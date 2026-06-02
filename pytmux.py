@@ -47,6 +47,7 @@ import re
 import signal
 import socket
 import struct
+import subprocess
 import sys
 import termios
 import time
@@ -337,6 +338,7 @@ class Window:
         self.layout_idx = 0    # 레이아웃 프리셋 순환 인덱스
         self.sync = False      # 입력 동기화(synchronize-panes)
         self.border_status = False  # 패널 제목 경계선 표시(pane-border-status)
+        self.auto_rename = True  # 활성 패널 명령으로 이름 자동 갱신
 
     @property
     def active_pane(self):
@@ -912,6 +914,47 @@ class Server:
         win = sess.active_window
         if win and name:
             win.name = name
+            win.auto_rename = False  # 수동 이름 지정 시 자동 갱신 끔
+
+    def set_auto_rename(self, sess: Session, value=None):
+        win = sess.active_window
+        if win:
+            win.auto_rename = (not win.auto_rename) if value is None else bool(value)
+
+    def _fg_command(self, fd: int):
+        """PTY 의 포그라운드 프로세스 그룹 명령 이름."""
+        try:
+            pgid = os.tcgetpgrp(fd)
+        except OSError:
+            return None
+        try:
+            out = subprocess.run(["ps", "-o", "comm=", "-p", str(pgid)],
+                                 capture_output=True, text=True, timeout=1).stdout.strip()
+        except Exception:
+            return None
+        if not out:
+            return None
+        name = os.path.basename(out.split()[0])
+        return name[1:] if name.startswith("-") else name  # -zsh → zsh
+
+    async def _autorename_loop(self):
+        while self.running:
+            await asyncio.sleep(2.0)
+            for sess in list(self.sessions.values()):
+                clients = [c for c in self.clients if c.session is sess]
+                if not clients:
+                    continue
+                changed = False
+                for win in sess.windows:
+                    if not getattr(win, "auto_rename", False) or not win.active_pane:
+                        continue
+                    cmd = self._fg_command(win.active_pane.master_fd)
+                    if cmd and cmd != win.name:
+                        win.name = cmd
+                        changed = True
+                if changed:
+                    for c in clients:
+                        await write_msg(c.writer, self._status_msg(sess))
 
     def kill_window(self, sess: Session):
         win = sess.active_window
@@ -1219,6 +1262,8 @@ class Server:
             self.join_pane(sess, orient=msg.get("orient", "tb"))
         elif action == "rename_window":
             self.rename_window(sess, str(msg.get("name", "")).strip())
+        elif action == "set_auto_rename":
+            self.set_auto_rename(sess, msg.get("value"))
         elif action == "kill_window":
             self.kill_window(sess)
             if sess.name not in self.sessions:
@@ -1360,12 +1405,14 @@ class Server:
         server = await asyncio.start_unix_server(self.handle_client, path=self.sock_path)
         os.chmod(self.sock_path, 0o600)
         flush = asyncio.create_task(self._flush_loop())
+        autoname = asyncio.create_task(self._autorename_loop())
         async with server:
             try:
                 await server.serve_forever()
             except asyncio.CancelledError:
                 pass
         flush.cancel()
+        autoname.cancel()
 
 
 def run_server(sock_path: str):
@@ -2081,6 +2128,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("prev_window")
             elif c in ("last-window", "last"):
                 self.send_cmd("last_window")
+            elif c == "automatic-rename" or (
+                    c == "setw" and "automatic-rename" in args):
+                val = None
+                if "on" in args:
+                    val = True
+                elif "off" in args:
+                    val = False
+                self.send_cmd("set_auto_rename", value=val)
             elif c in ("move-window", "movew"):
                 idx = self._opt_value(args, "-t")
                 idx = int(idx) if idx and idx.isdigit() else self._first_int(args)
