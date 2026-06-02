@@ -427,6 +427,7 @@ class Session:
         self.created_at = time.time()
         self.windows = [Window(0, "win", root)]
         self.active_index = 0
+        self.last_index = 0    # 직전 활성 윈도우(prefix l)
 
     @property
     def active_window(self) -> Window | None:
@@ -665,11 +666,19 @@ class Server:
         root = self.spawn_pane(cols, rows)
         idx = len(sess.windows)
         sess.windows.append(Window(idx, "win", root))
+        sess.last_index = sess.active_index
         sess.active_index = idx
 
     def select_window(self, sess: Session, index: int):
         if 0 <= index < len(sess.windows):
+            if index != sess.active_index:
+                sess.last_index = sess.active_index
             sess.active_index = index
+
+    def last_window(self, sess: Session):
+        li = getattr(sess, "last_index", 0)
+        if 0 <= li < len(sess.windows):
+            self.select_window(sess, li)
 
     LAYOUTS = ["even-horizontal", "even-vertical", "main-horizontal",
                "main-vertical", "tiled"]
@@ -1071,6 +1080,8 @@ class Server:
             self.select_window(sess, (sess.active_index - 1) % len(sess.windows))
         elif action == "select_window":
             self.select_window(sess, msg.get("index", 0))
+        elif action == "last_window":
+            self.last_window(sess)
         elif action == "zoom":
             self.toggle_zoom(sess)
         elif action == "select_layout":
@@ -1880,6 +1891,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("next_window")
             elif c in ("previous-window", "prev"):
                 self.send_cmd("prev_window")
+            elif c in ("last-window", "last"):
+                self.send_cmd("last_window")
             elif c in ("select-pane", "selectp"):
                 if "-T" in args:
                     title = " ".join(args[args.index("-T") + 1:])
@@ -2064,6 +2077,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("next_window")
             elif k == "p":
                 self.send_cmd("prev_window")
+            elif k == "l":
+                self.send_cmd("last_window")
             elif k.isdigit():
                 self.send_cmd("select_window", index=int(k))
             elif k == "d":
