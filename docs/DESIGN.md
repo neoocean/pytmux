@@ -97,7 +97,8 @@ Textual 프로세스는 SIGHUP 등을 받고 종료된다. 따라서 셸 세션(
 3. 데몬화 절차(서버): `fork → setsid → fork`(이중 포크)로 세션 리더 분리, `chdir`, stdio 를 `/dev/null`
    로 리다이렉트, 컨트롤링 터미널 분리. 이후 서버 이벤트 루프 진입.
 
-부가 서브커맨드(2차): `pytmux ls`, `pytmux attach -t <name>`, `pytmux kill-server`.
+부가 서브커맨드: `pytmux attach`(단일 세션), `pytmux ls`(탭/패널 요약),
+`pytmux kill-server`, `pytmux cmd <명령>`(외부 제어), `pytmux record|replay`(렌더 진단).
 
 ### 5.2 서버: 세션 모델
 
@@ -170,7 +171,7 @@ PTY 출력 스트림에서 전환 시퀀스를 가로채 활성 화면을 바꾼
   - `input{pane_id, data(bytes)}` — 키 입력 원시 바이트
   - `resize_client{cols, rows}` — 클라이언트(전체 터미널) 크기 변경
   - `scroll{pane_id, delta | to_top | to_bottom}` — 패널 스크롤백 뷰포트 이동(R6, §5.10)
-  - `cmd{...}` — 제어 명령(아래 §5.8): split / kill-pane / select-pane / resize-pane / new-window / new-session / rename ...
+  - `cmd{...}` — 제어 명령(아래 §5.8): split / kill-pane / select-pane / resize-pane / new-window(=새 탭) / rename / layout 저장·불러오기 ...
 - **서버 → 클라이언트 (이벤트/렌더)**:
   - `layout{window 트리 + 각 패널의 사각형 좌표(x,y,w,h)}`
   - `screen_update{pane_id, 변경 행/셀, 커서}` (전체 또는 diff)
@@ -207,9 +208,12 @@ PytmuxApp(App)
 └ 좌: 세션명     └ 윈도우 목록(활성=*)                                 └ 우: 호스트 / 시계
 ```
 
-- 좌측: 세션명. 중앙: 윈도우 인덱스:이름 목록(활성 강조). 우측: 호스트명·날짜·시각.
+- 중앙: 탭 인덱스:이름 목록(활성 강조). 우측: 활성 패널 제목·호스트명·시각.
+  단, **상단 탭바가 보이면 하단의 탭 목록은 생략**한다(중복 방지).
+- 상단 탭바(별도 위젯): 탭이 2개↑이거나 `tab-bar always` 설정 시 표시. [+]/탭/[x]
+  버튼과 폭 초과 시 ◀▶ 스크롤. 마우스 클릭·ESC 모드 방향키로 조작.
 - 데이터는 서버 `status` 이벤트로 갱신. 1초 주기 시계 틱은 클라이언트 로컬.
-- 색상은 tmux 기본(녹색 배경) 모사하되 설정 가능.
+- 색상은 p4v-tui 와 동일한 Textual textual-dark 테마 팔레트를 따르며 설정으로 덮어쓰기 가능.
 
 ### 5.8 메뉴/명령 시스템 (R4)
 
@@ -326,7 +330,8 @@ scripts/pytmux/
 4. **M4 — 분할/트리**: 수평·수직 분할, 패널 이동/삭제, 레이아웃 push. 상태표시줄(R3).
 5. **M5 — 메뉴/키맵**: prefix 키 + 명령 팔레트 + 팝업 메뉴(R4).
 6. **M6 — 마우스**: 드래그 리사이즈·클릭 포커스·버튼 삭제/추가(R5).
-7. **M7 — 다중 세션/윈도우 + 다듬기**: `new-session`, 윈도우 목록, 복수 클라이언트 미러링.
+7. **M7 — 탭 + 다듬기**: 단일 세션 + 탭(상단 탭바), 탭별 레이아웃 슬롯, 복수 클라이언트 미러링.
+   (멀티 세션은 사용자 표면에서 제거 — §5.2 참조.)
 
 ## 11. 위험 요소 및 대안
 
