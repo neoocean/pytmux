@@ -694,6 +694,40 @@ class Server:
         sess.windows.append(Window(idx, "win", pane))
         sess.active_index = idx
 
+    def join_pane(self, sess: Session, src_index: int | None = None,
+                  orient: str = "tb"):
+        """다른 윈도우의 활성 패널을 현재 활성 패널과 분할로 합친다."""
+        win = sess.active_window
+        if not win or len(sess.windows) < 2:
+            return
+        if src_index is None:
+            src_index = (sess.active_index - 1) % len(sess.windows)
+        if not (0 <= src_index < len(sess.windows)) or src_index == sess.active_index:
+            return
+        src = sess.windows[src_index]
+        pane = src.active_pane
+        src_single = pane.parent is None
+        if not src_single:
+            self._detach_pane(src, pane)
+        target = win.active_pane
+        new = Split(orient, target, pane, 0.5)
+        pp = target.parent
+        new.parent = pp
+        target.parent = new
+        pane.parent = new
+        if pp is None:
+            win.root = new
+        elif pp.a is target:
+            pp.a = new
+        else:
+            pp.b = new
+        win.active_pane = pane
+        win.zoomed = False
+        if src_single:
+            sess.windows.remove(src)
+            self._reindex(sess)
+        sess.active_index = sess.windows.index(win)
+
     def toggle_zoom(self, sess: Session):
         win = sess.active_window
         if not win:
@@ -946,6 +980,8 @@ class Server:
             self.swap_pane(sess, bool(msg.get("forward", True)))
         elif action == "break_pane":
             self.break_pane(sess)
+        elif action == "join_pane":
+            self.join_pane(sess, orient=msg.get("orient", "tb"))
         elif action == "rename_window":
             self.rename_window(sess, str(msg.get("name", "")).strip())
         elif action == "kill_window":
@@ -1753,6 +1789,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("swap_pane", forward=("-U" not in args))
             elif c in ("break-pane", "breakp"):
                 self.send_cmd("break_pane")
+            elif c in ("join-pane", "joinp"):
+                self.send_cmd("join_pane", orient=("lr" if "-h" in args else "tb"))
             elif c in ("detach-client", "detach"):
                 self.exit(message="detached")
             elif c == "kill-server":
