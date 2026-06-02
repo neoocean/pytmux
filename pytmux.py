@@ -680,6 +680,26 @@ class Server:
         if 0 <= li < len(sess.windows):
             self.select_window(sess, li)
 
+    def move_window(self, sess: Session, new_index: int):
+        n = len(sess.windows)
+        if n < 2:
+            return
+        new_index = max(0, min(new_index, n - 1))
+        win = sess.windows.pop(sess.active_index)
+        sess.windows.insert(new_index, win)
+        self._reindex(sess)
+        sess.active_index = sess.windows.index(win)
+
+    def swap_window(self, sess: Session, target_index: int):
+        n = len(sess.windows)
+        if not (0 <= target_index < n) or target_index == sess.active_index:
+            return
+        i = sess.active_index
+        sess.windows[i], sess.windows[target_index] = (
+            sess.windows[target_index], sess.windows[i])
+        self._reindex(sess)
+        sess.active_index = target_index
+
     LAYOUTS = ["even-horizontal", "even-vertical", "main-horizontal",
                "main-vertical", "tiled"]
 
@@ -1082,6 +1102,10 @@ class Server:
             self.select_window(sess, msg.get("index", 0))
         elif action == "last_window":
             self.last_window(sess)
+        elif action == "move_window":
+            self.move_window(sess, int(msg.get("index", 0)))
+        elif action == "swap_window":
+            self.swap_window(sess, int(msg.get("index", 0)))
         elif action == "zoom":
             self.toggle_zoom(sess)
         elif action == "select_layout":
@@ -1848,6 +1872,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.send_cmd("rename_session", name=val)
             elif purpose == "rename_pane":
                 self.send_cmd("set_pane_title", title=val)
+            elif purpose == "move_window":
+                if val.lstrip("-").isdigit():
+                    self.send_cmd("move_window", index=int(val))
             elif purpose == "new_session":
                 self.send_cmd("new_session", name=val)
             elif purpose == "confirm":
@@ -1893,6 +1920,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("prev_window")
             elif c in ("last-window", "last"):
                 self.send_cmd("last_window")
+            elif c in ("move-window", "movew"):
+                idx = self._opt_value(args, "-t")
+                idx = int(idx) if idx and idx.isdigit() else self._first_int(args)
+                if idx is not None:
+                    self.send_cmd("move_window", index=idx)
+            elif c in ("swap-window", "swapw"):
+                idx = self._opt_value(args, "-t")
+                idx = int(idx) if idx and idx.isdigit() else self._first_int(args)
+                if idx is not None:
+                    self.send_cmd("swap_window", index=idx)
             elif c in ("select-pane", "selectp"):
                 if "-T" in args:
                     title = " ".join(args[args.index("-T") + 1:])
@@ -2079,6 +2116,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("prev_window")
             elif k == "l":
                 self.send_cmd("last_window")
+            elif k == "period" or ch == ".":
+                self.open_prompt("move_window", "move-window to index")
             elif k.isdigit():
                 self.send_cmd("select_window", index=int(k))
             elif k == "d":
