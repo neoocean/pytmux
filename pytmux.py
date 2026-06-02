@@ -1734,6 +1734,8 @@ def load_config(path: str | None = None) -> dict:
                         cfg["status_left"] = val
                     elif opt == "status-right":
                         cfg["status_right"] = val
+                    elif opt == "status-position":
+                        cfg["status_position"] = "top" if val == "top" else "bottom"
                 elif parts[0] == "bind" and len(parts) >= 3:
                     cfg["bindings"][parts[1]] = " ".join(parts[2:])
                 elif parts[0] == "alias" and len(parts) >= 3:
@@ -2204,6 +2206,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.bindings = config.get("bindings", {})
             self.mouse_enabled = config.get("mouse", True)
             self.mode_keys = config.get("mode_keys", "vi")
+            self.status_position = config.get("status_position", "bottom")
             self.aliases = config.get("aliases", {})
             self.hooks = config.get("hooks", {})
             self._attached = False
@@ -2225,6 +2228,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         async def on_mount(self):
             self.view.focus()
+            if self.status_position == "top":
+                self.status.styles.dock = "top"
             try:
                 self.reader, self.writer = await asyncio.open_unix_connection(
                     path=self.sock_path)
@@ -2520,6 +2525,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif name == "status-right":
                 self.status.right_fmt = val
                 self.status.refresh()
+            elif name == "status-position":
+                self.status_position = "top" if val == "top" else "bottom"
+                self.status.styles.dock = self.status_position
 
         def show_options(self):
             lines = [
