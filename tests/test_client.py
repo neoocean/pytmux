@@ -133,10 +133,10 @@ async def test_active_pane_border_highlight():
         d = lay["dividers"][0]
         col = d["x"]
         cells = app.view._cells
-        green = any(cells[y][col][1] and cells[y][col][1].color and
-                    "green" in str(cells[y][col][1].color)
-                    for y in range(d["y"], d["y"] + d["h"]) if 0 <= y < len(cells))
-        assert green, "활성 패널 분할선 강조(녹색)"
+        blue = any(cells[y][col][1] and cells[y][col][1].color and
+                   "blue" in str(cells[y][col][1].color)
+                   for y in range(d["y"], d["y"] + d["h"]) if 0 <= y < len(cells))
+        assert blue, "활성 패널 분할선 강조(파란색)"
     await _with_app(body)
 
 

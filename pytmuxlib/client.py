@@ -793,9 +793,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     if 0 <= gx < W and 0 <= gy < H:
                         ch, st = cells[gy][gx]
                         cells[gy][gx] = (ch, st + Style(reverse=True))
-            # 분할선 (활성 패널에 접한 분할선은 강조색으로 표시)
+            # 분할선: 활성 패널에 접한 경계는 파란색 굵은 선(┃/━)으로 강조
             div_style = Style(color="grey50")
-            active_div = Style(color="green", bold=True)
+            active_div = Style(color="bright_blue", bold=True)
             arect = None
             for p in self.layout.get("panes", []):
                 if p["id"] == active:
@@ -815,8 +815,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return touch and overlap
 
             for d in self.layout.get("dividers", []):
-                ch = "│" if d["orient"] == "lr" else "─"
-                stl = active_div if _adjacent(d) else div_style
+                act = _adjacent(d)
+                stl = active_div if act else div_style
+                if d["orient"] == "lr":
+                    ch = "┃" if act else "│"
+                else:
+                    ch = "━" if act else "─"
                 for i in range(d["h"] if d["orient"] == "lr" else d["w"]):
                     if d["orient"] == "lr":
                         gx, gy = d["x"], d["y"] + i
