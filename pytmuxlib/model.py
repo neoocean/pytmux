@@ -2,11 +2,18 @@
 from __future__ import annotations
 
 import asyncio  # noqa: F401  (타입 주석용)
+import re
 import time
 
 import pyte
 
 from .protocol import HISTORY, MIN_H, MIN_W, conv_color, set_winsize
+
+# 대체 화면 버퍼(alternate screen) 전환 시퀀스. pyte 가 직접 지원하지 않아
+# pytmux 가 직접 처리한다(vim/less/htop/Claude Code 등 풀스크린 TUI 용).
+_ALT_RE = re.compile(rb"\x1b\[\?(1049|1047|47)(h|l)")
+# feed 경계에서 잘린 미완성 CSI private 시퀀스(예: ESC[?104)를 다음 feed 로 미룸
+_ALT_PARTIAL_RE = re.compile(rb"\x1b\[\?[0-9;]*$")
 
 
 class Pane:
@@ -18,9 +25,15 @@ class Pane:
         self.child_pid = pid
         self.cols = cols
         self.rows = rows
-        self.screen = pyte.HistoryScreen(cols, rows, history=HISTORY, ratio=0.5)
-        self.screen.set_mode(pyte.modes.LNM)
-        self.stream = pyte.ByteStream(self.screen)
+        # 메인 화면(스크롤백 보관) + 대체 화면(풀스크린 TUI 용, 스크롤백 없음)
+        self._main = pyte.HistoryScreen(cols, rows, history=HISTORY, ratio=0.5)
+        self._main.set_mode(pyte.modes.LNM)
+        self._main_stream = pyte.ByteStream(self._main)
+        self._alt = None
+        self._alt_stream = None
+        self.alt_active = False
+        self.screen = self._main      # 현재 활성 화면(렌더 대상)
+        self._altcarry = b""          # feed 경계의 미완성 시퀀스 보관
         self.scroll = 0          # 0 = live(맨 아래), 양수 = 위로 N 행
         self.dirty = True
         self.rect = (0, 0, cols, rows)
@@ -43,9 +56,14 @@ class Pane:
         self.master_fd = fd
         self.child_pid = pid
         self.cols, self.rows = cols, rows
-        self.screen = pyte.HistoryScreen(cols, rows, history=HISTORY, ratio=0.5)
-        self.screen.set_mode(pyte.modes.LNM)
-        self.stream = pyte.ByteStream(self.screen)
+        self._main = pyte.HistoryScreen(cols, rows, history=HISTORY, ratio=0.5)
+        self._main.set_mode(pyte.modes.LNM)
+        self._main_stream = pyte.ByteStream(self._main)
+        self._alt = None
+        self._alt_stream = None
+        self.alt_active = False
+        self.screen = self._main
+        self._altcarry = b""
         self.scroll = 0
         self.dirty = True
         self._scanbuf = ""
@@ -59,13 +77,57 @@ class Pane:
         return self
 
     def feed(self, data: bytes) -> None:
-        before = len(self.screen.history.top)
-        self.stream.feed(data)
-        after = len(self.screen.history.top)
-        if self.scroll > 0 and after > before:
-            # 스크롤백을 보는 중 새 출력이 위로 밀어내면 뷰포트를 고정(R6)
-            self.scroll = min(self.scroll + (after - before), after)
+        # 대체 화면 전환 시퀀스를 가로채 메인/대체 화면으로 라우팅한다.
+        buf = self._altcarry + data
+        self._altcarry = b""
+        m = _ALT_PARTIAL_RE.search(buf)
+        if m:  # 끝에 잘린 CSI private 시퀀스는 다음 feed 로 미룸
+            self._altcarry = buf[m.start():]
+            buf = buf[:m.start()]
+        pos = 0
+        for mo in _ALT_RE.finditer(buf):
+            self._feed_seg(buf[pos:mo.start()])
+            if mo.group(2) == b"h":
+                self._enter_alt()
+            else:
+                self._leave_alt()
+            pos = mo.end()
+        self._feed_seg(buf[pos:])
         self.dirty = True
+
+    def _feed_seg(self, seg: bytes) -> None:
+        if not seg:
+            return
+        if self.screen is self._main:
+            before = len(self._main.history.top)
+            self._main_stream.feed(seg)
+            after = len(self._main.history.top)
+            if self.scroll > 0 and after > before:
+                # 스크롤백을 보는 중 새 출력이 위로 밀어내면 뷰포트를 고정(R6)
+                self.scroll = min(self.scroll + (after - before), after)
+        else:
+            self._alt_stream.feed(seg)
+
+    def _enter_alt(self) -> None:
+        if self.alt_active:
+            return
+        self._alt = pyte.Screen(self.cols, self.rows)
+        self._alt.set_mode(pyte.modes.LNM)
+        self._alt_stream = pyte.ByteStream(self._alt)
+        self.screen = self._alt
+        self.alt_active = True
+        self.scroll = 0
+        self._match_abs = None
+
+    def _leave_alt(self) -> None:
+        if not self.alt_active:
+            return
+        self._alt = None
+        self._alt_stream = None
+        self.screen = self._main
+        self.alt_active = False
+        self.scroll = 0
+        self._match_abs = None
 
     def resize(self, cols: int, rows: int) -> None:
         cols = max(1, cols)
@@ -73,30 +135,33 @@ class Pane:
         if cols == self.cols and rows == self.rows:
             return
         self.cols, self.rows = cols, rows
-        self.screen.resize(rows, cols)
+        self._main.resize(rows, cols)
+        if self._alt is not None:
+            self._alt.resize(rows, cols)
         try:
             set_winsize(self.master_fd, rows, cols)
         except OSError:
             pass
         self.dirty = True
 
+    def _history_len(self) -> int:
+        h = getattr(self.screen, "history", None)
+        return len(h.top) if h is not None else 0
+
     def scroll_by(self, delta: int) -> None:
-        maxoff = len(self.screen.history.top)
-        self.scroll = max(0, min(self.scroll + delta, maxoff))
+        self.scroll = max(0, min(self.scroll + delta, self._history_len()))
         self.dirty = True
 
     def scroll_to(self, where: str) -> None:
-        if where == "top":
-            self.scroll = len(self.screen.history.top)
-        else:
-            self.scroll = 0
+        self.scroll = self._history_len() if where == "top" else 0
         self.dirty = True
 
     def render(self, with_cursor: bool):
         """현재 뷰포트를 [rows, cursor] 로 직렬화. rows = 행마다 [text, style] 런 목록."""
         screen = self.screen
         cols, lines = screen.columns, screen.lines
-        hist = list(screen.history.top)
+        h = getattr(screen, "history", None)
+        hist = list(h.top) if h is not None else []  # 대체 화면은 스크롤백 없음
         full = hist + [screen.buffer[y] for y in range(lines)]
         total = len(full)
         end = total - self.scroll

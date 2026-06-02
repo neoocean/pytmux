@@ -634,8 +634,9 @@ class Server:
     @staticmethod
     def _pane_text_lines(pane: Pane):
         screen = pane.screen
-        full = list(screen.history.top) + [screen.buffer[y]
-                                           for y in range(screen.lines)]
+        h = getattr(screen, "history", None)
+        hist = list(h.top) if h is not None else []
+        full = hist + [screen.buffer[y] for y in range(screen.lines)]
         return ["".join((line[x].data or " ")
                         for x in range(screen.columns)).rstrip()
                 for line in full]
@@ -854,9 +855,9 @@ class Server:
         if not win or not win.active_pane:
             return
         p = win.active_pane
-        try:
-            p.screen.history.top.clear()
-            p.screen.history.bottom.clear()
+        try:  # 메인 스크롤백을 비운다(대체 화면 중이어도)
+            p._main.history.top.clear()
+            p._main.history.bottom.clear()
         except Exception:
             pass
         p.scroll = 0
@@ -892,7 +893,7 @@ class Server:
         if found is None:
             return
         p._match_abs = found
-        hist = len(p.screen.history.top)
+        hist = p._history_len()
         target_start = max(0, found - lines // 2)
         p.scroll = max(0, min(hist, hist - target_start))
         p.dirty = True
