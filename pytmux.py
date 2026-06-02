@@ -2888,6 +2888,20 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("clear_history")
             elif c in ("clock-mode", "clock"):
                 self.push_screen(ClockScreen())
+            elif c in ("display-popup", "popup"):
+                cmd = " ".join(a for a in args if not a.startswith("-"))
+                if cmd:
+                    try:
+                        res = subprocess.run(["/bin/sh", "-c", cmd],
+                                             capture_output=True, timeout=30)
+                        text = (res.stdout + res.stderr).decode("utf-8", "ignore")
+                    except Exception as e:
+                        text = str(e)
+                    self.push_screen(InfoScreen(
+                        text.splitlines()[:60] or ["(출력 없음)"], title="popup"))
+                else:
+                    self.push_screen(InfoScreen(["display-popup <command>"],
+                                                title="popup"))
             elif c in ("source-file", "source"):
                 self.reload_config(args[0] if args else None)
             elif c in ("set", "set-option"):
