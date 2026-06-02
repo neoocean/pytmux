@@ -1009,6 +1009,36 @@ class Server:
         sess.name = name
         self.sessions[name] = sess
 
+    def _destroy_pane_proc(self, pane: Pane):
+        """패널의 PTY/자식 프로세스를 정리한다(트리 조작 없음)."""
+        try:
+            os.killpg(os.getpgid(pane.child_pid), signal.SIGHUP)
+        except (OSError, ProcessLookupError):
+            pass
+        try:
+            self.loop.remove_reader(pane.master_fd)
+        except (OSError, ValueError):
+            pass
+        try:
+            os.close(pane.master_fd)
+        except OSError:
+            pass
+        try:
+            os.waitpid(pane.child_pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+
+    def kill_session(self, name: str):
+        s = self.sessions.pop(name, None)
+        if not s:
+            return
+        for win in s.windows:
+            for p in win.panes():
+                self._destroy_pane_proc(p)
+        for c in self.clients:
+            if c.session is s:
+                c.session = next(iter(self.sessions.values()), None)
+
     def switch_session(self, client: "ClientConn", name: str) -> bool:
         target = self.sessions.get(name)
         if target:
@@ -1331,6 +1361,15 @@ class Server:
             self.switch_session(client, str(msg.get("name", "")).strip())
             await self._send_full(client)
             return
+        elif action == "kill_session":
+            name = str(msg.get("name") or sess.name)
+            self.kill_session(name)
+            if not self.sessions:
+                self._notify_no_sessions()
+                return
+            for c in self.clients:
+                await self._send_full(c)
+            return
         elif action == "kill_server":
             self._notify_no_sessions()
             return
@@ -1612,6 +1651,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("next_window", "다음 윈도우"),
         ("prev_window", "이전 윈도우"),
         ("new_session", "새 세션"),
+        ("kill_session", "세션 삭제"),
         ("command", "명령 입력 (:)"),
         ("detach", "detach (앱 종료, 세션 유지)"),
         ("kill_server", "서버 종료 (모든 세션 종료)"),
@@ -2082,6 +2122,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("prev_window")
             elif key == "new_session":
                 self.open_prompt("new_session", "new-session (이름, 빈칸=자동)")
+            elif key == "kill_session":
+                self.open_prompt("confirm", "kill-session? (y/N)",
+                                 action=lambda: self.send_cmd("kill_session"))
             elif key == "command":
                 self.open_prompt("command", ":")
             elif key == "detach":
@@ -2247,6 +2290,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 name = self._opt_value(args, "-t")
                 if name:
                     self.send_cmd("switch_session", name=name)
+            elif c in ("kill-session", "kills"):
+                name = self._opt_value(args, "-t")
+                self.send_cmd("kill_session", name=name or "")
             elif c in ("resize-pane", "resizep"):
                 if "-Z" in args:
                     self.send_cmd("zoom")
