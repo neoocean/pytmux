@@ -1138,10 +1138,20 @@ class Server:
                 return c
         return None
 
-    def _layout_msg(self, sess: Session, cols: int, rows: int):
+    def _session_size(self, sess: Session):
+        """세션에 attach 한 모든 클라이언트를 수용하도록 최소 크기를 쓴다(미러링)."""
+        cs = [c for c in self.clients if c.session is sess]
+        if not cs:
+            return 80, 24
+        return (max(MIN_W, min(c.cols for c in cs)),
+                max(MIN_H, min(c.rows for c in cs)))
+
+    def _layout_msg(self, sess: Session, cols: int = None, rows: int = None):
         win = sess.active_window
         if not win:
             return None
+        if cols is None or rows is None:
+            cols, rows = self._session_size(sess)
         # 모든 패널 PTY 크기를 레이아웃에 맞춰 갱신
         panes, divs = win.compute_layout(0, 0, cols, rows)
         pane_msgs, titlebars = [], []
@@ -1193,7 +1203,7 @@ class Server:
         sess = client.session
         if not sess:
             return
-        lay = self._layout_msg(sess, client.cols, client.rows)
+        lay = self._layout_msg(sess)  # 세션 공유 크기(최소)로 계산
         if not lay:
             return
         await write_msg(client.writer, lay)
@@ -1406,7 +1416,9 @@ class Server:
         client.session = self.get_or_create_session(
             first.get("session"), client.cols, client.rows)
         self.clients.append(client)
-        await self._send_full(client)
+        # 새 클라이언트가 붙으면 공유 크기가 바뀔 수 있어 같은 세션 전체를 갱신
+        for c in [x for x in self.clients if x.session is client.session]:
+            await self._send_full(c)
 
         try:
             while self.running:
@@ -1419,18 +1431,25 @@ class Server:
                 elif mt == "resize":
                     client.cols = max(MIN_W, int(msg.get("cols", 80)))
                     client.rows = max(MIN_H, int(msg.get("rows", 24)))
-                    await self._send_full(client)
+                    # 미러링: 세션 공유 크기가 바뀌므로 모든 클라이언트 갱신
+                    for c in [x for x in self.clients if x.session is client.session]:
+                        await self._send_full(c)
                 elif mt == "scroll":
                     self._handle_scroll(client, msg)
                 elif mt == "cmd":
                     await self._handle_cmd(client, msg)
         finally:
+            sess = client.session
             if client in self.clients:
                 self.clients.remove(client)
             try:
                 writer.close()
             except Exception:
                 pass
+            # 미러링: 남은 클라이언트는 공유 크기가 커질 수 있으니 갱신
+            if sess and sess in self.sessions.values():
+                for c in [x for x in self.clients if x.session is sess]:
+                    await self._send_full(c)
 
     def _handle_input(self, client: ClientConn, msg: dict):
         sess = client.session
