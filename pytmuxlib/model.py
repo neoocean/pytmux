@@ -181,9 +181,15 @@ class Pane:
             cur_key = None
             for x in range(cols):
                 ch = line[x]
+                data = ch.data
+                if data == "":
+                    # 와이드 문자(이모지·CJK)의 연속 셀: 보내지 않는다(클라이언트가
+                    # 문자 폭만큼 칸을 차지). 공백으로 바꾸면 한 칸씩 밀린다.
+                    continue
+                if not data:
+                    data = " "
                 style = self._char_style(ch)
                 key = tuple(sorted(style.items()))
-                data = ch.data or " "
                 if key != cur_key:
                     if cur_text:
                         segs.append(["".join(cur_text), dict(cur_key)])

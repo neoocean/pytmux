@@ -7,8 +7,15 @@ import shlex
 import socket
 import subprocess
 
+from wcwidth import wcwidth
+
 from .keymap import _key_to_ctrl_bytes, _tmux_key_to_textual, load_config
 from .protocol import MIN_H, MIN_W, read_msg, write_msg
+
+
+def _char_cells(ch: str) -> int:
+    """터미널에서 문자가 차지하는 칸 수(와이드=2, 그 외=1)."""
+    return 2 if wcwidth(ch) == 2 else 1
 
 
 def build_client_app(sock_path: str, config: dict | None = None,
@@ -401,6 +408,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             run = []
             run_st = None
             for ch, st in row:
+                if ch == "":
+                    continue  # 와이드 문자의 연속 셀 → 앞 문자가 2칸을 차지함
                 if st is run_st:
                     run.append(ch)
                 else:
@@ -748,7 +757,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                                 break
                             if 0 <= cx < W:
                                 cells[gy][cx] = (chh, st)
-                            cx += 1
+                            wch = _char_cells(chh)
+                            # 와이드 문자: 다음 칸은 연속 셀(렌더 시 건너뜀)
+                            if wch == 2 and 0 <= cx + 1 < W and \
+                                    (cx + 1 - p["x"]) < p["w"]:
+                                cells[gy][cx + 1] = ("", st)
+                            cx += wch
                 # 활성 패널 커서
                 if cursor and p["id"] == active:
                     ccx, ccy = cursor
