@@ -1698,7 +1698,8 @@ def load_config(path: str | None = None) -> dict:
         bind <key> <command...>   # prefix 후 <key> 에 명령 바인딩
     """
     cfg = {"prefix": "ctrl+b", "mouse": True, "bindings": {}, "aliases": {},
-           "status_bg": "green", "status_fg": "black", "mode_keys": "vi"}
+           "hooks": {}, "status_bg": "green", "status_fg": "black",
+           "mode_keys": "vi"}
     candidates = []
     if path:
         candidates.append(path)
@@ -1733,6 +1734,8 @@ def load_config(path: str | None = None) -> dict:
                     cfg["bindings"][parts[1]] = " ".join(parts[2:])
                 elif parts[0] == "alias" and len(parts) >= 3:
                     cfg["aliases"][parts[1]] = " ".join(parts[2:])
+                elif parts[0] in ("hook", "set-hook") and len(parts) >= 3:
+                    cfg["hooks"][parts[1]] = " ".join(parts[2:])
     except OSError:
         pass
     return cfg
@@ -2185,6 +2188,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.mouse_enabled = config.get("mouse", True)
             self.mode_keys = config.get("mode_keys", "vi")
             self.aliases = config.get("aliases", {})
+            self.hooks = config.get("hooks", {})
+            self._attached = False
+            self._prev_winc = 0
+            self._prev_bell = False
             self.view = MultiplexerView()
             self.status = StatusBar(bg=config.get("status_bg", "green"),
                                     fg=config.get("status_fg", "black"))
@@ -2222,16 +2229,33 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     return
                 self._dispatch(msg)
 
+        def _fire_hook(self, event):
+            cmd = self.hooks.get(event)
+            if cmd:
+                self._run_command(cmd)
+
         def _dispatch(self, msg):
             t = msg.get("t")
             if t == "layout":
                 self.layout = msg
                 self._composite()
+                if not self._attached:
+                    self._attached = True
+                    self._fire_hook("client-attached")
             elif t == "screen":
                 self.pane_content[msg["pane"]] = (msg["rows"], msg.get("cursor"))
                 self._composite()
             elif t == "status":
                 self.status.update_status(msg)
+                wins = msg.get("windows", [])
+                n = len(wins)
+                if self._prev_winc and n > self._prev_winc:
+                    self._fire_hook("after-new-window")
+                self._prev_winc = n
+                anybell = any(w.get("bell") for w in wins)
+                if anybell and not self._prev_bell:
+                    self._fire_hook("alert-bell")
+                self._prev_bell = anybell
             elif t == "tree":
                 if self._want_tree:
                     self._want_tree = False
@@ -2486,6 +2510,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
             self.bindings = cfg["bindings"]
             self.aliases = cfg.get("aliases", {})
+            self.hooks = cfg.get("hooks", {})
             self.mouse_enabled = cfg["mouse"]
             self.mode_keys = cfg["mode_keys"]
             self.status.bg = cfg["status_bg"]
@@ -2771,6 +2796,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.apply_option(opts[0], " ".join(opts[1:]))
             elif c in ("show-options", "show"):
                 self.show_options()
+            elif c == "set-hook":
+                if "-u" in args and len(args) >= 2:
+                    self.hooks.pop(args[args.index("-u") + 1], None)
+                else:
+                    opts = [a for a in args if not a.startswith("-")]
+                    if len(opts) >= 2:
+                        self.hooks[opts[0]] = " ".join(opts[1:])
+            elif c == "show-hooks":
+                self.push_screen(InfoScreen(
+                    [f"{k} → {v}" for k, v in self.hooks.items()], title="hooks"))
             # 알 수 없는 명령은 조용히 무시
 
         def on_paste(self, event: events.Paste):
