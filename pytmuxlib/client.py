@@ -756,18 +756,37 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     if 0 <= gx < W and 0 <= gy < H:
                         ch, st = cells[gy][gx]
                         cells[gy][gx] = (ch, st + Style(reverse=True))
-            # 분할선
+            # 분할선 (활성 패널에 접한 분할선은 강조색으로 표시)
             div_style = Style(color="grey50")
-            active_div = Style(color="green")
+            active_div = Style(color="green", bold=True)
+            arect = None
+            for p in self.layout.get("panes", []):
+                if p["id"] == active:
+                    arect = (p["x"], p["y"], p["w"], p["h"])
+                    break
+
+            def _adjacent(d):
+                if arect is None:
+                    return False
+                ax, ay, aw, ah = arect
+                if d["orient"] == "lr":  # 세로 분할선(열 d["x"])
+                    touch = d["x"] == ax - 1 or d["x"] == ax + aw
+                    overlap = not (d["y"] + d["h"] <= ay or d["y"] >= ay + ah)
+                else:                    # 가로 분할선(행 d["y"])
+                    touch = d["y"] == ay - 1 or d["y"] == ay + ah
+                    overlap = not (d["x"] + d["w"] <= ax or d["x"] >= ax + aw)
+                return touch and overlap
+
             for d in self.layout.get("dividers", []):
                 ch = "│" if d["orient"] == "lr" else "─"
+                stl = active_div if _adjacent(d) else div_style
                 for i in range(d["h"] if d["orient"] == "lr" else d["w"]):
                     if d["orient"] == "lr":
                         gx, gy = d["x"], d["y"] + i
                     else:
                         gx, gy = d["x"] + i, d["y"]
                     if 0 <= gx < W and 0 <= gy < H:
-                        cells[gy][gx] = (ch, div_style)
+                        cells[gy][gx] = (ch, stl)
             # 패널 제목 경계선(pane-border-status)
             for tb in self.layout.get("titlebars", []):
                 is_active = tb.get("active")
