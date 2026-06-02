@@ -12,6 +12,9 @@ set mouse on
 set status-bg green
 set status-fg black
 
+# 스크롤백(copy) 모드 키 스타일: vi 또는 emacs
+set mode-keys vi
+
 # prefix 후 키 바인딩: bind <key> <command...>
 # (command 는 명령 프롬프트(:)에서 쓰는 것과 동일한 구문)
 bind | split-window -h

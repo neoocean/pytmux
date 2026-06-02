@@ -1669,7 +1669,7 @@ def load_config(path: str | None = None) -> dict:
         bind <key> <command...>   # prefix 후 <key> 에 명령 바인딩
     """
     cfg = {"prefix": "ctrl+b", "mouse": True, "bindings": {},
-           "status_bg": "green", "status_fg": "black"}
+           "status_bg": "green", "status_fg": "black", "mode_keys": "vi"}
     candidates = []
     if path:
         candidates.append(path)
@@ -1698,6 +1698,8 @@ def load_config(path: str | None = None) -> dict:
                         cfg["status_bg"] = val
                     elif opt == "status-fg":
                         cfg["status_fg"] = val
+                    elif opt == "mode-keys":
+                        cfg["mode_keys"] = "emacs" if val == "emacs" else "vi"
                 elif parts[0] == "bind" and len(parts) >= 3:
                     cfg["bindings"][parts[1]] = " ".join(parts[2:])
     except OSError:
@@ -2124,6 +2126,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
             self.bindings = config.get("bindings", {})
             self.mouse_enabled = config.get("mouse", True)
+            self.mode_keys = config.get("mode_keys", "vi")
             self.view = MultiplexerView()
             self.status = StatusBar(bg=config.get("status_bg", "green"),
                                     fg=config.get("status_fg", "black"))
@@ -2773,14 +2776,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
             aid = self.layout.get("active")
             k = event.key
             ch = event.character
-            if k == "up":
+            half = max(1, self.layout.get("rows", 24) // 2)
+            vi = self.mode_keys == "vi"
+            emacs = self.mode_keys == "emacs"
+            if k == "up" or (vi and k == "k") or (emacs and k == "ctrl+p"):
                 self.send_scroll(aid, delta=1)
-            elif k == "down":
+            elif k == "down" or (vi and k == "j") or (emacs and k == "ctrl+n"):
                 self.send_scroll(aid, delta=-1)
-            elif k == "pageup":
-                self.send_scroll(aid, delta=10)
-            elif k == "pagedown":
-                self.send_scroll(aid, delta=-10)
+            elif k == "pageup" or (vi and k == "ctrl+u") or (emacs and k == "alt+v"):
+                self.send_scroll(aid, delta=half)
+            elif k == "pagedown" or (vi and k == "ctrl+d") or (emacs and k == "ctrl+v"):
+                self.send_scroll(aid, delta=-half)
             elif k == "g":
                 self.send_scroll(aid, top=True)
             elif k in ("G", "end"):
