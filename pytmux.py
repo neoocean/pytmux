@@ -1371,6 +1371,11 @@ class Server:
             self.switch_session(client, str(msg.get("name", "")).strip())
             await self._send_full(client)
             return
+        elif action == "detach_others":
+            for c in list(self.clients):
+                if c is not client and c.session is sess:
+                    await write_msg(c.writer, {"t": "bye"})
+            return
         elif action == "kill_session":
             name = str(msg.get("name") or sess.name)
             self.kill_session(name)
@@ -2360,7 +2365,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     val = False
                 self.send_cmd("set_border_status", value=val)
             elif c in ("detach-client", "detach"):
-                self.exit(message="detached")
+                if "-a" in args:
+                    self.send_cmd("detach_others")
+                else:
+                    self.exit(message="detached")
             elif c == "kill-server":
                 self.send_cmd("kill_server")
             # 알 수 없는 명령은 조용히 무시
