@@ -1,0 +1,20 @@
+# pytmux 설정 예시
+# ~/.config/pytmux/config 또는 ~/.pytmux.conf 로 복사해 사용한다.
+# (또는 PYTMUX_CONFIG 환경변수로 경로 지정)
+
+# prefix 키를 Ctrl-a 로 변경 (기본: Ctrl-b)
+set prefix C-a
+
+# 마우스 사용 (on/off)
+set mouse on
+
+# 상태줄 색상
+set status-bg green
+set status-fg black
+
+# prefix 후 키 바인딩: bind <key> <command...>
+# (command 는 명령 프롬프트(:)에서 쓰는 것과 동일한 구문)
+bind | split-window -h
+bind - split-window -v
+bind r rename-window
+bind k kill-pane
