@@ -1134,6 +1134,20 @@ class Server:
         except OSError:
             pass
 
+    def clear_history(self, sess: Session):
+        win = sess.active_window
+        if not win or not win.active_pane:
+            return
+        p = win.active_pane
+        try:
+            p.screen.history.top.clear()
+            p.screen.history.bottom.clear()
+        except Exception:
+            pass
+        p.scroll = 0
+        p._match_abs = None
+        p.dirty = True
+
     def _buffers_msg(self):
         return {"t": "buffers", "items": [
             {"i": i, "preview": (b.splitlines()[0] if b.splitlines() else "")[:50]}
@@ -1386,6 +1400,10 @@ class Server:
             return
         elif action == "request_buffers":
             await write_msg(client.writer, self._buffers_msg())
+            return
+        elif action == "clear_history":
+            self.clear_history(sess)
+            await self._send_full(client)
             return
         elif action == "request_tree":
             await write_msg(client.writer, self._tree_msg())
@@ -2602,6 +2620,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("paste_buffer", index=idx or 0)
             elif c in ("choose-buffer", "list-buffers", "lsb"):
                 self.choose_buffer()
+            elif c in ("clear-history", "clearhist"):
+                self.send_cmd("clear_history")
             # 알 수 없는 명령은 조용히 무시
 
         # ---- 이벤트 ----
