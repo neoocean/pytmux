@@ -200,6 +200,33 @@ async def test_tab_hierarchy_and_commands():
         await teardown(srv, task, sock)
 
 
+async def test_per_tab_layout_save_load():
+    """활성 탭 레이아웃을 이름 슬롯에 저장 → 새 탭/현재 탭 덮어쓰기로 불러오기."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv.split_pane(sess, "lr")
+        srv.split_pane(sess, "tb")
+        assert len(sess.active_tab.window.panes()) == 3
+        assert srv.save_tab_layout(sess, "three")
+        assert "three" in srv.list_tab_layouts()
+        # 새 탭으로 불러오기
+        assert srv.load_tab_layout(sess, "three", new_tab=True)
+        assert len(sess.tabs) == 2
+        assert len(sess.active_tab.window.panes()) == 3
+        # 단일 패널 탭 만든 뒤 현재 탭 덮어쓰기
+        srv.new_window(sess)
+        assert len(sess.tabs) == 3
+        assert len(sess.active_tab.window.panes()) == 1
+        assert srv.load_tab_layout(sess, "three", new_tab=False)
+        assert len(sess.tabs) == 3, "덮어쓰기는 탭 수 불변"
+        assert len(sess.active_tab.window.panes()) == 3
+        # 없는 슬롯
+        assert srv.load_tab_layout(sess, "nope") is False
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_hello_and_multiclient_minsize():
     srv, task, sock = await server_only()
     import pytmux

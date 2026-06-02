@@ -273,6 +273,28 @@ async def test_tab_bar_force_always():
     await _with_app(body, cfg={"tab_bar_always": True})
 
 
+async def test_layout_save_load_client():
+    async def body(app, pilot, srv):
+        sess = next(iter(srv.sessions.values()))
+        app._run_command("split-window -v")        # 좌우 2패널
+        await pilot.pause(0.4)
+        assert len(sess.active_tab.window.panes()) == 2
+        app._run_command("layout-save two")
+        await pilot.pause(0.3)
+        assert "two" in srv.list_tab_layouts()
+        # 직접 이름으로 새 탭에 불러오기
+        n = len(sess.tabs)
+        app._run_command("layout-load-new two")
+        await pilot.pause(0.4)
+        assert len(sess.tabs) == n + 1
+        assert len(sess.active_tab.window.panes()) == 2
+        # 이름 없이 불러오기 → 레이아웃 선택기 팝업
+        app._run_command("layout-load")
+        await pilot.pause(0.3)
+        assert app.screen_stack[-1].__class__.__name__ == "ChooseLayoutScreen"
+    await _with_app(body)
+
+
 async def test_wide_char_composite():
     async def body(app, pilot, srv):
         sess = next(iter(srv.sessions.values()))

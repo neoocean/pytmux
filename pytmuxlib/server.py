@@ -751,6 +751,67 @@ class Server:
             self.sessions[sess.name] = sess
         return True
 
+    # ---- 탭(윈도우+패널) 레이아웃 슬롯: 이름으로 저장/불러오기 ----
+    @property
+    def slots_path(self):
+        # 소켓 경로 기준(고정 소켓이면 안정적, 테스트의 임시 소켓이면 격리됨)
+        return self.sock_path + ".slots.json"
+
+    def _load_slots(self) -> dict:
+        try:
+            with open(self.slots_path, encoding="utf-8") as f:
+                d = json.load(f)
+                return d if isinstance(d, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _save_slots(self, slots: dict):
+        try:
+            with open(self.slots_path, "w", encoding="utf-8") as f:
+                json.dump(slots, f)
+        except OSError:
+            pass
+
+    def list_tab_layouts(self) -> list[str]:
+        return sorted(self._load_slots().keys())
+
+    def save_tab_layout(self, sess: Session, name: str) -> bool:
+        """활성 탭의 윈도우+패널 레이아웃을 이름 슬롯으로 저장."""
+        tab = sess.active_tab
+        if not tab or not name:
+            return False
+        slots = self._load_slots()
+        slots[name] = self._serialize_node(tab.window.root)
+        self._save_slots(slots)
+        return True
+
+    def load_tab_layout(self, sess: Session, name: str,
+                        new_tab: bool = False) -> bool:
+        """저장된 레이아웃을 현재 탭에 덮어쓰거나(new_tab=False) 새 탭으로 연다."""
+        spec = self._load_slots().get(name)
+        if not spec:
+            return False
+        c = self.clients_of(sess)
+        cols = c.cols if c else 80
+        rows = c.rows if c else 24
+        root = self._build_node(spec, cols, rows)
+        win = Window(root)
+        win._active = root if isinstance(root, Pane) else root.first_pane()
+        win._fix_parents(root, None)
+        if new_tab:
+            idx = len(sess.tabs)
+            sess.tabs.append(Tab(idx, name, win))
+            sess.last_index = sess.active_index
+            sess.active_index = idx
+        else:
+            old = sess.active_tab
+            if old is None:
+                return False
+            for p in old.window.panes():   # 기존 패널 정리 후 교체
+                self._destroy_pane_proc(p)
+            old.window = win
+        return True
+
     def handle_control(self, line: str):
         """외부 CLI(`pytmux cmd ...`)에서 보낸 명령을 서버 측에서 처리한다."""
         try:
@@ -792,6 +853,12 @@ class Server:
         elif c in ("rename-window", "renamew", "rename-tab", "renamet"):
             self.rename_window(sess, " ".join(a for a in args
                                               if not a.startswith("-")))
+        elif c in ("layout-save", "save-tab-layout"):
+            self.save_tab_layout(sess, " ".join(a for a in args
+                                                 if not a.startswith("-")))
+        elif c in ("layout-load", "load-tab-layout"):
+            nm = " ".join(a for a in args if not a.startswith("-"))
+            self.load_tab_layout(sess, nm, new_tab=("-n" in args))
         elif c in ("kill-session", "kills"):
             self.kill_session(tname or sess.name)
         elif c == "kill-server":
@@ -1164,6 +1231,21 @@ class Server:
             return
         elif action == "request_tree":
             await write_msg(client.writer, self._tree_msg())
+            return
+        elif action == "list_layouts":
+            await write_msg(client.writer, {"t": "layouts",
+                                            "names": self.list_tab_layouts()})
+            return
+        elif action == "save_tab_layout":
+            ok = self.save_tab_layout(sess, str(msg.get("name", "")).strip())
+            await write_msg(client.writer, {"t": "captured",
+                                            "chars": 1 if ok else 0})
+            return
+        elif action == "load_tab_layout":
+            if self.load_tab_layout(sess, str(msg.get("name", "")).strip(),
+                                    new_tab=bool(msg.get("new"))):
+                for c in [x for x in self.clients if x.session is sess]:
+                    await self._send_full(c)
             return
         elif action == "set_autoresume":
             self.set_autoresume(sess, value=msg.get("value"),

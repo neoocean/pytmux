@@ -134,6 +134,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("choose_tree", "탭 선택기(트리)"),
         ("next_window", "다음 탭"),
         ("prev_window", "이전 탭"),
+        ("layout_save", "레이아웃 저장(현재 탭)"),
+        ("layout_load_over", "레이아웃 불러오기(현재 탭 덮어쓰기)"),
+        ("layout_load_new", "레이아웃 불러오기(새 탭)"),
         ("command", "명령 입력"),
         ("detach", "detach (앱 종료, 셸 유지)"),
         ("kill_server", "서버 종료 (모든 탭/셸 종료)"),
@@ -187,8 +190,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("clock-mode", "큰 시계 표시"),
         ("run-shell", "셸 명령 실행"),
         ("if-shell", "조건부 셸 실행"),
-        ("save-layout", "레이아웃 저장"),
-        ("restore-layout", "레이아웃 복원"),
+        ("save-layout", "전체 레이아웃 저장(서버 영속)"),
+        ("restore-layout", "전체 레이아웃 복원(서버 영속)"),
+        ("layout-save", "현재 탭 레이아웃 저장 (이름)"),
+        ("layout-load", "레이아웃 불러오기 → 현재 탭 덮어쓰기 (이름)"),
+        ("layout-load-new", "레이아웃 불러오기 → 새 탭 (이름)"),
         ("kill-server", "서버와 모든 탭/셸 종료"),
     ]
 
@@ -434,6 +440,46 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.dismiss(None)
             else:
                 self.dismiss(int(event.item.id[1:]))
+
+        def on_key(self, event: events.Key):
+            if event.key == "escape":
+                event.stop()
+                self.dismiss(None)
+
+    class ChooseLayoutScreen(ModalScreen):
+        """저장된 레이아웃 슬롯 선택기(방향키 이동, Enter 선택, Esc 취소)."""
+        CSS = """
+        ChooseLayoutScreen { align: center middle; }
+        #lay { width: 56; height: auto; max-height: 80%;
+               border: round $accent; background: $panel; }
+        """
+
+        def __init__(self, names, title="레이아웃 불러오기"):
+            super().__init__()
+            self._names = names
+            self._title = title
+
+        def compose(self) -> ComposeResult:
+            rows = [ListItem(Label(nm), id=f"L{i}")
+                    for i, nm in enumerate(self._names)] or \
+                   [ListItem(Label("(저장된 레이아웃 없음)"), id="Lnone")]
+            lv = ListView(*rows, id="lay")
+            lv.border_title = self._title
+            yield lv
+
+        def on_mount(self):
+            self.query_one(ListView).focus()
+
+        def on_list_view_selected(self, event):
+            if event.item.id == "Lnone":
+                self.dismiss(None)
+            else:
+                self.dismiss(self._names[int(event.item.id[1:])])
+
+        def on_key(self, event: events.Key):
+            if event.key == "escape":
+                event.stop()
+                self.dismiss(None)
 
         def on_key(self, event: events.Key):
             if event.key == "escape":
@@ -832,6 +878,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.mode = "normal"     # normal | prefix | scroll | prompt | display
             self._want_tree = False  # choose-tree 응답 대기
             self._want_buffers = False  # choose-buffer 응답 대기
+            self._want_layouts = None  # 레이아웃 목록 응답 대기(모드: "new"/"over")
             # ---- 설정(config) 적용 ----
             self.prefix_key = config.get("prefix", "ctrl+b")
             self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
@@ -982,6 +1029,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if self._want_tree:
                     self._want_tree = False
                     self._open_choose_tree(msg)
+            elif t == "layouts":
+                if self._want_layouts:
+                    mode = self._want_layouts
+                    self._want_layouts = None
+                    self._open_choose_layout(msg.get("names", []), mode)
             elif t == "buffers":
                 if self._want_buffers:
                     self._want_buffers = False
@@ -1222,6 +1274,24 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.send_cmd("select_window", index=idx)
             self.push_screen(ChooseTreeScreen(tree), handle)
 
+        # ---- 레이아웃 저장/불러오기 ----
+        def save_layout_prompt(self):
+            self.open_prompt("save_layout", "레이아웃 이름으로 저장")
+
+        def request_layouts(self, mode):
+            """저장된 레이아웃 목록을 요청(mode: 'over'=현재 탭 덮어쓰기, 'new'=새 탭)."""
+            self._want_layouts = mode
+            self.send_cmd("list_layouts")
+
+        def _open_choose_layout(self, names, mode):
+            title = "레이아웃 → 새 탭" if mode == "new" else "레이아웃 → 현재 탭 덮어쓰기"
+
+            def handle(name):
+                if name:
+                    self.send_cmd("load_tab_layout", name=name,
+                                  new=(mode == "new"))
+            self.push_screen(ChooseLayoutScreen(names, title), handle)
+
         # ---- 메뉴 ----
         def open_menu(self):
             def handle(result):
@@ -1256,6 +1326,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("next_window")
             elif key == "prev_window":
                 self.send_cmd("prev_window")
+            elif key == "layout_save":
+                self.save_layout_prompt()
+            elif key == "layout_load_over":
+                self.request_layouts("over")
+            elif key == "layout_load_new":
+                self.request_layouts("new")
             elif key == "command":
                 self.open_prompt("command", "")
             elif key == "detach":
@@ -1373,6 +1449,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif purpose == "move_window":
                 if val.lstrip("-").isdigit():
                     self.send_cmd("move_window", index=int(val))
+            elif purpose == "save_layout":
+                if val.strip():
+                    self.send_cmd("save_tab_layout", name=val.strip())
             elif purpose == "search":
                 if val:
                     self.send_cmd("search", query=val, direction="up")
@@ -1615,6 +1694,27 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("save_layout")
             elif c == "restore-layout":
                 self.send_cmd("restore_layout")
+            elif c in ("layout-save", "save-tab-layout"):
+                name = " ".join(a for a in args if not a.startswith("-"))
+                if name:
+                    self.send_cmd("save_tab_layout", name=name)
+                else:
+                    self.save_layout_prompt()
+            elif c in ("layout-load", "load-tab-layout"):
+                name = " ".join(a for a in args if not a.startswith("-"))
+                if name:
+                    self.send_cmd("load_tab_layout", name=name,
+                                  new=("-n" in args))
+                else:
+                    self.request_layouts("new" if "-n" in args else "over")
+            elif c in ("layout-load-new",):
+                name = " ".join(a for a in args if not a.startswith("-"))
+                if name:
+                    self.send_cmd("load_tab_layout", name=name, new=True)
+                else:
+                    self.request_layouts("new")
+            elif c in ("layout-list", "list-layouts"):
+                self.request_layouts("over")
             elif c in ("choose-buffer", "list-buffers", "lsb"):
                 self.choose_buffer()
             elif c in ("clear-history", "clearhist"):
