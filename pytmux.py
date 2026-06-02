@@ -183,6 +183,8 @@ class Pane:
         self._resume_pending = False
         self._activity = False   # 마지막 검사 이후 출력 있었음
         self._bell = False       # 마지막 검사 이후 BEL 수신
+        self.search_query = ""   # 스크롤백 검색어
+        self._match_abs = None   # 현재 매치된 절대 라인 인덱스
 
     def reinit(self, pid: int, fd: int, cols: int, rows: int) -> None:
         """respawn: 새 PTY/셸로 화면 버퍼를 초기화한다."""
@@ -196,6 +198,8 @@ class Pane:
         self.dirty = True
         self._scanbuf = ""
         self._resume_pending = False
+        self.search_query = ""
+        self._match_abs = None
 
     # 레이아웃 계산용
     def first_pane(self) -> "Pane":
@@ -253,7 +257,7 @@ class Pane:
             cursor = [screen.cursor.x, screen.cursor.y]
 
         rows = []
-        for line in window:
+        for ry, line in enumerate(window):
             segs = []
             cur_text = []
             cur_key = None
@@ -271,6 +275,9 @@ class Pane:
                     cur_text.append(data)
             if cur_text:
                 segs.append(["".join(cur_text), dict(cur_key)])
+            # 검색 매치 라인 전체 하이라이트
+            if self._match_abs is not None and (start + ry) == self._match_abs:
+                segs = [[t, {**st, "rv": 1}] for t, st in segs]
             rows.append(segs)
         # 뷰포트가 화면보다 짧으면(스크롤 초기) 빈 줄로 채움
         while len(rows) < lines:
@@ -1095,6 +1102,44 @@ class Server:
             return
         win.border_status = (not win.border_status) if value is None else bool(value)
 
+    @staticmethod
+    def _pane_text_lines(pane: Pane):
+        screen = pane.screen
+        full = list(screen.history.top) + [screen.buffer[y]
+                                           for y in range(screen.lines)]
+        return ["".join((line[x].data or " ")
+                        for x in range(screen.columns)).rstrip()
+                for line in full]
+
+    def search_pane(self, sess: Session, query, direction="up"):
+        win = sess.active_window
+        if not win or not win.active_pane:
+            return
+        p = win.active_pane
+        if query:  # 새 검색어 → 현재 뷰부터 다시
+            p.search_query = query
+            p._match_abs = None
+        q = p.search_query
+        if not q:
+            return
+        texts = self._pane_text_lines(p)
+        total = len(texts)
+        lines = p.screen.lines
+        if p._match_abs is None:
+            cur = (total - p.scroll) - 1  # 현재 뷰 하단
+        else:
+            cur = p._match_abs
+        ql = q.lower()
+        rng = range(cur - 1, -1, -1) if direction == "up" else range(cur + 1, total)
+        found = next((i for i in rng if ql in texts[i].lower()), None)
+        if found is None:
+            return
+        p._match_abs = found
+        hist = len(p.screen.history.top)
+        target_start = max(0, found - lines // 2)
+        p.scroll = max(0, min(hist, hist - target_start))
+        p.dirty = True
+
     def select_pane_cycle(self, sess: Session):
         win = sess.active_window
         if not win:
@@ -1303,6 +1348,8 @@ class Server:
             self.set_border_status(sess, msg.get("value"))
         elif action == "respawn_pane":
             self.respawn_pane(sess)
+        elif action == "search":
+            self.search_pane(sess, msg.get("query"), msg.get("direction", "up"))
         elif action == "request_tree":
             await write_msg(client.writer, self._tree_msg())
             return
@@ -1466,8 +1513,9 @@ class Server:
         # 입력 동기화 시 윈도우 내 모든 패널에 동일 입력 전달
         targets = win.panes() if win.sync else [p]
         for t in targets:
-            if t.scroll != 0:
+            if t.scroll != 0 or t._match_abs is not None:
                 t.scroll = 0  # 입력 시작 시 live 로 복귀(R6)
+                t._match_abs = None
                 t.dirty = True
             try:
                 os.write(t.master_fd, data)
@@ -2202,6 +2250,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif purpose == "move_window":
                 if val.lstrip("-").isdigit():
                     self.send_cmd("move_window", index=int(val))
+            elif purpose == "search":
+                if val:
+                    self.send_cmd("search", query=val, direction="up")
+                self.mode = "scroll"  # 검색 후 스크롤백 모드 유지
             elif purpose == "new_session":
                 self.send_cmd("new_session", name=val)
             elif purpose == "confirm":
@@ -2517,6 +2569,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def _handle_scroll_key(self, event: events.Key):
             aid = self.layout.get("active")
             k = event.key
+            ch = event.character
             if k == "up":
                 self.send_scroll(aid, delta=1)
             elif k == "down":
@@ -2529,6 +2582,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_scroll(aid, top=True)
             elif k in ("G", "end"):
                 self.send_scroll(aid, bottom=True)
+            elif ch == "/" or k == "slash":
+                self.open_prompt("search", "search ↑ (이전 방향)")
+                return  # 프롬프트 모드로 전환
+            elif k == "n":
+                self.send_cmd("search", direction="up")
+            elif k == "N":
+                self.send_cmd("search", direction="down")
             elif k in ("q", "escape", "enter"):
                 self.send_scroll(aid, bottom=True)
                 self.mode = "normal"
