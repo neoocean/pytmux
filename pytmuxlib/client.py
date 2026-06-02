@@ -21,8 +21,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
     from textual.binding import Binding
     from textual.screen import ModalScreen
     from textual.strip import Strip
+    from textual.suggester import SuggestFromList
     from textual.widget import Widget
-    from textual.widgets import Label, ListItem, ListView
+    from textual.widgets import Input, Label, ListItem, ListView
     from datetime import datetime
 
     DEFAULT_STYLE = Style()
@@ -282,6 +283,53 @@ def build_client_app(sock_path: str, config: dict | None = None,
             event.stop()
             self.dismiss(None)
 
+    class PromptScreen(ModalScreen):
+        """명령/이름변경/검색 등 한 줄 입력을 받는 바닥 고정 모달.
+        Textual Input 을 별도 스크린(모달)에 담아 포커스 문제를 피한다."""
+        CSS = """
+        PromptScreen { align: center bottom; }
+        #pinput { dock: bottom; width: 100%; border: none; height: 1;
+                  padding: 0 1; background: $surface; color: $text; }
+        """
+
+        def __init__(self, purpose, label, initial, suggester):
+            super().__init__()
+            self._purpose = purpose
+            self._label = label
+            self._initial = initial
+            self._suggester = suggester
+
+        def compose(self) -> ComposeResult:
+            yield Input(value=self._initial, placeholder=self._label,
+                        suggester=self._suggester, id="pinput")
+
+        def on_mount(self):
+            inp = self.query_one(Input)
+            inp.focus()
+            inp.cursor_position = len(inp.value)
+
+        def on_input_submitted(self, event):
+            self.dismiss(event.value)
+
+        def on_input_changed(self, event):
+            # 명령 프롬프트에서 '?' 입력 → 명령 목록 선택기
+            if self._purpose == "command" and event.value.endswith("?"):
+                inp = self.query_one(Input)
+                base = event.value[:-1]
+                inp.value = base
+
+                def fill(name):
+                    if name:
+                        inp.value = name + " "
+                        inp.cursor_position = len(inp.value)
+                    inp.focus()
+                self.app.push_screen(CommandListScreen(COMMANDS, base), fill)
+
+        def on_key(self, event: events.Key):
+            if event.key == "escape":
+                event.stop()
+                self.dismiss(None)
+
     class ChooseBufferScreen(ModalScreen):
         CSS = """
         ChooseBufferScreen { align: center middle; }
@@ -473,9 +521,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.autoresume = False
             self.prefix_off = False  # 중첩: outer prefix 해제 표시
             self.message = None    # display-message 임시 메시지
-            self.prompt_text = None  # 명령 프롬프트 입력 버퍼(None=프롬프트 아님)
-            self.prompt_label = ""   # 프롬프트 힌트(":", "rename-window" 등)
-            self.prompt_suggest = ""  # 자동완성 고스트(남은 글자)
             self.bg = bg
             self.fg = fg
             self.left_fmt = left
@@ -510,19 +555,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def render_line(self, y: int) -> Strip:
             w = self.size.width
             base = Style(color=self.fg, bgcolor=self.bg)
-            # 명령 프롬프트 입력 중: 명령줄을 직접 렌더(끝에 커서 블록)
-            if self.prompt_text is not None:
-                ps = Style(color="white", bgcolor="black")
-                cur = Style(color="black", bgcolor="white")
-                ghost = Style(color="grey58", bgcolor="black", italic=True)
-                label = (self.prompt_label + " ") if self.prompt_label else ":"
-                segs = [Segment(label, ps), Segment(self.prompt_text, ps),
-                        Segment(" ", cur)]
-                if self.prompt_suggest:
-                    segs.append(Segment(self.prompt_suggest + " (Tab)", ghost))
-                else:
-                    segs.append(Segment("   ?=목록", ghost))
-                return Strip(segs).adjust_cell_length(w, ps)
             if self.message is not None:
                 ms = Style(color="black", bgcolor="yellow", bold=True)
                 return Strip([Segment(f" {self.message} ", ms)]).adjust_cell_length(
@@ -984,85 +1016,22 @@ def build_client_app(sock_path: str, config: dict | None = None,
             return ""
 
         def open_prompt(self, purpose, placeholder="", initial="", action=None):
-            # 입력은 App.on_key 에서 직접 처리하고, 명령줄은 상태표시줄에 직접
-            # 렌더링한다(Textual Input 위젯/포커스에 의존하지 않음).
-            self._prompt_purpose = purpose
-            self._prompt_action = action
-            self.status.prompt_label = placeholder
-            self.status.prompt_text = initial
-            self.status.prompt_suggest = ""
-            self.status.refresh()
-            self.mode = "prompt"
+            # 한 줄 입력을 Input 을 담은 바닥 모달(PromptScreen)로 받는다.
+            # 모달은 별도 스크린이라 포커스가 안정적이다(메인 뷰/AUTO_FOCUS 와 무관).
+            suggester = None
+            if purpose == "command":
+                suggester = SuggestFromList([n for n, _ in COMMANDS],
+                                            case_sensitive=False)
+            self.push_screen(
+                PromptScreen(purpose, placeholder, initial, suggester),
+                lambda val: self._prompt_done(purpose, action, val))
 
-        def close_prompt(self):
-            self.status.prompt_text = None
-            self.status.prompt_label = ""
-            self.status.prompt_suggest = ""
-            self._prompt_purpose = None
-            self._prompt_action = None
-            self.mode = "normal"
-            self.status.refresh()
-            self.view.focus()
-
-        def _autocomplete(self, buf):
-            """명령 첫 토큰에 대한 자동완성 후보(전체 이름) 반환. 없으면 None."""
-            if not buf or " " in buf:
-                return None
-            matches = [name for name, _ in COMMANDS if name.startswith(buf)]
-            return matches[0] if matches else None
-
-        def _update_suggest(self):
-            buf = self.status.prompt_text or ""
-            if self._prompt_purpose == "command":
-                full = self._autocomplete(buf)
-                self.status.prompt_suggest = full[len(buf):] if full else ""
-            else:
-                self.status.prompt_suggest = ""
-
-        def _open_command_list(self):
-            def handle(name):
-                if name:
-                    self.status.prompt_text = name + " "
-                    self._update_suggest()
-                    self.status.refresh()
-            # 현재 입력값으로 후보를 필터링해서 목록 표시
-            self.push_screen(CommandListScreen(COMMANDS,
-                                               self.status.prompt_text or ""), handle)
-
-        def _handle_prompt_key(self, event: events.Key):
-            """명령 프롬프트 입력을 App 레벨에서 직접 처리(포커스/Input 비의존)."""
-            k = event.key
-            ch = event.character
-            if k == "escape":
-                self.close_prompt()
+        def _prompt_done(self, purpose, action, val):
+            if purpose == "search":
+                self.mode = "scroll"  # 검색은 스크롤백 모드 유지/복귀
+            if val is None:  # 취소(Esc)
                 return
-            if k == "enter":
-                self._submit_prompt()
-                return
-            # ? → 명령 목록 선택기(명령 프롬프트에서만)
-            if self._prompt_purpose == "command" and ch == "?":
-                self._open_command_list()
-                return
-            # Tab → 자동완성 수락
-            if k == "tab":
-                full = self._autocomplete(self.status.prompt_text or "")
-                if full:
-                    self.status.prompt_text = full + " "
-                self._update_suggest()
-                self.status.refresh()
-                return
-            if k == "backspace":
-                self.status.prompt_text = (self.status.prompt_text or "")[:-1]
-            elif ch is not None and ch.isprintable():
-                self.status.prompt_text = (self.status.prompt_text or "") + ch
-            self._update_suggest()
-            self.status.refresh()
-
-        def _submit_prompt(self):
-            val = (self.status.prompt_text or "").strip()
-            purpose = self._prompt_purpose
-            action = self._prompt_action
-            self.close_prompt()
+            val = val.strip()
             if purpose == "command":
                 self._run_command(val)
             elif purpose == "rename_window":
@@ -1079,7 +1048,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif purpose == "search":
                 if val:
                     self.send_cmd("search", query=val, direction="up")
-                self.mode = "scroll"  # 검색 후 스크롤백 모드 유지
             elif purpose == "new_session":
                 self.send_cmd("new_session", name=val)
             elif purpose == "confirm":
@@ -1374,8 +1342,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 외부 터미널의 붙여넣기(멀티라인 포함)를 활성 패널로 패스스루.
             # 내부 앱이 bracketed paste 를 켰으면 서버가 마커로 감싼다.
             # (이미지 붙여넣기는 내부 Claude Code 가 공유 OS 클립보드에서 읽음)
-            if self.mode == "prompt" or len(self.screen_stack) > 1:
-                return  # 프롬프트/모달 입력은 위젯이 처리
+            if len(self.screen_stack) > 1:
+                return  # 프롬프트/모달 입력은 그 스크린이 처리
             if self.writer and event.text:
                 self.send_cmd("paste", text=event.text)
             event.stop()
@@ -1387,14 +1355,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 await write_msg(self.writer, {"t": "resize", "cols": cols, "rows": rows})
 
         def on_key(self, event: events.Key):
-            # 메뉴/모달이 떠 있으면 그쪽에서 처리
+            # 메뉴/프롬프트 등 모달이 떠 있으면 그 스크린이 처리
             if len(self.screen_stack) > 1:
-                return
-            # 프롬프트 입력 중: App 레벨에서 직접 처리(포커스 의존 X)
-            if self.mode == "prompt":
-                self._handle_prompt_key(event)
-                event.prevent_default()
-                event.stop()
                 return
             if self.mode == "prefix":
                 self._handle_prefix(event)

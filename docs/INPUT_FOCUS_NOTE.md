@@ -66,15 +66,25 @@ mount 직후      : MultiplexerView
 타이밍이 실제 터미널과 달라, `focus()`가 그대로 유지되어 버그가 드러나지 않았다.
 → **포커스가 필요한 메인-스크린 위젯은 헤드리스 통과만으로 안전하다고 믿지 말 것.**
 
-## 채택한 방식
+## 채택한 방식 (현재)
 
-- **입력**: `mode == "prompt"`일 때 `App.on_key(_handle_prompt_key)`에서 직접 처리
-  (printable→버퍼 누적, Backspace, Enter→실행, ESC→취소). 뷰가 포커스를 쥔 채
-  키가 버블링으로 `App.on_key`에 도달하는, 셸 포워딩과 동일한 경로라 실기에서 확실.
-- **표시**: 명령줄을 `StatusBar`가 직접 렌더(`prompt_text`/`prompt_label`/
-  `prompt_suggest` + 커서 블록). Textual 포커스/증분 repaint 에 의존하지 않음.
-- **목록(`?`)·메뉴·선택기**: 이것들은 **모달(ModalScreen + ListView)** 이라 포커스가
-  안정적이다(별도 스크린으로 push 되므로). 그래서 모달 기반 UI는 그대로 사용한다.
+위 규칙 (a)에 따라, **명령/이름변경/검색 등 한 줄 입력은 `Input` 위젯을 담은
+바닥 고정 모달 `PromptScreen`(ModalScreen)으로 받는다.** 모달은 별도 스크린으로
+push 되어 포커스가 안정적이므로(메인 뷰/AUTO_FOCUS 와 경쟁하지 않음) 스톡 `Input`
+을 그대로, 안전하게 쓸 수 있다. 실측: `app.focused` 가 모달의 `Input` 이 된다.
+
+- **입력/편집**: Textual `Input` 이 담당(커서 이동·중간 편집 등 기본 제공).
+- **자동완성**: `Input(suggester=SuggestFromList([명령이름...]))` 로 회색 고스트 자동완성
+  (오른쪽 화살표로 수락).
+- **`?` 명령 목록**: 명령 프롬프트에서 `?` 입력 시 `Input.Changed` 에서 감지해
+  `CommandListScreen`(ListView 모달)을 띄우고, 선택 결과를 `Input` 값으로 채운다.
+- **결과 전달**: `PromptScreen` 은 `dismiss(value)` 로 입력값을 돌려주고,
+  `App._prompt_done(purpose, action, value)` 가 용도별로 서버 명령에 매핑한다.
+
+> 이전(중간) 구현은 "StatusBar 직접 렌더 + App.on_key 직접 처리(규칙 b)"였다. 동작은
+> 했지만, 결국 규칙 (a)의 모달 `Input` 으로 통일해 표준 위젯의 편집 기능을 얻었다.
+> 핵심 교훈은 동일하다: **메인 스크린의 항상-포커스 전체화면 뷰 위에 스톡 입력
+> 위젯을 도킹하지 말고, 모달에 담아라.**
 
 ## 규칙
 
