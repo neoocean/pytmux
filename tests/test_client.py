@@ -64,11 +64,23 @@ async def test_command_list_and_autocomplete():
 
 async def test_help_command():
     async def body(app, pilot, srv):
+        sess = next(iter(srv.sessions.values()))
         app._run_command("help")
         await pilot.pause(0.2)
         scr = app.screen_stack[-1]
-        assert scr.__class__.__name__ == "InfoScreen"
-        assert any("split-window" in ln for ln in scr._lines)
+        assert scr.__class__.__name__ == "CommandListScreen"
+        # 첫 항목(split-window) 선택 → 명령 프롬프트에 채워짐
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        ps = app.screen_stack[-1]
+        assert ps.__class__.__name__ == "PromptScreen"
+        inp = ps.query_one(Input)
+        assert inp.value.strip() == "split-window", repr(inp.value)
+        # 한 번 더 Enter → 실행
+        n = len(sess.active_window.panes())
+        await pilot.press("enter")
+        await pilot.pause(0.4)
+        assert len(sess.active_window.panes()) == n + 1, "help 선택→실행"
     await _with_app(body)
 
 

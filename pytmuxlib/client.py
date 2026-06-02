@@ -1197,9 +1197,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.aliases[c] + (" " + " ".join(args) if args else ""),
                     _depth + 1)
             if c in ("help", "commands", "?", "list-commands"):
-                # 사용 가능한 명령 목록을 읽기전용으로 표시(아무 키나 닫힘)
-                self.push_screen(InfoScreen(
-                    [f"{n:<22}{d}" for n, d in COMMANDS], title="commands (help)"))
+                # 명령 목록 선택기: 방향키로 선택 → Enter 로 명령 프롬프트에 채움
+                # → 다시 Enter 로 실행(인자 추가 가능)
+                def _picked(name):
+                    if name:
+                        self.open_prompt("command", "", initial=name + " ")
+                self.push_screen(CommandListScreen(COMMANDS), _picked)
                 return
             if c in ("run-shell", "run"):
                 if args:
