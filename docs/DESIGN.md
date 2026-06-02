@@ -299,8 +299,10 @@ scripts/pytmux/
 │   ├── model.py             # Pane/Split/Window/Session 트리 + 레이아웃·프리셋
 │   ├── server.py            # Server(데몬): PTY·pyte·세션·명령·flush·영속
 │   ├── client.py            # Textual 클라이언트(build_client_app): 렌더·키·마우스·메뉴
-│   └── launcher.py          # 데몬화·attach·ls·kill-server·cmd(외부 제어)·main
-├── docs/                    # DESIGN / FEATURES / CONTRIBUTING
+│   ├── replay.py            # 렌더 진단: record(PTY 녹화)·replay(텍스트 프레임 재생)
+│   └── launcher.py          # 데몬화·attach·ls·kill-server·cmd·record·replay·main
+├── tests/                   # 헤드리스 테스트(run.py) + 리플레이 골든 스냅샷
+├── docs/                    # DESIGN / FEATURES / CONTRIBUTING / INPUT_FOCUS_NOTE
 ├── README.md
 ├── requirements.txt
 └── pytmux.conf.example

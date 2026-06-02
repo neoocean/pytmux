@@ -45,6 +45,7 @@ from pytmuxlib.model import (  # noqa: F401
 from pytmuxlib.protocol import (  # noqa: F401
     FLUSH_HZ, HISTORY, MIN_H, MIN_W, conv_color, default_socket_path,
     parse_reset_delay, read_msg, set_winsize, write_msg)
+from pytmuxlib.replay import render_pane_lines, replay  # noqa: F401
 from pytmuxlib.server import Server, run_server  # noqa: F401
 
 

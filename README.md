@@ -49,6 +49,10 @@ python3 pytmux.py new -s work     # 'work' 라는 이름의 세션 생성 후 at
 python3 pytmux.py ls              # 세션 목록
 python3 pytmux.py kill-server     # 서버와 모든 세션 종료
 python3 pytmux.py cmd new-window  # 외부에서 서버 제어(split-window -h, rename-window 등)
+
+# 렌더 진단(화면 없이): 프로그램 출력을 녹화→텍스트 프레임으로 재생
+python3 pytmux.py record --cols 120 cap.raw -- ls -C   # 옵션은 파일명 앞, 명령은 -- 뒤
+python3 pytmux.py replay --cols 120 cap.raw --ruler    # 텍스트로 덤프(+열 자)
 python3 pytmux.py --socket PATH … # 사용할 소켓 경로 직접 지정
 ```
 

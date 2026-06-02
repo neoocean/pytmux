@@ -106,6 +106,17 @@ def main(argv=None):
                        help="예: cmd new-window / cmd split-window -h")
     p_srv = sub.add_parser("server", help="(내부) 서버를 전경 실행")
     p_srv.add_argument("--foreground", action="store_true")
+    p_rec = sub.add_parser("record", help="명령을 PTY 에서 실행하며 원시 출력 녹화")
+    p_rec.add_argument("file", help="녹화 파일 경로")
+    p_rec.add_argument("--cols", type=int, default=None)
+    p_rec.add_argument("--rows", type=int, default=None)
+    p_rec.add_argument("words", nargs=argparse.REMAINDER,
+                       help="실행할 명령(생략 시 $SHELL). 예: record out.raw -- ls -C")
+    p_rep = sub.add_parser("replay", help="녹화 파일을 재생해 텍스트 프레임 덤프")
+    p_rep.add_argument("file", help="녹화 파일 경로")
+    p_rep.add_argument("--cols", type=int, default=None)
+    p_rep.add_argument("--rows", type=int, default=None)
+    p_rep.add_argument("--ruler", action="store_true", help="열 번호 자 표시")
     args = parser.parse_args(argv)
 
     sock_path = args.socket or default_socket_path()
@@ -113,6 +124,15 @@ def main(argv=None):
     if args.command == "server":
         run_server(sock_path)
         return
+    if args.command in ("record", "replay"):
+        from .replay import run_record, run_replay, term_size
+        tc, tr = term_size()
+        cols = args.cols or tc
+        rows = args.rows or tr
+        if args.command == "record":
+            words = [w for w in args.words if w != "--"]
+            sys.exit(run_record(args.file, cols, rows, words))
+        sys.exit(run_replay(args.file, cols, rows, ruler=args.ruler))
     if args.command == "ls":
         reply = control_request(sock_path, {"t": "list"})
         if not reply:

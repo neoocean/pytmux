@@ -23,6 +23,24 @@ python3 tests/run.py test_client  # 특정 모듈만
 - `test_client.py` — Textual headless: 명령 프롬프트(모달 Input)·`?`·자동완성·
   `help`, ESC 명령 모드, **IME 단축키**(한글 자모→QWERTY)·Ctrl+한글 무crash,
   display-panes, 포커스 패널 경계 강조, 와이드 문자 합성, 상태줄 포맷.
+- `test_replay.py` — 리플레이 골든 스냅샷: 커서 이동·CR 덮어쓰기·열 정렬·와이드
+  문자·대체 화면, record→replay 라운드트립.
+
+## 렌더 진단/리플레이 (화면 없이 출력 확인)
+
+실제 프로그램 출력을 녹화하고 텍스트 프레임으로 재생해, 화면 없이 렌더 결과를
+확인하거나 깨짐(열 밀림 등)을 오프라인 재현한다.
+
+```sh
+# 녹화: 옵션(--cols/--rows)은 파일명 앞, 실행 명령은 -- 뒤. 미지정 시 현재 터미널 크기.
+python3 pytmux.py record --cols 120 cap.raw -- ls -C
+python3 pytmux.py record --cols 160 cap.raw -- claude   # 상호작용도 통과(녹화)
+
+# 재생: 녹화 폭과 동일하게. --ruler 로 열 번호 자 표시.
+python3 pytmux.py replay --cols 120 cap.raw --ruler
+```
+
+프로그래밍 방식: `pytmux.replay(raw_bytes, cols, rows) -> list[str]`.
 
 ## 작성 규칙
 
