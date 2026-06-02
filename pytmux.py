@@ -1160,6 +1160,18 @@ class Server:
         self._reset_view(win.active_pane)
         self._write_paste(win.active_pane, self.buffers[index])
 
+    def capture_pane(self, sess: Session, full=False):
+        win = sess.active_window
+        if not win or not win.active_pane:
+            return 0
+        p = win.active_pane
+        texts = self._pane_text_lines(p)
+        if not full:
+            texts = texts[-p.screen.lines:]
+        text = "\n".join(texts).rstrip("\n")
+        self.set_buffer(text)
+        return len(text)
+
     def clear_history(self, sess: Session):
         win = sess.active_window
         if not win or not win.active_pane:
@@ -1433,6 +1445,10 @@ class Server:
         elif action == "clear_history":
             self.clear_history(sess)
             await self._send_full(client)
+            return
+        elif action == "capture_pane":
+            n = self.capture_pane(sess, bool(msg.get("full")))
+            await write_msg(client.writer, {"t": "captured", "chars": n})
             return
         elif action == "request_tree":
             await write_msg(client.writer, self._tree_msg())
@@ -2337,6 +2353,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if self._want_buffers:
                     self._want_buffers = False
                     self._open_choose_buffer(msg.get("items", []))
+            elif t == "captured":
+                self.display_message(f"{msg.get('chars', 0)} chars 버퍼에 캡처됨")
             elif t == "bye":
                 self.exit(message="pytmux: 서버가 종료되었습니다")
 
@@ -2918,6 +2936,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif c in ("paste-buffer", "pasteb"):
                 idx = self._first_int(args)
                 self.send_cmd("paste_buffer", index=idx or 0)
+            elif c in ("capture-pane", "capturep"):
+                self.send_cmd("capture_pane", full=("-S" in args or "-a" in args))
             elif c in ("choose-buffer", "list-buffers", "lsb"):
                 self.choose_buffer()
             elif c in ("clear-history", "clearhist"):
