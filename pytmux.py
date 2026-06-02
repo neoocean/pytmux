@@ -1447,7 +1447,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def render_line(self, y: int) -> Strip:
             w = self.size.width
             base = Style(color=self.fg, bgcolor=self.bg)
-            active = Style(color=self.bg, bgcolor="white", bold=True)
+            # 활성 윈도우: 녹색 바 위에서 잘 보이도록 검정 배경 + 흰 글씨(굵게)
+            active = Style(color="white", bgcolor="black", bold=True)
             segs = [Segment(f" [{self.session}] ", base)]
             if self.zoomed:
                 segs.append(Segment("Z ", Style(color="black", bgcolor="yellow",
