@@ -49,6 +49,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
     from textual import events
     from textual.app import App, ComposeResult
     from textual.binding import Binding
+    from textual.containers import Horizontal
     from textual.screen import ModalScreen
     from textual.strip import Strip
     from textual.suggester import SuggestFromList
@@ -337,8 +338,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
         Textual Input 을 별도 스크린(모달)에 담아 포커스 문제를 피한다."""
         CSS = """
         PromptScreen { align: center bottom; }
-        #pinput { dock: bottom; width: 100%; border: none; height: 1;
-                  padding: 0 1; background: $surface; color: $text; }
+        #prow { dock: bottom; width: 100%; height: 1; background: $surface; }
+        #pprefix { width: 2; height: 1; color: $accent; text-style: bold;
+                   background: $surface; }
+        #pinput { width: 1fr; border: none; height: 1; padding: 0;
+                  background: $surface; color: $text; }
         """
 
         def __init__(self, purpose, label, initial, suggester):
@@ -349,8 +353,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._suggester = suggester
 
         def compose(self) -> ComposeResult:
-            yield Input(value=self._initial, placeholder=self._label,
+            inp = Input(value=self._initial, placeholder=self._label,
                         suggester=self._suggester, id="pinput")
+            if self._purpose == "command":
+                # 맨 왼쪽에 고정 ':' 프리픽스(별도 위젯이라 백스페이스로 안 지워짐)
+                with Horizontal(id="prow"):
+                    yield Label(":", id="pprefix")
+                    yield inp
+            else:
+                inp.styles.dock = "bottom"
+                inp.styles.padding = (0, 1)
+                yield inp
 
         def on_mount(self):
             inp = self.query_one(Input)

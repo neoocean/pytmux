@@ -45,6 +45,23 @@ async def test_command_prompt_via_esc():
     await _with_app(body)
 
 
+async def test_command_prompt_colon_prefix():
+    async def body(app, pilot, srv):
+        await pilot.press("escape")
+        await pilot.press("colon")
+        scr = app.screen_stack[-1]
+        assert scr.query("#pprefix"), "고정 ':' 프리픽스 위젯 존재"
+        inp = scr.query_one(Input)
+        for ch in "ls":
+            await pilot.press(ch)
+        assert inp.value == "ls"           # ':' 는 입력 값에 포함되지 않음
+        for _ in range(5):                 # 다 지워도 프리픽스 위젯은 유지
+            await pilot.press("backspace")
+        assert inp.value == "", repr(inp.value)
+        assert scr.query("#pprefix"), "백스페이스로 ':' 가 지워지지 않음"
+    await _with_app(body)
+
+
 async def test_command_list_and_autocomplete():
     async def body(app, pilot, srv):
         await pilot.press("escape")
