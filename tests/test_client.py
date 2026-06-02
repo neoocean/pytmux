@@ -241,6 +241,30 @@ async def test_tab_bar_and_esc_nav():
     await _with_app(body)
 
 
+async def test_tab_bar_scroll_and_hide_bottom():
+    async def body(app, pilot, srv):
+        for _ in range(6):                 # 총 7개 탭(좁은 폭에서 오버플로)
+            app.send_cmd("new_window")
+            await pilot.pause(0.15)
+        await pilot.pause(0.3)
+        # 상단 탭바가 보이면 하단 상태줄 탭 목록 숨김
+        assert app.status.hide_tabs is True
+        stxt = "".join(s.text for s in app.status.render_line(0))
+        assert "0:" not in stxt and "1:" not in stxt, stxt
+        # 오버플로 → 스크롤 표시(◀/▶ 중 하나)
+        bar = "".join(s.text for s in app.tabbar.render_line(0))
+        assert ("◀" in bar) or ("▶" in bar), bar
+        # ESC 포커스 → 오른쪽 끝까지 선택 이동 → 선택 탭이 보이도록 스크롤
+        await pilot.press("escape")
+        await pilot.press("up")
+        assert app.tabbar.bar_focus is True
+        for _ in range(len(app.tabbar.tabs)):
+            await pilot.press("right")
+        bar2 = "".join(s.text for s in app.tabbar.render_line(0))
+        assert f"{app.tabbar.sel}:" in bar2, (app.tabbar.sel, bar2)
+    await _with_app(body, size=(38, 12))
+
+
 async def test_tab_bar_force_always():
     async def body(app, pilot, srv):
         assert app.tabbar.display is True, "tab-bar always 면 1탭도 표시"

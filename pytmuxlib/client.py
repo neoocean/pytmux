@@ -585,6 +585,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.tabs = []          # [{index,name,active,bell,activity}]
             self.sel = 0            # ESC 모드 선택 인덱스(= tab.index)
             self.bar_focus = False  # ESC 모드 포커스가 탭바에 있는지
+            self._scroll = 0        # 가로 스크롤(첫 표시 탭의 리스트 위치)
             self._zones = []        # [(x0, x1, kind, payload)] 클릭 히트테스트
 
         def set_tabs(self, tabs, active_idx):
@@ -593,6 +594,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.sel = active_idx
             self.refresh()
 
+        def scroll_by(self, delta):
+            self._scroll = max(0, min(self._scroll + delta,
+                                      max(0, len(self.tabs) - 1)))
+            self.refresh()
+
+        def _labels(self):
+            out = []
+            for t in self.tabs:
+                flag = "!" if t.get("bell") else ("#" if t.get("activity") else "")
+                out.append(f" {t['index']}:{t['name']}{flag} ")
+            return out
+
         def render_line(self, y: int) -> Strip:
             w = self.size.width
             base = Style(color="white", bgcolor="grey23")
@@ -600,6 +613,23 @@ def build_client_app(sock_path: str, config: dict | None = None,
             close_st = Style(color="white", bgcolor="red", bold=True)
             active_st = Style(color="white", bgcolor="blue", bold=True)
             sel_st = Style(color="black", bgcolor="cyan", bold=True)
+            arrow_st = Style(color="black", bgcolor="yellow", bold=True)
+            labels = self._labels()
+            widths = [sum(_char_cells(c) for c in s) for s in labels]
+            n = len(self.tabs)
+            idxs = [t["index"] for t in self.tabs]
+            selpos = idxs.index(self.sel) if self.sel in idxs else 0
+            # [+] 와 [x] 고정 버튼이 차지하는 폭을 뺀 가운데 영역
+            addtxt, closetxt = " [+] ", " [x] "
+            mid_w = max(1, w - len(addtxt) - len(closetxt))
+            # 선택 탭이 보이도록 스크롤 보정
+            self._scroll = max(0, min(self._scroll, max(0, n - 1)))
+            if selpos < self._scroll:
+                self._scroll = selpos
+            while (self._scroll < selpos and
+                   sum(widths[self._scroll:selpos + 1]) > mid_w - 2):
+                self._scroll += 1
+
             segs, zones = [], []
             x = 0
 
@@ -610,21 +640,34 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 segs.append(Segment(text, st))
                 x += wdt
 
-            add(" [+] ", add_st, "add")
-            for i, t in enumerate(self.tabs):
-                flag = "!" if t.get("bell") else ("#" if t.get("activity") else "")
-                label = f" {t['index']}:{t['name']}{flag} "
-                if self.bar_focus and t["index"] == self.sel:
+            add(addtxt, add_st, "add")
+            mid_used = 0
+            if self._scroll > 0:                       # 왼쪽에 더 있음
+                add("◀", arrow_st, "scroll_left")
+                mid_used += 1
+            i = self._scroll
+            while i < n:
+                tw = widths[i]
+                reserve = 1 if i < n - 1 else 0        # 오른쪽 화살표 자리
+                if mid_used + tw > mid_w - reserve and i > self._scroll:
+                    break
+                if self.bar_focus and self.tabs[i]["index"] == self.sel:
                     st = sel_st
-                elif t.get("active"):
+                elif self.tabs[i].get("active"):
                     st = active_st
                 else:
                     st = base
-                add(label, st, "tab", t["index"])
-            add(" [x] ", close_st, "close")
+                add(labels[i], st, "tab", self.tabs[i]["index"])
+                mid_used += tw
+                i += 1
+            if i < n:                                  # 오른쪽에 더 있음
+                add("▶", arrow_st, "scroll_right")
+            pad = w - x - len(closetxt)
+            if pad > 0:
+                segs.append(Segment(" " * pad, base))
+                x += pad
+            add(closetxt, close_st, "close")
             self._zones = zones
-            if x < w:
-                segs.append(Segment(" " * (w - x), base))
             return Strip(segs).adjust_cell_length(w, base)
 
         def _hit(self, x):
@@ -643,6 +686,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.app.confirm_kill_tab()
             elif kind == "tab":
                 self.app.send_cmd("select_window", index=payload)
+            elif kind == "scroll_left":
+                self.scroll_by(-1)
+            elif kind == "scroll_right":
+                self.scroll_by(1)
             event.stop()
 
     class StatusBar(Widget):
@@ -658,6 +705,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.prefix_off = False  # 중첩: outer prefix 해제 표시
             self.cmd_mode = False  # ESC 명령 모드 표시
             self.message = None    # display-message 임시 메시지
+            self.hide_tabs = False  # 상단 탭바가 보이면 하단 탭 목록 생략
             self.bg = bg
             self.fg = fg
             self.left_fmt = left
@@ -714,7 +762,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.prefix_off:
                 segs.append(Segment("NEST ", Style(color="white", bgcolor="magenta",
                                                    bold=True)))
-            for win in self.windows:
+            for win in ([] if self.hide_tabs else self.windows):
                 flag = "!" if win.get("bell") else ("#" if win.get("activity") else "")
                 label = f"{win['index']}:{win['name']}{flag} "
                 if win["active"]:
@@ -829,6 +877,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             달라지므로 서버에 새 크기를 통지한다."""
             visible = self._tabbar_visible()
             self.tabbar.set_tabs(self.status.windows, self._active_tab_index())
+            # 상단 탭바가 보이면 하단 상태줄의 탭 목록은 생략(중복 방지)
+            if self.status.hide_tabs != visible:
+                self.status.hide_tabs = visible
+                self.status.refresh()
             if self.tabbar.display != visible:
                 self.tabbar.display = visible
                 self._send_resize()
