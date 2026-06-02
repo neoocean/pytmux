@@ -68,7 +68,7 @@ python3 pytmux.py --socket PATH … # 사용할 소켓 경로 직접 지정
 | `prefix n` / `p` | 다음/이전 윈도우 | `prefix 0-9` | 윈도우 선택 |
 | `prefix d` | detach(세션 유지) | `prefix [` | 스크롤백 모드 |
 | `prefix Enter` | 메뉴 열기 | `prefix R` | 토큰리밋 자동재개 토글 |
-| `ESC` | 명령 입력(vi 처럼, 프리픽스 없이 바로) | `F12` | 중첩 시 prefix 패스스루 토글 |
+| `ESC` | 명령 모드(←↑↓→ 패널 이동, `:` 명령 프롬프트) | `F12` | 중첩 시 prefix 패스스루 토글 |
 
 스크롤백 모드(`prefix [`): `↑/↓`, `PageUp/PageDown`, `g`/`G`(맨 위/아래), `q`로 빠져나감.
 
@@ -81,7 +81,7 @@ python3 pytmux.py --socket PATH … # 사용할 소켓 경로 직접 지정
 | 휠 위/아래 | 커서가 올라간 패널 스크롤백 |
 | 우클릭 | 컨텍스트 메뉴 |
 
-## 명령 프롬프트 (`ESC` 또는 `prefix :`)
+## 명령 프롬프트 (`ESC` → `:`, 또는 `prefix :`)
 
 바닥에 입력창(모달)이 열리고 tmux 와 비슷한 명령을 받습니다. 입력 중:
 

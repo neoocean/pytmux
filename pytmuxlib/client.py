@@ -520,6 +520,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.pane_title = ""
             self.autoresume = False
             self.prefix_off = False  # 중첩: outer prefix 해제 표시
+            self.cmd_mode = False  # ESC 명령 모드 표시
             self.message = None    # display-message 임시 메시지
             self.bg = bg
             self.fg = fg
@@ -562,6 +563,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 활성 윈도우: 녹색 바 위에서 잘 보이도록 검정 배경 + 흰 글씨(굵게)
             active = Style(color="white", bgcolor="black", bold=True)
             segs = [Segment(self._expand(self.left_fmt), base)]
+            if self.cmd_mode:
+                segs.append(Segment("CMD(←↑↓→ 이동, : 명령) ",
+                                    Style(color="black", bgcolor="cyan", bold=True)))
             if self.zoomed:
                 segs.append(Segment("Z ", Style(color="black", bgcolor="yellow",
                                                  bold=True)))
@@ -1373,11 +1377,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.prevent_default()
                 event.stop()
                 return
+            if self.mode == "esc":
+                self._handle_esc_mode(event)
+                event.prevent_default()
+                event.stop()
+                return
             # normal
-            # ESC: vi 처럼 prefix 없이 바로 명령 입력 프롬프트 열기
-            # (주의: 이 모드에서 ESC 는 패널 안 프로그램으로 전달되지 않음)
+            # ESC: 명령 모드 진입(키를 명령으로 받음). 셸로는 전달하지 않음.
             if event.key == "escape":
-                self.open_prompt("command", "")
+                self.mode = "esc"
+                self.status.cmd_mode = True
+                self.status.refresh()
                 event.prevent_default()
                 event.stop()
                 return
@@ -1508,6 +1518,26 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if k.isdigit() and int(k) < len(panes):
                 self.send_cmd("select_pane_id", id=panes[int(k)]["id"])
             self._exit_display()
+
+        # ---- ESC(명령) 모드 ----
+        def _exit_esc(self):
+            self.mode = "normal"
+            self.status.cmd_mode = False
+            self.status.refresh()
+
+        def _handle_esc_mode(self, event: events.Key):
+            """ESC 로 들어온 명령 모드: 방향키=패널 이동(유지), :=명령 프롬프트,
+            그 외 키는 모드 종료."""
+            k = event.key
+            ch = event.character
+            if k in ("left", "right", "up", "down"):
+                self.send_cmd("select_pane", dir=k)  # 모드 유지(연속 이동)
+            elif ch == ":" or k == "colon":
+                self._exit_esc()
+                self.open_prompt("command", "")
+            else:
+                # escape/enter/i/그 외 → 명령 모드 종료(셸 입력 복귀)
+                self._exit_esc()
 
         def _handle_scroll_key(self, event: events.Key):
             aid = self.layout.get("active")
