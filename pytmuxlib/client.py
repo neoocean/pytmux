@@ -18,6 +18,29 @@ def _char_cells(ch: str) -> int:
     return 2 if wcwidth(ch) == 2 else 1
 
 
+# 한글 두벌식 자모 → QWERTY 영문 키. IME 가 켜져 있어도 단축키가 동작하도록
+# 키 매칭 시 자모를 물리 키(영문)로 되돌린다.
+_JAMO = {
+    "ㅂ": "q", "ㅈ": "w", "ㄷ": "e", "ㄱ": "r", "ㅅ": "t", "ㅛ": "y", "ㅕ": "u",
+    "ㅑ": "i", "ㅐ": "o", "ㅔ": "p", "ㅁ": "a", "ㄴ": "s", "ㅇ": "d", "ㄹ": "f",
+    "ㅎ": "g", "ㅗ": "h", "ㅓ": "j", "ㅏ": "k", "ㅣ": "l", "ㅋ": "z", "ㅌ": "x",
+    "ㅊ": "c", "ㅍ": "v", "ㅠ": "b", "ㅜ": "n", "ㅡ": "m",
+    # 시프트(쌍자음/이중모음) → 대문자 영문
+    "ㅃ": "Q", "ㅉ": "W", "ㄸ": "E", "ㄲ": "R", "ㅆ": "T", "ㅒ": "O", "ㅖ": "P",
+}
+
+
+def _normalize_key(k: str) -> str:
+    """Textual 키 문자열에서 한글 자모를 QWERTY 영문 키로 정규화."""
+    if not k:
+        return k
+    for pfx in ("ctrl+", "shift+", "alt+", "meta+"):
+        if k.startswith(pfx):
+            base = k[len(pfx):]
+            return pfx + _JAMO.get(base, base)
+    return _JAMO.get(k, k)
+
+
 def build_client_app(sock_path: str, config: dict | None = None,
                      session_name: str | None = None):
     config = config or {}
@@ -1440,7 +1463,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.prevent_default()
                 event.stop()
                 return
-            if self.prefix_enabled and event.key == self.prefix_key:
+            if self.prefix_enabled and _normalize_key(event.key) == self.prefix_key:
                 self.mode = "prefix"
                 event.prevent_default()
                 event.stop()
@@ -1453,14 +1476,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def _handle_prefix(self, event: events.Key):
             self.mode = "normal"
-            k = event.key
+            # IME(한글 자모)가 켜져 있어도 동작하도록 키를 QWERTY 로 정규화
+            k = _normalize_key(event.key)
             ch = event.character
+            nch = _JAMO.get(ch, ch) if ch else ch  # 자모 → 영문
             # prefix 를 한 번 더 누르면 prefix 키 자체를 셸로 전송
             if k == self.prefix_key:
                 self.send_input(self.prefix_bytes)
                 return
             # 사용자 정의 바인딩 우선 (config 의 bind)
-            token = ch if (ch and ch.isprintable() and not k.startswith("ctrl+")) else k
+            token = nch if (nch and nch.isprintable() and not k.startswith("ctrl+")) else k
             if token in self.bindings:
                 self._run_command(self.bindings[token])
                 return
@@ -1580,7 +1605,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def _handle_scroll_key(self, event: events.Key):
             aid = self.layout.get("active")
-            k = event.key
+            k = _normalize_key(event.key)  # IME 무관 (j/k/g/G/n/N/q 등)
             ch = event.character
             half = max(1, self.layout.get("rows", 24) // 2)
             vi = self.mode_keys == "vi"
