@@ -203,6 +203,33 @@ async def test_pane_name_on_border():
     await _with_app(body)
 
 
+async def test_tab_bar_and_esc_nav():
+    async def body(app, pilot, srv):
+        assert app.tabbar.display is False, "탭 1개면 탭바 숨김"
+        app.send_cmd("new_window")          # 새 탭
+        await pilot.pause(0.4)
+        assert app.tabbar.display is True, "탭 2개면 탭바 표시"
+        txt = "".join(s.text for s in app.tabbar.render_line(0))
+        assert "[+]" in txt and "[x]" in txt, txt  # 추가/삭제 버튼
+        # ESC 모드: 위 → 탭바 포커스 → ← 선택 → Enter 전환
+        await pilot.press("escape")
+        await pilot.press("up")
+        assert app.tabbar.bar_focus is True, "위 방향키로 탭바 포커스"
+        before = app._active_tab_index()
+        await pilot.press("left")
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+        assert app.tabbar.bar_focus is False, "Enter 후 탭바 포커스 해제"
+        assert app._active_tab_index() != before, "탭 전환 완료"
+    await _with_app(body)
+
+
+async def test_tab_bar_force_always():
+    async def body(app, pilot, srv):
+        assert app.tabbar.display is True, "tab-bar always 면 1탭도 표시"
+    await _with_app(body, cfg={"tab_bar_always": True})
+
+
 async def test_wide_char_composite():
     async def body(app, pilot, srv):
         sess = next(iter(srv.sessions.values()))

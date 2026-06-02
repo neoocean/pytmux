@@ -561,6 +561,77 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     return p
             return None
 
+    class TabBar(Widget):
+        """상단 탭 인터페이스. [+] 새 탭 / 각 탭 / [x] 탭 닫기 버튼을 표시한다.
+
+        마우스 클릭과 ESC 모드 방향키(←→ 선택, Enter 전환)로 조작. 탭이 하나뿐이면
+        기본 숨김이나, 설정 tab-bar always 면 항상 표시한다."""
+
+        def __init__(self):
+            super().__init__(id="tabbar")
+            self.tabs = []          # [{index,name,active,bell,activity}]
+            self.sel = 0            # ESC 모드 선택 인덱스(= tab.index)
+            self.bar_focus = False  # ESC 모드 포커스가 탭바에 있는지
+            self._zones = []        # [(x0, x1, kind, payload)] 클릭 히트테스트
+
+        def set_tabs(self, tabs, active_idx):
+            self.tabs = tabs
+            if not self.bar_focus:
+                self.sel = active_idx
+            self.refresh()
+
+        def render_line(self, y: int) -> Strip:
+            w = self.size.width
+            base = Style(color="white", bgcolor="grey23")
+            add_st = Style(color="black", bgcolor="green", bold=True)
+            close_st = Style(color="white", bgcolor="red", bold=True)
+            active_st = Style(color="white", bgcolor="blue", bold=True)
+            sel_st = Style(color="black", bgcolor="cyan", bold=True)
+            segs, zones = [], []
+            x = 0
+
+            def add(text, st, kind=None, payload=None):
+                nonlocal x
+                wdt = sum(_char_cells(c) for c in text)
+                zones.append((x, x + wdt, kind, payload))
+                segs.append(Segment(text, st))
+                x += wdt
+
+            add(" [+] ", add_st, "add")
+            for i, t in enumerate(self.tabs):
+                flag = "!" if t.get("bell") else ("#" if t.get("activity") else "")
+                label = f" {t['index']}:{t['name']}{flag} "
+                if self.bar_focus and t["index"] == self.sel:
+                    st = sel_st
+                elif t.get("active"):
+                    st = active_st
+                else:
+                    st = base
+                add(label, st, "tab", t["index"])
+            add(" [x] ", close_st, "close")
+            self._zones = zones
+            if x < w:
+                segs.append(Segment(" " * (w - x), base))
+            return Strip(segs).adjust_cell_length(w, base)
+
+        def _hit(self, x):
+            for x0, x1, kind, payload in self._zones:
+                if x0 <= x < x1:
+                    return kind, payload
+            return None, None
+
+        def on_click(self, event):
+            if not self.app.mouse_enabled:
+                return
+            kind, payload = self._hit(event.x)
+            if kind == "add":
+                self.app.send_cmd("new_window")
+            elif kind == "close":
+                self.app.confirm_kill_tab()
+            elif kind == "tab":
+                self.app.send_cmd("select_window", index=payload)
+            event.stop()
+
     class StatusBar(Widget):
         def __init__(self, bg="green", fg="black",
                      left=" ", right=" #{pane_title}#h %H:%M %d-%b-%y "):
@@ -656,6 +727,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         BINDINGS = []
         CSS = """
         Screen { layout: vertical; }
+        #tabbar { width: 100%; height: 1; dock: top; }
         #view { width: 100%; height: 1fr; }
         #status { width: 100%; height: 1; dock: bottom; }
         """
@@ -691,19 +763,23 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._prev_bell = False
             self._prompt_purpose = None
             self._prompt_action = None
+            self.tab_bar_always = config.get("tab_bar_always", False)
             self.view = MultiplexerView()
+            self.tabbar = TabBar()
             self.status = StatusBar(
                 bg=config.get("status_bg", "green"),
                 fg=config.get("status_fg", "black"),
-                left=config.get("status_left", " [#S] "),
+                left=config.get("status_left", " "),
                 right=config.get("status_right",
                                  " #{pane_title}#h %H:%M %d-%b-%y "))
 
         def compose(self) -> ComposeResult:
+            yield self.tabbar
             yield self.view
             yield self.status
 
         async def on_mount(self):
+            self.tabbar.display = self.tab_bar_always
             self.view.focus()
             if self.status_position == "top":
                 self.status.styles.dock = "top"
@@ -721,9 +797,56 @@ def build_client_app(sock_path: str, config: dict | None = None,
             await write_msg(self.writer, hello)
             self.run_worker(self._reader_task(), exclusive=False)
 
+        def _tabbar_visible(self):
+            return self.tab_bar_always or len(self.status.windows) >= 2
+
         def _content_size(self):
             size = self.size
-            return max(MIN_W, size.width), max(MIN_H, size.height - 1)
+            extra = 1 if self._tabbar_visible() else 0   # 상단 탭바 1줄
+            return max(MIN_W, size.width), max(MIN_H, size.height - 1 - extra)
+
+        def _active_tab_index(self):
+            for t in self.status.windows:
+                if t.get("active"):
+                    return t["index"]
+            return 0
+
+        def _update_tabbar(self):
+            """상태 갱신 시 탭바 데이터/표시 여부를 동기화. 표시가 바뀌면 뷰 크기가
+            달라지므로 서버에 새 크기를 통지한다."""
+            visible = self._tabbar_visible()
+            self.tabbar.set_tabs(self.status.windows, self._active_tab_index())
+            if self.tabbar.display != visible:
+                self.tabbar.display = visible
+                self._send_resize()
+
+        def _send_resize(self):
+            if self.writer:
+                cols, rows = self._content_size()
+                import asyncio as _a
+                _a.create_task(write_msg(
+                    self.writer, {"t": "resize", "cols": cols, "rows": rows}))
+
+        def confirm_kill_tab(self):
+            self.open_prompt("confirm", "kill-tab? (y/N)",
+                             action=lambda: self.send_cmd("kill_window"))
+
+        def _pane_above(self):
+            """활성 패널 위쪽(같은 열 범위)에 다른 패널이 있는지."""
+            act = self.layout.get("active")
+            panes = self.layout.get("panes", [])
+            ap = next((p for p in panes if p["id"] == act), None)
+            if not ap:
+                return False
+            ax, ay = ap["x"], ap["y"]
+            aw = ap["w"]
+            for p in panes:
+                if p["id"] == act:
+                    continue
+                if p["y"] + p["h"] <= ay and not (
+                        p["x"] + p["w"] <= ax or p["x"] >= ax + aw):
+                    return True
+            return False
 
         async def _reader_task(self):
             while True:
@@ -751,6 +874,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self._composite()
             elif t == "status":
                 self.status.update_status(msg)
+                self._update_tabbar()
                 if self.set_titles:
                     self.title = self.status._expand(self.title_fmt)
                 wins = msg.get("windows", [])
@@ -1620,14 +1744,47 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def _exit_esc(self):
             self.mode = "normal"
             self.status.cmd_mode = False
+            if self.tabbar.bar_focus:
+                self.tabbar.bar_focus = False
+                self.tabbar.refresh()
             self.status.refresh()
 
         def _handle_esc_mode(self, event: events.Key):
-            """ESC 로 들어온 명령 모드: 방향키=패널 이동(유지), :=명령 프롬프트,
-            그 외 키는 모드 종료."""
+            """ESC 명령 모드: 방향키=패널 이동, 위로 더 가면 상단 탭바 포커스.
+            탭바 포커스에서는 ←→ 탭 선택, Enter 전환, +/x 추가/삭제, ↓/Esc 복귀."""
             k = event.key
             ch = event.character
-            if k in ("left", "right", "up", "down"):
+            tb = self.tabbar
+            if tb.bar_focus:
+                tabs = tb.tabs
+                idxs = [t["index"] for t in tabs]
+                if k in ("left", "up") and idxs:
+                    cur = idxs.index(tb.sel) if tb.sel in idxs else 0
+                    tb.sel = idxs[(cur - 1) % len(idxs)]
+                    tb.refresh()
+                elif k in ("right",) and idxs:
+                    cur = idxs.index(tb.sel) if tb.sel in idxs else 0
+                    tb.sel = idxs[(cur + 1) % len(idxs)]
+                    tb.refresh()
+                elif k == "enter":
+                    self.send_cmd("select_window", index=tb.sel)
+                    tb.bar_focus = False
+                    tb.refresh()
+                elif ch in ("+", "a"):
+                    self.send_cmd("new_window")
+                elif ch in ("x", "d") or k == "delete":
+                    self.confirm_kill_tab()
+                elif k in ("down", "escape"):
+                    tb.bar_focus = False
+                    tb.refresh()
+                    if k == "escape":
+                        self._exit_esc()
+                return
+            if k == "up" and self._tabbar_visible() and not self._pane_above():
+                tb.sel = self._active_tab_index()   # 탭바로 포커스 진입
+                tb.bar_focus = True
+                tb.refresh()
+            elif k in ("left", "right", "up", "down"):
                 self.send_cmd("select_pane", dir=k)  # 모드 유지(연속 이동)
             elif ch == ":" or k == "colon":
                 self._exit_esc()

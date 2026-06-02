@@ -15,6 +15,9 @@ set status-fg black
 # 스크롤백(copy) 모드 키 스타일: vi 또는 emacs
 set mode-keys vi
 
+# 상단 탭바: always = 탭이 하나여도 항상 표시 (기본 auto: 탭 2개 이상일 때만)
+set tab-bar always
+
 # 상태줄 포맷(#S 세션, #h 짧은 호스트, #H 호스트, #{pane_title}, %H:%M 등 strftime)
 set status-left " [#S] "
 set status-right " #{pane_title}#h %H:%M %d-%b-%y "
