@@ -68,7 +68,7 @@ python3 pytmux.py --socket PATH … # 사용할 소켓 경로 직접 지정
 | `prefix n` / `p` | 다음/이전 윈도우 | `prefix 0-9` | 윈도우 선택 |
 | `prefix d` | detach(세션 유지) | `prefix [` | 스크롤백 모드 |
 | `prefix Enter` | 메뉴 열기 | `prefix R` | 토큰리밋 자동재개 토글 |
-| `F10` | 명령 입력(프리픽스 없이 바로) | `F12` | 중첩 시 prefix 패스스루 토글 |
+| `ESC` | 명령 입력(vi 처럼, 프리픽스 없이 바로) | `F12` | 중첩 시 prefix 패스스루 토글 |
 
 스크롤백 모드(`prefix [`): `↑/↓`, `PageUp/PageDown`, `g`/`G`(맨 위/아래), `q`로 빠져나감.
 

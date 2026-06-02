@@ -1270,8 +1270,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.stop()
                 return
             # normal
-            # F10: prefix 없이 바로 명령 입력 프롬프트 열기
-            if event.key == "f10":
+            # ESC: vi 처럼 prefix 없이 바로 명령 입력 프롬프트 열기
+            # (주의: 이 모드에서 ESC 는 패널 안 프로그램으로 전달되지 않음)
+            if event.key == "escape":
                 self.open_prompt("command", ":")
                 event.prevent_default()
                 event.stop()

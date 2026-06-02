@@ -24,7 +24,7 @@
     prefix $      세션 이름변경    prefix :      명령 입력
     prefix n / p  다음/이전 윈도우 prefix 0-9    윈도우 선택
     prefix d      detach           prefix [      스크롤백 모드
-    prefix Enter  메뉴 열기         F10           명령 입력(프리픽스 없이 바로)
+    prefix Enter  메뉴 열기         ESC           명령 입력(vi 처럼, prefix 없이 바로)
 마우스:
     휠 위/아래    해당 패널 스크롤백        패널 클릭   포커스 이동
     경계선 드래그 패널 리사이즈            우클릭      메뉴 열기
