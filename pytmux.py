@@ -2352,6 +2352,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.sync = False
             self.pane_title = ""
             self.autoresume = False
+            self.prefix_off = False  # 중첩: outer prefix 해제 표시
             self.message = None    # display-message 임시 메시지
             self.bg = bg
             self.fg = fg
@@ -2403,6 +2404,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.autoresume:
                 segs.append(Segment("AR ", Style(color="black", bgcolor="cyan",
                                                   bold=True)))
+            if self.prefix_off:
+                segs.append(Segment("NEST ", Style(color="white", bgcolor="magenta",
+                                                   bold=True)))
             for win in self.windows:
                 flag = "!" if win.get("bell") else ("#" if win.get("activity") else "")
                 label = f"{win['index']}:{win['name']}{flag} "
@@ -2450,6 +2454,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # ---- 설정(config) 적용 ----
             self.prefix_key = config.get("prefix", "ctrl+b")
             self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
+            self.prefix_enabled = True  # 중첩 시 F12 로 outer prefix 일시 해제
             self.bindings = config.get("bindings", {})
             self.mouse_enabled = config.get("mouse", True)
             self.mode_keys = config.get("mode_keys", "vi")
@@ -3217,7 +3222,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.stop()
                 return
             # normal
-            if event.key == self.prefix_key:
+            # F12: outer prefix 가로채기 토글(중첩 tmux/pytmux 용)
+            if event.key == "f12":
+                self.prefix_enabled = not self.prefix_enabled
+                self.status.prefix_off = not self.prefix_enabled
+                self.status.refresh()
+                self.display_message("outer prefix " +
+                                     ("ON" if self.prefix_enabled else "OFF (중첩)"))
+                event.prevent_default()
+                event.stop()
+                return
+            if self.prefix_enabled and event.key == self.prefix_key:
                 self.mode = "prefix"
                 event.prevent_default()
                 event.stop()
