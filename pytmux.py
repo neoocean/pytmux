@@ -185,6 +185,7 @@ class Pane:
         self._bell = False       # 마지막 검사 이후 BEL 수신
         self.search_query = ""   # 스크롤백 검색어
         self._match_abs = None   # 현재 매치된 절대 라인 인덱스
+        self.bracketed = False   # 내부 앱이 bracketed paste 모드를 켰는지
 
     def reinit(self, pid: int, fd: int, cols: int, rows: int) -> None:
         """respawn: 새 PTY/셸로 화면 버퍼를 초기화한다."""
@@ -200,6 +201,7 @@ class Pane:
         self._resume_pending = False
         self.search_query = ""
         self._match_abs = None
+        self.bracketed = False
 
     # 레이아웃 계산용
     def first_pane(self) -> "Pane":
@@ -592,6 +594,11 @@ class Server:
         pane._activity = True
         if b"\x07" in data:
             pane._bell = True
+        # bracketed paste 모드 추적(내부 앱의 DECSET 2004)
+        if b"\x1b[?2004h" in data:
+            pane.bracketed = True
+        if b"\x1b[?2004l" in data:
+            pane.bracketed = False
         if pane.autoresume and not pane._resume_pending:
             self._maybe_schedule_resume(pane, data.decode("utf-8", "ignore"))
 
@@ -1118,21 +1125,39 @@ class Server:
         self.buffers.insert(0, text)
         del self.buffers[50:]
 
+    @staticmethod
+    def _write_paste(pane: Pane, text: str):
+        """텍스트를 패널에 입력. 내부 앱이 bracketed paste 를 켰으면 마커로 감싼다
+        (멀티라인 붙여넣기가 줄마다 실행되지 않고 한 번의 붙여넣기로 처리됨)."""
+        data = text.encode("utf-8")
+        if pane.bracketed:
+            data = b"\x1b[200~" + data + b"\x1b[201~"
+        try:
+            os.write(pane.master_fd, data)
+        except OSError:
+            pass
+
+    def _reset_view(self, pane: Pane):
+        if pane.scroll or pane._match_abs is not None:
+            pane.scroll = 0
+            pane._match_abs = None
+            pane.dirty = True
+
+    def paste_text(self, sess: Session, text: str):
+        win = sess.active_window
+        if not win or not text:
+            return
+        self._reset_view(win.active_pane)
+        self._write_paste(win.active_pane, text)
+
     def paste_buffer(self, sess: Session, index=0):
         win = sess.active_window
         if not win or not self.buffers:
             return
         if not (0 <= index < len(self.buffers)):
             index = 0
-        p = win.active_pane
-        if p.scroll or p._match_abs is not None:
-            p.scroll = 0
-            p._match_abs = None
-            p.dirty = True
-        try:
-            os.write(p.master_fd, self.buffers[index].encode("utf-8"))
-        except OSError:
-            pass
+        self._reset_view(win.active_pane)
+        self._write_paste(win.active_pane, self.buffers[index])
 
     def clear_history(self, sess: Session):
         win = sess.active_window
@@ -1397,6 +1422,9 @@ class Server:
             return
         elif action == "paste_buffer":
             self.paste_buffer(sess, int(msg.get("index", 0)))
+            return
+        elif action == "paste":
+            self.paste_text(sess, str(msg.get("text", "")))
             return
         elif action == "request_buffers":
             await write_msg(client.writer, self._buffers_msg())
@@ -2617,7 +2645,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif c in ("paste-clipboard", "pasteb-clip"):
                 txt = self._clipboard_paste()
                 if txt:
-                    self.send_input(txt.encode("utf-8"))
+                    self.send_cmd("paste", text=txt)  # bracketed 패스스루
             elif c in ("paste-buffer", "pasteb"):
                 idx = self._first_int(args)
                 self.send_cmd("paste_buffer", index=idx or 0)
@@ -2626,6 +2654,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif c in ("clear-history", "clearhist"):
                 self.send_cmd("clear_history")
             # 알 수 없는 명령은 조용히 무시
+
+        def on_paste(self, event: events.Paste):
+            # 외부 터미널의 붙여넣기(멀티라인 포함)를 활성 패널로 패스스루.
+            # 내부 앱이 bracketed paste 를 켰으면 서버가 마커로 감싼다.
+            # (이미지 붙여넣기는 내부 Claude Code 가 공유 OS 클립보드에서 읽음)
+            if self.mode == "prompt" or len(self.screen_stack) > 1:
+                return  # 프롬프트/모달 입력은 위젯이 처리
+            if self.writer and event.text:
+                self.send_cmd("paste", text=event.text)
+            event.stop()
 
         # ---- 이벤트 ----
         async def on_resize(self, event):
