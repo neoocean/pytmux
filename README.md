@@ -115,7 +115,7 @@ python3 pytmux.py --socket PATH … # 사용할 소켓 경로 직접 지정
 new-tab                # 새 탭(새 윈도우) — new-window 와 동일
 kill-tab / rename-tab <name>   # 탭 삭제 / 이름변경 (kill-window/rename-window 별칭)
 select-tab <n> / next-tab / prev-tab / move-tab -t <n> / swap-tab -t <n>
-split-window -h        # 탭의 윈도우를 좌우 분할 (-v 는 상하)
+split-window -h        # 가로 분할(상/하)   -v 는 세로 분할(좌/우)
 kill-pane              # 현재 패널 삭제
 resize-pane -Z         # 줌 토글
 detach / kill-server

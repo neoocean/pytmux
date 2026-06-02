@@ -123,7 +123,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
     # 명령 프롬프트(:)에서 쓸 수 있는 명령 목록 (이름, 설명) — ? 목록·자동완성용
     COMMANDS = [
-        ("split-window", "패널 분할 (-h 좌우 / -v 상하)"),
+        ("split-window", "패널 분할 (-h 가로/상하 · -v 세로/좌우)"),
         ("kill-pane", "현재 패널 삭제"),
         ("resize-pane", "패널 크기 (-Z 줌 토글)"),
         ("select-pane", "패널 이동 (-L/-R/-U/-D) 또는 제목 (-T)"),
@@ -1395,7 +1395,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self._if_shell(args[0], args[1], args[2] if len(args) > 2 else None)
                 return
             if c in ("split-window", "splitw"):
-                orient = "lr" if "-h" in args else "tb"
+                # -h = 가로(상/하), -v = 세로(좌/우)
+                orient = "tb" if "-h" in args else (
+                    "lr" if "-v" in args else "tb")
                 self.send_cmd("split", orient=orient)
             elif c in ("kill-pane", "killp"):
                 self.send_cmd("kill_pane")

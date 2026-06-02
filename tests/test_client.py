@@ -257,11 +257,14 @@ async def test_wide_char_composite():
         app.pane_content[p.id] = (rows, cur)
         app._composite()
         cells = app.view._cells
-        grid = [cells[0][x][0] for x in range(6)]
-        # 가(와이드)=col2, 연속 셀=col3(""), C=col4
+        # 단일 패널도 테두리가 있어 내용은 inset 됨 → 내용 원점에서 상대 확인
+        ap = next(pp for pp in app.layout["panes"] if pp["id"] == p.id)
+        cx, cy = ap["x"], ap["y"]
+        grid = [cells[cy][cx + x][0] for x in range(6)]
+        # 가(와이드)=+2, 연속 셀=+3(""), C=+4
         assert grid[2] == "가" and grid[3] == "" and grid[4] == "C", grid
-        text = "".join(seg.text for seg in app.view.render_line(0))
-        assert "가CD" in text, repr(text[:8])
+        text = "".join(seg.text for seg in app.view.render_line(cy))
+        assert "가CD" in text, repr(text)
     await _with_app(body)
 
 

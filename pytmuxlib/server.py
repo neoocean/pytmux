@@ -782,7 +782,9 @@ class Server:
         elif c in ("kill-window", "killw", "kill-tab", "killt"):
             self.kill_window(sess)
         elif c in ("split-window", "splitw"):
-            self.split_pane(sess, "lr" if "-h" in args else "tb")
+            # -h = 가로(상/하), -v = 세로(좌/우)
+            self.split_pane(sess, "tb" if "-h" in args else
+                            ("lr" if "-v" in args else "tb"))
         elif c in ("select-window", "selectw", "select-tab", "selectt"):
             i = first_int()
             if i is not None:
@@ -966,7 +968,8 @@ class Server:
         # 모든 패널 PTY 크기를 레이아웃에 맞춰 갱신
         panes, divs = win.compute_layout(0, 0, cols, rows)
         # 패널이 둘 이상이면 각 패널을 테두리 박스로 감싼다(활성=파랑, 비활성=회색).
-        bordered = len(panes) > 1
+        # 패널이 하나뿐이라도 활성 아웃라인을 그린다(항상 테두리).
+        bordered = len(panes) >= 1
         pane_msgs, titlebars = [], []
         for p in panes:
             x, y, w, h = p.rect
