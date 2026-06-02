@@ -1736,6 +1736,11 @@ def load_config(path: str | None = None) -> dict:
                         cfg["status_right"] = val
                     elif opt == "status-position":
                         cfg["status_position"] = "top" if val == "top" else "bottom"
+                    elif opt == "status-interval":
+                        try:
+                            cfg["status_interval"] = max(1, int(val))
+                        except ValueError:
+                            pass
                 elif parts[0] == "bind" and len(parts) >= 3:
                     cfg["bindings"][parts[1]] = " ".join(parts[2:])
                 elif parts[0] == "alias" and len(parts) >= 3:
@@ -2207,6 +2212,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.mouse_enabled = config.get("mouse", True)
             self.mode_keys = config.get("mode_keys", "vi")
             self.status_position = config.get("status_position", "bottom")
+            self.status_interval = config.get("status_interval", 15)
+            self._status_timer = None
             self.aliases = config.get("aliases", {})
             self.hooks = config.get("hooks", {})
             self._attached = False
@@ -2230,6 +2237,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.view.focus()
             if self.status_position == "top":
                 self.status.styles.dock = "top"
+            self._restart_status_timer()
             try:
                 self.reader, self.writer = await asyncio.open_unix_connection(
                     path=self.sock_path)
@@ -2504,6 +2512,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("kill_server")
 
         # ---- 프롬프트 / 명령 ----
+        def _restart_status_timer(self):
+            if self._status_timer is not None:
+                self._status_timer.stop()
+            self._status_timer = self.set_interval(
+                self.status_interval, self.status.refresh)
+
         def apply_option(self, name, val):
             """클라이언트 측 옵션을 런타임에 적용."""
             if name == "prefix":
@@ -2528,6 +2542,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif name == "status-position":
                 self.status_position = "top" if val == "top" else "bottom"
                 self.status.styles.dock = self.status_position
+            elif name == "status-interval":
+                try:
+                    self.status_interval = max(1, int(val))
+                    self._restart_status_timer()
+                except ValueError:
+                    pass
 
         def show_options(self):
             lines = [
