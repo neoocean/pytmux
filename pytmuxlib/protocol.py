@@ -11,8 +11,8 @@ import struct
 import termios
 
 
-MIN_W = 3       # 패널 최소 폭(열)
-MIN_H = 2       # 패널 최소 높이(행)
+MIN_W = 3       # 패널 최소 폭(열) — 테두리(좌/우) + 내용 1칸
+MIN_H = 3       # 패널 최소 높이(행) — 테두리(상/하) + 내용 1칸
 FLUSH_HZ = 30   # 서버 화면 push 주기
 HISTORY = 10000 # 패널당 스크롤백 보관 행 수
 

@@ -325,30 +325,28 @@ class Window:
         if isinstance(node, Pane):
             panes.append(node)
             return
+        # 자식은 경계 셀을 공유(겹침)한다. 각 패널이 자기 테두리 박스를 그리므로
+        # 경계 열/행을 양쪽 패널 테두리가 같은 셀로 공유한다(한 변당 최소 MIN).
         if node.orient == "lr":
-            avail = w - 1
-            if avail < MIN_W * 2:
-                aw = max(0, avail)  # 너무 좁으면 한쪽에 몰아줌
+            if w >= MIN_W * 2:
+                bx = max(MIN_W, min(w - MIN_W, round((w - 1) * node.ratio)))
             else:
-                aw = max(MIN_W, min(avail - MIN_W, round(avail * node.ratio)))
-            dx = x + aw
+                bx = max(1, min(w - 1, (w - 1) // 2))
             divs.append({"split_id": node.id, "orient": "lr",
-                         "x": dx, "y": y, "w": 1, "h": h,
+                         "x": x + bx, "y": y, "w": 1, "h": h,
                          "rect": [x, y, w, h]})
-            self._layout(node.a, x, y, aw, h, panes, divs)
-            self._layout(node.b, dx + 1, y, avail - aw, h, panes, divs)
+            self._layout(node.a, x, y, bx + 1, h, panes, divs)        # [x, x+bx]
+            self._layout(node.b, x + bx, y, w - bx, h, panes, divs)   # [x+bx, x+w-1]
         else:
-            avail = h - 1
-            if avail < MIN_H * 2:
-                ah = max(0, avail)
+            if h >= MIN_H * 2:
+                by = max(MIN_H, min(h - MIN_H, round((h - 1) * node.ratio)))
             else:
-                ah = max(MIN_H, min(avail - MIN_H, round(avail * node.ratio)))
-            dy = y + ah
+                by = max(1, min(h - 1, (h - 1) // 2))
             divs.append({"split_id": node.id, "orient": "tb",
-                         "x": x, "y": dy, "w": w, "h": 1,
+                         "x": x, "y": y + by, "w": w, "h": 1,
                          "rect": [x, y, w, h]})
-            self._layout(node.a, x, y, w, ah, panes, divs)
-            self._layout(node.b, x, dy + 1, w, avail - ah, panes, divs)
+            self._layout(node.a, x, y, w, by + 1, panes, divs)        # [y, y+by]
+            self._layout(node.b, x, y + by, w, h - by, panes, divs)   # [y+by, y+h-1]
 
     def split_by_id(self, sid: int):
         stack = [self.root]

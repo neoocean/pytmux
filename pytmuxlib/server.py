@@ -957,24 +957,34 @@ class Server:
             cols, rows = self._session_size(sess)
         # 모든 패널 PTY 크기를 레이아웃에 맞춰 갱신
         panes, divs = win.compute_layout(0, 0, cols, rows)
+        # 패널이 둘 이상이면 각 패널을 테두리 박스로 감싼다(활성=파랑, 비활성=회색).
+        bordered = len(panes) > 1
         pane_msgs, titlebars = [], []
         for p in panes:
             x, y, w, h = p.rect
-            if win.border_status and h > 1:
-                cy, ch = y + 1, h - 1
+            box = None
+            if bordered and w >= 3 and h >= 3:
+                # 박스 테두리(상/하/좌/우) 안쪽이 내용 영역
+                cx, cy, cw, ch = x + 1, y + 1, w - 2, h - 2
+                box = [x, y, w, h]
+            elif win.border_status and h > 1:
+                cx, cy, cw, ch = x, y + 1, w, h - 1
                 titlebars.append({"x": x, "y": y, "w": w, "title": p.title,
                                   "active": p is win.active_pane})
             else:
-                cy, ch = y, h
-            p.resize(w, ch)
-            pane_msgs.append({"id": p.id, "x": x, "y": cy, "w": w, "h": ch,
-                              "title": p.title})
+                cx, cy, cw, ch = x, y, w, h
+            p.resize(cw, ch)
+            pane_msgs.append({"id": p.id, "x": cx, "y": cy, "w": cw, "h": ch,
+                              "title": p.title, "box": box,
+                              "active": p is win.active_pane})
         return {
             "t": "layout",
             "cols": cols, "rows": rows,
             "panes": pane_msgs,
             "dividers": divs,
             "titlebars": titlebars,
+            "bordered": bordered,
+            "border_status": bool(win.border_status),
             "active": win.active_pane.id,
         }
 

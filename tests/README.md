@@ -22,7 +22,7 @@ python3 tests/run.py test_client  # 특정 모듈만
   저장/복원, 외부 제어, 다중 클라이언트 최소 크기.
 - `test_client.py` — Textual headless: 명령 프롬프트(모달 Input)·`?`·자동완성·
   `help`, ESC 명령 모드, **IME 단축키**(한글 자모→QWERTY)·Ctrl+한글 무crash,
-  display-panes, 포커스 패널 경계 강조, 와이드 문자 합성, 상태줄 포맷.
+  display-panes, **활성 패널 전체 테두리(파랑)/비활성(회색)**, 와이드 문자 합성, 상태줄 포맷.
 - `test_replay.py` — 리플레이 골든 스냅샷: 커서 이동·CR 덮어쓰기·열 정렬·와이드
   문자·대체 화면, record→replay 라운드트립.
 

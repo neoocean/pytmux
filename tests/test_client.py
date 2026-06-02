@@ -138,17 +138,29 @@ async def test_ctrl_korean_no_crash():
 async def test_active_pane_border_highlight():
     async def body(app, pilot, srv):
         await pilot.press("ctrl+b")
-        await pilot.press("percent_sign")
+        await pilot.press("percent_sign")          # 좌우 분할(활성=새 패널)
         await pilot.pause(0.4)
         lay = app.layout
-        assert lay["dividers"], "분할선 존재"
-        d = lay["dividers"][0]
-        col = d["x"]
+        assert lay.get("bordered"), "다중 패널이면 테두리 박스"
+        active = lay["active"]
         cells = app.view._cells
-        blue = any(cells[y][col][1] and cells[y][col][1].color and
-                   "blue" in str(cells[y][col][1].color)
-                   for y in range(d["y"], d["y"] + d["h"]) if 0 <= y < len(cells))
-        assert blue, "활성 패널 분할선 강조(파란색)"
+
+        def is_blue(x, y):
+            st = cells[y][x][1]
+            return bool(st and st.color and "blue" in str(st.color))
+
+        ap = next(p for p in lay["panes"] if p["id"] == active)
+        bx, by, bw, bh = ap["box"]
+        x2, y2 = bx + bw - 1, by + bh - 1
+        # 활성 패널 박스의 네 변 전체가 파란색
+        assert all(is_blue(gx, by) and is_blue(gx, y2)
+                   for gx in range(bx, x2 + 1)), "활성 상/하 변 파랑"
+        assert all(is_blue(bx, gy) and is_blue(x2, gy)
+                   for gy in range(by, y2 + 1)), "활성 좌/우 변 파랑"
+        # 비활성 패널의 (활성과 공유하지 않는) 바깥 모서리는 회색
+        ip = next(p for p in lay["panes"] if p["id"] != active)
+        ibx, iby, ibw, ibh = ip["box"]
+        assert not is_blue(ibx, iby), "비활성 바깥 모서리는 회색"
     await _with_app(body)
 
 

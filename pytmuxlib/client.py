@@ -447,7 +447,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
         # --- 마우스 ---
         def _pane_at(self, x, y):
             for p in self.app.layout.get("panes", []):
-                if p["x"] <= x < p["x"] + p["w"] and p["y"] <= y < p["y"] + p["h"]:
+                bx, by, bw, bh = p.get("box") or (p["x"], p["y"], p["w"], p["h"])
+                if bx <= x < bx + bw and by <= y < by + bh:
                     return p
             return None
 
@@ -793,41 +794,58 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     if 0 <= gx < W and 0 <= gy < H:
                         ch, st = cells[gy][gx]
                         cells[gy][gx] = (ch, st + Style(reverse=True))
-            # 분할선: 활성 패널에 접한 경계는 파란색 굵은 선(┃/━)으로 강조
-            div_style = Style(color="grey50")
-            active_div = Style(color="bright_blue", bold=True)
-            arect = None
-            for p in self.layout.get("panes", []):
+            # 패널 테두리 박스: 비활성=회색, 활성=파란색. 경계 셀은 인접 패널이
+            # 공유하므로, 비활성 박스를 먼저 그리고 활성 박스를 마지막에 덮어
+            # 활성 패널의 경계 전체가 파란색이 되도록 한다.
+            inactive_box = Style(color="grey50")
+            active_box = Style(color="bright_blue", bold=True)
+            show_title = self.layout.get("border_status")
+            # 박스 문자 ↔ 변 비트(U=8,D=4,L=2,R=1): 겹치는 경계를 합쳐 ┬┴├┤┼ 로 연결
+            bbits = {"─": 0b0011, "│": 0b1100, "┌": 0b0101, "┐": 0b0110,
+                     "└": 0b1001, "┘": 0b1010, "├": 0b1101, "┤": 0b1110,
+                     "┬": 0b0111, "┴": 0b1011, "┼": 0b1111}
+            brev = {v: k for k, v in bbits.items()}
+
+            def _draw_box(p):
+                box = p.get("box")
+                if not box:
+                    return
+                bx, by, bw, bh = box
+                st = active_box if p["id"] == active else inactive_box
+                x2, y2 = bx + bw - 1, by + bh - 1
+
+                def put(gx, gy, chc):
+                    if not (0 <= gx < W and 0 <= gy < H):
+                        return
+                    cur = cells[gy][gx][0]
+                    if cur in bbits and chc in bbits:   # 경계끼리 만나면 변을 합침
+                        chc = brev[bbits[cur] | bbits[chc]]
+                    cells[gy][gx] = (chc, st)
+
+                for gx in range(bx + 1, x2):      # 모서리 제외(상/하)
+                    put(gx, by, "─")
+                    put(gx, y2, "─")
+                for gy in range(by + 1, y2):      # 모서리 제외(좌/우)
+                    put(bx, gy, "│")
+                    put(x2, gy, "│")
+                put(bx, by, "┌")                  # 모서리는 인접 박스와만 병합
+                put(x2, by, "┐")
+                put(bx, y2, "└")
+                put(x2, y2, "┘")
+                # pane-border-status: 제목을 위쪽 테두리에 표기
+                title = p.get("title")
+                if show_title and title and bw >= 6:
+                    label = f" {title} "[: bw - 2]
+                    for i, chc in enumerate(label):
+                        put(bx + 1 + i, by, chc)
+
+            boxes = self.layout.get("panes", [])
+            for p in boxes:
+                if p["id"] != active:
+                    _draw_box(p)
+            for p in boxes:
                 if p["id"] == active:
-                    arect = (p["x"], p["y"], p["w"], p["h"])
-                    break
-
-            def _adjacent(d):
-                if arect is None:
-                    return False
-                ax, ay, aw, ah = arect
-                if d["orient"] == "lr":  # 세로 분할선(열 d["x"])
-                    touch = d["x"] == ax - 1 or d["x"] == ax + aw
-                    overlap = not (d["y"] + d["h"] <= ay or d["y"] >= ay + ah)
-                else:                    # 가로 분할선(행 d["y"])
-                    touch = d["y"] == ay - 1 or d["y"] == ay + ah
-                    overlap = not (d["x"] + d["w"] <= ax or d["x"] >= ax + aw)
-                return touch and overlap
-
-            for d in self.layout.get("dividers", []):
-                act = _adjacent(d)
-                stl = active_div if act else div_style
-                if d["orient"] == "lr":
-                    ch = "┃" if act else "│"
-                else:
-                    ch = "━" if act else "─"
-                for i in range(d["h"] if d["orient"] == "lr" else d["w"]):
-                    if d["orient"] == "lr":
-                        gx, gy = d["x"], d["y"] + i
-                    else:
-                        gx, gy = d["x"] + i, d["y"]
-                    if 0 <= gx < W and 0 <= gy < H:
-                        cells[gy][gx] = (ch, stl)
+                    _draw_box(p)
             # 패널 제목 경계선(pane-border-status)
             for tb in self.layout.get("titlebars", []):
                 is_active = tb.get("active")
