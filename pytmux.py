@@ -663,6 +663,37 @@ class Server:
         a.parent = pb
         # 활성 패널은 그대로 따라간다(같은 셸)
 
+    def _detach_pane(self, win: Window, pane: Pane):
+        """패널을 윈도우 트리에서 떼어낸다(트리 수축). 활성 패널은 형제로 이동."""
+        parent = pane.parent
+        if parent is None:
+            return False  # 윈도우의 유일 패널 → 분리 불가
+        sibling = parent.b if parent.a is pane else parent.a
+        gp = parent.parent
+        sibling.parent = gp
+        if gp is None:
+            win.root = sibling
+        elif gp.a is parent:
+            gp.a = sibling
+        else:
+            gp.b = sibling
+        if win.active_pane is pane:
+            win.active_pane = sibling.first_pane()
+        pane.parent = None
+        return True
+
+    def break_pane(self, sess: Session):
+        win = sess.active_window
+        if not win:
+            return
+        pane = win.active_pane
+        if not self._detach_pane(win, pane):
+            return  # 단일 패널 윈도우는 분리 불가
+        win.zoomed = False
+        idx = len(sess.windows)
+        sess.windows.append(Window(idx, "win", pane))
+        sess.active_index = idx
+
     def toggle_zoom(self, sess: Session):
         win = sess.active_window
         if not win:
@@ -913,6 +944,8 @@ class Server:
             self.rotate_panes(sess, bool(msg.get("forward", True)))
         elif action == "swap_pane":
             self.swap_pane(sess, bool(msg.get("forward", True)))
+        elif action == "break_pane":
+            self.break_pane(sess)
         elif action == "rename_window":
             self.rename_window(sess, str(msg.get("name", "")).strip())
         elif action == "kill_window":
@@ -1718,6 +1751,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("rotate", forward=("-D" not in args))
             elif c in ("swap-pane", "swapp"):
                 self.send_cmd("swap_pane", forward=("-U" not in args))
+            elif c in ("break-pane", "breakp"):
+                self.send_cmd("break_pane")
             elif c in ("detach-client", "detach"):
                 self.exit(message="detached")
             elif c == "kill-server":
@@ -1798,6 +1833,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("swap_pane", forward=False)
             elif ch == "}":
                 self.send_cmd("swap_pane", forward=True)
+            elif ch == "!":
+                self.send_cmd("break_pane")
             elif k in ("left", "right", "up", "down"):
                 self.send_cmd("select_pane", dir=k)
             elif k in ("H", "J", "K", "L"):
