@@ -8,9 +8,9 @@ set prefix C-a
 # 마우스 사용 (on/off)
 set mouse on
 
-# 상태줄 색상
-set status-bg green
-set status-fg black
+# 상태줄 색상(미지정 시 p4v-tui 와 동일한 textual-dark 테마 색을 사용)
+# set status-bg green
+# set status-fg black
 
 # 스크롤백(copy) 모드 키 스타일: vi 또는 emacs
 set mode-keys vi

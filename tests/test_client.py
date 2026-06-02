@@ -170,10 +170,11 @@ async def test_active_pane_border_highlight():
         assert lay.get("bordered"), "다중 패널이면 테두리 박스"
         active = lay["active"]
         cells = app.view._cells
+        primary = app.theme_variables.get("primary", "#0178D4").lower()
 
         def is_blue(x, y):
             st = cells[y][x][1]
-            return bool(st and st.color and "blue" in str(st.color))
+            return bool(st and st.color and primary in str(st.color).lower())
 
         ap = next(p for p in lay["panes"] if p["id"] == active)
         bx, by, bw, bh = ap["box"]
@@ -212,11 +213,12 @@ async def test_pane_name_on_border():
         ta = top_text(ap)
         assert "EDITOR" in ta, repr(ta)
         assert "LOGS" in top_text(ip), repr(top_text(ip))
-        # 활성 패널 이름은 활성 색(파랑)
+        # 활성 패널 이름은 활성 색(테마 primary)
+        primary = app.theme_variables.get("primary", "#0178D4").lower()
         bx, by, bw, _ = ap["box"]
         i = ta.index("E")
         st = cells[by][bx + i][1]
-        assert st and st.color and "blue" in str(st.color), "활성 이름 파랑"
+        assert st and st.color and primary in str(st.color).lower(), "활성 이름 색"
     await _with_app(body)
 
 

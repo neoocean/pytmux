@@ -37,7 +37,7 @@ def load_config(path: str | None = None) -> dict:
         bind <key> <command...>   # prefix 후 <key> 에 명령 바인딩
     """
     cfg = {"prefix": "ctrl+b", "mouse": True, "bindings": {}, "aliases": {},
-           "hooks": {}, "status_bg": "green", "status_fg": "black",
+           "hooks": {}, "status_bg": None, "status_fg": None,
            "mode_keys": "vi", "tab_bar_always": False}
     candidates = []
     if path:

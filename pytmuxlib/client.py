@@ -60,6 +60,24 @@ def build_client_app(sock_path: str, config: dict | None = None,
     DEFAULT_STYLE = Style()
     _style_cache: dict = {}
 
+    # p4v-tui 와 동일한 textual-dark 테마 색을 따른다(없으면 폴백).
+    _THEME_FALLBACK = {
+        "primary": "#0178D4", "secondary": "#004578", "accent": "#FEA62B",
+        "background": "#121212", "surface": "#1E1E1E", "panel": "#242F38",
+        "foreground": "#E0E0E0", "success": "#4EBF71", "warning": "#FEA62B",
+        "error": "#B93C5B",
+    }
+
+    def theme_color(widget, name: str) -> str:
+        """현재 Textual 테마에서 색을 해석(없으면 textual-dark 폴백)."""
+        try:
+            v = widget.app.theme_variables.get(name)
+            if v:
+                return v
+        except Exception:
+            pass
+        return _THEME_FALLBACK.get(name, "white")
+
     def make_style(d: dict) -> Style:
         if not d:
             return DEFAULT_STYLE
@@ -608,12 +626,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def render_line(self, y: int) -> Strip:
             w = self.size.width
-            base = Style(color="white", bgcolor="grey23")
-            add_st = Style(color="black", bgcolor="green", bold=True)
-            close_st = Style(color="white", bgcolor="red", bold=True)
-            active_st = Style(color="white", bgcolor="blue", bold=True)
-            sel_st = Style(color="black", bgcolor="cyan", bold=True)
-            arrow_st = Style(color="black", bgcolor="yellow", bold=True)
+            fg = theme_color(self, "foreground")
+            base = Style(color=fg, bgcolor=theme_color(self, "panel"))
+            add_st = Style(color="black", bgcolor=theme_color(self, "success"),
+                           bold=True)
+            close_st = Style(color="white", bgcolor=theme_color(self, "error"),
+                             bold=True)
+            active_st = Style(color="white", bgcolor=theme_color(self, "primary"),
+                              bold=True)
+            sel_st = Style(color="black", bgcolor=theme_color(self, "accent"),
+                           bold=True)
+            arrow_st = Style(color="black", bgcolor=theme_color(self, "accent"),
+                             bold=True)
             labels = self._labels()
             widths = [sum(_char_cells(c) for c in s) for s in labels]
             n = len(self.tabs)
@@ -693,7 +717,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             event.stop()
 
     class StatusBar(Widget):
-        def __init__(self, bg="green", fg="black",
+        def __init__(self, bg=None, fg=None,
                      left=" ", right=" #{pane_title}#h %H:%M %d-%b-%y "):
             super().__init__(id="status")
             self.session = ""
@@ -739,38 +763,41 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def render_line(self, y: int) -> Strip:
             w = self.size.width
-            base = Style(color=self.fg, bgcolor=self.bg)
+            # 색상은 p4v-tui 와 동일한 textual-dark 테마를 따른다(설정으로 덮어쓰기 가능).
+            tc = lambda n: theme_color(self, n)  # noqa: E731
+            base = Style(color=self.fg or tc("foreground"),
+                         bgcolor=self.bg or tc("surface"))
             if self.message is not None:
-                ms = Style(color="black", bgcolor="yellow", bold=True)
+                ms = Style(color="black", bgcolor=tc("warning"), bold=True)
                 return Strip([Segment(f" {self.message} ", ms)]).adjust_cell_length(
                     w, ms)
-            # 활성 탭: 녹색 바 위에서 잘 보이도록 검정 배경 + 흰 글씨(굵게)
-            active = Style(color="white", bgcolor="black", bold=True)
+            active = Style(color="white", bgcolor=tc("primary"), bold=True)
             segs = [Segment(self._expand(self.left_fmt), base)]
             if self.cmd_mode:
                 segs.append(Segment("CMD(←↑↓→ 이동, : 명령) ",
-                                    Style(color="black", bgcolor="cyan", bold=True)))
+                                    Style(color="black", bgcolor=tc("accent"),
+                                          bold=True)))
             if self.zoomed:
-                segs.append(Segment("Z ", Style(color="black", bgcolor="yellow",
+                segs.append(Segment("Z ", Style(color="black", bgcolor=tc("warning"),
                                                  bold=True)))
             if self.sync:
-                segs.append(Segment("SYNC ", Style(color="white", bgcolor="red",
+                segs.append(Segment("SYNC ", Style(color="white", bgcolor=tc("error"),
                                                     bold=True)))
             if self.autoresume:
-                segs.append(Segment("AR ", Style(color="black", bgcolor="cyan",
+                segs.append(Segment("AR ", Style(color="black", bgcolor=tc("accent"),
                                                   bold=True)))
             if self.prefix_off:
-                segs.append(Segment("NEST ", Style(color="white", bgcolor="magenta",
-                                                   bold=True)))
+                segs.append(Segment("NEST ", Style(color="white",
+                                                   bgcolor=tc("secondary"), bold=True)))
             for win in ([] if self.hide_tabs else self.windows):
                 flag = "!" if win.get("bell") else ("#" if win.get("activity") else "")
                 label = f"{win['index']}:{win['name']}{flag} "
                 if win["active"]:
                     st = active
                 elif win.get("bell"):
-                    st = Style(color="white", bgcolor="red", bold=True)
+                    st = Style(color="white", bgcolor=tc("error"), bold=True)
                 elif win.get("activity"):
-                    st = Style(color="black", bgcolor="yellow")
+                    st = Style(color="black", bgcolor=tc("warning"))
                 else:
                     st = base
                 segs.append(Segment(label, st))
@@ -828,8 +855,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.view = MultiplexerView()
             self.tabbar = TabBar()
             self.status = StatusBar(
-                bg=config.get("status_bg", "green"),
-                fg=config.get("status_fg", "black"),
+                bg=config.get("status_bg"),       # None = 테마(textual-dark) 사용
+                fg=config.get("status_fg"),
                 left=config.get("status_left", " "),
                 right=config.get("status_right",
                                  " #{pane_title}#h %H:%M %d-%b-%y "))
@@ -1004,8 +1031,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 패널 테두리 박스: 비활성=회색, 활성=파란색. 경계 셀은 인접 패널이
             # 공유하므로, 비활성 박스를 먼저 그리고 활성 박스를 마지막에 덮어
             # 활성 패널의 경계 전체가 파란색이 되도록 한다.
-            inactive_box = Style(color="grey50")
-            active_box = Style(color="bright_blue", bold=True)
+            inactive_box = Style(color="grey42")
+            active_box = Style(color=theme_color(self, "primary"), bold=True)
             show_title = self.layout.get("border_status")
             # 박스 문자 ↔ 변 비트(U=8,D=4,L=2,R=1): 겹치는 경계를 합쳐 ┬┴├┤┼ 로 연결
             bbits = {"─": 0b0011, "│": 0b1100, "┌": 0b0101, "┐": 0b0110,
