@@ -36,5 +36,12 @@ p4 submit -c NNNN
 ## 코드/문서 규칙
 
 - 설계 변경은 먼저 `docs/DESIGN.md` 에 반영한 뒤 구현한다.
-- 진입점은 `pytmux.py` 단일 스크립트다.
+- 진입점은 `pytmux.py`(얇은 진입점), 구현은 `pytmuxlib/` 패키지.
 - 의존성은 `requirements.txt` 에 명시한다.
+
+## 테스트
+
+- 변경 후 **서브밋 전에** 헤드리스 테스트를 돌린다: `python3 tests/run.py`
+  (화면/터미널 없이 전체 동작 검증, 종료 코드 0 = 통과).
+- 동작을 바꾸거나 버그를 고치면 `tests/` 에 회귀 테스트를 추가한다. 화면 검증은
+  `harness.pane_text()` 나 `app.view._cells`/`render_line` 의 텍스트 비교로 한다.
