@@ -116,4 +116,6 @@ bind r rename-window
 
 ## 상태
 
-핵심 기능과 P0(필수) 기능이 구현되어 있습니다. 자세한 현황은 `docs/FEATURES.md` 참고.
+`docs/FEATURES.md` 의 모든 기능(패널/윈도우/세션/복사 모드/명령·설정/상태줄·UI/
+통합·자동화)이 구현되어 있습니다. 구현은 `pytmuxlib/` 패키지로 모듈화되어 있고
+`pytmux.py` 는 진입점입니다.
