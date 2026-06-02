@@ -95,15 +95,12 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog="pytmux", description="tmux 유사 터미널 멀티플렉서")
     parser.add_argument("--socket", default=None, help="유닉스 도메인 소켓 경로")
     sub = parser.add_subparsers(dest="command")
-    p_at = sub.add_parser("attach", help="실행 중인 서버에 attach (없으면 기동)")
-    p_at.add_argument("-t", "--target", default=None, help="attach 할 세션 이름")
-    p_new = sub.add_parser("new", help="새(이름 있는) 세션을 만들고 attach")
-    p_new.add_argument("-s", "--session-name", default=None, help="세션 이름")
-    sub.add_parser("ls", help="세션 목록")
-    sub.add_parser("kill-server", help="서버와 모든 세션 종료")
+    sub.add_parser("attach", help="실행 중인 서버에 attach (없으면 기동)")
+    sub.add_parser("ls", help="탭/패널 요약")
+    sub.add_parser("kill-server", help="서버와 모든 탭/셸 종료")
     p_cmd = sub.add_parser("cmd", help="실행 중 서버에 명령 전송(외부 제어)")
     p_cmd.add_argument("words", nargs=argparse.REMAINDER,
-                       help="예: cmd new-window / cmd split-window -h")
+                       help="예: cmd new-tab / cmd split-window -h")
     p_srv = sub.add_parser("server", help="(내부) 서버를 전경 실행")
     p_srv.add_argument("--foreground", action="store_true")
     p_rec = sub.add_parser("record", help="명령을 PTY 에서 실행하며 원시 출력 녹화")
@@ -139,7 +136,7 @@ def main(argv=None):
             print("실행 중인 서버 없음")
             return
         for s in reply.get("sessions", []):
-            print(f"{s['name']}: {s['windows']} windows, {s['panes']} panes")
+            print(f"{s['windows']} tabs, {s['panes']} panes")
         return
     if args.command == "kill-server":
         reply = control_request(sock_path, {"t": "kill-server"})
@@ -154,14 +151,9 @@ def main(argv=None):
             print(reply.get("result", "ok"))
         return
 
-    # 기본 동작 = attach (필요 시 데몬 기동)
-    session = None
-    if args.command == "attach":
-        session = args.target
-    elif args.command == "new":
-        session = args.session_name
+    # 기본 동작 = attach (필요 시 데몬 기동). 단일 세션 모델: 세션 이름 없음.
     ensure_server(sock_path)
-    run_client(sock_path, session)
+    run_client(sock_path, None)
 
 
 if __name__ == "__main__":

@@ -82,18 +82,15 @@ async def test_window_move_swap_rename():
         await teardown(srv, task, sock)
 
 
-async def test_sessions_named_rename_kill():
+async def test_single_session_enforced():
+    """단일 세션 모델: 이름을 줘도 항상 같은 하나의 세션에 attach 한다."""
     srv, task, sock = await server_only()
     try:
-        a = srv.new_session(80, 24, "alpha")
-        assert "alpha" in srv.sessions
-        srv.rename_session(a, "alpha2")
-        assert "alpha2" in srv.sessions and "alpha" not in srv.sessions
-        srv.kill_session("alpha2")
-        assert "alpha2" not in srv.sessions
-        # get_or_create: 없는 이름이면 생성
-        s = srv.get_or_create_session("brandnew", 80, 24)
-        assert s.name == "brandnew" and "brandnew" in srv.sessions
+        s1 = srv.ensure_default_session(80, 24)
+        s2 = srv.get_or_create_session("brandnew", 80, 24)
+        s3 = srv.get_or_create_session("other", 80, 24)
+        assert s1 is s2 is s3, "세션 이름 요청은 무시되고 단일 세션"
+        assert len(srv.sessions) == 1
     finally:
         await teardown(srv, task, sock)
 
@@ -213,7 +210,7 @@ async def test_hello_and_multiclient_minsize():
         sA = []
         await harness.drain(rA, sA)
         assert any(m["t"] == "layout" for m in sA)
-        assert any(m["t"] == "status" and m["session"] == "main" for m in sA)
+        assert any(m["t"] == "status" for m in sA)  # 단일 세션(이름 무시)
         # 둘째 클라이언트(더 작음) → 공유 최소 크기 80x24
         rB, wB = await asyncio.open_unix_connection(path=sock)
         await pytmux.write_msg(wB, {"t": "hello", "cols": 80, "rows": 24})

@@ -206,15 +206,10 @@ class Server:
         return sess
 
     def get_or_create_session(self, name: str | None, cols: int, rows: int) -> Session:
-        """이름이 주어지면 해당 세션에 attach(없으면 그 이름으로 생성).
-        이름이 없으면 기본 세션을 보장한다."""
-        if name:
-            if name in self.sessions:
-                return self.sessions[name]
-            root = self.spawn_pane(cols, max(MIN_H, rows))
-            sess = Session(name, root)
-            self.sessions[name] = sess
-            return sess
+        """단일 세션 모델: 요청 이름과 무관하게 항상 하나의 기본 세션에 attach 한다.
+
+        멀티 세션 개념을 사용자 표면에서 제거했으므로(최상위는 탭), 클라이언트의
+        세션 이름 요청은 무시하고 단일 세션을 보장/반환한다."""
         return self.ensure_default_session(cols, rows)
 
     # ---- 트리 조작 ----
