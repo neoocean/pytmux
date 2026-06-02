@@ -277,28 +277,26 @@ tmux 는 위로 스크롤해 지난 화면을 보려면 별도의 copy-mode 로 
 - `pyte` (터미널 에뮬레이션)
 - (선택) `msgpack` (IPC 직렬화 최적화)
 
-## 9. 디렉토리 구조 (예정)
+## 9. 디렉토리 구조 (현재)
+
+진입점 `pytmux.py` 는 얇은 re-export 셸이고, 구현은 `pytmuxlib/` 패키지로 분리되어
+있다(유지보수·LLM 친화성을 위해 역할별 모듈로 나눔).
 
 ```
 scripts/pytmux/
-├── docs/
-│   └── DESIGN.md            # (이 문서)
-├── pytmux/
-│   ├── __main__.py          # 런처/부트스트랩
-│   ├── server/
-│   │   ├── daemon.py        # 데몬화
-│   │   ├── server.py        # 이벤트 루프 / 소켓 수신
-│   │   ├── session.py       # Session/Window/Pane 트리
-│   │   ├── pane.py          # PTY + pyte 래퍼
-│   │   └── layout.py        # 분할/리사이즈 계산
-│   ├── client/
-│   │   ├── app.py           # Textual App
-│   │   ├── pane_view.py     # 패널 렌더 위젯
-│   │   ├── divider.py       # 드래그 리사이즈 분할선
-│   │   ├── status_bar.py    # 하단 상태줄
-│   │   └── menu.py          # 명령 팔레트/팝업 메뉴
-│   └── protocol.py          # IPC 메시지 정의/직렬화
-└── tests/
+├── pytmux.py                # 진입점(런처) — pytmuxlib 의 main 및 공개 API re-export
+├── pytmuxlib/
+│   ├── __init__.py
+│   ├── protocol.py          # 상수·소켓 경로·프레이밍(read/write_msg)·색/리밋시각 헬퍼
+│   ├── keymap.py            # 설정 파일 로드(load_config)·키 표기 변환
+│   ├── model.py             # Pane/Split/Window/Session 트리 + 레이아웃·프리셋
+│   ├── server.py            # Server(데몬): PTY·pyte·세션·명령·flush·영속
+│   ├── client.py            # Textual 클라이언트(build_client_app): 렌더·키·마우스·메뉴
+│   └── launcher.py          # 데몬화·attach·ls·kill-server·cmd(외부 제어)·main
+├── docs/                    # DESIGN / FEATURES / CONTRIBUTING
+├── README.md
+├── requirements.txt
+└── pytmux.conf.example
 ```
 
 ## 10. 구현 마일스톤

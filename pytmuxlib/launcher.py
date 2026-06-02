@@ -1,0 +1,148 @@
+"""데몬화 · 런처 · 외부 제어 CLI."""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import socket
+import sys
+import time
+
+from .client import run_client
+from .protocol import default_socket_path
+from .server import run_server
+
+
+def daemonize():
+    if os.fork() > 0:
+        os._exit(0)
+    os.setsid()
+    if os.fork() > 0:
+        os._exit(0)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    devnull = os.open(os.devnull, os.O_RDWR)
+    os.dup2(devnull, 0)
+    os.dup2(devnull, 1)
+    os.dup2(devnull, 2)
+    if devnull > 2:
+        os.close(devnull)
+
+
+def can_connect(sock_path: str) -> bool:
+    if not os.path.exists(sock_path):
+        return False
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        s.connect(sock_path)
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def ensure_server(sock_path: str):
+    if can_connect(sock_path):
+        return
+    pid = os.fork()
+    if pid == 0:
+        daemonize()
+        run_server(sock_path)
+        os._exit(0)
+    # 부모: 중간 자식을 회수하고 소켓이 뜰 때까지 대기
+    try:
+        os.waitpid(pid, 0)
+    except ChildProcessError:
+        pass
+    for _ in range(200):
+        if can_connect(sock_path):
+            return
+        time.sleep(0.02)
+    print("pytmux: 서버 기동 실패", file=sys.stderr)
+    sys.exit(1)
+
+
+def control_request(sock_path: str, obj: dict):
+    if not can_connect(sock_path):
+        return None
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.connect(sock_path)
+    data = json.dumps(obj).encode()
+    s.sendall(len(data).to_bytes(4, "big") + data)
+    try:
+        header = _recvn(s, 4)
+        if not header:
+            return None
+        n = int.from_bytes(header, "big")
+        payload = _recvn(s, n)
+        return json.loads(payload.decode())
+    finally:
+        s.close()
+
+
+def _recvn(s: socket.socket, n: int) -> bytes:
+    buf = b""
+    while len(buf) < n:
+        chunk = s.recv(n - len(buf))
+        if not chunk:
+            break
+        buf += chunk
+    return buf
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="pytmux", description="tmux 유사 터미널 멀티플렉서")
+    parser.add_argument("--socket", default=None, help="유닉스 도메인 소켓 경로")
+    sub = parser.add_subparsers(dest="command")
+    p_at = sub.add_parser("attach", help="실행 중인 서버에 attach (없으면 기동)")
+    p_at.add_argument("-t", "--target", default=None, help="attach 할 세션 이름")
+    p_new = sub.add_parser("new", help="새(이름 있는) 세션을 만들고 attach")
+    p_new.add_argument("-s", "--session-name", default=None, help="세션 이름")
+    sub.add_parser("ls", help="세션 목록")
+    sub.add_parser("kill-server", help="서버와 모든 세션 종료")
+    p_cmd = sub.add_parser("cmd", help="실행 중 서버에 명령 전송(외부 제어)")
+    p_cmd.add_argument("words", nargs=argparse.REMAINDER,
+                       help="예: cmd new-window / cmd split-window -h")
+    p_srv = sub.add_parser("server", help="(내부) 서버를 전경 실행")
+    p_srv.add_argument("--foreground", action="store_true")
+    args = parser.parse_args(argv)
+
+    sock_path = args.socket or default_socket_path()
+
+    if args.command == "server":
+        run_server(sock_path)
+        return
+    if args.command == "ls":
+        reply = control_request(sock_path, {"t": "list"})
+        if not reply:
+            print("실행 중인 서버 없음")
+            return
+        for s in reply.get("sessions", []):
+            print(f"{s['name']}: {s['windows']} windows, {s['panes']} panes")
+        return
+    if args.command == "kill-server":
+        reply = control_request(sock_path, {"t": "kill-server"})
+        print("서버 종료됨" if reply else "실행 중인 서버 없음")
+        return
+    if args.command == "cmd":
+        line = " ".join(args.words)
+        reply = control_request(sock_path, {"t": "control", "line": line})
+        if not reply:
+            print("실행 중인 서버 없음")
+        else:
+            print(reply.get("result", "ok"))
+        return
+
+    # 기본 동작 = attach (필요 시 데몬 기동)
+    session = None
+    if args.command == "attach":
+        session = args.target
+    elif args.command == "new":
+        session = args.session_name
+    ensure_server(sock_path)
+    run_client(sock_path, session)
+
+
+if __name__ == "__main__":
+    main()
