@@ -15,6 +15,10 @@ set status-fg black
 # 스크롤백(copy) 모드 키 스타일: vi 또는 emacs
 set mode-keys vi
 
+# 상태줄 포맷(#S 세션, #h 짧은 호스트, #H 호스트, #{pane_title}, %H:%M 등 strftime)
+set status-left " [#S] "
+set status-right " #{pane_title}#h %H:%M %d-%b-%y "
+
 # prefix 후 키 바인딩: bind <key> <command...>
 # (command 는 명령 프롬프트(:)에서 쓰는 것과 동일한 구문)
 bind | split-window -h

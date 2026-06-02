@@ -1730,6 +1730,10 @@ def load_config(path: str | None = None) -> dict:
                         cfg["status_fg"] = val
                     elif opt == "mode-keys":
                         cfg["mode_keys"] = "emacs" if val == "emacs" else "vi"
+                    elif opt == "status-left":
+                        cfg["status_left"] = val
+                    elif opt == "status-right":
+                        cfg["status_right"] = val
                 elif parts[0] == "bind" and len(parts) >= 3:
                     cfg["bindings"][parts[1]] = " ".join(parts[2:])
                 elif parts[0] == "alias" and len(parts) >= 3:
@@ -2098,7 +2102,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             return None
 
     class StatusBar(Widget):
-        def __init__(self, bg="green", fg="black"):
+        def __init__(self, bg="green", fg="black",
+                     left=" [#S] ", right=" #{pane_title}#h %H:%M %d-%b-%y "):
             super().__init__(id="status")
             self.session = ""
             self.windows = []
@@ -2108,6 +2113,22 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.autoresume = False
             self.bg = bg
             self.fg = fg
+            self.left_fmt = left
+            self.right_fmt = right
+
+        def _expand(self, fmt):
+            """#S/#h/#H/#{pane_title} 토큰과 strftime(%) 코드를 치환."""
+            try:
+                s = datetime.now().strftime(fmt)
+            except ValueError:
+                s = fmt
+            host = socket.gethostname()
+            tpane = (self.pane_title + " · ") if (self.pane_title
+                     and self.pane_title != "shell") else ""
+            return (s.replace("#S", self.session)
+                     .replace("#h", host.split(".")[0])
+                     .replace("#H", host)
+                     .replace("#{pane_title}", tpane))
 
         def update_status(self, msg):
             self.session = msg.get("session", "")
@@ -2123,7 +2144,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             base = Style(color=self.fg, bgcolor=self.bg)
             # 활성 윈도우: 녹색 바 위에서 잘 보이도록 검정 배경 + 흰 글씨(굵게)
             active = Style(color="white", bgcolor="black", bold=True)
-            segs = [Segment(f" [{self.session}] ", base)]
+            segs = [Segment(self._expand(self.left_fmt), base)]
             if self.zoomed:
                 segs.append(Segment("Z ", Style(color="black", bgcolor="yellow",
                                                  bold=True)))
@@ -2145,11 +2166,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 else:
                     st = base
                 segs.append(Segment(label, st))
-            now = datetime.now().strftime("%H:%M %d-%b-%y")
-            host = socket.gethostname().split(".")[0]
-            tpart = (f"{self.pane_title} · " if self.pane_title
-                     and self.pane_title != "shell" else "")
-            right = f" {tpart}{host} {now} "
+            right = self._expand(self.right_fmt)
             used = sum(len(s.text) for s in segs)
             pad = w - used - len(right)
             if pad > 0:
@@ -2193,8 +2210,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._prev_winc = 0
             self._prev_bell = False
             self.view = MultiplexerView()
-            self.status = StatusBar(bg=config.get("status_bg", "green"),
-                                    fg=config.get("status_fg", "black"))
+            self.status = StatusBar(
+                bg=config.get("status_bg", "green"),
+                fg=config.get("status_fg", "black"),
+                left=config.get("status_left", " [#S] "),
+                right=config.get("status_right",
+                                 " #{pane_title}#h %H:%M %d-%b-%y "))
             self.prompt = PromptBar()
 
         def compose(self) -> ComposeResult:
@@ -2493,6 +2514,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.status.refresh()
             elif name == "mode-keys":
                 self.mode_keys = "emacs" if val == "emacs" else "vi"
+            elif name == "status-left":
+                self.status.left_fmt = val
+                self.status.refresh()
+            elif name == "status-right":
+                self.status.right_fmt = val
+                self.status.refresh()
 
         def show_options(self):
             lines = [
@@ -2515,6 +2542,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.mode_keys = cfg["mode_keys"]
             self.status.bg = cfg["status_bg"]
             self.status.fg = cfg["status_fg"]
+            if "status_left" in cfg:
+                self.status.left_fmt = cfg["status_left"]
+            if "status_right" in cfg:
+                self.status.right_fmt = cfg["status_right"]
             self.status.refresh()
 
         def _active_window_name(self):
