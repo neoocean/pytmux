@@ -274,9 +274,24 @@ class Window:
         self.index = index
         self.name = name
         self.root = root
-        self.active_pane = root
+        self._active = root    # 활성 패널(프로퍼티로 last-pane 추적)
+        self._last = None      # 직전 활성 패널(prefix ;)
         self.zoomed = False    # 활성 패널 전체화면(prefix z)
         self.layout_idx = 0    # 레이아웃 프리셋 순환 인덱스
+
+    @property
+    def active_pane(self):
+        return self._active
+
+    @active_pane.setter
+    def active_pane(self, pane):
+        if pane is not self._active:
+            self._last = self._active
+        self._active = pane
+
+    def toggle_last_pane(self):
+        if self._last is not None and self._last in self.panes():
+            self.active_pane = self._last
 
     def panes(self):
         out = []
@@ -811,6 +826,11 @@ class Server:
         if best:
             win.active_pane = best
 
+    def last_pane(self, sess: Session):
+        win = sess.active_window
+        if win:
+            win.toggle_last_pane()
+
     def select_pane_cycle(self, sess: Session):
         win = sess.active_window
         if not win:
@@ -956,6 +976,8 @@ class Server:
                 win.active_pane = p
         elif action == "cycle_pane":
             self.select_pane_cycle(sess)
+        elif action == "last_pane":
+            self.last_pane(sess)
         elif action == "resize":
             self.resize_split(sess, msg.get("split_id"), msg.get("ratio", 0.5))
         elif action == "resize_dir":
@@ -1862,6 +1884,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("zoom")
             elif k == "o":
                 self.send_cmd("cycle_pane")
+            elif k == "semicolon" or ch == ";":
+                self.send_cmd("last_pane")
             elif k == "q":
                 self._enter_display()
             elif k == "space":
