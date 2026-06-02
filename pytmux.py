@@ -514,6 +514,7 @@ class Server:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.running = True
         self._session_seq = 0
+        self.buffers: list[str] = []   # 페이스트 버퍼(최신이 앞)
 
     # ---- PTY/패널 생성 ----
     def _fork_shell(self, cols: int, rows: int, cwd: str | None = None):
@@ -1111,6 +1112,12 @@ class Server:
                         for x in range(screen.columns)).rstrip()
                 for line in full]
 
+    def set_buffer(self, text: str):
+        if not text:
+            return
+        self.buffers.insert(0, text)
+        del self.buffers[50:]
+
     def search_pane(self, sess: Session, query, direction="up"):
         win = sess.active_window
         if not win or not win.active_pane:
@@ -1350,6 +1357,9 @@ class Server:
             self.respawn_pane(sess)
         elif action == "search":
             self.search_pane(sess, msg.get("query"), msg.get("direction", "up"))
+        elif action == "set_buffer":
+            self.set_buffer(str(msg.get("text", "")))
+            return
         elif action == "request_tree":
             await write_msg(client.writer, self._tree_msg())
             return
@@ -1808,6 +1818,26 @@ def build_client_app(sock_path: str, config: dict | None = None,
             super().__init__(id="view")
             self._cells: list[list] = []
             self._dragging = None  # (split_id, orient, rect)
+            self._sel = None       # 선택 영역 (x0,y0,x1,y1) 전역 좌표
+            self._sel_start = None
+
+        def _extract_selection(self):
+            if not self._sel or not self._cells:
+                return ""
+            x0, y0, x1, y1 = self._sel
+            if (y0, x0) > (y1, x1):
+                x0, y0, x1, y1 = x1, y1, x0, y0
+            out = []
+            for y in range(y0, y1 + 1):
+                if not (0 <= y < len(self._cells)):
+                    continue
+                row = self._cells[y]
+                sx = x0 if y == y0 else 0
+                ex = x1 if y == y1 else len(row) - 1
+                text = "".join(row[x][0] for x in range(max(0, sx),
+                                                         min(len(row), ex + 1)))
+                out.append(text.rstrip())
+            return "\n".join(out)
 
         def set_frame(self, cells):
             self._cells = cells
@@ -1848,6 +1878,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def on_mouse_down(self, event: events.MouseDown):
             if not self.app.mouse_enabled:
                 return
+            if self.app.mode == "scroll":  # copy-mode: 드래그로 선택
+                self._sel_start = (event.x, event.y)
+                self._sel = (event.x, event.y, event.x, event.y)
+                self.capture_mouse()
+                self.app._composite()
+                event.stop()
+                return
             if event.button == 3:
                 self.app.open_menu()
                 event.stop()
@@ -1864,6 +1901,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             event.stop()
 
         def on_mouse_move(self, event: events.MouseMove):
+            if self._sel_start is not None:
+                self._sel = (self._sel_start[0], self._sel_start[1],
+                             event.x, event.y)
+                self.app._composite()
+                event.stop()
+                return
             if not self._dragging:
                 return
             d = self._dragging
@@ -1879,6 +1922,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
             event.stop()
 
         def on_mouse_up(self, event: events.MouseUp):
+            if self._sel_start is not None:
+                text = self._extract_selection()
+                self._sel_start = None
+                self._sel = None
+                self.release_mouse()
+                if text:
+                    self.app.copy_text(text)
+                self.app._composite()
+                event.stop()
+                return
             if self._dragging:
                 self._dragging = None
                 self.release_mouse()
@@ -2107,6 +2160,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     s = st if i < len(label) else Style(color="grey50")
                     if 0 <= gx < W:
                         cells[gy][gx] = (chh, s)
+            # copy-mode 선택 영역 하이라이트
+            sel = self.view._sel
+            if sel:
+                sx0, sy0, sx1, sy1 = sel
+                if (sy0, sx0) > (sy1, sx1):
+                    sx0, sy0, sx1, sy1 = sx1, sy1, sx0, sy0
+                for yy in range(max(0, sy0), min(H, sy1 + 1)):
+                    a = sx0 if yy == sy0 else 0
+                    b = sx1 if yy == sy1 else W - 1
+                    for xx in range(max(0, a), min(W, b + 1)):
+                        c, sstl = cells[yy][xx]
+                        cells[yy][xx] = (c, sstl + Style(reverse=True))
             # display-panes 오버레이: 각 패널 중앙에 번호 표시
             if self.mode == "display":
                 for i, p in enumerate(self.layout.get("panes", [])):
@@ -2144,6 +2209,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 else:
                     m["delta"] = delta
                 asyncio.create_task(write_msg(self.writer, m))
+
+        # ---- 복사/버퍼 ----
+        def copy_text(self, text):
+            # 서버 페이스트 버퍼에 저장(클립보드 연동은 4.4 에서 추가)
+            self.send_cmd("set_buffer", text=text)
 
         # ---- choose-tree ----
         def request_tree(self):
