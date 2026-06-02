@@ -1270,6 +1270,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.stop()
                 return
             # normal
+            # F10: prefix 없이 바로 명령 입력 프롬프트 열기
+            if event.key == "f10":
+                self.open_prompt("command", ":")
+                event.prevent_default()
+                event.stop()
+                return
             # F12: outer prefix 가로채기 토글(중첩 tmux/pytmux 용)
             if event.key == "f12":
                 self.prefix_enabled = not self.prefix_enabled
