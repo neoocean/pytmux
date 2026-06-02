@@ -90,6 +90,91 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("kill_server", "서버 종료 (모든 세션 종료)"),
     ]
 
+    # 명령 프롬프트(:)에서 쓸 수 있는 명령 목록 (이름, 설명) — ? 목록·자동완성용
+    COMMANDS = [
+        ("split-window", "패널 분할 (-h 좌우 / -v 상하)"),
+        ("kill-pane", "현재 패널 삭제"),
+        ("resize-pane", "패널 크기 (-Z 줌 토글)"),
+        ("select-pane", "패널 이동 (-L/-R/-U/-D) 또는 제목 (-T)"),
+        ("rename-pane", "패널 제목 변경"),
+        ("swap-pane", "패널 위치 교환 (-U/-D)"),
+        ("rotate-window", "윈도우 내 패널 회전"),
+        ("break-pane", "패널을 새 윈도우로 분리"),
+        ("join-pane", "다른 윈도우 패널을 현재로 합치기 (-h)"),
+        ("respawn-pane", "패널 셸 재시작"),
+        ("select-layout", "레이아웃 프리셋 (even-h/v, main-h/v, tiled)"),
+        ("next-layout", "다음 레이아웃 프리셋"),
+        ("synchronize-panes", "입력 동기화 토글 [on|off]"),
+        ("capture-pane", "패널 내용을 버퍼로 캡처 (-S 전체)"),
+        ("pipe-pane", "패널 출력을 외부 명령으로 파이프"),
+        ("clear-history", "스크롤백 비우기"),
+        ("new-window", "새 윈도우"),
+        ("kill-window", "윈도우 삭제"),
+        ("next-window", "다음 윈도우"),
+        ("previous-window", "이전 윈도우"),
+        ("last-window", "직전 윈도우"),
+        ("select-window", "윈도우 선택 (-t N)"),
+        ("move-window", "윈도우 이동 (-t N)"),
+        ("swap-window", "윈도우 교환 (-t N)"),
+        ("rename-window", "윈도우 이름 변경"),
+        ("automatic-rename", "윈도우 자동 이름 [on|off]"),
+        ("monitor-activity", "활동 모니터링 [on|off]"),
+        ("monitor-bell", "벨 모니터링 [on|off]"),
+        ("choose-tree", "세션/윈도우 선택기"),
+        ("new-session", "새 세션 (-s 이름)"),
+        ("kill-session", "세션 삭제 (-t 이름)"),
+        ("rename-session", "세션 이름 변경"),
+        ("switch-client", "세션 전환 (-t 이름)"),
+        ("detach-client", "detach (-a 다른 클라이언트)"),
+        ("send-keys", "패널에 키 주입 (예: Enter, C-c)"),
+        ("paste-buffer", "페이스트 버퍼 붙여넣기 (N)"),
+        ("choose-buffer", "페이스트 버퍼 선택기"),
+        ("paste-clipboard", "OS 클립보드 붙여넣기"),
+        ("auto-resume", "토큰 리밋 자동 재개 [on|off]"),
+        ("auto-resume-message", "자동 재개 메시지 설정"),
+        ("set", "옵션 설정 (prefix/mouse/status-*/mode-keys 등)"),
+        ("show-options", "현재 옵션 보기"),
+        ("set-hook", "이벤트 훅 설정 (<event> <cmd>)"),
+        ("show-hooks", "훅 목록 보기"),
+        ("source-file", "설정 파일 다시 불러오기"),
+        ("display-message", "상태줄에 메시지 표시"),
+        ("display-popup", "명령 실행 결과를 팝업으로"),
+        ("clock-mode", "큰 시계 표시"),
+        ("run-shell", "셸 명령 실행"),
+        ("if-shell", "조건부 셸 실행"),
+        ("save-layout", "레이아웃 저장"),
+        ("restore-layout", "레이아웃 복원"),
+        ("kill-server", "서버와 모든 세션 종료"),
+    ]
+
+    class CommandListScreen(ModalScreen):
+        """명령 목록 선택기(? 입력 시). 방향키로 이동, Enter 선택, Esc 취소."""
+        CSS = """
+        CommandListScreen { align: center middle; }
+        #cmds { width: 72; height: auto; max-height: 80%;
+                border: round $accent; background: $panel; }
+        """
+
+        def __init__(self, items, query=""):
+            super().__init__()
+            q = query.lower()
+            self._items = [it for it in items if it[0].startswith(q)] or items
+
+        def compose(self) -> ComposeResult:
+            yield ListView(*[ListItem(Label(f"{n:<20} {d}"), id=f"c{i}")
+                             for i, (n, d) in enumerate(self._items)], id="cmds")
+
+        def on_mount(self):
+            self.query_one(ListView).focus()
+
+        def on_list_view_selected(self, event):
+            self.dismiss(self._items[int(event.item.id[1:])][0])
+
+        def on_key(self, event: events.Key):
+            if event.key == "escape":
+                event.stop()
+                self.dismiss(None)
+
     class MenuScreen(ModalScreen):
         CSS = """
         MenuScreen { align: center middle; }
@@ -390,6 +475,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.message = None    # display-message 임시 메시지
             self.prompt_text = None  # 명령 프롬프트 입력 버퍼(None=프롬프트 아님)
             self.prompt_label = ""   # 프롬프트 힌트(":", "rename-window" 등)
+            self.prompt_suggest = ""  # 자동완성 고스트(남은 글자)
             self.bg = bg
             self.fg = fg
             self.left_fmt = left
@@ -428,9 +514,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.prompt_text is not None:
                 ps = Style(color="white", bgcolor="black")
                 cur = Style(color="black", bgcolor="white")
+                ghost = Style(color="grey58", bgcolor="black", italic=True)
                 label = (self.prompt_label + " ") if self.prompt_label else ":"
                 segs = [Segment(label, ps), Segment(self.prompt_text, ps),
                         Segment(" ", cur)]
+                if self.prompt_suggest:
+                    segs.append(Segment(self.prompt_suggest + " (Tab)", ghost))
+                else:
+                    segs.append(Segment("   ?=목록", ghost))
                 return Strip(segs).adjust_cell_length(w, ps)
             if self.message is not None:
                 ms = Style(color="black", bgcolor="yellow", bold=True)
@@ -899,17 +990,44 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._prompt_action = action
             self.status.prompt_label = placeholder
             self.status.prompt_text = initial
+            self.status.prompt_suggest = ""
             self.status.refresh()
             self.mode = "prompt"
 
         def close_prompt(self):
             self.status.prompt_text = None
             self.status.prompt_label = ""
+            self.status.prompt_suggest = ""
             self._prompt_purpose = None
             self._prompt_action = None
             self.mode = "normal"
             self.status.refresh()
             self.view.focus()
+
+        def _autocomplete(self, buf):
+            """명령 첫 토큰에 대한 자동완성 후보(전체 이름) 반환. 없으면 None."""
+            if not buf or " " in buf:
+                return None
+            matches = [name for name, _ in COMMANDS if name.startswith(buf)]
+            return matches[0] if matches else None
+
+        def _update_suggest(self):
+            buf = self.status.prompt_text or ""
+            if self._prompt_purpose == "command":
+                full = self._autocomplete(buf)
+                self.status.prompt_suggest = full[len(buf):] if full else ""
+            else:
+                self.status.prompt_suggest = ""
+
+        def _open_command_list(self):
+            def handle(name):
+                if name:
+                    self.status.prompt_text = name + " "
+                    self._update_suggest()
+                    self.status.refresh()
+            # 현재 입력값으로 후보를 필터링해서 목록 표시
+            self.push_screen(CommandListScreen(COMMANDS,
+                                               self.status.prompt_text or ""), handle)
 
         def _handle_prompt_key(self, event: events.Key):
             """명령 프롬프트 입력을 App 레벨에서 직접 처리(포커스/Input 비의존)."""
@@ -921,10 +1039,23 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if k == "enter":
                 self._submit_prompt()
                 return
+            # ? → 명령 목록 선택기(명령 프롬프트에서만)
+            if self._prompt_purpose == "command" and ch == "?":
+                self._open_command_list()
+                return
+            # Tab → 자동완성 수락
+            if k == "tab":
+                full = self._autocomplete(self.status.prompt_text or "")
+                if full:
+                    self.status.prompt_text = full + " "
+                self._update_suggest()
+                self.status.refresh()
+                return
             if k == "backspace":
                 self.status.prompt_text = (self.status.prompt_text or "")[:-1]
             elif ch is not None and ch.isprintable():
                 self.status.prompt_text = (self.status.prompt_text or "") + ch
+            self._update_suggest()
             self.status.refresh()
 
         def _submit_prompt(self):
