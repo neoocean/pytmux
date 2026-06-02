@@ -48,6 +48,7 @@ python3 pytmux.py attach -t work  # 'work' 세션에 attach(없으면 생성)
 python3 pytmux.py new -s work     # 'work' 라는 이름의 세션 생성 후 attach
 python3 pytmux.py ls              # 세션 목록
 python3 pytmux.py kill-server     # 서버와 모든 세션 종료
+python3 pytmux.py cmd new-window  # 외부에서 서버 제어(split-window -h, rename-window 등)
 python3 pytmux.py --socket PATH … # 사용할 소켓 경로 직접 지정
 ```
 

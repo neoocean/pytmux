@@ -1174,6 +1174,79 @@ class Server:
         self._reset_view(win.active_pane)
         self._write_paste(win.active_pane, self.buffers[index])
 
+    def handle_control(self, line: str):
+        """외부 CLI(`pytmux cmd ...`)에서 보낸 명령을 서버 측에서 처리한다."""
+        try:
+            parts = shlex.split(line)
+        except ValueError:
+            parts = line.split()
+        if not parts:
+            return "empty"
+        c, args = parts[0], parts[1:]
+
+        def opt(flag):
+            return args[args.index(flag) + 1] if flag in args and \
+                args.index(flag) + 1 < len(args) else None
+
+        def first_int():
+            for a in args:
+                if a.lstrip("-").isdigit():
+                    return int(a.lstrip("-"))
+            return None
+        tname = opt("-t")
+        sess = self.sessions.get(tname) if tname else next(
+            iter(self.sessions.values()), None)
+        if c in ("new-session", "new"):
+            self.new_session(80, 24, opt("-s"))
+        elif sess is None:
+            return "no session"
+        elif c in ("new-window", "neww"):
+            self.new_window(sess)
+        elif c in ("kill-window", "killw"):
+            self.kill_window(sess)
+        elif c in ("split-window", "splitw"):
+            self.split_pane(sess, "lr" if "-h" in args else "tb")
+        elif c in ("select-window", "selectw"):
+            i = first_int()
+            if i is not None:
+                self.select_window(sess, i)
+        elif c in ("rename-window", "renamew"):
+            self.rename_window(sess, " ".join(a for a in args
+                                              if not a.startswith("-")))
+        elif c in ("kill-session", "kills"):
+            self.kill_session(tname or sess.name)
+        elif c == "kill-server":
+            self._notify_no_sessions()
+            return "ok"
+        elif c in ("send-keys", "send"):
+            self._control_send_keys(sess, args)
+        else:
+            return f"unknown: {c}"
+        for cl in list(self.clients):
+            asyncio.create_task(self._send_full(cl))
+        return "ok"
+
+    @staticmethod
+    def _control_send_keys(sess: Session, args):
+        sp = {"Enter": b"\r", "Tab": b"\t", "Space": b" ", "Escape": b"\x1b",
+              "BSpace": b"\x7f"}
+        win = sess.active_window
+        if not win:
+            return
+        out = b""
+        for a in (x for x in args if not x.startswith("-")):
+            if a in sp:
+                out += sp[a]
+            elif a.startswith("C-") and len(a) == 3 and a[2].isalpha():
+                out += bytes([ord(a[2].lower()) - 96])
+            else:
+                out += a.encode("utf-8")
+        if out:
+            try:
+                os.write(win.active_pane.master_fd, out)
+            except OSError:
+                pass
+
     def pipe_pane(self, sess: Session, cmd: str):
         win = sess.active_window
         if not win or not win.active_pane:
@@ -1596,6 +1669,11 @@ class Server:
             await write_msg(writer, {"t": "ok"})
             writer.close()
             self._notify_no_sessions()
+            return
+        if t == "control":
+            result = self.handle_control(first.get("line", ""))
+            await write_msg(writer, {"t": "ok", "result": result})
+            writer.close()
             return
         if t != "hello":
             writer.close()
@@ -3310,6 +3388,9 @@ def main(argv=None):
     p_new.add_argument("-s", "--session-name", default=None, help="세션 이름")
     sub.add_parser("ls", help="세션 목록")
     sub.add_parser("kill-server", help="서버와 모든 세션 종료")
+    p_cmd = sub.add_parser("cmd", help="실행 중 서버에 명령 전송(외부 제어)")
+    p_cmd.add_argument("words", nargs=argparse.REMAINDER,
+                       help="예: cmd new-window / cmd split-window -h")
     p_srv = sub.add_parser("server", help="(내부) 서버를 전경 실행")
     p_srv.add_argument("--foreground", action="store_true")
     args = parser.parse_args(argv)
@@ -3330,6 +3411,14 @@ def main(argv=None):
     if args.command == "kill-server":
         reply = control_request(sock_path, {"t": "kill-server"})
         print("서버 종료됨" if reply else "실행 중인 서버 없음")
+        return
+    if args.command == "cmd":
+        line = " ".join(args.words)
+        reply = control_request(sock_path, {"t": "control", "line": line})
+        if not reply:
+            print("실행 중인 서버 없음")
+        else:
+            print(reply.get("result", "ok"))
         return
 
     # 기본 동작 = attach (필요 시 데몬 기동)
