@@ -173,6 +173,23 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("kill-server", "서버와 모든 탭/셸 종료"),
     ]
 
+    # 명령 프롬프트 자동완성 후보. 자주 쓰는 옵션 템플릿을 앞에 두어, 명령을 다 치면
+    # ghost 로 옵션(-h 등)까지 함께 제안된다(→ 로 수락). 뒤에 전체 명령 이름을 붙여
+    # 옵션이 없는 명령도 보완.
+    COMPLETIONS = [
+        "split-window -h", "split-window -v",
+        "resize-pane -Z",
+        "select-pane -L", "select-pane -R", "select-pane -U", "select-pane -D",
+        "swap-pane -U", "swap-pane -D",
+        "join-pane -h",
+        "select-layout tiled", "select-layout even-horizontal",
+        "select-layout even-vertical", "select-layout main-vertical",
+        "select-layout main-horizontal",
+        "capture-pane -S",
+        "monitor-activity on", "monitor-bell on", "automatic-rename on",
+        "detach-client", "kill-server",
+    ] + [n for n, _ in COMMANDS]
+
     class CommandListScreen(ModalScreen):
         """명령 목록 선택기(? 입력 시). 방향키로 이동, Enter 선택, Esc 취소."""
         CSS = """
@@ -825,20 +842,41 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 put(x2, by, "┐")
                 put(bx, y2, "└")
                 put(x2, y2, "┘")
-                # pane-border-status: 제목을 위쪽 테두리에 표기
-                title = p.get("title")
-                if show_title and title and bw >= 6:
-                    label = f" {title} "[: bw - 2]
-                    for i, chc in enumerate(label):
-                        put(bx + 1 + i, by, chc)
+
+            def _draw_title(p):
+                """패널 이름을 위쪽 테두리 중앙에 표기(리네임됐거나 border-status).
+
+                테두리를 모두 그린 뒤 별도 패스로 호출해, 인접 패널의 경계선이
+                이름을 덮어쓰지 않게 한다. 색은 박스 색(활성=파랑/비활성=회색)."""
+                box = p.get("box")
+                if not box:
+                    return
+                bx, by, bw, _bh = box
+                title = (p.get("title") or "").strip()
+                renamed = title and title != "shell"
+                if not ((show_title or renamed) and title and bw >= 4):
+                    return
+                st = active_box if p["id"] == active else inactive_box
+                label = f" {title} "[: bw - 2]
+                start = bx + max(1, (bw - len(label)) // 2)  # 중앙 정렬
+                for i, chc in enumerate(label):
+                    gx = start + i
+                    if bx < gx < bx + bw - 1 and 0 <= by < H:  # 모서리 침범 방지
+                        cells[by][gx] = (chc, st)
 
             boxes = self.layout.get("panes", [])
-            for p in boxes:
+            for p in boxes:               # 1) 비활성 테두리 → 2) 활성 테두리(위에)
                 if p["id"] != active:
                     _draw_box(p)
             for p in boxes:
                 if p["id"] == active:
                     _draw_box(p)
+            for p in boxes:               # 3) 이름은 테두리 위에(활성 이름 최상위)
+                if p["id"] != active:
+                    _draw_title(p)
+            for p in boxes:
+                if p["id"] == active:
+                    _draw_title(p)
             # 패널 제목 경계선(pane-border-status)
             for tb in self.layout.get("titlebars", []):
                 is_active = tb.get("active")
@@ -1090,8 +1128,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 모달은 별도 스크린이라 포커스가 안정적이다(메인 뷰/AUTO_FOCUS 와 무관).
             suggester = None
             if purpose == "command":
-                suggester = SuggestFromList([n for n, _ in COMMANDS],
-                                            case_sensitive=False)
+                suggester = SuggestFromList(COMPLETIONS, case_sensitive=False)
             self.push_screen(
                 PromptScreen(purpose, placeholder, initial, suggester),
                 lambda val: self._prompt_done(purpose, action, val))

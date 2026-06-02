@@ -54,7 +54,10 @@ async def test_command_list_and_autocomplete():
             await pilot.press(ch)
         await pilot.pause(0.1)
         sug = await inp.suggester.get_suggestion("spl") if inp.suggester else None
-        assert sug == "split-window", sug
+        # 자동완성이 옵션까지 한 번에 제안(-h)
+        assert sug == "split-window -h", sug
+        sug2 = await inp.suggester.get_suggestion("split-window")
+        assert sug2 == "split-window -h", sug2
         # ? 로 명령 목록
         await pilot.press("question_mark")
         await pilot.pause(0.2)
@@ -161,6 +164,36 @@ async def test_active_pane_border_highlight():
         ip = next(p for p in lay["panes"] if p["id"] != active)
         ibx, iby, ibw, ibh = ip["box"]
         assert not is_blue(ibx, iby), "비활성 바깥 모서리는 회색"
+    await _with_app(body)
+
+
+async def test_pane_name_on_border():
+    async def body(app, pilot, srv):
+        await pilot.press("ctrl+b")
+        await pilot.press("percent_sign")          # 2패널 → 테두리 박스
+        await pilot.pause(0.4)
+        lay = app.layout
+        active = lay["active"]
+        ap = next(p for p in lay["panes"] if p["id"] == active)
+        ip = next(p for p in lay["panes"] if p["id"] != active)
+        ap["title"] = "EDITOR"      # 활성 패널 리네임
+        ip["title"] = "LOGS"        # 비활성 패널 리네임
+        app._composite()
+        cells = app.view._cells
+
+        def top_text(p):
+            bx, by, bw, _ = p["box"]
+            return "".join(cells[by][x][0] or " " for x in range(bx, bx + bw))
+
+        # 이름이 위쪽 테두리 중앙에 표시
+        ta = top_text(ap)
+        assert "EDITOR" in ta, repr(ta)
+        assert "LOGS" in top_text(ip), repr(top_text(ip))
+        # 활성 패널 이름은 활성 색(파랑)
+        bx, by, bw, _ = ap["box"]
+        i = ta.index("E")
+        st = cells[by][bx + i][1]
+        assert st and st.color and "blue" in str(st.color), "활성 이름 파랑"
     await _with_app(body)
 
 
