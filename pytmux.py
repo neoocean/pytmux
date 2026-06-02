@@ -137,6 +137,17 @@ class Pane:
         self.parent: Split | None = None
         self.title = "shell"
 
+    def reinit(self, pid: int, fd: int, cols: int, rows: int) -> None:
+        """respawn: 새 PTY/셸로 화면 버퍼를 초기화한다."""
+        self.master_fd = fd
+        self.child_pid = pid
+        self.cols, self.rows = cols, rows
+        self.screen = pyte.HistoryScreen(cols, rows, history=HISTORY, ratio=0.5)
+        self.screen.set_mode(pyte.modes.LNM)
+        self.stream = pyte.ByteStream(self.screen)
+        self.scroll = 0
+        self.dirty = True
+
     # 레이아웃 계산용
     def first_pane(self) -> "Pane":
         return self
@@ -443,7 +454,8 @@ class Server:
         self._session_seq = 0
 
     # ---- PTY/패널 생성 ----
-    def spawn_pane(self, cols: int, rows: int, cwd: str | None = None) -> Pane:
+    def _fork_shell(self, cols: int, rows: int, cwd: str | None = None):
+        """셸을 PTY 에 fork/exec 하고 (pid, master_fd) 반환."""
         cols = max(MIN_W, cols)
         rows = max(MIN_H, rows)
         pid, fd = pty.fork()
@@ -463,15 +475,45 @@ class Server:
                 os.execvpe(shell, [shell], env)
             except Exception:
                 os._exit(127)
-        # 부모
         try:
             set_winsize(fd, rows, cols)
         except OSError:
             pass
         os.set_blocking(fd, False)
-        pane = Pane(pid, fd, cols, rows)
+        return pid, fd
+
+    def spawn_pane(self, cols: int, rows: int, cwd: str | None = None) -> Pane:
+        pid, fd = self._fork_shell(cols, rows, cwd)
+        pane = Pane(pid, fd, max(MIN_W, cols), max(MIN_H, rows))
         self.loop.add_reader(fd, self._on_pane_readable, pane)
         return pane
+
+    def respawn_pane(self, sess: Session):
+        """활성 패널의 셸을 종료하고 같은 슬롯에서 새 셸을 띄운다."""
+        win = sess.active_window
+        if not win or not win.active_pane:
+            return
+        pane = win.active_pane
+        cwd = self._pane_cwd(pane)
+        try:
+            self.loop.remove_reader(pane.master_fd)
+        except (OSError, ValueError):
+            pass
+        try:
+            os.killpg(os.getpgid(pane.child_pid), signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+        try:
+            os.close(pane.master_fd)
+        except OSError:
+            pass
+        try:
+            os.waitpid(pane.child_pid, 0)  # SIGKILL 이므로 블로킹 회수 안전
+        except ChildProcessError:
+            pass
+        pid, fd = self._fork_shell(pane.cols, pane.rows, cwd)
+        pane.reinit(pid, fd, pane.cols, pane.rows)
+        self.loop.add_reader(fd, self._on_pane_readable, pane)
 
     def _on_pane_readable(self, pane: Pane):
         try:
@@ -1015,6 +1057,8 @@ class Server:
             self.set_pane_title(sess, str(msg.get("title", "")))
         elif action == "set_border_status":
             self.set_border_status(sess, msg.get("value"))
+        elif action == "respawn_pane":
+            self.respawn_pane(sess)
         elif action == "resize":
             self.resize_split(sess, msg.get("split_id"), msg.get("ratio", 0.5))
         elif action == "resize_dir":
@@ -1894,6 +1938,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("break_pane")
             elif c in ("join-pane", "joinp"):
                 self.send_cmd("join_pane", orient=("lr" if "-h" in args else "tb"))
+            elif c in ("respawn-pane", "respawnp"):
+                self.send_cmd("respawn_pane")
             elif c in ("synchronize-panes", "syncp") or (
                     c == "setw" and "synchronize-panes" in args):
                 val = None
