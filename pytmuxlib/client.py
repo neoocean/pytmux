@@ -1169,6 +1169,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return self._run_command(
                     self.aliases[c] + (" " + " ".join(args) if args else ""),
                     _depth + 1)
+            if c in ("help", "commands", "?", "list-commands"):
+                # 사용 가능한 명령 목록을 읽기전용으로 표시(아무 키나 닫힘)
+                self.push_screen(InfoScreen(
+                    [f"{n:<22}{d}" for n, d in COMMANDS], title="commands (help)"))
+                return
             if c in ("run-shell", "run"):
                 if args:
                     self._run_shell(args[0])
