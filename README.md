@@ -119,6 +119,7 @@ bind r rename-window
 - [docs/DESIGN.md](docs/DESIGN.md) — 아키텍처/설계
 - [docs/FEATURES.md](docs/FEATURES.md) — tmux 대비 기능 제안과 구현 현황
 - [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) — 기여/서브밋 규칙
+- [docs/INPUT_FOCUS_NOTE.md](docs/INPUT_FOCUS_NOTE.md) — 명령 프롬프트를 Textual Input 대신 직접 렌더링하는 이유(포커스 함정)
 
 ## 상태
 
