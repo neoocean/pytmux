@@ -484,7 +484,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
         #view { width: 100%; height: 1fr; }
         #status { width: 100%; height: 1; dock: bottom; }
         #prompt { width: 100%; height: 1; dock: bottom; display: none;
-                  background: $panel; }
+                  background: $surface; color: $text; }
+        #prompt:focus { background: $surface; }
         """
 
         def __init__(self, sock_path: str):
@@ -905,8 +906,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.prompt.value = initial
             self.status.display = False
             self.prompt.display = True
-            self.prompt.focus()
             self.mode = "prompt"
+            # display:none → 표시 직후엔 포커스가 안 걸리므로 리프레시 후 포커스
+            self.call_after_refresh(self._focus_prompt)
+
+        def _focus_prompt(self):
+            self.set_focus(self.prompt)
+            try:
+                self.prompt.cursor_position = len(self.prompt.value)
+            except Exception:
+                pass
 
         def close_prompt(self):
             self.prompt.display = False
