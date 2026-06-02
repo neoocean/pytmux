@@ -44,6 +44,7 @@ import json
 import os
 import pty
 import re
+import shlex
 import signal
 import socket
 import struct
@@ -1696,7 +1697,7 @@ def load_config(path: str | None = None) -> dict:
         set status-fg <color>     # 상태줄 글자색
         bind <key> <command...>   # prefix 후 <key> 에 명령 바인딩
     """
-    cfg = {"prefix": "ctrl+b", "mouse": True, "bindings": {},
+    cfg = {"prefix": "ctrl+b", "mouse": True, "bindings": {}, "aliases": {},
            "status_bg": "green", "status_fg": "black", "mode_keys": "vi"}
     candidates = []
     if path:
@@ -1730,6 +1731,8 @@ def load_config(path: str | None = None) -> dict:
                         cfg["mode_keys"] = "emacs" if val == "emacs" else "vi"
                 elif parts[0] == "bind" and len(parts) >= 3:
                     cfg["bindings"][parts[1]] = " ".join(parts[2:])
+                elif parts[0] == "alias" and len(parts) >= 3:
+                    cfg["aliases"][parts[1]] = " ".join(parts[2:])
     except OSError:
         pass
     return cfg
@@ -2181,6 +2184,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.bindings = config.get("bindings", {})
             self.mouse_enabled = config.get("mouse", True)
             self.mode_keys = config.get("mode_keys", "vi")
+            self.aliases = config.get("aliases", {})
             self.view = MultiplexerView()
             self.status = StatusBar(bg=config.get("status_bg", "green"),
                                     fg=config.get("status_fg", "black"))
@@ -2481,6 +2485,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.prefix_key = cfg["prefix"]
             self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
             self.bindings = cfg["bindings"]
+            self.aliases = cfg.get("aliases", {})
             self.mouse_enabled = cfg["mouse"]
             self.mode_keys = cfg["mode_keys"]
             self.status.bg = cfg["status_bg"]
@@ -2559,13 +2564,55 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     return int(a)
             return None
 
-        def _run_command(self, line):
+        def _run_shell(self, cmd):
+            try:
+                res = subprocess.run(["/bin/sh", "-c", cmd], capture_output=True,
+                                     timeout=15)
+                text = res.stdout.decode("utf-8", "ignore")
+                rc = res.returncode
+            except Exception as e:
+                text, rc = str(e), 1
+            if text.strip():
+                self.send_cmd("set_buffer", text=text)
+                self.push_screen(InfoScreen(text.splitlines()[:40], title="run-shell"))
+            return rc
+
+        def _if_shell(self, cond, then_cmd, else_cmd=None):
+            try:
+                rc = subprocess.run(["/bin/sh", "-c", cond], capture_output=True,
+                                    timeout=15).returncode
+            except Exception:
+                rc = 1
+            if rc == 0:
+                self._run_command(then_cmd)
+            elif else_cmd:
+                self._run_command(else_cmd)
+
+        def _run_command(self, line, _depth=0):
             """tmux 류 명령 문자열을 해석해 서버 명령으로 변환한다."""
-            if not line:
+            if not line or _depth > 8:
                 return
-            parts = line.split()
+            try:
+                parts = shlex.split(line)
+            except ValueError:
+                parts = line.split()
+            if not parts:
+                return
             c = parts[0].lower()
             args = parts[1:]
+            # 사용자 별칭 확장
+            if c in self.aliases:
+                return self._run_command(
+                    self.aliases[c] + (" " + " ".join(args) if args else ""),
+                    _depth + 1)
+            if c in ("run-shell", "run"):
+                if args:
+                    self._run_shell(args[0])
+                return
+            if c in ("if-shell", "if"):
+                if len(args) >= 2:
+                    self._if_shell(args[0], args[1], args[2] if len(args) > 2 else None)
+                return
             if c in ("split-window", "splitw"):
                 orient = "lr" if "-h" in args else "tb"
                 self.send_cmd("split", orient=orient)
