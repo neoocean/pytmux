@@ -2726,6 +2726,25 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif else_cmd:
                 self._run_command(else_cmd)
 
+        _SENDKEYS = {"Enter": b"\r", "Tab": b"\t", "Space": b" ",
+                     "Escape": b"\x1b", "BSpace": b"\x7f", "Up": b"\x1b[A",
+                     "Down": b"\x1b[B", "Right": b"\x1b[C", "Left": b"\x1b[D"}
+
+        def _send_keys(self, args):
+            literal = "-l" in args
+            toks = [a for a in args if not a.startswith("-")]
+            out = b""
+            for a in toks:
+                if not literal and a in self._SENDKEYS:
+                    out += self._SENDKEYS[a]
+                elif (not literal and a.startswith("C-") and len(a) == 3
+                      and a[2].isalpha()):
+                    out += bytes([ord(a[2].lower()) - 96])
+                else:
+                    out += a.encode("utf-8")
+            if out:
+                self.send_input(out)
+
         def _run_command(self, line, _depth=0):
             """tmux 류 명령 문자열을 해석해 서버 명령으로 변환한다."""
             if not line or _depth > 8:
@@ -2894,6 +2913,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 txt = self._clipboard_paste()
                 if txt:
                     self.send_cmd("paste", text=txt)  # bracketed 패스스루
+            elif c in ("send-keys", "send"):
+                self._send_keys(args)
             elif c in ("paste-buffer", "pasteb"):
                 idx = self._first_int(args)
                 self.send_cmd("paste_buffer", index=idx or 0)
