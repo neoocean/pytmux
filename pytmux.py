@@ -2424,6 +2424,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("kill_server")
 
         # ---- 프롬프트 / 명령 ----
+        def reload_config(self, path=None):
+            cfg = load_config(path)
+            self.prefix_key = cfg["prefix"]
+            self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
+            self.bindings = cfg["bindings"]
+            self.mouse_enabled = cfg["mouse"]
+            self.mode_keys = cfg["mode_keys"]
+            self.status.bg = cfg["status_bg"]
+            self.status.fg = cfg["status_fg"]
+            self.status.refresh()
+
         def _active_window_name(self):
             for w in self.status.windows:
                 if w.get("active"):
@@ -2653,6 +2664,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.choose_buffer()
             elif c in ("clear-history", "clearhist"):
                 self.send_cmd("clear_history")
+            elif c in ("source-file", "source"):
+                self.reload_config(args[0] if args else None)
             # 알 수 없는 명령은 조용히 무시
 
         def on_paste(self, event: events.Paste):
