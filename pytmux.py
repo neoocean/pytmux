@@ -279,6 +279,7 @@ class Window:
         self.zoomed = False    # 활성 패널 전체화면(prefix z)
         self.layout_idx = 0    # 레이아웃 프리셋 순환 인덱스
         self.sync = False      # 입력 동기화(synchronize-panes)
+        self.border_status = False  # 패널 제목 경계선 표시(pane-border-status)
 
     @property
     def active_pane(self):
@@ -843,6 +844,12 @@ class Server:
         if win and win.active_pane:
             win.active_pane.title = title
 
+    def set_border_status(self, sess: Session, value=None):
+        win = sess.active_window
+        if not win:
+            return
+        win.border_status = (not win.border_status) if value is None else bool(value)
+
     def select_pane_cycle(self, sess: Session):
         win = sess.active_window
         if not win:
@@ -892,15 +899,24 @@ class Server:
             return None
         # 모든 패널 PTY 크기를 레이아웃에 맞춰 갱신
         panes, divs = win.compute_layout(0, 0, cols, rows)
+        pane_msgs, titlebars = [], []
         for p in panes:
-            p.resize(p.rect[2], p.rect[3])
+            x, y, w, h = p.rect
+            if win.border_status and h > 1:
+                cy, ch = y + 1, h - 1
+                titlebars.append({"x": x, "y": y, "w": w, "title": p.title,
+                                  "active": p is win.active_pane})
+            else:
+                cy, ch = y, h
+            p.resize(w, ch)
+            pane_msgs.append({"id": p.id, "x": x, "y": cy, "w": w, "h": ch,
+                              "title": p.title})
         return {
             "t": "layout",
             "cols": cols, "rows": rows,
-            "panes": [{"id": p.id, "x": p.rect[0], "y": p.rect[1],
-                       "w": p.rect[2], "h": p.rect[3], "title": p.title}
-                      for p in panes],
+            "panes": pane_msgs,
             "dividers": divs,
+            "titlebars": titlebars,
             "active": win.active_pane.id,
         }
 
@@ -997,6 +1013,8 @@ class Server:
             self.set_sync(sess, msg.get("value"))
         elif action == "set_pane_title":
             self.set_pane_title(sess, str(msg.get("title", "")))
+        elif action == "set_border_status":
+            self.set_border_status(sess, msg.get("value"))
         elif action == "resize":
             self.resize_split(sess, msg.get("split_id"), msg.get("ratio", 0.5))
         elif action == "resize_dir":
@@ -1641,6 +1659,20 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         gx, gy = d["x"] + i, d["y"]
                     if 0 <= gx < W and 0 <= gy < H:
                         cells[gy][gx] = (ch, div_style)
+            # 패널 제목 경계선(pane-border-status)
+            for tb in self.layout.get("titlebars", []):
+                is_active = tb.get("active")
+                st = Style(color="black", bgcolor="cyan" if is_active else "white")
+                label = f" {tb['title']} "
+                gy = tb["y"]
+                if not (0 <= gy < H):
+                    continue
+                for i in range(tb["w"]):
+                    gx = tb["x"] + i
+                    chh = label[i] if i < len(label) else "─"
+                    s = st if i < len(label) else Style(color="grey50")
+                    if 0 <= gx < W:
+                        cells[gy][gx] = (chh, s)
             # display-panes 오버레이: 각 패널 중앙에 번호 표시
             if self.mode == "display":
                 for i, p in enumerate(self.layout.get("panes", [])):
@@ -1870,6 +1902,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 elif "off" in args:
                     val = False
                 self.send_cmd("set_sync", value=val)
+            elif c == "setw" and "pane-border-status" in args or \
+                    c == "pane-border-status":
+                val = None
+                if "on" in args or "top" in args:
+                    val = True
+                elif "off" in args:
+                    val = False
+                self.send_cmd("set_border_status", value=val)
             elif c in ("detach-client", "detach"):
                 self.exit(message="detached")
             elif c == "kill-server":
