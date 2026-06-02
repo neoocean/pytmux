@@ -22,7 +22,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
     from textual.screen import ModalScreen
     from textual.strip import Strip
     from textual.widget import Widget
-    from textual.widgets import Input, Label, ListItem, ListView
+    from textual.widgets import Label, ListItem, ListView
     from datetime import datetime
 
     DEFAULT_STYLE = Style()
@@ -227,20 +227,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.stop()
                 self.dismiss(None)
 
-    class PromptBar(Input):
-        """하단 입력줄. 명령(:)·윈도우 이름변경·확인 등에 재사용."""
-
-        def __init__(self):
-            super().__init__(id="prompt")
-            self.purpose = None
-            self.action = None
-
-        def on_key(self, event: events.Key):
-            if event.key == "escape":
-                event.stop()
-                event.prevent_default()
-                self.app.close_prompt()
-
     class MultiplexerView(Widget):
         can_focus = True
 
@@ -402,6 +388,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.autoresume = False
             self.prefix_off = False  # 중첩: outer prefix 해제 표시
             self.message = None    # display-message 임시 메시지
+            self.prompt_text = None  # 명령 프롬프트 입력 버퍼(None=프롬프트 아님)
+            self.prompt_label = ""   # 프롬프트 힌트(":", "rename-window" 등)
             self.bg = bg
             self.fg = fg
             self.left_fmt = left
@@ -436,6 +424,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def render_line(self, y: int) -> Strip:
             w = self.size.width
             base = Style(color=self.fg, bgcolor=self.bg)
+            # 명령 프롬프트 입력 중: 명령줄을 직접 렌더(끝에 커서 블록)
+            if self.prompt_text is not None:
+                ps = Style(color="white", bgcolor="black")
+                cur = Style(color="black", bgcolor="white")
+                label = (self.prompt_label + " ") if self.prompt_label else ":"
+                segs = [Segment(label, ps), Segment(self.prompt_text, ps),
+                        Segment(" ", cur)]
+                return Strip(segs).adjust_cell_length(w, ps)
             if self.message is not None:
                 ms = Style(color="black", bgcolor="yellow", bold=True)
                 return Strip([Segment(f" {self.message} ", ms)]).adjust_cell_length(
@@ -483,9 +479,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
         Screen { layout: vertical; }
         #view { width: 100%; height: 1fr; }
         #status { width: 100%; height: 1; dock: bottom; }
-        #prompt { width: 100%; height: 1; dock: bottom; display: none;
-                  background: $surface; color: $text; }
-        #prompt:focus { background: $surface; }
         """
 
         def __init__(self, sock_path: str):
@@ -517,6 +510,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._attached = False
             self._prev_winc = 0
             self._prev_bell = False
+            self._prompt_purpose = None
+            self._prompt_action = None
             self.view = MultiplexerView()
             self.status = StatusBar(
                 bg=config.get("status_bg", "green"),
@@ -524,12 +519,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 left=config.get("status_left", " [#S] "),
                 right=config.get("status_right",
                                  " #{pane_title}#h %H:%M %d-%b-%y "))
-            self.prompt = PromptBar()
 
         def compose(self) -> ComposeResult:
             yield self.view
             yield self.status
-            yield self.prompt
 
         async def on_mount(self):
             self.view.focus()
@@ -900,48 +893,44 @@ def build_client_app(sock_path: str, config: dict | None = None,
             return ""
 
         def open_prompt(self, purpose, placeholder="", initial="", action=None):
-            self.prompt.purpose = purpose
-            self.prompt.action = action
-            self.prompt.placeholder = placeholder
-            self.prompt.value = initial
-            self.status.display = False
-            self.prompt.display = True
+            # 입력은 App.on_key 에서 직접 처리하고, 명령줄은 상태표시줄에 직접
+            # 렌더링한다(Textual Input 위젯/포커스에 의존하지 않음).
+            self._prompt_purpose = purpose
+            self._prompt_action = action
+            self.status.prompt_label = placeholder
+            self.status.prompt_text = initial
+            self.status.refresh()
             self.mode = "prompt"
-            # 입력은 App.on_key(_handle_prompt_key)에서 직접 처리하므로 입력창에
-            # 포커스를 옮기지 않는다(뷰 포커스 유지 → 키가 App 으로 확실히 전달).
 
         def close_prompt(self):
-            self.prompt.display = False
-            self.status.display = True
-            self.prompt.value = ""
-            self.prompt.purpose = None
-            self.prompt.action = None
+            self.status.prompt_text = None
+            self.status.prompt_label = ""
+            self._prompt_purpose = None
+            self._prompt_action = None
             self.mode = "normal"
+            self.status.refresh()
             self.view.focus()
 
-        def on_input_submitted(self, event):
-            if event.input is self.prompt:
-                self._submit_prompt()
-
         def _handle_prompt_key(self, event: events.Key):
-            """입력창에 포커스가 걸리지 않는 환경에서도 동작하도록 App 레벨에서
-            명령 프롬프트 입력을 직접 처리한다(입력창은 표시용)."""
+            """명령 프롬프트 입력을 App 레벨에서 직접 처리(포커스/Input 비의존)."""
             k = event.key
             ch = event.character
             if k == "escape":
                 self.close_prompt()
-            elif k == "enter":
+                return
+            if k == "enter":
                 self._submit_prompt()
-            elif k == "backspace":
-                self.prompt.value = self.prompt.value[:-1]
+                return
+            if k == "backspace":
+                self.status.prompt_text = (self.status.prompt_text or "")[:-1]
             elif ch is not None and ch.isprintable():
-                self.prompt.value += ch
-            # 그 외(방향키 등)는 무시
+                self.status.prompt_text = (self.status.prompt_text or "") + ch
+            self.status.refresh()
 
         def _submit_prompt(self):
-            val = self.prompt.value.strip()
-            purpose = self.prompt.purpose
-            action = self.prompt.action
+            val = (self.status.prompt_text or "").strip()
+            purpose = self._prompt_purpose
+            action = self._prompt_action
             self.close_prompt()
             if purpose == "command":
                 self._run_command(val)
