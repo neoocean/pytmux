@@ -1889,6 +1889,29 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.stop()
                 self.dismiss(None)
 
+    class ClockScreen(ModalScreen):
+        """clock-mode(prefix t): 큰 시계 오버레이. 아무 키나 누르면 닫힘."""
+        CSS = """
+        ClockScreen { align: center middle; }
+        #clock { width: auto; height: auto; padding: 2 4;
+                 border: round $accent; background: $panel;
+                 color: $success; text-style: bold; }
+        """
+
+        def compose(self) -> ComposeResult:
+            yield Label(datetime.now().strftime("%H:%M:%S"), id="clock")
+
+        def on_mount(self):
+            self.set_interval(1.0, self._tick)
+
+        def _tick(self):
+            self.query_one("#clock", Label).update(
+                datetime.now().strftime("%H:%M:%S"))
+
+        def on_key(self, event: events.Key):
+            event.stop()
+            self.dismiss(None)
+
     class InfoScreen(ModalScreen):
         """간단한 읽기전용 목록 표시(show-options 등). 아무 키나 누르면 닫힘."""
         CSS = """
@@ -2863,6 +2886,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.choose_buffer()
             elif c in ("clear-history", "clearhist"):
                 self.send_cmd("clear_history")
+            elif c in ("clock-mode", "clock"):
+                self.push_screen(ClockScreen())
             elif c in ("source-file", "source"):
                 self.reload_config(args[0] if args else None)
             elif c in ("set", "set-option"):
@@ -2991,6 +3016,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.open_prompt("rename_session", "rename-session")
             elif k == "T":
                 self.open_prompt("rename_pane", "set pane title")
+            elif k == "t":
+                self.push_screen(ClockScreen())
             elif k == "R":
                 self.send_cmd("set_autoresume")
             elif k == "colon" or ch == ":":
