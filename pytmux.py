@@ -1174,6 +1174,68 @@ class Server:
         self._reset_view(win.active_pane)
         self._write_paste(win.active_pane, self.buffers[index])
 
+    # ---- 레이아웃 영속(저장/복원) ----
+    @property
+    def layout_path(self):
+        return os.path.join(os.path.dirname(self.sock_path) or "/tmp",
+                            "layout.json")
+
+    def _serialize_node(self, node):
+        if isinstance(node, Split):
+            return {"type": "split", "orient": node.orient, "ratio": node.ratio,
+                    "a": self._serialize_node(node.a),
+                    "b": self._serialize_node(node.b)}
+        return {"type": "pane", "title": node.title}
+
+    def _build_node(self, spec, cols, rows):
+        if spec.get("type") == "split":
+            a = self._build_node(spec["a"], cols, rows)
+            b = self._build_node(spec["b"], cols, rows)
+            return Split(spec.get("orient", "lr"), a, b, spec.get("ratio", 0.5))
+        p = self.spawn_pane(cols, rows)
+        p.title = spec.get("title", "shell")
+        return p
+
+    def save_layout(self, path=None):
+        path = path or self.layout_path
+        data = {"sessions": [
+            {"name": s.name, "windows": [
+                {"name": w.name, "root": self._serialize_node(w.root)}
+                for w in s.windows]}
+            for s in self.sessions.values()]}
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            return True
+        except OSError:
+            return False
+
+    def restore_layout(self, path=None):
+        path = path or self.layout_path
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return False
+        for ss in data.get("sessions", []):
+            wins = []
+            for i, wspec in enumerate(ss.get("windows", [])):
+                root = self._build_node(wspec["root"], 80, 24)
+                w = Window(i, wspec.get("name", "win"), root)
+                w._active = root if isinstance(root, Pane) else root.first_pane()
+                w._fix_parents(root, None)
+                wins.append(w)
+            if not wins:
+                continue
+            sess = Session.__new__(Session)
+            sess.name = self._unique_name(ss.get("name"))
+            sess.created_at = time.time()
+            sess.windows = wins
+            sess.active_index = 0
+            sess.last_index = 0
+            self.sessions[sess.name] = sess
+        return True
+
     def handle_control(self, line: str):
         """외부 CLI(`pytmux cmd ...`)에서 보낸 명령을 서버 측에서 처리한다."""
         try:
@@ -1562,6 +1624,15 @@ class Server:
         elif action == "pipe_pane":
             self.pipe_pane(sess, str(msg.get("cmd", "")))
             return
+        elif action == "save_layout":
+            ok = self.save_layout()
+            await write_msg(client.writer, {"t": "captured",
+                                            "chars": 1 if ok else 0})
+            return
+        elif action == "restore_layout":
+            self.restore_layout()
+            await self._send_full(client)
+            return
         elif action == "request_tree":
             await write_msg(client.writer, self._tree_msg())
             return
@@ -1775,6 +1846,9 @@ class Server:
             os.unlink(self.sock_path)
         server = await asyncio.start_unix_server(self.handle_client, path=self.sock_path)
         os.chmod(self.sock_path, 0o600)
+        # 재부팅/재시작 후: 저장된 레이아웃이 있으면 구조 복원(셸은 새로 시작)
+        if os.path.exists(self.layout_path) and not self.sessions:
+            self.restore_layout()
         flush = asyncio.create_task(self._flush_loop())
         autoname = asyncio.create_task(self._autorename_loop())
         async with server:
@@ -3058,6 +3132,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif c in ("pipe-pane", "pipep"):
                 self.send_cmd("pipe_pane",
                               cmd=" ".join(a for a in args if not a.startswith("-")))
+            elif c == "save-layout":
+                self.send_cmd("save_layout")
+            elif c == "restore-layout":
+                self.send_cmd("restore_layout")
             elif c in ("choose-buffer", "list-buffers", "lsb"):
                 self.choose_buffer()
             elif c in ("clear-history", "clearhist"):
