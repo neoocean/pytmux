@@ -838,6 +838,11 @@ class Server:
             return
         win.sync = (not win.sync) if value is None else bool(value)
 
+    def set_pane_title(self, sess: Session, title: str):
+        win = sess.active_window
+        if win and win.active_pane:
+            win.active_pane.title = title
+
     def select_pane_cycle(self, sess: Session):
         win = sess.active_window
         if not win:
@@ -893,7 +898,8 @@ class Server:
             "t": "layout",
             "cols": cols, "rows": rows,
             "panes": [{"id": p.id, "x": p.rect[0], "y": p.rect[1],
-                       "w": p.rect[2], "h": p.rect[3]} for p in panes],
+                       "w": p.rect[2], "h": p.rect[3], "title": p.title}
+                      for p in panes],
             "dividers": divs,
             "active": win.active_pane.id,
         }
@@ -909,6 +915,7 @@ class Server:
             "active_pane": win.active_pane.id if win else None,
             "zoomed": bool(win.zoomed) if win else False,
             "sync": bool(win.sync) if win else False,
+            "pane_title": win.active_pane.title if win and win.active_pane else "",
         }
 
     async def _send_full(self, client: ClientConn):
@@ -988,6 +995,8 @@ class Server:
             self.last_pane(sess)
         elif action == "set_sync":
             self.set_sync(sess, msg.get("value"))
+        elif action == "set_pane_title":
+            self.set_pane_title(sess, str(msg.get("title", "")))
         elif action == "resize":
             self.resize_split(sess, msg.get("split_id"), msg.get("ratio", 0.5))
         elif action == "resize_dir":
@@ -1472,6 +1481,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.windows = []
             self.zoomed = False
             self.sync = False
+            self.pane_title = ""
             self.bg = bg
             self.fg = fg
 
@@ -1480,6 +1490,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.windows = msg.get("windows", [])
             self.zoomed = msg.get("zoomed", False)
             self.sync = msg.get("sync", False)
+            self.pane_title = msg.get("pane_title", "")
             self.refresh()
 
         def render_line(self, y: int) -> Strip:
@@ -1499,7 +1510,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 segs.append(Segment(label, active if win["active"] else base))
             now = datetime.now().strftime("%H:%M %d-%b-%y")
             host = socket.gethostname().split(".")[0]
-            right = f" {host} {now} "
+            tpart = (f"{self.pane_title} · " if self.pane_title
+                     and self.pane_title != "shell" else "")
+            right = f" {tpart}{host} {now} "
             used = sum(len(s.text) for s in segs)
             pad = w - used - len(right)
             if pad > 0:
@@ -1746,6 +1759,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif purpose == "rename_session":
                 if val:
                     self.send_cmd("rename_session", name=val)
+            elif purpose == "rename_pane":
+                self.send_cmd("set_pane_title", title=val)
             elif purpose == "new_session":
                 self.send_cmd("new_session", name=val)
             elif purpose == "confirm":
@@ -1789,6 +1804,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("next_window")
             elif c in ("previous-window", "prev"):
                 self.send_cmd("prev_window")
+            elif c in ("select-pane", "selectp"):
+                if "-T" in args:
+                    title = " ".join(args[args.index("-T") + 1:])
+                    self.send_cmd("set_pane_title", title=title)
+                else:
+                    for flag, d in (("-L", "left"), ("-R", "right"),
+                                    ("-U", "up"), ("-D", "down")):
+                        if flag in args:
+                            self.send_cmd("select_pane", dir=d)
+                            break
+            elif c == "rename-pane":
+                self.send_cmd("set_pane_title", title=" ".join(args))
             elif c in ("select-window", "selectw"):
                 idx = self._opt_value(args, "-t")
                 idx = int(idx) if idx and idx.isdigit() else self._first_int(args)
@@ -1943,6 +1970,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                                  action=lambda: self.send_cmd("kill_window"))
             elif k == "dollar_sign" or ch == "$":
                 self.open_prompt("rename_session", "rename-session")
+            elif k == "T":
+                self.open_prompt("rename_pane", "set pane title")
             elif k == "colon" or ch == ":":
                 self.open_prompt("command", ":")
             elif k == "n":
