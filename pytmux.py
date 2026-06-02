@@ -1741,6 +1741,10 @@ def load_config(path: str | None = None) -> dict:
                             cfg["status_interval"] = max(1, int(val))
                         except ValueError:
                             pass
+                    elif opt == "set-titles":
+                        cfg["set_titles"] = val.lower() in ("on", "true", "1", "yes")
+                    elif opt == "set-titles-string":
+                        cfg["title_fmt"] = val
                 elif parts[0] == "bind" and len(parts) >= 3:
                     cfg["bindings"][parts[1]] = " ".join(parts[2:])
                 elif parts[0] == "alias" and len(parts) >= 3:
@@ -2156,9 +2160,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             host = socket.gethostname()
             tpane = (self.pane_title + " · ") if (self.pane_title
                      and self.pane_title != "shell") else ""
+            aw = next((w for w in self.windows if w.get("active")), None)
             return (s.replace("#S", self.session)
                      .replace("#h", host.split(".")[0])
                      .replace("#H", host)
+                     .replace("#I", str(aw["index"]) if aw else "")
+                     .replace("#W", aw["name"] if aw else "")
                      .replace("#{pane_title}", tpane))
 
         def update_status(self, msg):
@@ -2242,6 +2249,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.status_position = config.get("status_position", "bottom")
             self.status_interval = config.get("status_interval", 15)
             self._status_timer = None
+            self.set_titles = config.get("set_titles", False)
+            self.title_fmt = config.get("title_fmt", "#S:#I:#W")
             self.aliases = config.get("aliases", {})
             self.hooks = config.get("hooks", {})
             self._attached = False
@@ -2309,6 +2318,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self._composite()
             elif t == "status":
                 self.status.update_status(msg)
+                if self.set_titles:
+                    self.title = self.status._expand(self.title_fmt)
                 wins = msg.get("windows", [])
                 n = len(wins)
                 if self._prev_winc and n > self._prev_winc:
@@ -2587,6 +2598,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self._restart_status_timer()
                 except ValueError:
                     pass
+            elif name == "set-titles":
+                self.set_titles = val.lower() in ("on", "true", "1", "yes")
+            elif name == "set-titles-string":
+                self.title_fmt = val
 
         def show_options(self):
             lines = [
