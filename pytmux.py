@@ -1412,6 +1412,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         gx, gy = d["x"] + i, d["y"]
                     if 0 <= gx < W and 0 <= gy < H:
                         cells[gy][gx] = (ch, div_style)
+            # display-panes 오버레이: 각 패널 중앙에 번호 표시
+            if self.mode == "display":
+                for i, p in enumerate(self.layout.get("panes", [])):
+                    label = str(i)
+                    cx0 = p["x"] + max(0, (p["w"] - len(label)) // 2)
+                    cy0 = p["y"] + p["h"] // 2
+                    st = Style(color="black", bold=True,
+                               bgcolor="green" if p["id"] == active else "yellow")
+                    for j, chh in enumerate(label):
+                        gx = cx0 + j
+                        if 0 <= gx < W and 0 <= cy0 < H:
+                            cells[cy0][gx] = (chh, st)
             self.view.set_frame(cells)
 
         # ---- 송신 헬퍼 ----
@@ -1619,6 +1631,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.prevent_default()
                 event.stop()
                 return
+            if self.mode == "display":
+                self._handle_display_key(event)
+                event.prevent_default()
+                event.stop()
+                return
             # normal
             if event.key == self.prefix_key:
                 self.mode = "prefix"
@@ -1655,6 +1672,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("zoom")
             elif k == "o":
                 self.send_cmd("cycle_pane")
+            elif k == "q":
+                self._enter_display()
             elif k in ("left", "right", "up", "down"):
                 self.send_cmd("select_pane", dir=k)
             elif k in ("H", "J", "K", "L"):
@@ -1686,6 +1705,27 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif k == "enter":
                 self.open_menu()
             # 그 외 키는 무시
+
+        # ---- display-panes (prefix q) ----
+        def _enter_display(self):
+            self.mode = "display"
+            self._composite()
+            self.set_timer(1.5, self._auto_exit_display)
+
+        def _auto_exit_display(self):
+            if self.mode == "display":
+                self._exit_display()
+
+        def _exit_display(self):
+            self.mode = "normal"
+            self._composite()
+
+        def _handle_display_key(self, event: events.Key):
+            panes = self.layout.get("panes", [])
+            k = event.key
+            if k.isdigit() and int(k) < len(panes):
+                self.send_cmd("select_pane_id", id=panes[int(k)]["id"])
+            self._exit_display()
 
         def _handle_scroll_key(self, event: events.Key):
             aid = self.layout.get("active")
