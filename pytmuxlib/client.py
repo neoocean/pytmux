@@ -61,11 +61,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
         if k in SPECIAL:
             return SPECIAL[k]
         if k.startswith("ctrl+"):
-            if event.character:
-                return event.character.encode("utf-8", "replace")
             c = k[5:]
-            if len(c) == 1 and c.isalpha():
+            # ASCII 영문 ctrl 조합만 제어코드로(한글 등 비ASCII는 무시)
+            if len(c) == 1 and "a" <= c.lower() <= "z":
                 return bytes([ord(c.lower()) - 96])
+            if event.character and event.character.isascii():
+                return event.character.encode("utf-8", "replace")
             return b""
         if event.character is not None and event.character != "":
             return event.character.encode("utf-8", "replace")
