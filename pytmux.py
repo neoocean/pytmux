@@ -627,6 +627,42 @@ class Server:
         win.layout_idx = (win.layout_idx + 1) % len(self.LAYOUTS)
         win.apply_preset(self.LAYOUTS[win.layout_idx])
 
+    def rotate_panes(self, sess: Session, forward: bool = True):
+        win = sess.active_window
+        if not win:
+            return
+        win.zoomed = False
+        leaves = win.panes()
+        n = len(leaves)
+        if n < 2:
+            return
+        slots = [(p.parent, "a" if p.parent.a is p else "b") for p in leaves]
+        shift = 1 if forward else -1
+        new = [leaves[(i + shift) % n] for i in range(n)]
+        for (par, attr), pane in zip(slots, new):
+            setattr(par, attr, pane)
+            pane.parent = par
+
+    def swap_pane(self, sess: Session, forward: bool = True):
+        win = sess.active_window
+        if not win:
+            return
+        win.zoomed = False
+        leaves = win.panes()
+        n = len(leaves)
+        if n < 2 or win.active_pane not in leaves:
+            return
+        i = leaves.index(win.active_pane)
+        j = (i + 1) % n if forward else (i - 1) % n
+        a, b = leaves[i], leaves[j]
+        pa, aattr = a.parent, ("a" if a.parent.a is a else "b")
+        pb, battr = b.parent, ("a" if b.parent.a is b else "b")
+        setattr(pa, aattr, b)
+        b.parent = pa
+        setattr(pb, battr, a)
+        a.parent = pb
+        # 활성 패널은 그대로 따라간다(같은 셸)
+
     def toggle_zoom(self, sess: Session):
         win = sess.active_window
         if not win:
@@ -873,6 +909,10 @@ class Server:
             self.select_layout(sess, msg.get("preset", "tiled"))
         elif action == "cycle_layout":
             self.cycle_layout(sess)
+        elif action == "rotate":
+            self.rotate_panes(sess, bool(msg.get("forward", True)))
+        elif action == "swap_pane":
+            self.swap_pane(sess, bool(msg.get("forward", True)))
         elif action == "rename_window":
             self.rename_window(sess, str(msg.get("name", "")).strip())
         elif action == "kill_window":
@@ -1674,6 +1714,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.send_cmd("cycle_layout")
             elif c in ("next-layout", "nextl"):
                 self.send_cmd("cycle_layout")
+            elif c in ("rotate-window", "rotatew"):
+                self.send_cmd("rotate", forward=("-D" not in args))
+            elif c in ("swap-pane", "swapp"):
+                self.send_cmd("swap_pane", forward=("-U" not in args))
             elif c in ("detach-client", "detach"):
                 self.exit(message="detached")
             elif c == "kill-server":
@@ -1748,6 +1792,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self._enter_display()
             elif k == "space":
                 self.send_cmd("cycle_layout")
+            elif k == "ctrl+o":
+                self.send_cmd("rotate", forward=True)
+            elif ch == "{":
+                self.send_cmd("swap_pane", forward=False)
+            elif ch == "}":
+                self.send_cmd("swap_pane", forward=True)
             elif k in ("left", "right", "up", "down"):
                 self.send_cmd("select_pane", dir=k)
             elif k in ("H", "J", "K", "L"):
