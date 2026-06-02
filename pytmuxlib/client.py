@@ -86,7 +86,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("prev_window", "이전 윈도우"),
         ("new_session", "새 세션"),
         ("kill_session", "세션 삭제"),
-        ("command", "명령 입력 (:)"),
+        ("command", "명령 입력"),
         ("detach", "detach (앱 종료, 세션 유지)"),
         ("kill_server", "서버 종료 (모든 세션 종료)"),
     ]
@@ -925,7 +925,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.open_prompt("confirm", "kill-session? (y/N)",
                                  action=lambda: self.send_cmd("kill_session"))
             elif key == "command":
-                self.open_prompt("command", ":")
+                self.open_prompt("command", "")
             elif key == "detach":
                 self.exit(message="detached")
             elif key == "kill_server":
@@ -1377,7 +1377,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # ESC: vi 처럼 prefix 없이 바로 명령 입력 프롬프트 열기
             # (주의: 이 모드에서 ESC 는 패널 안 프로그램으로 전달되지 않음)
             if event.key == "escape":
-                self.open_prompt("command", ":")
+                self.open_prompt("command", "")
                 event.prevent_default()
                 event.stop()
                 return
@@ -1463,7 +1463,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif k == "R":
                 self.send_cmd("set_autoresume")
             elif k == "colon" or ch == ":":
-                self.open_prompt("command", ":")
+                self.open_prompt("command", "")
             elif k == "n":
                 self.send_cmd("next_window")
             elif k == "p":
