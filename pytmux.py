@@ -2211,9 +2211,37 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 asyncio.create_task(write_msg(self.writer, m))
 
         # ---- 복사/버퍼 ----
+        @staticmethod
+        def _clipboard_copy(text):
+            """OS 클립보드로 복사(pbcopy/xclip/wl-copy)."""
+            import shutil
+            for cmd in (["pbcopy"], ["xclip", "-selection", "clipboard"],
+                        ["wl-copy"]):
+                if shutil.which(cmd[0]):
+                    try:
+                        subprocess.run(cmd, input=text.encode("utf-8"), timeout=2)
+                        return True
+                    except Exception:
+                        pass
+            return False
+
+        @staticmethod
+        def _clipboard_paste():
+            import shutil
+            for cmd in (["pbpaste"], ["xclip", "-selection", "clipboard", "-o"],
+                        ["wl-paste", "-n"]):
+                if shutil.which(cmd[0]):
+                    try:
+                        return subprocess.run(cmd, capture_output=True, timeout=2
+                                              ).stdout.decode("utf-8", "ignore")
+                    except Exception:
+                        pass
+            return ""
+
         def copy_text(self, text):
-            # 서버 페이스트 버퍼에 저장(클립보드 연동은 4.4 에서 추가)
+            # 서버 페이스트 버퍼 + OS 클립보드 양쪽에 저장
             self.send_cmd("set_buffer", text=text)
+            self._clipboard_copy(text)
 
         # ---- choose-tree ----
         def request_tree(self):
@@ -2493,6 +2521,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.exit(message="detached")
             elif c == "kill-server":
                 self.send_cmd("kill_server")
+            elif c in ("paste-clipboard", "pasteb-clip"):
+                txt = self._clipboard_paste()
+                if txt:
+                    self.send_input(txt.encode("utf-8"))
             # 알 수 없는 명령은 조용히 무시
 
         # ---- 이벤트 ----
