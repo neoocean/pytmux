@@ -2118,6 +2118,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.sync = False
             self.pane_title = ""
             self.autoresume = False
+            self.message = None    # display-message 임시 메시지
             self.bg = bg
             self.fg = fg
             self.left_fmt = left
@@ -2149,6 +2150,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def render_line(self, y: int) -> Strip:
             w = self.size.width
             base = Style(color=self.fg, bgcolor=self.bg)
+            if self.message is not None:
+                ms = Style(color="black", bgcolor="yellow", bold=True)
+                return Strip([Segment(f" {self.message} ", ms)]).adjust_cell_length(
+                    w, ms)
             # 활성 윈도우: 녹색 바 위에서 잘 보이도록 검정 배경 + 흰 글씨(굵게)
             active = Style(color="white", bgcolor="black", bold=True)
             segs = [Segment(self._expand(self.left_fmt), base)]
@@ -2440,7 +2445,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def copy_text(self, text):
             # 서버 페이스트 버퍼 + OS 클립보드 양쪽에 저장
             self.send_cmd("set_buffer", text=text)
-            self._clipboard_copy(text)
+            clip = self._clipboard_copy(text)
+            self.display_message(
+                f"{len(text)} chars 복사됨" + (" (클립보드)" if clip else ""))
 
         def choose_buffer(self):
             self._want_buffers = True
@@ -2512,6 +2519,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("kill_server")
 
         # ---- 프롬프트 / 명령 ----
+        def display_message(self, text, secs=2.0):
+            self.status.message = text
+            self.status.refresh()
+            self.set_timer(secs, self._clear_message)
+
+        def _clear_message(self):
+            self.status.message = None
+            self.status.refresh()
+
         def _restart_status_timer(self):
             if self._status_timer is not None:
                 self._status_timer.stop()
@@ -2862,6 +2878,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     opts = [a for a in args if not a.startswith("-")]
                     if len(opts) >= 2:
                         self.hooks[opts[0]] = " ".join(opts[1:])
+            elif c in ("display-message", "display", "displaym"):
+                self.display_message(" ".join(args) if args else "")
             elif c == "show-hooks":
                 self.push_screen(InfoScreen(
                     [f"{k} → {v}" for k, v in self.hooks.items()], title="hooks"))
