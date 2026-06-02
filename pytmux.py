@@ -1118,6 +1118,27 @@ class Server:
         self.buffers.insert(0, text)
         del self.buffers[50:]
 
+    def paste_buffer(self, sess: Session, index=0):
+        win = sess.active_window
+        if not win or not self.buffers:
+            return
+        if not (0 <= index < len(self.buffers)):
+            index = 0
+        p = win.active_pane
+        if p.scroll or p._match_abs is not None:
+            p.scroll = 0
+            p._match_abs = None
+            p.dirty = True
+        try:
+            os.write(p.master_fd, self.buffers[index].encode("utf-8"))
+        except OSError:
+            pass
+
+    def _buffers_msg(self):
+        return {"t": "buffers", "items": [
+            {"i": i, "preview": (b.splitlines()[0] if b.splitlines() else "")[:50]}
+            for i, b in enumerate(self.buffers)]}
+
     def search_pane(self, sess: Session, query, direction="up"):
         win = sess.active_window
         if not win or not win.active_pane:
@@ -1359,6 +1380,12 @@ class Server:
             self.search_pane(sess, msg.get("query"), msg.get("direction", "up"))
         elif action == "set_buffer":
             self.set_buffer(str(msg.get("text", "")))
+            return
+        elif action == "paste_buffer":
+            self.paste_buffer(sess, int(msg.get("index", 0)))
+            return
+        elif action == "request_buffers":
+            await write_msg(client.writer, self._buffers_msg())
             return
         elif action == "request_tree":
             await write_msg(client.writer, self._tree_msg())
@@ -1797,6 +1824,36 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.stop()
                 self.dismiss(None)
 
+    class ChooseBufferScreen(ModalScreen):
+        CSS = """
+        ChooseBufferScreen { align: center middle; }
+        #buf { width: 64; height: auto; max-height: 80%;
+               border: round $accent; background: $panel; }
+        """
+
+        def __init__(self, items):
+            super().__init__()
+            self._items = items
+
+        def compose(self) -> ComposeResult:
+            rows = [ListItem(Label(f"{it['i']}: {it['preview']}"), id=f"b{it['i']}")
+                    for it in self._items] or [ListItem(Label("(버퍼 없음)"), id="bnone")]
+            yield ListView(*rows, id="buf")
+
+        def on_mount(self):
+            self.query_one(ListView).focus()
+
+        def on_list_view_selected(self, event):
+            if event.item.id == "bnone":
+                self.dismiss(None)
+            else:
+                self.dismiss(int(event.item.id[1:]))
+
+        def on_key(self, event: events.Key):
+            if event.key == "escape":
+                event.stop()
+                self.dismiss(None)
+
     class PromptBar(Input):
         """하단 입력줄. 명령(:)·윈도우 이름변경·확인 등에 재사용."""
 
@@ -2043,6 +2100,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.pane_content = {}   # id -> (rows, cursor)
             self.mode = "normal"     # normal | prefix | scroll | prompt | display
             self._want_tree = False  # choose-tree 응답 대기
+            self._want_buffers = False  # choose-buffer 응답 대기
             # ---- 설정(config) 적용 ----
             self.prefix_key = config.get("prefix", "ctrl+b")
             self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
@@ -2099,6 +2157,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if self._want_tree:
                     self._want_tree = False
                     self._open_choose_tree(msg)
+            elif t == "buffers":
+                if self._want_buffers:
+                    self._want_buffers = False
+                    self._open_choose_buffer(msg.get("items", []))
             elif t == "bye":
                 self.exit(message="pytmux: 서버가 종료되었습니다")
 
@@ -2242,6 +2304,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 서버 페이스트 버퍼 + OS 클립보드 양쪽에 저장
             self.send_cmd("set_buffer", text=text)
             self._clipboard_copy(text)
+
+        def choose_buffer(self):
+            self._want_buffers = True
+            self.send_cmd("request_buffers")
+
+        def _open_choose_buffer(self, items):
+            def handle(idx):
+                if idx is not None:
+                    self.send_cmd("paste_buffer", index=idx)
+            self.push_screen(ChooseBufferScreen(items), handle)
 
         # ---- choose-tree ----
         def request_tree(self):
@@ -2525,6 +2597,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 txt = self._clipboard_paste()
                 if txt:
                     self.send_input(txt.encode("utf-8"))
+            elif c in ("paste-buffer", "pasteb"):
+                idx = self._first_int(args)
+                self.send_cmd("paste_buffer", index=idx or 0)
+            elif c in ("choose-buffer", "list-buffers", "lsb"):
+                self.choose_buffer()
             # 알 수 없는 명령은 조용히 무시
 
         # ---- 이벤트 ----
@@ -2643,6 +2720,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.exit(message="detached")
             elif k == "left_square_bracket" or ch == "[":
                 self.mode = "scroll"
+            elif k == "right_square_bracket" or ch == "]":
+                self.send_cmd("paste_buffer", index=0)
+            elif k == "equals_sign" or ch == "=":
+                self.choose_buffer()
             elif k == "enter":
                 self.open_menu()
             # 그 외 키는 무시
