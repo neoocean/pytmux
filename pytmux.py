@@ -187,6 +187,7 @@ class Pane:
         self.search_query = ""   # 스크롤백 검색어
         self._match_abs = None   # 현재 매치된 절대 라인 인덱스
         self.bracketed = False   # 내부 앱이 bracketed paste 모드를 켰는지
+        self.pipe_proc = None    # pipe-pane 대상 프로세스
 
     def reinit(self, pid: int, fd: int, cols: int, rows: int) -> None:
         """respawn: 새 PTY/셸로 화면 버퍼를 초기화한다."""
@@ -600,6 +601,13 @@ class Server:
             pane.bracketed = True
         if b"\x1b[?2004l" in data:
             pane.bracketed = False
+        # pipe-pane: 패널 출력을 외부 명령으로 복제
+        if pane.pipe_proc and pane.pipe_proc.stdin:
+            try:
+                pane.pipe_proc.stdin.write(data)
+                pane.pipe_proc.stdin.flush()
+            except Exception:
+                pane.pipe_proc = None
         if pane.autoresume and not pane._resume_pending:
             self._maybe_schedule_resume(pane, data.decode("utf-8", "ignore"))
 
@@ -638,6 +646,12 @@ class Server:
             self._maybe_schedule_resume(p, text)
 
     def _pane_eof(self, pane: Pane):
+        if pane.pipe_proc:
+            try:
+                pane.pipe_proc.stdin.close()
+            except Exception:
+                pass
+            pane.pipe_proc = None
         try:
             self.loop.remove_reader(pane.master_fd)
         except (OSError, ValueError):
@@ -1160,6 +1174,28 @@ class Server:
         self._reset_view(win.active_pane)
         self._write_paste(win.active_pane, self.buffers[index])
 
+    def pipe_pane(self, sess: Session, cmd: str):
+        win = sess.active_window
+        if not win or not win.active_pane:
+            return
+        p = win.active_pane
+        if p.pipe_proc:  # 토글/재시작: 기존 파이프 종료
+            try:
+                p.pipe_proc.stdin.close()
+            except Exception:
+                pass
+            try:
+                p.pipe_proc.terminate()
+            except Exception:
+                pass
+            p.pipe_proc = None
+        if cmd:
+            try:
+                p.pipe_proc = subprocess.Popen(["/bin/sh", "-c", cmd],
+                                               stdin=subprocess.PIPE)
+            except Exception:
+                p.pipe_proc = None
+
     def capture_pane(self, sess: Session, full=False):
         win = sess.active_window
         if not win or not win.active_pane:
@@ -1449,6 +1485,9 @@ class Server:
         elif action == "capture_pane":
             n = self.capture_pane(sess, bool(msg.get("full")))
             await write_msg(client.writer, {"t": "captured", "chars": n})
+            return
+        elif action == "pipe_pane":
+            self.pipe_pane(sess, str(msg.get("cmd", "")))
             return
         elif action == "request_tree":
             await write_msg(client.writer, self._tree_msg())
@@ -2938,6 +2977,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("paste_buffer", index=idx or 0)
             elif c in ("capture-pane", "capturep"):
                 self.send_cmd("capture_pane", full=("-S" in args or "-a" in args))
+            elif c in ("pipe-pane", "pipep"):
+                self.send_cmd("pipe_pane",
+                              cmd=" ".join(a for a in args if not a.startswith("-")))
             elif c in ("choose-buffer", "list-buffers", "lsb"):
                 self.choose_buffer()
             elif c in ("clear-history", "clearhist"):
