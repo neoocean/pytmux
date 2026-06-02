@@ -276,6 +276,7 @@ class Window:
         self.root = root
         self.active_pane = root
         self.zoomed = False    # 활성 패널 전체화면(prefix z)
+        self.layout_idx = 0    # 레이아웃 프리셋 순환 인덱스
 
     def panes(self):
         out = []
@@ -345,6 +346,51 @@ class Window:
                     return n
                 stack += [n.a, n.b]
         return None
+
+    # --- 레이아웃 프리셋(select-layout) ---
+    @staticmethod
+    def _chain(nodes, orient):
+        """노드들을 동일 비율의 orient 분할 사슬로 묶는다."""
+        node = nodes[-1]
+        for i in range(len(nodes) - 2, -1, -1):
+            count = len(nodes) - i  # 이 서브트리의 잎/노드 수
+            node = Split(orient, nodes[i], node, 1.0 / count)
+        return node
+
+    def _fix_parents(self, node, parent):
+        node.parent = parent
+        if isinstance(node, Split):
+            self._fix_parents(node.a, node)
+            self._fix_parents(node.b, node)
+
+    def apply_preset(self, preset: str):
+        leaves = self.panes()
+        if not leaves:
+            return
+        self.zoomed = False
+        if preset in ("even-horizontal", "even-h"):
+            self.root = self._chain(leaves, "lr")
+        elif preset in ("even-vertical", "even-v"):
+            self.root = self._chain(leaves, "tb")
+        elif preset == "main-vertical":
+            main, rest = leaves[0], leaves[1:]
+            self.root = (Split("lr", main, self._chain(rest, "tb"), 0.5)
+                         if rest else main)
+        elif preset == "main-horizontal":
+            main, rest = leaves[0], leaves[1:]
+            self.root = (Split("tb", main, self._chain(rest, "lr"), 0.5)
+                         if rest else main)
+        elif preset == "tiled":
+            n = len(leaves)
+            cols = int(n ** 0.5)
+            if cols * cols < n:
+                cols += 1
+            rows = [leaves[i:i + cols] for i in range(0, n, cols)]
+            row_nodes = [self._chain(r, "lr") for r in rows]
+            self.root = self._chain(row_nodes, "tb")
+        else:
+            return
+        self._fix_parents(self.root, None)
 
 
 class Session:
@@ -565,6 +611,21 @@ class Server:
     def select_window(self, sess: Session, index: int):
         if 0 <= index < len(sess.windows):
             sess.active_index = index
+
+    LAYOUTS = ["even-horizontal", "even-vertical", "main-horizontal",
+               "main-vertical", "tiled"]
+
+    def select_layout(self, sess: Session, preset: str):
+        win = sess.active_window
+        if win:
+            win.apply_preset(preset)
+
+    def cycle_layout(self, sess: Session):
+        win = sess.active_window
+        if not win:
+            return
+        win.layout_idx = (win.layout_idx + 1) % len(self.LAYOUTS)
+        win.apply_preset(self.LAYOUTS[win.layout_idx])
 
     def toggle_zoom(self, sess: Session):
         win = sess.active_window
@@ -808,6 +869,10 @@ class Server:
             self.select_window(sess, msg.get("index", 0))
         elif action == "zoom":
             self.toggle_zoom(sess)
+        elif action == "select_layout":
+            self.select_layout(sess, msg.get("preset", "tiled"))
+        elif action == "cycle_layout":
+            self.cycle_layout(sess)
         elif action == "rename_window":
             self.rename_window(sess, str(msg.get("name", "")).strip())
         elif action == "kill_window":
@@ -1602,6 +1667,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.send_cmd("zoom")
             elif c == "zoom":
                 self.send_cmd("zoom")
+            elif c in ("select-layout", "selectl"):
+                if args:
+                    self.send_cmd("select_layout", preset=args[0])
+                else:
+                    self.send_cmd("cycle_layout")
+            elif c in ("next-layout", "nextl"):
+                self.send_cmd("cycle_layout")
             elif c in ("detach-client", "detach"):
                 self.exit(message="detached")
             elif c == "kill-server":
@@ -1674,6 +1746,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("cycle_pane")
             elif k == "q":
                 self._enter_display()
+            elif k == "space":
+                self.send_cmd("cycle_layout")
             elif k in ("left", "right", "up", "down"):
                 self.send_cmd("select_pane", dir=k)
             elif k in ("H", "J", "K", "L"):
