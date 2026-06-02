@@ -991,6 +991,13 @@ class Server:
             "active": win.active_pane.id,
         }
 
+    def _tree_msg(self):
+        return {"t": "tree", "current": None, "sessions": [
+            {"name": s.name, "active": (s is None),
+             "windows": [{"index": w.index, "name": w.name,
+                          "panes": len(w.panes())} for w in s.windows]}
+            for s in self.sessions.values()]}
+
     def _status_msg(self, sess: Session):
         win = sess.active_window
         return {
@@ -1088,6 +1095,9 @@ class Server:
             self.set_border_status(sess, msg.get("value"))
         elif action == "respawn_pane":
             self.respawn_pane(sess)
+        elif action == "request_tree":
+            await write_msg(client.writer, self._tree_msg())
+            return
         elif action == "resize":
             self.resize_split(sess, msg.get("split_id"), msg.get("ratio", 0.5))
         elif action == "resize_dir":
@@ -1420,6 +1430,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("new_window", "새 윈도우"),
         ("rename_window", "윈도우 이름 변경"),
         ("kill_window", "윈도우 삭제"),
+        ("choose_tree", "윈도우 선택기(트리)"),
         ("next_window", "다음 윈도우"),
         ("prev_window", "이전 윈도우"),
         ("new_session", "새 세션"),
@@ -1445,6 +1456,41 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def on_list_view_selected(self, event):
             key = event.item.id[2:]
             self.dismiss(key)
+
+        def on_key(self, event: events.Key):
+            if event.key == "escape":
+                event.stop()
+                self.dismiss(None)
+
+    class ChooseTreeScreen(ModalScreen):
+        CSS = """
+        ChooseTreeScreen { align: center middle; }
+        #tree { width: 64; height: auto; max-height: 80%;
+                border: round $accent; background: $panel; }
+        """
+
+        def __init__(self, tree):
+            super().__init__()
+            self._treedata = tree
+            self.entries = []
+
+        def compose(self) -> ComposeResult:
+            items = []
+            n = 0
+            for s in self._treedata.get("sessions", []):
+                for w in s["windows"]:
+                    label = (f"{s['name']}: {w['index']}:{w['name']} "
+                             f"({w['panes']} panes)")
+                    self.entries.append((s["name"], w["index"]))
+                    items.append(ListItem(Label(label), id=f"e{n}"))
+                    n += 1
+            yield ListView(*items, id="tree")
+
+        def on_mount(self):
+            self.query_one(ListView).focus()
+
+        def on_list_view_selected(self, event):
+            self.dismiss(self.entries[int(event.item.id[1:])])
 
         def on_key(self, event: events.Key):
             if event.key == "escape":
@@ -1638,7 +1684,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.layout = {"panes": [], "dividers": [], "active": None,
                            "cols": 80, "rows": 24}
             self.pane_content = {}   # id -> (rows, cursor)
-            self.mode = "normal"     # normal | prefix | scroll | prompt
+            self.mode = "normal"     # normal | prefix | scroll | prompt | display
+            self._want_tree = False  # choose-tree 응답 대기
             # ---- 설정(config) 적용 ----
             self.prefix_key = config.get("prefix", "ctrl+b")
             self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
@@ -1691,6 +1738,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self._composite()
             elif t == "status":
                 self.status.update_status(msg)
+            elif t == "tree":
+                if self._want_tree:
+                    self._want_tree = False
+                    self._open_choose_tree(msg)
             elif t == "bye":
                 self.exit(message="pytmux: 서버가 종료되었습니다")
 
@@ -1790,6 +1841,19 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     m["delta"] = delta
                 asyncio.create_task(write_msg(self.writer, m))
 
+        # ---- choose-tree ----
+        def request_tree(self):
+            self._want_tree = True
+            self.send_cmd("request_tree")
+
+        def _open_choose_tree(self, tree):
+            def handle(res):
+                if res:
+                    name, idx = res
+                    self.send_cmd("switch_session", name=name)
+                    self.send_cmd("select_window", index=idx)
+            self.push_screen(ChooseTreeScreen(tree), handle)
+
         # ---- 메뉴 ----
         def open_menu(self):
             def handle(result):
@@ -1808,6 +1872,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("kill_pane")
             elif key == "sync":
                 self.send_cmd("set_sync")
+            elif key == "choose_tree":
+                self.request_tree()
             elif key == "new_window":
                 self.send_cmd("new_window")
             elif key == "rename_window":
@@ -1930,6 +1996,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 idx = int(idx) if idx and idx.isdigit() else self._first_int(args)
                 if idx is not None:
                     self.send_cmd("swap_window", index=idx)
+            elif c in ("choose-tree", "choose-window", "choose-session"):
+                self.request_tree()
             elif c in ("select-pane", "selectp"):
                 if "-T" in args:
                     title = " ".join(args[args.index("-T") + 1:])
@@ -2116,6 +2184,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("prev_window")
             elif k == "l":
                 self.send_cmd("last_window")
+            elif k == "w":
+                self.request_tree()
             elif k == "period" or ch == ".":
                 self.open_prompt("move_window", "move-window to index")
             elif k.isdigit():
