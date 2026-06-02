@@ -200,6 +200,33 @@ async def test_tab_hierarchy_and_commands():
         await teardown(srv, task, sock)
 
 
+async def test_resize_rescales_panes():
+    """터미널 리사이즈 시 패널이 비율대로 다시 계산된다."""
+    import pytmux
+    srv, task, sock = await server_only()
+    try:
+        r, w = await asyncio.open_unix_connection(path=sock)
+        await pytmux.write_msg(w, {"t": "hello", "cols": 100, "rows": 40})
+        s = []
+        await harness.drain(r, s)
+        sess = next(iter(srv.sessions.values()))
+        srv.split_pane(sess, "lr")
+        await pytmux.write_msg(w, {"t": "resize", "cols": 100, "rows": 40})
+        s = []
+        await harness.drain(r, s)
+        big = [m for m in s if m["t"] == "layout"][-1]
+        wbig = max(p["w"] for p in big["panes"])
+        await pytmux.write_msg(w, {"t": "resize", "cols": 50, "rows": 40})
+        s = []
+        await harness.drain(r, s)
+        small = [m for m in s if m["t"] == "layout"][-1]
+        wsmall = max(p["w"] for p in small["panes"])
+        assert small["cols"] == 50 and wsmall < wbig, (wsmall, wbig)
+        w.close()
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_per_tab_layout_save_load():
     """활성 탭 레이아웃을 이름 슬롯에 저장 → 새 탭/현재 탭 덮어쓰기로 불러오기."""
     srv, task, sock = await server_only()
