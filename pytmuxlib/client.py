@@ -195,7 +195,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
         CSS = """
         CommandListScreen { align: center middle; }
         #cmds { width: 72; height: auto; max-height: 80%;
-                border: round $accent; background: $panel; }
+                border: round $accent; background: $panel;
+                overflow-y: scroll;                 /* 항상 스크롤바 트랙 표시 */
+                scrollbar-size-vertical: 2;
+                scrollbar-color: $accent;
+                scrollbar-color-hover: $accent-lighten-1;
+                scrollbar-background: $panel-darken-2; }
         """
 
         def __init__(self, items, query=""):
@@ -204,8 +209,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._items = [it for it in items if it[0].startswith(q)] or items
 
         def compose(self) -> ComposeResult:
-            yield ListView(*[ListItem(Label(f"{n:<20} {d}"), id=f"c{i}")
-                             for i, (n, d) in enumerate(self._items)], id="cmds")
+            lv = ListView(*[ListItem(Label(f"{n:<20} {d}"), id=f"c{i}")
+                            for i, (n, d) in enumerate(self._items)], id="cmds")
+            lv.border_title = f"명령 {len(self._items)}개"
+            lv.border_subtitle = "↑↓ 스크롤 · Enter 선택 · Esc 닫기"
+            yield lv
 
         def on_mount(self):
             self.query_one(ListView).focus()

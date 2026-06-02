@@ -61,7 +61,13 @@ async def test_command_list_and_autocomplete():
         # ? 로 명령 목록
         await pilot.press("question_mark")
         await pilot.pause(0.2)
-        assert app.screen_stack[-1].__class__.__name__ == "CommandListScreen"
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "CommandListScreen"
+        # 스크롤 가능 + 명령 개수/스크롤 힌트 표시
+        from textual.widgets import ListView
+        lv = scr.query_one(ListView)
+        assert str(lv.styles.overflow_y) == "scroll", "스크롤바 항상 표시"
+        assert "스크롤" in str(lv.border_subtitle), lv.border_subtitle
     await _with_app(body)
 
 
