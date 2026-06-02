@@ -30,8 +30,8 @@ def cleanup(srv, sock):
     """패널 자식 프로세스를 정리하고 소켓 파일 제거(루프는 중단하지 않음)."""
     srv.running = False
     for s in list(srv.sessions.values()):
-        for w in s.windows:
-            for p in w.panes():
+        for t in s.tabs:
+            for p in t.window.panes():
                 try:
                     os.killpg(os.getpgid(p.child_pid), signal.SIGKILL)
                 except Exception:

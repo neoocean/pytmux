@@ -41,7 +41,7 @@ from pytmuxlib.keymap import (  # noqa: F401
 from pytmuxlib.launcher import (  # noqa: F401
     can_connect, control_request, daemonize, ensure_server, main)
 from pytmuxlib.model import (  # noqa: F401
-    ClientConn, Pane, Session, Split, Window, pid_counter, split_counter)
+    ClientConn, Pane, Session, Split, Tab, Window, pid_counter, split_counter)
 from pytmuxlib.protocol import (  # noqa: F401
     FLUSH_HZ, HISTORY, MIN_H, MIN_W, conv_color, default_socket_path,
     parse_reset_delay, read_msg, set_winsize, write_msg)

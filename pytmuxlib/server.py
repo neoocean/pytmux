@@ -11,7 +11,7 @@ import signal
 import subprocess
 import time
 
-from .model import ClientConn, Pane, Session, Split, Window
+from .model import ClientConn, Pane, Session, Split, Tab, Window
 from .protocol import (FLUSH_HZ, MIN_H, MIN_W, parse_reset_delay,
                        read_msg, set_winsize, write_msg)
 
@@ -248,17 +248,18 @@ class Server:
         self._pane_eof(pane)
 
     def _remove_pane_from_tree(self, pane: Pane):
-        # 어떤 세션/윈도우에 속하는지 탐색
+        # 어떤 세션/탭(윈도우)에 속하는지 탐색
         for sess in list(self.sessions.values()):
-            for wi, win in enumerate(list(sess.windows)):
+            for wi, tab in enumerate(list(sess.tabs)):
+                win = tab.window
                 if pane not in win.panes():
                     continue
                 parent = pane.parent
                 if parent is None:
-                    # 윈도우의 마지막 패널 → 윈도우 제거
-                    sess.windows.pop(wi)
+                    # 윈도우의 마지막 패널 → 탭 제거
+                    sess.tabs.pop(wi)
                     self._reindex(sess)
-                    if not sess.windows:
+                    if not sess.tabs:
                         del self.sessions[sess.name]
                 else:
                     sibling = parent.b if parent.a is pane else parent.a
@@ -278,8 +279,8 @@ class Server:
                 return
 
     def _reindex(self, sess: Session):
-        for i, w in enumerate(sess.windows):
-            w.index = i
+        for i, t in enumerate(sess.tabs):
+            t.index = i
 
     def _pane_cwd(self, pane: Pane) -> str | None:
         # 자식 프로세스의 cwd 를 추정(가능하면). 실패 시 None.
@@ -289,53 +290,57 @@ class Server:
             return None
 
     def new_window(self, sess: Session):
+        """새 탭(= 새 윈도우, 단일 패널)을 만들고 활성화한다."""
         c = self.clients_of(sess)
         cols = c.cols if c else 80
         rows = c.rows if c else 24
         root = self.spawn_pane(cols, rows)
-        idx = len(sess.windows)
-        sess.windows.append(Window(idx, "win", root))
+        idx = len(sess.tabs)
+        sess.tabs.append(Tab(idx, "win", Window(root)))
         sess.last_index = sess.active_index
         sess.active_index = idx
 
+    # 탭 용어 별칭
+    new_tab = new_window
+
     def select_window(self, sess: Session, index: int):
-        if 0 <= index < len(sess.windows):
+        if 0 <= index < len(sess.tabs):
             if index != sess.active_index:
                 sess.last_index = sess.active_index
             sess.active_index = index
-            w = sess.windows[index]
-            w.has_activity = w.has_bell = False  # 보면 플래그 해제
+            t = sess.tabs[index]
+            t.has_activity = t.has_bell = False  # 보면 플래그 해제
 
     def set_monitor(self, sess: Session, which: str, value=None):
-        win = sess.active_window
-        if not win:
+        tab = sess.active_tab
+        if not tab:
             return
         attr = "monitor_activity" if which == "activity" else "monitor_bell"
-        cur = getattr(win, attr)
-        setattr(win, attr, (not cur) if value is None else bool(value))
+        cur = getattr(tab, attr)
+        setattr(tab, attr, (not cur) if value is None else bool(value))
 
     def last_window(self, sess: Session):
         li = getattr(sess, "last_index", 0)
-        if 0 <= li < len(sess.windows):
+        if 0 <= li < len(sess.tabs):
             self.select_window(sess, li)
 
     def move_window(self, sess: Session, new_index: int):
-        n = len(sess.windows)
+        n = len(sess.tabs)
         if n < 2:
             return
         new_index = max(0, min(new_index, n - 1))
-        win = sess.windows.pop(sess.active_index)
-        sess.windows.insert(new_index, win)
+        tab = sess.tabs.pop(sess.active_index)
+        sess.tabs.insert(new_index, tab)
         self._reindex(sess)
-        sess.active_index = sess.windows.index(win)
+        sess.active_index = sess.tabs.index(tab)
 
     def swap_window(self, sess: Session, target_index: int):
-        n = len(sess.windows)
+        n = len(sess.tabs)
         if not (0 <= target_index < n) or target_index == sess.active_index:
             return
         i = sess.active_index
-        sess.windows[i], sess.windows[target_index] = (
-            sess.windows[target_index], sess.windows[i])
+        sess.tabs[i], sess.tabs[target_index] = (
+            sess.tabs[target_index], sess.tabs[i])
         self._reindex(sess)
         sess.active_index = target_index
 
@@ -417,21 +422,22 @@ class Server:
         if not self._detach_pane(win, pane):
             return  # 단일 패널 윈도우는 분리 불가
         win.zoomed = False
-        idx = len(sess.windows)
-        sess.windows.append(Window(idx, "win", pane))
+        idx = len(sess.tabs)
+        sess.tabs.append(Tab(idx, "win", Window(pane)))
         sess.active_index = idx
 
     def join_pane(self, sess: Session, src_index: int | None = None,
                   orient: str = "tb"):
         """다른 윈도우의 활성 패널을 현재 활성 패널과 분할로 합친다."""
         win = sess.active_window
-        if not win or len(sess.windows) < 2:
+        if not win or len(sess.tabs) < 2:
             return
         if src_index is None:
-            src_index = (sess.active_index - 1) % len(sess.windows)
-        if not (0 <= src_index < len(sess.windows)) or src_index == sess.active_index:
+            src_index = (sess.active_index - 1) % len(sess.tabs)
+        if not (0 <= src_index < len(sess.tabs)) or src_index == sess.active_index:
             return
-        src = sess.windows[src_index]
+        src_tab = sess.tabs[src_index]
+        src = src_tab.window
         pane = src.active_pane
         src_single = pane.parent is None
         if not src_single:
@@ -451,9 +457,10 @@ class Server:
         win.active_pane = pane
         win.zoomed = False
         if src_single:
-            sess.windows.remove(src)
+            sess.tabs.remove(src_tab)
             self._reindex(sess)
-        sess.active_index = sess.windows.index(win)
+        cur_tab = next(t for t in sess.tabs if t.window is win)
+        sess.active_index = sess.tabs.index(cur_tab)
 
     def toggle_zoom(self, sess: Session):
         win = sess.active_window
@@ -466,10 +473,12 @@ class Server:
         win.zoomed = not win.zoomed
 
     def rename_window(self, sess: Session, name: str):
-        win = sess.active_window
-        if win and name:
-            win.name = name
-            win.auto_rename = False  # 수동 이름 지정 시 자동 갱신 끔
+        tab = sess.active_tab
+        if tab and name:
+            tab.name = name
+            tab.window.auto_rename = False  # 수동 이름 지정 시 자동 갱신 끔
+
+    rename_tab = rename_window
 
     def set_auto_rename(self, sess: Session, value=None):
         win = sess.active_window
@@ -500,12 +509,13 @@ class Server:
                 if not clients:
                     continue
                 changed = False
-                for win in sess.windows:
+                for tab in sess.tabs:
+                    win = tab.window
                     if not getattr(win, "auto_rename", False) or not win.active_pane:
                         continue
                     cmd = self._fg_command(win.active_pane.master_fd)
-                    if cmd and cmd != win.name:
-                        win.name = cmd
+                    if cmd and cmd != tab.name:
+                        tab.name = cmd
                         changed = True
                 if changed:
                     for c in clients:
@@ -532,11 +542,14 @@ class Server:
                 os.waitpid(p.child_pid, os.WNOHANG)
             except ChildProcessError:
                 pass
-        if win in sess.windows:
-            sess.windows.remove(win)
+        tab = sess.active_tab
+        if tab in sess.tabs:
+            sess.tabs.remove(tab)
         self._reindex(sess)
-        if not sess.windows:
+        if not sess.tabs:
             del self.sessions[sess.name]
+
+    kill_tab = kill_window
 
     def rename_session(self, sess: Session, name: str):
         if not name or name == sess.name or name in self.sessions:
@@ -568,8 +581,8 @@ class Server:
         s = self.sessions.pop(name, None)
         if not s:
             return
-        for win in s.windows:
-            for p in win.panes():
+        for tab in s.tabs:
+            for p in tab.window.panes():
                 self._destroy_pane_proc(p)
         for c in self.clients:
             if c.session is s:
@@ -707,8 +720,8 @@ class Server:
         path = path or self.layout_path
         data = {"sessions": [
             {"name": s.name, "windows": [
-                {"name": w.name, "root": self._serialize_node(w.root)}
-                for w in s.windows]}
+                {"name": t.name, "root": self._serialize_node(t.window.root)}
+                for t in s.tabs]}
             for s in self.sessions.values()]}
         try:
             with open(path, "w", encoding="utf-8") as f:
@@ -725,19 +738,19 @@ class Server:
         except (OSError, ValueError):
             return False
         for ss in data.get("sessions", []):
-            wins = []
+            tabs = []
             for i, wspec in enumerate(ss.get("windows", [])):
                 root = self._build_node(wspec["root"], 80, 24)
-                w = Window(i, wspec.get("name", "win"), root)
+                w = Window(root)
                 w._active = root if isinstance(root, Pane) else root.first_pane()
                 w._fix_parents(root, None)
-                wins.append(w)
-            if not wins:
+                tabs.append(Tab(i, wspec.get("name", "win"), w))
+            if not tabs:
                 continue
             sess = Session.__new__(Session)
             sess.name = self._unique_name(ss.get("name"))
             sess.created_at = time.time()
-            sess.windows = wins
+            sess.tabs = tabs
             sess.active_index = 0
             sess.last_index = 0
             self.sessions[sess.name] = sess
@@ -769,17 +782,17 @@ class Server:
             self.new_session(80, 24, opt("-s"))
         elif sess is None:
             return "no session"
-        elif c in ("new-window", "neww"):
+        elif c in ("new-window", "neww", "new-tab", "newt"):
             self.new_window(sess)
-        elif c in ("kill-window", "killw"):
+        elif c in ("kill-window", "killw", "kill-tab", "killt"):
             self.kill_window(sess)
         elif c in ("split-window", "splitw"):
             self.split_pane(sess, "lr" if "-h" in args else "tb")
-        elif c in ("select-window", "selectw"):
+        elif c in ("select-window", "selectw", "select-tab", "selectt"):
             i = first_int()
             if i is not None:
                 self.select_window(sess, i)
-        elif c in ("rename-window", "renamew"):
+        elif c in ("rename-window", "renamew", "rename-tab", "renamet"):
             self.rename_window(sess, " ".join(a for a in args
                                               if not a.startswith("-")))
         elif c in ("kill-session", "kills"):
@@ -991,8 +1004,8 @@ class Server:
     def _tree_msg(self):
         return {"t": "tree", "current": None, "sessions": [
             {"name": s.name, "active": (s is None),
-             "windows": [{"index": w.index, "name": w.name,
-                          "panes": len(w.panes())} for w in s.windows]}
+             "windows": [{"index": t.index, "name": t.name,
+                          "panes": len(t.window.panes())} for t in s.tabs]}
             for s in self.sessions.values()]}
 
     def _status_msg(self, sess: Session):
@@ -1000,10 +1013,10 @@ class Server:
         return {
             "t": "status",
             "session": sess.name,
-            "windows": [{"index": w.index, "name": w.name,
+            "windows": [{"index": t.index, "name": t.name,
                          "active": (i == sess.active_index),
-                         "bell": w.has_bell, "activity": w.has_activity}
-                        for i, w in enumerate(sess.windows)],
+                         "bell": t.has_bell, "activity": t.has_activity}
+                        for i, t in enumerate(sess.tabs)],
             "active_pane": win.active_pane.id if win else None,
             "zoomed": bool(win.zoomed) if win else False,
             "sync": bool(win.sync) if win else False,
@@ -1064,20 +1077,21 @@ class Server:
                         await write_msg(c.writer, msg)
                 # 활동/벨 모니터링: 비활성 윈도우의 출력/BEL 을 플래그로
                 status_changed = False
-                for w in sess.windows:
+                for t in sess.tabs:
+                    w = t.window
                     for p in w.panes():
                         if w is win:
-                            p._activity = p._bell = False  # 보고 있는 윈도우
+                            p._activity = p._bell = False  # 보고 있는 탭
                             continue
                         if p._bell:
                             p._bell = False
-                            if w.monitor_bell and not w.has_bell:
-                                w.has_bell = True
+                            if t.monitor_bell and not t.has_bell:
+                                t.has_bell = True
                                 status_changed = True
                         if p._activity:
                             p._activity = False
-                            if w.monitor_activity and not w.has_activity:
-                                w.has_activity = True
+                            if t.monitor_activity and not t.has_activity:
+                                t.has_activity = True
                                 status_changed = True
                 if status_changed:
                     smsg = self._status_msg(sess)
@@ -1163,9 +1177,9 @@ class Server:
         elif action == "new_window":
             self.new_window(sess)
         elif action == "next_window":
-            self.select_window(sess, (sess.active_index + 1) % len(sess.windows))
+            self.select_window(sess, (sess.active_index + 1) % len(sess.tabs))
         elif action == "prev_window":
-            self.select_window(sess, (sess.active_index - 1) % len(sess.windows))
+            self.select_window(sess, (sess.active_index - 1) % len(sess.tabs))
         elif action == "select_window":
             self.select_window(sess, msg.get("index", 0))
         elif action == "last_window":
@@ -1248,8 +1262,8 @@ class Server:
         t = first.get("t")
         if t == "list":
             await write_msg(writer, {"t": "list", "sessions": [
-                {"name": s.name, "windows": len(s.windows),
-                 "panes": sum(len(w.panes()) for w in s.windows)}
+                {"name": s.name, "windows": len(s.tabs),
+                 "panes": sum(len(t.window.panes()) for t in s.tabs)}
                 for s in self.sessions.values()]})
             writer.close()
             return
@@ -1343,8 +1357,8 @@ class Server:
     def shutdown(self):
         self.running = False
         for sess in self.sessions.values():
-            for win in sess.windows:
-                for p in win.panes():
+            for tab in sess.tabs:
+                for p in tab.window.panes():
                     try:
                         os.killpg(os.getpgid(p.child_pid), signal.SIGHUP)
                     except OSError:

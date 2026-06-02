@@ -34,9 +34,9 @@ async def test_break_join_pane():
     try:
         sess = srv.ensure_default_session(80, 24)
         srv.split_pane(sess, "lr")
-        n = len(sess.windows)
+        n = len(sess.tabs)
         srv.break_pane(sess)
-        assert len(sess.windows) == n + 1, "break → 새 윈도우"
+        assert len(sess.tabs) == n + 1, "break → 새 윈도우"
         srv.join_pane(sess)
         for p in sess.active_window.panes():
             assert p.parent is None or p in (p.parent.a, p.parent.b)
@@ -74,10 +74,10 @@ async def test_window_move_swap_rename():
         srv.new_window(sess)
         srv.rename_window(sess, "w2")
         srv.move_window(sess, 0)
-        assert [w.name for w in sess.windows] == ["w2", "w0", "w1"]
-        assert [w.index for w in sess.windows] == [0, 1, 2]
+        assert [t.name for t in sess.tabs] == ["w2", "w0", "w1"]
+        assert [t.index for t in sess.tabs] == [0, 1, 2]
         srv.swap_window(sess, 2)
-        assert [w.name for w in sess.windows] == ["w1", "w0", "w2"]
+        assert [t.name for t in sess.tabs] == ["w1", "w0", "w2"]
     finally:
         await teardown(srv, task, sock)
 
@@ -151,10 +151,10 @@ async def test_layout_persistence():
         import tempfile
         lp = tempfile.mktemp(suffix=".json")
         assert srv.save_layout(lp)
-        struct = [(s.name, [(w.name, len(w.panes())) for w in s.windows])
+        struct = [(s.name, [(t.name, len(t.window.panes())) for t in s.tabs])
                   for s in srv.sessions.values()]
         assert srv2.restore_layout(lp)
-        struct2 = [(s.name, [(w.name, len(w.panes())) for w in s.windows])
+        struct2 = [(s.name, [(t.name, len(t.window.panes())) for t in s.tabs])
                    for s in srv2.sessions.values()]
         assert struct2 == struct, (struct, struct2)
     finally:
@@ -167,12 +167,38 @@ async def test_handle_control():
     try:
         sess = srv.ensure_default_session(80, 24)
         assert srv.handle_control("new-window") == "ok"
-        assert len(sess.windows) == 2
+        assert len(sess.tabs) == 2
         srv.handle_control("split-window -h")
         assert len(sess.active_window.panes()) == 2
         srv.handle_control("rename-window CTRL")
-        assert sess.active_window.name == "CTRL"
+        assert sess.active_tab.name == "CTRL"
         assert srv.handle_control("bogus").startswith("unknown")
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_tab_hierarchy_and_commands():
+    """최상위 Tab → 단일 Window → 패널 집합 구조 및 탭 명령(new/kill/rename)."""
+    from pytmuxlib.model import Tab, Window
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        assert isinstance(sess.tabs[0], Tab), "최상위는 Tab"
+        assert isinstance(sess.active_tab.window, Window), "탭에 종속된 단일 윈도우"
+        assert sess.active_tab.window is sess.active_window, "compat 프로퍼티"
+        # 새 탭 = 새 윈도우(단일 패널)
+        assert srv.handle_control("new-tab") == "ok"
+        assert len(sess.tabs) == 2
+        assert len(sess.active_tab.window.panes()) == 1
+        # 탭의 윈도우를 패널로 분할
+        srv.split_pane(sess, "lr")
+        assert len(sess.active_tab.window.panes()) == 2
+        # 탭 이름 변경
+        srv.handle_control("rename-tab MYTAB")
+        assert sess.active_tab.name == "MYTAB"
+        # 탭 삭제
+        srv.handle_control("kill-tab")
+        assert len(sess.tabs) == 1
     finally:
         await teardown(srv, task, sock)
 

@@ -109,12 +109,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("kill_pane", "패널 삭제 ✕"),
         ("sync", "입력 동기화 토글"),
         ("autoresume", "토큰리밋 자동재개 토글"),
-        ("new_window", "새 윈도우"),
-        ("rename_window", "윈도우 이름 변경"),
-        ("kill_window", "윈도우 삭제"),
-        ("choose_tree", "윈도우 선택기(트리)"),
-        ("next_window", "다음 윈도우"),
-        ("prev_window", "이전 윈도우"),
+        ("new_window", "새 탭"),
+        ("rename_window", "탭 이름 변경"),
+        ("kill_window", "탭 삭제"),
+        ("choose_tree", "탭 선택기(트리)"),
+        ("next_window", "다음 탭"),
+        ("prev_window", "이전 탭"),
         ("new_session", "새 세션"),
         ("kill_session", "세션 삭제"),
         ("command", "명령 입력"),
@@ -131,8 +131,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("rename-pane", "패널 제목 변경"),
         ("swap-pane", "패널 위치 교환 (-U/-D)"),
         ("rotate-window", "윈도우 내 패널 회전"),
-        ("break-pane", "패널을 새 윈도우로 분리"),
-        ("join-pane", "다른 윈도우 패널을 현재로 합치기 (-h)"),
+        ("break-pane", "패널을 새 탭으로 분리"),
+        ("join-pane", "다른 탭의 패널을 현재로 합치기 (-h)"),
         ("respawn-pane", "패널 셸 재시작"),
         ("select-layout", "레이아웃 프리셋 (even-h/v, main-h/v, tiled)"),
         ("next-layout", "다음 레이아웃 프리셋"),
@@ -140,19 +140,19 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("capture-pane", "패널 내용을 버퍼로 캡처 (-S 전체)"),
         ("pipe-pane", "패널 출력을 외부 명령으로 파이프"),
         ("clear-history", "스크롤백 비우기"),
-        ("new-window", "새 윈도우"),
-        ("kill-window", "윈도우 삭제"),
-        ("next-window", "다음 윈도우"),
-        ("previous-window", "이전 윈도우"),
-        ("last-window", "직전 윈도우"),
-        ("select-window", "윈도우 선택 (-t N)"),
-        ("move-window", "윈도우 이동 (-t N)"),
-        ("swap-window", "윈도우 교환 (-t N)"),
-        ("rename-window", "윈도우 이름 변경"),
-        ("automatic-rename", "윈도우 자동 이름 [on|off]"),
+        ("new-tab", "새 탭 (새 윈도우 1개 생성, = new-window)"),
+        ("kill-tab", "탭 삭제 (= kill-window)"),
+        ("next-tab", "다음 탭"),
+        ("previous-tab", "이전 탭"),
+        ("last-tab", "직전 탭"),
+        ("select-tab", "탭 선택 (-t N)"),
+        ("move-tab", "탭 이동 (-t N)"),
+        ("swap-tab", "탭 교환 (-t N)"),
+        ("rename-tab", "탭 이름 변경"),
+        ("automatic-rename", "탭 자동 이름 [on|off]"),
         ("monitor-activity", "활동 모니터링 [on|off]"),
         ("monitor-bell", "벨 모니터링 [on|off]"),
-        ("choose-tree", "세션/윈도우 선택기"),
+        ("choose-tree", "세션/탭 선택기"),
         ("new-session", "새 세션 (-s 이름)"),
         ("kill-session", "세션 삭제 (-t 이름)"),
         ("rename-session", "세션 이름 변경"),
@@ -594,7 +594,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 ms = Style(color="black", bgcolor="yellow", bold=True)
                 return Strip([Segment(f" {self.message} ", ms)]).adjust_cell_length(
                     w, ms)
-            # 활성 윈도우: 녹색 바 위에서 잘 보이도록 검정 배경 + 흰 글씨(굵게)
+            # 활성 탭: 녹색 바 위에서 잘 보이도록 검정 배경 + 흰 글씨(굵게)
             active = Style(color="white", bgcolor="black", bold=True)
             segs = [Segment(self._expand(self.left_fmt), base)]
             if self.cmd_mode:
@@ -993,10 +993,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif key == "new_window":
                 self.send_cmd("new_window")
             elif key == "rename_window":
-                self.open_prompt("rename_window", "rename-window",
+                self.open_prompt("rename_window", "rename-tab",
                                  self._active_window_name())
             elif key == "kill_window":
-                self.open_prompt("confirm", "kill-window? (y/N)",
+                self.open_prompt("confirm", "kill-tab? (y/N)",
                                  action=lambda: self.send_cmd("kill_window"))
             elif key == "next_window":
                 self.send_cmd("next_window")
@@ -1235,15 +1235,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("split", orient=orient)
             elif c in ("kill-pane", "killp"):
                 self.send_cmd("kill_pane")
-            elif c in ("new-window", "neww"):
+            elif c in ("new-tab", "newt", "new-window", "neww"):
                 self.send_cmd("new_window")
-            elif c in ("kill-window", "killw"):
+            elif c in ("kill-tab", "killt", "kill-window", "killw"):
                 self.send_cmd("kill_window")
-            elif c in ("next-window", "next"):
+            elif c in ("next-tab", "next-window", "next"):
                 self.send_cmd("next_window")
-            elif c in ("previous-window", "prev"):
+            elif c in ("previous-tab", "prev-tab", "previous-window", "prev"):
                 self.send_cmd("prev_window")
-            elif c in ("last-window", "last"):
+            elif c in ("last-tab", "last-window", "last"):
                 self.send_cmd("last_window")
             elif c == "automatic-rename" or (
                     c == "setw" and "automatic-rename" in args):
@@ -1262,17 +1262,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 elif "off" in args:
                     val = False
                 self.send_cmd("set_monitor", which=which, value=val)
-            elif c in ("move-window", "movew"):
+            elif c in ("move-tab", "movet", "move-window", "movew"):
                 idx = self._opt_value(args, "-t")
                 idx = int(idx) if idx and idx.isdigit() else self._first_int(args)
                 if idx is not None:
                     self.send_cmd("move_window", index=idx)
-            elif c in ("swap-window", "swapw"):
+            elif c in ("swap-tab", "swapt", "swap-window", "swapw"):
                 idx = self._opt_value(args, "-t")
                 idx = int(idx) if idx and idx.isdigit() else self._first_int(args)
                 if idx is not None:
                     self.send_cmd("swap_window", index=idx)
-            elif c in ("choose-tree", "choose-window", "choose-session"):
+            elif c in ("choose-tree", "choose-tab", "choose-window",
+                       "choose-session"):
                 self.request_tree()
             elif c in ("select-pane", "selectp"):
                 if "-T" in args:
@@ -1286,17 +1287,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
                             break
             elif c == "rename-pane":
                 self.send_cmd("set_pane_title", title=" ".join(args))
-            elif c in ("select-window", "selectw"):
+            elif c in ("select-tab", "selectt", "select-window", "selectw"):
                 idx = self._opt_value(args, "-t")
                 idx = int(idx) if idx and idx.isdigit() else self._first_int(args)
                 if idx is not None:
                     self.send_cmd("select_window", index=idx)
-            elif c in ("rename-window", "renamew"):
+            elif c in ("rename-tab", "renamet", "rename-window", "renamew"):
                 name = " ".join(a for a in args if not a.startswith("-"))
                 if name:
                     self.send_cmd("rename_window", name=name)
                 else:
-                    self.open_prompt("rename_window", "rename-window",
+                    self.open_prompt("rename_window", "rename-tab",
                                      self._active_window_name())
             elif c in ("rename-session", "rename"):
                 name = " ".join(a for a in args if not a.startswith("-"))

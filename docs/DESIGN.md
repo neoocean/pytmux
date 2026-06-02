@@ -22,7 +22,7 @@ tmux 와 동일하게 하나의 터미널 안에서 여러 셸 세션·패널을
 |---|----------|----------------|
 | R1 | 앱을 시작하면 일반 터미널과 동일하게 보여야 한다 | 시작 시 단일 패널(전체화면)에 사용자의 기본 셸을 그대로 띄움 |
 | R2 | 앱을 닫거나 상위 터미널을 닫아도 세션이 유지되어야 한다 | 셸 PTY 를 보유하는 **백그라운드 데몬(서버)** 과 화면을 그리는 **클라이언트** 를 분리 |
-| R3 | 화면 하단에 tmux 와 동일한 상태 표시줄 1줄 | 클라이언트 하단에 `StatusBar` 위젯(세션명·윈도우 목록·시각 등) |
+| R3 | 화면 하단에 tmux 와 동일한 상태 표시줄 1줄 | 클라이언트 하단에 `StatusBar` 위젯(세션명·탭 목록·시각 등) |
 | R4 | 새 세션 열기, 패널 추가/삭제/이동/리사이즈를 모두 TUI 메뉴로 제어 | prefix 키 + 명령 팔레트 + 팝업 메뉴 |
 | R5 | 마우스로 리사이즈·삭제·추가 가능 | 분할선 드래그 리사이즈, 패널 헤더의 닫기 버튼, 분할 버튼/우클릭 컨텍스트 메뉴 |
 | R6 | 패널별로 위로 스크롤하여 화면 밖으로 밀려난 이전 내용을 볼 수 있어야 한다 | 패널마다 스크롤백 버퍼 보유. 휠/키로 위로 스크롤 시 지난 출력 표시 |
@@ -76,7 +76,7 @@ Textual 프로세스는 SIGHUP 등을 받고 종료된다. 따라서 셸 세션(
                                     │                  ▼
    ┌────────────────────────── 서버 / 데몬 (백그라운드, detached) ─────────────────────────┐
    │                                                                                       │
-   │   Server  ──owns──►  Session ──►  Window ──►  PaneTree(분할 레이아웃)                  │
+   │   Server  ──owns──►  Session ──►  Tab ──►  Window ──►  PaneTree(분할 레이아웃)         │
    │                                                   │                                   │
    │                                                   ├─ Pane(id=%0) ─► PTY master ─► /bin/zsh
    │                                                   │                  └─ pyte.Screen   │
@@ -108,15 +108,24 @@ Server
  └─ sessions: dict[name → Session]
 Session
  ├─ name, created_at
- └─ windows: list[Window], active_window
-Window
- ├─ name, index
- └─ layout: PaneNode (이진 분할 트리의 루트)
+ └─ tabs: list[Tab], active_tab  (active_window = active_tab.window 호환 프로퍼티)
+Tab                                  # 최상위 전환 단위(상태표시줄의 탭)
+ ├─ index, name
+ ├─ has_activity/has_bell, monitor_activity/monitor_bell
+ └─ window: Window                   # 탭에 종속된 단일 윈도우(1:1)
+Window                               # 패널 집합을 보유하는 렌더 영역
+ ├─ zoomed, sync, border_status, auto_rename
+ └─ root: PaneNode (이진 분할 트리의 루트)
 PaneNode (둘 중 하나)
  ├─ Split{ direction: H|V, ratio: float, child_a, child_b }   # 내부 노드
  └─ Pane{ id, pty_fd, child_pid, screen(pyte), cols, rows, title, cwd }  # 잎 노드
 ```
 
+- **Tab(최상위)**: 전환 단위. 이름/인덱스(상태표시줄 탭)와 활동/벨 표시를 보유하고,
+  정확히 하나의 Window 를 종속으로 가진다. `new-tab`(=`new-window`)으로 새 탭을 만들면
+  새 윈도우(단일 패널)가 생기고 이를 패널로 분할한다. `kill-tab`/`rename-tab` 명령 제공.
+- **Window(중간)**: 패널 분할 트리와 줌/동기화/모니터 상태를 보유. `split-window` 가 이
+  윈도우를 패널로 나눈다.
 - **Pane(잎)**: 실제 셸 1개 = PTY master fd + 자식 PID + `pyte.Screen` 버퍼.
 - **Split(내부)**: 수평/수직 분할과 분할 비율(`ratio`, 0~1)을 보유. 이진 트리로 임의 중첩 분할 표현.
 - 패널 식별자는 tmux 처럼 `%0, %1, ...` 단조 증가 ID.

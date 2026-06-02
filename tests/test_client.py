@@ -38,10 +38,10 @@ async def test_command_prompt_via_esc():
         assert app.focused is inp, "모달 Input 포커스"
         for ch in "new-window":
             await pilot.press(ch if ch != "-" else "minus")
-        n = len(sess.windows)
+        n = len(sess.tabs)
         await pilot.press("enter")
         await pilot.pause(0.4)
-        assert len(sess.windows) == n + 1, "명령 실행"
+        assert len(sess.tabs) == n + 1, "명령 실행"
     await _with_app(body)
 
 
@@ -119,10 +119,10 @@ async def test_ime_shortcuts():
         app.on_key(Key(key="ctrl+ㅠ", character=None))
         assert app.mode == "prefix", app.mode
         # prefix 후 물리 c(=ㅊ) → new-window
-        n = len(sess.windows)
+        n = len(sess.tabs)
         app.on_key(Key(key="ㅊ", character="ㅊ"))
         await pilot.pause(0.3)
-        assert len(sess.windows) == n + 1, "prefix+ㅊ → new-window"
+        assert len(sess.tabs) == n + 1, "prefix+ㅊ → new-window"
     await _with_app(body)
 
 

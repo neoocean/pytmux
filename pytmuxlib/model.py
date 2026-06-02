@@ -261,9 +261,13 @@ def split_counter() -> int:
 
 
 class Window:
-    def __init__(self, index: int, name: str, root: Pane):
-        self.index = index
-        self.name = name
+    """탭에 종속된 단일 윈도우: 패널 집합(분할 트리)을 보유하는 렌더 영역.
+
+    상위 컨테이너는 :class:`Tab` 이며(탭 1개 = 윈도우 1개), 탭이 이름/인덱스 등
+    전환 단위 정보를 갖는다. 윈도우는 패널 트리와 줌/동기화/모니터 상태를 갖는다.
+    """
+
+    def __init__(self, root: Pane):
         self.root = root
         self._active = root    # 활성 패널(프로퍼티로 last-pane 추적)
         self._last = None      # 직전 활성 패널(prefix ;)
@@ -271,11 +275,8 @@ class Window:
         self.layout_idx = 0    # 레이아웃 프리셋 순환 인덱스
         self.sync = False      # 입력 동기화(synchronize-panes)
         self.border_status = False  # 패널 제목 경계선 표시(pane-border-status)
-        self.auto_rename = True  # 활성 패널 명령으로 이름 자동 갱신
-        self.monitor_activity = False  # 비활성 윈도우 출력 감지
-        self.monitor_bell = True       # 벨(BEL) 감지
-        self.has_activity = False
-        self.has_bell = False
+        self.auto_rename = True  # 활성 패널 명령으로 탭 이름 자동 갱신
+        # 활동/벨 모니터 플래그(monitor_*/has_*)는 상위 Tab 이 보유한다.
 
     @property
     def active_pane(self):
@@ -404,20 +405,42 @@ class Window:
         self._fix_parents(self.root, None)
 
 
+class Tab:
+    """최상위 전환 단위. 정확히 하나의 :class:`Window` 를 종속으로 가진다.
+
+    이름/인덱스(상태표시줄 탭)와 출력 활동/벨 표시를 보유한다. 새 탭을 만들면
+    새 윈도우(단일 패널)가 생기고 이를 패널로 분할한다.
+    """
+
+    def __init__(self, index: int, name: str, window: "Window"):
+        self.index = index
+        self.name = name
+        self.window = window
+        self.has_activity = False
+        self.has_bell = False
+        self.monitor_activity = False
+        self.monitor_bell = True
+
+
 class Session:
     def __init__(self, name: str, root: Pane):
         self.name = name
         self.created_at = time.time()
-        self.windows = [Window(0, "win", root)]
+        self.tabs = [Tab(0, "win", Window(root))]
         self.active_index = 0
-        self.last_index = 0    # 직전 활성 윈도우(prefix l)
+        self.last_index = 0    # 직전 활성 탭(prefix l)
+
+    @property
+    def active_tab(self) -> Tab | None:
+        if not self.tabs:
+            return None
+        self.active_index = max(0, min(self.active_index, len(self.tabs) - 1))
+        return self.tabs[self.active_index]
 
     @property
     def active_window(self) -> Window | None:
-        if not self.windows:
-            return None
-        self.active_index = max(0, min(self.active_index, len(self.windows) - 1))
-        return self.windows[self.active_index]
+        t = self.active_tab
+        return t.window if t else None
 
 
 class ClientConn:
