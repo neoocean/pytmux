@@ -38,10 +38,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import datetime as _dt
 import fcntl
 import json
 import os
 import pty
+import re
 import signal
 import socket
 import struct
@@ -112,6 +114,43 @@ def conv_color(c):
     return c
 
 
+# ---- 토큰 리밋 자동 재개: 리밋 해제 시각 파서 ----
+_RESET_RE12 = re.compile(r'(\d{1,2})(?::(\d{2}))?\s*([ap]m)', re.I)
+_RESET_RE24 = re.compile(r'\b([01]?\d|2[0-3]):([0-5]\d)\b')
+
+
+def parse_reset_delay(text: str, now: "_dt.datetime | None" = None):
+    """Claude Code 등의 사용량 리밋 안내 문구에서 해제 시각을 찾아
+    지금부터 그때까지의 지연(초)을 반환. 못 찾으면 None."""
+    low = text.lower()
+    if "limit" not in low:
+        return None
+    if not any(k in low for k in ("reset", "again", "resume", "retry")):
+        return None
+    now = now or _dt.datetime.now()
+    m = _RESET_RE12.search(text)
+    if m:
+        hour = int(m.group(1))
+        minute = int(m.group(2) or 0)
+        ap = m.group(3).lower()
+        if ap == "pm" and hour != 12:
+            hour += 12
+        if ap == "am" and hour == 12:
+            hour = 0
+    else:
+        m = _RESET_RE24.search(text)
+        if not m:
+            return None
+        hour, minute = int(m.group(1)), int(m.group(2))
+    if hour > 23 or minute > 59:
+        return None
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += _dt.timedelta(days=1)
+    delay = (target - now).total_seconds()
+    return delay if 0 < delay <= 26 * 3600 else None
+
+
 # ===========================================================================
 #  서버 측
 # ===========================================================================
@@ -136,6 +175,11 @@ class Pane:
         self.rect = (0, 0, cols, rows)
         self.parent: Split | None = None
         self.title = "shell"
+        # 토큰 리밋 자동 재개
+        self.autoresume = False
+        self.resume_msg = "continue"
+        self._scanbuf = ""
+        self._resume_pending = False
 
     def reinit(self, pid: int, fd: int, cols: int, rows: int) -> None:
         """respawn: 새 PTY/셸로 화면 버퍼를 초기화한다."""
@@ -147,6 +191,8 @@ class Pane:
         self.stream = pyte.ByteStream(self.screen)
         self.scroll = 0
         self.dirty = True
+        self._scanbuf = ""
+        self._resume_pending = False
 
     # 레이아웃 계산용
     def first_pane(self) -> "Pane":
@@ -527,6 +573,42 @@ class Server:
             self._pane_eof(pane)
             return
         pane.feed(data)
+        if pane.autoresume and not pane._resume_pending:
+            self._maybe_schedule_resume(pane, data.decode("utf-8", "ignore"))
+
+    # ---- 토큰 리밋 자동 재개 ----
+    def _maybe_schedule_resume(self, pane: Pane, newtext: str):
+        pane._scanbuf = (pane._scanbuf + newtext)[-4000:]
+        if pane._resume_pending:
+            return
+        delay = parse_reset_delay(pane._scanbuf)
+        if delay is not None:
+            pane._resume_pending = True
+            # 해제 시각 +5초 버퍼 후 재개 메시지 입력
+            self.loop.call_later(delay + 5, self._fire_resume, pane)
+
+    def _fire_resume(self, pane: Pane):
+        pane._resume_pending = False
+        pane._scanbuf = ""
+        try:
+            os.write(pane.master_fd, (pane.resume_msg + "\r").encode("utf-8"))
+        except OSError:
+            pass
+
+    def set_autoresume(self, sess: Session, value=None, msg: str | None = None):
+        win = sess.active_window
+        if not win or not win.active_pane:
+            return
+        p = win.active_pane
+        if msg is not None:
+            p.resume_msg = msg
+            return
+        p.autoresume = (not p.autoresume) if value is None else bool(value)
+        if p.autoresume and not p._resume_pending:
+            # 켜는 순간 이미 화면에 떠 있는 리밋 안내도 즉시 검사
+            rows, _ = p.render(False)
+            text = "\n".join("".join(s[0] for s in r) for r in rows)
+            self._maybe_schedule_resume(p, text)
 
     def _pane_eof(self, pane: Pane):
         try:
@@ -1010,6 +1092,8 @@ class Server:
             "zoomed": bool(win.zoomed) if win else False,
             "sync": bool(win.sync) if win else False,
             "pane_title": win.active_pane.title if win and win.active_pane else "",
+            "autoresume": bool(win.active_pane.autoresume)
+            if win and win.active_pane else False,
         }
 
     async def _send_full(self, client: ClientConn):
@@ -1098,6 +1182,9 @@ class Server:
         elif action == "request_tree":
             await write_msg(client.writer, self._tree_msg())
             return
+        elif action == "set_autoresume":
+            self.set_autoresume(sess, value=msg.get("value"),
+                                msg=msg.get("msg"))
         elif action == "resize":
             self.resize_split(sess, msg.get("split_id"), msg.get("ratio", 0.5))
         elif action == "resize_dir":
@@ -1427,6 +1514,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("zoom", "패널 줌 토글 ⛶"),
         ("kill_pane", "패널 삭제 ✕"),
         ("sync", "입력 동기화 토글"),
+        ("autoresume", "토큰리밋 자동재개 토글"),
         ("new_window", "새 윈도우"),
         ("rename_window", "윈도우 이름 변경"),
         ("kill_window", "윈도우 삭제"),
@@ -1625,6 +1713,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.zoomed = False
             self.sync = False
             self.pane_title = ""
+            self.autoresume = False
             self.bg = bg
             self.fg = fg
 
@@ -1634,6 +1723,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.zoomed = msg.get("zoomed", False)
             self.sync = msg.get("sync", False)
             self.pane_title = msg.get("pane_title", "")
+            self.autoresume = msg.get("autoresume", False)
             self.refresh()
 
         def render_line(self, y: int) -> Strip:
@@ -1648,6 +1738,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.sync:
                 segs.append(Segment("SYNC ", Style(color="white", bgcolor="red",
                                                     bold=True)))
+            if self.autoresume:
+                segs.append(Segment("AR ", Style(color="black", bgcolor="cyan",
+                                                  bold=True)))
             for win in self.windows:
                 label = f"{win['index']}:{win['name']} "
                 segs.append(Segment(label, active if win["active"] else base))
@@ -1872,6 +1965,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("kill_pane")
             elif key == "sync":
                 self.send_cmd("set_sync")
+            elif key == "autoresume":
+                self.send_cmd("set_autoresume")
             elif key == "choose_tree":
                 self.request_tree()
             elif key == "new_window":
@@ -2058,6 +2153,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("join_pane", orient=("lr" if "-h" in args else "tb"))
             elif c in ("respawn-pane", "respawnp"):
                 self.send_cmd("respawn_pane")
+            elif c in ("auto-resume", "autoresume"):
+                val = None
+                if "on" in args:
+                    val = True
+                elif "off" in args:
+                    val = False
+                self.send_cmd("set_autoresume", value=val)
+            elif c in ("auto-resume-message", "autoresume-message"):
+                self.send_cmd("set_autoresume", msg=" ".join(args))
             elif c in ("synchronize-panes", "syncp") or (
                     c == "setw" and "synchronize-panes" in args):
                 val = None
@@ -2176,6 +2280,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.open_prompt("rename_session", "rename-session")
             elif k == "T":
                 self.open_prompt("rename_pane", "set pane title")
+            elif k == "R":
+                self.send_cmd("set_autoresume")
             elif k == "colon" or ch == ":":
                 self.open_prompt("command", ":")
             elif k == "n":
