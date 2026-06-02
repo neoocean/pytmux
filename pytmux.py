@@ -181,6 +181,8 @@ class Pane:
         self.resume_msg = "continue"
         self._scanbuf = ""
         self._resume_pending = False
+        self._activity = False   # 마지막 검사 이후 출력 있었음
+        self._bell = False       # 마지막 검사 이후 BEL 수신
 
     def reinit(self, pid: int, fd: int, cols: int, rows: int) -> None:
         """respawn: 새 PTY/셸로 화면 버퍼를 초기화한다."""
@@ -339,6 +341,10 @@ class Window:
         self.sync = False      # 입력 동기화(synchronize-panes)
         self.border_status = False  # 패널 제목 경계선 표시(pane-border-status)
         self.auto_rename = True  # 활성 패널 명령으로 이름 자동 갱신
+        self.monitor_activity = False  # 비활성 윈도우 출력 감지
+        self.monitor_bell = True       # 벨(BEL) 감지
+        self.has_activity = False
+        self.has_bell = False
 
     @property
     def active_pane(self):
@@ -575,6 +581,9 @@ class Server:
             self._pane_eof(pane)
             return
         pane.feed(data)
+        pane._activity = True
+        if b"\x07" in data:
+            pane._bell = True
         if pane.autoresume and not pane._resume_pending:
             self._maybe_schedule_resume(pane, data.decode("utf-8", "ignore"))
 
@@ -758,6 +767,16 @@ class Server:
             if index != sess.active_index:
                 sess.last_index = sess.active_index
             sess.active_index = index
+            w = sess.windows[index]
+            w.has_activity = w.has_bell = False  # 보면 플래그 해제
+
+    def set_monitor(self, sess: Session, which: str, value=None):
+        win = sess.active_window
+        if not win:
+            return
+        attr = "monitor_activity" if which == "activity" else "monitor_bell"
+        cur = getattr(win, attr)
+        setattr(win, attr, (not cur) if value is None else bool(value))
 
     def last_window(self, sess: Session):
         li = getattr(sess, "last_index", 0)
@@ -1129,7 +1148,8 @@ class Server:
             "t": "status",
             "session": sess.name,
             "windows": [{"index": w.index, "name": w.name,
-                         "active": (i == sess.active_index)}
+                         "active": (i == sess.active_index),
+                         "bell": w.has_bell, "activity": w.has_activity}
                         for i, w in enumerate(sess.windows)],
             "active_pane": win.active_pane.id if win else None,
             "zoomed": bool(win.zoomed) if win else False,
@@ -1189,6 +1209,27 @@ class Server:
                            "rows": rows, "cursor": cursor}
                     for c in clients:
                         await write_msg(c.writer, msg)
+                # 활동/벨 모니터링: 비활성 윈도우의 출력/BEL 을 플래그로
+                status_changed = False
+                for w in sess.windows:
+                    for p in w.panes():
+                        if w is win:
+                            p._activity = p._bell = False  # 보고 있는 윈도우
+                            continue
+                        if p._bell:
+                            p._bell = False
+                            if w.monitor_bell and not w.has_bell:
+                                w.has_bell = True
+                                status_changed = True
+                        if p._activity:
+                            p._activity = False
+                            if w.monitor_activity and not w.has_activity:
+                                w.has_activity = True
+                                status_changed = True
+                if status_changed:
+                    smsg = self._status_msg(sess)
+                    for c in clients:
+                        await write_msg(c.writer, smsg)
 
     # ---- 명령 처리 ----
     async def _handle_cmd(self, client: ClientConn, msg: dict):
@@ -1264,6 +1305,8 @@ class Server:
             self.rename_window(sess, str(msg.get("name", "")).strip())
         elif action == "set_auto_rename":
             self.set_auto_rename(sess, msg.get("value"))
+        elif action == "set_monitor":
+            self.set_monitor(sess, msg.get("which", "activity"), msg.get("value"))
         elif action == "kill_window":
             self.kill_window(sess)
             if sess.name not in self.sessions:
@@ -1789,8 +1832,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 segs.append(Segment("AR ", Style(color="black", bgcolor="cyan",
                                                   bold=True)))
             for win in self.windows:
-                label = f"{win['index']}:{win['name']} "
-                segs.append(Segment(label, active if win["active"] else base))
+                flag = "!" if win.get("bell") else ("#" if win.get("activity") else "")
+                label = f"{win['index']}:{win['name']}{flag} "
+                if win["active"]:
+                    st = active
+                elif win.get("bell"):
+                    st = Style(color="white", bgcolor="red", bold=True)
+                elif win.get("activity"):
+                    st = Style(color="black", bgcolor="yellow")
+                else:
+                    st = base
+                segs.append(Segment(label, st))
             now = datetime.now().strftime("%H:%M %d-%b-%y")
             host = socket.gethostname().split(".")[0]
             tpart = (f"{self.pane_title} · " if self.pane_title
@@ -2136,6 +2188,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 elif "off" in args:
                     val = False
                 self.send_cmd("set_auto_rename", value=val)
+            elif (c in ("monitor-activity", "monitor-bell")) or (
+                    c == "setw" and any("monitor-" in a for a in args)):
+                which = "bell" if ("bell" in c or "monitor-bell" in args) else "activity"
+                val = None
+                if "on" in args:
+                    val = True
+                elif "off" in args:
+                    val = False
+                self.send_cmd("set_monitor", which=which, value=val)
             elif c in ("move-window", "movew"):
                 idx = self._opt_value(args, "-t")
                 idx = int(idx) if idx and idx.isdigit() else self._first_int(args)
