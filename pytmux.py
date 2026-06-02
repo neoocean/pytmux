@@ -1872,6 +1872,32 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.stop()
                 self.dismiss(None)
 
+    class InfoScreen(ModalScreen):
+        """간단한 읽기전용 목록 표시(show-options 등). 아무 키나 누르면 닫힘."""
+        CSS = """
+        InfoScreen { align: center middle; }
+        #info { width: 64; height: auto; max-height: 80%;
+                border: round $accent; background: $panel; padding: 0 1; }
+        """
+
+        def __init__(self, lines, title="info"):
+            super().__init__()
+            self._lines = lines
+            self._title = title
+
+        def compose(self) -> ComposeResult:
+            box = ListView(*[ListItem(Label(ln)) for ln in self._lines] or
+                           [ListItem(Label("(없음)"))], id="info")
+            box.border_title = self._title
+            yield box
+
+        def on_mount(self):
+            self.query_one(ListView).focus()
+
+        def on_key(self, event: events.Key):
+            event.stop()
+            self.dismiss(None)
+
     class ChooseBufferScreen(ModalScreen):
         CSS = """
         ChooseBufferScreen { align: center middle; }
@@ -2424,6 +2450,32 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("kill_server")
 
         # ---- 프롬프트 / 명령 ----
+        def apply_option(self, name, val):
+            """클라이언트 측 옵션을 런타임에 적용."""
+            if name == "prefix":
+                self.prefix_key = _tmux_key_to_textual(val)
+                self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
+            elif name == "mouse":
+                self.mouse_enabled = val.lower() in ("on", "true", "1", "yes")
+            elif name == "status-bg":
+                self.status.bg = val
+                self.status.refresh()
+            elif name == "status-fg":
+                self.status.fg = val
+                self.status.refresh()
+            elif name == "mode-keys":
+                self.mode_keys = "emacs" if val == "emacs" else "vi"
+
+        def show_options(self):
+            lines = [
+                f"prefix      {self.prefix_key}",
+                f"mouse       {'on' if self.mouse_enabled else 'off'}",
+                f"status-bg   {self.status.bg}",
+                f"status-fg   {self.status.fg}",
+                f"mode-keys   {self.mode_keys}",
+            ]
+            self.push_screen(InfoScreen(lines, title="options"))
+
         def reload_config(self, path=None):
             cfg = load_config(path)
             self.prefix_key = cfg["prefix"]
@@ -2666,6 +2718,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("clear_history")
             elif c in ("source-file", "source"):
                 self.reload_config(args[0] if args else None)
+            elif c in ("set", "set-option"):
+                opts = [a for a in args if not a.startswith("-")]
+                if len(opts) >= 2:
+                    self.apply_option(opts[0], " ".join(opts[1:]))
+            elif c in ("show-options", "show"):
+                self.show_options()
             # 알 수 없는 명령은 조용히 무시
 
         def on_paste(self, event: events.Paste):
