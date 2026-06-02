@@ -907,15 +907,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.status.display = False
             self.prompt.display = True
             self.mode = "prompt"
-            # display:none → 표시 직후엔 포커스가 안 걸리므로 리프레시 후 포커스
-            self.call_after_refresh(self._focus_prompt)
-
-        def _focus_prompt(self):
-            self.set_focus(self.prompt)
-            try:
-                self.prompt.cursor_position = len(self.prompt.value)
-            except Exception:
-                pass
+            # 입력은 App.on_key(_handle_prompt_key)에서 직접 처리하므로 입력창에
+            # 포커스를 옮기지 않는다(뷰 포커스 유지 → 키가 App 으로 확실히 전달).
 
         def close_prompt(self):
             self.prompt.display = False
@@ -927,9 +920,26 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.view.focus()
 
         def on_input_submitted(self, event):
-            if event.input is not self.prompt:
-                return
-            val = event.value.strip()
+            if event.input is self.prompt:
+                self._submit_prompt()
+
+        def _handle_prompt_key(self, event: events.Key):
+            """입력창에 포커스가 걸리지 않는 환경에서도 동작하도록 App 레벨에서
+            명령 프롬프트 입력을 직접 처리한다(입력창은 표시용)."""
+            k = event.key
+            ch = event.character
+            if k == "escape":
+                self.close_prompt()
+            elif k == "enter":
+                self._submit_prompt()
+            elif k == "backspace":
+                self.prompt.value = self.prompt.value[:-1]
+            elif ch is not None and ch.isprintable():
+                self.prompt.value += ch
+            # 그 외(방향키 등)는 무시
+
+        def _submit_prompt(self):
+            val = self.prompt.value.strip()
             purpose = self.prompt.purpose
             action = self.prompt.action
             self.close_prompt()
@@ -1260,8 +1270,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 메뉴/모달이 떠 있으면 그쪽에서 처리
             if len(self.screen_stack) > 1:
                 return
-            # 프롬프트 입력 중이면 Input 위젯이 처리하도록 둔다
+            # 프롬프트 입력 중: App 레벨에서 직접 처리(포커스 의존 X)
             if self.mode == "prompt":
+                self._handle_prompt_key(event)
+                event.prevent_default()
+                event.stop()
                 return
             if self.mode == "prefix":
                 self._handle_prefix(event)
