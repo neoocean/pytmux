@@ -278,6 +278,7 @@ class Window:
         self._last = None      # 직전 활성 패널(prefix ;)
         self.zoomed = False    # 활성 패널 전체화면(prefix z)
         self.layout_idx = 0    # 레이아웃 프리셋 순환 인덱스
+        self.sync = False      # 입력 동기화(synchronize-panes)
 
     @property
     def active_pane(self):
@@ -831,6 +832,12 @@ class Server:
         if win:
             win.toggle_last_pane()
 
+    def set_sync(self, sess: Session, value=None):
+        win = sess.active_window
+        if not win:
+            return
+        win.sync = (not win.sync) if value is None else bool(value)
+
     def select_pane_cycle(self, sess: Session):
         win = sess.active_window
         if not win:
@@ -901,6 +908,7 @@ class Server:
                         for i, w in enumerate(sess.windows)],
             "active_pane": win.active_pane.id if win else None,
             "zoomed": bool(win.zoomed) if win else False,
+            "sync": bool(win.sync) if win else False,
         }
 
     async def _send_full(self, client: ClientConn):
@@ -978,6 +986,8 @@ class Server:
             self.select_pane_cycle(sess)
         elif action == "last_pane":
             self.last_pane(sess)
+        elif action == "set_sync":
+            self.set_sync(sess, msg.get("value"))
         elif action == "resize":
             self.resize_split(sess, msg.get("split_id"), msg.get("ratio", 0.5))
         elif action == "resize_dir":
@@ -1098,14 +1108,17 @@ class Server:
         if not win:
             return
         p = win.pane_by_id(msg.get("pane")) or win.active_pane
-        if p.scroll != 0:
-            p.scroll = 0  # 입력 시작 시 live 로 복귀(R6)
-            p.dirty = True
         data = base64.b64decode(msg.get("data", ""))
-        try:
-            os.write(p.master_fd, data)
-        except OSError:
-            pass
+        # 입력 동기화 시 윈도우 내 모든 패널에 동일 입력 전달
+        targets = win.panes() if win.sync else [p]
+        for t in targets:
+            if t.scroll != 0:
+                t.scroll = 0  # 입력 시작 시 live 로 복귀(R6)
+                t.dirty = True
+            try:
+                os.write(t.master_fd, data)
+            except OSError:
+                pass
 
     def _handle_scroll(self, client: ClientConn, msg: dict):
         sess = client.session
@@ -1297,6 +1310,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("split_tb", "패널 분할 ─ (상하)"),
         ("zoom", "패널 줌 토글 ⛶"),
         ("kill_pane", "패널 삭제 ✕"),
+        ("sync", "입력 동기화 토글"),
         ("new_window", "새 윈도우"),
         ("rename_window", "윈도우 이름 변경"),
         ("kill_window", "윈도우 삭제"),
@@ -1457,6 +1471,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.session = ""
             self.windows = []
             self.zoomed = False
+            self.sync = False
             self.bg = bg
             self.fg = fg
 
@@ -1464,6 +1479,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.session = msg.get("session", "")
             self.windows = msg.get("windows", [])
             self.zoomed = msg.get("zoomed", False)
+            self.sync = msg.get("sync", False)
             self.refresh()
 
         def render_line(self, y: int) -> Strip:
@@ -1475,6 +1491,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.zoomed:
                 segs.append(Segment("Z ", Style(color="black", bgcolor="yellow",
                                                  bold=True)))
+            if self.sync:
+                segs.append(Segment("SYNC ", Style(color="white", bgcolor="red",
+                                                    bold=True)))
             for win in self.windows:
                 label = f"{win['index']}:{win['name']} "
                 segs.append(Segment(label, active if win["active"] else base))
@@ -1663,6 +1682,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("zoom")
             elif key == "kill_pane":
                 self.send_cmd("kill_pane")
+            elif key == "sync":
+                self.send_cmd("set_sync")
             elif key == "new_window":
                 self.send_cmd("new_window")
             elif key == "rename_window":
@@ -1814,6 +1835,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("break_pane")
             elif c in ("join-pane", "joinp"):
                 self.send_cmd("join_pane", orient=("lr" if "-h" in args else "tb"))
+            elif c in ("synchronize-panes", "syncp") or (
+                    c == "setw" and "synchronize-panes" in args):
+                val = None
+                if "on" in args:
+                    val = True
+                elif "off" in args:
+                    val = False
+                self.send_cmd("set_sync", value=val)
             elif c in ("detach-client", "detach"):
                 self.exit(message="detached")
             elif c == "kill-server":
