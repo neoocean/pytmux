@@ -61,8 +61,19 @@ async def test_claude_state():
     assert claude_state(
         "✽ Flowing… (8m 4s · ↑ 21.1k tokens)\n"
         "⏵⏵ auto mode on (shift+tab to cycle)") == "busy"
+    # 폰트/터미널에 따라 스피너 글리프가 `*`/`·` 로 렌더되는 변형
+    assert claude_state("* Baking… (10s · ↑ 419 tokens · still thinking)") == "busy"
+    # 시간 표시 없이도 토큰 화살표 또는 "still thinking" 만으로 busy 판정
+    assert claude_state(
+        "⏵⏵ auto mode on (shift+tab to cycle)\n"
+        "* Baking… still thinking") == "busy"
+    assert claude_state(
+        "⏵⏵ auto mode on (shift+tab to cycle)\n"
+        "↑ 419 tokens") == "busy"
     # 오탐 방지: 도구 출력 말줄임표는 busy 아님
     assert claude_state("⎿  … +38 lines (ctrl+o to expand)") is None
+    # 오탐 방지: 화살표 없는 토큰 언급은 busy 아님
+    assert claude_state("Cost: 1.2k tokens used today") is None
 
 
 async def test_claude_usage():

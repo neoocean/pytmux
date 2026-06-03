@@ -75,13 +75,17 @@ _RESET_RE12 = re.compile(r'(\d{1,2})(?::(\d{2}))?\s*([ap]m)', re.I)
 _RESET_RE24 = re.compile(r'\b([01]?\d|2[0-3]):([0-5]\d)\b')
 
 # 처리중(busy) 스피너: 현행 Claude Code 는 footer 에 "esc to interrupt" 대신
-# "<글리프> <동명사>… (12s · ↓ 1.9k tokens)" 형식의 애니메이션 줄을 그린다.
-# 동명사 단어(Crunching/Flowing/…)와 글리프(✽✢✳✶✷✻·)는 매 프레임 바뀌므로
-# 안정적인 부분만 잡는다: 말줄임표(…) + 괄호 안 경과시간("(20s"/"(2m 17s").
+# "<글리프> <동명사>… (12s · ↑ 1.9k tokens · still thinking)" 형식의 애니메이션
+# 줄을 그린다. 동명사(Crunching/Flowing/Baking/…)·글리프(✽✢✳✶✷✻ + 폰트에 따라
+# `*`/`·`로 렌더되기도 함)는 매 프레임 바뀌므로 안정적인 시그널만 잡는다.
 # 시간 숫자+s 를 요구해 "… +38 lines (ctrl+o)" 같은 도구 출력 오탐을 피한다.
+# idle footer("shift+tab to cycle")가 busy 중에도 같이 보이므로 — busy 시그널은
+# 가급적 여러 형태로 잡아두고 claude_state 에서 busy 를 먼저 판정한다.
 _BUSY_SPINNER_RE = re.compile(
     r"…\s*\((?:\d+\s*m\s*)?\d+\s*s"      # "… (20s" / "… (2m 17s"
-    r"|[✽✢✳✶✷✻]\s+\w+…"                  # 스피너 글리프 + "동명사…"(시간 표시 전)
+    r"|[✽✢✳✶✷✻*·]\s+\w+…"                # 스피너 글리프 + "동명사…"(시간 표시 전)
+    r"|[↑↓]\s*[\d.,]+\s*[kKmM]?\s*tokens"  # "↑ 419 tokens" / "↓ 1.9k tokens"
+    r"|still\s+thinking"                  # 명시적 진행 표기
 )
 
 
