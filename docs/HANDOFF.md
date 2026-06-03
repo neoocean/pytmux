@@ -91,7 +91,9 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
 - 탭별 **레이아웃 슬롯** 저장/불러오기(`layout-save`/`layout-load`/`layout-load-new`,
   메뉴·선택기). 디스크 영속(`<sock>.slots.json`).
 - 명령 프롬프트: 고정 `:` 프리픽스, `?`/`help` 목록(**카테고리 탭** — ←→ 전환,
-  ↑↓ 명령 이동), 자동완성(옵션 포함).
+  ↑↓ 명령 이동), 자동완성(옵션 포함). **부분일치 후보 영역**: 명령 이름을 치면
+  접두사뿐 아니라 **중간 일치**(예: `tab`→`new-tab`/`kill-tab`…)까지 입력 줄 위로
+  펼쳐 보여줌(↑↓ 선택, Tab/Enter 채우기 → 다시 Enter 로 실행).
   **F12 로 바로 진입**(ESC 모드 아닐 때). `prefix F12` = 중첩 패스스루 토글.
 - 색: p4v-tui 와 동일한 Textual `textual-dark` 팔레트(`theme_color()` 로 해석).
 - clock-mode: 현재 패널 전체를 큰 시계로 덮음(뒤 dim, [x]/명령으로 닫기).

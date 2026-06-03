@@ -101,6 +101,50 @@ async def test_command_list_and_autocomplete():
     await _with_app(body)
 
 
+async def test_command_substring_candidates():
+    async def body(app, pilot, srv):
+        await pilot.press("escape")
+        await pilot.press("colon")
+        scr = app.screen_stack[-1]
+        inp = scr.query_one(Input)
+        from textual.widgets import Label
+        cand = scr.query_one("#pcand", Label)
+        # 중간부터 일치: "tab" 은 접두사가 아니지만 tab 이 든 명령들이 후보가 된다.
+        for ch in "tab":
+            await pilot.press(ch)
+        await pilot.pause(0.1)
+        names = [n for n, _ in scr._cand]
+        assert cand.display is True, "후보 영역이 위로 펼쳐짐"
+        assert "new-tab" in names and "kill-tab" in names, names
+        assert all("tab" in n for n in names), names
+        assert scr._sel == 0
+        # ↓ 로 후보 내 선택 이동
+        first = scr._cand[0][0]
+        await pilot.press("down")
+        await pilot.pause(0.05)
+        assert scr._sel == 1, scr._sel
+        # Tab 으로 강조 후보를 입력에 채움(뒤에 공백) → 후보 영역 숨김
+        chosen = scr._cand[scr._sel][0]
+        await pilot.press("tab")
+        await pilot.pause(0.1)
+        assert inp.value == chosen + " ", repr(inp.value)
+        assert cand.display is False, "옵션 입력 단계에선 후보 숨김"
+        # 첫 글자 일치(접두사)도 여전히 후보로 동작
+        for _ in range(len(inp.value)):
+            await pilot.press("backspace")
+        for ch in "new":
+            await pilot.press(ch)
+        await pilot.pause(0.1)
+        assert "new-tab" in [n for n, _ in scr._cand], scr._cand
+        # Enter 는 강조 후보를 채우기만(실행 X), 그 다음 Enter 로 실행
+        sel_name = scr._cand[scr._sel][0]
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1] is scr, "첫 Enter 는 후보 채우기"
+        assert inp.value == sel_name + " ", repr(inp.value)
+    await _with_app(body)
+
+
 async def test_help_command():
     async def body(app, pilot, srv):
         sess = next(iter(srv.sessions.values()))

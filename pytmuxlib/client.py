@@ -412,7 +412,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
                    background: $surface; }
         #pinput { width: 1fr; border: none; height: 1; padding: 0;
                   background: $surface; color: $text; }
+        /* 입력 줄 위로 펼쳐지는 자동완성 후보 영역(부분일치 명령). */
+        #pcand { dock: bottom; width: 100%; height: auto; max-height: 12;
+                 background: $panel; color: $text; padding: 0 1;
+                 border-top: tall $accent; }
         """
+
+        # 후보 영역에 한 번에 보여줄 최대 명령 수.
+        MAX_CAND = 12
 
         def __init__(self, purpose, label, initial, suggester):
             super().__init__()
@@ -420,6 +427,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._label = label
             self._initial = initial
             self._suggester = suggester
+            self._cand = []        # 현재 부분일치 후보 [(name, desc), ...]
+            self._sel = 0          # 후보 영역 내 선택 인덱스
+            self._cand_shown = False
 
         def compose(self) -> ComposeResult:
             inp = Input(value=self._initial, placeholder=self._label,
@@ -429,6 +439,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 with Horizontal(id="prow"):
                     yield Label(":", id="pprefix")
                     yield inp
+                # 입력 줄보다 먼저 docked → 입력 줄이 화면 맨 아래, 후보는 그 위로 쌓임.
+                yield Label("", id="pcand", markup=True)
             else:
                 inp.styles.dock = "bottom"
                 inp.styles.padding = (0, 1)
@@ -438,8 +450,63 @@ def build_client_app(sock_path: str, config: dict | None = None,
             inp = self.query_one(Input)
             inp.focus()
             inp.cursor_position = len(inp.value)
+            if self._purpose == "command":
+                self.query_one("#pcand", Label).display = False
+                self._refresh_cands()
+
+        @staticmethod
+        def _esc(s):
+            # rich/Textual 마크업으로 해석되지 않게 '[' 를 이스케이프.
+            return s.replace("[", r"\[")
+
+        def _refresh_cands(self):
+            """입력의 첫 토큰(명령 이름)으로 부분일치 후보를 재계산하고 후보 영역을
+            갱신한다. 토큰에 공백이 생기면(= 옵션 입력 단계) 후보를 숨긴다."""
+            if self._purpose != "command":
+                return
+            lbl = self.query_one("#pcand", Label)
+            s = self.query_one(Input).value.strip()
+            matches = []
+            if s and " " not in s:
+                ql = s.lower()
+                matches = [(n, d) for (n, d, *_) in COMMANDS if ql in n.lower()]
+                # 정확히 한 개이고 그게 입력과 동일하면 더 제안할 게 없음.
+                if len(matches) == 1 and matches[0][0].lower() == ql:
+                    matches = []
+            self._cand = matches[:self.MAX_CAND]
+            self._sel = 0
+            if not self._cand:
+                self._cand_shown = False
+                lbl.display = False
+                return
+            self._cand_shown = True
+            lbl.display = True
+            self._render_cands()
+
+        def _render_cands(self):
+            lbl = self.query_one("#pcand", Label)
+            rows = []
+            for i, (n, d) in enumerate(self._cand):
+                if i == self._sel:
+                    rows.append(f"[reverse]{self._esc(n):<20} {self._esc(d)}[/reverse]")
+                else:
+                    rows.append(f"{self._esc(n):<20} [dim]{self._esc(d)}[/dim]")
+            lbl.update("\n".join(rows))
+
+        def _accept_cand(self):
+            inp = self.query_one(Input)
+            name = self._cand[self._sel][0]
+            inp.value = name + " "
+            inp.cursor_position = len(inp.value)
+            inp.focus()
+            self._refresh_cands()
 
         def on_input_submitted(self, event):
+            # 후보가 떠 있으면 Enter 는 강조된 후보를 입력에 채우고(실행하지 않음),
+            # 그 다음 Enter 로 실제 실행한다.
+            if self._purpose == "command" and self._cand_shown and self._cand:
+                self._accept_cand()
+                return
             self.dismiss(event.value)
 
         def on_input_changed(self, event):
@@ -455,11 +522,27 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         inp.cursor_position = len(inp.value)
                     inp.focus()
                 self.app.push_screen(CommandListScreen(COMMANDS, base), fill)
+                return
+            self._refresh_cands()
 
         def on_key(self, event: events.Key):
             if event.key == "escape":
                 event.stop()
                 self.dismiss(None)
+                return
+            # 후보 영역이 떠 있을 때만 ↑↓ 로 선택 이동, Tab 으로 채우기.
+            if self._purpose == "command" and self._cand_shown and self._cand:
+                if event.key == "down":
+                    event.stop()
+                    self._sel = (self._sel + 1) % len(self._cand)
+                    self._render_cands()
+                elif event.key == "up":
+                    event.stop()
+                    self._sel = (self._sel - 1) % len(self._cand)
+                    self._render_cands()
+                elif event.key == "tab":
+                    event.stop()
+                    self._accept_cand()
 
     class ChooseBufferScreen(ModalScreen):
         CSS = """
