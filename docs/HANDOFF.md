@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **81 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **82 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -197,7 +197,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56385 + git, 신→구)
+## 9. 최근 변경(CL 56279~56389 + git, 신→구)
+
+- 56389 **ESC 모드 탭바 내비게이션**(§10 #3/#26 해결) — Enter 한 번으로 전환+ESC
+  종료(`_exit_esc`), ←/↑/→ 가 탭+`[+]` 순환(센티넬 "+"), [+] Enter=새 탭, 선택
+  강조. 회귀 테스트 1종(총 82). 클라이언트 전용.
 
 - 56385 **§11 Claude 코드 분리 1단계** — `claude_state`/`claude_usage`/
   `parse_reset_delay`+정규식을 `pytmuxlib/claude.py` 로 이전, protocol re-export
@@ -416,16 +420,9 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   - **테스트**: 실제 fork/exec 가 필요해 완전 헤드리스는 어렵지만, **직렬화↔트리 복원** 경로를
     가짜 fd 로 단위 테스트하고, **execv 직전 넘길 fd 의 CLOEXEC 해제·재채택 후 재설정**을 단언.
     re-exec 통합은 별도 수동 검증(실셸 띄워 `restart-server` 후 프로세스 PID·작업 유지 확인).
-- **[요청·미구현] ESC 모드 탭 전환 Enter 한 번으로 확정+복귀** — 현재 ESC 모드에서
-  위 방향키로 상단 탭바에 포커스를 준 뒤 ←→ 로 탭을 고르고 **Enter 를 누르면 그 탭으로
-  전환되지만 ESC 모드는 유지**(`tb.bar_focus` 만 해제)되고, **Enter 를 한 번 더** 눌러야
-  ESC 모드에서 빠져나오며 전환이 확정된다. 요청: ESC 모드에서 탭을 골라 **Enter 를 처음
-  누를 때 바로 ESC 모드에서 빠져나오며 탭이 확정**되게 한다. 손볼 곳은
-  `client.py::_handle_esc_mode` 의 `elif k == "enter":` 분기(탭바 포커스 블록) — 현재
-  `select_window` 후 `tb.bar_focus=False; tb.refresh()` 만 하는데, 대신 `_exit_esc()` 를
-  호출하면 bar_focus 해제·refresh 까지 포함해 한 번에 종료된다. 클라이언트 전용 변경이라
-  attach 재실행으로 반영(서버 재기동 불필요). 회귀 테스트(`test_tab_bar_and_esc_nav`)에
-  Enter 한 번 뒤 `app.mode == "normal"` 단언 추가 권장.
+- ~~**[요청·미구현] ESC 모드 탭 전환 Enter 한 번으로 확정+복귀**~~ → **CL 56389 에서
+  해결**(#26 과 함께). 탭바 포커스 Enter 분기가 `select_window` 후 `_exit_esc()` 를
+  호출해 한 번에 전환+ESC 종료.
 - **[요청·미구현] 상태줄 REC 클릭 시 캡처 정보 팝업** — 왼쪽 아래 `REC` 표시를
   클릭하면 **현재 탭/패널이 어느 경로의 어느 파일에 기록되고 있는지와 그 파일 크기**를
   보여주는 팝업을 띄운다. 캡처 경로는 `<sock>.capture/pane-<id>.log`(서버
@@ -720,21 +717,9 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
     키가 아님**을 분명히 해 그냥 패널로 흘려보내는 게 목표.
   - **주의**: prefix 모드/esc 모드/스크롤 모드 중에는 기존 동선 유지(그 모드의 키로 해석),
     normal 모드에서만 패스스루.
-- **[요청·미구현] ESC 모드 탭 네비게이션에 맨 오른쪽 `[+]` 새 탭 버튼도 포함** — ESC 모드에서
-  방향키로 탭 사이를 오갈 때 **맨 오른쪽 `[+]`(새 탭) 버튼도 커서로 선택**할 수 있게 하고, 그
-  버튼에서 **Enter 를 누르면 새 탭**이 열리게 한다. 현재 `_handle_esc_mode` 의 탭바 포커스 블록
-  (client.py ~2605-2641)은 `tb.sel`(탭 **인덱스 정수**)만 다루고 ←→ 가 탭 인덱스 사이를
-  순환(`(cur±1) % len(idxs)`)할 뿐 `[+]` 는 네비 대상이 아니다(현재는 `+`/`a` 문자 입력으로만
-  새 탭). 구현 방향:
-  - **선택 상태에 `[+]` 추가**: `tb.sel` 이 정수 인덱스만 담으므로 `[+]` 용 **센티넬**(예
-    `tb.sel = "+"` 또는 별도 `tb.sel_add` 플래그)을 도입. **마지막 탭에서 → 를 누르면 첫 탭으로
-    감싸지 말고 `[+]` 로 이동**, `[+]` 에서 → 는 첫 탭으로(또는 정지), ← 는 마지막 탭으로 복귀.
-  - **Enter 분기**: 선택이 `[+]` 면 `select_window` 대신 `new_window` 실행(기존 `+`/`a` 경로와
-    동일 명령).
-  - **렌더 강조**: TabBar render(`add` zone, ~1084 의 `add_st`)에서 **bar_focus 이고 sel==`[+]`**
-    이면 선택 강조 스타일(다른 선택 탭처럼 `sel_st` 계열)로 그려 커서 위치가 보이게.
-  - **주의**: 스크롤(◀▶)로 `[+]` 가 화면 밖일 때도 선택되면 보이도록 스크롤 보정과
-    맞물릴 것. `[+]` 는 항상 마지막 탭 오른쪽(현 위치) 유지.
+- ~~**[요청·미구현] ESC 모드 탭 네비게이션에 맨 오른쪽 `[+]` 새 탭 버튼도 포함**~~ → **CL
+  56389 에서 해결**(#3 과 함께). ←/↑/→ 가 `idxs + ["+"]` 를 순환(tb.sel="+"), Enter 가
+  "+" 면 `new_window`. TabBar.render 가 bar_focus+sel=="+" 면 `[+]` 를 선택 강조.
 - **[요청·미구현] 패널 경계선 마우스오버 시 배경색으로 반응(리사이즈 가능 암시)** — 두 패널
   사이의 경계선(divider)을 **마우스로 드래그하면 패널 크기를 조절**할 수 있다(`on_mouse_down`
   ~859 가 `_divider_at` 으로 경계를 잡아 `_dragging` 시작 → `on_mouse_move` ~910-919 가
