@@ -852,6 +852,21 @@ async def test_status_clock_click_toggles_clock_mode():
     await _with_app(body)
 
 
+async def test_tabbar_claude_done_background():
+    # 비활성 탭에 claude_done 플래그가 오면 옅은(success) 배경으로 그려 활성 탭
+    # (primary)과 구분된다(#22).
+    async def body(app, pilot, srv):
+        tabs = [{"index": 0, "name": "a", "active": True},
+                {"index": 1, "name": "b", "active": False, "claude_done": True}]
+        app.tabbar.set_tabs(tabs, 0)
+        strip = app.tabbar.render_line(0)
+        seg = next(s for s in strip if "1:b" in s.text)
+        active_seg = next(s for s in strip if "0:a" in s.text)
+        assert seg.style and seg.style.bgcolor is not None, "완료 탭 배경 강조"
+        assert seg.style.bgcolor != active_seg.style.bgcolor, "활성 탭과 다른 색"
+    await _with_app(body)
+
+
 async def test_bars_use_terminal_default_background():
     # 상단 탭바·하단 상태줄의 base(비활성/여백) 배경은 터미널 기본(bgcolor=None)을
     # 따르고, 강조 배지(활성 탭·REC 등)는 자체 bgcolor 를 유지한다(#10/#28).

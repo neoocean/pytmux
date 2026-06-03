@@ -365,7 +365,8 @@ class Server:
                 sess.last_index = sess.active_index
             sess.active_index = index
             t = sess.tabs[index]
-            t.has_activity = t.has_bell = False  # 보면 플래그 해제
+            # 보면 플래그 해제(활동·벨·Claude 완료 알림)
+            t.has_activity = t.has_bell = t.has_claude_done = False
 
     def set_monitor(self, sess: Session, which: str, value=None):
         tab = sess.active_tab
@@ -1272,6 +1273,31 @@ class Server:
                          for t in s.tabs]}
             for s in self.sessions.values()]}
 
+    def _scan_claude(self, sess, win) -> bool:
+        """모든 탭 패널의 Claude 상태/사용량을 화면 텍스트(screen.display)로 갱신
+        하고, **비활성 탭**의 busy→idle(작업 완료) 전이를 감지해 `has_claude_done`
+        를 세운다(#22). 활성 윈도우만이 아니라 전체를 훑는 이유는 백그라운드 탭의
+        완료를 알리기 위해서다. 상태가 바뀌면 True 반환."""
+        changed = False
+        for t in sess.tabs:
+            w = t.window
+            for p in w.panes():
+                txt = "\n".join(p.screen.display)
+                old_cl = p._claude
+                new_cl = claude_state(txt)
+                new_use = claude_usage(txt) if new_cl else None
+                if new_cl != p._claude or new_use != p._claude_usage:
+                    p._claude = new_cl
+                    p._claude_usage = new_use
+                    changed = True
+                # 비활성 탭에서 처리(busy)→대기(idle) 전이 = 작업 완료. limit 은
+                # "대기"가 아니므로 대상 아님(busy→idle 만).
+                if (w is not win and old_cl == "busy" and new_cl == "idle"
+                        and t.monitor_claude and not t.has_claude_done):
+                    t.has_claude_done = True
+                    changed = True
+        return changed
+
     @staticmethod
     def _tab_claude(tab) -> str | None:
         """탭 내 패널들의 Claude 상태를 합쳐 대표 상태 반환(limit>busy>idle)."""
@@ -1291,6 +1317,7 @@ class Server:
             "windows": [{"index": t.index, "name": t.name,
                          "active": (i == sess.active_index),
                          "bell": t.has_bell, "activity": t.has_activity,
+                         "claude_done": t.has_claude_done,
                          "claude": self._tab_claude(t)}
                         for i, t in enumerate(sess.tabs)],
             # 활성 윈도우 패널별 Claude 상태/마지막 프롬프트(헤더용)
@@ -1361,14 +1388,9 @@ class Server:
                            "rows": rows, "cursor": cursor}
                     for c in clients:
                         await write_msg(c.writer, msg)
-                    # Claude Code 상태/사용량 갱신(화면 텍스트 휴리스틱)
-                    txt = "\n".join("".join(s[0] for s in r) for r in rows)
-                    new_cl = claude_state(txt)
-                    new_use = claude_usage(txt) if new_cl else None
-                    if new_cl != p._claude or new_use != p._claude_usage:
-                        p._claude = new_cl
-                        p._claude_usage = new_use
-                        status_changed = True
+                # Claude Code 상태/사용량 갱신(+ 비활성 탭 완료 감지, #22)
+                if self._scan_claude(sess, win):
+                    status_changed = True
                 # 활동/벨 모니터링: 비활성 윈도우의 출력/BEL 을 플래그로
                 for t in sess.tabs:
                     w = t.window

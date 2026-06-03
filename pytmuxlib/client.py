@@ -1155,6 +1155,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                            bold=True)
             arrow_st = Style(color="black", bgcolor=theme_color(self, "accent"),
                              bold=True)
+            # 비활성 탭의 Claude 작업 완료 알림: 옅은 배경(보면 해제)(#22)
+            done_st = Style(color="black", bgcolor=theme_color(self, "success"))
             labels = self._labels()
             widths = [sum(_char_cells(c) for c in s) for s in labels]
             n = len(self.tabs)
@@ -1195,6 +1197,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     st = sel_st
                 elif self.tabs[i].get("active"):
                     st = active_st
+                elif self.tabs[i].get("claude_done"):
+                    st = done_st       # 비활성 탭 Claude 완료 알림(#22)
                 else:
                     st = base
                 add(labels[i], st, "tab", self.tabs[i]["index"])

@@ -594,8 +594,10 @@ class Tab:
         self.window = window
         self.has_activity = False
         self.has_bell = False
+        self.has_claude_done = False   # 비활성 탭 Claude 작업 완료(busy→idle) 알림
         self.monitor_activity = False
         self.monitor_bell = True
+        self.monitor_claude = True
 
 
 class Session:

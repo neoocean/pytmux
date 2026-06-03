@@ -58,6 +58,35 @@ async def test_tree_msg_includes_panes_and_remote():
         await teardown(srv, task, sock)
 
 
+async def test_inactive_tab_claude_done_flag():
+    # 비활성 탭의 Claude 패널이 busy→idle 로 끝나면 has_claude_done 이 켜지고,
+    # 그 탭을 보면(select_window) 해제된다(#22).
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv.new_window(sess)                 # 탭 1 추가(활성=탭1)
+        srv.select_window(sess, 0)           # 탭0 활성 → 탭1 비활성
+        t1 = sess.tabs[1]
+        p1 = t1.window.active_pane
+        p1._claude = "busy"                  # 직전 상태: 처리중
+        p1.feed(b"\r\ndone\r\n? for shortcuts\r\n")   # 화면이 idle footer
+        win = sess.active_window             # 탭0(활성)
+        srv._scan_claude(sess, win)
+        assert t1.has_claude_done is True, "비활성 탭 busy→idle → 완료 알림"
+        msg = srv._status_msg(sess)
+        assert msg["windows"][1]["claude_done"] is True
+        # 그 탭으로 전환 → 읽음 처리(해제)
+        srv.select_window(sess, 1)
+        assert t1.has_claude_done is False, "보면 해제"
+        # 활성 탭에서 끝나는 건 알림 대상 아님
+        p1._claude = "busy"
+        p1.feed(b"\r\n? for shortcuts\r\n")
+        srv._scan_claude(sess, sess.active_window)   # 이제 탭1이 활성
+        assert sess.tabs[1].has_claude_done is False, "활성 탭은 알림 안 함"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_break_join_pane():
     srv, task, sock = await server_only()
     try:
