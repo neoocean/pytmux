@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **65 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **73 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -197,8 +197,14 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56351 + git, 신→구)
+## 9. 최근 변경(CL 56279~56369 + git, 신→구)
 
+- 56369 상태줄 오른쪽 **세그먼트 분리**(§10 #11/#12 해결, #13 토대) — `StatusBar.
+  _expand_parts` 가 right_fmt 를 (kind,text) 런(host/time/date/plain)으로 쪼개
+  render_line 이 런별 세그먼트로 그린다. ① 원격(SSH; `_is_remote`=`SSH_CONNECTION`/
+  `SSH_TTY`)이면 host 를 `ssh:`+붉은색(error)+bold 로. ② `_clock_zone` 이 시각
+  (`%H:%M`) 런만 덮어 host·날짜 클릭은 clock-mode 무관. ③ 날짜 런 x 범위를
+  `_date_zone` 으로 등록(달력 #13 트리거 준비). 회귀 테스트 2종. 클라이언트 전용.
 - 56351 원격 SSH 휠 스크롤백 미동작(§10) **진단 계측** 추가 — 환경 의존이라
   코드만으론 단정 불가. `set mouse-debug on`(별칭 mouse-log) 으로 켜면
   `MultiplexerView` 의 down/scroll_up/scroll_down 핸들러가 받은 이벤트를
@@ -499,31 +505,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   처리, `adjust_cell_length` 의 패딩 채움 스타일도 base 라 함께 영향). ② 상단 탭바
   (`TabBar`)·패널 배경 등 **다른 영역도 같은 고정색을 쓰는지** 점검 — 일관성을 위해
   함께 갈지 결정. ③ 설정으로 명시 배경을 준 경우(`self.bg`)는 그대로 우선.
-- **[요청·미구현] 원격(SSH) 접속이면 머신 이름에 `ssh:` 접두사 + 붉은색 표시** — 화면
-  맨 아랫줄 오른쪽에 머신 이름·시간·날짜를 표시하고(`StatusBar` 의 `right_fmt` =
-  `#{pane_title}#h %H:%M %Y-%m-%d`, `#h` 가 `_expand` 에서 `socket.gethostname()` 단축명으로
-  치환), 이 영역을 누르면 활성 패널 clock-mode 토글(`_clock_zone`/`on_mouse_down`). 요청:
-  머신 이름 표시를 ① **로컬이면 지금과 동일한 색**(현재 `base` 스타일)으로, ② **SSH 를 통한
-  원격 서버면 앞에 `ssh:` 접두사를 붙이고 그 접두사+머신 이름을 붉은색**으로 표시한다.
-  구현 방향:
-  - **원격 판정(클라이언트 측)**: 클라이언트 프로세스 env 의 `SSH_CONNECTION`/`SSH_TTY`
-    유무로 판단(클라이언트는 사용자가 attach 한 머신에서 돌고, 원격 ssh 세션이면 그 서버
-    env 에 잡힘). 시작 시 1회 캐시.
-  - **렌더 분리**: 현재 오른쪽은 통째로 한 `base` 세그먼트(render_line ~1120-1125)라
-    host 부분만 색을 못 준다. host(`#h`) 구간을 **별도 세그먼트로 분리**해 원격이면
-    `ssh:<host>` 를 붉은색(`tc("error")` 전경)으로, 로컬이면 기존 `base` 로 그린다.
-    `_expand` 가 `#h` 를 문자열로 치환하므로 토큰 위치 추적이 필요 — host 만 따로 만들거나
-    오른쪽을 조각내어 합성.
-  - **주의**: `_clock_zone` 폭 계산(rw)·클릭 동작은 그대로 유지(접두사로 폭이 늘어나면
-    zone 좌표도 같이 갱신). 시간/날짜 부분 색은 변경 없음.
-- **[요청·미구현] 시계 클릭 존을 "시간" 부분으로만 한정** — 화면 오른쪽 아래에서
-  **시계(시간) 부분을 클릭할 때만 clock-mode 가 켜지고**, **머신 이름·날짜를 클릭하면
-  시계로 연결되지 않아야** 한다. 현재는 `_clock_zone` 이 오른쪽 전체(host + 시간 + 날짜)를
-  덮어(render_line ~1126-1128, `rw = right` 전체 폭) 어디를 눌러도 토글된다. 구현 방향:
-  오른쪽을 조각내어 **시간(`%H:%M`) 구간의 x 범위만** `_clock_zone` 으로 잡고
-  (`on_mouse_down` ~1135-1137 은 그대로), host·날짜 구간은 zone 에서 제외. 위 "원격 SSH
-  머신 이름 색" 항목과 **같은 오른쪽 영역 세그먼트 분리 작업**이라 함께 구현하면 좋다
-  (host/시간/날짜를 별도 세그먼트로 쪼개면 각 구간 x 범위를 정확히 알 수 있음).
+- ~~**[요청·미구현] 원격(SSH) 접속이면 머신 이름에 `ssh:` 접두사 + 붉은색 표시**~~ →
+  **CL 56369 에서 해결.** `StatusBar._expand_parts` 가 right_fmt 를 (kind,text) 런으로
+  쪼개고, `_is_remote`(`SSH_CONNECTION`/`SSH_TTY` 시작 시 1회 캐시)면 host 런을
+  `ssh:`+host·`error`(붉은색)+bold 로 그린다. 로컬은 기존 base 색.
+- ~~**[요청·미구현] 시계 클릭 존을 "시간" 부분으로만 한정**~~ → **CL 56369 에서 해결.**
+  세그먼트 분리(`_expand_parts`)로 `_clock_zone` 이 시각(`%H:%M`) 런만 덮는다 — host·날짜
+  클릭은 clock-mode 와 무관. `on_mouse_down` 시계 토글 동선은 그대로.
 - **[요청·미구현] 날짜 클릭 시 현재 패널에 이번 달 달력 오버레이(clock-mode 식)** — 화면
   오른쪽 아래 **날짜를 클릭하면 현재(활성) 패널에 오늘을 포함한 이번 달 달력**을 표시한다.
   clock-mode 시계와 동일하게 ① **뒤 패널 내용이 흐리게(dim)** 보이고, ② **계속 업데이트**되며
@@ -536,10 +524,10 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
     단계에 그림. 갱신은 `_clock_tick`(~1526)에 `calendar_panes` 도 포함시켜 다시 합성.
   - 달력 본문은 파이썬 `calendar` 모듈(`Calendar`/`monthcalendar`)로 이번 달 그리드를
     만들고 **오늘 날짜를 강조**(반전/색). 패널이 좁으면 축약 표시.
-  - **트리거(날짜 클릭 존)**: 바로 위 "시계 클릭 존을 시간 부분으로만 한정" 항목과 한 묶음 —
-    오른쪽 영역을 host/시간/날짜로 세그먼트 분리한 뒤 **날짜 구간 x 범위를 `_date_zone`**
-    으로 잡고, `StatusBar.on_mouse_down` 에서 시간 구간이면 clock, 날짜 구간이면 calendar
-    토글. (시계=시간, 달력=날짜로 분리.)
+  - **트리거(날짜 클릭 존)**: **세그먼트 분리·`_date_zone` 등록은 CL 56369 에서 완료**
+    (`StatusBar._expand_parts` 가 날짜 런 x 범위를 `self._date_zone` 으로 잡아 둠). 남은
+    일은 `StatusBar.on_mouse_down` 에서 `_date_zone` 클릭 시 `toggle_calendar` 호출 +
+    오버레이 그리기뿐. (시계=`_clock_zone`, 달력=`_date_zone` 로 이미 분리됨.)
 - **[요청·미구현] 전체 탭/패널/실행앱 한눈에 보기 + 전환·종료 팝업(로컬/원격 구분)** —
   현재 열려 있는 **모든 탭 → 탭별 패널 → 각 패널에서 실행 중인 앱**을 한 화면(팝업)에 모두
   표시하고, 그 안에서 **항목 간 전환**하거나 **선택한 탭/패널을 종료**할 수 있는 기능. **명령어로
