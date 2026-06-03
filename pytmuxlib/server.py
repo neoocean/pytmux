@@ -14,8 +14,8 @@ import subprocess
 import time
 
 from .model import ClientConn, Pane, Session, Split, Tab, Window
-from .protocol import (FLUSH_HZ, MIN_H, MIN_W, claude_state, claude_usage,
-                       parse_reset_delay, read_msg, set_winsize, write_msg)
+from .claude import claude_state, claude_usage, parse_reset_delay
+from .protocol import (FLUSH_HZ, MIN_H, MIN_W, read_msg, set_winsize, write_msg)
 
 
 class Server:
