@@ -168,6 +168,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("detach", "detach (앱 종료, 셸 유지)"),
         ("kill_server", "서버 종료 (모든 탭/셸 종료)"),
     ]
+    # 토글 메뉴 항목(현재 on/off 표시·선택해도 메뉴 안 닫음). 상태는 status 에서 읽음.
+    MENU_TOGGLES = {"zoom", "sync", "autoresume"}
 
     # 명령 프롬프트(:)에서 쓸 수 있는 명령 목록 (이름, 설명) — ? 목록·자동완성용
     # (이름, 설명, 카테고리). 카테고리는 ?/help 목록의 탭 그룹으로 쓰인다.
@@ -345,16 +347,53 @@ def build_client_app(sock_path: str, config: dict | None = None,
         """
 
         def compose(self) -> ComposeResult:
-            lv = ListView(*[ListItem(Label(label), id=f"m_{key}")
-                            for key, label in MENU_ITEMS], id="menu")
-            yield lv
+            self._labels = {}     # key -> (Label 위젯, 원본 라벨)
+            self._optim = {}      # 토글 낙관적 상태(status 회신 전 즉시 반영)
+            items = []
+            for key, label in MENU_ITEMS:
+                lab = Label(self._fmt(key, label))
+                self._labels[key] = (lab, label)
+                items.append(ListItem(lab, id=f"m_{key}"))
+            yield ListView(*items, id="menu")
+
+        def _toggle_state(self, key):
+            if key in self._optim:
+                return self._optim[key]
+            st = self.app.status
+            return {"zoom": st.zoomed, "sync": st.sync,
+                    "autoresume": st.autoresume}.get(key, False)
+
+        def _fmt(self, key, label):
+            if key in MENU_TOGGLES:
+                return f"{label}  {'●' if self._toggle_state(key) else '○'}"
+            return label
+
+        def refresh_labels(self):
+            # status 회신으로 실제 상태가 왔을 때 호출 — 낙관적 값을 버리고 갱신.
+            self._optim = {}
+            for key, (lab, base) in getattr(self, "_labels", {}).items():
+                if key in MENU_TOGGLES:
+                    lab.update(self._fmt(key, base))
 
         def on_mount(self):
             self.query_one(ListView).focus()
+            self.app._menu_screen = self   # status 갱신 시 라벨 다시 그리기 위해
+
+        def on_unmount(self):
+            if getattr(self.app, "_menu_screen", None) is self:
+                self.app._menu_screen = None
 
         def on_list_view_selected(self, event):
             key = event.item.id[2:]
-            self.dismiss(key)
+            if key in MENU_TOGGLES:
+                # 토글: 메뉴를 닫지 않고 명령만 보낸 뒤 라벨을 낙관적으로 갱신.
+                # ESC 로만 닫는다. 실제 상태는 status 회신 때 refresh_labels 로 확정.
+                self.app._run_menu_action(key)
+                self._optim[key] = not self._toggle_state(key)
+                lab, base = self._labels[key]
+                lab.update(self._fmt(key, base))
+            else:
+                self.dismiss(key)
 
         def on_key(self, event: events.Key):
             if event.key == "escape":
@@ -1565,6 +1604,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self._composite()
             elif t == "status":
                 self.status.update_status(msg)
+                # 컨텍스트 메뉴가 열려 있으면 토글 라벨(on/off)을 실제 상태로 갱신
+                ms = getattr(self, "_menu_screen", None)
+                if ms is not None:
+                    ms.refresh_labels()
                 self._update_claude(msg.get("panes_claude", []))
                 self._update_tabbar()
                 if self.set_titles:

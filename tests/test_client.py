@@ -281,6 +281,38 @@ class _FakeMouse:
         self.stopped = True
 
 
+async def test_context_menu_toggle_shows_state_and_stays_open():
+    # 컨텍스트 메뉴의 토글 항목(줌/동기화/자동재개)은 현재 on/off 를 표시하고,
+    # 선택해도 메뉴를 닫지 않으며(ESC 로만 닫음) 라벨이 갱신된다(#17).
+    async def body(app, pilot, srv):
+        active = app.layout.get("active")
+        app.status.sync = False
+        app.open_menu(active)
+        await pilot.pause(0.1)
+        menu = app.screen_stack[-1]
+        assert menu.__class__.__name__ == "MenuScreen"
+        # 초기 상태 표시(꺼짐 ○)
+        assert menu._toggle_state("sync") is False
+        assert menu._fmt("sync", "동기화").endswith("○")
+        # 토글 선택 → 메뉴 유지 + 명령 전송 + 라벨 켜짐(●)로 즉시 갱신
+        sent = []
+        app.send_cmd = lambda a, **k: sent.append(a)
+
+        class _Sel:
+            def __init__(self, iid):
+                self.item = type("I", (), {"id": iid})()
+        menu.on_list_view_selected(_Sel("m_sync"))
+        assert "set_sync" in sent, "토글 명령 전송"
+        assert app.screen_stack[-1] is menu, "토글 선택해도 메뉴 유지"
+        assert menu._toggle_state("sync") is True, "낙관적 토글 반영"
+        assert menu._fmt("sync", "동기화").endswith("●")
+        # 비토글 항목 선택 → 메뉴 닫힘
+        menu.on_list_view_selected(_Sel("m_new_window"))
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1] is not menu, "비토글 선택 → 닫힘"
+    await _with_app(body)
+
+
 async def test_context_menu_dims_other_panes():
     # 컨텍스트 메뉴가 열려 있는 동안 대상 패널 외 나머지 패널은 흐리게(dim) 그려
     # 어느 패널 대상인지 배경으로 구분한다(#18).
