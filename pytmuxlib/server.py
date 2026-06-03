@@ -1330,7 +1330,8 @@ class Server:
                         for i, t in enumerate(sess.tabs)],
             # 활성 윈도우 패널별 Claude 상태/마지막 프롬프트(헤더용)
             "panes_claude": [{"id": p.id, "claude": p._claude,
-                              "prompt": p.last_prompt}
+                              "prompt": p.last_prompt,
+                              "history": p.prompt_history[-30:]}
                              for p in (win.panes() if win else [])],
             "active_pane": win.active_pane.id if win else None,
             # 활성 패널이 Claude 면 토큰/컨텍스트 사용량(best-effort)
@@ -1718,6 +1719,11 @@ class Server:
                 line = buf.strip()
                 if line:
                     pane.last_prompt = line
+                    # 히스토리 누적(연속 중복 제외, 최근 200개 캡)
+                    if not pane.prompt_history or pane.prompt_history[-1] != line:
+                        pane.prompt_history.append(line)
+                        if len(pane.prompt_history) > 200:
+                            pane.prompt_history = pane.prompt_history[-200:]
                 buf = ""
             elif ord(ch) in (8, 127):        # backspace
                 buf = buf[:-1]

@@ -230,6 +230,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("clock-mode", "현재 패널을 큰 시계로 덮기(토글, 우상단 [x]/명령으로 닫기)", "설정/기타"),
         ("calendar-mode", "현재 패널을 이번 달 달력으로 덮기(토글, 상태줄 날짜 클릭/우상단 [x])", "설정/기타"),
         ("claude-header", "Claude 프롬프트 헤더 표시 on/off (claude-header on|off|toggle)", "설정/기타"),
+        ("prompt-history", "Claude 프롬프트 히스토리 팝업(헤더 클릭으로도 열림)", "설정/기타"),
         ("run-shell", "셸 명령 실행", "설정/기타"),
         ("if-shell", "조건부 셸 실행", "설정/기타"),
         ("detach-client", "detach (앱 종료, 셸 유지)", "설정/기타"),
@@ -473,7 +474,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._title = title
 
         def compose(self) -> ComposeResult:
-            box = ListView(*[ListItem(Label(ln)) for ln in self._lines] or
+            # markup=False: 임의 텍스트(프롬프트 등)의 대괄호가 마크업으로 사라지지 않게.
+            box = ListView(*[ListItem(Label(ln, markup=False))
+                             for ln in self._lines] or
                            [ListItem(Label("(없음)"))], id="info")
             box.border_title = self._title
             yield box
@@ -938,6 +941,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             for pid, (zx0, zx1, zy) in self.app._calendar_close_zones.items():
                 if zy == event.y and zx0 <= event.x < zx1:
                     self.app.toggle_calendar(pid)
+                    event.stop()
+                    return
+            # Claude 프롬프트 헤더 클릭 → 프롬프트 히스토리 팝업(#7)
+            for pid, (zx0, zx1, zy) in self.app._claude_header_zones.items():
+                if zy == event.y and zx0 <= event.x < zx1:
+                    self.app.open_prompt_history(pid)
                     event.stop()
                     return
             # 현재 탭 닫기 버튼([x]) 클릭(콘텐츠 오른쪽 위)
@@ -1492,8 +1501,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._menu_pane = None  # 컨텍스트 메뉴가 열린 대상 패널 id(배경 강조용)
             self._menu_open = False  # 컨텍스트 메뉴 표시 중(배경 dim 합성용)
             # Claude Code: 패널별 상태/마지막 프롬프트
-            self.pane_claude = {}      # id -> {"claude": state, "prompt": str}
+            self.pane_claude = {}      # id -> {"claude", "prompt", "history"}
             self.claude_header_on = True  # 프롬프트 헤더 표시(claude-header on|off)
+            self._claude_header_zones = {}  # id -> (x0,x1,y) 헤더 클릭존(히스토리 팝업)
             self._tab_close_zone = None  # 현재 탭 닫기 [x] 영역 (x0, x1, y)
             # ---- 설정(config) 적용 ----
             self.prefix_key = config.get("prefix", "ctrl+b")
@@ -1707,10 +1717,20 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.claude_header_on = on
             self._composite()
 
+        def open_prompt_history(self, pane_id=None):
+            # Claude 프롬프트 히스토리 팝업(시간순). 헤더 클릭/명령으로 연다(#7).
+            pid = pane_id if pane_id is not None else self.layout.get("active")
+            info = self.pane_claude.get(pid) or {}
+            hist = info.get("history") or ([info["prompt"]]
+                                           if info.get("prompt") else [])
+            lines = [f"{i + 1:>2}. {h}" for i, h in enumerate(hist)]
+            self.push_screen(InfoScreen(lines, title="프롬프트 히스토리(시간순)"))
+
         def _draw_claude_headers(self, cells, W, H):
             """Claude Code 패널 내부 맨 윗줄에 마지막 프롬프트를 스티키 헤더로 표시.
             스크롤과 무관(합성 시 항상 내용 최상단에 덮어 그림). 표시 여부는 전역
             옵션 claude_header_on(명령 `claude-header on|off`)으로 끄고 켠다."""
+            self._claude_header_zones = {}
             if not self.claude_header_on or not self.pane_claude:
                 return
             hdr_st = Style(color="white", bgcolor=theme_color(self, "primary"),
@@ -1724,6 +1744,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     continue
                 for xx in range(cx, min(cx + cw, W)):   # 헤더 배경
                     cells[cy][xx] = (" ", hdr_st)
+                # 헤더 본문 전체가 클릭존(프롬프트 히스토리 팝업, #7)
+                self._claude_header_zones[p["id"]] = (cx, min(cx + cw, W), cy)
                 text_start = cx + 1                      # 좌측 1칸 여백
                 budget = max(0, cw - 1)
                 gx = text_start
@@ -2699,6 +2721,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 arg = args[0].lower() if args else "toggle"
                 self.set_claude_header(arg == "on" if arg in ("on", "off")
                                        else not self.claude_header_on)
+            elif c in ("prompt-history", "prompts"):
+                self.open_prompt_history(self.layout.get("active"))
             elif c in ("display-popup", "popup"):
                 cmd = " ".join(a for a in args if not a.startswith("-"))
                 if cmd:

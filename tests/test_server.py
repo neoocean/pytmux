@@ -58,6 +58,25 @@ async def test_tree_msg_includes_panes_and_remote():
         await teardown(srv, task, sock)
 
 
+async def test_prompt_history_accumulates():
+    # _track_prompt 가 제출 프롬프트를 시간순 히스토리에 쌓고(연속 중복 제외),
+    # status 의 panes_claude 에 최근 목록을 전달한다(#7).
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        srv._track_prompt(p, b"first\r")
+        srv._track_prompt(p, b"second\r")
+        srv._track_prompt(p, b"second\r")   # 연속 중복 → 제외
+        srv._track_prompt(p, b"third\r")
+        assert p.prompt_history == ["first", "second", "third"], p.prompt_history
+        msg = srv._status_msg(sess)
+        pc = next(e for e in msg["panes_claude"] if e["id"] == p.id)
+        assert pc["history"][-1] == "third" and "first" in pc["history"]
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_inactive_tab_claude_done_flag():
     # 비활성 탭의 Claude 패널이 busy→idle 로 끝나면 has_claude_done 이 켜지고,
     # 그 탭을 보면(select_window) 해제된다(#22).

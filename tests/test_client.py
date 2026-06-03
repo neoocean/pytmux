@@ -978,6 +978,24 @@ async def test_claude_icon_and_header():
     await _with_app(body)
 
 
+async def test_prompt_history_popup():
+    # Claude 헤더 클릭/명령으로 프롬프트 히스토리 팝업(시간순)이 열린다(#7).
+    async def body(app, pilot, srv):
+        from textual.widgets import Label
+        active = app.layout["active"]
+        app._update_claude([{"id": active, "claude": "idle", "prompt": "latest",
+                             "history": ["do a", "do b", "latest"]}])
+        app._composite()
+        assert active in app._claude_header_zones, "헤더 클릭존 등록"
+        app.open_prompt_history(active)
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "InfoScreen"
+        joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        assert "do a" in joined and "latest" in joined, joined
+    await _with_app(body)
+
+
 async def test_wide_char_composite():
     async def body(app, pilot, srv):
         sess = next(iter(srv.sessions.values()))
