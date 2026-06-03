@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **73 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **74 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -197,8 +197,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56369 + git, 신→구)
+## 9. 최근 변경(CL 56279~56371 + git, 신→구)
 
+- 56371 상태줄 **날짜 클릭 → 이번 달 달력 오버레이**(§10 #13 해결) — clock-mode
+  미러: `calendar_panes`/`toggle_calendar`/`_draw_calendar_overlay`. 상태줄 날짜
+  존(`_date_zone`)·우상단 `[x]`·명령(`calendar-mode`/`cal`)으로 토글. 뒤 화면 dim,
+  `calendar` 모듈 그리드(월요일 시작)·오늘 강조, 자정 갱신. 시계/달력 상호 배타.
+  회귀 테스트 1종(총 74). 클라이언트 전용.
 - 56369 상태줄 오른쪽 **세그먼트 분리**(§10 #11/#12 해결, #13 토대) — `StatusBar.
   _expand_parts` 가 right_fmt 를 (kind,text) 런(host/time/date/plain)으로 쪼개
   render_line 이 런별 세그먼트로 그린다. ① 원격(SSH; `_is_remote`=`SSH_CONNECTION`/
@@ -512,22 +517,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 - ~~**[요청·미구현] 시계 클릭 존을 "시간" 부분으로만 한정**~~ → **CL 56369 에서 해결.**
   세그먼트 분리(`_expand_parts`)로 `_clock_zone` 이 시각(`%H:%M`) 런만 덮는다 — host·날짜
   클릭은 clock-mode 와 무관. `on_mouse_down` 시계 토글 동선은 그대로.
-- **[요청·미구현] 날짜 클릭 시 현재 패널에 이번 달 달력 오버레이(clock-mode 식)** — 화면
-  오른쪽 아래 **날짜를 클릭하면 현재(활성) 패널에 오늘을 포함한 이번 달 달력**을 표시한다.
-  clock-mode 시계와 동일하게 ① **뒤 패널 내용이 흐리게(dim)** 보이고, ② **계속 업데이트**되며
-  (자정 넘어가면 '오늘' 갱신·시계 tick 과 같은 주기), ③ **시계와 같은 방법으로 닫기**
-  (우상단 `[x]` / 같은 영역 재클릭 / 명령). 구현 방향(기존 clock-mode 미러링):
-  - clock-mode 구조를 그대로 본떠 `calendar_panes`(set)·`toggle_calendar`·
-    `_draw_calendar_overlay`·`_calendar_close_zones` 추가. `_draw_clock_overlay`
-    (client.py ~1550) 패턴 재사용 — 뒤 화면 dim, 가운데 정렬, 우상단 `[x]`, `_put_cell`
-    로 와이드 문자 정렬 보존. 합성 순서(`_composite` ~1748)에서 clock 오버레이와 같은
-    단계에 그림. 갱신은 `_clock_tick`(~1526)에 `calendar_panes` 도 포함시켜 다시 합성.
-  - 달력 본문은 파이썬 `calendar` 모듈(`Calendar`/`monthcalendar`)로 이번 달 그리드를
-    만들고 **오늘 날짜를 강조**(반전/색). 패널이 좁으면 축약 표시.
-  - **트리거(날짜 클릭 존)**: **세그먼트 분리·`_date_zone` 등록은 CL 56369 에서 완료**
-    (`StatusBar._expand_parts` 가 날짜 런 x 범위를 `self._date_zone` 으로 잡아 둠). 남은
-    일은 `StatusBar.on_mouse_down` 에서 `_date_zone` 클릭 시 `toggle_calendar` 호출 +
-    오버레이 그리기뿐. (시계=`_clock_zone`, 달력=`_date_zone` 로 이미 분리됨.)
+- ~~**[요청·미구현] 날짜 클릭 시 현재 패널에 이번 달 달력 오버레이(clock-mode 식)**~~ →
+  **CL 56371 에서 해결.** `calendar_panes`/`toggle_calendar`/`_draw_calendar_overlay`/
+  `_calendar_close_zones` 를 clock-mode 미러로 추가. 상태줄 날짜 존(`_date_zone`) 클릭·
+  우상단 `[x]`·명령(`calendar-mode`/`calendar`/`cal`)으로 토글. 뒤 화면 dim, `calendar`
+  모듈 monthdayscalendar(월요일 시작) 그리드(제목 YYYY-MM·요일·주별 날짜), 오늘 강조
+  (success 배경), `_clock_tick` 이 자정 넘어가면 갱신. **시계/달력은 한 패널에 하나만**
+  (toggle 시 상호 배타).
 - **[요청·미구현] 전체 탭/패널/실행앱 한눈에 보기 + 전환·종료 팝업(로컬/원격 구분)** —
   현재 열려 있는 **모든 탭 → 탭별 패널 → 각 패널에서 실행 중인 앱**을 한 화면(팝업)에 모두
   표시하고, 그 안에서 **항목 간 전환**하거나 **선택한 탭/패널을 종료**할 수 있는 기능. **명령어로
