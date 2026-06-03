@@ -335,6 +335,54 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   완료**(§6). 남은 것: `claude_usage` 의 토큰 수("↓ N tokens")는 스트리밍 델타라
   누적 컨텍스트와 다름 — 컨텍스트 잔량%·`(1M context)` 모델 배지 등 더 의미있는 신호로
   교체 여지. 리밋(limit) 문구는 실제 리밋 캡처 샘플이 없어 미검증.
+- **[요청·미구현/대형] 작업(열린 탭·패널)을 보존한 채 서버 재시작** — pytmux 는 활발히
+  개발 중이라 **서버를 자주 재시작**해야 하는데(§2 의 "데몬 재시작 주의": 서버 코드
+  `server.py`/`model.py`/`protocol.py` 변경은 `kill-server` 후 재기동해야 반영), 동시에
+  pytmux 로 **실제 작업을 하고 있어 재시작이 부담**스럽다. **레이아웃 저장
+  (`save_layout`/슬롯)은 트리 구조와 패널 제목만 직렬화**(`_serialize_node`, server.py
+  ~788-793)할 뿐 **셸 프로세스·실행 중인 프로그램·스크롤백을 잃고 새 셸을 띄우므로**
+  (`restore_layout`→`spawn_pane`, ~818-842) 작업 연속성에는 큰 도움이 안 된다. 요청:
+  **지금 열려 있는 탭·패널의 작업(살아 있는 셸/프로그램)을 보존한 채 서버를 재시작**할 수 있게 한다.
+
+  핵심 난점: **패널 = 서버가 소유한 PTY master fd + 자식 셸 프로세스**다. 서버를 죽이면
+  셸도 함께 죽고, 죽이지 않으면 새 코드가 안 올라온다. 보존 재시작은 "**프로세스/PTY 는
+  살린 채 서버 코드만 교체**"해야 한다. 두 가지 방식(tmux 가 쓰는 ①을 권장):
+
+  - **방식 ① 제자리 re-exec(권장, tmux 서버 업그레이드 방식)**: 새 명령
+    (예: `restart-server`/`server-respawn`)이 kill+spawn 대신 ⓐ **모든 패널 master fd 의
+    `FD_CLOEXEC` 를 해제**하고(현재 master 생성 직후 CLOEXEC 를 거는데(server.py ~61-63,
+    §6/CL 56309) **이게 바로 execv 때 fd 를 닫아 셸을 죽이는 원인** — 넘길 fd 만 직전에
+    해제), ⓑ **모델 트리 + 패널별 (child_pid·master_fd 번호·title·cwd·size·`_claude`·
+    `autoresume`·`last_prompt`·마우스 모드 등) + pyte 화면/스크롤백**을 상태 파일
+    (`layout_path` 패턴, server.py ~785)에 직렬화하고, ⓒ `os.execv(sys.executable, …)` 로
+    **서버를 제자리 재실행** — **PID 가 그대로라 자식 셸들이 계속 자기 자식으로 남아
+    `waitpid`/SIGCHLD 가 유효**하고, 상속된 master fd 가 PTY 를 살린다. ⓓ 새 이미지가
+    상태 파일을 읽어 **각 fd 를 Pane 으로 다시 감싸고**(`add_reader` 재등록) Session/Tab/
+    Window 트리를 복원. 클라이언트는 같은 소켓으로 재접속(detach→reattach).
+    - **주의**: ① `os.execv` 는 프로세스 이미지를 갈아끼우므로 **메모리에 있는 pyte 화면/
+      스크롤백은 직렬화하지 않으면 소실**된다 — 패널별 `screen.display`+history 를 상태
+      파일에 같이 저장해 복원하거나, 소실을 감수하고 **재그리기를 유도**(SIGWINCH/리사이즈
+      한 번으로 claude/vim 등 alt-screen TUI 는 다시 그림; 순수 셸은 스크롤백만 잃음).
+      ② 서버가 쥔 **리슨 유닉스 소켓·연결된 클라이언트 소켓**은 옛 이벤트 루프의 fd 라
+      execv 후 **리슨 소켓을 다시 만들고**(`serve` 가 이미 시작 시 unlink+재생성,
+      ~1719-1722) 클라이언트는 재접속해야 한다. ③ **CLOEXEC 불변식(§6)**: 평상시엔
+      절대 풀지 말고, **넘길 master fd 에 한해 execv 직전에만 해제**, 새 이미지에서 재채택
+      직후 다시 CLOEXEC 를 건다(형제 셸 fd 누수 재발 방지).
+  - **방식 ② 새 프로세스로 fd 핸드오프(SCM_RIGHTS)**: 옛 서버가 새 서버를 띄우고
+    유닉스 소켓 `sendmsg` 의 ancillary data(`SCM_RIGHTS`)로 **master fd 들 + 메타데이터를
+    전달**한 뒤 **자식을 죽이지 않고** 종료, 새 서버가 fd 를 채택. **단점**: 옛 서버가
+    종료되면 **자식 셸이 launchd/init 으로 reparent 돼 `waitpid`/SIGCHLD 로 죽음을 못 잡는다**
+    — `os.read` 의 **EOF/EIO(§6 의 macOS EIO 경로)**로만 패널 종료를 감지해야 한다(PID 는
+    살아 있어 `killpg` 신호는 가능). 구현이 ①보다 까다로워 차선.
+
+  - **무엇이 보존/소실되나**: 살아 있는 셸·프로그램(claude/vim/빌드 등)과 그 PTY 는 **보존**,
+    in-memory pyte 스크롤백은 직렬화 안 하면 **소실**, 클라이언트는 **재접속** 필요.
+  - **개발 워크플로 연계**: 이 기능의 1순위 동기가 §2 의 "서버 코드 바꿈 → 재기동" 고통이다.
+    re-exec(①)는 **디스크의 새 `server.py` 코드를 로드**하므로 "**작업 보존 + 새 코드 반영**"을
+    한 번에 달성한다(정확히 원하는 동작). `restart-server` 가 그 진입점.
+  - **테스트**: 실제 fork/exec 가 필요해 완전 헤드리스는 어렵지만, **직렬화↔트리 복원** 경로를
+    가짜 fd 로 단위 테스트하고, **execv 직전 넘길 fd 의 CLOEXEC 해제·재채택 후 재설정**을 단언.
+    re-exec 통합은 별도 수동 검증(실셸 띄워 `restart-server` 후 프로세스 PID·작업 유지 확인).
 - **[요청·미구현] ESC 모드 탭 전환 Enter 한 번으로 확정+복귀** — 현재 ESC 모드에서
   위 방향키로 상단 탭바에 포커스를 준 뒤 ←→ 로 탭을 고르고 **Enter 를 누르면 그 탭으로
   전환되지만 ESC 모드는 유지**(`tb.bar_focus` 만 해제)되고, **Enter 를 한 번 더** 눌러야
