@@ -2076,24 +2076,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if p["id"] == active:
                     _draw_title(p)
             # 활성 탭을 아래 콘텐츠와 연결(노트북 탭 모양, #23): 상단 탭바가 보이면
-            # 콘텐츠 최상단 테두리(row 0)의 활성 탭 x 범위를 활성색으로 칠해 끊고
-            # (가로선 제거) 양옆은 ┘/└ 코너로 마감 → 탭이 콘텐츠와 이어져 보인다.
+            # 콘텐츠 최상단 테두리(row 0)의 활성 탭 x 범위를 위쪽 절반 블록(▀)으로
+            # 활성색 칠한다. 탭바(꽉 찬 활성 배경)에서 콘텐츠로 가늘어지고, ▀ 의
+            # 아래 모서리(셀 중앙선)가 양옆 가로 테두리(─)와 같은 높이라 끊김 없이
+            # 한 줄로 이어진다 — 예전 꽉 찬 블록+┘/└ 코너 마감보다 자연스럽다.
             if self._tabbar_visible() and H > 0:
                 xr = self.tabbar.active_tab_xrange()
                 if xr:
                     tx0, tx1 = xr
-                    conn = Style(color="white",
-                                 bgcolor=theme_color(self, "primary"), bold=True)
+                    conn = Style(color=theme_color(self, "primary"), bgcolor=None)
                     for xx in range(max(0, tx0), min(tx1, W)):
-                        ch, _st = cells[0][xx]
-                        # 가로 테두리(─┬┴┼)는 공백으로 끊어 연결감, 그 외는 유지
-                        nch = " " if ch in "─┬┴┼" else ch
-                        cells[0][xx] = (nch, conn)
-                    # 끊긴 양 끝을 위로 꺾이는 코너로 마감(있으면)
-                    if 0 <= tx0 - 1 < W and cells[0][tx0 - 1][0] in "─┬┴┼":
-                        cells[0][tx0 - 1] = ("┘", cells[0][tx0 - 1][1])
-                    if 0 <= tx1 < W and cells[0][tx1][0] in "─┬┴┼":
-                        cells[0][tx1] = ("└", cells[0][tx1][1])
+                        cells[0][xx] = ("▀", conn)
             # 패널 제목 경계선(pane-border-status)
             for tb in self.layout.get("titlebars", []):
                 is_active = tb.get("active")

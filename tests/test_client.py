@@ -565,9 +565,13 @@ async def test_active_pane_border_highlight():
                    for gx in range(bx, x2 + 1)), "활성 상/하 변 파랑"
         assert all(ok(bx, gy) and ok(x2, gy)
                    for gy in range(by, y2 + 1)), "활성 좌/우 변 파랑"
-        # 비활성 패널의 (활성과 공유하지 않는) 바깥 모서리는 회색
+        # 비활성 패널의 (활성과 공유하지 않는) 바깥 모서리는 회색. 단 row 0 의
+        # 활성 탭 연결부(▀, 활성색)가 그 위에 덧칠되는 구간은 제외(닫기 [x] 와 동일).
         ip = next(p for p in lay["panes"] if p["id"] != active)
         ibx, iby, ibw, ibh = ip["box"]
+        conn = app.tabbar.active_tab_xrange() or (0, 0)
+        if iby == 0 and conn[0] <= ibx < conn[1]:
+            iby += ibh - 1            # 연결부에 가려지면 아래쪽 바깥 모서리로 검사
         assert not is_blue(ibx, iby), "비활성 바깥 모서리는 회색"
     await _with_app(body)
 
@@ -874,8 +878,9 @@ async def test_status_clock_click_toggles_clock_mode():
 
 
 async def test_active_tab_connects_to_content():
-    # 상단 탭바가 보이면 콘텐츠 최상단 테두리에서 활성 탭 x 범위 구간이 활성색으로
-    # 칠해져(끊겨) 탭과 콘텐츠가 연결돼 보인다(#23).
+    # 상단 탭바가 보이면 콘텐츠 최상단 테두리에서 활성 탭 x 범위 구간이 위쪽 절반
+    # 블록(▀)으로 활성색 칠해져 탭과 콘텐츠가 연결돼 보인다(#23). ▀ 의 아래
+    # 모서리가 양옆 가로 테두리와 같은 높이라 한 줄로 이어진다.
     async def body(app, pilot, srv):
         app.tabbar.render_line(0)            # _zones 채우기
         xr = app.tabbar.active_tab_xrange()
@@ -883,8 +888,9 @@ async def test_active_tab_connects_to_content():
         app._composite()
         tx0, tx1 = xr
         mid = min((tx0 + tx1) // 2, len(app.view._cells[0]) - 1)
-        st = app.view._cells[0][mid][1]
-        assert st is not None and st.bgcolor is not None, "연결 색(활성색)"
+        ch, st = app.view._cells[0][mid]
+        assert ch == "▀", "위쪽 절반 블록으로 연결"
+        assert st is not None and st.color is not None, "연결 색(활성색)"
     await _with_app(body, cfg={"tab_bar_always": True})
 
 
