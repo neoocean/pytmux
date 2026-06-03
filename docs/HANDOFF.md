@@ -621,6 +621,19 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   56413 에서 해결.** `TabBar.active_tab_xrange` 로 활성 탭 x 범위를 노출, `_composite`
   가 콘텐츠 상단 테두리(row 0)의 그 구간 가로선을 끊고 활성색으로 칠해(양끝 ┘/└)
   탭과 콘텐츠를 연결. (글리프 디테일은 골든 스냅샷으로 추후 다듬을 여지.)
+- **[버그·미해결] 탭 전환 시 노트북 탭 연결부가 따라오지 않아 어긋나 보임** (#23 회귀,
+  CL 56413). 증상: 활성 탭을 1·2번으로 바꿔도 콘텐츠 상단의 연결부(끊긴 구간+활성색)가
+  **이전 위치(맨 왼쪽/탭 0 구간)에 머물러** 활성 탭과 어긋난다(실측: 활성 `1:claude`인데
+  연결 노치는 좌단). 원인 가설: `_composite` 가 `self.tabbar.active_tab_xrange()` →
+  `self.tabbar._zones` 를 읽는데, **탭 전환 직후 `_composite` 가 탭바 `render_line`(=`_zones`
+  재계산)보다 먼저 돌아 stale `_zones`(이전 활성 탭 위치)를 본다.** 또는 `set_tabs` 로
+  active 플래그는 갱신됐지만 `_zones` 의 x 좌표가 직전 렌더 것이라 어긋남. 손볼 방향:
+  ① `active_tab_xrange` 를 `_zones`(렌더 부산물) 대신 **현재 `self.tabs`+스크롤 상태로
+  직접 x 를 계산**하는 순수 함수로 바꿔 합성 시점과 무관하게 정확히 잡기, 또는 ② 탭
+  전환(`select_window`)·`set_tabs` 후 `tabbar.refresh()` 와 `_composite()` 순서를 보장
+  (탭바 먼저 렌더 → 그 `_zones` 로 합성). ①이 견고. 회귀 테스트: 탭 2개에서 활성 탭을
+  바꾼 뒤 `active_tab_xrange()` 가 새 활성 탭의 x 범위를 반환하고 `_composite` 의 연결
+  구간이 그 범위와 일치하는지 단언. 클라이언트 전용(attach 재실행 반영).
 - ~~**[요청·미구현] 탭 선택기(트리)에 각 탭/패널의 로컬/원격 구분 표시**~~ → **CL 56383 에서
   해결**(위 전체 개요 팝업과 한 묶음). 트리 패널 행에 `[local]`/`[ssh]` 배지 표시(서버
   `_tree_msg` 가 패널별 `remote` 플래그 전달).
