@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **62 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **65 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -197,8 +197,23 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56319 + git, 신→구)
+## 9. 최근 변경(CL 56279~56324 + git, 신→구)
 
+- 56324 README 키 바인딩에 Shift 조합 패스스루 안내 추가(문서만).
+- 56321/56323 Shift+Enter/Shift+Escape 를 활성 패널로 전달 — Textual 이 Shift 조합을
+  `event.key="shift+enter"/"shift+escape"`(character=None)로 주는데 `SPECIAL` 에
+  매핑이 없어 `key_to_bytes` 가 빈 바이트를 돌려줘 키가 삼켜졌다. `"shift+enter": b"\n"`
+  (LF — Claude 멀티라인 입력, 그냥 Enter=CR 제출과 구분), `"shift+escape": b"\x1b"`
+  (앱으로 ESC 전달 — ESC 단독은 esc 모드 진입이라 별도 조합) 추가 + 회귀 테스트 3종.
+  **교훈**: 56321 최초 제출 때 git 미러가 depot 보다 뒤처져 있어 stale 한 git HEAD 로
+  파일을 재구성하는 바람에 다른 기계(@surface, 56319)의 UI 변경을 의도치 않게 되돌렸고
+  56323 으로 복구. depot 이 source of truth — 제출 전 `p4 diff`/`p4 print #have` 로
+  비교하고 `git checkout HEAD -- file` 로 격리하지 말 것.
+- 56320 Claude busy(처리중) 감지 보강 — busy footer 가 `<글리프> <동명사>… (12s · ↑ 1.9k
+  tokens · still thinking)` 형식인데 글리프가 폰트/터미널에 따라 `*`/`·` 로 렌더되거나
+  idle footer(shift+tab to cycle)와 겹쳐 보일 때 놓쳤다. `_BUSY_SPINNER_RE` 에 글리프
+  `*`/`·` 변형·토큰 화살표(↑/↓ … tokens)·`still thinking` 시그널 추가, 화살표 없는 토큰
+  언급("1.2k tokens used")은 오탐 안 하도록 유지. 회귀 테스트 보강.
 - 56319 Shift+Tab(backtab) 을 활성 패널로 전달 — Textual 이 Shift+Tab 을
   `event.key="shift+tab"`(character=None)로 주는데 `client.py::SPECIAL` 에
   매핑이 없어 `key_to_bytes` 가 빈 바이트를 돌려줘 키가 삼켜졌다(특히 Claude
