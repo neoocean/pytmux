@@ -295,6 +295,30 @@ async def test_layout_save_load_client():
     await _with_app(body)
 
 
+async def test_clock_mode_overlay():
+    async def body(app, pilot, srv):
+        active = app.layout["active"]
+        app.toggle_clock(active)              # clock-mode on(현재 패널)
+        await pilot.pause(0.2)
+        assert active in app.clock_panes
+        cells = app.view._cells
+        ap = next(p for p in app.layout["panes"] if p["id"] == active)
+        # 뒤 화면이 흐리게(dim)
+        st = cells[ap["y"]][ap["x"]][1]
+        assert st and st.dim, "패널 내용 dim"
+        # 큰 시계 블록 문자가 그려짐
+        assert any("█" in (cells[y][x][0] or "")
+                   for y in range(len(cells))
+                   for x in range(len(cells[0]))), "큰 시계 표시"
+        # 우상단 닫기 버튼 영역 등록
+        assert active in app._clock_close_zones
+        # 다시 토글 → 닫힘
+        app.toggle_clock(active)
+        await pilot.pause(0.1)
+        assert active not in app.clock_panes
+    await _with_app(body, size=(44, 14))
+
+
 async def test_wide_char_composite():
     async def body(app, pilot, srv):
         sess = next(iter(srv.sessions.values()))

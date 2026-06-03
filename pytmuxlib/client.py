@@ -18,6 +18,22 @@ def _char_cells(ch: str) -> int:
     return 2 if wcwidth(ch) == 2 else 1
 
 
+# clock-mode 큰 시계용 3x5 블록 폰트(시:분:초)
+_CLOCK_FONT = {
+    "0": ["███", "█ █", "█ █", "█ █", "███"],
+    "1": ["  █", "  █", "  █", "  █", "  █"],
+    "2": ["███", "  █", "███", "█  ", "███"],
+    "3": ["███", "  █", "███", "  █", "███"],
+    "4": ["█ █", "█ █", "███", "  █", "  █"],
+    "5": ["███", "█  ", "███", "  █", "███"],
+    "6": ["███", "█  ", "███", "█ █", "███"],
+    "7": ["███", "  █", "  █", "  █", "  █"],
+    "8": ["███", "█ █", "███", "█ █", "███"],
+    "9": ["███", "█ █", "███", "  █", "███"],
+    ":": ["   ", " █ ", "   ", " █ ", "   "],
+}
+
+
 # 한글 두벌식 자모 → QWERTY 영문 키. IME 가 켜져 있어도 단축키가 동작하도록
 # 키 매칭 시 자모를 물리 키(영문)로 되돌린다.
 _JAMO = {
@@ -187,7 +203,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("source-file", "설정 파일 다시 불러오기"),
         ("display-message", "상태줄에 메시지 표시"),
         ("display-popup", "명령 실행 결과를 팝업으로"),
-        ("clock-mode", "큰 시계 표시"),
+        ("clock-mode", "현재 패널을 큰 시계로 덮기(토글, 우상단 [x]/명령으로 닫기)"),
         ("run-shell", "셸 명령 실행"),
         ("if-shell", "조건부 셸 실행"),
         ("save-layout", "전체 레이아웃 저장(서버 영속)"),
@@ -307,29 +323,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if event.key == "escape":
                 event.stop()
                 self.dismiss(None)
-
-    class ClockScreen(ModalScreen):
-        """clock-mode(prefix t): 큰 시계 오버레이. 아무 키나 누르면 닫힘."""
-        CSS = """
-        ClockScreen { align: center middle; }
-        #clock { width: auto; height: auto; padding: 2 4;
-                 border: round $accent; background: $panel;
-                 color: $success; text-style: bold; }
-        """
-
-        def compose(self) -> ComposeResult:
-            yield Label(datetime.now().strftime("%H:%M:%S"), id="clock")
-
-        def on_mount(self):
-            self.set_interval(1.0, self._tick)
-
-        def _tick(self):
-            self.query_one("#clock", Label).update(
-                datetime.now().strftime("%H:%M:%S"))
-
-        def on_key(self, event: events.Key):
-            event.stop()
-            self.dismiss(None)
 
     class InfoScreen(ModalScreen):
         """간단한 읽기전용 목록 표시(show-options 등). 아무 키나 누르면 닫힘."""
@@ -567,6 +560,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.app.open_menu()
                 event.stop()
                 return
+            # clock-mode 닫기 버튼([x]) 클릭
+            for pid, (zx0, zx1, zy) in self.app._clock_close_zones.items():
+                if zy == event.y and zx0 <= event.x < zx1:
+                    self.app.toggle_clock(pid)
+                    event.stop()
+                    return
             d = self._divider_at(event.x, event.y)
             if d:
                 self._dragging = d
@@ -879,6 +878,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._want_tree = False  # choose-tree 응답 대기
             self._want_buffers = False  # choose-buffer 응답 대기
             self._want_layouts = None  # 레이아웃 목록 응답 대기(모드: "new"/"over")
+            self.clock_panes = set()   # clock-mode 가 켜진 패널 id 집합
+            self._clock_close_zones = {}  # pane_id -> (x0, x1, y) 닫기 버튼 영역
             # ---- 설정(config) 적용 ----
             self.prefix_key = config.get("prefix", "ctrl+b")
             self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
@@ -919,6 +920,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.status_position == "top":
                 self.status.styles.dock = "top"
             self._restart_status_timer()
+            self.set_interval(1.0, self._clock_tick)  # clock-mode 초 단위 갱신
             try:
                 self.reader, self.writer = await asyncio.open_unix_connection(
                     path=self.sock_path)
@@ -1042,6 +1044,70 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.display_message(f"{msg.get('chars', 0)} chars 버퍼에 캡처됨")
             elif t == "bye":
                 self.exit(message="pytmux: 서버가 종료되었습니다")
+
+        # ---- clock-mode(패널 전체를 덮는 큰 시계) ----
+        def toggle_clock(self, pane_id):
+            if pane_id is None:
+                return
+            if pane_id in self.clock_panes:
+                self.clock_panes.discard(pane_id)
+            else:
+                self.clock_panes.add(pane_id)
+            self._composite()
+
+        def _clock_tick(self):
+            # 1초마다: 시계 패널이 있으면 시각 갱신(뒤 화면도 함께 다시 합성)
+            if self.clock_panes:
+                self._composite()
+
+        def _draw_clock_overlay(self, cells, W, H, active):
+            """clock-mode 패널을 큰 시계로 덮는다. 뒤의 패널 출력은 흐리게(dim)
+            계속 보이고, 우상단 [x] 로 닫을 수 있다."""
+            self._clock_close_zones = {}
+            if not self.clock_panes:
+                return
+            dim = Style(dim=True)
+            digit_st = Style(color=theme_color(self, "success"), bold=True)
+            close_st = Style(color="white", bgcolor=theme_color(self, "error"),
+                             bold=True)
+            now = datetime.now().strftime("%H:%M:%S")
+            glyphs = [_CLOCK_FONT.get(c, ["   "] * 5) for c in now]
+            cw = sum(len(g[0]) for g in glyphs) + (len(glyphs) - 1)
+            ch_h = 5
+            for p in self.layout.get("panes", []):
+                if p["id"] not in self.clock_panes:
+                    continue
+                px, py, pw, ph = p["x"], p["y"], p["w"], p["h"]
+                # 1) 뒤 화면 흐리게(계속 업데이트되는 내용도 dim 으로 보임)
+                for yy in range(py, min(py + ph, H)):
+                    for xx in range(px, min(px + pw, W)):
+                        c, st = cells[yy][xx]
+                        cells[yy][xx] = (c, st + dim)
+                # 2) 큰 시계(공간 충분) 또는 단순 시각
+                if pw >= cw and ph >= ch_h:
+                    ox = px + (pw - cw) // 2
+                    oy = py + (ph - ch_h) // 2
+                    for row in range(ch_h):
+                        gx = ox
+                        for g in glyphs:
+                            for c in g[row]:
+                                if c != " " and 0 <= gx < W and 0 <= oy + row < H:
+                                    cells[oy + row][gx] = (c, digit_st)
+                                gx += 1
+                            gx += 1   # 글자 사이 간격
+                else:
+                    ox = px + max(0, (pw - len(now)) // 2)
+                    oy = py + ph // 2
+                    for j, c in enumerate(now):
+                        if 0 <= ox + j < W and 0 <= oy < H:
+                            cells[oy][ox + j] = (c, digit_st)
+                # 3) 우상단 닫기 버튼 [x]
+                bx0 = px + pw - 3
+                if bx0 >= px and 0 <= py < H:
+                    for j, c in enumerate("[x]"):
+                        if 0 <= bx0 + j < W:
+                            cells[py][bx0 + j] = (c, close_st)
+                    self._clock_close_zones[p["id"]] = (bx0, bx0 + 3, py)
 
         def _composite(self):
             W = self.layout.get("cols", self.size.width)
@@ -1191,6 +1257,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         gx = cx0 + j
                         if 0 <= gx < W and 0 <= cy0 < H:
                             cells[cy0][gx] = (chh, st)
+            # clock-mode 오버레이(패널 전체 덮기, 뒤 화면 dim)
+            self._draw_clock_overlay(cells, W, H, active)
             self.view.set_frame(cells)
 
         # ---- 송신 헬퍼 ----
@@ -1720,7 +1788,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif c in ("clear-history", "clearhist"):
                 self.send_cmd("clear_history")
             elif c in ("clock-mode", "clock"):
-                self.push_screen(ClockScreen())
+                self.toggle_clock(self.layout.get("active"))
             elif c in ("display-popup", "popup"):
                 cmd = " ".join(a for a in args if not a.startswith("-"))
                 if cmd:
@@ -1884,7 +1952,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif k == "T":
                 self.open_prompt("rename_pane", "set pane title")
             elif k == "t":
-                self.push_screen(ClockScreen())
+                self.toggle_clock(self.layout.get("active"))
             elif k == "R":
                 self.send_cmd("set_autoresume")
             elif k == "colon" or ch == ":":

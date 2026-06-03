@@ -82,7 +82,8 @@ python3 pytmux.py --socket PATH … # 사용할 소켓 경로 직접 지정
 | `prefix ,` | 탭 이름변경 | `prefix &` | 탭 삭제(확인) |
 | `prefix .` | 탭 이동(인덱스) | `prefix :` | 명령 입력 |
 | `prefix n` / `p` | 다음/이전 탭 | `prefix 0-9` | 탭 선택 |
-| `prefix d` | detach(세션 유지) | `prefix [` | 스크롤백 모드 |
+| `prefix d` | detach(셸 유지) | `prefix [` | 스크롤백 모드 |
+| `prefix t` | 시계 모드(현재 패널 덮기) | `prefix l` | 직전 탭 |
 | `prefix Enter` | 메뉴 열기 | `prefix R` | 토큰리밋 자동재개 토글 |
 | `ESC` | 명령 모드(←↑↓→ 패널 이동, `:` 명령 프롬프트) | `F12` | 중첩 시 prefix 패스스루 토글 |
 
