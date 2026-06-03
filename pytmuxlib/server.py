@@ -1252,11 +1252,24 @@ class Server:
             "active": win.active_pane.id,
         }
 
+    # 패널이 원격 세션을 돌리는지 판정하는 fg 명령 이름들(소문자).
+    _REMOTE_CMDS = {"ssh", "mosh", "mosh-client", "autossh", "sshpass",
+                    "telnet", "et", "eternal-terminal", "kitten"}
+
+    def _pane_overview(self, pane):
+        """트리/개요용 패널 1건 정보: id·제목·fg 앱·로컬/원격."""
+        cmd = self._fg_command(pane.master_fd) or ""
+        return {"id": pane.id, "title": (pane.title or "").strip(),
+                "cmd": cmd, "remote": cmd.lower() in self._REMOTE_CMDS}
+
     def _tree_msg(self):
         return {"t": "tree", "current": None, "sessions": [
             {"name": s.name, "active": (s is None),
              "windows": [{"index": t.index, "name": t.name,
-                          "panes": len(t.window.panes())} for t in s.tabs]}
+                          "active": (t is s.active_tab),
+                          "panes": [self._pane_overview(p)
+                                    for p in t.window.panes()]}
+                         for t in s.tabs]}
             for s in self.sessions.values()]}
 
     @staticmethod

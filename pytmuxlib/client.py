@@ -202,7 +202,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("swap-tab", "탭 교환 (-t N)", "탭"),
         ("rename-tab", "탭 이름 변경", "탭"),
         ("automatic-rename", "탭 자동 이름 [on|off]", "탭"),
-        ("choose-tree", "탭 선택기(트리)", "탭"),
+        ("choose-tree", "탭/패널 트리(전환·종료, 실행 앱·로컬/원격 표시. d/x=종료)", "탭"),
         ("capture-pane", "패널 내용을 버퍼로 캡처 (-S 전체)", "복사/버퍼"),
         ("pipe-pane", "패널 출력을 외부 명령으로 파이프", "복사/버퍼"),
         ("clear-history", "스크롤백 비우기", "복사/버퍼"),
@@ -410,29 +410,53 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def __init__(self, tree):
             super().__init__()
             self._treedata = tree
-            self.entries = []
+            self.entries = []   # 행별 dict: {kind: win|pane, index, pid?}
 
         def compose(self) -> ComposeResult:
             items = []
             n = 0
             for s in self._treedata.get("sessions", []):
                 for w in s["windows"]:
-                    label = f"{w['index']}:{w['name']} ({w['panes']} panes)"
-                    self.entries.append((s["name"], w["index"]))
-                    items.append(ListItem(Label(label), id=f"e{n}"))
+                    panes = w.get("panes", [])
+                    npanes = len(panes) if isinstance(panes, list) else panes
+                    mark = "▾" if w.get("active") else "▸"
+                    wlabel = f"{mark} {w['index']}:{w['name']}  ({npanes} panes)"
+                    self.entries.append({"kind": "win", "index": w["index"]})
+                    # markup=False — 라벨에 들어가는 [ssh]/제목의 대괄호가 Textual
+                    # 마크업으로 해석돼 사라지지 않게 한다.
+                    items.append(ListItem(Label(wlabel, markup=False), id=f"e{n}"))
                     n += 1
+                    if isinstance(panes, list):
+                        for p in panes:
+                            app = p.get("cmd") or "shell"
+                            badge = "[ssh]" if p.get("remote") else "[local]"
+                            title = (p.get("title") or "").strip()
+                            ttxt = f" · {title}" if title and title != "shell" else ""
+                            plabel = f"    └ {badge} {app}{ttxt}"
+                            self.entries.append({"kind": "pane",
+                                                 "index": w["index"],
+                                                 "pid": p["id"]})
+                            items.append(ListItem(Label(plabel, markup=False),
+                                                  id=f"e{n}"))
+                            n += 1
             yield ListView(*items, id="tree")
 
         def on_mount(self):
             self.query_one(ListView).focus()
 
         def on_list_view_selected(self, event):
-            self.dismiss(self.entries[int(event.item.id[1:])])
+            self.dismiss(("select", self.entries[int(event.item.id[1:])]))
 
         def on_key(self, event: events.Key):
             if event.key == "escape":
                 event.stop()
                 self.dismiss(None)
+            elif event.key in ("d", "x"):   # 선택 항목(탭/패널) 종료
+                lv = self.query_one(ListView)
+                idx = lv.index
+                if idx is not None and 0 <= idx < len(self.entries):
+                    event.stop()
+                    self.dismiss(("kill", self.entries[idx]))
 
     class InfoScreen(ModalScreen):
         """간단한 읽기전용 목록 표시(show-options 등). 아무 키나 누르면 닫힘."""
@@ -2140,9 +2164,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def _open_choose_tree(self, tree):
             def handle(res):
-                if res:
-                    _name, idx = res
-                    self.send_cmd("select_window", index=idx)
+                if not res:
+                    return
+                act, e = res
+                self.send_cmd("select_window", index=e["index"])
+                if e["kind"] == "pane":
+                    self.send_cmd("select_pane_id", id=e["pid"])
+                if act == "kill":
+                    if e["kind"] == "win":
+                        self.confirm_kill_tab()
+                    else:
+                        self.open_prompt("confirm", "kill-pane? (y/N)",
+                                         action=lambda: self.send_cmd("kill_pane"))
             self.push_screen(ChooseTreeScreen(tree), handle)
 
         # ---- 레이아웃 저장/불러오기 ----
@@ -2485,7 +2518,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 idx = int(idx) if idx and idx.isdigit() else self._first_int(args)
                 if idx is not None:
                     self.send_cmd("swap_window", index=idx)
-            elif c in ("choose-tree", "choose-tab", "choose-window"):
+            elif c in ("choose-tree", "choose-tab", "choose-window",
+                       "overview", "tree"):
                 self.request_tree()
             elif c in ("select-pane", "selectp"):
                 if "-T" in args:

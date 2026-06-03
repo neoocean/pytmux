@@ -281,6 +281,36 @@ class _FakeMouse:
         self.stopped = True
 
 
+async def test_choose_tree_shows_panes_and_switches():
+    # 탭/패널 트리가 패널을 들여쓰기로 보이고 로컬/원격([local]/[ssh])·실행 앱을
+    # 표시하며, 패널 선택 시 그 탭+패널로 전환한다(#14/#24).
+    async def body(app, pilot, srv):
+        from textual.widgets import Label
+        tree = {"sessions": [{"name": "s", "windows": [
+            {"index": 1, "name": "win", "active": True, "panes": [
+                {"id": 11, "title": "shell", "cmd": "zsh", "remote": False},
+                {"id": 12, "title": "box", "cmd": "ssh", "remote": True}]}]}]}
+        sent = []
+        app.send_cmd = lambda a, **k: sent.append((a, k))
+        app._open_choose_tree(tree)
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "ChooseTreeScreen"
+        assert [e["kind"] for e in scr.entries] == ["win", "pane", "pane"]
+        joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        assert "[ssh]" in joined and "[local]" in joined, "로컬/원격 배지"
+        assert "ssh" in joined and "zsh" in joined, "실행 앱 표시"
+
+        class _Sel:
+            def __init__(self, iid):
+                self.item = type("I", (), {"id": iid})()
+        scr.on_list_view_selected(_Sel("e2"))   # entries[2] = pane id 12
+        await pilot.pause(0.1)
+        assert ("select_window", {"index": 1}) in sent
+        assert ("select_pane_id", {"id": 12}) in sent
+    await _with_app(body)
+
+
 async def test_context_menu_toggle_shows_state_and_stays_open():
     # 컨텍스트 메뉴의 토글 항목(줌/동기화/자동재개)은 현재 on/off 를 표시하고,
     # 선택해도 메뉴를 닫지 않으며(ESC 로만 닫음) 라벨이 갱신된다(#17).

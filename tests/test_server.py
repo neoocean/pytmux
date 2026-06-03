@@ -33,6 +33,31 @@ async def test_pane_tree_ops():
         await teardown(srv, task, sock)
 
 
+async def test_tree_msg_includes_panes_and_remote():
+    # _tree_msg 가 윈도우별 패널 목록(id·title·cmd·remote)을 담고, fg 명령이 ssh
+    # 류면 remote=True 로 판정하는지(#14/#24 데이터 인프라).
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv.split_pane(sess, "lr")
+        win = sess.active_window
+        ids = [p.id for p in win.panes()]
+        # fg 명령을 흉내: 첫 패널은 ssh(원격), 나머지는 zsh(로컬)
+        first = win.panes()[0]
+        srv._fg_command = lambda fd, _f=first: ("ssh" if fd == _f.master_fd
+                                                else "zsh")
+        msg = srv._tree_msg()
+        w = msg["sessions"][0]["windows"][0]
+        assert isinstance(w["panes"], list) and len(w["panes"]) == len(ids)
+        p0 = next(p for p in w["panes"] if p["id"] == first.id)
+        assert p0["remote"] is True and p0["cmd"] == "ssh", "ssh 패널 → 원격"
+        others = [p for p in w["panes"] if p["id"] != first.id]
+        assert all(p["remote"] is False for p in others), "zsh 패널 → 로컬"
+        assert "active" in w
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_break_join_pane():
     srv, task, sock = await server_only()
     try:
