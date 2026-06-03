@@ -60,10 +60,26 @@ pip install -r requirements.txt
 
 > macOS / Linux(POSIX PTY) 에서 동작합니다. Python 3.11 이상 권장.
 
+### `pytmux` 명령으로 등록 (선택)
+
+`python3 pytmux.py` 대신 어디서든 `pytmux` 로 실행하려면 래퍼를 설치합니다.
+
+```sh
+./install.sh            # 기본 위치(~/.local/bin)에 'pytmux' 래퍼 설치
+./install.sh /usr/local/bin   # 다른 디렉터리에 설치
+BIN=pt ./install.sh     # 다른 이름(pt)으로 설치
+
+./uninstall.sh          # 제거(설치 시 쓴 DIR/BIN 인자를 동일하게)
+```
+
+래퍼는 이 저장소의 `pytmux.py` 절대경로를 가리키므로 저장소를 옮기면 다시
+설치하면 됩니다. 설치 대상 디렉터리가 PATH 에 없으면 안내 문구가 나옵니다.
+
 ## 사용법
 
 ```sh
 python3 pytmux.py                 # 서버가 없으면 자동 기동 후 attach, 있으면 attach
+# 래퍼를 설치했다면 어디서든 `pytmux`, `pytmux ls`, `pytmux kill-server` 등으로
 python3 pytmux.py attach          # (단일 세션) 실행 중 서버에 attach
 python3 pytmux.py ls              # 탭/패널 요약
 python3 pytmux.py kill-server     # 서버와 모든 탭/셸 종료
