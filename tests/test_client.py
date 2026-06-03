@@ -538,6 +538,26 @@ async def test_pane_name_on_border():
     await _with_app(body)
 
 
+async def test_esc_tab_bar_plus_button_nav():
+    # ESC 모드 탭바 내비게이션이 맨 오른쪽 [+] 버튼까지 포함하고, [+] 에서 Enter
+    # 누르면 새 탭이 열리며 ESC 모드도 종료된다(#26 + #3).
+    async def body(app, pilot, srv):
+        sess = list(srv.sessions.values())[0]
+        before = len(sess.tabs)
+        await pilot.press("escape")
+        await pilot.press("up")
+        assert app.tabbar.bar_focus is True, "탭바 포커스"
+        await pilot.press("right")          # 탭 1개 → 오른쪽은 [+]
+        assert app.tabbar.sel == "+", "맨 오른쪽 [+] 선택"
+        seg = next(s for s in app.tabbar.render_line(0) if "[+]" in s.text)
+        assert seg.style is not None and seg.style.bgcolor is not None
+        await pilot.press("enter")
+        await pilot.pause(0.4)
+        assert app.mode == "normal", "Enter 후 ESC 모드 종료"
+        assert len(sess.tabs) == before + 1, "[+] Enter → 새 탭"
+    await _with_app(body, cfg={"tab_bar_always": True})
+
+
 async def test_tab_bar_and_esc_nav():
     # auto 모드(tab-bar off): 1탭 숨김 → 2탭 표시 동작 검증
     async def body(app, pilot, srv):
@@ -560,6 +580,7 @@ async def test_tab_bar_and_esc_nav():
         await pilot.pause(0.3)
         assert app.tabbar.bar_focus is False, "Enter 후 탭바 포커스 해제"
         assert app._active_tab_index() != before, "탭 전환 완료"
+        assert app.mode == "normal", "Enter 한 번으로 ESC 모드도 종료(#3)"
     await _with_app(body, cfg={"tab_bar_always": False})
 
 

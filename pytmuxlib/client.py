@@ -1177,7 +1177,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 i += 1
             if i < n:                                  # 오른쪽에 더 있음
                 add("▶", arrow_st, "scroll_right")
-            add(addtxt, add_st, "add")                 # 마지막 탭 바로 오른쪽
+            # ESC 모드에서 [+] 가 커서 대상으로 선택되면 강조(#26)
+            add_cur = sel_st if (self.bar_focus and self.sel == "+") else add_st
+            add(addtxt, add_cur, "add")                # 마지막 탭 바로 오른쪽
             pad = w - x
             if pad > 0:
                 segs.append(Segment(" " * pad, base))
@@ -2912,21 +2914,23 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         self.send_cmd("move_tab", index=pos, to=pos + 1)
                         tb.sel = pos + 1
                         tb.refresh()
-                elif k in ("left", "up") and idxs:
-                    cur = idxs.index(tb.sel) if tb.sel in idxs else 0
-                    tb.sel = idxs[(cur - 1) % len(idxs)]
-                    tb.refresh()
-                elif k in ("right",) and idxs:
-                    cur = idxs.index(tb.sel) if tb.sel in idxs else 0
-                    tb.sel = idxs[(cur + 1) % len(idxs)]
+                elif k in ("left", "up", "right") and idxs:
+                    # 탭들 + 맨 오른쪽 [+] 버튼을 한 줄로 순환(#26).
+                    positions = idxs + ["+"]
+                    cur = (positions.index(tb.sel) if tb.sel in positions else 0)
+                    step = -1 if k in ("left", "up") else 1
+                    tb.sel = positions[(cur + step) % len(positions)]
                     tb.refresh()
                 elif k == "enter":
-                    self.send_cmd("select_window", index=tb.sel)
-                    tb.bar_focus = False
-                    tb.refresh()
+                    # [+] 선택이면 새 탭, 아니면 그 탭으로 전환. 둘 다 ESC 모드 종료.
+                    if tb.sel == "+":
+                        self.send_cmd("new_window")
+                    else:
+                        self.send_cmd("select_window", index=tb.sel)
+                    self._exit_esc()   # bar_focus 해제·refresh 포함(#3)
                 elif ch in ("+", "a"):
                     self.send_cmd("new_window")
-                elif ch in ("x", "d") or k == "delete":
+                elif (ch in ("x", "d") or k == "delete") and tb.sel in idxs:
                     self.confirm_kill_tab()
                 elif k in ("down", "escape"):
                     tb.bar_focus = False
