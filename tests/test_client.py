@@ -604,6 +604,50 @@ async def test_status_clock_click_toggles_clock_mode():
     await _with_app(body)
 
 
+async def test_status_right_segments_clock_and_date_zones():
+    # 오른쪽(host/시각/날짜)을 별도 런으로 쪼갠 뒤 시각=시계 존, 날짜=달력 존이
+    # 서로 겹치지 않고, 날짜 클릭은 clock-mode 를 켜지 않아야 한다(#12).
+    async def body(app, pilot, srv):
+        from textual import events
+        app.status.render_line(0)
+        cz = app.status._clock_zone
+        dz = app.status._date_zone
+        assert cz is not None, "시각(시계) 클릭 존 등록"
+        assert dz is not None, "날짜(달력) 클릭 존 등록"
+        # 기본 포맷 ' ...%H:%M %Y-%m-%d ' 이라 시각이 날짜보다 왼쪽.
+        assert cz[1] <= dz[0], "시각/날짜 존이 겹치지 않음(시각이 앞)"
+        active = app.layout["active"]
+        # 날짜 영역 클릭 → 시계 토글 안 됨.
+        ev = events.MouseDown(app.status, dz[0], 0, 0, 0, 1, False, False, False)
+        app.status.on_mouse_down(ev)
+        await pilot.pause(0.1)
+        assert active not in app.clock_panes, "날짜 클릭은 clock-mode 와 무관"
+        # 시각 영역 클릭 → 시계 토글.
+        ev = events.MouseDown(app.status, cz[0], 0, 0, 0, 1, False, False, False)
+        app.status.on_mouse_down(ev)
+        await pilot.pause(0.1)
+        assert active in app.clock_panes, "시각 클릭 → clock-mode 켜짐"
+    await _with_app(body)
+
+
+async def test_status_right_ssh_host_prefix_when_remote():
+    # 원격(SSH) 세션이면 머신 이름 앞에 'ssh:' 접두사 + 붉은색(#11). 로컬이면 없음.
+    async def body(app, pilot, srv):
+        # 로컬: ssh: 접두사 없음.
+        app.status._is_remote = False
+        txt = "".join(s.text for s in app.status.render_line(0))
+        assert "ssh:" not in txt, "로컬은 ssh: 접두사 없음"
+        # 원격으로 강제 후 재렌더 → ssh: 접두사 + host 세그먼트가 error 색.
+        app.status._is_remote = True
+        strip = app.status.render_line(0)
+        txt = "".join(s.text for s in strip)
+        assert "ssh:" in txt, "원격은 ssh: 접두사 표시"
+        host_seg = next(s for s in strip if s.text.startswith("ssh:"))
+        assert host_seg.style is not None and host_seg.style.color is not None, \
+            "원격 host 세그먼트는 색이 지정됨(붉은색)"
+    await _with_app(body)
+
+
 async def test_tab_bar_default_always():
     # 기본값(tab_bar_always=True): 탭이 하나여도 상단 탭바 표시
     async def body(app, pilot, srv):

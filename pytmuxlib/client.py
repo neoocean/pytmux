@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import os
 import shlex
 import socket
 import subprocess
@@ -17,6 +18,11 @@ from .protocol import MIN_H, MIN_W, read_msg, write_msg
 def _char_cells(ch: str) -> int:
     """터미널에서 문자가 차지하는 칸 수(와이드=2, 그 외=1)."""
     return 2 if wcwidth(ch) == 2 else 1
+
+
+# 상태줄 오른쪽 strftime 코드 분류 — 시각(시계) vs 날짜(달력) 클릭 존 분리용.
+_TIME_STRFTIME = set("HIMSpRTrXkl")
+_DATE_STRFTIME = set("YymdbBaAjeDFuwUWxgGCV")
 
 
 # clock-mode 큰 시계용 3x5 블록 폰트(시:분:초)
@@ -1153,7 +1159,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.fg = fg
             self.left_fmt = left
             self.right_fmt = right
-            self._clock_zone = None  # (x0, x1) 시계(오른쪽) 클릭 영역
+            self._clock_zone = None  # (x0, x1) 시각(시계) 클릭 영역
+            self._date_zone = None   # (x0, x1) 날짜(달력) 클릭 영역
+            # 클라이언트가 SSH 원격 세션에서 도는지(attach 한 머신 기준, 시작 시 1회).
+            self._is_remote = bool(os.environ.get("SSH_CONNECTION")
+                                   or os.environ.get("SSH_TTY"))
 
         def _expand(self, fmt):
             """#S/#h/#H/#{pane_title} 토큰과 strftime(%) 코드를 치환."""
@@ -1171,6 +1181,69 @@ def build_client_app(sock_path: str, config: dict | None = None,
                      .replace("#I", str(aw["index"]) if aw else "")
                      .replace("#W", aw["name"] if aw else "")
                      .replace("#{pane_title}", tpane))
+
+        def _expand_parts(self, fmt):
+            """오른쪽 포맷을 (kind, text) 런 목록으로 펼친다.
+            kind ∈ {'host','time','date','plain'}. 호스트(원격 강조)·시각(시계
+            클릭)·날짜(달력 클릭) 구간을 분리하기 위해 토큰/‌strftime 코드 단위로
+            쪼갠 뒤 인접 동종을 병합한다. right_fmt 가 커스텀돼도 동작한다."""
+            host = socket.gethostname()
+            aw = next((w for w in self.windows if w.get("active")), None)
+            tpane = (self.pane_title + " · ") if (self.pane_title
+                     and self.pane_title != "shell") else ""
+            runs = []
+            i, n = 0, len(fmt)
+            while i < n:
+                c = fmt[i]
+                if c == "#":
+                    if fmt.startswith("#{pane_title}", i):
+                        runs.append(("plain", tpane)); i += len("#{pane_title}"); continue
+                    two = fmt[i:i + 2]
+                    if two == "#h":
+                        runs.append(("host", host.split(".")[0])); i += 2; continue
+                    if two == "#H":
+                        runs.append(("host", host)); i += 2; continue
+                    if two == "#S":
+                        runs.append(("plain", self.session)); i += 2; continue
+                    if two == "#I":
+                        runs.append(("plain", str(aw["index"]) if aw else "")); i += 2; continue
+                    if two == "#W":
+                        runs.append(("plain", aw["name"] if aw else "")); i += 2; continue
+                    runs.append(("plain", c)); i += 1; continue
+                if c == "%" and i + 1 < n:
+                    code = fmt[i + 1]
+                    if code == "%":
+                        runs.append(("plain", "%")); i += 2; continue
+                    try:
+                        val = datetime.now().strftime("%" + code)
+                    except ValueError:
+                        val = "%" + code
+                    kind = ("time" if code in _TIME_STRFTIME
+                            else "date" if code in _DATE_STRFTIME else "plain")
+                    runs.append((kind, val)); i += 2; continue
+                runs.append(("plain", c)); i += 1
+            return self._merge_runs(runs)
+
+        @staticmethod
+        def _merge_runs(runs):
+            # ① 같은 종류 strftime 코드 사이의 구분자(:,-,/,. )만 있는 plain 런을
+            #    양옆과 같은 kind 로 흡수(%H:%M·%Y-%m-%d 를 한 구간으로 묶음).
+            absorbed = []
+            for idx, (kind, text) in enumerate(runs):
+                if (kind == "plain" and text and all(ch in ":-/. " for ch in text)
+                        and absorbed and absorbed[-1][0] in ("time", "date")
+                        and idx + 1 < len(runs)
+                        and runs[idx + 1][0] == absorbed[-1][0]):
+                    kind = absorbed[-1][0]
+                absorbed.append((kind, text))
+            # ② 인접 동일 kind 병합.
+            merged = []
+            for kind, text in absorbed:
+                if merged and merged[-1][0] == kind:
+                    merged[-1] = (kind, merged[-1][1] + text)
+                else:
+                    merged.append([kind, text])
+            return [(k, t) for k, t in merged if t]
 
         def update_status(self, msg):
             self.session = msg.get("session", "")
@@ -1230,15 +1303,36 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 else:
                     st = base
                 segs.append(Segment(label, st))
-            right = self._expand(self.right_fmt)
-            used = sum(len(s.text) for s in segs)
-            pad = w - used - len(right)
-            if pad > 0:
+            # 오른쪽은 host/시각/날짜를 별도 런으로 쪼개 그린다 — 원격이면 host 를
+            # `ssh:` 접두사+붉은색으로, 시각/날짜는 각각 시계/달력 클릭 존으로.
+            right_parts = self._expand_parts(self.right_fmt)
+            host_style = Style(color=tc("error"), bgcolor=self.bg or tc("surface"),
+                               bold=True)
+            built = []   # (kind, text, style, cells)
+            right_w = 0
+            for kind, text in right_parts:
+                st = base
+                if kind == "host" and self._is_remote:
+                    text = "ssh:" + text
+                    st = host_style
+                cells = sum(_char_cells(c) for c in text)
+                built.append((kind, text, st, cells))
+                right_w += cells
+            used = sum(sum(_char_cells(c) for c in s.text) for s in segs)
+            pad = max(0, w - used - right_w)
+            if pad:
                 segs.append(Segment(" " * pad, base))
-            segs.append(Segment(right, base))
-            # 오른쪽 시계 영역(클릭하면 활성 패널 clock-mode 토글)
-            rw = sum(_char_cells(c) for c in right)
-            self._clock_zone = (max(0, w - rw), w) if rw else None
+            # 각 런 세그먼트를 붙이며 누적 x 로 시각(시계)/날짜(달력) 클릭 존 계산.
+            self._clock_zone = None
+            self._date_zone = None
+            x = used + pad
+            for kind, text, st, cells in built:
+                segs.append(Segment(text, st))
+                if cells and kind == "time":
+                    self._clock_zone = (x, x + cells)
+                elif cells and kind == "date":
+                    self._date_zone = (x, x + cells)
+                x += cells
             # 폭 맞추기(자르기)
             return Strip(segs).adjust_cell_length(w, base)
 
