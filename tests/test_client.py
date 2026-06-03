@@ -873,6 +873,21 @@ async def test_status_clock_click_toggles_clock_mode():
     await _with_app(body)
 
 
+async def test_active_tab_connects_to_content():
+    # 상단 탭바가 보이면 콘텐츠 최상단 테두리에서 활성 탭 x 범위 구간이 활성색으로
+    # 칠해져(끊겨) 탭과 콘텐츠가 연결돼 보인다(#23).
+    async def body(app, pilot, srv):
+        app.tabbar.render_line(0)            # _zones 채우기
+        xr = app.tabbar.active_tab_xrange()
+        assert xr is not None, "활성 탭 x 범위"
+        app._composite()
+        tx0, tx1 = xr
+        mid = min((tx0 + tx1) // 2, len(app.view._cells[0]) - 1)
+        st = app.view._cells[0][mid][1]
+        assert st is not None and st.bgcolor is not None, "연결 색(활성색)"
+    await _with_app(body, cfg={"tab_bar_always": True})
+
+
 async def test_tabbar_claude_done_background():
     # 비활성 탭에 claude_done 플래그가 오면 옅은(success) 배경으로 그려 활성 탭
     # (primary)과 구분된다(#22).

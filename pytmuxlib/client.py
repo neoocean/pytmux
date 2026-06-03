@@ -1227,6 +1227,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     return kind, payload
             return None, None
 
+        def active_tab_xrange(self):
+            """현재 활성 탭의 화면 x 범위 (x0, x1). 콘텐츠 상단 테두리를 활성 탭과
+            연결(노트북 탭 모양)하는 데 쓴다(#23). _zones 가 비었으면 None."""
+            aidx = next((t["index"] for t in self.tabs if t.get("active")), None)
+            if aidx is None:
+                return None
+            for x0, x1, kind, payload in self._zones:
+                if kind == "tab" and payload == aidx:
+                    return (x0, x1)
+            return None
+
         def on_mouse_down(self, event):
             if not self.app.mouse_enabled:
                 return
@@ -2040,6 +2051,25 @@ def build_client_app(sock_path: str, config: dict | None = None,
             for p in boxes:
                 if p["id"] == active:
                     _draw_title(p)
+            # 활성 탭을 아래 콘텐츠와 연결(노트북 탭 모양, #23): 상단 탭바가 보이면
+            # 콘텐츠 최상단 테두리(row 0)의 활성 탭 x 범위를 활성색으로 칠해 끊고
+            # (가로선 제거) 양옆은 ┘/└ 코너로 마감 → 탭이 콘텐츠와 이어져 보인다.
+            if self._tabbar_visible() and H > 0:
+                xr = self.tabbar.active_tab_xrange()
+                if xr:
+                    tx0, tx1 = xr
+                    conn = Style(color="white",
+                                 bgcolor=theme_color(self, "primary"), bold=True)
+                    for xx in range(max(0, tx0), min(tx1, W)):
+                        ch, _st = cells[0][xx]
+                        # 가로 테두리(─┬┴┼)는 공백으로 끊어 연결감, 그 외는 유지
+                        nch = " " if ch in "─┬┴┼" else ch
+                        cells[0][xx] = (nch, conn)
+                    # 끊긴 양 끝을 위로 꺾이는 코너로 마감(있으면)
+                    if 0 <= tx0 - 1 < W and cells[0][tx0 - 1][0] in "─┬┴┼":
+                        cells[0][tx0 - 1] = ("┘", cells[0][tx0 - 1][1])
+                    if 0 <= tx1 < W and cells[0][tx1][0] in "─┬┴┼":
+                        cells[0][tx1] = ("└", cells[0][tx1][1])
             # 패널 제목 경계선(pane-border-status)
             for tb in self.layout.get("titlebars", []):
                 is_active = tb.get("active")
