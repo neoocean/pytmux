@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **92 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **93 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -197,7 +197,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56409 + git, 신→구)
+## 9. 최근 변경(CL 56279~56411 + git, 신→구)
+
+- 56411 **토큰 사용량 클릭 → Claude 트리 팝업**(§10 #19 해결) — _usage_zone 클릭,
+  request_tree(usage)→Claude 패널 필터 InfoScreen(앱·상태·사용량). _pane_overview 에
+  claude/usage 추가. 회귀 테스트 1종(총 93). 서버+클라 → kill-server 재기동.
 
 - 56409 Claude 헤더 **프롬프트 히스토리 팝업**(§10 #7 부분해결) — 서버 prompt_history
   누적, 클라 헤더 클릭/명령(prompt-history)→InfoScreen 시간순. ESC 포커스 선택은 후속.
@@ -558,22 +562,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   대상을 `_menu_pane`(우클릭 패널/활성)에 잡고 _composite 재합성. `_composite` 끝에서
   `_menu_open` 이면 `_menu_pane` 외 모든 패널 셀에 `Style(dim=True)` 합성(clock-mode dim
   기법 재사용). 닫히면 재합성으로 복원.
-- **[요청·미구현] 토큰 사용량 표시 클릭 → Claude 실행 중 탭/패널 트리 + 세션별 토큰 팝업** —
-  화면 오른쪽 아래(REC 옆) **토큰 사용량 표시를 클릭하면**, 현재 **Claude Code 를 실행 중인 모든
-  탭/패널을 트리 형태**로 보여주고 **각 세션이 토큰을 얼마나 쓰는지 한 화면에서** 확인하는
-  팝업을 띄운다. 구현 방향:
-  - **클릭 존**: StatusBar 의 `claude_usage` 세그먼트(client.py ~1101-1104)에 클릭 영역
-    (`_usage_zone`)을 등록(시계 `_clock_zone` 패턴). `on_mouse_down` 에서 이 영역이면 팝업.
-  - **데이터(서버)**: 패널마다 `_claude`(상태)·`_claude_usage`(사용량)가 이미 있고
-    `panes_claude` 로 내려간다. **Claude 가 떠 있는 패널만 추려** 탭→패널 트리로 묶고 각 패널의
-    토큰 사용량을 함께 전달. (현재 `claude_usage` 는 활성 패널 1개분만 상태줄에 노출 →
-    모든 Claude 패널분을 모아야 함.) **세션별 누적 토큰**은 위 "상태줄 토큰 사용량을 세션
-    누적" 항목의 누적값(`_claude_usage_total`)을 그대로 쓰면 의미가 맞다(스트리밍 델타 주의).
-  - **팝업**: 탭/패널 트리 + 패널별 토큰을 한 화면에 보이는 모달(위 "전체 탭/패널/실행앱 개요"
-    트리 팝업과 같은 위젯을 재사용하되 **Claude 패널만 필터**하고 토큰 열 추가). 전환·종료까지
-    얹을지는 그 항목과 통합 시 결정.
-  - **연관**: [전체 탭/패널/실행앱 개요 팝업], [상태줄 토큰 사용량 세션 누적] 두 항목과 묶어
-    구현하면 트리·사용량 인프라를 공유한다.
+- ~~**[요청·미구현] 토큰 사용량 표시 클릭 → Claude 실행 중 탭/패널 트리 + 세션별 토큰
+  팝업**~~ → **CL 56411 에서 해결.** StatusBar 사용량 세그먼트에 `_usage_zone` 클릭존,
+  클릭 시 request_tree(purpose="usage") → Claude 패널만 필터해 InfoScreen 에 탭/패널·
+  앱·상태·사용량 표시. server `_pane_overview` 에 claude/usage 필드 추가. 명령
+  token-usage/tokens. (세션별 누적 토큰의 "누적" 정의는 #5 (1)과 함께 후속.)
 - **[요청·미구현] 토큰 사용량 로깅(탭/패널/세션별) + 시간·일·월 단위 조회 화면** — Claude Code
   화면에서 읽은 토큰 사용량을 **탭별·패널별·세션별 로그로 영속 기록**하고, **시간 단위/날짜
   단위/월 단위로 집계 조회**하는 화면을 만든다. **명령어로 팝업을 열어** 조회할 수 있어야 하고,
