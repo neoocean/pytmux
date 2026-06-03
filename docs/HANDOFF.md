@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **86 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **87 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -197,7 +197,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56396 + git, 신→구)
+## 9. 최근 변경(CL 56279~56398 + git, 신→구)
+
+- 56398 **Ctrl+Q 활성 패널 전달**(§10 #25 해결) — Textual 기본 ctrl+q quit
+  priority 바인딩을 ctrl_q 액션으로 덮어 normal 모드면 \x11 전달(종료는 detach).
+  회귀 테스트 1종(총 87). 클라이언트 전용.
 
 - 56396 패널 **경계선 마우스오버 배경 강조**(§10 #27 해결) — `_hover_divider` +
   on_mouse_move 추적, _composite 가 그 칸 배경 강조. 회귀 테스트 1종(총 86).
@@ -690,22 +694,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 - ~~**[요청·미구현] 탭 선택기(트리)에 각 탭/패널의 로컬/원격 구분 표시**~~ → **CL 56383 에서
   해결**(위 전체 개요 팝업과 한 묶음). 트리 패널 행에 `[local]`/`[ssh]` 배지 표시(서버
   `_tree_msg` 가 패널별 `remote` 플래그 전달).
-- **[요청·미구현/확인필요] Ctrl+Q 를 활성 패널로 전달(앱 종료는 detach 명령으로만)** — pytmux
-  는 Ctrl+Q 로 종료되지 않는다(의도된 동작 유지). 요청: **Ctrl+Q 를 누르면 그 키 입력을 활성
-  패널로 전달**하고, 앱을 끝내려면 **detach 명령**을 쓰게 한다. 현재 상태:
-  - **detach 는 이미 있음** — `detach`/`detach-client` 명령(client.py ~161/224/2311), 메뉴
-    항목(~161), `self.exit()`. "종료는 명령으로 detach" 요구는 이미 충족.
-  - **전달 경로도 코드상 존재** — `key_to_bytes`(~128)가 `ctrl+q` 를 `\x11`(DC1/XON)로 만들고,
-    normal 모드 `on_key`(~2471)가 `send_input` 으로 활성 패널에 보낸다. 그런데 **실제로
-    패널에 안 가면** 원인은 두 가지가 유력: ① **Textual 프레임워크가 ctrl+q 를 먼저 가로챔**
-    (기본 quit/priority 바인딩 — `BINDINGS=[]` 는 앱 자체 바인딩만 비우고 시스템 바인딩은
-    남을 수 있음). ② **터미널 흐름제어(IXON)** 가 Ctrl+Q(XON)/Ctrl+S(XOFF)를 먹어 앱까지
-    도달 안 함. 조사·수정 방향: on_key 진입 전에 ctrl+q 가 잡히는지 로깅 → Textual 바인딩이면
-    명시적으로 해제/무력화(ESC 모드·prefix 와의 우선순위도 정의), 흐름제어면 PTY 입력단
-    `termios` 의 `IXON` 해제(또는 raw 모드) 검토. ESC/F12/prefix 처럼 **pytmux 가 가로채는
-    키가 아님**을 분명히 해 그냥 패널로 흘려보내는 게 목표.
-  - **주의**: prefix 모드/esc 모드/스크롤 모드 중에는 기존 동선 유지(그 모드의 키로 해석),
-    normal 모드에서만 패스스루.
+- ~~**[요청·미구현/확인필요] Ctrl+Q 를 활성 패널로 전달(앱 종료는 detach 명령으로만)**~~ →
+  **CL 56398 에서 해결.** 원인은 Textual 기본 App 의 `ctrl+q → quit` **priority** 바인딩
+  이 패스스루 전에 가로챈 것. PytmuxApp.BINDINGS 에 `ctrl+q → ctrl_q`(priority)로 덮고,
+  action_ctrl_q 가 normal 모드면 활성 패널로 \x11 전달·그 외 모드는 무시. detach 는 기존
+  명령/메뉴 그대로. (IXON 이 Ctrl+Q 를 먹는 터미널 흐름제어는 별개의 터미널 설정 영역.)
 - ~~**[요청·미구현] ESC 모드 탭 네비게이션에 맨 오른쪽 `[+]` 새 탭 버튼도 포함**~~ → **CL
   56389 에서 해결**(#3 과 함께). ←/↑/→ 가 `idxs + ["+"]` 를 순환(tb.sel="+"), Enter 가
   "+" 면 `new_window`. TabBar.render 가 bar_focus+sel=="+" 면 `[+]` 를 선택 강조.
