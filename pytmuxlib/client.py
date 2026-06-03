@@ -1977,13 +1977,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.prevent_default()
                 event.stop()
                 return
-            # F12: outer prefix 가로채기 토글(중첩 tmux/pytmux 용)
+            # F12: 바로 명령 프롬프트 진입(ESC 모드가 아닐 때).
+            # 중첩 prefix 가로채기 토글은 prefix F12 로 이동.
             if event.key == "f12":
-                self.prefix_enabled = not self.prefix_enabled
-                self.status.prefix_off = not self.prefix_enabled
-                self.status.refresh()
-                self.display_message("outer prefix " +
-                                     ("ON" if self.prefix_enabled else "OFF (중첩)"))
+                self.open_prompt("command", "")
                 event.prevent_default()
                 event.stop()
                 return
@@ -2012,6 +2009,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
             token = nch if (nch and nch.isprintable() and not k.startswith("ctrl+")) else k
             if token in self.bindings:
                 self._run_command(self.bindings[token])
+                return
+            if k == "f12":   # prefix F12: 중첩 prefix 가로채기 토글
+                self.prefix_enabled = not self.prefix_enabled
+                self.status.prefix_off = not self.prefix_enabled
+                self.status.refresh()
+                self.display_message("outer prefix " +
+                                     ("ON" if self.prefix_enabled else "OFF (중첩)"))
                 return
             if k == "percent_sign" or ch == "%":
                 self.send_cmd("split", orient="lr")

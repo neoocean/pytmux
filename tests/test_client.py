@@ -110,6 +110,23 @@ async def test_help_command():
     await _with_app(body)
 
 
+async def test_f12_opens_command_prompt():
+    async def body(app, pilot, srv):
+        assert app.mode == "normal"
+        await pilot.press("f12")               # ESC 모드 아님 → 바로 명령 프롬프트
+        assert app.screen_stack[-1].__class__.__name__ == "PromptScreen"
+        inp = app.screen_stack[-1].query_one(Input)
+        assert app.focused is inp
+        # prefix F12 는 중첩 prefix 토글(명령 프롬프트 아님)
+        await pilot.press("escape")            # 프롬프트 닫기
+        await pilot.pause(0.1)
+        await pilot.press("ctrl+b")
+        await pilot.press("f12")
+        await pilot.pause(0.1)
+        assert app.prefix_enabled is False, "prefix F12 → 중첩 패스스루 토글"
+    await _with_app(body)
+
+
 async def test_esc_mode_arrows_and_colon():
     async def body(app, pilot, srv):
         await pilot.press("escape")
