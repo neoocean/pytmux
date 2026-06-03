@@ -593,6 +593,43 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
     이라 색을 주입 가능하게 바꿔야 함.
   - **패널 닫기 경로도**: kill-pane 확인(현재 별도 prompt, ~2359)도 마지막 패널이면 같은
     종료-경고로 통일 고려.
+- **[요청·미구현] 컨텍스트 메뉴 토글 항목의 현재 on/off 표시 + 토글은 선택해도 메뉴 안 닫고
+  ESC 로만 닫기** — Ctrl+클릭(또는 `&`)으로 여는 컨텍스트 메뉴(`MenuScreen`, client.py ~333)에는
+  **토글 메뉴**(줌·입력 동기화·토큰리밋 자동재개)가 있는데, 라벨이 정적("패널 줌 토글 ⛶" 등)이라
+  **지금 켜졌는지 꺼졌는지 알 수 없다**. 또 토글을 선택하면 **즉시 메뉴가 닫혀**(`dismiss(key)`)
+  변화를 못 본다. 요청: ① 메뉴에서 **각 토글의 현재 상태(on/off)를 표시**, ② 토글 항목은
+  **선택(Enter/클릭)해도 메뉴를 바로 닫지 말고** 토글 상태가 바뀌는 걸 본 뒤 **ESC 로 직접 닫기**.
+  현재 구조:
+  - `MENU_ITEMS`(client.py ~144-163)는 `(key, label)` 정적 튜플. 토글 항목은 **`zoom`·`sync`·
+    `autoresume`** 3종(나머지는 액션). `MenuScreen.compose`(~339-342)가 라벨 그대로 `ListItem`
+    생성, `on_list_view_selected`(~347-349)·클릭·Enter 모두 **`dismiss(key)`** 로 닫고
+    `open_menu.handle`→`_run_menu_action`(~1920)이 토글 명령(`set_sync`/`set_autoresume`/`zoom`) 전송.
+  - **토글 상태값은 클라이언트가 이미 보유**: `self.zoomed`/`sync`/`autoresume`(StatusBar
+    ~1142-1146, status 메시지로 갱신 ~1178-1182). 메뉴가 이 값을 읽으면 됨.
+  구현 방향:
+  - **토글 메타데이터**: `MENU_ITEMS` 에 토글 플래그 추가(`(key,label,is_toggle)`) 또는
+    `MENU_TOGGLES = {"zoom","sync","autoresume"}` 집합 도입. (capture-output 도 토글이지만
+    메뉴엔 없음 — 넣을지 결정.)
+  - **상태 표시(렌더)**: `MenuScreen.compose` 에서 토글 항목이면 현재 상태를 라벨에 붙인다
+    (예 `[x]`/`[ ]`·`●`/`○`·`on`/`off`). 상태는 `MenuScreen` 이 `self.app.zoomed/sync/autoresume`
+    로 읽거나 `open_menu` 가 현재 상태 dict 를 생성자에 넘긴다. 메뉴 열 때 시점 상태 반영(zoom=활성
+    패널, sync/autoresume=활성 윈도우/패널 기준).
+  - **선택해도 안 닫고 갱신**: `on_list_view_selected`(및 Enter/클릭 경로)에서 **토글 항목이면
+    `dismiss` 하지 말고** 그 자리에서 토글 명령을 보내고(메뉴 유지) 해당 `ListItem` 라벨을 갱신.
+    비토글 항목은 기존대로 `dismiss(key)`. ESC 로만 닫기는 `on_key`(~351-354)에 이미 있음.
+    - **난점(상태 왕복)**: 토글 명령→서버가 상태 변경→**status 메시지로 새 상태 회신** 시점에
+      떠 있는 메뉴 라벨을 다시 그려야 한다. `_set_status`(~1178)에서 현재 열린 메뉴가 있으면
+      (`self._menu_screen` 약참조 보관) `menu.refresh_labels()` 호출로 연결, 또는 토글 직후
+      **낙관적으로 라벨을 뒤집고** status 로 확정. `MenuScreen` 은 `self.app` 으로 `send_cmd`
+      접근 가능 — `_run_menu_action` 의 토글 분기를 dismiss 없이 호출하는 경로를 둔다.
+  - **클릭=Enter 동일 경로**: ListView 클릭도 `on_list_view_selected` 라 같은 토글-비닫힘 로직.
+  - **주의**: ① zoom 토글 시 뒤 레이아웃이 바뀌어도 메뉴는 중앙 모달이라 유지 — 라벨만 갱신.
+    ② 메뉴가 포커스를 쥐어 떠 있는 동안 활성 패널은 안 바뀜. ③ 위 "컨텍스트 메뉴 대상 패널
+    배경 구분"·"프롬프트 단위 클리어 모드 토글" 항목과 같은 `MenuScreen`/`MENU_ITEMS` 를 만지므로
+    함께 가면 일관적(`_menu_pane` 대상 패널 정합성 주의).
+  - **테스트**: `test_client` 에서 sync/autoresume/zoom 상태를 세팅하고 `MenuScreen` 라벨에
+    on/off 표시가 반영되는지, 토글 항목 선택 시 dismiss 안 되고(메뉴 유지) 라벨/상태가 바뀌는지,
+    비토글 항목은 dismiss 되는지, ESC 로 닫히는지 단언.
 - **[요청·미구현] 컨텍스트 메뉴가 뜰 때 대상 패널을 배경에서 구분 표시** — Ctrl+클릭(우클릭)
   하면 현재 패널의 컨텍스트 메뉴(`MenuScreen`)가 **화면 중앙**에 뜨는데, 한 탭에 패널이 여럿이면
   **어느 패널을 대상으로 한 메뉴인지 알기 어렵다**. 요청: 메뉴가 떠 있는 동안 **대상 패널을
