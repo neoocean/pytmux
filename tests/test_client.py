@@ -551,6 +551,44 @@ async def test_clock_mode_overlay():
     await _with_app(body, size=(44, 14))
 
 
+async def test_calendar_overlay_and_date_click():
+    # 날짜 클릭/명령으로 이번 달 달력 오버레이를 켜고(뒤 화면 dim·오늘 강조·[x]),
+    # clock-mode 와 상호 배타인지 검증(#13).
+    async def body(app, pilot, srv):
+        from textual import events
+        from datetime import datetime
+        active = app.layout["active"]
+        # 상태줄 날짜 존 클릭 → 달력 on
+        app.status.render_line(0)
+        dz = app.status._date_zone
+        assert dz is not None, "날짜 클릭 존 등록"
+        ev = events.MouseDown(app.status, dz[0], 0, 0, 0, 1, False, False, False)
+        app.status.on_mouse_down(ev)
+        await pilot.pause(0.2)
+        assert active in app.calendar_panes, "날짜 클릭 → 달력 켜짐"
+        cells = app.view._cells
+        ap = next(p for p in app.layout["panes"] if p["id"] == active)
+        st = cells[ap["y"]][ap["x"]][1]
+        assert st and st.dim, "패널 내용 dim"
+        assert active in app._calendar_close_zones, "우상단 [x] 등록"
+        # 요일 헤더(Mo) 또는 연-월 제목이 그려졌는지
+        flat = "".join(cells[y][x][0] or ""
+                       for y in range(len(cells)) for x in range(len(cells[0])))
+        assert f"{datetime.now().year}-" in flat or "Mo" in flat, "달력 텍스트 표시"
+        # clock-mode 를 켜면 같은 패널의 달력은 꺼진다(상호 배타)
+        app.toggle_clock(active)
+        await pilot.pause(0.1)
+        assert active in app.clock_panes and active not in app.calendar_panes
+        # 명령으로 달력 토글 → clock 은 꺼짐
+        app.toggle_calendar(active)
+        await pilot.pause(0.1)
+        assert active in app.calendar_panes and active not in app.clock_panes
+        app.toggle_calendar(active)
+        await pilot.pause(0.1)
+        assert active not in app.calendar_panes, "재토글 → 닫힘"
+    await _with_app(body, size=(44, 16))
+
+
 async def test_clock_mode_over_wide_chars_keeps_alignment():
     # 회귀: 한글(와이드 문자)이 깔린 화면에서 clock-mode 를 켜면 시계 글자가
     # 와이드 문자의 한쪽 칸만 덮어 정렬이 깨졌다(녹색 블록 흩어짐).

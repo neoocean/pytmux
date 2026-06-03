@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import calendar
 import os
 import shlex
 import socket
@@ -225,6 +226,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("display-message", "상태줄에 메시지 표시", "설정/기타"),
         ("display-popup", "명령 실행 결과를 팝업으로", "설정/기타"),
         ("clock-mode", "현재 패널을 큰 시계로 덮기(토글, 우상단 [x]/명령으로 닫기)", "설정/기타"),
+        ("calendar-mode", "현재 패널을 이번 달 달력으로 덮기(토글, 상태줄 날짜 클릭/우상단 [x])", "설정/기타"),
         ("run-shell", "셸 명령 실행", "설정/기타"),
         ("if-shell", "조건부 셸 실행", "설정/기타"),
         ("detach-client", "detach (앱 종료, 셸 유지)", "설정/기타"),
@@ -850,6 +852,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.app.toggle_clock(pid)
                     event.stop()
                     return
+            # 달력 오버레이 닫기 버튼([x]) 클릭
+            for pid, (zx0, zx1, zy) in self.app._calendar_close_zones.items():
+                if zy == event.y and zx0 <= event.x < zx1:
+                    self.app.toggle_calendar(pid)
+                    event.stop()
+                    return
             # Claude 헤더 닫기 버튼([x]) 클릭
             for pid, (zx0, zx1, zy) in self.app._claude_close_zones.items():
                 if zy == event.y and zx0 <= event.x < zx1:
@@ -1343,6 +1351,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if z and z[0] <= event.x < z[1]:
                 self.app.toggle_clock(self.app.layout.get("active"))
                 event.stop()
+                return
+            dz = self._date_zone
+            if dz and dz[0] <= event.x < dz[1]:
+                self.app.toggle_calendar(self.app.layout.get("active"))
+                event.stop()
 
     class PytmuxApp(App):
         ENABLE_COMMAND_PALETTE = False
@@ -1369,6 +1382,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._want_layouts = None  # 레이아웃 목록 응답 대기(모드: "new"/"over")
             self.clock_panes = set()   # clock-mode 가 켜진 패널 id 집합
             self._clock_close_zones = {}  # pane_id -> (x0, x1, y) 닫기 버튼 영역
+            self.calendar_panes = set()   # 달력 오버레이가 켜진 패널 id 집합
+            self._calendar_close_zones = {}  # pane_id -> (x0, x1, y) 닫기 버튼
             # Claude Code: 패널별 상태/마지막 프롬프트, 헤더 닫힘 추적
             self.pane_claude = {}      # id -> {"claude": state, "prompt": str}
             self._claude_hidden = {}   # id -> 닫을 때의 prompt(같으면 숨김)
@@ -1629,11 +1644,23 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.clock_panes.discard(pane_id)
             else:
                 self.clock_panes.add(pane_id)
+                self.calendar_panes.discard(pane_id)  # 한 패널엔 한 오버레이만
+            self._composite()
+
+        def toggle_calendar(self, pane_id):
+            if pane_id is None:
+                return
+            if pane_id in self.calendar_panes:
+                self.calendar_panes.discard(pane_id)
+            else:
+                self.calendar_panes.add(pane_id)
+                self.clock_panes.discard(pane_id)     # 한 패널엔 한 오버레이만
             self._composite()
 
         def _clock_tick(self):
-            # 1초마다: 시계 패널이 있으면 시각 갱신(뒤 화면도 함께 다시 합성)
-            if self.clock_panes:
+            # 1초마다: 시계/달력 오버레이가 있으면 갱신(뒤 화면도 함께 다시 합성).
+            # 달력은 자정을 넘어가면 '오늘' 강조가 다음 날로 이동한다.
+            if self.clock_panes or self.calendar_panes:
                 self._composite()
 
         @staticmethod
@@ -1702,6 +1729,67 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     for j, c in enumerate("[x]"):
                         self._put_cell(cells, bx0 + j, py, c, close_st, W, H)
                     self._clock_close_zones[p["id"]] = (bx0, bx0 + 3, py)
+
+        def _draw_calendar_overlay(self, cells, W, H, active):
+            """달력 모드 패널을 이번 달 달력으로 덮는다(clock-mode 미러). 뒤의
+            패널 출력은 흐리게(dim) 계속 보이고, 오늘 날짜는 강조, 우상단 [x] 로
+            닫는다(상태줄 날짜 재클릭/명령으로도 닫힘)."""
+            self._calendar_close_zones = {}
+            if not self.calendar_panes:
+                return
+            dim = Style(dim=True)
+            day_st = Style(color=theme_color(self, "foreground"))
+            title_st = Style(color=theme_color(self, "success"), bold=True)
+            today_st = Style(color="black", bgcolor=theme_color(self, "success"),
+                             bold=True)
+            close_st = Style(color="white", bgcolor=theme_color(self, "error"),
+                             bold=True)
+            now = datetime.now()
+            yr, mo, today = now.year, now.month, now.day
+            weeks = calendar.Calendar(firstweekday=0).monthdayscalendar(yr, mo)
+            title = f"{yr}-{mo:02d}"
+            whdr = "Mo Tu We Th Fr Sa Su"
+            grid_w = len(whdr)        # 20칸(요일 2칸 + 구분 1칸)*7 - 1
+            nlines = 2 + len(weeks)   # 제목 + 요일 + 주 수
+            for p in self.layout.get("panes", []):
+                if p["id"] not in self.calendar_panes:
+                    continue
+                px, py, pw, ph = p["x"], p["y"], p["w"], p["h"]
+                # 1) 뒤 화면 흐리게
+                for yy in range(py, min(py + ph, H)):
+                    for xx in range(px, min(px + pw, W)):
+                        c, st = cells[yy][xx]
+                        cells[yy][xx] = (c, st + dim)
+                # 2) 달력 그리드(공간 충분) 또는 단순 날짜
+                if pw >= grid_w and ph >= nlines:
+                    ox = px + (pw - grid_w) // 2
+                    oy = py + (ph - nlines) // 2
+                    tx = ox + (grid_w - len(title)) // 2
+                    for j, c in enumerate(title):       # 제목(YYYY-MM, 중앙)
+                        self._put_cell(cells, tx + j, oy, c, title_st, W, H)
+                    for j, c in enumerate(whdr):         # 요일 헤더
+                        self._put_cell(cells, ox + j, oy + 1, c, day_st, W, H)
+                    for wi, week in enumerate(weeks):    # 주별 날짜
+                        ry = oy + 2 + wi
+                        for col, day in enumerate(week):
+                            if not day:
+                                continue
+                            st = today_st if day == today else day_st
+                            cxp = ox + col * 3
+                            for k, c in enumerate(f"{day:2d}"):
+                                self._put_cell(cells, cxp + k, ry, c, st, W, H)
+                else:
+                    s = now.strftime("%Y-%m-%d")
+                    ox = px + max(0, (pw - len(s)) // 2)
+                    oy = py + ph // 2
+                    for j, c in enumerate(s):
+                        self._put_cell(cells, ox + j, oy, c, title_st, W, H)
+                # 3) 우상단 닫기 버튼 [x]
+                bx0 = px + pw - 3
+                if bx0 >= px and 0 <= py < H:
+                    for j, c in enumerate("[x]"):
+                        self._put_cell(cells, bx0 + j, py, c, close_st, W, H)
+                    self._calendar_close_zones[p["id"]] = (bx0, bx0 + 3, py)
 
         def _composite(self):
             W = self.layout.get("cols", self.size.width)
@@ -1853,8 +1941,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._draw_claude_headers(cells, W, H)
             # 현재 탭 닫기 [x]: 콘텐츠 영역 오른쪽 위 모서리(상단 테두리 위)
             self._draw_tab_close(cells, W, H)
-            # clock-mode 오버레이(패널 전체 덮기, 뒤 화면 dim)
+            # clock-mode / 달력 오버레이(패널 전체 덮기, 뒤 화면 dim)
             self._draw_clock_overlay(cells, W, H, active)
+            self._draw_calendar_overlay(cells, W, H, active)
             self.view.set_frame(cells)
 
         def _draw_tab_close(self, cells, W, H):
@@ -2452,6 +2541,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("clear_history")
             elif c in ("clock-mode", "clock"):
                 self.toggle_clock(self.layout.get("active"))
+            elif c in ("calendar-mode", "calendar", "cal"):
+                self.toggle_calendar(self.layout.get("active"))
             elif c in ("display-popup", "popup"):
                 cmd = " ".join(a for a in args if not a.startswith("-"))
                 if cmd:
