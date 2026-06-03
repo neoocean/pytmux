@@ -136,6 +136,11 @@ python3 pytmux.py --socket PATH … # 사용할 소켓 경로 직접 지정
 
 스크롤백 모드(`prefix [`): `↑/↓`, `PageUp/PageDown`, `g`/`G`(맨 위/아래), `q`로 빠져나감.
 
+> **Shift 조합 키 패스스루**: `Shift+Enter`(줄바꿈 LF)·`Shift+Tab`(backtab/CSI Z)·
+> `Shift+Escape`(ESC)는 prefix 없이 바로 **활성 패널로 전달**됩니다. Claude Code 등에서
+> `Shift+Enter`로 멀티라인 입력, `Shift+Tab`으로 권한/자동 모드 순환에 쓰입니다.
+> (그냥 `Enter`는 제출 CR, 그냥 `ESC`는 명령 모드 진입이라 구분됩니다.)
+
 > 한글 IME가 켜져 있어도 단축키가 동작합니다(두벌식 자모를 QWERTY 키로 자동 변환).
 > 단, 두벌식에서 시프트가 구분되지 않는 `prefix H/J/K/L`(패널 크기 조절)은 IME 중엔
 > 마우스 드래그나 영문 입력 상태를 사용하세요.
