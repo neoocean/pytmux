@@ -262,6 +262,13 @@ async def test_claude_prompt_tracking():
         assert p.last_prompt == "pasted", p.last_prompt
         srv._track_prompt(p, b"\x1b[Dmid\r")          # 화살표(CSI)는 건너뜀
         assert p.last_prompt == "mid", p.last_prompt
+        # 붙여넣기(모바일 받아쓰기/자동완성 포함)도 추적되어야 함:
+        # paste_text 로 본문 입력 후 별도 Enter(\r) 로 확정 → last_prompt 갱신.
+        # (이 경로가 빠지면 헤더가 셸 실행 명령에 머문다)
+        srv.paste_text(sess, "fix the header")
+        assert p.last_prompt == "mid", "Enter 전엔 미확정"
+        srv._track_prompt(p, b"\r")
+        assert p.last_prompt == "fix the header", p.last_prompt
         # 탭 Claude 집계(limit > busy > idle)
         p._claude = "idle"
         assert srv._tab_claude(sess.active_tab) == "idle"

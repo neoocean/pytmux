@@ -739,6 +739,11 @@ class Server:
         """텍스트를 패널에 입력. 내부 앱이 bracketed paste 를 켰으면 마커로 감싼다
         (멀티라인 붙여넣기가 줄마다 실행되지 않고 한 번의 붙여넣기로 처리됨)."""
         data = text.encode("utf-8")
+        # 붙여넣기(모바일 받아쓰기·자동완성 포함)도 프롬프트 추적에 반영한다.
+        # 이게 없으면 붙여넣은 Claude 프롬프트는 last_prompt 에 안 잡혀 헤더가
+        # 셸 실행 명령("claude")에 머문다. 이후 사용자가 Enter(\r) 를 누르면
+        # 누적된 본문이 last_prompt 로 확정된다(개행 포함 시 즉시 확정).
+        Server._track_prompt(pane, data)
         if pane.bracketed:
             data = b"\x1b[200~" + data + b"\x1b[201~"
         try:

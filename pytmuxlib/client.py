@@ -313,6 +313,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if event.key == "escape":
                 event.stop()
                 self.dismiss(None)
+            elif event.key == "enter":
+                # ListView 기본 Enter 바인딩이 포커스/타이밍 문제로 안 먹는
+                # 경우가 있어 직접 현재 항목을 선택해 프롬프트에 채운다.
+                event.stop()
+                idx = self.query_one(ListView).index
+                if idx is not None and 0 <= idx < len(self._cur):
+                    self.dismiss(self._cur[idx][0])
             elif event.key in ("left", "right") and len(self._cats) > 1:
                 event.stop()
                 step = 1 if event.key == "right" else -1
@@ -545,14 +552,22 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self._accept_cand()
 
     class ConfirmScreen(ModalScreen):
-        """예/아니오 확인 팝업(중앙). 마우스/터치로 항목 클릭, ↑↓·←→ 로 선택 이동,
-        Enter 확정, y/n 단축, Esc(=아니오) 취소. 위험한 동작(탭 닫기 등) 확인용."""
+        """예/아니오 확인 팝업(중앙). 두 버튼을 좌우로 배치하고, 선택된 쪽만
+        유채색(강조색)·선택 안 된 쪽은 무채색(회색)으로 그려 헷갈리지 않게 한다.
+        ←→ 로 선택 이동, Enter 확정, y/n 단축, Esc(=아니오) 취소, 버튼 터치로
+        즉시 확정. 위험한 동작(탭 닫기 등) 확인용."""
         CSS = """
         ConfirmScreen { align: center middle; }
         #confirmbox { width: 48; height: auto; border: round $accent;
                       background: $panel; padding: 1 2; }
         #confirmmsg { width: 100%; height: auto; padding: 0 0 1 0; }
-        #confirmopts { width: 100%; height: auto; background: $panel; }
+        #confirmopts { width: 100%; height: 3; align: center middle; }
+        #confirmopts > Label {           /* 미선택: 무채색(회색) */
+            width: 1fr; height: 3; margin: 0 1; content-align: center middle;
+            text-style: bold; border: round $panel-lighten-2;
+            background: $panel-lighten-1; color: $text-disabled; }
+        #confirmopts > Label.sel {       /* 선택: 유채색(강조색) */
+            border: round $accent; background: $accent; color: $text; }
         """
 
         def __init__(self, message, yes_label="닫기", no_label="취소",
@@ -562,26 +577,43 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._yes = yes_label
             self._no = no_label
             self._title = title
-            self._default_yes = default_yes
+            self._sel = 0 if default_yes else 1   # 0=예 / 1=아니오(기본 '취소')
 
         def compose(self) -> ComposeResult:
             with Vertical(id="confirmbox"):
                 yield Label(self._message, id="confirmmsg")
-                yield ListView(
-                    ListItem(Label(f"  {self._yes}  "), id="cy"),
-                    ListItem(Label(f"  {self._no}  "), id="cn"),
-                    id="confirmopts")
+                with Horizontal(id="confirmopts"):
+                    yield Label(self._yes, id="cy")
+                    yield Label(self._no, id="cn")
 
         def on_mount(self):
             box = self.query_one("#confirmbox", Vertical)
             box.border_title = self._title
-            box.border_subtitle = "Enter 확정 · y/n · Esc 취소"
-            lv = self.query_one(ListView)
-            lv.index = 0 if self._default_yes else 1   # 기본 선택(보통 '취소')
-            lv.focus()
+            box.border_subtitle = "←→ 이동 · Enter 확정 · y/n · Esc 취소"
+            opts = self.query_one("#confirmopts", Horizontal)
+            opts.can_focus = True          # 화면이 키 입력을 받도록 포커스 대상 확보
+            opts.focus()
+            self._refresh()
 
-        def on_list_view_selected(self, event):
-            self.dismiss(event.item.id == "cy")
+        def _refresh(self):
+            """선택 위치에 따라 강조 클래스(.sel)를 토글한다."""
+            self.query_one("#cy", Label).set_class(self._sel == 0, "sel")
+            self.query_one("#cn", Label).set_class(self._sel == 1, "sel")
+
+        def on_click(self, event: events.Click):
+            # 버튼 터치/클릭 → 그 선택지로 즉시 확정.
+            w = getattr(event, "widget", None)
+            while w is not None:
+                wid = getattr(w, "id", None)
+                if wid == "cy":
+                    event.stop()
+                    self.dismiss(True)
+                    return
+                if wid == "cn":
+                    event.stop()
+                    self.dismiss(False)
+                    return
+                w = w.parent
 
         def on_key(self, event: events.Key):
             k = event.key
@@ -594,10 +626,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif k in ("n", "N"):
                 event.stop()
                 self.dismiss(False)
-            elif k in ("left", "right"):
+            elif k == "enter":
                 event.stop()
-                lv = self.query_one(ListView)
-                lv.index = 0 if lv.index == 1 else 1
+                self.dismiss(self._sel == 0)
+            elif k in ("left", "right", "tab"):
+                event.stop()
+                self._sel = 1 - self._sel
+                self._refresh()
 
     class ChooseBufferScreen(ModalScreen):
         CSS = """
@@ -762,6 +797,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.app.close_claude_header(pid)
                     event.stop()
                     return
+            # 현재 탭 닫기 버튼([x]) 클릭(콘텐츠 오른쪽 위)
+            z = self.app._tab_close_zone
+            if z and z[2] == event.y and z[0] <= event.x < z[1]:
+                self.app.confirm_kill_tab()
+                event.stop()
+                return
             d = self._divider_at(event.x, event.y)
             if d:
                 self._dragging = d
@@ -834,7 +875,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             return None
 
     class TabBar(Widget):
-        """상단 탭 인터페이스. [+] 새 탭 / 각 탭 / [x] 탭 닫기 버튼을 표시한다.
+        """상단 탭 인터페이스. 각 탭과, 마지막 탭 바로 오른쪽의 [+] 새 탭 버튼을
+        표시한다. (탭 닫기 [x] 는 콘텐츠 영역 오른쪽 위 모서리로 이동했다.)
 
         마우스 클릭과 ESC 모드 방향키(←→ 선택, Enter 전환)로 조작. 탭이 하나뿐이면
         기본 숨김이나, 설정 tab-bar always 면 항상 표시한다."""
@@ -877,8 +919,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
             base = Style(color=fg, bgcolor=theme_color(self, "panel"))
             add_st = Style(color="black", bgcolor=theme_color(self, "success"),
                            bold=True)
-            close_st = Style(color="white", bgcolor=theme_color(self, "error"),
-                             bold=True)
             active_st = Style(color="white", bgcolor=theme_color(self, "primary"),
                               bold=True)
             sel_st = Style(color="black", bgcolor=theme_color(self, "accent"),
@@ -890,9 +930,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             n = len(self.tabs)
             idxs = [t["index"] for t in self.tabs]
             selpos = idxs.index(self.sel) if self.sel in idxs else 0
-            # [+] 와 [x] 고정 버튼이 차지하는 폭을 뺀 가운데 영역
-            addtxt, closetxt = " [+] ", " [x] "
-            mid_w = max(1, w - len(addtxt) - len(closetxt))
+            # [+] 새 탭 버튼 폭만 빼면 됨([x] 닫기는 콘텐츠 패널 위로 이동함)
+            addtxt = " [+] "
+            mid_w = max(1, w - len(addtxt))
             # 선택 탭이 보이도록 스크롤 보정
             self._scroll = max(0, min(self._scroll, max(0, n - 1)))
             if selpos < self._scroll:
@@ -911,7 +951,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 segs.append(Segment(text, st))
                 x += wdt
 
-            add(addtxt, add_st, "add")
             mid_used = 0
             if self._scroll > 0:                       # 왼쪽에 더 있음
                 add("◀", arrow_st, "scroll_left")
@@ -933,11 +972,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 i += 1
             if i < n:                                  # 오른쪽에 더 있음
                 add("▶", arrow_st, "scroll_right")
-            pad = w - x - len(closetxt)
+            add(addtxt, add_st, "add")                 # 마지막 탭 바로 오른쪽
+            pad = w - x
             if pad > 0:
                 segs.append(Segment(" " * pad, base))
                 x += pad
-            add(closetxt, close_st, "close")
             self._zones = zones
             return Strip(segs).adjust_cell_length(w, base)
 
@@ -953,8 +992,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
             kind, payload = self._hit(event.x)
             if kind == "add":
                 self.app.send_cmd("new_window")
-            elif kind == "close":
-                self.app.confirm_kill_tab()
             elif kind == "scroll_left":
                 self.scroll_by(-1)
             elif kind == "scroll_right":
@@ -984,7 +1021,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
     class StatusBar(Widget):
         def __init__(self, bg=None, fg=None,
-                     left=" ", right=" #{pane_title}#h %H:%M %d-%b-%y "):
+                     left=" ", right=" #{pane_title}#h %H:%M %Y-%m-%d "):
             super().__init__(id="status")
             self.session = ""
             self.windows = []
@@ -1128,6 +1165,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.pane_claude = {}      # id -> {"claude": state, "prompt": str}
             self._claude_hidden = {}   # id -> 닫을 때의 prompt(같으면 숨김)
             self._claude_close_zones = {}  # id -> (x0, x1, y)
+            self._tab_close_zone = None  # 현재 탭 닫기 [x] 영역 (x0, x1, y)
             # ---- 설정(config) 적용 ----
             self.prefix_key = config.get("prefix", "ctrl+b")
             self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
@@ -1155,7 +1193,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 fg=config.get("status_fg"),
                 left=config.get("status_left", " "),
                 right=config.get("status_right",
-                                 " #{pane_title}#h %H:%M %d-%b-%y "))
+                                 " #{pane_title}#h %H:%M %Y-%m-%d "))
 
         def compose(self) -> ComposeResult:
             yield self.tabbar
@@ -1595,9 +1633,26 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         self._put_cell(cells, cx0 + j, cy0, chh, st, W, H)
             # Claude Code 마지막 프롬프트 스티키 헤더(내용 최상단)
             self._draw_claude_headers(cells, W, H)
+            # 현재 탭 닫기 [x]: 콘텐츠 영역 오른쪽 위 모서리(상단 테두리 위)
+            self._draw_tab_close(cells, W, H)
             # clock-mode 오버레이(패널 전체 덮기, 뒤 화면 dim)
             self._draw_clock_overlay(cells, W, H, active)
             self.view.set_frame(cells)
+
+        def _draw_tab_close(self, cells, W, H):
+            """현재 탭(윈도우) 닫기 [x] 버튼을 콘텐츠 영역 오른쪽 위 모서리에 그린다.
+            (이전엔 상단 탭바 오른쪽 끝에 있던 것을 패널 위로 옮김.) 상단 테두리
+            행(0)에 그려 Claude 헤더(내용 첫 행)·시계와 겹치지 않는다."""
+            self._tab_close_zone = None
+            if W < 3 or H < 1:
+                return
+            st = Style(color="white", bgcolor=theme_color(self, "error"), bold=True)
+            bx0 = W - 3
+            for j, chh in enumerate("[x]"):
+                gx = bx0 + j
+                if 0 <= gx < W:
+                    cells[0][gx] = (chh, st)
+            self._tab_close_zone = (bx0, W, 0)
 
         # ---- 송신 헬퍼 ----
         def send_cmd(self, action, **kw):

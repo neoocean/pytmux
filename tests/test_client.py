@@ -253,10 +253,16 @@ async def test_active_pane_border_highlight():
         ap = next(p for p in lay["panes"] if p["id"] == active)
         bx, by, bw, bh = ap["box"]
         x2, y2 = bx + bw - 1, by + bh - 1
-        # 활성 패널 박스의 네 변 전체가 파란색
-        assert all(is_blue(gx, by) and is_blue(gx, y2)
+        # 콘텐츠 오른쪽 위 모서리의 탭 닫기 [x] 는 빨강 오버레이라 예외.
+        tz = app._tab_close_zone
+
+        def ok(x, y):
+            return is_blue(x, y) or (tz and y == tz[2] and tz[0] <= x < tz[1])
+
+        # 활성 패널 박스의 네 변 전체가 파란색([x] 자리는 제외)
+        assert all(ok(gx, by) and ok(gx, y2)
                    for gx in range(bx, x2 + 1)), "활성 상/하 변 파랑"
-        assert all(is_blue(bx, gy) and is_blue(x2, gy)
+        assert all(ok(bx, gy) and ok(x2, gy)
                    for gy in range(by, y2 + 1)), "활성 좌/우 변 파랑"
         # 비활성 패널의 (활성과 공유하지 않는) 바깥 모서리는 회색
         ip = next(p for p in lay["panes"] if p["id"] != active)
@@ -304,7 +310,10 @@ async def test_tab_bar_and_esc_nav():
         await pilot.pause(0.4)
         assert app.tabbar.display is True, "탭 2개면 탭바 표시"
         txt = "".join(s.text for s in app.tabbar.render_line(0))
-        assert "[+]" in txt and "[x]" in txt, txt  # 추가/삭제 버튼
+        # [+] 새 탭은 탭바(마지막 탭 오른쪽)에, [x] 닫기는 콘텐츠 패널 위로 이동
+        assert "[+]" in txt and "[x]" not in txt, txt
+        assert txt.rstrip().endswith("[+]"), txt   # 마지막 탭 바로 오른쪽
+        assert app._tab_close_zone is not None, "콘텐츠 탭 닫기 [x] 영역"
         # ESC 모드: 위 → 탭바 포커스 → ← 선택 → Enter 전환
         await pilot.press("escape")
         await pilot.press("up")
@@ -329,20 +338,21 @@ async def test_tab_close_confirm_popup():
         await pilot.pause(0.2)
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "ConfirmScreen", scr
-        from textual.widgets import ListView
-        lv = scr.query_one(ListView)
-        assert lv.index == 1, "기본 선택은 '취소'(안전)"
+        assert scr._sel == 1, "기본 선택은 '취소'(안전)"
+        from textual.widgets import Label
+        assert scr.query_one("#cn", Label).has_class("sel"), "취소가 강조됨"
+        assert not scr.query_one("#cy", Label).has_class("sel"), "닫기는 무채색"
         # Esc = 취소 → 탭 유지
         await pilot.press("escape")
         await pilot.pause(0.3)
         assert len(sess.tabs) == 2, "취소 시 탭 유지"
-        # 다시 팝업 → y 로 확정 → 탭 닫힘
+        # 다시 팝업 → '닫기' 버튼 터치(클릭) 로 확정 → 탭 닫힘
         app.confirm_kill_tab()
         await pilot.pause(0.2)
         assert app.screen_stack[-1].__class__.__name__ == "ConfirmScreen"
-        await pilot.press("y")
+        await pilot.click("#cy")
         await pilot.pause(0.5)
-        assert len(sess.tabs) == 1, "확인 시 탭 닫힘"
+        assert len(sess.tabs) == 1, "확인(클릭) 시 탭 닫힘"
     await _with_app(body)
 
 
