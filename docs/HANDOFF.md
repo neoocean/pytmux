@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **59 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **61 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -95,8 +95,8 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
 - 패널: 분할(`-h`=가로/상하, `-v`=세로/좌우 — **tmux 와 반대, 한국어 직관 기준**),
   이동·줌·swap/rotate·break/join·동기화·제목·테두리 아웃라인.
 - 탭: 새 탭(=새 윈도우)·삭제·이름변경·선택·재정렬(드래그/Shift+←→ Enter 확정/
-  `move-tab-left/right/first/last`). **상단 탭바**(2개↑ 자동, `tab-bar always`),
-  마우스 클릭·ESC 위 방향키 포커스→←→ 선택→Enter, 폭 초과 시 ◀▶ 스크롤.
+  `move-tab-left/right/first/last`). **상단 탭바**(기본 항상 표시, `tab-bar auto`
+  면 2개↑일 때만), 마우스 클릭·ESC 위 방향키 포커스→←→ 선택→Enter, 폭 초과 시 ◀▶ 스크롤.
   탭바 우측 `[x]` 닫기·키바인딩·`&` 메뉴는 모두 **중앙 확인 팝업**(`ConfirmScreen`,
   `닫기`/`취소`·↑↓←→·y/n·Esc, 기본 선택=취소)으로 통일.
 - 탭별 **레이아웃 슬롯** 저장/불러오기(`layout-save`/`layout-load`/`layout-load-new`,
@@ -107,7 +107,8 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
   펼쳐 보여줌(↑↓ 선택, Tab/Enter 채우기 → 다시 Enter 로 실행).
   **F12 로 바로 진입**(ESC 모드 아닐 때). `prefix F12` = 중첩 패스스루 토글.
 - 색: p4v-tui 와 동일한 Textual `textual-dark` 팔레트(`theme_color()` 로 해석).
-- clock-mode: 현재 패널 전체를 큰 시계로 덮음(뒤 dim, [x]/명령으로 닫기).
+- clock-mode: 현재 패널 전체를 큰 시계로 덮음(뒤 dim, [x]/명령/**하단 바 시계
+  클릭**으로 토글).
 - copy-mode 스크롤백/검색/선택복사/클립보드, 붙여넣기 패스스루.
 - **Claude Code 연동(고유)**: 토큰 리밋 자동재개(prefix R), 탭 상태 아이콘
   (대기 ○/처리중 ◐/리밋 ⊘), 마지막 프롬프트 스티키 헤더, 토큰/컨텍스트 표시.
@@ -183,8 +184,12 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56311, 신→구)
+## 9. 최근 변경(CL 56279~56313, 신→구)
 
+- 56313 상단 탭바 기본 항상표시 + 하단 시계 클릭으로 clock-mode 토글 — tab-bar
+  기본값 always(`set tab-bar auto` 로 2개↑만 표시). `: set`/source-file 런타임
+  반영(`set_tab_bar_always`). StatusBar 오른쪽 시계 영역(`_clock_zone`) 클릭 시
+  활성 패널 clock-mode 토글. 테스트 61 passed.
 - 56311 README 에 SSH/mosh 자동 attach 셸 설정 안내 추가 — 원격 로그인 시 가드
   (인터랙티브 + tty + 미중첩 + ssh/mosh)로 `pytmux` 한 줄 실행. 중첩 방지는
   `$TMUX` 대신 `server.py` 가 패널 셸에 심는 `$PYTMUX`(server.py:48) 검사. 문서 전용.
