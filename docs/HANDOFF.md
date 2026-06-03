@@ -197,7 +197,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56401 + git, 신→구)
+## 9. 최근 변경(CL 56279~56405 + git, 신→구)
+
+- 56405 Claude 헤더 **[x] 제거 → claude-header on|off 명령**(§10 #8 부분해결) —
+  프롬프트 단위 숨김 제거, 전역 옵션 claude_header_on·명령으로 제어. 팝업 숨김(②)·
+  영속(③)은 #7 과 함께 후속. 클라이언트 전용.
 
 - 56401 **비활성 탭 Claude 완료 알림**(§10 #22 해결) — `_scan_claude` 가 모든 탭
   패널을 훑어 비활성 탭 busy→idle 을 `has_claude_done` 으로, TabBar 가 success 배경.
@@ -505,23 +509,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
     스크롤 가능한 리스트)을 시간 순으로 노출. 좌표 변환 시 패널 오프셋·테두리 inset 주의.
   - **주의**: §6 의 last_prompt 추적은 근사치(백스페이스/CSI/붙여넣기 처리)라 히스토리도
     같은 한계 — 복잡한 줄 편집은 부정확할 수 있음.
-- **[요청·미구현] Claude 헤더 첫 행 닫기 버튼 제거 → 팝업에서 숨김 설정·명령으로 복원** —
-  현재 Claude 패널 첫 행 프롬프트 헤더 **좌측에 닫기 `[x]` 버튼**이 있다
-  (`_draw_claude_headers` 가 `[x]` 를 그리고 `_claude_close_zones` 등록 → 클릭 시
-  `close_claude_header` 가 `_claude_hidden[pid]=prompt` 로 그 프롬프트만 숨김; 새 프롬프트가
-  오면 `_update_claude` 가 다시 보이게 함). 요청: ① 이 **`[x]` 닫기 버튼을 제거**한다. ②
-  대신 위 항목의 **첫 행 클릭 팝업**(프롬프트 히스토리 팝업) 안에서 **이 첫 행을 없애도록
-  설정**할 수 있게 한다(끄면 헤더가 안 보임). ③ 이후 **명령으로 이 행을 다시 켤 수 있어야**
-  한다. 구현 방향:
-  - `_draw_claude_headers` 에서 `[x]` 그리기·`_claude_close_zones` 제거. 프롬프트별 일시
-    숨김(`_claude_hidden`) 모델 대신 **헤더 표시 여부를 영속 옵션**으로(예: `opts.json` 의
-    `claude_header` on/off — 캡처 옵션처럼 서버 영속, §5/§의 `set_capture` 패턴 참고).
-  - 위 히스토리 팝업에 **"이 헤더 숨기기" 토글/버튼** 추가 → 끄면 옵션 off 로 저장,
-    `_draw_claude_headers` 가 off 면 그리지 않음.
-  - 다시 켜는 **명령** 추가(예: `claude-header on|off`, 명령 목록·`set` 에 노출). 끈 뒤에도
-    명령으로 복원 가능해야 하므로 프롬프트 단위가 아니라 패널/전역 옵션으로 둘 것.
-  - **주의**: 닫기 [x] 를 없애면 우측 탭 닫기 [x](`_draw_tab_close`)와의 시각적 겹침 회피
-    명분(§90 합성 순서 주석)도 사라지니, 헤더 클릭 zone 을 행 전체로 둘 수 있음.
+- **[부분해결] Claude 헤더 첫 행 닫기 버튼 제거 → 옵션·명령 제어** — **CL 56405 에서
+  [x] 제거 + 전역 옵션/명령 구현**: 헤더 [x]·_claude_hidden(프롬프트 단위 숨김) 제거,
+  App.claude_header_on(기본 on)·명령 `claude-header on|off|toggle` 로 헤더 표시 제어.
+  **남은 부분**: ② 프롬프트 히스토리 팝업(#7) 안의 "이 헤더 숨기기" 토글, ③ opts.json
+  영속(현재 클라 세션 한정) — #7 구현 시 함께.
 - **[요청·미구현] 커맨드 팔레트에서 옵션 설정 후 프롬프트 없이 바로 실행** — 현재
   명령 실행은 tmux 식: 명령 프롬프트(`:`)에서 자동완성하거나 `?`/`help` 목록
   (`CommandListScreen`)에서 명령을 고르면 **프롬프트 입력 줄에 채워주고**
