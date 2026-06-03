@@ -25,6 +25,9 @@ class Server:
         self.running = True
         self._session_seq = 0
         self.buffers: list[str] = []   # 페이스트 버퍼(최신이 앞)
+        # 패널 출력 캡처(Claude 화면 문구 분석용). 기본 ON, opts.json 에 영속.
+        self._capfiles: dict[int, "object"] = {}   # pane.id -> 열린 바이너리 파일
+        self.capture = bool(self._load_opts().get("capture", True))
 
     # ---- PTY/패널 생성 ----
     def _fork_shell(self, cols: int, rows: int, cwd: str | None = None):
@@ -98,6 +101,8 @@ class Server:
         if not data:
             self._pane_eof(pane)
             return
+        if self.capture:
+            self._capture_write(pane, data)
         pane.feed(data)
         pane._activity = True
         if b"\x07" in data:
@@ -578,6 +583,7 @@ class Server:
 
     def _destroy_pane_proc(self, pane: Pane):
         """패널의 PTY/자식 프로세스를 정리한다(트리 조작 없음)."""
+        self._close_capfile(pane.id)
         try:
             os.killpg(os.getpgid(pane.child_pid), signal.SIGHUP)
         except (OSError, ProcessLookupError):
@@ -795,6 +801,85 @@ class Server:
         except OSError:
             pass
 
+    # ---- 서버 옵션 영속(opts.json) ----
+    @property
+    def opts_path(self) -> str:
+        return self.sock_path + ".opts.json"
+
+    def _load_opts(self) -> dict:
+        try:
+            with open(self.opts_path, encoding="utf-8") as f:
+                d = json.load(f)
+                return d if isinstance(d, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _save_opts(self):
+        try:
+            with open(self.opts_path, "w", encoding="utf-8") as f:
+                json.dump({"capture": self.capture}, f)
+        except OSError:
+            pass
+
+    # ---- 패널 출력 캡처(Claude 화면 문구 분석용) ----
+    @property
+    def capture_dir(self) -> str:
+        return self.sock_path + ".capture"
+
+    def _pane_location(self, pane: Pane) -> str:
+        """패널이 속한 탭을 'tab<idx>:<name>' 로 반환(메타 로그용)."""
+        for sess in self.sessions.values():
+            for i, tab in enumerate(sess.tabs):
+                if pane in tab.window.panes():
+                    return f"tab{i}:{tab.name}"
+        return "tab?:?"
+
+    def _capture_write(self, pane: Pane, data: bytes):
+        """패널의 raw PTY 출력을 pane-<id>.log 에 무손실 append(재생/분석용)."""
+        fh = self._capfiles.get(pane.id)
+        if fh is None:
+            try:
+                os.makedirs(self.capture_dir, exist_ok=True)
+                path = os.path.join(self.capture_dir, f"pane-{pane.id}.log")
+                fh = open(path, "ab", buffering=0)
+            except OSError:
+                return
+            self._capfiles[pane.id] = fh
+            # 탭/패널 매핑을 별도 텍스트 로그에 기록(raw 로그는 오염하지 않음).
+            try:
+                meta = (f"{time.strftime('%Y-%m-%d %H:%M:%S')} "
+                        f"pane-{pane.id} {self._pane_location(pane)} "
+                        f"title={pane.title!r}\n")
+                with open(os.path.join(self.capture_dir, "sessions.log"),
+                          "a", encoding="utf-8") as mf:
+                    mf.write(meta)
+            except OSError:
+                pass
+        try:
+            fh.write(data)
+        except OSError:
+            self._close_capfile(pane.id)
+
+    def _close_capfile(self, pane_id: int):
+        fh = self._capfiles.pop(pane_id, None)
+        if fh is not None:
+            try:
+                fh.close()
+            except OSError:
+                pass
+
+    def _close_all_capfiles(self):
+        for pid in list(self._capfiles):
+            self._close_capfile(pid)
+
+    def set_capture(self, value=None):
+        """출력 캡처 토글. value 미지정 시 반전. 상태를 opts.json 에 영속."""
+        self.capture = (not self.capture) if value is None else bool(value)
+        self._save_opts()
+        if not self.capture:        # 끄면 열린 파일을 닫음(켜면 lazy 재오픈)
+            self._close_all_capfiles()
+        return self.capture
+
     def list_tab_layouts(self) -> list[str]:
         return sorted(self._load_slots().keys())
 
@@ -892,6 +977,9 @@ class Server:
             return "ok"
         elif c in ("send-keys", "send"):
             self._control_send_keys(sess, args)
+        elif c in ("capture-output", "capture-toggle"):
+            val = True if "on" in args else (False if "off" in args else None)
+            return "on" if self.set_capture(val) else "off"
         else:
             return f"unknown: {c}"
         for cl in list(self.clients):
@@ -1134,6 +1222,7 @@ class Server:
             "pane_title": win.active_pane.title if win and win.active_pane else "",
             "autoresume": bool(win.active_pane.autoresume)
             if win and win.active_pane else False,
+            "capture": self.capture,
         }
 
     async def _send_full(self, client: ClientConn):
@@ -1347,6 +1436,8 @@ class Server:
             self.set_auto_rename(sess, msg.get("value"))
         elif action == "set_monitor":
             self.set_monitor(sess, msg.get("which", "activity"), msg.get("value"))
+        elif action == "set_capture":
+            self.set_capture(msg.get("value"))
         elif action == "kill_window":
             self.kill_window(sess)
             if sess.name not in self.sessions:
@@ -1527,6 +1618,7 @@ class Server:
 
     def shutdown(self):
         self.running = False
+        self._close_all_capfiles()
         for sess in self.sessions.values():
             for tab in sess.tabs:
                 for p in tab.window.panes():

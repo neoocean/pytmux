@@ -1,8 +1,12 @@
 """서버 기능 테스트: 패널/윈도우/세션 조작, 검색·버퍼·캡처, 영속, 제어."""
 import asyncio
 import base64
+import json
+import os
+import shutil
 
 import harness
+import pytmux
 from harness import first_session, pane_text, server_only, teardown
 
 
@@ -321,4 +325,50 @@ async def test_hello_and_multiclient_minsize():
         wA.close()
         wB.close()
     finally:
+        await teardown(srv, task, sock)
+
+
+async def test_capture_output():
+    """패널 출력 캡처: 기본 ON, 무손실 기록, 토글, opts.json 영속/재시작 유지."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        pane = sess.active_window.active_pane
+        assert srv.capture is True, "기본 ON"
+
+        # 캡처 기록 → pane-<id>.log 에 raw 바이트 무손실
+        srv._capture_write(pane, b"hello\x1b[31m world")
+        path = os.path.join(srv.capture_dir, f"pane-{pane.id}.log")
+        with open(path, "rb") as f:
+            assert f.read() == b"hello\x1b[31m world", "무손실 캡처"
+        # 메타 로그에 탭/패널 매핑
+        meta = open(os.path.join(srv.capture_dir, "sessions.log")).read()
+        assert f"pane-{pane.id}" in meta and "tab0:" in meta, meta
+
+        # 끄면 파일 닫힘 + opts.json 영속(capture=False)
+        assert srv.set_capture(False) is False
+        assert pane.id not in srv._capfiles, "끄면 핸들 닫힘"
+        assert json.load(open(srv.opts_path)) == {"capture": False}
+        # 꺼진 동안 _on_pane_readable 경로는 기록하지 않음
+        before = os.path.getsize(path)
+        if srv.capture:
+            srv._capture_write(pane, b"X")
+        assert os.path.getsize(path) == before, "OFF 중 기록 없음"
+
+        # 재시작 영속: 같은 sock 로 새 Server 를 만들면 OFF 를 읽음
+        assert pytmux.Server(sock).capture is False, "재시작 후 OFF 유지"
+
+        # 토글로 다시 ON → opts 갱신, 재기록 가능(lazy 재오픈)
+        assert srv.set_capture(None) is True
+        assert json.load(open(srv.opts_path)) == {"capture": True}
+        srv._capture_write(pane, b"again")
+        with open(path, "rb") as f:
+            assert f.read().endswith(b"again"), "재개 후 append"
+    finally:
+        srv._close_all_capfiles()
+        shutil.rmtree(srv.capture_dir, ignore_errors=True)
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
         await teardown(srv, task, sock)

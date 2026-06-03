@@ -64,7 +64,7 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
 | `protocol.py` | ~150 | 상수·소켓 경로·프레이밍(read/write_msg)·색/시각 헬퍼, `parse_reset_delay`(리밋 해제 시각), `claude_state`/`claude_usage`(화면 휴리스틱) |
 | `keymap.py` | ~100 | 설정 파일 로드(`load_config`), tmux 키 표기 변환 |
 | `model.py` | ~460 | `Pane`/`Split`/`Window`/`Tab`/`Session`. 레이아웃 계산(`compute_layout`/`_layout` — **테두리 박스용 겹침 분할**), 프리셋 |
-| `server.py` | ~1570 | `Server`: PTY·flush 루프·명령 처리·세션/탭/패널 조작·검색·버퍼·캡처·레이아웃 슬롯·자동재개·Claude 감지 |
+| `server.py` | ~1660 | `Server`: PTY·flush 루프·명령 처리·세션/탭/패널 조작·검색·버퍼·캡처·레이아웃 슬롯·자동재개·Claude 감지·출력 캡처(`opts.json` 영속) |
 | `client.py` | ~2210 | `build_client_app()` 클로저: 위젯(MultiplexerView/TabBar/StatusBar)·모달(Prompt/Menu/CommandList/ChooseTree/ChooseLayout/Info/ChooseBuffer)·`_composite`(합성)·키/마우스·명령 |
 | `launcher.py` | ~160 | `main()`·서브커맨드(attach/ls/kill-server/cmd/server/record/replay)·데몬화 |
 | `replay.py` | ~200 | 렌더 진단: `record`(PTY 녹화)·`replay`(텍스트 프레임 재생) |
@@ -90,13 +90,17 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
   마우스 클릭·ESC 위 방향키 포커스→←→ 선택→Enter, 폭 초과 시 ◀▶ 스크롤.
 - 탭별 **레이아웃 슬롯** 저장/불러오기(`layout-save`/`layout-load`/`layout-load-new`,
   메뉴·선택기). 디스크 영속(`<sock>.slots.json`).
-- 명령 프롬프트: 고정 `:` 프리픽스, `?`/`help` 목록(스크롤바), 자동완성(옵션 포함).
+- 명령 프롬프트: 고정 `:` 프리픽스, `?`/`help` 목록(**카테고리 탭** — ←→ 전환,
+  ↑↓ 명령 이동), 자동완성(옵션 포함).
   **F12 로 바로 진입**(ESC 모드 아닐 때). `prefix F12` = 중첩 패스스루 토글.
 - 색: p4v-tui 와 동일한 Textual `textual-dark` 팔레트(`theme_color()` 로 해석).
 - clock-mode: 현재 패널 전체를 큰 시계로 덮음(뒤 dim, [x]/명령으로 닫기).
 - copy-mode 스크롤백/검색/선택복사/클립보드, 붙여넣기 패스스루.
 - **Claude Code 연동(고유)**: 토큰 리밋 자동재개(prefix R), 탭 상태 아이콘
   (대기 ○/처리중 ◐/리밋 ⊘), 마지막 프롬프트 스티키 헤더, 토큰/컨텍스트 표시.
+- **패널 출력 캡처(진단)**: 각 패널 raw 출력을 `<sock>.capture/pane-<id>.log` 로
+  무손실 기록(탭 매핑은 `sessions.log`). Claude 화면 문구 분석용. 기본 ON,
+  `capture-output [on|off]` 토글(상태줄 `REC`), 상태는 `<sock>.opts.json` 영속.
 
 ## 6. ⚠️ 깨지기 쉬운/휴리스틱 부분 (주의)
 
@@ -166,6 +170,8 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 ## 10. 가능한 후속 작업 (열린 항목)
 
 - Claude 감지/사용량 정규식을 실제 Claude Code 화면 문구에 맞춰 보강(§6).
+  → **출력 캡처가 이를 위한 준비**: `<sock>.capture/pane-*.log`(기본 ON)에 쌓인
+  실제 raw 출력을 분석해 `protocol.claude_state`/`claude_usage` 정규식을 보강할 것.
 - 탭 **드래그 재정렬 시 시각적 피드백**(현재는 놓을 때 확정만).
 - 패널 **드래그 swap**, 단일 패널 테두리 on/off 옵션화.
 - 다중 줄 상태표시줄, unbind-key, 라이브 PTY display-popup.
