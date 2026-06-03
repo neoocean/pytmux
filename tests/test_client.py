@@ -423,6 +423,39 @@ async def test_clock_mode_overlay():
     await _with_app(body, size=(44, 14))
 
 
+async def test_clock_mode_over_wide_chars_keeps_alignment():
+    # 회귀: 한글(와이드 문자)이 깔린 화면에서 clock-mode 를 켜면 시계 글자가
+    # 와이드 문자의 한쪽 칸만 덮어 정렬이 깨졌다(녹색 블록 흩어짐).
+    # _put_cell 이 짝 셀을 공백으로 정리해 정렬을 보존하는지 검증.
+    async def body(app, pilot, srv):
+        from pytmuxlib.client import _char_cells
+        sess = next(iter(srv.sessions.values()))
+        p = sess.active_window.active_pane
+        p.feed(b"\x1b[2J\x1b[H")
+        for _ in range(12):                    # 화면을 한글로 가득 채움
+            p.feed("가나다라마바사아자차카타파하".encode() + b"\r\n")
+        rows, cur = p.render(True)
+        app.pane_content[p.id] = (rows, cur)
+        active = app.layout["active"]
+        app.toggle_clock(active)
+        await pilot.pause(0.2)
+        cells = app.view._cells
+        W = len(cells[0])
+        # 불변식: "" 연속 셀의 왼쪽은 반드시 와이드 문자여야 한다(짝이 안 깨짐).
+        for y, row in enumerate(cells):
+            for x, (ch, _st) in enumerate(row):
+                if ch == "":
+                    assert x > 0 and _char_cells(row[x - 1][0]) == 2, \
+                        f"고아 연속셀 @({x},{y}) 좌={row[x-1][0]!r}"
+            # 각 행의 렌더 폭이 그리드 폭과 일치(밀림 없음)
+            rw = sum(_char_cells(c) for c, _ in row if c != "")
+            assert rw == W, f"행 {y} 폭 {rw} != {W}"
+        # 큰 시계 블록 문자가 실제로 그려졌는지
+        assert any("█" in (cells[y][x][0] or "")
+                   for y in range(len(cells)) for x in range(W)), "시계 표시"
+    await _with_app(body, size=(44, 16))
+
+
 async def test_status_clock_click_toggles_clock_mode():
     async def body(app, pilot, srv):
         from textual import events

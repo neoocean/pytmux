@@ -235,14 +235,16 @@ class Server:
         return self.ensure_default_session(cols, rows)
 
     # ---- 트리 조작 ----
-    def split_pane(self, sess: Session, orient: str):
+    def split_pane(self, sess: Session, orient: str, path: str | None = None):
         win = sess.active_window
         if not win:
             return
         win.zoomed = False
         target = win.active_pane
+        # 시작 디렉토리: default-path 설정에 따름(기본 current=분할 대상 패널 cwd).
+        cwd = self._resolve_start_cwd(sess, path)
         # 새 패널은 일단 임시 크기로 만들고, 곧 재배치된다.
-        new = self.spawn_pane(MIN_W, MIN_H, cwd=self._pane_cwd(target))
+        new = self.spawn_pane(MIN_W, MIN_H, cwd=cwd)
         split = Split(orient, target, new, 0.5)
         parent = target.parent
         split.parent = parent
@@ -300,18 +302,49 @@ class Server:
             t.index = i
 
     def _pane_cwd(self, pane: Pane) -> str | None:
-        # 자식 프로세스의 cwd 를 추정(가능하면). 실패 시 None.
+        # 자식(셸) 프로세스의 cwd 를 추정한다. 실패 시 None.
+        pid = pane.child_pid
+        # Linux 빠른 경로: /proc/<pid>/cwd 심볼릭 링크.
         try:
-            return os.readlink(f"/proc/{pane.child_pid}/cwd")
+            return os.readlink(f"/proc/{pid}/cwd")
         except OSError:
-            return None
+            pass
+        # macOS/BSD 폴백: /proc 가 없으므로 lsof 로 cwd(fd=cwd) 를 조회.
+        # -Fn 은 'n<경로>' 한 줄로 출력하므로 파싱이 단순하다.
+        try:
+            out = subprocess.run(
+                ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+                capture_output=True, text=True, timeout=2)
+            for line in out.stdout.splitlines():
+                if line.startswith("n"):
+                    return line[1:] or None
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+        return None
 
-    def new_window(self, sess: Session):
+    def _resolve_start_cwd(self, sess: Session,
+                           path: str | None = None) -> str | None:
+        """새 탭/패널이 시작할 디렉토리를 default-path 설정에 따라 결정한다.
+
+        current(기본) = 현재 활성 패널의 cwd, home = $HOME, 그 외 = 해당 경로.
+        결정 불가 시 None 을 반환하면 셸은 서버 프로세스의 cwd 에서 시작한다."""
+        val = (path or "current").strip()
+        low = val.lower()
+        if low in ("", "current", "pane_current_path"):
+            win = sess.active_window
+            pane = win.active_pane if win else None
+            return self._pane_cwd(pane) if pane else None
+        if low == "home":
+            return os.path.expanduser("~")
+        return os.path.expanduser(val)
+
+    def new_window(self, sess: Session, path: str | None = None):
         """새 탭(= 새 윈도우, 단일 패널)을 만들고 활성화한다."""
         c = self.clients_of(sess)
         cols = c.cols if c else 80
         rows = c.rows if c else 24
-        root = self.spawn_pane(cols, rows)
+        cwd = self._resolve_start_cwd(sess, path)
+        root = self.spawn_pane(cols, rows, cwd=cwd)
         idx = len(sess.tabs)
         sess.tabs.append(Tab(idx, "win", Window(root)))
         sess.last_index = sess.active_index
@@ -964,13 +997,14 @@ class Server:
         elif sess is None:
             return "no session"
         elif c in ("new-window", "neww", "new-tab", "newt"):
-            self.new_window(sess)
+            # -c <경로> 로 시작 디렉토리 지정(tmux 호환). 없으면 default-path 기본.
+            self.new_window(sess, path=opt("-c"))
         elif c in ("kill-window", "killw", "kill-tab", "killt"):
             self.kill_window(sess)
         elif c in ("split-window", "splitw"):
-            # -h = 가로(상/하), -v = 세로(좌/우)
+            # -h = 가로(상/하), -v = 세로(좌/우), -c <경로> = 시작 디렉토리
             self.split_pane(sess, "tb" if "-h" in args else
-                            ("lr" if "-v" in args else "tb"))
+                            ("lr" if "-v" in args else "tb"), path=opt("-c"))
         elif c in ("select-window", "selectw", "select-tab", "selectt"):
             i = first_int()
             if i is not None:
@@ -1330,7 +1364,7 @@ class Server:
             return
         action = msg.get("action")
         if action == "split":
-            self.split_pane(sess, msg.get("orient", "lr"))
+            self.split_pane(sess, msg.get("orient", "lr"), path=msg.get("path"))
         elif action == "kill_pane":
             pane = sess.active_window.active_pane if sess.active_window else None
             if pane:
@@ -1415,7 +1449,7 @@ class Server:
         elif action == "resize_dir":
             self.resize_dir(sess, msg.get("dir"), msg.get("cells", 3))
         elif action == "new_window":
-            self.new_window(sess)
+            self.new_window(sess, path=msg.get("path"))
         elif action == "next_window":
             self.select_window(sess, (sess.active_index + 1) % len(sess.tabs))
         elif action == "prev_window":

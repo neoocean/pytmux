@@ -34,11 +34,13 @@ def load_config(path: str | None = None) -> dict:
         set mouse on|off          # 마우스 사용 여부
         set status-bg <color>     # 상태줄 배경색
         set status-fg <color>     # 상태줄 글자색
+        set default-path <val>    # 새 탭/패널 시작 디렉토리
+                                  #   current(기본)=현재 패널, home=$HOME, 또는 경로
         bind <key> <command...>   # prefix 후 <key> 에 명령 바인딩
     """
     cfg = {"prefix": "ctrl+b", "mouse": True, "bindings": {}, "aliases": {},
            "hooks": {}, "status_bg": None, "status_fg": None,
-           "mode_keys": "vi", "tab_bar_always": True}
+           "mode_keys": "vi", "tab_bar_always": True, "default_path": "current"}
     candidates = []
     if path:
         candidates.append(path)
@@ -89,6 +91,12 @@ def load_config(path: str | None = None) -> dict:
                         cfg["set_titles"] = val.lower() in ("on", "true", "1", "yes")
                     elif opt == "set-titles-string":
                         cfg["title_fmt"] = val
+                    elif opt in ("default-path", "default_path"):
+                        # 새 탭/패널이 시작할 디렉토리.
+                        #   current = 현재 활성 패널의 cwd(기본)
+                        #   home    = $HOME
+                        #   <경로>  = 해당 절대/~ 경로
+                        cfg["default_path"] = val.strip()
                 elif parts[0] == "bind" and len(parts) >= 3:
                     cfg["bindings"][parts[1]] = " ".join(parts[2:])
                 elif parts[0] == "alias" and len(parts) >= 3:

@@ -1380,6 +1380,25 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.clock_panes:
                 self._composite()
 
+        @staticmethod
+        def _put_cell(cells, x, y, ch, st, W, H):
+            """단일폭 글자를 cell 그리드에 정렬을 깨지 않고 써넣는다.
+
+            배경에 한글 등 와이드 문자(2칸: 본체+빈 연속셀 "")가 있을 때 그 절반만
+            덮으면 짝 셀이 어긋나 행 전체가 밀린다(예: clock-mode 시계가 깨짐).
+            덮어쓰는 자리의 와이드 짝 셀을 공백으로 정리해 정렬을 보존한다.
+            (오버레이가 배경 글자 일부를 지우는 것은 의도된 동작)"""
+            if not (0 <= x < W and 0 <= y < H):
+                return
+            row = cells[y]
+            if row[x][0] == "" and x > 0:
+                # 이 자리가 와이드 문자의 둘째(연속) 칸 → 왼쪽 본체를 공백으로.
+                row[x - 1] = (" ", row[x - 1][1])
+            elif _char_cells(row[x][0]) == 2 and x + 1 < W and row[x + 1][0] == "":
+                # 이 자리가 와이드 문자의 본체 → 오른쪽 연속 칸을 공백으로.
+                row[x + 1] = (" ", row[x + 1][1])
+            row[x] = (ch, st)
+
         def _draw_clock_overlay(self, cells, W, H, active):
             """clock-mode 패널을 큰 시계로 덮는다. 뒤의 패널 출력은 흐리게(dim)
             계속 보이고, 우상단 [x] 로 닫을 수 있다."""
@@ -1411,22 +1430,21 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         gx = ox
                         for g in glyphs:
                             for c in g[row]:
-                                if c != " " and 0 <= gx < W and 0 <= oy + row < H:
-                                    cells[oy + row][gx] = (c, digit_st)
+                                if c != " ":
+                                    self._put_cell(cells, gx, oy + row, c,
+                                                   digit_st, W, H)
                                 gx += 1
                             gx += 1   # 글자 사이 간격
                 else:
                     ox = px + max(0, (pw - len(now)) // 2)
                     oy = py + ph // 2
                     for j, c in enumerate(now):
-                        if 0 <= ox + j < W and 0 <= oy < H:
-                            cells[oy][ox + j] = (c, digit_st)
+                        self._put_cell(cells, ox + j, oy, c, digit_st, W, H)
                 # 3) 우상단 닫기 버튼 [x]
                 bx0 = px + pw - 3
                 if bx0 >= px and 0 <= py < H:
                     for j, c in enumerate("[x]"):
-                        if 0 <= bx0 + j < W:
-                            cells[py][bx0 + j] = (c, close_st)
+                        self._put_cell(cells, bx0 + j, py, c, close_st, W, H)
                     self._clock_close_zones[p["id"]] = (bx0, bx0 + 3, py)
 
         def _composite(self):
@@ -1574,9 +1592,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     st = Style(color="black", bold=True,
                                bgcolor="green" if p["id"] == active else "yellow")
                     for j, chh in enumerate(label):
-                        gx = cx0 + j
-                        if 0 <= gx < W and 0 <= cy0 < H:
-                            cells[cy0][gx] = (chh, st)
+                        self._put_cell(cells, cx0 + j, cy0, chh, st, W, H)
             # Claude Code 마지막 프롬프트 스티키 헤더(내용 최상단)
             self._draw_claude_headers(cells, W, H)
             # clock-mode 오버레이(패널 전체 덮기, 뒤 화면 dim)
@@ -1588,6 +1604,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.writer:
                 kw["t"] = "cmd"
                 kw["action"] = action
+                # 새 탭/패널은 설정된 시작 디렉토리(default-path)를 함께 보낸다.
+                # 서버가 current/home/<경로> 를 해석한다. 호출부에서 명시하면 우선.
+                if action in ("split", "new_window") and "path" not in kw:
+                    kw["path"] = getattr(self, "default_path", "current")
                 asyncio.create_task(write_msg(self.writer, kw))
 
         def send_input(self, data: bytes):
@@ -1808,6 +1828,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if "status_right" in cfg:
                 self.status.right_fmt = cfg["status_right"]
             self.set_tab_bar_always(cfg.get("tab_bar_always", True))
+            self.default_path = cfg.get("default_path", "current")
             self.status.refresh()
 
         def _active_window_name(self):
@@ -2177,6 +2198,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.writer:
                 cols, rows = self._content_size()
                 await write_msg(self.writer, {"t": "resize", "cols": cols, "rows": rows})
+            # iOS(Blink 등)에서 소프트 키보드를 닫았다 열면 resize 가 키보드
+            # 애니메이션 중간 크기로만 오고 최종 크기 이벤트가 누락될 수 있다.
+            # 그 결과 마지막 행(하단 테두리)이 갱신되지 않은 채 남는다. 잠시 뒤
+            # 정착된 크기로 한 번 더 통지해 새 프레임을 받아 재합성한다.
+            self.set_timer(0.3, self._send_resize)
 
         def on_key(self, event: events.Key):
             # 메뉴/프롬프트 등 모달이 떠 있으면 그 스크린이 처리

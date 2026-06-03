@@ -18,6 +18,12 @@ set mode-keys vi
 # 상단 탭바: always(기본) = 탭이 하나여도 항상 표시 / auto = 탭 2개 이상일 때만
 set tab-bar always
 
+# 새 탭/패널이 시작할 디렉토리
+#   current(기본) = 지금 활성 패널이 있는 디렉토리에서 시작
+#   home          = $HOME 에서 시작
+#   <경로>        = 지정한 절대/~ 경로에서 시작 (예: ~/projects)
+set default-path current
+
 # 상태줄 포맷(#S 세션, #h 짧은 호스트, #H 호스트, #{pane_title}, %H:%M 등 strftime)
 set status-left " [#S] "
 set status-right " #{pane_title}#h %H:%M %d-%b-%y "

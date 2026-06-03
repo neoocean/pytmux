@@ -188,6 +188,7 @@ detach / kill-server
 set prefix C-a            # prefix 키 변경
 set mouse on              # 마우스 on/off
 set tab-bar always        # 탭이 하나여도 상단 탭바 표시(기본). auto = 2개 이상일 때만
+set default-path current  # 새 탭/패널 시작 위치: current(현재 패널)/home/<경로>
 # set status-bg green     # 상태줄 색(미지정 시 textual-dark 테마)
 # set status-fg black
 bind | split-window -v    # prefix 후 키 바인딩(-v = 세로/좌우 분할)
