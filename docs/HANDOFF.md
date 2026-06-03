@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **82 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **83 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -197,7 +197,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56389 + git, 신→구)
+## 9. 최근 변경(CL 56279~56392 + git, 신→구)
+
+- 56392 닫기 확인 팝업 **pytmux 종료 케이스 구분**(§10 #16 해결) — 마지막 탭이면
+  제목/문구 경고 + 선택 강조를 붉은색(ConfirmScreen danger). 회귀 테스트 1종(총 83).
+  클라이언트 전용.
 
 - 56389 **ESC 모드 탭바 내비게이션**(§10 #3/#26 해결) — Enter 한 번으로 전환+ESC
   종료(`_exit_esc`), ←/↑/→ 가 탭+`[+]` 순환(센티넬 "+"), [+] Enter=새 탭, 선택
@@ -560,22 +564,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   - **주의**: 정상 attach(서버↔클라이언트)는 막으면 안 되고, **새 서버를 패널 안에서 새로
     기동/attach 하려는 경우만** 거부 대상. `$PYTMUX` 는 패널 셸에만 있으므로 클라이언트
     프로세스 자체 env 와 혼동하지 말 것.
-- **[요청·미구현] 닫기 확인 팝업을 "pytmux 종료 여부"로 구분(메시지+하이라이트색)** — 탭을
-  닫을 때 확인 팝업(`ConfirmScreen`)이 뜨는데, **① 남은 탭이 있어 pytmux 가 안 끝나는 경우**와
-  **② 마지막 탭/패널이라 닫으면 pytmux 가 종료되는 경우**를 **메시지와 강조(하이라이트) 색상으로
-  구분**한다. 현재 `confirm_kill_tab`(client.py ~1381)은 두 경우 모두 같은 문구
-  ("이 탭을 닫을까요? 탭의 셸이 종료됩니다.")를 쓰고, `ConfirmScreen`(~555)의 선택 버튼 강조는
-  `$accent` 한 색뿐이라 구분이 없다. 구현 방향:
-  - **종료 여부 판정(클라이언트)**: 이 닫기로 pytmux 가 끝나는가 = 탭이 1개뿐이고(`self.windows`
-    길이) 그 탭을 닫는 경우(또는 마지막 패널까지 닫히는 경우). `confirm_kill_tab` 에서
-    `len(self.windows) <= 1` 이면 "종료" 케이스로 분기.
-  - **메시지 분기**: 종료 케이스는 "이 탭을 닫으면 pytmux 가 종료됩니다" 식 경고 문구로, 일반
-    케이스는 기존 문구 유지.
-  - **하이라이트 색 분기**: `ConfirmScreen` 에 위험도/강조색 파라미터 추가(예: `danger=True`
-    → `.sel` 강조를 `$accent` 대신 `$error`(붉은색)로). 현재 `.sel` CSS 는 `$accent` 하드코딩
-    이라 색을 주입 가능하게 바꿔야 함.
-  - **패널 닫기 경로도**: kill-pane 확인(현재 별도 prompt, ~2359)도 마지막 패널이면 같은
-    종료-경고로 통일 고려.
+- ~~**[요청·미구현] 닫기 확인 팝업을 "pytmux 종료 여부"로 구분(메시지+하이라이트색)**~~ →
+  **CL 56392 에서 해결.** `confirm_kill_tab` 이 `len(self.tabbar.tabs) <= 1` 이면 종료
+  케이스로 분기 — 제목 "pytmux 종료"·"…닫으면 pytmux 가 종료됩니다…" 문구·danger=True.
+  `ConfirmScreen` 에 danger 파라미터(선택 강조를 $accent→$error 붉은색). **패널 닫기**
+  **경로(kill-pane y/N 프롬프트)는 별도 — 추후 통일 여지.**
 - ~~**[요청·미구현] 컨텍스트 메뉴 토글 항목의 현재 on/off 표시 + 토글은 선택해도 메뉴 안 닫고
   ESC 로만 닫기**~~ → **CL 56379 에서 해결.** `MENU_TOGGLES={zoom,sync,autoresume}` 도입.
   `MenuScreen` 이 토글 항목 라벨 끝에 현재 상태(●/○)를 붙이고(_toggle_state 가 app.status
