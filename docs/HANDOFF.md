@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **80 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **81 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -197,8 +197,12 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56383 + git, 신→구)
+## 9. 최근 변경(CL 56279~56385 + git, 신→구)
 
+- 56385 **§11 Claude 코드 분리 1단계** — `claude_state`/`claude_usage`/
+  `parse_reset_delay`+정규식을 `pytmuxlib/claude.py` 로 이전, protocol re-export
+  하위호환, server import `.claude`, 테스트 `test_claude.py`. 무동작(81 passed).
+  서버 import 변경 → kill-server 재기동 후 반영.
 - 56383 **탭/패널 트리 개요**(§10 #14/#24 해결) — 서버 `_tree_msg` 가 패널 리스트
   ({id,title,cmd,remote})를 전달, 클라 `ChooseTreeScreen` 가 패널을 들여쓰기로
   `[local]`/`[ssh]`+앱 표시, Enter=전환·d/x=종료, `overview`/`tree` 명령. 회귀
@@ -830,15 +834,21 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ### 11.4 점진적 이전 순서(저위험)
 
-1. **순수 함수부터**: `claude.py` 신설 + 감지/사용량/지연 파서 이전(+protocol re-export). 테스트
-   (`test_protocol` 의 claude 휴리스틱)를 `test_claude` 로 옮기거나 import 경로만 갱신. **무동작·저위험.**
-2. **서버 훅화**: `_maybe_resume`/`_track_prompt`/flush 갱신/메시지 조립을 claude 모듈 함수로
-   추출(동작 동일). 서버 테스트(`test_server` 의 Claude/재개/프롬프트)로 회귀 확인.
-3. **Pane 상태 묶기**: 흩어진 Claude 필드를 `Pane.claude` 하위로(접근부 일괄 치환). 코어 `Pane`
-   표면이 줄어 model.py 충돌 면 감소.
-4. **클라이언트 렌더 추출**: `client_claude.py` 로 렌더/상태 함수 이전, 클로저는 위임만.
+1. ~~**순수 함수부터**: `claude.py` 신설 + 감지/사용량/지연 파서 이전(+protocol re-export)~~ →
+   **CL 56385 에서 완료.** `claude_state`/`claude_usage`/`parse_reset_delay`+정규식을
+   `pytmuxlib/claude.py` 로 이전, protocol 은 re-export 로 하위호환, server import 를 `.claude`
+   로 갱신, 테스트를 `test_claude.py` 로 이전. **무동작·81 passed.**
+2. **(미완·후속)** **서버 훅화**: `_maybe_resume`/`_track_prompt`/flush 갱신/메시지 조립을 claude
+   모듈 함수로 추출(동작 동일). 서버 테스트(`test_server` 의 Claude/재개/프롬프트)로 회귀 확인.
+3. **(미완·후속)** **Pane 상태 묶기**: 흩어진 Claude 필드를 `Pane.claude` 하위로(접근부 일괄 치환).
+   코어 `Pane` 표면이 줄어 model.py 충돌 면 감소.
+4. **(미완·후속)** **클라이언트 렌더 추출**: `client_claude.py` 로 렌더/상태 함수 이전, 클로저는
+   위임만(`build_client_app` 클로저라 가장 까다로움).
+> **현 상태**: 1단계(모듈 경계 생성)는 완료. 2~4단계는 **기존 동작 코드의 무동작 이전**이라
+> 기능 추가 작업보다 후순위로 두었다 — claude.py 가 이미 존재하므로 새 Claude 기능의 서버측
+> 휴리스틱은 거기에 추가하면 된다(점진적으로 2~3단계가 자연 진행).
 - **불변식 유지**(§3): `Session.active_window` 프로퍼티, CLOEXEC(§6), feed 경계 캐리(§6),
-  단일 세션 모델은 깨지 말 것. 각 단계마다 `python3 tests/run.py` 72(현재) 유지.
+  단일 세션 모델은 깨지 말 것. 각 단계마다 `python3 tests/run.py`(현재 81) 유지.
 - **데몬 재시작 주의**(§2): 서버측(claude.py 가 서버 로직 포함) 변경은 `kill-server` 재기동 후 반영.
 
 ### 11.5 대안(더 가벼움)
