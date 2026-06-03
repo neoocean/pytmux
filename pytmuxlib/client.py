@@ -183,6 +183,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("last-tab", "직전 탭"),
         ("select-tab", "탭 선택 (-t N)"),
         ("move-tab", "탭 이동 (-t N)"),
+        ("move-tab-left", "현재 탭을 왼쪽으로"),
+        ("move-tab-right", "현재 탭을 오른쪽으로"),
+        ("move-tab-first", "현재 탭을 맨 앞으로"),
+        ("move-tab-last", "현재 탭을 맨 뒤로"),
         ("swap-tab", "탭 교환 (-t N)"),
         ("rename-tab", "탭 이름 변경"),
         ("automatic-rename", "탭 자동 이름 [on|off]"),
@@ -650,6 +654,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.bar_focus = False  # ESC 모드 포커스가 탭바에 있는지
             self._scroll = 0        # 가로 스크롤(첫 표시 탭의 리스트 위치)
             self._zones = []        # [(x0, x1, kind, payload)] 클릭 히트테스트
+            self._drag = None       # 드래그 중인 탭 index(재정렬)
 
         def set_tabs(self, tabs, active_idx):
             self.tabs = tabs
@@ -745,7 +750,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     return kind, payload
             return None, None
 
-        def on_click(self, event):
+        def on_mouse_down(self, event):
             if not self.app.mouse_enabled:
                 return
             kind, payload = self._hit(event.x)
@@ -753,12 +758,31 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.app.send_cmd("new_window")
             elif kind == "close":
                 self.app.confirm_kill_tab()
-            elif kind == "tab":
-                self.app.send_cmd("select_window", index=payload)
             elif kind == "scroll_left":
                 self.scroll_by(-1)
             elif kind == "scroll_right":
                 self.scroll_by(1)
+            elif kind == "tab":
+                # 탭 클릭=드래그 시작(놓을 때 같은 탭이면 선택, 다른 탭이면 재정렬)
+                self._drag = payload
+                self.capture_mouse()
+            event.stop()
+
+        def on_mouse_up(self, event):
+            if self._drag is None:
+                return
+            src = self._drag
+            self._drag = None
+            try:
+                self.release_mouse()
+            except Exception:
+                pass
+            kind, payload = self._hit(event.x)
+            if kind == "tab" and payload != src:
+                # index==위치(연속) 이므로 그대로 사용
+                self.app.send_cmd("move_tab", index=src, to=payload)
+            else:
+                self.app.send_cmd("select_window", index=src)
             event.stop()
 
     class StatusBar(Widget):
@@ -1654,6 +1678,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 elif "off" in args:
                     val = False
                 self.send_cmd("set_monitor", which=which, value=val)
+            elif c in ("move-tab-left", "move-tab-right",
+                       "move-tab-first", "move-tab-last"):
+                self.send_cmd("move_current_tab", where=c[len("move-tab-"):])
             elif c in ("move-tab", "movet", "move-window", "movew"):
                 idx = self._opt_value(args, "-t")
                 idx = int(idx) if idx and idx.isdigit() else self._first_int(args)
@@ -2020,7 +2047,19 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if tb.bar_focus:
                 tabs = tb.tabs
                 idxs = [t["index"] for t in tabs]
-                if k in ("left", "up") and idxs:
+                if k == "shift+left" and tb.sel in idxs:   # 선택 탭 왼쪽으로 이동
+                    pos = idxs.index(tb.sel)
+                    if pos > 0:
+                        self.send_cmd("move_tab", index=pos, to=pos - 1)
+                        tb.sel = pos - 1
+                        tb.refresh()
+                elif k == "shift+right" and tb.sel in idxs:  # 오른쪽으로 이동
+                    pos = idxs.index(tb.sel)
+                    if pos < len(idxs) - 1:
+                        self.send_cmd("move_tab", index=pos, to=pos + 1)
+                        tb.sel = pos + 1
+                        tb.refresh()
+                elif k in ("left", "up") and idxs:
                     cur = idxs.index(tb.sel) if tb.sel in idxs else 0
                     tb.sel = idxs[(cur - 1) % len(idxs)]
                     tb.refresh()

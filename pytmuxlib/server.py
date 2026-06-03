@@ -339,6 +339,29 @@ class Server:
         self._reindex(sess)
         sess.active_index = target_index
 
+    def move_tab(self, sess: Session, index: int, to_index: int):
+        """index 위치의 탭을 to_index 로 재배치(활성 탭 추적 유지)."""
+        n = len(sess.tabs)
+        if n < 2 or not (0 <= index < n):
+            return
+        to_index = max(0, min(to_index, n - 1))
+        if to_index == index:
+            return
+        active_tab = sess.active_tab
+        tab = sess.tabs.pop(index)
+        sess.tabs.insert(to_index, tab)
+        self._reindex(sess)
+        if active_tab in sess.tabs:
+            sess.active_index = sess.tabs.index(active_tab)
+
+    def move_current_tab(self, sess: Session, where: str):
+        """현재(활성) 탭을 좌/우/맨앞/맨뒤로 이동."""
+        i, n = sess.active_index, len(sess.tabs)
+        to = {"left": i - 1, "right": i + 1,
+              "first": 0, "last": n - 1}.get(where)
+        if to is not None:
+            self.move_tab(sess, i, to)
+
     LAYOUTS = ["even-horizontal", "even-vertical", "main-horizontal",
                "main-vertical", "tiled"]
 
@@ -853,6 +876,9 @@ class Server:
         elif c in ("rename-window", "renamew", "rename-tab", "renamet"):
             self.rename_window(sess, " ".join(a for a in args
                                               if not a.startswith("-")))
+        elif c in ("move-tab-left", "move-tab-right",
+                   "move-tab-first", "move-tab-last"):
+            self.move_current_tab(sess, c[len("move-tab-"):])
         elif c in ("layout-save", "save-tab-layout"):
             self.save_tab_layout(sess, " ".join(a for a in args
                                                  if not a.startswith("-")))
@@ -1268,6 +1294,11 @@ class Server:
             self.move_window(sess, int(msg.get("index", 0)))
         elif action == "swap_window":
             self.swap_window(sess, int(msg.get("index", 0)))
+        elif action == "move_tab":
+            self.move_tab(sess, int(msg.get("index", 0)),
+                          int(msg.get("to", 0)))
+        elif action == "move_current_tab":
+            self.move_current_tab(sess, str(msg.get("where", "")))
         elif action == "zoom":
             self.toggle_zoom(sess)
         elif action == "select_layout":

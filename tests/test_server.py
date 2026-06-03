@@ -227,6 +227,31 @@ async def test_resize_rescales_panes():
         await teardown(srv, task, sock)
 
 
+async def test_tab_reorder():
+    """탭 재정렬: move_current_tab(좌/우/맨앞/맨뒤) + move_tab(임의), 활성 추적."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        for nm in ["a", "b", "c"]:
+            srv.new_window(sess)
+            srv.rename_window(sess, nm)
+        assert [t.name for t in sess.tabs] == ["win", "a", "b", "c"]
+        assert sess.active_tab.name == "c"
+        srv.move_current_tab(sess, "first")
+        assert [t.name for t in sess.tabs] == ["c", "win", "a", "b"]
+        assert sess.active_tab.name == "c", "활성 탭 추적"
+        srv.move_current_tab(sess, "last")
+        assert [t.name for t in sess.tabs] == ["win", "a", "b", "c"]
+        srv.move_current_tab(sess, "left")
+        assert [t.name for t in sess.tabs] == ["win", "a", "c", "b"]
+        # 임의 탭 이동(활성 c 는 위치 유지 추적)
+        srv.move_tab(sess, 0, 3)
+        assert [t.name for t in sess.tabs] == ["a", "c", "b", "win"]
+        assert sess.active_tab.name == "c"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_per_tab_layout_save_load():
     """활성 탭 레이아웃을 이름 슬롯에 저장 → 새 탭/현재 탭 덮어쓰기로 불러오기."""
     srv, task, sock = await server_only()
