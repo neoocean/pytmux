@@ -91,6 +91,10 @@ _CSI_PARTIAL_RE = re.compile(rb"\x1b(?:\[[0-9:;?<>=!]*)?$")
 # 자세한 배경은 docs/HANDOFF.md §10 참조.
 _SGR_RE = re.compile(rb"\x1b\[([0-9:;]*)m")
 
+# 내부 앱의 마우스 트래킹 DECSET. 1000=press/release, 1002=+drag, 1003=any-motion,
+# 1006=SGR 확장 좌표 인코딩. 클라이언트의 마우스 패스스루 판단에 쓰인다.
+_MOUSE_RE = re.compile(rb"\x1b\[\?(1000|1002|1003|1006)(h|l)")
+
 
 def _rewrite_sgr_token(tok: bytes) -> bytes | None:
     """콜론 서브파라미터를 가진 단일 SGR 파라미터를 세미콜론 형태로 변환.
@@ -180,6 +184,12 @@ class Pane:
         self.search_query = ""   # 스크롤백 검색어
         self._match_abs = None   # 현재 매치된 절대 라인 인덱스
         self.bracketed = False   # 내부 앱이 bracketed paste 모드를 켰는지
+        # 내부 앱의 마우스 트래킹 모드(DECSET). 클라이언트가 이 패널로 마우스를
+        # 패스스루할지/어떻게 인코딩할지 판단하는 데 쓴다(서버가 추적해 전달).
+        self._mouse_modes = set()   # 켜진 {1000,1002,1003}
+        self.mouse_track = 0        # 0=off 1=press/release 2=+drag 3=any-motion
+        self.mouse_sgr = False      # 1006 SGR 확장 좌표 인코딩 사용 여부
+        self._mouse_sent = (0, False)  # 클라이언트로 마지막 전달한 (track, sgr)
         self.pipe_proc = None    # pipe-pane 대상 프로세스
 
     def reinit(self, pid: int, fd: int, cols: int, rows: int) -> None:
@@ -202,6 +212,31 @@ class Pane:
         self.search_query = ""
         self._match_abs = None
         self.bracketed = False
+        self._mouse_modes = set()
+        self.mouse_track = 0
+        self.mouse_sgr = False
+        self._mouse_sent = (0, False)
+
+    def update_mouse_modes(self, data: bytes) -> bool:
+        """피드 데이터에서 마우스 트래킹 DECSET(1000/1002/1003/1006)을 추적한다.
+        bracketed paste(2004) 추적과 같은 위치에서 호출. 상태가 바뀌면 True 를
+        반환해 서버가 클라이언트에 레이아웃을 다시 보내게 한다."""
+        if b"\x1b[?100" not in data:   # 1000/1002/1003/1006 모두 이 접두사
+            return False
+        before = (self.mouse_track, self.mouse_sgr)
+        for mo in _MOUSE_RE.finditer(data):
+            mode = int(mo.group(1))
+            on = mo.group(2) == b"h"
+            if mode == 1006:
+                self.mouse_sgr = on
+            elif on:
+                self._mouse_modes.add(mode)
+            else:
+                self._mouse_modes.discard(mode)
+        self.mouse_track = (3 if 1003 in self._mouse_modes
+                            else 2 if 1002 in self._mouse_modes
+                            else 1 if 1000 in self._mouse_modes else 0)
+        return (self.mouse_track, self.mouse_sgr) != before
 
     # 레이아웃 계산용
     def first_pane(self) -> "Pane":

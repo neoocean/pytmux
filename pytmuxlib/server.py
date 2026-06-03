@@ -129,6 +129,12 @@ class Server:
             pane.bracketed = True
         if b"\x1b[?2004l" in data:
             pane.bracketed = False
+        # 마우스 트래킹 모드 추적(DECSET 1000/1002/1003/1006). 바뀌면 클라이언트가
+        # 패스스루 여부를 알도록 레이아웃(패널별 mouse 플래그 포함)을 다시 보낸다.
+        if pane.update_mouse_modes(data):
+            sess = self._session_of_pane(pane)
+            if sess:
+                self._broadcast_session(sess)
         # pipe-pane: 패널 출력을 외부 명령으로 복제
         if pane.pipe_proc and pane.pipe_proc.stdin:
             try:
@@ -1188,6 +1194,14 @@ class Server:
                 return c
         return None
 
+    def _session_of_pane(self, pane: Pane) -> Session | None:
+        """패널이 속한 세션을 찾는다(어느 탭/윈도우든)."""
+        for sess in self.sessions.values():
+            for t in sess.tabs:
+                if pane in t.window.panes():
+                    return sess
+        return None
+
     def _session_size(self, sess: Session):
         """세션에 attach 한 모든 클라이언트를 수용하도록 최소 크기를 쓴다(미러링)."""
         cs = [c for c in self.clients if c.session is sess]
@@ -1222,9 +1236,11 @@ class Server:
             else:
                 cx, cy, cw, ch = x, y, w, h
             p.resize(cw, ch)
+            p._mouse_sent = (p.mouse_track, p.mouse_sgr)
             pane_msgs.append({"id": p.id, "x": cx, "y": cy, "w": cw, "h": ch,
                               "title": p.title, "box": box,
-                              "active": p is win.active_pane})
+                              "active": p is win.active_pane,
+                              "mouse": p.mouse_track, "mouse_sgr": p.mouse_sgr})
         return {
             "t": "layout",
             "cols": cols, "rows": rows,
@@ -1615,6 +1631,14 @@ class Server:
             return
         p = win.pane_by_id(msg.get("pane")) or win.active_pane
         data = base64.b64decode(msg.get("data", ""))
+        # 마우스 패스스루: 커서 아래 패널 PTY 로만 raw 전달. 입력 동기화 대상이
+        # 아니고(위치 기반), 프롬프트 추적/scroll 복귀도 건드리지 않는다.
+        if msg.get("mouse"):
+            try:
+                os.write(p.master_fd, data)
+            except OSError:
+                pass
+            return
         self._track_prompt(p, data)   # 마지막 입력 프롬프트 추적(Claude 헤더용)
         # 입력 동기화 시 윈도우 내 모든 패널에 동일 입력 전달
         targets = win.panes() if win.sync else [p]

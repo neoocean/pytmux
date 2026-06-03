@@ -138,6 +138,41 @@ async def test_sync_input_broadcast():
         await teardown(srv, task, sock)
 
 
+async def test_mouse_mode_tracking_and_passthrough():
+    import base64
+    from pytmuxlib.model import ClientConn
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        # 내부 앱이 DECSET 1002+1006 을 켜면 추적되고 레이아웃에 노출된다
+        changed = p.update_mouse_modes(b"\x1b[?1002h\x1b[?1006h")
+        assert changed and p.mouse_track == 2 and p.mouse_sgr is True
+        lay = srv._layout_msg(sess)
+        pm = next(m for m in lay["panes"] if m["id"] == p.id)
+        assert pm["mouse"] == 2 and pm["mouse_sgr"] is True
+        # 끄면 0 으로 복귀
+        p.update_mouse_modes(b"\x1b[?1002l\x1b[?1006l")
+        assert p.mouse_track == 0 and p.mouse_sgr is False
+
+        # mouse 플래그 입력은 대상 패널만, 프롬프트 추적/동기화 제외
+        srv.split_pane(sess, "lr")
+        srv._layout_msg(sess)
+        srv.set_sync(sess, True)        # 동기화 ON 이어도 마우스는 브로드캐스트 안 함
+        target = win.panes()[0]
+        client = ClientConn(None)
+        client.session = sess
+        seq = b"\x1b[<0;3;4M"
+        srv._handle_input(client, {"pane": target.id, "mouse": True,
+                                   "data": base64.b64encode(seq).decode()})
+        await asyncio.sleep(0.2)
+        # 마우스 경로는 _track_prompt 를 거치지 않으므로 입력 누적이 없어야 함
+        assert target._inbuf == "" and target.last_prompt == ""
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_search_buffer_capture_clear():
     srv, task, sock = await server_only()
     try:

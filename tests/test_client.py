@@ -271,6 +271,64 @@ async def test_shift_escape_forwards_esc_plain_escape_enters_esc_mode():
     await _with_app(body)
 
 
+class _FakeMouse:
+    def __init__(self, x, y, button=1):
+        self.x, self.y, self.button = x, y, button
+        self.stopped = False
+
+    def stop(self):
+        self.stopped = True
+
+
+async def test_mouse_passthrough_encoding_and_routing():
+    async def body(app, pilot, srv):
+        v = app.view
+        # 마우스 모드를 켠 내부 앱 패널 하나. content=(2,1) 10x5, 테두리 box.
+        app.layout = {"panes": [{"id": 7, "x": 2, "y": 1, "w": 10, "h": 5,
+                                 "box": [1, 0, 12, 7], "mouse": 2,
+                                 "mouse_sgr": True, "active": True}],
+                      "dividers": [], "active": 7, "cols": 100, "rows": 30}
+        app.mode = "normal"
+        # 대상 판정: content 안 → 패널, 테두리/모드전환 시 → None
+        assert v._mouse_target(5, 3)["id"] == 7
+        assert v._mouse_target(1, 0) is None        # 테두리(content 밖)
+        app.mode = "prefix"
+        assert v._mouse_target(5, 3) is None         # prefix 시 pytmux 우선
+        app.mode = "normal"
+
+        p = app.layout["panes"][0]
+        # SGR 1006 인코딩(좌표 content 기준 1-based: 5-2+1=4, 3-1+1=3)
+        assert v._encode_mouse(p, 5, 3, "press", 1) == b"\x1b[<0;4;3M"
+        assert v._encode_mouse(p, 5, 3, "release", 1) == b"\x1b[<0;4;3m"
+        assert v._encode_mouse(p, 5, 3, "drag", 1) == b"\x1b[<32;4;3M"
+        assert v._encode_mouse(p, 5, 3, "wheelup", 0) == b"\x1b[<64;4;3M"
+        assert v._encode_mouse(p, 99, 99, "press", 1) == b""   # content 밖
+        # X10 폴백(1006 off): 릴리스는 버튼3, 좌표/버튼 +32
+        p2 = dict(p, mouse_sgr=False)
+        assert v._encode_mouse(p2, 5, 3, "press", 1) == b"\x1b[M" + bytes([32, 36, 35])
+        assert v._encode_mouse(p2, 5, 3, "release", 1) == b"\x1b[M" + bytes([35, 36, 35])
+
+        # 라우팅: down→press 가 대상 패널 id 로, up→release 로, _mouse_fwd 정리
+        sent = []
+        app.send_mouse = lambda pid, data: sent.append((pid, data))
+        app.send_cmd = lambda action, **kw: None
+        v.on_mouse_down(_FakeMouse(5, 3, 1))
+        assert sent == [(7, b"\x1b[<0;4;3M")], sent
+        assert v._mouse_fwd == 7
+        v.on_mouse_move(_FakeMouse(6, 3, 1))       # 드래그(1002+)
+        assert sent[-1] == (7, b"\x1b[<32;5;3M"), sent
+        v.on_mouse_up(_FakeMouse(6, 3, 1))
+        assert sent[-1] == (7, b"\x1b[<0;5;3m"), sent
+        assert v._mouse_fwd is None
+
+        # 마우스 모드 OFF 패널은 패스스루 안 함(pytmux 가 select 처리)
+        app.layout["panes"][0]["mouse"] = 0
+        sent.clear()
+        v.on_mouse_down(_FakeMouse(5, 3, 1))
+        assert sent == [], "마우스 모드 off 면 패스스루 안 함"
+    await _with_app(body)
+
+
 async def test_active_pane_border_highlight():
     async def body(app, pilot, srv):
         await pilot.press("ctrl+b")

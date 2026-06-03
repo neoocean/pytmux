@@ -716,6 +716,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._dragging = None  # (split_id, orient, rect)
             self._sel = None       # 선택 영역 (x0,y0,x1,y1) 전역 좌표
             self._sel_start = None
+            self._mouse_fwd = None     # 패스스루 중인 패널 id(버튼 다운~업)
+            self._mouse_fwd_btn = 0    # 그 시퀀스의 버튼(드래그/릴리스 인코딩용)
 
         def _extract_selection(self):
             if not self._sel or not self._cells:
@@ -774,6 +776,52 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     return d
             return None
 
+        def _pane_by_id(self, pid):
+            for p in self.app.layout.get("panes", []):
+                if p["id"] == pid:
+                    return p
+            return None
+
+        # --- 내부 앱 마우스 패스스루(p4v-tui 등 마우스 1급 TUI) ---
+        def _mouse_target(self, x, y):
+            """패스스루 대상 패널을 반환. 내부 앱이 마우스 모드를 켰고, 좌표가 그
+            패널의 **content 영역**(테두리 제외) 안이며, pytmux 가 normal 모드일
+            때만. prefix/copy-mode/팝업이면 None → pytmux 가 가로챈다(tmux 와 동일)."""
+            if self.app.mode != "normal":
+                return None
+            p = self._pane_at(x, y)
+            if not p or not p.get("mouse"):
+                return None
+            if not (p["x"] <= x < p["x"] + p["w"]
+                    and p["y"] <= y < p["y"] + p["h"]):
+                return None   # 테두리/타이틀바 위 → pytmux
+            return p
+
+        def _encode_mouse(self, p, x, y, kind, button):
+            """마우스 이벤트를 내부 앱이 이해하는 바이트로 인코딩한다.
+            kind: press/release/drag/move/wheelup/wheeldown. 좌표는 패널 content
+            기준 1-based. 패널이 1006 을 켰으면 SGR, 아니면 레거시 X10 인코딩."""
+            col = x - p["x"] + 1
+            row = y - p["y"] + 1
+            if col < 1 or row < 1 or col > p["w"] or row > p["h"]:
+                return b""
+            if kind == "wheelup":
+                cb = 64
+            elif kind == "wheeldown":
+                cb = 65
+            else:
+                base = {1: 0, 2: 1, 3: 2}.get(button, 0)
+                cb = (base + 32 if kind == "drag"
+                      else 35 if kind == "move" else base)
+            if p.get("mouse_sgr"):
+                final = "m" if kind == "release" else "M"
+                return f"\x1b[<{cb};{col};{row}{final}".encode()
+            # 레거시 X10: 릴리스는 버튼 3, 좌표/버튼은 32 오프셋(223 캡).
+            if kind == "release":
+                cb = 3
+            return b"\x1b[M" + bytes([32 + min(cb, 223), 32 + min(col, 223),
+                                      32 + min(row, 223)])
+
         def on_mouse_down(self, event: events.MouseDown):
             if not self.app.mouse_enabled:
                 return
@@ -784,7 +832,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.app._composite()
                 event.stop()
                 return
-            if event.button == 3:
+            if event.button == 3 and self._mouse_target(event.x, event.y) is None:
                 self.app.open_menu()
                 event.stop()
                 return
@@ -812,6 +860,20 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.capture_mouse()
                 event.stop()
                 return
+            # 내부 앱 마우스 패스스루(content 영역, 마우스 모드 on). 포커스도 옮긴다.
+            tp = self._mouse_target(event.x, event.y)
+            if tp is not None:
+                if not tp.get("active"):     # 비활성 패널 클릭 시에만 포커스 이동
+                    self.app.send_cmd("select_pane_id", id=tp["id"])
+                data = self._encode_mouse(tp, event.x, event.y, "press",
+                                          event.button)
+                if data:
+                    self.app.send_mouse(tp["id"], data)
+                    self._mouse_fwd = tp["id"]
+                    self._mouse_fwd_btn = event.button
+                    self.capture_mouse()
+                event.stop()
+                return
             p = self._pane_at(event.x, event.y)
             if p:
                 self.app.send_cmd("select_pane_id", id=p["id"])
@@ -824,7 +886,24 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.app._composite()
                 event.stop()
                 return
+            # 패스스루 드래그(버튼 다운 후 이동) — 1002+(드래그 추적) 앱에만 전달
+            if self._mouse_fwd is not None:
+                pd = self._pane_by_id(self._mouse_fwd)
+                if pd and pd.get("mouse", 0) >= 2:
+                    data = self._encode_mouse(pd, event.x, event.y, "drag",
+                                              self._mouse_fwd_btn)
+                    if data:
+                        self.app.send_mouse(pd["id"], data)
+                event.stop()
+                return
             if not self._dragging:
+                # 버튼 없는 모션 — any-motion(1003) 앱에만 전달
+                pd = self._mouse_target(event.x, event.y)
+                if pd is not None and pd.get("mouse", 0) >= 3:
+                    data = self._encode_mouse(pd, event.x, event.y, "move", 0)
+                    if data:
+                        self.app.send_mouse(pd["id"], data)
+                        event.stop()
                 return
             d = self._dragging
             sx, sy, sw, sh = d["rect"]
@@ -849,6 +928,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.app._composite()
                 event.stop()
                 return
+            # 패스스루 버튼 릴리스
+            if self._mouse_fwd is not None:
+                pd = self._pane_by_id(self._mouse_fwd)
+                if pd is not None:
+                    data = self._encode_mouse(pd, event.x, event.y, "release",
+                                              self._mouse_fwd_btn)
+                    if data:
+                        self.app.send_mouse(pd["id"], data)
+                self._mouse_fwd = None
+                self.release_mouse()
+                event.stop()
+                return
             if self._dragging:
                 self._dragging = None
                 self.release_mouse()
@@ -857,6 +948,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def on_mouse_scroll_up(self, event):
             if not self.app.mouse_enabled:
                 return
+            # 마우스 모드 앱(less/htop/Claude 등)은 휠을 직접 처리하도록 전달.
+            tp = self._mouse_target(event.x, event.y)
+            if tp is not None:
+                data = self._encode_mouse(tp, event.x, event.y, "wheelup", 0)
+                if data:
+                    self.app.send_mouse(tp["id"], data)
+                event.stop()
+                return
             p = self._pane_at(event.x, event.y) or self._active_pane()
             if p:
                 self.app.send_scroll(p["id"], delta=3)
@@ -864,6 +963,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def on_mouse_scroll_down(self, event):
             if not self.app.mouse_enabled:
+                return
+            tp = self._mouse_target(event.x, event.y)
+            if tp is not None:
+                data = self._encode_mouse(tp, event.x, event.y, "wheeldown", 0)
+                if data:
+                    self.app.send_mouse(tp["id"], data)
+                event.stop()
                 return
             p = self._pane_at(event.x, event.y) or self._active_pane()
             if p:
@@ -1678,6 +1784,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     "t": "input", "pane": self.layout.get("active"),
                     "data": base64.b64encode(data).decode("ascii")}))
 
+        def send_mouse(self, pane_id, data: bytes):
+            """마우스 패스스루: 특정 패널 PTY 로만 raw 마우스 시퀀스를 보낸다
+            (입력 동기화/프롬프트 추적 제외 — 서버가 mouse 플래그로 구분)."""
+            if self.writer and data:
+                asyncio.create_task(write_msg(self.writer, {
+                    "t": "input", "pane": pane_id, "mouse": True,
+                    "data": base64.b64encode(data).decode("ascii")}))
+
         def send_scroll(self, pane_id, delta=0, bottom=False, top=False):
             if self.writer:
                 m = {"t": "scroll", "pane": pane_id}
@@ -1723,6 +1837,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
             clip = self._clipboard_copy(text)
             self.display_message(
                 f"{len(text)} chars 복사됨" + (" (클립보드)" if clip else ""))
+
+        def paste_os_clipboard(self):
+            """OS 클립보드 내용을 활성 패널에 붙여넣는다(bracketed 패스스루)."""
+            txt = self._clipboard_paste()
+            if txt:
+                self.send_cmd("paste", text=txt)
+            else:
+                self.display_message("클립보드가 비어있거나 읽을 수 없음")
 
         def choose_buffer(self):
             self._want_buffers = True
@@ -2165,9 +2287,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif c == "kill-server":
                 self.send_cmd("kill_server")
             elif c in ("paste-clipboard", "pasteb-clip"):
-                txt = self._clipboard_paste()
-                if txt:
-                    self.send_cmd("paste", text=txt)  # bracketed 패스스루
+                self.paste_os_clipboard()  # bracketed 패스스루
             elif c in ("send-keys", "send"):
                 self._send_keys(args)
             elif c in ("paste-buffer", "pasteb"):
@@ -2308,6 +2428,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return
             if self.prefix_enabled and _normalize_key(event.key) == self.prefix_key:
                 self.mode = "prefix"
+                event.prevent_default()
+                event.stop()
+                return
+            # Ctrl+V(윈도우) / Command+V(맥): OS 클립보드를 활성 패널에 붙여넣기.
+            # (맥 터미널은 보통 Cmd+V 를 가로채 on_paste 로 넘기지만, Cmd/Win 메타
+            #  키가 super+v 로 직접 들어오는 환경을 위해 함께 처리한다.)
+            if event.key in ("ctrl+v", "super+v"):
+                self.paste_os_clipboard()
                 event.prevent_default()
                 event.stop()
                 return
