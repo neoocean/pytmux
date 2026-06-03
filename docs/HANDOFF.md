@@ -623,6 +623,39 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   - **주의**: "/clear" 와 "문서 기록"은 **Claude Code 슬래시 명령/지시문**이라 pytmux 가
     아니라 패널 안 Claude 에게 보내는 입력이다(헷갈리지 말 것). 문서화 지시가 실제로 무엇을
     어디에 기록할지는 Claude 쪽 프로젝트 관례(CLAUDE.md/메모리)에 맡긴다.
+- **[요청·미구현] 비활성 탭의 Claude 작업 완료를 상단 탭 배경색(옅게)으로 알림(보면 사라짐)** —
+  다른 탭을 보고 있을 때, **비활성(현재 안 보는) 탭의 Claude Code 패널** 중 하나 이상이 **작업을
+  마치고 대기 상태(busy→idle)**가 되면 **상단 탭바에서 그 탭의 배경색을 옅게** 바꿔 "완료된 작업이
+  있는 Claude 패널이 있음"을 알린다. 그 **탭으로 전환하면 읽은 것으로 처리**되어 표시가 사라진다.
+  이는 기존 **활동(`#`)·벨(`!`) 모니터링과 같은 "비활성 탭에 표시 → 보면 해제"** 패턴의 Claude 완료
+  버전이다(활성 탭에서 끝나는 건 사용자가 보고 있으니 표시 안 함). 기존 인프라(확장 대상):
+  - **탭 플래그(모델)**: `Tab` 에 `has_activity`/`has_bell` 처럼 **`has_claude_done`(bool)** 추가
+    (model.py ~595-598, `monitor_*` 옆). 모니터 토글이 필요하면 `monitor_bell` 패턴으로
+    `monitor_claude`(기본 on) 도 둘 수 있음.
+  - **완료 전이 감지(서버 flush 루프)**: flush 루프가 매 프레임 패널 화면에서 `claude_state` 를
+    계산하고 `new_cl != p._claude` 비교 후 `p._claude=new_cl` 로 갱신한다(server.py ~1353-1358).
+    그 **직전 값(`p._claude`)이 busy 이고 새 값(`new_cl`)이 idle** 이면 **busy→idle 전이**다.
+    바로 아래 활동/벨 처리 블록(~1359-1375)과 같은 자리에서, **그 패널이 비활성 탭(`w is not win`)
+    소속이면** `t.has_claude_done = True; status_changed = True`. (활성 탭 패널은 activity/bell
+    처럼 매 프레임 클리어 — ~1363-1365 와 동일 정책.)
+  - **읽음 처리(보면 해제)**: `select_window`(server.py ~360-368)에서 `t.has_activity =
+    t.has_bell = False` 와 **같은 줄에 `t.has_claude_done = False`** 추가. flush 루프에서 활성
+    탭은 매 프레임 클리어되므로 전환 즉시 사라진다.
+  - **상태 메시지**: `_status_msg`(server.py ~1278-1282)의 윈도우 dict 에 **`claude_done` 필드**
+    추가(`bell`/`activity` 와 나란히). 클라이언트 `TabBar.set_tabs` 로 흘러간다(client.py ~1007).
+  - **렌더 강조(클라이언트)**: `TabBar.render_line` 의 스타일 선택(client.py ~1078-1083)에서
+    **비활성·비선택 탭이고 `claude_done` 이면 `base` 대신 옅은 배경 스타일**로 그린다 — 활성
+    탭(`active_st`=primary, 진한 파랑)보다 **옅게**(예: `success`/`primary` 를 dim 또는 낮은
+    채도 배경으로 블렌드). 선택(`sel_st`)·활성(`active_st`) 우선순위는 유지. `_labels` 의 idle
+    아이콘(`○`)·`#`/`!` flag 와는 **독립**(배경색은 추가 신호).
+  - **주의/난점**: ① 완료 판정이 `claude_state` 휴리스틱(§6)에 의존하므로, **스피너 깜빡임으로
+    busy↔idle 가 떨리면 거짓 완료**가 켜질 수 있다 — 잠깐 idle 후 곧 busy 면 무시하도록 **연속
+    N프레임 idle 확인/짧은 디바운스**를 고려. ② **limit(리밋 멈춤, ⊘)** 은 "작업을 마치고 대기"가
+    아니므로 이 표시 대상이 아님(busy→idle 만; limit 은 기존 아이콘 유지). ③ 한 탭에 Claude 패널이
+    여럿이면 **하나라도** 완료되면 켜고, 전환 시 일괄 해제(패널 단위가 아니라 탭 단위 플래그).
+  - **회귀 테스트**: `test_server` 에 비활성 탭 패널을 busy→idle 로 만들고 status 메시지의
+    `claude_done==True`, 그 탭 `select_window` 후 `False` 단언. `test_client` 에 `claude_done` 탭이
+    옅은 배경(활성과 다른 스타일)으로 그려지는지(`render_line`/셀 스타일) 단언.
 - **[요청·미구현] 활성 탭을 아래 콘텐츠와 "연결되는" 노트북 탭 모양으로** — 현재 화면 맨 위
   탭바와 그 아래 패널 영역 사이에 **줄(콘텐츠 상단 테두리)이 가로로 쭉 그어져** 있어 활성 탭이
   콘텐츠와 분리돼 보인다. 요청: **활성 탭과 그 아래 탭 패널 영역을 연결하는 모양**(노트북/폴더
