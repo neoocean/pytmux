@@ -1478,12 +1478,22 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     oy = py + ph // 2
                     for j, c in enumerate(now):
                         self._put_cell(cells, ox + j, oy, c, digit_st, W, H)
-                # 3) 우상단 닫기 버튼 [x]
-                bx0 = px + pw - 3
-                if bx0 >= px and 0 <= py < H:
+                # 3) 우상단 닫기 버튼 [x] — 패널 박스 오른쪽 위 모서리(테두리 행)에
+                #    그려, 탭/패널 닫기 [x](_draw_tab_close, 콘텐츠 오른쪽 위 모서리)
+                #    와 같은 자리에 오게 한다. 시계가 떠 있는 동안 이 자리는 '시계
+                #    닫기'이고(on_mouse_down 의 클릭 우선순위가 시계 먼저), 시계를
+                #    닫아야 그 자리가 비로소 '탭 닫기'로 동작한다 — 즉 시계를 먼저
+                #    닫아야 패널(탭)을 닫을 수 있다.
+                box = p.get("box")
+                if box:
+                    bxx, byy, bww, _bhh = box
+                    cbx0, cby = bxx + bww - 3, byy   # 모서리 3칸(…우상단), 테두리 행
+                else:
+                    cbx0, cby = px + pw - 3, py      # 테두리 없으면 내용 기준
+                if cbx0 >= 0 and 0 <= cby < H:
                     for j, c in enumerate("[x]"):
-                        self._put_cell(cells, bx0 + j, py, c, close_st, W, H)
-                    self._clock_close_zones[p["id"]] = (bx0, bx0 + 3, py)
+                        self._put_cell(cells, cbx0 + j, cby, c, close_st, W, H)
+                    self._clock_close_zones[p["id"]] = (cbx0, cbx0 + 3, cby)
 
         def _composite(self):
             W = self.layout.get("cols", self.size.width)

@@ -426,10 +426,20 @@ async def test_clock_mode_overlay():
                    for x in range(len(cells[0]))), "큰 시계 표시"
         # 우상단 닫기 버튼 영역 등록
         assert active in app._clock_close_zones
-        # 다시 토글 → 닫힘
-        app.toggle_clock(active)
-        await pilot.pause(0.1)
-        assert active not in app.clock_panes
+        # 시계 닫기 [x] 는 탭/패널 닫기 [x] 와 같은 자리(콘텐츠 오른쪽 위 모서리).
+        # 단일 패널이면 패널 박스가 콘텐츠 전체라 두 영역이 정확히 겹친다.
+        czone = app._clock_close_zones[active]
+        tzone = app._tab_close_zone
+        assert tzone is not None and czone == tzone, (czone, tzone)
+        # 그 자리를 클릭하면 '시계 먼저' — 탭이 아니라 시계가 닫힌다(클릭 우선순위).
+        from textual import events
+        ntabs = len(srv.sessions[next(iter(srv.sessions))].tabs)
+        cx = (czone[0] + czone[1]) // 2
+        ev = events.MouseDown(app.view, cx, czone[2], 0, 0, 1, False, False, False)
+        app.view.on_mouse_down(ev)
+        await pilot.pause(0.2)
+        assert active not in app.clock_panes, "클릭 시 시계 먼저 닫힘"
+        assert len(srv.sessions[next(iter(srv.sessions))].tabs) == ntabs, "탭 유지"
     await _with_app(body, size=(44, 14))
 
 
