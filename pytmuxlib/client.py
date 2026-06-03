@@ -1463,7 +1463,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
     class PytmuxApp(App):
         ENABLE_COMMAND_PALETTE = False
-        BINDINGS = []
+        # Textual 기본 App 은 ctrl+q 를 priority quit 으로 바인딩한다 — 이걸 덮어
+        # 종료가 아니라 활성 패널로 전달한다(앱 종료는 detach 명령으로만). #25
+        BINDINGS = [Binding("ctrl+q", "ctrl_q", show=False, priority=True)]
         CSS = """
         Screen { layout: vertical; }
         #tabbar { width: 100%; height: 1; dock: top; }
@@ -2120,6 +2122,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 asyncio.create_task(write_msg(self.writer, {
                     "t": "input", "pane": self.layout.get("active"),
                     "data": base64.b64encode(data).decode("ascii")}))
+
+        def action_ctrl_q(self):
+            # Ctrl+Q 는 앱 종료가 아니라(종료는 detach 명령) 활성 패널로 전달(#25).
+            # normal 모드에서만 패스스루 — 다른 모드는 그 모드 키 해석을 위해 무시.
+            # (참고: 터미널 흐름제어 IXON 이 Ctrl+Q(XON)를 먹으면 앱까지 안 올 수
+            #  있다 — 그건 터미널 설정 영역. 여기선 Textual quit 가로채기만 해제.)
+            if self.mode == "normal":
+                self.send_input(b"\x11")
 
         def send_mouse(self, pane_id, data: bytes):
             """마우스 패스스루: 특정 패널 PTY 로만 raw 마우스 시퀀스를 보낸다

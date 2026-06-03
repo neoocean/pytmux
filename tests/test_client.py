@@ -371,6 +371,24 @@ async def test_context_menu_dims_other_panes():
     await _with_app(body)
 
 
+async def test_ctrl_q_passthrough_not_quit():
+    # Ctrl+Q 는 앱을 종료하지 않고 활성 패널로 전달된다(종료는 detach 명령). (#25)
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_input = lambda d: sent.append(d)
+        app.mode = "normal"
+        await pilot.press("ctrl+q")
+        await pilot.pause(0.1)
+        assert b"\x11" in sent, "normal 모드 ctrl+q → 활성 패널로 DC1 전달"
+        assert app.is_running, "ctrl+q 로 앱이 종료되지 않음"
+        # 다른 모드(prefix 등)에서는 패스스루하지 않음
+        sent.clear()
+        app.mode = "prefix"
+        app.action_ctrl_q()
+        assert sent == [], "비 normal 모드는 패스스루 안 함"
+    await _with_app(body)
+
+
 async def test_divider_hover_tints_background():
     # 경계선(divider) 위에 마우스를 올리면 그 칸 배경이 강조되고(리사이즈 암시),
     # 벗어나면 해제된다(#27).
