@@ -281,6 +281,27 @@ class _FakeMouse:
         self.stopped = True
 
 
+async def test_token_usage_tree_popup():
+    # 토큰 사용량 클릭 → Claude 실행 중 패널 + 사용량 트리 팝업(#19). Claude 아닌
+    # 패널은 제외.
+    async def body(app, pilot, srv):
+        from textual.widgets import Label
+        tree = {"sessions": [{"name": "s", "windows": [
+            {"index": 0, "name": "w", "panes": [
+                {"id": 5, "cmd": "claude", "claude": "busy", "usage": "ctx 42%",
+                 "remote": False},
+                {"id": 6, "cmd": "zsh", "claude": None, "usage": None,
+                 "remote": False}]}]}]}
+        app._open_usage_tree(tree)
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "InfoScreen"
+        joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        assert "ctx 42%" in joined and "pane 5" in joined, joined
+        assert "pane 6" not in joined, "Claude 아닌 패널은 제외"
+    await _with_app(body)
+
+
 async def test_choose_tree_shows_panes_and_switches():
     # 탭/패널 트리가 패널을 들여쓰기로 보이고 로컬/원격([local]/[ssh])·실행 앱을
     # 표시하며, 패널 선택 시 그 탭+패널로 전환한다(#14/#24).

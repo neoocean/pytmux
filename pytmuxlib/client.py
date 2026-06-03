@@ -231,6 +231,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("calendar-mode", "현재 패널을 이번 달 달력으로 덮기(토글, 상태줄 날짜 클릭/우상단 [x])", "설정/기타"),
         ("claude-header", "Claude 프롬프트 헤더 표시 on/off (claude-header on|off|toggle)", "설정/기타"),
         ("prompt-history", "Claude 프롬프트 히스토리 팝업(헤더 클릭으로도 열림)", "설정/기타"),
+        ("token-usage", "Claude 실행 중 탭/패널 + 토큰 사용량 트리(상태줄 사용량 클릭)", "설정/기타"),
         ("run-shell", "셸 명령 실행", "설정/기타"),
         ("if-shell", "조건부 셸 실행", "설정/기타"),
         ("detach-client", "detach (앱 종료, 셸 유지)", "설정/기타"),
@@ -1281,6 +1282,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.right_fmt = right
             self._clock_zone = None  # (x0, x1) 시각(시계) 클릭 영역
             self._date_zone = None   # (x0, x1) 날짜(달력) 클릭 영역
+            self._usage_zone = None  # (x0, x1) 토큰 사용량 클릭 영역(Claude 트리)
             # 클라이언트가 SSH 원격 세션에서 도는지(attach 한 머신 기준, 시작 시 1회).
             self._is_remote = bool(os.environ.get("SSH_CONNECTION")
                                    or os.environ.get("SSH_TTY"))
@@ -1405,8 +1407,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.capture:        # 패널 출력 캡처 중
                 segs.append(Segment("REC ", Style(color="white", bgcolor=tc("error"),
                                                    bold=True)))
+            self._usage_zone = None
             if self.claude_usage:   # 활성 Claude 패널 토큰/컨텍스트(best-effort)
-                segs.append(Segment(f" {self.claude_usage} ",
+                utext = f" {self.claude_usage} "
+                ux0 = sum(sum(_char_cells(c) for c in s.text) for s in segs)
+                self._usage_zone = (ux0, ux0 + sum(_char_cells(c) for c in utext))
+                segs.append(Segment(utext,
                                     Style(color="white", bgcolor=tc("secondary"),
                                           bold=True)))
             if self.prefix_off:
@@ -1468,6 +1474,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if dz and dz[0] <= event.x < dz[1]:
                 self.app.toggle_calendar(self.app.layout.get("active"))
                 event.stop()
+                return
+            uz = self._usage_zone
+            if uz and uz[0] <= event.x < uz[1]:
+                self.app.open_claude_usage_tree()   # 토큰 사용량 클릭 → Claude 트리
+                event.stop()
 
     class PytmuxApp(App):
         ENABLE_COMMAND_PALETTE = False
@@ -1492,6 +1503,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.pane_content = {}   # id -> (rows, cursor)
             self.mode = "normal"     # normal | prefix | scroll | prompt | display
             self._want_tree = False  # choose-tree 응답 대기
+            self._tree_purpose = "choose"  # tree 응답 용도(choose|usage)
             self._want_buffers = False  # choose-buffer 응답 대기
             self._want_layouts = None  # 레이아웃 목록 응답 대기(모드: "new"/"over")
             self.clock_panes = set()   # clock-mode 가 켜진 패널 id 집합
@@ -1693,7 +1705,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif t == "tree":
                 if self._want_tree:
                     self._want_tree = False
-                    self._open_choose_tree(msg)
+                    if getattr(self, "_tree_purpose", "choose") == "usage":
+                        self._open_usage_tree(msg)
+                    else:
+                        self._open_choose_tree(msg)
             elif t == "layouts":
                 if self._want_layouts:
                     mode = self._want_layouts
@@ -2221,9 +2236,32 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.push_screen(ChooseBufferScreen(items), handle)
 
         # ---- choose-tree ----
-        def request_tree(self):
+        def request_tree(self, purpose="choose"):
             self._want_tree = True
+            self._tree_purpose = purpose   # "choose"(전환/종료) | "usage"(토큰 보기)
             self.send_cmd("request_tree")
+
+        def open_claude_usage_tree(self):
+            # 토큰 사용량 표시 클릭 → Claude 실행 중 탭/패널 + 사용량 트리 팝업(#19)
+            self.request_tree(purpose="usage")
+
+        def _open_usage_tree(self, tree):
+            lines = []
+            for s in tree.get("sessions", []):
+                for w in s.get("windows", []):
+                    cps = [p for p in (w.get("panes") or [])
+                           if isinstance(p, dict) and p.get("claude")]
+                    if not cps:
+                        continue
+                    lines.append(f"[{w['index']}] {w['name']}")
+                    for p in cps:
+                        app = p.get("cmd") or "claude"
+                        usage = p.get("usage") or "-"
+                        state = p.get("claude")
+                        lines.append(f"    pane {p['id']} · {app} · {state} · {usage}")
+            if not lines:
+                lines = ["(실행 중인 Claude 패널 없음)"]
+            self.push_screen(InfoScreen(lines, title="Claude 토큰 사용량(세션별)"))
 
         def _open_choose_tree(self, tree):
             def handle(res):
@@ -2723,6 +2761,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                                        else not self.claude_header_on)
             elif c in ("prompt-history", "prompts"):
                 self.open_prompt_history(self.layout.get("active"))
+            elif c in ("token-usage", "tokens"):
+                self.open_claude_usage_tree()
             elif c in ("display-popup", "popup"):
                 cmd = " ".join(a for a in args if not a.startswith("-"))
                 if cmd:

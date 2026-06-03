@@ -1258,10 +1258,11 @@ class Server:
                     "telnet", "et", "eternal-terminal", "kitten"}
 
     def _pane_overview(self, pane):
-        """트리/개요용 패널 1건 정보: id·제목·fg 앱·로컬/원격."""
+        """트리/개요용 패널 1건 정보: id·제목·fg 앱·로컬/원격·Claude 상태/사용량."""
         cmd = self._fg_command(pane.master_fd) or ""
         return {"id": pane.id, "title": (pane.title or "").strip(),
-                "cmd": cmd, "remote": cmd.lower() in self._REMOTE_CMDS}
+                "cmd": cmd, "remote": cmd.lower() in self._REMOTE_CMDS,
+                "claude": pane._claude, "usage": pane._claude_usage}
 
     def _tree_msg(self):
         return {"t": "tree", "current": None, "sessions": [
