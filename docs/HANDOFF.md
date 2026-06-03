@@ -821,6 +821,22 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   - **테스트**: `test_client` 에서 dividers 가 있는 레이아웃을 두고 `_divider_at` 좌표로
     `_hover_divider` 설정→`_composite` 후 그 셀에 배경 스타일이 들어갔는지, divider 밖 셀에는
     안 들어갔는지 단언.
+- **[요청·미구현] 상단 탭바(첫 줄) 배경을 터미널 기본 배경색으로** — 화면 맨 윗줄
+  탭바(`TabBar`)의 배경이 **고정 테마색**이라, 터미널 앱에서 배경색을 바꿔도 첫 줄에는
+  반영되지 않는다. 원인: `TabBar.render_line`(client.py ~1033)의 `base` 스타일이
+  `bgcolor=theme_color(self, "panel")`(`panel`=#242F38, 팔레트 ~83행)로 **고정색**을
+  칠하고, 이 `base` 가 **비활성 탭·여백 패딩·`adjust_cell_length`**(~1092/1095)에 모두
+  쓰인다. 요청: 첫 줄 배경을 **터미널 기본 배경**이 적용되도록 한다. 구현 방향: `base`
+  의 `bgcolor` 를 고정 `panel` 대신 **`None`(터미널 기본)** 으로 둔다 — 패널 내용 셀이
+  기본 배경(`d.get("b")`=conv_color None, client.py ~105)으로 터미널 색을 보이는 것과
+  **동일한 메커니즘**이라, 같은 경로로 터미널 배경이 첫 줄에도 흐른다. 활성(primary)/
+  선택(accent)/`[+]`(success)/화살표(accent) 배지는 **자체 bgcolor 유지**(의도된 강조).
+  **주의**: ① 비활성 탭 글자색(`fg`=theme foreground, 밝은 회색)은 그대로 둘지 — 밝은
+  터미널 배경에서 대비가 나쁘면 `color` 도 None(터미널 기본 전경) 고려. ② 이건 아래
+  **"하단 상태줄(REC 줄) 배경을 터미널 배경색으로"** 항목의 **상단 탭바 버전**이라 같은
+  패턴으로 함께 가면 일관적(StatusBar `base` ~1190-1191 의 `bgcolor` 도 고정 `surface`).
+  ③ 클라이언트 전용 변경이라 attach 재실행으로 반영(서버 재기동 불필요). ④ 회귀 테스트:
+  렌더한 탭바 세그먼트의 여백/비활성 탭 `bgcolor` 가 None, 활성 탭은 강조색인지 단언.
 - 탭 **드래그 재정렬 시 시각적 피드백**(현재는 놓을 때 확정만).
 - 패널 **드래그 swap**, 단일 패널 테두리 on/off 옵션화.
 - 다중 줄 상태표시줄, unbind-key, 라이브 PTY display-popup.
