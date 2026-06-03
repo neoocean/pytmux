@@ -464,6 +464,22 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   (`on_mouse_down` ~1135-1137 은 그대로), host·날짜 구간은 zone 에서 제외. 위 "원격 SSH
   머신 이름 색" 항목과 **같은 오른쪽 영역 세그먼트 분리 작업**이라 함께 구현하면 좋다
   (host/시간/날짜를 별도 세그먼트로 쪼개면 각 구간 x 범위를 정확히 알 수 있음).
+- **[요청·미구현] 날짜 클릭 시 현재 패널에 이번 달 달력 오버레이(clock-mode 식)** — 화면
+  오른쪽 아래 **날짜를 클릭하면 현재(활성) 패널에 오늘을 포함한 이번 달 달력**을 표시한다.
+  clock-mode 시계와 동일하게 ① **뒤 패널 내용이 흐리게(dim)** 보이고, ② **계속 업데이트**되며
+  (자정 넘어가면 '오늘' 갱신·시계 tick 과 같은 주기), ③ **시계와 같은 방법으로 닫기**
+  (우상단 `[x]` / 같은 영역 재클릭 / 명령). 구현 방향(기존 clock-mode 미러링):
+  - clock-mode 구조를 그대로 본떠 `calendar_panes`(set)·`toggle_calendar`·
+    `_draw_calendar_overlay`·`_calendar_close_zones` 추가. `_draw_clock_overlay`
+    (client.py ~1550) 패턴 재사용 — 뒤 화면 dim, 가운데 정렬, 우상단 `[x]`, `_put_cell`
+    로 와이드 문자 정렬 보존. 합성 순서(`_composite` ~1748)에서 clock 오버레이와 같은
+    단계에 그림. 갱신은 `_clock_tick`(~1526)에 `calendar_panes` 도 포함시켜 다시 합성.
+  - 달력 본문은 파이썬 `calendar` 모듈(`Calendar`/`monthcalendar`)로 이번 달 그리드를
+    만들고 **오늘 날짜를 강조**(반전/색). 패널이 좁으면 축약 표시.
+  - **트리거(날짜 클릭 존)**: 바로 위 "시계 클릭 존을 시간 부분으로만 한정" 항목과 한 묶음 —
+    오른쪽 영역을 host/시간/날짜로 세그먼트 분리한 뒤 **날짜 구간 x 범위를 `_date_zone`**
+    으로 잡고, `StatusBar.on_mouse_down` 에서 시간 구간이면 clock, 날짜 구간이면 calendar
+    토글. (시계=시간, 달력=날짜로 분리.)
 - 탭 **드래그 재정렬 시 시각적 피드백**(현재는 놓을 때 확정만).
 - 패널 **드래그 swap**, 단일 패널 테두리 on/off 옵션화.
 - 다중 줄 상태표시줄, unbind-key, 라이브 PTY display-popup.
