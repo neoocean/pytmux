@@ -3,3 +3,6 @@ __pycache__/
 *.pyo
 .DS_Store
 *.sock
+# 프로젝트 메모(에이전트 학습 노트)는 Perforce 에만 두고 GitHub 미러에는 올리지 않는다.
+/memory/
+docs/MEMORY.md
