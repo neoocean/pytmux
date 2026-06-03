@@ -643,15 +643,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
             background: $panel-lighten-1; color: $text-disabled; }
         #confirmopts > Label.sel {       /* 선택: 유채색(강조색) */
             border: round $accent; background: $accent; color: $text; }
+        #confirmopts > Label.sel.danger {  /* 위험(종료) 선택: 붉은색 강조 */
+            border: round $error; background: $error; color: $text; }
         """
 
         def __init__(self, message, yes_label="닫기", no_label="취소",
-                     title="확인", default_yes=False):
+                     title="확인", default_yes=False, danger=False):
             super().__init__()
             self._message = message
             self._yes = yes_label
             self._no = no_label
             self._title = title
+            self._danger = danger   # True 면 선택 강조를 $error(붉은색)로
             self._sel = 0 if default_yes else 1   # 0=예 / 1=아니오(기본 '취소')
 
         def compose(self) -> ComposeResult:
@@ -671,9 +674,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._refresh()
 
         def _refresh(self):
-            """선택 위치에 따라 강조 클래스(.sel)를 토글한다."""
-            self.query_one("#cy", Label).set_class(self._sel == 0, "sel")
-            self.query_one("#cn", Label).set_class(self._sel == 1, "sel")
+            """선택 위치에 따라 강조 클래스(.sel)를 토글한다. danger 면 .danger 도."""
+            cy, cn = self.query_one("#cy", Label), self.query_one("#cn", Label)
+            cy.set_class(self._sel == 0, "sel")
+            cn.set_class(self._sel == 1, "sel")
+            cy.set_class(self._danger, "danger")
+            cn.set_class(self._danger, "danger")
 
         def on_click(self, event: events.Click):
             # 버튼 터치/클릭 → 그 선택지로 즉시 확정.
@@ -1573,19 +1579,27 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.writer, {"t": "resize", "cols": cols, "rows": rows}))
 
         def confirm_popup(self, message, action, title="확인",
-                          yes_label="닫기"):
+                          yes_label="닫기", danger=False):
             """중앙 확인 팝업을 띄우고, '예'면 action 실행."""
             def done(ok):
                 if ok and action:
                     action()
             self.push_screen(
-                ConfirmScreen(message, yes_label=yes_label, title=title), done)
+                ConfirmScreen(message, yes_label=yes_label, title=title,
+                              danger=danger), done)
 
         def confirm_kill_tab(self):
+            # 이 탭을 닫으면 pytmux 가 끝나는가 = 탭이 하나뿐인가(#16).
+            last = len(self.tabbar.tabs) <= 1
+            if last:
+                msg = ("이 탭을 닫으면 pytmux 가 종료됩니다(모든 셸 종료). 닫을까요?")
+                title = "pytmux 종료"
+            else:
+                msg = "이 탭을 닫을까요? 탭의 셸이 종료됩니다."
+                title = "탭 닫기"
             self.confirm_popup(
-                "이 탭을 닫을까요? 탭의 셸이 종료됩니다.",
-                action=lambda: self.send_cmd("kill_window"),
-                title="탭 닫기", yes_label="닫기")
+                msg, action=lambda: self.send_cmd("kill_window"),
+                title=title, yes_label="닫기", danger=last)
 
         def _pane_above(self):
             """활성 패널 위쪽(같은 열 범위)에 다른 패널이 있는지."""

@@ -584,6 +584,33 @@ async def test_tab_bar_and_esc_nav():
     await _with_app(body, cfg={"tab_bar_always": False})
 
 
+async def test_close_confirm_distinguishes_pytmux_exit():
+    # 닫기 확인 팝업이 "pytmux 종료" 케이스(마지막 탭)와 일반 케이스를 메시지·
+    # 강조색(danger=붉은색)으로 구분한다(#16).
+    async def body(app, pilot, srv):
+        from textual.widgets import Label
+        # 탭 1개(기본) → 닫으면 pytmux 종료 → danger 강조 + 경고 메시지
+        app.confirm_kill_tab()
+        await pilot.pause(0.2)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "ConfirmScreen"
+        assert scr._danger is True, "마지막 탭 → 종료(danger)"
+        assert "종료" in scr._message
+        assert scr.query_one("#cn", Label).has_class("danger"), "붉은색 강조"
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+        # 탭 2개 → 일반(danger 아님)
+        app.send_cmd("new_window")
+        await pilot.pause(0.4)
+        app.confirm_kill_tab()
+        await pilot.pause(0.2)
+        scr2 = app.screen_stack[-1]
+        assert scr2._danger is False, "탭 여럿 → 일반"
+        assert not scr2.query_one("#cn", Label).has_class("danger")
+        await pilot.press("escape")
+    await _with_app(body)
+
+
 async def test_tab_close_confirm_popup():
     async def body(app, pilot, srv):
         sess = next(iter(srv.sessions.values()))
