@@ -211,6 +211,15 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   전달(`send_mouse`→`_handle_input` mouse 플래그, 동기화/프롬프트 추적 제외).
   prefix/copy-mode 면 pytmux 우선. 휠도 마우스 모드 앱엔 전달. 회귀 테스트 2종.
   **서버+클라이언트 양쪽 변경이라 `kill-server` 재기동 후 반영.**
+- (신규) XTMODKEYS 제거로 **로컬 Claude Code 전체 밑줄 버그 재발** 수정 — 56333
+  의 콜론식 SGR 정규화로 한 번 잡았으나, 현행 Claude Code 는 capable 터미널을 감지
+  하면 modifyOtherKeys 토글로 `CSI > 4 ; Ps m`(XTMODKEYS)을 내보낸다. pyte 0.8.2
+  의 CSI 파서가 `>` private 마커를 무시하고 이를 `CSI 4 ; Ps m`(=SGR 밑줄 ON)으로
+  잘못 읽어, 콜론 경로와 무관하게 다시 화면 전체에 밑줄이 번졌다. `model.feed` 에
+  `_PRIVATE_SGR_RE`(`CSI [<>=]..m`) 제거 단계를 추가해 pyte 에 닿기 전에 통째로 버린다
+  (pytmux 가 자체 키보드 프로토콜을 다루므로 이 시퀀스는 불필요). feed 경계 캐리
+  (`_CSI_PARTIAL_RE`)는 이미 `<>=` 를 포함해 쪼개진 시퀀스도 안전. 회귀 테스트 추가.
+  **서버 변경이라 `kill-server` 재기동 후 반영.**
 - 56333 콜론식 SGR 정규화로 **로컬 Claude Code 전체 밑줄 버그** 수정(§10 해결) —
   pyte 0.8.2 가 콜론(:) 서브파라미터를 미지 문자로 보고 SGR 시퀀스를 끊는 탓에,
   capable 터미널을 감지한 Claude Code 가 내보내는 `CSI 4:0 m`(밑줄 끄기 콜론형)을

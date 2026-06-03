@@ -134,6 +134,37 @@ async def test_colon_sgr_underline_normalized():
         await teardown(srv, task, sock)
 
 
+async def test_xtmodkeys_not_parsed_as_underline():
+    # XTMODKEYS(`CSI > 4 ; Ps m`, modifyOtherKeys): capable 터미널을 감지한
+    # Claude Code 가 내보낸다. pyte 0.8.2 는 `>` private 마커를 무시하고 이를
+    # `CSI 4 ; Ps m`(=SGR 밑줄 ON)으로 잘못 읽어 이후 모든 셀에 밑줄이 번진다.
+    # feed 단계에서 `CSI [<>=]..m` 을 제거해 막는다. 회귀: 로컬 Claude Code 전체 밑줄.
+    # ensure_default_session 은 같은 패널을 돌려줘 커서 SGR 상태가 서브케이스 간
+    # 새어나간다. 각 케이스 앞에 `CSI 0 m` 으로 SGR 을 초기화해 격리한다.
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(20, 2)
+        p = sess.active_window.active_pane
+        p.feed(b"\x1b[2J\x1b[H\x1b[0m\x1b[>4;2mAB")  # XTMODKEYS 켜기 → 글자
+        rows, _ = p.render(False)
+        line0 = "".join(seg[0] for seg in rows[0])
+        assert "AB" in line0 and "4" not in line0.replace("AB", ""), repr(line0)
+        assert not any(st.get("un") for t, st in rows[0]), "XTMODKEYS 밑줄 오인"
+
+        # 실제 밑줄 SGR(`CSI 4 m`)은 그대로 유지되어야 함
+        p.feed(b"\x1b[2J\x1b[H\x1b[0m\x1b[4mAB")
+        rows2, _ = p.render(False)
+        assert any(st.get("un") and "AB" in t for t, st in rows2[0]), "정상 밑줄 유실"
+
+        # private SGR 이 feed 경계로 쪼개져도 제거되어야 함
+        p.feed(b"\x1b[2J\x1b[H\x1b[0m\x1b[>4")  # 미완성 CSI → 캐리
+        p.feed(b";2mAB")                         # 다음 feed 에서 완성
+        rows3, _ = p.render(False)
+        assert not any(st.get("un") for t, st in rows3[0]), "경계 분할 XTMODKEYS 밑줄 오인"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_resize_keeps_content():
     srv, task, sock = await server_only()
     try:

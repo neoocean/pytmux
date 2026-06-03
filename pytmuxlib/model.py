@@ -91,6 +91,14 @@ _CSI_PARTIAL_RE = re.compile(rb"\x1b(?:\[[0-9:;?<>=!]*)?$")
 # 자세한 배경은 docs/HANDOFF.md §10 참조.
 _SGR_RE = re.compile(rb"\x1b\[([0-9:;]*)m")
 
+# private-marker(<,>,=)가 붙은 `m` 종결 CSI 를 제거한다. 대표적으로 XTMODKEYS
+# (`CSI > 4 ; Ps m`, modifyOtherKeys) — capable 터미널을 감지한 Claude Code 가
+# 켜기/끄기로 내보낸다. pyte 0.8.2 의 CSI 파서는 `>` 마커를 무시하고 이를 그냥
+# `CSI 4 ; Ps m`(=SGR 밑줄 ON)으로 잘못 읽어, 이후 모든 셀에 밑줄이 번진다(화면
+# 전체 밑줄 버그). pytmux 는 자체 키보드 프로토콜을 다루므로 이 시퀀스를 pyte 에
+# 넘길 이유가 없어 통째로 버린다. 자세한 배경은 docs/HANDOFF.md §10 참조.
+_PRIVATE_SGR_RE = re.compile(rb"\x1b\[[<>=][0-9;:]*m")
+
 # 내부 앱의 마우스 트래킹 DECSET. 1000=press/release, 1002=+drag, 1003=any-motion,
 # 1006=SGR 확장 좌표 인코딩. 클라이언트의 마우스 패스스루 판단에 쓰인다.
 _MOUSE_RE = re.compile(rb"\x1b\[\?(1000|1002|1003|1006)(h|l)")
@@ -250,6 +258,7 @@ class Pane:
         if m:  # 끝에 잘린 CSI 시퀀스는 다음 feed 로 미룸(완전한 시퀀스만 처리)
             self._altcarry = buf[m.start():]
             buf = buf[:m.start()]
+        buf = _PRIVATE_SGR_RE.sub(b"", buf)   # XTMODKEYS 등 `CSI >..m` 제거(밑줄 오인 방지)
         buf = _sanitize_sgr(buf)   # 콜론식 SGR → pyte 가 이해하는 세미콜론 형태
         pos = 0
         for mo in _ALT_RE.finditer(buf):
