@@ -197,8 +197,20 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56333 + git, 신→구)
+## 9. 최근 변경(CL 56279~56351 + git, 신→구)
 
+- 56351 원격 SSH 휠 스크롤백 미동작(§10) **진단 계측** 추가 — 환경 의존이라
+  코드만으론 단정 불가. `set mouse-debug on`(별칭 mouse-log) 으로 켜면
+  `MultiplexerView` 의 down/scroll_up/scroll_down 핸들러가 받은 이벤트를
+  `<sock>.mouse.log` 에 남긴다. 원격에서 휠이 Textual 까지 도달하는지(조사 방향
+  ①)를 切り分け 하는 용도. 회귀 테스트. 클라이언트 전용(attach 재실행 반영).
+- 56347 **내부 마우스 TUI 앱 마우스 패스스루** 구현(§10 해결) — 서버가 내부 앱의
+  DECSET 1000/1002/1003/1006 을 추적(`Pane.update_mouse_modes`)해 패널별
+  `mouse`/`mouse_sgr` 로 레이아웃에 실어 보내고, 클라이언트가 마우스 모드 ON
+  패널의 content 영역에서 normal 모드일 때 SGR(1006)/X10 으로 인코딩해 PTY 로
+  전달(`send_mouse`→`_handle_input` mouse 플래그, 동기화/프롬프트 추적 제외).
+  prefix/copy-mode 면 pytmux 우선. 휠도 마우스 모드 앱엔 전달. 회귀 테스트 2종.
+  **서버+클라이언트 양쪽 변경이라 `kill-server` 재기동 후 반영.**
 - 56333 콜론식 SGR 정규화로 **로컬 Claude Code 전체 밑줄 버그** 수정(§10 해결) —
   pyte 0.8.2 가 콜론(:) 서브파라미터를 미지 문자로 보고 SGR 시퀀스를 끊는 탓에,
   capable 터미널을 감지한 Claude Code 가 내보내는 `CSI 4:0 m`(밑줄 끄기 콜론형)을
@@ -277,37 +289,28 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 10. 가능한 후속 작업 (열린 항목)
 
-- **[버그·미해결] 내부 마우스 TUI 앱(p4v-tui 등)에 마우스 입력이 전달 안 됨** —
-  상위 디렉토리의 `p4v-tui` 처럼 **마우스를 1급으로 쓰는 TUI 앱을 패널에서 실행하면
-  키보드는 패널(PTY)로 전송되지만 마우스 입력은 패널로 전달되지 않는다.** 원인:
-  `client.py::MultiplexerView` 의 마우스 핸들러(`on_mouse_down/move/up/scroll`)가 모든
-  마우스 이벤트를 **pytmux 자신의 용도로만 소비**(패널 포커스·경계 드래그·스크롤백·
-  copy-mode 선택·우클릭 메뉴)하고 `event.stop()` 으로 끝내며, **내부 앱 PTY 로 마우스를
-  되돌려 보내는 패스스루 경로가 아예 없다.** 키 입력은 `send_input`(→PTY)으로 가는데
-  마우스는 그런 경로가 없는 셈. tmux 는 내부 앱이 마우스 트래킹을 켜면(DECSET
-  1000/1002/1003/1006) 마우스 이벤트를 **SGR 시퀀스로 인코딩해 패널에 그대로
-  전달**한다. 구현 방향: ① 서버에서 내부 앱의 마우스 모드 DECSET 을 추적(현재
-  `server.py` 의 bracketed paste(2004) 추적과 동일 패턴으로 1000/1002/1003/1006/1015
-  SGR 추가). ② 해당 패널이 마우스 모드를 켰으면 클라이언트가 자신의 UI 처리 대신
-  (또는 경계/탭바 등 pytmux 영역이 아닐 때) 마우스 이벤트를 `CSI < b ; x ; y M/m`
-  (SGR 1006) 형태로 인코딩해 `send_input` 으로 PTY 에 전달. ③ `prefix` 가 눌렸거나
-  copy-mode 일 때는 pytmux 가 가로채고, 그 외엔 내부 앱 우선 — tmux 의 동작과 맞춤.
-  현재는 `set mouse off` 로 꺼도 마우스가 내부 앱으로 가지 않는다(애초에 패스스루가
-  없어서). 좌표 변환 시 패널 오프셋·테두리 inset(`_composite` 의 박스/내용 inset)을
-  반드시 빼야 내부 앱 좌표와 맞는다.
-- **[버그·미해결] 원격 SSH 환경에서 마우스 휠 위쪽 스크롤백이 동작 안 함** —
-  **로컬에서는** 활성 패널에서 마우스 휠을 올리면 스크롤백(지난 출력)이 위로 잘
-  스크롤되지만, **원격 SSH 환경에서 pytmux 를 쓰면 위쪽으로 스크롤되지 않는다.**
-  (아래쪽은 확인 필요.) 휠 처리 경로는 `client.py::MultiplexerView.on_mouse_scroll_up`
-  → `app.send_scroll(pane_id, delta=3)` 이므로, **클라이언트가 휠 이벤트 자체를 받는지**가
-  관건. 로컬/원격에서만 갈리는 점으로 보아 **상위 터미널/SSH 경로에서 마우스 휠
-  이벤트가 Textual 까지 도달하지 않는** 환경 문제로 의심된다. 조사 방향: ① 원격에서
-  Textual 이 `MouseScrollUp` 이벤트를 실제로 받는지 로깅(안 받으면 터미널 마우스 트래킹
-  미활성/SGR 1006 미협상 — 상위 터미널 설정·`$TERM`·mosh vs ssh 차이). ② 원격 상위
-  터미널이 휠을 **앱에 넘기지 않고 자기 스크롤백**으로 가로채는지(Textual 이 마우스
-  트래킹 DECSET 을 켰는데도 일부 터미널/세션은 위쪽 휠을 자체 처리). ③ 받긴 받는데
-  `send_scroll`/서버 스크롤 적용이 원격에서만 누락되는지 — 서버 `scroll` 처리와
-  패널 `scrollback` 상태를 캡처 로그로 확인. 우선 ①(이벤트 도달 여부)부터 切り分け.
+- ~~**[버그] 내부 마우스 TUI 앱(p4v-tui 등)에 마우스 입력이 전달 안 됨**~~ →
+  **CL 56347 에서 해결.** 위 "구현 방향" 그대로 구현했다: ① 서버(`model.Pane.
+  update_mouse_modes`)가 내부 앱의 DECSET 1000/1002/1003/1006 을 추적해
+  `mouse_track`(0~3)/`mouse_sgr` 로 두고, 바뀌면 레이아웃을 다시 보내 패널별
+  `mouse`/`mouse_sgr` 플래그로 클라이언트에 전달. ② 클라이언트(`MultiplexerView.
+  _mouse_target`/`_encode_mouse`)가 마우스 모드 ON 패널의 **content 영역**(테두리
+  제외)에서 normal 모드일 때 마우스를 SGR(1006)/X10 으로 인코딩해 `send_mouse`
+  →해당 패널 PTY 로 전달(`_handle_input` 의 `mouse` 플래그: 동기화/프롬프트 추적
+  제외). ③ prefix/copy-mode 면 pytmux 가 가로챔. 휠도 마우스 모드 앱엔 전달.
+  좌표는 패널 content 오프셋(`p["x"]/p["y"]`)을 빼서 1-based 로 변환. **주의:
+  `set mouse off` 면 pytmux 가 마우스를 아예 안 써 패스스루도 비활성(기본 on).**
+- **[버그·환경 의존, 진단 추가됨] 원격 SSH 환경에서 마우스 휠 위쪽 스크롤백이
+  동작 안 함** — 로컬은 정상, 원격 SSH 만 위쪽 휠 스크롤 안 됨. 코드 경로
+  (`on_mouse_scroll_up`→`send_scroll`)는 로컬에서 정상이라 **상위 터미널/SSH 가
+  휠을 Textual 까지 전달하느냐**의 환경 문제로 의심(헤드리스/로컬 재현 불가).
+  **CL 56351 에서 조사 방향 ①을 위한 진단 계측 추가**: `set mouse-debug on` 으로
+  켜면 받은 마우스/휠 이벤트가 `<sock>.mouse.log` 에 찍힌다. **원격에서 켜고 휠을
+  올린 뒤 mouse.log 확인** — `scroll_up` 이 찍히면 이벤트는 도달한 것(→서버
+  scroll 처리/터미널 재그리기 ③을 조사), 안 찍히면 상위 터미널이 휠을 안
+  넘기는 것(①: 터미널 마우스 트래킹·`$TERM`·SGR 1006·mosh vs ssh 차이, 또는
+  ② 터미널이 자체 스크롤백으로 가로챔 → 터미널 설정). 이게 환경(①/②)이면
+  pytmux 코드 수정으로는 못 고치고 터미널 쪽 설정이 필요하다.
 - ~~**[버그] 로컬 실행 시 Claude Code 인터페이스 글자에 원치 않는 밑줄**~~ →
   **CL 56333 에서 해결.** 원인은 합성 단계가 아니라 **서버 화면 버퍼(pyte) 단계**
   였다: pyte 0.8.2 의 CSI 파서가 콜론(:) 서브파라미터를 미지 문자로 처리해 SGR
