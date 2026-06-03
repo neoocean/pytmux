@@ -1285,7 +1285,15 @@ class Server:
                 txt = "\n".join(p.screen.display)
                 old_cl = p._claude
                 new_cl = claude_state(txt)
-                new_use = claude_usage(txt) if new_cl else None
+                # 사용량 표시는 Claude 세션이 살아 있는 동안 유지한다(#5): 화면에서
+                # 토큰 문구가 잠시 사라져도(스크롤 등) 마지막 값을 보존하고, 세션이
+                # 끝나면(claude None) 비운다. (화면의 "↑/↓ N tokens" 는 스트리밍
+                # 델타라 신뢰할 만한 누적 합산은 별도 신호 필요 — 후속 과제.)
+                if new_cl:
+                    u = claude_usage(txt)
+                    new_use = u if u is not None else p._claude_usage
+                else:
+                    new_use = None
                 if new_cl != p._claude or new_use != p._claude_usage:
                     p._claude = new_cl
                     p._claude_usage = new_use

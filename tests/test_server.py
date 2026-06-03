@@ -87,6 +87,29 @@ async def test_inactive_tab_claude_done_flag():
         await teardown(srv, task, sock)
 
 
+async def test_claude_usage_persists_while_session_alive():
+    # 사용량 표시는 Claude 세션이 살아 있는 동안 유지되고(화면에서 토큰 문구가
+    # 사라져도), 세션이 끝나면 비워진다(#5).
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        p.feed(b"\x1b[2J\x1b[H used 45.2k tokens\r\n? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle" and p._claude_usage == "45.2k tok", p._claude_usage
+        # 토큰 문구가 화면에서 사라져도(여전히 idle) 마지막 값 유지
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._claude_usage == "45.2k tok", "세션 살아있는 동안 유지"
+        # Claude 세션 종료(평범한 셸) → 사용량 클리어
+        p.feed(b"\x1b[2J\x1b[Huser@host ~ % ls\r\n")
+        srv._scan_claude(sess, win)
+        assert p._claude is None and p._claude_usage is None, "세션 끝 → 클리어"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_break_join_pane():
     srv, task, sock = await server_only()
     try:
