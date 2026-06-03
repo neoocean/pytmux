@@ -65,7 +65,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
     from textual import events
     from textual.app import App, ComposeResult
     from textual.binding import Binding
-    from textual.containers import Horizontal
+    from textual.containers import Horizontal, Vertical
     from textual.screen import ModalScreen
     from textual.strip import Strip
     from textual.suggester import SuggestFromList
@@ -159,63 +159,66 @@ def build_client_app(sock_path: str, config: dict | None = None,
     ]
 
     # 명령 프롬프트(:)에서 쓸 수 있는 명령 목록 (이름, 설명) — ? 목록·자동완성용
+    # (이름, 설명, 카테고리). 카테고리는 ?/help 목록의 탭 그룹으로 쓰인다.
+    # 새 명령을 추가할 땐 카테고리도 함께 지정할 것(없으면 "기타"로 묶임).
     COMMANDS = [
-        ("split-window", "패널 분할 (-h 가로/상하 · -v 세로/좌우)"),
-        ("kill-pane", "현재 패널 삭제"),
-        ("resize-pane", "패널 크기 (-Z 줌 토글)"),
-        ("select-pane", "패널 이동 (-L/-R/-U/-D) 또는 제목 (-T)"),
-        ("rename-pane", "패널 제목 변경"),
-        ("swap-pane", "패널 위치 교환 (-U/-D)"),
-        ("rotate-window", "윈도우 내 패널 회전"),
-        ("break-pane", "패널을 새 탭으로 분리"),
-        ("join-pane", "다른 탭의 패널을 현재로 합치기 (-h)"),
-        ("respawn-pane", "패널 셸 재시작"),
-        ("select-layout", "레이아웃 프리셋 (even-h/v, main-h/v, tiled)"),
-        ("next-layout", "다음 레이아웃 프리셋"),
-        ("synchronize-panes", "입력 동기화 토글 [on|off]"),
-        ("capture-pane", "패널 내용을 버퍼로 캡처 (-S 전체)"),
-        ("pipe-pane", "패널 출력을 외부 명령으로 파이프"),
-        ("clear-history", "스크롤백 비우기"),
-        ("new-tab", "새 탭 (새 윈도우 1개 생성, = new-window)"),
-        ("kill-tab", "탭 삭제 (= kill-window)"),
-        ("next-tab", "다음 탭"),
-        ("previous-tab", "이전 탭"),
-        ("last-tab", "직전 탭"),
-        ("select-tab", "탭 선택 (-t N)"),
-        ("move-tab", "탭 이동 (-t N)"),
-        ("move-tab-left", "현재 탭을 왼쪽으로"),
-        ("move-tab-right", "현재 탭을 오른쪽으로"),
-        ("move-tab-first", "현재 탭을 맨 앞으로"),
-        ("move-tab-last", "현재 탭을 맨 뒤로"),
-        ("swap-tab", "탭 교환 (-t N)"),
-        ("rename-tab", "탭 이름 변경"),
-        ("automatic-rename", "탭 자동 이름 [on|off]"),
-        ("monitor-activity", "활동 모니터링 [on|off]"),
-        ("monitor-bell", "벨 모니터링 [on|off]"),
-        ("choose-tree", "탭 선택기(트리)"),
-        ("detach-client", "detach (앱 종료, 셸 유지)"),
-        ("send-keys", "패널에 키 주입 (예: Enter, C-c)"),
-        ("paste-buffer", "페이스트 버퍼 붙여넣기 (N)"),
-        ("choose-buffer", "페이스트 버퍼 선택기"),
-        ("paste-clipboard", "OS 클립보드 붙여넣기"),
-        ("auto-resume", "토큰 리밋 자동 재개 [on|off]"),
-        ("auto-resume-message", "자동 재개 메시지 설정"),
-        ("set", "옵션 설정 (prefix/mouse/status-*/mode-keys 등)"),
-        ("show-options", "현재 옵션 보기"),
-        ("set-hook", "이벤트 훅 설정 (<event> <cmd>)"),
-        ("show-hooks", "훅 목록 보기"),
-        ("source-file", "설정 파일 다시 불러오기"),
-        ("display-message", "상태줄에 메시지 표시"),
-        ("display-popup", "명령 실행 결과를 팝업으로"),
-        ("clock-mode", "현재 패널을 큰 시계로 덮기(토글, 우상단 [x]/명령으로 닫기)"),
-        ("run-shell", "셸 명령 실행"),
-        ("if-shell", "조건부 셸 실행"),
-        ("save-layout", "전체 레이아웃 저장(서버 영속)"),
-        ("restore-layout", "전체 레이아웃 복원(서버 영속)"),
-        ("layout-save", "현재 탭 레이아웃 저장 (이름)"),
-        ("layout-load", "레이아웃 불러오기 → 현재 탭 덮어쓰기 (이름)"),
-        ("layout-load-new", "레이아웃 불러오기 → 새 탭 (이름)"),
-        ("kill-server", "서버와 모든 탭/셸 종료"),
+        ("split-window", "패널 분할 (-h 가로/상하 · -v 세로/좌우)", "패널"),
+        ("kill-pane", "현재 패널 삭제", "패널"),
+        ("resize-pane", "패널 크기 (-Z 줌 토글)", "패널"),
+        ("select-pane", "패널 이동 (-L/-R/-U/-D) 또는 제목 (-T)", "패널"),
+        ("rename-pane", "패널 제목 변경", "패널"),
+        ("swap-pane", "패널 위치 교환 (-U/-D)", "패널"),
+        ("rotate-window", "윈도우 내 패널 회전", "패널"),
+        ("break-pane", "패널을 새 탭으로 분리", "패널"),
+        ("join-pane", "다른 탭의 패널을 현재로 합치기 (-h)", "패널"),
+        ("respawn-pane", "패널 셸 재시작", "패널"),
+        ("select-layout", "레이아웃 프리셋 (even-h/v, main-h/v, tiled)", "패널"),
+        ("next-layout", "다음 레이아웃 프리셋", "패널"),
+        ("synchronize-panes", "입력 동기화 토글 [on|off]", "패널"),
+        ("new-tab", "새 탭 (새 윈도우 1개 생성, = new-window)", "탭"),
+        ("kill-tab", "탭 삭제 (= kill-window)", "탭"),
+        ("next-tab", "다음 탭", "탭"),
+        ("previous-tab", "이전 탭", "탭"),
+        ("last-tab", "직전 탭", "탭"),
+        ("select-tab", "탭 선택 (-t N)", "탭"),
+        ("move-tab", "탭 이동 (-t N)", "탭"),
+        ("move-tab-left", "현재 탭을 왼쪽으로", "탭"),
+        ("move-tab-right", "현재 탭을 오른쪽으로", "탭"),
+        ("move-tab-first", "현재 탭을 맨 앞으로", "탭"),
+        ("move-tab-last", "현재 탭을 맨 뒤로", "탭"),
+        ("swap-tab", "탭 교환 (-t N)", "탭"),
+        ("rename-tab", "탭 이름 변경", "탭"),
+        ("automatic-rename", "탭 자동 이름 [on|off]", "탭"),
+        ("choose-tree", "탭 선택기(트리)", "탭"),
+        ("capture-pane", "패널 내용을 버퍼로 캡처 (-S 전체)", "복사/버퍼"),
+        ("pipe-pane", "패널 출력을 외부 명령으로 파이프", "복사/버퍼"),
+        ("clear-history", "스크롤백 비우기", "복사/버퍼"),
+        ("send-keys", "패널에 키 주입 (예: Enter, C-c)", "복사/버퍼"),
+        ("paste-buffer", "페이스트 버퍼 붙여넣기 (N)", "복사/버퍼"),
+        ("choose-buffer", "페이스트 버퍼 선택기", "복사/버퍼"),
+        ("paste-clipboard", "OS 클립보드 붙여넣기", "복사/버퍼"),
+        ("save-layout", "전체 레이아웃 저장(서버 영속)", "레이아웃"),
+        ("restore-layout", "전체 레이아웃 복원(서버 영속)", "레이아웃"),
+        ("layout-save", "현재 탭 레이아웃 저장 (이름)", "레이아웃"),
+        ("layout-load", "레이아웃 불러오기 → 현재 탭 덮어쓰기 (이름)", "레이아웃"),
+        ("layout-load-new", "레이아웃 불러오기 → 새 탭 (이름)", "레이아웃"),
+        ("monitor-activity", "활동 모니터링 [on|off]", "모니터/Claude"),
+        ("monitor-bell", "벨 모니터링 [on|off]", "모니터/Claude"),
+        ("auto-resume", "토큰 리밋 자동 재개 [on|off]", "모니터/Claude"),
+        ("auto-resume-message", "자동 재개 메시지 설정", "모니터/Claude"),
+        ("capture-output", "패널 출력 캡처 토글 [on|off] (기본 on, 영속)", "모니터/Claude"),
+        ("set", "옵션 설정 (prefix/mouse/status-*/mode-keys 등)", "설정/기타"),
+        ("show-options", "현재 옵션 보기", "설정/기타"),
+        ("set-hook", "이벤트 훅 설정 (<event> <cmd>)", "설정/기타"),
+        ("show-hooks", "훅 목록 보기", "설정/기타"),
+        ("source-file", "설정 파일 다시 불러오기", "설정/기타"),
+        ("display-message", "상태줄에 메시지 표시", "설정/기타"),
+        ("display-popup", "명령 실행 결과를 팝업으로", "설정/기타"),
+        ("clock-mode", "현재 패널을 큰 시계로 덮기(토글, 우상단 [x]/명령으로 닫기)", "설정/기타"),
+        ("run-shell", "셸 명령 실행", "설정/기타"),
+        ("if-shell", "조건부 셸 실행", "설정/기타"),
+        ("detach-client", "detach (앱 종료, 셸 유지)", "설정/기타"),
+        ("kill-server", "서버와 모든 탭/셸 종료", "설정/기타"),
     ]
 
     # 명령 프롬프트 자동완성 후보. 자주 쓰는 옵션 템플릿을 앞에 두어, 명령을 다 치면
@@ -233,14 +236,20 @@ def build_client_app(sock_path: str, config: dict | None = None,
         "capture-pane -S",
         "monitor-activity on", "monitor-bell on", "automatic-rename on",
         "detach-client", "kill-server",
-    ] + [n for n, _ in COMMANDS]
+    ] + [c[0] for c in COMMANDS]
 
     class CommandListScreen(ModalScreen):
-        """명령 목록 선택기(? 입력 시). 방향키로 이동, Enter 선택, Esc 취소."""
+        """명령 목록 선택기(? 입력 시). 명령이 많아 카테고리별 탭으로 나눠 한 번에 한
+        카테고리만 보여준다. ←→ 로 카테고리(탭) 전환, ↑↓ 로 명령 이동, Enter 선택,
+        Esc 취소 — 모두 방향키로 제어된다."""
         CSS = """
         CommandListScreen { align: center middle; }
-        #cmds { width: 72; height: auto; max-height: 80%;
-                border: round $accent; background: $panel;
+        #cmdbox { width: 78; height: auto; max-height: 80%;
+                  border: round $accent; background: $panel; }
+        #cmdtabs { width: 100%; height: 1; padding: 0 1;
+                   background: $panel-darken-1; }
+        #cmds { width: 100%; height: auto; max-height: 1fr;
+                background: $panel;
                 overflow-y: scroll;                 /* 항상 스크롤바 트랙 표시 */
                 scrollbar-size-vertical: 2;
                 scrollbar-color: $accent;
@@ -251,25 +260,64 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def __init__(self, items, query=""):
             super().__init__()
             q = query.lower()
-            self._items = [it for it in items if it[0].startswith(q)] or items
+            filt = [it for it in items if it[0].startswith(q)] or list(items)
+            # 카테고리 등장 순서를 유지하며 그룹화: [(카테고리, [(이름, 설명), ...]), ...]
+            order, bucket = [], {}
+            for it in filt:
+                cat = it[2] if len(it) > 2 else "기타"
+                if cat not in bucket:
+                    bucket[cat] = []
+                    order.append(cat)
+                bucket[cat].append((it[0], it[1]))
+            self._cats = [(c, bucket[c]) for c in order]
+            self._ci = 0          # 현재 카테고리 인덱스
+            self._cur = []        # 현재 카테고리의 (이름, 설명) 목록
 
         def compose(self) -> ComposeResult:
-            lv = ListView(*[ListItem(Label(f"{n:<20} {d}"), id=f"c{i}")
-                            for i, (n, d) in enumerate(self._items)], id="cmds")
-            lv.border_title = f"명령 {len(self._items)}개"
-            lv.border_subtitle = "↑↓ 스크롤 · Enter 선택 · Esc 닫기"
-            yield lv
+            with Vertical(id="cmdbox"):
+                yield Label("", id="cmdtabs", markup=True)
+                yield ListView(id="cmds")
 
-        def on_mount(self):
+        async def on_mount(self):
+            await self._render_cat()
             self.query_one(ListView).focus()
 
-        def on_list_view_selected(self, event):
-            self.dismiss(self._items[int(event.item.id[1:])][0])
+        async def _render_cat(self):
+            # 상단 탭 바(현재 카테고리 강조).
+            parts = []
+            for i, (c, items) in enumerate(self._cats):
+                if i == self._ci:
+                    parts.append(f"[reverse b] {c} ({len(items)}) [/]")
+                else:
+                    parts.append(f"[dim] {c} [/]")
+            self.query_one("#cmdtabs", Label).update("  ".join(parts))
+            # 현재 카테고리 명령 목록으로 ListView 교체(이전 항목을 먼저 비운 뒤 채움 —
+            # 비동기 clear/extend 순서를 await 로 보장해 ID 충돌/잔상을 피한다).
+            self._cur = self._cats[self._ci][1] if self._cats else []
+            lv = self.query_one(ListView)
+            await lv.clear()
+            await lv.extend([ListItem(Label(f"{n:<20} {d}"))
+                             for n, d in self._cur])
+            if self._cur:
+                lv.index = 0
+            box = self.query_one("#cmdbox", Vertical)
+            box.border_title = "명령 목록"
+            box.border_subtitle = "←→ 카테고리 · ↑↓ 명령 · Enter 선택 · Esc 닫기"
 
-        def on_key(self, event: events.Key):
+        def on_list_view_selected(self, event):
+            idx = self.query_one(ListView).index
+            if idx is not None and 0 <= idx < len(self._cur):
+                self.dismiss(self._cur[idx][0])
+
+        async def on_key(self, event: events.Key):
             if event.key == "escape":
                 event.stop()
                 self.dismiss(None)
+            elif event.key in ("left", "right") and len(self._cats) > 1:
+                event.stop()
+                step = 1 if event.key == "right" else -1
+                self._ci = (self._ci + step) % len(self._cats)
+                await self._render_cat()
 
     class MenuScreen(ModalScreen):
         CSS = """
@@ -806,6 +854,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.sync = False
             self.pane_title = ""
             self.autoresume = False
+            self.capture = True      # 패널 출력 캡처 중(서버 옵션, 기본 ON)
             self.prefix_off = False  # 중첩: outer prefix 해제 표시
             self.cmd_mode = False  # ESC 명령 모드 표시
             self.message = None    # display-message 임시 메시지
@@ -840,6 +889,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.sync = msg.get("sync", False)
             self.pane_title = msg.get("pane_title", "")
             self.autoresume = msg.get("autoresume", False)
+            self.capture = msg.get("capture", True)
             self.claude_usage = msg.get("claude_usage")
             self.refresh()
 
@@ -868,6 +918,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.autoresume:
                 segs.append(Segment("AR ", Style(color="black", bgcolor=tc("accent"),
                                                   bold=True)))
+            if self.capture:        # 패널 출력 캡처 중
+                segs.append(Segment("REC ", Style(color="white", bgcolor=tc("error"),
+                                                   bold=True)))
             if self.claude_usage:   # 활성 Claude 패널 토큰/컨텍스트(best-effort)
                 segs.append(Segment(f" {self.claude_usage} ",
                                     Style(color="white", bgcolor=tc("secondary"),
@@ -1824,6 +1877,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("set_autoresume", value=val)
             elif c in ("auto-resume-message", "autoresume-message"):
                 self.send_cmd("set_autoresume", msg=" ".join(args))
+            elif c in ("capture-output", "capture-toggle"):
+                val = None
+                if "on" in args:
+                    val = True
+                elif "off" in args:
+                    val = False
+                self.send_cmd("set_capture", value=val)
+                self.display_message("출력 캡처 " + ("토글" if val is None else
+                                     ("ON" if val else "OFF")) + " (상태줄 REC)")
             elif c in ("synchronize-panes", "syncp") or (
                     c == "setw" and "synchronize-panes" in args):
                 val = None

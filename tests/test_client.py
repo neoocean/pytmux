@@ -75,16 +75,29 @@ async def test_command_list_and_autocomplete():
         assert sug == "split-window -h", sug
         sug2 = await inp.suggester.get_suggestion("split-window")
         assert sug2 == "split-window -h", sug2
-        # ? 로 명령 목록
+        # ? 로 명령 목록(필터 없이 전체 보려면 입력을 먼저 비움)
+        for _ in "spl":
+            await pilot.press("backspace")
         await pilot.press("question_mark")
         await pilot.pause(0.2)
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "CommandListScreen"
-        # 스크롤 가능 + 명령 개수/스크롤 힌트 표시
+        # 카테고리 탭으로 그룹화됨(첫 카테고리 = 패널, 첫 명령 = split-window)
+        assert [c for c, _ in scr._cats][:2] == ["패널", "탭"], scr._cats
+        assert scr._ci == 0 and scr._cur[0][0] == "split-window", scr._cur[:1]
         from textual.widgets import ListView
         lv = scr.query_one(ListView)
         assert str(lv.styles.overflow_y) == "scroll", "스크롤바 항상 표시"
-        assert "스크롤" in str(lv.border_subtitle), lv.border_subtitle
+        # ← → 로 카테고리(탭) 전환
+        await pilot.press("right")
+        await pilot.pause(0.1)
+        assert scr._ci == 1 and scr._cur[0][0] == "new-tab", (scr._ci, scr._cur[:1])
+        await pilot.press("left")
+        await pilot.pause(0.1)
+        assert scr._ci == 0 and scr._cur[0][0] == "split-window", scr._ci
+        # 힌트는 박스 subtitle 에 표시
+        box = scr.query_one("#cmdbox")
+        assert "카테고리" in str(box.border_subtitle), box.border_subtitle
     await _with_app(body)
 
 
