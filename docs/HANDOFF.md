@@ -325,6 +325,18 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   호출하면 bar_focus 해제·refresh 까지 포함해 한 번에 종료된다. 클라이언트 전용 변경이라
   attach 재실행으로 반영(서버 재기동 불필요). 회귀 테스트(`test_tab_bar_and_esc_nav`)에
   Enter 한 번 뒤 `app.mode == "normal"` 단언 추가 권장.
+- **[요청·미구현] 상태줄 REC 클릭 시 캡처 정보 팝업** — 왼쪽 아래 `REC` 표시를
+  클릭하면 **현재 탭/패널이 어느 경로의 어느 파일에 기록되고 있는지와 그 파일 크기**를
+  보여주는 팝업을 띄운다. 캡처 경로는 `<sock>.capture/pane-<id>.log`(서버
+  `server.py::_capture_write`, `capture_dir`), 탭 매핑은 같은 디렉터리 `sessions.log`.
+  구현 방향: ① `client.py` StatusBar 의 REC 세그먼트에 클릭 영역을 등록(현재 오른쪽
+  시계 `_clock_zone`(`client.py` ~1128/1135)과 동일 패턴으로 `_rec_zone` 좌표 추가,
+  REC 는 줄 맨 왼쪽 `"REC "` 4칸). ② 클릭 시 활성 패널의 캡처 파일 경로·크기를 표시할
+  팝업(`InfoScreen` 류 모달) 노출 — 경로는 클라이언트가 알기 어려우니 서버에서 활성
+  패널의 캡처 파일 절대경로와 `os.path.getsize` 결과를 내려주는 경로 추가(예: 상태/
+  레이아웃 메시지에 `capture_path`/`capture_size` 동봉, 또는 전용 질의 명령). 캡처가
+  off(`REC` 미표시)일 때는 클릭 영역도 없음. **주의**: 이 REC/캡처 기능은 개발 중
+  디버깅용이며 어느 정도 궤도에 오르면 제거 예정 — 깊게 결합시키지 말고 분리 가능하게.
 - 탭 **드래그 재정렬 시 시각적 피드백**(현재는 놓을 때 확정만).
 - 패널 **드래그 swap**, 단일 패널 테두리 on/off 옵션화.
 - 다중 줄 상태표시줄, unbind-key, 라이브 PTY display-popup.
