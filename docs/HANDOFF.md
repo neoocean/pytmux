@@ -11,7 +11,7 @@
   `/Users/neoocean/p4/playground/scripts/pytmux`. GitHub 미러
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **55 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **56 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -137,8 +137,13 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
 3. **상세 디스크립션**(한 줄 요약 `[scripts/pytmux] <영역>: <요약>` + 배경/변경/파일).
 4. **서브밋마다 GitHub 에 동일하게 커밋·푸시**(origin main).
 
-세션 중에는 `/tmp/ship.py <desc파일>`(임시 헬퍼: 열린 파일을 번호 CL 로 옮겨 submit
-+ git commit/push)을 썼다. **`/tmp` 라 영구적이지 않다** — 없으면 아래처럼 수동 수행:
+세션 중에는 임시 헬퍼(열린 파일을 번호 CL 로 옮겨 submit + git commit/push)를 썼다:
+
+- `/tmp/ship.py <desc파일>` — 디폴트 체인지리스트의 **열린 파일 전부**를 한 CL 로.
+- `/tmp/ship2.py <desc파일> <file...>` — **지정한 파일만** 빈 번호 CL 로 옮겨 submit.
+  무관한 변경을 두 CL 로 나눠 보낼 때 사용(예: 56297/56298 분리 서브밋).
+
+**`/tmp` 라 영구적이지 않다** — 없으면 아래처럼 수동 수행:
 
 ```sh
 p4 edit <수정파일> ; p4 add <새파일>          # 대상 열기
@@ -147,8 +152,10 @@ p4 submit -c NNNN
 git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 ```
 
-## 9. 최근 변경(CL 56279~56293, 신→구)
+## 9. 최근 변경(CL 56279~56298, 신→구)
 
+- 56298 패널 출력 캡처(Claude 화면 분석용, 기본 ON·`opts.json` 영속, 상태줄 REC)
+- 56297 ?/help 명령 목록을 카테고리 탭으로 분할(←→ 카테고리·↑↓ 명령)
 - 56293 F12 로 명령 프롬프트 바로 진입(중첩 토글은 prefix F12)
 - 56292 활성 Claude 패널 토큰/컨텍스트 상태줄 표시(best-effort)
 - 56291 Claude 상태 탭 아이콘 + 마지막 프롬프트 스티키 헤더
