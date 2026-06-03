@@ -161,6 +161,7 @@ bind r rename-tab
 - [docs/DESIGN.md](docs/DESIGN.md) — 아키텍처/설계
 - [docs/FEATURES.md](docs/FEATURES.md) — tmux 대비 기능 제안과 구현 현황
 - [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) — 기여/서브밋 규칙
+- [docs/HANDOFF.md](docs/HANDOFF.md) — 핸드오프(인계) 문서: 구조·실행·주의점·최근 변경
 - [docs/INPUT_FOCUS_NOTE.md](docs/INPUT_FOCUS_NOTE.md) — 명령 프롬프트를 모달(ModalScreen) 안의 Textual Input 으로 띄우는 이유(메인 뷰 포커스 함정 회피)
 
 ## 상태
