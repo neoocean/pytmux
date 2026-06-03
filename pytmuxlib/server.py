@@ -12,7 +12,7 @@ import subprocess
 import time
 
 from .model import ClientConn, Pane, Session, Split, Tab, Window
-from .protocol import (FLUSH_HZ, MIN_H, MIN_W, parse_reset_delay,
+from .protocol import (FLUSH_HZ, MIN_H, MIN_W, claude_state, parse_reset_delay,
                        read_msg, set_winsize, write_msg)
 
 
@@ -1099,6 +1099,17 @@ class Server:
                           "panes": len(t.window.panes())} for t in s.tabs]}
             for s in self.sessions.values()]}
 
+    @staticmethod
+    def _tab_claude(tab) -> str | None:
+        """탭 내 패널들의 Claude 상태를 합쳐 대표 상태 반환(limit>busy>idle)."""
+        pri = {"limit": 3, "busy": 2, "idle": 1}
+        best, score = None, 0
+        for p in tab.window.panes():
+            s = p._claude
+            if s and pri[s] > score:
+                best, score = s, pri[s]
+        return best
+
     def _status_msg(self, sess: Session):
         win = sess.active_window
         return {
@@ -1106,8 +1117,13 @@ class Server:
             "session": sess.name,
             "windows": [{"index": t.index, "name": t.name,
                          "active": (i == sess.active_index),
-                         "bell": t.has_bell, "activity": t.has_activity}
+                         "bell": t.has_bell, "activity": t.has_activity,
+                         "claude": self._tab_claude(t)}
                         for i, t in enumerate(sess.tabs)],
+            # 활성 윈도우 패널별 Claude 상태/마지막 프롬프트(헤더용)
+            "panes_claude": [{"id": p.id, "claude": p._claude,
+                              "prompt": p.last_prompt}
+                             for p in (win.panes() if win else [])],
             "active_pane": win.active_pane.id if win else None,
             "zoomed": bool(win.zoomed) if win else False,
             "sync": bool(win.sync) if win else False,
@@ -1157,6 +1173,7 @@ class Server:
                 clients = [c for c in self.clients if c.session is sess]
                 if not clients:
                     continue
+                status_changed = False
                 for p in win.panes():
                     if not p.dirty:
                         continue
@@ -1166,8 +1183,13 @@ class Server:
                            "rows": rows, "cursor": cursor}
                     for c in clients:
                         await write_msg(c.writer, msg)
+                    # Claude Code 상태 갱신(화면 텍스트 휴리스틱)
+                    txt = "\n".join("".join(s[0] for s in r) for r in rows)
+                    new_cl = claude_state(txt)
+                    if new_cl != p._claude:
+                        p._claude = new_cl
+                        status_changed = True
                 # 활동/벨 모니터링: 비활성 윈도우의 출력/BEL 을 플래그로
-                status_changed = False
                 for t in sess.tabs:
                     w = t.window
                     for p in w.panes():
@@ -1440,6 +1462,7 @@ class Server:
             return
         p = win.pane_by_id(msg.get("pane")) or win.active_pane
         data = base64.b64decode(msg.get("data", ""))
+        self._track_prompt(p, data)   # 마지막 입력 프롬프트 추적(Claude 헤더용)
         # 입력 동기화 시 윈도우 내 모든 패널에 동일 입력 전달
         targets = win.panes() if win.sync else [p]
         for t in targets:
@@ -1451,6 +1474,37 @@ class Server:
                 os.write(t.master_fd, data)
             except OSError:
                 pass
+
+    @staticmethod
+    def _track_prompt(pane: Pane, data: bytes):
+        """입력 바이트에서 현재 줄을 누적하고 Enter 시 last_prompt 로 확정한다.
+        CSI/ESC 시퀀스는 건너뛰고(화살표 등), bracketed paste 본문은 포함한다."""
+        text = data.decode("utf-8", "ignore")
+        buf = pane._inbuf
+        i, n = 0, len(text)
+        while i < n:
+            ch = text[i]
+            if ch == "\x1b":                 # ESC: 제어 시퀀스 건너뜀
+                i += 1
+                if i < n and text[i] == "[":
+                    i += 1
+                    while i < n and not (0x40 <= ord(text[i]) <= 0x7e):
+                        i += 1
+                    i += 1
+                else:
+                    i += 1
+                continue
+            if ch in ("\r", "\n"):
+                line = buf.strip()
+                if line:
+                    pane.last_prompt = line
+                buf = ""
+            elif ord(ch) in (8, 127):        # backspace
+                buf = buf[:-1]
+            elif ord(ch) >= 32:
+                buf += ch
+            i += 1
+        pane._inbuf = buf[-500:]
 
     def _handle_scroll(self, client: ClientConn, msg: dict):
         sess = client.session

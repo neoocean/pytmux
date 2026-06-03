@@ -46,6 +46,10 @@ class Pane:
         self._resume_pending = False
         self._activity = False   # 마지막 검사 이후 출력 있었음
         self._bell = False       # 마지막 검사 이후 BEL 수신
+        # Claude Code 감지: 상태(idle/busy/limit/None)와 마지막 입력 프롬프트
+        self._claude = None
+        self._inbuf = ""         # 현재 입력 줄 누적(프롬프트 추적용)
+        self.last_prompt = ""    # 마지막으로 제출한 프롬프트(한 줄)
         self.search_query = ""   # 스크롤백 검색어
         self._match_abs = None   # 현재 매치된 절대 라인 인덱스
         self.bracketed = False   # 내부 앱이 bracketed paste 모드를 켰는지

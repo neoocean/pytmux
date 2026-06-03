@@ -75,6 +75,27 @@ _RESET_RE12 = re.compile(r'(\d{1,2})(?::(\d{2}))?\s*([ap]m)', re.I)
 _RESET_RE24 = re.compile(r'\b([01]?\d|2[0-3]):([0-5]\d)\b')
 
 
+def claude_state(text: str):
+    """패널의 최근 화면 텍스트로 Claude Code CLI 상태를 추정한다.
+
+    반환: "limit"(사용량 리밋으로 멈춤) / "busy"(프롬프트 처리중) /
+    "idle"(입력 대기) / None(Claude Code 아님). 화면 특징 문자열로 휴리스틱 판별.
+    """
+    low = text.lower()
+    # 사용량 리밋 안내(자동재개 파서와 동일 신호)
+    if "limit" in low and any(k in low for k in
+                              ("reset", "again", "resume", "retry", "upgrade")):
+        return "limit"
+    # 처리중: 작업 표시줄의 "esc to interrupt"
+    if "esc to interrupt" in low or "interrupt)" in low:
+        return "busy"
+    # 입력 대기: Claude 입력창 푸터/도움말 신호
+    if ("? for shortcuts" in low or "for shortcuts" in low
+            or "/help for help" in low or "bypass permissions" in low):
+        return "idle"
+    return None
+
+
 def parse_reset_delay(text: str, now: "_dt.datetime | None" = None):
     """Claude Code 등의 사용량 리밋 안내 문구에서 해제 시각을 찾아
     지금부터 그때까지의 지연(초)을 반환. 못 찾으면 None."""

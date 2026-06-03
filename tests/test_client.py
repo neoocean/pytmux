@@ -251,8 +251,9 @@ async def test_tab_bar_scroll_and_hide_bottom():
         await pilot.pause(0.3)
         # 상단 탭바가 보이면 하단 상태줄 탭 목록 숨김
         assert app.status.hide_tabs is True
+        # 탭 이름(예: win/zsh)이 하단 상태줄에 렌더되지 않음(시계의 "0:" 와 충돌 회피)
         stxt = "".join(s.text for s in app.status.render_line(0))
-        assert "0:" not in stxt and "1:" not in stxt, stxt
+        assert ":win" not in stxt and ":zsh" not in stxt, stxt
         # 오버플로 → 스크롤 표시(◀/▶ 중 하나)
         bar = "".join(s.text for s in app.tabbar.render_line(0))
         assert ("◀" in bar) or ("▶" in bar), bar
@@ -317,6 +318,34 @@ async def test_clock_mode_overlay():
         await pilot.pause(0.1)
         assert active not in app.clock_panes
     await _with_app(body, size=(44, 14))
+
+
+async def test_claude_icon_and_header():
+    async def body(app, pilot, srv):
+        active = app.layout["active"]
+        # 탭 아이콘: busy → ◐
+        app.tabbar.tabs = [{"index": 0, "name": "win",
+                            "active": True, "claude": "busy"}]
+        assert "◐" in "".join(app.tabbar._labels())
+        # 스티키 헤더: 마지막 프롬프트 + [x]
+        app.pane_claude = {active: {"id": active, "claude": "idle",
+                                    "prompt": "do the thing"}}
+        app._composite()
+        ap = next(p for p in app.layout["panes"] if p["id"] == active)
+        row = "".join((c[0] or " ") for c in app.view._cells[ap["y"]])
+        assert "do the thing" in row and "[x]" in row, repr(row)
+        assert active in app._claude_close_zones
+        # 닫기 → 숨김(같은 프롬프트면 계속 숨김)
+        app.close_claude_header(active)
+        app._composite()
+        row2 = "".join((c[0] or " ") for c in app.view._cells[ap["y"]])
+        assert "do the thing" not in row2, repr(row2)
+        # 새 프롬프트가 오면 다시 표시
+        app._update_claude([{"id": active, "claude": "idle", "prompt": "next"}])
+        app._composite()
+        row3 = "".join((c[0] or " ") for c in app.view._cells[ap["y"]])
+        assert "next" in row3, repr(row3)
+    await _with_app(body)
 
 
 async def test_wide_char_composite():

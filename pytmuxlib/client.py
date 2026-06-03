@@ -570,6 +570,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.app.toggle_clock(pid)
                     event.stop()
                     return
+            # Claude 헤더 닫기 버튼([x]) 클릭
+            for pid, (zx0, zx1, zy) in self.app._claude_close_zones.items():
+                if zy == event.y and zx0 <= event.x < zx1:
+                    self.app.close_claude_header(pid)
+                    event.stop()
+                    return
             d = self._divider_at(event.x, event.y)
             if d:
                 self._dragging = d
@@ -667,11 +673,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
                                       max(0, len(self.tabs) - 1)))
             self.refresh()
 
+        # Claude Code 상태 아이콘(탭): 대기 ○ / 처리중 ◐ / 리밋 멈춤 ⊘
+        CLAUDE_ICON = {"idle": "○", "busy": "◐", "limit": "⊘"}
+
         def _labels(self):
             out = []
             for t in self.tabs:
                 flag = "!" if t.get("bell") else ("#" if t.get("activity") else "")
-                out.append(f" {t['index']}:{t['name']}{flag} ")
+                ic = self.CLAUDE_ICON.get(t.get("claude"))
+                ic = (ic + " ") if ic else ""
+                out.append(f" {ic}{t['index']}:{t['name']}{flag} ")
             return out
 
         def render_line(self, y: int) -> Strip:
@@ -904,6 +915,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._want_layouts = None  # 레이아웃 목록 응답 대기(모드: "new"/"over")
             self.clock_panes = set()   # clock-mode 가 켜진 패널 id 집합
             self._clock_close_zones = {}  # pane_id -> (x0, x1, y) 닫기 버튼 영역
+            # Claude Code: 패널별 상태/마지막 프롬프트, 헤더 닫힘 추적
+            self.pane_claude = {}      # id -> {"claude": state, "prompt": str}
+            self._claude_hidden = {}   # id -> 닫을 때의 prompt(같으면 숨김)
+            self._claude_close_zones = {}  # id -> (x0, x1, y)
             # ---- 설정(config) 적용 ----
             self.prefix_key = config.get("prefix", "ctrl+b")
             self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
@@ -1039,6 +1054,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self._composite()
             elif t == "status":
                 self.status.update_status(msg)
+                self._update_claude(msg.get("panes_claude", []))
                 self._update_tabbar()
                 if self.set_titles:
                     self.title = self.status._expand(self.title_fmt)
@@ -1068,6 +1084,58 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.display_message(f"{msg.get('chars', 0)} chars 버퍼에 캡처됨")
             elif t == "bye":
                 self.exit(message="pytmux: 서버가 종료되었습니다")
+
+        # ---- Claude Code 마지막 프롬프트 스티키 헤더 ----
+        def _update_claude(self, panes_claude):
+            self.pane_claude = {e["id"]: e for e in panes_claude}
+            # 프롬프트가 바뀌면(새 프롬프트 제출) 닫아둔 헤더를 다시 보이게
+            for pid, e in self.pane_claude.items():
+                if (pid in self._claude_hidden
+                        and self._claude_hidden[pid] != e.get("prompt")):
+                    self._claude_hidden.pop(pid, None)
+
+        def close_claude_header(self, pane_id):
+            info = self.pane_claude.get(pane_id, {})
+            self._claude_hidden[pane_id] = info.get("prompt", "")
+            self._composite()
+
+        def _draw_claude_headers(self, cells, W, H):
+            """Claude Code 패널 내부 맨 윗줄에 마지막 프롬프트를 스티키 헤더로 표시.
+            스크롤과 무관(합성 시 항상 내용 최상단에 덮어 그림). 우측 [x] 로 닫기."""
+            self._claude_close_zones = {}
+            if not self.pane_claude:
+                return
+            hdr_st = Style(color="white", bgcolor=theme_color(self, "primary"),
+                           bold=True)
+            close_st = Style(color="white", bgcolor=theme_color(self, "error"),
+                             bold=True)
+            for p in self.layout.get("panes", []):
+                info = self.pane_claude.get(p["id"])
+                if not info or not info.get("claude") or not info.get("prompt"):
+                    continue
+                if self._claude_hidden.get(p["id"]) == info["prompt"]:
+                    continue
+                cx, cy, cw = p["x"], p["y"], p["w"]
+                if cw < 6 or not (0 <= cy < H):
+                    continue
+                for xx in range(cx, min(cx + cw, W)):   # 헤더 배경
+                    cells[cy][xx] = (" ", hdr_st)
+                budget = cw - 3                          # [x] 자리 확보
+                gx = cx
+                for chh in "▷ " + info["prompt"]:
+                    wch = _char_cells(chh)
+                    if gx - cx + wch > budget:
+                        break
+                    if 0 <= gx < W:
+                        cells[cy][gx] = (chh, hdr_st)
+                        if wch == 2 and gx + 1 - cx < budget and 0 <= gx + 1 < W:
+                            cells[cy][gx + 1] = ("", hdr_st)
+                    gx += wch
+                bx0 = cx + cw - 3
+                for j, chh in enumerate("[x]"):
+                    if 0 <= bx0 + j < W:
+                        cells[cy][bx0 + j] = (chh, close_st)
+                self._claude_close_zones[p["id"]] = (bx0, bx0 + 3, cy)
 
         # ---- clock-mode(패널 전체를 덮는 큰 시계) ----
         def toggle_clock(self, pane_id):
@@ -1281,6 +1349,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         gx = cx0 + j
                         if 0 <= gx < W and 0 <= cy0 < H:
                             cells[cy0][gx] = (chh, st)
+            # Claude Code 마지막 프롬프트 스티키 헤더(내용 최상단)
+            self._draw_claude_headers(cells, W, H)
             # clock-mode 오버레이(패널 전체 덮기, 뒤 화면 dim)
             self._draw_clock_overlay(cells, W, H, active)
             self.view.set_frame(cells)

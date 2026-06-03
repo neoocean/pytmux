@@ -41,3 +41,11 @@ async def test_load_config():
     assert cfg["bindings"]["|"] == "split-window -h"
     assert cfg["aliases"]["v"] == "split-window -h"
     assert cfg["hooks"]["after-new-window"] == "rename-window H"
+
+
+async def test_claude_state():
+    from pytmuxlib.protocol import claude_state
+    assert claude_state("blah blah\n? for shortcuts") == "idle"
+    assert claude_state("Compacting… (esc to interrupt)") == "busy"
+    assert claude_state("Claude usage limit reached. resets at 5pm") == "limit"
+    assert claude_state("user@host ~ % ls") is None

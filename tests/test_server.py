@@ -227,6 +227,27 @@ async def test_resize_rescales_panes():
         await teardown(srv, task, sock)
 
 
+async def test_claude_prompt_tracking():
+    """입력에서 마지막 프롬프트 추적(백스페이스/CSI/붙여넣기) + 탭 상태 집계."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        srv._track_prompt(p, b"abc\x7f\r")            # abc + backspace → ab
+        assert p.last_prompt == "ab", p.last_prompt
+        srv._track_prompt(p, b"\x1b[200~pasted\x1b[201~\r")  # bracketed paste 본문
+        assert p.last_prompt == "pasted", p.last_prompt
+        srv._track_prompt(p, b"\x1b[Dmid\r")          # 화살표(CSI)는 건너뜀
+        assert p.last_prompt == "mid", p.last_prompt
+        # 탭 Claude 집계(limit > busy > idle)
+        p._claude = "idle"
+        assert srv._tab_claude(sess.active_tab) == "idle"
+        p._claude = "limit"
+        assert srv._tab_claude(sess.active_tab) == "limit"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_tab_reorder():
     """탭 재정렬: move_current_tab(좌/우/맨앞/맨뒤) + move_tab(임의), 활성 추적."""
     srv, task, sock = await server_only()
