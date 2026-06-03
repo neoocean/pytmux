@@ -759,6 +759,31 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
     이면 선택 강조 스타일(다른 선택 탭처럼 `sel_st` 계열)로 그려 커서 위치가 보이게.
   - **주의**: 스크롤(◀▶)로 `[+]` 가 화면 밖일 때도 선택되면 보이도록 스크롤 보정과
     맞물릴 것. `[+]` 는 항상 마지막 탭 오른쪽(현 위치) 유지.
+- **[요청·미구현] 패널 경계선 마우스오버 시 배경색으로 반응(리사이즈 가능 암시)** — 두 패널
+  사이의 경계선(divider)을 **마우스로 드래그하면 패널 크기를 조절**할 수 있다(`on_mouse_down`
+  ~859 가 `_divider_at` 으로 경계를 잡아 `_dragging` 시작 → `on_mouse_move` ~910-919 가
+  `resize` 명령으로 ratio 전달). 그러나 **마우스를 올려도 아무 반응이 없어** 사용자가 이 동작이
+  있는 줄 모를 수 있다. 요청: **두 패널 경계선 위에 마우스 커서를 올리면 그 라인 배경색을 살짝
+  넣어** 리사이즈 가능함을 시각적으로 알린다. 구현 방향:
+  - **호버 추적(클라이언트)**: `MultiplexerView.__init__`(client.py ~717, `_dragging` 옆)에
+    `_hover_divider = None` 추가. `on_mouse_move`(~884)에서 선택/패스스루-드래그/리사이즈-드래그가
+    아닌 **버튼 없는 모션**일 때 `_divider_at(event.x, event.y)`(~774) 결과를 `_hover_divider` 에
+    넣고, **값이 바뀐 경우에만** `_composite()` 재합성(모션마다 재합성하면 떨림/부하 — 변경
+    시에만). 위젯 밖으로 나가면(`on_leave`/MouseMove 중단) None 으로 클리어, 드래그 시작 시도 클리어.
+  - **렌더 강조(`_composite`)**: 테두리 박스 그리기(~1661-1686) **이후**, `_hover_divider`(또는
+    `_dragging` 중인 divider)가 있으면 그 divider 사각형 셀(`d["x"]..x+w`, `d["y"]..y+h`)에
+    **기존 문자/전경은 유지하고 배경색만 살짝** 입힌다(셀 스타일에 `+ Style(bgcolor=...)` 합성).
+    색은 활성 경계보다 은은하게(예: `theme_color(self,"primary")` 저채도·`panel-lighten` 계열).
+    divider 좌표는 `_divider_at` 이 보는 `layout["dividers"]` 와 동일(서버가 내려주는 리사이즈
+    가능 경계, §6 겹침 분할).
+  - **주의**: ① 마우스 모드 ON 내부 앱(패스스루)은 **content 영역**(테두리 제외)만 대상이고
+    divider 는 경계선이라 분리됨 — divider 위면 호버를 우선하고 any-motion(1003) 패스스루
+    (~903-908)는 건너뛴다. ② `set mouse off` 면 마우스 자체를 안 쓰므로 호버도 비활성. ③ 단일
+    패널이면 `dividers` 가 비어 호버 없음. ④ 드래그 중에도 같은 강조를 유지하면 "잡고 있음"이
+    일관되게 보인다.
+  - **테스트**: `test_client` 에서 dividers 가 있는 레이아웃을 두고 `_divider_at` 좌표로
+    `_hover_divider` 설정→`_composite` 후 그 셀에 배경 스타일이 들어갔는지, divider 밖 셀에는
+    안 들어갔는지 단언.
 - 탭 **드래그 재정렬 시 시각적 피드백**(현재는 놓을 때 확정만).
 - 패널 **드래그 swap**, 단일 패널 테두리 on/off 옵션화.
 - 다중 줄 상태표시줄, unbind-key, 라이브 PTY display-popup.
