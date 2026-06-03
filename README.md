@@ -75,6 +75,26 @@ BIN=pt ./install.sh     # 다른 이름(pt)으로 설치
 래퍼는 이 저장소의 `pytmux.py` 절대경로를 가리키므로 저장소를 옮기면 다시
 설치하면 됩니다. 설치 대상 디렉터리가 PATH 에 없으면 안내 문구가 나옵니다.
 
+### SSH/mosh 접속 시 자동 실행 (선택)
+
+원격 로그인하면 곧바로 pytmux 세션으로 들어가도록 셸 설정(`~/.zshrc` 등)에
+아래 블록을 추가합니다. tmux 의 `tmux new-session -A -s main` 자동 실행을
+대체하는 용도입니다.
+
+```sh
+# 인터랙티브 SSH/mosh 로그인일 때만 pytmux 세션에 attach.
+# 가드: 인터랙티브 + 실제 tty + 아직 pytmux 안이 아님 + ssh/mosh 접속.
+# 비인터랙티브 도구 셸은 가로채지 않으므로 자동화 명령을 막지 않습니다.
+if command -v pytmux >/dev/null && [[ -o interactive ]] && [[ -t 1 ]] \
+   && [[ -z "$PYTMUX" ]] && [[ -n "$SSH_CONNECTION$SSH_TTY" ]]; then
+  pytmux
+fi
+```
+
+pytmux 는 단일 세션 모델이라 인자 없이 `pytmux` 만 실행하면 서버가 없으면
+기동하고 있으면 그 세션에 attach 합니다. 중첩 방지 가드는 tmux 의 `$TMUX`
+대신 pytmux 가 패널 셸에 심는 `$PYTMUX` 환경변수를 검사합니다.
+
 ## 사용법
 
 ```sh
