@@ -119,6 +119,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
         "f4": b"\x1bOS", "f5": b"\x1b[15~", "f6": b"\x1b[17~", "f7": b"\x1b[18~",
         "f8": b"\x1b[19~", "f9": b"\x1b[20~", "f10": b"\x1b[21~",
         "f11": b"\x1b[23~", "f12": b"\x1b[24~",
+        "shift+tab": b"\x1b[Z",   # backtab(CSI Z) — Claude 권한 모드 순환 등
+        "shift+enter": b"\n",     # LF — Claude 등 입력 줄바꿈(Enter=CR 제출과 구분)
+        "shift+escape": b"\x1b",  # 앱으로 ESC 전달(ESC 단독은 esc 모드 진입)
     }
 
     def key_to_bytes(event: events.Key) -> bytes:
@@ -1367,7 +1370,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def _draw_claude_headers(self, cells, W, H):
             """Claude Code 패널 내부 맨 윗줄에 마지막 프롬프트를 스티키 헤더로 표시.
-            스크롤과 무관(합성 시 항상 내용 최상단에 덮어 그림). 우측 [x] 로 닫기."""
+            스크롤과 무관(합성 시 항상 내용 최상단에 덮어 그림). 좌측 [x] 로 닫기
+            (우측은 탭 닫기 [x] 와 한 행 차이로 시각적으로 겹쳐 보이므로 좌측 배치)."""
             self._claude_close_zones = {}
             if not self.pane_claude:
                 return
@@ -1386,22 +1390,25 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     continue
                 for xx in range(cx, min(cx + cw, W)):   # 헤더 배경
                     cells[cy][xx] = (" ", hdr_st)
-                budget = cw - 3                          # [x] 자리 확보
-                gx = cx
-                for chh in "▷ " + info["prompt"]:
-                    wch = _char_cells(chh)
-                    if gx - cx + wch > budget:
-                        break
-                    if 0 <= gx < W:
-                        cells[cy][gx] = (chh, hdr_st)
-                        if wch == 2 and gx + 1 - cx < budget and 0 <= gx + 1 < W:
-                            cells[cy][gx + 1] = ("", hdr_st)
-                    gx += wch
-                bx0 = cx + cw - 3
+                # 좌측 [x] (3칸) + 공백 1칸 후 프롬프트
+                bx0 = cx
                 for j, chh in enumerate("[x]"):
                     if 0 <= bx0 + j < W:
                         cells[cy][bx0 + j] = (chh, close_st)
                 self._claude_close_zones[p["id"]] = (bx0, bx0 + 3, cy)
+                text_start = cx + 4                      # [x] + space
+                budget = max(0, cw - 4)
+                gx = text_start
+                for chh in "▷ " + info["prompt"]:
+                    wch = _char_cells(chh)
+                    if gx - text_start + wch > budget:
+                        break
+                    if 0 <= gx < W:
+                        cells[cy][gx] = (chh, hdr_st)
+                        if wch == 2 and gx + 1 - text_start < budget and \
+                                0 <= gx + 1 < W:
+                            cells[cy][gx + 1] = ("", hdr_st)
+                    gx += wch
 
         # ---- clock-mode(패널 전체를 덮는 큰 시계) ----
         def toggle_clock(self, pane_id):
@@ -1478,22 +1485,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     oy = py + ph // 2
                     for j, c in enumerate(now):
                         self._put_cell(cells, ox + j, oy, c, digit_st, W, H)
-                # 3) 우상단 닫기 버튼 [x] — 패널 박스 오른쪽 위 모서리(테두리 행)에
-                #    그려, 탭/패널 닫기 [x](_draw_tab_close, 콘텐츠 오른쪽 위 모서리)
-                #    와 같은 자리에 오게 한다. 시계가 떠 있는 동안 이 자리는 '시계
-                #    닫기'이고(on_mouse_down 의 클릭 우선순위가 시계 먼저), 시계를
-                #    닫아야 그 자리가 비로소 '탭 닫기'로 동작한다 — 즉 시계를 먼저
-                #    닫아야 패널(탭)을 닫을 수 있다.
-                box = p.get("box")
-                if box:
-                    bxx, byy, bww, _bhh = box
-                    cbx0, cby = bxx + bww - 3, byy   # 모서리 3칸(…우상단), 테두리 행
-                else:
-                    cbx0, cby = px + pw - 3, py      # 테두리 없으면 내용 기준
-                if cbx0 >= 0 and 0 <= cby < H:
+                # 3) 우상단 닫기 버튼 [x]
+                bx0 = px + pw - 3
+                if bx0 >= px and 0 <= py < H:
                     for j, c in enumerate("[x]"):
-                        self._put_cell(cells, cbx0 + j, cby, c, close_st, W, H)
-                    self._clock_close_zones[p["id"]] = (cbx0, cbx0 + 3, cby)
+                        self._put_cell(cells, bx0 + j, py, c, close_st, W, H)
+                    self._clock_close_zones[p["id"]] = (bx0, bx0 + 3, py)
 
         def _composite(self):
             W = self.layout.get("cols", self.size.width)

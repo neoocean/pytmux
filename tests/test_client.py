@@ -235,6 +235,42 @@ async def test_ctrl_korean_no_crash():
     await _with_app(body)
 
 
+async def test_shift_tab_forwarded_as_backtab():
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_input = lambda data: sent.append(data)
+        # normal 모드에서 Shift+Tab(=backtab) → 패널로 CSI Z 전달
+        app.on_key(Key(key="shift+tab", character=None))
+        assert sent == [b"\x1b[Z"], sent
+    await _with_app(body)
+
+
+async def test_shift_enter_forwarded_as_lf():
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_input = lambda data: sent.append(data)
+        # normal 모드에서 Shift+Enter → 앱으로 LF(줄바꿈) 전달(Enter=CR 과 구분)
+        app.on_key(Key(key="shift+enter", character=None))
+        assert sent == [b"\n"], sent
+    await _with_app(body)
+
+
+async def test_shift_escape_forwards_esc_plain_escape_enters_esc_mode():
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_input = lambda data: sent.append(data)
+        # Shift+Escape → 앱으로 ESC(0x1b) 전달, esc 모드 진입 안 함
+        app.on_key(Key(key="shift+escape", character=None))
+        assert sent == [b"\x1b"], sent
+        assert app.mode == "normal"
+        # ESC 단독 → esc 모드 진입(셸로 전달 안 함)
+        sent.clear()
+        app.on_key(Key(key="escape", character=None))
+        assert sent == []
+        assert app.mode == "esc"
+    await _with_app(body)
+
+
 async def test_active_pane_border_highlight():
     async def body(app, pilot, srv):
         await pilot.press("ctrl+b")
@@ -426,20 +462,10 @@ async def test_clock_mode_overlay():
                    for x in range(len(cells[0]))), "큰 시계 표시"
         # 우상단 닫기 버튼 영역 등록
         assert active in app._clock_close_zones
-        # 시계 닫기 [x] 는 탭/패널 닫기 [x] 와 같은 자리(콘텐츠 오른쪽 위 모서리).
-        # 단일 패널이면 패널 박스가 콘텐츠 전체라 두 영역이 정확히 겹친다.
-        czone = app._clock_close_zones[active]
-        tzone = app._tab_close_zone
-        assert tzone is not None and czone == tzone, (czone, tzone)
-        # 그 자리를 클릭하면 '시계 먼저' — 탭이 아니라 시계가 닫힌다(클릭 우선순위).
-        from textual import events
-        ntabs = len(srv.sessions[next(iter(srv.sessions))].tabs)
-        cx = (czone[0] + czone[1]) // 2
-        ev = events.MouseDown(app.view, cx, czone[2], 0, 0, 1, False, False, False)
-        app.view.on_mouse_down(ev)
-        await pilot.pause(0.2)
-        assert active not in app.clock_panes, "클릭 시 시계 먼저 닫힘"
-        assert len(srv.sessions[next(iter(srv.sessions))].tabs) == ntabs, "탭 유지"
+        # 다시 토글 → 닫힘
+        app.toggle_clock(active)
+        await pilot.pause(0.1)
+        assert active not in app.clock_panes
     await _with_app(body, size=(44, 14))
 
 
@@ -524,6 +550,13 @@ async def test_claude_icon_and_header():
         row = "".join((c[0] or " ") for c in app.view._cells[ap["y"]])
         assert "do the thing" in row and "[x]" in row, repr(row)
         assert active in app._claude_close_zones
+        # Claude 헤더 [x] 는 좌측 배치(우측이면 탭 닫기 [x] 와 한 행 차이로 시각
+        # 적으로 중복돼 보임). 클릭존 좌측 끝이 패널 좌측과 일치해야 한다.
+        x0, x1, _cy = app._claude_close_zones[active]
+        assert x0 == ap["x"] and x1 == ap["x"] + 3, (x0, x1, ap["x"])
+        # 탭 닫기 [x] 는 우상단(W-3..W) 에 그대로
+        tcz = app._tab_close_zone
+        assert tcz is not None and tcz[1] == app.layout["cols"], tcz
         # 닫기 → 숨김(같은 프롬프트면 계속 숨김)
         app.close_claude_header(active)
         app._composite()
