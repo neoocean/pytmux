@@ -9,11 +9,137 @@ import pyte
 
 from .protocol import HISTORY, MIN_H, MIN_W, conv_color, set_winsize
 
+class _BCEMixin:
+    """배경색 소거(BCE) 동작을 하는 화면 믹스인.
+
+    pyte 기본 erase 는 지운 빈 칸에 커서의 현재 SGR 속성을 통째로 채운다.
+    그래서 프로그램이 밑줄(또는 굵게 등)을 켠 채 줄·화면을 지우면, 실제 터미널
+    (xterm 류의 BCE = 배경색만 유지)과 달리 빈 칸에 밑줄이 그대로 남아
+    화면 전체에 원치 않는 가로줄이 보인다(예: Claude Code 환영 화면).
+
+    여기서는 erase 시 배경색·전경색·반전만 보존하고 밑줄/굵게/기울임/취소선/
+    깜빡임 같은 글자 장식 속성은 버려 실제 터미널 동작에 맞춘다.
+    """
+
+    def _erase_char(self):
+        return self.cursor.attrs._replace(
+            data=" ", bold=False, italics=False, underscore=False,
+            strikethrough=False, blink=False)
+
+    def erase_characters(self, count=None):
+        self.dirty.add(self.cursor.y)
+        count = count or 1
+        blank = self._erase_char()
+        line = self.buffer[self.cursor.y]
+        for x in range(self.cursor.x,
+                       min(self.cursor.x + count, self.columns)):
+            line[x] = blank
+
+    def erase_in_line(self, how=0, private=False):
+        self.dirty.add(self.cursor.y)
+        if how == 0:
+            interval = range(self.cursor.x, self.columns)
+        elif how == 1:
+            interval = range(self.cursor.x + 1)
+        else:
+            interval = range(self.columns)
+        blank = self._erase_char()
+        line = self.buffer[self.cursor.y]
+        for x in interval:
+            line[x] = blank
+
+    def erase_in_display(self, how=0, *args, **kwargs):
+        if how == 0:
+            interval = range(self.cursor.y + 1, self.lines)
+        elif how == 1:
+            interval = range(self.cursor.y)
+        elif how in (2, 3):
+            interval = range(self.lines)
+        else:
+            interval = range(0)
+        self.dirty.update(interval)
+        blank = self._erase_char()
+        for y in interval:
+            line = self.buffer[y]
+            for x in list(line):
+                line[x] = blank
+        if how == 0 or how == 1:
+            self.erase_in_line(how)
+
+
+class _BCEScreen(_BCEMixin, pyte.Screen):
+    pass
+
+
+class _BCEHistoryScreen(_BCEMixin, pyte.HistoryScreen):
+    pass
+
+
 # 대체 화면 버퍼(alternate screen) 전환 시퀀스. pyte 가 직접 지원하지 않아
 # pytmux 가 직접 처리한다(vim/less/htop/Claude Code 등 풀스크린 TUI 용).
 _ALT_RE = re.compile(rb"\x1b\[\?(1049|1047|47)(h|l)")
-# feed 경계에서 잘린 미완성 CSI private 시퀀스(예: ESC[?104)를 다음 feed 로 미룸
-_ALT_PARTIAL_RE = re.compile(rb"\x1b\[\?[0-9;]*$")
+# feed 경계에서 잘린 미완성 CSI 시퀀스(예: ESC[?104, ESC[4: 등)를 다음 feed 로
+# 미룬다. ESC 단독 또는 ESC[ + 종결바이트 없는 파라미터를 끝에서 잡아낸다.
+# 이렇게 해야 _ALT_RE 라우팅과 아래 _sanitize_sgr 가 항상 완전한 시퀀스만 본다.
+_CSI_PARTIAL_RE = re.compile(rb"\x1b(?:\[[0-9:;?<>=!]*)?$")
+
+# 콜론(:) 서브파라미터를 쓰는 현대식 SGR(`m`)을 pyte 0.8.2 가 이해하는 세미콜론
+# 형태로 정규화한다. pyte 의 CSI 파서는 콜론을 미지 문자로 보고 시퀀스를 **중단**
+# 하므로, 밑줄 끄기(`CSI 4:0 m`)·곱슬밑줄(`4:3`)·24bit 색(`38:2::r:g:b`)·밑줄색
+# (`58:...`) 같은 시퀀스가 들어오면 밑줄 속성이 꺼지지 않고 그대로 남아 화면 전체에
+# 밑줄이 번지거나 "0m" 같은 잔해가 찍힌다(특히 capable 터미널을 감지한 Claude Code).
+# 자세한 배경은 docs/HANDOFF.md §10 참조.
+_SGR_RE = re.compile(rb"\x1b\[([0-9:;]*)m")
+
+
+def _rewrite_sgr_token(tok: bytes) -> bytes | None:
+    """콜론 서브파라미터를 가진 단일 SGR 파라미터를 세미콜론 형태로 변환.
+
+    반환값을 그대로 세미콜론 목록에 끼워 넣는다. None 이면 그 파라미터를 버린다
+    (pyte 가 표현 못하는 밑줄색 등). 콜론이 없는 토큰은 호출 전에 걸러진다.
+    """
+    sub = tok.split(b":")
+    head = sub[0]
+    if head == b"4":
+        # 밑줄 스타일: 4:0 = 끄기(=24), 그 외(4:1~4:5 곱슬/이중 등) = 켜기(=4).
+        val = sub[1] if len(sub) > 1 else b""
+        return b"24" if val in (b"0", b"") else b"4"
+    if head in (b"38", b"48"):
+        kind = sub[1] if len(sub) > 1 else b""
+        nums = [p for p in sub[2:] if p != b""]
+        if kind == b"5" and nums:
+            return head + b";5;" + nums[0]
+        if kind == b"2" and len(nums) >= 3:
+            # 38:2:<colorspace>:r:g:b — colorspace 가 비어도 마지막 3개가 r,g,b.
+            return head + b";2;" + b";".join(nums[-3:])
+        return None  # 형식 불명 → 버림(잔해 방지)
+    # 58:(밑줄색) 등 pyte 미지원 → 버림.
+    return None
+
+
+def _sanitize_sgr(buf: bytes) -> bytes:
+    if b":" not in buf:   # 콜론이 없으면 정규화할 SGR 도 없다(흔한 경로).
+        return buf
+
+    def repl(mo: "re.Match[bytes]") -> bytes:
+        params = mo.group(1)
+        if b":" not in params:
+            return mo.group(0)   # 평범한 SGR 은 그대로.
+        out = []
+        for tok in params.split(b";"):
+            if b":" not in tok:
+                out.append(tok)
+                continue
+            rewritten = _rewrite_sgr_token(tok)
+            if rewritten is not None:
+                out.append(rewritten)
+        if not out:
+            # 전부 버려졌으면 시퀀스 자체를 제거한다. `CSI m`(=reset all)으로
+            # 두면 앞서 설정된 굵게/색까지 의도치 않게 초기화된다.
+            return b""
+        return b"\x1b[" + b";".join(out) + b"m"
+
+    return _SGR_RE.sub(repl, buf)
 
 
 class Pane:
@@ -26,7 +152,7 @@ class Pane:
         self.cols = cols
         self.rows = rows
         # 메인 화면(스크롤백 보관) + 대체 화면(풀스크린 TUI 용, 스크롤백 없음)
-        self._main = pyte.HistoryScreen(cols, rows, history=HISTORY, ratio=0.5)
+        self._main = _BCEHistoryScreen(cols, rows, history=HISTORY, ratio=0.5)
         self._main.set_mode(pyte.modes.LNM)
         self._main_stream = pyte.ByteStream(self._main)
         self._alt = None
@@ -61,7 +187,7 @@ class Pane:
         self.master_fd = fd
         self.child_pid = pid
         self.cols, self.rows = cols, rows
-        self._main = pyte.HistoryScreen(cols, rows, history=HISTORY, ratio=0.5)
+        self._main = _BCEHistoryScreen(cols, rows, history=HISTORY, ratio=0.5)
         self._main.set_mode(pyte.modes.LNM)
         self._main_stream = pyte.ByteStream(self._main)
         self._alt = None
@@ -85,10 +211,11 @@ class Pane:
         # 대체 화면 전환 시퀀스를 가로채 메인/대체 화면으로 라우팅한다.
         buf = self._altcarry + data
         self._altcarry = b""
-        m = _ALT_PARTIAL_RE.search(buf)
-        if m:  # 끝에 잘린 CSI private 시퀀스는 다음 feed 로 미룸
+        m = _CSI_PARTIAL_RE.search(buf)
+        if m:  # 끝에 잘린 CSI 시퀀스는 다음 feed 로 미룸(완전한 시퀀스만 처리)
             self._altcarry = buf[m.start():]
             buf = buf[:m.start()]
+        buf = _sanitize_sgr(buf)   # 콜론식 SGR → pyte 가 이해하는 세미콜론 형태
         pos = 0
         for mo in _ALT_RE.finditer(buf):
             self._feed_seg(buf[pos:mo.start()])
@@ -116,7 +243,7 @@ class Pane:
     def _enter_alt(self) -> None:
         if self.alt_active:
             return
-        self._alt = pyte.Screen(self.cols, self.rows)
+        self._alt = _BCEScreen(self.cols, self.rows)
         self._alt.set_mode(pyte.modes.LNM)
         self._alt_stream = pyte.ByteStream(self._alt)
         self.screen = self._alt

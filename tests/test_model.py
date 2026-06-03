@@ -73,6 +73,67 @@ async def test_wide_char_render():
         await teardown(srv, task, sock)
 
 
+async def test_bce_erase_drops_underline():
+    # 밑줄(또는 굵게 등)을 켠 채 줄·화면을 지워도 빈 칸에 장식이 남지 않아야 한다
+    # (실 터미널의 BCE = 배경색만 보존). 회귀: Claude Code 환영 화면의 가로줄.
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(20, 4)
+        p = sess.active_window.active_pane
+        p.feed(b"\x1b[2J\x1b[H")
+        # 밑줄 ON, 'Hi' 쓰고 reset 없이 줄 끝까지 지우고(EL) 화면 전체 지움(ED)
+        p.feed(b"\x1b[4mHi\x1b[K\r\n\x1b[2J")
+        rows, _ = p.render(False)
+        blanks = [st for r in rows for text, st in r
+                  if st.get("un") and text.strip() == ""]
+        assert not blanks, f"빈 칸에 밑줄이 남음: {blanks}"
+        # 실제 글자의 밑줄은 보존되어야 함(정상 동작)
+        sess2 = srv.ensure_default_session(20, 4)
+        p2 = sess2.active_window.active_pane
+        p2.feed(b"\x1b[2J\x1b[H\x1b[4mHi\x1b[0m")
+        rows2, _ = p2.render(False)
+        assert any(st.get("un") and "H" in text for r in rows2 for text, st in r)
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_colon_sgr_underline_normalized():
+    # 콜론식 SGR(현대 터미널): pyte 0.8.2 는 콜론을 미지 문자로 보고 시퀀스를
+    # 중단해 밑줄이 꺼지지 않고 번지거나 "0m" 잔해가 찍힌다. feed 단계에서
+    # 세미콜론 형태로 정규화해 막는다. 회귀: 로컬 Claude Code 전체 밑줄 버그.
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(20, 2)
+        p = sess.active_window.active_pane
+        # 밑줄 ON → 콜론식 리셋(4:0) → 이후 글자. 밑줄이 번지면 안 되고 잔해도 없어야.
+        p.feed(b"\x1b[2J\x1b[H\x1b[4mAB\x1b[4:0mCD")
+        rows, _ = p.render(False)
+        line0 = "".join(seg[0] for seg in rows[0])
+        assert "ABCD" in line0 and "0m" not in line0, repr(line0)
+        # AB 만 밑줄, CD 는 밑줄 없음
+        assert any(st.get("un") and "AB" in t for t, st in rows[0]), "AB 밑줄 유지"
+        assert not any(st.get("un") and "CD" in t for t, st in rows[0]), "CD 밑줄 번짐"
+
+        # 콜론식 24bit 전경색(38:2::r:g:b)도 정상 적용되고 잔해가 없어야 함
+        sess2 = srv.ensure_default_session(20, 2)
+        p2 = sess2.active_window.active_pane
+        p2.feed(b"\x1b[2J\x1b[H\x1b[38:2::255:0:0mXY")
+        rows2, _ = p2.render(False)
+        l2 = "".join(seg[0] for seg in rows2[0])
+        assert "XY" in l2 and ":" not in l2 and "2;" not in l2, repr(l2)
+        assert any(st.get("f") and "XY" in t for t, st in rows2[0]), "24bit 색 적용"
+
+        # 콜론식 SGR 이 feed 경계로 쪼개져도 정규화되어야 함
+        sess3 = srv.ensure_default_session(20, 2)
+        p3 = sess3.active_window.active_pane
+        p3.feed(b"\x1b[2J\x1b[H\x1b[4mAB\x1b[4")  # 미완성 CSI → 캐리
+        p3.feed(b":0mCD")                          # 다음 feed 에서 완성
+        rows3, _ = p3.render(False)
+        assert not any(st.get("un") and "CD" in t for t, st in rows3[0]), "경계 분할 밑줄 번짐"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_resize_keeps_content():
     srv, task, sock = await server_only()
     try:
