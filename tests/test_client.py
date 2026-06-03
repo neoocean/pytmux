@@ -317,6 +317,34 @@ async def test_tab_bar_and_esc_nav():
     await _with_app(body)
 
 
+async def test_tab_close_confirm_popup():
+    async def body(app, pilot, srv):
+        sess = next(iter(srv.sessions.values()))
+        app.send_cmd("new_window")            # 탭 2개
+        await pilot.pause(0.4)
+        assert len(sess.tabs) == 2
+        # 탭바 [x] 닫기 버튼 클릭 → 확인 팝업
+        app.confirm_kill_tab()
+        await pilot.pause(0.2)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "ConfirmScreen", scr
+        from textual.widgets import ListView
+        lv = scr.query_one(ListView)
+        assert lv.index == 1, "기본 선택은 '취소'(안전)"
+        # Esc = 취소 → 탭 유지
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        assert len(sess.tabs) == 2, "취소 시 탭 유지"
+        # 다시 팝업 → y 로 확정 → 탭 닫힘
+        app.confirm_kill_tab()
+        await pilot.pause(0.2)
+        assert app.screen_stack[-1].__class__.__name__ == "ConfirmScreen"
+        await pilot.press("y")
+        await pilot.pause(0.5)
+        assert len(sess.tabs) == 1, "확인 시 탭 닫힘"
+    await _with_app(body)
+
+
 async def test_tab_bar_scroll_and_hide_bottom():
     async def body(app, pilot, srv):
         for _ in range(6):                 # 총 7개 탭(좁은 폭에서 오버플로)

@@ -544,6 +544,61 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     event.stop()
                     self._accept_cand()
 
+    class ConfirmScreen(ModalScreen):
+        """예/아니오 확인 팝업(중앙). 마우스/터치로 항목 클릭, ↑↓·←→ 로 선택 이동,
+        Enter 확정, y/n 단축, Esc(=아니오) 취소. 위험한 동작(탭 닫기 등) 확인용."""
+        CSS = """
+        ConfirmScreen { align: center middle; }
+        #confirmbox { width: 48; height: auto; border: round $accent;
+                      background: $panel; padding: 1 2; }
+        #confirmmsg { width: 100%; height: auto; padding: 0 0 1 0; }
+        #confirmopts { width: 100%; height: auto; background: $panel; }
+        """
+
+        def __init__(self, message, yes_label="닫기", no_label="취소",
+                     title="확인", default_yes=False):
+            super().__init__()
+            self._message = message
+            self._yes = yes_label
+            self._no = no_label
+            self._title = title
+            self._default_yes = default_yes
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="confirmbox"):
+                yield Label(self._message, id="confirmmsg")
+                yield ListView(
+                    ListItem(Label(f"  {self._yes}  "), id="cy"),
+                    ListItem(Label(f"  {self._no}  "), id="cn"),
+                    id="confirmopts")
+
+        def on_mount(self):
+            box = self.query_one("#confirmbox", Vertical)
+            box.border_title = self._title
+            box.border_subtitle = "Enter 확정 · y/n · Esc 취소"
+            lv = self.query_one(ListView)
+            lv.index = 0 if self._default_yes else 1   # 기본 선택(보통 '취소')
+            lv.focus()
+
+        def on_list_view_selected(self, event):
+            self.dismiss(event.item.id == "cy")
+
+        def on_key(self, event: events.Key):
+            k = event.key
+            if k == "escape":
+                event.stop()
+                self.dismiss(False)
+            elif k in ("y", "Y"):
+                event.stop()
+                self.dismiss(True)
+            elif k in ("n", "N"):
+                event.stop()
+                self.dismiss(False)
+            elif k in ("left", "right"):
+                event.stop()
+                lv = self.query_one(ListView)
+                lv.index = 0 if lv.index == 1 else 1
+
     class ChooseBufferScreen(ModalScreen):
         CSS = """
         ChooseBufferScreen { align: center middle; }
@@ -1149,9 +1204,20 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 _a.create_task(write_msg(
                     self.writer, {"t": "resize", "cols": cols, "rows": rows}))
 
+        def confirm_popup(self, message, action, title="확인",
+                          yes_label="닫기"):
+            """중앙 확인 팝업을 띄우고, '예'면 action 실행."""
+            def done(ok):
+                if ok and action:
+                    action()
+            self.push_screen(
+                ConfirmScreen(message, yes_label=yes_label, title=title), done)
+
         def confirm_kill_tab(self):
-            self.open_prompt("confirm", "kill-tab? (y/N)",
-                             action=lambda: self.send_cmd("kill_window"))
+            self.confirm_popup(
+                "이 탭을 닫을까요? 탭의 셸이 종료됩니다.",
+                action=lambda: self.send_cmd("kill_window"),
+                title="탭 닫기", yes_label="닫기")
 
         def _pane_above(self):
             """활성 패널 위쪽(같은 열 범위)에 다른 패널이 있는지."""
@@ -1624,8 +1690,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.open_prompt("rename_window", "rename-tab",
                                  self._active_window_name())
             elif key == "kill_window":
-                self.open_prompt("confirm", "kill-tab? (y/N)",
-                                 action=lambda: self.send_cmd("kill_window"))
+                self.confirm_kill_tab()
             elif key == "next_window":
                 self.send_cmd("next_window")
             elif key == "prev_window":
@@ -2199,8 +2264,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.open_prompt("rename_window", "rename-tab",
                                  self._active_window_name())
             elif k == "ampersand" or ch == "&":
-                self.open_prompt("confirm", "kill-tab? (y/N)",
-                                 action=lambda: self.send_cmd("kill_window"))
+                self.confirm_kill_tab()
             elif k == "T":
                 self.open_prompt("rename_pane", "set pane title")
             elif k == "t":
