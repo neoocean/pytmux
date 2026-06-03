@@ -48,6 +48,25 @@ async def test_break_join_pane():
         await teardown(srv, task, sock)
 
 
+async def test_pane_master_fd_cloexec():
+    """새 패널의 PTY master 에 FD_CLOEXEC 가 걸려, 이후 만들어지는 패널의 자식 셸이
+    형제 패널 fd 를 상속하지 않는다(패널 간 출력 섞임 방지)."""
+    import fcntl
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        srv.split_pane(sess, "lr")
+        srv.new_window(sess)
+        all_panes = [p for t in sess.tabs for p in t.window.panes()]
+        assert len(all_panes) >= 3
+        for p in all_panes:
+            flags = fcntl.fcntl(p.master_fd, fcntl.F_GETFD)
+            assert flags & fcntl.FD_CLOEXEC, f"pane {p.id} master fd 에 CLOEXEC 없음"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_last_pane_and_window():
     srv, task, sock = await server_only()
     try:

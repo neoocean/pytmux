@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import errno
+import fcntl
 import json
 import os
 import pty
@@ -51,6 +53,16 @@ class Server:
                 os.execvpe(shell, [shell], env)
             except Exception:
                 os._exit(127)
+        # 부모가 쥔 PTY master 에 close-on-exec 를 건다. 이게 없으면 이후 새 패널을
+        # 만들 때 pty.fork() 한 자식 셸이 형제 패널들의 master fd 를 그대로 상속해,
+        # fd 가 여러 프로세스에 살아남아 종료·재사용 시 패널 간 출력이 섞이는(=새 탭이
+        # 다른 패널을 "복사"한 듯 보이는) 원인이 된다. 각 master 생성 직후 CLOEXEC 를
+        # 걸어 두면 다음 fork 의 자식은 어떤 형제 master 도 물려받지 않는다.
+        try:
+            flags = fcntl.fcntl(fd, fcntl.F_GETFD)
+            fcntl.fcntl(fd, fcntl.F_SETFD, flags | fcntl.FD_CLOEXEC)
+        except OSError:
+            pass
         try:
             set_winsize(fd, rows, cols)
         except OSError:
@@ -96,8 +108,13 @@ class Server:
             data = os.read(pane.master_fd, 65536)
         except (BlockingIOError, InterruptedError):
             return
-        except OSError:
-            data = b""
+        except OSError as e:
+            # macOS/BSD 는 슬레이브(자식)가 끝나면 master 읽기에서 EIO 를 던진다 →
+            # 정상 EOF 로 처리. 그 외 일시적 오류는 패널을 닫지 않고 무시한다(살아있는
+            # 패널을 잘못 정리하면 fd 가 해제·재사용되며 패널 간 fd 가 꼬일 수 있다).
+            if e.errno == errno.EIO:
+                self._pane_eof(pane)
+            return
         if not data:
             self._pane_eof(pane)
             return
