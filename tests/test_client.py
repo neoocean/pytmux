@@ -272,12 +272,40 @@ async def test_shift_escape_forwards_esc_plain_escape_enters_esc_mode():
 
 
 class _FakeMouse:
-    def __init__(self, x, y, button=1):
+    def __init__(self, x, y, button=1, ctrl=False):
         self.x, self.y, self.button = x, y, button
+        self.ctrl = ctrl
         self.stopped = False
 
     def stop(self):
         self.stopped = True
+
+
+async def test_right_click_menu_unified_and_ctrl_click_noop():
+    # 우클릭(button 3)은 마우스 모드(패스스루) 패널 위에서도 pytmux 컨텍스트 메뉴를
+    # 열고 그 패널을 활성화한다. Ctrl+Click 은 무동작(메뉴 안 뜸). (#29)
+    async def body(app, pilot, srv):
+        v = app.view
+        app.layout = {"panes": [{"id": 7, "x": 2, "y": 1, "w": 10, "h": 5,
+                                 "box": [1, 0, 12, 7], "mouse": 2,
+                                 "mouse_sgr": True, "active": True}],
+                      "dividers": [], "active": 7, "cols": 100, "rows": 30}
+        app.mode = "normal"
+        sel = []
+        app.send_cmd = lambda action, **kw: sel.append((action, kw))
+        # 우클릭 → 메뉴 열림(마우스 모드여도 패스스루보다 우선)
+        v.on_mouse_down(_FakeMouse(5, 3, button=3))
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1].__class__.__name__ == "MenuScreen", "우클릭→메뉴"
+        assert app._menu_pane == 7, "메뉴 대상 = 우클릭한 패널"
+        app.pop_screen()
+        await pilot.pause(0.05)
+        # Ctrl+Click(button 1 + ctrl) → 무동작(메뉴 안 뜸)
+        v.on_mouse_down(_FakeMouse(5, 3, button=1, ctrl=True))
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1].__class__.__name__ != "MenuScreen", \
+            "Ctrl+Click 은 메뉴를 열지 않음"
+    await _with_app(body)
 
 
 async def test_mouse_passthrough_encoding_and_routing():

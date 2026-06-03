@@ -842,8 +842,19 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.app._composite()
                 event.stop()
                 return
-            if event.button == 3 and self._mouse_target(event.x, event.y) is None:
-                self.app.open_menu()
+            # Ctrl+Click 은 무동작 — 컨텍스트 메뉴는 순수 우클릭(button 3)으로만 연다.
+            # (단, 터미널이 Ctrl+Click 을 그냥 button 3 으로 합쳐 보내면 ctrl 플래그가
+            #  안 와 구분 불가 — 그 경우 우클릭으로 취급됨. 터미널 의존 한계.)
+            if event.ctrl and self.app.mode == "normal":
+                event.stop()
+                return
+            # 우클릭: 마우스 모드(패스스루) 앱 위여도 pytmux 컨텍스트 메뉴를 우선한다.
+            # 커서 아래 패널을 먼저 활성화한 뒤 그 패널을 대상으로 메뉴를 연다.
+            if event.button == 3 and self.app.mode == "normal":
+                p = self._pane_at(event.x, event.y)
+                if p and p["id"] != self.app.layout.get("active"):
+                    self.app.send_cmd("select_pane_id", id=p["id"])
+                self.app.open_menu(p["id"] if p else None)
                 event.stop()
                 return
             # clock-mode 닫기 버튼([x]) 클릭
@@ -1387,6 +1398,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._clock_close_zones = {}  # pane_id -> (x0, x1, y) 닫기 버튼 영역
             self.calendar_panes = set()   # 달력 오버레이가 켜진 패널 id 집합
             self._calendar_close_zones = {}  # pane_id -> (x0, x1, y) 닫기 버튼
+            self._menu_pane = None  # 컨텍스트 메뉴가 열린 대상 패널 id(배경 강조용)
             # Claude Code: 패널별 상태/마지막 프롬프트, 헤더 닫힘 추적
             self.pane_claude = {}      # id -> {"claude": state, "prompt": str}
             self._claude_hidden = {}   # id -> 닫을 때의 prompt(같으면 숨김)
@@ -2097,7 +2109,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.push_screen(ChooseLayoutScreen(names, title), handle)
 
         # ---- 메뉴 ----
-        def open_menu(self):
+        def open_menu(self, pane_id=None):
+            # 메뉴 대상 패널(우클릭한 패널, 없으면 활성). 배경 강조(#18)·동작 대상.
+            self._menu_pane = pane_id or self.layout.get("active")
             def handle(result):
                 if result:
                     self._run_menu_action(result)
