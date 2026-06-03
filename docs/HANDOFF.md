@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **74 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **75 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -197,8 +197,12 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56371 + git, 신→구)
+## 9. 최근 변경(CL 56279~56373 + git, 신→구)
 
+- 56373 상단 탭바·하단 상태줄 **배경을 터미널 기본 배경색으로**(§10 #10/#28 해결) —
+  `TabBar`/`StatusBar` 의 base bgcolor 를 고정 테마색(panel/surface)에서 None(터미널
+  기본)으로. 활성 탭·REC 등 강조 배지는 자체 bgcolor 유지, 명시 bg(self.bg) 우선.
+  회귀 테스트 1종(총 75). 클라이언트 전용.
 - 56371 상태줄 **날짜 클릭 → 이번 달 달력 오버레이**(§10 #13 해결) — clock-mode
   미러: `calendar_panes`/`toggle_calendar`/`_draw_calendar_overlay`. 상태줄 날짜
   존(`_date_zone`)·우상단 `[x]`·명령(`calendar-mode`/`cal`)으로 토글. 뒤 화면 dim,
@@ -498,18 +502,10 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
     옵션이 있는 명령에 한해 점진 적용. 옵션 없는 명령은 선택 즉시 실행.
   - 기존 "선택 → 프롬프트 채움 → Enter" 경로(line ~532, ~2026-2027)는 유지(둘 다 가능).
   - ESC 모드/`F12` 진입과의 동선, 카테고리 탭 UI 와의 일관성 고려.
-- **[요청·미구현] 하단 상태줄(REC 줄) 배경을 터미널 배경색으로** — 화면 하단 REC 표시가
-  나오는 줄(`StatusBar`)의 배경이 **고정 검정/어두운색**이라, 터미널 앱에서 배경색을 바꿔도
-  이 줄에는 반영되지 않는다. 원인: `StatusBar.render_line`(client.py ~1077-1078)의 `base`
-  스타일이 `bgcolor=self.bg or tc("surface")` 로 **고정 테마색**(`surface`=`#1E1E1E`,
-  팔레트 ~82행)을 칠한다. 요청: 이 줄 배경을 **터미널 색상(터미널 기본 배경)이 적용되도록**
-  수정. 구현 방향: 명시적 `bg` 설정이 없을 때 base 의 `bgcolor` 를 고정 `surface` 대신
-  **터미널 기본 배경(`bgcolor=None`)** 으로 두어 터미널이 칠하게 한다(REC/SYNC/AR 등 개별
-  배지는 자체 bgcolor 유지 — 이건 의도된 강조라 그대로). **주의**: ① 합성/렌더 경로가
-  `bgcolor=None` 을 터미널 기본으로 제대로 흘려보내는지 확인(`Segment`/`Strip` 의 None bg
-  처리, `adjust_cell_length` 의 패딩 채움 스타일도 base 라 함께 영향). ② 상단 탭바
-  (`TabBar`)·패널 배경 등 **다른 영역도 같은 고정색을 쓰는지** 점검 — 일관성을 위해
-  함께 갈지 결정. ③ 설정으로 명시 배경을 준 경우(`self.bg`)는 그대로 우선.
+- ~~**[요청·미구현] 하단 상태줄(REC 줄) 배경을 터미널 배경색으로**~~ → **CL 56373 에서
+  해결**(상단 탭바 #28 과 함께). `StatusBar.render_line` 의 base bgcolor 를
+  `self.bg or surface` → `self.bg`(미설정이면 None=터미널 기본). REC/SYNC/AR 등 배지·
+  명시 bg(self.bg) 우선은 그대로.
 - ~~**[요청·미구현] 원격(SSH) 접속이면 머신 이름에 `ssh:` 접두사 + 붉은색 표시**~~ →
   **CL 56369 에서 해결.** `StatusBar._expand_parts` 가 right_fmt 를 (kind,text) 런으로
   쪼개고, `_is_remote`(`SSH_CONNECTION`/`SSH_TTY` 시작 시 1회 캐시)면 host 런을
@@ -805,22 +801,10 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   - **테스트**: `test_client` 에서 dividers 가 있는 레이아웃을 두고 `_divider_at` 좌표로
     `_hover_divider` 설정→`_composite` 후 그 셀에 배경 스타일이 들어갔는지, divider 밖 셀에는
     안 들어갔는지 단언.
-- **[요청·미구현] 상단 탭바(첫 줄) 배경을 터미널 기본 배경색으로** — 화면 맨 윗줄
-  탭바(`TabBar`)의 배경이 **고정 테마색**이라, 터미널 앱에서 배경색을 바꿔도 첫 줄에는
-  반영되지 않는다. 원인: `TabBar.render_line`(client.py ~1033)의 `base` 스타일이
-  `bgcolor=theme_color(self, "panel")`(`panel`=#242F38, 팔레트 ~83행)로 **고정색**을
-  칠하고, 이 `base` 가 **비활성 탭·여백 패딩·`adjust_cell_length`**(~1092/1095)에 모두
-  쓰인다. 요청: 첫 줄 배경을 **터미널 기본 배경**이 적용되도록 한다. 구현 방향: `base`
-  의 `bgcolor` 를 고정 `panel` 대신 **`None`(터미널 기본)** 으로 둔다 — 패널 내용 셀이
-  기본 배경(`d.get("b")`=conv_color None, client.py ~105)으로 터미널 색을 보이는 것과
-  **동일한 메커니즘**이라, 같은 경로로 터미널 배경이 첫 줄에도 흐른다. 활성(primary)/
-  선택(accent)/`[+]`(success)/화살표(accent) 배지는 **자체 bgcolor 유지**(의도된 강조).
-  **주의**: ① 비활성 탭 글자색(`fg`=theme foreground, 밝은 회색)은 그대로 둘지 — 밝은
-  터미널 배경에서 대비가 나쁘면 `color` 도 None(터미널 기본 전경) 고려. ② 이건 아래
-  **"하단 상태줄(REC 줄) 배경을 터미널 배경색으로"** 항목의 **상단 탭바 버전**이라 같은
-  패턴으로 함께 가면 일관적(StatusBar `base` ~1190-1191 의 `bgcolor` 도 고정 `surface`).
-  ③ 클라이언트 전용 변경이라 attach 재실행으로 반영(서버 재기동 불필요). ④ 회귀 테스트:
-  렌더한 탭바 세그먼트의 여백/비활성 탭 `bgcolor` 가 None, 활성 탭은 강조색인지 단언.
+- ~~**[요청·미구현] 상단 탭바(첫 줄) 배경을 터미널 기본 배경색으로**~~ → **CL 56373 에서
+  해결**(하단 상태줄 #10 과 함께). `TabBar.render_line` 의 base bgcolor 를
+  `theme_color("panel")` → None(터미널 기본). 활성/선택/`[+]`/화살표 배지는 자체 bgcolor
+  유지, 비활성 탭 전경색은 그대로.
 - **[요청·미구현] 패널 컨텍스트 메뉴 트리거를 '마우스 오른쪽 버튼'으로 통일(로컬/원격
   공통) + Ctrl+Click 무력화** — 현재 컨텍스트 메뉴(`MenuScreen`)는 `MultiplexerView.
   on_mouse_down`(client.py ~837)에서 **`event.button == 3`(우클릭)** 이고 그 좌표의
