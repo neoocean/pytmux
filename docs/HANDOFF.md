@@ -10,7 +10,8 @@
 - **어디**: Perforce `//woojinkim/scripts/pytmux/...`, 로컬
   `/Users/neoocean/p4/playground/scripts/pytmux`. GitHub 미러
   `https://github.com/neoocean/pytmux` (origin, main).
-- **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach).
+- **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
+  `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
 - **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **56 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
@@ -27,6 +28,10 @@ python3 pytmux.py record/replay   # 렌더 진단(화면 없이 출력 녹화→
 python3 tests/run.py              # 전체 헤드리스 테스트
 python3 tests/run.py test_client  # 특정 모듈만
 python3 -m py_compile pytmuxlib/*.py   # 빠른 문법 점검
+
+./install.sh [DIR]                # PATH 에 `pytmux` 래퍼 설치(기본 ~/.local/bin)
+BIN=pt ./install.sh               # 다른 이름으로 설치
+./uninstall.sh [DIR]              # 래퍼 제거(설치 시 쓴 DIR/BIN 동일 인자)
 ```
 
 > ⚠️ **데몬 재시작 주의**: 서버(데몬)는 셸을 보유한 장수 프로세스라 **클라이언트를
@@ -154,8 +159,9 @@ p4 submit -c NNNN
 git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 ```
 
-## 9. 최근 변경(CL 56279~56298, 신→구)
+## 9. 최근 변경(CL 56279~56303, 신→구)
 
+- 56303 설치/제거 스크립트 추가(`install.sh`/`uninstall.sh` — 어디서든 `pytmux` 실행)
 - 56298 패널 출력 캡처(Claude 화면 분석용, 기본 ON·`opts.json` 영속, 상태줄 REC)
 - 56297 ?/help 명령 목록을 카테고리 탭으로 분할(←→ 카테고리·↑↓ 명령)
 - 56293 F12 로 명령 프롬프트 바로 진입(중첩 토글은 prefix F12)
