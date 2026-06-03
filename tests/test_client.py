@@ -894,6 +894,38 @@ async def test_active_tab_connects_to_content():
     await _with_app(body, cfg={"tab_bar_always": True})
 
 
+async def test_active_tab_connector_follows_switch():
+    # #23 회귀: 활성 탭을 바꾸면 콘텐츠 상단 연결부(▀)가 새 탭으로 따라와야 한다.
+    # 예전엔 ① active_tab_xrange 가 render_line 부산물 _zones 를 읽어 전환 직후
+    # stale 값을 주고, ② _composite 가 status(탭 변경) 메시지에 안 돌아 연결부가
+    # 옛 탭 위치에 남았다. 폭(100)을 넘겨 스크롤이 생기는 긴 이름으로 재현한다.
+    async def body(app, pilot, srv):
+        names = [f"window-name-{i}" for i in range(6)]    # 6*≈17 > 100 → 스크롤
+        wins = lambda a: [{"index": i, "name": n, "active": (i == a)}
+                          for i, n in enumerate(names)]
+        app.status.windows = wins(0)
+        app._update_tabbar(); app._composite()
+        xr0 = app.tabbar.active_tab_xrange()
+        assert xr0 is not None and xr0[0] == 0, "활성 탭0 은 맨 왼쪽에서 시작"
+        # ① render_line 재실행(=_zones 갱신) 전에도 새 활성 탭 범위를 직접 계산
+        app.status.windows = wins(5)
+        prev_zones = list(app.tabbar._zones)
+        app.tabbar.set_tabs(app.status.windows, app._active_tab_index())
+        xr5 = app.tabbar.active_tab_xrange()
+        assert app.tabbar._zones == prev_zones, "render_line 아직 안 돎(_zones 그대로)"
+        assert xr5 is not None and xr5 != xr0, "전환 직후 새 활성 탭(5) 범위를 계산"
+        # ② 전체 경로(_update_tabbar)는 활성 탭이 바뀌면 즉시 재합성해 연결부를 옮긴다
+        app.status.windows = wins(0)
+        app._update_tabbar()                  # 5→0: 활성 변경 → 내부 _composite
+        app.status.windows = wins(5)
+        app._update_tabbar()                  # 0→5: 활성 변경 → 내부 _composite
+        xr = app.tabbar.active_tab_xrange()
+        cells = app.view._cells
+        mid = min((xr[0] + xr[1]) // 2, len(cells[0]) - 1)
+        assert cells[0][mid][0] == "▀", "연결부 ▀ 가 새 활성 탭 위치에 그려짐"
+    await _with_app(body, cfg={"tab_bar_always": True})
+
+
 async def test_tabbar_claude_done_background():
     # 비활성 탭에 claude_done 플래그가 오면 옅은(success) 배경으로 그려 활성 탭
     # (primary)과 구분된다(#22).

@@ -1145,6 +1145,47 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 out.append(f" {ic}{t['index']}:{t['name']}{flag} ")
             return out
 
+        def _entries(self):
+            """현재 상태(탭·스크롤·폭)에서 탭바에 그릴 항목을 (kind, payload, text)
+            순서 리스트로 만든다(스타일 무관, 기하만). render_line(세그먼트·스타일)과
+            active_tab_xrange(연결부 x 좌표)가 같은 기하를 공유해, 합성 시점이나
+            직전 렌더 상태와 무관하게 일치한다(#23 — 예전엔 후자가 render_line 부산물인
+            _zones 를 읽어 탭 전환 직후 stale 값으로 연결부가 어긋났다). 스크롤 보정은
+            render_line 과 동일하게 여기서 수행(부수효과로 self._scroll 갱신)."""
+            w = self.size.width
+            labels = self._labels()
+            widths = [sum(_char_cells(c) for c in s) for s in labels]
+            n = len(self.tabs)
+            idxs = [t["index"] for t in self.tabs]
+            selpos = idxs.index(self.sel) if self.sel in idxs else 0
+            # [+] 새 탭 버튼 폭만 빼면 됨([x] 닫기는 콘텐츠 패널 위로 이동함)
+            addtxt = " [+] "
+            mid_w = max(1, w - len(addtxt))
+            # 선택 탭이 보이도록 스크롤 보정
+            self._scroll = max(0, min(self._scroll, max(0, n - 1)))
+            if selpos < self._scroll:
+                self._scroll = selpos
+            while (self._scroll < selpos and
+                   sum(widths[self._scroll:selpos + 1]) > mid_w - 2):
+                self._scroll += 1
+            entries, mid_used = [], 0
+            if self._scroll > 0:                       # 왼쪽에 더 있음
+                entries.append(("scroll_left", None, "◀"))
+                mid_used += 1
+            i = self._scroll
+            while i < n:
+                tw = widths[i]
+                reserve = 1 if i < n - 1 else 0        # 오른쪽 화살표 자리
+                if mid_used + tw > mid_w - reserve and i > self._scroll:
+                    break
+                entries.append(("tab", self.tabs[i]["index"], labels[i]))
+                mid_used += tw
+                i += 1
+            if i < n:                                  # 오른쪽에 더 있음
+                entries.append(("scroll_right", None, "▶"))
+            entries.append(("add", None, addtxt))      # 마지막 탭 바로 오른쪽
+            return entries
+
         def render_line(self, y: int) -> Strip:
             w = self.size.width
             fg = theme_color(self, "foreground")
@@ -1162,58 +1203,29 @@ def build_client_app(sock_path: str, config: dict | None = None,
                              bold=True)
             # 비활성 탭의 Claude 작업 완료 알림: 옅은 배경(보면 해제)(#22)
             done_st = Style(color="black", bgcolor=theme_color(self, "success"))
-            labels = self._labels()
-            widths = [sum(_char_cells(c) for c in s) for s in labels]
-            n = len(self.tabs)
-            idxs = [t["index"] for t in self.tabs]
-            selpos = idxs.index(self.sel) if self.sel in idxs else 0
-            # [+] 새 탭 버튼 폭만 빼면 됨([x] 닫기는 콘텐츠 패널 위로 이동함)
-            addtxt = " [+] "
-            mid_w = max(1, w - len(addtxt))
-            # 선택 탭이 보이도록 스크롤 보정
-            self._scroll = max(0, min(self._scroll, max(0, n - 1)))
-            if selpos < self._scroll:
-                self._scroll = selpos
-            while (self._scroll < selpos and
-                   sum(widths[self._scroll:selpos + 1]) > mid_w - 2):
-                self._scroll += 1
-
+            by_idx = {t["index"]: t for t in self.tabs}
             segs, zones = [], []
             x = 0
-
-            def add(text, st, kind=None, payload=None):
-                nonlocal x
+            for kind, payload, text in self._entries():
+                if kind in ("scroll_left", "scroll_right"):
+                    st = arrow_st
+                elif kind == "add":
+                    # ESC 모드에서 [+] 가 커서 대상으로 선택되면 강조(#26)
+                    st = sel_st if (self.bar_focus and self.sel == "+") else add_st
+                else:                                  # tab
+                    t = by_idx.get(payload, {})
+                    if self.bar_focus and payload == self.sel:
+                        st = sel_st
+                    elif t.get("active"):
+                        st = active_st
+                    elif t.get("claude_done"):
+                        st = done_st   # 비활성 탭 Claude 완료 알림(#22)
+                    else:
+                        st = base
                 wdt = sum(_char_cells(c) for c in text)
                 zones.append((x, x + wdt, kind, payload))
                 segs.append(Segment(text, st))
                 x += wdt
-
-            mid_used = 0
-            if self._scroll > 0:                       # 왼쪽에 더 있음
-                add("◀", arrow_st, "scroll_left")
-                mid_used += 1
-            i = self._scroll
-            while i < n:
-                tw = widths[i]
-                reserve = 1 if i < n - 1 else 0        # 오른쪽 화살표 자리
-                if mid_used + tw > mid_w - reserve and i > self._scroll:
-                    break
-                if self.bar_focus and self.tabs[i]["index"] == self.sel:
-                    st = sel_st
-                elif self.tabs[i].get("active"):
-                    st = active_st
-                elif self.tabs[i].get("claude_done"):
-                    st = done_st       # 비활성 탭 Claude 완료 알림(#22)
-                else:
-                    st = base
-                add(labels[i], st, "tab", self.tabs[i]["index"])
-                mid_used += tw
-                i += 1
-            if i < n:                                  # 오른쪽에 더 있음
-                add("▶", arrow_st, "scroll_right")
-            # ESC 모드에서 [+] 가 커서 대상으로 선택되면 강조(#26)
-            add_cur = sel_st if (self.bar_focus and self.sel == "+") else add_st
-            add(addtxt, add_cur, "add")                # 마지막 탭 바로 오른쪽
             pad = w - x
             if pad > 0:
                 segs.append(Segment(" " * pad, base))
@@ -1229,13 +1241,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def active_tab_xrange(self):
             """현재 활성 탭의 화면 x 범위 (x0, x1). 콘텐츠 상단 테두리를 활성 탭과
-            연결(노트북 탭 모양)하는 데 쓴다(#23). _zones 가 비었으면 None."""
+            연결(노트북 탭 모양)하는 데 쓴다(#23). _zones(직전 렌더 부산물) 대신
+            _entries() 로 현재 self.tabs+스크롤에서 직접 계산해, 탭 전환 직후
+            render_line 재실행 전에 합성돼도 새 활성 탭을 정확히 가리킨다."""
             aidx = next((t["index"] for t in self.tabs if t.get("active")), None)
             if aidx is None:
                 return None
-            for x0, x1, kind, payload in self._zones:
+            x = 0
+            for kind, payload, text in self._entries():
+                wdt = sum(_char_cells(c) for c in text)
                 if kind == "tab" and payload == aidx:
-                    return (x0, x1)
+                    return (x, x + wdt)
+                x += wdt
             return None
 
         def on_mouse_down(self, event):
@@ -1627,7 +1644,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             """상태 갱신 시 탭바 데이터/표시 여부를 동기화. 표시가 바뀌면 뷰 크기가
             달라지므로 서버에 새 크기를 통지한다."""
             visible = self._tabbar_visible()
-            self.tabbar.set_tabs(self.status.windows, self._active_tab_index())
+            new_active = self._active_tab_index()
+            prev_active = next((t["index"] for t in self.tabbar.tabs
+                                if t.get("active")), None)
+            self.tabbar.set_tabs(self.status.windows, new_active)
             # 상단 탭바가 보이면 하단 상태줄의 탭 목록은 생략(중복 방지)
             if self.status.hide_tabs != visible:
                 self.status.hide_tabs = visible
@@ -1635,6 +1655,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.tabbar.display != visible:
                 self.tabbar.display = visible
                 self._send_resize()
+            # 활성 탭이 바뀌면 콘텐츠 상단 연결부(노트북 탭, #23)가 따라오도록 즉시
+            # 재합성한다. 연결부는 _composite 에서 그리는데 평소엔 layout/screen
+            # 메시지에만 돌아, status 메시지로 활성 탭만 바뀌면 다음 합성까지 연결부가
+            # 옛 탭 위치에 남았다(active_tab_xrange 는 이제 _entries 로 현재 탭에서
+            # 직접 계산하므로 여기서 합성만 다시 돌리면 정확한 위치로 그려진다).
+            if prev_active != new_active and self.tabbar.display:
+                self._composite()
 
         def _send_resize(self):
             if self.writer:
