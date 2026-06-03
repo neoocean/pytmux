@@ -1399,6 +1399,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.calendar_panes = set()   # 달력 오버레이가 켜진 패널 id 집합
             self._calendar_close_zones = {}  # pane_id -> (x0, x1, y) 닫기 버튼
             self._menu_pane = None  # 컨텍스트 메뉴가 열린 대상 패널 id(배경 강조용)
+            self._menu_open = False  # 컨텍스트 메뉴 표시 중(배경 dim 합성용)
             # Claude Code: 패널별 상태/마지막 프롬프트, 헤더 닫힘 추적
             self.pane_claude = {}      # id -> {"claude": state, "prompt": str}
             self._claude_hidden = {}   # id -> 닫을 때의 prompt(같으면 숨김)
@@ -1959,6 +1960,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # clock-mode / 달력 오버레이(패널 전체 덮기, 뒤 화면 dim)
             self._draw_clock_overlay(cells, W, H, active)
             self._draw_calendar_overlay(cells, W, H, active)
+            # 컨텍스트 메뉴가 열려 있으면 대상 패널 외 나머지를 흐리게(#18) — 중앙
+            # 모달이라 위치로 패널을 가리킬 수 없어 배경 dim 으로 대상을 구분한다.
+            if self._menu_open and self._menu_pane is not None:
+                mdim = Style(dim=True)
+                for p in self.layout.get("panes", []):
+                    if p["id"] == self._menu_pane:
+                        continue
+                    for yy in range(p["y"], min(p["y"] + p["h"], H)):
+                        for xx in range(p["x"], min(p["x"] + p["w"], W)):
+                            c, st = cells[yy][xx]
+                            cells[yy][xx] = (c, st + mdim)
             self.view.set_frame(cells)
 
         def _draw_tab_close(self, cells, W, H):
@@ -2112,7 +2124,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def open_menu(self, pane_id=None):
             # 메뉴 대상 패널(우클릭한 패널, 없으면 활성). 배경 강조(#18)·동작 대상.
             self._menu_pane = pane_id or self.layout.get("active")
+            self._menu_open = True
+            self._composite()        # 대상 외 패널을 흐리게(메뉴 모달 아래로 보임)
             def handle(result):
+                self._menu_open = False
+                self._composite()    # dim 해제
                 if result:
                     self._run_menu_action(result)
             self.push_screen(MenuScreen(), handle)

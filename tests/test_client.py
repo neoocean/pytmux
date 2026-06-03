@@ -281,6 +281,34 @@ class _FakeMouse:
         self.stopped = True
 
 
+async def test_context_menu_dims_other_panes():
+    # 컨텍스트 메뉴가 열려 있는 동안 대상 패널 외 나머지 패널은 흐리게(dim) 그려
+    # 어느 패널 대상인지 배경으로 구분한다(#18).
+    async def body(app, pilot, srv):
+        app.layout = {"panes": [{"id": 1, "x": 0, "y": 0, "w": 10, "h": 5,
+                                 "box": [0, 0, 10, 5]},
+                                {"id": 2, "x": 10, "y": 0, "w": 10, "h": 5,
+                                 "box": [10, 0, 10, 5]}],
+                      "active": 1, "cols": 20, "rows": 5, "dividers": []}
+        app.pane_content = {1: ([[("x" * 10, {})] for _ in range(5)], None),
+                            2: ([[("y" * 10, {})] for _ in range(5)], None)}
+        app._menu_pane = 1
+        app._menu_open = True
+        app._composite()
+        cells = app.view._cells
+        # 대상(1) 내부 셀은 dim 아님, 비대상(2) 내부 셀은 dim
+        s_target = cells[2][5][1]
+        s_other = cells[2][15][1]
+        assert not (s_target and s_target.dim), "대상 패널은 흐리지 않음"
+        assert s_other and s_other.dim, "비대상 패널은 흐리게(dim)"
+        # 메뉴 닫힘 → dim 해제
+        app._menu_open = False
+        app._composite()
+        cells = app.view._cells
+        assert not (cells[2][15][1] and cells[2][15][1].dim), "닫으면 dim 해제"
+    await _with_app(body)
+
+
 async def test_right_click_menu_unified_and_ctrl_click_noop():
     # 우클릭(button 3)은 마우스 모드(패스스루) 패널 위에서도 pytmux 컨텍스트 메뉴를
     # 열고 그 패널을 활성화한다. Ctrl+Click 은 무동작(메뉴 안 뜸). (#29)
