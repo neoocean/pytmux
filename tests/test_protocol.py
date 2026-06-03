@@ -49,6 +49,20 @@ async def test_claude_state():
     assert claude_state("Compacting… (esc to interrupt)") == "busy"
     assert claude_state("Claude usage limit reached. resets at 5pm") == "limit"
     assert claude_state("user@host ~ % ls") is None
+    # 현행 Claude Code(2026): 작업 스피너 줄(esc to interrupt 없음)
+    assert claude_state("✽ Crunching… (38s · ↓ 1.9k tokens)") == "busy"
+    assert claude_state("✻ Choreographing… (3m 28s)") == "busy"
+    assert claude_state("· Boondoggling… (14s · thinking)") == "busy"
+    assert claude_state("✻ Symbioting…") == "busy"          # 시간 표시 전 프레임
+    # 현행 idle footer: 권한 모드 줄(shift+tab 순환)
+    assert claude_state("❯\n⏵⏵ auto mode on (shift+tab to cycle)") == "idle"
+    assert claude_state("⏵⏵ accept edits on (shift+tab to cycle)") == "idle"
+    # busy 와 idle footer 가 함께 있으면 busy 우선
+    assert claude_state(
+        "✽ Flowing… (8m 4s · ↑ 21.1k tokens)\n"
+        "⏵⏵ auto mode on (shift+tab to cycle)") == "busy"
+    # 오탐 방지: 도구 출력 말줄임표는 busy 아님
+    assert claude_state("⎿  … +38 lines (ctrl+o to expand)") is None
 
 
 async def test_claude_usage():

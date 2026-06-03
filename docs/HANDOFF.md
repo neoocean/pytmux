@@ -119,9 +119,18 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
 ## 6. ⚠️ 깨지기 쉬운/휴리스틱 부분 (주의)
 
 - **Claude 감지(`protocol.claude_state`/`claude_usage`)**: 패널 화면 텍스트의 특정
-  문자열("esc to interrupt", "? for shortcuts", "usage limit", "context … NN%",
-  "NN tokens")에 의존한다. **Claude Code 버전이 표시 문구를 바꾸면 오작동/미표시**.
+  문자열에 의존한다. **Claude Code 버전이 표시 문구를 바꾸면 오작동/미표시**.
   실제 화면 문구를 확인해 정규식을 보강해야 한다. 가장 손볼 가능성이 높은 곳.
+  - 현행(2026, CL 56315 기준)은 busy 시 **작업 스피너 줄** `✽ Crunching… (38s · ↓ 1.9k
+    tokens)`(글리프·동명사·시간 매 프레임 변동, **"esc to interrupt" 없음**)을, idle
+    시 **권한 모드 footer** `⏵⏵ auto mode on (shift+tab to cycle)`(accept edits/plan
+    mode 로 순환)를 그린다. 그래서 `_BUSY_SPINNER_RE`(말줄임표+괄호 경과시간)와
+    `"shift+tab to"` 로 잡는다. 모드 footer 는 busy 중에도 같이 보이므로 **busy 를 먼저**
+    판정한다. 레거시 "esc to interrupt"/"? for shortcuts"/"bypass permissions" 신호도
+    하위호환으로 유지.
+  - 실제 화면 재현법: `<sock>.capture/pane-*.log`(raw, ANSI 섞임)를 **pyte 로 다시
+    렌더**해야 `claude_state` 가 보는 텍스트와 같아진다(raw grep 은 글자 사이 이스케이프
+    때문에 빗나감). `pyte.ByteStream` 에 로그 tail 을 feed → `screen.display` 하단 줄 확인.
 - **마지막 프롬프트 추적(`server._track_prompt`)**: 입력 바이트를 누적하고 Enter 시
   확정. 백스페이스/CSI(화살표) 건너뜀·bracketed paste 본문 포함은 처리하나, 복잡한
   줄 편집은 근사치.
@@ -184,8 +193,14 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56313, 신→구)
+## 9. 최근 변경(CL 56279~56315, 신→구)
 
+- 56315 Claude 감지 정규식을 현행 Claude Code busy/idle footer 에 맞춰 보강 —
+  busy 는 작업 스피너 줄(`✽ Crunching… (38s · ↓ 1.9k tokens)`, "esc to interrupt"
+  없음)을 `_BUSY_SPINNER_RE`(말줄임표+괄호 경과시간/글리프+동명사)로, idle 은 권한
+  모드 footer(`⏵⏵ auto mode on (shift+tab to cycle)`)를 "shift+tab to" 로 판정.
+  레거시 신호 하위호환 유지·busy 우선. 실제 문구는 capture 로그 pyte 재렌더로 확인.
+  테스트 62 passed.
 - 56313 상단 탭바 기본 항상표시 + 하단 시계 클릭으로 clock-mode 토글 — tab-bar
   기본값 always(`set tab-bar auto` 로 2개↑만 표시). `: set`/source-file 런타임
   반영(`set_tab_bar_always`). StatusBar 오른쪽 시계 영역(`_clock_zone`) 클릭 시
@@ -222,9 +237,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 10. 가능한 후속 작업 (열린 항목)
 
-- Claude 감지/사용량 정규식을 실제 Claude Code 화면 문구에 맞춰 보강(§6).
-  → **출력 캡처가 이를 위한 준비**: `<sock>.capture/pane-*.log`(기본 ON)에 쌓인
-  실제 raw 출력을 분석해 `protocol.claude_state`/`claude_usage` 정규식을 보강할 것.
+- ~~Claude 감지/사용량 정규식을 실제 Claude Code 화면 문구에 맞춰 보강(§6).~~
+  → **busy/idle 은 CL 56315 에서 현행 문구(작업 스피너·권한 모드 footer)에 맞춰 보강
+  완료**(§6). 남은 것: `claude_usage` 의 토큰 수("↓ N tokens")는 스트리밍 델타라
+  누적 컨텍스트와 다름 — 컨텍스트 잔량%·`(1M context)` 모델 배지 등 더 의미있는 신호로
+  교체 여지. 리밋(limit) 문구는 실제 리밋 캡처 샘플이 없어 미검증.
 - 탭 **드래그 재정렬 시 시각적 피드백**(현재는 놓을 때 확정만).
 - 패널 **드래그 swap**, 단일 패널 테두리 on/off 옵션화.
 - 다중 줄 상태표시줄, unbind-key, 라이브 PTY display-popup.

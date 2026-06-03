@@ -74,23 +74,39 @@ def conv_color(c):
 _RESET_RE12 = re.compile(r'(\d{1,2})(?::(\d{2}))?\s*([ap]m)', re.I)
 _RESET_RE24 = re.compile(r'\b([01]?\d|2[0-3]):([0-5]\d)\b')
 
+# 처리중(busy) 스피너: 현행 Claude Code 는 footer 에 "esc to interrupt" 대신
+# "<글리프> <동명사>… (12s · ↓ 1.9k tokens)" 형식의 애니메이션 줄을 그린다.
+# 동명사 단어(Crunching/Flowing/…)와 글리프(✽✢✳✶✷✻·)는 매 프레임 바뀌므로
+# 안정적인 부분만 잡는다: 말줄임표(…) + 괄호 안 경과시간("(20s"/"(2m 17s").
+# 시간 숫자+s 를 요구해 "… +38 lines (ctrl+o)" 같은 도구 출력 오탐을 피한다.
+_BUSY_SPINNER_RE = re.compile(
+    r"…\s*\((?:\d+\s*m\s*)?\d+\s*s"      # "… (20s" / "… (2m 17s"
+    r"|[✽✢✳✶✷✻]\s+\w+…"                  # 스피너 글리프 + "동명사…"(시간 표시 전)
+)
+
 
 def claude_state(text: str):
     """패널의 최근 화면 텍스트로 Claude Code CLI 상태를 추정한다.
 
     반환: "limit"(사용량 리밋으로 멈춤) / "busy"(프롬프트 처리중) /
     "idle"(입력 대기) / None(Claude Code 아님). 화면 특징 문자열로 휴리스틱 판별.
+
+    현행 Claude Code(2026 기준)는 busy 시 작업 스피너("✽ Crunching… (38s …)"),
+    idle 시 권한 모드 footer("⏵⏵ auto mode on (shift+tab to cycle)")를 그린다.
+    모드 footer 는 busy 중에도 같이 보이므로 반드시 busy 를 먼저 판정한다.
     """
     low = text.lower()
     # 사용량 리밋 안내(자동재개 파서와 동일 신호)
     if "limit" in low and any(k in low for k in
                               ("reset", "again", "resume", "retry", "upgrade")):
         return "limit"
-    # 처리중: 작업 표시줄의 "esc to interrupt"
-    if "esc to interrupt" in low or "interrupt)" in low:
+    # 처리중: 현행 작업 스피너 또는 레거시 "esc to interrupt"
+    if (_BUSY_SPINNER_RE.search(text)
+            or "esc to interrupt" in low or "interrupt)" in low):
         return "busy"
-    # 입력 대기: Claude 입력창 푸터/도움말 신호
-    if ("? for shortcuts" in low or "for shortcuts" in low
+    # 입력 대기: 권한 모드 footer(shift+tab 순환) 또는 도움말/단축키 신호
+    if ("shift+tab to" in low or "mode on (shift" in low
+            or "? for shortcuts" in low or "for shortcuts" in low
             or "/help for help" in low or "bypass permissions" in low):
         return "idle"
     return None
