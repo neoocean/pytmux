@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **83 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **85 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -197,7 +197,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56392 + git, 신→구)
+## 9. 최근 변경(CL 56279~56394 + git, 신→구)
+
+- 56394 **pytmux 중첩 실행 거부(로컬)**(§10 #15 로컬 해결) — `nesting_blocked`
+  ($PYTMUX 설정+not --force)면 attach 를 sys.exit(1). 원격 중첩은 후속. 테스트
+  2종(총 85, test_launcher.py 신설).
 
 - 56392 닫기 확인 팝업 **pytmux 종료 케이스 구분**(§10 #16 해결) — 마지막 탭이면
   제목/문구 경고 + 선택 강조를 붉은색(ConfirmScreen danger). 회귀 테스트 1종(총 83).
@@ -547,23 +551,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   (win→select_window, pane→+select_pane_id), d/x=종료(win→confirm_kill_tab, pane→
   kill-pane y/N). 명령 `overview`/`tree` 별칭. **fg 명령만으로 원격 판정**(자식 트리
   심층 검사는 미적용 — 추후 정밀화 여지).
-- **[요청·미구현] pytmux 중첩 실행 거부(로컬·원격 공통)** — pytmux 패널 안에서 **다시
-  pytmux 를 실행하면 거부**해야 한다. 특히 pytmux 로 **원격 서버에 접속한 뒤 그쪽에서도
-  pytmux 를 실행하려 하면 중단**시킨다. 현재 패널 셸에는 `$PYTMUX`(소켓 경로)가 심어지지만
-  (`server.py` ~48), `launcher.main`(launcher.py ~154-156)의 기본 동작(attach/기동)이 **이를
-  검사하지 않아** 중첩 실행이 막히지 않는다(README 의 SSH 자동 attach 가드만 `$PYTMUX` 를
-  본다). 구현 방향:
-  - **로컬 중첩**: `main`(및 `attach` 서브커맨드) 시작에서 `$PYTMUX` 가 설정돼 있으면
-    **에러 메시지 출력 후 비정상 종료**(tmux 의 "sessions should be nested with care; unset
-    $TMUX to force" 식). 강제 플래그(예: `--force`)나 환경 해제로만 우회 허용할지 결정.
-  - **원격 중첩**: ssh 로 원격에 들어가면 `$PYTMUX` 가 기본적으로 **전파되지 않는다**
-    (SendEnv/AcceptEnv 미설정). 따라서 원격 셸은 자신이 pytmux 패널 안에서 떠 있는지 모른다.
-    pytmux 가 패널에서 ssh 를 띄울 때 **중첩 표식을 원격으로 전달**해야 함 — 예: ssh 명령에
-    `SetEnv PYTMUX=...`(OpenSSH 7.8+) 주입, 또는 원격에서도 인식 가능한 마커 사용. 이게 있어야
-    원격 pytmux 가 `$PYTMUX` 검사로 중첩을 거부할 수 있다.
-  - **주의**: 정상 attach(서버↔클라이언트)는 막으면 안 되고, **새 서버를 패널 안에서 새로
-    기동/attach 하려는 경우만** 거부 대상. `$PYTMUX` 는 패널 셸에만 있으므로 클라이언트
-    프로세스 자체 env 와 혼동하지 말 것.
+- **[부분해결] pytmux 중첩 실행 거부** — **로컬은 CL 56394 에서 해결**: `launcher.
+  nesting_blocked` 가 `$PYTMUX` 설정 + not --force 면 main/attach 를 sys.exit(1) 로
+  거부(우회: --force 또는 `unset PYTMUX`). **원격(ssh) 중첩은 미구현** — ssh 로 들어가면
+  `$PYTMUX` 가 기본 전파 안 되고, pytmux 가 ssh 를 직접 띄우지 않아(사용자가 패널에서 ssh
+  입력) SetEnv 주입 지점이 없다. ssh 래퍼/`SetEnv PYTMUX` 주입이 필요해 후속 과제.
 - ~~**[요청·미구현] 닫기 확인 팝업을 "pytmux 종료 여부"로 구분(메시지+하이라이트색)**~~ →
   **CL 56392 에서 해결.** `confirm_kill_tab` 이 `len(self.tabbar.tabs) <= 1` 이면 종료
   케이스로 분기 — 제목 "pytmux 종료"·"…닫으면 pytmux 가 종료됩니다…" 문구·danger=True.
