@@ -500,6 +500,23 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
     원격 접속 중인지**의 판정임 — 혼동 주의.)
   - **명령**: `choose-tree`/`tree`/`overview` 류 명령을 `COMMANDS` 에 노출(이미 트리 선택기를
     여는 경로가 있으면 그 명령을 확장).
+- **[요청·미구현] pytmux 중첩 실행 거부(로컬·원격 공통)** — pytmux 패널 안에서 **다시
+  pytmux 를 실행하면 거부**해야 한다. 특히 pytmux 로 **원격 서버에 접속한 뒤 그쪽에서도
+  pytmux 를 실행하려 하면 중단**시킨다. 현재 패널 셸에는 `$PYTMUX`(소켓 경로)가 심어지지만
+  (`server.py` ~48), `launcher.main`(launcher.py ~154-156)의 기본 동작(attach/기동)이 **이를
+  검사하지 않아** 중첩 실행이 막히지 않는다(README 의 SSH 자동 attach 가드만 `$PYTMUX` 를
+  본다). 구현 방향:
+  - **로컬 중첩**: `main`(및 `attach` 서브커맨드) 시작에서 `$PYTMUX` 가 설정돼 있으면
+    **에러 메시지 출력 후 비정상 종료**(tmux 의 "sessions should be nested with care; unset
+    $TMUX to force" 식). 강제 플래그(예: `--force`)나 환경 해제로만 우회 허용할지 결정.
+  - **원격 중첩**: ssh 로 원격에 들어가면 `$PYTMUX` 가 기본적으로 **전파되지 않는다**
+    (SendEnv/AcceptEnv 미설정). 따라서 원격 셸은 자신이 pytmux 패널 안에서 떠 있는지 모른다.
+    pytmux 가 패널에서 ssh 를 띄울 때 **중첩 표식을 원격으로 전달**해야 함 — 예: ssh 명령에
+    `SetEnv PYTMUX=...`(OpenSSH 7.8+) 주입, 또는 원격에서도 인식 가능한 마커 사용. 이게 있어야
+    원격 pytmux 가 `$PYTMUX` 검사로 중첩을 거부할 수 있다.
+  - **주의**: 정상 attach(서버↔클라이언트)는 막으면 안 되고, **새 서버를 패널 안에서 새로
+    기동/attach 하려는 경우만** 거부 대상. `$PYTMUX` 는 패널 셸에만 있으므로 클라이언트
+    프로세스 자체 env 와 혼동하지 말 것.
 - 탭 **드래그 재정렬 시 시각적 피드백**(현재는 놓을 때 확정만).
 - 패널 **드래그 swap**, 단일 패널 테두리 on/off 옵션화.
 - 다중 줄 상태표시줄, unbind-key, 라이브 PTY display-popup.
