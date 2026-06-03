@@ -49,3 +49,11 @@ async def test_claude_state():
     assert claude_state("Compacting… (esc to interrupt)") == "busy"
     assert claude_state("Claude usage limit reached. resets at 5pm") == "limit"
     assert claude_state("user@host ~ % ls") is None
+
+
+async def test_claude_usage():
+    from pytmuxlib.protocol import claude_usage
+    assert claude_usage("Context left until auto-compact: 23%") == "ctx 23%"
+    assert claude_usage("Context low (8% remaining)") == "ctx 8%"
+    assert claude_usage("used 45.2k tokens") == "45.2k tok"
+    assert claude_usage("a normal line") is None

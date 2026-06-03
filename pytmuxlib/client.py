@@ -810,6 +810,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.cmd_mode = False  # ESC 명령 모드 표시
             self.message = None    # display-message 임시 메시지
             self.hide_tabs = False  # 상단 탭바가 보이면 하단 탭 목록 생략
+            self.claude_usage = None  # 활성 Claude 패널의 토큰/컨텍스트(best-effort)
             self.bg = bg
             self.fg = fg
             self.left_fmt = left
@@ -839,6 +840,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.sync = msg.get("sync", False)
             self.pane_title = msg.get("pane_title", "")
             self.autoresume = msg.get("autoresume", False)
+            self.claude_usage = msg.get("claude_usage")
             self.refresh()
 
         def render_line(self, y: int) -> Strip:
@@ -866,6 +868,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.autoresume:
                 segs.append(Segment("AR ", Style(color="black", bgcolor=tc("accent"),
                                                   bold=True)))
+            if self.claude_usage:   # 활성 Claude 패널 토큰/컨텍스트(best-effort)
+                segs.append(Segment(f" {self.claude_usage} ",
+                                    Style(color="white", bgcolor=tc("secondary"),
+                                          bold=True)))
             if self.prefix_off:
                 segs.append(Segment("NEST ", Style(color="white",
                                                    bgcolor=tc("secondary"), bold=True)))

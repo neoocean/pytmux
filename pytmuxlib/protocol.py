@@ -96,6 +96,31 @@ def claude_state(text: str):
     return None
 
 
+_CTX_PCT_RES = [
+    re.compile(r"context\s+(?:low|left|remaining)[^0-9%]*?(\d{1,3})\s*%", re.I),
+    re.compile(r"(\d{1,3})\s*%\s*(?:context|remaining|"
+               r"until\s+auto[- ]?compact)", re.I),
+    re.compile(r"auto[- ]?compact[^0-9%]*?(\d{1,3})\s*%", re.I),
+]
+_TOK_RE = re.compile(r"([\d][\d.,]*\s?[kKmM]?)\s*tokens?\b", re.I)
+
+
+def claude_usage(text: str):
+    """Claude Code 화면 텍스트에서 컨텍스트 사용률/토큰 수를 best-effort 추출.
+
+    Claude Code 가 항상 고정 위치에 토큰/컨텍스트를 출력하진 않으므로 휴리스틱이다.
+    'ctx NN%' 또는 'NNk tok' 같은 짧은 문자열을 반환(못 찾으면 None).
+    """
+    for rx in _CTX_PCT_RES:
+        m = rx.search(text)
+        if m:
+            return f"ctx {m.group(1)}%"
+    m = _TOK_RE.search(text)
+    if m:
+        return f"{m.group(1).replace(' ', '')} tok"
+    return None
+
+
 def parse_reset_delay(text: str, now: "_dt.datetime | None" = None):
     """Claude Code 등의 사용량 리밋 안내 문구에서 해제 시각을 찾아
     지금부터 그때까지의 지연(초)을 반환. 못 찾으면 None."""

@@ -12,8 +12,8 @@ import subprocess
 import time
 
 from .model import ClientConn, Pane, Session, Split, Tab, Window
-from .protocol import (FLUSH_HZ, MIN_H, MIN_W, claude_state, parse_reset_delay,
-                       read_msg, set_winsize, write_msg)
+from .protocol import (FLUSH_HZ, MIN_H, MIN_W, claude_state, claude_usage,
+                       parse_reset_delay, read_msg, set_winsize, write_msg)
 
 
 class Server:
@@ -1125,6 +1125,10 @@ class Server:
                               "prompt": p.last_prompt}
                              for p in (win.panes() if win else [])],
             "active_pane": win.active_pane.id if win else None,
+            # 활성 패널이 Claude 면 토큰/컨텍스트 사용량(best-effort)
+            "claude_usage": (win.active_pane._claude_usage
+                             if win and win.active_pane
+                             and win.active_pane._claude else None),
             "zoomed": bool(win.zoomed) if win else False,
             "sync": bool(win.sync) if win else False,
             "pane_title": win.active_pane.title if win and win.active_pane else "",
@@ -1183,11 +1187,13 @@ class Server:
                            "rows": rows, "cursor": cursor}
                     for c in clients:
                         await write_msg(c.writer, msg)
-                    # Claude Code 상태 갱신(화면 텍스트 휴리스틱)
+                    # Claude Code 상태/사용량 갱신(화면 텍스트 휴리스틱)
                     txt = "\n".join("".join(s[0] for s in r) for r in rows)
                     new_cl = claude_state(txt)
-                    if new_cl != p._claude:
+                    new_use = claude_usage(txt) if new_cl else None
+                    if new_cl != p._claude or new_use != p._claude_usage:
                         p._claude = new_cl
+                        p._claude_usage = new_use
                         status_changed = True
                 # 활동/벨 모니터링: 비활성 윈도우의 출력/BEL 을 플래그로
                 for t in sess.tabs:

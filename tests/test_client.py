@@ -369,6 +369,14 @@ async def test_wide_char_composite():
     await _with_app(body)
 
 
+async def test_status_claude_usage():
+    async def body(app, pilot, srv):
+        app.status.claude_usage = "ctx 42%"
+        txt = "".join(s.text for s in app.status.render_line(0))
+        assert "ctx 42%" in txt, repr(txt)
+    await _with_app(body)
+
+
 async def test_status_format():
     async def body(app, pilot, srv):
         strip = app.status.render_line(0)

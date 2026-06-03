@@ -48,6 +48,7 @@ class Pane:
         self._bell = False       # 마지막 검사 이후 BEL 수신
         # Claude Code 감지: 상태(idle/busy/limit/None)와 마지막 입력 프롬프트
         self._claude = None
+        self._claude_usage = None  # "ctx 42%" / "12k tok" 등(best-effort)
         self._inbuf = ""         # 현재 입력 줄 누적(프롬프트 추적용)
         self.last_prompt = ""    # 마지막으로 제출한 프롬프트(한 줄)
         self.search_query = ""   # 스크롤백 검색어
