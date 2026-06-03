@@ -6,6 +6,7 @@ import base64
 import shlex
 import socket
 import subprocess
+import time
 
 from wcwidth import wcwidth
 
@@ -823,6 +824,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                                       32 + min(row, 223)])
 
         def on_mouse_down(self, event: events.MouseDown):
+            self.app._log_mouse("down", event.x, event.y, event.button)
             if not self.app.mouse_enabled:
                 return
             if self.app.mode == "scroll":  # copy-mode: 드래그로 선택
@@ -946,6 +948,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.stop()
 
         def on_mouse_scroll_up(self, event):
+            # 진단 로그는 어떤 가드보다 먼저 — "이벤트가 도달했는가"를 본다.
+            self.app._log_mouse("scroll_up", event.x, event.y)
             if not self.app.mouse_enabled:
                 return
             # 마우스 모드 앱(less/htop/Claude 등)은 휠을 직접 처리하도록 전달.
@@ -962,6 +966,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             event.stop()
 
         def on_mouse_scroll_down(self, event):
+            self.app._log_mouse("scroll_down", event.x, event.y)
             if not self.app.mouse_enabled:
                 return
             tp = self._mouse_target(event.x, event.y)
@@ -1281,6 +1286,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.prefix_enabled = True  # 중첩 시 F12 로 outer prefix 일시 해제
             self.bindings = config.get("bindings", {})
             self.mouse_enabled = config.get("mouse", True)
+            # 마우스 이벤트 진단 로그(원격 SSH 휠 스크롤 미동작 등 환경 의존 문제용).
+            # `set mouse-debug on` 으로 켜면 클라이언트가 받은 마우스/휠 이벤트를
+            # <sock>.mouse.log 로 남긴다 → 원격에서 휠 이벤트가 Textual 까지 실제로
+            # 도달하는지(도달 안 하면 상위 터미널/SSH 문제)를 切り分け 할 수 있다.
+            self.mouse_debug = config.get("mouse_debug", False)
+            self._mouse_log_path = (sock_path or "pytmux") + ".mouse.log"
             self.mode_keys = config.get("mode_keys", "vi")
             self.status_position = config.get("status_position", "bottom")
             self.status_interval = config.get("status_interval", 15)
@@ -1792,6 +1803,19 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     "t": "input", "pane": pane_id, "mouse": True,
                     "data": base64.b64encode(data).decode("ascii")}))
 
+        def _log_mouse(self, kind, x, y, button=0, note=""):
+            """마우스 진단 로그 한 줄(켜졌을 때만). 원격에서 휠 이벤트가 클라이언트
+            (Textual)까지 도달하는지 확인하는 용도. 도달하면 여기 찍히고, 그래도
+            스크롤이 안 되면 서버 scroll 처리/터미널 재그리기 쪽을 본다."""
+            if not self.mouse_debug:
+                return
+            try:
+                with open(self._mouse_log_path, "a") as f:
+                    f.write(f"{time.strftime('%H:%M:%S')} {kind} "
+                            f"x={x} y={y} b={button} mode={self.mode} {note}\n")
+            except OSError:
+                pass
+
         def send_scroll(self, pane_id, delta=0, bottom=False, top=False):
             if self.writer:
                 m = {"t": "scroll", "pane": pane_id}
@@ -1955,6 +1979,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
             elif name == "mouse":
                 self.mouse_enabled = val.lower() in ("on", "true", "1", "yes")
+            elif name in ("mouse-debug", "mouse-log"):
+                self.mouse_debug = val.lower() in ("on", "true", "1", "yes")
+                if self.mouse_debug:
+                    self.display_message(f"마우스 진단 로그: {self._mouse_log_path}")
             elif name == "status-bg":
                 self.status.bg = val
                 self.status.refresh()
@@ -1990,6 +2018,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             lines = [
                 f"prefix      {self.prefix_key}",
                 f"mouse       {'on' if self.mouse_enabled else 'off'}",
+                f"mouse-debug {'on' if self.mouse_debug else 'off'}",
                 f"status-bg   {self.status.bg}",
                 f"status-fg   {self.status.fg}",
                 f"mode-keys   {self.mode_keys}",

@@ -329,6 +329,30 @@ async def test_mouse_passthrough_encoding_and_routing():
     await _with_app(body)
 
 
+async def test_mouse_debug_logging():
+    import os
+    import tempfile
+
+    async def body(app, pilot, srv):
+        path = os.path.join(tempfile.gettempdir(), "pytmux_mousedbg_test.log")
+        if os.path.exists(path):
+            os.remove(path)
+        app._mouse_log_path = path
+        # 꺼져 있으면 아무것도 기록하지 않음
+        app.mouse_debug = False
+        app.view.on_mouse_scroll_up(_FakeMouse(5, 5))
+        assert not os.path.exists(path), "mouse-debug off 면 로그 없음"
+        # 켜면 받은 휠 이벤트가 기록됨(원격에서 이벤트 도달 여부 진단용)
+        app.mouse_debug = True
+        app.view.on_mouse_scroll_up(_FakeMouse(5, 5))
+        app.view.on_mouse_scroll_down(_FakeMouse(5, 5))
+        with open(path) as f:
+            log = f.read()
+        assert "scroll_up" in log and "scroll_down" in log, log
+        os.remove(path)
+    await _with_app(body)
+
+
 async def test_active_pane_border_highlight():
     async def body(app, pilot, srv):
         await pilot.press("ctrl+b")
