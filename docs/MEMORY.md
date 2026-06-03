@@ -34,6 +34,25 @@
   → EOF 판정은 EIO/빈 읽기만. 그 외 OSError로 살아있는 패널을 닫으면 fd가 재사용되며
   같은 fd 꼬임을 부른다.
 
+## Claude 감지 휴리스틱 (CL 56315) — 진단 전말
+
+- **증상**: 탭 상태 아이콘(대기 ○/처리중 ◐)이 현행 Claude Code 에서 안 뜸. 원인은
+  `protocol.claude_state` 가 의존하던 화면 문구가 버전업으로 바뀐 것.
+- **현행(2026) footer 문구**: busy 는 작업 스피너 줄 `✽ Crunching… (38s · ↓ 1.9k
+  tokens)`(글리프·동명사·시간 매 프레임 변동, **"esc to interrupt" 사라짐**), idle 은
+  권한 모드 줄 `⏵⏵ auto mode on (shift+tab to cycle)`(accept edits/plan mode 순환,
+  **"? for shortcuts"/"bypass permissions" 안 보임**). 모드 줄은 busy 중에도 같이
+  보이므로 **busy 를 먼저 판정**해야 함.
+- **결정타(진단 기법)**: 캡처 로그(`<sock>.capture/pane-*.log`)는 raw 바이트라 글자
+  사이에 커서 이동 ANSI 가 섞여 **grep 이 빗나간다**(예: `esc[2C[1Bto interrupt`).
+  `claude_state` 가 실제로 보는 건 **pyte 가 렌더한 화면 텍스트**이므로, 로그 tail 을
+  `pyte.ByteStream` 에 feed → `screen.display` 하단 줄을 봐야 진짜 문구가 나온다.
+  스피너 동명사/글리프를 시간순으로 모으려면 일정 크기씩 feed 하며 하단 줄 스냅샷.
+- **교훈**: 스피너처럼 매 프레임 바뀌는 UI 는 **변하지 않는 토막만** 잡는다 —
+  말줄임표+괄호 경과시간(`… (20s`)은 안정적이고, 시간 숫자+s 를 요구하면
+  `… +38 lines (ctrl+o)` 같은 도구 출력 오탐도 막힌다. 리밋(limit) 문구는 실제
+  캡처 샘플이 없어 여전히 미검증(다음에 리밋 걸리면 로그 떠서 보강할 것).
+
 ## Git·Perforce 워크플로 (이 저장소 특수)
 
 - Perforce가 정본, GitHub(`neoocean/pytmux`)는 미러. **서브밋마다 git도 같은 단위로
