@@ -371,6 +371,32 @@ async def test_context_menu_dims_other_panes():
     await _with_app(body)
 
 
+async def test_divider_hover_tints_background():
+    # 경계선(divider) 위에 마우스를 올리면 그 칸 배경이 강조되고(리사이즈 암시),
+    # 벗어나면 해제된다(#27).
+    async def body(app, pilot, srv):
+        v = app.view
+        app.layout = {
+            "panes": [{"id": 1, "x": 0, "y": 0, "w": 10, "h": 5},
+                      {"id": 2, "x": 11, "y": 0, "w": 10, "h": 5}],
+            "dividers": [{"x": 10, "y": 0, "w": 1, "h": 5, "split_id": 100,
+                          "orient": "lr", "rect": [0, 0, 21, 5]}],
+            "active": 1, "cols": 21, "rows": 5}
+        app.pane_content = {1: ([[("x" * 10, {})] for _ in range(5)], None),
+                            2: ([[("y" * 10, {})] for _ in range(5)], None)}
+        # divider(x=10) 위 모션 → 호버 추적 + 배경 강조
+        v.on_mouse_move(_FakeMouse(10, 2))
+        await pilot.pause(0.05)
+        assert v._hover_divider == (10, 0, 1, 5), v._hover_divider
+        st = app.view._cells[2][10][1]
+        assert st is not None and st.bgcolor is not None, "divider 칸 배경 강조"
+        # divider 밖(패널 내부) 모션 → 해제
+        v.on_mouse_move(_FakeMouse(3, 2))
+        await pilot.pause(0.05)
+        assert v._hover_divider is None, "divider 벗어나면 해제"
+    await _with_app(body)
+
+
 async def test_right_click_menu_unified_and_ctrl_click_noop():
     # 우클릭(button 3)은 마우스 모드(패스스루) 패널 위에서도 pytmux 컨텍스트 메뉴를
     # 열고 그 패널을 활성화한다. Ctrl+Click 은 무동작(메뉴 안 뜸). (#29)

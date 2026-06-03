@@ -792,6 +792,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             super().__init__(id="view")
             self._cells: list[list] = []
             self._dragging = None  # (split_id, orient, rect)
+            self._hover_divider = None  # 마우스가 올라간 경계선 rect (x,y,w,h)
             self._sel = None       # 선택 영역 (x0,y0,x1,y1) 전역 좌표
             self._sel_start = None
             self._mouse_fwd = None     # 패스스루 중인 패널 id(버튼 다운~업)
@@ -953,6 +954,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             d = self._divider_at(event.x, event.y)
             if d:
                 self._dragging = d
+                self._hover_divider = None   # 드래그 시작 → 호버 강조는 해제
                 self.capture_mouse()
                 event.stop()
                 return
@@ -993,6 +995,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.stop()
                 return
             if not self._dragging:
+                # 경계선(divider) 위 호버 → 배경 강조(리사이즈 가능 암시)(#27).
+                # divider 는 테두리라 패스스루 content 영역과 분리됨 → 호버 우선.
+                if self.app.mouse_enabled:
+                    dv = self._divider_at(event.x, event.y)
+                    new_hov = (dv["x"], dv["y"], dv["w"], dv["h"]) if dv else None
+                    if new_hov != self._hover_divider:
+                        self._hover_divider = new_hov
+                        self.app._composite()   # 변경 시에만 재합성(떨림 방지)
+                    if dv:
+                        event.stop()
+                        return
                 # 버튼 없는 모션 — any-motion(1003) 앱에만 전달
                 pd = self._mouse_target(event.x, event.y)
                 if pd is not None and pd.get("mouse", 0) >= 3:
@@ -1012,6 +1025,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.app.send_cmd("resize", split_id=d["split_id"],
                               ratio=max(0.05, min(0.95, ratio)))
             event.stop()
+
+        def on_leave(self, event=None):
+            # 위젯 밖으로 나가면 경계선 호버 강조 해제(#27).
+            if self._hover_divider is not None:
+                self._hover_divider = None
+                self.app._composite()
 
         def on_mouse_up(self, event: events.MouseUp):
             if self._sel_start is not None:
@@ -2043,6 +2062,20 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # clock-mode / 달력 오버레이(패널 전체 덮기, 뒤 화면 dim)
             self._draw_clock_overlay(cells, W, H, active)
             self._draw_calendar_overlay(cells, W, H, active)
+            # 경계선(divider) 호버/드래그 강조: 그 칸의 글자는 두고 배경만 살짝
+            # 입혀 리사이즈 가능함을 알린다(#27).
+            hov = self.view._hover_divider
+            if hov is None and self.view._dragging:
+                d = self.view._dragging
+                hov = (d["x"], d["y"], d["w"], d["h"])
+            if hov:
+                hx, hy, hw, hh = hov
+                tint = Style(bgcolor=theme_color(self, "primary"))
+                for yy in range(hy, min(hy + hh, H)):
+                    for xx in range(hx, min(hx + hw, W)):
+                        if 0 <= yy < H and 0 <= xx < W:
+                            c, st = cells[yy][xx]
+                            cells[yy][xx] = (c, st + tint)
             # 컨텍스트 메뉴가 열려 있으면 대상 패널 외 나머지를 흐리게(#18) — 중앙
             # 모달이라 위치로 패널을 가리킬 수 없어 배경 dim 으로 대상을 구분한다.
             if self._menu_open and self._menu_pane is not None:
