@@ -197,7 +197,14 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56419 + git, 신→구)
+## 9. 최근 변경(CL 56279~56421 + git, 신→구)
+
+- 56421 **탭 전환 시 노트북 연결부가 따라오게**(§10 #23 회귀 해결) — 활성 탭을 바꿔도
+  연결부가 옛 탭에 남던 버그. 원인 둘: ① `active_tab_xrange` 가 렌더 부산물 `_zones`
+  를 읽어 전환 직후 stale, ② 연결부를 그리는 `_composite` 가 status(탭 변경) 경로에서
+  안 돌았다. 탭바 기하를 `_entries()` 로 추출해 `render_line`/`active_tab_xrange` 가
+  공유(후자는 현재 `self.tabs`+스크롤에서 직접 계산), `_update_tabbar` 가 활성 탭
+  변경 시 즉시 재합성. 회귀 테스트 1종(총 96). 클라이언트 전용.
 
 - 56419 **활성 탭↔콘텐츠 연결부를 위쪽 절반 블록(▀)으로**(§10 노트북 연결 다듬기) —
   CL 56413 의 노트북 탭 연결부가 row 0 활성 탭 구간을 활성색 배경으로 꽉 채우고(두꺼운
@@ -630,19 +637,18 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   x 범위를 노출, `_composite` 가 콘텐츠 상단 테두리(row 0)의 그 구간을 칠해 탭과 콘텐츠를
   연결. **56419: 꽉 찬 블록+┘/└ 코너 → 위쪽 절반 블록 ▀(활성색 전경)로 교체** — ▀ 아래
   모서리(셀 중앙선)가 양옆 가로 테두리(─)와 같은 높이라 끊김 없이 한 줄로 이어진다.
-- **[버그·미해결] 탭 전환 시 노트북 탭 연결부가 따라오지 않아 어긋나 보임** (#23 회귀,
-  CL 56413). 증상: 활성 탭을 1·2번으로 바꿔도 콘텐츠 상단의 연결부(끊긴 구간+활성색)가
-  **이전 위치(맨 왼쪽/탭 0 구간)에 머물러** 활성 탭과 어긋난다(실측: 활성 `1:claude`인데
-  연결 노치는 좌단). 원인 가설: `_composite` 가 `self.tabbar.active_tab_xrange()` →
-  `self.tabbar._zones` 를 읽는데, **탭 전환 직후 `_composite` 가 탭바 `render_line`(=`_zones`
-  재계산)보다 먼저 돌아 stale `_zones`(이전 활성 탭 위치)를 본다.** 또는 `set_tabs` 로
-  active 플래그는 갱신됐지만 `_zones` 의 x 좌표가 직전 렌더 것이라 어긋남. 손볼 방향:
-  ① `active_tab_xrange` 를 `_zones`(렌더 부산물) 대신 **현재 `self.tabs`+스크롤 상태로
-  직접 x 를 계산**하는 순수 함수로 바꿔 합성 시점과 무관하게 정확히 잡기, 또는 ② 탭
-  전환(`select_window`)·`set_tabs` 후 `tabbar.refresh()` 와 `_composite()` 순서를 보장
-  (탭바 먼저 렌더 → 그 `_zones` 로 합성). ①이 견고. 회귀 테스트: 탭 2개에서 활성 탭을
-  바꾼 뒤 `active_tab_xrange()` 가 새 활성 탭의 x 범위를 반환하고 `_composite` 의 연결
-  구간이 그 범위와 일치하는지 단언. 클라이언트 전용(attach 재실행 반영).
+- ~~**[버그·미해결] 탭 전환 시 노트북 탭 연결부가 따라오지 않아 어긋나 보임**~~ (#23 회귀,
+  CL 56413) → **CL 56421 에서 해결.** 증상: 활성 탭을 바꿔도 콘텐츠 상단 연결부가
+  옛 탭 위치(좌단)에 머물렀다. 원인은 진단대로 둘이었다: ① `active_tab_xrange` 가
+  렌더 부산물 `_zones` 를 읽어 전환 직후 stale(또는 스크롤로 새 활성 탭이 빠지면 None),
+  ② 연결부를 그리는 `_composite` 가 layout/screen 메시지에만 돌아 status 경로의 탭
+  변경(`_update_tabbar`)으로는 재합성이 안 됨. **수정(권장 ①+②)**: 탭바 기하를
+  `TabBar._entries()`(kind,payload,text 순서)로 추출해 `render_line`(스타일)과
+  `active_tab_xrange`(연결부 x)가 공유 — 후자는 `_zones` 대신 현재 `self.tabs`+스크롤
+  에서 직접 계산. 그리고 `_update_tabbar` 가 활성 탭 인덱스 변화를 감지하면 즉시
+  `_composite()` 호출. 회귀 테스트 `test_active_tab_connector_follows_switch`(폭 초과
+  스크롤 상황에서 전환 직후 새 범위 계산 + `_update_tabbar` 가 ▀ 를 새 위치에 그림).
+  클라이언트 전용(attach 재실행 반영).
 - ~~**[요청·미구현] 탭 선택기(트리)에 각 탭/패널의 로컬/원격 구분 표시**~~ → **CL 56383 에서
   해결**(위 전체 개요 팝업과 한 묶음). 트리 패널 행에 `[local]`/`[ssh]` 배지 표시(서버
   `_tree_msg` 가 패널별 `remote` 플래그 전달).
