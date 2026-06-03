@@ -952,31 +952,29 @@ async def test_claude_icon_and_header():
         app.tabbar.tabs = [{"index": 0, "name": "win",
                             "active": True, "claude": "busy"}]
         assert "◐" in "".join(app.tabbar._labels())
-        # 스티키 헤더: 마지막 프롬프트 + [x]
+        # 스티키 헤더: 마지막 프롬프트(좌측 [x] 닫기 버튼은 제거됨, #8)
         app.pane_claude = {active: {"id": active, "claude": "idle",
                                     "prompt": "do the thing"}}
         app._composite()
         ap = next(p for p in app.layout["panes"] if p["id"] == active)
         row = "".join((c[0] or " ") for c in app.view._cells[ap["y"]])
-        assert "do the thing" in row and "[x]" in row, repr(row)
-        assert active in app._claude_close_zones
-        # Claude 헤더 [x] 는 좌측 배치(우측이면 탭 닫기 [x] 와 한 행 차이로 시각
-        # 적으로 중복돼 보임). 클릭존 좌측 끝이 패널 좌측과 일치해야 한다.
-        x0, x1, _cy = app._claude_close_zones[active]
-        assert x0 == ap["x"] and x1 == ap["x"] + 3, (x0, x1, ap["x"])
+        assert "do the thing" in row, repr(row)
+        assert "[x]" not in row, "헤더 [x] 닫기 버튼은 제거됨"
         # 탭 닫기 [x] 는 우상단(W-3..W) 에 그대로
         tcz = app._tab_close_zone
         assert tcz is not None and tcz[1] == app.layout["cols"], tcz
-        # 닫기 → 숨김(같은 프롬프트면 계속 숨김)
-        app.close_claude_header(active)
+        # claude-header off → 헤더 숨김
+        app._run_command("claude-header off")
         app._composite()
         row2 = "".join((c[0] or " ") for c in app.view._cells[ap["y"]])
-        assert "do the thing" not in row2, repr(row2)
-        # 새 프롬프트가 오면 다시 표시
-        app._update_claude([{"id": active, "claude": "idle", "prompt": "next"}])
+        assert "do the thing" not in row2, "claude-header off → 숨김"
+        assert app.claude_header_on is False
+        # claude-header on → 다시 표시(전역 옵션, 프롬프트 단위 아님)
+        app._run_command("claude-header on")
         app._composite()
         row3 = "".join((c[0] or " ") for c in app.view._cells[ap["y"]])
-        assert "next" in row3, repr(row3)
+        assert "do the thing" in row3, "claude-header on → 표시"
+        assert app.claude_header_on is True
     await _with_app(body)
 
 

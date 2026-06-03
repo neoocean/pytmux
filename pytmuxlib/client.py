@@ -229,6 +229,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("display-popup", "명령 실행 결과를 팝업으로", "설정/기타"),
         ("clock-mode", "현재 패널을 큰 시계로 덮기(토글, 우상단 [x]/명령으로 닫기)", "설정/기타"),
         ("calendar-mode", "현재 패널을 이번 달 달력으로 덮기(토글, 상태줄 날짜 클릭/우상단 [x])", "설정/기타"),
+        ("claude-header", "Claude 프롬프트 헤더 표시 on/off (claude-header on|off|toggle)", "설정/기타"),
         ("run-shell", "셸 명령 실행", "설정/기타"),
         ("if-shell", "조건부 셸 실행", "설정/기타"),
         ("detach-client", "detach (앱 종료, 셸 유지)", "설정/기타"),
@@ -939,12 +940,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.app.toggle_calendar(pid)
                     event.stop()
                     return
-            # Claude 헤더 닫기 버튼([x]) 클릭
-            for pid, (zx0, zx1, zy) in self.app._claude_close_zones.items():
-                if zy == event.y and zx0 <= event.x < zx1:
-                    self.app.close_claude_header(pid)
-                    event.stop()
-                    return
             # 현재 탭 닫기 버튼([x]) 클릭(콘텐츠 오른쪽 위)
             z = self.app._tab_close_zone
             if z and z[2] == event.y and z[0] <= event.x < z[1]:
@@ -1496,10 +1491,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._calendar_close_zones = {}  # pane_id -> (x0, x1, y) 닫기 버튼
             self._menu_pane = None  # 컨텍스트 메뉴가 열린 대상 패널 id(배경 강조용)
             self._menu_open = False  # 컨텍스트 메뉴 표시 중(배경 dim 합성용)
-            # Claude Code: 패널별 상태/마지막 프롬프트, 헤더 닫힘 추적
+            # Claude Code: 패널별 상태/마지막 프롬프트
             self.pane_claude = {}      # id -> {"claude": state, "prompt": str}
-            self._claude_hidden = {}   # id -> 닫을 때의 prompt(같으면 숨김)
-            self._claude_close_zones = {}  # id -> (x0, x1, y)
+            self.claude_header_on = True  # 프롬프트 헤더 표시(claude-header on|off)
             self._tab_close_zone = None  # 현재 탭 닫기 [x] 영역 (x0, x1, y)
             # ---- 설정(config) 적용 ----
             self.prefix_key = config.get("prefix", "ctrl+b")
@@ -1707,47 +1701,31 @@ def build_client_app(sock_path: str, config: dict | None = None,
         # ---- Claude Code 마지막 프롬프트 스티키 헤더 ----
         def _update_claude(self, panes_claude):
             self.pane_claude = {e["id"]: e for e in panes_claude}
-            # 프롬프트가 바뀌면(새 프롬프트 제출) 닫아둔 헤더를 다시 보이게
-            for pid, e in self.pane_claude.items():
-                if (pid in self._claude_hidden
-                        and self._claude_hidden[pid] != e.get("prompt")):
-                    self._claude_hidden.pop(pid, None)
 
-        def close_claude_header(self, pane_id):
-            info = self.pane_claude.get(pane_id, {})
-            self._claude_hidden[pane_id] = info.get("prompt", "")
+        def set_claude_header(self, on: bool):
+            # claude-header on|off — 프롬프트 헤더 표시 토글(전역).
+            self.claude_header_on = on
             self._composite()
 
         def _draw_claude_headers(self, cells, W, H):
             """Claude Code 패널 내부 맨 윗줄에 마지막 프롬프트를 스티키 헤더로 표시.
-            스크롤과 무관(합성 시 항상 내용 최상단에 덮어 그림). 좌측 [x] 로 닫기
-            (우측은 탭 닫기 [x] 와 한 행 차이로 시각적으로 겹쳐 보이므로 좌측 배치)."""
-            self._claude_close_zones = {}
-            if not self.pane_claude:
+            스크롤과 무관(합성 시 항상 내용 최상단에 덮어 그림). 표시 여부는 전역
+            옵션 claude_header_on(명령 `claude-header on|off`)으로 끄고 켠다."""
+            if not self.claude_header_on or not self.pane_claude:
                 return
             hdr_st = Style(color="white", bgcolor=theme_color(self, "primary"),
                            bold=True)
-            close_st = Style(color="white", bgcolor=theme_color(self, "error"),
-                             bold=True)
             for p in self.layout.get("panes", []):
                 info = self.pane_claude.get(p["id"])
                 if not info or not info.get("claude") or not info.get("prompt"):
-                    continue
-                if self._claude_hidden.get(p["id"]) == info["prompt"]:
                     continue
                 cx, cy, cw = p["x"], p["y"], p["w"]
                 if cw < 6 or not (0 <= cy < H):
                     continue
                 for xx in range(cx, min(cx + cw, W)):   # 헤더 배경
                     cells[cy][xx] = (" ", hdr_st)
-                # 좌측 [x] (3칸) + 공백 1칸 후 프롬프트
-                bx0 = cx
-                for j, chh in enumerate("[x]"):
-                    if 0 <= bx0 + j < W:
-                        cells[cy][bx0 + j] = (chh, close_st)
-                self._claude_close_zones[p["id"]] = (bx0, bx0 + 3, cy)
-                text_start = cx + 4                      # [x] + space
-                budget = max(0, cw - 4)
+                text_start = cx + 1                      # 좌측 1칸 여백
+                budget = max(0, cw - 1)
                 gx = text_start
                 for chh in "▷ " + info["prompt"]:
                     wch = _char_cells(chh)
@@ -2716,6 +2694,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.toggle_clock(self.layout.get("active"))
             elif c in ("calendar-mode", "calendar", "cal"):
                 self.toggle_calendar(self.layout.get("active"))
+            elif c == "claude-header":
+                # claude-header [on|off|toggle] — 프롬프트 헤더 표시 제어(기본 toggle)
+                arg = args[0].lower() if args else "toggle"
+                self.set_claude_header(arg == "on" if arg in ("on", "off")
+                                       else not self.claude_header_on)
             elif c in ("display-popup", "popup"):
                 cmd = " ".join(a for a in args if not a.startswith("-"))
                 if cmd:
