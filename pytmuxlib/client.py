@@ -1294,6 +1294,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._clock_zone = None  # (x0, x1) 시각(시계) 클릭 영역
             self._date_zone = None   # (x0, x1) 날짜(달력) 클릭 영역
             self._usage_zone = None  # (x0, x1) 토큰 사용량 클릭 영역(Claude 트리)
+            self._rec_zone = None    # (x0, x1) REC 클릭 영역(캡처 정보 팝업)
+            self.capture_path = None  # 활성 패널 캡처 파일 경로
+            self.capture_size = 0     # 그 파일 크기(bytes)
             # 클라이언트가 SSH 원격 세션에서 도는지(attach 한 머신 기준, 시작 시 1회).
             self._is_remote = bool(os.environ.get("SSH_CONNECTION")
                                    or os.environ.get("SSH_TTY"))
@@ -1387,6 +1390,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.autoresume = msg.get("autoresume", False)
             self.capture = msg.get("capture", True)
             self.claude_usage = msg.get("claude_usage")
+            self.capture_path = msg.get("capture_path")
+            self.capture_size = msg.get("capture_size", 0)
             self.refresh()
 
         def render_line(self, y: int) -> Strip:
@@ -1415,7 +1420,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.autoresume:
                 segs.append(Segment("AR ", Style(color="black", bgcolor=tc("accent"),
                                                   bold=True)))
+            self._rec_zone = None
             if self.capture:        # 패널 출력 캡처 중
+                rx0 = sum(sum(_char_cells(c) for c in s.text) for s in segs)
+                self._rec_zone = (rx0, rx0 + 4)   # "REC "
                 segs.append(Segment("REC ", Style(color="white", bgcolor=tc("error"),
                                                    bold=True)))
             self._usage_zone = None
@@ -1475,6 +1483,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def on_mouse_down(self, event: events.MouseDown):
             if not self.app.mouse_enabled:
+                return
+            rz = self._rec_zone
+            if rz and rz[0] <= event.x < rz[1]:
+                self.app.show_capture_info(self.capture_path, self.capture_size)
+                event.stop()
                 return
             z = self._clock_zone
             if z and z[0] <= event.x < z[1]:
@@ -1742,6 +1755,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # claude-header on|off — 프롬프트 헤더 표시 토글(전역).
             self.claude_header_on = on
             self._composite()
+
+        def show_capture_info(self, path, size):
+            # REC 클릭 → 현재 활성 패널 캡처 파일 경로·크기 팝업(#4). 캡처 기능은
+            # 디버깅용이라 깊게 결합하지 않는다(분리/제거 용이).
+            if not path:
+                lines = ["캡처 off (REC 미표시)"]
+            else:
+                lines = [f"파일: {path}",
+                         f"크기: {size:,} bytes ({size / 1024:,.1f} KiB)",
+                         f"탭 매핑: {os.path.join(os.path.dirname(path), 'sessions.log')}"]
+            self.push_screen(InfoScreen(lines, title="패널 출력 캡처(REC)"))
 
         def open_prompt_history(self, pane_id=None):
             # Claude 프롬프트 히스토리 팝업(시간순). 헤더 클릭/명령으로 연다(#7).

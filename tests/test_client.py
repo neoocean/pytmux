@@ -924,6 +924,22 @@ async def test_bars_use_terminal_default_background():
     await _with_app(body)
 
 
+async def test_rec_click_capture_info_popup():
+    # REC 표시 클릭 → 활성 패널 캡처 파일 경로·크기 팝업(#4).
+    async def body(app, pilot, srv):
+        from textual.widgets import Label
+        app.status.capture = True
+        app.status.render_line(0)
+        assert app.status._rec_zone is not None, "REC 클릭존 등록"
+        app.show_capture_info("/tmp/x.sock.capture/pane-1.log", 2048)
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "InfoScreen"
+        joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        assert "pane-1.log" in joined and "2,048" in joined, joined
+    await _with_app(body)
+
+
 async def test_status_right_segments_clock_and_date_zones():
     # 오른쪽(host/시각/날짜)을 별도 런으로 쪼갠 뒤 시각=시계 존, 날짜=달력 존이
     # 서로 겹치지 않고, 날짜 클릭은 clock-mode 를 켜지 않아야 한다(#12).

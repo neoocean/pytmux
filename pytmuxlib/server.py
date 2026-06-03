@@ -888,6 +888,17 @@ class Server:
     def capture_dir(self) -> str:
         return self.sock_path + ".capture"
 
+    def _capture_info(self, pane):
+        """활성 패널의 캡처 파일 절대경로·크기(REC 클릭 팝업용). 캡처 off 면 (None,0)."""
+        if not self.capture or pane is None:
+            return None, 0
+        path = os.path.join(self.capture_dir, f"pane-{pane.id}.log")
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = 0
+        return path, size
+
     def _pane_location(self, pane: Pane) -> str:
         """패널이 속한 탭을 'tab<idx>:<name>' 로 반환(메타 로그용)."""
         for sess in self.sessions.values():
@@ -1320,6 +1331,7 @@ class Server:
 
     def _status_msg(self, sess: Session):
         win = sess.active_window
+        cap_path, cap_size = self._capture_info(win.active_pane if win else None)
         return {
             "t": "status",
             "session": sess.name,
@@ -1345,6 +1357,8 @@ class Server:
             "autoresume": bool(win.active_pane.autoresume)
             if win and win.active_pane else False,
             "capture": self.capture,
+            "capture_path": cap_path,
+            "capture_size": cap_size,
         }
 
     async def _send_full(self, client: ClientConn):
