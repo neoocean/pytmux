@@ -91,9 +91,18 @@ def _recvn(s: socket.socket, n: int) -> bytes:
     return buf
 
 
+def nesting_blocked(force: bool) -> bool:
+    """pytmux 패널 안에서 또 pytmux 를 띄우려는 중첩인지. 패널 셸에는 서버가
+    `$PYTMUX`(소켓 경로)를 심어 두므로(server.py), 그게 설정돼 있으면 중첩이다.
+    원격(ssh) 중첩은 `$PYTMUX` 가 기본 전파되지 않아 여기서 못 잡는다(문서 §10)."""
+    return bool(os.environ.get("PYTMUX")) and not force
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="pytmux", description="tmux 유사 터미널 멀티플렉서")
     parser.add_argument("--socket", default=None, help="유닉스 도메인 소켓 경로")
+    parser.add_argument("--force", action="store_true",
+                        help="중첩 실행 거부 등 안전장치를 무시하고 강제 실행")
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("attach", help="실행 중인 서버에 attach (없으면 기동)")
     sub.add_parser("ls", help="탭/패널 요약")
@@ -152,6 +161,12 @@ def main(argv=None):
         return
 
     # 기본 동작 = attach (필요 시 데몬 기동). 단일 세션 모델: 세션 이름 없음.
+    # 중첩 실행 거부: pytmux 패널 안($PYTMUX 설정)에서 다시 attach 하면 막는다
+    # (재귀 렌더·입력 꼬임 방지). --force 또는 `unset PYTMUX` 로만 우회.
+    if nesting_blocked(args.force):
+        print("pytmux: 이미 pytmux 안에서 실행 중입니다(중첩). 강제하려면 --force, "
+              "또는 'unset PYTMUX'.", file=sys.stderr)
+        sys.exit(1)
     ensure_server(sock_path)
     run_client(sock_path, None)
 
