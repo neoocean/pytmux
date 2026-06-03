@@ -1002,6 +1002,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.fg = fg
             self.left_fmt = left
             self.right_fmt = right
+            self._clock_zone = None  # (x0, x1) 시계(오른쪽) 클릭 영역
 
         def _expand(self, fmt):
             """#S/#h/#H/#{pane_title} 토큰과 strftime(%) 코드를 치환."""
@@ -1084,8 +1085,19 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if pad > 0:
                 segs.append(Segment(" " * pad, base))
             segs.append(Segment(right, base))
+            # 오른쪽 시계 영역(클릭하면 활성 패널 clock-mode 토글)
+            rw = sum(_char_cells(c) for c in right)
+            self._clock_zone = (max(0, w - rw), w) if rw else None
             # 폭 맞추기(자르기)
             return Strip(segs).adjust_cell_length(w, base)
+
+        def on_mouse_down(self, event: events.MouseDown):
+            if not self.app.mouse_enabled:
+                return
+            z = self._clock_zone
+            if z and z[0] <= event.x < z[1]:
+                self.app.toggle_clock(self.app.layout.get("active"))
+                event.stop()
 
     class PytmuxApp(App):
         ENABLE_COMMAND_PALETTE = False
@@ -1135,7 +1147,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._prev_bell = False
             self._prompt_purpose = None
             self._prompt_action = None
-            self.tab_bar_always = config.get("tab_bar_always", False)
+            self.tab_bar_always = config.get("tab_bar_always", True)
             self.view = MultiplexerView()
             self.tabbar = TabBar()
             self.status = StatusBar(
@@ -1172,6 +1184,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def _tabbar_visible(self):
             return self.tab_bar_always or len(self.status.windows) >= 2
+
+        def set_tab_bar_always(self, flag):
+            """상단 탭바 항상 표시 옵션을 런타임에 바꾼다(표시/뷰 크기 동기화)."""
+            flag = bool(flag)
+            if flag == self.tab_bar_always:
+                return
+            self.tab_bar_always = flag
+            self._update_tabbar()
 
         def _content_size(self):
             size = self.size
@@ -1758,6 +1778,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.set_titles = val.lower() in ("on", "true", "1", "yes")
             elif name == "set-titles-string":
                 self.title_fmt = val
+            elif name in ("tab-bar", "tabbar"):
+                self.set_tab_bar_always(
+                    val.lower() in ("always", "on", "true", "1", "yes"))
 
         def show_options(self):
             lines = [
@@ -1784,6 +1807,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.status.left_fmt = cfg["status_left"]
             if "status_right" in cfg:
                 self.status.right_fmt = cfg["status_right"]
+            self.set_tab_bar_always(cfg.get("tab_bar_always", True))
             self.status.refresh()
 
         def _active_window_name(self):

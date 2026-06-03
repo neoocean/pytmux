@@ -297,8 +297,9 @@ async def test_pane_name_on_border():
 
 
 async def test_tab_bar_and_esc_nav():
+    # auto 모드(tab-bar off): 1탭 숨김 → 2탭 표시 동작 검증
     async def body(app, pilot, srv):
-        assert app.tabbar.display is False, "탭 1개면 탭바 숨김"
+        assert app.tabbar.display is False, "auto 모드: 탭 1개면 탭바 숨김"
         app.send_cmd("new_window")          # 새 탭
         await pilot.pause(0.4)
         assert app.tabbar.display is True, "탭 2개면 탭바 표시"
@@ -314,7 +315,7 @@ async def test_tab_bar_and_esc_nav():
         await pilot.pause(0.3)
         assert app.tabbar.bar_focus is False, "Enter 후 탭바 포커스 해제"
         assert app._active_tab_index() != before, "탭 전환 완료"
-    await _with_app(body)
+    await _with_app(body, cfg={"tab_bar_always": False})
 
 
 async def test_tab_close_confirm_popup():
@@ -420,6 +421,39 @@ async def test_clock_mode_overlay():
         await pilot.pause(0.1)
         assert active not in app.clock_panes
     await _with_app(body, size=(44, 14))
+
+
+async def test_status_clock_click_toggles_clock_mode():
+    async def body(app, pilot, srv):
+        from textual import events
+        active = app.layout["active"]
+        # 상태줄 렌더 → 오른쪽 시계 클릭 영역(_clock_zone) 계산
+        app.status.render_line(0)
+        z = app.status._clock_zone
+        assert z is not None, "시계 영역 등록"
+        # 시계 영역 안을 클릭 → clock-mode on
+        ev = events.MouseDown(app.status, z[0], 0, 0, 0, 1, False, False, False)
+        app.status.on_mouse_down(ev)
+        await pilot.pause(0.1)
+        assert active in app.clock_panes, "시계 클릭 → clock-mode 켜짐"
+        # 다시 클릭 → 토글로 꺼짐
+        app.status.on_mouse_down(ev)
+        await pilot.pause(0.1)
+        assert active not in app.clock_panes, "다시 클릭 → 꺼짐"
+    await _with_app(body)
+
+
+async def test_tab_bar_default_always():
+    # 기본값(tab_bar_always=True): 탭이 하나여도 상단 탭바 표시
+    async def body(app, pilot, srv):
+        assert app.tab_bar_always is True
+        assert app.tabbar.display is True, "기본값: 1탭도 탭바 표시"
+        # 런타임 set tab-bar auto → 1탭이면 숨김
+        app.apply_option("tab-bar", "auto")
+        await pilot.pause(0.2)
+        assert app.tab_bar_always is False
+        assert app.tabbar.display is False, "auto + 1탭 → 숨김"
+    await _with_app(body, cfg={"tab_bar_always": True})
 
 
 async def test_claude_icon_and_header():

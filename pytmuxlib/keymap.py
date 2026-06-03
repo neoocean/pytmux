@@ -38,7 +38,7 @@ def load_config(path: str | None = None) -> dict:
     """
     cfg = {"prefix": "ctrl+b", "mouse": True, "bindings": {}, "aliases": {},
            "hooks": {}, "status_bg": None, "status_fg": None,
-           "mode_keys": "vi", "tab_bar_always": False}
+           "mode_keys": "vi", "tab_bar_always": True}
     candidates = []
     if path:
         candidates.append(path)
@@ -81,7 +81,8 @@ def load_config(path: str | None = None) -> dict:
                         except ValueError:
                             pass
                     elif opt in ("tab-bar", "tabbar"):
-                        # always = 탭이 하나여도 상단 탭바 표시(auto/off = 자동: 2개↑)
+                        # always(기본) = 탭이 하나여도 상단 탭바 표시
+                        # auto/off = 자동(탭 2개 이상일 때만 표시)
                         cfg["tab_bar_always"] = val.lower() in ("always", "on",
                                                                 "true", "1", "yes")
                     elif opt == "set-titles":
