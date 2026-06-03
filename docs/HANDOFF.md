@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **90 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **92 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -197,7 +197,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56407 + git, 신→구)
+## 9. 최근 변경(CL 56279~56409 + git, 신→구)
+
+- 56409 Claude 헤더 **프롬프트 히스토리 팝업**(§10 #7 부분해결) — 서버 prompt_history
+  누적, 클라 헤더 클릭/명령(prompt-history)→InfoScreen 시간순. ESC 포커스 선택은 후속.
+  회귀 테스트 2종(총 92). 서버+클라 → kill-server 재기동.
 
 - 56407 상태줄 토큰 사용량 **세션 동안 유지**(§10 #5 부분: 표시 유지) — _scan_claude
   가 Claude 살아있는 동안 마지막 사용량 보존, 종료 시 클리어. 누적 합산(1)은 후속.
@@ -483,24 +487,10 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   시작됐다"는 전이를 화면 휴리스틱으로만 판정해야 한다(연속 busy 라 idle 갭이 안 보일 수
   있음) — Claude 화면의 큐 표시/프롬프트 에코를 단서로 삼거나 보수적으로 처리. 입력·붙여넣기
   둘 다 `_track_prompt` 를 거치므로(§6) 두 경로 모두 동일하게 적용.
-- **[요청·미구현] Claude 프롬프트 헤더를 ESC 모드로 선택 → 프롬프트 히스토리 팝업** —
-  Claude 패널 첫 행 스티키 헤더는 직전 프롬프트 **하나만** 보여준다(`_draw_claude_headers`,
-  서버는 `pane.last_prompt` 단일만 보관). 요청: ① **ESC 모드에서 방향키로 이 헤더
-  인터페이스를 선택**할 수 있게 하고, ② 선택 후 **Enter 또는 클릭**하면 **이전에 입력한
-  프롬프트들을 시간 순으로 조회하는 팝업**을 띄운다. 구현 방향:
-  - **서버**: 프롬프트 히스토리 보관 추가 — `_track_prompt`(Enter 확정 시점)에서
-    `last_prompt` 외에 패널별 `prompt_history`(시간순 리스트)에 append. 레이아웃/상태
-    메시지나 전용 질의 명령으로 클라이언트에 히스토리 전달(길면 최근 N개·요청 시 풀 조회).
-    Claude 세션 경계(`claude_state` 신호)로 묶을지 여부 결정.
-  - **클라이언트(ESC 모드 선택)**: `_handle_esc_mode` 의 포커스 대상에 "Claude 헤더"를
-    추가 — 현재 포커스 이동은 패널(`select_pane`)과 상단 탭바(`bar_focus`) 두 종류뿐이니,
-    활성 패널이 Claude 헤더를 가진 경우 방향키로 헤더에 포커스가 가도록 새 상태 추가
-    (탭바 포커스 패턴 참고). 포커스 시 시각 표시.
-  - **팝업**: 클릭 영역은 기존 `_claude_close_zones`([x] 닫기)와 별개로 **헤더 본문
-    클릭 zone** 추가, Enter/클릭 시 프롬프트 히스토리 모달(`ChooseBuffer`/`InfoScreen` 류
-    스크롤 가능한 리스트)을 시간 순으로 노출. 좌표 변환 시 패널 오프셋·테두리 inset 주의.
-  - **주의**: §6 의 last_prompt 추적은 근사치(백스페이스/CSI/붙여넣기 처리)라 히스토리도
-    같은 한계 — 복잡한 줄 편집은 부정확할 수 있음.
+- **[부분해결] Claude 프롬프트 헤더 → 프롬프트 히스토리 팝업** — **CL 56409 에서 팝업
+  구현**: 서버가 패널별 prompt_history 누적(_track_prompt)·status 로 전달, 클라가 헤더
+  본문 클릭존·명령(prompt-history)으로 InfoScreen 시간순 목록 표시. **남은 부분**: ①
+  ESC 모드 방향키로 헤더에 포커스 주는 선택 동선(별도 포커스 상태 필요) 후속.
 - **[부분해결] Claude 헤더 첫 행 닫기 버튼 제거 → 옵션·명령 제어** — **CL 56405 에서
   [x] 제거 + 전역 옵션/명령 구현**: 헤더 [x]·_claude_hidden(프롬프트 단위 숨김) 제거,
   App.claude_header_on(기본 on)·명령 `claude-header on|off|toggle` 로 헤더 표시 제어.
