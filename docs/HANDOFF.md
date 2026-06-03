@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **75 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **76 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -197,8 +197,12 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56373 + git, 신→구)
+## 9. 최근 변경(CL 56279~56375 + git, 신→구)
 
+- 56375 컨텍스트 메뉴 **우클릭으로 통일 + Ctrl+Click 무력화**(§10 #29 해결) —
+  `on_mouse_down`: ctrl 클릭은 무동작, button 3 은 마우스 모드 앱 위여도 커서 아래
+  패널을 `select_pane_id` 후 그 패널 대상 `open_menu`. `_menu_pane` 보관(#18 토대).
+  회귀 테스트 1종(총 76). 클라이언트 전용.
 - 56373 상단 탭바·하단 상태줄 **배경을 터미널 기본 배경색으로**(§10 #10/#28 해결) —
   `TabBar`/`StatusBar` 의 base bgcolor 를 고정 테마색(panel/surface)에서 None(터미널
   기본)으로. 활성 탭·REC 등 강조 배지는 자체 bgcolor 유지, 명시 bg(self.bg) 우선.
@@ -805,33 +809,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   해결**(하단 상태줄 #10 과 함께). `TabBar.render_line` 의 base bgcolor 를
   `theme_color("panel")` → None(터미널 기본). 활성/선택/`[+]`/화살표 배지는 자체 bgcolor
   유지, 비활성 탭 전경색은 그대로.
-- **[요청·미구현] 패널 컨텍스트 메뉴 트리거를 '마우스 오른쪽 버튼'으로 통일(로컬/원격
-  공통) + Ctrl+Click 무력화** — 현재 컨텍스트 메뉴(`MenuScreen`)는 `MultiplexerView.
-  on_mouse_down`(client.py ~837)에서 **`event.button == 3`(우클릭)** 이고 그 좌표의
-  `_mouse_target` 이 None 일 때 `open_menu()` 로 연다. macOS 터미널은 **Ctrl+Click 을
-  버튼3(우클릭)으로 보내므로** 로컬에선 Ctrl+Click 으로도 열린다. 두 가지 문제/요청:
-  - **(원격/내부앱 패널에서 안 열림)** 원격 세션 등 **마우스 트래킹을 켠 내부 앱 패널**
-    에서는 `_mouse_target(x,y)` 가 그 패널을 반환(None 아님)해 우클릭이 **앱으로 패스스루**
-    (§"마우스 패스스루" CL 56347)되고 pytmux 메뉴가 안 뜬다. 그래서 원격 패널에선
-    Ctrl+Click/우클릭이 "아무 반응 없음"으로 보인다.
-  - **(트리거 정리 요청)** 메뉴 열기를 **마우스 오른쪽 버튼 하나로만** 하고, **Ctrl+Click
-    은 아무 동작도 안 하게** 한다(우클릭과 구분).
-  구현 방향:
-  - **로컬/원격 공통으로 우클릭 메뉴**: button==3 이면 `_mouse_target` 이 non-None(마우스
-    모드 앱)이어도 **pytmux 메뉴를 우선**해 열도록 ~837 조건에서 패스스루(~866-)보다 메뉴를
-    앞세운다(좌클릭/휠 등 나머지는 패스스루 유지). prefix/copy-mode 우선순위는 그대로.
-    **주의**: 이러면 내부 앱은 우클릭을 못 받는다 — 우클릭 패스스루가 꼭 필요한 앱이 있으면
-    예외 조건(옵션/특정 조합)을 둘지 결정.
-  - **Ctrl+Click 분리(난점)**: 터미널이 Ctrl+Click 을 그냥 버튼3 으로 합쳐 보내면 pytmux
-    는 진짜 우클릭과 **구분 불가**다. Textual `MouseDown` 의 수식자(`event.ctrl`)가 채워지
-    는지 먼저 확인 — 채워지면 `button==3 and not event.ctrl` 로 진짜 우클릭만 받고
-    Ctrl+좌클릭(button==1 + ctrl)은 무시. 안 채워지면 "Ctrl+Click 무력화"는 **터미널 의존**
-    이라 한계가 있음을 문서화(터미널이 보내는 이벤트 자체가 우클릭이면 막을 수 없음).
-  - **테스트**: `test_client` 에서 마우스 모드 ON 패널 좌표로 button==3 down → `open_menu`
-    (MenuScreen push) 호출 단언, button==1 + ctrl → 메뉴 안 뜸 단언.
-  - **이력**: 이 항목은 두 요청을 통합한다 — 원래 "**원격 패널에서도 Ctrl+Click 으로 메뉴를
-    열 것**"(원격 미동작 수정) 요청이, 이후 "**우클릭 하나로 통일하고 Ctrl+Click 은 무동작**"
-    으로 **갱신·대체**되었다(우클릭 경로가 로컬/원격 공통 해법이라 후자가 전자를 포함).
+- ~~**[요청·미구현] 패널 컨텍스트 메뉴 트리거를 '마우스 오른쪽 버튼'으로 통일(로컬/원격
+  공통) + Ctrl+Click 무력화**~~ → **CL 56375 에서 해결.** `on_mouse_down`(normal): ①
+  `event.ctrl` 이면 즉시 무동작(Ctrl+Click 으로 메뉴 안 열림), ② `button==3` 이면
+  `_mouse_target` 무관하게 커서 아래 패널(`_pane_at`)을 `select_pane_id` 로 활성화 후
+  그 패널 대상 `open_menu(pane_id)`. `open_menu` 가 대상을 `self._menu_pane` 에 보관
+  (#18 배경 강조용). **한계**: 터미널이 Ctrl+Click 을 ctrl 플래그 없이 button 3 으로
+  합쳐 보내면 진짜 우클릭과 구분 불가 → 우클릭으로 취급(터미널 의존).
 - 탭 **드래그 재정렬 시 시각적 피드백**(현재는 놓을 때 확정만).
 - 패널 **드래그 swap**, 단일 패널 테두리 on/off 옵션화.
 - 다중 줄 상태표시줄, unbind-key, 라이브 PTY display-popup.
