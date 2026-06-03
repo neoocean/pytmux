@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **78 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **80 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -197,8 +197,12 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56379 + git, 신→구)
+## 9. 최근 변경(CL 56279~56383 + git, 신→구)
 
+- 56383 **탭/패널 트리 개요**(§10 #14/#24 해결) — 서버 `_tree_msg` 가 패널 리스트
+  ({id,title,cmd,remote})를 전달, 클라 `ChooseTreeScreen` 가 패널을 들여쓰기로
+  `[local]`/`[ssh]`+앱 표시, Enter=전환·d/x=종료, `overview`/`tree` 명령. 회귀
+  테스트 2종(총 80). **서버+클라 양쪽 → kill-server 재기동 후 반영.**
 - 56379 컨텍스트 메뉴 **토글 항목 on/off 표시 + 선택해도 안 닫기**(§10 #17 해결) —
   `MENU_TOGGLES`·라벨에 ●/○·토글 선택 시 dismiss 없이 명령+낙관적 갱신, ESC 로만
   닫기, status 회신 때 `refresh_labels`. 회귀 테스트 1종(총 78). 클라이언트 전용.
@@ -530,26 +534,14 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   모듈 monthdayscalendar(월요일 시작) 그리드(제목 YYYY-MM·요일·주별 날짜), 오늘 강조
   (success 배경), `_clock_tick` 이 자정 넘어가면 갱신. **시계/달력은 한 패널에 하나만**
   (toggle 시 상호 배타).
-- **[요청·미구현] 전체 탭/패널/실행앱 한눈에 보기 + 전환·종료 팝업(로컬/원격 구분)** —
-  현재 열려 있는 **모든 탭 → 탭별 패널 → 각 패널에서 실행 중인 앱**을 한 화면(팝업)에 모두
-  표시하고, 그 안에서 **항목 간 전환**하거나 **선택한 탭/패널을 종료**할 수 있는 기능. **명령어로
-  팝업을 열 수** 있어야 하고, 각 패널이 **로컬에서 실행 중인지 원격(SSH)에서 실행 중인지
-  구분** 표시한다. 기존 인프라(확장 대상):
-  - **트리 선택기**: `ChooseTreeScreen`(client.py ~353)이 이미 윈도우(탭) 목록을 보여주나
-    `index:name (N panes)` 수준뿐 — **패널 단위로 들여쓰기**하고 각 패널의 실행 앱·로컬/원격
-    배지를 붙이도록 확장(또는 새 "overview" 모달). 트리에서 탭/패널 선택 시
-    `select_window`/`select_pane_id` 로 전환, 선택 항목 종료는 `kill_window`/`kill_pane`
-    (탭/패널 닫기 확인 팝업 `ConfirmScreen` 경유).
-  - **실행 앱 정보(서버)**: `_fg_command(fd)`(server.py ~567, `tcgetpgrp`+`ps -o comm=`)가
-    **활성 패널만** 조회한다. 트리 스냅샷에 **모든 패널의 fg 명령**을 담도록 확장(패널별
-    `master_fd` 로 조회). 트리 메시지(현재 `ChooseTreeScreen` 에 넘기는 tree)에 패널 id·
-    제목·fg 앱·로컬/원격 필드 추가.
-  - **로컬/원격 판정(패널별)**: 그 패널의 **프로세스 체인에 ssh/mosh/telnet 등 원격 세션이
-    있으면 원격**으로 표시. fg 명령이 ssh/mosh 면 단순 판정, 더 정확히는 자식 프로세스 트리
-    검사. (이건 §"원격 SSH 머신 이름 색" 의 *클라이언트 호스트* 판정과는 다른, **패널 내부에서
-    원격 접속 중인지**의 판정임 — 혼동 주의.)
-  - **명령**: `choose-tree`/`tree`/`overview` 류 명령을 `COMMANDS` 에 노출(이미 트리 선택기를
-    여는 경로가 있으면 그 명령을 확장).
+- ~~**[요청·미구현] 전체 탭/패널/실행앱 한눈에 보기 + 전환·종료 팝업(로컬/원격 구분)**~~ →
+  **CL 56383 에서 해결**(#24 와 함께). 서버 `_tree_msg` 의 windows[].panes 를 개수 →
+  패널 dict 리스트({id,title,cmd,remote})로 확장(`_pane_overview`+`_REMOTE_CMDS`로 fg
+  명령이 ssh/mosh/autossh/telnet/et 류면 remote). 클라 `ChooseTreeScreen` 가 윈도우
+  아래 패널을 들여쓰기로 `[local]`/`[ssh]` 배지+앱+제목 표시(markup=False), Enter=전환
+  (win→select_window, pane→+select_pane_id), d/x=종료(win→confirm_kill_tab, pane→
+  kill-pane y/N). 명령 `overview`/`tree` 별칭. **fg 명령만으로 원격 판정**(자식 트리
+  심층 검사는 미적용 — 추후 정밀화 여지).
 - **[요청·미구현] pytmux 중첩 실행 거부(로컬·원격 공통)** — pytmux 패널 안에서 **다시
   pytmux 를 실행하면 거부**해야 한다. 특히 pytmux 로 **원격 서버에 접속한 뒤 그쪽에서도
   pytmux 를 실행하려 하면 중단**시킨다. 현재 패널 셸에는 `$PYTMUX`(소켓 경로)가 심어지지만
@@ -705,14 +697,9 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
     받아 상단 테두리 줄의 해당 칸만 연결 문자로 바꾼다. 스크롤(◀▶)·`[+]` 와 겹치지 않게 주의.
   - **주의**: 탭바는 높이 1(dock top)이고 콘텐츠 테두리는 별도 행이라, 두 행의 경계 문자가
     자연스럽게 이어지는지 골든 스냅샷(`replay`)으로 확인. 색도 활성=primary 로 맞춰야 연결감.
-- **[요청·미구현] 탭 선택기(트리)에 각 탭/패널의 로컬/원격 구분 표시** — 탭 선택기 트리
-  (`ChooseTreeScreen`, client.py ~353)에서 각 탭·패널이 **로컬에서 실행 중인지 원격(SSH) 서버
-  인지** 구분되게 표시한다. 현재 트리는 `index:name (N panes)` 윈도우 수준만 보여준다. 구현
-  방향: 위 "전체 탭/패널/실행앱 개요 팝업" 항목의 **로컬/원격 판정**과 동일 — 패널의 프로세스
-  체인에 ssh/mosh/telnet 등 원격 세션이 있으면 원격으로 보고(서버에서 패널별 판정해 트리
-  스냅샷에 `remote` 플래그 추가), 트리 항목에 로컬/원격 배지(예: `[ssh]`/색상)를 붙인다. 그
-  항목과 **같은 데이터·위젯을 공유**하므로 함께 구현하면 된다(이 항목은 트리에 구분 표시를
-  넣는 것에 한정한 부분 요청).
+- ~~**[요청·미구현] 탭 선택기(트리)에 각 탭/패널의 로컬/원격 구분 표시**~~ → **CL 56383 에서
+  해결**(위 전체 개요 팝업과 한 묶음). 트리 패널 행에 `[local]`/`[ssh]` 배지 표시(서버
+  `_tree_msg` 가 패널별 `remote` 플래그 전달).
 - **[요청·미구현/확인필요] Ctrl+Q 를 활성 패널로 전달(앱 종료는 detach 명령으로만)** — pytmux
   는 Ctrl+Q 로 종료되지 않는다(의도된 동작 유지). 요청: **Ctrl+Q 를 누르면 그 키 입력을 활성
   패널로 전달**하고, 앱을 끝내려면 **detach 명령**을 쓰게 한다. 현재 상태:
