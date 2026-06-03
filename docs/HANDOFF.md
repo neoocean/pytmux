@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **76 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **77 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -197,8 +197,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56375 + git, 신→구)
+## 9. 최근 변경(CL 56279~56377 + git, 신→구)
 
+- 56377 컨텍스트 메뉴 열림 시 **대상 패널 배경 구분**(§10 #18 해결) — `_menu_open`
+  플래그 + `_composite` 에서 `_menu_pane` 외 패널을 `Style(dim=True)` 로 흐리게.
+  회귀 테스트 1종(총 77). 클라이언트 전용.
 - 56375 컨텍스트 메뉴 **우클릭으로 통일 + Ctrl+Click 무력화**(§10 #29 해결) —
   `on_mouse_down`: ctrl 클릭은 무동작, button 3 은 마우스 모드 앱 위여도 커서 아래
   패널을 `select_pane_id` 후 그 패널 대상 `open_menu`. `_menu_pane` 보관(#18 토대).
@@ -614,22 +617,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   - **테스트**: `test_client` 에서 sync/autoresume/zoom 상태를 세팅하고 `MenuScreen` 라벨에
     on/off 표시가 반영되는지, 토글 항목 선택 시 dismiss 안 되고(메뉴 유지) 라벨/상태가 바뀌는지,
     비토글 항목은 dismiss 되는지, ESC 로 닫히는지 단언.
-- **[요청·미구현] 컨텍스트 메뉴가 뜰 때 대상 패널을 배경에서 구분 표시** — Ctrl+클릭(우클릭)
-  하면 현재 패널의 컨텍스트 메뉴(`MenuScreen`)가 **화면 중앙**에 뜨는데, 한 탭에 패널이 여럿이면
-  **어느 패널을 대상으로 한 메뉴인지 알기 어렵다**. 요청: 메뉴가 떠 있는 동안 **대상 패널을
-  나머지 패널과 구분**되게(배경에서) 표시한다. 구현 방향:
-  - **대상 패널 추적**: `open_menu`(client.py ~1890)는 활성 패널을 대상으로 동작한다(메뉴
-    액션이 활성 패널에 send_cmd). 우클릭 진입(`on_mouse_down` button==3, ~836)은 현재 커서
-    아래 패널을 **선택하지 않으므로**, 우클릭 시 그 패널을 먼저 `select_pane_id` 하거나
-    메뉴 대상 패널 id 를 명시적으로 보관(`self._menu_pane`).
-  - **배경 강조**: 메뉴가 열린 동안 `_composite` 에서 **대상 패널만 평소대로, 나머지 패널은
-    흐리게(dim)** 그리거나 대상 패널 테두리를 강조색으로. clock-mode 의 dim 패턴
-    (`_draw_clock_overlay` ~1568-1572, 뒤 패널에 `Style(dim=True)` 합성)을 그대로 재사용.
-    `MenuScreen` 은 별도 ModalScreen 이라 그 아래 MultiplexerView 배경이 계속 보이므로,
-    메뉴 열림 상태 플래그를 두고 합성에 반영 → 닫힐 때 해제·재합성.
-  - **주의**: MenuScreen 은 중앙 고정(`align: center middle`)이라 위치로는 패널을 가리킬 수
-    없으니 배경 강조가 핵심. 좌표를 패널 근처로 옮기는 대안도 있으나(팝업을 대상 패널 위에
-    배치) 요청은 "배경에서 구분"이므로 dim/하이라이트 우선.
+- ~~**[요청·미구현] 컨텍스트 메뉴가 뜰 때 대상 패널을 배경에서 구분 표시**~~ → **CL 56377
+  에서 해결.** `_menu_open` 플래그(open_menu True/dismiss 핸들러 False) + open_menu 가
+  대상을 `_menu_pane`(우클릭 패널/활성)에 잡고 _composite 재합성. `_composite` 끝에서
+  `_menu_open` 이면 `_menu_pane` 외 모든 패널 셀에 `Style(dim=True)` 합성(clock-mode dim
+  기법 재사용). 닫히면 재합성으로 복원.
 - **[요청·미구현] 토큰 사용량 표시 클릭 → Claude 실행 중 탭/패널 트리 + 세션별 토큰 팝업** —
   화면 오른쪽 아래(REC 옆) **토큰 사용량 표시를 클릭하면**, 현재 **Claude Code 를 실행 중인 모든
   탭/패널을 트리 형태**로 보여주고 **각 세션이 토큰을 얼마나 쓰는지 한 화면에서** 확인하는
