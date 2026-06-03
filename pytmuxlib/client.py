@@ -1044,7 +1044,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def render_line(self, y: int) -> Strip:
             w = self.size.width
             fg = theme_color(self, "foreground")
-            base = Style(color=fg, bgcolor=theme_color(self, "panel"))
+            # 비활성 탭·여백 배경은 터미널 기본 배경(bgcolor=None)을 따른다 — 패널
+            # 내용 셀이 터미널 색을 보이는 것과 같은 메커니즘. 활성/선택/[+]/화살표
+            # 배지는 자체 bgcolor 유지(의도된 강조).
+            base = Style(color=fg, bgcolor=None)
             add_st = Style(color="black", bgcolor=theme_color(self, "success"),
                            bold=True)
             active_st = Style(color="white", bgcolor=theme_color(self, "primary"),
@@ -1268,8 +1271,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             w = self.size.width
             # 색상은 p4v-tui 와 동일한 textual-dark 테마를 따른다(설정으로 덮어쓰기 가능).
             tc = lambda n: theme_color(self, n)  # noqa: E731
-            base = Style(color=self.fg or tc("foreground"),
-                         bgcolor=self.bg or tc("surface"))
+            # 배경은 명시 설정(self.bg)이 없으면 터미널 기본(None)을 따른다 —
+            # REC/SYNC/AR 등 개별 배지는 자체 bgcolor 유지(의도된 강조).
+            base = Style(color=self.fg or tc("foreground"), bgcolor=self.bg)
             if self.message is not None:
                 ms = Style(color="black", bgcolor=tc("warning"), bold=True)
                 return Strip([Segment(f" {self.message} ", ms)]).adjust_cell_length(
@@ -1314,8 +1318,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 오른쪽은 host/시각/날짜를 별도 런으로 쪼개 그린다 — 원격이면 host 를
             # `ssh:` 접두사+붉은색으로, 시각/날짜는 각각 시계/달력 클릭 존으로.
             right_parts = self._expand_parts(self.right_fmt)
-            host_style = Style(color=tc("error"), bgcolor=self.bg or tc("surface"),
-                               bold=True)
+            host_style = Style(color=tc("error"), bgcolor=self.bg, bold=True)
             built = []   # (kind, text, style, cells)
             right_w = 0
             for kind, text in right_parts:

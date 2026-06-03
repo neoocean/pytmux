@@ -642,6 +642,27 @@ async def test_status_clock_click_toggles_clock_mode():
     await _with_app(body)
 
 
+async def test_bars_use_terminal_default_background():
+    # 상단 탭바·하단 상태줄의 base(비활성/여백) 배경은 터미널 기본(bgcolor=None)을
+    # 따르고, 강조 배지(활성 탭·REC 등)는 자체 bgcolor 를 유지한다(#10/#28).
+    async def body(app, pilot, srv):
+        # 탭바: base 세그먼트(배경 None) 존재 + 활성 탭은 bgcolor 지정
+        tstrip = app.tabbar.render_line(0)
+        tbgs = [s.style.bgcolor for s in tstrip if s.style]
+        assert any(b is None for b in tbgs), "탭바 base 배경 = 터미널 기본(None)"
+        assert any(b is not None for b in tbgs), "활성 탭 등 강조 배지는 bgcolor 유지"
+        # 상태줄: 명시 bg 미설정이면 base 배경 None + REC 배지는 bgcolor 지정
+        app.status.bg = None
+        app.status.capture = True
+        sstrip = app.status.render_line(0)
+        sbgs = [s.style.bgcolor for s in sstrip if s.style]
+        assert any(b is None for b in sbgs), "상태줄 base 배경 = 터미널 기본(None)"
+        rec = next((s for s in sstrip if s.text.strip() == "REC"), None)
+        assert rec is not None and rec.style.bgcolor is not None, \
+            "REC 배지는 자체 bgcolor 유지"
+    await _with_app(body)
+
+
 async def test_status_right_segments_clock_and_date_zones():
     # 오른쪽(host/시각/날짜)을 별도 런으로 쪼갠 뒤 시각=시계 존, 날짜=달력 존이
     # 서로 겹치지 않고, 날짜 클릭은 clock-mode 를 켜지 않아야 한다(#12).
