@@ -868,3 +868,78 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 - 패널 **드래그 swap**, 단일 패널 테두리 on/off 옵션화.
 - 다중 줄 상태표시줄, unbind-key, 라이브 PTY display-popup.
 - `unbind`/추가 옵션 등 FEATURES 의 "미구현" 표기 항목.
+
+## 11. Claude Code 특화 기능 분리 전략 (병렬 세션 충돌 최소화)
+
+> **동기**: 이 프로젝트를 **여러 Claude Code 세션이 각기 다른 부분을 동시에** 수정한다.
+> 특히 **Claude Code 연동 기능**(상태 감지·토큰/컨텍스트 표시·자동재개·프롬프트 헤더 등)은
+> 화면 문구 휴리스틱이라 자주 손대는데(§6), 이게 **코어 멀티플렉서 코드(패널/탭/레이아웃/
+> 입력)와 같은 파일·같은 함수에 뒤섞여** 있어 두 갈래 작업이 **머지 충돌**을 일으킨다.
+> 목표: Claude 특화 코드를 **별도 경계로 모아** "Claude 담당 세션"과 "코어 담당 세션"이
+> 서로 다른 파일을 만지도록 한다. **이 절은 전략 문서이며 아직 코드는 옮기지 않았다**(실제
+> 추출은 후속 CL). 아래 좌표는 현행(depot 56362 기준)이라 추출 전 재확인할 것.
+
+### 11.1 현재 Claude 특화 코드 지도 (흩어져 있음)
+
+| 계층 | 위치 | Claude 특화 내용 |
+|------|------|------|
+| `protocol.py` | ~73-173 | `claude_state`/`claude_usage`/`parse_reset_delay` + 정규식(`_BUSY_SPINNER_RE`·`_CTX_PCT_RES`·`_TOK_RE`·`_RESET_RE12/24`). **순수 함수**(화면 텍스트→상태/사용량/지연). 가장 분리하기 쉬움. |
+| `model.py` | Pane.__init__ ~180-191 (+reinit ~218) | 패널별 상태 필드: `autoresume`·`resume_msg`·`_scanbuf`·`_resume_pending`·`_claude`·`_claude_usage`·`_inbuf`·`last_prompt`. (`_inbuf`/`last_prompt` 은 프롬프트 추적용 — Claude 헤더 외엔 안 씀.) |
+| `server.py` | import ~17-18; 자동재개 `_maybe_resume`/scan ~145-163, `set_autoresume` ~167-176; 프롬프트 추적 `_track_prompt` ~1656-1677(+호출 ~752/1642); 레이아웃 메시지 `_tab_claude` ~1263-1268·`panes_claude`/`claude_usage` ~1284-1295; flush 루프 상태 갱신 ~1353-1357; `set_autoresume` 액션 ~1465 | 서버 측 Claude 로직 전부. flush 루프 훅(매 프레임 `claude_state`/`claude_usage`)과 자동재개·프롬프트 추적. |
+| `client.py` | `CLAUDE_ICON`/아이콘 라벨 ~1019-1027; StatusBar `claude_usage` ~1156/1188/1219-1221; App 상태 `pane_claude`/`_claude_hidden`/`_claude_close_zones` ~1284-1286; `_update_claude` ~1480-1486; `close_claude_header` ~1488-1491; `_draw_claude_headers` ~1493-1520(+합성 호출 ~1764); 헤더 [x] 클릭 ~847-852 | 클라이언트 렌더/입력. **`build_client_app()` 클로저 안**이라 추출이 가장 까다로움. |
+| 프로토콜 메시지 | 레이아웃/상태 메시지의 `claude`(탭)·`panes_claude`(패널별 `{id,claude,prompt}`)·`claude_usage`·`autoresume` 필드 | 서버↔클라이언트 **계약(contract)**. 분리 후에도 이 스키마가 두 계층의 경계. |
+
+### 11.2 목표 경계 (제안)
+
+핵심 아이디어: **Claude 로직을 전용 모듈로 모으고, 코어는 얇은 훅 한 줄로만 부른다.**
+
+1. **`pytmuxlib/claude.py` (신규, 서버측+순수)** — 한곳에 모은다:
+   - protocol.py 의 `claude_state`/`claude_usage`/`parse_reset_delay` + 정규식을 **이리로 이전**
+     (protocol.py 는 프레이밍/색 등 진짜 공통만 남김). 하위호환 위해 protocol 에서 re-export 가능.
+   - 패널별 Claude 상태를 **`ClaudePaneState` 같은 헬퍼 객체**(또는 함수군)로 캡슐화:
+     `_claude`·`_claude_usage`·`autoresume`·`resume_msg`·`_scanbuf`·`_resume_pending`·
+     `last_prompt`·`_inbuf` 를 `Pane.claude` 한 속성 아래로 모은다(코어 `Pane` 표면 축소).
+   - 서버 훅 함수: `update_from_screen(pane, text)`(flush 루프가 매 프레임 호출 →
+     상태/사용량 갱신 + busy→idle 등 전이 반환), `maybe_resume(pane, newtext)`(자동재개),
+     `track_prompt(pane, data)`(프롬프트 누적/확정). server.py 는 **이 함수들만** 호출.
+2. **`server.py` 는 훅만**: flush 루프 ~1353 블록을 `claude.update_from_screen(p, txt)` 한 줄로,
+   자동재개 ~145 를 `claude.maybe_resume(...)`, 프롬프트 추적을 `claude.track_prompt(...)` 로.
+   레이아웃 메시지의 Claude 필드 조립(`_tab_claude`/`panes_claude`/`claude_usage`)도 claude 모듈
+   헬퍼가 dict 조각을 만들어 주면 server 는 끼워 넣기만. **코어가 만지는 줄 수를 최소화**.
+3. **클라이언트 렌더 분리** — `client.py` 가 `build_client_app()` 클로저라 통째 이전은 어렵다.
+   현실적 절충: Claude 렌더/상태 함수(`_draw_claude_headers`·`_update_claude`·`close_claude_header`·
+   `CLAUDE_ICON`·StatusBar 의 usage 세그먼트)를 **모듈 수준 자유함수**로 빼고 `app`(또는 필요한
+   `cells/W/H/pane_claude`)을 인자로 받게 한다 — 예 `pytmuxlib/client_claude.py` 의
+   `draw_claude_headers(app, cells, W, H)`. 클로저 메서드는 **한 줄 위임**만 남긴다. 이러면
+   Claude 렌더 변경이 client.py 본문 대신 client_claude.py 에서 일어나 충돌 면이 분리된다.
+   (탭 아이콘/스티키 헤더 클릭 zone 좌표 변환 주의 — §"합성 순서" §5/§90.)
+4. **프로토콜 스키마를 명시적 계약으로**: `claude`/`panes_claude`/`claude_usage`/`autoresume`
+   필드를 한곳(예 claude 모듈 상수/타입)에 적어 두 계층이 같은 키를 쓰게 한다. 필드 추가는
+   계약 변경이니 양측이 의식하게.
+
+### 11.3 분리 후 "누가 어디를 만지나" (충돌 회피 규칙)
+
+- **Claude 담당 세션** → `pytmuxlib/claude.py`(+`client_claude.py`)와 프로토콜 Claude 필드만.
+  코어 파일은 **훅 호출 한 줄**만 건드림(거의 안 바뀜).
+- **코어(패널/탭/레이아웃/입력/copy-mode) 담당 세션** → `model.py`/`server.py`/`client.py`
+  본문. Claude 모듈은 **블랙박스**로 두고 안 만짐.
+- 둘 다 만지는 유일한 접점 = **훅 호출 지점**과 **프로토콜 필드**. 여길 안정화하면 충돌 끝.
+
+### 11.4 점진적 이전 순서(저위험)
+
+1. **순수 함수부터**: `claude.py` 신설 + 감지/사용량/지연 파서 이전(+protocol re-export). 테스트
+   (`test_protocol` 의 claude 휴리스틱)를 `test_claude` 로 옮기거나 import 경로만 갱신. **무동작·저위험.**
+2. **서버 훅화**: `_maybe_resume`/`_track_prompt`/flush 갱신/메시지 조립을 claude 모듈 함수로
+   추출(동작 동일). 서버 테스트(`test_server` 의 Claude/재개/프롬프트)로 회귀 확인.
+3. **Pane 상태 묶기**: 흩어진 Claude 필드를 `Pane.claude` 하위로(접근부 일괄 치환). 코어 `Pane`
+   표면이 줄어 model.py 충돌 면 감소.
+4. **클라이언트 렌더 추출**: `client_claude.py` 로 렌더/상태 함수 이전, 클로저는 위임만.
+- **불변식 유지**(§3): `Session.active_window` 프로퍼티, CLOEXEC(§6), feed 경계 캐리(§6),
+  단일 세션 모델은 깨지 말 것. 각 단계마다 `python3 tests/run.py` 72(현재) 유지.
+- **데몬 재시작 주의**(§2): 서버측(claude.py 가 서버 로직 포함) 변경은 `kill-server` 재기동 후 반영.
+
+### 11.5 대안(더 가벼움)
+
+전면 모듈 추출이 부담이면 **최소안**: 각 파일에서 Claude 코드를 **인접 블록으로 모으고**
+`# ---- Claude Code 연동 (분리 대상) ----` 식 **명확한 구획 주석**으로 감싼다(현재도 일부 있음).
+충돌은 줄지만 같은 파일이라 완전 분리는 아니다 — 11.2 의 전용 모듈이 본안.
