@@ -139,6 +139,34 @@ def claude_account(text: str):
     return None
 
 
+def claude_perm_mode(text: str):
+    """Claude Code idle 권한모드 footer 에서 현재 권한모드를 best-effort 추정.
+
+    반환:
+      "auto"    — 자동 수락(⏵⏵ / "auto-accept edits on" / "auto mode on")
+      "bypass"  — 권한 우회("bypass permissions"). 명시적·위험 모드라 건드리지 않음.
+      "plan"    — 플랜 모드("plan mode on")
+      "default" — 일반 모드(footer 는 보이나 위 어느 것도 아님)
+      None      — 권한모드 footer 신호가 안 보임(판정 불가)
+
+    Claude Code 버전이 footer 문구를 바꾸면 가장 먼저 손볼 곳이다(claude_state 와
+    같은 footer 를 본다)."""
+    low = text.lower()
+    footer = ("shift+tab to" in low or "mode on (shift" in low)
+    has_signal = (footer or "⏵⏵" in text or "auto-accept" in low
+                  or "auto mode" in low or "plan mode" in low
+                  or "bypass permissions" in low)
+    if not has_signal:
+        return None
+    if "bypass permissions" in low:
+        return "bypass"
+    if "⏵⏵" in text or "auto-accept" in low or "auto mode" in low:
+        return "auto"
+    if "plan mode" in low:
+        return "plan"
+    return "default"
+
+
 def parse_reset_delay(text: str, now: "_dt.datetime | None" = None):
     """Claude Code 등의 사용량 리밋 안내 문구에서 해제 시각을 찾아
     지금부터 그때까지의 지연(초)을 반환. 못 찾으면 None."""

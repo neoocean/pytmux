@@ -13,7 +13,8 @@ import time
 from . import ipc, proc, pty_backend, sshwrap, tokens, usagelog
 from .model import (ClientConn, Pane, Session, Split, Tab, Window,
                     coalesce_alt_repaints)
-from .claude import claude_account, claude_state, claude_usage, parse_reset_delay
+from .claude import (claude_account, claude_perm_mode, claude_state,
+                     claude_usage, parse_reset_delay)
 from .protocol import (FEED_SLICE, FLUSH_HZ, MIN_H, MIN_W, read_msg, write_msg)
 
 # pytmux 프로젝트 루트(= pytmuxlib 패키지의 상위). 캡처 출력 등 "프로젝트에 영속해
@@ -27,6 +28,11 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 스크롤되는 떨림이 난다. 그래서 예약 해제(=PTY 한 행 키우기)만 디바운스한다(설정
 # 은 즉시). 30Hz flush 기준 ~1초 — 진짜 Claude 종료 시 행을 되찾는 지연은 미미하다.
 _HDR_CLAUDE_MISS = 30
+
+# 권한모드 자동 오토모드 전환(§10): 한 번 idle 진입 후 auto 에 도달하지 못해도 이
+# 횟수까지만 shift+tab 을 보낸다(footer 순환 순서가 고정이 아닐 수 있어 폐루프지만,
+# 오검출 시 무한 순환을 막는 가드). default↔auto↔plan(↔bypass) 순환을 덮을 만큼.
+_CAM_MAX = 4
 
 
 class Server:
@@ -81,6 +87,10 @@ class Server:
         # 입력/재busy 시엔 발화하지 않는다. opts.json 영속.
         self.auto_doc_clear = bool(_opts.get("auto_doc_clear", False))
         self.auto_doc_clear_delay = float(_opts.get("auto_doc_clear_delay", 30.0))
+        # 권한모드 자동 오토모드 전환(§10): Claude 패널이 idle 이고 권한모드 footer 가
+        # auto(자동 수락)가 아니면 shift+tab 을 순환 주입해 auto 로 맞춘다. 기본 OFF.
+        # bypass(권한 우회) 모드는 명시적·위험 설정이라 건드리지 않는다. opts.json 영속.
+        self.claude_auto_mode = bool(_opts.get("claude_auto_mode", False))
 
     # ---- PTY/패널 생성 ----
     def _fork_shell(self, cols: int, rows: int, cwd: str | None = None,
@@ -433,6 +443,52 @@ class Server:
         pane._adc_active = True
         pane._pc_phase = None
         self._pc_advance(pane)
+
+    # ---- 권한모드 자동 오토모드 전환(§10) ----
+    def set_claude_auto_mode(self, value=None):
+        """Claude idle 시 권한모드를 auto 로 자동 맞추는 모드 토글. value 미지정 시
+        반전. 끄면 모든 패널의 시도 카운터를 리셋한다. opts.json 영속."""
+        self.claude_auto_mode = (not self.claude_auto_mode) if value is None \
+            else bool(value)
+        if not self.claude_auto_mode:
+            for p in self._all_panes():
+                p._cam_tries = 0
+                p._cam_last = None
+        self._save_opts()
+        return self.claude_auto_mode
+
+    def _inject_keys(self, pane: Pane, data: bytes):
+        """패널 PTY 로 raw 키 바이트를 보낸다(_pc_inject 와 달리 Enter 를 안 붙임).
+        권한모드 순환(shift+tab=\\x1b[Z) 등 제어키 주입용."""
+        if pane.pty is None:
+            return
+        try:
+            pane.pty.write(data)
+        except OSError:
+            pass
+
+    def _maybe_auto_mode(self, pane: Pane, txt: str):
+        """idle 패널의 권한모드 footer 를 확인해 auto 가 아니면 shift+tab(backtab,
+        \\x1b[Z)을 한 번 보내 권한모드를 순환시킨다(폐루프 — auto 가 될 때까지 다음
+        프레임에 다시 시도, 최대 _CAM_MAX). footer 순서가 고정이 아닐 수 있어 폐루프로
+        간다. 화면 갱신 전(직전과 같은 모드)에는 중복 주입하지 않는다.
+
+        대상 제외: footer 미관측(None)·이미 auto·bypass(명시적 위험 모드는 안 건드림)."""
+        mode = claude_perm_mode(txt)
+        if mode is None:
+            return                       # footer 안 보임 — 판정 불가, 상태 유지
+        if mode in ("auto", "bypass"):
+            pane._cam_tries = 0          # 목표 도달/대상 아님 → 시도 리셋
+            pane._cam_last = mode
+            return
+        # default/plan → auto. 직전에 작용한 모드와 같으면(아직 화면 미갱신) 대기.
+        if mode == pane._cam_last and pane._cam_tries > 0:
+            return
+        if pane._cam_tries >= _CAM_MAX:
+            return                       # 무한 순환 가드(오검출 대비)
+        pane._cam_tries += 1
+        pane._cam_last = mode
+        self._inject_keys(pane, b"\x1b[Z")
 
     def _pane_eof(self, pane: Pane):
         self._stop_pane_feed(pane)   # 진행 중 드레인 취소(정상 EOF 면 이미 빈 상태)
@@ -1415,7 +1471,8 @@ class Server:
                            "coalesce_repaints": self.coalesce_repaints,
                            "prompt_clear_message": self.prompt_clear_message,
                            "auto_doc_clear": self.auto_doc_clear,
-                           "auto_doc_clear_delay": self.auto_doc_clear_delay}, f)
+                           "auto_doc_clear_delay": self.auto_doc_clear_delay,
+                           "claude_auto_mode": self.claude_auto_mode}, f)
         except OSError:
             pass
 
@@ -1685,6 +1742,9 @@ class Server:
         elif c in ("auto-doc-clear", "auto-doc"):
             val = True if "on" in args else (False if "off" in args else None)
             return "on" if self.set_auto_doc_clear(val) else "off"
+        elif c in ("claude-auto-mode", "auto-mode"):
+            val = True if "on" in args else (False if "off" in args else None)
+            return "on" if self.set_claude_auto_mode(val) else "off"
         else:
             return f"unknown: {c}"
         for cl in list(self.clients):
@@ -2028,9 +2088,16 @@ class Server:
                     t.has_claude_done = True
                     changed = True
                 # 자동 doc→/clear(§10): idle 이탈(busy/limit/종료) 시 무장된 타이머를
-                # 즉시 해제한다 — idle 이 끊기면 "N초 지속" 전제가 깨진다.
+                # 즉시 해제한다 — idle 이 끊기면 "N초 지속" 전제가 깨진다. 권한모드
+                # 자동전환 시도 카운터도 idle 이탈 시 리셋(다음 idle 진입에 다시 시도).
                 if new_cl != "idle":
                     self._adc_disarm(p)
+                    p._cam_tries = 0
+                    p._cam_last = None
+                # 권한모드 자동 오토모드 전환(§10): idle 이고 토글이 켜졌으면 footer 의
+                # 권한모드가 auto 가 아닐 때 shift+tab 을 폐루프로 순환 주입한다.
+                elif self.claude_auto_mode:
+                    self._maybe_auto_mode(p, txt)
                 # 프롬프트 단위 클리어 모드(#9) + 자동 doc→/clear(§10): busy→idle(응답
                 # 완료) 경계에서 상태기계를 전진한다. 수동 모드(prompt_clear_mode)와
                 # 자동 시퀀스(_adc_active)가 같은 _pc_phase 기계를 공유한다.
@@ -2379,6 +2446,8 @@ class Server:
             self.set_coalesce_repaints(msg.get("value"))
         elif action == "set_auto_doc_clear":
             self.set_auto_doc_clear(msg.get("value"))
+        elif action == "set_claude_auto_mode":
+            self.set_claude_auto_mode(msg.get("value"))
         elif action == "set_prompt_clear":
             self.set_prompt_clear(sess, msg.get("value"))
         elif action == "set_prompt_clear_message":

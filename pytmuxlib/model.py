@@ -311,6 +311,12 @@ class Pane:
         # 재시작 직렬화(_RESUME_FIELDS) 대상이 아니다.
         self._adc_timer = None
         self._adc_active = False
+        # 권한모드 자동 오토모드 전환(§10): idle 일 때 footer 가 auto 가 아니면
+        # shift+tab 을 순환 주입한다(서버 옵션 claude_auto_mode 가 켜졌을 때만).
+        # _cam_tries 는 이번 idle 진입 후 보낸 횟수(무한 순환 가드 _CAM_MAX), _cam_last
+        # 는 직전에 관측·작용한 권한모드(화면 갱신 전 중복 주입 방지). 둘 다 휘발성.
+        self._cam_tries = 0
+        self._cam_last = None
         # _layout_msg 가 이 패널에 Claude 헤더 한 행을 예약했는지(#1). 예약 유무가
         # 바뀌면 flush 루프가 레이아웃(PTY 리사이즈 포함)을 다시 보낸다.
         self._hdr_reserved = False
@@ -366,6 +372,8 @@ class Pane:
         self._pc_phase = None    # 프롬프트 단위 클리어 상태기계 리셋(모드 자체는 유지)
         self.prompt_clear_queue = []  # 새 셸이므로 쌓인 명령 큐도 버린다(#4)
         self._adc_active = False  # 자동 doc→/clear 진행상태 리셋(§10; 타이머는 만료시 자가해제)
+        self._cam_tries = 0       # 권한모드 자동전환 시도 카운터 리셋(§10)
+        self._cam_last = None
         self._hdr_reserved = False
         self._hdr_claude = False
         self._hdr_claude_miss = 0

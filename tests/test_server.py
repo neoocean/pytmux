@@ -354,6 +354,71 @@ async def test_auto_doc_clear_sequence_and_guards():
         await teardown(srv, task, sock)
 
 
+async def test_claude_auto_mode_cycles_to_auto():
+    """§10 권한모드 자동전환: 토글 ON 이면 idle 패널의 footer 권한모드가 auto 가
+    아닐 때 shift+tab(\\x1b[Z)을 폐루프로 순환 주입해 auto 로 맞춘다. 같은 모드
+    반복(화면 미갱신) 시 중복 주입 안 함, auto/bypass 도달 시 정지, idle 이탈 시
+    카운터 리셋, 오검출 대비 _CAM_MAX 가드. 토글 opts 영속."""
+    from pytmuxlib.server import _CAM_MAX
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        sent = []
+        srv._inject_keys = lambda pane, data: sent.append(data)
+        BT = b"\x1b[Z"
+
+        assert srv.claude_auto_mode is False, "기본 off"
+        assert srv.set_claude_auto_mode(True) is True
+        import json as _json
+        assert _json.load(open(srv.opts_path))["claude_auto_mode"] is True
+
+        def scan(s):
+            p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
+            srv._scan_claude(sess, win)
+
+        scan("shift+tab to cycle")                    # idle, default → 1회
+        assert p._claude == "idle" and sent == [BT], sent
+        scan("shift+tab to cycle")                    # 같은 default → 중복 방지
+        assert sent == [BT]
+        scan("⏸ plan mode on (shift+tab to cycle)")    # plan → 한 번 더
+        assert sent == [BT, BT], sent
+        scan("⏵⏵ auto mode on (shift+tab to cycle)")   # auto 도달 → 정지+리셋
+        assert sent == [BT, BT] and p._cam_tries == 0
+
+        # bypass(명시·위험 모드)는 건드리지 않음
+        sent.clear()
+        scan("bypass permissions on (shift+tab to cycle)")
+        assert sent == []
+
+        # idle 이탈(busy) 시 카운터 리셋(다음 idle 진입에 다시 시도)
+        scan("⏸ plan mode on (shift+tab to cycle)")    # plan → 주입(1)
+        assert sent == [BT]
+        scan("✽ Crunching… (5s · ↑ 1k tokens)")        # busy → 리셋
+        assert p._claude == "busy" and p._cam_tries == 0
+
+        # _CAM_MAX 가드: 모드가 계속 바뀌어도 최대 _CAM_MAX 회까지만
+        sent.clear()
+        modes = ["shift+tab to cycle", "⏸ plan mode on (shift+tab to cycle)"]
+        for i in range(_CAM_MAX + 3):
+            scan(modes[i % 2])
+        assert len(sent) == _CAM_MAX, (len(sent), _CAM_MAX)
+
+        # 토글 off → 카운터 리셋, 더 안 보냄
+        srv.set_claude_auto_mode(False)
+        assert p._cam_tries == 0
+        sent.clear()
+        scan("shift+tab to cycle")
+        assert sent == []
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
 async def test_claude_header_reserves_row():
     """#1: Claude 프롬프트 헤더가 그려질 패널은 내용 영역에서 한 행을 빼(헤더 양보)
     PTY 도 그만큼 작게 리사이즈하고, layout 에 claude_hdr=True 를 실어 보낸다. 전역

@@ -4,7 +4,8 @@
 import datetime as dt
 
 import harness  # noqa: F401  (경로 설정)
-from pytmuxlib.claude import claude_state, claude_usage, parse_reset_delay
+from pytmuxlib.claude import (claude_perm_mode, claude_state, claude_usage,
+                              parse_reset_delay)
 
 
 async def test_parse_reset_delay():
@@ -47,6 +48,22 @@ async def test_claude_state():
     assert claude_state("⎿  … +38 lines (ctrl+o to expand)") is None
     # 오탐 방지: 화살표 없는 토큰 언급은 busy 아님
     assert claude_state("Cost: 1.2k tokens used today") is None
+
+
+async def test_claude_perm_mode():
+    # auto(자동 수락): ⏵⏵ / auto mode / auto-accept edits
+    assert claude_perm_mode("⏵⏵ auto mode on (shift+tab to cycle)") == "auto"
+    assert claude_perm_mode("⏵⏵ accept edits on (shift+tab to cycle)") == "auto"
+    assert claude_perm_mode("auto-accept edits on (shift+tab to cycle)") == "auto"
+    # plan 모드
+    assert claude_perm_mode("⏸ plan mode on (shift+tab to cycle)") == "plan"
+    # default: footer 는 보이나 auto/plan/bypass 아님
+    assert claude_perm_mode("normal\nshift+tab to cycle") == "default"
+    # bypass(위험·명시 모드): 건드리지 않게 별도 분류
+    assert claude_perm_mode("bypass permissions on") == "bypass"
+    # footer 신호 없음 → 판정 불가
+    assert claude_perm_mode("user@host ~ % ls") is None
+    assert claude_perm_mode("✽ Crunching… (38s)") is None
 
 
 async def test_claude_usage():
