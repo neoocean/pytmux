@@ -632,9 +632,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   PTY 식별자(child_pid·master_fd 번호)+화면 스냅샷을 직렬화하고, execv 직전 master fd
   CLOEXEC 해제 → `os.execv` → `--resume` 부트에서 `pty_backend.adopt` 로 상속 fd 채택
   +CLOEXEC 재채택. 클라이언트는 `{"t":"restarting"}` 후 같은 소켓으로 재접속. 셸 PID
-  보존을 서브프로세스 종단간 테스트로 검증(`tests/test_restart.py`, 7 케이스). 전체 명세는
-  **docs/RESTART_SCENARIO.md**. 남은 것(수동): 실 박스에서 alt-screen TUI 재그리기/
-  스크롤백 연속성 확인(주의 ① 대안 B). 이하 원 요청 기록 ⤵
+  보존을 서브프로세스 종단간 테스트로 검증(`tests/test_restart.py`, 8 케이스). 전체 명세는
+  **docs/RESTART_SCENARIO.md**. alt-screen 재그리기도 실 박스 검증 완료 — 복원 후
+  `_induce_redraw_all`(winsize 토글로 SIGWINCH)이 vim/claude 등을 repaint 시킨다(주의
+  ① 대안 B). 순수 셸은 메인 화면 평문 스냅샷으로 복원(pyte 완전 직렬화=대안 A 비채택).
+  이하 원 요청 기록 ⤵
 - pytmux 는 활발히
   개발 중이라 **서버를 자주 재시작**해야 하는데(§2 의 "데몬 재시작 주의": 서버 코드
   `server.py`/`model.py`/`protocol.py` 변경은 `kill-server` 후 재기동해야 반영), 동시에

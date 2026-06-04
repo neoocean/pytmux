@@ -3,11 +3,15 @@
 > **상태**: ✅ 구현됨(방식 ① 제자리 re-exec). 본 문서는 설계 기준선이자 구현 명세다.
 > 시나리오 도입 CL: **56541**. 구현 CL: **56543**(상태 직렬화) · **56545**(fd 채택·복원·
 > 부트 배선) · **56546**(restart-server 명령=os.execv + 종단간 검증) · **56547**(클라이언트
-> 재접속 ⓔ) · 본 CL(명령 팔레트 노출 + 문서). 회귀: `tests/test_restart.py`(7 케이스).
+> 재접속 ⓔ) · 56549(명령 팔레트 노출 + 문서) · 본 CL(alt-screen 재그리기 유도 = 대안
+> B). 회귀: `tests/test_restart.py`(8 케이스).
 >
 > **명령**: 명령 프롬프트/팔레트의 `restart-server`(별칭 `restart`), 또는 외부에서
-> `python3 pytmux.py cmd restart-server`. **남은 검증(수동)**: 실제 alt-screen TUI
-> (claude/vim)의 재그리기·스크롤백 연속성은 실 박스에서 확인 몫(주의 ① 대안 B).
+> `python3 pytmux.py cmd restart-server`. **alt-screen 재그리기**: 실 박스에서
+> 검증 완료 — 복원 후 `_induce_redraw_all` 이 각 패널 PTY 에 SIGWINCH 를 유발해
+> vim/claude 등이 repaint 한다(주의 ① 대안 B). 헤드리스 회귀
+> `test_restore_induces_altscreen_redraw` 로 고정. 순수 셸 스크롤백은 메인 화면
+> 평문 스냅샷으로 복원(완전한 pyte 내부 상태 직렬화 = 대안 A 는 비채택).
 
 ## 1. 배경과 목표
 
@@ -76,7 +80,8 @@ for pane in all_panes:
 2. Session/Tab/Window 트리 복원(`_build_node` 를 spawn 없이 "기존 fd 채택" 경로로 분기).
 3. **CLOEXEC 재채택**: 채택 직후 각 master fd 에 다시 `FD_CLOEXEC` 를 걸어 §6 불변식
    복구(이후 새 패널 fork 시 형제 fd 누수 방지).
-4. pyte 화면/스크롤백 복원, 또는 소실 감수 시 재그리기 유도(아래 주의 ①).
+4. 메인 화면 평문 스냅샷 복원(import_state) + **`_induce_redraw_all` 로 SIGWINCH
+   유발** → alt-screen TUI repaint(아래 주의 ① 대안 B, 구현됨).
 
 ### ⓔ 클라이언트 재접속
 서버가 쥔 리슨 유닉스 소켓·연결 클라이언트 소켓은 옛 이벤트 루프의 fd 라 execv 후
@@ -149,7 +154,9 @@ for pane in all_panes:
 2. `--resume` 부트 경로: fd 채택 분기(`_build_node` 의 spawn 대체) + CLOEXEC 재채택.
 3. `restart-server` 명령(ⓐ CLOEXEC 해제 → ⓑ 직렬화 → ⓒ execv) 추가.
 4. 클라이언트 재접속(ⓔ) + (선택) 코드변경 감지 후 재시작 제안 UX.
-5. pyte 화면/스크롤백 직렬화(대안 A) 또는 재그리기 유도(대안 B) 중 택1.
+5. ✅ 재그리기 유도(대안 B) 채택: 복원 후 `_induce_redraw_all`(winsize 한 칸
+   토글로 SIGWINCH) + 메인 화면 평문 스냅샷. pyte 내부 상태 완전 직렬화(대안 A)는
+   비채택(취약·과설계). 실 박스 검증 완료.
 6. 테스트 §7 추가.
 
 **데몬 재시작 주의(HANDOFF §2)**: 이 기능 자체가 서버 로직이라, 구현 중에는 여전히

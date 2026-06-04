@@ -1138,7 +1138,27 @@ class Server:
             sess.last_index = ss.get("last_index", 0)
             sess.popup = None
             self.sessions[sess.name] = sess
+        if self.sessions:
+            self._induce_redraw_all()
         return bool(self.sessions)
+
+    def _induce_redraw_all(self):
+        """재시작 복원 후 alt-screen TUI(vim/claude/htop 등)가 다시 그리도록 각 패널
+        PTY 에 SIGWINCH 를 한 번 유발한다(docs/RESTART_SCENARIO.md 주의 ① 대안 B).
+
+        새 이미지의 pyte 는 메인 화면(직렬화한 스냅샷)에서 시작하지만, 살아 있는
+        앱은 alt 화면 상태 그대로다. 재접속 크기가 이전과 같으면 resize 가 SIGWINCH
+        를 안 보내 앱이 영영 다시 안 그린다. 그래서 크기를 한 칸 줄였다 되돌려
+        커널이 SIGWINCH 를 보내게 강제한다(앱이 현재 화면을 전체 repaint → 스냅샷을
+        덮어쓴다). winsize 만 건드리고 pyte/Pane 치수는 그대로 둔다."""
+        for p in self._all_panes():
+            if p.pty is None:
+                continue
+            try:
+                p.pty.set_winsize(max(1, p.rows - 1), p.cols)
+                p.pty.set_winsize(p.rows, p.cols)
+            except OSError:
+                pass
 
     def restart_server(self) -> bool:
         """작업 보존 재시작(방식① 제자리 re-exec) — 셸/PTY 를 살린 채 서버 코드만

@@ -344,3 +344,67 @@ async def test_client_restart_command_maps_action():
             assert sent.count(("restart_server", {})) == 2, sent
     finally:
         await teardown(srv, task, sock)
+
+
+# ── 8. 복원 후 alt-screen 재그리기 유도(SIGWINCH) — docs §주의① 대안 B ──────────
+_ALT_APP = (
+    "import signal,sys,time,os\n"
+    "c=[0]\n"
+    "def draw(n):\n"
+    " sys.stdout.write('\\x1b[2J\\x1b[H');"
+    "sys.stdout.write('ALT_MARK_%d\\r\\n'%n);sys.stdout.flush()\n"
+    "def h(s,f):\n c[0]+=1;draw(c[0])\n"
+    "signal.signal(signal.SIGWINCH,h)\n"
+    "sys.stdout.write('\\x1b[?1049h');draw(0)\n"
+    "time.sleep(30)\n"
+)
+
+
+async def test_restore_induces_altscreen_redraw():
+    """재시작 복원 후 alt-screen TUI 가 SIGWINCH 로 다시 그려지는지(재접속 크기가
+    같아도) 검증한다. 살아 있는 alt 앱을 띄운 패널을 새 서버가 채택한 뒤, 같은
+    크기로 복원해도 _induce_redraw_all 이 SIGWINCH 를 유발해 앱이 repaint 한다."""
+    if ipc.IS_WINDOWS:
+        return
+    import tempfile
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    appf = tempfile.mktemp(suffix=".py")
+    with open(appf, "w") as f:
+        f.write(_ALT_APP)
+    try:
+        sess = srvA.ensure_default_session(80, 24)
+        pane = sess.active_window.active_pane
+        pane.pty.write(f"python3 {appf}\n".encode())
+        # alt 진입 + ALT_MARK_0 가 보일 때까지 대기
+        from harness import pane_text
+        for _ in range(150):
+            await asyncio.sleep(0.02)
+            if "ALT_MARK" in pane_text(pane):
+                break
+        assert "ALT_MARK" in pane_text(pane), "alt 앱 기동 실패: " + pane_text(pane)[:200]
+
+        path = tempfile.mktemp(suffix=".resume.json")
+        assert srvA.save_resume_state(path)
+        for p in srvA._all_panes():
+            p.pty.stop_reader()
+        # 같은 80x24 로 복원 → 크기 변화 없음. _induce_redraw_all 이 SIGWINCH 유발.
+        assert srvB.restore_resume_state(path)
+        paneB = next(iter(srvB.sessions.values())).active_window.active_pane
+        # SIGWINCH → 앱 repaint 출력이 새 pyte 로 들어와 ALT_MARK 가 다시 보인다.
+        seen = False
+        for _ in range(200):
+            await asyncio.sleep(0.02)
+            if "ALT_MARK" in pane_text(paneB):
+                seen = True
+                break
+        assert seen, "복원 후 재그리기 안 됨(마커 소실): " + pane_text(paneB)[:200]
+        os.unlink(path)
+        srvA.sessions.clear()
+    finally:
+        try:
+            os.unlink(appf)
+        except OSError:
+            pass
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
