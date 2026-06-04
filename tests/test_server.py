@@ -354,6 +354,40 @@ async def test_auto_doc_clear_sequence_and_guards():
         await teardown(srv, task, sock)
 
 
+async def test_screen_prompt_reflects_remote_injected():
+    """§10 #19: 데스크탑 앱 원격제어처럼 입력 경로(_track_prompt)를 안 거친 프롬프트
+    도 화면 transcript 에서 추출해 헤더(last_prompt)/히스토리에 반영한다. 단 로컬
+    입력으로 이미 히스토리에 있는 프롬프트는 화면에서 중복으로 다시 잡지 않는다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        # Claude idle + transcript 에 원격 주입 프롬프트가 그려진 상태
+        p.feed("\x1b[2J\x1b[H> 원격에서 보낸 프롬프트\r\n"
+               "답변 출력...\r\n더 많은 출력\r\n"
+               "⏵⏵ auto mode on (shift+tab to cycle)\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle"
+        assert p.last_prompt == "원격에서 보낸 프롬프트", p.last_prompt
+        assert p.prompt_history[-1] == "원격에서 보낸 프롬프트"
+        # 같은 화면 재스캔 → 이미 last_prompt/히스토리에 있으니 중복 추가 안 함
+        n = len(p.prompt_history)
+        srv._scan_claude(sess, win)
+        assert len(p.prompt_history) == n, "중복 방지"
+        # 로컬 입력(_track_prompt)으로 들어온 프롬프트가 화면에도 보여도 중복 안 됨
+        srv._track_prompt(p, "로컬 타이핑 프롬프트\r".encode("utf-8"))
+        assert p.last_prompt == "로컬 타이핑 프롬프트"
+        hist_len = len(p.prompt_history)
+        p.feed("\x1b[2J\x1b[H> 로컬 타이핑 프롬프트\r\n"
+               "답변...\r\n출력\r\n"
+               "⏵⏵ auto mode on (shift+tab to cycle)\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert len(p.prompt_history) == hist_len, "로컬 입력은 화면 파싱이 중복 안 함"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_claude_auto_mode_cycles_to_auto():
     """§10 권한모드 자동전환: 토글 ON 이면 idle 패널의 footer 권한모드가 auto 가
     아닐 때 shift+tab(\\x1b[Z)을 폐루프로 순환 주입해 auto 로 맞춘다. 같은 모드

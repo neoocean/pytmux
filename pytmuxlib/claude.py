@@ -139,6 +139,37 @@ def claude_account(text: str):
     return None
 
 
+# ---- 화면에서 사용자 프롬프트 추출(데스크탑 앱 원격제어 등 입력 경로 미경유, §10) ----
+# Claude Code transcript 는 사용자 턴을 "> 내용" 으로 그린다(바닥 입력박스도 "> ").
+# 제출된 프롬프트(transcript)와 라이브 입력박스를 구분하려고 하단 몇 줄은 건너뛴다.
+_PROMPT_LINE_RE = re.compile(r"^\s*(?:[│|]\s*)?>\s+(\S.*?)\s*$")
+_PROMPT_TAIL_SKIP = 3   # 하단 N줄(입력박스+footer) 제외
+
+
+def claude_prompt(text: str):
+    """Claude Code 화면 transcript 에서 최신 사용자 프롬프트 줄을 best-effort 추출.
+
+    사용자 턴은 보통 "> 내용"(테두리 안이면 "│ > 내용")으로 렌더된다. 라이브 입력
+    박스의 "> 타이핑중" 을 제출된 프롬프트로 오인하지 않도록 뒤쪽 빈 줄을 떼고 하단
+    _PROMPT_TAIL_SKIP 줄은 건너뛴 뒤, 그 위에서 가장 최근 매치를 고른다. 못 찾으면
+    None. **Claude UI 포맷 의존이라 best-effort** — 오검출 시 헤더가 잠깐 어긋날 뿐
+    이고, 서버는 입력 경로로 안 잡힌(히스토리에 없는) 경우에만 이 값을 쓴다."""
+    lines = text.splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    cutoff = len(lines) - _PROMPT_TAIL_SKIP
+    found = None
+    for i, line in enumerate(lines):
+        if i >= cutoff:
+            break
+        m = _PROMPT_LINE_RE.match(line)
+        if m:
+            cand = m.group(1).strip()
+            if len(cand) >= 2:   # 한 글자 등 잡음 제외
+                found = cand
+    return found
+
+
 def claude_perm_mode(text: str):
     """Claude Code idle 권한모드 footer 에서 현재 권한모드를 best-effort 추정.
 

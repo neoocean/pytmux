@@ -4,8 +4,8 @@
 import datetime as dt
 
 import harness  # noqa: F401  (경로 설정)
-from pytmuxlib.claude import (claude_perm_mode, claude_state, claude_usage,
-                              parse_reset_delay)
+from pytmuxlib.claude import (claude_perm_mode, claude_prompt, claude_state,
+                              claude_usage, parse_reset_delay)
 
 
 async def test_parse_reset_delay():
@@ -64,6 +64,27 @@ async def test_claude_perm_mode():
     # footer 신호 없음 → 판정 불가
     assert claude_perm_mode("user@host ~ % ls") is None
     assert claude_perm_mode("✽ Crunching… (38s)") is None
+
+
+async def test_claude_prompt():
+    # transcript 의 "> 내용"(가장 최근) 추출, 하단 입력박스/footer 는 건너뜀
+    screen = (
+        "> 첫 질문입니다\n"
+        "⏺ 답변 일부...\n"
+        "> 두 번째 질문\n"
+        "⏺ 또 답변...\n"
+        "\n"
+        "> \n"                       # 라이브 입력박스(빈) — 하단 skip 대상
+        "⏵⏵ auto mode on (shift+tab to cycle)\n"
+    )
+    assert claude_prompt(screen) == "두 번째 질문", claude_prompt(screen)
+    # 테두리 안 "│ > 내용" 형태도 인식
+    assert claude_prompt("│ > 박스 안 프롬프트 입니다\n행2\n행3\n행4") \
+        == "박스 안 프롬프트 입니다"
+    # 사용자 턴이 없으면 None
+    assert claude_prompt("⏺ 출력만 있음\n행2\n행3\n행4") is None
+    # 하단 N줄 안의 "> 타이핑중" 은 제출 프롬프트로 오인하지 않음
+    assert claude_prompt("일반\n행2\n> 타이핑 중인 줄\n행4") is None
 
 
 async def test_claude_usage():

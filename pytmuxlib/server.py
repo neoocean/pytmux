@@ -13,8 +13,8 @@ import time
 from . import ipc, proc, pty_backend, sshwrap, tokens, usagelog
 from .model import (ClientConn, Pane, Session, Split, Tab, Window,
                     coalesce_alt_repaints)
-from .claude import (claude_account, claude_perm_mode, claude_state,
-                     claude_usage, parse_reset_delay)
+from .claude import (claude_account, claude_perm_mode, claude_prompt,
+                     claude_state, claude_usage, parse_reset_delay)
 from .protocol import (FEED_SLICE, FLUSH_HZ, MIN_H, MIN_W, read_msg, write_msg)
 
 # pytmux 프로젝트 루트(= pytmuxlib 패키지의 상위). 캡처 출력 등 "프로젝트에 영속해
@@ -2080,6 +2080,21 @@ class Server:
                         boundary = True
                     if boundary and p.pending_prompts:
                         p.last_prompt = p.pending_prompts.pop(0)
+                        changed = True
+                # 데스크탑 앱 원격제어 등 입력 경로(_track_prompt)를 안 거친 프롬프트
+                # 반영(§10 #19): 화면 transcript 에서 최신 사용자 프롬프트를 best-effort
+                # 추출해, 입력으로 안 잡힌(last_prompt 와 다르고 최근 히스토리에도 없는)
+                # 경우에만 헤더/히스토리를 갱신한다. 로컬 입력은 _track_prompt 가 제출
+                # 즉시 히스토리에 남기므로 여기 가드(히스토리 멤버십)에 걸려 중복되지
+                # 않는다. 화면 파싱은 best-effort 라 보수적으로 매칭한다.
+                if new_cl:
+                    sp = claude_prompt(txt)
+                    if (sp and sp != p.last_prompt
+                            and sp not in p.prompt_history[-5:]):
+                        p.last_prompt = sp
+                        p.prompt_history.append(sp)
+                        if len(p.prompt_history) > 200:
+                            p.prompt_history = p.prompt_history[-200:]
                         changed = True
                 # 비활성 탭에서 처리(busy)→대기(idle) 전이 = 작업 완료. limit 은
                 # "대기"가 아니므로 대상 아님(busy→idle 만).
