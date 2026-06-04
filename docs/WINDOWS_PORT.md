@@ -79,10 +79,13 @@ Windows에 직접 대응물이 없어 포팅 시 약화/제거됨:
 
 이게 되면 ①②가 풀린 것이고, 나머지는 배관 작업이다.
 
-## 7. 다음 액션 (미결정)
+## 7. 다음 액션
 
-- **(a)** 위 PoC 슬라이스를 실제 작성해 ConPTY+pyte가 이 코드와 붙는지 검증
-- **(b)** 추상화 레이어 + `server.py` 리팩터 구체 단계별 구현 계획 수립
+- **(a)** ✅ PoC 슬라이스 작성됨 → [`../poc/winpty_poc.py`](../poc/winpty_poc.py).
+  - ConPTY(pywinpty) → 리더 스레드 → `call_soon_threadsafe` → asyncio → **기존** `Pane`(pyte) → **기존** `render_pane_lines`.
+  - pytmuxlib **무수정**: Windows에서 `protocol.py`의 `fcntl`/`termios` import가 깨지는 문제는, 두 모듈이 없을 때만 no-op 스텁을 `sys.modules`에 심어 우회(스텁 `ioctl`은 PoC에서 호출되지 않음).
+  - 검증 완료(macOS): `--selftest`로 `Pane.feed`+렌더 동작 확인 + fcntl 차단 시뮬레이션으로 스텁 경로 import 성립 확인. **ConPTY 절반은 Windows에서 `python poc\winpty_poc.py` 실행 필요.**
+- **(b)** 추상화 레이어 + `server.py` 리팩터 구체 단계별 구현 계획 수립 — PoC 통과 후 착수.
 - **(c)** 보류
 
 ## 부록 — 즉시 해결된 항목

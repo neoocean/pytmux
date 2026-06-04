@@ -680,6 +680,17 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 - 패널 **드래그 swap**, 단일 패널 테두리 on/off 옵션화.
 - 다중 줄 상태표시줄, unbind-key, 라이브 PTY display-popup.
 - `unbind`/추가 옵션 등 FEATURES 의 "미구현" 표기 항목.
+- **[조사완료·구현미착수] 네이티브 Windows 포팅** — `fcntl`/`termios`/`pty`/`os.fork`/
+  `AF_UNIX` 등 POSIX 전용 의존 때문에 Windows 네이티브 Python 에서 import 단계부터 막힘.
+  범위 조사는 [`docs/WINDOWS_PORT.md`](WINDOWS_PORT.md) 에 파일별로 정리됨(작업의 ~70%가
+  `server.py` 의 PTY·이벤트루프·프로세스·시그널 재작성). 리스크 집중부(① ConPTY,
+  ② asyncio×파이프 읽기)를 찌르는 **PoC 슬라이스 작성 완료** → [`poc/winpty_poc.py`](../poc/winpty_poc.py):
+  `pywinpty`(ConPTY)→리더 스레드→`call_soon_threadsafe`→**기존** `Pane`(pyte)→**기존**
+  `render_pane_lines`. pytmuxlib **무수정**(Windows 에서 `protocol.py` 의 fcntl import 깨짐을
+  no-op 스텁으로 우회). macOS 에서 렌더 파이프라인 절반(`--selftest` + fcntl 차단 시뮬)은
+  검증됨; **ConPTY 절반은 Windows 에서 `python poc\winpty_poc.py` 실행으로 확인 필요.**
+  다음 단계(WINDOWS_PORT §7-b): PoC 통과 후 추상화 레이어(`pty_backend`/`ipc`/`proc`) 신설
+  + `server.py` 리팩터의 단계별 구현 계획 수립.
 
 ## 11. Claude Code 특화 기능 분리 전략 (병렬 세션 충돌 최소화)
 
