@@ -68,18 +68,32 @@ async def test_protocol_imports_without_fcntl_termios():
 
 
 async def test_shell_argv_os_branch():
-    """client._shell_argv 가 OS 별 셸로 분기한다(run-shell/if-shell/popup 용).
+    """proc.shell_argv 가 OS 별 셸로 분기한다(server pipe-pane / client run-shell 공용).
 
-    POSIX 는 /bin/sh -c, Windows(nt)는 cmd /c. os.name 을 패치해 양쪽을 검증한다.
+    POSIX 는 /bin/sh -c, Windows(nt)는 cmd /c. IS_WINDOWS 를 패치해 양쪽을 검증한다.
     """
     from unittest import mock
+    from pytmuxlib import proc
+
+    with mock.patch.object(proc, "IS_WINDOWS", False):
+        assert proc.shell_argv("echo hi") == ["/bin/sh", "-c", "echo hi"]
+    with mock.patch.object(proc, "IS_WINDOWS", True), mock.patch.dict(
+            "os.environ", {"COMSPEC": r"C:\Windows\System32\cmd.exe"}):
+        assert proc.shell_argv("dir") == [r"C:\Windows\System32\cmd.exe", "/c", "dir"]
+    # COMSPEC 미설정 Windows → cmd.exe 폴백.
+    with mock.patch.object(proc, "IS_WINDOWS", True), \
+            mock.patch.dict("os.environ", {}, clear=True):
+        assert proc.shell_argv("dir") == ["cmd.exe", "/c", "dir"]
+
+
+async def test_client_shell_argv_delegates_to_proc():
+    """client._shell_argv 는 proc.shell_argv 로 위임한다(중복 제거 회귀 가드)."""
+    from unittest import mock
+    from pytmuxlib import proc
     from pytmuxlib.client import _shell_argv
 
-    with mock.patch("os.name", "posix"):
+    with mock.patch.object(proc, "IS_WINDOWS", False):
         assert _shell_argv("echo hi") == ["/bin/sh", "-c", "echo hi"]
-    with mock.patch("os.name", "nt"), mock.patch.dict(
-            "os.environ", {"COMSPEC": r"C:\Windows\System32\cmd.exe"}):
-        assert _shell_argv("dir") == [r"C:\Windows\System32\cmd.exe", "/c", "dir"]
-    # COMSPEC 미설정 Windows → cmd.exe 폴백.
-    with mock.patch("os.name", "nt"), mock.patch.dict("os.environ", {}, clear=True):
+    with mock.patch.object(proc, "IS_WINDOWS", True), \
+            mock.patch.dict("os.environ", {}, clear=True):
         assert _shell_argv("dir") == ["cmd.exe", "/c", "dir"]

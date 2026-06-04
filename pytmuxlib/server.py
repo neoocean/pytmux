@@ -9,7 +9,7 @@ import shlex
 import subprocess
 import time
 
-from . import pty_backend, tokens
+from . import ipc, proc, pty_backend, tokens
 from .model import ClientConn, Pane, Session, Split, Tab, Window
 from .claude import claude_state, claude_usage, parse_reset_delay
 from .protocol import (FLUSH_HZ, MIN_H, MIN_W, read_msg, write_msg)
@@ -18,6 +18,9 @@ from .protocol import (FLUSH_HZ, MIN_H, MIN_W, read_msg, write_msg)
 class Server:
     def __init__(self, sock_path: str):
         self.sock_path = sock_path
+        # 패널 셸 $PYTMUX 에 심을 엔드포인트. serve() 가 listen 을 시작하면 TCP
+        # 에페메럴(포트 0)은 확정 포트로 갱신된다. 바인드 전(테스트 등)엔 입력값 그대로.
+        self.resolved_endpoint = sock_path
         self.sessions: dict[str, Session] = {}
         self.clients: list[ClientConn] = []
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -43,7 +46,7 @@ class Server:
         rows = max(MIN_H, rows)
         env = dict(os.environ)
         env["TERM"] = "xterm-256color"
-        env["PYTMUX"] = self.sock_path
+        env["PYTMUX"] = self.resolved_endpoint
         env.pop("LINES", None)
         env.pop("COLUMNS", None)
         if pty_backend.IS_WINDOWS:
@@ -723,7 +726,7 @@ class Server:
     # ---- 레이아웃 영속(저장/복원) ----
     @property
     def layout_path(self):
-        return os.path.join(os.path.dirname(self.sock_path) or "/tmp",
+        return os.path.join(os.path.dirname(ipc.state_base(self.sock_path)) or "/tmp",
                             "layout.json")
 
     def _serialize_node(self, node):
@@ -785,8 +788,8 @@ class Server:
     # ---- 탭(윈도우+패널) 레이아웃 슬롯: 이름으로 저장/불러오기 ----
     @property
     def slots_path(self):
-        # 소켓 경로 기준(고정 소켓이면 안정적, 테스트의 임시 소켓이면 격리됨)
-        return self.sock_path + ".slots.json"
+        # 상태파일 접두 기준(unix=소켓 경로 그대로, tcp=상태 디렉터리/default)
+        return ipc.state_base(self.sock_path) + ".slots.json"
 
     def _load_slots(self) -> dict:
         try:
@@ -806,7 +809,7 @@ class Server:
     # ---- 서버 옵션 영속(opts.json) ----
     @property
     def opts_path(self) -> str:
-        return self.sock_path + ".opts.json"
+        return ipc.state_base(self.sock_path) + ".opts.json"
 
     def _load_opts(self) -> dict:
         try:
@@ -827,7 +830,7 @@ class Server:
     # ---- 패널 출력 캡처(Claude 화면 문구 분석용) ----
     @property
     def capture_dir(self) -> str:
-        return self.sock_path + ".capture"
+        return ipc.state_base(self.sock_path) + ".capture"
 
     def _capture_info(self, pane):
         """활성 패널의 캡처 파일 절대경로·크기(REC 클릭 팝업용). 캡처 off 면 (None,0)."""
@@ -1051,7 +1054,7 @@ class Server:
             p.pipe_proc = None
         if cmd:
             try:
-                p.pipe_proc = subprocess.Popen(["/bin/sh", "-c", cmd],
+                p.pipe_proc = subprocess.Popen(proc.shell_argv(cmd),
                                                stdin=subprocess.PIPE)
             except Exception:
                 p.pipe_proc = None
@@ -1770,7 +1773,8 @@ class Server:
                     if p.pty is not None:
                         p.pty.terminate()       # SIGHUP
         try:
-            if os.path.exists(self.sock_path):
+            # TCP 엔드포인트는 지울 파일이 없다(포트파일은 다음 기동이 덮어씀).
+            if not ipc.is_tcp(self.sock_path) and os.path.exists(self.sock_path):
                 os.unlink(self.sock_path)
         except OSError:
             pass
@@ -1779,10 +1783,10 @@ class Server:
 
     async def serve(self):
         self.loop = asyncio.get_running_loop()
-        if os.path.exists(self.sock_path):
-            os.unlink(self.sock_path)
-        server = await asyncio.start_unix_server(self.handle_client, path=self.sock_path)
-        os.chmod(self.sock_path, 0o600)
+        # OS 별 listen 분기(Unix=AF_UNIX, Windows=TCP 루프백+포트파일)는 ipc 가 담당.
+        # 확정 엔드포인트(TCP 면 실제 포트)를 패널 셸 $PYTMUX 에 게시한다.
+        server, self.resolved_endpoint = await ipc.start_server(
+            self.sock_path, self.handle_client)
         # 재부팅/재시작 후: 저장된 레이아웃이 있으면 구조 복원(셸은 새로 시작)
         if os.path.exists(self.layout_path) and not self.sessions:
             self.restore_layout()

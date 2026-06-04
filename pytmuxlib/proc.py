@@ -28,7 +28,21 @@ IS_WINDOWS = os.name == "nt"
 _DETACHED_PROCESS = 0x00000008
 _CREATE_NEW_PROCESS_GROUP = 0x00000200
 
-__all__ = ["IS_WINDOWS", "spawn_detached", "terminate", "is_alive", "server_argv"]
+__all__ = ["IS_WINDOWS", "spawn_detached", "terminate", "is_alive",
+           "server_argv", "shell_argv"]
+
+
+def shell_argv(cmd: str) -> List[str]:
+    """문자열 명령을 OS 기본 셸로 실행하는 argv 로 만든다.
+
+    pipe-pane(server) / run-shell·if-shell·display-popup(client) 처럼 사용자
+    명령을 셸에 통째로 넘길 때 쓴다. POSIX: ``/bin/sh -c <cmd>``,
+    Windows: ``cmd /c <cmd>``(COMSPEC 우선).
+    """
+    if IS_WINDOWS:
+        comspec = os.environ.get("COMSPEC", "cmd.exe")
+        return [comspec, "/c", cmd]
+    return ["/bin/sh", "-c", cmd]
 
 
 def server_argv(sock_path: str, *, python: Optional[str] = None,
