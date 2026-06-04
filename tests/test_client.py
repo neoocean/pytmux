@@ -1688,6 +1688,51 @@ async def test_net_watchdog_triggers_auto_reconnect():
     await _with_app(body)
 
 
+async def test_claude_footer_zones_and_popups():
+    """§10 item 2/3: _composite 가 Claude 패널 content 의 권한모드 footer 와 'Remote
+    Control active' 줄을 찾아 클릭존(_perm_zone/_remote_zone)을 등록하고, open_perm_mode/
+    open_remote_control 가 각각 권한모드 선택/원격제어 정보 팝업을 연다."""
+    async def body(app, pilot, srv):
+        pid = app.layout["panes"][0]["id"]
+        px = app.layout["panes"][0]["x"]
+        py = app.layout["panes"][0]["y"]
+        app.pane_claude = {pid: {"id": pid, "claude": "idle",
+                                 "perm_mode": "default"}}
+        rows = [
+            [("일반 출력 줄", {})],
+            [("⏵⏵ auto-accept edits on (shift+tab to cycle)", {})],
+            [("Remote Control active", {})],
+        ]
+        app.pane_content[pid] = (rows, None)
+        app._composite()
+        assert pid in app._perm_zone, app._perm_zone
+        assert pid in app._remote_zone, app._remote_zone
+        # 권한모드 footer 는 둘째 줄(py+1), 원격제어는 셋째 줄(py+2)
+        assert app._perm_zone[pid][2] == py + 1
+        assert app._remote_zone[pid][2] == py + 2
+        # x 범위는 패널 시작 이상
+        assert app._perm_zone[pid][0] >= px
+        # 권한모드 팝업: 현재 모드 표시 + 선택 시 set_claude_perm_mode 전송
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app.open_perm_mode(pid)
+        await pilot.pause(0.05)
+        scr = app.screen
+        assert scr.__class__.__name__ == "PermModeScreen", scr
+        assert "default" in (scr.query_one("#perm").border_title or "")
+        scr.dismiss("plan")
+        await pilot.pause(0.05)
+        assert sent and sent[0][0] == "set_claude_perm_mode"
+        assert sent[0][1].get("target") == "plan"
+        # 원격제어 팝업: InfoScreen
+        app.open_remote_control(pid)
+        await pilot.pause(0.05)
+        assert app.screen.__class__.__name__ == "InfoScreen"
+        app.screen.dismiss(None)
+        await pilot.pause(0.05)
+    await _with_app(body)
+
+
 async def test_status_claude_usage():
     async def body(app, pilot, srv):
         app.status.claude_usage = "ctx 42%"

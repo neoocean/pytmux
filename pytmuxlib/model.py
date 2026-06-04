@@ -317,6 +317,12 @@ class Pane:
         # 는 직전에 관측·작용한 권한모드(화면 갱신 전 중복 주입 방지). 둘 다 휘발성.
         self._cam_tries = 0
         self._cam_last = None
+        # 현재 관측된 권한모드(claude_perm_mode 결과: auto/plan/default/bypass/None)와
+        # 사용자가 footer 클릭 팝업으로 고른 목표 모드(§10 item 2). _perm_target 가
+        # 있으면 idle 시 그 모드까지 shift+tab 을 폐루프로 순환 주입한다(도달/포기 시
+        # None 으로). _perm_mode 는 status 로 클라에 보내 팝업의 '현재 모드' 표시에 씀.
+        self._perm_mode = None
+        self._perm_target = None
         # 비활성 탭 Claude 완료 알림(#22) 플리커 방지(§10 #18): busy↔idle 가 한 프레임
         # 흔들릴 때 done 이 잘못 서는 걸 막으려고, busy 를 본 뒤 idle 이 연속 N프레임
         # 안정될 때만 완료로 친다. _was_busy=직전에 busy 였음, _idle_frames=연속 idle 수.
@@ -379,6 +385,8 @@ class Pane:
         self._adc_active = False  # 자동 doc→/clear 진행상태 리셋(§10; 타이머는 만료시 자가해제)
         self._cam_tries = 0       # 권한모드 자동전환 시도 카운터 리셋(§10)
         self._cam_last = None
+        self._perm_mode = None    # 새 셸 — 권한모드 관측/목표 리셋(§10 item 2)
+        self._perm_target = None
         self._was_busy = False    # done 플리커 디바운스 리셋(§10 #18)
         self._idle_frames = 0
         self._hdr_reserved = False

@@ -211,6 +211,20 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56602 **Claude footer 클릭 → 권한모드 선택/원격제어 정보 팝업**(§10 item 2/3) —
+  패널 내 Claude Code 하단 ① 권한모드 footer(`auto mode on (shift+tab to cycle)`)
+  클릭 → 권한모드 선택 팝업(`PermModeScreen`, 현재 모드 표시+auto/default/plan 선택,
+  bypass 는 위험 모드라 제외), ② `Remote Control active` 클릭 → 원격제어 정보 팝업
+  (`InfoScreen`, 토글은 Claude 데스크탑 앱 관리라 터미널서 불가 → 안내 전용). 두 줄은
+  Claude 가 PTY 안에 그리므로, 클라 `_composite` 가 패널 content 를 훑어 위치를 찾아
+  클릭존(`_perm_zone`/`_remote_zone`, `_scan_footer_zones`)을 등록하고 `on_mouse_down`
+  이 패스스루보다 먼저 히트테스트한다. 서버: `Pane._perm_mode`(관측)/`_perm_target`
+  (목표), `_scan_claude` 가 idle 시 `claude_perm_mode` 로 현재 모드 관측→status
+  (`panes_claude.perm_mode`), 수동 목표가 있으면 `_drive_perm_mode` 로 shift+tab 폐루프
+  주입(없고 `claude_auto_mode` 면 기존 `_maybe_auto_mode`), `set_claude_perm_mode`
+  액션. 회귀 2종(목표 설정·폐루프·도달 해제·status / 클릭존 등록·팝업·set 전송),
+  188 passed. **서버+클라 — kill-server 재기동 후 반영.** 파일: `pytmuxlib/{client,
+  server,model}.py`, `tests/test_{server,client}.py`, `docs/HANDOFF.md`.
 - 56601 **degraded(빨간 외곽선) 고착 회복 — IPC 강제 재접속(수동 `reconnect` +
   워치독)**(§10) — 네트워크 저하로 외곽선이 빨강(CL 56593)으로 고착되고 ssh→pytmux
   가 멈출 때(클라↔서버 전송 정체로 `read_msg` 무한 블록), **실행 중 Claude 를 종료
@@ -710,7 +724,22 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   이 항목의 detection), 아래 "Windows→ssh→원격 macOS ssh 반응성 급락"·feed 드레인/
   백프레셔(서버 측 정체 원인 후보), 데스크탑 원격제어 프롬프트 반영(CL 56592, "앱은
   살아있다"의 같은 근거). **현재는 기록만 — 미구현.**
-- **[UI 요청, 미구현] 패널 하단 Claude `auto mode on` footer 클릭/터치 → 권한모드
+- **[UI 요청, 미구현(기록만)] Claude footer 모드/원격제어 영역 호버 시 배경색을 살짝
+  바꿔 클릭 가능함을 표시** — 요청: 마우스로 Claude Code 하단의 **권한모드 footer**·
+  **`Remote Control active`** 영역(= CL 56602 에서 등록한 `_perm_zone`/`_remote_zone`
+  클릭존)에 **호버하면 배경색을 살짝 바꿔** 클릭 가능한 영역임을 알린다. 현재 자산:
+  클릭존은 이미 있다(`_perm_zone`/`_remote_zone`, `client.py:_scan_footer_zones`,
+  `on_mouse_down` 히트테스트). 구현 방향: ㉠ `MultiplexerView.on_mouse_move` 에서
+  커서가 두 클릭존 안이면 hover 대상(`_footer_hover=(pid,kind)`)을 기억하고
+  `_composite` 재합성, ㉡ `_composite` 가 그 클릭존 줄(content 좌표)을 칠할 때 배경을
+  한 톤 밝게/어둡게(예 `$panel`/`secondary` 블렌드) 덮어 affordance 표시(탭바 드래그
+  `_drag_over` 강조 선례 참고). **주의**: 호버 강조는 클릭존 줄에만, Claude 본문
+  글자색은 유지(배경만 살짝). 탭바 호버(`_hover_divider`) 패턴과 동형. **연관**: CL
+  56602(클릭존·팝업)·탭 드래그 시각 피드백(CL 56469). **현재는 기록만 — 미구현.**
+- ~~**[UI 요청] 패널 하단 Claude `auto mode on` footer 클릭/터치 → 권한모드 선택
+  팝업**~~ → **CL 56602 에서 해결**(`PermModeScreen`, 현재 모드 표시+선택→shift+tab
+  폐루프 주입). 아래는 원 분석 기록.
+- **[원래 분석] 패널 하단 Claude `auto mode on` footer 클릭/터치 → 권한모드
   선택 팝업** — 요청: Claude Code 가 실행 중일 때 **패널 내 하단의 `auto mode on`
   부분을 터치/클릭**하면 팝업으로 **변경 가능한 권한모드들**을 보여주고 그중 하나를
   **선택**할 수 있게. 현재 구현/자산: 이 footer 는 **Claude 자체가 패널 PTY 안에**
@@ -729,7 +758,12 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   모드 순환 순서가 Claude 버전 의존이라 "목표까지 N회" 계산을 폐루프로 할지, 팝업
   UI(라디오/리스트)·자동전환(`claude-auto-mode`)과의 관계. **연관**: 권한모드 자동
   전환(CL 56591). **현재는 기록만 — 미구현.**
-- **[UI 요청, 미구현] 패널 내 `Remote Control active` 클릭/터치 → 원격제어 토글
+- ~~**[UI 요청] 패널 내 `Remote Control active` 클릭/터치 → 원격제어 토글 팝업**~~ →
+  **CL 56602 에서 해결**(클릭→`InfoScreen` 정보 팝업). 단 **토글은 미구현** — 원격제어
+  on/off 는 Claude 데스크탑 앱이 관리하는 기능이라 터미널서 직접 토글할 수단이 없어
+  **상태/안내 전용 팝업으로 축소**(요청의 '켜고 끄는 화면'은 토글 수단 부재로 안내로).
+  토글 키/명령이 Claude 측에 생기면 그때 주입 추가. 아래는 원 분석 기록.
+- **[원래 분석] 패널 내 `Remote Control active` 클릭/터치 → 원격제어 토글
   팝업** — 요청: 패널 안 **`Remote Control active`** 표시를 클릭/터치하면 팝업으로
   **원격 제어를 켜고 끄는 화면**을 보여주기. 현재 구현/제약: 이 표시도 **Claude
   데스크탑 앱의 원격제어 기능**이 패널 PTY 안에 그리는 것이라 pytmux 밖이다 —

@@ -1174,6 +1174,47 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.stop()
                 self.dismiss(None)
 
+    class PermModeScreen(ModalScreen):
+        """Claude 권한모드 선택 팝업(하단 footer 클릭, §10 item 2). 현재 모드를 표시
+        하고 목표 모드를 고르면 그 키를 dismiss → 서버가 shift+tab 폐루프로 목표까지
+        순환 주입한다. bypass(권한 우회)는 위험 모드라 목록에서 제외(실수 방지)."""
+        CSS = """
+        PermModeScreen { align: center middle; }
+        #perm { width: 60; height: auto; max-height: 80%;
+                border: round $accent; background: $panel; }
+        #perm ListItem Label { width: 1fr; }
+        """
+        _MODES = [
+            ("auto", "auto — 편집 자동 수락 (⏵⏵ auto-accept edits)"),
+            ("default", "default — 매번 확인 (일반 모드)"),
+            ("plan", "plan — 플랜 모드 (계획만, 실행 안 함)"),
+        ]
+
+        def __init__(self, current):
+            super().__init__()
+            self._current = current
+
+        def compose(self) -> ComposeResult:
+            items = []
+            for key, label in self._MODES:
+                mark = "  ◀ 현재" if key == self._current else ""
+                items.append(ListItem(Label(label + mark, markup=False),
+                                      id=f"M_{key}"))
+            lv = ListView(*items, id="perm")
+            lv.border_title = f"권한모드 선택 (현재: {self._current or '?'})"
+            yield lv
+
+        def on_mount(self):
+            self.query_one(ListView).focus()
+
+        def on_list_view_selected(self, event):
+            self.dismiss(event.item.id[2:])   # "M_auto" → "auto"
+
+        def on_key(self, event: events.Key):
+            if event.key == "escape":
+                event.stop()
+                self.dismiss(None)
+
     class MultiplexerView(Widget):
         can_focus = True
 
@@ -1341,6 +1382,19 @@ def build_client_app(sock_path: str, config: dict | None = None,
             for pid, (zx0, zx1, zy) in self.app._claude_header_zones.items():
                 if zy == event.y and zx0 <= event.x < zx1:
                     self.app.open_prompt_history(pid)
+                    event.stop()
+                    return
+            # Claude 권한모드 footer 클릭 → 권한모드 선택 팝업(§10 item 2). 패스스루
+            # 보다 먼저 가로채 마우스 모드 앱 위에서도 동작한다.
+            for pid, (zx0, zx1, zy) in self.app._perm_zone.items():
+                if zy == event.y and zx0 <= event.x < zx1:
+                    self.app.open_perm_mode(pid)
+                    event.stop()
+                    return
+            # Claude 'Remote Control active' 클릭 → 원격제어 정보 팝업(§10 item 3)
+            for pid, (zx0, zx1, zy) in self.app._remote_zone.items():
+                if zy == event.y and zx0 <= event.x < zx1:
+                    self.app.open_remote_control(pid)
                     event.stop()
                     return
             # 현재 탭 닫기 버튼([x]) 클릭(콘텐츠 오른쪽 위)
@@ -2070,6 +2124,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.claude_header_on = True  # 프롬프트 헤더 표시(claude-header on|off)
             self.single_border_on = True  # 단일 패널 테두리 표시(single-border on|off)
             self._claude_header_zones = {}  # id -> (x0,x1,y) 헤더 클릭존(히스토리 팝업)
+            # Claude 패널 PTY 안에 그려지는 하단 footer 클릭존(§10 item 2/3): 권한모드
+            # footer("auto mode on (shift+tab)") → 권한모드 선택 팝업, "Remote Control
+            # active" → 원격제어 정보 팝업. _composite 가 패널 content 를 훑어 채운다.
+            self._perm_zone = {}     # id -> (x0,x1,y) 권한모드 footer 클릭존
+            self._remote_zone = {}   # id -> (x0,x1,y) 원격제어 표시 클릭존
             self._hdr_focus = None      # ESC 모드 Claude 헤더 포커스 대상 pane id(#5)
             self._claude_hidden_panes = set()  # 헤더를 숨긴 패널 id(#6 ② 팝업서 토글)
             self._tab_close_zone = None  # 현재 탭 닫기 [x] 영역 (x0, x1, y)
@@ -2515,6 +2574,37 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 lines, title="프롬프트 히스토리(시간순)",
                 hide_key="h", hide_cb=lambda: self.toggle_header_hidden(pid)))
 
+        def open_perm_mode(self, pane_id):
+            """Claude 권한모드 선택 팝업을 연다(하단 footer 클릭, §10 item 2). 현재
+            모드(서버가 status 로 보낸 perm_mode)를 표시하고, 고른 목표를 서버로
+            보내면 서버가 shift+tab 폐루프로 그 모드까지 순환 주입한다."""
+            info = self.pane_claude.get(pane_id) or {}
+            current = info.get("perm_mode")
+
+            def _chosen(target):
+                if target:
+                    self.send_cmd("set_claude_perm_mode", id=pane_id,
+                                  target=target)
+                    self.display_message(f"권한모드 → {target} 전환 중…")
+            self.push_screen(PermModeScreen(current), _chosen)
+
+        def open_remote_control(self, pane_id):
+            """Claude 데스크탑 앱 원격제어('Remote Control active') 정보 팝업(§10 item 3).
+            원격제어 on/off 는 Claude 데스크탑 앱이 관리하는 기능이라 pytmux(터미널)에서
+            직접 토글할 수 없다 — 상태/안내 전용 팝업으로 둔다(요청의 '켜고 끄는 화면'
+            은 토글 수단 부재로 안내로 축소). 원격제어 입력 프롬프트는 헤더에 반영됨."""
+            lines = [
+                "이 패널의 Claude Code 가 데스크탑 앱 '원격 제어'로 연결돼 있습니다.",
+                "(패널 화면의 'Remote Control active' 표시)",
+                "",
+                "• 원격 제어 켜기/끄기는 Claude 데스크탑 앱에서 관리됩니다.",
+                "  pytmux(터미널)에서는 직접 토글할 수 없습니다.",
+                "• 원격 제어로 입력된 프롬프트도 상단 프롬프트 헤더에 반영됩니다.",
+                "",
+                "닫기: Esc 또는 바깥 클릭.",
+            ]
+            self.push_screen(InfoScreen(lines, title="원격 제어(Remote Control)"))
+
         def _draw_claude_headers(self, cells, W, H):
             """Claude Code 패널 내부 맨 윗줄에 마지막 프롬프트를 스티키 헤더로 표시.
             스크롤과 무관(합성 시 항상 내용 최상단에 덮어 그림). 표시 여부는 전역
@@ -2779,16 +2869,51 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     for j, c in enumerate(s):
                         self._put_cell(cells, ox + j, oy, c, title_st, W, H)
 
+        def _scan_footer_zones(self, p, rows, W, H):
+            """Claude 패널 content 줄에서 ① 권한모드 footer(클릭→권한모드 팝업, item 2)
+            와 ② 'Remote Control active'(클릭→원격제어 팝업, item 3)를 찾아 클릭존을
+            등록한다(§10). 패널 content 좌표(ry)를 화면 좌표(gy)로 매핑하고, 가장 아래
+            매치를 채택한다(footer 는 하단). Claude 패널만 대상."""
+            ci = self.pane_claude.get(p["id"])
+            if not (ci and ci.get("claude")):
+                return
+            for ry, row in enumerate(rows):
+                if ry >= p["h"]:
+                    break
+                gy = p["y"] + ry
+                if not (0 <= gy < H):
+                    continue
+                text = "".join(seg[0] for seg in row)
+                low = text.lower()
+                stripped = text.strip()
+                if not stripped:
+                    continue
+                # 줄의 실제 글자 범위(앞뒤 공백 제외)를 클릭존 x 범위로 — 와이드 인지.
+                lead = len(text) - len(text.lstrip())
+                x0 = p["x"] + sum(_char_cells(c) for c in text[:lead])
+                x1 = min(p["x"] + p["w"],
+                         x0 + sum(_char_cells(c) for c in stripped))
+                # 권한모드 footer(claude.py:claude_perm_mode 와 같은 신호)
+                if ("shift+tab to" in low or "mode on (shift" in low
+                        or "⏵⏵" in text or "auto-accept" in low):
+                    self._perm_zone[p["id"]] = (x0, x1, gy)
+                if "remote control" in low:
+                    self._remote_zone[p["id"]] = (x0, x1, gy)
+
         def _composite(self):
             W = self.layout.get("cols", self.size.width)
             H = self.layout.get("rows", max(1, self.size.height - 1))
             cells = [[(" ", DEFAULT_STYLE) for _ in range(W)] for _ in range(H)]
             active = self.layout.get("active")
+            # Claude footer 클릭존(§10 item 2/3) 재계산 — 매 합성마다 비우고 채운다.
+            self._perm_zone = {}
+            self._remote_zone = {}
             for p in self.layout.get("panes", []):
                 content = self.pane_content.get(p["id"])
                 if not content:
                     continue
                 rows, cursor = content
+                self._scan_footer_zones(p, rows, W, H)
                 for ry, row in enumerate(rows):
                     if ry >= p["h"]:
                         break

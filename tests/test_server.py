@@ -1454,3 +1454,44 @@ async def test_attach_survives_send_full_error():
         except OSError:
             pass
         await teardown(srv, task, sock)
+
+
+def _claude_footer(mode):
+    """권한모드 footer 텍스트 한 줄(claude_perm_mode 가 mode 로 판정하도록)."""
+    return {
+        "auto": "⏵⏵ auto-accept edits on (shift+tab to cycle)",
+        "plan": "plan mode on (shift+tab to cycle)",
+        "default": "↑↓ history  (shift+tab to cycle)",
+    }[mode]
+
+
+async def test_claude_perm_mode_set_and_drive():
+    """§10 item 2: 권한모드 footer 클릭 팝업 흐름의 서버측 — set_claude_perm_mode 가
+    목표를 박고, _drive_perm_mode 가 idle footer 가 목표가 될 때까지 shift+tab(backtab)
+    을 폐루프 주입하며, 도달하면 _perm_target 를 해제한다. _status_msg 는 현재
+    perm_mode 를 실어 보낸다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(100, 30)
+        p = sess.active_window.active_pane
+        injected = []
+        srv._inject_keys = lambda pane, data: injected.append(data)
+        # 목표 설정(클라 팝업 → set_claude_perm_mode)
+        srv.set_claude_perm_mode(sess, "auto")
+        assert p._perm_target == "auto"
+        # 현재 default → 한 번 shift+tab 주입, 카운터 증가
+        srv._drive_perm_mode(p, _claude_footer("default"), "auto")
+        assert injected == [b"\x1b[Z"], injected
+        # 화면 미갱신(같은 모드) → 중복 주입 안 함
+        srv._drive_perm_mode(p, _claude_footer("default"), "auto")
+        assert len(injected) == 1, "화면 갱신 전 중복 주입 금지"
+        # 화면이 auto 로 갱신 → 도달, 목표 해제, 추가 주입 없음
+        srv._drive_perm_mode(p, _claude_footer("auto"), "auto")
+        assert p._perm_target is None and len(injected) == 1
+        # status 에 현재 perm_mode 가 실린다
+        p._perm_mode = "auto"
+        msg = srv._status_msg(sess)
+        pc = [e for e in msg["panes_claude"] if e["id"] == p.id][0]
+        assert pc["perm_mode"] == "auto", pc
+    finally:
+        await teardown(srv, task, sock)

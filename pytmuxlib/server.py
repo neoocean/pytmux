@@ -497,6 +497,47 @@ class Server:
         pane._cam_last = mode
         self._inject_keys(pane, b"\x1b[Z")
 
+    def _drive_perm_mode(self, pane: Pane, txt: str, target: str):
+        """idle 패널의 권한모드를 사용자가 고른 target 으로 폐루프 구동한다(§10 item 2,
+        footer 클릭 팝업). shift+tab(backtab \\x1b[Z)을 한 번 보내고 다음 프레임에
+        footer 를 재확인해 target 에 도달할 때까지 반복(순환 순서가 Claude 버전 의존
+        이라 폐루프). 도달하거나 _CAM_MAX 초과(오검출/순서 상이)면 _perm_target 해제.
+        화면 갱신 전(직전과 같은 모드)에는 중복 주입하지 않는다(_maybe_auto_mode 와
+        같은 cam 카운터 공유)."""
+        mode = claude_perm_mode(txt)
+        if mode is None:
+            return                       # footer 안 보임 — 대기
+        if mode == target:
+            pane._perm_target = None     # 도달
+            pane._cam_tries = 0
+            pane._cam_last = None
+            return
+        if mode == pane._cam_last and pane._cam_tries > 0:
+            return                       # 화면 미갱신 — 대기
+        if pane._cam_tries >= _CAM_MAX:
+            pane._perm_target = None      # 못 맞춤 — 포기
+            pane._cam_tries = 0
+            pane._cam_last = None
+            return
+        pane._cam_tries += 1
+        pane._cam_last = mode
+        self._inject_keys(pane, b"\x1b[Z")
+
+    def set_claude_perm_mode(self, sess: Session, target: str, pane_id=None):
+        """활성(또는 지정) 패널의 권한모드 목표를 설정한다(footer 클릭 팝업, §10 item 2).
+        _scan_claude 가 idle 시 _drive_perm_mode 로 그 모드까지 폐루프 주입한다.
+        bypass 는 명시적 위험 모드라 목록엔 없지만 목표로는 허용한다(완결성)."""
+        win = sess.active_window
+        if not win:
+            return
+        p = (win.pane_by_id(pane_id) if pane_id is not None else None) \
+            or win.active_pane
+        if not p or target not in ("auto", "plan", "default", "bypass"):
+            return
+        p._perm_target = target
+        p._cam_tries = 0
+        p._cam_last = None
+
     def _pane_eof(self, pane: Pane):
         self._stop_pane_feed(pane)   # 진행 중 드레인 취소(정상 EOF 면 이미 빈 상태)
         if pane.pipe_proc:
@@ -2081,6 +2122,10 @@ class Server:
                 if p._claude is None:
                     if p.pending_prompts:
                         p.pending_prompts.clear()
+                    # Claude 세션 종료 → 권한모드 관측/목표 비움(§10 item 2)
+                    if p._perm_mode is not None or p._perm_target is not None:
+                        p._perm_mode = None
+                        p._perm_target = None
                 else:
                     boundary = (old_cl == "busy" and new_cl != "busy")
                     if not boundary and committed > 0 and new_cl == "busy":
@@ -2126,10 +2171,20 @@ class Server:
                     self._adc_disarm(p)
                     p._cam_tries = 0
                     p._cam_last = None
-                # 권한모드 자동 오토모드 전환(§10): idle 이고 토글이 켜졌으면 footer 의
-                # 권한모드가 auto 가 아닐 때 shift+tab 을 폐루프로 순환 주입한다.
-                elif self.claude_auto_mode:
-                    self._maybe_auto_mode(p, txt)
+                else:
+                    # idle: 현재 권한모드를 관측해 저장(팝업 '현재 모드' 표시용 — status
+                    # 로 클라에 전달, §10 item 2). footer 가 안 보이면(None) 마지막 값 유지.
+                    pm = claude_perm_mode(txt)
+                    if pm is not None and pm != p._perm_mode:
+                        p._perm_mode = pm
+                        changed = True
+                    # 권한모드 구동: 사용자가 footer 클릭 팝업으로 고른 수동 목표
+                    # (_perm_target)가 우선, 없고 claude_auto_mode 면 auto 로 순환
+                    # (§10 item 2 + 권한모드 자동 오토모드 전환). 둘 다 shift+tab 폐루프.
+                    if p._perm_target:
+                        self._drive_perm_mode(p, txt, p._perm_target)
+                    elif self.claude_auto_mode:
+                        self._maybe_auto_mode(p, txt)
                 # 프롬프트 단위 클리어 모드(#9) + 자동 doc→/clear(§10): busy→idle(응답
                 # 완료) 경계에서 상태기계를 전진한다. 수동 모드(prompt_clear_mode)와
                 # 자동 시퀀스(_adc_active)가 같은 _pc_phase 기계를 공유한다.
@@ -2185,7 +2240,8 @@ class Server:
             # 활성 윈도우 패널별 Claude 상태/마지막 프롬프트(헤더용)
             "panes_claude": [{"id": p.id, "claude": p._claude,
                               "prompt": p.last_prompt,
-                              "history": p.prompt_history[-30:]}
+                              "history": p.prompt_history[-30:],
+                              "perm_mode": p._perm_mode}
                              for p in (win.panes() if win else [])],
             "active_pane": win.active_pane.id if win else None,
             # 활성 패널이 Claude 면 토큰/컨텍스트 사용량(best-effort)
@@ -2408,6 +2464,11 @@ class Server:
             return
         elif action == "set_claude_account":
             self.set_claude_account(sess, str(msg.get("name", "")))
+            return
+        elif action == "set_claude_perm_mode":
+            # footer 클릭 팝업(§10 item 2): 활성/지정 패널 권한모드 목표 설정.
+            self.set_claude_perm_mode(sess, str(msg.get("target", "")),
+                                      pane_id=msg.get("id"))
             return
         elif action == "list_layouts":
             await write_msg(client.writer, {"t": "layouts",
