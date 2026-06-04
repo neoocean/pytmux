@@ -67,7 +67,7 @@ def _recvn(s, n: int) -> bytes:
 NEST_MARKER = "LC_PYTMUX"
 
 
-def nesting_blocked(force: bool) -> bool:
+def nesting_blocked() -> bool:
     """pytmux 패널 안에서 또 pytmux 를 띄우려는 중첩인지(로컬·원격 공통 판정 지점).
 
     - **로컬**: 패널 셸에 서버가 `$PYTMUX`(소켓 경로)를 심으므로 그게 설정돼 있으면 중첩.
@@ -75,16 +75,13 @@ def nesting_blocked(force: bool) -> bool:
       `$LC_PYTMUX` 를 SendEnv 로 원격에 전파한다(sshwrap). 원격 pytmux 는 `$PYTMUX`
       가 없어도 이 표식을 보고 중첩을 거부한다(docs/HANDOFF.md §10).
 
-    --force 로 우회(또는 `unset PYTMUX LC_PYTMUX`)."""
-    marked = bool(os.environ.get("PYTMUX") or os.environ.get(NEST_MARKER))
-    return marked and not force
+    우회 수단은 `unset PYTMUX LC_PYTMUX` 뿐(강제 옵션은 제공하지 않는다)."""
+    return bool(os.environ.get("PYTMUX") or os.environ.get(NEST_MARKER))
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="pytmux", description="tmux 유사 터미널 멀티플렉서")
     parser.add_argument("--socket", default=None, help="유닉스 도메인 소켓 경로")
-    parser.add_argument("--force", action="store_true",
-                        help="중첩 실행 거부 등 안전장치를 무시하고 강제 실행")
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("attach", help="실행 중인 서버에 attach (없으면 기동)")
     sub.add_parser("ls", help="탭/패널 요약")
@@ -144,10 +141,10 @@ def main(argv=None):
 
     # 기본 동작 = attach (필요 시 데몬 기동). 단일 세션 모델: 세션 이름 없음.
     # 중첩 실행 거부: pytmux 패널 안($PYTMUX 설정)에서 다시 attach 하면 막는다
-    # (재귀 렌더·입력 꼬임 방지). --force 또는 `unset PYTMUX` 로만 우회.
-    if nesting_blocked(args.force):
-        print("pytmux: 이미 pytmux 안에서 실행 중입니다(로컬/원격 중첩). 강제하려면 "
-              "--force, 또는 'unset PYTMUX LC_PYTMUX'.", file=sys.stderr)
+    # (재귀 렌더·입력 꼬임 방지). `unset PYTMUX LC_PYTMUX` 로만 우회(강제 옵션 없음).
+    if nesting_blocked():
+        print("pytmux: 이미 pytmux 안에서 실행 중입니다(로컬/원격 중첩). 우회하려면 "
+              "'unset PYTMUX LC_PYTMUX'.", file=sys.stderr)
         sys.exit(1)
     ensure_server(sock_path)
     run_client(sock_path, None)

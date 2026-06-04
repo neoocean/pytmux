@@ -14,14 +14,12 @@ async def test_nesting_blocked_helper():
         os.environ.pop("PYTMUX", None)
         os.environ.pop(NEST_MARKER, None)
         os.environ["PYTMUX"] = "/tmp/some.sock"   # 로컬 패널 안인 상황
-        assert nesting_blocked(False) is True, "로컬 패널 안 → 중첩 거부"
-        assert nesting_blocked(True) is False, "--force 면 통과"
+        assert nesting_blocked() is True, "로컬 패널 안 → 중첩 거부"
         os.environ.pop("PYTMUX", None)
-        assert nesting_blocked(False) is False, "패널 밖 → 정상"
+        assert nesting_blocked() is False, "패널 밖 → 정상"
         # 원격(ssh)에는 PYTMUX 가 없고 표식(LC_PYTMUX)만 전파된다 → 그래도 거부.
         os.environ[NEST_MARKER] = "1"
-        assert nesting_blocked(False) is True, "원격 표식만 있어도 거부"
-        assert nesting_blocked(True) is False, "--force 면 통과(원격도)"
+        assert nesting_blocked() is True, "원격 표식만 있어도 거부"
     finally:
         for k, v in ((("PYTMUX", old)), ((NEST_MARKER, old_m))):
             if v is None:

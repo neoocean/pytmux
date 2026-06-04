@@ -201,6 +201,12 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 9. 최근 변경(CL 56279~56500 + git, 신→구)
 
+- 56538 **pytmux 강제 중첩 옵션(`--force`) 제거** — 중첩 실행 거부(CL 56394 로컬/56510
+  원격)를 우회하던 전역 플래그 `--force` 를 폐지했다. 중첩(재귀 렌더·입력 꼬임)을 강제로
+  허용할 정당한 이유가 없고, 오용 시 화면이 깨지는 함정이라 안전장치를 우회 불가로 굳혔다.
+  `nesting_blocked()` 가 `force` 인자를 잃고 `$PYTMUX`/`$LC_PYTMUX` 표식만으로 판정,
+  argparse `--force` 인자·안내 문구 제거(우회는 `unset PYTMUX LC_PYTMUX` 뿐). 회귀 테스트
+  `test_nesting_blocked_helper` 에서 force 케이스 단언 삭제. 클라/런처 전용(attach 재실행).
 - 56523 **mouse-debug: 휠→화살표 변환 切り分け 위해 내비게이션 키도 로깅** — 원격 SSH 휠
   스크롤백 미동작(§10)의 두 원인((a)휠 이벤트 미도달 vs (b)터미널이 휠을 ↑/↓ 화살표로
   변환=1007)을 가리기 위해, mouse-debug 켜진 동안 `on_key` 최상단 `_log_key` 가 **내비게이션
@@ -775,8 +781,8 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   `test_sshwrap_marker_and_path`·`test_nesting_blocked_helper`(원격 표식 케이스 추가).
   아래는 원래 검토한 구현 방향(참고):
   - **로컬은 CL 56394 에서 해결**: `launcher.nesting_blocked` 가 `$PYTMUX`
-  설정 + not --force 면 main/attach 를 `sys.exit(1)` 로 거부(우회: --force 또는
-  `unset PYTMUX`). **원격(ssh) 중첩(이전 미구현)** — ssh 로 들어가면
+  설정이면 main/attach 를 `sys.exit(1)` 로 거부(우회: `unset PYTMUX LC_PYTMUX`
+  뿐 — 강제 옵션 `--force` 는 CL 56538 에서 폐지). **원격(ssh) 중첩(이전 미구현)** — ssh 로 들어가면
   `$PYTMUX` 가 기본 전파 안 되고, pytmux 가 ssh 를 직접 띄우지 않아(사용자가 패널에서 ssh
   입력) SetEnv 주입 지점이 없다. 구현 방향:
   - **① ssh 래퍼/SetEnv 주입**: pytmux 패널 셸에 `ssh` 래퍼(함수/alias 또는 PATH 앞단
