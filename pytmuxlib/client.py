@@ -132,6 +132,28 @@ def build_client_app(sock_path: str, config: dict | None = None,
             pass
         return _THEME_FALLBACK.get(name, "white")
 
+    def _darken_style(st: Style, ratio: float = 0.55) -> Style:
+        """ANSI dim 대신 실제 전경/배경 색을 검정 쪽으로 ratio 만큼 블렌드한 어두운
+        색을 계산해 적용하고 bold 를 해제한다(§10). ANSI dim 은 터미널 의존적이라
+        bold 글자(많은 터미널이 bold 를 밝게 렌더 → dim 상쇄)·명시적 밝은색 글자를
+        충분히 어둡게 못 하는데, 실색 블렌드는 터미널 무관하게 균일하게 어둡다.
+        전경색이 기본(None)이면 밝은 기본 전경이 안 묻히게 어두운 회색으로 둔다."""
+        from rich.color import Color
+
+        def _dark(col, fallback):
+            if col is None:
+                return fallback
+            try:
+                t = col.get_truecolor()
+            except Exception:
+                return fallback
+            return Color.from_rgb(t.red * (1 - ratio),
+                                  t.green * (1 - ratio),
+                                  t.blue * (1 - ratio))
+
+        return Style(color=_dark(st.color, Color.parse("grey23")),
+                     bgcolor=_dark(st.bgcolor, None), bold=False)
+
     def make_style(d: dict) -> Style:
         if not d:
             return DEFAULT_STYLE
@@ -2548,7 +2570,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
             화면에서 잘 안 보이던 우상단 [x] 버튼은 폐지했다."""
             if not self.clock_panes:
                 return
-            dim = Style(dim=True)
             digit_st = Style(color=theme_color(self, "success"), bold=True)
             now = datetime.now().strftime("%H:%M:%S")
             glyphs = [_CLOCK_FONT.get(c, ["   "] * 5) for c in now]
@@ -2558,11 +2579,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if p["id"] not in self.clock_panes:
                     continue
                 px, py, pw, ph = p["x"], p["y"], p["w"], p["h"]
-                # 1) 뒤 화면 흐리게(계속 업데이트되는 내용도 dim 으로 보임)
+                # 1) 뒤 화면 흐리게(실색 블렌드 — §10, 터미널 무관 균일)
                 for yy in range(py, min(py + ph, H)):
                     for xx in range(px, min(px + pw, W)):
                         c, st = cells[yy][xx]
-                        cells[yy][xx] = (c, st + dim)
+                        cells[yy][xx] = (c, _darken_style(st))
                 # 2) 큰 시계(공간 충분) 또는 단순 시각
                 if pw >= cw and ph >= ch_h:
                     ox = px + (pw - cw) // 2
@@ -2589,7 +2610,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
             버튼은 폐지했다."""
             if not self.calendar_panes:
                 return
-            dim = Style(dim=True)
             day_st = Style(color=theme_color(self, "foreground"))
             title_st = Style(color=theme_color(self, "success"), bold=True)
             today_st = Style(color="black", bgcolor=theme_color(self, "success"),
@@ -2605,11 +2625,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if p["id"] not in self.calendar_panes:
                     continue
                 px, py, pw, ph = p["x"], p["y"], p["w"], p["h"]
-                # 1) 뒤 화면 흐리게
+                # 1) 뒤 화면 흐리게(실색 블렌드 — §10, 터미널 무관 균일)
                 for yy in range(py, min(py + ph, H)):
                     for xx in range(px, min(px + pw, W)):
                         c, st = cells[yy][xx]
-                        cells[yy][xx] = (c, st + dim)
+                        cells[yy][xx] = (c, _darken_style(st))
                 # 2) 달력 그리드(공간 충분) 또는 단순 날짜
                 if pw >= grid_w and ph >= nlines:
                     ox = px + (pw - grid_w) // 2
@@ -2824,31 +2844,30 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 컨텍스트 메뉴가 열려 있으면 대상 패널 외 나머지를 흐리게(#18) — 중앙
             # 모달이라 위치로 패널을 가리킬 수 없어 배경 dim 으로 대상을 구분한다.
             if self._menu_open and self._menu_pane is not None:
-                mdim = Style(dim=True)
                 for p in self.layout.get("panes", []):
                     if p["id"] == self._menu_pane:
                         continue
                     for yy in range(p["y"], min(p["y"] + p["h"], H)):
                         for xx in range(p["x"], min(p["x"] + p["w"], W)):
                             c, st = cells[yy][xx]
-                            cells[yy][xx] = (c, st + mdim)
+                            cells[yy][xx] = (c, _darken_style(st))
             # Shift+드래그 패널 swap 중: 들고 있는 소스 패널은 흐리게(dim), 놓을
             # 대상 패널은 배경 강조(놓으면 두 패널이 자리를 맞바꾼다).
             if self.view._pane_swap is not None:
-                sdim = Style(dim=True)
                 stint = Style(bgcolor=theme_color(self, "warning"))
                 for p in self.layout.get("panes", []):
                     if p["id"] == self.view._pane_swap:
-                        ov = sdim
+                        darken = True       # 들고 있는 소스 패널: 실색 블렌드로 흐리게
                     elif p["id"] == self.view._pane_swap_over:
-                        ov = stint
+                        darken = False      # 놓을 대상 패널: 배경 강조(warning)
                     else:
                         continue
                     for yy in range(p["y"], min(p["y"] + p["h"], H)):
                         for xx in range(p["x"], min(p["x"] + p["w"], W)):
                             if 0 <= yy < H and 0 <= xx < W:
                                 c, st = cells[yy][xx]
-                                cells[yy][xx] = (c, st + ov)
+                                cells[yy][xx] = (c, _darken_style(st) if darken
+                                                 else st + stint)
             self.view.set_frame(cells)
 
         def _draw_tab_close(self, cells, W, H):

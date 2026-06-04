@@ -542,16 +542,19 @@ async def test_context_menu_dims_other_panes():
         app._menu_open = True
         app._composite()
         cells = app.view._cells
-        # 대상(1) 내부 셀은 dim 아님, 비대상(2) 내부 셀은 dim
+        # 대상(1) 내부 셀은 평소대로, 비대상(2)은 실색 블렌드로 어둡게(§10: ANSI dim
+        # 아님 — bold 해제 + 전경색을 검정 쪽으로 블렌드). 색이 대상과 달라야 한다.
         s_target = cells[2][5][1]
         s_other = cells[2][15][1]
         assert not (s_target and s_target.dim), "대상 패널은 흐리지 않음"
-        assert s_other and s_other.dim, "비대상 패널은 흐리게(dim)"
-        # 메뉴 닫힘 → dim 해제
+        assert s_other and not s_other.dim, "ANSI dim 아님(실색 블렌드)"
+        assert not s_other.bold and s_other.color is not None, "어두운 실색 적용"
+        assert s_other.color != s_target.color, "비대상은 대상과 다른(어두운) 색"
+        # 메뉴 닫힘 → 원복(대상 셀과 동일한 평소 스타일)
         app._menu_open = False
         app._composite()
         cells = app.view._cells
-        assert not (cells[2][15][1] and cells[2][15][1].dim), "닫으면 dim 해제"
+        assert cells[2][15][1].color == cells[2][5][1].color, "닫으면 원복"
     await _with_app(body)
 
 
@@ -950,9 +953,10 @@ async def test_clock_mode_overlay():
         assert active in app.clock_panes
         cells = app.view._cells
         ap = next(p for p in app.layout["panes"] if p["id"] == active)
-        # 뒤 화면이 흐리게(dim)
+        # 뒤 화면이 어둡게(§10: 실색 블렌드 — ANSI dim 아님, bold 해제+전경 어둡게)
         st = cells[ap["y"]][ap["x"]][1]
-        assert st and st.dim, "패널 내용 dim"
+        assert st is not None and not st.dim and not st.bold, st
+        assert st.color is not None, "어두운 실색 적용(기본 전경→어두운 회색)"
         # 큰 시계 블록 문자가 그려짐
         assert any("█" in (cells[y][x][0] or "")
                    for y in range(len(cells))
@@ -982,7 +986,9 @@ async def test_calendar_overlay_and_date_click():
         cells = app.view._cells
         ap = next(p for p in app.layout["panes"] if p["id"] == active)
         st = cells[ap["y"]][ap["x"]][1]
-        assert st and st.dim, "패널 내용 dim"
+        # 뒤 화면이 어둡게(§10: 실색 블렌드 — ANSI dim 아님)
+        assert st is not None and not st.dim and not st.bold, st
+        assert st.color is not None, "어두운 실색 적용"
         # 요일 헤더(Mo) 또는 연-월 제목이 그려졌는지
         flat = "".join(cells[y][x][0] or ""
                        for y in range(len(cells)) for x in range(len(cells[0])))
