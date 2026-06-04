@@ -986,17 +986,19 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if p["id"] == active:
                     _draw_title(p)
             # 활성 탭을 아래 콘텐츠와 연결(노트북 탭 모양, #23): 상단 탭바가 보이면
-            # 콘텐츠 최상단 테두리(row 0)의 활성 탭 x 범위를 위쪽 절반 블록(▀)으로
-            # 활성색 칠한다. 탭바(꽉 찬 활성 배경)에서 콘텐츠로 가늘어지고, ▀ 의
-            # 아래 모서리(셀 중앙선)가 양옆 가로 테두리(─)와 같은 높이라 끊김 없이
-            # 한 줄로 이어진다 — 예전 꽉 찬 블록+┘/└ 코너 마감보다 자연스럽다.
+            # 콘텐츠 최상단 테두리(row 0)의 활성 탭 x 범위를 **활성색 꽉 찬 배경 블록**
+            # 으로 칠해 탭의 파란 배경이 본문 테두리로 한 줄 이어지게 한다. 예전엔 위
+            # 절반 블록 글리프 ▀ 를 썼는데, 일부 모바일 터미널 폰트가 ▀ 를 칸 사이가
+            # 벌어지게 그려 **탭이 깨져 보였다**(사용자 보고, §10). 글리프 대신 공백+
+            # 배경색이라 폰트 무관하게 항상 매끈한 솔리드 바로 렌더된다.
             if self._tabbar_visible() and H > 0:
                 xr = self.tabbar.active_tab_xrange()
                 if xr:
                     tx0, tx1 = xr
-                    conn = Style(color=theme_color(self, "primary"), bgcolor=None)
+                    conn = Style(color="white",
+                                 bgcolor=theme_color(self, "primary"))
                     for xx in range(max(0, tx0), min(tx1, W)):
-                        cells[0][xx] = ("▀", conn)
+                        cells[0][xx] = (" ", conn)
             # 패널 제목 경계선(pane-border-status)
             for tb in self.layout.get("titlebars", []):
                 is_active = tb.get("active")

@@ -1090,9 +1090,9 @@ async def test_status_clock_click_toggles_clock_mode():
 
 
 async def test_active_tab_connects_to_content():
-    # 상단 탭바가 보이면 콘텐츠 최상단 테두리에서 활성 탭 x 범위 구간이 위쪽 절반
-    # 블록(▀)으로 활성색 칠해져 탭과 콘텐츠가 연결돼 보인다(#23). ▀ 의 아래
-    # 모서리가 양옆 가로 테두리와 같은 높이라 한 줄로 이어진다.
+    # 상단 탭바가 보이면 콘텐츠 최상단 테두리에서 활성 탭 x 범위 구간이 **활성색 꽉 찬
+    # 배경 블록**(공백+배경색)으로 칠해져 탭과 콘텐츠가 연결돼 보인다(#23). 글리프 ▀
+    # 는 일부 모바일 폰트에서 깨져 보여 배경 블록으로 바꿨다(§10).
     async def body(app, pilot, srv):
         app.tabbar.render_line(0)            # _zones 채우기
         xr = app.tabbar.active_tab_xrange()
@@ -1101,8 +1101,8 @@ async def test_active_tab_connects_to_content():
         tx0, tx1 = xr
         mid = min((tx0 + tx1) // 2, len(app.view._cells[0]) - 1)
         ch, st = app.view._cells[0][mid]
-        assert ch == "▀", "위쪽 절반 블록으로 연결"
-        assert st is not None and st.color is not None, "연결 색(활성색)"
+        assert ch == " ", "활성색 배경 블록(공백)으로 연결 — 폰트 무관"
+        assert st is not None and st.bgcolor is not None, "연결 색(활성 배경색)"
     await _with_app(body, cfg={"tab_bar_always": True})
 
 
@@ -1129,7 +1129,7 @@ async def test_tabbar_lead_and_plus_gap():
 
 
 async def test_active_tab_connector_follows_switch():
-    # #23 회귀: 활성 탭을 바꾸면 콘텐츠 상단 연결부(▀)가 새 탭으로 따라와야 한다.
+    # #23 회귀: 활성 탭을 바꾸면 콘텐츠 상단 연결부(활성색 배경 블록)가 새 탭으로 따라와야 한다.
     # 예전엔 ① active_tab_xrange 가 render_line 부산물 _zones 를 읽어 전환 직후
     # stale 값을 주고, ② _composite 가 status(탭 변경) 메시지에 안 돌아 연결부가
     # 옛 탭 위치에 남았다. 폭(100)을 넘겨 스크롤이 생기는 긴 이름으로 재현한다.
@@ -1158,7 +1158,9 @@ async def test_active_tab_connector_follows_switch():
         xr = app.tabbar.active_tab_xrange()
         cells = app.view._cells
         mid = min((xr[0] + xr[1]) // 2, len(cells[0]) - 1)
-        assert cells[0][mid][0] == "▀", "연결부 ▀ 가 새 활성 탭 위치에 그려짐"
+        cch, cst = cells[0][mid]
+        assert cch == " " and cst is not None and cst.bgcolor is not None, \
+            "연결부(활성색 배경 블록)가 새 활성 탭 위치에 그려짐"
     await _with_app(body, cfg={"tab_bar_always": True})
 
 

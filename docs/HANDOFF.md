@@ -211,6 +211,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56621 **탭-콘텐츠 연결부 `▀` 글리프 → 활성색 배경 블록**(§10 사용자 보고: 모바일서
+  탭 깨짐) — 활성 탭↔콘텐츠 연결부(노트북 탭, #23)를 위쪽 절반 블록 `▀`(U+2580)로
+  그렸는데 일부 모바일 폰트가 칸 사이를 벌려 렌더해 파선처럼 **깨져 보였다**(렌더
+  그리드 `┌▀▀▀──┐` 자체는 정상 — 폰트 글리프 문제). 글리프 의존을 없애 **공백+활성
+  배경색**(bgcolor=primary)으로 칠해 어떤 폰트에서도 솔리드 바로 잇게 했다. 회귀 2종
+  갱신, 193 passed. 클라 전용(attach 재실행). 파일: `pytmuxlib/client.py`,
+  `tests/test_client.py`, `docs/HANDOFF.md`.
 - 56616 **refactor(§10 LLM 친화, 4/N): 위젯 3종 → `clientwidgets.py`** — 클로저의
   `MultiplexerView`(패널 합성 뷰·마우스)·`TabBar`·`StatusBar` 853줄을 신규
   `pytmuxlib/clientwidgets.py` 로 이전. config/sock_path 미캡처·Screen/App/서로 미참조
