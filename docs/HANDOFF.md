@@ -618,6 +618,22 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 10. 가능한 후속 작업 (열린 항목)
 
+- **[UI 요청, 미구현] 탭바 [+] 새 탭 버튼 — 탭과 한 칸 떨어뜨리되 그 빈칸은 터미널
+  배경색** — 요청: 탭바 오른쪽 녹색 `[+]` 버튼이 마지막 탭과 **한 칸 떨어져** 있어야
+  하고, **그 빈칸은 (녹색이 아니라) 터미널 배경과 같은 색**이어야 한다. 현재 구현:
+  `TabBar._entries`(`client.py:1518`)가 `addtxt = "  [+] "`(앞 공백 2칸 포함)를
+  **하나의 `("add", …)` 엔트리**로 만들고, `render_line`(`client.py:1148`~)에서
+  `kind == "add"` 이면 **전체를 녹색 `add_st`** (`bgcolor=success`)로 칠한다 — 그래서
+  **앞 공백(간격)까지 녹색**으로 칠해진다(스크린샷의 증상). 구현 방향: 간격 칸을
+  `add_st` 에서 떼어내 **터미널 기본 배경(`base`, `bgcolor=None`)** 으로 그린다 —
+  ① `_entries` 에서 `("addgap", None, " ")` + `("add", None, "[+] ")`로 **분리**
+  하거나(권장), ② `render_line` 의 add 세그먼트 처리에서 선행 공백만 `base` 로
+  쪼개 Segment 를 2개로 낸다. 주의: **기하 일관성** — `_entries`/`render_line`/
+  `active_tab_xrange` 가 같은 폭을 공유하므로(주석 #23), 폭 예산(`addtxt` 길이로
+  `mid_w` 계산)·클릭 존(`_zones`, `("add", …)` 히트테스트)이 분리 후에도 맞아야
+  한다(gap 칸은 클릭 무시 = lead 처럼). 비활성 탭/여백이 터미널 배경을 따르는
+  메커니즘(`base = Style(bgcolor=None)`)은 이미 있으므로 그걸 재사용. **현재는
+  기록만 — 미구현.**
 - **[기능 요청, 미구현] 하단 토큰 사용량 표시 — 지속 표시 + 계정별 전체 세션 합계** —
   요청 2가지: ① **사라지지 않게(지속)** — 하단 상태줄의 토큰 사용량(`Σ…`/`ctx …`)이
   **사라질 때가 있다**(예: 활성 패널이 Claude 가 아니거나, 한 프레임 파싱 실패 시).
@@ -771,6 +787,15 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
       스파이크 제거. ② **풀스크린 리페인트 코얼레싱** — `_feedbuf` 에서 마지막 화면-무효화
       경계(`2J`/alt 전환) 이전을 드롭해 throughput 천장을 사실상 우회. ③ feed 별도 스레드
       (가장 큰 공사). 재현·측정은 `python poc/feed_profile.py [--profile]`.
+    - **✅ 대응 ① GC 튜닝 구현 완료(CL 56xxx)**: `server._feed_drain` 이 드레인 창 동안만
+      순환 GC 를 끈다 — `_gc_drain_enter`(첫 드레인 0→1 에서 `gc.disable()`)/`_gc_drain_exit`
+      (마지막 1→0 에서 원래 켜져 있었으면 `gc.enable()`+`gc.collect()` 1회). 동시 드레인은
+      깊이 카운터(`_gc_drain_depth`)로 묶어 마지막 하나가 끝날 때만 복구하고, exit 는 try/
+      finally 라 취소·예외에도 균형을 유지(GC 영구 꺼짐 방지). `Char` 는 불변값이라 순환이
+      없어 refcount 만으로 회수되므로 드레인 창 누수 위험은 낮다. **효과(측정)**: 서버 드레인
+      경로 50k 줄 버스트에서 슬라이스 max 82ms→4.5ms, 스파이크>20ms 5→0. 회귀 테스트
+      `test_feed_drain_disables_gc_during_burst`·`test_feed_drain_gc_balanced_on_cancel`.
+      **서버 변경 → kill-server 재기동.** (원인 1 throughput 천장은 대응 ②/③ 미구현 — 잔여.)
 - ~~**[버그] 내부 마우스 TUI 앱(p4v-tui 등)에 마우스 입력이 전달 안 됨**~~ →
   **CL 56347 에서 해결.** 위 "구현 방향" 그대로 구현했다: ① 서버(`model.Pane.
   update_mouse_modes`)가 내부 앱의 DECSET 1000/1002/1003/1006 을 추적해
