@@ -51,7 +51,8 @@ WSL/Cygwin/MSYS2 없이 **네이티브 Windows** 에서 돌리려면 "패키지 
 
 ### ③ 프로세스 모델 & 시그널
 - **현재**: `os.fork()` 이중 데몬화 + `os.setsid`(`launcher.py:16-29`), `os.killpg(os.getpgid(pid), SIGHUP/SIGKILL)`(`server.py:91,270,610,645,770`), `os.waitpid(...WNOHANG)`, `os.execvpe`.
-- **Windows**: 데몬화 → `subprocess` 로 `python pytmux.py server` 를 `DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP` 분리 기동. 종료 → `TerminateProcess`/`proc.kill()` 또는 **Job 오브젝트** 로 자식트리 정리. `waitpid` → `proc.poll/wait`. `FD_CLOEXEC`(`server.py:62`) → `SetHandleInformation` 핸들 상속 제어.
+- **Windows**: 데몬화 → `subprocess` 로 `python pytmux.py server` 를 `DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW` 분리 기동(+ 가능하면 창 없는 `pythonw.exe`). 종료 → `TerminateProcess`/`proc.kill()` 또는 **Job 오브젝트** 로 자식트리 정리. `waitpid` → `proc.poll/wait`. `FD_CLOEXEC`(`server.py:62`) → `SetHandleInformation` 핸들 상속 제어.
+  - **데몬 콘솔 창 억제**: 초기엔 `DETACHED_PROCESS` 만 걸었는데 일부 기동 경로(.cmd 래퍼/py 런처 경유)에서 데몬용 `python.exe` 가 콘솔 창을 띄워, 사용자가 보기엔 pytmux 와 함께 PowerShell 창이 딸려 떴다(그 창을 닫으면 서버가 죽어 클라이언트도 종료). 해결: `CREATE_NO_WINDOW` 추가 + 같은 폴더의 `pythonw.exe`(GUI 서브시스템, 콘솔 미생성) 선호(`proc._windowless_python`). 클라이언트 attach 는 그대로 기존 터미널 전경 실행.
 
 ### ④ IPC (소켓)
 - **현재**: `AF_UNIX`(`launcher.py:35,69`), `asyncio.open_unix_connection`(`client.py:1592`), 소켓경로 `default_socket_path()` = `XDG_RUNTIME_DIR`/`/tmp/pytmux-{getuid}`(`protocol.py:18-25`).

@@ -15,7 +15,10 @@ from pytmuxlib import proc
 
 def test_server_argv():
     argv = proc.server_argv("/tmp/x.sock")
-    assert argv[0] == sys.executable
+    # 데몬은 창 없는 인터프리터를 선호한다. POSIX 는 항상 sys.executable,
+    # Windows 는 같은 폴더에 pythonw.exe 가 있으면 그쪽(없으면 sys.executable).
+    expected = proc._windowless_python() or sys.executable
+    assert argv[0] == expected
     assert argv[-3:] == ["--socket", "/tmp/x.sock", "server"]
     assert argv[1].endswith("pytmux.py")
 

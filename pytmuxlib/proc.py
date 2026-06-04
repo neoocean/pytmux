@@ -7,8 +7,12 @@
   * **Unix**: 현재 launcher 의 이중 fork+setsid 데몬화 대신, 서버 하위명령을
     `start_new_session=True`(=setsid) 로 분리 기동한다. 부모가 종료하면 자식은
     init 으로 재부모화되어 컨트롤링 터미널과 무관하게 살아남는다.
-  * **Windows**: fork 가 없으므로 `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`
-    플래그로 콘솔/프로세스그룹에서 분리해 서버를 기동한다.
+  * **Windows**: fork 가 없으므로 `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP |
+    CREATE_NO_WINDOW` 플래그로 콘솔/프로세스그룹에서 분리해 서버를 기동한다.
+    + 가능하면 창 없는 `pythonw.exe` 로 띄워 데몬이 콘솔 창을 만들지 않게 한다
+    (클라이언트는 기존 터미널에 그대로 전경 attach). 배경: 사용자가 보던
+    "딸려 뜨는 PowerShell 창"은 데몬이 콘솔을 띄운 것이었고, 그 창을 닫으면
+    서버가 죽어 attach 한 클라이언트도 함께 종료됐다.
 
 종료는 프로세스 **트리**(자식 셸 포함)를 함께 정리한다:
   * Unix    : `killpg(getpgid(pid), SIGTERM→SIGKILL)`.
@@ -27,9 +31,34 @@ IS_WINDOWS = os.name == "nt"
 # Windows 전용 생성 플래그(POSIX 에선 0).
 _DETACHED_PROCESS = 0x00000008
 _CREATE_NEW_PROCESS_GROUP = 0x00000200
+# CREATE_NO_WINDOW: 콘솔 서브시스템 실행파일(python.exe)을 띄울 때 새 콘솔 창이
+# 뜨지 않게 한다. DETACHED_PROCESS 만으로는 일부 기동 경로(.cmd 래퍼·py 런처
+# 경유 등)에서 콘솔 창이 깜빡이거나 그대로 남는 사례가 있어 함께 건다.
+_CREATE_NO_WINDOW = 0x08000000
 
 __all__ = ["IS_WINDOWS", "spawn_detached", "terminate", "is_alive",
            "server_argv", "shell_argv"]
+
+
+def _windowless_python() -> Optional[str]:
+    """Windows 에서 창 없는 인터프리터(pythonw.exe) 절대경로(없으면 None).
+
+    백그라운드 서버 데몬은 콘솔이 필요 없으므로 같은 디렉터리의 pythonw.exe 를
+    선호한다. python.exe(콘솔 서브시스템)는 기동 경로에 따라 콘솔 창을 띄울 수
+    있지만 pythonw.exe(GUI 서브시스템)는 절대 콘솔을 만들지 않는다.
+    """
+    if not IS_WINDOWS:
+        return None
+    exe = sys.executable or ""
+    base = os.path.basename(exe).lower()
+    # 이미 pythonw.exe 면 그대로. python.exe → 같은 폴더의 pythonw.exe 시도.
+    if base == "pythonw.exe":
+        return exe
+    if base == "python.exe":
+        cand = os.path.join(os.path.dirname(exe), "pythonw.exe")
+        if os.path.exists(cand):
+            return cand
+    return None
 
 
 def shell_argv(cmd: str) -> List[str]:
@@ -51,7 +80,8 @@ def server_argv(sock_path: str, *, python: Optional[str] = None,
 
     entry: pytmux.py 진입점 경로(기본 = 이 패키지 상위의 pytmux.py).
     """
-    py = python or sys.executable
+    # 백그라운드 데몬은 창 없는 pythonw.exe 를 선호(없으면 sys.executable).
+    py = python or _windowless_python() or sys.executable
     if entry is None:
         entry = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -69,7 +99,8 @@ def spawn_detached(argv: List[str], *, cwd: Optional[str] = None,
     kwargs: dict = dict(cwd=cwd, env=env, stdin=devnull, stdout=devnull,
                         stderr=devnull, close_fds=True)
     if IS_WINDOWS:
-        kwargs["creationflags"] = _DETACHED_PROCESS | _CREATE_NEW_PROCESS_GROUP
+        kwargs["creationflags"] = (
+            _DETACHED_PROCESS | _CREATE_NEW_PROCESS_GROUP | _CREATE_NO_WINDOW)
     else:
         # setsid: 새 세션/프로세스그룹의 리더가 되어 컨트롤링 터미널에서 분리되고,
         # 종료 시 그룹 전체(자식 셸 포함)를 killpg 로 한 번에 정리할 수 있다.
