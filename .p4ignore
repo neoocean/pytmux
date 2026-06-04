@@ -5,3 +5,5 @@ __pycache__/
 *.pyc
 *.swp
 .DS_Store
+# Windows 호환성·성능 리포트(scripts/win_report.py) 출력 — 생성 산출물(버전관리 제외)
+reports/

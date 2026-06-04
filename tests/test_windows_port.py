@@ -133,6 +133,20 @@ async def test_fg_command_guarded_on_windows():
         assert Server._fg_command(None, -1) is None
 
 
+async def test_render_only_resize_without_fcntl():
+    """렌더 전용 패널(pty=None) resize 는 fcntl 없는 Windows 에서도 안 깨진다.
+
+    set_winsize 는 fcntl/termios 를 지연 import 하므로 ModuleNotFoundError(=
+    ImportError 하위)가 날 수 있다. resize 폴백이 이를 삼켜야 한다.
+    """
+    from pytmuxlib.model import Pane
+
+    pane = Pane(-1, -1, 80, 24)  # pty=None → 렌더 전용 폴백 경로
+    with _BlockImport("fcntl", "termios"):
+        pane.resize(30, 100)  # 예외 없이 통과해야 함
+    assert (pane.cols, pane.rows) == (30, 100)
+
+
 async def test_winpty_backpressure_gate():
     """_WinPty.pause_reader/resume_reader 가 리더 게이트(Event)를 제대로 여닫고,
     stop/close 가 멈춘 리더를 깨우는지(§10 ② Windows 백프레셔).
