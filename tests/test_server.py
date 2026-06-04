@@ -1029,6 +1029,108 @@ async def test_feed_drain_interleaves_with_loop():
         await teardown(srv, task, sock)
 
 
+async def test_feed_drain_disables_gc_during_burst():
+    # §10 GC 튜닝: 버스트 드레인이 도는 동안 순환 GC 를 꺼(슬라이스 중간 GC 일시정지로
+    # 인한 입력 끊김 제거) 모든 드레인이 끝나면 다시 켜야 한다. 동시 드레인(여러 패널)
+    # 에서도 카운터로 안전 — 마지막 하나가 끝날 때만 복구한다.
+    import gc
+    from pytmuxlib.model import Pane
+    from pytmuxlib.protocol import FEED_SLICE
+    srv, task, sock = await server_only()
+    gc_was = gc.isenabled()
+    try:
+        gc.enable()   # 기준 상태 고정
+        p1 = Pane(0, -1, 80, 24)
+        p2 = Pane(0, -1, 80, 24)
+        big = (b"y" * FEED_SLICE) * 6
+        srv._on_pane_data(p1, big)
+        srv._on_pane_data(p2, big)
+        await asyncio.sleep(0)   # 드레인 태스크들이 시작해 _gc_drain_enter 를 거치게
+        assert srv._gc_drain_depth == 2, "두 패널 드레인 → 깊이 2"
+        assert not gc.isenabled(), "드레인 중엔 GC 꺼짐"
+        await _drain_pane_feed(p1)
+        await _drain_pane_feed(p2)
+        assert srv._gc_drain_depth == 0, "모든 드레인 종료 → 깊이 0"
+        assert gc.isenabled(), "원래 켜져 있었으면 드레인 후 GC 복구"
+    finally:
+        if gc_was:
+            gc.enable()
+        await teardown(srv, task, sock)
+
+
+async def test_feed_drain_gc_balanced_on_cancel():
+    # 드레인이 취소(패널 teardown/재attach)돼도 GC 가드 카운터가 균형을 유지해야 한다
+    # — finally 의 _gc_drain_exit 가 항상 깊이를 되돌린다(GC 영구 꺼짐 방지).
+    import gc
+    from pytmuxlib.model import Pane
+    from pytmuxlib.protocol import FEED_SLICE
+    srv, task, sock = await server_only()
+    gc_was = gc.isenabled()
+    try:
+        gc.enable()
+        pane = Pane(0, -1, 80, 24)
+        srv._on_pane_data(pane, (b"z" * FEED_SLICE) * 6)
+        await asyncio.sleep(0)         # 드레인 태스크 시작(_gc_drain_enter)
+        assert srv._gc_drain_depth == 1 and not gc.isenabled()
+        srv._stop_pane_feed(pane)      # 진행 중 드레인 취소
+        await asyncio.sleep(0)         # 취소 콜백 처리(finally 실행)
+        assert srv._gc_drain_depth == 0, "취소 후에도 깊이 복구"
+        assert gc.isenabled(), "취소돼도 GC 복구"
+    finally:
+        if gc_was:
+            gc.enable()
+        await teardown(srv, task, sock)
+
+
+async def test_coalesce_repaints_collapses_feedbuf_and_persists():
+    # §10 대응 ②: 옵션이 켜져 있으면 _on_pane_data 가 쌓인 alt-screen 풀스크린
+    # 리페인트 버스트를 합쳐 feedbuf 를 줄이고, 끄면 그대로 둔다. 옵션은 opts.json 영속.
+    from pytmuxlib.model import Pane
+    from pytmuxlib.protocol import FEED_SLICE
+    srv, task, sock = await server_only()
+    try:
+        assert srv.coalesce_repaints is True, "기본 ON"
+
+        def frame(tag):
+            pad = b"x" * 1200   # 슬라이스 경로(>FEED_SLICE)를 타도록 프레임을 키운다
+            return (b"\x1b[H\x1b[2J\x1b[1;1H" + f"FRAME-{tag}".encode() +
+                    pad + b"\x1b[0m")
+
+        pane = Pane(0, -1, 80, 24)
+        pane.feed(b"\x1b[?1049h")          # alt 진입(이후 도착분은 alt 버스트)
+        burst = b"".join(frame(c) for c in "ABCDEFGHIJ")
+        assert len(burst) > FEED_SLICE, "버스트 경로를 타도록 충분히 크게"
+        srv._on_pane_data(pane, burst)
+        # 마지막 2J 이전(앞 9 프레임)이 드롭돼 남은 바이트가 한 프레임 수준으로 작아야.
+        remaining = len(pane._feedbuf) + 0
+        await _drain_pane_feed(pane)
+        assert remaining < len(burst) // 2, \
+            f"coalesce 로 feedbuf 가 크게 줄어야(remaining={remaining}/{len(burst)})"
+        txt = pane_text(pane)   # alt-screen 렌더(_export_screen 은 main 만 봄)
+        assert "FRAME-J" in txt, "마지막 프레임 보존"
+        assert "FRAME-A" not in txt, "중간 프레임 무효화"
+
+        # 끄면 드롭 안 함
+        assert srv.set_coalesce_repaints(False) is False
+        assert json.load(open(srv.opts_path))["coalesce_repaints"] is False
+        pane2 = Pane(0, -1, 80, 24)
+        pane2.feed(b"\x1b[?1049h")
+        srv._on_pane_data(pane2, burst)
+        # 끄면 합치지 않으므로 버스트 전체가 드레인 큐에 그대로 남는다(드레인 전 시점).
+        assert len(pane2._feedbuf) == len(burst), "끄면 합치지 않음"
+        await _drain_pane_feed(pane2)
+
+        # 재시작(같은 sock) 후 OFF 유지
+        assert pytmux.Server(sock).coalesce_repaints is False
+        assert srv.set_coalesce_repaints(None) is True   # 토글 → ON
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
 async def test_claude_header_opt_persists():
     # #6 ③: claude-header 전역 표시 상태가 opts.json 에 영속되고 재시작 후 유지.
     srv, task, sock = await server_only()

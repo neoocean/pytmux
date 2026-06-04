@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import gc
 import json
 import os
 import shlex
@@ -10,7 +11,8 @@ import subprocess
 import time
 
 from . import ipc, proc, pty_backend, sshwrap, tokens, usagelog
-from .model import ClientConn, Pane, Session, Split, Tab, Window
+from .model import (ClientConn, Pane, Session, Split, Tab, Window,
+                    coalesce_alt_repaints)
 from .claude import claude_account, claude_state, claude_usage, parse_reset_delay
 from .protocol import (FEED_SLICE, FLUSH_HZ, MIN_H, MIN_W, read_msg, write_msg)
 
@@ -40,6 +42,14 @@ class Server:
         self.clients: list[ClientConn] = []
         self.loop: asyncio.AbstractEventLoop | None = None
         self.running = True
+        # 대량 출력 드레인 중 순환 GC 일시정지 가드(§10 프로파일링): pyte feed 는 셀마다
+        # `Char` 네임드튜플을 새로 할당해 버스트 한 번에 수백만 객체가 생긴다. 순환 GC 가
+        # 이를 주기적으로 훑으면 단일 슬라이스가 30~85ms 멈춰(측정) 이벤트 루프가 끊기고
+        # 입력이 뚝뚝 끊긴다. drain 이 도는 동안만 GC 를 끄고(_gc_drain_depth 0→1) 모든
+        # drain 이 끝나면 다시 켜 1회 collect 한다(1→0). Char 는 불변값이라 순환이 없어
+        # refcount 만으로 회수되므로 드레인 창 동안 누수 위험은 낮다.
+        self._gc_drain_depth = 0
+        self._gc_was_enabled = True
         self._session_seq = 0
         # Claude 세션 일련번호(#7 토큰 로깅): 패널의 claude None→비None 전이마다 +1.
         self._claude_session_seq = 0
@@ -54,6 +64,11 @@ class Server:
         # 패널이 하나뿐일 때 테두리(아웃라인)를 그릴지(기본 ON=항상 테두리).
         # off 면 단일 패널은 테두리 없이 화면 전체를 내용으로 쓴다. opts.json 영속.
         self.single_border = bool(_opts.get("single_border", True))
+        # alt-screen 풀스크린 리페인트 코얼레싱(#§10 대응 ②). 켜면 Claude busy 스피너
+        # 등 매 프레임 화면을 통째로 다시 그리는 대량 출력이 feed 보다 빠르게 쌓일 때
+        # 무효화된 중간 프레임을 버려 feed 부하/지연을 줄인다(안전 조건은
+        # coalesce_alt_repaints 참조 — alt-screen 한정·무손실). 기본 ON, opts.json 영속.
+        self.coalesce_repaints = bool(_opts.get("coalesce_repaints", True))
         # 프롬프트 단위 클리어 모드(#9)의 ① 문서화 지시문. 패널 안 Claude 에게 보내는
         # 슬래시/지시문이며(pytmux 명령 아님), 무엇을 어디에 기록할지는 Claude 쪽
         # 프로젝트 관례(CLAUDE.md/메모리)에 맡긴다. opts.json 영속.
@@ -140,19 +155,49 @@ class Server:
             # 이미 드레인 중 → 큐에 이어 붙이면 실행 중 태스크가 소비한다(POSIX 는
             # reader 가 멈춰 여기 거의 안 옴; pause 가 no-op 인 백엔드의 버스트 대비).
             pane._feedbuf += data
+            self._coalesce_feed(pane)
             return
         if len(data) <= FEED_SLICE:
             self._ingest_slice(pane, data)
             return
         pane._feedbuf += data
+        self._coalesce_feed(pane)
         if pane.pty is not None:
             pane.pty.pause_reader()
         pane._feed_task = self.loop.create_task(self._feed_drain(pane))
 
+    def _coalesce_feed(self, pane: Pane) -> None:
+        """대기 중인 feedbuf 에서 무효화된 alt-screen 리페인트 프레임을 합쳐 pyte feed
+        부하를 줄인다(§10 대응 ②). 옵션이 꺼져 있거나 안전 조건이 안 맞으면 no-op."""
+        if not self.coalesce_repaints or not pane._feedbuf:
+            return
+        pane._feedbuf = coalesce_alt_repaints(pane._feedbuf, pane.alt_active)
+
+    def _gc_drain_enter(self) -> None:
+        """드레인 진입: 첫 드레인이면 순환 GC 를 끈다(중첩은 깊이만 +1)."""
+        if self._gc_drain_depth == 0:
+            self._gc_was_enabled = gc.isenabled()
+            if self._gc_was_enabled:
+                gc.disable()
+        self._gc_drain_depth += 1
+
+    def _gc_drain_exit(self) -> None:
+        """드레인 종료: 마지막 드레인이면 GC 를 (원래 켜져 있었으면) 다시 켜고 1회
+        collect 해 드레인 창에서 미룬 회수를 즉시 처리한다."""
+        if self._gc_drain_depth > 0:
+            self._gc_drain_depth -= 1
+        if self._gc_drain_depth == 0 and self._gc_was_enabled:
+            gc.enable()
+            gc.collect()
+
     async def _feed_drain(self, pane: Pane):
         """버스트 바이트를 FEED_SLICE 단위로 먹이며 슬라이스마다 이벤트 루프에 양보.
-        모두 비우면 reader 를 재개해 다음 배치를 읽는다(취소 시엔 재개 안 함)."""
+        모두 비우면 reader 를 재개해 다음 배치를 읽는다(취소 시엔 재개 안 함).
+
+        드레인이 도는 동안은 순환 GC 를 꺼 둔다(_gc_drain_enter/exit, §10) — 슬라이스
+        중간 GC 일시정지로 인한 입력 끊김을 없앤다."""
         cancelled = False
+        self._gc_drain_enter()
         try:
             while pane._feedbuf:
                 n = min(FEED_SLICE, len(pane._feedbuf))
@@ -164,6 +209,7 @@ class Server:
             raise
         finally:
             pane._feed_task = None
+            self._gc_drain_exit()
             if not cancelled and pane.pty is not None:
                 try:
                     pane.pty.resume_reader()
@@ -1310,6 +1356,7 @@ class Server:
                 json.dump({"capture": self.capture,
                            "claude_header": self.claude_header,
                            "single_border": self.single_border,
+                           "coalesce_repaints": self.coalesce_repaints,
                            "prompt_clear_message": self.prompt_clear_message}, f)
         except OSError:
             pass
@@ -1455,6 +1502,14 @@ class Server:
         self._save_opts()
         return self.single_border
 
+    def set_coalesce_repaints(self, value=None):
+        """alt-screen 리페인트 코얼레싱 토글(§10 대응 ②). value 미지정 시 반전.
+        opts.json 영속. 클라 렌더에는 영향 없는 서버 내부 동작이라 status 불필요."""
+        self.coalesce_repaints = (not self.coalesce_repaints) if value is None \
+            else bool(value)
+        self._save_opts()
+        return self.coalesce_repaints
+
     def list_tab_layouts(self) -> list[str]:
         return sorted(self._load_slots().keys())
 
@@ -1566,6 +1621,9 @@ class Server:
             val = True if "on" in args else (False if "off" in args else None)
             self.set_single_border(val)
             # 레이아웃(박스 유무)이 바뀌므로 아래 broadcast 로 떨어지게 한다.
+        elif c in ("coalesce-repaints", "coalesce"):
+            val = True if "on" in args else (False if "off" in args else None)
+            return "on" if self.set_coalesce_repaints(val) else "off"
         else:
             return f"unknown: {c}"
         for cl in list(self.clients):
@@ -2229,6 +2287,8 @@ class Server:
             self.set_claude_header(msg.get("value"))
         elif action == "set_single_border":
             self.set_single_border(msg.get("value"))
+        elif action == "set_coalesce":
+            self.set_coalesce_repaints(msg.get("value"))
         elif action == "set_prompt_clear":
             self.set_prompt_clear(sess, msg.get("value"))
         elif action == "set_prompt_clear_message":

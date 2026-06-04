@@ -159,6 +159,42 @@ _PRIVATE_SGR_RE = re.compile(rb"\x1b\[[<>=][0-9;:]*m")
 # 1006=SGR 확장 좌표 인코딩. 클라이언트의 마우스 패스스루 판단에 쓰인다.
 _MOUSE_RE = re.compile(rb"\x1b\[\?(1000|1002|1003|1006)(h|l)")
 
+# 풀스크린 클리어(erase-in-display all): CSI 2J / CSI 3J. alt-screen 에서 이 시퀀스
+# 이전에 그려진 내용은 전부 지워지므로(스크롤백 없음) 그 앞 바이트는 화면에 안 보인다.
+_FULL_CLEAR_RE = re.compile(rb"\x1b\[[23]J")
+
+
+def coalesce_alt_repaints(buf: bytes, alt_active: bool) -> bytes:
+    """alt-screen 풀스크린 리페인트 버스트에서 무효화된 중간 프레임 바이트를 버려
+    pyte feed 부하를 줄인다(docs/HANDOFF.md §10 대응 ②, "같은 프레임 다중 리페인트
+    합치기"). Claude busy 스피너처럼 매 프레임 화면을 통째로 다시 그리는 출력이
+    feed 속도보다 빠르게 쌓일 때, 마지막 한 프레임만 보이므로 그 앞을 드롭한다.
+
+    안전 조건(하나라도 어긋나면 buf 를 **그대로 반환** — 손실 없음):
+      - ``alt_active`` 여야 한다. main-screen 은 위로 밀린 줄이 스크롤백에 쌓이므로
+        바이트를 버리면 스크롤백을 잃는다(절대 드롭 금지).
+      - buf 안에 alt-screen 전환(``_ALT_RE``: ?1049/?1047/?47 h|l)이 없어야 한다.
+        있으면 버퍼가 화면 경계를 가로질러 단순 드롭이 안전하지 않다.
+      - 풀클리어(CSI 2J/3J)가 **2개 이상**이어야 한다 — 즉 이미 여러 프레임이 밀려
+        '뒤처진' 상태일 때만 합친다(중간 프레임들은 각자 상태를 세팅·리셋하는 완결된
+        리페인트라, 마지막 클리어 이후 프레임이 자기 상태를 다시 세운다).
+
+    드롭 지점은 **마지막 풀클리어의 시작 위치 이전 전부**다. 클리어 자체와 그 뒤
+    리페인트는 온전히 남으므로 "화면을 비우고 새 프레임을 그린다"는 결과가 보존된다.
+    """
+    if not alt_active:
+        return buf
+    if _ALT_RE.search(buf):
+        return buf
+    last = -1
+    count = 0
+    for m in _FULL_CLEAR_RE.finditer(buf):
+        last = m.start()
+        count += 1
+    if count < 2 or last <= 0:
+        return buf
+    return buf[last:]
+
 
 def _rewrite_sgr_token(tok: bytes) -> bytes | None:
     """콜론 서브파라미터를 가진 단일 SGR 파라미터를 세미콜론 형태로 변환.

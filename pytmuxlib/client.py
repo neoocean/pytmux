@@ -263,6 +263,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("calendar-mode", "현재 패널을 이번 달 달력으로 덮기(토글, 상태줄 날짜 클릭/우상단 [x])", "설정/기타"),
         ("claude-header", "Claude 프롬프트 헤더 표시 on/off (claude-header on|off|toggle)", "설정/기타"),
         ("single-border", "패널이 하나뿐일 때 테두리 표시 on/off (single-border on|off|toggle)", "설정/기타"),
+        ("coalesce-repaints", "대량 출력 시 alt-screen 풀스크린 리페인트 합치기 on/off — ssh 반응성(coalesce-repaints on|off|toggle)", "설정/기타"),
         ("prompt-history", "Claude 프롬프트 히스토리 팝업(헤더 클릭으로도 열림)", "설정/기타"),
         ("token-usage", "Claude 실행 중 탭/패널 + 토큰 사용량 트리(상태줄 사용량 클릭)", "설정/기타"),
         ("token-log", "토큰 사용량 영속 로그 집계 팝업(시간/일/월 × 계정 — h/d/m·a 전환)", "설정/기타"),
@@ -327,6 +328,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         "prompt-clear": [{"key": "state", "label": "클리어모드", "choices": _ONOFF}],
         "claude-header": [{"key": "state", "label": "헤더", "choices": _ONOFF}],
         "single-border": [{"key": "state", "label": "단일테두리", "choices": _ONOFF}],
+        "coalesce-repaints": [{"key": "state", "label": "리페인트합치기", "choices": _ONOFF}],
     }
     # 인자 없이 바로 실행해도 되는(파괴적이지 않은) 명령 — 선택 즉시 실행한다(#3).
     # kill-*/detach/respawn 등 파괴적 명령은 의도 확인을 위해 기존처럼 프롬프트에 채운다.
@@ -3486,6 +3488,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     else (not self.single_border_on)
                 self.single_border_on = val           # 낙관적 즉시 반영
                 self.send_cmd("set_single_border", value=bool(val))
+            elif c in ("coalesce-repaints", "coalesce"):
+                # coalesce-repaints [on|off|toggle] — alt-screen 리페인트 합치기(§10 대응
+                # ②). 서버 내부 동작이라 클라 상태/렌더 변화 없음 — on/off 는 그대로,
+                # 인자 없으면 toggle(서버가 반전). 서버가 opts.json 에 영속.
+                arg = args[0].lower() if args else "toggle"
+                val = (arg == "on") if arg in ("on", "off") else None
+                self.send_cmd("set_coalesce", value=val)
             elif c in ("prompt-history", "prompts"):
                 self.open_prompt_history(self.layout.get("active"))
             elif c in ("token-usage", "tokens"):

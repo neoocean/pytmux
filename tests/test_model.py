@@ -43,6 +43,37 @@ async def test_alt_screen_isolation():
         await teardown(srv, task, sock)
 
 
+async def test_coalesce_alt_repaints_lossless_and_guards():
+    # §10 대응 ②: alt-screen 다중 프레임 버스트를 coalesce 한 뒤 feed 한 최종 화면이
+    # 전체 feed 와 동일해야(무손실) 하고, 안전 조건이 안 맞으면 그대로 둬야 한다.
+    from pytmuxlib.model import Pane, coalesce_alt_repaints
+
+    def frame(tag):
+        # 자기 완결형 풀스크린 리페인트: 홈+클리어 → 위치+색 본문 → 리셋.
+        return (b"\x1b[H\x1b[2J\x1b[2;5H\x1b[1;32m" +
+                f"FRAME-{tag}".encode() + b"\x1b[0m")
+
+    # 3 프레임이 한 버스트로 쌓임(앞 2개는 마지막 2J 로 무효화).
+    body = frame("A") + frame("B") + frame("C")
+    full = Pane(-1, -1, 80, 24); full.feed(b"\x1b[?1049h"); full.feed(body)
+    coal = Pane(-1, -1, 80, 24); coal.feed(b"\x1b[?1049h")
+    out = coalesce_alt_repaints(body, coal.alt_active)
+    coal.feed(out)
+    assert len(out) < len(body), "중간 프레임이 드롭돼 더 짧아야"
+    assert full._export_screen() == coal._export_screen(), \
+        "coalesce 결과가 전체 feed 와 동일(무손실)해야"
+    assert "FRAME-C" in pane_text(coal) and "FRAME-A" not in pane_text(coal)
+
+    # 가드: main-screen 은 절대 드롭 안 함(스크롤백 손실 방지).
+    assert coalesce_alt_repaints(body, False) == body
+    # 가드: 버퍼가 alt 전환을 포함하면 bail(경계 가로지름).
+    crossing = frame("A") + b"\x1b[?1049l" + frame("B")
+    assert coalesce_alt_repaints(crossing, True) == crossing
+    # 가드: 풀클리어가 1개뿐이면 no-op(밀린 프레임 없음).
+    one = b"\x1b[2J\x1b[HX"
+    assert coalesce_alt_repaints(one, True) == one
+
+
 async def test_alt_marker_split_across_feeds():
     srv, task, sock = await server_only()
     try:
