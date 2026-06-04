@@ -1121,3 +1121,16 @@ async def test_status_format():
         txt = "".join(seg.text for seg in strip)
         assert txt.startswith("S=0|"), repr(txt[:10])  # status-left "S=#S| " 확장
     await _with_app(body, cfg={"status_left": "S=#S| "})
+
+
+async def test_alt_scroll_toggle():
+    """대체 스크롤 모드(1007) 비활성 옵션 — 기본 on(=1007 끔), set 으로 토글.
+    _term_write 는 헤드리스 드라이버에서도 예외 없이 동작해야 한다(no-op 허용)."""
+    async def body(app, pilot, srv):
+        assert app.disable_alt_scroll is True, "기본은 휠 스크롤백 pytmux 처리"
+        app.apply_option("alt-scroll", "off")
+        assert app.disable_alt_scroll is False
+        app.apply_option("alt-scroll", "on")
+        assert app.disable_alt_scroll is True
+        app._term_write("\x1b[?1007l")          # 직접 호출도 예외 없음
+    await _with_app(body)

@@ -414,6 +414,17 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   넘기는 것(①: 터미널 마우스 트래킹·`$TERM`·SGR 1006·mosh vs ssh 차이, 또는
   ② 터미널이 자체 스크롤백으로 가로챔 → 터미널 설정). 이게 환경(①/②)이면
   pytmux 코드 수정으로는 못 고치고 터미널 쪽 설정이 필요하다.
+  - **CL 56425 에서 best-effort 완화 추가**: 가장 흔한 원인이 **대체 스크롤 모드
+    (DECSET 1007)** 로 판단 — iTerm2·일부 SSH 클라이언트가 기본적으로 alt-screen 에서
+    마우스 휠을 ↑/↓ **화살표 키로 변환**해 보낸다. 그러면 pytmux 는 진짜 휠 이벤트
+    (`on_mouse_scroll_up`)를 못 받고 화살표만 활성 패널로 새어 스크롤백이 안 열린다
+    (로컬 터미널은 1007 off → 정상, 원격 터미널은 1007 on → 실패로 증상 일치).
+    `App.on_mount` 가 `\x1b[?1007l`(`_term_write`, Textual 드라이버 경유)로 1007 을
+    꺼 터미널이 SGR(1006) 휠 이벤트를 그대로 넘기게 하고, `on_unmount` 가 `\x1b[?1007h`
+    로 복원한다. 기본 on(`disable_alt_scroll`), `set alt-scroll off` 로 터미널 기본에
+    맡길 수 있다. **터미널이 1007 을 지원하지 않으면(②류) 여전히 mouse-debug 로 확인**
+    필요 — 이 완화는 1007 변환이 원인일 때만 듣는다. 회귀 테스트 `test_alt_scroll_toggle`.
+    클라이언트 전용(attach 재실행 반영).
 - ~~**[버그] 로컬 실행 시 Claude Code 인터페이스 글자에 원치 않는 밑줄**~~ →
   **CL 56333 에서 해결.** 원인은 합성 단계가 아니라 **서버 화면 버퍼(pyte) 단계**
   였다: pyte 0.8.2 의 CSI 파서가 콜론(:) 서브파라미터를 미지 문자로 처리해 SGR

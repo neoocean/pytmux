@@ -1570,6 +1570,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 도달하는지(도달 안 하면 상위 터미널/SSH 문제)를 切り分け 할 수 있다.
             self.mouse_debug = config.get("mouse_debug", False)
             self._mouse_log_path = (sock_path or "pytmux") + ".mouse.log"
+            # 대체 스크롤 모드(DECSET 1007) 비활성 여부. 켜져 있으면 일부 터미널이
+            # 휠을 화살표 키로 바꿔 보내 pytmux 스크롤백이 안 열린다 → 기본으로 끈다.
+            # `set alt-scroll on` 으로 다시 켜면(=1007 비활성화 해제) 터미널 기본 동작.
+            self.disable_alt_scroll = config.get("disable_alt_scroll", True)
             self.mode_keys = config.get("mode_keys", "vi")
             self.status_position = config.get("status_position", "bottom")
             self.status_interval = config.get("status_interval", 15)
@@ -1598,6 +1602,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
             yield self.view
             yield self.status
 
+        def _term_write(self, seq):
+            """터미널에 raw 이스케이프 시퀀스를 직접 쓴다(Textual 드라이버 경유).
+            드라이버가 아직 없거나(테스트 run_test) write 실패는 조용히 무시한다."""
+            drv = getattr(self, "_driver", None)
+            if drv is None:
+                return
+            try:
+                drv.write(seq)
+                drv.flush()
+            except Exception:
+                pass
+
         async def on_mount(self):
             self.tabbar.display = self.tab_bar_always
             self.view.focus()
@@ -1605,6 +1621,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.status.styles.dock = "top"
             self._restart_status_timer()
             self.set_interval(1.0, self._clock_tick)  # clock-mode 초 단위 갱신
+            # 대체 스크롤 모드(DECSET 1007) 끄기 — 일부 터미널(iTerm2, 일부 SSH
+            # 클라이언트)은 기본적으로 alt-screen 에서 마우스 휠을 ↑/↓ 화살표 키로
+            # 변환해 보낸다(§10 "원격 SSH 휠 스크롤백 미동작"). 그러면 pytmux 는
+            # 진짜 휠 이벤트(on_mouse_scroll_up)를 못 받고 화살표만 활성 패널로 새어
+            # 스크롤백이 안 열린다. 1007 을 끄면 터미널이 SGR(1006) 휠 이벤트를 그대로
+            # 넘겨 pytmux 자체 스크롤백 처리가 동작한다. 종료 시 on_unmount 가 복원.
+            if self.disable_alt_scroll:
+                self._term_write("\x1b[?1007l")
             try:
                 self.reader, self.writer = await asyncio.open_unix_connection(
                     path=self.sock_path)
@@ -1617,6 +1641,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 hello["session"] = self.session_name
             await write_msg(self.writer, hello)
             self.run_worker(self._reader_task(), exclusive=False)
+
+        def on_unmount(self):
+            # 마운트 시 끈 대체 스크롤 모드(1007)를 복원해 터미널을 원상태로 둔다.
+            if getattr(self, "disable_alt_scroll", False):
+                self._term_write("\x1b[?1007h")
 
         def _tabbar_visible(self):
             return self.tab_bar_always or len(self.status.windows) >= 2
@@ -2450,6 +2479,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.mouse_debug = val.lower() in ("on", "true", "1", "yes")
                 if self.mouse_debug:
                     self.display_message(f"마우스 진단 로그: {self._mouse_log_path}")
+            elif name == "alt-scroll":
+                # on = 대체 스크롤 모드(1007) 비활성(휠을 실제 마우스 이벤트로) — 기본.
+                # off = 터미널 기본 동작에 맡김(휠이 화살표로 갈 수 있음).
+                self.disable_alt_scroll = val.lower() in ("on", "true", "1", "yes")
+                self._term_write(
+                    "\x1b[?1007l" if self.disable_alt_scroll else "\x1b[?1007h")
+                self.display_message(
+                    "휠 스크롤백: " + ("pytmux 처리(1007 끔)"
+                                       if self.disable_alt_scroll else "터미널 기본"))
             elif name == "status-bg":
                 self.status.bg = val
                 self.status.refresh()
@@ -2486,6 +2524,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 f"prefix      {self.prefix_key}",
                 f"mouse       {'on' if self.mouse_enabled else 'off'}",
                 f"mouse-debug {'on' if self.mouse_debug else 'off'}",
+                f"alt-scroll  {'on' if self.disable_alt_scroll else 'off'}",
                 f"status-bg   {self.status.bg}",
                 f"status-fg   {self.status.fg}",
                 f"mode-keys   {self.mode_keys}",

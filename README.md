@@ -195,6 +195,9 @@ detach / kill-server
 ```conf
 set prefix C-a            # prefix 키 변경
 set mouse on              # 마우스 on/off
+set alt-scroll on         # 휠 스크롤백을 pytmux 가 처리(기본). 일부 터미널(iTerm2 등)이
+                          # alt-screen 에서 휠을 화살표로 바꿔 스크롤백이 안 열릴 때 유지.
+                          # off = 터미널 기본 동작에 맡김
 set tab-bar always        # 탭이 하나여도 상단 탭바 표시(기본). auto = 2개 이상일 때만
 set default-path current  # 새 탭/패널 시작 위치: current(현재 패널)/home/<경로>
 # set status-bg green     # 상태줄 색(미지정 시 textual-dark 테마)
