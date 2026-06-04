@@ -211,6 +211,26 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56563 **원격 Claude 헤더 예약 디바운스 — Windows→ssh 첫 실행 한 줄 스크롤 떨림
+  수정** — Windows 에서 pytmux 실행 후 ssh 로 원격 macOS Claude Code 를 처음 띄우면
+  화면이 위아래로 **한 줄씩 스크롤**되는 떨림이 났다(로컬 정상). 원인은 헤더 행
+  예약(#1, CL 56516): `_should_reserve_header = claude_header AND p._claude AND
+  last_prompt` 면 내용 영역에서 한 행을 빼고 **PTY 도 ch-1 로 리사이즈**한다. 그런데
+  `p._claude` 는 화면 텍스트 스크래핑(`claude_state`)이라 footer("? for shortcuts"·
+  busy 스피너)가 한 프레임 안 잡히면 None 으로 깜빡인다. 로컬은 화면이 한 번에 도착해
+  그 중간 프레임을 거의 안 잡지만, **ssh/ConPTY 는 화면이 조각나 도착**해 footer 없는
+  중간 프레임을 잡을 확률이 커 `p._claude` 가 None↔truthy 로 깜빡 → 헤더 예약이 매
+  프레임 토글 → flush 루프가 레이아웃을 다시 보내 PTY 를 ch↔ch-1 로 반복 리사이즈 →
+  원격 Claude 가 SIGWINCH 마다 리플로우해 한 줄씩 떨린다. 해결: 헤더 예약 판정에
+  **디바운스된 `p._hdr_claude`** 도입 — Claude 로 보이면 즉시 True(헤더 즉시 표시),
+  None 이면 연속 `_HDR_CLAUDE_MISS`(=30프레임, 30Hz≈1초) 동안 None 이어야 False 로
+  떨군다. 즉 **예약 해제(=PTY 한 행 키우기)만 디바운스**해 깜빡임 떨림을 없애고 설정은
+  즉시라 반응성은 그대로(진짜 Claude 종료 시 행 회수 지연은 ~1초로 미미). `model.Pane`
+  에 `_hdr_claude`/`_hdr_claude_miss`(init·respawn), `server` 의 `_should_reserve_header`
+  가 `_hdr_claude` 를 읽고 `_scan_claude` 가 매 스캔 갱신, 상수 `_HDR_CLAUDE_MISS`.
+  회귀 `test_claude_header_debounce_no_thrash` 신설 + `test_claude_header_reserves_row`
+  갱신, 164 passed. **서버측 변경 — kill-server 재기동 후 반영.** 파일:
+  `pytmuxlib/{model,server}.py`, `tests/test_server.py`.
 - 56560 **대량 출력 비차단 처리: feed 슬라이스 드레인(`_feed_drain`)** — feed
   가속(56558) 후에도 pyte feed 는 순수 파이썬이라 ~1.2 MB/s 가 천장. PTY 한 읽기
   (최대 64KB)를 통째로 동기 feed 하면 그동안(~56ms) 이벤트 루프가 막혀 입력·flush·

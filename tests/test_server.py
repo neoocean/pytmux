@@ -245,8 +245,10 @@ async def test_claude_header_reserves_row():
         pm0 = srv._layout_msg(sess)["panes"][0]
         assert pm0["claude_hdr"] is False and p._hdr_reserved is False
         h0, y0 = pm0["h"], pm0["y"]
-        # Claude + 프롬프트 → 예약(claude_header 기본 on)
+        # Claude + 프롬프트 → 예약(claude_header 기본 on). 헤더 예약은 디바운스된
+        # _hdr_claude 를 보므로(원격 깜빡임 방지) 그것도 세운다.
         p._claude = "idle"
+        p._hdr_claude = True
         p.last_prompt = "do x"
         pm1 = srv._layout_msg(sess)["panes"][0]
         assert pm1["claude_hdr"] is True and p._hdr_reserved is True
@@ -257,6 +259,42 @@ async def test_claude_header_reserves_row():
         srv.set_claude_header(False)
         pm2 = srv._layout_msg(sess)["panes"][0]
         assert pm2["claude_hdr"] is False and pm2["h"] == h0
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
+async def test_claude_header_debounce_no_thrash():
+    """원격(ssh/ConPTY) Claude 의 footer 가 한두 프레임 안 잡혀 _claude 가 None 으로
+    깜빡여도 헤더 예약(=PTY 한 행 양보)이 토글되면 안 된다. raw `_claude` 깜빡임이
+    예약을 매 프레임 뒤집으면 PTY 가 ±1 행 리사이즈를 반복해 원격 Claude 화면이
+    한 줄씩 위아래로 스크롤되는 떨림이 난다(Windows→ssh→macOS 첫 실행 증상).
+    예약 해제는 _HDR_CLAUDE_MISS 프레임 연속 non-Claude 일 때만 일어난다."""
+    from pytmuxlib.server import _HDR_CLAUDE_MISS
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        p.last_prompt = "do x"
+        # Claude idle footer → 예약 ON, 디바운스 플래그도 즉시 True
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle" and p._hdr_claude is True
+        assert srv._should_reserve_header(p) is True
+        # footer 없는 중간 프레임이 한 번 와 raw 가 None 으로 깜빡여도 예약 유지
+        p.feed(b"\x1b[2J\x1b[H(redrawing...)\r\n")
+        srv._scan_claude(sess, win)
+        assert p._claude is None, "raw 상태는 None 으로 깜빡"
+        assert p._hdr_claude is True and srv._should_reserve_header(p) is True, \
+            "한 프레임 깜빡임으로 예약이 풀리면 PTY 떨림이 난다"
+        # 연속 _HDR_CLAUDE_MISS 프레임 non-Claude → 그제서야 예약 해제
+        for _ in range(_HDR_CLAUDE_MISS):
+            srv._scan_claude(sess, win)
+        assert p._hdr_claude is False and srv._should_reserve_header(p) is False
     finally:
         try:
             os.unlink(srv.opts_path)

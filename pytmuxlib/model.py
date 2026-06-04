@@ -271,6 +271,16 @@ class Pane:
         # _layout_msg 가 이 패널에 Claude 헤더 한 행을 예약했는지(#1). 예약 유무가
         # 바뀌면 flush 루프가 레이아웃(PTY 리사이즈 포함)을 다시 보낸다.
         self._hdr_reserved = False
+        # 헤더 예약(#1)용 **디바운스된** Claude 존재 플래그. `_claude` 는 화면
+        # 텍스트 스크래핑이라 footer(예: "? for shortcuts")가 한 프레임 안 잡히면
+        # None 으로 깜빡일 수 있는데, 그 raw 값을 그대로 _should_reserve_header 에
+        # 쓰면 헤더 예약이 매 프레임 토글돼 PTY 가 ±1 행으로 리사이즈를 반복한다
+        # → 원격(ssh) Claude 가 SIGWINCH 마다 리플로우해 화면이 한 줄씩 위아래로
+        # 스크롤되는 떨림이 생긴다(Windows/ConPTY 는 화면이 조각나 도착해 footer
+        # 없는 중간 프레임을 잡을 확률이 커 증상이 두드러진다). 그래서 Claude 가
+        # 사라진 것으로 보여도 _HDR_CLAUDE_MISS 프레임 연속 None 이어야 예약을 푼다.
+        self._hdr_claude = False       # 디바운스된 "이 패널은 Claude" 판정
+        self._hdr_claude_miss = 0      # 연속으로 non-Claude 로 본 스캔 수
         self.search_query = ""   # 스크롤백 검색어
         self._match_abs = None   # 현재 매치된 절대 라인 인덱스
         self.bracketed = False   # 내부 앱이 bracketed paste 모드를 켰는지
@@ -313,6 +323,8 @@ class Pane:
         self._pc_phase = None    # 프롬프트 단위 클리어 상태기계 리셋(모드 자체는 유지)
         self.prompt_clear_queue = []  # 새 셸이므로 쌓인 명령 큐도 버린다(#4)
         self._hdr_reserved = False
+        self._hdr_claude = False
+        self._hdr_claude_miss = 0
         self.search_query = ""
         self._match_abs = None
         self.bracketed = False
