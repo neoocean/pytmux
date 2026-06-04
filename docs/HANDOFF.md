@@ -211,6 +211,16 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56603 **refactor(§10 LLM 친화, 1/N): client.py 순수 유틸리티 → `clientutil.py`**
+  — client.py(4363줄)·server.py 거대 단일 파일을 **동작 보존**(헤드리스 테스트 전부
+  통과 게이트) 한 채 작은 단일책임 모듈로 점진 분리하는 첫 단계. 모듈 최상단(클로저
+  `build_client_app` 밖)의 순수 헬퍼/상수 9종(`_shell_argv`·`_char_cells`·`_fmt_tokens`
+  ·`_TIME/_DATE_STRFTIME`·`_CLOCK_FONT`·`_JAMO`·`_normalize_key`·`_KEY_DIAG`)을 신규
+  `pytmuxlib/clientutil.py` 로 이전하고 `from .clientutil import …` 로 되가져온다(공개
+  이름 동일=하위호환, 클로저가 그 이름으로 참조). client.py 4363→4287줄. 188 passed
+  (무변경). 클라 전용(attach 재실행). 다음: 클로저 프리앰블 헬퍼(theme_color·
+  make_style·COMMANDS…)·모달 Screen 분리. 파일: `pytmuxlib/{client,clientutil}.py`,
+  `docs/HANDOFF.md`.
 - 56602 **Claude footer 클릭 → 권한모드 선택/원격제어 정보 팝업**(§10 item 2/3) —
   패널 내 Claude Code 하단 ① 권한모드 footer(`auto mode on (shift+tab to cycle)`)
   클릭 → 권한모드 선택 팝업(`PermModeScreen`, 현재 모드 표시+auto/default/plan 선택,
