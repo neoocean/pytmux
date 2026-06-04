@@ -724,7 +724,9 @@ class Server:
     def _popup_layout(self, sess: Session, cols: int, rows: int):
         """팝업 박스 geometry 를 산출하고 팝업 패널 PTY 를 내용 크기로 리사이즈한 뒤
         레이아웃 메시지에 넣을 dict 를 반환. 팝업 없으면 None."""
-        pu = sess.popup
+        # getattr 폴백: Session.__new__(복원 경로)이 popup 세팅을 빠뜨려도 attach 가
+        # 통째로 깨지지 않게 방어한다(§10 — 근본 원인은 복원 경로에서 popup=None 세팅).
+        pu = getattr(sess, "popup", None)
         if not pu:
             return None
         pane = pu.get("pane")
@@ -1278,6 +1280,12 @@ class Server:
             sess.tabs = tabs
             sess.active_index = 0
             sess.last_index = 0
+            # ⚠️ Session.__new__ 는 __init__ 을 건너뛰므로 __init__ 이 세팅하는 휘발성
+            # 속성을 여기서 똑같이 채워야 한다. popup 누락이 치명적이었다(§10): 부팅 시
+            # layout.json 자동 복원(run_server 의 restore_layout)으로 popup 없는 Session
+            # 이 만들어지면, 이후 모든 attach 가 _layout_msg→_popup_layout 의 sess.popup
+            # 에서 AttributeError → _send_full 실패 → 화면 일부만 그려진 채 종료/브릭됐다.
+            sess.popup = None
             self.sessions[sess.name] = sess
         return True
 

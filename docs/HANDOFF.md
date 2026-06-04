@@ -211,6 +211,18 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56607 **FIX 치명적 크래시: 복원된 Session 에 `popup` 누락 → 모든 attach 브릭**(§10)
+  — 사용자 보고("실행 시 화면 일부 나타났다 바로 종료/빈 패널")의 근본 원인을 CL 56599
+  가 남긴 `<sock>.error.log` 로 확정: `AttributeError: 'Session' object has no attribute
+  'popup'`(`_layout_msg`→`_popup_layout`→`sess.popup`). 부팅 시 layout.json **자동
+  복원**(`run_server` 가 `restore_layout()` 호출)이 Session 을 `Session.__new__` 로
+  만들며 `__init__` 의 `popup=None` 을 빠뜨려, **저장된 레이아웃이 있는 데몬은 부팅마다
+  popup 없는 Session 생성 → 이후 모든 attach 가 `_send_full` 에서 터져 화면 일부만
+  그려진 채 끊김/브릭/빈 패널**. (resume(re-exec)·`ensure_default_session` 경로는 무사
+  → fresh 데몬은 정상이라 재현이 까다로웠고, CL 56599 가드+에러로그가 결정적 단서.)
+  수정: `restore_layout` 에 `sess.popup = None` 추가 + `_popup_layout` 이 `getattr`
+  폴백. 회귀 `test_restore_layout_session_has_popup`, 189 passed. **서버측 — kill-server
+  재기동 후 반영.** 파일: `pytmuxlib/server.py`, `tests/test_server.py`, `docs/HANDOFF.md`.
 - 56603 **refactor(§10 LLM 친화, 1/N): client.py 순수 유틸리티 → `clientutil.py`**
   — client.py(4363줄)·server.py 거대 단일 파일을 **동작 보존**(헤드리스 테스트 전부
   통과 게이트) 한 채 작은 단일책임 모듈로 점진 분리하는 첫 단계. 모듈 최상단(클로저

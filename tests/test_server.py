@@ -1495,3 +1495,29 @@ async def test_claude_perm_mode_set_and_drive():
         assert pc["perm_mode"] == "auto", pc
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_restore_layout_session_has_popup():
+    """§10 회귀(치명적 크래시): 부팅 시 layout.json 자동 복원(restore_layout)이 만드는
+    Session 도 popup 속성을 가져야 한다. Session.__new__ 는 __init__ 을 건너뛰는데
+    예전엔 popup 세팅을 빠뜨려, 복원된 세션에 attach 하면 _layout_msg→_popup_layout 의
+    sess.popup 에서 AttributeError → _send_full 실패 → 화면 일부만 그려진 채 끊김/브릭."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv.split_pane(sess, "lr")
+        assert srv.save_layout(), "레이아웃 저장"
+        srv.sessions.clear()
+        assert srv.restore_layout(), "레이아웃 복원"
+        rsess = next(iter(srv.sessions.values()))
+        # 복원된 세션이 popup 을 가져야(없으면 attach 가 통째로 깨졌다)
+        assert hasattr(rsess, "popup") and rsess.popup is None
+        # 핵심: _layout_msg/_popup_layout 가 예외 없이 동작
+        assert srv._layout_msg(rsess) is not None
+        assert srv._popup_layout(rsess, 80, 24) is None
+    finally:
+        try:
+            os.unlink(srv.layout_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
