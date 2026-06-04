@@ -408,3 +408,43 @@ async def test_restore_induces_altscreen_redraw():
             pass
         await teardown(srvA, taskA, sockA)
         await teardown(srvB, taskB, sockB)
+
+
+# ── 9. 복원 후 스크롤백 연속성: 화면 밖으로 밀린 줄이 스크롤백에 보존 ─────────────
+async def test_restore_preserves_scrollback():
+    """일반 셸 패널에서 화면 높이를 넘는 출력을 낸 뒤 재시작(채택 복원)해도, 화면
+    밖으로 밀린 초기 줄이 스크롤백에 보존돼 맨 위로 스크롤하면 다시 보인다.
+    docs/RESTART_SCENARIO.md: 메인 화면 평문 스냅샷 복원(순수 셸 스크롤백 연속성)."""
+    if ipc.IS_WINDOWS:
+        return
+    import tempfile
+    from harness import pane_text
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    try:
+        sess = srvA.ensure_default_session(80, 24)
+        pane = sess.active_window.active_pane
+        pane.pty.write(b"for i in $(seq 1 40); do echo SCROLL_LINE_$i; done\n")
+        for _ in range(200):
+            await asyncio.sleep(0.02)
+            if "SCROLL_LINE_40" in pane_text(pane):
+                break
+        assert "SCROLL_LINE_40" in pane_text(pane), "마커 출력 실패"
+
+        path = tempfile.mktemp(suffix=".resume.json")
+        assert srvA.save_resume_state(path)
+        for p in srvA._all_panes():
+            p.pty.stop_reader()
+        assert srvB.restore_resume_state(path)
+        paneB = next(iter(srvB.sessions.values())).active_window.active_pane
+        await asyncio.sleep(0.3)   # induce_redraw/프롬프트 출력 정착
+        # 맨 위로 스크롤 → 화면 밖으로 밀렸던 초기 줄이 스크롤백에서 보여야 한다.
+        paneB.scroll_to("top")
+        top = pane_text(paneB)
+        early = [i for i in range(1, 6) if f"SCROLL_LINE_{i}" in top]
+        assert len(early) >= 3, f"스크롤백 초기 줄 소실: {early}\n{top[:300]}"
+        os.unlink(path)
+        srvA.sessions.clear()
+    finally:
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)

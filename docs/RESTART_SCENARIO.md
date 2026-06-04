@@ -3,15 +3,17 @@
 > **상태**: ✅ 구현됨(방식 ① 제자리 re-exec). 본 문서는 설계 기준선이자 구현 명세다.
 > 시나리오 도입 CL: **56541**. 구현 CL: **56543**(상태 직렬화) · **56545**(fd 채택·복원·
 > 부트 배선) · **56546**(restart-server 명령=os.execv + 종단간 검증) · **56547**(클라이언트
-> 재접속 ⓔ) · 56549(명령 팔레트 노출 + 문서) · 본 CL(alt-screen 재그리기 유도 = 대안
-> B). 회귀: `tests/test_restart.py`(8 케이스).
+> 재접속 ⓔ) · 56549(명령 팔레트 노출 + 문서) · 56550(alt-screen 재그리기 유도 = 대안
+> B) · 본 CL(스크롤백 연속성 검증). 회귀: `tests/test_restart.py`(9 케이스).
 >
 > **명령**: 명령 프롬프트/팔레트의 `restart-server`(별칭 `restart`), 또는 외부에서
-> `python3 pytmux.py cmd restart-server`. **alt-screen 재그리기**: 실 박스에서
-> 검증 완료 — 복원 후 `_induce_redraw_all` 이 각 패널 PTY 에 SIGWINCH 를 유발해
-> vim/claude 등이 repaint 한다(주의 ① 대안 B). 헤드리스 회귀
-> `test_restore_induces_altscreen_redraw` 로 고정. 순수 셸 스크롤백은 메인 화면
-> 평문 스냅샷으로 복원(완전한 pyte 내부 상태 직렬화 = 대안 A 는 비채택).
+> `python3 pytmux.py cmd restart-server`. **alt-screen 재그리기**: 실 박스 검증 완료 —
+> 복원 후 `_induce_redraw_all` 이 각 패널 PTY 에 SIGWINCH 를 유발해 vim/claude 등이
+> repaint 한다(주의 ① 대안 B). 회귀 `test_restore_induces_altscreen_redraw`.
+> **스크롤백 연속성**: 실 박스 검증 완료 — 화면 밖으로 밀린 줄이 메인 화면 평문
+> 스냅샷으로 복원돼 재시작 후 맨 위로 스크롤하면 다시 보인다(회귀
+> `test_restore_preserves_scrollback`; 초기 줄 1~5 가 스크롤백에서 복원됨을 확인).
+> 완전한 pyte 내부 상태 직렬화(대안 A)는 비채택.
 
 ## 1. 배경과 목표
 
