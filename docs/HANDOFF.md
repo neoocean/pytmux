@@ -201,21 +201,15 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 9. 최근 변경(CL 56279~56500 + git, 신→구)
 
-> ⚠️ **git 미러 동기화 필요(2026-06-04, Windows 세션).** 아래 Windows 박스(Perforce
-> 클라이언트 `office`, 로컬 git 없음 — [MEMORY.md] 참조)에서 낸 CL 은 **GitHub 미러
-> (origin main)에 아직 미반영**이다. macOS 개발 머신에서 depot → git 동기화가 필요하다.
-> (이 박스에서는 `git push` 불가 — `§8` 의 미러 동선은 macOS 에서만 수행.) 대상 CL:
-> - **56548** `pytmux: automate install` — `install.ps1`/`install.sh` 에 의존성 설치
->   (`pip install -r requirements.txt`) 추가, `install.ps1` 가 `~/.local/bin` 에 `python`/
->   `python.cmd` shim 자동 생성(minimal-PATH 셸에서 `python pytmux.py` 가 되도록),
->   `uninstall.ps1` 이 shim 도 제거(install 표식 확인 후), `docs/ENV_SETUP_WINDOWS.md` 갱신.
-> - **56544** `docs: ENV_SETUP_WINDOWS.md 신설` — SSH/로그인 셸의 minimal PATH 에 WindowsApps
->   가 빠져 `python` 이 안 잡히는 증상 진단 + `~/.local/bin` python shim 해결법 문서화.
-> - **56540** 디스크립션만 수정(WINDOWS_PORT.md#6 의 플레이스홀더 → 정식 설명). p4 메타데이터
->   변경이라 git 쪽은 커밋 메시지 차이뿐 — WINDOWS_PORT.md#6 **내용**의 미러 반영 여부는 별도 확인.
->
-> 참고: 위 작업과 별개로 `surface-office` 병행 세션이 56545~56550(`작업 보존 재시작`)을
-> 제출 중 — depot head 가 빠르게 움직이므로 미러 동기화 전 have/head 확인 권장.
+> ✅ **git 미러 동기화 완료(2026-06-04, macOS 세션).** Windows 박스(`office`)와
+> `surface-office` 병행 세션에서 낸 CL **56540~56560** 을 macOS 개발 머신에서
+> depot → git 으로 재생해 **GitHub 미러(origin main)에 반영**했다(CL 1개=커밋 1개,
+> 각 CL 의 리비전 시점 내용을 `p4 print` 로 복원, 메시지에 `Perforce: change NNNN`
+> 푸터). 작업 트리는 depot head 와 바이트 단위 일치(`p4 diff -sa` 비어 있음),
+> `origin/main` 과 동기. 미러 CL: 56540, 56541, 56543, 56544, 56545, 56546, 56547,
+> 56548, 56549, 56550, 56551, 56552, 56555, 56556, 56558, 56560. (`.claude/
+> settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
+> 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
 - 56560 **대량 출력 비차단 처리: feed 슬라이스 드레인(`_feed_drain`)** — feed
   가속(56558) 후에도 pyte feed 는 순수 파이썬이라 ~1.2 MB/s 가 천장. PTY 한 읽기
