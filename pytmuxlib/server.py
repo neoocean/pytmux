@@ -442,6 +442,26 @@ class Server:
         a.parent = pb
         # 활성 패널은 그대로 따라간다(같은 셸)
 
+    def swap_pane_ids(self, sess: Session, id_a: int, id_b: int) -> bool:
+        """활성 윈도우에서 id_a·id_b 두 리프 패널의 트리 위치를 맞바꾼다(드래그
+        swap 용). swap_pane(인접 순환)과 달리 임의의 두 패널을 지정해 교환한다.
+        활성 패널은 같은 셸을 그대로 따라간다(위치만 교환)."""
+        win = sess.active_window
+        if not win or id_a == id_b:
+            return False
+        leaves = {p.id: p for p in win.panes()}
+        a, b = leaves.get(id_a), leaves.get(id_b)
+        if a is None or b is None or a.parent is None or b.parent is None:
+            return False
+        win.zoomed = False
+        pa, aattr = a.parent, ("a" if a.parent.a is a else "b")
+        pb, battr = b.parent, ("a" if b.parent.a is b else "b")
+        setattr(pa, aattr, b)
+        b.parent = pa
+        setattr(pb, battr, a)
+        a.parent = pb
+        return True
+
     def _detach_pane(self, win: Window, pane: Pane):
         """패널을 윈도우 트리에서 떼어낸다(트리 수축). 활성 패널은 형제로 이동."""
         parent = pane.parent
@@ -533,7 +553,14 @@ class Server:
             win.auto_rename = (not win.auto_rename) if value is None else bool(value)
 
     def _fg_command(self, fd: int):
-        """PTY 의 포그라운드 프로세스 그룹 명령 이름."""
+        """PTY 의 포그라운드 프로세스 그룹 명령 이름(자동 탭이름·ssh 감지용).
+
+        Windows(ConPTY)에는 포그라운드 프로세스 그룹 개념과 os.tcgetpgrp/ps 가
+        없어 지원하지 않는다(docs/WINDOWS_PORT.md §4 기능 열화). 자동 이름은
+        고정 탭이름으로 우아하게 폴백된다. os.tcgetpgrp 는 Windows 에 아예
+        없어(AttributeError) OSError 핸들러로는 못 잡으므로 먼저 분기한다."""
+        if pty_backend.IS_WINDOWS:
+            return None
         try:
             pgid = os.tcgetpgrp(fd)
         except OSError:
@@ -1567,6 +1594,9 @@ class Server:
             self.rotate_panes(sess, bool(msg.get("forward", True)))
         elif action == "swap_pane":
             self.swap_pane(sess, bool(msg.get("forward", True)))
+        elif action == "swap_pane_to":
+            self.swap_pane_ids(sess, int(msg.get("id", -1)),
+                               int(msg.get("to_id", -1)))
         elif action == "break_pane":
             self.break_pane(sess)
         elif action == "join_pane":

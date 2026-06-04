@@ -201,6 +201,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 9. 최근 변경(CL 56279~56464 + git, 신→구)
 
+- 56489 **패널 드래그 swap**(§10 마무리 묶음 #9b) — 서버 `swap_pane_ids` + 액션
+  `swap_pane_to`(임의 두 패널 위치 교환). 클라 Shift+좌버튼 드래그로 패널 swap
+  (`_pane_swap`/`_pane_swap_over`), 드래그 중 소스 dim·대상 강조. 회귀 테스트
+  `test_swap_pane_ids`·`test_shift_drag_pane_swap`. 서버+클라 → kill-server 재기동.
+
 - 56480 **단일 패널 테두리 on/off 옵션화**(§10 마무리 묶음 #9a) — 서버 `single_border`
   옵션(기본 ON, opts.json 영속). `_layout_msg` 가 `len(panes) >= 2 or single_border`
   일 때만 box. 단일 패널 OFF 면 화면 전체 사용, 다중 패널은 항상 테두리. 명령
@@ -807,7 +812,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   로 흐리게, 드롭 대상은 warning 배경+bold+underline 으로 강조(놓으면 그 자리로 이동).
   같은 탭 위면 대상 해제(소스만 흐림). `on_mouse_up` 이 `_drag`/`_drag_over` 초기화 후
   재합성. 회귀 테스트 `test_tab_drag_reorder_visual_feedback`. 클라이언트 전용(attach 재실행).
-- 패널 **드래그 swap**(미구현 — 9b 대상).
+- ~~패널 **드래그 swap**.~~ → **CL 56489 에서 해결.** 서버 `swap_pane_ids(sess, id_a,
+  id_b)`(임의의 두 리프 패널 트리 위치 교환, swap_pane 의 인접 순환과 달리 지정 교환)
+  + 액션 `swap_pane_to`. 클라: **Shift+좌버튼 드래그**로 패널을 잡아 다른 패널에 놓으면
+  swap(`MultiplexerView._pane_swap`/`_pane_swap_over`, on_mouse_down/move/up). Shift+드래그를
+  passthrough/divider 보다 먼저 가로채 마우스 모드 앱 위에서도 동작(패널 ≥2 일 때만).
+  드래그 중 `_composite` 가 소스 패널은 dim, 대상 패널은 warning 배경으로 강조. 회귀
+  테스트 `test_swap_pane_ids`(서버)·`test_shift_drag_pane_swap`(클라). 서버+클라 → 재기동.
 - ~~단일 패널 테두리 on/off 옵션화.~~ → **CL 56480 에서 해결.** 서버에 `single_border`
   옵션(기본 ON=항상 테두리, opts.json 영속) 추가. `_layout_msg` 의 `bordered` 를
   `len(panes) >= 2 or self.single_border` 로 바꿔, **패널이 둘 이상이면 옵션과 무관하게

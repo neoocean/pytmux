@@ -949,6 +949,48 @@ async def test_active_tab_connector_follows_switch():
     await _with_app(body, cfg={"tab_bar_always": True})
 
 
+async def test_shift_drag_pane_swap():
+    # #9b: Shift+좌버튼 드래그로 패널을 잡아 다른 패널에 놓으면 두 패널 위치를
+    # 맞바꾼다(서버에 swap_pane_to 전송). 드래그 중 소스/대상 상태를 추적한다.
+    async def body(app, pilot, srv):
+        app.layout = {"active": 1, "panes": [
+            {"id": 1, "x": 0, "y": 0, "w": 40, "h": 20, "box": None},
+            {"id": 2, "x": 41, "y": 0, "w": 40, "h": 20, "box": None}]}
+        sent = []
+        app.send_cmd = lambda a, **k: sent.append((a, k))
+        v = app.view
+
+        class _Ev:
+            def __init__(self, x, y, shift=True, button=1, ctrl=False):
+                self.x, self.y = x, y
+                self.shift, self.button, self.ctrl = shift, button, ctrl
+
+            def stop(self):
+                pass
+
+        # Shift+좌버튼 다운 on 패널 1 → swap 시작
+        v.on_mouse_down(_Ev(5, 5))
+        assert v._pane_swap == 1, "소스 패널 = 1"
+        # 패널 2 위로 이동 → 대상 추적
+        v.on_mouse_move(_Ev(60, 5))
+        assert v._pane_swap_over == 2, "대상 패널 = 2"
+        # 놓음 → swap_pane_to 전송, 상태 초기화
+        v.on_mouse_up(_Ev(60, 5))
+        assert ("swap_pane_to", {"id": 1, "to_id": 2}) in sent, sent
+        assert v._pane_swap is None and v._pane_swap_over is None
+
+        # 제자리(같은 패널)에 놓으면 swap 안 함
+        sent.clear()
+        v.on_mouse_down(_Ev(5, 5))
+        v.on_mouse_up(_Ev(5, 5))
+        assert not any(a == "swap_pane_to" for a, _ in sent), "제자리는 swap 없음"
+
+        # Shift 없으면 swap 시작 안 함(일반 클릭 경로)
+        v.on_mouse_down(_Ev(5, 5, shift=False))
+        assert v._pane_swap is None, "Shift 없으면 swap 모드 아님"
+    await _with_app(body)
+
+
 async def test_tab_drag_reorder_visual_feedback():
     # #8: 탭을 드래그 재정렬하는 동안 들고 있는 탭(소스)은 흐리게(dim), 놓을 위치
     # (드롭 대상)은 warning 배경+밑줄로 표시된다. 놓을 때만 확정하던 것에 더해

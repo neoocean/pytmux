@@ -829,6 +829,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._sel_start = None
             self._mouse_fwd = None     # 패스스루 중인 패널 id(버튼 다운~업)
             self._mouse_fwd_btn = 0    # 그 시퀀스의 버튼(드래그/릴리스 인코딩용)
+            self._pane_swap = None     # Shift+드래그 swap 중인 소스 패널 id
+            self._pane_swap_over = None  # 드래그 중 가리키는 swap 대상 패널 id
 
         def _extract_selection(self):
             if not self._sel or not self._cells:
@@ -944,6 +946,20 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.app._composite()
                 event.stop()
                 return
+            # Shift+드래그 = 패널 swap. 좌버튼+Shift 로 패널을 잡아 다른 패널에 놓으면
+            # 두 패널 위치를 맞바꾼다(내용 앱은 그대로). passthrough/divider 보다 먼저
+            # 가로채 마우스 모드 앱 위에서도 동작한다. 패널이 둘 이상일 때만.
+            if (getattr(event, "shift", False) and event.button == 1
+                    and self.app.mode == "normal"
+                    and len(self.app.layout.get("panes", [])) >= 2):
+                p = self._pane_at(event.x, event.y)
+                if p:
+                    self._pane_swap = p["id"]
+                    self._pane_swap_over = None
+                    self.capture_mouse()
+                    self.app._composite()
+                    event.stop()
+                    return
             # Ctrl+Click 은 무동작 — 컨텍스트 메뉴는 순수 우클릭(button 3)으로만 연다.
             # (단, 터미널이 Ctrl+Click 을 그냥 button 3 으로 합쳐 보내면 ctrl 플래그가
             #  안 와 구분 불가 — 그 경우 우클릭으로 취급됨. 터미널 의존 한계.)
@@ -1010,6 +1026,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
             event.stop()
 
         def on_mouse_move(self, event: events.MouseMove):
+            # Shift+드래그 패널 swap 중 — 대상 패널 추적(시각 강조 갱신)
+            if self._pane_swap is not None:
+                p = self._pane_at(event.x, event.y)
+                over = p["id"] if (p and p["id"] != self._pane_swap) else None
+                if over != self._pane_swap_over:
+                    self._pane_swap_over = over
+                    self.app._composite()
+                event.stop()
+                return
             if self._sel_start is not None:
                 self._sel = (self._sel_start[0], self._sel_start[1],
                              event.x, event.y)
@@ -1065,6 +1090,22 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.app._composite()
 
         def on_mouse_up(self, event: events.MouseUp):
+            # Shift+드래그 패널 swap 완료 — 대상이 있으면 서버에 swap 요청
+            if self._pane_swap is not None:
+                src = self._pane_swap
+                self._pane_swap = None
+                self._pane_swap_over = None
+                try:
+                    self.release_mouse()
+                except Exception:
+                    pass
+                p = self._pane_at(event.x, event.y)
+                if p and p["id"] != src:
+                    self.app.send_cmd("swap_pane_to", id=src, to_id=p["id"])
+                else:
+                    self.app._composite()   # 강조 해제만(제자리 놓음)
+                event.stop()
+                return
             if self._sel_start is not None:
                 text = self._extract_selection()
                 self._sel_start = None
@@ -2315,6 +2356,23 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         for xx in range(p["x"], min(p["x"] + p["w"], W)):
                             c, st = cells[yy][xx]
                             cells[yy][xx] = (c, st + mdim)
+            # Shift+드래그 패널 swap 중: 들고 있는 소스 패널은 흐리게(dim), 놓을
+            # 대상 패널은 배경 강조(놓으면 두 패널이 자리를 맞바꾼다).
+            if self.view._pane_swap is not None:
+                sdim = Style(dim=True)
+                stint = Style(bgcolor=theme_color(self, "warning"))
+                for p in self.layout.get("panes", []):
+                    if p["id"] == self.view._pane_swap:
+                        ov = sdim
+                    elif p["id"] == self.view._pane_swap_over:
+                        ov = stint
+                    else:
+                        continue
+                    for yy in range(p["y"], min(p["y"] + p["h"], H)):
+                        for xx in range(p["x"], min(p["x"] + p["w"], W)):
+                            if 0 <= yy < H and 0 <= xx < W:
+                                c, st = cells[yy][xx]
+                                cells[yy][xx] = (c, st + ov)
             self.view.set_frame(cells)
 
         def _draw_tab_close(self, cells, W, H):

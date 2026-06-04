@@ -599,6 +599,35 @@ async def test_capture_output():
         await teardown(srv, task, sock)
 
 
+async def test_swap_pane_ids():
+    # #9b: swap_pane_ids 가 임의의 두 리프 패널 위치를 맞바꾼다(드래그 swap 서버측).
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv.split_pane(sess, "lr")            # 좌우 2분할
+        win = sess.active_window
+        leaves = win.panes()
+        assert len(leaves) == 2
+        a, b = leaves[0], leaves[1]
+        # 분할 전 위치(rect) 기록
+        panes0, _ = win.compute_layout(0, 0, 80, 24)
+        rect = {p.id: p.rect for p in panes0}
+        # a, b 위치 교환
+        assert srv.swap_pane_ids(sess, a.id, b.id) is True
+        panes1, _ = win.compute_layout(0, 0, 80, 24)
+        rect2 = {p.id: p.rect for p in panes1}
+        assert rect2[a.id] == rect[b.id], "a 가 b 의 옛 위치로"
+        assert rect2[b.id] == rect[a.id], "b 가 a 의 옛 위치로"
+        # 트리 일관성 유지
+        for p in win.panes():
+            assert p.parent is None or p in (p.parent.a, p.parent.b)
+        # 같은 id / 없는 id 는 no-op(False)
+        assert srv.swap_pane_ids(sess, a.id, a.id) is False
+        assert srv.swap_pane_ids(sess, a.id, 99999) is False
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_single_pane_border_toggle_and_persist():
     # #9: 단일 패널 테두리 표시를 옵션화. 기본 ON(단일 패널도 box), off 면 단일
     # 패널은 box 없이 화면 전체를 내용으로 쓴다. 패널이 둘 이상이면 옵션과
