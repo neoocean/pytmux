@@ -1,4 +1,7 @@
-"""공통: 상수 · 소켓 경로 · 프로토콜 프레이밍 · 색/시각 헬퍼."""
+"""공통: 상수 · 프로토콜 프레이밍 · 색/시각 헬퍼.
+
+소켓 경로/엔드포인트 결정은 pytmuxlib.ipc 로 일원화됐다(구 default_socket_path
+함수는 ipc.default_endpoint 로 대체되어 제거됨 — docs/WINDOWS_PORT.md §6-4)."""
 from __future__ import annotations
 
 import asyncio
@@ -16,16 +19,6 @@ MIN_W = 3       # 패널 최소 폭(열) — 테두리(좌/우) + 내용 1칸
 MIN_H = 3       # 패널 최소 높이(행) — 테두리(상/하) + 내용 1칸
 FLUSH_HZ = 30   # 서버 화면 push 주기
 HISTORY = 10000 # 패널당 스크롤백 보관 행 수
-
-
-def default_socket_path() -> str:
-    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/pytmux-{os.getuid()}"
-    os.makedirs(runtime, exist_ok=True)
-    try:
-        os.chmod(runtime, 0o700)
-    except OSError:
-        pass
-    return os.path.join(runtime, "default.sock")
 
 
 async def read_msg(reader: asyncio.StreamReader):

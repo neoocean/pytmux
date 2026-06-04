@@ -39,11 +39,11 @@ from pytmuxlib.client import build_client_app, run_client  # noqa: F401
 from pytmuxlib.keymap import (  # noqa: F401
     _key_to_ctrl_bytes, _tmux_key_to_textual, load_config)
 from pytmuxlib.launcher import (  # noqa: F401
-    can_connect, control_request, daemonize, ensure_server, main)
+    can_connect, control_request, ensure_server, main)
 from pytmuxlib.model import (  # noqa: F401
     ClientConn, Pane, Session, Split, Tab, Window, pid_counter, split_counter)
 from pytmuxlib.protocol import (  # noqa: F401
-    FLUSH_HZ, HISTORY, MIN_H, MIN_W, conv_color, default_socket_path,
+    FLUSH_HZ, HISTORY, MIN_H, MIN_W, conv_color,
     parse_reset_delay, read_msg, set_winsize, write_msg)
 from pytmuxlib.replay import render_pane_lines, replay  # noqa: F401
 from pytmuxlib.server import Server, run_server  # noqa: F401
