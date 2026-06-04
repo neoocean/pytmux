@@ -291,3 +291,36 @@ async def test_execv_restart_preserves_shell_pid():
                 os.unlink(endpoint)
         except OSError:
             pass
+
+
+# ── 6. 클라이언트 재접속(ⓔ): restarting 통지 → 끊김 → 새 서버에 재접속 ──────────
+async def test_client_reconnects_on_restarting():
+    """서버가 {"t":"restarting"} 을 보낸 뒤 연결이 끊기면, 클라이언트가 종료하지
+    않고 같은 소켓 경로로 재접속한다(docs/RESTART_SCENARIO.md ⓔ). 실 execv 대신
+    옛 서버가 연결을 끊고 새 서버(재접속 대상)를 띄워 동치 상황을 만든다."""
+    from harness import make_app
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    app = make_app(sockA)
+    try:
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause(0.5)
+            assert app.layout.get("panes"), "초기 접속 레이아웃"
+            # 재시작 통지 → 클라이언트가 끊김을 재접속으로 다루도록 표식
+            for c in list(srvA.clients):
+                await write_msg(c.writer, {"t": "restarting"})
+            await pilot.pause(0.3)
+            assert app._reconnecting is True, "restarting 통지로 재접속 모드"
+            # 재접속 대상 = 새 서버(실제론 같은 소켓; 테스트는 별 소켓으로 대체)
+            app.sock_path = sockB
+            # 옛 서버가 연결을 끊는다(execv 로 리슨 소켓이 닫히는 것과 동치)
+            for c in list(srvA.clients):
+                c.writer.close()
+            await pilot.pause(1.0)
+            assert app.writer is not None, "재접속 성공"
+            assert app._reconnecting is False, "재접속 후 플래그 해제"
+            assert app.layout.get("panes"), "재접속 후 레이아웃 재수신"
+            assert srvB.clients, "새 서버에 클라이언트 연결됨"
+    finally:
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)

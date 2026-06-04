@@ -1952,6 +1952,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.session_name = session_name
             self.reader = None
             self.writer = None
+            # 작업 보존 재시작(re-exec): 서버가 {"t":"restarting"} 을 보내면 다음
+            # 연결 끊김을 종료가 아닌 재접속으로 다룬다(docs/RESTART_SCENARIO.md ⓔ).
+            self._reconnecting = False
             self.layout = {"panes": [], "dividers": [], "active": None,
                            "cols": 80, "rows": 24}
             self.pane_content = {}   # id -> (rows, cursor)
@@ -2179,9 +2182,35 @@ def build_client_app(sock_path: str, config: dict | None = None,
             while True:
                 msg = await read_msg(self.reader)
                 if msg is None:
+                    # 작업 보존 재시작 중이면 종료 대신 재접속(ⓔ).
+                    if self._reconnecting:
+                        await self._reconnect()
+                        return
                     self.exit()
                     return
                 self._dispatch(msg)
+
+        async def _reconnect(self):
+            """서버가 re-exec 로 재기동되는 동안 같은 소켓으로 재접속한다(ⓔ).
+            새 서버가 listen 을 다시 열 때까지 잠깐 재시도한 뒤 hello 로 재개."""
+            self._reconnecting = False
+            for _ in range(300):   # ~6초
+                try:
+                    self.reader, self.writer = await ipc.open_connection(
+                        self.sock_path)
+                    break
+                except (ConnectionError, FileNotFoundError, OSError):
+                    await asyncio.sleep(0.02)
+            else:
+                self.exit(message="pytmux: 서버 재접속 실패")
+                return
+            cols, rows = self._content_size()
+            hello = {"t": "hello", "cols": cols, "rows": rows}
+            if self.session_name:
+                hello["session"] = self.session_name
+            await write_msg(self.writer, hello)
+            self.display_message("pytmux: 서버 재시작 완료 — 재접속됨")
+            self.run_worker(self._reader_task(), exclusive=False)
 
         def _fire_hook(self, event):
             cmd = self.hooks.get(event)
@@ -2246,6 +2275,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self._open_choose_buffer(msg.get("items", []))
             elif t == "captured":
                 self.display_message(f"{msg.get('chars', 0)} chars 버퍼에 캡처됨")
+            elif t == "restarting":
+                # 작업 보존 재시작 통지(ⓔ): 곧 끊길 연결을 재접속으로 다룬다.
+                self._reconnecting = True
+                self.display_message("pytmux: 서버 재시작 중…")
             elif t == "bye":
                 self.exit(message="pytmux: 서버가 종료되었습니다")
 
