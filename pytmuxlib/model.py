@@ -259,6 +259,73 @@ class Pane:
         self.mouse_sgr = False
         self._mouse_sent = (0, False)
 
+    # 작업 보존 재시작(re-exec)용 직렬화 — docs/RESTART_SCENARIO.md ⓑ/ⓓ.
+    # setattr 로 그대로 복원 가능한 JSON 가능 스칼라/딕트 필드 목록. PTY 식별자
+    # (child_pid·master_fd)와 크기·화면 스냅샷은 export_state 가 별도로 다룬다.
+    _RESUME_FIELDS = (
+        "title", "autoresume", "resume_msg", "last_prompt",
+        "_claude", "_claude_usage", "_scanbuf", "_resume_pending",
+        "_claude_session_id", "_claude_account", "_claude_account_manual",
+        "_tok_state", "_session_tokens", "prompt_clear_mode", "bracketed",
+    )
+
+    def _export_screen(self) -> list[str]:
+        """메인 화면(스크롤백+현재 버퍼)을 평문 줄 목록으로. alt 화면은 직렬화하지
+        않는다(풀스크린 TUI 는 재시작 후 리사이즈로 다시 그린다, alt B)."""
+        scr = self._main
+        h = getattr(scr, "history", None)
+        hist = list(h.top) if h is not None else []
+        lines = hist + [scr.buffer[y] for y in range(scr.lines)]
+        out = []
+        for line in lines:
+            s = "".join((line[x].data or " ") for x in range(scr.columns))
+            out.append(s.rstrip())
+        while out and not out[-1]:   # 뒤쪽 빈 줄 제거
+            out.pop()
+        return out[-HISTORY:]
+
+    def export_state(self) -> dict:
+        """재시작 시 보존할 패널 상태를 JSON 가능 dict 로 직렬화한다.
+
+        PTY 식별자(child_pid·master_fd 번호)·크기·마우스 모드·프롬프트 큐·화면
+        스냅샷을 포함한다. 새 서버 이미지가 import_state 로 같은 Pane 상태를 복원하고,
+        master_fd 번호로 상속된 PTY 를 다시 채택한다. docs/RESTART_SCENARIO.md ⓑ."""
+        d = {
+            "child_pid": self.child_pid,
+            "master_fd": self.master_fd,
+            "cols": self.cols,
+            "rows": self.rows,
+            "mouse_modes": sorted(self._mouse_modes),
+            "mouse_sgr": self.mouse_sgr,
+            "prompt_history": list(self.prompt_history)[-100:],
+            "pending_prompts": list(self.pending_prompts),
+            "prompt_clear_queue": list(self.prompt_clear_queue),
+            "screen": self._export_screen(),
+        }
+        for f in self._RESUME_FIELDS:
+            d[f] = getattr(self, f)
+        return d
+
+    def import_state(self, d: dict) -> None:
+        """export_state 가 만든 dict 로 패널 상태를 복원한다(child_pid·master_fd 는
+        생성자에서 이미 설정됐으므로 여기서 건드리지 않는다)."""
+        for f in self._RESUME_FIELDS:
+            if f in d:
+                setattr(self, f, d[f])
+        self._mouse_modes = set(d.get("mouse_modes", []))
+        self.mouse_sgr = bool(d.get("mouse_sgr", False))
+        self.mouse_track = (3 if 1003 in self._mouse_modes
+                            else 2 if 1002 in self._mouse_modes
+                            else 1 if 1000 in self._mouse_modes else 0)
+        self.prompt_history = list(d.get("prompt_history", []))
+        self.pending_prompts = list(d.get("pending_prompts", []))
+        self.prompt_clear_queue = list(d.get("prompt_clear_queue", []))
+        snap = d.get("screen")
+        if snap:
+            # 평문 스냅샷을 메인 화면에 다시 채워 재시작 후에도 직전 내용이 보이게
+            # 한다(순수 셸도 비지 않음). 살아 있는 셸의 다음 출력이 이어서 그린다.
+            self.feed(("\r\n".join(snap) + "\r\n").encode("utf-8", "ignore"))
+
     def update_mouse_modes(self, data: bytes) -> bool:
         """피드 데이터에서 마우스 트래킹 DECSET(1000/1002/1003/1006)을 추적한다.
         bracketed paste(2004) 추적과 같은 위치에서 호출. 상태가 바뀌면 True 를
@@ -652,6 +719,10 @@ class Session:
         self.tabs = [Tab(0, "win", Window(root))]
         self.active_index = 0
         self.last_index = 0    # 직전 활성 탭(prefix l)
+        # 라이브 PTY 팝업(display-popup): 트리에 속하지 않는 떠 있는 PTY 패널 1개.
+        # None 이면 닫힌 상태. 열리면 {"pane", "title", "want_w", "want_h"} 를 담고,
+        # 표시 geometry 는 매 레이아웃 계산 때 세션 크기에 맞춰 중앙 정렬로 산출한다.
+        self.popup = None
 
     @property
     def active_tab(self) -> Tab | None:

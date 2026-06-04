@@ -51,11 +51,15 @@ class Server:
             "이번 세션에서 얻은 정보·결정을 프로젝트 문서(CLAUDE.md/메모리)에 기록해줘."))
 
     # ---- PTY/패널 생성 ----
-    def _fork_shell(self, cols: int, rows: int, cwd: str | None = None):
+    def _fork_shell(self, cols: int, rows: int, cwd: str | None = None,
+                    cmd: str | None = None):
         """셸을 PTY 백엔드(pty_backend)에 띄우고 PtyProcess 핸들을 반환.
 
         OS 별 PTY/프로세스 분기는 전부 pty_backend 가 담당한다(Unix=pty.fork,
         Windows=ConPTY). CLOEXEC·winsize·논블로킹 설정도 백엔드 spawn 안에서 처리.
+
+        cmd 가 주어지면 인터랙티브 셸 대신 `셸 -c <cmd>` 로 그 명령만 실행한다
+        (display-popup 라이브 PTY 용). 명령이 끝나면 셸이 종료→PTY EOF→팝업 자동 닫힘.
         """
         cols = max(MIN_W, cols)
         rows = max(MIN_H, rows)
@@ -70,9 +74,11 @@ class Server:
         sshwrap.panel_env(env, ipc.default_state_dir())
         if pty_backend.IS_WINDOWS:
             shell = env.get("PYTMUX_SHELL") or env.get("COMSPEC") or "cmd.exe"
+            argv = [shell, "/c", cmd] if cmd else [shell]
         else:
             shell = env.get("SHELL", "/bin/sh")
-        return pty_backend.spawn([shell], cols=cols, rows=rows, cwd=cwd, env=env)
+            argv = [shell, "-c", cmd] if cmd else [shell]
+        return pty_backend.spawn(argv, cols=cols, rows=rows, cwd=cwd, env=env)
 
     def _attach_reader(self, pane: Pane) -> None:
         """패널 PTY 의 읽기를 시작한다(on_data/on_eof 는 이벤트 루프 스레드에서 호출)."""
@@ -81,8 +87,9 @@ class Server:
             lambda d, p=pane: self._on_pane_data(p, d),
             lambda p=pane: self._pane_eof(p))
 
-    def spawn_pane(self, cols: int, rows: int, cwd: str | None = None) -> Pane:
-        proc = self._fork_shell(cols, rows, cwd)
+    def spawn_pane(self, cols: int, rows: int, cwd: str | None = None,
+                   cmd: str | None = None) -> Pane:
+        proc = self._fork_shell(cols, rows, cwd, cmd)
         fd = proc.fileno() if hasattr(proc, "fileno") else -1
         pane = Pane(proc.pid, fd, max(MIN_W, cols), max(MIN_H, rows))
         pane.pty = proc
@@ -272,6 +279,13 @@ class Server:
             pane.pty.stop_reader()
             pane.pty.close()
             pane.pty.reap(block=False)
+        # 라이브 PTY 팝업 패널은 트리에 없으므로(_remove_pane_from_tree 가 못 찾음)
+        # 팝업으로 닫는다 — 명령이 끝나면 PTY EOF 로 여기 들어와 자동으로 사라진다.
+        for sess in list(self.sessions.values()):
+            if sess.popup and sess.popup.get("pane") is pane:
+                sess.popup = None
+                self._broadcast_session(sess)
+                return
         self._remove_pane_from_tree(pane)
 
     # ---- 데몬 부트스트랩 세션 ----
@@ -378,6 +392,78 @@ class Server:
     def _reindex(self, sess: Session):
         for i, t in enumerate(sess.tabs):
             t.index = i
+
+    # ---- 라이브 PTY 팝업(display-popup) ----
+    def _popup_rect(self, cols: int, rows: int, want_w=None, want_h=None):
+        """팝업 박스의 화면 geometry(x, y, w, h)를 세션 크기에 맞춰 중앙 정렬로 산출.
+
+        want_w/want_h 미지정 시 화면의 약 80%(테두리 포함 외곽 크기). 최소 외곽
+        크기는 가로 12·세로 5(테두리 2 + 내용 ≥3). 항상 화면 안에 들어오도록 클램프."""
+        w = want_w or max(12, cols * 8 // 10)
+        h = want_h or max(5, rows * 8 // 10)
+        w = max(12, min(w, cols))
+        h = max(5, min(h, rows))
+        x = max(0, (cols - w) // 2)
+        y = max(0, (rows - h) // 2)
+        return x, y, w, h
+
+    def popup_open(self, sess: Session, cmd: str, want_w=None, want_h=None,
+                   title: str | None = None, cwd: str | None = None):
+        """라이브 PTY 팝업을 연다. 트리에 속하지 않는 PTY 패널 1개를 띄우고
+        `셸 -c <cmd>` 를 실행한다. 이미 열려 있으면 먼저 닫는다(한 번에 하나)."""
+        cmd = (cmd or "").strip()
+        if not cmd:
+            return False
+        if sess.popup:
+            self.popup_close(sess)
+        cols, rows = self._session_size(sess)
+        x, y, w, h = self._popup_rect(cols, rows, want_w, want_h)
+        cw, ch = max(MIN_W, w - 2), max(MIN_H, h - 2)
+        if cwd is None:
+            win = sess.active_window
+            if win and win.active_pane:
+                cwd = self._pane_cwd(win.active_pane)
+        pane = self.spawn_pane(cw, ch, cwd=cwd, cmd=cmd)
+        pane.title = (title or cmd)[:40]
+        sess.popup = {"pane": pane, "title": pane.title,
+                      "want_w": want_w, "want_h": want_h, "cmd": cmd}
+        self._broadcast_session(sess)
+        return True
+
+    def popup_close(self, sess: Session):
+        """팝업을 닫고 그 PTY 자식을 종료한다(명령이 안 끝났어도 강제 닫기)."""
+        pu = sess.popup
+        if not pu:
+            return False
+        sess.popup = None
+        pane = pu.get("pane")
+        if pane is not None and pane.pty is not None:
+            try:
+                pane.pty.stop_reader()
+                pane.pty.terminate()
+                pane.pty.close()
+                pane.pty.reap(block=False)
+            except Exception:
+                pass
+        self._broadcast_session(sess)
+        return True
+
+    def _popup_layout(self, sess: Session, cols: int, rows: int):
+        """팝업 박스 geometry 를 산출하고 팝업 패널 PTY 를 내용 크기로 리사이즈한 뒤
+        레이아웃 메시지에 넣을 dict 를 반환. 팝업 없으면 None."""
+        pu = sess.popup
+        if not pu:
+            return None
+        pane = pu.get("pane")
+        if pane is None:
+            return None
+        x, y, w, h = self._popup_rect(cols, rows, pu.get("want_w"),
+                                      pu.get("want_h"))
+        cw, ch = max(MIN_W, w - 2), max(MIN_H, h - 2)
+        pane.resize(cw, ch)
+        return {"id": pane.id, "x": x, "y": y, "w": w, "h": h,
+                "cx": x + 1, "cy": y + 1, "cw": cw, "ch": ch,
+                "title": pu.get("title") or ""}
 
     def _pane_cwd(self, pane: Pane) -> str | None:
         # 자식(셸) 프로세스의 cwd 를 추정한다. 실패 시 None.
@@ -920,6 +1006,54 @@ class Server:
             self.sessions[sess.name] = sess
         return True
 
+    # ---- 작업 보존 재시작(re-exec) 상태 직렬화/복원 — docs/RESTART_SCENARIO.md ----
+    @property
+    def resume_state_path(self) -> str:
+        """재시작 보존 상태 파일. save_layout(구조만)과 달리 살아 있는 셸의 PTY
+        식별자(child_pid·master_fd 번호)·패널 상태·화면 스냅샷까지 담는다."""
+        return ipc.state_base(self.sock_path) + ".resume.json"
+
+    def _all_panes(self):
+        for sess in self.sessions.values():
+            for tab in sess.tabs:
+                for p in tab.window.panes():
+                    yield p
+
+    def _serialize_resume_node(self, node):
+        if isinstance(node, Split):
+            return {"type": "split", "orient": node.orient, "ratio": node.ratio,
+                    "a": self._serialize_resume_node(node.a),
+                    "b": self._serialize_resume_node(node.b)}
+        return {"type": "pane", "pane": node.export_state()}
+
+    def _serialize_resume_window(self, w: Window) -> dict:
+        return {"root": self._serialize_resume_node(w.root),
+                "active_pid": w.active_pane.child_pid if w.active_pane else None,
+                "zoomed": w.zoomed, "border_status": w.border_status,
+                "sync": w.sync, "auto_rename": w.auto_rename,
+                "layout_idx": w.layout_idx}
+
+    def save_resume_state(self, path: str | None = None) -> bool:
+        """현재 트리·패널 상태(살아 있는 셸 PTY 포함)를 상태 파일에 직렬화한다.
+        re-exec 직전에 호출되며, 새 이미지가 restore_resume_state 로 복원한다."""
+        path = path or self.resume_state_path
+        data = {"version": 1, "sessions": [
+            {"name": s.name, "active_index": s.active_index,
+             "last_index": s.last_index,
+             "tabs": [{"index": t.index, "name": t.name,
+                       "window": self._serialize_resume_window(t.window),
+                       "monitor_activity": t.monitor_activity,
+                       "monitor_bell": t.monitor_bell,
+                       "monitor_claude": t.monitor_claude}
+                      for t in s.tabs]}
+            for s in self.sessions.values()]}
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            return True
+        except OSError:
+            return False
+
     # ---- 탭(윈도우+패널) 레이아웃 슬롯: 이름으로 저장/불러오기 ----
     @property
     def slots_path(self):
@@ -1440,6 +1574,7 @@ class Server:
             "bordered": bordered,
             "border_status": bool(win.border_status),
             "active": win.active_pane.id,
+            "popup": self._popup_layout(sess, cols, rows),
         }
 
     # 패널이 원격 세션을 돌리는지 판정하는 fg 명령 이름들(소문자).
@@ -1614,6 +1749,14 @@ class Server:
             p.dirty = False
             await write_msg(client.writer, {"t": "screen", "pane": p.id,
                                             "rows": rows, "cursor": cursor})
+        # 팝업 패널 화면도 함께(트리에 없으므로 별도로 보냄). 팝업은 항상 포커스라
+        # 커서를 그린다(render(True)).
+        if sess.popup and sess.popup.get("pane") is not None:
+            pp = sess.popup["pane"]
+            rows, cursor = pp.render(True)
+            pp.dirty = False
+            await write_msg(client.writer, {"t": "screen", "pane": pp.id,
+                                            "rows": rows, "cursor": cursor})
         await write_msg(client.writer, self._status_msg(sess))
 
     def _broadcast_session(self, sess: Session):
@@ -1651,6 +1794,16 @@ class Server:
                            "rows": rows, "cursor": cursor}
                     for c in clients:
                         await write_msg(c.writer, msg)
+                # 라이브 PTY 팝업 패널(트리 밖)도 dirty 면 스트리밍한다.
+                pu = sess.popup
+                if pu and pu.get("pane") is not None and pu["pane"].dirty:
+                    pp = pu["pane"]
+                    rows, cursor = pp.render(True)
+                    pp.dirty = False
+                    pmsg = {"t": "screen", "pane": pp.id,
+                            "rows": rows, "cursor": cursor}
+                    for c in clients:
+                        await write_msg(c.writer, pmsg)
                 # Claude Code 상태/사용량 갱신(+ 비활성 탭 완료 감지, #22)
                 if self._scan_claude(sess, win):
                     status_changed = True
@@ -1741,6 +1894,14 @@ class Server:
         elif action == "pipe_pane":
             self.pipe_pane(sess, str(msg.get("cmd", "")))
             return
+        elif action == "popup_open":
+            self.popup_open(sess, str(msg.get("cmd", "")),
+                            want_w=msg.get("w"), want_h=msg.get("h"),
+                            title=msg.get("title"))
+            return  # popup_open 이 broadcast
+        elif action == "popup_close":
+            self.popup_close(sess)
+            return  # popup_close 가 broadcast
         elif action == "save_layout":
             ok = self.save_layout()
             await write_msg(client.writer, {"t": "captured",
@@ -1961,7 +2122,19 @@ class Server:
         win = sess.active_window if sess else None
         if not win:
             return
-        p = win.pane_by_id(msg.get("pane")) or win.active_pane
+        # 팝업이 열려 있고 입력 대상이 팝업 패널이면 그 PTY 로만 직접 보낸다
+        # (트리 밖이라 pane_by_id 로는 못 찾음; 동기화/프롬프트추적도 제외).
+        pid = msg.get("pane")
+        if sess.popup and sess.popup.get("pane") is not None \
+                and pid == sess.popup["pane"].id:
+            pp = sess.popup["pane"]
+            try:
+                if pp.pty is not None:
+                    pp.pty.write(base64.b64decode(msg.get("data", "")))
+            except OSError:
+                pass
+            return
+        p = win.pane_by_id(pid) or win.active_pane
         data = base64.b64decode(msg.get("data", ""))
         # 마우스 패스스루: 커서 아래 패널 PTY 로만 raw 전달. 입력 동기화 대상이
         # 아니고(위치 기반), 프롬프트 추적/scroll 복귀도 건드리지 않는다.
