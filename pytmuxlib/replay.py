@@ -87,6 +87,15 @@ def run_record(path: str, cols: int, rows: int, argv: list[str],
 
     부모가 slave fd 를 계속 열어 두어, 자식이 종료해도 PTY 에 남은 출력을 EIO 없이
     끝까지 읽는다(macOS 의 빠른 명령 출력 유실 방지)."""
+    # record() 는 POSIX pty/termios/tty/select(fd) 에 의존하는 개발 진단 도구다.
+    # Windows 에는 대응물이 없어(후순위, docs/WINDOWS_PORT.md §6-3) 지원하지 않는다.
+    # pywinpty 기반 ConPTY 녹화는 별도 과제이므로, 모호한 ModuleNotFoundError 대신
+    # 명확한 메시지를 내고 종료한다. (replay() 재생은 순수 로직이라 Windows 에서 동작.)
+    if os.name == "nt":
+        sys.stderr.write(
+            "record: Windows 에서는 PTY 녹화를 지원하지 않습니다"
+            "(POSIX 전용 진단 도구). replay 재생은 사용 가능합니다.\n")
+        return 2
     import pty
     import select
     import subprocess

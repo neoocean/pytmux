@@ -97,3 +97,17 @@ async def test_client_shell_argv_delegates_to_proc():
     with mock.patch.object(proc, "IS_WINDOWS", True), \
             mock.patch.dict("os.environ", {}, clear=True):
         assert _shell_argv("dir") == ["cmd.exe", "/c", "dir"]
+
+
+async def test_replay_record_guarded_on_windows():
+    """replay.run_record 는 Windows 에서 PTY import 없이 명확히 거부한다(후순위).
+
+    과거: Windows 에서 호출 시 함수 내부 `import pty`(termios 의존)가
+    ModuleNotFoundError 로 깨졌다. 이제 os.name=='nt' 면 메시지 후 코드 2 반환.
+    """
+    from unittest import mock
+    from pytmuxlib.replay import run_record
+
+    with mock.patch("os.name", "nt"):
+        rc = run_record("/nonexistent/should-not-open.raw", 80, 24, ["echo", "x"])
+    assert rc == 2
