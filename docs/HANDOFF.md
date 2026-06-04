@@ -211,6 +211,25 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56599 **server attach 안정성 — 초기 _send_full/scan_claude 예외가 클라를 브릭하지
+  않게 가드 + 에러 로그**(§10 사용자 보고) — 증상: pytmux 실행 시 **화면이 일부
+  나타났다 바로 종료**되고, 이후 모든 attach 가 같은 상태로 **반복 실패(브릭)**.
+  원인: `handle_client` 의 클라 등록(`self.clients.append`)과 **초기 `_send_full`
+  루프가 try/finally 밖**이라, `_send_full`(레이아웃→화면→상태 순)이 한 번 예외를
+  던지면 ① 화면이 일부만 전송된 채 연결이 끊겨 클라가 즉시 종료(=partial render
+  then exit), ② 그 클라가 `self.clients` 에 **누수**되고, ③ 데몬 stderr 가
+  `/dev/null` 이라 **트레이스백도 없이** 진단 불가 — 한 번 실패하면 누수된 죽은
+  클라 + 깨진 상태로 이후 attach 도 반복 실패한다. 수정: `handle_client` 의 세션
+  생성·append·초기 `_send_full`·메시지 루프를 **try 안으로** 옮겨 `finally` 가
+  항상 클라를 정리(누수 차단)하고, 초기/teardown `_send_full` 은 **클라별 가드**
+  (한 클라 실패가 다른 attach 를 막지 않음), 메시지 디스패치도 **per-message 가드**
+  (한 메시지 실패가 세션을 끊지 않음). `_flush_loop` 은 `_scan_claude`(새 휴리스틱:
+  프롬프트/토큰/권한모드) 예외가 flush 루프 전체(=모든 클라 렌더)를 죽이지 않게
+  가드. 신규 `_log_error(where)` 가 예외 트레이스백을 `<sock>.error.log` 에 append
+  (best-effort) — **데몬 무stderr 환경의 진단 단서**(다음 발생 시 정확 원인 추적용).
+  회귀 `test_attach_survives_send_full_error`(예외 전파 안 함+누수 없음+error.log
+  기록), 184 passed. **서버측 변경 — kill-server 재기동 후 반영.** 파일:
+  `pytmuxlib/server.py`, `tests/test_server.py`, `docs/HANDOFF.md`.
 - 56574 **팝업 닫기 [x] 버튼 글자 소실 수정(markup=False)** — Claude 토큰 사용량
   팝업(`TokenLogScreen`)·정보 팝업(`InfoScreen`) 우상단 닫기 버튼이 **배경색(빨강)만
   보이고 `[x]` 글자가 안 보이던** 버그. 원인: `Label("[x]")` 의 Textual 마크업이

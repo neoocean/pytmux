@@ -9,6 +9,7 @@ import os
 import shlex
 import subprocess
 import time
+import traceback
 
 from . import ipc, proc, pty_backend, sshwrap, tokens, usagelog
 from .model import (ClientConn, Pane, Session, Split, Tab, Window,
@@ -2283,9 +2284,14 @@ class Server:
                             "rows": rows, "cursor": cursor}
                     for c in clients:
                         await write_msg(c.writer, pmsg)
-                # Claude Code 상태/사용량 갱신(+ 비활성 탭 완료 감지, #22)
-                if self._scan_claude(sess, win):
-                    status_changed = True
+                # Claude Code 상태/사용량 갱신(+ 비활성 탭 완료 감지, #22).
+                # 새 휴리스틱(프롬프트/토큰/권한모드)이 특정 화면에서 터져도 flush
+                # 루프 전체(=모든 클라 렌더)가 죽지 않게 가드한다(§10 안정성).
+                try:
+                    if self._scan_claude(sess, win):
+                        status_changed = True
+                except Exception:
+                    self._log_error("scan_claude")
                 # 활동/벨 모니터링: 비활성 윈도우의 출력/BEL 을 플래그로
                 for t in sess.tabs:
                     w = t.window
@@ -2537,6 +2543,24 @@ class Server:
             return
         await self._send_full(client)
 
+    def _log_error(self, where: str):
+        """방금 처리 중인 예외의 트레이스백을 `<sock>.error.log` 에 append 한다.
+
+        데몬은 stderr 가 /dev/null 이라, 클라이언트 처리(attach/_send_full/dispatch)
+        나 flush 루프에서 난 예외가 **조용히 삼켜지면** 진단 단서가 없다. 한 클라
+        attach 가 _send_full 에서 터지면 화면이 일부만 그려진 채 연결이 끊겨(클라가
+        '일부 나타났다 바로 종료') 이후 모든 attach 가 같은 상태로 브릭되는데,
+        호출부가 이걸 잡아 로그를 남기고 계속 진행하게 해 자가복구한다. 로깅 자체는
+        절대 실패를 전파하지 않는다(best-effort)."""
+        try:
+            path = ipc.state_base(self.sock_path) + ".error.log"
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(f"\n==== {stamp} [{where}] ====\n")
+                f.write(traceback.format_exc())
+        except Exception:
+            pass
+
     async def handle_client(self, reader: asyncio.StreamReader,
                             writer: asyncio.StreamWriter):
         first = await read_msg(reader)
@@ -2568,35 +2592,52 @@ class Server:
         client = ClientConn(writer)
         client.cols = max(MIN_W, int(first.get("cols", 80)))
         client.rows = max(MIN_H, int(first.get("rows", 24)))
-        client.session = self.get_or_create_session(
-            first.get("session"), client.cols, client.rows)
-        self.clients.append(client)
-        # 새 클라이언트가 붙으면 공유 크기가 바뀔 수 있어 같은 세션 전체를 갱신
-        for c in [x for x in self.clients if x.session is client.session]:
-            await self._send_full(c)
-
+        # 주의: append + 초기 _send_full 을 try 안에 둔다. 예전엔 try 밖이라
+        # _send_full 이 한 번 터지면 ① 클라가 self.clients 에 남아 누수되고
+        # ② 화면이 일부만 그려진 채 연결이 끊겨 클라가 즉시 종료, ③ 트레이스백도
+        # 없이 이후 모든 attach 가 같은 상태로 브릭됐다(사용자 보고: "화면이 일부
+        # 나타났다 바로 종료"). 이제 finally 가 항상 정리하고, _send_full 은 클라별로
+        # 가드해 한 클라의 실패가 다른 클라 attach 를 막지 않게 한다.
         try:
+            client.session = self.get_or_create_session(
+                first.get("session"), client.cols, client.rows)
+            self.clients.append(client)
+            # 새 클라이언트가 붙으면 공유 크기가 바뀔 수 있어 같은 세션 전체를 갱신.
+            # 한 클라의 _send_full 실패가 새 attach 를 죽이지 않게 개별 가드한다.
+            for c in [x for x in self.clients if x.session is client.session]:
+                try:
+                    await self._send_full(c)
+                except Exception:
+                    self._log_error("send_full(initial)")
+
             while self.running:
                 msg = await read_msg(reader)
                 if msg is None:
                     break
-                mt = msg.get("t")
-                if mt == "ping":
-                    # 네트워크 응답성 측정(§10): 클라가 RTT 를 재도록 즉시 echo.
-                    await write_msg(client.writer, {"t": "pong",
-                                                    "ts": msg.get("ts")})
-                elif mt == "input":
-                    self._handle_input(client, msg)
-                elif mt == "resize":
-                    client.cols = max(MIN_W, int(msg.get("cols", 80)))
-                    client.rows = max(MIN_H, int(msg.get("rows", 24)))
-                    # 미러링: 세션 공유 크기가 바뀌므로 모든 클라이언트 갱신
-                    for c in [x for x in self.clients if x.session is client.session]:
-                        await self._send_full(c)
-                elif mt == "scroll":
-                    self._handle_scroll(client, msg)
-                elif mt == "cmd":
-                    await self._handle_cmd(client, msg)
+                try:
+                    mt = msg.get("t")
+                    if mt == "ping":
+                        # 네트워크 응답성 측정(§10): 클라가 RTT 를 재도록 즉시 echo.
+                        await write_msg(client.writer, {"t": "pong",
+                                                        "ts": msg.get("ts")})
+                    elif mt == "input":
+                        self._handle_input(client, msg)
+                    elif mt == "resize":
+                        client.cols = max(MIN_W, int(msg.get("cols", 80)))
+                        client.rows = max(MIN_H, int(msg.get("rows", 24)))
+                        # 미러링: 세션 공유 크기가 바뀌므로 모든 클라이언트 갱신
+                        for c in [x for x in self.clients
+                                  if x.session is client.session]:
+                            await self._send_full(c)
+                    elif mt == "scroll":
+                        self._handle_scroll(client, msg)
+                    elif mt == "cmd":
+                        await self._handle_cmd(client, msg)
+                except Exception:
+                    # 한 메시지 처리 실패가 세션을 끊지 않게 잡아 로그만 남기고 계속.
+                    self._log_error(f"dispatch({msg.get('t')})")
+        except Exception:
+            self._log_error("handle_client")
         finally:
             sess = client.session
             if client in self.clients:
@@ -2605,10 +2646,13 @@ class Server:
                 writer.close()
             except Exception:
                 pass
-            # 미러링: 남은 클라이언트는 공유 크기가 커질 수 있으니 갱신
+            # 미러링: 남은 클라이언트는 공유 크기가 커질 수 있으니 갱신(개별 가드)
             if sess and sess in self.sessions.values():
                 for c in [x for x in self.clients if x.session is sess]:
-                    await self._send_full(c)
+                    try:
+                        await self._send_full(c)
+                    except Exception:
+                        self._log_error("send_full(teardown)")
 
     def _handle_input(self, client: ClientConn, msg: dict):
         sess = client.session

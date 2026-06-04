@@ -1397,3 +1397,60 @@ async def test_claude_header_opt_persists():
         except OSError:
             pass
         await teardown(srv, task, sock)
+
+
+class _OneShotReader:
+    """hello 프레임 하나를 준 뒤 EOF(IncompleteReadError)를 내는 가짜 reader.
+    handle_client 의 attach 직후 종료 경로(초기 _send_full 만 도는)를 재현한다."""
+    def __init__(self, hello: dict):
+        body = json.dumps(hello).encode()
+        self._buf = len(body).to_bytes(4, "big") + body
+        self._done = False
+
+    async def readexactly(self, n: int) -> bytes:
+        if self._done or len(self._buf) < n:
+            self._done = True
+            raise asyncio.IncompleteReadError(b"", n)
+        out, self._buf = self._buf[:n], self._buf[n:]
+        if not self._buf:
+            self._done = True
+        return out
+
+
+class _NullWriter:
+    def write(self, b): pass
+    async def drain(self): pass
+    def close(self): pass
+    def is_closing(self): return False
+
+
+async def test_attach_survives_send_full_error():
+    # 회귀(§10 안정성): 초기 _send_full 이 예외를 던져도 handle_client 가 ① 예외를
+    # 전파하지 않고(클라 즉시 종료/브릭 방지) ② 클라를 self.clients 에 누수하지 않으며
+    # ③ 트레이스백을 <sock>.error.log 에 남긴다. 예전엔 _send_full 이 try 밖이라 한 번
+    # 터지면 클라가 누수되고 이후 모든 attach 가 같은 상태로 브릭됐다.
+    srv, task, sock = await server_only()
+    try:
+        srv.ensure_default_session(80, 24)
+        boom = []
+
+        async def _raise(_c):
+            boom.append(1)
+            raise RuntimeError("synthetic _send_full failure")
+
+        srv._send_full = _raise
+        before = len(srv.clients)
+        # 예외가 전파되지 않아야 한다(await 가 깔끔히 반환).
+        await srv.handle_client(_OneShotReader({"t": "hello", "cols": 80,
+                                                "rows": 24}), _NullWriter())
+        assert boom, "초기 _send_full 이 호출됐어야"
+        assert len(srv.clients) == before, "실패한 클라가 누수되면 안 됨"
+        log = ipc.state_base(sock) + ".error.log"
+        assert os.path.exists(log), "에러 로그가 남아야"
+        assert "synthetic _send_full failure" in open(log, encoding="utf-8").read()
+    finally:
+        try:
+            os.unlink(ipc.state_base(sock) + ".error.log")
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
