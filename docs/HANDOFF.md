@@ -211,6 +211,19 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56614 **하드닝: Session 복원 일반화(크래시 재발 방지) + Windows 콘솔 창 팝업 방지**
+  (§10 사용자 요청) — ① **크래시 재발 방지**: `Session.restored(name, tabs, …)`
+  클래스메서드 신설 — 직렬화 복원 경로(`restore_layout`·`restore_resume_state`)가
+  `__init__` 을 우회(`__new__`)할 때 휘발성 속성을 **한 곳에서 빠짐없이** 채운다.
+  CL 56607 의 popup 누락 같은 부류를 구조적으로 차단(앞으로 Session 휘발성 속성
+  추가 시 restored 한 곳만 갱신). 두 복원 사이트를 통일. ② **Windows 콘솔 창 팝업
+  방지**: `proc.no_window_kwargs()`(CREATE_NO_WINDOW, POSIX no-op)를 모든 콘솔 명령
+  subprocess 에 적용 — 클립보드(clip.exe / **PowerShell Get-Clipboard**), run-shell·
+  if-shell·display-popup(cmd /c), pipe-pane(Popen), `is_alive`(tasklist)/`terminate`
+  (taskkill), 서버 fg/cwd 감지(lsof/ps). 사용자 보고 "딸려 뜨는 PowerShell 창" 해소.
+  회귀 `test_no_window_kwargs` + `test_restore_layout_session_has_popup`(restored 경유),
+  191 passed. **서버+클라 — kill-server 재기동.** 파일: `pytmuxlib/{model,server,client,
+  proc}.py`, `tests/test_server.py`, `docs/HANDOFF.md`.
 - 56611 **refactor(§10 LLM 친화, 3/N): 모달 Screen 클래스 11종 → `clientscreens.py`**
   — 클로저의 자족적 `ModalScreen` 11종(CommandList/CommandOptions/Menu/ChooseTree/
   Info/TokenLog/Prompt/Confirm/ChooseBuffer/ChooseLayout/PermMode) 844줄을 신규

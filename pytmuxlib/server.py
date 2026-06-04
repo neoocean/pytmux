@@ -753,7 +753,8 @@ class Server:
         try:
             out = subprocess.run(
                 ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
-                capture_output=True, text=True, timeout=2)
+                capture_output=True, text=True, timeout=2,
+                **proc.no_window_kwargs())
             for line in out.stdout.splitlines():
                 if line.startswith("n"):
                     return line[1:] or None
@@ -1032,8 +1033,9 @@ class Server:
         except OSError:
             return None
         try:
-            out = subprocess.run(["ps", "-o", "comm=", "-p", str(pgid)],
-                                 capture_output=True, text=True, timeout=1).stdout.strip()
+            out = subprocess.run(
+                ["ps", "-o", "comm=", "-p", str(pgid)], capture_output=True,
+                text=True, timeout=1, **proc.no_window_kwargs()).stdout.strip()
         except Exception:
             return None
         if not out:
@@ -1274,18 +1276,9 @@ class Server:
                 tabs.append(Tab(i, wspec.get("name", "win"), w))
             if not tabs:
                 continue
-            sess = Session.__new__(Session)
-            sess.name = self._unique_name(ss.get("name"))
-            sess.created_at = time.time()
-            sess.tabs = tabs
-            sess.active_index = 0
-            sess.last_index = 0
-            # ⚠️ Session.__new__ 는 __init__ 을 건너뛰므로 __init__ 이 세팅하는 휘발성
-            # 속성을 여기서 똑같이 채워야 한다. popup 누락이 치명적이었다(§10): 부팅 시
-            # layout.json 자동 복원(run_server 의 restore_layout)으로 popup 없는 Session
-            # 이 만들어지면, 이후 모든 attach 가 _layout_msg→_popup_layout 의 sess.popup
-            # 에서 AttributeError → _send_full 실패 → 화면 일부만 그려진 채 종료/브릭됐다.
-            sess.popup = None
+            # Session.restored 가 popup 등 휘발성 속성을 빠짐없이 채운다(§10 — 과거
+            # popup 누락으로 복원 세션 attach 가 전부 깨졌다).
+            sess = Session.restored(self._unique_name(ss.get("name")), tabs)
             self.sessions[sess.name] = sess
         return True
 
@@ -1409,14 +1402,10 @@ class Server:
                 tabs.append(t)
             if not tabs:
                 continue
-            sess = Session.__new__(Session)
-            sess.name = self._unique_name(ss.get("name"))
-            sess.created_at = time.time()
-            sess.tabs = tabs
-            sess.active_index = max(0, min(ss.get("active_index", 0),
-                                           len(tabs) - 1))
-            sess.last_index = ss.get("last_index", 0)
-            sess.popup = None
+            sess = Session.restored(
+                self._unique_name(ss.get("name")), tabs,
+                active_index=max(0, min(ss.get("active_index", 0), len(tabs) - 1)),
+                last_index=ss.get("last_index", 0))
             self.sessions[sess.name] = sess
         if self.sessions:
             self._induce_redraw_all()
@@ -1847,8 +1836,10 @@ class Server:
             p.pipe_proc = None
         if cmd:
             try:
+                # no_window_kwargs: Windows 에서 pipe-pane 의 cmd /c 콘솔 창 안 뜨게(§10)
                 p.pipe_proc = subprocess.Popen(proc.shell_argv(cmd),
-                                               stdin=subprocess.PIPE)
+                                               stdin=subprocess.PIPE,
+                                               **proc.no_window_kwargs())
             except Exception:
                 p.pipe_proc = None
 

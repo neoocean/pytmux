@@ -1521,3 +1521,16 @@ async def test_restore_layout_session_has_popup():
         except OSError:
             pass
         await teardown(srv, task, sock)
+
+
+async def test_no_window_kwargs():
+    """§10 Windows: subprocess 콘솔 창 팝업 방지 헬퍼. POSIX 에선 빈 dict(무영향),
+    Windows 에선 CREATE_NO_WINDOW creationflags 를 담는다(clip.exe·PowerShell
+    Get-Clipboard·cmd /c·tasklist/taskkill 콘솔 창이 번쩍이지 않게)."""
+    from pytmuxlib import proc
+    kw = proc.no_window_kwargs()
+    assert isinstance(kw, dict)
+    if proc.IS_WINDOWS:
+        assert kw.get("creationflags", 0) & 0x08000000, kw  # CREATE_NO_WINDOW
+    else:
+        assert kw == {}, kw

@@ -865,6 +865,25 @@ class Session:
         # 표시 geometry 는 매 레이아웃 계산 때 세션 크기에 맞춰 중앙 정렬로 산출한다.
         self.popup = None
 
+    @classmethod
+    def restored(cls, name: str, tabs: list, active_index: int = 0,
+                 last_index: int = 0) -> "Session":
+        """직렬화 복원용 생성자(__init__ 우회). 복원 경로(restore_layout·
+        restore_resume_state)는 tabs 를 따로 만들어 넘기므로 __init__ 의 시그니처
+        (root 1개)와 안 맞아 `__new__` 로 만든다 — 그때 __init__ 이 세팅하는 **휘발성
+        속성을 빠짐없이 채워** 복원 세션이 새 세션과 동일한 속성 집합을 갖게 한다.
+        과거 popup 누락이 모든 attach 를 깨뜨렸다(§10): _popup_layout 의 sess.popup
+        에서 AttributeError → _send_full 실패 → 화면 일부만 그려진 채 끊김/브릭. 앞으로
+        Session 에 휘발성 속성을 추가하면 **여기도 함께** 갱신할 것."""
+        self = cls.__new__(cls)
+        self.name = name
+        self.created_at = time.time()
+        self.tabs = tabs
+        self.active_index = active_index
+        self.last_index = last_index
+        self.popup = None
+        return self
+
     @property
     def active_tab(self) -> Tab | None:
         if not self.tabs:

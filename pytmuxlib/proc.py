@@ -37,7 +37,18 @@ _CREATE_NEW_PROCESS_GROUP = 0x00000200
 _CREATE_NO_WINDOW = 0x08000000
 
 __all__ = ["IS_WINDOWS", "spawn_detached", "terminate", "is_alive",
-           "server_argv", "shell_argv"]
+           "server_argv", "shell_argv", "no_window_kwargs"]
+
+
+def no_window_kwargs() -> dict:
+    """Windows 에서 콘솔 앱(clip.exe·cmd /c·tasklist·taskkill 등)을 subprocess 로
+    띄울 때 **콘솔 창이 번쩍이지 않게** 할 creationflags 를 담은 kwargs 를 돌려준다.
+    POSIX 에선 빈 dict(무영향). subprocess.run/Popen 에 `**proc.no_window_kwargs()`
+    로 펼쳐 쓴다 — 사용자 요청: 윈도우 실행 시 PowerShell/cmd 창이 함께 뜨지 않게.
+    (데몬 spawn 은 spawn_detached 가 이미 DETACHED|NO_WINDOW 로 처리.)"""
+    if IS_WINDOWS:
+        return {"creationflags": _CREATE_NO_WINDOW}
+    return {}
 
 
 def _windowless_python() -> Optional[str]:
@@ -118,7 +129,8 @@ def is_alive(pid: int) -> bool:
         try:
             out = subprocess.run(
                 ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-                capture_output=True, text=True, timeout=5).stdout
+                capture_output=True, text=True, timeout=5,
+                **no_window_kwargs()).stdout
         except (OSError, subprocess.SubprocessError):
             return False
         return str(pid) in out
@@ -145,7 +157,8 @@ def terminate(pid: int, *, force: bool = False) -> None:
         if force:
             cmd.append("/F")
         try:
-            subprocess.run(cmd, capture_output=True, timeout=10)
+            subprocess.run(cmd, capture_output=True, timeout=10,
+                           **no_window_kwargs())
         except (OSError, subprocess.SubprocessError):
             pass
         return

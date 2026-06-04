@@ -2055,7 +2055,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         ["wl-copy"], ["clip"]):   # clip = Windows clip.exe(표준입력 복사)
                 if shutil.which(cmd[0]):
                     try:
-                        subprocess.run(cmd, input=text.encode("utf-8"), timeout=2)
+                        # no_window_kwargs: Windows 에서 clip.exe 콘솔 창 안 뜨게(§10)
+                        subprocess.run(cmd, input=text.encode("utf-8"), timeout=2,
+                                       **proc.no_window_kwargs())
                         return True
                     except Exception:
                         pass
@@ -2070,8 +2072,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         ["powershell", "-NoProfile", "-Command", "Get-Clipboard"]):
                 if shutil.which(cmd[0]):
                     try:
-                        return subprocess.run(cmd, capture_output=True, timeout=2
-                                              ).stdout.decode("utf-8", "ignore")
+                        # no_window_kwargs: Windows 에서 PowerShell Get-Clipboard 창이
+                        # 번쩍이지 않게 한다(§10 사용자 보고: 딸려 뜨는 PowerShell 창).
+                        return subprocess.run(
+                            cmd, capture_output=True, timeout=2,
+                            **proc.no_window_kwargs()
+                        ).stdout.decode("utf-8", "ignore")
                     except Exception:
                         pass
             return ""
@@ -2406,7 +2412,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def _run_shell(self, cmd):
             try:
                 res = subprocess.run(_shell_argv(cmd), capture_output=True,
-                                     timeout=15)
+                                     timeout=15, **proc.no_window_kwargs())
                 text = res.stdout.decode("utf-8", "ignore")
                 rc = res.returncode
             except Exception as e:
@@ -2419,7 +2425,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def _if_shell(self, cond, then_cmd, else_cmd=None):
             try:
                 rc = subprocess.run(_shell_argv(cond), capture_output=True,
-                                    timeout=15).returncode
+                                    timeout=15,
+                                    **proc.no_window_kwargs()).returncode
             except Exception:
                 rc = 1
             if rc == 0:
@@ -2756,7 +2763,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if cmd:
                     try:
                         res = subprocess.run(_shell_argv(cmd),
-                                             capture_output=True, timeout=30)
+                                             capture_output=True, timeout=30,
+                                             **proc.no_window_kwargs())
                         text = (res.stdout + res.stderr).decode("utf-8", "ignore")
                     except Exception as e:
                         text = str(e)
