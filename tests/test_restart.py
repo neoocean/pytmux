@@ -83,3 +83,106 @@ async def test_save_resume_state_structure():
         os.unlink(path)
     finally:
         await teardown(srv, task, sock)
+
+
+async def _read_until(fd, marker: bytes, timeout=3.0) -> bytes:
+    """master fd 에서 marker 가 보일 때까지(또는 timeout) 비동기로 읽어 모은다."""
+    loop = asyncio.get_event_loop()
+    end = loop.time() + timeout
+    buf = b""
+    while loop.time() < end and marker not in buf:
+        try:
+            chunk = os.read(fd, 65536)
+            if chunk:
+                buf += chunk
+                continue
+        except BlockingIOError:
+            pass
+        except OSError:
+            break
+        await asyncio.sleep(0.02)
+    return buf
+
+
+# ── 3. fd 채택: fork 없이 기존 셸 PTY 를 다시 감싸 읽기/쓰기 ───────────────────
+async def test_adopt_preserves_pid_and_io():
+    if ipc.IS_WINDOWS:
+        return
+    import fcntl
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        pane = sess.active_window.active_pane
+        orig_pid, orig_fd = pane.child_pid, pane.master_fd
+        # execv 후엔 옛 리더 등록이 사라진다 → 여기서도 리더를 멈추고 fd 직접 다룬다.
+        pane.pty.stop_reader()
+        adopted = pty_backend.adopt(orig_fd, orig_pid, cols=80, rows=24)
+        assert adopted.pid == orig_pid, "채택 후 PID 보존"
+        # CLOEXEC 가 다시 걸렸는지(ⓓ §6 불변식)
+        flags = fcntl.fcntl(orig_fd, fcntl.F_GETFD)
+        assert flags & fcntl.FD_CLOEXEC, "채택 시 CLOEXEC 재채택"
+        # 살아 있는 셸과 입출력이 된다 → PTY 가 보존됐다.
+        adopted.write(b"echo HELLO_ADOPT_42\r\n")
+        out = await _read_until(orig_fd, b"HELLO_ADOPT_42")
+        assert b"HELLO_ADOPT_42" in out, out[-200:]
+        adopted.kill()
+        adopted.close()
+        adopted.reap(block=True)
+        # 서버 cleanup 이 같은 fd 를 다시 닫지 않도록 세션을 비운다.
+        srv.sessions.clear()
+    finally:
+        await teardown(srv, task, sock)
+
+
+# ── 4. 전체 복원 라운드트립: 옛 서버가 쥔 fd 를 새 서버가 채택(= execv 후 동치) ──
+async def test_restore_resume_state_roundtrip():
+    if ipc.IS_WINDOWS:
+        return
+    import fcntl
+    import tempfile
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    try:
+        sess = srvA.ensure_default_session(80, 24)
+        srvA.rename_window(sess, "editor")
+        srvA.split_pane(sess, "lr")
+        srvA.new_window(sess)
+        srvA.rename_window(sess, "logs")
+        # 활성 패널에 표식 상태를 심어 복원 확인
+        ap = sess.active_window.active_pane
+        ap.title = "MARKED"
+        ap.autoresume = True
+        ap._claude = "idle"
+        struct = [(t.name, len(t.window.panes())) for t in sess.tabs]
+        pids = sorted(p.child_pid for p in srvA._all_panes())
+
+        path = tempfile.mktemp(suffix=".resume.json")
+        assert srvA.save_resume_state(path)
+        # execv 재현: 옛 서버의 리더 등록을 모두 해제(새 이미지가 fd 를 채택).
+        for p in srvA._all_panes():
+            p.pty.stop_reader()
+
+        assert srvB.restore_resume_state(path)
+        sessB = next(iter(srvB.sessions.values()))
+        structB = [(t.name, len(t.window.panes())) for t in sessB.tabs]
+        assert structB == struct, (struct, structB)
+        pidsB = sorted(p.child_pid for p in srvB._all_panes())
+        assert pidsB == pids, "복원 후 셸 PID 보존"
+        # CLOEXEC 재채택 + 활성 패널 상태/이름 복원
+        for p in srvB._all_panes():
+            flags = fcntl.fcntl(p.master_fd, fcntl.F_GETFD)
+            assert flags & fcntl.FD_CLOEXEC
+        apB = sessB.active_window.active_pane
+        assert apB.title == "MARKED"
+        assert apB.autoresume is True
+        assert apB._claude == "idle"
+        # 살아 있는 셸과 입출력 가능(PTY 보존)
+        apB.pty.stop_reader()
+        apB.pty.write(b"echo RESTORED_OK_7\r\n")
+        out = await _read_until(apB.master_fd, b"RESTORED_OK_7")
+        assert b"RESTORED_OK_7" in out, out[-200:]
+        os.unlink(path)
+        srvA.sessions.clear()   # 같은 fd 이중 close 방지(B 가 정리)
+    finally:
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)

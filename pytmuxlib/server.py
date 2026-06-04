@@ -20,8 +20,11 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class Server:
-    def __init__(self, sock_path: str):
+    def __init__(self, sock_path: str, resume_path: str | None = None):
         self.sock_path = sock_path
+        # 작업 보존 재시작(re-exec) 후 부트: 이 경로의 상태 파일로 상속된 PTY 를
+        # 채택해 셸을 살린 채 복원한다(serve()). None 이면 평소 부트.
+        self._resume_path = resume_path
         # 패널 셸 $PYTMUX 에 심을 엔드포인트. serve() 가 listen 을 시작하면 TCP
         # 에페메럴(포트 0)은 확정 포트로 갱신된다. 바인드 전(테스트 등)엔 입력값 그대로.
         self.resolved_endpoint = sock_path
@@ -1053,6 +1056,89 @@ class Server:
             return True
         except OSError:
             return False
+
+    def _release_master_cloexec(self):
+        """re-exec 직전(ⓐ): 넘길 모든 패널 master fd 의 CLOEXEC 를 해제해 execv 가
+        fd 를 닫아 셸을 죽이지 않게 한다. 새 이미지가 채택 직후 다시 건다(ⓓ/adopt).
+        평상시엔 절대 풀지 않는다(§6 불변식)."""
+        try:
+            import fcntl
+        except ImportError:
+            return
+        for p in self._all_panes():
+            if p.master_fd is not None and p.master_fd >= 0:
+                try:
+                    flags = fcntl.fcntl(p.master_fd, fcntl.F_GETFD)
+                    fcntl.fcntl(p.master_fd, fcntl.F_SETFD,
+                                flags & ~fcntl.FD_CLOEXEC)
+                except OSError:
+                    pass
+
+    def _build_resume_node(self, spec):
+        if spec.get("type") == "split":
+            a = self._build_resume_node(spec["a"])
+            b = self._build_resume_node(spec["b"])
+            return Split(spec.get("orient", "lr"), a, b, spec.get("ratio", 0.5))
+        ps = spec["pane"]
+        cols, rows = max(MIN_W, ps["cols"]), max(MIN_H, ps["rows"])
+        # 상속된 master fd 를 fork 없이 다시 채택한다(PID 그대로 → reap/killpg 유효).
+        proc = pty_backend.adopt(ps["master_fd"], ps["child_pid"],
+                                 cols=cols, rows=rows)
+        fd = proc.fileno() if hasattr(proc, "fileno") else ps["master_fd"]
+        pane = Pane(ps["child_pid"], fd, cols, rows)
+        pane.pty = proc
+        pane.import_state(ps)
+        self._attach_reader(pane)
+        return pane
+
+    def restore_resume_state(self, path: str | None = None) -> bool:
+        """save_resume_state 가 만든 상태 파일에서 세션·탭·트리를 복원하고, 상속된
+        PTY master fd 를 채택해 살아 있는 셸에 다시 연결한다. re-exec 후 새 서버
+        이미지의 부트 경로에서 호출. docs/RESTART_SCENARIO.md ⓓ."""
+        path = path or self.resume_state_path
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return False
+        if data.get("version") != 1:
+            return False
+        for ss in data.get("sessions", []):
+            tabs = []
+            for wt in ss.get("tabs", []):
+                wspec = wt["window"]
+                try:
+                    root = self._build_resume_node(wspec["root"])
+                except (KeyError, OSError):
+                    continue
+                w = Window(root)
+                w._fix_parents(root, None)
+                apid = wspec.get("active_pid")
+                ap = next((p for p in w.panes() if p.child_pid == apid), None)
+                w._active = ap or (root if isinstance(root, Pane)
+                                   else root.first_pane())
+                w.zoomed = wspec.get("zoomed", False)
+                w.border_status = wspec.get("border_status", False)
+                w.sync = wspec.get("sync", False)
+                w.auto_rename = wspec.get("auto_rename", True)
+                w.layout_idx = wspec.get("layout_idx", 0)
+                t = Tab(wt.get("index", len(tabs)), wt.get("name", "win"), w)
+                t.monitor_activity = wt.get("monitor_activity", False)
+                t.monitor_bell = wt.get("monitor_bell", True)
+                t.monitor_claude = wt.get("monitor_claude", True)
+                tabs.append(t)
+            if not tabs:
+                continue
+            sess = Session.__new__(Session)
+            sess.name = self._unique_name(ss.get("name"))
+            sess.created_at = time.time()
+            sess.tabs = tabs
+            sess.active_index = max(0, min(ss.get("active_index", 0),
+                                           len(tabs) - 1))
+            sess.last_index = ss.get("last_index", 0)
+            sess.popup = None
+            self.sessions[sess.name] = sess
+        return bool(self.sessions)
 
     # ---- 탭(윈도우+패널) 레이아웃 슬롯: 이름으로 저장/불러오기 ----
     @property
@@ -2238,8 +2324,18 @@ class Server:
         # 확정 엔드포인트(TCP 면 실제 포트)를 패널 셸 $PYTMUX 에 게시한다.
         server, self.resolved_endpoint = await ipc.start_server(
             self.sock_path, self.handle_client)
+        # 작업 보존 재시작(re-exec) 후: 상속된 PTY 를 채택해 셸을 살린 채 복원.
+        # 성공 시 상태 파일을 지워(다음 평범한 재시작이 stale 채택을 시도하지 않게).
+        resumed = False
+        rp = self._resume_path
+        if rp and os.path.exists(rp) and not self.sessions:
+            resumed = self.restore_resume_state(rp)
+            try:
+                os.unlink(rp)
+            except OSError:
+                pass
         # 재부팅/재시작 후: 저장된 레이아웃이 있으면 구조 복원(셸은 새로 시작)
-        if os.path.exists(self.layout_path) and not self.sessions:
+        if not resumed and os.path.exists(self.layout_path) and not self.sessions:
             self.restore_layout()
         flush = asyncio.create_task(self._flush_loop())
         autoname = asyncio.create_task(self._autorename_loop())
@@ -2252,8 +2348,8 @@ class Server:
         autoname.cancel()
 
 
-def run_server(sock_path: str):
-    srv = Server(sock_path)
+def run_server(sock_path: str, resume_path: str | None = None):
+    srv = Server(sock_path, resume_path)
     try:
         asyncio.run(srv.serve())
     except (KeyboardInterrupt, RuntimeError):

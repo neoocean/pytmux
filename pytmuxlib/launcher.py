@@ -91,6 +91,9 @@ def main(argv=None):
                        help="예: cmd new-tab / cmd split-window -h")
     p_srv = sub.add_parser("server", help="(내부) 서버를 전경 실행")
     p_srv.add_argument("--foreground", action="store_true")
+    # 작업 보존 재시작(re-exec): 새 서버 이미지가 이 상태 파일로 상속된 PTY 를 채택.
+    p_srv.add_argument("--resume", default=None,
+                       help="(내부) 재시작 보존 상태 파일로 부트")
     p_rec = sub.add_parser("record", help="명령을 PTY 에서 실행하며 원시 출력 녹화")
     p_rec.add_argument("file", help="녹화 파일 경로")
     p_rec.add_argument("--cols", type=int, default=None)
@@ -107,7 +110,7 @@ def main(argv=None):
     sock_path = args.socket or ipc.default_endpoint()
 
     if args.command == "server":
-        run_server(sock_path)
+        run_server(sock_path, resume_path=getattr(args, "resume", None))
         return
     if args.command in ("record", "replay"):
         from .replay import run_record, run_replay, term_size

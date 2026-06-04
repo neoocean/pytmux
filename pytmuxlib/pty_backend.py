@@ -50,7 +50,19 @@ except (ImportError, AttributeError):
 OnData = Callable[[bytes], None]
 OnEof = Callable[[], None]
 
-__all__ = ["IS_WINDOWS", "PtyProcess", "spawn"]
+__all__ = ["IS_WINDOWS", "PtyProcess", "spawn", "adopt"]
+
+
+def adopt(fd: int, pid: int, *, cols: int, rows: int) -> "PtyProcess":
+    """이미 살아 있는 셸의 master fd + 자식 pid 를 fork 없이 새 PtyProcess 로 감싼다.
+
+    작업 보존 재시작(re-exec) 후 상속된 master fd 를 다시 채택하는 경로
+    (docs/RESTART_SCENARIO.md ⓓ). PID 가 그대로라 reap/killpg 의미가 유효하다.
+    POSIX 전용 — Windows ConPTY 핸들은 execv 상속 모델이 없어 지원하지 않는다(§6).
+    """
+    if IS_WINDOWS:
+        raise NotImplementedError("fd adoption 은 POSIX 전용(ConPTY 핸들 비상속)")
+    return _UnixPty.adopt(fd, pid, cols=cols, rows=rows)
 
 
 def spawn(argv, *, cols: int, rows: int,
@@ -143,6 +155,36 @@ class _UnixPty(PtyProcess):
         except OSError:
             pass
         os.set_blocking(fd, False)
+
+    @classmethod
+    def adopt(cls, fd: int, pid: int, *, cols: int, rows: int) -> "_UnixPty":
+        """fork 없이 기존 fd+pid 를 감싸는 _UnixPty 를 만든다(재시작 후 fd 채택).
+
+        re-exec 직전 넘길 fd 의 CLOEXEC 를 해제했으므로(서버 ⓐ), 여기서 다시 걸어
+        §6 불변식(형제 패널 fd 누수 방지)을 복구한다. fd 는 상속돼 이미 열려 있다.
+        """
+        self = cls.__new__(cls)
+        self._fd = fd
+        self.pid = pid
+        self._loop = None
+        self._on_data = None
+        self._on_eof = None
+        self._reading = False
+        try:
+            import fcntl
+            flags = fcntl.fcntl(fd, fcntl.F_GETFD)
+            fcntl.fcntl(fd, fcntl.F_SETFD, flags | fcntl.FD_CLOEXEC)
+        except OSError:
+            pass
+        try:
+            self.set_winsize(rows, cols)
+        except OSError:
+            pass
+        try:
+            os.set_blocking(fd, False)
+        except OSError:
+            pass
+        return self
 
     def fileno(self) -> int:
         return self._fd
