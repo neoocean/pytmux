@@ -201,6 +201,22 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 9. 최근 변경(CL 56279~56500 + git, 신→구)
 
+> ⚠️ **git 미러 동기화 필요(2026-06-04, Windows 세션).** 아래 Windows 박스(Perforce
+> 클라이언트 `office`, 로컬 git 없음 — [MEMORY.md] 참조)에서 낸 CL 은 **GitHub 미러
+> (origin main)에 아직 미반영**이다. macOS 개발 머신에서 depot → git 동기화가 필요하다.
+> (이 박스에서는 `git push` 불가 — `§8` 의 미러 동선은 macOS 에서만 수행.) 대상 CL:
+> - **56548** `pytmux: automate install` — `install.ps1`/`install.sh` 에 의존성 설치
+>   (`pip install -r requirements.txt`) 추가, `install.ps1` 가 `~/.local/bin` 에 `python`/
+>   `python.cmd` shim 자동 생성(minimal-PATH 셸에서 `python pytmux.py` 가 되도록),
+>   `uninstall.ps1` 이 shim 도 제거(install 표식 확인 후), `docs/ENV_SETUP_WINDOWS.md` 갱신.
+> - **56544** `docs: ENV_SETUP_WINDOWS.md 신설` — SSH/로그인 셸의 minimal PATH 에 WindowsApps
+>   가 빠져 `python` 이 안 잡히는 증상 진단 + `~/.local/bin` python shim 해결법 문서화.
+> - **56540** 디스크립션만 수정(WINDOWS_PORT.md#6 의 플레이스홀더 → 정식 설명). p4 메타데이터
+>   변경이라 git 쪽은 커밋 메시지 차이뿐 — WINDOWS_PORT.md#6 **내용**의 미러 반영 여부는 별도 확인.
+>
+> 참고: 위 작업과 별개로 `surface-office` 병행 세션이 56545~56550(`작업 보존 재시작`)을
+> 제출 중 — depot head 가 빠르게 움직이므로 미러 동기화 전 have/head 확인 권장.
+
 - 56539 **ESC 모드에서 `?` → 바로 help 팝업** — ESC 명령 모드에서 `:` 는 명령
   프롬프트(`PromptScreen`)를 여는데, 거기서 다시 `?` 를 쳐야 명령 목록이 나왔다. 한
   단계를 줄여 **ESC 모드에서 `?` 를 누르면 프롬프트를 거치지 않고 곧장 help 팝업**
