@@ -211,6 +211,15 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56610 **refactor(§10 LLM 친화, 2/N): client.py 클로저 프리앰블 헬퍼/상수 →
+  `clientutil.py`** — 1단계(56606)에 이어 `build_client_app` 클로저 맨 앞의 순수
+  헬퍼/상수 264줄(`DEFAULT_STYLE`·`theme_color`·`_darken_style`·`make_style`·`SPECIAL`
+  ·`key_to_bytes`·`MENU_ITEMS`·`MENU_TOGGLES`·`COMMANDS`·`COMPLETIONS`·`_ONOFF`·
+  `COMMAND_OPTIONS`·`COMMAND_NOARG`)을 `clientutil.py` 로 이전. 모두 클로저 상태
+  미캡처(스타일 해석·키→바이트·명령/메뉴 테이블). client.py 가 `from .clientutil
+  import …` 로 되가져와 참조(동작 불변). client.py 4287→4032줄, clientutil 86→356줄.
+  190 passed + 실제 클라 스모크. 클라 전용. 다음: 모달 Screen 클래스 분리. 파일:
+  `pytmuxlib/{client,clientutil}.py`, `docs/HANDOFF.md`.
 - 56608 **명령 자동완성 후보를 입력 박스 위쪽에 고정**(§10 사용자 요청) — 명령
   프롬프트(esc `:`) 자동완성 후보(`#pcand`)가 입력 박스(`#prow`) **위쪽**에 펼쳐지게
   한다(모바일에서 박스 아래면 키보드에 가림). 기존엔 둘 다 `dock:bottom` 적층 순서에
