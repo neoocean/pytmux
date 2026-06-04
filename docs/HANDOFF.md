@@ -217,6 +217,26 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 참고: 위 작업과 별개로 `surface-office` 병행 세션이 56545~56550(`작업 보존 재시작`)을
 > 제출 중 — depot head 가 빠르게 움직이므로 미러 동기화 전 have/head 확인 권장.
 
+- 56558 **PTY feed 2.75배 가속: pyte HistoryScreen 제거(`_ScrollbackScreen`)** —
+  pytmux 체감 느림의 단일 원인이 PTY 출력 파싱(pyte feed)이 0.4 MB/s 라는 점이었다
+  (빌드 로그·`cat` 등 다MB 출력이 들어오면 단일 asyncio 루프가 묶여 UI 정지). 다른
+  터미널 비교상 호스트 터미널은 무죄 — Warp 가 Terminal.app 보다 빠름(5151 vs 2246
+  fps, /tmp/termbench.py). cProfile 결과 pyte `HistoryScreen` 이 인터랙티브 페이징
+  (prev/next_page)용 `__getattribute__` 훅으로 **모든 속성 접근**을 가로채
+  before/after_event 를 끼워, `draw()` 의 글자별 속성 접근마다 호출돼(1 MB 피드당
+  1,100만+ 회 — 전체 시간의 절반) feed 가 ~3배 느려졌다. pytmux 는 그 페이징을 전혀
+  안 쓰고 `history.top` 만 읽으므로 순수 오버헤드. `_BCEHistoryScreen`
+  (pyte.HistoryScreen 기반) → `_ScrollbackScreen`(plain `pyte.Screen` +
+  `index`/`reverse_index`/`reset` 만 오버라이드)으로 교체해 HistoryScreen 의 줄
+  수집을 **동일 조건·동일 대상**으로 재현하고 훅은 제거. `.history.top/.bottom` deque
+  인터페이스(경량 `_History` 홀더)를 유지해 호출부(render/capture_pane/clear_history/
+  `_export_screen`)는 무변경. 결과: 8 MB 피드 0.44 → 1.21 MB/s(2.75배), 스크롤백/화면
+  버퍼가 옛 HistoryScreen 과 **바이트 단위 동일**함을 검증, 162개 테스트 전부 통과
+  (test_feed_and_scrollback, test_restore_preserves_scrollback, test_pane_export_
+  import_roundtrip, test_search_buffer_capture_clear 포함). 남은 개선: 대량 출력
+  레이트 제한/코얼레싱, feed 별도 스레드 분리(feed 는 여전히 pyte 한계로 ~1.2 MB/s).
+  **서버측 변경 — kill-server 재기동 후 반영**(이 세션에서 재기동 완료). 파일:
+  `pytmuxlib/model.py`.
 - 56539 **ESC 모드에서 `?` → 바로 help 팝업** — ESC 명령 모드에서 `:` 는 명령
   프롬프트(`PromptScreen`)를 여는데, 거기서 다시 `?` 를 쳐야 명령 목록이 나왔다. 한
   단계를 줄여 **ESC 모드에서 `?` 를 누르면 프롬프트를 거치지 않고 곧장 help 팝업**

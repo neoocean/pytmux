@@ -4,8 +4,10 @@ from __future__ import annotations
 import asyncio  # noqa: F401  (타입 주석용)
 import re
 import time
+from collections import deque
 
 import pyte
+from pyte.screens import Margins
 
 from .protocol import HISTORY, MIN_H, MIN_W, conv_color, set_winsize
 
@@ -71,8 +73,62 @@ class _BCEScreen(_BCEMixin, pyte.Screen):
     pass
 
 
-class _BCEHistoryScreen(_BCEMixin, pyte.HistoryScreen):
-    pass
+class _History:
+    """pyte History 네임드튜플의 경량 대체. pytmux 는 top/bottom 두 deque 만 쓴다
+    (render·capture_pane·clear_history·_export_screen). pyte 의 ratio/size/position
+    필드와 인터랙티브 페이징 상태는 쓰지 않으므로 보관하지 않는다."""
+
+    __slots__ = ("top", "bottom")
+
+    def __init__(self, maxlen: int):
+        self.top = deque(maxlen=maxlen)
+        self.bottom = deque(maxlen=maxlen)
+
+
+class _ScrollbackScreen(_BCEMixin, pyte.Screen):
+    """plain pyte Screen + 위로 밀려난 줄만 자체 deque 에 모으는 경량 스크롤백.
+
+    pyte.HistoryScreen 을 대체한다. HistoryScreen 은 인터랙티브 페이징(prev/next
+    _page)을 위해 `__getattribute__` 로 **모든 속성 접근**을 가로채 before/after
+    _event 를 끼워 넣는데, 이 훅이 draw() 의 글자별 속성 접근마다 호출돼 feed 가
+    ~3배 느려진다(1MB 피드에 __getattribute__ 1,100만+ 회 — 시간의 절반). pytmux 는
+    그 페이징을 전혀 쓰지 않고 history.top 만 읽으므로, HistoryScreen 이 하던 줄
+    수집(index/reverse_index)만 동일하게 재현하고 훅을 제거한다.
+
+    수집 조건·대상 줄은 HistoryScreen.index/reverse_index 와 바이트 단위로 동일해
+    스크롤백 동작에 회귀가 없다. .history.top/.bottom deque 인터페이스도 그대로라
+    기존 호출부(render·capture_pane·clear_history·_export_screen)는 변경 불필요."""
+
+    def __init__(self, columns: int, lines: int,
+                 history: int = HISTORY, ratio: float = 0.5):
+        # super().__init__ 가 reset() 을 호출하므로 history 를 먼저 만든다
+        # (HistoryScreen 과 동일한 순서).
+        self.history = _History(history)
+        super().__init__(columns, lines)
+
+    def index(self) -> None:
+        """전체 화면이 위로 스크롤될 때 빠지는 맨 윗줄을 top 히스토리에 모은다
+        (HistoryScreen.index 와 동일)."""
+        top, bottom = self.margins or Margins(0, self.lines - 1)
+        if self.cursor.y == bottom:
+            self.history.top.append(self.buffer[top])
+        super().index()
+
+    def reverse_index(self) -> None:
+        """아래로 스크롤될 때 빠지는 맨 아랫줄을 bottom 히스토리에 모은다
+        (HistoryScreen.reverse_index 와 동일)."""
+        top, bottom = self.margins or Margins(0, self.lines - 1)
+        if self.cursor.y == top:
+            self.history.bottom.append(self.buffer[bottom])
+        super().reverse_index()
+
+    def reset(self) -> None:
+        """RIS(ESC c) 등에서 화면과 함께 스크롤백도 비운다(HistoryScreen.reset 과
+        동일). __init__ 의 super().__init__ → reset() 경로에서도 호출되므로
+        history 가 먼저 존재해야 한다."""
+        super().reset()
+        self.history.top.clear()
+        self.history.bottom.clear()
 
 
 # 대체 화면 버퍼(alternate screen) 전환 시퀀스. pyte 가 직접 지원하지 않아
@@ -164,7 +220,7 @@ class Pane:
         self.cols = cols
         self.rows = rows
         # 메인 화면(스크롤백 보관) + 대체 화면(풀스크린 TUI 용, 스크롤백 없음)
-        self._main = _BCEHistoryScreen(cols, rows, history=HISTORY, ratio=0.5)
+        self._main = _ScrollbackScreen(cols, rows, history=HISTORY, ratio=0.5)
         self._main.set_mode(pyte.modes.LNM)
         self._main_stream = pyte.ByteStream(self._main)
         self._alt = None
@@ -231,7 +287,7 @@ class Pane:
         self.child_pid = pid
         self.pty = None          # 서버가 reinit 직후 새 PtyProcess 를 주입
         self.cols, self.rows = cols, rows
-        self._main = _BCEHistoryScreen(cols, rows, history=HISTORY, ratio=0.5)
+        self._main = _ScrollbackScreen(cols, rows, history=HISTORY, ratio=0.5)
         self._main.set_mode(pyte.modes.LNM)
         self._main_stream = pyte.ByteStream(self._main)
         self._alt = None
