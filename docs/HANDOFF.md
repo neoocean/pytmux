@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **124 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **134 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -199,7 +199,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56464 + git, 신→구)
+## 9. 최근 변경(CL 56279~56497 + git, 신→구)
 
 - 56497 **다중 줄 상태표시줄**(§10/#10) — `StatusBar.lines`(0~5) + `extra` 보조 줄 포맷.
   맨 아래 줄=주 상태, 그 위는 `status-format[i]`. `render_line(y)` 줄별 분기, `set status N`/
