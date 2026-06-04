@@ -211,6 +211,14 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56611 **refactor(§10 LLM 친화, 3/N): 모달 Screen 클래스 11종 → `clientscreens.py`**
+  — 클로저의 자족적 `ModalScreen` 11종(CommandList/CommandOptions/Menu/ChooseTree/
+  Info/TokenLog/Prompt/Confirm/ChooseBuffer/ChooseLayout/PermMode) 844줄을 신규
+  `pytmuxlib/clientscreens.py` 로 이전. config/sock_path 미캡처·다른 위젯 미참조(AST/grep
+  확인), 의존성은 textual·clientutil(COMMANDS·MENU_ITEMS·MENU_TOGGLES)·usagelog·datetime
+  뿐. client.py 가 11종을 import 해 push_screen. client.py 4032→3188줄, 신규 clientscreens
+  868줄. 190 passed + 실제 클라 스모크. 다음: server.py 분할. 파일: `pytmuxlib/{client,
+  clientscreens}.py`, `docs/HANDOFF.md`.
 - 56610 **refactor(§10 LLM 친화, 2/N): client.py 클로저 프리앰블 헬퍼/상수 →
   `clientutil.py`** — 1단계(56606)에 이어 `build_client_app` 클로저 맨 앞의 순수
   헬퍼/상수 264줄(`DEFAULT_STYLE`·`theme_color`·`_darken_style`·`make_style`·`SPECIAL`
