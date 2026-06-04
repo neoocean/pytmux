@@ -201,6 +201,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 9. 최근 변경(CL 56279~56464 + git, 신→구)
 
+- 56495 **런타임 unbind-key/bind-key/list-keys**(§10/#11) — FEATURES 에서 "unbind 미구현"
+  이던 것 해소. `_run_command` 에 `bind-key <key> <command>`·`unbind-key <key>|-a`·
+  `list-keys` 추가(tmux `C-x` → ctrl+x 정규화, bind 명령 원문 플래그 보존). COMMANDS 노출.
+  회귀 테스트 `test_bind_unbind_keys`(총 133). 클라이언트 전용.
+
 - 56491 **캡처(REC) 출력 위치 이전 요구사항 기록**(§10, 사용자 요청·문서만) — 캡처
   로그가 현재 /tmp(`state_base`)에 남아 휘발·미공유. 프로젝트 디렉터리(`captures/`)로
   옮겨 Perforce 로 머신 간 공유하되 GitHub 엔 절대 미반영(.gitignore/add 제외) 하는
@@ -845,7 +850,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   `single_border` 실어 클라가 `single_border_on` 으로 권위값 반영(낙관적 즉시 토글).
   회귀 테스트 `test_single_pane_border_toggle_and_persist`. **서버+클라 → kill-server 재기동.**
 - 다중 줄 상태표시줄(미구현 — #10 잔여), 라이브 PTY display-popup(미구현 — #10 잔여).
-- ~~`unbind`/추가 옵션 등 FEATURES 의 "미구현" 표기 항목(unbind-key).~~ → **CL CLNEW 에서
+- ~~`unbind`/추가 옵션 등 FEATURES 의 "미구현" 표기 항목(unbind-key).~~ → **CL 56495 에서
   해결.** 런타임 명령 `bind-key <key> <command>`·`unbind-key <key>|-a`·`list-keys` 추가
   (`_run_command`). 키는 tmux 표기(`C-x`)를 `_tmux_key_to_textual` 로 ctrl+x 정규화, 한
   글자는 그대로. bind 는 첫 인자만 키·나머지는 명령 원문(플래그 보존). FEATURES 표의

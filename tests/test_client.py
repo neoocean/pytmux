@@ -949,6 +949,34 @@ async def test_active_tab_connector_follows_switch():
     await _with_app(body, cfg={"tab_bar_always": True})
 
 
+async def test_bind_unbind_keys():
+    # #10/#11: 런타임 bind-key/unbind-key/list-keys. FEATURES 에서 unbind 가 미구현
+    # 이었다. bind-key 로 추가, unbind-key 로 해제(-a 전체), tmux 표기(C-x) 정규화.
+    async def body(app, pilot, srv):
+        app.bindings = {}
+        # bind-key: 한 글자 키 + tmux 표기(C-x → ctrl+x 정규화)
+        app._run_command("bind-key x split-window -h")
+        app._run_command("bind-key C-g new-window")
+        assert app.bindings["x"] == "split-window -h"
+        assert app.bindings["ctrl+g"] == "new-window", app.bindings
+        # unbind 단일
+        app._run_command("unbind-key x")
+        assert "x" not in app.bindings
+        # 없는 키 unbind 는 무해
+        app._run_command("unbind-key zzz")
+        # list-keys 팝업
+        app._run_command("list-keys")
+        await pilot.pause(0.05)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "InfoScreen"
+        app.pop_screen()
+        # unbind -a 전체 해제
+        app._run_command("bind-key y kill-pane")
+        app._run_command("unbind-key -a")
+        assert app.bindings == {}
+    await _with_app(body)
+
+
 async def test_shift_drag_pane_swap():
     # #9b: Shift+좌버튼 드래그로 패널을 잡아 다른 패널에 놓으면 두 패널 위치를
     # 맞바꾼다(서버에 swap_pane_to 전송). 드래그 중 소스/대상 상태를 추적한다.

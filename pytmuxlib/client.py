@@ -256,6 +256,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("token-usage", "Claude 실행 중 탭/패널 + 토큰 사용량 트리(상태줄 사용량 클릭)", "설정/기타"),
         ("run-shell", "셸 명령 실행", "설정/기타"),
         ("if-shell", "조건부 셸 실행", "설정/기타"),
+        ("bind-key", "prefix 후 키에 명령 바인딩 (bind-key <key> <command>)", "설정/기타"),
+        ("unbind-key", "키 바인딩 해제 (unbind-key <key> | -a)", "설정/기타"),
+        ("list-keys", "현재 키 바인딩 목록 팝업", "설정/기타"),
         ("detach-client", "detach (앱 종료, 셸 유지)", "설정/기타"),
         ("kill-server", "서버와 모든 탭/셸 종료", "설정/기타"),
     ]
@@ -3082,6 +3085,32 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif c == "show-hooks":
                 self.push_screen(InfoScreen(
                     [f"{k} → {v}" for k, v in self.hooks.items()], title="hooks"))
+            elif c in ("bind-key", "bind", "bindkey"):
+                # bind-key <key> <command...> — prefix 후 <key> 에 명령 바인딩(런타임).
+                # 키는 tmux 표기(C-x)도 받아 textual(ctrl+x)로 정규화. 한 글자는 그대로.
+                # 첫 인자만 키, 나머지는 명령 원문(플래그 -h 등 보존)으로 그대로 쓴다.
+                if len(args) >= 2:
+                    key = _tmux_key_to_textual(args[0])
+                    self.bindings[key] = " ".join(args[1:])
+                    self.display_message(f"bound {key}")
+            elif c in ("unbind-key", "unbind", "unbindkey"):
+                # unbind-key <key> | -a (전체 해제). 없는 키는 조용히 무시.
+                if "-a" in args:
+                    n = len(self.bindings)
+                    self.bindings.clear()
+                    self.display_message(f"unbound all ({n})")
+                else:
+                    pos = [a for a in args if not a.startswith("-")]
+                    if pos:
+                        key = _tmux_key_to_textual(pos[0])
+                        if self.bindings.pop(key, None) is not None:
+                            self.display_message(f"unbound {key}")
+                        else:
+                            self.display_message(f"no binding: {key}")
+            elif c in ("list-keys", "lsk", "list-binds"):
+                lines = [f"{k} → {v}" for k, v in sorted(self.bindings.items())]
+                self.push_screen(InfoScreen(lines or ["(바인딩 없음)"],
+                                            title="key bindings"))
             # 알 수 없는 명령은 조용히 무시
 
         def on_paste(self, event: events.Paste):
