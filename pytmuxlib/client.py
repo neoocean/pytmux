@@ -3843,6 +3843,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif ch == ":" or k == "colon":
                 self._exit_esc()
                 self.open_prompt("command", "")
+            elif ch == "?":                       # ':' 대신 '?' → 바로 help 팝업
+                self._exit_esc()
+                self._run_command("help")
             elif ch == "h":                       # Claude 헤더 포커스 진입(#5)
                 panes = self._claude_header_panes()
                 if panes:

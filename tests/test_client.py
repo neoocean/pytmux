@@ -268,6 +268,17 @@ async def test_esc_mode_arrows_and_colon():
     await _with_app(body)
 
 
+async def test_esc_mode_question_opens_help():
+    async def body(app, pilot, srv):
+        await pilot.press("escape")
+        assert app.mode == "esc"
+        # ':' 대신 '?' → 프롬프트 거치지 않고 바로 help 팝업.
+        await pilot.press("question_mark")
+        assert app.mode == "normal", "? 는 ESC 모드 종료"
+        assert app.screen_stack[-1].__class__.__name__ == "CommandListScreen"
+    await _with_app(body)
+
+
 async def test_display_panes():
     async def body(app, pilot, srv):
         await pilot.press("ctrl+b")

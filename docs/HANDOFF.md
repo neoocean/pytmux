@@ -201,6 +201,12 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 9. 최근 변경(CL 56279~56500 + git, 신→구)
 
+- 56539 **ESC 모드에서 `?` → 바로 help 팝업** — ESC 명령 모드에서 `:` 는 명령
+  프롬프트(`PromptScreen`)를 여는데, 거기서 다시 `?` 를 쳐야 명령 목록이 나왔다. 한
+  단계를 줄여 **ESC 모드에서 `?` 를 누르면 프롬프트를 거치지 않고 곧장 help 팝업**
+  (`CommandListScreen`)을 띄운다. `_handle_esc_mode` 에 `ch == "?"` 분기 추가(`:` 와
+  같이 `_exit_esc()` 후 `_run_command("help")`). 회귀 테스트
+  `test_esc_mode_question_opens_help`. 클라이언트 전용(attach 재실행).
 - 56538 **pytmux 강제 중첩 옵션(`--force`) 제거** — 중첩 실행 거부(CL 56394 로컬/56510
   원격)를 우회하던 전역 플래그 `--force` 를 폐지했다. 중첩(재귀 렌더·입력 꼬임)을 강제로
   허용할 정당한 이유가 없고, 오용 시 화면이 깨지는 함정이라 안전장치를 우회 불가로 굳혔다.
