@@ -201,6 +201,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 9. 최근 변경(CL 56279~56464 + git, 신→구)
 
+- 56497 **다중 줄 상태표시줄**(§10/#10) — `StatusBar.lines`(0~5) + `extra` 보조 줄 포맷.
+  맨 아래 줄=주 상태, 그 위는 `status-format[i]`. `render_line(y)` 줄별 분기, `set status N`/
+  `set status-format <line> <fmt>`, 위젯 높이·뷰 크기·서버 resize 동기화. 회귀 테스트
+  `test_multiline_status_bar`(총 134). 클라이언트 전용.
+
 - 56495 **런타임 unbind-key/bind-key/list-keys**(§10/#11) — FEATURES 에서 "unbind 미구현"
   이던 것 해소. `_run_command` 에 `bind-key <key> <command>`·`unbind-key <key>|-a`·
   `list-keys` 추가(tmux `C-x` → ctrl+x 정규화, bind 명령 원문 플래그 보존). COMMANDS 노출.
@@ -849,7 +854,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   `single-border|pane-border [on|off|toggle]`(레이아웃 재브로드캐스트). status 에
   `single_border` 실어 클라가 `single_border_on` 으로 권위값 반영(낙관적 즉시 토글).
   회귀 테스트 `test_single_pane_border_toggle_and_persist`. **서버+클라 → kill-server 재기동.**
-- 다중 줄 상태표시줄(미구현 — #10 잔여), 라이브 PTY display-popup(미구현 — #10 잔여).
+- ~~다중 줄 상태표시줄.~~ → **CL 56497 에서 해결.** `StatusBar.lines`(0~5, 기본 1) +
+  `extra`(보조 줄 포맷 dict). 맨 아래 줄이 주 상태(REC/사용량/시계 등), 그 위는
+  `status-format[i]`(index 1=바닥 바로 위)를 `_expand` 로 펼쳐 표시. `render_line(y)` 가
+  줄별 분기, 클릭 존은 맨 아래 줄에서만. `set_status_lines` 가 위젯 높이·뷰 크기 동기화
+  +서버 resize 통지. 옵션 `set status N`(0=숨김)·`set status-format <line> <fmt>`. 회귀
+  테스트 `test_multiline_status_bar`. 클라이언트 전용(attach 재실행).
+- 라이브 PTY display-popup(미구현 — #10 잔여).
 - ~~`unbind`/추가 옵션 등 FEATURES 의 "미구현" 표기 항목(unbind-key).~~ → **CL 56495 에서
   해결.** 런타임 명령 `bind-key <key> <command>`·`unbind-key <key>|-a`·`list-keys` 추가
   (`_run_command`). 키는 tmux 표기(`C-x`)를 `_tmux_key_to_textual` 로 ctrl+x 정규화, 한

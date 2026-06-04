@@ -1413,6 +1413,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.fg = fg
             self.left_fmt = left
             self.right_fmt = right
+            # 다중 줄 상태표시줄: lines = 상태줄 줄 수(0~5, 기본 1). 맨 아래 줄(bottom)이
+            # 기존의 풍부한 상태(REC/사용량/시계 등), 그 위 줄들은 extra[i] 의 포맷
+            # 문자열을 _expand 로 펼쳐 표시(tmux status-format[i] 와 동일하게 index 1
+            # 이 바닥 바로 위). 0 이면 상태줄 숨김.
+            self.lines = 1
+            self.extra = {}          # {line_index(>=1): fmt 문자열}
             self._clock_zone = None  # (x0, x1) 시각(시계) 클릭 영역
             self._date_zone = None   # (x0, x1) 날짜(달력) 클릭 영역
             self._usage_zone = None  # (x0, x1) 토큰 사용량 클릭 영역(Claude 트리)
@@ -1518,12 +1524,25 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.refresh()
 
         def render_line(self, y: int) -> Strip:
+            # 다중 줄: 맨 아래 줄이 주 상태(아래 _render_main), 그 위는 extra 포맷.
+            h = max(1, self.lines)
+            base = Style(color=self.fg or theme_color(self, "foreground"),
+                         bgcolor=self.bg)
+            if y != h - 1:
+                # bottom 위의 보조 줄. tmux 처럼 index 1 = 바닥 바로 위.
+                idx = (h - 1) - y
+                fmt = self.extra.get(idx, "")
+                txt = self._expand(fmt) if fmt else ""
+                return Strip([Segment(txt, base)]).adjust_cell_length(
+                    self.size.width, base)
+            return self._render_main(base)
+
+        def _render_main(self, base) -> Strip:
             w = self.size.width
             # 색상은 p4v-tui 와 동일한 textual-dark 테마를 따른다(설정으로 덮어쓰기 가능).
             tc = lambda n: theme_color(self, n)  # noqa: E731
             # 배경은 명시 설정(self.bg)이 없으면 터미널 기본(None)을 따른다 —
             # REC/SYNC/AR 등 개별 배지는 자체 bgcolor 유지(의도된 강조).
-            base = Style(color=self.fg or tc("foreground"), bgcolor=self.bg)
             if self.message is not None:
                 ms = Style(color="black", bgcolor=tc("warning"), bold=True)
                 return Strip([Segment(f" {self.message} ", ms)]).adjust_cell_length(
@@ -1612,6 +1631,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def on_mouse_down(self, event: events.MouseDown):
             if not self.app.mouse_enabled:
+                return
+            # 클릭 존(REC/시계/날짜/사용량)은 주 상태가 그려지는 맨 아래 줄에만 있다.
+            if event.y != self.size.height - 1:
                 return
             rz = self._rec_zone
             if rz and rz[0] <= event.x < rz[1]:
@@ -1774,10 +1796,28 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.tab_bar_always = flag
             self._update_tabbar()
 
+        def set_status_lines(self, n):
+            """상태표시줄 줄 수(0~5)를 런타임에 바꾼다. 위젯 높이·뷰 크기를 동기화하고
+            서버에 새 크기를 알린다(레이아웃 재계산)."""
+            n = max(0, min(5, int(n)))
+            if n == self.status.lines:
+                return
+            self.status.lines = n
+            self.status.styles.height = n
+            self.status.display = n > 0
+            self.status.refresh()
+            # 콘텐츠 영역(패널)이 줄어/늘어나므로 서버에 새 크기 통지.
+            if self.writer:
+                cols, rows = self._content_size()
+                self.run_worker(write_msg(
+                    self.writer, {"t": "resize", "cols": cols, "rows": rows}))
+
         def _content_size(self):
             size = self.size
             extra = 1 if self._tabbar_visible() else 0   # 상단 탭바 1줄
-            return max(MIN_W, size.width), max(MIN_H, size.height - 1 - extra)
+            status = self.status.lines                   # 상태표시줄 줄 수(0~5)
+            return (max(MIN_W, size.width),
+                    max(MIN_H, size.height - status - extra))
 
         def _active_tab_index(self):
             for t in self.status.windows:
@@ -2669,6 +2709,29 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif name == "status-right":
                 self.status.right_fmt = val
                 self.status.refresh()
+            elif name == "status":
+                # status N — 상태표시줄 줄 수(0~5). on/off 는 1/0 으로.
+                v = val.strip().lower()
+                if v in ("on", "true", "yes"):
+                    self.set_status_lines(1)
+                elif v in ("off", "false", "no"):
+                    self.set_status_lines(0)
+                else:
+                    try:
+                        self.set_status_lines(int(v))
+                    except ValueError:
+                        pass
+            elif name == "status-format":
+                # status-format <line> <fmt...> — 보조 줄(line>=1) 포맷 지정.
+                parts = val.split(None, 1)
+                if parts:
+                    try:
+                        idx = int(parts[0])
+                    except ValueError:
+                        idx = -1
+                    if idx >= 1:
+                        self.status.extra[idx] = parts[1] if len(parts) > 1 else ""
+                        self.status.refresh()
             elif name == "status-position":
                 self.status_position = "top" if val == "top" else "bottom"
                 self.status.styles.dock = self.status_position

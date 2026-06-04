@@ -949,6 +949,33 @@ async def test_active_tab_connector_follows_switch():
     await _with_app(body, cfg={"tab_bar_always": True})
 
 
+async def test_multiline_status_bar():
+    # #10: 다중 줄 상태표시줄. status N(0~5) 로 줄 수 조절, 맨 아래 줄이 주 상태,
+    # 그 위 줄들은 status-format[i] 포맷(index 1 = 바닥 바로 위)을 _expand 로 표시.
+    async def body(app, pilot, srv):
+        sb = app.status
+        sb.session = "work"
+        assert sb.lines == 1, "기본 1줄"
+        # 2줄로 + 보조 줄(index 1) 포맷 지정
+        app.apply_option("status", "2")
+        assert sb.lines == 2 and sb.styles.height.value == 2, sb.lines
+        app.apply_option("status-format", "1 second-line-marker")
+        await pilot.pause(0.05)
+        # 위젯 높이 2: render_line(1)=주 상태(bottom), render_line(0)=보조(index1)
+        top = "".join(s.text for s in sb.render_line(0))
+        assert "second-line-marker" in top, top
+        # bottom 줄은 주 상태(시각/날짜 포맷 흔적). 최소한 예외 없이 렌더되는지 확인.
+        bottom = "".join(s.text for s in sb.render_line(1))
+        assert isinstance(bottom, str)
+        # status 0 → 숨김
+        app.apply_option("status", "0")
+        assert sb.lines == 0 and sb.display is False
+        # 다시 1줄로 복귀(기본 동작 유지)
+        app.apply_option("status", "1")
+        assert sb.lines == 1 and sb.display is True
+    await _with_app(body)
+
+
 async def test_bind_unbind_keys():
     # #10/#11: 런타임 bind-key/unbind-key/list-keys. FEATURES 에서 unbind 가 미구현
     # 이었다. bind-key 로 추가, unbind-key 로 해제(-a 전체), tmux 표기(C-x) 정규화.
