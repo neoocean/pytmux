@@ -211,6 +211,18 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   (`_pane_swap`/`_pane_swap_over`), 드래그 중 소스 dim·대상 강조. 회귀 테스트
   `test_swap_pane_ids`·`test_shift_drag_pane_swap`. 서버+클라 → kill-server 재기동.
 
+- 56471/56473/56475/56479/56487 **Windows 포팅 후속 마감 묶음**(§10, WINDOWS_PORT §7-b4)
+  — 추상화 레이어/리팩터 이후 잔여 POSIX 의존·패키징 정리. ① 56471 `proc.shell_argv`
+  신설로 pipe-pane `/bin/sh` 하드코딩 제거 + `client._shell_argv` 위임 통합. ② 56473
+  `replay.run_record` Windows 가드(메시지+코드 2). ③ 56475 `requirements.txt`
+  (`wcwidth` 명시 + `pywinpty; win32`) + `install.ps1`/`uninstall.ps1` Windows 설치 래퍼.
+  ④ 56479 dead code `protocol.default_socket_path` 제거 + `pytmux.py` 재export 정리.
+  ⑤ 56487 POSIX 열화 우아한 폴백: `model.py` 렌더 resize `ImportError` 흡수,
+  `test_windows_port` 가드 테스트(shell_argv/record/fg_command/resize), `WINDOWS_PORT.md`
+  동기화. 회귀 132 통과. ⚠️ **attribution**: ⑤의 `server.py` `_fg_command` Windows 가드는
+  공유 워크스페이스에서 동시 세션이 `server.py` 를 default CL에 먼저 열어 둔 탓에 분리
+  서브밋 불가 → **CL 56489(드래그 swap)에 동반 커밋**됨(depot 반영 정상, 귀속만 어긋남).
+
 - 56480 **단일 패널 테두리 on/off 옵션화**(§10 마무리 묶음 #9a) — 서버 `single_border`
   옵션(기본 ON, opts.json 영속). `_layout_msg` 가 `len(panes) >= 2 or single_border`
   일 때만 box. 단일 패널 OFF 면 화면 전체 사용, 다중 패널은 항상 테두리. 명령
@@ -832,8 +844,12 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   `single-border|pane-border [on|off|toggle]`(레이아웃 재브로드캐스트). status 에
   `single_border` 실어 클라가 `single_border_on` 으로 권위값 반영(낙관적 즉시 토글).
   회귀 테스트 `test_single_pane_border_toggle_and_persist`. **서버+클라 → kill-server 재기동.**
-- 다중 줄 상태표시줄, unbind-key, 라이브 PTY display-popup.
-- `unbind`/추가 옵션 등 FEATURES 의 "미구현" 표기 항목.
+- 다중 줄 상태표시줄(미구현 — #10 잔여), 라이브 PTY display-popup(미구현 — #10 잔여).
+- ~~`unbind`/추가 옵션 등 FEATURES 의 "미구현" 표기 항목(unbind-key).~~ → **CL CLNEW 에서
+  해결.** 런타임 명령 `bind-key <key> <command>`·`unbind-key <key>|-a`·`list-keys` 추가
+  (`_run_command`). 키는 tmux 표기(`C-x`)를 `_tmux_key_to_textual` 로 ctrl+x 정규화, 한
+  글자는 그대로. bind 는 첫 인자만 키·나머지는 명령 원문(플래그 보존). FEATURES 표의
+  "unbind 는 미구현" 표기 해소. 회귀 테스트 `test_bind_unbind_keys`. 클라이언트 전용.
 - **[요청·미구현] 캡처(REC) 출력을 /tmp → 프로젝트 디렉터리로 옮기고 Perforce 로 관리(단,
   GitHub 엔 절대 미반영)** — ★ 사용자 요청. **현재**: 패널 출력 캡처(REC, raw PTY 무손실
   로그)는 `Server.capture_dir = ipc.state_base(sock) + ".capture"` 에 쓰여, `state_base` 가
@@ -856,7 +872,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
     민감 화면(토큰·키 입력 잔재)이 깃헙 공개로 새지 않게 하는 게 목적이라 **누락 시 사고**다.
   - **주의**: capture 는 Claude 화면 문구 분석(busy/usage/프롬프트) 소스이기도 하다 — 경로만
     옮기고 기록 포맷·소비자(`_scan_claude` 등)는 그대로 둔다.
-- **[조사완료·구현미착수] 네이티브 Windows 포팅** — `fcntl`/`termios`/`pty`/`os.fork`/
+- **[구현 완료·실 Windows 박스 검증만 잔여] 네이티브 Windows 포팅** — `fcntl`/`termios`/`pty`/`os.fork`/
   `AF_UNIX` 등 POSIX 전용 의존 때문에 Windows 네이티브 Python 에서 import 단계부터 막힘.
   범위 조사는 [`docs/WINDOWS_PORT.md`](WINDOWS_PORT.md) 에 파일별로 정리됨(작업의 ~70%가
   `server.py` 의 PTY·이벤트루프·프로세스·시그널 재작성). 리스크 집중부(① ConPTY,
@@ -868,8 +884,16 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   Python 3.12.4/pywinpty 3.0.3/pyte 0.8.2/wcwidth 0.7.0 에서 `pip install pywinpty` 후
   `python poc\winpty_poc.py` 실행 → **`PYTMUX_POC_OK` 정상 출력**(cmd.exe 의사콘솔→리더 스레드
   펌프→pyte→렌더, 544바이트). 리스크 ①(ConPTY)·②(asyncio×파이프 읽기) de-risk 완료.
-  다음 단계(WINDOWS_PORT §6-b): 추상화 레이어(`pty_backend`/`ipc`/`proc`) 신설 + `server.py`
-  리팩터(작업의 ~70%)의 단계별 구현 계획 수립 후 착수.
+  **✅ 본 포팅 구현 완료(2026-06-04)**: 추상화 레이어 3종(`pty_backend`/`ipc`/`proc`)
+  신설·테스트, `server.py`·`model.py` PTY 생애주기 전환, `server.serve()`/`client`/
+  `launcher` 데몬·제어 `ipc`·`proc` 전환 완료. 후속 마감(CL 56471/56473/56475/56479/
+  56487, 일부 server.py 가드는 56489 동반): pipe-pane 셸 분기(`proc.shell_argv`),
+  `replay.record` Windows 가드, POSIX 열화 우아한 폴백(`_fg_command`/렌더 resize),
+  dead code `default_socket_path` 제거, `requirements.txt`(`wcwidth`+`pywinpty;win32`)
+  ·`install.ps1`/`uninstall.ps1` 패키징. 헤드리스 132 통과. **코드상 남은 일 없음 —
+  유일 잔여는 실 Windows 박스 검증(WINDOWS_PORT §7-d)**: `pip install -r requirements.txt`
+  → `.\install.ps1` → attach/split/`kill-server` 스모크 + ConPTY 멀티바이트(CJK/이모지)
+  경계 확인. 깨지면 `_WinPty` 를 저수준 `winpty.PTY`(바이트) 경로로 교체(§3① NOTE).
 
 ## 11. Claude Code 특화 기능 분리 전략 (병렬 세션 충돌 최소화)
 
