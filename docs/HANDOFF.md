@@ -618,6 +618,57 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 10. 가능한 후속 작업 (열린 항목)
 
+- **[UI 요청, 미구현] 패널 하단 Claude `auto mode on` footer 클릭/터치 → 권한모드
+  선택 팝업** — 요청: Claude Code 가 실행 중일 때 **패널 내 하단의 `auto mode on`
+  부분을 터치/클릭**하면 팝업으로 **변경 가능한 권한모드들**을 보여주고 그중 하나를
+  **선택**할 수 있게. 현재 구현/자산: 이 footer 는 **Claude 자체가 패널 PTY 안에**
+  그리는 줄이라 pytmux 위젯이 아니다 — 클릭하려면 ① footer 의 **화면상 위치(행/열
+  범위)를 찾는 휴리스틱**과 ② 그 영역을 **패널 위 클릭존**으로 등록해야 한다.
+  권한모드 파서는 이미 있다: `claude.py:claude_perm_mode(text)`(CL 56591, "auto"/
+  "plan"/"bypass"/"default"/None 구분). 모드 전환 키도 있다: 서버
+  `_inject_keys(pane, b"\x1b[Z")`(shift+tab backtab, CL 56591)·클라 `client.py:160`.
+  Claude 헤더 클릭존 선례: `_claude_header_zones`(`client.py:2404` 에서 등록,
+  `:1281` 에서 히트테스트). 구현 방향: ㉠ 서버 `_scan_claude` 가 footer 줄을 찾을
+  때 그 **행 인덱스**도 같이 실어 보내거나, 클라가 패널 렌더 셀에서 "shift+tab to
+  cycle"/"mode on" 줄을 스캔해 클릭존(`_perm_zone[pid]=(x0,x1,y)`)을 만든다. ㉡
+  클릭 시 모드 목록 팝업(`InfoScreen`/전용 모달)을 띄우고, 선택하면 **현재 모드에서
+  목표 모드까지 shift+tab 을 필요 횟수만큼** 주입(`claude_perm_mode` 로 footer
+  재확인하는 폐루프 — CL 56591 `_maybe_auto_mode` 패턴 재사용). **열린 결정**:
+  모드 순환 순서가 Claude 버전 의존이라 "목표까지 N회" 계산을 폐루프로 할지, 팝업
+  UI(라디오/리스트)·자동전환(`claude-auto-mode`)과의 관계. **연관**: 권한모드 자동
+  전환(CL 56591). **현재는 기록만 — 미구현.**
+- **[UI 요청, 미구현] 패널 내 `Remote Control active` 클릭/터치 → 원격제어 토글
+  팝업** — 요청: 패널 안 **`Remote Control active`** 표시를 클릭/터치하면 팝업으로
+  **원격 제어를 켜고 끄는 화면**을 보여주기. 현재 구현/제약: 이 표시도 **Claude
+  데스크탑 앱의 원격제어 기능**이 패널 PTY 안에 그리는 것이라 pytmux 밖이다 —
+  ① 위 auto-mode 항목과 같은 **footer 위치 휴리스틱 + 패널 클릭존** 인프라가 필요
+  하고, ② **원격제어 on/off 자체는 Claude/데스크탑 앱의 동작**이라 pytmux 가 직접
+  토글할 수 없을 수 있다(키/슬래시 명령으로 가능한지 조사 필요 — Claude 측 단축키
+  확인). 관련: 데스크탑 원격제어로 주입된 프롬프트를 화면에서 추출해 헤더에 반영하는
+  처리는 이미 함(CL 56592, `claude.py:claude_prompt`). 구현 방향: 클릭존을 만든 뒤
+  팝업에 **현재 원격제어 상태(화면 파싱)** 와 가능한 동작을 보이고, 토글 수단이
+  있으면 해당 키/명령을 패널에 주입(`_inject_keys`). **열린 결정**: 토글 수단 존재
+  여부(없으면 안내/상태표시 전용 팝업으로 축소), 클릭존 인프라를 위 auto-mode 항목과
+  공유. **연관**: 위 auto-mode footer 클릭 항목·CL 56592. **현재는 기록만 — 미구현.**
+- **[UI 요청, 미구현] 상태줄 `ssh:` 원격 호스트 세그먼트 클릭/터치 → 서버 정보
+  팝업(연결상태·속도)** — 요청: 화면 하단의 **`ssh:` 로 시작하는 원격 서버 표시**
+  자리를 클릭/터치하면 팝업으로 **서버 정보·연결 상태·속도(지연)** 등을 보여주는
+  정보 팝업을 연다. 현재 구현/자산: 호스트 세그먼트는 상태줄이 이미 별도 런으로
+  그린다 — `_render_main` 에서 `kind=="host"` 이고 `self._is_remote` 면 `"ssh:"`
+  접두사+`host_style`(error 색)로 렌더(`client.py:1914`). `_is_remote` 는
+  `SSH_CONNECTION` 등 환경으로 판정(`client.py:1719`). **다만 시계/날짜와 달리 host
+  세그먼트엔 클릭존이 없다**(`_clock_zone`/`_date_zone` 만 있음 — `client.py` 우측
+  런 처리부). 응답성/속도 신호는 이미 측정한다: 네트워크 RTT 히스테리시스
+  (`_net_degraded`, ping/pong RTT — CL 56593). 구현 방향: ㉠ 우측 런 루프에서 host
+  세그먼트의 x 범위로 `self._host_zone=(x0,x1)` 를 만들고(시계/날짜 존과 동형),
+  `on_mouse_down` 히트테스트에 추가. ㉡ 클릭 시 `InfoScreen` 으로 서버 정보 팝업:
+  `SSH_CONNECTION`/`SSH_CLIENT` 파싱(원격/로컬 IP·포트), 호스트명, **연결상태/속도**
+  는 CL 56593 의 RTT(최근 표본·degraded 여부)를 노출 — 단 현재 RTT 표본은 클라가
+  히스테리시스 카운터로만 쓰고 **마지막 RTT 값을 보관하진 않으므로**, `_net_last_rtt`
+  류 필드를 더해 팝업에 "최근 RTT NNms / degraded" 로 보이게 한다. **열린 결정**:
+  표시 항목 범위(IP 노출 수위·민감정보), RTT 이력(최근 N개 그래프 vs 단일 값).
+  **연관**: 네트워크 응답성 외곽선(CL 56593)·REC/토큰 정보팝업(InfoScreen 공유).
+  **현재는 기록만 — 미구현.**
 - **[리팩토링 요청, 미구현] 코드를 LLM 친화적인 형태로 리팩토링** — 요청: 코드를
   **LLM 친화적인 형태로 리팩토링**. 동기(현 상태): 핵심 두 모듈이 **거대 단일 파일**
   이라 LLM 이 한 번에 통째로 읽어야 편집이 가능하고 컨텍스트·충돌 비용이 크다 —
