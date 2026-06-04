@@ -201,6 +201,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 9. 최근 변경(CL 56279~56464 + git, 신→구)
 
+- 56491 **캡처(REC) 출력 위치 이전 요구사항 기록**(§10, 사용자 요청·문서만) — 캡처
+  로그가 현재 /tmp(`state_base`)에 남아 휘발·미공유. 프로젝트 디렉터리(`captures/`)로
+  옮겨 Perforce 로 머신 간 공유하되 GitHub 엔 절대 미반영(.gitignore/add 제외) 하는
+  요구사항·구현 방향(capture_dir 교체, 롤오버, 깃헙 차단) 정리. 다음 작업 후보.
+
 - 56489 **패널 드래그 swap**(§10 마무리 묶음 #9b) — 서버 `swap_pane_ids` + 액션
   `swap_pane_to`(임의 두 패널 위치 교환). 클라 Shift+좌버튼 드래그로 패널 swap
   (`_pane_swap`/`_pane_swap_over`), 드래그 중 소스 dim·대상 강조. 회귀 테스트
@@ -829,6 +834,28 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   회귀 테스트 `test_single_pane_border_toggle_and_persist`. **서버+클라 → kill-server 재기동.**
 - 다중 줄 상태표시줄, unbind-key, 라이브 PTY display-popup.
 - `unbind`/추가 옵션 등 FEATURES 의 "미구현" 표기 항목.
+- **[요청·미구현] 캡처(REC) 출력을 /tmp → 프로젝트 디렉터리로 옮기고 Perforce 로 관리(단,
+  GitHub 엔 절대 미반영)** — ★ 사용자 요청. **현재**: 패널 출력 캡처(REC, raw PTY 무손실
+  로그)는 `Server.capture_dir = ipc.state_base(sock) + ".capture"` 에 쓰여, `state_base` 가
+  `$XDG_RUNTIME_DIR` 또는 `/tmp/pytmux-<uid>/default.capture/` 로 풀려 **/tmp 휘발 영역**에
+  남는다(`pane-<id>.log` + `sessions.log`, server.py `_capture_write`). 재부팅·tmp 청소로
+  사라지고 머신 간 공유가 안 된다. **요청**: 캡처 출력을 **프로젝트 디렉터리 하위**(예
+  `scripts/pytmux/captures/` 또는 `.captures/`)에 기록하도록 옮겨 **여러 기계에서 개발 시
+  Perforce 로 올려 공유·관리**한다. **단, GitHub 미러에는 절대 올라가지 않게** 한다.
+  구현 방향:
+  - **경로 분리**: 캡처 루트를 sock 기반 state_base 가 아니라 **프로젝트 고정 경로**로
+    바꾼다(예 모듈 디렉터리 기준 `captures/<sock-id>/`). `capture_dir`(server.py ~863)만
+    교체하면 `_capture_write`/`_capture_info`/REC 팝업 경로가 따라온다. 다중 세션·소켓
+    충돌을 피하려 sock 식별자를 하위 폴더로.
+  - **Perforce 관리**: 캡처 디렉터리를 depot 에 추가(`p4 add captures/...`). raw PTY 로그라
+    **바이너리/대용량**이 될 수 있으니 롤오버·최대 크기·보존 기간 정책과, 자동 `p4 add`/
+    submit 동선(또는 수동)을 정한다(자동 submit 은 디폴트 CL 오염 주의 — 공유 워크스페이스).
+  - **GitHub 차단(필수)**: 워크스페이스에 git 미러가 생기면 캡처 경로를 `.gitignore` 에
+    넣어(`captures/`) 절대 푸시되지 않게 한다. 현재 이 워크스페이스엔 git 저장소가 없지만
+    (`§8` 의 GitHub 미러 동선이 부활하면) **add 단계에서 캡처 경로를 제외**하는 게 본안.
+    민감 화면(토큰·키 입력 잔재)이 깃헙 공개로 새지 않게 하는 게 목적이라 **누락 시 사고**다.
+  - **주의**: capture 는 Claude 화면 문구 분석(busy/usage/프롬프트) 소스이기도 하다 — 경로만
+    옮기고 기록 포맷·소비자(`_scan_claude` 등)는 그대로 둔다.
 - **[조사완료·구현미착수] 네이티브 Windows 포팅** — `fcntl`/`termios`/`pty`/`os.fork`/
   `AF_UNIX` 등 POSIX 전용 의존 때문에 Windows 네이티브 Python 에서 import 단계부터 막힘.
   범위 조사는 [`docs/WINDOWS_PORT.md`](WINDOWS_PORT.md) 에 파일별로 정리됨(작업의 ~70%가
