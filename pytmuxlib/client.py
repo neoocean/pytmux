@@ -308,6 +308,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("detach-client", "detach (앱 종료, 셸 유지)", "설정/기타"),
         ("kill-server", "서버와 모든 탭/셸 종료", "설정/기타"),
         ("restart-server", "작업 보존 재시작 — 셸/PTY 를 살린 채 서버 코드만 교체(재접속)", "설정/기타"),
+        ("reconnect", "IPC 강제 재접속 — degraded(빨간 외곽선) 고착 회복(서버 보존)", "설정/기타"),
     ]
 
     # 명령 프롬프트 자동완성 후보. 자주 쓰는 옵션 템플릿을 앞에 두어, 명령을 다 치면
@@ -2044,6 +2045,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 작업 보존 재시작(re-exec): 서버가 {"t":"restarting"} 을 보내면 다음
             # 연결 끊김을 종료가 아닌 재접속으로 다룬다(docs/RESTART_SCENARIO.md ⓔ).
             self._reconnecting = False
+            # IPC 강제 재접속(§10 degraded 회복): 정체된 소켓을 버리고 새로 세울 때
+            # 옛 reader 태스크가 EOF 로 깨어나 self.exit() 하지 않게 세대 번호로 구분
+            # 한다. _start_reader 가 띄우는 각 reader 태스크는 자기 (reader, gen) 을
+            # 들고 돌고, EOF 시 gen != _conn_gen 이면 이미 새 연결로 교체된 것이므로
+            # 조용히 종료한다. _force_reconnecting = 재접속 진행 중(중복 트리거 방지).
+            self._conn_gen = 0
+            self._force_reconnecting = False
             self.layout = {"panes": [], "dividers": [], "active": None,
                            "cols": 80, "rows": 24}
             self.pane_content = {}   # id -> (rows, cursor)
@@ -2076,6 +2084,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.net_ping_interval = config.get("net_ping_interval", 0.5)  # 초
             self.net_bad_n = config.get("net_bad_n", 3)    # ON 전이 지속 표본
             self.net_good_n = config.get("net_good_n", 3)  # OFF 전이 지속 표본
+            # 자동 회복(§10): degraded 가 net_recover_n 회 연속(=표시 임계보다 훨씬
+            # 길게) 지속되면 IPC 를 강제 재접속한다(서버 PTY/세션은 보존). 기본 20
+            # 표본 ≈ 10초(net_ping_interval 0.5초 기준). off 면 수동 `reconnect` 만.
+            self.net_auto_reconnect = config.get("net_auto_reconnect", True)
+            self.net_recover_n = config.get("net_recover_n", 20)
+            self._net_last_rtt = None   # 마지막 측정 RTT(초) — 서버정보 팝업·진단용
             # ---- 설정(config) 적용 ----
             self.prefix_key = config.get("prefix", "ctrl+b")
             self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
@@ -2162,7 +2176,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.session_name:
                 hello["session"] = self.session_name
             await write_msg(self.writer, hello)
-            self.run_worker(self._reader_task(), exclusive=False)
+            self._start_reader()
 
         def on_unmount(self):
             # 마운트 시 끈 대체 스크롤 모드(1007)를 복원해 터미널을 원상태로 둔다.
@@ -2279,10 +2293,22 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     return True
             return False
 
-        async def _reader_task(self):
+        def _start_reader(self):
+            """현재 self.reader 에 묶인 새 reader 태스크를 띄운다. 연결 세대(_conn_gen)
+            를 올려 각 태스크가 자기 세대를 들고 돌게 한다 — 강제 재접속으로 소켓이
+            교체되면 옛 태스크는 EOF 시 세대 불일치를 보고 조용히 종료한다."""
+            self._conn_gen += 1
+            self.run_worker(self._reader_task(self.reader, self._conn_gen),
+                            exclusive=False)
+
+        async def _reader_task(self, reader, gen):
             while True:
-                msg = await read_msg(self.reader)
+                msg = await read_msg(reader)
                 if msg is None:
+                    # 이 reader 가 이미 새 연결로 교체됐으면(강제 재접속) 옛 태스크는
+                    # 조용히 종료 — self.exit() 로 앱을 닫지 않는다(§10 degraded 회복).
+                    if gen != self._conn_gen:
+                        return
                     # 작업 보존 재시작 중이면 종료 대신 재접속(ⓔ).
                     if self._reconnecting:
                         await self._reconnect()
@@ -2311,7 +2337,64 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 hello["session"] = self.session_name
             await write_msg(self.writer, hello)
             self.display_message("pytmux: 서버 재시작 완료 — 재접속됨")
-            self.run_worker(self._reader_task(), exclusive=False)
+            self._start_reader()
+
+        async def _force_reconnect(self, reason="manual"):
+            """정체/degraded 된 IPC 연결을 강제로 새로 세워 반응성을 회복한다(§10).
+
+            서버(데몬)의 셸·PTY·세션은 **건드리지 않고** 클라↔서버 소켓만 교체한다 —
+            ssh 전송이 정체돼 `read_msg` 가 무한 블록되고 degraded(빨간 외곽선)가
+            고착될 때, 옛 소켓을 강제로 닫아 블록을 깨우고 새 연결로 hello 를 보내면
+            서버가 `_send_full` 로 전체 화면/레이아웃을 재전송해 회복된다. 옛 reader
+            태스크는 세대 불일치로 조용히 종료한다(앱은 안 닫힘). Claude 등 실행 중인
+            앱은 PTY 안에서 계속 돌고 있었으므로 그대로 이어진다(tmux 모델).
+            reason: "manual"(reconnect 명령) | "auto"(degraded 워치독)."""
+            if self._force_reconnecting:
+                return
+            self._force_reconnecting = True
+            try:
+                self.display_message(
+                    "pytmux: 재접속 중…" + (" (자동 회복)" if reason == "auto" else ""))
+                # 옛 소켓을 강제로 닫아 블록된 read_msg 를 깨운다(옛 태스크는 세대
+                # 불일치로 종료). writer/reader 가 같은 전송을 공유하므로 writer 만 닫음.
+                old_w = self.writer
+                self.writer = None
+                if old_w is not None:
+                    try:
+                        old_w.close()
+                    except Exception:
+                        pass
+                # 새 연결(서버는 살아 있으니 보통 즉시 — 잠깐 재시도).
+                for _ in range(150):   # ~3초
+                    try:
+                        self.reader, self.writer = await ipc.open_connection(
+                            self.sock_path)
+                        break
+                    except (ConnectionError, FileNotFoundError, OSError):
+                        await asyncio.sleep(0.02)
+                else:
+                    self.display_message("pytmux: 재접속 실패 — 네트워크 확인")
+                    return
+                cols, rows = self._content_size()
+                hello = {"t": "hello", "cols": cols, "rows": rows}
+                if self.session_name:
+                    hello["session"] = self.session_name
+                await write_msg(self.writer, hello)
+                # 네트워크 상태 리셋: 새 채널이니 degraded 해제하고 표본 카운터 비움.
+                self._net_ping_ts = None
+                self._net_bad = self._net_good = 0
+                if self._net_degraded:
+                    self._net_degraded = False
+                    self._composite()
+                self.display_message("pytmux: 재접속됨 — 화면 재동기")
+                self._start_reader()   # 새 reader 태스크(새 세대) — 서버 _send_full 수신
+            finally:
+                self._force_reconnecting = False
+
+        def reconnect_now(self, reason="manual"):
+            """강제 재접속을 워커로 시작한다(명령/워치독에서 호출). 이미 진행 중이면
+            _force_reconnect 가 즉시 반환한다."""
+            self.run_worker(self._force_reconnect(reason), exclusive=False)
 
         def _fire_hook(self, event):
             cmd = self.hooks.get(event)
@@ -2545,7 +2628,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def _net_sample(self, rtt):
             """RTT 표본 하나로 히스테리시스를 갱신한다. 임계 초과가 net_bad_n 회
             연속이면 degraded ON, 임계 이하가 net_good_n 회 연속이면 OFF(깜빡임 방지).
-            상태가 바뀌면 외곽선 색을 다시 그린다."""
+            상태가 바뀌면 외곽선 색을 다시 그린다. 또 degraded 가 net_recover_n 회
+            연속(표시 임계보다 훨씬 길게) 지속되면 IPC 강제 재접속으로 회복을 시도한다
+            (§10 — 서버 PTY/세션 보존)."""
+            self._net_last_rtt = rtt
             if rtt > self.net_rtt_threshold:
                 self._net_bad += 1
                 self._net_good = 0
@@ -2560,6 +2646,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if new != self._net_degraded:
                 self._net_degraded = new
                 self._composite()
+            # 자동 회복(§10): 느림이 충분히 오래 지속되면 강제 재접속(중복 방지는
+            # _force_reconnect 가). 재시도 간격을 두려고 카운터를 비워 다음 회복까지
+            # 다시 net_recover_n 표본을 모은다.
+            if (self.net_auto_reconnect and not self._force_reconnecting
+                    and self._net_bad >= self.net_recover_n):
+                self._net_bad = 0
+                self.reconnect_now("auto")
 
         @staticmethod
         def _put_cell(cells, x, y, ch, st, W, H):
@@ -3591,6 +3684,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 작업 보존 재시작: 셸/PTY 를 살린 채 서버 코드만 교체(re-exec).
                 # 화면이 잠깐 끊겼다 재접속된다(docs/RESTART_SCENARIO.md).
                 self.send_cmd("restart_server")
+            elif c in ("reconnect", "resync"):
+                # IPC 강제 재접속(§10): degraded(빨간 외곽선) 고착 시 정체된 소켓을
+                # 버리고 새로 세워 회복한다. 서버 PTY/세션·실행 중 Claude 는 보존.
+                self.reconnect_now("manual")
             elif c in ("paste-clipboard", "pasteb-clip"):
                 self.paste_os_clipboard()  # bracketed 패스스루
             elif c in ("send-keys", "send"):

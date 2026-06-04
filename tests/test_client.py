@@ -1642,6 +1642,52 @@ async def test_net_responsiveness_hysteresis_and_border():
     await _with_app(body)
 
 
+async def test_force_reconnect_recovers_without_exit():
+    """§10 degraded 회복: 강제 재접속(_force_reconnect)이 ① IPC 소켓을 교체(연결
+    세대 _conn_gen 증가)하고 ② degraded 를 해제하며 ③ 앱을 종료하지 않고 ④ 서버
+    _send_full 로 레이아웃을 재수신한다. 옛 reader 태스크는 세대 불일치로 조용히
+    종료(앱 안 닫힘) — 서버 PTY/세션은 보존."""
+    async def body(app, pilot, srv):
+        gen0 = app._conn_gen
+        old_reader = app.reader
+        app._net_degraded = True
+        app._net_bad = 99
+        await app._force_reconnect("manual")
+        await pilot.pause(0.2)
+        assert app._conn_gen > gen0, "새 연결 세대"
+        assert app.reader is not old_reader, "소켓 교체됨"
+        assert app._net_degraded is False, "degraded 해제"
+        assert app._net_bad == 0 and not app._force_reconnecting
+        assert app.layout.get("panes"), "재동기된 레이아웃 수신"
+        # 서버는 옛 연결을 정리하고 새 연결 1개만 들고 있어야(누수 없음)
+        await pilot.pause(0.2)
+        assert len(srv.clients) == 1, f"클라 누수: {len(srv.clients)}"
+        # 앱이 살아 있어 명령이 계속 동작(입력 왕복)
+        app._net_sample(0.01)
+        assert app._net_degraded is False
+    await _with_app(body)
+
+
+async def test_net_watchdog_triggers_auto_reconnect():
+    """§10: degraded 가 net_recover_n 회 연속 지속되면 워치독이 강제 재접속을 트리거
+    한다(net_auto_reconnect ON). reconnect_now 호출 여부로 검증."""
+    async def body(app, pilot, srv):
+        app.net_rtt_threshold = 0.4
+        app.net_recover_n = 5
+        app.net_auto_reconnect = True
+        app._net_bad = app._net_good = 0
+        app._force_reconnecting = False
+        fired = []
+        app.reconnect_now = lambda reason="manual": fired.append(reason)
+        for _ in range(4):
+            app._net_sample(1.0)
+        assert not fired, "임계 미만에선 트리거 안 함"
+        app._net_sample(1.0)   # 5회째
+        assert fired == ["auto"], fired
+        assert app._net_bad == 0, "재시도 간격용 카운터 리셋"
+    await _with_app(body)
+
+
 async def test_status_claude_usage():
     async def body(app, pilot, srv):
         app.status.claude_usage = "ctx 42%"

@@ -211,6 +211,19 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56601 **degraded(빨간 외곽선) 고착 회복 — IPC 강제 재접속(수동 `reconnect` +
+  워치독)**(§10) — 네트워크 저하로 외곽선이 빨강(CL 56593)으로 고착되고 ssh→pytmux
+  가 멈출 때(클라↔서버 전송 정체로 `read_msg` 무한 블록), **실행 중 Claude 를 종료
+  하지 않고** 반응성을 회복한다. **서버 PTY/세션은 보존하고 클라↔서버 소켓만 교체**
+  → 서버 `_send_full` 로 전체 재동기(tmux 모델). `_force_reconnect` 가 정체된 소켓을
+  강제로 닫아 블록을 깨우고 새 연결로 hello 재전송, 네트 상태를 리셋한다. **연결
+  세대**(`_conn_gen`)+`_start_reader` 로 각 reader 태스크가 자기 (reader, gen) 을
+  들고 돌아, 소켓 교체 시 옛 태스크는 EOF 에서 세대 불일치를 보고 `self.exit()` 없이
+  조용히 종료(앱 안 닫힘). 트리거는 ① 수동 명령 `reconnect`/`resync`, ② 워치독
+  (degraded 가 `net_recover_n` 기본 20표본≈10초 연속 지속 시 자동, `net_auto_reconnect`
+  on). `_net_last_rtt` 보관(진단). 회귀 2종(소켓 교체·degraded 해제·앱 미종료·재동기
+  ·누수 없음·워치독), 186 passed. 클라이언트 전용(attach 재실행). 파일:
+  `pytmuxlib/client.py`, `tests/test_client.py`, `docs/HANDOFF.md`.
 - 56599 **server attach 안정성 — 초기 _send_full/scan_claude 예외가 클라를 브릭하지
   않게 가드 + 에러 로그**(§10 사용자 보고) — 증상: pytmux 실행 시 **화면이 일부
   나타났다 바로 종료**되고, 이후 모든 attach 가 같은 상태로 **반복 실패(브릭)**.
@@ -659,7 +672,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   비동기 흐름을 유지할지. **연관**: 아래 "상태줄 `ssh:` 호스트 클릭" 항목(이 통합이
   대체)·REC/토큰 InfoScreen·네트워크 응답성(CL 56593)·`CommandListScreen` 탭 UI.
   **현재는 기록만 — 미구현(지금 구현하지 않음).**
-- **[버그·기능 요청, 미구현] 네트워크 degraded(빨간 외곽선) 고착에서 Claude 종료
+- ~~**[버그·기능 요청] 네트워크 degraded(빨간 외곽선) 고착에서 Claude 종료 없이
+  패널 반응성 회복**~~ → **CL 56601 에서 해결**(수동 `reconnect`/`resync` 명령 +
+  degraded 워치독 자동 재접속, 서버 PTY/세션 보존·`_send_full` 재동기, 연결 세대로
+  옛 reader 조용히 종료). 아래는 원 분석 기록.
+- **[원래 보고·분석] 네트워크 degraded(빨간 외곽선) 고착에서 Claude 종료
   없이 패널 반응성 회복** — 보고: 한 번 네트워크가 나빠져 패널 아웃라인이 빨간색
   (CL 56593 응답성 degraded)으로 바뀐 뒤 **영영 원복되지 않는다**. **Claude
   데스크탑 앱으로 보면 여전히 동작 중**이지만 **ssh 를 통해 pytmux 로 보면 반응이
