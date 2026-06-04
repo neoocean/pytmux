@@ -4,6 +4,7 @@ import os
 
 import harness
 from harness import pane_text, server_only, teardown
+from pytmuxlib import proc
 
 
 async def test_feed_and_scrollback():
@@ -187,12 +188,9 @@ async def test_respawn_pane():
         await asyncio.sleep(0.2)
         srv.respawn_pane(sess)
         assert p.child_pid != old_pid and p.id == old_id
-        # 옛 프로세스 종료
-        try:
-            os.kill(old_pid, 0)
-            alive = True
-        except OSError:
-            alive = False
-        assert not alive, "respawn 후 옛 셸 종료"
+        # 옛 프로세스 종료 확인. os.kill(pid,0) 은 Windows 에서 존재확인이 아니라
+        # TerminateProcess 라 의미가 달라 쓸 수 없다 → 크로스플랫폼 proc.is_alive.
+        await asyncio.sleep(0.3)  # kill/reap 반영 대기(특히 Windows taskkill 비동기)
+        assert not proc.is_alive(old_pid), "respawn 후 옛 셸 종료"
     finally:
         await teardown(srv, task, sock)

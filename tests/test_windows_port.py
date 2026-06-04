@@ -124,8 +124,11 @@ async def test_fg_command_guarded_on_windows():
     from pytmuxlib import pty_backend
     from pytmuxlib.server import Server
 
+    # create=True: 실제 Windows 에는 os.tcgetpgrp 가 아예 없어 패치 대상이 없으므로
+    # (mock 이 원본 속성을 못 찾아 AttributeError) 강제로 만들어 패치한다. macOS 에선
+    # 원래 존재하므로 무해.
     with mock.patch.object(pty_backend, "IS_WINDOWS", True), \
-            mock.patch("os.tcgetpgrp", side_effect=AttributeError):
+            mock.patch("os.tcgetpgrp", side_effect=AttributeError, create=True):
         # self 를 쓰지 않는 메서드라 더미 인스턴스 없이 호출 가능.
         assert Server._fg_command(None, -1) is None
 

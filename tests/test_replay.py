@@ -4,6 +4,7 @@
 텍스트 프레임이 기대값과 일치하는지 확인한다. 렌더 파이프라인(커서 이동·덮어쓰기·
 와이드 문자·열 정렬) 회귀를 화면 없이 못박는다.
 """
+import os
 import tempfile
 
 import harness  # noqa: F401 (경로 설정)
@@ -53,6 +54,8 @@ async def test_alt_screen_in_replay():
 
 async def test_record_then_replay_roundtrip():
     # record 로 실제 프로그램 출력을 캡처하고 replay 로 재생 → 일치
+    if os.name == "nt":
+        return  # run_record 는 PTY(pty.fork) 의존이라 Windows 미지원(rc=2 가드, §7-b4)
     path = tempfile.mktemp(suffix=".raw")
     rc = run_record(path, 40, 6, ["sh", "-c", "printf 'AB\\nCD\\n'"], echo=False)
     assert rc == 0

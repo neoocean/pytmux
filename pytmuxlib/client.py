@@ -85,6 +85,15 @@ def _normalize_key(k: str) -> str:
     return _JAMO.get(k, k)
 
 
+# mouse-debug 진단에서 기록할 '내비게이션 키' 안전 목록. 원격 휠이 alt-scroll
+# (DECSET 1007) 변환으로 ↑/↓ 화살표로 새는지(=휠 이벤트는 안 오고 화살표만 옴)를
+# 가려내기 위함. **여기 없는 키(특히 문자)는 절대 로그에 남기지 않는다** — 패널에
+# 친 텍스트/비밀번호가 진단 로그로 유출되지 않게 하기 위한 화이트리스트.
+_KEY_DIAG = frozenset({
+    "up", "down", "left", "right", "pageup", "pagedown", "home", "end",
+})
+
+
 def build_client_app(sock_path: str, config: dict | None = None,
                      session_name: str | None = None):
     config = config or {}
@@ -259,6 +268,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("token-account", "활성 패널 Claude 계정 수동 지정 (token-account <이름>, 빈값=자동)", "설정/기타"),
         ("prompt-clear", "프롬프트 단위 클리어 모드 토글(완료마다 문서화+/clear) [on|off]", "모니터/Claude"),
         ("prompt-clear-message", "프롬프트 단위 클리어의 문서화 지시문 변경", "모니터/Claude"),
+        ("prompt-clear-queue", "프롬프트 단위 클리어 큐에 명령 쌓기(빈값=목록, -c=비움)", "모니터/Claude"),
         ("run-shell", "셸 명령 실행", "설정/기타"),
         ("if-shell", "조건부 셸 실행", "설정/기타"),
         ("bind-key", "prefix 후 키에 명령 바인딩 (bind-key <key> <command>)", "설정/기타"),
@@ -284,6 +294,49 @@ def build_client_app(sock_path: str, config: dict | None = None,
         "monitor-activity on", "monitor-bell on", "automatic-rename on",
         "detach-client", "kill-server",
     ] + [c[0] for c in COMMANDS]
+
+    # 커맨드 팔레트(#3)에서 명령을 고르면 옵션(선택지)을 모달에서 정한 뒤 프롬프트를
+    # 거치지 않고 바로 실행한다. 각 항목은 {"key","label","choices":[(보임,값),...]}
+    # — 선택지(choice)뿐이라 모달이 키보드만으로 동작한다(자유 텍스트 인자가 필요한
+    # 명령은 schema 없이 기존처럼 프롬프트에 채운다). 값이 빈 문자열이면 토큰 생략.
+    _ONOFF = [("토글", ""), ("켜기", "on"), ("끄기", "off")]
+    COMMAND_OPTIONS = {
+        "split-window": [{"key": "orient", "label": "방향", "choices": [
+            ("가로 분할 ─ (상/하)", "-h"), ("세로 분할 │ (좌/우)", "-v")]}],
+        "select-pane": [{"key": "dir", "label": "이동", "choices": [
+            ("◀ 왼쪽", "-L"), ("▶ 오른쪽", "-R"),
+            ("▲ 위", "-U"), ("▼ 아래", "-D")]}],
+        "resize-pane": [{"key": "zoom", "label": "동작", "choices": [
+            ("줌 토글 ⛶", "-Z")]}],
+        "select-layout": [{"key": "preset", "label": "프리셋", "choices": [
+            ("바둑판 tiled", "tiled"),
+            ("가로 균등 even-horizontal", "even-horizontal"),
+            ("세로 균등 even-vertical", "even-vertical"),
+            ("메인 세로 main-vertical", "main-vertical"),
+            ("메인 가로 main-horizontal", "main-horizontal")]}],
+        "capture-pane": [{"key": "scope", "label": "범위", "choices": [
+            ("보이는 영역", ""), ("스크롤백 전체 -S", "-S")]}],
+        "synchronize-panes": [{"key": "state", "label": "동기화", "choices": _ONOFF}],
+        "monitor-activity": [{"key": "state", "label": "활동", "choices": _ONOFF}],
+        "monitor-bell": [{"key": "state", "label": "벨", "choices": _ONOFF}],
+        "auto-resume": [{"key": "state", "label": "자동재개", "choices": _ONOFF}],
+        "capture-output": [{"key": "state", "label": "캡처", "choices": _ONOFF}],
+        "automatic-rename": [{"key": "state", "label": "자동이름", "choices": _ONOFF}],
+        "prompt-clear": [{"key": "state", "label": "클리어모드", "choices": _ONOFF}],
+        "claude-header": [{"key": "state", "label": "헤더", "choices": _ONOFF}],
+        "single-border": [{"key": "state", "label": "단일테두리", "choices": _ONOFF}],
+    }
+    # 인자 없이 바로 실행해도 되는(파괴적이지 않은) 명령 — 선택 즉시 실행한다(#3).
+    # kill-*/detach/respawn 등 파괴적 명령은 의도 확인을 위해 기존처럼 프롬프트에 채운다.
+    COMMAND_NOARG = {
+        "next-tab", "previous-tab", "last-tab",
+        "move-tab-left", "move-tab-right", "move-tab-first", "move-tab-last",
+        "next-layout", "rotate-window", "new-tab", "choose-tree",
+        "choose-buffer", "paste-clipboard", "save-layout", "restore-layout",
+        "show-options", "show-hooks", "source-file", "clock-mode",
+        "calendar-mode", "prompt-history", "token-usage", "token-log",
+        "list-keys",
+    }
 
     class CommandListScreen(ModalScreen):
         """명령 목록 선택기(? 입력 시). 명령이 많아 카테고리별 탭으로 나눠 한 번에 한
@@ -372,6 +425,81 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 step = 1 if event.key == "right" else -1
                 self._ci = (self._ci + step) % len(self._cats)
                 await self._render_cat()
+
+    class CommandOptionsScreen(ModalScreen):
+        """커맨드 팔레트에서 고른 명령의 옵션(선택지)을 모달 안에서 정한 뒤 프롬프트를
+        거치지 않고 바로 실행한다(#3). 옵션 행을 ListView 로 두어(MenuScreen 식 포커스)
+        ↑↓ 로 옵션 이동, ←→ 로 값 변경, Enter 실행, Esc 취소 — 키보드만으로 제어된다.
+        완성된 명령 줄을 dismiss 로 돌려주면 호출부가 _run_command 로 바로 실행한다."""
+        CSS = """
+        CommandOptionsScreen { align: center middle; }
+        #optmenu { width: 54; height: auto; max-height: 80%;
+                   border: round $accent; background: $panel; }
+        """
+
+        def __init__(self, name, desc, opts):
+            super().__init__()
+            self.cmd_name = name
+            self.cmd_desc = desc
+            self.opts = opts
+            self.sel = [0 for _ in opts]   # 각 옵션의 현재 선택 index
+
+        def compose(self) -> ComposeResult:
+            # MenuScreen 과 동일한 구조(ListView 직접 + 비지 않은 Label)로 둔다 —
+            # Vertical 래퍼나 빈 Label 을 섞으면 합성 단계에서 렌더 오류가 났다.
+            self._labs = []
+            items = []
+            for i in range(len(self.opts)):
+                lab = Label(self._row_text(i))
+                self._labs.append(lab)
+                items.append(ListItem(lab, id=f"o_{i}"))
+            yield ListView(*items, id="optmenu")
+
+        def on_mount(self):
+            lv = self.query_one(ListView)
+            if self.opts:
+                lv.index = 0
+            lv.focus()
+            lv.border_title = f"{self.cmd_name} 옵션 · ←→ 값 · Enter 실행 · Esc"
+            self._update_sub()
+
+        def _update_sub(self):
+            self.query_one(ListView).border_subtitle = ": " + self._build_line()
+
+        def _build_line(self):
+            toks = [self.cmd_name]
+            for o, si in zip(self.opts, self.sel):
+                val = o["choices"][si][1]
+                if val:
+                    toks.append(val)
+            return " ".join(toks)
+
+        def _row_text(self, i):
+            o, si = self.opts[i], self.sel[i]
+            cur = o["choices"][si][0]
+            arrows = "◀ ▶" if len(o["choices"]) > 1 else "    "
+            return f"{o['label']}:  {arrows}  {cur}"
+
+        def on_list_view_selected(self, event):
+            # Enter/클릭 으로 행 선택 시 현재 값으로 바로 실행(on_key 와 이중 안전).
+            self.dismiss(self._build_line())
+
+        def on_key(self, event: events.Key):
+            k = event.key
+            if k == "escape":
+                event.stop()
+                self.dismiss(None)
+            elif k == "enter":
+                event.stop()
+                self.dismiss(self._build_line())
+            elif k in ("left", "right") and self.opts:
+                event.stop()
+                i = self.query_one(ListView).index or 0
+                o = self.opts[i]
+                step = 1 if k == "right" else -1
+                self.sel[i] = (self.sel[i] + step) % len(o["choices"])
+                self._labs[i].update(self._row_text(i))
+                self._update_sub()
 
     class MenuScreen(ModalScreen):
         CSS = """
@@ -498,10 +626,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
         그 외 키를 누르면 닫힌다. 긴 줄(예: 프롬프트 히스토리)은 여러 줄로 줄바꿈."""
         # 항목 Label 을 컨테이너 폭(1fr)에 맞춰 줄바꿈(text-wrap 기본 wrap) → 긴
         # 프롬프트가 잘리지 않고 여러 줄로 펼쳐진다. ListItem 은 height:auto 로 늘어남.
+        # 폭은 좁은 화면(모바일)에 맞춰 반응형: 96% 로 채우되 넓은 화면에선 66 칸으로
+        # 캡. 제목 줄은 [제목 … [x]] 헤더로 두어 좁아도 닫기 [x] 가 (고정폭이라) 항상
+        # 오른쪽에 보인다(예전엔 고정폭 박스가 화면을 넘쳐 닫기 수단이 안 보였다).
         CSS = """
         InfoScreen { align: center middle; }
-        #info { width: 64; height: auto; max-height: 80%;
-                border: round $accent; background: $panel; padding: 0 1; }
+        #infobox { width: 96%; max-width: 66; height: auto;
+                   border: round $accent; background: $panel; padding: 0 1; }
+        #infohead { width: 100%; height: 1; }
+        #infotitle { width: 1fr; height: 1; color: $accent; text-style: bold; }
+        #infoclose { width: 5; height: 1; content-align: center middle;
+                     background: $error; color: $text; text-style: bold; }
+        #info { width: 100%; height: auto; max-height: 75%; }
         #info ListItem { height: auto; }
         #info ListItem Label { width: 1fr; }
         """
@@ -519,14 +655,26 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def compose(self) -> ComposeResult:
             # markup=False: 임의 텍스트(프롬프트 등)의 대괄호가 마크업으로 사라지지 않게.
-            box = ListView(*[ListItem(Label(ln, markup=False))
-                             for ln in self._lines] or
-                           [ListItem(Label("(없음)"))], id="info")
-            box.border_title = self._title
-            yield box
+            with Vertical(id="infobox"):
+                with Horizontal(id="infohead"):
+                    yield Label(self._title, id="infotitle", markup=False)
+                    yield Label("[x]", id="infoclose")     # 항상 보이는 닫기 버튼
+                yield ListView(*[ListItem(Label(ln, markup=False))
+                                 for ln in self._lines] or
+                               [ListItem(Label("(없음)"))], id="info")
 
         def on_mount(self):
             self.query_one(ListView).focus()
+
+        def on_click(self, event: events.Click):
+            # 닫기 [x] 터치/클릭 → 닫는다(좁은 화면에서도 항상 보이는 버튼).
+            w = getattr(event, "widget", None)
+            while w is not None:
+                if getattr(w, "id", None) == "infoclose":
+                    event.stop()
+                    self.dismiss(None)
+                    return
+                w = w.parent
 
         def on_key(self, event: events.Key):
             event.stop()
@@ -559,8 +707,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
         [a] 계정 필터 순환, 방향키 스크롤, 그 외/Esc 닫기(라운드트립 없이 전환)."""
         CSS = """
         TokenLogScreen { align: center middle; }
-        #tklog { width: 84; height: auto; max-height: 85%;
-                 border: round $accent; background: $panel; padding: 0 1; }
+        #tklogbox { width: 96%; max-width: 86; height: auto;
+                    border: round $accent; background: $panel; padding: 0 1; }
+        #tkloghead { width: 100%; height: 1; }
+        #tklogtitle { width: 1fr; height: 1; color: $accent; text-style: bold; }
+        #tklogclose { width: 5; height: 1; content-align: center middle;
+                      background: $error; color: $text; text-style: bold; }
+        #tklog { width: 100%; height: auto; max-height: 78%; }
         #tklog ListItem { height: auto; }
         #tklog ListItem Label { width: 1fr; }
         """
@@ -585,8 +738,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             return self._accounts[self._ai]
 
         def compose(self) -> ComposeResult:
-            box = ListView(id="tklog")
-            yield box
+            with Vertical(id="tklogbox"):
+                with Horizontal(id="tkloghead"):
+                    yield Label("토큰 사용량 로그", id="tklogtitle")
+                    yield Label("[x]", id="tklogclose")    # 항상 보이는 닫기 버튼
+                yield ListView(id="tklog")
 
         async def on_mount(self):
             await self._refresh()
@@ -602,7 +758,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
                                              self._account):
                 items.append(ListItem(Label(ln, markup=False)))
             await lv.extend(items)
-            lv.border_title = f"토큰 사용량 로그 (단위:{self._bucket})"
+            self.query_one("#tklogtitle", Label).update(
+                f"토큰 사용량 로그 (단위:{self._bucket})")
+
+        def on_click(self, event: events.Click):
+            # 닫기 [x] 터치/클릭 → 닫는다(좁은 화면에서도 항상 보이는 버튼).
+            w = getattr(event, "widget", None)
+            while w is not None:
+                if getattr(w, "id", None) == "tklogclose":
+                    event.stop()
+                    self.dismiss(None)
+                    return
+                w = w.parent
 
         async def on_key(self, event: events.Key):
             event.stop()
@@ -1093,18 +1260,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.app.open_menu(p["id"] if p else None)
                 event.stop()
                 return
-            # clock-mode 닫기 버튼([x]) 클릭
-            for pid, (zx0, zx1, zy) in self.app._clock_close_zones.items():
-                if zy == event.y and zx0 <= event.x < zx1:
-                    self.app.toggle_clock(pid)
-                    event.stop()
-                    return
-            # 달력 오버레이 닫기 버튼([x]) 클릭
-            for pid, (zx0, zx1, zy) in self.app._calendar_close_zones.items():
-                if zy == event.y and zx0 <= event.x < zx1:
-                    self.app.toggle_calendar(pid)
-                    event.stop()
-                    return
+            # 시계/달력 오버레이가 켜진 패널을 클릭하면 닫는다([x] 버튼 폐지).
+            op = self._pane_at(event.x, event.y)
+            if op and self.app._close_overlay(op["id"]):
+                event.stop()
+                return
             # Claude 프롬프트 헤더 클릭 → 프롬프트 히스토리 팝업(#7)
             for pid, (zx0, zx1, zy) in self.app._claude_header_zones.items():
                 if zy == event.y and zx0 <= event.x < zx1:
@@ -1518,6 +1678,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.pane_title = ""
             self.autoresume = False
             self.prompt_clear = False  # 프롬프트 단위 클리어 모드(활성 패널, #9)
+            self.prompt_clear_queue = []  # 프롬프트 단위 클리어 큐(활성 패널, #4)
             self.capture = True      # 패널 출력 캡처 중(서버 옵션, 기본 ON)
             self.prefix_off = False  # 중첩: outer prefix 해제 표시
             self.cmd_mode = False  # ESC 명령 모드 표시
@@ -1633,6 +1794,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.pane_title = msg.get("pane_title", "")
             self.autoresume = msg.get("autoresume", False)
             self.prompt_clear = msg.get("prompt_clear", False)
+            self.prompt_clear_queue = msg.get("prompt_clear_queue", [])
             self.capture = msg.get("capture", True)
             self.claude_usage = msg.get("claude_usage")
             self.claude_tokens = msg.get("claude_tokens", 0)
@@ -1800,9 +1962,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._want_layouts = None  # 레이아웃 목록 응답 대기(모드: "new"/"over")
             self._want_token_log = False  # 토큰 로그 집계 팝업 응답 대기(#7)
             self.clock_panes = set()   # clock-mode 가 켜진 패널 id 집합
-            self._clock_close_zones = {}  # pane_id -> (x0, x1, y) 닫기 버튼 영역
             self.calendar_panes = set()   # 달력 오버레이가 켜진 패널 id 집합
-            self._calendar_close_zones = {}  # pane_id -> (x0, x1, y) 닫기 버튼
             self._menu_pane = None  # 컨텍스트 메뉴가 열린 대상 패널 id(배경 강조용)
             self._menu_open = False  # 컨텍스트 메뉴 표시 중(배경 dim 합성용)
             # Claude Code: 패널별 상태/마지막 프롬프트
@@ -1820,9 +1980,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.bindings = config.get("bindings", {})
             self.mouse_enabled = config.get("mouse", True)
             # 마우스 이벤트 진단 로그(원격 SSH 휠 스크롤 미동작 등 환경 의존 문제용).
-            # `set mouse-debug on` 으로 켜면 클라이언트가 받은 마우스/휠 이벤트를
-            # <sock>.mouse.log 로 남긴다 → 원격에서 휠 이벤트가 Textual 까지 실제로
-            # 도달하는지(도달 안 하면 상위 터미널/SSH 문제)를 切り分け 할 수 있다.
+            # `set mouse-debug on` 으로 켜면 클라이언트가 받은 마우스/휠 이벤트와
+            # **내비게이션 키**(↑/↓/페이지/홈/엔드 — `_KEY_DIAG` 화이트리스트)를
+            # <sock>.mouse.log 로 남긴다 → 휠이 (a)Textual 까지 도달하는지, 아니면
+            # (b)상위 터미널이 1007 변환으로 화살표 키로 바꿔 보내는지를 切り分け 한다
+            # (문자/단축키는 입력 유출 방지로 기록하지 않음).
             self.mouse_debug = config.get("mouse_debug", False)
             self._mouse_log_path = (ipc.state_base(sock_path) if sock_path
                                     else "pytmux") + ".mouse.log"
@@ -2149,12 +2311,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
             focus_st = Style(color="black", bgcolor=theme_color(self, "accent"),
                              bold=True)
             for p in self.layout.get("panes", []):
+                if not p.get("claude_hdr"):   # 서버가 헤더 행을 예약한 패널만(#1)
+                    continue
                 if p["id"] in self._claude_hidden_panes:   # 팝업서 숨긴 헤더(#6 ②)
                     continue
                 info = self.pane_claude.get(p["id"])
                 if not info or not info.get("claude") or not info.get("prompt"):
                     continue
-                cx, cy, cw = p["x"], p["y"], p["w"]
+                # 서버가 내용 영역을 한 행 내렸으므로(cy=p["y"]) 헤더는 그 위 한 줄
+                # (p["y"]-1, 예약된 행)에 그린다(#1).
+                cx, cy, cw = p["x"], p["y"] - 1, p["w"]
                 if cw < 6 or not (0 <= cy < H):
                     continue
                 hdr_st = focus_st if p["id"] == self._hdr_focus else base_st
@@ -2197,6 +2363,21 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.clock_panes.discard(pane_id)     # 한 패널엔 한 오버레이만
             self._composite()
 
+        def _close_overlay(self, pane_id):
+            """해당 패널의 시계/달력 오버레이를 닫는다. 닫았으면 True(없으면 False).
+            오버레이 [x] 버튼을 폐지하고 패널 클릭/Shift+ESC 로 닫기 위한 공용 경로."""
+            if pane_id is not None and (pane_id in self.clock_panes
+                                        or pane_id in self.calendar_panes):
+                self.clock_panes.discard(pane_id)
+                self.calendar_panes.discard(pane_id)
+                self._composite()
+                return True
+            return False
+
+        def _close_active_overlay(self):
+            """활성 패널의 시계/달력 오버레이를 닫는다(Shift+ESC). 닫았으면 True."""
+            return self._close_overlay(self.layout.get("active"))
+
         def _clock_tick(self):
             # 1초마다: 시계/달력 오버레이가 있으면 갱신(뒤 화면도 함께 다시 합성).
             # 달력은 자정을 넘어가면 '오늘' 강조가 다음 날로 이동한다.
@@ -2224,14 +2405,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def _draw_clock_overlay(self, cells, W, H, active):
             """clock-mode 패널을 큰 시계로 덮는다. 뒤의 패널 출력은 흐리게(dim)
-            계속 보이고, 우상단 [x] 로 닫을 수 있다."""
-            self._clock_close_zones = {}
+            계속 보인다. 닫기는 패널 클릭 또는 (활성 패널일 때) Shift+ESC — 좁은
+            화면에서 잘 안 보이던 우상단 [x] 버튼은 폐지했다."""
             if not self.clock_panes:
                 return
             dim = Style(dim=True)
             digit_st = Style(color=theme_color(self, "success"), bold=True)
-            close_st = Style(color="white", bgcolor=theme_color(self, "error"),
-                             bold=True)
             now = datetime.now().strftime("%H:%M:%S")
             glyphs = [_CLOCK_FONT.get(c, ["   "] * 5) for c in now]
             cw = sum(len(g[0]) for g in glyphs) + (len(glyphs) - 1)
@@ -2263,26 +2442,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     oy = py + ph // 2
                     for j, c in enumerate(now):
                         self._put_cell(cells, ox + j, oy, c, digit_st, W, H)
-                # 3) 우상단 닫기 버튼 [x]
-                bx0 = px + pw - 3
-                if bx0 >= px and 0 <= py < H:
-                    for j, c in enumerate("[x]"):
-                        self._put_cell(cells, bx0 + j, py, c, close_st, W, H)
-                    self._clock_close_zones[p["id"]] = (bx0, bx0 + 3, py)
 
         def _draw_calendar_overlay(self, cells, W, H, active):
             """달력 모드 패널을 이번 달 달력으로 덮는다(clock-mode 미러). 뒤의
-            패널 출력은 흐리게(dim) 계속 보이고, 오늘 날짜는 강조, 우상단 [x] 로
-            닫는다(상태줄 날짜 재클릭/명령으로도 닫힘)."""
-            self._calendar_close_zones = {}
+            패널 출력은 흐리게(dim) 계속 보이고, 오늘 날짜는 강조. 닫기는 패널
+            클릭·(활성 패널일 때) Shift+ESC·상태줄 날짜 재클릭/명령 — 우상단 [x]
+            버튼은 폐지했다."""
             if not self.calendar_panes:
                 return
             dim = Style(dim=True)
             day_st = Style(color=theme_color(self, "foreground"))
             title_st = Style(color=theme_color(self, "success"), bold=True)
             today_st = Style(color="black", bgcolor=theme_color(self, "success"),
-                             bold=True)
-            close_st = Style(color="white", bgcolor=theme_color(self, "error"),
                              bold=True)
             now = datetime.now()
             yr, mo, today = now.year, now.month, now.day
@@ -2324,12 +2495,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     oy = py + ph // 2
                     for j, c in enumerate(s):
                         self._put_cell(cells, ox + j, oy, c, title_st, W, H)
-                # 3) 우상단 닫기 버튼 [x]
-                bx0 = px + pw - 3
-                if bx0 >= px and 0 <= py < H:
-                    for j, c in enumerate("[x]"):
-                        self._put_cell(cells, bx0 + j, py, c, close_st, W, H)
-                    self._calendar_close_zones[p["id"]] = (bx0, bx0 + 3, py)
 
         def _composite(self):
             W = self.layout.get("cols", self.size.width)
@@ -2598,6 +2763,25 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 with open(self._mouse_log_path, "a") as f:
                     f.write(f"{time.strftime('%H:%M:%S')} {kind} "
                             f"x={x} y={y} b={button} mode={self.mode} {note}\n")
+            except OSError:
+                pass
+
+        def _log_key(self, key):
+            """진단: mouse-debug 가 켜졌을 때 '내비게이션 키'만 mouse.log 에 남긴다.
+            휠 이벤트(scroll_up/down)가 한 줄도 안 찍히는데 휠을 굴릴 때마다 여기에
+            `key up`/`key down` 이 쏟아지면, 상위 터미널이 휠을 화살표로 변환(1007
+            미지원)해 보내는 것 — 1007 끄기(alt-scroll on)가 안 듣는 터미널이다.
+            반대로 둘 다 안 찍히면 터미널이 휠을 아예 안 넘긴다(터미널 자체 스크롤백
+            가로채기 등). **문자/단축키는 기록하지 않는다**(`_KEY_DIAG` 화이트리스트
+            만) — 패널 입력 유출 방지."""
+            if not self.mouse_debug:
+                return
+            if _normalize_key(key) not in _KEY_DIAG:
+                return
+            try:
+                with open(self._mouse_log_path, "a") as f:
+                    f.write(f"{time.strftime('%H:%M:%S')} key "
+                            f"{_normalize_key(key)} mode={self.mode}\n")
             except OSError:
                 pass
 
@@ -3030,10 +3214,24 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.aliases[c] + (" " + " ".join(args) if args else ""),
                     _depth + 1)
             if c in ("help", "commands", "?", "list-commands"):
-                # 명령 목록 선택기: 방향키로 선택 → Enter 로 명령 프롬프트에 채움
-                # → 다시 Enter 로 실행(인자 추가 가능)
+                # 명령 목록 선택기(#3): 옵션 스키마가 있으면 옵션 모달에서 값을 정해
+                # 프롬프트 없이 바로 실행, 인자 없는 안전한 명령은 선택 즉시 실행,
+                # 그 외(자유 텍스트 인자)는 기존처럼 명령 프롬프트에 채워 Enter 로 실행.
                 def _picked(name):
-                    if name:
+                    if not name:
+                        return
+                    opts = COMMAND_OPTIONS.get(name)
+                    if opts:
+                        desc = next((d for n, d, *_ in COMMANDS if n == name), "")
+
+                        def _run(line):
+                            if line:
+                                self._run_command(line)
+                        self.push_screen(
+                            CommandOptionsScreen(name, desc, opts), _run)
+                    elif name in COMMAND_NOARG:
+                        self._run_command(name)
+                    else:
                         self.open_prompt("command", "", initial=name + " ")
                 self.push_screen(CommandListScreen(COMMANDS), _picked)
                 return
@@ -3257,6 +3455,20 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif c == "prompt-clear-message":
                 # prompt-clear-message <문구> — ① 문서화 지시문 변경(opts 영속).
                 self.send_cmd("set_prompt_clear_message", msg=" ".join(args).strip())
+            elif c in ("prompt-clear-queue", "pc-queue"):
+                # prompt-clear-queue [<명령> | -c|clear] — 빈값=현재 큐 목록 팝업(#4),
+                # -c/clear=큐 비움, 그 외=명령을 큐에 추가(모드 자동 on, doc+/clear
+                # 사이클마다 하나씩 투입).
+                if not args:
+                    q = self.status.prompt_clear_queue
+                    lines = [f"{i+1}. {cmd}" for i, cmd in enumerate(q)] or \
+                        ["(큐 비어 있음)"]
+                    self.push_screen(InfoScreen(lines, title="프롬프트 클리어 큐"))
+                elif args[0].lower() in ("-c", "clear", "--clear"):
+                    self.send_cmd("pc_queue_clear")
+                    self.display_message("큐 비움")
+                else:
+                    self.send_cmd("pc_queue_add", cmd=" ".join(args).strip())
             elif c in ("display-popup", "popup"):
                 cmd = " ".join(a for a in args if not a.startswith("-"))
                 if cmd:
@@ -3341,6 +3553,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.set_timer(0.3, self._send_resize)
 
         def on_key(self, event: events.Key):
+            # 진단: 어떤 가드/모드 분기보다 먼저 — 휠이 화살표로 새는지 본다
+            # (mouse-debug 켜진 경우에만, 내비게이션 키만 기록).
+            self._log_key(event.key)
             # 메뉴/프롬프트 등 모달이 떠 있으면 그 스크린이 처리
             if len(self.screen_stack) > 1:
                 return
@@ -3390,6 +3605,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             #  키가 super+v 로 직접 들어오는 환경을 위해 함께 처리한다.)
             if event.key in ("ctrl+v", "super+v"):
                 self.paste_os_clipboard()
+                event.prevent_default()
+                event.stop()
+                return
+            # Shift+ESC: 활성 패널에 시계/달력 오버레이가 떠 있으면 그것부터 닫는다
+            # (오버레이 [x] 버튼 폐지). 오버레이가 없으면 기존처럼 ESC 를 패널로 전달.
+            if event.key == "shift+escape" and self._close_active_overlay():
                 event.prevent_default()
                 event.stop()
                 return
@@ -3530,6 +3751,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if not self.claude_header_on:
                 return out
             for p in self.layout.get("panes", []):
+                if not p.get("claude_hdr"):   # 헤더 행이 실제 예약된 패널만(#1)
+                    continue
+                if p["id"] in self._claude_hidden_panes:
+                    continue
                 info = self.pane_claude.get(p["id"])
                 if info and info.get("claude") and info.get("prompt"):
                     out.append(p["id"])

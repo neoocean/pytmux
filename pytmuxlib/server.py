@@ -184,7 +184,33 @@ class Server:
             else bool(value)
         if not p.prompt_clear_mode:
             p._pc_phase = None
+            p.prompt_clear_queue.clear()   # 모드 끄면 쌓인 큐도 비운다(#4)
         return p.prompt_clear_mode
+
+    def pc_queue_add(self, sess: Session, cmd: str):
+        """활성 패널의 프롬프트 단위 클리어 큐에 명령을 쌓는다(#4). 각 명령은
+        doc+/clear 사이클을 마칠 때마다 하나씩 Claude 에 투입된다. 큐잉은 이
+        워크플로를 함의하므로 모드가 꺼져 있으면 켠다. 패널이 한가하고 진행 중인
+        시퀀스가 없으면 곧장 첫 명령을 투입해 사이클을 시작한다."""
+        win = sess.active_window
+        if not win or not win.active_pane:
+            return None
+        p = win.active_pane
+        cmd = (cmd or "").strip()
+        if not cmd:
+            return None
+        p.prompt_clear_queue.append(cmd)
+        if not p.prompt_clear_mode:
+            p.prompt_clear_mode = True
+        if p._pc_phase is None and p._claude == "idle":
+            self._pc_drain(p)
+        return len(p.prompt_clear_queue)
+
+    def pc_queue_clear(self, sess: Session):
+        """활성 패널의 프롬프트 단위 클리어 큐를 비운다(#4)."""
+        win = sess.active_window
+        if win and win.active_pane:
+            win.active_pane.prompt_clear_queue.clear()
 
     def set_prompt_clear_message(self, msg: str):
         """① 문서화 지시문 문구를 바꾸고 opts.json 에 영속."""
@@ -204,12 +230,24 @@ class Server:
         except OSError:
             pass
 
+    def _pc_drain(self, pane: Pane):
+        """큐(#4)의 다음 명령을 Claude 에 투입하고 새 사이클을 시작한다. last_prompt
+        를 그 명령으로 갱신해 헤더가 '지금 처리 중인 명령'을 보이게 하고, phase 는
+        None 으로 둬 그 명령 완료 시 다시 doc→/clear 사이클이 돌게 한다."""
+        if not pane.prompt_clear_queue:
+            return
+        nxt = pane.prompt_clear_queue.pop(0)
+        pane.last_prompt = nxt
+        pane._pc_phase = None
+        self._pc_inject(pane, nxt)
+
     def _pc_advance(self, pane: Pane):
         """프롬프트 단위 클리어 상태기계를 busy→idle 경계에서 한 단계 전진한다.
 
         phase None(사용자 프롬프트 완료) → 문서화 지시 주입(phase=doc)
         phase doc(문서화 응답 완료)      → /clear 주입(phase=clear)
-        phase clear(/clear 완료)         → 시퀀스 종료(phase=None)
+        phase clear(/clear 완료)         → 큐(#4)에 다음 명령이 있으면 투입하고 새
+                                           사이클로, 없으면 시퀀스 종료(phase=None)
         """
         ph = pane._pc_phase
         if ph is None:
@@ -220,6 +258,8 @@ class Server:
             pane._pc_phase = "clear"
         else:  # "clear"
             pane._pc_phase = None
+            if pane.prompt_clear_queue:
+                self._pc_drain(pane)
 
     def _pane_eof(self, pane: Pane):
         if pane.pipe_proc:
@@ -1343,6 +1383,14 @@ class Server:
         return (max(MIN_W, min(c.cols for c in cs)),
                 max(MIN_H, min(c.rows for c in cs)))
 
+    def _should_reserve_header(self, p) -> bool:
+        """클라이언트가 이 패널에 Claude 프롬프트 헤더를 그릴지 여부(#1). 그러면
+        내용 영역에서 한 행을 빼(헤더가 차지) 헤더가 1행짜리 패널 내용을 가리지
+        않게 한다. 전역 옵션 claude_header + 그 패널이 Claude 이고 표시할 프롬프트가
+        있을 때 참. (클라 전용 _claude_hidden_panes 팝업 숨김은 서버가 모르므로 그
+        경우 예약 행은 비워둔다 — 토글 시 터미널 리플로우를 피하는 이점도 있다.)"""
+        return bool(self.claude_header and p._claude and p.last_prompt)
+
     def _layout_msg(self, sess: Session, cols: int = None, rows: int = None):
         win = sess.active_window
         if not win:
@@ -1369,11 +1417,19 @@ class Server:
                                   "active": p is win.active_pane})
             else:
                 cx, cy, cw, ch = x, y, w, h
+            # Claude 헤더가 그려질 패널이면 내용 영역 맨 윗 한 행을 헤더에 양보한다
+            # (#1). 내용은 cy+1 부터, 높이 -1. 헤더는 클라가 예약된 행(cy)에 그린다.
+            hdr = self._should_reserve_header(p) and ch > 1
+            if hdr:
+                cy += 1
+                ch -= 1
+            p._hdr_reserved = hdr
             p.resize(cw, ch)
             p._mouse_sent = (p.mouse_track, p.mouse_sgr)
             pane_msgs.append({"id": p.id, "x": cx, "y": cy, "w": cw, "h": ch,
                               "title": p.title, "box": box,
                               "active": p is win.active_pane,
+                              "claude_hdr": hdr,
                               "mouse": p.mouse_track, "mouse_sgr": p.mouse_sgr})
         return {
             "t": "layout",
@@ -1534,6 +1590,9 @@ class Server:
             if win and win.active_pane else False,
             "prompt_clear": bool(win.active_pane.prompt_clear_mode)
             if win and win.active_pane else False,
+            # 프롬프트 단위 클리어 큐(#4): 활성 패널에 쌓인 명령들(표시·목록용)
+            "prompt_clear_queue": (list(win.active_pane.prompt_clear_queue)
+                                   if win and win.active_pane else []),
             "capture": self.capture,
             "capture_path": cap_path,
             "capture_size": cap_size,
@@ -1612,6 +1671,14 @@ class Server:
                             if t.monitor_activity and not t.has_activity:
                                 t.has_activity = True
                                 status_changed = True
+                # Claude 헤더 행 예약(#1) 변동: 프롬프트가 처음 떠 헤더가 생기거나
+                # Claude 가 끝나 헤더가 사라지면 내용 영역을 ±1 행 해야 한다. 레이아웃을
+                # 다시 보내 PTY 리사이즈 + 새 geometry 를 반영(_send_full 이 status 포함).
+                if any(self._should_reserve_header(p) != p._hdr_reserved
+                       for p in win.panes()):
+                    for c in clients:
+                        await self._send_full(c)
+                    continue
                 if status_changed:
                     smsg = self._status_msg(sess)
                     for c in clients:
@@ -1771,6 +1838,10 @@ class Server:
         elif action == "set_prompt_clear_message":
             self.set_prompt_clear_message(str(msg.get("msg", "")))
             return
+        elif action == "pc_queue_add":
+            self.pc_queue_add(sess, str(msg.get("cmd", "")))
+        elif action == "pc_queue_clear":
+            self.pc_queue_clear(sess)
         elif action == "kill_window":
             self.kill_window(sess)
             if sess.name not in self.sessions:

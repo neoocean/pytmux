@@ -205,6 +205,12 @@ class Pane:
         # _pc_phase: None(대기) | "doc"(문서화 지시 처리 대기) | "clear"(/clear 처리 대기).
         self.prompt_clear_mode = False
         self._pc_phase = None
+        # 프롬프트 단위 클리어 큐(#4): 사용자가 미리 쌓아 둔 명령들. 각 명령은
+        # doc+/clear 사이클을 마칠 때마다 _pc_advance 가 하나씩 투입한다.
+        self.prompt_clear_queue = []
+        # _layout_msg 가 이 패널에 Claude 헤더 한 행을 예약했는지(#1). 예약 유무가
+        # 바뀌면 flush 루프가 레이아웃(PTY 리사이즈 포함)을 다시 보낸다.
+        self._hdr_reserved = False
         self.search_query = ""   # 스크롤백 검색어
         self._match_abs = None   # 현재 매치된 절대 라인 인덱스
         self.bracketed = False   # 내부 앱이 bracketed paste 모드를 켰는지
@@ -243,6 +249,8 @@ class Pane:
         self._claude_account = None
         self._claude_account_manual = False
         self._pc_phase = None    # 프롬프트 단위 클리어 상태기계 리셋(모드 자체는 유지)
+        self.prompt_clear_queue = []  # 새 셸이므로 쌓인 명령 큐도 버린다(#4)
+        self._hdr_reserved = False
         self.search_query = ""
         self._match_abs = None
         self.bracketed = False

@@ -201,6 +201,31 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 9. 최근 변경(CL 56279~56500 + git, 신→구)
 
+- 56523 **mouse-debug: 휠→화살표 변환 切り分け 위해 내비게이션 키도 로깅** — 원격 SSH 휠
+  스크롤백 미동작(§10)의 두 원인((a)휠 이벤트 미도달 vs (b)터미널이 휠을 ↑/↓ 화살표로
+  변환=1007)을 가리기 위해, mouse-debug 켜진 동안 `on_key` 최상단 `_log_key` 가 **내비게이션
+  키**(↑/↓/←/→/PageUp/PageDown/Home/End = `_KEY_DIAG`)도 `<sock>.mouse.log` 에 기록. `scroll_*`
+  없이 `key up/down` 만 쏟아지면 (b) 확정(터미널 1007/alt-scroll 설정 문제), 둘 다 없으면 (a).
+  **문자/단축키는 미기록**(화이트리스트 — 패널 입력 유출 방지). `test_mouse_debug_logging`
+  확장(키 기록·문자 미기록 단언), 전체 150 passed. 클라 전용(attach 재실행).
+- 56519 **시계/달력 오버레이 닫기: [x] 폐지 → 패널 클릭/Shift+ESC** — 우상단 [x] 닫기
+  버튼이 좁은(모바일) 화면에서 잘 안 보이고 누르기 어려웠다. 두 오버레이 그리기에서
+  [x]·`_clock_close_zones`/`_calendar_close_zones`(속성 포함) 제거. 닫기는 ① 오버레이가
+  켜진 패널 클릭(`MultiplexerView.on_mouse_down`→`_pane_at`→`_close_overlay`), ② 활성
+  패널 **Shift+ESC**(`on_key` normal: `shift+escape` 가 `_close_active_overlay` 성공 시
+  소비, 없으면 기존대로 ESC 를 패널로 전달). 헬퍼 `_close_overlay`/`_close_active_overlay`
+  추가. 상태줄 날짜·시계 클릭/`calendar-mode`·`clock-mode` 명령 토글은 그대로. 회귀
+  테스트 `test_overlay_closes_by_panel_click_and_shift_esc` + 기존 2종 갱신(총 148).
+  클라이언트 전용(attach 재실행).
+
+- 56517 **정보 팝업 닫기 버튼 + 좁은 화면 반응형 폭** — 좁은(모바일) 폭에서 `InfoScreen`/
+  `TokenLogScreen` 팝업이 **고정폭(64/84)이라 화면을 넘쳐 닫기 수단이 안 보이던** 문제.
+  박스를 **반응형 폭**(`width:96%`·`max-width:66/86`)으로 바꾸고, 제목 줄을 `[제목 …
+  [x]]` 헤더(Horizontal: 제목 `1fr` + 닫기 `[x]` 고정 5칸)로 만들어 **좁아도 [x] 가 항상
+  오른쪽에 보임**. `[x]` 클릭(`on_click`)·`Esc`(기존 fallthrough) 둘 다로 닫힘. 회귀
+  테스트 `test_info_popup_close_button_and_esc`(좁은 폭 58 에서 [x] 화면 안+클릭/Esc
+  닫힘). 클라이언트 전용(attach 재실행).
+
 - 56500 **프롬프트 히스토리 팝업 방향키 내비게이션 + 긴 프롬프트 줄바꿈**(§10/#7) —
   `InfoScreen.on_key` 가 **어떤 키에도 `dismiss`** 하던 탓에 방향키를 누르면 팝업이
   즉시 닫히던 버그 수정. 방향키(`up`/`down`/`pageup`/`pagedown`/`home`/`end`)는 닫지
@@ -535,13 +560,29 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
     맡길 수 있다. **터미널이 1007 을 지원하지 않으면(②류) 여전히 mouse-debug 로 확인**
     필요 — 이 완화는 1007 변환이 원인일 때만 듣는다. 회귀 테스트 `test_alt_scroll_toggle`.
     클라이언트 전용(attach 재실행 반영).
-- **[요청·미구현/CL 56510 기록] Claude 프롬프트 헤더가 패널 1행을 차지하면 터미널
-  스크롤을 2행부터 시작** — Claude Code 를 띄운 패널은 기본으로 **1행에 이전에 입력한
-  프롬프트(스티키 헤더, `_draw_claude_headers`)** 를 그린다. 현재는 이 1행을 **포함해
-  터미널(패널 내용)이 스크롤·렌더**되므로, 패널(또는 터미널)이 **한 줄만** 있을 때 그 한
-  줄이 1행 프롬프트 헤더에 **가려져 내용이 안 보인다**. 요청: **1행에 프롬프트 헤더가 있는
-  패널이면 터미널 내용 영역을 2행부터 시작**시켜(헤더가 차지한 1행을 내용 영역에서 빼서)
-  내용이 헤더에 가리지 않게 한다. 구현 방향:
+  - **CL 56523 에서 진단 보강(切り分け 완성)**: mouse-debug 가 켜지면 휠 이벤트뿐
+    아니라 **내비게이션 키(↑/↓/←/→/PageUp/PageDown/Home/End)** 도 `<sock>.mouse.log` 에
+    남긴다(`_log_key`, `_KEY_DIAG` 화이트리스트 — **문자/단축키는 입력 유출 방지로 제외**).
+    이제 휠을 굴렸을 때 **`scroll_up/down` 이 안 찍히고 `key up`/`key down` 만 쏟아지면 위
+    1007 변환(alt-scroll 안 듣는 터미널)으로 확정**, 둘 다 안 찍히면 터미널이 휠을 아예
+    안 넘기는 것(②: 터미널 자체 스크롤백 가로채기 등 → 터미널 설정). 환경 의존이라 코드로
+    더 못 고치는 케이스의 **원인 확정**까지가 이 작업의 목표(자동 화살표→스크롤 변환은
+    실 화살표 입력과 구분 불가라 의도적으로 미구현). 회귀 테스트 `test_mouse_debug_logging`
+    확장. 클라 전용(attach 재실행).
+- ~~**[요청·미구현/CL 56510 기록] Claude 프롬프트 헤더가 패널 1행을 차지하면 터미널
+  스크롤을 2행부터 시작**~~ → **CL 56516 에서 해결(서버 PTY 리사이즈 방식).** 서버
+  `_layout_msg` 가 `_should_reserve_header(p)`(전역 `claude_header` + 그 패널이 Claude 이고
+  `last_prompt` 있음)면 내용 영역을 한 행 양보한다(`cy+1`, `ch-1`)— 단일 테두리 on/off 가
+  content 를 조절하는 그 자리. `p.resize(cw, ch)` 로 **PTY 도 한 행 작게** 리사이즈해 Claude
+  Code 가 실제로 작은 화면을 그려 정합성이 가장 좋다(검토 ①). 예약 사실을 layout 패널 msg 에
+  `claude_hdr=True` 로 실어 보내고, 클라(`_draw_claude_headers`/`_claude_header_panes`)는
+  그 플래그가 있는 패널만 헤더를 **예약된 행(`p["y"]-1`, 내용 위 한 줄)** 에 그린다(이전엔
+  `p["y"]` 에 덧그려 겹쳤다). 헤더 유무가 바뀌면(프롬프트가 처음 뜨거나 Claude 종료) flush
+  루프가 `_should_reserve_header(p) != p._hdr_reserved` 를 감지해 레이아웃을 다시 보내 PTY 를
+  재리사이즈한다. 클라 전용 `_claude_hidden_panes`(팝업 숨김)는 서버가 모르므로 그 경우 예약
+  행만 비고, 토글 시 터미널 리플로우가 없는 이점도 있다. 회귀 테스트
+  `test_claude_header_reserves_row`(서버)·`test_claude_icon_and_header` 등(클라, 헤더 행 -1
+  반영). **서버+클라 → kill-server 재기동.** 아래는 원래 검토한 구현 방향(참고):
   - 헤더는 클라이언트 합성 단계(`_composite`/`_draw_claude_headers`)가 패널 content
     **위에 덧그린다** — 즉 서버가 보낸 패널 content 행 높이(`_layout_msg` 의 `h`/`cy`)는
     헤더를 모른다. 그래서 **헤더가 그려지는 패널은 content 영역을 한 행 줄이고(`cy+1`,
@@ -674,13 +715,20 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   로 권위값 회신). 재시작 후 유지. 회귀 테스트 `test_claude_header_opt_persists`(서버)·
   `test_header_hide_toggle_from_history`·`test_claude_header_status_applies`(클라).
   **서버+클라 → kill-server 재기동.**
-- **[요청·미구현] 커맨드 팔레트에서 옵션 설정 후 프롬프트 없이 바로 실행** — 현재
-  명령 실행은 tmux 식: 명령 프롬프트(`:`)에서 자동완성하거나 `?`/`help` 목록
-  (`CommandListScreen`)에서 명령을 고르면 **프롬프트 입력 줄에 채워주고**
-  (`open_prompt("command", initial=name+" ")`), 거기서 **Enter 를 눌러 실행**한다
-  (`_run_command`). 요청: **명령 프롬프트는 그대로 유지**하되, **커맨드 팔레트에서 커맨드를
-  선택하고 그 인터페이스 안에서 옵션을 설정해 프롬프트를 거치지 않고 바로 실행**하는 경로를
-  추가한다. 구현 방향:
+- ~~**[요청·미구현] 커맨드 팔레트에서 옵션 설정 후 프롬프트 없이 바로 실행**~~ → **CL
+  56516 에서 해결.** `?`/`help` 목록(`CommandListScreen`)에서 명령을 고르면(`_picked`):
+  ① 옵션 스키마(`COMMAND_OPTIONS`)가 있으면 **`CommandOptionsScreen` 모달**을 띄워 옵션
+  (선택지)을 ←→ 로 정하고 Enter 로 **완성된 명령 줄을 `_run_command` 에 직접 넘겨 실행**
+  (프롬프트 우회), ② 인자 없는 안전한 명령(`COMMAND_NOARG`: next-tab·select-layout 등 비파괴)
+  은 **선택 즉시 실행**, ③ 그 외(자유 텍스트 인자) 명령은 **기존처럼 프롬프트에 채워**
+  Enter 로 실행(파괴적 kill-*/detach 등도 확인 위해 이 경로). 옵션 스키마는 choice(선택지)만
+  지원해 모달이 키보드만으로 동작(`MenuScreen` 식 ListView 포커스 — Vertical 래퍼/빈 Label
+  은 합성 단계 렌더 오류를 내므로 피함). 적용 명령: split-window·select-pane·resize-pane·
+  select-layout·capture-pane + 각종 on/off 토글(synchronize-panes·monitor-*·auto-resume·
+  prompt-clear·claude-header·single-border 등). 회귀 테스트 `test_help_command`(옵션 모달
+  바로 실행)·`test_command_options_change_value`(←→ 값 변경)·`test_command_palette_routing`
+  (no-arg 즉시 실행/자유텍스트 프롬프트). 클라이언트 전용(attach 재실행 반영). 아래는 원래
+  검토한 구현 방향(참고):
   - `CommandListScreen`(또는 새 팔레트 모달)에서 명령 선택 시 **프롬프트로 채우는 대신**,
     그 명령의 **옵션 입력 UI**(인자/플래그 토글·값 입력)를 모달 안에 펼치고, "실행" 액션이
     완성된 명령 줄을 만들어 `_run_command` 를 **직접 호출**(프롬프트 우회).
@@ -818,9 +866,19 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   `prompt_clear_message`(opts.json 영속, 명령 `prompt-clear-message <문구>`). 토글: 메뉴
   항목 `prompt_clear`(autoresume 옆, ●/○ 상태표시) + 명령 `prompt-clear [on|off]` + status
   `prompt_clear` 전달. 회귀 테스트 `test_prompt_clear_mode_sequence`. **서버+클라 →
-  kill-server 재기동.** **남은 것(후속)**: 사용자가 미리 쌓아 둔 **명령 큐를 /clear 후
-  하나씩 투입**하는 배치(키 입력 가로채기·에코 충돌 회피 필요)는 미구현 — 현재는 "사용자
-  프롬프트 완료마다 자동 문서화+/clear" 까지. 아래는 원래 검토한 구현 방향(참고):
+  kill-server 재기동.** ~~**남은 것(후속)**: 사용자가 미리 쌓아 둔 **명령 큐를 /clear 후
+  하나씩 투입**하는 배치~~ → **CL 56516 에서 해결(명시적 큐 API 방식).** 라이브 키 입력
+  가로채기(에코 충돌 위험)는 피하고 **명시적 큐 명령**으로 구현했다: `prompt-clear-queue
+  <명령>` 이 활성 패널 `Pane.prompt_clear_queue` 에 명령을 쌓고(모드 자동 on), `-c`/`clear`
+  로 비우며, 빈값이면 현재 큐를 InfoScreen 으로 보여준다(status `prompt_clear_queue` 전달).
+  드레인: `_pc_advance` 의 `clear` 단계(=/clear 완료)에서 큐가 비지 않았으면 `_pc_drain` 이
+  다음 명령을 `last_prompt` 로 올리고 `_pc_inject`(추적 우회) 한 뒤 phase=None 으로 둬 그
+  명령도 doc→/clear 사이클을 돈다 — 즉 **각 큐 명령이 프롬프트 단위로 잘려 매번 문서화+컨텍스트
+  클리어**된다. 패널이 한가하면(`_claude=="idle"`, 진행 중 시퀀스 없음) `pc_queue_add` 가 곧장
+  첫 명령을 투입해 사이클을 시작한다. 모드를 끄면 큐도 비운다. 회귀 테스트
+  `test_prompt_clear_queue_drains`(서버, 사이클별 드레인 + idle 즉시 투입)·
+  `test_prompt_clear_queue_command`(클라). **서버+클라 → kill-server 재기동.** 아래는 원래
+  검토한 구현 방향(참고):
 - **[참고·구현 방향] '프롬프트 단위 클리어' 모드(큐 배치 포함)** —
   Claude Code 패널의 컨텍스트 메뉴(우클릭/`&` 메뉴)에서 **'프롬프트 단위 클리어' 모드**를
   켜고 끈다(패널별 토글, 기본 off). **끄면 평소와 똑같이** 동작한다. **켜면** 그 패널에서

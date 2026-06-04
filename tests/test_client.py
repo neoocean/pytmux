@@ -152,18 +152,90 @@ async def test_help_command():
         await pilot.pause(0.2)
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "CommandListScreen"
-        # 첫 항목(split-window) 선택 → 명령 프롬프트에 채워짐
+        # 첫 항목(split-window)은 옵션 스키마가 있어 옵션 모달이 열린다(#3)
         await pilot.press("enter")
         await pilot.pause(0.2)
-        ps = app.screen_stack[-1]
-        assert ps.__class__.__name__ == "PromptScreen"
-        inp = ps.query_one(Input)
-        assert inp.value.strip() == "split-window", repr(inp.value)
-        # 한 번 더 Enter → 실행
+        opt = app.screen_stack[-1]
+        assert opt.__class__.__name__ == "CommandOptionsScreen"
+        assert opt.cmd_name == "split-window", opt.cmd_name
+        # Enter → 기본 선택(-h)으로 프롬프트 없이 바로 실행 → 패널 분할
         n = len(sess.active_window.panes())
         await pilot.press("enter")
         await pilot.pause(0.4)
-        assert len(sess.active_window.panes()) == n + 1, "help 선택→실행"
+        assert len(sess.active_window.panes()) == n + 1, "옵션 모달 Enter→실행"
+    await _with_app(body)
+
+
+async def test_command_options_change_value():
+    # #3: 옵션 모달에서 ←→ 로 값을 바꾸면 그 값으로 프롬프트 없이 바로 실행된다.
+    async def body(app, pilot, srv):
+        sess = next(iter(srv.sessions.values()))
+        ran = []
+        orig = app._run_command
+        app._run_command = lambda line, *a, **k: (
+            ran.append(line), orig(line, *a, **k))[-1]
+        app._run_command("help")
+        await pilot.pause(0.15)
+        ran.clear()
+        await pilot.press("enter")           # 첫 항목 split-window → 옵션 모달
+        await pilot.pause(0.15)
+        opt = app.screen_stack[-1]
+        assert opt.__class__.__name__ == "CommandOptionsScreen", opt
+        assert opt._build_line() == "split-window -h"
+        await pilot.press("right")           # 방향 -h → -v
+        assert opt._build_line() == "split-window -v"
+        n = len(sess.active_window.panes())
+        await pilot.press("enter")           # 바로 실행
+        await pilot.pause(0.4)
+        assert "split-window -v" in ran, ran
+        assert len(sess.active_window.panes()) == n + 1
+    await _with_app(body)
+
+
+async def test_command_palette_routing():
+    # #3: 커맨드 팔레트에서 인자 없는 안전한 명령은 선택 즉시 실행되고, 자유 텍스트
+    # 인자가 필요한 명령은 기존처럼 명령 프롬프트에 채워진다(즉시 실행 아님).
+    async def body(app, pilot, srv):
+        ran = []
+        orig = app._run_command
+        app._run_command = lambda line, *a, **k: (
+            ran.append(line), orig(line, *a, **k))[-1]
+        # no-arg(next-tab): 선택(dismiss) 즉시 실행
+        app._run_command("help")
+        await pilot.pause(0.15)
+        ran.clear()
+        app.screen_stack[-1].dismiss("next-tab")
+        await pilot.pause(0.15)
+        assert "next-tab" in ran, ran
+        # 자유 텍스트(rename-tab): 명령 프롬프트가 열림(즉시 실행 아님)
+        app._run_command("help")
+        await pilot.pause(0.15)
+        ran.clear()
+        app.screen_stack[-1].dismiss("rename-tab")
+        await pilot.pause(0.15)
+        assert app.screen_stack[-1].__class__.__name__ == "PromptScreen"
+        assert "rename-tab" not in ran
+    await _with_app(body)
+
+
+async def test_prompt_clear_queue_command():
+    # #4: prompt-clear-queue <명령>=추가, -c=비움, 빈값=현재 큐 목록 팝업.
+    async def body(app, pilot, srv):
+        from textual.widgets import Label
+        sent = []
+        app.send_cmd = lambda a, **k: sent.append((a, k))
+        app._run_command("prompt-clear-queue do the thing")
+        assert sent[-1] == ("pc_queue_add", {"cmd": "do the thing"}), sent
+        app._run_command("prompt-clear-queue -c")
+        assert sent[-1] == ("pc_queue_clear", {}), sent
+        # 빈값 → status 의 큐를 InfoScreen 으로 표시
+        app.status.prompt_clear_queue = ["alpha", "beta"]
+        app._run_command("prompt-clear-queue")
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "InfoScreen"
+        joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        assert "alpha" in joined and "beta" in joined, joined
     await _with_app(body)
 
 
@@ -565,9 +637,19 @@ async def test_mouse_debug_logging():
         app.mouse_debug = True
         app.view.on_mouse_scroll_up(_FakeMouse(5, 5))
         app.view.on_mouse_scroll_down(_FakeMouse(5, 5))
+        # 내비게이션 키도 기록 — 휠이 화살표로 변환돼 새는 경우(1007 미지원)를
+        # 휠 이벤트 미도달과 切り分け 하기 위함.
+        app.on_key(Key(key="up", character=None))
+        app.on_key(Key(key="down", character=None))
+        # 문자/단축키는 기록하지 않는다(패널 입력 유출 방지).
+        app.on_key(Key(key="a", character="a"))
+        app.on_key(Key(key="ctrl+b", character=None))
         with open(path) as f:
             log = f.read()
         assert "scroll_up" in log and "scroll_down" in log, log
+        assert "key up" in log and "key down" in log, log
+        assert "key a" not in log and "ctrl+b" not in log, \
+            "문자/단축키는 진단 로그에 남기지 않아야 한다: " + log
         os.remove(path)
     await _with_app(body)
 
@@ -668,9 +750,16 @@ async def test_tab_bar_and_esc_nav():
     async def body(app, pilot, srv):
         assert app.tabbar.display is False, "auto 모드: 탭 1개면 탭바 숨김"
         app.send_cmd("new_window")          # 새 탭
-        await pilot.pause(0.4)
+        # 고정 pause 대신 조건 대기: Windows(ConPTY)는 패널 기동·status 왕복·레이아웃
+        # 패스가 느려 0.4s 안에 탭바가 정착(render_line 이 [+] 를 그릴) 안 될 수 있다.
+        txt = ""
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if app.tabbar.display:
+                txt = "".join(s.text for s in app.tabbar.render_line(0))
+                if "[+]" in txt:
+                    break
         assert app.tabbar.display is True, "탭 2개면 탭바 표시"
-        txt = "".join(s.text for s in app.tabbar.render_line(0))
         # [+] 새 탭은 탭바(마지막 탭 오른쪽)에, [x] 닫기는 콘텐츠 패널 위로 이동
         assert "[+]" in txt and "[x]" not in txt, txt
         assert txt.rstrip().endswith("[+]"), txt   # 마지막 탭 바로 오른쪽
@@ -813,17 +902,15 @@ async def test_clock_mode_overlay():
         assert any("█" in (cells[y][x][0] or "")
                    for y in range(len(cells))
                    for x in range(len(cells[0]))), "큰 시계 표시"
-        # 우상단 닫기 버튼 영역 등록
-        assert active in app._clock_close_zones
-        # 다시 토글 → 닫힘
-        app.toggle_clock(active)
+        # 우상단 [x] 폐지 → 활성 패널 Shift+ESC 로 닫힌다
+        await pilot.press("shift+escape")
         await pilot.pause(0.1)
-        assert active not in app.clock_panes
+        assert active not in app.clock_panes, "Shift+ESC 로 시계 닫힘"
     await _with_app(body, size=(44, 14))
 
 
 async def test_calendar_overlay_and_date_click():
-    # 날짜 클릭/명령으로 이번 달 달력 오버레이를 켜고(뒤 화면 dim·오늘 강조·[x]),
+    # 날짜 클릭/명령으로 이번 달 달력 오버레이를 켜고(뒤 화면 dim·오늘 강조),
     # clock-mode 와 상호 배타인지 검증(#13).
     async def body(app, pilot, srv):
         from textual import events
@@ -841,7 +928,6 @@ async def test_calendar_overlay_and_date_click():
         ap = next(p for p in app.layout["panes"] if p["id"] == active)
         st = cells[ap["y"]][ap["x"]][1]
         assert st and st.dim, "패널 내용 dim"
-        assert active in app._calendar_close_zones, "우상단 [x] 등록"
         # 요일 헤더(Mo) 또는 연-월 제목이 그려졌는지
         flat = "".join(cells[y][x][0] or ""
                        for y in range(len(cells)) for x in range(len(cells[0])))
@@ -857,6 +943,35 @@ async def test_calendar_overlay_and_date_click():
         app.toggle_calendar(active)
         await pilot.pause(0.1)
         assert active not in app.calendar_panes, "재토글 → 닫힘"
+    await _with_app(body, size=(44, 16))
+
+
+async def test_overlay_closes_by_panel_click_and_shift_esc():
+    # 시계/달력 오버레이는 우상단 [x] 대신 ① 패널 클릭 ② (활성 패널) Shift+ESC 로
+    # 닫는다. [x] 닫기 영역은 더 이상 그리지 않는다.
+    async def body(app, pilot, srv):
+        from textual import events
+        active = app.layout["active"]
+        ap = next(p for p in app.layout["panes"] if p["id"] == active)
+        cx, cy = ap["x"] + ap["w"] // 2, ap["y"] + ap["h"] // 2
+        # 닫기 영역 속성은 폐지됨
+        assert not hasattr(app, "_clock_close_zones"), "시계 [x] 닫기영역 폐지"
+        assert not hasattr(app, "_calendar_close_zones"), "달력 [x] 닫기영역 폐지"
+        # ① 달력 켜고 → 패널 클릭으로 닫힘
+        app.toggle_calendar(active)
+        await pilot.pause(0.1)
+        assert active in app.calendar_panes
+        ev = events.MouseDown(app.view, cx, cy, 0, 0, 1, False, False, False)
+        app.view.on_mouse_down(ev)
+        await pilot.pause(0.1)
+        assert active not in app.calendar_panes, "패널 클릭으로 달력 닫힘"
+        # ② 시계 켜고 → 활성 패널 Shift+ESC 로 닫힘
+        app.toggle_clock(active)
+        await pilot.pause(0.1)
+        assert active in app.clock_panes
+        await pilot.press("shift+escape")
+        await pilot.pause(0.1)
+        assert active not in app.clock_panes, "Shift+ESC 로 시계 닫힘"
     await _with_app(body, size=(44, 16))
 
 
@@ -1218,6 +1333,33 @@ async def test_rec_click_capture_info_popup():
     await _with_app(body)
 
 
+async def test_info_popup_close_button_and_esc():
+    # 좁은(모바일) 폭에서도 정보 팝업(InfoScreen)에 닫기 [x] 버튼이 화면 안에 보이고,
+    # [x] 클릭과 Esc 둘 다로 닫힌다.
+    async def body(app, pilot, srv):
+        from textual.widgets import Label
+        app.show_capture_info("/tmp/x.sock.capture/pane-1.log", 2048)
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "InfoScreen"
+        close = scr.query_one("#infoclose", Label)
+        reg = close.region
+        assert reg.width > 0 and reg.right <= app.size.width, \
+            f"닫기 [x] 버튼이 화면 안에 보여야 함 {reg} (폭 {app.size.width})"
+        # [x] 클릭으로 닫힘
+        await pilot.click("#infoclose")
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1].__class__.__name__ != "InfoScreen", "[x] 클릭으로 닫힘"
+        # 다시 열고 Esc 로 닫힘
+        app.show_capture_info("/tmp/x.sock.capture/pane-1.log", 2048)
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1].__class__.__name__ == "InfoScreen"
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1].__class__.__name__ != "InfoScreen", "Esc 로 닫힘"
+    await _with_app(body, size=(58, 30))      # 좁은(모바일) 폭
+
+
 async def test_status_right_segments_clock_and_date_zones():
     # 오른쪽(host/시각/날짜)을 별도 런으로 쪼갠 뒤 시각=시계 존, 날짜=달력 존이
     # 서로 겹치지 않고, 날짜 클릭은 clock-mode 를 켜지 않아야 한다(#12).
@@ -1282,17 +1424,26 @@ async def test_claude_icon_and_header():
         app.tabbar.tabs = [{"index": 0, "name": "win",
                             "active": True, "claude": "busy"}]
         assert "◐" in "".join(app.tabbar._labels())
-        # 스티키 헤더: 마지막 프롬프트(좌측 [x] 닫기 버튼은 제거됨, #8)
+        # 스티키 헤더: 마지막 프롬프트(좌측 [x] 닫기 버튼은 제거됨, #8). 서버가 헤더
+        # 행을 예약하면 pane["claude_hdr"]=True 로 알려오고, 헤더는 내용 위 한 줄
+        # (ap["y"]-1)에 그려진다(#1).
         app.pane_claude = {active: {"id": active, "claude": "idle",
                                     "prompt": "do the thing"}}
-        app._composite()
         ap = next(p for p in app.layout["panes"] if p["id"] == active)
-        row = "".join((c[0] or " ") for c in app.view._cells[ap["y"]])
+        # 서버 예약을 모사: claude_hdr=True 면 내용 영역이 한 행 내려오고(y+1, h-1)
+        # 헤더는 그 위 한 줄(내부 행)에 그려진다. y 를 안 내리면 헤더가 박스 윗
+        # 테두리 행(탭 닫기 [x] 가 있는 줄)에 겹쳐 검증이 헷갈린다.
+        ap["claude_hdr"] = True
+        ap["y"] += 1
+        ap["h"] -= 1
+        hy = ap["y"] - 1
+        app._composite()
+        row = "".join((c[0] or " ") for c in app.view._cells[hy])
         assert "do the thing" in row, repr(row)
         assert "[x]" not in row, "헤더 [x] 닫기 버튼은 제거됨"
         # 헤더 배경은 진한 파랑(primary-darken-2) — 본문/테두리(primary)보다 어둡게
         dark = app.theme_variables.get("primary-darken-2", "#0053AA").lower()
-        cellbg = app.view._cells[ap["y"]][ap["x"] + 1][1]
+        cellbg = app.view._cells[hy][ap["x"] + 1][1]
         assert cellbg and cellbg.bgcolor and dark in str(cellbg.bgcolor).lower(), \
             f"헤더 배경 진한 파랑 기대, got {cellbg.bgcolor if cellbg else None}"
         # 탭 닫기 [x] 는 우상단(W-3..W) 에 그대로
@@ -1301,13 +1452,13 @@ async def test_claude_icon_and_header():
         # claude-header off → 헤더 숨김
         app._run_command("claude-header off")
         app._composite()
-        row2 = "".join((c[0] or " ") for c in app.view._cells[ap["y"]])
+        row2 = "".join((c[0] or " ") for c in app.view._cells[hy])
         assert "do the thing" not in row2, "claude-header off → 숨김"
         assert app.claude_header_on is False
         # claude-header on → 다시 표시(전역 옵션, 프롬프트 단위 아님)
         app._run_command("claude-header on")
         app._composite()
-        row3 = "".join((c[0] or " ") for c in app.view._cells[ap["y"]])
+        row3 = "".join((c[0] or " ") for c in app.view._cells[hy])
         assert "do the thing" in row3, "claude-header on → 표시"
         assert app.claude_header_on is True
     await _with_app(body)
@@ -1320,6 +1471,8 @@ async def test_prompt_history_popup():
         active = app.layout["active"]
         app._update_claude([{"id": active, "claude": "idle", "prompt": "latest",
                              "history": ["do a", "do b", "latest"]}])
+        next(p for p in app.layout["panes"]
+             if p["id"] == active)["claude_hdr"] = True  # 서버 헤더 행 예약(#1)
         app._composite()
         assert active in app._claude_header_zones, "헤더 클릭존 등록"
         app.open_prompt_history(active)
@@ -1337,15 +1490,16 @@ async def test_esc_header_focus_opens_history():
         active = app.layout["active"]
         app._update_claude([{"id": active, "claude": "idle", "prompt": "latest",
                              "history": ["do a", "latest"]}])
+        ap = next(p for p in app.layout["panes"] if p["id"] == active)
+        ap["claude_hdr"] = True                # 서버 헤더 행 예약(#1)
         app._composite()
         await pilot.press("escape")
         assert app.mode == "esc"
         await pilot.press("h")                 # 헤더 포커스 진입
         assert app._hdr_focus == active, app._hdr_focus
-        # 포커스 헤더는 accent(강조)색 배경
-        ap = next(p for p in app.layout["panes"] if p["id"] == active)
+        # 포커스 헤더는 accent(강조)색 배경. 헤더는 내용 위 한 줄(ap["y"]-1)에 그려짐(#1)
         accent = app.theme_variables.get("accent", "#FEA62B").lower()
-        cellbg = app.view._cells[ap["y"]][ap["x"] + 1][1]
+        cellbg = app.view._cells[ap["y"] - 1][ap["x"] + 1][1]
         assert cellbg and cellbg.bgcolor and accent in str(cellbg.bgcolor).lower(), \
             f"헤더 포커스 강조색 기대, got {cellbg.bgcolor if cellbg else None}"
         await pilot.press("enter")             # 히스토리 팝업 + 모드 종료
@@ -1427,9 +1581,11 @@ async def test_header_hide_toggle_from_history():
         active = app.layout["active"]
         app._update_claude([{"id": active, "claude": "idle", "prompt": "latest",
                              "history": ["latest"]}])
-        app._composite()
         ap = next(p for p in app.layout["panes"] if p["id"] == active)
-        row = "".join((c[0] or " ") for c in app.view._cells[ap["y"]])
+        ap["claude_hdr"] = True                # 서버 헤더 행 예약(#1)
+        hy = ap["y"] - 1                        # 헤더는 내용 위 한 줄
+        app._composite()
+        row = "".join((c[0] or " ") for c in app.view._cells[hy])
         assert "latest" in row, "처음엔 헤더 표시"
         # 팝업 열고 h → 숨김
         app.open_prompt_history(active)
@@ -1438,7 +1594,7 @@ async def test_header_hide_toggle_from_history():
         await pilot.pause(0.1)
         assert active in app._claude_hidden_panes
         app._composite()
-        row2 = "".join((c[0] or " ") for c in app.view._cells[ap["y"]])
+        row2 = "".join((c[0] or " ") for c in app.view._cells[hy])
         assert "latest" not in row2, "헤더 숨김"
         # 다시 팝업 h → 표시 복원
         app.open_prompt_history(active)

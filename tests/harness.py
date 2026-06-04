@@ -12,35 +12,62 @@ import tempfile
 # 상위 디렉토리(pytmux 패키지/진입점)를 import 경로에 추가
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytmux  # noqa: E402
+from pytmuxlib import ipc  # noqa: E402
+
+IS_WINDOWS = os.name == "nt"
 
 
 async def server_only():
-    """서버를 기동하고 소켓이 뜰 때까지 대기. (srv, task, sock) 반환."""
-    sock = tempfile.mktemp(suffix=".sock")
-    srv = pytmux.Server(sock)
+    """서버를 기동하고 listen 이 뜰 때까지 대기. (srv, task, endpoint) 반환.
+
+    Unix: 임시 `.sock`(AF_UNIX). Windows: asyncio 의 AF_UNIX 지원이 불완전해
+    `ipc` 가 TCP 루프백으로 분기하므로 여기서도 TCP 에페메럴(포트 0)을 쓴다.
+    TCP 는 상태파일 prefix(`ipc.state_base`)·포트파일이 고정 경로
+    (`default_state_dir/default`)라 테스트 간 충돌하므로, 매 테스트마다 유니크한
+    상태 디렉터리를 `LOCALAPPDATA` 로 주입해 격리한다.
+    반환값은 **확정 엔드포인트**(TCP 면 실제 포트)라 클라이언트가 그대로 접속한다.
+    """
+    if IS_WINDOWS:
+        os.environ["LOCALAPPDATA"] = tempfile.mkdtemp(prefix="pytmux-test-")
+        endpoint = "tcp:127.0.0.1:0"
+    else:
+        endpoint = tempfile.mktemp(suffix=".sock")
+    srv = pytmux.Server(endpoint)
     task = asyncio.create_task(srv.serve())
+    # listen 준비 신호: Unix=소켓 파일 생성, TCP=resolved_endpoint 가 실제 포트로 확정.
     for _ in range(300):
-        if os.path.exists(sock):
+        if ipc.is_tcp(endpoint):
+            re = srv.resolved_endpoint
+            if ipc.is_tcp(re) and not re.endswith(":0"):
+                break
+        elif os.path.exists(endpoint):
             break
         await asyncio.sleep(0.01)
-    return srv, task, sock
+    return srv, task, srv.resolved_endpoint
 
 
-def cleanup(srv, sock):
-    """패널 자식 프로세스를 정리하고 소켓 파일 제거(루프는 중단하지 않음)."""
+def cleanup(srv, endpoint):
+    """패널 자식 프로세스를 정리하고 (Unix) 소켓 파일 제거(루프는 중단하지 않음)."""
     srv.running = False
     for s in list(srv.sessions.values()):
         for t in s.tabs:
             for p in t.window.panes():
                 try:
-                    os.killpg(os.getpgid(p.child_pid), signal.SIGKILL)
+                    if p.pty is not None:
+                        # 크로스플랫폼: pty_backend 가 OS 별 종료를 추상화(Unix
+                        # SIGKILL / Windows TerminateProcess).
+                        p.pty.kill()
+                        p.pty.close()
+                    elif not IS_WINDOWS:
+                        os.killpg(os.getpgid(p.child_pid), signal.SIGKILL)
                 except Exception:
                     pass
-    try:
-        if os.path.exists(sock):
-            os.unlink(sock)
-    except OSError:
-        pass
+    if not ipc.is_tcp(endpoint):
+        try:
+            if os.path.exists(endpoint):
+                os.unlink(endpoint)
+        except OSError:
+            pass
 
 
 async def teardown(srv, task, sock):
@@ -57,8 +84,13 @@ def pane_text(pane):
     return "\n".join("".join(seg[0] for seg in row) for row in rows)
 
 
-async def drain(reader, store, timeout=0.8):
-    """소켓에서 timeout 동안 들어오는 메시지를 store(list)에 모은다."""
+async def drain(reader, store, timeout=0.8, until=None):
+    """소켓에서 timeout 동안 들어오는 메시지를 store(list)에 모은다.
+
+    until(store) 술어를 주면 만족 즉시 반환한다. Windows(TCP+ConPTY)는 메시지
+    왕복이 느려 고정 창이 빠듯하므로, 호출부는 넉넉한 timeout + until 로 "조건 충족
+    시 조기 반환"을 쓰면 Unix 에선 빠르고 Windows 에선 인내한다.
+    """
     loop = asyncio.get_event_loop()
     end = loop.time() + timeout
     while loop.time() < end:
@@ -70,6 +102,8 @@ async def drain(reader, store, timeout=0.8):
         if msg is None:
             break
         store.append(msg)
+        if until is not None and until(store):
+            break
 
 
 async def first_session(srv, timeout=1.0):
