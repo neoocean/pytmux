@@ -304,6 +304,13 @@ class Pane:
         # 프롬프트 단위 클리어 큐(#4): 사용자가 미리 쌓아 둔 명령들. 각 명령은
         # doc+/clear 사이클을 마칠 때마다 _pc_advance 가 하나씩 투입한다.
         self.prompt_clear_queue = []
+        # 자동 doc→/clear(§10): Claude 가 idle 로 N초 지속되면 1회 문서화→/clear 를
+        # 자동 수행한다(서버 옵션 auto_doc_clear 가 켜졌을 때만). _adc_timer 는 무장된
+        # asyncio 타이머 핸들(없으면 None), _adc_active 는 자동 시퀀스 진행 중 여부
+        # (진행 중엔 _pc_phase 상태기계를 prompt_clear_mode 와 공유). 둘 다 휘발성이라
+        # 재시작 직렬화(_RESUME_FIELDS) 대상이 아니다.
+        self._adc_timer = None
+        self._adc_active = False
         # _layout_msg 가 이 패널에 Claude 헤더 한 행을 예약했는지(#1). 예약 유무가
         # 바뀌면 flush 루프가 레이아웃(PTY 리사이즈 포함)을 다시 보낸다.
         self._hdr_reserved = False
@@ -358,6 +365,7 @@ class Pane:
         self._claude_account_manual = False
         self._pc_phase = None    # 프롬프트 단위 클리어 상태기계 리셋(모드 자체는 유지)
         self.prompt_clear_queue = []  # 새 셸이므로 쌓인 명령 큐도 버린다(#4)
+        self._adc_active = False  # 자동 doc→/clear 진행상태 리셋(§10; 타이머는 만료시 자가해제)
         self._hdr_reserved = False
         self._hdr_claude = False
         self._hdr_claude_miss = 0

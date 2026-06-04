@@ -273,6 +273,87 @@ async def test_prompt_clear_mode_sequence():
         await teardown(srv, task, sock)
 
 
+async def test_auto_doc_clear_sequence_and_guards():
+    """§10 자동 doc→/clear: 토글이 켜진 상태에서 busy→idle 가 N초 지속되면(타이머
+    만료=_adc_fire) 문서화 지시→/clear 를 1회 자동 주입한다. idle 이탈 시 무장된
+    타이머를 해제하고, idle아님/진행중/수동모드/토글off 면 발화하지 않는다. 토글은
+    opts.json 영속."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        injected = []
+        srv._pc_inject = lambda pane, text: injected.append(text)
+
+        assert srv.auto_doc_clear is False, "기본 off"
+        assert srv.set_auto_doc_clear(True) is True
+        import json as _json
+        assert _json.load(open(srv.opts_path))["auto_doc_clear"] is True
+
+        def go_idle():
+            p._claude = "busy"
+            p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+            srv._scan_claude(sess, win)
+
+        # busy→idle → 타이머 무장(아직 발화 안 함)
+        go_idle()
+        assert p._claude == "idle"
+        assert p._adc_timer is not None and p._adc_active is False
+        assert injected == []
+        # 타이머 만료(N초 지속 시뮬) → 문서화 지시 주입, 시퀀스 시작
+        srv._adc_fire(p)
+        assert p._adc_active is True and p._pc_phase == "doc"
+        assert injected == [srv.prompt_clear_message], injected
+        # 문서화 응답 완료 → /clear → 다음 완료 → 시퀀스 종료(_adc_active 해제)
+        go_idle()
+        assert p._pc_phase == "clear" and injected[-1] == "/clear"
+        go_idle()
+        assert p._pc_phase is None and p._adc_active is False
+        assert len(injected) == 2, "doc + clear 두 번만"
+
+        # idle 이탈(재busy) 시 _scan_claude 가 무장 해제
+        go_idle()
+        assert p._adc_timer is not None
+        p._claude = "idle"
+        p.feed(b"\x1b[2J\x1b[H\x1b[2K\xe2\x86\x91 1k tokens\r\n")  # busy(↑ tokens)
+        srv._scan_claude(sess, win)
+        assert p._claude == "busy" and p._adc_timer is None
+
+        # 발화 가드: idle아님/진행중/수동모드/토글off 면 _adc_fire no-op
+        injected.clear()
+        p._claude = "busy"
+        p._adc_active = False
+        p._pc_phase = None
+        srv._adc_fire(p)
+        assert injected == [], "idle 아님 → no-op"
+        p._claude = "idle"
+        p._adc_active = True
+        srv._adc_fire(p)
+        assert injected == [], "이미 진행 중 → no-op"
+        p._adc_active = False
+        p.prompt_clear_mode = True
+        srv._adc_fire(p)
+        assert injected == [], "수동 클리어 모드 → no-op"
+        p.prompt_clear_mode = False
+        srv.set_auto_doc_clear(False)
+        srv._adc_fire(p)
+        assert injected == [], "토글 off → no-op"
+
+        # 토글 off 시 무장된 타이머 일괄 해제
+        srv.set_auto_doc_clear(True)
+        go_idle()
+        assert p._adc_timer is not None
+        srv.set_auto_doc_clear(False)
+        assert p._adc_timer is None
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
 async def test_claude_header_reserves_row():
     """#1: Claude 프롬프트 헤더가 그려질 패널은 내용 영역에서 한 행을 빼(헤더 양보)
     PTY 도 그만큼 작게 리사이즈하고, layout 에 claude_hdr=True 를 실어 보낸다. 전역

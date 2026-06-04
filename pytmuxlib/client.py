@@ -271,6 +271,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("prompt-clear", "프롬프트 단위 클리어 모드 토글(완료마다 문서화+/clear) [on|off]", "모니터/Claude"),
         ("prompt-clear-message", "프롬프트 단위 클리어의 문서화 지시문 변경", "모니터/Claude"),
         ("prompt-clear-queue", "프롬프트 단위 클리어 큐에 명령 쌓기(빈값=목록, -c=비움)", "모니터/Claude"),
+        ("auto-doc-clear", "Claude idle 30초 지속 시 자동 문서화+/clear on/off (auto-doc-clear on|off|toggle)", "모니터/Claude"),
         ("run-shell", "셸 명령 실행", "설정/기타"),
         ("if-shell", "조건부 셸 실행", "설정/기타"),
         ("bind-key", "prefix 후 키에 명령 바인딩 (bind-key <key> <command>)", "설정/기타"),
@@ -326,6 +327,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         "capture-output": [{"key": "state", "label": "캡처", "choices": _ONOFF}],
         "automatic-rename": [{"key": "state", "label": "자동이름", "choices": _ONOFF}],
         "prompt-clear": [{"key": "state", "label": "클리어모드", "choices": _ONOFF}],
+        "auto-doc-clear": [{"key": "state", "label": "자동클리어", "choices": _ONOFF}],
         "claude-header": [{"key": "state", "label": "헤더", "choices": _ONOFF}],
         "single-border": [{"key": "state", "label": "단일테두리", "choices": _ONOFF}],
         "coalesce-repaints": [{"key": "state", "label": "리페인트합치기", "choices": _ONOFF}],
@@ -3524,6 +3526,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 arg = args[0].lower() if args else "toggle"
                 val = (arg == "on") if arg in ("on", "off") else None
                 self.send_cmd("set_prompt_clear", value=val)
+            elif c in ("auto-doc-clear", "auto-doc"):
+                # auto-doc-clear [on|off|toggle] — Claude 가 idle 로 30초 지속되면
+                # 자동으로 문서화→/clear 를 1회 수행(§10). 서버 전역 토글, opts 영속.
+                arg = args[0].lower() if args else "toggle"
+                val = (arg == "on") if arg in ("on", "off") else None
+                self.send_cmd("set_auto_doc_clear", value=val)
             elif c == "prompt-clear-message":
                 # prompt-clear-message <문구> — ① 문서화 지시문 변경(opts 영속).
                 self.send_cmd("set_prompt_clear_message", msg=" ".join(args).strip())

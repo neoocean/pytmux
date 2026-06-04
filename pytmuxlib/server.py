@@ -75,6 +75,12 @@ class Server:
         self.prompt_clear_message = str(_opts.get(
             "prompt_clear_message",
             "이번 세션에서 얻은 정보·결정을 프로젝트 문서(CLAUDE.md/메모리)에 기록해줘."))
+        # 자동 doc→/clear(§10): Claude 가 작업을 끝내고(busy→idle) 그 상태로
+        # auto_doc_clear_delay 초 지속되면(사용자 개입 없이) prompt_clear_message →
+        # /clear 를 1회 자동 주입한다. 기본 OFF(명시 토글 필요). limit 상태/사용자
+        # 입력/재busy 시엔 발화하지 않는다. opts.json 영속.
+        self.auto_doc_clear = bool(_opts.get("auto_doc_clear", False))
+        self.auto_doc_clear_delay = float(_opts.get("auto_doc_clear_delay", 30.0))
 
     # ---- PTY/패널 생성 ----
     def _fork_shell(self, cols: int, rows: int, cwd: str | None = None,
@@ -377,6 +383,56 @@ class Server:
             pane._pc_phase = None
             if pane.prompt_clear_queue:
                 self._pc_drain(pane)
+
+    # ---- 자동 doc→/clear(§10): idle 지속 N초 후 1회 문서화→/clear ----
+    def set_auto_doc_clear(self, value=None):
+        """Claude idle 지속 시 자동 문서화→/clear 모드 토글. value 미지정 시 반전.
+        끄면 무장된 모든 패널 타이머를 해제한다. opts.json 영속."""
+        self.auto_doc_clear = (not self.auto_doc_clear) if value is None \
+            else bool(value)
+        if not self.auto_doc_clear:
+            for p in self._all_panes():
+                self._adc_disarm(p)
+        self._save_opts()
+        return self.auto_doc_clear
+
+    def _adc_disarm(self, pane: Pane):
+        """무장된 자동 doc→/clear 타이머를 해제한다(사용자 입력·재busy·세션 종료·
+        토글 off 시). 핸들이 없으면 무동작."""
+        t = getattr(pane, "_adc_timer", None)
+        if t is not None:
+            t.cancel()
+            pane._adc_timer = None
+
+    def _adc_arm(self, pane: Pane):
+        """idle 진입 시점에 무장: auto_doc_clear_delay 초 뒤 _adc_fire 를 예약한다.
+        기존 타이머가 있으면 먼저 해제(재무장). 실행 중인 이벤트 루프가 없으면
+        (테스트가 _scan_claude 를 동기 호출하는 등) 조용히 패스한다 — 타이머 기반
+        자동 발화만 비활성일 뿐 다른 동작에는 영향이 없다."""
+        self._adc_disarm(pane)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        pane._adc_timer = loop.call_later(
+            self.auto_doc_clear_delay, self._adc_fire, pane)
+
+    def _adc_fire(self, pane: Pane):
+        """타이머 만료(idle 가 N초 지속됨): 발화 조건을 재확인한 뒤 문서화→/clear
+        시퀀스를 시작한다. idle 이 아니거나(그새 busy/limit/종료), 이미 진행 중이거나,
+        수동 prompt_clear_mode 거나, 토글이 꺼졌으면 발화하지 않는다.
+        시작 = _pc_phase 를 None 으로 두고 _pc_advance 로 문서화 지시문을 주입(→doc).
+        이후 busy→idle 경계마다 _scan_claude 가 doc→clear→종료로 시퀀스를 잇는다."""
+        pane._adc_timer = None
+        if not self.auto_doc_clear:
+            return
+        if pane._claude != "idle":
+            return
+        if pane._adc_active or pane.prompt_clear_mode:
+            return
+        pane._adc_active = True
+        pane._pc_phase = None
+        self._pc_advance(pane)
 
     def _pane_eof(self, pane: Pane):
         self._stop_pane_feed(pane)   # 진행 중 드레인 취소(정상 EOF 면 이미 빈 상태)
@@ -1357,7 +1413,9 @@ class Server:
                            "claude_header": self.claude_header,
                            "single_border": self.single_border,
                            "coalesce_repaints": self.coalesce_repaints,
-                           "prompt_clear_message": self.prompt_clear_message}, f)
+                           "prompt_clear_message": self.prompt_clear_message,
+                           "auto_doc_clear": self.auto_doc_clear,
+                           "auto_doc_clear_delay": self.auto_doc_clear_delay}, f)
         except OSError:
             pass
 
@@ -1624,6 +1682,9 @@ class Server:
         elif c in ("coalesce-repaints", "coalesce"):
             val = True if "on" in args else (False if "off" in args else None)
             return "on" if self.set_coalesce_repaints(val) else "off"
+        elif c in ("auto-doc-clear", "auto-doc"):
+            val = True if "on" in args else (False if "off" in args else None)
+            return "on" if self.set_auto_doc_clear(val) else "off"
         else:
             return f"unknown: {c}"
         for cl in list(self.clients):
@@ -1966,12 +2027,22 @@ class Server:
                         and t.monitor_claude and not t.has_claude_done):
                     t.has_claude_done = True
                     changed = True
-                # 프롬프트 단위 클리어 모드(#9): busy→idle(응답 완료)마다 상태기계를
-                # 한 단계 전진(사용자 프롬프트 완료→문서화 지시→/clear). 주입한 지시·
-                # /clear 자체의 완료도 같은 경계로 다음 단계를 끈다.
-                if (p.prompt_clear_mode and old_cl == "busy"
-                        and new_cl == "idle"):
-                    self._pc_advance(p)
+                # 자동 doc→/clear(§10): idle 이탈(busy/limit/종료) 시 무장된 타이머를
+                # 즉시 해제한다 — idle 이 끊기면 "N초 지속" 전제가 깨진다.
+                if new_cl != "idle":
+                    self._adc_disarm(p)
+                # 프롬프트 단위 클리어 모드(#9) + 자동 doc→/clear(§10): busy→idle(응답
+                # 완료) 경계에서 상태기계를 전진한다. 수동 모드(prompt_clear_mode)와
+                # 자동 시퀀스(_adc_active)가 같은 _pc_phase 기계를 공유한다.
+                # 진행 중이 아니면서 자동 모드가 켜져 있으면 idle 진입 시점에 무장만
+                # 한다(실제 발화는 N초 뒤 _adc_fire).
+                if old_cl == "busy" and new_cl == "idle":
+                    if p.prompt_clear_mode or p._adc_active:
+                        self._pc_advance(p)
+                        if p._adc_active and p._pc_phase is None:
+                            p._adc_active = False   # 자동 doc→clear 시퀀스 완료
+                    elif self.auto_doc_clear:
+                        self._adc_arm(p)
         return changed
 
     @staticmethod
@@ -2306,6 +2377,8 @@ class Server:
             self.set_single_border(msg.get("value"))
         elif action == "set_coalesce":
             self.set_coalesce_repaints(msg.get("value"))
+        elif action == "set_auto_doc_clear":
+            self.set_auto_doc_clear(msg.get("value"))
         elif action == "set_prompt_clear":
             self.set_prompt_clear(sess, msg.get("value"))
         elif action == "set_prompt_clear_message":
@@ -2462,6 +2535,7 @@ class Server:
                 pass
             return
         self._track_prompt(p, data)   # 마지막 입력 프롬프트 추적(Claude 헤더용)
+        self._adc_disarm(p)   # 사용자 입력 = 활동 중 → 자동 doc→/clear 발화 취소(§10)
         # 입력 동기화 시 윈도우 내 모든 패널에 동일 입력 전달
         targets = win.panes() if win.sync else [p]
         for t in targets:
