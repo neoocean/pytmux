@@ -129,6 +129,44 @@ async def test_claude_usage_persists_while_session_alive():
         await teardown(srv, task, sock)
 
 
+async def test_queued_prompt_header_defers():
+    # #4: busy 중 입력한 프롬프트는 헤더(last_prompt)를 즉시 안 바꾸고 큐에 쌓였다가
+    # 응답 경계(busy→idle)에 순서대로 승격된다. 히스토리는 제출 즉시 기록.
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        # idle 에서 A 제출 → 즉시 헤더 확정
+        srv._track_prompt(p, b"prompt A\r")
+        assert p.last_prompt == "prompt A"
+        # busy 진입
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (5s · ↓ 0.5k tokens)\r\n".encode())
+        srv._scan_claude(sess, win)
+        assert p._claude == "busy"
+        # busy 중 B, C 제출 → 큐잉, 헤더는 A 유지
+        srv._track_prompt(p, b"prompt B\r")
+        srv._track_prompt(p, b"prompt C\r")
+        assert p.last_prompt == "prompt A", "busy 중 새 프롬프트는 헤더 안 바꿈"
+        assert p.pending_prompts == ["prompt B", "prompt C"]
+        # 응답 종료(busy→idle) → 큐 다음(B) 승격
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p.last_prompt == "prompt B", p.last_prompt
+        assert p.pending_prompts == ["prompt C"]
+        # B 처리(busy) → 종료(idle) → C 승격
+        p.feed("\x1b[2J\x1b[H✽ Baking… (3s · ↓ 0.3k tokens)\r\n".encode())
+        srv._scan_claude(sess, win)
+        assert p.last_prompt == "prompt B", "B 처리 중엔 B 유지"
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p.last_prompt == "prompt C" and p.pending_prompts == []
+        # 히스토리에는 A,B,C 모두 즉시 기록
+        assert p.prompt_history == ["prompt A", "prompt B", "prompt C"]
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_session_tokens_accumulate():
     # 토큰 누계(#3): busy footer 의 running 토큰을 응답별 peak 로 합산, 세션 종료 시 리셋.
     srv, task, sock = await server_only()

@@ -194,6 +194,7 @@ class Pane:
         self._inbuf = ""         # 현재 입력 줄 누적(프롬프트 추적용)
         self.last_prompt = ""    # 마지막으로 제출한 프롬프트(한 줄)
         self.prompt_history = []  # 시간순 제출 프롬프트 목록(히스토리 팝업용)
+        self.pending_prompts = []  # busy 중 입력해 큐된 프롬프트(#4, 처리 시작 시 승격)
         self.search_query = ""   # 스크롤백 검색어
         self._match_abs = None   # 현재 매치된 절대 라인 인덱스
         self.bracketed = False   # 내부 앱이 bracketed paste 모드를 켰는지

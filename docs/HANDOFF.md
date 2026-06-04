@@ -197,7 +197,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56437 + git, 신→구)
+## 9. 최근 변경(CL 56279~56439 + git, 신→구)
+
+- 56439 **대기(큐)중 프롬프트는 헤더 즉시 안 바꿈**(§10) — `_track_prompt` 가 busy 중
+  입력 프롬프트를 `Pane.pending_prompts` 큐에 보관(last_prompt 즉시 안 덮음, 히스토리는
+  즉시), `_scan_claude` 가 응답 경계(busy→non-busy 또는 running 토큰 급감 committed>0)에
+  큐 다음 프롬프트를 last_prompt 로 승격. 헤더 = "지금 처리 중인 프롬프트". 회귀 테스트
+  1종(총 114). **서버 변경 → kill-server 재기동.**
 
 - 56437 **상태줄 토큰 사용량 누적 합산**(§10) — 신규 `pytmuxlib/tokens.py`(running 토큰
   파서+응답별 peak 합산 상태기계). 정의: busy footer 의 "↑/↓ N tokens" 는 현재 응답
@@ -533,21 +539,16 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   세그먼트에 `Σ45.2k` 표기(`_fmt_tokens`). 회귀 테스트 `test_tokens`(4)+`test_session_tokens_
   accumulate`+`test_status_session_tokens`. **서버+클라 → kill-server 재기동 후 반영.**
   영속 이력/시간·일·월 집계는 #7(토큰 로깅)에서 같은 데이터 소스로 확장.
-- **[요청·미구현] 대기(큐) 중인 새 프롬프트는 첫 줄 헤더를 아직 바꾸지 말 것** — Claude
-  패널 첫 줄의 스티키 헤더는 마지막으로 입력한 프롬프트를 보여준다(서버
-  `server.py::_track_prompt`(~1632)가 Enter 즉시 `pane.last_prompt` 확정 → 레이아웃 메시지
-  `prompt`(~1268-1269) → 클라이언트 `_draw_claude_headers`). 현재는 **이전 프롬프트가 아직
-  실행 중인데 새 프롬프트를 입력하면 Enter 즉시** 헤더가 새 프롬프트로 바뀐다. 요청: 새로
-  입력한 프롬프트가 **아직 처리되지 않고 대기(큐)중일 때는 첫 줄 프롬프트를 바꾸지 말고**,
-  그 프롬프트가 **전달되어 처리되기 시작하는 시점에** 헤더를 새 프롬프트로 갱신한다. 즉
-  헤더는 "지금 처리 중인 프롬프트"를 반영해야 함(Claude Code 가 busy 중 입력을 큐잉했다가
-  순차 처리하는 동작과 맞춤). 구현 방향: `_track_prompt` 에서 Enter 확정 시 패널이 이미
-  busy(`p._claude` 가 처리중)면 **`last_prompt` 를 즉시 덮지 말고 `pending_prompt` 로 보관**,
-  현재 처리 끝나고 다음 프롬프트 처리가 시작되는 전이(busy 재진입/스피너 갱신 등 `claude_state`
-  신호)를 잡아 그때 `pending_prompt`→`last_prompt` 로 승격. **난점**: "큐된 프롬프트가 처리
-  시작됐다"는 전이를 화면 휴리스틱으로만 판정해야 한다(연속 busy 라 idle 갭이 안 보일 수
-  있음) — Claude 화면의 큐 표시/프롬프트 에코를 단서로 삼거나 보수적으로 처리. 입력·붙여넣기
-  둘 다 `_track_prompt` 를 거치므로(§6) 두 경로 모두 동일하게 적용.
+- ~~**[요청·미구현] 대기(큐) 중인 새 프롬프트는 첫 줄 헤더를 아직 바꾸지 말 것**~~ →
+  **CL 56439 에서 해결.** `_track_prompt` 가 Enter 확정 시 패널이 이미 busy(`p._claude
+  == "busy"`)면 `last_prompt` 를 즉시 덮지 않고 **`Pane.pending_prompts` 큐에 보관**한다
+  (히스토리는 제출 즉시 기록 — 큐잉돼도 제출은 맞으므로). `_scan_claude` 가 **응답 경계**
+  에서 큐의 다음 프롬프트를 `last_prompt` 로 승격: ① busy→non-busy(응답 종료) 또는 ②
+  연속 busy 중 **running 토큰 급감**(#3 의 `tokens.step` 이 반환하는 `committed>0` = idle
+  갭 없이 다음 응답 시작 — 핸드오프가 지적한 "연속 busy 라 idle 갭이 안 보임" 난점을 토큰
+  경계로 해결). Claude 세션 종료(None)면 큐를 비운다. 입력·붙여넣기 둘 다 `_track_prompt`
+  를 거쳐 동일 적용. 회귀 테스트 `test_queued_prompt_header_defers`(A 즉시→busy 중 B·C 큐잉
+  →응답마다 B,C 순차 승격, 히스토리엔 즉시 A,B,C). **서버 변경 → kill-server 재기동.**
 - **[부분해결] Claude 프롬프트 헤더 → 프롬프트 히스토리 팝업** — **CL 56409 에서 팝업
   구현**: 서버가 패널별 prompt_history 누적(_track_prompt)·status 로 전달, 클라가 헤더
   본문 클릭존·명령(prompt-history)으로 InfoScreen 시간순 목록 표시. **남은 부분**: ①

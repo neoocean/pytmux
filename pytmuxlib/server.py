@@ -1313,11 +1313,13 @@ class Server:
                 # 토큰 누계(#3): 새 Claude 세션 시작(None→Claude) 시 리셋, 매 프레임
                 # 현재 응답 running 토큰을 step 으로 접어 응답별 peak 를 누계에 확정.
                 # (확정 시점 committed>0 은 #7 의 영속 로깅 이벤트로도 쓰인다.)
+                committed = 0
                 if new_cl and not old_cl:
                     tokens.reset(p._tok_state)
                 if new_cl:
                     running = tokens.parse_running_tokens(txt)
-                    tokens.step(p._tok_state, running, new_cl == "busy")
+                    committed = tokens.step(p._tok_state, running,
+                                            new_cl == "busy")
                     if p._tok_state["total"] != p._session_tokens:
                         p._session_tokens = p._tok_state["total"]
                         changed = True
@@ -1326,6 +1328,21 @@ class Server:
                     p._tok_state["peak"] = 0
                     p._tok_state["total"] = 0
                     changed = True
+                # 큐된 프롬프트 승격(#4): 헤더는 "지금 처리 중인 프롬프트"를 보여야
+                # 한다. busy 중 입력한 프롬프트는 _track_prompt 가 pending_prompts 에
+                # 쌓아 뒀다(last_prompt 즉시 안 바꿈). 응답 경계 — ① busy→non-busy(응답
+                # 종료) 또는 ② 연속 busy 중 running 토큰 급감(committed>0 = 다음 응답
+                # 시작) — 에서 큐의 다음 프롬프트를 last_prompt 로 승격한다.
+                if p._claude is None:
+                    if p.pending_prompts:
+                        p.pending_prompts.clear()
+                else:
+                    boundary = (old_cl == "busy" and new_cl != "busy")
+                    if not boundary and committed > 0 and new_cl == "busy":
+                        boundary = True
+                    if boundary and p.pending_prompts:
+                        p.last_prompt = p.pending_prompts.pop(0)
+                        changed = True
                 # 비활성 탭에서 처리(busy)→대기(idle) 전이 = 작업 완료. limit 은
                 # "대기"가 아니므로 대상 아님(busy→idle 만).
                 if (w is not win and old_cl == "busy" and new_cl == "idle"
@@ -1753,12 +1770,19 @@ class Server:
             if ch in ("\r", "\n"):
                 line = buf.strip()
                 if line:
-                    pane.last_prompt = line
-                    # 히스토리 누적(연속 중복 제외, 최근 200개 캡)
+                    # 히스토리는 제출 즉시 기록(큐잉돼도 제출된 것은 맞다).
                     if not pane.prompt_history or pane.prompt_history[-1] != line:
                         pane.prompt_history.append(line)
                         if len(pane.prompt_history) > 200:
                             pane.prompt_history = pane.prompt_history[-200:]
+                    # 헤더용 last_prompt(#4): 이전 프롬프트가 아직 처리중(busy)이면
+                    # 즉시 덮지 말고 pending 큐에 쌓는다 — _scan_claude 가 응답 경계에
+                    # 다음 프롬프트를 승격한다(헤더 = "지금 처리 중인 프롬프트").
+                    # busy 가 아니면(idle/None/limit) 곧장 확정.
+                    if pane._claude == "busy":
+                        pane.pending_prompts.append(line)
+                    else:
+                        pane.last_prompt = line
                 buf = ""
             elif ord(ch) in (8, 127):        # backspace
                 buf = buf[:-1]
