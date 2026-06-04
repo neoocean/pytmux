@@ -217,6 +217,27 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 참고: 위 작업과 별개로 `surface-office` 병행 세션이 56545~56550(`작업 보존 재시작`)을
 > 제출 중 — depot head 가 빠르게 움직이므로 미러 동기화 전 have/head 확인 권장.
 
+- 56560 **대량 출력 비차단 처리: feed 슬라이스 드레인(`_feed_drain`)** — feed
+  가속(56558) 후에도 pyte feed 는 순수 파이썬이라 ~1.2 MB/s 가 천장. PTY 한 읽기
+  (최대 64KB)를 통째로 동기 feed 하면 그동안(~56ms) 이벤트 루프가 막혀 입력·flush·
+  render 가 지연된다. **측정상 literal '레이트 제한/코얼레싱'은 효과 없음**(feed 가
+  99.8%, `_on_pane_data` 청크당 스캔은 0.2%; 읽기와 feed 가 동기라 커널 PTY 버퍼가
+  이미 producer 를 백프레셔 → 메모리 폭증/데이터 손실 없음). 진짜 개선은 feed 가
+  루프를 오래 잡지 않게 쪼개 양보하는 것: 버스트(>`FEED_SLICE`)면 `pause_reader`
+  로 reader 를 잠깐 떼고 8KB 슬라이스로 먹이며 슬라이스마다 `await asyncio.sleep(0)`
+  로 양보, 다 비우면 `resume_reader`(`_feed_drain`). 소량(대화형 에코, ≤8KB)은
+  기존처럼 인라인 즉시 처리. `_on_pane_data` 분기 + `_feed_drain`/`_stop_pane_feed`
+  신설, 기존 본문은 `_ingest_slice` 로 분리, 모든 teardown(`_pane_eof`/`kill_pane`/
+  `kill_window`/`_destroy_pane_proc`/`respawn`/popup-close/restart)에서 드레인 취소,
+  restart 직전 남은 `_feedbuf` 동기 flush(execv 손실 방지). `pty_backend` 에
+  `pause_reader`/`resume_reader`(`_UnixPty` 구현; 베이스 no-op, Windows 리더 스레드
+  best-effort), `model` 에 `Pane._feedbuf/_feed_task`, `protocol` 에 `FEED_SLICE`.
+  결과(측정): 폭주 중 최악 이벤트 루프 차단 **56.3ms → 13.6ms(4.1배)**, throughput
+  비용 **+3.5%**(1.25→1.21 MB/s), 화면/스크롤백 무손실(슬라이스 드레인 = 일괄 feed
+  와 바이트 동일). 회귀 165개 통과(신규 3: large_output_chunked_equivalent_and_
+  lossless / small_output_fed_inline / feed_drain_interleaves_with_loop).
+  **서버측 변경 — kill-server 재기동 후 반영.** 파일: `pytmuxlib/{protocol,
+  pty_backend,model,server}.py`, `tests/test_server.py`.
 - 56558 **PTY feed 2.75배 가속: pyte HistoryScreen 제거(`_ScrollbackScreen`)** —
   pytmux 체감 느림의 단일 원인이 PTY 출력 파싱(pyte feed)이 0.4 MB/s 라는 점이었다
   (빌드 로그·`cat` 등 다MB 출력이 들어오면 단일 asyncio 루프가 묶여 UI 정지). 다른

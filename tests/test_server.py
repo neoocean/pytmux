@@ -908,6 +908,89 @@ async def test_single_pane_border_toggle_and_persist():
         await teardown(srv, task, sock)
 
 
+async def _drain_pane_feed(pane, limit=5000):
+    """버스트 드레인 태스크가 끝날 때까지(또는 한도) 루프를 돌린다."""
+    for _ in range(limit):
+        if pane._feed_task is None and not pane._feedbuf:
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("feed 드레인이 끝나지 않음")
+
+
+async def test_large_output_chunked_equivalent_and_lossless():
+    # 대량 출력 비차단 처리(feed 슬라이스 드레인): 서버 ingest 경로로 큰 버스트를
+    # 넣으면 reader 를 떼고 FEED_SLICE 단위로 쪼개 먹인 뒤 재개한다. 결과 화면/
+    # 스크롤백이 동일 데이터를 한 번에 feed 한 것과 바이트 단위로 같아야 한다
+    # (색 escape 가 슬라이스 경계를 가로질러도 손실/깨짐 없음).
+    from pytmuxlib.model import Pane
+    from pytmuxlib.protocol import FEED_SLICE
+    srv, task, sock = await server_only()
+    try:
+        pane = Pane(0, -1, 80, 24)   # pty=None → pause/resume 가드로 무해
+        colors = [b"\x1b[31m", b"\x1b[32m", b"\x1b[33m", b"\x1b[0m"]
+        payload = b"".join(
+            colors[i % 4] + f"row-{i:05d}-the-quick-brown-fox\x1b[0m\r\n".encode()
+            for i in range(800))
+        assert len(payload) > FEED_SLICE * 3, "버스트 경로를 타도록 충분히 크게"
+        srv._on_pane_data(pane, payload)
+        assert pane._feed_task is not None, "버스트는 드레인 태스크로"
+        assert pane._feedbuf, "아직 남은 바이트가 큐에 있어야"
+        await _drain_pane_feed(pane)
+
+        ref = Pane(0, -1, 80, 24)
+        ref.feed(payload)            # 한 번에 먹인 기준값
+        assert pane._export_screen() == ref._export_screen(), \
+            "슬라이스 드레인 결과가 일괄 feed 와 동일해야(무손실)"
+        lines = pane._export_screen()
+        assert any("row-00000-" in ln for ln in lines), "첫 줄 스크롤백 보존"
+        assert any("row-00799-" in ln for ln in lines), "마지막 줄 보존"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_small_output_fed_inline():
+    # 소량(대화형 에코 등, <= FEED_SLICE)은 드레인 태스크 없이 인라인 즉시 처리해
+    # 기존 동기 경로와 동일하게 동작(추가 지연 0).
+    from pytmuxlib.model import Pane
+    srv, task, sock = await server_only()
+    try:
+        pane = Pane(0, -1, 80, 24)
+        srv._on_pane_data(pane, b"hello world\r\n")
+        assert pane._feed_task is None and pane._feedbuf == b"", "인라인 처리"
+        assert any("hello world" in ln for ln in pane._export_screen())
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_feed_drain_interleaves_with_loop():
+    # 드레인이 슬라이스마다 이벤트 루프에 양보하는지: 함께 도는 코루틴이 드레인
+    # 진행 중에 여러 번 끼어들어 실행돼야 한다(한 번에 블록하지 않음).
+    from pytmuxlib.model import Pane
+    from pytmuxlib.protocol import FEED_SLICE
+    srv, task, sock = await server_only()
+    try:
+        pane = Pane(0, -1, 80, 24)
+        payload = (b"x" * FEED_SLICE) * 8        # 8 슬라이스
+        progressed = 0
+        drain_done = {"v": False}
+
+        async def ticker():
+            nonlocal progressed
+            while not drain_done["v"]:
+                progressed += 1
+                await asyncio.sleep(0)
+
+        tk = asyncio.create_task(ticker())
+        srv._on_pane_data(pane, payload)
+        await _drain_pane_feed(pane)
+        drain_done["v"] = True
+        await tk
+        # 8 슬라이스 = 최소 8회 양보 → ticker 가 그 사이사이 여러 번 돌았어야.
+        assert progressed >= 8, f"드레인이 루프를 양보하지 않음(progressed={progressed})"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_claude_header_opt_persists():
     # #6 ③: claude-header 전역 표시 상태가 opts.json 에 영속되고 재시작 후 유지.
     srv, task, sock = await server_only()

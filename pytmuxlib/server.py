@@ -12,7 +12,7 @@ import time
 from . import ipc, proc, pty_backend, sshwrap, tokens, usagelog
 from .model import ClientConn, Pane, Session, Split, Tab, Window
 from .claude import claude_account, claude_state, claude_usage, parse_reset_delay
-from .protocol import (FLUSH_HZ, MIN_H, MIN_W, read_msg, write_msg)
+from .protocol import (FEED_SLICE, FLUSH_HZ, MIN_H, MIN_W, read_msg, write_msg)
 
 # pytmux 프로젝트 루트(= pytmuxlib 패키지의 상위). 캡처 출력 등 "프로젝트에 영속해
 # Perforce 로 공유할" 산출물의 기준 경로다. proc.server_argv 의 entry 추정과 동일 규칙.
@@ -85,6 +85,7 @@ class Server:
 
     def _attach_reader(self, pane: Pane) -> None:
         """패널 PTY 의 읽기를 시작한다(on_data/on_eof 는 이벤트 루프 스레드에서 호출)."""
+        self._stop_pane_feed(pane)   # 재attach 시 이전 드레인 잔여 상태 초기화
         pane.pty.start_reader(
             self.loop,
             lambda d, p=pane: self._on_pane_data(p, d),
@@ -106,6 +107,7 @@ class Server:
             return
         pane = win.active_pane
         cwd = self._pane_cwd(pane)
+        self._stop_pane_feed(pane)          # 진행 중 드레인 취소(새 셸로 교체 전)
         if pane.pty is not None:
             pane.pty.stop_reader()
             pane.pty.kill()                 # SIGKILL 즉시 종료
@@ -120,6 +122,57 @@ class Server:
     def _on_pane_data(self, pane: Pane, data: bytes):
         # PTY 읽기/EOF/EIO 처리는 pty_backend 가 담당하고, 여기엔 수신 바이트 처리만
         # 남는다(backend 가 on_data 를 이벤트 루프 스레드에서 부른다).
+        #
+        # 대량 출력 비차단 처리: pyte feed 는 순수 파이썬이라 64KB 한 읽기를 통째로
+        # 먹이면 ~50ms 동안 이벤트 루프가 막혀 입력·flush 가 지연된다. 그래서 버스트는
+        # reader 를 잠깐 떼고(커널 PTY 백프레셔 유지 → 데이터 손실/메모리 폭증 없음)
+        # FEED_SLICE 단위로 쪼개 먹이며 슬라이스마다 루프에 양보한다(_feed_drain).
+        # 소량(대화형 에코 등)은 인라인 즉시 처리해 기존 경로와 동일하게 둔다.
+        if pane._feed_task is not None:
+            # 이미 드레인 중 → 큐에 이어 붙이면 실행 중 태스크가 소비한다(POSIX 는
+            # reader 가 멈춰 여기 거의 안 옴; pause 가 no-op 인 백엔드의 버스트 대비).
+            pane._feedbuf += data
+            return
+        if len(data) <= FEED_SLICE:
+            self._ingest_slice(pane, data)
+            return
+        pane._feedbuf += data
+        if pane.pty is not None:
+            pane.pty.pause_reader()
+        pane._feed_task = self.loop.create_task(self._feed_drain(pane))
+
+    async def _feed_drain(self, pane: Pane):
+        """버스트 바이트를 FEED_SLICE 단위로 먹이며 슬라이스마다 이벤트 루프에 양보.
+        모두 비우면 reader 를 재개해 다음 배치를 읽는다(취소 시엔 재개 안 함)."""
+        cancelled = False
+        try:
+            while pane._feedbuf:
+                n = min(FEED_SLICE, len(pane._feedbuf))
+                chunk, pane._feedbuf = pane._feedbuf[:n], pane._feedbuf[n:]
+                self._ingest_slice(pane, chunk)
+                await asyncio.sleep(0)   # 양보: 입력/flush/render 가 끼어든다
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        finally:
+            pane._feed_task = None
+            if not cancelled and pane.pty is not None:
+                try:
+                    pane.pty.resume_reader()
+                except Exception:
+                    pass
+
+    def _stop_pane_feed(self, pane: Pane):
+        """진행 중인 드레인 태스크를 취소하고 대기 버퍼를 비운다(패널 teardown/재attach)."""
+        t = pane._feed_task
+        if t is not None and not t.done():
+            t.cancel()
+        pane._feed_task = None
+        pane._feedbuf = b""
+
+    def _ingest_slice(self, pane: Pane, data: bytes):
+        """수신 바이트 한 조각을 실제로 처리한다(feed + 활동/모드 스캔). _on_pane_data
+        (소량 인라인)와 _feed_drain(버스트 슬라이스) 양쪽에서 호출된다."""
         if self.capture:
             self._capture_write(pane, data)
         pane.feed(data)
@@ -272,6 +325,7 @@ class Server:
                 self._pc_drain(pane)
 
     def _pane_eof(self, pane: Pane):
+        self._stop_pane_feed(pane)   # 진행 중 드레인 취소(정상 EOF 면 이미 빈 상태)
         if pane.pipe_proc:
             try:
                 pane.pipe_proc.stdin.close()
@@ -440,6 +494,8 @@ class Server:
             return False
         sess.popup = None
         pane = pu.get("pane")
+        if pane is not None:
+            self._stop_pane_feed(pane)  # 진행 중 드레인 취소
         if pane is not None and pane.pty is not None:
             try:
                 pane.pty.stop_reader()
@@ -794,6 +850,7 @@ class Server:
         if not win:
             return
         for p in win.panes():
+            self._stop_pane_feed(p)     # 진행 중 드레인 취소
             if p.pty is not None:
                 p.pty.terminate()       # SIGHUP
                 p.pty.stop_reader()
@@ -817,6 +874,7 @@ class Server:
 
     def _destroy_pane_proc(self, pane: Pane):
         """패널의 PTY/자식 프로세스를 정리한다(트리 조작 없음)."""
+        self._stop_pane_feed(pane)      # 진행 중 드레인 취소
         self._close_capfile(pane.id)
         if pane.pty is not None:
             pane.pty.terminate()        # SIGHUP
@@ -1171,6 +1229,15 @@ class Server:
             return False
         if not self.sessions:
             return False
+        # 폭주 드레인 중이면 아직 pyte 에 안 먹인 _feedbuf 가 남아 있을 수 있다.
+        # execv 로 프로세스 이미지가 바뀌면 그 바이트(파이썬 메모리)는 사라지므로,
+        # 직렬화 전에 진행 중 드레인을 멈추고 남은 바이트를 동기로 마저 먹여 화면
+        # 스냅샷(_export_screen)에 반영한다.
+        for p in self._all_panes():
+            buf = p._feedbuf
+            self._stop_pane_feed(p)   # 태스크 취소 + _feedbuf 비움
+            if buf:
+                self._ingest_slice(p, buf)
         if not self.save_resume_state():
             return False
         self._save_opts()

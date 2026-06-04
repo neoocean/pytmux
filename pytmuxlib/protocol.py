@@ -19,6 +19,12 @@ MIN_W = 3       # 패널 최소 폭(열) — 테두리(좌/우) + 내용 1칸
 MIN_H = 3       # 패널 최소 높이(행) — 테두리(상/하) + 내용 1칸
 FLUSH_HZ = 30   # 서버 화면 push 주기
 HISTORY = 10000 # 패널당 스크롤백 보관 행 수
+# 대량 출력(빌드 로그·cat 등) 시 PTY 한 읽기(최대 64KB)를 이 크기 슬라이스로 쪼개
+# pyte 에 먹이고 슬라이스마다 이벤트 루프에 양보한다(server._feed_drain). pyte feed 는
+# 순수 파이썬이라 64KB 를 한 번에 먹이면 ~50ms 동안 루프가 막혀 입력·flush 가 지연된다.
+# 8KB(≈6ms/슬라이스)면 폭주 중에도 입력·렌더가 부드럽게 끼어든다. 데이터 손실 없음
+# (reader 를 잠깐 떼어 커널 PTY 백프레셔 유지 — docs/HANDOFF.md §9 의 CL 참조).
+FEED_SLICE = 8192
 
 
 async def read_msg(reader: asyncio.StreamReader):

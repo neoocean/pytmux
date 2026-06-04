@@ -89,6 +89,16 @@ class PtyProcess:
     def stop_reader(self) -> None:
         raise NotImplementedError
 
+    def pause_reader(self) -> None:
+        """읽기를 일시 중단한다(콜백/핸들은 보존 — resume_reader 로 재개).
+
+        대량 출력 드레인 중(server._feed_drain) 더 읽지 않게 막아 커널 PTY 버퍼가
+        producer 를 백프레셔하게 한다. 기본은 no-op(백엔드별 선택 구현 — POSIX 만
+        의미가 있고 Windows 리더 스레드는 미지원이라 best-effort)."""
+
+    def resume_reader(self) -> None:
+        """pause_reader 로 멈춘 읽기를 재개한다. 기본 no-op."""
+
     def write(self, data: bytes) -> None:
         raise NotImplementedError
 
@@ -227,6 +237,21 @@ class _UnixPty(PtyProcess):
             except (OSError, ValueError):
                 pass
         self._reading = False
+
+    def pause_reader(self) -> None:
+        # stop_reader 와 달리 콜백(_on_data/_on_eof/_loop)을 보존해 resume 가능.
+        if self._reading and self._loop is not None:
+            try:
+                self._loop.remove_reader(self._fd)
+            except (OSError, ValueError):
+                pass
+            self._reading = False
+
+    def resume_reader(self) -> None:
+        if (not self._reading and self._loop is not None
+                and self._on_data is not None and self._fd >= 0):
+            self._loop.add_reader(self._fd, self._readable)
+            self._reading = True
 
     def write(self, data: bytes) -> None:
         os.write(self._fd, data)
