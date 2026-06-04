@@ -2003,6 +2003,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._hdr_focus = None      # ESC 모드 Claude 헤더 포커스 대상 pane id(#5)
             self._claude_hidden_panes = set()  # 헤더를 숨긴 패널 id(#6 ② 팝업서 토글)
             self._tab_close_zone = None  # 현재 탭 닫기 [x] 영역 (x0, x1, y)
+            # 네트워크 응답성(§10): 클라↔서버 ping/pong 왕복지연(RTT)을 주기 측정하고
+            # 히스테리시스로 degraded 판정 — degraded 면 패널 외곽선을 빨강으로(회복 시
+            # 원복). _net_ping_ts=미응답 ping 의 송신 monotonic 시각(None=응답됨).
+            self._net_ping_ts = None
+            self._net_degraded = False
+            self._net_bad = 0      # 연속 느림 표본 수
+            self._net_good = 0     # 연속 양호 표본 수
+            self.net_rtt_threshold = config.get("net_rtt_threshold", 0.4)  # 초
+            self.net_ping_interval = config.get("net_ping_interval", 0.5)  # 초
+            self.net_bad_n = config.get("net_bad_n", 3)    # ON 전이 지속 표본
+            self.net_good_n = config.get("net_good_n", 3)  # OFF 전이 지속 표본
             # ---- 설정(config) 적용 ----
             self.prefix_key = config.get("prefix", "ctrl+b")
             self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
@@ -2069,6 +2080,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.status.styles.dock = "top"
             self._restart_status_timer()
             self.set_interval(1.0, self._clock_tick)  # clock-mode 초 단위 갱신
+            self.set_interval(self.net_ping_interval, self._net_ping)  # RTT 측정(§10)
             # 대체 스크롤 모드(DECSET 1007) 끄기 — 일부 터미널(iTerm2, 일부 SSH
             # 클라이언트)은 기본적으로 alt-screen 에서 마우스 휠을 ↑/↓ 화살표 키로
             # 변환해 보낸다(§10 "원격 SSH 휠 스크롤백 미동작"). 그러면 pytmux 는
@@ -2300,6 +2312,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if self._want_buffers:
                     self._want_buffers = False
                     self._open_choose_buffer(msg.get("items", []))
+            elif t == "pong":
+                self._on_pong()   # 네트워크 RTT 표본(§10)
             elif t == "captured":
                 self.display_message(f"{msg.get('chars', 0)} chars 버퍼에 캡처됨")
             elif t == "restarting":
@@ -2442,6 +2456,47 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 1초마다: 시계/달력 오버레이가 있으면 갱신(뒤 화면도 함께 다시 합성).
             # 달력은 자정을 넘어가면 '오늘' 강조가 다음 날로 이동한다.
             if self.clock_panes or self.calendar_panes:
+                self._composite()
+
+        # ---- 네트워크 응답성 측정(§10): ping/pong RTT + 히스테리시스 ----
+        def _net_ping(self):
+            """주기적으로 서버에 ping 을 보내 RTT 를 잰다. 직전 ping 이 임계 안에
+            응답(pong)되지 않았으면 그 자체를 느림 표본으로 치고(채널 지연/정체) 새
+            ping 을 보낸다. 임계 안에 아직 대기 중이면 새 ping 을 보류(중복 방지)."""
+            if not self.writer:
+                return
+            now = time.monotonic()
+            if self._net_ping_ts is not None:
+                if now - self._net_ping_ts <= self.net_rtt_threshold:
+                    return                       # 응답 대기 중(임계 내) — 보류
+                self._net_sample(now - self._net_ping_ts)   # 미응답 = 느림 표본
+            self._net_ping_ts = now
+            asyncio.create_task(write_msg(self.writer, {"t": "ping", "ts": now}))
+
+        def _on_pong(self):
+            """서버 pong 수신: 미응답 ping 의 왕복지연을 표본으로 기록."""
+            if self._net_ping_ts is not None:
+                rtt = time.monotonic() - self._net_ping_ts
+                self._net_ping_ts = None
+                self._net_sample(rtt)
+
+        def _net_sample(self, rtt):
+            """RTT 표본 하나로 히스테리시스를 갱신한다. 임계 초과가 net_bad_n 회
+            연속이면 degraded ON, 임계 이하가 net_good_n 회 연속이면 OFF(깜빡임 방지).
+            상태가 바뀌면 외곽선 색을 다시 그린다."""
+            if rtt > self.net_rtt_threshold:
+                self._net_bad += 1
+                self._net_good = 0
+            else:
+                self._net_good += 1
+                self._net_bad = 0
+            new = self._net_degraded
+            if self._net_bad >= self.net_bad_n:
+                new = True
+            elif self._net_good >= self.net_good_n:
+                new = False
+            if new != self._net_degraded:
+                self._net_degraded = new
                 self._composite()
 
         @staticmethod
@@ -2598,6 +2653,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 활성 패널의 경계 전체가 파란색이 되도록 한다.
             inactive_box = Style(color="grey42")
             active_box = Style(color=theme_color(self, "primary"), bold=True)
+            # 네트워크 응답성 저하(§10): RTT 히스테리시스로 degraded 면 모든 패널
+            # 테두리를 error(빨강)로 덮어 사용자에게 알린다(회복되면 원복). 단일
+            # ssh 채널을 전 패널이 공유하므로 전 패널 공통 상태.
+            if self._net_degraded:
+                err = theme_color(self, "error")
+                inactive_box = Style(color=err)
+                active_box = Style(color=err, bold=True)
             show_title = self.layout.get("border_status")
             # 박스 문자 ↔ 변 비트(U=8,D=4,L=2,R=1): 겹치는 경계를 합쳐 ┬┴├┤┼ 로 연결
             bbits = {"─": 0b0011, "│": 0b1100, "┌": 0b0101, "┐": 0b0110,

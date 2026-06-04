@@ -2565,7 +2565,11 @@ class Server:
                 if msg is None:
                     break
                 mt = msg.get("t")
-                if mt == "input":
+                if mt == "ping":
+                    # 네트워크 응답성 측정(§10): 클라가 RTT 를 재도록 즉시 echo.
+                    await write_msg(client.writer, {"t": "pong",
+                                                    "ts": msg.get("ts")})
+                elif mt == "input":
                     self._handle_input(client, msg)
                 elif mt == "resize":
                     client.cols = max(MIN_W, int(msg.get("cols", 80)))

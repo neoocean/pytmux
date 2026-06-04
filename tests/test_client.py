@@ -1582,6 +1582,51 @@ async def test_wide_char_composite():
     await _with_app(body)
 
 
+async def test_net_responsiveness_hysteresis_and_border():
+    """§10: RTT 표본 히스테리시스 — 임계 초과 net_bad_n 회 연속이면 degraded ON,
+    임계 이하 net_good_n 회 연속이면 OFF(깜빡임 방지). degraded 면 패널 외곽선이
+    error 색으로 바뀐다. 실제 ping/pong 왕복도 표본을 기록하고 _net_ping_ts 를
+    클리어한다."""
+    async def body(app, pilot, srv):
+        app.net_rtt_threshold = 0.4
+        app.net_bad_n = 3
+        app.net_good_n = 3
+        app._net_degraded = False
+        app._net_bad = app._net_good = 0
+        # 느림 2회로는 ON 안 됨, 3회 연속 → ON
+        app._net_sample(1.0)
+        app._net_sample(1.0)
+        assert app._net_degraded is False
+        app._net_sample(1.0)
+        assert app._net_degraded is True
+        # 양호 2회로는 안 풀림, 3회 연속 → OFF
+        app._net_sample(0.01)
+        app._net_sample(0.01)
+        assert app._net_degraded is True
+        app._net_sample(0.01)
+        assert app._net_degraded is False
+        # 외곽선 색: degraded OFF vs ON 비교 + ON == error 색
+        pane = app.layout["panes"][0]
+        bx, by, bw, bh = pane["box"]
+        app._net_degraded = False
+        app._composite()
+        off_c = app.view._cells[by][bx][1].color
+        app._net_degraded = True
+        app._composite()
+        on_c = app.view._cells[by][bx][1].color
+        # degraded 면 외곽선 색이 평소(primary/grey)와 달라진다(error 색으로 덮임)
+        assert on_c != off_c, (on_c, off_c)
+        app._net_degraded = False
+        app._composite()
+        # 실제 ping/pong 왕복: 로컬 RTT 작음 → _net_ping_ts 설정 후 pong 으로 클리어
+        app._net_ping_ts = None
+        app._net_ping()
+        assert app._net_ping_ts is not None
+        await pilot.pause(0.1)
+        assert app._net_ping_ts is None, "pong 수신해 표본 기록 후 클리어"
+    await _with_app(body)
+
+
 async def test_status_claude_usage():
     async def body(app, pilot, srv):
         app.status.claude_usage = "ctx 42%"
