@@ -487,12 +487,20 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.dismiss(("kill", self.entries[idx]))
 
     class InfoScreen(ModalScreen):
-        """간단한 읽기전용 목록 표시(show-options 등). 아무 키나 누르면 닫힘."""
+        """간단한 읽기전용 목록 표시(show-options 등). 방향키로 항목을 내비게이션하고
+        그 외 키를 누르면 닫힌다. 긴 줄(예: 프롬프트 히스토리)은 여러 줄로 줄바꿈."""
+        # 항목 Label 을 컨테이너 폭(1fr)에 맞춰 줄바꿈(text-wrap 기본 wrap) → 긴
+        # 프롬프트가 잘리지 않고 여러 줄로 펼쳐진다. ListItem 은 height:auto 로 늘어남.
         CSS = """
         InfoScreen { align: center middle; }
         #info { width: 64; height: auto; max-height: 80%;
                 border: round $accent; background: $panel; padding: 0 1; }
+        #info ListItem { height: auto; }
+        #info ListItem Label { width: 1fr; }
         """
+
+        # 방향키(내비게이션) — 닫지 않고 ListView 선택을 옮긴다.
+        _NAV_KEYS = ("up", "down", "pageup", "pagedown", "home", "end")
 
         def __init__(self, lines, title="info", hide_key=None, hide_cb=None):
             super().__init__()
@@ -515,6 +523,25 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def on_key(self, event: events.Key):
             event.stop()
+            # 방향키는 닫지 말고 히스토리 내비게이션에 쓴다(팝업이 바로 닫히던 버그).
+            if event.key in self._NAV_KEYS:
+                lv = self.query_one(ListView)
+                n = len(lv.children)
+                if event.key == "up":
+                    lv.action_cursor_up()
+                elif event.key == "down":
+                    lv.action_cursor_down()
+                elif event.key == "pageup":
+                    for _ in range(5):
+                        lv.action_cursor_up()
+                elif event.key == "pagedown":
+                    for _ in range(5):
+                        lv.action_cursor_down()
+                elif event.key == "home" and n:
+                    lv.index = 0
+                elif event.key == "end" and n:
+                    lv.index = n - 1
+                return
             if self._hide_key and event.key == self._hide_key and self._hide_cb:
                 self._hide_cb()
             self.dismiss(None)

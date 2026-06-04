@@ -1004,6 +1004,46 @@ async def test_bind_unbind_keys():
     await _with_app(body)
 
 
+async def test_prompt_history_arrows_navigate_not_close():
+    # #7: 프롬프트 히스토리 팝업에서 방향키는 팝업을 닫지 않고 항목을 내비게이션한다
+    # (이전엔 아무 키나 닫혀 방향키도 즉시 닫혔다). 긴 프롬프트는 잘리지 않고 여러
+    # 줄로 줄바꿈되며, 방향키 외 키는 기존대로 닫는다.
+    async def body(app, pilot, srv):
+        from textual.widgets import Label, ListView
+        long_prompt = "이것은 " + "아주 " * 40 + "긴 프롬프트입니다"
+        app.pane_claude = {5: {"id": 5, "claude": "idle", "prompt": "p3",
+                               "history": ["p1", long_prompt, "p3"]}}
+        app.open_prompt_history(5)
+        await pilot.pause(0.05)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "InfoScreen"
+        lv = scr.query_one(ListView)
+        start = lv.index
+        # 아래로 두 번 → 닫히지 않고 선택이 이동
+        scr.on_key(Key(key="down", character=None))
+        scr.on_key(Key(key="down", character=None))
+        await pilot.pause(0.05)
+        assert app.screen_stack[-1] is scr, "방향키로 팝업이 닫히면 안 됨"
+        assert lv.index != start, ("선택이 이동해야 함", start, lv.index)
+        # 위로 한 번 → 여전히 열려 있음
+        scr.on_key(Key(key="up", character=None))
+        await pilot.pause(0.05)
+        assert app.screen_stack[-1] is scr
+        # home/end 도 닫지 않는다
+        scr.on_key(Key(key="end", character=None))
+        scr.on_key(Key(key="home", character=None))
+        await pilot.pause(0.05)
+        assert app.screen_stack[-1] is scr and lv.index == 0
+        # 긴 프롬프트가 잘리지 않고 보존(줄바꿈 표시)
+        joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        assert "긴 프롬프트입니다" in joined, joined
+        # 방향키 외 키는 닫는다
+        scr.on_key(Key(key="enter", character=None))
+        await pilot.pause(0.05)
+        assert scr not in app.screen_stack, "Enter 등은 기존대로 닫혀야 함"
+    await _with_app(body)
+
+
 async def test_shift_drag_pane_swap():
     # #9b: Shift+좌버튼 드래그로 패널을 잡아 다른 패널에 놓으면 두 패널 위치를
     # 맞바꾼다(서버에 swap_pane_to 전송). 드래그 중 소스/대상 상태를 추적한다.

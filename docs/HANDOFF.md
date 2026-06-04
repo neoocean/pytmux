@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **134 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **135 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -199,7 +199,16 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56497 + git, 신→구)
+## 9. 최근 변경(CL 56279~56500 + git, 신→구)
+
+- 56500 **프롬프트 히스토리 팝업 방향키 내비게이션 + 긴 프롬프트 줄바꿈**(§10/#7) —
+  `InfoScreen.on_key` 가 **어떤 키에도 `dismiss`** 하던 탓에 방향키를 누르면 팝업이
+  즉시 닫히던 버그 수정. 방향키(`up`/`down`/`pageup`/`pagedown`/`home`/`end`)는 닫지
+  않고 `ListView` 선택을 옮기고(`action_cursor_up/down`·`index`), **그 외 키만** 닫는다.
+  긴 프롬프트는 잘리지 않게 CSS(`#info ListItem Label { width: 1fr }`·`ListItem
+  height:auto`)로 **여러 줄 줄바꿈**. InfoScreen 공용이라 다른 목록 팝업(options/
+  토큰 사용량/list-keys)도 방향키 내비게이션·줄바꿈 혜택. 회귀 테스트
+  `test_prompt_history_arrows_navigate_not_close`(총 135). 클라이언트 전용(attach 재실행).
 
 - 56497 **다중 줄 상태표시줄**(§10/#10) — `StatusBar.lines`(0~5) + `extra` 보조 줄 포맷.
   맨 아래 줄=주 상태, 그 위는 `status-format[i]`. `render_line(y)` 줄별 분기, `set status N`/
@@ -630,6 +639,10 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   히스토리 팝업, Esc 해제. 포커스 헤더는 `_draw_claude_headers` 가 accent 강조색으로 그린다.
   `_exit_esc` 가 포커스 해제. 회귀 테스트 `test_esc_header_focus_opens_history`. 클라이언트
   전용(attach 재실행).
+  - **CL 56500 에서 팝업 조작 보강**: `InfoScreen.on_key` 가 **어떤 키에도 닫히던**(방향키
+    포함) 탓에 히스토리 내비게이션이 불가했다 — 방향키는 닫지 말고 `ListView` 선택을 옮기게
+    하고(그 외 키만 닫음), 긴 프롬프트는 Label 줄바꿈(`width:1fr`+`height:auto`)으로 여러
+    줄 표시. 회귀 테스트 `test_prompt_history_arrows_navigate_not_close`. 클라이언트 전용.
 - ~~**[부분해결] Claude 헤더 첫 행 닫기 버튼 제거 → 옵션·명령 제어**~~ → **CL 56405
   ([x] 제거+전역 옵션/명령) + CL 56460(② 팝업 숨김 토글 + ③ opts.json 영속)에서 해결.**
   ② **히스토리 팝업서 '이 헤더 숨기기' 토글**: `InfoScreen` 에 `hide_key`/`hide_cb` 추가,
