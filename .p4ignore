@@ -1,0 +1,7 @@
+# Perforce 무시 목록(P4IGNORE). 캡처(captures/)는 의도적으로 제외하지 않는다 —
+# 캡처는 Perforce 로 공유·관리하려는 대상이므로 여기서 무시하면 안 된다
+# (GitHub 차단은 .gitignore 가 담당). 여기엔 빌드 산출물·캐시만 무시한다.
+__pycache__/
+*.pyc
+*.swp
+.DS_Store

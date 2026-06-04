@@ -9,10 +9,14 @@ import shlex
 import subprocess
 import time
 
-from . import ipc, proc, pty_backend, tokens
+from . import ipc, proc, pty_backend, sshwrap, tokens, usagelog
 from .model import ClientConn, Pane, Session, Split, Tab, Window
-from .claude import claude_state, claude_usage, parse_reset_delay
+from .claude import claude_account, claude_state, claude_usage, parse_reset_delay
 from .protocol import (FLUSH_HZ, MIN_H, MIN_W, read_msg, write_msg)
+
+# pytmux 프로젝트 루트(= pytmuxlib 패키지의 상위). 캡처 출력 등 "프로젝트에 영속해
+# Perforce 로 공유할" 산출물의 기준 경로다. proc.server_argv 의 entry 추정과 동일 규칙.
+PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class Server:
@@ -26,6 +30,8 @@ class Server:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.running = True
         self._session_seq = 0
+        # Claude 세션 일련번호(#7 토큰 로깅): 패널의 claude None→비None 전이마다 +1.
+        self._claude_session_seq = 0
         self.buffers: list[str] = []   # 페이스트 버퍼(최신이 앞)
         # 패널 출력 캡처(Claude 화면 문구 분석용). 기본 ON, opts.json 에 영속.
         self._capfiles: dict[int, "object"] = {}   # pane.id -> 열린 바이너리 파일
@@ -37,6 +43,12 @@ class Server:
         # 패널이 하나뿐일 때 테두리(아웃라인)를 그릴지(기본 ON=항상 테두리).
         # off 면 단일 패널은 테두리 없이 화면 전체를 내용으로 쓴다. opts.json 영속.
         self.single_border = bool(_opts.get("single_border", True))
+        # 프롬프트 단위 클리어 모드(#9)의 ① 문서화 지시문. 패널 안 Claude 에게 보내는
+        # 슬래시/지시문이며(pytmux 명령 아님), 무엇을 어디에 기록할지는 Claude 쪽
+        # 프로젝트 관례(CLAUDE.md/메모리)에 맡긴다. opts.json 영속.
+        self.prompt_clear_message = str(_opts.get(
+            "prompt_clear_message",
+            "이번 세션에서 얻은 정보·결정을 프로젝트 문서(CLAUDE.md/메모리)에 기록해줘."))
 
     # ---- PTY/패널 생성 ----
     def _fork_shell(self, cols: int, rows: int, cwd: str | None = None):
@@ -52,6 +64,10 @@ class Server:
         env["PYTMUX"] = self.resolved_endpoint
         env.pop("LINES", None)
         env.pop("COLUMNS", None)
+        # 원격(ssh) 중첩 거부: 표식(LC_PYTMUX) + ssh 래퍼를 패널 셸에 주입해 ssh 로
+        # 들어간 원격에서도 pytmux 중첩이 막히게 한다(docs/HANDOFF.md §10). 로컬
+        # 중첩은 위 $PYTMUX 가 담당한다.
+        sshwrap.panel_env(env, ipc.default_state_dir())
         if pty_backend.IS_WINDOWS:
             shell = env.get("PYTMUX_SHELL") or env.get("COMSPEC") or "cmd.exe"
         else:
@@ -155,6 +171,55 @@ class Server:
             rows, _ = p.render(False)
             text = "\n".join("".join(s[0] for s in r) for r in rows)
             self._maybe_schedule_resume(p, text)
+
+    # ---- 프롬프트 단위 클리어 모드(#9) ----
+    def set_prompt_clear(self, sess: Session, value=None):
+        """활성 패널의 프롬프트 단위 클리어 모드 토글. value 미지정 시 반전.
+        끄면 진행 중인 상태기계도 리셋한다(다음 프롬프트는 평소대로)."""
+        win = sess.active_window
+        if not win or not win.active_pane:
+            return None
+        p = win.active_pane
+        p.prompt_clear_mode = (not p.prompt_clear_mode) if value is None \
+            else bool(value)
+        if not p.prompt_clear_mode:
+            p._pc_phase = None
+        return p.prompt_clear_mode
+
+    def set_prompt_clear_message(self, msg: str):
+        """① 문서화 지시문 문구를 바꾸고 opts.json 에 영속."""
+        msg = (msg or "").strip()
+        if msg:
+            self.prompt_clear_message = msg
+            self._save_opts()
+        return self.prompt_clear_message
+
+    def _pc_inject(self, pane: Pane, text: str):
+        """패널 안 Claude 에게 한 줄 입력+Enter 주입(자동재개 _fire_resume 와 동일 경로).
+        프롬프트 추적/히스토리를 거치지 않아 사용자 프롬프트와 섞이지 않는다."""
+        if pane.pty is None:
+            return
+        try:
+            pane.pty.write((text + "\r").encode("utf-8"))
+        except OSError:
+            pass
+
+    def _pc_advance(self, pane: Pane):
+        """프롬프트 단위 클리어 상태기계를 busy→idle 경계에서 한 단계 전진한다.
+
+        phase None(사용자 프롬프트 완료) → 문서화 지시 주입(phase=doc)
+        phase doc(문서화 응답 완료)      → /clear 주입(phase=clear)
+        phase clear(/clear 완료)         → 시퀀스 종료(phase=None)
+        """
+        ph = pane._pc_phase
+        if ph is None:
+            self._pc_inject(pane, self.prompt_clear_message)
+            pane._pc_phase = "doc"
+        elif ph == "doc":
+            self._pc_inject(pane, "/clear")
+            pane._pc_phase = "clear"
+        else:  # "clear"
+            pane._pc_phase = None
 
     def _pane_eof(self, pane: Pane):
         if pane.pipe_proc:
@@ -854,13 +919,71 @@ class Server:
             with open(self.opts_path, "w", encoding="utf-8") as f:
                 json.dump({"capture": self.capture,
                            "claude_header": self.claude_header,
-                           "single_border": self.single_border}, f)
+                           "single_border": self.single_border,
+                           "prompt_clear_message": self.prompt_clear_message}, f)
         except OSError:
             pass
 
+    # ---- 토큰 사용량 영속 로그(#7) ----
+    @property
+    def tokens_log_path(self) -> str:
+        """응답별 확정 토큰을 적는 JSONL 로그. capture 와 달리 휘발 영역(state_base)
+        에 둔다 — 캡처(raw 화면)와 달리 민감 화면 잔재가 없는 집계 데이터라 Perforce
+        공유 대상이 아니다. 조회 화면이 read+aggregate 로 시간/일/월×계정 집계."""
+        return ipc.state_base(self.sock_path) + ".tokens.jsonl"
+
+    def _tab_index_of(self, sess: Session, pane: Pane):
+        for i, tab in enumerate(sess.tabs):
+            if pane in tab.window.panes():
+                return i
+        return None
+
+    def _log_tokens(self, sess: Session, tab: Tab, pane: Pane, amount: int):
+        """응답 한 건의 확정 토큰을 JSONL 로그에 append(tokens.step committed>0 이벤트)."""
+        rec = usagelog.make_record(
+            ts=time.time(), tab=tab.index, pane=pane.id,
+            session=pane._claude_session_id, account=pane._claude_account,
+            tokens=amount)
+        usagelog.append(self.tokens_log_path, rec)
+
+    def set_claude_account(self, sess: Session, name: str):
+        """활성 패널의 Claude 계정을 수동 지정(화면 휴리스틱이 못 잡을 때 보정, #7 ②).
+        빈 문자열이면 수동 지정 해제(자동 감지로 복귀)."""
+        win = sess.active_window
+        if not win or not win.active_pane:
+            return
+        p = win.active_pane
+        name = (name or "").strip()
+        if name:
+            p._claude_account = name
+            p._claude_account_manual = True
+        else:
+            p._claude_account_manual = False
+            p._claude_account = None
+
     # ---- 패널 출력 캡처(Claude 화면 문구 분석용) ----
+    def _capture_id(self) -> str:
+        """캡처 하위 폴더명(소켓별 격리). state_base 의 basename 에서 .sock 제거."""
+        base = os.path.basename(ipc.state_base(self.sock_path))
+        if base.endswith(".sock"):
+            base = base[:-len(".sock")]
+        return base or "default"
+
     @property
     def capture_dir(self) -> str:
+        """캡처(REC) 출력 루트.
+
+        기본 소켓(실사용)은 **프로젝트 디렉터리 하위 `captures/<sock-id>/`** 에 둔다 —
+        여러 기계에서 개발 시 Perforce 로 올려 공유·관리하기 위함(docs/HANDOFF.md §10).
+        **단 GitHub 미러에는 절대 올라가면 안 되므로** 이 경로는 `.gitignore`/`.p4ignore`
+        의 `captures/` 로 차단한다(민감 화면 유출 방지). `PYTMUX_CAPTURE_DIR` 로 강제
+        지정 가능(테스트는 임시 디렉터리를 주입해 프로젝트 오염을 막는다). 그 외(임시
+        소켓 등 비기본 엔드포인트)는 휘발 영역(state_base 옆 `.capture`)을 그대로 쓴다."""
+        override = os.environ.get("PYTMUX_CAPTURE_DIR")
+        if override:
+            return os.path.join(override, self._capture_id())
+        if self.sock_path == ipc.default_endpoint():
+            return os.path.join(PROJECT_DIR, "captures", self._capture_id())
         return ipc.state_base(self.sock_path) + ".capture"
 
     def _capture_info(self, pane):
@@ -1314,10 +1437,22 @@ class Server:
                 committed = 0
                 if new_cl and not old_cl:
                     tokens.reset(p._tok_state)
+                    # 새 Claude 세션 경계: 세션 id 부여, 계정 재감지(수동 지정은 유지).
+                    self._claude_session_seq += 1
+                    p._claude_session_id = self._claude_session_seq
+                    if not p._claude_account_manual:
+                        p._claude_account = None
                 if new_cl:
+                    # 계정 단서를 매 프레임 갱신(마지막 본 값 유지; 수동 지정 우선).
+                    if not p._claude_account_manual:
+                        acct = claude_account(txt)
+                        if acct and acct != p._claude_account:
+                            p._claude_account = acct
                     running = tokens.parse_running_tokens(txt)
                     committed = tokens.step(p._tok_state, running,
                                             new_cl == "busy")
+                    if committed > 0:
+                        self._log_tokens(sess, t, p, committed)
                     if p._tok_state["total"] != p._session_tokens:
                         p._session_tokens = p._tok_state["total"]
                         changed = True
@@ -1347,6 +1482,12 @@ class Server:
                         and t.monitor_claude and not t.has_claude_done):
                     t.has_claude_done = True
                     changed = True
+                # 프롬프트 단위 클리어 모드(#9): busy→idle(응답 완료)마다 상태기계를
+                # 한 단계 전진(사용자 프롬프트 완료→문서화 지시→/clear). 주입한 지시·
+                # /clear 자체의 완료도 같은 경계로 다음 단계를 끈다.
+                if (p.prompt_clear_mode and old_cl == "busy"
+                        and new_cl == "idle"):
+                    self._pc_advance(p)
         return changed
 
     @staticmethod
@@ -1390,6 +1531,8 @@ class Server:
             "sync": bool(win.sync) if win else False,
             "pane_title": win.active_pane.title if win and win.active_pane else "",
             "autoresume": bool(win.active_pane.autoresume)
+            if win and win.active_pane else False,
+            "prompt_clear": bool(win.active_pane.prompt_clear_mode)
             if win and win.active_pane else False,
             "capture": self.capture,
             "capture_path": cap_path,
@@ -1543,6 +1686,16 @@ class Server:
         elif action == "request_tree":
             await write_msg(client.writer, self._tree_msg())
             return
+        elif action == "request_token_log":
+            # 영속 토큰 로그(최근 N 줄)를 클라이언트로. 클라가 usagelog 로 시간/일/월×
+            # 계정 집계해 팝업에 표시(라운드트립 없이 버킷/계정 전환).
+            recs = usagelog.read(self.tokens_log_path,
+                                 limit=int(msg.get("limit", 5000)))
+            await write_msg(client.writer, {"t": "token_log", "records": recs})
+            return
+        elif action == "set_claude_account":
+            self.set_claude_account(sess, str(msg.get("name", "")))
+            return
         elif action == "list_layouts":
             await write_msg(client.writer, {"t": "layouts",
                                             "names": self.list_tab_layouts()})
@@ -1613,6 +1766,11 @@ class Server:
             self.set_claude_header(msg.get("value"))
         elif action == "set_single_border":
             self.set_single_border(msg.get("value"))
+        elif action == "set_prompt_clear":
+            self.set_prompt_clear(sess, msg.get("value"))
+        elif action == "set_prompt_clear_message":
+            self.set_prompt_clear_message(str(msg.get("msg", "")))
+            return
         elif action == "kill_window":
             self.kill_window(sess)
             if sess.name not in self.sessions:

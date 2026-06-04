@@ -12,7 +12,7 @@ import time
 
 from wcwidth import wcwidth
 
-from . import ipc, proc
+from . import ipc, proc, usagelog
 from .keymap import _key_to_ctrl_bytes, _tmux_key_to_textual, load_config
 from .protocol import MIN_H, MIN_W, read_msg, write_msg
 
@@ -176,6 +176,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("kill_pane", "패널 삭제 ✕"),
         ("sync", "입력 동기화 토글"),
         ("autoresume", "토큰리밋 자동재개 토글"),
+        ("prompt_clear", "프롬프트 단위 클리어 토글(완료마다 문서화+/clear)"),
         ("new_window", "새 탭"),
         ("rename_window", "탭 이름 변경"),
         ("kill_window", "탭 삭제"),
@@ -190,7 +191,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("kill_server", "서버 종료 (모든 탭/셸 종료)"),
     ]
     # 토글 메뉴 항목(현재 on/off 표시·선택해도 메뉴 안 닫음). 상태는 status 에서 읽음.
-    MENU_TOGGLES = {"zoom", "sync", "autoresume"}
+    MENU_TOGGLES = {"zoom", "sync", "autoresume", "prompt_clear"}
 
     # 명령 프롬프트(:)에서 쓸 수 있는 명령 목록 (이름, 설명) — ? 목록·자동완성용
     # (이름, 설명, 카테고리). 카테고리는 ?/help 목록의 탭 그룹으로 쓰인다.
@@ -254,6 +255,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("single-border", "패널이 하나뿐일 때 테두리 표시 on/off (single-border on|off|toggle)", "설정/기타"),
         ("prompt-history", "Claude 프롬프트 히스토리 팝업(헤더 클릭으로도 열림)", "설정/기타"),
         ("token-usage", "Claude 실행 중 탭/패널 + 토큰 사용량 트리(상태줄 사용량 클릭)", "설정/기타"),
+        ("token-log", "토큰 사용량 영속 로그 집계 팝업(시간/일/월 × 계정 — h/d/m·a 전환)", "설정/기타"),
+        ("token-account", "활성 패널 Claude 계정 수동 지정 (token-account <이름>, 빈값=자동)", "설정/기타"),
+        ("prompt-clear", "프롬프트 단위 클리어 모드 토글(완료마다 문서화+/clear) [on|off]", "모니터/Claude"),
+        ("prompt-clear-message", "프롬프트 단위 클리어의 문서화 지시문 변경", "모니터/Claude"),
         ("run-shell", "셸 명령 실행", "설정/기타"),
         ("if-shell", "조건부 셸 실행", "설정/기타"),
         ("bind-key", "prefix 후 키에 명령 바인딩 (bind-key <key> <command>)", "설정/기타"),
@@ -389,7 +394,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return self._optim[key]
             st = self.app.status
             return {"zoom": st.zoomed, "sync": st.sync,
-                    "autoresume": st.autoresume}.get(key, False)
+                    "autoresume": st.autoresume,
+                    "prompt_clear": getattr(st, "prompt_clear", False)}.get(
+                        key, False)
 
         def _fmt(self, key, label):
             if key in MENU_TOGGLES:
@@ -544,6 +551,87 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return
             if self._hide_key and event.key == self._hide_key and self._hide_cb:
                 self._hide_cb()
+            self.dismiss(None)
+
+    class TokenLogScreen(ModalScreen):
+        """토큰 사용량 영속 로그 집계 팝업(#7). 서버가 보낸 레코드를 클라이언트가
+        usagelog 로 시간/일/월 × 계정 집계한다. [h]시간 [d]일 [m]월 버킷 전환,
+        [a] 계정 필터 순환, 방향키 스크롤, 그 외/Esc 닫기(라운드트립 없이 전환)."""
+        CSS = """
+        TokenLogScreen { align: center middle; }
+        #tklog { width: 84; height: auto; max-height: 85%;
+                 border: round $accent; background: $panel; padding: 0 1; }
+        #tklog ListItem { height: auto; }
+        #tklog ListItem Label { width: 1fr; }
+        """
+        _NAV_KEYS = ("up", "down", "pageup", "pagedown", "home", "end")
+        _BUCKETS = {"h": "hour", "d": "day", "m": "month"}
+
+        def __init__(self, records):
+            super().__init__()
+            self._records = records or []
+            self._bucket = "day"
+            # 계정 필터 순환 목록: None(전체) + 등장 계정들(정렬)
+            seen = []
+            for r in self._records:
+                a = r.get("account") or usagelog.UNKNOWN
+                if a not in seen:
+                    seen.append(a)
+            self._accounts = [None] + sorted(seen)
+            self._ai = 0
+
+        @property
+        def _account(self):
+            return self._accounts[self._ai]
+
+        def compose(self) -> ComposeResult:
+            box = ListView(id="tklog")
+            yield box
+
+        async def on_mount(self):
+            await self._refresh()
+            self.query_one(ListView).focus()
+
+        async def _refresh(self):
+            lv = self.query_one(ListView)
+            await lv.clear()
+            acct = self._account if self._account is not None else "전체"
+            hint = f"[h]시간 [d]일 [m]월   [a]계정: {acct}   [Esc]닫기"
+            items = [ListItem(Label(hint, markup=False))]
+            for ln in usagelog.summary_lines(self._records, self._bucket,
+                                             self._account):
+                items.append(ListItem(Label(ln, markup=False)))
+            await lv.extend(items)
+            lv.border_title = f"토큰 사용량 로그 (단위:{self._bucket})"
+
+        async def on_key(self, event: events.Key):
+            event.stop()
+            k = event.key
+            if k in self._BUCKETS:
+                self._bucket = self._BUCKETS[k]
+                await self._refresh()
+                return
+            if k == "a" and len(self._accounts) > 1:
+                self._ai = (self._ai + 1) % len(self._accounts)
+                await self._refresh()
+                return
+            if k in self._NAV_KEYS:
+                lv = self.query_one(ListView)
+                if k == "up":
+                    lv.action_cursor_up()
+                elif k == "down":
+                    lv.action_cursor_down()
+                elif k == "pageup":
+                    for _ in range(5):
+                        lv.action_cursor_up()
+                elif k == "pagedown":
+                    for _ in range(5):
+                        lv.action_cursor_down()
+                elif k == "home":
+                    lv.index = 0
+                elif k == "end" and len(lv.children):
+                    lv.index = len(lv.children) - 1
+                return
             self.dismiss(None)
 
     class PromptScreen(ModalScreen):
@@ -1429,6 +1517,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.sync = False
             self.pane_title = ""
             self.autoresume = False
+            self.prompt_clear = False  # 프롬프트 단위 클리어 모드(활성 패널, #9)
             self.capture = True      # 패널 출력 캡처 중(서버 옵션, 기본 ON)
             self.prefix_off = False  # 중첩: outer prefix 해제 표시
             self.cmd_mode = False  # ESC 명령 모드 표시
@@ -1543,6 +1632,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.sync = msg.get("sync", False)
             self.pane_title = msg.get("pane_title", "")
             self.autoresume = msg.get("autoresume", False)
+            self.prompt_clear = msg.get("prompt_clear", False)
             self.capture = msg.get("capture", True)
             self.claude_usage = msg.get("claude_usage")
             self.claude_tokens = msg.get("claude_tokens", 0)
@@ -1708,6 +1798,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._tree_purpose = "choose"  # tree 응답 용도(choose|usage)
             self._want_buffers = False  # choose-buffer 응답 대기
             self._want_layouts = None  # 레이아웃 목록 응답 대기(모드: "new"/"over")
+            self._want_token_log = False  # 토큰 로그 집계 팝업 응답 대기(#7)
             self.clock_panes = set()   # clock-mode 가 켜진 패널 id 집합
             self._clock_close_zones = {}  # pane_id -> (x0, x1, y) 닫기 버튼 영역
             self.calendar_panes = set()   # 달력 오버레이가 켜진 패널 id 집합
@@ -1978,6 +2069,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         self._open_usage_tree(msg)
                     else:
                         self._open_choose_tree(msg)
+            elif t == "token_log":
+                if getattr(self, "_want_token_log", False):
+                    self._want_token_log = False
+                    self.push_screen(TokenLogScreen(msg.get("records") or []))
             elif t == "layouts":
                 if self._want_layouts:
                     mode = self._want_layouts
@@ -2582,6 +2677,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 토큰 사용량 표시 클릭 → Claude 실행 중 탭/패널 + 사용량 트리 팝업(#19)
             self.request_tree(purpose="usage")
 
+        def open_token_log(self):
+            # 토큰 사용량 영속 로그 집계 팝업(#7). 서버에 최근 로그를 요청하고,
+            # 응답(t==token_log)이 오면 TokenLogScreen 으로 시간/일/월×계정 집계.
+            self._want_token_log = True
+            self.send_cmd("request_token_log", limit=5000)
+
         def _open_usage_tree(self, tree):
             lines = []
             for s in tree.get("sessions", []):
@@ -2660,6 +2761,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("set_sync")
             elif key == "autoresume":
                 self.send_cmd("set_autoresume")
+            elif key == "prompt_clear":
+                self.send_cmd("set_prompt_clear")
             elif key == "choose_tree":
                 self.request_tree()
             elif key == "new_window":
@@ -3141,6 +3244,19 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.open_prompt_history(self.layout.get("active"))
             elif c in ("token-usage", "tokens"):
                 self.open_claude_usage_tree()
+            elif c in ("token-log", "tokens-log", "token-usage-log"):
+                self.open_token_log()
+            elif c in ("token-account", "tokens-account"):
+                # token-account <이름> — 활성 패널 Claude 계정 수동 지정(빈값=자동).
+                self.send_cmd("set_claude_account", name=" ".join(args).strip())
+            elif c in ("prompt-clear", "prompt-clear-mode"):
+                # prompt-clear [on|off|toggle] — 활성 패널 프롬프트 단위 클리어 모드(#9).
+                arg = args[0].lower() if args else "toggle"
+                val = (arg == "on") if arg in ("on", "off") else None
+                self.send_cmd("set_prompt_clear", value=val)
+            elif c == "prompt-clear-message":
+                # prompt-clear-message <문구> — ① 문서화 지시문 변경(opts 영속).
+                self.send_cmd("set_prompt_clear_message", msg=" ".join(args).strip())
             elif c in ("display-popup", "popup"):
                 cmd = " ".join(a for a in args if not a.startswith("-"))
                 if cmd:

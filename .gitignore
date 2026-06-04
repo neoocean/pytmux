@@ -1,8 +1,8 @@
+# 패널 출력 캡처(REC). raw PTY 로그라 토큰·키 입력 잔재 등 민감 화면이 담길 수
+# 있어 GitHub 미러에는 절대 올라가면 안 된다(docs/HANDOFF.md §10). Perforce 로만
+# 공유한다 — git 미러가 부활해도 여기서 차단한다.
+captures/
+
+# 파이썬 바이트코드 캐시
 __pycache__/
 *.pyc
-*.pyo
-.DS_Store
-*.sock
-# 프로젝트 메모(에이전트 학습 노트)는 Perforce 에만 두고 GitHub 미러에는 올리지 않는다.
-/memory/
-docs/MEMORY.md

@@ -107,6 +107,38 @@ def claude_usage(text: str):
     return None
 
 
+# ---- 계정 식별(토큰 로깅 계정별 구분, docs/HANDOFF.md §10 #7) ----
+# Claude Code 의 /status·로그인 배너·푸터에 보이는 이메일/플랜으로 계정을 추정한다.
+# 화면 텍스트만 보므로 휴리스틱이고, 못 찾으면 None(서버가 "unknown" 으로 적는다).
+_EMAIL_RE = re.compile(r"\b([A-Za-z0-9._%+\-]+)@([A-Za-z0-9.\-]+\.[A-Za-z]{2,})\b")
+_ORG_RE = re.compile(r"\b(?:organization|org|team|workspace|account)\s*[:\-]\s*"
+                     r"([A-Za-z0-9 ._\-]{2,40})", re.I)
+_PLAN_RE = re.compile(r"\b(Pro|Max|Team|Enterprise|Free)\b\s*"
+                      r"(?:plan|subscription|tier)", re.I)
+
+
+def claude_account(text: str):
+    """Claude Code 화면 텍스트에서 계정 식별 문자열을 best-effort 추출.
+
+    개인/팀(조직) 계정을 토큰 로그에서 구분하기 위함(요금·한도 별개). 우선순위:
+    ① 이메일(별칭화 — 원문 미노출) → ② 조직/팀명 → ③ 플랜명. 못 찾으면 None.
+
+    **민감정보 보호**: 이메일은 원문 대신 `로컬앞2글자…@도메인` 별칭으로 돌려준다
+    (개인 vs 조직 도메인 구분은 되되 전체 주소는 로그에 남기지 않음)."""
+    m = _EMAIL_RE.search(text)
+    if m:
+        local, domain = m.group(1), m.group(2)
+        alias = (local[:2] + "…") if len(local) > 2 else local
+        return f"{alias}@{domain}"
+    m = _ORG_RE.search(text)
+    if m:
+        return m.group(1).strip()
+    m = _PLAN_RE.search(text)
+    if m:
+        return m.group(1).lower()
+    return None
+
+
 def parse_reset_delay(text: str, now: "_dt.datetime | None" = None):
     """Claude Code 등의 사용량 리밋 안내 문구에서 해제 시각을 찾아
     지금부터 그때까지의 지연(초)을 반환. 못 찾으면 None."""

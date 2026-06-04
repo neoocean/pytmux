@@ -302,6 +302,42 @@ async def test_token_usage_tree_popup():
     await _with_app(body)
 
 
+async def test_token_log_screen_aggregates_and_switches():
+    # #7: token_log 응답 → TokenLogScreen 이 시간/일/월 × 계정 집계를 보이고,
+    # [m] 월 버킷 전환·[a] 계정 필터 순환이 라운드트립 없이 동작.
+    async def body(app, pilot, srv):
+        from textual.widgets import Label
+        recs = [
+            {"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
+             "account": "me@x.org", "tokens": 1500},
+            {"ts": 1_700_500_000.0, "tab": 1, "pane": 2, "session": 2,
+             "account": "team@y.org", "tokens": 2000},
+        ]
+        app._want_token_log = True
+        app._dispatch({"t": "token_log", "records": recs})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "TokenLogScreen"
+        joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        assert "전체 Σ3.5k" in joined, joined
+        assert "me@x.org" in joined and "team@y.org" in joined
+        # 계정 필터 순환([a]): 전체 → 첫 계정만
+        await pilot.press("a")
+        await pilot.pause(0.1)
+        joined2 = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        accts = {a for a in ("me@x.org", "team@y.org") if a in joined2}
+        assert len(accts) == 1, f"한 계정만 필터링돼야: {joined2}"
+        # 월 버킷 전환([m]) — 닫히지 않고 갱신
+        await pilot.press("m")
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1] is scr, "버킷 전환 키는 닫지 않음"
+        # 그 외 키는 닫는다
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1] is not scr, "Esc 로 닫힘"
+    await _with_app(body)
+
+
 async def test_choose_tree_shows_panes_and_switches():
     # 탭/패널 트리가 패널을 들여쓰기로 보이고 로컬/원격([local]/[ssh])·실행 앱을
     # 표시하며, 패널 선택 시 그 탭+패널로 전환한다(#14/#24).

@@ -129,6 +129,105 @@ async def test_claude_usage_persists_while_session_alive():
         await teardown(srv, task, sock)
 
 
+async def test_token_usage_logging():
+    """#7: 응답 확정(committed>0) 시 tokens.jsonl 에 ts/tab/pane/session/account/
+    tokens 한 줄이 적히고, 새 Claude 세션마다 session id 가 증가하며, 계정은 화면
+    이메일에서 별칭으로 잡힌다. 수동 지정(set_claude_account)이 자동을 덮는다."""
+    from pytmuxlib import usagelog
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        # 새 Claude 세션 + busy(↑ N tokens 가 busy 신호 겸 running) + 계정 단서
+        p.feed("\x1b[2J\x1b[H me@woojinkim.org\r\n"
+               "↑ 1.9k tokens\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._claude == "busy", p._claude
+        sid1 = p._claude_session_id
+        assert sid1 > 0
+        # idle 로 종료 → peak(1900) 확정 → 로그 1줄
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        recs = usagelog.read(srv.tokens_log_path)
+        assert len(recs) == 1, recs
+        r = recs[0]
+        assert r["tokens"] == 1900 and r["pane"] == p.id, r
+        assert r["session"] == sid1 and r["tab"] == 0, r
+        assert r["account"].endswith("@woojinkim.org"), r["account"]
+
+        # 세션 종료 후 새 Claude 세션 → session id 증가
+        p.feed(b"\x1b[2J\x1b[Huser@host ~ % ls\r\n")     # 평범한 셸(claude None)
+        srv._scan_claude(sess, win)
+        p.feed("\x1b[2J\x1b[H↑ 2k tokens\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._claude_session_id == sid1 + 1, "새 세션 id 증가"
+
+        # 수동 계정 지정이 자동 감지를 덮는다
+        srv.set_claude_account(sess, "team-acct")
+        assert p._claude_account == "team-acct" and p._claude_account_manual
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        recs = usagelog.read(srv.tokens_log_path)
+        assert recs[-1]["account"] == "team-acct", recs[-1]
+        # 집계 전체 합
+        agg = usagelog.aggregate(recs, "day")
+        assert agg["total"] == 3900, agg
+    finally:
+        try:
+            os.unlink(srv.tokens_log_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
+async def test_prompt_clear_mode_sequence():
+    """#9: 프롬프트 단위 클리어 모드. 사용자 프롬프트 busy→idle 완료마다 ① 문서화
+    지시 → ② /clear 를 순차 주입하고, /clear 완료 후 시퀀스가 끝난다. 끄면 리셋,
+    지시문은 opts.json 에 영속."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        injected = []
+        srv._pc_inject = lambda pane, text: injected.append(text)
+        assert srv.set_prompt_clear(sess, True) is True
+        assert p.prompt_clear_mode and p._pc_phase is None
+
+        def complete_response():
+            p._claude = "busy"                          # 직전 처리중
+            p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")  # idle footer
+            srv._scan_claude(sess, win)
+
+        complete_response()      # 사용자 프롬프트 완료 → 문서화 지시 주입
+        assert p._pc_phase == "doc"
+        assert injected == [srv.prompt_clear_message], injected
+        complete_response()      # 문서화 응답 완료 → /clear 주입
+        assert p._pc_phase == "clear" and injected[-1] == "/clear"
+        complete_response()      # /clear 완료 → 시퀀스 종료
+        assert p._pc_phase is None
+        assert len(injected) == 2, "doc + clear 두 번만 주입"
+
+        # 끄면 진행 중 상태기계도 리셋
+        p._pc_phase = "doc"
+        assert srv.set_prompt_clear(sess, False) is False
+        assert p._pc_phase is None
+
+        # 지시문 변경 + opts.json 영속
+        srv.set_prompt_clear_message("새 지시문")
+        assert srv.prompt_clear_message == "새 지시문"
+        import json as _json
+        saved = _json.load(open(srv.opts_path))["prompt_clear_message"]
+        assert saved == "새 지시문", saved
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
 async def test_queued_prompt_header_defers():
     # #4: busy 중 입력한 프롬프트는 헤더(last_prompt)를 즉시 안 바꾸고 큐에 쌓였다가
     # 응답 경계(busy→idle)에 순서대로 승격된다. 히스토리는 제출 즉시 기록.
@@ -597,6 +696,31 @@ async def test_capture_output():
         except OSError:
             pass
         await teardown(srv, task, sock)
+
+
+async def test_capture_dir_project_and_override():
+    """캡처 루트 경로 결정(§10): 기본 소켓→프로젝트 captures/, 임시 소켓→state_base,
+    PYTMUX_CAPTURE_DIR→강제 override. Perforce 공유용 경로 + GitHub 차단 대상."""
+    from pytmuxlib import ipc, server as srv_mod
+    # 임시(비기본) 소켓 → 휘발 영역(state_base 옆 .capture). 프로젝트 미오염.
+    tmp_srv = pytmux.Server("/tmp/pytmux-test-xyz.sock")
+    assert tmp_srv.capture_dir == "/tmp/pytmux-test-xyz.sock.capture"
+
+    # 기본 엔드포인트 → 프로젝트 captures/<id> 하위(Perforce 공유 대상)
+    default_srv = pytmux.Server(ipc.default_endpoint())
+    cap = default_srv.capture_dir
+    assert cap.startswith(os.path.join(srv_mod.PROJECT_DIR, "captures")), cap
+    # 캡처 루트는 .gitignore 의 captures/ 로 GitHub 차단(민감 화면 유출 방지)
+    gi = open(os.path.join(srv_mod.PROJECT_DIR, ".gitignore")).read()
+    assert "captures/" in gi, "captures/ 가 .gitignore 에 있어야 함(GitHub 차단)"
+
+    # PYTMUX_CAPTURE_DIR override 가 최우선
+    os.environ["PYTMUX_CAPTURE_DIR"] = "/tmp/pytmux-cap-override"
+    try:
+        ov = pytmux.Server("/tmp/pytmux-test-xyz.sock")
+        assert ov.capture_dir.startswith("/tmp/pytmux-cap-override"), ov.capture_dir
+    finally:
+        del os.environ["PYTMUX_CAPTURE_DIR"]
 
 
 async def test_swap_pane_ids():

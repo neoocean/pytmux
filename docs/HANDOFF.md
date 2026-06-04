@@ -535,6 +535,25 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
     맡길 수 있다. **터미널이 1007 을 지원하지 않으면(②류) 여전히 mouse-debug 로 확인**
     필요 — 이 완화는 1007 변환이 원인일 때만 듣는다. 회귀 테스트 `test_alt_scroll_toggle`.
     클라이언트 전용(attach 재실행 반영).
+- **[요청·미구현/CL 56507 기록] Claude 프롬프트 헤더가 패널 1행을 차지하면 터미널
+  스크롤을 2행부터 시작** — Claude Code 를 띄운 패널은 기본으로 **1행에 이전에 입력한
+  프롬프트(스티키 헤더, `_draw_claude_headers`)** 를 그린다. 현재는 이 1행을 **포함해
+  터미널(패널 내용)이 스크롤·렌더**되므로, 패널(또는 터미널)이 **한 줄만** 있을 때 그 한
+  줄이 1행 프롬프트 헤더에 **가려져 내용이 안 보인다**. 요청: **1행에 프롬프트 헤더가 있는
+  패널이면 터미널 내용 영역을 2행부터 시작**시켜(헤더가 차지한 1행을 내용 영역에서 빼서)
+  내용이 헤더에 가리지 않게 한다. 구현 방향:
+  - 헤더는 클라이언트 합성 단계(`_composite`/`_draw_claude_headers`)가 패널 content
+    **위에 덧그린다** — 즉 서버가 보낸 패널 content 행 높이(`_layout_msg` 의 `h`/`cy`)는
+    헤더를 모른다. 그래서 **헤더가 그려지는 패널은 content 영역을 한 행 줄이고(`cy+1`,
+    `ch-1`) 시작 y 를 한 칸 내려** 헤더와 겹치지 않게 해야 한다(현재 단일 패널 테두리
+    on/off 가 `single_border` 로 content 영역을 조절하는 것과 같은 자리).
+  - 헤더 표시 여부는 패널별로 다르다(`claude_header` 전역 옵션 + `_claude_hidden_panes`
+    패널별 숨김 + 그 패널이 Claude 인지). content 영역 축소도 **그 패널이 실제로 헤더를
+    그릴 때만** 적용해야 한다(헤더 없는 패널은 그대로 전체 높이 사용).
+  - 서버/클라 어디서 행을 빼는지: 헤더는 클라 전용 렌더라 **클라가 그 패널의 PTY 크기를
+    한 행 작게 서버에 통지**하거나(resize), 클라 합성에서 content 를 한 행 내려 그리고
+    맨 아래 한 행을 비우는(또는 서버에 작은 높이를 알리는) 방식. PTY 크기까지 줄이면
+    Claude Code 가 실제로 한 행 작은 화면을 그려 정합성이 가장 좋다.
 - ~~**[버그] 로컬 실행 시 Claude Code 인터페이스 글자에 원치 않는 밑줄**~~ →
   **CL 56333 에서 해결.** 원인은 합성 단계가 아니라 **서버 화면 버퍼(pyte) 단계**
   였다: pyte 0.8.2 의 CSI 파서가 콜론(:) 서브파라미터를 미지 문자로 처리해 SGR
@@ -696,11 +715,20 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   (win→select_window, pane→+select_pane_id), d/x=종료(win→confirm_kill_tab, pane→
   kill-pane y/N). 명령 `overview`/`tree` 별칭. **fg 명령만으로 원격 판정**(자식 트리
   심층 검사는 미적용 — 추후 정밀화 여지).
-- **[부분해결·요청확인] pytmux 중첩 실행 거부 (로컬 + 원격 둘 다)** — **★ 사용자 요청
-  (확정 요구사항)**: pytmux 안에서 pytmux 를 다시 실행하는 **중첩을 로컬·원격 모두에서
-  거부**해야 한다. **로컬은 CL 56394 에서 해결**: `launcher.nesting_blocked` 가 `$PYTMUX`
+- ~~**[부분해결·요청확인] pytmux 중첩 실행 거부 (로컬 + 원격 둘 다)**~~ → **로컬 CL 56394,
+  원격(ssh) CL 56507 에서 해결.** 원격은 아래 ①(SetEnv/SendEnv 전파)의 **서버 무설정
+  변형**으로 구현했다: 패널 셸 env 에 표식 `LC_PYTMUX=1` 을 심고, PATH 앞단에 ssh 래퍼
+  (`pytmuxlib/sshwrap.py`)를 깔아 `ssh -o SendEnv=LC_PYTMUX` 로 실행한다(래퍼는 자기
+  디렉터리를 PATH 에서 빼 진짜 ssh 를 exec — 무한 재귀 방지). 대부분의 sshd 기본값
+  `AcceptEnv LANG LC_*` 를 타고 원격 셸로 표식이 전파되고, `launcher.nesting_blocked`
+  가 `$PYTMUX`(로컬) **또는** `$LC_PYTMUX`(원격) 를 보고 거부한다 — **sshd_config 수정
+  불필요**(흔한 기본값을 탐). LC_* 미수용 sshd 면 전파만 빠질 뿐 깨지지 않는다(우아한
+  열화). 래핑 대상은 `-o` 를 ssh 로 전달하는 ssh/autossh(mosh 제외). 회귀 테스트
+  `test_sshwrap_marker_and_path`·`test_nesting_blocked_helper`(원격 표식 케이스 추가).
+  아래는 원래 검토한 구현 방향(참고):
+  - **로컬은 CL 56394 에서 해결**: `launcher.nesting_blocked` 가 `$PYTMUX`
   설정 + not --force 면 main/attach 를 `sys.exit(1)` 로 거부(우회: --force 또는
-  `unset PYTMUX`). **원격(ssh) 중첩은 미구현(다음 작업 대상)** — ssh 로 들어가면
+  `unset PYTMUX`). **원격(ssh) 중첩(이전 미구현)** — ssh 로 들어가면
   `$PYTMUX` 가 기본 전파 안 되고, pytmux 가 ssh 를 직접 띄우지 않아(사용자가 패널에서 ssh
   입력) SetEnv 주입 지점이 없다. 구현 방향:
   - **① ssh 래퍼/SetEnv 주입**: pytmux 패널 셸에 `ssh` 래퍼(함수/alias 또는 PATH 앞단
@@ -735,7 +763,22 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   클릭 시 request_tree(purpose="usage") → Claude 패널만 필터해 InfoScreen 에 탭/패널·
   앱·상태·사용량 표시. server `_pane_overview` 에 claude/usage 필드 추가. 명령
   token-usage/tokens. (세션별 누적 토큰의 "누적" 정의는 #5 (1)과 함께 후속.)
-- **[요청·미구현] 토큰 사용량 로깅(탭/패널/세션별) + 시간·일·월 단위 조회 화면** — Claude Code
+- ~~**[요청·미구현] 토큰 사용량 로깅(탭/패널/세션별) + 시간·일·월 단위 조회 화면**~~ →
+  **CL 56507 에서 해결.** 아래 구현 방향대로: 신규 `pytmuxlib/usagelog.py`(순수 모듈 —
+  `make_record`/`append`/`read`/`bucket_key`/`aggregate`/`summary_lines`)가 JSONL 로그를
+  적고 시간/일/월 × 계정으로 집계한다. 서버 `_scan_claude` 가 `tokens.step` 의 **확정
+  이벤트(committed>0)** 마다 `<sock>.tokens.jsonl` 에 `{ts,tab,pane,session,account,
+  tokens}` 한 줄을 append(중복 없이 1응답=1레코드). 세션 id 는 패널 claude None→비None
+  전이마다 `_claude_session_seq` 로 부여. **계정별 구분**: `claude.claude_account(text)`
+  가 화면 이메일/조직/플랜을 추정하되 **이메일은 `로컬앞2글자…@도메인` 별칭**으로 마스킹
+  (민감정보 보호), `set_claude_account`(명령 `token-account <이름>`)로 수동 보정 가능.
+  조회 화면: 명령 `token-log`(별칭 `tokens-log`) → 서버 `request_token_log` 가 최근 N 줄
+  반환 → 클라 `TokenLogScreen` 이 `usagelog` 로 집계해 팝업([h]시간/[d]일/[m]월 버킷,
+  [a] 계정 필터 순환 — 라운드트립 없이 전환). 회귀 테스트 `test_usagelog.*`·
+  `test_token_usage_logging`·`test_token_log_screen_aggregates_and_switches`. **서버+클라
+  → kill-server 재기동.** 데이터 소스는 #3 의 `tokens.py` 와 공유.
+  아래는 원래 검토한 구현 방향(참고):
+- **[참고·구현 방향] 토큰 사용량 로깅(탭/패널/세션별) + 시간·일·월 단위 조회 화면** — Claude Code
   화면에서 읽은 토큰 사용량을 **탭별·패널별·세션별 로그로 영속 기록**하고, **시간 단위/날짜
   단위/월 단위로 집계 조회**하는 화면을 만든다. **명령어로 팝업을 열어** 조회할 수 있어야 하고,
   Claude Code 가 실행될 때 화면을 읽어 **사용량을 모니터링·세션 단위로 기록해 나중에 합산**할
@@ -767,7 +810,18 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   - **연관**: [상태줄 토큰 사용량 세션 누적](누적값 정의·`tokens.py`), [토큰 사용량 클릭 →
     Claude 트리 팝업](실시간 현재값 트리) 과 데이터 소스 공유 — 이 항목은 그 **영속 이력/계정별
     집계** 버전.
-- **[요청·미구현] Claude 패널 컨텍스트 메뉴에 '프롬프트 단위 클리어' 모드 토글** —
+- ~~**[요청·미구현] Claude 패널 컨텍스트 메뉴에 '프롬프트 단위 클리어' 모드 토글**~~ →
+  **CL 56507 에서 해결(단, 자동 시퀀스 범위).** 패널별 `Pane.prompt_clear_mode`(기본 off)
+  + busy→idle 경계에서 전진하는 소형 상태기계 `_pc_advance`(phase None→문서화 지시 주입→
+  `/clear` 주입→종료)를 `_scan_claude` 에 훅. 주입은 `_pc_inject`(자동재개 `_fire_resume`
+  와 동일 PTY write 경로 — 프롬프트 추적/히스토리 안 거침). ① 문서화 지시문은 옵션
+  `prompt_clear_message`(opts.json 영속, 명령 `prompt-clear-message <문구>`). 토글: 메뉴
+  항목 `prompt_clear`(autoresume 옆, ●/○ 상태표시) + 명령 `prompt-clear [on|off]` + status
+  `prompt_clear` 전달. 회귀 테스트 `test_prompt_clear_mode_sequence`. **서버+클라 →
+  kill-server 재기동.** **남은 것(후속)**: 사용자가 미리 쌓아 둔 **명령 큐를 /clear 후
+  하나씩 투입**하는 배치(키 입력 가로채기·에코 충돌 회피 필요)는 미구현 — 현재는 "사용자
+  프롬프트 완료마다 자동 문서화+/clear" 까지. 아래는 원래 검토한 구현 방향(참고):
+- **[참고·구현 방향] '프롬프트 단위 클리어' 모드(큐 배치 포함)** —
   Claude Code 패널의 컨텍스트 메뉴(우클릭/`&` 메뉴)에서 **'프롬프트 단위 클리어' 모드**를
   켜고 끈다(패널별 토글, 기본 off). **끄면 평소와 똑같이** 동작한다. **켜면** 그 패널에서
   **프롬프트 하나의 진행이 완료(busy→idle 전이)될 때마다**, 다음 사용자 명령을 그대로
@@ -879,9 +933,19 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   (`_run_command`). 키는 tmux 표기(`C-x`)를 `_tmux_key_to_textual` 로 ctrl+x 정규화, 한
   글자는 그대로. bind 는 첫 인자만 키·나머지는 명령 원문(플래그 보존). FEATURES 표의
   "unbind 는 미구현" 표기 해소. 회귀 테스트 `test_bind_unbind_keys`. 클라이언트 전용.
-- **[요청·미구현] 캡처(REC) 출력을 /tmp → 프로젝트 디렉터리로 옮기고 Perforce 로 관리(단,
-  GitHub 엔 절대 미반영)** — ★ 사용자 요청. **현재**: 패널 출력 캡처(REC, raw PTY 무손실
-  로그)는 `Server.capture_dir = ipc.state_base(sock) + ".capture"` 에 쓰여, `state_base` 가
+- ~~**[요청·미구현] 캡처(REC) 출력을 /tmp → 프로젝트 디렉터리로 옮기고 Perforce 로 관리(단,
+  GitHub 엔 절대 미반영)**~~ → **CL 56507 에서 해결.** `Server.capture_dir` 를 경로 결정
+  로직으로 바꿨다: **기본 엔드포인트(실사용)면 `PROJECT_DIR/captures/<sock-id>/`**(프로젝트
+  하위 — Perforce 공유 대상), `PYTMUX_CAPTURE_DIR` env 가 있으면 그쪽(테스트가 임시
+  디렉터리 주입해 프로젝트 오염 방지), **임시/비기본 소켓이면 종전 휘발 영역**(`state_base`
+  옆 `.capture` — 헤드리스 테스트는 mktemp 소켓이라 자동으로 이쪽). **GitHub 차단**:
+  `.gitignore` 에 `captures/` 추가(민감 화면 유출 방지). `.p4ignore` 는 captures 를
+  **제외하지 않음**(Perforce 공유 대상이므로). 기록 포맷·소비자(`_capture_write`/
+  `_scan_claude`)는 그대로. 회귀 테스트 `test_capture_dir_project_and_override`. **단, 실제
+  `p4 add captures/...` 와 롤오버/보존 정책·자동 submit 동선은 운영 시 별도 결정**(아래
+  "Perforce 관리" 참고 — raw 대용량이라 디폴트 CL 오염 주의). 아래는 원래 상황/방향(참고):
+- **[참고·상황] 캡처(REC) 출력 경로(이전 /tmp)** — **현재**: 패널 출력 캡처(REC, raw PTY 무손실
+  로그)는 (이전) `Server.capture_dir = ipc.state_base(sock) + ".capture"` 에 쓰여, `state_base` 가
   `$XDG_RUNTIME_DIR` 또는 `/tmp/pytmux-<uid>/default.capture/` 로 풀려 **/tmp 휘발 영역**에
   남는다(`pane-<id>.log` + `sessions.log`, server.py `_capture_write`). 재부팅·tmp 청소로
   사라지고 머신 간 공유가 안 된다. **요청**: 캡처 출력을 **프로젝트 디렉터리 하위**(예
