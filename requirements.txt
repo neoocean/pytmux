@@ -1,3 +1,8 @@
 # pytmux 의존성
 textual>=0.50    # TUI 클라이언트
 pyte>=0.8        # 터미널 에뮬레이션(서버 측 화면 버퍼/스크롤백)
+wcwidth>=0.2     # 와이드 문자(CJK/이모지) 폭 계산 — client/server/replay 공용
+
+# Windows 네이티브 전용(WSL/Cygwin 불필요): ConPTY PTY 백엔드.
+# POSIX 에서는 표준 라이브러리 pty 를 쓰므로 설치되지 않는다.
+pywinpty>=2.0; sys_platform == "win32"   # ConPTY(pty_backend._WinPty)
