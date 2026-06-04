@@ -56,6 +56,22 @@ async def test_claude_usage():
     assert claude_usage("a normal line") is None
 
 
+async def test_claude_usage_context_badge():
+    # 확장 컨텍스트 모델 배지(1M)를 잔량%·토큰에 덧붙인다.
+    assert claude_usage("claude-opus-4-8 (1M context)") == "1M ctx"
+    assert claude_usage(
+        "Context left until auto-compact: 23%  ·  opus (1M context)") == "ctx 23% 1M"
+    assert claude_usage("200K context window") == "200K ctx"
+
+
+async def test_claude_usage_excludes_streaming_delta():
+    # busy footer 의 "↑/↓ N tokens" 스트리밍 델타는 사용량으로 보고하지 않는다.
+    assert claude_usage("✽ Crunching… (12s · ↓ 1.9k tokens)") is None
+    assert claude_usage("↑ 419 tokens") is None
+    # 화살표 없는 누계는 그대로 채택
+    assert claude_usage("total 12k tokens") == "12k tok"
+
+
 async def test_protocol_reexports_claude():
     # 하위호환: protocol 에서도 여전히 import 가능해야 한다.
     from pytmuxlib.protocol import claude_state as cs, claude_usage as cu

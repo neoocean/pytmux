@@ -64,6 +64,9 @@ _CTX_PCT_RES = [
                r"until\s+auto[- ]?compact)", re.I),
     re.compile(r"auto[- ]?compact[^0-9%]*?(\d{1,3})\s*%", re.I),
 ]
+# 확장 컨텍스트 모델 배지: "claude-opus-4-8 (1M context)" / "1M context window" 등.
+# 컨텍스트 잔량%·토큰과 별개로 "이 패널은 1M(또는 200k) 컨텍스트 모델"임을 알린다.
+_CTX_BADGE_RE = re.compile(r"\(?\s*(\d+\s*[kKmM])\s*context\b", re.I)
 _TOK_RE = re.compile(r"([\d][\d.,]*\s?[kKmM]?)\s*tokens?\b", re.I)
 
 
@@ -72,14 +75,35 @@ def claude_usage(text: str):
 
     Claude Code 가 항상 고정 위치에 토큰/컨텍스트를 출력하진 않으므로 휴리스틱이다.
     'ctx NN%' 또는 'NNk tok' 같은 짧은 문자열을 반환(못 찾으면 None).
+
+    우선순위: ① 컨텍스트 잔량%(가장 의미있음) → ② 화살표 없는 토큰 누계.
+    확장 컨텍스트 모델 배지(예: "1M")가 보이면 뒤에 덧붙인다.
+
+    **스트리밍 델타 제외**: busy footer 의 "↑/↓ N tokens" 는 한 프레임 분의 송수신
+    델타라 누적 컨텍스트가 아니므로 사용량으로 보고하지 않는다(이건 busy 신호로만
+    쓰임 — _BUSY_SPINNER_RE). 화살표가 바로 앞에 붙은 토큰 언급은 건너뛴다.
     """
+    badge = None
+    mb = _CTX_BADGE_RE.search(text)
+    if mb:
+        badge = mb.group(1).replace(" ", "").upper()   # "1m" → "1M"
+
+    def _join(s):
+        return f"{s} {badge}" if badge else s
+
     for rx in _CTX_PCT_RES:
         m = rx.search(text)
         if m:
-            return f"ctx {m.group(1)}%"
-    m = _TOK_RE.search(text)
-    if m:
-        return f"{m.group(1).replace(' ', '')} tok"
+            return _join(f"ctx {m.group(1)}%")
+    for m in _TOK_RE.finditer(text):
+        # 화살표 델타(↑/↓ … tokens)와 겹치면 건너뜀
+        prefix = text[max(0, m.start() - 4):m.start()]
+        if "↑" in prefix or "↓" in prefix:
+            continue
+        return _join(f"{m.group(1).replace(' ', '')} tok")
+    # 토큰/잔량은 못 찾았지만 확장 컨텍스트 모델 배지만 보일 때
+    if badge:
+        return f"{badge} ctx"
     return None
 
 

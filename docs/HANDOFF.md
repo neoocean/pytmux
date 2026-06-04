@@ -197,7 +197,17 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56421 + git, 신→구)
+## 9. 최근 변경(CL 56279~56427 + git, 신→구)
+
+- 56427 **Claude 사용량 신호 보강**(§10 사용량) — `claude_usage` 가 컨텍스트 잔량% 우선,
+  확장 컨텍스트 모델 배지(`(1M context)`→`_CTX_BADGE_RE`)를 `ctx 23% 1M` 처럼 덧붙이고,
+  busy footer 의 스트리밍 델타(`↑/↓ N tokens`)는 사용량 보고에서 제외(화살표 없는 누계만
+  채택). 회귀 테스트 2종(총 99). 서버 import 경유 — kill-server 재기동 후 반영.
+
+- 56426 **원격 SSH 휠 스크롤백 best-effort 완화**(§10) — App.on_mount 가 대체 스크롤
+  모드(DECSET 1007)를 꺼(`\x1b[?1007l`, `_term_write`) iTerm2/일부 SSH 클라가 휠을
+  화살표로 바꿔 보내 스크롤백이 안 열리는 문제를 완화. on_unmount 복원, `set alt-scroll
+  on|off` 토글(기본 on). 회귀 테스트 1종(총 97). 클라이언트 전용.
 
 - 56421 **탭 전환 시 노트북 연결부가 따라오게**(§10 #23 회귀 해결) — 활성 탭을 바꿔도
   연결부가 옛 탭에 남던 버그. 원인 둘: ① `active_tab_xrange` 가 렌더 부산물 `_zones`
@@ -414,7 +424,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   넘기는 것(①: 터미널 마우스 트래킹·`$TERM`·SGR 1006·mosh vs ssh 차이, 또는
   ② 터미널이 자체 스크롤백으로 가로챔 → 터미널 설정). 이게 환경(①/②)이면
   pytmux 코드 수정으로는 못 고치고 터미널 쪽 설정이 필요하다.
-  - **CL 56425 에서 best-effort 완화 추가**: 가장 흔한 원인이 **대체 스크롤 모드
+  - **CL 56426 에서 best-effort 완화 추가**: 가장 흔한 원인이 **대체 스크롤 모드
     (DECSET 1007)** 로 판단 — iTerm2·일부 SSH 클라이언트가 기본적으로 alt-screen 에서
     마우스 휠을 ↑/↓ **화살표 키로 변환**해 보낸다. 그러면 pytmux 는 진짜 휠 이벤트
     (`on_mouse_scroll_up`)를 못 받고 화살표만 활성 패널로 새어 스크롤백이 안 열린다
@@ -437,9 +447,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   경로를 의심할 것.**
 - ~~Claude 감지/사용량 정규식을 실제 Claude Code 화면 문구에 맞춰 보강(§6).~~
   → **busy/idle 은 CL 56315 에서 현행 문구(작업 스피너·권한 모드 footer)에 맞춰 보강
-  완료**(§6). 남은 것: `claude_usage` 의 토큰 수("↓ N tokens")는 스트리밍 델타라
-  누적 컨텍스트와 다름 — 컨텍스트 잔량%·`(1M context)` 모델 배지 등 더 의미있는 신호로
-  교체 여지. 리밋(limit) 문구는 실제 리밋 캡처 샘플이 없어 미검증.
+  완료**(§6). **사용량 신호는 CL 56427 에서 보강**: `claude_usage` 가 ① 컨텍스트 잔량%
+  를 우선하고, ② 확장 컨텍스트 모델 배지(`(1M context)`/`200K context window` →
+  `_CTX_BADGE_RE`)를 감지해 `ctx 23% 1M` 처럼 덧붙이며, ③ busy footer 의 스트리밍 델타
+  (`↑/↓ N tokens`, 한 프레임 송수신량이라 누적 아님)는 **사용량으로 보고하지 않도록**
+  화살표 앞붙은 토큰 언급을 건너뛴다(화살표 없는 누계 "used 45.2k tokens" 만 채택).
+  회귀 테스트 `test_claude_usage_context_badge`·`test_claude_usage_excludes_streaming_delta`.
+  남은 것: 리밋(limit) 문구는 실제 리밋 캡처 샘플이 없어 미검증.
 - **[요청·미구현/대형] 작업(열린 탭·패널)을 보존한 채 서버 재시작** — pytmux 는 활발히
   개발 중이라 **서버를 자주 재시작**해야 하는데(§2 의 "데몬 재시작 주의": 서버 코드
   `server.py`/`model.py`/`protocol.py` 변경은 `kill-server` 후 재기동해야 반영), 동시에
