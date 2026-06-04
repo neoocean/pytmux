@@ -627,11 +627,24 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   (win→select_window, pane→+select_pane_id), d/x=종료(win→confirm_kill_tab, pane→
   kill-pane y/N). 명령 `overview`/`tree` 별칭. **fg 명령만으로 원격 판정**(자식 트리
   심층 검사는 미적용 — 추후 정밀화 여지).
-- **[부분해결] pytmux 중첩 실행 거부** — **로컬은 CL 56394 에서 해결**: `launcher.
-  nesting_blocked` 가 `$PYTMUX` 설정 + not --force 면 main/attach 를 sys.exit(1) 로
-  거부(우회: --force 또는 `unset PYTMUX`). **원격(ssh) 중첩은 미구현** — ssh 로 들어가면
+- **[부분해결·요청확인] pytmux 중첩 실행 거부 (로컬 + 원격 둘 다)** — **★ 사용자 요청
+  (확정 요구사항)**: pytmux 안에서 pytmux 를 다시 실행하는 **중첩을 로컬·원격 모두에서
+  거부**해야 한다. **로컬은 CL 56394 에서 해결**: `launcher.nesting_blocked` 가 `$PYTMUX`
+  설정 + not --force 면 main/attach 를 `sys.exit(1)` 로 거부(우회: --force 또는
+  `unset PYTMUX`). **원격(ssh) 중첩은 미구현(다음 작업 대상)** — ssh 로 들어가면
   `$PYTMUX` 가 기본 전파 안 되고, pytmux 가 ssh 를 직접 띄우지 않아(사용자가 패널에서 ssh
-  입력) SetEnv 주입 지점이 없다. ssh 래퍼/`SetEnv PYTMUX` 주입이 필요해 후속 과제.
+  입력) SetEnv 주입 지점이 없다. 구현 방향:
+  - **① ssh 래퍼/SetEnv 주입**: pytmux 패널 셸에 `ssh` 래퍼(함수/alias 또는 PATH 앞단
+    스크립트)를 깔아 `ssh -o SetEnv=PYTMUX=1 …`(또는 `SendEnv PYTMUX`) 로 원격에 표식을
+    전파 → 원격 pytmux 가 `nesting_blocked` 로 거부. 단 서버 `AcceptEnv PYTMUX`/`SetEnv`
+    허용이 필요(서버 sshd_config 의존).
+  - **② 원격측 자체 가드**: 서버 의존을 피하려면 원격 셸의 자동 attach 가드(README
+    "SSH/mosh 자동 attach")에서 이미 `$PYTMUX` 외에 추가 표식(예: 부모 프로세스 트리에
+    pytmux 데몬 소켓 존재 여부)을 검사. 다만 다른 호스트면 부모 트리로는 못 잡으니 ①의
+    환경변수 전파가 본안.
+  - **③ 최후 보루**: 원격 pytmux 기동 시 **이미 같은 tty 가 pytmux 클라이언트인지**(예:
+    `$PYTMUX`/래핑된 `$TERM` 표식)만 보고 거부 — 표식 전파(①)가 전제.
+  로컬·원격 공통으로 `launcher.nesting_blocked` 한 곳에서 표식을 판정하도록 모으는 게 목표.
 - ~~**[요청·미구현] 닫기 확인 팝업을 "pytmux 종료 여부"로 구분(메시지+하이라이트색)**~~ →
   **CL 56392 에서 해결.** `confirm_kill_tab` 이 `len(self.tabbar.tabs) <= 1` 이면 종료
   케이스로 분기 — 제목 "pytmux 종료"·"…닫으면 pytmux 가 종료됩니다…" 문구·danger=True.
