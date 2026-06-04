@@ -36,7 +36,30 @@ python : The term 'python' is not recognized as the name of a cmdlet, function, 
   Alias)지만 직접 호출하면 정상 실행됨(`Python 3.12.10`).
 - `...\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe` — 버전 고정 별칭.
 
-## 2. 해결 — `~/.local/bin` 에 `python` shim 한 쌍
+## 2. 자동화 — `install.ps1`
+
+위 진단을 바탕으로 `install.ps1` 이 아래 3가지를 자동 처리한다(2026-06-04 추가).
+새 박스라면 이거 한 줄이면 끝이다.
+
+```powershell
+PS> .\install.ps1
+```
+
+1. **의존성 설치** — `python -m pip install -r requirements.txt`(없으면 `py -m pip`).
+2. **`pytmux` 런처 생성** — `%LOCALAPPDATA%\pytmux\bin\pytmux.cmd`. `python` 이 없으면 `py` 로 폴백하므로,
+   사실 런처만 쓸 거면 아래 shim 없이도 `pytmux` 는 동작한다.
+3. **`python` shim 생성** — `py -c "import sys; print(sys.executable)"` 로 *실제 동작하는* 인터프리터
+   경로를 알아내, 사용자명 하드코딩 없이 `~/.local/bin` 에 `python`/`python.cmd` 를 만든다.
+
+옵션: `-SkipDeps`(의존성 건너뜀), `-SkipShim`(shim 건너뜀), `-ShimDir <경로>`(shim 위치).
+제거는 `.\uninstall.ps1` — install.ps1 가 만든 shim 만 골라 지운다(표식 주석으로 식별).
+
+> POSIX 는 `python3` 가 표준이라 shim 이 필요 없다. `install.sh` 는 의존성 설치 + 런처만 한다
+> (`SKIP_DEPS=1` 로 의존성 건너뜀).
+
+## 3. 수동 구성 — `~/.local/bin` 에 `python` shim 한 쌍
+
+install.ps1 을 못 쓰는 상황을 위한 수동 절차. 동작 원리는 위 자동화와 같다.
 
 `~/.local/bin` 은 **모든 셸 변종의 PATH 에 들어있다**(현 세션 PATH·레지스트리 PATH·로그인 bash
 모두 확인). 이미 같은 패턴의 `tmux`/`tmux.cmd` shim 이 여기 있으므로 **동일 패턴**으로
@@ -67,7 +90,7 @@ rem Forwards to the working Store Python 3.12 alias - same interpreter as `py`.
 확장자 없는 `python` 은 bash 가, `python.cmd` 는 PowerShell/cmd(PATHEXT)가 각각 집어 쓴다.
 경로는 박스마다 사용자명이 다르면 맞춰 바꿀 것.
 
-## 3. 검증
+## 4. 검증
 
 ```
 # PowerShell
@@ -84,7 +107,7 @@ Python 3.12.10
 > 콘솔 코드페이지가 cp949 라 한글 도움말/메시지가 깨져 보일 수 있는데, 동작과는 무관하다.
 > 필요하면 `chcp 65001` 또는 `$env:PYTHONUTF8=1` 로 UTF-8 출력을 맞춘다.
 
-## 4. 대안(채택 안 함)과 이유
+## 5. 대안(채택 안 함)과 이유
 
 - **레지스트리 PATH 수정**: 새 셸에만 반영되고, minimal PATH 로 리셋하는 로그인 셸에는 무력.
   shim 이 셸 종류와 무관하게 확실.

@@ -1,14 +1,18 @@
-# pytmux 제거(Windows) — install.ps1 가 만든 래퍼(pytmux.cmd)를 지운다.
+# pytmux 제거(Windows) — install.ps1 가 만든 래퍼(pytmux.cmd)와 python shim 을 지운다.
 # uninstall.sh 의 PowerShell 대응판.
 #
 # 사용법(PowerShell):
 #   .\uninstall.ps1                 # 기본 위치($env:LOCALAPPDATA\pytmux\bin)에서 제거
 #   .\uninstall.ps1 -Dir C:\bin     # 해당 디렉터리에서 제거
 #   .\uninstall.ps1 -Bin pytmux2    # 다른 이름으로 설치했을 때
+#   .\uninstall.ps1 -ShimDir D:\bin # python shim 위치 지정(기본 ~/.local/bin)
+#   .\uninstall.ps1 -SkipShim       # python shim 은 남겨둠
 [CmdletBinding()]
 param(
     [string]$Dir = (Join-Path $env:LOCALAPPDATA 'pytmux\bin'),
-    [string]$Bin = 'pytmux'
+    [string]$Bin = 'pytmux',
+    [string]$ShimDir = (Join-Path $HOME '.local\bin'),
+    [switch]$SkipShim
 )
 $ErrorActionPreference = 'Stop'
 
@@ -19,4 +23,20 @@ if (Test-Path -LiteralPath $Target) {
     Write-Host "제거 완료: $Target"
 } else {
     Write-Host "이미 없습니다: $Target"
+}
+
+# python shim 제거. install.ps1 가 생성한 것만 지우도록 표식 문자열을 확인한다.
+if (-not $SkipShim) {
+    foreach ($name in @('python.cmd', 'python')) {
+        $shim = Join-Path $ShimDir $name
+        if (Test-Path -LiteralPath $shim) {
+            $content = Get-Content -LiteralPath $shim -Raw -ErrorAction SilentlyContinue
+            if ($content -and ($content -match 'pytmux install\.ps1')) {
+                Remove-Item -LiteralPath $shim -Force
+                Write-Host "제거 완료: $shim"
+            } else {
+                Write-Host "건너뜀(install.ps1 생성본 아님): $shim"
+            }
+        }
+    }
 }
