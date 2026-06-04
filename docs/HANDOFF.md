@@ -618,6 +618,40 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 10. 가능한 후속 작업 (열린 항목)
 
+- **[버그·기능 요청, 미구현] 네트워크 degraded(빨간 외곽선) 고착에서 Claude 종료
+  없이 패널 반응성 회복** — 보고: 한 번 네트워크가 나빠져 패널 아웃라인이 빨간색
+  (CL 56593 응답성 degraded)으로 바뀐 뒤 **영영 원복되지 않는다**. **Claude
+  데스크탑 앱으로 보면 여전히 동작 중**이지만 **ssh 를 통해 pytmux 로 보면 반응이
+  없다(멈춤)**. 실행 중인 Claude Code 를 **종료하지 않고** 패널 반응성을 회복할
+  방법이 필요하다. 원인 분석: ① Claude 프로세스(서버 측 PTY 자식)는 살아 있고
+  데스크탑 앱은 **자체 원격제어 채널**로 Claude 와 직접 통신하므로 진행이 보인다 —
+  멈춘 곳은 **로컬 pytmux 클라 ↔ 원격 pytmux 서버 사이의 ssh 전송(IPC)** 이다.
+  ② ssh 가 정체되면 클라의 `read_msg(self.reader)`(`client.py:2268`)가 무한 블록
+  되고 입력 왕복이 끊긴다. ③ degraded 가 안 풀리는 건 ping 의 pong 이 영영 안 와
+  (`_net_sample` 양호 표본이 0) 외곽선이 빨강에 고착되는 것 — **즉 빨강은 증상을
+  정확히 보고하나 복구 수단이 없다**(CL 56593 은 detection 만). **기존 자산(복구
+  토대)**: ㉠ **detach/재attach** — `detach` 명령이 앱만 종료하고 서버 셸/PTY 는
+  유지(`client.py:3137` `self.exit("detached")`); 새 ssh 로 다시 attach 하면 서버가
+  세션을 그대로 들고 있어 회복(tmux 모델). 단 정체된 같은 ssh 위에서 detach 자체가
+  안 먹을 수 있어 **로컬에서 ssh 를 끊고 새로 접속**해야 할 수도. ㉡ **자동 재접속
+  기계** — `_reconnect`(`client.py:2278`)가 이미 `ipc.open_connection` 재연결+hello
+  재전송→서버 `_send_full` 로 전체 상태 재수신을 한다(작업 보존 재시작 ⓔ 용). 이
+  경로를 **degraded 워치독이 재사용**하면 PTY 를 안 건드리고 IPC 계층만 새로 세워
+  회복할 수 있다. **구현 방향(택1/조합)**: (A) **degraded 워치독 자동 재접속** —
+  degraded 가 임계(예 수 초~10초) 이상 지속되면 클라가 **멈춘 소켓을 버리고
+  reconnect**(stuck `read_msg` 를 깨우려면 reader 태스크/소켓을 강제 close 후 재
+  open; `asyncio.wait_for` 타임아웃·watchdog 태스크 필요). 성공 시 서버 `_send_full`
+  로 화면/레이아웃 재동기 → 반응성 회복. (B) **수동 회복 명령** — `reconnect`/
+  `resync` 명령을 추가해 사용자가 빨간 외곽선을 보고 즉시 IPC 재연결을 트리거(가장
+  단순·안전). (C) **서버 측 slow-client 가드** — 서버가 한 클라에 `write_msg` 할 때
+  블록되면 전체가 굶을 수 있으니, 클라별 쓰기 타임아웃/드롭(정체 클라가 서버를 막지
+  않게). **열린 결정**: ㉠ 자동(A) vs 수동(B) vs 둘 다, ㉡ stuck `read_msg` 를 깨우는
+  방법(reader 태스크 취소+소켓 close 후 _reconnect 재사용 범위), ㉢ degraded 지속
+  임계(빨강 표시 임계와 별개의 더 긴 "회복 시도" 임계), ㉣ 서버가 IPC 만 새로 받고
+  PTY/세션은 100% 보존하는지 회귀 검증. **연관**: 네트워크 응답성 외곽선(CL 56593,
+  이 항목의 detection), 아래 "Windows→ssh→원격 macOS ssh 반응성 급락"·feed 드레인/
+  백프레셔(서버 측 정체 원인 후보), 데스크탑 원격제어 프롬프트 반영(CL 56592, "앱은
+  살아있다"의 같은 근거). **현재는 기록만 — 미구현.**
 - **[UI 요청, 미구현] 패널 하단 Claude `auto mode on` footer 클릭/터치 → 권한모드
   선택 팝업** — 요청: Claude Code 가 실행 중일 때 **패널 내 하단의 `auto mode on`
   부분을 터치/클릭**하면 팝업으로 **변경 가능한 권한모드들**을 보여주고 그중 하나를
