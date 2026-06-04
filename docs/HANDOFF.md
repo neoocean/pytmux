@@ -197,9 +197,15 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56427 + git, 신→구)
+## 9. 최근 변경(CL 56279~56429 + git, 신→구)
 
-- 56427 **Claude 사용량 신호 보강**(§10 사용량) — `claude_usage` 가 컨텍스트 잔량% 우선,
+- 56429 **Claude 스티키 헤더 배경 진하게**(사용자 요청) — Claude Code 패널 맨 윗줄
+  마지막 프롬프트 스티키 헤더(`_draw_claude_headers`)의 배경을 `primary` → 한 단계
+  어두운 `primary-darken-2`(#0053AA)로. 본문/활성 테두리(primary)보다 어두워 헤더가
+  더 또렷이 구분된다. `_THEME_FALLBACK` 에 primary-darken-2 폴백 추가. 테스트의 헤더
+  배경색 단언 1종 추가. 클라이언트 전용(attach 재실행 반영).
+
+- 56428 **Claude 사용량 신호 보강**(§10 사용량) — `claude_usage` 가 컨텍스트 잔량% 우선,
   확장 컨텍스트 모델 배지(`(1M context)`→`_CTX_BADGE_RE`)를 `ctx 23% 1M` 처럼 덧붙이고,
   busy footer 의 스트리밍 델타(`↑/↓ N tokens`)는 사용량 보고에서 제외(화살표 없는 누계만
   채택). 회귀 테스트 2종(총 99). 서버 import 경유 — kill-server 재기동 후 반영.
@@ -447,7 +453,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   경로를 의심할 것.**
 - ~~Claude 감지/사용량 정규식을 실제 Claude Code 화면 문구에 맞춰 보강(§6).~~
   → **busy/idle 은 CL 56315 에서 현행 문구(작업 스피너·권한 모드 footer)에 맞춰 보강
-  완료**(§6). **사용량 신호는 CL 56427 에서 보강**: `claude_usage` 가 ① 컨텍스트 잔량%
+  완료**(§6). **사용량 신호는 CL 56428 에서 보강**: `claude_usage` 가 ① 컨텍스트 잔량%
   를 우선하고, ② 확장 컨텍스트 모델 배지(`(1M context)`/`200K context window` →
   `_CTX_BADGE_RE`)를 감지해 `ctx 23% 1M` 처럼 덧붙이며, ③ busy footer 의 스트리밍 델타
   (`↑/↓ N tokens`, 한 프레임 송수신량이라 누적 아님)는 **사용량으로 보고하지 않도록**

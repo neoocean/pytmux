@@ -90,6 +90,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         "background": "#121212", "surface": "#1E1E1E", "panel": "#242F38",
         "foreground": "#E0E0E0", "success": "#4EBF71", "warning": "#FEA62B",
         "error": "#B93C5B",
+        "primary-darken-2": "#0053AA",   # Claude 헤더 배경(진한 파랑)
     }
 
     def theme_color(widget, name: str) -> str:
@@ -1839,7 +1840,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._claude_header_zones = {}
             if not self.claude_header_on or not self.pane_claude:
                 return
-            hdr_st = Style(color="white", bgcolor=theme_color(self, "primary"),
+            # 헤더 배경은 진한 파랑(primary-darken-2) — 본문/활성 테두리(primary)보다
+            # 한 단계 어둡게 해 스티키 헤더가 더 또렷이 구분되도록 한다.
+            hdr_st = Style(color="white",
+                           bgcolor=theme_color(self, "primary-darken-2"),
                            bold=True)
             for p in self.layout.get("panes", []):
                 info = self.pane_claude.get(p["id"])

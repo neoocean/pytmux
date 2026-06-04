@@ -1050,6 +1050,11 @@ async def test_claude_icon_and_header():
         row = "".join((c[0] or " ") for c in app.view._cells[ap["y"]])
         assert "do the thing" in row, repr(row)
         assert "[x]" not in row, "헤더 [x] 닫기 버튼은 제거됨"
+        # 헤더 배경은 진한 파랑(primary-darken-2) — 본문/테두리(primary)보다 어둡게
+        dark = app.theme_variables.get("primary-darken-2", "#0053AA").lower()
+        cellbg = app.view._cells[ap["y"]][ap["x"] + 1][1]
+        assert cellbg and cellbg.bgcolor and dark in str(cellbg.bgcolor).lower(), \
+            f"헤더 배경 진한 파랑 기대, got {cellbg.bgcolor if cellbg else None}"
         # 탭 닫기 [x] 는 우상단(W-3..W) 에 그대로
         tcz = app._tab_close_zone
         assert tcz is not None and tcz[1] == app.layout["cols"], tcz
