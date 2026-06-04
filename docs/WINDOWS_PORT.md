@@ -2,10 +2,12 @@
 
 > 작성: 2026-06-04 · 대상: Windows 포팅을 검토/진행하는 사람·에이전트
 > 관련: [DESIGN.md](DESIGN.md) · [HANDOFF.md](HANDOFF.md) · [CONTRIBUTING.md](CONTRIBUTING.md)
-> 상태: **추상화 레이어 + `server.py` PTY 리팩터 완료(2026-06-04).** PTY/IPC/프로세스
-> 추상층 3종 신설·테스트 완료, `server.py`·`model.py` 의 PTY 생애주기를 추상층으로
-> 전환 완료. **남은 일: IPC/데몬 wiring**(serve/client connect/launcher 를 ipc·proc 로
-> 전환) — §7 참조.
+> 상태: **추상화 레이어 + PTY 리팩터 + IPC/데몬 wiring + 잔여 POSIX 가드·패키징
+> 완료(2026-06-04).** PTY/IPC/프로세스 추상층 3종 신설·테스트 완료, `server.py`·
+> `model.py` PTY 생애주기 전환 완료, `server.serve()`/`client connect`/`launcher`
+> 데몬·제어를 `ipc`·`proc` 로 전환 완료, pipe-pane 셸 분기·record 가드·열화 가드·
+> dead code 제거·의존성/설치 래퍼까지 마감(§7-b4). **코드상 남은 일은 없음 — 유일한
+> 잔여는 실 Windows 박스 검증**(§7-d): ConPTY 멀티바이트 경계·전체 기동 스모크.
 
 ## 0. 배경
 
@@ -57,11 +59,13 @@ WSL/Cygwin/MSYS2 없이 **네이티브 Windows** 에서 돌리려면 "패키지 
 
 ## 4. 기능 열화(degradation) 불가피 항목
 
-Windows에 직접 대응물이 없어 포팅 시 약화/제거됨:
+Windows에 직접 대응물이 없어 포팅 시 약화/제거됨. **모두 크래시 없이 우아하게
+폴백하도록 가드 완료**(아래 ✅) — 기능만 빠지고 서버는 정상 동작한다.
 
-- **패널 cwd 상속** (`_pane_cwd`, `/proc/<pid>/cwd`·`lsof`, `server.py:310`) — 새 분할이 현재 디렉토리에서 시작하는 기능. Windows엔 간단한 per-process cwd 조회가 없음.
-- **fg 명령 기반 탭 자동이름 + ssh 감지** (`_fg_command`, `os.tcgetpgrp`+`ps`, `server.py:568`) — ConPTY는 포그라운드 프로세스 그룹을 노출 안 함.
-- **시그널 의미**(SIGHUP/SIGKILL) — TerminateProcess로 대체되나 graceful 종료 동작이 달라짐.
+- **패널 cwd 상속** (`_pane_cwd`, `/proc/<pid>/cwd`·`lsof`) — 새 분할이 현재 디렉토리에서 시작하는 기능. Windows엔 간단한 per-process cwd 조회가 없음. ✅ `os.readlink`/`lsof` 모두 OSError 로 잡혀 `None` 반환 → 셸이 서버 cwd 에서 시작(무해 폴백).
+- **fg 명령 기반 탭 자동이름 + ssh 감지** (`_fg_command`, `os.tcgetpgrp`+`ps`) — ConPTY는 포그라운드 프로세스 그룹을 노출 안 함. ✅ `os.tcgetpgrp` 는 Windows 에 아예 없어 `AttributeError`(except OSError 로 못 잡음)였으나 `pty_backend.IS_WINDOWS` 가드로 선차단 → 고정 탭이름으로 폴백.
+- **시그널 의미**(SIGHUP/SIGKILL) — TerminateProcess(`proc.terminate`/`taskkill /T`)로 대체되나 graceful 종료 동작이 달라짐.
+- **렌더 전용 패널 resize** — `set_winsize` 가 fcntl 지연 import → Windows 에서 `ModuleNotFoundError`. ✅ `Pane.resize` 폴백이 `(OSError, ImportError)` 를 함께 삼킴.
 
 ## 5. 소소한 수정 (`client.py`)
 
@@ -104,18 +108,38 @@ Windows에 직접 대응물이 없어 포팅 시 약화/제거됨:
   와 생성자 시그니처는 호환 유지(테스트·replay·poc 무수정). 헤드리스 테스트 통과.
 - **(b3)** ✅ **`client.py` Windows 분기**(§5): 클립보드 `clip`/`Get-Clipboard` 추가,
   `_shell_argv` 로 run-shell/if-shell/popup 의 `/bin/sh -c`→`cmd /c` 분기.
-- **(c)** ⏳ **남은 일 — IPC/데몬 wiring**(다음 세션): 추상층은 만들었으나 아직 연결
-  안 됨. 실제 Windows 기동을 위해 전환 필요:
-  - `server.serve()` 의 `asyncio.start_unix_server` → `ipc.start_server`(확정
-    엔드포인트를 패널 셸 `PYTMUX` 환경에 게시).
+- **(c)** ✅ **IPC/데몬 wiring 완료**(2026-06-04): 추상층을 실제 호출부에 연결.
+  - `server.serve()` 의 `asyncio.start_unix_server` → `ipc.start_server`. 확정
+    엔드포인트를 `self.resolved_endpoint` 에 받아 패널 셸 `$PYTMUX`(`_fork_shell`)에
+    게시. `shutdown()` 의 소켓 unlink 는 unix 엔드포인트일 때만.
   - `client` 의 `asyncio.open_unix_connection` → `ipc.open_connection`.
-  - `launcher` 의 `AF_UNIX`(can_connect/control_request)·`daemonize`/`ensure_server`
-    → `ipc.probe`/`ipc.control_socket`·`proc.spawn_detached`(+`ipc.default_endpoint`).
-  - TCP 엔드포인트일 때 보조파일(`sock_path + ".slots.json"`/`.opts.json`/`.capture`)
-    경로를 실제 상태 디렉터리(`ipc.default_state_dir`) 기준으로 분리.
-- **(d)** 실 Windows 박스에서 ConPTY 멀티바이트(CJK/이모지) 경계 확인 → 깨지면
-  `_WinPty` 를 저수준 `winpty.PTY`(바이트) 경로로 교체(§3① NOTE).
+  - `launcher`: `can_connect` → `ipc.probe`(하위호환 이름 유지), `control_request`
+    → `ipc.control_socket`, `ensure_server`(이중 fork+setsid)·`daemonize`(삭제) →
+    `proc.spawn_detached(proc.server_argv(...))`, 기본 엔드포인트 → `ipc.default_endpoint`.
+  - 보조파일 경로 분리: `ipc.state_base(endpoint)` 신설(unix=소켓 경로 그대로 /
+    tcp=`<state_dir>/default`). `server.py` 의 `slots_path`/`opts_path`/`capture_dir`/
+    `layout_path` 와 `client` 의 `mouse.log` 가 이를 경유 → TCP 에서 파일명 충돌 없음.
+  - 검증: 헤드리스 124 통과(서버 serve 가 새 경로 경유), macOS 에서 `ensure_server`
+    →`probe`→`ls`/`cmd`→`kill-server` 실데몬 스모크 통과.
+- **(b4)** ✅ **잔여 POSIX 하드코딩/열화 가드 정리**(코드 후속, 2026-06-04):
+  - `server.py` pipe-pane 의 `["/bin/sh","-c",cmd]` 하드코딩 → `proc.shell_argv`.
+    셸 분기 로직을 `proc.shell_argv` 로 일원화하고 `client._shell_argv` 는 위임.
+  - `replay.run_record()` 는 Windows 에서 명확한 메시지+코드 2 로 거부(진단 도구
+    후순위, `replay()` 재생은 동작).
+  - `_fg_command`(자동 탭이름)·`_pane_cwd`·렌더 전용 `resize` 를 Windows 에서
+    크래시 없이 폴백하도록 가드(§4).
+  - `protocol.default_socket_path`(dead code, `os.getuid` 의존) 제거 — `ipc`
+    로 일원화.
+  - 패키징: `requirements.txt` 에 `wcwidth` 명시 + `pywinpty; win32` 추가,
+    `install.ps1`/`uninstall.ps1`(Windows 설치 래퍼) 신설.
+  - 회귀 가드: `tests/test_windows_port.py` 확장(shell_argv/record/fg_command/
+    resize). 헤드리스 전체 통과.
+- **(d)** ⏳ **남은 일 = 실 Windows 박스 검증**(§1 제외 불가 항목): ConPTY
+  멀티바이트(CJK/이모지) 경계 확인 + 전체 기동 스모크(`pip install -r
+  requirements.txt` → `.\install.ps1` → attach/split/`kill-server`). 멀티바이트가
+  깨지면 `_WinPty` 를 저수준 `winpty.PTY`(바이트) 경로로 교체(§3① NOTE).
 
 ## 부록 — 즉시 해결된 항목
 
-- `wcwidth` 미설치 → `pip install wcwidth`(0.7.0) 설치 완료. 이후 `fcntl` 에서 막힘(위 참조).
+- `wcwidth` 미설치 → `requirements.txt` 에 명시(0.2+). 이후 `fcntl` 에서 막혔던
+  문제는 protocol 지연 import 로 해소(위 참조).

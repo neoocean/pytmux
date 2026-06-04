@@ -111,3 +111,34 @@ async def test_replay_record_guarded_on_windows():
     with mock.patch("os.name", "nt"):
         rc = run_record("/nonexistent/should-not-open.raw", 80, 24, ["echo", "x"])
     assert rc == 2
+
+
+async def test_fg_command_guarded_on_windows():
+    """Server._fg_command 는 Windows 에서 os.tcgetpgrp 호출 전에 None 으로 폴백.
+
+    os.tcgetpgrp 는 Windows 에 아예 없어 AttributeError 가 나는데, 함수의
+    except 는 OSError 만 잡는다. IS_WINDOWS 가드가 먼저 끊지 않으면 자동 탭이름
+    루프가 깨진다. tcgetpgrp 가 AttributeError 를 던지게 해 가드 효력을 못박는다.
+    """
+    from unittest import mock
+    from pytmuxlib import pty_backend
+    from pytmuxlib.server import Server
+
+    with mock.patch.object(pty_backend, "IS_WINDOWS", True), \
+            mock.patch("os.tcgetpgrp", side_effect=AttributeError):
+        # self 를 쓰지 않는 메서드라 더미 인스턴스 없이 호출 가능.
+        assert Server._fg_command(None, -1) is None
+
+
+async def test_render_only_resize_without_fcntl():
+    """렌더 전용 패널(pty=None) resize 는 fcntl 없는 Windows 에서도 안 깨진다.
+
+    set_winsize 는 fcntl/termios 를 지연 import 하므로 ModuleNotFoundError(=
+    ImportError 하위)가 날 수 있다. resize 폴백이 이를 삼켜야 한다.
+    """
+    from pytmuxlib.model import Pane
+
+    pane = Pane(-1, -1, 80, 24)  # pty=None → 렌더 전용 폴백 경로
+    with _BlockImport("fcntl", "termios"):
+        pane.resize(30, 100)  # 예외 없이 통과해야 함
+    assert (pane.cols, pane.rows) == (30, 100)

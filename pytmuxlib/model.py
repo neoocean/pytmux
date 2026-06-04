@@ -334,9 +334,12 @@ class Pane:
             except OSError:
                 pass
         else:
+            # Windows 의 렌더 전용 패널: set_winsize 가 fcntl/termios 를 지연
+            # import 하므로 ModuleNotFoundError 가 날 수 있다(OSError 아님). 폭만
+            # 못 알릴 뿐 무해하므로 함께 삼킨다.
             try:
                 set_winsize(self.master_fd, rows, cols)
-            except OSError:
+            except (OSError, ImportError):
                 pass
         self.dirty = True
 
