@@ -324,3 +324,23 @@ async def test_client_reconnects_on_restarting():
     finally:
         await teardown(srvA, taskA, sockA)
         await teardown(srvB, taskB, sockB)
+
+
+# ── 7. 클라이언트 명령 매핑: "restart-server" → restart_server 액션 ───────────────
+async def test_client_restart_command_maps_action():
+    """명령 프롬프트/팔레트에서 restart-server 를 치면 restart_server 액션을 서버로
+    보낸다(실제 execv 는 서버 몫이라 send_cmd 만 가로채 검증)."""
+    from harness import make_app
+    srv, task, sock = await server_only()
+    app = make_app(sock)
+    try:
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause(0.4)
+            sent = []
+            app.send_cmd = lambda action, **kw: sent.append((action, kw))
+            app._run_command("restart-server")
+            app._run_command("restart")
+            assert ("restart_server", {}) in sent, sent
+            assert sent.count(("restart_server", {})) == 2, sent
+    finally:
+        await teardown(srv, task, sock)

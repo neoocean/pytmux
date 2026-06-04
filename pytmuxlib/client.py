@@ -276,6 +276,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("list-keys", "현재 키 바인딩 목록 팝업", "설정/기타"),
         ("detach-client", "detach (앱 종료, 셸 유지)", "설정/기타"),
         ("kill-server", "서버와 모든 탭/셸 종료", "설정/기타"),
+        ("restart-server", "작업 보존 재시작 — 셸/PTY 를 살린 채 서버 코드만 교체(재접속)", "설정/기타"),
     ]
 
     # 명령 프롬프트 자동완성 후보. 자주 쓰는 옵션 템플릿을 앞에 두어, 명령을 다 치면
@@ -3413,6 +3414,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.exit(message="detached")
             elif c == "kill-server":
                 self.send_cmd("kill_server")
+            elif c in ("restart-server", "restart"):
+                # 작업 보존 재시작: 셸/PTY 를 살린 채 서버 코드만 교체(re-exec).
+                # 화면이 잠깐 끊겼다 재접속된다(docs/RESTART_SCENARIO.md).
+                self.send_cmd("restart_server")
             elif c in ("paste-clipboard", "pasteb-clip"):
                 self.paste_os_clipboard()  # bracketed 패스스루
             elif c in ("send-keys", "send"):
