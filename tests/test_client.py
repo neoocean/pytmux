@@ -98,6 +98,12 @@ async def test_command_list_and_autocomplete():
         # 힌트는 박스 subtitle 에 표시
         box = scr.query_one("#cmdbox")
         assert "카테고리" in str(box.border_subtitle), box.border_subtitle
+        # §10: #cmds 높이를 최대 카테고리 항목 수(≤_CMDS_MAX_ROWS)로 고정 → ←→
+        # 전환 시 박스 높이 불변(출렁임 방지)
+        maxn = max(len(items) for _, items in scr._cats)
+        exp = min(maxn, scr._CMDS_MAX_ROWS)
+        assert scr.query_one("#cmds").styles.height.value == exp, \
+            scr.query_one("#cmds").styles.height
     await _with_app(body)
 
 

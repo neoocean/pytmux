@@ -351,12 +351,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
         카테고리만 보여준다. ←→ 로 카테고리(탭) 전환, ↑↓ 로 명령 이동, Enter 선택,
         Esc 취소 — 모두 방향키로 제어된다."""
         CSS = """
-        CommandListScreen { align: center middle; }
+        /* §10: 터미널 배경이 팝업 배경($panel)과 같아 박스가 묻히지 않게, 백드롭을
+           더 어둡게($background 80% — Textual 기본 60%보다 진하게) 깔아 팝업과
+           구분되게 한다. 실제 색 블렌드라 터미널 무관하게 균일하다. */
+        CommandListScreen { align: center middle; background: $background 80%; }
         #cmdbox { width: 78; height: auto; max-height: 80%;
                   border: round $accent; background: $panel; }
         #cmdtabs { width: 100%; height: 1; padding: 0 1;
                    background: $panel-darken-1; }
-        #cmds { width: 100%; height: auto; max-height: 1fr;
+        /* §10: 높이를 "항목이 가장 많은 카테고리" 기준으로 고정(on_mount 에서
+           styles.height 설정) — ←→ 카테고리 전환 시 박스가 출렁이지 않게. 항목이
+           적은 카테고리는 ListView 아래쪽이 빈 채로 남아 높이를 유지한다. */
+        #cmds { width: 100%;
                 background: $panel;
                 overflow-y: scroll;                 /* 항상 스크롤바 트랙 표시 */
                 scrollbar-size-vertical: 2;
@@ -386,7 +392,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 yield Label("", id="cmdtabs", markup=True)
                 yield ListView(id="cmds")
 
+        # 카테고리 전환 시 박스 높이 출렁임 방지용 화면 한도(80% 대략, 행 수).
+        _CMDS_MAX_ROWS = 20
+
         async def on_mount(self):
+            # §10: 모든 카테고리 중 최대 항목 수로 ListView 높이를 고정한다(항목 적은
+            # 카테고리는 아래쪽이 빈 채로 유지 → ←→ 전환 시 높이 불변). 화면을 넘지
+            # 않게 _CMDS_MAX_ROWS 로 클램프(초과 카테고리는 그때만 스크롤). 설명 줄바꿈
+            # 으로 일부 항목이 2행이 될 수 있어 항목 수 기준은 근사다(드물게 스크롤).
+            maxn = max((len(items) for _, items in self._cats), default=1)
+            self.query_one("#cmds").styles.height = min(maxn, self._CMDS_MAX_ROWS)
             await self._render_cat()
             self.query_one(ListView).focus()
 
@@ -638,14 +653,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
         # 캡. 제목 줄은 [제목 … [x]] 헤더로 두어 좁아도 닫기 [x] 가 (고정폭이라) 항상
         # 오른쪽에 보인다(예전엔 고정폭 박스가 화면을 넘쳐 닫기 수단이 안 보였다).
         CSS = """
-        InfoScreen { align: center middle; }
+        InfoScreen { align: center middle; background: $background 80%; }
         #infobox { width: 96%; max-width: 66; height: auto;
                    border: round $accent; background: $panel; padding: 0 1; }
         #infohead { width: 100%; height: 1; }
         #infotitle { width: 1fr; height: 1; color: $accent; text-style: bold; }
         #infoclose { width: 5; height: 1; content-align: center middle;
                      background: $error; color: $text; text-style: bold; }
-        #info { width: 100%; height: auto; max-height: 75%; }
+        /* §10: 배경 탭 패널 영역 안에서 더 길어지게 — 한 번에 더 많은 항목 표시.
+           ModalScreen 은 화면 전체를 덮으므로 %는 화면 기준 → 탭바/상태줄을 침범하지
+           않을 만큼 여유를 두고 85% 로(이전 75%). 프롬프트 히스토리/REC/토큰 팝업이
+           InfoScreen 을 공유하므로 모두 적용된다. */
+        #info { width: 100%; height: auto; max-height: 85%; }
         #info ListItem { height: auto; }
         #info ListItem Label { width: 1fr; }
         """
@@ -817,13 +836,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
         """명령/이름변경/검색 등 한 줄 입력을 받는 바닥 고정 모달.
         Textual Input 을 별도 스크린(모달)에 담아 포커스 문제를 피한다."""
         CSS = """
-        PromptScreen { align: center bottom; }
-        #prow { dock: bottom; width: 100%; height: 1; background: $surface; }
+        PromptScreen { align: center bottom; background: $background 80%; }
+        /* §10: command 입력 줄(esc :)을 외곽선(테두리)으로 감싼다. 테두리가 위·아래
+           2행을 더 쓰므로 height:3, dock:bottom 으로 테두리 포함 박스가 바닥에 붙는다.
+           ':' 프리픽스·입력은 테두리 안쪽 한 행에 들어간다(아래 compose 의 #prow).
+           rename/search 등 다른 용도는 #prow 를 안 쓰는 bare Input 이라 영향 없음. */
+        #prow { dock: bottom; width: 100%; height: 3; background: $surface;
+                border: round $accent; }
         #pprefix { width: 2; height: 1; color: $accent; text-style: bold;
                    background: $surface; }
         #pinput { width: 1fr; border: none; height: 1; padding: 0;
                   background: $surface; color: $text; }
-        /* 입력 줄 위로 펼쳐지는 자동완성 후보 영역(부분일치 명령). */
+        /* 입력 줄(테두리 박스) 위로 펼쳐지는 자동완성 후보 영역(부분일치 명령). */
         #pcand { dock: bottom; width: 100%; height: auto; max-height: 12;
                  background: $panel; color: $text; padding: 0 1;
                  border-top: tall $accent; }
