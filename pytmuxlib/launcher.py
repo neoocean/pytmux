@@ -1,62 +1,34 @@
-"""데몬화 · 런처 · 외부 제어 CLI."""
+"""데몬화 · 런처 · 외부 제어 CLI.
+
+OS 별 분기(데몬화/소켓)는 직접 알지 않고 추상층만 부른다(docs/WINDOWS_PORT.md §7-c):
+  * 서버 데몬 기동/존재확인 → pytmuxlib.proc (Unix setsid 분리 / Windows DETACHED).
+  * 소켓 접속/제어/probe → pytmuxlib.ipc (Unix AF_UNIX / Windows TCP 루프백+포트파일).
+"""
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import socket
 import sys
 import time
 
+from . import ipc, proc
 from .client import run_client
-from .protocol import default_socket_path
 from .server import run_server
 
 
-def daemonize():
-    if os.fork() > 0:
-        os._exit(0)
-    os.setsid()
-    if os.fork() > 0:
-        os._exit(0)
-    sys.stdout.flush()
-    sys.stderr.flush()
-    devnull = os.open(os.devnull, os.O_RDWR)
-    os.dup2(devnull, 0)
-    os.dup2(devnull, 1)
-    os.dup2(devnull, 2)
-    if devnull > 2:
-        os.close(devnull)
-
-
 def can_connect(sock_path: str) -> bool:
-    if not os.path.exists(sock_path):
-        return False
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        s.connect(sock_path)
-        return True
-    except OSError:
-        return False
-    finally:
-        s.close()
+    return ipc.probe(sock_path)
 
 
 def ensure_server(sock_path: str):
-    if can_connect(sock_path):
+    if ipc.probe(sock_path):
         return
-    pid = os.fork()
-    if pid == 0:
-        daemonize()
-        run_server(sock_path)
-        os._exit(0)
-    # 부모: 중간 자식을 회수하고 소켓이 뜰 때까지 대기
-    try:
-        os.waitpid(pid, 0)
-    except ChildProcessError:
-        pass
+    # 부모 생애와 무관하게 살아남는 분리 서버 프로세스를 띄운다(Unix setsid /
+    # Windows DETACHED_PROCESS). 그 뒤 listen 이 떠 접속 가능해질 때까지 대기.
+    proc.spawn_detached(proc.server_argv(sock_path))
     for _ in range(200):
-        if can_connect(sock_path):
+        if ipc.probe(sock_path):
             return
         time.sleep(0.02)
     print("pytmux: 서버 기동 실패", file=sys.stderr)
@@ -64,10 +36,9 @@ def ensure_server(sock_path: str):
 
 
 def control_request(sock_path: str, obj: dict):
-    if not can_connect(sock_path):
+    s = ipc.control_socket(sock_path)
+    if s is None:
         return None
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.connect(sock_path)
     data = json.dumps(obj).encode()
     s.sendall(len(data).to_bytes(4, "big") + data)
     try:
@@ -81,7 +52,7 @@ def control_request(sock_path: str, obj: dict):
         s.close()
 
 
-def _recvn(s: socket.socket, n: int) -> bytes:
+def _recvn(s, n: int) -> bytes:
     buf = b""
     while len(buf) < n:
         chunk = s.recv(n - len(buf))
@@ -125,7 +96,7 @@ def main(argv=None):
     p_rep.add_argument("--ruler", action="store_true", help="열 번호 자 표시")
     args = parser.parse_args(argv)
 
-    sock_path = args.socket or default_socket_path()
+    sock_path = args.socket or ipc.default_endpoint()
 
     if args.command == "server":
         run_server(sock_path)

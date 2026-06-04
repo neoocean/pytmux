@@ -31,7 +31,7 @@ IS_WINDOWS = os.name == "nt"
 
 __all__ = [
     "IS_WINDOWS", "parse_endpoint", "is_tcp",
-    "default_state_dir", "default_endpoint", "portfile_for",
+    "default_state_dir", "default_endpoint", "portfile_for", "state_base",
     "start_server", "open_connection", "probe", "control_socket",
 ]
 
@@ -79,6 +79,18 @@ def default_endpoint() -> str:
     if IS_WINDOWS:
         return "tcp:127.0.0.1:0"
     return os.path.join(default_state_dir(), "default.sock")
+
+
+def state_base(endpoint: str) -> str:
+    """상태파일(slots/opts/capture/layout) 경로의 프리픽스.
+
+    Unix 소켓이면 소켓 경로 자체(고정 소켓→안정, 임시 소켓→테스트 격리). TCP
+    엔드포인트("tcp:host:port")면 콜론 등 파일명 불가 문자를 피하고 포트가 바뀌어도
+    안정적이도록 상태 디렉터리(default_state_dir)의 고정 prefix 를 쓴다
+    (docs/WINDOWS_PORT.md §7-c-4)."""
+    if is_tcp(endpoint):
+        return os.path.join(default_state_dir(), "default")
+    return endpoint
 
 
 def portfile_for(endpoint: str) -> str:
