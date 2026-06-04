@@ -12,7 +12,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **95 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **124 passed**
   (`python3 tests/run.py`).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -199,12 +199,20 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56460 + git, 신→구)
+## 9. 최근 변경(CL 56279~56464 + git, 신→구)
 
-- 56460 **Claude 헤더 숨김 토글 + claude-header opts.json 영속**(§10 #6) — ② 히스토리
-  팝업 `[h]` 로 패널별 헤더 숨김(`_claude_hidden_panes`, InfoScreen hide_key/hide_cb),
-  ③ 서버가 `claude_header` 를 opts.json 에 영속(set_claude_header)·status 전달, 클라
-  명령이 서버 경유로 영속. 회귀 테스트 3종(총 124). **서버+클라 → kill-server 재기동.**
+- 56464 **pytmux 중첩 거부(로컬+원격) 요구사항 기록**(§10 #10, 사용자 요청·문서만) —
+  로컬 거부(CL 56394)는 완료, 원격(ssh) 거부 구현 방향(SetEnv=PYTMUX 전파/원격측 가드/tty
+  표식) 정리. 다음 작업 대상.
+
+- 56460(+56462) **Claude 헤더 숨김 토글 + claude-header opts.json 영속**(§10 #6) — ②
+  히스토리 팝업 `[h]` 로 패널별 헤더 숨김(`_claude_hidden_panes`, InfoScreen hide_key/
+  hide_cb), ③ 서버가 `claude_header` 를 opts.json 에 영속(set_claude_header)·status 전달,
+  클라 명령이 서버 경유로 영속. 회귀 테스트 3종(총 124). **서버+클라 → kill-server 재기동.**
+  ⚠️ **attribution 주의**: 공유 워크스페이스(Windows 포팅 세션과 동시 작업) 탓에 **server.py·
+  tests·docs 는 CL 56460, client.py 변경은 CL 56462(windows-port 세션 서브밋에 동반)에 분리
+  귀속**됐다. depot 에는 양쪽 모두 반영되어 기능은 완전(데이터 손실 없음). 교훈: 같은 워크스페이스
+  에선 디폴트 CL이 섞이니 CL 생성 시 파일 명시·CL 먼저 생성해 번호 확보.
 
 - 56449 **ESC 모드 Claude 헤더 포커스 → 히스토리**(§10 #5) — ESC 모드에서 `h` 로 Claude
   헤더 포커스(`_hdr_focus`), ←↑/→↓ 헤더 이동, Enter 히스토리 팝업, Esc 해제. 포커스
@@ -214,6 +222,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   오른쪽에서 시작(lead 엔트리로 render_line/active_tab_xrange 공유), `[+]` addtxt 를
   " [+] "→"  [+] "(앞 공백 2칸)로 왼쪽 탭과 한 칸 더 띄움. 회귀 테스트 1종 + 연결부
   테스트 LEAD 반영. 클라이언트 전용(attach 재실행).
+
+- 56443 **토큰 로깅 계정별 구분 요구사항 기록**(§10 #7, 사용자 요청·문서만) — 토큰 사용량
+  로깅을 Claude 계정(개인/팀)별로 분리해야 한다는 요구사항과 식별 방향(/status·푸터의
+  이메일/조직/플랜 파싱 또는 수동 레이블, 민감정보 해시) 추가. #3(56437)에서 합산 단위가
+  이미 정의됐음(committed 이벤트=1응답 1레코드)도 반영.
 
 - 56439 **대기(큐)중 프롬프트는 헤더 즉시 안 바꿈**(§10) — `_track_prompt` 가 busy 중
   입력 프롬프트를 `Pane.pending_prompts` 큐에 보관(last_prompt 즉시 안 덮음, 히스토리는
