@@ -211,6 +211,14 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56616 **refactor(§10 LLM 친화, 4/N): 위젯 3종 → `clientwidgets.py`** — 클로저의
+  `MultiplexerView`(패널 합성 뷰·마우스)·`TabBar`·`StatusBar` 853줄을 신규
+  `pytmuxlib/clientwidgets.py` 로 이전. config/sock_path 미캡처·Screen/App/서로 미참조
+  (self.app 런타임). 의존성 textual·clientutil·datetime·os/socket 뿐. PytmuxApp 이
+  import 해 compose. **client.py 3188→2335줄(최초 4363 대비 −46%)**, 누적 분리
+  clientutil(356)/clientscreens(868)/clientwidgets(882). 193 passed(ptyshot 실제 클라
+  시각 회귀 포함). 다음: server.py 분할 검토. 파일: `pytmuxlib/{client,clientwidgets}.py`,
+  `docs/HANDOFF.md`.
 - 56615 **실제 화면 스크린샷 테스트 하네스(`ptyshot`) + 진짜 클라 시각 회귀**(§10
   사용자 질문) — 헤드리스 외에 실제 화면을 자동 테스트하는 수단. 신규 `tests/ptyshot.py`
   가 진짜 Textual 클라이언트를 가짜 터미널(stdlib `pty`) 아래 띄워 **사용자가 보는
