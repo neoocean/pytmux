@@ -16,6 +16,17 @@ from .keymap import _key_to_ctrl_bytes, _tmux_key_to_textual, load_config
 from .protocol import MIN_H, MIN_W, read_msg, write_msg
 
 
+def _shell_argv(cmd: str) -> list:
+    """run-shell/if-shell/display-popup 의 셸 명령 argv. OS 별 셸로 분기.
+
+    POSIX: /bin/sh -c <cmd>,  Windows: cmd /c <cmd> (COMSPEC 우선).
+    """
+    if os.name == "nt":
+        comspec = os.environ.get("COMSPEC", "cmd.exe")
+        return [comspec, "/c", cmd]
+    return ["/bin/sh", "-c", cmd]
+
+
 def _char_cells(ch: str) -> int:
     """터미널에서 문자가 차지하는 칸 수(와이드=2, 그 외=1)."""
     return 2 if wcwidth(ch) == 2 else 1
@@ -480,10 +491,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 border: round $accent; background: $panel; padding: 0 1; }
         """
 
-        def __init__(self, lines, title="info"):
+        def __init__(self, lines, title="info", hide_key=None, hide_cb=None):
             super().__init__()
             self._lines = lines
             self._title = title
+            # 특정 키(hide_key)를 누르면 hide_cb 를 부르고 닫는다(#6 ② '이 헤더 숨기기').
+            self._hide_key = hide_key
+            self._hide_cb = hide_cb
 
         def compose(self) -> ComposeResult:
             # markup=False: 임의 텍스트(프롬프트 등)의 대괄호가 마크업으로 사라지지 않게.
@@ -498,6 +512,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def on_key(self, event: events.Key):
             event.stop()
+            if self._hide_key and event.key == self._hide_key and self._hide_cb:
+                self._hide_cb()
             self.dismiss(None)
 
     class PromptScreen(ModalScreen):
@@ -1586,6 +1602,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.claude_header_on = True  # 프롬프트 헤더 표시(claude-header on|off)
             self._claude_header_zones = {}  # id -> (x0,x1,y) 헤더 클릭존(히스토리 팝업)
             self._hdr_focus = None      # ESC 모드 Claude 헤더 포커스 대상 pane id(#5)
+            self._claude_hidden_panes = set()  # 헤더를 숨긴 패널 id(#6 ② 팝업서 토글)
             self._tab_close_zone = None  # 현재 탭 닫기 [x] 영역 (x0, x1, y)
             # ---- 설정(config) 적용 ----
             self.prefix_key = config.get("prefix", "ctrl+b")
@@ -1794,6 +1811,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self._composite()
             elif t == "status":
                 self.status.update_status(msg)
+                # claude-header 전역 표시 상태를 서버 opts.json 권위값으로 반영(#6 ③)
+                if "claude_header" in msg:
+                    self.claude_header_on = bool(msg["claude_header"])
                 # 컨텍스트 메뉴가 열려 있으면 토글 라벨(on/off)을 실제 상태로 갱신
                 ms = getattr(self, "_menu_screen", None)
                 if ms is not None:
@@ -1837,8 +1857,20 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.pane_claude = {e["id"]: e for e in panes_claude}
 
         def set_claude_header(self, on: bool):
-            # claude-header on|off — 프롬프트 헤더 표시 토글(전역).
+            # claude-header on|off — 프롬프트 헤더 표시 토글(전역). 낙관적으로 즉시
+            # 반영하고 서버에 보내 opts.json 에 영속(#6 ③) — 서버가 status 로 회신.
             self.claude_header_on = on
+            self.send_cmd("set_claude_header", value=bool(on))
+            self._composite()
+
+        def toggle_header_hidden(self, pane_id):
+            # 특정 패널의 헤더만 숨기거나 다시 보이게(#6 ② — 히스토리 팝업서 토글).
+            # 패널별·세션 한정(전역 claude-header off 와 별개). 숨겨도 prompt-history
+            # 명령이나 ESC h 로 팝업을 열어 다시 보이게 할 수 있다.
+            if pane_id in self._claude_hidden_panes:
+                self._claude_hidden_panes.discard(pane_id)
+            else:
+                self._claude_hidden_panes.add(pane_id)
             self._composite()
 
         def show_capture_info(self, path, size):
@@ -1854,12 +1886,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def open_prompt_history(self, pane_id=None):
             # Claude 프롬프트 히스토리 팝업(시간순). 헤더 클릭/명령으로 연다(#7).
+            # [h] 로 이 패널 헤더 숨김/표시 토글(#6 ②).
             pid = pane_id if pane_id is not None else self.layout.get("active")
             info = self.pane_claude.get(pid) or {}
             hist = info.get("history") or ([info["prompt"]]
                                            if info.get("prompt") else [])
             lines = [f"{i + 1:>2}. {h}" for i, h in enumerate(hist)]
-            self.push_screen(InfoScreen(lines, title="프롬프트 히스토리(시간순)"))
+            hidden = pid in self._claude_hidden_panes
+            lines.append("")
+            lines.append("  [h] 이 헤더 " + ("다시 표시" if hidden else "숨기기"))
+            self.push_screen(InfoScreen(
+                lines, title="프롬프트 히스토리(시간순)",
+                hide_key="h", hide_cb=lambda: self.toggle_header_hidden(pid)))
 
         def _draw_claude_headers(self, cells, W, H):
             """Claude Code 패널 내부 맨 윗줄에 마지막 프롬프트를 스티키 헤더로 표시.
@@ -1869,15 +1907,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if not self.claude_header_on or not self.pane_claude:
                 return
             # 헤더 배경은 진한 파랑(primary-darken-2) — 본문/활성 테두리(primary)보다
-            # 한 단계 어둡게 해 스티키 헤더가 더 또렷이 구분되도록 한다.
-            # 헤더 배경은 진한 파랑(primary-darken-2). ESC 모드 헤더 포커스(#5)면
-            # 강조색(accent)으로 구분한다.
+            # 한 단계 어둡게. ESC 모드 헤더 포커스(#5)면 강조색(accent)으로 구분한다.
             base_st = Style(color="white",
                             bgcolor=theme_color(self, "primary-darken-2"),
                             bold=True)
             focus_st = Style(color="black", bgcolor=theme_color(self, "accent"),
                              bold=True)
             for p in self.layout.get("panes", []):
+                if p["id"] in self._claude_hidden_panes:   # 팝업서 숨긴 헤더(#6 ②)
+                    continue
                 info = self.pane_claude.get(p["id"])
                 if not info or not info.get("claude") or not info.get("prompt"):
                     continue
@@ -2325,10 +2363,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
         # ---- 복사/버퍼 ----
         @staticmethod
         def _clipboard_copy(text):
-            """OS 클립보드로 복사(pbcopy/xclip/wl-copy)."""
+            """OS 클립보드로 복사(pbcopy/xclip/wl-copy/clip.exe)."""
             import shutil
             for cmd in (["pbcopy"], ["xclip", "-selection", "clipboard"],
-                        ["wl-copy"]):
+                        ["wl-copy"], ["clip"]):   # clip = Windows clip.exe(표준입력 복사)
                 if shutil.which(cmd[0]):
                     try:
                         subprocess.run(cmd, input=text.encode("utf-8"), timeout=2)
@@ -2341,7 +2379,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def _clipboard_paste():
             import shutil
             for cmd in (["pbpaste"], ["xclip", "-selection", "clipboard", "-o"],
-                        ["wl-paste", "-n"]):
+                        ["wl-paste", "-n"],
+                        # Windows: PowerShell Get-Clipboard(끝에 CRLF 가 붙을 수 있음)
+                        ["powershell", "-NoProfile", "-Command", "Get-Clipboard"]):
                 if shutil.which(cmd[0]):
                     try:
                         return subprocess.run(cmd, capture_output=True, timeout=2
@@ -2648,7 +2688,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def _run_shell(self, cmd):
             try:
-                res = subprocess.run(["/bin/sh", "-c", cmd], capture_output=True,
+                res = subprocess.run(_shell_argv(cmd), capture_output=True,
                                      timeout=15)
                 text = res.stdout.decode("utf-8", "ignore")
                 rc = res.returncode
@@ -2661,7 +2701,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def _if_shell(self, cond, then_cmd, else_cmd=None):
             try:
-                rc = subprocess.run(["/bin/sh", "-c", cond], capture_output=True,
+                rc = subprocess.run(_shell_argv(cond), capture_output=True,
                                     timeout=15).returncode
             except Exception:
                 rc = 1
@@ -2917,7 +2957,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 cmd = " ".join(a for a in args if not a.startswith("-"))
                 if cmd:
                     try:
-                        res = subprocess.run(["/bin/sh", "-c", cmd],
+                        res = subprocess.run(_shell_argv(cmd),
                                              capture_output=True, timeout=30)
                         text = (res.stdout + res.stderr).decode("utf-8", "ignore")
                     except Exception as e:

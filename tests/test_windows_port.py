@@ -65,3 +65,21 @@ async def test_protocol_imports_without_fcntl_termios():
     # 컨텍스트를 벗어나면 정상 protocol 이 복원돼 set_winsize 가 동작해야 한다(Unix).
     import pytmuxlib.protocol as proto
     assert callable(proto.set_winsize)
+
+
+async def test_shell_argv_os_branch():
+    """client._shell_argv 가 OS 별 셸로 분기한다(run-shell/if-shell/popup 용).
+
+    POSIX 는 /bin/sh -c, Windows(nt)는 cmd /c. os.name 을 패치해 양쪽을 검증한다.
+    """
+    from unittest import mock
+    from pytmuxlib.client import _shell_argv
+
+    with mock.patch("os.name", "posix"):
+        assert _shell_argv("echo hi") == ["/bin/sh", "-c", "echo hi"]
+    with mock.patch("os.name", "nt"), mock.patch.dict(
+            "os.environ", {"COMSPEC": r"C:\Windows\System32\cmd.exe"}):
+        assert _shell_argv("dir") == [r"C:\Windows\System32\cmd.exe", "/c", "dir"]
+    # COMSPEC 미설정 Windows → cmd.exe 폴백.
+    with mock.patch("os.name", "nt"), mock.patch.dict("os.environ", {}, clear=True):
+        assert _shell_argv("dir") == ["cmd.exe", "/c", "dir"]
