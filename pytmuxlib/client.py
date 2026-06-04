@@ -1147,6 +1147,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
         # Claude Code 상태 아이콘(탭): 대기 ○ / 처리중 ◐ / 리밋 멈춤 ⊘
         CLAUDE_ICON = {"idle": "○", "busy": "◐", "limit": "⊘"}
 
+        # 탭바 왼쪽 여백 — 첫 탭을 한 칸 오른쪽에서 시작(사용자 요청). lead 엔트리로
+        # 넣어 render_line/active_tab_xrange 가 같은 오프셋을 공유한다.
+        LEAD = 1
+
         def _labels(self):
             out = []
             for t in self.tabs:
@@ -1169,9 +1173,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             n = len(self.tabs)
             idxs = [t["index"] for t in self.tabs]
             selpos = idxs.index(self.sel) if self.sel in idxs else 0
-            # [+] 새 탭 버튼 폭만 빼면 됨([x] 닫기는 콘텐츠 패널 위로 이동함)
-            addtxt = " [+] "
-            mid_w = max(1, w - len(addtxt))
+            # [+] 새 탭 버튼: 왼쪽 탭과 한 칸 더 띄운다(사용자 요청 — 앞 공백 2칸).
+            # 왼쪽 여백(LEAD)도 폭 예산에서 뺀다.
+            addtxt = "  [+] "
+            mid_w = max(1, w - len(addtxt) - self.LEAD)
             # 선택 탭이 보이도록 스크롤 보정
             self._scroll = max(0, min(self._scroll, max(0, n - 1)))
             if selpos < self._scroll:
@@ -1180,6 +1185,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                    sum(widths[self._scroll:selpos + 1]) > mid_w - 2):
                 self._scroll += 1
             entries, mid_used = [], 0
+            if self.LEAD:                              # 왼쪽 여백(첫 탭 한 칸 오른쪽)
+                entries.append(("lead", None, " " * self.LEAD))
             if self._scroll > 0:                       # 왼쪽에 더 있음
                 entries.append(("scroll_left", None, "◀"))
                 mid_used += 1
@@ -1218,7 +1225,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             segs, zones = [], []
             x = 0
             for kind, payload, text in self._entries():
-                if kind in ("scroll_left", "scroll_right"):
+                if kind == "lead":                     # 왼쪽 여백(빈 칸, 클릭 무시)
+                    st = base
+                elif kind in ("scroll_left", "scroll_right"):
                     st = arrow_st
                 elif kind == "add":
                     # ESC 모드에서 [+] 가 커서 대상으로 선택되면 강조(#26)

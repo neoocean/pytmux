@@ -894,6 +894,27 @@ async def test_active_tab_connects_to_content():
     await _with_app(body, cfg={"tab_bar_always": True})
 
 
+async def test_tabbar_lead_and_plus_gap():
+    # 사용자 요청: 첫 탭은 한 칸 오른쪽에서 시작(LEAD), [+] 는 왼쪽 탭과 한 칸 더 띄움.
+    async def body(app, pilot, srv):
+        app.status.windows = [{"index": 0, "name": "win", "active": True}]
+        app._update_tabbar()
+        app.tabbar.set_tabs(app.status.windows, 0)
+        ents = app.tabbar._entries()
+        assert ents[0][0] == "lead" and ents[0][2] == " " * app.tabbar.LEAD, ents[0]
+        # 첫 탭 엔트리는 lead 다음
+        assert ents[1][0] == "tab", ents[1]
+        # [+] 버튼은 앞에 공백 2칸(왼쪽 탭과 한 칸 더 분리)
+        add = next(e for e in ents if e[0] == "add")
+        assert add[2] == "  [+] ", repr(add[2])
+        # 렌더 첫 칸은 빈 여백, 탭은 LEAD 칸 뒤에서 시작
+        app._composite()
+        line = "".join(s.text for s in app.tabbar.render_line(0))
+        assert line[:app.tabbar.LEAD] == " " * app.tabbar.LEAD
+        assert app.tabbar.active_tab_xrange()[0] == app.tabbar.LEAD
+    await _with_app(body, cfg={"tab_bar_always": True})
+
+
 async def test_active_tab_connector_follows_switch():
     # #23 회귀: 활성 탭을 바꾸면 콘텐츠 상단 연결부(▀)가 새 탭으로 따라와야 한다.
     # 예전엔 ① active_tab_xrange 가 render_line 부산물 _zones 를 읽어 전환 직후
@@ -906,7 +927,9 @@ async def test_active_tab_connector_follows_switch():
         app.status.windows = wins(0)
         app._update_tabbar(); app._composite()
         xr0 = app.tabbar.active_tab_xrange()
-        assert xr0 is not None and xr0[0] == 0, "활성 탭0 은 맨 왼쪽에서 시작"
+        # 첫 탭은 왼쪽 여백(LEAD) 만큼 오른쪽에서 시작
+        assert xr0 is not None and xr0[0] == app.tabbar.LEAD, \
+            f"활성 탭0 은 LEAD({app.tabbar.LEAD}) 칸 뒤에서 시작, got {xr0}"
         # ① render_line 재실행(=_zones 갱신) 전에도 새 활성 탭 범위를 직접 계산
         app.status.windows = wins(5)
         prev_zones = list(app.tabbar._zones)
