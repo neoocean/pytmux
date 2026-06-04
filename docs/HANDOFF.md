@@ -535,7 +535,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
     맡길 수 있다. **터미널이 1007 을 지원하지 않으면(②류) 여전히 mouse-debug 로 확인**
     필요 — 이 완화는 1007 변환이 원인일 때만 듣는다. 회귀 테스트 `test_alt_scroll_toggle`.
     클라이언트 전용(attach 재실행 반영).
-- **[요청·미구현/CL 56507 기록] Claude 프롬프트 헤더가 패널 1행을 차지하면 터미널
+- **[요청·미구현/CL 56510 기록] Claude 프롬프트 헤더가 패널 1행을 차지하면 터미널
   스크롤을 2행부터 시작** — Claude Code 를 띄운 패널은 기본으로 **1행에 이전에 입력한
   프롬프트(스티키 헤더, `_draw_claude_headers`)** 를 그린다. 현재는 이 1행을 **포함해
   터미널(패널 내용)이 스크롤·렌더**되므로, 패널(또는 터미널)이 **한 줄만** 있을 때 그 한
@@ -716,7 +716,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   kill-pane y/N). 명령 `overview`/`tree` 별칭. **fg 명령만으로 원격 판정**(자식 트리
   심층 검사는 미적용 — 추후 정밀화 여지).
 - ~~**[부분해결·요청확인] pytmux 중첩 실행 거부 (로컬 + 원격 둘 다)**~~ → **로컬 CL 56394,
-  원격(ssh) CL 56507 에서 해결.** 원격은 아래 ①(SetEnv/SendEnv 전파)의 **서버 무설정
+  원격(ssh) CL 56510 에서 해결.** 원격은 아래 ①(SetEnv/SendEnv 전파)의 **서버 무설정
   변형**으로 구현했다: 패널 셸 env 에 표식 `LC_PYTMUX=1` 을 심고, PATH 앞단에 ssh 래퍼
   (`pytmuxlib/sshwrap.py`)를 깔아 `ssh -o SendEnv=LC_PYTMUX` 로 실행한다(래퍼는 자기
   디렉터리를 PATH 에서 빼 진짜 ssh 를 exec — 무한 재귀 방지). 대부분의 sshd 기본값
@@ -764,7 +764,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   앱·상태·사용량 표시. server `_pane_overview` 에 claude/usage 필드 추가. 명령
   token-usage/tokens. (세션별 누적 토큰의 "누적" 정의는 #5 (1)과 함께 후속.)
 - ~~**[요청·미구현] 토큰 사용량 로깅(탭/패널/세션별) + 시간·일·월 단위 조회 화면**~~ →
-  **CL 56507 에서 해결.** 아래 구현 방향대로: 신규 `pytmuxlib/usagelog.py`(순수 모듈 —
+  **CL 56510 에서 해결.** 아래 구현 방향대로: 신규 `pytmuxlib/usagelog.py`(순수 모듈 —
   `make_record`/`append`/`read`/`bucket_key`/`aggregate`/`summary_lines`)가 JSONL 로그를
   적고 시간/일/월 × 계정으로 집계한다. 서버 `_scan_claude` 가 `tokens.step` 의 **확정
   이벤트(committed>0)** 마다 `<sock>.tokens.jsonl` 에 `{ts,tab,pane,session,account,
@@ -811,7 +811,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
     Claude 트리 팝업](실시간 현재값 트리) 과 데이터 소스 공유 — 이 항목은 그 **영속 이력/계정별
     집계** 버전.
 - ~~**[요청·미구현] Claude 패널 컨텍스트 메뉴에 '프롬프트 단위 클리어' 모드 토글**~~ →
-  **CL 56507 에서 해결(단, 자동 시퀀스 범위).** 패널별 `Pane.prompt_clear_mode`(기본 off)
+  **CL 56510 에서 해결(단, 자동 시퀀스 범위).** 패널별 `Pane.prompt_clear_mode`(기본 off)
   + busy→idle 경계에서 전진하는 소형 상태기계 `_pc_advance`(phase None→문서화 지시 주입→
   `/clear` 주입→종료)를 `_scan_claude` 에 훅. 주입은 `_pc_inject`(자동재개 `_fire_resume`
   와 동일 PTY write 경로 — 프롬프트 추적/히스토리 안 거침). ① 문서화 지시문은 옵션
@@ -934,7 +934,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   글자는 그대로. bind 는 첫 인자만 키·나머지는 명령 원문(플래그 보존). FEATURES 표의
   "unbind 는 미구현" 표기 해소. 회귀 테스트 `test_bind_unbind_keys`. 클라이언트 전용.
 - ~~**[요청·미구현] 캡처(REC) 출력을 /tmp → 프로젝트 디렉터리로 옮기고 Perforce 로 관리(단,
-  GitHub 엔 절대 미반영)**~~ → **CL 56507 에서 해결.** `Server.capture_dir` 를 경로 결정
+  GitHub 엔 절대 미반영)**~~ → **CL 56510 에서 해결.** `Server.capture_dir` 를 경로 결정
   로직으로 바꿨다: **기본 엔드포인트(실사용)면 `PROJECT_DIR/captures/<sock-id>/`**(프로젝트
   하위 — Perforce 공유 대상), `PYTMUX_CAPTURE_DIR` env 가 있으면 그쪽(테스트가 임시
   디렉터리 주입해 프로젝트 오염 방지), **임시/비기본 소켓이면 종전 휘발 영역**(`state_base`
