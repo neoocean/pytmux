@@ -688,9 +688,12 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   `pywinpty`(ConPTY)→리더 스레드→`call_soon_threadsafe`→**기존** `Pane`(pyte)→**기존**
   `render_pane_lines`. pytmuxlib **무수정**(Windows 에서 `protocol.py` 의 fcntl import 깨짐을
   no-op 스텁으로 우회). macOS 에서 렌더 파이프라인 절반(`--selftest` + fcntl 차단 시뮬)은
-  검증됨; **ConPTY 절반은 Windows 에서 `python poc\winpty_poc.py` 실행으로 확인 필요.**
-  다음 단계(WINDOWS_PORT §7-b): PoC 통과 후 추상화 레이어(`pty_backend`/`ipc`/`proc`) 신설
-  + `server.py` 리팩터의 단계별 구현 계획 수립.
+  검증됨. **✅ ConPTY 절반도 Windows 에서 검증 완료(2026-06-04)** — Windows 11(10.0.22631)/
+  Python 3.12.4/pywinpty 3.0.3/pyte 0.8.2/wcwidth 0.7.0 에서 `pip install pywinpty` 후
+  `python poc\winpty_poc.py` 실행 → **`PYTMUX_POC_OK` 정상 출력**(cmd.exe 의사콘솔→리더 스레드
+  펌프→pyte→렌더, 544바이트). 리스크 ①(ConPTY)·②(asyncio×파이프 읽기) de-risk 완료.
+  다음 단계(WINDOWS_PORT §6-b): 추상화 레이어(`pty_backend`/`ipc`/`proc`) 신설 + `server.py`
+  리팩터(작업의 ~70%)의 단계별 구현 계획 수립 후 착수.
 
 ## 11. Claude Code 특화 기능 분리 전략 (병렬 세션 충돌 최소화)
 

@@ -2,7 +2,7 @@
 
 > 작성: 2026-06-04 · 대상: Windows 포팅을 검토/진행하는 사람·에이전트
 > 관련: [DESIGN.md](DESIGN.md) · [HANDOFF.md](HANDOFF.md) · [CONTRIBUTING.md](CONTRIBUTING.md)
-> 상태: **조사만 완료(코드 변경 없음).** 구현 미착수.
+> 상태: **조사 완료 + PoC 슬라이스 Windows 검증 완료(2026-06-04).** 본 포팅(추상화 레이어 + `server.py` 리팩터) 미착수.
 
 ## 0. 배경
 
@@ -81,10 +81,11 @@ Windows에 직접 대응물이 없어 포팅 시 약화/제거됨:
 
 ## 7. 다음 액션
 
-- **(a)** ✅ PoC 슬라이스 작성됨 → [`../poc/winpty_poc.py`](../poc/winpty_poc.py).
+- **(a)** ✅ PoC 슬라이스 작성·**Windows 검증 완료** → [`../poc/winpty_poc.py`](../poc/winpty_poc.py).
   - ConPTY(pywinpty) → 리더 스레드 → `call_soon_threadsafe` → asyncio → **기존** `Pane`(pyte) → **기존** `render_pane_lines`.
   - pytmuxlib **무수정**: Windows에서 `protocol.py`의 `fcntl`/`termios` import가 깨지는 문제는, 두 모듈이 없을 때만 no-op 스텁을 `sys.modules`에 심어 우회(스텁 `ioctl`은 PoC에서 호출되지 않음).
-  - 검증 완료(macOS): `--selftest`로 `Pane.feed`+렌더 동작 확인 + fcntl 차단 시뮬레이션으로 스텁 경로 import 성립 확인. **ConPTY 절반은 Windows에서 `python poc\winpty_poc.py` 실행 필요.**
+  - 검증 완료(macOS): `--selftest`로 `Pane.feed`+렌더 동작 확인 + fcntl 차단 시뮬레이션으로 스텁 경로 import 성립 확인.
+  - **✅ ConPTY 절반 Windows 검증 완료(2026-06-04)**: Windows 11(10.0.22631) / Python 3.12.4 / pywinpty 3.0.3 / pyte 0.8.2 / wcwidth 0.7.0 환경에서 `python poc\winpty_poc.py` 실행 → **`PYTMUX_POC_OK` 정상 출력**(cmd.exe 의사콘솔 기동 → 리더 스레드 펌프 → pyte → 렌더, 544바이트 프레임). `pip install pywinpty` 한 번이면 됨(`pyte`/`wcwidth`는 기설치 가정). **리스크 ①(ConPTY)·②(asyncio×파이프 읽기) de-risk 완료** — 이제 §6-b 본 포팅 착수 가능.
 - **(b)** 추상화 레이어 + `server.py` 리팩터 구체 단계별 구현 계획 수립 — PoC 통과 후 착수.
 - **(c)** 보류
 
