@@ -201,7 +201,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 9. 최근 변경(CL 56279~56464 + git, 신→구)
 
-- 56476 **단일 패널 테두리 on/off 옵션화**(§10 마무리 묶음 #9a) — 서버 `single_border`
+- 56480 **단일 패널 테두리 on/off 옵션화**(§10 마무리 묶음 #9a) — 서버 `single_border`
   옵션(기본 ON, opts.json 영속). `_layout_msg` 가 `len(panes) >= 2 or single_border`
   일 때만 box. 단일 패널 OFF 면 화면 전체 사용, 다중 패널은 항상 테두리. 명령
   `single-border|pane-border [on|off|toggle]`, status `single_border` 클라 반영.
@@ -808,7 +808,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   같은 탭 위면 대상 해제(소스만 흐림). `on_mouse_up` 이 `_drag`/`_drag_over` 초기화 후
   재합성. 회귀 테스트 `test_tab_drag_reorder_visual_feedback`. 클라이언트 전용(attach 재실행).
 - 패널 **드래그 swap**(미구현 — 9b 대상).
-- ~~단일 패널 테두리 on/off 옵션화.~~ → **CL 56476 에서 해결.** 서버에 `single_border`
+- ~~단일 패널 테두리 on/off 옵션화.~~ → **CL 56480 에서 해결.** 서버에 `single_border`
   옵션(기본 ON=항상 테두리, opts.json 영속) 추가. `_layout_msg` 의 `bordered` 를
   `len(panes) >= 2 or self.single_border` 로 바꿔, **패널이 둘 이상이면 옵션과 무관하게
   항상 테두리**(구분 필요), **하나뿐이면 옵션 OFF 시 box 없이 화면 전체를 내용으로** 쓴다.
