@@ -2,7 +2,10 @@
 
 > 작성: 2026-06-04 · 대상: Windows 포팅을 검토/진행하는 사람·에이전트
 > 관련: [DESIGN.md](DESIGN.md) · [HANDOFF.md](HANDOFF.md) · [CONTRIBUTING.md](CONTRIBUTING.md)
-> 상태: **조사 완료 + PoC 슬라이스 Windows 검증 완료(2026-06-04).** 본 포팅(추상화 레이어 + `server.py` 리팩터) 미착수.
+> 상태: **추상화 레이어 + `server.py` PTY 리팩터 완료(2026-06-04).** PTY/IPC/프로세스
+> 추상층 3종 신설·테스트 완료, `server.py`·`model.py` 의 PTY 생애주기를 추상층으로
+> 전환 완료. **남은 일: IPC/데몬 wiring**(serve/client connect/launcher 를 ipc·proc 로
+> 전환) — §7 참조.
 
 ## 0. 배경
 
@@ -86,8 +89,32 @@ Windows에 직접 대응물이 없어 포팅 시 약화/제거됨:
   - pytmuxlib **무수정**: Windows에서 `protocol.py`의 `fcntl`/`termios` import가 깨지는 문제는, 두 모듈이 없을 때만 no-op 스텁을 `sys.modules`에 심어 우회(스텁 `ioctl`은 PoC에서 호출되지 않음).
   - 검증 완료(macOS): `--selftest`로 `Pane.feed`+렌더 동작 확인 + fcntl 차단 시뮬레이션으로 스텁 경로 import 성립 확인.
   - **✅ ConPTY 절반 Windows 검증 완료(2026-06-04)**: Windows 11(10.0.22631) / Python 3.12.4 / pywinpty 3.0.3 / pyte 0.8.2 / wcwidth 0.7.0 환경에서 `python poc\winpty_poc.py` 실행 → **`PYTMUX_POC_OK` 정상 출력**(cmd.exe 의사콘솔 기동 → 리더 스레드 펌프 → pyte → 렌더, 544바이트 프레임). `pip install pywinpty` 한 번이면 됨(`pyte`/`wcwidth`는 기설치 가정). **리스크 ①(ConPTY)·②(asyncio×파이프 읽기) de-risk 완료** — 이제 §6-b 본 포팅 착수 가능.
-- **(b)** 추상화 레이어 + `server.py` 리팩터 구체 단계별 구현 계획 수립 — PoC 통과 후 착수.
-- **(c)** 보류
+- **(b)** ✅ **추상화 레이어 3종 신설·테스트 완료**(2026-06-04):
+  - `pytmuxlib/pty_backend.py` — PTY 백엔드(Unix `pty.fork` / Windows ConPTY 리더
+    스레드 펌프). spawn/start_reader/write/set_winsize/terminate/kill/reap/close.
+  - `pytmuxlib/ipc.py` — IPC 전송(Unix AF_UNIX / Windows TCP 루프백 + 포트파일).
+    엔드포인트를 문자열로 표현해 기존 `sock_path:str` 스레딩 보존.
+  - `pytmuxlib/proc.py` — 데몬/프로세스(Unix setsid 분리·killpg / Windows
+    DETACHED_PROCESS·taskkill). 서버 데몬 기동/종료 담당.
+  - `pytmuxlib/protocol.py` — 최상단 `fcntl`/`termios` import 를 `set_winsize` 안으로
+    지연시켜 Windows 에서 모듈 import 성립(PoC 의 sys.modules 스텁 불필요화).
+- **(b2)** ✅ **`server.py`·`model.py` PTY 리팩터 완료**(작업의 ~70%): `pty.fork`·
+  `os.read`·`add_reader`·`killpg`·`waitpid`·`fcntl`·`os.write`·`set_winsize` 직접
+  호출을 전부 `pty_backend.PtyProcess` 로 치환. `Pane.pty` 주입, `master_fd`/`child_pid`
+  와 생성자 시그니처는 호환 유지(테스트·replay·poc 무수정). 헤드리스 테스트 통과.
+- **(b3)** ✅ **`client.py` Windows 분기**(§5): 클립보드 `clip`/`Get-Clipboard` 추가,
+  `_shell_argv` 로 run-shell/if-shell/popup 의 `/bin/sh -c`→`cmd /c` 분기.
+- **(c)** ⏳ **남은 일 — IPC/데몬 wiring**(다음 세션): 추상층은 만들었으나 아직 연결
+  안 됨. 실제 Windows 기동을 위해 전환 필요:
+  - `server.serve()` 의 `asyncio.start_unix_server` → `ipc.start_server`(확정
+    엔드포인트를 패널 셸 `PYTMUX` 환경에 게시).
+  - `client` 의 `asyncio.open_unix_connection` → `ipc.open_connection`.
+  - `launcher` 의 `AF_UNIX`(can_connect/control_request)·`daemonize`/`ensure_server`
+    → `ipc.probe`/`ipc.control_socket`·`proc.spawn_detached`(+`ipc.default_endpoint`).
+  - TCP 엔드포인트일 때 보조파일(`sock_path + ".slots.json"`/`.opts.json`/`.capture`)
+    경로를 실제 상태 디렉터리(`ipc.default_state_dir`) 기준으로 분리.
+- **(d)** 실 Windows 박스에서 ConPTY 멀티바이트(CJK/이모지) 경계 확인 → 깨지면
+  `_WinPty` 를 저수준 `winpty.PTY`(바이트) 경로로 교체(§3① NOTE).
 
 ## 부록 — 즉시 해결된 항목
 
