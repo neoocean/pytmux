@@ -211,6 +211,16 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56615 **실제 화면 스크린샷 테스트 하네스(`ptyshot`) + 진짜 클라 시각 회귀**(§10
+  사용자 질문) — 헤드리스 외에 실제 화면을 자동 테스트하는 수단. 신규 `tests/ptyshot.py`
+  가 진짜 Textual 클라이언트를 가짜 터미널(stdlib `pty`) 아래 띄워 **사용자가 보는
+  ANSI 화면**을 캡처한다(`capture`→(raw, alive), `screen_text`, `has_traceback`).
+  헤드리스 단언(위젯/셀)과 달리 실제 `_composite`/CSS/드라이버 렌더를 통과한 출력을
+  잡아 트레이스백·테두리·프롬프트 유무를 검증 — driver.py(서버 합성)와 상보적, POSIX
+  전용(Windows skip). `tests/test_ptyshot.py`: ANSI 제거·트레이스백 감지 + **실제
+  클라가 PTY 아래 렌더·생존·무트레이스백·테두리** 시각 회귀(부팅 layout.json 복원
+  경로=CL 56607 크래시도 통과). 임시 소켓 데몬 격리·정리. 193 passed. 파일:
+  `tests/{ptyshot,test_ptyshot}.py`(신규), `docs/HANDOFF.md`.
 - 56614 **하드닝: Session 복원 일반화(크래시 재발 방지) + Windows 콘솔 창 팝업 방지**
   (§10 사용자 요청) — ① **크래시 재발 방지**: `Session.restored(name, tabs, …)`
   클래스메서드 신설 — 직렬화 복원 경로(`restore_layout`·`restore_resume_state`)가
