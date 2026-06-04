@@ -801,16 +801,21 @@ def build_client_app(sock_path: str, config: dict | None = None,
            2행을 더 쓰므로 height:3, dock:bottom 으로 테두리 포함 박스가 바닥에 붙는다.
            ':' 프리픽스·입력은 테두리 안쪽 한 행에 들어간다(아래 compose 의 #prow).
            rename/search 등 다른 용도는 #prow 를 안 쓰는 bare Input 이라 영향 없음. */
-        #prow { dock: bottom; width: 100%; height: 3; background: $surface;
+        /* 후보 영역(#pcand)을 입력 박스(#prow) **위쪽**에 확실히 두려고 둘을 바닥
+           고정 Vertical(#pwrap)로 묶고 후보를 먼저 둔다 — dock:bottom 끼리의 적층
+           순서가 Textual 버전에 따라 뒤집힐 수 있어(모바일서 후보가 박스 아래로 가
+           키보드에 가려짐), 컨테이너 정상 흐름으로 순서를 못박는다(§10 사용자 요청). */
+        #pwrap { dock: bottom; width: 100%; height: auto; }
+        #prow { width: 100%; height: 3; background: $surface;
                 border: round $accent; }
         #pprefix { width: 2; height: 1; color: $accent; text-style: bold;
                    background: $surface; }
         #pinput { width: 1fr; border: none; height: 1; padding: 0;
                   background: $surface; color: $text; }
-        /* 입력 줄(테두리 박스) 위로 펼쳐지는 자동완성 후보 영역(부분일치 명령). */
-        #pcand { dock: bottom; width: 100%; height: auto; max-height: 12;
+        /* 입력 박스 위에 펼쳐지는 자동완성 후보 영역(부분일치 명령). */
+        #pcand { width: 100%; height: auto; max-height: 12;
                  background: $panel; color: $text; padding: 0 1;
-                 border-top: tall $accent; }
+                 border: round $accent; }
         """
 
         # 후보 영역에 한 번에 보여줄 최대 명령 수.
@@ -830,12 +835,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
             inp = Input(value=self._initial, placeholder=self._label,
                         suggester=self._suggester, id="pinput")
             if self._purpose == "command":
-                # 맨 왼쪽에 고정 ':' 프리픽스(별도 위젯이라 백스페이스로 안 지워짐)
-                with Horizontal(id="prow"):
-                    yield Label(":", id="pprefix")
-                    yield inp
-                # 입력 줄보다 먼저 docked → 입력 줄이 화면 맨 아래, 후보는 그 위로 쌓임.
-                yield Label("", id="pcand", markup=True)
+                # 바닥 고정 컨테이너에 후보(위) → 입력 박스(아래) 순으로 둬, 자동완성
+                # 후보가 항상 입력 박스 위쪽에 펼쳐지게 한다(모바일 키보드에 안 가림).
+                with Vertical(id="pwrap"):
+                    yield Label("", id="pcand", markup=True)
+                    # 맨 왼쪽 고정 ':' 프리픽스(별도 위젯이라 백스페이스로 안 지워짐)
+                    with Horizontal(id="prow"):
+                        yield Label(":", id="pprefix")
+                        yield inp
             else:
                 inp.styles.dock = "bottom"
                 inp.styles.padding = (0, 1)

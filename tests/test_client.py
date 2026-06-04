@@ -1733,6 +1733,25 @@ async def test_claude_footer_zones_and_popups():
     await _with_app(body)
 
 
+async def test_command_candidates_above_input_box():
+    """§10: 자동완성 후보(#pcand)가 입력 박스(#prow) **위쪽**에 펼쳐진다(모바일 키보드에
+    안 가리게). dock 적층 순서(Textual 버전 의존)에 기대지 않고 바닥 고정 Vertical
+    (#pwrap)에 후보→박스 순으로 둬 순서를 못박는다."""
+    async def body(app, pilot, srv):
+        app.open_prompt("command", "")
+        await pilot.pause(0.1)
+        scr = app.screen
+        assert scr.__class__.__name__ == "PromptScreen"
+        scr.query_one("#pinput").value = "tab"
+        scr._refresh_cands()
+        await pilot.pause(0.1)
+        prow = scr.query_one("#prow")
+        pcand = scr.query_one("#pcand")
+        assert pcand.display, "후보가 표시돼야"
+        assert pcand.region.y < prow.region.y, (pcand.region, prow.region)
+    await _with_app(body)
+
+
 async def test_status_claude_usage():
     async def body(app, pilot, srv):
         app.status.claude_usage = "ctx 42%"

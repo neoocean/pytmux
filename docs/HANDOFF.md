@@ -211,6 +211,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56608 **명령 자동완성 후보를 입력 박스 위쪽에 고정**(§10 사용자 요청) — 명령
+  프롬프트(esc `:`) 자동완성 후보(`#pcand`)가 입력 박스(`#prow`) **위쪽**에 펼쳐지게
+  한다(모바일에서 박스 아래면 키보드에 가림). 기존엔 둘 다 `dock:bottom` 적층 순서에
+  의존했는데(버전/환경 따라 뒤집힐 수 있음), 바닥 고정 `Vertical`(`#pwrap`)에 후보(위)
+  →박스(아래) 순으로 묶어 못박았다. 회귀 `test_command_candidates_above_input_box`.
+  클라 전용(attach 재실행). 파일: `pytmuxlib/client.py`, `tests/test_client.py`,
+  `docs/HANDOFF.md`.
 - 56607 **FIX 치명적 크래시: 복원된 Session 에 `popup` 누락 → 모든 attach 브릭**(§10)
   — 사용자 보고("실행 시 화면 일부 나타났다 바로 종료/빈 패널")의 근본 원인을 CL 56599
   가 남긴 `<sock>.error.log` 로 확정: `AttributeError: 'Session' object has no attribute
