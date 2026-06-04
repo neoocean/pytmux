@@ -1585,6 +1585,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.pane_claude = {}      # id -> {"claude", "prompt", "history"}
             self.claude_header_on = True  # 프롬프트 헤더 표시(claude-header on|off)
             self._claude_header_zones = {}  # id -> (x0,x1,y) 헤더 클릭존(히스토리 팝업)
+            self._hdr_focus = None      # ESC 모드 Claude 헤더 포커스 대상 pane id(#5)
             self._tab_close_zone = None  # 현재 탭 닫기 [x] 영역 (x0, x1, y)
             # ---- 설정(config) 적용 ----
             self.prefix_key = config.get("prefix", "ctrl+b")
@@ -1869,9 +1870,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return
             # 헤더 배경은 진한 파랑(primary-darken-2) — 본문/활성 테두리(primary)보다
             # 한 단계 어둡게 해 스티키 헤더가 더 또렷이 구분되도록 한다.
-            hdr_st = Style(color="white",
-                           bgcolor=theme_color(self, "primary-darken-2"),
-                           bold=True)
+            # 헤더 배경은 진한 파랑(primary-darken-2). ESC 모드 헤더 포커스(#5)면
+            # 강조색(accent)으로 구분한다.
+            base_st = Style(color="white",
+                            bgcolor=theme_color(self, "primary-darken-2"),
+                            bold=True)
+            focus_st = Style(color="black", bgcolor=theme_color(self, "accent"),
+                             bold=True)
             for p in self.layout.get("panes", []):
                 info = self.pane_claude.get(p["id"])
                 if not info or not info.get("claude") or not info.get("prompt"):
@@ -1879,6 +1884,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 cx, cy, cw = p["x"], p["y"], p["w"]
                 if cw < 6 or not (0 <= cy < H):
                     continue
+                hdr_st = focus_st if p["id"] == self._hdr_focus else base_st
                 for xx in range(cx, min(cx + cw, W)):   # 헤더 배경
                     cells[cy][xx] = (" ", hdr_st)
                 # 헤더 본문 전체가 클릭존(프롬프트 히스토리 팝업, #7)
@@ -3143,7 +3149,47 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.tabbar.bar_focus:
                 self.tabbar.bar_focus = False
                 self.tabbar.refresh()
+            if self._hdr_focus is not None:    # 헤더 포커스 해제(#5)
+                self._hdr_focus = None
+                self._composite()
             self.status.refresh()
+
+        def _claude_header_panes(self):
+            """헤더가 그려지는 Claude 패널 id 를 레이아웃 순서로 반환(#5 헤더 포커스)."""
+            out = []
+            if not self.claude_header_on:
+                return out
+            for p in self.layout.get("panes", []):
+                info = self.pane_claude.get(p["id"])
+                if info and info.get("claude") and info.get("prompt"):
+                    out.append(p["id"])
+            return out
+
+        def _handle_hdr_focus(self, event: events.Key):
+            """ESC 모드 Claude 헤더 포커스(#5): ←↑/→↓ 헤더 이동, Enter 히스토리 팝업,
+            Esc 해제. 대상 헤더가 사라지면 포커스 해제."""
+            k = event.key
+            panes = self._claude_header_panes()
+            if not panes or self._hdr_focus not in panes:
+                self._hdr_focus = None
+                self._composite()
+                return
+            cur = panes.index(self._hdr_focus)
+            if k in ("left", "up"):
+                self._hdr_focus = panes[(cur - 1) % len(panes)]
+                self._composite()
+            elif k in ("right", "down"):
+                self._hdr_focus = panes[(cur + 1) % len(panes)]
+                self._composite()
+            elif k == "enter":
+                pid = self._hdr_focus
+                self._hdr_focus = None
+                self._exit_esc()
+                self.open_prompt_history(pid)
+            elif k == "escape":
+                self._hdr_focus = None
+                self._composite()
+                self._exit_esc()
 
         def _handle_esc_mode(self, event: events.Key):
             """ESC 명령 모드: 방향키=패널 이동, 위로 더 가면 상단 탭바 포커스.
@@ -3151,6 +3197,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             k = event.key
             ch = event.character
             tb = self.tabbar
+            if self._hdr_focus is not None:       # Claude 헤더 포커스 동선(#5)
+                self._handle_hdr_focus(event)
+                return
             if tb.bar_focus:
                 tabs = tb.tabs
                 idxs = [t["index"] for t in tabs]
@@ -3199,6 +3248,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif ch == ":" or k == "colon":
                 self._exit_esc()
                 self.open_prompt("command", "")
+            elif ch == "h":                       # Claude 헤더 포커스 진입(#5)
+                panes = self._claude_header_panes()
+                if panes:
+                    active = self.layout.get("active")
+                    self._hdr_focus = active if active in panes else panes[0]
+                    self._composite()
+                else:
+                    self.display_message("Claude 헤더 없음")
             else:
                 # escape/enter/i/그 외 → 명령 모드 종료(셸 입력 복귀)
                 self._exit_esc()

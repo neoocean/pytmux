@@ -1114,6 +1114,31 @@ async def test_prompt_history_popup():
     await _with_app(body)
 
 
+async def test_esc_header_focus_opens_history():
+    # #5: ESC 모드에서 h 로 Claude 헤더 포커스 진입(accent 강조), Enter 로 히스토리 팝업.
+    async def body(app, pilot, srv):
+        active = app.layout["active"]
+        app._update_claude([{"id": active, "claude": "idle", "prompt": "latest",
+                             "history": ["do a", "latest"]}])
+        app._composite()
+        await pilot.press("escape")
+        assert app.mode == "esc"
+        await pilot.press("h")                 # 헤더 포커스 진입
+        assert app._hdr_focus == active, app._hdr_focus
+        # 포커스 헤더는 accent(강조)색 배경
+        ap = next(p for p in app.layout["panes"] if p["id"] == active)
+        accent = app.theme_variables.get("accent", "#FEA62B").lower()
+        cellbg = app.view._cells[ap["y"]][ap["x"] + 1][1]
+        assert cellbg and cellbg.bgcolor and accent in str(cellbg.bgcolor).lower(), \
+            f"헤더 포커스 강조색 기대, got {cellbg.bgcolor if cellbg else None}"
+        await pilot.press("enter")             # 히스토리 팝업 + 모드 종료
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "InfoScreen"
+        assert app._hdr_focus is None and app.mode == "normal"
+    await _with_app(body)
+
+
 async def test_wide_char_composite():
     async def body(app, pilot, srv):
         sess = next(iter(srv.sessions.values()))

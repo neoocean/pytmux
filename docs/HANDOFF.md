@@ -199,7 +199,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56445 + git, 신→구)
+## 9. 최근 변경(CL 56279~56449 + git, 신→구)
+
+- 56449 **ESC 모드 Claude 헤더 포커스 → 히스토리**(§10 #5) — ESC 모드에서 `h` 로 Claude
+  헤더 포커스(`_hdr_focus`), ←↑/→↓ 헤더 이동, Enter 히스토리 팝업, Esc 해제. 포커스
+  헤더는 accent 강조. 회귀 테스트 1종(총 119↑). 클라이언트 전용.
 
 - 56445 **탭바 왼쪽 여백 + [+] 분리**(사용자 요청) — `TabBar.LEAD=1` 로 첫 탭을 한 칸
   오른쪽에서 시작(lead 엔트리로 render_line/active_tab_xrange 공유), `[+]` addtxt 를
@@ -556,10 +560,15 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   경계로 해결). Claude 세션 종료(None)면 큐를 비운다. 입력·붙여넣기 둘 다 `_track_prompt`
   를 거쳐 동일 적용. 회귀 테스트 `test_queued_prompt_header_defers`(A 즉시→busy 중 B·C 큐잉
   →응답마다 B,C 순차 승격, 히스토리엔 즉시 A,B,C). **서버 변경 → kill-server 재기동.**
-- **[부분해결] Claude 프롬프트 헤더 → 프롬프트 히스토리 팝업** — **CL 56409 에서 팝업
-  구현**: 서버가 패널별 prompt_history 누적(_track_prompt)·status 로 전달, 클라가 헤더
-  본문 클릭존·명령(prompt-history)으로 InfoScreen 시간순 목록 표시. **남은 부분**: ①
-  ESC 모드 방향키로 헤더에 포커스 주는 선택 동선(별도 포커스 상태 필요) 후속.
+- ~~**[부분해결] Claude 프롬프트 헤더 → 프롬프트 히스토리 팝업**~~ → **CL 56409(팝업)
+  + CL 56449(ESC 모드 포커스 동선)에서 해결.** 팝업: 서버가 패널별 prompt_history 누적
+  (_track_prompt)·status 전달, 클라가 헤더 클릭존·명령(prompt-history)으로 InfoScreen
+  시간순 표시. **ESC 모드 포커스 동선(#5)**: `_hdr_focus`(pane id) 상태 추가 — ESC 모드
+  에서 `h` 로 Claude 헤더 포커스 진입(활성 패널이 Claude 면 그것, 아니면 첫 Claude 헤더),
+  ←↑/→↓ 로 Claude 헤더 간 이동(`_claude_header_panes` 레이아웃 순서), Enter 로 그 헤더의
+  히스토리 팝업, Esc 해제. 포커스 헤더는 `_draw_claude_headers` 가 accent 강조색으로 그린다.
+  `_exit_esc` 가 포커스 해제. 회귀 테스트 `test_esc_header_focus_opens_history`. 클라이언트
+  전용(attach 재실행).
 - **[부분해결] Claude 헤더 첫 행 닫기 버튼 제거 → 옵션·명령 제어** — **CL 56405 에서
   [x] 제거 + 전역 옵션/명령 구현**: 헤더 [x]·_claude_hidden(프롬프트 단위 숨김) 제거,
   App.claude_header_on(기본 on)·명령 `claude-header on|off|toggle` 로 헤더 표시 제어.
