@@ -25,12 +25,15 @@ if [ ! -f "$ENTRY" ]; then
   exit 1
 fi
 
-if ! command -v python3 >/dev/null 2>&1; then
+have_py3=0
+if command -v python3 >/dev/null 2>&1; then
+  have_py3=1
+else
   echo "경고: python3 를 PATH 에서 찾지 못했습니다. 설치는 계속하지만 실행 시 필요합니다." >&2
 fi
 
 # 의존성 설치.
-if [ "${SKIP_DEPS:-0}" != "1" ] && [ -f "$REPO/requirements.txt" ] && command -v python3 >/dev/null 2>&1; then
+if [ "${SKIP_DEPS:-0}" != "1" ] && [ "$have_py3" = "1" ] && [ -f "$REPO/requirements.txt" ]; then
   echo "의존성 설치: python3 -m pip install -r requirements.txt"
   python3 -m pip install -r "$REPO/requirements.txt" || \
     echo "경고: 의존성 설치 실패. 수동 실행: python3 -m pip install -r \"$REPO/requirements.txt\"" >&2
