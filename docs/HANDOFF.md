@@ -610,6 +610,44 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 10. 가능한 후속 작업 (열린 항목)
 
+- **[버그·환경 의존, 미해결] Windows→ssh→원격 macOS Claude Code 에서 Shift+ESC 로
+  ESC 를 못 보냄** — 보고: Windows 에서 pytmux 실행 후 ssh 로 원격 macOS 에 붙어
+  Claude Code 를 쓸 때 **Shift+ESC 가 동작하지 않아 ESC(인터럽트/입력 취소)를 앱에
+  보낼 수 없다**. 배경: pytmux 는 **단독 ESC 를 명령(esc) 모드 진입**에 쓰므로 셸/앱
+  으로 전달하지 않는다(`on_key` normal: `event.key == "escape"` → esc 모드). 앱에
+  ESC 를 보내는 통로로 **Shift+ESC**(`SPECIAL["shift+escape"] = b"\x1b"`,
+  `client.py:162`)를 둔다 — Shift+ESC 면 esc 모드로 안 빠지고 패널에 `\x1b` 를 그대로
+  전달(오버레이가 떠 있으면 그것부터 닫고, 없으면 전달: `client.py:3651`). **원인
+  (유력)**: 레거시 터미널(conhost·일부 Windows Terminal 설정)은 **Escape 키에 Shift
+  수식을 인코딩하지 못한다** — Kitty 키보드 프로토콜/`modifyOtherKeys` 미지원이면
+  Shift+ESC 가 그냥 `ESC` 로 도착한다. 그러면 pytmux 가 `event.key == "escape"` 로
+  보고 **esc 모드로 진입**해 버려 ESC 가 앱(Claude)에 영영 안 간다(맥 로컬 터미널은
+  수식 인코딩이 돼 정상 — 증상이 환경 의존인 이유). 마우스 휠 1007 건(아래)과 같은
+  부류의 **상위 터미널 키 인코딩 한계**로 의심. 검증: `set mouse-debug on` 의
+  `_log_key`(내비게이션 키 로깅)처럼 키 진단을 켜 Windows 에서 Shift+ESC 가
+  `shift+escape` 로 오는지 `escape` 로 오는지 확인하면 확정된다. 가능한 대응(미구현,
+  택1): ① **ESC 전달 전용 바인딩/명령** 제공(예 `prefix` + 키, 또는 esc 모드에서 한 번
+  더 ESC → 앱으로 1회 ESC 전달) — 터미널 수식 인코딩에 의존하지 않음(가장 확실). ②
+  Windows 에서 Kitty 키보드 프로토콜 활성 터미널(Windows Terminal 최신/WezTerm 등)
+  사용 안내. ③ esc 모드 진입에 디바운스/타임아웃을 둬 곧이어 키가 안 오면 앱으로 ESC
+  를 흘리는 휴리스틱(오작동 위험으로 비권장). **현재는 미해결 — 기록만.**
+- **[버그·성능, 미해결] Windows→ssh→원격 macOS Claude Code 사용 중 수 분 내 ssh
+  반응성 급락** — 보고: Claude Code 를 쓰다 보면 **몇 분 안에 반응성이 극도로 나빠
+  진다**. pytmux 인터페이스 자체(패널 전환·명령 등)는 느리지 않은데 **ssh 의 반응성
+  (원격으로 가는 키 입력·원격에서 오는 출력)**이 느려져 아무 조작도 못 하게 된다.
+  분석(유력): pytmux 의 단일 asyncio 루프는 PTY 출력을 **pyte 로 feed** 하는데 이게
+  순수 파이썬이라 **~1.2 MB/s 가 천장**이다(§9 CL 56558/56560). Claude Code 는 작업
+  스피너·토큰 카운터를 **매 프레임 풀스크린 리페인트**(고fps)로 그려 ssh 위로 지속적
+  대량 출력을 흘린다. feed 가 그 속도를 못 따라가면 슬라이스 드레인(56560)이 reader
+  를 멈춰 **커널 PTY 버퍼 백프레셔** → ConPTY/ssh 출력 파이프가 차 ssh 채널이 막히고,
+  같은 채널을 타는 **키 입력 왕복도 함께 지연**된다(그래서 pytmux UI 는 멀쩡한데 ssh
+  만 느림). "수 분 내 점진 악화"는 출력이 입력 처리보다 빨라 큐가 계속 밀리는 양상과
+  일치. 확인 방향: ① Claude busy(스피너) 중에만 악화되는지(=대량 출력 가설), ②
+  `top`/프로파일로 feed(pyte)가 루프를 잡는지, ③ 단순 `cat 대용량` 을 ssh 로 흘려도
+  재현되는지(=Claude 무관, 순수 throughput). 가능한 대응(미구현): **출력 레이트
+  제한/코얼레싱**(같은 프레임 다중 리페인트 합치기), **feed 별도 스레드 분리**, 또는
+  busy 중 비활성/비가시 영역 feed 스로틀(§9 의 "남은 개선"과 동일 줄기). **현재는
+  미해결 — 기록만.**
 - ~~**[버그] 내부 마우스 TUI 앱(p4v-tui 등)에 마우스 입력이 전달 안 됨**~~ →
   **CL 56347 에서 해결.** 위 "구현 방향" 그대로 구현했다: ① 서버(`model.Pane.
   update_mouse_modes`)가 내부 앱의 DECSET 1000/1002/1003/1006 을 추적해
