@@ -618,6 +618,28 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 10. 가능한 후속 작업 (열린 항목)
 
+- **[기능 요청, 미구현] Windows 환경 호환성·성능 테스트 리포트 생성 스크립트** —
+  요청: **Windows 환경에서 호환성 및 성능 테스트 리포트를 작성하는 스크립트**가
+  필요. 한 번 실행하면 환경 정보 + 호환성 통과/실패 + 성능 수치를 모은 리포트를
+  출력. 재사용/재실행 시 비교 가능해야. 기존 자산(재사용·통합 대상): ① **헤드리스
+  테스트 러너** `tests/run.py`(`py tests/run.py`, 현재 150/150) — 호환성 회귀. ②
+  **Windows 포팅 import 가드** `tests/test_windows_port.py`(fcntl/termios 부재
+  시뮬레이션). ③ **feed/render 처리량 프로파일러** `poc/feed_profile.py`(feed MB/s,
+  FEED_SLICE 슬라이스 지연 ms, alt-screen vs main-screen, cProfile) — 성능 핫패스.
+  ④ 문서 `docs/WINDOWS_PORT.md`(§7-d 실 Windows 11 검증 절차)·`docs/
+  ENV_SETUP_WINDOWS.md`·`install.ps1`. **제안 스코프**: A) **환경 수집** — OS/빌드,
+  Python 버전(`pythonw.exe` 유무), 터미널(conhost/Windows Terminal/WezTerm, Kitty
+  키보드 프로토콜 지원 여부), PTY 백엔드(ConPTY/`pywinpty` 버전), 의존성
+  (`requirements.txt`, `wcwidth`) 설치 상태. B) **호환성** — `tests/run.py` 전체
+  실행 결과 집계, import 가드, PTY spawn/resize/입력 왕복(라이브 attach 스모크),
+  키/마우스 인코딩(§10 Shift+ESC·마우스 1006/X10), 시그널/포그라운드 가드. C)
+  **성능** — `feed_profile.py` 수치(feed MB/s·슬라이스 지연·event loop 차단 ms,
+  §9 의 "56.3ms→13.6ms" 비교 기준), render+`json.dumps`, (가능하면) IPC RTT. D)
+  **출력** — Markdown 리포트(환경·요약 표·PASS/FAIL·수치·이전 실행 대비). **열린
+  결정(사용자 확인 필요)**: ① 리포트 포맷/위치(예 `reports/win-report-<날짜>.md` vs
+  stdout), ② 신규 단일 스크립트(예 `scripts/win_report.py`) vs 기존 run.py/
+  feed_profile.py 래핑, ③ 호환성 범위(헤드리스만 vs 라이브 attach 스모크 포함), ④
+  성능 임계/판정선 둘지(회귀 게이트) 또는 측정만. **현재는 기록만 — 미구현.**
 - **[기능 요청, 미구현] 네트워크 응답성 저하 시 패널 외곽선을 빨간색으로 표시** —
   요청: 네트워크 속도가 느려져 **응답성이 낮아지면 패널 외곽선(테두리)을 빨간색**
   으로 그려 사용자에게 알리고, **응답성이 개선되면 원래 색으로 복귀**한다. 현재 구현:
