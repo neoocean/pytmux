@@ -618,6 +618,29 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 10. 가능한 후속 작업 (열린 항목)
 
+- **[기능 요청, 미구현] Claude idle(작업 완료·비리밋) 시 30초 후 진행상황 문서화 →
+  `/clear` 자동 수행(옵션 토글)** — 요청: Claude Code 가 실행 중이고 **리밋 상태가
+  아니며 작업이 완료(idle)** 되면, **30초 대기** 후 **현재 세션 진행상황을 문서에
+  기록**하고 이어서 **`/clear`** 한다. 이 동작은 **옵션에서 끌 수 있어야** 한다.
+  **기존 자산(거의 그대로 재사용)**: "프롬프트 단위 클리어 모드(#9)" 상태기계가
+  이미 **doc→/clear** 사이클을 구현한다 — `_pc_advance`(`server.py:361`): phase
+  None→문서화 지시 주입(`prompt_clear_message`)→phase doc→`/clear` 주입→phase
+  clear. 주입은 `_pc_inject`(`server.py:340`, Claude PTY 에 한 줄+Enter), 토글은
+  `set_prompt_clear`/`prompt_clear_mode`, 문구는 `set_prompt_clear_message`(opts.json
+  영속). 트리거 지점은 `_scan_claude` 의 busy→idle 경계(`server.py:1945`). **이번
+  요청과의 차이(델타)**: ① **자동 트리거** — 기존은 큐(`prompt_clear_queue`)에 쌓인
+  명령 완료 시 도는 방식인데, 요청은 **사용자 개입 없이 idle 되면** 자동으로 doc→
+  /clear 를 시작. ② **30초 대기** — busy→idle 즉시가 아니라 **30초 디바운스** 후 발화
+  (그 사이 사용자가 입력하거나 다시 busy 가 되면 **취소**, idle 유지 시에만 발화).
+  타이머를 패널별로 두고 idle 진입 시 무장·이탈 시 해제(asyncio 콜백/만료 검사).
+  ③ **리밋 가드** — `_claude == "limit"` 이면 발화 안 함(idle 일 때만; 기존도 busy→
+  idle 만 보지만 명시적으로 limit 제외). ④ **옵션 토글** — 새 설정/명령(예
+  `auto-doc-clear on|off`, 영속) + (선택) 대기초·문서화 지시문 설정. **열린 결정**:
+  ㉠ 기존 `prompt-clear-mode` 를 이 자동 모드로 확장할지 vs **별도 모드** 신설할지,
+  ㉡ "문서에 기록"의 대상 문서/지시문(= `prompt_clear_message` 재사용 여부, 어떤
+  파일에 적을지), ㉢ 대기시간 고정 30초 vs 설정값, ㉣ 활성 패널만 vs 모든 Claude
+  패널 대상. **연관**: 위 "Claude 오토모드 자동전환" 항목(둘 다 idle 감지·자동 키
+  주입 줄기). **현재는 기록만 — 미구현.**
 - **[UI 요청, 미구현] 토큰 사용량 표시 — 기호와 숫자 사이 한 칸 띄우기** — 요청:
   토큰 사용량 표시(`Σ44.6k`)에서 **기호(`Σ`)와 숫자 사이를 한 칸** 띄워 `Σ 44.6k`
   로. 현재 구현: `_status_strip` 에서 `uparts.append("Σ" + _fmt_tokens(...))`
@@ -945,7 +968,24 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
       없어 refcount 만으로 회수되므로 드레인 창 누수 위험은 낮다. **효과(측정)**: 서버 드레인
       경로 50k 줄 버스트에서 슬라이스 max 82ms→4.5ms, 스파이크>20ms 5→0. 회귀 테스트
       `test_feed_drain_disables_gc_during_burst`·`test_feed_drain_gc_balanced_on_cancel`.
-      **서버 변경 → kill-server 재기동.** (원인 1 throughput 천장은 대응 ②/③ 미구현 — 잔여.)
+      **서버 변경 → kill-server 재기동.**
+    - **✅ 대응 ② 코얼레싱 구현 완료(CL 56xxx)**: alt-screen 풀스크린 리페인트 버스트에서
+      무효화된 중간 프레임을 버려 pyte feed 부하(원인 1 throughput 천장)를 직접 줄인다.
+      순수 함수 `model.coalesce_alt_repaints(buf, alt_active)` — **무손실 안전 조건**: ①
+      `alt_active` 일 때만(main-screen 은 위로 밀린 줄이 스크롤백에 쌓여 드롭 시 손실 →
+      절대 금지), ② 버퍼에 alt 전환(`?1049/?1047/?47`)이 없을 때만(화면 경계 가로지르면
+      bail), ③ 풀클리어(`CSI 2J/3J`)가 2개 이상일 때만 — 마지막 클리어 이전 전부를 드롭
+      (클리어+그 뒤 리페인트는 온전히 남아 "비우고 새로 그림" 결과 보존). 서버
+      `_coalesce_feed` 가 `_on_pane_data` 의 feedbuf 누적 직후 적용(옵션 `coalesce_repaints`
+      기본 ON, opts.json 영속, 명령 `coalesce-repaints on|off|toggle`). 클라 렌더엔 영향
+      없는 서버 내부 동작이라 status 미전달. **효과(측정, 현실 시나리오=alt 진입 후 busy
+      리페인트 버스트)**: 8 프레임 버스트 pyte feed 100%→12.5%·drain 13.3ms→2.9ms,
+      30 프레임 100%→3.3%·42.6ms→2.9ms → 드레인이 빨리 끝나 reader 가 즉시 재개, 커널
+      PTY 백프레셔/ssh 채널 막힘 완화. 렌더 동일성(2/5/12 프레임 무손실) 검증.
+      회귀 테스트 `test_coalesce_alt_repaints_lossless_and_guards`(model)·
+      `test_coalesce_repaints_collapses_feedbuf_and_persists`(server). **서버+클라 →
+      kill-server 재기동.** (원인 1 천장 자체(pyte Char 할당)는 그대로 — 코얼레싱은 "덜
+      먹여서" 우회. 대응 ③ feed 별도 스레드는 미구현 — 잔여.)
 - ~~**[버그] 내부 마우스 TUI 앱(p4v-tui 등)에 마우스 입력이 전달 안 됨**~~ →
   **CL 56347 에서 해결.** 위 "구현 방향" 그대로 구현했다: ① 서버(`model.Pane.
   update_mouse_modes`)가 내부 앱의 DECSET 1000/1002/1003/1006 을 추적해
