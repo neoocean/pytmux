@@ -317,6 +317,11 @@ class Pane:
         # 는 직전에 관측·작용한 권한모드(화면 갱신 전 중복 주입 방지). 둘 다 휘발성.
         self._cam_tries = 0
         self._cam_last = None
+        # 비활성 탭 Claude 완료 알림(#22) 플리커 방지(§10 #18): busy↔idle 가 한 프레임
+        # 흔들릴 때 done 이 잘못 서는 걸 막으려고, busy 를 본 뒤 idle 이 연속 N프레임
+        # 안정될 때만 완료로 친다. _was_busy=직전에 busy 였음, _idle_frames=연속 idle 수.
+        self._was_busy = False
+        self._idle_frames = 0
         # _layout_msg 가 이 패널에 Claude 헤더 한 행을 예약했는지(#1). 예약 유무가
         # 바뀌면 flush 루프가 레이아웃(PTY 리사이즈 포함)을 다시 보낸다.
         self._hdr_reserved = False
@@ -374,6 +379,8 @@ class Pane:
         self._adc_active = False  # 자동 doc→/clear 진행상태 리셋(§10; 타이머는 만료시 자가해제)
         self._cam_tries = 0       # 권한모드 자동전환 시도 카운터 리셋(§10)
         self._cam_last = None
+        self._was_busy = False    # done 플리커 디바운스 리셋(§10 #18)
+        self._idle_frames = 0
         self._hdr_reserved = False
         self._hdr_claude = False
         self._hdr_claude_miss = 0

@@ -82,8 +82,10 @@ async def test_prompt_history_accumulates():
 
 
 async def test_inactive_tab_claude_done_flag():
-    # 비활성 탭의 Claude 패널이 busy→idle 로 끝나면 has_claude_done 이 켜지고,
-    # 그 탭을 보면(select_window) 해제된다(#22).
+    # 비활성 탭의 Claude 패널이 busy→(안정)idle 로 끝나면 has_claude_done 이 켜지고,
+    # 그 탭을 보면(select_window) 해제된다(#22). idle 은 _DONE_IDLE_FRAMES 프레임
+    # 안정돼야 완료로 친다(§10 #18 플리커 방지).
+    from pytmuxlib.server import _DONE_IDLE_FRAMES
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
@@ -91,21 +93,47 @@ async def test_inactive_tab_claude_done_flag():
         srv.select_window(sess, 0)           # 탭0 활성 → 탭1 비활성
         t1 = sess.tabs[1]
         p1 = t1.window.active_pane
-        p1._claude = "busy"                  # 직전 상태: 처리중
-        p1.feed(b"\r\ndone\r\n? for shortcuts\r\n")   # 화면이 idle footer
         win = sess.active_window             # 탭0(활성)
+        # 처리중(busy) 을 스캔으로 확정(_was_busy 세팅)
+        p1.feed("\x1b[2J\x1b[H↑ 1k tokens\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
-        assert t1.has_claude_done is True, "비활성 탭 busy→idle → 완료 알림"
+        assert p1._claude == "busy"
+        # idle footer 로 전환 — 안정될 때까지(_DONE_IDLE_FRAMES) 완료 안 뜸
+        p1.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        for _ in range(_DONE_IDLE_FRAMES - 1):
+            srv._scan_claude(sess, win)
+            assert t1.has_claude_done is False, "idle 안정 전엔 완료 안 함"
+        srv._scan_claude(sess, win)          # N번째 안정 idle → 완료
+        assert t1.has_claude_done is True, "비활성 탭 busy→안정 idle → 완료 알림"
         msg = srv._status_msg(sess)
         assert msg["windows"][1]["claude_done"] is True
         # 그 탭으로 전환 → 읽음 처리(해제)
         srv.select_window(sess, 1)
         assert t1.has_claude_done is False, "보면 해제"
-        # 활성 탭에서 끝나는 건 알림 대상 아님
-        p1._claude = "busy"
-        p1.feed(b"\r\n? for shortcuts\r\n")
-        srv._scan_claude(sess, sess.active_window)   # 이제 탭1이 활성
-        assert sess.tabs[1].has_claude_done is False, "활성 탭은 알림 안 함"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_done_flag_debounced_against_flicker():
+    """§10 #18: busy→idle 가 한 프레임 깜빡(idle 한 프레임 뒤 다시 busy)이면 완료
+    알림(has_claude_done)이 서지 않는다 — 안정 idle 만 완료로 친다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv.new_window(sess)
+        srv.select_window(sess, 0)
+        t1 = sess.tabs[1]
+        p1 = t1.window.active_pane
+        win = sess.active_window
+        p1.feed("\x1b[2J\x1b[H↑ 1k tokens\r\n".encode("utf-8"))  # busy
+        srv._scan_claude(sess, win)
+        p1.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")                  # idle 한 프레임
+        srv._scan_claude(sess, win)
+        assert t1.has_claude_done is False
+        p1.feed("\x1b[2J\x1b[H↑ 2k tokens\r\n".encode("utf-8"))  # 다시 busy(깜빡)
+        srv._scan_claude(sess, win)
+        # 안정 idle 이 아니었으므로 완료 안 섬
+        assert t1.has_claude_done is False, "한 프레임 깜빡임에 완료 오검출 없음"
     finally:
         await teardown(srv, task, sock)
 

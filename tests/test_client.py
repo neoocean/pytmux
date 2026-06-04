@@ -1116,9 +1116,10 @@ async def test_tabbar_lead_and_plus_gap():
         assert ents[0][0] == "lead" and ents[0][2] == " " * app.tabbar.LEAD, ents[0]
         # 첫 탭 엔트리는 lead 다음
         assert ents[1][0] == "tab", ents[1]
-        # [+] 버튼은 앞에 공백 2칸(왼쪽 탭과 한 칸 더 분리)
+        # [+] 버튼은 간격칸(addgap "  ", 터미널 배경)으로 분리되고 버튼은 "[+] "(§10 #16)
+        gap = next(e for e in ents if e[0] == "addgap")
         add = next(e for e in ents if e[0] == "add")
-        assert add[2] == "  [+] ", repr(add[2])
+        assert gap[2] == "  " and add[2] == "[+] ", (gap, add)
         # 렌더 첫 칸은 빈 여백, 탭은 LEAD 칸 뒤에서 시작
         app._composite()
         line = "".join(s.text for s in app.tabbar.render_line(0))
@@ -1509,9 +1510,11 @@ async def test_claude_icon_and_header():
         cellbg = app.view._cells[hy][ap["x"] + 1][1]
         assert cellbg and cellbg.bgcolor and dark in str(cellbg.bgcolor).lower(), \
             f"헤더 배경 진한 파랑 기대, got {cellbg.bgcolor if cellbg else None}"
-        # 탭 닫기 [x] 는 우상단(W-3..W) 에 그대로
+        # 탭 닫기 [x] 는 활성 패널 콘텐츠 영역 안쪽 우상단(§10 #15) — 외곽선 위가 아님
         tcz = app._tab_close_zone
-        assert tcz is not None and tcz[1] == app.layout["cols"], tcz
+        assert tcz == (ap["x"] + ap["w"] - 3, ap["x"] + ap["w"], ap["y"]), tcz
+        xs = "".join(app.view._cells[ap["y"]][x][0] for x in range(tcz[0], tcz[1]))
+        assert xs == "[x]", repr(xs)
         # claude-header off → 헤더 숨김
         app._run_command("claude-header off")
         app._composite()

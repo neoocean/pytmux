@@ -34,6 +34,12 @@ _HDR_CLAUDE_MISS = 30
 # 오검출 시 무한 순환을 막는 가드). default↔auto↔plan(↔bypass) 순환을 덮을 만큼.
 _CAM_MAX = 4
 
+# 비활성 탭 Claude 완료 알림(#22) 플리커 방지(§10 #18): busy→idle 후 idle 이 연속
+# 이만큼의 스캔 프레임 동안 안정돼야 "완료"로 친다. raw busy↔idle 깜빡임(footer 가
+# 한 프레임 안 잡혀 idle 로 보였다 다시 busy)에 done 이 잘못 서서 탭이 잠깐 녹색이
+# 되는 것을 막는다. 30Hz flush 기준 ~0.1초 — 진짜 완료 알림 지연은 미미하다.
+_DONE_IDLE_FRAMES = 3
+
 
 class Server:
     def __init__(self, sock_path: str, resume_path: str | None = None):
@@ -2097,10 +2103,20 @@ class Server:
                             p.prompt_history = p.prompt_history[-200:]
                         changed = True
                 # 비활성 탭에서 처리(busy)→대기(idle) 전이 = 작업 완료. limit 은
-                # "대기"가 아니므로 대상 아님(busy→idle 만).
-                if (w is not win and old_cl == "busy" and new_cl == "idle"
-                        and t.monitor_claude and not t.has_claude_done):
+                # "대기"가 아니므로 대상 아님. 플리커 방지(§10 #18): raw busy→idle 즉시
+                # 대신, busy 를 본 적이 있고(idle 진입) idle 이 _DONE_IDLE_FRAMES 프레임
+                # 연속 안정될 때만 완료로 친다(한 프레임 깜빡임에 녹색 오검출 방지).
+                if new_cl == "idle":
+                    p._idle_frames += 1
+                else:
+                    p._idle_frames = 0
+                    if new_cl == "busy":
+                        p._was_busy = True   # 작업 중이었음 → 다음 안정 idle 이 '완료'
+                if (w is not win and t.monitor_claude and not t.has_claude_done
+                        and p._was_busy and new_cl == "idle"
+                        and p._idle_frames >= _DONE_IDLE_FRAMES):
                     t.has_claude_done = True
+                    p._was_busy = False
                     changed = True
                 # 자동 doc→/clear(§10): idle 이탈(busy/limit/종료) 시 무장된 타이머를
                 # 즉시 해제한다 — idle 이 끊기면 "N초 지속" 전제가 깨진다. 권한모드

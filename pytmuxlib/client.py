@@ -300,6 +300,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("bind-key", "prefix 후 키에 명령 바인딩 (bind-key <key> <command>)", "설정/기타"),
         ("unbind-key", "키 바인딩 해제 (unbind-key <key> | -a)", "설정/기타"),
         ("list-keys", "현재 키 바인딩 목록 팝업", "설정/기타"),
+        # help/commands/list-commands 도 자동완성 후보에 잡히게 등록(§10 #8). 입력하면
+        # 전체 명령 목록(CommandListScreen)을 연다 — '?' 입력도 같은 목록을 즉시 연다.
+        ("help", "전체 명령 목록 보기('?' 도 동일, 카테고리 탭)", "설정/기타"),
+        ("commands", "전체 명령 목록 보기(help 별칭)", "설정/기타"),
+        ("list-commands", "전체 명령 목록 보기(help 별칭)", "설정/기타"),
         ("detach-client", "detach (앱 종료, 셸 유지)", "설정/기타"),
         ("kill-server", "서버와 모든 탭/셸 종료", "설정/기타"),
         ("restart-server", "작업 보존 재시작 — 셸/PTY 를 살린 채 서버 코드만 교체(재접속)", "설정/기타"),
@@ -718,14 +723,22 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.query_one(ListView).focus()
 
         def on_click(self, event: events.Click):
-            # 닫기 [x] 터치/클릭 → 닫는다(좁은 화면에서도 항상 보이는 버튼).
+            # 조상 체인을 거슬러: 닫기 [x] → 닫음. 박스(#infobox) 안이면 유지, 바깥
+            # (백드롭) 클릭이면 닫음(§10 #13 — REC/프롬프트 히스토리/토큰 팝업 공통).
             w = getattr(event, "widget", None)
+            inside_box = False
             while w is not None:
-                if getattr(w, "id", None) == "infoclose":
+                wid = getattr(w, "id", None)
+                if wid == "infoclose":
                     event.stop()
                     self.dismiss(None)
                     return
+                if wid == "infobox":
+                    inside_box = True
                 w = w.parent
+            if not inside_box:        # 박스 바깥/백드롭 클릭 → 닫기
+                event.stop()
+                self.dismiss(None)
 
         def on_key(self, event: events.Key):
             event.stop()
@@ -1595,7 +1608,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 i += 1
             if i < n:                                  # 오른쪽에 더 있음
                 entries.append(("scroll_right", None, "▶"))
-            entries.append(("add", None, addtxt))      # 마지막 탭 바로 오른쪽
+            # [+] 새 탭 버튼(§10 #16): 앞 간격칸은 터미널 배경(녹색 아님)으로 분리해
+            # 그려, 간격까지 녹색으로 칠해지지 않게 한다. 간격칸은 클릭 무시(lead 처럼).
+            entries.append(("addgap", None, addtxt[:2]))   # 간격(터미널 배경)
+            entries.append(("add", None, addtxt[2:]))      # "[+] "(녹색 버튼)
             return entries
 
         def render_line(self, y: int) -> Strip:
@@ -1624,7 +1640,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             segs, zones = [], []
             x = 0
             for kind, payload, text in self._entries():
-                if kind == "lead":                     # 왼쪽 여백(빈 칸, 클릭 무시)
+                if kind in ("lead", "addgap"):         # 여백/[+] 간격칸(터미널 배경, 클릭 무시)
                     st = base
                 elif kind in ("scroll_left", "scroll_right"):
                     st = arrow_st
@@ -2648,6 +2664,21 @@ def build_client_app(sock_path: str, config: dict | None = None,
                             cxp = ox + col * 3
                             for k, c in enumerate(f"{day:2d}"):
                                 self._put_cell(cells, cxp + k, ry, c, st, W, H)
+                    # 그리드 둘레 외곽선(§10 #14): 한 칸 패딩 두고 round 박스 —
+                    # 위·아래·좌·우로 한 칸씩 더 들어갈 공간이 있을 때만 그린다.
+                    if pw >= grid_w + 2 and ph >= nlines + 2:
+                        bst = Style(color=theme_color(self, "accent"))
+                        bx0, by0, bx1, by1 = ox - 1, oy - 1, ox + grid_w, oy + nlines
+                        self._put_cell(cells, bx0, by0, "╭", bst, W, H)
+                        self._put_cell(cells, bx1, by0, "╮", bst, W, H)
+                        self._put_cell(cells, bx0, by1, "╰", bst, W, H)
+                        self._put_cell(cells, bx1, by1, "╯", bst, W, H)
+                        for xx in range(bx0 + 1, bx1):
+                            self._put_cell(cells, xx, by0, "─", bst, W, H)
+                            self._put_cell(cells, xx, by1, "─", bst, W, H)
+                        for yy in range(by0 + 1, by1):
+                            self._put_cell(cells, bx0, yy, "│", bst, W, H)
+                            self._put_cell(cells, bx1, yy, "│", bst, W, H)
                 else:
                     s = now.strftime("%Y-%m-%d")
                     ox = px + max(0, (pw - len(s)) // 2)
@@ -2871,19 +2902,30 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.view.set_frame(cells)
 
         def _draw_tab_close(self, cells, W, H):
-            """현재 탭(윈도우) 닫기 [x] 버튼을 콘텐츠 영역 오른쪽 위 모서리에 그린다.
-            (이전엔 상단 탭바 오른쪽 끝에 있던 것을 패널 위로 옮김.) 상단 테두리
-            행(0)에 그려 Claude 헤더(내용 첫 행)·시계와 겹치지 않는다."""
+            """현재 탭(윈도우) 닫기 [x] 버튼을 **활성 패널의 외곽선 안쪽** 우상단(콘텐츠
+            영역 첫 행 오른쪽 끝)에 그린다(§10 #15 — 이전엔 화면 상단 테두리 행 0 에
+            얹혀 있었다). 활성 패널의 실제 x/y/w/h 를 써서 분할(split) 상태에서도 그
+            패널 테두리 안쪽에 붙는다. _draw_claude_headers 뒤에 호출돼 헤더 위에 그려
+            진다(겹치면 [x] 가 보이도록)."""
             self._tab_close_zone = None
-            if W < 3 or H < 1:
+            active = self.layout.get("active")
+            ap = next((p for p in self.layout.get("panes", [])
+                       if p["id"] == active), None)
+            if ap is None:
+                return
+            px, py, pw, ph = ap["x"], ap["y"], ap["w"], ap["h"]
+            if pw < 4 or ph < 1:
                 return
             st = Style(color="white", bgcolor=theme_color(self, "error"), bold=True)
-            bx0 = W - 3
+            by = py                 # 콘텐츠 영역 첫 행(외곽선 바로 안쪽)
+            bx0 = px + pw - 3       # 콘텐츠 우측 끝 3칸("[x]") — 우측 테두리 안쪽
+            if not (0 <= by < H):
+                return
             for j, chh in enumerate("[x]"):
                 gx = bx0 + j
                 if 0 <= gx < W:
-                    cells[0][gx] = (chh, st)
-            self._tab_close_zone = (bx0, W, 0)
+                    cells[by][gx] = (chh, st)
+            self._tab_close_zone = (bx0, bx0 + 3, by)
 
         # ---- 송신 헬퍼 ----
         def send_cmd(self, action, **kw):
