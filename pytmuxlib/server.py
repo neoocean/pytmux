@@ -3,20 +3,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import errno
-import fcntl
 import json
 import os
-import pty
 import shlex
-import signal
 import subprocess
 import time
 
-from . import tokens
+from . import pty_backend, tokens
 from .model import ClientConn, Pane, Session, Split, Tab, Window
 from .claude import claude_state, claude_usage, parse_reset_delay
-from .protocol import (FLUSH_HZ, MIN_H, MIN_W, read_msg, set_winsize, write_msg)
+from .protocol import (FLUSH_HZ, MIN_H, MIN_W, read_msg, write_msg)
 
 
 class Server:
@@ -34,47 +30,37 @@ class Server:
 
     # ---- PTY/패널 생성 ----
     def _fork_shell(self, cols: int, rows: int, cwd: str | None = None):
-        """셸을 PTY 에 fork/exec 하고 (pid, master_fd) 반환."""
+        """셸을 PTY 백엔드(pty_backend)에 띄우고 PtyProcess 핸들을 반환.
+
+        OS 별 PTY/프로세스 분기는 전부 pty_backend 가 담당한다(Unix=pty.fork,
+        Windows=ConPTY). CLOEXEC·winsize·논블로킹 설정도 백엔드 spawn 안에서 처리.
+        """
         cols = max(MIN_W, cols)
         rows = max(MIN_H, rows)
-        pid, fd = pty.fork()
-        if pid == 0:  # 자식: 셸로 교체
-            try:
-                if cwd:
-                    os.chdir(cwd)
-            except OSError:
-                pass
-            env = dict(os.environ)
-            env["TERM"] = "xterm-256color"
-            env["PYTMUX"] = self.sock_path
-            env.pop("LINES", None)
-            env.pop("COLUMNS", None)
+        env = dict(os.environ)
+        env["TERM"] = "xterm-256color"
+        env["PYTMUX"] = self.sock_path
+        env.pop("LINES", None)
+        env.pop("COLUMNS", None)
+        if pty_backend.IS_WINDOWS:
+            shell = env.get("PYTMUX_SHELL") or env.get("COMSPEC") or "cmd.exe"
+        else:
             shell = env.get("SHELL", "/bin/sh")
-            try:
-                os.execvpe(shell, [shell], env)
-            except Exception:
-                os._exit(127)
-        # 부모가 쥔 PTY master 에 close-on-exec 를 건다. 이게 없으면 이후 새 패널을
-        # 만들 때 pty.fork() 한 자식 셸이 형제 패널들의 master fd 를 그대로 상속해,
-        # fd 가 여러 프로세스에 살아남아 종료·재사용 시 패널 간 출력이 섞이는(=새 탭이
-        # 다른 패널을 "복사"한 듯 보이는) 원인이 된다. 각 master 생성 직후 CLOEXEC 를
-        # 걸어 두면 다음 fork 의 자식은 어떤 형제 master 도 물려받지 않는다.
-        try:
-            flags = fcntl.fcntl(fd, fcntl.F_GETFD)
-            fcntl.fcntl(fd, fcntl.F_SETFD, flags | fcntl.FD_CLOEXEC)
-        except OSError:
-            pass
-        try:
-            set_winsize(fd, rows, cols)
-        except OSError:
-            pass
-        os.set_blocking(fd, False)
-        return pid, fd
+        return pty_backend.spawn([shell], cols=cols, rows=rows, cwd=cwd, env=env)
+
+    def _attach_reader(self, pane: Pane) -> None:
+        """패널 PTY 의 읽기를 시작한다(on_data/on_eof 는 이벤트 루프 스레드에서 호출)."""
+        pane.pty.start_reader(
+            self.loop,
+            lambda d, p=pane: self._on_pane_data(p, d),
+            lambda p=pane: self._pane_eof(p))
 
     def spawn_pane(self, cols: int, rows: int, cwd: str | None = None) -> Pane:
-        pid, fd = self._fork_shell(cols, rows, cwd)
-        pane = Pane(pid, fd, max(MIN_W, cols), max(MIN_H, rows))
-        self.loop.add_reader(fd, self._on_pane_readable, pane)
+        proc = self._fork_shell(cols, rows, cwd)
+        fd = proc.fileno() if hasattr(proc, "fileno") else -1
+        pane = Pane(proc.pid, fd, max(MIN_W, cols), max(MIN_H, rows))
+        pane.pty = proc
+        self._attach_reader(pane)
         return pane
 
     def respawn_pane(self, sess: Session):
@@ -84,41 +70,20 @@ class Server:
             return
         pane = win.active_pane
         cwd = self._pane_cwd(pane)
-        try:
-            self.loop.remove_reader(pane.master_fd)
-        except (OSError, ValueError):
-            pass
-        try:
-            os.killpg(os.getpgid(pane.child_pid), signal.SIGKILL)
-        except (OSError, ProcessLookupError):
-            pass
-        try:
-            os.close(pane.master_fd)
-        except OSError:
-            pass
-        try:
-            os.waitpid(pane.child_pid, 0)  # SIGKILL 이므로 블로킹 회수 안전
-        except ChildProcessError:
-            pass
-        pid, fd = self._fork_shell(pane.cols, pane.rows, cwd)
-        pane.reinit(pid, fd, pane.cols, pane.rows)
-        self.loop.add_reader(fd, self._on_pane_readable, pane)
+        if pane.pty is not None:
+            pane.pty.stop_reader()
+            pane.pty.kill()                 # SIGKILL 즉시 종료
+            pane.pty.close()
+            pane.pty.reap(block=True)       # SIGKILL 이므로 블로킹 회수 안전
+        proc = self._fork_shell(pane.cols, pane.rows, cwd)
+        fd = proc.fileno() if hasattr(proc, "fileno") else -1
+        pane.reinit(proc.pid, fd, pane.cols, pane.rows)
+        pane.pty = proc
+        self._attach_reader(pane)
 
-    def _on_pane_readable(self, pane: Pane):
-        try:
-            data = os.read(pane.master_fd, 65536)
-        except (BlockingIOError, InterruptedError):
-            return
-        except OSError as e:
-            # macOS/BSD 는 슬레이브(자식)가 끝나면 master 읽기에서 EIO 를 던진다 →
-            # 정상 EOF 로 처리. 그 외 일시적 오류는 패널을 닫지 않고 무시한다(살아있는
-            # 패널을 잘못 정리하면 fd 가 해제·재사용되며 패널 간 fd 가 꼬일 수 있다).
-            if e.errno == errno.EIO:
-                self._pane_eof(pane)
-            return
-        if not data:
-            self._pane_eof(pane)
-            return
+    def _on_pane_data(self, pane: Pane, data: bytes):
+        # PTY 읽기/EOF/EIO 처리는 pty_backend 가 담당하고, 여기엔 수신 바이트 처리만
+        # 남는다(backend 가 on_data 를 이벤트 루프 스레드에서 부른다).
         if self.capture:
             self._capture_write(pane, data)
         pane.feed(data)
@@ -160,10 +125,11 @@ class Server:
     def _fire_resume(self, pane: Pane):
         pane._resume_pending = False
         pane._scanbuf = ""
-        try:
-            os.write(pane.master_fd, (pane.resume_msg + "\r").encode("utf-8"))
-        except OSError:
-            pass
+        if pane.pty is not None:
+            try:
+                pane.pty.write((pane.resume_msg + "\r").encode("utf-8"))
+            except OSError:
+                pass
 
     def set_autoresume(self, sess: Session, value=None, msg: str | None = None):
         win = sess.active_window
@@ -187,18 +153,10 @@ class Server:
             except Exception:
                 pass
             pane.pipe_proc = None
-        try:
-            self.loop.remove_reader(pane.master_fd)
-        except (OSError, ValueError):
-            pass
-        try:
-            os.close(pane.master_fd)
-        except OSError:
-            pass
-        try:
-            os.waitpid(pane.child_pid, os.WNOHANG)
-        except ChildProcessError:
-            pass
+        if pane.pty is not None:
+            pane.pty.stop_reader()
+            pane.pty.close()
+            pane.pty.reap(block=False)
         self._remove_pane_from_tree(pane)
 
     # ---- 데몬 부트스트랩 세션 ----
@@ -266,11 +224,9 @@ class Server:
         win.active_pane = new
 
     def kill_pane(self, sess: Session, pane: Pane):
-        # 셸 자식 종료
-        try:
-            os.killpg(os.getpgid(pane.child_pid), signal.SIGHUP)
-        except (OSError, ProcessLookupError):
-            pass
+        # 셸 자식 종료(graceful = SIGHUP). 나머지 정리는 _pane_eof.
+        if pane.pty is not None:
+            pane.pty.terminate()
         self._pane_eof(pane)
 
     def _remove_pane_from_tree(self, pane: Pane):
@@ -607,22 +563,11 @@ class Server:
         if not win:
             return
         for p in win.panes():
-            try:
-                os.killpg(os.getpgid(p.child_pid), signal.SIGHUP)
-            except (OSError, ProcessLookupError):
-                pass
-            try:
-                self.loop.remove_reader(p.master_fd)
-            except (OSError, ValueError):
-                pass
-            try:
-                os.close(p.master_fd)
-            except OSError:
-                pass
-            try:
-                os.waitpid(p.child_pid, os.WNOHANG)
-            except ChildProcessError:
-                pass
+            if p.pty is not None:
+                p.pty.terminate()       # SIGHUP
+                p.pty.stop_reader()
+                p.pty.close()
+                p.pty.reap(block=False)
         tab = sess.active_tab
         if tab in sess.tabs:
             sess.tabs.remove(tab)
@@ -642,22 +587,11 @@ class Server:
     def _destroy_pane_proc(self, pane: Pane):
         """패널의 PTY/자식 프로세스를 정리한다(트리 조작 없음)."""
         self._close_capfile(pane.id)
-        try:
-            os.killpg(os.getpgid(pane.child_pid), signal.SIGHUP)
-        except (OSError, ProcessLookupError):
-            pass
-        try:
-            self.loop.remove_reader(pane.master_fd)
-        except (OSError, ValueError):
-            pass
-        try:
-            os.close(pane.master_fd)
-        except OSError:
-            pass
-        try:
-            os.waitpid(pane.child_pid, os.WNOHANG)
-        except ChildProcessError:
-            pass
+        if pane.pty is not None:
+            pane.pty.terminate()        # SIGHUP
+            pane.pty.stop_reader()
+            pane.pty.close()
+            pane.pty.reap(block=False)
 
     def kill_session(self, name: str):
         s = self.sessions.pop(name, None)
@@ -755,7 +689,8 @@ class Server:
         if pane.bracketed:
             data = b"\x1b[200~" + data + b"\x1b[201~"
         try:
-            os.write(pane.master_fd, data)
+            if pane.pty is not None:
+                pane.pty.write(data)
         except OSError:
             pass
 
@@ -1077,8 +1012,10 @@ class Server:
             else:
                 out += a.encode("utf-8")
         if out:
+            ap = win.active_pane
             try:
-                os.write(win.active_pane.master_fd, out)
+                if ap is not None and ap.pty is not None:
+                    ap.pty.write(out)
             except OSError:
                 pass
 
@@ -1731,7 +1668,8 @@ class Server:
         # 아니고(위치 기반), 프롬프트 추적/scroll 복귀도 건드리지 않는다.
         if msg.get("mouse"):
             try:
-                os.write(p.master_fd, data)
+                if p.pty is not None:
+                    p.pty.write(data)
             except OSError:
                 pass
             return
@@ -1744,7 +1682,8 @@ class Server:
                 t._match_abs = None
                 t.dirty = True
             try:
-                os.write(t.master_fd, data)
+                if t.pty is not None:
+                    t.pty.write(data)
             except OSError:
                 pass
 
@@ -1810,10 +1749,8 @@ class Server:
         for sess in self.sessions.values():
             for tab in sess.tabs:
                 for p in tab.window.panes():
-                    try:
-                        os.killpg(os.getpgid(p.child_pid), signal.SIGHUP)
-                    except OSError:
-                        pass
+                    if p.pty is not None:
+                        p.pty.terminate()       # SIGHUP
         try:
             if os.path.exists(self.sock_path):
                 os.unlink(self.sock_path)

@@ -205,11 +205,15 @@ class Pane:
         self.mouse_sgr = False      # 1006 SGR 확장 좌표 인코딩 사용 여부
         self._mouse_sent = (0, False)  # 클라이언트로 마지막 전달한 (track, sgr)
         self.pipe_proc = None    # pipe-pane 대상 프로세스
+        # PTY 백엔드 핸들(pty_backend.PtyProcess). 서버가 spawn 직후 주입한다.
+        # 렌더 전용(replay/진단) 패널은 None — master_fd/child_pid 만 -1 로 둔다.
+        self.pty = None
 
     def reinit(self, pid: int, fd: int, cols: int, rows: int) -> None:
         """respawn: 새 PTY/셸로 화면 버퍼를 초기화한다."""
         self.master_fd = fd
         self.child_pid = pid
+        self.pty = None          # 서버가 reinit 직후 새 PtyProcess 를 주입
         self.cols, self.rows = cols, rows
         self._main = _BCEHistoryScreen(cols, rows, history=HISTORY, ratio=0.5)
         self._main.set_mode(pyte.modes.LNM)
@@ -322,10 +326,18 @@ class Pane:
         self._main.resize(rows, cols)
         if self._alt is not None:
             self._alt.resize(rows, cols)
-        try:
-            set_winsize(self.master_fd, rows, cols)
-        except OSError:
-            pass
+        # PTY 크기 통지는 백엔드 핸들을 통해(크로스플랫폼). 렌더 전용 패널(pty=None)은
+        # 옛 fd 기반 set_winsize 로 폴백(fd=-1 이면 무해하게 실패).
+        if self.pty is not None:
+            try:
+                self.pty.set_winsize(rows, cols)
+            except OSError:
+                pass
+        else:
+            try:
+                set_winsize(self.master_fd, rows, cols)
+            except OSError:
+                pass
         self.dirty = True
 
     def _history_len(self) -> int:
