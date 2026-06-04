@@ -610,7 +610,18 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 10. 가능한 후속 작업 (열린 항목)
 
-- **[버그·환경 의존, 미해결] Windows→ssh→원격 macOS Claude Code 에서 Shift+ESC 로
+- ~~**[버그·환경 의존] Windows→ssh→원격 macOS Claude Code 에서 Shift+ESC 로 ESC 를
+  못 보냄**~~ → **CL 56572 에서 대응(①: 터미널-비의존 통로 2개 추가).** Shift+ESC 가
+  안 먹는 근본 원인(터미널이 ESC 에 Shift 수식을 인코딩 못 함)은 코드로 못 고치므로,
+  **수식 인코딩에 의존하지 않는 ESC 전달 통로**를 댔다: (a) **ESC 더블탭** — esc 모드
+  에서 ESC 를 한 번 더 누르면 활성 패널에 실제 ESC(`\x1b`) 1회를 보내고 모드를 빠진다
+  (`_handle_esc_mode` 에 `k=="escape"` 분기; 단독 ESC=모드 진입은 그대로, 모드만 빠질
+  땐 i/enter/그 외 키). (b) **`send-escape` 명령**(별칭 `send-esc`, COMMAND_NOARG·
+  COMMANDS 노출) — 한 키에 `bind-key <key> send-escape` 로 전용 ESC 키를 만들 수 있다
+  (기존 `send-keys Escape` 의 한 토큰 단축). 회귀 테스트 `test_double_escape_sends_esc_
+  to_pane`·`test_send_escape_command`. 클라이언트 전용(attach 재실행). 아래는 원래
+  분석(참고):
+- **[원래 보고·분석] Windows→ssh→원격 macOS Claude Code 에서 Shift+ESC 로
   ESC 를 못 보냄** — 보고: Windows 에서 pytmux 실행 후 ssh 로 원격 macOS 에 붙어
   Claude Code 를 쓸 때 **Shift+ESC 가 동작하지 않아 ESC(인터럽트/입력 취소)를 앱에
   보낼 수 없다**. 배경: pytmux 는 **단독 ESC 를 명령(esc) 모드 진입**에 쓰므로 셸/앱

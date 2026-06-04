@@ -238,6 +238,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("pipe-pane", "패널 출력을 외부 명령으로 파이프", "복사/버퍼"),
         ("clear-history", "스크롤백 비우기", "복사/버퍼"),
         ("send-keys", "패널에 키 주입 (예: Enter, C-c)", "복사/버퍼"),
+        ("send-escape", "활성 패널에 ESC 전달 (Shift+ESC 안 먹는 터미널용; ESC 모드서 ESC 한 번 더로도 가능)", "복사/버퍼"),
         ("paste-buffer", "페이스트 버퍼 붙여넣기 (N)", "복사/버퍼"),
         ("choose-buffer", "페이스트 버퍼 선택기", "복사/버퍼"),
         ("paste-clipboard", "OS 클립보드 붙여넣기", "복사/버퍼"),
@@ -336,7 +337,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         "choose-buffer", "paste-clipboard", "save-layout", "restore-layout",
         "show-options", "show-hooks", "source-file", "clock-mode",
         "calendar-mode", "prompt-history", "token-usage", "token-log",
-        "list-keys",
+        "list-keys", "send-escape",
     }
 
     class CommandListScreen(ModalScreen):
@@ -3422,6 +3423,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.paste_os_clipboard()  # bracketed 패스스루
             elif c in ("send-keys", "send"):
                 self._send_keys(args)
+            elif c in ("send-escape", "send-esc"):
+                # 활성 패널에 ESC 1회 전달(= send-keys Escape 의 한 토큰 단축).
+                # 한 키에 바인딩하기 쉽게 별도 명령으로 노출 — Shift+ESC 가 안 먹는
+                # 터미널에서 `bind-key <key> send-escape` 로 전용 키를 둘 수 있다.
+                self.send_input(b"\x1b")
             elif c in ("paste-buffer", "pasteb"):
                 idx = self._first_int(args)
                 self.send_cmd("paste_buffer", index=idx or 0)
@@ -3892,8 +3898,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self._composite()
                 else:
                     self.display_message("Claude 헤더 없음")
+            elif k == "escape":
+                # ESC 모드에서 ESC 를 한 번 더 → 활성 패널에 실제 ESC(\x1b) 1회 전달
+                # 후 종료(더블탭 ESC = 앱에 ESC 1회). Shift+ESC 가 터미널 수식 인코딩
+                # 한계로 그냥 ESC 로 도착하는 환경(일부 Windows conhost/WT·일부 ssh,
+                # Kitty 키보드 프로토콜/modifyOtherKeys 미지원)에서 Claude Code 등 TUI
+                # 에 ESC(인터럽트)를 보내는 **터미널-비의존** 통로. 단독 ESC=esc 모드
+                # 진입은 그대로다. 모드만 빠지고 싶으면 i/enter/그 외 키를 쓴다.
+                self._exit_esc()
+                self.send_input(b"\x1b")
             else:
-                # escape/enter/i/그 외 → 명령 모드 종료(셸 입력 복귀)
+                # enter/i/그 외 → 명령 모드 종료(셸 입력 복귀, ESC 전달 없음)
                 self._exit_esc()
 
         def _handle_scroll_key(self, event: events.Key):

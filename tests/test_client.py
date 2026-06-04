@@ -354,6 +354,39 @@ async def test_shift_escape_forwards_esc_plain_escape_enters_esc_mode():
     await _with_app(body)
 
 
+async def test_double_escape_sends_esc_to_pane():
+    """ESC 더블탭(ESC ESC)으로 앱에 실제 ESC 1회 전달 — Shift+ESC 가 터미널 수식
+    인코딩 한계로 안 먹는 환경(일부 Windows/ssh)용 터미널-비의존 통로(①)."""
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_input = lambda data: sent.append(data)
+        # 첫 ESC = esc 모드 진입(전달 없음)
+        app.on_key(Key(key="escape", character=None))
+        assert app.mode == "esc" and sent == []
+        # 두 번째 ESC = 실제 ESC 전달 + 모드 종료
+        app.on_key(Key(key="escape", character=None))
+        assert sent == [b"\x1b"], sent
+        assert app.mode == "normal"
+        # 모드만 빠지고 싶을 땐 i/그 외 키 → ESC 전달 없이 종료(비회귀).
+        sent.clear()
+        app.on_key(Key(key="escape", character=None))
+        assert app.mode == "esc"
+        app.on_key(Key(key="i", character="i"))
+        assert app.mode == "normal" and sent == []
+    await _with_app(body)
+
+
+async def test_send_escape_command():
+    """send-escape 명령(한 토큰)으로 활성 패널에 ESC 전달 — 한 키에 bind-key
+    하기 쉽게 노출(send-keys Escape 와 동일 동작)."""
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_input = lambda data: sent.append(data)
+        app._run_command("send-escape")
+        assert sent == [b"\x1b"], sent
+    await _with_app(body)
+
+
 class _FakeMouse:
     def __init__(self, x, y, button=1, ctrl=False):
         self.x, self.y, self.button = x, y, button
