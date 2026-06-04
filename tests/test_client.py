@@ -1596,12 +1596,39 @@ async def test_status_session_tokens():
         app.status.claude_usage = "ctx 42%"
         app.status.claude_tokens = 45200
         txt = "".join(s.text for s in app.status.render_line(0))
-        assert "Σ45.2k" in txt, repr(txt)
+        # §10: 기호 Σ 와 숫자 사이 한 칸 띄움
+        assert "Σ 45.2k" in txt, repr(txt)
+        # 계정이 있으면 @계정 곁들임(§10 계정별 합계)
+        app.status.claude_account = "alice"
+        txt_a = "".join(s.text for s in app.status.render_line(0))
+        assert "Σ 45.2k @alice" in txt_a, repr(txt_a)
         # 사용량 문구 없이 누계만 있어도 표시
         app.status.claude_usage = None
+        app.status.claude_account = None
         app.status.claude_tokens = 1_200_000
         txt2 = "".join(s.text for s in app.status.render_line(0))
-        assert "Σ1.2M" in txt2, repr(txt2)
+        assert "Σ 1.2M" in txt2, repr(txt2)
+    await _with_app(body)
+
+
+async def test_status_tokens_persist_when_empty():
+    """§10 지속표시: usage/tokens/account 가 비어 온 status 프레임에서도 마지막
+    비어있지 않은 값을 유지한다(활성 패널이 Claude 가 아니거나 한 프레임 파싱
+    실패해도 표시가 사라지지 않음). 새 비-0 값이 오면 갱신된다."""
+    async def body(app, pilot, srv):
+        app.status.update_status({"claude_usage": "ctx 42%",
+                                  "claude_tokens": 45200,
+                                  "claude_account": "alice"})
+        assert app.status.claude_tokens == 45200
+        # 빈 프레임 → 유지
+        app.status.update_status({})
+        assert app.status.claude_tokens == 45200
+        assert app.status.claude_usage == "ctx 42%"
+        assert app.status.claude_account == "alice"
+        # 새 비-0 값 → 갱신
+        app.status.update_status({"claude_tokens": 99000, "claude_account": "bob"})
+        assert app.status.claude_tokens == 99000
+        assert app.status.claude_account == "bob"
     await _with_app(body)
 
 

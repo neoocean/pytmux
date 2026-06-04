@@ -1693,7 +1693,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.message = None    # display-message 임시 메시지
             self.hide_tabs = False  # 상단 탭바가 보이면 하단 탭 목록 생략
             self.claude_usage = None  # 활성 Claude 패널의 토큰/컨텍스트(best-effort)
-            self.claude_tokens = 0    # 활성 Claude 패널 세션 누적 토큰(#3)
+            self.claude_tokens = 0    # 활성 계정 누적 토큰(§10 계정별 합계, 지속표시)
+            self.claude_account = None  # 누적 토큰의 귀속 계정(표시에 곁들임)
             self.bg = bg
             self.fg = fg
             self.left_fmt = left
@@ -1804,8 +1805,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.prompt_clear = msg.get("prompt_clear", False)
             self.prompt_clear_queue = msg.get("prompt_clear_queue", [])
             self.capture = msg.get("capture", True)
-            self.claude_usage = msg.get("claude_usage")
-            self.claude_tokens = msg.get("claude_tokens", 0)
+            # §10 지속표시: usage/tokens/account 가 비어 와도(활성 패널이 Claude 가
+            # 아니거나 한 프레임 파싱 실패) 마지막 비어있지 않은 값을 유지한다.
+            # 계정이 바뀌면 서버가 새 비-0 값을 보내므로 자연히 갱신된다.
+            cu = msg.get("claude_usage")
+            if cu:
+                self.claude_usage = cu
+            ct = msg.get("claude_tokens", 0)
+            if ct:
+                self.claude_tokens = ct
+            ca = msg.get("claude_account")
+            if ca:
+                self.claude_account = ca
             self.capture_path = msg.get("capture_path")
             self.capture_size = msg.get("capture_size", 0)
             self.refresh()
@@ -1861,7 +1872,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.claude_usage:
                 uparts.append(self.claude_usage)
             if self.claude_tokens:
-                uparts.append("Σ" + _fmt_tokens(self.claude_tokens))
+                # 기호(Σ)와 숫자 사이 한 칸 띄움(§10). 계정이 있으면 @계정 곁들임.
+                tk = "Σ " + _fmt_tokens(self.claude_tokens)
+                if self.claude_account:
+                    tk += " @" + self.claude_account
+                uparts.append(tk)
             if uparts:
                 utext = " " + " · ".join(uparts) + " "
                 ux0 = sum(sum(_char_cells(c) for c in s.text) for s in segs)

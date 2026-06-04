@@ -1985,6 +1985,21 @@ class Server:
                 best, score = s, pri[s]
         return best
 
+    def _account_token_total(self, ap) -> int:
+        """활성 패널의 Claude 계정을 키로, 그 계정에 속한 모든 패널(전체 세션 순회)
+        의 세션 누적 토큰을 합산한다(§10 계정별 합계). 계정 추정 전이면 활성 패널
+        단독 누계로 폴백하고, 활성 패널이 Claude 가 아니면 0 을 보낸다(이 경우
+        클라이언트가 마지막 비어있지 않은 값을 유지해 표시가 사라지지 않게 한다)."""
+        if not ap:
+            return 0
+        acct = ap._claude_account
+        if acct:
+            return sum(p._session_tokens for p in self._all_panes()
+                       if p._claude_account == acct)
+        if ap._claude:
+            return ap._session_tokens
+        return 0
+
     def _status_msg(self, sess: Session):
         win = sess.active_window
         cap_path, cap_size = self._capture_info(win.active_pane if win else None)
@@ -2007,10 +2022,12 @@ class Server:
             "claude_usage": (win.active_pane._claude_usage
                              if win and win.active_pane
                              and win.active_pane._claude else None),
-            # 활성 패널 Claude 세션 누적 토큰(#3, 응답별 peak 합산)
-            "claude_tokens": (win.active_pane._session_tokens
-                              if win and win.active_pane
-                              and win.active_pane._claude else 0),
+            # 활성 패널 계정 기준 — 그 계정에 속한 모든 세션/패널의 세션 누적 토큰을
+            # 합산(§10 토큰 지속표시·계정별 합계). 계정 식별자도 함께 보내 표시에 곁들임.
+            "claude_tokens": self._account_token_total(
+                win.active_pane if win else None),
+            "claude_account": (win.active_pane._claude_account
+                               if win and win.active_pane else None),
             "zoomed": bool(win.zoomed) if win else False,
             "sync": bool(win.sync) if win else False,
             "pane_title": win.active_pane.title if win and win.active_pane else "",

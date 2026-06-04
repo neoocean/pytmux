@@ -185,6 +185,47 @@ async def test_token_usage_logging():
         await teardown(srv, task, sock)
 
 
+async def test_account_token_total_aggregates_across_panes():
+    """§10 계정별 합계: 활성 패널의 Claude 계정을 키로, 같은 계정에 속한 모든
+    패널(전체 세션 순회)의 _session_tokens 를 합산해 status 의 claude_tokens 로
+    내보낸다. 계정 미상이면 활성 패널 단독 누계, Claude 아니면 0(클라가 마지막값
+    유지). claude_account 식별자도 함께 보낸다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv.split_pane(sess, "lr")
+        srv.split_pane(sess, "tb")
+        win = sess.active_window
+        panes = win.panes()
+        assert len(panes) == 3
+        # 같은 계정 두 패널 + 다른 계정 한 패널
+        panes[0]._claude_account = "alice"
+        panes[0]._session_tokens = 1000
+        panes[0]._claude = "idle"
+        panes[1]._claude_account = "alice"
+        panes[1]._session_tokens = 2500
+        panes[1]._claude = "busy"
+        panes[2]._claude_account = "bob"
+        panes[2]._session_tokens = 700
+        panes[2]._claude = "idle"
+        # 활성=alice 패널 → alice 합계 3500, 식별자 alice
+        win.active_pane = panes[0]
+        msg = srv._status_msg(sess)
+        assert msg["claude_tokens"] == 3500, msg["claude_tokens"]
+        assert msg["claude_account"] == "alice", msg["claude_account"]
+        # 활성=bob 패널 → bob 단독 700
+        win.active_pane = panes[2]
+        assert srv._status_msg(sess)["claude_tokens"] == 700
+        # 계정 미상 + Claude 패널 → 단독 누계 폴백
+        panes[2]._claude_account = None
+        assert srv._status_msg(sess)["claude_tokens"] == 700
+        # 계정 미상 + Claude 아님 → 0(클라가 마지막값 유지)
+        panes[2]._claude = None
+        assert srv._status_msg(sess)["claude_tokens"] == 0
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_prompt_clear_mode_sequence():
     """#9: 프롬프트 단위 클리어 모드. 사용자 프롬프트 busy→idle 완료마다 ① 문서화
     지시 → ② /clear 를 순차 주입하고, /clear 완료 후 시퀀스가 끝난다. 끄면 리셋,
