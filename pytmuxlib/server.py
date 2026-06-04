@@ -1140,6 +1140,41 @@ class Server:
             self.sessions[sess.name] = sess
         return bool(self.sessions)
 
+    def restart_server(self) -> bool:
+        """작업 보존 재시작(방식① 제자리 re-exec) — 셸/PTY 를 살린 채 서버 코드만
+        새 이미지로 교체한다. docs/RESTART_SCENARIO.md §3. POSIX 전용.
+
+        ⓑ 상태 직렬화 → ⓔ 클라이언트 재접속 통지 → (call_later) ⓐ master fd
+        CLOEXEC 해제 → ⓒ os.execv. PID 가 그대로라 자식 셸이 계속 자식으로 남고,
+        상속된 master fd 가 PTY 를 살린다. 새 이미지는 --resume 로 채택 복원한다(ⓓ)."""
+        if pty_backend.IS_WINDOWS or self.loop is None:
+            return False
+        if not self.sessions:
+            return False
+        if not self.save_resume_state():
+            return False
+        self._save_opts()
+        # ⓔ 재시작 통지: 클라이언트가 끊김을 종료가 아닌 재접속으로 다루게 한다.
+        for c in list(self.clients):
+            asyncio.create_task(write_msg(c.writer, {"t": "restarting"}))
+        # 비-PTY fd(캡처 파일 등) 정리 — 새 이미지가 다시 연다. master fd 는 보존.
+        self._close_all_capfiles()
+        argv = proc.server_argv(self.sock_path) + ["--resume",
+                                                   self.resume_state_path]
+        # write_msg 가 flush 될 짧은 틈을 준 뒤 execv(같은 이벤트 루프 틱이 아님).
+        self.loop.call_later(0.1, self._do_execv, argv)
+        return True
+
+    def _do_execv(self, argv):
+        # ⓐ 넘길 master fd 의 CLOEXEC 를 execv 직전에만 해제(평상시 불변식 유지).
+        self._release_master_cloexec()
+        self.running = False
+        try:
+            os.execv(argv[0], argv)
+        except OSError:
+            # execv 실패(드묾): 깨끗한 종료로 폴백. 셸은 SIGHUP 으로 정리된다.
+            self._notify_no_sessions()
+
     # ---- 탭(윈도우+패널) 레이아웃 슬롯: 이름으로 저장/불러오기 ----
     @property
     def slots_path(self):
@@ -1421,6 +1456,9 @@ class Server:
         elif c == "kill-server":
             self._notify_no_sessions()
             return "ok"
+        elif c in ("restart-server", "restart"):
+            # 작업 보존 재시작(re-exec). 셸/PTY 보존(docs/RESTART_SCENARIO.md).
+            return "restarting" if self.restart_server() else "unsupported"
         elif c in ("send-keys", "send"):
             self._control_send_keys(sess, args)
         elif c in ("capture-output", "capture-toggle"):
@@ -2129,6 +2167,10 @@ class Server:
             return
         elif action == "kill_server":
             self._notify_no_sessions()
+            return
+        elif action == "restart_server":
+            # 작업 보존 재시작(re-exec). 셸/PTY 보존(docs/RESTART_SCENARIO.md).
+            self.restart_server()
             return
         else:
             return

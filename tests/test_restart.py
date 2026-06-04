@@ -6,10 +6,14 @@
 상속 fd 를 다시 감싸는 것과 동치). 실 박스에서의 execv 검증은 별도(수동) 몫이다.
 """
 import asyncio
+import base64
 import os
+import re
 
+import pytmux
 from harness import server_only, teardown
-from pytmuxlib import ipc, pty_backend
+from pytmuxlib import ipc, proc, pty_backend
+from pytmuxlib.protocol import read_msg, write_msg
 
 
 # ── 1. Pane 상태 직렬화 라운드트립(PTY 없이 순수) ─────────────────────────────
@@ -186,3 +190,104 @@ async def test_restore_resume_state_roundtrip():
     finally:
         await teardown(srvA, taskA, sockA)
         await teardown(srvB, taskB, sockB)
+
+
+# ── 5. 종단간 실 재시작(os.execv): 서버 서브프로세스를 띄워 restart 후 셸 PID 보존 ──
+async def _conn(endpoint):
+    return await ipc.open_connection(endpoint)
+
+
+async def _send_input(writer, text: str):
+    await write_msg(writer, {"t": "input",
+                             "data": base64.b64encode(text.encode()).decode()})
+
+
+async def _await_regex(reader, pattern, timeout=8.0):
+    """hello 이후 들어오는 screen 메시지의 텍스트를 모아 pattern 매치를 찾는다."""
+    rx = re.compile(pattern)
+    loop = asyncio.get_event_loop()
+    end = loop.time() + timeout
+    acc = ""
+    while loop.time() < end:
+        try:
+            msg = await asyncio.wait_for(read_msg(reader),
+                                         timeout=max(0.05, end - loop.time()))
+        except asyncio.TimeoutError:
+            break
+        if msg is None:
+            break
+        if msg.get("t") == "screen":
+            for row in msg.get("rows", []):
+                for seg in row:
+                    acc += seg[0]
+            m = rx.search(acc)
+            if m:
+                return m
+    return rx.search(acc)
+
+
+async def test_execv_restart_preserves_shell_pid():
+    """실제 os.execv 재시작 후에도 패널 셸이 같은 PID 로 살아 있는지 종단간 검증.
+
+    서버를 서브프로세스로 띄우고(=실 데몬), 패널 셸에 `echo $$` 를 보내 PID 를 읽은
+    뒤 restart-server 를 트리거, 재기동된 서버에 재접속해 다시 `echo $$` 로 같은
+    PID 인지 확인한다. docs/RESTART_SCENARIO.md §7 test_restart_preserves_pids."""
+    if ipc.IS_WINDOWS:
+        return
+    import tempfile
+    endpoint = tempfile.mktemp(suffix=".sock")
+    pid = proc.spawn_detached(proc.server_argv(endpoint))
+    try:
+        # listen 대기
+        for _ in range(300):
+            if ipc.probe(endpoint):
+                break
+            await asyncio.sleep(0.02)
+        assert ipc.probe(endpoint), "서버 서브프로세스 기동 실패"
+
+        reader, writer = await _conn(endpoint)
+        await write_msg(writer, {"t": "hello", "cols": 80, "rows": 24})
+        await asyncio.sleep(0.3)               # 셸 프롬프트 안정화
+        await _send_input(writer, "echo PX=$$\n")
+        m = await _await_regex(reader, r"PX=(\d+)")
+        assert m, "재시작 전 셸 PID 를 못 읽음"
+        pid1 = m.group(1)
+
+        # 별도 연결로 restart-server 제어 요청
+        r2, w2 = await _conn(endpoint)
+        await write_msg(w2, {"t": "control", "line": "restart-server"})
+        reply = await asyncio.wait_for(read_msg(r2), timeout=3.0)
+        assert reply and reply.get("result") == "restarting", reply
+        w2.close()
+
+        # 옛 연결은 execv 로 끊긴다. 재기동(같은 소켓) 대기 후 재접속.
+        await asyncio.sleep(0.4)
+        for _ in range(400):
+            if ipc.probe(endpoint):
+                break
+            await asyncio.sleep(0.02)
+        assert ipc.probe(endpoint), "재시작 후 서버 재기동 실패"
+
+        reader2, writer2 = await _conn(endpoint)
+        await write_msg(writer2, {"t": "hello", "cols": 80, "rows": 24})
+        await asyncio.sleep(0.3)
+        await _send_input(writer2, "echo PY=$$\n")
+        m2 = await _await_regex(reader2, r"PY=(\d+)")
+        assert m2, "재시작 후 셸 PID 를 못 읽음"
+        pid2 = m2.group(1)
+
+        assert pid1 == pid2, f"재시작 전후 셸 PID 불일치: {pid1} != {pid2}"
+    finally:
+        try:
+            r3, w3 = await _conn(endpoint)
+            await write_msg(w3, {"t": "kill-server"})
+            await asyncio.sleep(0.2)
+            w3.close()
+        except Exception:
+            pass
+        proc.terminate(pid, force=True)
+        try:
+            if os.path.exists(endpoint):
+                os.unlink(endpoint)
+        except OSError:
+            pass
