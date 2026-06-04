@@ -12,6 +12,7 @@ import time
 
 from wcwidth import wcwidth
 
+from . import ipc, proc
 from .keymap import _key_to_ctrl_bytes, _tmux_key_to_textual, load_config
 from .protocol import MIN_H, MIN_W, read_msg, write_msg
 
@@ -20,11 +21,9 @@ def _shell_argv(cmd: str) -> list:
     """run-shell/if-shell/display-popup 의 셸 명령 argv. OS 별 셸로 분기.
 
     POSIX: /bin/sh -c <cmd>,  Windows: cmd /c <cmd> (COMSPEC 우선).
+    셸 분기 로직은 server(pipe-pane)와 공유하기 위해 proc.shell_argv 에 둔다.
     """
-    if os.name == "nt":
-        comspec = os.environ.get("COMSPEC", "cmd.exe")
-        return [comspec, "/c", cmd]
-    return ["/bin/sh", "-c", cmd]
+    return proc.shell_argv(cmd)
 
 
 def _char_cells(ch: str) -> int:
@@ -1148,6 +1147,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._scroll = 0        # 가로 스크롤(첫 표시 탭의 리스트 위치)
             self._zones = []        # [(x0, x1, kind, payload)] 클릭 히트테스트
             self._drag = None       # 드래그 중인 탭 index(재정렬)
+            self._drag_over = None  # 드래그 중 현재 가리키는 드롭 대상 탭 index
 
         def set_tabs(self, tabs, active_idx):
             self.tabs = tabs
@@ -1237,6 +1237,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                              bold=True)
             # 비활성 탭의 Claude 작업 완료 알림: 옅은 배경(보면 해제)(#22)
             done_st = Style(color="black", bgcolor=theme_color(self, "success"))
+            # 드래그 재정렬 시각 피드백: 들고 있는 탭(소스)은 흐리게, 놓을 위치
+            # (드롭 대상)은 밑줄+강조색으로 표시(놓으면 그 자리로 이동).
+            dragging = self._drag is not None
+            drop_st = Style(color="black", bgcolor=theme_color(self, "warning"),
+                            bold=True, underline=True)
             by_idx = {t["index"]: t for t in self.tabs}
             segs, zones = [], []
             x = 0
@@ -1250,7 +1255,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     st = sel_st if (self.bar_focus and self.sel == "+") else add_st
                 else:                                  # tab
                     t = by_idx.get(payload, {})
-                    if self.bar_focus and payload == self.sel:
+                    if dragging and payload == self._drag_over and payload != self._drag:
+                        st = drop_st   # 드롭 대상(놓으면 여기로 이동)
+                    elif dragging and payload == self._drag:
+                        st = base + Style(dim=True)  # 들고 있는 탭(소스) 흐리게
+                    elif self.bar_focus and payload == self.sel:
                         st = sel_st
                     elif t.get("active"):
                         st = active_st
@@ -1307,11 +1316,25 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.capture_mouse()
             event.stop()
 
+        def on_mouse_move(self, event):
+            # 드래그 중에만(capture_mouse 로 이동 이벤트가 여기로 옴) 드롭 대상을
+            # 추적해 시각 피드백을 갱신한다. 같은 탭 위면 대상 없음(소스만 흐리게).
+            if self._drag is None:
+                return
+            kind, payload = self._hit(event.x)
+            over = payload if (kind == "tab" and payload != self._drag) else None
+            if over != self._drag_over:
+                self._drag_over = over
+                self.refresh()
+            event.stop()
+
         def on_mouse_up(self, event):
             if self._drag is None:
                 return
             src = self._drag
             self._drag = None
+            self._drag_over = None
+            self.refresh()
             try:
                 self.release_mouse()
             except Exception:
@@ -1615,7 +1638,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # <sock>.mouse.log 로 남긴다 → 원격에서 휠 이벤트가 Textual 까지 실제로
             # 도달하는지(도달 안 하면 상위 터미널/SSH 문제)를 切り分け 할 수 있다.
             self.mouse_debug = config.get("mouse_debug", False)
-            self._mouse_log_path = (sock_path or "pytmux") + ".mouse.log"
+            self._mouse_log_path = (ipc.state_base(sock_path) if sock_path
+                                    else "pytmux") + ".mouse.log"
             # 대체 스크롤 모드(DECSET 1007) 비활성 여부. 켜져 있으면 일부 터미널이
             # 휠을 화살표 키로 바꿔 보내 pytmux 스크롤백이 안 열린다 → 기본으로 끈다.
             # `set alt-scroll on` 으로 다시 켜면(=1007 비활성화 해제) 터미널 기본 동작.
@@ -1676,8 +1700,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.disable_alt_scroll:
                 self._term_write("\x1b[?1007l")
             try:
-                self.reader, self.writer = await asyncio.open_unix_connection(
-                    path=self.sock_path)
+                # OS 별 전송 분기(Unix=AF_UNIX, Windows=TCP 루프백)는 ipc 가 담당.
+                self.reader, self.writer = await ipc.open_connection(self.sock_path)
             except (ConnectionError, FileNotFoundError, OSError):
                 self.exit(message="pytmux: 서버에 연결할 수 없습니다")
                 return

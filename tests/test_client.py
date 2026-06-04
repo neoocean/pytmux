@@ -949,6 +949,50 @@ async def test_active_tab_connector_follows_switch():
     await _with_app(body, cfg={"tab_bar_always": True})
 
 
+async def test_tab_drag_reorder_visual_feedback():
+    # #8: 탭을 드래그 재정렬하는 동안 들고 있는 탭(소스)은 흐리게(dim), 놓을 위치
+    # (드롭 대상)은 warning 배경+밑줄로 표시된다. 놓을 때만 확정하던 것에 더해
+    # 드래그 중 시각 피드백을 준다. on_mouse_move 가 _drag_over 를 추적한다.
+    async def body(app, pilot, srv):
+        tabs = [{"index": 0, "name": "a", "active": True},
+                {"index": 1, "name": "b", "active": False},
+                {"index": 2, "name": "c", "active": False}]
+        app.tabbar.set_tabs(tabs, 0)
+        app.tabbar.render_line(0)               # _zones 채우기
+
+        # 드래그 시작: 탭 0 을 잡는다
+        class _Ev:
+            def __init__(self, x):
+                self.x = x
+            def stop(self):
+                pass
+
+        z0 = next(z for z in app.tabbar._zones if z[2] == "tab" and z[3] == 0)
+        z2 = next(z for z in app.tabbar._zones if z[2] == "tab" and z[3] == 2)
+        app.tabbar.on_mouse_down(_Ev((z0[0] + z0[1]) // 2))
+        assert app.tabbar._drag == 0, "드래그 소스 = 탭 0"
+
+        # 탭 2 위로 이동 → 드롭 대상 추적
+        app.tabbar.on_mouse_move(_Ev((z2[0] + z2[1]) // 2))
+        assert app.tabbar._drag_over == 2, "드롭 대상 = 탭 2"
+
+        strip = app.tabbar.render_line(0)
+        src_seg = next(s for s in strip if "0:a" in s.text)
+        dst_seg = next(s for s in strip if "2:c" in s.text)
+        assert src_seg.style and src_seg.style.dim, "소스 탭은 흐리게(dim)"
+        assert dst_seg.style and dst_seg.style.underline, "드롭 대상은 밑줄"
+        assert dst_seg.style.bgcolor is not None, "드롭 대상 강조 배경"
+
+        # 같은 탭 위로 오면 대상 해제(소스만 흐림)
+        app.tabbar.on_mouse_move(_Ev((z0[0] + z0[1]) // 2))
+        assert app.tabbar._drag_over is None, "소스 위면 드롭 대상 없음"
+
+        # 놓으면 드래그 상태 해제
+        app.tabbar.on_mouse_up(_Ev((z2[0] + z2[1]) // 2))
+        assert app.tabbar._drag is None and app.tabbar._drag_over is None
+    await _with_app(body)
+
+
 async def test_tabbar_claude_done_background():
     # 비활성 탭에 claude_done 플래그가 오면 옅은(success) 배경으로 그려 활성 탭
     # (primary)과 구분된다(#22).

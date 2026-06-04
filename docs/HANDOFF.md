@@ -201,6 +201,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 9. 최근 변경(CL 56279~56464 + git, 신→구)
 
+- 56467 **탭 드래그 재정렬 시각 피드백**(§10 마무리 묶음 #8) — `TabBar._drag_over` +
+  `on_mouse_move` 로 드래그 중 드롭 대상 탭을 추적, `render_line` 이 소스 탭은
+  dim, 드롭 대상은 warning 배경+밑줄로 강조(놓으면 그 자리로 이동). 회귀 테스트
+  `test_tab_drag_reorder_visual_feedback`(총 125). 클라이언트 전용.
+
 - 56464 **pytmux 중첩 거부(로컬+원격) 요구사항 기록**(§10 #10, 사용자 요청·문서만) —
   로컬 거부(CL 56394)는 완료, 원격(ssh) 거부 구현 방향(SetEnv=PYTMUX 전파/원격측 가드/tty
   표식) 정리. 다음 작업 대상.
@@ -789,7 +794,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   그 패널 대상 `open_menu(pane_id)`. `open_menu` 가 대상을 `self._menu_pane` 에 보관
   (#18 배경 강조용). **한계**: 터미널이 Ctrl+Click 을 ctrl 플래그 없이 button 3 으로
   합쳐 보내면 진짜 우클릭과 구분 불가 → 우클릭으로 취급(터미널 의존).
-- 탭 **드래그 재정렬 시 시각적 피드백**(현재는 놓을 때 확정만).
+- ~~탭 **드래그 재정렬 시 시각적 피드백**(현재는 놓을 때 확정만).~~ → **CL 56467 에서
+  해결.** `TabBar` 에 `_drag_over`(드래그 중 가리키는 드롭 대상 탭 index) 추가 +
+  `on_mouse_move`(capture_mouse 로 드래그 중에만 이동 이벤트 수신)가 커서 아래 탭을
+  추적해 변경 시 재합성. `render_line` 이 들고 있는 탭(소스)은 `base+Style(dim=True)`
+  로 흐리게, 드롭 대상은 warning 배경+bold+underline 으로 강조(놓으면 그 자리로 이동).
+  같은 탭 위면 대상 해제(소스만 흐림). `on_mouse_up` 이 `_drag`/`_drag_over` 초기화 후
+  재합성. 회귀 테스트 `test_tab_drag_reorder_visual_feedback`. 클라이언트 전용(attach 재실행).
 - 패널 **드래그 swap**, 단일 패널 테두리 on/off 옵션화.
 - 다중 줄 상태표시줄, unbind-key, 라이브 PTY display-popup.
 - `unbind`/추가 옵션 등 FEATURES 의 "미구현" 표기 항목.
