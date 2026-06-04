@@ -1045,7 +1045,15 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   아니라 전체가 같은 ssh 채널을 타므로 보통 전 패널 공통 상태. **연관**: 아래
   "**Windows→ssh→원격 macOS … ssh 반응성 급락**" 항목과 같은 줄기(그 지연을
   외곽선 색으로 가시화하는 것). **현재는 기록만 — 미구현.**
-- **[버그·조사, 미구현] 탭이 일시적으로 녹색으로 보일 때가 있음** — 보고: 탭이
+- ~~**[버그·조사] 탭이 일시적으로 녹색으로 보일 때가 있음**~~ → **해결**(플리커
+  디바운스). busy↔idle 가 한 프레임 깜빡일 때 done(녹색)이 잘못 서던 오검출을
+  `_scan_claude` 에 `_was_busy`+`_idle_frames` 디바운스로 막았다 — busy 를 본 적이
+  있고(`_was_busy`) idle 이 `_DONE_IDLE_FRAMES`(=3) 프레임 **연속 안정**일 때만
+  `has_claude_done` 을 세운다(`server.py:2154-2165`, `model.py:329`). 의도된 완료
+  알림(monitor-claude)은 유지하되 한 프레임 깜빡임만 걸러낸다. 회귀
+  `test_done_flag_debounced_against_flicker`. **서버 변경 → kill-server 재기동.**
+  아래는 원 분석 기록.
+- **[원래 보고·분석] 탭이 일시적으로 녹색으로 보일 때가 있음** — 보고: 탭이
   **일시적으로 녹색**으로 보일 때가 있다(스크린샷: 비활성 탭 `0:claude!` 가 녹색).
   유력 원인: **비활성 탭 Claude 작업 완료 알림(#22)** — `_scan_claude`
   (`server.py:1938`)가 **비활성 탭**의 busy→idle 전이를 감지하면
@@ -1059,7 +1067,16 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   서는 것 — `_hdr_claude` 처럼 **busy→idle 전이에 디바운스**를 두거나, idle 이 연속
   N프레임 유지될 때만 done 을 세우는 보정이 필요. **조사 항목: 의도된 알림인지 vs
   플리커 버그인지 사용자 확인 후 분기. 현재는 기록만 — 미구현.**
-- **[버그, 미구현] Claude 데스크탑 앱(원격 제어)에서 입력한 프롬프트가 상단 프롬프트
+- ~~**[버그] Claude 데스크탑 앱(원격 제어)에서 입력한 프롬프트가 상단 프롬프트
+  헤더에 반영 안 됨**~~ → **해결**(화면 transcript 파싱). 입력 경로(`_track_prompt`)
+  를 안 거친 원격 주입 프롬프트를 `_scan_claude` 가 화면에서 추출해 반영한다 —
+  신설 파서 `claude.py:claude_prompt(text)`(transcript 의 "> 내용" 줄, 라이브 입력박스
+  하단 `_PROMPT_TAIL_SKIP` 줄 제외)가 잡은 줄이 `last_prompt` 와 다르고 최근 히스토리
+  (`prompt_history[-5:]`)에도 없을 때만 `last_prompt`/`prompt_history` 갱신
+  (`server.py:2141-2149`). 로컬 입력은 `_track_prompt` 가 이미 히스토리에 남겨 가드에
+  걸려 **이중 기록 안 됨**. 회귀 `test_screen_prompt_reflects_remote_injected`(server)·
+  `test_claude_prompt`(claude). **서버 변경 → kill-server 재기동.** 아래는 원 분석 기록.
+- **[원래 보고·분석] Claude 데스크탑 앱(원격 제어)에서 입력한 프롬프트가 상단 프롬프트
   헤더에 반영 안 됨** — 보고: 프롬프트를 **Claude 데스크탑 앱으로부터** 입력하면
   (화면의 "Remote Control active") 상단 프롬프트 표시 바(Claude 헤더)가 **업데이트
   되지 않는다**. 업데이트되어야 함. 원인: 헤더는 `pane.last_prompt`(`model.py:260`)
@@ -1201,8 +1218,15 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   Windows 에서 Kitty 키보드 프로토콜 활성 터미널(Windows Terminal 최신/WezTerm 등)
   사용 안내. ③ esc 모드 진입에 디바운스/타임아웃을 둬 곧이어 키가 안 오면 앱으로 ESC
   를 흘리는 휴리스틱(오작동 위험으로 비권장). **현재는 미해결 — 기록만.**
-- **[버그·성능, 미해결] Windows→ssh→원격 macOS Claude Code 사용 중 수 분 내 ssh
-  반응성 급락** — 보고: Claude Code 를 쓰다 보면 **몇 분 안에 반응성이 극도로 나빠
+- **[버그·성능, 완화됨 · 근본(feed 스레드) 잔여] Windows→ssh→원격 macOS Claude Code
+  사용 중 수 분 내 ssh 반응성 급락** — **요약**: 정량 프로파일로 원인 2건 확정(아래
+  ★) 후 **대응 ①(드레인 중 GC 비활성)·②(alt-screen 풀스크린 리페인트 코얼레싱)
+  구현 완료** → 입력 스파이크(82ms→4.5ms)·feed 부하 대폭 감소. **남은 레버는 대응
+  ③ feed 별도 스레드 하나**인데, 이는 단일 asyncio 루프 핫패스를 갈아엎는 큰 공사인
+  데다 증상이 **Windows→ssh 환경 의존이라 헤드리스/로컬 macOS 에서 재현·검증 불가** —
+  검증 수단 없이 블라인드로 핫패스를 바꾸는 위험이 이득보다 커 **의도적으로 보류**
+  (싼 완화 2건이 이미 랜딩). 실 Windows 박스에서 ①②로도 부족하다는 측정이 나오면
+  그때 ③ 착수. 보고: Claude Code 를 쓰다 보면 **몇 분 안에 반응성이 극도로 나빠
   진다**. pytmux 인터페이스 자체(패널 전환·명령 등)는 느리지 않은데 **ssh 의 반응성
   (원격으로 가는 키 입력·원격에서 오는 출력)**이 느려져 아무 조작도 못 하게 된다.
   분석(유력): pytmux 의 단일 asyncio 루프는 PTY 출력을 **pyte 로 feed** 하는데 이게
