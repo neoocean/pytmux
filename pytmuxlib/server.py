@@ -26,7 +26,11 @@ class Server:
         self.buffers: list[str] = []   # 페이스트 버퍼(최신이 앞)
         # 패널 출력 캡처(Claude 화면 문구 분석용). 기본 ON, opts.json 에 영속.
         self._capfiles: dict[int, "object"] = {}   # pane.id -> 열린 바이너리 파일
-        self.capture = bool(self._load_opts().get("capture", True))
+        _opts = self._load_opts()
+        self.capture = bool(_opts.get("capture", True))
+        # Claude 프롬프트 헤더 전역 표시(#6 ③ opts.json 영속). 클라가 status 로 받아
+        # claude_header_on 에 반영하고, `claude-header on|off` 가 서버를 거쳐 갱신·영속.
+        self.claude_header = bool(_opts.get("claude_header", True))
 
     # ---- PTY/패널 생성 ----
     def _fork_shell(self, cols: int, rows: int, cwd: str | None = None):
@@ -815,7 +819,8 @@ class Server:
     def _save_opts(self):
         try:
             with open(self.opts_path, "w", encoding="utf-8") as f:
-                json.dump({"capture": self.capture}, f)
+                json.dump({"capture": self.capture,
+                           "claude_header": self.claude_header}, f)
         except OSError:
             pass
 
@@ -888,6 +893,13 @@ class Server:
         if not self.capture:        # 끄면 열린 파일을 닫음(켜면 lazy 재오픈)
             self._close_all_capfiles()
         return self.capture
+
+    def set_claude_header(self, value=None):
+        """Claude 프롬프트 헤더 전역 표시 토글. 상태를 opts.json 에 영속(#6 ③)."""
+        self.claude_header = (not self.claude_header) if value is None \
+            else bool(value)
+        self._save_opts()
+        return self.claude_header
 
     def list_tab_layouts(self) -> list[str]:
         return sorted(self._load_slots().keys())
@@ -990,6 +1002,9 @@ class Server:
         elif c in ("capture-output", "capture-toggle"):
             val = True if "on" in args else (False if "off" in args else None)
             return "on" if self.set_capture(val) else "off"
+        elif c == "claude-header":
+            val = True if "on" in args else (False if "off" in args else None)
+            return "on" if self.set_claude_header(val) else "off"
         else:
             return f"unknown: {c}"
         for cl in list(self.clients):
@@ -1333,6 +1348,7 @@ class Server:
             "capture": self.capture,
             "capture_path": cap_path,
             "capture_size": cap_size,
+            "claude_header": self.claude_header,
         }
 
     async def _send_full(self, client: ClientConn):
@@ -1543,6 +1559,8 @@ class Server:
             self.set_monitor(sess, msg.get("which", "activity"), msg.get("value"))
         elif action == "set_capture":
             self.set_capture(msg.get("value"))
+        elif action == "set_claude_header":
+            self.set_claude_header(msg.get("value"))
         elif action == "kill_window":
             self.kill_window(sess)
             if sess.name not in self.sessions:

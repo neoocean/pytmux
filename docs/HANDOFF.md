@@ -199,7 +199,12 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56449 + git, 신→구)
+## 9. 최근 변경(CL 56279~56460 + git, 신→구)
+
+- 56460 **Claude 헤더 숨김 토글 + claude-header opts.json 영속**(§10 #6) — ② 히스토리
+  팝업 `[h]` 로 패널별 헤더 숨김(`_claude_hidden_panes`, InfoScreen hide_key/hide_cb),
+  ③ 서버가 `claude_header` 를 opts.json 에 영속(set_claude_header)·status 전달, 클라
+  명령이 서버 경유로 영속. 회귀 테스트 3종(총 124). **서버+클라 → kill-server 재기동.**
 
 - 56449 **ESC 모드 Claude 헤더 포커스 → 히스토리**(§10 #5) — ESC 모드에서 `h` 로 Claude
   헤더 포커스(`_hdr_focus`), ←↑/→↓ 헤더 이동, Enter 히스토리 팝업, Esc 해제. 포커스
@@ -569,11 +574,18 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   히스토리 팝업, Esc 해제. 포커스 헤더는 `_draw_claude_headers` 가 accent 강조색으로 그린다.
   `_exit_esc` 가 포커스 해제. 회귀 테스트 `test_esc_header_focus_opens_history`. 클라이언트
   전용(attach 재실행).
-- **[부분해결] Claude 헤더 첫 행 닫기 버튼 제거 → 옵션·명령 제어** — **CL 56405 에서
-  [x] 제거 + 전역 옵션/명령 구현**: 헤더 [x]·_claude_hidden(프롬프트 단위 숨김) 제거,
-  App.claude_header_on(기본 on)·명령 `claude-header on|off|toggle` 로 헤더 표시 제어.
-  **남은 부분**: ② 프롬프트 히스토리 팝업(#7) 안의 "이 헤더 숨기기" 토글, ③ opts.json
-  영속(현재 클라 세션 한정) — #7 구현 시 함께.
+- ~~**[부분해결] Claude 헤더 첫 행 닫기 버튼 제거 → 옵션·명령 제어**~~ → **CL 56405
+  ([x] 제거+전역 옵션/명령) + CL 56460(② 팝업 숨김 토글 + ③ opts.json 영속)에서 해결.**
+  ② **히스토리 팝업서 '이 헤더 숨기기' 토글**: `InfoScreen` 에 `hide_key`/`hide_cb` 추가,
+  `open_prompt_history` 가 `[h]` 키로 `toggle_header_hidden(pid)` 호출 + 힌트 줄 표시.
+  패널별 `App._claude_hidden_panes` 집합으로 그 패널 헤더만 숨김(전역 claude-header off
+  와 별개), `_draw_claude_headers` 가 스킵. 숨겨도 `prompt-history` 명령/ESC `h` 로 팝업을
+  열어 되돌릴 수 있다. ③ **claude-header 전역 옵션 opts.json 영속**: 서버가 `claude_header`
+  를 `<sock>.opts.json` 에 저장(`set_claude_header`+`_save_opts`)·status 로 전달, 클라가
+  `claude-header` 명령 시 `set_claude_header` 를 서버로 보내 영속(낙관적 즉시 반영, status
+  로 권위값 회신). 재시작 후 유지. 회귀 테스트 `test_claude_header_opt_persists`(서버)·
+  `test_header_hide_toggle_from_history`·`test_claude_header_status_applies`(클라).
+  **서버+클라 → kill-server 재기동.**
 - **[요청·미구현] 커맨드 팔레트에서 옵션 설정 후 프롬프트 없이 바로 실행** — 현재
   명령 실행은 tmux 식: 명령 프롬프트(`:`)에서 자동완성하거나 `?`/`help` 목록
   (`CommandListScreen`)에서 명령을 고르면 **프롬프트 입력 줄에 채워주고**

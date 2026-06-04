@@ -573,7 +573,7 @@ async def test_capture_output():
         # 끄면 파일 닫힘 + opts.json 영속(capture=False)
         assert srv.set_capture(False) is False
         assert pane.id not in srv._capfiles, "끄면 핸들 닫힘"
-        assert json.load(open(srv.opts_path)) == {"capture": False}
+        assert json.load(open(srv.opts_path))["capture"] is False
         # 꺼진 동안 _on_pane_readable 경로는 기록하지 않음
         before = os.path.getsize(path)
         if srv.capture:
@@ -585,13 +585,32 @@ async def test_capture_output():
 
         # 토글로 다시 ON → opts 갱신, 재기록 가능(lazy 재오픈)
         assert srv.set_capture(None) is True
-        assert json.load(open(srv.opts_path)) == {"capture": True}
+        assert json.load(open(srv.opts_path))["capture"] is True
         srv._capture_write(pane, b"again")
         with open(path, "rb") as f:
             assert f.read().endswith(b"again"), "재개 후 append"
     finally:
         srv._close_all_capfiles()
         shutil.rmtree(srv.capture_dir, ignore_errors=True)
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
+async def test_claude_header_opt_persists():
+    # #6 ③: claude-header 전역 표시 상태가 opts.json 에 영속되고 재시작 후 유지.
+    srv, task, sock = await server_only()
+    try:
+        assert srv.claude_header is True, "기본 표시"
+        assert srv.set_claude_header(False) is False
+        assert json.load(open(srv.opts_path))["claude_header"] is False
+        # 같은 sock 로 새 Server → OFF 를 읽음
+        assert pytmux.Server(sock).claude_header is False, "재시작 후 OFF 유지"
+        assert srv.set_claude_header(None) is True   # 토글 → ON
+        assert json.load(open(srv.opts_path))["claude_header"] is True
+    finally:
         try:
             os.unlink(srv.opts_path)
         except OSError:

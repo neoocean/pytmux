@@ -1202,3 +1202,41 @@ async def test_alt_scroll_toggle():
         assert app.disable_alt_scroll is True
         app._term_write("\x1b[?1007l")          # 직접 호출도 예외 없음
     await _with_app(body)
+
+
+async def test_header_hide_toggle_from_history():
+    # #6 ②: 히스토리 팝업에서 h 로 그 패널 헤더를 숨기고/다시 보이게 토글.
+    async def body(app, pilot, srv):
+        active = app.layout["active"]
+        app._update_claude([{"id": active, "claude": "idle", "prompt": "latest",
+                             "history": ["latest"]}])
+        app._composite()
+        ap = next(p for p in app.layout["panes"] if p["id"] == active)
+        row = "".join((c[0] or " ") for c in app.view._cells[ap["y"]])
+        assert "latest" in row, "처음엔 헤더 표시"
+        # 팝업 열고 h → 숨김
+        app.open_prompt_history(active)
+        await pilot.pause(0.1)
+        await pilot.press("h")
+        await pilot.pause(0.1)
+        assert active in app._claude_hidden_panes
+        app._composite()
+        row2 = "".join((c[0] or " ") for c in app.view._cells[ap["y"]])
+        assert "latest" not in row2, "헤더 숨김"
+        # 다시 팝업 h → 표시 복원
+        app.open_prompt_history(active)
+        await pilot.pause(0.1)
+        await pilot.press("h")
+        await pilot.pause(0.1)
+        assert active not in app._claude_hidden_panes
+    await _with_app(body)
+
+
+async def test_claude_header_status_applies():
+    # #6 ③: 서버 status 의 claude_header 권위값이 claude_header_on 에 반영된다.
+    async def body(app, pilot, srv):
+        app._dispatch({"t": "status", "windows": [], "claude_header": False})
+        assert app.claude_header_on is False
+        app._dispatch({"t": "status", "windows": [], "claude_header": True})
+        assert app.claude_header_on is True
+    await _with_app(body)
