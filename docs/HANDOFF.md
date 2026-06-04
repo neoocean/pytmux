@@ -201,6 +201,12 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 9. 최근 변경(CL 56279~56464 + git, 신→구)
 
+- 56476 **단일 패널 테두리 on/off 옵션화**(§10 마무리 묶음 #9a) — 서버 `single_border`
+  옵션(기본 ON, opts.json 영속). `_layout_msg` 가 `len(panes) >= 2 or single_border`
+  일 때만 box. 단일 패널 OFF 면 화면 전체 사용, 다중 패널은 항상 테두리. 명령
+  `single-border|pane-border [on|off|toggle]`, status `single_border` 클라 반영.
+  회귀 테스트 `test_single_pane_border_toggle_and_persist`. 서버+클라 → kill-server 재기동.
+
 - 56469 **탭 드래그 재정렬 시각 피드백**(§10 마무리 묶음 #8) — `TabBar._drag_over` +
   `on_mouse_move` 로 드래그 중 드롭 대상 탭을 추적, `render_line` 이 소스 탭은
   dim, 드롭 대상은 warning 배경+밑줄로 강조(놓으면 그 자리로 이동). 회귀 테스트
@@ -801,7 +807,15 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   로 흐리게, 드롭 대상은 warning 배경+bold+underline 으로 강조(놓으면 그 자리로 이동).
   같은 탭 위면 대상 해제(소스만 흐림). `on_mouse_up` 이 `_drag`/`_drag_over` 초기화 후
   재합성. 회귀 테스트 `test_tab_drag_reorder_visual_feedback`. 클라이언트 전용(attach 재실행).
-- 패널 **드래그 swap**, 단일 패널 테두리 on/off 옵션화.
+- 패널 **드래그 swap**(미구현 — 9b 대상).
+- ~~단일 패널 테두리 on/off 옵션화.~~ → **CL 56476 에서 해결.** 서버에 `single_border`
+  옵션(기본 ON=항상 테두리, opts.json 영속) 추가. `_layout_msg` 의 `bordered` 를
+  `len(panes) >= 2 or self.single_border` 로 바꿔, **패널이 둘 이상이면 옵션과 무관하게
+  항상 테두리**(구분 필요), **하나뿐이면 옵션 OFF 시 box 없이 화면 전체를 내용으로** 쓴다.
+  `set_single_border`(토글/명시) + 액션 `set_single_border` + 텍스트 명령
+  `single-border|pane-border [on|off|toggle]`(레이아웃 재브로드캐스트). status 에
+  `single_border` 실어 클라가 `single_border_on` 으로 권위값 반영(낙관적 즉시 토글).
+  회귀 테스트 `test_single_pane_border_toggle_and_persist`. **서버+클라 → kill-server 재기동.**
 - 다중 줄 상태표시줄, unbind-key, 라이브 PTY display-popup.
 - `unbind`/추가 옵션 등 FEATURES 의 "미구현" 표기 항목.
 - **[조사완료·구현미착수] 네이티브 Windows 포팅** — `fcntl`/`termios`/`pty`/`os.fork`/

@@ -599,6 +599,41 @@ async def test_capture_output():
         await teardown(srv, task, sock)
 
 
+async def test_single_pane_border_toggle_and_persist():
+    # #9: 단일 패널 테두리 표시를 옵션화. 기본 ON(단일 패널도 box), off 면 단일
+    # 패널은 box 없이 화면 전체를 내용으로 쓴다. 패널이 둘 이상이면 옵션과
+    # 무관하게 항상 테두리. opts.json 영속.
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        assert srv.single_border is True, "기본 ON"
+        # 단일 패널 + 기본 ON → box 있음
+        lay = srv._layout_msg(sess)
+        assert len(lay["panes"]) == 1 and lay["panes"][0]["box"], "단일 패널도 테두리"
+        # OFF → 단일 패널 box 없음, 내용이 화면 전체
+        assert srv.set_single_border(False) is False
+        lay = srv._layout_msg(sess)
+        assert lay["panes"][0]["box"] is None, "off 면 단일 패널 테두리 없음"
+        assert lay["panes"][0]["w"] == 80 and lay["panes"][0]["h"] == 24, \
+            "테두리 없으면 내용이 화면 전체"
+        # 패널이 둘 이상이면 off 여도 테두리 유지(패널 구분 필요)
+        srv.split_pane(sess, "lr")
+        lay = srv._layout_msg(sess)
+        assert len(lay["panes"]) == 2
+        assert all(p["box"] for p in lay["panes"]), "다중 패널은 항상 테두리"
+        # opts.json 영속 + 재시작 후 OFF 유지, status 에도 반영
+        assert json.load(open(srv.opts_path))["single_border"] is False
+        assert pytmux.Server(sock).single_border is False, "재시작 후 OFF 유지"
+        assert srv._status_msg(sess)["single_border"] is False, "status 반영"
+        assert srv.set_single_border(None) is True   # 토글 → ON
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
 async def test_claude_header_opt_persists():
     # #6 ③: claude-header 전역 표시 상태가 opts.json 에 영속되고 재시작 후 유지.
     srv, task, sock = await server_only()

@@ -251,6 +251,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         ("clock-mode", "현재 패널을 큰 시계로 덮기(토글, 우상단 [x]/명령으로 닫기)", "설정/기타"),
         ("calendar-mode", "현재 패널을 이번 달 달력으로 덮기(토글, 상태줄 날짜 클릭/우상단 [x])", "설정/기타"),
         ("claude-header", "Claude 프롬프트 헤더 표시 on/off (claude-header on|off|toggle)", "설정/기타"),
+        ("single-border", "패널이 하나뿐일 때 테두리 표시 on/off (single-border on|off|toggle)", "설정/기타"),
         ("prompt-history", "Claude 프롬프트 히스토리 팝업(헤더 클릭으로도 열림)", "설정/기타"),
         ("token-usage", "Claude 실행 중 탭/패널 + 토큰 사용량 트리(상태줄 사용량 클릭)", "설정/기타"),
         ("run-shell", "셸 명령 실행", "설정/기타"),
@@ -1623,6 +1624,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # Claude Code: 패널별 상태/마지막 프롬프트
             self.pane_claude = {}      # id -> {"claude", "prompt", "history"}
             self.claude_header_on = True  # 프롬프트 헤더 표시(claude-header on|off)
+            self.single_border_on = True  # 단일 패널 테두리 표시(single-border on|off)
             self._claude_header_zones = {}  # id -> (x0,x1,y) 헤더 클릭존(히스토리 팝업)
             self._hdr_focus = None      # ESC 모드 Claude 헤더 포커스 대상 pane id(#5)
             self._claude_hidden_panes = set()  # 헤더를 숨긴 패널 id(#6 ② 팝업서 토글)
@@ -1838,6 +1840,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # claude-header 전역 표시 상태를 서버 opts.json 권위값으로 반영(#6 ③)
                 if "claude_header" in msg:
                     self.claude_header_on = bool(msg["claude_header"])
+                # single-border 전역 상태도 서버 권위값으로 반영(opts.json 영속)
+                if "single_border" in msg:
+                    self.single_border_on = bool(msg["single_border"])
                 # 컨텍스트 메뉴가 열려 있으면 토글 라벨(on/off)을 실제 상태로 갱신
                 ms = getattr(self, "_menu_screen", None)
                 if ms is not None:
@@ -2973,6 +2978,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 arg = args[0].lower() if args else "toggle"
                 self.set_claude_header(arg == "on" if arg in ("on", "off")
                                        else not self.claude_header_on)
+            elif c in ("single-border", "pane-border"):
+                # single-border [on|off|toggle] — 단일 패널 테두리 표시(기본 toggle).
+                # 서버가 opts.json 에 영속하고 새 레이아웃을 다시 보낸다.
+                arg = args[0].lower() if args else "toggle"
+                val = (arg == "on") if arg in ("on", "off") \
+                    else (not self.single_border_on)
+                self.single_border_on = val           # 낙관적 즉시 반영
+                self.send_cmd("set_single_border", value=bool(val))
             elif c in ("prompt-history", "prompts"):
                 self.open_prompt_history(self.layout.get("active"))
             elif c in ("token-usage", "tokens"):

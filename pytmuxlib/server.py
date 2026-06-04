@@ -34,6 +34,9 @@ class Server:
         # Claude 프롬프트 헤더 전역 표시(#6 ③ opts.json 영속). 클라가 status 로 받아
         # claude_header_on 에 반영하고, `claude-header on|off` 가 서버를 거쳐 갱신·영속.
         self.claude_header = bool(_opts.get("claude_header", True))
+        # 패널이 하나뿐일 때 테두리(아웃라인)를 그릴지(기본 ON=항상 테두리).
+        # off 면 단일 패널은 테두리 없이 화면 전체를 내용으로 쓴다. opts.json 영속.
+        self.single_border = bool(_opts.get("single_border", True))
 
     # ---- PTY/패널 생성 ----
     def _fork_shell(self, cols: int, rows: int, cwd: str | None = None):
@@ -823,7 +826,8 @@ class Server:
         try:
             with open(self.opts_path, "w", encoding="utf-8") as f:
                 json.dump({"capture": self.capture,
-                           "claude_header": self.claude_header}, f)
+                           "claude_header": self.claude_header,
+                           "single_border": self.single_border}, f)
         except OSError:
             pass
 
@@ -903,6 +907,13 @@ class Server:
             else bool(value)
         self._save_opts()
         return self.claude_header
+
+    def set_single_border(self, value=None):
+        """단일 패널 테두리 표시 토글. value 미지정 시 반전. opts.json 영속."""
+        self.single_border = (not self.single_border) if value is None \
+            else bool(value)
+        self._save_opts()
+        return self.single_border
 
     def list_tab_layouts(self) -> list[str]:
         return sorted(self._load_slots().keys())
@@ -1008,6 +1019,10 @@ class Server:
         elif c == "claude-header":
             val = True if "on" in args else (False if "off" in args else None)
             return "on" if self.set_claude_header(val) else "off"
+        elif c in ("single-border", "pane-border"):
+            val = True if "on" in args else (False if "off" in args else None)
+            self.set_single_border(val)
+            # 레이아웃(박스 유무)이 바뀌므로 아래 broadcast 로 떨어지게 한다.
         else:
             return f"unknown: {c}"
         for cl in list(self.clients):
@@ -1187,8 +1202,9 @@ class Server:
         # 모든 패널 PTY 크기를 레이아웃에 맞춰 갱신
         panes, divs = win.compute_layout(0, 0, cols, rows)
         # 패널이 둘 이상이면 각 패널을 테두리 박스로 감싼다(활성=파랑, 비활성=회색).
-        # 패널이 하나뿐이라도 활성 아웃라인을 그린다(항상 테두리).
-        bordered = len(panes) >= 1
+        # 패널이 하나뿐이면 single_border 옵션이 켜져 있을 때만 아웃라인을 그린다
+        # (off 면 단일 패널이 화면 전체를 내용으로 사용 — 사용자 요청).
+        bordered = len(panes) >= 2 or self.single_border
         pane_msgs, titlebars = [], []
         for p in panes:
             x, y, w, h = p.rect
@@ -1352,6 +1368,7 @@ class Server:
             "capture_path": cap_path,
             "capture_size": cap_size,
             "claude_header": self.claude_header,
+            "single_border": self.single_border,
         }
 
     async def _send_full(self, client: ClientConn):
@@ -1564,6 +1581,8 @@ class Server:
             self.set_capture(msg.get("value"))
         elif action == "set_claude_header":
             self.set_claude_header(msg.get("value"))
+        elif action == "set_single_border":
+            self.set_single_border(msg.get("value"))
         elif action == "kill_window":
             self.kill_window(sess)
             if sess.name not in self.sessions:
