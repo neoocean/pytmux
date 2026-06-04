@@ -660,7 +660,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             with Vertical(id="infobox"):
                 with Horizontal(id="infohead"):
                     yield Label(self._title, id="infotitle", markup=False)
-                    yield Label("[x]", id="infoclose")     # 항상 보이는 닫기 버튼
+                    # markup=False: "[x]" 가 Textual 마크업 태그로 해석돼 사라지지
+                    # 않게(그러면 배경색만 남고 글자가 안 보인다).
+                    yield Label("[x]", id="infoclose", markup=False)  # 닫기 버튼
                 yield ListView(*[ListItem(Label(ln, markup=False))
                                  for ln in self._lines] or
                                [ListItem(Label("(없음)"))], id="info")
@@ -743,7 +745,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             with Vertical(id="tklogbox"):
                 with Horizontal(id="tkloghead"):
                     yield Label("토큰 사용량 로그", id="tklogtitle")
-                    yield Label("[x]", id="tklogclose")    # 항상 보이는 닫기 버튼
+                    # markup=False: "[x]" 가 마크업 태그로 사라지지 않게(배경색만
+                    # 남고 X 가 안 보이던 버그).
+                    yield Label("[x]", id="tklogclose", markup=False)  # 닫기 버튼
                 yield ListView(id="tklog")
 
         async def on_mount(self):

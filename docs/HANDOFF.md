@@ -211,6 +211,14 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56574 **팝업 닫기 [x] 버튼 글자 소실 수정(markup=False)** — Claude 토큰 사용량
+  팝업(`TokenLogScreen`)·정보 팝업(`InfoScreen`) 우상단 닫기 버튼이 **배경색(빨강)만
+  보이고 `[x]` 글자가 안 보이던** 버그. 원인: `Label("[x]")` 의 Textual 마크업이
+  기본 활성이라 `[x]` 를 **스타일 태그로 해석**해 빈 문자열로 렌더(`render().plain==''`)
+  — 닫는 `[/]` 가 없어 글자가 통째로 사라졌다. `#tklogclose`·`#infoclose` Label 에
+  **`markup=False`** 를 주어 `"[x]"` 를 리터럴로 표시. 회귀: 두 팝업 테스트에
+  `close.render().plain` 에 `[x]` 포함 단언 추가(총 167). 클라이언트 전용(attach 재실행).
+  파일: `pytmuxlib/client.py`, `tests/test_client.py`, `docs/HANDOFF.md`.
 - 56563 **원격 Claude 헤더 예약 디바운스 — Windows→ssh 첫 실행 한 줄 스크롤 떨림
   수정** — Windows 에서 pytmux 실행 후 ssh 로 원격 macOS Claude Code 를 처음 띄우면
   화면이 위아래로 **한 줄씩 스크롤**되는 떨림이 났다(로컬 정상). 원인은 헤더 행

@@ -319,6 +319,11 @@ class _WinPty(PtyProcess):
         self._on_eof: Optional[OnEof] = None
         self._reader: Optional[threading.Thread] = None
         self._stop = threading.Event()
+        # 백프레셔용 게이트: set=읽기 허용(기본), clear=리더 스레드를 다음 read 전에
+        # 멈춤(pause_reader). POSIX 의 remove_reader 와 같은 역할 — 대량 출력 드레인
+        # 중(server._feed_drain) 더 읽지 않아 ConPTY/커널 버퍼가 producer 를 막게 한다.
+        self._resume_evt = threading.Event()
+        self._resume_evt.set()
         self._eof_fired = False
 
         spec = argv if len(argv) > 1 else argv[0]
@@ -337,6 +342,14 @@ class _WinPty(PtyProcess):
     def _read_loop(self) -> None:
         proc = self._proc
         while not self._stop.is_set():
+            # 백프레셔: pause_reader 로 게이트가 닫히면 드레인이 끝나(resume_reader)
+            # 게이트가 다시 열릴 때까지 read 를 멈춘다. stop_reader/close 도 게이트를
+            # 열어(+_stop) 멈춘 리더를 깨워 빠져나가게 한다. 이미 진행 중인 read 한
+            # 건(≤DEFAULT_READ)은 마저 전달될 수 있다(POSIX 와 동일하게 무해·유한).
+            if not self._resume_evt.is_set():
+                self._resume_evt.wait()
+                if self._stop.is_set():
+                    break
             try:
                 s = proc.read(DEFAULT_READ)
             except EOFError:
@@ -368,7 +381,18 @@ class _WinPty(PtyProcess):
             cb()
 
     def stop_reader(self) -> None:
-        self._stop.set()  # daemon 스레드는 다음 read/EOF 에서 빠져나감
+        self._stop.set()       # daemon 스레드는 다음 read/EOF 에서 빠져나감
+        self._resume_evt.set()  # 백프레셔로 멈춰 있던 리더를 깨워 _stop 을 보게 한다
+
+    def pause_reader(self) -> None:
+        # 리더 스레드를 다음 read 전에 멈춰 ConPTY 버퍼가 백프레셔하게 한다(메모리
+        # 폭증·이벤트 루프 플러딩 방지). POSIX _UnixPty.pause_reader(remove_reader)와
+        # 동일 의도. 과거 Windows 는 base no-op 이라 드레인 중에도 리더가 계속 읽어
+        # _feedbuf 가 무한정 커지고 loop 가 _deliver 콜백으로 포화됐다(§10 ②).
+        self._resume_evt.clear()
+
+    def resume_reader(self) -> None:
+        self._resume_evt.set()
 
     def write(self, data: bytes) -> None:
         # 고수준 API 는 str 을 받는다. 바이트 → utf-8 디코드(§6 NOTE 의 멀티바이트 주의).
@@ -401,6 +425,7 @@ class _WinPty(PtyProcess):
 
     def close(self) -> None:
         self._stop.set()
+        self._resume_evt.set()  # 멈춘 리더를 깨워 빠져나가게 한다(teardown 교착 방지)
         try:
             self._proc.close()
         except Exception:

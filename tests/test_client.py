@@ -437,6 +437,11 @@ async def test_token_log_screen_aggregates_and_switches():
         joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
         assert "전체 Σ3.5k" in joined, joined
         assert "me@x.org" in joined and "team@y.org" in joined
+        # 닫기 버튼 [x] 가 글자까지 보여야 함(markup=False — 예전엔 마크업으로
+        # 해석돼 배경색만 남고 X 가 사라졌다).
+        close = scr.query_one("#tklogclose", Label)
+        assert "[x]" in close.render().plain, \
+            f"닫기 버튼에 [x] 글자가 보여야 함: {close.render().plain!r}"
         # 계정 필터 순환([a]): 전체 → 첫 계정만
         await pilot.press("a")
         await pilot.pause(0.1)
@@ -1390,6 +1395,8 @@ async def test_info_popup_close_button_and_esc():
         reg = close.region
         assert reg.width > 0 and reg.right <= app.size.width, \
             f"닫기 [x] 버튼이 화면 안에 보여야 함 {reg} (폭 {app.size.width})"
+        assert "[x]" in close.render().plain, \
+            f"닫기 버튼에 [x] 글자가 보여야 함(markup=False): {close.render().plain!r}"
         # [x] 클릭으로 닫힘
         await pilot.click("#infoclose")
         await pilot.pause(0.1)

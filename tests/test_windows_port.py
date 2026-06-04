@@ -133,6 +133,34 @@ async def test_fg_command_guarded_on_windows():
         assert Server._fg_command(None, -1) is None
 
 
+async def test_winpty_backpressure_gate():
+    """_WinPty.pause_reader/resume_reader 가 리더 게이트(Event)를 제대로 여닫고,
+    stop/close 가 멈춘 리더를 깨우는지(§10 ② Windows 백프레셔).
+
+    실제 winpty 없이 __new__ 로 인스턴스를 만들어 게이트 상태만 검증한다 — 과거
+    Windows 는 pause/resume 가 base no-op 이라 드레인 중에도 리더가 무한정 읽어
+    _feedbuf 가 폭증하고 loop 가 _deliver 로 포화됐다.
+    """
+    import threading
+    from pytmuxlib.pty_backend import _WinPty
+
+    wp = _WinPty.__new__(_WinPty)        # __init__(winpty.spawn) 우회
+    wp._stop = threading.Event()
+    wp._resume_evt = threading.Event()
+    wp._resume_evt.set()
+
+    assert wp._resume_evt.is_set(), "기본은 읽기 허용"
+    wp.pause_reader()
+    assert not wp._resume_evt.is_set(), "pause → 게이트 닫힘(리더 멈춤)"
+    wp.resume_reader()
+    assert wp._resume_evt.is_set(), "resume → 게이트 열림"
+    # stop_reader 는 _stop 을 세우고 게이트도 열어(멈춘 리더가 _stop 을 보게) 깨운다.
+    wp.pause_reader()
+    wp.stop_reader()
+    assert wp._stop.is_set() and wp._resume_evt.is_set(), \
+        "stop 은 멈춘 리더를 깨워 빠져나가게 해야(교착 방지)"
+
+
 async def test_render_only_resize_without_fcntl():
     """렌더 전용 패널(pty=None) resize 는 fcntl 없는 Windows 에서도 안 깨진다.
 
