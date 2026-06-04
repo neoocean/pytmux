@@ -1120,6 +1120,21 @@ async def test_status_claude_usage():
     await _with_app(body)
 
 
+async def test_status_session_tokens():
+    # 세션 누적 토큰(#3)을 상태줄에 Σ 표기로 보여준다.
+    async def body(app, pilot, srv):
+        app.status.claude_usage = "ctx 42%"
+        app.status.claude_tokens = 45200
+        txt = "".join(s.text for s in app.status.render_line(0))
+        assert "Σ45.2k" in txt, repr(txt)
+        # 사용량 문구 없이 누계만 있어도 표시
+        app.status.claude_usage = None
+        app.status.claude_tokens = 1_200_000
+        txt2 = "".join(s.text for s in app.status.render_line(0))
+        assert "Σ1.2M" in txt2, repr(txt2)
+    await _with_app(body)
+
+
 async def test_status_format():
     async def body(app, pilot, srv):
         strip = app.status.render_line(0)

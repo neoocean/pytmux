@@ -13,6 +13,7 @@ import signal
 import subprocess
 import time
 
+from . import tokens
 from .model import ClientConn, Pane, Session, Split, Tab, Window
 from .claude import claude_state, claude_usage, parse_reset_delay
 from .protocol import (FLUSH_HZ, MIN_H, MIN_W, read_msg, set_winsize, write_msg)
@@ -1299,8 +1300,7 @@ class Server:
                 new_cl = claude_state(txt)
                 # 사용량 표시는 Claude 세션이 살아 있는 동안 유지한다(#5): 화면에서
                 # 토큰 문구가 잠시 사라져도(스크롤 등) 마지막 값을 보존하고, 세션이
-                # 끝나면(claude None) 비운다. (화면의 "↑/↓ N tokens" 는 스트리밍
-                # 델타라 신뢰할 만한 누적 합산은 별도 신호 필요 — 후속 과제.)
+                # 끝나면(claude None) 비운다.
                 if new_cl:
                     u = claude_usage(txt)
                     new_use = u if u is not None else p._claude_usage
@@ -1309,6 +1309,22 @@ class Server:
                 if new_cl != p._claude or new_use != p._claude_usage:
                     p._claude = new_cl
                     p._claude_usage = new_use
+                    changed = True
+                # 토큰 누계(#3): 새 Claude 세션 시작(None→Claude) 시 리셋, 매 프레임
+                # 현재 응답 running 토큰을 step 으로 접어 응답별 peak 를 누계에 확정.
+                # (확정 시점 committed>0 은 #7 의 영속 로깅 이벤트로도 쓰인다.)
+                if new_cl and not old_cl:
+                    tokens.reset(p._tok_state)
+                if new_cl:
+                    running = tokens.parse_running_tokens(txt)
+                    tokens.step(p._tok_state, running, new_cl == "busy")
+                    if p._tok_state["total"] != p._session_tokens:
+                        p._session_tokens = p._tok_state["total"]
+                        changed = True
+                elif p._session_tokens:
+                    p._session_tokens = 0
+                    p._tok_state["peak"] = 0
+                    p._tok_state["total"] = 0
                     changed = True
                 # 비활성 탭에서 처리(busy)→대기(idle) 전이 = 작업 완료. limit 은
                 # "대기"가 아니므로 대상 아님(busy→idle 만).
@@ -1351,6 +1367,10 @@ class Server:
             "claude_usage": (win.active_pane._claude_usage
                              if win and win.active_pane
                              and win.active_pane._claude else None),
+            # 활성 패널 Claude 세션 누적 토큰(#3, 응답별 peak 합산)
+            "claude_tokens": (win.active_pane._session_tokens
+                              if win and win.active_pane
+                              and win.active_pane._claude else 0),
             "zoomed": bool(win.zoomed) if win else False,
             "sync": bool(win.sync) if win else False,
             "pane_title": win.active_pane.title if win and win.active_pane else "",

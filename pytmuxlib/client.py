@@ -21,6 +21,16 @@ def _char_cells(ch: str) -> int:
     return 2 if wcwidth(ch) == 2 else 1
 
 
+def _fmt_tokens(total: int) -> str:
+    """누적 토큰 수를 짧게 표기. 1234567→"1.2M", 45200→"45.2k", 800→"800".
+    (서버측 tokens.fmt 과 동일 규칙 — 클라이언트 단독 표시용 경량 복제.)"""
+    if total >= 1_000_000:
+        return f"{total / 1_000_000:.1f}M".replace(".0M", "M")
+    if total >= 1_000:
+        return f"{total / 1_000:.1f}k".replace(".0k", "k")
+    return str(total)
+
+
 # 상태줄 오른쪽 strftime 코드 분류 — 시각(시계) vs 날짜(달력) 클릭 존 분리용.
 _TIME_STRFTIME = set("HIMSpRTrXkl")
 _DATE_STRFTIME = set("YymdbBaAjeDFuwUWxgGCV")
@@ -1305,6 +1315,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.message = None    # display-message 임시 메시지
             self.hide_tabs = False  # 상단 탭바가 보이면 하단 탭 목록 생략
             self.claude_usage = None  # 활성 Claude 패널의 토큰/컨텍스트(best-effort)
+            self.claude_tokens = 0    # 활성 Claude 패널 세션 누적 토큰(#3)
             self.bg = bg
             self.fg = fg
             self.left_fmt = left
@@ -1408,6 +1419,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.autoresume = msg.get("autoresume", False)
             self.capture = msg.get("capture", True)
             self.claude_usage = msg.get("claude_usage")
+            self.claude_tokens = msg.get("claude_tokens", 0)
             self.capture_path = msg.get("capture_path")
             self.capture_size = msg.get("capture_size", 0)
             self.refresh()
@@ -1445,8 +1457,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 segs.append(Segment("REC ", Style(color="white", bgcolor=tc("error"),
                                                    bold=True)))
             self._usage_zone = None
-            if self.claude_usage:   # 활성 Claude 패널 토큰/컨텍스트(best-effort)
-                utext = f" {self.claude_usage} "
+            # 활성 Claude 패널: 컨텍스트 사용량(best-effort) + 세션 누적 토큰(#3, Σ)
+            uparts = []
+            if self.claude_usage:
+                uparts.append(self.claude_usage)
+            if self.claude_tokens:
+                uparts.append("Σ" + _fmt_tokens(self.claude_tokens))
+            if uparts:
+                utext = " " + " · ".join(uparts) + " "
                 ux0 = sum(sum(_char_cells(c) for c in s.text) for s in segs)
                 self._usage_zone = (ux0, ux0 + sum(_char_cells(c) for c in utext))
                 segs.append(Segment(utext,

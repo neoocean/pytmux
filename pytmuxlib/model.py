@@ -187,6 +187,10 @@ class Pane:
         # Claude Code 감지: 상태(idle/busy/limit/None)와 마지막 입력 프롬프트
         self._claude = None
         self._claude_usage = None  # "ctx 42%" / "12k tok" 등(best-effort)
+        # 토큰 누적(tokens.py): 현재 응답 peak + 세션 누계. _session_tokens 는
+        # 표시·전송용 캐시(= _tok_state["total"]). 새 Claude 세션마다 리셋.
+        self._tok_state = {"peak": 0, "total": 0}
+        self._session_tokens = 0
         self._inbuf = ""         # 현재 입력 줄 누적(프롬프트 추적용)
         self.last_prompt = ""    # 마지막으로 제출한 프롬프트(한 줄)
         self.prompt_history = []  # 시간순 제출 프롬프트 목록(히스토리 팝업용)
@@ -218,6 +222,8 @@ class Pane:
         self.dirty = True
         self._scanbuf = ""
         self._resume_pending = False
+        self._tok_state = {"peak": 0, "total": 0}
+        self._session_tokens = 0
         self.search_query = ""
         self._match_abs = None
         self.bracketed = False

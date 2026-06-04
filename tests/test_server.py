@@ -129,6 +129,36 @@ async def test_claude_usage_persists_while_session_alive():
         await teardown(srv, task, sock)
 
 
+async def test_session_tokens_accumulate():
+    # 토큰 누계(#3): busy footer 의 running 토큰을 응답별 peak 로 합산, 세션 종료 시 리셋.
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        # 응답1: 0.5k → 1.9k 스트리밍(busy) 후 idle
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (5s · ↓ 0.5k tokens)\r\n".encode())
+        srv._scan_claude(sess, win)
+        assert p._claude == "busy", p._claude
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (9s · ↓ 1.9k tokens)\r\n".encode())
+        srv._scan_claude(sess, win)
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._session_tokens == 1900, p._session_tokens
+        # 응답2: 2.5k 까지 → idle (누계 4400)
+        p.feed("\x1b[2J\x1b[H✽ Baking… (4s · ↓ 2.5k tokens)\r\n".encode())
+        srv._scan_claude(sess, win)
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._session_tokens == 4400, p._session_tokens
+        # Claude 세션 종료 → 누계 리셋
+        p.feed(b"\x1b[2J\x1b[Huser@host ~ % ls\r\n")
+        srv._scan_claude(sess, win)
+        assert p._session_tokens == 0, "세션 끝 → 누계 리셋"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_break_join_pane():
     srv, task, sock = await server_only()
     try:

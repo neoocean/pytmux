@@ -197,7 +197,14 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56429 + git, 신→구)
+## 9. 최근 변경(CL 56279~56437 + git, 신→구)
+
+- 56437 **상태줄 토큰 사용량 누적 합산**(§10) — 신규 `pytmuxlib/tokens.py`(running 토큰
+  파서+응답별 peak 합산 상태기계). 정의: busy footer 의 "↑/↓ N tokens" 는 현재 응답
+  running 수(응답 사이 리셋)라 세션 누계 = 각 응답 peak 의 합. `server._scan_claude` 가
+  매 프레임 `step` 으로 접어 `Pane._session_tokens` 에 확정(세션 시작 reset), status
+  `claude_tokens` → 상태줄 `Σ45.2k` 표기. 회귀 테스트 7종(총 109). **서버+클라 →
+  kill-server 재기동.**
 
 - 56429 **Claude 스티키 헤더 배경 진하게**(사용자 요청) — Claude Code 패널 맨 윗줄
   마지막 프롬프트 스티키 헤더(`_draw_claude_headers`)의 배경을 `primary` → 한 단계
@@ -515,11 +522,17 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   `_capture_info` 가 활성 패널 캡처 파일 경로·크기를 status(capture_path/size)로,
   StatusBar `_rec_zone` 클릭 시 InfoScreen 에 경로·크기·sessions.log 표시. (REC 은 디버깅
   용이라 분리 가능하게 얕게 결합.)
-- **[부분해결] 상태줄 토큰 사용량 세션 동안 유지** — **(2) 표시 유지는 CL 56407 에서
-  해결**: _scan_claude 가 Claude 세션이 살아 있으면 화면에서 토큰 문구가 사라져도
-  마지막 _claude_usage 를 유지하고, 세션 종료 시 비운다. **(1) 누적 합산은 미구현**
-  — 화면의 "↑/↓ N tokens" 가 스트리밍 델타라 정의(델타 누적 vs 누계 파싱)를 먼저
-  정해야 함. 후속.
+- ~~**[부분해결] 상태줄 토큰 사용량 세션 동안 유지**~~ → **(2) 표시 유지는 CL 56407,
+  (1) 누적 합산은 CL 56437 에서 해결.** **정의**: 화면 busy footer 의 "↑/↓ N tokens" 는
+  **현재 응답 한 건의 running 토큰 수**(스트리밍 중 단조 증가, 응답 사이 리셋)다 — 프레임
+  델타도 누계도 아니다. 그래서 **세션 누계 = 각 응답의 최종(peak) 토큰 수의 합**으로 정의
+  했다. 신규 `pytmuxlib/tokens.py`(순수 파서 `parse_running_tokens` + 상태기계 `step`/
+  `new_state`/`reset`/`fmt`)가 누계를 만들고, `server._scan_claude` 가 매 프레임 `step` 으로
+  접어 응답 종료(busy 종료/running 급감)에 peak 를 `Pane._tok_state`/`_session_tokens` 에
+  확정한다(새 Claude 세션마다 reset). status 메시지 `claude_tokens` 로 전달 → 상태줄 사용량
+  세그먼트에 `Σ45.2k` 표기(`_fmt_tokens`). 회귀 테스트 `test_tokens`(4)+`test_session_tokens_
+  accumulate`+`test_status_session_tokens`. **서버+클라 → kill-server 재기동 후 반영.**
+  영속 이력/시간·일·월 집계는 #7(토큰 로깅)에서 같은 데이터 소스로 확장.
 - **[요청·미구현] 대기(큐) 중인 새 프롬프트는 첫 줄 헤더를 아직 바꾸지 말 것** — Claude
   패널 첫 줄의 스티키 헤더는 마지막으로 입력한 프롬프트를 보여준다(서버
   `server.py::_track_prompt`(~1632)가 Enter 즉시 `pane.last_prompt` 확정 → 레이아웃 메시지
