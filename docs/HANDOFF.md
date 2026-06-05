@@ -762,6 +762,59 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ## 10. 가능한 후속 작업 (열린 항목)
 
+### 10-A. 2026-06-05 세션 미착수 큐 (사용자 요청, 순차 구현 예정)
+
+> 같은 세션에서 ESC 더블탭(#36)·ESC+n/p·ESC+없는숫자 깜빡임·SSH attach·driver 윈도우
+> 포팅(**CL 56691**)과 명령프롬프트 한영 오타 복원·정보팝업 ←→ 닫기[x] 내비
+> (**CL 56702**)는 구현·제출 완료. 아래는 이후 들어온 요청으로 **아직 미착수**(기록만).
+> #1·#2 패널 DnD 마우스 설계는 확정됨 → [MEMORY] `pytmux-pane-dnd-mouse-design` 참조.
+
+- **[키 요청, 미구현] ESC+숫자를 pytmux 탭 전환으로(앱 특수문자 차단), Shift+ESC+숫자로
+  특수문자 전송** — 패널 안 앱(Claude 등) 텍스트박스에서 ESC+1/2 는 특수문자(Alt+digit
+  =ESC+digit 시퀀스)로 들어간다. pytmux 안에서는 ESC+숫자가 **pytmux 탭 전환**으로
+  동작해야 하고(앱으로 안 샘), 특수문자를 보내려면 **Shift+ESC+숫자**로. 원인 가설:
+  ESC 직후 숫자가 터미널/Textual 에서 **`alt+<digit>` 로 합성**돼 도착 → `escape` 단독
+  이벤트가 안 와 esc 모드 진입을 못 하고 그대로 패널에 전달됨. 대응: `client.py`
+  `on_key` 에서 **`alt+<digit>`** 를 esc-모드 숫자(=`select_window` index digit-1)처럼
+  처리하고, **`shift+alt+<digit>`**(=Shift+ESC+숫자)는 `\x1b<digit>` 를 패널로 전달.
+  분리 도착(느린 입력) 경로는 기존 esc 모드가 이미 처리. **현재는 기록만 — 미구현.**
+- **[UI 요청, 미구현] 권한모드 선택 팝업을 좌측 정렬 + 'auto mode on' 바로 위에 배치** —
+  `PermModeScreen`(`clientscreens.py`)은 현재 화면 중앙 정렬. Claude footer 의 `auto
+  mode on` 줄 **바로 위쪽 왼쪽**에 뜨도록(이미 `open_perm_mode` 가 `anchor_y` 를 넘김,
+  `client.py:~610`) 가로 정렬을 left 로, 세로 위치를 footer 기준으로. **기록만 — 미구현.**
+- **[UI 요청, 미구현] 권한모드 선택 팝업 — 바깥 클릭으로 닫기** — `PermModeScreen` 에
+  backdrop 클릭(box 바깥) 시 `dismiss(None)` 추가(InfoScreen/InfoTabsScreen 의 inside-box
+  판정 패턴 재사용). **현재는 기록만 — 미구현.**
+- **[성능 요청, 미구현] 팝업 표시 시 배경 디밍이 ~1초 걸려 느림 — 개선** — 팝업이 뜰 때
+  배경 어두워짐이 ~1s 지연. 원인 후보: 팝업 open 시 배경 재합성(`_composite`)+emoji→`·`
+  치환(`clientutil`)이 무겁거나, dim 적용이 다음 프레임/타이머에 묶여 지연. 디밍 경로를
+  프로파일해 즉시(같은 프레임) 적용되게. **연관**: §10 기존 "배경 디밍" 항목들.
+  **현재는 기록만 — 미구현.**
+- **[검증+문서 요청, 미착수] pytmux 패널 안 Claude CLI 에서 shift+home/end/shift+방향키
+  텍스트 선택·삭제·수정 가능 여부** — shift+Home/End/arrows 포워딩은 이전 폴리시 패스에서
+  반영됨(MEMORY `pytmux-ui-polish-pass-pending`). 실제 Claude CLI 에서 선택/편집이 되는지
+  **검증**하고 결과를 **문서로 만들어 제출**. **현재는 기록만 — 미착수.**
+- **[UI 요청, 미구현] 토큰 사용량 팝업 — 하단 가로선 + 전 세션 토큰 합계 + 하단 닫기
+  버튼** — `InfoTabsScreen` 토큰 탭(내용은 `client.py` `_open_status_tabs` 에서 구성).
+  맨 아래에 **가로 구분선**, 그 아래 **모든 세션 토큰 합계** 한 줄, 그리고 팝업 **하단에
+  닫기 버튼**. **현재는 기록만 — 미구현.**
+- **[UI 요청, 미구현/의도확인] 리스트 팝업 — 긴 영문 URL 하드 줄바꿈(번호 정렬 보존)** —
+  프롬프트 히스토리 등에서 항목 12 같은 긴 URL 이 soft-wrap 돼 다음 줄로 흘러 번호 정렬이
+  깨진다. **하드 줄바꿈**으로 다음 줄로 안 내려가게. **열린 결정**: 글자단위 hard-wrap(다음
+  줄에 들여쓰기 맞춰 이어쓰기) vs 한 줄 truncate(…). 구현 전 의도 확인. **기록만 — 미구현.**
+- **[UI 요청, 미구현] 프롬프트 히스토리 팝업 — 마지막 항목서 ↓ 시 빈칸 건너뛰어 `[h]`
+  메뉴로 + 그 사이 구분선** — `InfoScreen`(프롬프트 히스토리, `[h] 이 헤더 숨기기` footer).
+  마지막 항목(예 30)에서 ↓ 누르면 항목과 `[h]` 사이 **빈 줄**에 멈춤 → 바로 `[h]` 로
+  점프하게, 그리고 그 사이에 **구분선** 그리기. **현재는 기록만 — 미구현.**
+- **[UI 요청, 미구현] 달력 큰 글꼴 — 한 날짜의 두 자리 숫자 사이 간격 좁히기** —
+  `clientwidgets` 달력 오버레이 빅폰트 렌더. 현재 숫자 간 gap=2(MEMORY 폴리시 패스).
+  한 날짜를 이루는 **두 자리 숫자 사이** 간격만 더 좁게. **현재는 기록만 — 미구현.**
+- **[기능 요청, 미구현] `open-clock`/`open-calendar`·`close-clock`/`close-calendar`
+  명령** — `open-clock`/`open-calendar` = **현재 하이라이트 패널**에 시계/달력 표시,
+  `close-clock`/`close-calendar` = 보이는 패널 중 그것이 떠 있는 패널에서 닫기. 오버레이는
+  마우스 클릭 또는 명령으로 닫기. `client.py` `_run_command` 디스패치 + `toggle_clock`/
+  `toggle_calendar`(`client.py:~691-720`) 활용. **현재는 기록만 — 미구현.**
+
 - **[UI 요청, 미구현] 하단 상태줄 정보 팝업 통합 — REC·Claude 토큰·서버이름 클릭을
   탭으로 구분된 단일 팝업으로** — 요청: 화면 **최하단 상태줄**의 ① **REC**(캡처),
   ② **Claude 토큰 사용량 표시**(`Σ …`/`ctx …`), ③ **서버이름**(`ssh:` 호스트)을
