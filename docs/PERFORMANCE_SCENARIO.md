@@ -245,7 +245,7 @@ Python 3.11+ `frozen_modules` 효과 확인.
 **검증**: `bench.py` `cold_import_ms` 비교 + 실 attach 첫 프레임까지 시각 측정
 (`tests/ptyshot.py` 활용).
 
-### A2. `wait_server` 초기 백오프 단축 — ✅ 구현(CL 56807)
+### A2. `wait_server` 초기 백오프 단축 — ✅ 구현(CL 56808)
 
 **현상/근거**: `wait_server` 는 20ms 고정 간격 폴(`launcher.py:27-33`). 첫 probe 는
 즉시 하지만, 서버가 막 떠 첫 probe 가 실패하면 다음 시도까지 20ms 고정 대기.
@@ -255,7 +255,7 @@ Python 3.11+ `frozen_modules` 효과 확인.
 
 **검증**: 효과가 작을 수 있음 — `bench` 보다 실 attach 반복 측정으로 판단.
 
-### A3. 첫 프레임: 활성 패널 우선 전송 — ✅ 구현(CL 56807)
+### A3. 첫 프레임: 활성 패널 우선 전송 — ✅ 구현(CL 56808)
 
 **현상/근거**: `_send_full` 은 layout → **전 패널 순차 render/전송** → status 순
 (`server.py:2368-2390`). 분할이 많으면 활성 패널 첫 그림이 비활성 패널 직렬화 뒤로
@@ -270,21 +270,32 @@ Python 3.11+ `frozen_modules` 효과 확인.
 
 효과×안전(낮은 위험·높은 효과 우선):
 
-| 순위 | 시나리오 | 효과 | 위험 | 측정 지표 |
+| 순위 | 시나리오 | 효과 | 위험 | 상태 |
 |---|---|---|---|---|
-| 1 | **B1** scan_claude dirty 게이팅+저주기 | 높음(idle/다중패널) | 낮음 | idle CPU, flush 지터 |
-| 2 | **B2** 행 단위 델타 전송 | 매우 높음(alt 풀리페인트·ssh) | 중 | json KiB/frame, slice ms |
-| 3 | **B3** render dirty줄+스타일 캐시 | 높음 | 중 | render_all_ms |
-| 4 | **B5** 적응형 flush(이벤트 구동) | 중(입력지연·idle CPU) | 중 | 입력→화면 지연 |
-| 5 | **B4** 메시지 배치+drain 1회 | 중(다중 패널/클라) | 낮음 | flush 지연 |
-| 6 | **A1** textual import 다이어트 | 중(cold start) | 낮음 | cold_import_ms |
-| 7 | **A3/A2** first-paint·백오프 | 작음(체감) | 낮음 | first-paint |
-| 8 | **B6** 직렬화 포맷 | B2 후 잔여 | 중(의존성) | json/frame |
-| 9 | **B7** feed 천장(스레드) | 환경의존 | 높음 | feed MB/s |
+| — | **ReDoS** claude_usage `_CTX_BADGE_RE` | 높음(핫패스) | 낮음 | ✅ CL 56801 (420ms→0.08ms) |
+| 1 | **B1** scan_claude dirty 게이팅 | 높음(idle/다중패널) | 낮음 | ✅ CL 56802 (idle scan 무비용) |
+| 3 | **B3** render 스타일 키 캐시 | 중(render ~25-33%↓) | 낮음 | ✅ CL 56805 |
+| 5 | **B4** 메시지 배치+drain 1회 | 중(다중 패널/클라) | 낮음 | ✅ CL 56806 |
+| 7 | **A3/A2** first-paint·백오프 | 작음(체감) | 낮음 | ✅ CL 56808 |
+| 2 | **B2** 행 단위 델타 전송 | 매우 높음(alt 풀리페인트·ssh) | 중~높 | ⏳ 미착수(아래) |
+| 4 | **B5** 적응형 flush(이벤트 구동) | 중(입력지연) | 중 | ⏳ 보류(아래) |
+| 6 | **A1** textual import 다이어트 | 중(cold start) | 낮음 | ⏳ 미착수 |
+| 8 | **B6** 직렬화 포맷(orjson) | B2 후 잔여 | 중(의존성) | ⏳ B2 후 측정 |
+| 9 | **B7** 비가시 패널 feed 스로틀 | 낮음(동시 폭증만) | 중 | ⏳ 저효과 보류 |
 
-**권장 1차 묶음**: B1 → B3 → B2 순으로(스캔 절감 → render 절감 → 델타 전송). 각
-단계마다 `bench.py` 전후 비교 + `tests/run.py` 통과를 게이트로 작은 CL 로 제출한다
-(서버 측 변경이라 적용엔 `python pytmux.py cmd restart-server` 필요 — HANDOFF §2).
+**완료(2026-06-06)**: ReDoS·B1·B3·B4·A2·A3 + 측정 중 발견한 claude_usage ReDoS. idle/
+다중패널 CPU·flush 왕복·render 직렬화·first-paint 를 개선했다(235 passed, 매 단계 동작 불변).
+
+**남은 항목 — 권고**:
+- **B2(행 단위 델타)** — 남은 가장 큰 레버지만 **서버 프로토콜+클라 적용+full/delta
+  동기화(resync)+골든 동일성 검증**이 묶인 큰 변경이라, 코어 IPC 를 만지는 별도 집중
+  CL 묶음으로 다루는 게 안전(B3 의 "dirty 줄만 직렬화"도 이 행 스냅샷과 함께). office
+  병행 세션이 server/IPC 를 동시 수정 중이면 충돌 위험이 커 조율 후 착수 권장.
+- **B5(이벤트 구동 flush)** — 입력→화면 지연(≤33ms) 단축이 목표지만 **코어 flush 루프**
+  에 `asyncio.Event` 웨이크를 넣는 변경이라 기아/중복웨이크/누락 회귀 위험이 있다.
+  B1(스캔 게이팅)+B4(배치)로 idle CPU 는 이미 낮아져 잔여 이득이 작아 보류.
+- **B7** — 단일 패널 폭증엔 무효(동시 다중 폭증만 도움) → 실효 낮아 보류.
+- **A1** — textual import 지연/트리셰이킹은 무위험·소이득, 여력 시 착수.
 
 ## 7. 비목표 / 주의
 
