@@ -66,7 +66,11 @@ _CTX_PCT_RES = [
 ]
 # 확장 컨텍스트 모델 배지: "claude-opus-4-8 (1M context)" / "1M context window" 등.
 # 컨텍스트 잔량%·토큰과 별개로 "이 패널은 1M(또는 200k) 컨텍스트 모델"임을 알린다.
-_CTX_BADGE_RE = re.compile(r"\(?\s*(\d+\s*[kKmM])\s*context\b", re.I)
+# 주의(ReDoS): 선행 `\(?\s*` 를 두면 거대 공백 화면(와이드·대부분 빈 줄)에서 `\s*` 가
+# 매 위치마다 백트래킹해 O(n²)로 폭주한다(200x50 빈화면서 ~420ms 관측). 매칭은 항상
+# 숫자에서 시작하게 두어(`\d+` 가 공백 위치에서 즉시 실패) 선형 스캔이 되게 한다.
+# "(1M context)" 의 여는 괄호는 search 가 알아서 건너뛰므로 굳이 패턴에 안 넣는다.
+_CTX_BADGE_RE = re.compile(r"(\d+\s*[kKmM])\s*context\b", re.I)
 _TOK_RE = re.compile(r"([\d][\d.,]*\s?[kKmM]?)\s*tokens?\b", re.I)
 
 

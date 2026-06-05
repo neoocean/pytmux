@@ -108,6 +108,19 @@ async def test_claude_usage_context_badge():
     assert claude_usage("200K context window") == "200K ctx"
 
 
+async def test_claude_usage_no_redos_on_wide_blank():
+    """ReDoS 회귀: 와이드·대부분 공백 화면(200x50)에서 claude_usage 가 빠르게 끝나야
+    한다. _CTX_BADGE_RE 의 선행 `\\s*` 가 거대 공백에서 O(n²) 백트래킹해 ~420ms 폭주
+    하던 것을 선형화했다. 매 패널 스캔마다 도는 핫패스라 회귀 시 flush 가 마비된다."""
+    import time
+    blank = "? for shortcuts" + " " * 185 + ("\n" + " " * 200) * 49
+    t0 = time.perf_counter()
+    r = claude_usage(blank)
+    dt = (time.perf_counter() - t0) * 1000
+    assert r is None
+    assert dt < 50, f"claude_usage 너무 느림(ReDoS 회귀?): {dt:.1f}ms"
+
+
 async def test_claude_usage_excludes_streaming_delta():
     # busy footer 의 "↑/↓ N tokens" 스트리밍 델타는 사용량으로 보고하지 않는다.
     assert claude_usage("✽ Crunching… (12s · ↓ 1.9k tokens)") is None
