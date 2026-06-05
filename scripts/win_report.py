@@ -286,6 +286,13 @@ def render_markdown(data: dict, prev: dict | None) -> str:
 
 # ----------------------------------------------------------------- main
 def main(argv=None) -> int:
+    # Windows 콘솔 기본 인코딩(cp1252)은 한글·박스글리프(✓/↑/✽ 등)를 못 써
+    # stdout 출력이 UnicodeEncodeError 로 죽는다(리포트 md·요약 print 모두 영향 —
+    # CI windows-latest 에서 적발). 파일 쓰기는 이미 utf-8 이고, stdout 만 재설정한다.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError, OSError):
+        pass
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--mb", type=float, default=5.0,
                     help="성능 측정 합성 스트림 크기(MB, 기본 5)")

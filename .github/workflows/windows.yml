@@ -1,8 +1,8 @@
-name: windows-compat
+name: os-compat
 
 # macOS(arm64) 개발 환경에서는 Windows 네이티브 경로(pywinpty/ConPTY, proc.py 실경로,
-# ipc TCP 엔드포인트)를 직접 검증할 수 없다. 이 워크플로가 GitHub의 windows-latest
-# (Windows Server 2022, x86-64) 러너에서 그 부분을 자동으로 본다.
+# ipc TCP 엔드포인트)를 직접 검증할 수 없고, 깨끗한 Linux(POSIX-but-not-macOS)에서의
+# 이식성도 못 본다. 이 워크플로가 GitHub 러너에서 macOS/Linux/Windows 3종을 한 번에 본다.
 # 자세한 배경·한계는 docs/WINDOWS_TESTING.md 참고.
 
 on:
@@ -12,12 +12,13 @@ on:
   workflow_dispatch:        # Actions 탭에서 수동 트리거
 
 jobs:
-  windows:
-    runs-on: windows-latest    # Windows Server 2022, x86-64
+  test:
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]   # Linux x86-64 / macOS arm64 / Win Server
         python: ["3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -25,24 +26,27 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
-      - name: Install deps (incl. pywinpty)
+      - name: Install deps
+        # pywinpty 는 requirements.txt 의 sys_platform=="win32" 마커로
+        # Linux/macOS 에선 pip 이 자동 스킵한다(설치 실패 없음).
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Smoke — pywinpty imports + ConPTY spawns
+      - name: Smoke — pywinpty imports + ConPTY spawns (Windows only)
+        if: runner.os == 'Windows'
         run: python -c "from winpty import PtyProcess; p=PtyProcess.spawn('cmd /c echo ok'); print('pywinpty OK')"
 
       - name: Headless test suite
         run: python tests/run.py
 
-      - name: Windows compat + perf report
+      - name: Compat + perf report
         run: python scripts/win_report.py --mb 5
 
       - name: Upload report artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: win-report-py${{ matrix.python }}
+          name: report-${{ matrix.os }}-py${{ matrix.python }}
           path: reports/win-report-*.md
           if-no-files-found: warn
