@@ -1070,8 +1070,12 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   **현재는 기록만 — 미구현.**
 - **[리팩토링 요청, 부분 구현] 코드를 LLM 친화적인 형태로 리팩토링** — **진행 중**:
   client.py 가 `clientutil`/`clientscreens`/`clientwidgets` 로 4단계 분리됨(CL 56603·
-  56610·56611·56616, client.py 4363→2335줄). **server.py(~1720줄) 분할은 미착수.**
-  아래는 원 요청. — 요청: 코드를
+  56610·56611·56616, client.py 4363→2335줄). **server.py 분할 진행 중**(믹스인 방식 —
+  Server 가 각 믹스인을 상속, 동작 불변·테스트 게이트): ① **Claude 주입 클러스터 →
+  `serverclaude.py` `ServerClaudeMixin`**(CL 56765 — 자동재개·prompt-clear·auto-doc-clear·
+  claude-auto-mode·perm-mode 구동, server.py 2968→2668줄). 다음 후보(연속 응집 블록):
+  캡처(REC) 클러스터, flush/IPC 클러스터, 레이아웃/패널 트리 클러스터. 아래는 원 요청.
+  요청: 코드를
   **LLM 친화적인 형태로 리팩토링**. 동기(현 상태): 핵심 두 모듈이 **거대 단일 파일**
   이라 LLM 이 한 번에 통째로 읽어야 편집이 가능하고 컨텍스트·충돌 비용이 크다 —
   `client.py` **3963줄**, `server.py` **2569줄**(나머지는 model 856·pty_backend 432
