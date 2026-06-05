@@ -22,23 +22,25 @@ docs/benchmark/
 3. **터미널 출력 폭증** — 처리량(feed MB/s)과 반응성(슬라이스 지연 p50/p99/max).
    claude busy 풀리페인트 / plain cat 스크롤 합성 워크로드(`poc/feed_profile.py` 재사용).
 
-## 동기화 모델 (왜 Perforce 가 아니라 git 인가)
+## 동기화 모델 (git-우선 + Perforce 미러)
 
 벤치마크는 **CI(GitHub Actions)가 ubuntu/macos/windows 러너에서** 생성한다 — 개발
 환경(Apple Silicon macOS)에서는 Linux/Windows 수치를 낼 수 없기 때문이다. CI 는
-Perforce depot 에 쓸 수 없고 git 미러에만 커밋할 수 있으므로, 이 히스토리는
-**git-우선**이다:
+Perforce depot 에 **직접 쓸 수 없고** git 미러에만 커밋할 수 있으므로 이 히스토리는
+**git-우선**이고, depot 에는 **수동/에이전트 미러**로 따라잡는다(설계 변경 — 이전에는
+`.p4ignore` 로 depot 에서 제외했으나, 이제 depot 에서도 추적한다):
 
 - `.github/workflows/benchmark.yml` 의 `publish` 잡이 세 OS 결과를 모아 미러 `main` 에
   커밋(`[skip ci]` 로 자기 재트리거 방지).
 - 개발환경에서는 **`git pull`** 로 받아 본다.
-- **`.p4ignore` 에 `docs/benchmark/` 가 있어** Perforce 는 이 파일들을 추적하지 않는다
-  (워크스페이스에 git 으로 받아도 depot 은 깨끗하게 유지). 생성기 소스(`scripts/bench.py`,
-  워크플로, 이 README)는 `docs/benchmark/` 밖이거나 별도라 Perforce 로 정상 관리된다.
+- **depot 추적**: CI 가 git 에 올린 결과를 개발 머신에서 `p4 add docs/benchmark/...` 후
+  submit 해 depot 에 미러한다(CI 직접 제출 불가). 따라서 **depot 은 git 보다 다소 지연**
+  될 수 있다 — 최신은 항상 git 미러가 기준이다. 생성기 소스(`scripts/bench.py`, 워크플로)
+  도 Perforce 로 정상 관리된다.
 
-> **주의(미러 재생성)**: git 미러가 depot 기준으로 강제 재빌드되면 git-only 인 벤치마크
-> 히스토리는 사라질 수 있다(벤치마크는 언제든 재생성 가능하므로 보통 문제 없음).
-> 특정 결과를 영구 보존하려면 그 파일만 따로 depot 에 `p4 add` 하면 된다.
+> **주의(미러 재생성)**: 이제 벤치마크가 depot 에도 있으므로 git 미러가 depot 기준으로
+> 강제 재빌드돼도 함께 복원된다(예전 git-only 시절엔 사라질 수 있었다). 단 git 에만 있고
+> 아직 depot 에 미러 안 된 최신 결과는 그 사이 누락될 수 있다.
 
 ## 로컬 실행
 
