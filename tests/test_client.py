@@ -1772,6 +1772,26 @@ async def test_status_tabs_has_server_tab():
     await _with_app(body)
 
 
+async def test_shift_nav_keys_forwarded_to_panel():
+    """§10-A #5 검증: pytmux 가 shift+Home/End/shift+방향키를 표준 xterm CSI 1;2
+    시퀀스로 활성 패널(앱)에 그대로 전달한다(정상 모드, 가로채지 않음). 이 포워딩이
+    Claude CLI 등에서 텍스트 선택/편집의 전제가 된다 — 실제 선택 동작은 앱 몫."""
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_input = lambda b: sent.append(b)
+        cases = {
+            "shift+left": b"\x1b[1;2D", "shift+right": b"\x1b[1;2C",
+            "shift+up": b"\x1b[1;2A", "shift+down": b"\x1b[1;2B",
+            "shift+home": b"\x1b[1;2H", "shift+end": b"\x1b[1;2F",
+        }
+        assert app.mode == "normal" and len(app.screen_stack) == 1
+        for key, seq in cases.items():
+            sent.clear()
+            app.on_key(Key(key=key, character=None))
+            assert sent == [seq], (key, sent)
+    await _with_app(body)
+
+
 async def test_popup_dim_synchronous_and_cached():
     """§10-A #4: 팝업 배경 디밍 지연 개선 — ① _darken_style 은 (style,ratio) 캐시라
     같은 스타일이면 동일 객체를 즉시 반환(전 화면 셀 dim 을 경량화), ② push_screen 이

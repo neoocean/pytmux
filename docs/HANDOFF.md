@@ -211,6 +211,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56741 **Claude CLI shift+방향키 텍스트 편집 — 전달 검증 + 문서**(§10-A #5) — pytmux
+  가 `Shift+Home/End/방향키` 를 표준 xterm `CSI 1;2 X` 로 활성 패널에 손실 없이 전달함을
+  코드 경로(`on_key`→`key_to_bytes`)로 확인하고 헤드리스 회귀
+  `test_shift_nav_keys_forwarded_to_panel`(6키 시퀀스·미가로채기)로 고정. 선택/편집의
+  실효는 앱 해석 의존임을 명시하고, 바이트 시퀀스 표·전달 경로·라이브 수동 체크리스트·
+  제약을 신규 `docs/CLAUDE_TEXT_EDITING.md` 로 작성. 231 passed. 클라이언트 전용.
+  파일: `docs/CLAUDE_TEXT_EDITING.md`(신규), `tests/test_client.py`, `docs/HANDOFF.md`.
 - 56731 **팝업 배경 디밍 즉시 적용(지연 제거) + `_darken_style` 캐시**(§10-A #4) —
   ① `push_screen`/`pop_screen` 이 같은 턴에 `_composite()` 를 즉시 호출해 dim 이 다음
   refresh/clock tick(최악 1초)을 기다리지 않게 했다(call_after_refresh 는 마운트 후
@@ -852,10 +859,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   전 화면 셀 dim 이 `_darken_style` 을 셀마다 호출(truecolor 블렌드+Style 생성)했는데
   대부분 셀의 스타일이 같으므로 `@lru_cache(8192)` 로 (style,ratio) 캐시 → 같은 스타일은
   한 번만 계산. 순수 함수·Style 불변/해시가능이라 안전.
-- **[검증+문서 요청, 미착수] pytmux 패널 안 Claude CLI 에서 shift+home/end/shift+방향키
-  텍스트 선택·삭제·수정 가능 여부** — shift+Home/End/arrows 포워딩은 이전 폴리시 패스에서
-  반영됨(MEMORY `pytmux-ui-polish-pass-pending`). 실제 Claude CLI 에서 선택/편집이 되는지
-  **검증**하고 결과를 **문서로 만들어 제출**. **현재는 기록만 — 미착수.**
+- ~~**[검증+문서 요청] pytmux 패널 안 Claude CLI 에서 shift+home/end/shift+방향키 텍스트
+  선택·삭제·수정 가능 여부**~~ → **CL 56741 에서 완료** → 문서 [CLAUDE_TEXT_EDITING.md]
+  (CLAUDE_TEXT_EDITING.md). 검증 결과: **pytmux 전달은 ✅ 검증 완료**(정상 모드에서
+  `Shift+Home/End/방향키` 를 표준 xterm `CSI 1;2 X` 시퀀스로 패널에 손실 없이 전달,
+  미가로채기 — 헤드리스 회귀 `test_shift_nav_keys_forwarded_to_panel` 로 6키 고정).
+  **선택/삭제/수정의 실효는 앱(Claude CLI) 해석에 의존** → 문서에 바이트 시퀀스 표·전달
+  경로·라이브 수동 체크리스트·터미널 수정자 인코딩 의존 제약을 정리해 제출.
 - ~~**[UI 요청] 토큰 사용량 팝업 — 하단 가로선 + 전 세션 토큰 합계 + 하단 닫기 버튼**~~ →
   **CL 56721 에서 해결.** ① `client._usage_tree_lines` 가 맨 아래에 **가로 구분선**(`─`×36)
   과 **전체 세션 토큰 합계**(`전체 세션 합계 — Σ N`) 한 줄을 덧붙인다(모든 claude 패널
