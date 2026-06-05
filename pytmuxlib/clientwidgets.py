@@ -640,7 +640,7 @@ class StatusBar(Widget):
         self.autoresume = False
         self.prompt_clear = False  # 프롬프트 단위 클리어 모드(활성 패널, #9)
         self.prompt_clear_queue = []  # 프롬프트 단위 클리어 큐(활성 패널, #4)
-        self.capture = True      # 패널 출력 캡처 중(서버 옵션, 기본 ON)
+        self.capture = False     # 패널 출력 캡처 중(서버 옵션, 기본 OFF)
         self.prefix_off = False  # 중첩: outer prefix 해제 표시
         self.cmd_mode = False  # ESC 명령 모드 표시
         self.message = None    # display-message 임시 메시지
@@ -757,7 +757,7 @@ class StatusBar(Widget):
         self.autoresume = msg.get("autoresume", False)
         self.prompt_clear = msg.get("prompt_clear", False)
         self.prompt_clear_queue = msg.get("prompt_clear_queue", [])
-        self.capture = msg.get("capture", True)
+        self.capture = msg.get("capture", False)
         # §10 지속표시: usage/tokens/account 가 비어 와도(활성 패널이 Claude 가
         # 아니거나 한 프레임 파싱 실패) 마지막 비어있지 않은 값을 유지한다.
         # 계정이 바뀌면 서버가 새 비-0 값을 보내므로 자연히 갱신된다.

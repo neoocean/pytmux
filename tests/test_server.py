@@ -115,8 +115,8 @@ async def test_inactive_tab_claude_done_flag():
 
 
 async def test_startup_rules_injection():
-    # #27: 저장된 시작 규칙이 새 Claude 세션의 첫 idle 에 프롬프트로 주입된다(제출
-    # 없이, 줄바꿈은 \n). 빈 규칙이면 주입하지 않는다.
+    # #27: 저장된 시작 규칙이 새 Claude 세션의 첫 idle 에 프롬프트로 주입되고 **엔터까지
+    # 눌러 제출**된다(본문 줄바꿈은 \n, 맨 끝 \r 로 제출). 빈 규칙이면 주입하지 않는다.
     srv, task, sock = await server_only()
     try:
         srv.set_claude_rules("always do X\nand Y")
@@ -129,8 +129,11 @@ async def test_startup_rules_injection():
         # None→claude(새 세션) + idle footer → 같은 스캔에서 예약+주입
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
         srv._scan_claude(sess, win)
+        # 본문은 즉시(\n 줄바꿈), Enter(\r)는 한 박자 뒤 별도 쓰기로 도착한다.
         assert b"".join(writes) == b"always do X\nand Y", writes
         assert p._rules_pending is False
+        await asyncio.sleep(srv._RULES_ENTER_DELAY + 0.15)
+        assert b"".join(writes) == b"always do X\nand Y\r", writes
         # 빈 규칙이면 다음 세션에서 주입 없음
         srv.set_claude_rules("")
         srv.new_window(sess)
@@ -1117,14 +1120,15 @@ async def test_hello_and_multiclient_minsize():
 
 
 async def test_capture_output():
-    """패널 출력 캡처: 기본 ON, 무손실 기록, 토글, opts.json 영속/재시작 유지."""
+    """패널 출력 캡처: 기본 OFF, 켜면 무손실 기록, 토글, opts.json 영속/재시작 유지."""
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
         pane = sess.active_window.active_pane
-        assert srv.capture is True, "기본 ON"
+        assert srv.capture is False, "기본 OFF"
 
-        # 캡처 기록 → pane-<id>.log 에 raw 바이트 무손실
+        # 켜면 기록 시작 → pane-<id>.log 에 raw 바이트 무손실
+        assert srv.set_capture(True) is True
         srv._capture_write(pane, b"hello\x1b[31m world")
         path = os.path.join(srv.capture_dir, f"pane-{pane.id}.log")
         with open(path, "rb") as f:

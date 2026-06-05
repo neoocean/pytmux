@@ -123,7 +123,7 @@ async def test_command_list_and_autocomplete():
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "CommandListScreen"
         # 카테고리 탭으로 그룹화됨(첫 카테고리 = 패널, 첫 명령 = split-window)
-        assert [c for c, _ in scr._cats][:2] == ["패널", "탭"], scr._cats
+        assert [c for c, _ in scr._all_cats][:2] == ["패널", "탭"], scr._all_cats
         assert scr._ci == 0 and scr._cur[0][0] == "split-window", scr._cur[:1]
         from textual.widgets import ListView
         lv = scr.query_one(ListView)
@@ -137,10 +137,10 @@ async def test_command_list_and_autocomplete():
         assert scr._ci == 0 and scr._cur[0][0] == "split-window", scr._ci
         # 힌트는 박스 subtitle 에 표시
         box = scr.query_one("#cmdbox")
-        assert "카테고리" in str(box.border_subtitle), box.border_subtitle
+        assert "탭" in str(box.border_subtitle), box.border_subtitle
         # §10: #cmds 높이를 최대 카테고리 항목 수(≤_CMDS_MAX_ROWS)로 고정 → ←→
         # 전환 시 박스 높이 불변(출렁임 방지)
-        maxn = max(len(items) for _, items in scr._cats)
+        maxn = max(len(items) for _, items in scr._all_cats)
         exp = min(maxn, scr._CMDS_MAX_ROWS)
         assert scr.query_one("#cmds").styles.height.value == exp, \
             scr.query_one("#cmds").styles.height
@@ -846,7 +846,8 @@ async def test_esc_tab_bar_plus_button_nav():
         sess = list(srv.sessions.values())[0]
         before = len(sess.tabs)
         await pilot.press("escape")
-        await pilot.press("up")
+        await pilot.press("up")          # 헤더 없으면 우상단 [x] 로(#)
+        await pilot.press("up")          # 다시 ↑ → 탭바
         assert app.tabbar.bar_focus is True, "탭바 포커스"
         await pilot.press("right")          # 탭 1개 → 오른쪽은 [+]
         assert app.tabbar.sel == "+", "맨 오른쪽 [+] 선택"
@@ -878,9 +879,10 @@ async def test_tab_bar_and_esc_nav():
         assert "[+]" in txt and "[x]" not in txt, txt
         assert txt.rstrip().endswith("[+]"), txt   # 마지막 탭 바로 오른쪽
         assert app._tab_close_zone is not None, "콘텐츠 탭 닫기 [x] 영역"
-        # ESC 모드: 위 → 탭바 포커스 → ← 선택 → Enter 전환
+        # ESC 모드: 위 → (헤더 없으면 [x]) → 위 → 탭바 포커스 → ← 선택 → Enter 전환
         await pilot.press("escape")
-        await pilot.press("up")
+        await pilot.press("up")          # 헤더 없으면 우상단 [x] 로(#)
+        await pilot.press("up")          # 다시 ↑ → 탭바
         assert app.tabbar.bar_focus is True, "위 방향키로 탭바 포커스"
         before = app._active_tab_index()
         await pilot.press("left")
@@ -964,7 +966,8 @@ async def test_tab_bar_scroll_and_hide_bottom():
         assert ("◀" in bar) or ("▶" in bar), bar
         # ESC 포커스 → 오른쪽 끝까지 선택 이동 → 선택 탭이 보이도록 스크롤
         await pilot.press("escape")
-        await pilot.press("up")
+        await pilot.press("up")          # 헤더 없으면 우상단 [x] 로(#)
+        await pilot.press("up")          # 다시 ↑ → 탭바
         assert app.tabbar.bar_focus is True
         for _ in range(len(app.tabbar.tabs)):
             await pilot.press("right")
@@ -1522,9 +1525,9 @@ async def test_status_tabs_popup_merged():
         app.status.capture = True
         app.status.render_line(0)
         assert app.status._rec_zone is not None, "REC 클릭존 등록"
-        # REC 버튼 배선: status_tabs 트리 요청 + 캡처 탭(1) + 캡처 줄 준비
+        # REC 버튼 배선: status_tabs 트리 요청 + 캡처 탭(0=왼쪽) + 캡처 줄 준비
         app.show_capture_info("/tmp/x.sock.capture/pane-1.log", 2048)
-        assert app._tree_purpose == "status_tabs" and app._status_tab_initial == 1
+        assert app._tree_purpose == "status_tabs" and app._status_tab_initial == 0
         app._want_tree = False     # 서버의 실제 트리 응답이 또 팝업을 띄우지 않게(결정성)
         # 트리 응답을 직접 넣어 팝업 구성(라운드트립 비의존)
         tree = {"sessions": [{"name": "s", "windows": [
@@ -1535,10 +1538,10 @@ async def test_status_tabs_popup_merged():
         await pilot.pause(0.1)
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoTabsScreen"
-        # 초기 탭 = 캡처(1): 캡처 정보 보임
+        # 초기 탭 = 캡처(0=왼쪽): 캡처 정보 보임
         joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
         assert "pane-1.log" in joined and "2,048" in joined, joined
-        # ←→ 로 토큰 사용량 탭 → ctx 와 실제 토큰(Σ 8.2k) 보임(#18)
+        # ←→ 로 토큰 사용량 탭(1=오른쪽) → ctx 와 실제 토큰(Σ 8.2k) 보임(#18)
         await pilot.press("left")
         await pilot.pause(0.1)
         j2 = " ".join(str(lbl.render()) for lbl in scr.query(Label))
@@ -2046,4 +2049,157 @@ async def test_claude_header_status_applies():
         assert app.claude_header_on is False
         app._dispatch({"t": "status", "windows": [], "claude_header": True})
         assert app.claude_header_on is True
+    await _with_app(body)
+
+
+async def test_command_list_search_filters_and_tab_counts():
+    # 검색창에 타이핑하면 즉시 필터링 + 각 탭에 일치 수 표시 + 결과 있는 탭으로
+    # 자동 점프(현재 탭에 결과가 없을 때).
+    from pytmuxlib.clientscreens import CommandListScreen
+    async def body(app, pilot, srv):
+        items = [
+            ("split-window", "패널 분할", "패널"),
+            ("kill-pane", "패널 삭제", "패널"),
+            ("new-tab", "새 탭 열기", "탭"),
+            ("rename-tab", "탭 이름 변경", "탭"),
+            ("copy-mode", "복사 모드", "복사/버퍼"),
+        ]
+        app.push_screen(CommandListScreen(items))
+        await pilot.pause(0.2)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "CommandListScreen"
+        # 검색 없음 → 첫 탭(패널) 활성, 전체 2건.
+        assert scr._ci == 0 and len(scr._cur) == 2, (scr._ci, scr._cur)
+        # 'tab' 검색 → 패널 0건, 탭 2건. 현재 탭(패널)에 결과 없어 탭으로 자동 점프.
+        for ch in "tab":
+            await pilot.press(ch)
+        await pilot.pause(0.1)
+        assert scr._query == "tab"
+        assert scr._ci == 1, scr._ci                       # 자동 점프
+        assert [n for n, _ in scr._cur] == ["new-tab", "rename-tab"], scr._cur
+        # 비활성/활성 탭 모두 일치 수가 계산된다(패널 0, 탭 2).
+        assert len(scr._matches(scr._all_cats[0][1])) == 0
+        assert len(scr._matches(scr._all_cats[1][1])) == 2
+        # 활성 탭 라벨에 (2) 표기.
+        from textual.widgets import Label
+        lbl = scr.query_one("#cmdtab_1", Label)
+        assert "(2)" in str(lbl.render()), lbl.render()
+        # 검색창(표시 전용)에 입력값 반영.
+        assert scr.query_one("#cmdsearch", Input).value == "tab"
+        # 백스페이스로 모두 지우면 전체 복귀.
+        for _ in "tab":
+            await pilot.press("backspace")
+        await pilot.pause(0.1)
+        assert scr._query == "" and len(scr._cur) == 2
+    await _with_app(body)
+
+
+async def test_command_list_home_end_tab_click_and_close():
+    # Home/End 로 목록 처음·끝, 탭 클릭으로 카테고리 전환, [x] 클릭으로 닫기.
+    from pytmuxlib.clientscreens import CommandListScreen
+    from textual.widgets import ListView
+    async def body(app, pilot, srv):
+        items = [(f"cmd{i:02d}", f"desc {i}", "패널") for i in range(6)] + \
+                [("new-tab", "새 탭", "탭")]
+        app.push_screen(CommandListScreen(items))
+        await pilot.pause(0.2)
+        scr = app.screen_stack[-1]
+        lv = scr.query_one(ListView)
+        assert lv.index == 0
+        await pilot.press("end")                           # 맨 아래
+        await pilot.pause(0.1)
+        assert lv.index == len(scr._cur) - 1, lv.index
+        await pilot.press("home")                          # 맨 위
+        await pilot.pause(0.1)
+        assert lv.index == 0
+        await pilot.click("#cmdtab_1")                     # 탭 클릭 → 전환
+        await pilot.pause(0.1)
+        assert scr._ci == 1 and scr._cur[0][0] == "new-tab", (scr._ci, scr._cur[:1])
+        await pilot.click("#cmdclose")                     # [x] → 닫기
+        await pilot.pause(0.2)
+        assert not any(s.__class__.__name__ == "CommandListScreen"
+                       for s in app.screen_stack)
+    await _with_app(body)
+
+
+async def test_rules_editor_save_cancel_and_spacer():
+    # #27 규칙 에디터: 타이틀↔에디터 한 줄 여백 + 우측 닫기[x] + 하단 저장/취소.
+    from pytmuxlib.clientscreens import RulesEditScreen
+    async def body(app, pilot, srv):
+        captured = []
+        app.push_screen(RulesEditScreen("hello rules"),
+                        lambda v: captured.append(v))
+        await pilot.pause(0.2)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "RulesEditScreen"
+        assert scr.query("#rulesspacer"), "타이틀↔에디터 한 줄 여백"
+        assert scr.query("#rulesclose"), "우측 닫기 버튼"
+        assert scr.query("#rulessave") and scr.query("#rulescancel"), "저장/취소"
+        await pilot.click("#rulessave")                    # 저장 → 텍스트 반환
+        await pilot.pause(0.2)
+        assert captured == ["hello rules"], captured
+    await _with_app(body)
+
+
+async def test_rules_editor_cancel_returns_none():
+    from pytmuxlib.clientscreens import RulesEditScreen
+    async def body(app, pilot, srv):
+        captured = []
+        app.push_screen(RulesEditScreen("x"), lambda v: captured.append(v))
+        await pilot.pause(0.2)
+        await pilot.click("#rulescancel")                  # 취소 → None
+        await pilot.pause(0.2)
+        assert captured == [None], captured
+    await _with_app(body)
+
+
+async def test_command_prompt_empty_lists_all_commands():
+    # esc : 로 연 빈 명령 프롬프트는 위쪽(#pcand)에 전체 명령을 펼친다(↑↓ 탐색, #).
+    from textual.widgets import Label
+    from pytmuxlib.clientutil import COMMANDS
+    async def body(app, pilot, srv):
+        await pilot.press("escape")
+        await pilot.press("colon")
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "PromptScreen"
+        await pilot.pause(0.1)
+        assert scr.query_one("#pcand", Label).display is True, "빈 입력서 후보 펼침"
+        assert len(scr._cand) == len(COMMANDS), (len(scr._cand), len(COMMANDS))
+        await pilot.press("down")                          # 윈도우 탐색
+        assert scr._sel == 1, scr._sel
+    await _with_app(body)
+
+
+async def test_esc_nav_reaches_close_without_header():
+    # 헤더(1행 프롬프트)가 없어도 ESC 모드 ↑ 로 우상단 닫기 [x] 에 닿는다(#).
+    from textual.events import Key
+    async def body(app, pilot, srv):
+        app.claude_header_on = True
+        app.pane_claude = {}                               # Claude 헤더 없음
+        assert app._claude_header_panes() == []
+        await pilot.press("escape")
+        app.on_key(Key(key="up", character=None))          # 최상단 패널 ↑ → [x]
+        assert app._hdr_focus == "close", app._hdr_focus
+    await _with_app(body)
+
+
+async def test_status_tabs_capture_toggle():
+    # REC 탭에서 [c] 로 출력 캡처를 켜고 끌 수 있다(#). capture-output 명령 전송 +
+    # 낙관적 로컬 반영.
+    async def body(app, pilot, srv):
+        app.status.capture = True
+        app.status.capture_path = "/tmp/x/pane-1.log"
+        app.status.capture_size = 10
+        app._status_cap_lines = None
+        app._status_tab_initial = 0
+        sent = []
+        app._run_command = lambda line, *a, **k: sent.append(line)
+        app._open_status_tabs({"sessions": []})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "InfoTabsScreen"
+        await pilot.press("c")                             # 캡처 토글
+        await pilot.pause(0.1)
+        assert sent == ["capture-output"], sent
+        assert app.status.capture is False, "낙관적 OFF 반영"
     await _with_app(body)

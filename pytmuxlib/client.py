@@ -100,7 +100,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._active_hdr_row = None  # 활성 패널 프롬프트 헤더 행(닫기 [x] 위치, #15)
             self._drag_split = None      # 탭→패널 드래그 미리보기 (pane_id, orient)(#19)
             self._undim_rows = set()     # 팝업 dim 에서 제외할 콘텐츠 행(클릭 원천, #29)
-            self._last_esc_ts = 0.0      # ESC 오토리핏 디바운스용 직전 처리 시각(#32)
+            self._last_esc_ts = 0.0      # ESC 오토리핏 디바운스용 직전 도착 시각(#32)
+            self._ESC_DEBOUNCE = 0.6     # 이 초 안의 반복 ESC 는 오토리핏으로 무시
             # 네트워크 응답성(§10): 클라↔서버 ping/pong 왕복지연(RTT)을 주기 측정하고
             # 히스테리시스로 degraded 판정 — degraded 면 패널 외곽선을 빨강으로(회복 시
             # 원복). _net_ping_ts=미응답 ping 의 송신 monotonic 시각(None=응답됨).
@@ -543,12 +544,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def _capture_info_lines(self, path=None, size=None):
             # REC(출력 캡처) 정보 줄. 인자를 안 주면 상태줄에 마지막으로 온 값을 쓴다.
+            # 맨 앞에 현재 ON/OFF 를 보여 화면에서 [c] 로 토글한 결과가 바로 반영된다.
+            on = bool(getattr(self.status, "capture", False))
+            head = "상태: ON (캡처 중)" if on else "상태: OFF"
             if path is None:
                 path = self.status.capture_path
                 size = self.status.capture_size or 0
+            if not on:
+                return [head, "(캡처 꺼짐 — REC 미표시)"]
             if not path:
-                return ["캡처 off (REC 미표시)"]
-            return [f"파일: {path}",
+                return [head, "(캡처 파일 준비 중…)"]
+            return [head,
+                    f"파일: {path}",
                     f"크기: {size:,} bytes ({size / 1024:,.1f} KiB)",
                     f"탭 매핑: {os.path.join(os.path.dirname(path), 'sessions.log')}"]
 
@@ -556,7 +563,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # REC 클릭 → 통합 상태 팝업의 '출력 캡처' 탭으로 연다(#10 — 토큰 사용량과
             # 한 팝업으로 합침). 캡처 줄은 즉시 만들고, 토큰 트리는 서버에서 받아온다.
             self._status_cap_lines = self._capture_info_lines(path, size)
-            self._status_tab_initial = 1   # 1 = 캡처 탭
+            self._status_tab_initial = 0   # 0 = 캡처 탭(REC 가 왼쪽)
             self.request_tree(purpose="status_tabs")
 
         def show_status_tabs(self, initial=0):
@@ -661,6 +668,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if p["id"] == active:
                     self._active_hdr_row = cy
                     budget = max(0, cw - 1 - 4)
+                    # 닫기 [x](우측 3칸)와 프롬프트 헤더 사이 한 칸은 헤더색이 아닌
+                    # 터미널 배경으로 비운다(빈 Style → 터미널 기본 배경, #).
+                    gapx = cx + cw - 4
+                    if 0 <= gapx < W:
+                        cells[cy][gapx] = (" ", Style())
                 else:
                     budget = max(0, cw - 1)
                 gx = text_start
@@ -855,7 +867,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 한 날짜칸은 숫자 두 자리(3+1+3=7) + 칸 사이 1, 한 주는 글자 5 + 간격 1.
                 # DCW=한 날짜칸 폭(숫자 3 + 자리사이 2 + 숫자 3 = 8), DGAP=칸 사이,
                 # DIG=자리(숫자) 사이 간격(2 — 두 자리 수가 붙어 안 읽히던 문제, #27).
-                DCW, DGAP, RHB, DIG = 8, 1, 6, 2
+                DCW, DGAP, RHB, DIG = 8, 3, 6, 2   # DGAP↑(날짜칸 사이 더 띄움)
                 gw_big = 7 * DCW + 6 * DGAP          # 칸 7개 + 사이 간격
                 nl_big = 2 + len(weeks) * RHB        # 제목+요일 + 주×6
                 if pw >= gw_big + 2 and ph >= nl_big + 2:
@@ -902,7 +914,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 2) 칸 폭(colw)·주 간격(rowh)을 가용 공간에 맞춰 키운다 — 넓고 높은
                 # 화면일수록 큰 달력(사용자 요청). 한 칸은 숫자 2 + 여백이라 colw≥3.
                 # grid_w = 6칸 간격 + 마지막 칸 숫자 2. 외곽선 패딩 2칸을 여유로 둔다.
-                colw, rowh = 3, 1
+                colw, rowh = 4, 1               # 시작 4 → 날짜 사이 최소 2칸 여백
                 while colw < 8 and pw >= (6 * (colw + 1) + 2) + 2:
                     colw += 1
                 while rowh < 3 and ph >= (2 + (len(weeks) - 1) * (rowh + 1) + 1) + 2:
@@ -1482,7 +1494,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def open_claude_usage_tree(self):
             # 토큰 사용량 클릭 → 통합 상태 팝업의 '토큰 사용량' 탭으로 연다(#10).
-            self.show_status_tabs(initial=0)
+            self.show_status_tabs(initial=1)   # 1 = 토큰 탭(오른쪽)
 
         def open_token_log(self):
             # 토큰 사용량 영속 로그 집계 팝업(#7). 서버에 최근 로그를 요청하고,
@@ -1527,14 +1539,28 @@ def build_client_app(sock_path: str, config: dict | None = None,
             return lines or ["(실행 중인 Claude 패널 없음)"]
 
         def _open_status_tabs(self, tree):
-            """REC(출력 캡처)·토큰 사용량을 **한 팝업의 두 탭**으로 연다(#10). 어느
-            버튼으로 열었는지(_status_tab_initial)에 따라 초기 탭만 다르다."""
+            """REC(출력 캡처)·토큰 사용량을 **한 팝업의 두 탭**으로 연다(#10). 상태줄
+            버튼 배치(REC 왼쪽·토큰 오른쪽)에 맞춰 탭 순서도 REC(0)·토큰(1)이다.
+            어느 버튼으로 열었는지(_status_tab_initial)에 따라 초기 탭만 다르다.
+            REC 탭에선 [c] 로 출력 캡처를 켜고 끌 수 있다."""
             usage = self._usage_tree_lines(tree)
             cap = getattr(self, "_status_cap_lines", None) or self._capture_info_lines()
             initial = getattr(self, "_status_tab_initial", 0)
+
+            def _toggle_capture():
+                # capture-output 토글 명령 전송 + 낙관적 로컬 반영 → 갱신된 캡처 줄.
+                self._run_command("capture-output")
+                self.status.capture = not bool(getattr(self.status, "capture", False))
+                if not self.status.capture:
+                    self.status.capture_path = None
+                    self.status.capture_size = 0
+                self.status.refresh()
+                return self._capture_info_lines()
+
+            actions = {0: ("c", "[c] 캡처 켜기/끄기", _toggle_capture)}
             self.push_screen(InfoTabsScreen(
-                [("토큰 사용량", usage), ("출력 캡처(REC)", cap)],
-                initial=initial, title="상태"))
+                [("출력 캡처(REC)", cap), ("토큰 사용량", usage)],
+                initial=initial, title="상태", actions=actions))
 
         def _open_choose_tree(self, tree):
             def handle(res):
@@ -2247,16 +2273,20 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if len(self.screen_stack) > 1:
                 return
             # ESC 오토리핏 디바운스(#32): 터미널은 키 뗌(release) 이벤트를 주지 않아
-            # 키를 누르고 있으면 같은 ESC 가 반복 도착해 모드가 깜빡인다. 직전 ESC 처리
-            # 후 짧은 시간(0.25s) 안에 온 ESC/Shift+ESC 는 오토리핏으로 보고 무시해,
-            # **한 번 누름에 한 번만** 모드가 바뀌게 한다(release 시 1회 변경과 동등).
+            # 키를 누르고 있으면 같은 ESC 가 반복 도착해 모드가 깜빡인다. 직전 ESC **도착**
+            # 후 _ESC_DEBOUNCE 초 안에 온 ESC/Shift+ESC 는 오토리핏으로 보고 무시한다.
+            # 핵심: _last_esc_ts 를 (무시하든 처리하든) **매번** 갱신해 창을 슬라이딩
+            # 시킨다 — 그래야 빠른 반복이 직전과 늘 가까워 계속 무시되고, 키를 뗀 뒤
+            # (도착 간격 > 디바운스) 다시 눌렀을 때만 처리된다(release 시 1회 변경과 동등).
+            # 창을 OS 오토리핏 간격보다 넉넉히(0.6s) 잡아야 깜빡임이 안 생긴다.
             if event.key in ("escape", "shift+escape"):
                 now = time.monotonic()
-                if now - self._last_esc_ts < 0.25:
+                prev = self._last_esc_ts
+                self._last_esc_ts = now          # 매 ESC 갱신(슬라이딩 창)
+                if now - prev < self._ESC_DEBOUNCE:
                     event.prevent_default()
                     event.stop()
                     return
-                self._last_esc_ts = now
             if self.mode == "prefix":
                 self._handle_prefix(event)
                 event.prevent_default()
@@ -2589,16 +2619,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return
             if k == "up" and not self._pane_above():
                 # 최상단 패널에서 ↑: 먼저 프롬프트 헤더(있으면)로, 다시 ↑ 면 탭바로
-                # (#31 헤더·닫기버튼을 방향키 동선에 편입). 헤더가 없으면 바로 탭바.
+                # (#31 헤더·닫기버튼을 방향키 동선에 편입). 헤더가 없어도 우상단 닫기
+                # [x] 는 항상 그려지므로 [x] 로 보낸다(#) — 거기서 다시 ↑ 면 탭바.
                 panes = self._claude_header_panes()
                 active = self.layout.get("active")
                 if active in panes:
                     self._hdr_focus = active
                     self._composite()
-                elif self._tabbar_visible():
-                    tb.sel = self._active_tab_index()
-                    tb.bar_focus = True
-                    tb.refresh()
+                else:
+                    self._hdr_focus = "close"   # 프롬프트 헤더 없어도 [x] 로 이동
+                    self._composite()
             elif k in ("left", "right", "up", "down"):
                 self.send_cmd("select_pane", dir=k)  # 모드 유지(연속 이동)
             elif ch == ":" or k == "colon":

@@ -70,7 +70,7 @@ class Server:
         # 패널 출력 캡처(Claude 화면 문구 분석용). 기본 ON, opts.json 에 영속.
         self._capfiles: dict[int, "object"] = {}   # pane.id -> 열린 바이너리 파일
         _opts = self._load_opts()
-        self.capture = bool(_opts.get("capture", True))
+        self.capture = bool(_opts.get("capture", False))   # 기본 OFF
         # Claude 프롬프트 헤더 전역 표시(#6 ③ opts.json 영속). 클라가 status 로 받아
         # claude_header_on 에 반영하고, `claude-header on|off` 가 서버를 거쳐 갱신·영속.
         self.claude_header = bool(_opts.get("claude_header", True))
@@ -378,18 +378,40 @@ class Server:
         except OSError:
             pass
 
+    # 본문 붙여넣기 처리가 끝난 뒤 Enter 를 보낼 지연(초). Claude Code 가 빠르게
+    # 도착한 본문+\r 을 하나의 '붙여넣기'로 보고 마지막 \r 을 줄바꿈으로 흡수하던
+    # 문제(타이핑만 되고 전송 안 됨)를 피하려고 Enter 를 한 박자 뒤 별도로 보낸다.
+    _RULES_ENTER_DELAY = 0.25
+
     def _inject_rules(self, pane: Pane):
-        """저장된 시작 규칙(#27)을 패널 프롬프트에 **제출하지 않고** 넣는다. 줄바꿈은
-        \\n(=Claude 입력 줄바꿈, shift+Enter 와 동일)으로 보내고 끝에 Enter(\\r)를 안
-        붙여, 사용자가 이어 작성/제출하게 둔다. 규칙이 비었으면 무동작."""
+        """저장된 시작 규칙(#27)을 Claude 시작/clear 시 패널 프롬프트에 넣고 **엔터까지
+        눌러 제출**한다. 본문(여러 줄 가능)은 \\n(=Claude 입력 줄바꿈)으로 한 번에 넣고,
+        Enter(\\r)는 본문 처리가 끝난 뒤 **별도 쓰기**로 보낸다 — 본문과 \\r 을 한 번에
+        보내면 Claude Code 가 통째로 붙여넣기로 보고 \\r 을 줄바꿈으로 흡수해 제출이 안
+        되기 때문이다(타이핑만 되고 전송 안 됨). 규칙이 비었으면 무동작."""
         text = (self.claude_rules or "").strip()
         if not text or pane.pty is None:
             return
+        # 본문 내부 개행은 \n(미제출)으로. Enter 는 아래에서 별도로.
         payload = text.replace("\r\n", "\n").replace("\r", "\n")
         try:
             pane.pty.write(payload.encode("utf-8"))
         except OSError:
-            pass
+            return
+
+        def _send_enter():
+            # 패널이 그새 닫혔을 수 있어 매번 확인.
+            try:
+                if pane.pty is not None:
+                    pane.pty.write(b"\r")
+            except OSError:
+                pass
+
+        # loop 가 있으면 한 박자 뒤 별도 Enter, 없으면(드묾) 즉시.
+        if self.loop is not None:
+            self.loop.call_later(self._RULES_ENTER_DELAY, _send_enter)
+        else:
+            _send_enter()
 
     def _pc_drain(self, pane: Pane):
         """큐(#4)의 다음 명령을 Claude 에 투입하고 새 사이클을 시작한다. last_prompt

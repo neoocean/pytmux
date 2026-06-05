@@ -22,20 +22,39 @@ from .clientutil import (COMMAND_FREETEXT, COMMAND_NOARG, COMMAND_OPTIONS,
 
 class CommandListScreen(ModalScreen):
     """명령 목록 선택기(? 입력 시). 명령이 많아 카테고리별 탭으로 나눠 한 번에 한
-    카테고리만 보여준다. ←→ 로 카테고리(탭) 전환, ↑↓ 로 명령 이동, Enter 선택,
-    Esc 취소 — 모두 방향키로 제어된다."""
+    카테고리만 보여준다. 탭은 별도 외곽선으로 감싸고(#32 식) ←→ 또는 마우스
+    클릭으로 전환한다. ↑↓ 명령 이동, Home/End 로 목록 처음·끝, Enter 선택,
+    Esc/[x] 닫기. 상단 검색창에 타이핑하면 즉시 필터링되고, 각 탭에(활성/비활성
+    모두) 일치 수가 표시돼 어느 탭에 결과가 있는지 보인다.
+
+    검색창은 표시 전용(can_focus=False)이다 — 포커스는 ListView 에 두고 화면
+    on_key 에서 글자/Backspace 를 가로채 검색어를 키운다. 이렇게 해야 Input 이
+    ←→·Home/End 를 커서 이동으로 가로채지 않아 탭 전환·목록 점프가 그대로
+    동작한다."""
     CSS = """
     /* §10: 터미널 배경이 팝업 배경($panel)과 같아 박스가 묻히지 않게, 백드롭을
        더 어둡게($background 80% — Textual 기본 60%보다 진하게) 깔아 팝업과
        구분되게 한다. 실제 색 블렌드라 터미널 무관하게 균일하다. */
-    CommandListScreen { align: center middle; background: $background 80%; }
-    #cmdbox { width: 78; height: auto; max-height: 80%;
-              border: round $accent; background: $panel; }
-    #cmdtabs { width: 100%; height: 1; padding: 0 1;
-               background: $panel-darken-1; }
+    /* 하단 프롬프트(esc :)에서 ? 로 여는 인터페이스라 팝업을 바닥(프롬프트 바로
+       위)에 붙인다 — 프롬프트 입력칸(3행)을 margin-bottom 으로 비운다(#). */
+    CommandListScreen { align: center bottom; background: $background 80%; }
+    #cmdbox { width: 90%; max-width: 96; height: auto; max-height: 85%;
+              margin-bottom: 3;
+              border: round $accent; background: $panel; padding: 0 1; }
+    /* 탭 그룹을 별도 외곽선으로 감싼다(#32) → head 는 3행. [x] 는 우측 끝(1fr). */
+    #cmdhead { width: 100%; height: 3; }
+    #cmdtabs { width: auto; height: 3; border: round $accent; }
+    #cmdtabs Label { width: auto; height: 1; }   /* 탭 하나(클릭 대상) */
+    #cmdgap { width: 1fr; height: 3; }
+    /* 닫기 [x] 는 1행으로 우측 위 모서리에 붙인다(가로 흐름 마지막, 높이 1). */
+    #cmdclose { width: 5; height: 1; content-align: center middle;
+                background: $error; color: $text; text-style: bold; }
+    /* 검색창(타이틀 탭줄과 목록 사이). 표시 전용이라 포커스를 받지 않는다. */
+    #cmdsearch { width: 100%; height: 3; border: round $accent;
+                 background: $panel-darken-1; }
     /* §10: 높이를 "항목이 가장 많은 카테고리" 기준으로 고정(on_mount 에서
-       styles.height 설정) — ←→ 카테고리 전환 시 박스가 출렁이지 않게. 항목이
-       적은 카테고리는 ListView 아래쪽이 빈 채로 남아 높이를 유지한다. */
+       styles.height 설정) — ←→ 카테고리 전환·검색 필터 시 박스가 출렁이지
+       않게. 항목이 적으면 ListView 아래쪽이 빈 채로 남아 높이를 유지한다. */
     #cmds { width: 100%;
             background: $panel;
             overflow-y: scroll;                 /* 항상 스크롤바 트랙 표시 */
@@ -45,83 +64,163 @@ class CommandListScreen(ModalScreen):
             scrollbar-background: $panel-darken-2; }
     """
 
+    # 카테고리 전환·검색 시 박스 높이 출렁임 방지용 화면 한도(행 수).
+    _CMDS_MAX_ROWS = 18
+
     def __init__(self, items, query=""):
         super().__init__()
-        q = query.lower()
-        filt = [it for it in items if it[0].startswith(q)] or list(items)
-        # 카테고리 등장 순서를 유지하며 그룹화: [(카테고리, [(이름, 설명), ...]), ...]
+        # 전체 항목을 카테고리 등장 순서로 그룹화(검색은 런타임 필터 — 전체를 보관).
         order, bucket = [], {}
-        for it in filt:
+        for it in items:
             cat = it[2] if len(it) > 2 else "기타"
             if cat not in bucket:
                 bucket[cat] = []
                 order.append(cat)
             bucket[cat].append((it[0], it[1]))
-        self._cats = [(c, bucket[c]) for c in order]
+        self._all_cats = [(c, bucket[c]) for c in order]
         self._ci = 0          # 현재 카테고리 인덱스
-        self._cur = []        # 현재 카테고리의 (이름, 설명) 목록
+        self._cur = []        # 현재 카테고리의 (필터된) (이름, 설명) 목록
+        self._query = query or ""   # 검색어(초기값=호출부가 넘긴 부분 입력)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="cmdbox"):
-            yield Label("", id="cmdtabs", markup=True)
+            with Horizontal(id="cmdhead"):
+                with Horizontal(id="cmdtabs"):       # 탭 그룹(외곽선, 클릭 대상)
+                    for i, _c in enumerate(self._all_cats):
+                        yield Label("", id=f"cmdtab_{i}", markup=True)
+                yield Label("", id="cmdgap")          # [x] 를 우측 끝으로 미는 여백
+                yield Label("[x]", id="cmdclose", markup=False)
+            yield Input(placeholder="검색…", id="cmdsearch")
             yield ListView(id="cmds")
 
-    # 카테고리 전환 시 박스 높이 출렁임 방지용 화면 한도(80% 대략, 행 수).
-    _CMDS_MAX_ROWS = 20
-
     async def on_mount(self):
-        # §10: 모든 카테고리 중 최대 항목 수로 ListView 높이를 고정한다(항목 적은
-        # 카테고리는 아래쪽이 빈 채로 유지 → ←→ 전환 시 높이 불변). 화면을 넘지
-        # 않게 _CMDS_MAX_ROWS 로 클램프(초과 카테고리는 그때만 스크롤). 설명 줄바꿈
-        # 으로 일부 항목이 2행이 될 수 있어 항목 수 기준은 근사다(드물게 스크롤).
-        maxn = max((len(items) for _, items in self._cats), default=1)
+        # §10: 모든 카테고리 중 최대 항목 수로 ListView 높이를 고정한다(전환·검색
+        # 시 높이 불변). 화면을 넘지 않게 _CMDS_MAX_ROWS 로 클램프(초과 시 스크롤).
+        maxn = max((len(items) for _, items in self._all_cats), default=1)
         self.query_one("#cmds").styles.height = min(maxn, self._CMDS_MAX_ROWS)
-        await self._render_cat()
+        si = self.query_one("#cmdsearch", Input)
+        si.can_focus = False           # 표시 전용 — 클릭/탭 포커스가 키 모델을 깨지 않게
+        si.value = self._query
+        await self._rebuild()
         self.query_one(ListView).focus()
 
-    async def _render_cat(self):
-        # 상단 탭 바(현재 카테고리 강조).
-        parts = []
-        for i, (c, items) in enumerate(self._cats):
+    def _matches(self, items):
+        # 이름·설명 부분일치(대소문자 무시). 검색어가 비면 전체.
+        q = self._query.strip().lower()
+        if not q:
+            return list(items)
+        return [(n, d) for n, d in items if q in n.lower() or q in d.lower()]
+
+    async def _rebuild(self):
+        searching = bool(self._query.strip())
+        # 검색 중 현재 탭에 결과가 없으면 결과 있는 첫 탭으로 점프(빈 화면 방지).
+        if searching and not self._matches(self._all_cats[self._ci][1]):
+            for i, (_c, items) in enumerate(self._all_cats):
+                if self._matches(items):
+                    self._ci = i
+                    break
+        # 탭 바: 각 탭에 일치 수 표기. 활성=강조, 결과 있는 비활성=굵게, 없음=dim.
+        for i, (c, items) in enumerate(self._all_cats):
+            lbl = self.query_one(f"#cmdtab_{i}", Label)
+            n = len(self._matches(items))
             if i == self._ci:
-                parts.append(f"[reverse b] {c} ({len(items)}) [/]")
+                lbl.update(f"[reverse b] {c} ({n}) [/]")
+            elif searching and n:
+                lbl.update(f"[b] {c} ({n}) [/]")
             else:
-                parts.append(f"[dim] {c} [/]")
-        self.query_one("#cmdtabs", Label).update("  ".join(parts))
-        # 현재 카테고리 명령 목록으로 ListView 교체(이전 항목을 먼저 비운 뒤 채움 —
-        # 비동기 clear/extend 순서를 await 로 보장해 ID 충돌/잔상을 피한다).
-        self._cur = self._cats[self._ci][1] if self._cats else []
+                lbl.update(f"[dim] {c} [/]")
+        # 현재 카테고리(필터된) 명령으로 ListView 교체(clear→extend 를 await 로
+        # 순서 보장해 ID 충돌/잔상을 피한다).
+        self._cur = (self._matches(self._all_cats[self._ci][1])
+                     if self._all_cats else [])
         lv = self.query_one(ListView)
         await lv.clear()
-        await lv.extend([ListItem(Label(f"{n:<20} {d}"))
-                         for n, d in self._cur])
         if self._cur:
+            await lv.extend([ListItem(Label(f"{n:<20} {d}"))
+                             for n, d in self._cur])
             lv.index = 0
+        else:
+            await lv.extend([ListItem(Label("[dim](검색 결과 없음)[/]",
+                                            markup=True))])
         box = self.query_one("#cmdbox", Vertical)
         box.border_title = "명령 목록"
-        box.border_subtitle = "←→ 카테고리 · ↑↓ 명령 · Enter 선택 · Esc 닫기"
+        box.border_subtitle = ("타이핑 검색 · ←→/클릭 탭 · ↑↓ 명령 · "
+                               "Home/End 처음·끝 · Enter 선택 · Esc 닫기")
 
-    def on_list_view_selected(self, event):
+    def _select_current(self):
         idx = self.query_one(ListView).index
         if idx is not None and 0 <= idx < len(self._cur):
             self.dismiss(self._cur[idx][0])
 
+    def on_list_view_selected(self, event):
+        self._select_current()
+
+    async def _switch_to(self, i):
+        if 0 <= i < len(self._all_cats) and i != self._ci:
+            self._ci = i
+            await self._rebuild()
+
+    async def on_click(self, event: events.Click):
+        # 조상 체인을 거슬러: [x]→닫기, 탭→전환, 박스 바깥(백드롭)→닫기.
+        w = getattr(event, "widget", None)
+        inside = False
+        while w is not None:
+            wid = getattr(w, "id", None)
+            if wid == "cmdclose":
+                event.stop(); self.dismiss(None); return
+            if wid and wid.startswith("cmdtab_"):   # 탭 클릭 → 전환
+                event.stop()
+                await self._switch_to(int(wid.split("_")[1]))
+                return
+            if wid == "cmdbox":
+                inside = True
+            w = w.parent
+        if not inside:
+            event.stop(); self.dismiss(None)
+
     async def on_key(self, event: events.Key):
-        if event.key == "escape":
+        key = event.key
+        if key == "escape":
             event.stop()
             self.dismiss(None)
-        elif event.key == "enter":
+        elif key == "enter":
             # ListView 기본 Enter 바인딩이 포커스/타이밍 문제로 안 먹는
             # 경우가 있어 직접 현재 항목을 선택해 프롬프트에 채운다.
             event.stop()
-            idx = self.query_one(ListView).index
-            if idx is not None and 0 <= idx < len(self._cur):
-                self.dismiss(self._cur[idx][0])
-        elif event.key in ("left", "right") and len(self._cats) > 1:
+            self._select_current()
+        elif key in ("left", "right") and len(self._all_cats) > 1:
             event.stop()
-            step = 1 if event.key == "right" else -1
-            self._ci = (self._ci + step) % len(self._cats)
-            await self._render_cat()
+            step = 1 if key == "right" else -1
+            self._ci = (self._ci + step) % len(self._all_cats)
+            await self._rebuild()
+        elif key == "home":
+            event.stop()
+            lv = self.query_one(ListView)
+            if self._cur:
+                lv.index = 0
+                try: lv.scroll_to_widget(lv.children[0])
+                except Exception: pass
+        elif key == "end":
+            event.stop()
+            lv = self.query_one(ListView)
+            if self._cur:
+                last = len(self._cur) - 1
+                lv.index = last
+                try: lv.scroll_to_widget(lv.children[last])
+                except Exception: pass
+        elif key == "backspace":
+            # 검색창 표시 전용 — 글자 편집을 화면 on_key 에서 처리한다.
+            event.stop()
+            if self._query:
+                self._query = self._query[:-1]
+                self.query_one("#cmdsearch", Input).value = self._query
+                await self._rebuild()
+        elif (event.character and len(event.character) == 1
+              and event.character.isprintable()):
+            event.stop()
+            self._query += event.character
+            self.query_one("#cmdsearch", Input).value = self._query
+            await self._rebuild()
 
 class CommandOptionsScreen(ModalScreen):
     """커맨드 팔레트에서 고른 명령의 옵션(선택지)을 모달 안에서 정한 뒤 프롬프트를
@@ -327,8 +426,11 @@ class InfoScreen(ModalScreen):
     # 캡. 제목 줄은 [제목 … [x]] 헤더로 두어 좁아도 닫기 [x] 가 (고정폭이라) 항상
     # 오른쪽에 보인다(예전엔 고정폭 박스가 화면을 넘쳐 닫기 수단이 안 보였다).
     CSS = """
-    InfoScreen { align: center middle; background: $background 80%; }
+    /* 상단 패널(헤더)을 클릭해 여는 팝업이라 화면 위쪽에 붙인다 — 탭바 한 줄
+       아래(margin-top)에서 시작(#). */
+    InfoScreen { align: center top; background: $background 80%; }
     #infobox { width: 96%; max-width: 66; height: auto; max-height: 95%;
+               margin-top: 1;
                border: round $accent; background: $panel; padding: 0 1; }
     #infohead { width: 100%; height: 1; }
     #infotitle { width: 1fr; height: 1; color: $accent; text-style: bold; }
@@ -457,11 +559,14 @@ class InfoTabsScreen(ModalScreen):
     """
     _NAV = ("up", "down", "pageup", "pagedown", "home", "end")
 
-    def __init__(self, tabs, initial=0, title="정보"):
+    def __init__(self, tabs, initial=0, title="정보", actions=None):
         super().__init__()
         self._tabs = tabs              # [(탭이름, [줄, ...]), ...]
         self._ti = max(0, min(initial, len(tabs) - 1)) if tabs else 0
         self._title = title
+        # {탭인덱스: (키, 힌트, 콜백)} — 그 탭에서 키를 누르면 콜백 실행. 콜백이
+        # 줄 리스트를 돌려주면 그 탭 내용을 갱신한다(예: REC 캡처 ON/OFF 토글).
+        self._actions = actions or {}
 
     def compose(self) -> ComposeResult:
         with Vertical(id="itbox"):
@@ -494,7 +599,11 @@ class InfoTabsScreen(ModalScreen):
         if lines:
             lv.index = 0
         box = self.query_one("#itbox", Vertical)
-        box.border_subtitle = "←→/클릭 탭 · ↑↓ 항목 · Esc 닫기"
+        sub = "←→/클릭 탭 · ↑↓ 항목 · Esc 닫기"
+        act = self._actions.get(self._ti)
+        if act:                         # 이 탭에서 가능한 동작(예: [c] 캡처 토글)
+            sub = f"{act[1]} · " + sub
+        box.border_subtitle = sub
 
     async def _switch_to(self, i):
         if 0 <= i < len(self._tabs) and i != self._ti:
@@ -522,6 +631,14 @@ class InfoTabsScreen(ModalScreen):
         event.stop()
         if event.key == "escape":
             self.dismiss(None)
+            return
+        # 현재 탭에 동작이 걸려 있고 그 키면 콜백 실행 후 내용 갱신(예: 캡처 토글).
+        act = self._actions.get(self._ti)
+        if act and event.key == act[0]:
+            new_lines = act[2]()
+            if new_lines is not None:
+                self._tabs[self._ti] = (self._tabs[self._ti][0], new_lines)
+            await self._render_tab()
             return
         # ←→ 또는 Tab/Shift+Tab 으로 탭 전환(팝업이 열린 뒤에도, #24). ListView 가
         # 좌우키를 먹는 환경을 대비해 Tab 도 받는다.
@@ -559,8 +676,20 @@ class RulesEditScreen(ModalScreen):
     RulesEditScreen { align: center middle; background: $background 80%; }
     #rulesbox { width: 90%; max-width: 100; height: auto; max-height: 90%;
                 border: round $accent; background: $panel; padding: 0 1; }
-    #ruleshead { width: 100%; height: 1; color: $accent; text-style: bold; }
-    #rulesedit { width: 100%; height: auto; min-height: 8; max-height: 80%; }
+    /* 헤더: 타이틀(1fr) + 우측 닫기 [x]. */
+    #ruleshead { width: 100%; height: 1; }
+    #rulestitle { width: 1fr; height: 1; color: $accent; text-style: bold; }
+    #rulesclose { width: 5; height: 1; content-align: center middle;
+                  background: $error; color: $text; text-style: bold; }
+    /* 타이틀과 에디터 사이 한 줄(여백). */
+    #rulesspacer { width: 100%; height: 1; }
+    #rulesedit { width: 100%; height: auto; min-height: 8; max-height: 70%; }
+    /* 하단 저장/취소 버튼(에디터와 한 줄 띄움, 우측 정렬). */
+    #rulesbtns { width: 100%; height: 1; margin-top: 1; align-horizontal: right; }
+    #rulesbtns Label { width: auto; height: 1; padding: 0 2; margin-left: 2;
+                       text-style: bold; }
+    #rulessave { background: $success; color: $text; }
+    #rulescancel { background: $panel-darken-2; color: $text; }
     """
 
     def __init__(self, text=""):
@@ -569,12 +698,31 @@ class RulesEditScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="rulesbox"):
-            yield Label("Claude 시작 규칙 — Ctrl+S 저장 · Esc 취소", id="ruleshead")
+            with Horizontal(id="ruleshead"):
+                yield Label("Claude 시작 규칙 — Ctrl+S 저장 · Esc 취소",
+                            id="rulestitle")
+                # markup=False: "[x]" 가 마크업 태그로 사라지지 않게.
+                yield Label("[x]", id="rulesclose", markup=False)  # 닫기 버튼
+            yield Label("", id="rulesspacer")        # 타이틀↔에디터 한 줄 여백
             yield TextArea(self._text, id="rulesedit")
+            with Horizontal(id="rulesbtns"):
+                yield Label("저장", id="rulessave")
+                yield Label("취소", id="rulescancel")
 
     def on_mount(self):
         ta = self.query_one(TextArea)
         ta.focus()
+
+    def on_click(self, event: events.Click):
+        # 닫기 [x]/취소 → 취소(None), 저장 → 텍스트 반환. 그 외(에디터 등) 유지.
+        w = getattr(event, "widget", None)
+        while w is not None:
+            wid = getattr(w, "id", None)
+            if wid in ("rulesclose", "rulescancel"):
+                event.stop(); self.dismiss(None); return
+            if wid == "rulessave":
+                event.stop(); self.dismiss(self.query_one(TextArea).text); return
+            w = w.parent
 
     def on_key(self, event: events.Key):
         if event.key == "escape":
@@ -776,13 +924,17 @@ class PromptScreen(ModalScreen):
         lbl = self.query_one("#pcand", Label)
         s = self.query_one(Input).value.strip()
         matches = []
-        if s and " " not in s:
+        if not s:
+            # 빈 명령 프롬프트(esc :) → 전체 명령을 위쪽에 보여준다(↑↓ 탐색, #).
+            matches = [(n, d) for (n, d, *_) in COMMANDS]
+        elif " " not in s:
             ql = s.lower()
             matches = [(n, d) for (n, d, *_) in COMMANDS if ql in n.lower()]
             # 정확히 한 개이고 그게 입력과 동일하면 더 제안할 게 없음.
             if len(matches) == 1 and matches[0][0].lower() == ql:
                 matches = []
-        self._cand = matches[:self.MAX_CAND]
+        # 전체 목록을 보관(자르지 않음) — _render_cands 가 MAX_CAND 윈도우로 그린다.
+        self._cand = matches
         self._sel = 0
         if not self._cand:
             self._cand_shown = False
@@ -794,12 +946,24 @@ class PromptScreen(ModalScreen):
 
     def _render_cands(self):
         lbl = self.query_one("#pcand", Label)
+        n = len(self._cand)
+        # 전체 줄 수(후보 + 위/아래 '더 보기' 표시)를 MAX_CAND 안에 맞춘다.
+        body = self.MAX_CAND if n <= self.MAX_CAND else self.MAX_CAND - 2
+        if n <= body:
+            start = 0
+        else:                       # _sel 이 보이도록 윈도우를 민다(빈 입력=전체 명령)
+            start = max(0, min(self._sel - body // 2, n - body))
         rows = []
-        for i, (n, d) in enumerate(self._cand):
+        if start > 0:
+            rows.append("[dim]  ↑ 더 …[/dim]")
+        for i in range(start, min(start + body, n)):
+            nm, d = self._cand[i]
             if i == self._sel:
-                rows.append(f"[reverse]{self._esc(n):<20} {self._esc(d)}[/reverse]")
+                rows.append(f"[reverse]{self._esc(nm):<20} {self._esc(d)}[/reverse]")
             else:
-                rows.append(f"{self._esc(n):<20} [dim]{self._esc(d)}[/dim]")
+                rows.append(f"{self._esc(nm):<20} [dim]{self._esc(d)}[/dim]")
+        if start + body < n:
+            rows.append("[dim]  ↓ 더 …[/dim]")
         lbl.update("\n".join(rows))
 
     def _accept_cand(self):
