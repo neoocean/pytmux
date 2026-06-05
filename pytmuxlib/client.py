@@ -1478,6 +1478,65 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 pass
             return False
 
+        @staticmethod
+        def _clipboard_save_image():
+            """OS 클립보드의 이미지를 임시 PNG 파일로 저장하고 그 경로를 반환한다
+            (실패/이미지 없음 → None). §10-A #11 결정 ①(경로 문자열 주입)용.
+
+            - Windows: .NET `System.Windows.Forms.Clipboard.GetImage()` → `.Save(png)`.
+            - macOS: `pngpaste <path>`.
+            - Linux/X11: `xclip -selection clipboard -t image/png -o`.
+            - Linux/Wayland: `wl-paste --type image/png`.
+
+            주의(로컬 가정): 저장 파일은 **클라이언트 머신**에 생긴다. 클라이언트와
+            서버(PTY 자식 앱)가 같은 머신일 때만 경로가 유효하다 — 원격(ssh) 환경은
+            호출부가 Alt+V(공유 클립보드 직접 읽기)로 폴백한다."""
+            import shutil
+            import tempfile
+            try:
+                fd, path = tempfile.mkstemp(prefix="pytmux-clip-", suffix=".png")
+                os.close(fd)
+            except Exception:
+                return None
+            ok = False
+            try:
+                if proc.IS_WINDOWS:
+                    ps = (
+                        "Add-Type -AssemblyName System.Windows.Forms;"
+                        "Add-Type -AssemblyName System.Drawing;"
+                        "$img=[System.Windows.Forms.Clipboard]::GetImage();"
+                        "if ($img) { $img.Save('" + path.replace("'", "''") +
+                        "', [System.Drawing.Imaging.ImageFormat]::Png); 'OK' }"
+                    )
+                    out = subprocess.run(
+                        ["powershell", "-NoProfile", "-Sta", "-Command", ps],
+                        capture_output=True, timeout=8, **proc.no_window_kwargs()
+                    ).stdout.decode("utf-8", "ignore")
+                    ok = "OK" in out
+                elif shutil.which("pngpaste"):           # macOS
+                    ok = subprocess.run(["pngpaste", path], capture_output=True,
+                                        timeout=8).returncode == 0
+                elif shutil.which("xclip"):              # Linux/X11
+                    with open(path, "wb") as f:
+                        ok = subprocess.run(
+                            ["xclip", "-selection", "clipboard",
+                             "-t", "image/png", "-o"],
+                            stdout=f, timeout=8).returncode == 0
+                elif shutil.which("wl-paste"):           # Linux/Wayland
+                    with open(path, "wb") as f:
+                        ok = subprocess.run(
+                            ["wl-paste", "--type", "image/png"],
+                            stdout=f, timeout=8).returncode == 0
+                if ok and os.path.exists(path) and os.path.getsize(path) > 0:
+                    return path
+            except Exception:
+                pass
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+            return None
+
         def copy_text(self, text):
             # 서버 페이스트 버퍼 + OS 클립보드 양쪽에 저장
             self.send_cmd("set_buffer", text=text)
@@ -1486,20 +1545,27 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 f"{len(text)} chars 복사됨" + (" (클립보드)" if clip else ""))
 
         def paste_os_clipboard(self):
-            """OS 클립보드 내용을 활성 패널에 붙여넣는다.
+            """OS 클립보드 내용을 활성 패널에 붙여넣는다(명령 `paste-clipboard`, Ctrl+V).
 
-            - **텍스트**: 직접 읽어 bracketed 패스스루로 패널에 주입한다.
-            - **이미지**: 클라이언트는 PTY 너머로 비트맵을 옮길 수 없으므로,
-              내부 앱(Claude Code)이 **공유 OS 클립보드**에서 직접 읽도록
-              Alt+V(=ESC v) 키스트로크만 패널로 전달한다. 윈도우의 Claude Code 는
-              Ctrl+V 가 터미널/멀티플렉서(pytmux)에 가로채일 때를 대비해 Alt+V 를
-              클립보드 이미지 붙여넣기로 받는다 — 서버의 PTY 자식과 클립보드는
-              같은 OS 세션을 공유하므로 그대로 동작한다."""
+            - **텍스트**: 직접 읽어 bracketed 패스스루로 패널에 주입한다(우선).
+            - **이미지**(§10-A #11): 클라이언트는 PTY 너머로 비트맵을 옮길 수 없으므로,
+              클립보드 이미지를 **임시 PNG 파일로 저장**하고 그 **파일 경로 문자열**을
+              패널에 붙여넣는다(결정 ① — Claude Code CLI 등은 경로를 첨부 이미지로 인식).
+              파일은 클라이언트 머신에 생기므로 클라이언트=서버(로컬)일 때 유효하다.
+              저장에 실패하면(도구 부재/원격 등) 내부 앱이 **공유 OS 클립보드**에서 직접
+              읽도록 Alt+V(=ESC v) 키스트로크로 폴백한다."""
             txt = self._clipboard_paste()
             if txt:
                 self.send_cmd("paste", text=txt)
                 return
             if self._clipboard_has_image():
+                path = self._clipboard_save_image()
+                if path:
+                    # 경로를 붙여넣어 앱이 첨부 이미지로 인식하게 한다(결정 ①).
+                    self.send_cmd("paste", text=path)
+                    self.display_message(f"클립보드 이미지 저장 → 경로 붙여넣기: {path}")
+                    return
+                # 폴백: 내부 앱이 공유 클립보드에서 직접 읽도록 Alt+V.
                 self.send_input(b"\x1bv")   # ESC v = Alt+V
                 self.display_message("이미지 붙여넣기 → 내부 앱(Alt+V)")
                 return
