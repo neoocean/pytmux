@@ -1080,7 +1080,10 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   (-32%), 믹스인 3개(serverclaude/servercapture/serverpersist).** ④ Claude 화면 스캐닝
   (`_scan_claude`/`_tab_claude`/`_account_token_total`/`_track_prompt` + 상수
   `_HDR_CLAUDE_MISS`/`_DONE_IDLE_FRAMES`)도 `serverclaude.py` 로 모음(CL 56773) —
-  flush/IPC 꼬리에서 Claude 로직 제거 완료.** 분리 패턴: 연속
+  flush/IPC 꼬리에서 Claude 로직 제거 완료.** ⑤ **PTY/패널 생성·feed 드레인·EOF
+  처리 → `serverpty.py` `ServerPtyMixin`**(CL 56775 — _fork_shell·spawn_pane·
+  _on_pane_data·_feed_drain·_ingest_slice·_pane_eof 등). **server.py 2968→1825줄
+  (-38%), 믹스인 5개(serverclaude/servercapture/serverpersist/serverpty).** 분리 패턴: 연속
   응집 블록을 `class XxxMixin:` 으로 옮기고 `Server(…Mixin들)` 가 상속(메서드는 self.*·
   다른 메서드를 그대로 참조 → 동작 불변, 헤드리스 232 테스트가 게이트). **코어 멀티
   플렉서(패널 spawn/트리·window/tab/session ops·flush/IPC)는 의도적으로 Server 본체에
