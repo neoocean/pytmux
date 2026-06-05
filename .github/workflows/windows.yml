@@ -11,6 +11,12 @@ on:
   pull_request:
   workflow_dispatch:        # Actions 탭에서 수동 트리거
 
+# 연속 푸시가 9잡 매트릭스를 겹쳐 띄워 무료 macOS 러너가 적체되는 것을 막는다 —
+# 같은 ref 의 진행 중 run 을 새 푸시가 취소(최신 커밋만 검증). PR/브랜치별로 격리.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     strategy:
