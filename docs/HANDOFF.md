@@ -1085,10 +1085,14 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   _on_pane_data·_feed_drain·_ingest_slice·_pane_eof 등). **server.py 2968→1825줄
   (-38%).** ⑥ **IPC/flush/명령 디스패치 → `serverio.py` `ServerIOMixin`**(CL 56778
   — _layout_msg/_status_msg/_tree_msg·_send_full·_flush_loop·_handle_cmd·handle_client·
-  serve 등). **최종: server.py 2968→1152줄(-61%), 믹스인 6개**(serverclaude 585/
-  serverio 693/serverpersist 313/serverpty 215/servercapture 106). 남은 server.py 본체
-  = 코어 멀티플렉서(세션/window/tab/패널 트리 ops·popup·버퍼/붙여넣기·토큰로깅·옵션
-  토글·레이아웃 슬롯·검색·리사이즈·handle_control) — 의도적으로 Server 에 유지.** 분리 패턴: 연속
+  serve 등). ⑦ **세션/window/tab/패널 트리 조작 → `servertree.py` `ServerTreeMixin`**
+  (CL 56779 — split/kill/move/swap/rotate/break/join/zoom/rename·popup·레이아웃 프리셋·
+  동기화). **최종: server.py 2968→567줄(-81%), 믹스인 7개**(serverclaude 585/serverio
+  693/servertree 602/serverpersist 313/serverpty 215/servercapture 106). 남은 server.py
+  본체(567줄) = __init__·세션 부트스트랩·버퍼/붙여넣기·토큰 로깅·옵션 토글·탭 레이아웃
+  슬롯·handle_control·pipe/capture/search/resize·세션 헬퍼 — 작고 잡다해 추가 분리
+  이득이 작아 Server 에 유지. **LLM 친화 리팩토링 핵심 목표 달성**(거대 단일 파일 해소·
+  Claude 코드 모듈 분리). 분리 패턴: 연속
   응집 블록을 `class XxxMixin:` 으로 옮기고 `Server(…Mixin들)` 가 상속(메서드는 self.*·
   다른 메서드를 그대로 참조 → 동작 불변, 헤드리스 232 테스트가 게이트). **코어 멀티
   플렉서(패널 spawn/트리·window/tab/session ops·flush/IPC)는 의도적으로 Server 본체에
