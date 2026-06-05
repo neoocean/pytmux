@@ -942,16 +942,15 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   `show_status_tabs(initial=2)`(서버 탭)로 통합 팝업을 연다 — REC→0·토큰→1·서버→2 로
   클릭 요소에 맞는 초기 탭. 탭 전환은 기존 `InfoTabsScreen` ←→/클릭. (아래 "상태줄
   `ssh:` 호스트 클릭→서버 정보 팝업" 항목을 이 통합이 흡수.)
-- **[UI 요청, 미구현] 명령 목록 팝업에서 Claude 관련 기능을 독립된 탭으로 분리** —
-  명령 목록 팝업(`CommandListScreen`, `?`/`help`)은 이미 **카테고리 탭**(←→ 전환,
-  `_render_cat`)을 갖고 있다. 현재 Claude 연동 명령(예: 자동재개·권한모드·토큰/사용량
-  ·프롬프트 헤더·클리어 모드 등 `claude`/`resume`/`perm`/`usage` 계열)이 일반 카테고리에
-  섞여 있는데, 이를 **별도의 "Claude" 카테고리 탭**으로 묶어 분리한다. 구현 방향:
-  `clientutil.COMMANDS`(또는 카테고리 매핑 테이블)에서 Claude 계열 명령에 별도 카테고리
-  키를 부여하고, `CommandListScreen._render_cat`/탭 목록이 그 탭을 표시하도록 한다.
-  **열린 결정**: 어떤 명령을 Claude 탭에 넣을지 경계(자동재개/권한모드/토큰/헤더/클리어
-  /resume 만? capture-output 도?), 탭 라벨/순서. **현재는 기록만 — 미구현(지금 구현하지
-  않음).**
+- ~~**[UI 요청] 명령 목록 팝업에서 Claude 관련 기능을 독립된 탭으로 분리**~~ →
+  **CL 56763 에서 해결.** 이전엔 `"모니터/Claude"` 혼합 카테고리였던 것을 **`"모니터"`**
+  (monitor-activity/monitor-bell/capture-output)와 **`"Claude"`**(auto-resume·
+  auto-resume-message·claude-header·prompt-history·token-usage/log/account·prompt-clear·
+  prompt-clear-message·prompt-clear-queue·claude-rules·auto-doc-clear·claude-auto-mode
+  — 13개)로 분리했다. `clientutil.COMMANDS` 의 카테고리 키만 바꿔(CommandListScreen 의
+  카테고리 버킷/탭은 그대로 동작) 탭 순서는 …레이아웃·모니터·Claude·설정/기타. 회귀:
+  `test_command_palette_categories` 에 Claude/모니터 분리 단언 추가. 클라 전용(attach
+  재실행).
 - ~~**[버그·기능 요청] 네트워크 degraded(빨간 외곽선) 고착에서 Claude 종료 없이
   패널 반응성 회복**~~ → **CL 56601 에서 해결**(수동 `reconnect`/`resync` 명령 +
   degraded 워치독 자동 재접속, 서버 PTY/세션 보존·`_send_full` 재동기, 연결 세대로

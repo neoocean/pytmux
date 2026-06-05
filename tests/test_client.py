@@ -144,6 +144,17 @@ async def test_command_list_and_autocomplete():
         exp = min(maxn, scr._CMDS_MAX_ROWS)
         assert scr.query_one("#cmds").styles.height.value == exp, \
             scr.query_one("#cmds").styles.height
+        # §10 #1: Claude 관련 명령이 독립 "Claude" 카테고리 탭으로 분리됨(일반
+        # 모니터링은 "모니터" 로 분리 — 이전엔 "모니터/Claude" 혼합 카테고리였다).
+        catmap = dict(scr._all_cats)
+        assert "Claude" in catmap and "모니터" in catmap, list(catmap)
+        claude_names = [n for n, _ in catmap["Claude"]]
+        for nm in ("claude-auto-mode", "auto-doc-clear", "auto-resume",
+                   "token-usage", "claude-header", "prompt-clear"):
+            assert nm in claude_names, (nm, claude_names)
+        mon_names = [n for n, _ in catmap["모니터"]]
+        assert "monitor-activity" in mon_names, mon_names
+        assert "claude-auto-mode" not in mon_names, mon_names
     await _with_app(body)
 
 
