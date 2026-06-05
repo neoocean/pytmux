@@ -17,7 +17,8 @@ from textual.widgets import Input, Label, ListItem, ListView, TextArea
 
 from . import usagelog
 from .clientutil import (COMMAND_FREETEXT, COMMAND_NOARG, COMMAND_OPTIONS,
-                         COMMANDS, MENU_ITEMS, MENU_TOGGLES)
+                         COMMANDS, MENU_ITEMS, MENU_TOGGLES,
+                         has_hangul, hangul_to_qwerty)
 
 
 class CommandListScreen(ModalScreen):
@@ -109,7 +110,11 @@ class CommandListScreen(ModalScreen):
         q = self._query.strip().lower()
         if not q:
             return list(items)
-        return [(n, d) for n, d in items if q in n.lower() or q in d.lower()]
+        # 한영 오타 복원: 검색어에 한글이 섞이면 QWERTY 로 되돌려 매칭(이름에 한해).
+        # 설명은 한글이므로 원문 q 로도 매칭해 양쪽 다 살린다.
+        qn = hangul_to_qwerty(q).lower() if has_hangul(q) else q
+        return [(n, d) for n, d in items
+                if qn in n.lower() or q in n.lower() or q in d.lower()]
 
     async def _rebuild(self):
         searching = bool(self._query.strip())
@@ -553,6 +558,8 @@ class InfoTabsScreen(ModalScreen):
        마지막(1fr 스페이서 뒤)이라 우측 끝, 높이 1이라 3행 head 의 첫 행에 놓인다. */
     #itclose { width: 5; height: 1; content-align: center middle;
                background: $error; color: $text; text-style: bold; }
+    /* ←→ 로 [x] 에 포커스가 오면 강조(탭과 동일한 키보드 동선). */
+    #itclose.-focus { background: $warning; color: black; text-style: bold; }
     #itbody { width: 100%; height: auto; }
     #itbody ListItem { height: auto; }
     #itbody ListItem Label { width: 1fr; }
@@ -563,6 +570,8 @@ class InfoTabsScreen(ModalScreen):
         super().__init__()
         self._tabs = tabs              # [(탭이름, [줄, ...]), ...]
         self._ti = max(0, min(initial, len(tabs) - 1)) if tabs else 0
+        # ←→ 포커스 위치: 0..N-1=탭, N=닫기[x]. 초기엔 현재 탭.
+        self._sel = self._ti
         self._title = title
         # {탭인덱스: (키, 힌트, 콜백)} — 그 탭에서 키를 누르면 콜백 실행. 콜백이
         # 줄 리스트를 돌려주면 그 탭 내용을 갱신한다(예: REC 캡처 ON/OFF 토글).
@@ -583,11 +592,17 @@ class InfoTabsScreen(ModalScreen):
         self.query_one(ListView).focus()
 
     def _render_tabbar(self):
-        # 각 탭 라벨 갱신(현재 탭만 강조). 클릭 대상이라 탭마다 별도 위젯이다(#32).
+        # 각 탭 라벨 갱신(현재 탭 강조). 클릭 대상이라 탭마다 별도 위젯이다(#32).
+        # ←→ 포커스가 [x](=N)면 보고 있는 탭은 [b] 로, [x] 는 -focus 로 강조한다.
+        n = len(self._tabs)
         for i, (name, _l) in enumerate(self._tabs):
             lbl = self.query_one(f"#ittab_{i}", Label)
-            lbl.update(f"[reverse b] {name} [/]" if i == self._ti
-                       else f"[dim] {name} [/]")
+            if i == self._ti:
+                lbl.update(f"[reverse b] {name} [/]" if self._sel == i
+                           else f"[b] {name} [/]")
+            else:
+                lbl.update(f"[dim] {name} [/]")
+        self.query_one("#itclose", Label).set_class(self._sel == n, "-focus")
 
     async def _render_tab(self):
         self._render_tabbar()
@@ -599,7 +614,7 @@ class InfoTabsScreen(ModalScreen):
         if lines:
             lv.index = 0
         box = self.query_one("#itbox", Vertical)
-        sub = "←→/클릭 탭 · ↑↓ 항목 · Esc 닫기"
+        sub = "←→ 탭·닫기[x] · ↑↓ 항목 · Enter/Esc 닫기"
         act = self._actions.get(self._ti)
         if act:                         # 이 탭에서 가능한 동작(예: [c] 캡처 토글)
             sub = f"{act[1]} · " + sub
@@ -608,6 +623,7 @@ class InfoTabsScreen(ModalScreen):
     async def _switch_to(self, i):
         if 0 <= i < len(self._tabs) and i != self._ti:
             self._ti = i
+            self._sel = i
             await self._render_tab()
 
     async def on_click(self, event: events.Click):
@@ -640,13 +656,24 @@ class InfoTabsScreen(ModalScreen):
                 self._tabs[self._ti] = (self._tabs[self._ti][0], new_lines)
             await self._render_tab()
             return
-        # ←→ 또는 Tab/Shift+Tab 으로 탭 전환(팝업이 열린 뒤에도, #24). ListView 가
+        # ←→(또는 Tab/Shift+Tab)으로 탭 + 닫기[x] 를 순환 포커스(요청). 위치는
+        # 0..N-1=탭, N=닫기[x]. 탭에 오면 그 탭 내용으로 전환, [x] 에 오면 내용은
+        # 그대로 두고 [x] 만 강조한다([x] 에서 Enter/그 외 키로 닫힘). ListView 가
         # 좌우키를 먹는 환경을 대비해 Tab 도 받는다.
         if (event.key in ("left", "right", "tab", "shift+tab")
-                and len(self._tabs) > 1):
+                and self._tabs):
+            n = len(self._tabs)
             step = -1 if event.key in ("left", "shift+tab") else 1
-            self._ti = (self._ti + step) % len(self._tabs)
-            await self._render_tab()
+            self._sel = (self._sel + step) % (n + 1)
+            if self._sel < n:
+                self._ti = self._sel
+                await self._render_tab()
+            else:
+                self._render_tabbar()   # [x] 포커스: 내용 유지, 탭바/[x]만 갱신
+            return
+        # 닫기[x] 에 포커스가 있을 때 Enter/Space → 닫기(명시적; 그 외 키도 아래에서 닫힘).
+        if event.key in ("enter", "space") and self._sel == len(self._tabs):
+            self.dismiss(None)
             return
         if event.key in self._NAV:
             lv = self.query_one(ListView)
@@ -929,6 +956,10 @@ class PromptScreen(ModalScreen):
             matches = [(n, d) for (n, d, *_) in COMMANDS]
         elif " " not in s:
             ql = s.lower()
+            # 한영 오타 복원: IME 켠 채 친 한글(예: "ㅏㅑㅣㅣ"=kill)을 QWERTY 로
+            # 되돌려 그걸로 검색한다(요청). 한글이 섞였을 때만 변환.
+            if has_hangul(ql):
+                ql = hangul_to_qwerty(ql).lower()
             matches = [(n, d) for (n, d, *_) in COMMANDS if ql in n.lower()]
             # 정확히 한 개이고 그게 입력과 동일하면 더 제안할 게 없음.
             if len(matches) == 1 and matches[0][0].lower() == ql:

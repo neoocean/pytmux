@@ -98,6 +98,57 @@ def _normalize_key(k: str) -> str:
     return _JAMO.get(k, k)
 
 
+# 한영 오타 복원(명령 프롬프트): IME 가 켜진 채 영문 명령을 치면 두벌식 자모가
+# 음절로 합성돼 들어온다(예: "kill"→"ㅏㅑㅣㅣ", "split"→"�holl"… 식). 합성 음절을
+# 초/중/종성으로 분해하고 복합 자모(겹받침·이중모음)를 낱자로 풀어 _JAMO 로 QWERTY
+# 영문으로 되돌린다. ASCII 등 비-한글은 그대로 둔다.
+_CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"            # 초성 19
+_JUNG = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ"          # 중성 21
+_JONG = "_ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ"  # 종성 28(0=없음)
+# 복합 자모 → 두벌식상 그것을 만드는 낱자 시퀀스(각 낱자는 _JAMO 로 영문 변환).
+_COMPOUND_JAMO = {
+    "ㅘ": "ㅗㅏ", "ㅙ": "ㅗㅐ", "ㅚ": "ㅗㅣ", "ㅝ": "ㅜㅓ", "ㅞ": "ㅜㅔ",
+    "ㅟ": "ㅜㅣ", "ㅢ": "ㅡㅣ",
+    "ㄳ": "ㄱㅅ", "ㄵ": "ㄴㅈ", "ㄶ": "ㄴㅎ", "ㄺ": "ㄹㄱ", "ㄻ": "ㄹㅁ",
+    "ㄼ": "ㄹㅂ", "ㄽ": "ㄹㅅ", "ㄾ": "ㄹㅌ", "ㄿ": "ㄹㅍ", "ㅀ": "ㄹㅎ",
+    "ㅄ": "ㅂㅅ",
+}
+
+
+def _jamo_to_q(j: str) -> str:
+    if j in _COMPOUND_JAMO:
+        return "".join(_JAMO.get(x, x) for x in _COMPOUND_JAMO[j])
+    return _JAMO.get(j, j)
+
+
+def has_hangul(s: str) -> bool:
+    """문자열에 한글(자모/호환자모/완성형 음절)이 하나라도 있으면 True."""
+    return any(0x1100 <= ord(c) <= 0x11FF or 0x3130 <= ord(c) <= 0x318F
+               or 0xAC00 <= ord(c) <= 0xD7A3 for c in s)
+
+
+def hangul_to_qwerty(text: str) -> str:
+    """한글(두벌식 IME 로 잘못 입력된 영문)을 QWERTY 영문으로 되돌린다.
+
+    완성형 음절은 초/중/종성으로 분해, 낱자/복합자모는 _JAMO 로 변환. 비-한글은
+    그대로. 예: "ㅏㅑㅣㅣ"→"kill", "ㄴ푤ㅑㅅ"류 합성도 분해해 복원."""
+    out = []
+    for ch in text:
+        o = ord(ch)
+        if 0xAC00 <= o <= 0xD7A3:                 # 완성형 음절 → 분해
+            s = o - 0xAC00
+            cho, jung, jong = s // 588, (s // 28) % 21, s % 28
+            out.append(_jamo_to_q(_CHO[cho]))
+            out.append(_jamo_to_q(_JUNG[jung]))
+            if jong:
+                out.append(_jamo_to_q(_JONG[jong]))
+        elif ch in _JAMO or ch in _COMPOUND_JAMO:  # 낱자/복합자모(미합성)
+            out.append(_jamo_to_q(ch))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 # mouse-debug 진단에서 기록할 '내비게이션 키' 안전 목록. 원격 휠이 alt-scroll
 # (DECSET 1007) 변환으로 ↑/↓ 화살표로 새는지(=휠 이벤트는 안 오고 화살표만 옴)를
 # 가려내기 위함. **여기 없는 키(특히 문자)는 절대 로그에 남기지 않는다** — 패널에

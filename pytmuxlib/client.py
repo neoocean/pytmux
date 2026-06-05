@@ -15,7 +15,7 @@ from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS, DEFAULT_STYLE,
     MENU_ITEMS, MENU_TOGGLES, SPECIAL, _CLOCK_FONT, _DATE_STRFTIME, _JAMO,
     _KEY_DIAG, _ONOFF, _TIME_STRFTIME, _char_cells, _darken_style, _fmt_tokens,
-    _is_emoji,
+    _is_emoji, has_hangul, hangul_to_qwerty,
     _normalize_key, _shell_argv, key_to_bytes, make_style, theme_color)
 from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 사용)
     ChooseBufferScreen, ChooseLayoutScreen, ChooseTreeScreen, CommandListScreen,
@@ -1884,6 +1884,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 parts = line.split()
             if not parts:
                 return
+            # 한영 오타 복원: 명령 이름 토큰에 한글이 섞이면(IME 켠 채 입력) QWERTY 로
+            # 되돌린다. 이름은 항상 ASCII 이므로 안전하고, 인자(한글 이름 등)는 안 건드린다.
+            if has_hangul(parts[0]):
+                parts[0] = hangul_to_qwerty(parts[0])
             c = parts[0].lower()
             args = parts[1:]
             # 사용자 별칭 확장

@@ -367,6 +367,23 @@ async def test_esc_invalid_digit_blinks_active_tab():
     await _with_app(body)
 
 
+async def test_command_prompt_hangul_typo_recovery():
+    # 한영 오타: IME 켠 채 친 한글 명령을 QWERTY 로 되돌려 검색/실행한다.
+    from pytmuxlib.clientutil import hangul_to_qwerty, has_hangul
+    assert hangul_to_qwerty("ㅏㅑㅣㅣ") == "kill"        # kill (낱자 모음)
+    assert hangul_to_qwerty("네ㅣㅑㅅ") == "split"        # split (합성+낱자 혼합)
+    assert hangul_to_qwerty("kill") == "kill"            # ASCII 는 그대로
+    assert has_hangul("ㅏㅑㅣㅣ") and not has_hangul("kill")
+
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda a, **k: sent.append((a, k))
+        # "kill-pane" 를 IME 켠 채 치면 "ㅏㅑㅣㅣ-pane" → 복원돼 kill_pane 실행.
+        app._run_command("ㅏㅑㅣㅣ-pane")
+        assert ("kill_pane", {}) in sent, sent
+    await _with_app(body)
+
+
 async def test_display_panes():
     async def body(app, pilot, srv):
         await pilot.press("ctrl+b")
@@ -1601,8 +1618,9 @@ async def test_status_tabs_popup_merged():
         # 초기 탭 = 캡처(0=왼쪽): 캡처 정보 보임
         joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
         assert "pane-1.log" in joined and "2,048" in joined, joined
-        # ←→ 로 토큰 사용량 탭(1=오른쪽) → ctx 와 실제 토큰(Σ 8.2k) 보임(#18)
-        await pilot.press("left")
+        # → 로 토큰 사용량 탭(1=오른쪽) → ctx 와 실제 토큰(Σ 8.2k) 보임(#18).
+        # (←→ 순환에 닫기[x] 가 포함되므로 탭0→탭1 은 'right' 다.)
+        await pilot.press("right")
         await pilot.pause(0.1)
         j2 = " ".join(str(lbl.render()) for lbl in scr.query(Label))
         assert "ctx 42%" in j2 and "8.2k" in j2, j2
@@ -1635,6 +1653,39 @@ async def test_info_tabs_close_button_and_esc():
         await pilot.pause(0.1)
         assert app.screen_stack[-1].__class__.__name__ != "InfoTabsScreen", "Esc 닫기"
     await _with_app(body, size=(58, 30))      # 좁은(모바일) 폭
+
+
+async def test_info_tabs_arrow_reaches_close_button():
+    # ←→ 가 탭들 + 닫기[x] 를 순환 포커스한다(요청). 위치 0..N-1=탭, N=[x].
+    async def body(app, pilot, srv):
+        from textual.widgets import Label
+        app._status_cap_lines = ["파일: /tmp/x/pane-1.log"]
+        app._status_tab_initial = 0
+        app._open_status_tabs({"sessions": []})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "InfoTabsScreen"
+        n = len(scr._tabs)
+        assert n >= 2 and scr._sel == 0
+        await pilot.press("right")            # 0 → 1
+        await pilot.pause(0.05)
+        assert scr._sel == 1 and scr._ti == 1
+        for _ in range(n - 1):                # 마지막 탭에서 한 번 더 → [x]
+            await pilot.press("right")
+            await pilot.pause(0.03)
+        assert scr._sel == n, "←→ 가 닫기[x] 에 도달해야"
+        assert scr.query_one("#itclose", Label).has_class("-focus"), "[x] 강조"
+        await pilot.press("right")            # [x] → 0 (wrap)
+        await pilot.pause(0.05)
+        assert scr._sel == 0
+        await pilot.press("left")             # 0 → [x] (wrap back)
+        await pilot.pause(0.05)
+        assert scr._sel == n
+        await pilot.press("enter")            # [x]+Enter → 닫힘
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1].__class__.__name__ != "InfoTabsScreen", \
+            "[x] 포커스 + Enter 로 닫힘"
+    await _with_app(body)
 
 
 async def test_status_right_segments_clock_and_date_zones():
