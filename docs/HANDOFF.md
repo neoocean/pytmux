@@ -1075,9 +1075,15 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   `serverclaude.py` `ServerClaudeMixin`**(CL 56765 — 자동재개·prompt-clear·auto-doc-clear·
   claude-auto-mode·perm-mode 구동). ② **캡처(REC) 클러스터 → `servercapture.py`
   `ServerCaptureMixin`**(CL 56766 — _capture_*·capture_dir·set_capture). ③ **영속/직렬화·
-  재시작(execv) 클러스터 → `serverpersist.py` `ServerPersistMixin`**(CL 56767 — layout/
+  재시작(execv) 클러스터 → `serverpersist.py` `ServerPersistMixin`**(CL 56768 — layout/
   resume/slots/opts 직렬화·저장·복원 + restart_server/_do_execv). **server.py 2968→2282줄
-  (-23%), 신규 믹스인 3개.** 다음 후보(연속 응집 블록): flush/IPC, 레이아웃/패널 트리. 아래는 원 요청.
+  (-23%), 신규 믹스인 3개(serverclaude/servercapture/serverpersist).** 분리 패턴: 연속
+  응집 블록을 `class XxxMixin:` 으로 옮기고 `Server(…Mixin들)` 가 상속(메서드는 self.*·
+  다른 메서드를 그대로 참조 → 동작 불변, 헤드리스 232 테스트가 게이트). **코어 멀티
+  플렉서(패널 spawn/트리·window/tab/session ops·flush/IPC)는 의도적으로 Server 본체에
+  유지** — 이들이 곧 Server 의 핵심이라 분리 이득이 작고, flush/IPC 꼬리엔 `_scan_claude`
+  (Claude)가 섞여 있어 추가 분리는 _scan_claude 류를 serverclaude 로 마저 모은 뒤가 적절
+  (선택적 후속). 아래는 원 요청.
   요청: 코드를
   **LLM 친화적인 형태로 리팩토링**. 동기(현 상태): 핵심 두 모듈이 **거대 단일 파일**
   이라 LLM 이 한 번에 통째로 읽어야 편집이 가능하고 컨텍스트·충돌 비용이 크다 —
