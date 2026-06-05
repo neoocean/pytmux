@@ -990,8 +990,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   이 항목의 detection), 아래 "Windows→ssh→원격 macOS ssh 반응성 급락"·feed 드레인/
   백프레셔(서버 측 정체 원인 후보), 데스크탑 원격제어 프롬프트 반영(CL 56592, "앱은
   살아있다"의 같은 근거). **현재는 기록만 — 미구현.**
-- **[UI 요청, 미구현(기록만)] Claude footer 모드/원격제어 영역 호버 시 배경색을 살짝
-  바꿔 클릭 가능함을 표시** — 요청: 마우스로 Claude Code 하단의 **권한모드 footer**·
+- ~~**[UI 요청] Claude footer 모드/원격제어 영역 호버 시 배경색을 살짝
+  바꿔 클릭 가능함을 표시**~~ → **CL 56762 에서 해결.** `MultiplexerView.on_mouse_move`
+  가 `_footer_zone_at(x,y)`(신규, perm/remote 클릭존 공용 히트테스트)로 호버 대상을
+  판정해 `_set_footer_hover((pid,kind))` 로 기억하고(바뀔 때만 재합성, 떨림 방지),
+  `_composite` 가 divider 호버 직후 그 클릭존 줄 배경을 `secondary` 로 한 톤 덮는다
+  (글자색 유지). 회귀 `test_claude_footer_hover_highlights_zone`. 아래는 원 분석.
+  요청: 마우스로 Claude Code 하단의 **권한모드 footer**·
   **`Remote Control active`** 영역(= CL 56602 에서 등록한 `_perm_zone`/`_remote_zone`
   클릭존)에 **호버하면 배경색을 살짝 바꿔** 클릭 가능한 영역임을 알린다. 현재 자산:
   클릭존은 이미 있다(`_perm_zone`/`_remote_zone`, `client.py:_scan_footer_zones`,

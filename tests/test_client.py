@@ -2217,6 +2217,47 @@ async def test_claude_footer_zones_and_popups():
     await _with_app(body)
 
 
+async def test_claude_footer_hover_highlights_zone():
+    """§10: Claude footer(권한모드/원격제어) 클릭존 위에 호버하면 그 줄 배경이
+    강조된다(클릭 가능 암시). _footer_zone_at 히트테스트 + 호버 시 셀 배경 변화."""
+    from rich.style import Style as RStyle
+    from pytmuxlib.clientutil import theme_color
+
+    async def body(app, pilot, srv):
+        pid = app.layout["panes"][0]["id"]
+        py = app.layout["panes"][0]["y"]
+        app.pane_claude = {pid: {"id": pid, "claude": "idle",
+                                 "perm_mode": "default"}}
+        rows = [
+            [("일반 출력 줄", {})],
+            [("⏵⏵ auto mode on (shift+tab to cycle)", {})],
+            [("Remote Control active", {})],
+        ]
+        app.pane_content[pid] = (rows, None)
+        app._footer_hover = None
+        app._composite()
+        # 히트테스트: 권한모드 줄 안 → ("perm"), 원격제어 줄 안 → ("remote"),
+        # 존 바깥(첫 줄) → None.
+        zx0, zx1, zy = app._perm_zone[pid]
+        assert app._footer_zone_at(zx0, zy) == (pid, "perm")
+        rx0, rx1, ry = app._remote_zone[pid]
+        assert app._footer_zone_at(rx0, ry) == (pid, "remote")
+        assert app._footer_zone_at(zx0, py) is None
+        # 호버 전/후 배경 비교: 권한모드 줄 호버 → 그 줄 배경이 secondary 로 강조.
+        bg_before = app.view._cells[zy][zx0][1].bgcolor
+        app._footer_hover = (pid, "perm")
+        app._composite()
+        bg_after = app.view._cells[zy][zx0][1].bgcolor
+        sec = RStyle(bgcolor=theme_color(app, "secondary")).bgcolor
+        assert bg_after == sec, (bg_after, sec)
+        assert bg_after != bg_before
+        # 호버 해제 → 원래대로(secondary 아님)
+        app._footer_hover = None
+        app._composite()
+        assert app.view._cells[zy][zx0][1].bgcolor != sec
+    await _with_app(body)
+
+
 async def test_perm_mode_click_outside_closes():
     """§10-A #3: 권한모드 팝업 박스(#perm) 바깥(백드롭) 클릭 시 dismiss(None) 로 닫힌다.
     박스 안 클릭은 닫지 않는다(InfoScreen 의 inside-box 판정 패턴)."""

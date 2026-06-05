@@ -234,6 +234,12 @@ class MultiplexerView(Widget):
             self.app.send_cmd("select_pane_id", id=p["id"])
         event.stop()
 
+    def _set_footer_hover(self, fh):
+        """Claude footer 호버 대상을 갱신하고, 바뀐 경우에만 재합성한다(떨림 방지)."""
+        if fh != self.app._footer_hover:
+            self.app._footer_hover = fh
+            self.app._composite()
+
     def on_mouse_move(self, event: events.MouseMove):
         # Shift+드래그 패널 swap 중 — 대상 패널 추적(시각 강조 갱신)
         if self._pane_swap is not None:
@@ -270,8 +276,13 @@ class MultiplexerView(Widget):
                     self._hover_divider = new_hov
                     self.app._composite()   # 변경 시에만 재합성(떨림 방지)
                 if dv:
+                    self._set_footer_hover(None)
                     event.stop()
                     return
+                # Claude footer(권한모드/원격제어) 클릭존 위 호버 → 배경 강조(클릭
+                # 가능 암시, §10). content 영역과 겹치므로 강조만 하고 패스스루는 막지
+                # 않는다(클릭은 on_mouse_down 이 패스스루보다 먼저 가로챔).
+                self._set_footer_hover(self.app._footer_zone_at(event.x, event.y))
             # 버튼 없는 모션 — any-motion(1003) 앱에만 전달
             pd = self._mouse_target(event.x, event.y)
             if pd is not None and pd.get("mouse", 0) >= 3:

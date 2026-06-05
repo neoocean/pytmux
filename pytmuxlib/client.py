@@ -94,6 +94,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # active" → 원격제어 정보 팝업. _composite 가 패널 content 를 훑어 채운다.
             self._perm_zone = {}     # id -> (x0,x1,y) 권한모드 footer 클릭존
             self._remote_zone = {}   # id -> (x0,x1,y) 원격제어 표시 클릭존
+            self._footer_hover = None  # 호버 중인 footer 클릭존 (pane_id, "perm"|"remote")(§10)
             self._hdr_focus = None      # ESC 모드 Claude 헤더 포커스 대상 pane id(#5)
             self._claude_hidden_panes = set()  # 헤더를 숨긴 패널 id(#6 ② 팝업서 토글)
             self._tab_close_zone = None  # 현재 탭 닫기 [x] 영역 (x0, x1, y)
@@ -1026,6 +1027,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if "remote control" in low:
                     self._remote_zone[p["id"]] = (x0, x1, gy)
 
+        def _footer_zone_at(self, x, y):
+            """좌표 (x,y) 가 Claude footer 클릭존(권한모드/원격제어) 안이면
+            (pane_id, "perm"|"remote") 반환, 아니면 None(§10 호버 강조·클릭 공용)."""
+            for pid, (zx0, zx1, zy) in self._perm_zone.items():
+                if zy == y and zx0 <= x < zx1:
+                    return (pid, "perm")
+            for pid, (zx0, zx1, zy) in self._remote_zone.items():
+                if zy == y and zx0 <= x < zx1:
+                    return (pid, "remote")
+            return None
+
         def _composite(self):
             W = self.layout.get("cols", self.size.width)
             H = self.layout.get("rows", max(1, self.size.height - 1))
@@ -1219,6 +1231,20 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         if 0 <= yy < H and 0 <= xx < W:
                             c, st = cells[yy][xx]
                             cells[yy][xx] = (c, st + tint)
+            # Claude footer(권한모드/원격제어) 클릭존 호버 강조(§10): 클릭 가능 영역
+            # 임을 알리려 그 줄 배경만 한 톤 입힌다(글자색 유지). 클릭존은 위에서 막
+            # 재계산됐으므로 호버 대상이 아직 유효할 때만 칠한다(떨림 없음).
+            if self._footer_hover is not None:
+                _fpid, _fkind = self._footer_hover
+                _fzone = (self._perm_zone if _fkind == "perm"
+                          else self._remote_zone).get(_fpid)
+                if _fzone:
+                    zx0, zx1, zy = _fzone
+                    ftint = Style(bgcolor=theme_color(self, "secondary"))
+                    if 0 <= zy < H:
+                        for xx in range(max(0, zx0), min(zx1, W)):
+                            c, st = cells[zy][xx]
+                            cells[zy][xx] = (c, st + ftint)
             # 컨텍스트 메뉴가 열려 있으면 대상 패널 외 나머지를 흐리게(#18) — 중앙
             # 모달이라 위치로 패널을 가리킬 수 없어 배경 dim 으로 대상을 구분한다.
             if self._menu_open and self._menu_pane is not None:
