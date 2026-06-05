@@ -211,6 +211,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56720 **큰 달력 두 자리 숫자 사이 간격 좁힘(DIG 2→1)**(§10-A #9) — `client.
+  _draw_calendar_overlay` 의 큰 달력(시계 3×5 폰트) 경로에서 한 날짜의 두 자리 숫자
+  사이 간격 `DIG` 를 2→1 로 줄여 두 자리가 한 덩어리로 읽히게 했다. 날짜칸 사이
+  간격(`DGAP`/`DCW=8`)은 유지(날짜끼리는 안 붙음). 회귀 `test_big_calendar_digit_spacing`
+  (큰 패널 90×46 에서 10일 글리프 두 블록 사이 빈 칸이 정확히 1칸인지 셀 단위 측정),
+  223 passed. 클라이언트 전용(attach 재실행). 파일: `pytmuxlib/client.py`,
+  `tests/test_client.py`, `docs/HANDOFF.md`.
 - 56719 **open/close-clock·calendar 명령(멱등 켜기/끄기)**(§10-A #10) — 시계/달력
   오버레이를 토글이 아니라 명시적으로 켜고(`open-clock`/`open-calendar`) 끄는
   (`close-clock`/`close-calendar`) 명령. 활성 패널 대상, 멱등(이미 원하는 상태면 그대로),
@@ -817,9 +824,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   메뉴로 + 그 사이 구분선** — `InfoScreen`(프롬프트 히스토리, `[h] 이 헤더 숨기기` footer).
   마지막 항목(예 30)에서 ↓ 누르면 항목과 `[h]` 사이 **빈 줄**에 멈춤 → 바로 `[h]` 로
   점프하게, 그리고 그 사이에 **구분선** 그리기. **현재는 기록만 — 미구현.**
-- **[UI 요청, 미구현] 달력 큰 글꼴 — 한 날짜의 두 자리 숫자 사이 간격 좁히기** —
-  `clientwidgets` 달력 오버레이 빅폰트 렌더. 현재 숫자 간 gap=2(MEMORY 폴리시 패스).
-  한 날짜를 이루는 **두 자리 숫자 사이** 간격만 더 좁게. **현재는 기록만 — 미구현.**
+- ~~**[UI 요청] 달력 큰 글꼴 — 한 날짜의 두 자리 숫자 사이 간격 좁히기**~~ →
+  **CL 56720 에서 해결.** `client._draw_calendar_overlay` 의 큰 달력(시계 폰트) 경로에서
+  자리(숫자) 사이 간격 `DIG` 를 2→1 로 줄여 한 날짜의 두 자리가 한 덩어리로 읽히게 했다.
+  날짜칸 사이 간격(`DGAP`/`DCW=8`)은 그대로라 날짜끼리는 안 붙는다(두 자리 폭 3+1+3=7
+  이 8칸 안에서 가운데 정렬). (위치는 `clientwidgets` 가 아니라 `client.py` 합성 경로였음.)
 - ~~**[기능 요청] `open-clock`/`open-calendar`·`close-clock`/`close-calendar` 명령**~~ →
   **CL 56719 에서 해결.** `open-clock`/`open-calendar` = 현재 하이라이트(활성) 패널에
   시계/달력 **멱등 켜기**(이미 떠 있으면 유지 — 토글과 달리 다시 호출해도 안 꺼짐),

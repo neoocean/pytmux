@@ -892,9 +892,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         cells[yy][xx] = (c, _darken_style(st))
                 # 1.5) 아주 큰 패널이면 시계 폰트(3×5)로 날짜를 큼직하게 — '큰 달력'(#16).
                 # 한 날짜칸은 숫자 두 자리(3+1+3=7) + 칸 사이 1, 한 주는 글자 5 + 간격 1.
-                # DCW=한 날짜칸 폭(숫자 3 + 자리사이 2 + 숫자 3 = 8), DGAP=칸 사이,
-                # DIG=자리(숫자) 사이 간격(2 — 두 자리 수가 붙어 안 읽히던 문제, #27).
-                DCW, DGAP, RHB, DIG = 8, 3, 6, 2   # DGAP↑(날짜칸 사이 더 띄움)
+                # DCW=한 날짜칸 폭(숫자 3 + 자리사이 1 + 숫자 3 = 7 + 여유 1 = 8), DGAP=칸 사이,
+                # DIG=자리(숫자) 사이 간격(§10-A #9: 2→1 로 좁혀 한 날짜의 두 자리가
+                # 한 덩어리로 읽히게 — 날짜칸 사이 간격 DGAP/DCW 는 그대로라 날짜끼리는
+                # 안 붙는다. 두 자리 폭 3+1+3=7 이 DCW(8) 안에서 가운데 정렬된다).
+                DCW, DGAP, RHB, DIG = 8, 3, 6, 1   # DGAP↑(날짜칸 사이 더 띄움), DIG↓(자리 사이 좁힘)
                 gw_big = 7 * DCW + 6 * DGAP          # 칸 7개 + 사이 간격
                 nl_big = 2 + len(weeks) * RHB        # 제목+요일 + 주×6
                 if pw >= gw_big + 2 and ph >= nl_big + 2:

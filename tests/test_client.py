@@ -1125,6 +1125,47 @@ async def test_calendar_overlay_and_date_click():
     await _with_app(body, size=(44, 16))
 
 
+async def test_big_calendar_digit_spacing():
+    """§10-A #9: 큰 패널에서 '큰 달력'(시계 폰트) 경로가 렌더되고, 한 날짜의 두 자리
+    숫자 사이 간격이 DIG=1(글리프 폭 3 + 간격 1)로 좁다 — 두 자리가 한 덩어리로 읽힘.
+    렌더된 셀에서 2-digit 날짜(10일)의 두 글리프 블록 사이 빈 칸이 정확히 1칸인지 측정
+    (DIG=2 였다면 빈 칸 2개라 실패 — 상수 회귀를 셀 단위로 고정)."""
+    async def body(app, pilot, srv):
+        active = app.layout["active"]
+        app.set_calendar(active, True)
+        await pilot.pause(0.1)
+        ap = next(p for p in app.layout["panes"] if p["id"] == active)
+        DCW, DGAP, RHB, DIG = 8, 3, 6, 1   # client._draw_calendar_overlay 와 일치
+        import calendar as _cal
+        from datetime import datetime
+        now = datetime.now()
+        weeks = _cal.Calendar(firstweekday=0).monthdayscalendar(now.year, now.month)
+        gw_big = 7 * DCW + 6 * DGAP
+        nl_big = 2 + len(weeks) * RHB
+        if not (ap["w"] >= gw_big + 2 and ap["h"] >= nl_big + 2):
+            return   # 화면이 작으면 큰 달력 경로가 아니므로 검증 생략
+        px, py, pw, ph = ap["x"], ap["y"], ap["w"], ap["h"]
+        ox = px + (pw - gw_big) // 2
+        oy = py + (ph - nl_big) // 2
+        # 10일의 (주, 요일) 위치
+        loc = next(((wi, col) for wi, wk in enumerate(weeks)
+                    for col, d in enumerate(wk) if d == 10), None)
+        assert loc is not None
+        wi, col = loc
+        gw = 2 * 3 + 1 * DIG                 # 두 자리 글리프 총폭
+        gx0 = ox + col * (DCW + DGAP) + (DCW - gw) // 2
+        ry = oy + 2 + wi * RHB
+        cells = app.view._cells
+
+        def block_has_glyph(x):              # x열의 5행 중 비공백이 하나라도 있나
+            return any((cells[ry + r][x][0] or " ") != " " for r in range(5))
+        # 첫 자리(gx0..+2)·둘째 자리(gx0+4..+6) 블록엔 글리프, 사이(gx0+3)는 빈 칸 1개.
+        assert any(block_has_glyph(gx0 + k) for k in range(3)), "첫 자리 글리프"
+        assert any(block_has_glyph(gx0 + 4 + k) for k in range(3)), "둘째 자리 글리프"
+        assert not block_has_glyph(gx0 + 3), "두 자리 사이는 빈 칸 1개(DIG=1)"
+    await _with_app(body, size=(90, 46))
+
+
 async def test_open_close_clock_calendar_commands():
     """§10-A #10: open-clock/open-calendar(멱등 켜기)·close-clock/close-calendar(끄기).
     토글과 달리 두 번 열어도 켜진 채 유지되고, 한 패널엔 한 오버레이만(상호 배타)."""
