@@ -1,8 +1,9 @@
 # pytmux 성능/반응성 가속 — 동작 시나리오
 
-> **상태**: 🟡 설계/제안(미구현). 본 문서는 "더 빨리 실행되고, 모든 인터페이스가 더
-> 빨리 응답하게" 만들기 위한 **근거 기반 최적화 시나리오**다. 각 항목은 코드 근거
-> (`file:line`)·개선안·예상 효과·위험·검증 게이트를 갖는다.
+> **상태**: 🟢 핵심 구현 + 추가 리서치. ReDoS·B1·B2·B3·B4·A2·A3 구현 완료(§3~§6 ✅),
+> 실행속도·반응성의 남은 레버는 §8(추가 리서치, 2026-06-06 실측)에 A4/A5/B8/B9 로 정리.
+> 본 문서는 "더 빨리 실행되고 더 빨리 응답하게" 만들기 위한 **근거 기반 최적화 시나리오**
+> 다. 각 항목은 코드 근거(`file:line`)·개선안·예상 효과·위험·검증 게이트를 갖는다.
 > 관련: [HANDOFF.md](HANDOFF.md) §9(throughput 작업 이력)·§10 · [WINDOWS_TESTING.md](WINDOWS_TESTING.md)
 > 측정 도구: `scripts/bench.py`(startup·탭/패널 반응성·출력폭증 3축), `poc/feed_profile.py`(feed/render 핫패스).
 
@@ -295,15 +296,13 @@ Python 3.11+ `frozen_modules` 효과 확인.
 다중패널 CPU·flush 왕복·render 직렬화·first-paint 를 개선했다(235 passed, 매 단계 동작 불변).
 
 **남은 항목 — 권고**:
-- **B2(행 단위 델타)** — 남은 가장 큰 레버지만 **서버 프로토콜+클라 적용+full/delta
-  동기화(resync)+골든 동일성 검증**이 묶인 큰 변경이라, 코어 IPC 를 만지는 별도 집중
-  CL 묶음으로 다루는 게 안전(B3 의 "dirty 줄만 직렬화"도 이 행 스냅샷과 함께). office
-  병행 세션이 server/IPC 를 동시 수정 중이면 충돌 위험이 커 조율 후 착수 권장.
+- ~~B2(행 단위 델타)~~ → ✅ **CL 56852 완료**(per-client 델타, 스피너 28×↓).
 - **B5(이벤트 구동 flush)** — 입력→화면 지연(≤33ms) 단축이 목표지만 **코어 flush 루프**
   에 `asyncio.Event` 웨이크를 넣는 변경이라 기아/중복웨이크/누락 회귀 위험이 있다.
   B1(스캔 게이팅)+B4(배치)로 idle CPU 는 이미 낮아져 잔여 이득이 작아 보류.
 - **B7** — 단일 패널 폭증엔 무효(동시 다중 폭증만 도움) → 실효 낮아 보류.
-- **A1** — textual import 지연/트리셰이킹은 무위험·소이득, 여력 시 착수.
+- **A1** — textual import 지연/트리셰이킹은 무위험·소이득, 여력 시 착수(§8 실측 참고).
+- **신규 레버 A4/A5/B8/B9 는 §8(추가 리서치) 참조** — 실측 import 분해로 도출.
 
 ## 7. 비목표 / 주의
 
@@ -314,3 +313,82 @@ Python 3.11+ `frozen_modules` 효과 확인.
   [RESTART_SCENARIO.md](RESTART_SCENARIO.md) 의 `restart-server` 사용.
 - 인터랙티브 ssh 반응성의 최종 확인은 실 Windows 박스(WINDOWS_TESTING.md §3-c) —
   헤드리스 `bench.py` 는 대리 지표다.
+
+## 8. 추가 리서치 (2026-06-06) — 실측 import 분해 + 신규 레버
+
+> B1·B2·B3·B4·A2·A3·ReDoS 완료 후 **실행속도·반응성의 남은 레버**를 `python -X
+> importtime` 과 마이크로 측정으로 다시 도출했다. 아래는 근거(실측)·개선안·효과·위험.
+
+### 8.1 실측 — cold import 분해 (`python -X importtime`)
+
+| 진입 | 총 import | 지배 요인 |
+|------|----:|------|
+| `import pytmux`(서버/제어 경로, textual 미로드) | **~52ms** | asyncio ~22(ipc 경유) · model→pyte ~12 · wcwidth ~9.5 |
+| `import pytmuxlib.client`(attach 경로, textual) | **~136ms** | textual ~60(clientscreens→textual.screen→css 31) · asyncio ~20 · rich ~8 |
+
+- 마이크로 측정: `ipc+protocol` 만 = 26.6ms, 여기에 `server(→model→pyte)` = +9.9ms.
+- 결론: **attach(common) 의 startup 은 textual(~60ms) 이 지배**(회피 불가, 정리 여지
+  제한적). 경량 제어 명령(ls/cmd/kill)은 server/model/pyte(~10ms) 를 불필요 지불.
+
+### 8.2 A4. 경량 제어 명령(ls/cmd/kill) 지연 import ★저위험·소이득
+
+**현상/근거**: `launcher.py:16 from .server import run_server`·`pytmux.py:47,53` 이
+**server/model/pyte/wcwidth 를 모듈 로드 시 즉시** 끌어온다(~10ms). `ls`/`cmd`/`kill`
+은 IPC 만 쓰고 model/pyte 가 필요 없다(서버 데몬만 필요). **개선**: textual 처럼
+server/model/pyte/replay 도 `pytmux.py` `__getattr__`(PEP 562)·`run_server` 지연
+import 로 돌려, 경량 명령 경로가 pyte/wcwidth 를 안 사게 한다. **효과**: ls/cmd/kill
+cold ~52ms→~42ms. **위험**: 낮음(심볼 재노출 동일, 서버/attach 경로는 그대로 로드).
+**검증**: `python -X importtime pytmux.py ls` 전후, 기존 테스트 import 호환.
+
+### 8.3 A5. 배포 시 `.pyc` 사전컴파일 ★무위험
+
+**현상/근거**: `install.sh` 에 `compileall` 이 없어 설치 후 **첫 실행이 .pyc 를 컴파일**
+하며 cold import 가 더 느리다(importtime 첫 실행에 컴파일 포함). **개선**: `install.sh`
+가 `python -m compileall pytmuxlib` 를 돌려 배포 시 바이트코드를 미리 만든다(또는
+`PYTHONPYCACHEPREFIX` 안내). **효과**: 설치 직후 첫 attach cold import 단축(환경따라
+수~수십 ms). **위험**: 없음(런타임 동작 불변, 패키징만). **검증**: 설치 후 첫 실행
+cold_import_ms.
+
+### 8.4 A1(보강). textual import — 현실적 기대치
+
+**근거**: 클라 import 의 ~60ms 는 textual 코어(css 엔진 31ms·app 19ms·rich)다 —
+**TUI 인 이상 회피 불가**. 트리셰이킹은 안 쓰는 textual 위젯/심볼 import 제거로 한정적
+(수~십 ms). clientscreens(모달군) 지연 import 는 textual.screen 을 client 가 어차피
+로드하므로 marginal. **결론**: A1 은 "큰 한 방"이 아니라 A4/A5 와 함께 수십 ms 를
+긁는 수준 — 기대치를 낮게 잡고 측정 후 착수.
+
+### 8.5 B8. 클라이언트 **증분 합성**(dirty-region `_composite`) ★반응성
+
+**현상/근거**: 클라 `_composite`(`client.py:1054`)는 매 갱신마다 **전 화면 W×H 셀을
+재합성**한다(패널 blit·테두리·오버레이·dim 다중 순회). B2 로 서버→클라 전송은 줄었지만
+**1줄 델타에도 클라가 화면 전체를 재합성**한다 — 출력 폭증·다중 패널서 클라측 핫패스.
+**개선**: 변경된 패널/행만 재합성하는 dirty-region 합성(서버 B2/B3 의 클라측 대응).
+B2 가 보낸 변경 행 집합을 합성 단위로 재사용. **효과**: 클라 CPU·입력→화면 지연 감소
+(특히 저사양 클라·원격). **위험**: 중(합성은 테두리·오버레이·헤더가 셀을 공유해 부분
+갱신 정합이 까다로움 — 골든 비교 필수). **검증**: `tests/ptyshot` 시각 회귀 + 합성
+호출당 처리 셀 수 측정.
+
+### 8.6 B9. 클라 **합성 코얼레싱**(read-burst 당 1회) ★반응성·저위험·고효과
+
+**현상/근거**: 클라 `_reader_task`(`client.py:352`)가 메시지 1개마다 핸들러에서
+`self._composite()` 를 부른다(`client.py` screen/screen-delta/status 분기). B4(배치
+송신)·B2(델타) 이후 **한 flush 가 여러 메시지를 한 번에** 보내므로, 클라가 한 번에
+받은 N 메시지에 **_composite 를 N 회** 돌린다(같은 프레임을 여러 번 재합성). **개선**:
+메시지 처리에서 즉시 합성하지 말고 `self._needs_composite=True` 만 세운 뒤, **이벤트
+루프 틱마다 1회**(`call_soon`/한 read 버스트 후) 합성해 코얼레싱. **효과**: 출력 폭증·
+다중 패널 flush 에서 클라 합성 횟수를 프레임당 1회로 — 클라 CPU·지터 대폭 감소(B8
+없이도 즉효). **위험**: 낮음(합성을 한 틱 미루는 것뿐, 시각 결과 동일). **검증**: 한
+배치 수신 시 _composite 호출이 1회인지 + ptyshot 시각 회귀.
+
+### 8.7 갱신된 우선순위(신규 레버)
+
+| 순위 | 레버 | 효과 | 위험 |
+|---|---|---|---|
+| 1 | **B9** 클라 합성 코얼레싱 | 높음(폭증/다중패널 클라 CPU) | 낮음 |
+| 2 | **A4** 경량명령 지연 import | 낮음(ls/cmd/kill ~10ms) | 낮음 |
+| 3 | **A5** .pyc 사전컴파일 | 낮음(첫 실행) | 없음 |
+| 4 | **B8** 클라 증분 합성 | 중~높(클라 핫패스) | 중 |
+| 5 | **A1** textual import 다이어트 | 낮음(현실적) | 낮음 |
+
+> **권장 다음 착수**: **B9**(저위험·고효과 — B2/B4 와 시너지) → A4/A5(무위험 잡이득)
+> → B8(B9 후 잔여가 크면). 각각 `tests/run.py` 통과 + (B8/B9) ptyshot 골든을 게이트로.
