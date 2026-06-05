@@ -10,13 +10,31 @@ from __future__ import annotations
 import asyncio
 import json
 
-from .claude import claude_perm_mode
+from . import tokens
+from .claude import (claude_account, claude_feedback_prompt, claude_prompt,
+                     claude_perm_mode, claude_state, claude_usage)
 from .model import Pane, Session
 
 # 권한모드 자동 오토모드 전환(§10): 한 번 idle 진입 후 auto 에 도달하지 못해도 이
 # 횟수까지만 shift+tab 을 보낸다(footer 순환 순서가 고정이 아닐 수 있어 폐루프지만,
 # 오검출 시 무한 순환을 막는 가드). default↔auto↔plan(↔bypass) 순환을 덮을 만큼.
 _CAM_MAX = 4
+
+
+# Claude 헤더 행 예약(#1)을 풀기 전, 패널이 연속으로 non-Claude 로 보여야 하는
+# 스캔(=flush) 횟수. `_claude` 는 화면 스크래핑이라 footer 가 한두 프레임 안 잡혀
+# None 으로 깜빡이는데(특히 ssh/ConPTY 처럼 화면이 조각나 도착할 때), 그때마다
+# 예약을 풀면 PTY 가 ±1 행으로 리사이즈를 반복해 원격 Claude 화면이 한 줄씩 위아래로
+# 스크롤되는 떨림이 난다. 그래서 예약 해제(=PTY 한 행 키우기)만 디바운스한다(설정
+# 은 즉시). 30Hz flush 기준 ~1초 — 진짜 Claude 종료 시 행을 되찾는 지연은 미미하다.
+_HDR_CLAUDE_MISS = 30
+
+
+# 비활성 탭 Claude 완료 알림(#22) 플리커 방지(§10 #18): busy→idle 후 idle 이 연속
+# 이만큼의 스캔 프레임 동안 안정돼야 "완료"로 친다. raw busy↔idle 깜빡임(footer 가
+# 한 프레임 안 잡혀 idle 로 보였다 다시 busy)에 done 이 잘못 서서 탭이 잠깐 녹색이
+# 되는 것을 막는다. 30Hz flush 기준 ~0.1초 — 진짜 완료 알림 지연은 미미하다.
+_DONE_IDLE_FRAMES = 3
 
 
 class ServerClaudeMixin:
@@ -318,3 +336,249 @@ class ServerClaudeMixin:
         p._perm_target = target
         p._cam_tries = 0
         p._cam_last = None
+
+    def _scan_claude(self, sess, win) -> bool:
+        """모든 탭 패널의 Claude 상태/사용량을 화면 텍스트(screen.display)로 갱신
+        하고, **비활성 탭**의 busy→idle(작업 완료) 전이를 감지해 `has_claude_done`
+        를 세운다(#22). 활성 윈도우만이 아니라 전체를 훑는 이유는 백그라운드 탭의
+        완료를 알리기 위해서다. 상태가 바뀌면 True 반환."""
+        changed = False
+        for t in sess.tabs:
+            w = t.window
+            for p in w.panes():
+                txt = "\n".join(p.screen.display)
+                old_cl = p._claude
+                new_cl = claude_state(txt)
+                # Claude 세션 피드백 프롬프트 자동 Dismiss(#26): "How is Claude doing
+                # this session?" 가 뜨면 '0'(Dismiss) 키를 한 번 주입해 치운다. 같은
+                # 화면에 반복 주입하지 않도록 사라질 때까지 디바운스한다.
+                if claude_feedback_prompt(txt):
+                    if not p._feedback_seen and p.pty is not None:
+                        p._feedback_seen = True
+                        try:
+                            p.pty.write(b"0")
+                        except OSError:
+                            pass
+                else:
+                    p._feedback_seen = False
+                # 사용량 표시는 Claude 세션이 살아 있는 동안 유지한다(#5): 화면에서
+                # 토큰 문구가 잠시 사라져도(스크롤 등) 마지막 값을 보존하고, 세션이
+                # 끝나면(claude None) 비운다.
+                if new_cl:
+                    u = claude_usage(txt)
+                    new_use = u if u is not None else p._claude_usage
+                else:
+                    new_use = None
+                if new_cl != p._claude or new_use != p._claude_usage:
+                    p._claude = new_cl
+                    p._claude_usage = new_use
+                    changed = True
+                # 헤더 예약(#1)용 디바운스: Claude 로 보이면 즉시 True, 아니면 연속
+                # _HDR_CLAUDE_MISS 프레임 뒤에야 False. raw `_claude` 깜빡임이 헤더
+                # 예약을 토글해 PTY 가 ±1 행 리사이즈를 반복(원격 화면 한 줄 떨림)
+                # 하는 것을 막는다(_should_reserve_header 가 _hdr_claude 를 읽음).
+                if new_cl:
+                    p._hdr_claude = True
+                    p._hdr_claude_miss = 0
+                elif p._hdr_claude:
+                    p._hdr_claude_miss += 1
+                    if p._hdr_claude_miss >= _HDR_CLAUDE_MISS:
+                        p._hdr_claude = False
+                # 토큰 누계(#3): 새 Claude 세션 시작(None→Claude) 시 리셋, 매 프레임
+                # 현재 응답 running 토큰을 step 으로 접어 응답별 peak 를 누계에 확정.
+                # (확정 시점 committed>0 은 #7 의 영속 로깅 이벤트로도 쓰인다.)
+                committed = 0
+                if new_cl and not old_cl:
+                    tokens.reset(p._tok_state)
+                    # 새 Claude 세션 경계: 세션 id 부여, 계정 재감지(수동 지정은 유지).
+                    self._claude_session_seq += 1
+                    p._claude_session_id = self._claude_session_seq
+                    if not p._claude_account_manual:
+                        p._claude_account = None
+                    # 시작 규칙 주입 예약(#27): 새 Claude 세션이 뜨면 다음 idle(입력
+                    # 준비됨) 때 저장된 규칙을 프롬프트에 넣는다. 빈 규칙이면 안 함.
+                    if self.claude_rules.strip():
+                        p._rules_pending = True
+                if not new_cl:
+                    p._rules_pending = False   # 세션 끝나면 예약 해제
+                if new_cl:
+                    # 계정 단서를 매 프레임 갱신(마지막 본 값 유지; 수동 지정 우선).
+                    if not p._claude_account_manual:
+                        acct = claude_account(txt)
+                        if acct and acct != p._claude_account:
+                            p._claude_account = acct
+                    running = tokens.parse_running_tokens(txt)
+                    committed = tokens.step(p._tok_state, running,
+                                            new_cl == "busy")
+                    if committed > 0:
+                        self._log_tokens(sess, t, p, committed)
+                    # 표시용 누계 = 확정 total + **진행 중 응답의 peak**(아직 미확정).
+                    # 예전엔 total 만 써서, 스트리밍 중인 현재 응답 토큰이 빠져 Claude
+                    # 표시보다 항상 적게 나왔다(#20). peak 는 확정 시 total 로 접히므로
+                    # total+peak 는 경계에서 연속적이고 이중계산이 없다.
+                    live = p._tok_state["total"] + p._tok_state["peak"]
+                    if live != p._session_tokens:
+                        p._session_tokens = live
+                        changed = True
+                elif p._session_tokens:
+                    p._session_tokens = 0
+                    p._tok_state["peak"] = 0
+                    p._tok_state["total"] = 0
+                    changed = True
+                # 큐된 프롬프트 승격(#4): 헤더는 "지금 처리 중인 프롬프트"를 보여야
+                # 한다. busy 중 입력한 프롬프트는 _track_prompt 가 pending_prompts 에
+                # 쌓아 뒀다(last_prompt 즉시 안 바꿈). 응답 경계 — ① busy→non-busy(응답
+                # 종료) 또는 ② 연속 busy 중 running 토큰 급감(committed>0 = 다음 응답
+                # 시작) — 에서 큐의 다음 프롬프트를 last_prompt 로 승격한다.
+                if p._claude is None:
+                    if p.pending_prompts:
+                        p.pending_prompts.clear()
+                    # Claude 세션 종료 → 권한모드 관측/목표 비움(§10 item 2)
+                    if p._perm_mode is not None or p._perm_target is not None:
+                        p._perm_mode = None
+                        p._perm_target = None
+                else:
+                    boundary = (old_cl == "busy" and new_cl != "busy")
+                    if not boundary and committed > 0 and new_cl == "busy":
+                        boundary = True
+                    if boundary and p.pending_prompts:
+                        p.last_prompt = p.pending_prompts.pop(0)
+                        changed = True
+                # 데스크탑 앱 원격제어 등 입력 경로(_track_prompt)를 안 거친 프롬프트
+                # 반영(§10 #19): 화면 transcript 에서 최신 사용자 프롬프트를 best-effort
+                # 추출해, 입력으로 안 잡힌(last_prompt 와 다르고 최근 히스토리에도 없는)
+                # 경우에만 헤더/히스토리를 갱신한다. 로컬 입력은 _track_prompt 가 제출
+                # 즉시 히스토리에 남기므로 여기 가드(히스토리 멤버십)에 걸려 중복되지
+                # 않는다. 화면 파싱은 best-effort 라 보수적으로 매칭한다.
+                if new_cl:
+                    sp = claude_prompt(txt)
+                    if (sp and sp != p.last_prompt
+                            and sp not in p.prompt_history[-5:]):
+                        p.last_prompt = sp
+                        p.prompt_history.append(sp)
+                        if len(p.prompt_history) > 200:
+                            p.prompt_history = p.prompt_history[-200:]
+                        changed = True
+                # 비활성 탭에서 처리(busy)→대기(idle) 전이 = 작업 완료. limit 은
+                # "대기"가 아니므로 대상 아님. 플리커 방지(§10 #18): raw busy→idle 즉시
+                # 대신, busy 를 본 적이 있고(idle 진입) idle 이 _DONE_IDLE_FRAMES 프레임
+                # 연속 안정될 때만 완료로 친다(한 프레임 깜빡임에 녹색 오검출 방지).
+                if new_cl == "idle":
+                    p._idle_frames += 1
+                else:
+                    p._idle_frames = 0
+                    if new_cl == "busy":
+                        p._was_busy = True   # 작업 중이었음 → 다음 안정 idle 이 '완료'
+                if (w is not win and t.monitor_claude and not t.has_claude_done
+                        and p._was_busy and new_cl == "idle"
+                        and p._idle_frames >= _DONE_IDLE_FRAMES):
+                    t.has_claude_done = True
+                    p._was_busy = False
+                    changed = True
+                # 자동 doc→/clear(§10): idle 이탈(busy/limit/종료) 시 무장된 타이머를
+                # 즉시 해제한다 — idle 이 끊기면 "N초 지속" 전제가 깨진다. 권한모드
+                # 자동전환 시도 카운터도 idle 이탈 시 리셋(다음 idle 진입에 다시 시도).
+                if new_cl != "idle":
+                    self._adc_disarm(p)
+                    p._cam_tries = 0
+                    p._cam_last = None
+                else:
+                    # 시작 규칙 주입(#27): 새 세션/clear 후 첫 idle(입력 준비됨)에 한 번.
+                    if p._rules_pending:
+                        p._rules_pending = False
+                        self._inject_rules(p)
+                    # idle: 현재 권한모드를 관측해 저장(팝업 '현재 모드' 표시용 — status
+                    # 로 클라에 전달, §10 item 2). footer 가 안 보이면(None) 마지막 값 유지.
+                    pm = claude_perm_mode(txt)
+                    if pm is not None and pm != p._perm_mode:
+                        p._perm_mode = pm
+                        changed = True
+                    # 권한모드 구동: 사용자가 footer 클릭 팝업으로 고른 수동 목표
+                    # (_perm_target)가 우선, 없고 claude_auto_mode 면 auto 로 순환
+                    # (§10 item 2 + 권한모드 자동 오토모드 전환). 둘 다 shift+tab 폐루프.
+                    if p._perm_target:
+                        self._drive_perm_mode(p, txt, p._perm_target)
+                    elif self.claude_auto_mode:
+                        self._maybe_auto_mode(p, txt)
+                # 프롬프트 단위 클리어 모드(#9) + 자동 doc→/clear(§10): busy→idle(응답
+                # 완료) 경계에서 상태기계를 전진한다. 수동 모드(prompt_clear_mode)와
+                # 자동 시퀀스(_adc_active)가 같은 _pc_phase 기계를 공유한다.
+                # 진행 중이 아니면서 자동 모드가 켜져 있으면 idle 진입 시점에 무장만
+                # 한다(실제 발화는 N초 뒤 _adc_fire).
+                if old_cl == "busy" and new_cl == "idle":
+                    if p.prompt_clear_mode or p._adc_active:
+                        self._pc_advance(p)
+                        if p._adc_active and p._pc_phase is None:
+                            p._adc_active = False   # 자동 doc→clear 시퀀스 완료
+                    elif self.auto_doc_clear:
+                        self._adc_arm(p)
+        return changed
+
+    @staticmethod
+    def _tab_claude(tab) -> str | None:
+        """탭 내 패널들의 Claude 상태를 합쳐 대표 상태 반환(limit>busy>idle)."""
+        pri = {"limit": 3, "busy": 2, "idle": 1}
+        best, score = None, 0
+        for p in tab.window.panes():
+            s = p._claude
+            if s and pri[s] > score:
+                best, score = s, pri[s]
+        return best
+
+    def _account_token_total(self, ap) -> int:
+        """활성 패널의 Claude 계정을 키로, 그 계정에 속한 모든 패널(전체 세션 순회)
+        의 세션 누적 토큰을 합산한다(§10 계정별 합계). 계정 추정 전이면 활성 패널
+        단독 누계로 폴백하고, 활성 패널이 Claude 가 아니면 0 을 보낸다(이 경우
+        클라이언트가 마지막 비어있지 않은 값을 유지해 표시가 사라지지 않게 한다)."""
+        if not ap:
+            return 0
+        acct = ap._claude_account
+        if acct:
+            return sum(p._session_tokens for p in self._all_panes()
+                       if p._claude_account == acct)
+        if ap._claude:
+            return ap._session_tokens
+        return 0
+
+    @staticmethod
+    def _track_prompt(pane: Pane, data: bytes):
+        """입력 바이트에서 현재 줄을 누적하고 Enter 시 last_prompt 로 확정한다.
+        CSI/ESC 시퀀스는 건너뛰고(화살표 등), bracketed paste 본문은 포함한다."""
+        text = data.decode("utf-8", "ignore")
+        buf = pane._inbuf
+        i, n = 0, len(text)
+        while i < n:
+            ch = text[i]
+            if ch == "\x1b":                 # ESC: 제어 시퀀스 건너뜀
+                i += 1
+                if i < n and text[i] == "[":
+                    i += 1
+                    while i < n and not (0x40 <= ord(text[i]) <= 0x7e):
+                        i += 1
+                    i += 1
+                else:
+                    i += 1
+                continue
+            if ch in ("\r", "\n"):
+                line = buf.strip()
+                if line:
+                    # 히스토리는 제출 즉시 기록(큐잉돼도 제출된 것은 맞다).
+                    if not pane.prompt_history or pane.prompt_history[-1] != line:
+                        pane.prompt_history.append(line)
+                        if len(pane.prompt_history) > 200:
+                            pane.prompt_history = pane.prompt_history[-200:]
+                    # 헤더용 last_prompt(#4): 이전 프롬프트가 아직 처리중(busy)이면
+                    # 즉시 덮지 말고 pending 큐에 쌓는다 — _scan_claude 가 응답 경계에
+                    # 다음 프롬프트를 승격한다(헤더 = "지금 처리 중인 프롬프트").
+                    # busy 가 아니면(idle/None/limit) 곧장 확정.
+                    if pane._claude == "busy":
+                        pane.pending_prompts.append(line)
+                    else:
+                        pane.last_prompt = line
+                buf = ""
+            elif ord(ch) in (8, 127):        # backspace
+                buf = buf[:-1]
+            elif ord(ch) >= 32:
+                buf += ch
+            i += 1
+        pane._inbuf = buf[-500:]
