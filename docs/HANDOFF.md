@@ -211,6 +211,20 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56632 **ESC 모드 종료 시 ESC 가 패널로 새지 않게 — 패널 ESC 전달은 Shift+ESC 만**
+  (§10 사용자 요청) — 단독 ESC 로 esc(명령) 모드 진입 후 **ESC 를 다시 눌러 모드를
+  빠져나올 때 그 ESC 가 활성 패널로 전달되던** 동작을 없앴다. 패널(앱)에 실제
+  ESC(`\x1b`)를 보내는 통로는 **Shift+ESC 일 때만**이어야 한다는 요청. `_handle_esc_mode`
+  의 `k=="escape"` 분기에서 `self.send_input(b"\x1b")` 를 **제거**하고 `self._exit_esc()`
+  만 남겼다 — 즉 "ESC 더블탭 → 앱에 ESC 1회"(CL 56572 (a)) 통로를 **폐지**. 앱에 ESC 가
+  필요하면 **Shift+ESC 패스스루**(`SPECIAL["shift+escape"]=b"\x1b"`) 또는 **`send-escape`
+  명령/전용 바인딩**(CL 56572 (b))을 쓴다 — 56572 가 막으려던 환경(conhost/일부 WT·ssh
+  의 Shift 수식 미인코딩)에도 대체 통로가 남아 완전 회귀는 아니다. 회귀
+  `test_double_escape_sends_esc_to_pane`(전달 동작 고정)를 폐지하고
+  `test_double_escape_exits_mode_without_pane_esc`(더블탭=전달 없이 모드 종료)+
+  `test_shift_escape_sends_esc_to_pane`(Shift+ESC 만 `\x1b`)로 교체, 191 passed.
+  클라이언트 전용(attach 재실행). 파일: `pytmuxlib/client.py`, `tests/test_client.py`,
+  `docs/HANDOFF.md`.
 - 56621 **탭-콘텐츠 연결부 `▀` 글리프 → 활성색 배경 블록**(§10 사용자 보고: 모바일서
   탭 깨짐) — 활성 탭↔콘텐츠 연결부(노트북 탭, #23)를 위쪽 절반 블록 `▀`(U+2580)로
   그렸는데 일부 모바일 폰트가 칸 사이를 벌려 렌더해 파선처럼 **깨져 보였다**(렌더
@@ -1186,13 +1200,39 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   `client.py:1280` 부근(`_tab_close_zone` 히트테스트)을 새 좌표에 맞춰 갱신.
   주의: 좁은 화면에서도 항상 보이게(고정폭 [x]) 유지, `markup=False` 규약 유지
   (1fb8fbe 처럼 `[x]` 가 마크업으로 소실되지 않게). **현재는 기록만 — 미구현.**
+- ~~**[버그·동작변경 요청] ESC 모드 종료 시 ESC 가 패널로 새지 않게 — 패널
+  ESC 전달은 Shift+ESC 일 때만**~~ → **CL 56632 에서 구현**(`_handle_esc_mode` 의
+  `k=="escape"` 분기에서 `send_input(b"\x1b")` 제거, `_exit_esc()` 만 — 더블탭 ESC 의
+  패널 전달 폐지). 회귀 `test_double_escape_exits_mode_without_pane_esc`(더블탭=전달
+  없이 모드 종료)+`test_shift_escape_sends_esc_to_pane`(Shift+ESC 만 `\x1b` 전달)로
+  기존 `test_double_escape_sends_esc_to_pane` 를 교체, 191 passed. 아래는 원래 보고/
+  분석(참고): — 보고: 단독 ESC 로 esc(명령) 모드에 진입했다가
+  **ESC 를 다시 눌러 esc 모드를 빠져나올 때 그 ESC 가 활성 패널로 전달된다**. 전달되면
+  안 된다 — 패널에 실제 ESC(`\x1b`)를 보내는 통로는 **항상 Shift+ESC 일 때만**이어야
+  한다. 현재 구현: `_handle_esc_mode` 의 `k == "escape"` 분기(`client.py:2341~2349`)가
+  **의도적으로** `self._exit_esc()` 뒤에 `self.send_input(b"\x1b")` 로 패널에 ESC 1회를
+  보낸다(="ESC 더블탭 → 앱에 ESC 1회"). 이는 바로 아래 **CL 56572 (a)** 가 Shift+ESC
+  가 터미널 수식 인코딩 한계로 안 먹는 환경(conhost/일부 WT·ssh, Kitty 프로토콜/
+  modifyOtherKeys 미지원)을 위해 댄 **터미널-비의존 ESC 통로**였는데, 이번 요청은 그
+  결정을 **뒤집는다** — 더블탭 ESC 는 ESC 를 전달하지 말고 **모드만 빠져야** 한다.
+  구현 방향: 그 분기에서 `self.send_input(b"\x1b")` 를 **제거**하고 `self._exit_esc()`
+  만 남긴다(= i/enter/그 외 키와 동일하게 "전달 없이 종료"). 그래도 패널 ESC 전달은
+  **Shift+ESC**(`SPECIAL["shift+escape"] = b"\x1b"` + on_key normal `shift+escape`
+  패스스루, `client.py:162`)와 **`send-escape` 명령(별칭 send-esc, CL 56572 (b))** 이
+  남으므로, 더블탭만 없애도 56572 가 막으려던 환경엔 대체 통로가 남아 완전 회귀는
+  아니다. **주의**: 회귀 테스트 `test_double_escape_sends_esc_to_pane`(CL 56572)이
+  **현재(전달) 동작을 고정**하므로 구현 시 함께 갱신/삭제해야 하고, 이는 바로 아래
+  Shift+ESC 항목·CL 56572 와 **직접 충돌하는 결정 변경**임을 명시할 것. 클라이언트
+  전용(attach 재실행). **→ CL 56632 에서 구현됨.**
 - ~~**[버그·환경 의존] Windows→ssh→원격 macOS Claude Code 에서 Shift+ESC 로 ESC 를
   못 보냄**~~ → **CL 56572 에서 대응(①: 터미널-비의존 통로 2개 추가).** Shift+ESC 가
   안 먹는 근본 원인(터미널이 ESC 에 Shift 수식을 인코딩 못 함)은 코드로 못 고치므로,
   **수식 인코딩에 의존하지 않는 ESC 전달 통로**를 댔다: (a) **ESC 더블탭** — esc 모드
   에서 ESC 를 한 번 더 누르면 활성 패널에 실제 ESC(`\x1b`) 1회를 보내고 모드를 빠진다
   (`_handle_esc_mode` 에 `k=="escape"` 분기; 단독 ESC=모드 진입은 그대로, 모드만 빠질
-  땐 i/enter/그 외 키). (b) **`send-escape` 명령**(별칭 `send-esc`, COMMAND_NOARG·
+  땐 i/enter/그 외 키). **(⚠️ 이 더블탭 통로 (a) 는 이후 CL 56632 에서 폐지됨 — 위
+  "ESC 모드 종료 시 ESC 가 패널로 새지 않게" 항목 참조. ESC 전달은 (b)/Shift+ESC 로.)**
+  (b) **`send-escape` 명령**(별칭 `send-esc`, COMMAND_NOARG·
   COMMANDS 노출) — 한 키에 `bind-key <key> send-escape` 로 전용 ESC 키를 만들 수 있다
   (기존 `send-keys Escape` 의 한 토큰 단축). 회귀 테스트 `test_double_escape_sends_esc_
   to_pane`·`test_send_escape_command`. 클라이언트 전용(attach 재실행). 아래는 원래

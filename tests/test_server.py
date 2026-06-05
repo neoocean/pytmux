@@ -114,6 +114,63 @@ async def test_inactive_tab_claude_done_flag():
         await teardown(srv, task, sock)
 
 
+async def test_startup_rules_injection():
+    # #27: 저장된 시작 규칙이 새 Claude 세션의 첫 idle 에 프롬프트로 주입된다(제출
+    # 없이, 줄바꿈은 \n). 빈 규칙이면 주입하지 않는다.
+    srv, task, sock = await server_only()
+    try:
+        srv.set_claude_rules("always do X\nand Y")
+        assert srv.claude_rules == "always do X\nand Y"
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        writes = []
+        p.pty.write = lambda b: writes.append(b)
+        # None→claude(새 세션) + idle footer → 같은 스캔에서 예약+주입
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert b"".join(writes) == b"always do X\nand Y", writes
+        assert p._rules_pending is False
+        # 빈 규칙이면 다음 세션에서 주입 없음
+        srv.set_claude_rules("")
+        srv.new_window(sess)
+        p2 = sess.tabs[-1].window.active_pane
+        w2 = []
+        p2.pty.write = lambda b: w2.append(b)
+        p2.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, sess.tabs[-1].window)
+        assert w2 == [], w2
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_auto_dismiss_feedback_prompt():
+    # #26: Claude 세션 피드백 프롬프트가 뜨면 '0'(Dismiss)을 한 번 주입하고, 같은
+    # 화면엔 반복 주입하지 않으며(디바운스), 프롬프트가 사라지면 다시 무장된다.
+    from pytmuxlib.claude import claude_feedback_prompt
+    assert claude_feedback_prompt("x How is Claude doing this session? (optional)")
+    assert not claude_feedback_prompt("just normal output")
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        writes = []
+        p.pty.write = lambda b: writes.append(b)   # 주입 캡처
+        p.feed(b"\x1b[2J\x1b[HHow is Claude doing this session? (optional)\r\n"
+               b"  1: Bad   2: Fine   3: Good   0: Dismiss\r\n")
+        srv._scan_claude(sess, win)
+        assert writes == [b"0"], writes
+        assert p._feedback_seen is True
+        srv._scan_claude(sess, win)                # 재스캔 → 반복 주입 없음
+        assert writes == [b"0"], "디바운스(반복 주입 없음)"
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")  # 프롬프트 사라짐
+        srv._scan_claude(sess, win)
+        assert p._feedback_seen is False, "사라지면 재무장"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_done_flag_debounced_against_flicker():
     """§10 #18: busy→idle 가 한 프레임 깜빡(idle 한 프레임 뒤 다시 busy)이면 완료
     알림(has_claude_done)이 서지 않는다 — 안정 idle 만 완료로 친다."""

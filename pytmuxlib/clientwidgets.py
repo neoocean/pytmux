@@ -424,7 +424,9 @@ class TabBar(Widget):
             flag = "!" if t.get("bell") else ("#" if t.get("activity") else "")
             ic = self.CLAUDE_ICON.get(t.get("claude"))
             ic = (ic + " ") if ic else ""
-            out.append(f" {ic}{t['index']}:{t['name']}{flag} ")
+            # 표시는 1부터(사용자 요청 #21). 내부 index 는 0-based 리스트 위치 그대로
+            # 두고(select_window 등 좌표 계산 호환), **보여줄 때만** +1 한다.
+            out.append(f" {ic}{t['index'] + 1}:{t['name']}{flag} ")
         return out
 
     def _entries(self):
@@ -442,7 +444,7 @@ class TabBar(Widget):
         selpos = idxs.index(self.sel) if self.sel in idxs else 0
         # [+] 새 탭 버튼: 왼쪽 탭과 한 칸 더 띄운다(사용자 요청 — 앞 공백 2칸).
         # 왼쪽 여백(LEAD)도 폭 예산에서 뺀다.
-        addtxt = "  [+] "
+        addtxt = "  [+]"
         mid_w = max(1, w - len(addtxt) - self.LEAD)
         # 선택 탭이 보이도록 스크롤 보정
         self._scroll = max(0, min(self._scroll, max(0, n - 1)))
@@ -489,8 +491,10 @@ class TabBar(Widget):
                        bold=True)
         arrow_st = Style(color="black", bgcolor=theme_color(self, "accent"),
                          bold=True)
-        # 비활성 탭의 Claude 작업 완료 알림: 옅은 배경(보면 해제)(#22)
-        done_st = Style(color="black", bgcolor=theme_color(self, "success"))
+        # 비활성 탭의 Claude 작업 완료 알림(보면 해제). 배경을 바꾸면 너무 튄다는
+        # 피드백(#31) → **배경은 그대로 두고 탭 이름 글자색만** 호박색(warning)+굵게로
+        # 바꿔 알린다. 활성(primary 배경)·선택(accent 배경)과 자연히 구분된다.
+        done_st = Style(color=theme_color(self, "warning"), bold=True)
         # 드래그 재정렬 시각 피드백: 들고 있는 탭(소스)은 흐리게, 놓을 위치
         # (드롭 대상)은 밑줄+강조색으로 표시(놓으면 그 자리로 이동).
         dragging = self._drag is not None
@@ -571,10 +575,22 @@ class TabBar(Widget):
         event.stop()
 
     def on_mouse_move(self, event):
-        # 드래그 중에만(capture_mouse 로 이동 이벤트가 여기로 옴) 드롭 대상을
-        # 추적해 시각 피드백을 갱신한다. 같은 탭 위면 대상 없음(소스만 흐리게).
+        # 드래그 중에만(capture_mouse 로 이동 이벤트가 여기로 옴) 시각 피드백 갱신.
         if self._drag is None:
             return
+        # 탭바 아래(콘텐츠 영역)로 끌어내리면 패널 분할 드롭 모드(#19): 커서 아래 패널과
+        # 분할 방향을 미리보기로 표시한다. 탭바는 1행이라 event.y>=1 이 콘텐츠 행이다.
+        if event.y >= 1:
+            drop = self.app._tabdrop_at(event.x, event.y - 1)
+            if drop != self.app._drag_split:
+                self.app._drag_split = drop
+                self._drag_over = None
+                self.app._composite()           # 분할 미리보기 갱신
+            event.stop()
+            return
+        if self.app._drag_split is not None:    # 탭바로 되올라옴 → 미리보기 해제
+            self.app._drag_split = None
+            self.app._composite()
         kind, payload = self._hit(event.x)
         over = payload if (kind == "tab" and payload != self._drag) else None
         if over != self._drag_over:
@@ -586,13 +602,24 @@ class TabBar(Widget):
         if self._drag is None:
             return
         src = self._drag
+        drop = self.app._drag_split
         self._drag = None
         self._drag_over = None
+        self.app._drag_split = None
         self.refresh()
         try:
             self.release_mouse()
         except Exception:
             pass
+        # 콘텐츠 위에 놓았으면(드롭 대상 패널 있음) 그 패널을 활성화하고, 끌어온 탭의
+        # 패널을 그 패널에 분할로 합친다(#19 탭→패널). 아니면 기존 재정렬/전환.
+        if event.y >= 1 and drop is not None:
+            pane_id, orient = drop
+            self.app.send_cmd("select_pane_id", id=pane_id)
+            self.app.send_cmd("join_pane", src=src, orient=orient)
+            self.app._composite()
+            event.stop()
+            return
         kind, payload = self._hit(event.x)
         if kind == "tab" and payload != src:
             # index==위치(연속) 이므로 그대로 사용
@@ -654,7 +681,7 @@ class StatusBar(Widget):
         return (s.replace("#S", self.session)
                  .replace("#h", host.split(".")[0])
                  .replace("#H", host)
-                 .replace("#I", str(aw["index"]) if aw else "")
+                 .replace("#I", str(aw["index"] + 1) if aw else "")
                  .replace("#W", aw["name"] if aw else "")
                  .replace("#{pane_title}", tpane))
 
@@ -682,7 +709,7 @@ class StatusBar(Widget):
                 if two == "#S":
                     runs.append(("plain", self.session)); i += 2; continue
                 if two == "#I":
-                    runs.append(("plain", str(aw["index"]) if aw else "")); i += 2; continue
+                    runs.append(("plain", str(aw["index"] + 1) if aw else "")); i += 2; continue
                 if two == "#W":
                     runs.append(("plain", aw["name"] if aw else "")); i += 2; continue
                 runs.append(("plain", c)); i += 1; continue
@@ -799,7 +826,11 @@ class StatusBar(Widget):
             uparts.append(self.claude_usage)
         if self.claude_tokens:
             # 기호(Σ)와 숫자 사이 한 칸 띄움(§10). 계정이 있으면 @계정 곁들임.
-            tk = "Σ " + _fmt_tokens(self.claude_tokens)
+            # 터미널 폭이 넉넉하면(≥80칸) 약어(6.3M) 대신 세 자리 콤마 전체 숫자로
+            # 보여준다(#30 사용자 요청). 좁으면 기존 약어로 자리를 아낀다.
+            num = (f"{self.claude_tokens:,}" if w >= 80
+                   else _fmt_tokens(self.claude_tokens))
+            tk = "Σ " + num
             if self.claude_account:
                 tk += " @" + self.claude_account
             uparts.append(tk)
@@ -815,7 +846,7 @@ class StatusBar(Widget):
                                                bgcolor=tc("secondary"), bold=True)))
         for win in ([] if self.hide_tabs else self.windows):
             flag = "!" if win.get("bell") else ("#" if win.get("activity") else "")
-            label = f"{win['index']}:{win['name']}{flag} "
+            label = f"{win['index'] + 1}:{win['name']}{flag} "   # 표시 1-based(#21)
             if win["active"]:
                 st = active
             elif win.get("bell"):

@@ -35,7 +35,11 @@
     set status-fg / bind <key> <command>). 자세한 내용은 load_config 참고.
 """
 
-from pytmuxlib.client import build_client_app, run_client  # noqa: F401
+# client(=textual) 은 무거우므로 여기서 즉시 import 하지 않는다 — 서버 하위프로세스
+# (`pytmux.py server`)나 가벼운 제어 명령(ls/cmd/kill)이 import 만으로 textual 전체를
+# 끌어와 기동이 느려지던 문제(Windows 사용자 보고). 가벼운 하위모듈만 즉시 재노출하고,
+# client 의 심볼은 모듈 __getattr__(PEP 562)로 **처음 접근할 때** 지연 로드한다
+# (`import pytmux; pytmux.build_client_app` 같은 테스트/외부 호환 유지).
 from pytmuxlib.keymap import (  # noqa: F401
     _key_to_ctrl_bytes, _tmux_key_to_textual, load_config)
 from pytmuxlib.launcher import (  # noqa: F401
@@ -47,6 +51,20 @@ from pytmuxlib.protocol import (  # noqa: F401
     parse_reset_delay, read_msg, set_winsize, write_msg)
 from pytmuxlib.replay import render_pane_lines, replay  # noqa: F401
 from pytmuxlib.server import Server, run_server  # noqa: F401
+
+# 지연 재노출: 접근 전엔 textual 을 안 끌어온다(client 모듈에서만 옴).
+_LAZY = {"build_client_app": "pytmuxlib.client",
+         "run_client": "pytmuxlib.client"}
+
+
+def __getattr__(name):   # PEP 562
+    mod = _LAZY.get(name)
+    if mod is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+    val = getattr(importlib.import_module(mod), name)
+    globals()[name] = val   # 다음 접근부터는 캐시된 전역으로
+    return val
 
 
 if __name__ == "__main__":

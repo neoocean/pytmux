@@ -14,8 +14,8 @@ import traceback
 from . import ipc, proc, pty_backend, sshwrap, tokens, usagelog
 from .model import (ClientConn, Pane, Session, Split, Tab, Window,
                     coalesce_alt_repaints)
-from .claude import (claude_account, claude_perm_mode, claude_prompt,
-                     claude_state, claude_usage, parse_reset_delay)
+from .claude import (claude_account, claude_feedback_prompt, claude_perm_mode,
+                     claude_prompt, claude_state, claude_usage, parse_reset_delay)
 from .protocol import (FEED_SLICE, FLUSH_HZ, MIN_H, MIN_W, read_msg, write_msg)
 
 # pytmux 프로젝트 루트(= pytmuxlib 패키지의 상위). 캡처 출력 등 "프로젝트에 영속해
@@ -98,6 +98,14 @@ class Server:
         # auto(자동 수락)가 아니면 shift+tab 을 순환 주입해 auto 로 맞춘다. 기본 OFF.
         # bypass(권한 우회) 모드는 명시적·위험 설정이라 건드리지 않는다. opts.json 영속.
         self.claude_auto_mode = bool(_opts.get("claude_auto_mode", False))
+        # Claude Code 시작 규칙(#27): 사용자가 에디터 팝업으로 저장해 둔 "항상 지킬
+        # 규칙" 텍스트. 새 Claude 세션이 뜨면(또는 pytmux 가 /clear 한 뒤) 이 텍스트를
+        # 프롬프트에 주입한다(빈 문자열이면 아무것도 안 함). opts.json 영속.
+        self.claude_rules = str(_opts.get("claude_rules", ""))
+
+    def set_claude_rules(self, text: str):
+        self.claude_rules = text or ""
+        self._save_opts()
 
     # ---- PTY/패널 생성 ----
     def _fork_shell(self, cols: int, rows: int, cwd: str | None = None,
@@ -370,6 +378,19 @@ class Server:
         except OSError:
             pass
 
+    def _inject_rules(self, pane: Pane):
+        """저장된 시작 규칙(#27)을 패널 프롬프트에 **제출하지 않고** 넣는다. 줄바꿈은
+        \\n(=Claude 입력 줄바꿈, shift+Enter 와 동일)으로 보내고 끝에 Enter(\\r)를 안
+        붙여, 사용자가 이어 작성/제출하게 둔다. 규칙이 비었으면 무동작."""
+        text = (self.claude_rules or "").strip()
+        if not text or pane.pty is None:
+            return
+        payload = text.replace("\r\n", "\n").replace("\r", "\n")
+        try:
+            pane.pty.write(payload.encode("utf-8"))
+        except OSError:
+            pass
+
     def _pc_drain(self, pane: Pane):
         """큐(#4)의 다음 명령을 Claude 에 투입하고 새 사이클을 시작한다. last_prompt
         를 그 명령으로 갱신해 헤더가 '지금 처리 중인 명령'을 보이게 하고, phase 는
@@ -396,6 +417,9 @@ class Server:
         elif ph == "doc":
             self._pc_inject(pane, "/clear")
             pane._pc_phase = "clear"
+            # /clear 직후엔 시작 규칙을 다시 넣는다(#27): 다음 idle 에 1회 주입 예약.
+            if self.claude_rules.strip():
+                pane._rules_pending = True
         else:  # "clear"
             pane._pc_phase = None
             if pane.prompt_clear_queue:
@@ -629,6 +653,23 @@ class Server:
             pane.pty.terminate()
         self._pane_eof(pane)
 
+    def _carry_tokens_on_close(self, pane: Pane):
+        """닫히는 Claude 패널의 확정 토큰을 **같은 계정의 살아있는 패널**로 이관한다
+        (#20). 그래야 계정 합계가 패널 하나 닫혔다고 줄지 않고, 같은 계정의 Claude
+        Code 가 전부 닫힐 때까지 유지된다(살아남는 패널이 없으면 자연히 사라진다).
+        진행 중(미확정) peak 는 응답이 끊긴 것이므로 이관하지 않는다."""
+        tok = (pane._tok_state.get("total", 0)
+               if getattr(pane, "_tok_state", None) else 0)
+        acct = getattr(pane, "_claude_account", None)
+        if not tok or not acct:
+            return
+        for p in self._all_panes():
+            if p is not pane and getattr(p, "_claude_account", None) == acct:
+                p._tok_state["total"] = p._tok_state.get("total", 0) + tok
+                p._session_tokens = (p._tok_state["total"]
+                                     + p._tok_state.get("peak", 0))
+                return
+
     def _remove_pane_from_tree(self, pane: Pane):
         # 어떤 세션/탭(윈도우)에 속하는지 탐색
         for sess in list(self.sessions.values()):
@@ -636,6 +677,7 @@ class Server:
                 win = tab.window
                 if pane not in win.panes():
                     continue
+                self._carry_tokens_on_close(pane)   # #20 계정 합계 유지
                 parent = pane.parent
                 if parent is None:
                     # 윈도우의 마지막 패널 → 탭 제거
@@ -1517,7 +1559,8 @@ class Server:
                            "prompt_clear_message": self.prompt_clear_message,
                            "auto_doc_clear": self.auto_doc_clear,
                            "auto_doc_clear_delay": self.auto_doc_clear_delay,
-                           "claude_auto_mode": self.claude_auto_mode}, f)
+                           "claude_auto_mode": self.claude_auto_mode,
+                           "claude_rules": self.claude_rules}, f)
         except OSError:
             pass
 
@@ -2036,7 +2079,9 @@ class Server:
         cmd = self._fg_command(pane.master_fd) or ""
         return {"id": pane.id, "title": (pane.title or "").strip(),
                 "cmd": cmd, "remote": cmd.lower() in self._REMOTE_CMDS,
-                "claude": pane._claude, "usage": pane._claude_usage}
+                "claude": pane._claude, "usage": pane._claude_usage,
+                # 세션 누계 토큰(#18) — 트리 팝업이 ctx 와 함께 실제 토큰량을 보이게.
+                "tokens": pane._session_tokens}
 
     def _tree_msg(self):
         return {"t": "tree", "current": None, "sessions": [
@@ -2060,6 +2105,18 @@ class Server:
                 txt = "\n".join(p.screen.display)
                 old_cl = p._claude
                 new_cl = claude_state(txt)
+                # Claude 세션 피드백 프롬프트 자동 Dismiss(#26): "How is Claude doing
+                # this session?" 가 뜨면 '0'(Dismiss) 키를 한 번 주입해 치운다. 같은
+                # 화면에 반복 주입하지 않도록 사라질 때까지 디바운스한다.
+                if claude_feedback_prompt(txt):
+                    if not p._feedback_seen and p.pty is not None:
+                        p._feedback_seen = True
+                        try:
+                            p.pty.write(b"0")
+                        except OSError:
+                            pass
+                else:
+                    p._feedback_seen = False
                 # 사용량 표시는 Claude 세션이 살아 있는 동안 유지한다(#5): 화면에서
                 # 토큰 문구가 잠시 사라져도(스크롤 등) 마지막 값을 보존하고, 세션이
                 # 끝나면(claude None) 비운다.
@@ -2094,6 +2151,12 @@ class Server:
                     p._claude_session_id = self._claude_session_seq
                     if not p._claude_account_manual:
                         p._claude_account = None
+                    # 시작 규칙 주입 예약(#27): 새 Claude 세션이 뜨면 다음 idle(입력
+                    # 준비됨) 때 저장된 규칙을 프롬프트에 넣는다. 빈 규칙이면 안 함.
+                    if self.claude_rules.strip():
+                        p._rules_pending = True
+                if not new_cl:
+                    p._rules_pending = False   # 세션 끝나면 예약 해제
                 if new_cl:
                     # 계정 단서를 매 프레임 갱신(마지막 본 값 유지; 수동 지정 우선).
                     if not p._claude_account_manual:
@@ -2105,8 +2168,13 @@ class Server:
                                             new_cl == "busy")
                     if committed > 0:
                         self._log_tokens(sess, t, p, committed)
-                    if p._tok_state["total"] != p._session_tokens:
-                        p._session_tokens = p._tok_state["total"]
+                    # 표시용 누계 = 확정 total + **진행 중 응답의 peak**(아직 미확정).
+                    # 예전엔 total 만 써서, 스트리밍 중인 현재 응답 토큰이 빠져 Claude
+                    # 표시보다 항상 적게 나왔다(#20). peak 는 확정 시 total 로 접히므로
+                    # total+peak 는 경계에서 연속적이고 이중계산이 없다.
+                    live = p._tok_state["total"] + p._tok_state["peak"]
+                    if live != p._session_tokens:
+                        p._session_tokens = live
                         changed = True
                 elif p._session_tokens:
                     p._session_tokens = 0
@@ -2171,6 +2239,10 @@ class Server:
                     p._cam_tries = 0
                     p._cam_last = None
                 else:
+                    # 시작 규칙 주입(#27): 새 세션/clear 후 첫 idle(입력 준비됨)에 한 번.
+                    if p._rules_pending:
+                        p._rules_pending = False
+                        self._inject_rules(p)
                     # idle: 현재 권한모드를 관측해 저장(팝업 '현재 모드' 표시용 — status
                     # 로 클라에 전달, §10 item 2). footer 가 안 보이면(None) 마지막 값 유지.
                     pm = claude_perm_mode(txt)
@@ -2268,6 +2340,7 @@ class Server:
             "capture_size": cap_size,
             "claude_header": self.claude_header,
             "single_border": self.single_border,
+            "claude_rules": self.claude_rules,   # #27 시작 규칙(에디터 초기값용)
         }
 
     async def _send_full(self, client: ClientConn):
@@ -2526,7 +2599,9 @@ class Server:
         elif action == "break_pane":
             self.break_pane(sess)
         elif action == "join_pane":
-            self.join_pane(sess, orient=msg.get("orient", "tb"))
+            # src(끌어온 탭 인덱스) 지정 가능(#19 탭→패널 드래그). 미지정이면 직전 탭.
+            self.join_pane(sess, src_index=msg.get("src"),
+                           orient=msg.get("orient", "tb"))
         elif action == "rename_window":
             self.rename_window(sess, str(msg.get("name", "")).strip())
         elif action == "set_auto_rename":
@@ -2545,6 +2620,9 @@ class Server:
             self.set_auto_doc_clear(msg.get("value"))
         elif action == "set_claude_auto_mode":
             self.set_claude_auto_mode(msg.get("value"))
+        elif action == "set_claude_rules":      # #27 시작 규칙 저장(영속)
+            self.set_claude_rules(msg.get("text", ""))
+            self._broadcast_session(sess)       # status 로 새 규칙 회신
         elif action == "set_prompt_clear":
             self.set_prompt_clear(sess, msg.get("value"))
         elif action == "set_prompt_clear_message":

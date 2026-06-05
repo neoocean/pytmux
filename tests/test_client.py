@@ -45,6 +45,46 @@ async def test_command_prompt_via_esc():
     await _with_app(body)
 
 
+async def test_command_prompt_hint_desc_arg_toggle():
+    # §10: 명령을 다 치면 오른쪽 힌트(#phint)에 ① 무인자→설명, ② 자유텍스트 인자→
+    # 밑줄(____), ③ 토글/선택지 인자→방향키 선택 + Enter 즉시 실행.
+    async def body(app, pilot, srv):
+        await pilot.press("escape")
+        await pilot.press("colon")
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "PromptScreen"
+        inp = scr.query_one(Input)
+
+        # ① 무인자 완성 명령 → 설명만(선택지 없음)
+        inp.value = "detach-client"
+        scr._refresh_cands(); scr._refresh_hint()
+        assert scr._hint_cmd == "detach-client" and not scr._choices
+        assert scr._hint_text.strip(), "설명 힌트"
+
+        # ② 자유 텍스트 인자 → 밑줄 힌트
+        inp.value = "rename-tab"
+        scr._refresh_cands(); scr._refresh_hint()
+        assert scr._hint_cmd == "rename-tab" and not scr._choices
+        assert "____" in scr._hint_text
+
+        # ③ 토글 인자 → 선택지 채워지고 방향키로 강조 이동
+        inp.value = "synchronize-panes"
+        scr._refresh_cands(); scr._refresh_hint()
+        assert scr._choices and scr._hint_cmd == "synchronize-panes"
+        base = scr._choice_sel
+        await pilot.press("down")
+        assert scr._choice_sel == (base + 1) % len(scr._choices), "방향키 강조 이동"
+
+        # Enter → 강조된 선택지로 'cmd value' 즉시 실행(dismiss 로 전달)
+        captured = []
+        scr.dismiss = lambda v=None: captured.append(v)
+        scr.on_input_submitted(type("E", (), {"value": inp.value})())
+        _disp, val = scr._choices[scr._choice_sel]
+        expect = f"synchronize-panes {val}" if val else "synchronize-panes"
+        assert captured == [expect], (captured, expect)
+    await _with_app(body)
+
+
 async def test_command_prompt_colon_prefix():
     async def body(app, pilot, srv):
         await pilot.press("escape")
@@ -352,33 +392,49 @@ async def test_shift_escape_forwards_esc_plain_escape_enters_esc_mode():
         app.on_key(Key(key="shift+escape", character=None))
         assert sent == [b"\x1b"], sent
         assert app.mode == "normal"
-        # ESC 단독 → esc 모드 진입(셸로 전달 안 함)
+        # ESC 단독 → esc 모드 진입(셸로 전달 안 함). 별개의 누름이므로 디바운스 리셋(#32).
         sent.clear()
+        app._last_esc_ts = 0.0
         app.on_key(Key(key="escape", character=None))
         assert sent == []
         assert app.mode == "esc"
     await _with_app(body)
 
 
-async def test_double_escape_sends_esc_to_pane():
-    """ESC 더블탭(ESC ESC)으로 앱에 실제 ESC 1회 전달 — Shift+ESC 가 터미널 수식
-    인코딩 한계로 안 먹는 환경(일부 Windows/ssh)용 터미널-비의존 통로(①)."""
+async def test_double_escape_exits_mode_without_pane_esc():
+    """ESC 더블탭(ESC ESC) = **모드만 종료, 패널로 ESC 전달 없음**. 패널(앱)에 실제
+    ESC 를 보내는 통로는 Shift+ESC 일 때만이어야 한다(사용자 요청, 더블탭 통로 폐지)."""
     async def body(app, pilot, srv):
         sent = []
         app.send_input = lambda data: sent.append(data)
+        # 각 ESC 는 별개의 누름이므로 디바운스(#32) 리셋 후 보낸다(오토리핏 아님).
         # 첫 ESC = esc 모드 진입(전달 없음)
+        app._last_esc_ts = 0.0
         app.on_key(Key(key="escape", character=None))
         assert app.mode == "esc" and sent == []
-        # 두 번째 ESC = 실제 ESC 전달 + 모드 종료
+        # 두 번째 ESC = 모드만 종료, 패널로 ESC 전달 없음
+        app._last_esc_ts = 0.0
         app.on_key(Key(key="escape", character=None))
-        assert sent == [b"\x1b"], sent
         assert app.mode == "normal"
-        # 모드만 빠지고 싶을 땐 i/그 외 키 → ESC 전달 없이 종료(비회귀).
-        sent.clear()
+        assert sent == [], sent
+        # i/그 외 키로 빠질 때도 전달 없음(동일 동작).
+        app._last_esc_ts = 0.0
         app.on_key(Key(key="escape", character=None))
         assert app.mode == "esc"
         app.on_key(Key(key="i", character="i"))
         assert app.mode == "normal" and sent == []
+    await _with_app(body)
+
+
+async def test_shift_escape_sends_esc_to_pane():
+    """패널에 ESC 를 보내는 유일한 키 통로는 Shift+ESC — esc 모드로 빠지지 않고
+    활성 패널에 \\x1b 를 그대로 전달한다(오버레이가 없을 때)."""
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_input = lambda data: sent.append(data)
+        app.on_key(Key(key="shift+escape", character=None))
+        assert app.mode == "normal", app.mode   # esc 모드 진입 안 함
+        assert sent == [b"\x1b"], sent
     await _with_app(body)
 
 
@@ -1090,9 +1146,9 @@ async def test_status_clock_click_toggles_clock_mode():
 
 
 async def test_active_tab_connects_to_content():
-    # 상단 탭바가 보이면 콘텐츠 최상단 테두리에서 활성 탭 x 범위 구간이 **활성색 꽉 찬
-    # 배경 블록**(공백+배경색)으로 칠해져 탭과 콘텐츠가 연결돼 보인다(#23). 글리프 ▀
-    # 는 일부 모바일 폰트에서 깨져 보여 배경 블록으로 바꿨다(§10).
+    # 상단 탭바가 보이면 콘텐츠 최상단 테두리에서 활성 탭 x 범위 구간이 위 절반 블록
+    # ▀(활성색 전경)으로 칠해져 탭과 콘텐츠가 연결돼 보인다(#23). 셀 전체 배경 블록은
+    # 본문 상단 테두리(─, 셀 중앙)를 침범해, 윗절반만 칠하는 ▀ 로 되돌렸다(사용자 요청).
     async def body(app, pilot, srv):
         app.tabbar.render_line(0)            # _zones 채우기
         xr = app.tabbar.active_tab_xrange()
@@ -1101,8 +1157,8 @@ async def test_active_tab_connects_to_content():
         tx0, tx1 = xr
         mid = min((tx0 + tx1) // 2, len(app.view._cells[0]) - 1)
         ch, st = app.view._cells[0][mid]
-        assert ch == " ", "활성색 배경 블록(공백)으로 연결 — 폰트 무관"
-        assert st is not None and st.bgcolor is not None, "연결 색(활성 배경색)"
+        assert ch == "▀", "위 절반 블록 ▀ 로 연결(아웃라인 비침범)"
+        assert st is not None and st.color is not None, "연결 색(활성 전경색)"
     await _with_app(body, cfg={"tab_bar_always": True})
 
 
@@ -1116,10 +1172,11 @@ async def test_tabbar_lead_and_plus_gap():
         assert ents[0][0] == "lead" and ents[0][2] == " " * app.tabbar.LEAD, ents[0]
         # 첫 탭 엔트리는 lead 다음
         assert ents[1][0] == "tab", ents[1]
-        # [+] 버튼은 간격칸(addgap "  ", 터미널 배경)으로 분리되고 버튼은 "[+] "(§10 #16)
+        # [+] 버튼은 간격칸(addgap "  ", 터미널 배경)으로 분리되고 버튼은 "[+]"
+        # (뒤 여백 없음 — 사용자 요청, §10 #16)
         gap = next(e for e in ents if e[0] == "addgap")
         add = next(e for e in ents if e[0] == "add")
-        assert gap[2] == "  " and add[2] == "[+] ", (gap, add)
+        assert gap[2] == "  " and add[2] == "[+]", (gap, add)
         # 렌더 첫 칸은 빈 여백, 탭은 LEAD 칸 뒤에서 시작
         app._composite()
         line = "".join(s.text for s in app.tabbar.render_line(0))
@@ -1159,8 +1216,8 @@ async def test_active_tab_connector_follows_switch():
         cells = app.view._cells
         mid = min((xr[0] + xr[1]) // 2, len(cells[0]) - 1)
         cch, cst = cells[0][mid]
-        assert cch == " " and cst is not None and cst.bgcolor is not None, \
-            "연결부(활성색 배경 블록)가 새 활성 탭 위치에 그려짐"
+        assert cch == "▀" and cst is not None and cst.color is not None, \
+            "연결부(위 절반 블록 ▀)가 새 활성 탭 위치에 그려짐"
     await _with_app(body, cfg={"tab_bar_always": True})
 
 
@@ -1312,10 +1369,11 @@ async def test_tab_drag_reorder_visual_feedback():
         app.tabbar.set_tabs(tabs, 0)
         app.tabbar.render_line(0)               # _zones 채우기
 
-        # 드래그 시작: 탭 0 을 잡는다
+        # 드래그 시작: 탭 0 을 잡는다 (y=0 = 탭바 위, 재정렬 경로; #19 분할은 y>=1)
         class _Ev:
-            def __init__(self, x):
+            def __init__(self, x, y=0):
                 self.x = x
+                self.y = y
             def stop(self):
                 pass
 
@@ -1329,8 +1387,8 @@ async def test_tab_drag_reorder_visual_feedback():
         assert app.tabbar._drag_over == 2, "드롭 대상 = 탭 2"
 
         strip = app.tabbar.render_line(0)
-        src_seg = next(s for s in strip if "0:a" in s.text)
-        dst_seg = next(s for s in strip if "2:c" in s.text)
+        src_seg = next(s for s in strip if "1:a" in s.text)   # 표시 1-based(#21)
+        dst_seg = next(s for s in strip if "3:c" in s.text)
         assert src_seg.style and src_seg.style.dim, "소스 탭은 흐리게(dim)"
         assert dst_seg.style and dst_seg.style.underline, "드롭 대상은 밑줄"
         assert dst_seg.style.bgcolor is not None, "드롭 대상 강조 배경"
@@ -1345,18 +1403,93 @@ async def test_tab_drag_reorder_visual_feedback():
     await _with_app(body)
 
 
-async def test_tabbar_claude_done_background():
-    # 비활성 탭에 claude_done 플래그가 오면 옅은(success) 배경으로 그려 활성 탭
-    # (primary)과 구분된다(#22).
+async def test_esc_autorepeat_debounced():
+    # #32: ESC 오토리핏(짧은 간격 반복)은 무시되어 모드가 깜빡이지 않는다. 직전 ESC
+    # 처리 직후의 ESC 는 모드를 안 바꾸고, 충분한 간격 뒤의 ESC 만 토글한다.
+    async def body(app, pilot, srv):
+        import time as _t
+        from textual.events import Key
+        assert app.mode == "normal"
+        app._last_esc_ts = 0.0
+        app.on_key(Key(key="escape", character=None))      # 첫 ESC → esc 모드
+        assert app.mode == "esc"
+        # 곧바로 온 ESC(오토리핏) → 무시(모드 유지)
+        app.on_key(Key(key="escape", character=None))
+        assert app.mode == "esc", "오토리핏 ESC 는 무시"
+        # 디바운스 창을 지난 ESC → 정상 토글(여기선 esc 종료)
+        app._last_esc_ts = _t.monotonic() - 1.0
+        app.on_key(Key(key="escape", character=None))
+        assert app.mode == "normal", "간격 충분하면 토글"
+    await _with_app(body)
+
+
+async def test_esc_nav_reaches_header_and_close():
+    # #31: ESC 모드에서 ↑(최상단 패널)→프롬프트 헤더, →(마지막 헤더)→닫기 [x],
+    # Enter(닫기 포커스)→탭 닫기 확인. ↑(헤더)→탭바.
+    async def body(app, pilot, srv):
+        from textual.events import Key
+        active = app.layout["active"]
+        ap = next(p for p in app.layout["panes"] if p["id"] == active)
+        ap["claude_hdr"] = True
+        app.claude_header_on = True
+        app.pane_claude = {active: {"id": active, "claude": "idle", "prompt": "hi"}}
+        assert app._claude_header_panes() == [active]
+        await pilot.press("escape")
+        assert app.mode == "esc"
+        app.on_key(Key(key="up", character=None))      # 최상단 패널 ↑ → 헤더
+        assert app._hdr_focus == active, app._hdr_focus
+        app.on_key(Key(key="right", character=None))   # 마지막 헤더 → 닫기 [x]
+        assert app._hdr_focus == "close", app._hdr_focus
+        killed = []
+        app.confirm_kill_tab = lambda: killed.append(1)
+        app.on_key(Key(key="enter", character=None))   # 닫기 [x] Enter → 탭 닫기
+        assert killed == [1] and app._hdr_focus is None
+    await _with_app(body)
+
+
+async def test_tab_drag_to_pane_split():
+    # #19: 탭을 탭바 아래(콘텐츠)로 끌면 커서 아래 패널·분할 방향을 판정하고, 놓으면
+    # 그 패널을 활성화한 뒤 끌어온 탭을 분할로 합치는 명령(select_pane_id+join_pane)을
+    # 보낸다. 좌우 가장자리=lr, 위아래=tb.
+    async def body(app, pilot, srv):
+        # 단일 패널 레이아웃 가정: 패널 하나가 콘텐츠 전체.
+        ps = app.layout.get("panes")
+        assert ps, "패널 존재"
+        p = ps[0]
+        px, py, pw, ph = p["x"], p["y"], p["w"], p["h"]
+        # 오른쪽 가장자리 근처 → lr
+        d = app._tabdrop_at(px + pw - 1, py + ph // 2)
+        assert d == (p["id"], "lr"), d
+        # 위쪽 가장자리 근처 → tb
+        d2 = app._tabdrop_at(px + pw // 2, py)
+        assert d2 == (p["id"], "tb"), d2
+        # 드롭 시 명령 전송 검증
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app.tabbar._drag = 1                 # 끌고 있는 탭(인덱스 1)
+        app._drag_split = (p["id"], "lr")
+        ev = type("E", (), {"x": px + pw - 1, "y": py + 2,
+                            "stop": lambda self: None})()
+        app.tabbar.on_mouse_up(ev)
+        assert ("select_pane_id", {"id": p["id"]}) in sent, sent
+        assert ("join_pane", {"src": 1, "orient": "lr"}) in sent, sent
+        assert app._drag_split is None
+    await _with_app(body)
+
+
+async def test_tabbar_claude_done_name_color():
+    # 비활성 탭에 claude_done 플래그가 오면 **배경은 일반 탭과 같게 두고 탭 이름
+    # 글자색만** 호박색(warning)으로 바꿔 완료를 알린다(#31 — 배경 강조는 안 함).
     async def body(app, pilot, srv):
         tabs = [{"index": 0, "name": "a", "active": True},
-                {"index": 1, "name": "b", "active": False, "claude_done": True}]
+                {"index": 1, "name": "b", "active": False, "claude_done": True},
+                {"index": 2, "name": "c", "active": False}]
         app.tabbar.set_tabs(tabs, 0)
         strip = app.tabbar.render_line(0)
-        seg = next(s for s in strip if "1:b" in s.text)
-        active_seg = next(s for s in strip if "0:a" in s.text)
-        assert seg.style and seg.style.bgcolor is not None, "완료 탭 배경 강조"
-        assert seg.style.bgcolor != active_seg.style.bgcolor, "활성 탭과 다른 색"
+        seg = next(s for s in strip if "2:b" in s.text)       # 표시 1-based(#21)
+        normal = next(s for s in strip if "3:c" in s.text)
+        assert seg.style.bgcolor == normal.style.bgcolor, "배경은 일반 탭과 동일(강조 안 함)"
+        assert seg.style.color != normal.style.color, "완료는 탭 이름 글자색으로 구분"
     await _with_app(body)
 
 
@@ -1381,48 +1514,63 @@ async def test_bars_use_terminal_default_background():
     await _with_app(body)
 
 
-async def test_rec_click_capture_info_popup():
-    # REC 표시 클릭 → 활성 패널 캡처 파일 경로·크기 팝업(#4).
+async def test_status_tabs_popup_merged():
+    # #10: REC·토큰 사용량 두 버튼이 **한 팝업**(InfoTabsScreen)의 서로 다른 탭을
+    # 연다. REC → '출력 캡처' 탭(초기), ←→ 로 '토큰 사용량' 탭(ctx + Σ 토큰).
     async def body(app, pilot, srv):
         from textual.widgets import Label
         app.status.capture = True
         app.status.render_line(0)
         assert app.status._rec_zone is not None, "REC 클릭존 등록"
+        # REC 버튼 배선: status_tabs 트리 요청 + 캡처 탭(1) + 캡처 줄 준비
         app.show_capture_info("/tmp/x.sock.capture/pane-1.log", 2048)
+        assert app._tree_purpose == "status_tabs" and app._status_tab_initial == 1
+        app._want_tree = False     # 서버의 실제 트리 응답이 또 팝업을 띄우지 않게(결정성)
+        # 트리 응답을 직접 넣어 팝업 구성(라운드트립 비의존)
+        tree = {"sessions": [{"name": "s", "windows": [
+            {"index": 0, "name": "w", "panes": [
+                {"id": 5, "cmd": "claude", "claude": "busy", "usage": "ctx 42%",
+                 "tokens": 8200}]}]}]}
+        app._open_status_tabs(tree)
         await pilot.pause(0.1)
         scr = app.screen_stack[-1]
-        assert scr.__class__.__name__ == "InfoScreen"
+        assert scr.__class__.__name__ == "InfoTabsScreen"
+        # 초기 탭 = 캡처(1): 캡처 정보 보임
         joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
         assert "pane-1.log" in joined and "2,048" in joined, joined
+        # ←→ 로 토큰 사용량 탭 → ctx 와 실제 토큰(Σ 8.2k) 보임(#18)
+        await pilot.press("left")
+        await pilot.pause(0.1)
+        j2 = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        assert "ctx 42%" in j2 and "8.2k" in j2, j2
     await _with_app(body)
 
 
-async def test_info_popup_close_button_and_esc():
-    # 좁은(모바일) 폭에서도 정보 팝업(InfoScreen)에 닫기 [x] 버튼이 화면 안에 보이고,
-    # [x] 클릭과 Esc 둘 다로 닫힌다.
+async def test_info_tabs_close_button_and_esc():
+    # 좁은(모바일) 폭에서도 통합 상태 팝업(InfoTabsScreen)에 닫기 [x] 가 화면 안에
+    # 보이고, [x] 클릭과 Esc 둘 다로 닫힌다(#10).
     async def body(app, pilot, srv):
         from textual.widgets import Label
-        app.show_capture_info("/tmp/x.sock.capture/pane-1.log", 2048)
+        app._status_cap_lines = ["파일: /tmp/x/pane-1.log"]
+        app._status_tab_initial = 1
+        app._open_status_tabs({"sessions": []})
         await pilot.pause(0.1)
         scr = app.screen_stack[-1]
-        assert scr.__class__.__name__ == "InfoScreen"
-        close = scr.query_one("#infoclose", Label)
+        assert scr.__class__.__name__ == "InfoTabsScreen"
+        close = scr.query_one("#itclose", Label)
         reg = close.region
         assert reg.width > 0 and reg.right <= app.size.width, \
-            f"닫기 [x] 버튼이 화면 안에 보여야 함 {reg} (폭 {app.size.width})"
-        assert "[x]" in close.render().plain, \
-            f"닫기 버튼에 [x] 글자가 보여야 함(markup=False): {close.render().plain!r}"
-        # [x] 클릭으로 닫힘
-        await pilot.click("#infoclose")
+            f"닫기 [x] 가 화면 안에 보여야 함 {reg} (폭 {app.size.width})"
+        assert "[x]" in close.render().plain
+        await pilot.click("#itclose")
         await pilot.pause(0.1)
-        assert app.screen_stack[-1].__class__.__name__ != "InfoScreen", "[x] 클릭으로 닫힘"
-        # 다시 열고 Esc 로 닫힘
-        app.show_capture_info("/tmp/x.sock.capture/pane-1.log", 2048)
+        assert app.screen_stack[-1].__class__.__name__ != "InfoTabsScreen", "[x] 닫기"
+        app._open_status_tabs({"sessions": []})
         await pilot.pause(0.1)
-        assert app.screen_stack[-1].__class__.__name__ == "InfoScreen"
+        assert app.screen_stack[-1].__class__.__name__ == "InfoTabsScreen"
         await pilot.press("escape")
         await pilot.pause(0.1)
-        assert app.screen_stack[-1].__class__.__name__ != "InfoScreen", "Esc 로 닫힘"
+        assert app.screen_stack[-1].__class__.__name__ != "InfoTabsScreen", "Esc 닫기"
     await _with_app(body, size=(58, 30))      # 좁은(모바일) 폭
 
 
@@ -1506,17 +1654,20 @@ async def test_claude_icon_and_header():
         app._composite()
         row = "".join((c[0] or " ") for c in app.view._cells[hy])
         assert "do the thing" in row, repr(row)
-        assert "[x]" not in row, "헤더 [x] 닫기 버튼은 제거됨"
+        # #15: 닫기 [x] 가 프롬프트(헤더) 행으로 한 줄 올라왔다 → 헤더 행 우측 끝에 보인다.
+        assert "[x]" in row, "닫기 [x] 가 헤더(프롬프트) 행으로 이동"
         # 헤더 배경은 진한 파랑(primary-darken-2) — 본문/테두리(primary)보다 어둡게
         dark = app.theme_variables.get("primary-darken-2", "#0053AA").lower()
         cellbg = app.view._cells[hy][ap["x"] + 1][1]
         assert cellbg and cellbg.bgcolor and dark in str(cellbg.bgcolor).lower(), \
             f"헤더 배경 진한 파랑 기대, got {cellbg.bgcolor if cellbg else None}"
-        # 탭 닫기 [x] 는 활성 패널 콘텐츠 영역 안쪽 우상단(§10 #15) — 외곽선 위가 아님
+        # 탭 닫기 [x] 는 활성 패널 프롬프트(헤더) 행 우상단(#15) — 콘텐츠 첫 행이 아님
         tcz = app._tab_close_zone
-        assert tcz == (ap["x"] + ap["w"] - 3, ap["x"] + ap["w"], ap["y"]), tcz
-        xs = "".join(app.view._cells[ap["y"]][x][0] for x in range(tcz[0], tcz[1]))
+        assert tcz == (ap["x"] + ap["w"] - 3, ap["x"] + ap["w"], hy), tcz
+        xs = "".join(app.view._cells[hy][x][0] for x in range(tcz[0], tcz[1]))
         assert xs == "[x]", repr(xs)
+        # 프롬프트 본문은 [x] 직전 한 칸까지만 — [x] 바로 왼쪽 칸은 비어 있다(겹침 방지).
+        assert app.view._cells[hy][tcz[0] - 1][0] in (" ", ""), "프롬프트와 [x] 사이 간격"
         # claude-header off → 헤더 숨김
         app._run_command("claude-header off")
         app._composite()
@@ -1762,25 +1913,58 @@ async def test_status_claude_usage():
     await _with_app(body)
 
 
+async def test_popup_dims_and_substitutes_emoji():
+    # #25: 팝업(모달)이 떠 있으면 본문을 어둡게 칠하고, 컬러로 안 어두워지는 이모지는
+    # placeholder(·)로 치환한다. 팝업이 없으면 이모지 원본 그대로.
+    async def body(app, pilot, srv):
+        from textual.screen import ModalScreen
+        from pytmuxlib.clientutil import _is_emoji
+        assert _is_emoji("✽") and not _is_emoji("○") and not _is_emoji("가")
+        active = app.layout["active"]
+        # 모달 없음: 이모지 그대로(set→composite 사이 await 없음 → 서버 덮어쓰기 회피)
+        app.pane_content = {active: ([[("✽AA", {})]], None)}
+        app._composite()
+        flat0 = "".join(c[0] or "" for row in app.view._cells for c in row)
+        assert "✽" in flat0, "모달 없을 땐 이모지 그대로"
+        # 모달 푸시 후(screen_stack>1): 이모지 치환 + 어둡게. 빈 ModalScreen 으로 충분.
+        app.push_screen(ModalScreen())
+        assert len(app.screen_stack) > 1
+        app.pane_content = {active: ([[("✽AA", {})]], None)}
+        app._composite()
+        flat1 = "".join(c[0] or "" for row in app.view._cells for c in row)
+        assert "✽" not in flat1 and "·" in flat1, "팝업 시 이모지 치환됨"
+    await _with_app(body)
+
+
 async def test_status_session_tokens():
-    # 세션 누적 토큰(#3)을 상태줄에 Σ 표기로 보여준다.
+    # 세션 누적 토큰(#3)을 상태줄에 Σ 표기로 보여준다. 넓은 폭(≥80)에서는 세 자리
+    # 콤마 전체 숫자(#30), 좁은 폭에서는 약어(k/M).
     async def body(app, pilot, srv):
         app.status.claude_usage = "ctx 42%"
         app.status.claude_tokens = 45200
         txt = "".join(s.text for s in app.status.render_line(0))
-        # §10: 기호 Σ 와 숫자 사이 한 칸 띄움
-        assert "Σ 45.2k" in txt, repr(txt)
+        # 기호 Σ 와 숫자 사이 한 칸 띄움 + 넓은 폭이라 전체 숫자(콤마)
+        assert "Σ 45,200" in txt, repr(txt)
         # 계정이 있으면 @계정 곁들임(§10 계정별 합계)
         app.status.claude_account = "alice"
         txt_a = "".join(s.text for s in app.status.render_line(0))
-        assert "Σ 45.2k @alice" in txt_a, repr(txt_a)
+        assert "Σ 45,200 @alice" in txt_a, repr(txt_a)
         # 사용량 문구 없이 누계만 있어도 표시
         app.status.claude_usage = None
         app.status.claude_account = None
         app.status.claude_tokens = 1_200_000
         txt2 = "".join(s.text for s in app.status.render_line(0))
-        assert "Σ 1.2M" in txt2, repr(txt2)
+        assert "Σ 1,200,000" in txt2, repr(txt2)
     await _with_app(body)
+
+
+async def test_status_tokens_abbrev_when_narrow():
+    # 좁은 폭(<80칸)에서는 토큰 누계를 약어(k/M)로 줄여 자리를 아낀다(#30).
+    async def body(app, pilot, srv):
+        app.status.claude_tokens = 1_200_000
+        txt = "".join(s.text for s in app.status.render_line(0))
+        assert "Σ 1.2M" in txt, repr(txt)
+    await _with_app(body, size=(60, 20))
 
 
 async def test_status_tokens_persist_when_empty():

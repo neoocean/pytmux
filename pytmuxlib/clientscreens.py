@@ -13,10 +13,11 @@ from textual.screen import ModalScreen
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Input, Label, ListItem, ListView
+from textual.widgets import Input, Label, ListItem, ListView, TextArea
 
 from . import usagelog
-from .clientutil import COMMANDS, MENU_ITEMS, MENU_TOGGLES
+from .clientutil import (COMMAND_FREETEXT, COMMAND_NOARG, COMMAND_OPTIONS,
+                         COMMANDS, MENU_ITEMS, MENU_TOGGLES)
 
 
 class CommandListScreen(ModalScreen):
@@ -327,17 +328,18 @@ class InfoScreen(ModalScreen):
     # 오른쪽에 보인다(예전엔 고정폭 박스가 화면을 넘쳐 닫기 수단이 안 보였다).
     CSS = """
     InfoScreen { align: center middle; background: $background 80%; }
-    #infobox { width: 96%; max-width: 66; height: auto;
+    #infobox { width: 96%; max-width: 66; height: auto; max-height: 95%;
                border: round $accent; background: $panel; padding: 0 1; }
     #infohead { width: 100%; height: 1; }
     #infotitle { width: 1fr; height: 1; color: $accent; text-style: bold; }
     #infoclose { width: 5; height: 1; content-align: center middle;
                  background: $error; color: $text; text-style: bold; }
-    /* §10: 배경 탭 패널 영역 안에서 더 길어지게 — 한 번에 더 많은 항목 표시.
-       ModalScreen 은 화면 전체를 덮으므로 %는 화면 기준 → 탭바/상태줄을 침범하지
-       않을 만큼 여유를 두고 85% 로(이전 75%). 프롬프트 히스토리/REC/토큰 팝업이
-       InfoScreen 을 공유하므로 모두 적용된다. */
-    #info { width: 100%; height: auto; max-height: 85%; }
+    /* §10: 상하 공간이 넉넉하면 내용을 **한 번에** 보여준다(사용자 요청) — 리스트는
+       내용 높이(height:auto)만큼 자라고, 박스(#infobox)가 화면의 95%까지만 커지도록
+       막는다. 따라서 내용이 화면보다 작으면 스크롤 없이 전부 보이고, 넘칠 때만 박스
+       한도에서 리스트가 스크롤된다(예전엔 85% 고정 상한이라 공간이 남아도 잘렸다).
+       프롬프트 히스토리/REC/토큰 팝업이 InfoScreen 을 공유하므로 모두 적용된다. */
+    #info { width: 100%; height: auto; }
     #info ListItem { height: auto; }
     #info ListItem Label { width: 1fr; }
     """
@@ -345,13 +347,18 @@ class InfoScreen(ModalScreen):
     # 방향키(내비게이션) — 닫지 않고 ListView 선택을 옮긴다.
     _NAV_KEYS = ("up", "down", "pageup", "pagedown", "home", "end")
 
-    def __init__(self, lines, title="info", hide_key=None, hide_cb=None):
+    def __init__(self, lines, title="info", hide_key=None, hide_cb=None,
+                 initial_index=None, max_width=None):
         super().__init__()
         self._lines = lines
         self._title = title
         # 특정 키(hide_key)를 누르면 hide_cb 를 부르고 닫는다(#6 ② '이 헤더 숨기기').
         self._hide_key = hide_key
         self._hide_cb = hide_cb
+        # 열 때 강조(선택)할 항목 인덱스(예: 프롬프트 히스토리의 최신 항목, #17).
+        self._initial_index = initial_index
+        # 박스 가로 최대폭 오버라이드(없으면 CSS 기본 66). 프롬프트 히스토리는 넓게(#17).
+        self._max_width = max_width
 
     def compose(self) -> ComposeResult:
         # markup=False: 임의 텍스트(프롬프트 등)의 대괄호가 마크업으로 사라지지 않게.
@@ -366,7 +373,19 @@ class InfoScreen(ModalScreen):
                            [ListItem(Label("(없음)"))], id="info")
 
     def on_mount(self):
-        self.query_one(ListView).focus()
+        if self._max_width is not None:        # 가로 넓히기(#17)
+            self.query_one("#infobox").styles.max_width = self._max_width
+        lv = self.query_one(ListView)
+        lv.focus()
+        if self._initial_index is not None:    # 최신 항목 강조 + 스크롤(#17)
+            n = len(lv.children)
+            if n:
+                idx = max(0, min(self._initial_index, n - 1))
+                lv.index = idx
+                try:
+                    lv.scroll_to_widget(lv.children[idx])
+                except Exception:
+                    pass
 
     def on_click(self, event: events.Click):
         # 조상 체인을 거슬러: 닫기 [x] → 닫음. 박스(#infobox) 안이면 유지, 바깥
@@ -410,6 +429,161 @@ class InfoScreen(ModalScreen):
         if self._hide_key and event.key == self._hide_key and self._hide_cb:
             self._hide_cb()
         self.dismiss(None)
+
+class InfoTabsScreen(ModalScreen):
+    """탭으로 나뉜 읽기전용 정보 팝업(#10). 하단 상태줄의 두 버튼(REC 출력 캡처 ·
+    토큰 사용량)이 **한 팝업**을 열되 서로 다른 탭을 펴도록 통합한 것. ←→ 로 탭
+    전환, ↑↓ 항목 이동, Esc/[x]/바깥클릭 닫기. 높이·닫기 동작은 InfoScreen 과 동일
+    (공간이 넉넉하면 한 번에 표시, 화면의 95%까지)."""
+    CSS = """
+    InfoTabsScreen { align: center middle; background: $background 80%; }
+    /* 더 크게(#24): 폭은 넓게, 내용이 적어도 일정 높이를 확보(min-height)해 작게
+       쪼그라들지 않게 한다. 내용이 많으면 화면의 95%까지 자란다. */
+    #itbox { width: 92%; max-width: 100; height: auto;
+             min-height: 14; max-height: 95%;
+             border: round $accent; background: $panel; padding: 0 1; }
+    /* 탭 그룹을 별도 외곽선으로 감싼다(#32) → head 는 3행. [x] 는 우측 끝(1fr 스페이서). */
+    #ithead { width: 100%; height: 3; }
+    #ittabs { width: auto; height: 3; border: round $accent; }
+    #ittabs Label { width: auto; height: 1; }   /* 탭 하나(클릭 대상) */
+    #itgap { width: 1fr; height: 3; }
+    /* 닫기 [x] 는 1행으로 우측 위 모서리에 붙인다(#30 — 3행 블록 아님). 가로 흐름의
+       마지막(1fr 스페이서 뒤)이라 우측 끝, 높이 1이라 3행 head 의 첫 행에 놓인다. */
+    #itclose { width: 5; height: 1; content-align: center middle;
+               background: $error; color: $text; text-style: bold; }
+    #itbody { width: 100%; height: auto; }
+    #itbody ListItem { height: auto; }
+    #itbody ListItem Label { width: 1fr; }
+    """
+    _NAV = ("up", "down", "pageup", "pagedown", "home", "end")
+
+    def __init__(self, tabs, initial=0, title="정보"):
+        super().__init__()
+        self._tabs = tabs              # [(탭이름, [줄, ...]), ...]
+        self._ti = max(0, min(initial, len(tabs) - 1)) if tabs else 0
+        self._title = title
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="itbox"):
+            with Horizontal(id="ithead"):
+                with Horizontal(id="ittabs"):     # 탭 그룹(외곽선, #32)
+                    for i, (name, _l) in enumerate(self._tabs):
+                        yield Label("", id=f"ittab_{i}", markup=True)
+                yield Label("", id="itgap")        # [x] 를 우측 끝으로 미는 여백
+                yield Label("[x]", id="itclose", markup=False)
+            yield ListView(id="itbody")
+
+    async def on_mount(self):
+        await self._render_tab()
+        self.query_one(ListView).focus()
+
+    def _render_tabbar(self):
+        # 각 탭 라벨 갱신(현재 탭만 강조). 클릭 대상이라 탭마다 별도 위젯이다(#32).
+        for i, (name, _l) in enumerate(self._tabs):
+            lbl = self.query_one(f"#ittab_{i}", Label)
+            lbl.update(f"[reverse b] {name} [/]" if i == self._ti
+                       else f"[dim] {name} [/]")
+
+    async def _render_tab(self):
+        self._render_tabbar()
+        lines = self._tabs[self._ti][1] if self._tabs else []
+        lv = self.query_one(ListView)
+        await lv.clear()
+        await lv.extend([ListItem(Label(ln, markup=False))
+                         for ln in (lines or ["(없음)"])])
+        if lines:
+            lv.index = 0
+        box = self.query_one("#itbox", Vertical)
+        box.border_subtitle = "←→/클릭 탭 · ↑↓ 항목 · Esc 닫기"
+
+    async def _switch_to(self, i):
+        if 0 <= i < len(self._tabs) and i != self._ti:
+            self._ti = i
+            await self._render_tab()
+
+    async def on_click(self, event: events.Click):
+        w = getattr(event, "widget", None)
+        inside = False
+        while w is not None:
+            wid = getattr(w, "id", None)
+            if wid == "itclose":
+                event.stop(); self.dismiss(None); return
+            if wid and wid.startswith("ittab_"):   # 탭 클릭 → 전환(#32)
+                event.stop()
+                await self._switch_to(int(wid.split("_")[1]))
+                return
+            if wid == "itbox":
+                inside = True
+            w = w.parent
+        if not inside:
+            event.stop(); self.dismiss(None)
+
+    async def on_key(self, event: events.Key):
+        event.stop()
+        if event.key == "escape":
+            self.dismiss(None)
+            return
+        # ←→ 또는 Tab/Shift+Tab 으로 탭 전환(팝업이 열린 뒤에도, #24). ListView 가
+        # 좌우키를 먹는 환경을 대비해 Tab 도 받는다.
+        if (event.key in ("left", "right", "tab", "shift+tab")
+                and len(self._tabs) > 1):
+            step = -1 if event.key in ("left", "shift+tab") else 1
+            self._ti = (self._ti + step) % len(self._tabs)
+            await self._render_tab()
+            return
+        if event.key in self._NAV:
+            lv = self.query_one(ListView)
+            if event.key == "up":
+                lv.action_cursor_up()
+            elif event.key == "down":
+                lv.action_cursor_down()
+            elif event.key == "pageup":
+                for _ in range(5):
+                    lv.action_cursor_up()
+            elif event.key == "pagedown":
+                for _ in range(5):
+                    lv.action_cursor_down()
+            elif event.key == "home" and len(lv.children):
+                lv.index = 0
+            elif event.key == "end" and len(lv.children):
+                lv.index = len(lv.children) - 1
+            return
+        # 그 외 키 → 닫기(InfoScreen 과 동일한 가벼운 닫힘)
+        self.dismiss(None)
+
+class RulesEditScreen(ModalScreen):
+    """Claude 시작 규칙 편집 팝업(#27). 멀티라인 에디터에 '항상 지킬 규칙'을 적고
+    Ctrl+S 로 저장(dismiss=텍스트), Esc 로 취소(dismiss=None). 저장된 규칙은 새
+    Claude 세션/clear 후 프롬프트에 자동 주입된다(빈값이면 주입 안 함)."""
+    CSS = """
+    RulesEditScreen { align: center middle; background: $background 80%; }
+    #rulesbox { width: 90%; max-width: 100; height: auto; max-height: 90%;
+                border: round $accent; background: $panel; padding: 0 1; }
+    #ruleshead { width: 100%; height: 1; color: $accent; text-style: bold; }
+    #rulesedit { width: 100%; height: auto; min-height: 8; max-height: 80%; }
+    """
+
+    def __init__(self, text=""):
+        super().__init__()
+        self._text = text or ""
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="rulesbox"):
+            yield Label("Claude 시작 규칙 — Ctrl+S 저장 · Esc 취소", id="ruleshead")
+            yield TextArea(self._text, id="rulesedit")
+
+    def on_mount(self):
+        ta = self.query_one(TextArea)
+        ta.focus()
+
+    def on_key(self, event: events.Key):
+        if event.key == "escape":
+            event.stop()
+            self.dismiss(None)
+        elif event.key == "ctrl+s":
+            event.stop()
+            self.dismiss(self.query_one(TextArea).text)
+
 
 class TokenLogScreen(ModalScreen):
     """토큰 사용량 영속 로그 집계 팝업(#7). 서버가 보낸 레코드를 클라이언트가
@@ -533,6 +707,10 @@ class PromptScreen(ModalScreen):
                background: $surface; }
     #pinput { width: 1fr; border: none; height: 1; padding: 0;
               background: $surface; color: $text; }
+    /* 입력 오른쪽에 붙는 힌트: 명령 설명 / 인자 밑줄(____) / 토글 선택지. 입력칸
+       (1fr)이 남는 폭을 채우므로 힌트는 항상 줄 오른쪽 끝에 표시된다(명령 오른쪽). */
+    #phint { width: auto; max-width: 60%; height: 1; padding: 0 1;
+             background: $surface; content-align: right middle; }
     /* 입력 박스 위에 펼쳐지는 자동완성 후보 영역(부분일치 명령). */
     #pcand { width: 100%; height: auto; max-height: 12;
              background: $panel; color: $text; padding: 0 1;
@@ -551,6 +729,11 @@ class PromptScreen(ModalScreen):
         self._cand = []        # 현재 부분일치 후보 [(name, desc), ...]
         self._sel = 0          # 후보 영역 내 선택 인덱스
         self._cand_shown = False
+        # 입력 오른쪽 힌트(완성된 명령일 때): 토글/선택지 모드 상태.
+        self._hint_cmd = None      # 완성된 명령 이름(아니면 None)
+        self._choices = []         # 토글/선택지 [(보임, 값), ...] (없으면 빈 리스트)
+        self._choice_sel = 0       # 강조된 선택지 인덱스
+        self._hint_text = ""       # 현재 힌트 원문(마크업 포함, 상태 확인용)
 
     def compose(self) -> ComposeResult:
         inp = Input(value=self._initial, placeholder=self._label,
@@ -564,6 +747,8 @@ class PromptScreen(ModalScreen):
                 with Horizontal(id="prow"):
                     yield Label(":", id="pprefix")
                     yield inp
+                    # 입력 오른쪽 힌트(설명/인자 밑줄/토글 선택지). markup 으로 강조.
+                    yield Label("", id="phint", markup=True)
         else:
             inp.styles.dock = "bottom"
             inp.styles.padding = (0, 1)
@@ -576,6 +761,7 @@ class PromptScreen(ModalScreen):
         if self._purpose == "command":
             self.query_one("#pcand", Label).display = False
             self._refresh_cands()
+            self._refresh_hint()
 
     @staticmethod
     def _esc(s):
@@ -623,12 +809,75 @@ class PromptScreen(ModalScreen):
         inp.cursor_position = len(inp.value)
         inp.focus()
         self._refresh_cands()
+        self._refresh_hint()
+
+    @staticmethod
+    def _cmd_desc(name):
+        for (n, d, *_) in COMMANDS:
+            if n == name:
+                return d
+        return None
+
+    def _set_hint(self, markup):
+        # 힌트 텍스트를 갱신하고 원문을 보관(테스트/상태 확인용).
+        self._hint_text = markup
+        self.query_one("#phint", Label).update(markup)
+
+    def _refresh_hint(self):
+        """입력이 **완성된 명령**이면 입력칸 오른쪽 힌트(#phint)에 설명을 띄운다.
+        - 선택지/토글 인자(COMMAND_OPTIONS): 방향키로 고르는 토글 UI(↑↓ 강조, Enter 실행).
+        - 자유 텍스트 인자(COMMAND_FREETEXT): 인자 자리에 밑줄(____)+설명.
+        - 그 외(무인자·인자 입력 중): 설명만. 부분 입력(후보 표시 중)이면 힌트는 비운다."""
+        if self._purpose != "command":
+            return
+        self._hint_cmd = None
+        self._choices = []
+        s = self.query_one(Input).value
+        first = s.split(None, 1)[0] if s.strip() else ""
+        rest = s[len(first):].strip()
+        name = first.lower()
+        desc = self._cmd_desc(name)
+        # 후보 영역이 떠 있거나(부분 입력) 완성 명령이 아니면 힌트 비움.
+        if self._cand_shown or not desc:
+            self._set_hint("")
+            return
+        self._hint_cmd = name
+        opts = COMMAND_OPTIONS.get(name)
+        if opts and not rest:
+            # 선택지/토글: 방향키 강조 + Enter 즉시 실행(단일 spec 지원).
+            self._choices = list(opts[0]["choices"])
+            self._choice_sel = 0
+            self._render_hint()
+            return
+        if name in COMMAND_FREETEXT and not rest:
+            self._set_hint(f"[bold]____[/bold]  [dim]{self._esc(desc)}[/dim]")
+            return
+        self._set_hint(f"[dim]{self._esc(desc)}[/dim]")
+
+    def _render_hint(self):
+        # 토글/선택지를 한 줄에 나열하고 강조된 항목만 reverse 로 표시(↑↓ 로 이동).
+        parts = []
+        for i, (disp, _v) in enumerate(self._choices):
+            d = self._esc(disp)
+            parts.append(f"[reverse] {d} [/reverse]" if i == self._choice_sel
+                         else f"[dim] {d} [/dim]")
+        self._set_hint("  ".join(parts))
+
+    def _run_choice(self):
+        """강조된 토글/선택지로 즉시 실행(Enter). 값이 비면(예: '토글') 인자 생략."""
+        name = self._hint_cmd
+        val = self._choices[self._choice_sel][1]
+        self.dismiss(f"{name} {val}" if val else name)
 
     def on_input_submitted(self, event):
         # 후보가 떠 있으면 Enter 는 강조된 후보를 입력에 채우고(실행하지 않음),
         # 그 다음 Enter 로 실제 실행한다.
         if self._purpose == "command" and self._cand_shown and self._cand:
             self._accept_cand()
+            return
+        # 토글/선택지 모드면 강조된 선택지로 바로 실행.
+        if self._purpose == "command" and self._choices:
+            self._run_choice()
             return
         self.dismiss(event.value)
 
@@ -647,6 +896,7 @@ class PromptScreen(ModalScreen):
             self.app.push_screen(CommandListScreen(COMMANDS, base), fill)
             return
         self._refresh_cands()
+        self._refresh_hint()
 
     def on_key(self, event: events.Key):
         if event.key == "escape":
@@ -666,6 +916,18 @@ class PromptScreen(ModalScreen):
             elif event.key == "tab":
                 event.stop()
                 self._accept_cand()
+            return
+        # 토글/선택지 모드: ↑↓(과 가능하면 ←→)로 강조 이동, Enter 는 submit 에서 실행.
+        # (←→ 는 Input 의 커서 이동 바인딩이 먼저 먹을 수 있어 ↑↓ 를 주 경로로 둔다.)
+        if self._purpose == "command" and self._choices:
+            if event.key in ("up", "left"):
+                event.stop()
+                self._choice_sel = (self._choice_sel - 1) % len(self._choices)
+                self._render_hint()
+            elif event.key in ("down", "right"):
+                event.stop()
+                self._choice_sel = (self._choice_sel + 1) % len(self._choices)
+                self._render_hint()
 
 class ConfirmScreen(ModalScreen):
     """예/아니오 확인 팝업(중앙). 두 버튼을 좌우로 배치하고, 선택된 쪽만
@@ -831,7 +1093,7 @@ class PermModeScreen(ModalScreen):
     하고 목표 모드를 고르면 그 키를 dismiss → 서버가 shift+tab 폐루프로 목표까지
     순환 주입한다. bypass(권한 우회)는 위험 모드라 목록에서 제외(실수 방지)."""
     CSS = """
-    PermModeScreen { align: center middle; }
+    PermModeScreen { align: center top; }
     #perm { width: 60; height: auto; max-height: 80%;
             border: round $accent; background: $panel; }
     #perm ListItem Label { width: 1fr; }
@@ -842,9 +1104,12 @@ class PermModeScreen(ModalScreen):
         ("plan", "plan — 플랜 모드 (계획만, 실행 안 함)"),
     ]
 
-    def __init__(self, current):
+    def __init__(self, current, anchor_y=None):
         super().__init__()
         self._current = current
+        # 클릭한 footer 행(화면 y). 아래에 공간이 있으면 그 아래, 없으면 위에 띄운다.
+        # None 이면 화면 세로 중앙(기존 동작).
+        self._anchor_y = anchor_y
 
     def compose(self) -> ComposeResult:
         items = []
@@ -857,7 +1122,18 @@ class PermModeScreen(ModalScreen):
         yield lv
 
     def on_mount(self):
-        self.query_one(ListView).focus()
+        lv = self.query_one(ListView)
+        lv.focus()
+        # 클릭 위치 기준 세로 배치: 아래 공간이 충분하면 클릭 행 바로 아래, 아니면 위.
+        box_h = len(self._MODES) + 2          # 테두리 포함 대략 높이
+        sh = self.size.height
+        if self._anchor_y is None:
+            y = max(0, (sh - box_h) // 2)     # 앵커 없으면 중앙
+        elif self._anchor_y - box_h >= 0:
+            y = self._anchor_y - box_h        # 클릭한 줄 **바로 위**(우선, #29)
+        else:
+            y = self._anchor_y + 1            # 위 공간이 없을 때만 아래
+        lv.styles.offset = (0, y)
 
     def on_list_view_selected(self, event):
         self.dismiss(event.item.id[2:])   # "M_auto" → "auto"

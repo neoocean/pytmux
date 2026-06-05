@@ -328,6 +328,8 @@ class Pane:
         # 안정될 때만 완료로 친다. _was_busy=직전에 busy 였음, _idle_frames=연속 idle 수.
         self._was_busy = False
         self._idle_frames = 0
+        self._feedback_seen = False  # 세션 피드백 프롬프트 자동 Dismiss 디바운스(#26)
+        self._rules_pending = False  # 시작 규칙 주입 예약(다음 idle 에 1회, #27)
         # _layout_msg 가 이 패널에 Claude 헤더 한 행을 예약했는지(#1). 예약 유무가
         # 바뀌면 flush 루프가 레이아웃(PTY 리사이즈 포함)을 다시 보낸다.
         self._hdr_reserved = False

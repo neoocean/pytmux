@@ -13,12 +13,24 @@ import sys
 import time
 
 from . import ipc, proc
-from .client import run_client
 from .server import run_server
+# NOTE: client(=textual) 은 여기서 import 하지 않는다 — 서버 하위프로세스
+# (`pytmux.py server`)나 가벼운 제어 명령(ls/cmd/kill)이 launcher 만 거쳐도
+# textual 전체를 로드해 기동이 수백 ms 느려졌다(Windows 사용자 보고). attach
+# 경로에서만 지연 import 한다(아래 main()).
 
 
 def can_connect(sock_path: str) -> bool:
     return ipc.probe(sock_path)
+
+
+def wait_server(sock_path: str, *, polls: int = 200, interval: float = 0.02) -> bool:
+    """서버가 listen 떠 접속 가능해질 때까지 폴링. 성공이면 True, 시간 초과면 False."""
+    for _ in range(polls):
+        if ipc.probe(sock_path):
+            return True
+        time.sleep(interval)
+    return False
 
 
 def ensure_server(sock_path: str):
@@ -27,12 +39,9 @@ def ensure_server(sock_path: str):
     # 부모 생애와 무관하게 살아남는 분리 서버 프로세스를 띄운다(Unix setsid /
     # Windows DETACHED_PROCESS). 그 뒤 listen 이 떠 접속 가능해질 때까지 대기.
     proc.spawn_detached(proc.server_argv(sock_path))
-    for _ in range(200):
-        if ipc.probe(sock_path):
-            return
-        time.sleep(0.02)
-    print("pytmux: 서버 기동 실패", file=sys.stderr)
-    sys.exit(1)
+    if not wait_server(sock_path):
+        print("pytmux: 서버 기동 실패", file=sys.stderr)
+        sys.exit(1)
 
 
 def control_request(sock_path: str, obj: dict):
@@ -149,7 +158,16 @@ def main(argv=None):
         print("pytmux: 이미 pytmux 안에서 실행 중입니다(로컬/원격 중첩). 우회하려면 "
               "'unset PYTMUX LC_PYTMUX'.", file=sys.stderr)
         sys.exit(1)
-    ensure_server(sock_path)
+    # 서버 기동(없으면)과 textual 로드를 **겹쳐서** 체감 기동을 줄인다: 서버를 먼저
+    # 띄워두고(분리 프로세스), 그 부팅(수백 ms)이 도는 동안 무거운 client(=textual)
+    # 를 import 한 뒤 readiness 를 폴링한다. 직렬(기동 완료 후 import)보다 빠르다.
+    need_spawn = not ipc.probe(sock_path)
+    if need_spawn:
+        proc.spawn_detached(proc.server_argv(sock_path))
+    from .client import run_client   # 지연 import: 서버 부팅과 병렬로 textual 로드
+    if need_spawn and not wait_server(sock_path):
+        print("pytmux: 서버 기동 실패", file=sys.stderr)
+        sys.exit(1)
     run_client(sock_path, None)
 
 

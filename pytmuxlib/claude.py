@@ -111,10 +111,23 @@ def claude_usage(text: str):
 # Claude Code 의 /status·로그인 배너·푸터에 보이는 이메일/플랜으로 계정을 추정한다.
 # 화면 텍스트만 보므로 휴리스틱이고, 못 찾으면 None(서버가 "unknown" 으로 적는다).
 _EMAIL_RE = re.compile(r"\b([A-Za-z0-9._%+\-]+)@([A-Za-z0-9.\-]+\.[A-Za-z]{2,})\b")
-_ORG_RE = re.compile(r"\b(?:organization|org|team|workspace|account)\s*[:\-]\s*"
-                     r"([A-Za-z0-9 ._\-]{2,40})", re.I)
+# 구분자는 콜론(`org: Foo`) 또는 **공백으로 둘러싼** 대시(`account - Foo`)만 인정한다.
+# 앞에 단어문자/슬래시/대시가 붙은 경우는 제외해 `/team-onboarding …` 같은 슬래시
+# 명령·하이픈 단어를 계정명으로 오검출하지 않는다(상태줄 @계정에 튐, 사용자 보고).
+_ORG_RE = re.compile(r"(?<![\w/\-])(?:organization|org|team|workspace|account)\s*"
+                     r"(?::|\s[-–]\s)\s*([A-Za-z0-9 ._\-]{2,40})", re.I)
 _PLAN_RE = re.compile(r"\b(Pro|Max|Team|Enterprise|Free)\b\s*"
                       r"(?:plan|subscription|tier)", re.I)
+
+
+# Claude Code 세션 종료 시 뜨는 피드백 프롬프트("How is Claude doing this session?
+# 1:Bad 2:Fine 3:Good 0:Dismiss"). 자동으로 0(Dismiss) 을 눌러 치우기 위한 감지(#26).
+_FEEDBACK_RE = re.compile(r"How is Claude doing this session", re.I)
+
+
+def claude_feedback_prompt(text: str) -> bool:
+    """화면에 Claude 세션 피드백 프롬프트가 떠 있으면 True(자동 Dismiss 대상)."""
+    return bool(_FEEDBACK_RE.search(text))
 
 
 def claude_account(text: str):

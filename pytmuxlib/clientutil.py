@@ -24,6 +24,26 @@ def _char_cells(ch: str) -> int:
     return 2 if wcwidth(ch) == 2 else 1
 
 
+# 이모지(컬러 픽토그래프) 코드포인트 대략 범위. 팝업이 떠 본문을 어둡게 칠할 때,
+# 이모지는 터미널이 셀 스타일을 무시하고 컬러로 그려 안 어두워지므로 placeholder 로
+# 치환한다(#25). CJK/한글·기하도형(○◐ 등)·박스문자는 스타일대로 어두워지므로 제외.
+_EMOJI_RANGES = (
+    (0x1F000, 0x1FAFF), (0x1FC00, 0x1FFFD),
+    (0x2600, 0x27BF),   # 기타 기호·딩뱃(✽ ✓ ☀ 등 컬러로 그려질 수 있음)
+    (0x2B00, 0x2BFF), (0x2300, 0x23FF),  # ⌛⏳⏰ 등
+    (0x2190, 0x21FF),  # 화살표 일부(컬러 이모지 변형)
+    (0xFE00, 0xFE0F),  # variation selectors
+)
+
+
+def _is_emoji(ch: str) -> bool:
+    """ch 가 컬러 이모지로 렌더될 가능성이 높은 문자인지(어둡게 안 되는 대상, #25)."""
+    if not ch:
+        return False
+    o = ord(ch[0])
+    return any(a <= o <= b for a, b in _EMOJI_RANGES)
+
+
 def _fmt_tokens(total: int) -> str:
     """누적 토큰 수를 짧게 표기. 1234567→"1.2M", 45200→"45.2k", 800→"800".
     (서버측 tokens.fmt 과 동일 규칙 — 클라이언트 단독 표시용 경량 복제.)"""
@@ -163,6 +183,13 @@ SPECIAL = {
     "shift+tab": b"\x1b[Z",   # backtab(CSI Z) — Claude 권한 모드 순환 등
     "shift+enter": b"\n",     # LF — Claude 등 입력 줄바꿈(Enter=CR 제출과 구분)
     "shift+escape": b"\x1b",  # 앱으로 ESC 전달(ESC 단독은 esc 모드 진입)
+    # 수정자 포함 커서 키(표준 xterm CSI 1;mod 시퀀스)를 패널 앱에 그대로 전달한다.
+    # 예전엔 매핑이 없어 b"" 로 버려졌다. Shift+Home/End 로 줄 선택 → Del(\x1b[3~)로
+    # 삭제 같은 동작이 가능해진다(지원 여부는 패널 앱에 달림 — Claude Code 등). #14
+    "shift+home": b"\x1b[1;2H", "shift+end": b"\x1b[1;2F",
+    "shift+left": b"\x1b[1;2D", "shift+right": b"\x1b[1;2C",
+    "shift+up": b"\x1b[1;2A", "shift+down": b"\x1b[1;2B",
+    "ctrl+home": b"\x1b[1;5H", "ctrl+end": b"\x1b[1;5F",
 }
 
 def key_to_bytes(event: events.Key) -> bytes:
@@ -274,6 +301,7 @@ COMMANDS = [
     ("prompt-clear", "프롬프트 단위 클리어 모드 토글(완료마다 문서화+/clear) [on|off]", "모니터/Claude"),
     ("prompt-clear-message", "프롬프트 단위 클리어의 문서화 지시문 변경", "모니터/Claude"),
     ("prompt-clear-queue", "프롬프트 단위 클리어 큐에 명령 쌓기(빈값=목록, -c=비움)", "모니터/Claude"),
+    ("claude-rules", "Claude 시작 규칙 편집(저장 시 새 세션/clear 후 프롬프트에 자동 주입)", "모니터/Claude"),
     ("auto-doc-clear", "Claude idle 30초 지속 시 자동 문서화+/clear on/off (auto-doc-clear on|off|toggle)", "모니터/Claude"),
     ("claude-auto-mode", "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off (claude-auto-mode on|off|toggle)", "모니터/Claude"),
     ("run-shell", "셸 명령 실행", "설정/기타"),
@@ -352,5 +380,17 @@ COMMAND_NOARG = {
     "choose-buffer", "paste-clipboard", "save-layout", "restore-layout",
     "show-options", "show-hooks", "source-file", "clock-mode",
     "calendar-mode", "prompt-history", "token-usage", "token-log",
-    "list-keys", "send-escape",
+    "list-keys", "send-escape", "claude-rules",
+}
+# 자유 텍스트 인자를 받는 명령 — 명령 프롬프트에서 명령을 다 치면 인자 자리에 밑줄
+# (____)을 그려 "여기에 인자를 입력" 임을 알린다(사용자 요청). 선택지형(COMMAND_OPTIONS)
+# 은 밑줄 대신 방향키로 고르는 토글 UI 를 쓰므로 여기 넣지 않는다. 무인자/파괴적
+# 명령(detach-client·kill-* 등)도 제외해 잘못된 밑줄을 막는다.
+COMMAND_FREETEXT = {
+    "rename-pane", "rename-tab", "send-keys", "pipe-pane", "paste-buffer",
+    "layout-save", "layout-load", "layout-load-new", "auto-resume-message",
+    "set", "set-hook", "display-message", "display-popup", "run-shell",
+    "if-shell", "bind-key", "unbind-key", "token-account",
+    "prompt-clear-message", "prompt-clear-queue", "select-tab", "move-tab",
+    "swap-tab", "resize-pane", "capture-pane", "join-pane",
 }
