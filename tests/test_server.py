@@ -513,6 +513,36 @@ async def test_autoresume_schedules_on_limit_reset():
         await teardown(srv, task, sock)
 
 
+async def test_scan_claude_gating_skips_settled_pane():
+    """B1 성능: 출력이 없으면(settled) _scan_claude 가 비싼 화면 파싱(claude_state)을
+    건너뛴다. 새 출력이 오면 다시 스캔. 전이 디바운스(done 알림 등)는 별도 테스트가
+    출력 없이도 진행됨을 보장한다(test_inactive_tab_claude_done_flag)."""
+    import pytmuxlib.serverclaude as sc
+    srv, task, sock = await server_only()
+    orig = sc.claude_state
+    calls = []
+    sc.claude_state = lambda txt: (calls.append(1), orig(txt))[1]
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")   # idle 출력 → _feed_seq 증가
+        srv._scan_claude(sess, win)
+        n1 = len(calls)
+        assert n1 >= 1 and p._claude == "idle"
+        # 출력 없이 재스캔 2회 → settled 라 claude_state 재호출 없음(스킵)
+        srv._scan_claude(sess, win)
+        srv._scan_claude(sess, win)
+        assert len(calls) == n1, ("settled 패널 재파싱 안 함", len(calls), n1)
+        # 새 출력 → 다시 스캔
+        p.feed(b"\x1b[2J\x1b[Hbusy... \xe2\x86\x91 1k tokens (5s)\r\n")
+        srv._scan_claude(sess, win)
+        assert len(calls) == n1 + 1, "출력 오면 재스캔"
+    finally:
+        sc.claude_state = orig
+        await teardown(srv, task, sock)
+
+
 async def test_claude_auto_mode_cycles_to_auto():
     """§10 권한모드 자동전환: 토글 ON 이면 idle 패널의 footer 권한모드가 auto 가
     아닐 때 shift+tab(\\x1b[Z)을 폐루프로 순환 주입해 auto 로 맞춘다. 같은 모드

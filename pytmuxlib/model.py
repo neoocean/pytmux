@@ -280,6 +280,10 @@ class Pane:
         self._resume_pending = False
         self._activity = False   # 마지막 검사 이후 출력 있었음
         self._bell = False       # 마지막 검사 이후 BEL 수신
+        # Claude 스캔 dirty 게이팅(B1): feed 마다 _feed_seq 증가. _scan_claude 가
+        # 마지막 스캔 때 본 seq(_scan_seq)와 같으면 화면 텍스트가 그대로 → 스캔 생략.
+        self._feed_seq = 0
+        self._scan_seq = -1
         # Claude Code 감지: 상태(idle/busy/limit/None)와 마지막 입력 프롬프트
         self._claude = None
         self._claude_usage = None  # "ctx 42%" / "12k tok" 등(best-effort)
@@ -514,6 +518,7 @@ class Pane:
             pos = mo.end()
         self._feed_seg(buf[pos:])
         self.dirty = True
+        self._feed_seq += 1   # B1: Claude 스캔 게이팅용 — 출력 있을 때만 재스캔
 
     def _feed_seg(self, seg: bytes) -> None:
         if not seg:

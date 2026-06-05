@@ -261,6 +261,11 @@ class ServerClaudeMixin:
             for p in self._all_panes():
                 p._cam_tries = 0
                 p._cam_last = None
+        else:
+            # 켤 때: 이미 idle-settled(출력 없음)라 스캔 게이팅(B1)으로 스킵될 패널도
+            # 다음 프레임에 한 번 재스캔해 auto 로 즉시 맞추도록 강제한다.
+            for p in self._all_panes():
+                p._scan_seq = -1
         self._save_opts()
         return self.claude_auto_mode
 
@@ -337,6 +342,7 @@ class ServerClaudeMixin:
         p._perm_target = target
         p._cam_tries = 0
         p._cam_last = None
+        p._scan_seq = -1   # 스캔 게이팅(B1) 무시하고 다음 프레임에 구동 시작
 
     def _scan_claude(self, sess, win) -> bool:
         """모든 탭 패널의 Claude 상태/사용량을 화면 텍스트(screen.display)로 갱신
@@ -347,6 +353,20 @@ class ServerClaudeMixin:
         for t in sess.tabs:
             w = t.window
             for p in w.panes():
+                # dirty 게이팅(B1): 마지막 스캔 이후 출력이 없었으면(_feed_seq 불변)
+                # 화면 텍스트가 그대로라 상태/사용량/전이가 바뀔 수 없다 — join+정규식
+                # 스캔을 통째로 건너뛴다(idle·다중 패널에서 flush CPU 대폭 절감).
+                # 단, **프레임 카운터로 도는 디바운스**는 출력 없는 프레임에도 진행돼야
+                # 하므로(완료 알림 #22: idle 이 _DONE_IDLE_FRAMES 프레임 안정 / 헤더
+                # 예약 해제: 비-Claude 가 _HDR_CLAUDE_MISS 프레임 지속), 그 전이가
+                # 진행 중인 패널(pending)은 화면 불변이어도 계속 스캔한다. settled
+                # (안정 idle·안정 비Claude) 패널만 건너뛴다.
+                pending = ((p._was_busy and p._claude == "idle"
+                            and p._idle_frames < _DONE_IDLE_FRAMES)
+                           or (p._hdr_claude and not p._claude))
+                if p._feed_seq == p._scan_seq and not pending:
+                    continue
+                p._scan_seq = p._feed_seq
                 txt = "\n".join(p.screen.display)
                 old_cl = p._claude
                 new_cl = claude_state(txt)
