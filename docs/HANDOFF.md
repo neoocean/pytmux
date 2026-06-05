@@ -211,6 +211,17 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56718 **권한모드 팝업 좌측 정렬·footer 바로 위 배치 + 바깥 클릭 닫기**(§10-A #2·#3)
+  — Claude footer(`auto mode on …`) 클릭으로 여는 `PermModeScreen` 을 ① **좌측 정렬**
+  하고(`align: left top`, `open_perm_mode` 가 `_perm_zone[pid]` 의 시작 x 를 `anchor_x`
+  로 넘겨 `on_mount` 가 박스 offset.x 를 그 footer 시작 x 에 맞춤 — 화면 오른쪽 넘으면
+  클램프, 앵커 없으면 가로 중앙), ② 세로는 기존대로 클릭 줄 **바로 위**(공간 없으면 아래),
+  ③ **박스(`#perm`) 바깥(백드롭) 클릭 시 닫힘**(`on_click` 이 조상 체인에 `#perm` 없으면
+  `dismiss(None)` — InfoScreen 의 inside-box 판정 패턴). 회귀: 기존
+  `test_claude_footer_zones_and_popups` 에 offset.x=anchor 단언 추가 + 신규
+  `test_perm_mode_click_outside_closes`(안 클릭 유지·바깥 클릭 닫힘), 221 passed.
+  클라이언트 전용(attach 재실행). 파일: `pytmuxlib/{client,clientscreens}.py`,
+  `tests/test_client.py`, `docs/HANDOFF.md`.
 - 56632 **ESC 모드 종료 시 ESC 가 패널로 새지 않게 — 패널 ESC 전달은 Shift+ESC 만**
   (§10 사용자 요청) — 단독 ESC 로 esc(명령) 모드 진입 후 **ESC 를 다시 눌러 모드를
   빠져나올 때 그 ESC 가 활성 패널로 전달되던** 동작을 없앴다. 패널(앱)에 실제
@@ -769,13 +780,14 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > (**CL 56702**)는 구현·제출 완료. 아래는 이후 들어온 요청으로 **아직 미착수**(기록만).
 > #1·#2 패널 DnD 마우스 설계는 확정됨 → [MEMORY] `pytmux-pane-dnd-mouse-design` 참조.
 
-- **[UI 요청, 미구현] 권한모드 선택 팝업을 좌측 정렬 + 'auto mode on' 바로 위에 배치** —
-  `PermModeScreen`(`clientscreens.py`)은 현재 화면 중앙 정렬. Claude footer 의 `auto
-  mode on` 줄 **바로 위쪽 왼쪽**에 뜨도록(이미 `open_perm_mode` 가 `anchor_y` 를 넘김,
-  `client.py:~610`) 가로 정렬을 left 로, 세로 위치를 footer 기준으로. **기록만 — 미구현.**
-- **[UI 요청, 미구현] 권한모드 선택 팝업 — 바깥 클릭으로 닫기** — `PermModeScreen` 에
-  backdrop 클릭(box 바깥) 시 `dismiss(None)` 추가(InfoScreen/InfoTabsScreen 의 inside-box
-  판정 패턴 재사용). **현재는 기록만 — 미구현.**
+- ~~**[UI 요청] 권한모드 선택 팝업을 좌측 정렬 + 'auto mode on' 바로 위에 배치**~~ →
+  **CL 56718 에서 해결.** `PermModeScreen` CSS 를 `align: left top` 으로 바꾸고,
+  `open_perm_mode` 가 `_perm_zone[pid]` 의 시작 x(`anchor_x`)를 넘겨 `on_mount` 가
+  박스 offset.x 를 그 footer 시작 x 에 맞춘다(화면 오른쪽 넘으면 클램프, 앵커 없으면
+  가로 중앙). 세로는 기존대로 클릭 줄 바로 위(공간 없으면 아래).
+- ~~**[UI 요청] 권한모드 선택 팝업 — 바깥 클릭으로 닫기**~~ → **CL 56718 에서 해결.**
+  `PermModeScreen.on_click` 추가 — 조상 체인에 `#perm` 박스가 없으면(백드롭) `dismiss(None)`
+  (InfoScreen 의 inside-box 판정 패턴 재사용).
 - **[성능 요청, 미구현] 팝업 표시 시 배경 디밍이 ~1초 걸려 느림 — 개선** — 팝업이 뜰 때
   배경 어두워짐이 ~1s 지연. 원인 후보: 팝업 open 시 배경 재합성(`_composite`)+emoji→`·`
   치환(`clientutil`)이 무겁거나, dim 적용이 다음 프레임/타이머에 묶여 지연. 디밍 경로를

@@ -597,7 +597,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             info = self.pane_claude.get(pane_id) or {}
             current = info.get("perm_mode")
             zone = self._perm_zone.get(pane_id)
-            anchor_y = zone[2] if zone else None   # 클릭한 footer 행 → 팝업 위치 기준
+            anchor_y = zone[2] if zone else None   # 클릭한 footer 행 → 팝업 세로 위치 기준
+            anchor_x = zone[0] if zone else None   # footer 시작 x → 팝업 좌측 정렬 기준(#2)
             # 클릭한 그 줄(auto mode on 등)은 팝업 dim 에서 제외해 밝게 둔다(#29).
             self._undim_rows = {anchor_y} if anchor_y is not None else set()
 
@@ -607,7 +608,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.send_cmd("set_claude_perm_mode", id=pane_id,
                                   target=target)
                     self.display_message(f"권한모드 → {target} 전환 중…")
-            self.push_screen(PermModeScreen(current, anchor_y=anchor_y), _chosen)
+            self.push_screen(PermModeScreen(current, anchor_y=anchor_y,
+                                            anchor_x=anchor_x), _chosen)
 
         def open_remote_control(self, pane_id):
             """Claude 데스크탑 앱 원격제어('Remote Control active') 정보 팝업(§10 item 3).

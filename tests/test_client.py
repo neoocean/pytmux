@@ -1987,6 +1987,13 @@ async def test_claude_footer_zones_and_popups():
         scr = app.screen
         assert scr.__class__.__name__ == "PermModeScreen", scr
         assert "default" in (scr.query_one("#perm").border_title or "")
+        # §10-A #2: 좌측 정렬 — 박스 offset.x 가 footer 시작 x(anchor)에 맞는다
+        # (화면 오른쪽을 넘지 않게 클램프). 세로는 클릭 줄 바로 위.
+        off = scr.query_one("#perm").styles.offset
+        ax = app._perm_zone[pid][0]
+        ax_clamped = max(0, min(ax, scr.size.width - scr._BOX_W))
+        assert int(off.x.value) == ax_clamped, (off.x.value, ax_clamped)
+        assert int(off.y.value) >= 0                      # 화면 안에 배치
         scr.dismiss("plan")
         await pilot.pause(0.05)
         assert sent and sent[0][0] == "set_claude_perm_mode"
@@ -1997,6 +2004,46 @@ async def test_claude_footer_zones_and_popups():
         assert app.screen.__class__.__name__ == "InfoScreen"
         app.screen.dismiss(None)
         await pilot.pause(0.05)
+    await _with_app(body)
+
+
+async def test_perm_mode_click_outside_closes():
+    """§10-A #3: 권한모드 팝업 박스(#perm) 바깥(백드롭) 클릭 시 dismiss(None) 로 닫힌다.
+    박스 안 클릭은 닫지 않는다(InfoScreen 의 inside-box 판정 패턴)."""
+    async def body(app, pilot, srv):
+        pid = app.layout["panes"][0]["id"]
+        app.pane_claude = {pid: {"id": pid, "claude": "idle",
+                                 "perm_mode": "default"}}
+        # 클릭존이 없어도 open_perm_mode 는 동작(앵커 None → 중앙)
+        app.open_perm_mode(pid)
+        await pilot.pause(0.05)
+        scr = app.screen
+        assert scr.__class__.__name__ == "PermModeScreen", scr
+
+        class _W:
+            def __init__(self, wid, parent=None):
+                self.id = wid
+                self.parent = parent
+
+        class _Ev:
+            def __init__(self, widget):
+                self.widget = widget
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        # 박스 안 클릭(#perm) → 닫히지 않음
+        ev_in = _Ev(_W("perm", parent=_W("screen")))
+        scr.on_click(ev_in)
+        await pilot.pause(0.05)
+        assert app.screen is scr, "박스 안 클릭은 닫지 않는다"
+        # 박스 바깥(백드롭) 클릭 → 닫힘
+        ev_out = _Ev(_W("backdrop", parent=None))
+        scr.on_click(ev_out)
+        await pilot.pause(0.05)
+        assert app.screen is not scr, "바깥 클릭은 팝업을 닫는다"
+        assert ev_out.stopped
     await _with_app(body)
 
 

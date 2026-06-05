@@ -1286,25 +1286,34 @@ class ChooseLayoutScreen(ModalScreen):
 class PermModeScreen(ModalScreen):
     """Claude 권한모드 선택 팝업(하단 footer 클릭, §10 item 2). 현재 모드를 표시
     하고 목표 모드를 고르면 그 키를 dismiss → 서버가 shift+tab 폐루프로 목표까지
-    순환 주입한다. bypass(권한 우회)는 위험 모드라 목록에서 제외(실수 방지)."""
+    순환 주입한다. bypass(권한 우회)는 위험 모드라 목록에서 제외(실수 방지).
+
+    배치(§10-A #2): 클릭한 footer('auto mode on …') 줄 **바로 위**에, 그리고
+    **좌측 정렬**(footer 가 시작하는 패널 왼쪽 x 에 맞춤)로 띄운다. 그래서 팝업이
+    클릭한 그 줄에 붙어 보인다(화면 중앙이 아님). anchor 가 없으면 화면 중앙."""
     CSS = """
-    PermModeScreen { align: center top; }
+    PermModeScreen { align: left top; }
     #perm { width: 60; height: auto; max-height: 80%;
             border: round $accent; background: $panel; }
     #perm ListItem Label { width: 1fr; }
     """
+    # 박스 폭(CSS #perm width 와 일치) — 좌측 정렬 오프셋/중앙 계산에 쓴다.
+    _BOX_W = 60
     _MODES = [
         ("auto", "auto — 편집 자동 수락 (⏵⏵ auto-accept edits)"),
         ("default", "default — 매번 확인 (일반 모드)"),
         ("plan", "plan — 플랜 모드 (계획만, 실행 안 함)"),
     ]
 
-    def __init__(self, current, anchor_y=None):
+    def __init__(self, current, anchor_y=None, anchor_x=None):
         super().__init__()
         self._current = current
         # 클릭한 footer 행(화면 y). 아래에 공간이 있으면 그 아래, 없으면 위에 띄운다.
         # None 이면 화면 세로 중앙(기존 동작).
         self._anchor_y = anchor_y
+        # 클릭한 footer 가 시작하는 화면 x(패널 왼쪽). 좌측 정렬 기준(#2).
+        # None 이면 화면 가로 중앙.
+        self._anchor_x = anchor_x
 
     def compose(self) -> ComposeResult:
         items = []
@@ -1328,10 +1337,30 @@ class PermModeScreen(ModalScreen):
             y = self._anchor_y - box_h        # 클릭한 줄 **바로 위**(우선, #29)
         else:
             y = self._anchor_y + 1            # 위 공간이 없을 때만 아래
-        lv.styles.offset = (0, y)
+        # 가로 배치(#2): footer 시작 x 에 좌측 정렬(align:left top 기준 offset).
+        # 박스가 화면 오른쪽을 넘지 않게 클램프. 앵커 없으면 가로 중앙.
+        sw = self.size.width
+        if self._anchor_x is None:
+            x = max(0, (sw - self._BOX_W) // 2)
+        else:
+            x = max(0, min(self._anchor_x, sw - self._BOX_W))
+        lv.styles.offset = (x, y)
 
     def on_list_view_selected(self, event):
         self.dismiss(event.item.id[2:])   # "M_auto" → "auto"
+
+    def on_click(self, event: events.Click):
+        # 박스(#perm) 바깥(백드롭) 클릭 → 닫기(§10-A #3). InfoScreen 패턴 재사용.
+        w = getattr(event, "widget", None)
+        inside = False
+        while w is not None:
+            if getattr(w, "id", None) == "perm":
+                inside = True
+                break
+            w = w.parent
+        if not inside:
+            event.stop()
+            self.dismiss(None)
 
     def on_key(self, event: events.Key):
         if event.key == "escape":
