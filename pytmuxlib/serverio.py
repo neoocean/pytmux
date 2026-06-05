@@ -150,8 +150,13 @@ class ServerIOMixin:
             return
         await write_msg(client.writer, lay)
         win = sess.active_window
-        for p in win.panes():
-            rows, cursor = p.render(p is win.active_pane)
+        # A3: 활성 패널을 가장 먼저 render·전송해 사용자가 보는 화면의 first-paint 를
+        # 앞당긴다(분할이 많아도 포커스 패널이 비활성 패널 직렬화 뒤로 안 밀림). 총량
+        # 동일, 순서만 활성 우선.
+        ap = win.active_pane
+        panes = sorted(win.panes(), key=lambda p: p is not ap)
+        for p in panes:
+            rows, cursor = p.render(p is ap)
             p.dirty = False
             await write_msg(client.writer, {"t": "screen", "pane": p.id,
                                             "rows": rows, "cursor": cursor})

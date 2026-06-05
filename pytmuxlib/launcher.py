@@ -25,12 +25,20 @@ def can_connect(sock_path: str) -> bool:
 
 
 def wait_server(sock_path: str, *, polls: int = 200, interval: float = 0.02) -> bool:
-    """서버가 listen 떠 접속 가능해질 때까지 폴링. 성공이면 True, 시간 초과면 False."""
-    for _ in range(polls):
+    """서버가 listen 떠 접속 가능해질 때까지 폴링. 성공이면 True, 시간 초과면 False.
+
+    A2: 초기엔 촘촘히(2ms~) 지수 백오프 후 `interval`(20ms) 상한으로 폴 — 서버가
+    빨리(<20ms) 뜬 경우의 체감 지연을 줄인다(고정 20ms 면 최대 20ms 허비). 총 예산은
+    기존과 동일(polls*interval ≈ 4s)으로 유지."""
+    deadline = time.monotonic() + polls * interval
+    delay = 0.002
+    while True:
         if ipc.probe(sock_path):
             return True
-        time.sleep(interval)
-    return False
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(min(delay, interval))
+        delay *= 1.6
 
 
 def ensure_server(sock_path: str):

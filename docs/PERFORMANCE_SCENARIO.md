@@ -245,7 +245,7 @@ Python 3.11+ `frozen_modules` 효과 확인.
 **검증**: `bench.py` `cold_import_ms` 비교 + 실 attach 첫 프레임까지 시각 측정
 (`tests/ptyshot.py` 활용).
 
-### A2. `wait_server` 초기 백오프 단축
+### A2. `wait_server` 초기 백오프 단축 — ✅ 구현(CL 56807)
 
 **현상/근거**: `wait_server` 는 20ms 고정 간격 폴(`launcher.py:27-33`). 첫 probe 는
 즉시 하지만, 서버가 막 떠 첫 probe 가 실패하면 다음 시도까지 20ms 고정 대기.
@@ -255,7 +255,7 @@ Python 3.11+ `frozen_modules` 효과 확인.
 
 **검증**: 효과가 작을 수 있음 — `bench` 보다 실 attach 반복 측정으로 판단.
 
-### A3. 첫 프레임: 활성 패널 우선 전송
+### A3. 첫 프레임: 활성 패널 우선 전송 — ✅ 구현(CL 56807)
 
 **현상/근거**: `_send_full` 은 layout → **전 패널 순차 render/전송** → status 순
 (`server.py:2368-2390`). 분할이 많으면 활성 패널 첫 그림이 비활성 패널 직렬화 뒤로
