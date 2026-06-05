@@ -150,6 +150,10 @@ class ServerIOMixin:
             return
         await write_msg(client.writer, lay)
         win = sess.active_window
+        # B2: full 재동기 — 이 클라의 델타 기준(_sent_rows)을 비우고 아래에서 보낸
+        # full screen 으로 다시 채운다(이후 flush 가 이 기준 대비 델타를 보냄). 죽은
+        # 패널의 stale 스냅샷도 함께 정리된다.
+        client._sent_rows.clear()
         # A3: 활성 패널을 가장 먼저 render·전송해 사용자가 보는 화면의 first-paint 를
         # 앞당긴다(분할이 많아도 포커스 패널이 비활성 패널 직렬화 뒤로 안 밀림). 총량
         # 동일, 순서만 활성 우선.
@@ -158,6 +162,7 @@ class ServerIOMixin:
         for p in panes:
             rows, cursor = p.render(p is ap)
             p.dirty = False
+            client._sent_rows[p.id] = rows
             await write_msg(client.writer, {"t": "screen", "pane": p.id,
                                             "rows": rows, "cursor": cursor})
         # 팝업 패널 화면도 함께(트리에 없으므로 별도로 보냄). 팝업은 항상 포커스라
@@ -166,9 +171,27 @@ class ServerIOMixin:
             pp = sess.popup["pane"]
             rows, cursor = pp.render(True)
             pp.dirty = False
+            client._sent_rows[pp.id] = rows
             await write_msg(client.writer, {"t": "screen", "pane": pp.id,
                                             "rows": rows, "cursor": cursor})
         await write_msg(client.writer, self._status_msg(sess))
+
+    _DELTA_MAX_RATIO = 0.7   # 바뀐 행이 이 비율 초과면 full screen 으로 폴백
+
+    def _screen_frame(self, client, pane_id, rows, cursor):
+        """이 클라에 보낼 screen 프레임 bytes(B2). 직전 전송(_sent_rows) 대비 바뀐 행이
+        적으면 screen-delta(바뀐 [y, segs] 목록), 아니면(행 수 변동·최초·임계 초과)
+        full screen. client._sent_rows[pane_id] 를 새 rows 로 갱신한다."""
+        prev = client._sent_rows.get(pane_id)
+        client._sent_rows[pane_id] = rows
+        if prev is not None and len(prev) == len(rows):
+            changed = [[y, rows[y]] for y in range(len(rows))
+                       if rows[y] != prev[y]]
+            if len(changed) <= len(rows) * self._DELTA_MAX_RATIO:
+                return frame_msg({"t": "screen-delta", "pane": pane_id,
+                                  "rows": changed, "cursor": cursor})
+        return frame_msg({"t": "screen", "pane": pane_id,
+                          "rows": rows, "cursor": cursor})
 
     def _broadcast_session(self, sess: Session):
         """구조 변경 후 해당 세션의 모든 클라이언트에 전체 상태를 다시 보낸다."""
@@ -196,24 +219,28 @@ class ServerIOMixin:
                 if not clients:
                     continue
                 status_changed = False
-                # B4: 한 프레임의 screen(+status) 메시지를 프레임 bytes 로 모아두고
-                # 클라마다 한 번에 write+drain 한다(패널/클라 곱만큼의 await/drain 제거).
-                frames = []
+                # B2+B4: 패널은 1회 render 하고, 클라마다 직전 전송 대비 바뀐 행만
+                # screen-delta(아니면 full screen)로 만들어, 그 클라의 프레임 bytes 를
+                # 모아 한 번에 write+drain 한다(B4 배치). 클라별 _sent_rows 기준이라
+                # 다중 클라·신규 attach 도 정합.
+                frames_by_client = {c: [] for c in clients}
                 for p in win.panes():
                     if not p.dirty:
                         continue
                     rows, cursor = p.render(p is win.active_pane)
                     p.dirty = False
-                    frames.append(frame_msg({"t": "screen", "pane": p.id,
-                                             "rows": rows, "cursor": cursor}))
+                    for c in clients:
+                        frames_by_client[c].append(
+                            self._screen_frame(c, p.id, rows, cursor))
                 # 라이브 PTY 팝업 패널(트리 밖)도 dirty 면 스트리밍한다.
                 pu = sess.popup
                 if pu and pu.get("pane") is not None and pu["pane"].dirty:
                     pp = pu["pane"]
                     rows, cursor = pp.render(True)
                     pp.dirty = False
-                    frames.append(frame_msg({"t": "screen", "pane": pp.id,
-                                             "rows": rows, "cursor": cursor}))
+                    for c in clients:
+                        frames_by_client[c].append(
+                            self._screen_frame(c, pp.id, rows, cursor))
                 # Claude Code 상태/사용량 갱신(+ 비활성 탭 완료 감지, #22).
                 # 새 휴리스틱(프롬프트/토큰/권한모드)이 특정 화면에서 터져도 flush
                 # 루프 전체(=모든 클라 렌더)가 죽지 않게 가드한다(§10 안정성).
@@ -248,10 +275,12 @@ class ServerIOMixin:
                         await self._send_full(c)
                     continue
                 if status_changed:
-                    frames.append(frame_msg(self._status_msg(sess)))
+                    sframe = frame_msg(self._status_msg(sess))
+                    for c in clients:
+                        frames_by_client[c].append(sframe)
                 # 클라마다 이 프레임의 모든 메시지를 한 번에 write+drain(B4).
                 for c in clients:
-                    await write_frames(c.writer, frames)
+                    await write_frames(c.writer, frames_by_client[c])
 
     # ---- 명령 처리 ----
     async def _handle_cmd(self, client: ClientConn, msg: dict):

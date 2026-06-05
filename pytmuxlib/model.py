@@ -915,4 +915,8 @@ class ClientConn:
         self.session: Session | None = None
         self.cols = 80
         self.rows = 24
+        # B2 행 단위 델타: 이 클라에 마지막으로 보낸 패널별 rows 스냅샷
+        # {pane_id -> rows}. 다음 프레임에 바뀐 행만 screen-delta 로 보낸다(클라마다
+        # 자기 상태 기준이라 다중 클라·신규 attach 도 정합 — seq/resync 불필요).
+        self._sent_rows: dict[int, list] = {}
 

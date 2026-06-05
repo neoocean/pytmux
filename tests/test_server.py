@@ -543,6 +543,52 @@ async def test_scan_claude_gating_skips_settled_pane():
         await teardown(srv, task, sock)
 
 
+async def test_screen_delta_frame_and_equivalence():
+    """B2 행 단위 델타: _screen_frame 이 최초엔 full screen, 이후 소수 행 변경엔
+    screen-delta 를 낸다. 델타를 직전 rows 에 적용하면 full render 와 동일(골든),
+    변경 행이 임계 초과면 full 폴백."""
+    import json
+    from pytmuxlib.model import ClientConn
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(40, 10)
+        p = sess.active_window.active_pane
+        c = ClientConn(None)
+
+        def decode(frame):
+            return json.loads(frame[4:].decode("utf-8"))
+
+        p.feed(b"\x1b[2J\x1b[Hline0\r\nline1\r\nline2\r\n")
+        rows1, cur1 = p.render(True)
+        f1 = decode(srv._screen_frame(c, p.id, rows1, cur1))
+        assert f1["t"] == "screen", "최초 전송은 full"
+
+        # 한 행만 변경 → 델타
+        p.feed(b"\x1b[2;1HLINE1-CHANGED")
+        rows2, cur2 = p.render(True)
+        f2 = decode(srv._screen_frame(c, p.id, rows2, cur2))
+        assert f2["t"] == "screen-delta", f2["t"]
+        assert 0 < len(f2["rows"]) < len(rows2), "일부 행만"
+        # 델타를 직전 rows 에 적용 → full render 와 셀 단위 동일
+        applied = list(rows1)
+        for y, segs in f2["rows"]:
+            applied[y] = segs
+        assert applied == rows2, "델타 적용 == full render(골든)"
+
+        # 대부분 행 변경 → full 폴백
+        p.feed(b"\x1b[2J\x1b[H" + b"\r\n".join(b"x" * 30 for _ in range(9)))
+        rows3, cur3 = p.render(True)
+        f3 = decode(srv._screen_frame(c, p.id, rows3, cur3))
+        assert f3["t"] == "screen", "대부분 변경 시 full 폴백"
+
+        # 행 수 변동(리사이즈)도 full
+        c._sent_rows[p.id] = rows3[:5]
+        f4 = decode(srv._screen_frame(c, p.id, rows3, cur3))
+        assert f4["t"] == "screen", "행 수 불일치 시 full"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_claude_auto_mode_cycles_to_auto():
     """§10 권한모드 자동전환: 토글 ON 이면 idle 패널의 footer 권한모드가 auto 가
     아닐 때 shift+tab(\\x1b[Z)을 폐루프로 순환 주입해 auto 로 맞춘다. 같은 모드

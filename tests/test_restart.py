@@ -216,13 +216,20 @@ async def _await_regex(reader, pattern, timeout=8.0):
             break
         if msg is None:
             break
-        if msg.get("t") == "screen":
+        t = msg.get("t")
+        if t == "screen":
             for row in msg.get("rows", []):
                 for seg in row:
                     acc += seg[0]
-            m = rx.search(acc)
-            if m:
-                return m
+        elif t == "screen-delta":   # B2: 바뀐 행만 — 그 행 텍스트도 누적
+            for _y, segs in msg.get("rows", []):
+                for seg in segs:
+                    acc += seg[0]
+        else:
+            continue
+        m = rx.search(acc)
+        if m:
+            return m
     return rx.search(acc)
 
 

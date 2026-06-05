@@ -460,6 +460,19 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif t == "screen":
                 self.pane_content[msg["pane"]] = (msg["rows"], msg.get("cursor"))
                 self._composite()
+            elif t == "screen-delta":
+                # B2: 바뀐 행만 받아 캐시된 rows 에 행 단위로 적용. base 가 없는
+                # per-client 모델이라 직전 full/델타가 만든 캐시에 그대로 덮어쓴다.
+                pid = msg["pane"]
+                prev = self.pane_content.get(pid)
+                rows = list(prev[0]) if prev else []
+                for y, segs in msg["rows"]:
+                    if 0 <= y < len(rows):
+                        rows[y] = segs
+                    elif y == len(rows):
+                        rows.append(segs)
+                self.pane_content[pid] = (rows, msg.get("cursor"))
+                self._composite()
             elif t == "status":
                 self.status.update_status(msg)
                 # claude-header 전역 표시 상태를 서버 opts.json 권위값으로 반영(#6 ③)
