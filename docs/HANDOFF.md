@@ -814,6 +814,17 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   `close-clock`/`close-calendar` = 보이는 패널 중 그것이 떠 있는 패널에서 닫기. 오버레이는
   마우스 클릭 또는 명령으로 닫기. `client.py` `_run_command` 디스패치 + `toggle_clock`/
   `toggle_calendar`(`client.py:~691-720`) 활용. **현재는 기록만 — 미구현.**
+- **[기능 요청, 미구현] OS 클립보드의 이미지·텍스트를 읽어 pytmux 안에 붙여넣는 명령** —
+  OS 클립보드 내용을 활성 패널(앱)에 붙여넣는 명령(예 `paste-clipboard`). **텍스트**는
+  기존 `paste_os_clipboard`(Ctrl+V, 텍스트 전용; `client.py`)를 명령으로도 노출하면 됨.
+  **이미지**가 핵심 신규: Windows 는 PowerShell/.NET `Get-Clipboard -Format Image`(또는
+  `System.Windows.Forms.Clipboard.GetImage`)로 이미지를 꺼내 **임시 파일(PNG)로 저장**,
+  POSIX 는 `pngpaste`/`xclip -selection clipboard -t image/png`. 클립보드에 이미지가 있으면
+  이미지 경로를, 없으면 텍스트를 붙여넣는다. **열린 결정**: 대상 앱(Claude Code CLI)에
+  이미지를 어떻게 전달할지 — ① 저장한 파일 **경로 문자열**을 키 입력으로 주입(앱이 경로를
+  첨부로 인식), ② 터미널 bracketed-paste/이미지 프로토콜. 일반적으로 ①이 안전. 명령
+  배선은 `client.py` `_run_command` + `paste_os_clipboard` 확장, 캡처는 `proc`(clip.exe
+  /PowerShell, `no_window_kwargs`)·POSIX 분기. **현재는 기록만 — 미구현.**
 
 - **[UI 요청, 미구현] 하단 상태줄 정보 팝업 통합 — REC·Claude 토큰·서버이름 클릭을
   탭으로 구분된 단일 팝업으로** — 요청: 화면 **최하단 상태줄**의 ① **REC**(캡처),
