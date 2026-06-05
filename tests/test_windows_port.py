@@ -175,6 +175,44 @@ async def test_winpty_backpressure_gate():
         "stop 은 멈춘 리더를 깨워 빠져나가게 해야(교착 방지)"
 
 
+async def test_resolve_default_endpoint_attaches_across_xdg_mismatch():
+    """ssh 로그인으로 XDG_RUNTIME_DIR 유무가 갈려 소켓 경로가 어긋나도 떠 있는 서버를
+    찾아 attach 한다. 서버가 없으면 canonical default 로 폴백(종전 동작).
+    """
+    from unittest import mock
+    from pytmuxlib import ipc
+
+    # Unix 분기: XDG 설정 시 두 후보(/run/user/<uid>, /tmp/pytmux-<uid>) 순서.
+    with mock.patch.object(ipc, "IS_WINDOWS", False), \
+            mock.patch("os.getuid", return_value=1000, create=True), \
+            mock.patch.dict("os.environ",
+                            {"XDG_RUNTIME_DIR": "/run/user/1000"}, clear=False):
+        assert ipc.default_endpoint_candidates() == [
+            "/run/user/1000/pytmux/default.sock",
+            "/tmp/pytmux-1000/default.sock"]
+        # 서버가 /tmp 후보에만 떠 있으면 그 후보를 고른다(XDG 경로가 아닌데도 attach).
+        live = "/tmp/pytmux-1000/default.sock"
+        with mock.patch.object(ipc, "probe", side_effect=lambda e, **k: e == live):
+            assert ipc.resolve_default_endpoint() == live
+        # 어디에도 서버가 없으면 canonical default 로 폴백(새로 기동할 위치).
+        with mock.patch.object(ipc, "probe", return_value=False), \
+                mock.patch.object(ipc, "default_endpoint",
+                                  return_value="/run/user/1000/pytmux/default.sock"):
+            assert ipc.resolve_default_endpoint() == \
+                "/run/user/1000/pytmux/default.sock"
+
+    # XDG 미설정 Unix → /tmp 후보만.
+    with mock.patch.object(ipc, "IS_WINDOWS", False), \
+            mock.patch("os.getuid", return_value=1000, create=True), \
+            mock.patch.dict("os.environ", {}, clear=True):
+        assert ipc.default_endpoint_candidates() == ["/tmp/pytmux-1000/default.sock"]
+
+    # Windows → LOCALAPPDATA 안정적이라 단일 후보(= default_endpoint).
+    with mock.patch.object(ipc, "IS_WINDOWS", True), \
+            mock.patch.object(ipc, "default_endpoint", return_value="tcp:127.0.0.1:0"):
+        assert ipc.default_endpoint_candidates() == ["tcp:127.0.0.1:0"]
+
+
 async def test_render_only_resize_without_fcntl():
     """렌더 전용 패널(pty=None) resize 는 fcntl 없는 Windows 에서도 안 깨진다.
 

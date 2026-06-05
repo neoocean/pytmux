@@ -101,7 +101,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._drag_split = None      # 탭→패널 드래그 미리보기 (pane_id, orient)(#19)
             self._undim_rows = set()     # 팝업 dim 에서 제외할 콘텐츠 행(클릭 원천, #29)
             self._last_esc_ts = 0.0      # ESC 오토리핏 디바운스용 직전 도착 시각(#32)
-            self._ESC_DEBOUNCE = 0.6     # 이 초 안의 반복 ESC 는 오토리핏으로 무시
+            self._ESC_DEBOUNCE = 0.06    # 이 초 안의 연속 ESC 만 오토리핏으로 무시(#36)
             # 네트워크 응답성(§10): 클라↔서버 ping/pong 왕복지연(RTT)을 주기 측정하고
             # 히스테리시스로 degraded 판정 — degraded 면 패널 외곽선을 빨강으로(회복 시
             # 원복). _net_ping_ts=미응답 ping 의 송신 monotonic 시각(None=응답됨).
@@ -2272,13 +2272,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 메뉴/프롬프트 등 모달이 떠 있으면 그 스크린이 처리
             if len(self.screen_stack) > 1:
                 return
-            # ESC 오토리핏 디바운스(#32): 터미널은 키 뗌(release) 이벤트를 주지 않아
-            # 키를 누르고 있으면 같은 ESC 가 반복 도착해 모드가 깜빡인다. 직전 ESC **도착**
-            # 후 _ESC_DEBOUNCE 초 안에 온 ESC/Shift+ESC 는 오토리핏으로 보고 무시한다.
-            # 핵심: _last_esc_ts 를 (무시하든 처리하든) **매번** 갱신해 창을 슬라이딩
-            # 시킨다 — 그래야 빠른 반복이 직전과 늘 가까워 계속 무시되고, 키를 뗀 뒤
-            # (도착 간격 > 디바운스) 다시 눌렀을 때만 처리된다(release 시 1회 변경과 동등).
-            # 창을 OS 오토리핏 간격보다 넉넉히(0.6s) 잡아야 깜빡임이 안 생긴다.
+            # ESC 오토리핏 디바운스(#32, #36): 터미널은 키 뗌(release) 이벤트를 주지
+            # 않아 키를 누르고 있으면 같은 ESC 가 반복 도착해 모드가 깜빡인다. 직전 ESC
+            # **도착** 후 _ESC_DEBOUNCE 초 안에 온 ESC/Shift+ESC 는 오토리핏으로 보고
+            # 무시한다. _last_esc_ts 를 (무시하든 처리하든) **매번** 갱신해 창을 슬라이딩
+            # 시킨다 — 빠른 연속 스트림은 직전과 늘 가까워 계속 무시된다.
+            # #36: 창을 OS 오토리핏 **반복 간격**(보통 ~33ms)보다는 크고 사람이 의도적으로
+            # 두 번 누르는 간격(보통 100ms+)보다는 작게(0.06s) 잡는다. 그래야 빠른 더블탭
+            # (ESC 두 번 → esc 모드 진입/해제)이 살아난다. 트레이드오프: 키를 길게 누르면
+            # 오토리핏 **첫 반복**(repeat-delay 250~500ms 뒤)은 이 창을 벗어나 모드가 한 번
+            # 토글될 수 있다(이후 빠른 스트림은 모두 무시). 타이밍만으로는 '첫 오토리핏'과
+            # '의도적 두 번째 누름'을 구분할 수 없어 받아들인 절충이다(앱에 ESC 전달은
+            # 항상 Shift+ESC/`send-escape` 경로라 이 토글은 셸로 새지 않는다).
             if event.key in ("escape", "shift+escape"):
                 now = time.monotonic()
                 prev = self._last_esc_ts
@@ -2576,6 +2581,21 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 idx = int(ch) - 1
                 if any(t["index"] == idx for t in tb.tabs):
                     self.send_cmd("select_window", index=idx)
+                    self._exit_esc()
+                else:
+                    # 없는 번호 → 전환 불가. 현재 활성 탭을 깜빡여 안내하고 esc 모드는
+                    # 유지(다른 번호로 재시도 가능)(요청).
+                    tb.blink_active()
+                return
+            # n = 새 탭, p = 새 패널(상하 분할, 새 패널은 아래). ESC 모드 어디서든
+            # 동작하고 액션 후 모드를 빠져 새 탭/패널에서 바로 입력하게 한다. 분할
+            # 경계는 마우스로 끌어 바로 재배치할 수 있다(요청).
+            if ch == "n":
+                self.send_cmd("new_window")
+                self._exit_esc()
+                return
+            if ch == "p":
+                self.send_cmd("split", orient="tb")
                 self._exit_esc()
                 return
             if tb.bar_focus:

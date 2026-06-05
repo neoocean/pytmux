@@ -116,7 +116,10 @@ def main(argv=None):
     p_rep.add_argument("--ruler", action="store_true", help="열 번호 자 표시")
     args = parser.parse_args(argv)
 
-    sock_path = args.socket or ipc.default_endpoint()
+    # 명시 --socket 이 없으면 이미 떠 있는 서버를 찾아 붙는다(ssh 로그인 등으로
+    # XDG_RUNTIME_DIR 유무가 갈려 소켓 경로가 어긋나도 같은 서버에 attach 하도록).
+    # 서버가 없으면 canonical 기본 경로로 떨어져 종전과 동일하게 새로 기동한다.
+    sock_path = args.socket or ipc.resolve_default_endpoint()
 
     if args.command == "server":
         run_server(sock_path, resume_path=getattr(args, "resume", None))

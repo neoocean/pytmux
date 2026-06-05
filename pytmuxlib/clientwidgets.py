@@ -399,6 +399,10 @@ class TabBar(Widget):
         self._zones = []        # [(x0, x1, kind, payload)] 클릭 히트테스트
         self._drag = None       # 드래그 중인 탭 index(재정렬)
         self._drag_over = None  # 드래그 중 현재 가리키는 드롭 대상 탭 index
+        self._blink_idx = None  # 깜빡일 탭 index(ESC+없는 숫자 안내)
+        self._blink_on = False  # 깜빡임 현재 위상(True=경고색 표시)
+        self._blink_left = 0    # 남은 on/off 토글 횟수
+        self._blink_timer = None
 
     def set_tabs(self, tabs, active_idx):
         self.tabs = tabs
@@ -409,6 +413,33 @@ class TabBar(Widget):
     def scroll_by(self, delta):
         self._scroll = max(0, min(self._scroll + delta,
                                   max(0, len(self.tabs) - 1)))
+        self.refresh()
+
+    def blink_active(self, times: int = 3, period: float = 0.12):
+        """현재 활성(하이라이트) 탭을 times 번 깜빡여 '여기서 더 이동 불가'를 시각적
+        으로 알린다(ESC+없는 숫자). render_line 이 _blink_on 위상일 때 그 탭을 경고색
+        으로 그린다. 활성 탭이 없으면 무시."""
+        aidx = next((t["index"] for t in self.tabs if t.get("active")), None)
+        if aidx is None:
+            return
+        self._blink_idx = aidx
+        self._blink_on = True
+        self._blink_left = max(1, times) * 2     # on/off 토글 횟수
+        if self._blink_timer is not None:
+            self._blink_timer.stop()
+        self._blink_timer = self.set_interval(period, self._blink_step)
+        self.refresh()
+
+    def _blink_step(self):
+        self._blink_left -= 1
+        if self._blink_left <= 0:
+            self._blink_on = False
+            self._blink_idx = None
+            if self._blink_timer is not None:
+                self._blink_timer.stop()
+                self._blink_timer = None
+        else:
+            self._blink_on = not self._blink_on
         self.refresh()
 
     # Claude Code 상태 아이콘(탭): 대기 ○ / 처리중 ◐ / 리밋 멈춤 ⊘
@@ -500,6 +531,9 @@ class TabBar(Widget):
         dragging = self._drag is not None
         drop_st = Style(color="black", bgcolor=theme_color(self, "warning"),
                         bold=True, underline=True)
+        # ESC+없는 숫자 안내용 깜빡임(현재 활성 탭을 경고색으로 번쩍).
+        blink_st = Style(color="black", bgcolor=theme_color(self, "warning"),
+                         bold=True)
         by_idx = {t["index"]: t for t in self.tabs}
         segs, zones = [], []
         x = 0
@@ -513,7 +547,9 @@ class TabBar(Widget):
                 st = sel_st if (self.bar_focus and self.sel == "+") else add_st
             else:                                  # tab
                 t = by_idx.get(payload, {})
-                if dragging and payload == self._drag_over and payload != self._drag:
+                if self._blink_on and payload == self._blink_idx:
+                    st = blink_st  # ESC+없는 숫자 → 활성 탭 깜빡임(이동 불가 안내)
+                elif dragging and payload == self._drag_over and payload != self._drag:
                     st = drop_st   # 드롭 대상(놓으면 여기로 이동)
                 elif dragging and payload == self._drag:
                     st = base + Style(dim=True)  # 들고 있는 탭(소스) 흐리게

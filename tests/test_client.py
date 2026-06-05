@@ -325,6 +325,48 @@ async def test_esc_mode_question_opens_help():
     await _with_app(body)
 
 
+async def test_esc_n_new_tab_and_p_new_pane():
+    # ESC+n = 새 탭(new_window), ESC+p = 새 패널(상하 분할, 새 패널 아래). 둘 다
+    # 액션 후 esc 모드를 빠진다. (멀티 ESC 라 디바운스#36 를 매번 리셋)
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda a, **k: sent.append((a, k))
+        app._last_esc_ts = 0.0
+        await pilot.press("escape")
+        assert app.mode == "esc"
+        await pilot.press("n")
+        assert ("new_window", {}) in sent and app.mode == "normal", "n=새 탭 후 종료"
+        sent.clear()
+        app._last_esc_ts = 0.0
+        await pilot.press("escape")
+        assert app.mode == "esc"
+        await pilot.press("p")
+        assert ("split", {"orient": "tb"}) in sent and app.mode == "normal", \
+            "p=상하 분할 후 종료"
+    await _with_app(body)
+
+
+async def test_esc_invalid_digit_blinks_active_tab():
+    # ESC+없는 숫자 → 전환 불가. 현재 활성 탭을 깜빡여 안내하고 esc 모드 유지.
+    # 존재하는 번호는 전환 후 종료.
+    async def body(app, pilot, srv):
+        blinked = []
+        app.tabbar.blink_active = lambda *a, **k: blinked.append(True)
+        sent = []
+        app.send_cmd = lambda a, **k: sent.append((a, k))
+        app._last_esc_ts = 0.0
+        await pilot.press("escape")
+        assert app.mode == "esc"
+        await pilot.press("2")          # 기본 1탭 → 탭 2 없음
+        assert blinked == [True], "없는 번호 → 활성 탭 깜빡임"
+        assert app.mode == "esc", "없는 번호는 esc 모드 유지"
+        assert not sent, "없는 번호는 전환 명령 없음"
+        await pilot.press("1")          # 탭 1 존재 → 전환 + 종료
+        assert ("select_window", {"index": 0}) in sent
+        assert app.mode == "normal", "있는 번호는 전환 후 종료"
+    await _with_app(body)
+
+
 async def test_display_panes():
     async def body(app, pilot, srv):
         await pilot.press("ctrl+b")
@@ -1423,6 +1465,24 @@ async def test_esc_autorepeat_debounced():
         app._last_esc_ts = _t.monotonic() - 1.0
         app.on_key(Key(key="escape", character=None))
         assert app.mode == "normal", "간격 충분하면 토글"
+    await _with_app(body)
+
+
+async def test_esc_double_tap_toggles():
+    # #36: 의도적인 빠른 더블탭(오토리핏 반복 간격 ~33ms 보다 크고 사람 더블탭
+    # 간격 ~100ms+ 안)은 두 번째 ESC 가 살아나 모드를 토글한다. 첫 ESC=진입,
+    # 디바운스 창(0.06s)을 갓 지난 두 번째 ESC=해제.
+    async def body(app, pilot, srv):
+        import time as _t
+        from textual.events import Key
+        assert app.mode == "normal"
+        app._last_esc_ts = 0.0
+        app.on_key(Key(key="escape", character=None))      # 1번째 → esc 진입
+        assert app.mode == "esc"
+        # 사람의 더블탭 간격(디바운스 창보다 큼) → 2번째 ESC 가 토글
+        app._last_esc_ts = _t.monotonic() - (app._ESC_DEBOUNCE + 0.05)
+        app.on_key(Key(key="escape", character=None))
+        assert app.mode == "normal", "더블탭 2번째 ESC 는 모드 해제"
     await _with_app(body)
 
 

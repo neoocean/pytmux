@@ -31,7 +31,8 @@ IS_WINDOWS = os.name == "nt"
 
 __all__ = [
     "IS_WINDOWS", "parse_endpoint", "is_tcp",
-    "default_state_dir", "default_endpoint", "portfile_for", "state_base",
+    "default_state_dir", "default_endpoint", "default_endpoint_candidates",
+    "resolve_default_endpoint", "portfile_for", "state_base",
     "start_server", "open_connection", "probe", "control_socket",
 ]
 
@@ -79,6 +80,43 @@ def default_endpoint() -> str:
     if IS_WINDOWS:
         return "tcp:127.0.0.1:0"
     return os.path.join(default_state_dir(), "default.sock")
+
+
+def default_endpoint_candidates() -> list:
+    """이미 떠 있는 서버를 찾기 위한 기본 엔드포인트 후보(우선순위 순, 중복 제거).
+
+    Unix 에서 `XDG_RUNTIME_DIR` 유무가 세션마다 갈리는 게 문제다(예: 데스크톱/
+    systemd 로그인은 `/run/user/<uid>`, 단순 ssh 로그인은 미설정이라 `/tmp/pytmux-
+    <uid>` 폴백). 서버를 띄운 세션과 새로 attach 하는 세션의 경로가 어긋나면 같은
+    서버를 못 찾아 새 서버가 떠버린다. 두 위치를 모두 후보로 둬 어느 쪽에 떠 있든
+    붙게 한다. Windows 는 LOCALAPPDATA 가 안정적이라 단일 후보."""
+    if IS_WINDOWS:
+        return [default_endpoint()]
+    # POSIX 소켓 경로라 구분자는 항상 '/'(이 분기는 Unix 전용).
+    cands = []
+    xdg = os.environ.get("XDG_RUNTIME_DIR")
+    if xdg:
+        cands.append(f"{xdg.rstrip('/')}/pytmux/default.sock")
+    cands.append(f"/tmp/pytmux-{os.getuid()}/default.sock")
+    seen, out = set(), []
+    for c in cands:
+        if c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def resolve_default_endpoint() -> str:
+    """기본 엔드포인트를 정한다(명시 --socket 이 없을 때).
+
+    이미 서버가 떠 있는 후보가 있으면 그 엔드포인트(= attach 대상)를 돌려주고,
+    없으면 canonical `default_endpoint()`(= 새로 기동할 위치)를 돌려준다. 서버가
+    없을 때 동작은 종전과 동일하고, ssh 등으로 경로가 어긋난 채 서버가 떠 있을 때만
+    그 서버를 찾아 붙는다(요청)."""
+    for cand in default_endpoint_candidates():
+        if probe(cand):
+            return cand
+    return default_endpoint()
 
 
 def state_base(endpoint: str) -> str:
