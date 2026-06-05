@@ -211,6 +211,16 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56724 **프롬프트 히스토리 긴 URL 하드 줄바꿈 + 구분선/↓→[h] 점프**(§10-A #7·#8)
+  — `InfoScreen` 에 ① `wrap_hang` 모드: 마운트 후 박스 실폭을 재서 `_hangwrap`(모듈
+  헬퍼)로 각 줄을 행잉-인덴트 하드 줄바꿈('NN. ' 접두사 폭만큼 이어줄 들여쓰기 →
+  번호 정렬 보존, 긴 URL 은 글자 단위 컷)하고 목록 재구성(`_rewrap`), initial_index 도
+  매핑. ② nav 가 구분선/빈 줄을 건너뜀(`_skip`/`_skip_over`). `open_prompt_history` 가
+  마지막 프롬프트와 `[h]` footer 사이에 구분선(`─`×24)을 넣고 `wrap_hang=True` 로 연다
+  → 마지막 항목서 ↓ 한 번에 `[h]` 로 점프. 회귀: `test_hangwrap_preserves_number_alignment`
+  + `test_prompt_history_down_jumps_to_h_over_divider`, 227 passed. 클라이언트 전용
+  (attach 재실행). 파일: `pytmuxlib/{client,clientscreens}.py`, `tests/test_client.py`,
+  `docs/HANDOFF.md`.
 - 56722 **클립보드 이미지 붙여넣기 — PNG 저장 후 경로 주입(결정 ①) + Alt+V 폴백**
   (§10-A #11) — `paste-clipboard`(Ctrl+V)가 텍스트 우선, 텍스트 없고 이미지면 신규
   `_clipboard_save_image`(Windows .NET `Clipboard.GetImage().Save` / macOS `pngpaste`
@@ -834,14 +844,18 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   tokens 합). 토큰 탭(통합 상태 팝업)과 독립 사용량 트리 팝업 양쪽에 적용. ② `InfoTabsScreen`
   에 **하단 닫기 버튼**(`#itclosebtn`, 목록 아래 한 줄·가로 가득·가운데) 추가 — 클릭/터치로
   닫힘(상단 [x] 와 별개로 좁은 화면·긴 목록에서 손 닿는 곳).
-- **[UI 요청, 미구현/의도확인] 리스트 팝업 — 긴 영문 URL 하드 줄바꿈(번호 정렬 보존)** —
-  프롬프트 히스토리 등에서 항목 12 같은 긴 URL 이 soft-wrap 돼 다음 줄로 흘러 번호 정렬이
-  깨진다. **하드 줄바꿈**으로 다음 줄로 안 내려가게. **열린 결정**: 글자단위 hard-wrap(다음
-  줄에 들여쓰기 맞춰 이어쓰기) vs 한 줄 truncate(…). 구현 전 의도 확인. **기록만 — 미구현.**
-- **[UI 요청, 미구현] 프롬프트 히스토리 팝업 — 마지막 항목서 ↓ 시 빈칸 건너뛰어 `[h]`
-  메뉴로 + 그 사이 구분선** — `InfoScreen`(프롬프트 히스토리, `[h] 이 헤더 숨기기` footer).
-  마지막 항목(예 30)에서 ↓ 누르면 항목과 `[h]` 사이 **빈 줄**에 멈춤 → 바로 `[h]` 로
-  점프하게, 그리고 그 사이에 **구분선** 그리기. **현재는 기록만 — 미구현.**
+- ~~**[UI 요청/의도확인] 리스트 팝업 — 긴 영문 URL 하드 줄바꿈(번호 정렬 보존)**~~ →
+  **CL 56724 에서 해결(결정: 글자단위 hard-wrap + 행잉 인덴트 채택, truncate 아님).**
+  `InfoScreen(wrap_hang=True)` 면 마운트 후 박스 실제 폭을 재서(`_rewrap`, `call_after_refresh`)
+  각 줄을 `_hangwrap` 로 하드 줄바꿈한다 — 'NN. '/'NN) ' 번호 접두사 폭만큼 이어줄을
+  들여써 번호 정렬을 보존(공백 없는 긴 URL 은 글자 단위로 컷). 프롬프트 히스토리가
+  `wrap_hang=True` 로 연다. (len 기반 폭이라 영문 URL=핵심 케이스엔 정확, 한글 와이드
+  글자는 근사 — 필요시 후속.)
+- ~~**[UI 요청] 프롬프트 히스토리 팝업 — 마지막 항목서 ↓ 시 빈칸 건너뛰어 `[h]` 메뉴로
+  + 그 사이 구분선**~~ → **CL 56724 에서 해결.** `open_prompt_history` 가 마지막 프롬프트와
+  `[h]` footer 사이에 **구분선(`─`×24)** 을 넣고, `InfoScreen` nav 가 **구분선/빈 줄을 건너뛴다**
+  (`_skip`/`_skip_over` — 마운트 시 표시줄에서 `─`/공백만인 줄을 skip 집합으로 계산, ↑↓·
+  page·home/end 이동 후 같은 방향으로 skip). 그래서 마지막 항목서 ↓ 한 번에 `[h]` 로 점프.
 - ~~**[UI 요청] 달력 큰 글꼴 — 한 날짜의 두 자리 숫자 사이 간격 좁히기**~~ →
   **CL 56720 에서 해결.** `client._draw_calendar_overlay` 의 큰 달력(시계 폰트) 경로에서
   자리(숫자) 사이 간격 `DIG` 를 2→1 로 줄여 한 날짜의 두 자리가 한 덩어리로 읽히게 했다.

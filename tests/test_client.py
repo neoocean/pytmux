@@ -1441,6 +1441,49 @@ async def test_prompt_history_arrows_navigate_not_close():
     await _with_app(body)
 
 
+async def test_hangwrap_preserves_number_alignment():
+    """§10-A #7: _hangwrap 가 긴 줄(공백 없는 URL 포함)을 폭 안으로 하드 줄바꿈하되
+    'NN. ' 번호 접두사 폭만큼 이어줄을 들여써 번호 정렬을 보존한다."""
+    from pytmuxlib.clientscreens import _hangwrap
+    line = "12. https://example.com/" + "a" * 80
+    out = _hangwrap(line, 30)
+    assert len(out) > 1, out
+    assert out[0].startswith("12. ")
+    assert all(len(o) <= 30 for o in out), [len(o) for o in out]
+    # 이어줄은 4칸('12. ') 들여쓰기로 시작(번호 자리 아래 정렬)
+    assert out[1].startswith("    ") and out[1].strip(), out
+    # 짧은 줄은 그대로
+    assert _hangwrap(" 1. short", 30) == [" 1. short"]
+
+
+async def test_prompt_history_down_jumps_to_h_over_divider():
+    """§10-A #8: 프롬프트 히스토리 — 마지막 프롬프트에서 ↓ 한 번에 구분선을 건너뛰어
+    [h] footer 로 점프한다(구분선/빈 줄은 nav 에서 skip)."""
+    async def body(app, pilot, srv):
+        from textual.widgets import Label, ListView
+        app.pane_claude = {7: {"id": 7, "claude": "idle", "prompt": "p2",
+                               "history": ["p1", "p2"]}}
+        app.open_prompt_history(7)
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "InfoScreen"
+        lv = scr.query_one(ListView)
+        texts = [str(it.query_one(Label).render()) for it in lv.children]
+        assert any("─" in t for t in texts), ("구분선 표시", texts)
+        hidx = next(i for i, t in enumerate(texts) if "[h]" in t)
+        p2idx = next(i for i, t in enumerate(texts) if "p2" in t)
+        # 마지막 프롬프트(p2) 선택 후 ↓ → 구분선 건너뛰고 [h] 로 점프
+        lv.index = p2idx
+        scr.on_key(Key(key="down", character=None))
+        await pilot.pause(0.05)
+        assert lv.index == hidx, (lv.index, hidx, texts)
+        # ↑ → 다시 p2 로(구분선 건너뜀)
+        scr.on_key(Key(key="up", character=None))
+        await pilot.pause(0.05)
+        assert lv.index == p2idx, (lv.index, p2idx, texts)
+    await _with_app(body)
+
+
 async def test_shift_drag_pane_swap():
     # #9b: Shift+좌버튼 드래그로 패널을 잡아 다른 패널에 놓으면 두 패널 위치를
     # 맞바꾼다(서버에 swap_pane_to 전송). 드래그 중 소스/대상 상태를 추적한다.

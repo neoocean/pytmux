@@ -583,12 +583,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 맨 나중에 입력한(최신) 프롬프트를 열 때 강조(#17). hist 는 시간순(오래된→
             # 최신)이라 마지막 프롬프트 줄(len(hist)-1)을 선택해 그리로 스크롤한다.
             latest = (len(hist) - 1) if hist else None
-            lines.append("")
+            # §10-A #8: 마지막 항목과 [h] footer 사이에 구분선(─). nav 에서 구분선은
+            # 건너뛰므로, 마지막 프롬프트에서 ↓ 한 번에 [h] 로 점프한다.
+            lines.append("─" * 24)
             lines.append("  [h] 이 헤더 " + ("다시 표시" if hidden else "숨기기"))
             self.push_screen(InfoScreen(
                 lines, title="프롬프트 히스토리(시간순)",
                 hide_key="h", hide_cb=lambda: self.toggle_header_hidden(pid),
-                initial_index=latest, max_width=110))   # 좌우로 넓게(#17)
+                initial_index=latest, max_width=110,   # 좌우로 넓게(#17)
+                wrap_hang=True))                       # 긴 URL 하드 줄바꿈(§10-A #7)
 
         def open_perm_mode(self, pane_id):
             """Claude 권한모드 선택 팝업을 연다(하단 footer 클릭, §10 item 2). 현재
