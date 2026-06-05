@@ -13,3 +13,6 @@ reports/
 # 에이전트 학습 메모(내부 워크플로·머신명·진단 노트). 공개 GitHub 미러에는
 # 올리지 않고 Perforce 로만 공유한다(captures/ 와 동일 정책). 미러가 부활해도 차단.
 memory/
+
+# 에이전트 설정·스킬(.claude/). 내부 운영용이라 공개 미러 제외, Perforce 로만 공유.
+.claude/
