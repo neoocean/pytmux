@@ -476,6 +476,43 @@ async def test_screen_prompt_reflects_remote_injected():
         await teardown(srv, task, sock)
 
 
+async def test_autoresume_schedules_on_limit_reset():
+    """§10 토큰 리밋 자동재개: 리밋 해제 시각 안내가 뜨면 _maybe_schedule_resume 가
+    parse_reset_delay 로 지연을 계산해 _fire_resume 타이머를 건다. serverclaude 믹스인
+    분리 후 parse_reset_delay import 누락 회귀를 막는 가드(이 경로는 리밋 화면에서만
+    실행돼 기존 스위트가 커버하지 않았다)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        scheduled = []
+
+        class _FakeLoop:
+            def call_later(self, delay, fn, *a):
+                scheduled.append((delay, fn, a))
+        srv.loop = _FakeLoop()
+
+        # parse_reset_delay 가 잡는 문구(리밋+해제시각) → 지연 계산·예약
+        srv._maybe_schedule_resume(p, "usage limit reached — resets at 3:00pm")
+        assert p._resume_pending is True, "리밋 안내 시 예약 플래그"
+        assert scheduled, "resume 타이머가 걸려야 함"
+        delay, fn, _ = scheduled[0]
+        assert delay > 0 and fn == srv._fire_resume, (delay, fn)
+
+        # 이미 예약된 상태면 중복 예약 안 함
+        srv._maybe_schedule_resume(p, "usage limit reached — resets at 3:00pm")
+        assert len(scheduled) == 1, "중복 예약 방지"
+
+        # 리밋 신호 없는 일반 출력은 예약하지 않음(scanbuf 도 비워 이전 리밋 잔상 제거)
+        p._resume_pending = False
+        p._scanbuf = ""
+        scheduled.clear()
+        srv._maybe_schedule_resume(p, "normal shell output, nothing here")
+        assert not scheduled and p._resume_pending is False
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_claude_auto_mode_cycles_to_auto():
     """§10 권한모드 자동전환: 토글 ON 이면 idle 패널의 footer 권한모드가 auto 가
     아닐 때 shift+tab(\\x1b[Z)을 폐루프로 순환 주입해 auto 로 맞춘다. 같은 모드

@@ -12,7 +12,8 @@ import json
 
 from . import tokens
 from .claude import (claude_account, claude_feedback_prompt, claude_prompt,
-                     claude_perm_mode, claude_state, claude_usage)
+                     claude_perm_mode, claude_state, claude_usage,
+                     parse_reset_delay)
 from .model import Pane, Session
 
 # 권한모드 자동 오토모드 전환(§10): 한 번 idle 진입 후 auto 에 도달하지 못해도 이
