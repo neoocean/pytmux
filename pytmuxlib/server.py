@@ -93,10 +93,6 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         # 프롬프트에 주입한다(빈 문자열이면 아무것도 안 함). opts.json 영속.
         self.claude_rules = str(_opts.get("claude_rules", ""))
 
-    def set_claude_rules(self, text: str):
-        self.claude_rules = text or ""
-        self._save_opts()
-
     # ---- 데몬 부트스트랩 세션 ----
     def ensure_default_session(self, cols: int, rows: int) -> Session:
         if self.sessions:

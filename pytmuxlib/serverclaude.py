@@ -583,3 +583,7 @@ class ServerClaudeMixin:
                 buf += ch
             i += 1
         pane._inbuf = buf[-500:]
+
+    def set_claude_rules(self, text: str):
+        self.claude_rules = text or ""
+        self._save_opts()

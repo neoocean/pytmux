@@ -1068,7 +1068,10 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   표시 항목 범위(IP 노출 수위·민감정보), RTT 이력(최근 N개 그래프 vs 단일 값).
   **연관**: 네트워크 응답성 외곽선(CL 56593)·REC/토큰 정보팝업(InfoScreen 공유).
   **현재는 기록만 — 미구현.**
-- **[리팩토링 요청, 부분 구현] 코드를 LLM 친화적인 형태로 리팩토링** — **진행 중**:
+- ~~**[리팩토링 요청] 코드를 LLM 친화적인 형태로 리팩토링**~~ → **핵심 목표 달성**(거대
+  단일 파일 해소 — client.py·server.py 둘 다 모듈 분리). 모든 Claude 서버 코드는
+  serverclaude.py 로 통합(set_claude_rules 포함, CL 56781). 추가 미세 분리(버퍼/검색/
+  토큰로깅 등 작은 클러스터)는 선택적. **이력**:
   client.py 가 `clientutil`/`clientscreens`/`clientwidgets` 로 4단계 분리됨(CL 56603·
   56610·56611·56616, client.py 4363→2335줄). **server.py 분할 진행 중**(믹스인 방식 —
   Server 가 각 믹스인을 상속, 동작 불변·테스트 게이트): ① **Claude 주입 클러스터 →
