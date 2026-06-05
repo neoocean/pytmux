@@ -211,6 +211,14 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56719 **open/close-clock·calendar 명령(멱등 켜기/끄기)**(§10-A #10) — 시계/달력
+  오버레이를 토글이 아니라 명시적으로 켜고(`open-clock`/`open-calendar`) 끄는
+  (`close-clock`/`close-calendar`) 명령. 활성 패널 대상, 멱등(이미 원하는 상태면 그대로),
+  한 패널엔 한 오버레이만(open 시 반대쪽 닫음). 신규 `set_clock`/`set_calendar` 헬퍼
+  + `_run_command` 디스패치, `clientutil.COMMANDS`/`COMMAND_NOARG` 등록. 회귀
+  `test_open_close_clock_calendar_commands`(멱등·상호배타·close 안전), 222 passed.
+  클라이언트 전용(attach 재실행). 파일: `pytmuxlib/{client,clientutil}.py`,
+  `tests/test_client.py`, `docs/HANDOFF.md`.
 - 56718 **권한모드 팝업 좌측 정렬·footer 바로 위 배치 + 바깥 클릭 닫기**(§10-A #2·#3)
   — Claude footer(`auto mode on …`) 클릭으로 여는 `PermModeScreen` 을 ① **좌측 정렬**
   하고(`align: left top`, `open_perm_mode` 가 `_perm_zone[pid]` 의 시작 x 를 `anchor_x`
@@ -812,11 +820,12 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 - **[UI 요청, 미구현] 달력 큰 글꼴 — 한 날짜의 두 자리 숫자 사이 간격 좁히기** —
   `clientwidgets` 달력 오버레이 빅폰트 렌더. 현재 숫자 간 gap=2(MEMORY 폴리시 패스).
   한 날짜를 이루는 **두 자리 숫자 사이** 간격만 더 좁게. **현재는 기록만 — 미구현.**
-- **[기능 요청, 미구현] `open-clock`/`open-calendar`·`close-clock`/`close-calendar`
-  명령** — `open-clock`/`open-calendar` = **현재 하이라이트 패널**에 시계/달력 표시,
-  `close-clock`/`close-calendar` = 보이는 패널 중 그것이 떠 있는 패널에서 닫기. 오버레이는
-  마우스 클릭 또는 명령으로 닫기. `client.py` `_run_command` 디스패치 + `toggle_clock`/
-  `toggle_calendar`(`client.py:~691-720`) 활용. **현재는 기록만 — 미구현.**
+- ~~**[기능 요청] `open-clock`/`open-calendar`·`close-clock`/`close-calendar` 명령**~~ →
+  **CL 56719 에서 해결.** `open-clock`/`open-calendar` = 현재 하이라이트(활성) 패널에
+  시계/달력 **멱등 켜기**(이미 떠 있으면 유지 — 토글과 달리 다시 호출해도 안 꺼짐),
+  `close-clock`/`close-calendar` = 활성 패널에서 끄기(멱등). 한 패널엔 한 오버레이만
+  (open 시 반대 오버레이 닫음). 신규 `set_clock`/`set_calendar`(멱등) 헬퍼 + `_run_command`
+  디스패치, `clientutil.COMMANDS`/`COMMAND_NOARG` 등록(? 목록·즉시 실행).
 - **[기능 요청, 미구현] OS 클립보드의 이미지·텍스트를 읽어 pytmux 안에 붙여넣는 명령** —
   OS 클립보드 내용을 활성 패널(앱)에 붙여넣는 명령(예 `paste-clipboard`). **텍스트**는
   기존 `paste_os_clipboard`(Ctrl+V, 텍스트 전용; `client.py`)를 명령으로도 노출하면 됨.

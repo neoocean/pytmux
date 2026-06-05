@@ -1125,6 +1125,28 @@ async def test_calendar_overlay_and_date_click():
     await _with_app(body, size=(44, 16))
 
 
+async def test_open_close_clock_calendar_commands():
+    """§10-A #10: open-clock/open-calendar(멱등 켜기)·close-clock/close-calendar(끄기).
+    토글과 달리 두 번 열어도 켜진 채 유지되고, 한 패널엔 한 오버레이만(상호 배타)."""
+    async def body(app, pilot, srv):
+        active = app.layout["active"]
+        # open-clock: 멱등 — 두 번 열어도 켜진 채 유지
+        app._run_command("open-clock")
+        assert active in app.clock_panes
+        app._run_command("open-clock")
+        assert active in app.clock_panes, "open 은 멱등(재토글로 꺼지지 않음)"
+        # open-calendar: 시계는 꺼지고 달력만(상호 배타)
+        app._run_command("open-calendar")
+        assert active in app.calendar_panes and active not in app.clock_panes
+        # close-calendar: 끔
+        app._run_command("close-calendar")
+        assert active not in app.calendar_panes
+        # close-clock 은 안 떠 있어도 안전(멱등)
+        app._run_command("close-clock")
+        assert active not in app.clock_panes
+    await _with_app(body, size=(44, 16))
+
+
 async def test_overlay_closes_by_panel_click_and_shift_esc():
     # 시계/달력 오버레이는 우상단 [x] 대신 ① 패널 클릭 ② (활성 패널) Shift+ESC 로
     # 닫는다. [x] 닫기 영역은 더 이상 그리지 않는다.

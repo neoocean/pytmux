@@ -342,6 +342,10 @@ COMMANDS = [
     ("display-popup", "명령 실행 결과를 팝업으로", "설정/기타"),
     ("clock-mode", "현재 패널을 큰 시계로 덮기(토글, 우상단 [x]/명령으로 닫기)", "설정/기타"),
     ("calendar-mode", "현재 패널을 이번 달 달력으로 덮기(토글, 상태줄 날짜 클릭/우상단 [x])", "설정/기타"),
+    ("open-clock", "현재 패널에 큰 시계 표시(이미 떠 있으면 유지)", "설정/기타"),
+    ("close-clock", "현재 패널의 큰 시계 닫기", "설정/기타"),
+    ("open-calendar", "현재 패널에 이번 달 달력 표시(이미 떠 있으면 유지)", "설정/기타"),
+    ("close-calendar", "현재 패널의 달력 닫기", "설정/기타"),
     ("claude-header", "Claude 프롬프트 헤더 표시 on/off (claude-header on|off|toggle)", "설정/기타"),
     ("single-border", "패널이 하나뿐일 때 테두리 표시 on/off (single-border on|off|toggle)", "설정/기타"),
     ("coalesce-repaints", "대량 출력 시 alt-screen 풀스크린 리페인트 합치기 on/off — ssh 반응성(coalesce-repaints on|off|toggle)", "설정/기타"),
@@ -430,7 +434,8 @@ COMMAND_NOARG = {
     "next-layout", "rotate-window", "new-tab", "choose-tree",
     "choose-buffer", "paste-clipboard", "save-layout", "restore-layout",
     "show-options", "show-hooks", "source-file", "clock-mode",
-    "calendar-mode", "prompt-history", "token-usage", "token-log",
+    "calendar-mode", "open-clock", "close-clock", "open-calendar",
+    "close-calendar", "prompt-history", "token-usage", "token-log",
     "list-keys", "send-escape", "claude-rules",
 }
 # 자유 텍스트 인자를 받는 명령 — 명령 프롬프트에서 명령을 다 치면 인자 자리에 밑줄

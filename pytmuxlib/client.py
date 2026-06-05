@@ -710,6 +710,31 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.clock_panes.discard(pane_id)     # 한 패널엔 한 오버레이만
             self._composite()
 
+        def set_clock(self, pane_id, on):
+            """시계 오버레이를 명시적으로 켜거나(open-clock) 끈다(close-clock).
+            토글이 아니라 멱등 — 이미 원하는 상태면 그대로. open 시 같은 패널의
+            달력은 닫는다(한 패널엔 한 오버레이)."""
+            if pane_id is None:
+                return
+            if on:
+                self.clock_panes.add(pane_id)
+                self.calendar_panes.discard(pane_id)
+            else:
+                self.clock_panes.discard(pane_id)
+            self._composite()
+
+        def set_calendar(self, pane_id, on):
+            """달력 오버레이를 명시적으로 켜거나(open-calendar) 끈다(close-calendar).
+            멱등 — open 시 같은 패널의 시계는 닫는다."""
+            if pane_id is None:
+                return
+            if on:
+                self.calendar_panes.add(pane_id)
+                self.clock_panes.discard(pane_id)
+            else:
+                self.calendar_panes.discard(pane_id)
+            self._composite()
+
         def _close_overlay(self, pane_id):
             """해당 패널의 시계/달력 오버레이를 닫는다. 닫았으면 True(없으면 False).
             오버레이 [x] 버튼을 폐지하고 패널 클릭/Shift+ESC 로 닫기 위한 공용 경로."""
@@ -2122,6 +2147,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.toggle_clock(self.layout.get("active"))
             elif c in ("calendar-mode", "calendar", "cal"):
                 self.toggle_calendar(self.layout.get("active"))
+            elif c == "open-clock":
+                self.set_clock(self.layout.get("active"), True)
+            elif c == "close-clock":
+                self.set_clock(self.layout.get("active"), False)
+            elif c in ("open-calendar", "open-cal"):
+                self.set_calendar(self.layout.get("active"), True)
+            elif c in ("close-calendar", "close-cal"):
+                self.set_calendar(self.layout.get("active"), False)
             elif c == "claude-header":
                 # claude-header [on|off|toggle] — 프롬프트 헤더 표시 제어(기본 toggle)
                 arg = args[0].lower() if args else "toggle"
