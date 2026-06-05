@@ -5,11 +5,37 @@ import asyncio  # noqa: F401  (타입 주석용)
 import re
 import time
 from collections import deque
+from functools import lru_cache
 
 import pyte
 from pyte.screens import Margins
 
 from .protocol import HISTORY, MIN_H, MIN_W, conv_color, set_winsize
+
+
+@lru_cache(maxsize=8192)
+def _style_key(fg, bg, bold, italics, underscore, reverse, strike):
+    """Char 스타일 필드 → 직렬화 런 키(정렬된 튜플). render 핫루프가 셀마다
+    dict 생성+sort 하던 것을 메모이즈한다(B3) — 대부분 셀이 같은 스타일이라 적중률
+    높음. 키에서 `dict(key)` 로 스타일 dict 를 복원한다(클라 _darken_style lru_cache 선례)."""
+    d = {}
+    f = conv_color(fg)
+    b = conv_color(bg)
+    if f:
+        d["f"] = f
+    if b:
+        d["b"] = b
+    if bold:
+        d["bo"] = 1
+    if italics:
+        d["it"] = 1
+    if underscore:
+        d["un"] = 1
+    if reverse:
+        d["rv"] = 1
+    if strike:
+        d["st"] = 1
+    return tuple(sorted(d.items()))
 
 class _BCEMixin:
     """배경색 소거(BCE) 동작을 하는 화면 믹스인.
@@ -624,8 +650,9 @@ class Pane:
                     continue
                 if not data:
                     data = " "
-                style = self._char_style(ch)
-                key = tuple(sorted(style.items()))
+                key = _style_key(ch.fg, ch.bg, ch.bold, ch.italics,
+                                 ch.underscore, ch.reverse,
+                                 getattr(ch, "strikethrough", False))
                 if key != cur_key:
                     if cur_text:
                         segs.append(["".join(cur_text), dict(cur_key)])
@@ -643,28 +670,6 @@ class Pane:
         while len(rows) < lines:
             rows.append([[" " * cols, {}]])
         return rows, cursor
-
-    @staticmethod
-    def _char_style(ch) -> dict:
-        d = {}
-        fg = conv_color(ch.fg)
-        bg = conv_color(ch.bg)
-        if fg:
-            d["f"] = fg
-        if bg:
-            d["b"] = bg
-        if ch.bold:
-            d["bo"] = 1
-        if ch.italics:
-            d["it"] = 1
-        if ch.underscore:
-            d["un"] = 1
-        if ch.reverse:
-            d["rv"] = 1
-        if getattr(ch, "strikethrough", False):
-            d["st"] = 1
-        return d
-
 
 class Split:
     """내부 노드. 방향(lr/tb)과 비율로 두 자식을 분할."""
