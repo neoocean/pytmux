@@ -148,6 +148,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.aliases = config.get("aliases", {})
             self.hooks = config.get("hooks", {})
             self._attached = False
+            self._composite_pending = False  # B9: 합성 코얼레싱 예약 플래그
             self._prev_winc = 0
             self._prev_bell = False
             self._prompt_purpose = None
@@ -449,17 +450,35 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if cmd:
                 self._run_command(cmd)
 
+        def _request_composite(self):
+            """B9: 합성 코얼레싱 — 한 read 버스트(서버가 B4 로 배치 송신한 여러 screen/
+            delta)에서 메시지마다 합성하지 않고, 루프 틱당 _composite 를 1회만 돈다.
+            이미 예약돼 있으면 no-op. 버퍼된 메시지들은 reader 가 양보 없이 연속 처리
+            하므로 call_soon 콜백이 버스트 끝에 한 번 실행된다(시각 결과 동일·1프레임)."""
+            if self._composite_pending:
+                return
+            self._composite_pending = True
+            try:
+                asyncio.get_running_loop().call_soon(self._do_pending_composite)
+            except RuntimeError:        # 러닝 루프 밖(직접 호출/테스트) — 즉시 합성
+                self._composite_pending = False
+                self._composite()
+
+        def _do_pending_composite(self):
+            self._composite_pending = False
+            self._composite()
+
         def _dispatch(self, msg):
             t = msg.get("t")
             if t == "layout":
                 self.layout = msg
-                self._composite()
+                self._request_composite()
                 if not self._attached:
                     self._attached = True
                     self._fire_hook("client-attached")
             elif t == "screen":
                 self.pane_content[msg["pane"]] = (msg["rows"], msg.get("cursor"))
-                self._composite()
+                self._request_composite()
             elif t == "screen-delta":
                 # B2: 바뀐 행만 받아 캐시된 rows 에 행 단위로 적용. base 가 없는
                 # per-client 모델이라 직전 full/델타가 만든 캐시에 그대로 덮어쓴다.
@@ -472,7 +491,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     elif y == len(rows):
                         rows.append(segs)
                 self.pane_content[pid] = (rows, msg.get("cursor"))
-                self._composite()
+                self._request_composite()
             elif t == "status":
                 self.status.update_status(msg)
                 # claude-header 전역 표시 상태를 서버 opts.json 권위값으로 반영(#6 ③)
@@ -1641,7 +1660,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def open_token_log(self):
             # 토큰 사용량 영속 로그 집계 팝업(#7). 서버에 최근 로그를 요청하고,
-            # 응답(t==token_log)이 오면 TokenLogScreen 으로 시간/일/월×계정 집계.
+            # 응답(t==token_log)이 오면 TokenLogScreen 으로 시간/일/주/월×계정
+            # (=클라이언트) 집계. 상태바 Σ 클릭의 진입점이기도 하다.
             self._want_token_log = True
             self.send_cmd("request_token_log", limit=5000)
 

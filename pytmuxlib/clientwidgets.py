@@ -962,7 +962,9 @@ class StatusBar(Widget):
             return
         uz = self._usage_zone
         if uz and uz[0] <= event.x < uz[1]:
-            self.app.open_claude_usage_tree()   # 토큰 사용량 클릭 → Claude 트리
+            # 토큰 사용량 클릭 → 영속 통계 팝업(계정=클라이언트별 · 시간/일/주/월,
+            # 모든 세션 합계 포함, pytmux 재시작 후에도 유지).
+            self.app.open_token_log()
             event.stop()
             return
         hz = self._host_zone

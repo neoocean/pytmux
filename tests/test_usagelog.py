@@ -53,6 +53,11 @@ async def test_aggregate_buckets_and_accounts():
     # 월 버킷은 모두 한 달로
     mo = usagelog.aggregate(recs, "month")
     assert len(mo["buckets"]) == 1
+    # 주 버킷: 같은 ISO 주차의 레코드는 한 버킷으로 합산, 키는 "%G-W%V" 형식
+    wk = usagelog.aggregate(recs, "week")
+    assert len(wk["buckets"]) == 1
+    wk0 = usagelog.bucket_key(1_700_000_000.0, "week")
+    assert "-W" in wk0 and wk["buckets"][wk0]["a@x.org"] == 1500
     # 요약 줄 생성(헤더 + 계정별 + 버킷별)
     lines = usagelog.summary_lines(recs, "day")
     assert any("전체 Σ3.5k" in ln for ln in lines), lines

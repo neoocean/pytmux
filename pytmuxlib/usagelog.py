@@ -19,10 +19,12 @@ import os
 
 UNKNOWN = "unknown"
 
-# 집계 버킷 → strftime 포맷. "hour"=시간, "day"=일, "month"=월.
+# 집계 버킷 → strftime 포맷. "hour"=시간, "day"=일, "week"=주, "month"=월.
+# 주는 ISO-8601 주차(%G=ISO 연도, %V=ISO 주차, 월요일 시작) → "2023-W46".
 _BUCKET_FMT = {
     "hour": "%Y-%m-%d %H:00",
     "day": "%Y-%m-%d",
+    "week": "%G-W%V",
     "month": "%Y-%m",
 }
 

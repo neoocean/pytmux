@@ -852,8 +852,9 @@ class RulesEditScreen(ModalScreen):
 
 class TokenLogScreen(ModalScreen):
     """토큰 사용량 영속 로그 집계 팝업(#7). 서버가 보낸 레코드를 클라이언트가
-    usagelog 로 시간/일/월 × 계정 집계한다. [h]시간 [d]일 [m]월 버킷 전환,
-    [a] 계정 필터 순환, 방향키 스크롤, 그 외/Esc 닫기(라운드트립 없이 전환)."""
+    usagelog 로 시간/일/주/월 × 계정(=클라이언트) 집계한다. [h]시간 [d]일 [w]주
+    [m]월 버킷 전환, [a] 계정 필터 순환, 방향키 스크롤, 그 외/Esc 닫기(라운드트립
+    없이 전환)."""
     CSS = """
     TokenLogScreen { align: center middle; }
     #tklogbox { width: 96%; max-width: 86; height: auto;
@@ -867,7 +868,7 @@ class TokenLogScreen(ModalScreen):
     #tklog ListItem Label { width: 1fr; }
     """
     _NAV_KEYS = ("up", "down", "pageup", "pagedown", "home", "end")
-    _BUCKETS = {"h": "hour", "d": "day", "m": "month"}
+    _BUCKETS = {"h": "hour", "d": "day", "w": "week", "m": "month"}
 
     def __init__(self, records):
         super().__init__()
@@ -903,7 +904,7 @@ class TokenLogScreen(ModalScreen):
         lv = self.query_one(ListView)
         await lv.clear()
         acct = self._account if self._account is not None else "전체"
-        hint = f"[h]시간 [d]일 [m]월   [a]계정: {acct}   [Esc]닫기"
+        hint = f"[h]시간 [d]일 [w]주 [m]월   [a]계정: {acct}   [Esc]닫기"
         items = [ListItem(Label(hint, markup=False))]
         for ln in usagelog.summary_lines(self._records, self._bucket,
                                          self._account):

@@ -584,6 +584,11 @@ async def test_token_log_screen_aggregates_and_switches():
         await pilot.press("m")
         await pilot.pause(0.1)
         assert app.screen_stack[-1] is scr, "버킷 전환 키는 닫지 않음"
+        # 주 버킷 전환([w]) — 닫히지 않고 갱신
+        await pilot.press("w")
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1] is scr, "주 버킷 전환 키는 닫지 않음"
+        assert scr._bucket == "week", scr._bucket
         # 그 외 키는 닫는다
         await pilot.press("escape")
         await pilot.pause(0.1)
@@ -1831,6 +1836,26 @@ async def test_popup_dim_synchronous_and_cached():
     await _with_app(body)
 
 
+async def test_status_usage_click_opens_token_log():
+    """상태줄 토큰 사용량(Σ) 클릭존이 등록되고, 클릭하면 영속 통계 팝업
+    (계정=클라이언트별 · 시간/일/주/월)을 여는 open_token_log 를 호출한다."""
+    async def body(app, pilot, srv):
+        from textual import events
+        # 사용량 존이 그려지도록 누적 토큰/계정을 채운 뒤 렌더.
+        app.status.claude_tokens = 1500
+        app.status.claude_account = "me@x.org"
+        app.status.render_line(0)
+        uz = app.status._usage_zone
+        assert uz is not None, "토큰 사용량(Σ) 클릭존 등록"
+        called = []
+        app.open_token_log = lambda: called.append(True)
+        y = app.status.size.height - 1
+        ev = events.MouseDown(app.status, uz[0], y, 0, 0, 1, False, False, False)
+        app.status.on_mouse_down(ev)
+        assert called == [True], called
+    await _with_app(body)
+
+
 async def test_status_host_click_opens_server_tab():
     """§10-A #12: 상태줄 서버이름(host) 클릭존이 등록되고, 클릭하면 통합 상태 팝업을
     서버 탭(initial=2)으로 연다."""
@@ -2061,6 +2086,28 @@ async def test_esc_header_focus_opens_history():
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoScreen"
         assert app._hdr_focus is None and app.mode == "normal"
+    await _with_app(body)
+
+
+async def test_composite_coalescing():
+    """B9: 한 read 버스트에서 _request_composite 를 여러 번 호출해도 _composite 는
+    루프 틱당 1회만 돈다(서버 B4 배치/B2 델타가 보낸 N 메시지에 N회 재합성 방지)."""
+    import asyncio as _asyncio
+
+    async def body(app, pilot, srv):
+        calls = []
+        app._composite = lambda: calls.append(1)
+        app._composite_pending = False
+        app._request_composite()
+        app._request_composite()
+        app._request_composite()
+        assert calls == [], "예약만 — 즉시 합성 안 함"
+        await _asyncio.sleep(0)            # 루프 틱 → call_soon 콜백 1회
+        assert calls == [1], ("틱당 1회 합성", calls)
+        # 다음 버스트는 다시 1회
+        app._request_composite()
+        await _asyncio.sleep(0)
+        assert calls == [1, 1], calls
     await _with_app(body)
 
 
