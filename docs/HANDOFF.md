@@ -211,7 +211,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
-- 56729 **팝업 배경 디밍 즉시 적용(지연 제거) + `_darken_style` 캐시**(§10-A #4) —
+- 56731 **팝업 배경 디밍 즉시 적용(지연 제거) + `_darken_style` 캐시**(§10-A #4) —
   ① `push_screen`/`pop_screen` 이 같은 턴에 `_composite()` 를 즉시 호출해 dim 이 다음
   refresh/clock tick(최악 1초)을 기다리지 않게 했다(call_after_refresh 는 마운트 후
   안정화용으로 유지). ② 전 화면 셀 dim 비용을 줄이려 `_darken_style` 에 `@lru_cache(8192)`
@@ -844,7 +844,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 - ~~**[UI 요청] 권한모드 선택 팝업 — 바깥 클릭으로 닫기**~~ → **CL 56718 에서 해결.**
   `PermModeScreen.on_click` 추가 — 조상 체인에 `#perm` 박스가 없으면(백드롭) `dismiss(None)`
   (InfoScreen 의 inside-box 판정 패턴 재사용).
-- ~~**[성능 요청] 팝업 표시 시 배경 디밍이 ~1초 걸려 느림 — 개선**~~ → **CL 56729 에서
+- ~~**[성능 요청] 팝업 표시 시 배경 디밍이 ~1초 걸려 느림 — 개선**~~ → **CL 56731 에서
   해결(두 원인 모두 대응).** ① **지연**: `push_screen` 이 dim 재합성을 `call_after_refresh`
   로만 예약해, idle 상태에선 다음 refresh(최악엔 1초 clock tick)까지 dim 이 늦게 적용됐다
   → 같은 턴에 `_composite()` 를 **즉시 호출**(set_frame→view.refresh 로 다음 프레임 표시),
