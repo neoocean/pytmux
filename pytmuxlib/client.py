@@ -1279,17 +1279,23 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.view.set_frame(cells)
 
         def push_screen(self, *args, **kwargs):
-            # 팝업이 열리면 곧장 뒤 본문을 어둡게(#25) — 다음 서버 프레임을 기다리지
-            # 않도록 재합성을 예약(view 생성 후에만).
+            # 팝업이 열리면 곧장 뒤 본문을 어둡게(#25). §10-A #4: 예전엔 call_after_refresh
+            # 로만 재합성을 예약해, idle 상태에선 dim 이 다음 refresh(최악엔 1초 clock
+            # tick)까지 늦게 적용돼 "팝업 디밍이 ~1초 걸린다"는 보고가 있었다. 이제
+            # **같은 턴에 _composite() 를 즉시 호출**해 dim 을 바로 적용하고(set_frame 이
+            # view.refresh() 호출 → 다음 프레임에 표시), 마운트 후 레이아웃 안정화를 위해
+            # call_after_refresh 도 한 번 더 둔다(둘 다 캐시된 _darken_style 로 경량).
             r = super().push_screen(*args, **kwargs)
             if getattr(self, "view", None) is not None:
+                self._composite()
                 self.call_after_refresh(self._composite)
             return r
 
         def pop_screen(self, *args, **kwargs):
-            # 팝업을 닫으면 어둡게/치환을 풀고 원본으로 재합성(#25).
+            # 팝업을 닫으면 어둡게/치환을 풀고 원본으로 재합성(#25) — 즉시 + 마운트 후.
             r = super().pop_screen(*args, **kwargs)
             if getattr(self, "view", None) is not None:
+                self._composite()
                 self.call_after_refresh(self._composite)
             return r
 

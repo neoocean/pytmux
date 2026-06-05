@@ -1772,6 +1772,34 @@ async def test_status_tabs_has_server_tab():
     await _with_app(body)
 
 
+async def test_popup_dim_synchronous_and_cached():
+    """§10-A #4: 팝업 배경 디밍 지연 개선 — ① _darken_style 은 (style,ratio) 캐시라
+    같은 스타일이면 동일 객체를 즉시 반환(전 화면 셀 dim 을 경량화), ② push_screen 이
+    같은 턴에 _composite 를 즉시 호출해 dim 이 다음 refresh/타이머를 기다리지 않는다."""
+    from rich.style import Style
+    from pytmuxlib.clientutil import _darken_style
+    s = Style(color="white", bgcolor="blue", bold=True)
+    assert _darken_style(s) is _darken_style(s), "lru_cache 적중(동일 객체)"
+
+    async def body(app, pilot, srv):
+        from pytmuxlib.clientscreens import InfoScreen
+        calls = []
+        real = app._composite
+
+        def spy():
+            calls.append(1)
+            real()
+        app._composite = spy
+        app.push_screen(InfoScreen(["x"], title="t"))
+        # await 없이 — 즉시(같은 턴) _composite 가 불려야 한다(지연 dim 제거)
+        assert calls, "push_screen 직후 즉시 _composite 호출(지연 없음)"
+        app._composite = real
+        await pilot.pause(0.1)              # 팝업 마운트 완료까지 대기 후 정리
+        app.pop_screen()
+        await pilot.pause(0.1)
+    await _with_app(body)
+
+
 async def test_status_host_click_opens_server_tab():
     """§10-A #12: 상태줄 서버이름(host) 클릭존이 등록되고, 클릭하면 통합 상태 팝업을
     서버 탭(initial=2)으로 연다."""

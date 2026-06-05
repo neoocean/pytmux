@@ -211,6 +211,14 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56729 **팝업 배경 디밍 즉시 적용(지연 제거) + `_darken_style` 캐시**(§10-A #4) —
+  ① `push_screen`/`pop_screen` 이 같은 턴에 `_composite()` 를 즉시 호출해 dim 이 다음
+  refresh/clock tick(최악 1초)을 기다리지 않게 했다(call_after_refresh 는 마운트 후
+  안정화용으로 유지). ② 전 화면 셀 dim 비용을 줄이려 `_darken_style` 에 `@lru_cache(8192)`
+  — 같은 스타일은 블렌드를 한 번만 계산(대부분 셀이 동일 스타일). 회귀
+  `test_popup_dim_synchronous_and_cached`(캐시 동일객체 + push 직후 즉시 _composite),
+  230 passed. 클라이언트 전용(attach 재실행). 파일: `pytmuxlib/{client,clientutil}.py`,
+  `tests/test_client.py`, `docs/HANDOFF.md`.
 - 56726 **상태줄 통합 팝업에 '서버' 탭 + 서버이름 클릭존**(§10-A #12) — REC·토큰이
   이미 통합돼 있던 `InfoTabsScreen` 에 세 번째 **서버 탭**(`_server_info_lines`:
   호스트·로컬/원격·소켓·RTT·degraded·재접속 안내)을 추가하고, 상태줄 host 런에
@@ -836,11 +844,14 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 - ~~**[UI 요청] 권한모드 선택 팝업 — 바깥 클릭으로 닫기**~~ → **CL 56718 에서 해결.**
   `PermModeScreen.on_click` 추가 — 조상 체인에 `#perm` 박스가 없으면(백드롭) `dismiss(None)`
   (InfoScreen 의 inside-box 판정 패턴 재사용).
-- **[성능 요청, 미구현] 팝업 표시 시 배경 디밍이 ~1초 걸려 느림 — 개선** — 팝업이 뜰 때
-  배경 어두워짐이 ~1s 지연. 원인 후보: 팝업 open 시 배경 재합성(`_composite`)+emoji→`·`
-  치환(`clientutil`)이 무겁거나, dim 적용이 다음 프레임/타이머에 묶여 지연. 디밍 경로를
-  프로파일해 즉시(같은 프레임) 적용되게. **연관**: §10 기존 "배경 디밍" 항목들.
-  **현재는 기록만 — 미구현.**
+- ~~**[성능 요청] 팝업 표시 시 배경 디밍이 ~1초 걸려 느림 — 개선**~~ → **CL 56729 에서
+  해결(두 원인 모두 대응).** ① **지연**: `push_screen` 이 dim 재합성을 `call_after_refresh`
+  로만 예약해, idle 상태에선 다음 refresh(최악엔 1초 clock tick)까지 dim 이 늦게 적용됐다
+  → 같은 턴에 `_composite()` 를 **즉시 호출**(set_frame→view.refresh 로 다음 프레임 표시),
+  마운트 후 안정화용 `call_after_refresh` 도 유지. `pop_screen` 도 동일. ② **비용**:
+  전 화면 셀 dim 이 `_darken_style` 을 셀마다 호출(truecolor 블렌드+Style 생성)했는데
+  대부분 셀의 스타일이 같으므로 `@lru_cache(8192)` 로 (style,ratio) 캐시 → 같은 스타일은
+  한 번만 계산. 순수 함수·Style 불변/해시가능이라 안전.
 - **[검증+문서 요청, 미착수] pytmux 패널 안 Claude CLI 에서 shift+home/end/shift+방향키
   텍스트 선택·삭제·수정 가능 여부** — shift+Home/End/arrows 포워딩은 이전 폴리시 패스에서
   반영됨(MEMORY `pytmux-ui-polish-pass-pending`). 실제 Claude CLI 에서 선택/편집이 되는지
