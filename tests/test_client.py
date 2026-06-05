@@ -1754,6 +1754,41 @@ async def test_info_tabs_bottom_close_button():
     await _with_app(body)
 
 
+async def test_status_tabs_has_server_tab():
+    """§10-A #12: 통합 상태 팝업에 '서버' 탭(3번째)이 생기고 호스트·소켓 정보를 보인다."""
+    async def body(app, pilot, srv):
+        from textual.widgets import Label
+        app._status_cap_lines = ["파일: /tmp/x/pane-1.log"]
+        app._status_tab_initial = 2
+        app._open_status_tabs({"sessions": []})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "InfoTabsScreen"
+        names = [t[0] for t in scr._tabs]
+        assert names == ["출력 캡처(REC)", "토큰 사용량", "서버"], names
+        assert scr._ti == 2, "초기 탭=서버"
+        joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        assert "호스트:" in joined and "소켓:" in joined, joined
+    await _with_app(body)
+
+
+async def test_status_host_click_opens_server_tab():
+    """§10-A #12: 상태줄 서버이름(host) 클릭존이 등록되고, 클릭하면 통합 상태 팝업을
+    서버 탭(initial=2)으로 연다."""
+    async def body(app, pilot, srv):
+        from textual import events
+        app.status.render_line(0)
+        hz = app.status._host_zone
+        assert hz is not None, "서버이름(host) 클릭존 등록"
+        called = []
+        app.show_status_tabs = lambda initial=0: called.append(initial)
+        y = app.status.size.height - 1
+        ev = events.MouseDown(app.status, hz[0], y, 0, 0, 1, False, False, False)
+        app.status.on_mouse_down(ev)
+        assert called == [2], called
+    await _with_app(body)
+
+
 async def test_info_tabs_close_button_and_esc():
     # 좁은(모바일) 폭에서도 통합 상태 팝업(InfoTabsScreen)에 닫기 [x] 가 화면 안에
     # 보이고, [x] 클릭과 Esc 둘 다로 닫힌다(#10).

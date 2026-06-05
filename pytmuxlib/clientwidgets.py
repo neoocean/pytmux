@@ -698,6 +698,7 @@ class StatusBar(Widget):
         self._date_zone = None   # (x0, x1) 날짜(달력) 클릭 영역
         self._usage_zone = None  # (x0, x1) 토큰 사용량 클릭 영역(Claude 트리)
         self._rec_zone = None    # (x0, x1) REC 클릭 영역(캡처 정보 팝업)
+        self._host_zone = None   # (x0, x1) 서버이름(host) 클릭 영역(서버 탭, §10-A #12)
         self.capture_path = None  # 활성 패널 캡처 파일 경로
         self.capture_size = 0     # 그 파일 크기(bytes)
         # 클라이언트가 SSH 원격 세션에서 도는지(attach 한 머신 기준, 시작 시 1회).
@@ -910,9 +911,10 @@ class StatusBar(Widget):
         pad = max(0, w - used - right_w)
         if pad:
             segs.append(Segment(" " * pad, base))
-        # 각 런 세그먼트를 붙이며 누적 x 로 시각(시계)/날짜(달력) 클릭 존 계산.
+        # 각 런 세그먼트를 붙이며 누적 x 로 시각(시계)/날짜(달력)/서버이름 클릭 존 계산.
         self._clock_zone = None
         self._date_zone = None
+        self._host_zone = None
         x = used + pad
         for kind, text, st, cells in built:
             segs.append(Segment(text, st))
@@ -920,6 +922,8 @@ class StatusBar(Widget):
                 self._clock_zone = (x, x + cells)
             elif cells and kind == "date":
                 self._date_zone = (x, x + cells)
+            elif cells and kind == "host":
+                self._host_zone = (x, x + cells)   # 서버이름 클릭 → 서버 탭(#12)
             x += cells
         # 폭 맞추기(자르기)
         return Strip(segs).adjust_cell_length(w, base)
@@ -948,4 +952,9 @@ class StatusBar(Widget):
         uz = self._usage_zone
         if uz and uz[0] <= event.x < uz[1]:
             self.app.open_claude_usage_tree()   # 토큰 사용량 클릭 → Claude 트리
+            event.stop()
+            return
+        hz = self._host_zone
+        if hz and hz[0] <= event.x < hz[1]:
+            self.app.show_status_tabs(initial=2)  # 서버이름 클릭 → 서버 탭(#12)
             event.stop()

@@ -1644,13 +1644,35 @@ def build_client_app(sock_path: str, config: dict | None = None,
             lines.append(f"전체 세션 합계  —  Σ {_fmt_tokens(grand)}")
             return lines
 
+        def _server_info_lines(self):
+            """서버 정보 탭(§10-A #12) 줄 — 호스트·로컬/원격·소켓 경로·RTT·응답성.
+            상태줄 서버이름(host) 클릭 시 통합 상태 팝업의 '서버' 탭으로 보인다."""
+            host = socket.gethostname()
+            remote = bool(getattr(self.status, "_is_remote", False))
+            lines = [
+                f"호스트: {host}",
+                f"연결: {'원격(ssh)' if remote else '로컬'}",
+                f"소켓: {self.sock_path}",
+            ]
+            rtt = getattr(self, "_net_last_rtt", None)
+            if rtt is not None:
+                thr = getattr(self, "net_rtt_threshold", 0.4)
+                lines.append(f"RTT: {rtt * 1000:.0f} ms (임계 {thr * 1000:.0f} ms)")
+            degraded = bool(getattr(self, "_net_degraded", False))
+            lines.append("응답성: " + ("저하(degraded) — 빨간 외곽선" if degraded
+                                        else "정상"))
+            lines.append("")
+            lines.append("degraded 고착 시 reconnect / resync 명령으로 재접속")
+            return lines
+
         def _open_status_tabs(self, tree):
-            """REC(출력 캡처)·토큰 사용량을 **한 팝업의 두 탭**으로 연다(#10). 상태줄
-            버튼 배치(REC 왼쪽·토큰 오른쪽)에 맞춰 탭 순서도 REC(0)·토큰(1)이다.
+            """REC(출력 캡처)·토큰 사용량·서버 정보를 **한 팝업의 세 탭**으로 연다(#10,
+            §10-A #12). 상태줄 버튼 배치에 맞춰 탭 순서는 REC(0)·토큰(1)·서버(2)다.
             어느 버튼으로 열었는지(_status_tab_initial)에 따라 초기 탭만 다르다.
             REC 탭에선 [c] 로 출력 캡처를 켜고 끌 수 있다."""
             usage = self._usage_tree_lines(tree)
             cap = getattr(self, "_status_cap_lines", None) or self._capture_info_lines()
+            server = self._server_info_lines()
             initial = getattr(self, "_status_tab_initial", 0)
 
             def _toggle_capture():
@@ -1665,7 +1687,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
             actions = {0: ("c", "[c] 캡처 켜기/끄기", _toggle_capture)}
             self.push_screen(InfoTabsScreen(
-                [("출력 캡처(REC)", cap), ("토큰 사용량", usage)],
+                [("출력 캡처(REC)", cap), ("토큰 사용량", usage), ("서버", server)],
                 initial=initial, title="상태", actions=actions))
 
         def _open_choose_tree(self, tree):

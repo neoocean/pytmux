@@ -211,6 +211,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56726 **상태줄 통합 팝업에 '서버' 탭 + 서버이름 클릭존**(§10-A #12) — REC·토큰이
+  이미 통합돼 있던 `InfoTabsScreen` 에 세 번째 **서버 탭**(`_server_info_lines`:
+  호스트·로컬/원격·소켓·RTT·degraded·재접속 안내)을 추가하고, 상태줄 host 런에
+  `_host_zone` 클릭존을 등록해 클릭 시 `show_status_tabs(initial=2)` 로 서버 탭을 연다
+  (REC→0·토큰→1·서버→2). 회귀 `test_status_tabs_has_server_tab` +
+  `test_status_host_click_opens_server_tab`, 229 passed. 클라이언트 전용(attach 재실행).
+  파일: `pytmuxlib/{client,clientwidgets}.py`, `tests/test_client.py`, `docs/HANDOFF.md`.
 - 56724 **프롬프트 히스토리 긴 URL 하드 줄바꿈 + 구분선/↓→[h] 점프**(§10-A #7·#8)
   — `InfoScreen` 에 ① `wrap_hang` 모드: 마운트 후 박스 실폭을 재서 `_hangwrap`(모듈
   헬퍼)로 각 줄을 행잉-인덴트 하드 줄바꿈('NN. ' 접두사 폭만큼 이어줄 들여쓰기 →
@@ -876,28 +883,16 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   macOS `pngpaste`, Linux `xclip -t image/png -o`/`wl-paste --type image/png`. **로컬 가정**:
   PNG 는 클라이언트 머신에 생기므로 클라이언트=서버일 때 경로가 유효(원격은 ③ 폴백).
 
-- **[UI 요청, 미구현] 하단 상태줄 정보 팝업 통합 — REC·Claude 토큰·서버이름 클릭을
-  탭으로 구분된 단일 팝업으로** — 요청: 화면 **최하단 상태줄**의 ① **REC**(캡처),
-  ② **Claude 토큰 사용량 표시**(`Σ …`/`ctx …`), ③ **서버이름**(`ssh:` 호스트)을
-  터치/클릭하면 지금은 **서로 다른 팝업**이 따로 열린다. 이를 **탭으로 구분된 하나의
-  팝업**으로 합치고, **클릭한 요소(버튼)에 따라 해당 탭이 열리게** 한다(REC 클릭→
-  캡처 탭, 토큰 클릭→토큰/사용량 탭, 서버이름 클릭→서버정보 탭). 현재 구현/자산:
-  세 클릭존이 이미 따로 있다 — `_rec_zone`(REC, `client.py` 상태줄 `_render_main`)→
-  캡처 정보 `InfoScreen`(`client.py:2321`), `_usage_zone`(토큰)→`request_tree(usage)`
-  →Claude 트리 `InfoScreen`(`client.py:2021`), 그리고 **서버이름 클릭존은 아직 없음**
-  (아래 "상태줄 `ssh:` 호스트 클릭→서버 정보 팝업" 항목에서 신설 예정 — 이 통합
-  요청이 **그 항목을 흡수**한다: 독립 팝업 대신 통합 팝업의 한 탭으로). 탭 팝업 선례:
-  `CommandListScreen` 이 이미 **카테고리 탭(←→ 전환)** 을 구현(`client.py:347`,
-  `_render_cat`) — 그 탭 UI/키 처리(←→ 탭 이동, ↑↓ 항목)를 재사용·일반화할 수 있다.
-  구현 방향: ㉠ 탭 컨테이너 모달(예 `StatusInfoScreen`)을 만들어 **REC/토큰/서버**
-  3 탭을 담고, 각 탭 콘텐츠는 기존 팝업 본문(캡처 정보·Claude 트리·서버 RTT/연결)을
-  이식. ㉡ 세 클릭존 핸들러가 같은 모달을 **초기 선택 탭만 다르게** 열도록 통일
-  (`StatusInfoScreen(initial="rec"|"tokens"|"server")`). ㉢ 팝업 안에서 ←→/탭 클릭으로
-  탭 전환. **열린 결정**: 탭 라벨/순서, 서버 탭의 표시 항목(IP 노출 수위·RTT 이력),
-  기존 토큰 팝업이 트리(`request_tree`) 라운드트립을 쓰는데 통합 모달에서도 동일
-  비동기 흐름을 유지할지. **연관**: 아래 "상태줄 `ssh:` 호스트 클릭" 항목(이 통합이
-  대체)·REC/토큰 InfoScreen·네트워크 응답성(CL 56593)·`CommandListScreen` 탭 UI.
-  **현재는 기록만 — 미구현(지금 구현하지 않음).**
+- ~~**[UI 요청] 하단 상태줄 정보 팝업 통합 — REC·Claude 토큰·서버이름 클릭을 탭으로
+  구분된 단일 팝업으로**~~ → **CL 56726 에서 완결.** REC·토큰은 이미 통합 팝업
+  (`InfoTabsScreen`, CL 56??/§10 #10)으로 합쳐져 있었고, 이번에 **세 번째 '서버' 탭 +
+  서버이름(host) 클릭존**을 추가해 요청을 완결했다. ① `client._server_info_lines`
+  (호스트·로컬/원격·소켓 경로·RTT·degraded 응답성·재접속 안내), `_open_status_tabs` 가
+  `[REC, 토큰, 서버]` 3탭 구성. ② 상태줄(`clientwidgets.StatusBar`)의 host 런에
+  `_host_zone` 등록(`_render_main` 우측 런 루프), `on_mouse_down` 이 host 클릭 시
+  `show_status_tabs(initial=2)`(서버 탭)로 통합 팝업을 연다 — REC→0·토큰→1·서버→2 로
+  클릭 요소에 맞는 초기 탭. 탭 전환은 기존 `InfoTabsScreen` ←→/클릭. (아래 "상태줄
+  `ssh:` 호스트 클릭→서버 정보 팝업" 항목을 이 통합이 흡수.)
 - **[UI 요청, 미구현] 명령 목록 팝업에서 Claude 관련 기능을 독립된 탭으로 분리** —
   명령 목록 팝업(`CommandListScreen`, `?`/`help`)은 이미 **카테고리 탭**(←→ 전환,
   `_render_cat`)을 갖고 있다. 현재 Claude 연동 명령(예: 자동재개·권한모드·토큰/사용량
