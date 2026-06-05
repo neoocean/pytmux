@@ -1070,7 +1070,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   **현재는 기록만 — 미구현.**
 - ~~**[리팩토링 요청] 코드를 LLM 친화적인 형태로 리팩토링**~~ → **핵심 목표 달성**(거대
   단일 파일 해소 — client.py·server.py 둘 다 모듈 분리). 모든 Claude 서버 코드는
-  serverclaude.py 로 통합(set_claude_rules 포함, CL 56781). 추가 미세 분리(버퍼/검색/
+  serverclaude.py 로 통합(set_claude_rules 포함, CL 56780). 추가 미세 분리(버퍼/검색/
   토큰로깅 등 작은 클러스터)는 선택적. **이력**:
   client.py 가 `clientutil`/`clientscreens`/`clientwidgets` 로 4단계 분리됨(CL 56603·
   56610·56611·56616, client.py 4363→2335줄). **server.py 분할 진행 중**(믹스인 방식 —
