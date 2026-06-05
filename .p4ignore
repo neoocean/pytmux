@@ -7,3 +7,8 @@ __pycache__/
 .DS_Store
 # Windows 호환성·성능 리포트(scripts/win_report.py) 출력 — 생성 산출물(버전관리 제외)
 reports/
+# OS별 벤치마크 결과(docs/benchmark/<os>/<ts>.md|json)는 CI(GitHub Actions)가
+# 생성·커밋하는 git-우선 히스토리다. Perforce depot 에는 담지 않고(소스가 아님),
+# 개발환경은 git pull 로 본다(docs/benchmark/README.md). 단 bench.py/워크플로 등
+# 소스는 docs/benchmark 밖이라 정상 추적된다.
+docs/benchmark/
