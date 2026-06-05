@@ -1074,8 +1074,10 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   Server 가 각 믹스인을 상속, 동작 불변·테스트 게이트): ① **Claude 주입 클러스터 →
   `serverclaude.py` `ServerClaudeMixin`**(CL 56765 — 자동재개·prompt-clear·auto-doc-clear·
   claude-auto-mode·perm-mode 구동). ② **캡처(REC) 클러스터 → `servercapture.py`
-  `ServerCaptureMixin`**(CL 56766 — _capture_*·capture_dir·set_capture). server.py
-  2968→2580줄. 다음 후보(연속 응집 블록): flush/IPC, 레이아웃/패널 트리, 영속/직렬화. 아래는 원 요청.
+  `ServerCaptureMixin`**(CL 56766 — _capture_*·capture_dir·set_capture). ③ **영속/직렬화·
+  재시작(execv) 클러스터 → `serverpersist.py` `ServerPersistMixin`**(CL 56767 — layout/
+  resume/slots/opts 직렬화·저장·복원 + restart_server/_do_execv). **server.py 2968→2282줄
+  (-23%), 신규 믹스인 3개.** 다음 후보(연속 응집 블록): flush/IPC, 레이아웃/패널 트리. 아래는 원 요청.
   요청: 코드를
   **LLM 친화적인 형태로 리팩토링**. 동기(현 상태): 핵심 두 모듈이 **거대 단일 파일**
   이라 LLM 이 한 번에 통째로 읽어야 편집이 가능하고 컨텍스트·충돌 비용이 크다 —
