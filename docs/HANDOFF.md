@@ -853,6 +853,19 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > (**CL 56702**)는 구현·제출 완료. 아래는 이후 들어온 요청으로 **아직 미착수**(기록만).
 > #1·#2 패널 DnD 마우스 설계는 확정됨 → [MEMORY] `pytmux-pane-dnd-mouse-design` 참조.
 
+- **[버그 보고, 미구현] 모바일에서 Claude 권한모드 `auto mode` 자동 전환이 안 됨**
+  (2026-06-05 보고) — 모바일(폰)에서 pytmux 로 접속해 쓸 때 권한모드가 **auto mode 로
+  전환되지 않는다**(데스크탑/일반 터미널에선 동작). 관련 자산: 자동 전환은 서버
+  `_maybe_auto_mode`(CL 56591 — idle 시 shift+tab backtab `\x1b[Z` 주입), 수동 목표는
+  `_drive_perm_mode`(CL 56602 — 목표 모드까지 폐루프 주입), footer 관측은 `claude_perm_mode`
+  (화면 파싱: `auto mode on (shift+tab to cycle)`). **추정 원인 후보**: ㉠ 모바일 환경
+  에서 backtab(`\x1b[Z`) 주입이 안 먹거나 인코딩이 달라 모드 순환 자체가 안 일어남,
+  ㉡ 모바일 폰트/렌더로 footer 텍스트가 어긋나 `claude_perm_mode` 파싱이 빗나가 폐루프가
+  목표 도달을 영영 못 봄(계속 주입하거나 아예 시작 안 함), ㉢ 모바일 키 경로(IME/paste)
+  와의 상호작용. **조사 방향**: 모바일 attach 상태에서 `<sock>.capture/pane-*.log` 를
+  pyte 로 재렌더해 footer 줄이 보이는지 + `_maybe_auto_mode`/`_drive_perm_mode` 가 backtab
+  을 실제 주입하는지 로그로 확인. **연관**: 권한모드 자동전환(CL 56591)·footer 클릭
+  팝업/폐루프(CL 56602). **현재는 기록만 — 미구현.**
 - ~~**[UI 요청] 권한모드 선택 팝업을 좌측 정렬 + 'auto mode on' 바로 위에 배치**~~ →
   **CL 56718 에서 해결.** `PermModeScreen` CSS 를 `align: left top` 으로 바꾸고,
   `open_perm_mode` 가 `_perm_zone[pid]` 의 시작 x(`anchor_x`)를 넘겨 `on_mount` 가
