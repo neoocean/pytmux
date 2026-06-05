@@ -211,6 +211,14 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56721 **토큰 사용량 팝업 하단 구분선·전 세션 합계 + InfoTabsScreen 하단 닫기 버튼**
+  (§10-A #6) — ① `client._usage_tree_lines` 끝에 가로 구분선(`─`×36)과 전체 세션 토큰
+  합계(`전체 세션 합계 — Σ N`, 모든 claude 패널 tokens 합) 한 줄 추가(통합 상태 팝업
+  토큰 탭·독립 사용량 트리 팝업 공통). ② `InfoTabsScreen` 에 하단 닫기 버튼(`#itclosebtn`,
+  목록 아래 한 줄·가로 가득·가운데, 클릭/터치 닫힘) 추가. 회귀:
+  `test_status_tabs_popup_merged` 에 합계·구분선·하단버튼 단언 추가 + 신규
+  `test_info_tabs_bottom_close_button`, 224 passed. 클라이언트 전용(attach 재실행).
+  파일: `pytmuxlib/{client,clientscreens}.py`, `tests/test_client.py`, `docs/HANDOFF.md`.
 - 56720 **큰 달력 두 자리 숫자 사이 간격 좁힘(DIG 2→1)**(§10-A #9) — `client.
   _draw_calendar_overlay` 의 큰 달력(시계 3×5 폰트) 경로에서 한 날짜의 두 자리 숫자
   사이 간격 `DIG` 를 2→1 로 줄여 두 자리가 한 덩어리로 읽히게 했다. 날짜칸 사이
@@ -812,10 +820,12 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   텍스트 선택·삭제·수정 가능 여부** — shift+Home/End/arrows 포워딩은 이전 폴리시 패스에서
   반영됨(MEMORY `pytmux-ui-polish-pass-pending`). 실제 Claude CLI 에서 선택/편집이 되는지
   **검증**하고 결과를 **문서로 만들어 제출**. **현재는 기록만 — 미착수.**
-- **[UI 요청, 미구현] 토큰 사용량 팝업 — 하단 가로선 + 전 세션 토큰 합계 + 하단 닫기
-  버튼** — `InfoTabsScreen` 토큰 탭(내용은 `client.py` `_open_status_tabs` 에서 구성).
-  맨 아래에 **가로 구분선**, 그 아래 **모든 세션 토큰 합계** 한 줄, 그리고 팝업 **하단에
-  닫기 버튼**. **현재는 기록만 — 미구현.**
+- ~~**[UI 요청] 토큰 사용량 팝업 — 하단 가로선 + 전 세션 토큰 합계 + 하단 닫기 버튼**~~ →
+  **CL 56721 에서 해결.** ① `client._usage_tree_lines` 가 맨 아래에 **가로 구분선**(`─`×36)
+  과 **전체 세션 토큰 합계**(`전체 세션 합계 — Σ N`) 한 줄을 덧붙인다(모든 claude 패널
+  tokens 합). 토큰 탭(통합 상태 팝업)과 독립 사용량 트리 팝업 양쪽에 적용. ② `InfoTabsScreen`
+  에 **하단 닫기 버튼**(`#itclosebtn`, 목록 아래 한 줄·가로 가득·가운데) 추가 — 클릭/터치로
+  닫힘(상단 [x] 와 별개로 좁은 화면·긴 목록에서 손 닿는 곳).
 - **[UI 요청, 미구현/의도확인] 리스트 팝업 — 긴 영문 URL 하드 줄바꿈(번호 정렬 보존)** —
   프롬프트 히스토리 등에서 항목 12 같은 긴 URL 이 soft-wrap 돼 다음 줄로 흘러 번호 정렬이
   깨진다. **하드 줄바꿈**으로 다음 줄로 안 내려가게. **열린 결정**: 글자단위 hard-wrap(다음

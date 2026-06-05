@@ -1548,8 +1548,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def _usage_tree_lines(self, tree):
             """트리 응답 → 사용량 표시 줄. ctx(컨텍스트 %)와 함께 실제 세션 누계
-            토큰(Σ)을 탭 합계·패널별로 보인다(#18)."""
+            토큰(Σ)을 탭 합계·패널별로 보인다(#18). 맨 아래에는 가로 구분선과
+            **모든 세션 토큰 합계** 한 줄을 덧붙인다(§10-A #6)."""
             lines = []
+            grand = 0
             for s in tree.get("sessions", []):
                 for w in s.get("windows", []):
                     cps = [p for p in (w.get("panes") or [])
@@ -1557,6 +1559,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     if not cps:
                         continue
                     wtok = sum((p.get("tokens") or 0) for p in cps)  # 탭 합계
+                    grand += wtok
                     lines.append(f"[{w['index'] + 1}] {w['name']}  —  Σ {_fmt_tokens(wtok)}")
                     for p in cps:
                         app = p.get("cmd") or "claude"
@@ -1565,7 +1568,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         tok = _fmt_tokens(p.get("tokens") or 0)
                         lines.append(f"    pane {p['id']} · {app} · {state} · "
                                      f"{usage} · Σ {tok}")
-            return lines or ["(실행 중인 Claude 패널 없음)"]
+            if not lines:
+                return ["(실행 중인 Claude 패널 없음)"]
+            # 하단 가로 구분선 + 전 세션 토큰 합계(§10-A #6).
+            lines.append("─" * 36)
+            lines.append(f"전체 세션 합계  —  Σ {_fmt_tokens(grand)}")
+            return lines
 
         def _open_status_tabs(self, tree):
             """REC(출력 캡처)·토큰 사용량을 **한 팝업의 두 탭**으로 연다(#10). 상태줄

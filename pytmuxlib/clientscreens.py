@@ -563,6 +563,12 @@ class InfoTabsScreen(ModalScreen):
     #itbody { width: 100%; height: auto; }
     #itbody ListItem { height: auto; }
     #itbody ListItem Label { width: 1fr; }
+    /* 하단 닫기 버튼(§10-A #6): 목록 아래 한 줄, 가로 가득·가운데 정렬. 클릭/터치로
+       닫는다(상단 [x] 와 별개로 좁은 화면·긴 목록에서 손이 닿는 곳에 둠). */
+    #itclosebtn { width: 100%; height: 1; margin-top: 1;
+                  content-align: center middle; text-style: bold;
+                  background: $panel-darken-2; color: $text; }
+    #itclosebtn:hover { background: $error; }
     """
     _NAV = ("up", "down", "pageup", "pagedown", "home", "end")
 
@@ -586,6 +592,7 @@ class InfoTabsScreen(ModalScreen):
                 yield Label("", id="itgap")        # [x] 를 우측 끝으로 미는 여백
                 yield Label("[x]", id="itclose", markup=False)
             yield ListView(id="itbody")
+            yield Label("닫기", id="itclosebtn", markup=False)  # 하단 닫기(§10-A #6)
 
     async def on_mount(self):
         await self._render_tab()
@@ -631,7 +638,7 @@ class InfoTabsScreen(ModalScreen):
         inside = False
         while w is not None:
             wid = getattr(w, "id", None)
-            if wid == "itclose":
+            if wid in ("itclose", "itclosebtn"):   # 상단 [x] / 하단 닫기 버튼
                 event.stop(); self.dismiss(None); return
             if wid and wid.startswith("ittab_"):   # 탭 클릭 → 전환(#32)
                 event.stop()

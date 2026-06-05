@@ -1687,6 +1687,27 @@ async def test_status_tabs_popup_merged():
         await pilot.pause(0.1)
         j2 = " ".join(str(lbl.render()) for lbl in scr.query(Label))
         assert "ctx 42%" in j2 and "8.2k" in j2, j2
+        # §10-A #6: 토큰 탭 맨 아래 가로 구분선 + 전 세션 합계 한 줄
+        assert "전체 세션 합계" in j2, j2
+        assert "─" in j2, "하단 가로 구분선"
+        # §10-A #6: 팝업 하단 닫기 버튼 존재
+        assert scr.query_one("#itclosebtn", Label).render().plain.strip() == "닫기"
+    await _with_app(body)
+
+
+async def test_info_tabs_bottom_close_button():
+    """§10-A #6: 통합 상태 팝업(InfoTabsScreen) 하단 닫기 버튼(#itclosebtn) 클릭 시 닫힌다."""
+    async def body(app, pilot, srv):
+        app._status_cap_lines = ["파일: /tmp/x/pane-1.log"]
+        app._status_tab_initial = 0
+        app._open_status_tabs({"sessions": []})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "InfoTabsScreen"
+        await pilot.click("#itclosebtn")
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1].__class__.__name__ != "InfoTabsScreen", \
+            "하단 닫기 버튼으로 닫힘"
     await _with_app(body)
 
 
