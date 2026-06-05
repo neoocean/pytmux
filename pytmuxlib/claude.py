@@ -196,19 +196,27 @@ def claude_perm_mode(text: str):
     Claude Code 버전이 footer 문구를 바꾸면 가장 먼저 손볼 곳이다(claude_state 와
     같은 footer 를 본다)."""
     low = text.lower()
-    footer = ("shift+tab to" in low or "mode on (shift" in low)
-    has_signal = (footer or "⏵⏵" in text or "auto-accept" in low
-                  or "auto mode" in low or "plan mode" in low
-                  or "bypass permissions" in low)
-    if not has_signal:
-        return None
+    # 명시적 권한모드 글리프/문구부터 판정한다(글리프·모드명은 footer 줄 앞쪽이라
+    # 좁은 폭(모바일)에서 뒤가 잘려도 살아남는다).
     if "bypass permissions" in low:
         return "bypass"
-    if "⏵⏵" in text or "auto-accept" in low or "auto mode" in low:
+    if ("⏵⏵" in text or "auto-accept" in low or "auto mode" in low
+            or "accept edits on" in low):
         return "auto"
-    if "plan mode" in low:
+    if "plan mode" in low or "⏸" in text:
         return "plan"
-    return "default"
+    # 글리프가 없으면 default(일반) 모드 후보. 실제 Claude default 모드는 권한 글리프
+    # 없이 입력 힌트("? for shortcuts" / "/help for help")만 그린다(claude_state 의
+    # idle 신호와 동일). 이전엔 default 신호로 "shift+tab to cycle" 만 봤는데 — 실제
+    # default footer 엔 그 문구가 없어서 — None 을 반환했고, 그 결과 default→auto
+    # 자동전환(_maybe_auto_mode)이 시작조차 못 했다(폭 무관한 근본 버그였지만, 좁은
+    # 폭 모바일에서 auto/plan 글리프 footer 마저 안 보일 때 특히 두드러졌다). idle
+    # 입력 힌트가 보이면 default 로 판정해 자동전환 폐루프가 시작되게 한다.
+    if ("shift+tab to" in low or "mode on (shift" in low
+            or "? for shortcuts" in low or "for shortcuts" in low
+            or "/help for help" in low):
+        return "default"
+    return None
 
 
 def parse_reset_delay(text: str, now: "_dt.datetime | None" = None):

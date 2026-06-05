@@ -853,19 +853,24 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > (**CL 56702**)는 구현·제출 완료. 아래는 이후 들어온 요청으로 **아직 미착수**(기록만).
 > #1·#2 패널 DnD 마우스 설계는 확정됨 → [MEMORY] `pytmux-pane-dnd-mouse-design` 참조.
 
-- **[버그 보고, 미구현] 모바일에서 Claude 권한모드 `auto mode` 자동 전환이 안 됨**
-  (2026-06-05 보고) — 모바일(폰)에서 pytmux 로 접속해 쓸 때 권한모드가 **auto mode 로
-  전환되지 않는다**(데스크탑/일반 터미널에선 동작). 관련 자산: 자동 전환은 서버
-  `_maybe_auto_mode`(CL 56591 — idle 시 shift+tab backtab `\x1b[Z` 주입), 수동 목표는
-  `_drive_perm_mode`(CL 56602 — 목표 모드까지 폐루프 주입), footer 관측은 `claude_perm_mode`
-  (화면 파싱: `auto mode on (shift+tab to cycle)`). **추정 원인 후보**: ㉠ 모바일 환경
-  에서 backtab(`\x1b[Z`) 주입이 안 먹거나 인코딩이 달라 모드 순환 자체가 안 일어남,
-  ㉡ 모바일 폰트/렌더로 footer 텍스트가 어긋나 `claude_perm_mode` 파싱이 빗나가 폐루프가
-  목표 도달을 영영 못 봄(계속 주입하거나 아예 시작 안 함), ㉢ 모바일 키 경로(IME/paste)
-  와의 상호작용. **조사 방향**: 모바일 attach 상태에서 `<sock>.capture/pane-*.log` 를
-  pyte 로 재렌더해 footer 줄이 보이는지 + `_maybe_auto_mode`/`_drive_perm_mode` 가 backtab
-  을 실제 주입하는지 로그로 확인. **연관**: 권한모드 자동전환(CL 56591)·footer 클릭
-  팝업/폐루프(CL 56602). **현재는 기록만 — 미구현.**
+- ~~**[버그 보고] 모바일에서 Claude 권한모드 `auto mode` 자동 전환이 안 됨**~~
+  (2026-06-05 보고) → **CL 56761 에서 해결.** **근본 원인**: 자동전환은 전적으로
+  서버 측이다(`_scan_claude` 가 화면 텍스트로 `claude_perm_mode()` 감지 → auto 아니면
+  `_maybe_auto_mode` 가 backtab `\x1b[Z` 를 PTY 에 주입 — 주입·감지 모두 클라 단말
+  무관). 그런데 `claude_perm_mode` 가 **default(일반) 모드를 `"shift+tab to cycle"`
+  문구로만** 잡았는데, 실제 Claude default footer 는 권한 글리프 없이 **`"? for
+  shortcuts"`** 입력 힌트만 그린다(= `claude_state` 의 idle 신호). 그래서 default 에서
+  `claude_perm_mode` 가 `None` 반환 → `_maybe_auto_mode` 가 `mode is None` 으로 조기
+  반환 → **default→auto 전환이 시작조차 못 함**. 폭 무관한 근본 버그였으나, 좁은 폭
+  모바일에서 (auto/plan 글리프 footer 는 줄 앞쪽이라 좁아도 살아남는 반면) Claude 가
+  default 인 상태가 흔해 특히 두드러졌다. 기존 테스트가 default 를 **가짜
+  `"shift+tab to cycle"`** 로 넣어 통과해 거짓 확신을 줬다. **수정**: `claude_perm_mode`
+  가 글리프(⏵⏵/⏸/auto/plan/bypass)를 먼저 판정하고, 글리프 없이 idle 입력 힌트
+  (`"? for shortcuts"`/`"/help for help"`)가 보이면 **default 로 판정**한다 →
+  폐루프가 default 에서 시작. 캡처 로그를 pyte 로 재렌더해 실제 footer 4종 확인,
+  단위/서버 테스트를 실제 `"? for shortcuts"` 로 교체. 231 passed. **서버측 —
+  kill-server 재기동 후 반영.** **연관**: 권한모드 자동전환(CL 56591)·footer 클릭
+  팝업/폐루프(CL 56602).
 - ~~**[UI 요청] 권한모드 선택 팝업을 좌측 정렬 + 'auto mode on' 바로 위에 배치**~~ →
   **CL 56718 에서 해결.** `PermModeScreen` CSS 를 `align: left top` 으로 바꾸고,
   `open_perm_mode` 가 `_perm_zone[pid]` 의 시작 x(`anchor_x`)를 넘겨 `on_mount` 가
@@ -1340,7 +1345,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   자동 키 주입은 사용자가 타이핑 중이면 방해될 수 있으니 idle 확정 시점에만, 패널당
   1회로. 서버/클라 중 어디서 키를 주입할지 결정 필요(상태 권위는 서버, 키 주입 경로는
   클라 `send_input`/서버 PTY write). **구현 완료 — CL 56591(자동전환)/56602(수동
-  목표). 모바일 미동작은 별도 버그(CL 56757)로 추적.**
+  목표). 모바일/default 미동작 버그는 CL 56761 에서 해결(default footer 인식).**
 - ~~**[UI 요청] 패널 출력 캡처(REC) 정보 팝업 — 팝업 바깥을 클릭하면 닫기**~~ →
   **해결** — `InfoScreen.on_click` 이 박스(`#infobox`) 바깥(백드롭) 클릭 시 `dismiss(None)`
   (REC·프롬프트 히스토리·토큰 팝업 공통). 아래는 원 요청·분석.

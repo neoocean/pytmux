@@ -500,9 +500,9 @@ async def test_claude_auto_mode_cycles_to_auto():
             p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
             srv._scan_claude(sess, win)
 
-        scan("shift+tab to cycle")                    # idle, default → 1회
+        scan("? for shortcuts")                       # idle, 실제 default footer → 1회
         assert p._claude == "idle" and sent == [BT], sent
-        scan("shift+tab to cycle")                    # 같은 default → 중복 방지
+        scan("? for shortcuts")                       # 같은 default → 중복 방지
         assert sent == [BT]
         scan("⏸ plan mode on (shift+tab to cycle)")    # plan → 한 번 더
         assert sent == [BT, BT], sent
@@ -522,7 +522,7 @@ async def test_claude_auto_mode_cycles_to_auto():
 
         # _CAM_MAX 가드: 모드가 계속 바뀌어도 최대 _CAM_MAX 회까지만
         sent.clear()
-        modes = ["shift+tab to cycle", "⏸ plan mode on (shift+tab to cycle)"]
+        modes = ["? for shortcuts", "⏸ plan mode on (shift+tab to cycle)"]
         for i in range(_CAM_MAX + 3):
             scan(modes[i % 2])
         assert len(sent) == _CAM_MAX, (len(sent), _CAM_MAX)
@@ -531,7 +531,7 @@ async def test_claude_auto_mode_cycles_to_auto():
         srv.set_claude_auto_mode(False)
         assert p._cam_tries == 0
         sent.clear()
-        scan("shift+tab to cycle")
+        scan("? for shortcuts")
         assert sent == []
     finally:
         try:

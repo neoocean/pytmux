@@ -57,7 +57,13 @@ async def test_claude_perm_mode():
     assert claude_perm_mode("auto-accept edits on (shift+tab to cycle)") == "auto"
     # plan 모드
     assert claude_perm_mode("⏸ plan mode on (shift+tab to cycle)") == "plan"
-    # default: footer 는 보이나 auto/plan/bypass 아님
+    # default: 권한 글리프 없이 idle 입력 힌트만 보이는 일반 모드.
+    # ★실제 Claude default footer 는 "? for shortcuts" 다(이전엔 "shift+tab to cycle"
+    #  만 default 로 잡아 — 실제 footer 엔 그 문구가 없으므로 — None 을 반환했고,
+    #  그래서 default→auto 자동전환이 시작 못 했다. 좁은 폭 모바일 미동작의 근본).
+    assert claude_perm_mode("? for shortcuts · ← for agents") == "default"
+    assert claude_perm_mode("  ? for shortcuts") == "default"
+    assert claude_perm_mode("/help for help, /status for status") == "default"
     assert claude_perm_mode("normal\nshift+tab to cycle") == "default"
     # bypass(위험·명시 모드): 건드리지 않게 별도 분류
     assert claude_perm_mode("bypass permissions on") == "bypass"
