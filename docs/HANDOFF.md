@@ -769,15 +769,6 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > (**CL 56702**)는 구현·제출 완료. 아래는 이후 들어온 요청으로 **아직 미착수**(기록만).
 > #1·#2 패널 DnD 마우스 설계는 확정됨 → [MEMORY] `pytmux-pane-dnd-mouse-design` 참조.
 
-- **[키 요청, 미구현] ESC+숫자를 pytmux 탭 전환으로(앱 특수문자 차단), Shift+ESC+숫자로
-  특수문자 전송** — 패널 안 앱(Claude 등) 텍스트박스에서 ESC+1/2 는 특수문자(Alt+digit
-  =ESC+digit 시퀀스)로 들어간다. pytmux 안에서는 ESC+숫자가 **pytmux 탭 전환**으로
-  동작해야 하고(앱으로 안 샘), 특수문자를 보내려면 **Shift+ESC+숫자**로. 원인 가설:
-  ESC 직후 숫자가 터미널/Textual 에서 **`alt+<digit>` 로 합성**돼 도착 → `escape` 단독
-  이벤트가 안 와 esc 모드 진입을 못 하고 그대로 패널에 전달됨. 대응: `client.py`
-  `on_key` 에서 **`alt+<digit>`** 를 esc-모드 숫자(=`select_window` index digit-1)처럼
-  처리하고, **`shift+alt+<digit>`**(=Shift+ESC+숫자)는 `\x1b<digit>` 를 패널로 전달.
-  분리 도착(느린 입력) 경로는 기존 esc 모드가 이미 처리. **현재는 기록만 — 미구현.**
 - **[UI 요청, 미구현] 권한모드 선택 팝업을 좌측 정렬 + 'auto mode on' 바로 위에 배치** —
   `PermModeScreen`(`clientscreens.py`)은 현재 화면 중앙 정렬. Claude footer 의 `auto
   mode on` 줄 **바로 위쪽 왼쪽**에 뜨도록(이미 `open_perm_mode` 가 `anchor_y` 를 넘김,
