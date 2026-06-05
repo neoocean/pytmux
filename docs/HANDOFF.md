@@ -211,6 +211,16 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 56742 **테스트 격리: 캡처(REC) 디렉터리를 `PYTMUX_CAPTURE_DIR` 임시로 주입**(테스트
+  인프라 버그) — `harness.server_only` 의 테스트 엔드포인트 `tcp:127.0.0.1:0` 이
+  `ipc.default_endpoint()` 와 같아 `server.capture_dir` 가 **공유 프로젝트 `captures/default`**
+  를 가리켰다. 그 결과 **실사용 pytmux 데몬이 같은 파일을 캡처 중일 때** `test_capture_output`
+  이 17MB 짜리 실제 세션 로그를 읽어 깨지고(이번 세션에서 실제 발생), 거대 파일을 읽다
+  전체 스위트가 멈추기도 했다. `server_only` 가 매 서버마다 `PYTMUX_CAPTURE_DIR` 를
+  유니크 임시 디렉터리로 주입(`capture_dir` 가 이 override 우선)해 캡처를 격리하고,
+  `teardown` 이 그 env 를 해제(비-override 동작을 검증하는 `test_capture_dir_project_and_override`
+  에 안 새게)한다. 실사용 `captures/` 오염도 방지. 231 passed. 파일: `tests/harness.py`,
+  `docs/HANDOFF.md`.
 - 56741 **Claude CLI shift+방향키 텍스트 편집 — 전달 검증 + 문서**(§10-A #5) — pytmux
   가 `Shift+Home/End/방향키` 를 표준 xterm `CSI 1;2 X` 로 활성 패널에 손실 없이 전달함을
   코드 경로(`on_key`→`key_to_bytes`)로 확인하고 헤드리스 회귀

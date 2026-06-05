@@ -32,6 +32,13 @@ async def server_only():
         endpoint = "tcp:127.0.0.1:0"
     else:
         endpoint = tempfile.mktemp(suffix=".sock")
+    # 캡처(REC) 출력 격리: 테스트 엔드포인트 "tcp:127.0.0.1:0" 는 default_endpoint()
+    # 와 같아 server.capture_dir 가 **공유 프로젝트 captures/default** 를 가리킨다.
+    # 그러면 실사용 pytmux 데몬이 같은 파일을 캡처 중일 때 test_capture_output 이 그
+    # 17MB 짜리 실제 세션 로그를 읽어 깨진다(테스트 격리 결함). PYTMUX_CAPTURE_DIR 를
+    # 매 서버마다 유니크 임시 디렉터리로 주입해 캡처를 격리한다(capture_dir 가 이
+    # override 를 우선한다). 실사용 captures/ 오염도 막는다.
+    os.environ["PYTMUX_CAPTURE_DIR"] = tempfile.mkdtemp(prefix="pytmux-cap-")
     srv = pytmux.Server(endpoint)
     task = asyncio.create_task(srv.serve())
     # listen 준비 신호: Unix=소켓 파일 생성, TCP=resolved_endpoint 가 실제 포트로 확정.
@@ -76,6 +83,10 @@ async def teardown(srv, task, sock):
     # cancel 만 하고 asyncio.run 의 마무리에 맡긴다.
     cleanup(srv, sock)
     task.cancel()
+    # server_only 가 주입한 캡처 격리 override 를 해제 — 같은 프로세스의 다른
+    # 테스트(capture_dir 의 비-override 동작을 검증하는 test_capture_dir_project_and_override
+    # 등)에 새지 않게 한다.
+    os.environ.pop("PYTMUX_CAPTURE_DIR", None)
 
 
 def pane_text(pane):
