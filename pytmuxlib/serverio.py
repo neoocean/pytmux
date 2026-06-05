@@ -14,7 +14,8 @@ import traceback
 from . import ipc, tokens, usagelog
 from .claude import claude_account, claude_usage
 from .model import ClientConn, Session
-from .protocol import FLUSH_HZ, MIN_H, MIN_W, read_msg, write_msg
+from .protocol import (FLUSH_HZ, MIN_H, MIN_W, frame_msg, read_msg, write_frames,
+                       write_msg)
 
 
 class ServerIOMixin:
@@ -190,25 +191,24 @@ class ServerIOMixin:
                 if not clients:
                     continue
                 status_changed = False
+                # B4: 한 프레임의 screen(+status) 메시지를 프레임 bytes 로 모아두고
+                # 클라마다 한 번에 write+drain 한다(패널/클라 곱만큼의 await/drain 제거).
+                frames = []
                 for p in win.panes():
                     if not p.dirty:
                         continue
                     rows, cursor = p.render(p is win.active_pane)
                     p.dirty = False
-                    msg = {"t": "screen", "pane": p.id,
-                           "rows": rows, "cursor": cursor}
-                    for c in clients:
-                        await write_msg(c.writer, msg)
+                    frames.append(frame_msg({"t": "screen", "pane": p.id,
+                                             "rows": rows, "cursor": cursor}))
                 # 라이브 PTY 팝업 패널(트리 밖)도 dirty 면 스트리밍한다.
                 pu = sess.popup
                 if pu and pu.get("pane") is not None and pu["pane"].dirty:
                     pp = pu["pane"]
                     rows, cursor = pp.render(True)
                     pp.dirty = False
-                    pmsg = {"t": "screen", "pane": pp.id,
-                            "rows": rows, "cursor": cursor}
-                    for c in clients:
-                        await write_msg(c.writer, pmsg)
+                    frames.append(frame_msg({"t": "screen", "pane": pp.id,
+                                             "rows": rows, "cursor": cursor}))
                 # Claude Code 상태/사용량 갱신(+ 비활성 탭 완료 감지, #22).
                 # 새 휴리스틱(프롬프트/토큰/권한모드)이 특정 화면에서 터져도 flush
                 # 루프 전체(=모든 클라 렌더)가 죽지 않게 가드한다(§10 안정성).
@@ -243,9 +243,10 @@ class ServerIOMixin:
                         await self._send_full(c)
                     continue
                 if status_changed:
-                    smsg = self._status_msg(sess)
-                    for c in clients:
-                        await write_msg(c.writer, smsg)
+                    frames.append(frame_msg(self._status_msg(sess)))
+                # 클라마다 이 프레임의 모든 메시지를 한 번에 write+drain(B4).
+                for c in clients:
+                    await write_frames(c.writer, frames)
 
     # ---- 명령 처리 ----
     async def _handle_cmd(self, client: ClientConn, msg: dict):

@@ -41,10 +41,29 @@ async def read_msg(reader: asyncio.StreamReader):
     return json.loads(payload.decode("utf-8"))
 
 
-async def write_msg(writer: asyncio.StreamWriter, obj) -> bool:
+def frame_msg(obj) -> bytes:
+    """obj 를 길이프리픽스 JSON 프레임 bytes 로(write/drain 없음). 여러 메시지를 모아
+    한 번에 write+drain 하려는 배치 송신용(B4)."""
     data = json.dumps(obj).encode("utf-8")
+    return len(data).to_bytes(4, "big") + data
+
+
+async def write_msg(writer: asyncio.StreamWriter, obj) -> bool:
     try:
-        writer.write(len(data).to_bytes(4, "big") + data)
+        writer.write(frame_msg(obj))
+        await writer.drain()
+        return True
+    except (ConnectionError, RuntimeError):
+        return False
+
+
+async def write_frames(writer: asyncio.StreamWriter, frames) -> bool:
+    """이미 프레이밍된 bytes 들을 한 번에 write 하고 drain 1회(B4). flush 한 프레임에서
+    한 클라로 갈 여러 screen+status 를 모아 보낼 때 await/drain 왕복을 줄인다."""
+    if not frames:
+        return True
+    try:
+        writer.write(b"".join(frames))
         await writer.drain()
         return True
     except (ConnectionError, RuntimeError):

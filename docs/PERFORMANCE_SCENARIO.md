@@ -127,7 +127,7 @@ output_flood 의 `render_ms_frame`·`json KiB/frame` 으로 효과 정량화.
 
 ### B3. `render()` 셀 직렬화 비용 절감 (스타일 키 캐시 ✅ / dirty 줄은 B2와 함께)
 
-> **구현(스타일 키 캐시, CL 56NNN)**: 셀마다 dict 생성 + `tuple(sorted(...))` 하던 것을
+> **구현(스타일 키 캐시, CL 56805)**: 셀마다 dict 생성 + `tuple(sorted(...))` 하던 것을
 > 모듈 `@lru_cache _style_key(fg,bg,bold,…)` 로 메모이즈. 셀 1만개 스타일키 2.12ms→1.08ms
 > (≈render 비용의 1/3 구간을 절반으로 → render 약 25–33% 단축) + 셀당 dict/tuple 할당
 > 제거(GC 부담↓, 출력 폭증 시 유리). 측정상 render 잔여 비용은 **셀당 Python 루프**
@@ -154,7 +154,14 @@ output_flood 의 `render_ms_frame`·`json KiB/frame` 으로 효과 정량화.
 캐시하면 화면이 갱신 안 됨. 회귀: dirty 줄 외 변경이 새 나가지 않는지 + 스크롤·검색
 하이라이트(`_match_abs`, `model.py:634`) 경로 골든 비교.
 
-### B4. flush 메시지 배치 + `drain()` 1회
+### B4. flush 메시지 배치 + `drain()` 1회 — ✅ 구현(CL 56806)
+
+> **구현**: `protocol.frame_msg(obj)`(프레이밍만)·`write_frames(writer, frames)`(일괄
+> write+drain 1회) 추가. `_flush_loop` 이 한 프레임의 screen(+status) 들을 frame bytes
+> 로 모아 클라마다 한 번에 write+drain → 패널×클라 곱만큼의 await/drain 왕복 제거.
+> read_msg 는 길이프리픽스라 연결된 프레임을 그대로 순차 파싱(클라 변경 불필요).
+> (`_send_full` 은 first-paint 위해 배치 대신 A3 의 active-first 증분 송신과 함께 다룸.)
+
 
 **현상/근거**: `write_msg` 는 메시지마다 `await writer.drain()` 한다
 (`protocol.py` write_msg). flush 는 **패널마다·클라마다** `await write_msg(...)` 를
