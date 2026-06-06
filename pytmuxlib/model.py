@@ -360,6 +360,13 @@ class Pane:
         self._idle_frames = 0
         self._feedback_seen = False  # 세션 피드백 프롬프트 자동 Dismiss 디바운스(#26)
         self._rules_pending = False  # 시작 규칙 주입 예약(다음 idle 에 1회, #27)
+        # 토큰 절감 자동화(docs/TOKEN_SAVING_SCENARIO.md). 둘 다 휘발성(재시작 비직렬화).
+        # _resume_handle: 자동재개 예약 call_later 핸들 — busy 복귀 시 cancel 하려고
+        #   들고 있는다(M12; 없으면 None). _ctx_fired: 컨텍스트 잔량 자동 정리(M11)가
+        #   이번 저잔량 구간에 이미 발화했는지 — 잔량이 임계+히스테리시스 위로 회복하거나
+        #   새 세션이 시작될 때까지 재발화를 막는다.
+        self._resume_handle = None
+        self._ctx_fired = False
         # _layout_msg 가 이 패널에 Claude 헤더 한 행을 예약했는지(#1). 예약 유무가
         # 바뀌면 flush 루프가 레이아웃(PTY 리사이즈 포함)을 다시 보낸다.
         self._hdr_reserved = False
@@ -407,6 +414,8 @@ class Pane:
         self.dirty = True
         self._scanbuf = ""
         self._resume_pending = False
+        self._resume_handle = None   # 자동재개 예약 핸들 리셋(M12; 타이머는 자가만료)
+        self._ctx_fired = False      # 컨텍스트 잔량 자동 정리 디바운스 리셋(M11)
         self._tok_state = {"peak": 0, "total": 0}
         self._session_tokens = 0
         self._claude_session_id = 0

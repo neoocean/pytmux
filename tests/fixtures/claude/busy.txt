@@ -1,0 +1,5 @@
+ ⏺ Searching the codebase…
+
+ ✽ Crunching… (38s · ↓ 1.9k tokens · esc to interrupt)
+
+ > implement the parser

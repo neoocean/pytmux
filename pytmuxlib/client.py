@@ -13,14 +13,15 @@ import time
 from . import ipc, proc, usagelog
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS, DEFAULT_STYLE,
-    MENU_ITEMS, MENU_TOGGLES, SPECIAL, _CLOCK_FONT, _DATE_STRFTIME, _JAMO,
-    _KEY_DIAG, _ONOFF, _TIME_STRFTIME, _char_cells, _darken_style, _fmt_tokens,
-    _is_emoji, has_hangul, hangul_to_qwerty,
+    MENU_ITEMS, MENU_TOGGLES, SAVER_CYCLES, SPECIAL, _CLOCK_FONT,
+    _DATE_STRFTIME, _JAMO, _KEY_DIAG, _ONOFF, _TIME_STRFTIME, _char_cells,
+    _darken_style, _fmt_tokens, _is_emoji, has_hangul, hangul_to_qwerty,
     _normalize_key, _shell_argv, key_to_bytes, make_style, theme_color)
 from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 사용)
-    ChooseBufferScreen, ChooseLayoutScreen, ChooseTreeScreen, CommandListScreen,
-    CommandOptionsScreen, ConfirmScreen, InfoScreen, InfoTabsScreen, MenuScreen,
-    PermModeScreen, PromptScreen, RulesEditScreen, TokenLogScreen)
+    ChooseBufferScreen, ChooseLayoutScreen, ChooseTreeScreen, ClaudeSaverScreen,
+    CommandListScreen, CommandOptionsScreen, ConfirmScreen, InfoScreen,
+    InfoTabsScreen, MenuScreen, PermModeScreen, PromptScreen, RulesEditScreen,
+    TokenLogScreen)
 from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose 에서 사용)
     MultiplexerView, StatusBar, TabBar)
 from .keymap import _key_to_ctrl_bytes, _tmux_key_to_textual, load_config
@@ -508,6 +509,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 ms = getattr(self, "_menu_screen", None)
                 if ms is not None:
                     ms.refresh_labels()
+                # 토큰 절감 설정 팝업이 열려 있으면 토글/값 라벨을 권위값으로 갱신
+                ss = getattr(self, "_saver_screen", None)
+                if ss is not None:
+                    ss.refresh_labels()
                 self._update_claude(msg.get("panes_claude", []))
                 self._update_tabbar()
                 if self.set_titles:
@@ -1844,6 +1849,93 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif key == "kill_server":
                 self.send_cmd("kill_server")
 
+        # ---- 토큰 절감 설정 팝업(token-saver, docs/TOKEN_SAVING_SCENARIO.md) ----
+        def open_claude_saver(self):
+            self.push_screen(ClaudeSaverScreen())
+
+        @staticmethod
+        def _fmt_budget(v):
+            if not v:
+                return "끔(무제한)"
+            if v >= 1_000_000:
+                return f"{v / 1_000_000:.1f}M".replace(".0M", "M")
+            if v >= 1_000:
+                return f"{v // 1000}k"
+            return str(v)
+
+        def _saver_display(self, key):
+            """설정 팝업의 한 행이 보일 현재값 문자열(토글 ●/○ 또는 cycle 값)."""
+            st = self.status
+            bools = {
+                "autoresume": st.autoresume,
+                "resume_gate": st.token_budget_resume_gate,
+                "ctx_autoclear": st.claude_ctx_autoclear,
+                "auto_doc_clear": st.auto_doc_clear,
+                "claude_auto_mode": st.claude_auto_mode,
+                "prompt_clear": st.prompt_clear,
+            }
+            if key in bools:
+                return "●" if bools[key] else "○"
+            if key == "ctx_action":
+                return "/compact" if st.claude_ctx_action == "compact" \
+                    else "doc+/clear"
+            if key == "ctx_threshold":
+                return f"잔량<{st.claude_ctx_threshold}%"
+            if key == "budget_day":
+                return self._fmt_budget(st.token_budget_day)
+            if key == "budget_session":
+                return self._fmt_budget(st.token_budget_session)
+            return ""
+
+        @staticmethod
+        def _cycle_next(key, cur):
+            vals = SAVER_CYCLES[key]
+            try:
+                i = vals.index(cur)
+            except ValueError:
+                i = -1
+            return vals[(i + 1) % len(vals)]
+
+        def _saver_action(self, key):
+            """설정 팝업에서 한 행을 Enter — 동작을 서버로 보내고 status 를 낙관적으로
+            즉시 반영한다(서버 broadcast 가 권위값으로 확정). 토글은 set_* 를 인자
+            없이(서버가 반전), cycle 은 다음 프리셋 값을 보낸다."""
+            st = self.status
+            if key == "autoresume":
+                self.send_cmd("set_autoresume")
+                st.autoresume = not st.autoresume
+            elif key == "resume_gate":
+                self.send_cmd("set_token_budget_resume_gate")
+                st.token_budget_resume_gate = not st.token_budget_resume_gate
+            elif key == "ctx_autoclear":
+                self.send_cmd("set_claude_ctx_autoclear")
+                st.claude_ctx_autoclear = not st.claude_ctx_autoclear
+            elif key == "auto_doc_clear":
+                self.send_cmd("set_auto_doc_clear", value=None)
+                st.auto_doc_clear = not st.auto_doc_clear
+            elif key == "claude_auto_mode":
+                self.send_cmd("set_claude_auto_mode", value=None)
+                st.claude_auto_mode = not st.claude_auto_mode
+            elif key == "prompt_clear":
+                self.send_cmd("set_prompt_clear", value=None)
+                st.prompt_clear = not st.prompt_clear
+            elif key == "ctx_action":
+                nxt = self._cycle_next("ctx_action", st.claude_ctx_action)
+                self.send_cmd("set_claude_ctx_action", value=nxt)
+                st.claude_ctx_action = nxt
+            elif key == "ctx_threshold":
+                nxt = self._cycle_next("ctx_threshold", st.claude_ctx_threshold)
+                self.send_cmd("set_claude_ctx_threshold", value=nxt)
+                st.claude_ctx_threshold = nxt
+            elif key == "budget_day":
+                nxt = self._cycle_next("budget_day", st.token_budget_day)
+                self.send_cmd("set_token_budget", day=nxt)
+                st.token_budget_day = nxt
+            elif key == "budget_session":
+                nxt = self._cycle_next("budget_session", st.token_budget_session)
+                self.send_cmd("set_token_budget", session=nxt)
+                st.token_budget_session = nxt
+
         # ---- 프롬프트 / 명령 ----
         def display_message(self, text, secs=2.0):
             self.status.message = text
@@ -2371,6 +2463,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 arg = args[0].lower() if args else "toggle"
                 val = (arg == "on") if arg in ("on", "off") else None
                 self.send_cmd("set_prompt_clear", value=val)
+            elif c in ("token-saver", "claude-settings", "token-settings"):
+                # 토큰 절감 설정 팝업 — 각 자동 개입 토글·잔량 임계·예산(설정 팝업).
+                self.open_claude_saver()
             elif c in ("auto-doc-clear", "auto-doc"):
                 # auto-doc-clear [on|off|toggle] — Claude 가 idle 로 30초 지속되면
                 # 자동으로 문서화→/clear 를 1회 수행(§10). 서버 전역 토글, opts 영속.

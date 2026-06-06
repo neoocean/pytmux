@@ -18,7 +18,7 @@ from textual.widgets import Input, Label, ListItem, ListView, TextArea
 
 from . import usagelog
 from .clientutil import (COMMAND_FREETEXT, COMMAND_NOARG, COMMAND_OPTIONS,
-                         COMMANDS, MENU_ITEMS, MENU_TOGGLES,
+                         COMMANDS, MENU_ITEMS, MENU_TOGGLES, SAVER_ROWS,
                          has_hangul, hangul_to_qwerty)
 
 
@@ -364,6 +364,62 @@ class MenuScreen(ModalScreen):
         if event.key == "escape":
             event.stop()
             self.dismiss(None)
+
+class ClaudeSaverScreen(ModalScreen):
+    """토큰 절감 설정 팝업(docs/TOKEN_SAVING_SCENARIO.md, `token-saver` 명령).
+
+    각 자동 개입을 ●/○ 로 토글하고, 정리 방식·잔량 임계·일/세션 예산을 Enter 로
+    프리셋 순환한다. ESC 로 닫는다. MenuScreen 과 같은 위임 구조 — 현재값/동작은
+    app._saver_display/_saver_action 이 처리하고(앱 상태 의존), 서버 status 회신마다
+    refresh_labels 로 권위값을 다시 그린다(client.py 의 _saver_screen 훅)."""
+    CSS = """
+    ClaudeSaverScreen { align: center middle; background: $background 80%; }
+    #saver { width: 64; height: auto; max-height: 90%;
+             border: round $accent; background: $panel; }
+    #saver_hint { color: $text-muted; }
+    """
+
+    def compose(self) -> ComposeResult:
+        self._labels = {}
+        items = []
+        for key, label, _kind in SAVER_ROWS:
+            lab = Label(self._fmt(key, label))
+            self._labels[key] = (lab, label)
+            items.append(ListItem(lab, id=f"s_{key}"))
+        items.append(ListItem(Label("Enter 토글/순환 · ESC 닫기", id="saver_hint"),
+                              id="s__hint", disabled=True))
+        yield ListView(*items, id="saver")
+
+    def _fmt(self, key, label):
+        return f"{label}   {self.app._saver_display(key)}"
+
+    def refresh_labels(self):
+        for key, (lab, base) in getattr(self, "_labels", {}).items():
+            lab.update(self._fmt(key, base))
+
+    def on_mount(self):
+        self.query_one(ListView).focus()
+        self.app._saver_screen = self
+
+    def on_unmount(self):
+        if getattr(self.app, "_saver_screen", None) is self:
+            self.app._saver_screen = None
+
+    def on_list_view_selected(self, event):
+        item_id = event.item.id or ""
+        if not item_id.startswith("s_") or item_id == "s__hint":
+            return
+        key = item_id[2:]
+        # 토글/순환은 팝업을 닫지 않고 동작만 보낸 뒤 라벨을 낙관적으로 갱신한다
+        # (_saver_action 이 status 를 즉시 반영). 서버 broadcast 가 권위값으로 확정.
+        self.app._saver_action(key)
+        self.refresh_labels()
+
+    def on_key(self, event: events.Key):
+        if event.key == "escape":
+            event.stop()
+            self.dismiss(None)
+
 
 class ChooseTreeScreen(ModalScreen):
     CSS = """

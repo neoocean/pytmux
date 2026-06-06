@@ -139,6 +139,18 @@ class ServerIOMixin:
             "claude_header": self.claude_header,
             "single_border": self.single_border,
             "claude_rules": self.claude_rules,   # #27 시작 규칙(에디터 초기값용)
+            # 토큰 절감 설정(설정 팝업 토글 현재값 + 예산 경고). 전역 opts 그대로,
+            # budget_level 은 일/세션 예산 대비 경고 레벨(0/80/100, M10).
+            "auto_doc_clear": self.auto_doc_clear,
+            "claude_auto_mode": self.claude_auto_mode,
+            "claude_ctx_autoclear": self.claude_ctx_autoclear,
+            "claude_ctx_threshold": self.claude_ctx_threshold,
+            "claude_ctx_action": self.claude_ctx_action,
+            "token_budget_day": self.token_budget_day,
+            "token_budget_session": self.token_budget_session,
+            "token_budget_resume_gate": self.token_budget_resume_gate,
+            "budget_level": self._budget_level_for(
+                win.active_pane if win else None),
         }
 
     async def _send_full(self, client: ClientConn):
@@ -452,6 +464,21 @@ class ServerIOMixin:
             self.set_auto_doc_clear(msg.get("value"))
         elif action == "set_claude_auto_mode":
             self.set_claude_auto_mode(msg.get("value"))
+        elif action == "set_claude_ctx_autoclear":   # M11 잔량 자동 정리 토글
+            self.set_claude_ctx_autoclear(msg.get("value"))
+            self._broadcast_session(sess)
+        elif action == "set_claude_ctx_action":      # M11 정리 방식(compact/doc-clear)
+            self.set_claude_ctx_action(str(msg.get("value", "")))
+            self._broadcast_session(sess)
+        elif action == "set_claude_ctx_threshold":   # M11 잔량 임계(%)
+            self.set_claude_ctx_threshold(msg.get("value"))
+            self._broadcast_session(sess)
+        elif action == "set_token_budget":           # M10 일/세션 예산
+            self.set_token_budget(day=msg.get("day"), session=msg.get("session"))
+            self._broadcast_session(sess)
+        elif action == "set_token_budget_resume_gate":   # M12 예산 게이트 토글
+            self.set_token_budget_resume_gate(msg.get("value"))
+            self._broadcast_session(sess)
         elif action == "set_claude_rules":      # #27 시작 규칙 저장(영속)
             self.set_claude_rules(msg.get("text", ""))
             self._broadcast_session(sess)       # status 로 새 규칙 회신

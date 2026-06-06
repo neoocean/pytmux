@@ -291,6 +291,30 @@ MENU_ITEMS = [
 # 토글 메뉴 항목(현재 on/off 표시·선택해도 메뉴 안 닫음). 상태는 status 에서 읽음.
 MENU_TOGGLES = {"zoom", "sync", "autoresume", "prompt_clear"}
 
+# 토큰 절감 설정 팝업(`token-saver` 명령, docs/TOKEN_SAVING_SCENARIO.md)의 행 목록.
+# (key, 라벨, 종류). 종류 "toggle"=●/○ 토글, "cycle"=프리셋 값 순환(Enter 로 다음
+# 값). 현재값·동작은 client.py 의 _saver_display/_saver_action 이 처리한다(앱 상태
+# 의존이라 화면이 직접 안 들고, MenuScreen 이 _run_menu_action 에 위임하는 것과 동일).
+SAVER_ROWS = [
+    ("autoresume", "토큰리밋 자동재개", "toggle"),
+    ("resume_gate", "예산 초과 시 자동재개 보류", "toggle"),
+    ("ctx_autoclear", "컨텍스트 잔량 부족 시 자동 정리", "toggle"),
+    ("ctx_action", "  └ 정리 방식", "cycle"),
+    ("ctx_threshold", "  └ 잔량 임계", "cycle"),
+    ("auto_doc_clear", "idle 지속 시 자동 문서화+/clear", "toggle"),
+    ("claude_auto_mode", "권한모드 자동 오토", "toggle"),
+    ("prompt_clear", "프롬프트 단위 클리어(완료마다 doc+/clear)", "toggle"),
+    ("budget_day", "일 토큰 예산", "cycle"),
+    ("budget_session", "세션 토큰 예산", "cycle"),
+]
+# cycle 행의 프리셋 값(Enter 마다 다음으로 순환). 예산 0=무제한(끔).
+SAVER_CYCLES = {
+    "ctx_action": ["compact", "doc-clear"],
+    "ctx_threshold": [10, 15, 20, 25, 30],
+    "budget_day": [0, 100_000, 200_000, 500_000, 1_000_000],
+    "budget_session": [0, 50_000, 100_000, 200_000, 500_000],
+}
+
 # 명령 프롬프트(:)에서 쓸 수 있는 명령 목록 (이름, 설명) — ? 목록·자동완성용
 # (이름, 설명, 카테고리). 카테고리는 ?/help 목록의 탭 그룹으로 쓰인다.
 # 새 명령을 추가할 땐 카테고리도 함께 지정할 것(없으면 "기타"로 묶임).
@@ -365,6 +389,7 @@ COMMANDS = [
     ("prompt-clear-message", "프롬프트 단위 클리어의 문서화 지시문 변경", "Claude"),
     ("prompt-clear-queue", "프롬프트 단위 클리어 큐에 명령 쌓기(빈값=목록, -c=비움)", "Claude"),
     ("claude-rules", "Claude 시작 규칙 편집(저장 시 새 세션/clear 후 프롬프트에 자동 주입)", "Claude"),
+    ("token-saver", "토큰 절감 설정 팝업 — 각 자동 개입 토글·잔량 임계·예산(별칭 claude-settings, token-settings)", "Claude"),
     ("auto-doc-clear", "Claude idle 30초 지속 시 자동 문서화+/clear on/off (auto-doc-clear on|off|toggle)", "Claude"),
     ("claude-auto-mode", "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off (claude-auto-mode on|off|toggle)", "Claude"),
     ("run-shell", "셸 명령 실행", "설정/기타"),
@@ -446,7 +471,7 @@ COMMAND_NOARG = {
     "show-options", "show-hooks", "source-file", "clock-mode",
     "calendar-mode", "open-clock", "close-clock", "open-calendar",
     "close-calendar", "prompt-history", "token-usage", "token-log",
-    "list-keys", "send-escape", "claude-rules",
+    "list-keys", "send-escape", "claude-rules", "token-saver",
 }
 # 자유 텍스트 인자를 받는 명령 — 명령 프롬프트에서 명령을 다 치면 인자 자리에 밑줄
 # (____)을 그려 "여기에 인자를 입력" 임을 알린다(사용자 요청). 선택지형(COMMAND_OPTIONS)

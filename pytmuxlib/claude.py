@@ -111,6 +111,36 @@ def claude_usage(text: str):
     return None
 
 
+def claude_context_pct(text: str):
+    """Claude Code 화면에서 **컨텍스트 잔량(headroom) %**를 best-effort 추출(int|None).
+
+    `claude_usage` 가 표시용 문자열("ctx 23%")을 내는 것과 달리, 이 함수는 **자동
+    정리 트리거(M11)에 쓸 숫자**를 낸다. 같은 `_CTX_PCT_RES` 정규식을 재사용하므로
+    표시값과 일관된다.
+
+    **의미 규약**: 반환값은 "남은 여유 %"로 해석한다 — **작을수록 컨텍스트가 꽉 참**.
+    Claude Code 의 세 표기를 모두 이 의미로 본다:
+      · "context left/remaining N%"  → N = 남은 여유(작을수록 참)
+      · "N% until auto-compact"      → N = 압축까지 남은 %(작을수록 곧 압축=참)
+      · "auto-compact … N%"          → 위와 동일 계열로 취급
+    따라서 호출부(M11)는 **값 < 임계** 일 때 정리를 발화한다. 못 찾으면 None 을 내고,
+    호출부는 None 을 0%로 오해하지 말고 발화를 보류해야 한다(§5.5 미동작 편향).
+
+    **주의(휴리스틱)**: "사용 %"(used)와 "잔량 %"(left)가 화면에서 반대 의미인데,
+    현행 정규식은 left/remaining/until-compact 계열만 잡는다. Claude 가 "82% used"
+    같은 표기를 쓰면 의미가 뒤집히므로 골든 픽스처(tests/fixtures/claude)로 실제
+    표기를 회귀 고정한다(docs/TOKEN_SAVING_SCENARIO.md §7)."""
+    for rx in _CTX_PCT_RES:
+        m = rx.search(text)
+        if m:
+            try:
+                v = int(m.group(1))
+            except (TypeError, ValueError):
+                return None
+            return v if 0 <= v <= 100 else None
+    return None
+
+
 # ---- 계정 식별(토큰 로깅 계정별 구분, docs/HANDOFF.md §10 #7) ----
 # Claude Code 의 /status·로그인 배너·푸터에 보이는 이메일/플랜으로 계정을 추정한다.
 # 화면 텍스트만 보므로 휴리스틱이고, 못 찾으면 None(서버가 "unknown" 으로 적는다).

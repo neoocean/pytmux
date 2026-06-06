@@ -1,0 +1,4 @@
+ ⏺ Model: claude-opus-4-8 (1M context)
+
+ ⏵⏵ auto mode on (shift+tab to cycle)
+ ? for shortcuts

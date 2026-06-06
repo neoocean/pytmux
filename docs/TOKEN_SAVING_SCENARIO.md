@@ -1,8 +1,10 @@
 # Claude Code 토큰 과사용 자동 회피 — 개입 시나리오
 
-> **상태**: 📝 설계 시나리오(미구현 제안). 본 문서는 pytmux 안에서 Claude Code 를
-> 돌릴 때 **토큰 과사용을 자동으로 회피**하기 위해 ① 무엇을 개입할 수 있고 ② 그 개입을
-> 어떻게 **안전하게** 자동화하는지를 코드 근거 기반으로 정리한다. 각 전략은
+> **상태**: 🟢 **M8~M12 구현 완료**(아래 §6 로드맵 표 참조, `tests/test_token_saver.py`
+> 11케이스 + 골든 픽스처). 설정은 전역 opts(opts.json 영속)이고 `token-saver` 명령
+> (별칭 `claude-settings`/`token-settings`)으로 **설정 팝업**을 열어 각 개입을 토글
+> 한다. 모든 자동 개입은 **기본 OFF**(옵트인). 본 문서는 ① 무엇을 개입할 수 있고
+> ② 그 개입을 어떻게 **안전하게** 자동화하는지를 코드 근거 기반으로 정리한다. 각 전략은
 > `file:line` 근거·재사용할 기존 1차 함수·안전 게이트·위험·검증 게이트를 갖는다.
 > 관련: [IMPROVEMENT_OPPORTUNITIES.md](IMPROVEMENT_OPPORTUNITIES.md) §3(Claude 자동화
 > 공백) · [HANDOFF.md](HANDOFF.md) §10(LLM 친화) · [PERFORMANCE_SCENARIO.md](PERFORMANCE_SCENARIO.md)
@@ -245,18 +247,35 @@ plan 유도는 opt-in 이고 idle 한정.
 기존 진행(M1~M7, IMPROVEMENT §진행현황)을 잇는 번호. 각 단계 `tests/run.py`(현재 17개
 테스트 파일) 통과 + 골든 픽스처 추가가 머지 조건.
 
-| MS | 내용 | 등급 | 위험 | 핵심 파일 |
-|---|---|---|---|---|
-| **M8** | 골든 픽스처 수집(실 Claude limit/ctx/busy/idle 화면 캡처) + `claude.py` 정규식 회귀 고정 | — | 낮음 | `tests/fixtures/claude/*`, `tests/test_claude.py` |
-| **M9** | `claude_context_pct` 숫자 파서(잔량 vs 사용 의미 확정) + 단위 테스트 | 0 | 낮음 | `claude.py` |
-| **M10** | T2 ① 예산 opt + 누계 비교 + **알림만**(헤더/상태줄 경고) | 0 | 낮음 | `server.py`, `serverclaude.py`, `serverio.py` |
-| **M11** | T1 잔량% 기반 자동 정리(기본 OFF opt) — 기존 `_adc`/`_pc_advance` 재사용 | 3 | 중 | `serverclaude.py` |
-| **M12** | T4 자동재개 예약 취소 경로 + 카운트다운/취소 힌트 + T2 예산 게이트 | 3 | 낮음 | `serverclaude.py`, `client.py` |
-| **M13** | T3 권한모드 plan 유도(예산 압박, opt-in) + 모델 과선택 힌트 | 1 | 낮음 | `serverclaude.py` |
-| **M14** | T1/T2 자동 동작 단계 승격(알림→자동, 기본 OFF 유지) + 빈도 상한 | 3 | 중 | `serverclaude.py` |
+| MS | 내용 | 등급 | 위험 | 핵심 파일 | 상태 |
+|---|---|---|---|---|---|
+| **M8** | 골든 픽스처(합성, 실캡처 보강 TODO) + `claude.py` 회귀 고정 | — | 낮음 | `tests/fixtures/claude/*`, `tests/test_token_saver.py` | ✅ |
+| **M9** | `claude_context_pct` 숫자 파서(잔량=headroom, 작을수록 참) + 단위 테스트 | 0 | 낮음 | `claude.py:114` | ✅ |
+| **M10** | 예산 opt(일/세션) + 누계 추적 + **알림만**(상태줄 ⚠예산 경고) | 0 | 낮음 | `server.py`(`_budget_track`), `serverclaude.py`(`_budget_level_for`), `clientwidgets.py` | ✅ |
+| **M11** | 잔량%<임계 자동 정리(기본 OFF) — `/compact`(기본) 또는 doc→/clear(`_pc_advance` 재사용) | 3 | 중 | `serverclaude.py`(`_ctx_intervene`, `_scan_claude` 완료경계) | ✅ |
+| **M12** | 자동재개 예약 취소 경로(`_cancel_resume`) + 예산 게이트(`_fire_resume`) | 3 | 낮음 | `serverclaude.py` | ✅ |
+| **M13** | T3 권한모드 plan 유도(예산 압박, opt-in) + 모델 과선택 힌트 | 1 | 낮음 | `serverclaude.py` | ⏳ 후속 |
+| **M14** | 빈도 상한 + 카운트다운/취소 힌트 UI + 실 limit 골든 캡처 보강 | 3 | 중 | `serverclaude.py`, `client.py` | ⏳ 후속 |
 
-> 순서 원칙: **감지 정확도(M8·M9)를 먼저 고정**한 뒤에야 비가역 자동화(M11·M14)를
-> 켠다(§5.4). M10(알림)은 위험 0 이라 먼저 가치를 낸다.
+> 순서 원칙: **감지 정확도(M8·M9)를 먼저 고정**한 뒤에야 비가역 자동화(M11)를
+> 켠다(§5.4). M10(알림)은 위험 0. 모든 자동 개입은 **기본 OFF**, `token-saver` 팝업
+> 으로 옵트인. **남은 후속(M13·M14)**: plan 유도·모델 힌트(T3), 정리 빈도 상한,
+> 카운트다운 UI, **실 Claude limit 화면 골든 캡처**(M8 의 가장 중요한 보강 — 현재
+> 픽스처는 문서화 포맷 합성이라 실화면 검증은 미완, `tests/fixtures/claude/README.md`).
+
+### 구현 메모(설정·동작 요약)
+- **설정 팝업**: `token-saver`(별칭 `claude-settings`·`token-settings`) → `ClaudeSaverScreen`.
+  ●/○ 토글 + 정리방식/잔량임계/일·세션예산 프리셋 순환(Enter), ESC 닫기. 전역 opts,
+  status 회신마다 권위값 갱신(`clientscreens.py` `_saver_screen` 훅). 행: 자동재개·
+  예산재개보류·잔량자동정리·정리방식·잔량임계·auto-doc-clear·권한자동·프롬프트클리어·
+  일예산·세션예산.
+- **M11 발화 시점**: busy→idle(응답 완료) 경계 — 사용자가 타이핑 중이 아니고 다음
+  비싼 턴 직전이라 가장 값싼 정리 시점. 디바운스(`_ctx_fired`)는 잔량이 임계+5%p 위로
+  회복하거나 새 세션 시작 시 해제(compact 무효 시 매 응답 무한 정리 방지).
+- **M11 우선순위**: 잔량 정리가 auto-doc-clear(시간 기반)보다 먼저(잔량 부족이 더 시급).
+- **M10 누계**: 확정 토큰(`step` committed>0) append **전에** 추적(이중계산 방지). 기동
+  시 로그에서 오늘 누계 시드(재시작 정합), 자정 넘김 0 리셋. best-effort(화면 토큰 합)라
+  하드 차단 아님 — 경고 + 자동개입 보류용.
 
 ---
 

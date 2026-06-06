@@ -92,6 +92,29 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         # 규칙" 텍스트. 새 Claude 세션이 뜨면(또는 pytmux 가 /clear 한 뒤) 이 텍스트를
         # 프롬프트에 주입한다(빈 문자열이면 아무것도 안 함). opts.json 영속.
         self.claude_rules = str(_opts.get("claude_rules", ""))
+        # ---- 토큰 절감 자동화(docs/TOKEN_SAVING_SCENARIO.md) — 모두 전역·영속 ----
+        # M11 컨텍스트 잔량 기반 자동 정리: idle 패널의 컨텍스트 잔량(claude_context_pct)
+        # 이 claude_ctx_threshold(%) 밑으로 떨어지면 1회 정리한다. action=정리 방식
+        # ("compact"=네이티브 /compact 요약, 연속성 유지 / "doc-clear"=문서화→/clear
+        # 완전 초기화). 기본 OFF·기본 /compact(비가역성 낮음). idle/발화직전 재확인/
+        # 최근입력 연기/busy 취소 게이트는 _scan_claude 가 적용(§5).
+        self.claude_ctx_autoclear = bool(_opts.get("claude_ctx_autoclear", False))
+        self.claude_ctx_threshold = int(_opts.get("claude_ctx_threshold", 15))
+        self.claude_ctx_action = str(_opts.get("claude_ctx_action", "compact"))
+        # M10 토큰 예산: 일/세션 누계가 이 값을 넘으면 경고(0=무제한). 누계는 화면
+        # 토큰 합(best-effort)이라 하드 차단이 아니라 알림·자동개입 보류용이다(§5.5).
+        self.token_budget_day = int(_opts.get("token_budget_day", 0))
+        self.token_budget_session = int(_opts.get("token_budget_session", 0))
+        # M12 자동재개 예산 게이트: 켜면 예산 초과 시 자동재개(continue 주입)를 보류
+        # 한다(사용자 수동 재개는 가능). 기본 OFF(autoresume 동작 불변).
+        self.token_budget_resume_gate = bool(
+            _opts.get("token_budget_resume_gate", False))
+        # M10 일 예산 누계(in-memory, best-effort). 첫 확정 이벤트에서 로그로부터
+        # 오늘 누계를 시드(재시작 정합)하고 이후 메모리로 증분, 자정 넘김 시 0 리셋.
+        # _budget_level: 일 예산 기준 경고 레벨(0/80/100), status 로 클라에 전달.
+        self._today_tokens = None
+        self._today_key = None
+        self._budget_level = 0
 
     # ---- 데몬 부트스트랩 세션 ----
     def ensure_default_session(self, cols: int, rows: int) -> Session:
@@ -205,11 +228,51 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
 
     def _log_tokens(self, sess: Session, tab: Tab, pane: Pane, amount: int):
         """응답 한 건의 확정 토큰을 JSONL 로그에 append(tokens.step committed>0 이벤트)."""
+        # M10 예산 추적은 append **전에** — 시드(_seed_today_from_log)가 이번 레코드를
+        # 아직 포함하지 않은 상태에서 prior 누계를 읽고 amount 를 더하게 해 이중계산을
+        # 피한다(append 후 시드하면 방금 쓴 레코드가 시드에 섞여 중복).
+        self._budget_track(amount)
         rec = usagelog.make_record(
             ts=time.time(), tab=tab.index, pane=pane.id,
             session=pane._claude_session_id, account=pane._claude_account,
             tokens=amount)
         usagelog.append(self.tokens_log_path, rec)
+
+    def _seed_today_from_log(self, key: str) -> int:
+        """오늘 버킷 키에 해당하는 로그 레코드 토큰 합(서버 기동 시 1회 시드용, M10)."""
+        try:
+            recs = usagelog.read(self.tokens_log_path)
+        except OSError:
+            return 0
+        return sum(int(r.get("tokens", 0)) for r in recs
+                   if usagelog.bucket_key(r.get("ts", 0.0), "day") == key)
+
+    def _budget_track(self, amount: int):
+        """확정 토큰을 오늘 누계에 더하고 일 예산 경고 레벨을 갱신한다(M10).
+        예산이 둘 다 0(무제한)이면 누계 추적을 건너뛰고 레벨 0."""
+        if self.token_budget_day <= 0 and self.token_budget_session <= 0:
+            self._budget_level = 0
+            return
+        key = usagelog.bucket_key(time.time(), "day")
+        if self._today_key != key:
+            # 첫 호출(기동)이면 로그에서 오늘 누계 시드 — 재시작 후에도 일 예산이
+            # 이어진다. 자정 넘김(_today_key 이미 있음)이면 새 날이라 0 에서 시작.
+            self._today_tokens = (self._seed_today_from_log(key)
+                                  if self._today_key is None else 0)
+            self._today_key = key
+        self._today_tokens += max(0, int(amount))
+        self._refresh_budget_level()
+
+    def _refresh_budget_level(self):
+        """일 예산 대비 경고 레벨(0/80/100)을 _budget_level 에 캐시한다."""
+        lvl = 0
+        day = self.token_budget_day
+        if day > 0 and self._today_tokens is not None:
+            if self._today_tokens >= day:
+                lvl = 100
+            elif self._today_tokens >= day * 0.8:
+                lvl = 80
+        self._budget_level = lvl
 
     def set_claude_account(self, sess: Session, name: str):
         """활성 패널의 Claude 계정을 수동 지정(화면 휴리스틱이 못 잡을 때 보정, #7 ②).

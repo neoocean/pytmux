@@ -11,8 +11,8 @@ import asyncio
 import json
 
 from . import tokens
-from .claude import (claude_account, claude_feedback_prompt, claude_prompt,
-                     claude_perm_mode, claude_state, claude_usage,
+from .claude import (claude_account, claude_context_pct, claude_feedback_prompt,
+                     claude_prompt, claude_perm_mode, claude_state, claude_usage,
                      parse_reset_delay)
 from .model import Pane, Session
 
@@ -61,11 +61,24 @@ class ServerClaudeMixin:
         delay = parse_reset_delay(pane._scanbuf)
         if delay is not None:
             pane._resume_pending = True
-            # 해제 시각 +5초 버퍼 후 재개 메시지 입력
-            self.loop.call_later(delay + 5, self._fire_resume, pane)
+            # 해제 시각 +5초 버퍼 후 재개 메시지 입력. 핸들을 들고 있다가 busy 복귀
+            # 시 취소한다(M12 _cancel_resume — 사용자가 먼저 재개한 작업 보호).
+            pane._resume_handle = self.loop.call_later(
+                delay + 5, self._fire_resume, pane)
+
+    def _cancel_resume(self, pane: Pane):
+        """무장된 자동재개 예약을 취소한다(busy 복귀·세션 종료 시, M12). 발화직전
+        재확인(#6)이 limit 이탈을 이미 막지만, 예약 자체를 일찍 거둬 헤더
+        카운트다운도 즉시 사라지게 한다. 핸들이 없으면 무동작."""
+        h = getattr(pane, "_resume_handle", None)
+        if h is not None:
+            h.cancel()
+            pane._resume_handle = None
+        pane._resume_pending = False
 
     def _fire_resume(self, pane: Pane):
         pane._resume_pending = False
+        pane._resume_handle = None
         pane._scanbuf = ""
         # 발화 직전 재확인(#6): 화면이 **여전히 limit 상태**일 때만 주입한다. 예약과
         # 발화 사이(수 분~수 시간)에 사용자가 직접 재개했거나 화면이 busy/idle 로
@@ -74,6 +87,10 @@ class ServerClaudeMixin:
         if pane.pty is None:
             return
         if claude_state(screen_text(pane.screen)) != "limit":
+            return
+        # M12 예산 게이트: 게이트가 켜져 있고 예산을 초과했으면 자동재개를 보류한다
+        # (또 한도까지 태우는 것을 막음). 사용자는 직접 continue 로 재개 가능.
+        if self.token_budget_resume_gate and self._budget_over(pane):
             return
         try:
             pane.pty.write((pane.resume_msg + "\r").encode("utf-8"))
@@ -456,6 +473,7 @@ class ServerClaudeMixin:
                     # 준비됨) 때 저장된 규칙을 프롬프트에 넣는다. 빈 규칙이면 안 함.
                     if self.claude_rules.strip():
                         p._rules_pending = True
+                    p._ctx_fired = False   # 새 세션 — 잔량 자동정리 디바운스 해제(M11)
                 if not new_cl:
                     p._rules_pending = False   # 세션 끝나면 예약 해제
                 if new_cl:
@@ -532,6 +550,11 @@ class ServerClaudeMixin:
                     t.has_claude_done = True
                     p._was_busy = False
                     changed = True
+                # M12: limit 이탈 시 무장된 자동재개 예약을 취소(사용자가 먼저 재개
+                # 했거나 화면이 전환됨). _fire_resume 도 발화직전 limit 재확인으로
+                # 막지만(#6), 예약을 일찍 거둬 헤더 카운트다운도 즉시 사라지게 한다.
+                if new_cl != "limit" and p._resume_handle is not None:
+                    self._cancel_resume(p)
                 # 자동 doc→/clear(§10): idle 이탈(busy/limit/종료) 시 무장된 타이머를
                 # 즉시 해제한다 — idle 이 끊기면 "N초 지속" 전제가 깨진다. 권한모드
                 # 자동전환 시도 카운터도 idle 이탈 시 리셋(다음 idle 진입에 다시 시도).
@@ -557,6 +580,13 @@ class ServerClaudeMixin:
                         self._drive_perm_mode(p, txt, p._perm_target)
                     elif self.claude_auto_mode:
                         self._maybe_auto_mode(p, txt)
+                    # M11 디바운스 해제: 정리 후 잔량이 임계+여유(5%p) 위로 회복하면
+                    # 다음 저잔량 구간에 재발화할 수 있게 한다. 회복 전엔 재발화 금지
+                    # (compact 가 효과 없어도 매 응답 무한 정리하지 않게 — §5.5).
+                    if p._ctx_fired:
+                        rec = claude_context_pct(txt)
+                        if rec is not None and rec >= self.claude_ctx_threshold + 5:
+                            p._ctx_fired = False
                 # 프롬프트 단위 클리어 모드(#9) + 자동 doc→/clear(§10): busy→idle(응답
                 # 완료) 경계에서 상태기계를 전진한다. 수동 모드(prompt_clear_mode)와
                 # 자동 시퀀스(_adc_active)가 같은 _pc_phase 기계를 공유한다.
@@ -567,8 +597,20 @@ class ServerClaudeMixin:
                         self._pc_advance(p)
                         if p._adc_active and p._pc_phase is None:
                             p._adc_active = False   # 자동 doc→clear 시퀀스 완료
-                    elif self.auto_doc_clear:
-                        self._adc_arm(p)
+                    else:
+                        # M11 컨텍스트 잔량 자동 정리: 응답 완료 경계에서 잔량이 임계
+                        # 밑이면 1회 정리(우선). 잔량 부족이 "idle N초 경과"(auto-doc-
+                        # clear)보다 시급하므로 둘 다 켜져 있으면 잔량 정리를 먼저 한다.
+                        # 완료 경계라 사용자가 타이핑 중이 아니고(응답이 막 끝남) 다음
+                        # 비싼 턴 직전이라 정리에 가장 값싼 시점이다(§3 S1).
+                        pct = (claude_context_pct(txt)
+                               if self.claude_ctx_autoclear and not p._ctx_fired
+                               else None)
+                        if pct is not None and pct < self.claude_ctx_threshold:
+                            p._ctx_fired = True
+                            self._ctx_intervene(p)
+                        elif self.auto_doc_clear:
+                            self._adc_arm(p)
         return changed
 
     @staticmethod
@@ -643,3 +685,100 @@ class ServerClaudeMixin:
     def set_claude_rules(self, text: str):
         self.claude_rules = text or ""
         self._save_opts()
+
+    # ---- 토큰 절감 설정(docs/TOKEN_SAVING_SCENARIO.md) ----
+    def set_claude_ctx_autoclear(self, value=None):
+        """컨텍스트 잔량 기반 자동 정리(M11) 토글. value 미지정 시 반전. 끄면 무장된
+        디바운스도 리셋한다(다음 켤 때 깨끗이 시작). opts.json 영속."""
+        self.claude_ctx_autoclear = (not self.claude_ctx_autoclear) \
+            if value is None else bool(value)
+        if not self.claude_ctx_autoclear:
+            for p in self._all_panes():
+                p._ctx_fired = False
+        else:
+            # 켤 때: idle-settled(B1 스킵) 패널도 다음 프레임에 한 번 재스캔.
+            for p in self._all_panes():
+                p._scan_seq = -1
+        self._save_opts()
+        return self.claude_ctx_autoclear
+
+    def set_claude_ctx_action(self, action: str):
+        """정리 방식 설정: "compact"(/compact 요약) 또는 "doc-clear"(문서화→/clear).
+        알 수 없는 값은 무시(현 값 유지). opts.json 영속."""
+        a = (action or "").strip().lower()
+        if a in ("compact", "doc-clear"):
+            self.claude_ctx_action = a
+            self._save_opts()
+        return self.claude_ctx_action
+
+    def set_claude_ctx_threshold(self, pct):
+        """잔량 임계(%) 설정. 1~99 범위로 클램프. opts.json 영속."""
+        try:
+            v = int(pct)
+        except (TypeError, ValueError):
+            return self.claude_ctx_threshold
+        self.claude_ctx_threshold = max(1, min(99, v))
+        self._save_opts()
+        return self.claude_ctx_threshold
+
+    def set_token_budget(self, day=None, session=None):
+        """일/세션 토큰 예산 설정(0=무제한). None 인 인자는 변경하지 않는다. 예산을
+        바꾸면 경고 레벨을 즉시 재계산한다. opts.json 영속."""
+        if day is not None:
+            try:
+                self.token_budget_day = max(0, int(day))
+            except (TypeError, ValueError):
+                pass
+        if session is not None:
+            try:
+                self.token_budget_session = max(0, int(session))
+            except (TypeError, ValueError):
+                pass
+        self._refresh_budget_level()
+        self._save_opts()
+        return (self.token_budget_day, self.token_budget_session)
+
+    def set_token_budget_resume_gate(self, value=None):
+        """자동재개 예산 게이트(M12) 토글. value 미지정 시 반전. opts.json 영속."""
+        self.token_budget_resume_gate = (not self.token_budget_resume_gate) \
+            if value is None else bool(value)
+        self._save_opts()
+        return self.token_budget_resume_gate
+
+    def _budget_over(self, pane: Pane) -> bool:
+        """일 또는 세션 예산을 초과했는지(M10/M12). 예산이 0(무제한)이면 그 축은
+        무시. 누계는 best-effort 라 하드 차단이 아니라 자동개입 보류 판단에만 쓴다."""
+        if (self.token_budget_day > 0 and self._today_tokens is not None
+                and self._today_tokens >= self.token_budget_day):
+            return True
+        if (self.token_budget_session > 0 and pane is not None
+                and pane._session_tokens >= self.token_budget_session):
+            return True
+        return False
+
+    def _budget_level_for(self, pane: Pane) -> int:
+        """status 표시용 경고 레벨(0/80/100). 일 예산(_budget_level)과 활성 패널
+        세션 예산 중 높은 쪽. 예산 미설정이면 0."""
+        lvl = self._budget_level
+        b = self.token_budget_session
+        if b > 0 and pane is not None and pane._claude:
+            used = pane._session_tokens
+            if used >= b:
+                lvl = max(lvl, 100)
+            elif used >= b * 0.8:
+                lvl = max(lvl, 80)
+        return lvl
+
+    def _ctx_intervene(self, pane: Pane):
+        """컨텍스트 잔량 부족(M11): 설정된 방식으로 1회 정리한다. "compact" 는
+        /compact 한 줄 주입(연속성 유지), "doc-clear" 는 기존 doc→/clear 상태기계를
+        무장·시작(_adc 와 동일 경로 — 토큰 세션 리셋·시작 규칙 재주입까지 재사용).
+        호출부(_scan_claude)가 idle·발화직전·디바운스·예산 게이트를 이미 확인했다."""
+        if self.claude_ctx_action == "doc-clear":
+            # 자동 doc→clear 시퀀스를 시작(idle 경계마다 _pc_advance 가 이어 감).
+            if not pane._adc_active and not pane.prompt_clear_mode:
+                pane._adc_active = True
+                pane._pc_phase = None
+                self._pc_advance(pane)
+        else:   # "compact"
+            self._pc_inject(pane, "/compact")

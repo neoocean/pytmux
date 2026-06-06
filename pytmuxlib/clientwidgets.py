@@ -723,6 +723,16 @@ class StatusBar(Widget):
         self.claude_usage = None  # 활성 Claude 패널의 토큰/컨텍스트(best-effort)
         self.claude_tokens = 0    # 활성 계정 누적 토큰(§10 계정별 합계, 지속표시)
         self.claude_account = None  # 누적 토큰의 귀속 계정(표시에 곁들임)
+        # 토큰 절감 설정(설정 팝업 토글 현재값 + 예산 경고, docs/TOKEN_SAVING_SCENARIO).
+        self.auto_doc_clear = False
+        self.claude_auto_mode = False
+        self.claude_ctx_autoclear = False
+        self.claude_ctx_threshold = 15
+        self.claude_ctx_action = "compact"
+        self.token_budget_day = 0
+        self.token_budget_session = 0
+        self.token_budget_resume_gate = False
+        self.budget_level = 0     # 예산 경고 레벨(0/80/100, M10)
         self.bg = bg
         self.fg = fg
         self.left_fmt = left
@@ -846,6 +856,21 @@ class StatusBar(Widget):
         ca = msg.get("claude_account")
         if ca:
             self.claude_account = ca
+        # 토큰 절감 설정(설정 팝업이 현재값으로 토글을 그리는 데 씀). 항상 권위값 반영.
+        self.auto_doc_clear = msg.get("auto_doc_clear", self.auto_doc_clear)
+        self.claude_auto_mode = msg.get("claude_auto_mode", self.claude_auto_mode)
+        self.claude_ctx_autoclear = msg.get(
+            "claude_ctx_autoclear", self.claude_ctx_autoclear)
+        self.claude_ctx_threshold = msg.get(
+            "claude_ctx_threshold", self.claude_ctx_threshold)
+        self.claude_ctx_action = msg.get(
+            "claude_ctx_action", self.claude_ctx_action)
+        self.token_budget_day = msg.get("token_budget_day", self.token_budget_day)
+        self.token_budget_session = msg.get(
+            "token_budget_session", self.token_budget_session)
+        self.token_budget_resume_gate = msg.get(
+            "token_budget_resume_gate", self.token_budget_resume_gate)
+        self.budget_level = msg.get("budget_level", 0)
         self.capture_path = msg.get("capture_path")
         self.capture_size = msg.get("capture_size", 0)
         self.refresh()
@@ -916,6 +941,14 @@ class StatusBar(Widget):
             self._usage_zone = (ux0, ux0 + sum(_char_cells(c) for c in utext))
             segs.append(Segment(utext,
                                 Style(color="white", bgcolor=tc("secondary"),
+                                      bold=True)))
+        # M10 토큰 예산 경고(알림만 — 동작 변경 없음). 80%=노랑 ⚠, 100%=빨강 ⚠.
+        # 예산 미설정이면 budget_level 0 이라 표시 안 함(docs/TOKEN_SAVING_SCENARIO).
+        if self.budget_level >= 80:
+            over = self.budget_level >= 100
+            segs.append(Segment(" ⚠예산 " + ("초과 " if over else "80% "),
+                                Style(color="white",
+                                      bgcolor=("red" if over else "yellow"),
                                       bold=True)))
         if self.prefix_off:
             segs.append(Segment("NEST ", Style(color="white",
