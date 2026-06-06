@@ -1,0 +1,12 @@
+   Settings   Status   Config   Usage   Stats
+
+ Current session · Resets 5am (Asia/Seoul)
+ ████▏
+ 10% used
+
+ Current week (all models) · Resets Jun 13 at 3am (Asia/Seoul)
+ █████▉
+ 14% used
+
+ Current week (Sonnet only) · Resets Jun 13 at 3am (Asia/Seoul)
+ 0% used

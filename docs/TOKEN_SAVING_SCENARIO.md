@@ -39,10 +39,10 @@
 > **5차(이번 개정) — 그림자 `/usage` 질의 설계(§10, M19)**: §9.3 의 "5h 분모 미상"을
 > Claude 의 `/usage` 실측으로 정직히 푸는 방안. 핵심 요구가 "사용자 눈에 안 띄게"라,
 > **현재 세션 주입(A, render-freeze)** vs **숨은 세션(B)/headless `claude -p`(B2)** 두 길을
-> 모두 검토했다. **B2 타당성 검증(2026-06-07 실측)=기각** — `claude -p "/usage"` 는
-> 무비용·headless(토큰 0·~30ms)지만 출력이 첫 줄뿐이라 **5h/주간 한도 숫자를 못 뽑는다**
-> (§10.4). → **방법 B(숨은 대화형 세션) 1순위**, A 폴백. 둘 다 TUI 패널을 pyte 로 스크랩
-> 해야 함. 구현은 실 `/usage` TUI 패널 캡처를 선행으로 **승인 후 착수**.
+> 모두 검토했다. **B2(`claude -p`)=기각**(무비용 headless 지만 출력이 첫 줄뿐 — 한도 숫자
+> 미출력). **방법 B(숨은 대화형 세션) 확정.** 실 `/usage` TUI 패널을 REC 캡처에서 확보해
+> 픽스처화(`usage.txt`)했고, 패널이 **세션(5h) % 를 직접** 줘 §9.3 "5h 분모 미상"이 소멸
+> (주간 한도·리셋 시각도 확보). 구현은 숨은 세션 lifecycle 플럼밍이 남아 **승인 후 착수**.
 
 ---
 
@@ -393,7 +393,7 @@ opt 화는 후속.
 | **M17** | **반복 실패·장기 턴 감지 알림**(T7) — 완료 꼬리 비교(S8 `screen_tail_key`/`track_repeat`)+`_busy_since`(S9). 상태줄 ⚠배지(grade0) | 0 | 낮음 | `claude.py`·`serverclaude.py`·`model.py`·`serverio.py`·`clientwidgets.py` | ✅ |
 | **M18** | **상태줄 가시성 + 통합 팝업**(§9) — `ctx:N%/1M`·`Σ25k(7%/5h)` 표기 + 사용량존 클릭→통계, `[s]`→시나리오 토글, 5h 분모 설정행 | 0 | 낮음 | `claude.py`·`serverclaude.py`·`serverio.py`·`clientwidgets.py`·`clientscreens.py`·`client.py` | ✅ (esc-커서 키보드만 보류) |
 | **M8보강** | 실 Claude 화면 골든 캡처 — busy/idle/badge_1m/ctx_low 는 REC 캡처로 실교체 완료. **limit/feedback/auto-compact 는 미수집**(녹화 중 미발생) | — | 낮음 | `tests/fixtures/claude/*`(README) | 🟡 부분(limit 등 잔여) |
-| **M19** | **그림자 `/usage` 질의**(§10) — 실 5h/주간 한도·리셋 확보(§9.3 분모 실측화). **B2(`claude -p`) 타당성 검증=기각**(무비용 headless 지만 한도 숫자 미출력). 방법 **B(숨은 대화형 세션) 1순위**, A(동결) 폴백 | 2~3 | 중 | `claude.py`(`parse_usage`)·`serverclaude.py`·`serverpty.py` | 📐 설계(§10)+B2검증완료, 구현 승인 대기 |
+| **M19** | **그림자 `/usage` 질의**(§10) — 실 세션(5h)/주간 한도·리셋 확보. **방법 B 확정**(숨은 대화형 세션 스크랩; B2 `claude -p` 기각). 실 `/usage` 패널 캡처·픽스처 확보 → 세션 % 직접 → §9.3 분모 소멸 | 2~3 | 중 | `claude.py`(`parse_usage`+usage.txt)·`serverclaude.py`·`serverpty.py` | 📐 설계확정+캡처완료, 구현 승인 대기 |
 
 > 순서 원칙: **감지 정확도(M8·M9)를 먼저 고정**한 뒤에야 비가역 자동화(M11)를
 > 켠다(§5.4). M10(알림)은 위험 0. 모든 자동 개입은 **기본 OFF**, `token-saver` 팝업
@@ -655,7 +655,7 @@ used" 반대 주의). 한쪽만 잡히면 현행대로(`ctx:23%` 또는 `1M ctx`
 
 ---
 
-## 10. M19 — 그림자 `/usage` 질의: 실 사용량 한도 확보 [설계 · 구현 보류]
+## 10. M19 — 그림자 `/usage` 질의: 실 사용량 한도 확보 [설계 확정(방법 B) · 구현 승인 대기]
 
 §9.3 의 **5h 분모 미상** 문제(분모를 추정·학습에 의존)를 **Claude 의 실측치로 정직히
 해결**하는 방안. Claude Code 의 `/usage` 는 5시간/주간 사용량 한도와 **리셋 시각**을
@@ -730,31 +730,47 @@ pytmux 가 렌더 파이프라인을 소유하는 점을 이용:
   project/setup-token/ultrareview/update 뿐).
 
 **→ B2 기각.** 무비용·headless 지만 한도 숫자를 못 뽑는다(print 모드가 /usage 를 한 줄로
-자름). **선택: 방법 B(숨은 대화형 세션) 1순위, A(현세션 동결) 폴백.** 둘 다 실제 TUI 패널을
-pyte 로 렌더해 스크랩해야 한도가 나온다 — pytmux 의 pyte 렌더·스크랩 강점을 쓴다. B 가
-"완전 무표시·무위험"이라 여전히 우선이고, 비용(off-tree 숨은 pty + 대화형 기동)은 저빈도로
-상쇄. **선결: 실제 `/usage` TUI 패널 1회 캡처**(현재 없음)로 `parse_usage` 포맷 픽스처화.
+자름). **확정: 방법 B(숨은 대화형 세션).** 실제 TUI 패널을 pyte 로 렌더해 스크랩해야 한도가
+나온다 — pytmux 의 pyte 렌더·스크랩 강점을 쓴다. B 가 "완전 무표시·무위험"이고, 비용
+(off-tree 숨은 pty + 대화형 기동)은 저빈도로 상쇄. A(현세션 동결)는 폴백.
+
+**실 `/usage` TUI 패널 캡처 확보(2026-06-07, pane-2 REC, replay 렌더):**
+```
+ Settings  Status  Config  Usage  Stats
+ Current session · Resets 5am (Asia/Seoul)
+ ████▏   10% used
+ Current week (all models) · Resets Jun 13 at 3am (Asia/Seoul)
+ █████▉  14% used
+ Current week (Sonnet only) · Resets Jun 13 at 3am (Asia/Seoul)
+ 0% used
+```
+→ `tests/fixtures/claude/usage.txt`. **핵심 수확**: 패널이 **세션(5시간) % 를 직접** 준다
+(`Current session … N% used`) — §9.3 의 "5h **분모** 미상" 문제가 **소멸**한다(추정·학습
+불필요, % 가 곧 답). 덤으로 **주간 한도(전모델/Sonnet) % + 리셋 시각**까지 나온다.
 
 ### 10.5 파싱·검증·안전
 
-- **`parse_usage(text)`(신규)**: 5h 한도%·주간 한도%·각 리셋까지 시간(`parse_reset_delay`
-  재사용 가능)·절대 한도치(있으면)를 낸다. **실 `/usage` 출력 골든 픽스처 필수**(현재 없음).
-- **연동**: 확보한 5h 절대 한도를 §9.3 의 분모로 주입 → `_tok5h_pct` 가 추정·학습 대신
-  **실측 분모**를 쓴다. 주간 한도·리셋 시각도 상태줄/팝업에 표시.
-- **안전(등급 2~3)**: B/B2 는 사용자 세션 무간섭이라 실질 위험은 "숨은 프로세스 기동"
+- **`parse_usage(text)`(신규)**: 위 패널에서 **세션(5h) % · 주간(전모델) % · 주간(Sonnet) %
+  + 각 리셋 표기**를 뽑는다. 파싱 대상 행: `Current (session|week ...) · Resets <리셋>` 과
+  그 아래 `N% used`. 리셋은 `5am`(세션, 당일 시각) / `Jun 13 at 3am`(주간, 날짜+시각),
+  tz 괄호(`(Asia/Seoul)`). 실 골든 픽스처: `tests/fixtures/claude/usage.txt`.
+- **연동(단순화)**: 세션 % 가 직접 나오므로 §9.3 `_tok5h_pct` 가 **추정·학습 분모를 버리고
+  실측 % 를 그대로** 쓴다(`token_budget_5h`/`_learned_5h_cap` 폴백만 남김). 주간 한도·리셋
+  시각은 상태줄/팝업에 추가 표시.
+- **안전(등급 2~3)**: B 는 사용자 세션 무간섭이라 실질 위험은 "숨은 프로세스 기동"
   뿐(가역). A 를 쓸 경우만 §5.3 의 강한 게이트(빈 입력·idle·즉시 취소)가 필수. 빈도 상한
   공유(§5.6). 모든 파싱 best-effort(§5.7).
-- **검증**: `parse_usage` 단위(실 픽스처) · B2 타당성 실측 1회(사람) · 숨은 세션 lifecycle
-  통합테스트(기동→질의→kill 정합) · A 채택 시 동결/복구 무틈 실 박스 확인.
+- **검증**: `parse_usage` 단위(실 픽스처 usage.txt) · 숨은 세션 lifecycle 통합테스트
+  (기동→`/usage` 주입→스크랩→kill 정합) · 실 박스 1회(사람) 무표시 확인.
 
 ### 10.6 변경 표면(예상, 구현 시)
 
 | 위치 | 변경 |
 |---|---|
-| `claude.py` | `parse_usage()` 파서 + 실 골든 픽스처 |
-| `serverclaude.py` | 질의 오케스트레이션(B2: subprocess `claude -p`; B: 숨은 PTY lifecycle; A: 동결+주입+복구), 확보 한도를 5h 분모로 |
-| `serverpty.py`/`model.py` | (B 한정) off-tree 숨은 pane 생성·관리 |
-| `serverio.py` | 주간 한도·리셋 시각 status 필드 |
+| `claude.py` | `parse_usage()` 파서(✅ 픽스처 usage.txt 확보) |
+| `serverclaude.py` | 방법 B 오케스트레이션(숨은 대화형 PTY 기동→`/usage` 주입→스크랩→kill), 세션 % 를 `_tok5h_pct` 실측으로 |
+| `serverpty.py`/`model.py` | off-tree 숨은 pane(대화형 claude) 생성·수명 관리 |
+| `serverio.py` | 주간 한도(전모델/Sonnet)·리셋 시각 status 필드 |
 | opts | 질의 주기·on/off(`token-saver` 행) |
 
 > **요약**: "안 보이게"라는 핵심 요구에는 **현재 세션 주입(A)보다 숨은 세션(B), 그중에서도

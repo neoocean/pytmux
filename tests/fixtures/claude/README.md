@@ -15,6 +15,8 @@ pytmux REC 캡처(`captures/default/pane-*.log`, 오염된 이 세션 pane-2 제
 - ✅ `idle.txt` — 실 footer `⏵⏵ auto mode on · 2 shells` + `? for shortcuts`.
 - ✅ `badge_1m.txt` — 실 모델 배지 `Opus 4.8 (1M context)`(M14c `claude_model` 근거).
 - ✅ `ctx_low.txt` — 실 잔량 경고 `Context low (8% remaining)`.
+- ✅ `usage.txt` — 실 `/usage` TUI 패널(M19): `Current session/week · Resets … · N% used`.
+  pane-2 REC 를 replay 로 렌더해 재구성(세션=5h % 직접·주간 한도·리셋 시각).
 
 나머지는 아직 **합성**(synthesized)이다 — `claude.py` 주석의 문서화 포맷으로 만든 것이라
 실화면 1:1 일치의 객관 근거는 아직 아니다.
