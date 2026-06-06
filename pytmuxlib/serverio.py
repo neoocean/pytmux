@@ -149,6 +149,7 @@ class ServerIOMixin:
             "token_budget_day": self.token_budget_day,
             "token_budget_session": self.token_budget_session,
             "token_budget_resume_gate": self.token_budget_resume_gate,
+            "claude_budget_plan": self.claude_budget_plan,
             "budget_level": self._budget_level_for(
                 win.active_pane if win else None),
         }
@@ -478,6 +479,9 @@ class ServerIOMixin:
             self._broadcast_session(sess)
         elif action == "set_token_budget_resume_gate":   # M12 예산 게이트 토글
             self.set_token_budget_resume_gate(msg.get("value"))
+            self._broadcast_session(sess)
+        elif action == "set_claude_budget_plan":         # M13 예산 압박 plan 유도
+            self.set_claude_budget_plan(msg.get("value"))
             self._broadcast_session(sess)
         elif action == "set_claude_rules":      # #27 시작 규칙 저장(영속)
             self.set_claude_rules(msg.get("text", ""))

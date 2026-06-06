@@ -578,6 +578,12 @@ class ServerClaudeMixin:
                     # (§10 item 2 + 권한모드 자동 오토모드 전환). 둘 다 shift+tab 폐루프.
                     if p._perm_target:
                         self._drive_perm_mode(p, txt, p._perm_target)
+                    elif (self.claude_budget_plan
+                          and self._budget_level_for(p) >= 80
+                          and claude_perm_mode(txt) not in ("plan", "bypass")):
+                        # M13: 예산 압박(≥80%) → plan 유도. bypass(명시적 위험)는
+                        # 불간섭, 이미 plan 이면 무동작. claude_auto_mode 보다 우선.
+                        self._drive_perm_mode(p, txt, "plan")
                     elif self.claude_auto_mode:
                         self._maybe_auto_mode(p, txt)
                     # M11 디바운스 해제: 정리 후 잔량이 임계+여유(5%p) 위로 회복하면
@@ -744,6 +750,18 @@ class ServerClaudeMixin:
             if value is None else bool(value)
         self._save_opts()
         return self.token_budget_resume_gate
+
+    def set_claude_budget_plan(self, value=None):
+        """예산 압박 시 plan 유도(M13) 토글. value 미지정 시 반전. 끄면 다음 프레임에
+        한 번 재스캔(켤 때와 대칭)해 cam 카운터를 리셋. opts.json 영속."""
+        self.claude_budget_plan = (not self.claude_budget_plan) \
+            if value is None else bool(value)
+        for p in self._all_panes():
+            p._cam_tries = 0
+            p._cam_last = None
+            p._scan_seq = -1
+        self._save_opts()
+        return self.claude_budget_plan
 
     def _budget_over(self, pane: Pane) -> bool:
         """일 또는 세션 예산을 초과했는지(M10/M12). 예산이 0(무제한)이면 그 축은

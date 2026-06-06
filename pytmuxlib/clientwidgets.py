@@ -732,6 +732,7 @@ class StatusBar(Widget):
         self.token_budget_day = 0
         self.token_budget_session = 0
         self.token_budget_resume_gate = False
+        self.claude_budget_plan = False
         self.budget_level = 0     # 예산 경고 레벨(0/80/100, M10)
         self.bg = bg
         self.fg = fg
@@ -870,6 +871,8 @@ class StatusBar(Widget):
             "token_budget_session", self.token_budget_session)
         self.token_budget_resume_gate = msg.get(
             "token_budget_resume_gate", self.token_budget_resume_gate)
+        self.claude_budget_plan = msg.get(
+            "claude_budget_plan", self.claude_budget_plan)
         self.budget_level = msg.get("budget_level", 0)
         self.capture_path = msg.get("capture_path")
         self.capture_size = msg.get("capture_size", 0)

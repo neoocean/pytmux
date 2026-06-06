@@ -229,6 +229,45 @@ async def test_budget_over_day_and_session():
         await teardown(srv, task, sock)
 
 
+# ---- M13: 예산 압박 시 plan 유도 ----
+async def test_budget_plan_induction():
+    """claude_budget_plan + 예산≥80% + idle + 권한모드 非plan/非bypass 면 shift+tab
+    (\\x1b[Z)으로 plan 유도. bypass 는 불간섭, 예산<80% 면 무동작."""
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p = await _claude_pane(srv)
+        keys = []
+        srv._inject_keys = lambda pane, data: keys.append(data)
+        srv.claude_budget_plan = True
+        srv.token_budget_day = 1000      # 일 예산(스캔이 _session_tokens 처럼 안 덮음)
+
+        def idle(text, today):
+            srv._today_tokens = today
+            srv._refresh_budget_level()
+            p._claude = "idle"
+            p.feed(b"\x1b[2J\x1b[H" + text.encode())
+            srv._scan_claude(sess, win)
+
+        # 예산<80%(70%) → 유도 안 함
+        idle("? for shortcuts", 700)
+        assert keys == []
+        # 예산≥80%(90%) + default footer → plan 유도(shift+tab)
+        idle("? for shortcuts", 900)
+        assert keys == [b"\x1b[Z"], keys
+        # bypass 는 불간섭(명시적 위험 모드)
+        keys.clear()
+        p._cam_tries = 0
+        p._cam_last = None
+        idle("bypass permissions", 950)
+        assert keys == [], "bypass 는 안 건드림"
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
 # ---- M12: 자동재개 예산 게이트·예약 취소 ----
 class _FakePty:
     def __init__(self):

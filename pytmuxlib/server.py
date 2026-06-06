@@ -109,6 +109,11 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         # 한다(사용자 수동 재개는 가능). 기본 OFF(autoresume 동작 불변).
         self.token_budget_resume_gate = bool(
             _opts.get("token_budget_resume_gate", False))
+        # M13 예산 압박 시 plan 유도: 켜면 예산 경고(≥80%) + idle 일 때 권한모드를
+        # plan 으로 폐루프 유도해(편집 전 검토 → 맹목 도구 호출 감소) 토큰 소모를
+        # 늦춘다(가역 — 사용자가 shift+tab 으로 되돌림). bypass(명시적 위험)는 불간섭.
+        # claude_auto_mode(auto 유도)와 상충하면 예산 압박 시 plan 이 우선. 기본 OFF.
+        self.claude_budget_plan = bool(_opts.get("claude_budget_plan", False))
         # M10 일 예산 누계(in-memory, best-effort). 첫 확정 이벤트에서 로그로부터
         # 오늘 누계를 시드(재시작 정합)하고 이후 메모리로 증분, 자정 넘김 시 0 리셋.
         # _budget_level: 일 예산 기준 경고 레벨(0/80/100), status 로 클라에 전달.
@@ -373,6 +378,7 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         # 토큰 절감 on/off 토글의 외부 cmd 파리티(설정 팝업과 같은 setter).
         "ctx-autoclear": "set_claude_ctx_autoclear",
         "resume-gate": "set_token_budget_resume_gate",
+        "budget-plan": "set_claude_budget_plan",
     }
 
     def handle_control(self, line: str):

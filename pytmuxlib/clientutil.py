@@ -298,6 +298,7 @@ MENU_TOGGLES = {"zoom", "sync", "autoresume", "prompt_clear"}
 SAVER_ROWS = [
     ("autoresume", "토큰리밋 자동재개", "toggle"),
     ("resume_gate", "예산 초과 시 자동재개 보류", "toggle"),
+    ("budget_plan", "예산 압박(≥80%) 시 plan 모드 유도", "toggle"),
     ("ctx_autoclear", "컨텍스트 잔량 부족 시 자동 정리", "toggle"),
     ("ctx_action", "  └ 정리 방식", "cycle"),
     ("ctx_threshold", "  └ 잔량 임계", "cycle"),

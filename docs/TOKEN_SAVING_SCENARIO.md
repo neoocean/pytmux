@@ -254,8 +254,8 @@ plan 유도는 opt-in 이고 idle 한정.
 | **M10** | 예산 opt(일/세션) + 누계 추적 + **알림만**(상태줄 ⚠예산 경고) | 0 | 낮음 | `server.py`(`_budget_track`), `serverclaude.py`(`_budget_level_for`), `clientwidgets.py` | ✅ |
 | **M11** | 잔량%<임계 자동 정리(기본 OFF) — `/compact`(기본) 또는 doc→/clear(`_pc_advance` 재사용) | 3 | 중 | `serverclaude.py`(`_ctx_intervene`, `_scan_claude` 완료경계) | ✅ |
 | **M12** | 자동재개 예약 취소 경로(`_cancel_resume`) + 예산 게이트(`_fire_resume`) | 3 | 낮음 | `serverclaude.py` | ✅ |
-| **M13** | T3 권한모드 plan 유도(예산 압박, opt-in) + 모델 과선택 힌트 | 1 | 낮음 | `serverclaude.py` | ⏳ 후속 |
-| **M14** | 빈도 상한 + 카운트다운/취소 힌트 UI + 실 limit 골든 캡처 보강 | 3 | 중 | `serverclaude.py`, `client.py` | ⏳ 후속 |
+| **M13** | T3 권한모드 plan 유도(예산≥80%+idle, opt-in 토글, bypass 불간섭) | 1 | 낮음 | `serverclaude.py`(`_scan_claude` 권한구동) | ✅ |
+| **M14** | 빈도 상한 + 카운트다운/취소 힌트 UI + 실 limit 골든 캡처 보강 + 모델 과선택 힌트 | 3 | 중 | `serverclaude.py`, `client.py` | ⏳ 후속 |
 
 > 순서 원칙: **감지 정확도(M8·M9)를 먼저 고정**한 뒤에야 비가역 자동화(M11)를
 > 켠다(§5.4). M10(알림)은 위험 0. 모든 자동 개입은 **기본 OFF**, `token-saver` 팝업

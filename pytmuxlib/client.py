@@ -1869,6 +1869,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             bools = {
                 "autoresume": st.autoresume,
                 "resume_gate": st.token_budget_resume_gate,
+                "budget_plan": st.claude_budget_plan,
                 "ctx_autoclear": st.claude_ctx_autoclear,
                 "auto_doc_clear": st.auto_doc_clear,
                 "claude_auto_mode": st.claude_auto_mode,
@@ -1907,6 +1908,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif key == "resume_gate":
                 self.send_cmd("set_token_budget_resume_gate")
                 st.token_budget_resume_gate = not st.token_budget_resume_gate
+            elif key == "budget_plan":
+                self.send_cmd("set_claude_budget_plan")
+                st.claude_budget_plan = not st.claude_budget_plan
             elif key == "ctx_autoclear":
                 self.send_cmd("set_claude_ctx_autoclear")
                 st.claude_ctx_autoclear = not st.claude_ctx_autoclear
