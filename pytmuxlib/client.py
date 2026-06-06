@@ -11,6 +11,7 @@ import time
 import traceback
 
 from . import clientclip, clientrender, ipc, proc, usagelog, version
+from .claude import saver_hook_events
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS, DEFAULT_STYLE,
     MENU_ITEMS, MENU_TOGGLES, SAVER_CYCLES, SPECIAL,
@@ -169,6 +170,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._composite_pending = False  # B9: 합성 코얼레싱 예약 플래그
             self._prev_winc = 0
             self._prev_bell = False
+            # M16: 절감 신호 에스컬레이션 훅의 직전 전이 상태(상승 에지 1회 발화용, §8)
+            self._saver_prev = {"budget_level": 0, "pending_kind": None,
+                                "limit": False}
             self._prompt_purpose = None
             self._prompt_action = None
             self.tab_bar_always = config.get("tab_bar_always", True)
@@ -477,10 +481,26 @@ def build_client_app(sock_path: str, config: dict | None = None,
             _force_reconnect 가 즉시 반환한다."""
             self.run_worker(self._force_reconnect(reason), exclusive=False)
 
-        def _fire_hook(self, event):
+        def _fire_hook(self, event, env=None):
             cmd = self.hooks.get(event)
-            if cmd:
+            if not cmd:
+                return
+            if not env:
                 self._run_command(cmd)
+                return
+            # M16: 훅 명령(run-shell 래핑 시 subprocess 가 os.environ 상속)이 참조할
+            # PYTMUX_* 컨텍스트를 잠깐 심고 복원한다(§8).
+            saved = {k: os.environ.get(k) for k in env}
+            try:
+                for k, v in env.items():
+                    os.environ[k] = str(v)
+                self._run_command(cmd)
+            finally:
+                for k, old in saved.items():
+                    if old is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = old
 
         def _request_composite(self):
             """B9: 합성 코얼레싱 — 한 read 버스트(서버가 B4 로 배치 송신한 여러 screen/
@@ -558,6 +578,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if anybell and not self._prev_bell:
                     self._fire_hook("alert-bell")
                 self._prev_bell = anybell
+                # M16: 절감 신호 전이 → PTY 밖 에스컬레이션 훅(자리 비움 대응, §8).
+                for ev, env in saver_hook_events(self._saver_prev, msg):
+                    self._fire_hook(ev, env=env)
             elif t == "tree":
                 if self._want_tree:
                     self._want_tree = False

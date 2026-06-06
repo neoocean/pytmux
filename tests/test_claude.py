@@ -5,7 +5,8 @@ import datetime as dt
 
 import harness  # noqa: F401  (경로 설정)
 from pytmuxlib.claude import (claude_perm_mode, claude_prompt, claude_state,
-                              claude_usage, parse_reset_delay)
+                              claude_usage, parse_reset_delay,
+                              saver_hook_events)
 
 
 async def test_screen_text_matches_display():
@@ -147,3 +148,52 @@ async def test_protocol_reexports_claude():
     from pytmuxlib.protocol import claude_state as cs, claude_usage as cu
     assert cs("Compacting… (esc to interrupt)") == "busy"
     assert cu("used 45.2k tokens") == "45.2k tok"
+
+
+async def test_saver_hook_events_edges():
+    """M16: 절감 신호 전이 → 훅 이벤트. 상승 에지에서만 1회(§8)."""
+    prev = {"budget_level": 0, "pending_kind": None, "limit": False}
+
+    def names(msg):
+        return [e for e, _ in saver_hook_events(prev, msg)]
+
+    # 0→80: warn 1회(over 아님)
+    assert names({"budget_level": 80}) == ["claude-budget-warn"]
+    # 80 유지: 미발화(같은 화면 여러 프레임)
+    assert names({"budget_level": 80}) == []
+    # 80→100: over 1회(warn 재발 안 함)
+    assert names({"budget_level": 100}) == ["claude-budget-over"]
+    # 하강(100→0)은 미발화, 이후 0→100 직행은 warn+over 둘 다
+    assert names({"budget_level": 0}) == []
+    assert names({"budget_level": 100}) == ["claude-budget-warn",
+                                            "claude-budget-over"]
+    # 비가역 자동액션 무장: None→{kind} 1회, 유지 미발화, 해제 후 재무장 1회
+    prev2 = {"budget_level": 0, "pending_kind": None, "limit": False}
+    assert [e for e, _ in saver_hook_events(
+        prev2, {"claude_pending": {"kind": "autoresume", "eta": 12}})] \
+        == ["claude-auto-armed"]
+    assert [e for e, _ in saver_hook_events(
+        prev2, {"claude_pending": {"kind": "autoresume", "eta": 8}})] == []
+    assert [e for e, _ in saver_hook_events(prev2, {"claude_pending": None})] == []
+    assert [e for e, _ in saver_hook_events(
+        prev2, {"claude_pending": {"kind": "ctxclear"}})] == ["claude-auto-armed"]
+    # 활성 패널 limit 진입 1회(상승 에지)
+    prev3 = {"budget_level": 0, "pending_kind": None, "limit": False}
+    m = {"active_pane": 5, "panes_claude": [{"id": 5, "claude": "limit"},
+                                            {"id": 6, "claude": "idle"}]}
+    assert [e for e, _ in saver_hook_events(prev3, m)] == ["claude-limit"]
+    assert [e for e, _ in saver_hook_events(prev3, m)] == []  # 유지 미발화
+
+
+async def test_saver_hook_events_env_payload():
+    """이벤트 env 가 PYTMUX_* 컨텍스트(별칭 계정·레벨·eta)를 담는다."""
+    prev = {"budget_level": 0, "pending_kind": None, "limit": False}
+    evs = dict(saver_hook_events(
+        prev, {"budget_level": 100, "claude_account": "wo…@woojinkim.org",
+               "claude_pending": {"kind": "autoresume", "eta": 30}}))
+    warn = evs["claude-budget-warn"]
+    assert warn["PYTMUX_BUDGET_LEVEL"] == 100
+    assert warn["PYTMUX_ACCOUNT"] == "wo…@woojinkim.org"
+    armed = evs["claude-auto-armed"]
+    assert armed["PYTMUX_PENDING_KIND"] == "autoresume"
+    assert armed["PYTMUX_PENDING_ETA"] == 30

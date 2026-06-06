@@ -317,3 +317,54 @@ def parse_reset_delay(text: str, now: "_dt.datetime | None" = None):
         target += _dt.timedelta(days=1)
     delay = (target - now).total_seconds()
     return delay if 0 < delay <= 26 * 3600 else None
+
+
+# ---- M16: PTY 밖 에스컬레이션 훅 — status 전이 → (event, env) (§8) ----
+# 클라(PytmuxApp)가 status 마다 호출한다. 이미 송신되는 신호(budget_level·
+# claude_pending·활성패널 limit)의 **상승 에지에서만** 1회 발화하도록 (event, env)
+# 목록을 계산하고 prev(가변 dict)를 갱신한다. PytmuxApp 은 import 불가(함수 내부
+# 정의)라 여기 모듈 함수로 빼서 단위 테스트가 가능하게 한다(alert-bell 전이 패턴과 동형).
+def saver_hook_events(prev: dict, msg: dict) -> list:
+    """status 전이에서 발화할 [(event, env_dict), …] 을 계산하고 prev 를 갱신한다.
+
+    prev 키: budget_level(int)·pending_kind(str|None)·limit(bool). 상승 에지(미만→이상,
+    None→값, False→True)에서만 이벤트를 낸다 — 같은 화면을 여러 프레임 봐도 중복
+    발화하지 않는다(§5.6). env 는 사용자 훅 셸 명령이 참조할 PYTMUX_* 컨텍스트.
+    계정은 별칭(claude_account)만 — 원문 이메일은 싣지 않는다."""
+    events = []
+    acct = msg.get("claude_account") or ""
+    blvl = int(msg.get("budget_level") or 0)
+    pblvl = int(prev.get("budget_level", 0))
+    if blvl >= 80 > pblvl:
+        events.append(("claude-budget-warn", {
+            "PYTMUX_HOOK_EVENT": "claude-budget-warn",
+            "PYTMUX_BUDGET_LEVEL": blvl, "PYTMUX_ACCOUNT": acct}))
+    if blvl >= 100 > pblvl:
+        events.append(("claude-budget-over", {
+            "PYTMUX_HOOK_EVENT": "claude-budget-over",
+            "PYTMUX_BUDGET_LEVEL": blvl, "PYTMUX_ACCOUNT": acct}))
+    prev["budget_level"] = blvl
+
+    pend = msg.get("claude_pending")
+    kind = pend.get("kind") if isinstance(pend, dict) else None
+    if kind and not prev.get("pending_kind"):
+        events.append(("claude-auto-armed", {
+            "PYTMUX_HOOK_EVENT": "claude-auto-armed",
+            "PYTMUX_PENDING_KIND": kind,
+            "PYTMUX_PENDING_ETA": (pend.get("eta") if isinstance(pend, dict)
+                                   else "") or "",
+            "PYTMUX_ACCOUNT": acct}))
+    prev["pending_kind"] = kind
+
+    apid = msg.get("active_pane")
+    astate = None
+    for e in msg.get("panes_claude", []):
+        if e.get("id") == apid:
+            astate = e.get("claude")
+            break
+    is_limit = (astate == "limit")
+    if is_limit and not prev.get("limit"):
+        events.append(("claude-limit", {
+            "PYTMUX_HOOK_EVENT": "claude-limit", "PYTMUX_ACCOUNT": acct}))
+    prev["limit"] = is_limit
+    return events
