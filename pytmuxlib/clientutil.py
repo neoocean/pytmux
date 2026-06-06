@@ -174,6 +174,7 @@ _THEME_FALLBACK = {
     "foreground": "#E0E0E0", "success": "#4EBF71", "warning": "#FEA62B",
     "error": "#B93C5B",
     "primary-darken-2": "#0053AA",   # Claude 헤더 배경(진한 파랑)
+    "primary-darken-3": "#004295",   # 명령 프롬프트 명령어 배경(옅은 진파랑)
 }
 
 def theme_color(widget, name: str) -> str:

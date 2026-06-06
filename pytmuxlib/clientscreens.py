@@ -16,10 +16,32 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, Label, ListItem, ListView, TextArea
 
+from rich.highlighter import Highlighter
+
 from . import usagelog
 from .clientutil import (COMMAND_FREETEXT, COMMAND_NOARG, COMMAND_OPTIONS,
                          COMMANDS, MENU_ITEMS, MENU_TOGGLES, SAVER_ROWS,
-                         has_hangul, hangul_to_qwerty)
+                         has_hangul, hangul_to_qwerty, theme_color)
+
+
+class _CommandWordHighlighter(Highlighter):
+    """명령 프롬프트 입력에서 **첫 토큰(명령어)** 에만 옅은 배경을 입혀 인자와
+    시각적으로 구분한다(사용자 요청). 명령어와 인자 사이 첫 공백까지가 명령 토큰."""
+
+    def __init__(self, style: str):
+        self._style = style          # 예: "on #2f3b52"(rich 스타일 문자열)
+
+    def highlight(self, text):
+        s = text.plain
+        n = len(s)
+        i = 0
+        while i < n and s[i] == " ":   # 선행 공백 건너뜀
+            i += 1
+        j = i
+        while j < n and s[j] != " ":   # 첫 토큰 끝(다음 공백)까지
+            j += 1
+        if j > i:
+            text.stylize(self._style, i, j)
 
 
 class CommandListScreen(ModalScreen):
@@ -1063,8 +1085,12 @@ class PromptScreen(ModalScreen):
         self._hint_text = ""       # 현재 힌트 원문(마크업 포함, 상태 확인용)
 
     def compose(self) -> ComposeResult:
+        # 명령 프롬프트는 첫 토큰(명령어) 배경을 옅게 칠해 인자와 구분한다.
+        hl = None
+        if self._purpose == "command":
+            hl = _CommandWordHighlighter(f"on {theme_color(self, 'primary-darken-3')}")
         inp = Input(value=self._initial, placeholder=self._label,
-                    suggester=self._suggester, id="pinput")
+                    suggester=self._suggester, id="pinput", highlighter=hl)
         if self._purpose == "command":
             # 바닥 고정 컨테이너에 후보(위) → 입력 박스(아래) 순으로 둬, 자동완성
             # 후보가 항상 입력 박스 위쪽에 펼쳐지게 한다(모바일 키보드에 안 가림).
