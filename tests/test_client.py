@@ -27,6 +27,46 @@ async def test_hello_paints_screen():
     await _with_app(body)
 
 
+async def test_net_degraded_hysteresis():
+    """degraded 히스테리시스(#5.8): 임계 초과 RTT 가 net_bad_n 회 연속이면 degraded
+    ON, 임계 이하가 net_good_n 회 연속이면 OFF. 한두 표본 깜빡임엔 안 뒤집힌다."""
+    async def body(app, pilot, srv):
+        app.net_auto_reconnect = False        # 회복용 강제 재접속 경로 분리
+        app._net_degraded = False
+        app._net_bad = app._net_good = 0
+        thr = app.net_rtt_threshold
+        bad, good = app.net_bad_n, app.net_good_n
+        # 느린 표본 (bad-1)회: 아직 ON 아님(깜빡임 방어)
+        for _ in range(bad - 1):
+            app._net_sample(thr + 0.5)
+        assert app._net_degraded is False
+        app._net_sample(thr + 0.5)            # bad 번째 → ON
+        assert app._net_degraded is True
+        # 양호 표본 (good-1)회: 아직 OFF 아님
+        for _ in range(good - 1):
+            app._net_sample(thr * 0.1)
+        assert app._net_degraded is True
+        app._net_sample(thr * 0.1)            # good 번째 → OFF
+        assert app._net_degraded is False
+    await _with_app(body)
+
+
+async def test_net_degraded_recover_triggers_reconnect():
+    """degraded 가 net_recover_n 회 연속 지속되면 강제 재접속을 1회 시도한다(§10)."""
+    async def body(app, pilot, srv):
+        calls = []
+        app.reconnect_now = lambda why="auto": calls.append(why)
+        app.net_auto_reconnect = True
+        app._force_reconnecting = False
+        app._net_degraded = False
+        app._net_bad = app._net_good = 0
+        for _ in range(app.net_recover_n):
+            app._net_sample(app.net_rtt_threshold + 1.0)
+        assert calls == ["auto"], calls
+        assert app._net_bad == 0   # 다음 회복까지 카운터 리셋(간격 두기)
+    await _with_app(body)
+
+
 async def test_resize_pane_directional_command():
     """resize-pane -L/-R/-U/-D [N] 이 resize_dir 로 매핑된다(#17 — 키·명령·마우스
     리사이즈 대칭). 과거엔 -Z(줌)만 처리해 명령/팔레트로 분할선 이동이 불가했다."""

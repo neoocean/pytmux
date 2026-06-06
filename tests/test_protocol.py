@@ -32,6 +32,26 @@ async def test_read_msg_frame_length_bounded_and_robust():
     r.feed_eof()
     assert (await read_msg(r)) is None
 
+    # ④ 잘린 프레임: 헤더는 N 을 약속하지만 페이로드가 그보다 짧고 EOF →
+    #    IncompleteReadError 를 None 으로(예외 전파 없이 연결 종료 신호).
+    r = asyncio.StreamReader()
+    body = frame_msg({"t": "hello"})
+    r.feed_data(body[:-3])          # 마지막 3바이트 누락(잘림)
+    r.feed_eof()
+    assert (await read_msg(r)) is None
+
+    # ⑤ 헤더만 오고 페이로드 0바이트 + EOF → None(부분 헤더/조기 EOF 견고성)
+    r = asyncio.StreamReader()
+    r.feed_data((10).to_bytes(4, "big"))
+    r.feed_eof()
+    assert (await read_msg(r)) is None
+
+    # ⑥ 미지 타입 't' 라도 read_msg 는 dict 를 그대로 돌려준다(타입 판별은 상위 책임).
+    r = asyncio.StreamReader()
+    r.feed_data(frame_msg({"t": "totally-unknown", "v": 9}))
+    r.feed_eof()
+    assert (await read_msg(r)) == {"t": "totally-unknown", "v": 9}
+
 
 async def test_key_to_ctrl_bytes():
     assert pytmux._key_to_ctrl_bytes("ctrl+a") == b"\x01"
