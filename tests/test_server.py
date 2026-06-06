@@ -1949,3 +1949,31 @@ async def test_claude_model_status_m14c():
         assert srv._status_msg(sess)["claude_model"] == "opus-4.8"
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_account_priority_cleanup_m15():
+    """M15 우선순위 정리: 계정 합계가 예산을 넘고 이 패널이 가장 꽉 찬 idle 이면,
+    개별 잔량 임계 미만이 아니어도(잔량 50% > 15%) 정리를 발화한다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        srv.claude_ctx_autoclear = True
+        # busy(피크 200k) → 세션 누계 200k
+        p.feed("\x1b[2J\x1b[H↑ 200k tokens\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._claude == "busy"
+        p._ctx_pct = 50                       # 잔량 50%(임계 15%보다 높음)
+        # 예산 미설정 → 우선순위 조건 거짓
+        assert srv._account_over_budget(p) is False
+        srv.token_budget_account = 100_000    # 200k >= 100k → 초과
+        assert srv._account_over_budget(p) is True
+        # idle 완료 경계 → 우선순위 정리 발화(개별 임계 미만 아님에도)
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle"
+        assert srv._is_fullest_idle(p) is True
+        assert p._ctx_fired is True
+    finally:
+        await teardown(srv, task, sock)

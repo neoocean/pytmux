@@ -386,7 +386,7 @@ opt 화는 후속.
 | **M14a** | 정리 **빈도 상한**(time floor `claude_ctx_min_interval`, 기본 120초) — `_ctx_fired` 디바운스에 직교하는 시간 바닥(§5.6) | 3 | 낮음 | `serverclaude.py`(`_ctx_cap_ok`), `server.py`, 설정 팝업 | ✅ |
 | **M14b** | 무장 자동액션 카운트다운/취소 힌트 UI(`claude_pending`) + 입력 시 자동재개 취소(§5.3) | 2 | 중 | `serverio.py`, `client.py` | ✅ |
 | **M14c** | 모델 배지 파서 `claude_model`(T3) — 실 캡처 `Opus 4.8 (1M context)` 로 검증. 힌트 UI 는 후속 | 1 | 낮음 | `claude.py`(`claude_model`), `tests/fixtures/claude/badge_1m.txt` | ✅ 파서(힌트 UI 미구현) |
-| **M15** | **계정 합계 예산**(T5) — `_budget_over`/`_budget_level_for` 가 `_account_token_total` 도 봄(opt `token_budget_account` + 설정행). 우선순위 정리(잔량% 최저 idle 먼저)는 per-pane ctx% 추적 필요라 후속 | 3 | 낮음 | `serverclaude.py`(`_budget_*`), `server.py`·opts·`clientutil.py`·`client.py` | ✅ 예산게이트(정리정렬 후속) |
+| **M15** | **계정 합계 예산 + 멀티세션 우선순위 정리**(T5) — `_budget_*` 가 `_account_token_total` 도 봄(opt `token_budget_account`). 계정 예산 초과 시 per-pane `_ctx_pct` 로 **가장 꽉 찬 idle 부터** 정리(`_is_fullest_idle`/`_account_over_budget`) | 3 | 낮음 | `serverclaude.py`·`model.py`(`_ctx_pct`)·`server.py`·`clientutil.py`·`client.py` | ✅ |
 | **M16** | **PTY 밖 에스컬레이션 훅**(T6) — `claude-budget-warn/over`·`claude-auto-armed`·`claude-limit` 훅(클라 status 전이에 발화) | 0 | 낮음 | `claude.py`(`saver_hook_events`), `client.py`(status 핸들러·`_fire_hook` env); 서버 무변경 | ✅ |
 | **M17** | **반복 실패·장기 턴 감지 알림**(T7) — 완료 꼬리 비교(S8 `screen_tail_key`/`track_repeat`)+`_busy_since`(S9). 상태줄 ⚠배지(grade0) | 0 | 낮음 | `claude.py`·`serverclaude.py`·`model.py`·`serverio.py`·`clientwidgets.py` | ✅ |
 | **M18** | **상태줄 가시성 + 통합 팝업**(§9) — `ctx:N%/1M`·`Σ25k(7%/5h)` 표기 + 사용량존 클릭→통계, `[s]`→시나리오 토글, 5h 분모 설정행 | 0 | 낮음 | `claude.py`·`serverclaude.py`·`serverio.py`·`clientwidgets.py`·`clientscreens.py`·`client.py` | ✅ (esc-커서 키보드만 보류) |

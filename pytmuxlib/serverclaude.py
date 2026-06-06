@@ -478,8 +478,10 @@ class ServerClaudeMixin:
                     if self.claude_rules.strip():
                         p._rules_pending = True
                     p._ctx_fired = False   # 새 세션 — 잔량 자동정리 디바운스 해제(M11)
+                    p._ctx_pct = None      # 새 세션 — 잔량% 추적 리셋(M15)
                 if not new_cl:
                     p._rules_pending = False   # 세션 끝나면 예약 해제
+                    p._ctx_pct = None          # 세션 끝 — 잔량% 비교 대상 제외(M15)
                 if new_cl:
                     # 계정 단서를 매 프레임 갱신(마지막 본 값 유지; 수동 지정 우선).
                     if not p._claude_account_manual:
@@ -491,6 +493,10 @@ class ServerClaudeMixin:
                     if mdl and mdl != p._claude_model:
                         p._claude_model = mdl
                         changed = True
+                    # M15: 컨텍스트 잔량% 추적(우선순위 정리 비교용). 마지막 값 유지.
+                    cp = claude_context_pct(txt)
+                    if cp is not None:
+                        p._ctx_pct = cp
                     running = tokens.parse_running_tokens(txt)
                     committed = tokens.step(p._tok_state, running,
                                             new_cl == "busy")
@@ -632,7 +638,14 @@ class ServerClaudeMixin:
                         pct = (claude_context_pct(txt)
                                if self.claude_ctx_autoclear and not p._ctx_fired
                                else None)
-                        if pct is not None and pct < self.claude_ctx_threshold:
+                        # M15 우선순위 정리: 계정 합계가 예산을 넘고, 이 패널이 그 계정
+                        # idle 세션 중 가장 꽉 찬(잔량% 최저) 패널이면, 개별 임계 미만이
+                        # 아니어도 정리한다 — 멀티세션 누적 시 가장 비싼 세션부터 비운다.
+                        priority = (self.claude_ctx_autoclear and not p._ctx_fired
+                                    and self._account_over_budget(p)
+                                    and self._is_fullest_idle(p))
+                        if ((pct is not None and pct < self.claude_ctx_threshold)
+                                or priority):
                             # M14 빈도 상한: 직전 정리로부터 min_interval 초가 안
                             # 지났으면 이번 경계는 건너뛴다(_ctx_fired 를 안 세워 다음
                             # 완료 경계에 재평가 — 시간이 차면 발화). 잔량이 낮은 동안엔
@@ -688,6 +701,23 @@ class ServerClaudeMixin:
         if ap._claude:
             return ap._session_tokens
         return 0
+
+    def _account_over_budget(self, pane) -> bool:
+        """M15: pane 의 계정 합계가 계정 예산을 넘었는지(예산 0이면 False)."""
+        ba = self.token_budget_account
+        return ba > 0 and self._account_token_total(pane) >= ba
+
+    def _is_fullest_idle(self, pane) -> bool:
+        """M15: pane 이 **같은 계정의 idle Claude 패널 중 잔량%가 가장 낮은**(=가장 꽉
+        찬) 패널인지. 멀티세션 누적 시 가장 비싼 세션부터 정리하려고 선택한다. 잔량%를
+        아는 후보만 비교하고, 동률이면 True(경계마다 1개만 발화되므로 무방)."""
+        acct = pane._claude_account
+        cand = [q for q in self._all_panes()
+                if q._claude == "idle" and q._claude_account == acct
+                and q._ctx_pct is not None]
+        if pane not in cand:
+            return False
+        return pane._ctx_pct <= min(q._ctx_pct for q in cand)
 
     def _usage_text(self, p):
         """M18-A: 상태줄 컨텍스트 표시. Claude 가 점유%를 그리면 그대로(`ctx N% / 1M`),
