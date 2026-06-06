@@ -39,8 +39,10 @@
 > **5차(이번 개정) — 그림자 `/usage` 질의 설계(§10, M19)**: §9.3 의 "5h 분모 미상"을
 > Claude 의 `/usage` 실측으로 정직히 푸는 방안. 핵심 요구가 "사용자 눈에 안 띄게"라,
 > **현재 세션 주입(A, render-freeze)** vs **숨은 세션(B)/headless `claude -p`(B2)** 두 길을
-> 모두 검토해 **B/B2 를 권장**(완전 무표시·무위험)했다. 구현은 실 `/usage` 포맷 캡처와
-> B2 타당성 검증을 선행 조건으로 **승인 후 착수**(설계만 기록).
+> 모두 검토했다. **B2 타당성 검증(2026-06-07 실측)=기각** — `claude -p "/usage"` 는
+> 무비용·headless(토큰 0·~30ms)지만 출력이 첫 줄뿐이라 **5h/주간 한도 숫자를 못 뽑는다**
+> (§10.4). → **방법 B(숨은 대화형 세션) 1순위**, A 폴백. 둘 다 TUI 패널을 pyte 로 스크랩
+> 해야 함. 구현은 실 `/usage` TUI 패널 캡처를 선행으로 **승인 후 착수**.
 
 ---
 
@@ -391,7 +393,7 @@ opt 화는 후속.
 | **M17** | **반복 실패·장기 턴 감지 알림**(T7) — 완료 꼬리 비교(S8 `screen_tail_key`/`track_repeat`)+`_busy_since`(S9). 상태줄 ⚠배지(grade0) | 0 | 낮음 | `claude.py`·`serverclaude.py`·`model.py`·`serverio.py`·`clientwidgets.py` | ✅ |
 | **M18** | **상태줄 가시성 + 통합 팝업**(§9) — `ctx:N%/1M`·`Σ25k(7%/5h)` 표기 + 사용량존 클릭→통계, `[s]`→시나리오 토글, 5h 분모 설정행 | 0 | 낮음 | `claude.py`·`serverclaude.py`·`serverio.py`·`clientwidgets.py`·`clientscreens.py`·`client.py` | ✅ (esc-커서 키보드만 보류) |
 | **M8보강** | 실 Claude 화면 골든 캡처 — busy/idle/badge_1m/ctx_low 는 REC 캡처로 실교체 완료. **limit/feedback/auto-compact 는 미수집**(녹화 중 미발생) | — | 낮음 | `tests/fixtures/claude/*`(README) | 🟡 부분(limit 등 잔여) |
-| **M19** | **그림자 `/usage` 질의**(§10) — 실 5h/주간 한도·리셋을 안 보이게 확보(§9.3 분모 실측화). 방법 B(숨은 세션)/B2(`claude -p`) 권장, A(현세션 동결)는 폴백 | 2~3 | 중 | `claude.py`(`parse_usage`)·`serverclaude.py`·(`serverpty.py`) | 📐 설계(§10), 구현 승인 대기 |
+| **M19** | **그림자 `/usage` 질의**(§10) — 실 5h/주간 한도·리셋 확보(§9.3 분모 실측화). **B2(`claude -p`) 타당성 검증=기각**(무비용 headless 지만 한도 숫자 미출력). 방법 **B(숨은 대화형 세션) 1순위**, A(동결) 폴백 | 2~3 | 중 | `claude.py`(`parse_usage`)·`serverclaude.py`·`serverpty.py` | 📐 설계(§10)+B2검증완료, 구현 승인 대기 |
 
 > 순서 원칙: **감지 정확도(M8·M9)를 먼저 고정**한 뒤에야 비가역 자동화(M11)를
 > 켠다(§5.4). M10(알림)은 위험 0. 모든 자동 개입은 **기본 OFF**, `token-saver` 팝업
@@ -715,12 +717,23 @@ pytmux 가 렌더 파이프라인을 소유하는 점을 이용:
 | **구현 난이도** | 동결 플럼빙 | off-tree pane 플럼빙 | 가장 단순(있으면) |
 | **선행 검증** | /usage 포맷 캡처 | /usage 포맷 캡처 | + print 모드 슬래시 동작 |
 
-**선택: 방법 B(특히 B2 가 가능하면 B2)를 권장.** 근거: 사용자의 **핵심 요구가 "안 보이게"**
-인데, **B 만이 100% 무표시·무위험**이다. A 는 본질적으로 동결 seam 과 입력 오염 창이 남아
-"완전 무표시"를 보장 못 한다. B 의 약점은 자원 비용인데 **저빈도 질의로 상쇄**되고, **B2
-(headless)가 성립하면 숨은 pane 플럼밍도 不要**라 가장 깨끗하다. → **1순위 B2 타당성 검증
-(`claude -p`/usage 서브커맨드로 한도 확보 가능한가) → 되면 B2, 안 되면 B(숨은 TUI 세션),
-A 는 최후 폴백.**
+**B2 타당성 검증 결과 (2026-06-07, 실측 — `claude` v2.1.167):**
+- ✅ **메커니즘 완벽**: `claude -p "/usage" --output-format json` 가 `/usage` 를 **로컬
+  슬래시로 처리** — `num_turns:0 · input/output_tokens:0 · total_cost_usd:0 ·
+  duration_api_ms:0 · model:"<synthetic>"`. **API 호출·토큰 0, ~30ms, TUI/pane 불필요.**
+- ❌ **데이터 불완전(치명적)**: print 모드 출력이 **첫 줄 한 줄**뿐 —
+  `"You are currently using your subscription to power your Claude Code usage"`. **5h/주간
+  한도 %·리셋 시각은 안 나온다**(대화형 TUI 패널의 박스/바에서만 렌더; json·stream-json
+  동일). 디스크 `~/.claude/stats-cache.json` 도 일별 토큰·누적비용·컨텍스트윈도우 등
+  **이력 통계만**이고 5h/주간 한도·리셋은 없음.
+- `claude` 서브커맨드에도 `usage` 류 없음(agents/auth/auto-mode/doctor/install/mcp/plugin/
+  project/setup-token/ultrareview/update 뿐).
+
+**→ B2 기각.** 무비용·headless 지만 한도 숫자를 못 뽑는다(print 모드가 /usage 를 한 줄로
+자름). **선택: 방법 B(숨은 대화형 세션) 1순위, A(현세션 동결) 폴백.** 둘 다 실제 TUI 패널을
+pyte 로 렌더해 스크랩해야 한도가 나온다 — pytmux 의 pyte 렌더·스크랩 강점을 쓴다. B 가
+"완전 무표시·무위험"이라 여전히 우선이고, 비용(off-tree 숨은 pty + 대화형 기동)은 저빈도로
+상쇄. **선결: 실제 `/usage` TUI 패널 1회 캡처**(현재 없음)로 `parse_usage` 포맷 픽스처화.
 
 ### 10.5 파싱·검증·안전
 
