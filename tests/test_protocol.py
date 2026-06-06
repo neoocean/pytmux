@@ -7,6 +7,32 @@ import harness  # noqa: F401  (경로 설정)
 import pytmux
 
 
+async def test_read_msg_frame_length_bounded_and_robust():
+    """read_msg 가 ① 정상 프레임 왕복 ② 상한 초과 길이 → None(OOM 방지)
+    ③ 비-JSON/손상 페이로드 → None(예외 아님) 을 보장한다(견고성·DoS 가드)."""
+    import asyncio
+    from pytmuxlib.protocol import read_msg, frame_msg, MAX_FRAME
+
+    # ① 정상 왕복
+    r = asyncio.StreamReader()
+    r.feed_data(frame_msg({"t": "hello", "x": 1}))
+    r.feed_eof()
+    assert (await read_msg(r)) == {"t": "hello", "x": 1}
+
+    # ② 상한 초과 길이 헤더 → 페이로드를 읽지 않고 None
+    r = asyncio.StreamReader()
+    r.feed_data((MAX_FRAME + 1).to_bytes(4, "big"))
+    r.feed_eof()
+    assert (await read_msg(r)) is None
+
+    # ③ 비-JSON/비-UTF8 페이로드 → 예외 없이 None
+    r = asyncio.StreamReader()
+    junk = b"\xff\xfe not json {"
+    r.feed_data(len(junk).to_bytes(4, "big") + junk)
+    r.feed_eof()
+    assert (await read_msg(r)) is None
+
+
 async def test_key_to_ctrl_bytes():
     assert pytmux._key_to_ctrl_bytes("ctrl+a") == b"\x01"
     assert pytmux._key_to_ctrl_bytes("ctrl+b") == b"\x02"

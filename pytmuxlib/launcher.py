@@ -12,7 +12,7 @@ import os
 import sys
 import time
 
-from . import ipc, proc
+from . import ipc, proc, protocol
 # NOTE: client(=textual)·server(=model→pyte→wcwidth) 는 여기서 import 하지 않는다.
 # 가벼운 제어 명령(ls/cmd/kill)이 launcher 만 거쳐도 textual 전체나 pyte/wcwidth 를
 # 로드해 기동이 느려졌다(Windows 사용자 보고). attach 경로의 client, `server` 명령의
@@ -62,8 +62,13 @@ def control_request(sock_path: str, obj: dict):
         if not header:
             return None
         n = int.from_bytes(header, "big")
+        if n > protocol.MAX_FRAME:      # 무제한 응답 길이 → OOM 방지(read_msg 와 동일 상한)
+            return None
         payload = _recvn(s, n)
-        return json.loads(payload.decode())
+        try:
+            return json.loads(payload)  # bytes 직접; 손상·비-JSON 응답은 None
+        except (ValueError, UnicodeDecodeError):
+            return None
     finally:
         s.close()
 

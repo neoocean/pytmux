@@ -26,19 +26,33 @@ HISTORY = 10000 # 패널당 스크롤백 보관 행 수
 # (reader 를 잠깐 떼어 커널 PTY 백프레셔 유지 — docs/HANDOFF.md §9 의 CL 참조).
 FEED_SLICE = 8192
 
+# 한 프레임 페이로드의 상한(64MiB). 길이프리픽스는 4바이트(최대 4GiB)라, 손상되거나
+# 악의적인(또는 비-pytmux 클라가 붙어 보낸) 헤더 하나가 `readexactly(length)` 로
+# 수 GiB 할당을 요구해 서버/클라를 즉시 OOM 시킬 수 있다. 정상 메시지(레이아웃·화면
+# 델타·status)는 이보다 훨씬 작으므로 상한 초과 프레임은 연결 종료로 처리한다.
+MAX_FRAME = 64 * 1024 * 1024
+
 
 async def read_msg(reader: asyncio.StreamReader):
-    """길이-프리픽스(4바이트 빅엔디언) + JSON 한 프레임을 읽는다. EOF 면 None."""
+    """길이-프리픽스(4바이트 빅엔디언) + JSON 한 프레임을 읽는다. EOF·비정상 프레임이면
+    None(호출부가 연결 종료로 처리). 길이는 MAX_FRAME 으로 상한, 페이로드가 깨졌거나
+    비-JSON 이어도 예외 대신 None 을 돌려 리더 루프가 죽지 않게 한다."""
     try:
         header = await reader.readexactly(4)
     except (asyncio.IncompleteReadError, ConnectionError):
         return None
     length = int.from_bytes(header, "big")
+    if length > MAX_FRAME:
+        return None                     # 무제한 길이 → OOM 방지(연결 종료 신호)
     try:
         payload = await reader.readexactly(length)
     except (asyncio.IncompleteReadError, ConnectionError):
         return None
-    return json.loads(payload.decode("utf-8"))
+    try:
+        # json.loads 는 bytes 를 직접 받아 내부에서 utf-8 디코드한다(중간 str 할당 제거).
+        return json.loads(payload)
+    except (ValueError, UnicodeDecodeError):
+        return None                     # 손상·비-JSON 프레임은 조용히 버림(리더 보호)
 
 
 def frame_msg(obj) -> bytes:
