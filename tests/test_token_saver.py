@@ -446,7 +446,8 @@ async def test_setters_persist_to_opts():
         assert srv.set_claude_ctx_action("doc-clear") == "doc-clear"
         assert srv.set_claude_ctx_action("bogus") == "doc-clear"   # 무효 무시
         assert srv.set_claude_ctx_threshold(200) == 99             # 클램프
-        assert srv.set_token_budget(day=123000, session=45000) == (123000, 45000)
+        assert srv.set_token_budget(day=123000, session=45000) == (123000, 45000, 0)
+        assert srv.set_token_budget(h5=350000) == (123000, 45000, 350000)
         assert srv.set_token_budget_resume_gate(True) is True
         saved = json.load(open(srv.opts_path))
         assert saved["claude_ctx_autoclear"] is True
@@ -454,6 +455,7 @@ async def test_setters_persist_to_opts():
         assert saved["claude_ctx_threshold"] == 99
         assert saved["token_budget_day"] == 123000
         assert saved["token_budget_session"] == 45000
+        assert saved["token_budget_5h"] == 350000
         assert saved["token_budget_resume_gate"] is True
     finally:
         try:

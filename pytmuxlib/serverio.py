@@ -13,7 +13,7 @@ import time
 import traceback
 
 from . import ipc, tokens, usagelog
-from .claude import claude_account, claude_usage
+from .claude import claude_account, claude_usage, ctx_window_tokens
 from .model import ClientConn, Session
 from .protocol import (FLUSH_HZ, MIN_H, MIN_W, PROTO_VERSION, frame_msg,
                        read_msg, write_frames, write_msg)
@@ -115,6 +115,7 @@ class ServerIOMixin:
     def _status_msg(self, sess: Session, full=True):
         win = sess.active_window
         cap_path, cap_size = self._capture_info(win.active_pane if win else None)
+        _tok_total = self._account_token_total(win.active_pane if win else None)
         return {
             "t": "status",
             "session": sess.name,
@@ -129,14 +130,17 @@ class ServerIOMixin:
             "panes_claude": [self._pane_claude_entry(p, full)
                              for p in (win.panes() if win else [])],
             "active_pane": win.active_pane.id if win else None,
-            # 활성 패널이 Claude 면 토큰/컨텍스트 사용량(best-effort)
-            "claude_usage": (win.active_pane._claude_usage
+            # 활성 패널이 Claude 면 토큰/컨텍스트 사용량(best-effort). M18-A: 점유%가
+            # 없으면 세션 누계/윈도우로 근사 사용%를 곁들인다(_usage_text).
+            "claude_usage": (self._usage_text(win.active_pane)
                              if win and win.active_pane
                              and win.active_pane._claude else None),
             # 활성 패널 계정 기준 — 그 계정에 속한 모든 세션/패널의 세션 누적 토큰을
             # 합산(§10 토큰 지속표시·계정별 합계). 계정 식별자도 함께 보내 표시에 곁들임.
-            "claude_tokens": self._account_token_total(
-                win.active_pane if win else None),
+            "claude_tokens": _tok_total,
+            # M18-B: 5시간 한도 근접도 %(분모 미상이면 None — 지어내지 않음).
+            "tok5h_pct": self._tok5h_pct(
+                win.active_pane if win else None, _tok_total),
             "claude_account": (win.active_pane._claude_account
                                if win and win.active_pane else None),
             "zoomed": bool(win.zoomed) if win else False,
@@ -165,6 +169,7 @@ class ServerIOMixin:
             "claude_ctx_action": self.claude_ctx_action,
             "token_budget_day": self.token_budget_day,
             "token_budget_session": self.token_budget_session,
+            "token_budget_5h": self.token_budget_5h,
             "token_budget_resume_gate": self.token_budget_resume_gate,
             "claude_budget_plan": self.claude_budget_plan,
             "budget_level": self._budget_level_for(
@@ -528,8 +533,9 @@ class ServerIOMixin:
         elif action == "set_claude_ctx_min_interval":  # M14 정리 빈도 상한(초)
             self.set_claude_ctx_min_interval(msg.get("value"))
             self._broadcast_session(sess)
-        elif action == "set_token_budget":           # M10 일/세션 예산
-            self.set_token_budget(day=msg.get("day"), session=msg.get("session"))
+        elif action == "set_token_budget":           # M10 일/세션/5h 예산
+            self.set_token_budget(day=msg.get("day"), session=msg.get("session"),
+                                  h5=msg.get("h5"))
             self._broadcast_session(sess)
         elif action == "set_token_budget_resume_gate":   # M12 예산 게이트 토글
             self.set_token_budget_resume_gate(msg.get("value"))

@@ -119,6 +119,11 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         # 토큰 합(best-effort)이라 하드 차단이 아니라 알림·자동개입 보류용이다(§5.5).
         self.token_budget_day = int(_opts.get("token_budget_day", 0))
         self.token_budget_session = int(_opts.get("token_budget_session", 0))
+        # M18-B 5시간 한도 근접도 표시의 분모. 0=설정 안 함 → 분모로 limit 관측
+        # 학습치(_learned_5h_cap)를 쓰고, 그것도 없으면 %를 숨긴다(지어내지 않음).
+        self.token_budget_5h = int(_opts.get("token_budget_5h", 0))
+        # limit 진입 시점의 계정 누계로 5h 상한을 학습(in-memory, best-effort).
+        self._learned_5h_cap = 0
         # M12 자동재개 예산 게이트: 켜면 예산 초과 시 자동재개(continue 주입)를 보류
         # 한다(사용자 수동 재개는 가능). 기본 OFF(autoresume 동작 불변).
         self.token_budget_resume_gate = bool(

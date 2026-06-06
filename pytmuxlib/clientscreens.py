@@ -960,7 +960,8 @@ class TokenLogScreen(ModalScreen):
         lv = self.query_one(ListView)
         await lv.clear()
         acct = self._account if self._account is not None else "전체"
-        hint = f"[h]시간 [d]일 [w]주 [m]월   [a]계정: {acct}   [Esc]닫기"
+        hint = (f"[h]시간 [d]일 [w]주 [m]월   [a]계정: {acct}   "
+                f"[s]시나리오 설정   [Esc]닫기")
         items = [ListItem(Label(hint, markup=False))]
         for ln in usagelog.summary_lines(self._records, self._bucket,
                                          self._account):
@@ -989,6 +990,10 @@ class TokenLogScreen(ModalScreen):
         if k == "a" and len(self._accounts) > 1:
             self._ai = (self._ai + 1) % len(self._accounts)
             await self._refresh()
+            return
+        if k == "s":
+            # M18-C: 사용량 통계에서 바로 과사용 완화 시나리오 on/off 로(§9.4).
+            self.app.open_claude_saver()
             return
         if k in self._NAV_KEYS:
             lv = self.query_one(ListView)

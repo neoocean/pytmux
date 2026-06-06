@@ -98,7 +98,8 @@ def claude_usage(text: str):
     for rx in _CTX_PCT_RES:
         m = rx.search(text)
         if m:
-            return _join(f"ctx {m.group(1)}%")
+            # M18-A: 사용%+윈도우를 'ctx N% / 1M' 슬래시 포맷으로(배지 있을 때).
+            return f"ctx {m.group(1)}% / {badge}" if badge else f"ctx {m.group(1)}%"
     for m in _TOK_RE.finditer(text):
         # 화살표 델타(↑/↓ … tokens)와 겹치면 건너뜀
         prefix = text[max(0, m.start() - 4):m.start()]
@@ -109,6 +110,20 @@ def claude_usage(text: str):
     if badge:
         return f"{badge} ctx"
     return None
+
+
+_WINDOW_RE = re.compile(r"(\d+)\s*([kKmM])")
+
+
+def ctx_window_tokens(s):
+    """배지 문자열('1M'/'200K'/'1M ctx'/'ctx 23% / 1M')에서 컨텍스트 윈도우 토큰 수
+    (int)를 뽑는다. 못 찾으면 None. M18-A 의 세션 사용% 근사(분모)용."""
+    if not s:
+        return None
+    m = _WINDOW_RE.search(s)
+    if not m:
+        return None
+    return int(m.group(1)) * (1_000_000 if m.group(2) in "mM" else 1_000)
 
 
 def claude_context_pct(text: str):

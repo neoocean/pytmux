@@ -1836,3 +1836,38 @@ async def test_status_history_debounce():
         assert "history" not in m["panes_claude"][0]
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_status_usage_display_m18():
+    """M18-A: 배지-only 사용문자열에 세션 누계/윈도우 근사 사용%를 ~ 로 곁들이고,
+    Claude 점유%는 그대로. M18-B: 5h 근접도 %는 분모(설정/학습)가 있을 때만."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        p._claude = "idle"
+        # A: 배지-only + 세션 누계 → 근사 사용%(~)
+        p._claude_usage = "1M ctx"
+        p._session_tokens = 100_000
+        assert srv._usage_text(p) == "ctx ~10% / 1M"
+        # 누계가 윈도우 이상이면 근사 생략(배지만)
+        p._session_tokens = 1_500_000
+        assert srv._usage_text(p) == "1M ctx"
+        # Claude 가 점유%를 그리면 그대로(슬래시 포맷)
+        p._claude_usage = "ctx 23% / 1M"
+        assert srv._usage_text(p) == "ctx 23% / 1M"
+        # B: 분모 미상(설정·학습 0) → None(% 지어내지 않음)
+        p._session_tokens = 100_000
+        assert srv._tok5h_pct(p, 25_000) is None
+        # 설정 분모 → %
+        assert srv.set_token_budget(h5=350_000)[2] == 350_000
+        assert srv._tok5h_pct(p, 25_000) == 7
+        # 설정 0 이면 limit 관측 학습치를 분모로
+        srv.set_token_budget(h5=0)
+        srv._learned_5h_cap = 500_000
+        assert srv._tok5h_pct(p, 25_000) == 5
+        # 토큰 0 이거나 비-Claude 면 None
+        p._claude = None
+        assert srv._tok5h_pct(p, 25_000) is None
+    finally:
+        await teardown(srv, task, sock)

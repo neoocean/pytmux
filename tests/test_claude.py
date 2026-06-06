@@ -117,9 +117,20 @@ async def test_claude_usage():
 async def test_claude_usage_context_badge():
     # 확장 컨텍스트 모델 배지(1M)를 잔량%·토큰에 덧붙인다.
     assert claude_usage("claude-opus-4-8 (1M context)") == "1M ctx"
+    # M18-A: 사용%+윈도우는 슬래시 포맷 'ctx N% / 1M'.
     assert claude_usage(
-        "Context left until auto-compact: 23%  ·  opus (1M context)") == "ctx 23% 1M"
+        "Context left until auto-compact: 23%  ·  opus (1M context)") == "ctx 23% / 1M"
     assert claude_usage("200K context window") == "200K ctx"
+
+
+async def test_ctx_window_tokens():
+    from pytmuxlib.claude import ctx_window_tokens
+    assert ctx_window_tokens("1M ctx") == 1_000_000
+    assert ctx_window_tokens("200K ctx") == 200_000
+    assert ctx_window_tokens("ctx 23% / 1M") == 1_000_000
+    assert ctx_window_tokens(None) is None
+    assert ctx_window_tokens("no badge here") is None
+    # 서버는 배지-only 사용문자열("1M ctx")에만 호출한다(토큰 문자열엔 미사용).
 
 
 async def test_claude_usage_no_redos_on_wide_blank():

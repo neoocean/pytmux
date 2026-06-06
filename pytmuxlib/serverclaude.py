@@ -14,7 +14,7 @@ import time
 from . import tokens
 from .claude import (claude_account, claude_context_pct, claude_feedback_prompt,
                      claude_prompt, claude_perm_mode, claude_state, claude_usage,
-                     parse_reset_delay)
+                     ctx_window_tokens, parse_reset_delay)
 from .model import Pane, Session
 
 # 권한모드 자동 오토모드 전환(§10): 한 번 idle 진입 후 auto 에 도달하지 못해도 이
@@ -501,6 +501,12 @@ class ServerClaudeMixin:
                     p._tok_state["peak"] = 0
                     p._tok_state["total"] = 0
                     changed = True
+                # M18-B: limit 진입 시점의 계정 누계로 5h 상한을 학습(설정 미지정 시
+                # 5h 근접도 표시의 분모로 쓴다, §9.3 (b) 관측 학습).
+                if new_cl == "limit":
+                    tot = self._account_token_total(p)
+                    if tot > self._learned_5h_cap:
+                        self._learned_5h_cap = tot
                 # 큐된 프롬프트 승격(#4): 헤더는 "지금 처리 중인 프롬프트"를 보여야
                 # 한다. busy 중 입력한 프롬프트는 _track_prompt 가 pending_prompts 에
                 # 쌓아 뒀다(last_prompt 즉시 안 바꿈). 응답 경계 — ① busy→non-busy(응답
@@ -652,6 +658,33 @@ class ServerClaudeMixin:
             return ap._session_tokens
         return 0
 
+    def _usage_text(self, p):
+        """M18-A: 상태줄 컨텍스트 표시. Claude 가 점유%를 그리면 그대로(`ctx N% / 1M`),
+        배지만 있으면(점유% 미상) 세션 누계/윈도우로 **근사 사용%**를 `~` 로 곁들인다.
+        근사는 누계 기반이라 라이브 점유와 다르므로 윈도우 미만일 때만 보인다(§9.2)."""
+        if p is None:
+            return None
+        u = p._claude_usage
+        if not u:
+            return None
+        if u.endswith(" ctx") and "%" not in u:   # 배지-only("1M ctx")
+            wt = ctx_window_tokens(u)
+            st = p._session_tokens
+            if wt and 0 < st < wt:
+                return f"ctx ~{round(st / wt * 100)}% / {u[:-4]}"
+        return u
+
+    def _tok5h_pct(self, p, total):
+        """M18-B: 5시간 한도 근접도 %(int)|None. 분모 = token_budget_5h(설정) 또는
+        limit 관측 학습치(_learned_5h_cap). 분모 미상이면 None — % 를 지어내지 않는다
+        (§5.5 미동작 편향). 분자는 표시 토큰(계정 누계)으로 §9.3 의 5h 근사."""
+        if p is None or not p._claude or total <= 0:
+            return None
+        cap = self.token_budget_5h or self._learned_5h_cap
+        if cap <= 0:
+            return None
+        return min(999, round(total / cap * 100))
+
     @staticmethod
     def _track_prompt(pane: Pane, data: bytes):
         """입력 바이트에서 현재 줄을 누적하고 Enter 시 last_prompt 로 확정한다.
@@ -778,9 +811,9 @@ class ServerClaudeMixin:
         last = pane._ctx_last_fire
         return last is None or (time.monotonic() - last) >= iv
 
-    def set_token_budget(self, day=None, session=None):
-        """일/세션 토큰 예산 설정(0=무제한). None 인 인자는 변경하지 않는다. 예산을
-        바꾸면 경고 레벨을 즉시 재계산한다. opts.json 영속."""
+    def set_token_budget(self, day=None, session=None, h5=None):
+        """일/세션/5시간 토큰 예산 설정(0=무제한). None 인 인자는 변경하지 않는다.
+        예산을 바꾸면 경고 레벨을 즉시 재계산한다. opts.json 영속."""
         if day is not None:
             try:
                 self.token_budget_day = max(0, int(day))
@@ -791,9 +824,15 @@ class ServerClaudeMixin:
                 self.token_budget_session = max(0, int(session))
             except (TypeError, ValueError):
                 pass
+        if h5 is not None:
+            try:
+                self.token_budget_5h = max(0, int(h5))
+            except (TypeError, ValueError):
+                pass
         self._refresh_budget_level()
         self._save_opts()
-        return (self.token_budget_day, self.token_budget_session)
+        return (self.token_budget_day, self.token_budget_session,
+                self.token_budget_5h)
 
     def set_token_budget_resume_gate(self, value=None):
         """자동재개 예산 게이트(M12) 토글. value 미지정 시 반전. opts.json 영속."""

@@ -352,6 +352,7 @@ class ServerPersistMixin:
                                self.claude_ctx_min_interval,
                            "token_budget_day": self.token_budget_day,
                            "token_budget_session": self.token_budget_session,
+                           "token_budget_5h": self.token_budget_5h,
                            "token_budget_resume_gate":
                                self.token_budget_resume_gate,
                            "claude_budget_plan": self.claude_budget_plan}, f)
