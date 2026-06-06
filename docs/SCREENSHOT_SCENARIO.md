@@ -1,10 +1,11 @@
 # 매뉴얼 스크린샷 — 실제 화면 캡처 시나리오
 
-> **상태**: 🧪 제안/조사(미구현). 본 문서는 `docs/MANUAL.md` 의 코드블록 ASCII
-> "스크린샷" 을 **실제 화면 이미지**로 교체하기 위한 방법 조사와 채택안, 구현 시나리오다.
-> 결론부터: **Textual 네이티브 SVG 내보내기**(`App.save_screenshot`)를 1차 수단으로,
-> 애니메이션이 필요한 데모는 **VHS**(charmbracelet/vhs)를, 순수 패널 프로그램 출력은
-> **ptyshot → 이미지 변환**을 폴백으로 쓴다.
+> **상태**: ✅ 1차 구현됨(방식 ① Textual SVG). `scripts/gen_screenshots.py` 가 실제
+> 클라이언트를 헤드리스로 운전해 10개 장면을 SVG 로 떠 `docs/img/` 에 저장하고,
+> `docs/MANUAL.md` 가 이를 싣는다. 본 문서는 그 설계 기준선이자 방법 조사 기록이다.
+> **생성**: `python3 scripts/gen_screenshots.py`(전체, 장면별 격리 서브프로세스) 또는
+> `python3 scripts/gen_screenshots.py <이름>`(단일 장면). 남은 일: 애니메이션 데모는
+> **VHS**, 순수 패널 프로그램 출력은 **ptyshot → 이미지 변환**, 회귀 `tests/test_shotgen.py`.
 
 ---
 
