@@ -1921,6 +1921,14 @@ async def test_repeat_loop_warn_m17():
         p.feed(b"\x1b[2J\x1b[HDifferent now\r\n? for shortcuts\r\n")
         srv._scan_claude(sess, win)
         assert p._repeat_n == 0 and p._claude_warn is None
+        # repeat_alert=0 이면 반복이 쌓여도 경고 안 뜸(opt 끔)
+        srv.set_claude_turn_warn(repeat=0)
+        for _ in range(4):
+            p.feed("\x1b[2J\x1b[H↑ 1k tokens\r\n".encode("utf-8"))
+            srv._scan_claude(sess, win)
+            p.feed(b"\x1b[2J\x1b[HSame fail\r\n? for shortcuts\r\n")
+            srv._scan_claude(sess, win)
+        assert p._repeat_n >= 3 and p._claude_warn is None
     finally:
         await teardown(srv, task, sock)
 

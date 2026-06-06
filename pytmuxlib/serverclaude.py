@@ -52,10 +52,8 @@ _HDR_CLAUDE_MISS = 30
 # 한 프레임 안 잡혀 idle 로 보였다 다시 busy)에 done 이 잘못 서서 탭이 잠깐 녹색이
 # 되는 것을 막는다. 30Hz flush 기준 ~0.1초 — 진짜 완료 알림 지연은 미미하다.
 _DONE_IDLE_FRAMES = 3
-# M17(T7) 표시 경고 임계(grade0 — 알림만). 한 턴이 이 초 이상 busy 면 장기 턴 경고,
-# 동일 완료 출력이 이 횟수 이상 연속되면 루프 의심 경고.
-_LONG_TURN_SEC = 600
-_REPEAT_ALERT = 3
+# M17(T7) 경고 임계는 opt(server.py: claude_long_turn_sec 기본 600 / claude_repeat_alert
+# 기본 3, 0=끔). 스캔의 warn 블록이 self.* 를 읽는다.
 
 
 class ServerClaudeMixin:
@@ -646,13 +644,15 @@ class ServerClaudeMixin:
                         elif self.auto_doc_clear:
                             self._adc_arm(p)
                 # M17(T7) 표시 경고 갱신(grade0 — 알림만, 개입 없음). S9 장기 턴 우선,
-                # 아니면 S8 반복 루프. 세션 종료 시 상태 리셋.
+                # 아니면 S8 반복 루프. 임계는 opt(0=끔). 세션 종료 시 상태 리셋.
                 warn = None
-                if new_cl == "busy" and p._busy_since is not None:
+                lt = self.claude_long_turn_sec
+                ra = self.claude_repeat_alert
+                if (lt > 0 and new_cl == "busy" and p._busy_since is not None):
                     el = time.monotonic() - p._busy_since
-                    if el >= _LONG_TURN_SEC:
+                    if el >= lt:
                         warn = f"이 턴 {int(el // 60)}분째 — 폭주 가능"
-                elif new_cl == "idle" and p._repeat_n >= _REPEAT_ALERT:
+                elif ra > 0 and new_cl == "idle" and p._repeat_n >= ra:
                     warn = f"동일 결과 {p._repeat_n + 1}회 반복 — 루프 의심"
                 if not new_cl:
                     p._busy_since = None
@@ -870,6 +870,22 @@ class ServerClaudeMixin:
         self._save_opts()
         return (self.token_budget_day, self.token_budget_session,
                 self.token_budget_5h, self.token_budget_account)
+
+    def set_claude_turn_warn(self, long_sec=None, repeat=None):
+        """M17 표시 경고 임계 설정(0=끔). long_sec=장기 턴 초, repeat=동일 완료 반복
+        횟수. None 인자는 변경 안 함. opts.json 영속."""
+        if long_sec is not None:
+            try:
+                self.claude_long_turn_sec = max(0, int(long_sec))
+            except (TypeError, ValueError):
+                pass
+        if repeat is not None:
+            try:
+                self.claude_repeat_alert = max(0, int(repeat))
+            except (TypeError, ValueError):
+                pass
+        self._save_opts()
+        return (self.claude_long_turn_sec, self.claude_repeat_alert)
 
     def set_token_budget_resume_gate(self, value=None):
         """자동재개 예산 게이트(M12) 토글. value 미지정 시 반전. opts.json 영속."""

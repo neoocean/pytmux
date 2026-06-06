@@ -792,6 +792,8 @@ class StatusBar(Widget):
         self.token_budget_session = 0
         self.token_budget_5h = 0   # M18-B: 5시간 한도 근접도 표시의 분모(설정값)
         self.token_budget_account = 0  # M15: 계정 합계 예산
+        self.claude_long_turn_sec = 600  # M17: 장기 턴 경고 임계(초, 0=끔)
+        self.claude_repeat_alert = 3     # M17: 반복 루프 경고 임계(회, 0=끔)
         self.token_budget_resume_gate = False
         self.claude_budget_plan = False
         self.budget_level = 0     # 예산 경고 레벨(0/80/100, M10)
@@ -943,6 +945,10 @@ class StatusBar(Widget):
         self.token_budget_5h = msg.get("token_budget_5h", self.token_budget_5h)
         self.token_budget_account = msg.get(
             "token_budget_account", self.token_budget_account)
+        self.claude_long_turn_sec = msg.get(
+            "claude_long_turn_sec", self.claude_long_turn_sec)
+        self.claude_repeat_alert = msg.get(
+            "claude_repeat_alert", self.claude_repeat_alert)
         self.token_budget_resume_gate = msg.get(
             "token_budget_resume_gate", self.token_budget_resume_gate)
         self.claude_budget_plan = msg.get(

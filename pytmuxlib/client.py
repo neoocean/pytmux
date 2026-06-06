@@ -1767,6 +1767,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return self._fmt_budget(st.token_budget_5h)
             if key == "budget_account":
                 return self._fmt_budget(st.token_budget_account)
+            if key == "long_turn":
+                v = int(st.claude_long_turn_sec)
+                return "끔" if v <= 0 else f"{v}초 이상"
+            if key == "repeat_alert":
+                v = int(st.claude_repeat_alert)
+                return "끔" if v <= 0 else f"{v}회 이상"
             return ""
 
         @staticmethod
@@ -1834,6 +1840,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
                                        int(st.token_budget_account))
                 self.send_cmd("set_token_budget", acct=nxt)
                 st.token_budget_account = nxt
+            elif key == "long_turn":
+                nxt = self._cycle_next("long_turn", int(st.claude_long_turn_sec))
+                self.send_cmd("set_claude_turn_warn", long_sec=nxt)
+                st.claude_long_turn_sec = nxt
+            elif key == "repeat_alert":
+                nxt = self._cycle_next("repeat_alert", int(st.claude_repeat_alert))
+                self.send_cmd("set_claude_turn_warn", repeat=nxt)
+                st.claude_repeat_alert = nxt
 
         # ---- 프롬프트 / 명령 ----
         def display_message(self, text, secs=2.0):

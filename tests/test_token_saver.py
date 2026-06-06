@@ -452,8 +452,11 @@ async def test_setters_persist_to_opts():
         assert srv.set_token_budget(h5=350000) == (123000, 45000, 350000, 0)
         assert srv.set_token_budget(acct=2_000_000) == (123000, 45000, 350000,
                                                         2_000_000)
+        assert srv.set_claude_turn_warn(long_sec=900, repeat=0) == (900, 0)
         assert srv.set_token_budget_resume_gate(True) is True
         saved = json.load(open(srv.opts_path))
+        assert saved["claude_long_turn_sec"] == 900
+        assert saved["claude_repeat_alert"] == 0
         assert saved["claude_ctx_autoclear"] is True
         assert saved["claude_ctx_action"] == "doc-clear"
         assert saved["claude_ctx_threshold"] == 99

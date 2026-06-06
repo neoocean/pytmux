@@ -128,6 +128,10 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         # 토큰은 계정 단위로 청구되므로 같은 계정 N개 세션의 합계(_account_token_total)
         # 가 이 값을 넘으면 경고·자동개입 보류. 멀티세션 누적(S7) 대응.
         self.token_budget_account = int(_opts.get("token_budget_account", 0))
+        # M17(T7) 표시 경고 임계(grade0 알림만). long_turn=한 턴 busy 지속 한계(초,
+        # 0=끔), repeat=동일 완료 출력 반복 횟수(0=끔). 상태줄 ⚠배지로만 알린다.
+        self.claude_long_turn_sec = int(_opts.get("claude_long_turn_sec", 600))
+        self.claude_repeat_alert = int(_opts.get("claude_repeat_alert", 3))
         # M12 자동재개 예산 게이트: 켜면 예산 초과 시 자동재개(continue 주입)를 보류
         # 한다(사용자 수동 재개는 가능). 기본 OFF(autoresume 동작 불변).
         self.token_budget_resume_gate = bool(

@@ -178,6 +178,8 @@ class ServerIOMixin:
             "token_budget_session": self.token_budget_session,
             "token_budget_5h": self.token_budget_5h,
             "token_budget_account": self.token_budget_account,
+            "claude_long_turn_sec": self.claude_long_turn_sec,
+            "claude_repeat_alert": self.claude_repeat_alert,
             "token_budget_resume_gate": self.token_budget_resume_gate,
             "claude_budget_plan": self.claude_budget_plan,
             "budget_level": self._budget_level_for(
@@ -544,6 +546,10 @@ class ServerIOMixin:
         elif action == "set_token_budget":           # M10 일/세션/5h/계정 예산
             self.set_token_budget(day=msg.get("day"), session=msg.get("session"),
                                   h5=msg.get("h5"), acct=msg.get("acct"))
+            self._broadcast_session(sess)
+        elif action == "set_claude_turn_warn":           # M17 장기턴/반복 임계
+            self.set_claude_turn_warn(long_sec=msg.get("long_sec"),
+                                      repeat=msg.get("repeat"))
             self._broadcast_session(sess)
         elif action == "set_token_budget_resume_gate":   # M12 예산 게이트 토글
             self.set_token_budget_resume_gate(msg.get("value"))
