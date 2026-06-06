@@ -2915,6 +2915,48 @@ async def test_copy_mode_selection_clamped_to_start_pane():
     assert v._clamp_sel(99, 99) == (99, 99)
 
 
+# ---- soft-wrap(자동 줄바꿈) 줄을 복사 시 한 줄로 잇기 ----
+async def test_copy_mode_joins_soft_wrapped_lines():
+    """서버가 표시한 soft-wrap 연속원 행(app.pane_wrap)을 추출 시 개행 없이 잇는다.
+    wrap 인 행은 다음 행과 한 줄로(꽉 찬 줄이라 trailing 보존), wrap 아닌 행은
+    rstrip 후 개행. 마지막 선택행은 wrap 여부와 무관하게 거기서 끝난다. wrap 정보가
+    없으면(구버전/단일 주입) 기존 줄 단위 개행으로 폴백. __new__ 주입 + 가짜 app."""
+    from pytmuxlib.clientwidgets import MultiplexerView
+
+    def _mk(wrap):
+        v = MultiplexerView.__new__(MultiplexerView)
+        # 폭 10 단일 패널. row0,row1 은 꽉 찬 wrap 연속원, row2 는 짧은 종결 줄.
+        rows = ["ABCDEFGHIJ", "KLMNOPQRST", "UVWXY     "]
+        v._cells = [[(c, None) for c in r] for r in rows]
+        v._sel_rect = (0, 0, 10, 3)
+        v._sel_pane_id = 7
+        # app 은 Textual 읽기전용 프로퍼티라 주입 불가 — wrap 조회 헬퍼만 오버라이드해
+        # 앱 비의존으로 단언한다(_sel_wrap_set 의 app 접근 경로는 폴백으로 검증됨).
+        v._sel_wrap_set = lambda: set(wrap)
+        return v
+
+    # row0,row1 이 wrap → 세 줄이 한 줄로. 끝점은 row2 의 'Y'(col4).
+    v = _mk({0, 1})
+    v._sel = (0, 0, 4, 2)
+    assert v._extract_selection() == "ABCDEFGHIJKLMNOPQRSTUVWXY"
+
+    # 일부만 wrap: row0 만 wrap, row1 은 하드 개행 → 두 줄.
+    v = _mk({0})
+    v._sel = (0, 0, 4, 2)
+    assert v._extract_selection() == "ABCDEFGHIJKLMNOPQRST\nUVWXY"
+
+    # wrap 정보 없음 → 기존 동작(줄마다 개행, rstrip).
+    v = _mk(set())
+    v._sel = (0, 0, 4, 2)
+    assert v._extract_selection() == "ABCDEFGHIJ\nKLMNOPQRST\nUVWXY"
+
+    # 마지막 선택행이 wrap 으로 표시돼도 거기서 선택이 끝나면 잇지 않는다(개행 없음,
+    # 단일 줄). row0 까지만 선택, row0 가 wrap 이어도 다음 행은 선택 밖.
+    v = _mk({0, 1})
+    v._sel = (0, 0, 9, 0)
+    assert v._extract_selection() == "ABCDEFGHIJ"
+
+
 # ---- §4.5: history 누락 시 직전 값 유지 ----
 async def test_claude_history_retained_when_omitted():
     """서버가 history 를 변할 때만 싣는(§4.5) 것에 맞춰, history 키가 빠진 status

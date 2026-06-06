@@ -89,6 +89,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.layout = {"panes": [], "dividers": [], "active": None,
                            "cols": 80, "rows": 24}
             self.pane_content = {}   # id -> (rows, cursor)
+            self.pane_wrap = {}      # id -> set(soft-wrap 연속원 행 인덱스, 프레임 상대)
+            #   copy-mode 선택 추출에서 자동 줄바꿈 줄을 한 줄로 잇는 데 쓴다(매 screen/
+            #   screen-delta 메시지가 전체 리스트를 실어 보내므로 통째로 교체).
             self.mode = "normal"     # normal | prefix | scroll | prompt | display
             self._want_tree = False  # choose-tree 응답 대기
             self._tree_purpose = "choose"  # tree 응답 용도(choose|usage)
@@ -507,6 +510,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self._fire_hook("client-attached")
             elif t == "screen":
                 self.pane_content[msg["pane"]] = (msg["rows"], msg.get("cursor"))
+                self.pane_wrap[msg["pane"]] = set(msg.get("wrap") or ())
                 self._request_composite()
             elif t == "screen-delta":
                 # B2: 바뀐 행만 받아 캐시된 rows 에 행 단위로 적용. base 가 없는
@@ -520,6 +524,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     elif y == len(rows):
                         rows.append(segs)
                 self.pane_content[pid] = (rows, msg.get("cursor"))
+                self.pane_wrap[pid] = set(msg.get("wrap") or ())
                 self._request_composite()
             elif t == "status":
                 self.status.update_status(msg)

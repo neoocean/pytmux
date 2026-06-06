@@ -94,6 +94,33 @@ class _BCEMixin:
         if how == 0 or how == 1:
             self.erase_in_line(how)
 
+    # --- soft-wrap(자동 줄바꿈) 표시 ---
+    # 복사 시 "자동 줄바꿈으로 이어진 줄"을 한 줄로 잇기 위한 정확 신호(휴리스틱 아님).
+    # pyte 의 draw() 는 DECAWM 자동 줄바꿈일 때만 그 내부에서 self.linefeed() 를
+    # 부른다(명시적 \n·VT·FF 는 Stream 이 draw 밖에서 linefeed 를 부름). 따라서
+    # draw 진입 동안만 _drawing 을 켜 두면, linefeed 가 그 플래그로 "이 줄바꿈은
+    # wrap 인가"를 무오류로 구분한다. wrap 이면 떠나는 줄(아직 cursor.y)의 줄 객체에
+    # wrapped 를 태그한다 — 줄 객체는 스크롤백(history.top)으로 밀려가도 그대로
+    # 따라가므로(같은 dict 참조), 화면 밖으로 스크롤된 wrap 도 보존된다.
+    # render() 가 이 태그를 (현재 마지막 칸이 비어 있지 않을 때만) 내보내, 이후
+    # 줄 끝이 지워지거나 당겨진 stale 태그는 자동으로 무효화된다.
+    def draw(self, data):
+        self._drawing = True
+        try:
+            super().draw(data)
+        finally:
+            self._drawing = False
+
+    def linefeed(self):
+        if getattr(self, "_drawing", False):
+            # carriage_return() 직후·super().linefeed() 직전 — cursor.y 는 아직
+            # '떠나는 줄'이라 그 줄을 wrap 연속원으로 태그한다.
+            try:
+                self.buffer[self.cursor.y].wrapped = True
+            except Exception:
+                pass
+        super().linefeed()
+
 
 class _BCEScreen(_BCEMixin, pyte.Screen):
     pass
@@ -302,6 +329,7 @@ class Pane:
         # 감지해 무효화한다. render 가 패널당 flush당 1회라 클라 델타와 충돌 없음.
         self._row_cache = None
         self._row_cache_key = None
+        self._last_wrap = []     # 직전 render 의 soft-wrap 연속원 행(프레임 상대 인덱스)
         self.rect = (0, 0, cols, rows)
         self.parent: Split | None = None
         self.title = "shell"
@@ -699,6 +727,15 @@ class Pane:
         if start < 0:
             start, end = 0, lines
         window = full[start:end]
+
+        # 자동 줄바꿈(soft-wrap) 연속원 행을 프레임 상대 인덱스로 모은다(복사 시 한 줄
+        # 잇기, serverio 가 screen 메시지 "wrap" 으로 클라에 그대로 전달). draw 가
+        # 태그한 wrapped 줄 중, **현재 마지막 칸이 비어 있지 않은**(=여전히 꽉 찬) 줄만
+        # 내보내 — 줄 끝이 지워지거나 당겨져 더는 wrap 이 아닌 stale 태그를 싸게
+        # 무효화한다(빈 칸 default Char.data == " "; 와이드문자 stub 은 "" 라 꽉 참).
+        cl = cols - 1
+        self._last_wrap = [i for i, ln in enumerate(window)
+                           if getattr(ln, "wrapped", False) and ln[cl].data != " "]
 
         cursor = None
         if with_cursor and self.scroll == 0 and not screen.cursor.hidden:

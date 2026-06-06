@@ -33,6 +33,8 @@ class MultiplexerView(Widget):
         self._sel_start = None
         self._sel_rect = None  # 선택 시작 패널 content rect (px,py,pw,ph) — 드래그·
         #   추출을 이 패널 안으로 클램프(분할 경계 넘어 복사 오염 방지, §2.4)
+        self._sel_pane_id = None  # 선택 시작 패널 id — 추출 시 그 패널의 soft-wrap
+        #   정보(app.pane_wrap)를 찾아 자동 줄바꿈 줄을 한 줄로 잇는다
         self._mouse_fwd = None     # 패스스루 중인 패널 id(버튼 다운~업)
         self._mouse_fwd_btn = 0    # 그 시퀀스의 버튼(드래그/릴리스 인코딩용)
         self._pane_swap = None     # Shift+드래그 swap 중인 소스 패널 id
@@ -48,6 +50,19 @@ class MultiplexerView(Widget):
         return (max(px, min(px + pw - 1, x)),
                 max(py, min(py + ph - 1, y)))
 
+    def _sel_wrap_set(self):
+        """선택 시작 패널의 soft-wrap 연속원 행 인덱스 집합(프레임 상대). app/패널
+        정보가 없거나(테스트의 __new__ 주입·앱 컨텍스트 없음) 구버전 서버라 wrap 을
+        못 받았으면 빈 집합 → _extract_selection 은 기존 줄 단위 개행으로 폴백한다.
+        Textual 의 self.app 은 앱 컨텍스트가 없으면 예외를 던지므로 통째로 감싼다."""
+        pid = getattr(self, "_sel_pane_id", None)
+        if pid is None:
+            return ()
+        try:
+            return self.app.pane_wrap.get(pid, ())
+        except Exception:
+            return ()
+
     def _extract_selection(self):
         if not self._sel or not self._cells:
             return ""
@@ -58,11 +73,17 @@ class MultiplexerView(Widget):
         # 안 그러면 중간 줄이 화면 끝까지 잡혀 인접 패널·테두리까지 복사된다(§2.4).
         # rect 없으면 전체 폭(0..행끝)으로 폴백해 단일 패널 동작 불변.
         if self._sel_rect:
-            lx, _, lw, _ = self._sel_rect
+            lx, py, lw, _ = self._sel_rect
             left, right = lx, lx + lw - 1
         else:
+            lx, py, lw = 0, None, None
             left, right = 0, None
-        out = []
+        # 자동 줄바꿈(soft-wrap) 연속원 행 집합(패널 content 행 인덱스, 프레임 상대).
+        # 서버가 정확히 표시한 wrap 만 join 한다(휴리스틱 아님). 행 y 의 content 행은
+        # y - py. 그 행이 wrap 이면 다음 행과 개행 없이 잇고, 꽉 찬 줄이라 trailing 도
+        # 보존한다. 마지막 선택행은 wrap 여부와 무관하게 거기서 선택이 끝난다.
+        wrap = self._sel_wrap_set()
+        parts = []
         for y in range(y0, y1 + 1):
             if not (0 <= y < len(self._cells)):
                 continue
@@ -72,8 +93,14 @@ class MultiplexerView(Widget):
             ex = x1 if y == y1 else row_right
             text = "".join(row[x][0] for x in range(max(0, sx),
                                                      min(len(row), ex + 1)))
-            out.append(text.rstrip())
-        return "\n".join(out)
+            wrapped = (py is not None and y < y1 and (y - py) in wrap)
+            if wrapped:
+                parts.append(text)          # 다음 행과 한 줄로 — 개행·rstrip 없음
+            else:
+                parts.append(text.rstrip())
+                if y < y1:
+                    parts.append("\n")
+        return "".join(parts)
 
     def set_frame(self, cells):
         """합성된 전 화면 cells 를 받아 변경된 행만 다시 그리게 한다(B8).
@@ -195,6 +222,7 @@ class MultiplexerView(Widget):
             # 선택 시작 패널을 기억해(§2.4) 이후 드래그/추출을 그 패널 안으로 묶는다.
             p = self._pane_at(event.x, event.y)
             self._sel_rect = (p["x"], p["y"], p["w"], p["h"]) if p else None
+            self._sel_pane_id = p["id"] if p else None
             sx, sy = self._clamp_sel(event.x, event.y)
             self._sel_start = (sx, sy)
             self._sel = (sx, sy, sx, sy)
@@ -380,10 +408,11 @@ class MultiplexerView(Widget):
             event.stop()
             return
         if self._sel_start is not None:
-            text = self._extract_selection()   # _sel_rect 사용 후 리셋
+            text = self._extract_selection()   # _sel_rect/_sel_pane_id 사용 후 리셋
             self._sel_start = None
             self._sel = None
             self._sel_rect = None
+            self._sel_pane_id = None
             self.release_mouse()
             if text:
                 self.app.copy_text(text)
