@@ -10,7 +10,7 @@ import socket
 import subprocess
 import time
 
-from . import ipc, proc, usagelog, version
+from . import clientclip, clientrender, ipc, proc, usagelog, version
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS, DEFAULT_STYLE,
     MENU_ITEMS, MENU_TOGGLES, SAVER_CYCLES, SPECIAL, _CLOCK_FONT,
@@ -885,25 +885,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self._net_bad = 0
                 self.reconnect_now("auto")
 
-        @staticmethod
-        def _put_cell(cells, x, y, ch, st, W, H):
-            """단일폭 글자를 cell 그리드에 정렬을 깨지 않고 써넣는다.
-
-            배경에 한글 등 와이드 문자(2칸: 본체+빈 연속셀 "")가 있을 때 그 절반만
-            덮으면 짝 셀이 어긋나 행 전체가 밀린다(예: clock-mode 시계가 깨짐).
-            덮어쓰는 자리의 와이드 짝 셀을 공백으로 정리해 정렬을 보존한다.
-            (오버레이가 배경 글자 일부를 지우는 것은 의도된 동작)"""
-            if not (0 <= x < W and 0 <= y < H):
-                return
-            row = cells[y]
-            if row[x][0] == "" and x > 0:
-                # 이 자리가 와이드 문자의 둘째(연속) 칸 → 왼쪽 본체를 공백으로.
-                row[x - 1] = (" ", row[x - 1][1])
-            elif _char_cells(row[x][0]) == 2 and x + 1 < W and row[x + 1][0] == "":
-                # 이 자리가 와이드 문자의 본체 → 오른쪽 연속 칸을 공백으로.
-                row[x + 1] = (" ", row[x + 1][1])
-            row[x] = (ch, st)
-
+        # 셀 그리드 합성 헬퍼는 앱 비의존이라 clientrender.py 로 분리(#12). 호출은
+        # clientrender.put_cell(...) 로 직접 한다(과거 self._put_cell).
         def _draw_clock_overlay(self, cells, W, H, active):
             """clock-mode 패널을 큰 시계로 덮는다. 뒤의 패널 출력은 흐리게(dim)
             계속 보인다. 닫기는 패널 클릭 또는 (활성 패널일 때) Shift+ESC — 좁은
@@ -933,7 +916,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         for g in glyphs:
                             for c in g[row]:
                                 if c != " ":
-                                    self._put_cell(cells, gx, oy + row, c,
+                                    clientrender.put_cell(cells, gx, oy + row, c,
                                                    digit_st, W, H)
                                 gx += 1
                             gx += 1   # 글자 사이 간격
@@ -941,7 +924,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     ox = px + max(0, (pw - len(now)) // 2)
                     oy = py + ph // 2
                     for j, c in enumerate(now):
-                        self._put_cell(cells, ox + j, oy, c, digit_st, W, H)
+                        clientrender.put_cell(cells, ox + j, oy, c, digit_st, W, H)
 
         def _draw_calendar_overlay(self, cells, W, H, active):
             """달력 모드 패널을 이번 달 달력으로 덮는다(clock-mode 미러). 뒤의
@@ -983,11 +966,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     oy = py + (ph - nl_big) // 2
                     tx = ox + (gw_big - len(title)) // 2
                     for j, c in enumerate(title):                 # 제목
-                        self._put_cell(cells, tx + j, oy, c, title_st, W, H)
+                        clientrender.put_cell(cells, tx + j, oy, c, title_st, W, H)
                     for col, wd in enumerate(wds):                # 요일(칸 중앙)
                         hx = ox + col * (DCW + DGAP) + (DCW - len(wd)) // 2
                         for k, c in enumerate(wd):
-                            self._put_cell(cells, hx + k, oy + 1, c, day_st, W, H)
+                            clientrender.put_cell(cells, hx + k, oy + 1, c, day_st, W, H)
                     for wi, week in enumerate(weeks):             # 주별 날짜(큰 글자)
                         ry = oy + 2 + wi * RHB
                         for col, day in enumerate(week):
@@ -1003,20 +986,20 @@ def build_client_app(sock_path: str, config: dict | None = None,
                                 for r, gl in enumerate(glyph):
                                     for k, gc in enumerate(gl):
                                         if gc != " ":
-                                            self._put_cell(cells, dx + k, ry + r,
+                                            clientrender.put_cell(cells, dx + k, ry + r,
                                                            gc, st, W, H)
                     bst = Style(color=theme_color(self, "accent"))   # 외곽선
                     bx0, by0, bx1, by1 = ox - 1, oy - 1, ox + gw_big, oy + nl_big
-                    self._put_cell(cells, bx0, by0, "╭", bst, W, H)
-                    self._put_cell(cells, bx1, by0, "╮", bst, W, H)
-                    self._put_cell(cells, bx0, by1, "╰", bst, W, H)
-                    self._put_cell(cells, bx1, by1, "╯", bst, W, H)
+                    clientrender.put_cell(cells, bx0, by0, "╭", bst, W, H)
+                    clientrender.put_cell(cells, bx1, by0, "╮", bst, W, H)
+                    clientrender.put_cell(cells, bx0, by1, "╰", bst, W, H)
+                    clientrender.put_cell(cells, bx1, by1, "╯", bst, W, H)
                     for xx in range(bx0 + 1, bx1):
-                        self._put_cell(cells, xx, by0, "─", bst, W, H)
-                        self._put_cell(cells, xx, by1, "─", bst, W, H)
+                        clientrender.put_cell(cells, xx, by0, "─", bst, W, H)
+                        clientrender.put_cell(cells, xx, by1, "─", bst, W, H)
                     for yy in range(by0 + 1, by1):
-                        self._put_cell(cells, bx0, yy, "│", bst, W, H)
-                        self._put_cell(cells, bx1, yy, "│", bst, W, H)
+                        clientrender.put_cell(cells, bx0, yy, "│", bst, W, H)
+                        clientrender.put_cell(cells, bx1, yy, "│", bst, W, H)
                     continue                                      # 큰 달력 완료
                 # 2) 칸 폭(colw)·주 간격(rowh)을 가용 공간에 맞춰 키운다 — 넓고 높은
                 # 화면일수록 큰 달력(사용자 요청). 한 칸은 숫자 2 + 여백이라 colw≥3.
@@ -1034,10 +1017,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     oy = py + (ph - nlines) // 2
                     tx = ox + (grid_w - len(title)) // 2
                     for j, c in enumerate(title):       # 제목(YYYY-MM, 중앙)
-                        self._put_cell(cells, tx + j, oy, c, title_st, W, H)
+                        clientrender.put_cell(cells, tx + j, oy, c, title_st, W, H)
                     for col, wd in enumerate(wds):       # 요일 헤더(칸 간격 colw)
                         for k, c in enumerate(wd):
-                            self._put_cell(cells, ox + col * colw + k, oy + 1,
+                            clientrender.put_cell(cells, ox + col * colw + k, oy + 1,
                                            c, day_st, W, H)
                     for wi, week in enumerate(weeks):    # 주별 날짜(줄 간격 rowh)
                         ry = oy + 2 + wi * rowh
@@ -1047,28 +1030,28 @@ def build_client_app(sock_path: str, config: dict | None = None,
                             st = today_st if day == today else day_st
                             cxp = ox + col * colw
                             for k, c in enumerate(f"{day:2d}"):
-                                self._put_cell(cells, cxp + k, ry, c, st, W, H)
+                                clientrender.put_cell(cells, cxp + k, ry, c, st, W, H)
                     # 그리드 둘레 외곽선(§10 #14): 한 칸 패딩 두고 round 박스 —
                     # 위·아래·좌·우로 한 칸씩 더 들어갈 공간이 있을 때만 그린다.
                     if pw >= grid_w + 2 and ph >= nlines + 2:
                         bst = Style(color=theme_color(self, "accent"))
                         bx0, by0, bx1, by1 = ox - 1, oy - 1, ox + grid_w, oy + nlines
-                        self._put_cell(cells, bx0, by0, "╭", bst, W, H)
-                        self._put_cell(cells, bx1, by0, "╮", bst, W, H)
-                        self._put_cell(cells, bx0, by1, "╰", bst, W, H)
-                        self._put_cell(cells, bx1, by1, "╯", bst, W, H)
+                        clientrender.put_cell(cells, bx0, by0, "╭", bst, W, H)
+                        clientrender.put_cell(cells, bx1, by0, "╮", bst, W, H)
+                        clientrender.put_cell(cells, bx0, by1, "╰", bst, W, H)
+                        clientrender.put_cell(cells, bx1, by1, "╯", bst, W, H)
                         for xx in range(bx0 + 1, bx1):
-                            self._put_cell(cells, xx, by0, "─", bst, W, H)
-                            self._put_cell(cells, xx, by1, "─", bst, W, H)
+                            clientrender.put_cell(cells, xx, by0, "─", bst, W, H)
+                            clientrender.put_cell(cells, xx, by1, "─", bst, W, H)
                         for yy in range(by0 + 1, by1):
-                            self._put_cell(cells, bx0, yy, "│", bst, W, H)
-                            self._put_cell(cells, bx1, yy, "│", bst, W, H)
+                            clientrender.put_cell(cells, bx0, yy, "│", bst, W, H)
+                            clientrender.put_cell(cells, bx1, yy, "│", bst, W, H)
                 else:
                     s = now.strftime("%Y-%m-%d")
                     ox = px + max(0, (pw - len(s)) // 2)
                     oy = py + ph // 2
                     for j, c in enumerate(s):
-                        self._put_cell(cells, ox + j, oy, c, title_st, W, H)
+                        clientrender.put_cell(cells, ox + j, oy, c, title_st, W, H)
 
         def _scan_footer_zones(self, p, rows, W, H):
             """Claude 패널 content 줄에서 ① 권한모드 footer(클릭→권한모드 팝업, item 2)
@@ -1283,7 +1266,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     st = Style(color="black", bold=True,
                                bgcolor="green" if p["id"] == active else "yellow")
                     for j, chh in enumerate(label):
-                        self._put_cell(cells, cx0 + j, cy0, chh, st, W, H)
+                        clientrender.put_cell(cells, cx0 + j, cy0, chh, st, W, H)
             # Claude Code 마지막 프롬프트 스티키 헤더(내용 최상단)
             self._draw_claude_headers(cells, W, H)
             # 현재 탭 닫기 [x]: 콘텐츠 영역 오른쪽 위 모서리(상단 테두리 위)
@@ -1511,145 +1494,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 asyncio.create_task(write_msg(self.writer, m))
 
         # ---- 복사/버퍼 ----
-        @staticmethod
-        def _clipboard_copy(text):
-            """OS 클립보드로 복사(pbcopy/xclip/wl-copy/clip.exe)."""
-            import shutil
-            for cmd in (["pbcopy"], ["xclip", "-selection", "clipboard"],
-                        ["wl-copy"], ["clip"]):   # clip = Windows clip.exe(표준입력 복사)
-                if shutil.which(cmd[0]):
-                    try:
-                        # no_window_kwargs: Windows 에서 clip.exe 콘솔 창 안 뜨게(§10)
-                        subprocess.run(cmd, input=text.encode("utf-8"), timeout=2,
-                                       **proc.no_window_kwargs())
-                        return True
-                    except (OSError, subprocess.SubprocessError):
-                        pass
-            return False
-
-        @staticmethod
-        def _clipboard_paste():
-            import shutil
-            for cmd in (["pbpaste"], ["xclip", "-selection", "clipboard", "-o"],
-                        ["wl-paste", "-n"],
-                        # Windows: PowerShell Get-Clipboard(끝에 CRLF 가 붙을 수 있음)
-                        ["powershell", "-NoProfile", "-Command", "Get-Clipboard"]):
-                if shutil.which(cmd[0]):
-                    try:
-                        # no_window_kwargs: Windows 에서 PowerShell Get-Clipboard 창이
-                        # 번쩍이지 않게 한다(§10 사용자 보고: 딸려 뜨는 PowerShell 창).
-                        return subprocess.run(
-                            cmd, capture_output=True, timeout=2,
-                            **proc.no_window_kwargs()
-                        ).stdout.decode("utf-8", "ignore")
-                    except (OSError, subprocess.SubprocessError):
-                        pass
-            return ""
-
-        @staticmethod
-        def _clipboard_has_image():
-            """OS 클립보드에 (텍스트가 아닌) 이미지가 들어 있으면 True.
-
-            윈도우는 PowerShell ``Get-Clipboard -Format Image`` 로 확인하고,
-            mac/linux 는 가능한 도구로 best-effort 확인한다(도구가 없으면 False
-            → 기존 동작 유지). 어떤 예외든 조용히 False 로 떨어진다."""
-            import shutil
-            try:
-                if proc.IS_WINDOWS:
-                    # -Sta: 클립보드 접근은 STA 스레드를 요구할 수 있다(STA 강제).
-                    # no_window_kwargs: 딸려 뜨는 PowerShell 창 방지(§10).
-                    out = subprocess.run(
-                        ["powershell", "-NoProfile", "-Sta", "-Command",
-                         "if (Get-Clipboard -Format Image) { 'IMG' }"],
-                        capture_output=True, timeout=3,
-                        **proc.no_window_kwargs()
-                    ).stdout.decode("utf-8", "ignore")
-                    return "IMG" in out
-                if shutil.which("osascript"):   # macOS
-                    out = subprocess.run(
-                        ["osascript", "-e", "clipboard info"],
-                        capture_output=True, timeout=3
-                    ).stdout.decode("utf-8", "ignore")
-                    return any(t in out for t in ("PNGf", "TIFF", "GIFf"))
-                if shutil.which("xclip"):       # Linux/X11
-                    out = subprocess.run(
-                        ["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"],
-                        capture_output=True, timeout=3
-                    ).stdout.decode("utf-8", "ignore")
-                    return "image/" in out
-                if shutil.which("wl-paste"):    # Linux/Wayland
-                    out = subprocess.run(
-                        ["wl-paste", "--list-types"],
-                        capture_output=True, timeout=3
-                    ).stdout.decode("utf-8", "ignore")
-                    return "image/" in out
-            except (OSError, subprocess.SubprocessError):
-                pass
-            return False
-
-        @staticmethod
-        def _clipboard_save_image():
-            """OS 클립보드의 이미지를 임시 PNG 파일로 저장하고 그 경로를 반환한다
-            (실패/이미지 없음 → None). §10-A #11 결정 ①(경로 문자열 주입)용.
-
-            - Windows: .NET `System.Windows.Forms.Clipboard.GetImage()` → `.Save(png)`.
-            - macOS: `pngpaste <path>`.
-            - Linux/X11: `xclip -selection clipboard -t image/png -o`.
-            - Linux/Wayland: `wl-paste --type image/png`.
-
-            주의(로컬 가정): 저장 파일은 **클라이언트 머신**에 생긴다. 클라이언트와
-            서버(PTY 자식 앱)가 같은 머신일 때만 경로가 유효하다 — 원격(ssh) 환경은
-            호출부가 Alt+V(공유 클립보드 직접 읽기)로 폴백한다."""
-            import shutil
-            import tempfile
-            try:
-                fd, path = tempfile.mkstemp(prefix="pytmux-clip-", suffix=".png")
-                os.close(fd)
-            except OSError:
-                return None
-            ok = False
-            try:
-                if proc.IS_WINDOWS:
-                    ps = (
-                        "Add-Type -AssemblyName System.Windows.Forms;"
-                        "Add-Type -AssemblyName System.Drawing;"
-                        "$img=[System.Windows.Forms.Clipboard]::GetImage();"
-                        "if ($img) { $img.Save('" + path.replace("'", "''") +
-                        "', [System.Drawing.Imaging.ImageFormat]::Png); 'OK' }"
-                    )
-                    out = subprocess.run(
-                        ["powershell", "-NoProfile", "-Sta", "-Command", ps],
-                        capture_output=True, timeout=8, **proc.no_window_kwargs()
-                    ).stdout.decode("utf-8", "ignore")
-                    ok = "OK" in out
-                elif shutil.which("pngpaste"):           # macOS
-                    ok = subprocess.run(["pngpaste", path], capture_output=True,
-                                        timeout=8).returncode == 0
-                elif shutil.which("xclip"):              # Linux/X11
-                    with open(path, "wb") as f:
-                        ok = subprocess.run(
-                            ["xclip", "-selection", "clipboard",
-                             "-t", "image/png", "-o"],
-                            stdout=f, timeout=8).returncode == 0
-                elif shutil.which("wl-paste"):           # Linux/Wayland
-                    with open(path, "wb") as f:
-                        ok = subprocess.run(
-                            ["wl-paste", "--type", "image/png"],
-                            stdout=f, timeout=8).returncode == 0
-                if ok and os.path.exists(path) and os.path.getsize(path) > 0:
-                    return path
-            except (OSError, subprocess.SubprocessError):
-                pass
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-            return None
-
+        # OS 클립보드 입출력은 앱 상태 비의존이라 clientclip.py 모듈 자유함수로
+        # 분리했다(#12). 클로저는 거기에 위임만 한다.
         def copy_text(self, text):
             # 서버 페이스트 버퍼 + OS 클립보드 양쪽에 저장
             self.send_cmd("set_buffer", text=text)
-            clip = self._clipboard_copy(text)
+            clip = clientclip.copy(text)
             self.display_message(
                 f"{len(text)} chars 복사됨" + (" (클립보드)" if clip else ""))
 
@@ -1663,12 +1513,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
               파일은 클라이언트 머신에 생기므로 클라이언트=서버(로컬)일 때 유효하다.
               저장에 실패하면(도구 부재/원격 등) 내부 앱이 **공유 OS 클립보드**에서 직접
               읽도록 Alt+V(=ESC v) 키스트로크로 폴백한다."""
-            txt = self._clipboard_paste()
+            txt = clientclip.paste()
             if txt:
                 self.send_cmd("paste", text=txt)
                 return
-            if self._clipboard_has_image():
-                path = self._clipboard_save_image()
+            if clientclip.has_image():
+                path = clientclip.save_image()
                 if path:
                     # 경로를 붙여넣어 앱이 첨부 이미지로 인식하게 한다(결정 ①).
                     self.send_cmd("paste", text=path)

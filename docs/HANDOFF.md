@@ -78,6 +78,8 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
 | `launcher.py` | ~160 | `main()`·서브커맨드(attach/ls/kill-server/cmd/server/record/replay)·데몬화 |
 | `replay.py` | ~200 | 렌더 진단: `record`(PTY 녹화)·`replay`(텍스트 프레임 재생) |
 | `version.py` | ~55 | 실행 코드 버전(p4 `#have` CL → git short → unknown)·업타임 포맷. `version` 명령 팝업이 씀 |
+| `clientclip.py` | ~150 | OS 클립보드 입출력(copy/paste/has_image/save_image) — 앱 비의존 순수 함수(#12, build_client_app 에서 추출) |
+| `clientrender.py` | ~30 | 셀 그리드 합성 헬퍼(`put_cell` — 와이드문자 정렬 보존) — 앱 비의존 순수 함수(#12 추출) |
 
 `pytmux.py` 는 얇은 진입점(위 심볼 재노출 + `main()`).
 

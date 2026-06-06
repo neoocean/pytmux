@@ -2855,27 +2855,34 @@ async def test_status_tabs_capture_toggle():
 async def test_paste_clipboard_text_image_and_fallback():
     """§10-A #11: paste-clipboard 디스패치 — ① 텍스트면 그 텍스트 paste, ② 텍스트가
     없고 이미지면 PNG 저장 후 경로 paste(결정 ①), ③ 저장 실패 시 Alt+V(ESC v) 폴백."""
+    from pytmuxlib import clientclip
+    _orig = (clientclip.paste, clientclip.has_image, clientclip.save_image)
+
     async def body(app, pilot, srv):
         sent = []
         keys = []
         app.send_cmd = lambda action, **kw: sent.append((action, kw))
         app.send_input = lambda b: keys.append(b)
-        # ① 텍스트 우선 (인스턴스 속성이 클래스 staticmethod 를 가린다)
-        app._clipboard_paste = lambda: "hello"
+        # 클립보드 IO 는 clientclip 모듈 자유함수(#12) — 그 함수를 모킹한다.
+        # ① 텍스트 우선
+        clientclip.paste = lambda: "hello"
         app.paste_os_clipboard()
         assert sent[-1] == ("paste", {"text": "hello"}), sent
         # ② 텍스트 없음 + 이미지 있음 + 저장 성공 → 경로 paste
         sent.clear(); keys.clear()
-        app._clipboard_paste = lambda: ""
-        app._clipboard_has_image = lambda: True
-        app._clipboard_save_image = lambda: "/tmp/pytmux-clip-x.png"
+        clientclip.paste = lambda: ""
+        clientclip.has_image = lambda: True
+        clientclip.save_image = lambda: "/tmp/pytmux-clip-x.png"
         app.paste_os_clipboard()
         assert sent[-1] == ("paste", {"text": "/tmp/pytmux-clip-x.png"}), sent
         assert keys == [], "저장 성공 시 Alt+V 안 보냄"
         # ③ 이미지 있음 + 저장 실패 → Alt+V(ESC v) 폴백
         sent.clear(); keys.clear()
-        app._clipboard_save_image = lambda: None
+        clientclip.save_image = lambda: None
         app.paste_os_clipboard()
         assert keys == [b"\x1bv"], keys
         assert all(a != "paste" for a, _ in sent), sent
-    await _with_app(body)
+    try:
+        await _with_app(body)
+    finally:   # 모듈 전역 모킹 복원(다른 테스트 누수 방지)
+        clientclip.paste, clientclip.has_image, clientclip.save_image = _orig
