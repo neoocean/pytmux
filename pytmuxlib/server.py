@@ -479,11 +479,11 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         if p.pipe_proc:  # 토글/재시작: 기존 파이프 종료
             try:
                 p.pipe_proc.stdin.close()
-            except Exception:
+            except OSError:
                 pass
             try:
                 p.pipe_proc.terminate()
-            except Exception:
+            except OSError:           # 이미 죽음(ProcessLookupError) 등
                 pass
             p.pipe_proc = None
         if cmd:
@@ -492,8 +492,9 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
                 p.pipe_proc = subprocess.Popen(proc.shell_argv(cmd),
                                                stdin=subprocess.PIPE,
                                                **proc.no_window_kwargs())
-            except Exception:
+            except (OSError, ValueError):   # 명령 없음/인자 오류 — 조용히 실패 말고 로그
                 p.pipe_proc = None
+                self._log_error("pipe_pane_spawn")
 
     def capture_pane(self, sess: Session, full=False):
         win = sess.active_window
@@ -515,7 +516,7 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         try:  # 메인 스크롤백을 비운다(대체 화면 중이어도)
             p._main.history.top.clear()
             p._main.history.bottom.clear()
-        except Exception:
+        except AttributeError:   # pyte 내부 구조 방어(history 없는 화면 등)
             pass
         p.scroll = 0
         p._match_abs = None

@@ -572,7 +572,7 @@ class ServerIOMixin:
             try:
                 await write_msg(writer, {"t": "error", "error": "proto_mismatch",
                                          "server_proto": PROTO_VERSION})
-            except Exception:
+            except (OSError, ConnectionError):
                 pass
             writer.close()
             return
@@ -653,7 +653,7 @@ class ServerIOMixin:
                 self.clients.remove(client)
             try:
                 writer.close()
-            except Exception:
+            except (OSError, ConnectionError):
                 pass
             # 미러링: 남은 클라이언트는 공유 크기가 커질 수 있으니 갱신(개별 가드)
             if sess and sess in self.sessions.values():

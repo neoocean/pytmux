@@ -401,6 +401,11 @@ class _WinPty(PtyProcess):
     def set_winsize(self, rows: int, cols: int) -> None:
         self._proc.setwinsize(max(1, rows), max(1, cols))
 
+    # NOTE(#28): 아래 winpty 정리 경로의 `except Exception` 은 **의도적으로 광역**이다.
+    # pywinpty 는 OSError 가 아닌 자체 `winpty.WinptyError`(또는 RuntimeError)를 던질
+    # 수 있어 OSError 로 좁히면 종료/정리 중 그 예외가 새어 teardown 을 깨뜨린다. 정리
+    # 경로라 best-effort 로 삼키는 게 맞다(POSIX 쪽 _UnixPty 는 표준 OSError 라 호출부에서
+    # 좁혔다). 실 Windows 박스 없이 타입을 좁히는 건 검증 불가라 광역 유지.
     def terminate(self) -> None:
         try:
             self._proc.terminate(force=False)

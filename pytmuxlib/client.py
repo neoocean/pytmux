@@ -183,7 +183,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             try:
                 drv.write(seq)
                 drv.flush()
-            except Exception:
+            except OSError:
                 pass
 
         async def on_mount(self):
@@ -425,7 +425,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if old_w is not None:
                     try:
                         old_w.close()
-                    except Exception:
+                    except OSError:
                         pass
                 # 새 연결(서버는 살아 있으니 보통 즉시 — 잠깐 재시도) + hello.
                 if not await self._connect_and_hello(_RECONNECT_RETRIES_FORCE):
@@ -1487,7 +1487,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         subprocess.run(cmd, input=text.encode("utf-8"), timeout=2,
                                        **proc.no_window_kwargs())
                         return True
-                    except Exception:
+                    except (OSError, subprocess.SubprocessError):
                         pass
             return False
 
@@ -1506,7 +1506,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                             cmd, capture_output=True, timeout=2,
                             **proc.no_window_kwargs()
                         ).stdout.decode("utf-8", "ignore")
-                    except Exception:
+                    except (OSError, subprocess.SubprocessError):
                         pass
             return ""
 
@@ -1547,7 +1547,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         capture_output=True, timeout=3
                     ).stdout.decode("utf-8", "ignore")
                     return "image/" in out
-            except Exception:
+            except (OSError, subprocess.SubprocessError):
                 pass
             return False
 
@@ -1569,7 +1569,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             try:
                 fd, path = tempfile.mkstemp(prefix="pytmux-clip-", suffix=".png")
                 os.close(fd)
-            except Exception:
+            except OSError:
                 return None
             ok = False
             try:
@@ -1602,11 +1602,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                             stdout=f, timeout=8).returncode == 0
                 if ok and os.path.exists(path) and os.path.getsize(path) > 0:
                     return path
-            except Exception:
+            except (OSError, subprocess.SubprocessError):
                 pass
             try:
                 os.remove(path)
-            except Exception:
+            except OSError:
                 pass
             return None
 
@@ -2125,7 +2125,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                                      timeout=15, **proc.no_window_kwargs())
                 text = res.stdout.decode("utf-8", "ignore")
                 rc = res.returncode
-            except Exception as e:
+            except (OSError, subprocess.SubprocessError) as e:
                 text, rc = str(e), 1
             if text.strip():
                 self.send_cmd("set_buffer", text=text)
@@ -2137,7 +2137,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 rc = subprocess.run(_shell_argv(cond), capture_output=True,
                                     timeout=15,
                                     **proc.no_window_kwargs()).returncode
-            except Exception:
+            except (OSError, subprocess.SubprocessError):
                 rc = 1
             if rc == 0:
                 self._run_command(then_cmd)
@@ -2503,7 +2503,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                                              capture_output=True, timeout=30,
                                              **proc.no_window_kwargs())
                         text = (res.stdout + res.stderr).decode("utf-8", "ignore")
-                    except Exception as e:
+                    except (OSError, subprocess.SubprocessError) as e:
                         text = str(e)
                     self.push_screen(InfoScreen(
                         text.splitlines()[:60] or ["(출력 없음)"], title="popup"))

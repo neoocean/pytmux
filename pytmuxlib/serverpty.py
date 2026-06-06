@@ -159,7 +159,7 @@ class ServerPtyMixin:
             if not cancelled and pane.pty is not None:
                 try:
                     pane.pty.resume_reader()
-                except Exception:
+                except OSError:
                     pass
 
     def _stop_pane_feed(self, pane: Pane):
@@ -195,7 +195,7 @@ class ServerPtyMixin:
             try:
                 pane.pipe_proc.stdin.write(data)
                 pane.pipe_proc.stdin.flush()
-            except Exception:
+            except (OSError, ValueError):   # broken pipe / 닫힌 stdin
                 pane.pipe_proc = None
         if pane.autoresume and not pane._resume_pending:
             self._maybe_schedule_resume(pane, data.decode("utf-8", "ignore"))
@@ -206,7 +206,7 @@ class ServerPtyMixin:
         if pane.pipe_proc:
             try:
                 pane.pipe_proc.stdin.close()
-            except Exception:
+            except OSError:
                 pass
             pane.pipe_proc = None
         if pane.pty is not None:
