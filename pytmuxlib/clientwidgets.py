@@ -31,10 +31,22 @@ class MultiplexerView(Widget):
         self._hover_divider = None  # 마우스가 올라간 경계선 rect (x,y,w,h)
         self._sel = None       # 선택 영역 (x0,y0,x1,y1) 전역 좌표
         self._sel_start = None
+        self._sel_rect = None  # 선택 시작 패널 content rect (px,py,pw,ph) — 드래그·
+        #   추출을 이 패널 안으로 클램프(분할 경계 넘어 복사 오염 방지, §2.4)
         self._mouse_fwd = None     # 패스스루 중인 패널 id(버튼 다운~업)
         self._mouse_fwd_btn = 0    # 그 시퀀스의 버튼(드래그/릴리스 인코딩용)
         self._pane_swap = None     # Shift+드래그 swap 중인 소스 패널 id
         self._pane_swap_over = None  # 드래그 중 가리키는 swap 대상 패널 id
+
+    def _clamp_sel(self, x, y):
+        """좌표를 선택 시작 패널의 content rect 안으로 클램프(§2.4). rect 가 없으면
+        (단일 패널·구버전) 원좌표 그대로 — 기존 전체화면 선택과 동일."""
+        r = self._sel_rect
+        if not r:
+            return x, y
+        px, py, pw, ph = r
+        return (max(px, min(px + pw - 1, x)),
+                max(py, min(py + ph - 1, y)))
 
     def _extract_selection(self):
         if not self._sel or not self._cells:
@@ -42,13 +54,22 @@ class MultiplexerView(Widget):
         x0, y0, x1, y1 = self._sel
         if (y0, x0) > (y1, x1):
             x0, y0, x1, y1 = x1, y1, x0, y0
+        # 여러 줄 선택의 중간 줄은 시작 패널의 가로 범위(left..right)로 한정한다 —
+        # 안 그러면 중간 줄이 화면 끝까지 잡혀 인접 패널·테두리까지 복사된다(§2.4).
+        # rect 없으면 전체 폭(0..행끝)으로 폴백해 단일 패널 동작 불변.
+        if self._sel_rect:
+            lx, _, lw, _ = self._sel_rect
+            left, right = lx, lx + lw - 1
+        else:
+            left, right = 0, None
         out = []
         for y in range(y0, y1 + 1):
             if not (0 <= y < len(self._cells)):
                 continue
             row = self._cells[y]
-            sx = x0 if y == y0 else 0
-            ex = x1 if y == y1 else len(row) - 1
+            row_right = right if right is not None else len(row) - 1
+            sx = x0 if y == y0 else left
+            ex = x1 if y == y1 else row_right
             text = "".join(row[x][0] for x in range(max(0, sx),
                                                      min(len(row), ex + 1)))
             out.append(text.rstrip())
@@ -171,8 +192,12 @@ class MultiplexerView(Widget):
         if not self.app.mouse_enabled:
             return
         if self.app.mode == "scroll":  # copy-mode: 드래그로 선택
-            self._sel_start = (event.x, event.y)
-            self._sel = (event.x, event.y, event.x, event.y)
+            # 선택 시작 패널을 기억해(§2.4) 이후 드래그/추출을 그 패널 안으로 묶는다.
+            p = self._pane_at(event.x, event.y)
+            self._sel_rect = (p["x"], p["y"], p["w"], p["h"]) if p else None
+            sx, sy = self._clamp_sel(event.x, event.y)
+            self._sel_start = (sx, sy)
+            self._sel = (sx, sy, sx, sy)
             self.capture_mouse()
             self.app._composite()
             event.stop()
@@ -279,8 +304,8 @@ class MultiplexerView(Widget):
             event.stop()
             return
         if self._sel_start is not None:
-            self._sel = (self._sel_start[0], self._sel_start[1],
-                         event.x, event.y)
+            ex, ey = self._clamp_sel(event.x, event.y)   # 시작 패널 안으로(§2.4)
+            self._sel = (self._sel_start[0], self._sel_start[1], ex, ey)
             self.app._composite()
             event.stop()
             return
@@ -355,9 +380,10 @@ class MultiplexerView(Widget):
             event.stop()
             return
         if self._sel_start is not None:
-            text = self._extract_selection()
+            text = self._extract_selection()   # _sel_rect 사용 후 리셋
             self._sel_start = None
             self._sel = None
+            self._sel_rect = None
             self.release_mouse()
             if text:
                 self.app.copy_text(text)

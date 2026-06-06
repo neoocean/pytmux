@@ -1108,15 +1108,21 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     s = st if i < len(label) else Style(color="grey50")
                     if 0 <= gx < W:
                         cells[gy][gx] = (chh, s)
-            # copy-mode 선택 영역 하이라이트
+            # copy-mode 선택 영역 하이라이트(추출과 동일하게 시작 패널 가로 범위로
+            # 중간 줄을 한정 — 분할 경계 넘어 강조/복사되던 오염 방지, §2.4)
             sel = self.view._sel
             if sel:
                 sx0, sy0, sx1, sy1 = sel
                 if (sy0, sx0) > (sy1, sx1):
                     sx0, sy0, sx1, sy1 = sx1, sy1, sx0, sy0
+                srect = self.view._sel_rect
+                if srect:
+                    left, right = srect[0], srect[0] + srect[2] - 1
+                else:
+                    left, right = 0, W - 1
                 for yy in range(max(0, sy0), min(H, sy1 + 1)):
-                    a = sx0 if yy == sy0 else 0
-                    b = sx1 if yy == sy1 else W - 1
+                    a = sx0 if yy == sy0 else left
+                    b = sx1 if yy == sy1 else right
                     for xx in range(max(0, a), min(W, b + 1)):
                         c, sstl = cells[yy][xx]
                         cells[yy][xx] = (c, sstl + Style(reverse=True))

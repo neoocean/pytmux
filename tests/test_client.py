@@ -2886,3 +2886,30 @@ async def test_paste_clipboard_text_image_and_fallback():
         await _with_app(body)
     finally:   # 모듈 전역 모킹 복원(다른 테스트 누수 방지)
         clientclip.paste, clientclip.has_image, clientclip.save_image = _orig
+
+
+# ---- §2.4: copy-mode 선택을 시작 패널 경계로 클램프 ----
+async def test_copy_mode_selection_clamped_to_start_pane():
+    """여러 줄 드래그 선택의 중간 줄이 화면 끝까지 잡혀 인접 패널·테두리까지
+    복사되던 오염(§2.4)을 시작 패널 가로 범위로 묶어 막는다. rect 없으면(단일
+    패널) 기존 전체 폭 동작 불변. _extract_selection/_clamp_sel 은 앱 비의존이라
+    __new__ 로 만든 뷰에 셀/선택만 주입해 단언한다."""
+    from pytmuxlib.clientwidgets import MultiplexerView
+    v = MultiplexerView.__new__(MultiplexerView)
+    line = "L" * 9 + "|" + "R" * 10            # 0..8 좌패널, 9 테두리, 10..19 우패널
+    v._cells = [[(c, None) for c in line] for _ in range(4)]
+    # 좌패널(x0..8)에서 시작한 선택. 끝점은 드래그 시 이미 클램프됐다고 가정.
+    v._sel_rect = (0, 0, 9, 4)
+    v._sel = (1, 0, 7, 2)
+    lines = v._extract_selection().split("\n")
+    assert lines[1] == "LLLLLLLLL", lines      # 중간 줄: 패널 폭(0..8)만
+    assert "|" not in "".join(lines) and "R" not in "".join(lines)
+    # 끝점 클램프: 우패널 쪽(15) 좌표는 좌패널 우경계(8)로 당겨진다.
+    assert v._clamp_sel(15, 2) == (8, 2)
+    assert v._clamp_sel(-3, 9) == (0, 3)       # 좌·하 경계도 클램프
+    # rect 없음(단일 패널) → 전체 폭 동작 그대로
+    v._sel_rect = None
+    v._sel = (1, 0, 18, 2)
+    full = v._extract_selection().split("\n")
+    assert "|" in full[1] and "R" in full[1]
+    assert v._clamp_sel(99, 99) == (99, 99)
