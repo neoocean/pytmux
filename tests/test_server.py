@@ -1072,6 +1072,55 @@ async def test_handle_control():
         await teardown(srv, task, sock)
 
 
+async def test_fire_resume_rechecks_limit_state():
+    """_fire_resume 는 발화 직전 화면이 여전히 limit 일 때만 'continue' 를 주입한다(#6).
+    예약~발화 사이에 사용자가 재개했거나(화면이 limit 아님) parse_reset_delay 오탐이면
+    주입을 건너뛰어 작업 중인 Claude 에 끼어들지 않는다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        p.resume_msg = "continue"
+        real = p.pty
+        writes = []
+
+        class _Spy:
+            def write(self, b):
+                writes.append(b)
+        try:
+            p.pty = _Spy()
+            # ① 화면이 limit 아님(셸 프롬프트) → 주입 안 함
+            p.feed(b"\x1b[2J\x1b[H$ ls -la\r\n")
+            srv._fire_resume(p)
+            assert writes == [], "limit 아니면 주입 안 함"
+            # ② 화면이 limit → continue 주입
+            p.feed(b"\x1b[2J\x1b[Husage limit reached, resets at 3pm\r\n")
+            srv._fire_resume(p)
+            assert writes and b"continue" in writes[0], "limit 이면 continue 주입"
+        finally:
+            p.pty = real
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_clear_resets_token_session():
+    """/clear 자동 주입(_pc_advance doc→clear) 시 토큰 누계가 새 세션으로 끊긴다(#5).
+    절감 자동화가 돌수록 doc/clear 토큰이 사용자 누계에 합산되던 구조적 오차를 막는다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        p._tok_state = {"peak": 0, "total": 5000}
+        p._session_tokens = 5000
+        sid0 = p._claude_session_id
+        p._pc_phase = "doc"               # doc 응답 완료 → /clear 주입 단계
+        srv._pc_advance(p)
+        assert p._tok_state["total"] == 0 and p._session_tokens == 0, "누계 리셋"
+        assert p._claude_session_id != sid0, "새 세션 id 부여"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_proto_version_negotiation():
     """와이어 프로토콜 버전 협상(#7): 비호환 proto 는 명확히 거절, proto 없는(구버전)
     클라는 호환으로 통과. 버전 스큐 시 조용한 오작동 대신 명시적 실패가 되게 한다."""

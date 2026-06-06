@@ -67,11 +67,18 @@ class ServerClaudeMixin:
     def _fire_resume(self, pane: Pane):
         pane._resume_pending = False
         pane._scanbuf = ""
-        if pane.pty is not None:
-            try:
-                pane.pty.write((pane.resume_msg + "\r").encode("utf-8"))
-            except OSError:
-                pass
+        # 발화 직전 재확인(#6): 화면이 **여전히 limit 상태**일 때만 주입한다. 예약과
+        # 발화 사이(수 분~수 시간)에 사용자가 직접 재개했거나 화면이 busy/idle 로
+        # 돌아갔다면, 'continue' 주입이 작업 중인 Claude 에 끼어들어 작업을 망친다.
+        # parse_reset_delay 가 transcript 의 우연한 시각 숫자로 오탐했을 때도 막아 준다.
+        if pane.pty is None:
+            return
+        if claude_state(screen_text(pane.screen)) != "limit":
+            return
+        try:
+            pane.pty.write((pane.resume_msg + "\r").encode("utf-8"))
+        except OSError:
+            pass
 
     def set_autoresume(self, sess: Session, value=None, msg: str | None = None):
         win = sess.active_window
@@ -192,6 +199,17 @@ class ServerClaudeMixin:
         pane._pc_phase = None
         self._pc_inject(pane, nxt)
 
+    def _reset_token_session(self, pane: Pane):
+        """패널 토큰 누계를 **새 세션으로 끊는다**(/clear 컨텍스트 경계, #5). tokens
+        상태를 0 으로 리셋하고 세션 id 를 새로 부여해, /clear 이후의 토큰이 비워진 새
+        컨텍스트에 귀속되게 한다(usagelog 의 세션 단위 집계도 컨텍스트와 정합). None→
+        Claude 첫 진입과 동일한 경계 처리지만, /clear 는 화면이 계속 Claude 라 그 경계
+        검출(new_cl and not old_cl)에 안 걸려 여기서 명시적으로 끊는다."""
+        tokens.reset(pane._tok_state)
+        pane._session_tokens = 0
+        self._claude_session_seq += 1
+        pane._claude_session_id = self._claude_session_seq
+
     def _pc_advance(self, pane: Pane):
         """프롬프트 단위 클리어 상태기계를 busy→idle 경계에서 한 단계 전진한다.
 
@@ -207,6 +225,10 @@ class ServerClaudeMixin:
         elif ph == "doc":
             self._pc_inject(pane, "/clear")
             pane._pc_phase = "clear"
+            # /clear 로 Claude 컨텍스트가 비워지므로 토큰 누계도 **새 세션으로 끊는다**(#5).
+            # 안 그러면 절감 자동화(doc→clear)가 돌수록 doc 작성·/clear 자체 토큰이 사용자
+            # 프롬프트 누계에 계속 합산되고, 세션 id 가 실제 컨텍스트 경계와 어긋난다.
+            self._reset_token_session(pane)
             # /clear 직후엔 시작 규칙을 다시 넣는다(#27): 다음 idle 에 1회 주입 예약.
             if self.claude_rules.strip():
                 pane._rules_pending = True
