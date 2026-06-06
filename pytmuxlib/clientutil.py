@@ -407,6 +407,7 @@ COMMANDS = [
     ("detach-client", "detach (앱 종료, 셸 유지)", "설정/기타"),
     ("kill-server", "서버와 모든 탭/셸 종료", "설정/기타"),
     ("restart-server", "작업 보존 재시작 — 셸/PTY 를 살린 채 서버 코드만 교체(재접속)", "설정/기타"),
+    ("restart-all", "전체 재시작 — 서버 세션유지 재시작 + 클라 재기동(별칭 full-restart). 서버·클라 코드 모두 갱신", "설정/기타"),
     ("reconnect", "IPC 강제 재접속 — degraded(빨간 외곽선) 고착 회복(서버 보존)", "설정/기타"),
 ]
 

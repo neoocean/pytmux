@@ -27,6 +27,22 @@ async def test_hello_paints_screen():
     await _with_app(body)
 
 
+async def test_restart_all_arms_relaunch_and_restarts_server():
+    """restart-all: 클라가 relaunch 를 무장(_relaunch_on_restart)하고 서버에
+    restart_server 를 보낸다. 일반 restart-server 는 relaunch 무장 안 함."""
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append(action)
+        app._run_command("restart-server")
+        assert app._relaunch_on_restart is False
+        assert sent == ["restart_server"]
+        sent.clear()
+        app._run_command("restart-all")
+        assert app._relaunch_on_restart is True
+        assert sent == ["restart_server"]
+    await _with_app(body)
+
+
 async def test_version_command_opens_popup():
     """version 명령이 서버에 요청을 보내고(_want_version), version 회신을 받으면
     클라/서버 버전·업타임 팝업(InfoScreen)을 띄운다."""

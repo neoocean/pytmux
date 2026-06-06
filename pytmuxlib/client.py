@@ -75,6 +75,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 작업 보존 재시작(re-exec): 서버가 {"t":"restarting"} 을 보내면 다음
             # 연결 끊김을 종료가 아닌 재접속으로 다룬다(docs/RESTART_SCENARIO.md ⓔ).
             self._reconnecting = False
+            # 전체 재시작(restart-all): 서버 re-exec 시 in-place 재접속 대신 **클라
+            # 자신도 relaunch**(새 클라 코드로 재attach)하려는 요청. 끊김 처리에서
+            # _relaunch 를 세우고 종료하면 run_client 가 os.execv 로 새 클라를 띄운다.
+            self._relaunch_on_restart = False
+            self._relaunch = False
             # IPC 강제 재접속(§10 degraded 회복): 정체된 소켓을 버리고 새로 세울 때
             # 옛 reader 태스크가 EOF 로 깨어나 self.exit() 하지 않게 세대 번호로 구분
             # 한다. _start_reader 가 띄우는 각 reader 태스크는 자기 (reader, gen) 을
@@ -379,9 +384,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     # 조용히 종료 — self.exit() 로 앱을 닫지 않는다(§10 degraded 회복).
                     if gen != self._conn_gen:
                         return
-                    # 작업 보존 재시작 중이면 종료 대신 재접속(ⓔ).
+                    # 작업 보존 재시작 중이면 종료 대신 재접속(ⓔ). 단 전체 재시작
+                    # (restart-all)이면 in-place 재접속 대신 클라를 relaunch 한다 —
+                    # run_client 가 app.run() 반환 후 os.execv 로 새 클라를 띄운다
+                    # (terminal 은 textual 종료가 정상복구). 새 클라가 re-exec 된 서버에
+                    # 재접속해 셸/세션은 보존되고 클라 코드까지 갱신된다.
                     if self._reconnecting:
-                        await self._reconnect()
+                        if self._relaunch_on_restart:
+                            self._relaunch = True
+                            self.exit()
+                        else:
+                            await self._reconnect()
                         return
                     self.exit()
                     return
@@ -2409,6 +2422,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 작업 보존 재시작: 셸/PTY 를 살린 채 서버 코드만 교체(re-exec).
                 # 화면이 잠깐 끊겼다 재접속된다(docs/RESTART_SCENARIO.md).
                 self.send_cmd("restart_server")
+            elif c in ("restart-all", "full-restart", "restart-client-server"):
+                # 전체 재시작: 서버는 work-preserving re-exec(셸/세션 보존), 동시에
+                # 클라이언트도 자신을 relaunch(새 클라 코드로 재attach). 서버/클라
+                # 코드를 모두 갱신하면서 작업은 보존한다(docs/RESTART_SCENARIO.md).
+                self._relaunch_on_restart = True
+                self.display_message("pytmux: 전체 재시작 — 서버 재시작 + 클라 재기동…")
+                self.send_cmd("restart_server")
             elif c in ("reconnect", "resync"):
                 # IPC 강제 재접속(§10): degraded(빨간 외곽선) 고착 시 정체된 소켓을
                 # 버리고 새로 세워 회복한다. 서버 PTY/세션·실행 중 Claude 는 보존.
@@ -3075,3 +3095,23 @@ def run_client(sock_path: str, session: str | None = None):
     config = load_config()
     app = build_client_app(sock_path, config, session)
     app.run()
+    # 전체 재시작(restart-all): app 이 _relaunch 를 세우고 종료했으면, textual 이
+    # 터미널을 정상복구한 지금(run 반환 후) **자신을 os.execv 로 교체**해 새 클라
+    # 코드로 다시 attach 한다. 원래 실행 인자(sys.argv)를 그대로 재실행 — 같은
+    # 동작(attach)으로 돌아오고, 이미 떠 있는(re-exec 된) 서버에 재접속한다.
+    if getattr(app, "_relaunch", False):
+        import sys
+        argv0 = sys.argv[0]
+        # `python pytmux.py …`(스크립트) 면 인터프리터로, 설치된 콘솔 스크립트
+        # (실행권한 있는 비-.py) 면 그 실행파일로 그대로 재실행해 원 동작을 재현한다.
+        if argv0.endswith(".py") or not os.access(argv0, os.X_OK):
+            cmd = [sys.executable] + sys.argv
+        else:
+            cmd = list(sys.argv)
+        try:
+            os.execv(cmd[0], cmd)
+        except OSError:
+            try:    # execv 실패 폴백: 분리 프로세스로라도 새 클라를 띄운다.
+                proc.spawn_detached(cmd)
+            except OSError:
+                pass

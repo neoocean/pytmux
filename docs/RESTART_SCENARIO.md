@@ -14,6 +14,16 @@
 > 스냅샷으로 복원돼 재시작 후 맨 위로 스크롤하면 다시 보인다(회귀
 > `test_restore_preserves_scrollback`; 초기 줄 1~5 가 스크롤백에서 복원됨을 확인).
 > 완전한 pyte 내부 상태 직렬화(대안 A)는 비채택.
+>
+> **전체 재시작 `restart-all`**(별칭 `full-restart`): 서버 work-preserving re-exec
+> **+ 클라이언트 자기 relaunch**를 한 명령으로. 서버는 위와 동일하게 셸/세션을 보존한
+> 채 코드만 교체하고, 클라는 in-place 재접속(ⓔ) 대신 **자신을 `os.execv` 로 교체**해
+> 새 클라 코드로 다시 attach 한다(서버·클라 코드 모두 갱신, 작업 보존). 동작: 클라가
+> `_relaunch_on_restart` 를 무장하고 `restart_server` 전송 → `{"t":"restarting"}` →
+> 서버 re-exec 로 연결이 끊기면, 끊김 핸들러가 재접속 대신 `_relaunch` 를 세우고 종료
+> → textual 이 터미널을 정상복구한 뒤 `run_client` 가 원 인자(`sys.argv`)로 재실행
+> → 새 클라가 (상속 listen 소켓 덕에 큐잉되는) 재-exec 서버에 재접속. 클라 코드 변경
+> (`client.py`/`clientwidgets.py`/`clientscreens.py`)까지 한 번에 반영하는 "전체 업그레이드".
 
 ## 1. 배경과 목표
 
