@@ -302,6 +302,7 @@ SAVER_ROWS = [
     ("ctx_autoclear", "컨텍스트 잔량 부족 시 자동 정리", "toggle"),
     ("ctx_action", "  └ 정리 방식", "cycle"),
     ("ctx_threshold", "  └ 잔량 임계", "cycle"),
+    ("ctx_min_interval", "  └ 정리 빈도 상한", "cycle"),
     ("auto_doc_clear", "idle 지속 시 자동 문서화+/clear", "toggle"),
     ("claude_auto_mode", "권한모드 자동 오토", "toggle"),
     ("prompt_clear", "프롬프트 단위 클리어(완료마다 doc+/clear)", "toggle"),
@@ -312,6 +313,7 @@ SAVER_ROWS = [
 SAVER_CYCLES = {
     "ctx_action": ["compact", "doc-clear"],
     "ctx_threshold": [10, 15, 20, 25, 30],
+    "ctx_min_interval": [0, 60, 120, 300, 600],
     "budget_day": [0, 100_000, 200_000, 500_000, 1_000_000],
     "budget_session": [0, 50_000, 100_000, 200_000, 500_000],
 }

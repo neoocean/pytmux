@@ -373,6 +373,10 @@ class Pane:
         #   새 세션이 시작될 때까지 재발화를 막는다.
         self._resume_handle = None
         self._ctx_fired = False
+        # _ctx_last_fire: 마지막 자동 정리(M11 _ctx_intervene) 발화 시각(time.monotonic).
+        #   M14 빈도 상한 — 정리가 컨텍스트를 못 줄이는 오검출/병적 진동에서 매 완료
+        #   경계 무한 정리를 막는 시간 바닥(§5.6). None=아직 발화 안 함(휘발성).
+        self._ctx_last_fire = None
         # _layout_msg 가 이 패널에 Claude 헤더 한 행을 예약했는지(#1). 예약 유무가
         # 바뀌면 flush 루프가 레이아웃(PTY 리사이즈 포함)을 다시 보낸다.
         self._hdr_reserved = False
@@ -424,6 +428,7 @@ class Pane:
         self._resume_pending = False
         self._resume_handle = None   # 자동재개 예약 핸들 리셋(M12; 타이머는 자가만료)
         self._ctx_fired = False      # 컨텍스트 잔량 자동 정리 디바운스 리셋(M11)
+        self._ctx_last_fire = None   # 정리 빈도 상한 시각 리셋(M14)
         self._tok_state = {"peak": 0, "total": 0}
         self._session_tokens = 0
         self._claude_session_id = 0

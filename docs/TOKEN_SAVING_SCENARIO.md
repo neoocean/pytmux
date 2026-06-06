@@ -255,7 +255,10 @@ plan 유도는 opt-in 이고 idle 한정.
 | **M11** | 잔량%<임계 자동 정리(기본 OFF) — `/compact`(기본) 또는 doc→/clear(`_pc_advance` 재사용) | 3 | 중 | `serverclaude.py`(`_ctx_intervene`, `_scan_claude` 완료경계) | ✅ |
 | **M12** | 자동재개 예약 취소 경로(`_cancel_resume`) + 예산 게이트(`_fire_resume`) | 3 | 낮음 | `serverclaude.py` | ✅ |
 | **M13** | T3 권한모드 plan 유도(예산≥80%+idle, opt-in 토글, bypass 불간섭) | 1 | 낮음 | `serverclaude.py`(`_scan_claude` 권한구동) | ✅ |
-| **M14** | 빈도 상한 + 카운트다운/취소 힌트 UI + 실 limit 골든 캡처 보강 + 모델 과선택 힌트 | 3 | 중 | `serverclaude.py`, `client.py` | ⏳ 후속 |
+| **M14a** | 정리 **빈도 상한**(time floor `claude_ctx_min_interval`, 기본 120초) — `_ctx_fired` 디바운스에 직교하는 시간 바닥(§5.6) | 3 | 낮음 | `serverclaude.py`(`_ctx_cap_ok`), `server.py`, 설정 팝업 | ✅ |
+| **M14b** | 무장 자동액션 카운트다운/취소 힌트 UI(`claude_pending`) + 입력 시 자동재개 취소(§5.3) | 2 | 중 | `serverio.py`, `client.py` | ⏳ |
+| **M14c** | 모델 과선택 힌트(T3) — **실 Claude 모델 배지 캡처 필요**(미검증 휴리스틱 출하 금지) | 1 | 중 | — | ⛔ 차단(실캡처) |
+| **M8보강** | **실 Claude limit/배지 화면 골든 캡처** — 현재 픽스처는 합성(문서 포맷) | — | 낮음 | `tests/fixtures/claude/*` | ⛔ 차단(실캡처) |
 
 > 순서 원칙: **감지 정확도(M8·M9)를 먼저 고정**한 뒤에야 비가역 자동화(M11)를
 > 켠다(§5.4). M10(알림)은 위험 0. 모든 자동 개입은 **기본 OFF**, `token-saver` 팝업
@@ -273,6 +276,10 @@ plan 유도는 opt-in 이고 idle 한정.
   비싼 턴 직전이라 가장 값싼 정리 시점. 디바운스(`_ctx_fired`)는 잔량이 임계+5%p 위로
   회복하거나 새 세션 시작 시 해제(compact 무효 시 매 응답 무한 정리 방지).
 - **M11 우선순위**: 잔량 정리가 auto-doc-clear(시간 기반)보다 먼저(잔량 부족이 더 시급).
+- **M14a 빈도 상한**: `_ctx_fired`(잔량 회복까지 1회)와 **직교**하는 시간 바닥. 정리가
+  잔량을 못 늘리는 오검출·병적 진동에서 회복→재하락이 빠르게 반복돼도 `min_interval`
+  초 안엔 재발화 금지(`_ctx_cap_ok`). 0=상한 없음. 발화 시 `_ctx_last_fire`(monotonic)
+  기록, 새 세션/respawn 시 리셋. 설정 팝업 `정리 빈도 상한` 행(0/60/120/300/600초).
 - **M10 누계**: 확정 토큰(`step` committed>0) append **전에** 추적(이중계산 방지). 기동
   시 로그에서 오늘 누계 시드(재시작 정합), 자정 넘김 0 리셋. best-effort(화면 토큰 합)라
   하드 차단 아님 — 경고 + 자동개입 보류용.

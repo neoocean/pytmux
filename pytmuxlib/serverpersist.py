@@ -348,6 +348,8 @@ class ServerPersistMixin:
                            "claude_ctx_autoclear": self.claude_ctx_autoclear,
                            "claude_ctx_threshold": self.claude_ctx_threshold,
                            "claude_ctx_action": self.claude_ctx_action,
+                           "claude_ctx_min_interval":
+                               self.claude_ctx_min_interval,
                            "token_budget_day": self.token_budget_day,
                            "token_budget_session": self.token_budget_session,
                            "token_budget_resume_gate":

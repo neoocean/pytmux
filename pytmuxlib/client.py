@@ -1837,6 +1837,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     else "doc+/clear"
             if key == "ctx_threshold":
                 return f"잔량<{st.claude_ctx_threshold}%"
+            if key == "ctx_min_interval":
+                iv = int(st.claude_ctx_min_interval)
+                return "상한 없음" if iv <= 0 else f"{iv}초마다 최대 1회"
             if key == "budget_day":
                 return self._fmt_budget(st.token_budget_day)
             if key == "budget_session":
@@ -1886,6 +1889,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 nxt = self._cycle_next("ctx_threshold", st.claude_ctx_threshold)
                 self.send_cmd("set_claude_ctx_threshold", value=nxt)
                 st.claude_ctx_threshold = nxt
+            elif key == "ctx_min_interval":
+                nxt = self._cycle_next(
+                    "ctx_min_interval", int(st.claude_ctx_min_interval))
+                self.send_cmd("set_claude_ctx_min_interval", value=nxt)
+                st.claude_ctx_min_interval = nxt
             elif key == "budget_day":
                 nxt = self._cycle_next("budget_day", st.token_budget_day)
                 self.send_cmd("set_token_budget", day=nxt)

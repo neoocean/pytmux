@@ -99,6 +99,7 @@ async def test_ctx_autoclear_recovery_then_refire():
         srv._pc_inject = lambda pane, text: injected.append(text)
         srv.claude_ctx_autoclear = True
         srv.claude_ctx_threshold = 15
+        srv.claude_ctx_min_interval = 0   # 시간 상한은 별도 테스트 — 여기선 끈다
 
         def complete(text):
             p._claude = "busy"
@@ -171,6 +172,68 @@ async def test_ctx_autoclear_doc_clear_reuses_machinery():
         assert injected[-1] == "/clear"
         complete("? for shortcuts")                        # /clear 완료 → 시퀀스 끝
         assert p._adc_active is False and p._pc_phase is None
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
+# ---- M14: 정리 빈도 상한(time floor) ----
+async def test_ctx_min_interval_caps_refire():
+    """빈도 상한이 켜져 있으면 잔량이 회복→재하락해도 직전 정리로부터 min_interval
+    초가 안 지났으면 재발화하지 않는다(시간 바닥). _ctx_last_fire 를 과거로 당기면
+    상한이 풀려 다시 발화한다(monotonic 시계 진행을 시뮬레이트)."""
+    import time as _t
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p = await _claude_pane(srv)
+        injected = []
+        srv._pc_inject = lambda pane, text: injected.append(text)
+        srv.claude_ctx_autoclear = True
+        srv.claude_ctx_threshold = 15
+        srv.claude_ctx_min_interval = 300   # 상한 5분
+
+        def complete(text):
+            p._claude = "busy"
+            p.feed(b"\x1b[2J\x1b[H" + text.encode())
+            srv._scan_claude(sess, win)
+
+        complete("context left 8%\r\n? for shortcuts")     # 첫 발화(상한 미해당)
+        assert injected == ["/compact"]
+        assert p._ctx_last_fire is not None
+        # 회복으로 디바운스 해제됐지만 상한(5분)은 아직 — 재하락해도 발화 금지.
+        complete("context left 72%\r\n? for shortcuts")
+        assert p._ctx_fired is False
+        complete("context left 9%\r\n? for shortcuts")
+        assert injected == ["/compact"], "빈도 상한: 시간 미경과 시 재발화 금지"
+        # 시간이 지난 것으로 시뮬레이트(_ctx_last_fire 를 과거로) → 상한 해제.
+        p._ctx_last_fire = _t.monotonic() - 301
+        complete("context left 9%\r\n? for shortcuts")
+        assert injected == ["/compact", "/compact"], "상한 경과 후 재발화"
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
+async def test_ctx_min_interval_setter_clamp_persist():
+    """set_claude_ctx_min_interval 은 0~3600 으로 클램프하고 opts.json 에 영속.
+    0=상한 없음(_ctx_cap_ok 항상 True)."""
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p = await _claude_pane(srv)
+        assert srv.set_claude_ctx_min_interval(300) == 300
+        assert srv.set_claude_ctx_min_interval(99999) == 3600   # 상한 클램프
+        assert srv.set_claude_ctx_min_interval(-5) == 0          # 하한 클램프
+        assert srv.set_claude_ctx_min_interval("bad") == 0       # 잘못된 값=현 값
+        assert srv._ctx_cap_ok(p) is True                        # 0 → 항상 허용
+        srv.set_claude_ctx_min_interval(300)
+        with open(srv.opts_path, encoding="utf-8") as f:
+            assert json.load(f)["claude_ctx_min_interval"] == 300
     finally:
         try:
             os.unlink(srv.opts_path)

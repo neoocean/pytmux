@@ -145,6 +145,7 @@ class ServerIOMixin:
             "claude_auto_mode": self.claude_auto_mode,
             "claude_ctx_autoclear": self.claude_ctx_autoclear,
             "claude_ctx_threshold": self.claude_ctx_threshold,
+            "claude_ctx_min_interval": self.claude_ctx_min_interval,
             "claude_ctx_action": self.claude_ctx_action,
             "token_budget_day": self.token_budget_day,
             "token_budget_session": self.token_budget_session,
@@ -486,6 +487,9 @@ class ServerIOMixin:
             self._broadcast_session(sess)
         elif action == "set_claude_ctx_threshold":   # M11 잔량 임계(%)
             self.set_claude_ctx_threshold(msg.get("value"))
+            self._broadcast_session(sess)
+        elif action == "set_claude_ctx_min_interval":  # M14 정리 빈도 상한(초)
+            self.set_claude_ctx_min_interval(msg.get("value"))
             self._broadcast_session(sess)
         elif action == "set_token_budget":           # M10 일/세션 예산
             self.set_token_budget(day=msg.get("day"), session=msg.get("session"))

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 from . import tokens
 from .claude import (claude_account, claude_context_pct, claude_feedback_prompt,
@@ -613,8 +614,14 @@ class ServerClaudeMixin:
                                if self.claude_ctx_autoclear and not p._ctx_fired
                                else None)
                         if pct is not None and pct < self.claude_ctx_threshold:
-                            p._ctx_fired = True
-                            self._ctx_intervene(p)
+                            # M14 빈도 상한: 직전 정리로부터 min_interval 초가 안
+                            # 지났으면 이번 경계는 건너뛴다(_ctx_fired 를 안 세워 다음
+                            # 완료 경계에 재평가 — 시간이 차면 발화). 잔량이 낮은 동안엔
+                            # auto-doc-clear 무장도 하지 않는다(정리가 더 시급·우선).
+                            if self._ctx_cap_ok(p):
+                                p._ctx_fired = True
+                                p._ctx_last_fire = time.monotonic()
+                                self._ctx_intervene(p)
                         elif self.auto_doc_clear:
                             self._adc_arm(p)
         return changed
@@ -726,6 +733,28 @@ class ServerClaudeMixin:
         self.claude_ctx_threshold = max(1, min(99, v))
         self._save_opts()
         return self.claude_ctx_threshold
+
+    def set_claude_ctx_min_interval(self, secs):
+        """정리 빈도 상한(초) 설정(M14). 0=상한 없음, 그 외 0~3600 클램프.
+        opts.json 영속. 잘못된 값은 현 값 유지."""
+        try:
+            v = float(secs)
+        except (TypeError, ValueError):
+            return self.claude_ctx_min_interval
+        self.claude_ctx_min_interval = max(0.0, min(3600.0, v))
+        self._save_opts()
+        return self.claude_ctx_min_interval
+
+    def _ctx_cap_ok(self, pane: Pane) -> bool:
+        """M14 빈도 상한: 직전 자동 정리(_ctx_last_fire)로부터
+        claude_ctx_min_interval 초가 지났으면 True(0=상한 없음 → 항상 True).
+        _ctx_fired 디바운스(잔량 회복까지 1회)와 직교하는 **시간 바닥**으로, 정리가
+        컨텍스트를 못 줄이는 오검출/병적 진동에서 매 완료경계 무한 정리를 막는다(§5.6)."""
+        iv = self.claude_ctx_min_interval
+        if iv <= 0:
+            return True
+        last = pane._ctx_last_fire
+        return last is None or (time.monotonic() - last) >= iv
 
     def set_token_budget(self, day=None, session=None):
         """일/세션 토큰 예산 설정(0=무제한). None 인 인자는 변경하지 않는다. 예산을

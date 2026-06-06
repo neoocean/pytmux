@@ -107,6 +107,11 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         self.claude_ctx_autoclear = bool(_opts.get("claude_ctx_autoclear", False))
         self.claude_ctx_threshold = int(_opts.get("claude_ctx_threshold", 15))
         self.claude_ctx_action = str(_opts.get("claude_ctx_action", "compact"))
+        # M14 정리 빈도 상한(초): 직전 자동 정리로부터 이 시간이 지나야 다시 정리한다
+        # (0=상한 없음). _ctx_fired 디바운스(잔량 회복까지 1회)에 더해, 정리가 잔량을
+        # 못 늘리는 오검출·병적 진동에서 매 완료경계 무한 정리를 막는 시간 바닥(§5.6).
+        self.claude_ctx_min_interval = float(
+            _opts.get("claude_ctx_min_interval", 120.0))
         # M10 토큰 예산: 일/세션 누계가 이 값을 넘으면 경고(0=무제한). 누계는 화면
         # 토큰 합(best-effort)이라 하드 차단이 아니라 알림·자동개입 보류용이다(§5.5).
         self.token_budget_day = int(_opts.get("token_budget_day", 0))

@@ -729,6 +729,7 @@ class StatusBar(Widget):
         self.claude_ctx_autoclear = False
         self.claude_ctx_threshold = 15
         self.claude_ctx_action = "compact"
+        self.claude_ctx_min_interval = 120
         self.token_budget_day = 0
         self.token_budget_session = 0
         self.token_budget_resume_gate = False
@@ -866,6 +867,8 @@ class StatusBar(Widget):
             "claude_ctx_threshold", self.claude_ctx_threshold)
         self.claude_ctx_action = msg.get(
             "claude_ctx_action", self.claude_ctx_action)
+        self.claude_ctx_min_interval = msg.get(
+            "claude_ctx_min_interval", self.claude_ctx_min_interval)
         self.token_budget_day = msg.get("token_budget_day", self.token_budget_day)
         self.token_budget_session = msg.get(
             "token_budget_session", self.token_budget_session)
