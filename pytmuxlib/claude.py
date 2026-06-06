@@ -98,8 +98,8 @@ def claude_usage(text: str):
     for rx in _CTX_PCT_RES:
         m = rx.search(text)
         if m:
-            # M18-A: 사용%+윈도우를 'ctx N% / 1M' 슬래시 포맷으로(배지 있을 때).
-            return f"ctx {m.group(1)}% / {badge}" if badge else f"ctx {m.group(1)}%"
+            # M18-A: 사용%+윈도우를 'ctx:N%/1M' 콤팩트 포맷(공백 없이, 사용자 요청).
+            return f"ctx:{m.group(1)}%/{badge}" if badge else f"ctx:{m.group(1)}%"
     for m in _TOK_RE.finditer(text):
         # 화살표 델타(↑/↓ … tokens)와 겹치면 건너뜀
         prefix = text[max(0, m.start() - 4):m.start()]

@@ -1849,13 +1849,13 @@ async def test_status_usage_display_m18():
         # A: 배지-only + 세션 누계 → 근사 사용%(~)
         p._claude_usage = "1M ctx"
         p._session_tokens = 100_000
-        assert srv._usage_text(p) == "ctx ~10% / 1M"
+        assert srv._usage_text(p) == "ctx:~10%/1M"
         # 누계가 윈도우 이상이면 근사 생략(배지만)
         p._session_tokens = 1_500_000
         assert srv._usage_text(p) == "1M ctx"
-        # Claude 가 점유%를 그리면 그대로(슬래시 포맷)
-        p._claude_usage = "ctx 23% / 1M"
-        assert srv._usage_text(p) == "ctx 23% / 1M"
+        # Claude 가 점유%를 그리면 그대로(콤팩트 포맷)
+        p._claude_usage = "ctx:23%/1M"
+        assert srv._usage_text(p) == "ctx:23%/1M"
         # B: 분모 미상(설정·학습 0) → None(% 지어내지 않음)
         p._session_tokens = 100_000
         assert srv._tok5h_pct(p, 25_000) is None

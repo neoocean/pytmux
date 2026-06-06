@@ -697,7 +697,8 @@ class ServerClaudeMixin:
             wt = ctx_window_tokens(u)
             st = p._session_tokens
             if wt and 0 < st < wt:
-                return f"ctx ~{round(st / wt * 100)}% / {u[:-4]}"
+                # 콤팩트 포맷 'ctx:~N%/1M'. ~ 는 근사(세션누계 기반) 표시 유지.
+                return f"ctx:~{round(st / wt * 100)}%/{u[:-4]}"
         return u
 
     def _tok5h_pct(self, p, total):
