@@ -422,7 +422,18 @@ detach                           # 앱만 떼기(셸 유지)
 
 ## 11. Claude Code 연동
 
-pytmux 는 패널에서 돌리는 **Claude Code CLI** 에 특화된 보조 기능이 많습니다.
+pytmux 는 패널에서 돌리는 **Claude Code CLI** 에 특화된 보조 기능이 많습니다. 아래는
+**실제 Claude Code 가 pytmux 패널에서 도는 화면**입니다 — 패널에서 `claude` 를 실행하고
+프롬프트를 보낸 뒤 응답이 끝난 모습입니다. 탭바의 상태 아이콘, 맨 윗줄(첫 라인)의 파란
+**스티키 헤더**(보낸 프롬프트), 하단 상태줄의 **컨텍스트·토큰**(`1M ctx · Σ 170`)이 모두
+pytmux 가 Claude Code 출력을 읽어 자동으로 채운 것입니다.
+
+![실제 Claude Code 가 pytmux 패널에서 실행 중 — 프롬프트·응답·스티키 헤더·토큰](image/22-claude-real.svg)
+
+> 이 화면은 실제 `claude` CLI 를 패널에서 돌려 캡처한 것입니다. 생성기에서
+> `python3 scripts/gen_screenshots.py 22-claude-real` 로 (실제 API 호출로) 다시 만들 수
+> 있습니다. 아래 §11.1~§11.5 의 세부 스크린샷은 각 기능을 또렷하게 보이려고 동일한
+> Claude TUI 화면을 통제된 예시로 띄워 캡처한 것으로, 동작은 위 실제 화면과 같습니다.
 
 ### 11.1 상태 아이콘
 

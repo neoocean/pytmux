@@ -5,10 +5,12 @@
 > `docs/MANUAL.md` 가 이를 싣는다. 본 문서는 그 설계 기준선이자 방법 조사 기록이다.
 > Claude 연동 스크린샷(상태아이콘·스티키 헤더·토큰·권한모드)도 **가짜 상태 주입 없이**
 > 실제로 캡처한다 — 서버의 Claude 휴리스틱이 출력 텍스트 기반이라, 화면을 흉내 내는
-> 스탠드인을 패널에서 띄우면 진짜 서버 경로로 감지된다(§3-A 보강).
-> **생성**: `python3 scripts/gen_screenshots.py`(전체, 장면별 격리 서브프로세스) 또는
-> `python3 scripts/gen_screenshots.py <이름>`(단일 장면). 남은 일: 애니메이션 데모는
-> **VHS**, 회귀 `tests/test_shotgen.py`.
+> 스탠드인을 패널에서 띄우면 진짜 서버 경로로 감지된다(§3-A 보강). 더 나아가 **진짜
+> `claude` CLI 를 패널에서 실행**해 캡처하는 라이브 장면(`22-claude-real`)도 있다 — 실제
+> API 호출이 일어나므로 결정적 기본 생성에선 제외하고, 이름을 지정했을 때만 돈다.
+> **생성**: `python3 scripts/gen_screenshots.py`(전체 21개 결정적 장면, 장면별 격리
+> 서브프로세스) 또는 `python3 scripts/gen_screenshots.py <이름>`(단일 장면; 라이브
+> `22-claude-real` 포함). 남은 일: 애니메이션 데모는 **VHS**, 회귀 `tests/test_shotgen.py`.
 
 ---
 

@@ -94,6 +94,11 @@ def _aid(app):
     return app.layout.get("active")
 
 
+def _pane_text(app):
+    c = app.pane_content.get(_aid(app))
+    return "\n".join("".join(s[0] for s in row) for row in c[0]) if c else ""
+
+
 async def _run_fake_claude(pilot, app):
     """활성 패널에서 Claude 흉내 스탠드인을 띄우고, 서버가 Claude 로 감지할 때까지
     대기한다(출력 기반 휴리스틱이라 진짜 서버 경로로 동작)."""
@@ -292,6 +297,41 @@ async def restart_check(app, pilot):
     await pilot.pause(0.4)
 
 
+async def claude_real(app, pilot):
+    """**진짜** Claude Code CLI 를 패널에서 실행해 캡처(스탠드인 아님).
+
+    `claude` 가 PATH 에 있어야 하고, 실제 API 호출(인증·네트워크·토큰)이 일어난다.
+    그래서 이 장면은 결정적 기본 생성(_orchestrate)에서 제외하고, 이름을 지정했을
+    때만 돈다. 프롬프트를 보내 응답이 끝난(idle) 화면을 캡처한다 — 서버의 Claude
+    휴리스틱이 진짜 출력을 감지해 스티키 헤더·상태아이콘·토큰을 그대로 채운다."""
+    import shutil
+    if not shutil.which("claude"):
+        raise RuntimeError("claude CLI 가 PATH 에 없음 — 실제 Claude Code 가 필요합니다")
+    app.send_cmd("rename_window", name="claude")
+    await pilot.pause(0.3)
+    await _type(pilot, "claude")
+    await pilot.press("enter")
+    for _ in range(200):                       # TUI 기동 대기(입력박스/단축키 힌트)
+        await pilot.pause(0.1)
+        if "shortcuts" in _pane_text(app).lower():
+            break
+    await _type(pilot, "pytmux 가 무엇인지 두 문장으로 설명해줘")
+    await pilot.pause(0.4)
+    await pilot.press("enter")
+    became_busy = False
+    for _ in range(450):                       # 최대 ~45s: busy → 응답완료(idle)까지
+        await pilot.pause(0.1)
+        t = _pane_text(app)
+        if "Overloaded" in t or "API Error" in t:
+            raise RuntimeError("claude API 오류(예: 529 Overloaded) — 재시도")
+        st = app.pane_claude.get(_aid(app), {}).get("claude")
+        if st == "busy":
+            became_busy = True
+        if became_busy and st == "idle":
+            break
+    await pilot.pause(0.6)
+
+
 # 장면: (이름, 설명, 운전함수[, 크기]). 크기 생략 시 SIZE(90×26). 큰 달력은 블록-숫자
 # 모드가 뜨도록 더 큰(높은) 터미널이 필요하다.
 BIG = (96, 44)
@@ -319,6 +359,13 @@ SCENES = [
     ("21-restart-check", "restart-check 드라이런 — 작업보존 재시작 안전점검", restart_check),
 ]
 
+# 라이브(실호출) 장면 — 진짜 외부 도구를 돌려 캡처한다. 결정적이지 않고 네트워크·
+# 인증·토큰이 필요하므로 기본 전체 생성에선 제외하고, 이름을 지정했을 때만 돈다.
+LIVE_SCENES = [
+    ("22-claude-real", "실제 Claude Code 가 pytmux 패널에서 실행 중", claude_real),
+]
+ALL_SCENES = SCENES + LIVE_SCENES
+
 
 def _scene_size(scene):
     return scene[3] if len(scene) > 3 else SIZE
@@ -334,6 +381,28 @@ def _is_blank(svg_path):
         return os.path.getsize(svg_path) < 13000
     except OSError:
         return True
+
+
+import re as _re
+
+_EMAIL_RE = _re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+
+
+def _redact_svg(path):
+    """저장한 SVG 에서 이메일 주소를 가린다(라이브 Claude 장면 등 실제 계정정보 보호).
+
+    실제 `claude` 실행 화면에는 로그인 계정 이메일이 환영 배너·상태줄에 뜬다. 공개
+    저장소에 커밋되는 이미지라 PII 를 user@example.com 으로 마스킹한다(다른 텍스트는
+    그대로)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            svg = f.read()
+    except OSError:
+        return
+    new = _EMAIL_RE.sub("user@example.com", svg)
+    if new != svg:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(new)
 
 
 async def _one_shot(name, desc, drive, path, size=SIZE):
@@ -354,6 +423,7 @@ async def _one_shot(name, desc, drive, path, size=SIZE):
             await pilot.pause(0.4)
             os.makedirs(OUT_DIR, exist_ok=True)
             app.save_screenshot(path)
+            _redact_svg(path)          # 이메일 등 PII 마스킹(라이브 Claude 장면 등)
     finally:
         await teardown(srv, task, sock)
 
@@ -361,21 +431,26 @@ async def _one_shot(name, desc, drive, path, size=SIZE):
 async def shoot(name, desc, drive, retries=4, size=SIZE):
     path = os.path.join(OUT_DIR, name + ".svg")
     for attempt in range(1, retries + 1):
-        await _one_shot(name, desc, drive, path, size)
-        if not _is_blank(path):
+        try:
+            await _one_shot(name, desc, drive, path, size)
+            blank = _is_blank(path)
+        except Exception as e:  # noqa: BLE001  라이브 장면의 일시 오류(예: 529)도 재시도
+            print(f"  … {name} 오류({type(e).__name__}: {e}), 재시도 {attempt}/{retries}")
+            continue
+        if not blank:
             print(f"  ✓ {name}.svg  — {desc}")
             return path
         print(f"  … {name} 빈 프레임, 재시도 {attempt}/{retries}")
-    print(f"  ✗ {name}.svg  — {retries}회 모두 빈 프레임(레이스)")
+    print(f"  ✗ {name}.svg  — {retries}회 실패")
     return path
 
 
 async def _worker(filt):
     """워커 모드: filt 에 매칭되는 장면을 **이 프로세스에서** 생성한다."""
-    todo = [s for s in SCENES if filt in s[0]]
+    todo = [s for s in ALL_SCENES if filt in s[0]]
     if not todo:
         print(f"매칭 장면 없음: {filt!r}\n사용 가능: " +
-              ", ".join(s[0] for s in SCENES))
+              ", ".join(s[0] for s in ALL_SCENES))
         return 1
     print(f"스크린샷 생성 → {OUT_DIR}")
     for scene in todo:
