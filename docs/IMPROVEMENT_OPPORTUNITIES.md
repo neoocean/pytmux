@@ -31,7 +31,11 @@
   박스(macOS)에서 검증 불가 + 데몬 영속상 구클라 락아웃 위험. M5의 #7 이 협상 기반 마련.
 - **#8 서버 render-후-폐기 → dirty 행 재직렬화**(H): 플러시 핫패스 재구성, pyte
   `screen.dirty` 클리어 시점 추적 정확성 필수, §8 B3 미구현분과 중복. ptyshot 골든 게이트.
-- **#12 build_client_app 2921줄 분할**(H): 최대 churn·회귀면. 단계적 추출 별도.
+- **#12 build_client_app 분할**(H): 단계적 추출 진행 중. **1/N**(`clientrender.put_cell`·
+  `clientclip` 클립보드) ✅. **2/N**(시계/달력 오버레이 → `clientrender.draw_clock_overlay`·
+  `draw_calendar_overlay`, 테마 Style 만 클로저가 해석해 위임) ✅ — `tests/test_clientrender.py`
+  로 그리드 출력 회귀 가드 + ptyshot 골든. 남은 분: Claude 렌더(`_draw_claude_headers`·
+  footer 존)는 app 상태(zone 등록·layout) 결합이 커 후속.
 - **#28 광역 except 좁히기**(M): 로깅 도입과 함께(서버 `_log_error` 활용) 후속.
 - **#9/#21~24/#22·컨텍스트 잔량 트리거**(M, Claude): 실 Claude 화면 캡처·로그 포맷
   마이그레이션 필요. **컨텍스트 잔량% 기반 절감 트리거**가 가장 큰 자동화 공백.

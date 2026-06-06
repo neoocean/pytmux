@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import calendar
 import os
 import shlex
 import socket
@@ -13,7 +12,7 @@ import time
 from . import clientclip, clientrender, ipc, proc, usagelog, version
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS, DEFAULT_STYLE,
-    MENU_ITEMS, MENU_TOGGLES, SAVER_CYCLES, SPECIAL, _CLOCK_FONT,
+    MENU_ITEMS, MENU_TOGGLES, SAVER_CYCLES, SPECIAL,
     _DATE_STRFTIME, _JAMO, _KEY_DIAG, _ONOFF, _TIME_STRFTIME, _char_cells,
     _darken_style, _fmt_tokens, _is_emoji, has_hangul, hangul_to_qwerty,
     _normalize_key, _shell_argv, key_to_bytes, make_style, theme_color)
@@ -47,7 +46,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
     from textual.binding import Binding
     from textual.suggester import SuggestFromList
     from textual.widgets import Input
-    from datetime import datetime
 
     class PytmuxApp(App):
         ENABLE_COMMAND_PALETTE = False
@@ -888,170 +886,35 @@ def build_client_app(sock_path: str, config: dict | None = None,
         # 셀 그리드 합성 헬퍼는 앱 비의존이라 clientrender.py 로 분리(#12). 호출은
         # clientrender.put_cell(...) 로 직접 한다(과거 self._put_cell).
         def _draw_clock_overlay(self, cells, W, H, active):
-            """clock-mode 패널을 큰 시계로 덮는다. 뒤의 패널 출력은 흐리게(dim)
-            계속 보인다. 닫기는 패널 클릭 또는 (활성 패널일 때) Shift+ESC — 좁은
-            화면에서 잘 안 보이던 우상단 [x] 버튼은 폐지했다."""
+            """clock-mode 패널을 큰 시계로 덮는다(테마 Style 해석 후 clientrender 의
+            앱-비의존 자유함수에 위임, #12). 뒤의 패널 출력은 흐리게(dim) 계속 보인다.
+            닫기는 패널 클릭 또는 (활성 패널일 때) Shift+ESC — 좁은 화면에서 잘 안
+            보이던 우상단 [x] 버튼은 폐지했다."""
             if not self.clock_panes:
                 return
             digit_st = Style(color=theme_color(self, "success"), bold=True)
-            now = datetime.now().strftime("%H:%M:%S")
-            glyphs = [_CLOCK_FONT.get(c, ["   "] * 5) for c in now]
-            cw = sum(len(g[0]) for g in glyphs) + (len(glyphs) - 1)
-            ch_h = 5
-            for p in self.layout.get("panes", []):
-                if p["id"] not in self.clock_panes:
-                    continue
-                px, py, pw, ph = p["x"], p["y"], p["w"], p["h"]
-                # 1) 뒤 화면 흐리게(실색 블렌드 — §10, 터미널 무관 균일)
-                for yy in range(py, min(py + ph, H)):
-                    for xx in range(px, min(px + pw, W)):
-                        c, st = cells[yy][xx]
-                        cells[yy][xx] = (c, _darken_style(st))
-                # 2) 큰 시계(공간 충분) 또는 단순 시각
-                if pw >= cw and ph >= ch_h:
-                    ox = px + (pw - cw) // 2
-                    oy = py + (ph - ch_h) // 2
-                    for row in range(ch_h):
-                        gx = ox
-                        for g in glyphs:
-                            for c in g[row]:
-                                if c != " ":
-                                    clientrender.put_cell(cells, gx, oy + row, c,
-                                                   digit_st, W, H)
-                                gx += 1
-                            gx += 1   # 글자 사이 간격
-                else:
-                    ox = px + max(0, (pw - len(now)) // 2)
-                    oy = py + ph // 2
-                    for j, c in enumerate(now):
-                        clientrender.put_cell(cells, ox + j, oy, c, digit_st, W, H)
+            clientrender.draw_clock_overlay(
+                cells, self.layout.get("panes", []), self.clock_panes,
+                W, H, digit_st)
 
         def _draw_calendar_overlay(self, cells, W, H, active):
-            """달력 모드 패널을 이번 달 달력으로 덮는다(clock-mode 미러). 뒤의
-            패널 출력은 흐리게(dim) 계속 보이고, 오늘 날짜는 강조. 닫기는 패널
-            클릭·(활성 패널일 때) Shift+ESC·상태줄 날짜 재클릭/명령 — 우상단 [x]
-            버튼은 폐지했다."""
+            """달력 모드 패널을 이번 달 달력으로 덮는다(테마 Style 해석 후 clientrender
+            자유함수에 위임, #12). 뒤의 패널 출력은 흐리게(dim) 계속 보이고, 오늘
+            날짜는 강조. 닫기는 패널 클릭·(활성 패널일 때) Shift+ESC·상태줄 날짜
+            재클릭/명령 — 우상단 [x] 버튼은 폐지했다."""
             if not self.calendar_panes:
                 return
-            day_st = Style(color=theme_color(self, "foreground"))
-            title_st = Style(color=theme_color(self, "success"), bold=True)
-            today_st = Style(color="black", bgcolor=theme_color(self, "success"),
-                             bold=True)
-            now = datetime.now()
-            yr, mo, today = now.year, now.month, now.day
-            weeks = calendar.Calendar(firstweekday=0).monthdayscalendar(yr, mo)
-            title = f"{yr}-{mo:02d}"
-            wds = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
-            for p in self.layout.get("panes", []):
-                if p["id"] not in self.calendar_panes:
-                    continue
-                px, py, pw, ph = p["x"], p["y"], p["w"], p["h"]
-                # 1) 뒤 화면 흐리게(실색 블렌드 — §10, 터미널 무관 균일)
-                for yy in range(py, min(py + ph, H)):
-                    for xx in range(px, min(px + pw, W)):
-                        c, st = cells[yy][xx]
-                        cells[yy][xx] = (c, _darken_style(st))
-                # 1.5) 아주 큰 패널이면 시계 폰트(3×5)로 날짜를 큼직하게 — '큰 달력'(#16).
-                # 한 날짜칸은 숫자 두 자리(3+1+3=7) + 칸 사이 1, 한 주는 글자 5 + 간격 1.
-                # DCW=한 날짜칸 폭(숫자 3 + 자리사이 1 + 숫자 3 = 7 + 여유 1 = 8), DGAP=칸 사이,
-                # DIG=자리(숫자) 사이 간격(§10-A #9: 2→1 로 좁혀 한 날짜의 두 자리가
-                # 한 덩어리로 읽히게 — 날짜칸 사이 간격 DGAP/DCW 는 그대로라 날짜끼리는
-                # 안 붙는다. 두 자리 폭 3+1+3=7 이 DCW(8) 안에서 가운데 정렬된다).
-                DCW, DGAP, RHB, DIG = 8, 3, 6, 1   # DGAP↑(날짜칸 사이 더 띄움), DIG↓(자리 사이 좁힘)
-                gw_big = 7 * DCW + 6 * DGAP          # 칸 7개 + 사이 간격
-                nl_big = 2 + len(weeks) * RHB        # 제목+요일 + 주×6
-                if pw >= gw_big + 2 and ph >= nl_big + 2:
-                    big_today = Style(color=theme_color(self, "success"), bold=True)
-                    ox = px + (pw - gw_big) // 2
-                    oy = py + (ph - nl_big) // 2
-                    tx = ox + (gw_big - len(title)) // 2
-                    for j, c in enumerate(title):                 # 제목
-                        clientrender.put_cell(cells, tx + j, oy, c, title_st, W, H)
-                    for col, wd in enumerate(wds):                # 요일(칸 중앙)
-                        hx = ox + col * (DCW + DGAP) + (DCW - len(wd)) // 2
-                        for k, c in enumerate(wd):
-                            clientrender.put_cell(cells, hx + k, oy + 1, c, day_st, W, H)
-                    for wi, week in enumerate(weeks):             # 주별 날짜(큰 글자)
-                        ry = oy + 2 + wi * RHB
-                        for col, day in enumerate(week):
-                            if not day:
-                                continue
-                            st = big_today if day == today else day_st
-                            s = str(day)
-                            gw = len(s) * 3 + (len(s) - 1) * DIG
-                            gx0 = ox + col * (DCW + DGAP) + (DCW - gw) // 2
-                            for di, ch in enumerate(s):
-                                glyph = _CLOCK_FONT.get(ch, ["   "] * 5)
-                                dx = gx0 + di * (3 + DIG)
-                                for r, gl in enumerate(glyph):
-                                    for k, gc in enumerate(gl):
-                                        if gc != " ":
-                                            clientrender.put_cell(cells, dx + k, ry + r,
-                                                           gc, st, W, H)
-                    bst = Style(color=theme_color(self, "accent"))   # 외곽선
-                    bx0, by0, bx1, by1 = ox - 1, oy - 1, ox + gw_big, oy + nl_big
-                    clientrender.put_cell(cells, bx0, by0, "╭", bst, W, H)
-                    clientrender.put_cell(cells, bx1, by0, "╮", bst, W, H)
-                    clientrender.put_cell(cells, bx0, by1, "╰", bst, W, H)
-                    clientrender.put_cell(cells, bx1, by1, "╯", bst, W, H)
-                    for xx in range(bx0 + 1, bx1):
-                        clientrender.put_cell(cells, xx, by0, "─", bst, W, H)
-                        clientrender.put_cell(cells, xx, by1, "─", bst, W, H)
-                    for yy in range(by0 + 1, by1):
-                        clientrender.put_cell(cells, bx0, yy, "│", bst, W, H)
-                        clientrender.put_cell(cells, bx1, yy, "│", bst, W, H)
-                    continue                                      # 큰 달력 완료
-                # 2) 칸 폭(colw)·주 간격(rowh)을 가용 공간에 맞춰 키운다 — 넓고 높은
-                # 화면일수록 큰 달력(사용자 요청). 한 칸은 숫자 2 + 여백이라 colw≥3.
-                # grid_w = 6칸 간격 + 마지막 칸 숫자 2. 외곽선 패딩 2칸을 여유로 둔다.
-                colw, rowh = 4, 1               # 시작 4 → 날짜 사이 최소 2칸 여백
-                while colw < 8 and pw >= (6 * (colw + 1) + 2) + 2:
-                    colw += 1
-                while rowh < 3 and ph >= (2 + (len(weeks) - 1) * (rowh + 1) + 1) + 2:
-                    rowh += 1
-                grid_w = 6 * colw + 2
-                nlines = 2 + (len(weeks) - 1) * rowh + 1
-                # 3) 달력 그리드(공간 충분) 또는 단순 날짜
-                if pw >= grid_w and ph >= nlines:
-                    ox = px + (pw - grid_w) // 2
-                    oy = py + (ph - nlines) // 2
-                    tx = ox + (grid_w - len(title)) // 2
-                    for j, c in enumerate(title):       # 제목(YYYY-MM, 중앙)
-                        clientrender.put_cell(cells, tx + j, oy, c, title_st, W, H)
-                    for col, wd in enumerate(wds):       # 요일 헤더(칸 간격 colw)
-                        for k, c in enumerate(wd):
-                            clientrender.put_cell(cells, ox + col * colw + k, oy + 1,
-                                           c, day_st, W, H)
-                    for wi, week in enumerate(weeks):    # 주별 날짜(줄 간격 rowh)
-                        ry = oy + 2 + wi * rowh
-                        for col, day in enumerate(week):
-                            if not day:
-                                continue
-                            st = today_st if day == today else day_st
-                            cxp = ox + col * colw
-                            for k, c in enumerate(f"{day:2d}"):
-                                clientrender.put_cell(cells, cxp + k, ry, c, st, W, H)
-                    # 그리드 둘레 외곽선(§10 #14): 한 칸 패딩 두고 round 박스 —
-                    # 위·아래·좌·우로 한 칸씩 더 들어갈 공간이 있을 때만 그린다.
-                    if pw >= grid_w + 2 and ph >= nlines + 2:
-                        bst = Style(color=theme_color(self, "accent"))
-                        bx0, by0, bx1, by1 = ox - 1, oy - 1, ox + grid_w, oy + nlines
-                        clientrender.put_cell(cells, bx0, by0, "╭", bst, W, H)
-                        clientrender.put_cell(cells, bx1, by0, "╮", bst, W, H)
-                        clientrender.put_cell(cells, bx0, by1, "╰", bst, W, H)
-                        clientrender.put_cell(cells, bx1, by1, "╯", bst, W, H)
-                        for xx in range(bx0 + 1, bx1):
-                            clientrender.put_cell(cells, xx, by0, "─", bst, W, H)
-                            clientrender.put_cell(cells, xx, by1, "─", bst, W, H)
-                        for yy in range(by0 + 1, by1):
-                            clientrender.put_cell(cells, bx0, yy, "│", bst, W, H)
-                            clientrender.put_cell(cells, bx1, yy, "│", bst, W, H)
-                else:
-                    s = now.strftime("%Y-%m-%d")
-                    ox = px + max(0, (pw - len(s)) // 2)
-                    oy = py + ph // 2
-                    for j, c in enumerate(s):
-                        clientrender.put_cell(cells, ox + j, oy, c, title_st, W, H)
+            styles = {
+                "day": Style(color=theme_color(self, "foreground")),
+                "title": Style(color=theme_color(self, "success"), bold=True),
+                "today": Style(color="black",
+                               bgcolor=theme_color(self, "success"), bold=True),
+                "big_today": Style(color=theme_color(self, "success"), bold=True),
+                "border": Style(color=theme_color(self, "accent")),
+            }
+            clientrender.draw_calendar_overlay(
+                cells, self.layout.get("panes", []), self.calendar_panes,
+                W, H, styles)
 
         def _scan_footer_zones(self, p, rows, W, H):
             """Claude 패널 content 줄에서 ① 권한모드 footer(클릭→권한모드 팝업, item 2)
