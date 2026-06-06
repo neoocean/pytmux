@@ -55,7 +55,8 @@ def control_request(sock_path: str, obj: dict):
     s = ipc.control_socket(sock_path)
     if s is None:
         return None
-    data = json.dumps(obj).encode()
+    # 제어 프레임에도 와이어 버전을 실어 서버가 비호환을 거절할 수 있게 한다(#7).
+    data = json.dumps({"proto": protocol.PROTO_VERSION, **obj}).encode()
     s.sendall(len(data).to_bytes(4, "big") + data)
     try:
         header = _recvn(s, 4)

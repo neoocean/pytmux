@@ -1072,6 +1072,32 @@ async def test_handle_control():
         await teardown(srv, task, sock)
 
 
+async def test_proto_version_negotiation():
+    """와이어 프로토콜 버전 협상(#7): 비호환 proto 는 명확히 거절, proto 없는(구버전)
+    클라는 호환으로 통과. 버전 스큐 시 조용한 오작동 대신 명시적 실패가 되게 한다."""
+    from pytmuxlib.protocol import write_msg, read_msg, PROTO_VERSION
+    srv, task, sock = await server_only()
+    try:
+        # ① 비호환 proto → proto_mismatch 에러 + 연결 종료 + 클라 미등록
+        reader, writer = await ipc.open_connection(sock)
+        await write_msg(writer, {"t": "hello", "proto": PROTO_VERSION + 999,
+                                 "cols": 80, "rows": 24})
+        resp = await read_msg(reader)
+        assert resp and resp.get("error") == "proto_mismatch", resp
+        assert resp.get("server_proto") == PROTO_VERSION
+        assert (await read_msg(reader)) is None         # 거절 후 연결 닫힘
+        assert len(srv.clients) == 0                     # 등록 안 됨
+        writer.close()
+
+        # ② proto 없는 구버전 클라 → 호환으로 통과(첫 프레임 _send_full 수신)
+        reader2, writer2 = await ipc.open_connection(sock)
+        await write_msg(writer2, {"t": "hello", "cols": 80, "rows": 24})
+        assert (await read_msg(reader2)) is not None     # 레이아웃/화면 수신 = 수락
+        writer2.close()
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_split_window_orientation_matches_tmux():
     """split-window -h = 좌우(lr), -v/기본 = 상하(tb) — tmux 규약 정합(회귀 가드).
 

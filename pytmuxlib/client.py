@@ -24,7 +24,7 @@ from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 
 from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose 에서 사용)
     MultiplexerView, StatusBar, TabBar)
 from .keymap import _key_to_ctrl_bytes, _tmux_key_to_textual, load_config
-from .protocol import MIN_H, MIN_W, read_msg, write_msg
+from .protocol import MIN_H, MIN_W, PROTO_VERSION, read_msg, write_msg
 
 # IPC 소켓 재접속 재시도 파라미터 — 흩어져 있던 매직 상수를 한곳에 모았다(M4 #30).
 _RECONNECT_DELAY = 0.02            # 재시도 간격(초)
@@ -208,7 +208,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.exit(message="pytmux: 서버에 연결할 수 없습니다")
                 return
             cols, rows = self._content_size()
-            hello = {"t": "hello", "cols": cols, "rows": rows}
+            hello = {"t": "hello", "proto": PROTO_VERSION, "cols": cols, "rows": rows}
             if self.session_name:
                 hello["session"] = self.session_name
             await write_msg(self.writer, hello)
@@ -385,7 +385,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             else:
                 return False
             cols, rows = self._content_size()
-            hello = {"t": "hello", "cols": cols, "rows": rows}
+            hello = {"t": "hello", "proto": PROTO_VERSION, "cols": cols, "rows": rows}
             if self.session_name:
                 hello["session"] = self.session_name
             await write_msg(self.writer, hello)

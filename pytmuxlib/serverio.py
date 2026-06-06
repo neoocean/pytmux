@@ -14,8 +14,8 @@ import traceback
 from . import ipc, tokens, usagelog
 from .claude import claude_account, claude_usage
 from .model import ClientConn, Session
-from .protocol import (FLUSH_HZ, MIN_H, MIN_W, frame_msg, read_msg, write_frames,
-                       write_msg)
+from .protocol import (FLUSH_HZ, MIN_H, MIN_W, PROTO_VERSION, frame_msg,
+                       read_msg, write_frames, write_msg)
 
 
 class ServerIOMixin:
@@ -535,6 +535,18 @@ class ServerIOMixin:
                             writer: asyncio.StreamWriter):
         first = await read_msg(reader)
         if first is None:
+            writer.close()
+            return
+        # 와이어 프로토콜 버전 협상: 클라가 보낸 proto 가 서버와 다르면 명확히 거절한다
+        # (구·신 버전 혼용 시 조용한 오작동 대신 명시적 실패). 필드가 없으면(구버전 클라)
+        # 호환으로 간주해 통과시킨다 — 점진 롤아웃.
+        cproto = first.get("proto")
+        if cproto is not None and cproto != PROTO_VERSION:
+            try:
+                await write_msg(writer, {"t": "error", "error": "proto_mismatch",
+                                         "server_proto": PROTO_VERSION})
+            except Exception:
+                pass
             writer.close()
             return
         t = first.get("t")

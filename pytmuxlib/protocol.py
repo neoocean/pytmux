@@ -32,6 +32,12 @@ FEED_SLICE = 8192
 # 델타·status)는 이보다 훨씬 작으므로 상한 초과 프레임은 연결 종료로 처리한다.
 MAX_FRAME = 64 * 1024 * 1024
 
+# 클라↔서버 와이어 프로토콜 버전. 프레이밍·메시지 스키마가 비호환으로 바뀔 때 올린다.
+# 첫 프레임(hello/list/control 등)에 클라가 실어 보내고, 서버가 불일치를 명확히 거절해
+# 구·신 버전 혼용 시 조용한 오작동/JSON 깨짐 대신 명시적 실패가 되게 한다. 필드가 아예
+# 없으면(구버전 클라) 호환으로 간주해 받아들인다(점진 롤아웃 — docs IMPROVEMENT §5.3).
+PROTO_VERSION = 1
+
 
 async def read_msg(reader: asyncio.StreamReader):
     """길이-프리픽스(4바이트 빅엔디언) + JSON 한 프레임을 읽는다. EOF·비정상 프레임이면
