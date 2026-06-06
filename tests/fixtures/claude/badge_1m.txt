@@ -1,4 +1,7 @@
- ⏺ Model: claude-opus-4-8 (1M context)
+ ⏺ Done.
 
- ⏵⏵ auto mode on (shift+tab to cycle)
- ? for shortcuts
+ ────────────────────────────────────────────
+ ❯
+ ────────────────────────────────────────────
+   Opus 4.8 (1M context) · /model to change
+   ? for shortcuts

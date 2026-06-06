@@ -4,8 +4,8 @@
 import datetime as dt
 
 import harness  # noqa: F401  (경로 설정)
-from pytmuxlib.claude import (claude_perm_mode, claude_prompt, claude_state,
-                              claude_usage, parse_reset_delay,
+from pytmuxlib.claude import (claude_model, claude_perm_mode, claude_prompt,
+                              claude_state, claude_usage, parse_reset_delay,
                               saver_hook_events)
 
 
@@ -121,6 +121,15 @@ async def test_claude_usage_context_badge():
     assert claude_usage(
         "Context left until auto-compact: 23%  ·  opus (1M context)") == "ctx 23% / 1M"
     assert claude_usage("200K context window") == "200K ctx"
+
+
+async def test_claude_model():
+    # M14c: 실 배지 'Opus 4.8 (1M context)' + 하이픈 표기 둘 다.
+    assert claude_model("Opus 4.8 (1M context) · /model to change") == "opus-4.8"
+    assert claude_model("claude-sonnet-4-6") == "sonnet-4.6"
+    assert claude_model("Haiku 4.5") == "haiku-4.5"
+    assert claude_model("Opus") == "opus"
+    assert claude_model("no model here") is None
 
 
 async def test_ctx_window_tokens():

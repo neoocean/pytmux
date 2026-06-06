@@ -1,5 +1,7 @@
  ⏺ Done. The change is applied.
 
- ⏵⏵ auto mode on (shift+tab to cycle)
- > 
- ? for shortcuts
+ ────────────────────────────────────────────
+ ❯
+ ────────────────────────────────────────────
+   ⏵⏵ auto mode on · 2 shells
+   ? for shortcuts

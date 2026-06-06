@@ -112,6 +112,25 @@ def claude_usage(text: str):
     return None
 
 
+# M14c: 모델 배지 파서. 실 캡처 'Opus 4.8 (1M context)' · 'claude-opus-4-8' 둘 다 잡는다.
+# 계열 뒤 버전은 점(4.8) 또는 하이픈(4-8) 표기 모두 허용하고 점으로 정규화한다.
+_MODEL_RE = re.compile(r"\b(Opus|Sonnet|Haiku)\b[\s-]*([0-9]+(?:[.\-][0-9]+)*)?", re.I)
+
+
+def claude_model(text):
+    """Claude Code 화면 배지에서 모델 계열(+버전)을 best-effort 추출.
+
+    'Opus 4.8 (1M context)' → 'opus-4.8', 'claude-sonnet-4-6' → 'sonnet-4.6',
+    계열만 보이면 'opus'. 못 찾으면 None. 모델 과선택 힌트(T3/S4)·표시용 — 현행
+    Claude UI 포맷 의존(§5.7)이라 실 골든 픽스처(badge_1m.txt)로 회귀 고정한다."""
+    m = _MODEL_RE.search(text)
+    if not m:
+        return None
+    fam = m.group(1).lower()
+    ver = m.group(2)
+    return f"{fam}-{ver.replace('-', '.')}" if ver else fam
+
+
 _WINDOW_RE = re.compile(r"(\d+)\s*([kKmM])")
 
 

@@ -13,7 +13,7 @@ import os
 import harness  # noqa: F401  (경로 설정)
 from harness import server_only, teardown
 from pytmuxlib.claude import (claude_context_pct, claude_feedback_prompt,
-                              claude_state, claude_usage)
+                              claude_model, claude_state, claude_usage)
 
 FIXDIR = os.path.join(os.path.dirname(__file__), "fixtures", "claude")
 
@@ -37,8 +37,8 @@ async def test_claude_context_pct():
 
 # ---- M8: 골든 픽스처 회귀 고정 ----
 async def test_golden_fixtures():
-    """합성 골든 픽스처가 기대 상태/사용량/잔량%를 낸다(claude.py 회귀 고정).
-    실 캡처 보강 전까지 '문서화된 포맷 자신'에 대한 회귀 가드다(README 참조)."""
+    """골든 픽스처가 기대 상태/사용량/잔량%/모델을 낸다(claude.py 회귀 고정).
+    busy/idle/badge_1m/ctx_low 는 실 캡처 보강분(README), 나머지는 합성."""
     assert claude_state(_fix("limit.txt")) == "limit"
     assert claude_state(_fix("busy.txt")) == "busy"
     assert claude_state(_fix("idle.txt")) == "idle"
@@ -50,6 +50,8 @@ async def test_golden_fixtures():
     assert claude_context_pct(_fix("ctx_high.txt")) == 72
     assert claude_context_pct(_fix("idle.txt")) is None
     assert "1M" in (claude_usage(_fix("badge_1m.txt")) or "")
+    # M14c: 실 모델 배지 'Opus 4.8 (1M context)' 에서 모델 계열·버전 추출.
+    assert claude_model(_fix("badge_1m.txt")) == "opus-4.8"
 
 
 # ---- M11: 컨텍스트 잔량 기반 자동 정리 ----
