@@ -930,6 +930,9 @@ class Session:
         self.tabs = [Tab(0, "win", Window(root))]
         self.active_index = 0
         self.last_index = 0    # 직전 활성 탭(prefix l)
+        # M14 카운트다운 디바운스: 직전에 status 로 보낸 무장 자동액션 (kind, eta초).
+        # flush 루프가 ETA 변동 때만 status 를 재전송하도록 비교에 쓴다(휘발성).
+        self._pending_key = None
         # 라이브 PTY 팝업(display-popup): 트리에 속하지 않는 떠 있는 PTY 패널 1개.
         # None 이면 닫힌 상태. 열리면 {"pane", "title", "want_w", "want_h"} 를 담고,
         # 표시 geometry 는 매 레이아웃 계산 때 세션 크기에 맞춰 중앙 정렬로 산출한다.
@@ -951,6 +954,7 @@ class Session:
         self.tabs = tabs
         self.active_index = active_index
         self.last_index = last_index
+        self._pending_key = None   # M14 카운트다운 디바운스(휘발성)
         self.popup = None
         return self
 

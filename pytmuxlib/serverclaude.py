@@ -745,6 +745,28 @@ class ServerClaudeMixin:
         self._save_opts()
         return self.claude_ctx_min_interval
 
+    def _pending_action(self, pane):
+        """M14 카운트다운: 무장된 자동 액션(자동재개 예약 / auto-doc-clear 타이머)의
+        종류와 남은 초(ETA)를 반환한다(없으면 None). 클라 상태줄 배지가 "곧 자동
+        개입이 일어난다(입력 시 취소)"를 사용자에게 보이게 한다 — 비가역 동작의
+        발견성·취소권 보장(§5.3·§5.4). 자동재개를 우선해 본다(둘 다 무장은 정상
+        경로상 안 생기지만 안전하게 한쪽만). 발화 시각은 asyncio 타이머 핸들의
+        when()(loop.time 기준)에서 얻는다 — 클램프해 음수/만료는 0 으로."""
+        if pane is None or self.loop is None:
+            return None
+        h = getattr(pane, "_resume_handle", None)
+        kind = "resume"
+        if h is None:
+            h = getattr(pane, "_adc_timer", None)
+            kind = "doc-clear"
+        if h is None:
+            return None
+        try:
+            eta = max(0, int(round(h.when() - self.loop.time())))
+        except (AttributeError, RuntimeError, TypeError):
+            return None
+        return {"kind": kind, "eta": eta}
+
     def _ctx_cap_ok(self, pane: Pane) -> bool:
         """M14 빈도 상한: 직전 자동 정리(_ctx_last_fire)로부터
         claude_ctx_min_interval 초가 지났으면 True(0=상한 없음 → 항상 True).

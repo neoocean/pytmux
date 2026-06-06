@@ -735,6 +735,7 @@ class StatusBar(Widget):
         self.token_budget_resume_gate = False
         self.claude_budget_plan = False
         self.budget_level = 0     # 예산 경고 레벨(0/80/100, M10)
+        self.claude_pending = None  # 무장된 자동 액션 {kind, eta초}(M14 카운트다운)
         self.bg = bg
         self.fg = fg
         self.left_fmt = left
@@ -877,6 +878,8 @@ class StatusBar(Widget):
         self.claude_budget_plan = msg.get(
             "claude_budget_plan", self.claude_budget_plan)
         self.budget_level = msg.get("budget_level", 0)
+        # M14 카운트다운: 서버가 매 status 에 항상 키를 실어 보낸다(없으면 None).
+        self.claude_pending = msg.get("claude_pending")
         self.capture_path = msg.get("capture_path")
         self.capture_size = msg.get("capture_size", 0)
         self.refresh()
@@ -955,6 +958,16 @@ class StatusBar(Widget):
             segs.append(Segment(" ⚠예산 " + ("초과 " if over else "80% "),
                                 Style(color="white",
                                       bgcolor=("red" if over else "yellow"),
+                                      bold=True)))
+        # M14 카운트다운 배지: 무장된 자동 액션의 종류 + 남은 초. 비가역 동작이
+        # 곧 일어남을 알리고(발견성), 입력하면 취소됨을 함의한다(§5.3). 배지는
+        # 주황(주의)으로 강조 — 무장돼 있을 때만 나타나고 발화/취소 시 사라진다.
+        if isinstance(self.claude_pending, dict):
+            kind = self.claude_pending.get("kind")
+            eta = self.claude_pending.get("eta", 0)
+            label = "자동재개" if kind == "resume" else "자동정리"
+            segs.append(Segment(f" ⏳{label} {eta}s(입력=취소) ",
+                                Style(color="black", bgcolor=tc("warning"),
                                       bold=True)))
         if self.prefix_off:
             segs.append(Segment("NEST ", Style(color="white",

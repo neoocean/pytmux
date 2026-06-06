@@ -153,6 +153,9 @@ class ServerIOMixin:
             "claude_budget_plan": self.claude_budget_plan,
             "budget_level": self._budget_level_for(
                 win.active_pane if win else None),
+            # M14 무장된 자동 액션 카운트다운(없으면 None): {kind, eta(초)}.
+            "claude_pending": self._pending_action(
+                win.active_pane if win else None),
         }
 
     async def _send_full(self, client: ClientConn):
@@ -263,6 +266,14 @@ class ServerIOMixin:
                         status_changed = True
                 except Exception:
                     self._log_error("scan_claude")
+                # M14 카운트다운 틱: 무장된 자동 액션의 ETA(정수 초)나 종류가 바뀌면
+                # status 를 재전송한다(출력 변화가 없어도 1초마다 카운트다운 갱신).
+                # 무장/해제 전이도 여기서 잡혀 배지가 즉시 뜨고 사라진다.
+                pend = self._pending_action(win.active_pane if win else None)
+                pkey = (pend["kind"], pend["eta"]) if pend else None
+                if pkey != sess._pending_key:
+                    sess._pending_key = pkey
+                    status_changed = True
                 # 활동/벨 모니터링: 비활성 윈도우의 출력/BEL 을 플래그로
                 for t in sess.tabs:
                     w = t.window
@@ -714,6 +725,8 @@ class ServerIOMixin:
             return
         self._track_prompt(p, data)   # 마지막 입력 프롬프트 추적(Claude 헤더용)
         self._adc_disarm(p)   # 사용자 입력 = 활동 중 → 자동 doc→/clear 발화 취소(§10)
+        self._cancel_resume(p)  # M14: 사용자가 입력했으면 자동재개 예약도 취소(§5.3
+        #   선점 — 사용자가 직접 키를 쳤다 = 작업을 이어받음 → continue 중복 주입 방지)
         # 입력 동기화 시 윈도우 내 모든 패널에 동일 입력 전달
         targets = win.panes() if win.sync else [p]
         for t in targets:

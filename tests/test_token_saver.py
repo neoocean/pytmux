@@ -384,6 +384,59 @@ async def test_cancel_resume_clears_pending():
         await teardown(srv, task, sock)
 
 
+# ---- M14: 무장 자동액션 카운트다운/취소 힌트 ----
+async def test_pending_action_reports_kind_and_eta():
+    """무장된 자동재개/auto-doc-clear 타이머가 있으면 _pending_action 이 종류와
+    남은 초(ETA)를 보고한다(없으면 None). 자동재개를 우선해 본다."""
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p = await _claude_pane(srv)
+        assert srv._pending_action(p) is None        # 무장 없음
+        assert srv._pending_action(None) is None      # 패널 없음
+        p._resume_handle = srv.loop.call_later(30, lambda: None)
+        pa = srv._pending_action(p)
+        assert pa and pa["kind"] == "resume" and 25 <= pa["eta"] <= 30, pa
+        # resume 가 우선: 둘 다 무장돼 있어도 resume 를 보고.
+        p._adc_timer = srv.loop.call_later(10, lambda: None)
+        assert srv._pending_action(p)["kind"] == "resume"
+        p._resume_handle.cancel()
+        p._resume_handle = None
+        pa = srv._pending_action(p)
+        assert pa and pa["kind"] == "doc-clear" and 5 <= pa["eta"] <= 10, pa
+        p._adc_timer.cancel()
+        p._adc_timer = None
+        assert srv._pending_action(p) is None
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
+async def test_user_input_cancels_armed_resume():
+    """사용자가 패널에 입력하면 무장된 자동재개 예약이 취소된다(§5.3 선점 —
+    continue 중복 주입 방지). _handle_input 경로에서 _cancel_resume 가 불린다."""
+    import base64
+    from pytmuxlib.model import ClientConn
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p = await _claude_pane(srv)
+        p._resume_handle = srv.loop.call_later(100, lambda: None)
+        p._resume_pending = True
+        client = ClientConn(None)
+        client.session = sess
+        srv._handle_input(client, {"pane": p.id,
+                                   "data": base64.b64encode(b"x").decode()})
+        assert p._resume_handle is None and p._resume_pending is False
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
 # ---- 설정 setter opts.json 영속 ----
 async def test_setters_persist_to_opts():
     srv, task, sock = await server_only()

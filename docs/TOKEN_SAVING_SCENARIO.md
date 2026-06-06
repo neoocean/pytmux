@@ -256,7 +256,7 @@ plan 유도는 opt-in 이고 idle 한정.
 | **M12** | 자동재개 예약 취소 경로(`_cancel_resume`) + 예산 게이트(`_fire_resume`) | 3 | 낮음 | `serverclaude.py` | ✅ |
 | **M13** | T3 권한모드 plan 유도(예산≥80%+idle, opt-in 토글, bypass 불간섭) | 1 | 낮음 | `serverclaude.py`(`_scan_claude` 권한구동) | ✅ |
 | **M14a** | 정리 **빈도 상한**(time floor `claude_ctx_min_interval`, 기본 120초) — `_ctx_fired` 디바운스에 직교하는 시간 바닥(§5.6) | 3 | 낮음 | `serverclaude.py`(`_ctx_cap_ok`), `server.py`, 설정 팝업 | ✅ |
-| **M14b** | 무장 자동액션 카운트다운/취소 힌트 UI(`claude_pending`) + 입력 시 자동재개 취소(§5.3) | 2 | 중 | `serverio.py`, `client.py` | ⏳ |
+| **M14b** | 무장 자동액션 카운트다운/취소 힌트 UI(`claude_pending`) + 입력 시 자동재개 취소(§5.3) | 2 | 중 | `serverio.py`, `client.py` | ✅ |
 | **M14c** | 모델 과선택 힌트(T3) — **실 Claude 모델 배지 캡처 필요**(미검증 휴리스틱 출하 금지) | 1 | 중 | — | ⛔ 차단(실캡처) |
 | **M8보강** | **실 Claude limit/배지 화면 골든 캡처** — 현재 픽스처는 합성(문서 포맷) | — | 낮음 | `tests/fixtures/claude/*` | ⛔ 차단(실캡처) |
 
@@ -280,6 +280,13 @@ plan 유도는 opt-in 이고 idle 한정.
   잔량을 못 늘리는 오검출·병적 진동에서 회복→재하락이 빠르게 반복돼도 `min_interval`
   초 안엔 재발화 금지(`_ctx_cap_ok`). 0=상한 없음. 발화 시 `_ctx_last_fire`(monotonic)
   기록, 새 세션/respawn 시 리셋. 설정 팝업 `정리 빈도 상한` 행(0/60/120/300/600초).
+- **M14b 카운트다운/취소**: 서버가 무장된 자동 액션(자동재개 예약·auto-doc-clear
+  타이머)의 `{kind, eta초}`를 status `claude_pending` 으로 싣고(`_pending_action`,
+  타이머 `when()`−`loop.time()`), flush 루프가 ETA 정수 초 변동 시에만 status 재전송
+  (1Hz 틱, `sess._pending_key` 디바운스). 클라 상태줄에 주황 배지 `⏳자동재개 12s
+  (입력=취소)`. 비가역 동작 발화 전 발견성+취소권(§5.3·§5.4). **사용자 입력 시
+  자동재개도 취소**(`_handle_input`→`_cancel_resume`, auto-doc-clear `_adc_disarm`
+  과 대칭). 무장/해제 전이 시 배지가 즉시 뜨고 사라진다.
 - **M10 누계**: 확정 토큰(`step` committed>0) append **전에** 추적(이중계산 방지). 기동
   시 로그에서 오늘 누계 시드(재시작 정합), 자정 넘김 0 리셋. best-effort(화면 토큰 합)라
   하드 차단 아님 — 경고 + 자동개입 보류용.
