@@ -270,8 +270,8 @@ plan 유도는 opt-in 이고 idle 한정.
 - **설정 팝업**: `token-saver`(별칭 `claude-settings`·`token-settings`) → `ClaudeSaverScreen`.
   ●/○ 토글 + 정리방식/잔량임계/일·세션예산 프리셋 순환(Enter), ESC 닫기. 전역 opts,
   status 회신마다 권위값 갱신(`clientscreens.py` `_saver_screen` 훅). 행: 자동재개·
-  예산재개보류·잔량자동정리·정리방식·잔량임계·auto-doc-clear·권한자동·프롬프트클리어·
-  일예산·세션예산.
+  예산재개보류·**예산압박plan유도(M13)**·잔량자동정리·정리방식·잔량임계·**정리빈도
+  상한(M14a)**·auto-doc-clear·권한자동·프롬프트클리어·일예산·세션예산.
 - **M11 발화 시점**: busy→idle(응답 완료) 경계 — 사용자가 타이핑 중이 아니고 다음
   비싼 턴 직전이라 가장 값싼 정리 시점. 디바운스(`_ctx_fired`)는 잔량이 임계+5%p 위로
   회복하거나 새 세션 시작 시 해제(compact 무효 시 매 응답 무한 정리 방지).

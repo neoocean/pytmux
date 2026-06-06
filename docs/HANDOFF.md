@@ -215,7 +215,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~56500 + git, 신→구)
+## 9. 최근 변경(CL 56279~57060 + git, 신→구)
 
 > ✅ **git 미러 동기화 완료(2026-06-04, macOS 세션).** Windows 박스(`office`)와
 > `surface-office` 병행 세션에서 낸 CL **56540~56560** 을 macOS 개발 머신에서
@@ -227,6 +227,40 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 57060 **REC(패널 출력 캡처) 기본 ON**(실 Claude 출력 골든 근거 수집) — `server.py`
+  capture 기본값 `False`→`True`(코드 주석·FEATURES·HANDOFF 는 이미 "기본 ON" 이었는데
+  실제 기본값만 False 였던 불일치 교정). `opts.json` 영속이라 사용자가 `capture-output
+  off` 로 끄면 그 선택 유지. 목적: 실 Claude limit/busy/idle/ctx 화면을 무손실 기록 →
+  M8 골든·M14c 모델힌트·§3.2 감지 정확도 작업의 객관 근거(2026-06-08 Windows 세션
+  예정). 안전: `captures/` 는 `.gitignore` 로 GitHub 미러 차단(민감 화면 유출 방지),
+  `.p4ignore` 에선 의도적 비차단(머신 간 Perforce 공유용 — submit 은 사용자 검토 후).
+  `test_capture_output` 기본 ON 단언으로 갱신. 광역 배치 223 passed. 파일: `server.py`,
+  `tests/test_server.py`.
+- 57032~57054 **A·B·C 자율 진행(IMPROVEMENT 잔여, 단계별 submit)**:
+  - 57032 **M14a 정리 빈도 상한**(time floor `claude_ctx_min_interval`, 기본 120초) —
+    `_ctx_fired` 디바운스에 직교하는 시간 바닥. 정리가 잔량을 못 줄이는 오검출·병적
+    진동에서 매 완료경계 무한 정리 방지(`serverclaude._ctx_cap_ok`). 설정 팝업 행 추가.
+  - 57040 **M14b 무장 자동액션 카운트다운/취소 힌트 UI**(`claude_pending`) — 자동재개·
+    auto-doc-clear 타이머의 `{kind, eta초}`를 status 로 싣고(when()−loop.time()) 1Hz 틱,
+    상태줄 주황 배지 `⏳자동재개 12s(입력=취소)`. 사용자 입력 시 자동재개도 취소(§5.3).
+  - 57046 **#12 2/N 시계·달력 오버레이 추출** — `build_client_app` 거대 클로저에서
+    `clientrender.draw_clock_overlay`·`draw_calendar_overlay` 자유함수로(테마 Style 만
+    클로저가 해석해 위임). `tests/test_clientrender.py` 신규 + ptyshot 골든 가드.
+  - 57048 **§2.4 copy-mode 선택 패널 경계 클램프** — 분할 화면 드래그 선택이 전역
+    좌표라 중간 줄이 인접 패널·테두리까지 복사되던 오염을 시작 패널 범위로 묶어 제거.
+  - 57051 **§4.5 prompt history 변경 시에만 전송** — 매 status(토큰 변동으로 자주
+    발화)마다 30개 프롬프트 재직렬화·전송하던 ssh 트래픽 제거(`_pane_claude_entry`).
+  - 57052 **§4.4 feed ESC-없는 플레인 텍스트 빠른 경로** — buf 에 ESC 없으면 정규식
+    4개 건너뛰고 직행(빌드 로그·cat 핫패스, 동작 불변).
+  - 57054 **docs: IMPROVEMENT 진행 반영 + §2.6 분석 보류**(줌 reflow — 영향 드문 경계
+    + 레이아웃 핫패스 회귀 위험 커 실 재현 픽스처 확보 후로 보류, 분석 명시).
+  - 최종 스위트 286 passed. **남은 차단**: M14c(모델힌트)·M8 골든은 실 Claude 캡처
+    필요(→ 57060 으로 수집 시작), #2 IPC 인증·Windows #1.1~1.5 는 실 환경 필요.
+- 56986~57024 **Claude 토큰 절감 자동화(M8~M13) + B 전체(견고성·#8·#12 1/N)** — 골든
+  픽스처·`claude_context_pct` 잔량 파서·일/세션 예산 추적·잔량%<임계 자동 정리(compact/
+  doc-clear)·자동재개 예약 취소·예산 게이트·plan 유도 + #28 except 좁힘·#5.8 테스트·
+  #8 dirty 행 재직렬화(18×)·#12 1/N(`clientrender.put_cell`·`clientclip`)·#5.9. 설계:
+  `docs/TOKEN_SAVING_SCENARIO.md`. 또 version/restart-all/restart-check 명령(§위 §3.5).
 - 56742 **테스트 격리: 캡처(REC) 디렉터리를 `PYTMUX_CAPTURE_DIR` 임시로 주입**(테스트
   인프라 버그) — `harness.server_only` 의 테스트 엔드포인트 `tcp:127.0.0.1:0` 이
   `ipc.default_endpoint()` 와 같아 `server.capture_dir` 가 **공유 프로젝트 `captures/default`**

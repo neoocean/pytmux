@@ -169,6 +169,18 @@ CI로 안 잡히는 인터랙티브 버그를 봐야 할 때만.
 `py scripts/win_report.py` 한 줄로 리포트를 만들고, 필요하면 라이브 attach로 반응성을
 직접 본다. **새 인프라 0** — macOS에서 자동화하고 싶은 것의 80%는 사실 여기서 충분.
 
+> **REC(패널 출력 캡처)로 실 Claude Code 출력 수집(2026-06-06~, 기본 ON).** CL 57060
+> 이후 capture 기본값이 ON 이라 Windows 박스에서 pytmux 를 새로 띄우면 자동으로 모든
+> 패널의 raw PTY 출력을 `captures/<sock-id>/pane-<id>.log` 에 무손실 기록한다(매핑은
+> `sessions.log`). 실 Claude limit/busy/idle/ctx 화면을 떠서 `python pytmux.py replay
+> <log> --cols N --rows M [--ruler]` 로 복원 → M8 골든 픽스처·M14c 모델힌트·§3.2 감지
+> 정확도 작업의 객관 근거로 쓴다(현재 이 항목들은 실 캡처에 차단돼 있다). **유의**:
+> ① 그 박스 `opts.json` 에 과거 `capture:false` 가 영속돼 있으면 기본 ON 이 안 먹으니
+> `python pytmux.py cmd capture-output on` 1회. ② `captures/` 는 `.gitignore` 로 GitHub
+> 미러 차단(민감 화면 유출 방지), `.p4ignore` 비차단(머신 간 Perforce 공유용) — 캡처
+> 데이터 submit 은 실 터미널 내용(비밀·경로 포함 가능)이라 검토 후. ③ 무손실이라 무한
+> 증가 — 분석 후 불필요 로그 정리.
+
 ### 4-b. Windows VM (UTM 또는 Parallels) — arm64 제약 주의
 - Apple Silicon이라 **Windows 11 ARM64**만 자연스럽게 뜬다(x86-64 Windows는 에뮬레이션→느림).
 - **함정**: `pywinpty`(Rust 확장)의 **ARM64 Windows 사전 빌드 휠이 없을 수 있다** → VM 안에서
