@@ -13,6 +13,7 @@ from datetime import datetime
 
 from textual.widget import Widget
 from textual import events
+from textual.geometry import Region
 from textual.strip import Strip
 from rich.segment import Segment
 from rich.style import Style
@@ -54,8 +55,35 @@ class MultiplexerView(Widget):
         return "\n".join(out)
 
     def set_frame(self, cells):
+        """합성된 전 화면 cells 를 받아 변경된 행만 다시 그리게 한다(B8).
+
+        _composite 는 오버레이·테두리가 셀을 공유해 정합성 위험 때문에 **전 화면을
+        그대로 재구성**한다(증분 합성 아님). 대신 여기서 직전 프레임과 **행 단위로
+        정확 비교**해, 바뀐 행만 `refresh(Region(...))` 로 무효화한다 — textual 이
+        깨끗한 행의 render_line 재호출을 건너뛴다. 1줄 델타(Claude 스피너·ssh)에도
+        전 화면 W×H render_line 을 돌리던 클라 핫패스를 변경 행만으로 줄인다.
+
+        정확성: 전 화면을 재구성한 뒤 (ch, Style) 동등성(Style 은 캐시 hash 비교)으로
+        비교하므로 dirty 검출이 정확하다 — 스타일만 바뀐 행도 잡고, 시각적으로 동일한
+        행(새 Style 인스턴스라도 ==)은 건너뛴다. 차원 변화·첫 프레임은 전체 refresh.
+        """
+        prev = self._cells
         self._cells = cells
-        self.refresh()
+        H = len(cells)
+        # 첫 프레임이거나 행 수/열 수(리사이즈)가 바뀌면 안전하게 전체 무효화.
+        if (not prev or len(prev) != H
+                or (H and len(prev[0]) != len(cells[0]))):
+            self.refresh()
+            return
+        dirty = [y for y in range(H) if cells[y] != prev[y]]
+        if not dirty:
+            return                      # 시각적 변화 없음 — 재렌더 불필요
+        if len(dirty) * 2 >= H:         # 절반 이상 바뀌면 region 분할 이득이 적다
+            self.refresh()
+            return
+        w = len(cells[0]) if H else 0
+        for y in dirty:
+            self.refresh(Region(0, y, w, 1))
 
     def render_line(self, y: int) -> Strip:
         if y >= len(self._cells):

@@ -46,3 +46,34 @@ async def test_real_client_renders_no_crash():
             launcher.control_request(sock, {"t": "kill-server"})
         except Exception:
             pass
+
+
+async def test_real_client_delta_render():
+    """입력으로 유발한 화면 델타가 실제 클라 렌더 경로로 정확히 그려지는지(B8 회귀).
+
+    B8: set_frame 이 직전 프레임과 행 단위 비교해 변경된 행만 region refresh 한다 —
+    초기 전체 렌더 뒤 1줄 델타에도 전 화면 render_line 을 돌리지 않는다. 부분 refresh
+    가 깨지면 새 출력이 안 보이거나 stale 행이 남는다. PTY 아래 진짜 클라를 띄워
+    echo 명령을 흘려보내고(0.6초 뒤 feed), 그 고유 마커 출력이 화면에 나타나는지
+    단언한다 — 델타 경로 end-to-end 검증."""
+    if ptyshot.IS_WINDOWS:
+        return  # POSIX 전용 하네스
+    marker = "PYTMUX_B8_DELTA_OK"
+    sock = tempfile.mktemp(suffix=".sock")
+    try:
+        raw, alive = ptyshot.capture(
+            [sys.executable, _entry(), "--socket", sock],
+            seconds=6.0, feed=("echo " + marker + "\n").encode())
+        txt = ptyshot.screen_text(raw)
+        assert alive, "클라가 캡처 시간 안에 종료(크래시)"
+        assert not ptyshot.has_traceback(raw), txt[-1500:]
+        # 입력으로 유발된 델타(echo 출력)가 부분 refresh 후 화면에 보여야 한다.
+        assert marker in txt, "델타(echo 출력)가 렌더되지 않음:\n" + txt[-800:]
+        # 테두리도 그대로(부분 refresh 가 테두리 행을 망치지 않음).
+        assert any(c in txt for c in "┌─│┐└┘"), "테두리 손상:\n" + txt[-800:]
+    finally:
+        from pytmuxlib import launcher
+        try:
+            launcher.control_request(sock, {"t": "kill-server"})
+        except Exception:
+            pass

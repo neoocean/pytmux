@@ -27,6 +27,58 @@ async def test_hello_paints_screen():
     await _with_app(body)
 
 
+async def test_set_frame_dirty_row_refresh():
+    """set_frame 이 직전 프레임과 행 단위 비교해 변경된 행만 region refresh 한다(B8).
+
+    _composite 는 전 화면을 재구성하지만(오버레이 정합), set_frame 이 dirty 행만
+    textual 에 무효화해 깨끗한 행의 render_line 재호출을 건너뛴다. refresh 를 스파이로
+    바꿔(텍스추얼 미접촉) 정확한 dirty 검출만 단위 검증한다."""
+    from pytmuxlib.clientwidgets import MultiplexerView
+    from rich.style import Style
+
+    view = MultiplexerView()
+    calls = []
+    view.refresh = lambda *regions, **kw: calls.append(regions)
+    S = Style()
+
+    def frame(h, w, mark=None):
+        cells = [[(" ", S) for _ in range(w)] for _ in range(h)]
+        if mark is not None:
+            y, ch = mark
+            cells[y][0] = (ch, S)
+        return cells
+
+    # 1) 첫 프레임 → 전체 refresh(region 인자 없음).
+    view.set_frame(frame(10, 20))
+    assert calls == [()], calls
+    calls.clear()
+
+    # 2) 동일 프레임 → 재렌더 불필요(refresh 호출 0).
+    view.set_frame(frame(10, 20))
+    assert calls == [], calls
+
+    # 3) 한 행만 변경 → 그 y 의 Region 하나만.
+    view.set_frame(frame(10, 20, mark=(3, "X")))
+    assert len(calls) == 1 and len(calls[0]) == 1, calls
+    reg = calls[0][0]
+    assert (reg.x, reg.y, reg.width, reg.height) == (0, 3, 20, 1), reg
+    calls.clear()
+
+    # 4) 열 수(리사이즈) 변화 → 안전하게 전체 refresh.
+    view.set_frame(frame(10, 25, mark=(3, "X")))
+    assert calls == [()], calls
+    calls.clear()
+
+    # 5) 절반 이상(여기선 6/10) 변경 → region 분할 이득이 적어 전체 refresh.
+    many = frame(10, 25, mark=(3, "X"))
+    for y in range(6):
+        many[y][1] = ("Z", S)
+    view.set_frame(many)
+    assert calls == [()], calls
+    # _cells 는 최신 프레임으로 갱신(_extract_selection 등 의존부 정합).
+    assert view._cells is many
+
+
 async def test_command_prompt_via_esc():
     async def body(app, pilot, srv):
         sess = next(iter(srv.sessions.values()))
