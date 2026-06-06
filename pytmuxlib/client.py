@@ -110,7 +110,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._claude_header_zones = {}  # id -> (x0,x1,y) 헤더 클릭존(히스토리 팝업)
             # Claude 패널 PTY 안에 그려지는 하단 footer 클릭존(§10 item 2/3): 권한모드
             # footer("auto mode on (shift+tab)") → 권한모드 선택 팝업, "Remote Control
-            # active" → 원격제어 정보 팝업. _composite 가 패널 content 를 훑어 채운다.
+            # active" → 원격제어 정보+토글([r]=/rc) 팝업. _composite 가 채운다.
             self._perm_zone = {}     # id -> (x0,x1,y) 권한모드 footer 클릭존
             self._remote_zone = {}   # id -> (x0,x1,y) 원격제어 표시 클릭존
             self._footer_hover = None  # 호버 중인 footer 클릭존 (pane_id, "perm"|"remote")(§10)
@@ -726,22 +726,33 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.push_screen(PermModeScreen(current, anchor_y=anchor_y,
                                             anchor_x=anchor_x), _chosen)
 
+        def _toggle_remote_control(self, pane_id):
+            """원격 제어 토글: 해당 Claude 패널에 `/rc` 슬래시 명령+Enter 를 주입한다.
+            Claude Code CLI 가 `/rc` 로 원격 제어를 켜고 끈다 — 사용자가 직접 친 것과
+            동일한 입력 경로(서버가 그 패널 PTY 에 그대로 쓴다)."""
+            if self.writer and pane_id is not None:
+                asyncio.create_task(write_msg(self.writer, {
+                    "t": "input", "pane": pane_id,
+                    "data": base64.b64encode(b"/rc\r").decode("ascii")}))
+
         def open_remote_control(self, pane_id):
-            """Claude 데스크탑 앱 원격제어('Remote Control active') 정보 팝업(§10 item 3).
-            원격제어 on/off 는 Claude 데스크탑 앱이 관리하는 기능이라 pytmux(터미널)에서
-            직접 토글할 수 없다 — 상태/안내 전용 팝업으로 둔다(요청의 '켜고 끄는 화면'
-            은 토글 수단 부재로 안내로 축소). 원격제어 입력 프롬프트는 헤더에 반영됨."""
+            """Claude 원격제어('Remote Control active') 정보+토글 팝업(§10 item 3).
+            원격 제어는 Claude Code CLI 의 `/rc` 슬래시 명령으로 켜고 끌 수 있으므로,
+            이 팝업에서 [r] 로 바로 토글한다(해당 패널에 `/rc` 주입)."""
             lines = [
                 "이 패널의 Claude Code 가 데스크탑 앱 '원격 제어'로 연결돼 있습니다.",
                 "(패널 화면의 'Remote Control active' 표시)",
                 "",
-                "• 원격 제어 켜기/끄기는 Claude 데스크탑 앱에서 관리됩니다.",
-                "  pytmux(터미널)에서는 직접 토글할 수 없습니다.",
+                "• 원격 제어는 Claude Code CLI 의 '/rc' 명령으로 켜고 끕니다.",
+                "  → 이 화면에서 [r] 키로 바로 토글합니다(해당 패널에 /rc 주입).",
                 "• 원격 제어로 입력된 프롬프트도 상단 프롬프트 헤더에 반영됩니다.",
                 "",
-                "닫기: Esc 또는 바깥 클릭.",
+                "[r] 원격 제어 토글(/rc)   ·   닫기: Esc 또는 바깥 클릭.",
             ]
-            self.push_screen(InfoScreen(lines, title="원격 제어(Remote Control)"))
+            self.push_screen(InfoScreen(
+                lines, title="원격 제어(Remote Control)",
+                hide_key="r",
+                hide_cb=lambda: self._toggle_remote_control(pane_id)))
 
         def _draw_claude_headers(self, cells, W, H):
             """Claude Code 패널 내부 맨 윗줄에 마지막 프롬프트를 스티키 헤더로 표시.

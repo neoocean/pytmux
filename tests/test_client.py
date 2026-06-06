@@ -2446,12 +2446,43 @@ async def test_claude_footer_zones_and_popups():
         await pilot.pause(0.05)
         assert sent and sent[0][0] == "set_claude_perm_mode"
         assert sent[0][1].get("target") == "plan"
-        # 원격제어 팝업: InfoScreen
+        # 원격제어 팝업: InfoScreen + [r] 토글(/rc 주입). 메시지가 틀렸다는 사용자
+        # 보고로 안내문을 정정하고 토글 수단을 추가했다.
+        toggled = []
+        app._toggle_remote_control = lambda pane_id: toggled.append(pane_id)
         app.open_remote_control(pid)
         await pilot.pause(0.05)
         assert app.screen.__class__.__name__ == "InfoScreen"
-        app.screen.dismiss(None)
+        assert app.screen._hide_key == "r"            # [r] = 토글 바인딩
+        await pilot.press("r")                        # [r] → /rc 토글 + 닫힘
         await pilot.pause(0.05)
+        assert toggled == [pid]
+        assert app.screen.__class__.__name__ != "InfoScreen"
+    await _with_app(body)
+
+
+async def test_remote_control_toggle_injects_rc():
+    """원격제어 토글이 해당 패널에 '/rc'+Enter(input 메시지)를 주입한다(CLI /rc 로
+    켜고 끔). 사용자 보고로 '직접 토글 불가' 안내를 정정하고 추가한 동작."""
+    import base64
+    import pytmuxlib.client as climod
+
+    async def body(app, pilot, srv):
+        pid = app.layout["panes"][0]["id"]
+        sent = []
+        orig = climod.write_msg
+
+        async def cap(writer, msg):
+            sent.append(msg)
+        climod.write_msg = cap
+        try:
+            app._toggle_remote_control(pid)
+            await pilot.pause(0.05)
+        finally:
+            climod.write_msg = orig
+        inp = [m for m in sent if m.get("t") == "input" and m.get("pane") == pid]
+        assert inp, sent
+        assert base64.b64decode(inp[0]["data"]) == b"/rc\r"
     await _with_app(body)
 
 
