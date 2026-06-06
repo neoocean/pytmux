@@ -1923,3 +1923,21 @@ async def test_repeat_loop_warn_m17():
         assert p._repeat_n == 0 and p._claude_warn is None
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_claude_model_status_m14c():
+    """M14c: 스캔이 실 배지 'Opus 4.8 (1M context)' 에서 모델을 파싱해 저장하고
+    status 로 송신한다(활성 Claude 패널 한정)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        p.feed("\x1b[2J\x1b[H Opus 4.8 (1M context)\r\n↑ 1k tokens\r\n"
+               .encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._claude == "busy"
+        assert p._claude_model == "opus-4.8", p._claude_model
+        assert srv._status_msg(sess)["claude_model"] == "opus-4.8"
+    finally:
+        await teardown(srv, task, sock)

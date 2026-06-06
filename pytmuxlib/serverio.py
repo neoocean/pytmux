@@ -144,6 +144,10 @@ class ServerIOMixin:
             # M17(T7): 활성 패널 장기턴/반복루프 경고(grade0 — 없으면 None).
             "claude_warn": (win.active_pane._claude_warn
                             if win and win.active_pane else None),
+            # M14c: 활성 패널 모델 배지(opus-4.8 등, 없으면 None).
+            "claude_model": (win.active_pane._claude_model
+                             if win and win.active_pane
+                             and win.active_pane._claude else None),
             "claude_account": (win.active_pane._claude_account
                                if win and win.active_pane else None),
             "zoomed": bool(win.zoomed) if win else False,

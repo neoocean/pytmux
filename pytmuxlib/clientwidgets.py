@@ -780,6 +780,7 @@ class StatusBar(Widget):
         self.claude_account = None  # 누적 토큰의 귀속 계정(표시에 곁들임)
         self.tok5h_pct = None     # M18-B: 5시간 한도 근접도 %(분모 미상이면 None)
         self.claude_warn = None   # M17: 장기턴/반복루프 경고(grade0, 없으면 None)
+        self.claude_model = None  # M14c: 활성 Claude 모델 배지(opus-4.8 등)
         # 토큰 절감 설정(설정 팝업 토글 현재값 + 예산 경고, docs/TOKEN_SAVING_SCENARIO).
         self.auto_doc_clear = False
         self.claude_auto_mode = False
@@ -922,6 +923,9 @@ class StatusBar(Widget):
         # 표시는 안 하고(매 status 권위값), 0/None 이면 곁들임을 떼서 낡은 값이 안 남게.
         self.tok5h_pct = msg.get("tok5h_pct")
         self.claude_warn = msg.get("claude_warn")   # M17 grade0 경고(권위값)
+        cm = msg.get("claude_model")                # M14c 모델 배지(지속표시)
+        if cm:
+            self.claude_model = cm
         # 토큰 절감 설정(설정 팝업이 현재값으로 토글을 그리는 데 씀). 항상 권위값 반영.
         self.auto_doc_clear = msg.get("auto_doc_clear", self.auto_doc_clear)
         self.claude_auto_mode = msg.get("claude_auto_mode", self.claude_auto_mode)
@@ -996,8 +1000,11 @@ class StatusBar(Widget):
             segs.append(Segment("REC ", Style(color="white", bgcolor=tc("error"),
                                                bold=True)))
         self._usage_zone = None
-        # 활성 Claude 패널: 컨텍스트 사용량(best-effort) + 세션 누적 토큰(#3, Σ)
+        # 활성 Claude 패널: 모델(M14c) + 컨텍스트 사용량(best-effort) + 세션 누적(#3, Σ)
         uparts = []
+        # 모델 배지는 좁은 폭에선 생략(자리 절약). claude_usage 가 있을 때만(활성 Claude).
+        if self.claude_model and self.claude_usage and w >= 60:
+            uparts.append(self.claude_model)
         if self.claude_usage:
             uparts.append(self.claude_usage)
         if self.claude_tokens:

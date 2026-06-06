@@ -13,9 +13,9 @@ import time
 
 from . import tokens
 from .claude import (claude_account, claude_context_pct, claude_feedback_prompt,
-                     claude_prompt, claude_perm_mode, claude_state, claude_usage,
-                     ctx_window_tokens, parse_reset_delay, screen_tail_key,
-                     track_repeat)
+                     claude_model, claude_prompt, claude_perm_mode, claude_state,
+                     claude_usage, ctx_window_tokens, parse_reset_delay,
+                     screen_tail_key, track_repeat)
 from .model import Pane, Session
 
 # 권한모드 자동 오토모드 전환(§10): 한 번 idle 진입 후 auto 에 도달하지 못해도 이
@@ -488,6 +488,11 @@ class ServerClaudeMixin:
                         acct = claude_account(txt)
                         if acct and acct != p._claude_account:
                             p._claude_account = acct
+                    # M14c: 모델 배지(Opus 4.8 등) 갱신 — 마지막 본 값 유지.
+                    mdl = claude_model(txt)
+                    if mdl and mdl != p._claude_model:
+                        p._claude_model = mdl
+                        changed = True
                     running = tokens.parse_running_tokens(txt)
                     committed = tokens.step(p._tok_state, running,
                                             new_cl == "busy")

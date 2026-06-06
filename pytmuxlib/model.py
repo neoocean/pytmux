@@ -347,6 +347,7 @@ class Pane:
         # Claude Code 감지: 상태(idle/busy/limit/None)와 마지막 입력 프롬프트
         self._claude = None
         self._claude_usage = None  # "ctx 42%" / "12k tok" 등(best-effort)
+        self._claude_model = None  # M14c: 모델 배지(opus-4.8 등, best-effort)
         # 토큰 누적(tokens.py): 현재 응답 peak + 세션 누계. _session_tokens 는
         # 표시·전송용 캐시(= _tok_state["total"]). 새 Claude 세션마다 리셋.
         self._tok_state = {"peak": 0, "total": 0}
