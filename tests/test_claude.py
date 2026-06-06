@@ -8,6 +8,19 @@ from pytmuxlib.claude import (claude_perm_mode, claude_prompt, claude_state,
                               claude_usage, parse_reset_delay)
 
 
+async def test_screen_text_matches_display():
+    """serverclaude.screen_text(경량 추출)가 `"\\n".join(screen.display)`와 셀 단위로
+    동일해야 한다(perf #11 — wcwidth 호출 없이 같은 결과). 와이드문자(CJK)·연속셀
+    포함 화면으로 못박는다."""
+    import pyte
+    from pytmuxlib.serverclaude import screen_text
+
+    s = pyte.Screen(20, 3)
+    st = pyte.Stream(s)
+    st.feed("AB한글CD\r\n↑ 1.2k tokens\r\nx")
+    assert screen_text(s) == "\n".join(s.display)
+
+
 async def test_parse_reset_delay():
     now = dt.datetime(2026, 6, 2, 14, 0, 0)
     assert parse_reset_delay("limit reached, resets at 3:00pm", now) == 3600

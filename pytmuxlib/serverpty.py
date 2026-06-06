@@ -137,10 +137,19 @@ class ServerPtyMixin:
         self._gc_drain_enter()
         try:
             while pane._feedbuf:
-                n = min(FEED_SLICE, len(pane._feedbuf))
-                chunk, pane._feedbuf = pane._feedbuf[:n], pane._feedbuf[n:]
-                self._ingest_slice(pane, chunk)
-                await asyncio.sleep(0)   # 양보: 입력/flush/render 가 끼어든다
+                # 현재 버퍼를 통째로 떼어내(스냅샷) 오프셋으로 슬라이스한다. 과거엔
+                # `_feedbuf = _feedbuf[n:]` 로 매 슬라이스 잔여 **전체를 재복사**해
+                # backlog 가 수 MB 로 쌓이면 슬라이싱만 O(n²)(4MB≈50ms)로 루프를 막았다.
+                # 스냅샷을 비워 두므로 드레인 중 도착분(append)·coalesce 는 새 _feedbuf
+                # 에 쌓이고 다음 바깥 루프에서 처리된다(동시성·시각 결과 불변).
+                buf = pane._feedbuf
+                pane._feedbuf = b""
+                off, total = 0, len(buf)
+                while off < total:
+                    n = min(FEED_SLICE, total - off)
+                    self._ingest_slice(pane, buf[off:off + n])
+                    off += n
+                    await asyncio.sleep(0)   # 양보: 입력/flush/render 가 끼어든다
         except asyncio.CancelledError:
             cancelled = True
             raise

@@ -22,6 +22,20 @@ from .model import Pane, Session
 _CAM_MAX = 4
 
 
+def screen_text(screen) -> str:
+    """pyte 스크린을 줄바꿈 결합한 평문으로 — `"\\n".join(screen.display)` 의 경량
+    대체(perf #11). `screen.display` 는 셀마다 `wcwidth()` 를 호출(폭 보정)하지만,
+    이 텍스트는 claude.py 의 정규식 8~10개 입력으로만 쓰여 폭 보정이 무의미하다.
+    pyte 는 와이드문자 연속셀을 `data==""` 로 저장하므로 셀 data 를 그대로 join 하면
+    display 와 **셀 단위 동일**한 결과가 나오며(연속셀은 빈 문자열이라 자연 스킵),
+    wcwidth 호출이 사라져 ~2.6× 빠르다(80×24 측정 267µs→101µs). busy Claude 패널은
+    매 프레임 변경돼 30Hz 로 도는 핫패스다."""
+    buf = screen.buffer
+    cols = range(screen.columns)
+    return "\n".join(
+        "".join(buf[y][x].data for x in cols) for y in range(screen.lines))
+
+
 # Claude 헤더 행 예약(#1)을 풀기 전, 패널이 연속으로 non-Claude 로 보여야 하는
 # 스캔(=flush) 횟수. `_claude` 는 화면 스크래핑이라 footer 가 한두 프레임 안 잡혀
 # None 으로 깜빡이는데(특히 ssh/ConPTY 처럼 화면이 조각나 도착할 때), 그때마다
@@ -367,7 +381,7 @@ class ServerClaudeMixin:
                 if p._feed_seq == p._scan_seq and not pending:
                     continue
                 p._scan_seq = p._feed_seq
-                txt = "\n".join(p.screen.display)
+                txt = screen_text(p.screen)
                 old_cl = p._claude
                 new_cl = claude_state(txt)
                 # Claude 세션 피드백 프롬프트 자동 Dismiss(#26): "How is Claude doing
