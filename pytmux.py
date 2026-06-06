@@ -35,26 +35,30 @@
     set status-fg / bind <key> <command>). 자세한 내용은 load_config 참고.
 """
 
-# client(=textual) 은 무거우므로 여기서 즉시 import 하지 않는다 — 서버 하위프로세스
-# (`pytmux.py server`)나 가벼운 제어 명령(ls/cmd/kill)이 import 만으로 textual 전체를
-# 끌어와 기동이 느려지던 문제(Windows 사용자 보고). 가벼운 하위모듈만 즉시 재노출하고,
-# client 의 심볼은 모듈 __getattr__(PEP 562)로 **처음 접근할 때** 지연 로드한다
-# (`import pytmux; pytmux.build_client_app` 같은 테스트/외부 호환 유지).
+# client(=textual)·server(=model→pyte→wcwidth) 는 무거우므로 여기서 즉시 import 하지
+# 않는다 — 서버 하위프로세스(`pytmux.py server`)나 가벼운 제어 명령(ls/cmd/kill)이
+# import 만으로 textual 전체나 pyte/wcwidth 를 끌어와 기동이 느려지던 문제(Windows
+# 사용자 보고). 가벼운 하위모듈(keymap/launcher/protocol)만 즉시 재노출하고, client·
+# model·replay·server 의 심볼은 모듈 __getattr__(PEP 562)로 **처음 접근할 때** 지연
+# 로드한다(`import pytmux; pytmux.Server` 같은 테스트/외부 호환 유지). 경량 명령
+# 경로(main→launcher)는 이 무거운 재노출을 전혀 건드리지 않는다(A4).
 from pytmuxlib.keymap import (  # noqa: F401
     _key_to_ctrl_bytes, _tmux_key_to_textual, load_config)
 from pytmuxlib.launcher import (  # noqa: F401
     can_connect, control_request, ensure_server, main)
-from pytmuxlib.model import (  # noqa: F401
-    ClientConn, Pane, Session, Split, Tab, Window, pid_counter, split_counter)
 from pytmuxlib.protocol import (  # noqa: F401
     FLUSH_HZ, HISTORY, MIN_H, MIN_W, conv_color,
     parse_reset_delay, read_msg, set_winsize, write_msg)
-from pytmuxlib.replay import render_pane_lines, replay  # noqa: F401
-from pytmuxlib.server import Server, run_server  # noqa: F401
 
-# 지연 재노출: 접근 전엔 textual 을 안 끌어온다(client 모듈에서만 옴).
+# 지연 재노출: 접근 전엔 textual(client)·pyte(model/replay/server) 를 안 끌어온다.
 _LAZY = {"build_client_app": "pytmuxlib.client",
-         "run_client": "pytmuxlib.client"}
+         "run_client": "pytmuxlib.client",
+         "ClientConn": "pytmuxlib.model", "Pane": "pytmuxlib.model",
+         "Session": "pytmuxlib.model", "Split": "pytmuxlib.model",
+         "Tab": "pytmuxlib.model", "Window": "pytmuxlib.model",
+         "pid_counter": "pytmuxlib.model", "split_counter": "pytmuxlib.model",
+         "render_pane_lines": "pytmuxlib.replay", "replay": "pytmuxlib.replay",
+         "Server": "pytmuxlib.server", "run_server": "pytmuxlib.server"}
 
 
 def __getattr__(name):   # PEP 562

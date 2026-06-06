@@ -13,11 +13,10 @@ import sys
 import time
 
 from . import ipc, proc
-from .server import run_server
-# NOTE: client(=textual) 은 여기서 import 하지 않는다 — 서버 하위프로세스
-# (`pytmux.py server`)나 가벼운 제어 명령(ls/cmd/kill)이 launcher 만 거쳐도
-# textual 전체를 로드해 기동이 수백 ms 느려졌다(Windows 사용자 보고). attach
-# 경로에서만 지연 import 한다(아래 main()).
+# NOTE: client(=textual)·server(=model→pyte→wcwidth) 는 여기서 import 하지 않는다.
+# 가벼운 제어 명령(ls/cmd/kill)이 launcher 만 거쳐도 textual 전체나 pyte/wcwidth 를
+# 로드해 기동이 느려졌다(Windows 사용자 보고). attach 경로의 client, `server` 명령의
+# run_server 모두 main() 안에서 필요 시점에만 지연 import 한다(A4).
 
 
 def can_connect(sock_path: str) -> bool:
@@ -130,6 +129,7 @@ def main(argv=None):
     sock_path = args.socket or ipc.resolve_default_endpoint()
 
     if args.command == "server":
+        from .server import run_server   # 지연 import: 서버 데몬 경로에서만 model/pyte 로드
         run_server(sock_path, resume_path=getattr(args, "resume", None))
         return
     if args.command in ("record", "replay"):
