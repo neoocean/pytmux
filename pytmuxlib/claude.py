@@ -145,6 +145,26 @@ def claude_context_pct(text: str):
 # Claude Code 의 /status·로그인 배너·푸터에 보이는 이메일/플랜으로 계정을 추정한다.
 # 화면 텍스트만 보므로 휴리스틱이고, 못 찾으면 None(서버가 "unknown" 으로 적는다).
 _EMAIL_RE = re.compile(r"\b([A-Za-z0-9._%+\-]+)@([A-Za-z0-9.\-]+\.[A-Za-z]{2,})\b")
+# RFC 2606/6761 예약·플레이스홀더 도메인 — 실제 로그인 계정일 수 없다. Claude 가
+# 처리 중인 transcript/문서 본문의 예시 이메일(user@example.com 등)을 계정으로
+# 오검출하던 사용자 보고를 차단한다(상태줄에 @us…@example.com 으로 튐 —
+# docs/TOKEN_SAVING_SCENARIO.md §5.7 휴리스틱 포맷 오탐의 실제 사례).
+_RESERVED_EMAIL_DOMAINS = frozenset({
+    "example.com", "example.net", "example.org", "example.edu",
+})
+_RESERVED_EMAIL_TLDS = frozenset({"example", "invalid", "localhost", "test"})
+# 계정 맥락 키워드 — 이메일이 이 단어와 같은 줄에 있으면 본문 예시가 아니라 로그인
+# 계정으로 본다(/status·로그인 배너·푸터). 맥락 줄이 없으면 첫 비예약 이메일로 폴백.
+_ACCT_CONTEXT_RE = re.compile(
+    r"\b(?:account|login|logged\s*in|signed\s*in|e-?mail|auth)\b", re.I)
+
+
+def _is_reserved_email_domain(domain: str) -> bool:
+    """예약/플레이스홀더 도메인(절대 실계정 아님)이면 True."""
+    d = domain.lower()
+    return d in _RESERVED_EMAIL_DOMAINS or d.rsplit(".", 1)[-1] in _RESERVED_EMAIL_TLDS
+
+
 # 구분자는 콜론(`org: Foo`) 또는 **공백으로 둘러싼** 대시(`account - Foo`)만 인정한다.
 # 앞에 단어문자/슬래시/대시가 붙은 경우는 제외해 `/team-onboarding …` 같은 슬래시
 # 명령·하이픈 단어를 계정명으로 오검출하지 않는다(상태줄 @계정에 튐, 사용자 보고).
@@ -171,12 +191,26 @@ def claude_account(text: str):
     ① 이메일(별칭화 — 원문 미노출) → ② 조직/팀명 → ③ 플랜명. 못 찾으면 None.
 
     **민감정보 보호**: 이메일은 원문 대신 `로컬앞2글자…@도메인` 별칭으로 돌려준다
-    (개인 vs 조직 도메인 구분은 되되 전체 주소는 로그에 남기지 않음)."""
-    m = _EMAIL_RE.search(text)
-    if m:
-        local, domain = m.group(1), m.group(2)
-        alias = (local[:2] + "…") if len(local) > 2 else local
-        return f"{alias}@{domain}"
+    (개인 vs 조직 도메인 구분은 되되 전체 주소는 로그에 남기지 않음).
+
+    **오탐 방지**: 화면 전체에서 첫 이메일을 무조건 잡지 않는다 — 예약 도메인
+    (example.* 등)은 건너뛰고, 계정 맥락 줄(account/login/email…)의 이메일을 본문
+    예시 이메일보다 우선한다. 맥락 줄이 없으면 첫 비예약 이메일로 폴백."""
+    fallback = None
+    for line in text.splitlines():
+        anchored = _ACCT_CONTEXT_RE.search(line) is not None
+        for m in _EMAIL_RE.finditer(line):
+            local, domain = m.group(1), m.group(2)
+            if _is_reserved_email_domain(domain):
+                continue
+            alias = (local[:2] + "…") if len(local) > 2 else local
+            acct = f"{alias}@{domain}"
+            if anchored:                # 계정 맥락 줄의 이메일 — 최우선 채택
+                return acct
+            if fallback is None:        # 맥락 없는 첫 비예약 이메일 — 폴백 후보
+                fallback = acct
+    if fallback is not None:
+        return fallback
     m = _ORG_RE.search(text)
     if m:
         return m.group(1).strip()

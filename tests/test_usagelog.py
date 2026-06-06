@@ -76,3 +76,13 @@ async def test_claude_account_heuristics():
     assert claude_account("You are on the Max plan").startswith("max")
     # 단서 없음 → None
     assert claude_account("? for shortcuts") is None
+    # 예약/플레이스홀더 도메인은 계정으로 잡지 않는다(본문 예시 이메일 오탐 차단 —
+    # 상태줄 @us…@example.com 사용자 보고). 다른 단서 없으면 None.
+    assert claude_account("Transcript: email user@example.com to confirm") is None
+    assert claude_account("contact a@b.invalid or x@y.test") is None
+    # 예시 이메일은 건너뛰되 실제 단서(조직)는 살린다
+    assert claude_account("see admin@example.org\nOrganization: Acme") == "Acme"
+    # 계정 맥락 줄의 이메일이 앞선 본문 이메일보다 우선(둘 다 비예약이어도)
+    assert claude_account(
+        "ref bob@contractor.net in notes\nLogin: woojin@woojinkim.org"
+    ) == "wo…@woojinkim.org"
