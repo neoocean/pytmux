@@ -123,6 +123,25 @@ async def test_claude_usage_context_badge():
     assert claude_usage("200K context window") == "200K ctx"
 
 
+async def test_screen_tail_key_and_track_repeat():
+    """M17 S8: 완료 꼬리 키 + 반복 카운트."""
+    from pytmuxlib.claude import screen_tail_key, track_repeat
+    # 빈 줄 제거 + 우측 공백 제거(좌측 들여쓰기는 보존), 마지막 n줄.
+    a = screen_tail_key("x\n\n  done line  \n\n", n=12)
+    assert a == "x\n  done line"
+    assert screen_tail_key("only  \n", n=12) == "only"
+    # 여러 줄 꼬리 n개만
+    b = screen_tail_key("\n".join(str(i) for i in range(20)), n=3)
+    assert b == "17\n18\n19"
+    # 동일 키 연속 → +1, 다르면 0 리셋, 빈 키는 상태 유지
+    tail, n = None, 0
+    tail, n = track_repeat(tail, n, "A");  assert (tail, n) == ("A", 0)
+    tail, n = track_repeat(tail, n, "A");  assert (tail, n) == ("A", 1)
+    tail, n = track_repeat(tail, n, "A");  assert (tail, n) == ("A", 2)
+    tail, n = track_repeat(tail, n, "");   assert (tail, n) == ("A", 2)   # 빈 키 무시
+    tail, n = track_repeat(tail, n, "B");  assert (tail, n) == ("B", 0)   # 변경 리셋
+
+
 async def test_claude_model():
     # M14c: 실 배지 'Opus 4.8 (1M context)' + 하이픈 표기 둘 다.
     assert claude_model("Opus 4.8 (1M context) · /model to change") == "opus-4.8"

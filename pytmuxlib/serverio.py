@@ -141,6 +141,9 @@ class ServerIOMixin:
             # M18-B: 5시간 한도 근접도 %(분모 미상이면 None — 지어내지 않음).
             "tok5h_pct": self._tok5h_pct(
                 win.active_pane if win else None, _tok_total),
+            # M17(T7): 활성 패널 장기턴/반복루프 경고(grade0 — 없으면 None).
+            "claude_warn": (win.active_pane._claude_warn
+                            if win and win.active_pane else None),
             "claude_account": (win.active_pane._claude_account
                                if win and win.active_pane else None),
             "zoomed": bool(win.zoomed) if win else False,

@@ -395,6 +395,12 @@ class Pane:
         # 안정될 때만 완료로 친다. _was_busy=직전에 busy 였음, _idle_frames=연속 idle 수.
         self._was_busy = False
         self._idle_frames = 0
+        # M17(T7): 반복 실패 루프(S8)·비정상 장기 턴(S9) 감지용. busy 진입 시각,
+        # 직전 완료 화면 꼬리 해시·연속 동일 횟수, 표시용 경고 문자열(grade0 알림만).
+        self._busy_since = None
+        self._done_tail = None
+        self._repeat_n = 0
+        self._claude_warn = None
         self._feedback_seen = False  # 세션 피드백 프롬프트 자동 Dismiss 디바운스(#26)
         self._rules_pending = False  # 시작 규칙 주입 예약(다음 idle 에 1회, #27)
         # 토큰 절감 자동화(docs/TOKEN_SAVING_SCENARIO.md). 둘 다 휘발성(재시작 비직렬화).

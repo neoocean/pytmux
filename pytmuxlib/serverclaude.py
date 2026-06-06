@@ -14,7 +14,8 @@ import time
 from . import tokens
 from .claude import (claude_account, claude_context_pct, claude_feedback_prompt,
                      claude_prompt, claude_perm_mode, claude_state, claude_usage,
-                     ctx_window_tokens, parse_reset_delay)
+                     ctx_window_tokens, parse_reset_delay, screen_tail_key,
+                     track_repeat)
 from .model import Pane, Session
 
 # 권한모드 자동 오토모드 전환(§10): 한 번 idle 진입 후 auto 에 도달하지 못해도 이
@@ -51,6 +52,10 @@ _HDR_CLAUDE_MISS = 30
 # 한 프레임 안 잡혀 idle 로 보였다 다시 busy)에 done 이 잘못 서서 탭이 잠깐 녹색이
 # 되는 것을 막는다. 30Hz flush 기준 ~0.1초 — 진짜 완료 알림 지연은 미미하다.
 _DONE_IDLE_FRAMES = 3
+# M17(T7) 표시 경고 임계(grade0 — 알림만). 한 턴이 이 초 이상 busy 면 장기 턴 경고,
+# 동일 완료 출력이 이 횟수 이상 연속되면 루프 의심 경고.
+_LONG_TURN_SEC = 600
+_REPEAT_ALERT = 3
 
 
 class ServerClaudeMixin:
@@ -551,6 +556,8 @@ class ServerClaudeMixin:
                     p._idle_frames = 0
                     if new_cl == "busy":
                         p._was_busy = True   # 작업 중이었음 → 다음 안정 idle 이 '완료'
+                        if old_cl != "busy":
+                            p._busy_since = time.monotonic()   # M17 S9: 턴 시작 시각
                 if (w is not win and t.monitor_claude and not t.has_claude_done
                         and p._was_busy and new_cl == "idle"
                         and p._idle_frames >= _DONE_IDLE_FRAMES):
@@ -606,6 +613,9 @@ class ServerClaudeMixin:
                 # 진행 중이 아니면서 자동 모드가 켜져 있으면 idle 진입 시점에 무장만
                 # 한다(실제 발화는 N초 뒤 _adc_fire).
                 if old_cl == "busy" and new_cl == "idle":
+                    # M17 S8: 완료 경계마다 화면 꼬리를 직전과 비교(동일 출력 반복 카운트).
+                    p._done_tail, p._repeat_n = track_repeat(
+                        p._done_tail, p._repeat_n, screen_tail_key(txt))
                     if p.prompt_clear_mode or p._adc_active:
                         self._pc_advance(p)
                         if p._adc_active and p._pc_phase is None:
@@ -630,6 +640,22 @@ class ServerClaudeMixin:
                                 self._ctx_intervene(p)
                         elif self.auto_doc_clear:
                             self._adc_arm(p)
+                # M17(T7) 표시 경고 갱신(grade0 — 알림만, 개입 없음). S9 장기 턴 우선,
+                # 아니면 S8 반복 루프. 세션 종료 시 상태 리셋.
+                warn = None
+                if new_cl == "busy" and p._busy_since is not None:
+                    el = time.monotonic() - p._busy_since
+                    if el >= _LONG_TURN_SEC:
+                        warn = f"이 턴 {int(el // 60)}분째 — 폭주 가능"
+                elif new_cl == "idle" and p._repeat_n >= _REPEAT_ALERT:
+                    warn = f"동일 결과 {p._repeat_n + 1}회 반복 — 루프 의심"
+                if not new_cl:
+                    p._busy_since = None
+                    p._repeat_n = 0
+                    p._done_tail = None
+                if warn != p._claude_warn:
+                    p._claude_warn = warn
+                    changed = True
         return changed
 
     @staticmethod

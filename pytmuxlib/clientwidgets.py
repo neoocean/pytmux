@@ -779,6 +779,7 @@ class StatusBar(Widget):
         self.claude_tokens = 0    # 활성 계정 누적 토큰(§10 계정별 합계, 지속표시)
         self.claude_account = None  # 누적 토큰의 귀속 계정(표시에 곁들임)
         self.tok5h_pct = None     # M18-B: 5시간 한도 근접도 %(분모 미상이면 None)
+        self.claude_warn = None   # M17: 장기턴/반복루프 경고(grade0, 없으면 None)
         # 토큰 절감 설정(설정 팝업 토글 현재값 + 예산 경고, docs/TOKEN_SAVING_SCENARIO).
         self.auto_doc_clear = False
         self.claude_auto_mode = False
@@ -920,6 +921,7 @@ class StatusBar(Widget):
         # M18-B: 5시간 한도 근접도 %(분모 미상이면 None — 표시 생략). 토큰처럼 지속
         # 표시는 안 하고(매 status 권위값), 0/None 이면 곁들임을 떼서 낡은 값이 안 남게.
         self.tok5h_pct = msg.get("tok5h_pct")
+        self.claude_warn = msg.get("claude_warn")   # M17 grade0 경고(권위값)
         # 토큰 절감 설정(설정 팝업이 현재값으로 토글을 그리는 데 씀). 항상 권위값 반영.
         self.auto_doc_clear = msg.get("auto_doc_clear", self.auto_doc_clear)
         self.claude_auto_mode = msg.get("claude_auto_mode", self.claude_auto_mode)
@@ -1034,6 +1036,11 @@ class StatusBar(Widget):
             eta = self.claude_pending.get("eta", 0)
             label = "자동재개" if kind == "resume" else "자동정리"
             segs.append(Segment(f" ⏳{label} {eta}s(입력=취소) ",
+                                Style(color="black", bgcolor=tc("warning"),
+                                      bold=True)))
+        # M17(T7): 장기턴/반복루프 경고 배지(grade0 — 알림만, 개입 없음). 있을 때만.
+        if self.claude_warn:
+            segs.append(Segment(f" ⚠{self.claude_warn} ",
                                 Style(color="black", bgcolor=tc("warning"),
                                       bold=True)))
         if self.prefix_off:

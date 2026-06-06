@@ -112,6 +112,24 @@ def claude_usage(text: str):
     return None
 
 
+# ---- M17(T7): 반복 실패 루프(S8) 감지용 순수 헬퍼 ----
+def screen_tail_key(text, n=12):
+    """화면 꼬리 n줄(빈 줄 제거·우측 공백 제거)을 합쳐 완료 비교용 안정 키를 만든다.
+    busy→idle 완료마다 이 키를 직전과 비교해 동일 출력 반복(루프 의심)을 센다."""
+    lines = [ln.rstrip() for ln in (text or "").splitlines() if ln.strip()]
+    return "\n".join(lines[-n:])
+
+
+def track_repeat(prev_tail, repeat_n, new_tail):
+    """완료 꼬리 비교 → (갱신된 tail, repeat_n). 직전과 같으면 +1, 다르면 0 으로 리셋.
+    빈 키(new_tail 없음)는 비교를 건드리지 않는다(상태 유지)."""
+    if not new_tail:
+        return prev_tail, repeat_n
+    if new_tail == prev_tail:
+        return prev_tail, repeat_n + 1
+    return new_tail, 0
+
+
 # M14c: 모델 배지 파서. 실 캡처 'Opus 4.8 (1M context)' · 'claude-opus-4-8' 둘 다 잡는다.
 # 계열 뒤 버전은 점(4.8) 또는 하이픈(4-8) 표기 모두 허용하고 점으로 정규화한다.
 _MODEL_RE = re.compile(r"\b(Opus|Sonnet|Haiku)\b[\s-]*([0-9]+(?:[.\-][0-9]+)*)?", re.I)

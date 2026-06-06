@@ -1896,3 +1896,30 @@ async def test_account_budget_gate_m15():
         assert srv._budget_over(p) is True
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_repeat_loop_warn_m17():
+    """M17 S8: 동일 출력으로 busy→idle 완료가 반복되면 루프 의심 경고가 선다(grade0)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        for _ in range(4):
+            p.feed("\x1b[2J\x1b[H↑ 1k tokens\r\n".encode("utf-8"))  # busy
+            srv._scan_claude(sess, win)
+            assert p._claude == "busy", p._claude
+            p.feed(b"\x1b[2J\x1b[HError: same failure\r\n? for shortcuts\r\n")  # idle
+            srv._scan_claude(sess, win)
+            assert p._claude == "idle", p._claude
+        # 4회 동일 완료 → repeat_n>=3 → 경고 문자열 설정
+        assert p._repeat_n >= 3, p._repeat_n
+        assert p._claude_warn and "반복" in p._claude_warn, p._claude_warn
+        # 출력이 달라지면 카운터 리셋 → 경고 해제
+        p.feed("\x1b[2J\x1b[H↑ 1k tokens\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        p.feed(b"\x1b[2J\x1b[HDifferent now\r\n? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._repeat_n == 0 and p._claude_warn is None
+    finally:
+        await teardown(srv, task, sock)
