@@ -811,9 +811,9 @@ class ServerClaudeMixin:
         last = pane._ctx_last_fire
         return last is None or (time.monotonic() - last) >= iv
 
-    def set_token_budget(self, day=None, session=None, h5=None):
-        """일/세션/5시간 토큰 예산 설정(0=무제한). None 인 인자는 변경하지 않는다.
-        예산을 바꾸면 경고 레벨을 즉시 재계산한다. opts.json 영속."""
+    def set_token_budget(self, day=None, session=None, h5=None, acct=None):
+        """일/세션/5시간/계정합계 토큰 예산 설정(0=무제한). None 인 인자는 변경하지
+        않는다. 예산을 바꾸면 경고 레벨을 즉시 재계산한다. opts.json 영속."""
         if day is not None:
             try:
                 self.token_budget_day = max(0, int(day))
@@ -829,10 +829,15 @@ class ServerClaudeMixin:
                 self.token_budget_5h = max(0, int(h5))
             except (TypeError, ValueError):
                 pass
+        if acct is not None:
+            try:
+                self.token_budget_account = max(0, int(acct))
+            except (TypeError, ValueError):
+                pass
         self._refresh_budget_level()
         self._save_opts()
         return (self.token_budget_day, self.token_budget_session,
-                self.token_budget_5h)
+                self.token_budget_5h, self.token_budget_account)
 
     def set_token_budget_resume_gate(self, value=None):
         """자동재개 예산 게이트(M12) 토글. value 미지정 시 반전. opts.json 영속."""
@@ -854,27 +859,41 @@ class ServerClaudeMixin:
         return self.claude_budget_plan
 
     def _budget_over(self, pane: Pane) -> bool:
-        """일 또는 세션 예산을 초과했는지(M10/M12). 예산이 0(무제한)이면 그 축은
-        무시. 누계는 best-effort 라 하드 차단이 아니라 자동개입 보류 판단에만 쓴다."""
+        """일/세션/계정합계 예산 중 하나라도 초과했는지(M10/M12/M15). 예산이 0
+        (무제한)이면 그 축은 무시. 누계는 best-effort 라 하드 차단이 아니라 자동개입
+        보류 판단에만 쓴다."""
         if (self.token_budget_day > 0 and self._today_tokens is not None
                 and self._today_tokens >= self.token_budget_day):
             return True
         if (self.token_budget_session > 0 and pane is not None
                 and pane._session_tokens >= self.token_budget_session):
             return True
+        # M15: 계정 단위 청구 — 같은 계정 모든 세션 합계가 계정 예산을 넘으면 초과.
+        if (self.token_budget_account > 0 and pane is not None
+                and self._account_token_total(pane) >= self.token_budget_account):
+            return True
         return False
 
     def _budget_level_for(self, pane: Pane) -> int:
-        """status 표시용 경고 레벨(0/80/100). 일 예산(_budget_level)과 활성 패널
-        세션 예산 중 높은 쪽. 예산 미설정이면 0."""
+        """status 표시용 경고 레벨(0/80/100). 일 예산(_budget_level)·활성 패널 세션
+        예산·계정 합계 예산(M15) 중 가장 높은 쪽. 예산 미설정이면 0."""
         lvl = self._budget_level
-        b = self.token_budget_session
-        if b > 0 and pane is not None and pane._claude:
-            used = pane._session_tokens
-            if used >= b:
-                lvl = max(lvl, 100)
-            elif used >= b * 0.8:
-                lvl = max(lvl, 80)
+        if pane is not None and pane._claude:
+            b = self.token_budget_session
+            if b > 0:
+                used = pane._session_tokens
+                if used >= b:
+                    lvl = max(lvl, 100)
+                elif used >= b * 0.8:
+                    lvl = max(lvl, 80)
+            # M15: 계정 합계 vs 계정 예산
+            ba = self.token_budget_account
+            if ba > 0:
+                tot = self._account_token_total(pane)
+                if tot >= ba:
+                    lvl = max(lvl, 100)
+                elif tot >= ba * 0.8:
+                    lvl = max(lvl, 80)
         return lvl
 
     def _ctx_intervene(self, pane: Pane):

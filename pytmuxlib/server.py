@@ -124,6 +124,10 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         self.token_budget_5h = int(_opts.get("token_budget_5h", 0))
         # limit 진입 시점의 계정 누계로 5h 상한을 학습(in-memory, best-effort).
         self._learned_5h_cap = 0
+        # M15 계정 합계 예산(0=무제한). 세션 예산은 패널 단독을 보지만(_budget_over),
+        # 토큰은 계정 단위로 청구되므로 같은 계정 N개 세션의 합계(_account_token_total)
+        # 가 이 값을 넘으면 경고·자동개입 보류. 멀티세션 누적(S7) 대응.
+        self.token_budget_account = int(_opts.get("token_budget_account", 0))
         # M12 자동재개 예산 게이트: 켜면 예산 초과 시 자동재개(continue 주입)를 보류
         # 한다(사용자 수동 재개는 가능). 기본 OFF(autoresume 동작 불변).
         self.token_budget_resume_gate = bool(

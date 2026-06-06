@@ -1871,3 +1871,28 @@ async def test_status_usage_display_m18():
         assert srv._tok5h_pct(p, 25_000) is None
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_account_budget_gate_m15():
+    """M15: 예산 경고/초과가 패널 단독뿐 아니라 계정 합계(_account_token_total)도
+    본다. 같은 계정 세션 합계가 계정 예산을 넘으면 80/100 경고·_budget_over."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        p._claude = "idle"
+        p._claude_account = "wo…@woojinkim.org"
+        p._session_tokens = 900_000
+        # 계정 예산 미설정 → 레벨 0, 미초과
+        assert srv._budget_level_for(p) == 0
+        assert srv._budget_over(p) is False
+        # 계정 예산 1M, 합계 0.9M → 90% → 80 경고(아직 미초과)
+        assert srv.set_token_budget(acct=1_000_000)[3] == 1_000_000
+        assert srv._budget_level_for(p) == 80
+        assert srv._budget_over(p) is False
+        # 합계가 계정 예산 초과 → 100 + _budget_over
+        p._session_tokens = 1_100_000
+        assert srv._budget_level_for(p) == 100
+        assert srv._budget_over(p) is True
+    finally:
+        await teardown(srv, task, sock)

@@ -1754,6 +1754,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return self._fmt_budget(st.token_budget_session)
             if key == "budget_5h":
                 return self._fmt_budget(st.token_budget_5h)
+            if key == "budget_account":
+                return self._fmt_budget(st.token_budget_account)
             return ""
 
         @staticmethod
@@ -1816,6 +1818,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 nxt = self._cycle_next("budget_5h", int(st.token_budget_5h))
                 self.send_cmd("set_token_budget", h5=nxt)
                 st.token_budget_5h = nxt
+            elif key == "budget_account":
+                nxt = self._cycle_next("budget_account",
+                                       int(st.token_budget_account))
+                self.send_cmd("set_token_budget", acct=nxt)
+                st.token_budget_account = nxt
 
         # ---- 프롬프트 / 명령 ----
         def display_message(self, text, secs=2.0):
