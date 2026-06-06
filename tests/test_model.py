@@ -303,3 +303,33 @@ async def test_respawn_pane():
         assert not proc.is_alive(old_pid), "respawn 후 옛 셸 종료"
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_feed_plain_text_fast_path():
+    """§4.4 빠른 경로: ESC 없는 플레인 텍스트 버스트는 정규식 4개를 건너뛰고 바로
+    현재 화면에 먹는다 — 동작은 불변(처리할 제어 시퀀스가 없으므로). alt 라우팅·
+    _altcarry(잘린 CSI) 경계도 정합."""
+    from pytmuxlib.model import Pane
+    # 1) 플레인 텍스트가 정확히 그려지고 _feed_seq/dirty 가 갱신된다.
+    p = Pane(-1, -1, 40, 6)
+    seq0 = p._feed_seq
+    p.feed(b"hello world\r\nsecond line\r\n")
+    assert p._feed_seq == seq0 + 1 and p.dirty
+    txt = pane_text(p)
+    assert "hello world" in txt and "second line" in txt
+    assert p._altcarry == b""           # ESC 없으니 캐리도 없음
+    # 2) alt 모드에서도 빠른 경로는 현재(=alt) 화면으로 라우팅된다.
+    p2 = Pane(-1, -1, 30, 5)
+    p2.feed(b"\x1b[?1049h")             # alt 진입(일반 경로)
+    assert p2.alt_active
+    p2.feed(b"ALTPLAIN")               # ESC 없는 텍스트 → alt 화면에(빠른 경로)
+    assert "ALTPLAIN" in pane_text(p2)
+    p2.feed(b"\x1b[?1049l")            # 메인 복귀
+    assert not p2.alt_active and "ALTPLAIN" not in pane_text(p2)
+    # 3) 잘린 CSI 가 _altcarry 로 넘어가면 다음 데이터가 플레인이라도 buf 에 ESC 가
+    #    생겨 일반 경로로 완성 처리된다(빠른 경로가 캐리를 삼키지 않음).
+    p3 = Pane(-1, -1, 20, 3)
+    p3.feed(b"X\x1b[1")                # 끝에 잘린 CSI → 캐리
+    assert p3._altcarry
+    p3.feed(b";31mRED")               # 캐리+이어붙여 완성 → RED 정상 렌더
+    assert "RED" in pane_text(p3)

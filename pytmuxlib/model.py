@@ -553,6 +553,15 @@ class Pane:
         # 대체 화면 전환 시퀀스를 가로채 메인/대체 화면으로 라우팅한다.
         buf = self._altcarry + data
         self._altcarry = b""
+        # 빠른 경로(§4.4): ESC 가 전혀 없으면 CSI 캐리·SGR 정제·alt 전환이 있을 수
+        # 없다 — 정규식 4개(_CSI_PARTIAL_RE/_PRIVATE_SGR_RE/_sanitize_sgr/_ALT_RE)를
+        # 모두 건너뛰고 현재 화면에 바로 먹인다. 빌드 로그·cat 등 플레인 텍스트
+        # 버스트의 흔한 핫패스로, 처리할 제어 시퀀스가 없으므로 결과는 불변이다.
+        if b"\x1b" not in buf:
+            self._feed_seg(buf)
+            self.dirty = True
+            self._feed_seq += 1
+            return
         m = _CSI_PARTIAL_RE.search(buf)
         if m:  # 끝에 잘린 CSI 시퀀스는 다음 feed 로 미룸(완전한 시퀀스만 처리)
             self._altcarry = buf[m.start():]
