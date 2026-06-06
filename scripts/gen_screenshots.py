@@ -237,6 +237,13 @@ async def degraded(app, pilot):
     await pilot.pause(0.3)
 
 
+async def command_popup(app, pilot):
+    # 명령 프롬프트(prefix :)에서 ? / help / commands 로 여는 명령 목록 팝업.
+    from pytmuxlib.clientscreens import CommandListScreen, COMMANDS
+    app.push_screen(CommandListScreen(COMMANDS))
+    await pilot.pause(0.5)
+
+
 SCENES = [
     ("01-first-run", "첫 실행 — 단일 패널 + 탭바 + 상태줄", first_run),
     ("02-split-lr", "좌우 분할 — 활성 패널 파란 테두리", split_lr),
@@ -254,6 +261,7 @@ SCENES = [
     ("14-info-popup", "통합 정보 팝업(캡처·토큰·서버)", info_popup),
     ("15-scrollback", "스크롤백(복사) 모드 — 지난 출력", scrollback),
     ("16-degraded", "네트워크 degraded — 패널 외곽선 빨강", degraded),
+    ("17-command-popup", "명령 목록 팝업(? / help) — 카테고리 탭·검색·스크롤", command_popup),
 ]
 
 
