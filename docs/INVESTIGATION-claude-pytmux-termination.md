@@ -161,5 +161,66 @@ pytmux 의 치명 경로는 아니다. 19:01:28 에 **Claude 데스크톱 앱이
 같은 배포 타이밍일 가능성 → claude CLI 가 새 버전으로 self-exit/relaunch 했을 의심.
 client 재기동(19:01:38)은 그와 별개(사용자 재실행 or Textual 예외)일 수 있다. **검증 중.**
 
+## 7. ★ 결론 (2026-06-06 19:1x, 증거기반) — 이전 "서버 사망" 프레이밍 정정
+
+### 7.1 가장 중요한 정정
+**관측된 모든 스냅샷에서 서버(45767)는 살아 있었다.** §2 1차 스냅샷도, §5 2차
+(19:01)도 서버는 PPID=1 데몬으로 생존. → `CRASH_INVESTIGATION.md` 의 중심 주장
+("근본 원인 = 무엇이 서버를 죽이는가")는 **실측 데이터로 뒷받침되지 않는다.** 그건
+"서버가 죽으면 이렇게 된다"는 **메커니즘 가설**이었을 뿐, 서버는 실제로 한 번도 죽지
+않았다. 동시종료의 진짜 그림은 아래처럼 **두 개의 독립 사건**이다.
+
+### 7.2 19:01 사건 분해
+**(A) pytmux 클라이언트 재기동(81908→88728, 19:01:38)**
+- 배후에 서버 restart 가 **없었다**: `restart_server` 는 `_save_opts()`+소켓 재바인드를
+  수반하는데 `opts.json` mtime=**17:49**, `default.sock` mtime=**14:38** — 둘 다 19:01
+  아님. 마지막 작업보존 재시작은 14:38 이 마지막. → 클라 relaunch 는 restart-all
+  트리거가 **아니다.**
+- 따라서 클라는 **자체 종료**(Textual 미처리 예외 크래시 or 사용자 수동 재실행).
+  `run_client`(client.py:2886)은 `_relaunch`(restart-all) 일 때만 execv 로 자가 재기동
+  하고, 그 외 미처리 예외로 `app.run()` 이 반환하면 **그냥 프로세스 종료** — 자동복구
+  없음. 사용자가 직접 `pytmux` 재실행해야 한다.
+- **클라이언트는 크래시 트레이스백을 디스크에 전혀 남기지 않는다**(client.py 에
+  excepthook/크래시 로그 부재) → Terminal 스크롤백(휘발)으로만 가 사후분석 불가.
+  ⇒ **이것이 이번 조사범위 안에서 가장 실질적인 pytmux 약점.**
+
+**(B) 한 pane 의 claude 종료(이전 PID→88758, 19:01:45)**
+- pytmux 자동주입 탓 **아님**: 현재 `opts.json` 에서 `auto_doc_clear`=false,
+  `claude_ctx_autoclear`=false, `claude_auto_mode`=false, `claude_rules`="",
+  `token_budget`=0 — claude 를 종료시킬 만한 주입(continue·/clear·/compact·rules)을
+  **자동으로 보내지 않는 설정.** 상시 주입은 피드백 dismiss `0` 뿐(무해).
+- CLI 자동업데이트 **아님**: claude 바이너리(`~/.local/bin/claude`→2.1.167) mtime=
+  **14:01**, 19:01 에 안 바뀜.
+- segfault **아님**(오늘 `.ips` 없음), jetsam **아님**(리포트 0·79% 여유).
+- zsh 가 시그널 종료 메시지(`zsh: killed/terminated/segfault`)를 **안 찍었다**(전 pane
+  캡처 ANSI-strip 검색 결과 실 메시지 0건) → **클린 exit** 쪽.
+- **전례**: `~/Library/Logs/DiagnosticReports/2.1.162-2026-06-04-081043.ips` = claude
+  **2.1.162 크래시 리포트(6/4)**. claude CLI 가 자체 크래시한 사실이 실재한다.
+  ⇒ claude 종료는 **claude 내부/외부신호** 영역으로, pytmux 통제 밖. (오늘 19:01 은
+  .ips 없는 클린 종료라 claude 자체 정상 exit 이거나 덤프 안 남는 종료.)
+
+### 7.3 시간 상관 (해석 주의)
+클라(19:01:38)·claude(19:01:45)가 ~7초 간격, 그리고 **Claude 데스크톱 앱 ShipIt
+자동업데이트(19:01:28)**와 같은 분대. Claude 계열(데스크톱+CLI+pytmux의 claude 처리)
+프로세스에 작용한 **공통 외부 트리거** 가능성을 시사하나, pytmux 자동화는 설정상
+면책된다. **상관이지 인과 확정 아님.**
+
+### 7.4 결론 한 줄
+> 이번 "동시종료"는 **서버 사망의 귀결이 아니라**, ① 자동복구·크래시로깅이 없는
+> pytmux **클라이언트의 독립 종료**와 ② pytmux 통제 밖 **claude 프로세스의 독립
+> 종료**가 거의 동시에 겹친 것이다. 서버·셸은 멀쩡했다.
+
+### 7.5 권고 (pytmux 개선 — 우선순위)
+1. **클라이언트 크래시 영속화**: `run_client` 에 excepthook/try 로 트레이스백을
+   상태디렉터리(`<sock>.client.crash.log`)에 기록 → 사후분석 가능하게. *(가장 시급)*
+2. **클라이언트 미처리 예외 자동복구**: `app.run()` 이 예외로 반환하면(=restart-all
+   아닌 비정상 종료) 한정 횟수 자동 재attach(degraded reconnect 재사용). 사용자가
+   화면을 잃지 않게.
+3. (다른 변종 대비, 메커니즘 방어) 서버 SIGTERM/SIGHUP 핸들러 + `run_server` 예외
+   광역 가드 — §3·CRASH_INVESTIGATION §4-5 의 제안 유지.
+4. claude 측은 pytmux 밖이라 직접 수정 불가 — 단, pytmux 가 claude 종료/재시작을
+   **이벤트로 기록**(이미 tokens.jsonl 세션경계 있음)해 빈도·시각을 추적하면 외부
+   트리거 상관분석이 쉬워진다.
+
 ---
 _(이 문서는 진행 중 계속 append/갱신된다.)_
