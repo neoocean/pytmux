@@ -244,6 +244,57 @@ async def command_popup(app, pilot):
     await pilot.pause(0.5)
 
 
+async def clock(app, pilot):
+    # prefix t / 하단 바 시계 클릭 → 시계 모드(현재 패널을 큰 블록 시계로 덮음).
+    app.set_clock(_aid(app), True)
+    app._composite()
+    await pilot.pause(0.4)
+
+
+async def calendar_big(app, pilot):
+    # 큰 달력(숫자가 블록 문자) — 패널이 충분히 크면 자동으로 블록-숫자 달력이 된다.
+    app.set_calendar(_aid(app), True)
+    app._composite()
+    await pilot.pause(0.4)
+
+
+async def confirm_tab_last(app, pilot):
+    # 탭이 하나뿐일 때 탭을 닫으면 pytmux 종료 경고 팝업이 뜬다.
+    app.confirm_kill_tab()
+    await pilot.pause(0.4)
+
+
+async def prompt_history(app, pilot):
+    # Claude 패널의 스티키 헤더(첫 줄, 처리 중 프롬프트)를 클릭하면 프롬프트
+    # 히스토리 팝업이 열린다. 대표적인 히스토리를 넣어 시간순 목록을 보인다.
+    app.send_cmd("rename_window", name="claude")
+    await pilot.pause(0.3)
+    await _run_fake_claude(pilot, app)
+    aid = _aid(app)
+    info = app.pane_claude.get(aid) or {}
+    info["history"] = [
+        "버그 재현 케이스 먼저 작성해줘",
+        "model.py 의 렌더 캐시 무효화 정리",
+        "리팩터링하고 테스트 추가해줘",
+    ]
+    app.pane_claude[aid] = info
+    app.open_prompt_history(aid)
+    await pilot.pause(0.4)
+
+
+async def restart_check(app, pilot):
+    # restart-all 드라이런(restart-check) — 실제로 안 하고 안전 점검 PASS/FAIL 팝업.
+    app._show_restart_check_popup({
+        "reexec_supported": True, "has_sessions": True, "serialize_ok": True,
+        "panes": 3, "panes_with_fd": 3,
+        "running_version": "p4:5281", "disk_version": "p4:5290",
+    })
+    await pilot.pause(0.4)
+
+
+# 장면: (이름, 설명, 운전함수[, 크기]). 크기 생략 시 SIZE(90×26). 큰 달력은 블록-숫자
+# 모드가 뜨도록 더 큰(높은) 터미널이 필요하다.
+BIG = (96, 44)
 SCENES = [
     ("01-first-run", "첫 실행 — 단일 패널 + 탭바 + 상태줄", first_run),
     ("02-split-lr", "좌우 분할 — 활성 패널 파란 테두리", split_lr),
@@ -253,8 +304,8 @@ SCENES = [
     ("06-command-prompt", "명령 프롬프트(prefix :) + 고스트 자동완성", command_prompt),
     ("07-kill-pane-prompt", "패널 닫기 확인 프롬프트(prefix x)", kill_pane_prompt),
     ("08-tabs-multi", "탭 여러 개 + 이름변경", tabs_multi),
-    ("09-calendar", "달력 오버레이(cal)", calendar),
-    ("10-confirm-tab", "탭 닫기 확인 박스", confirm_tab),
+    ("09-calendar", "큰 달력 오버레이(cal) — 블록-숫자", calendar_big, BIG),
+    ("10-confirm-tab", "탭 닫기 확인 박스(탭 2개 이상)", confirm_tab),
     ("11-claude", "Claude 처리중 — 탭 아이콘 ◐·스티키 헤더·토큰", claude),
     ("12-claude-autoresume", "Claude + 토큰리밋 자동재개(상태줄 AR)", claude_autoresume),
     ("13-perm-mode", "Claude 권한모드 선택 팝업(auto/default/plan)", perm_mode),
@@ -262,7 +313,15 @@ SCENES = [
     ("15-scrollback", "스크롤백(복사) 모드 — 지난 출력", scrollback),
     ("16-degraded", "네트워크 degraded — 패널 외곽선 빨강", degraded),
     ("17-command-popup", "명령 목록 팝업(? / help) — 카테고리 탭·검색·스크롤", command_popup),
+    ("18-clock", "시계 모드 — 큰 블록 시계", clock),
+    ("19-confirm-tab-last", "마지막 탭 닫기 — pytmux 종료 경고 팝업", confirm_tab_last),
+    ("20-prompt-history", "Claude 프롬프트 히스토리 팝업(헤더 클릭)", prompt_history),
+    ("21-restart-check", "restart-check 드라이런 — 작업보존 재시작 안전점검", restart_check),
 ]
+
+
+def _scene_size(scene):
+    return scene[3] if len(scene) > 3 else SIZE
 
 
 def _is_blank(svg_path):
@@ -277,11 +336,11 @@ def _is_blank(svg_path):
         return True
 
 
-async def _one_shot(name, desc, drive, path):
+async def _one_shot(name, desc, drive, path, size=SIZE):
     srv, task, sock = await server_only()
     app = make_app(sock, {}, "main")
     try:
-        async with app.run_test(size=SIZE) as pilot:
+        async with app.run_test(size=size) as pilot:
             await _settle(pilot, app, want_panes=1)
             await _wait_painted(pilot, app)      # 초기 패널 페인트까지 대기
             await pilot.pause(0.3)
@@ -299,10 +358,10 @@ async def _one_shot(name, desc, drive, path):
         await teardown(srv, task, sock)
 
 
-async def shoot(name, desc, drive, retries=4):
+async def shoot(name, desc, drive, retries=4, size=SIZE):
     path = os.path.join(OUT_DIR, name + ".svg")
     for attempt in range(1, retries + 1):
-        await _one_shot(name, desc, drive, path)
+        await _one_shot(name, desc, drive, path, size)
         if not _is_blank(path):
             print(f"  ✓ {name}.svg  — {desc}")
             return path
@@ -319,9 +378,10 @@ async def _worker(filt):
               ", ".join(s[0] for s in SCENES))
         return 1
     print(f"스크린샷 생성 → {OUT_DIR}")
-    for name, desc, drive in todo:
+    for scene in todo:
+        name, desc, drive = scene[0], scene[1], scene[2]
         try:
-            await shoot(name, desc, drive)
+            await shoot(name, desc, drive, size=_scene_size(scene))
         except Exception as e:  # noqa: BLE001  한 장 실패가 전체를 막지 않게
             print(f"  ✗ {name}: {type(e).__name__}: {e}")
     return 0
@@ -336,8 +396,8 @@ def _orchestrate():
     import subprocess
     print(f"스크린샷 생성(장면별 격리) → {OUT_DIR}")
     rc = 0
-    for name, desc, _ in SCENES:
-        r = subprocess.run([sys.executable, os.path.abspath(__file__), name])
+    for scene in SCENES:
+        r = subprocess.run([sys.executable, os.path.abspath(__file__), scene[0]])
         rc = rc or r.returncode
     return rc
 
