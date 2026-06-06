@@ -1806,3 +1806,33 @@ async def test_no_window_kwargs():
         assert kw.get("creationflags", 0) & 0x08000000, kw  # CREATE_NO_WINDOW
     else:
         assert kw == {}, kw
+
+
+async def test_status_history_debounce():
+    """§4.5: 주기 status(full=False)는 prompt_history 가 바뀔 때만 history 를 싣고,
+    full=True(신규 attach·구조 resync)는 항상 싣는다. full 은 _hist_sent 추적을
+    건드리지 않아 주기 스트림의 델타를 오염시키지 않는다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        p.prompt_history = ["a"]
+        # full=True 는 항상 history 포함
+        m = srv._status_msg(sess, full=True)
+        assert m["panes_claude"][0]["history"] == ["a"]
+        # 주기 첫 전송: 직전 전송분 없음(None) → 포함 + _hist_sent 갱신
+        m = srv._status_msg(sess, full=False)
+        assert m["panes_claude"][0]["history"] == ["a"]
+        # 변화 없음 → history 키 생략(재직렬화·전송 방지)
+        m = srv._status_msg(sess, full=False)
+        assert "history" not in m["panes_claude"][0]
+        # 변경 → 다시 포함
+        p.prompt_history.append("b")
+        m = srv._status_msg(sess, full=False)
+        assert m["panes_claude"][0]["history"] == ["a", "b"]
+        # full 은 _hist_sent 를 안 바꿈 → 직후 주기는 변화 없으니 여전히 생략
+        srv._status_msg(sess, full=True)
+        m = srv._status_msg(sess, full=False)
+        assert "history" not in m["panes_claude"][0]
+    finally:
+        await teardown(srv, task, sock)

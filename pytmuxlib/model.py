@@ -331,6 +331,9 @@ class Pane:
         self._inbuf = ""         # 현재 입력 줄 누적(프롬프트 추적용)
         self.last_prompt = ""    # 마지막으로 제출한 프롬프트(한 줄)
         self.prompt_history = []  # 시간순 제출 프롬프트 목록(히스토리 팝업용)
+        # 직전 status(주기 flush)에 실어 보낸 history[-30:] 슬라이스(§4.5 디바운스).
+        # 변할 때만 다시 싣게 비교에 쓴다(휘발성; 매 프레임 재직렬화·전송 방지).
+        self._hist_sent = None
         self.pending_prompts = []  # busy 중 입력해 큐된 프롬프트(#4, 처리 시작 시 승격)
         # 프롬프트 단위 클리어 모드(#9): 켜면 사용자 프롬프트가 busy→idle 로 끝날
         # 때마다 ① 문서화 지시 ② /clear 를 순차 주입하는 소형 상태기계를 돈다.

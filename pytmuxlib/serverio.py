@@ -94,7 +94,24 @@ class ServerIOMixin:
                          for t in s.tabs]}
             for s in self.sessions.values()]}
 
-    def _status_msg(self, sess: Session):
+    def _pane_claude_entry(self, p, full):
+        """status 의 패널별 Claude 항목. history 는 드물게 바뀌는데 매 status(토큰
+        변동으로 자주 발화)마다 30개 프롬프트를 재직렬화·전송하면 ssh 트래픽이
+        커진다(§4.5). 그래서 **변할 때만** 싣는다: `full`(신규 attach·구조 변경
+        resync)이면 항상 실어 새 클라가 비어 보이지 않게 하고, 주기 flush(full=False)
+        는 직전 전송분(_hist_sent)과 다를 때만 싣고 갱신한다. full 은 _hist_sent 를
+        건드리지 않는다 — 주기 스트림(모든 클라 공유)의 추적을 오염시키면 다른 클라가
+        델타를 놓친다."""
+        e = {"id": p.id, "claude": p._claude, "prompt": p.last_prompt,
+             "perm_mode": p._perm_mode}
+        h = p.prompt_history[-30:]
+        if full or h != p._hist_sent:
+            e["history"] = h
+            if not full:
+                p._hist_sent = h
+        return e
+
+    def _status_msg(self, sess: Session, full=True):
         win = sess.active_window
         cap_path, cap_size = self._capture_info(win.active_pane if win else None)
         return {
@@ -106,11 +123,9 @@ class ServerIOMixin:
                          "claude_done": t.has_claude_done,
                          "claude": self._tab_claude(t)}
                         for i, t in enumerate(sess.tabs)],
-            # 활성 윈도우 패널별 Claude 상태/마지막 프롬프트(헤더용)
-            "panes_claude": [{"id": p.id, "claude": p._claude,
-                              "prompt": p.last_prompt,
-                              "history": p.prompt_history[-30:],
-                              "perm_mode": p._perm_mode}
+            # 활성 윈도우 패널별 Claude 상태/마지막 프롬프트(헤더용). history 는
+            # 변할 때만 싣는다(§4.5 — _pane_claude_entry).
+            "panes_claude": [self._pane_claude_entry(p, full)
                              for p in (win.panes() if win else [])],
             "active_pane": win.active_pane.id if win else None,
             # 활성 패널이 Claude 면 토큰/컨텍스트 사용량(best-effort)
@@ -300,7 +315,8 @@ class ServerIOMixin:
                         await self._send_full(c)
                     continue
                 if status_changed:
-                    sframe = frame_msg(self._status_msg(sess))
+                    # 주기 status: history 는 변할 때만(§4.5, full=False).
+                    sframe = frame_msg(self._status_msg(sess, full=False))
                     for c in clients:
                         frames_by_client[c].append(sframe)
                 # 클라마다 이 프레임의 모든 메시지를 한 번에 write+drain(B4).

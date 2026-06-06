@@ -596,7 +596,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         # ---- Claude Code 마지막 프롬프트 스티키 헤더 ----
         def _update_claude(self, panes_claude):
-            self.pane_claude = {e["id"]: e for e in panes_claude}
+            # history 가 빠진 항목(§4.5: 서버가 변할 때만 실음)은 직전에 받은
+            # history 를 유지한다 — 매 status 마다 30개 프롬프트를 재전송하지 않게.
+            new = {}
+            for e in panes_claude:
+                pid = e["id"]
+                if "history" not in e:
+                    prev = self.pane_claude.get(pid)
+                    if prev is not None and "history" in prev:
+                        e = {**e, "history": prev["history"]}
+                new[pid] = e
+            self.pane_claude = new
 
         def set_claude_header(self, on: bool):
             # claude-header on|off — 프롬프트 헤더 표시 토글(전역). 낙관적으로 즉시

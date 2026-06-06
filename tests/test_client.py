@@ -2913,3 +2913,23 @@ async def test_copy_mode_selection_clamped_to_start_pane():
     full = v._extract_selection().split("\n")
     assert "|" in full[1] and "R" in full[1]
     assert v._clamp_sel(99, 99) == (99, 99)
+
+
+# ---- §4.5: history 누락 시 직전 값 유지 ----
+async def test_claude_history_retained_when_omitted():
+    """서버가 history 를 변할 때만 싣는(§4.5) 것에 맞춰, history 키가 빠진 status
+    항목은 직전에 받은 history 를 유지하고 나머지 필드는 갱신한다."""
+    async def body(app, pilot, srv):
+        app._update_claude([{"id": 1, "claude": "idle", "prompt": "p",
+                             "perm_mode": "default", "history": ["a", "b"]}])
+        assert app.pane_claude[1]["history"] == ["a", "b"]
+        # history 빠진 갱신 → 직전 값 유지, 나머지는 새 값
+        app._update_claude([{"id": 1, "claude": "busy", "prompt": "p2",
+                             "perm_mode": "default"}])
+        assert app.pane_claude[1]["history"] == ["a", "b"]
+        assert app.pane_claude[1]["claude"] == "busy"
+        # history 다시 오면 교체
+        app._update_claude([{"id": 1, "claude": "idle", "prompt": "p3",
+                             "perm_mode": "default", "history": ["a", "b", "c"]}])
+        assert app.pane_claude[1]["history"] == ["a", "b", "c"]
+    await _with_app(body)
