@@ -77,8 +77,22 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
 | `client.py` | ~2530 | `build_client_app()` 클로저: 위젯(MultiplexerView/TabBar/StatusBar)·모달(Prompt/Menu/CommandList/ChooseTree/ChooseLayout/Info/ChooseBuffer)·`_composite`(합성, `_draw_tab_close` 포함)·키/마우스·명령 |
 | `launcher.py` | ~160 | `main()`·서브커맨드(attach/ls/kill-server/cmd/server/record/replay)·데몬화 |
 | `replay.py` | ~200 | 렌더 진단: `record`(PTY 녹화)·`replay`(텍스트 프레임 재생) |
+| `version.py` | ~55 | 실행 코드 버전(p4 `#have` CL → git short → unknown)·업타임 포맷. `version` 명령 팝업이 씀 |
 
 `pytmux.py` 는 얇은 진입점(위 심볼 재노출 + `main()`).
+
+### `version` 명령 — 버전/업타임 팝업
+`version`(별칭 `about`)은 **클라이언트·서버 각각이 로드한 코드의 버전(퍼포스
+체인지리스트)과 업타임**을 한 팝업(InfoScreen)에 보인다. 동작:
+- 버전 = `version.code_version()` = `p4 changes -m1 <root>/...#have` 의 CL(폴백 git
+  short hash → `unknown`). **프로세스 시작 시점에 캡처해 캐시**한다(서버=부팅/ re-exec,
+  클라=런치). 이후 디스크가 새 CL 로 바뀌어도 "이 프로세스가 돌리는 코드"의 버전을
+  보여주려는 의도(서버는 `__init__`, 클라는 `on_mount` 에서 executor 로 비동기 캡처해
+  첫 페인트 핫패스를 막지 않음).
+- 업타임 = 각자 시작 시각 기준. **서버 업타임은 마지막 (re-)exec 기준**(작업 보존
+  재시작은 새 프로세스라 리셋).
+- 흐름: 클라 `version` → `request_version` → 서버가 `{version,uptime,pid}` 회신 →
+  클라가 자기 값과 합쳐 팝업. 외부 `pytmux cmd` 파리티는 없음(클라 UI 기능).
 
 ### 렌더 합성(`client.py::_composite`) 순서
 1. 각 패널 내용 blit(와이드 문자 폭 인지, 연속 셀 `""`).

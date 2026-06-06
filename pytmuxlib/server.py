@@ -11,7 +11,7 @@ import subprocess
 import time
 import traceback
 
-from . import ipc, proc, pty_backend, sshwrap, tokens, usagelog
+from . import ipc, proc, pty_backend, sshwrap, tokens, usagelog, version
 from .model import (ClientConn, Pane, Session, Split, Tab, Window,
                     coalesce_alt_repaints)
 from .claude import (claude_account, claude_feedback_prompt, claude_perm_mode,
@@ -45,6 +45,12 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         self.clients: list[ClientConn] = []
         self.loop: asyncio.AbstractEventLoop | None = None
         self.running = True
+        # version 명령 팝업용: 이 프로세스가 **로드한 코드**의 버전(p4 CL)과 부팅
+        # 시각. re-exec 후엔 새 프로세스라 둘 다 다시 캡처된다(= 데몬 업타임은 마지막
+        # (re-)exec 기준). 버전 캡처는 ~수십 ms p4 호출이지만 부팅 1회뿐이라 무해
+        # (클라의 textual import 와 겹쳐 체감 영향 없음).
+        self._boot_time = time.time()
+        self._code_version = version.code_version()
         # 대량 출력 드레인 중 순환 GC 일시정지 가드(§10 프로파일링): pyte feed 는 셀마다
         # `Char` 네임드튜플을 새로 할당해 버스트 한 번에 수백만 객체가 생긴다. 순환 GC 가
         # 이를 주기적으로 훑으면 단일 슬라이스가 30~85ms 멈춰(측정) 이벤트 루프가 끊기고

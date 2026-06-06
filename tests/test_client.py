@@ -27,6 +27,24 @@ async def test_hello_paints_screen():
     await _with_app(body)
 
 
+async def test_version_command_opens_popup():
+    """version 명령이 서버에 요청을 보내고(_want_version), version 회신을 받으면
+    클라/서버 버전·업타임 팝업(InfoScreen)을 띄운다."""
+    from pytmuxlib.clientscreens import InfoScreen
+
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append(action)
+        app._run_command("version")
+        assert app._want_version is True
+        assert "request_version" in sent
+        # 서버 회신 모사 → 팝업
+        app._show_version_popup({"version": "p4:99999", "uptime": 3661, "pid": 42})
+        await pilot.pause(0.1)
+        assert isinstance(app.screen, InfoScreen)
+    await _with_app(body)
+
+
 async def test_net_degraded_hysteresis():
     """degraded 히스테리시스(#5.8): 임계 초과 RTT 가 net_bad_n 회 연속이면 degraded
     ON, 임계 이하가 net_good_n 회 연속이면 OFF. 한두 표본 깜빡임엔 안 뒤집힌다."""

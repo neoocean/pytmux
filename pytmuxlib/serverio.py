@@ -379,6 +379,13 @@ class ServerIOMixin:
                                  limit=int(msg.get("limit", 5000)))
             await write_msg(client.writer, {"t": "token_log", "records": recs})
             return
+        elif action == "request_version":
+            # version 명령 팝업: 이 서버가 로드한 코드 버전(p4 CL)·업타임·pid 회신.
+            # 클라가 자기 버전/업타임과 합쳐 팝업을 띄운다.
+            await write_msg(client.writer, {
+                "t": "version", "version": self._code_version,
+                "uptime": time.time() - self._boot_time, "pid": os.getpid()})
+            return
         elif action == "set_claude_account":
             self.set_claude_account(sess, str(msg.get("name", "")))
             return

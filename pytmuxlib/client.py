@@ -10,7 +10,7 @@ import socket
 import subprocess
 import time
 
-from . import ipc, proc, usagelog
+from . import ipc, proc, usagelog, version
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS, DEFAULT_STYLE,
     MENU_ITEMS, MENU_TOGGLES, SAVER_CYCLES, SPECIAL, _CLOCK_FONT,
@@ -67,6 +67,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.session_name = session_name
             self.reader = None
             self.writer = None
+            # version 명령 팝업용(이 클라가 로드한 코드 버전·런치 시각). 버전 캡처는
+            # ~수십 ms p4 호출이라 startup(첫 페인트) 핫패스를 막지 않게 on_mount 에서
+            # executor 로 비동기 계산해 채운다(그 전까진 "…"). 업타임은 런치 시각 기준.
+            self._boot_time = time.time()
+            self._code_version = "…"
             # 작업 보존 재시작(re-exec): 서버가 {"t":"restarting"} 을 보내면 다음
             # 연결 끊김을 종료가 아닌 재접속으로 다룬다(docs/RESTART_SCENARIO.md ⓔ).
             self._reconnecting = False
@@ -189,6 +194,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
         async def on_mount(self):
             self.tabbar.display = self.tab_bar_always
             self.view.focus()
+            # 클라 코드 버전을 백그라운드(executor)로 계산해 채운다 — startup 핫패스
+            # (첫 페인트)를 ~수십 ms p4 호출로 막지 않는다. version 명령 전에 끝난다.
+            async def _load_version():
+                try:
+                    loop = asyncio.get_running_loop()
+                    self._code_version = await loop.run_in_executor(
+                        None, version.code_version)
+                except (OSError, RuntimeError):
+                    self._code_version = "unknown"
+            asyncio.create_task(_load_version())
             if self.status_position == "top":
                 self.status.styles.dock = "top"
             self._restart_status_timer()
@@ -540,6 +555,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if getattr(self, "_want_token_log", False):
                     self._want_token_log = False
                     self.push_screen(TokenLogScreen(msg.get("records") or []))
+            elif t == "version":
+                if getattr(self, "_want_version", False):
+                    self._want_version = False
+                    self._show_version_popup(msg)
             elif t == "layouts":
                 if self._want_layouts:
                     mode = self._want_layouts
@@ -1671,6 +1690,27 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._want_token_log = True
             self.send_cmd("request_token_log", limit=5000)
 
+        def open_version(self):
+            # version 명령: 서버에 버전/업타임을 요청하고(t==version 회신), 클라 자신의
+            # 버전/업타임과 합쳐 팝업(InfoScreen)을 띄운다.
+            self._want_version = True
+            self.send_cmd("request_version")
+
+        def _show_version_popup(self, msg):
+            """서버 version 회신(version·uptime·pid) + 클라 자신의 값으로 팝업 구성."""
+            cli_up = version.fmt_uptime(time.time() - self._boot_time)
+            srv_up = version.fmt_uptime(msg.get("uptime", 0))
+            lines = [
+                "pytmux 버전 / 업타임",
+                "",
+                f"  클라이언트  {self._code_version:<14}  업타임 {cli_up}",
+                f"  서버        {msg.get('version', '?'):<14}  업타임 {srv_up}",
+                "",
+                f"  (서버 pid {msg.get('pid', '?')} · 버전=동기화된 p4 CL,"
+                " 폴백 git)",
+            ]
+            self.push_screen(InfoScreen(lines, title="version"))
+
         def open_rules_editor(self):
             # #27: Claude 시작 규칙 편집 팝업. 저장하면 서버 opts.json 에 영속하고,
             # 새 Claude 세션 또는 /clear 직후 첫 idle 에 프롬프트로 자동 주입한다.
@@ -2467,6 +2507,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 arg = args[0].lower() if args else "toggle"
                 val = (arg == "on") if arg in ("on", "off") else None
                 self.send_cmd("set_prompt_clear", value=val)
+            elif c in ("version", "about"):
+                # 클라/서버 버전(p4 CL)·업타임 팝업.
+                self.open_version()
             elif c in ("token-saver", "claude-settings", "token-settings"):
                 # 토큰 절감 설정 팝업 — 각 자동 개입 토글·잔량 임계·예산(설정 팝업).
                 self.open_claude_saver()
