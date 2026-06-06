@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+import signal
 import time
 import traceback
 
@@ -786,31 +787,85 @@ class ServerIOMixin:
         if self.loop:
             self.loop.stop()
 
+    def _on_term_signal(self, signame: str):
+        """외부 종료 시그널(SIGTERM/SIGHUP) 수신 시: 사실을 error.log 에 남기고 질서
+        있게 종료한다. 핸들러가 없으면 기본동작 = 정리 없는 즉사라, master fd 가
+        그대로 닫혀 pane 의 claude 들이 SIGHUP 으로 함께 죽는다(docs/INVESTIGATION
+        §3.2 '서버 사망' 변종). 여기서 잡아 **흔적을 남기고**(평소 silent — 다음
+        사후분석에서 외부 kill 여부 판별) shutdown() 으로 내려간다."""
+        try:
+            path = ipc.state_base(self.sock_path) + ".error.log"
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(f"\n==== {stamp} [signal {signame}] "
+                        f"서버 종료 시그널 수신 → shutdown ====\n")
+        except Exception:
+            pass
+        self.shutdown()
+
+    def _install_signal_handlers(self) -> list:
+        """외부 종료 시그널 핸들러(SIGTERM/SIGHUP)를 현재 루프에 설치하고, 설치한
+        시그널 목록을 돌려준다(정리용). 핸들러가 없으면 SIGTERM/SIGHUP 은 '정리
+        없는 즉사'라 pane claude 들이 SIGHUP 연쇄로 함께 죽는다(docs/INVESTIGATION
+        §3.2/§8). 잡아서 로그를 남기고 깨끗이 정리 종료하게 한다.
+
+        **프로덕션 엔트리(run_server)에서만** 켠다(self._handle_signals): 테스트는
+        harness 가 한 프로세스에서 serve() 를 여러 번 띄우는데, 시그널 핸들러는
+        프로세스 전역(self-pipe) 자원이라 루프 간 누수로 teardown 레이스를 만든다.
+        Windows/미지원 환경은 조용히 패스."""
+        installed = []
+        if not getattr(self, "_handle_signals", False):
+            return installed
+        for signame in ("SIGTERM", "SIGHUP"):
+            sig = getattr(signal, signame, None)
+            if sig is None:
+                continue
+            try:
+                self.loop.add_signal_handler(
+                    sig, self._on_term_signal, signame)
+                installed.append(sig)
+            except (NotImplementedError, RuntimeError, ValueError):
+                pass
+        return installed
+
+    def _remove_signal_handlers(self, installed: list):
+        """설치된 시그널 핸들러를 제거한다(serve 종료/취소 시 — 누수 방지)."""
+        for sig in installed:
+            try:
+                self.loop.remove_signal_handler(sig)
+            except (RuntimeError, ValueError):
+                pass
+
     async def serve(self):
         self.loop = asyncio.get_running_loop()
-        # OS 별 listen 분기(Unix=AF_UNIX, Windows=TCP 루프백+포트파일)는 ipc 가 담당.
-        # 확정 엔드포인트(TCP 면 실제 포트)를 패널 셸 $PYTMUX 에 게시한다.
-        server, self.resolved_endpoint = await ipc.start_server(
-            self.sock_path, self.handle_client)
-        # 작업 보존 재시작(re-exec) 후: 상속된 PTY 를 채택해 셸을 살린 채 복원.
-        # 성공 시 상태 파일을 지워(다음 평범한 재시작이 stale 채택을 시도하지 않게).
-        resumed = False
-        rp = self._resume_path
-        if rp and os.path.exists(rp) and not self.sessions:
-            resumed = self.restore_resume_state(rp)
-            try:
-                os.unlink(rp)
-            except OSError:
-                pass
-        # 재부팅/재시작 후: 저장된 레이아웃이 있으면 구조 복원(셸은 새로 시작)
-        if not resumed and os.path.exists(self.layout_path) and not self.sessions:
-            self.restore_layout()
-        flush = asyncio.create_task(self._flush_loop())
-        autoname = asyncio.create_task(self._autorename_loop())
-        async with server:
-            try:
-                await server.serve_forever()
-            except asyncio.CancelledError:
-                pass
-        flush.cancel()
-        autoname.cancel()
+        signals = self._install_signal_handlers()
+        try:
+            # OS 별 listen 분기(Unix=AF_UNIX, Windows=TCP 루프백+포트파일)는 ipc 가 담당.
+            # 확정 엔드포인트(TCP 면 실제 포트)를 패널 셸 $PYTMUX 에 게시한다.
+            server, self.resolved_endpoint = await ipc.start_server(
+                self.sock_path, self.handle_client)
+            # 작업 보존 재시작(re-exec) 후: 상속된 PTY 를 채택해 셸을 살린 채 복원.
+            # 성공 시 상태 파일을 지워(다음 평범한 재시작이 stale 채택을 안 하게).
+            resumed = False
+            rp = self._resume_path
+            if rp and os.path.exists(rp) and not self.sessions:
+                resumed = self.restore_resume_state(rp)
+                try:
+                    os.unlink(rp)
+                except OSError:
+                    pass
+            # 재부팅/재시작 후: 저장된 레이아웃이 있으면 구조 복원(셸은 새로 시작)
+            if not resumed and os.path.exists(self.layout_path) \
+                    and not self.sessions:
+                self.restore_layout()
+            flush = asyncio.create_task(self._flush_loop())
+            autoname = asyncio.create_task(self._autorename_loop())
+            async with server:
+                try:
+                    await server.serve_forever()
+                except asyncio.CancelledError:
+                    pass
+            flush.cancel()
+            autoname.cancel()
+        finally:
+            self._remove_signal_handlers(signals)

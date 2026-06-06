@@ -8,6 +8,7 @@ import shlex
 import socket
 import subprocess
 import time
+import traceback
 
 from . import clientclip, clientrender, ipc, proc, usagelog, version
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
@@ -2883,27 +2884,90 @@ def build_client_app(sock_path: str, config: dict | None = None,
     return PytmuxApp(sock_path)
 
 
+def _relaunch_self():
+    """현재 클라이언트를 os.execv 로 같은 인자로 교체 재실행한다(restart-all·크래시
+    자동복구 공용). `python pytmux.py …`(스크립트)면 인터프리터로, 설치된 콘솔
+    스크립트(실행권한 있는 비-.py)면 그 실행파일로 원 동작(attach)을 재현한다.
+    execv 실패 시 분리 프로세스로라도 새 클라를 띄운다. 정상 경로면 돌아오지 않는다."""
+    import sys
+    argv0 = sys.argv[0]
+    if argv0.endswith(".py") or not os.access(argv0, os.X_OK):
+        cmd = [sys.executable] + sys.argv
+    else:
+        cmd = list(sys.argv)
+    try:
+        os.execv(cmd[0], cmd)
+    except OSError:
+        try:
+            proc.spawn_detached(cmd)
+        except OSError:
+            pass
+
+
+def _log_client_crash(sock_path: str, tb: str):
+    """클라이언트 미처리 예외 트레이스백을 `<sock>.client.crash.log` 에 append 한다.
+    클라는 Terminal 안에서 도는데 크래시하면 트레이스백이 터미널 스크롤백(휘발)으로만
+    가 사후분석이 불가능했다(docs/INVESTIGATION §7.2-A). 디스크에 남겨 다음 재발 시
+    원인을 즉시 잡게 한다. 로깅 자체는 절대 실패를 전파하지 않는다(best-effort)."""
+    try:
+        path = ipc.state_base(sock_path) + ".client.crash.log"
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"\n==== {stamp} pid={os.getpid()} "
+                    f"ver={version.code_version()} ====\n")
+            f.write(tb)
+    except Exception:
+        pass
+
+
+# 크래시 자동복구 상한: 같은 클라가 연쇄 크래시(뜨자마자 또 죽음)하면 무한 execv
+# 루프가 되므로 막는다. execv 는 프로세스 메모리를 갈아끼우니 카운터는 환경변수로
+# 대를 넘긴다. 빠른 재크래시만 누적하고(아래 _CRASH_LOOP_WINDOW), 이 횟수를 넘으면
+# 자동복구를 멈춘 채 사용자에게 알리고 종료한다.
+_CLIENT_CRASH_RELAUNCH_MAX = 5
+# 이 시간(초) 안에 다시 크래시하면 '연쇄 크래시 루프'로 보고 카운트한다. 오래
+# 정상 동작하다 죽은 건 새 카운트(1)로 리셋 — 정상 사용 중 어쩌다 난 크래시가
+# 복구 예산을 소진하지 않게 한다.
+_CRASH_LOOP_WINDOW = 30.0
+
+
+def _crash_relaunch_count() -> int:
+    try:
+        return int(os.environ.get("PYTMUX_CLIENT_CRASH_N", "0"))
+    except ValueError:
+        return 0
+
+
 def run_client(sock_path: str, session: str | None = None):
+    import sys
     config = load_config()
     app = build_client_app(sock_path, config, session)
-    app.run()
+    crashed = None
+    start = time.monotonic()
+    try:
+        app.run()
+    except Exception:    # Textual 밖으로 샌 미처리 예외 = 클라이언트 크래시
+        crashed = traceback.format_exc()
+    elapsed = time.monotonic() - start
+    if crashed is not None:
+        # 크래시: 트레이스백을 영속화하고(사후분석), 한도 내에서 새 클라로 자가
+        # 재기동해 화면을 회복한다. 데몬(서버)이 셸/PTY/세션을 들고 있어 멀쩡하므로
+        # 새 클라가 재attach 하면 작업이 그대로 이어진다(tmux 모델).
+        _log_client_crash(sock_path, crashed)
+        n = (_crash_relaunch_count() + 1) if elapsed < _CRASH_LOOP_WINDOW else 1
+        if n <= _CLIENT_CRASH_RELAUNCH_MAX:
+            os.environ["PYTMUX_CLIENT_CRASH_N"] = str(n)
+            _relaunch_self()       # 새 클라로 재기동(서버 생존 → 보통 즉시 재attach)
+            return
+        # 상한 초과(연쇄 크래시): 자동복구 중단 — 무한 루프 방지, 사용자에게 알림.
+        sys.stderr.write(
+            "pytmux: 클라이언트가 반복 크래시해 자동복구를 멈춥니다.\n"
+            f"  트레이스백: {ipc.state_base(sock_path)}.client.crash.log\n")
+        sys.exit(1)
+    # 정상 종료: 크래시가 아니므로 복구 카운터를 비운다(다음 세션은 깨끗이 시작).
+    os.environ.pop("PYTMUX_CLIENT_CRASH_N", None)
     # 전체 재시작(restart-all): app 이 _relaunch 를 세우고 종료했으면, textual 이
-    # 터미널을 정상복구한 지금(run 반환 후) **자신을 os.execv 로 교체**해 새 클라
-    # 코드로 다시 attach 한다. 원래 실행 인자(sys.argv)를 그대로 재실행 — 같은
-    # 동작(attach)으로 돌아오고, 이미 떠 있는(re-exec 된) 서버에 재접속한다.
+    # 터미널을 정상복구한 지금(run 반환 후) 자신을 os.execv 로 교체해 새 클라 코드로
+    # 다시 attach 한다(이미 re-exec 된 서버에 재접속해 셸/세션 보존).
     if getattr(app, "_relaunch", False):
-        import sys
-        argv0 = sys.argv[0]
-        # `python pytmux.py …`(스크립트) 면 인터프리터로, 설치된 콘솔 스크립트
-        # (실행권한 있는 비-.py) 면 그 실행파일로 그대로 재실행해 원 동작을 재현한다.
-        if argv0.endswith(".py") or not os.access(argv0, os.X_OK):
-            cmd = [sys.executable] + sys.argv
-        else:
-            cmd = list(sys.argv)
-        try:
-            os.execv(cmd[0], cmd)
-        except OSError:
-            try:    # execv 실패 폴백: 분리 프로세스로라도 새 클라를 띄운다.
-                proc.spawn_detached(cmd)
-            except OSError:
-                pass
+        _relaunch_self()

@@ -650,7 +650,21 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
 
 def run_server(sock_path: str, resume_path: str | None = None):
     srv = Server(sock_path, resume_path)
+    # 프로덕션 데몬에서만 외부 종료 시그널(SIGTERM/SIGHUP)을 핸들링한다(serve 가
+    # 이 플래그를 보고 설치). 테스트 harness 는 serve() 를 직접 호출하므로 켜지지
+    # 않아 시그널 핸들러의 프로세스 전역 자원이 루프 간 누수되지 않는다.
+    srv._handle_signals = True
     try:
         asyncio.run(srv.serve())
     except (KeyboardInterrupt, RuntimeError):
         pass
+    except Exception:
+        # serve() 밖으로 샌 미처리 예외 = 서버 치명 종료(동시종료의 '서버 사망'
+        # 변종). 데몬은 stderr 가 /dev/null 이라 평소엔 흔적 없이 사라지는데,
+        # 트레이스백을 `<sock>.error.log` 에 남겨 다음 조사에서 원인을 잡게 한다
+        # (docs/INVESTIGATION §3·§7.5). 로깅 후 재전파하지 않고 조용히 종료한다
+        # — 프로세스는 어차피 끝나고, 정리는 OS 가 fd 를 닫으며 마무리한다.
+        try:
+            srv._log_error("run_server(fatal)")
+        except Exception:
+            pass
