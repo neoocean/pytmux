@@ -7,6 +7,84 @@ from harness import pane_text, server_only, teardown
 from pytmuxlib import proc
 
 
+def _full_render(p, with_cursor=True):
+    """같은 버퍼 상태에서 콜드 캐시 전체 경로 render 를 강제(빠른 경로 정합 비교용).
+    버퍼를 안 건드리므로 sparse-buffer materialize 인공물 없이 fast 와 동일 상태."""
+    p._row_cache = None
+    p._row_cache_key = None
+    return p.render(with_cursor)
+
+
+async def test_render_dirty_path_matches_full():
+    """#8 행 단위 재직렬화: 캐시 워밍 후 출력을 먹이고 **빠른 경로**(screen.dirty 행만)
+    render 한 결과가 **같은 버퍼**의 전체 경로 render 와 바이트 동일해야 한다. pyte
+    dirty 표기 누락이 있으면(캐시 잔상) 어긋난다. 그리기/소거/스크롤/줄삽입·삭제/문자
+    삽입·삭제/SGR/와이드문자/연속 프레임을 못박는다."""
+    from pytmuxlib.model import Pane
+
+    prefix = (b"\x1b[2J\x1b[H"
+              + b"".join(f"row{i:02d} content here\r\n".encode()
+                        for i in range(20)))
+    suffixes = [
+        b"\x1b[5;3Hxx",                      # 한 줄 일부 덮어쓰기
+        b"\x1b[3;1H\x1b[K",                  # 줄 끝까지 소거
+        b"\x1b[2J",                          # 화면 소거
+        b"more\r\nlines\r\npushed\r\nup\r\n" * 3,   # 스크롤(index)
+        b"\x1b[10;1H\x1b[3L",                # 줄 삽입(CSI L)
+        b"\x1b[10;1H\x1b[2M",                # 줄 삭제(CSI M)
+        b"\x1b[6;3H\x1b[4@",                 # 문자 삽입(CSI @)
+        b"\x1b[6;3H\x1b[4P",                 # 문자 삭제(CSI P)
+        b"\x1b[1mBOLD\x1b[0m \x1b[31mRED\x1b[0m\r\n",   # SGR 변화
+        "\x1b[8;1H가나다ABC\r\n".encode(),    # 와이드문자(CJK)
+        b"\x1b[1;1H\x1b[7mreverse\x1b[0m",   # reverse 속성
+    ]
+    for suf in suffixes:
+        p = Pane(-1, -1, 40, 12)
+        p.feed(prefix)
+        p.render(True)                        # 캐시 워밍(라이브 뷰)
+        assert p._row_cache is not None
+        p.feed(suf)
+        rows_fast, cur_fast = p.render(True)   # 빠른 경로(dirty 행만)
+        rows_full, cur_full = _full_render(p)  # 같은 버퍼, 전체 경로
+        assert rows_fast == rows_full, f"suffix={suf!r}"
+        assert cur_fast == cur_full
+        # 연속 두 번째 프레임도(누적 dirty 처리) 일치
+        p.feed(b"\x1b[2;1HTAIL\r\n")
+        r2_fast = p.render(True)[0]
+        r2_full = _full_render(p)[0]
+        assert r2_fast == r2_full, f"2nd frame suffix={suf!r}"
+
+
+async def test_render_cache_invalidation_paths():
+    """캐시 무효화: alt 전환·스크롤·리사이즈 후 render 가 전체 경로로 폴백해 정확한
+    화면을 낸다(같은 상태의 전체 경로와 동일). 빠른 경로가 잘못된 캐시를 재사용하지
+    않는지 확인."""
+    from pytmuxlib.model import Pane
+
+    base = [b"\x1b[2J\x1b[H"] + [f"L{i} line\r\n".encode() for i in range(6)]
+    # alt 전환: 캐시 워밍 후 alt 진입 → 폴백(alt 내용)
+    a = Pane(-1, -1, 30, 8)
+    for s in base:
+        a.feed(s)
+    a.render(True)
+    a.feed(b"\x1b[?1049h\x1b[2J\x1b[HALT SCREEN")
+    assert a.render(True)[0] == _full_render(a)[0]
+    a.feed(b"\x1b[?1049l")                    # 메인 복귀도 정합
+    assert a.render(True)[0] == _full_render(a)[0]
+    # 스크롤: 캐시 워밍 후 위로 스크롤 → 폴백(스크롤백 뷰)
+    c = Pane(-1, -1, 30, 8)
+    for s in [b"\x1b[2J\x1b[H"] + [f"line{i}\r\n".encode() for i in range(30)]:
+        c.feed(s)
+    c.render(True)
+    c.scroll_by(5)
+    assert c.render(True)[0] == _full_render(c)[0]
+    c.scroll_to("bottom")                     # 라이브 복귀
+    assert c.render(True)[0] == _full_render(c)[0]
+    # 리사이즈(크기 변경)는 _row_cache_key=(cols,lines,…) 불일치로 자명히 무효화
+    # → 전체 경로. 실 fd 없는 렌더전용 패널은 resize(set_winsize) 불가라 실 fd 가
+    # 있는 test_server 의 리사이즈 회귀(레이아웃/화면)가 이 경로를 함께 커버한다.
+
+
 async def test_feed_and_scrollback():
     srv, task, sock = await server_only()
     try:

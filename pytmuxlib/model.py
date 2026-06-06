@@ -296,6 +296,12 @@ class Pane:
         self._feed_task = None
         self.scroll = 0          # 0 = live(맨 아래), 양수 = 위로 N 행
         self.dirty = True
+        # 행 단위 재직렬화 캐시(#8): 직전 render 의 행 직렬화 결과(라이브 뷰 한정).
+        # 다음 render 는 pyte screen.dirty 가 표시한 행만 다시 만들고 나머지는 이
+        # 캐시를 재사용한다. _row_cache_key=(cols,lines,id(screen))로 크기·alt 전환을
+        # 감지해 무효화한다. render 가 패널당 flush당 1회라 클라 델타와 충돌 없음.
+        self._row_cache = None
+        self._row_cache_key = None
         self.rect = (0, 0, cols, rows)
         self.parent: Split | None = None
         self.title = "shell"
@@ -412,6 +418,8 @@ class Pane:
         self._feed_task = None
         self.scroll = 0
         self.dirty = True
+        self._row_cache = None       # 행 재직렬화 캐시 리셋(#8; 새 화면 객체)
+        self._row_cache_key = None
         self._scanbuf = ""
         self._resume_pending = False
         self._resume_handle = None   # 자동재개 예약 핸들 리셋(M12; 타이머는 자가만료)
@@ -627,8 +635,42 @@ class Pane:
         self.scroll = self._history_len() if where == "top" else 0
         self.dirty = True
 
+    def _serialize_row(self, line, cols):
+        """한 줄(line)을 [text, style] 런(run) 목록으로 직렬화한다(매치 하이라이트
+        제외). render 의 빠른 경로/전체 경로가 공유한다(#8)."""
+        segs = []
+        cur_text = []
+        cur_key = None
+        for x in range(cols):
+            ch = line[x]
+            data = ch.data
+            if data == "":
+                # 와이드 문자(이모지·CJK)의 연속 셀: 보내지 않는다(클라이언트가
+                # 문자 폭만큼 칸을 차지). 공백으로 바꾸면 한 칸씩 밀린다.
+                continue
+            if not data:
+                data = " "
+            key = _style_key(ch.fg, ch.bg, ch.bold, ch.italics,
+                             ch.underscore, ch.reverse,
+                             getattr(ch, "strikethrough", False))
+            if key != cur_key:
+                if cur_text:
+                    segs.append(["".join(cur_text), dict(cur_key)])
+                cur_text = [data]
+                cur_key = key
+            else:
+                cur_text.append(data)
+        if cur_text:
+            segs.append(["".join(cur_text), dict(cur_key)])
+        return segs
+
     def render(self, with_cursor: bool):
-        """현재 뷰포트를 [rows, cursor] 로 직렬화. rows = 행마다 [text, style] 런 목록."""
+        """현재 뷰포트를 [rows, cursor] 로 직렬화. rows = 행마다 [text, style] 런 목록.
+
+        #8 행 단위 재직렬화: 라이브 뷰(scroll 0)·검색 비활성·캐시 유효(같은 화면
+        객체·크기)면 pyte `screen.dirty` 가 표시한 행만 다시 만들고 나머지는 직전
+        캐시를 재사용한다(alt 풀리페인트에서 1줄만 바뀌어도 24행 전부 재직렬화하던
+        낭비 제거). 스크롤/검색/리사이즈/alt전환/콜드캐시는 전체 경로로 폴백한다."""
         screen = self.screen
         cols, lines = screen.columns, screen.lines
         h = getattr(screen, "history", None)
@@ -645,32 +687,25 @@ class Pane:
         if with_cursor and self.scroll == 0 and not screen.cursor.hidden:
             cursor = [screen.cursor.x, screen.cursor.y]
 
+        sdirty = getattr(screen, "dirty", None)
+        live = (self.scroll == 0 and self._match_abs is None
+                and not self.search_query and len(window) == lines)
+        cache_key = (cols, lines, id(screen))
+        # 빠른 경로: dirty 행만 재직렬화하고 나머지는 캐시 재사용.
+        if (live and sdirty is not None and self._row_cache is not None
+                and self._row_cache_key == cache_key):
+            rows = list(self._row_cache)
+            for ry in list(sdirty):
+                if 0 <= ry < lines:
+                    rows[ry] = self._serialize_row(window[ry], cols)
+            sdirty.clear()
+            self._row_cache = rows
+            return rows, cursor
+
+        # 전체 경로(스크롤/검색/alt전환/리사이즈/콜드캐시).
         rows = []
         for ry, line in enumerate(window):
-            segs = []
-            cur_text = []
-            cur_key = None
-            for x in range(cols):
-                ch = line[x]
-                data = ch.data
-                if data == "":
-                    # 와이드 문자(이모지·CJK)의 연속 셀: 보내지 않는다(클라이언트가
-                    # 문자 폭만큼 칸을 차지). 공백으로 바꾸면 한 칸씩 밀린다.
-                    continue
-                if not data:
-                    data = " "
-                key = _style_key(ch.fg, ch.bg, ch.bold, ch.italics,
-                                 ch.underscore, ch.reverse,
-                                 getattr(ch, "strikethrough", False))
-                if key != cur_key:
-                    if cur_text:
-                        segs.append(["".join(cur_text), dict(cur_key)])
-                    cur_text = [data]
-                    cur_key = key
-                else:
-                    cur_text.append(data)
-            if cur_text:
-                segs.append(["".join(cur_text), dict(cur_key)])
+            segs = self._serialize_row(line, cols)
             # 검색 매치 라인 전체 하이라이트
             if self._match_abs is not None and (start + ry) == self._match_abs:
                 segs = [[t, {**st, "rv": 1}] for t, st in segs]
@@ -678,6 +713,15 @@ class Pane:
         # 뷰포트가 화면보다 짧으면(스크롤 초기) 빈 줄로 채움
         while len(rows) < lines:
             rows.append([[" " * cols, {}]])
+        # 다음 빠른 경로용 캐시는 라이브 뷰일 때만 둔다(그 외엔 무효화).
+        if live:
+            self._row_cache = list(rows)
+            self._row_cache_key = cache_key
+        else:
+            self._row_cache = None
+            self._row_cache_key = None
+        if sdirty is not None:
+            sdirty.clear()
         return rows, cursor
 
 class Split:
