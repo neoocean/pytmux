@@ -30,17 +30,17 @@ from .protocol import MIN_H, MIN_W, read_msg, write_msg
 def build_client_app(sock_path: str, config: dict | None = None,
                      session_name: str | None = None):
     config = config or {}
-    from rich.segment import Segment
+    # 빌드 시점에만 무거운 textual 을 끌어온다(모듈 import 는 가볍게). 아래는 실제로
+    # 이 함수/클로저에서 쓰는 심볼만 — 미사용 import(Segment/Strip/Widget/ModalScreen/
+    # Horizontal/Vertical/Label/ListItem/ListView)는 제거(A1 정리). 해당 textual 모듈은
+    # 어차피 clientwidgets/clientscreens 가 로드하므로 제거로 import 시간은 안 줄지만
+    # 죽은 의존을 없애 가독성을 높인다(textual 코어 ~57ms 는 TUI 상 불가피 — A1 §8.4).
     from rich.style import Style
     from textual import events
     from textual.app import App, ComposeResult
     from textual.binding import Binding
-    from textual.containers import Horizontal, Vertical
-    from textual.screen import ModalScreen
-    from textual.strip import Strip
     from textual.suggester import SuggestFromList
-    from textual.widget import Widget
-    from textual.widgets import Input, Label, ListItem, ListView
+    from textual.widgets import Input
     from datetime import datetime
 
     class PytmuxApp(App):
