@@ -358,6 +358,23 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         capture/claude-header/single-border/coalesce/auto-doc-clear/auto-mode 공용."""
         return True if "on" in args else (False if "off" in args else None)
 
+    # `pytmux cmd <명령> [on|off]` 의 **즉시 "on"/"off" 반환** 토글 표(#5.9 — 종전
+    # 6벌 복붙 elif 를 dict 조회 한 줄로 일원화). 값은 set_* setter 메서드 이름이며
+    # bool(현재 상태)을 돌려준다. single-border 는 레이아웃(박스 유무)이 바뀌어
+    # broadcast 가 필요하므로 이 표가 아니라 별도 분기로 둔다.
+    _ONOFF_CONTROLS = {
+        "capture-output": "set_capture", "capture-toggle": "set_capture",
+        "claude-header": "set_claude_header",
+        "coalesce-repaints": "set_coalesce_repaints",
+        "coalesce": "set_coalesce_repaints",
+        "auto-doc-clear": "set_auto_doc_clear", "auto-doc": "set_auto_doc_clear",
+        "claude-auto-mode": "set_claude_auto_mode",
+        "auto-mode": "set_claude_auto_mode",
+        # 토큰 절감 on/off 토글의 외부 cmd 파리티(설정 팝업과 같은 setter).
+        "ctx-autoclear": "set_claude_ctx_autoclear",
+        "resume-gate": "set_token_budget_resume_gate",
+    }
+
     def handle_control(self, line: str):
         """외부 CLI(`pytmux cmd ...`)에서 보낸 명령을 서버 측에서 처리한다."""
         try:
@@ -384,6 +401,9 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
             self.new_session(80, 24, opt("-s"))
         elif sess is None:
             return "no session"
+        elif c in self._ONOFF_CONTROLS:          # 즉시 on/off 반환 토글(#5.9 표)
+            setter = getattr(self, self._ONOFF_CONTROLS[c])
+            return "on" if setter(self._arg_onoff(args)) else "off"
         elif c in ("new-window", "neww", "new-tab", "newt"):
             # -c <경로> 로 시작 디렉토리 지정(tmux 호환). 없으면 default-path 기본.
             self.new_window(sess, path=opt("-c"))
@@ -418,25 +438,10 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
             return "restarting" if self.restart_server() else "unsupported"
         elif c in ("send-keys", "send"):
             self._control_send_keys(sess, args)
-        elif c in ("capture-output", "capture-toggle"):
-            val = self._arg_onoff(args)
-            return "on" if self.set_capture(val) else "off"
-        elif c == "claude-header":
-            val = self._arg_onoff(args)
-            return "on" if self.set_claude_header(val) else "off"
         elif c in ("single-border", "pane-border"):
-            val = self._arg_onoff(args)
-            self.set_single_border(val)
-            # 레이아웃(박스 유무)이 바뀌므로 아래 broadcast 로 떨어지게 한다.
-        elif c in ("coalesce-repaints", "coalesce"):
-            val = self._arg_onoff(args)
-            return "on" if self.set_coalesce_repaints(val) else "off"
-        elif c in ("auto-doc-clear", "auto-doc"):
-            val = self._arg_onoff(args)
-            return "on" if self.set_auto_doc_clear(val) else "off"
-        elif c in ("claude-auto-mode", "auto-mode"):
-            val = self._arg_onoff(args)
-            return "on" if self.set_claude_auto_mode(val) else "off"
+            # 레이아웃(박스 유무)이 바뀌므로 _ONOFF_CONTROLS 표(즉시 반환)가 아니라
+            # 여기서 처리해 아래 broadcast 로 떨어지게 한다.
+            self.set_single_border(self._arg_onoff(args))
         else:
             return f"unknown: {c}"
         for cl in list(self.clients):
