@@ -39,6 +39,15 @@ if [ "${SKIP_DEPS:-0}" != "1" ] && [ "$have_py3" = "1" ] && [ -f "$REPO/requirem
     echo "경고: 의존성 설치 실패. 수동 실행: python3 -m pip install -r \"$REPO/requirements.txt\"" >&2
 fi
 
+# 바이트코드 사전컴파일(A5): 설치 시 .pyc 를 미리 만들어 첫 실행이 컴파일을 지불하지
+# 않게 한다(attach cold import 단축, 런타임 동작 불변·패키징만). 실패해도 설치는 계속
+# (런타임이 어차피 lazily 컴파일하므로 치명적이지 않음).
+if [ "$have_py3" = "1" ] && [ -d "$REPO/pytmuxlib" ]; then
+  echo "바이트코드 사전컴파일: python3 -m compileall pytmuxlib"
+  python3 -m compileall -q "$REPO/pytmuxlib" "$ENTRY" || \
+    echo "경고: 사전컴파일 실패(무시 가능 — 첫 실행 시 자동 컴파일됨)." >&2
+fi
+
 mkdir -p "$DIR"
 cat > "$TARGET" <<EOF
 #!/bin/sh

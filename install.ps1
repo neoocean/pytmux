@@ -64,6 +64,18 @@ if (-not $SkipDeps) {
     }
 }
 
+# --- 1b) 바이트코드 사전컴파일(A5) ---
+# 설치 시 .pyc 를 미리 만들어 첫 실행이 컴파일을 지불하지 않게 한다(attach cold import
+# 단축, 런타임 동작 불변·패키징만). 실패해도 설치는 계속(런타임이 lazily 컴파일).
+$Lib = Join-Path $Repo 'pytmuxlib'
+if ($Py -and (Test-Path -LiteralPath $Lib)) {
+    Write-Host "바이트코드 사전컴파일: $Py -m compileall pytmuxlib"
+    & $Py -m compileall -q $Lib $Entry
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "사전컴파일 실패(무시 가능 — 첫 실행 시 자동 컴파일됨)."
+    }
+}
+
 # --- 2) pytmux 런처 ---
 New-Item -ItemType Directory -Force -Path $Dir | Out-Null
 
