@@ -1072,6 +1072,29 @@ async def test_handle_control():
         await teardown(srv, task, sock)
 
 
+async def test_split_window_orientation_matches_tmux():
+    """split-window -h = 좌우(lr), -v/기본 = 상하(tb) — tmux 규약 정합(회귀 가드).
+
+    과거엔 -h→상하로 반전돼 prefix %/" · join-pane -h 와 어긋났다(키↔명령 경로 비대칭).
+    서버 외부제어 경로(handle_control)와 join-pane 규약이 일치하는지 못박는다."""
+    srv, task, sock = await server_only()
+    try:
+        # -h → 좌우(lr)
+        sess = srv.ensure_default_session(80, 24)
+        srv.handle_control("split-window -h")
+        assert sess.active_window.root.orient == "lr", "split -h 는 좌우(lr)"
+        # 새 탭에서 -v → 상하(tb)
+        srv.handle_control("new-window")
+        srv.handle_control("split-window -v")
+        assert sess.active_window.root.orient == "tb", "split -v 는 상하(tb)"
+        # 기본(플래그 없음) → 상하(tb)
+        srv.handle_control("new-window")
+        srv.handle_control("split-window")
+        assert sess.active_window.root.orient == "tb", "split 기본은 상하(tb)"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_tab_hierarchy_and_commands():
     """최상위 Tab → 단일 Window → 패널 집합 구조 및 탭 명령(new/kill/rename)."""
     from pytmuxlib.model import Tab, Window

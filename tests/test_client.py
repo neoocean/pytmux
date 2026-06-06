@@ -27,6 +27,21 @@ async def test_hello_paints_screen():
     await _with_app(body)
 
 
+async def test_first_int_skips_flags_and_negatives():
+    """_first_int 가 플래그/음수 토큰을 건너뛰고 뒤따르는 양수 인덱스를 찾는다.
+
+    과거엔 첫 음수 토큰에서 None 을 반환해 `move-tab foo -2 3` 같은 입력에서 뒤의
+    3 을 가렸다(인덱스 명령 침묵 실패)."""
+    async def body(app, pilot, srv):
+        f = app._first_int
+        assert f(["3"]) == 3
+        assert f(["-t", "2"]) == 2            # 플래그 건너뛰고 2
+        assert f(["foo", "-2", "3"]) == 3     # 음수 가려도 뒤 양수 발견(회귀)
+        assert f(["-2"]) is None              # 음수 단독은 미지원(불변)
+        assert f(["bar", "baz"]) is None
+    await _with_app(body)
+
+
 async def test_set_frame_dirty_row_refresh():
     """set_frame 이 직전 프레임과 행 단위 비교해 변경된 행만 region refresh 한다(B8).
 

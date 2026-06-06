@@ -2017,8 +2017,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
         @staticmethod
         def _first_int(args):
             for a in args:
-                if a.lstrip("-").isdigit():
-                    return int(a.lstrip("-")) if not a.startswith("-") else None
+                # 플래그(-t)·음수 토큰은 인덱스로 보지 않고 **계속 스캔**한다 — 과거엔
+                # 첫 음수에서 None 을 반환해 뒤따르는 양수 인덱스를 가려, `move-tab`
+                # 등이 조용히 무시됐다.
+                if a.startswith("-"):
+                    continue
                 if a.isdigit():
                     return int(a)
             return None
@@ -2119,9 +2122,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self._if_shell(args[0], args[1], args[2] if len(args) > 2 else None)
                 return
             if c in ("split-window", "splitw"):
-                # -h = 가로(상/하), -v = 세로(좌/우)
-                orient = "tb" if "-h" in args else (
-                    "lr" if "-v" in args else "tb")
+                # tmux 규약: -h = 좌우(side-by-side, lr), -v/기본 = 상하(tb).
+                # (과거엔 -h→상하로 반전돼 prefix %/" · join-pane -h 와 어긋났다.)
+                orient = "lr" if "-h" in args else "tb"
                 self.send_cmd("split", orient=orient)
             elif c in ("kill-pane", "killp"):
                 self.send_cmd("kill_pane")

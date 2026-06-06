@@ -295,7 +295,7 @@ MENU_TOGGLES = {"zoom", "sync", "autoresume", "prompt_clear"}
 # (이름, 설명, 카테고리). 카테고리는 ?/help 목록의 탭 그룹으로 쓰인다.
 # 새 명령을 추가할 땐 카테고리도 함께 지정할 것(없으면 "기타"로 묶임).
 COMMANDS = [
-    ("split-window", "패널 분할 (-h 가로/상하 · -v 세로/좌우)", "패널"),
+    ("split-window", "패널 분할 (-h 좌우 │ · -v/기본 상하 ─)", "패널"),
     ("kill-pane", "현재 패널 삭제", "패널"),
     ("resize-pane", "패널 크기 (-Z 줌 토글)", "패널"),
     ("select-pane", "패널 이동 (-L/-R/-U/-D) 또는 제목 (-T)", "패널"),
@@ -407,7 +407,7 @@ COMPLETIONS = [
 _ONOFF = [("토글", ""), ("켜기", "on"), ("끄기", "off")]
 COMMAND_OPTIONS = {
     "split-window": [{"key": "orient", "label": "방향", "choices": [
-        ("가로 분할 ─ (상/하)", "-h"), ("세로 분할 │ (좌/우)", "-v")]}],
+        ("좌우 분할 │ (-h)", "-h"), ("상하 분할 ─ (-v)", "-v")]}],
     "select-pane": [{"key": "dir", "label": "이동", "choices": [
         ("◀ 왼쪽", "-L"), ("▶ 오른쪽", "-R"),
         ("▲ 위", "-U"), ("▼ 아래", "-D")]}],

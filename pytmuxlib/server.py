@@ -321,9 +321,8 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         elif c in ("kill-window", "killw", "kill-tab", "killt"):
             self.kill_window(sess)
         elif c in ("split-window", "splitw"):
-            # -h = 가로(상/하), -v = 세로(좌/우), -c <경로> = 시작 디렉토리
-            self.split_pane(sess, "tb" if "-h" in args else
-                            ("lr" if "-v" in args else "tb"), path=opt("-c"))
+            # tmux 규약: -h = 좌우(lr), -v/기본 = 상하(tb), -c <경로> = 시작 디렉토리.
+            self.split_pane(sess, "lr" if "-h" in args else "tb", path=opt("-c"))
         elif c in ("select-window", "selectw", "select-tab", "selectt"):
             i = first_int()
             if i is not None:
