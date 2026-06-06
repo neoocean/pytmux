@@ -27,6 +27,25 @@ async def test_hello_paints_screen():
     await _with_app(body)
 
 
+async def test_resize_pane_directional_command():
+    """resize-pane -L/-R/-U/-D [N] 이 resize_dir 로 매핑된다(#17 — 키·명령·마우스
+    리사이즈 대칭). 과거엔 -Z(줌)만 처리해 명령/팔레트로 분할선 이동이 불가했다."""
+    async def body(app, pilot, srv):
+        sent = []
+        orig = app.send_cmd
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        try:
+            app._run_command("resize-pane -R 5")
+            app._run_command("resize-pane -U")      # N 생략 → 기본 3
+            app._run_command("resize-pane -Z")      # 줌은 그대로
+        finally:
+            app.send_cmd = orig
+        assert ("resize_dir", {"dir": "right", "cells": 5}) in sent, sent
+        assert ("resize_dir", {"dir": "up", "cells": 3}) in sent, sent
+        assert ("zoom", {}) in sent, sent
+    await _with_app(body)
+
+
 async def test_first_int_skips_flags_and_negatives():
     """_first_int 가 플래그/음수 토큰을 건너뛰고 뒤따르는 양수 인덱스를 찾는다.
 

@@ -2199,6 +2199,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif c in ("resize-pane", "resizep"):
                 if "-Z" in args:
                     self.send_cmd("zoom")
+                else:
+                    # tmux resize-pane -L/-R/-U/-D [N]: 분할선을 N칸(기본 3) 이동.
+                    # 마우스 divider 드래그·prefix HJKL 과 같은 resize_dir 경로로 보내
+                    # 키·명령·마우스 리사이즈를 대칭화한다(#17 — 과거엔 -Z 만 처리해
+                    # 명령/팔레트로는 분할선 정밀 이동이 불가했다).
+                    _dmap = {"-L": "left", "-R": "right", "-U": "up", "-D": "down"}
+                    d = next((_dmap[a] for a in args if a in _dmap), None)
+                    if d is not None:
+                        self.send_cmd("resize_dir", dir=d,
+                                      cells=(self._first_int(args) or 3))
             elif c == "zoom":
                 self.send_cmd("zoom")
             elif c in ("select-layout", "selectl"):

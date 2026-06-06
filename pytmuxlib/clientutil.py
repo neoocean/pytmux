@@ -297,7 +297,7 @@ MENU_TOGGLES = {"zoom", "sync", "autoresume", "prompt_clear"}
 COMMANDS = [
     ("split-window", "패널 분할 (-h 좌우 │ · -v/기본 상하 ─)", "패널"),
     ("kill-pane", "현재 패널 삭제", "패널"),
-    ("resize-pane", "패널 크기 (-Z 줌 토글)", "패널"),
+    ("resize-pane", "패널 크기 (-Z 줌 · -L/-R/-U/-D 분할선 이동)", "패널"),
     ("select-pane", "패널 이동 (-L/-R/-U/-D) 또는 제목 (-T)", "패널"),
     ("rename-pane", "패널 제목 변경", "패널"),
     ("swap-pane", "패널 위치 교환 (-U/-D)", "패널"),
@@ -389,6 +389,7 @@ COMMANDS = [
 COMPLETIONS = [
     "split-window -h", "split-window -v",
     "resize-pane -Z",
+    "resize-pane -L", "resize-pane -R", "resize-pane -U", "resize-pane -D",
     "select-pane -L", "select-pane -R", "select-pane -U", "select-pane -D",
     "swap-pane -U", "swap-pane -D",
     "join-pane -h",
@@ -411,8 +412,9 @@ COMMAND_OPTIONS = {
     "select-pane": [{"key": "dir", "label": "이동", "choices": [
         ("◀ 왼쪽", "-L"), ("▶ 오른쪽", "-R"),
         ("▲ 위", "-U"), ("▼ 아래", "-D")]}],
-    "resize-pane": [{"key": "zoom", "label": "동작", "choices": [
-        ("줌 토글 ⛶", "-Z")]}],
+    "resize-pane": [{"key": "dir", "label": "동작", "choices": [
+        ("줌 토글 ⛶", "-Z"), ("◀ 왼쪽", "-L"), ("▶ 오른쪽", "-R"),
+        ("▲ 위", "-U"), ("▼ 아래", "-D")]}],
     "select-layout": [{"key": "preset", "label": "프리셋", "choices": [
         ("바둑판 tiled", "tiled"),
         ("가로 균등 even-horizontal", "even-horizontal"),
