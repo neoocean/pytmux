@@ -24,6 +24,15 @@
 > → textual 이 터미널을 정상복구한 뒤 `run_client` 가 원 인자(`sys.argv`)로 재실행
 > → 새 클라가 (상속 listen 소켓 덕에 큐잉되는) 재-exec 서버에 재접속. 클라 코드 변경
 > (`client.py`/`clientwidgets.py`/`clientscreens.py`)까지 한 번에 반영하는 "전체 업그레이드".
+>
+> **드라이런 점검 `restart-check`**(별칭 `restart-dry-run`): restart-all 을 **실행하지
+> 않고** 안전성만 점검해 PASS/FAIL 팝업으로 보고한다(부작용 없음 — 상태를 임시
+> 직렬화/역파싱만). 점검: ① 서버 re-exec 지원(POSIX·이벤트루프) ② 복원할 세션 존재
+> ③ 상태 직렬화 round-trip(`_resume_payload`→json dump/load/구조검증) ④ 모든 패널이
+> 살아있는 master fd 보유(상속해야 셸이 산다) ⑤ 클라 relaunch 인자 해석 가능. 더불어
+> 실행 버전 vs 디스크 버전을 함께 보여(다르면 "재시작이 새 코드를 로드"한다는 뜻 —
+> 위험이 아니라 갱신). 서버 점검은 `restart_check()`(serverpersist), 회신을 클라가
+> 자기 측 점검과 합쳐 팝업.
 
 ## 1. 배경과 목표
 

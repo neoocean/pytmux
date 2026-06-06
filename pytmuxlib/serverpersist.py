@@ -7,7 +7,7 @@ import asyncio
 import json
 import os
 
-from . import ipc, proc, pty_backend
+from . import ipc, proc, pty_backend, version
 from .model import Pane, Session, Split, Tab, Window
 from .protocol import MIN_H, MIN_W, write_msg
 
@@ -99,11 +99,10 @@ class ServerPersistMixin:
                 "sync": w.sync, "auto_rename": w.auto_rename,
                 "layout_idx": w.layout_idx}
 
-    def save_resume_state(self, path: str | None = None) -> bool:
-        """현재 트리·패널 상태(살아 있는 셸 PTY 포함)를 상태 파일에 직렬화한다.
-        re-exec 직전에 호출되며, 새 이미지가 restore_resume_state 로 복원한다."""
-        path = path or self.resume_state_path
-        data = {"version": 1, "sessions": [
+    def _resume_payload(self) -> dict:
+        """re-exec 복원용 상태 페이로드(트리·패널·창 메타)를 만든다. save_resume_state
+        와 restart_check(드라이런)이 공유한다."""
+        return {"version": 1, "sessions": [
             {"name": s.name, "active_index": s.active_index,
              "last_index": s.last_index,
              "tabs": [{"index": t.index, "name": t.name,
@@ -113,6 +112,12 @@ class ServerPersistMixin:
                        "monitor_claude": t.monitor_claude}
                       for t in s.tabs]}
             for s in self.sessions.values()]}
+
+    def save_resume_state(self, path: str | None = None) -> bool:
+        """현재 트리·패널 상태(살아 있는 셸 PTY 포함)를 상태 파일에 직렬화한다.
+        re-exec 직전에 호출되며, 새 이미지가 restore_resume_state 로 복원한다."""
+        path = path or self.resume_state_path
+        data = self._resume_payload()
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f)
@@ -252,6 +257,37 @@ class ServerPersistMixin:
         # write_msg 가 flush 될 짧은 틈을 준 뒤 execv(같은 이벤트 루프 틱이 아님).
         self.loop.call_later(0.1, self._do_execv, argv)
         return True
+
+    def restart_check(self) -> dict:
+        """restart-all **드라이런**: 실제 재시작 없이 작업 보존 재시작이 안전한지
+        점검한 결과를 dict 로 돌려준다(restart-check 명령이 팝업으로 표시). 부작용
+        없음 — 상태를 임시로 직렬화/역파싱만 하고 파일/프로세스는 안 건드린다.
+
+        점검: ① re-exec 지원(POSIX·이벤트루프) ② 복원할 세션 존재 ③ 상태 직렬화
+        round-trip(json dump→load→구조 검증) ④ 모든 패널이 살아있는 master fd 보유
+        (상속해야 셸이 산다) ⑤ 실행 코드 버전(running) vs 디스크 버전(재시작이
+        로드할 코드 — 다르면 '갱신됨'이지 위험은 아님)."""
+        panes = list(self._all_panes())
+        n = len(panes)
+        with_fd = sum(1 for p in panes
+                      if p.master_fd is not None and p.master_fd >= 0)
+        serialize_ok, serialize_err = False, ""
+        try:
+            back = json.loads(json.dumps(self._resume_payload()))
+            serialize_ok = (back.get("version") == 1
+                            and isinstance(back.get("sessions"), list)
+                            and len(back["sessions"]) == len(self.sessions))
+        except (TypeError, ValueError) as e:
+            serialize_err = str(e)
+        return {
+            "reexec_supported": (not pty_backend.IS_WINDOWS
+                                 and self.loop is not None),
+            "has_sessions": bool(self.sessions),
+            "panes": n, "panes_with_fd": with_fd,
+            "serialize_ok": serialize_ok, "serialize_err": serialize_err,
+            "running_version": self._code_version,
+            "disk_version": version.code_version(),
+        }
 
     def _do_execv(self, argv):
         # ⓐ 넘길 master fd 의 CLOEXEC 를 execv 직전에만 해제(평상시 불변식 유지).

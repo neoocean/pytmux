@@ -43,6 +43,26 @@ async def test_restart_all_arms_relaunch_and_restarts_server():
     await _with_app(body)
 
 
+async def test_restart_check_command_opens_popup():
+    """restart-check: 서버에 드라이런 점검을 요청(_want_restart_check)하고, 회신을
+    받으면 PASS/FAIL 팝업(InfoScreen)을 띄운다."""
+    from pytmuxlib.clientscreens import InfoScreen
+
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append(action)
+        app._run_command("restart-check")
+        assert app._want_restart_check is True
+        assert "request_restart_check" in sent
+        app._show_restart_check_popup({
+            "reexec_supported": True, "has_sessions": True,
+            "serialize_ok": True, "panes": 2, "panes_with_fd": 2,
+            "running_version": "p4:1", "disk_version": "p4:2"})
+        await pilot.pause(0.1)
+        assert isinstance(app.screen, InfoScreen)
+    await _with_app(body)
+
+
 async def test_version_command_opens_popup():
     """version 명령이 서버에 요청을 보내고(_want_version), version 회신을 받으면
     클라/서버 버전·업타임 팝업(InfoScreen)을 띄운다."""

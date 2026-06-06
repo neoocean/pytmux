@@ -572,6 +572,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if getattr(self, "_want_version", False):
                     self._want_version = False
                     self._show_version_popup(msg)
+            elif t == "restart_check":
+                if getattr(self, "_want_restart_check", False):
+                    self._want_restart_check = False
+                    self._show_restart_check_popup(msg)
             elif t == "layouts":
                 if self._want_layouts:
                     mode = self._want_layouts
@@ -1709,6 +1713,54 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._want_version = True
             self.send_cmd("request_version")
 
+        @staticmethod
+        def _client_relaunch_ok():
+            """restart-all 의 클라 relaunch(os.execv)가 인자를 해석할 수 있는지(run_client
+            의 재실행 로직과 동일 판정)."""
+            import sys
+            a0 = sys.argv[0]
+            return bool(a0) and (a0.endswith(".py") or os.access(a0, os.X_OK))
+
+        def open_restart_check(self):
+            # restart-check: 작업 보존 전체 재시작이 안전한지 드라이런 점검(실행 안 함).
+            # 서버 점검(re-exec/직렬화/fd)을 요청하고, 회신에 클라 측 점검을 합쳐 팝업.
+            self._want_restart_check = True
+            self.send_cmd("request_restart_check")
+
+        def _show_restart_check_popup(self, m):
+            """서버 restart_check 결과 + 클라 측 점검을 PASS/WARN/FAIL 로 팝업."""
+            panes, with_fd = m.get("panes", 0), m.get("panes_with_fd", 0)
+            fd_ok = (panes == with_fd and panes > 0)
+            cli_ok = self._client_relaunch_ok()
+            checks = [
+                (m.get("reexec_supported"), "서버 re-exec 지원(POSIX·이벤트루프)"),
+                (m.get("has_sessions"), "복원할 세션 존재"),
+                (m.get("serialize_ok"), "상태 직렬화 round-trip"),
+                (fd_ok, f"패널 master fd 보유 ({with_fd}/{panes})"),
+                (cli_ok, "클라이언트 relaunch 인자 해석"),
+            ]
+            safe = all(ok for ok, _ in checks)
+            lines = [
+                ("✅ 안전 — restart-all 수행 가능" if safe
+                 else "⚠️ 주의 — 아래 FAIL 항목 확인 후 진행"),
+                "",
+            ]
+            for ok, label in checks:
+                lines.append(f"  [{'PASS' if ok else 'FAIL'}] {label}")
+            if m.get("serialize_err"):
+                lines.append(f"        직렬화 오류: {m['serialize_err']}")
+            run_v, disk_v = m.get("running_version"), m.get("disk_version")
+            lines += [
+                "",
+                f"  서버 버전: 실행={run_v}  디스크={disk_v}"
+                + ("  → 재시작 시 갱신됨" if run_v != disk_v else "  (동일)"),
+                f"  클라 버전: 실행={self._code_version}  디스크="
+                f"{version.code_version()}",
+                "",
+                "  (버전 차이는 위험이 아니라 '재시작이 새 코드를 로드'를 뜻함)",
+            ]
+            self.push_screen(InfoScreen(lines, title="restart-check (드라이런)"))
+
         def _show_version_popup(self, msg):
             """서버 version 회신(version·uptime·pid) + 클라 자신의 값으로 팝업 구성."""
             cli_up = version.fmt_uptime(time.time() - self._boot_time)
@@ -2422,6 +2474,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 작업 보존 재시작: 셸/PTY 를 살린 채 서버 코드만 교체(re-exec).
                 # 화면이 잠깐 끊겼다 재접속된다(docs/RESTART_SCENARIO.md).
                 self.send_cmd("restart_server")
+            elif c in ("restart-check", "restart-dry-run", "restart-all-check"):
+                # restart-all 드라이런: 실제 재시작 없이 안전성만 점검해 팝업으로 보고.
+                self.open_restart_check()
             elif c in ("restart-all", "full-restart", "restart-client-server"):
                 # 전체 재시작: 서버는 work-preserving re-exec(셸/세션 보존), 동시에
                 # 클라이언트도 자신을 relaunch(새 클라 코드로 재attach). 서버/클라

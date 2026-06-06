@@ -408,6 +408,7 @@ COMMANDS = [
     ("kill-server", "서버와 모든 탭/셸 종료", "설정/기타"),
     ("restart-server", "작업 보존 재시작 — 셸/PTY 를 살린 채 서버 코드만 교체(재접속)", "설정/기타"),
     ("restart-all", "전체 재시작 — 서버 세션유지 재시작 + 클라 재기동(별칭 full-restart). 서버·클라 코드 모두 갱신", "설정/기타"),
+    ("restart-check", "restart-all 드라이런 — 실행 없이 안전성(re-exec·직렬화·fd·relaunch) 점검 팝업(별칭 restart-dry-run)", "설정/기타"),
     ("reconnect", "IPC 강제 재접속 — degraded(빨간 외곽선) 고착 회복(서버 보존)", "설정/기타"),
 ]
 
@@ -475,6 +476,7 @@ COMMAND_NOARG = {
     "calendar-mode", "open-clock", "close-clock", "open-calendar",
     "close-calendar", "prompt-history", "token-usage", "token-log",
     "list-keys", "send-escape", "claude-rules", "token-saver", "version",
+    "restart-check",
 }
 # 자유 텍스트 인자를 받는 명령 — 명령 프롬프트에서 명령을 다 치면 인자 자리에 밑줄
 # (____)을 그려 "여기에 인자를 입력" 임을 알린다(사용자 요청). 선택지형(COMMAND_OPTIONS)

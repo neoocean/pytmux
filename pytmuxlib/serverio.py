@@ -386,6 +386,12 @@ class ServerIOMixin:
                 "t": "version", "version": self._code_version,
                 "uptime": time.time() - self._boot_time, "pid": os.getpid()})
             return
+        elif action == "request_restart_check":
+            # restart-check 드라이런: 작업 보존 재시작 안전성 점검 결과 회신(부작용 없음).
+            rep = self.restart_check()
+            rep["t"] = "restart_check"
+            await write_msg(client.writer, rep)
+            return
         elif action == "set_claude_account":
             self.set_claude_account(sess, str(msg.get("name", "")))
             return
