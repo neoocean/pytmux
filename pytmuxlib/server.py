@@ -63,10 +63,13 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         # Claude 세션 일련번호(#7 토큰 로깅): 패널의 claude None→비None 전이마다 +1.
         self._claude_session_seq = 0
         self.buffers: list[str] = []   # 페이스트 버퍼(최신이 앞)
-        # 패널 출력 캡처(Claude 화면 문구 분석용). 기본 ON, opts.json 에 영속.
+        # 패널 출력 캡처(Claude 화면 문구 분석용). **기본 ON** — 실 Claude Code
+        # 출력을 무손실 기록해 limit/busy/idle/ctx 화면 골든 픽스처·휴리스틱
+        # 보강의 객관 근거로 쓴다(IMPROVEMENT §3.2, TOKEN_SAVING M8). opts.json
+        # 에 영속하므로 사용자가 capture-output off 로 끄면 그 선택이 유지된다.
         self._capfiles: dict[int, "object"] = {}   # pane.id -> 열린 바이너리 파일
         _opts = self._load_opts()
-        self.capture = bool(_opts.get("capture", False))   # 기본 OFF
+        self.capture = bool(_opts.get("capture", True))   # 기본 ON
         # Claude 프롬프트 헤더 전역 표시(#6 ③ opts.json 영속). 클라가 status 로 받아
         # claude_header_on 에 반영하고, `claude-header on|off` 가 서버를 거쳐 갱신·영속.
         self.claude_header = bool(_opts.get("claude_header", True))

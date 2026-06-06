@@ -1331,15 +1331,15 @@ async def test_hello_and_multiclient_minsize():
 
 
 async def test_capture_output():
-    """패널 출력 캡처: 기본 OFF, 켜면 무손실 기록, 토글, opts.json 영속/재시작 유지."""
+    """패널 출력 캡처: 기본 ON(실 Claude 출력 골든 근거), 무손실 기록, 토글,
+    opts.json 영속/재시작 유지(끈 선택도 유지)."""
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
         pane = sess.active_window.active_pane
-        assert srv.capture is False, "기본 OFF"
+        assert srv.capture is True, "기본 ON(opts 미설정 시)"
 
-        # 켜면 기록 시작 → pane-<id>.log 에 raw 바이트 무손실
-        assert srv.set_capture(True) is True
+        # 켜진 상태에서 기록 → pane-<id>.log 에 raw 바이트 무손실
         srv._capture_write(pane, b"hello\x1b[31m world")
         path = os.path.join(srv.capture_dir, f"pane-{pane.id}.log")
         with open(path, "rb") as f:
