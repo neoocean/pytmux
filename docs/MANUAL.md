@@ -211,11 +211,13 @@ detach), 상위 터미널 창을 닫아도 셸은 계속 돌아갑니다. 다시
 
 ### 5.6 삭제
 
-- `prefix x` — 현재 패널 삭제. 화면 **아래쪽에 `kill-pane? (y/N)` 확인 프롬프트**가
-  뜨고, `y` 를 누르면 닫힙니다.
-- 명령 `kill-pane`
+- `prefix x` — 현재 패널 삭제(`kill-pane? (y/N)` 확인 뒤 `y`).
+- **명령으로 삭제** — `ESC` 를 눌러 명령 모드로 들어간 뒤 `:` 로 명령 프롬프트를 열고
+  **`kill-pane`** 을 입력해 Enter 합니다(`prefix :` 로 바로 열어도 됩니다). 아래는 두
+  패널 중 하나를 닫으려고 명령 프롬프트에 `kill-pane` 을 입력한 모습입니다(오른쪽에
+  `현재 패널 삭제` 설명 힌트).
 
-![패널 닫기 — 하단에 kill-pane? (y/N) 확인 프롬프트](image/07-kill-pane-prompt.svg)
+![ESC → : 로 명령 프롬프트를 열고 kill-pane 입력](image/07-kill-pane-prompt.svg)
 
 ### 5.7 레이아웃 저장/복원
 

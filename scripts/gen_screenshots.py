@@ -155,10 +155,16 @@ async def command_prompt(app, pilot):
 
 
 async def kill_pane_prompt(app, pilot):
+    # ESC → : 로 명령 프롬프트를 열고 kill-pane 명령을 입력한 모습(실제 키 입력).
     app.send_cmd("split", orient="lr")
     await _settle(pilot, app, want_panes=2)
-    app.open_prompt("confirm", "kill-pane? (y/N)",
-                    action=lambda: app.send_cmd("kill_pane"))
+    await _wait_painted(pilot, app)
+    await pilot.press("escape")        # 명령 모드(ESC)
+    await pilot.pause(0.2)
+    await pilot.press("colon")         # 명령 프롬프트 열기
+    await pilot.pause(0.2)
+    for ch in "kill-pane":             # 명령 입력
+        await pilot.press("minus" if ch == "-" else ch)
     await pilot.pause(0.4)
 
 
@@ -346,7 +352,7 @@ SCENES = [
     ("04-zoom", "줌 — 상태줄 Z 표시", zoom),
     ("05-menu", "메뉴(prefix Enter)", menu),
     ("06-command-prompt", "명령 프롬프트(prefix :) + 고스트 자동완성", command_prompt),
-    ("07-kill-pane-prompt", "패널 닫기 확인 프롬프트(prefix x)", kill_pane_prompt),
+    ("07-kill-pane-prompt", "패널 닫기 — ESC : 명령 프롬프트에 kill-pane 입력", kill_pane_prompt),
     ("08-tabs-multi", "탭 여러 개 + 이름변경", tabs_multi),
     ("09-calendar", "큰 달력 오버레이(cal) — 블록-숫자", calendar_big, BIG),
     ("10-confirm-tab", "탭 닫기 확인 박스(탭 2개 이상)", confirm_tab),
