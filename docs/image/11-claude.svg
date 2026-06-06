@@ -1,4 +1,4 @@
-<svg class="rich-terminal" viewBox="0 0 1116 684.4" xmlns="http://www.w3.org/2000/svg">
+<svg class="rich-terminal" viewBox="0 0 1238 782.0" xmlns="http://www.w3.org/2000/svg">
     <!-- Generated with Rich https://www.textualize.io -->
     <style>
 
@@ -19,146 +19,170 @@
         font-weight: 700;
     }
 
-    .terminal-4174869913-matrix {
+    .terminal-1110970247-matrix {
         font-family: Fira Code, monospace;
         font-size: 20px;
         line-height: 24.4px;
         font-variant-east-asian: full-width;
     }
 
-    .terminal-4174869913-title {
+    .terminal-1110970247-title {
         font-size: 18px;
         font-weight: bold;
         font-family: arial;
     }
 
-    .terminal-4174869913-r1 { fill: #e0e0e0 }
-.terminal-4174869913-r2 { fill: #c4c5b5;font-weight: bold }
-.terminal-4174869913-r3 { fill: #1a1a1a;font-weight: bold }
-.terminal-4174869913-r4 { fill: #c5c8c6 }
-.terminal-4174869913-r5 { fill: #0178d4;font-weight: bold }
-.terminal-4174869913-r6 { fill: #0178d4 }
-.terminal-4174869913-r7 { fill: #292929 }
-.terminal-4174869913-r8 { fill: #b93c5b;font-weight: bold }
+    .terminal-1110970247-r1 { fill: #e0e0e0 }
+.terminal-1110970247-r2 { fill: #c4c5b5;font-weight: bold }
+.terminal-1110970247-r3 { fill: #1a1a1a;font-weight: bold }
+.terminal-1110970247-r4 { fill: #c5c8c6 }
+.terminal-1110970247-r5 { fill: #0178d4;font-weight: bold }
+.terminal-1110970247-r6 { fill: #0178d4 }
+.terminal-1110970247-r7 { fill: #d78787 }
+.terminal-1110970247-r8 { fill: #949494 }
+.terminal-1110970247-r9 { fill: #949494;font-style: italic; }
+.terminal-1110970247-r10 { fill: #4e4e4e }
+.terminal-1110970247-r11 { fill: #ffffff }
+.terminal-1110970247-r12 { fill: #949494;font-weight: bold }
+.terminal-1110970247-r13 { fill: #ffaf87 }
+.terminal-1110970247-r14 { fill: #808080 }
+.terminal-1110970247-r15 { fill: #292929 }
+.terminal-1110970247-r16 { fill: #b93c5b;font-weight: bold }
     </style>
 
     <defs>
-    <clipPath id="terminal-4174869913-clip-terminal">
-      <rect x="0" y="0" width="1097.0" height="633.4" />
+    <clipPath id="terminal-1110970247-clip-terminal">
+      <rect x="0" y="0" width="1219.0" height="731.0" />
     </clipPath>
-    <clipPath id="terminal-4174869913-line-0">
-    <rect x="0" y="1.5" width="1098" height="24.65"/>
+    <clipPath id="terminal-1110970247-line-0">
+    <rect x="0" y="1.5" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-1">
-    <rect x="0" y="25.9" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-1">
+    <rect x="0" y="25.9" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-2">
-    <rect x="0" y="50.3" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-2">
+    <rect x="0" y="50.3" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-3">
-    <rect x="0" y="74.7" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-3">
+    <rect x="0" y="74.7" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-4">
-    <rect x="0" y="99.1" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-4">
+    <rect x="0" y="99.1" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-5">
-    <rect x="0" y="123.5" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-5">
+    <rect x="0" y="123.5" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-6">
-    <rect x="0" y="147.9" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-6">
+    <rect x="0" y="147.9" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-7">
-    <rect x="0" y="172.3" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-7">
+    <rect x="0" y="172.3" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-8">
-    <rect x="0" y="196.7" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-8">
+    <rect x="0" y="196.7" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-9">
-    <rect x="0" y="221.1" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-9">
+    <rect x="0" y="221.1" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-10">
-    <rect x="0" y="245.5" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-10">
+    <rect x="0" y="245.5" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-11">
-    <rect x="0" y="269.9" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-11">
+    <rect x="0" y="269.9" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-12">
-    <rect x="0" y="294.3" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-12">
+    <rect x="0" y="294.3" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-13">
-    <rect x="0" y="318.7" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-13">
+    <rect x="0" y="318.7" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-14">
-    <rect x="0" y="343.1" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-14">
+    <rect x="0" y="343.1" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-15">
-    <rect x="0" y="367.5" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-15">
+    <rect x="0" y="367.5" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-16">
-    <rect x="0" y="391.9" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-16">
+    <rect x="0" y="391.9" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-17">
-    <rect x="0" y="416.3" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-17">
+    <rect x="0" y="416.3" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-18">
-    <rect x="0" y="440.7" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-18">
+    <rect x="0" y="440.7" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-19">
-    <rect x="0" y="465.1" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-19">
+    <rect x="0" y="465.1" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-20">
-    <rect x="0" y="489.5" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-20">
+    <rect x="0" y="489.5" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-21">
-    <rect x="0" y="513.9" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-21">
+    <rect x="0" y="513.9" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-22">
-    <rect x="0" y="538.3" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-22">
+    <rect x="0" y="538.3" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-23">
-    <rect x="0" y="562.7" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-23">
+    <rect x="0" y="562.7" width="1220" height="24.65"/>
             </clipPath>
-<clipPath id="terminal-4174869913-line-24">
-    <rect x="0" y="587.1" width="1098" height="24.65"/>
+<clipPath id="terminal-1110970247-line-24">
+    <rect x="0" y="587.1" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-1110970247-line-25">
+    <rect x="0" y="611.5" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-1110970247-line-26">
+    <rect x="0" y="635.9" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-1110970247-line-27">
+    <rect x="0" y="660.3" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-1110970247-line-28">
+    <rect x="0" y="684.7" width="1220" height="24.65"/>
             </clipPath>
     </defs>
 
-    <rect fill="#292929" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="1114" height="682.4" rx="8"/><text class="terminal-4174869913-title" fill="#c5c8c6" text-anchor="middle" x="557" y="27">PytmuxApp</text>
+    <rect fill="#292929" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="1236" height="780" rx="8"/><text class="terminal-1110970247-title" fill="#c5c8c6" text-anchor="middle" x="618" y="27">PytmuxApp</text>
             <g transform="translate(26,22)">
             <circle cx="0" cy="0" r="7" fill="#ff5f57"/>
             <circle cx="22" cy="0" r="7" fill="#febc2e"/>
             <circle cx="44" cy="0" r="7" fill="#28c840"/>
             </g>
         
-    <g transform="translate(9, 41)" clip-path="url(#terminal-4174869913-clip-terminal)">
-    <rect fill="#0178d4" x="12.2" y="1.5" width="146.4" height="24.65" shape-rendering="crispEdges"/><rect fill="#4ebf71" x="183" y="1.5" width="36.6" height="24.65" shape-rendering="crispEdges"/><rect fill="#0053aa" x="12.2" y="50.3" width="1024.8" height="24.65" shape-rendering="crispEdges"/><rect fill="#b93c5b" x="1049.2" y="50.3" width="36.6" height="24.65" shape-rendering="crispEdges"/><rect fill="#c5c8c6" x="12.2" y="489.5" width="12.2" height="24.65" shape-rendering="crispEdges"/><rect fill="#004578" x="12.2" y="611.5" width="256.2" height="24.65" shape-rendering="crispEdges"/>
-    <g class="terminal-4174869913-matrix">
-    <text class="terminal-4174869913-r2" x="12.2" y="20" textLength="146.4" clip-path="url(#terminal-4174869913-line-0)">&#160;◐&#160;1:claude&#160;</text><text class="terminal-4174869913-r3" x="183" y="20" textLength="36.6" clip-path="url(#terminal-4174869913-line-0)">[+]</text><text class="terminal-4174869913-r4" x="1098" y="20" textLength="12.2" clip-path="url(#terminal-4174869913-line-0)">
-</text><text class="terminal-4174869913-r5" x="0" y="44.4" textLength="12.2" clip-path="url(#terminal-4174869913-line-1)">┌</text><text class="terminal-4174869913-r6" x="12.2" y="44.4" textLength="146.4" clip-path="url(#terminal-4174869913-line-1)">▀▀▀▀▀▀▀▀▀▀▀▀</text><text class="terminal-4174869913-r5" x="158.6" y="44.4" textLength="939.4" clip-path="url(#terminal-4174869913-line-1)">────────────────────────────────────────────────────────────────────────────┐</text><text class="terminal-4174869913-r4" x="1098" y="44.4" textLength="12.2" clip-path="url(#terminal-4174869913-line-1)">
-</text><text class="terminal-4174869913-r5" x="0" y="68.8" textLength="12.2" clip-path="url(#terminal-4174869913-line-2)">│</text><text class="terminal-4174869913-r2" x="12.2" y="68.8" textLength="866.2" clip-path="url(#terminal-4174869913-line-2)">&#160;▷&#160;리팩터링하고&#160;테스트&#160;추가해줘&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-4174869913-r2" x="1049.2" y="68.8" textLength="36.6" clip-path="url(#terminal-4174869913-line-2)">[x]</text><text class="terminal-4174869913-r5" x="1085.8" y="68.8" textLength="12.2" clip-path="url(#terminal-4174869913-line-2)">│</text><text class="terminal-4174869913-r4" x="1098" y="68.8" textLength="12.2" clip-path="url(#terminal-4174869913-line-2)">
-</text><text class="terminal-4174869913-r5" x="0" y="93.2" textLength="12.2" clip-path="url(#terminal-4174869913-line-3)">│</text><text class="terminal-4174869913-r5" x="1085.8" y="93.2" textLength="12.2" clip-path="url(#terminal-4174869913-line-3)">│</text><text class="terminal-4174869913-r4" x="1098" y="93.2" textLength="12.2" clip-path="url(#terminal-4174869913-line-3)">
-</text><text class="terminal-4174869913-r5" x="0" y="117.6" textLength="12.2" clip-path="url(#terminal-4174869913-line-4)">│</text><text class="terminal-4174869913-r4" x="12.2" y="117.6" textLength="915" clip-path="url(#terminal-4174869913-line-4)">&gt;&#160;리팩터링하고&#160;테스트&#160;추가해줘&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-4174869913-r5" x="1085.8" y="117.6" textLength="12.2" clip-path="url(#terminal-4174869913-line-4)">│</text><text class="terminal-4174869913-r4" x="1098" y="117.6" textLength="12.2" clip-path="url(#terminal-4174869913-line-4)">
-</text><text class="terminal-4174869913-r5" x="0" y="142" textLength="12.2" clip-path="url(#terminal-4174869913-line-5)">│</text><text class="terminal-4174869913-r5" x="1085.8" y="142" textLength="12.2" clip-path="url(#terminal-4174869913-line-5)">│</text><text class="terminal-4174869913-r4" x="1098" y="142" textLength="12.2" clip-path="url(#terminal-4174869913-line-5)">
-</text><text class="terminal-4174869913-r5" x="0" y="166.4" textLength="12.2" clip-path="url(#terminal-4174869913-line-6)">│</text><text class="terminal-4174869913-r4" x="12.2" y="166.4" textLength="1073.6" clip-path="url(#terminal-4174869913-line-6)">●&#160;Crunching…&#160;(38s&#160;·&#160;↓&#160;1.9k&#160;tokens&#160;·&#160;esc&#160;to&#160;interrupt)&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-4174869913-r5" x="1085.8" y="166.4" textLength="12.2" clip-path="url(#terminal-4174869913-line-6)">│</text><text class="terminal-4174869913-r4" x="1098" y="166.4" textLength="12.2" clip-path="url(#terminal-4174869913-line-6)">
-</text><text class="terminal-4174869913-r5" x="0" y="190.8" textLength="12.2" clip-path="url(#terminal-4174869913-line-7)">│</text><text class="terminal-4174869913-r4" x="12.2" y="190.8" textLength="1073.6" clip-path="url(#terminal-4174869913-line-7)">&#160;&#160;Read&#160;pytmuxlib/model.py&#160;(94&#160;lines)&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-4174869913-r5" x="1085.8" y="190.8" textLength="12.2" clip-path="url(#terminal-4174869913-line-7)">│</text><text class="terminal-4174869913-r4" x="1098" y="190.8" textLength="12.2" clip-path="url(#terminal-4174869913-line-7)">
-</text><text class="terminal-4174869913-r5" x="0" y="215.2" textLength="12.2" clip-path="url(#terminal-4174869913-line-8)">│</text><text class="terminal-4174869913-r4" x="12.2" y="215.2" textLength="1073.6" clip-path="url(#terminal-4174869913-line-8)">&#160;&#160;Update&#160;pytmuxlib/model.py&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-4174869913-r5" x="1085.8" y="215.2" textLength="12.2" clip-path="url(#terminal-4174869913-line-8)">│</text><text class="terminal-4174869913-r4" x="1098" y="215.2" textLength="12.2" clip-path="url(#terminal-4174869913-line-8)">
-</text><text class="terminal-4174869913-r5" x="0" y="239.6" textLength="12.2" clip-path="url(#terminal-4174869913-line-9)">│</text><text class="terminal-4174869913-r4" x="12.2" y="239.6" textLength="1073.6" clip-path="url(#terminal-4174869913-line-9)">&#160;&#160;Update&#160;tests/test_model.py&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-4174869913-r5" x="1085.8" y="239.6" textLength="12.2" clip-path="url(#terminal-4174869913-line-9)">│</text><text class="terminal-4174869913-r4" x="1098" y="239.6" textLength="12.2" clip-path="url(#terminal-4174869913-line-9)">
-</text><text class="terminal-4174869913-r5" x="0" y="264" textLength="12.2" clip-path="url(#terminal-4174869913-line-10)">│</text><text class="terminal-4174869913-r4" x="12.2" y="264" textLength="1073.6" clip-path="url(#terminal-4174869913-line-10)">&#160;&#160;Bash(python3&#160;tests/run.py)&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-4174869913-r5" x="1085.8" y="264" textLength="12.2" clip-path="url(#terminal-4174869913-line-10)">│</text><text class="terminal-4174869913-r4" x="1098" y="264" textLength="12.2" clip-path="url(#terminal-4174869913-line-10)">
-</text><text class="terminal-4174869913-r5" x="0" y="288.4" textLength="12.2" clip-path="url(#terminal-4174869913-line-11)">│</text><text class="terminal-4174869913-r4" x="12.2" y="288.4" textLength="1073.6" clip-path="url(#terminal-4174869913-line-11)">&#160;&#160;⎿&#160;&#160;278&#160;passed,&#160;0&#160;failed&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-4174869913-r5" x="1085.8" y="288.4" textLength="12.2" clip-path="url(#terminal-4174869913-line-11)">│</text><text class="terminal-4174869913-r4" x="1098" y="288.4" textLength="12.2" clip-path="url(#terminal-4174869913-line-11)">
-</text><text class="terminal-4174869913-r5" x="0" y="312.8" textLength="12.2" clip-path="url(#terminal-4174869913-line-12)">│</text><text class="terminal-4174869913-r5" x="1085.8" y="312.8" textLength="12.2" clip-path="url(#terminal-4174869913-line-12)">│</text><text class="terminal-4174869913-r4" x="1098" y="312.8" textLength="12.2" clip-path="url(#terminal-4174869913-line-12)">
-</text><text class="terminal-4174869913-r5" x="0" y="337.2" textLength="12.2" clip-path="url(#terminal-4174869913-line-13)">│</text><text class="terminal-4174869913-r4" x="12.2" y="337.2" textLength="1073.6" clip-path="url(#terminal-4174869913-line-13)">&#160;&#160;12.3k&#160;tokens&#160;·&#160;ctx&#160;48%&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-4174869913-r5" x="1085.8" y="337.2" textLength="12.2" clip-path="url(#terminal-4174869913-line-13)">│</text><text class="terminal-4174869913-r4" x="1098" y="337.2" textLength="12.2" clip-path="url(#terminal-4174869913-line-13)">
-</text><text class="terminal-4174869913-r5" x="0" y="361.6" textLength="12.2" clip-path="url(#terminal-4174869913-line-14)">│</text><text class="terminal-4174869913-r5" x="1085.8" y="361.6" textLength="12.2" clip-path="url(#terminal-4174869913-line-14)">│</text><text class="terminal-4174869913-r4" x="1098" y="361.6" textLength="12.2" clip-path="url(#terminal-4174869913-line-14)">
-</text><text class="terminal-4174869913-r5" x="0" y="386" textLength="12.2" clip-path="url(#terminal-4174869913-line-15)">│</text><text class="terminal-4174869913-r4" x="12.2" y="386" textLength="1073.6" clip-path="url(#terminal-4174869913-line-15)">────────────────────────────────────────────&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-4174869913-r5" x="1085.8" y="386" textLength="12.2" clip-path="url(#terminal-4174869913-line-15)">│</text><text class="terminal-4174869913-r4" x="1098" y="386" textLength="12.2" clip-path="url(#terminal-4174869913-line-15)">
-</text><text class="terminal-4174869913-r5" x="0" y="410.4" textLength="12.2" clip-path="url(#terminal-4174869913-line-16)">│</text><text class="terminal-4174869913-r4" x="12.2" y="410.4" textLength="1073.6" clip-path="url(#terminal-4174869913-line-16)">&#160;&gt;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-4174869913-r5" x="1085.8" y="410.4" textLength="12.2" clip-path="url(#terminal-4174869913-line-16)">│</text><text class="terminal-4174869913-r4" x="1098" y="410.4" textLength="12.2" clip-path="url(#terminal-4174869913-line-16)">
-</text><text class="terminal-4174869913-r5" x="0" y="434.8" textLength="12.2" clip-path="url(#terminal-4174869913-line-17)">│</text><text class="terminal-4174869913-r4" x="12.2" y="434.8" textLength="1073.6" clip-path="url(#terminal-4174869913-line-17)">────────────────────────────────────────────&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-4174869913-r5" x="1085.8" y="434.8" textLength="12.2" clip-path="url(#terminal-4174869913-line-17)">│</text><text class="terminal-4174869913-r4" x="1098" y="434.8" textLength="12.2" clip-path="url(#terminal-4174869913-line-17)">
-</text><text class="terminal-4174869913-r5" x="0" y="459.2" textLength="12.2" clip-path="url(#terminal-4174869913-line-18)">│</text><text class="terminal-4174869913-r4" x="12.2" y="459.2" textLength="1073.6" clip-path="url(#terminal-4174869913-line-18)">&#160;&#160;⏵⏵&#160;auto-accept&#160;edits&#160;on&#160;(shift+tab&#160;to&#160;cycle)&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-4174869913-r5" x="1085.8" y="459.2" textLength="12.2" clip-path="url(#terminal-4174869913-line-18)">│</text><text class="terminal-4174869913-r4" x="1098" y="459.2" textLength="12.2" clip-path="url(#terminal-4174869913-line-18)">
-</text><text class="terminal-4174869913-r5" x="0" y="483.6" textLength="12.2" clip-path="url(#terminal-4174869913-line-19)">│</text><text class="terminal-4174869913-r5" x="1085.8" y="483.6" textLength="12.2" clip-path="url(#terminal-4174869913-line-19)">│</text><text class="terminal-4174869913-r4" x="1098" y="483.6" textLength="12.2" clip-path="url(#terminal-4174869913-line-19)">
-</text><text class="terminal-4174869913-r5" x="0" y="508" textLength="12.2" clip-path="url(#terminal-4174869913-line-20)">│</text><text class="terminal-4174869913-r5" x="1085.8" y="508" textLength="12.2" clip-path="url(#terminal-4174869913-line-20)">│</text><text class="terminal-4174869913-r4" x="1098" y="508" textLength="12.2" clip-path="url(#terminal-4174869913-line-20)">
-</text><text class="terminal-4174869913-r5" x="0" y="532.4" textLength="12.2" clip-path="url(#terminal-4174869913-line-21)">│</text><text class="terminal-4174869913-r5" x="1085.8" y="532.4" textLength="12.2" clip-path="url(#terminal-4174869913-line-21)">│</text><text class="terminal-4174869913-r4" x="1098" y="532.4" textLength="12.2" clip-path="url(#terminal-4174869913-line-21)">
-</text><text class="terminal-4174869913-r5" x="0" y="556.8" textLength="12.2" clip-path="url(#terminal-4174869913-line-22)">│</text><text class="terminal-4174869913-r5" x="1085.8" y="556.8" textLength="12.2" clip-path="url(#terminal-4174869913-line-22)">│</text><text class="terminal-4174869913-r4" x="1098" y="556.8" textLength="12.2" clip-path="url(#terminal-4174869913-line-22)">
-</text><text class="terminal-4174869913-r5" x="0" y="581.2" textLength="12.2" clip-path="url(#terminal-4174869913-line-23)">│</text><text class="terminal-4174869913-r5" x="1085.8" y="581.2" textLength="12.2" clip-path="url(#terminal-4174869913-line-23)">│</text><text class="terminal-4174869913-r4" x="1098" y="581.2" textLength="12.2" clip-path="url(#terminal-4174869913-line-23)">
-</text><text class="terminal-4174869913-r5" x="0" y="605.6" textLength="1098" clip-path="url(#terminal-4174869913-line-24)">└────────────────────────────────────────────────────────────────────────────────────────┘</text><text class="terminal-4174869913-r4" x="1098" y="605.6" textLength="12.2" clip-path="url(#terminal-4174869913-line-24)">
-</text><text class="terminal-4174869913-r2" x="12.2" y="630" textLength="256.2" clip-path="url(#terminal-4174869913-line-25)">&#160;12.3k&#160;tok&#160;·&#160;Σ&#160;1,900&#160;</text><text class="terminal-4174869913-r8" x="707.6" y="630" textLength="170.8" clip-path="url(#terminal-4174869913-line-25)">ssh:playground</text><text class="terminal-4174869913-r1" x="890.6" y="630" textLength="61" clip-path="url(#terminal-4174869913-line-25)">16:45</text><text class="terminal-4174869913-r1" x="963.8" y="630" textLength="122" clip-path="url(#terminal-4174869913-line-25)">2026-06-06</text>
+    <g transform="translate(9, 41)" clip-path="url(#terminal-1110970247-clip-terminal)">
+    <rect fill="#0178d4" x="12.2" y="1.5" width="146.4" height="24.65" shape-rendering="crispEdges"/><rect fill="#4ebf71" x="183" y="1.5" width="36.6" height="24.65" shape-rendering="crispEdges"/><rect fill="#0053aa" x="12.2" y="50.3" width="1146.8" height="24.65" shape-rendering="crispEdges"/><rect fill="#b93c5b" x="1171.2" y="50.3" width="36.6" height="24.65" shape-rendering="crispEdges"/><rect fill="#3a3a3a" x="12.2" y="221.1" width="24.4" height="24.65" shape-rendering="crispEdges"/><rect fill="#3a3a3a" x="36.6" y="221.1" width="475.8" height="24.65" shape-rendering="crispEdges"/><rect fill="#3a3a3a" x="512.4" y="221.1" width="695.4" height="24.65" shape-rendering="crispEdges"/><rect fill="#3a3a3a" x="12.2" y="465.1" width="24.4" height="24.65" shape-rendering="crispEdges"/><rect fill="#3a3a3a" x="36.6" y="465.1" width="305" height="24.65" shape-rendering="crispEdges"/><rect fill="#3a3a3a" x="341.6" y="465.1" width="866.2" height="24.65" shape-rendering="crispEdges"/><rect fill="#c5c8c6" x="36.6" y="611.5" width="12.2" height="24.65" shape-rendering="crispEdges"/><rect fill="#b93c5b" x="12.2" y="709.1" width="48.8" height="24.65" shape-rendering="crispEdges"/><rect fill="#004578" x="61" y="709.1" width="414.8" height="24.65" shape-rendering="crispEdges"/>
+    <g class="terminal-1110970247-matrix">
+    <text class="terminal-1110970247-r2" x="12.2" y="20" textLength="146.4" clip-path="url(#terminal-1110970247-line-0)">&#160;◐&#160;1:claude&#160;</text><text class="terminal-1110970247-r3" x="183" y="20" textLength="36.6" clip-path="url(#terminal-1110970247-line-0)">[+]</text><text class="terminal-1110970247-r4" x="1220" y="20" textLength="12.2" clip-path="url(#terminal-1110970247-line-0)">
+</text><text class="terminal-1110970247-r5" x="0" y="44.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-1)">┌</text><text class="terminal-1110970247-r6" x="12.2" y="44.4" textLength="146.4" clip-path="url(#terminal-1110970247-line-1)">▀▀▀▀▀▀▀▀▀▀▀▀</text><text class="terminal-1110970247-r5" x="158.6" y="44.4" textLength="1061.4" clip-path="url(#terminal-1110970247-line-1)">──────────────────────────────────────────────────────────────────────────────────────┐</text><text class="terminal-1110970247-r4" x="1220" y="44.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-1)">
+</text><text class="terminal-1110970247-r5" x="0" y="68.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-2)">│</text><text class="terminal-1110970247-r2" x="12.2" y="68.8" textLength="1012.6" clip-path="url(#terminal-1110970247-line-2)">&#160;▷&#160;스크롤백은&#160;어떻게&#160;보나요?&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-1110970247-r2" x="1171.2" y="68.8" textLength="36.6" clip-path="url(#terminal-1110970247-line-2)">[x]</text><text class="terminal-1110970247-r5" x="1207.8" y="68.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-2)">│</text><text class="terminal-1110970247-r4" x="1220" y="68.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-2)">
+</text><text class="terminal-1110970247-r5" x="0" y="93.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-3)">│</text><text class="terminal-1110970247-r7" x="12.2" y="93.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-3)">│</text><text class="terminal-1110970247-r8" x="122" y="93.2" textLength="451.4" clip-path="url(#terminal-1110970247-line-3)">Opus&#160;4.8&#160;(1M&#160;context)&#160;·&#160;Claude&#160;Max&#160;·&#160;</text><text class="terminal-1110970247-r7" x="658.8" y="93.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-3)">│</text><text class="terminal-1110970247-r4" x="671" y="93.2" textLength="524.6" clip-path="url(#terminal-1110970247-line-3)">&#160;Added&#160;glob&#160;pattern&#160;support&#160;in&#160;deny&#160;rule&#160;…&#160;</text><text class="terminal-1110970247-r7" x="1195.6" y="93.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-3)">│</text><text class="terminal-1110970247-r5" x="1207.8" y="93.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-3)">│</text><text class="terminal-1110970247-r4" x="1220" y="93.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-3)">
+</text><text class="terminal-1110970247-r5" x="0" y="117.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-4)">│</text><text class="terminal-1110970247-r7" x="12.2" y="117.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-4)">│</text><text class="terminal-1110970247-r8" x="122" y="117.6" textLength="378.2" clip-path="url(#terminal-1110970247-line-4)">user@example.com&#x27;s&#160;Organization</text><text class="terminal-1110970247-r7" x="658.8" y="117.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-4)">│</text><text class="terminal-1110970247-r9" x="683.2" y="117.6" textLength="280.6" clip-path="url(#terminal-1110970247-line-4)">/release-notes&#160;for&#160;more</text><text class="terminal-1110970247-r7" x="1195.6" y="117.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-4)">│</text><text class="terminal-1110970247-r5" x="1207.8" y="117.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-4)">│</text><text class="terminal-1110970247-r4" x="1220" y="117.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-4)">
+</text><text class="terminal-1110970247-r5" x="0" y="142" textLength="12.2" clip-path="url(#terminal-1110970247-line-5)">│</text><text class="terminal-1110970247-r7" x="12.2" y="142" textLength="12.2" clip-path="url(#terminal-1110970247-line-5)">│</text><text class="terminal-1110970247-r8" x="158.6" y="142" textLength="366" clip-path="url(#terminal-1110970247-line-5)">~/p4/playground/scripts/pytmux</text><text class="terminal-1110970247-r7" x="658.8" y="142" textLength="12.2" clip-path="url(#terminal-1110970247-line-5)">│</text><text class="terminal-1110970247-r7" x="1195.6" y="142" textLength="12.2" clip-path="url(#terminal-1110970247-line-5)">│</text><text class="terminal-1110970247-r5" x="1207.8" y="142" textLength="12.2" clip-path="url(#terminal-1110970247-line-5)">│</text><text class="terminal-1110970247-r4" x="1220" y="142" textLength="12.2" clip-path="url(#terminal-1110970247-line-5)">
+</text><text class="terminal-1110970247-r5" x="0" y="166.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-6)">│</text><text class="terminal-1110970247-r7" x="12.2" y="166.4" textLength="1195.6" clip-path="url(#terminal-1110970247-line-6)">╰────────────────────────────────────────────────────────────────────────────────────────────────╯</text><text class="terminal-1110970247-r5" x="1207.8" y="166.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-6)">│</text><text class="terminal-1110970247-r4" x="1220" y="166.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-6)">
+</text><text class="terminal-1110970247-r5" x="0" y="190.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-7)">│</text><text class="terminal-1110970247-r5" x="1207.8" y="190.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-7)">│</text><text class="terminal-1110970247-r4" x="1220" y="190.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-7)">
+</text><text class="terminal-1110970247-r5" x="0" y="215.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-8)">│</text><text class="terminal-1110970247-r5" x="1207.8" y="215.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-8)">│</text><text class="terminal-1110970247-r4" x="1220" y="215.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-8)">
+</text><text class="terminal-1110970247-r5" x="0" y="239.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-9)">│</text><text class="terminal-1110970247-r10" x="12.2" y="239.6" textLength="24.4" clip-path="url(#terminal-1110970247-line-9)">❯&#160;</text><text class="terminal-1110970247-r11" x="36.6" y="239.6" textLength="305" clip-path="url(#terminal-1110970247-line-9)">pytmux&#160;가&#160;무엇인지&#160;두&#160;문장으로&#160;설명해줘</text><text class="terminal-1110970247-r5" x="1207.8" y="239.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-9)">│</text><text class="terminal-1110970247-r4" x="1220" y="239.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-9)">
+</text><text class="terminal-1110970247-r5" x="0" y="264" textLength="12.2" clip-path="url(#terminal-1110970247-line-10)">│</text><text class="terminal-1110970247-r5" x="1207.8" y="264" textLength="12.2" clip-path="url(#terminal-1110970247-line-10)">│</text><text class="terminal-1110970247-r4" x="1220" y="264" textLength="12.2" clip-path="url(#terminal-1110970247-line-10)">
+</text><text class="terminal-1110970247-r5" x="0" y="288.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-11)">│</text><text class="terminal-1110970247-r8" x="36.6" y="288.4" textLength="48.8" clip-path="url(#terminal-1110970247-line-11)">Ran&#160;</text><text class="terminal-1110970247-r12" x="85.4" y="288.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-11)">1</text><text class="terminal-1110970247-r8" x="97.6" y="288.4" textLength="183" clip-path="url(#terminal-1110970247-line-11)">&#160;shell&#160;command&#160;</text><text class="terminal-1110970247-r5" x="1207.8" y="288.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-11)">│</text><text class="terminal-1110970247-r4" x="1220" y="288.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-11)">
+</text><text class="terminal-1110970247-r5" x="0" y="312.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-12)">│</text><text class="terminal-1110970247-r5" x="1207.8" y="312.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-12)">│</text><text class="terminal-1110970247-r4" x="1220" y="312.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-12)">
+</text><text class="terminal-1110970247-r5" x="0" y="337.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-13)">│</text><text class="terminal-1110970247-r11" x="12.2" y="337.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-13)">⏺</text><text class="terminal-1110970247-r4" x="24.4" y="337.2" textLength="829.6" clip-path="url(#terminal-1110970247-line-13)">&#160;pytmux는&#160;Python과&#160;Textual로&#160;만든&#160;tmux&#160;유사&#160;터미널&#160;멀티플렉서로,&#160;하나의&#160;터미널&#160;안에서&#160;여러&#160;셸을&#160;&#160;</text><text class="terminal-1110970247-r5" x="1207.8" y="337.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-13)">│</text><text class="terminal-1110970247-r4" x="1220" y="337.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-13)">
+</text><text class="terminal-1110970247-r5" x="0" y="361.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-14)">│</text><text class="terminal-1110970247-r4" x="12.2" y="361.6" textLength="744.2" clip-path="url(#terminal-1110970247-line-14)">&#160;&#160;패널·탭으로&#160;나눠&#160;쓸&#160;수&#160;있게&#160;해줍니다.&#160;셸&#160;PTY를&#160;백그라운드&#160;데몬(서버)이&#160;보유하기&#160;때문에&#160;앱이나&#160;&#160;&#160;</text><text class="terminal-1110970247-r5" x="1207.8" y="361.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-14)">│</text><text class="terminal-1110970247-r4" x="1220" y="361.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-14)">
+</text><text class="terminal-1110970247-r5" x="0" y="386" textLength="12.2" clip-path="url(#terminal-1110970247-line-15)">│</text><text class="terminal-1110970247-r4" x="12.2" y="386" textLength="756.4" clip-path="url(#terminal-1110970247-line-15)">&#160;&#160;상위&#160;터미널&#160;창을&#160;닫아도&#160;셸&#160;세션이&#160;계속&#160;살아있고,&#160;다시&#160;실행하면&#160;이어서&#160;붙을&#160;수&#160;있습니다.&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="terminal-1110970247-r5" x="1207.8" y="386" textLength="12.2" clip-path="url(#terminal-1110970247-line-15)">│</text><text class="terminal-1110970247-r4" x="1220" y="386" textLength="12.2" clip-path="url(#terminal-1110970247-line-15)">
+</text><text class="terminal-1110970247-r5" x="0" y="410.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-16)">│</text><text class="terminal-1110970247-r5" x="1207.8" y="410.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-16)">│</text><text class="terminal-1110970247-r4" x="1220" y="410.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-16)">
+</text><text class="terminal-1110970247-r5" x="0" y="434.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-17)">│</text><text class="terminal-1110970247-r8" x="12.2" y="434.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-17)">✻</text><text class="terminal-1110970247-r8" x="36.6" y="434.8" textLength="158.6" clip-path="url(#terminal-1110970247-line-17)">Cooked&#160;for&#160;7s</text><text class="terminal-1110970247-r5" x="1207.8" y="434.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-17)">│</text><text class="terminal-1110970247-r4" x="1220" y="434.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-17)">
+</text><text class="terminal-1110970247-r5" x="0" y="459.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-18)">│</text><text class="terminal-1110970247-r5" x="1207.8" y="459.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-18)">│</text><text class="terminal-1110970247-r4" x="1220" y="459.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-18)">
+</text><text class="terminal-1110970247-r5" x="0" y="483.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-19)">│</text><text class="terminal-1110970247-r10" x="12.2" y="483.6" textLength="24.4" clip-path="url(#terminal-1110970247-line-19)">❯&#160;</text><text class="terminal-1110970247-r11" x="36.6" y="483.6" textLength="170.8" clip-path="url(#terminal-1110970247-line-19)">스크롤백은&#160;어떻게&#160;보나요?</text><text class="terminal-1110970247-r5" x="1207.8" y="483.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-19)">│</text><text class="terminal-1110970247-r4" x="1220" y="483.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-19)">
+</text><text class="terminal-1110970247-r5" x="0" y="508" textLength="12.2" clip-path="url(#terminal-1110970247-line-20)">│</text><text class="terminal-1110970247-r5" x="1207.8" y="508" textLength="12.2" clip-path="url(#terminal-1110970247-line-20)">│</text><text class="terminal-1110970247-r4" x="1220" y="508" textLength="12.2" clip-path="url(#terminal-1110970247-line-20)">
+</text><text class="terminal-1110970247-r5" x="0" y="532.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-21)">│</text><text class="terminal-1110970247-r7" x="12.2" y="532.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-21)">·</text><text class="terminal-1110970247-r13" x="36.6" y="532.4" textLength="24.4" clip-path="url(#terminal-1110970247-line-21)">Sw</text><text class="terminal-1110970247-r7" x="61" y="532.4" textLength="97.6" clip-path="url(#terminal-1110970247-line-21)">irling…&#160;</text><text class="terminal-1110970247-r5" x="1207.8" y="532.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-21)">│</text><text class="terminal-1110970247-r4" x="1220" y="532.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-21)">
+</text><text class="terminal-1110970247-r5" x="0" y="556.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-22)">│</text><text class="terminal-1110970247-r8" x="12.2" y="556.8" textLength="927.2" clip-path="url(#terminal-1110970247-line-22)">&#160;&#160;⎿&#160; Tip:&#160;Run&#160;tasks&#160;in&#160;the&#160;cloud&#160;while&#160;you&#160;keep&#160;coding&#160;locally&#160;·&#160;clau.de/web</text><text class="terminal-1110970247-r5" x="1207.8" y="556.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-22)">│</text><text class="terminal-1110970247-r4" x="1220" y="556.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-22)">
+</text><text class="terminal-1110970247-r5" x="0" y="581.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-23)">│</text><text class="terminal-1110970247-r5" x="1207.8" y="581.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-23)">│</text><text class="terminal-1110970247-r4" x="1220" y="581.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-23)">
+</text><text class="terminal-1110970247-r5" x="0" y="605.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-24)">│</text><text class="terminal-1110970247-r14" x="12.2" y="605.6" textLength="1195.6" clip-path="url(#terminal-1110970247-line-24)">──────────────────────────────────────────────────────────────────────────────────────────────────</text><text class="terminal-1110970247-r5" x="1207.8" y="605.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-24)">│</text><text class="terminal-1110970247-r4" x="1220" y="605.6" textLength="12.2" clip-path="url(#terminal-1110970247-line-24)">
+</text><text class="terminal-1110970247-r5" x="0" y="630" textLength="12.2" clip-path="url(#terminal-1110970247-line-25)">│</text><text class="terminal-1110970247-r8" x="12.2" y="630" textLength="24.4" clip-path="url(#terminal-1110970247-line-25)">❯ </text><text class="terminal-1110970247-r5" x="1207.8" y="630" textLength="12.2" clip-path="url(#terminal-1110970247-line-25)">│</text><text class="terminal-1110970247-r4" x="1220" y="630" textLength="12.2" clip-path="url(#terminal-1110970247-line-25)">
+</text><text class="terminal-1110970247-r5" x="0" y="654.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-26)">│</text><text class="terminal-1110970247-r14" x="12.2" y="654.4" textLength="1195.6" clip-path="url(#terminal-1110970247-line-26)">──────────────────────────────────────────────────────────────────────────────────────────────────</text><text class="terminal-1110970247-r5" x="1207.8" y="654.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-26)">│</text><text class="terminal-1110970247-r4" x="1220" y="654.4" textLength="12.2" clip-path="url(#terminal-1110970247-line-26)">
+</text><text class="terminal-1110970247-r5" x="0" y="678.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-27)">│</text><text class="terminal-1110970247-r8" x="36.6" y="678.8" textLength="195.2" clip-path="url(#terminal-1110970247-line-27)">esc&#160;to&#160;interrupt</text><text class="terminal-1110970247-r5" x="1207.8" y="678.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-27)">│</text><text class="terminal-1110970247-r4" x="1220" y="678.8" textLength="12.2" clip-path="url(#terminal-1110970247-line-27)">
+</text><text class="terminal-1110970247-r5" x="0" y="703.2" textLength="1220" clip-path="url(#terminal-1110970247-line-28)">└──────────────────────────────────────────────────────────────────────────────────────────────────┘</text><text class="terminal-1110970247-r4" x="1220" y="703.2" textLength="12.2" clip-path="url(#terminal-1110970247-line-28)">
+</text><text class="terminal-1110970247-r2" x="12.2" y="727.6" textLength="48.8" clip-path="url(#terminal-1110970247-line-29)">REC&#160;</text><text class="terminal-1110970247-r2" x="61" y="727.6" textLength="414.8" clip-path="url(#terminal-1110970247-line-29)">&#160;1M&#160;ctx&#160;·&#160;Σ&#160;239&#160;@user@example.com&#160;</text><text class="terminal-1110970247-r16" x="829.6" y="727.6" textLength="170.8" clip-path="url(#terminal-1110970247-line-29)">ssh:playground</text><text class="terminal-1110970247-r1" x="1012.6" y="727.6" textLength="61" clip-path="url(#terminal-1110970247-line-29)">18:53</text><text class="terminal-1110970247-r1" x="1085.8" y="727.6" textLength="122" clip-path="url(#terminal-1110970247-line-29)">2026-06-06</text>
     </g>
     </g>
 </svg>

@@ -1,16 +1,15 @@
 # 매뉴얼 스크린샷 — 실제 화면 캡처 시나리오
 
 > **상태**: ✅ 1차 구현됨(방식 ① Textual SVG). `scripts/gen_screenshots.py` 가 실제
-> 클라이언트를 헤드리스로 운전해 21개 장면을 SVG 로 떠 `docs/image/` 에 저장하고,
-> `docs/MANUAL.md` 가 이를 싣는다. 본 문서는 그 설계 기준선이자 방법 조사 기록이다.
-> Claude 연동 스크린샷(상태아이콘·스티키 헤더·토큰·권한모드)도 **가짜 상태 주입 없이**
-> 실제로 캡처한다 — 서버의 Claude 휴리스틱이 출력 텍스트 기반이라, 화면을 흉내 내는
-> 스탠드인을 패널에서 띄우면 진짜 서버 경로로 감지된다(§3-A 보강). 더 나아가 **진짜
-> `claude` CLI 를 패널에서 실행**해 캡처하는 라이브 장면(`22-claude-real`)도 있다 — 실제
-> API 호출이 일어나므로 결정적 기본 생성에선 제외하고, 이름을 지정했을 때만 돈다.
-> **생성**: `python3 scripts/gen_screenshots.py`(전체 21개 결정적 장면, 장면별 격리
-> 서브프로세스) 또는 `python3 scripts/gen_screenshots.py <이름>`(단일 장면; 라이브
-> `22-claude-real` 포함). 남은 일: 애니메이션 데모는 **VHS**, 회귀 `tests/test_shotgen.py`.
+> 클라이언트를 헤드리스로 운전해 SVG 로 떠 `docs/image/` 에 저장하고, `docs/MANUAL.md`
+> 가 이를 싣는다. 본 문서는 그 설계 기준선이자 방법 조사 기록이다. 장면은 두 갈래다:
+> ① **결정적 장면 17개**(API·네트워크 불필요) — 무인자 `gen_screenshots.py` 가 장면별
+> 격리 서브프로세스로 전부 생성. ② **라이브 Claude 컷 5개**(11/12/13/20/22) — **진짜
+> `claude` CLI 를 패널에서 한 세션 실행**해 처리중(◐)·응답완료·자동재개(AR)·권한모드
+> 팝업·프롬프트 히스토리를 캡처한다(`claude_suite`). 실제 API 호출(인증·토큰)이라
+> 결정적 기본 생성에선 제외하고 **`python3 scripts/gen_screenshots.py claude-suite`** 로만
+> 돈다. 저장 시 `_redact_svg` 가 계정 이메일·환영 배너 이름 등 PII 를 자동 마스킹한다
+> (공개 저장소 보호). 남은 일: 애니메이션 데모는 **VHS**, 회귀 `tests/test_shotgen.py`.
 
 ---
 

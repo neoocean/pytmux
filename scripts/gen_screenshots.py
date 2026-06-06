@@ -3,10 +3,15 @@
 
 진짜 서버(임시 소켓)를 띄우고 **실제 클라이언트 앱**(`build_client_app`)을 Textual
 헤드리스(`run_test`)로 운전해, 각 장면을 클라가 실제로 그리는 그대로 **SVG** 로 떠
-`docs/img/` 에 저장한다. 위젯 상태 단언이 아니라 사용자가 보는 화면 그 자체다.
+`docs/image/` 에 저장한다. 위젯 상태 단언이 아니라 사용자가 보는 화면 그 자체다.
 
-  python3 scripts/gen_screenshots.py            # 전체 생성 → docs/img/*.svg
-  python3 scripts/gen_screenshots.py 02-split   # 이름에 매칭되는 장면만
+  python3 scripts/gen_screenshots.py            # 결정적 장면 전체 → docs/image/*.svg
+  python3 scripts/gen_screenshots.py 02-split   # 이름에 매칭되는 결정적 장면만
+  python3 scripts/gen_screenshots.py claude-suite  # 라이브: 진짜 claude 실행해 §11 컷 5장
+
+결정적 장면(API 불필요)과 라이브 Claude 컷(진짜 `claude` 한 세션 실행 — 11/12/13/20/22)
+두 갈래다. 라이브 컷은 실제 API 호출이라 무인자 전체 생성에서 제외하고 claude-suite 로만
+돈다. 저장 SVG 의 계정 PII(이메일·환영 배너 이름)는 _redact_svg 가 마스킹한다.
 
 POSIX 전용(서버/PTY 가 stdlib pty 기반). 헤드리스라 디스플레이/실TTY 불필요.
 시계·호스트명 등 환경값은 실제값이 박힌다(재생성 시 그 부분만 diff 날 수 있음).
@@ -27,38 +32,6 @@ from harness import make_app, server_only, teardown  # noqa: E402
 
 OUT_DIR = os.path.join(_UNIT, "docs", "image")
 SIZE = (90, 26)
-
-# Claude Code CLI 화면을 흉내 내는 스탠드인. 서버의 Claude 휴리스틱
-# (pytmuxlib/claude.py)이 **출력 텍스트**로 패널을 Claude 로 감지하므로(명령 이름이
-# 아님), 이 화면을 패널에서 띄우면 진짜 서버 경로로 헤더 예약·상태아이콘·토큰 집계가
-# 동작한다 — 즉 Claude 연동 스크린샷도 가짜 상태 주입 없이 실제로 캡처된다.
-FAKE_CLAUDE = """\
-import sys, time
-F = '''\\
-\\u273b Welcome to Claude Code
-
-> \\ub9ac\\ud329\\ud130\\ub9c1\\ud558\\uace0 \\ud14c\\uc2a4\\ud2b8 \\ucd94\\uac00\\ud574\\uc918
-
-\\u25cf Crunching\\u2026 (38s \\u00b7 \\u2193 1.9k tokens \\u00b7 esc to interrupt)
-  Read pytmuxlib/model.py (94 lines)
-  Update pytmuxlib/model.py
-  Update tests/test_model.py
-  Bash(python3 tests/run.py)
-  \\u23bf  278 passed, 0 failed
-
-  12.3k tokens \\u00b7 ctx 48%
-
-\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500
- >
-\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500
-  \\u23f5\\u23f5 auto-accept edits on (shift+tab to cycle)
-'''
-sys.stdout.write("\\x1b[2J\\x1b[H" + F)
-sys.stdout.flush()
-time.sleep(120)
-"""
-_FC_PATH = "/tmp/pytmux_fakeclaude.py"
-
 
 async def _settle(pilot, app, want_panes=None, tries=40):
     """레이아웃/화면 메시지가 흘러들어 합성될 때까지 잠깐 기다린다."""
@@ -99,20 +72,45 @@ def _pane_text(app):
     return "\n".join("".join(s[0] for s in row) for row in c[0]) if c else ""
 
 
-async def _run_fake_claude(pilot, app):
-    """활성 패널에서 Claude 흉내 스탠드인을 띄우고, 서버가 Claude 로 감지할 때까지
-    대기한다(출력 기반 휴리스틱이라 진짜 서버 경로로 동작)."""
-    with open(_FC_PATH, "w", encoding="utf-8") as f:
-        f.write(FAKE_CLAUDE)
-    for ch in f"python3 {_FC_PATH}":
-        await pilot.press("space" if ch == " " else ch)
+async def _launch_claude(pilot, app):
+    """활성 패널에서 **진짜** `claude` 를 실행하고 TUI 가 뜰 때까지 대기."""
+    app.send_cmd("rename_window", name="claude")
+    await pilot.pause(0.3)
+    await _type(pilot, "claude")
     await pilot.press("enter")
-    for _ in range(120):
-        await pilot.pause(0.05)
-        ci = app.pane_claude.get(_aid(app), {})
-        if ci.get("claude") and ci.get("prompt"):
+    for _ in range(250):                       # TUI 기동 대기(단축키 힌트/입력박스)
+        await pilot.pause(0.1)
+        if "shortcuts" in _pane_text(app).lower():
             return True
-    return False
+    raise RuntimeError("claude TUI 기동 실패")
+
+
+async def _send_prompt(pilot, app, text):
+    await _type(pilot, text)
+    await pilot.pause(0.4)
+    await pilot.press("enter")
+
+
+def _check_api_error(app):
+    t = _pane_text(app)
+    if "Overloaded" in t or "API Error" in t:
+        raise RuntimeError("claude API 오류(예: 529 Overloaded) — 재시도")
+
+
+async def _wait_claude(pilot, app, target, tries=600):
+    """target("busy"/"idle")까지 대기. idle 은 한 번 busy 를 거친 뒤의 idle(=응답완료)."""
+    became_busy = False
+    for _ in range(tries):
+        await pilot.pause(0.1)
+        _check_api_error(app)
+        st = app.pane_claude.get(_aid(app), {}).get("claude")
+        if st == "busy":
+            became_busy = True
+            if target == "busy":
+                return
+        if target == "idle" and became_busy and st == "idle":
+            return
+    raise RuntimeError(f"claude {target} 대기 시간 초과")
 
 
 # ─────────────────────────── 장면 정의 ───────────────────────────
@@ -187,27 +185,6 @@ async def confirm_tab(app, pilot):
     await pilot.pause(0.4)
 
 
-async def claude(app, pilot):
-    app.send_cmd("rename_window", name="claude")
-    await pilot.pause(0.3)
-    await _run_fake_claude(pilot, app)
-    await pilot.pause(0.5)
-
-
-async def claude_autoresume(app, pilot):
-    app.send_cmd("rename_window", name="claude")
-    await pilot.pause(0.3)
-    await _run_fake_claude(pilot, app)
-    app.send_cmd("set_autoresume")     # prefix R = 토큰리밋 자동재개 토글 → 상태줄 AR
-    await pilot.pause(0.6)
-
-
-async def perm_mode(app, pilot):
-    from pytmuxlib.clientscreens import PermModeScreen
-    app.push_screen(PermModeScreen("auto"))
-    await pilot.pause(0.4)
-
-
 async def info_popup(app, pilot):
     from pytmuxlib.clientscreens import InfoTabsScreen
     tabs = [
@@ -269,24 +246,6 @@ async def confirm_tab_last(app, pilot):
     await pilot.pause(0.4)
 
 
-async def prompt_history(app, pilot):
-    # Claude 패널의 스티키 헤더(첫 줄, 처리 중 프롬프트)를 클릭하면 프롬프트
-    # 히스토리 팝업이 열린다. 대표적인 히스토리를 넣어 시간순 목록을 보인다.
-    app.send_cmd("rename_window", name="claude")
-    await pilot.pause(0.3)
-    await _run_fake_claude(pilot, app)
-    aid = _aid(app)
-    info = app.pane_claude.get(aid) or {}
-    info["history"] = [
-        "버그 재현 케이스 먼저 작성해줘",
-        "model.py 의 렌더 캐시 무효화 정리",
-        "리팩터링하고 테스트 추가해줘",
-    ]
-    app.pane_claude[aid] = info
-    app.open_prompt_history(aid)
-    await pilot.pause(0.4)
-
-
 async def restart_check(app, pilot):
     # restart-all 드라이런(restart-check) — 실제로 안 하고 안전 점검 PASS/FAIL 팝업.
     app._show_restart_check_popup({
@@ -297,39 +256,84 @@ async def restart_check(app, pilot):
     await pilot.pause(0.4)
 
 
-async def claude_real(app, pilot):
-    """**진짜** Claude Code CLI 를 패널에서 실행해 캡처(스탠드인 아님).
+# 진짜 Claude Code 한 세션에서 캡처하는 §11 컷 묶음(라이브 — 실제 API 호출).
+CLAUDE_OUTPUTS = ["11-claude", "12-claude-autoresume", "13-perm-mode",
+                  "20-prompt-history", "22-claude-real"]
 
-    `claude` 가 PATH 에 있어야 하고, 실제 API 호출(인증·네트워크·토큰)이 일어난다.
-    그래서 이 장면은 결정적 기본 생성(_orchestrate)에서 제외하고, 이름을 지정했을
-    때만 돈다. 프롬프트를 보내 응답이 끝난(idle) 화면을 캡처한다 — 서버의 Claude
-    휴리스틱이 진짜 출력을 감지해 스티키 헤더·상태아이콘·토큰을 그대로 채운다."""
+
+async def _claude_suite_once():
+    """진짜 `claude` 한 세션을 운전해 §11 세부 컷 5장을 모두 캡처한다.
+
+    프롬프트 1회로 idle(응답완료)·autoresume·권한모드 팝업·히스토리 팝업을 찍고,
+    프롬프트 2회째의 busy 상태로 처리중(◐) 컷을 찍는다(환영 배너가 위로 밀려 계정
+    이름이 안 보이는 상태). 저장 시 _redact_svg 가 이메일 등 PII 를 마스킹한다."""
+    srv, task, sock = await server_only()
+    app = make_app(sock, {}, "main")
+
+    async def shot(pilot, name):
+        app._composite()
+        app.refresh()
+        await pilot.pause(0.4)
+        os.makedirs(OUT_DIR, exist_ok=True)
+        p = os.path.join(OUT_DIR, name + ".svg")
+        app.save_screenshot(p)
+        _redact_svg(p)
+        print(f"  ✓ {name}.svg")
+
+    try:
+        async with app.run_test(size=(100, 30)) as pilot:
+            await _settle(pilot, app, want_panes=1)
+            await _wait_painted(pilot, app)
+            await _launch_claude(pilot, app)
+            aid = _aid(app)
+            # ── 프롬프트 1 → 응답완료(idle)
+            await _send_prompt(pilot, app, "pytmux 가 무엇인지 두 문장으로 설명해줘")
+            await _wait_claude(pilot, app, "idle")
+            await pilot.pause(0.6)
+            await shot(pilot, "22-claude-real")            # 실제 실행(응답완료)
+            # ── 자동재개(AR) 토글 → 상태줄 AR 배지
+            app.send_cmd("set_autoresume")
+            await pilot.pause(0.6)
+            await shot(pilot, "12-claude-autoresume")
+            app.send_cmd("set_autoresume")                 # 원복(off)
+            await pilot.pause(0.3)
+            # ── 권한모드 선택 팝업(footer 클릭 상당)
+            app.open_perm_mode(aid)
+            await pilot.pause(0.5)
+            await shot(pilot, "13-perm-mode")
+            await pilot.press("escape")
+            await pilot.pause(0.3)
+            # ── 프롬프트 2 → 처리중(busy) 컷(◐ + 스티키 헤더 + 토큰)
+            await _send_prompt(pilot, app, "스크롤백은 어떻게 보나요?")
+            await _wait_claude(pilot, app, "busy")
+            await pilot.pause(1.0)
+            await shot(pilot, "11-claude")
+            # ── 프롬프트 히스토리 팝업(헤더 클릭) — 보낸 프롬프트 2개가 시간순
+            app.open_prompt_history(aid)
+            await pilot.pause(0.5)
+            await shot(pilot, "20-prompt-history")
+            await pilot.press("escape")
+            await pilot.pause(0.2)
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def claude_suite(retries=4):
+    """라이브 Claude 컷 묶음 생성(실제 API 호출). 일시 오류(529 등)엔 재시도."""
     import shutil
     if not shutil.which("claude"):
-        raise RuntimeError("claude CLI 가 PATH 에 없음 — 실제 Claude Code 가 필요합니다")
-    app.send_cmd("rename_window", name="claude")
-    await pilot.pause(0.3)
-    await _type(pilot, "claude")
-    await pilot.press("enter")
-    for _ in range(200):                       # TUI 기동 대기(입력박스/단축키 힌트)
-        await pilot.pause(0.1)
-        if "shortcuts" in _pane_text(app).lower():
-            break
-    await _type(pilot, "pytmux 가 무엇인지 두 문장으로 설명해줘")
-    await pilot.pause(0.4)
-    await pilot.press("enter")
-    became_busy = False
-    for _ in range(450):                       # 최대 ~45s: busy → 응답완료(idle)까지
-        await pilot.pause(0.1)
-        t = _pane_text(app)
-        if "Overloaded" in t or "API Error" in t:
-            raise RuntimeError("claude API 오류(예: 529 Overloaded) — 재시도")
-        st = app.pane_claude.get(_aid(app), {}).get("claude")
-        if st == "busy":
-            became_busy = True
-        if became_busy and st == "idle":
-            break
-    await pilot.pause(0.6)
+        print("  ✗ claude CLI 가 PATH 에 없음 — 실제 Claude Code 가 필요합니다")
+        return 1
+    print(f"실제 Claude Code 캡처(라이브) → {OUT_DIR}")
+    for attempt in range(1, retries + 1):
+        try:
+            await _claude_suite_once()
+            return 0
+        except Exception as e:  # noqa: BLE001  일시 오류는 통째로 재시도
+            print(f"  … claude-suite 오류({type(e).__name__}: {e}), "
+                  f"재시도 {attempt}/{retries}")
+    print("  ✗ claude-suite 실패")
+    return 1
 
 
 # 장면: (이름, 설명, 운전함수[, 크기]). 크기 생략 시 SIZE(90×26). 큰 달력은 블록-숫자
@@ -346,25 +350,18 @@ SCENES = [
     ("08-tabs-multi", "탭 여러 개 + 이름변경", tabs_multi),
     ("09-calendar", "큰 달력 오버레이(cal) — 블록-숫자", calendar_big, BIG),
     ("10-confirm-tab", "탭 닫기 확인 박스(탭 2개 이상)", confirm_tab),
-    ("11-claude", "Claude 처리중 — 탭 아이콘 ◐·스티키 헤더·토큰", claude),
-    ("12-claude-autoresume", "Claude + 토큰리밋 자동재개(상태줄 AR)", claude_autoresume),
-    ("13-perm-mode", "Claude 권한모드 선택 팝업(auto/default/plan)", perm_mode),
     ("14-info-popup", "통합 정보 팝업(캡처·토큰·서버)", info_popup),
     ("15-scrollback", "스크롤백(복사) 모드 — 지난 출력", scrollback),
     ("16-degraded", "네트워크 degraded — 패널 외곽선 빨강", degraded),
     ("17-command-popup", "명령 목록 팝업(? / help) — 카테고리 탭·검색·스크롤", command_popup),
     ("18-clock", "시계 모드 — 큰 블록 시계", clock),
     ("19-confirm-tab-last", "마지막 탭 닫기 — pytmux 종료 경고 팝업", confirm_tab_last),
-    ("20-prompt-history", "Claude 프롬프트 히스토리 팝업(헤더 클릭)", prompt_history),
     ("21-restart-check", "restart-check 드라이런 — 작업보존 재시작 안전점검", restart_check),
 ]
-
-# 라이브(실호출) 장면 — 진짜 외부 도구를 돌려 캡처한다. 결정적이지 않고 네트워크·
-# 인증·토큰이 필요하므로 기본 전체 생성에선 제외하고, 이름을 지정했을 때만 돈다.
-LIVE_SCENES = [
-    ("22-claude-real", "실제 Claude Code 가 pytmux 패널에서 실행 중", claude_real),
-]
-ALL_SCENES = SCENES + LIVE_SCENES
+# Claude 컷(11·12·13·20·22)은 결정적 장면이 아니라 진짜 `claude` 한 세션에서 캡처한다
+# (claude_suite). 실제 API 호출이라 무인자 전체 생성에선 제외하고, `claude-suite` 또는
+# 해당 이름을 지정했을 때만 돈다.
+ALL_SCENES = SCENES
 
 
 def _scene_size(scene):
@@ -388,18 +385,23 @@ import re as _re
 _EMAIL_RE = _re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
 
-def _redact_svg(path):
-    """저장한 SVG 에서 이메일 주소를 가린다(라이브 Claude 장면 등 실제 계정정보 보호).
+_WELCOME_RE = _re.compile(r">Welcome(?:&#160;|\s)back[^<]*</text>")
 
-    실제 `claude` 실행 화면에는 로그인 계정 이메일이 환영 배너·상태줄에 뜬다. 공개
-    저장소에 커밋되는 이미지라 PII 를 user@example.com 으로 마스킹한다(다른 텍스트는
-    그대로)."""
+
+def _redact_svg(path):
+    """저장한 SVG 에서 계정 PII(이메일·환영 배너 이름)를 가린다(라이브 Claude 보호).
+
+    실제 `claude` 실행 화면에는 로그인 계정 이메일이 환영 배너·상태줄에, 사용자 이름이
+    "Welcome back <이름>!" 배너에 뜬다. 공개 저장소에 커밋되는 이미지라 이메일은
+    user@example.com 으로, 환영 이름은 "Welcome back!" 으로 마스킹한다(다른 텍스트는
+    그대로). textLength 속성이 있어 폭은 유지된다."""
     try:
         with open(path, encoding="utf-8") as f:
             svg = f.read()
     except OSError:
         return
     new = _EMAIL_RE.sub("user@example.com", svg)
+    new = _WELCOME_RE.sub(">Welcome&#160;back!</text>", new)
     if new != svg:
         with open(path, "w", encoding="utf-8") as f:
             f.write(new)
@@ -482,7 +484,11 @@ if __name__ == "__main__":
         print("이 생성기는 POSIX 전용입니다(서버 PTY 가 stdlib pty 기반).")
         sys.exit(2)
     if len(sys.argv) > 1:
-        # 워커 모드(장면 이름 지정) — 이 프로세스에서 생성.
-        sys.exit(asyncio.run(_worker(sys.argv[1])))
-    # 인자 없음 — 장면별 서브프로세스로 전체 생성(권장 경로).
+        arg = sys.argv[1]
+        # 라이브 Claude 컷 묶음(실제 `claude` 실행 — 11/12/13/20/22).
+        if arg in ("claude-suite", "claude") or arg in CLAUDE_OUTPUTS:
+            sys.exit(asyncio.run(claude_suite()))
+        # 워커 모드(결정적 장면 이름 지정) — 이 프로세스에서 생성.
+        sys.exit(asyncio.run(_worker(arg)))
+    # 인자 없음 — 장면별 서브프로세스로 결정적 장면 전체 생성(Claude 컷 제외).
     sys.exit(_orchestrate())
