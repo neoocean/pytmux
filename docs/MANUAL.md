@@ -4,12 +4,6 @@
 설치 → 첫 실행 → 패널/탭 다루기 → 마우스·메뉴·명령 → Claude Code 연동 → 설정·운영까지
 **실제 화면 스크린샷**과 함께 차근차근 설명합니다.
 
-> 주요 화면은 **실제 스크린샷**(SVG)으로 싣습니다. 이 이미지들은 실제 클라이언트를
-> 헤드리스로 운전해 자동 생성한 것으로, `python3 scripts/gen_screenshots.py` 로 언제든
-> 다시 만들 수 있습니다(생성 방식: [SCREENSHOT_SCENARIO.md](SCREENSHOT_SCENARIO.md)).
-> 아직 자동 캡처가 어려운 일부 상태(Claude 연동·스크롤백·네트워크 degraded 등)는
-> 코드블록 ASCII 로 재현했습니다.
->
 > 더 짧은 요약은 [README](../README.md), 설계/내부는 [DESIGN.md](DESIGN.md),
 > 기능 목록은 [FEATURES.md](FEATURES.md) 를 참고하세요.
 
