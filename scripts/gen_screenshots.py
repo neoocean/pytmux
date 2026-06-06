@@ -25,8 +25,39 @@ sys.path.insert(0, _UNIT)
 import harness  # noqa: E402
 from harness import make_app, server_only, teardown  # noqa: E402
 
-OUT_DIR = os.path.join(_UNIT, "docs", "img")
+OUT_DIR = os.path.join(_UNIT, "docs", "image")
 SIZE = (90, 26)
+
+# Claude Code CLI 화면을 흉내 내는 스탠드인. 서버의 Claude 휴리스틱
+# (pytmuxlib/claude.py)이 **출력 텍스트**로 패널을 Claude 로 감지하므로(명령 이름이
+# 아님), 이 화면을 패널에서 띄우면 진짜 서버 경로로 헤더 예약·상태아이콘·토큰 집계가
+# 동작한다 — 즉 Claude 연동 스크린샷도 가짜 상태 주입 없이 실제로 캡처된다.
+FAKE_CLAUDE = """\
+import sys, time
+F = '''\\
+\\u273b Welcome to Claude Code
+
+> \\ub9ac\\ud329\\ud130\\ub9c1\\ud558\\uace0 \\ud14c\\uc2a4\\ud2b8 \\ucd94\\uac00\\ud574\\uc918
+
+\\u25cf Crunching\\u2026 (38s \\u00b7 \\u2193 1.9k tokens \\u00b7 esc to interrupt)
+  Read pytmuxlib/model.py (94 lines)
+  Update pytmuxlib/model.py
+  Update tests/test_model.py
+  Bash(python3 tests/run.py)
+  \\u23bf  278 passed, 0 failed
+
+  12.3k tokens \\u00b7 ctx 48%
+
+\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500
+ >
+\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500
+  \\u23f5\\u23f5 auto-accept edits on (shift+tab to cycle)
+'''
+sys.stdout.write("\\x1b[2J\\x1b[H" + F)
+sys.stdout.flush()
+time.sleep(120)
+"""
+_FC_PATH = "/tmp/pytmux_fakeclaude.py"
 
 
 async def _settle(pilot, app, want_panes=None, tries=40):
@@ -61,6 +92,22 @@ async def _type(pilot, text):
 
 def _aid(app):
     return app.layout.get("active")
+
+
+async def _run_fake_claude(pilot, app):
+    """활성 패널에서 Claude 흉내 스탠드인을 띄우고, 서버가 Claude 로 감지할 때까지
+    대기한다(출력 기반 휴리스틱이라 진짜 서버 경로로 동작)."""
+    with open(_FC_PATH, "w", encoding="utf-8") as f:
+        f.write(FAKE_CLAUDE)
+    for ch in f"python3 {_FC_PATH}":
+        await pilot.press("space" if ch == " " else ch)
+    await pilot.press("enter")
+    for _ in range(120):
+        await pilot.pause(0.05)
+        ci = app.pane_claude.get(_aid(app), {})
+        if ci.get("claude") and ci.get("prompt"):
+            return True
+    return False
 
 
 # ─────────────────────────── 장면 정의 ───────────────────────────
@@ -135,6 +182,61 @@ async def confirm_tab(app, pilot):
     await pilot.pause(0.4)
 
 
+async def claude(app, pilot):
+    app.send_cmd("rename_window", name="claude")
+    await pilot.pause(0.3)
+    await _run_fake_claude(pilot, app)
+    await pilot.pause(0.5)
+
+
+async def claude_autoresume(app, pilot):
+    app.send_cmd("rename_window", name="claude")
+    await pilot.pause(0.3)
+    await _run_fake_claude(pilot, app)
+    app.send_cmd("set_autoresume")     # prefix R = 토큰리밋 자동재개 토글 → 상태줄 AR
+    await pilot.pause(0.6)
+
+
+async def perm_mode(app, pilot):
+    from pytmuxlib.clientscreens import PermModeScreen
+    app.push_screen(PermModeScreen("auto"))
+    await pilot.pause(0.4)
+
+
+async def info_popup(app, pilot):
+    from pytmuxlib.clientscreens import InfoTabsScreen
+    tabs = [
+        ("캡처(REC)", ["녹화: off",
+                       "경로: ~/.cache/pytmux/captures/default",
+                       "capture-output on|off 로 토글"]),
+        ("토큰", ["계정별 사용량 합계",
+                  "  default   12.3k tok",
+                  "  (세션 누적 · token-log 로 파일 기록)"]),
+        ("서버", ["연결: 정상", "RTT: 3 ms", "소켓: /tmp/pytmux-…/default.sock"]),
+    ]
+    app.push_screen(InfoTabsScreen(tabs, title="정보"))
+    await pilot.pause(0.4)
+
+
+async def scrollback(app, pilot):
+    for ch in "for i in $(seq 1 60); do echo \"line $i — 스크롤백 테스트\"; done":
+        await pilot.press("space" if ch == " " else ch)
+    await pilot.press("enter")
+    await pilot.pause(0.7)
+    app.mode = "scroll"                 # prefix [ = 스크롤백(복사) 모드
+    app.send_scroll(_aid(app), delta=18)  # 위로 스크롤(지난 출력)
+    await pilot.pause(0.5)
+
+
+async def degraded(app, pilot):
+    app.send_cmd("split", orient="lr")
+    await _settle(pilot, app, want_panes=2)
+    await _wait_painted(pilot, app)
+    app._net_degraded = True           # §10: IPC 지연 → 패널 외곽선 빨강
+    app._net_last_rtt = 1.8
+    await pilot.pause(0.3)
+
+
 SCENES = [
     ("01-first-run", "첫 실행 — 단일 패널 + 탭바 + 상태줄", first_run),
     ("02-split-lr", "좌우 분할 — 활성 패널 파란 테두리", split_lr),
@@ -146,22 +248,25 @@ SCENES = [
     ("08-tabs-multi", "탭 여러 개 + 이름변경", tabs_multi),
     ("09-calendar", "달력 오버레이(cal)", calendar),
     ("10-confirm-tab", "탭 닫기 확인 박스", confirm_tab),
+    ("11-claude", "Claude 처리중 — 탭 아이콘 ◐·스티키 헤더·토큰", claude),
+    ("12-claude-autoresume", "Claude + 토큰리밋 자동재개(상태줄 AR)", claude_autoresume),
+    ("13-perm-mode", "Claude 권한모드 선택 팝업(auto/default/plan)", perm_mode),
+    ("14-info-popup", "통합 정보 팝업(캡처·토큰·서버)", info_popup),
+    ("15-scrollback", "스크롤백(복사) 모드 — 지난 출력", scrollback),
+    ("16-degraded", "네트워크 degraded — 패널 외곽선 빨강", degraded),
 ]
 
 
 def _is_blank(svg_path):
     """패널 콘텐츠 없이 크롬(탭바·상태줄)만 그려진 빈 프레임인지 판정.
 
-    스크린샷 레이스로 패널이 페인트되기 전 프레임이 잡히면 셸 프롬프트나 패널
-    테두리 글리프가 없다 — 그걸로 빈 캡처를 가려낸다."""
+    스크린샷 레이스로 패널이 페인트되기 전 프레임이 잡히면 본문 텍스트가 거의 없어
+    SVG 크기가 빈 프레임(크롬만, ~11.4KB)에 수렴한다. 콘텐츠가 있는 프레임은 모두
+    14KB 이상이라 크기로 안전하게 가려낸다(장면마다 글리프가 달라 마커 검사보다 견고)."""
     try:
-        with open(svg_path, encoding="utf-8") as f:
-            svg = f.read()
+        return os.path.getsize(svg_path) < 13000
     except OSError:
         return True
-    # 패널이 그려졌으면 셸 프롬프트('%'/'$') 또는 패널 테두리(└,│,┌)가 있다.
-    return not any(tok in svg for tok in ("&#160;%&#160;", "&#160;$&#160;",
-                                          "└", "┌", "│"))
 
 
 async def _one_shot(name, desc, drive, path):
