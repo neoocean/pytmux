@@ -289,6 +289,12 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
             old.window = win
         return True
 
+    @staticmethod
+    def _arg_onoff(args):
+        """control 토글 인자 파싱: 'on'→True, 'off'→False, 그 외→None(현재값 토글).
+        capture/claude-header/single-border/coalesce/auto-doc-clear/auto-mode 공용."""
+        return True if "on" in args else (False if "off" in args else None)
+
     def handle_control(self, line: str):
         """외부 CLI(`pytmux cmd ...`)에서 보낸 명령을 서버 측에서 처리한다."""
         try:
@@ -350,23 +356,23 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         elif c in ("send-keys", "send"):
             self._control_send_keys(sess, args)
         elif c in ("capture-output", "capture-toggle"):
-            val = True if "on" in args else (False if "off" in args else None)
+            val = self._arg_onoff(args)
             return "on" if self.set_capture(val) else "off"
         elif c == "claude-header":
-            val = True if "on" in args else (False if "off" in args else None)
+            val = self._arg_onoff(args)
             return "on" if self.set_claude_header(val) else "off"
         elif c in ("single-border", "pane-border"):
-            val = True if "on" in args else (False if "off" in args else None)
+            val = self._arg_onoff(args)
             self.set_single_border(val)
             # 레이아웃(박스 유무)이 바뀌므로 아래 broadcast 로 떨어지게 한다.
         elif c in ("coalesce-repaints", "coalesce"):
-            val = True if "on" in args else (False if "off" in args else None)
+            val = self._arg_onoff(args)
             return "on" if self.set_coalesce_repaints(val) else "off"
         elif c in ("auto-doc-clear", "auto-doc"):
-            val = True if "on" in args else (False if "off" in args else None)
+            val = self._arg_onoff(args)
             return "on" if self.set_auto_doc_clear(val) else "off"
         elif c in ("claude-auto-mode", "auto-mode"):
-            val = True if "on" in args else (False if "off" in args else None)
+            val = self._arg_onoff(args)
             return "on" if self.set_claude_auto_mode(val) else "off"
         else:
             return f"unknown: {c}"

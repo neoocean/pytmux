@@ -26,6 +26,11 @@ from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose 에서 사용)
 from .keymap import _key_to_ctrl_bytes, _tmux_key_to_textual, load_config
 from .protocol import MIN_H, MIN_W, read_msg, write_msg
 
+# IPC 소켓 재접속 재시도 파라미터 — 흩어져 있던 매직 상수를 한곳에 모았다(M4 #30).
+_RECONNECT_DELAY = 0.02            # 재시도 간격(초)
+_RECONNECT_RETRIES_RESTART = 300  # 서버 re-exec 재기동 대기(~6s)
+_RECONNECT_RETRIES_FORCE = 150    # degraded 강제 재접속(~3s, 서버는 살아 있음)
+
 
 def build_client_app(sock_path: str, config: dict | None = None,
                      session_name: str | None = None):
@@ -366,25 +371,33 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     return
                 self._dispatch(msg)
 
-        async def _reconnect(self):
-            """서버가 re-exec 로 재기동되는 동안 같은 소켓으로 재접속한다(ⓔ).
-            새 서버가 listen 을 다시 열 때까지 잠깐 재시도한 뒤 hello 로 재개."""
-            self._reconnecting = False
-            for _ in range(300):   # ~6초
+        async def _connect_and_hello(self, retries):
+            """소켓 재연결 + hello 송신 공통 경로(재시작 재개·degraded 강제 재접속 공용).
+            listen 이 열릴 때까지 retries 회(_RECONNECT_DELAY 간격) 재시도하고, 붙으면
+            현재 크기로 hello 를 보낸다. 성공 True / 시간초과 False(호출부가 메시지 처리)."""
+            for _ in range(retries):
                 try:
                     self.reader, self.writer = await ipc.open_connection(
                         self.sock_path)
                     break
                 except (ConnectionError, FileNotFoundError, OSError):
-                    await asyncio.sleep(0.02)
+                    await asyncio.sleep(_RECONNECT_DELAY)
             else:
-                self.exit(message="pytmux: 서버 재접속 실패")
-                return
+                return False
             cols, rows = self._content_size()
             hello = {"t": "hello", "cols": cols, "rows": rows}
             if self.session_name:
                 hello["session"] = self.session_name
             await write_msg(self.writer, hello)
+            return True
+
+        async def _reconnect(self):
+            """서버가 re-exec 로 재기동되는 동안 같은 소켓으로 재접속한다(ⓔ).
+            새 서버가 listen 을 다시 열 때까지 잠깐 재시도한 뒤 hello 로 재개."""
+            self._reconnecting = False
+            if not await self._connect_and_hello(_RECONNECT_RETRIES_RESTART):
+                self.exit(message="pytmux: 서버 재접속 실패")
+                return
             self.display_message("pytmux: 서버 재시작 완료 — 재접속됨")
             self._start_reader()
 
@@ -413,22 +426,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         old_w.close()
                     except Exception:
                         pass
-                # 새 연결(서버는 살아 있으니 보통 즉시 — 잠깐 재시도).
-                for _ in range(150):   # ~3초
-                    try:
-                        self.reader, self.writer = await ipc.open_connection(
-                            self.sock_path)
-                        break
-                    except (ConnectionError, FileNotFoundError, OSError):
-                        await asyncio.sleep(0.02)
-                else:
+                # 새 연결(서버는 살아 있으니 보통 즉시 — 잠깐 재시도) + hello.
+                if not await self._connect_and_hello(_RECONNECT_RETRIES_FORCE):
                     self.display_message("pytmux: 재접속 실패 — 네트워크 확인")
                     return
-                cols, rows = self._content_size()
-                hello = {"t": "hello", "cols": cols, "rows": rows}
-                if self.session_name:
-                    hello["session"] = self.session_name
-                await write_msg(self.writer, hello)
                 # 네트워크 상태 리셋: 새 채널이니 degraded 해제하고 표본 카운터 비움.
                 self._net_ping_ts = None
                 self._net_bad = self._net_good = 0
