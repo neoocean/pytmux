@@ -1,13 +1,20 @@
 # 토큰 사용량 저장소 설계 검토 — JSONL → SQLite (패널별·계정별 통계)
 
-> **상태**: 🟡 **설계 검토(미구현)**. 본 문서는 현재 JSONL 로그를 SQLite 로 옮겨
-> **패널별·계정별 통계**를 출력하는 방안을 코드 근거로 검토하고, 단계적 마이그레이션
-> 경로와 권고를 정리한다. 결정/구현 전 합의용 문서다.
+> **상태**: 🟢 **구현 완료(SQLite 전면 도입, 2026-06-07)**. 사용자 결정으로 §7 의
+> 단계적 권고 대신 **SQLite 전면 도입**을 채택해 구현했다. 본 문서는 그 설계 근거·
+> 트레이드오프·경로를 남긴다. 구현 요약:
+> - 저장: `pytmuxlib/usagedb.py`(SQLite, WAL). 경로 `db/claude-tokens.db`
+>   (db/ 는 .gitignore·p4ignore 제외). 서버 최초 사용 시 옛 JSONL 일회 임포트.
+> - 집계: `usagelog.aggregate/summary_lines(dim=account|session)` — 클라 측(서버측
+>   GROUP BY 는 **Phase B**, 아래 §0·§7 참조, 현 규모에선 미도입).
+> - UI: 토큰 팝업 **[패널] 서브탭**(세션 기준 묶기 — 패널 재사용 대비, §8).
+> - 도구: `scripts/import_token_jsonl.py`(수동 임포트), `migrate_token_accounts.py
+>   --db`(DB 계정 정정), `usagedb.prune`(보존).
 >
 > 관련: [TOKEN_SAVING_SCENARIO.md](TOKEN_SAVING_SCENARIO.md) (토큰 감지/개입 전반) ·
 > [HANDOFF.md](HANDOFF.md) §10 #7 (영속 로깅 도입 배경) ·
-> `pytmuxlib/usagelog.py` (현 순수 함수 계층) · `scripts/migrate_token_accounts.py`
-> (계정 정리 도구).
+> `pytmuxlib/usagedb.py`(SQLite 저장) · `pytmuxlib/usagelog.py`(순수 집계·신뢰 규칙) ·
+> `scripts/migrate_token_accounts.py`·`scripts/import_token_jsonl.py`(도구).
 
 ---
 

@@ -23,6 +23,13 @@ Unknown 이 옳다는 원칙(사용자 지시 2026-06-07).
     # 경로 명시
     python3 scripts/migrate_token_accounts.py --apply --keep-domain woojinkim.org \
         /tmp/pytmux-501/default.sock.tokens.jsonl
+    # SQLite DB 정정(저장이 SQLite 로 이행된 뒤 — UPDATE 한 방, 파일 재작성 없음)
+    python3 scripts/migrate_token_accounts.py --db db/claude-tokens.db --apply \
+        --keep-domain woojinkim.org
+
+이제 토큰 저장은 SQLite(db/claude-tokens.db)가 표준이며(docs/TOKEN_USAGE_STORAGE_DESIGN.md),
+`--db` 모드가 DB 의 계정을 직접 정정한다. JSONL 경로 모드는 레거시 로그·임포트 전
+데이터 정리에 남겨둔다.
 """
 from __future__ import annotations
 
@@ -100,6 +107,35 @@ def _fmt_counts(d):
                                                     key=lambda kv: -kv[1]))
 
 
+def _migrate_db(db_path, keep_accounts, keep_domains, apply):
+    """SQLite DB 의 비신뢰 계정을 unknown 으로 정정(UPDATE 한 방 — 파일 재작성 없음).
+    드라이런은 변경될 행 수만 보고하고, --apply 시 실제 UPDATE 한다."""
+    from pytmuxlib import usagedb  # 지연 임포트(JSONL 경로엔 불필요)
+    if not os.path.exists(db_path):
+        print(f"DB 없음: {db_path}")
+        return 1
+    conn = usagedb.connect(db_path)
+    before = usagedb.account_counts(conn)
+    untrusted = {a: n for a, n in before.items()
+                 if a != usagelog.UNKNOWN
+                 and not is_trusted(a, keep_accounts, keep_domains)}
+    print(f"대상 DB: {db_path}")
+    print(f"신뢰 계정={sorted(keep_accounts) or '(없음)'} · "
+          f"신뢰 도메인={sorted(keep_domains) or '(없음)'} · "
+          f"모드={'적용' if apply else '드라이런(미리보기)'}")
+    print(f"  before: {_fmt_counts(before)}")
+    print(f"  정정 대상(→unknown): {_fmt_counts(untrusted) or '(없음)'}")
+    if not apply:
+        print("\n드라이런입니다. 실제로 바꾸려면 --apply 를 붙이세요.")
+        conn.close()
+        return 0
+    changed = usagedb.update_accounts(conn, keep_accounts, keep_domains)
+    print(f"  after : {_fmt_counts(usagedb.account_counts(conn))}")
+    print(f"  → {changed} 행 정정 완료.")
+    conn.close()
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -110,6 +146,8 @@ def main(argv=None):
                     help="신뢰할 도메인 — 별칭이 @DOMAIN 으로 끝나면 유지(반복 가능)")
     ap.add_argument("--apply", action="store_true",
                     help="실제 적용(미지정 시 드라이런)")
+    ap.add_argument("--db", metavar="PATH",
+                    help="JSONL 대신 SQLite DB(db/claude-tokens.db)의 계정을 정정한다")
     args = ap.parse_args(argv)
 
     keep_accounts = set(args.keep)
@@ -117,6 +155,9 @@ def main(argv=None):
     if not keep_accounts and not keep_domains:
         ap.error("--keep 또는 --keep-domain 중 최소 하나는 필요합니다 "
                  "(신뢰 목록 없이 전부 unknown 으로 만들지 않도록).")
+
+    if args.db:
+        return _migrate_db(args.db, keep_accounts, keep_domains, args.apply)
 
     paths = args.paths or _discover_logs()
     if not paths:

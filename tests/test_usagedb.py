@@ -153,3 +153,65 @@ async def test_aggregate_default_dim_unchanged():
     agg = usagelog.aggregate(recs, "day")
     assert agg["accounts"]["a@x.org"] == 1000 and agg["accounts"]["b@y.org"] == 500
     assert "계정별" in "\n".join(usagelog.summary_lines(recs, "day"))
+
+
+def _load_script(name):
+    import importlib.util
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(here, "scripts", name + ".py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+async def test_import_token_jsonl_script():
+    """scripts/import_token_jsonl: JSONL → DB 임포트(미리보기/적용/중복 거부)."""
+    import shutil
+    d = tempfile.mkdtemp()
+    try:
+        jsonl = os.path.join(d, "default.sock.tokens.jsonl")
+        usagelog.append(jsonl, _rec(1_700_000_000.0, 0, 1, 1, "me@x.org", 100))
+        usagelog.append(jsonl, _rec(1_700_000_100.0, 0, 1, 1, "me@x.org", 200))
+        db = os.path.join(d, "db", "claude-tokens.db")
+        mod = _load_script("import_token_jsonl")
+        # 미리보기: DB 미생성
+        assert mod.main(["--db", db, jsonl]) == 0
+        assert not os.path.exists(db), "미리보기는 쓰지 않음"
+        # 적용: 2건 임포트
+        assert mod.main(["--apply", "--db", db, jsonl]) == 0
+        conn = usagedb.connect(db)
+        assert usagedb.count(conn) == 2
+        conn.close()
+        # 중복 거부(--force 없이)
+        assert mod.main(["--apply", "--db", db, jsonl]) == 2
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_migrate_db_mode_remaps_untrusted():
+    """scripts/migrate_token_accounts --db: DB 의 비신뢰 계정을 unknown 으로 정정."""
+    import shutil
+    d = tempfile.mkdtemp()
+    try:
+        db = os.path.join(d, "claude-tokens.db")
+        conn = usagedb.connect(db)
+        usagedb.insert(conn, _rec(1.0, 0, 1, 1, "me@woojinkim.org", 10))
+        usagedb.insert(conn, _rec(2.0, 0, 1, 1, "gi…@github.com", 5))
+        conn.close()
+        mod = _load_script("migrate_token_accounts")
+        # 드라이런: 변경 없음
+        assert mod.main(["--db", db, "--keep-domain", "woojinkim.org"]) == 0
+        conn = usagedb.connect(db)
+        assert usagedb.account_counts(conn).get("gi…@github.com") == 1
+        conn.close()
+        # 적용: github 오탐 → unknown
+        assert mod.main(["--db", db, "--keep-domain", "woojinkim.org",
+                         "--apply"]) == 0
+        conn = usagedb.connect(db)
+        counts = usagedb.account_counts(conn)
+        assert "gi…@github.com" not in counts
+        assert counts["me@woojinkim.org"] == 1 and counts[usagelog.UNKNOWN] == 1
+        conn.close()
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
