@@ -948,9 +948,10 @@ class TokenLogScreen(ModalScreen):
     _NAV_KEYS = ("up", "down", "pageup", "pagedown", "home", "end")
     _BUCKETS = {"h": "hour", "d": "day", "w": "week", "m": "month"}
 
-    def __init__(self, records):
+    def __init__(self, records, usage=None):
         super().__init__()
         self._records = records or []
+        self._usage = usage          # M19 그림자 /usage 한도(dict|None)
         self._bucket = "day"
         # 계정 필터 순환 목록: None(전체) + 등장 계정들(정렬)
         seen = []
@@ -978,13 +979,32 @@ class TokenLogScreen(ModalScreen):
         await self._refresh()
         self.query_one(ListView).focus()
 
+    def _usage_lines(self):
+        """M19 그림자 /usage 한도를 표시 줄로(없으면 [u] 안내 1줄)."""
+        u = self._usage
+        if not isinstance(u, dict):
+            return ["── 한도(/usage): [u] 로 조회 ──"]
+        out = ["── Claude 한도(/usage 실측) ──"]
+        labels = [("session", "세션(5h)"), ("week_all", "주간(전모델)"),
+                  ("week_sonnet", "주간(Sonnet)")]
+        for key, name in labels:
+            d = u.get(key)
+            if isinstance(d, dict) and d.get("pct") is not None:
+                rs = d.get("reset")
+                out.append(f"  {name}: {d['pct']}% 사용"
+                           + (f" · 리셋 {rs}" if rs else ""))
+        return out
+
     async def _refresh(self):
         lv = self.query_one(ListView)
         await lv.clear()
         acct = self._account if self._account is not None else "전체"
         hint = (f"[h]시간 [d]일 [w]주 [m]월   [a]계정: {acct}   "
-                f"[s]시나리오 설정   [Esc]닫기")
+                f"[s]시나리오 설정   [u]/usage 갱신   [Esc]닫기")
         items = [ListItem(Label(hint, markup=False))]
+        # M19: 그림자 /usage 로 확보한 실 한도(있으면 맨 위에). 없으면 [u] 안내.
+        for ln in self._usage_lines():
+            items.append(ListItem(Label(ln, markup=False)))
         for ln in usagelog.summary_lines(self._records, self._bucket,
                                          self._account):
             items.append(ListItem(Label(ln, markup=False)))
@@ -1016,6 +1036,11 @@ class TokenLogScreen(ModalScreen):
         if k == "s":
             # M18-C: 사용량 통계에서 바로 과사용 완화 시나리오 on/off 로(§9.4).
             self.app.open_claude_saver()
+            return
+        if k == "u":
+            # M19: 그림자 /usage 갱신 요청. 결과는 status 로 와 다음 열람부터 반영.
+            self.app.send_cmd("refresh_usage")
+            self.query_one("#tklogtitle", Label).update("/usage 조회 중… (~수초)")
             return
         if k in self._NAV_KEYS:
             lv = self.query_one(ListView)

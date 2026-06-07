@@ -1977,3 +1977,23 @@ async def test_account_priority_cleanup_m15():
         assert p._ctx_fired is True
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_usage_limits_status_m19():
+    """M19: self._usage(그림자 /usage 결과)가 있으면 _tok5h_pct 가 분모 추정 대신
+    세션 실측 % 를 그대로 쓰고, status 가 usage_limits 를 싣는다. (질의 자체는 숨은
+    세션이라 결과를 직접 주입해 배선만 검증.)"""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        p._claude = "idle"
+        assert srv._tok5h_pct(p, 0) is None        # _usage 없고 분모 0 → None
+        srv._usage = {"session": {"pct": 37, "reset": "2pm (Asia/Seoul)"},
+                      "week_all": {"pct": 14, "reset": "Jun 13 at 3am"}}
+        assert srv._tok5h_pct(p, 0) == 37          # 실측 — 분모 불필요
+        m = srv._status_msg(sess)
+        assert m["usage_limits"]["session"]["pct"] == 37
+        assert m["usage_limits"]["week_all"]["pct"] == 14
+    finally:
+        await teardown(srv, task, sock)

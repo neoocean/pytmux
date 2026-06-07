@@ -781,6 +781,7 @@ class StatusBar(Widget):
         self.tok5h_pct = None     # M18-B: 5시간 한도 근접도 %(분모 미상이면 None)
         self.claude_warn = None   # M17: 장기턴/반복루프 경고(grade0, 없으면 None)
         self.claude_model = None  # M14c: 활성 Claude 모델 배지(opus-4.8 등)
+        self.usage_limits = None  # M19: 그림자 /usage 세션·주간 한도 dict
         # 토큰 절감 설정(설정 팝업 토글 현재값 + 예산 경고, docs/TOKEN_SAVING_SCENARIO).
         self.auto_doc_clear = False
         self.claude_auto_mode = False
@@ -928,6 +929,8 @@ class StatusBar(Widget):
         cm = msg.get("claude_model")                # M14c 모델 배지(지속표시)
         if cm:
             self.claude_model = cm
+        if "usage_limits" in msg:                   # M19 그림자 /usage 결과(권위값)
+            self.usage_limits = msg.get("usage_limits")
         # 토큰 절감 설정(설정 팝업이 현재값으로 토글을 그리는 데 씀). 항상 권위값 반영.
         self.auto_doc_clear = msg.get("auto_doc_clear", self.auto_doc_clear)
         self.claude_auto_mode = msg.get("claude_auto_mode", self.claude_auto_mode)

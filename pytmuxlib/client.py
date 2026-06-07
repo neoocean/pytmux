@@ -594,7 +594,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif t == "token_log":
                 if getattr(self, "_want_token_log", False):
                     self._want_token_log = False
-                    self.push_screen(TokenLogScreen(msg.get("records") or []))
+                    self.push_screen(TokenLogScreen(
+                        msg.get("records") or [],
+                        usage=getattr(self.status, "usage_limits", None)))
             elif t == "version":
                 if getattr(self, "_want_version", False):
                     self._want_version = False
@@ -2378,6 +2380,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.open_claude_usage_tree()
             elif c in ("token-log", "tokens-log", "token-usage-log"):
                 self.open_token_log()
+            elif c in ("claude-usage", "usage", "refresh-usage"):
+                # M19 그림자 /usage 질의: 서버가 숨은 claude 를 띄워 실 세션/주간 한도를
+                # 긁어온다(사용자 화면 무간섭, ~수초). 회신은 status 로 반영.
+                self.send_cmd("refresh_usage")
+                self.display_message("사용량 조회 중… (숨은 /usage, ~수초)", 4.0)
             elif c in ("token-account", "tokens-account"):
                 # token-account <이름> — 활성 패널 Claude 계정 수동 지정(빈값=자동).
                 self.send_cmd("set_claude_account", name=" ".join(args).strip())

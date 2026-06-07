@@ -393,7 +393,7 @@ opt 화는 후속.
 | **M17** | **반복 실패·장기 턴 감지 알림**(T7) — 완료 꼬리 비교(S8 `screen_tail_key`/`track_repeat`)+`_busy_since`(S9). 상태줄 ⚠배지(grade0) | 0 | 낮음 | `claude.py`·`serverclaude.py`·`model.py`·`serverio.py`·`clientwidgets.py` | ✅ |
 | **M18** | **상태줄 가시성 + 통합 팝업**(§9) — `ctx:N%/1M`·`Σ25k(7%/5h)` 표기 + 사용량존 클릭→통계, `[s]`→시나리오 토글, 5h 분모 설정행 | 0 | 낮음 | `claude.py`·`serverclaude.py`·`serverio.py`·`clientwidgets.py`·`clientscreens.py`·`client.py` | ✅ (esc-커서 키보드만 보류) |
 | **M8보강** | 실 Claude 화면 골든 캡처 — busy/idle/badge_1m/ctx_low 는 REC 캡처로 실교체 완료. **limit/feedback/auto-compact 는 미수집**(녹화 중 미발생) | — | 낮음 | `tests/fixtures/claude/*`(README) | 🟡 부분(limit 등 잔여) |
-| **M19** | **그림자 `/usage` 질의**(§10) — 실 세션(5h)/주간 한도·리셋 확보. **방법 B 확정**(숨은 대화형 세션 스크랩; B2 `claude -p` 기각). 실 `/usage` 패널 캡처·픽스처 확보 → 세션 % 직접 → §9.3 분모 소멸 | 2~3 | 중 | `claude.py`(`parse_usage`+usage.txt)·`serverclaude.py`·`serverpty.py` | 📐 설계확정+캡처완료, 구현 승인 대기 |
+| **M19** | **그림자 `/usage` 질의**(§10) — 숨은 대화형 claude 스크랩으로 실 세션(5h)/주간 한도·리셋 확보(방법 B; B2 기각). `usageprobe.query_usage`·`refresh_usage`·`parse_usage`·`claude-usage` 명령·`[u]`. 세션 % 실측이 §9.3 분모 대체. 라이브 검증 | 2~3 | 중 | `usageprobe.py`·`claude.py`(`parse_usage`)·`serverclaude.py`·`serverio.py`·`client*.py` | ✅ (수동; 주기 자동·실박스 확인 남음) |
 
 > 순서 원칙: **감지 정확도(M8·M9)를 먼저 고정**한 뒤에야 비가역 자동화(M11)를
 > 켠다(§5.4). M10(알림)은 위험 0. 모든 자동 개입은 **기본 OFF**, `token-saver` 팝업
@@ -655,7 +655,17 @@ used" 반대 주의). 한쪽만 잡히면 현행대로(`ctx:23%` 또는 `1M ctx`
 
 ---
 
-## 10. M19 — 그림자 `/usage` 질의: 실 사용량 한도 확보 [설계 확정(방법 B) · 구현 승인 대기]
+## 10. M19 — 그림자 `/usage` 질의: 실 사용량 한도 확보 [✅ 구현(방법 B, 수동 트리거)]
+
+> **구현됨(2026-06-07)**: `pytmuxlib/usageprobe.py` `query_usage()` 가 `pty.openpty`+
+> `subprocess`(close_fds·start_new_session — executor 스레드 fork 안전)로 **숨은 대화형
+> `claude`** 를 띄워 `? for shortcuts` 까지 대기 → `/usage`+Enter 주입 → pyte 로 패널 렌더
+> → `parse_usage` 스크랩 → kill. 서버 `refresh_usage()`(executor·35s 타임아웃)가 결과를
+> `self._usage` 에 저장·broadcast. 트리거: `claude-usage`/`usage` 명령 또는 토큰로그 팝업
+> `[u]`. `_tok5h_pct` 가 세션 실측 % 를 그대로 써 §9.3 분모 추정을 대체. 상태줄/팝업에
+> 세션·주간 한도·리셋 표시(status `usage_limits`). **실측 검증**: 라이브에서 ~2–8초에
+> `{session:2%@2pm, week_all:14%, week_sonnet:0%}` 확보. 남은 것: **주기 자동 질의 opt**
+> (현재 수동만), 실 박스 무표시 최종 확인.
 
 §9.3 의 **5h 분모 미상** 문제(분모를 추정·학습에 의존)를 **Claude 의 실측치로 정직히
 해결**하는 방안. Claude Code 의 `/usage` 는 5시간/주간 사용량 한도와 **리셋 시각**을

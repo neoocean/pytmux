@@ -124,6 +124,9 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         self.token_budget_5h = int(_opts.get("token_budget_5h", 0))
         # limit 진입 시점의 계정 누계로 5h 상한을 학습(in-memory, best-effort).
         self._learned_5h_cap = 0
+        # M19 그림자 /usage 질의 결과(세션·주간 한도 %·리셋). dict|None. 수동 갱신.
+        self._usage = None
+        self._usage_busy = False   # 질의 진행 중(중복 방지)
         # M15 계정 합계 예산(0=무제한). 세션 예산은 패널 단독을 보지만(_budget_over),
         # 토큰은 계정 단위로 청구되므로 같은 계정 N개 세션의 합계(_account_token_total)
         # 가 이 값을 넘으면 경고·자동개입 보류. 멀티세션 누적(S7) 대응.

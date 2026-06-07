@@ -396,6 +396,7 @@ COMMANDS = [
     ("prompt-history", "Claude 프롬프트 히스토리 팝업(헤더 클릭으로도 열림)", "Claude"),
     ("token-usage", "Claude 실행 중 탭/패널 + 토큰 사용량 트리(상태줄 사용량 클릭)", "Claude"),
     ("token-log", "토큰 사용량 영속 로그 집계 팝업(시간/일/월 × 계정 — h/d/m·a 전환)", "Claude"),
+    ("claude-usage", "그림자 /usage 질의 — 숨은 세션으로 실 세션/주간 한도 갱신(별칭 usage)", "Claude"),
     ("token-account", "활성 패널 Claude 계정 수동 지정 (token-account <이름>, 빈값=자동)", "Claude"),
     ("prompt-clear", "프롬프트 단위 클리어 모드 토글(완료마다 문서화+/clear) [on|off]", "Claude"),
     ("prompt-clear-message", "프롬프트 단위 클리어의 문서화 지시문 변경", "Claude"),
@@ -487,7 +488,7 @@ COMMAND_NOARG = {
     "calendar-mode", "open-clock", "close-clock", "open-calendar",
     "close-calendar", "prompt-history", "token-usage", "token-log",
     "list-keys", "send-escape", "claude-rules", "token-saver", "version",
-    "restart-check",
+    "restart-check", "claude-usage", "usage",
 }
 # 자유 텍스트 인자를 받는 명령 — 명령 프롬프트에서 명령을 다 치면 인자 자리에 밑줄
 # (____)을 그려 "여기에 인자를 입력" 임을 알린다(사용자 요청). 선택지형(COMMAND_OPTIONS)

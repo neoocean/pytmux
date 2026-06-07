@@ -737,15 +737,46 @@ class ServerClaudeMixin:
         return u
 
     def _tok5h_pct(self, p, total):
-        """M18-B: 5시간 한도 근접도 %(int)|None. 분모 = token_budget_5h(설정) 또는
-        limit 관측 학습치(_learned_5h_cap). 분모 미상이면 None — % 를 지어내지 않는다
-        (§5.5 미동작 편향). 분자는 표시 토큰(계정 누계)으로 §9.3 의 5h 근사."""
-        if p is None or not p._claude or total <= 0:
+        """M18-B/M19: 5시간 한도 근접도 %(int)|None.
+        ① M19 그림자 /usage 로 확보한 **세션(5h) 실측 %** 가 있으면 그걸 그대로(분모
+           추정 불필요). ② 없으면 분모(token_budget_5h 설정/limit 학습 _learned_5h_cap)
+           기반 근사. ③ 둘 다 없으면 None(§5.5 — 지어내지 않음)."""
+        if p is None or not p._claude:
+            return None
+        u = self._usage
+        if u and isinstance(u.get("session"), dict) \
+                and u["session"].get("pct") is not None:
+            return int(u["session"]["pct"])          # M19 실측 — 분자/분모 불필요
+        if total <= 0:
             return None
         cap = self.token_budget_5h or self._learned_5h_cap
         if cap <= 0:
             return None
         return min(999, round(total / cap * 100))
+
+    async def refresh_usage(self):
+        """M19 그림자 /usage 질의: executor 스레드에서 숨은 claude 를 띄워 /usage 패널을
+        스크랩(usageprobe.query_usage)해 self._usage 에 저장하고 broadcast 한다. 사용자
+        화면 무간섭. 중복 호출은 무시. 결과 dict|None."""
+        if self._usage_busy:
+            return self._usage
+        self._usage_busy = True
+        try:
+            from . import usageprobe
+            loop = asyncio.get_event_loop()
+            cwd = getattr(self, "cwd", None) or None
+            u = await asyncio.wait_for(
+                loop.run_in_executor(None, usageprobe.query_usage, "claude", cwd),
+                timeout=35)
+        except Exception:
+            u = None
+        finally:
+            self._usage_busy = False
+        if u:
+            self._usage = u
+            for s in list(self.sessions.values()):
+                self._broadcast_session(s)
+        return u
 
     @staticmethod
     def _track_prompt(pane: Pane, data: bytes):

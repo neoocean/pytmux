@@ -112,6 +112,54 @@ def claude_usage(text: str):
     return None
 
 
+# ---- M19: /usage 패널 파서(그림자 질의 결과 스크랩) ----
+# 두 레이아웃 모두 처리한다(실측):
+#  · 넓은 raw: 'Current session' / '█ 2% used' / 'Resets 2pm (Asia/Seoul)' (줄 분리)
+#  · 좁은 렌더: 'Current session · Resets 5am (Asia/Seoul)' + 'N% used' (일부 합쳐짐)
+# 'Current <항목>' 헤더로 블록을 시작하고, 블록 안에서 'N% used'·'Resets …' 를 줍는다.
+_USAGE_HDR_RE = re.compile(r"Current\s+(session|week\s*\([^)]*\))", re.I)
+_USAGE_PCT_RE = re.compile(r"(\d{1,3})%\s*used", re.I)
+_USAGE_RESET_RE = re.compile(r"Resets\s+(.+?)\s*$", re.I)
+
+
+def parse_usage(text):
+    """Claude `/usage` TUI 패널 텍스트에서 세션(5시간)·주간 한도 %·리셋 표기를 뽑는다.
+
+    반환 예: {"session": {"pct":2,"reset":"2pm (Asia/Seoul)"},
+              "week_all": {"pct":14,"reset":"Jun 13 at 3am (Asia/Seoul)"},
+              "week_sonnet": {"pct":0,"reset":"..."}}. 패널 없으면 None.
+    세션 % 가 직접 나오므로 §9.3 의 5h 분모 추정이 불필요해진다(M19)."""
+    blocks, cur = [], None
+    for raw in (text or "").splitlines():
+        ln = raw.strip()
+        mh = _USAGE_HDR_RE.search(ln)
+        if mh:
+            cur = {"label": mh.group(1).lower(), "pct": None, "reset": None}
+            mr = _USAGE_RESET_RE.search(ln)      # 같은 줄에 Resets 가 붙은 좁은 레이아웃
+            if mr:
+                cur["reset"] = mr.group(1).strip()
+            blocks.append(cur)
+            continue
+        if cur is None:
+            continue
+        mp = _USAGE_PCT_RE.search(ln)
+        if mp and cur["pct"] is None:
+            cur["pct"] = int(mp.group(1))
+        mr = _USAGE_RESET_RE.search(ln)
+        if mr and cur["reset"] is None:
+            cur["reset"] = mr.group(1).strip()
+    out = {}
+    for b in blocks:
+        if b["pct"] is None:
+            continue
+        lab = b["label"]
+        key = ("session" if lab.startswith("session")
+               else "week_all" if "all models" in lab
+               else "week_sonnet" if "sonnet" in lab else "week")
+        out[key] = {"pct": b["pct"], "reset": b["reset"]}
+    return out or None
+
+
 # ---- M17(T7): 반복 실패 루프(S8) 감지용 순수 헬퍼 ----
 def screen_tail_key(text, n=12):
     """화면 꼬리 n줄(빈 줄 제거·우측 공백 제거)을 합쳐 완료 비교용 안정 키를 만든다.

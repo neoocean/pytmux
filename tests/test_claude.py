@@ -123,6 +123,24 @@ async def test_claude_usage_context_badge():
     assert claude_usage("200K context window") == "200K ctx"
 
 
+async def test_parse_usage():
+    """M19: 실 /usage 패널(usage.txt)에서 세션·주간 한도 %·리셋 추출."""
+    import os
+    from pytmuxlib.claude import parse_usage
+    fix = os.path.join(os.path.dirname(__file__), "fixtures", "claude", "usage.txt")
+    u = parse_usage(open(fix).read())     # 실 raw 레이아웃(줄 분리)
+    assert u["session"] == {"pct": 2, "reset": "2pm (Asia/Seoul)"}, u
+    assert u["week_all"]["pct"] == 14
+    assert u["week_all"]["reset"] == "Jun 13 at 3am (Asia/Seoul)"
+    assert u["week_sonnet"]["pct"] == 0
+    assert parse_usage("nothing here") is None
+    # 좁은 레이아웃(헤더에 Resets 붙고 % 다음줄)도 처리
+    u2 = parse_usage("Current session · Resets 5am (Asia/Seoul)\n  ██  10% used")
+    assert u2["session"] == {"pct": 10, "reset": "5am (Asia/Seoul)"}, u2
+    # 헤더만 있고 % 없으면 그 항목은 누락(짝 안 맞음)
+    assert parse_usage("Current session\nResets 5am") is None
+
+
 async def test_screen_tail_key_and_track_repeat():
     """M17 S8: 완료 꼬리 키 + 반복 카운트."""
     from pytmuxlib.claude import screen_tail_key, track_repeat
