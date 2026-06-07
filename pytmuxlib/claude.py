@@ -306,6 +306,14 @@ def claude_welcome(text: str) -> bool:
     return bool(_WELCOME_RE.search(text or ""))
 
 
+def claude_remote_active(text: str) -> bool:
+    """Claude Code 패널이 데스크탑 앱 '원격 제어'에 연결돼 있는지(화면의 'Remote
+    Control active' 표시) 판정. 시작 시 자동 /rc 주입(auto-launch)이 **이미 켜진**
+    원격제어를 도로 끄지 않도록 idempotent 가드로 쓴다(재시작 resume 후 첫 스캔이
+    None→Claude 로 보여 새 세션으로 오인하는 경우 등). 클라 클릭존 판정과 동일 문구."""
+    return "remote control" in (text or "").lower()
+
+
 def _alias_email(local: str, domain: str) -> str:
     """이메일을 `로컬앞2글자…@도메인` 별칭으로(원문 미노출). 로컬이 2글자 이하면 그대로."""
     alias = (local[:2] + "…") if len(local) > 2 else local

@@ -119,6 +119,7 @@ async def test_startup_rules_injection():
     # 눌러 제출**된다(본문 줄바꿈은 \n, 맨 끝 \r 로 제출). 빈 규칙이면 주입하지 않는다.
     srv, task, sock = await server_only()
     try:
+        srv.claude_auto_launch = False   # 규칙 주입만 격리(auto-launch /rc 제외)
         srv.set_claude_rules("always do X\nand Y")
         assert srv.claude_rules == "always do X\nand Y"
         sess = srv.ensure_default_session(80, 24)
@@ -628,6 +629,7 @@ async def test_claude_auto_mode_cycles_to_auto():
     from pytmuxlib.server import _CAM_MAX
     srv, task, sock = await server_only()
     try:
+        srv.claude_auto_launch = False   # 상시 auto_mode 만 격리(launch /rc·auto 제외)
         sess = srv.ensure_default_session(80, 24)
         win = sess.active_window
         p = win.active_pane
@@ -677,6 +679,72 @@ async def test_claude_auto_mode_cycles_to_auto():
         sent.clear()
         scan("? for shortcuts")
         assert sent == []
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
+async def test_claude_auto_launch_rc_and_perm_auto():
+    """요청: 새 Claude 세션이 패널에 뜨면(None→Claude) auto-launch(기본 ON)가
+    ① 첫 idle 에 `/rc`(원격 제어) 를 1회 주입하고 ② 다음 idle 에 권한모드를 auto 로
+    1회 유도(shift+tab 폐루프)한다. 이미 원격제어가 켜진 화면('Remote Control active')
+    에선 /rc 를 건너뛴다(도로 끄지 않음). 토글 OFF 면 어느 것도 안 한다. opts 영속."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        rc, bt = [], []
+        srv._pc_inject = lambda pane, text: rc.append(text)
+        srv._inject_keys = lambda pane, data: bt.append(data)
+        BT = b"\x1b[Z"
+
+        assert srv.claude_auto_launch is True, "기본 on"
+
+        def scan(s):
+            p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
+            srv._scan_claude(sess, win)
+
+        # 새 세션(None→idle): 첫 idle 에 /rc 1회, 권한 유도는 예약만(이 프레임엔 안 함)
+        scan("? for shortcuts")
+        assert p._claude == "idle"
+        assert rc == ["/rc"], rc
+        assert p._rc_pending is False and p._perm_auto_pending is True
+        assert bt == [], "이 프레임엔 shift+tab 없음(프레임 분리)"
+
+        # 다음 idle(권한=plan): _perm_target=auto 세우고 shift+tab 1회 주입
+        scan("⏸ plan mode on (shift+tab to cycle)")
+        assert p._perm_auto_pending is False and p._perm_target == "auto"
+        assert bt == [BT], bt
+        # auto 도달 → 폐루프 정지, /rc 재주입 없음(세션 유지 중)
+        scan("⏵⏵ auto mode on (shift+tab to cycle)")
+        assert p._perm_target is None and rc == ["/rc"]
+
+        # 같은 세션 유지 중엔 /rc 재주입 없음(busy→idle 왕복해도)
+        scan("✽ Crunching… (5s · ↑ 1k tokens)")   # busy → idle 이탈(세션 유지)
+        scan("/help for help")                     # 다시 idle — 재주입 없음
+        assert rc == ["/rc"]
+        # 세션 종료(None) 후 'Remote Control active' 동반 재시작
+        scan("$ ")                          # 비-Claude(None) → 세션 끝
+        assert p._claude is None
+        rc.clear()
+        scan("Remote Control active\n? for shortcuts")   # 새 세션 + 이미 원격 ON
+        assert p._claude == "idle"
+        assert rc == [], "원격제어 ON 화면이면 /rc 건너뜀"
+        assert p._perm_auto_pending is True, "그래도 권한 auto 유도는 예약"
+
+        # 토글 OFF → 영속 + 새 세션에 아무 자동 셋업 안 함
+        import json as _json
+        assert srv.set_claude_auto_launch(False) is False
+        assert _json.load(open(srv.opts_path))["claude_auto_launch"] is False
+        scan("$ ")                          # 세션 종료
+        rc.clear(); bt.clear()
+        scan("? for shortcuts")             # 새 세션이지만 OFF
+        assert p._rc_pending is False and p._perm_auto_pending is False
+        assert rc == [] and bt == []
     finally:
         try:
             os.unlink(srv.opts_path)

@@ -344,6 +344,7 @@ class ServerPersistMixin:
                            "auto_doc_clear": self.auto_doc_clear,
                            "auto_doc_clear_delay": self.auto_doc_clear_delay,
                            "claude_auto_mode": self.claude_auto_mode,
+                           "claude_auto_launch": self.claude_auto_launch,
                            "claude_rules": self.claude_rules,
                            "claude_ctx_autoclear": self.claude_ctx_autoclear,
                            "claude_ctx_threshold": self.claude_ctx_threshold,

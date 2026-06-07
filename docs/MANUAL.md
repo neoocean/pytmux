@@ -543,6 +543,25 @@ Claude 데스크탑 앱 **원격 제어**로 연결된 패널은 화면에 `Remo
 
 ![원격 제어 팝업 — [r] 로 /rc 토글](image/25-remote-control.svg)
 
+### 11.10 새 세션 자동 셋업 (`auto-launch`)
+
+`auto-launch`(**기본 ON**)는 패널에서 Claude Code 가 **새로 시작될 때마다**(세션 시작
+감지) 다음을 **세션당 1회** 자동 적용합니다.
+
+- **`/rc` 주입** — 원격 제어(리모트 커넥션)를 켭니다. 화면에 이미 `Remote Control
+  active` 가 보이면(재접속·재시작 복원 등) **건너뛰어** 켜진 원격 제어를 도로 끄지
+  않습니다.
+- **권한모드 `auto` 유도** — 첫 idle 에서 권한모드를 `auto`(자동 수락)로 한 번 맞춥니다
+  (`shift+tab` 폐루프).
+
+`claude-auto-mode`(§11.5)가 idle 마다 **상시** auto 로 강제하는 것과 달리, `auto-launch`
+는 **세션 시작 1회**만 작동합니다 — 이후 사용자가 `shift+tab` 으로 바꾸면 다시 건드리지
+않습니다. `/rc` 제출과 권한 `shift+tab` 은 입력 프레임을 갈라 한 묶음으로 섞이지 않게
+보냅니다.
+
+- `auto-launch off` 로 끄고 `auto-launch on` 으로 켭니다(기본 ON). 설정은 `opts.json`
+  에 영속됩니다.
+
 토큰 절약 시나리오 전반은 [TOKEN_SAVING_SCENARIO.md](TOKEN_SAVING_SCENARIO.md) 를
 참고하세요.
 
@@ -756,6 +775,7 @@ tmux 의 윈도우 명령 이름과 별칭을 **둘 다** 받습니다.
 | `token-log` | 토큰 사용량 파일 기록 |
 | `claude-rules` | 시작 규칙 편집(새 세션/clear 후 자동 주입) |
 | `claude-auto-mode on\|off` | idle 시 권한모드 자동 오토모드 전환 |
+| `auto-launch on\|off` | 새 세션 시작 시 `/rc`(원격 제어)+권한 `auto` 1회 자동 적용(기본 ON) |
 | `auto-doc-clear on\|off` | 30초 idle 시 자동 문서화 + `/clear` |
 
 ### 키 바인딩 / 진단 / 운영

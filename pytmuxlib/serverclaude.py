@@ -13,9 +13,10 @@ import time
 
 from . import tokens
 from .claude import (claude_account, claude_context_pct, claude_feedback_prompt,
-                     claude_model, claude_prompt, claude_perm_mode, claude_state,
-                     claude_usage, claude_welcome, ctx_window_tokens,
-                     parse_reset_delay, screen_tail_key, track_repeat)
+                     claude_model, claude_prompt, claude_perm_mode,
+                     claude_remote_active, claude_state, claude_usage,
+                     claude_welcome, ctx_window_tokens, parse_reset_delay,
+                     screen_tail_key, track_repeat)
 from .model import Pane, Session
 
 # 권한모드 자동 오토모드 전환(§10): 한 번 idle 진입 후 auto 에 도달하지 못해도 이
@@ -326,6 +327,19 @@ class ServerClaudeMixin:
         self._save_opts()
         return self.claude_auto_mode
 
+    def set_claude_auto_launch(self, value=None):
+        """새 Claude 세션 시작 시 /rc(원격 제어 켜기)+권한모드 auto 를 1회 자동 적용
+        하는 모드 토글. value 미지정 시 반전. opts.json 영속. 끌 때 진행 중인 1회
+        예약(_rc_pending/_perm_auto_pending)도 거둔다(다음 세션부터 적용/미적용)."""
+        self.claude_auto_launch = (not self.claude_auto_launch) if value is None \
+            else bool(value)
+        if not self.claude_auto_launch:
+            for p in self._all_panes():
+                p._rc_pending = False
+                p._perm_auto_pending = False
+        self._save_opts()
+        return self.claude_auto_launch
+
     def _inject_keys(self, pane: Pane, data: bytes):
         """패널 PTY 로 raw 키 바이트를 보낸다(_pc_inject 와 달리 Enter 를 안 붙임).
         권한모드 순환(shift+tab=\\x1b[Z) 등 제어키 주입용."""
@@ -477,10 +491,18 @@ class ServerClaudeMixin:
                     # 준비됨) 때 저장된 규칙을 프롬프트에 넣는다. 빈 규칙이면 안 함.
                     if self.claude_rules.strip():
                         p._rules_pending = True
+                    # 새 세션 자동 셋업(auto-launch): 첫 idle 에 /rc(원격제어)+권한 auto
+                    # 1회 적용. _rc_pending 가 idle 에서 /rc 를 쏘고 _perm_auto_pending
+                    # 으로 넘겨, 다음 idle 에 _perm_target=auto 를 세운다(프레임 분리로
+                    # /rc 제출과 shift+tab 이 한 묶음으로 섞이지 않게).
+                    if self.claude_auto_launch:
+                        p._rc_pending = True
                     p._ctx_fired = False   # 새 세션 — 잔량 자동정리 디바운스 해제(M11)
                     p._ctx_pct = None      # 새 세션 — 잔량% 추적 리셋(M15)
                 if not new_cl:
                     p._rules_pending = False   # 세션 끝나면 예약 해제
+                    p._rc_pending = False      # 세션 끝 — auto-launch 예약 해제
+                    p._perm_auto_pending = False
                     p._ctx_pct = None          # 세션 끝 — 잔량% 비교 대상 제외(M15)
                 # 수동 /clear 감지: 이미 Claude 세션 중(old_cl)인데 환영 배너가 **새로**
                 # 뜨면(빈 컨텍스트) 토큰 누계를 새 세션으로 끊는다. pytmux 자동화(_pc_
@@ -604,6 +626,22 @@ class ServerClaudeMixin:
                     if p._rules_pending:
                         p._rules_pending = False
                         self._inject_rules(p)
+                    # 새 세션 자동 셋업(auto-launch, 요청): 첫 idle 에 /rc 로 원격 제어
+                    # (리모트 커넥션)를 켜고, 다음 idle 에 권한모드를 auto 로 유도한다.
+                    # /rc 와 권한 shift+tab 을 다른 프레임으로 갈라 한 묶음 입력으로
+                    # 섞이지 않게 한다. 이미 원격제어가 켜진 화면(resume 후 오인 등)에선
+                    # /rc 를 건너뛰어 도로 끄지 않는다.
+                    if p._rc_pending:
+                        p._rc_pending = False
+                        if not claude_remote_active(txt):
+                            self._pc_inject(p, "/rc")
+                        p._perm_auto_pending = True
+                    elif p._perm_auto_pending:
+                        p._perm_auto_pending = False
+                        if claude_perm_mode(txt) not in ("auto", "bypass"):
+                            p._perm_target = "auto"   # 아래 폐루프가 auto 까지 순환
+                            p._cam_tries = 0
+                            p._cam_last = None
                     # idle: 현재 권한모드를 관측해 저장(팝업 '현재 모드' 표시용 — status
                     # 로 클라에 전달, §10 item 2). footer 가 안 보이면(None) 마지막 값 유지.
                     pm = claude_perm_mode(txt)

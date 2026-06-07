@@ -461,6 +461,11 @@ class Pane:
         # 세션을 재리셋하지 않게, 배너가 "새로 떴을" 때만 1회 끊는다(claude_welcome).
         self._welcome_seen = False
         self._rules_pending = False  # 시작 규칙 주입 예약(다음 idle 에 1회, #27)
+        # 새 Claude 세션 자동 셋업(auto-launch): 시작 시 /rc(원격제어)를 1회 주입하고
+        # (_rc_pending) 그 다음 idle 에 권한모드를 auto 로 1회 유도(_perm_auto_pending).
+        # 프레임을 갈라 /rc 제출과 shift+tab 이 섞이지 않게 한다. 둘 다 휘발성.
+        self._rc_pending = False
+        self._perm_auto_pending = False
         # 토큰 절감 자동화(docs/TOKEN_SAVING_SCENARIO.md). 둘 다 휘발성(재시작 비직렬화).
         # _resume_handle: 자동재개 예약 call_later 핸들 — busy 복귀 시 cancel 하려고
         #   들고 있는다(M12; 없으면 None). _ctx_fired: 컨텍스트 잔량 자동 정리(M11)가

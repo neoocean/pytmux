@@ -104,6 +104,12 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         # auto(자동 수락)가 아니면 shift+tab 을 순환 주입해 auto 로 맞춘다. 기본 OFF.
         # bypass(권한 우회) 모드는 명시적·위험 설정이라 건드리지 않는다. opts.json 영속.
         self.claude_auto_mode = bool(_opts.get("claude_auto_mode", False))
+        # 새 Claude 세션 자동 셋업(요청): Claude Code 가 패널에서 새로 뜨면(None→Claude)
+        # 첫 idle 에 ① `/rc` 를 1회 주입해 원격 제어(리모트 커넥션)를 켜고 ② 권한모드를
+        # auto 로 1회 유도한다. claude_auto_mode(상시 강제)와 달리 **세션 시작 1회**만
+        # 작용한다(이후 사용자가 바꾸면 안 건드림). `/rc` 는 이미 원격제어가 켜진 화면
+        # (claude_remote_active)에선 건너뛰어 도로 끄지 않는다. 기본 ON. opts.json 영속.
+        self.claude_auto_launch = bool(_opts.get("claude_auto_launch", True))
         # Claude Code 시작 규칙(#27): 사용자가 에디터 팝업으로 저장해 둔 "항상 지킬
         # 규칙" 텍스트. 새 Claude 세션이 뜨면(또는 pytmux 가 /clear 한 뒤) 이 텍스트를
         # 프롬프트에 주입한다(빈 문자열이면 아무것도 안 함). opts.json 영속.
@@ -454,6 +460,8 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         "auto-doc-clear": "set_auto_doc_clear", "auto-doc": "set_auto_doc_clear",
         "claude-auto-mode": "set_claude_auto_mode",
         "auto-mode": "set_claude_auto_mode",
+        "claude-auto-launch": "set_claude_auto_launch",
+        "auto-launch": "set_claude_auto_launch",
         # 토큰 절감 on/off 토글의 외부 cmd 파리티(설정 팝업과 같은 setter).
         "ctx-autoclear": "set_claude_ctx_autoclear",
         "resume-gate": "set_token_budget_resume_gate",
