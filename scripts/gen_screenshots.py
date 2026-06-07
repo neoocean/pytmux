@@ -417,7 +417,10 @@ def _is_blank(svg_path):
         return True
 
 
+import html as _html
 import re as _re
+
+from rich.cells import cell_len as _cell_len
 
 _EMAIL_RE = _re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
@@ -425,13 +428,40 @@ _EMAIL_RE = _re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 _WELCOME_RE = _re.compile(r">Welcome(?:&#160;|\s)back[^<]*</text>")
 
 
-def _redact_svg(path):
-    """저장한 SVG 에서 계정 PII(이메일·환영 배너 이름)를 가린다(라이브 Claude 보호).
+# Rich 의 export_svg 는 <text> 의 textLength 를 cell_len 이 아닌 len(글자수) 로 계산하는
+# 버그가 있어(rich/console.py: `textLength=char_width * len(text)`), 한글 등 와이드(2칸)
+# 문자가 절반 폭으로 압축돼 자간이 좁아지고 글자가 겹쳐 보인다. x 좌표는 cell_len 기준이라
+# 정상이므로 textLength 만 cell_len 기준으로 다시 늘리면 그리드에 맞게 펼쳐진다.
+_TEXT_RE = _re.compile(
+    r'(<text\b[^>]*?textLength=")([0-9.]+)("[^>]*>)([^<]*)(</text>)'
+)
 
-    실제 `claude` 실행 화면에는 로그인 계정 이메일이 환영 배너·상태줄에, 사용자 이름이
+
+def _fix_cjk_textlength(svg):
+    """와이드 문자가 든 <text> 의 textLength 를 셀폭 기준으로 보정한다."""
+
+    def repl(m):
+        pre, length, mid, content, end = m.groups()
+        text = _html.unescape(content)
+        n = len(text)
+        cells = _cell_len(text)
+        if n == 0 or cells == 0 or cells == n:
+            return m.group(0)            # 와이드 문자 없음 → 그대로
+        char_width = float(length) / n   # 셀당 px (모노스페이스)
+        return f"{pre}{char_width * cells:g}{mid}{content}{end}"
+
+    return _TEXT_RE.sub(repl, svg)
+
+
+def _redact_svg(path):
+    """저장한 SVG 의 PII 마스킹 + 한글 자간(textLength) 보정.
+
+    PII: 실제 `claude` 실행 화면에는 로그인 계정 이메일이 환영 배너·상태줄에, 사용자 이름이
     "Welcome back <이름>!" 배너에 뜬다. 공개 저장소에 커밋되는 이미지라 이메일은
     user@example.com 으로, 환영 이름은 "Welcome back!" 으로 마스킹한다(다른 텍스트는
-    그대로). textLength 속성이 있어 폭은 유지된다."""
+    그대로). textLength 속성이 있어 폭은 유지된다.
+
+    자간: Rich 의 와이드 문자 textLength 버그를 _fix_cjk_textlength 로 교정한다."""
     try:
         with open(path, encoding="utf-8") as f:
             svg = f.read()
@@ -439,6 +469,7 @@ def _redact_svg(path):
         return
     new = _EMAIL_RE.sub("user@example.com", svg)
     new = _WELCOME_RE.sub(">Welcome&#160;back!</text>", new)
+    new = _fix_cjk_textlength(new)
     if new != svg:
         with open(path, "w", encoding="utf-8") as f:
             f.write(new)
