@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hmac
 import os
+import secrets
 import signal
 import time
 import traceback
@@ -658,6 +660,20 @@ class ServerIOMixin:
                 pass
             writer.close()
             return
+        # 연결 인증(F1): 토큰이 설정돼 있으면(=실제 데몬) 첫 메시지의 token 을 상수시간
+        # 비교로 검증한다. 토큰을 읽을 수 있는 건 0600 파일을 둔 같은 UID 뿐이므로,
+        # Windows TCP 루프백에서 다른 로컬 사용자의 접속을 차단한다. 불일치/누락이면
+        # 명확히 거절하고 연결을 끊는다(서버는 살아 있음).
+        if self.auth_token is not None:
+            tok = first.get("token")
+            if not isinstance(tok, str) or not hmac.compare_digest(
+                    tok, self.auth_token):
+                try:
+                    await write_msg(writer, {"t": "error", "error": "auth_failed"})
+                except (OSError, ConnectionError):
+                    pass
+                writer.close()
+                return
         t = first.get("t")
         if t == "list":
             await write_msg(writer, {"t": "list", "sessions": [
@@ -873,6 +889,14 @@ class ServerIOMixin:
         self.loop = asyncio.get_running_loop()
         signals = self._install_signal_handlers()
         try:
+            # 연결 인증 토큰(F1)을 listen **전에** 게시한다. 클라이언트는 0600 토큰
+            # 파일을 읽어 hello/control 에 실어 보내고, handle_client 가 검증한다. listen
+            # 후에 쓰면 재시작 직후 클라가 빈/구토큰을 읽을 창이 생기므로 먼저 쓴다.
+            self.auth_token = secrets.token_hex(32)
+            try:
+                ipc.write_token(self.sock_path, self.auth_token)
+            except OSError:
+                self._log_error("write_token")
             # OS 별 listen 분기(Unix=AF_UNIX, Windows=TCP 루프백+포트파일)는 ipc 가 담당.
             # 확정 엔드포인트(TCP 면 실제 포트)를 패널 셸 $PYTMUX 에 게시한다.
             server, self.resolved_endpoint = await ipc.start_server(

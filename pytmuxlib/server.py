@@ -51,6 +51,10 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         # (클라의 textual import 와 겹쳐 체감 영향 없음).
         self._boot_time = time.time()
         self._code_version = version.code_version()
+        # 연결 인증 토큰(F1). serve() 가 listen 전에 무작위 토큰을 생성·게시(0600)하고
+        # 채운다. None 인 동안(serve 미호출 단위 테스트)은 handle_client 가 검증을
+        # 건너뛴다 — 실제 데몬은 항상 serve() 를 거치므로 토큰이 강제된다.
+        self.auth_token: str | None = None
         # 대량 출력 드레인 중 순환 GC 일시정지 가드(§10 프로파일링): pyte feed 는 셀마다
         # `Char` 네임드튜플을 새로 할당해 버스트 한 번에 수백만 객체가 생긴다. 순환 GC 가
         # 이를 주기적으로 훑으면 단일 슬라이스가 30~85ms 멈춰(측정) 이벤트 루프가 끊기고

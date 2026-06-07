@@ -33,7 +33,7 @@ pytmux 의 보안 경계는 **전적으로 전송 계층(소켓 파일 권한 / 
 
 | ID | 심각도 | 항목 | 전제 |
 |----|--------|------|------|
-| F1 | **High**(Windows) | TCP 루프백 무인증 → 무인가 로컬 접근으로 입력주입·RCE·종료 | Windows |
+| F1 | **High**(Windows) ✅적용 | TCP 루프백 무인증 → 무인가 로컬 접근으로 입력주입·RCE·종료 | Windows |
 | F2 | Medium | 애플리케이션 인증/피어 UID 검증 부재(전 플랫폼) | — |
 | F3 | Medium | `/tmp` 폴백 상태 디렉터리 선점 → 가짜 서버/MITM | Unix, XDG 미설정(ssh) |
 | F4 | Medium | 캡처(REC) 기본 ON·raw 민감출력·world-readable·depot 공유 | 로컬/팀 |
@@ -98,6 +98,12 @@ pytmux 의 보안 경계는 **전적으로 전송 계층(소켓 파일 권한 / 
   `hello`/`control` 에 토큰을 실어 서버가 검증(없거나 불일치면 즉시 종료). ② 가능하면
   Windows AF_UNIX(최신 빌드 지원) 또는 Named Pipe(per-user ACL)로 전환. 토큰은 최소한의
   심층 방어로 즉시 도입 권장.
+- **적용됨(①)**: `ipc.token_path/write_token/read_token` 으로 서버가 listen **전에**
+  `secrets.token_hex(32)` 토큰을 `0600` 파일에 게시(`serverio.serve`), 클라/launcher 가
+  읽어 `hello`/`control` 첫 메시지에 실어 보내고, `handle_client` 가 `hmac.compare_digest`
+  로 검증해 불일치/누락이면 `auth_failed` 로 거절한다. 토큰을 읽을 수 있는 건 같은 UID
+  뿐이라 Windows TCP 루프백의 무인가 접속이 차단된다. 회귀: `test_server.py::
+  test_auth_token_required_and_published` · `test_control_requires_auth_token`.
 
 ### F2 — [Medium] 애플리케이션 인증/피어 검증 부재
 

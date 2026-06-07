@@ -236,6 +236,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return
             cols, rows = self._content_size()
             hello = {"t": "hello", "proto": PROTO_VERSION, "cols": cols, "rows": rows}
+            tok = ipc.read_token(self.sock_path)   # 연결 인증(F1)
+            if tok:
+                hello["token"] = tok
             if self.session_name:
                 hello["session"] = self.session_name
             await write_msg(self.writer, hello)
@@ -421,6 +424,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return False
             cols, rows = self._content_size()
             hello = {"t": "hello", "proto": PROTO_VERSION, "cols": cols, "rows": rows}
+            tok = ipc.read_token(self.sock_path)   # 연결 인증(F1)
+            if tok:
+                hello["token"] = tok
             if self.session_name:
                 hello["session"] = self.session_name
             await write_msg(self.writer, hello)

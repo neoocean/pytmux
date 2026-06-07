@@ -1140,9 +1140,63 @@ async def test_proto_version_negotiation():
 
         # ② proto 없는 구버전 클라 → 호환으로 통과(첫 프레임 _send_full 수신)
         reader2, writer2 = await ipc.open_connection(sock)
-        await write_msg(writer2, {"t": "hello", "cols": 80, "rows": 24})
+        await write_msg(writer2, {"t": "hello", "cols": 80, "rows": 24,
+                                  "token": srv.auth_token})
         assert (await read_msg(reader2)) is not None     # 레이아웃/화면 수신 = 수락
         writer2.close()
+    finally:
+        await teardown(srv, task, sock)
+
+
+# ── 연결 인증 토큰(F1, docs/SECURITY_REVIEW.md) ────────────────────────────────
+async def test_auth_token_required_and_published():
+    """서버는 listen 전에 0600 토큰 파일을 게시하고, 올바른 토큰만 수락한다.
+    무인가 로컬 주체(특히 Windows TCP 루프백)의 접속을 차단한다."""
+    import os
+    from pytmuxlib.protocol import write_msg, read_msg
+    srv, task, sock = await server_only()
+    try:
+        # 서버가 토큰을 발급했고, 파일에서 읽은 값과 일치한다.
+        assert srv.auth_token and ipc.read_token(sock) == srv.auth_token
+        # 토큰 파일은 0600(소유자만 읽기) — TCP 루프백에서도 같은 UID 만 토큰을 얻는다.
+        if not ipc.IS_WINDOWS:
+            mode = os.stat(ipc.token_path(sock)).st_mode & 0o777
+            assert mode == 0o600, oct(mode)
+
+        # ① 토큰 없음 → auth_failed + 연결 종료 + 클라 미등록
+        r0, w0 = await ipc.open_connection(sock)
+        await write_msg(w0, {"t": "hello", "cols": 80, "rows": 24})
+        reply = await read_msg(r0)
+        assert reply == {"t": "error", "error": "auth_failed"}, reply
+        assert (await read_msg(r0)) is None        # 서버가 연결을 끊음
+        w0.close()
+
+        # ② 틀린 토큰 → auth_failed
+        r1, w1 = await ipc.open_connection(sock)
+        await write_msg(w1, {"t": "hello", "cols": 80, "rows": 24, "token": "nope"})
+        assert (await read_msg(r1)) == {"t": "error", "error": "auth_failed"}
+        w1.close()
+
+        # ③ 올바른 토큰 → 수락(레이아웃/화면 수신), 클라 등록
+        r2, w2 = await ipc.open_connection(sock)
+        await write_msg(w2, {"t": "hello", "cols": 80, "rows": 24,
+                             "token": srv.auth_token})
+        assert (await read_msg(r2)) is not None
+        w2.close()
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_control_requires_auth_token():
+    """control 채널(send-keys/kill 등)도 토큰 없이는 거절된다(무인증 kill 방지)."""
+    from pytmuxlib.protocol import write_msg, read_msg
+    srv, task, sock = await server_only()
+    try:
+        r, w = await ipc.open_connection(sock)
+        await write_msg(w, {"t": "control", "line": "kill-server"})
+        assert (await read_msg(r)) == {"t": "error", "error": "auth_failed"}
+        w.close()
+        assert srv.running, "무인가 control 로 서버가 종료되면 안 됨"
     finally:
         await teardown(srv, task, sock)
 
@@ -1202,7 +1256,8 @@ async def test_resize_rescales_panes():
     srv, task, sock = await server_only()
     try:
         r, w = await ipc.open_connection(sock)
-        await pytmux.write_msg(w, {"t": "hello", "cols": 100, "rows": 40})
+        await pytmux.write_msg(w, {"t": "hello", "cols": 100, "rows": 40,
+                                   "token": srv.auth_token})
         s = []
         await harness.drain(r, s)
         sess = next(iter(srv.sessions.values()))
@@ -1309,7 +1364,7 @@ async def test_hello_and_multiclient_minsize():
     try:
         rA, wA = await ipc.open_connection(sock)
         await pytmux.write_msg(wA, {"t": "hello", "cols": 100, "rows": 40,
-                                    "session": "main"})
+                                    "session": "main", "token": srv.auth_token})
         sA = []
         await harness.drain(rA, sA, timeout=5,
                             until=lambda s: any(m["t"] == "layout" for m in s)
@@ -1318,7 +1373,8 @@ async def test_hello_and_multiclient_minsize():
         assert any(m["t"] == "status" for m in sA)  # 단일 세션(이름 무시)
         # 둘째 클라이언트(더 작음) → 공유 최소 크기 80x24
         rB, wB = await ipc.open_connection(sock)
-        await pytmux.write_msg(wB, {"t": "hello", "cols": 80, "rows": 24})
+        await pytmux.write_msg(wB, {"t": "hello", "cols": 80, "rows": 24,
+                                    "token": srv.auth_token})
         sB = []
         await harness.drain(rB, sB, timeout=5,
                             until=lambda s: any(m["t"] == "layout" for m in s))
@@ -1714,7 +1770,9 @@ async def test_attach_survives_send_full_error():
         before = len(srv.clients)
         # 예외가 전파되지 않아야 한다(await 가 깔끔히 반환).
         await srv.handle_client(_OneShotReader({"t": "hello", "cols": 80,
-                                                "rows": 24}), _NullWriter())
+                                                "rows": 24,
+                                                "token": srv.auth_token}),
+                                _NullWriter())
         assert boom, "초기 _send_full 이 호출됐어야"
         assert len(srv.clients) == before, "실패한 클라가 누수되면 안 됨"
         log = ipc.state_base(sock) + ".error.log"

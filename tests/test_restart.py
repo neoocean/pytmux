@@ -270,7 +270,8 @@ async def test_execv_restart_preserves_shell_pid():
         assert ipc.probe(endpoint), "서버 서브프로세스 기동 실패"
 
         reader, writer = await _conn(endpoint)
-        await write_msg(writer, {"t": "hello", "cols": 80, "rows": 24})
+        await write_msg(writer, {"t": "hello", "cols": 80, "rows": 24,
+                                 "token": ipc.read_token(endpoint)})
         await asyncio.sleep(0.3)               # 셸 프롬프트 안정화
         await _send_input(writer, "echo PX=$$\n")
         m = await _await_regex(reader, r"PX=(\d+)")
@@ -279,7 +280,8 @@ async def test_execv_restart_preserves_shell_pid():
 
         # 별도 연결로 restart-server 제어 요청
         r2, w2 = await _conn(endpoint)
-        await write_msg(w2, {"t": "control", "line": "restart-server"})
+        await write_msg(w2, {"t": "control", "line": "restart-server",
+                             "token": ipc.read_token(endpoint)})
         reply = await asyncio.wait_for(read_msg(r2), timeout=3.0)
         assert reply and reply.get("result") == "restarting", reply
         w2.close()
@@ -293,7 +295,9 @@ async def test_execv_restart_preserves_shell_pid():
         assert ipc.probe(endpoint), "재시작 후 서버 재기동 실패"
 
         reader2, writer2 = await _conn(endpoint)
-        await write_msg(writer2, {"t": "hello", "cols": 80, "rows": 24})
+        # 재시작 후 토큰이 새로 발급되므로 다시 읽는다.
+        await write_msg(writer2, {"t": "hello", "cols": 80, "rows": 24,
+                                  "token": ipc.read_token(endpoint)})
         await asyncio.sleep(0.3)
         await _send_input(writer2, "echo PY=$$\n")
         m2 = await _await_regex(reader2, r"PY=(\d+)")
@@ -304,7 +308,8 @@ async def test_execv_restart_preserves_shell_pid():
     finally:
         try:
             r3, w3 = await _conn(endpoint)
-            await write_msg(w3, {"t": "kill-server"})
+            await write_msg(w3, {"t": "kill-server",
+                                 "token": ipc.read_token(endpoint)})
             await asyncio.sleep(0.2)
             w3.close()
         except Exception:

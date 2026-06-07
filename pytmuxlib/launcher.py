@@ -56,7 +56,13 @@ def control_request(sock_path: str, obj: dict):
     if s is None:
         return None
     # 제어 프레임에도 와이어 버전을 실어 서버가 비호환을 거절할 수 있게 한다(#7).
-    data = json.dumps({"proto": protocol.PROTO_VERSION, **obj}).encode()
+    # 연결 인증 토큰(F1)도 함께 실어 서버가 무인가 접속을 거절하게 한다(없으면 생략).
+    frame = {"proto": protocol.PROTO_VERSION}
+    tok = ipc.read_token(sock_path)
+    if tok:
+        frame["token"] = tok
+    frame.update(obj)
+    data = json.dumps(frame).encode()
     s.sendall(len(data).to_bytes(4, "big") + data)
     try:
         header = _recvn(s, 4)

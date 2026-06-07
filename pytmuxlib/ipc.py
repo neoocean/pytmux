@@ -33,6 +33,7 @@ __all__ = [
     "IS_WINDOWS", "parse_endpoint", "is_tcp",
     "default_state_dir", "default_endpoint", "default_endpoint_candidates",
     "resolve_default_endpoint", "portfile_for", "state_base",
+    "token_path", "write_token", "read_token",
     "start_server", "open_connection", "probe", "control_socket",
 ]
 
@@ -154,6 +155,49 @@ def _write_portfile(path: str, port: int) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(str(port))
     os.replace(tmp, path)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 연결 인증 토큰(F1) — 같은 UID 만 읽을 수 있는 0600 파일로 공유 비밀을 게시한다.
+# Unix 소켓은 0700 디렉터리·0600 소켓으로 이미 같은 UID 만 접근 가능하지만, Windows
+# 는 127.0.0.1 TCP 루프백이라 같은 머신의 **다른 로컬 사용자도 접속 가능**하다. 토큰을
+# 읽을 수 있는 건 파일을 0600 으로 둔 같은 UID 뿐이므로, hello/control 첫 메시지에 토큰을
+# 실어 서버가 검증하면 무인가 로컬 주체의 접속을 차단한다(docs/SECURITY_REVIEW.md F1).
+# ─────────────────────────────────────────────────────────────────────────────
+def token_path(endpoint: str) -> str:
+    """인증 토큰 파일 경로. Unix=소켓경로+".token", TCP=상태 디렉터리 고정 파일."""
+    if is_tcp(endpoint):
+        return os.path.join(default_state_dir(), "default.token")
+    return endpoint + ".token"
+
+
+def write_token(endpoint: str, token: str) -> str:
+    """토큰을 0600 으로 원자적 게시(서버). 게시한 경로를 반환한다.
+
+    O_CREAT 시점부터 0600 으로 만들어 다른 사용자가 토큰을 읽을 창을 두지 않는다.
+    """
+    path = token_path(endpoint)
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, token.encode("ascii"))
+    finally:
+        os.close(fd)
+    os.replace(tmp, path)
+    try:    # 기존 파일이 넓은 권한으로 남아 있었을 가능성 대비(best-effort).
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return path
+
+
+def read_token(endpoint: str) -> Optional[str]:
+    """게시된 토큰을 읽는다(클라/launcher). 없거나 못 읽으면 None."""
+    try:
+        with open(token_path(endpoint), "r", encoding="ascii") as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
 
 
 ClientCb = Callable[[asyncio.StreamReader, asyncio.StreamWriter], Awaitable[None]]
