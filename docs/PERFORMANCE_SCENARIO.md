@@ -4,7 +4,7 @@
 > 실행속도·반응성의 남은 레버는 §8(추가 리서치, 2026-06-06 실측)에 A4/A5/B8/B9 로 정리.
 > 본 문서는 "더 빨리 실행되고 더 빨리 응답하게" 만들기 위한 **근거 기반 최적화 시나리오**
 > 다. 각 항목은 코드 근거(`file:line`)·개선안·예상 효과·위험·검증 게이트를 갖는다.
-> 후속 리뷰(2026-06-07, 신규 레버 C1~C5 미구현)는 [PERFORMANCE_REVIEW_2026-06-07.md](PERFORMANCE_REVIEW_2026-06-07.md).
+> 후속 리뷰(2026-06-07, 신규 레버 C1~C5 **구현·게시 완료**)는 [PERFORMANCE_REVIEW_2026-06-07.md](PERFORMANCE_REVIEW_2026-06-07.md).
 > 관련: [HANDOFF.md](HANDOFF.md) §9(throughput 작업 이력)·§10 · [WINDOWS_TESTING.md](WINDOWS_TESTING.md)
 > 측정 도구: `scripts/bench.py`(startup·탭/패널 반응성·출력폭증 3축), `poc/feed_profile.py`(feed/render 핫패스).
 
@@ -16,7 +16,7 @@
 python scripts/bench.py            # 기준선(baseline) — docs/benchmark/<os>/<ts>.md 생성
 # ... 변경 구현 ...
 python scripts/bench.py            # 변경 후 — 같은 머신/같은 파라미터로 재측정해 비교
-python tests/run.py                # 동작 불변 게이트(현 231 passed 유지)
+python tests/run.py                # 동작 불변 게이트(현 314 passed 유지)
 ```
 
 - `bench.py` 는 **완전 헤드리스**(실 셸/ssh 불필요)로 결정적이다. 인터랙티브 ssh
