@@ -797,6 +797,7 @@ class StatusBar(Widget):
         self.cmd_mode = False  # ESC 명령 모드 표시
         self.message = None    # display-message 임시 메시지
         self.hide_tabs = False  # 상단 탭바가 보이면 하단 탭 목록 생략
+        self.claude_active = False  # 활성 패널이 Claude 패널인가(좌하단 토큰 표기 게이트)
         self.claude_usage = None  # 활성 Claude 패널의 토큰/컨텍스트(best-effort)
         self.claude_tokens = 0    # 활성 계정 누적 토큰(§10 계정별 합계, 지속표시)
         self.claude_account = None  # 누적 토큰의 귀속 계정(표시에 곁들임)
@@ -932,6 +933,10 @@ class StatusBar(Widget):
         self.prompt_clear = msg.get("prompt_clear", False)
         self.prompt_clear_queue = msg.get("prompt_clear_queue", [])
         self.capture = msg.get("capture", False)
+        # 활성 패널이 Claude 패널인지(권위값, 매 status). 값(tokens/usage)은 아래처럼
+        # 지속표시하되, 렌더는 이 플래그로 게이트해 Claude 가 아닌 탭/패널에선 좌하단
+        # 토큰 표기를 숨긴다. 탭 전환 시 status 가 곧 와 False 로 내려간다.
+        self.claude_active = msg.get("claude_active", False)
         # §10 지속표시: usage/tokens/account 가 비어 와도(활성 패널이 Claude 가
         # 아니거나 한 프레임 파싱 실패) 마지막 비어있지 않은 값을 유지한다.
         # 계정이 바뀌면 서버가 새 비-0 값을 보내므로 자연히 갱신된다.
@@ -1031,26 +1036,29 @@ class StatusBar(Widget):
             segs.append(Segment("REC ", Style(color="white", bgcolor=tc("error"),
                                                bold=True)))
         self._usage_zone = None
-        # 활성 Claude 패널: 모델(M14c) + 컨텍스트 사용량(best-effort) + 세션 누적(#3, Σ)
+        # 활성 Claude 패널: 모델(M14c) + 컨텍스트 사용량(best-effort) + 세션 누적(#3, Σ).
+        # Claude 가 아닌 탭/패널에선 좌하단 토큰 표기를 통째로 숨긴다(claude_active 게이트)
+        # — 지속표시 값(claude_tokens 등)은 유지하되 렌더만 막는다.
         uparts = []
-        # 모델 배지는 좁은 폭에선 생략(자리 절약). claude_usage 가 있을 때만(활성 Claude).
-        if self.claude_model and self.claude_usage and w >= 60:
-            uparts.append(self.claude_model)
-        if self.claude_usage:
-            uparts.append(self.claude_usage)
-        if self.claude_tokens:
-            # 기호(Σ)와 숫자 사이 한 칸 띄움(§10). 계정이 있으면 @계정 곁들임.
-            # 터미널 폭이 넉넉하면(≥80칸) 약어(6.3M) 대신 세 자리 콤마 전체 숫자로
-            # 보여준다(#30 사용자 요청). 좁으면 기존 약어로 자리를 아낀다.
-            num = (f"{self.claude_tokens:,}" if w >= 80
-                   else _fmt_tokens(self.claude_tokens))
-            tk = "Σ " + num
-            # M18-B: 5시간 한도 근접도(분모 미상이면 None → 생략, 지어내지 않음).
-            if self.tok5h_pct is not None:
-                tk += f" ({self.tok5h_pct}% / 5h)"
-            if self.claude_account:
-                tk += " @" + self.claude_account
-            uparts.append(tk)
+        if self.claude_active:
+            # 모델 배지는 좁은 폭에선 생략(자리 절약). claude_usage 가 있을 때만.
+            if self.claude_model and self.claude_usage and w >= 60:
+                uparts.append(self.claude_model)
+            if self.claude_usage:
+                uparts.append(self.claude_usage)
+            if self.claude_tokens:
+                # 기호(Σ)와 숫자 사이 한 칸 띄움(§10). 계정이 있으면 @계정 곁들임.
+                # 터미널 폭이 넉넉하면(≥80칸) 약어(6.3M) 대신 세 자리 콤마 전체 숫자로
+                # 보여준다(#30 사용자 요청). 좁으면 기존 약어로 자리를 아낀다.
+                num = (f"{self.claude_tokens:,}" if w >= 80
+                       else _fmt_tokens(self.claude_tokens))
+                tk = "Σ " + num
+                # M18-B: 5시간 한도 근접도(분모 미상이면 None → 생략, 지어내지 않음).
+                if self.tok5h_pct is not None:
+                    tk += f" ({self.tok5h_pct}% / 5h)"
+                if self.claude_account:
+                    tk += " @" + self.claude_account
+                uparts.append(tk)
         if uparts:
             utext = " " + " · ".join(uparts) + " "
             ux0 = sum(sum(_char_cells(c) for c in s.text) for s in segs)

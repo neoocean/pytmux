@@ -148,6 +148,10 @@ class ServerIOMixin:
             "panes_claude": [self._pane_claude_entry(p, full)
                              for p in (win.panes() if win else [])],
             "active_pane": win.active_pane.id if win else None,
+            # 활성 패널이 Claude 패널인가(권위값). 클라가 좌하단 토큰/사용량 표기를
+            # 이 플래그로 게이트해 Claude 가 아닌 탭/패널에선 표기를 숨긴다.
+            "claude_active": bool(win and win.active_pane
+                                  and win.active_pane._claude),
             # 활성 패널이 Claude 면 토큰/컨텍스트 사용량(best-effort). M18-A: 점유%가
             # 없으면 세션 누계/윈도우로 근사 사용%를 곁들인다(_usage_text).
             "claude_usage": (self._usage_text(win.active_pane)

@@ -2053,7 +2053,8 @@ async def test_status_usage_click_opens_token_log():
     (계정=클라이언트별 · 시간/일/주/월)을 여는 open_token_log 를 호출한다."""
     async def body(app, pilot, srv):
         from textual import events
-        # 사용량 존이 그려지도록 누적 토큰/계정을 채운 뒤 렌더.
+        # 사용량 존이 그려지도록 누적 토큰/계정을 채운 뒤 렌더(활성 Claude 패널).
+        app.status.claude_active = True
         app.status.claude_tokens = 1500
         app.status.claude_account = "me@x.org"
         app.status.render_line(0)
@@ -2622,6 +2623,7 @@ async def test_command_candidates_above_input_box():
 
 async def test_status_claude_usage():
     async def body(app, pilot, srv):
+        app.status.claude_active = True
         app.status.claude_usage = "ctx 42%"
         txt = "".join(s.text for s in app.status.render_line(0))
         assert "ctx 42%" in txt, repr(txt)
@@ -2655,6 +2657,7 @@ async def test_status_session_tokens():
     # 세션 누적 토큰(#3)을 상태줄에 Σ 표기로 보여준다. 넓은 폭(≥80)에서는 세 자리
     # 콤마 전체 숫자(#30), 좁은 폭에서는 약어(k/M).
     async def body(app, pilot, srv):
+        app.status.claude_active = True
         app.status.claude_usage = "ctx 42%"
         app.status.claude_tokens = 45200
         txt = "".join(s.text for s in app.status.render_line(0))
@@ -2673,9 +2676,30 @@ async def test_status_session_tokens():
     await _with_app(body)
 
 
+async def test_status_tokens_hidden_when_not_claude():
+    """Claude 가 아닌 탭/패널(claude_active False)에선 좌하단 토큰/사용량 표기를
+    숨긴다 — 지속표시 값이 남아 있어도 렌더하지 않는다. 값 자체는 보존되어
+    (다시 Claude 패널로 돌아오면 표시), 클릭존도 등록되지 않는다."""
+    async def body(app, pilot, srv):
+        # 값은 채워 두되 활성 패널은 Claude 가 아님.
+        app.status.claude_active = False
+        app.status.claude_usage = "ctx 42%"
+        app.status.claude_tokens = 45200
+        app.status.claude_account = "alice"
+        txt = "".join(s.text for s in app.status.render_line(0))
+        assert "Σ" not in txt and "ctx 42%" not in txt, repr(txt)
+        assert app.status._usage_zone is None, "클릭존 미등록"
+        # 다시 Claude 패널이 활성화되면 보존된 값이 그대로 표시된다.
+        app.status.claude_active = True
+        txt2 = "".join(s.text for s in app.status.render_line(0))
+        assert "Σ 45,200 @alice" in txt2, repr(txt2)
+    await _with_app(body)
+
+
 async def test_status_tokens_abbrev_when_narrow():
     # 좁은 폭(<80칸)에서는 토큰 누계를 약어(k/M)로 줄여 자리를 아낀다(#30).
     async def body(app, pilot, srv):
+        app.status.claude_active = True
         app.status.claude_tokens = 1_200_000
         txt = "".join(s.text for s in app.status.render_line(0))
         assert "Σ 1.2M" in txt, repr(txt)
