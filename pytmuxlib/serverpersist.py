@@ -43,7 +43,7 @@ class ServerPersistMixin:
                 for t in s.tabs]}
             for s in self.sessions.values()]}
         try:
-            with open(path, "w", encoding="utf-8") as f:
+            with ipc.open_private(path) as f:   # 0600(F5): 화면 스냅샷 등 민감정보 보호
                 json.dump(data, f)
             return True
         except OSError:
@@ -119,7 +119,7 @@ class ServerPersistMixin:
         path = path or self.resume_state_path
         data = self._resume_payload()
         try:
-            with open(path, "w", encoding="utf-8") as f:
+            with ipc.open_private(path) as f:   # 0600(F5): 화면 스냅샷 등 민감정보 보호
                 json.dump(data, f)
             return True
         except OSError:
@@ -315,7 +315,7 @@ class ServerPersistMixin:
 
     def _save_slots(self, slots: dict):
         try:
-            with open(self.slots_path, "w", encoding="utf-8") as f:
+            with ipc.open_private(self.slots_path) as f:   # 0600(F5)
                 json.dump(slots, f)
         except OSError:
             pass
@@ -335,7 +335,7 @@ class ServerPersistMixin:
 
     def _save_opts(self):
         try:
-            with open(self.opts_path, "w", encoding="utf-8") as f:
+            with ipc.open_private(self.opts_path) as f:   # 0600(F5)
                 json.dump({"capture": self.capture,
                            "claude_header": self.claude_header,
                            "single_border": self.single_border,

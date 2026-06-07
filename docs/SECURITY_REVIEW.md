@@ -36,8 +36,8 @@ pytmux 의 보안 경계는 **전적으로 전송 계층(소켓 파일 권한 / 
 | F1 | **High**(Windows) ✅적용 | TCP 루프백 무인증 → 무인가 로컬 접근으로 입력주입·RCE·종료 | Windows |
 | F2 | Medium ✅적용 | 애플리케이션 인증/피어 UID 검증 부재(전 플랫폼) | — |
 | F3 | Medium ✅적용 | `/tmp` 폴백 상태 디렉터리 선점 → 가짜 서버/MITM | Unix, XDG 미설정(ssh) |
-| F4 | Medium | 캡처(REC) 기본 ON·raw 민감출력·world-readable·depot 공유 | 로컬/팀 |
-| F5 | Low–Med | 영속 파일(resume/slots/opts) 권한 미설정(심층방어 부족) | — |
+| F4 | Medium ✅적용(권한) | 캡처(REC) 기본 ON·raw 민감출력·world-readable·depot 공유 | 로컬/팀 |
+| F5 | Low–Med ✅적용 | 영속 파일(resume/slots/opts) 권한 미설정(심층방어 부족) | — |
 | F6 | Low | 메시지 입력 검증 빈약 → 자원 고갈(DoS) | 무인가 접근 시 |
 | F7 | Info | popup/pipe/run-shell/claude-rules = 의도된 셸 실행(인가 권한 내) | — |
 | F8 | Info | 가짜 서버의 화면/상태 위조(피싱)·키입력 가로채기 | 엔드포인트 통제 시 |
@@ -157,6 +157,13 @@ pytmux 의 보안 경계는 **전적으로 전송 계층(소켓 파일 권한 / 
   로 바꾸거나, 최소한 민감 패턴 마스킹·짧은 보존·명시적 동의 흐름 도입. ③ depot 공유가
   필요하면 raw 대신 마스킹본을 올리는 정책을 문서화. (관련 메모리: REC 기본 ON, 실 Claude
   데이터 수집.)
+- **적용됨(①)**: `_capture_write` 가 캡처 디렉터리를 `0700`, `pane-*.log`/`sessions.log`
+  를 `ipc.open_private`(생성 시점부터 `0600`)로 만든다 — 로컬 다른 사용자의 raw 캡처
+  열람을 차단(F4 의 핵심 노출 경로). 회귀: `test_server.py::test_private_files_are_0600`.
+- **②는 의도적 미적용**: REC 기본 ON 은 실 Claude 데이터 수집을 위한 **의도된 설계**라
+  (개발 워크플로 의존) 기본값을 바꾸지 않는다. 로컬 노출은 ①(0600/0700)로 해소되며,
+  GitHub 유출은 `.gitignore` 로 이미 차단됨(검증). depot 공유 시 raw 노출은 팀 내부로
+  한정되는 알려진 트레이드오프다.
 
 ### F5 — [Low–Medium] 영속 파일 권한 미설정 (심층 방어 부족)
 
@@ -167,6 +174,9 @@ pytmux 의 보안 경계는 **전적으로 전송 계층(소켓 파일 권한 / 
   디렉터리) 안에 있어 **정상 경로에선 디렉터리 권한으로 보호**된다. 그러나 파일 단위
   `0600` 이 아니라 심층 방어가 부족하고, F3 의 디렉터리 선점이 성립하면 그대로 노출된다.
 - **권고**: 민감 영속 파일은 `os.open(..., 0o600)` 또는 기록 후 `os.chmod(path, 0o600)`.
+- **적용됨**: `ipc.open_private()`(O_CREAT 시점부터 `0600`)로 `resume.json`/`slots.json`/
+  `opts.json`/`layout.json` 저장. umask 로 잠깐 넓게 열리는 창이 없다. 회귀:
+  `test_server.py::test_private_files_are_0600`.
 
 ### F6 — [Low] 메시지 입력 검증 빈약 → 자원 고갈
 

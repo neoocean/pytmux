@@ -1239,6 +1239,38 @@ async def test_validate_state_dir_rejects_symlink():
         pass
 
 
+async def test_private_files_are_0600():
+    """민감 영속·캡처 파일은 0600, 캡처 디렉터리는 0700 으로 생성된다(F4/F5).
+
+    캡처 raw 로그에는 표시·에코된 비밀번호·토큰이 남을 수 있어 같은 머신의 다른 로컬
+    사용자가 못 읽게 해야 한다. opts/resume/slots/layout 도 화면 스냅샷 등 민감정보를 담는다."""
+    import os
+    import tempfile
+    if ipc.IS_WINDOWS:
+        return
+    # open_private: 생성 시점부터 0600
+    p = tempfile.mktemp(prefix="pytmux-priv-")
+    with ipc.open_private(p) as f:
+        f.write("x")
+    assert (os.stat(p).st_mode & 0o777) == 0o600, oct(os.stat(p).st_mode)
+    os.unlink(p)
+
+    srv, task, sock = await server_only()
+    try:
+        srv._save_opts()
+        assert (os.stat(srv.opts_path).st_mode & 0o777) == 0o600
+        # 캡처: 패널 출력 한 조각 기록 후 파일/디렉터리 권한 확인
+        srv.capture = True
+        sess = srv.ensure_default_session(80, 24)
+        pane = sess.active_window.active_pane
+        srv._capture_write(pane, b"secret-output\n")
+        capfile = os.path.join(srv.capture_dir, f"pane-{pane.id}.log")
+        assert (os.stat(capfile).st_mode & 0o777) == 0o600
+        assert (os.stat(srv.capture_dir).st_mode & 0o777) == 0o700
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_split_window_orientation_matches_tmux():
     """split-window -h = 좌우(lr), -v/기본 = 상하(tb) — tmux 규약 정합(회귀 가드).
 

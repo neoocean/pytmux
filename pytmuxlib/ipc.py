@@ -35,7 +35,7 @@ __all__ = [
     "IS_WINDOWS", "parse_endpoint", "is_tcp",
     "default_state_dir", "default_endpoint", "default_endpoint_candidates",
     "resolve_default_endpoint", "portfile_for", "state_base",
-    "token_path", "write_token", "read_token", "peer_uid",
+    "token_path", "write_token", "read_token", "peer_uid", "open_private",
     "start_server", "open_connection", "probe", "control_socket",
 ]
 
@@ -220,6 +220,27 @@ def read_token(endpoint: str) -> Optional[str]:
             return f.read().strip() or None
     except OSError:
         return None
+
+
+def open_private(path: str, mode: str = "w", buffering: int = -1):
+    """파일을 0600 으로 연다(민감 영속·캡처 파일, F4/F5 — docs/SECURITY_REVIEW.md).
+
+    `open()` 은 umask(흔히 0644)로 만들어 잠깐 다른 사용자가 읽을 수 있는 창이 생긴다.
+    `os.open(..., 0o600)` 으로 **생성 시점부터** 소유자 전용으로 만든다. mode 는
+    w/wb/a/ab 만 지원(쓰기 전용). Windows 는 모드 비트가 무시되지만 per-user 영역이라
+    무해하다. 기존 호출부의 `with open(...) as f: ...` 를 그대로 대체할 수 있다.
+    """
+    append = "a" in mode
+    binary = "b" in mode
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC)
+    fd = os.open(path, flags, 0o600)
+    try:
+        if binary:
+            return os.fdopen(fd, "ab" if append else "wb", buffering)
+        return os.fdopen(fd, "a" if append else "w", buffering, encoding="utf-8")
+    except Exception:
+        os.close(fd)
+        raise
 
 
 def peer_uid(sock: Optional[socket.socket]) -> Optional[int]:

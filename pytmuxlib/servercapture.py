@@ -65,8 +65,14 @@ class ServerCaptureMixin:
         if fh is None:
             try:
                 os.makedirs(self.capture_dir, exist_ok=True)
+                # 캡처 디렉터리는 0700(F4): raw 출력엔 표시·에코된 비밀번호·토큰이 남을
+                # 수 있어 같은 머신의 다른 로컬 사용자가 못 읽게 좁힌다(best-effort).
+                try:
+                    os.chmod(self.capture_dir, 0o700)
+                except OSError:
+                    pass
                 path = os.path.join(self.capture_dir, f"pane-{pane.id}.log")
-                fh = open(path, "ab", buffering=0)
+                fh = ipc.open_private(path, "ab", buffering=0)   # 0600(F4)
             except OSError:
                 return
             self._capfiles[pane.id] = fh
@@ -75,8 +81,8 @@ class ServerCaptureMixin:
                 meta = (f"{time.strftime('%Y-%m-%d %H:%M:%S')} "
                         f"pane-{pane.id} {self._pane_location(pane)} "
                         f"title={pane.title!r}\n")
-                with open(os.path.join(self.capture_dir, "sessions.log"),
-                          "a", encoding="utf-8") as mf:
+                with ipc.open_private(                          # 0600(F4)
+                        os.path.join(self.capture_dir, "sessions.log"), "a") as mf:
                     mf.write(meta)
             except OSError:
                 pass
