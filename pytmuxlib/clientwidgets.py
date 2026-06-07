@@ -497,6 +497,14 @@ class TabBar(Widget):
         self._blink_on = False  # 깜빡임 현재 위상(True=경고색 표시)
         self._blink_left = 0    # 남은 on/off 토글 횟수
         self._blink_timer = None
+        # C2(PERFORMANCE_REVIEW 2026-06-07): _entries() 결과 프레임 캐시. render_line
+        # 과 active_tab_xrange 가 같은 프레임에 _entries() 를 각각 부르므로(동일 기하
+        # 2회 계산), (폭·sel·진입 스크롤·탭 시그니처)가 같으면 재사용한다. 스타일
+        # (active/drag/blink/focus)은 기하와 무관해 키에 없다 — render_line 이 매
+        # 프레임 스타일을 다시 입힌다.
+        self._entries_sig = None    # 캐시 키(미스 판정)
+        self._entries_cache = None  # 캐시된 entries
+        self._entries_scroll = 0    # 캐시 시점의 안정화된 _scroll
 
     def set_tabs(self, tabs, active_idx):
         self.tabs = tabs
@@ -560,8 +568,19 @@ class TabBar(Widget):
         active_tab_xrange(연결부 x 좌표)가 같은 기하를 공유해, 합성 시점이나
         직전 렌더 상태와 무관하게 일치한다(#23 — 예전엔 후자가 render_line 부산물인
         _zones 를 읽어 탭 전환 직후 stale 값으로 연결부가 어긋났다). 스크롤 보정은
-        render_line 과 동일하게 여기서 수행(부수효과로 self._scroll 갱신)."""
+        render_line 과 동일하게 여기서 수행(부수효과로 self._scroll 갱신).
+
+        C2: 같은 프레임에 render_line·active_tab_xrange 가 둘 다 부르므로, (폭·sel·
+        진입 스크롤·탭 기하 시그니처)가 직전과 같으면 캐시를 돌려준다. 히트 시엔
+        labels/widths/스크롤 루프를 통째로 건너뛰고, 캐시 당시 안정화된 스크롤을
+        복원해 후속 코드 일관성을 유지한다(스크롤 안정화는 멱등)."""
         w = self.size.width
+        sig = (w, self.sel, self._scroll,
+               tuple((t["index"], t["name"], t.get("bell"),
+                      t.get("activity"), t.get("claude")) for t in self.tabs))
+        if sig == self._entries_sig:
+            self._scroll = self._entries_scroll
+            return self._entries_cache
         labels = self._labels()
         widths = [sum(_char_cells(c) for c in s) for s in labels]
         n = len(self.tabs)
@@ -599,6 +618,9 @@ class TabBar(Widget):
         # 그려, 간격까지 녹색으로 칠해지지 않게 한다. 간격칸은 클릭 무시(lead 처럼).
         entries.append(("addgap", None, addtxt[:2]))   # 간격(터미널 배경)
         entries.append(("add", None, addtxt[2:]))      # "[+] "(녹색 버튼)
+        self._entries_sig = sig            # C2: 진입 시그니처로 캐시(스크롤은 진입값)
+        self._entries_scroll = self._scroll  # 안정화된 스크롤 보존(히트 시 복원)
+        self._entries_cache = entries
         return entries
 
     def render_line(self, y: int) -> Strip:

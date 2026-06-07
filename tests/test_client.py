@@ -3041,3 +3041,33 @@ async def test_char_cells_memoized_correct():
         _char_cells("a")
     after = _char_cells.cache_info()
     assert after.hits > before.hits, "반복 호출이 캐시 적중하지 않음"
+
+
+# ---- C2(PERFORMANCE_REVIEW 2026-06-07): TabBar _entries() 프레임 캐시 ----
+async def test_tabbar_entries_cached_and_consistent():
+    """_entries() 가 (폭·sel·스크롤·탭 기하)별로 캐시되어 같은 프레임 2회 호출이
+    동일 객체를 돌려주고(render_line+active_tab_xrange 중복 계산 제거), 기하가
+    render zone 과 일치하며, 탭/sel 변경 시 캐시가 무효화되는지 검증."""
+    async def body(app, pilot, srv):
+        tb = app.tabbar
+        tabs = [{"index": i, "name": f"t{i}", "active": i == 1}
+                for i in range(3)]
+        tb.set_tabs(tabs, 1)
+        await pilot.pause(0.05)
+        # 같은 상태 반복 호출 → 동일 캐시 객체(히트)
+        e1 = tb._entries()
+        assert tb._entries() is e1, "동일 상태에서 _entries 캐시 미적중"
+        # active_tab_xrange 기하가 render_line 의 활성 탭 zone 과 정확히 일치
+        tb.render_line(0)
+        zone = next(((x0, x1) for x0, x1, kind, pl in tb._zones
+                     if kind == "tab" and pl == 1), None)
+        assert zone is not None, "활성 탭 zone 없음"
+        assert tb.active_tab_xrange() == zone, "xrange 가 render zone 과 불일치"
+        # 탭 내용 변경(추가) → 캐시 무효화
+        tb.set_tabs(tabs + [{"index": 3, "name": "t3", "active": False}], 1)
+        assert tb._entries() is not e1, "탭 변경 후 캐시 무효화 안 됨"
+        # 선택(sel) 변경 → 캐시 무효화
+        before = tb._entries()
+        tb.sel = 2
+        assert tb._entries() is not before, "sel 변경 후 캐시 무효화 안 됨"
+    await _with_app(body, cfg={"tab_bar_always": True})
