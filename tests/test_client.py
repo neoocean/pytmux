@@ -3117,3 +3117,28 @@ async def test_status_retains_static_opts_when_omitted_c4():
         assert st.claude_ctx_action == "doc-clear", "정리 방식 유실"
         assert st.token_budget_account == 1_000_000, "계정 예산 유실"
     await _with_app(body)
+
+
+async def test_token_log_box_height_stable_regardless_of_content():
+    """토큰로그 팝업 높이 고정(2026-06-07): 레코드 수·버킷이 달라도 박스 높이가
+    변하지 않는다(예전 height:auto 는 짧은 '일' 버킷에선 쪼그라들고 '시간' 버킷에선
+    화면 끝까지 찼다). 고정 높이 + 리스트 1fr 로 출렁임 제거."""
+    async def body(app, pilot, srv):
+        now = 1_700_000_000.0
+        recs = [{"ts": now + i * 3600, "tab": 0, "pane": 1, "session": 1,
+                 "account": "me@x.org", "tokens": 100} for i in range(30)]
+        app._want_token_log = True
+        app._dispatch({"t": "token_log", "records": recs})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "TokenLogScreen"
+        box = scr.query_one("#tklogbox")
+        h_day = box.size.height                 # 기본 '일' 버킷(행 적음)
+        assert h_day > 0
+        await pilot.press("h")                  # '시간' 버킷(행 많음 — 예전엔 더 컸음)
+        await pilot.pause(0.1)
+        assert box.size.height == h_day, ("hour", box.size.height, h_day)
+        await pilot.press("m")                  # '월' 버킷(행 적음 — 예전엔 더 작았음)
+        await pilot.pause(0.1)
+        assert box.size.height == h_day, ("month", box.size.height, h_day)
+    await _with_app(body, size=(80, 28))

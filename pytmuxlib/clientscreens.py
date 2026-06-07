@@ -935,7 +935,11 @@ class TokenLogScreen(ModalScreen):
     없이 전환)."""
     CSS = """
     TokenLogScreen { align: center middle; }
-    #tklogbox { width: 96%; max-width: 86; height: auto;
+    /* 높이 고정(2026-06-07 사용자 요청): 내용(레코드 수)에 따라 박스가 줄거나
+       출렁이지 않게 **고정 높이**로 둔다. 예전엔 height:auto + 리스트 max-height:74%
+       라 짧은 버킷(일)에선 쪼그라들고 긴 버킷(시간)에선 거의 화면 끝까지 찼다.
+       고정값은 직전 최대보다 몇 줄 짧게(76%) — 리스트는 1fr 로 남는 높이를 채운다. */
+    #tklogbox { width: 96%; max-width: 86; height: 76%;
                 border: round $accent; background: $panel; padding: 0 1; }
     #tkloghead { width: 100%; height: 1; }
     #tklogtitle { width: 1fr; height: 1; color: $accent; text-style: bold; }
@@ -947,7 +951,7 @@ class TokenLogScreen(ModalScreen):
     .tkbtab { background: $surface; color: $text-muted; }
     .tkbtab-active { background: $accent; color: $text; text-style: bold; }
     .tkbbtn { background: $primary-darken-2; color: $text; }
-    #tklog { width: 100%; height: auto; max-height: 74%; }
+    #tklog { width: 100%; height: 1fr; }   /* 고정 박스의 남는 높이를 채움(출렁임 없음) */
     #tklog ListItem { height: auto; }
     #tklog ListItem Label { width: 1fr; }
     """
