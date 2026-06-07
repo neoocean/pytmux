@@ -559,47 +559,61 @@ class Pane:
         "_tok_state", "_session_tokens", "prompt_clear_mode", "bracketed",
     )
 
-    def _export_screen(self) -> list[str]:
-        """메인 화면(스크롤백+현재 버퍼)을 줄 목록으로 — **색/속성(SGR) 포함**.
-        alt 화면은 직렬화하지 않는다(풀스크린 TUI 는 재시작 후 리사이즈로 다시 그린다).
+    def _serialize_line(self, line, columns: int) -> str:
+        """한 줄(pyte 버퍼 행)을 SGR(색/속성) 포함 문자열로. 마지막 비공백 셀까지만
+        내보내고(뒤 공백 절약), 속성 없는 줄은 이스케이프 0(평문 그대로 — 회귀 없음).
+        와이드 문자 연속 셀(data=="")은 건너뛴다(import feed 가 다시 만든다)."""
+        last = -1
+        for x in range(columns):
+            d = line[x].data
+            if d != "" and d != " ":
+                last = x
+        if last < 0:
+            return ""
+        # cur_sgr="" = 기본(reset) 상태 기준. 색→기본 전이는 명시적 reset 으로 닫는다.
+        parts, cur_sgr = [], ""
+        for x in range(last + 1):
+            ch = line[x]
+            if ch.data == "":
+                continue
+            sgr = _cell_sgr_for(ch)
+            if sgr != cur_sgr:
+                parts.append(sgr if sgr else "\x1b[0m")
+                cur_sgr = sgr
+            parts.append(ch.data)
+        if cur_sgr:
+            parts.append("\x1b[0m")
+        return "".join(parts)
 
-        예전엔 평문만 내보내 restart-all 후 스크롤백 색이 모두 사라졌다(사용자 보고
-        2026-06-07). 이제 셀 속성이 바뀌는 지점마다 SGR 이스케이프를 끼워 넣어,
-        import_state 의 feed 가 pyte 에 같은 색/속성을 재현하게 한다. 줄 끝은 reset 으로
-        닫아 다음 줄로 속성이 새지 않게 한다(속성 없는 줄은 평문 그대로 — 회귀 없음)."""
+    def _export_screen(self) -> list[str]:
+        """메인 화면(스크롤백+현재 버퍼) 전체를 SGR 포함 줄 목록으로(뒤 빈 줄 제거).
+        스크롤-업 연속성·하위호환용. 정확 복원은 _export_history/_export_viewport 사용."""
         scr = self._main
         h = getattr(scr, "history", None)
         hist = list(h.top) if h is not None else []
         lines = hist + [scr.buffer[y] for y in range(scr.lines)]
-        out = []
-        for line in lines:
-            # 마지막 비공백 셀까지만(뒤쪽 공백·기본속성 잘라 페이로드·노이즈 축소).
-            last = -1
-            for x in range(scr.columns):
-                d = line[x].data
-                if d != "" and d != " ":
-                    last = x
-            if last < 0:
-                out.append("")
-                continue
-            # cur_sgr="" = 기본(reset) 상태가 기준. 속성 없는 줄은 이스케이프가 전혀
-            # 안 들어가 평문 그대로(회귀 없음). 색→기본 전이는 명시적 reset 으로 닫는다.
-            parts, cur_sgr = [], ""
-            for x in range(last + 1):
-                ch = line[x]
-                if ch.data == "":       # 와이드 문자 연속 셀 — 건너뜀(import feed 가 재생성)
-                    continue
-                sgr = _cell_sgr_for(ch)
-                if sgr != cur_sgr:
-                    parts.append(sgr if sgr else "\x1b[0m")   # 색→기본은 reset 으로
-                    cur_sgr = sgr
-                parts.append(ch.data)
-            if cur_sgr:
-                parts.append("\x1b[0m")   # 줄 끝 reset(다음 줄로 속성 누수 방지)
-            out.append("".join(parts))
-        while out and not out[-1]:   # 뒤쪽 빈 줄 제거
+        out = [self._serialize_line(line, scr.columns) for line in lines]
+        while out and not out[-1]:
             out.pop()
         return out[-HISTORY:]
+
+    def _export_history(self) -> list[str]:
+        """스크롤백(화면 밖으로 밀린 줄)만 SGR 포함으로. 뒤 빈 줄 제거·HISTORY 캡."""
+        scr = self._main
+        h = getattr(scr, "history", None)
+        hist = list(h.top) if h is not None else []
+        out = [self._serialize_line(line, scr.columns) for line in hist]
+        while out and not out[-1]:
+            out.pop()
+        return out[-HISTORY:]
+
+    def _export_viewport(self) -> list[str]:
+        """현재 화면(보이는 scr.lines 행)을 **빈 줄 트림 없이 그대로** SGR 포함으로.
+        행 수·위치가 앱의 화면 모델과 정확히 일치해야 execv 후 부분 repaint(메인 화면
+        TUI 의 SIGWINCH 갱신)가 어긋나지 않는다(restart-all 커서·줄 정합, B/D)."""
+        scr = self._main
+        return [self._serialize_line(scr.buffer[y], scr.columns)
+                for y in range(scr.lines)]
 
     def export_state(self) -> dict:
         """재시작 시 보존할 패널 상태를 JSON 가능 dict 로 직렬화한다.
@@ -617,7 +631,12 @@ class Pane:
             "prompt_history": list(self.prompt_history)[-100:],
             "pending_prompts": list(self.pending_prompts),
             "prompt_clear_queue": list(self.prompt_clear_queue),
-            "screen": self._export_screen(),
+            # 스크롤백(연속성·하위호환) + 정확 뷰포트/커서(메인 화면 TUI 정합, B/C/D).
+            "screen": self._export_screen(),          # 하위호환(구 이미지 읽기)
+            "history": self._export_history(),         # 스크롤백만
+            "viewport": self._export_viewport(),       # 현재 화면(트림 없음)
+            "cursor": {"x": self._main.cursor.x, "y": self._main.cursor.y,
+                       "hidden": bool(self._main.cursor.hidden)},
         }
         for f in self._RESUME_FIELDS:
             d[f] = getattr(self, f)
@@ -637,11 +656,28 @@ class Pane:
         self.prompt_history = list(d.get("prompt_history", []))
         self.pending_prompts = list(d.get("pending_prompts", []))
         self.prompt_clear_queue = list(d.get("prompt_clear_queue", []))
-        snap = d.get("screen")
-        if snap:
-            # 평문 스냅샷을 메인 화면에 다시 채워 재시작 후에도 직전 내용이 보이게
-            # 한다(순수 셸도 비지 않음). 살아 있는 셸의 다음 출력이 이어서 그린다.
-            self.feed(("\r\n".join(snap) + "\r\n").encode("utf-8", "ignore"))
+        view = d.get("viewport")
+        if view is not None:
+            # 정확 복원(B/C/D): 스크롤백 + **현재 화면(트림 없음)** 을 한 번에 피드하되
+            # 끝에 개행을 붙이지 않아(마지막 줄이 한 칸 스크롤돼 커서가 밀리던 D 원인)
+            # 마지막 scr.lines 줄이 화면을 정확히 채우게 한다. 이어서 커서를 앱이 두고
+            # 간 좌표로 절대 이동(CUP)해, execv 후 메인 화면 TUI 의 부분 repaint 가
+            # 어긋나지 않게 한다. 살아 있는 앱의 다음 출력/SIGWINCH repaint 가 이어 그린다.
+            hist = d.get("history") or []
+            payload = "\r\n".join(list(hist) + list(view))
+            self.feed(payload.encode("utf-8", "ignore"))
+            cur = d.get("cursor") or {}
+            try:
+                cy = int(cur.get("y", 0)) + 1
+                cx = int(cur.get("x", 0)) + 1
+            except (TypeError, ValueError):
+                cy = cx = 1
+            self.feed(f"\x1b[{cy};{cx}H".encode("ascii"))
+            if cur.get("hidden"):
+                self.feed(b"\x1b[?25l")   # 앱이 커서를 숨긴 상태였으면 복원
+        elif d.get("screen"):
+            # 하위호환(구 이미지가 쓴 스냅샷 — viewport/cursor 없음): 기존 평문 경로.
+            self.feed(("\r\n".join(d["screen"]) + "\r\n").encode("utf-8", "ignore"))
 
     def update_mouse_modes(self, data: bytes) -> bool:
         """피드 데이터에서 마우스 트래킹 DECSET(1000/1002/1003/1006)을 추적한다.

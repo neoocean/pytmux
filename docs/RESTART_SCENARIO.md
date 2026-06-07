@@ -104,14 +104,18 @@ for pane in all_panes:
 4. 메인 화면 스냅샷 복원(import_state, **SGR 색/속성 포함** — 2026-06-07) +
    **`_induce_redraw_all` 로 SIGWINCH 유발** → alt-screen TUI repaint(아래 주의 ① 대안 B).
 
-> **메인 화면 TUI(예: Claude Code)의 복원 한계**: alt-screen 앱(vim)은 SIGWINCH 에
+> **메인 화면 TUI(예: Claude Code)의 복원 정합**: alt-screen 앱(vim)은 SIGWINCH 에
 > 전체 repaint 하므로 완벽 복원되지만, **메인 화면에 그리는 TUI**(Claude Code)는
-> SIGWINCH 에 뷰포트만 **부분 repaint** 한다. 그 부분 갱신은 앱이 기억하는 화면 모델
-> 기준인데, execv 후 pyte 는 스냅샷으로 재구성돼 **두 모델이 어긋날 수 있다** → 커서
-> 한 칸 어긋남·커서 주변 줄 불일치·헤더(프롬프트 히스토리) 행 예약 깜빡임. 색은
-> 스냅샷이 SGR 로 보존하므로 스크롤백까지 복원된다(위 4). 커서/뷰포트 정합까지
-> 맞추려면 **현재 화면을 빈 줄 트림 없이 그대로 + 커서 좌표 복원**(정확 뷰포트 재현)이
-> 필요하다(후속 과제 — 실 박스 검증 필요).
+> SIGWINCH 에 뷰포트만 **부분 repaint** 한다 — 그 부분 갱신은 앱이 기억하는 화면 모델
+> 기준이라, execv 후 pyte 가 스냅샷으로 어긋나게 재구성되면 커서 한 칸 어긋남·커서
+> 주변 줄 불일치·헤더 행 깜빡임이 났다. **수정(2026-06-07)**: ① 색/속성을 SGR 로 보존,
+> ② **현재 화면(viewport)을 빈 줄 트림 없이 그대로** + **커서 좌표(cursor)** 직렬화·복원,
+> ③ 복원 feed 끝에 개행을 붙이지 않아(마지막 줄 스크롤로 커서가 밀리던 원인 제거) 마지막
+> scr.lines 줄이 화면을 정확히 채우고 CUP 으로 커서를 앱이 둔 자리에 복귀시킨다. 이로써
+> pyte 화면이 앱 모델과 일치해 부분 repaint 가 어긋나지 않는다(스냅샷 키: `history`·
+> `viewport`·`cursor`; 구 `screen` 키는 하위호환 폴백). 헤드리스 그리드+커서 라운드트립
+> 회귀(`test_export_import_restores_cursor_and_exact_viewport`). **라이브 정합(실 Claude
+> 패널 restart-all)은 실 박스 확인 권장** — 헤드리스로는 앱의 repaint 상호작용까진 재현 못함.
 
 ### ⓔ 클라이언트 재접속
 서버가 쥔 리슨 유닉스 소켓·연결 클라이언트 소켓은 옛 이벤트 루프의 fd 라 execv 후

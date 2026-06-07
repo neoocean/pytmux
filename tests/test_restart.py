@@ -514,3 +514,34 @@ async def test_export_screen_plain_line_has_no_escapes():
     snap = p._export_screen()
     assert snap and "\x1b" not in snap[0], snap
     assert snap[0] == "plain ascii line"
+
+
+async def test_export_import_restores_cursor_and_exact_viewport():
+    """restart-all 정확 뷰포트·커서 복원(B/C/D, 2026-06-07): 현재 화면을 빈 줄 트림 없이
+    그대로 + 커서 좌표를 복원해, execv 후 메인 화면 TUI 의 부분 repaint 가 어긋나지
+    않게 한다(커서 한 칸 어긋남·커서 주변 줄 불일치 방지). 헤드리스 그리드+커서 라운드트립."""
+    from pytmuxlib.model import Pane
+    p = Pane(1234, -1, 40, 10)
+    p.feed(b"line0\r\nline1\r\nABC def")
+    p.feed(b"\x1b[4;3H")          # 커서를 row3,col2(0-based)로 명시 이동
+    assert (p._main.cursor.y, p._main.cursor.x) == (3, 2)
+    q = Pane(1234, -1, 40, 10)
+    q.import_state(p.export_state())
+    # 커서 좌표가 정확히 복원
+    assert (q._main.cursor.y, q._main.cursor.x) == (3, 2), \
+        (q._main.cursor.y, q._main.cursor.x)
+    # 화면 그리드(모든 행)가 원본과 동일 — 행 수·위치 어긋남 없음
+    for y in range(q._main.lines):
+        prow = "".join(p._main.buffer[y][x].data or " " for x in range(p._main.columns))
+        qrow = "".join(q._main.buffer[y][x].data or " " for x in range(q._main.columns))
+        assert qrow == prow, (y, repr(qrow), repr(prow))
+
+
+async def test_import_backward_compat_old_screen_only():
+    """하위호환: viewport/cursor 없는 구 스냅샷('screen'만)도 기존 평문 경로로 복원."""
+    from pytmuxlib.model import Pane
+    from harness import pane_text
+    q = Pane(1234, -1, 40, 10)
+    q.import_state({"screen": ["hello", "world"]})   # 구 포맷
+    txt = pane_text(q)
+    assert "hello" in txt and "world" in txt
