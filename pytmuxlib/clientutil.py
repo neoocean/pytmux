@@ -44,6 +44,28 @@ _EMOJI_RANGES = (
 )
 
 
+# C3(PERFORMANCE_REVIEW 2026-06-07): 합성(_composite) 핫패스가 셀/프레임마다 새로
+# 만들던 **불변** Style·dict 를 모듈 상수로 호이스트한다. 시각 결과는 동일하고 객체
+# 할당만 제거한다(대형 선택·풀리페인트서 셀당 누적되던 비용).
+_REVERSE_STYLE = Style(reverse=True)            # 커서·copy-mode 선택 반전
+_TB_ACTIVE_STYLE = Style(color="black", bgcolor="cyan")    # pane-border-status 활성
+_TB_INACTIVE_STYLE = Style(color="black", bgcolor="white")  # 비활성
+_TB_BORDER_STYLE = Style(color="grey50")        # 제목줄 채움선(라벨 뒤 ─)
+# 박스 문자 ↔ 변 비트(U=8,D=4,L=2,R=1): 겹치는 경계를 합쳐 ┬┴├┤┼ 로 연결.
+_BOX_BITS = {"─": 0b0011, "│": 0b1100, "┌": 0b0101, "┐": 0b0110,
+             "└": 0b1001, "┘": 0b1010, "├": 0b1101, "┤": 0b1110,
+             "┬": 0b0111, "┴": 0b1011, "┼": 0b1111}
+_BOX_REV = {v: k for k, v in _BOX_BITS.items()}
+
+
+@lru_cache(maxsize=512)
+def _with_reverse(st: Style) -> Style:
+    """st 에 반전(reverse)을 더한 Style. 대형 copy-mode 선택은 같은 바탕 스타일 셀이
+    많아 적중률이 높다 — 셀마다 `st + Style(reverse=True)` 를 새로 만들지 않는다.
+    Style 은 불변·hashable 이라 캐시 키로 안전하다(C3)."""
+    return st + _REVERSE_STYLE
+
+
 def _is_emoji(ch: str) -> bool:
     """ch 가 컬러 이모지로 렌더될 가능성이 높은 문자인지(어둡게 안 되는 대상, #25)."""
     if not ch:

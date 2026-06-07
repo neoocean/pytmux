@@ -15,8 +15,10 @@ from .claude import saver_hook_events
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS, DEFAULT_STYLE,
     MENU_ITEMS, MENU_TOGGLES, SAVER_CYCLES, SPECIAL,
-    _DATE_STRFTIME, _JAMO, _KEY_DIAG, _ONOFF, _TIME_STRFTIME, _char_cells,
-    _darken_style, _fmt_tokens, _is_emoji, has_hangul, hangul_to_qwerty,
+    _BOX_BITS, _BOX_REV, _DATE_STRFTIME, _JAMO, _KEY_DIAG, _ONOFF,
+    _TB_ACTIVE_STYLE, _TB_BORDER_STYLE, _TB_INACTIVE_STYLE, _TIME_STRFTIME,
+    _char_cells, _darken_style, _fmt_tokens, _is_emoji, _with_reverse,
+    has_hangul, hangul_to_qwerty,
     _normalize_key, _shell_argv, key_to_bytes, make_style, theme_color)
 from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 사용)
     ChooseBufferScreen, ChooseLayoutScreen, ChooseTreeScreen, ClaudeSaverScreen,
@@ -1060,7 +1062,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     gx, gy = p["x"] + ccx, p["y"] + ccy
                     if 0 <= gx < W and 0 <= gy < H:
                         ch, st = cells[gy][gx]
-                        cells[gy][gx] = (ch, st + Style(reverse=True))
+                        cells[gy][gx] = (ch, _with_reverse(st))   # C3: 캐시된 반전
             # 패널 테두리 박스: 비활성=회색, 활성=파란색. 경계 셀은 인접 패널이
             # 공유하므로, 비활성 박스를 먼저 그리고 활성 박스를 마지막에 덮어
             # 활성 패널의 경계 전체가 파란색이 되도록 한다.
@@ -1074,11 +1076,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 inactive_box = Style(color=err)
                 active_box = Style(color=err, bold=True)
             show_title = self.layout.get("border_status")
-            # 박스 문자 ↔ 변 비트(U=8,D=4,L=2,R=1): 겹치는 경계를 합쳐 ┬┴├┤┼ 로 연결
-            bbits = {"─": 0b0011, "│": 0b1100, "┌": 0b0101, "┐": 0b0110,
-                     "└": 0b1001, "┘": 0b1010, "├": 0b1101, "┤": 0b1110,
-                     "┬": 0b0111, "┴": 0b1011, "┼": 0b1111}
-            brev = {v: k for k, v in bbits.items()}
+            # 박스 문자 ↔ 변 비트(U=8,D=4,L=2,R=1): 겹치는 경계를 합쳐 ┬┴├┤┼ 로 연결.
+            # C3: 상수 dict 를 매 _composite 마다 새로 만들지 않고 모듈 상수를 재사용.
+            bbits = _BOX_BITS
+            brev = _BOX_REV
 
             def _draw_box(p):
                 box = p.get("box")
@@ -1159,7 +1160,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 패널 제목 경계선(pane-border-status)
             for tb in self.layout.get("titlebars", []):
                 is_active = tb.get("active")
-                st = Style(color="black", bgcolor="cyan" if is_active else "white")
+                st = _TB_ACTIVE_STYLE if is_active else _TB_INACTIVE_STYLE  # C3
                 label = f" {tb['title']} "
                 gy = tb["y"]
                 if not (0 <= gy < H):
@@ -1167,7 +1168,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 for i in range(tb["w"]):
                     gx = tb["x"] + i
                     chh = label[i] if i < len(label) else "─"
-                    s = st if i < len(label) else Style(color="grey50")
+                    s = st if i < len(label) else _TB_BORDER_STYLE   # C3
                     if 0 <= gx < W:
                         cells[gy][gx] = (chh, s)
             # copy-mode 선택 영역 하이라이트(추출과 동일하게 시작 패널 가로 범위로
@@ -1187,7 +1188,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     b = sx1 if yy == sy1 else right
                     for xx in range(max(0, a), min(W, b + 1)):
                         c, sstl = cells[yy][xx]
-                        cells[yy][xx] = (c, sstl + Style(reverse=True))
+                        cells[yy][xx] = (c, _with_reverse(sstl))   # C3: 캐시된 반전
             # display-panes 오버레이: 각 패널 중앙에 번호 표시
             if self.mode == "display":
                 for i, p in enumerate(self.layout.get("panes", [])):

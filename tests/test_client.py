@@ -3071,3 +3071,26 @@ async def test_tabbar_entries_cached_and_consistent():
         tb.sel = 2
         assert tb._entries() is not before, "sel 변경 후 캐시 무효화 안 됨"
     await _with_app(body, cfg={"tab_bar_always": True})
+
+
+# ---- C3(PERFORMANCE_REVIEW 2026-06-07): 합성 루프 Style/dict 상수 호이스트 ----
+async def test_with_reverse_and_box_constants():
+    """_with_reverse 가 st + Style(reverse=True) 와 동일(시각 불변)하며 lru_cache 로
+    캐시되고, _BOX_REV 가 _BOX_BITS 의 정확한 역인덱스인지(테두리 합성 동작 불변)."""
+    from rich.style import Style
+    from pytmuxlib.clientutil import (
+        _BOX_BITS, _BOX_REV, _REVERSE_STYLE, _with_reverse)
+    # 동치: 캐시 헬퍼 결과 == 직접 합성
+    base = Style(color="red", bgcolor="blue")
+    assert _with_reverse(base) == base + Style(reverse=True)
+    assert _REVERSE_STYLE == Style(reverse=True)
+    # 캐시 적용 표식 + 반복 호출 적중
+    assert hasattr(_with_reverse, "cache_info")
+    before = _with_reverse.cache_info()
+    for _ in range(5):
+        _with_reverse(base)
+    assert _with_reverse.cache_info().hits > before.hits
+    # 박스 비트 역인덱스가 정확(합성에서 brev[bbits[a]|bbits[b]] 가 유효해야 함)
+    assert len(_BOX_REV) == len(_BOX_BITS)
+    for ch, bits in _BOX_BITS.items():
+        assert _BOX_REV[bits] == ch
