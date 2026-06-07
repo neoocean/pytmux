@@ -769,6 +769,19 @@ async def test_token_log_screen_aggregates_and_switches():
         await pilot.pause(0.1)
         assert app.screen_stack[-1] is scr, "주 버킷 전환 키는 닫지 않음"
         assert scr._bucket == "week", scr._bucket
+        # 마우스로 서브탭 클릭 → 버킷 전환(키 없이도)
+        await pilot.click("#tab_month")
+        await pilot.pause(0.1)
+        assert scr._bucket == "month", scr._bucket
+        await pilot.click("#tab_hour")
+        await pilot.pause(0.1)
+        assert scr._bucket == "hour", scr._bucket
+        assert app.screen_stack[-1] is scr, "탭 클릭은 닫지 않음"
+        # M19: /usage 결과를 status 훅으로 밀어넣으면 한도 줄이 보인다
+        scr.update_usage({"session": {"pct": 7, "reset": "5am"}})
+        await pilot.pause(0.1)
+        joined3 = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        assert "세션(5h): 7% 사용" in joined3, joined3
         # 그 외 키는 닫는다
         await pilot.press("escape")
         await pilot.pause(0.1)

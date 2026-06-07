@@ -612,7 +612,14 @@ used" 반대 주의). 한쪽만 잡히면 현행대로(`ctx:23%` 또는 `1M ctx`
 3. **설정에 5h 분모 행 추가**: ClaudeSaverScreen 의 SAVER_ROWS 에 `budget_5h`(5시간 한도)
    cycle 행을 더해(clientutil.py) 9.3 의 분모를 GUI 로 설정 — `_saver_action`/`_saver_display`
    (client.py)·`set_token_budget(h5=…)`(serverclaude.py)·status `token_budget_5h` 로 영속.
-4. **키보드 전용 진입(esc-모드 커서+Enter)은 미구현**: 상태줄은 패널 내용이 아니라
+4. **마우스 서브탭 + /usage 표시(개정)**: TokenLogScreen 상단에 **클릭 가능한 서브탭**
+   `시간/일/주/월`(버킷 전환) + 버튼 `계정`·`/usage`·`시나리오` 를 둔다(`#tktabs`, on_click
+   이 위젯 id 로 분기 — 키 h/d/w/m·a 와 동등). 활성 버킷은 강조(`tkbtab-active`). **M19
+   `/usage` 실측 한도(세션 5h·주간 전모델/Sonnet % + 리셋)를 팝업 맨 위에 표시**하고,
+   `/usage` 버튼/`[u]`/`claude-usage` 로 갱신한다(결과는 status `usage_limits` → 열린
+   팝업의 `update_usage` 훅으로 즉시 반영). 자동 조회는 안 함(매 열람마다 숨은 claude
+   기동은 과함 — 마지막 결과 표시 + 명시 갱신).
+5. **키보드 전용 진입(esc-모드 커서+Enter)은 미구현**: 상태줄은 패널 내용이 아니라
    **크롬(chrome)**이라 copy/scroll 모드의 셀 커서가 그 위에 놓이지 않는다. 키보드만으로는
    `:token-log` 명령(또는 `token-saver`)을 쓴다. 마우스/터치는 모든 모드에서 동작하므로
    실사용 동선은 막히지 않는다(상태줄을 진짜 셀 커서 대상으로 만드는 건 별도 과제).

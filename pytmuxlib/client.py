@@ -565,6 +565,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 ss = getattr(self, "_saver_screen", None)
                 if ss is not None:
                     ss.refresh_labels()
+                # M19: 토큰로그 팝업이 열려 있고 새 /usage 결과가 왔으면 반영
+                tl = getattr(self, "_token_log_screen", None)
+                if tl is not None and "usage_limits" in msg:
+                    tl.update_usage(msg.get("usage_limits"))
                 self._update_claude(msg.get("panes_claude", []))
                 self._update_tabbar()
                 if self.set_titles:

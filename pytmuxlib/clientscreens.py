@@ -941,12 +941,21 @@ class TokenLogScreen(ModalScreen):
     #tklogtitle { width: 1fr; height: 1; color: $accent; text-style: bold; }
     #tklogclose { width: 5; height: 1; content-align: center middle;
                   background: $error; color: $text; text-style: bold; }
-    #tklog { width: 100%; height: auto; max-height: 78%; }
+    /* 마우스로 누르는 서브탭(버킷)+버튼 행. */
+    #tktabs { width: 100%; height: 1; }
+    #tktabs Label { height: 1; padding: 0 1; margin: 0 1 0 0; }
+    .tkbtab { background: $surface; color: $text-muted; }
+    .tkbtab-active { background: $accent; color: $text; text-style: bold; }
+    .tkbbtn { background: $primary-darken-2; color: $text; }
+    #tklog { width: 100%; height: auto; max-height: 74%; }
     #tklog ListItem { height: auto; }
     #tklog ListItem Label { width: 1fr; }
     """
     _NAV_KEYS = ("up", "down", "pageup", "pagedown", "home", "end")
     _BUCKETS = {"h": "hour", "d": "day", "w": "week", "m": "month"}
+    # 서브탭 위젯 id → 버킷.
+    _TAB_BUCKET = {"tab_hour": "hour", "tab_day": "day",
+                   "tab_week": "week", "tab_month": "month"}
 
     def __init__(self, records, usage=None):
         super().__init__()
@@ -969,21 +978,46 @@ class TokenLogScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="tklogbox"):
             with Horizontal(id="tkloghead"):
-                yield Label("토큰 사용량 로그", id="tklogtitle")
+                yield Label("토큰 사용량", id="tklogtitle")
                 # markup=False: "[x]" 가 마크업 태그로 사라지지 않게(배경색만
                 # 남고 X 가 안 보이던 버그).
                 yield Label("[x]", id="tklogclose", markup=False)  # 닫기 버튼
+            # 마우스로 누르는 서브탭(시간/일/주/월) + 동작 버튼.
+            with Horizontal(id="tktabs"):
+                yield Label("시간", id="tab_hour", classes="tkbtab", markup=False)
+                yield Label("일", id="tab_day", classes="tkbtab", markup=False)
+                yield Label("주", id="tab_week", classes="tkbtab", markup=False)
+                yield Label("월", id="tab_month", classes="tkbtab", markup=False)
+                yield Label("계정", id="tab_acct", classes="tkbbtn", markup=False)
+                yield Label("/usage", id="tab_usage", classes="tkbbtn",
+                            markup=False)
+                yield Label("시나리오", id="tab_saver", classes="tkbbtn",
+                            markup=False)
             yield ListView(id="tklog")
 
     async def on_mount(self):
+        # status 훅이 새 /usage 결과를 이 화면에 밀어넣게 등록(M19). 자동 조회는 안
+        # 한다(매번 열 때 숨은 claude 기동은 과함) — 마지막 결과를 보여주고, 갱신은
+        # [/usage] 버튼/`claude-usage` 명령으로 명시 트리거한다.
+        self.app._token_log_screen = self
         await self._refresh()
         self.query_one(ListView).focus()
+
+    def on_unmount(self):
+        if getattr(self.app, "_token_log_screen", None) is self:
+            self.app._token_log_screen = None
+
+    def update_usage(self, usage):
+        """클라 status 훅이 새 /usage 결과를 전달하면 갱신·재그린다(M19)."""
+        if usage and usage != self._usage:
+            self._usage = usage
+            self.run_worker(self._refresh())
 
     def _usage_lines(self):
         """M19 그림자 /usage 한도를 표시 줄로(없으면 [u] 안내 1줄)."""
         u = self._usage
         if not isinstance(u, dict):
-            return ["── 한도(/usage): [u] 로 조회 ──"]
+            return ["── Claude 한도(/usage): [/usage] 눌러 조회 ──"]
         out = ["── Claude 한도(/usage 실측) ──"]
         labels = [("session", "세션(5h)"), ("week_all", "주간(전모델)"),
                   ("week_sonnet", "주간(Sonnet)")]
@@ -995,32 +1029,61 @@ class TokenLogScreen(ModalScreen):
                            + (f" · 리셋 {rs}" if rs else ""))
         return out
 
+    def _sync_tabs(self):
+        """활성 버킷 서브탭만 강조 클래스를 켠다(마우스 탭 UI)."""
+        for tid, bucket in self._TAB_BUCKET.items():
+            try:
+                lab = self.query_one("#" + tid, Label)
+            except Exception:
+                continue
+            lab.set_class(bucket == self._bucket, "tkbtab-active")
+
     async def _refresh(self):
         lv = self.query_one(ListView)
         await lv.clear()
-        acct = self._account if self._account is not None else "전체"
-        hint = (f"[h]시간 [d]일 [w]주 [m]월   [a]계정: {acct}   "
-                f"[s]시나리오 설정   [u]/usage 갱신   [Esc]닫기")
-        items = [ListItem(Label(hint, markup=False))]
-        # M19: 그림자 /usage 로 확보한 실 한도(있으면 맨 위에). 없으면 [u] 안내.
+        self._sync_tabs()
+        items = []
+        # M19: 그림자 /usage 로 확보한 실 한도(맨 위). 없으면 [/usage] 안내.
         for ln in self._usage_lines():
             items.append(ListItem(Label(ln, markup=False)))
+        acct = self._account if self._account is not None else "전체"
+        items.append(ListItem(Label(f"── 토큰 로그 · 계정: {acct} "
+                                    f"(탭/키 h·d·w·m, [a]계정) ──", markup=False)))
         for ln in usagelog.summary_lines(self._records, self._bucket,
                                          self._account):
             items.append(ListItem(Label(ln, markup=False)))
         await lv.extend(items)
         self.query_one("#tklogtitle", Label).update(
-            f"토큰 사용량 로그 (단위:{self._bucket})")
+            f"토큰 사용량 (단위:{self._bucket})")
 
     def on_click(self, event: events.Click):
-        # 닫기 [x] 터치/클릭 → 닫는다(좁은 화면에서도 항상 보이는 버튼).
+        # 마우스 클릭: 닫기 [x]·서브탭(버킷)·동작 버튼을 위젯 id 로 분기한다.
         w = getattr(event, "widget", None)
+        wid = None
         while w is not None:
-            if getattr(w, "id", None) == "tklogclose":
-                event.stop()
-                self.dismiss(None)
-                return
+            wid = getattr(w, "id", None)
+            if wid:
+                break
             w = w.parent
+        if wid == "tklogclose":
+            event.stop()
+            self.dismiss(None)
+        elif wid in self._TAB_BUCKET:
+            event.stop()
+            self._bucket = self._TAB_BUCKET[wid]
+            self.run_worker(self._refresh())
+        elif wid == "tab_acct":
+            event.stop()
+            if len(self._accounts) > 1:
+                self._ai = (self._ai + 1) % len(self._accounts)
+                self.run_worker(self._refresh())
+        elif wid == "tab_usage":
+            event.stop()
+            self.app.send_cmd("refresh_usage")
+            self.query_one("#tklogtitle", Label).update("/usage 조회 중… (~수초)")
+        elif wid == "tab_saver":
+            event.stop()
+            self.app.open_claude_saver()
 
     async def on_key(self, event: events.Key):
         event.stop()
