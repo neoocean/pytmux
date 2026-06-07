@@ -774,7 +774,7 @@ async def test_token_log_screen_aggregates_and_switches():
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "TokenLogScreen"
         joined = _tok_text(scr)
-        assert "전체 Σ3.5k" in joined, joined
+        assert "Σ3.5k" in joined, joined
         assert "me@x.org" in joined and "team@y.org" in joined
         # 닫기 버튼 [x] 가 글자까지 보여야 함(markup=False — 예전엔 마크업으로
         # 해석돼 배경색만 남고 X 가 사라졌다).
@@ -808,7 +808,7 @@ async def test_token_log_screen_aggregates_and_switches():
         scr.update_usage({"session": {"pct": 7, "reset": "5am"}})
         await pilot.pause(0.1)
         joined3 = _tok_text(scr)
-        assert "세션(5h): 7% 사용" in joined3, joined3
+        assert "5h:7%" in joined3, joined3   # 컴팩트 한 줄(표 높이 보호)
         # 그 외 키는 닫는다
         await pilot.press("escape")
         await pilot.pause(0.1)
@@ -845,7 +845,7 @@ async def test_token_log_panel_subtab_groups_by_session():
         assert "탭" in joined and ":p" in joined, joined
         assert "세션별" in joined, joined
         # 세션1=2000(1500+500), 세션2=2000 — 합 4000 유지
-        assert "전체 Σ4k" in joined, joined
+        assert "Σ4k" in joined, joined
         # 마우스로 [패널] 탭 클릭 → 계정 차원으로 되돌림
         await pilot.click("#tab_panel")
         await pilot.pause(0.1)

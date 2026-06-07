@@ -1042,20 +1042,19 @@ class TokenLogScreen(ModalScreen):
             self.run_worker(self._refresh())
 
     def _usage_lines(self):
-        """M19 그림자 /usage 한도를 표시 줄로(없으면 [u] 안내 1줄)."""
+        """M19 그림자 /usage 한도를 **한 줄로 컴팩트**하게(줄바꿈으로 표가 묻히지
+        않게). 리셋 시각은 자리 절약 위해 생략(상세는 /usage 조회로). 없으면 안내 1줄."""
         u = self._usage
         if not isinstance(u, dict):
-            return ["── Claude 한도(/usage): [/usage] 눌러 조회 ──"]
-        out = ["── Claude 한도(/usage 실측) ──"]
-        labels = [("session", "세션(5h)"), ("week_all", "주간(전모델)"),
-                  ("week_sonnet", "주간(Sonnet)")]
-        for key, name in labels:
+            return ["한도(/usage): [u] 눌러 조회"]
+        parts = []
+        for key, name in (("session", "5h"), ("week_all", "주"),
+                          ("week_sonnet", "주S")):
             d = u.get(key)
             if isinstance(d, dict) and d.get("pct") is not None:
-                rs = d.get("reset")
-                out.append(f"  {name}: {d['pct']}% 사용"
-                           + (f" · 리셋 {rs}" if rs else ""))
-        return out
+                parts.append(f"{name}:{d['pct']}%")
+        return ["한도 " + " · ".join(parts)] if parts else \
+            ["한도(/usage): [u] 눌러 조회"]
 
     def _sync_tabs(self):
         """탭 라벨(폭 반응형)·활성 버킷·활성 그룹차원([패널])·정렬([정렬]) 강조."""
@@ -1084,18 +1083,19 @@ class TokenLogScreen(ModalScreen):
             pass
 
     def _metrics(self):
-        """현재 폭 티어로 (라벨 셀폭, 막대 칸수)를 정한다(반응형). 좁으면 막대 생략."""
+        """현재 폭 티어로 (라벨 셀폭, 막대 칸수)를 정한다(반응형). 막대 칸수는
+        DataTable 셀 패딩+세로 스크롤바가 폭을 먹어도 % 가 안 잘리게 여유를 둔다."""
         try:
             w = self.app.size.width
         except Exception:
             w = 0
         if w >= 80:
-            return 28, 16
+            return 26, 12
         if w >= 60:
-            return 22, 10
+            return 20, 8
         if w >= 44:
-            return 16, 6
-        return 12, 0
+            return 15, 4
+        return 11, 0
 
     @staticmethod
     def _trunc(s, cells):
@@ -1116,11 +1116,12 @@ class TokenLogScreen(ModalScreen):
         return "".join(out)
 
     def _barcell(self, tok, vmax, pct, cells):
-        """막대+% 셀 문자열. cells<=0 이면 % 만(좁은 폭)."""
+        """% + 막대 셀 문자열. % 를 **앞에** 둔다 — 스크롤바/패딩이 폭을 먹어 셀
+        오른쪽이 잘려도 핵심 숫자(%)는 항상 보이고 막대 꼬리만 잘린다. cells<=0 이면 % 만."""
+        p = f"{pct:>3}%"
         if cells <= 0:
-            return f"{pct}%"
-        b = usagelog.bar(tok, vmax, cells)
-        return f"{b:<{cells}} {pct:>3}%"
+            return p
+        return f"{p} {usagelog.bar(tok, vmax, cells)}"
 
     async def _refresh(self):
         self._sync_tabs()
@@ -1156,9 +1157,9 @@ class TokenLogScreen(ModalScreen):
         self.query_one("#tklogtitle", Label).update(
             f"토큰 사용량 · {self._bucket} · {dimname}별")
         acct = self._account if self._account is not None else "전체"
+        # 스코프는 1줄로 컴팩트(묶음/버킷은 제목에 이미 있음). 표 높이를 아낀다.
         top = self._usage_lines() + [
-            f"계정 {acct} · 묶음 {dimname} · 정렬 {order_l} · 전체 "
-            f"Σ{usagelog._fmt_tokens(v['total'])}"]
+            f"계정 {acct} · {order_l} · Σ{usagelog._fmt_tokens(v['total'])}"]
         self.query_one("#tktop", Static).update("\n".join(top))
         self.query_one("#tkhint", Static).update(
             "h시간 d일 w주 m월 · a계정 p패널 o정렬 · u/usage s시나리오 · Esc닫기")
