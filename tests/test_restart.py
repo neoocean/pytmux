@@ -477,3 +477,40 @@ async def test_restore_preserves_scrollback():
     finally:
         await teardown(srvA, taskA, sockA)
         await teardown(srvB, taskB, sockB)
+
+
+async def test_export_import_preserves_color():
+    """restart-all 색 보존(2026-06-07): _export_screen 이 평문만 내보내 재시작 후
+    스크롤백 색이 사라지던 문제. 이제 SGR(색·굵기·밑줄 등)을 끼워 라운드트립한다."""
+    from pytmuxlib.model import Pane
+    p = Pane(1234, -1, 80, 24)
+    # 빨강 ERROR, 초록 배경 OK, 굵게 BOLD, 밑줄 U
+    p.feed(b"\x1b[31mERROR\x1b[0m \x1b[42mOK\x1b[0m \x1b[1mBOLD\x1b[0m \x1b[4mU\x1b[0m\r\n")
+    q = Pane(1234, -1, 80, 24)
+    q.import_state(p.export_state())
+    pb, qb = p._main.buffer, q._main.buffer
+
+    def attrs(buf, x):
+        c = buf[0][x]
+        return (c.data, c.fg, c.bg, c.bold, c.italics, c.underscore,
+                c.reverse, c.strikethrough)
+    for x in range(18):                       # 셀별 속성이 원본과 동일하게 복원
+        assert attrs(qb, x) == attrs(pb, x), (x, attrs(qb, x), attrs(pb, x))
+    # 색/속성이 실제로 살아 있음(기본색으로 뭉개지지 않음)
+    assert qb[0][0].fg == "red", qb[0][0].fg
+    assert qb[0][6].bg == "green", qb[0][6].bg
+    assert qb[0][9].bold is True
+    # 색→기본 전이가 누수되지 않음(공백·뒤 텍스트는 기본색)
+    assert qb[0][5].fg == "default" and qb[0][5].bg == "default"
+    # export 멱등(복원 후 다시 export == 원본)
+    assert q._export_screen() == p._export_screen()
+
+
+async def test_export_screen_plain_line_has_no_escapes():
+    """속성 없는 줄은 평문 그대로(이스케이프 0) — 색 보존이 평문 경로를 회귀시키지 않음."""
+    from pytmuxlib.model import Pane
+    p = Pane(1234, -1, 80, 24)
+    p.feed(b"plain ascii line\r\n")
+    snap = p._export_screen()
+    assert snap and "\x1b" not in snap[0], snap
+    assert snap[0] == "plain ascii line"

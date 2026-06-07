@@ -101,8 +101,17 @@ for pane in all_panes:
 2. Session/Tab/Window 트리 복원(`_build_node` 를 spawn 없이 "기존 fd 채택" 경로로 분기).
 3. **CLOEXEC 재채택**: 채택 직후 각 master fd 에 다시 `FD_CLOEXEC` 를 걸어 §6 불변식
    복구(이후 새 패널 fork 시 형제 fd 누수 방지).
-4. 메인 화면 평문 스냅샷 복원(import_state) + **`_induce_redraw_all` 로 SIGWINCH
-   유발** → alt-screen TUI repaint(아래 주의 ① 대안 B, 구현됨).
+4. 메인 화면 스냅샷 복원(import_state, **SGR 색/속성 포함** — 2026-06-07) +
+   **`_induce_redraw_all` 로 SIGWINCH 유발** → alt-screen TUI repaint(아래 주의 ① 대안 B).
+
+> **메인 화면 TUI(예: Claude Code)의 복원 한계**: alt-screen 앱(vim)은 SIGWINCH 에
+> 전체 repaint 하므로 완벽 복원되지만, **메인 화면에 그리는 TUI**(Claude Code)는
+> SIGWINCH 에 뷰포트만 **부분 repaint** 한다. 그 부분 갱신은 앱이 기억하는 화면 모델
+> 기준인데, execv 후 pyte 는 스냅샷으로 재구성돼 **두 모델이 어긋날 수 있다** → 커서
+> 한 칸 어긋남·커서 주변 줄 불일치·헤더(프롬프트 히스토리) 행 예약 깜빡임. 색은
+> 스냅샷이 SGR 로 보존하므로 스크롤백까지 복원된다(위 4). 커서/뷰포트 정합까지
+> 맞추려면 **현재 화면을 빈 줄 트림 없이 그대로 + 커서 좌표 복원**(정확 뷰포트 재현)이
+> 필요하다(후속 과제 — 실 박스 검증 필요).
 
 ### ⓔ 클라이언트 재접속
 서버가 쥔 리슨 유닉스 소켓·연결 클라이언트 소켓은 옛 이벤트 루프의 fd 라 execv 후

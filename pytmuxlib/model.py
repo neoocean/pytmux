@@ -37,6 +37,59 @@ def _style_key(fg, bg, bold, italics, underscore, reverse, strike):
         d["st"] = 1
     return tuple(sorted(d.items()))
 
+
+# restart-all 스냅샷(_export_screen)이 색/속성을 보존하도록 pyte 셀 속성 → SGR
+# 이스케이프로 환원한다. pyte fg/bg 는 "default"·기본색명·"bright<name>"·6자리 hex.
+_SGR_BASE = {"black": 30, "red": 31, "green": 32, "brown": 33, "yellow": 33,
+             "blue": 34, "magenta": 35, "cyan": 36, "white": 37}
+
+
+def _sgr_color(c, is_bg: bool):
+    """pyte 색값 → SGR 코드 리스트(기본색이면 []). is_bg 면 배경 오프셋(+10)."""
+    if not c or c == "default":
+        return []
+    off = 10 if is_bg else 0
+    if len(c) == 6 and all(ch in "0123456789abcdefABCDEF" for ch in c):
+        return [48 if is_bg else 38, 2,
+                int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)]
+    name, bright = c, False
+    if name.startswith("bright"):
+        bright, name = True, name[6:]
+    base = _SGR_BASE.get(name)
+    if base is None:
+        return []
+    return [base + off + (60 if bright else 0)]
+
+
+@lru_cache(maxsize=8192)
+def _cell_sgr(fg, bg, bold, italics, underscore, reverse, strike) -> str:
+    """셀 속성 → SGR 이스케이프 문자열(기본 속성이면 빈 문자열). _export_screen 이
+    런 경계마다 끼워 색/굵기/밑줄 등을 복원 feed 에 실어 보낸다. 캐시 적중률 높음."""
+    codes = []
+    if bold:
+        codes.append(1)
+    if italics:
+        codes.append(3)
+    if underscore:
+        codes.append(4)
+    if reverse:
+        codes.append(7)
+    if strike:
+        codes.append(9)
+    codes += _sgr_color(fg, False)
+    codes += _sgr_color(bg, True)
+    if not codes:
+        return ""
+    # 런 시작마다 reset(0) 후 속성을 다시 깔아 직전 런 잔여 속성이 안 새게 한다.
+    return "\x1b[0;" + ";".join(str(c) for c in codes) + "m"
+
+
+def _cell_sgr_for(ch) -> str:
+    """pyte Char 셀에서 _cell_sgr 캐시 키를 뽑아 SGR 문자열을 얻는다."""
+    return _cell_sgr(ch.fg, ch.bg, ch.bold, ch.italics, ch.underscore,
+                     ch.reverse, ch.strikethrough)
+
+
 class _BCEMixin:
     """배경색 소거(BCE) 동작을 하는 화면 믹스인.
 
@@ -507,19 +560,43 @@ class Pane:
     )
 
     def _export_screen(self) -> list[str]:
-        """메인 화면(스크롤백+현재 버퍼)을 평문 줄 목록으로. alt 화면은 직렬화하지
-        않는다(풀스크린 TUI 는 재시작 후 리사이즈로 다시 그린다, alt B)."""
+        """메인 화면(스크롤백+현재 버퍼)을 줄 목록으로 — **색/속성(SGR) 포함**.
+        alt 화면은 직렬화하지 않는다(풀스크린 TUI 는 재시작 후 리사이즈로 다시 그린다).
+
+        예전엔 평문만 내보내 restart-all 후 스크롤백 색이 모두 사라졌다(사용자 보고
+        2026-06-07). 이제 셀 속성이 바뀌는 지점마다 SGR 이스케이프를 끼워 넣어,
+        import_state 의 feed 가 pyte 에 같은 색/속성을 재현하게 한다. 줄 끝은 reset 으로
+        닫아 다음 줄로 속성이 새지 않게 한다(속성 없는 줄은 평문 그대로 — 회귀 없음)."""
         scr = self._main
         h = getattr(scr, "history", None)
         hist = list(h.top) if h is not None else []
         lines = hist + [scr.buffer[y] for y in range(scr.lines)]
         out = []
         for line in lines:
-            # 와이드(2칸) 문자의 연속 셀은 data=="" 다. 이를 공백으로 내보내면(예전 버그)
-            # 복원 feed 때 pyte 가 "한"+공백+"글" 로 재배치해 자간이 벌어진다. 건너뛰면
-            # "한글" 그대로 나가고, feed 시 pyte 가 연속 셀을 다시 만들어 원형 복원된다.
-            s = "".join(line[x].data for x in range(scr.columns) if line[x].data != "")
-            out.append(s.rstrip())
+            # 마지막 비공백 셀까지만(뒤쪽 공백·기본속성 잘라 페이로드·노이즈 축소).
+            last = -1
+            for x in range(scr.columns):
+                d = line[x].data
+                if d != "" and d != " ":
+                    last = x
+            if last < 0:
+                out.append("")
+                continue
+            # cur_sgr="" = 기본(reset) 상태가 기준. 속성 없는 줄은 이스케이프가 전혀
+            # 안 들어가 평문 그대로(회귀 없음). 색→기본 전이는 명시적 reset 으로 닫는다.
+            parts, cur_sgr = [], ""
+            for x in range(last + 1):
+                ch = line[x]
+                if ch.data == "":       # 와이드 문자 연속 셀 — 건너뜀(import feed 가 재생성)
+                    continue
+                sgr = _cell_sgr_for(ch)
+                if sgr != cur_sgr:
+                    parts.append(sgr if sgr else "\x1b[0m")   # 색→기본은 reset 으로
+                    cur_sgr = sgr
+                parts.append(ch.data)
+            if cur_sgr:
+                parts.append("\x1b[0m")   # 줄 끝 reset(다음 줄로 속성 누수 방지)
+            out.append("".join(parts))
         while out and not out[-1]:   # 뒤쪽 빈 줄 제거
             out.pop()
         return out[-HISTORY:]
