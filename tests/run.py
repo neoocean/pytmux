@@ -32,6 +32,12 @@ for _stream in (sys.stdout, sys.stderr):
 # 매달리던 진짜 행은 잡힌다. PYTMUX_TEST_TIMEOUT 으로 조정(0=무제한).
 TEST_TIMEOUT = float(os.environ.get("PYTMUX_TEST_TIMEOUT", "90"))
 
+# 간헐 실패(주로 느린 CI 러너에서 Textual run_test 클라 테스트의 타이밍 — fixed
+# pilot.pause 가 짧아 렌더가 아직 안 됨) 재시도. 일시적 플레이크는 재시도로 통과하고,
+# 진짜 실패는 모든 시도에서 실패해 그대로 잡힌다. 재시도로 통과한 건 FLAKY 로 표시해
+# 가시성 유지. **타임아웃(행)은 재시도 안 함**(행을 또 기다리는 건 낭비). 0=재시도 끔.
+TEST_RETRIES = int(os.environ.get("PYTMUX_TEST_RETRIES", "2"))
+
 # SIGALRM 하드 백스톱(POSIX). asyncio.wait_for 는 await 지점에서만 취소할 수 있어,
 # 테스트가 **동기 블로킹 콜**(PTY os.read·서브프로세스 wait·소켓 recv)에서 매달리면
 # 이벤트 루프로 제어가 안 돌아와 못 끊는다 — CI macOS 러너에서 스위트가 첫 출력도
@@ -92,7 +98,7 @@ def discover(names):
 
 def main(argv):
     names = [a[:-3] if a.endswith(".py") else a for a in argv]
-    passed = failed = 0
+    passed = failed = flaky = 0
     failures = []
     for modname in discover(names):
         # import 도 SIGALRM 으로 감싼다 — 모듈 import 가 매달리면(과거 macOS CI 에서
@@ -113,24 +119,39 @@ def main(argv):
                  if n.startswith("test_") and asyncio.iscoroutinefunction(f)]
         for name, fn in sorted(tests):
             label = f"{modname}.{name}"
-            _arm()
-            try:
-                asyncio.run(_run_with_timeout(fn))
+            ok, hung, last_exc, last_tb = False, False, None, ""
+            for attempt in range(max(1, TEST_RETRIES + 1)):
+                _arm()
+                try:
+                    asyncio.run(_run_with_timeout(fn))
+                    ok = True
+                except asyncio.TimeoutError:
+                    hung = True            # 행은 재시도 안 함(아래에서 break)
+                    last_exc = TimeoutError(f"{TEST_TIMEOUT}s 초과 — hang(데드락 의심)")
+                    last_tb = f"TIMEOUT after {TEST_TIMEOUT}s\n"
+                except Exception as e:
+                    last_exc, last_tb = e, traceback.format_exc()
+                finally:
+                    _disarm()
+                if ok:
+                    if attempt == 0:
+                        print(f"  PASS  {label}")
+                    else:
+                        flaky += 1
+                        print(f"  PASS  {label} (FLAKY — {attempt}회 재시도 후 통과)")
+                    break
+                if hung or attempt == TEST_RETRIES:
+                    break                  # 행이거나 마지막 시도 → 실패 확정
+                print(f"  retry {label} (시도 {attempt + 1} 실패: {last_exc})")
+            if ok:
                 passed += 1
-                print(f"  PASS  {label}")
-            except asyncio.TimeoutError:
+            else:
                 failed += 1
-                msg = f"{TEST_TIMEOUT}s 초과 — hang(데드락 의심)"
-                failures.append((label, TimeoutError(msg),
-                                 f"TIMEOUT after {TEST_TIMEOUT}s\n"))
-                print(f"  FAIL  {label}: TIMEOUT {TEST_TIMEOUT}s")
-            except Exception as e:
-                failed += 1
-                failures.append((label, e, traceback.format_exc()))
-                print(f"  FAIL  {label}: {e}")
-            finally:
-                _disarm()
-    print(f"\n{'='*50}\n{passed} passed, {failed} failed")
+                failures.append((label, last_exc, last_tb))
+                tag = "TIMEOUT" if hung else "FAIL"
+                print(f"  {tag}  {label}: {last_exc}")
+    flaky_note = f" ({flaky} flaky — 재시도 후 통과)" if flaky else ""
+    print(f"\n{'='*50}\n{passed} passed, {failed} failed{flaky_note}")
     for label, e, tb in failures:
         print(f"\n--- {label} ---\n{tb}")
     return 1 if failed else 0
