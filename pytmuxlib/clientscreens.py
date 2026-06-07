@@ -14,14 +14,17 @@ from textual.screen import ModalScreen
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Input, Label, ListItem, ListView, TextArea
+from textual.widgets import (DataTable, Input, Label, ListItem, ListView,
+                             Static, TextArea)
 
 from rich.highlighter import Highlighter
+from rich.text import Text
 
 from . import usagelog
 from .clientutil import (COMMAND_FREETEXT, COMMAND_NOARG, COMMAND_OPTIONS,
                          COMMANDS, MENU_ITEMS, MENU_TOGGLES, SAVER_ROWS,
-                         has_hangul, hangul_to_qwerty, theme_color)
+                         _char_cells, has_hangul, hangul_to_qwerty,
+                         theme_color)
 
 
 class _CommandWordHighlighter(Highlighter):
@@ -936,9 +939,7 @@ class TokenLogScreen(ModalScreen):
     CSS = """
     TokenLogScreen { align: center middle; }
     /* 높이 고정(2026-06-07 사용자 요청): 내용(레코드 수)에 따라 박스가 줄거나
-       출렁이지 않게 **고정 높이**로 둔다. 예전엔 height:auto + 리스트 max-height:74%
-       라 짧은 버킷(일)에선 쪼그라들고 긴 버킷(시간)에선 거의 화면 끝까지 찼다.
-       고정값은 직전 최대보다 몇 줄 짧게(76%) — 리스트는 1fr 로 남는 높이를 채운다. */
+       출렁이지 않게 **고정 높이**로 둔다. 표(DataTable)는 1fr 로 남는 높이를 채운다. */
     #tklogbox { width: 96%; max-width: 86; height: 76%;
                 border: round $accent; background: $panel; padding: 0 1; }
     #tkloghead { width: 100%; height: 1; }
@@ -951,9 +952,10 @@ class TokenLogScreen(ModalScreen):
     .tkbtab { background: $surface; color: $text-muted; }
     .tkbtab-active { background: $accent; color: $text; text-style: bold; }
     .tkbbtn { background: $primary-darken-2; color: $text; }
-    #tklog { width: 100%; height: 1fr; }   /* 고정 박스의 남는 높이를 채움(출렁임 없음) */
-    #tklog ListItem { height: auto; }
-    #tklog ListItem Label { width: 1fr; }
+    /* 스코프/한도(위)·키 안내(아래)는 옅게 1~몇 줄, 표가 남는 높이를 채운다. */
+    #tktop { width: 100%; height: auto; color: $text-muted; }
+    #tkhint { width: 100%; height: 1; color: $text-muted; }
+    #tktable { width: 100%; height: 1fr; }
     """
     _NAV_KEYS = ("up", "down", "pageup", "pagedown", "home", "end")
     _BUCKETS = {"h": "hour", "d": "day", "w": "week", "m": "month"}
@@ -969,6 +971,8 @@ class TokenLogScreen(ModalScreen):
         # 그룹 차원: "account"=계정별(기본), "session"=세션별([패널] 탭). 패널은
         # 닫히고 재사용되므로 안정적 세션 id 로 묶는다(설계 §8, 사용자 결정).
         self._dim = "account"
+        # 버킷(시간축) 정렬: "time"=최근 위(기본), "tokens"=많이 쓴 순([o] 토글).
+        self._order = "time"
         # 계정 필터 순환 목록: None(전체) + 등장 계정들(정렬)
         seen = []
         for r in self._records:
@@ -1001,7 +1005,12 @@ class TokenLogScreen(ModalScreen):
                             markup=False)
                 yield Label("시나리오", id="tab_saver", classes="tkbbtn",
                             markup=False)
-            yield ListView(id="tklog")
+            yield Static("", id="tktop", markup=False)
+            table = DataTable(id="tktable", zebra_stripes=True,
+                              cursor_type="row")
+            table.can_focus = True
+            yield table
+            yield Static("", id="tkhint", markup=False)
 
     async def on_mount(self):
         # status 훅이 새 /usage 결과를 이 화면에 밀어넣게 등록(M19). 자동 조회는 안
@@ -1009,7 +1018,7 @@ class TokenLogScreen(ModalScreen):
         # [/usage] 버튼/`claude-usage` 명령으로 명시 트리거한다.
         self.app._token_log_screen = self
         await self._refresh()
-        self.query_one(ListView).focus()
+        self.query_one(DataTable).focus()
 
     def on_unmount(self):
         if getattr(self.app, "_token_log_screen", None) is self:
@@ -1052,25 +1061,85 @@ class TokenLogScreen(ModalScreen):
         except Exception:
             pass
 
+    def _metrics(self):
+        """현재 폭 티어로 (라벨 셀폭, 막대 칸수)를 정한다(반응형). 좁으면 막대 생략."""
+        try:
+            w = self.app.size.width
+        except Exception:
+            w = 0
+        if w >= 80:
+            return 28, 16
+        if w >= 60:
+            return 22, 10
+        if w >= 44:
+            return 16, 6
+        return 12, 0
+
+    @staticmethod
+    def _trunc(s, cells):
+        """문자열을 셀폭 cells 로 자른다(한글 2셀 고려, 넘치면 … 말줄임)."""
+        if cells <= 0:
+            return ""
+        used, out = 0, []
+        for ch in s:
+            cw = _char_cells(ch)
+            if used + cw > cells:
+                while out and used + 1 > cells:
+                    used -= _char_cells(out[-1])
+                    out.pop()
+                out.append("…")
+                return "".join(out)
+            out.append(ch)
+            used += cw
+        return "".join(out)
+
+    def _barcell(self, tok, vmax, pct, cells):
+        """막대+% 셀 문자열. cells<=0 이면 % 만(좁은 폭)."""
+        if cells <= 0:
+            return f"{pct}%"
+        b = usagelog.bar(tok, vmax, cells)
+        return f"{b:<{cells}} {pct:>3}%"
+
     async def _refresh(self):
-        lv = self.query_one(ListView)
-        await lv.clear()
         self._sync_tabs()
-        items = []
-        # M19: 그림자 /usage 로 확보한 실 한도(맨 위). 없으면 [/usage] 안내.
-        for ln in self._usage_lines():
-            items.append(ListItem(Label(ln, markup=False)))
-        acct = self._account if self._account is not None else "전체"
+        table = self.query_one(DataTable)
+        table.clear(columns=True)
+        label_w, bar_cells = self._metrics()
+        v = usagelog.agg_view(self._records, self._bucket, self._account,
+                              self._dim, self._order)
         dimname = "세션" if self._dim == "session" else "계정"
-        items.append(ListItem(Label(f"── 토큰 로그 · 계정: {acct} · 묶음: {dimname} "
-                                    f"(탭/키 h·d·w·m, [a]계정, [p]패널) ──",
-                                    markup=False)))
-        for ln in usagelog.summary_lines(self._records, self._bucket,
-                                         self._account, self._dim):
-            items.append(ListItem(Label(ln, markup=False)))
-        await lv.extend(items)
+        # 컬럼: 항목 | 토큰(우측) | 비율(막대+%)
+        table.add_column("항목", key="label", width=label_w)
+        table.add_column(Text("토큰", justify="right"), key="tok", width=8)
+        table.add_column("비율", key="bar", width=bar_cells + 5)
+
+        def add(label, tok, pct, vmax):
+            table.add_row(self._trunc(label, label_w),
+                          Text(usagelog._fmt_tokens(tok), justify="right"),
+                          self._barcell(tok, vmax, pct, bar_cells))
+
+        if not self._records or v["total"] == 0:
+            table.add_row("(기록된 토큰 사용량이 없습니다)", "", "")
+        else:
+            # 그룹(계정/세션)이 2개 이상일 때만 그룹별 총합 + 구분선(단일이면 중복이라 생략).
+            if v["multi"]:
+                for label, tok, pct in v["groups"]:
+                    add(label, tok, pct, v["gmax"])
+                table.add_row(f"── 시간({self._bucket}) ──", "", "")
+            for label, tok, pct in v["buckets"]:
+                add(label, tok, pct, v["bmax"])
+
+        # 제목: 묶음·버킷·정렬·전체 합. 스코프/한도(위)·키 안내(아래)는 분리.
+        order_l = "토큰순" if self._order == "tokens" else "시간순"
         self.query_one("#tklogtitle", Label).update(
-            f"토큰 사용량 (단위:{self._bucket} · {dimname}별)")
+            f"토큰 사용량 · {self._bucket} · {dimname}별")
+        acct = self._account if self._account is not None else "전체"
+        top = self._usage_lines() + [
+            f"계정 {acct} · 묶음 {dimname} · 정렬 {order_l} · 전체 "
+            f"Σ{usagelog._fmt_tokens(v['total'])}"]
+        self.query_one("#tktop", Static).update("\n".join(top))
+        self.query_one("#tkhint", Static).update(
+            "h시간 d일 w주 m월 · a계정 p패널 o정렬 · u/usage s시나리오 · Esc닫기")
 
     def on_click(self, event: events.Click):
         # 마우스 클릭: 닫기 [x]·서브탭(버킷)·동작 버튼을 위젯 id 로 분기한다.
@@ -1107,47 +1176,49 @@ class TokenLogScreen(ModalScreen):
             self.app.open_claude_saver()
 
     async def on_key(self, event: events.Key):
-        event.stop()
         k = event.key
         if k in self._BUCKETS:
+            event.stop()
             self._bucket = self._BUCKETS[k]
             await self._refresh()
             return
         if k == "a" and len(self._accounts) > 1:
+            event.stop()
             self._ai = (self._ai + 1) % len(self._accounts)
             await self._refresh()
             return
         if k == "p":
+            event.stop()
             # 그룹 차원 토글: 계정별 ↔ 세션별([패널]).
             self._dim = "account" if self._dim == "session" else "session"
             await self._refresh()
             return
+        if k == "o":
+            event.stop()
+            # 버킷 정렬 토글: 시간순 ↔ 토큰순.
+            self._order = "tokens" if self._order == "time" else "time"
+            await self._refresh()
+            return
         if k == "s":
+            event.stop()
             # M18-C: 사용량 통계에서 바로 과사용 완화 시나리오 on/off 로(§9.4).
             self.app.open_claude_saver()
             return
         if k == "u":
+            event.stop()
             # M19: 그림자 /usage 갱신 요청. 결과는 status 로 와 다음 열람부터 반영.
             self.app.send_cmd("refresh_usage")
             self.query_one("#tklogtitle", Label).update("/usage 조회 중… (~수초)")
             return
         if k in self._NAV_KEYS:
-            lv = self.query_one(ListView)
-            if k == "up":
-                lv.action_cursor_up()
-            elif k == "down":
-                lv.action_cursor_down()
-            elif k == "pageup":
-                for _ in range(5):
-                    lv.action_cursor_up()
-            elif k == "pagedown":
-                for _ in range(5):
-                    lv.action_cursor_down()
-            elif k == "home":
-                lv.index = 0
-            elif k == "end" and len(lv.children):
-                lv.index = len(lv.children) - 1
+            # 스크롤/커서는 포커스된 DataTable 이 자체 처리 — 가로채지 않는다.
             return
+        if k == "escape":
+            event.stop()
+            self.dismiss(None)
+            return
+        # 그 외 키는 닫는다(기존 동작).
+        event.stop()
         self.dismiss(None)
 
 class PromptScreen(ModalScreen):

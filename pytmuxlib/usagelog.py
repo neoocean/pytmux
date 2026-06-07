@@ -149,6 +149,96 @@ def _fmt_tokens(total: int) -> str:
     return str(total)
 
 
+# 막대 게이지용 부분블록(1/8 단위) — 우측 끝 잔량을 부드럽게 표현.
+_BAR_BLOCKS = " ▏▎▍▌▋▊▉█"
+
+
+def bar(value: int, vmax: int, cells: int) -> str:
+    """value/vmax 비율을 cells 칸 막대 문자열로(부분블록 포함). vmax<=0/cells<=0 이면
+    빈 문자열. 표시 계층(DataTable/InfoScreen) 공용 — 폭은 호출부가 셀폭으로 계산."""
+    if cells <= 0 or vmax <= 0 or value <= 0:
+        return ""
+    frac = max(0.0, min(1.0, value / vmax))
+    eighths = int(round(frac * cells * 8))
+    full, rem = divmod(eighths, 8)
+    full = min(full, cells)
+    s = "█" * full + (_BAR_BLOCKS[rem] if rem and full < cells else "")
+    return s
+
+
+def _bucket_short(bk: str, bucket: str) -> str:
+    """버킷 키를 짧은 표시 라벨로(연도 등 반복 정보 제거). day=MM-DD, month=YYYY-MM,
+    week=W##(연도는 헤더에 한 번), hour=MM-DD HH시."""
+    if bucket == "day" and len(bk) == 10:          # YYYY-MM-DD → MM-DD
+        return bk[5:]
+    if bucket == "week" and "-W" in bk:            # YYYY-W## → W##
+        return "W" + bk.split("-W", 1)[1]
+    if bucket == "hour" and len(bk) >= 13:         # YYYY-MM-DD HH:00 → MM-DD HH시
+        return bk[5:10] + " " + bk[11:13] + "시"
+    return bk                                       # month(YYYY-MM) 등은 그대로
+
+
+def _session_tabpane(records: list) -> dict:
+    """세션 id → 대표 '탭T:pP' 라벨(그 세션 레코드의 최빈 tab:pane). 표시 1-based 탭."""
+    by: dict = {}
+    for r in records:
+        sid = r.get("session")
+        if sid is None:
+            continue
+        key = (r.get("tab"), r.get("pane"))
+        by.setdefault(sid, {})
+        by[sid][key] = by[sid].get(key, 0) + 1
+    out = {}
+    for sid, counts in by.items():
+        (tab, pane), _ = max(counts.items(), key=lambda kv: kv[1])
+        tlabel = (tab + 1) if isinstance(tab, int) else "?"
+        out[sid] = f"탭{tlabel}:p{pane}"
+    return out
+
+
+def agg_view(records: list, bucket: str = "day", account: str | None = None,
+             dim: str = "account", order: str = "time") -> dict:
+    """표시(DataTable) 전용 집계 — 정렬·라벨·비율까지 계산해 렌더가 바로 쓰게 한다.
+
+    반환:
+      {"total": int,
+       "groups": [(label, tokens, share_pct)],   # 묶음(계정/세션) 총합, 토큰 많은 순
+       "buckets": [(label, tokens, share_pct)],   # 시간축, order("time"|"tokens")
+       "multi": bool,                              # 그룹 2개 이상(=중복 분해 가치 있음)
+       "gmax": int, "bmax": int}                   # 막대 기준(각 목록의 최대 토큰)
+    세션 차원은 라벨에 대표 탭:패널을 곁들인다('세션 4 (탭2:p3)')."""
+    agg = aggregate(records, bucket, account, dim)
+    total = agg["total"]
+    tp = _session_tabpane(records) if dim == "session" else {}
+
+    def glabel(g):
+        if dim == "session" and g.startswith("세션 "):
+            try:
+                sid = int(g.split(" ", 1)[1])
+            except (ValueError, IndexError):
+                sid = None
+            tpl = tp.get(sid)
+            return f"{g} ({tpl})" if tpl else g
+        return g
+
+    def pct(tok):
+        return round(tok / total * 100) if total else 0
+
+    groups = sorted(agg["groups"].items(), key=lambda kv: -kv[1])
+    grows = [(glabel(g), t, pct(t)) for g, t in groups]
+    bucket_tot = {bk: sum(per.values()) for bk, per in agg["buckets"].items()}
+    if order == "tokens":
+        bkeys = sorted(bucket_tot, key=lambda k: -bucket_tot[k])
+    else:
+        bkeys = sorted(bucket_tot, reverse=True)        # 시간 내림차순(최근 위)
+    brows = [(_bucket_short(bk, bucket), bucket_tot[bk], pct(bucket_tot[bk]))
+             for bk in bkeys]
+    return {"total": total, "groups": grows, "buckets": brows,
+            "multi": len(grows) > 1,
+            "gmax": max((t for _, t, _ in grows), default=0),
+            "bmax": max((t for _, t, _ in brows), default=0)}
+
+
 def summary_lines(records: list, bucket: str = "day",
                   account: str | None = None, dim: str = "account") -> list:
     """조회 화면(InfoScreen)용 사람이 읽는 집계 줄 목록을 만든다.

@@ -743,6 +743,20 @@ async def test_token_usage_tree_popup():
     await _with_app(body)
 
 
+def _tok_text(scr):
+    """TokenLogScreen 의 보이는 텍스트 전부(제목/탭/스코프 Static + DataTable 셀)."""
+    from textual.widgets import DataTable, Label, Static
+    parts = [str(w.render()) for w in scr.query(Label)]
+    parts += [str(w.render()) for w in scr.query(Static)]
+    try:
+        t = scr.query_one(DataTable)
+        for i in range(t.row_count):
+            parts.append(" ".join(str(c) for c in t.get_row_at(i)))
+    except Exception:
+        pass
+    return " ".join(parts)
+
+
 async def test_token_log_screen_aggregates_and_switches():
     # #7: token_log 응답 → TokenLogScreen 이 시간/일/월 × 계정 집계를 보이고,
     # [m] 월 버킷 전환·[a] 계정 필터 순환이 라운드트립 없이 동작.
@@ -759,7 +773,7 @@ async def test_token_log_screen_aggregates_and_switches():
         await pilot.pause(0.1)
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "TokenLogScreen"
-        joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        joined = _tok_text(scr)
         assert "전체 Σ3.5k" in joined, joined
         assert "me@x.org" in joined and "team@y.org" in joined
         # 닫기 버튼 [x] 가 글자까지 보여야 함(markup=False — 예전엔 마크업으로
@@ -770,7 +784,7 @@ async def test_token_log_screen_aggregates_and_switches():
         # 계정 필터 순환([a]): 전체 → 첫 계정만
         await pilot.press("a")
         await pilot.pause(0.1)
-        joined2 = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        joined2 = _tok_text(scr)
         accts = {a for a in ("me@x.org", "team@y.org") if a in joined2}
         assert len(accts) == 1, f"한 계정만 필터링돼야: {joined2}"
         # 월 버킷 전환([m]) — 닫히지 않고 갱신
@@ -793,7 +807,7 @@ async def test_token_log_screen_aggregates_and_switches():
         # M19: /usage 결과를 status 훅으로 밀어넣으면 한도 줄이 보인다
         scr.update_usage({"session": {"pct": 7, "reset": "5am"}})
         await pilot.pause(0.1)
-        joined3 = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        joined3 = _tok_text(scr)
         assert "세션(5h): 7% 사용" in joined3, joined3
         # 그 외 키는 닫는다
         await pilot.press("escape")
@@ -825,8 +839,10 @@ async def test_token_log_panel_subtab_groups_by_session():
         await pilot.press("p")
         await pilot.pause(0.1)
         assert scr._dim == "session" and app.screen_stack[-1] is scr
-        joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        joined = _tok_text(scr)
         assert "세션 1" in joined and "세션 2" in joined, joined
+        # 세션 라벨에 대표 탭:패널이 곁들여진다(식별성, 사용자 결정)
+        assert "탭" in joined and ":p" in joined, joined
         assert "세션별" in joined, joined
         # 세션1=2000(1500+500), 세션2=2000 — 합 4000 유지
         assert "전체 Σ4k" in joined, joined

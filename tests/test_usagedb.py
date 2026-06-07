@@ -155,6 +155,55 @@ async def test_aggregate_default_dim_unchanged():
     assert "계정별" in "\n".join(usagelog.summary_lines(recs, "day"))
 
 
+async def test_bar_gauge_partial_blocks():
+    """막대 게이지: 비율→부분블록. 0/음수/빈 폭은 빈 문자열, 최대값은 가득."""
+    assert usagelog.bar(0, 100, 10) == ""
+    assert usagelog.bar(50, 0, 10) == ""        # vmax<=0
+    assert usagelog.bar(50, 100, 0) == ""       # cells<=0
+    assert usagelog.bar(100, 100, 8) == "█" * 8, repr(usagelog.bar(100, 100, 8))
+    half = usagelog.bar(50, 100, 8)
+    assert len(half) <= 8 and "█" in half       # 절반쯤
+    # 아주 작은 비율도 0칸이면 빈 문자열에 가까움(부분블록만)
+    tiny = usagelog.bar(1, 1000, 8)
+    assert tiny == "" or tiny[0] in usagelog._BAR_BLOCKS
+
+
+async def test_agg_view_buckets_groups_order_and_pct():
+    recs = [
+        _rec(1_700_000_000.0, 0, 1, 1, "a@x.org", 1000),   # day0
+        _rec(1_700_000_100.0, 0, 1, 1, "b@y.org", 9000),   # day0
+        _rec(1_700_500_000.0, 1, 2, 2, "a@x.org", 100),    # 다른 날
+    ]
+    v = usagelog.agg_view(recs, "day", dim="account", order="time")
+    assert v["total"] == 10100
+    assert v["multi"] is True
+    # 그룹: 토큰 많은 순(b 9000, a 1100)
+    assert [g[0] for g in v["groups"]] == ["b@y.org", "a@x.org"]
+    assert v["groups"][0][1] == 9000 and v["groups"][0][2] == 89  # share %
+    # 버킷: 시간 내림차순(최근 먼저) — 둘째 날(100)이 먼저
+    assert v["buckets"][0][1] == 100 and v["buckets"][1][1] == 10000
+    # order=tokens 면 큰 버킷 먼저
+    v2 = usagelog.agg_view(recs, "day", order="tokens")
+    assert v2["buckets"][0][1] == 10000
+    assert v2["bmax"] == 10000
+
+
+async def test_agg_view_session_label_has_tabpane():
+    recs = [
+        _rec(1_700_000_000.0, 1, 3, 4, "a@x.org", 100),   # tab=1→탭2, pane=3
+        _rec(1_700_000_100.0, 1, 3, 4, "a@x.org", 200),
+    ]
+    v = usagelog.agg_view(recs, "day", dim="session")
+    assert v["groups"][0][0] == "세션 4 (탭2:p3)", v["groups"][0][0]
+
+
+async def test_agg_view_single_group_not_multi():
+    recs = [_rec(1_700_000_000.0, 0, 1, 1, "a@x.org", 100),
+            _rec(1_700_000_100.0, 0, 1, 1, "a@x.org", 200)]
+    v = usagelog.agg_view(recs, "day")
+    assert v["multi"] is False and len(v["groups"]) == 1
+
+
 def _load_script(name):
     import importlib.util
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
