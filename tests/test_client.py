@@ -802,6 +802,41 @@ async def test_token_log_screen_aggregates_and_switches():
     await _with_app(body)
 
 
+async def test_token_log_panel_subtab_groups_by_session():
+    """[패널] 서브탭: 그룹 차원을 계정↔세션으로 토글한다. 세션 차원은 (재사용되는)
+    패널 id 가 아니라 세션 id 로 묶어 보인다(설계 §8 — 세션 기준)."""
+    async def body(app, pilot, srv):
+        from textual.widgets import Label
+        recs = [
+            # 같은 세션 1 이 다른 패널(1,3)에 걸쳐도 한 그룹
+            {"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
+             "account": "me@x.org", "tokens": 1500},
+            {"ts": 1_700_000_100.0, "tab": 0, "pane": 3, "session": 1,
+             "account": "me@x.org", "tokens": 500},
+            {"ts": 1_700_000_200.0, "tab": 1, "pane": 2, "session": 2,
+             "account": "me@x.org", "tokens": 2000},
+        ]
+        app._want_token_log = True
+        app._dispatch({"t": "token_log", "records": recs})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr._dim == "account", "기본은 계정 차원"
+        # 키 [p] 로 세션 차원 토글
+        await pilot.press("p")
+        await pilot.pause(0.1)
+        assert scr._dim == "session" and app.screen_stack[-1] is scr
+        joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        assert "세션 1" in joined and "세션 2" in joined, joined
+        assert "세션별" in joined, joined
+        # 세션1=2000(1500+500), 세션2=2000 — 합 4000 유지
+        assert "전체 Σ4k" in joined, joined
+        # 마우스로 [패널] 탭 클릭 → 계정 차원으로 되돌림
+        await pilot.click("#tab_panel")
+        await pilot.pause(0.1)
+        assert scr._dim == "account" and app.screen_stack[-1] is scr
+    await _with_app(body)
+
+
 async def test_choose_tree_shows_panes_and_switches():
     # 탭/패널 트리가 패널을 들여쓰기로 보이고 로컬/원격([local]/[ssh])·실행 앱을
     # 표시하며, 패널 선택 시 그 탭+패널로 전환한다(#14/#24).

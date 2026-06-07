@@ -966,6 +966,9 @@ class TokenLogScreen(ModalScreen):
         self._records = records or []
         self._usage = usage          # M19 그림자 /usage 한도(dict|None)
         self._bucket = "day"
+        # 그룹 차원: "account"=계정별(기본), "session"=세션별([패널] 탭). 패널은
+        # 닫히고 재사용되므로 안정적 세션 id 로 묶는다(설계 §8, 사용자 결정).
+        self._dim = "account"
         # 계정 필터 순환 목록: None(전체) + 등장 계정들(정렬)
         seen = []
         for r in self._records:
@@ -993,6 +996,7 @@ class TokenLogScreen(ModalScreen):
                 yield Label("주", id="tab_week", classes="tkbtab", markup=False)
                 yield Label("월", id="tab_month", classes="tkbtab", markup=False)
                 yield Label("계정", id="tab_acct", classes="tkbbtn", markup=False)
+                yield Label("패널", id="tab_panel", classes="tkbbtn", markup=False)
                 yield Label("/usage", id="tab_usage", classes="tkbbtn",
                             markup=False)
                 yield Label("시나리오", id="tab_saver", classes="tkbbtn",
@@ -1034,13 +1038,19 @@ class TokenLogScreen(ModalScreen):
         return out
 
     def _sync_tabs(self):
-        """활성 버킷 서브탭만 강조 클래스를 켠다(마우스 탭 UI)."""
+        """활성 버킷 서브탭 + 활성 그룹차원([패널]) 강조 클래스를 켠다(마우스 탭 UI)."""
         for tid, bucket in self._TAB_BUCKET.items():
             try:
                 lab = self.query_one("#" + tid, Label)
             except Exception:
                 continue
             lab.set_class(bucket == self._bucket, "tkbtab-active")
+        # [패널] 탭은 세션 차원일 때 강조(계정 차원이 기본).
+        try:
+            self.query_one("#tab_panel", Label).set_class(
+                self._dim == "session", "tkbtab-active")
+        except Exception:
+            pass
 
     async def _refresh(self):
         lv = self.query_one(ListView)
@@ -1051,14 +1061,16 @@ class TokenLogScreen(ModalScreen):
         for ln in self._usage_lines():
             items.append(ListItem(Label(ln, markup=False)))
         acct = self._account if self._account is not None else "전체"
-        items.append(ListItem(Label(f"── 토큰 로그 · 계정: {acct} "
-                                    f"(탭/키 h·d·w·m, [a]계정) ──", markup=False)))
+        dimname = "세션" if self._dim == "session" else "계정"
+        items.append(ListItem(Label(f"── 토큰 로그 · 계정: {acct} · 묶음: {dimname} "
+                                    f"(탭/키 h·d·w·m, [a]계정, [p]패널) ──",
+                                    markup=False)))
         for ln in usagelog.summary_lines(self._records, self._bucket,
-                                         self._account):
+                                         self._account, self._dim):
             items.append(ListItem(Label(ln, markup=False)))
         await lv.extend(items)
         self.query_one("#tklogtitle", Label).update(
-            f"토큰 사용량 (단위:{self._bucket})")
+            f"토큰 사용량 (단위:{self._bucket} · {dimname}별)")
 
     def on_click(self, event: events.Click):
         # 마우스 클릭: 닫기 [x]·서브탭(버킷)·동작 버튼을 위젯 id 로 분기한다.
@@ -1081,6 +1093,11 @@ class TokenLogScreen(ModalScreen):
             if len(self._accounts) > 1:
                 self._ai = (self._ai + 1) % len(self._accounts)
                 self.run_worker(self._refresh())
+        elif wid == "tab_panel":
+            event.stop()
+            # 그룹 차원 토글: 계정별 ↔ 세션별([패널]).
+            self._dim = "account" if self._dim == "session" else "session"
+            self.run_worker(self._refresh())
         elif wid == "tab_usage":
             event.stop()
             self.app.send_cmd("refresh_usage")
@@ -1098,6 +1115,11 @@ class TokenLogScreen(ModalScreen):
             return
         if k == "a" and len(self._accounts) > 1:
             self._ai = (self._ai + 1) % len(self._accounts)
+            await self._refresh()
+            return
+        if k == "p":
+            # 그룹 차원 토글: 계정별 ↔ 세션별([패널]).
+            self._dim = "account" if self._dim == "session" else "session"
             await self._refresh()
             return
         if k == "s":
