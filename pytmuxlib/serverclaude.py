@@ -14,8 +14,8 @@ import time
 from . import tokens
 from .claude import (claude_account, claude_context_pct, claude_feedback_prompt,
                      claude_model, claude_prompt, claude_perm_mode, claude_state,
-                     claude_usage, ctx_window_tokens, parse_reset_delay,
-                     screen_tail_key, track_repeat)
+                     claude_usage, claude_welcome, ctx_window_tokens,
+                     parse_reset_delay, screen_tail_key, track_repeat)
 from .model import Pane, Session
 
 # 권한모드 자동 오토모드 전환(§10): 한 번 idle 진입 후 auto 에 도달하지 못해도 이
@@ -482,6 +482,20 @@ class ServerClaudeMixin:
                 if not new_cl:
                     p._rules_pending = False   # 세션 끝나면 예약 해제
                     p._ctx_pct = None          # 세션 끝 — 잔량% 비교 대상 제외(M15)
+                # 수동 /clear 감지: 이미 Claude 세션 중(old_cl)인데 환영 배너가 **새로**
+                # 뜨면(빈 컨텍스트) 토큰 누계를 새 세션으로 끊는다. pytmux 자동화(_pc_
+                # advance)를 안 타는 사용자 직접 /clear 가, 상태줄 ctx 근사%(누계/윈도우)를
+                # 안 비워 /clear 후에도 옛 % 가 남던 문제 수정. 배너가 머무는 동안은
+                # _welcome_seen 으로 1회만. 신규 시작(old_cl 없음)은 위 None→Claude 가 처리.
+                wel = claude_welcome(txt)
+                if wel and not p._welcome_seen and old_cl:
+                    self._reset_token_session(p)
+                    p._ctx_fired = False
+                    p._ctx_pct = None
+                    if self.claude_rules.strip():
+                        p._rules_pending = True
+                    changed = True
+                p._welcome_seen = wel
                 if new_cl:
                     # 계정 단서를 매 프레임 갱신(마지막 본 값 유지; 수동 지정 우선).
                     if not p._claude_account_manual:

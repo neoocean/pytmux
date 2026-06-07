@@ -293,6 +293,19 @@ def claude_feedback_prompt(text: str) -> bool:
     return bool(_FEEDBACK_RE.search(text))
 
 
+# /clear·세션 시작 직후의 환영(splash) 배너 = 컨텍스트가 비워진 신호. 버전 줄
+# "Claude Code v2.1.168" 은 빈/정리된 화면에만 뜨고 대화 중엔 안 보인다. 사용자가
+# 직접 /clear 하면 pytmux 자동화 경로(_pc_advance)를 안 타 토큰 누계가 안 끊기므로,
+# 이 배너로 수동 /clear(빈 컨텍스트)를 감지해 누계를 새 세션으로 끊는다(상태줄 ctx 근사%).
+_WELCOME_RE = re.compile(r"Claude Code v\d+\.\d", re.I)
+
+
+def claude_welcome(text: str) -> bool:
+    """Claude Code 환영/시작 배너(버전 splash)가 보이면 True. /clear 직후·세션 시작
+    화면에 뜬다 = 컨텍스트(transcript)가 비워진 신호."""
+    return bool(_WELCOME_RE.search(text or ""))
+
+
 def _alias_email(local: str, domain: str) -> str:
     """이메일을 `로컬앞2글자…@도메인` 별칭으로(원문 미노출). 로컬이 2글자 이하면 그대로."""
     alias = (local[:2] + "…") if len(local) > 2 else local

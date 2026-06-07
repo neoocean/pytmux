@@ -404,6 +404,9 @@ class Pane:
         self._repeat_n = 0
         self._claude_warn = None
         self._feedback_seen = False  # 세션 피드백 프롬프트 자동 Dismiss 디바운스(#26)
+        # 수동 /clear 감지 디바운스: 환영 배너가 화면에 머무는 동안 매 프레임 토큰
+        # 세션을 재리셋하지 않게, 배너가 "새로 떴을" 때만 1회 끊는다(claude_welcome).
+        self._welcome_seen = False
         self._rules_pending = False  # 시작 규칙 주입 예약(다음 idle 에 1회, #27)
         # 토큰 절감 자동화(docs/TOKEN_SAVING_SCENARIO.md). 둘 다 휘발성(재시작 비직렬화).
         # _resume_handle: 자동재개 예약 call_later 핸들 — busy 복귀 시 cancel 하려고

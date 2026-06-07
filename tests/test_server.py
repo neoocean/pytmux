@@ -2211,3 +2211,33 @@ async def test_status_static_opts_only_on_full_c4():
             assert k in periodic, f"주기 status 에 동적/낙관 필드 {k} 누락"
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_manual_clear_resets_token_session():
+    """수동 /clear 감지(2026-06-07): 사용자가 직접 /clear 하면 환영 배너가 뜨고,
+    pytmux 가 토큰 누계를 새 세션으로 끊어 상태줄 ctx 근사%(누계/윈도우)가 비워진다.
+    (자동화 _pc_advance 경로를 안 타는 수동 /clear 가 옛 % 를 남기던 문제 회귀.)"""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        # Claude busy + 토큰 누계 발생
+        p.feed("\x1b[2J\x1b[H? for shortcuts\r\n↑ 5k tokens\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._claude in ("busy", "idle")
+        sid = p._claude_session_id
+        assert p._session_tokens > 0, p._session_tokens
+        # 사용자 직접 /clear → 환영(splash) 배너 + 빈 컨텍스트(idle)
+        p.feed("\x1b[2J\x1b[H Claude Code v2.1.168\r\n"
+               " Opus 4.8 (1M context)\r\n"
+               " ⏵⏵ auto mode on (shift+tab to cycle)\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._session_tokens == 0, ("토큰 누계가 안 끊김", p._session_tokens)
+        assert p._claude_session_id == sid + 1, "새 세션 id 부여"
+        assert p._welcome_seen is True
+        # 배너가 머무는 동안 재리셋 안 함(디바운스) — id 가 또 안 오른다
+        srv._scan_claude(sess, win)
+        assert p._claude_session_id == sid + 1, "배너 지속 중 재리셋 금지"
+    finally:
+        await teardown(srv, task, sock)
