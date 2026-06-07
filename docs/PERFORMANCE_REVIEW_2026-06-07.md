@@ -1,6 +1,6 @@
 # pytmux 성능 리뷰 — 전체 코드 재검토 (2026-06-07)
 
-> **상태**: 🔎 리뷰만(미구현). 이번 패스는 `pytmuxlib/` 전체(~14k LOC)를 서버 핫패스·
+> **상태**: 🟢 C1~C5 구현 진행 중(§4 구현 현황). 이번 패스는 `pytmuxlib/` 전체(~14k LOC)를 서버 핫패스·
 > 클라 렌더·Claude/영속 3개 축으로 다시 훑어 **신규 최적화 레버**를 도출한 결과다. 직전
 > 스프린트([PERFORMANCE_SCENARIO.md](PERFORMANCE_SCENARIO.md))에서 A1–A5·B1–B11 이
 > 이미 끝났으므로, 본 문서는 **그 목록에 없는 net-new 항목**만 싣는다.
@@ -166,3 +166,17 @@ python tests/run.py          # 동작 불변(전부 통과)
 관련 문서: [PERFORMANCE_SCENARIO.md](PERFORMANCE_SCENARIO.md)(A/B 레버 이력·측정 원칙) ·
 [IMPROVEMENT_OPPORTUNITIES.md](IMPROVEMENT_OPPORTUNITIES.md)(제품 차원 리뷰) ·
 [HANDOFF.md](HANDOFF.md) §9(throughput 작업 이력).
+
+---
+
+## 4. 구현 현황 (2026-06-07)
+
+> 레버 1개 = 체인지리스트 1개. 각 단계 `tests/run.py` 통과 후 git push + p4 번호 CL submit.
+
+| 레버 | 상태 | 비고 |
+|---|---|---|
+| C1 `_char_cells` lru_cache | ✅ 구현 | `clientutil.py:24` `@lru_cache(256)`. 회귀 `test_char_cells_memoized_correct`. |
+| C2 TabBar `_entries()` 캐시 | ⏳ | |
+| C3 Style/dict 상수 호이스트 | ⏳ | |
+| C4 status 정적 옵션 분리 | ⏳ | |
+| C5 `_account_token_total` 1회 | ⏳ | |

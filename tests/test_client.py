@@ -3019,3 +3019,25 @@ async def test_claude_history_retained_when_omitted():
                              "perm_mode": "default", "history": ["a", "b", "c"]}])
         assert app.pane_claude[1]["history"] == ["a", "b", "c"]
     await _with_app(body)
+
+
+# ---- C1(PERFORMANCE_REVIEW 2026-06-07): _char_cells 메모이즈 ----
+async def test_char_cells_memoized_correct():
+    """_char_cells 가 lru_cache 로 메모이즈되며 폭 계산이 정확한지(동작 불변).
+
+    ASCII=1, 와이드(CJK)=2 값은 그대로여야 하고, 같은 문자 반복 호출은 캐시
+    적중으로 처리돼 wcwidth 왕복을 줄인다(클라 합성·탭바·상태줄 핫패스)."""
+    from pytmuxlib.clientutil import _char_cells
+    # 캐시가 실제로 붙어 있는지(functools.lru_cache 표식)
+    assert hasattr(_char_cells, "cache_info"), "_char_cells 에 lru_cache 미적용"
+    # 값 정확성: ASCII·공백=1, 한글·CJK=2
+    assert _char_cells("a") == 1
+    assert _char_cells(" ") == 1
+    assert _char_cells("가") == 2
+    assert _char_cells("漢") == 2
+    # 반복 호출은 캐시 적중(첫 호출이 채운 항목을 재사용)
+    before = _char_cells.cache_info()
+    for _ in range(10):
+        _char_cells("a")
+    after = _char_cells.cache_info()
+    assert after.hits > before.hits, "반복 호출이 캐시 적중하지 않음"

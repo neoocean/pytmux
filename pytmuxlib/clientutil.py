@@ -21,8 +21,14 @@ def _shell_argv(cmd: str) -> list:
     return proc.shell_argv(cmd)
 
 
+@lru_cache(maxsize=256)
 def _char_cells(ch: str) -> int:
-    """터미널에서 문자가 차지하는 칸 수(와이드=2, 그 외=1)."""
+    """터미널에서 문자가 차지하는 칸 수(와이드=2, 그 외=1).
+
+    C1(PERFORMANCE_REVIEW 2026-06-07): 클라 합성 셀 루프·TabBar 폭·상태줄 폭에서
+    **문자 1개당** 불린다. wcwidth 는 코드포인트 테이블 이분탐색이라 문자당 비용이
+    0이 아닌데, 실 화면은 ASCII(공백·영숫자)가 절대다수라 lru_cache 적중률이 거의
+    100% 다. 순수함수라 메모이즈가 안전하다(입력 도메인 사실상 유한)."""
     return 2 if wcwidth(ch) == 2 else 1
 
 
