@@ -1,9 +1,16 @@
 name: os-compat
 
-# macOS(arm64) 개발 환경에서는 Windows 네이티브 경로(pywinpty/ConPTY, proc.py 실경로,
-# ipc TCP 엔드포인트)를 직접 검증할 수 없고, 깨끗한 Linux(POSIX-but-not-macOS)에서의
-# 이식성도 못 본다. 이 워크플로가 GitHub 러너에서 macOS/Linux/Windows 3종을 한 번에 본다.
-# 자세한 배경·한계는 docs/WINDOWS_TESTING.md 참고.
+# 이 워크플로의 목적은 **개발 박스(macOS)에서 직접 못 보는** 환경을 GitHub 러너에서
+# 보는 것이다: ① Windows 네이티브 경로(pywinpty/ConPTY, proc.py 실경로, ipc TCP) ②
+# 깨끗한 Linux(POSIX-but-not-macOS) 이식성. 자세한 배경은 docs/WINDOWS_TESTING.md.
+#
+# macОS 러너는 매트릭스에서 **뺐다**(2026-06-07): (a) 개발이 macOS 에서 이뤄져 로컬
+# `python tests/run.py`(322 passed)가 같은 커버리지를 주므로 **중복**이고, (b) GitHub
+# macOS 러너에서 **간헐적 데드락**(PTY/서브프로세스, 헤드리스·tty 부재 환경 특이)이 나
+# 잡이 17분씩 매달리다 취소됐다 — 로컬·Linux·Windows 어디서도 재현 안 됨. SIGALRM·
+# faulthandler·step/job 타임아웃 백스톱으로도 그 환경에선 신뢰성 있게 못 끊겨, 비싼
+# 러너 분만 태우고 신호는 거짓-적색이었다. macOS 특이 검증이 필요하면 로컬에서 직접
+# 돌리거나(개발 박스), 아래 matrix 에 `macos-latest` 를 한시적으로 도로 넣어 확인한다.
 
 on:
   push:
@@ -11,8 +18,8 @@ on:
   pull_request:
   workflow_dispatch:        # Actions 탭에서 수동 트리거
 
-# 연속 푸시가 9잡 매트릭스를 겹쳐 띄워 무료 macOS 러너가 적체되는 것을 막는다 —
-# 같은 ref 의 진행 중 run 을 새 푸시가 취소(최신 커밋만 검증). PR/브랜치별로 격리.
+# 연속 푸시가 매트릭스를 겹쳐 띄우는 것을 막는다 — 같은 ref 의 진행 중 run 을 새 푸시가
+# 취소(최신 커밋만 검증). PR/브랜치별로 격리.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -22,12 +29,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]   # Linux x86-64 / macOS arm64 / Win Server
+        os: [ubuntu-latest, windows-latest]   # Linux x86-64 / Win Server (macOS=개발 박스, 위 주석)
         python: ["3.11", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
-    # 한 잡이 매달려도(과거 macOS 러너에서 PTY/서브프로세스 데드락으로 47분씩 돌다
-    # 다음 푸시에 취소됨) 12분 안에 끊어 비싼 러너 분을 낭비하지 않는다. 정상 잡은
-    # ~5분. tests/run.py 의 테스트별 타임아웃(PYTMUX_TEST_TIMEOUT)이 1차 방어, 이건 2차.
+    # 어떤 잡이든 매달리면 12분에 끊어 러너 분 낭비를 막는다(정상 ~5분). tests/run.py
+    # 의 테스트별 SIGALRM·faulthandler 타임아웃이 1차 방어(행을 트레이스백과 함께 빠른
+    # 실패로 전환), 이건 2차 안전망. (GitHub 의 timeout 강제는 wedged 러너에서 지연될 수
+    # 있어, 자체 종료하는 run.py 쪽 백스톱이 더 신뢰성 있다.)
     timeout-minutes: 12
     env:
       # Windows 콘솔에서 한글 출력이 cp1252 로 깨져 러너가 UnicodeEncodeError 로 죽던
