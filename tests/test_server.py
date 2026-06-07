@@ -231,8 +231,10 @@ async def test_token_usage_logging():
         sess = srv.ensure_default_session(80, 24)
         win = sess.active_window
         p = win.active_pane
-        # 새 Claude 세션 + busy(↑ N tokens 가 busy 신호 겸 running) + 계정 단서
-        p.feed("\x1b[2J\x1b[H me@woojinkim.org\r\n"
+        # 새 Claude 세션 + busy(↑ N tokens 가 busy 신호 겸 running) + 계정 단서.
+        # 계정은 Claude UI 의 신뢰 신호("<email>'s Organization")에서만 잡는다 —
+        # 화면에 흩어진 임의 이메일(git URL 등)은 안 잡힘(2026-06-07 오탐 수정).
+        p.feed("\x1b[2J\x1b[H me@woojinkim.org's Organization\r\n"
                "↑ 1.9k tokens\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
         assert p._claude == "busy", p._claude

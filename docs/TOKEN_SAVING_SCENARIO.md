@@ -87,8 +87,18 @@ PTY master fd + 자식 셸이고, Claude Code 는 그 셸 안에서 도는 한 T
 | `tokens.step` / `_session_tokens` | 세션 누계(int) | `tokens.py:59`, `serverclaude.py:476` | 응답 peak 합 |
 | `usagelog.aggregate` | (버킷×계정) 누계 | `usagelog.py:80` | 일/주/월 예산 판단 |
 | `claude_perm_mode` | `auto`/`bypass`/`plan`/`default` | `claude.py:190` | 모드 절감 판단 |
-| `claude_account` | 별칭 이메일/조직/플랜 | `claude.py:137` | 계정별 예산 |
+| `claude_account` | 별칭 이메일/조직/플랜 | `claude.py:287` | 계정별 예산(엄격 — 아래) |
 | `parse_reset_delay` | 리밋 해제까지 지연(초) | `claude.py:226` | 자동재개 타이밍 |
+
+> **`claude_account` 엄격 검출(2026-06-07 오탐 수정)**: 화면 본문에는 코드·diff·git
+> URL·예시 등 **계정과 무관한 이메일**이 흔하다(예: git SSH URL
+> `git@github.com:user/repo` → 과거 상태줄·토큰로그에 `gi…@github.com` 으로 튐;
+> `a@x.org`·`us…@example.com` 도 동류). 이제 **Claude UI 가 직접 그린 신뢰 신호에서만**
+> 계정을 잡는다 — ① `<email>'s Organization`(계정/조직 표시, 최우선) ② 계정 라벨 **바로
+> 뒤** 이메일(`Login:`/`Account:`/`Logged in as <addr>`, git SSH URL 제외) ③ 라벨 기반
+> 조직/팀명·플랜(약한 신호). **신뢰 신호가 없으면 `None`** → `usagelog` 가 `unknown` 으로
+> 묶는다(잘못된 계정 표시보다 Unknown 이 옳다 — 사용자 지시). 맨 이메일(라벨 없는)·예약
+> 도메인은 더 이상 계정으로 잡지 않는다. 회귀: `test_claude_account_rejects_screen_emails`.
 
 ### 2.2 개입(actuation) — PTY 주입
 

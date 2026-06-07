@@ -242,9 +242,9 @@ def claude_context_pct(text: str):
 
 
 # ---- 계정 식별(토큰 로깅 계정별 구분, docs/HANDOFF.md §10 #7) ----
-# Claude Code 의 /status·로그인 배너·푸터에 보이는 이메일/플랜으로 계정을 추정한다.
-# 화면 텍스트만 보므로 휴리스틱이고, 못 찾으면 None(서버가 "unknown" 으로 적는다).
-_EMAIL_RE = re.compile(r"\b([A-Za-z0-9._%+\-]+)@([A-Za-z0-9.\-]+\.[A-Za-z]{2,})\b")
+# Claude Code UI 가 직접 그린 계정 신호(<email>'s Organization · 계정 라벨)에서만
+# 계정을 추정한다. 화면 본문(코드·git URL·예시)의 임의 이메일은 계정이 아니므로
+# 잡지 않고, 신뢰 신호가 없으면 None(서버가 "unknown" 으로 묶는다 — 사용자 지시).
 # RFC 2606/6761 예약·플레이스홀더 도메인 — 실제 로그인 계정일 수 없다. Claude 가
 # 처리 중인 transcript/문서 본문의 예시 이메일(user@example.com 등)을 계정으로
 # 오검출하던 사용자 보고를 차단한다(상태줄에 @us…@example.com 으로 튐 —
@@ -253,10 +253,19 @@ _RESERVED_EMAIL_DOMAINS = frozenset({
     "example.com", "example.net", "example.org", "example.edu",
 })
 _RESERVED_EMAIL_TLDS = frozenset({"example", "invalid", "localhost", "test"})
-# 계정 맥락 키워드 — 이메일이 이 단어와 같은 줄에 있으면 본문 예시가 아니라 로그인
-# 계정으로 본다(/status·로그인 배너·푸터). 맥락 줄이 없으면 첫 비예약 이메일로 폴백.
-_ACCT_CONTEXT_RE = re.compile(
-    r"\b(?:account|login|logged\s*in|signed\s*in|e-?mail|auth)\b", re.I)
+# ① 가장 신뢰할 수 있는 신호: Claude Code 계정/조직 표시 "<email>'s Organization"
+# (계정 패널·릴리스노트 푸터에 실측). 화면 본문(코드·diff·git URL·예시)에 흩어진
+# 임의 이메일이 아니라 Claude UI 가 직접 그린 계정이므로 이걸 최우선·사실상 유일
+# 출처로 본다. 아포스트로피는 곧은(') / 둥근(') 둘 다 허용.
+_ACCT_ORG_RE = re.compile(
+    r"([A-Za-z0-9._%+\-]+)@([A-Za-z0-9.\-]+\.[A-Za-z]{2,})['’]s\s+Organization",
+    re.I)
+# ② 계정 라벨 **바로 뒤**의 이메일(Login:/Account:/Email: <addr> 류 /status 출력).
+# 키워드와 이메일이 인접해야만 매치 → transcript 산문("…email someone at x@y.com")이나
+# 본문 예시는 안 잡힌다. git SSH URL(git@host:path)은 매치 뒤 ':' 검사로 따로 배제.
+_ACCT_LABEL_EMAIL_RE = re.compile(
+    r"(?:account|logged\s+in(?:\s+as)?|signed\s+in(?:\s+as)?|login|e-?mail)"
+    r"\s*[:·\-]?\s+([A-Za-z0-9._%+\-]+)@([A-Za-z0-9.\-]+\.[A-Za-z]{2,})", re.I)
 
 
 def _is_reserved_email_domain(domain: str) -> bool:
@@ -284,33 +293,39 @@ def claude_feedback_prompt(text: str) -> bool:
     return bool(_FEEDBACK_RE.search(text))
 
 
+def _alias_email(local: str, domain: str) -> str:
+    """이메일을 `로컬앞2글자…@도메인` 별칭으로(원문 미노출). 로컬이 2글자 이하면 그대로."""
+    alias = (local[:2] + "…") if len(local) > 2 else local
+    return f"{alias}@{domain}"
+
+
 def claude_account(text: str):
-    """Claude Code 화면 텍스트에서 계정 식별 문자열을 best-effort 추출.
+    """Claude Code 화면 텍스트에서 **신뢰할 수 있는** 계정 식별자만 추출(없으면 None).
 
-    개인/팀(조직) 계정을 토큰 로그에서 구분하기 위함(요금·한도 별개). 우선순위:
-    ① 이메일(별칭화 — 원문 미노출) → ② 조직/팀명 → ③ 플랜명. 못 찾으면 None.
+    개인/팀 계정을 토큰 로그에서 구분하기 위함(요금·한도 별개). 화면 본문에는 코드·
+    diff·git URL·예시 등 **계정과 무관한 이메일**이 흔하므로(예: git SSH URL
+    `git@github.com:user/repo` → 과거 `gi…@github.com` 오검출), 임의 이메일을 계정으로
+    잡지 않는다. **정확히 못 잡으면 None 을 돌려 서버가 "unknown" 으로 묶게 한다**
+    (사용자 지시 2026-06-07 — 잘못된 계정 표시보다 Unknown 이 옳다).
 
-    **민감정보 보호**: 이메일은 원문 대신 `로컬앞2글자…@도메인` 별칭으로 돌려준다
-    (개인 vs 조직 도메인 구분은 되되 전체 주소는 로그에 남기지 않음).
-
-    **오탐 방지**: 화면 전체에서 첫 이메일을 무조건 잡지 않는다 — 예약 도메인
-    (example.* 등)은 건너뛰고, 계정 맥락 줄(account/login/email…)의 이메일을 본문
-    예시 이메일보다 우선한다. 맥락 줄이 없으면 첫 비예약 이메일로 폴백."""
-    fallback = None
-    for line in text.splitlines():
-        anchored = _ACCT_CONTEXT_RE.search(line) is not None
-        for m in _EMAIL_RE.finditer(line):
-            local, domain = m.group(1), m.group(2)
-            if _is_reserved_email_domain(domain):
-                continue
-            alias = (local[:2] + "…") if len(local) > 2 else local
-            acct = f"{alias}@{domain}"
-            if anchored:                # 계정 맥락 줄의 이메일 — 최우선 채택
-                return acct
-            if fallback is None:        # 맥락 없는 첫 비예약 이메일 — 폴백 후보
-                fallback = acct
-    if fallback is not None:
-        return fallback
+    우선순위:
+      ① Claude UI 의 `<email>'s Organization` 표시(가장 신뢰).
+      ② 계정 라벨 바로 뒤 이메일(Login:/Account:/Email: <addr>). git SSH URL 제외.
+      ③ 조직/팀명 라벨(`organization: Foo`)·플랜명(라벨 기반, 약한 신호).
+    어디서도 못 찾으면 None. 이메일은 별칭화(_alias_email)해 원문을 로그에 안 남긴다."""
+    # ① Claude 계정/조직 표시 — 사실상 유일하게 믿을 수 있는 출처.
+    m = _ACCT_ORG_RE.search(text)
+    if m and not _is_reserved_email_domain(m.group(2)):
+        return _alias_email(m.group(1), m.group(2))
+    # ② 계정 라벨 바로 뒤 이메일(예약 도메인·git SSH URL 배제).
+    for m in _ACCT_LABEL_EMAIL_RE.finditer(text):
+        local, domain = m.group(1), m.group(2)
+        if _is_reserved_email_domain(domain):
+            continue
+        if text[m.end():m.end() + 1] == ":":   # git@host:path 등 SSH URL → 배제
+            continue
+        return _alias_email(local, domain)
+    # ③ 라벨 기반 조직/팀명·플랜(약한 신호 — 이메일을 못 찾을 때만).
     m = _ORG_RE.search(text)
     if m:
         return m.group(1).strip()
