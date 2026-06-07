@@ -3,7 +3,7 @@ IME 단축키/표시줄/포커스 경계/와이드 문자 합성."""
 import asyncio
 
 import harness
-from harness import make_app, server_only, teardown
+from harness import make_app, server_only, teardown, wait_until
 from textual.events import Key
 from textual.widgets import Input
 
@@ -449,7 +449,8 @@ async def test_command_palette_routing():
         await pilot.pause(0.15)
         ran.clear()
         app.screen_stack[-1].dismiss("rename-tab")
-        await pilot.pause(0.15)
+        await wait_until(pilot, lambda: app.screen_stack[-1].__class__.__name__
+                         == "PromptScreen")
         assert app.screen_stack[-1].__class__.__name__ == "PromptScreen"
         assert "rename-tab" not in ran
     await _with_app(body)
@@ -940,7 +941,8 @@ async def test_right_click_menu_unified_and_ctrl_click_noop():
         app.send_cmd = lambda action, **kw: sel.append((action, kw))
         # 우클릭 → 메뉴 열림(마우스 모드여도 패스스루보다 우선)
         v.on_mouse_down(_FakeMouse(5, 3, button=3))
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: app.screen_stack[-1].__class__.__name__
+                         == "MenuScreen")
         assert app.screen_stack[-1].__class__.__name__ == "MenuScreen", "우클릭→메뉴"
         assert app._menu_pane == 7, "메뉴 대상 = 우클릭한 패널"
         app.pop_screen()
@@ -1210,7 +1212,9 @@ async def test_tab_close_confirm_popup():
         assert len(sess.tabs) == 2, "취소 시 탭 유지"
         # 다시 팝업 → '닫기' 버튼 터치(클릭) 로 확정 → 탭 닫힘
         app.confirm_kill_tab()
-        await pilot.pause(0.2)
+        # 클래스뿐 아니라 클릭 대상 버튼(#cy)이 mount 될 때까지 대기(자식 미마운트
+        # 상태로 클릭하면 ConfirmScreen 내부 query 가 실패 — CI 플레이크).
+        await wait_until(pilot, lambda: app.screen_stack[-1].query_one("#cy"))
         assert app.screen_stack[-1].__class__.__name__ == "ConfirmScreen"
         await pilot.click("#cy")
         await pilot.pause(0.5)
@@ -1267,7 +1271,8 @@ async def test_layout_save_load_client():
         assert len(sess.active_tab.window.panes()) == 2
         # 이름 없이 불러오기 → 레이아웃 선택기 팝업
         app._run_command("layout-load")
-        await pilot.pause(0.3)
+        await wait_until(pilot, lambda: app.screen_stack[-1].__class__.__name__
+                         == "ChooseLayoutScreen")
         assert app.screen_stack[-1].__class__.__name__ == "ChooseLayoutScreen"
     await _with_app(body)
 
@@ -1673,7 +1678,9 @@ async def test_prompt_history_down_jumps_to_h_over_divider():
         app.pane_claude = {7: {"id": 7, "claude": "idle", "prompt": "p2",
                                "history": ["p1", "p2"]}}
         app.open_prompt_history(7)
-        await pilot.pause(0.1)
+        # InfoScreen 이 top 이 되고 **그 안의 ListView 가 mount** 될 때까지 대기
+        # (push 직후엔 자식이 아직 안 그려져 query_one 이 실패할 수 있다 — CI 플레이크).
+        await wait_until(pilot, lambda: app.screen_stack[-1].query_one(ListView))
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoScreen"
         lv = scr.query_one(ListView)
@@ -1684,11 +1691,11 @@ async def test_prompt_history_down_jumps_to_h_over_divider():
         # 마지막 프롬프트(p2) 선택 후 ↓ → 구분선 건너뛰고 [h] 로 점프
         lv.index = p2idx
         scr.on_key(Key(key="down", character=None))
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: lv.index == hidx)
         assert lv.index == hidx, (lv.index, hidx, texts)
         # ↑ → 다시 p2 로(구분선 건너뜀)
         scr.on_key(Key(key="up", character=None))
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: lv.index == p2idx)
         assert lv.index == p2idx, (lv.index, p2idx, texts)
     await _with_app(body)
 
@@ -2086,7 +2093,8 @@ async def test_info_tabs_close_button_and_esc():
         await pilot.pause(0.1)
         assert app.screen_stack[-1].__class__.__name__ != "InfoTabsScreen", "[x] 닫기"
         app._open_status_tabs({"sessions": []})
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: app.screen_stack[-1].__class__.__name__
+                         == "InfoTabsScreen")
         assert app.screen_stack[-1].__class__.__name__ == "InfoTabsScreen"
         await pilot.press("escape")
         await pilot.pause(0.1)
@@ -2275,7 +2283,8 @@ async def test_esc_header_focus_opens_history():
         assert cellbg and cellbg.bgcolor and accent in str(cellbg.bgcolor).lower(), \
             f"헤더 포커스 강조색 기대, got {cellbg.bgcolor if cellbg else None}"
         await pilot.press("enter")             # 히스토리 팝업 + 모드 종료
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: app.screen_stack[-1].__class__.__name__
+                         == "InfoScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoScreen"
         assert app._hdr_focus is None and app.mode == "normal"

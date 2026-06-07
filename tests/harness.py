@@ -95,6 +95,26 @@ def pane_text(pane):
     return "\n".join("".join(seg[0] for seg in row) for row in rows)
 
 
+async def wait_until(pilot, cond, timeout=4.0, step=0.05):
+    """cond() 가 참이 될 때까지 pilot.pause(step) 로 폴링한다(최대 timeout). 참이 되면
+    True, 시간 초과면 False. 고정 `pilot.pause(N)` + 단언 패턴의 CI 플레이크(느린
+    Windows 러너에서 모달 push·키 처리·렌더가 N 초 안에 안 끝남)를 없앤다 — Unix 에선
+    조건 충족 즉시 빠르고, 느린 환경에선 timeout 까지 인내한다. 호출부는 반환 후에도
+    동일 조건을 단언해(실패 메시지 보존) 의미를 유지한다."""
+    import asyncio as _asyncio
+    loop = _asyncio.get_event_loop()
+    end = loop.time() + timeout
+    while True:
+        try:
+            if cond():
+                return True
+        except Exception:
+            pass
+        if loop.time() >= end:
+            return False
+        await pilot.pause(step)
+
+
 async def drain(reader, store, timeout=0.8, until=None):
     """소켓에서 timeout 동안 들어오는 메시지를 store(list)에 모은다.
 
