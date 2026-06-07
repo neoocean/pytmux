@@ -366,10 +366,17 @@ async def test_client_reconnects_on_restarting():
         await teardown(srvB, taskB, sockB)
 
 
-# ── 7. 클라이언트 명령 매핑: "restart-server" → restart_server 액션 ───────────────
+# ── 7. 클라이언트 명령 매핑: "restart-server" → 드라이런 → restart_server 액션 ─────
+_PASS_CHECK = {
+    "t": "restart_check", "reexec_supported": True, "has_sessions": True,
+    "serialize_ok": True, "panes": 1, "panes_with_fd": 1,
+}
+
+
 async def test_client_restart_command_maps_action():
-    """명령 프롬프트/팔레트에서 restart-server 를 치면 restart_server 액션을 서버로
-    보낸다(실제 execv 는 서버 몫이라 send_cmd 만 가로채 검증)."""
+    """명령 프롬프트/팔레트에서 restart-server 를 치면 먼저 드라이런
+    (request_restart_check)을 보내고, 통과 회신을 받아야 restart_server 액션을
+    서버로 보낸다(실제 execv 는 서버 몫이라 send_cmd 만 가로채 검증)."""
     from harness import make_app
     srv, task, sock = await server_only()
     app = make_app(sock)
@@ -378,10 +385,39 @@ async def test_client_restart_command_maps_action():
             await pilot.pause(0.4)
             sent = []
             app.send_cmd = lambda action, **kw: sent.append((action, kw))
+            # 1) 명령 → 선행 드라이런만 나간다(아직 restart_server 아님).
             app._run_command("restart-server")
-            app._run_command("restart")
+            assert ("request_restart_check", {}) in sent, sent
+            assert ("restart_server", {}) not in sent, sent
+            # 2) 통과 회신 → 실제 restart_server 가 나간다.
+            app._dispatch(dict(_PASS_CHECK))
             assert ("restart_server", {}) in sent, sent
-            assert sent.count(("restart_server", {})) == 2, sent
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_client_restart_dryrun_fail_asks_confirm():
+    """드라이런 FAIL 이면 곧장 재시작하지 않고 재확인 팝업을 띄운다(사용자가
+    '재시작'을 눌러야 restart_server 가 나간다)."""
+    from harness import make_app
+    srv, task, sock = await server_only()
+    app = make_app(sock)
+    try:
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause(0.4)
+            sent = []
+            app.send_cmd = lambda action, **kw: sent.append((action, kw))
+            confirmed = []
+            app.confirm_popup = lambda msg, action, **kw: confirmed.append(action)
+            app._run_command("restart-server")
+            # 직렬화 실패 회신 → 재시작 보류, 재확인 팝업.
+            fail = dict(_PASS_CHECK, serialize_ok=False)
+            app._dispatch(fail)
+            assert ("restart_server", {}) not in sent, sent
+            assert confirmed, "FAIL 시 재확인 팝업이 떠야 함"
+            # 사용자가 '재시작'을 누르면 그제야 restart_server.
+            confirmed[0]()
+            assert ("restart_server", {}) in sent, sent
     finally:
         await teardown(srv, task, sock)
 

@@ -82,6 +82,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # _relaunch 를 세우고 종료하면 run_client 가 os.execv 로 새 클라를 띄운다.
             self._relaunch_on_restart = False
             self._relaunch = False
+            # restart-server/restart-all 은 실행 전 드라이런(request_restart_check)을
+            # 먼저 돌린다. 회신(restart_check)이 올 때 어떤 재시작을 대기 중인지
+            # ("server"|"all") 기억해 두고, 안전하면 곧장 실행, FAIL 이면 재확인 팝업.
+            self._pending_restart = None
             # IPC 강제 재접속(§10 degraded 회복): 정체된 소켓을 버리고 새로 세울 때
             # 옛 reader 태스크가 EOF 로 깨어나 self.exit() 하지 않게 세대 번호로 구분
             # 한다. _start_reader 가 띄우는 각 reader 태스크는 자기 (reader, gen) 을
@@ -617,6 +621,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if getattr(self, "_want_restart_check", False):
                     self._want_restart_check = False
                     self._show_restart_check_popup(msg)
+                elif getattr(self, "_pending_restart", None):
+                    # restart-server/restart-all 의 선행 드라이런 회신 — 안전성으로
+                    # 실제 재시작을 게이트한다(FAIL 이면 재확인).
+                    self._gate_restart_on_check(msg)
             elif t == "layouts":
                 if self._want_layouts:
                     mode = self._want_layouts
@@ -1509,19 +1517,64 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._want_restart_check = True
             self.send_cmd("request_restart_check")
 
-        def _show_restart_check_popup(self, m):
-            """서버 restart_check 결과 + 클라 측 점검을 PASS/WARN/FAIL 로 팝업."""
+        def begin_restart(self, kind):
+            # restart-server/restart-all 공통 진입: 실행 전 드라이런을 먼저 돌린다.
+            # 회신(restart_check)에서 _pending_restart 를 보고 안전하면 곧장 실행,
+            # FAIL 이면 재확인 팝업으로 진행 여부를 다시 묻는다(do_restart).
+            self._pending_restart = kind
+            self.display_message("pytmux: 재시작 전 드라이런 점검 중…")
+            self.send_cmd("request_restart_check")
+
+        def do_restart(self, kind):
+            # 실제 재시작 수행. restart-all 은 클라 자신도 relaunch 한다.
+            if kind == "all":
+                self._relaunch_on_restart = True
+                self.display_message(
+                    "pytmux: 전체 재시작 — 서버 재시작 + 클라 재기동…")
+            else:
+                self.display_message("pytmux: 서버 재시작…")
+            self.send_cmd("restart_server")
+
+        @staticmethod
+        def _restart_check_eval(m, cli_ok, kind="all"):
+            """서버 restart_check 결과 + 클라 측 점검을 (safe, checks) 로 평가.
+            kind="server" 는 클라를 relaunch 하지 않으므로 relaunch 점검을 제외한다."""
             panes, with_fd = m.get("panes", 0), m.get("panes_with_fd", 0)
             fd_ok = (panes == with_fd and panes > 0)
-            cli_ok = self._client_relaunch_ok()
             checks = [
                 (m.get("reexec_supported"), "서버 re-exec 지원(POSIX·이벤트루프)"),
                 (m.get("has_sessions"), "복원할 세션 존재"),
                 (m.get("serialize_ok"), "상태 직렬화 round-trip"),
                 (fd_ok, f"패널 master fd 보유 ({with_fd}/{panes})"),
-                (cli_ok, "클라이언트 relaunch 인자 해석"),
             ]
-            safe = all(ok for ok, _ in checks)
+            if kind == "all":
+                checks.append((cli_ok, "클라이언트 relaunch 인자 해석"))
+            return all(ok for ok, _ in checks), checks
+
+        def _gate_restart_on_check(self, m):
+            """대기 중인 재시작(_pending_restart)을 드라이런 결과로 게이트한다.
+            안전하면 곧장 실행, FAIL 이면 재시작 여부를 재확인 팝업으로 묻는다."""
+            kind = self._pending_restart
+            self._pending_restart = None
+            safe, checks = self._restart_check_eval(
+                m, self._client_relaunch_ok(), kind)
+            if safe:
+                self.do_restart(kind)
+                return
+            label = "전체 재시작" if kind == "all" else "서버 재시작"
+            fails = [lbl for ok, lbl in checks if not ok]
+            msg = "\n".join(
+                [f"드라이런 FAIL — {label} 안전 점검에서 문제가 있습니다:", ""]
+                + [f"  [FAIL] {lbl}" for lbl in fails]
+                + ["", "그래도 재시작할까요?"])
+            self.confirm_popup(
+                msg, action=lambda: self.do_restart(kind),
+                title="재시작 확인", yes_label="재시작", danger=True)
+
+        def _show_restart_check_popup(self, m):
+            """서버 restart_check 결과 + 클라 측 점검을 PASS/WARN/FAIL 로 팝업."""
+            cli_ok = self._client_relaunch_ok()
+            safe, checks = self._restart_check_eval(m, cli_ok)
             lines = [
                 ("✅ 안전 — restart-all 수행 가능" if safe
                  else "⚠️ 주의 — 아래 FAIL 항목 확인 후 진행"),
@@ -2290,7 +2343,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif c in ("restart-server", "restart"):
                 # 작업 보존 재시작: 셸/PTY 를 살린 채 서버 코드만 교체(re-exec).
                 # 화면이 잠깐 끊겼다 재접속된다(docs/RESTART_SCENARIO.md).
-                self.send_cmd("restart_server")
+                # 실행 전 드라이런으로 안전성을 먼저 점검한다.
+                self.begin_restart("server")
             elif c in ("restart-check", "restart-dry-run", "restart-all-check"):
                 # restart-all 드라이런: 실제 재시작 없이 안전성만 점검해 팝업으로 보고.
                 self.open_restart_check()
@@ -2298,9 +2352,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 전체 재시작: 서버는 work-preserving re-exec(셸/세션 보존), 동시에
                 # 클라이언트도 자신을 relaunch(새 클라 코드로 재attach). 서버/클라
                 # 코드를 모두 갱신하면서 작업은 보존한다(docs/RESTART_SCENARIO.md).
-                self._relaunch_on_restart = True
-                self.display_message("pytmux: 전체 재시작 — 서버 재시작 + 클라 재기동…")
-                self.send_cmd("restart_server")
+                # 실행 전 드라이런으로 안전성을 먼저 점검한다.
+                self.begin_restart("all")
             elif c in ("reconnect", "resync"):
                 # IPC 강제 재접속(§10): degraded(빨간 외곽선) 고착 시 정체된 소켓을
                 # 버리고 새로 세워 회복한다. 서버 PTY/세션·실행 중 Claude 는 보존.

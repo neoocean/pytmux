@@ -28,18 +28,30 @@ async def test_hello_paints_screen():
 
 
 async def test_restart_all_arms_relaunch_and_restarts_server():
-    """restart-all: 클라가 relaunch 를 무장(_relaunch_on_restart)하고 서버에
+    """restart-all: 실행 전 드라이런(request_restart_check)을 먼저 보내고, 통과
+    회신을 받으면 클라가 relaunch 를 무장(_relaunch_on_restart)하고 서버에
     restart_server 를 보낸다. 일반 restart-server 는 relaunch 무장 안 함."""
+    _ok = {"reexec_supported": True, "has_sessions": True, "serialize_ok": True,
+           "panes": 1, "panes_with_fd": 1}
+
     async def body(app, pilot, srv):
         sent = []
         app.send_cmd = lambda action, **kw: sent.append(action)
+        # restart-server: 드라이런 먼저, 통과 회신 후에야 restart_server.
         app._run_command("restart-server")
+        assert sent == ["request_restart_check"]
         assert app._relaunch_on_restart is False
-        assert sent == ["restart_server"]
+        app._dispatch(dict(_ok, t="restart_check"))
+        assert app._relaunch_on_restart is False
+        assert sent == ["request_restart_check", "restart_server"]
         sent.clear()
+        # restart-all: 드라이런 먼저, 통과 회신 후 relaunch 무장 + restart_server.
         app._run_command("restart-all")
+        assert sent == ["request_restart_check"]
+        assert app._relaunch_on_restart is False
+        app._dispatch(dict(_ok, t="restart_check"))
         assert app._relaunch_on_restart is True
-        assert sent == ["restart_server"]
+        assert sent == ["request_restart_check", "restart_server"]
     await _with_app(body)
 
 
