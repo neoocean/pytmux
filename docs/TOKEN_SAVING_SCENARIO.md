@@ -99,6 +99,13 @@ PTY master fd + 자식 셸이고, Claude Code 는 그 셸 안에서 도는 한 T
 > 조직/팀명·플랜(약한 신호). **신뢰 신호가 없으면 `None`** → `usagelog` 가 `unknown` 으로
 > 묶는다(잘못된 계정 표시보다 Unknown 이 옳다 — 사용자 지시). 맨 이메일(라벨 없는)·예약
 > 도메인은 더 이상 계정으로 잡지 않는다. 회귀: `test_claude_account_rejects_screen_emails`.
+>
+> **과거 로그 정리**: 검출 수정 전 `*.tokens.jsonl` 에 적힌 옛 오탐 계정은
+> `scripts/migrate_token_accounts.py` 로 일괄 `unknown` 처리한다 — 신뢰 allowlist
+> (`--keep <account>`/`--keep-domain <domain>`)만 남기고 나머지를 unknown 으로(기본
+> 드라이런, `--apply` 로 적용, `<path>.bak` 백업·원자 교체). 회귀
+> `test_migrate_token_accounts`. **주의**: 검출 수정은 서버 데몬 재기동(restart-all/
+> kill-server) 후에야 로드되므로, 재기동 전까진 옛 코드가 새 오탐을 계속 적을 수 있다.
 
 ### 2.2 개입(actuation) — PTY 주입
 

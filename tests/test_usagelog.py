@@ -104,3 +104,51 @@ async def test_claude_account_rejects_screen_emails():
     assert claude_account(
         "remote git@github.com:woojinkim/x.git\nme@woojinkim.org's Organization"
     ) == "me@woojinkim.org"
+
+
+async def test_migrate_token_accounts():
+    """비신뢰 계정 일괄 unknown 마이그레이션(scripts/migrate_token_accounts) 핵심 로직.
+
+    신뢰(allowlist) 계정·도메인만 남기고 나머지(git URL 오탐 등)는 unknown 으로
+    바꾼다. 이미 unknown·빈 값은 unknown 유지, 손상 줄은 보존."""
+    import importlib.util
+    import json
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec = importlib.util.spec_from_file_location(
+        "migrate_token_accounts",
+        os.path.join(here, "scripts", "migrate_token_accounts.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    keep_acc = {"me@woojinkim.org"}
+    keep_dom = {"woojinkim.org"}
+    # 단위: is_trusted / remap_account
+    assert mod.is_trusted("me@woojinkim.org", keep_acc, keep_dom)
+    assert mod.is_trusted("wo…@woojinkim.org", set(), keep_dom)   # 도메인 매치
+    assert not mod.is_trusted("gi…@github.com", keep_acc, keep_dom)
+    assert not mod.is_trusted("unknown", keep_acc, keep_dom)
+    assert not mod.is_trusted(None, keep_acc, keep_dom)
+    assert mod.remap_account("gi…@github.com", keep_acc, keep_dom) == "unknown"
+    assert mod.remap_account("me@woojinkim.org", keep_acc, keep_dom) == "me@woojinkim.org"
+
+    # 줄 단위 마이그레이션 + 통계
+    lines = [
+        json.dumps({"ts": 1, "account": "me@woojinkim.org", "tokens": 10}) + "\n",
+        json.dumps({"ts": 2, "account": "gi…@github.com", "tokens": 5}) + "\n",
+        json.dumps({"ts": 3, "account": "us…@example.com", "tokens": 4}) + "\n",
+        json.dumps({"ts": 4, "account": "unknown", "tokens": 3}) + "\n",
+        json.dumps({"ts": 5, "tokens": 2}) + "\n",          # account 키 없음→unknown 유지
+        "  \n",                                              # 공백줄 보존
+        "{corrupt json\n",                                   # 손상줄 보존
+    ]
+    out, st = mod.migrate_lines(lines, keep_acc, keep_dom)
+    assert st["records"] == 5, st          # 공백·손상 제외
+    assert st["changed"] == 2, st          # github·example 2건만 변경
+    assert st["bad"] == 1, st
+    accts = [json.loads(l)["account"] for l in out
+             if l.strip() and not l.strip().startswith("{corrupt")]
+    assert accts == ["me@woojinkim.org", "unknown", "unknown", "unknown", "unknown"]
+    assert st["after"].get("me@woojinkim.org") == 1
+    assert st["after"].get("unknown") == 4
+    assert "{corrupt json\n" in out and "  \n" in out   # 비레코드 줄 원형 보존
