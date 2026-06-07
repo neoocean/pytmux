@@ -17,6 +17,10 @@ import struct
 
 MIN_W = 3       # 패널 최소 폭(열) — 테두리(좌/우) + 내용 1칸
 MIN_H = 3       # 패널 최소 높이(행) — 테두리(상/하) + 내용 1칸
+# 비정상·악의 클라가 거대 치수(예: 99999×99999)를 보내 레이아웃/셀 계산 메모리를
+# 부풀리는 자원 고갈(F6, docs/SECURITY_REVIEW.md)을 막는 상한. 실 단말보다 충분히 크다.
+MAX_W = 2000
+MAX_H = 2000
 FLUSH_HZ = 30   # 서버 화면 push 주기
 HISTORY = 10000 # 패널당 스크롤백 보관 행 수
 # 대량 출력(빌드 로그·cat 등) 시 PTY 한 읽기(최대 64KB)를 이 크기 슬라이스로 쪼개
@@ -88,6 +92,16 @@ async def write_frames(writer: asyncio.StreamWriter, frames) -> bool:
         return True
     except (ConnectionError, RuntimeError):
         return False
+
+
+def clamp_dim(val, lo: int, hi: int, default: int) -> int:
+    """클라가 보낸 치수(cols/rows) 필드를 [lo, hi] 로 자른다(F6). 정수로 못 바꾸면
+    default — 음수/거대값/타입혼동으로 인한 자원 고갈·예외를 한곳에서 막는다."""
+    try:
+        n = int(val)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, n))
 
 
 def set_winsize(fd: int, rows: int, cols: int) -> None:

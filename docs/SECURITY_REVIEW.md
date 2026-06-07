@@ -38,7 +38,7 @@ pytmux 의 보안 경계는 **전적으로 전송 계층(소켓 파일 권한 / 
 | F3 | Medium ✅적용 | `/tmp` 폴백 상태 디렉터리 선점 → 가짜 서버/MITM | Unix, XDG 미설정(ssh) |
 | F4 | Medium ✅적용(권한) | 캡처(REC) 기본 ON·raw 민감출력·world-readable·depot 공유 | 로컬/팀 |
 | F5 | Low–Med ✅적용 | 영속 파일(resume/slots/opts) 권한 미설정(심층방어 부족) | — |
-| F6 | Low | 메시지 입력 검증 빈약 → 자원 고갈(DoS) | 무인가 접근 시 |
+| F6 | Low ✅적용 | 메시지 입력 검증 빈약 → 자원 고갈(DoS) | 무인가 접근 시 |
 | F7 | Info | popup/pipe/run-shell/claude-rules = 의도된 셸 실행(인가 권한 내) | — |
 | F8 | Info | 가짜 서버의 화면/상태 위조(피싱)·키입력 가로채기 | 엔드포인트 통제 시 |
 
@@ -188,6 +188,10 @@ pytmux 의 보안 경계는 **전적으로 전송 계층(소켓 파일 권한 / 
   per-message try/except 덕에 **원격 크래시/OOM 으로 서버를 죽이긴 어렵다**.
 - **권고**: cols/rows 상한(예: 1000×1000), base64 디코드 `try/except`, 정수/실수 필드 타입
   가드. (저위험 — F1 선결이 우선.)
+- **적용됨**: `protocol.MAX_W/MAX_H=2000` 상한 + `protocol.clamp_dim()`(정수 변환 실패 시
+  default)으로 hello·resize 의 cols/rows 를 `[MIN, MAX]` 로 자른다. `_handle_input` 의
+  base64 디코드를 `binascii.Error`/`ValueError` 가드로 감싸 손상 입력만 무시한다(팝업·
+  일반 경로 공용). 회귀: `test_clamp_dim_bounds`, `test_bad_base64_input_is_ignored`.
 
 ### F7 — [Info] popup/pipe/run-shell/claude-rules = 의도된 셸 실행
 
@@ -241,14 +245,17 @@ pytmux 의 보안 경계는 **전적으로 전송 계층(소켓 파일 권한 / 
 
 ---
 
-## 5. 권고 우선순위
+## 5. 권고 우선순위 (적용 현황)
 
-1. **(High) F1** — Windows TCP 무인증 해소: hello/control 에 **공유 비밀 토큰** 검증 추가
+> **현황(2026-06-07)**: F1–F6 의 권고를 모두 적용 완료(F4 ②REC 기본 OFF 는 의도적
+> 미적용 — §F4 참조). 각 발견의 "**적용됨**" 항목과 회귀 테스트 참조. 전체 308 passed.
+
+1. **(High) F1 ✅** — Windows TCP 무인증 해소: hello/control 에 **공유 비밀 토큰** 검증 추가
    (서버가 `0600` 파일에 게시). 가장 시급.
-2. **(Medium) F2** — Unix `SO_PEERCRED`/`getpeereid` 피어 UID 검증(심층 방어).
-3. **(Medium) F3** — 상태 디렉터리 소유권·권한·심링크 검증 후 사용, `XDG_RUNTIME_DIR` 우선.
-4. **(Medium) F4** — 캡처 파일/디렉터리 `0600`/`0700`, REC 기본 OFF 또는 마스킹·보존정책.
-5. **(Low) F5/F6** — 민감 영속 파일 `0600`, cols/rows 상한·base64 가드.
+2. **(Medium) F2 ✅** — Unix `SO_PEERCRED`/`getpeereid` 피어 UID 검증(심층 방어).
+3. **(Medium) F3 ✅** — 상태 디렉터리 소유권·권한·심링크 검증 후 사용, `XDG_RUNTIME_DIR` 우선.
+4. **(Medium) F4 ✅(권한)** — 캡처 파일/디렉터리 `0600`/`0700`. REC 기본값은 설계상 ON 유지.
+5. **(Low) F5/F6 ✅** — 민감 영속 파일 `0600`, cols/rows 상한·base64 가드.
 
 각 항목은 독립적이며, F1·F3 가 "무인가 주체가 클라이언트가 되는" 근본 통로이므로 가장
 효과가 크다. F7 류 셸 실행 기능은 **그대로 두고**, 접근 통제(F1–F3)로 보호하는 것이 설계에

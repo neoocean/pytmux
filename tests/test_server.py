@@ -1271,6 +1271,39 @@ async def test_private_files_are_0600():
         await teardown(srv, task, sock)
 
 
+async def test_clamp_dim_bounds():
+    """치수 필드 검증(F6): 상·하한 적용, 정수로 못 바꾸면 default."""
+    from pytmuxlib.protocol import clamp_dim, MIN_W, MAX_W
+    assert clamp_dim(99999, MIN_W, MAX_W, 80) == MAX_W      # 거대값 → 상한
+    assert clamp_dim(1, MIN_W, MAX_W, 80) == MIN_W          # 작은값 → 하한
+    assert clamp_dim(-5, MIN_W, MAX_W, 80) == MIN_W         # 음수 → 하한
+    assert clamp_dim("nope", MIN_W, MAX_W, 80) == 80        # 비정수 → default
+    assert clamp_dim(None, MIN_W, MAX_W, 80) == 80
+    assert clamp_dim(100, MIN_W, MAX_W, 80) == 100          # 정상 통과
+
+
+async def test_bad_base64_input_is_ignored():
+    """손상된 base64 input 은 그 입력만 무시하고 서버·연결은 살아남는다(F6)."""
+    from pytmuxlib.protocol import write_msg
+    srv, task, sock = await server_only()
+    try:
+        srv.ensure_default_session(80, 24)
+        r, w = await ipc.open_connection(sock)
+        await write_msg(w, {"t": "hello", "cols": 80, "rows": 24,
+                            "token": srv.auth_token})
+        await harness.drain(r, [], timeout=1)
+        await write_msg(w, {"t": "input", "data": "!!!not base64!!!"})
+        await write_msg(w, {"t": "ping", "ts": 1})
+        got = []
+        await harness.drain(r, got, timeout=3,
+                            until=lambda s: any(m.get("t") == "pong" for m in s))
+        assert any(m.get("t") == "pong" for m in got), "서버가 살아 pong 응답해야"
+        assert srv.running
+        w.close()
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_split_window_orientation_matches_tmux():
     """split-window -h = 좌우(lr), -v/기본 = 상하(tb) — tmux 규약 정합(회귀 가드).
 

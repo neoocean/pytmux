@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import hmac
 import os
 import secrets
@@ -17,8 +18,8 @@ import traceback
 from . import ipc, tokens, usagelog
 from .claude import claude_account, claude_usage, ctx_window_tokens
 from .model import ClientConn, Session
-from .protocol import (FLUSH_HZ, MIN_H, MIN_W, PROTO_VERSION, frame_msg,
-                       read_msg, write_frames, write_msg)
+from .protocol import (FLUSH_HZ, MAX_H, MAX_W, MIN_H, MIN_W, PROTO_VERSION,
+                       clamp_dim, frame_msg, read_msg, write_frames, write_msg)
 
 
 class ServerIOMixin:
@@ -709,8 +710,8 @@ class ServerIOMixin:
             return
 
         client = ClientConn(writer)
-        client.cols = max(MIN_W, int(first.get("cols", 80)))
-        client.rows = max(MIN_H, int(first.get("rows", 24)))
+        client.cols = clamp_dim(first.get("cols", 80), MIN_W, MAX_W, 80)
+        client.rows = clamp_dim(first.get("rows", 24), MIN_H, MAX_H, 24)
         # 주의: append + 초기 _send_full 을 try 안에 둔다. 예전엔 try 밖이라
         # _send_full 이 한 번 터지면 ① 클라가 self.clients 에 남아 누수되고
         # ② 화면이 일부만 그려진 채 연결이 끊겨 클라가 즉시 종료, ③ 트레이스백도
@@ -742,8 +743,10 @@ class ServerIOMixin:
                     elif mt == "input":
                         self._handle_input(client, msg)
                     elif mt == "resize":
-                        client.cols = max(MIN_W, int(msg.get("cols", 80)))
-                        client.rows = max(MIN_H, int(msg.get("rows", 24)))
+                        client.cols = clamp_dim(msg.get("cols", 80),
+                                                MIN_W, MAX_W, 80)
+                        client.rows = clamp_dim(msg.get("rows", 24),
+                                                MIN_H, MAX_H, 24)
                         # 미러링: 세션 공유 크기가 바뀌므로 모든 클라이언트 갱신
                         for c in [x for x in self.clients
                                   if x.session is client.session]:
@@ -778,6 +781,12 @@ class ServerIOMixin:
         win = sess.active_window if sess else None
         if not win:
             return
+        # 입력 데이터 base64 디코드(F6): 손상·악의 base64 가 예외를 던지지 않게 한 곳에서
+        # 가드한다(binascii.Error 는 ValueError 하위). 실패하면 그 입력만 무시.
+        try:
+            data = base64.b64decode(msg.get("data", ""))
+        except (binascii.Error, ValueError):
+            return
         # 팝업이 열려 있고 입력 대상이 팝업 패널이면 그 PTY 로만 직접 보낸다
         # (트리 밖이라 pane_by_id 로는 못 찾음; 동기화/프롬프트추적도 제외).
         pid = msg.get("pane")
@@ -786,12 +795,11 @@ class ServerIOMixin:
             pp = sess.popup["pane"]
             try:
                 if pp.pty is not None:
-                    pp.pty.write(base64.b64decode(msg.get("data", "")))
+                    pp.pty.write(data)
             except OSError:
                 pass
             return
         p = win.pane_by_id(pid) or win.active_pane
-        data = base64.b64decode(msg.get("data", ""))
         # 마우스 패스스루: 커서 아래 패널 PTY 로만 raw 전달. 입력 동기화 대상이
         # 아니고(위치 기반), 프롬프트 추적/scroll 복귀도 건드리지 않는다.
         if msg.get("mouse"):
