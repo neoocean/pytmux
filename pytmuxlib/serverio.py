@@ -187,8 +187,10 @@ class ServerIOMixin:
             "claude_repeat_alert": self.claude_repeat_alert,
             "token_budget_resume_gate": self.token_budget_resume_gate,
             "claude_budget_plan": self.claude_budget_plan,
+            # C5: claude_tokens 용으로 위에서 계산한 _tok_total 을 그대로 넘겨
+            # 계정 합계 전 패널 순회를 status 빌드당 1회로(중복 _all_panes 제거).
             "budget_level": self._budget_level_for(
-                win.active_pane if win else None),
+                win.active_pane if win else None, _tok_total),
             # M14 무장된 자동 액션 카운트다운(없으면 None): {kind, eta(초)}.
             "claude_pending": self._pending_action(
                 win.active_pane if win else None),

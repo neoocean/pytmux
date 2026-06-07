@@ -179,4 +179,4 @@ python tests/run.py          # 동작 불변(전부 통과)
 | C2 TabBar `_entries()` 캐시 | ✅ 구현 | `clientwidgets.py` `_entries` (폭·sel·스크롤·탭 기하) 시그니처 프레임 캐시. 스타일은 키 제외(render_line 이 매 프레임 재적용). 회귀 `test_tabbar_entries_cached_and_consistent`. |
 | C3 Style/dict 상수 호이스트 | ✅ 구현 | `clientutil.py` 에 `_REVERSE_STYLE`·`_TB_*`·`_BOX_BITS/REV` 상수 + `_with_reverse` lru_cache. `client.py` `_composite` 가 셀/프레임마다 새로 만들던 Style·dict 제거. 회귀 `test_with_reverse_and_box_constants`. |
 | C4 status 정적 옵션 분리 | ⏳ | |
-| C5 `_account_token_total` 1회 | ⏳ | |
+| C5 `_account_token_total` 1회 | ✅ 구현 | `_budget_level_for(pane, total=None)` 에 선택 인자 추가, `serverio._status_msg` 가 `claude_tokens` 용으로 계산한 합계를 넘겨 status 빌드당 전 패널 순회 1회. 회귀 `test_budget_level_for_accepts_precomputed_total_c5`. |

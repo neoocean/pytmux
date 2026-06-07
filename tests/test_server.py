@@ -2159,3 +2159,27 @@ async def test_usage_limits_status_m19():
         assert m["usage_limits"]["week_all"]["pct"] == 14
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_budget_level_for_accepts_precomputed_total_c5():
+    """C5: _budget_level_for 에 total 을 넘기면 계정 합계를 다시 순회하지 않고 그 값을
+    쓴다(status 빌드당 _account_token_total 1회). total 미지정과 동일 결과여야 하고,
+    넘긴 total 이 실제로 판정에 쓰이는지 검증."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        p._claude = "idle"
+        p._claude_account = "wo…@woojinkim.org"
+        p._session_tokens = 900_000
+        srv.set_token_budget(acct=1_000_000)
+        # total 미지정(내부 계산) == total 명시(같은 값) — 동치
+        auto = srv._budget_level_for(p)
+        tot = srv._account_token_total(p)
+        assert srv._budget_level_for(p, tot) == auto == 80
+        # 넘긴 total 이 실제로 쓰임: 합계를 초과값으로 주면 패널 누계와 무관히 100
+        assert srv._budget_level_for(p, 1_200_000) == 100
+        # 낮은 total 을 주면 80 미만(계정 분기는 total 만 보고, 세션 예산 미설정)
+        assert srv._budget_level_for(p, 100) == 0
+    finally:
+        await teardown(srv, task, sock)

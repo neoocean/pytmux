@@ -983,9 +983,13 @@ class ServerClaudeMixin:
             return True
         return False
 
-    def _budget_level_for(self, pane: Pane) -> int:
+    def _budget_level_for(self, pane: Pane, total: int | None = None) -> int:
         """status 표시용 경고 레벨(0/80/100). 일 예산(_budget_level)·활성 패널 세션
-        예산·계정 합계 예산(M15) 중 가장 높은 쪽. 예산 미설정이면 0."""
+        예산·계정 합계 예산(M15) 중 가장 높은 쪽. 예산 미설정이면 0.
+
+        C5(PERFORMANCE_REVIEW 2026-06-07): total 을 주면 계정 합계를 다시 순회하지
+        않고 그 값을 쓴다. _status_msg 가 claude_tokens 용으로 이미 계산한
+        _account_token_total 을 넘겨, 한 status 빌드에서 전 패널 합산이 1회가 되게 한다."""
         lvl = self._budget_level
         if pane is not None and pane._claude:
             b = self.token_budget_session
@@ -998,7 +1002,8 @@ class ServerClaudeMixin:
             # M15: 계정 합계 vs 계정 예산
             ba = self.token_budget_account
             if ba > 0:
-                tot = self._account_token_total(pane)
+                tot = (self._account_token_total(pane)
+                       if total is None else total)
                 if tot >= ba:
                     lvl = max(lvl, 100)
                 elif tot >= ba * 0.8:
