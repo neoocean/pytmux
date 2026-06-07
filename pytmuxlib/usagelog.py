@@ -197,7 +197,8 @@ def _session_tabpane(records: list) -> dict:
 
 
 def agg_view(records: list, bucket: str = "day", account: str | None = None,
-             dim: str = "account", order: str = "time") -> dict:
+             dim: str = "account", order: str = "time",
+             top: int | None = None) -> dict:
     """표시(DataTable) 전용 집계 — 정렬·라벨·비율까지 계산해 렌더가 바로 쓰게 한다.
 
     반환:
@@ -206,7 +207,9 @@ def agg_view(records: list, bucket: str = "day", account: str | None = None,
        "buckets": [(label, tokens, share_pct)],   # 시간축, order("time"|"tokens")
        "multi": bool,                              # 그룹 2개 이상(=중복 분해 가치 있음)
        "gmax": int, "bmax": int}                   # 막대 기준(각 목록의 최대 토큰)
-    세션 차원은 라벨에 대표 탭:패널을 곁들인다('세션 4 (탭2:p3)')."""
+    세션 차원은 라벨에 대표 탭:패널을 곁들인다('세션 4 (탭2:p3)'). top 이 주어지고
+    그룹이 그보다 많으면 상위 top 만 남기고 나머지는 '기타 N개' 한 줄로 접는다
+    (침묵 절단이 아니라 접힘을 명시 — 설계 §4)."""
     agg = aggregate(records, bucket, account, dim)
     total = agg["total"]
     tp = _session_tabpane(records) if dim == "session" else {}
@@ -226,6 +229,10 @@ def agg_view(records: list, bucket: str = "day", account: str | None = None,
 
     groups = sorted(agg["groups"].items(), key=lambda kv: -kv[1])
     grows = [(glabel(g), t, pct(t)) for g, t in groups]
+    if top is not None and len(grows) > top:
+        rest = grows[top:]
+        rest_tok = sum(t for _, t, _ in rest)
+        grows = grows[:top] + [(f"기타 {len(rest)}개", rest_tok, pct(rest_tok))]
     bucket_tot = {bk: sum(per.values()) for bk, per in agg["buckets"].items()}
     if order == "tokens":
         bkeys = sorted(bucket_tot, key=lambda k: -bucket_tot[k])

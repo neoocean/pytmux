@@ -1,10 +1,14 @@
 # 토큰 사용량 조회 UI 가독성 개선 — 시나리오
 
-> **상태**: 🟡 **설계 시나리오(미구현)**. 토큰 사용량 팝업(`TokenLogScreen`)이 일자별·
-> 계정별·세션별 사용량을 **보여주긴 하나 알아보기 어렵다**는 피드백(2026-06-07)을
-> 받아, 조건별 사용량을 **한눈에 비교·스캔**하도록 정리하는 방안을 코드 근거로
-> 정리한다. 저장 계층은 [TOKEN_USAGE_STORAGE_DESIGN.md](TOKEN_USAGE_STORAGE_DESIGN.md)
-> (SQLite, 구현 완료)와 독립이며, 본 문서는 **표시(렌더) 계층**만 다룬다.
+> **상태**: 🟢 **구현 완료(2026-06-07)**. 토큰 사용량 팝업(`TokenLogScreen`)이 일자별·
+> 계정별·세션별 사용량을 보여주나 알아보기 어렵다는 피드백을 받아 표시 계층을 개편했다.
+> 구현: ListView→**DataTable**(컬럼 [항목|토큰 우측정렬|막대+%]), 폭 반응형 막대·라벨
+> 말줄임, 단일 그룹 분해 생략(P3), /usage·스코프 상단·키 안내 하단 분리(P5), 버킷
+> **시간순 기본 + [o]/[정렬] 토큰순 토글**, 탭 줄 **폭 반응형 축약**(P6), 세션 라벨에
+> 대표 탭:패널(P7), 그룹 상위 N+'기타' 접기(§4). 저장 계층
+> ([TOKEN_USAGE_STORAGE_DESIGN.md](TOKEN_USAGE_STORAGE_DESIGN.md), SQLite)와 독립 —
+> 본 개편은 **표시 계층만**(저장/집계/IPC 변경 0). 구현: `usagelog.agg_view/bar`,
+> `clientscreens.TokenLogScreen`.
 >
 > 관련: `pytmuxlib/usagelog.py`(`summary_lines`·`aggregate`·`_fmt_tokens`) ·
 > `pytmuxlib/clientscreens.py`(`TokenLogScreen` compose/_refresh) ·

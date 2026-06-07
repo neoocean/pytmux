@@ -197,6 +197,20 @@ async def test_agg_view_session_label_has_tabpane():
     assert v["groups"][0][0] == "세션 4 (탭2:p3)", v["groups"][0][0]
 
 
+async def test_agg_view_top_folds_rest_into_others():
+    """top 이 주어지면 상위 N 그룹만 남기고 나머지를 '기타 M개' 한 줄로 접는다(§4)."""
+    recs = [_rec(1_700_000_000.0 + i, 0, 1, i, f"a{i}@x.org", 100 - i)
+            for i in range(5)]   # 계정 5개(토큰 100,99,...,96)
+    v = usagelog.agg_view(recs, "day", top=2)
+    labels = [g[0] for g in v["groups"]]
+    assert labels[:2] == ["a0@x.org", "a1@x.org"]
+    assert labels[-1] == "기타 3개", labels
+    # 기타 합 = 98+97+96 = 291
+    assert v["groups"][-1][1] == 291
+    # 접어도 전체 합 보존
+    assert sum(g[1] for g in v["groups"]) == v["total"]
+
+
 async def test_agg_view_single_group_not_multi():
     recs = [_rec(1_700_000_000.0, 0, 1, 1, "a@x.org", 100),
             _rec(1_700_000_100.0, 0, 1, 1, "a@x.org", 200)]

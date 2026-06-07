@@ -962,6 +962,16 @@ class TokenLogScreen(ModalScreen):
     # 서브탭 위젯 id → 버킷.
     _TAB_BUCKET = {"tab_hour": "hour", "tab_day": "day",
                    "tab_week": "week", "tab_month": "month"}
+    # 탭 라벨(넓은 폭, 좁은 폭). 좁으면 한 글자로 줄여 모바일에서 탭 줄이 안 넘치게(P6).
+    _TAB_LABELS = {
+        "tab_hour": ("시간", "시"), "tab_day": ("일", "일"),
+        "tab_week": ("주", "주"), "tab_month": ("월", "월"),
+        "tab_acct": ("계정", "계"), "tab_panel": ("패널", "패"),
+        "tab_order": ("정렬", "정"), "tab_usage": ("/usage", "U"),
+        "tab_saver": ("시나리오", "S"),
+    }
+    # [패널]/계정 그룹이 많을 때 상위 N + '기타'로 접어 길이 폭주를 막는다(설계 §4).
+    _GROUP_TOP = 8
 
     def __init__(self, records, usage=None):
         super().__init__()
@@ -1001,6 +1011,7 @@ class TokenLogScreen(ModalScreen):
                 yield Label("월", id="tab_month", classes="tkbtab", markup=False)
                 yield Label("계정", id="tab_acct", classes="tkbbtn", markup=False)
                 yield Label("패널", id="tab_panel", classes="tkbbtn", markup=False)
+                yield Label("정렬", id="tab_order", classes="tkbbtn", markup=False)
                 yield Label("/usage", id="tab_usage", classes="tkbbtn",
                             markup=False)
                 yield Label("시나리오", id="tab_saver", classes="tkbbtn",
@@ -1047,17 +1058,28 @@ class TokenLogScreen(ModalScreen):
         return out
 
     def _sync_tabs(self):
-        """활성 버킷 서브탭 + 활성 그룹차원([패널]) 강조 클래스를 켠다(마우스 탭 UI)."""
+        """탭 라벨(폭 반응형)·활성 버킷·활성 그룹차원([패널])·정렬([정렬]) 강조."""
+        try:
+            narrow = self.app.size.width < 64
+        except Exception:
+            narrow = False
+        for tid, (full, short) in self._TAB_LABELS.items():
+            try:
+                self.query_one("#" + tid, Label).update(short if narrow else full)
+            except Exception:
+                pass
         for tid, bucket in self._TAB_BUCKET.items():
             try:
                 lab = self.query_one("#" + tid, Label)
             except Exception:
                 continue
             lab.set_class(bucket == self._bucket, "tkbtab-active")
-        # [패널] 탭은 세션 차원일 때 강조(계정 차원이 기본).
+        # [패널] 탭은 세션 차원일 때, [정렬] 탭은 토큰순일 때 강조.
         try:
             self.query_one("#tab_panel", Label).set_class(
                 self._dim == "session", "tkbtab-active")
+            self.query_one("#tab_order", Label).set_class(
+                self._order == "tokens", "tkbtab-active")
         except Exception:
             pass
 
@@ -1106,7 +1128,7 @@ class TokenLogScreen(ModalScreen):
         table.clear(columns=True)
         label_w, bar_cells = self._metrics()
         v = usagelog.agg_view(self._records, self._bucket, self._account,
-                              self._dim, self._order)
+                              self._dim, self._order, top=self._GROUP_TOP)
         dimname = "세션" if self._dim == "session" else "계정"
         # 컬럼: 항목 | 토큰(우측) | 비율(막대+%)
         table.add_column("항목", key="label", width=label_w)
@@ -1166,6 +1188,11 @@ class TokenLogScreen(ModalScreen):
             event.stop()
             # 그룹 차원 토글: 계정별 ↔ 세션별([패널]).
             self._dim = "account" if self._dim == "session" else "session"
+            self.run_worker(self._refresh())
+        elif wid == "tab_order":
+            event.stop()
+            # 버킷 정렬 토글: 시간순 ↔ 토큰순.
+            self._order = "tokens" if self._order == "time" else "time"
             self.run_worker(self._refresh())
         elif wid == "tab_usage":
             event.stop()

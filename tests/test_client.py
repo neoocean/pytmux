@@ -853,6 +853,37 @@ async def test_token_log_panel_subtab_groups_by_session():
     await _with_app(body)
 
 
+async def test_token_log_sort_toggle_and_tab():
+    """버킷 정렬 토글: 기본 시간순(최근 위) ↔ [o]키/[정렬]탭 으로 토큰순. 토큰순이면
+    가장 큰 버킷이 맨 위로 온다."""
+    async def body(app, pilot, srv):
+        recs = [
+            {"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
+             "account": "me@x.org", "tokens": 100},      # 오래된·큼
+            {"ts": 1_700_500_000.0, "tab": 0, "pane": 1, "session": 1,
+             "account": "me@x.org", "tokens": 5},         # 최근·작음
+        ]
+        app._want_token_log = True
+        app._dispatch({"t": "token_log", "records": recs})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        from textual.widgets import DataTable
+        assert scr._order == "time", "기본은 시간순"
+        first0 = str(scr.query_one(DataTable).get_row_at(0)[1])   # 토큰 셀
+        assert "5" in first0, f"시간순: 최근(작은) 버킷이 위 — {first0}"
+        # [o] 키로 토큰순 → 큰 버킷(100)이 위
+        await pilot.press("o")
+        await pilot.pause(0.1)
+        assert scr._order == "tokens" and app.screen_stack[-1] is scr
+        first1 = str(scr.query_one(DataTable).get_row_at(0)[1])
+        assert "100" in first1, f"토큰순: 큰 버킷이 위 — {first1}"
+        # [정렬] 탭 클릭 → 다시 시간순
+        await pilot.click("#tab_order")
+        await pilot.pause(0.1)
+        assert scr._order == "time"
+    await _with_app(body)
+
+
 async def test_choose_tree_shows_panes_and_switches():
     # 탭/패널 트리가 패널을 들여쓰기로 보이고 로컬/원격([local]/[ssh])·실행 앱을
     # 표시하며, 패널 선택 시 그 탭+패널로 전환한다(#14/#24).
