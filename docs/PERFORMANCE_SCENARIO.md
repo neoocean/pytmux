@@ -4,6 +4,7 @@
 > 실행속도·반응성의 남은 레버는 §8(추가 리서치, 2026-06-06 실측)에 A4/A5/B8/B9 로 정리.
 > 본 문서는 "더 빨리 실행되고 더 빨리 응답하게" 만들기 위한 **근거 기반 최적화 시나리오**
 > 다. 각 항목은 코드 근거(`file:line`)·개선안·예상 효과·위험·검증 게이트를 갖는다.
+> 후속 리뷰(2026-06-07, 신규 레버 C1~C5 미구현)는 [PERFORMANCE_REVIEW_2026-06-07.md](PERFORMANCE_REVIEW_2026-06-07.md).
 > 관련: [HANDOFF.md](HANDOFF.md) §9(throughput 작업 이력)·§10 · [WINDOWS_TESTING.md](WINDOWS_TESTING.md)
 > 측정 도구: `scripts/bench.py`(startup·탭/패널 반응성·출력폭증 3축), `poc/feed_profile.py`(feed/render 핫패스).
 
