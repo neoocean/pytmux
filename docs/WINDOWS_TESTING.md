@@ -15,9 +15,20 @@
 | 실 Windows 박스(@office) ssh | ✅(이미 있음) | ✅ 전부 | ★★ 인터랙티브 버그용 |
 
 **한 줄 답**: macOS에서 Docker Windows 컨테이너는 **원리적으로 불가능**하다. 대신
-**GitHub Actions의 OS 매트릭스(`ubuntu`/`macos`/`windows`)** 가 이 프로젝트에 가장 잘 맞는다 —
-실제 Windows 커널 위에서 `pywinpty`를 설치하고, 3 OS × 3 Python 에서 헤드리스 스위트 +
-`scripts/win_report.py`를 그대로 돌려 리포트를 아티팩트로 남길 수 있다.
+**GitHub Actions의 OS 매트릭스** 가 이 프로젝트에 가장 잘 맞는다 — 실제 Windows 커널
+위에서 `pywinpty`를 설치하고, 헤드리스 스위트 + `scripts/win_report.py`를 그대로 돌려
+리포트를 아티팩트로 남긴다.
+
+> **CI 매트릭스에서 macOS 제거(2026-06-07)**: 현재 `os-compat` 워크플로는
+> **`ubuntu` × `windows` × Python 3.11/3.12/3.13** 만 돈다. macOS 는 (a) **개발 박스가
+> macOS** 라 로컬 `python tests/run.py`(322 passed)가 같은 커버리지를 줘 중복이고,
+> (b) GitHub macOS 러너에서 **간헐적 PTY/서브프로세스 데드락**(헤드리스·tty 부재 환경
+> 특이, 로컬·Linux·Windows 미재현)으로 잡이 17분씩 매달려 거짓-적색·러너 분 낭비만
+> 냈다 — in-process 백스톱(SIGALRM·faulthandler)으로도 그 환경에선 신뢰성 있게 못 끊겼다.
+> 워크플로 본래 목적(개발 박스가 못 보는 Windows 네이티브 + 깨끗한 Linux 검증)은
+> ubuntu+windows 로 충족된다. macOS 특이 검증이 필요하면 로컬 실행 또는 `windows.yml`
+> matrix 에 `macos-latest` 한시 재추가(주석 안내). 러너 견고성(UTF-8 출력·테스트별
+> 타임아웃·faulthandler 행 덤프)은 유지된다.
 
 ---
 
@@ -141,7 +152,8 @@ jobs:
 ### 3-b. 이 워크플로가 잡는 것
 - **Windows**: `pywinpty` 설치·import·ConPTY spawn 회귀(macOS에선 절대 못 보는 것).
 - **Linux**: macOS-특유 가정이 POSIX 일반에서 깨지는지(이식성).
-- **3 OS × 3 Python** 모두에서 헤드리스 스위트(현재 202 passed)·`win_report.py` 통과 여부.
+- **ubuntu × windows × 3 Python**(macOS 는 매트릭스에서 제외, 위 §0 노트) 에서 헤드리스
+  스위트(현재 로컬 322 passed)·`win_report.py` 통과 여부.
 - 각 칸의 **호환성·성능 Markdown 리포트**를 `report-<os>-py<ver>` 아티팩트로 남겨 비교.
 
 ### 3-c. 한계(CI가 못 잡는 것)
