@@ -333,7 +333,12 @@ async def test_client_reconnects_on_restarting():
     app = make_app(sockA)
     try:
         async with app.run_test(size=(100, 30)) as pilot:
-            await pilot.pause(0.5)
+            # 고정 0.5s 는 Windows(ConPTY) 초기 attach(서버 spawn+레이아웃 왕복)가
+            # 느려 패널이 아직 안 와 실패했다(CI 플레이크). 조건 대기로 바꾼다.
+            for _ in range(60):
+                await pilot.pause(0.05)
+                if app.layout.get("panes"):
+                    break
             assert app.layout.get("panes"), "초기 접속 레이아웃"
             # 재시작 통지 → 클라이언트가 끊김을 재접속으로 다루도록 표식
             for c in list(srvA.clients):

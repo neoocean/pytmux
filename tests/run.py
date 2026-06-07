@@ -11,9 +11,33 @@ import os
 import sys
 import traceback
 
+# CI 견고성(2026-06-07). ① Windows 콘솔 기본 인코딩(cp1252)이 한글 실패 메시지를 못
+# 찍어 러너가 UnicodeEncodeError 로 죽던 것을 막는다 → UTF-8 강제(+backslashreplace).
+# ② 줄 버퍼링으로 진행이 CI 로그에 즉시 보이게 한다(파이프 출력은 기본 블록 버퍼라,
+# 한 테스트가 매달리면 그때까지의 PASS 도 안 보여 "통째로 멈춘" 것처럼 보였다).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="backslashreplace",
+                            line_buffering=True)
+    except (AttributeError, ValueError):
+        pass
+
+# 한 테스트가 매달리면(예: CI macOS 러너에서 PTY/서브프로세스 데드락) 스위트 전체가
+# 멈추지 않게 테스트별 타임아웃을 건다 → 행(hang)을 그 테스트의 TIMEOUT 실패로 바꿔
+# 빠르게·이름과 함께 드러낸다. 로컬은 테스트당 수초 이내라 90초면 오검출 없고, 47분씩
+# 매달리던 진짜 행은 잡힌다. PYTMUX_TEST_TIMEOUT 으로 조정(0=무제한).
+TEST_TIMEOUT = float(os.environ.get("PYTMUX_TEST_TIMEOUT", "90"))
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
+
+
+async def _run_with_timeout(fn):
+    if TEST_TIMEOUT > 0:
+        await asyncio.wait_for(fn(), TEST_TIMEOUT)
+    else:
+        await fn()
 
 
 def discover(names):
@@ -37,9 +61,15 @@ def main(argv):
         for name, fn in sorted(tests):
             label = f"{modname}.{name}"
             try:
-                asyncio.run(fn())
+                asyncio.run(_run_with_timeout(fn))
                 passed += 1
                 print(f"  PASS  {label}")
+            except asyncio.TimeoutError:
+                failed += 1
+                msg = f"{TEST_TIMEOUT}s 초과 — hang(데드락 의심)"
+                failures.append((label, TimeoutError(msg),
+                                 f"TIMEOUT after {TEST_TIMEOUT}s\n"))
+                print(f"  FAIL  {label}: TIMEOUT {TEST_TIMEOUT}s")
             except Exception as e:
                 failed += 1
                 failures.append((label, e, traceback.format_exc()))

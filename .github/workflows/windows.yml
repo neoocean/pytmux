@@ -25,6 +25,15 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]   # Linux x86-64 / macOS arm64 / Win Server
         python: ["3.11", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
+    # 한 잡이 매달려도(과거 macOS 러너에서 PTY/서브프로세스 데드락으로 47분씩 돌다
+    # 다음 푸시에 취소됨) 12분 안에 끊어 비싼 러너 분을 낭비하지 않는다. 정상 잡은
+    # ~5분. tests/run.py 의 테스트별 타임아웃(PYTMUX_TEST_TIMEOUT)이 1차 방어, 이건 2차.
+    timeout-minutes: 12
+    env:
+      # Windows 콘솔에서 한글 출력이 cp1252 로 깨져 러너가 UnicodeEncodeError 로 죽던
+      # 것 방지(러너의 stdout reconfigure 와 함께 이중 방어). 파이썬 전 출력 UTF-8.
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
     steps:
       - uses: actions/checkout@v4
 
@@ -44,10 +53,12 @@ jobs:
         run: python -c "from winpty import PtyProcess; p=PtyProcess.spawn('cmd /c echo ok'); print('pywinpty OK')"
 
       - name: Headless test suite
-        run: python tests/run.py
+        timeout-minutes: 8        # 스위트는 보통 ~수분 — 매달리면 여기서 끊어 잡 전체를 안 먹게
+        run: python -u tests/run.py   # -u: 버퍼링 없이 진행 즉시 출력(행 지점 식별)
 
       - name: Compat + perf report
-        run: python scripts/win_report.py --mb 5
+        timeout-minutes: 4        # win_report 가 서브프로세스에서 매달려도 스위트 결과는 남게
+        run: python -u scripts/win_report.py --mb 5
 
       - name: Upload report artifact
         if: always()
