@@ -179,6 +179,32 @@ PTY 출력 스트림에서 전환 시퀀스를 가로채 활성 화면을 바꾼
   - `bell{pane_id}`, `pane_exit{pane_id, status}`
 - **프레임 동기화**: 서버는 PTY 읽기 후 dirty 패널을 모았다가 ~60Hz 로 묶어서 push(coalescing).
 
+### 5.5.1 보안 모델 (전송 계층)
+
+전체 위협 모델·검토·근거는 [SECURITY_REVIEW.md](SECURITY_REVIEW.md). 핵심만 요약한다.
+
+- **신뢰 경계는 소켓 하나뿐**이다. 소켓에 붙은 클라이언트는 곧 사용자로 간주된다
+  (`display-popup`/`pipe-pane`/`run-shell` 의 셸 실행은 tmux 처럼 의도된 기능). 따라서
+  보안의 본질은 *누가 클라이언트가 될 수 있는가* = 전송 계층 접근 통제다.
+- **접근 통제**:
+  - *Unix*: AF_UNIX 소켓을 `0700` 상태 디렉터리 + `0600` 소켓으로 같은 UID 로 제한하고,
+    추가로 **피어 UID 검증**(`ipc.peer_uid` — Linux SO_PEERCRED / macOS·BSD LOCAL_PEERCRED)을
+    심층 방어로 둔다(F2).
+  - *Windows*: `127.0.0.1` TCP 루프백이라 파일권한 같은 per-user 통제가 없다. 서버가 listen
+    전에 무작위 **연결 인증 토큰**(`secrets.token_hex`)을 `0600` 파일에 게시하고, 클라/launcher
+    가 첫 메시지(hello/control)에 실어 보내면 서버가 `hmac.compare_digest` 로 검증한다. 토큰을
+    읽을 수 있는 건 같은 UID 뿐이라 무인가 로컬 접속이 차단된다(F1).
+  - *상태 디렉터리 선점 방지*: `XDG_RUNTIME_DIR` 없는 ssh 폴백(`/tmp/pytmux-<uid>`)을 공격자가
+    선점하지 못하게 `os.lstat` 으로 **심링크 아님 + 현재 UID 소유**를 검증하고 어긋나면 거부
+    (fail-closed, F3).
+- **민감 파일 권한**: 화면 스냅샷이 담기는 `resume.json`·`slots`·`opts`·`layout`, raw 출력
+  캡처(REC)는 `ipc.open_private`(생성 시점부터 `0600`)로, 캡처 디렉터리는 `0700` 으로 만든다
+  (F4/F5). REC 기본 ON 은 데이터 수집을 위한 설계라 유지하되 권한으로 로컬 노출을 막는다.
+- **입력 검증**: 클라가 보낸 `cols/rows` 는 `[MIN, MAX]` 로 클램프(`protocol.clamp_dim`),
+  base64 입력은 디코드 가드로 손상분만 무시한다(자원 고갈/예외 방지, F6).
+- **클라이언트는 서버 데이터를 표시 전용으로** 다룬다 — 서버 메시지가 명령 해석기/셸로 흐르는
+  경로가 없어 가짜 서버→클라 코드 실행은 불가하다(명령은 로컬 설정·사용자 입력에서만 구동).
+
 ### 5.6 클라이언트: Textual 앱 구성
 
 ```

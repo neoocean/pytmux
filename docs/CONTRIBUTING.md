@@ -39,6 +39,22 @@ p4 submit -c NNNN
 - 진입점은 `pytmux.py`(얇은 진입점), 구현은 `pytmuxlib/` 패키지.
 - 의존성은 `requirements.txt` 에 명시한다.
 
+## 보안 규칙
+
+전송 계층 보안 모델은 [DESIGN.md §5.5.1](DESIGN.md) · 위협 모델/검토는
+[SECURITY_REVIEW.md](SECURITY_REVIEW.md) 참고. 새 코드는 다음을 지킨다.
+
+- **민감 파일은 `ipc.open_private`(0600) 로 연다** — 화면 내용·토큰·캡처 등이 담기는
+  영속/로그 파일을 `open(...,"w")` 로 만들면 umask(0644)로 다른 로컬 사용자가 읽을 수 있다.
+- **서버 첫 메시지 핸들러는 인증을 전제한다** — `handle_client` 의 토큰(F1)·피어 UID(F2)
+  검증을 우회하는 새 진입점을 만들지 않는다. 새 `control`/`cmd` 액션도 같은 신뢰 경계 안.
+- **클라이언트는 서버 데이터를 실행하지 않는다** — 서버에서 받은 메시지를 `_run_command`/
+  셸/`eval` 로 흘리지 않는다(표시 전용). 명령은 로컬 설정·사용자 입력에서만.
+- **외부 명령은 argv 리스트로** 실행한다(`shell=True`/`os.system` 금지). 셸 실행이 의도된
+  기능(popup/pipe/run-shell)이면 접근 통제로 보호하고 그 사실을 주석에 남긴다.
+- **클라 입력 필드는 검증한다** — 치수는 `protocol.clamp_dim`, base64/JSON 디코드는 예외
+  가드로 감싼다.
+
 ## 스크린샷 (매뉴얼 이미지)
 
 `docs/MANUAL.md` 의 이미지는 **수작업 캡처가 아니라** `scripts/gen_screenshots.py` 가
