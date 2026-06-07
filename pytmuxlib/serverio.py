@@ -660,6 +660,18 @@ class ServerIOMixin:
                 pass
             writer.close()
             return
+        # 피어 UID 검증(F2): Unix 소켓이면 상대 프로세스의 UID 가 서버와 같은지 확인한다
+        # (파일권한 0700/0600 위의 심층 방어). 다른 UID 면 거절. 검증 불가(None)면 통과
+        # (TCP·미지원 OS — 토큰 F1 이 1차 방어). docs/SECURITY_REVIEW.md F2.
+        if not ipc.is_tcp(self.sock_path) and hasattr(os, "getuid"):
+            puid = ipc.peer_uid(writer.get_extra_info("socket"))
+            if puid is not None and puid != os.getuid():
+                try:
+                    await write_msg(writer, {"t": "error", "error": "auth_failed"})
+                except (OSError, ConnectionError):
+                    pass
+                writer.close()
+                return
         # 연결 인증(F1): 토큰이 설정돼 있으면(=실제 데몬) 첫 메시지의 token 을 상수시간
         # 비교로 검증한다. 토큰을 읽을 수 있는 건 0600 파일을 둔 같은 UID 뿐이므로,
         # Windows TCP 루프백에서 다른 로컬 사용자의 접속을 차단한다. 불일치/누락이면

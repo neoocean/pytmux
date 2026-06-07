@@ -1201,6 +1201,44 @@ async def test_control_requires_auth_token():
         await teardown(srv, task, sock)
 
 
+async def test_peer_uid_over_unix_socket():
+    """ipc.peer_uid 가 AF_UNIX 상대 UID 를 읽는다(F2 심층 방어). None 입력은 None."""
+    import os
+    import socket as _s
+    if ipc.IS_WINDOWS:
+        return
+    a, b = _s.socketpair(_s.AF_UNIX, _s.SOCK_STREAM)
+    try:
+        assert ipc.peer_uid(a) == os.getuid()
+        assert ipc.peer_uid(b) == os.getuid()
+    finally:
+        a.close()
+        b.close()
+    assert ipc.peer_uid(None) is None
+
+
+async def test_validate_state_dir_rejects_symlink():
+    """상태 디렉터리 검증(F3): 심볼릭 링크 거부, 정상 디렉터리는 통과.
+
+    타 UID 소유 거부는 root 없이는 재현 불가하므로 심링크 거부로 대표 검증한다(둘 다
+    lstat 기반 같은 메커니즘 — 공격자 선점 심링크·디렉터리 모두 소유자 불일치로 잡힘)."""
+    import os
+    import tempfile
+    if ipc.IS_WINDOWS:
+        return
+    d = tempfile.mkdtemp(prefix="pytmux-sd-")
+    real = os.path.join(d, "real")
+    os.mkdir(real)
+    ipc._validate_state_dir(real)            # 정상(비링크·자기소유) → 통과
+    link = os.path.join(d, "link")
+    os.symlink(real, link)
+    try:
+        ipc._validate_state_dir(link)
+        assert False, "심볼릭 링크 상태 디렉터리가 거부되지 않음"
+    except RuntimeError:
+        pass
+
+
 async def test_split_window_orientation_matches_tmux():
     """split-window -h = 좌우(lr), -v/기본 = 상하(tb) — tmux 규약 정합(회귀 가드).
 
@@ -1750,6 +1788,7 @@ class _NullWriter:
     async def drain(self): pass
     def close(self): pass
     def is_closing(self): return False
+    def get_extra_info(self, name, default=None): return default  # 피어검증(F2)용
 
 
 async def test_attach_survives_send_full_error():

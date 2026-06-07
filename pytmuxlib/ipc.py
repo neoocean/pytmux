@@ -24,6 +24,8 @@ from __future__ import annotations
 import asyncio
 import os
 import socket
+import stat as _stat
+import struct
 from typing import Awaitable, Callable, Optional, Tuple
 
 
@@ -33,7 +35,7 @@ __all__ = [
     "IS_WINDOWS", "parse_endpoint", "is_tcp",
     "default_state_dir", "default_endpoint", "default_endpoint_candidates",
     "resolve_default_endpoint", "portfile_for", "state_base",
-    "token_path", "write_token", "read_token",
+    "token_path", "write_token", "read_token", "peer_uid",
     "start_server", "open_connection", "probe", "control_socket",
 ]
 
@@ -56,23 +58,43 @@ def is_tcp(endpoint: str) -> bool:
     return endpoint.startswith("tcp:")
 
 
+def _validate_state_dir(path: str) -> None:
+    """상태 디렉터리가 안전한지 검증한다(F3, docs/SECURITY_REVIEW.md).
+
+    `XDG_RUNTIME_DIR` 가 없는 ssh 로그인은 `/tmp/pytmux-<uid>` 로 폴백하는데, 부모가
+    공유(/tmp)라 공격자가 이 경로를 **먼저 자기 소유로 생성**해 두면 피해자가 그 안에
+    소켓/토큰을 만들거나 가짜 소켓에 붙어 키입력이 가로채진다. `lstat` 으로 **심볼릭
+    링크가 아니고 현재 UID 소유**인지 확인해 어긋나면 거부한다(fail-closed). lstat 은
+    링크를 따라가지 않으므로 공격자가 만든 심링크·디렉터리 둘 다 소유자 불일치로 잡힌다.
+    """
+    if IS_WINDOWS:
+        return
+    st = os.lstat(path)
+    if _stat.S_ISLNK(st.st_mode):
+        raise RuntimeError(f"상태 디렉터리가 심볼릭 링크임(보안상 거부): {path}")
+    if st.st_uid != os.getuid():
+        raise RuntimeError(
+            f"상태 디렉터리 소유자가 현재 사용자가 아님(보안상 거부): {path}")
+
+
 def default_state_dir() -> str:
     """런타임 상태(소켓/포트파일/슬롯·옵션 캐시)의 기본 디렉터리.
 
     Unix: $XDG_RUNTIME_DIR 또는 /tmp/pytmux-<uid>. Windows: %LOCALAPPDATA%\\pytmux.
-    디렉터리를 만들고 가능하면 0o700 으로 좁힌다.
+    디렉터리를 만들고, Unix 는 소유권·심링크를 검증(F3)한 뒤 0o700 으로 좁힌다.
     """
     if IS_WINDOWS:
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
         runtime = os.path.join(base, "pytmux")
-    else:
-        runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/pytmux-{os.getuid()}"
+        os.makedirs(runtime, exist_ok=True)
+        return runtime
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/pytmux-{os.getuid()}"
     os.makedirs(runtime, exist_ok=True)
-    if not IS_WINDOWS:
-        try:
-            os.chmod(runtime, 0o700)
-        except OSError:
-            pass
+    _validate_state_dir(runtime)   # 공격자 선점 디렉터리 거부(검증 후 권한 좁힘)
+    try:
+        os.chmod(runtime, 0o700)
+    except OSError:
+        pass
     return runtime
 
 
@@ -198,6 +220,31 @@ def read_token(endpoint: str) -> Optional[str]:
             return f.read().strip() or None
     except OSError:
         return None
+
+
+def peer_uid(sock: Optional[socket.socket]) -> Optional[int]:
+    """연결된 AF_UNIX 소켓 상대 프로세스의 UID(F2). 알 수 없으면 None.
+
+    Linux=SO_PEERCRED(ucred), macOS/BSD=LOCAL_PEERCRED(xucred). TCP 소켓·미지원 OS·
+    오류는 None 을 돌려 호출부가 "검증 불가 → 통과"(파일권한+토큰이 1차 방어)로 처리한다.
+    같은 UID 만 0700 디렉터리/0600 토큰에 접근 가능하므로, 이 검증은 심층 방어다.
+    """
+    if sock is None:
+        return None
+    try:
+        if hasattr(socket, "SO_PEERCRED"):          # Linux: struct ucred {pid,uid,gid}
+            buf = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                  struct.calcsize("3i"))
+            _pid, uid, _gid = struct.unpack("3i", buf)
+            return uid
+        if hasattr(socket, "LOCAL_PEERCRED"):       # macOS/BSD: struct xucred
+            buf = sock.getsockopt(0, socket.LOCAL_PEERCRED, 1024)
+            if len(buf) >= 8:                       # u_int cr_version; uid_t cr_uid; ...
+                _ver, uid = struct.unpack_from("=II", buf, 0)
+                return uid
+    except OSError:
+        return None
+    return None
 
 
 ClientCb = Callable[[asyncio.StreamReader, asyncio.StreamWriter], Awaitable[None]]

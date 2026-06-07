@@ -34,8 +34,8 @@ pytmux 의 보안 경계는 **전적으로 전송 계층(소켓 파일 권한 / 
 | ID | 심각도 | 항목 | 전제 |
 |----|--------|------|------|
 | F1 | **High**(Windows) ✅적용 | TCP 루프백 무인증 → 무인가 로컬 접근으로 입력주입·RCE·종료 | Windows |
-| F2 | Medium | 애플리케이션 인증/피어 UID 검증 부재(전 플랫폼) | — |
-| F3 | Medium | `/tmp` 폴백 상태 디렉터리 선점 → 가짜 서버/MITM | Unix, XDG 미설정(ssh) |
+| F2 | Medium ✅적용 | 애플리케이션 인증/피어 UID 검증 부재(전 플랫폼) | — |
+| F3 | Medium ✅적용 | `/tmp` 폴백 상태 디렉터리 선점 → 가짜 서버/MITM | Unix, XDG 미설정(ssh) |
 | F4 | Medium | 캡처(REC) 기본 ON·raw 민감출력·world-readable·depot 공유 | 로컬/팀 |
 | F5 | Low–Med | 영속 파일(resume/slots/opts) 권한 미설정(심층방어 부족) | — |
 | F6 | Low | 메시지 입력 검증 빈약 → 자원 고갈(DoS) | 무인가 접근 시 |
@@ -116,6 +116,10 @@ pytmux 의 보안 경계는 **전적으로 전송 계층(소켓 파일 권한 / 
   낮다(심층 방어 부족일 뿐). Windows 는 F1 과 결합해 즉시 악용된다.
 - **권고**: Unix 에서 `SO_PEERCRED`(Linux)/`getpeereid`(BSD/mac)로 **피어 UID == 서버
   UID** 를 검증해 파일권한 위에 한 겹 더 둔다. control 채널도 동일 검증.
+- **적용됨**: `ipc.peer_uid()`(Linux=SO_PEERCRED, macOS/BSD=LOCAL_PEERCRED)로 Unix 소켓
+  상대 UID 를 읽어 `handle_client` 가 서버 UID 와 다르면 거절(검증 불가면 통과 — 토큰
+  F1 이 1차 방어). control 포함 모든 첫 메시지에 토큰 검증(F1)이 걸려 무인증 실행도
+  차단됨. 회귀: `test_server.py::test_peer_uid_over_unix_socket`.
 
 ### F3 — [Medium] `/tmp` 폴백 상태 디렉터리 선점 (가짜 서버/MITM)
 
@@ -131,6 +135,11 @@ pytmux 의 보안 경계는 **전적으로 전송 계층(소켓 파일 권한 / 
 - **권고**: 상태 디렉터리 사용 전에 `os.lstat` 로 **소유자(`st_uid==os.getuid()`)·권한
   (`0700`)·심볼릭링크 아님**을 검증하고, 어긋나면 거부(새 무작위 디렉터리/실패 처리).
   `XDG_RUNTIME_DIR`(systemd 가 `0700` 보장) 우선 사용.
+- **적용됨**: `ipc._validate_state_dir()` 가 `default_state_dir()` 에서 makedirs 직후
+  `os.lstat` 로 **심볼릭 링크가 아니고 현재 UID 소유**인지 확인해 어긋나면 `RuntimeError`
+  로 거부(fail-closed)하고, 그 다음에 0700 으로 좁힌다. lstat 은 링크를 안 따라가므로
+  공격자가 선점한 심링크·디렉터리 모두 소유자 불일치로 잡힌다. 회귀:
+  `test_server.py::test_validate_state_dir_rejects_symlink`.
 
 ### F4 — [Medium] 캡처(REC) 기본 ON · raw 민감 출력 · world-readable
 
