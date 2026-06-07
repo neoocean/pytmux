@@ -262,6 +262,34 @@ async def restart_check(app, pilot):
     await pilot.pause(0.4)
 
 
+async def token_saver(app, pilot):
+    # 토큰 절감 설정 팝업(token-saver) — 자동 개입 토글·잔량 임계·예산·경고 설정행.
+    app.open_claude_saver()
+    await pilot.pause(0.5)
+
+
+async def token_log(app, pilot):
+    # 토큰 사용량 팝업 — 마우스 서브탭(시간/일/주/월) + M19 /usage 실측 한도.
+    from pytmuxlib.clientscreens import TokenLogScreen
+    recs = [
+        {"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
+         "account": "default", "tokens": 12300},
+        {"ts": 1_700_400_000.0, "tab": 1, "pane": 2, "session": 2,
+         "account": "default", "tokens": 8200},
+    ]
+    usage = {"session": {"pct": 2, "reset": "2pm (Asia/Seoul)"},
+             "week_all": {"pct": 14, "reset": "Jun 13 at 3am (Asia/Seoul)"},
+             "week_sonnet": {"pct": 0, "reset": "Jun 13 at 3am (Asia/Seoul)"}}
+    app.push_screen(TokenLogScreen(recs, usage=usage))
+    await pilot.pause(0.5)
+
+
+async def remote_control(app, pilot):
+    # 원격 제어(Remote Control) 정보+토글 팝업 — [r] 로 /rc 주입해 켜고 끈다.
+    app.open_remote_control(_aid(app))
+    await pilot.pause(0.5)
+
+
 # 진짜 Claude Code 한 세션에서 캡처하는 §11 컷 묶음(라이브 — 실제 API 호출).
 CLAUDE_OUTPUTS = ["11-claude", "12-claude-autoresume", "13-perm-mode",
                   "20-prompt-history", "22-claude-real"]
@@ -363,6 +391,9 @@ SCENES = [
     ("18-clock", "시계 모드 — 큰 블록 시계", clock),
     ("19-confirm-tab-last", "마지막 탭 닫기 — pytmux 종료 경고 팝업", confirm_tab_last),
     ("21-restart-check", "restart-check 드라이런 — 작업보존 재시작 안전점검", restart_check),
+    ("23-token-saver", "토큰 절감 설정 팝업(token-saver) — 자동개입 토글·임계·예산·경고", token_saver),
+    ("24-token-log", "토큰 사용량 팝업 — 마우스 서브탭(시간/일/주/월) + /usage 실측 한도", token_log),
+    ("25-remote-control", "원격 제어 팝업 — [r] 로 /rc 토글", remote_control),
 ]
 # Claude 컷(11·12·13·20·22)은 결정적 장면이 아니라 진짜 `claude` 한 세션에서 캡처한다
 # (claude_suite). 실제 API 호출이라 무인자 전체 생성에선 제외하고, `claude-suite` 또는
