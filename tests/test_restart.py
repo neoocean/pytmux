@@ -334,8 +334,9 @@ async def test_client_reconnects_on_restarting():
     try:
         async with app.run_test(size=(100, 30)) as pilot:
             # 고정 0.5s 는 Windows(ConPTY) 초기 attach(서버 spawn+레이아웃 왕복)가
-            # 느려 패널이 아직 안 와 실패했다(CI 플레이크). 조건 대기로 바꾼다.
-            for _ in range(60):
+            # 느려 패널이 아직 안 와 실패했다(CI 플레이크). 조건 대기로 바꾼다 — Windows
+            # CI 콜드스타트가 3s 도 넘겨(이중 서버 spawn) 넉넉히 ~10s 까지 기다린다.
+            for _ in range(200):
                 await pilot.pause(0.05)
                 if app.layout.get("panes"):
                     break

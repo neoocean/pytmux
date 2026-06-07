@@ -48,7 +48,14 @@ class _CapWriter:
 
 async def test_restart_check_dry_run():
     """restart-check 드라이런: 부작용 없이 안전성 점검 결과를 회신한다(re-exec 지원·
-    세션 존재·직렬화 round-trip·패널 master fd 보유·버전)."""
+    세션 존재·직렬화 round-trip·패널 master fd 보유·버전).
+
+    Windows 는 작업 보존 재시작(re-exec+fd 상속)을 지원하지 않고(ConPTY 는 숫자
+    master_fd 가 없어 panes_with_fd 가 0, reexec_supported 도 False) → POSIX 전용
+    점검이라 건너뛴다."""
+    from pytmuxlib import ipc
+    if ipc.IS_WINDOWS:
+        return
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)

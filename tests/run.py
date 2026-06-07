@@ -8,6 +8,7 @@ PASS/FAIL 을 집계한다. 화면(TUI) 없이 전체 동작을 검증한다.
 import asyncio
 import importlib
 import os
+import signal
 import sys
 import traceback
 
@@ -27,6 +28,19 @@ for _stream in (sys.stdout, sys.stderr):
 # 빠르게·이름과 함께 드러낸다. 로컬은 테스트당 수초 이내라 90초면 오검출 없고, 47분씩
 # 매달리던 진짜 행은 잡힌다. PYTMUX_TEST_TIMEOUT 으로 조정(0=무제한).
 TEST_TIMEOUT = float(os.environ.get("PYTMUX_TEST_TIMEOUT", "90"))
+
+# SIGALRM 하드 백스톱(POSIX). asyncio.wait_for 는 await 지점에서만 취소할 수 있어,
+# 테스트가 **동기 블로킹 콜**(PTY os.read·서브프로세스 wait·소켓 recv)에서 매달리면
+# 이벤트 루프로 제어가 안 돌아와 못 끊는다 — CI macOS 러너에서 스위트가 첫 출력도
+# 없이 47분 매달리던 정확한 증상. SIGALRM 은 블로킹 시스템콜도 인터럽트해 예외를
+# 띄우므로, 이 경우에도 그 테스트의 TIMEOUT 실패로 바꿔 빠르게·이름과 함께 드러낸다.
+# (Windows 엔 SIGALRM 이 없지만 행은 macOS/Linux 케이스라 무방.)
+_HAS_ALARM = hasattr(signal, "SIGALRM")
+
+
+def _alarm_handler(signum, frame):
+    raise TimeoutError(f"{TEST_TIMEOUT}s 초과 — hang(SIGALRM, 동기 블로킹 의심)")
+
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -60,6 +74,10 @@ def main(argv):
                  if n.startswith("test_") and asyncio.iscoroutinefunction(f)]
         for name, fn in sorted(tests):
             label = f"{modname}.{name}"
+            if _HAS_ALARM and TEST_TIMEOUT > 0:
+                signal.signal(signal.SIGALRM, _alarm_handler)
+                # 동기 블로킹도 깨도록 wait_for 보다 살짝 늦게 발화(여유 2초).
+                signal.setitimer(signal.ITIMER_REAL, TEST_TIMEOUT + 2)
             try:
                 asyncio.run(_run_with_timeout(fn))
                 passed += 1
@@ -74,6 +92,9 @@ def main(argv):
                 failed += 1
                 failures.append((label, e, traceback.format_exc()))
                 print(f"  FAIL  {label}: {e}")
+            finally:
+                if _HAS_ALARM and TEST_TIMEOUT > 0:
+                    signal.setitimer(signal.ITIMER_REAL, 0)   # 타이머 해제
     print(f"\n{'='*50}\n{passed} passed, {failed} failed")
     for label, e, tb in failures:
         print(f"\n--- {label} ---\n{tb}")
