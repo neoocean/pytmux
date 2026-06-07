@@ -512,7 +512,10 @@ class Pane:
         lines = hist + [scr.buffer[y] for y in range(scr.lines)]
         out = []
         for line in lines:
-            s = "".join((line[x].data or " ") for x in range(scr.columns))
+            # 와이드(2칸) 문자의 연속 셀은 data=="" 다. 이를 공백으로 내보내면(예전 버그)
+            # 복원 feed 때 pyte 가 "한"+공백+"글" 로 재배치해 자간이 벌어진다. 건너뛰면
+            # "한글" 그대로 나가고, feed 시 pyte 가 연속 셀을 다시 만들어 원형 복원된다.
+            s = "".join(line[x].data for x in range(scr.columns) if line[x].data != "")
             out.append(s.rstrip())
         while out and not out[-1]:   # 뒤쪽 빈 줄 제거
             out.pop()

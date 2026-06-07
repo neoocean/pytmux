@@ -58,6 +58,23 @@ async def test_pane_export_import_roundtrip():
     assert "second line" in pane_text(q)
 
 
+# ── 1b. 와이드(한글) 문자 스냅샷이 자간 안 벌어지고 복원된다 ──────────────────
+async def test_export_import_preserves_wide_chars():
+    """예전 버그: _export_screen 이 와이드 문자 연속 셀(data=="")을 공백으로 내보내,
+    복원 feed 때 'AB' 인 한글이 'A B' 처럼 사이에 빈칸이 끼어 자간이 벌어졌다."""
+    from pytmuxlib.model import Pane
+    from harness import pane_text
+    p = Pane(1234, -1, 80, 24)
+    p.feed("한글 테스트 ABC\r\n".encode("utf-8"))
+    q = Pane(1234, -1, 80, 24)
+    q.import_state(p.export_state())
+    txt = pane_text(q)
+    assert "한글 테스트 ABC" in txt          # 원형 그대로 복원
+    assert "한 글" not in txt and "테 스 트" not in txt   # 자간 안 벌어짐
+    # export 가 멱등(복원 후 다시 export 하면 동일) — 연속 셀이 안정적으로 재구성됨
+    assert q._export_screen() == p._export_screen()
+
+
 # ── 2. 서버 save_resume_state 가 트리 구조 + PTY 식별자를 담는다 ───────────────
 async def test_save_resume_state_structure():
     if ipc.IS_WINDOWS:
