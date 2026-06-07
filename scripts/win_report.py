@@ -293,6 +293,14 @@ def main(argv=None) -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     except (AttributeError, ValueError, OSError):
         pass
+    # 행 백스톱(CI): 과거 macOS 러너에서 이 리포트(feed 프로파일·서브프로세스)가
+    # 매달려 잡이 수십 분 돌았다. 전체 예산을 넘기면 전 스레드 트레이스백을 덤프하고
+    # 종료해 행 위치를 남기고 CI step 을 끝낸다(자체 스레드 — 메인 블록돼도 동작).
+    import faulthandler
+    faulthandler.enable()
+    budget = float(os.environ.get("PYTMUX_REPORT_TIMEOUT", "180"))
+    if budget > 0:
+        faulthandler.dump_traceback_later(budget, exit=True)
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--mb", type=float, default=5.0,
                     help="성능 측정 합성 스트림 크기(MB, 기본 5)")

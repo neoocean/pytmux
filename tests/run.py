@@ -6,11 +6,14 @@ test_*.py 안의 'test_' 로 시작하는 async 함수를 각각 새 asyncio 루
 PASS/FAIL 을 집계한다. 화면(TUI) 없이 전체 동작을 검증한다.
 """
 import asyncio
+import faulthandler
 import importlib
 import os
 import signal
 import sys
 import traceback
+
+faulthandler.enable()   # 세그폴트/치명 신호 시 전 스레드 트레이스백 덤프
 
 # CI 견고성(2026-06-07). ① Windows 콘솔 기본 인코딩(cp1252)이 한글 실패 메시지를 못
 # 찍어 러너가 UnicodeEncodeError 로 죽던 것을 막는다 → UTF-8 강제(+backslashreplace).
@@ -43,16 +46,26 @@ def _alarm_handler(signum, frame):
 
 
 def _arm():
-    """SIGALRM 하드 타임아웃을 건다(POSIX). 모듈 import·테스트 실행 양쪽을 감싸,
-    어디서 매달려도 run.py 가 스스로 끝나 step 이 완료(로그 보존)되고 행 지점이 보인다."""
+    """타임아웃 백스톱 2단을 건다(import·테스트 양쪽을 감싼다). 어디서 매달려도 run.py
+    가 스스로 끝나 CI step 이 완료(로그 보존)되고 행 지점이 보인다.
+
+    ① SIGALRM(POSIX, +2초): await/인터럽트 가능한 블로킹을 그 테스트의 TIMEOUT 실패로
+       바꿔 스위트를 **계속** 진행. ② faulthandler(+15초, exit=True): SIGALRM 으로도 안
+       끊기는 행(과거 macOS CI 미스터리)에서 **전 스레드 트레이스백을 stderr 에 덤프하고
+       프로세스를 종료** — 행의 정확한 코드 위치가 로그에 남는다(자체 스레드라 메인이
+       블록돼도 동작; 크로스플랫폼)."""
     if _HAS_ALARM and TEST_TIMEOUT > 0:
         signal.signal(signal.SIGALRM, _alarm_handler)
         signal.setitimer(signal.ITIMER_REAL, TEST_TIMEOUT + 2)
+    if TEST_TIMEOUT > 0:
+        faulthandler.dump_traceback_later(TEST_TIMEOUT + 15, exit=True)
 
 
 def _disarm():
     if _HAS_ALARM and TEST_TIMEOUT > 0:
         signal.setitimer(signal.ITIMER_REAL, 0)
+    if TEST_TIMEOUT > 0:
+        faulthandler.cancel_dump_traceback_later()
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
