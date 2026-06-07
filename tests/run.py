@@ -42,6 +42,19 @@ def _alarm_handler(signum, frame):
     raise TimeoutError(f"{TEST_TIMEOUT}s 초과 — hang(SIGALRM, 동기 블로킹 의심)")
 
 
+def _arm():
+    """SIGALRM 하드 타임아웃을 건다(POSIX). 모듈 import·테스트 실행 양쪽을 감싸,
+    어디서 매달려도 run.py 가 스스로 끝나 step 이 완료(로그 보존)되고 행 지점이 보인다."""
+    if _HAS_ALARM and TEST_TIMEOUT > 0:
+        signal.signal(signal.SIGALRM, _alarm_handler)
+        signal.setitimer(signal.ITIMER_REAL, TEST_TIMEOUT + 2)
+
+
+def _disarm():
+    if _HAS_ALARM and TEST_TIMEOUT > 0:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
@@ -69,15 +82,25 @@ def main(argv):
     passed = failed = 0
     failures = []
     for modname in discover(names):
-        mod = importlib.import_module(modname)
+        # import 도 SIGALRM 으로 감싼다 — 모듈 import 가 매달리면(과거 macOS CI 에서
+        # 스위트가 첫 출력도 없이 17분 매달리던 정확한 지점) 여기서 TIMEOUT 실패로
+        # 전환돼 run.py 가 스스로 끝난다(step 이 완료돼 로그가 남고 주범 모듈이 보임).
+        print(f":: import {modname}", file=sys.stderr, flush=True)
+        _arm()
+        try:
+            mod = importlib.import_module(modname)
+        except BaseException as e:   # TimeoutError(SIGALRM) 포함
+            failed += 1
+            failures.append((f"{modname} (import)", e, traceback.format_exc()))
+            print(f"  FAIL  {modname} (import): {e}")
+            _disarm()
+            continue
+        _disarm()
         tests = [(n, f) for n, f in vars(mod).items()
                  if n.startswith("test_") and asyncio.iscoroutinefunction(f)]
         for name, fn in sorted(tests):
             label = f"{modname}.{name}"
-            if _HAS_ALARM and TEST_TIMEOUT > 0:
-                signal.signal(signal.SIGALRM, _alarm_handler)
-                # 동기 블로킹도 깨도록 wait_for 보다 살짝 늦게 발화(여유 2초).
-                signal.setitimer(signal.ITIMER_REAL, TEST_TIMEOUT + 2)
+            _arm()
             try:
                 asyncio.run(_run_with_timeout(fn))
                 passed += 1
@@ -93,8 +116,7 @@ def main(argv):
                 failures.append((label, e, traceback.format_exc()))
                 print(f"  FAIL  {label}: {e}")
             finally:
-                if _HAS_ALARM and TEST_TIMEOUT > 0:
-                    signal.setitimer(signal.ITIMER_REAL, 0)   # 타이머 해제
+                _disarm()
     print(f"\n{'='*50}\n{passed} passed, {failed} failed")
     for label, e, tb in failures:
         print(f"\n--- {label} ---\n{tb}")
