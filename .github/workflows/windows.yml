@@ -64,9 +64,13 @@ jobs:
         timeout-minutes: 8        # 스위트는 보통 ~수분 — 매달리면 여기서 끊어 잡 전체를 안 먹게
         run: python -u tests/run.py   # -u: 버퍼링 없이 진행 즉시 출력(행 지점 식별)
 
-      - name: Compat + perf report
-        timeout-minutes: 4        # win_report 가 서브프로세스에서 매달려도 스위트 결과는 남게
-        run: python -u scripts/win_report.py --mb 5
+      - name: Perf report (env + perf only)
+        timeout-minutes: 4        # win_report 가 매달려도 스위트 결과는 남게
+        # --no-tests: 호환성(헤드리스 스위트) 재실행을 끈다 — 위 "Headless test suite"
+        # 스텝이 이미 권위 결과이고, win_report 가 스위트를 한 번 더 돌리면 (a) 중복
+        # 실행이고 (b) 간헐 플레이크에 두 번째 노출돼 step1 통과(322/0)인데도 step2 에서
+        # 떨어지는 거짓-적색을 냈다. 여기선 환경 정보 + perf 수치(feed/render)만 리포트.
+        run: python -u scripts/win_report.py --no-tests --mb 5
 
       - name: Upload report artifact
         if: always()
