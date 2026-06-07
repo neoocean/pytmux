@@ -93,7 +93,8 @@ CREATE INDEX IF NOT EXISTS ix_usage_pane    ON usage(pane);
 
 PRAGMA user_version = 1;     -- 스키마 버전(이후 마이그레이션 분기)
 ```
-- 파일: `state_base(sock_path) + ".tokens.db"`(JSONL 과 병존/대체).
+- 파일: `db/claude-tokens.db`(프로젝트 디렉터리 하위 `db/`. .gitignore·중앙
+  p4ignore 에 `db/` 전체 제외 등록 — 런타임·호스트 로컬, 버전관리 비대상).
 - `sqlite3` 은 **CPython 표준 라이브러리** — 새 외부 의존 없음.
 
 ### 2.2 동시성
@@ -167,7 +168,7 @@ ORDER BY bucket DESC, tok DESC;
 1. **스키마/연결 계층** 신설: `pytmuxlib/usagedb.py` — `connect(path)`, `insert(rec)`,
    `query_agg(by, bucket, account, since)`, `update_accounts(...)`, `prune(before)`.
    `usagelog.py` 의 **순수 집계 규칙(버킷 포맷·UNKNOWN)** 은 재사용/공유.
-2. **일회성 임포트**: 기존 `*.tokens.jsonl` → `*.tokens.db` 적재 스크립트
+2. **일회성 임포트**: 기존 `*.tokens.jsonl` → `db/claude-tokens.db` 적재 스크립트
    (`scripts/import_token_jsonl.py`). 멱등(이미 적재분 스킵 위해 `ts,pane` 등으로
    판정하거나 임포트 전 빈 DB 가정).
 3. **이중 쓰기 과도기(옵션)**: 한동안 JSONL+DB 동시 append 로 안전망 → 검증 후 JSONL

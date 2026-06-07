@@ -3,6 +3,10 @@
 # 공유한다 — git 미러가 부활해도 여기서 차단한다.
 captures/
 
+# 토큰 사용량 SQLite DB(db/claude-tokens.db 등). 런타임 생성·호스트 로컬 데이터라
+# 버전관리 대상이 아니다 — 디렉터리 전체를 제외한다(captures/ 와 동일 정책).
+db/
+
 # 파이썬 바이트코드 캐시
 __pycache__/
 *.pyc
