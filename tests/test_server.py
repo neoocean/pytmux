@@ -2241,3 +2241,31 @@ async def test_manual_clear_resets_token_session():
         assert p._claude_session_id == sid + 1, "배너 지속 중 재리셋 금지"
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_header_reservation_skipped_on_short_panel():
+    """#1 Claude 프롬프트 헤더 예약은 짧은 패널(모바일 portrait)에선 생략한다 —
+    헤더가 가져가는 1행이 Claude 입력박스를 2줄로 reflow 시키던 문제(2026-06-07).
+    높은 패널에선 예약을 유지(스티키 프롬프트 헤더 표시)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 40)
+        p = sess.active_window.active_pane
+        p._hdr_claude = True
+        p.last_prompt = "구현해줘"
+        assert srv.claude_header is True                 # 기본 ON
+        assert srv._should_reserve_header(p) is True      # 표시 조건 충족
+        # 높은 패널(rows=40) → 예약(claude_hdr True)
+        hi = srv._layout_msg(sess, cols=80, rows=40)
+        pm = next(pp for pp in hi["panes"] if pp["id"] == p.id)
+        assert pm["claude_hdr"] is True, pm
+        # 짧은 패널(rows=10) → 예약 생략(claude_hdr False) → Claude 풀 높이
+        lo = srv._layout_msg(sess, cols=80, rows=10)
+        pm2 = next(pp for pp in lo["panes"] if pp["id"] == p.id)
+        assert pm2["claude_hdr"] is False, pm2
+        # 짧은 레이아웃 적용 후에도 재판정이 일관(오실레이션 없음): 같은 짧은 크기로
+        # 다시 그려도 예약 의도는 여전히 False 와 일치(_hdr_reserved 와 안 어긋남).
+        assert srv._reserve_header(
+            p, p.rows + (1 if p._hdr_reserved else 0)) == p._hdr_reserved
+    finally:
+        await teardown(srv, task, sock)
