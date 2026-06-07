@@ -11,7 +11,7 @@ import subprocess
 import time
 import traceback
 
-from . import ipc, proc, pty_backend, sshwrap, tokens, usagelog, version
+from . import ipc, proc, pty_backend, sshwrap, tokens, usagedb, usagelog, version
 from .model import (ClientConn, Pane, Session, Split, Tab, Window,
                     coalesce_alt_repaints)
 from .claude import (claude_account, claude_feedback_prompt, claude_perm_mode,
@@ -66,6 +66,9 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         self._session_seq = 0
         # Claude 세션 일련번호(#7 토큰 로깅): 패널의 claude None→비None 전이마다 +1.
         self._claude_session_seq = 0
+        # 토큰 사용량 SQLite 연결(지연 오픈, _tokens_db_conn). 최초 사용 시 열고
+        # 기존 JSONL 이력을 일회 임포트한다(docs/TOKEN_USAGE_STORAGE_DESIGN.md).
+        self._tokens_db = None
         self.buffers: list[str] = []   # 페이스트 버퍼(최신이 앞)
         # 패널 출력 캡처(Claude 화면 문구 분석용). **기본 ON** — 실 Claude Code
         # 출력을 무손실 기록해 limit/busy/idle/ctx 화면 골든 픽스처·휴리스틱
@@ -251,13 +254,52 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         self._reset_view(win.active_pane)
         self._write_paste(win.active_pane, self.buffers[index])
 
-    # ---- 토큰 사용량 영속 로그(#7) ----
+    # ---- 토큰 사용량 영속 저장(#7, SQLite) ----
     @property
     def tokens_log_path(self) -> str:
-        """응답별 확정 토큰을 적는 JSONL 로그. capture 와 달리 휘발 영역(state_base)
-        에 둔다 — 캡처(raw 화면)와 달리 민감 화면 잔재가 없는 집계 데이터라 Perforce
-        공유 대상이 아니다. 조회 화면이 read+aggregate 로 시간/일/월×계정 집계."""
+        """(레거시) 응답별 확정 토큰의 JSONL 로그 경로. 이제 저장은 SQLite(tokens_db_path)
+        로 옮겼고, 이 경로는 **기존 이력을 DB 로 일회 임포트**하는 원본으로만 남는다
+        (휘발 영역 state_base, docs/TOKEN_USAGE_STORAGE_DESIGN.md §5)."""
         return ipc.state_base(self.sock_path) + ".tokens.jsonl"
+
+    @property
+    def tokens_db_path(self) -> str:
+        """토큰 사용량 SQLite DB. 기본 소켓은 프로젝트 하위 `db/claude-tokens.db`,
+        그 외(임시 소켓 등)는 `db/claude-tokens-<sock-id>.db` 로 격리한다. captures 와
+        달리 raw 화면 잔재가 없는 집계 데이터지만, db/ 전체를 .gitignore·p4ignore 로
+        버전관리에서 제외한다(런타임·호스트 로컬, 사용자 결정 2026-06-07).
+        PYTMUX_TOKENS_DB 로 강제 지정 가능(테스트가 임시 파일을 주입해 오염 방지)."""
+        override = os.environ.get("PYTMUX_TOKENS_DB")
+        if override:
+            return override
+        from .servercapture import PROJECT_DIR
+        base = os.path.join(PROJECT_DIR, "db")
+        if self.sock_path == ipc.default_endpoint():
+            return os.path.join(base, "claude-tokens.db")
+        return os.path.join(base, f"claude-tokens-{self._capture_id()}.db")
+
+    def _tokens_db_conn(self):
+        """토큰 DB 연결(최초 1회 열고 보관). 새(빈) DB 이고 기존 JSONL 이력이 있으면
+        일회 임포트해 누적 통계를 보존하고, 재임포트 방지로 JSONL 을 `.imported` 로
+        옮긴다. 실패해도 None 을 돌려 본 흐름(토큰 로깅)을 막지 않는다."""
+        if self._tokens_db is not None:
+            return self._tokens_db
+        try:
+            conn = usagedb.connect(self.tokens_db_path)
+        except Exception:
+            return None
+        try:
+            if usagedb.count(conn) == 0:
+                old = self.tokens_log_path
+                if os.path.exists(old) and usagedb.import_jsonl(conn, old) > 0:
+                    try:
+                        os.replace(old, old + ".imported")
+                    except OSError:
+                        pass
+        except Exception:
+            pass
+        self._tokens_db = conn
+        return conn
 
     def _tab_index_of(self, sess: Session, pane: Pane):
         for i, tab in enumerate(sess.tabs):
@@ -266,25 +308,28 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         return None
 
     def _log_tokens(self, sess: Session, tab: Tab, pane: Pane, amount: int):
-        """응답 한 건의 확정 토큰을 JSONL 로그에 append(tokens.step committed>0 이벤트)."""
-        # M10 예산 추적은 append **전에** — 시드(_seed_today_from_log)가 이번 레코드를
+        """응답 한 건의 확정 토큰을 SQLite 에 적는다(tokens.step committed>0 이벤트)."""
+        # M10 예산 추적은 insert **전에** — 시드(_seed_today_from_log)가 이번 레코드를
         # 아직 포함하지 않은 상태에서 prior 누계를 읽고 amount 를 더하게 해 이중계산을
-        # 피한다(append 후 시드하면 방금 쓴 레코드가 시드에 섞여 중복).
+        # 피한다(insert 후 시드하면 방금 쓴 레코드가 시드에 섞여 중복).
         self._budget_track(amount)
         rec = usagelog.make_record(
             ts=time.time(), tab=tab.index, pane=pane.id,
             session=pane._claude_session_id, account=pane._claude_account,
             tokens=amount)
-        usagelog.append(self.tokens_log_path, rec)
+        conn = self._tokens_db_conn()
+        if conn is not None:
+            usagedb.insert(conn, rec)
 
     def _seed_today_from_log(self, key: str) -> int:
-        """오늘 버킷 키에 해당하는 로그 레코드 토큰 합(서버 기동 시 1회 시드용, M10)."""
-        try:
-            recs = usagelog.read(self.tokens_log_path)
-        except OSError:
+        """오늘 버킷 키에 해당하는 토큰 합(서버 기동 시 1회 시드용, M10). SQL 합산."""
+        conn = self._tokens_db_conn()
+        if conn is None:
             return 0
-        return sum(int(r.get("tokens", 0)) for r in recs
-                   if usagelog.bucket_key(r.get("ts", 0.0), "day") == key)
+        try:
+            return usagedb.total_for_day(conn, key)
+        except Exception:
+            return 0
 
     def _budget_track(self, amount: int):
         """확정 토큰을 오늘 누계에 더하고 일 예산 경고 레벨을 갱신한다(M10).

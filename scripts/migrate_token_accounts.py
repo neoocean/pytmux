@@ -37,25 +37,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pytmuxlib import ipc, usagelog  # noqa: E402
 
 
-def is_trusted(account, keep_accounts, keep_domains) -> bool:
-    """account 가 신뢰 허용목록에 들면 True. None/빈 값/unknown 은 신뢰 아님(=unknown 유지).
-
-    keep_accounts: 정확히 일치해야 하는 계정 별칭 집합.
-    keep_domains: 별칭이 `@<domain>` 으로 끝나면 신뢰(서브도메인 아님, 정확 도메인)."""
-    if not account or account == usagelog.UNKNOWN:
-        return False
-    if account in keep_accounts:
-        return True
-    for d in keep_domains:
-        if account.endswith("@" + d):
-            return True
-    return False
-
-
-def remap_account(account, keep_accounts, keep_domains) -> str:
-    """신뢰 계정이면 그대로, 아니면 usagelog.UNKNOWN."""
-    return account if is_trusted(account, keep_accounts, keep_domains) \
-        else usagelog.UNKNOWN
+# 신뢰 규칙(is_trusted/remap_account)은 usagelog 로 단일화 — DB update_accounts 와 공유.
+is_trusted = usagelog.is_trusted
+remap_account = usagelog.remap_account
 
 
 def migrate_lines(lines, keep_accounts, keep_domains):

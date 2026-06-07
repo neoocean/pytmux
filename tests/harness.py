@@ -39,6 +39,11 @@ async def server_only():
     # 매 서버마다 유니크 임시 디렉터리로 주입해 캡처를 격리한다(capture_dir 가 이
     # override 를 우선한다). 실사용 captures/ 오염도 막는다.
     os.environ["PYTMUX_CAPTURE_DIR"] = tempfile.mkdtemp(prefix="pytmux-cap-")
+    # 토큰 SQLite DB 격리: 기본적으로 server.tokens_db_path 는 공유 프로젝트
+    # db/claude-tokens.db 를 가리킨다. 매 서버마다 유니크 임시 파일로 주입해
+    # 실사용 DB 오염·테스트 간섭을 막는다(tokens_db_path 가 이 override 를 우선).
+    os.environ["PYTMUX_TOKENS_DB"] = tempfile.mktemp(suffix=".tokens.db",
+                                                     prefix="pytmux-db-")
     srv = pytmux.Server(endpoint)
     task = asyncio.create_task(srv.serve())
     # listen 준비 신호: Unix=소켓 파일 생성, TCP=resolved_endpoint 가 실제 포트로 확정.
@@ -87,6 +92,7 @@ async def teardown(srv, task, sock):
     # 테스트(capture_dir 의 비-override 동작을 검증하는 test_capture_dir_project_and_override
     # 등)에 새지 않게 한다.
     os.environ.pop("PYTMUX_CAPTURE_DIR", None)
+    os.environ.pop("PYTMUX_TOKENS_DB", None)
 
 
 def pane_text(pane):

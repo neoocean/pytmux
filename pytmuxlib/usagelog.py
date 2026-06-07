@@ -29,6 +29,28 @@ _BUCKET_FMT = {
 }
 
 
+def is_trusted(account, keep_accounts, keep_domains) -> bool:
+    """account 가 신뢰 허용목록에 들면 True. None/빈 값/unknown 은 신뢰 아님.
+
+    keep_accounts: 정확히 일치해야 하는 계정 별칭 집합.
+    keep_domains: 별칭이 `@<domain>` 으로 끝나면 신뢰(서브도메인 아님, 정확 도메인).
+    계정 정정(오검출 이메일 → unknown)의 단일 신뢰 규칙 — migrate 도구와 DB
+    update_accounts 가 공유한다(docs/TOKEN_USAGE_STORAGE_DESIGN.md §2.4)."""
+    if not account or account == UNKNOWN:
+        return False
+    if account in keep_accounts:
+        return True
+    for d in keep_domains:
+        if account.endswith("@" + d):
+            return True
+    return False
+
+
+def remap_account(account, keep_accounts, keep_domains) -> str:
+    """신뢰 계정이면 그대로, 아니면 UNKNOWN."""
+    return account if is_trusted(account, keep_accounts, keep_domains) else UNKNOWN
+
+
 def make_record(ts: float, tab, pane: int, session: int,
                 account: str | None, tokens: int) -> dict:
     """로그 레코드 한 건을 만든다(append 직전 서버가 호출)."""
@@ -77,29 +99,45 @@ def bucket_key(ts: float, bucket: str) -> str:
     return _dt.datetime.fromtimestamp(ts).strftime(fmt)
 
 
-def aggregate(records: list, bucket: str = "day",
-              account: str | None = None) -> dict:
-    """레코드를 (버킷 × 계정)으로 합산.
+def group_key(r: dict, dim: str = "account") -> str:
+    """레코드의 그룹 차원 키(라벨). dim="account"=계정, dim="session"=세션 기준.
 
-    account 가 주어지면 그 계정만 필터. 반환:
-      {"buckets": {bucket_key: {acct: tokens}},
-       "accounts": {acct: tokens},        # 계정별 총합
+    세션은 닫히고 재사용되는 패널 id 대신 안정적인 claude 세션 id 로 묶는다
+    (설계 §8 — 사용자 결정 '세션 기준 묶기')."""
+    if dim == "session":
+        sid = r.get("session")
+        return f"세션 {sid}" if sid is not None else "세션 ?"
+    return r.get("account") or UNKNOWN
+
+
+def aggregate(records: list, bucket: str = "day",
+              account: str | None = None, dim: str = "account") -> dict:
+    """레코드를 (버킷 × 그룹차원)으로 합산.
+
+    account 가 주어지면 그 계정만 필터(dim 과 무관하게 항상 계정 필터). dim 은
+    그룹 차원("account"=계정, "session"=세션). 반환:
+      {"buckets": {bucket_key: {group: tokens}},
+       "groups": {group: tokens},         # 그룹별 총합(많이 쓴 순 정렬은 표시 측)
+       "accounts": {group: tokens},       # 하위호환 별칭(=groups)
        "total": int}                      # 전체 총합
     """
     buckets: dict = {}
-    accounts: dict = {}
+    groups: dict = {}
     total = 0
     for r in records:
         acct = r.get("account") or UNKNOWN
         if account is not None and acct != account:
             continue
+        g = group_key(r, dim)
         tok = int(r.get("tokens", 0))
         bk = bucket_key(r.get("ts", 0.0), bucket)
         buckets.setdefault(bk, {})
-        buckets[bk][acct] = buckets[bk].get(acct, 0) + tok
-        accounts[acct] = accounts.get(acct, 0) + tok
+        buckets[bk][g] = buckets[bk].get(g, 0) + tok
+        groups[g] = groups.get(g, 0) + tok
         total += tok
-    return {"buckets": buckets, "accounts": accounts, "total": total}
+    # "accounts" 는 하위호환 별칭(기존 호출부가 agg["accounts"] 를 읽음).
+    return {"buckets": buckets, "groups": groups, "accounts": groups,
+            "total": total}
 
 
 def _fmt_tokens(total: int) -> str:
@@ -112,23 +150,25 @@ def _fmt_tokens(total: int) -> str:
 
 
 def summary_lines(records: list, bucket: str = "day",
-                  account: str | None = None) -> list:
+                  account: str | None = None, dim: str = "account") -> list:
     """조회 화면(InfoScreen)용 사람이 읽는 집계 줄 목록을 만든다.
 
-    버킷별로 계정 합계를 보이고, 맨 위에 계정 총합·전체 총합 헤더를 둔다.
-    레코드가 없으면 안내 한 줄."""
-    agg = aggregate(records, bucket, account)
+    버킷별로 그룹(계정 또는 세션) 합계를 보이고, 맨 위에 그룹 총합·전체 총합
+    헤더를 둔다. dim="session" 이면 세션 기준으로 묶는다([패널] 탭). 레코드가
+    없으면 안내 한 줄."""
+    agg = aggregate(records, bucket, account, dim)
     if not records or agg["total"] == 0:
         return ["(기록된 토큰 사용량이 없습니다)"]
     lines = []
     scope = f" · 계정={account}" if account else ""
-    lines.append(f"토큰 사용량 — 단위:{bucket}{scope}  전체 Σ{_fmt_tokens(agg['total'])}")
-    # 계정별 총합(많이 쓴 순)
-    for acct, tok in sorted(agg["accounts"].items(),
-                            key=lambda kv: -kv[1]):
-        lines.append(f"  [{acct}] Σ{_fmt_tokens(tok)}")
+    label = "세션" if dim == "session" else "계정"
+    lines.append(f"토큰 사용량 — 단위:{bucket} · {label}별{scope}"
+                 f"  전체 Σ{_fmt_tokens(agg['total'])}")
+    # 그룹별 총합(많이 쓴 순)
+    for g, tok in sorted(agg["groups"].items(), key=lambda kv: -kv[1]):
+        lines.append(f"  [{g}] Σ{_fmt_tokens(tok)}")
     lines.append("")
-    # 버킷별(최근이 위로) × 계정
+    # 버킷별(최근이 위로) × 그룹
     for bk in sorted(agg["buckets"], reverse=True):
         per = agg["buckets"][bk]
         parts = "  ".join(f"{a}:{_fmt_tokens(t)}"

@@ -222,10 +222,10 @@ async def test_claude_usage_persists_while_session_alive():
 
 
 async def test_token_usage_logging():
-    """#7: 응답 확정(committed>0) 시 tokens.jsonl 에 ts/tab/pane/session/account/
-    tokens 한 줄이 적히고, 새 Claude 세션마다 session id 가 증가하며, 계정은 화면
-    이메일에서 별칭으로 잡힌다. 수동 지정(set_claude_account)이 자동을 덮는다."""
-    from pytmuxlib import usagelog
+    """#7: 응답 확정(committed>0) 시 SQLite 에 ts/tab/pane/session/account/tokens
+    한 건이 적히고, 새 Claude 세션마다 session id 가 증가하며, 계정은 화면 이메일
+    에서 별칭으로 잡힌다. 수동 지정(set_claude_account)이 자동을 덮는다."""
+    from pytmuxlib import usagedb, usagelog
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
@@ -243,7 +243,7 @@ async def test_token_usage_logging():
         # idle 로 종료 → peak(1900) 확정 → 로그 1줄
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
         srv._scan_claude(sess, win)
-        recs = usagelog.read(srv.tokens_log_path)
+        recs = usagedb.query_records(srv._tokens_db_conn())
         assert len(recs) == 1, recs
         r = recs[0]
         assert r["tokens"] == 1900 and r["pane"] == p.id, r
@@ -262,7 +262,7 @@ async def test_token_usage_logging():
         assert p._claude_account == "team-acct" and p._claude_account_manual
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
         srv._scan_claude(sess, win)
-        recs = usagelog.read(srv.tokens_log_path)
+        recs = usagedb.query_records(srv._tokens_db_conn())
         assert recs[-1]["account"] == "team-acct", recs[-1]
         # 집계 전체 합
         agg = usagelog.aggregate(recs, "day")
@@ -272,6 +272,35 @@ async def test_token_usage_logging():
             os.unlink(srv.tokens_log_path)
         except OSError:
             pass
+        await teardown(srv, task, sock)
+
+
+async def test_tokens_db_imports_legacy_jsonl_once():
+    """기존 *.tokens.jsonl 이력은 새 DB 최초 사용 시 일회 임포트되어 누적 통계가
+    보존되고, 재임포트 방지로 JSONL 은 .imported 로 옮겨진다(중복 적재 없음)."""
+    from pytmuxlib import usagedb, usagelog
+    srv, task, sock = await server_only()
+    try:
+        # 새 DB 가 열리기 전에 레거시 JSONL 을 미리 깔아 둔다.
+        old = srv.tokens_log_path
+        usagelog.append(old, usagelog.make_record(
+            1_700_000_000.0, 0, 1, 1, "me@woojinkim.org", 1234))
+        usagelog.append(old, usagelog.make_record(
+            1_700_000_100.0, 0, 1, 1, None, 66))
+        conn = srv._tokens_db_conn()          # 최초 사용 → 임포트 발생
+        recs = usagedb.query_records(conn)
+        assert len(recs) == 2, recs
+        assert sum(r["tokens"] for r in recs) == 1300
+        assert not os.path.exists(old), "임포트 후 JSONL 은 .imported 로 이동"
+        assert os.path.exists(old + ".imported")
+        # 두 번째 호출은 재임포트하지 않는다(같은 연결·count>0).
+        assert usagedb.count(srv._tokens_db_conn()) == 2
+    finally:
+        for suffix in ("", ".imported"):
+            try:
+                os.unlink(srv.tokens_log_path + suffix)
+            except OSError:
+                pass
         await teardown(srv, task, sock)
 
 

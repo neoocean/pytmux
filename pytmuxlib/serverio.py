@@ -15,7 +15,7 @@ import signal
 import time
 import traceback
 
-from . import ipc, tokens, usagelog
+from . import ipc, tokens, usagedb
 from .claude import claude_account, claude_usage, ctx_window_tokens
 from .model import ClientConn, Session
 from .protocol import (FLUSH_HZ, MAX_H, MAX_W, MIN_H, MIN_W, PROTO_VERSION,
@@ -464,10 +464,12 @@ class ServerIOMixin:
             await write_msg(client.writer, self._tree_msg())
             return
         elif action == "request_token_log":
-            # 영속 토큰 로그(최근 N 줄)를 클라이언트로. 클라가 usagelog 로 시간/일/월×
-            # 계정 집계해 팝업에 표시(라운드트립 없이 버킷/계정 전환).
-            recs = usagelog.read(self.tokens_log_path,
-                                 limit=int(msg.get("limit", 5000)))
+            # 영속 토큰 레코드(최근 N 건)를 SQLite 에서 읽어 클라이언트로. 클라가
+            # usagelog 로 시간/일/월 × 계정/세션 집계해 팝업에 표시(라운드트립 없이
+            # 버킷/차원 전환). 서버측 GROUP BY 집계는 설계 Phase B.
+            conn = self._tokens_db_conn()
+            recs = (usagedb.query_records(conn, limit=int(msg.get("limit", 5000)))
+                    if conn is not None else [])
             await write_msg(client.writer, {"t": "token_log", "records": recs})
             return
         elif action == "request_version":
