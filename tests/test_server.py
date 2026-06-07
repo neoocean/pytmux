@@ -2183,3 +2183,29 @@ async def test_budget_level_for_accepts_precomputed_total_c5():
         assert srv._budget_level_for(p, 100) == 0
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_status_static_opts_only_on_full_c4():
+    """C4: 토글로만 바뀌는 정적 옵션(claude_rules·예산/컨텍스트 12)은 full status
+    (attach·_broadcast_session)에만 싣고 주기(full=False) status 에선 뺀다. 낙관적
+    토글 4개 불린은 주기에도 유지(전용 브로드캐스트 경로 없음)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        STATIC = ["claude_rules", "claude_ctx_autoclear", "claude_ctx_threshold",
+                  "claude_ctx_min_interval", "claude_ctx_action",
+                  "token_budget_day", "token_budget_session", "token_budget_5h",
+                  "token_budget_account", "claude_long_turn_sec",
+                  "claude_repeat_alert", "token_budget_resume_gate",
+                  "claude_budget_plan"]
+        full = srv._status_msg(sess, full=True)
+        for k in STATIC:
+            assert k in full, f"full status 에 정적 옵션 {k} 누락"
+        periodic = srv._status_msg(sess, full=False)
+        for k in STATIC:
+            assert k not in periodic, f"주기 status 가 정적 옵션 {k} 를 실음(C4 위반)"
+        for k in ("claude_header", "single_border", "auto_doc_clear",
+                  "claude_auto_mode", "budget_level", "claude_pending"):
+            assert k in periodic, f"주기 status 에 동적/낙관 필드 {k} 누락"
+    finally:
+        await teardown(srv, task, sock)

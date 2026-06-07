@@ -3094,3 +3094,26 @@ async def test_with_reverse_and_box_constants():
     assert len(_BOX_REV) == len(_BOX_BITS)
     for ch, bits in _BOX_BITS.items():
         assert _BOX_REV[bits] == ch
+
+
+# ---- C4(PERFORMANCE_REVIEW 2026-06-07): 정적 옵션 주기 status 생략 시 유지 ----
+async def test_status_retains_static_opts_when_omitted_c4():
+    """C4: 서버가 정적 옵션을 주기 status 에서 빼도(키 부재), 클라 StatusBar 는 직전
+    권위값을 유지한다(update_status 의 msg.get(k, self.k) 보존). 설정 팝업이 낡은
+    값을 그리지 않게 하는 핵심 불변식."""
+    async def body(app, pilot, srv):
+        st = app.status
+        st.update_status({"t": "status", "token_budget_day": 5000,
+                          "claude_ctx_threshold": 22, "claude_ctx_action": "doc-clear",
+                          "token_budget_account": 1_000_000})
+        assert st.token_budget_day == 5000
+        assert st.claude_ctx_threshold == 22
+        assert st.claude_ctx_action == "doc-clear"
+        assert st.token_budget_account == 1_000_000
+        # 정적 옵션 키가 모두 빠진 주기 status → 직전 값 그대로 유지
+        st.update_status({"t": "status"})
+        assert st.token_budget_day == 5000, "토큰 예산 유실"
+        assert st.claude_ctx_threshold == 22, "컨텍스트 임계 유실"
+        assert st.claude_ctx_action == "doc-clear", "정리 방식 유실"
+        assert st.token_budget_account == 1_000_000, "계정 예산 유실"
+    await _with_app(body)

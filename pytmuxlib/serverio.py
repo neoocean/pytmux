@@ -119,7 +119,7 @@ class ServerIOMixin:
         win = sess.active_window
         cap_path, cap_size = self._capture_info(win.active_pane if win else None)
         _tok_total = self._account_token_total(win.active_pane if win else None)
-        return {
+        msg = {
             "t": "status",
             "session": sess.name,
             "windows": [{"index": t.index, "name": t.name,
@@ -168,25 +168,12 @@ class ServerIOMixin:
             "capture": self.capture,
             "capture_path": cap_path,
             "capture_size": cap_size,
+            # 낙관적 토글(클라가 즉시 반영) + 주기 status 권위값으로 화해하는 4개
+            # 불린은 매 status 에 싣는다(전용 브로드캐스트 경로 없음 — C4 주석 참조).
             "claude_header": self.claude_header,
             "single_border": self.single_border,
-            "claude_rules": self.claude_rules,   # #27 시작 규칙(에디터 초기값용)
-            # 토큰 절감 설정(설정 팝업 토글 현재값 + 예산 경고). 전역 opts 그대로,
-            # budget_level 은 일/세션 예산 대비 경고 레벨(0/80/100, M10).
             "auto_doc_clear": self.auto_doc_clear,
             "claude_auto_mode": self.claude_auto_mode,
-            "claude_ctx_autoclear": self.claude_ctx_autoclear,
-            "claude_ctx_threshold": self.claude_ctx_threshold,
-            "claude_ctx_min_interval": self.claude_ctx_min_interval,
-            "claude_ctx_action": self.claude_ctx_action,
-            "token_budget_day": self.token_budget_day,
-            "token_budget_session": self.token_budget_session,
-            "token_budget_5h": self.token_budget_5h,
-            "token_budget_account": self.token_budget_account,
-            "claude_long_turn_sec": self.claude_long_turn_sec,
-            "claude_repeat_alert": self.claude_repeat_alert,
-            "token_budget_resume_gate": self.token_budget_resume_gate,
-            "claude_budget_plan": self.claude_budget_plan,
             # C5: claude_tokens 용으로 위에서 계산한 _tok_total 을 그대로 넘겨
             # 계정 합계 전 패널 순회를 status 빌드당 1회로(중복 _all_panes 제거).
             "budget_level": self._budget_level_for(
@@ -195,6 +182,29 @@ class ServerIOMixin:
             "claude_pending": self._pending_action(
                 win.active_pane if win else None),
         }
+        # C4(PERFORMANCE_REVIEW 2026-06-07): 토글로만 바뀌는 정적 옵션은 **full** 일
+        # 때만 싣는다(신규 attach·_broadcast_session). 이들은 전부 set_* 핸들러가
+        # _broadcast_session(→ _send_full, full=True)으로 회신하므로 변경·접속 시 항상
+        # 도달하고, 주기(full=False) status 에선 빠져도 클라가 직전 값을 유지한다
+        # (clientwidgets.update_status 의 msg.get(k, self.k) 보존 패턴). claude_rules
+        # (문자열)·예산/컨텍스트 12필드가 스트리밍 중 30Hz 재직렬화·재전송되던 것을 없앤다.
+        if full:
+            msg.update({
+                "claude_rules": self.claude_rules,   # #27 시작 규칙(에디터 초기값용)
+                "claude_ctx_autoclear": self.claude_ctx_autoclear,
+                "claude_ctx_threshold": self.claude_ctx_threshold,
+                "claude_ctx_min_interval": self.claude_ctx_min_interval,
+                "claude_ctx_action": self.claude_ctx_action,
+                "token_budget_day": self.token_budget_day,
+                "token_budget_session": self.token_budget_session,
+                "token_budget_5h": self.token_budget_5h,
+                "token_budget_account": self.token_budget_account,
+                "claude_long_turn_sec": self.claude_long_turn_sec,
+                "claude_repeat_alert": self.claude_repeat_alert,
+                "token_budget_resume_gate": self.token_budget_resume_gate,
+                "claude_budget_plan": self.claude_budget_plan,
+            })
+        return msg
 
     async def _send_full(self, client: ClientConn):
         sess = client.session
