@@ -11,7 +11,8 @@
 
 결정적 장면(API 불필요)과 라이브 Claude 컷(진짜 `claude` 한 세션 실행 — 11/12/13/20/22)
 두 갈래다. 라이브 컷은 실제 API 호출이라 무인자 전체 생성에서 제외하고 claude-suite 로만
-돈다. 저장 SVG 의 계정 PII(이메일·환영 배너 이름)는 _redact_svg 가 마스킹한다.
+돈다. 저장 SVG 는 _redact_svg 가 후처리한다: 계정 PII(이메일·환영 배너 이름) 마스킹 +
+한글 등 와이드 문자의 자간 보정(Rich textLength 버그 교정, _fix_cjk_textlength).
 
 POSIX 전용(서버/PTY 가 stdlib pty 기반). 헤드리스라 디스플레이/실TTY 불필요.
 시계·호스트명 등 환경값은 실제값이 박힌다(재생성 시 그 부분만 diff 날 수 있음).

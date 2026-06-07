@@ -39,6 +39,22 @@ p4 submit -c NNNN
 - 진입점은 `pytmux.py`(얇은 진입점), 구현은 `pytmuxlib/` 패키지.
 - 의존성은 `requirements.txt` 에 명시한다.
 
+## 스크린샷 (매뉴얼 이미지)
+
+`docs/MANUAL.md` 의 이미지는 **수작업 캡처가 아니라** `scripts/gen_screenshots.py` 가
+실 클라이언트를 헤드리스로 운전해 SVG 로 생성한다(`docs/image/*.svg`). 설계·방법은
+[SCREENSHOT_SCENARIO.md](SCREENSHOT_SCENARIO.md), 사용법은 그 스크립트의 docstring 참고.
+
+- UI(테두리색·상태줄·팝업·탭바 등)나 매뉴얼 장면을 바꿨으면 **서브밋 전에 재생성**한다:
+  ```bash
+  python3 scripts/gen_screenshots.py            # 결정적 장면 전체 재생성
+  python3 scripts/gen_screenshots.py 14-info    # 이름 매칭 장면만
+  python3 scripts/gen_screenshots.py claude-suite  # 라이브 Claude 컷(실 API 호출)
+  ```
+- 저장 직후 `_redact_svg` 가 (1) 계정 PII(이메일·환영 배너 이름) 마스킹, (2) 한글 등
+  와이드 문자 자간 보정(Rich `textLength` 버그 교정)을 자동 적용한다 — 별도 작업 불필요.
+- 시계·호스트명 등 환경값은 실제값이 박혀 그 부분만 diff 가 날 수 있다(무해).
+
 ## 테스트
 
 - 변경 후 **서브밋 전에** 헤드리스 테스트를 돌린다: `python3 tests/run.py`
