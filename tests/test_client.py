@@ -1511,7 +1511,7 @@ async def test_big_calendar_digit_spacing():
         import calendar as _cal
         from datetime import datetime
         now = datetime.now()
-        weeks = _cal.Calendar(firstweekday=0).monthdayscalendar(now.year, now.month)
+        weeks = _cal.Calendar(firstweekday=6).monthdayscalendar(now.year, now.month)
         gw_big = 7 * DCW + 6 * DGAP
         nl_big = 2 + len(weeks) * RHB
         if not (ap["w"] >= gw_big + 2 and ap["h"] >= nl_big + 2):
