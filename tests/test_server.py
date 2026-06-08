@@ -149,11 +149,15 @@ async def test_startup_rules_injection():
 
 
 async def test_auto_dismiss_feedback_prompt():
-    # #26: Claude 세션 피드백 프롬프트가 뜨면 '0'(Dismiss)을 주입한다. 첫 '0'이
+    # #26: Claude 세션 피드백 프롬프트가 뜨면 Esc(Dismiss)을 주입한다. 첫 키가
     # 레이스로 누락될 수 있어 프롬프트가 남아 있는 동안 GAP 프레임 간격으로 최대
     # _FEEDBACK_MAX_TRIES 회 재주입하고, 프롬프트가 사라지면 다시 무장된다.
+    # Dismiss 키는 Esc 다 — '0' 은 비모달 배너 아래 컴포저에 그대로 찍혀 지워지지
+    # 않는 "00" 을 남기던 버그(사용자 보고)라 인쇄 불가 키 Esc 로 바꿨다.
     from pytmuxlib.claude import claude_feedback_prompt
-    from pytmuxlib.serverclaude import _FEEDBACK_GAP, _FEEDBACK_MAX_TRIES
+    from pytmuxlib.serverclaude import (_FEEDBACK_DISMISS_KEY, _FEEDBACK_GAP,
+                                        _FEEDBACK_MAX_TRIES)
+    assert _FEEDBACK_DISMISS_KEY == b"\x1b"   # Esc — 컴포저에 인쇄 문자를 남기지 않음
     assert claude_feedback_prompt("x How is Claude doing this session? (optional)")
     assert not claude_feedback_prompt("just normal output")
     srv, task, sock = await server_only()
@@ -166,15 +170,15 @@ async def test_auto_dismiss_feedback_prompt():
         p.feed(b"\x1b[2J\x1b[HHow is Claude doing this session? (optional)\r\n"
                b"  1: Bad   2: Fine   3: Good   0: Dismiss\r\n")
         srv._scan_claude(sess, win)
-        assert writes == [b"0"], writes
+        assert writes == [b"\x1b"], writes
         assert p._feedback_active is True and p._feedback_tries == 1
         # GAP 안의 연속 스캔은 재주입하지 않는다(간격 디바운스).
         srv._scan_claude(sess, win)
-        assert writes == [b"0"], "GAP 안에선 반복 주입 없음"
+        assert writes == [b"\x1b"], "GAP 안에선 반복 주입 없음"
         # GAP 프레임이 지나면 한 번 더 재주입(첫 키 누락 대비).
         for _ in range(_FEEDBACK_GAP):
             srv._scan_claude(sess, win)
-        assert writes == [b"0", b"0"], (writes, "GAP 경과 후 재시도")
+        assert writes == [b"\x1b", b"\x1b"], (writes, "GAP 경과 후 재시도")
         # 충분히 시도하면(MAX_TRIES) 더는 쏘지 않고 포기한다.
         for _ in range(_FEEDBACK_GAP * (_FEEDBACK_MAX_TRIES + 2)):
             srv._scan_claude(sess, win)

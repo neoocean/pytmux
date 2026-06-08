@@ -56,11 +56,18 @@ _HDR_CLAUDE_MISS = 30
 # 한 프레임 안 잡혀 idle 로 보였다 다시 busy)에 done 이 잘못 서서 탭이 잠깐 녹색이
 # 되는 것을 막는다. 30Hz flush 기준 ~0.1초 — 진짜 완료 알림 지연은 미미하다.
 _DONE_IDLE_FRAMES = 3
-# 세션 피드백 프롬프트 자동 Dismiss(#26) 재시도: 첫 '0'이 레이스(프롬프트 입력
+# 세션 피드백 프롬프트 자동 Dismiss(#26) 재시도: 첫 키가 레이스(프롬프트 입력
 # 핸들러가 아직 안 떴을 때)로 누락되면 한 번만 쏘고 영구 디바운스돼 메시지가 남던
 # 문제 → 프롬프트가 사라질 때까지 _FEEDBACK_GAP 프레임 간격으로 최대 _FEEDBACK_MAX_TRIES
 # 회 재주입한다(30Hz 기준 ~0.5초 간격 × 3회). 정적 화면에서도 재시도되도록 스캔을
 # 강제한다(pending). 충분히 시도하면 포기해 무한 스캔/스팸을 막는다.
+# Dismiss 키는 Esc(\x1b). 이 피드백 배너는 입력 컴포저 **위**에 비모달로 떠 있어
+# 컴포저가 계속 포커스를 갖는다 — 예전처럼 '0'(0x30)을 쏘면 Dismiss 되지 않고 그대로
+# 컴포저에 찍혀, 지워지지 않는 "00"이 프롬프트에 박히고 다음 입력에 딸려 들어간다
+# (사용자 보고). Claude Code 의 오버레이는 Space/Enter/Esc 로만 닫히는데, Space 는
+# 컴포저에 공백을, Enter 는 컴포저 제출을 유발할 수 있어 인쇄 불가·부작용 최소인 Esc 만
+# 쓴다(닫지 못해도 컴포저를 오염시키지 않음).
+_FEEDBACK_DISMISS_KEY = b"\x1b"
 _FEEDBACK_GAP = 15
 _FEEDBACK_MAX_TRIES = 3
 # M17(T7) 경고 임계는 opt(server.py: claude_long_turn_sec 기본 600 / claude_repeat_alert
@@ -505,7 +512,7 @@ class ServerClaudeMixin:
                             and p._idle_frames < _DONE_IDLE_FRAMES)
                            or (p._hdr_claude and not p._claude)
                            # 피드백 자동 Dismiss 재시도 중: 화면이 정적이어도
-                           # GAP 프레임마다 '0'을 다시 쏘려면 계속 스캔해야 한다(#26).
+                           # GAP 프레임마다 Esc 를 다시 쏘려면 계속 스캔해야 한다(#26).
                            or p._feedback_active)
                 if p._feed_seq == p._scan_seq and not pending:
                     continue
@@ -514,8 +521,8 @@ class ServerClaudeMixin:
                 old_cl = p._claude
                 new_cl = claude_state(txt)
                 # Claude 세션 피드백 프롬프트 자동 Dismiss(#26): "How is Claude doing
-                # this session?" 가 뜨면 '0'(Dismiss) 키를 한 번 주입해 치운다. 같은
-                # 화면에 반복 주입하지 않도록 사라질 때까지 디바운스한다.
+                # this session?" 가 뜨면 Esc(_FEEDBACK_DISMISS_KEY)를 한 번 주입해
+                # 치운다. 같은 화면에 반복 주입하지 않도록 사라질 때까지 디바운스한다.
                 if claude_feedback_prompt(txt):
                     if p._feedback_tries >= _FEEDBACK_MAX_TRIES:
                         # 충분히 시도함 → 포기(스캔 강제 해제, 스팸/무한 스캔 방지).
@@ -526,7 +533,7 @@ class ServerClaudeMixin:
                             p._feedback_tries += 1
                             p._feedback_wait = _FEEDBACK_GAP
                             try:
-                                p.pty.write(b"0")
+                                p.pty.write(_FEEDBACK_DISMISS_KEY)
                             except OSError:
                                 pass
                         else:

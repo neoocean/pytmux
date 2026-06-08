@@ -314,7 +314,9 @@ _PLAN_RE = re.compile(r"\b(Pro|Max|Team|Enterprise|Free)\b\s*"
 
 
 # Claude Code 세션 종료 시 뜨는 피드백 프롬프트("How is Claude doing this session?
-# 1:Bad 2:Fine 3:Good 0:Dismiss"). 자동으로 0(Dismiss) 을 눌러 치우기 위한 감지(#26).
+# 1:Bad 2:Fine 3:Good 0:Dismiss"). 자동으로 Esc 를 눌러 치우기 위한 감지(#26).
+# 주의: 표시는 "0:Dismiss" 지만 이 배너는 컴포저 위 비모달이라 '0' 을 쏘면 닫히지
+# 않고 컴포저에 찍힌다 — 실제 Dismiss 는 Esc/Space/Enter. serverclaude 참조.
 _FEEDBACK_RE = re.compile(r"How is Claude doing this session", re.I)
 
 
