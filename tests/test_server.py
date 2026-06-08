@@ -149,9 +149,11 @@ async def test_startup_rules_injection():
 
 
 async def test_auto_dismiss_feedback_prompt():
-    # #26: Claude 세션 피드백 프롬프트가 뜨면 '0'(Dismiss)을 한 번 주입하고, 같은
-    # 화면엔 반복 주입하지 않으며(디바운스), 프롬프트가 사라지면 다시 무장된다.
+    # #26: Claude 세션 피드백 프롬프트가 뜨면 '0'(Dismiss)을 주입한다. 첫 '0'이
+    # 레이스로 누락될 수 있어 프롬프트가 남아 있는 동안 GAP 프레임 간격으로 최대
+    # _FEEDBACK_MAX_TRIES 회 재주입하고, 프롬프트가 사라지면 다시 무장된다.
     from pytmuxlib.claude import claude_feedback_prompt
+    from pytmuxlib.serverclaude import _FEEDBACK_GAP, _FEEDBACK_MAX_TRIES
     assert claude_feedback_prompt("x How is Claude doing this session? (optional)")
     assert not claude_feedback_prompt("just normal output")
     srv, task, sock = await server_only()
@@ -165,12 +167,21 @@ async def test_auto_dismiss_feedback_prompt():
                b"  1: Bad   2: Fine   3: Good   0: Dismiss\r\n")
         srv._scan_claude(sess, win)
         assert writes == [b"0"], writes
-        assert p._feedback_seen is True
-        srv._scan_claude(sess, win)                # 재스캔 → 반복 주입 없음
-        assert writes == [b"0"], "디바운스(반복 주입 없음)"
+        assert p._feedback_active is True and p._feedback_tries == 1
+        # GAP 안의 연속 스캔은 재주입하지 않는다(간격 디바운스).
+        srv._scan_claude(sess, win)
+        assert writes == [b"0"], "GAP 안에선 반복 주입 없음"
+        # GAP 프레임이 지나면 한 번 더 재주입(첫 키 누락 대비).
+        for _ in range(_FEEDBACK_GAP):
+            srv._scan_claude(sess, win)
+        assert writes == [b"0", b"0"], (writes, "GAP 경과 후 재시도")
+        # 충분히 시도하면(MAX_TRIES) 더는 쏘지 않고 포기한다.
+        for _ in range(_FEEDBACK_GAP * (_FEEDBACK_MAX_TRIES + 2)):
+            srv._scan_claude(sess, win)
+        assert len(writes) == _FEEDBACK_MAX_TRIES, (writes, "최대 시도 상한")
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")  # 프롬프트 사라짐
         srv._scan_claude(sess, win)
-        assert p._feedback_seen is False, "사라지면 재무장"
+        assert p._feedback_active is False and p._feedback_tries == 0, "사라지면 재무장"
     finally:
         await teardown(srv, task, sock)
 
@@ -474,6 +485,77 @@ async def test_auto_doc_clear_sequence_and_guards():
         await teardown(srv, task, sock)
 
 
+async def test_auto_compact_idle_injects_slash_compact():
+    """요청: 토글 on 상태에서 busy→idle 가 N초 지속되면(타이머 만료=_acpt_fire)
+    '/compact'+Enter 를 1회 자동 주입한다. idle 이탈 시 무장 해제, 가드
+    (idle아님/진행중/수동모드/토글off)에선 발화 안 함. 토글 opts.json 영속."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        injected = []
+        srv._pc_inject = lambda pane, text: injected.append(text)
+
+        assert srv.auto_compact is False, "기본 off"
+        assert srv.set_auto_compact(True) is True
+        import json as _json
+        assert _json.load(open(srv.opts_path))["auto_compact"] is True
+
+        def go_idle():
+            p._claude = "busy"
+            p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+            srv._scan_claude(sess, win)
+
+        # busy→idle → 타이머 무장(아직 발화 안 함)
+        go_idle()
+        assert p._claude == "idle"
+        assert p._acpt_timer is not None
+        assert injected == []
+        # 타이머 만료(N초 지속 시뮬) → '/compact' 1회 주입
+        srv._acpt_fire(p)
+        assert injected == ["/compact"], injected
+
+        # idle 이탈(재busy) 시 _scan_claude 가 무장 해제
+        go_idle()
+        assert p._acpt_timer is not None
+        p._claude = "idle"
+        p.feed(b"\x1b[2J\x1b[H\x1b[2K\xe2\x86\x91 1k tokens\r\n")  # busy(↑ tokens)
+        srv._scan_claude(sess, win)
+        assert p._claude == "busy" and p._acpt_timer is None
+
+        # 발화 가드: idle아님/진행중/수동모드/토글off 면 _acpt_fire no-op
+        injected.clear()
+        p._claude = "busy"
+        srv._acpt_fire(p)
+        assert injected == [], "idle 아님 → no-op"
+        p._claude = "idle"
+        p._adc_active = True
+        srv._acpt_fire(p)
+        assert injected == [], "진행 중 → no-op"
+        p._adc_active = False
+        p.prompt_clear_mode = True
+        srv._acpt_fire(p)
+        assert injected == [], "수동 모드 → no-op"
+        p.prompt_clear_mode = False
+        srv.set_auto_compact(False)
+        srv._acpt_fire(p)
+        assert injected == [], "토글 off → no-op"
+
+        # 토글 off 시 무장된 타이머 일괄 해제
+        srv.set_auto_compact(True)
+        go_idle()
+        assert p._acpt_timer is not None
+        srv.set_auto_compact(False)
+        assert p._acpt_timer is None
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
 async def test_screen_prompt_reflects_remote_injected():
     """§10 #19: 데스크탑 앱 원격제어처럼 입력 경로(_track_prompt)를 안 거친 프롬프트
     도 화면 transcript 에서 추출해 헤더(last_prompt)/히스토리에 반영한다. 단 로컬
@@ -750,6 +832,99 @@ async def test_claude_auto_launch_rc_and_perm_auto():
             os.unlink(srv.opts_path)
         except OSError:
             pass
+        await teardown(srv, task, sock)
+
+
+async def test_rc_suppressed_after_org_policy_block():
+    """요청: '원격 제어가 조직 정책으로 비활성화' 메시지를 한 번 보면 이 세션(서버
+    프로세스) 동안 자동 /rc 를 영구 중단한다 — 매 새 세션마다 /rc 를 재시도해 같은
+    거부를 반복하지 않는다. 서버 전역 sticky 플래그(조직 단위 정책)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        rc = []
+        srv._pc_inject = lambda pane, text: rc.append(text)
+        srv._inject_keys = lambda pane, data: None
+
+        assert srv.claude_auto_launch is True and srv._rc_policy_blocked is False
+
+        def scan(s):
+            p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
+            srv._scan_claude(sess, win)
+
+        # 새 세션 → 첫 idle 에 /rc 1회 주입
+        scan("? for shortcuts")
+        assert p._claude == "idle" and rc == ["/rc"], rc
+        # /rc 결과로 조직 정책 거부 메시지가 뜸 → sticky 차단 + 무장 해제
+        scan("/remote-control\n"
+             "Remote Control is disabled by your organization's policy.")
+        assert srv._rc_policy_blocked is True
+        assert p._rc_pending is False
+        # 세션 종료 후 새 세션 → /rc 재무장·재주입 없음(차단 유지)
+        scan("$ ")
+        assert p._claude is None
+        rc.clear()
+        scan("? for shortcuts")
+        assert p._claude == "idle"
+        assert p._rc_pending is False, "차단 후 /rc 재무장 안 함"
+        assert rc == [], "차단 후 /rc 재주입 없음"
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
+async def test_manual_usage_panel_captured_for_5h_pct():
+    """요청: 사용자가 패널에서 직접 /usage 를 띄우면 그 **실측** 한도를 캡처해 상태줄
+    5h% 가 /usage 의 세션 %와 일치한다(예전엔 예산 추정치라 /usage 와 어긋남)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        # /usage 권위값이 없을 땐 추정 분모(학습 상한)로 100% 로 보이던 상황.
+        srv._learned_5h_cap = 1000
+        p._claude = "idle"
+        assert srv._tok5h_pct(p, 1000) == 100, "추정치(분모=학습상한)"
+        # 사용자가 /usage 를 띄움(패널 + Claude footer 동반) → 세션 61% 를 캡처.
+        panel = ("Current session\n  blocks 61% used\n  Resets 1:40pm (Asia/Seoul)\n"
+                 "Current week (all models)\n  blocks 41% used\n"
+                 "? for shortcuts\n")
+        p.feed(b"\x1b[2J\x1b[H" + panel.encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert isinstance(srv._usage, dict), srv._usage
+        assert srv._usage["session"]["pct"] == 61, srv._usage
+        p._claude = "idle"
+        assert srv._tok5h_pct(p, 1000) == 61, "이제 /usage 실측을 따른다"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_inline_session_limit_reflected_in_5h_pct():
+    """요청: /usage 패널을 안 열어도 footer 인라인 한도("used 93% of your session
+    limit")를 캡처해 상태줄 5h% 가 추정치(예산) 대신 실측 93% 를 따른다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        srv._learned_5h_cap = 1000
+        p._claude = "idle"
+        assert srv._tok5h_pct(p, 1000) == 100, "처음엔 추정치"
+        p.feed("\x1b[2J\x1b[H"
+               "You've used 93% of your session limit · resets 1:40pm "
+               "(Asia/Seoul) · /usage-credits to request more\r\n"
+               "? for shortcuts\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert isinstance(srv._usage, dict), srv._usage
+        assert srv._usage["session"]["pct"] == 93, srv._usage
+        p._claude = "idle"
+        assert srv._tok5h_pct(p, 1000) == 93, "인라인 실측을 따른다"
+    finally:
         await teardown(srv, task, sock)
 
 

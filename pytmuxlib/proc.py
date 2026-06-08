@@ -37,7 +37,8 @@ _CREATE_NEW_PROCESS_GROUP = 0x00000200
 _CREATE_NO_WINDOW = 0x08000000
 
 __all__ = ["IS_WINDOWS", "spawn_detached", "terminate", "is_alive",
-           "server_argv", "shell_argv", "no_window_kwargs"]
+           "server_argv", "shell_argv", "no_window_kwargs",
+           "open_in_file_manager"]
 
 
 def no_window_kwargs() -> dict:
@@ -70,6 +71,25 @@ def _windowless_python() -> Optional[str]:
         if os.path.exists(cand):
             return cand
     return None
+
+
+def open_in_file_manager(path: str) -> bool:
+    """경로(보통 디렉터리)를 OS 파일 관리자로 연다(클라이언트 머신 기준). 성공 추정 시
+    True. Windows=탐색기(os.startfile), macOS=open, Linux=xdg-open. 콘솔 앱이 아닌
+    GUI 호출이라 창 깜빡임이 없고, 실패는 조용히 False(호출부가 메시지 표시)."""
+    if not path:
+        return False
+    try:
+        if IS_WINDOWS:
+            os.startfile(path)  # type: ignore[attr-defined]  # Windows 전용
+            return True
+        opener = "open" if sys.platform == "darwin" else "xdg-open"
+        subprocess.Popen([opener, path], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         close_fds=True)
+        return True
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
 
 
 def shell_argv(cmd: str) -> List[str]:

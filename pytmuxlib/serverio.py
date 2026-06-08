@@ -192,6 +192,7 @@ class ServerIOMixin:
             "claude_header": self.claude_header,
             "single_border": self.single_border,
             "auto_doc_clear": self.auto_doc_clear,
+            "auto_compact": self.auto_compact,
             "claude_auto_mode": self.claude_auto_mode,
             # C5: claude_tokens 용으로 위에서 계산한 _tok_total 을 그대로 넘겨
             # 계정 합계 전 패널 순회를 status 빌드당 1회로(중복 _all_panes 제거).
@@ -569,6 +570,8 @@ class ServerIOMixin:
             self.set_coalesce_repaints(msg.get("value"))
         elif action == "set_auto_doc_clear":
             self.set_auto_doc_clear(msg.get("value"))
+        elif action == "set_auto_compact":
+            self.set_auto_compact(msg.get("value"))
         elif action == "set_claude_auto_mode":
             self.set_claude_auto_mode(msg.get("value"))
         elif action == "set_claude_ctx_autoclear":   # M11 잔량 자동 정리 토글
@@ -846,6 +849,7 @@ class ServerIOMixin:
             return
         self._track_prompt(p, data)   # 마지막 입력 프롬프트 추적(Claude 헤더용)
         self._adc_disarm(p)   # 사용자 입력 = 활동 중 → 자동 doc→/clear 발화 취소(§10)
+        self._acpt_disarm(p)  # 사용자 입력 → 자동 /compact 발화도 취소
         self._cancel_resume(p)  # M14: 사용자가 입력했으면 자동재개 예약도 취소(§5.3
         #   선점 — 사용자가 직접 키를 쳤다 = 작업을 이어받음 → continue 중복 주입 방지)
         # 입력 동기화 시 윈도우 내 모든 패널에 동일 입력 전달

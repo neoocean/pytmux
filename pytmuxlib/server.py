@@ -100,6 +100,11 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         # 입력/재busy 시엔 발화하지 않는다. opts.json 영속.
         self.auto_doc_clear = bool(_opts.get("auto_doc_clear", False))
         self.auto_doc_clear_delay = float(_opts.get("auto_doc_clear_delay", 30.0))
+        # 자동 /compact(요청): busy→idle 후 auto_compact_delay 초 지속되면 '/compact'
+        # +Enter 1회 주입(문서화 없이 컨텍스트 압축만). 기본 OFF(명시 토글). auto-doc-
+        # clear 와 같은 idle 경계에서 무장하므로 상호배타(doc-clear 우선). opts.json 영속.
+        self.auto_compact = bool(_opts.get("auto_compact", False))
+        self.auto_compact_delay = float(_opts.get("auto_compact_delay", 30.0))
         # 권한모드 자동 오토모드 전환(§10): Claude 패널이 idle 이고 권한모드 footer 가
         # auto(자동 수락)가 아니면 shift+tab 을 순환 주입해 auto 로 맞춘다. 기본 OFF.
         # bypass(권한 우회) 모드는 명시적·위험 설정이라 건드리지 않는다. opts.json 영속.
@@ -110,6 +115,11 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         # 작용한다(이후 사용자가 바꾸면 안 건드림). `/rc` 는 이미 원격제어가 켜진 화면
         # (claude_remote_active)에선 건너뛰어 도로 끄지 않는다. 기본 ON. opts.json 영속.
         self.claude_auto_launch = bool(_opts.get("claude_auto_launch", True))
+        # 원격 제어가 조직 정책으로 막혔다는 메시지("disabled by your organization")를
+        # 보면 세션(프로세스) 동안 자동 /rc 를 영구 중단하는 sticky 플래그(요청). 정책은
+        # 조직 단위라 서버 전역. 비영속(프로세스 한정) — 재시작 후 다시 시도해도 정책이
+        # 그대로면 곧 재감지된다.
+        self._rc_policy_blocked = False
         # Claude Code 시작 규칙(#27): 사용자가 에디터 팝업으로 저장해 둔 "항상 지킬
         # 규칙" 텍스트. 새 Claude 세션이 뜨면(또는 pytmux 가 /clear 한 뒤) 이 텍스트를
         # 프롬프트에 주입한다(빈 문자열이면 아무것도 안 함). opts.json 영속.
@@ -458,6 +468,7 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         "coalesce-repaints": "set_coalesce_repaints",
         "coalesce": "set_coalesce_repaints",
         "auto-doc-clear": "set_auto_doc_clear", "auto-doc": "set_auto_doc_clear",
+        "auto-compact": "set_auto_compact",
         "claude-auto-mode": "set_claude_auto_mode",
         "auto-mode": "set_claude_auto_mode",
         "claude-auto-launch": "set_claude_auto_launch",

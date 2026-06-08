@@ -343,6 +343,8 @@ class ServerPersistMixin:
                            "prompt_clear_message": self.prompt_clear_message,
                            "auto_doc_clear": self.auto_doc_clear,
                            "auto_doc_clear_delay": self.auto_doc_clear_delay,
+                           "auto_compact": self.auto_compact,
+                           "auto_compact_delay": self.auto_compact_delay,
                            "claude_auto_mode": self.claude_auto_mode,
                            "claude_auto_launch": self.claude_auto_launch,
                            "claude_rules": self.claude_rules,

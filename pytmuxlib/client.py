@@ -18,13 +18,13 @@ from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     _BOX_BITS, _BOX_REV, _DATE_STRFTIME, _JAMO, _KEY_DIAG, _ONOFF,
     _TB_ACTIVE_STYLE, _TB_BORDER_STYLE, _TB_INACTIVE_STYLE, _TIME_STRFTIME,
     _char_cells, _darken_style, _fmt_tokens, _is_emoji, _with_reverse,
-    has_hangul, hangul_to_qwerty,
+    has_hangul, hangul_to_qwerty, norm_sep,
     _normalize_key, _shell_argv, key_to_bytes, make_style, theme_color)
 from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 사용)
     ChooseBufferScreen, ChooseLayoutScreen, ChooseTreeScreen, ClaudeSaverScreen,
     CommandListScreen, CommandOptionsScreen, ConfirmScreen, InfoScreen,
-    InfoTabsScreen, MenuScreen, PermModeScreen, PromptScreen, RulesEditScreen,
-    TokenLogScreen)
+    InfoTabsScreen, MenuScreen, ModelCtxScreen, PermModeScreen, PromptScreen,
+    RulesEditScreen, TokenLogScreen)
 from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose 에서 사용)
     MultiplexerView, StatusBar, TabBar)
 from .keymap import _key_to_ctrl_bytes, _tmux_key_to_textual, load_config
@@ -50,6 +50,27 @@ def build_client_app(sock_path: str, config: dict | None = None,
     from textual.binding import Binding
     from textual.suggester import SuggestFromList
     from textual.widgets import Input
+
+    class SepInsensitiveSuggester(SuggestFromList):
+        """ghost 자동완성에서 공백·언더바·하이픈을 동일 취급한다(norm_sep).
+
+        'rename_'·'rename ' 를 쳐도 'rename-tab' 를 제안 — 명령 검색이 구분자
+        선택에 좌우되지 않게 한다. 후보·입력을 모두 norm_sep 로 통일해 prefix 비교."""
+        def __init__(self, suggestions, *, case_sensitive=False):
+            sugg = list(suggestions)
+            super().__init__(sugg, case_sensitive=case_sensitive)
+            # base 의 casefold 는 부모와 동일 규칙(case_sensitive=False → casefold).
+            base = sugg if case_sensitive else [s.casefold() for s in sugg]
+            self._sep_orig = sugg
+            self._sep_norm = [norm_sep(s) for s in base]
+
+        async def get_suggestion(self, value):
+            # 부모 _get_suggestion 이 case_sensitive=False 면 value 를 이미 casefold 함.
+            v = norm_sep(value)
+            for orig, norm in zip(self._sep_orig, self._sep_norm):
+                if norm.startswith(v):
+                    return orig
+            return None
 
     class PytmuxApp(App):
         ENABLE_COMMAND_PALETTE = False
@@ -121,6 +142,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._remote_zone = {}   # id -> (x0,x1,y) 원격제어 표시 클릭존
             self._footer_hover = None  # 호버 중인 footer 클릭존 (pane_id, "perm"|"remote")(§10)
             self._hdr_focus = None      # ESC 모드 Claude 헤더 포커스 대상 pane id(#5)
+            # ESC 모드에서 최하단 패널 ↓ → 하단 상태바 버튼 포커스(요청). 값은 현재
+            # 포커스된 버튼 키(None=비활성). ←→ 로 버튼 순환, Enter 로 실행, ↑/Esc 복귀.
+            self._status_focus = None
             self._claude_hidden_panes = set()  # 헤더를 숨긴 패널 id(#6 ② 팝업서 토글)
             self._tab_close_zone = None  # 현재 탭 닫기 [x] 영역 (x0, x1, y)
             self._active_hdr_row = None  # 활성 패널 프롬프트 헤더 행(닫기 [x] 위치, #15)
@@ -128,6 +152,21 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._undim_rows = set()     # 팝업 dim 에서 제외할 콘텐츠 행(클릭 원천, #29)
             self._last_esc_ts = 0.0      # ESC 오토리핏 디바운스용 직전 도착 시각(#32)
             self._ESC_DEBOUNCE = 0.06    # 이 초 안의 연속 ESC 만 오토리핏으로 무시(#36)
+            # ESC 모드 방향키로 패널을 옮기면 새로 활성화된 패널 테두리를 잠깐 깜빡여
+            # (warning↔active 교차) 어느 패널이 선택됐는지 또렷이 보이게 한다(요청).
+            # 클립보드 붙여넣기 진행 중 플래그(요청): 클립보드 읽기·이미지 저장이
+            # 외부 도구라 느려, 끝날 때까지 ESC 외 키 입력을 무시해 스트레이 키가
+            # 붙여넣기 후 패널로 새는 것을 막는다. 워커가 끝나면 해제.
+            self._pasting = False
+            # 패널에 적용되는 명령(rename-pane 등)을 명령 프롬프트에서 작성 중일 때,
+            # 그 명령이 적용될 패널(보통 활성 패널) 테두리를 밝게 표시해 어느 패널에
+            # 적용될지 보이게 한다(요청). PromptScreen 이 _set_cmd_target 로 세운다.
+            self._cmd_target_pane = None
+            self._flash_pending = False  # 다음 active 변경 시 깜빡일지(방향키가 세움)
+            self._pane_flash_id = None   # 깜빡이는 중인 패널 id
+            self._pane_flash_on = False  # 깜빡임 위상(True=warning 강조)
+            self._pane_flash_left = 0    # 남은 on/off 토글 횟수
+            self._pane_flash_timer = None
             # 네트워크 응답성(§10): 클라↔서버 ping/pong 왕복지연(RTT)을 주기 측정하고
             # 히스테리시스로 degraded 판정 — degraded 면 패널 외곽선을 빨강으로(회복 시
             # 원복). _net_ping_ts=미응답 ping 의 송신 monotonic 시각(None=응답됨).
@@ -366,6 +405,39 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 msg, action=lambda: self.send_cmd("kill_window"),
                 title=title, yes_label="닫기", danger=last)
 
+        def _set_cmd_target(self, on):
+            """패널 대상 명령을 프롬프트에서 작성 중일 때 대상 패널(활성)을 밝게
+            표시할지 토글한다(요청). 값이 바뀔 때만 재합성한다. 프롬프트가 닫히거나
+            대상 외 명령으로 바뀌면 off 로 해제한다."""
+            new = self.layout.get("active") if on else None
+            if new != self._cmd_target_pane:
+                self._cmd_target_pane = new
+                self._composite()
+
+        def _flash_pane(self, pid):
+            """패널 pid 의 테두리를 잠깐 깜빡인다(warning↔active 교차, ~0.4초). ESC
+            모드 방향키로 막 활성화된 패널을 또렷이 보이게 한다(요청). 타이머가 위상을
+            토글하며 _composite 를 다시 돌려 테두리 색만 바꾼다(레이아웃 영향 없음)."""
+            self._pane_flash_id = pid
+            self._pane_flash_on = True
+            self._pane_flash_left = 4          # on/off 4회 = 2번 깜빡임
+            if self._pane_flash_timer is not None:
+                self._pane_flash_timer.stop()
+            self._pane_flash_timer = self.set_interval(0.1, self._pane_flash_step)
+            self._composite()
+
+        def _pane_flash_step(self):
+            self._pane_flash_left -= 1
+            if self._pane_flash_left <= 0:
+                self._pane_flash_on = False
+                self._pane_flash_id = None
+                if self._pane_flash_timer is not None:
+                    self._pane_flash_timer.stop()
+                    self._pane_flash_timer = None
+            else:
+                self._pane_flash_on = not self._pane_flash_on
+            self._composite()
+
         def _pane_above(self):
             """활성 패널 위쪽(같은 열 범위)에 다른 패널이 있는지."""
             act = self.layout.get("active")
@@ -382,6 +454,108 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         p["x"] + p["w"] <= ax or p["x"] >= ax + aw):
                     return True
             return False
+
+        def _pane_below(self):
+            """활성 패널 아래쪽(같은 열 범위)에 다른 패널이 있는지(상태바 포커스 진입 판정)."""
+            act = self.layout.get("active")
+            panes = self.layout.get("panes", [])
+            ap = next((p for p in panes if p["id"] == act), None)
+            if not ap:
+                return False
+            ax, aw, abot = ap["x"], ap["w"], ap["y"] + ap["h"]
+            for p in panes:
+                if p["id"] == act:
+                    continue
+                if p["y"] >= abot and not (
+                        p["x"] + p["w"] <= ax or p["x"] >= ax + aw):
+                    return True
+            return False
+
+        def _status_buttons(self):
+            """ESC 모드 하단 포커스에서 ←→ 로 순환할 대상 키 목록(현재 화면에 있는
+            것만, 왼→오 시각 순서). 모델·토큰사용량은 Claude 활성 시, REC 는 캡처
+            중일 때만. host(ssh:서버명)·clock(시계)·date(달력)는 우측 상태에 그려질
+            때, perm("auto mode on" footer)은 활성 Claude 패널에 권한모드 footer 가
+            보일 때만 편입한다(요청)."""
+            sb = self.status
+            btns = []
+            if getattr(sb, "_model_zone", None):
+                btns.append("model")
+            if getattr(sb, "_usage_zone", None):
+                btns.append("usage")
+            if getattr(sb, "_rec_zone", None):
+                btns.append("rec")
+            if getattr(sb, "_host_zone", None):
+                btns.append("host")
+            if getattr(sb, "_clock_zone", None):
+                btns.append("clock")
+            if getattr(sb, "_date_zone", None):
+                btns.append("date")
+            # 활성 패널의 권한모드 footer("auto mode on")도 같은 동선에 편입(요청).
+            act = self.layout.get("active")
+            if act is not None and act in self._perm_zone:
+                btns.append("perm")
+            return btns
+
+        def _enter_status_focus(self):
+            """최하단 패널에서 ↓ → 상태바 버튼 포커스 진입(요청). 버튼이 없으면 무동작."""
+            btns = self._status_buttons()
+            if not btns:
+                return False
+            self._set_status_focus(btns[0])
+            return True
+
+        def _set_status_focus(self, key):
+            """하단 포커스 대상을 key 로 바꾸고 다시 그린다. 상태바 버튼은
+            focus_btn 으로 강조하고, perm("auto mode on" footer)은 패널 footer 줄에
+            그려지므로 _composite 로 강조한다(둘 다 갱신)."""
+            self._status_focus = key
+            self.status.focus_btn = key
+            self.status.refresh()
+            self._composite()   # perm footer 포커스 강조(요청)
+
+        def _exit_status_focus(self):
+            self._status_focus = None
+            self.status.focus_btn = None
+            self.status.refresh()
+            self._composite()
+
+        def _handle_status_focus(self, event):
+            """상태바 버튼 포커스 동선: ←→ 버튼 순환, Enter 실행, ↑/Esc/그 외 복귀."""
+            k = event.key
+            btns = self._status_buttons()
+            if not btns:               # 버튼이 사라짐 → 포커스 해제
+                self._exit_status_focus()
+                return
+            cur = self._status_focus if self._status_focus in btns else btns[0]
+            if k in ("left", "right"):
+                i = (btns.index(cur) + (1 if k == "right" else -1)) % len(btns)
+                self._set_status_focus(btns[i])
+            elif k == "enter":
+                act = self.layout.get("active")
+                self._exit_status_focus()
+                self._exit_esc()
+                if cur == "model":
+                    self.open_model_config()
+                elif cur == "usage":
+                    self.open_token_log()
+                elif cur == "rec":
+                    self.show_capture_info(self.status.capture_path,
+                                           self.status.capture_size)
+                elif cur == "host":
+                    self.show_status_tabs(initial=2)   # 서버 탭(#12, host 클릭과 동일)
+                elif cur == "clock":
+                    self.toggle_clock(act)             # 시계 오버레이 토글
+                elif cur == "date":
+                    self.toggle_calendar(act)          # 달력 오버레이 토글
+                elif cur == "perm":
+                    self.open_perm_mode(act)           # 권한모드 선택 팝업
+            elif k in ("up", "escape"):
+                self._exit_status_focus()   # 패널로 복귀(esc 모드 유지)
+                if k == "escape":
+                    self._exit_esc()
+            else:
+                self._exit_status_focus()
 
         def _start_reader(self):
             """현재 self.reader 에 묶인 새 reader 태스크를 띄운다. 연결 세대(_conn_gen)
@@ -535,7 +709,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def _dispatch(self, msg):
             t = msg.get("t")
             if t == "layout":
+                prev_active = self.layout.get("active")
                 self.layout = msg
+                new_active = msg.get("active")
+                # ESC 모드 방향키로 패널 전환을 요청했고(active 가 실제로 바뀜) 깜빡임이
+                # 예약돼 있으면 새 활성 패널을 깜빡인다(요청 — 선택 패널 가시화).
+                if (self._flash_pending and new_active is not None
+                        and new_active != prev_active):
+                    self._flash_pending = False
+                    self._flash_pane(new_active)
                 self._request_composite()
                 if not self._attached:
                     self._attached = True
@@ -712,20 +894,38 @@ def build_client_app(sock_path: str, config: dict | None = None,
             info = self.pane_claude.get(pid) or {}
             hist = info.get("history") or ([info["prompt"]]
                                            if info.get("prompt") else [])
-            lines = [f"{i + 1:>2}. {h}" for i, h in enumerate(hist)]
+            # 2칼럼 행: (번호, 본문) — 본문이 여러 줄이어도 번호 칼럼 아래로 새지
+            # 않고 본문 칼럼 안에 머문다(사용자 요청). 번호는 우측정렬 폭 보존.
+            rows = [(f"{i + 1}.", h) for i, h in enumerate(hist)]
             hidden = pid in self._claude_hidden_panes
             # 맨 나중에 입력한(최신) 프롬프트를 열 때 강조(#17). hist 는 시간순(오래된→
-            # 최신)이라 마지막 프롬프트 줄(len(hist)-1)을 선택해 그리로 스크롤한다.
+            # 최신)이라 마지막 프롬프트(len(hist)-1)를 선택해 그리로 스크롤한다.
             latest = (len(hist) - 1) if hist else None
-            # §10-A #8: 마지막 항목과 [h] footer 사이에 구분선(─). nav 에서 구분선은
-            # 건너뛰므로, 마지막 프롬프트에서 ↓ 한 번에 [h] 로 점프한다.
-            lines.append("─" * 24)
-            lines.append("  [h] 이 헤더 " + ("다시 표시" if hidden else "숨기기"))
+            # §10-A #8: 마지막 항목과 [h] footer 사이에 구분선(─, 전폭 문자열 행).
+            # nav 에서 구분선은 건너뛰므로, 마지막 프롬프트에서 ↓ 한 번에 [h] 로 점프.
+            rows.append("─" * 24)
+            rows.append("  [h] 이 헤더 " + ("다시 표시" if hidden else "숨기기"))
             self.push_screen(InfoScreen(
-                lines, title="프롬프트 히스토리(시간순)",
+                [], title="프롬프트 히스토리(시간순)",
                 hide_key="h", hide_cb=lambda: self.toggle_header_hidden(pid),
                 initial_index=latest, max_width=110,   # 좌우로 넓게(#17)
-                wrap_hang=True))                       # 긴 URL 하드 줄바꿈(§10-A #7)
+                col_rows=rows))                        # 번호/본문 2칼럼 표시
+
+        def open_model_config(self):
+            """Claude 모델·컨텍스트 변경 팝업(요청). 상태줄 모델 배지 클릭 / `model`
+            명령 / esc 모드 상태바 포커스로 연다. 고른 값은 활성 패널에 '/model <이름>'
+            (+컨텍스트 토큰)으로 주입한다 — 사용자가 직접 친 것과 같은 입력 경로."""
+            cur = getattr(self.status, "claude_model", None)
+            self.push_screen(ModelCtxScreen(cur), self._apply_model_config)
+
+        def _apply_model_config(self, res):
+            if not res:
+                return
+            model, ctx = res
+            arg = model if ctx in (None, "default") else f"{model} {ctx}"
+            # '/model <이름>' + Enter 주입(사용자 확인). 짧은 슬래시 명령이라 한 번에.
+            self.send_input(("/model " + arg + "\r").encode("utf-8"))
+            self.display_message(f"/model {arg} 적용 요청")
 
         def open_perm_mode(self, pane_id):
             """Claude 권한모드 선택 팝업을 연다(하단 footer 클릭, §10 item 2). 현재
@@ -792,6 +992,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             base_st = Style(color="white",
                             bgcolor=theme_color(self, "primary-darken-2"),
                             bold=True)
+            # 비활성 패널의 헤더 바는 한 단계 더 어둡게(요청) — 활성(밝은 파랑)과
+            # 비활성을 더 또렷이 구분한다. 활성 패널만 base_st(진파랑)를 쓴다.
+            inactive_hdr_st = Style(color="white",
+                                    bgcolor=theme_color(self, "primary-darken-3"),
+                                    bold=True)
             focus_st = Style(color="black", bgcolor=theme_color(self, "accent"),
                              bold=True)
             for p in self.layout.get("panes", []):
@@ -807,7 +1012,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 cx, cy, cw = p["x"], p["y"] - 1, p["w"]
                 if cw < 6 or not (0 <= cy < H):
                     continue
-                hdr_st = focus_st if p["id"] == self._hdr_focus else base_st
+                if p["id"] == self._hdr_focus:
+                    hdr_st = focus_st
+                elif p["id"] == active:
+                    hdr_st = base_st
+                else:
+                    hdr_st = inactive_hdr_st   # 비활성 헤더 바는 더 어둡게(요청)
                 for xx in range(cx, min(cx + cw, W)):   # 헤더 배경
                     cells[cy][xx] = (" ", hdr_st)
                 # 헤더 본문 전체가 클릭존(프롬프트 히스토리 팝업, #7)
@@ -1076,6 +1286,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 활성 패널의 경계 전체가 파란색이 되도록 한다.
             inactive_box = Style(color="grey42")
             active_box = Style(color=theme_color(self, "primary"), bold=True)
+            # 패널 선택 깜빡임(ESC 모드 방향키): 위상 on 일 때 그 패널 테두리를
+            # warning 색으로 그려 active(파랑)와 교차 점멸시킨다(선택 가시화, 요청).
+            flash_box = Style(color=theme_color(self, "warning"), bold=True)
             # 네트워크 응답성 저하(§10): RTT 히스테리시스로 degraded 면 모든 패널
             # 테두리를 error(빨강)로 덮어 사용자에게 알린다(회복되면 원복). 단일
             # ssh 채널을 전 패널이 공유하므로 전 패널 공통 상태.
@@ -1094,7 +1307,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if not box:
                     return
                 bx, by, bw, bh = box
-                st = active_box if p["id"] == active else inactive_box
+                if self._pane_flash_on and p["id"] == self._pane_flash_id:
+                    st = flash_box
+                elif self._cmd_target_pane is not None \
+                        and p["id"] == self._cmd_target_pane:
+                    st = flash_box   # 명령 대상 패널 — 밝게(요청)
+                elif p["id"] == active:
+                    st = active_box
+                else:
+                    st = inactive_box
                 x2, y2 = bx + bw - 1, by + bh - 1
 
                 def put(gx, gy, chc):
@@ -1231,8 +1452,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # Claude footer(권한모드/원격제어) 클릭존 호버 강조(§10): 클릭 가능 영역
             # 임을 알리려 그 줄 배경만 한 톤 입힌다(글자색 유지). 클릭존은 위에서 막
             # 재계산됐으므로 호버 대상이 아직 유효할 때만 칠한다(떨림 없음).
-            if self._footer_hover is not None:
-                _fpid, _fkind = self._footer_hover
+            # 호버, 또는 ESC 모드에서 "auto mode on"(perm) 포커스(요청) 시 강조.
+            _fh = self._footer_hover
+            if _fh is None and self._status_focus == "perm":
+                _act = self.layout.get("active")
+                if _act is not None and _act in self._perm_zone:
+                    _fh = (_act, "perm")
+            if _fh is not None:
+                _fpid, _fkind = _fh
                 _fzone = (self._perm_zone if _fkind == "perm"
                           else self._remote_zone).get(_fpid)
                 if _fzone:
@@ -1453,22 +1680,37 @@ def build_client_app(sock_path: str, config: dict | None = None,
               파일은 클라이언트 머신에 생기므로 클라이언트=서버(로컬)일 때 유효하다.
               저장에 실패하면(도구 부재/원격 등) 내부 앱이 **공유 OS 클립보드**에서 직접
               읽도록 Alt+V(=ESC v) 키스트로크로 폴백한다."""
-            txt = clientclip.paste()
-            if txt:
-                self.send_cmd("paste", text=txt)
+            # 클립보드 읽기/이미지 저장은 PowerShell 등 외부 도구라 수백 ms~수초
+            # 걸린다. 이벤트 루프에서 동기로 돌리면 화면이 멈춘 듯 보이고, 그동안 친
+            # 키가 붙여넣기 끝난 뒤 패널로 새어 들어간다(요청). 그래서 ① 즉시 안내
+            # 메시지를 띄우고 ② 실제 IO 는 워커(thread)로 돌려 루프를 안 막으며 ③
+            # 끝날 때까지 ESC 외 키를 무시한다(on_key 의 _pasting 가드). 진행 중 재호출 무시.
+            if self._pasting:
                 return
-            if clientclip.has_image():
-                path = clientclip.save_image()
-                if path:
-                    # 경로를 붙여넣어 앱이 첨부 이미지로 인식하게 한다(결정 ①).
-                    self.send_cmd("paste", text=path)
-                    self.display_message(f"클립보드 이미지 저장 → 경로 붙여넣기: {path}")
+            self._pasting = True
+            self.display_message("클립보드 붙여넣기 중… 잠시만요 (ESC 로 빠져나가기)")
+            self.run_worker(self._do_paste_clipboard(), exclusive=False)
+
+        async def _do_paste_clipboard(self):
+            try:
+                txt = await asyncio.to_thread(clientclip.paste)
+                if txt:
+                    self.send_cmd("paste", text=txt)
                     return
-                # 폴백: 내부 앱이 공유 클립보드에서 직접 읽도록 Alt+V.
-                self.send_input(b"\x1bv")   # ESC v = Alt+V
-                self.display_message("이미지 붙여넣기 → 내부 앱(Alt+V)")
-                return
-            self.display_message("클립보드가 비어있거나 읽을 수 없음")
+                if await asyncio.to_thread(clientclip.has_image):
+                    path = await asyncio.to_thread(clientclip.save_image)
+                    if path:
+                        # 경로를 붙여넣어 앱이 첨부 이미지로 인식하게 한다(결정 ①).
+                        self.send_cmd("paste", text=path)
+                        self.display_message(f"클립보드 이미지 → 경로 붙여넣기: {path}")
+                        return
+                    # 폴백: 내부 앱이 공유 클립보드에서 직접 읽도록 Alt+V.
+                    self.send_input(b"\x1bv")   # ESC v = Alt+V
+                    self.display_message("이미지 붙여넣기 → 내부 앱(Alt+V)")
+                    return
+                self.display_message("클립보드가 비어있거나 읽을 수 없음")
+            finally:
+                self._pasting = False
 
         def choose_buffer(self):
             self._want_buffers = True
@@ -1696,7 +1938,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.status.refresh()
                 return self._capture_info_lines()
 
-            actions = {0: ("c", "[c] 캡처 켜기/끄기", _toggle_capture)}
+            def _open_capture_dir():
+                # 기록 중인 캡처 파일이 있는 디렉터리를 OS 파일 관리자로 연다(요청).
+                # 캡처 경로는 클라이언트 머신 기준(서버=로컬일 때 유효). 없으면 안내.
+                path = getattr(self.status, "capture_path", None)
+                if path and proc.open_in_file_manager(os.path.dirname(path)):
+                    self.display_message("기록 폴더 열기")
+                else:
+                    self.display_message("열 기록 폴더가 없습니다(캡처 꺼짐)")
+                return None   # 줄 갱신 없음(팝업 유지)
+
+            actions = {0: [("c", "[c] 캡처 켜기/끄기", _toggle_capture),
+                           ("o", "[o] 기록 폴더 열기", _open_capture_dir)]}
             self.push_screen(InfoTabsScreen(
                 [("출력 캡처(REC)", cap), ("토큰 사용량", usage), ("서버", server)],
                 initial=initial, title="상태", actions=actions))
@@ -1768,8 +2021,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif key == "new_window":
                 self.send_cmd("new_window")
             elif key == "rename_window":
-                self.open_prompt("rename_window", "rename-tab",
-                                 self._active_window_name())
+                cur = self._active_window_name()
+                self.open_prompt("rename_window", cur or "rename-tab",
+                                 suggest=cur)   # 현재 이름=ghost(타이핑=덮어쓰기)
             elif key == "kill_window":
                 self.confirm_kill_tab()
             elif key == "next_window":
@@ -1812,6 +2066,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 "budget_plan": st.claude_budget_plan,
                 "ctx_autoclear": st.claude_ctx_autoclear,
                 "auto_doc_clear": st.auto_doc_clear,
+                "auto_compact": st.auto_compact,
                 "claude_auto_mode": st.claude_auto_mode,
                 "prompt_clear": st.prompt_clear,
             }
@@ -1870,6 +2125,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif key == "auto_doc_clear":
                 self.send_cmd("set_auto_doc_clear", value=None)
                 st.auto_doc_clear = not st.auto_doc_clear
+            elif key == "auto_compact":
+                self.send_cmd("set_auto_compact", value=None)
+                st.auto_compact = not st.auto_compact
             elif key == "claude_auto_mode":
                 self.send_cmd("set_claude_auto_mode", value=None)
                 st.claude_auto_mode = not st.claude_auto_mode
@@ -2042,12 +2300,26 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     return w.get("name", "")
             return ""
 
-        def open_prompt(self, purpose, placeholder="", initial="", action=None):
+        def _active_pane_title(self):
+            act = self.layout.get("active")
+            for p in self.layout.get("panes", []):
+                if p["id"] == act:
+                    return (p.get("title") or "").strip()
+            return ""
+
+        def open_prompt(self, purpose, placeholder="", initial="", action=None,
+                        suggest=None):
             # 한 줄 입력을 Input 을 담은 바닥 모달(PromptScreen)로 받는다.
             # 모달은 별도 스크린이라 포커스가 안정적이다(메인 뷰/AUTO_FOCUS 와 무관).
+            # suggest: rename 등에서 현재 이름을 **ghost(제안)** 로 띄운다 — Tab/→ 로
+            #   채워 편집·덧붙이고, 그냥 타이핑하면 덮어쓴다(initial 로 미리 채우면
+            #   타이핑이 덧붙던 문제, 요청). 빈 입력일 땐 placeholder 로도 흐리게 보인다.
             suggester = None
             if purpose == "command":
-                suggester = SuggestFromList(COMPLETIONS, case_sensitive=False)
+                suggester = SepInsensitiveSuggester(COMPLETIONS,
+                                                    case_sensitive=False)
+            elif suggest:
+                suggester = SuggestFromList([suggest], case_sensitive=False)
             self.push_screen(
                 PromptScreen(purpose, placeholder, initial, suggester),
                 lambda val: self._prompt_done(purpose, action, val))
@@ -2265,8 +2537,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if name:
                     self.send_cmd("rename_window", name=name)
                 else:
-                    self.open_prompt("rename_window", "rename-tab",
-                                     self._active_window_name())
+                    cur = self._active_window_name()
+                    self.open_prompt("rename_window", cur or "rename-tab",
+                                     suggest=cur)   # ghost(타이핑=덮어쓰기)
             elif c in ("resize-pane", "resizep"):
                 if "-Z" in args:
                     self.send_cmd("zoom")
@@ -2463,12 +2736,21 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif c in ("token-saver", "claude-settings", "token-settings"):
                 # 토큰 절감 설정 팝업 — 각 자동 개입 토글·잔량 임계·예산(설정 팝업).
                 self.open_claude_saver()
+            elif c in ("model", "model-config", "claude-model"):
+                # 모델·컨텍스트 변경 팝업(요청). 상태줄 모델 배지 클릭으로도 열린다.
+                self.open_model_config()
             elif c in ("auto-doc-clear", "auto-doc"):
                 # auto-doc-clear [on|off|toggle] — Claude 가 idle 로 30초 지속되면
                 # 자동으로 문서화→/clear 를 1회 수행(§10). 서버 전역 토글, opts 영속.
                 arg = args[0].lower() if args else "toggle"
                 val = (arg == "on") if arg in ("on", "off") else None
                 self.send_cmd("set_auto_doc_clear", value=val)
+            elif c in ("auto-compact", "auto-cmp"):
+                # auto-compact [on|off|toggle] — Claude 가 idle 로 30초 지속되면
+                # 자동으로 '/compact'+Enter 를 1회 주입(요청). 서버 전역 토글, opts 영속.
+                arg = args[0].lower() if args else "toggle"
+                val = (arg == "on") if arg in ("on", "off") else None
+                self.send_cmd("set_auto_compact", value=val)
             elif c in ("claude-auto-mode", "auto-mode"):
                 # claude-auto-mode [on|off|toggle] — Claude idle 시 권한모드를 자동
                 # 으로 오토모드로 맞춤(§10). 서버 전역 토글, opts 영속.
@@ -2583,6 +2865,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 메뉴/프롬프트 등 모달이 떠 있으면 그 스크린이 처리
             if len(self.screen_stack) > 1:
                 return
+            # 클립보드 붙여넣기 진행 중엔 ESC 외 키를 무시한다(요청): 외부 도구로
+            # 붙여넣는 동안 친 키가 완료 후 패널로 새는 것을 막는다. ESC/Shift+ESC 는
+            # 그대로 흘려 보내(빠져나갈 수단) 아래에서 평소대로 처리한다.
+            if self._pasting and event.key not in ("escape", "shift+escape"):
+                event.prevent_default()
+                event.stop()
+                return
             # ESC 오토리핏 디바운스(#32, #36): 터미널은 키 뗌(release) 이벤트를 주지
             # 않아 키를 누르고 있으면 같은 ESC 가 반복 도착해 모드가 깜빡인다. 직전 ESC
             # **도착** 후 _ESC_DEBOUNCE 초 안에 온 ESC/Shift+ESC 는 오토리핏으로 보고
@@ -2629,6 +2918,21 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.mode = "esc"
                 self.status.cmd_mode = True
                 self.status.refresh()
+                event.prevent_default()
+                event.stop()
+                return
+            # ESC 모드 진입은 위에서 즉시(동기) 이뤄지지만, 'ESC' 한 키를 누른 직후
+            # 아주 빨리 숫자를 누르면 터미널이 둘을 한 escape 시퀀스(\x1b<digit>)로
+            # 합쳐 **Alt+숫자**로 보내, ESC 가 단독 키로 안 와 모드 진입이 누락되고
+            # 숫자가 셸로 새던 문제(요청). Alt+숫자를 ESC 모드의 숫자키와 동일하게
+            # 그 번호(1-based) 탭으로 전환해 'esc 다음 숫자' 가 빠르게도 동작하게 한다.
+            if (len(event.key) == 5 and event.key.startswith("alt+")
+                    and event.key[4].isdigit()):
+                idx = int(event.key[4]) - 1
+                if any(t["index"] == idx for t in self.tabbar.tabs):
+                    self.send_cmd("select_window", index=idx)
+                else:
+                    self.tabbar.blink_active()   # 없는 번호 → 활성 탭 깜빡임 안내
                 event.prevent_default()
                 event.stop()
                 return
@@ -2720,12 +3024,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif k == "c":
                 self.send_cmd("new_window")
             elif k == "comma" or ch == ",":
-                self.open_prompt("rename_window", "rename-tab",
-                                 self._active_window_name())
+                cur = self._active_window_name()
+                self.open_prompt("rename_window", cur or "rename-tab",
+                                 suggest=cur)   # ghost(타이핑=덮어쓰기)
             elif k == "ampersand" or ch == "&":
                 self.confirm_kill_tab()
             elif k == "T":
-                self.open_prompt("rename_pane", "set pane title")
+                cur = self._active_pane_title()
+                self.open_prompt("rename_pane", cur or "set pane title",
+                                 suggest=cur)   # 현재 패널 제목=ghost
             elif k == "t":
                 self.toggle_clock(self.layout.get("active"))
             elif k == "R":
@@ -2789,6 +3096,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self._hdr_focus is not None:    # 헤더 포커스 해제(#5)
                 self._hdr_focus = None
                 self._composite()
+            if self._status_focus is not None:   # 상태바 버튼 포커스 해제(요청)
+                self._status_focus = None
+                self.status.focus_btn = None
             self.status.refresh()
 
         def _claude_header_panes(self):
@@ -2878,6 +3188,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self._hdr_focus is not None:       # Claude 헤더 포커스 동선(#5)
                 self._handle_hdr_focus(event)
                 return
+            if self._status_focus is not None:    # 하단 상태바 버튼 포커스 동선(요청)
+                self._handle_status_focus(event)
+                return
             # Shift+ESC: esc 모드에서도 활성 패널에 ESC(\x1b)를 전달한다(#22 — 예전엔
             # esc 모드에서 shift+escape 가 그 외 키와 함께 모드만 종료하고 ESC 를 안
             # 보냈다). 오버레이가 떠 있으면 그것부터 닫고, 아니면 ESC 전달 후 모드 종료.
@@ -2960,7 +3273,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 else:
                     self._hdr_focus = "close"   # 프롬프트 헤더 없어도 [x] 로 이동
                     self._composite()
+            elif k == "down" and not self._pane_below() \
+                    and self._enter_status_focus():
+                # 최하단 패널에서 ↓ → 하단 상태바 버튼 포커스(요청). 버튼이 없으면
+                # _enter_status_focus 가 False 라 아래 일반 select_pane 으로 떨어진다.
+                pass
             elif k in ("left", "right", "up", "down"):
+                # 전환된 새 활성 패널을 깜빡여 선택을 가시화(서버가 layout 으로
+                # active 를 바꿔 보내면 _dispatch 가 _flash_pane 을 띄운다).
+                self._flash_pending = True
                 self.send_cmd("select_pane", dir=k)  # 모드 유지(연속 이동)
             elif ch == ":" or k == "colon":
                 self._exit_esc()

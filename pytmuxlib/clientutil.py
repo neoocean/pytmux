@@ -157,6 +157,15 @@ def has_hangul(s: str) -> bool:
                or 0xAC00 <= ord(c) <= 0xD7A3 for c in s)
 
 
+def norm_sep(s: str) -> str:
+    """명령 검색 매칭에서 공백·언더바·하이픈을 모두 하이픈으로 통일한다.
+
+    사용자가 단어 구분자를 무엇으로 치든(스페이스/언더바/하이픈) 같은 명령에
+    매칭되게 한다 — 예: "rename ", "rename_", "rename-" 가 모두 "rename-tab" 에
+    매칭. 검색어와 후보(명령 이름)에 똑같이 적용해 비교하면 구분자가 무시된다."""
+    return s.replace(" ", "-").replace("_", "-")
+
+
 def hangul_to_qwerty(text: str) -> str:
     """한글(두벌식 IME 로 잘못 입력된 영문)을 QWERTY 영문으로 되돌린다.
 
@@ -333,6 +342,7 @@ SAVER_ROWS = [
     ("ctx_threshold", "  └ 잔량 임계", "cycle"),
     ("ctx_min_interval", "  └ 정리 빈도 상한", "cycle"),
     ("auto_doc_clear", "idle 지속 시 자동 문서화+/clear", "toggle"),
+    ("auto_compact", "idle 지속 시 자동 /compact", "toggle"),
     ("claude_auto_mode", "권한모드 자동 오토", "toggle"),
     ("prompt_clear", "프롬프트 단위 클리어(완료마다 doc+/clear)", "toggle"),
     ("budget_day", "일 토큰 예산", "cycle"),
@@ -430,9 +440,11 @@ COMMANDS = [
     ("prompt-clear-message", "프롬프트 단위 클리어의 문서화 지시문 변경", "Claude"),
     ("prompt-clear-queue", "프롬프트 단위 클리어 큐에 명령 쌓기(빈값=목록, -c=비움)", "Claude"),
     ("claude-rules", "Claude 시작 규칙 편집(저장 시 새 세션/clear 후 프롬프트에 자동 주입)", "Claude"),
+    ("model", "모델·컨텍스트 변경 팝업(상태줄 모델 배지 클릭으로도 열림, /model 주입; 별칭 model-config, claude-model)", "Claude"),
     ("version", "클라/서버 버전(p4 CL)·업타임 팝업(별칭 about)", "설정/기타"),
     ("token-saver", "토큰 절감 설정 팝업 — 각 자동 개입 토글·잔량 임계·예산(별칭 claude-settings, token-settings)", "Claude"),
     ("auto-doc-clear", "Claude idle 30초 지속 시 자동 문서화+/clear on/off (auto-doc-clear on|off|toggle)", "Claude"),
+    ("auto-compact", "Claude idle 30초 지속 시 자동 /compact on/off (auto-compact on|off|toggle)", "Claude"),
     ("claude-auto-mode", "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off (claude-auto-mode on|off|toggle)", "Claude"),
     ("auto-launch", "새 Claude 세션 시작 시 /rc(원격 제어)+권한모드 auto 1회 자동 적용 on/off (auto-launch on|off|toggle, 기본 on)", "Claude"),
     ("run-shell", "셸 명령 실행", "설정/기타"),
@@ -531,4 +543,15 @@ COMMAND_FREETEXT = {
     "if-shell", "bind-key", "unbind-key", "token-account",
     "prompt-clear-message", "prompt-clear-queue", "select-tab", "move-tab",
     "swap-tab", "resize-pane", "capture-pane", "join-pane",
+}
+
+# 활성 패널에 적용되는 명령들. 명령 프롬프트에서 이 명령을 작성 중이면 대상(활성)
+# 패널 테두리를 밝게 표시해 어느 패널에 적용될지 보이게 한다(요청). 탭/서버 범위
+# 명령(rename-tab·new-window 등)은 제외 — 특정 패널 대상이 아니다.
+PANE_SCOPED_CMDS = {
+    "rename-pane", "resize-pane", "select-pane", "swap-pane", "break-pane",
+    "join-pane", "respawn-pane", "kill-pane", "capture-pane", "pipe-pane",
+    "clear-history", "send-keys", "send-escape", "paste-buffer",
+    "paste-clipboard", "split-window", "clock-mode", "calendar-mode",
+    "open-clock", "close-clock", "open-calendar", "close-calendar",
 }

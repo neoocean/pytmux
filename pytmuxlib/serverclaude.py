@@ -14,9 +14,11 @@ import time
 from . import tokens
 from .claude import (claude_account, claude_context_pct, claude_feedback_prompt,
                      claude_model, claude_prompt, claude_perm_mode,
-                     claude_remote_active, claude_state, claude_usage,
-                     claude_welcome, ctx_window_tokens, parse_reset_delay,
-                     screen_tail_key, track_repeat)
+                     claude_remote_active, claude_remote_blocked,
+                     claude_state, claude_usage,
+                     claude_welcome, ctx_window_tokens, parse_inline_limit,
+                     parse_reset_delay, parse_usage, screen_tail_key,
+                     track_repeat)
 from .model import Pane, Session
 
 # 권한모드 자동 오토모드 전환(§10): 한 번 idle 진입 후 auto 에 도달하지 못해도 이
@@ -53,6 +55,13 @@ _HDR_CLAUDE_MISS = 30
 # 한 프레임 안 잡혀 idle 로 보였다 다시 busy)에 done 이 잘못 서서 탭이 잠깐 녹색이
 # 되는 것을 막는다. 30Hz flush 기준 ~0.1초 — 진짜 완료 알림 지연은 미미하다.
 _DONE_IDLE_FRAMES = 3
+# 세션 피드백 프롬프트 자동 Dismiss(#26) 재시도: 첫 '0'이 레이스(프롬프트 입력
+# 핸들러가 아직 안 떴을 때)로 누락되면 한 번만 쏘고 영구 디바운스돼 메시지가 남던
+# 문제 → 프롬프트가 사라질 때까지 _FEEDBACK_GAP 프레임 간격으로 최대 _FEEDBACK_MAX_TRIES
+# 회 재주입한다(30Hz 기준 ~0.5초 간격 × 3회). 정적 화면에서도 재시도되도록 스캔을
+# 강제한다(pending). 충분히 시도하면 포기해 무한 스캔/스팸을 막는다.
+_FEEDBACK_GAP = 15
+_FEEDBACK_MAX_TRIES = 3
 # M17(T7) 경고 임계는 opt(server.py: claude_long_turn_sec 기본 600 / claude_repeat_alert
 # 기본 3, 0=끔). 스캔의 warn 블록이 self.* 를 읽는다.
 
@@ -309,6 +318,53 @@ class ServerClaudeMixin:
         pane._pc_phase = None
         self._pc_advance(pane)
 
+    # ---- 자동 /compact(요청): idle 지속 N초 후 1회 '/compact'+Enter 주입 ----
+    # auto-doc-clear(문서화→/clear)의 단순 자매: 문서화 없이 /compact 한 줄만 넣어
+    # 컨텍스트를 압축한다. 둘은 같은 idle 경계에서 무장하므로 상호배타(arming elif).
+    def set_auto_compact(self, value=None):
+        """Claude idle 지속 시 자동 /compact 모드 토글. value 미지정 시 반전.
+        끄면 무장된 모든 패널 타이머를 해제한다. opts.json 영속."""
+        self.auto_compact = (not self.auto_compact) if value is None \
+            else bool(value)
+        if not self.auto_compact:
+            for p in self._all_panes():
+                self._acpt_disarm(p)
+        self._save_opts()
+        return self.auto_compact
+
+    def _acpt_disarm(self, pane: Pane):
+        """무장된 자동 /compact 타이머를 해제한다(사용자 입력·재busy·세션 종료·토글
+        off 시). 핸들이 없으면 무동작."""
+        t = getattr(pane, "_acpt_timer", None)
+        if t is not None:
+            t.cancel()
+            pane._acpt_timer = None
+
+    def _acpt_arm(self, pane: Pane):
+        """idle 진입 시점에 무장: auto_compact_delay 초 뒤 _acpt_fire 를 예약한다.
+        기존 타이머가 있으면 먼저 해제(재무장). 실행 중 루프가 없으면(테스트가
+        _scan_claude 를 동기 호출) 조용히 패스한다(_adc_arm 와 동일)."""
+        self._acpt_disarm(pane)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        pane._acpt_timer = loop.call_later(
+            self.auto_compact_delay, self._acpt_fire, pane)
+
+    def _acpt_fire(self, pane: Pane):
+        """타이머 만료(idle 가 N초 지속됨): 조건 재확인 후 '/compact'+Enter 1회 주입.
+        idle 가 아니거나(그새 busy/limit/종료), 자동 doc→clear/수동 prompt-clear 시퀀스가
+        진행 중이거나, 토글이 꺼졌으면 발화하지 않는다."""
+        pane._acpt_timer = None
+        if not self.auto_compact:
+            return
+        if pane._claude != "idle":
+            return
+        if pane._adc_active or pane.prompt_clear_mode:
+            return
+        self._pc_inject(pane, "/compact")   # 한 줄 입력 + Enter
+
     # ---- 권한모드 자동 오토모드 전환(§10) ----
     def set_claude_auto_mode(self, value=None):
         """Claude idle 시 권한모드를 auto 로 자동 맞추는 모드 토글. value 미지정 시
@@ -434,7 +490,10 @@ class ServerClaudeMixin:
                 # (안정 idle·안정 비Claude) 패널만 건너뛴다.
                 pending = ((p._was_busy and p._claude == "idle"
                             and p._idle_frames < _DONE_IDLE_FRAMES)
-                           or (p._hdr_claude and not p._claude))
+                           or (p._hdr_claude and not p._claude)
+                           # 피드백 자동 Dismiss 재시도 중: 화면이 정적이어도
+                           # GAP 프레임마다 '0'을 다시 쏘려면 계속 스캔해야 한다(#26).
+                           or p._feedback_active)
                 if p._feed_seq == p._scan_seq and not pending:
                     continue
                 p._scan_seq = p._feed_seq
@@ -445,14 +504,55 @@ class ServerClaudeMixin:
                 # this session?" 가 뜨면 '0'(Dismiss) 키를 한 번 주입해 치운다. 같은
                 # 화면에 반복 주입하지 않도록 사라질 때까지 디바운스한다.
                 if claude_feedback_prompt(txt):
-                    if not p._feedback_seen and p.pty is not None:
-                        p._feedback_seen = True
-                        try:
-                            p.pty.write(b"0")
-                        except OSError:
-                            pass
+                    if p._feedback_tries >= _FEEDBACK_MAX_TRIES:
+                        # 충분히 시도함 → 포기(스캔 강제 해제, 스팸/무한 스캔 방지).
+                        p._feedback_active = False
+                    else:
+                        p._feedback_active = True   # 정적 화면에도 스캔 유지(재시도)
+                        if p._feedback_wait <= 0 and p.pty is not None:
+                            p._feedback_tries += 1
+                            p._feedback_wait = _FEEDBACK_GAP
+                            try:
+                                p.pty.write(b"0")
+                            except OSError:
+                                pass
+                        else:
+                            p._feedback_wait -= 1
                 else:
-                    p._feedback_seen = False
+                    p._feedback_active = False
+                    p._feedback_tries = 0
+                    p._feedback_wait = 0
+                # 원격 제어가 조직 정책으로 막혔다는 메시지를 한 번이라도 보면, 이
+                # 세션(서버 프로세스) 동안 /rc 자동 주입을 영구 중단한다(요청). 정책은
+                # 조직 단위라 서버 전역 플래그로 둬 모든 패널에 적용한다 — 안 그러면
+                # 매 새 세션(/clear·재시작)마다 /rc 를 재시도해 같은 거부가 반복된다.
+                if not self._rc_policy_blocked and claude_remote_blocked(txt):
+                    self._rc_policy_blocked = True
+                    for q in self._all_panes():
+                        q._rc_pending = False   # 무장된 자동 /rc 예약도 거둔다
+                # 사용자가 패널에서 직접 /usage 를 띄우면 그 **실측** 한도를 캡처해
+                # 권위값(self._usage)으로 둔다 — 상태줄 5h%·토큰 화면 그래프가 /usage 와
+                # 어긋나던 문제(요청). 그림자 probe 결과와 같은 형식이라 그대로 저장하고,
+                # 패널이 사라져도 마지막 값을 유지한다(덮어쓸 때만 갱신·broadcast).
+                # ① /usage 패널(전체, 권위) ② footer 인라인 한도(부분: "used 93% of
+                # your session limit"). 둘 중 무엇이든 보이면 캡처해 상태줄 5h% 가 추정치
+                # 대신 실측을 따르게 한다(요청). 인라인은 기존 _usage 에 병합(세션/주간만
+                # 갱신, 패널서 받은 다른 키는 보존). 패널이 사라져도 마지막 값 유지.
+                new_usage = None
+                if "Current" in txt and "used" in txt:
+                    new_usage = parse_usage(txt)
+                if "limit" in txt and "used" in txt:
+                    inline = parse_inline_limit(txt)
+                    if inline:
+                        base = dict(self._usage) \
+                            if isinstance(self._usage, dict) else {}
+                        if new_usage:
+                            base.update(new_usage)
+                        base.update(inline)
+                        new_usage = base
+                if new_usage and new_usage != self._usage:
+                    self._usage = new_usage
+                    changed = True
                 # 사용량 표시는 Claude 세션이 살아 있는 동안 유지한다(#5): 화면에서
                 # 토큰 문구가 잠시 사라져도(스크롤 등) 마지막 값을 보존하고, 세션이
                 # 끝나면(claude None) 비운다.
@@ -495,7 +595,8 @@ class ServerClaudeMixin:
                     # 1회 적용. _rc_pending 가 idle 에서 /rc 를 쏘고 _perm_auto_pending
                     # 으로 넘겨, 다음 idle 에 _perm_target=auto 를 세운다(프레임 분리로
                     # /rc 제출과 shift+tab 이 한 묶음으로 섞이지 않게).
-                    if self.claude_auto_launch:
+                    # 조직 정책으로 /rc 가 막힌 세션이면 자동 /rc 를 재무장하지 않는다.
+                    if self.claude_auto_launch and not self._rc_policy_blocked:
                         p._rc_pending = True
                     p._ctx_fired = False   # 새 세션 — 잔량 자동정리 디바운스 해제(M11)
                     p._ctx_pct = None      # 새 세션 — 잔량% 추적 리셋(M15)
@@ -619,6 +720,7 @@ class ServerClaudeMixin:
                 # 자동전환 시도 카운터도 idle 이탈 시 리셋(다음 idle 진입에 다시 시도).
                 if new_cl != "idle":
                     self._adc_disarm(p)
+                    self._acpt_disarm(p)   # idle 끊김 → 자동 /compact 무장 해제
                     p._cam_tries = 0
                     p._cam_last = None
                 else:
@@ -633,7 +735,9 @@ class ServerClaudeMixin:
                     # /rc 를 건너뛰어 도로 끄지 않는다.
                     if p._rc_pending:
                         p._rc_pending = False
-                        if not claude_remote_active(txt):
+                        # 조직 정책으로 막혔거나 이미 원격제어가 켜진 화면이면 /rc 생략.
+                        if (not self._rc_policy_blocked
+                                and not claude_remote_active(txt)):
                             self._pc_inject(p, "/rc")
                         p._perm_auto_pending = True
                     elif p._perm_auto_pending:
@@ -708,6 +812,8 @@ class ServerClaudeMixin:
                                 self._ctx_intervene(p)
                         elif self.auto_doc_clear:
                             self._adc_arm(p)
+                        elif self.auto_compact:
+                            self._acpt_arm(p)   # idle N초 후 /compact(요청)
                 # M17(T7) 표시 경고 갱신(grade0 — 알림만, 개입 없음). S9 장기 턴 우선,
                 # 아니면 S8 반복 루프. 임계는 opt(0=끔). 세션 종료 시 상태 리셋.
                 warn = None

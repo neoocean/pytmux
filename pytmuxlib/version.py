@@ -12,6 +12,8 @@ from __future__ import annotations
 import os
 import subprocess
 
+from . import proc
+
 # pytmux 프로젝트 루트(= pytmuxlib 패키지의 상위). server.PROJECT_DIR 과 동일 규칙.
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -24,9 +26,12 @@ def code_version(project_dir: str | None = None, timeout: float = 1.5) -> str:
     d = project_dir or PROJECT_DIR
     # ① p4 #have — 이 워크스페이스에 동기화된 CL(=디스크 코드 리비전).
     try:
+        # no_window_kwargs: 창 없는 pythonw.exe 로 뜬 서버가 콘솔 앱(p4.exe)을
+        # 부팅 시 띄울 때 콘솔 창이 번쩍이지 않게(§10 사용자 보고: 딸려 뜨는 창).
         out = subprocess.run(
             ["p4", "changes", "-m1", os.path.join(d, "...") + "#have"],
-            capture_output=True, timeout=timeout, cwd=d)
+            capture_output=True, timeout=timeout, cwd=d,
+            **proc.no_window_kwargs())
         if out.returncode == 0:
             text = out.stdout.decode("utf-8", "ignore").strip()
             # "Change 57008 on ... by ..." → 57008
@@ -38,7 +43,8 @@ def code_version(project_dir: str | None = None, timeout: float = 1.5) -> str:
     # ② git short hash 폴백.
     try:
         out = subprocess.run(["git", "-C", d, "rev-parse", "--short", "HEAD"],
-                             capture_output=True, timeout=timeout)
+                             capture_output=True, timeout=timeout,
+                             **proc.no_window_kwargs())
         if out.returncode == 0:
             h = out.stdout.decode("utf-8", "ignore").strip()
             if h:

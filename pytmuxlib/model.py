@@ -433,6 +433,9 @@ class Pane:
         # 재시작 직렬화(_RESUME_FIELDS) 대상이 아니다.
         self._adc_timer = None
         self._adc_active = False
+        # 자동 /compact(요청): idle 가 auto_compact_delay 초 지속되면 1회 '/compact'
+        # +Enter 주입. _acpt_timer 는 무장된 타이머 핸들(없으면 None, 휘발성).
+        self._acpt_timer = None
         # 권한모드 자동 오토모드 전환(§10): idle 일 때 footer 가 auto 가 아니면
         # shift+tab 을 순환 주입한다(서버 옵션 claude_auto_mode 가 켜졌을 때만).
         # _cam_tries 는 이번 idle 진입 후 보낸 횟수(무한 순환 가드 _CAM_MAX), _cam_last
@@ -456,7 +459,12 @@ class Pane:
         self._done_tail = None
         self._repeat_n = 0
         self._claude_warn = None
-        self._feedback_seen = False  # 세션 피드백 프롬프트 자동 Dismiss 디바운스(#26)
+        # 세션 피드백 프롬프트 자동 Dismiss(#26): 첫 '0'이 누락돼도 프롬프트가
+        # 사라질 때까지 GAP 프레임마다 최대 MAX_TRIES 회 재주입(정적 화면에도 스캔
+        # 유지). active=재시도 중, tries=쏜 횟수, wait=다음 재시도까지 남은 프레임.
+        self._feedback_active = False
+        self._feedback_tries = 0
+        self._feedback_wait = 0
         # 수동 /clear 감지 디바운스: 환영 배너가 화면에 머무는 동안 매 프레임 토큰
         # 세션을 재리셋하지 않게, 배너가 "새로 떴을" 때만 1회 끊는다(claude_welcome).
         self._welcome_seen = False

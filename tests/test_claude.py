@@ -112,6 +112,11 @@ async def test_claude_usage():
     assert claude_usage("Context low (8% remaining)") == "ctx:8%"
     assert claude_usage("used 45.2k tokens") == "45.2k tok"
     assert claude_usage("a normal line") is None
+    # 단위 없는 작은 수("1 token" 등)는 컨텍스트 지표가 아니라 노이즈 → 무시(요청:
+    # 상태줄에 "1 tok" 오표시). 단위(k/M)가 붙은 값만 컨텍스트 토큰으로 채택.
+    assert claude_usage("Read 1 token from cache") is None
+    assert claude_usage("processed 987 tokens") is None
+    assert claude_usage("ctx 1.2M tokens") == "1.2M tok"
 
 
 async def test_claude_usage_context_badge():
@@ -128,7 +133,7 @@ async def test_parse_usage():
     import os
     from pytmuxlib.claude import parse_usage
     fix = os.path.join(os.path.dirname(__file__), "fixtures", "claude", "usage.txt")
-    u = parse_usage(open(fix).read())     # 실 raw 레이아웃(줄 분리)
+    u = parse_usage(open(fix, encoding="utf-8").read())  # 실 raw 레이아웃(줄 분리)
     assert u["session"] == {"pct": 2, "reset": "2pm (Asia/Seoul)"}, u
     assert u["week_all"]["pct"] == 14
     assert u["week_all"]["reset"] == "Jun 13 at 3am (Asia/Seoul)"
@@ -139,6 +144,20 @@ async def test_parse_usage():
     assert u2["session"] == {"pct": 10, "reset": "5am (Asia/Seoul)"}, u2
     # 헤더만 있고 % 없으면 그 항목은 누락(짝 안 맞음)
     assert parse_usage("Current session\nResets 5am") is None
+
+
+async def test_parse_inline_limit():
+    """footer 인라인 한도("used 93% of your session limit · resets …")에서 % 추출."""
+    from pytmuxlib.claude import parse_inline_limit
+    u = parse_inline_limit(
+        "You've used 93% of your session limit · resets 1:40pm (Asia/Seoul)"
+        " · /usage-credits to request more")
+    assert u["session"]["pct"] == 93, u
+    assert "1:40pm" in u["session"]["reset"], u
+    u2 = parse_inline_limit("you've used 41% of your weekly limit · resets Jun 11")
+    assert u2["week_all"]["pct"] == 41, u2
+    assert u2["week_all"]["reset"] == "Jun 11", u2
+    assert parse_inline_limit("just normal output") is None
 
 
 async def test_screen_tail_key_and_track_repeat():

@@ -263,6 +263,19 @@ async def restart_check(app, pilot):
     await pilot.pause(0.4)
 
 
+async def restart_confirm(app, pilot):
+    # 드라이런 FAIL → "그래도 재시작?" 재확인 팝업(MANUAL §15.2). 위험 동작이라
+    # danger=True(취소 붉은 강조, 기본 취소). 대표 FAIL 메시지로 직접 띄운다.
+    msg = "\n".join([
+        "드라이런 FAIL — 전체 재시작 안전 점검에서 문제가 있습니다:", "",
+        "  [FAIL] 서버 re-exec 지원(POSIX·이벤트루프)",
+        "  [FAIL] 패널 master fd 보유 (0/4)",
+        "", "그래도 재시작할까요?"])
+    app.confirm_popup(msg, action=lambda: None, title="재시작 확인",
+                      yes_label="재시작", danger=True)
+    await pilot.pause(0.4)
+
+
 async def token_saver(app, pilot):
     # 토큰 절감 설정 팝업(token-saver) — 자동 개입 토글·잔량 임계·예산·경고 설정행.
     app.open_claude_saver()
@@ -392,6 +405,7 @@ SCENES = [
     ("18-clock", "시계 모드 — 큰 블록 시계", clock),
     ("19-confirm-tab-last", "마지막 탭 닫기 — pytmux 종료 경고 팝업", confirm_tab_last),
     ("21-restart-check", "restart-check 드라이런 — 작업보존 재시작 안전점검", restart_check),
+    ("26-restart-confirm", "재시작 확인 — 드라이런 FAIL 시 '그래도 재시작?'(기본 취소)", restart_confirm),
     ("23-token-saver", "토큰 절감 설정 팝업(token-saver) — 자동개입 토글·임계·예산·경고", token_saver),
     ("24-token-log", "토큰 사용량 팝업 — 마우스 서브탭(시간/일/주/월) + /usage 실측 한도", token_log),
     ("25-remote-control", "원격 제어 팝업 — [r] 로 /rc 토글", remote_control),

@@ -807,6 +807,7 @@ class StatusBar(Widget):
         self.usage_limits = None  # M19: 그림자 /usage 세션·주간 한도 dict
         # 토큰 절감 설정(설정 팝업 토글 현재값 + 예산 경고, docs/TOKEN_SAVING_SCENARIO).
         self.auto_doc_clear = False
+        self.auto_compact = False
         self.claude_auto_mode = False
         self.claude_ctx_autoclear = False
         self.claude_ctx_threshold = 15
@@ -836,7 +837,9 @@ class StatusBar(Widget):
         self._date_zone = None   # (x0, x1) 날짜(달력) 클릭 영역
         self._usage_zone = None  # (x0, x1) 토큰 사용량 클릭 영역(Claude 트리)
         self._rec_zone = None    # (x0, x1) REC 클릭 영역(캡처 정보 팝업)
+        self._model_zone = None  # (x0, x1) 모델 배지 클릭 영역(모델·컨텍스트 팝업, 요청)
         self._host_zone = None   # (x0, x1) 서버이름(host) 클릭 영역(서버 탭, §10-A #12)
+        self.focus_btn = None    # ESC 모드 하단 포커스 키 강조(model/usage/rec/host/clock/date)
         self.capture_path = None  # 활성 패널 캡처 파일 경로
         self.capture_size = 0     # 그 파일 크기(bytes)
         # 클라이언트가 SSH 원격 세션에서 도는지(attach 한 머신 기준, 시작 시 1회).
@@ -960,6 +963,7 @@ class StatusBar(Widget):
             self.usage_limits = msg.get("usage_limits")
         # 토큰 절감 설정(설정 팝업이 현재값으로 토글을 그리는 데 씀). 항상 권위값 반영.
         self.auto_doc_clear = msg.get("auto_doc_clear", self.auto_doc_clear)
+        self.auto_compact = msg.get("auto_compact", self.auto_compact)
         self.claude_auto_mode = msg.get("claude_auto_mode", self.claude_auto_mode)
         self.claude_ctx_autoclear = msg.get(
             "claude_ctx_autoclear", self.claude_ctx_autoclear)
@@ -1033,9 +1037,12 @@ class StatusBar(Widget):
         if self.capture:        # 패널 출력 캡처 중
             rx0 = sum(sum(_char_cells(c) for c in s.text) for s in segs)
             self._rec_zone = (rx0, rx0 + 4)   # "REC "
-            segs.append(Segment("REC ", Style(color="white", bgcolor=tc("error"),
-                                               bold=True)))
+            rec_st = (Style(color="black", bgcolor=tc("warning"), bold=True)
+                      if self.focus_btn == "rec"
+                      else Style(color="white", bgcolor=tc("error"), bold=True))
+            segs.append(Segment("REC ", rec_st))
         self._usage_zone = None
+        self._model_zone = None   # 모델 배지 클릭존(모델·컨텍스트 변경 팝업, 요청)
         # 활성 Claude 패널: 모델(M14c) + 컨텍스트 사용량(best-effort) + 세션 누적(#3, Σ).
         # Claude 가 아닌 탭/패널에선 좌하단 토큰 표기를 통째로 숨긴다(claude_active 게이트)
         # — 지속표시 값(claude_tokens 등)은 유지하되 렌더만 막는다.
@@ -1060,17 +1067,41 @@ class StatusBar(Widget):
                     tk += " @" + self.claude_account
                 uparts.append(tk)
         if uparts:
-            utext = " " + " · ".join(uparts) + " "
+            sec = Style(color="white", bgcolor=tc("secondary"), bold=True)
+            hi = Style(color="black", bgcolor=tc("warning"), bold=True)
+            fb = self.focus_btn
             ux0 = sum(sum(_char_cells(c) for c in s.text) for s in segs)
-            self._usage_zone = (ux0, ux0 + sum(_char_cells(c) for c in utext))
-            segs.append(Segment(utext,
-                                Style(color="white", bgcolor=tc("secondary"),
-                                      bold=True)))
+            # 모델 배지(첫 upart)와 나머지(사용량·Σ)를 **분리 세그먼트**로 그려, 각각
+            # 클릭존·esc 포커스 강조가 가능하게 한다(요청). 모델 클릭=모델 팝업,
+            # 나머지 클릭=토큰 로그.
+            has_model = uparts[0] == self.claude_model
+            rest = uparts[1:] if has_model else uparts
+            segs.append(Segment(" ", sec))
+            x = ux0 + 1
+            if has_model:
+                mw = sum(_char_cells(c) for c in uparts[0])
+                self._model_zone = (x, x + mw)
+                segs.append(Segment(uparts[0], hi if fb == "model" else sec))
+                x += mw
+                if rest:
+                    segs.append(Segment(" · ", sec))
+                    x += 3
+            if rest:
+                rtext = " · ".join(rest)
+                rw = sum(_char_cells(c) for c in rtext)
+                segs.append(Segment(rtext, hi if fb == "usage" else sec))
+                x += rw
+            segs.append(Segment(" ", sec))
+            x += 1
+            self._usage_zone = (ux0, x)
         # M10 토큰 예산 경고(알림만 — 동작 변경 없음). 80%=노랑 ⚠, 100%=빨강 ⚠.
         # 예산 미설정이면 budget_level 0 이라 표시 안 함(docs/TOKEN_SAVING_SCENARIO).
         if self.budget_level >= 80:
             over = self.budget_level >= 100
-            segs.append(Segment(" ⚠예산 " + ("초과 " if over else "80% "),
+            # ⚠ 뒤에 공백: 이모지(⚠ U+26A0)가 터미널에선 2칸으로 그려지는데
+            # wcwidth 는 1칸이라, 바로 뒤 글자가 이모지 둘째 칸에 겹쳐 그려졌다(요청).
+            # 공백 한 칸을 둬 그 둘째 칸을 흡수해 겹침을 막는다.
+            segs.append(Segment(" ⚠ 예산 " + ("초과 " if over else "80% "),
                                 Style(color="white",
                                       bgcolor=("red" if over else "yellow"),
                                       bold=True)))
@@ -1081,12 +1112,12 @@ class StatusBar(Widget):
             kind = self.claude_pending.get("kind")
             eta = self.claude_pending.get("eta", 0)
             label = "자동재개" if kind == "resume" else "자동정리"
-            segs.append(Segment(f" ⏳{label} {eta}s(입력=취소) ",
+            segs.append(Segment(f" ⏳ {label} {eta}s(입력=취소) ",  # ⏳ 뒤 공백(겹침 방지)
                                 Style(color="black", bgcolor=tc("warning"),
                                       bold=True)))
         # M17(T7): 장기턴/반복루프 경고 배지(grade0 — 알림만, 개입 없음). 있을 때만.
         if self.claude_warn:
-            segs.append(Segment(f" ⚠{self.claude_warn} ",
+            segs.append(Segment(f" ⚠ {self.claude_warn} ",  # ⚠ 뒤 공백(글자 겹침 방지)
                                 Style(color="black", bgcolor=tc("warning"),
                                       bold=True)))
         if self.prefix_off:
@@ -1108,6 +1139,10 @@ class StatusBar(Widget):
         # `ssh:` 접두사+붉은색으로, 시각/날짜는 각각 시계/달력 클릭 존으로.
         right_parts = self._expand_parts(self.right_fmt)
         host_style = Style(color=tc("error"), bgcolor=self.bg, bold=True)
+        # ESC 모드 포커스(host/clock/date)면 그 run 을 강조색으로(요청). focus_btn
+        # 키 clock 은 strftime run kind 'time' 에 대응한다.
+        _fk = {"host": "host", "clock": "time", "date": "date"}.get(self.focus_btn)
+        focus_hi = Style(color="black", bgcolor=tc("warning"), bold=True)
         built = []   # (kind, text, style, cells)
         right_w = 0
         for kind, text in right_parts:
@@ -1115,6 +1150,8 @@ class StatusBar(Widget):
             if kind == "host" and self._is_remote:
                 text = "ssh:" + text
                 st = host_style
+            if kind == _fk:
+                st = focus_hi
             cells = sum(_char_cells(c) for c in text)
             built.append((kind, text, st, cells))
             right_w += cells
@@ -1158,6 +1195,12 @@ class StatusBar(Widget):
         dz = self._date_zone
         if dz and dz[0] <= event.x < dz[1]:
             self.app.toggle_calendar(self.app.layout.get("active"))
+            event.stop()
+            return
+        mz = self._model_zone
+        if mz and mz[0] <= event.x < mz[1]:
+            # 모델 배지 클릭 → 모델·컨텍스트 변경 팝업(요청).
+            self.app.open_model_config()
             event.stop()
             return
         uz = self._usage_zone

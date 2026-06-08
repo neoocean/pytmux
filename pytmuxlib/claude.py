@@ -105,7 +105,13 @@ def claude_usage(text: str):
         prefix = text[max(0, m.start() - 4):m.start()]
         if "↑" in prefix or "↓" in prefix:
             continue
-        return _join(f"{m.group(1).replace(' ', '')} tok")
+        g = m.group(1).replace(" ", "")
+        # 단위(k/M/B) 없는 작은 수("1 token" 등)는 컨텍스트 지표가 아니라 대화/도구
+        # 출력에 섞인 노이즈다 — 상태줄에 "1 tok" 같은 오표시가 떴다(요청). 컨텍스트
+        # 토큰 수는 항상 천 단위 이상(k/M)이므로 단위가 붙은 값만 채택한다.
+        if g[-1:].lower() not in ("k", "m", "b"):
+            continue
+        return _join(f"{g} tok")
     # 토큰/잔량은 못 찾았지만 확장 컨텍스트 모델 배지만 보일 때
     if badge:
         return f"{badge} ctx"
@@ -157,6 +163,30 @@ def parse_usage(text):
                else "week_all" if "all models" in lab
                else "week_sonnet" if "sonnet" in lab else "week")
         out[key] = {"pct": b["pct"], "reset": b["reset"]}
+    return out or None
+
+
+# footer 인라인 한도 안내: "You've used 93% of your session limit · resets 1:40pm
+# (Asia/Seoul) · /usage-credits to request more". /usage 패널을 안 열어도 이 한 줄로
+# 세션/주간 실측 %를 잡아 상태줄 5h% 가 추정치 대신 실측을 따르게 한다(요청).
+_INLINE_LIMIT_RE = re.compile(
+    r"used\s+(\d{1,3})%\s+of\s+your\s+(session|week(?:ly)?)\s+limit", re.I)
+_INLINE_RESET_RE = re.compile(r"resets?\s+(.+?)(?:\s*·|\s*$)", re.I)
+
+
+def parse_inline_limit(text):
+    """Claude footer 인라인 한도 문구에서 한도 %·리셋을 뽑는다(parse_usage 패널과 같은
+    형식의 dict). 세션→'session', 주간→'week_all' 키. 없으면 None."""
+    out = {}
+    for ln in (text or "").splitlines():
+        m = _INLINE_LIMIT_RE.search(ln)
+        if not m:
+            continue
+        kind = ("session" if m.group(2).lower().startswith("session")
+                else "week_all")
+        mr = _INLINE_RESET_RE.search(ln)
+        out[kind] = {"pct": int(m.group(1)),
+                     "reset": mr.group(1).strip() if mr else None}
     return out or None
 
 
@@ -312,6 +342,14 @@ def claude_remote_active(text: str) -> bool:
     원격제어를 도로 끄지 않도록 idempotent 가드로 쓴다(재시작 resume 후 첫 스캔이
     None→Claude 로 보여 새 세션으로 오인하는 경우 등). 클라 클릭존 판정과 동일 문구."""
     return "remote control" in (text or "").lower()
+
+
+def claude_remote_blocked(text: str) -> bool:
+    """원격 제어가 조직 정책으로 비활성화됐다는 메시지("Remote Control is disabled by
+    your organization's policy")가 화면에 보이면 True. 이게 한 번 뜨면 이 세션에서는
+    /rc 자동 주입을 영구 중단해야 한다(요청) — 매 새 세션마다 /rc 를 재시도해 같은
+    거부 메시지를 반복 띄우는 것을 막는다. 조직 정책이라 폭넓게(소유격 유무 무관) 잡는다."""
+    return "disabled by your organization" in (text or "").lower()
 
 
 def _alias_email(local: str, domain: str) -> str:

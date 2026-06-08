@@ -134,19 +134,7 @@ def draw_calendar_overlay(cells, panes, calendar_panes, W, H, styles, now=None):
                                 if gc != " ":
                                     put_cell(cells, dx + k, ry + r,
                                              gc, st, W, H)
-            bst = styles["border"]                        # 외곽선
-            bx0, by0, bx1, by1 = ox - 1, oy - 1, ox + gw_big, oy + nl_big
-            put_cell(cells, bx0, by0, "╭", bst, W, H)
-            put_cell(cells, bx1, by0, "╮", bst, W, H)
-            put_cell(cells, bx0, by1, "╰", bst, W, H)
-            put_cell(cells, bx1, by1, "╯", bst, W, H)
-            for xx in range(bx0 + 1, bx1):
-                put_cell(cells, xx, by0, "─", bst, W, H)
-                put_cell(cells, xx, by1, "─", bst, W, H)
-            for yy in range(by0 + 1, by1):
-                put_cell(cells, bx0, yy, "│", bst, W, H)
-                put_cell(cells, bx1, yy, "│", bst, W, H)
-            continue                                      # 큰 달력 완료
+            continue                                      # 큰 달력 완료(외곽선 없음)
         # 2) 칸 폭(colw)·주 간격(rowh)을 가용 공간에 맞춰 키운다 — 넓고 높은
         # 화면일수록 큰 달력(사용자 요청). 한 칸은 숫자 2 + 여백이라 colw≥3.
         # grid_w = 6칸 간격 + 마지막 칸 숫자 2. 외곽선 패딩 2칸을 여유로 둔다.
@@ -177,21 +165,7 @@ def draw_calendar_overlay(cells, panes, calendar_panes, W, H, styles, now=None):
                     cxp = ox + col * colw
                     for k, c in enumerate(f"{day:2d}"):
                         put_cell(cells, cxp + k, ry, c, st, W, H)
-            # 그리드 둘레 외곽선(§10 #14): 한 칸 패딩 두고 round 박스 —
-            # 위·아래·좌·우로 한 칸씩 더 들어갈 공간이 있을 때만 그린다.
-            if pw >= grid_w + 2 and ph >= nlines + 2:
-                bst = styles["border"]
-                bx0, by0, bx1, by1 = ox - 1, oy - 1, ox + grid_w, oy + nlines
-                put_cell(cells, bx0, by0, "╭", bst, W, H)
-                put_cell(cells, bx1, by0, "╮", bst, W, H)
-                put_cell(cells, bx0, by1, "╰", bst, W, H)
-                put_cell(cells, bx1, by1, "╯", bst, W, H)
-                for xx in range(bx0 + 1, bx1):
-                    put_cell(cells, xx, by0, "─", bst, W, H)
-                    put_cell(cells, xx, by1, "─", bst, W, H)
-                for yy in range(by0 + 1, by1):
-                    put_cell(cells, bx0, yy, "│", bst, W, H)
-                    put_cell(cells, bx1, yy, "│", bst, W, H)
+            # (외곽선 제거: 사용자 요청으로 달력 둘레 박스를 그리지 않는다.)
         else:
             s = now.strftime("%Y-%m-%d")
             ox = px + max(0, (pw - len(s)) // 2)
