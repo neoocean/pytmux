@@ -793,6 +793,14 @@ class ServerIOMixin:
                     await self._send_full(c)
                 except Exception:
                     self._log_error("send_full(initial)")
+            # 재접속/신규 attach 직후 살아 있는 TUI(Claude·vim 등)가 idle 라 출력이
+            # 없으면 pyte 스냅샷이 직전 리사이즈로 깨진 채 남아, 새 클라가 깨진 화면을
+            # 받는다(사용자 보고: ssh 재접속 시 프롬프트 박스 테두리 소실·빈 입력칸 2줄,
+            # 입력해도 안 돌아옴). 특히 **같은 크기 재접속**은 resize 가 SIGWINCH 를 안
+            # 보내 idle 앱이 영영 다시 안 그린다(_induce_redraw_all 주석 참조 — 지금까진
+            # 재시작 복원에서만 불렀다). attach 직후 한 번 SIGWINCH 를 유발해 앱이 현재
+            # 크기로 전체 repaint → 스냅샷을 새로 써 깨끗한 프레임이 흐르게 한다.
+            self._induce_redraw_all()
 
             while self.running:
                 msg = await read_msg(reader)
