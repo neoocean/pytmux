@@ -1375,7 +1375,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   알림(monitor-claude)은 유지하되 한 프레임 깜빡임만 걸러낸다. 회귀
   `test_done_flag_debounced_against_flicker`. **서버 변경 → kill-server 재기동.**
   아래는 원 분석 기록.
-- **[원래 보고·분석] 탭이 일시적으로 녹색으로 보일 때가 있음** — 보고: 탭이
+- ~~**[원래 보고·분석] 탭이 일시적으로 녹색으로 보일 때가 있음**~~ → **해결**(완료 알림
+  디바운스, §10 #18). `_scan_claude` 가 비활성 탭 busy→idle 전이에서 곧장 `has_claude_done`
+  을 세우지 않고, idle 이 `_DONE_IDLE_FRAMES`(=3, 30Hz≈0.1초) 연속 안정될 때만 세운다
+  (`serverclaude.py:58,734-747`). footer 가 한 프레임 안 잡혀 idle 로 깜빡이는 raw
+  busy↔idle 플리커에 done 이 잘못 서서 탭이 잠깐 녹색이 되는 것을 막는다. 회귀:
+  `test_done_flag_debounced_against_flicker`·`test_inactive_tab_claude_done_flag`. 아래는
+  원 분석 기록. 보고: 탭이
   **일시적으로 녹색**으로 보일 때가 있다(스크린샷: 비활성 탭 `0:claude!` 가 녹색).
   유력 원인: **비활성 탭 Claude 작업 완료 알림(#22)** — `_scan_claude`
   (`server.py:1938`)가 **비활성 탭**의 busy→idle 전이를 감지하면
