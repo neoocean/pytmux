@@ -1043,8 +1043,16 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   패널 반응성 회복**~~ → **CL 56601 에서 해결**(수동 `reconnect`/`resync` 명령 +
   degraded 워치독 자동 재접속, 서버 PTY/세션 보존·`_send_full` 재동기, 연결 세대로
   옛 reader 조용히 종료). 아래는 원 분석 기록.
-- **[원래 보고·분석] 네트워크 degraded(빨간 외곽선) 고착에서 Claude 종료
-  없이 패널 반응성 회복** — 보고: 한 번 네트워크가 나빠져 패널 아웃라인이 빨간색
+- ~~**[원래 보고·분석] 네트워크 degraded(빨간 외곽선) 고착에서 Claude 종료
+  없이 패널 반응성 회복**~~ → **git 29f6575 에서 해결**(A 자동 워치독 + B 수동 명령
+  조합). `_force_reconnect(reason)` 가 정체된 소켓을 강제 close 해 블록된 `read_msg`
+  를 깨우고 새 연결로 hello 재전송 → 서버 `_send_full` 로 전체 재동기(PTY/세션 보존).
+  ㉠ **자동**: degraded 가 `net_recover_n`(기본 20표본≈10초) 연속이면 `_net_ping` 워치독
+  (`client.py:1175`)이 `reconnect_now("auto")` 호출. ㉡ **수동**: `reconnect`/`resync`
+  명령(`client.py:2663`). 옵션 `net_auto_reconnect`(기본 ON)·`net_recover_n`. 회귀:
+  `test_force_reconnect_recovers_without_exit`·`test_net_watchdog_triggers_auto_reconnect`
+  ·`test_net_degraded_recover_triggers_reconnect`·`test_net_degraded_hysteresis`.
+  아래는 원 분석 기록. 보고: 한 번 네트워크가 나빠져 패널 아웃라인이 빨간색
   (CL 56593 응답성 degraded)으로 바뀐 뒤 **영영 원복되지 않는다**. **Claude
   데스크탑 앱으로 보면 여전히 동작 중**이지만 **ssh 를 통해 pytmux 로 보면 반응이
   없다(멈춤)**. 실행 중인 Claude Code 를 **종료하지 않고** 패널 반응성을 회복할
