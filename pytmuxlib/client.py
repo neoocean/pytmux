@@ -806,7 +806,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self._want_token_log = False
                     self.push_screen(TokenLogScreen(
                         msg.get("records") or [],
-                        usage=getattr(self.status, "usage_limits", None)))
+                        usage=getattr(self.status, "usage_limits", None),
+                        total_all=msg.get("total_all"),
+                        accounts_total=msg.get("accounts_total")))
             elif t == "version":
                 if getattr(self, "_want_version", False):
                     self._want_version = False

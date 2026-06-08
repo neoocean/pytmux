@@ -5,8 +5,14 @@
 > 트레이드오프·경로를 남긴다. 구현 요약:
 > - 저장: `pytmuxlib/usagedb.py`(SQLite, WAL). 경로 `db/claude-tokens.db`
 >   (db/ 는 .gitignore·p4ignore 제외). 서버 최초 사용 시 옛 JSONL 일회 임포트.
-> - 집계: `usagelog.aggregate/summary_lines(dim=account|session)` — 클라 측(서버측
->   GROUP BY 는 **Phase B**, 아래 §0·§7 참조, 현 규모에선 미도입).
+> - 집계: 버킷×차원(시간/일/주/월 × 계정/세션) 전환은 `usagelog.aggregate` 로 **클라
+>   측**(받은 최근 N 건을 라운드트립 없이 즉시 전환). **Phase B(2026-06-09 착수)**:
+>   전체 이력 합은 서버가 SQL 로 집계해 함께 보낸다 — `usagedb.total_all`(SUM)·
+>   `totals_by_account`(GROUP BY account). 받은 레코드는 cap(기본 5000) 이라 그 'Σ
+>   합계'가 이력 초과 시 과소표시되던 문제를, 서버측 GROUP BY 로 정확한 lifetime Σ
+>   를 돌려줘 해결(`request_token_log` 응답에 `total_all`/`accounts_total` 포함).
+>   버킷별 GROUP BY 는 week 키 `%G-W%V` 가 SQLite 3.46+ 에서만 지원돼 클라 strftime
+>   과 바이트 동일 보장이 어려워 클라측 유지(정확·즉시).
 > - UI: 토큰 팝업 **[패널] 서브탭**(세션 기준 묶기 — 패널 재사용 대비, §8).
 > - 도구: `scripts/import_token_jsonl.py`(수동 임포트), `migrate_token_accounts.py
 >   --db`(DB 계정 정정), `usagedb.prune`(보존).

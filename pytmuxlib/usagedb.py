@@ -133,6 +133,26 @@ def account_counts(conn) -> dict:
     return {r["account"]: r["n"] for r in cur.fetchall()}
 
 
+# ---- 서버측 GROUP BY 집계(설계 Phase B) ----
+# 전체 이력(레코드 cap 무관) 토큰 합을 SQL 에서 직접 집계한다. 클라가 보는 팝업은
+# 최근 N 건(query_records)만 받아 usagelog.aggregate 로 버킷×차원 전환을 라운드트립
+# 없이 하지만, 그 'Σ 합계'는 받은 N 건 한정이라 이력이 N 을 넘으면 과소표시된다.
+# 아래 함수들은 그 정확한 **전체 이력 합**을 서버가 SUM/GROUP BY 로 돌려준다.
+# (버킷별 GROUP BY 는 week 키 %G-W%V 가 SQLite 3.46+ 에서만 지원돼 usagelog 와
+#  바이트 동일 보장이 어렵다 — 버킷 전환은 클라측 집계 유지가 정확·즉시. 설계 §Phase B.)
+def total_all(conn) -> int:
+    """전체 이력 토큰 총합(레코드 수 무관). 정확한 lifetime Σ."""
+    return int(conn.execute(
+        "SELECT COALESCE(SUM(tokens),0) AS s FROM usage").fetchone()["s"])
+
+
+def totals_by_account(conn) -> dict:
+    """계정별 전체 이력 토큰 합. {account: tokens} (많이 쓴 순 정렬은 표시 측)."""
+    cur = conn.execute(
+        "SELECT account, COALESCE(SUM(tokens),0) AS s FROM usage GROUP BY account")
+    return {r["account"]: int(r["s"]) for r in cur.fetchall()}
+
+
 def update_accounts(conn, keep_accounts, keep_domains) -> int:
     """비신뢰 계정을 UNKNOWN 으로 일괄 정정(파일 재작성 불필요 — UPDATE 한 방).
     usagelog 의 신뢰 규칙을 공유한다. 변경된 행 수 반환."""

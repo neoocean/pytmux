@@ -816,6 +816,33 @@ async def test_token_log_screen_aggregates_and_switches():
     await _with_app(body)
 
 
+async def test_token_log_lifetime_total_from_server_agg():
+    """Phase B: 서버가 보낸 total_all(전체 이력 합, SQL 집계)이 받은 레코드 cap 합보다
+    크면, Σ 는 전체 이력 합을 보이고 표시 레코드 합을 병기한다(과소표시 방지)."""
+    async def body(app, pilot, srv):
+        recs = [   # 받은(최근) 레코드 — 합 3.5k
+            {"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
+             "account": "me@x.org", "tokens": 1500},
+            {"ts": 1_700_500_000.0, "tab": 1, "pane": 2, "session": 2,
+             "account": "team@y.org", "tokens": 2000},
+        ]
+        app._want_token_log = True
+        # 전체 이력은 9.5k(레코드 cap 밖 6k 가 더 있음) — 서버가 SQL 로 집계해 전달.
+        app._dispatch({"t": "token_log", "records": recs, "total_all": 9500,
+                       "accounts_total": {"me@x.org": 7500, "team@y.org": 2000}})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        joined = _tok_text(scr)
+        assert "Σ9.5k" in joined, joined          # lifetime 합(전체 이력)
+        assert "표시 3.5k" in joined, joined        # 표시 레코드 합 병기
+        # 계정 필터([a]) → me@x.org: lifetime 7.5k, 표시 1.5k
+        await pilot.press("a")
+        await pilot.pause(0.1)
+        joined2 = _tok_text(scr)
+        assert "Σ7.5k" in joined2 and "표시 1.5k" in joined2, joined2
+    await _with_app(body)
+
+
 async def test_token_log_panel_subtab_groups_by_session():
     """[패널] 서브탭: 그룹 차원을 계정↔세션으로 토글한다. 세션 차원은 (재사용되는)
     패널 id 가 아니라 세션 id 로 묶어 보인다(설계 §8 — 세션 기준)."""

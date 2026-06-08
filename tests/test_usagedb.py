@@ -87,6 +87,35 @@ async def test_prune_deletes_old():
     conn.close()
 
 
+async def test_total_all_and_totals_by_account_full_history():
+    """Phase B 서버측 GROUP BY: 전체 이력 합(total_all)·계정별 합(totals_by_account)이
+    레코드 수 cap 과 무관하게 SQL SUM/GROUP BY 로 정확히 집계되고, usagelog.aggregate
+    의 'groups'/'total'(전체 레코드 기준)과 일치한다."""
+    conn = usagedb.connect(":memory:")
+    recs = [
+        _rec(1_700_000_000.0, 0, 1, 1, "me@x.org", 1000),
+        _rec(1_700_000_100.0, 0, 1, 1, "me@x.org", 500),
+        _rec(1_700_000_200.0, 1, 2, 2, "you@y.org", 300),
+        _rec(1_700_000_300.0, 1, 3, 3, None, 7),       # unknown 계정
+    ]
+    usagedb.insert_many(conn, recs)
+    assert usagedb.total_all(conn) == 1807
+    by_acct = usagedb.totals_by_account(conn)
+    assert by_acct == {"me@x.org": 1500, "you@y.org": 300, usagelog.UNKNOWN: 7}
+    # usagelog 의 계정별 합(전체 레코드)과 동치 — 두 집계 경로의 parity.
+    agg = usagelog.aggregate(recs, bucket="day", dim="account")
+    assert by_acct == agg["groups"]
+    assert usagedb.total_all(conn) == agg["total"]
+    conn.close()
+
+
+async def test_total_all_empty_db_is_zero():
+    conn = usagedb.connect(":memory:")
+    assert usagedb.total_all(conn) == 0
+    assert usagedb.totals_by_account(conn) == {}
+    conn.close()
+
+
 async def test_import_jsonl_preserves_history():
     path = tempfile.mktemp(suffix=".tokens.jsonl")
     try:

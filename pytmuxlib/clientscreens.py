@@ -1181,10 +1181,15 @@ class TokenLogScreen(ModalScreen):
     # [패널]/계정 그룹이 많을 때 상위 N + '기타'로 접어 길이 폭주를 막는다(설계 §4).
     _GROUP_TOP = 8
 
-    def __init__(self, records, usage=None):
+    def __init__(self, records, usage=None, total_all=None, accounts_total=None):
         super().__init__()
         self._records = records or []
         self._usage = usage          # M19 그림자 /usage 한도(dict|None)
+        # Phase B: 서버가 SQL 로 집계한 정확한 전체 이력 합(레코드 cap 무관). 받은
+        # 레코드(_records)는 최근 N 건이라 그 Σ 는 과소표시될 수 있으므로, lifetime
+        # 합은 이 값을 쓴다(None=구버전 서버 → 레코드 합으로 폴백).
+        self._total_all = total_all
+        self._accounts_total = accounts_total or {}
         self._bucket = "day"
         # 그룹 차원: "account"=계정별(기본), "session"=세션별([패널] 탭). 패널은
         # 닫히고 재사용되므로 안정적 세션 id 로 묶는다(설계 §8, 사용자 결정).
@@ -1406,9 +1411,22 @@ class TokenLogScreen(ModalScreen):
         self.query_one("#tklogtitle", Label).update(
             f"토큰 사용량 · {self._bucket} · {dimname}별")
         acct = self._account if self._account is not None else "전체"
+        # Σ: 정확한 전체 이력 합(서버 SQL 집계, Phase B). 현재 계정 필터에 맞춰
+        # total_all(전체) / accounts_total[acct](계정별)을 쓰고, 없으면(구버전 서버)
+        # 표시 레코드 합으로 폴백. 레코드가 cap 돼 표시 합과 다르면 그 표시 합을 병기.
+        win = v["total"]
+        if self._account is None:
+            life = self._total_all
+        else:
+            life = self._accounts_total.get(self._account)
+        if life is None:
+            life = win
+        sigma = f"Σ{usagelog._fmt_tokens(life)}"
+        if life != win:
+            sigma += f" (표시 {usagelog._fmt_tokens(win)})"
         # 스코프는 1줄로 컴팩트(묶음/버킷은 제목에 이미 있음). 표 높이를 아낀다.
         top = self._usage_lines() + [
-            f"계정 {acct} · {order_l} · Σ{usagelog._fmt_tokens(v['total'])}"]
+            f"계정 {acct} · {order_l} · {sigma}"]
         self.query_one("#tktop", Static).update("\n".join(top))
         self.query_one("#tkhint", Static).update(
             "h시간 d일 w주 m월 · a계정 p패널 o정렬 · u/usage s시나리오 · Esc닫기")
