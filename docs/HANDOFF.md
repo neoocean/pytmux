@@ -222,7 +222,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~57660 + git, 신→구)
+## 9. 최근 변경(CL 56279~57678 + git, 신→구)
 
 > ✅ **git 미러 동기화 완료(2026-06-04, macOS 세션).** Windows 박스(`office`)와
 > `surface-office` 병행 세션에서 낸 CL **56540~56560** 을 macOS 개발 머신에서
@@ -234,6 +234,20 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 57678 **세션 피드백 자동 Dismiss 키 `0`→`Esc`**(사용자 보고 — 프롬프트 앞 지워지지
+  않는 `00`) — Claude 세션 종료 피드백 배너(`How is Claude doing this session? …
+  0:Dismiss`)는 입력 컴포저 **위**에 뜨는 **비모달**이라 컴포저가 계속 포커스를 갖는다.
+  #26 자동 Dismiss 가 `'0'`(0x30)을 주입하면 배너를 못 닫고 **그대로 컴포저에 찍힌다**.
+  닫히지 않으니 `claude_feedback_prompt()` 감지가 계속 참 → `_FEEDBACK_GAP` 간격 재주입
+  으로 `00` 이 쌓이고, `_FEEDBACK_MAX_TRIES` 후 포기해도 `00` 이 입력창에 남아 다음
+  제출에 딸려 들어갔다. 캡처(`captures/default/…docker-monitor_p2.log`)에서 빈 컴포저에
+  `0` 이 누적되는 게 바이트로 확인됨(배너 50여 프레임 지속·`0` 으로 안 닫힘).
+  - 수정: `serverclaude._FEEDBACK_DISMISS_KEY = b"\x1b"`(Esc) 신설·주입부 교체. Claude
+    Code 오버레이는 **Space/Enter/Esc** 로만 닫히는데(공식 interactive-mode 문서), Space=
+    공백 누출·Enter=컴포저 제출 위험이라 **인쇄 불가·부작용 최소인 Esc** 채택 — 못 닫아도
+    컴포저를 오염시키지 않는다. `claude.py` 감지 주석에 "0 은 컴포저로 찍힘" 경고 추가.
+  - 파일: `serverclaude.py`·`claude.py`·`tests/test_server.py`
+    (`test_auto_dismiss_feedback_prompt` 기대값 `b"0"`→`b"\x1b"` + Esc 가드). 382 passed.
 - 57660 **재시작 후 auto `/rc` 재주입 버그 수정**(요청 — 원격제어 이미 켜졌는데 패널
   재발) — 작업보존 재시작(re-exec)이 `restore_resume_state`→`_induce_redraw_all` 로
   각 패널에 SIGWINCH 강제 repaint 를 일으키는데, 그 repaint 중 **순간 빈 프레임**에서
