@@ -476,6 +476,11 @@ class Pane:
         # 사용자가 실제로 입력하면(serverio) 해제돼 다음 idle 에 다시 발화 가능.
         self._acpt_timer = None
         self._acpt_fired = False
+        # 시간기반 자동 compact·doc-clear 쿨다운 만료 시각(time.monotonic; 0=쿨다운
+        # 없음). 새 세션 시작·직전 compact·직전 clear 직후엔 이 시각 전까지 _acpt_arm/
+        # _adc_arm 을 무장하지 않는다(요청 — 새 세션·정리 직후 곧바로 또 압축/정리 방지).
+        # 휘발성(monotonic 은 프로세스 한정이라 직렬화 안 함 — 재시작 시 0 으로 리셋).
+        self._auto_cc_cooldown_until = 0.0
         # 권한모드 자동 오토모드 전환(§10): idle 일 때 footer 가 auto 가 아니면
         # shift+tab 을 순환 주입한다(서버 옵션 claude_auto_mode 가 켜졌을 때만).
         # _cam_tries 는 이번 idle 진입 후 보낸 횟수(무한 순환 가드 _CAM_MAX), _cam_last

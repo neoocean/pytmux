@@ -263,6 +263,7 @@ class ServerClaudeMixin:
             pane._pc_phase = "doc"
         elif ph == "doc":
             self._pc_inject(pane, "/clear")
+            self._auto_cc_mark(pane)   # 직전 clear 직후 쿨다운 시작(연속 정리 방지)
             pane._pc_phase = "clear"
             # /clear 로 Claude 컨텍스트가 비워지므로 토큰 누계도 **새 세션으로 끊는다**(#5).
             # 안 그러면 절감 자동화(doc→clear)가 돌수록 doc 작성·/clear 자체 토큰이 사용자
@@ -296,12 +297,28 @@ class ServerClaudeMixin:
             t.cancel()
             pane._adc_timer = None
 
+    def _auto_cc_mark(self, pane: Pane) -> None:
+        """시간기반 자동 compact·doc-clear 쿨다운을 새로 시작한다 — 새 세션 시작·직전
+        compact·직전 clear 직후 호출. 이후 auto_cc_cooldown_sec 초 동안 _acpt_arm/
+        _adc_arm 이 무장을 건너뛴다(요청). 0(비활성)이면 아무것도 하지 않는다."""
+        if self.auto_cc_cooldown_sec > 0:
+            pane._auto_cc_cooldown_until = time.monotonic() + self.auto_cc_cooldown_sec
+
+    def _auto_cc_blocked(self, pane: Pane) -> bool:
+        """아직 쿨다운 중이면(새 세션·직전 정리 직후) True — 시간기반 자동 발화 보류."""
+        return (self.auto_cc_cooldown_sec > 0
+                and time.monotonic() < pane._auto_cc_cooldown_until)
+
     def _adc_arm(self, pane: Pane):
         """idle 진입 시점에 무장: auto_doc_clear_delay 초 뒤 _adc_fire 를 예약한다.
         기존 타이머가 있으면 먼저 해제(재무장). 실행 중인 이벤트 루프가 없으면
         (테스트가 _scan_claude 를 동기 호출하는 등) 조용히 패스한다 — 타이머 기반
-        자동 발화만 비활성일 뿐 다른 동작에는 영향이 없다."""
+        자동 발화만 비활성일 뿐 다른 동작에는 영향이 없다.
+
+        새 세션/직전 정리 쿨다운(_auto_cc_blocked) 중이면 무장하지 않는다(요청)."""
         self._adc_disarm(pane)
+        if self._auto_cc_blocked(pane):
+            return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -355,9 +372,10 @@ class ServerClaudeMixin:
 
         이미 1회 발화했으면(_acpt_fired) 무장하지 않는다 — /compact 주입 자체가
         busy→idle 경계를 또 만들어 연속 재발화('Not enough messages to compact'
-        반복)하는 것을 막는다(요청). 사용자가 실제 입력하면 플래그가 풀려 재무장된다."""
+        반복)하는 것을 막는다(요청). 사용자가 실제 입력하면 플래그가 풀려 재무장된다.
+        새 세션/직전 정리 쿨다운(_auto_cc_blocked) 중이어도 무장하지 않는다(요청)."""
         self._acpt_disarm(pane)
-        if pane._acpt_fired:
+        if pane._acpt_fired or self._auto_cc_blocked(pane):
             return
         try:
             loop = asyncio.get_running_loop()
@@ -383,6 +401,7 @@ class ServerClaudeMixin:
         if claude_awaiting_answer(screen_text(pane.screen)):
             return   # 질문으로 끝남 — 사용자 답 대기 중이므로 발화하지 않음
         pane._acpt_fired = True   # 디바운스: 다음 사용자 입력 전까지 재발화 금지
+        self._auto_cc_mark(pane)  # 직전 compact 직후 쿨다운 시작(연속 정리 방지)
         self._pc_inject(pane, "/compact")   # 한 줄 입력 + Enter
 
     # ---- 권한모드 자동 오토모드 전환(§10) ----
@@ -644,6 +663,7 @@ class ServerClaudeMixin:
                         p._rc_pending = True
                     p._ctx_fired = False   # 새 세션 — 잔량 자동정리 디바운스 해제(M11)
                     p._ctx_pct = None      # 새 세션 — 잔량% 추적 리셋(M15)
+                    self._auto_cc_mark(p)  # 새 세션 — 시간기반 자동 compact·clear 쿨다운
                 if not new_cl:
                     p._rules_pending = False   # 세션 끝나면 예약 해제
                     p._rc_pending = False      # 세션 끝 — auto-launch 예약 해제
@@ -657,6 +677,7 @@ class ServerClaudeMixin:
                 wel = claude_welcome(txt)
                 if wel and not p._welcome_seen and old_cl:
                     self._reset_token_session(p)
+                    self._auto_cc_mark(p)   # 수동 /clear — 직후 자동 정리 쿨다운
                     p._ctx_fired = False
                     p._ctx_pct = None
                     if self.claude_rules.strip():
@@ -1233,4 +1254,5 @@ class ServerClaudeMixin:
                 pane._pc_phase = None
                 self._pc_advance(pane)
         else:   # "compact"
+            self._auto_cc_mark(pane)   # 직전 compact 직후 쿨다운 시작
             self._pc_inject(pane, "/compact")

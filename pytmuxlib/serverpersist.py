@@ -345,6 +345,7 @@ class ServerPersistMixin:
                            "auto_doc_clear_delay": self.auto_doc_clear_delay,
                            "auto_compact": self.auto_compact,
                            "auto_compact_delay": self.auto_compact_delay,
+                           "auto_cc_cooldown_sec": self.auto_cc_cooldown_sec,
                            "claude_auto_mode": self.claude_auto_mode,
                            "claude_auto_launch": self.claude_auto_launch,
                            "claude_rules": self.claude_rules,

@@ -107,6 +107,13 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         # clear 와 같은 idle 경계에서 무장하므로 상호배타(doc-clear 우선). opts.json 영속.
         self.auto_compact = bool(_opts.get("auto_compact", False))
         self.auto_compact_delay = float(_opts.get("auto_compact_delay", 30.0))
+        # 자동 compact·doc-clear 쿨다운(요청): 새 Claude 세션 시작 직후 또는 직전
+        # compact·clear 직후 이 초만큼은 **시간기반** 자동 compact·doc-clear 를 무장하지
+        # 않는다 — 세션을 막 시작했거나 방금 정리했는데 곧바로 또 압축/정리되던 문제 방지
+        # (사용자 보고: 새 세션에 작은 작업만 했는데 /compact 가 들어가 한참 대기). idle
+        # 경계마다 재평가하므로 쿨다운이 지나면 정상 동작으로 복귀한다. M11 잔량기반 정리는
+        # 별개(잔량이 낮을 때만 발화 — 새 세션·clear 직후엔 잔량이 높아 안 뜬다). 0=비활성.
+        self.auto_cc_cooldown_sec = float(_opts.get("auto_cc_cooldown_sec", 300.0))
         # 권한모드 자동 오토모드 전환(§10): Claude 패널이 idle 이고 권한모드 footer 가
         # auto(자동 수락)가 아니면 shift+tab 을 순환 주입해 auto 로 맞춘다. 기본 OFF.
         # bypass(권한 우회) 모드는 명시적·위험 설정이라 건드리지 않는다. opts.json 영속.

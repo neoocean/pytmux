@@ -454,6 +454,7 @@ async def test_auto_doc_clear_sequence_and_guards():
         p = win.active_pane
         injected = []
         srv._pc_inject = lambda pane, text: injected.append(text)
+        srv.auto_cc_cooldown_sec = 0.0   # 이 테스트는 무장/발화 기계만 — 쿨다운은 별도
 
         assert srv.auto_doc_clear is False, "기본 off"
         assert srv.set_auto_doc_clear(True) is True
@@ -534,6 +535,7 @@ async def test_auto_compact_idle_injects_slash_compact():
         p = win.active_pane
         injected = []
         srv._pc_inject = lambda pane, text: injected.append(text)
+        srv.auto_cc_cooldown_sec = 0.0   # 이 테스트는 무장/발화 기계만 — 쿨다운은 별도
 
         assert srv.auto_compact is False, "기본 off"
         assert srv.set_auto_compact(True) is True
@@ -630,6 +632,71 @@ async def test_auto_compact_skips_when_awaiting_answer():
         p.feed(b"\x1b[2J\x1b[HAll done. Saved 3 files.\r\n? for shortcuts\r\n")
         srv._acpt_fire(p)
         assert injected == ["/compact"], injected
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
+async def test_auto_compact_cooldown_after_new_session_and_fire():
+    """요청: 새 Claude 세션 시작 직후·직전 compact/clear 직후엔 auto_cc_cooldown_sec
+    초 동안 시간기반 자동 compact·doc-clear 를 무장하지 않는다(_auto_cc_blocked).
+    쿨다운이 지나면 정상 무장으로 복귀하고, cooldown_sec=0 이면 기능 자체가 꺼진다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        injected = []
+        srv._pc_inject = lambda pane, text: injected.append(text)
+        srv.claude_auto_launch = False   # 새 세션 /rc 자동주입 잡음 제외(이 테스트 무관)
+        srv.set_auto_compact(True)
+        assert srv.auto_cc_cooldown_sec > 0, "기본 쿨다운 on"
+
+        # 새 세션 감지(None→Claude)가 쿨다운을 건다.
+        p._claude = None
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle"
+        assert p._auto_cc_cooldown_until > 0, "새 세션 → 쿨다운 시작"
+        assert srv._auto_cc_blocked(p) is True
+
+        # 쿨다운 중 busy→idle 경계: _acpt_arm 이 무장하지 않는다.
+        p._claude = "busy"
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle" and p._acpt_timer is None, "쿨다운 중 → 무장 금지"
+        assert injected == []
+
+        # 쿨다운 만료 → 다음 busy→idle 에 정상 무장.
+        p._auto_cc_cooldown_until = 0.0
+        p._claude = "busy"
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._acpt_timer is not None, "쿨다운 만료 → 정상 무장"
+
+        # compact 발화 시 쿨다운 재설정(직전 compact 직후 연속 정리 방지).
+        p._auto_cc_cooldown_until = 0.0
+        srv._acpt_fire(p)
+        assert injected == ["/compact"], injected
+        assert p._auto_cc_cooldown_until > 0, "compact 발화 → 쿨다운 재시작"
+
+        # doc-clear 의 /clear 주입도 쿨다운을 건다.
+        p._auto_cc_cooldown_until = 0.0
+        p._pc_phase = "doc"
+        srv._pc_advance(p)   # doc→clear: '/clear' 주입
+        assert injected[-1] == "/clear"
+        assert p._auto_cc_cooldown_until > 0, "clear 주입 → 쿨다운 재시작"
+
+        # cooldown_sec=0 이면 비활성(_auto_cc_blocked 항상 False, _auto_cc_mark no-op).
+        srv.auto_cc_cooldown_sec = 0.0
+        p._auto_cc_cooldown_until = 9e18
+        assert srv._auto_cc_blocked(p) is False
+        p._auto_cc_cooldown_until = 0.0
+        srv._auto_cc_mark(p)
+        assert p._auto_cc_cooldown_until == 0.0, "0=비활성 → mark no-op"
     finally:
         try:
             os.unlink(srv.opts_path)
