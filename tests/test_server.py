@@ -956,6 +956,57 @@ async def test_rc_suppressed_after_org_policy_block():
         await teardown(srv, task, sock)
 
 
+async def test_rc_not_reinjected_after_restart_transient():
+    """버그(요청): 작업보존 재시작(re-exec) 직후 _induce_redraw_all 의 강제 repaint 가
+    순간 빈 프레임을 만들어 _claude 가 None→Claude 로 깜빡이면 거짓 '새 세션'으로
+    오인돼 auto /rc 가 재주입됐다 — 이미 켜진 원격제어 패널이 다시 떴다. fire 시점
+    _rc_done(직렬화 sticky) 가드로 재주입을 막고, 진짜 세션 종료(디바운스)에서만 해제해
+    다음 claude 기동엔 정상 재무장한다."""
+    from pytmuxlib import serverclaude as _sc
+    from pytmuxlib.model import Pane
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        rc = []
+        srv._pc_inject = lambda pane, text: rc.append(text)
+        srv._inject_keys = lambda pane, data: None
+
+        def scan(s):
+            p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
+            srv._scan_claude(sess, win)
+
+        # 최초 세션 → /rc 1회 주입, _rc_done 셋
+        scan("? for shortcuts")
+        assert rc == ["/rc"] and p._rc_done is True
+
+        # _rc_done 은 재시작 직렬화 대상이라 re-exec 후에도 유지된다(이 케이스의 핵심).
+        assert "_rc_done" in Pane._RESUME_FIELDS
+        assert p.export_state()["_rc_done"] is True
+
+        # 재시작 transient 재현: 빈 프레임(None) 몇 개 뒤 다시 Claude(거짓 None→Claude).
+        # 미스가 디바운스 임계에 못 미쳐 _rc_done 이 살아남아 /rc 가 재주입되지 않는다.
+        rc.clear()
+        for _ in range(3):
+            scan("")
+        assert p._claude is None
+        scan("? for shortcuts")
+        assert p._claude == "idle"
+        assert rc == [], "재시작 transient 후 /rc 재주입 없음"
+        assert p._rc_done is True
+
+        # 진짜 세션 종료(디바운스 임계 초과) → sticky 해제 → 다음 기동엔 재무장·주입
+        for _ in range(_sc._HDR_CLAUDE_MISS + 1):
+            scan("$ ")
+        assert p._rc_done is False, "디바운스 확정 종료 후 sticky 해제"
+        rc.clear()
+        scan("? for shortcuts")
+        assert rc == ["/rc"], "진짜 새 세션엔 /rc 재주입"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_manual_usage_panel_captured_for_5h_pct():
     """요청: 사용자가 패널에서 직접 /usage 를 띄우면 그 **실측** 한도를 캡처해 상태줄
     5h% 가 /usage 의 세션 %와 일치한다(예전엔 예산 추정치라 /usage 와 어긋남)."""

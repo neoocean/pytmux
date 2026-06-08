@@ -543,6 +543,11 @@ class ServerClaudeMixin:
                     self._rc_policy_blocked = True
                     for q in self._all_panes():
                         q._rc_pending = False   # 무장된 자동 /rc 예약도 거둔다
+                # 원격제어가 켜진 걸(패널/표시) 한 번이라도 보면 sticky 로 기록 — 재시작
+                # re-exec 후 거짓 None→Claude 로 auto /rc 가 재발해 이미 켜진 패널을 다시
+                # 띄우지 않게 한다(_rc_done 은 _RESUME_FIELDS 로 직렬화돼 유지).
+                if claude_remote_active(txt):
+                    p._rc_done = True
                 # 사용자가 패널에서 직접 /usage 를 띄우면 그 **실측** 한도를 캡처해
                 # 권위값(self._usage)으로 둔다 — 상태줄 5h%·토큰 화면 그래프가 /usage 와
                 # 어긋나던 문제(요청). 그림자 probe 결과와 같은 형식이라 그대로 저장하고,
@@ -602,6 +607,10 @@ class ServerClaudeMixin:
                     p._hdr_claude_miss += 1
                     if p._hdr_claude_miss >= _HDR_CLAUDE_MISS:
                         p._hdr_claude = False
+                        # 진짜 세션 종료(디바운스 확정) → auto /rc sticky 해제. 다음 claude
+                        # 기동엔 정상 재무장. 재시작 transient 한 프레임은 miss 임계(30)에
+                        # 못 미쳐 여기 안 오므로 _rc_done 이 살아남는다.
+                        p._rc_done = False
                 # 토큰 누계(#3): 새 Claude 세션 시작(None→Claude) 시 리셋, 매 프레임
                 # 현재 응답 running 토큰을 step 으로 접어 응답별 peak 를 누계에 확정.
                 # (확정 시점 committed>0 은 #7 의 영속 로깅 이벤트로도 쓰인다.)
@@ -622,6 +631,8 @@ class ServerClaudeMixin:
                     # 으로 넘겨, 다음 idle 에 _perm_target=auto 를 세운다(프레임 분리로
                     # /rc 제출과 shift+tab 이 한 묶음으로 섞이지 않게).
                     # 조직 정책으로 /rc 가 막힌 세션이면 자동 /rc 를 재무장하지 않는다.
+                    # (재시작 후 거짓 새세션 오인으로 /rc 가 재발하는 건 fire 시점의
+                    # _rc_done 가드로 막는다 — 무장은 perm-auto 유도도 겸하므로 둔다.)
                     if self.claude_auto_launch and not self._rc_policy_blocked:
                         p._rc_pending = True
                     p._ctx_fired = False   # 새 세션 — 잔량 자동정리 디바운스 해제(M11)
@@ -761,10 +772,14 @@ class ServerClaudeMixin:
                     # /rc 를 건너뛰어 도로 끄지 않는다.
                     if p._rc_pending:
                         p._rc_pending = False
-                        # 조직 정책으로 막혔거나 이미 원격제어가 켜진 화면이면 /rc 생략.
-                        if (not self._rc_policy_blocked
+                        # /rc 생략 조건: ① 조직 정책 차단 ② 이미 이 세션에 적용함
+                        # (_rc_done — 재시작 re-exec 후 거짓 새세션 오인 방지, 직렬화됨)
+                        # ③ 지금 화면이 이미 원격제어 ON.
+                        if (not self._rc_policy_blocked and not p._rc_done
                                 and not claude_remote_active(txt)):
                             self._pc_inject(p, "/rc")
+                        # 발화/스킵 무관히 이 세션 auto /rc 는 끝남 — sticky 로 재발 금지.
+                        p._rc_done = True
                         p._perm_auto_pending = True
                     elif p._perm_auto_pending:
                         p._perm_auto_pending = False

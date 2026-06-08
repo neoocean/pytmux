@@ -514,6 +514,13 @@ class Pane:
         # 프레임을 갈라 /rc 제출과 shift+tab 이 섞이지 않게 한다. 둘 다 휘발성.
         self._rc_pending = False
         self._perm_auto_pending = False
+        # _rc_done: 이 살아 있는 Claude 세션에 auto /rc 를 이미 적용했음(또는 원격제어가
+        # 켜진 걸 관측했음)을 표시하는 sticky 플래그. **재시작 시 직렬화**(_RESUME_FIELDS)
+        # 돼 re-exec 후에도 유지된다 — re-exec 직후 _induce_redraw_all 의 강제 repaint 가
+        # 순간 빈 프레임을 만들어 _claude 가 None→Claude 로 깜빡이면 거짓 "새 세션"으로
+        # 오인돼 /rc 가 재주입되던 버그(이미 켜진 원격제어 패널이 다시 뜸)를 막는다.
+        # 진짜 세션 종료(_hdr_claude 디바운스 off)에서만 해제해 다음 claude 기동엔 재무장.
+        self._rc_done = False
         # 토큰 절감 자동화(docs/TOKEN_SAVING_SCENARIO.md). 둘 다 휘발성(재시작 비직렬화).
         # _resume_handle: 자동재개 예약 call_later 핸들 — busy 복귀 시 cancel 하려고
         #   들고 있는다(M12; 없으면 None). _ctx_fired: 컨텍스트 잔량 자동 정리(M11)가
@@ -610,6 +617,7 @@ class Pane:
         "_claude", "_claude_usage", "_scanbuf", "_resume_pending",
         "_claude_session_id", "_claude_account", "_claude_account_manual",
         "_tok_state", "_session_tokens", "prompt_clear_mode", "bracketed",
+        "_rc_done",   # re-exec 후 거짓 새세션에 /rc 재주입 방지(원격제어 패널 재발)
     )
 
     def _serialize_line(self, line, columns: int) -> str:

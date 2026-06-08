@@ -215,7 +215,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~57658 + git, 신→구)
+## 9. 최근 변경(CL 56279~57660 + git, 신→구)
 
 > ✅ **git 미러 동기화 완료(2026-06-04, macOS 세션).** Windows 박스(`office`)와
 > `surface-office` 병행 세션에서 낸 CL **56540~56560** 을 macOS 개발 머신에서
@@ -227,6 +227,20 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 57660 **재시작 후 auto `/rc` 재주입 버그 수정**(요청 — 원격제어 이미 켜졌는데 패널
+  재발) — 작업보존 재시작(re-exec)이 `restore_resume_state`→`_induce_redraw_all` 로
+  각 패널에 SIGWINCH 강제 repaint 를 일으키는데, 그 repaint 중 **순간 빈 프레임**에서
+  `claude_state()` 가 None 을 반환해 `_claude` 가 None→Claude 로 깜빡이면 거짓 "새 세션"
+  으로 오인돼 auto-launch 가 `/rc` 를 재주입했다. 기존 가드(`claude_remote_active`)는 RC
+  패널이 화면에 떠 있을 때만 작동하는데 재시작 후엔 평범한 프롬프트라 못 막았다.
+  - 수정: sticky `_rc_done`(`/rc` 적용·원격제어 관측 시 셋, **`_RESUME_FIELDS` 직렬화**로
+    re-exec 넘어 유지). `/rc` 주입 시점에 `_rc_done` 가드 추가 → 거짓 새세션 재주입 차단.
+    `_perm_auto_pending` 무장은 유지(perm-auto 는 자체 가드). `_rc_done` 은 재시작
+    transient(1~수 프레임)엔 안 풀리고 **디바운스 확정 세션 종료**(`_hdr_claude` 30미스)
+    에서만 해제 → 진짜 새 claude 기동엔 정상 재무장. 배포 직후 첫 1회는 구 직렬화에
+    `_rc_done` 부재라 한 번 더 뜰 수 있음(이후 sticky 박혀 재발 없음).
+  - 파일: `model.py`·`serverclaude.py`·`tests/test_server.py`
+    (`test_rc_not_reinjected_after_restart_transient` 신규). 테스트 379 passed.
 - 57658 **자동 /compact 가드 + 그림자 /usage 자동갱신·계정표시 + REC 파일명**(macOS
   세션 캐치업, git 미러 push) — 이전 세션에 macOS 로컬에서 만든 작업 묶음을 depot 에
   게시. 같은 날 office(Windows)가 올린 57636(wrap-cascade 가드)·57606(footer-limit
