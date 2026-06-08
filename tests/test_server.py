@@ -904,6 +904,41 @@ async def test_manual_usage_panel_captured_for_5h_pct():
         await teardown(srv, task, sock)
 
 
+async def test_rename_single_claude_pane_injects_rename():
+    """요청: 탭에 패널이 하나뿐이고 그게 Claude Code 패널이면, 탭 이름 변경 시 같은
+    이름을 Claude 세션에도 /rename 으로 주입한다. 패널이 둘 이상이거나 Claude 가
+    아니면 주입하지 않는다(모호/무관)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        injected = []
+        srv._pc_inject = lambda pane, text: injected.append((pane, text))
+
+        # ① 단일 Claude 패널 → 탭 이름 + /rename 주입
+        p._claude = "idle"
+        srv.rename_window(sess, "myproj")
+        assert sess.active_tab.name == "myproj"
+        assert injected == [(p, "/rename myproj")], injected
+
+        # ② 단일이지만 Claude 아님 → 주입 안 함(탭 이름만)
+        injected.clear()
+        p._claude = None
+        srv.rename_window(sess, "plain")
+        assert sess.active_tab.name == "plain" and injected == [], injected
+
+        # ③ 패널 둘 → 모호 → 주입 안 함
+        injected.clear()
+        p._claude = "idle"
+        srv.split_pane(sess, "lr")
+        assert len(win.panes()) == 2
+        srv.rename_window(sess, "two")
+        assert sess.active_tab.name == "two" and injected == [], injected
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_inpane_usage_panel_bumps_shown_seq():
     """인패널 /usage 패널이 처음 뜨는 순간(상승에지)에만 usage_shown_seq 가 증가해
     클라가 전용 사용량 화면을 자동 팝업하게 한다(요청). 패널이 떠 있는 동안 재감지로는

@@ -444,6 +444,13 @@ class ServerTreeMixin:
         if tab and name:
             tab.name = name
             tab.window.auto_rename = False  # 수동 이름 지정 시 자동 갱신 끔
+            # 탭에 패널이 하나뿐이고 그게 Claude Code 패널이면, 같은 이름을 Claude
+            # 세션에도 `/rename <이름>` 으로 반영한다(요청). 패널이 둘 이상이면 어느
+            # 세션을 가리키는지 모호하므로 건너뛴다. _pc_inject 는 사용자 프롬프트와
+            # 섞이지 않는 별도 입력 경로(자동재개·/compact 와 동일).
+            panes = tab.window.panes()
+            if len(panes) == 1 and panes[0]._claude is not None:
+                self._pc_inject(panes[0], "/rename " + name)
 
     rename_tab = rename_window
 
