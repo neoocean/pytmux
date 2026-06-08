@@ -1115,10 +1115,12 @@ class StatusBar(Widget):
             segs.append(Segment(f" ⏳ {label} {eta}s(입력=취소) ",  # ⏳ 뒤 공백(겹침 방지)
                                 Style(color="black", bgcolor=tc("warning"),
                                       bold=True)))
-        # M17(T7): 장기턴/반복루프 경고 배지(grade0 — 알림만, 개입 없음). 있을 때만.
+        # M17(T7): 장기턴/반복루프('폭주 가능') 경고 배지(grade0 — 알림만, 개입 없음).
+        # 색은 error(핑크레드) — 테마상 warning 이 accent 와 같은 앰버(#FEA62B)라
+        # ESC 모드 배지·커서(accent)와 헷갈리던 문제를 피한다(요청).
         if self.claude_warn:
             segs.append(Segment(f" ⚠ {self.claude_warn} ",  # ⚠ 뒤 공백(글자 겹침 방지)
-                                Style(color="black", bgcolor=tc("warning"),
+                                Style(color="white", bgcolor=tc("error"),
                                       bold=True)))
         if self.prefix_off:
             segs.append(Segment("NEST ", Style(color="white",
