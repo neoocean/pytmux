@@ -101,6 +101,28 @@ async def test_feed_and_scrollback():
         await teardown(srv, task, sock)
 
 
+async def test_resized_pane_restores_tabstops():
+    """분할 새 패널(spawn MIN_W → 실제 폭 resize)에서 탭 정렬 출력이 줄바꿈에서
+    쪼개지지 않아야 한다(사용자 보고: 좁은 우측 패널의 ls 이름 첫 글자가 이전 줄
+    끝에 나옴). pyte 는 폭 3 에서 탭스톱을 빈 집합으로 두고 resize 가 재계산하지
+    않아, TAB 이 줄 끝으로 튀던 회귀를 못박는다."""
+    import pyte
+    from pytmuxlib.model import _ScrollbackScreen
+    from pytmuxlib.protocol import MIN_W
+
+    scr = _ScrollbackScreen(MIN_W, 6)    # spawn 시 임시 MIN_W(=3) → 탭스톱 빈 집합
+    scr.resize(6, 26)                     # 실제 폭으로 재배치(분할 경로): (lines, columns)
+    assert scr.tabstops == set(range(8, 26, 8)), scr.tabstops
+    # ls 가 폭 26 에서 내는 실제 바이트(단일 탭 컬럼 구분).
+    pyte.Stream(scr).feed("f01\tf21\tgg01\r\n")
+    first = "".join((scr.buffer[0][x].data if x in scr.buffer[0] else " ")
+                    for x in range(26))
+    # 탭이 8-칸 정지점으로 펼쳐져 한 줄에 들어간다(쪼개짐 없음).
+    assert first.startswith("f01     f21     gg01"), repr(first)
+    assert "gg01" in first, repr(first)   # 마지막 컬럼이 다음 줄로 새지 않음
+    assert not getattr(scr.buffer[0], "wrapped", False), "줄이 wrap 되지 않음"
+
+
 async def test_alt_screen_isolation():
     srv, task, sock = await server_only()
     try:

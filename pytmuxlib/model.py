@@ -174,6 +174,17 @@ class _BCEMixin:
                 pass
         super().linefeed()
 
+    def resize(self, lines=None, columns=None):
+        super().resize(lines, columns)
+        # pyte 의 resize 는 탭스톱을 재계산하지 않는다. 패널은 spawn 시 MIN_W(=3)로
+        # 만든 뒤 실제 폭으로 키우는데(특히 분할 새 패널), 폭 3에선 표준 탭스톱
+        # range(8,3,8) 이 빈 집합이라 그대로 남는다. 탭스톱이 비면 pyte 의 TAB 은
+        # 다음 8-칸 정지점이 아니라 줄 끝(마지막 칸)으로 커서를 보내, ls 처럼 탭으로
+        # 컬럼을 맞추는 출력에서 다음 이름의 첫 글자가 줄 끝에 찍히고 나머지가
+        # 다음 줄로 쪼개진다(사용자 보고: 좁은 우측 패널의 ls). 새 폭 기준 표준
+        # 8-칸 탭스톱을 다시 세워 실제 터미널과 동일하게 만든다.
+        self.tabstops = set(range(8, self.columns, 8))
+
 
 class _BCEScreen(_BCEMixin, pyte.Screen):
     pass

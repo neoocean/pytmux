@@ -1031,16 +1031,16 @@ class StatusBar(Widget):
             segs.append(Segment("SYNC ", Style(color="white", bgcolor=tc("error"),
                                                 bold=True)))
         if self.autoresume:
-            segs.append(Segment("AR ", Style(color="black", bgcolor=tc("accent"),
+            segs.append(Segment(" AR ", Style(color="black", bgcolor=tc("accent"),
                                               bold=True)))
         self._rec_zone = None
         if self.capture:        # 패널 출력 캡처 중
             rx0 = sum(sum(_char_cells(c) for c in s.text) for s in segs)
-            self._rec_zone = (rx0, rx0 + 4)   # "REC "
+            self._rec_zone = (rx0, rx0 + 5)   # " REC "
             rec_st = (Style(color="black", bgcolor=tc("warning"), bold=True)
                       if self.focus_btn == "rec"
                       else Style(color="white", bgcolor=tc("error"), bold=True))
-            segs.append(Segment("REC ", rec_st))
+            segs.append(Segment(" REC ", rec_st))
         self._usage_zone = None
         self._model_zone = None   # 모델 배지 클릭존(모델·컨텍스트 변경 팝업, 요청)
         # 활성 Claude 패널: 모델(M14c) + 컨텍스트 사용량(best-effort) + 세션 누적(#3, Σ).
