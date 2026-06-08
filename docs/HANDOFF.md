@@ -215,7 +215,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~57060 + git, 신→구)
+## 9. 최근 변경(CL 56279~57658 + git, 신→구)
 
 > ✅ **git 미러 동기화 완료(2026-06-04, macOS 세션).** Windows 박스(`office`)와
 > `surface-office` 병행 세션에서 낸 CL **56540~56560** 을 macOS 개발 머신에서
@@ -227,6 +227,30 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 57658 **자동 /compact 가드 + 그림자 /usage 자동갱신·계정표시 + REC 파일명**(macOS
+  세션 캐치업, git 미러 push) — 이전 세션에 macOS 로컬에서 만든 작업 묶음을 depot 에
+  게시. 같은 날 office(Windows)가 올린 57636(wrap-cascade 가드)·57606(footer-limit
+  파싱)·57603(model 팝업) 위에 얹힘(`model.py` 만 #46 자동 머지, 충돌 0).
+  - **자동 /compact 가드(요청)**: `/compact` 가 연속 발화(`Not enough messages to
+    compact` 반복)·질문 종료 화면에서 발화하던 것 차단. 원인=주입이 스스로 busy→idle
+    경계를 또 만들어 무한 재발화. `model.Pane._acpt_fired` 1회 발화 디바운스 +
+    `serverio` 사용자 입력 시 해제, `serverclaude._acpt_fire` 가
+    `claude.claude_awaiting_answer()`(❯ 선택박스·`?`/`？` 로 끝나는 마지막 내용줄
+    감지; 입력박스·footer 힌트 제외, best-effort)면 발화 skip.
+  - **그림자 /usage 자동 갱신 + 계정 대조**(요청 — 폰 앱과 stale 불일치 완화):
+    `server.usage_refresh_sec`(기본 600초, 0=off), `serverio._usage_loop`(Claude
+    패널 없으면 skip·부팅 후 1회 채움), `usageprobe` 가 숨은 세션 로그인 계정도
+    수집(`claude_account`), `clientscreens` usage 바에 `계정(/usage)` 줄(못 잡으면 미확인).
+  - **REC 캡처 파일명**: `pane-<id>.log` → `<날짜>_<시간>_<세션>_<탭>_p<패널>.log`
+    (`servercapture`·`server._cappaths` 로 시각 박힌 경로 보관, 한 폴더에서 식별·정렬).
+  - **model.py POSIX fd 회귀 수정**: office #46 의 `_notify_winsize` fd 폴백이
+    `master_fd=-1`(pty 없음/죽음·테스트 스텁)일 때 POSIX 에서 `fcntl` 이 `OSError` 가
+    아니라 `ValueError` 를 던져 `resize` 가 크래시(office 가 Windows 에서만 검증해
+    `test_shrink_wrap_guard` 가 macOS 에서 FAIL). fd 유효성 가드 + `ValueError` 포착.
+  - **docs/CONTRIBUTING.md** 서브밋 규칙 표현 정리. 테스트 378 passed. 파일:
+    `claude.py`·`clientscreens.py`·`model.py`·`server.py`·`servercapture.py`·
+    `serverclaude.py`·`serverio.py`·`usageprobe.py`·`tests/{test_claude,test_client,
+    test_model,test_server}.py`·`docs/CONTRIBUTING.md`.
 - 57060 **REC(패널 출력 캡처) 기본 ON**(실 Claude 출력 골든 근거 수집) — `server.py`
   capture 기본값 `False`→`True`(코드 주석·FEATURES·HANDOFF 는 이미 "기본 ON" 이었는데
   실제 기본값만 False 였던 불일치 교정). `opts.json` 영속이라 사용자가 `capture-output
