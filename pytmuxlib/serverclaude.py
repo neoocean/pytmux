@@ -541,6 +541,14 @@ class ServerClaudeMixin:
                 new_usage = None
                 if "Current" in txt and "used" in txt:
                     new_usage = parse_usage(txt)
+                # 인패널 /usage 패널이 안 보이다 처음 보이는 순간(상승에지)에만 자동
+                # 팝업 신호(seq)를 올린다 — 패널이 떠 있는 동안 매 status 마다 감지되니
+                # 패널별 직전 가시성(_usage_panel_seen)과 비교해 중복 팝업을 막는다.
+                panel_now = new_usage is not None
+                if panel_now and not getattr(p, "_usage_panel_seen", False):
+                    self._usage_shown_seq += 1
+                    changed = True
+                p._usage_panel_seen = panel_now
                 if "limit" in txt and "used" in txt:
                     inline = parse_inline_limit(txt)
                     if inline:

@@ -1091,6 +1091,30 @@ class RulesEditScreen(ModalScreen):
             self.dismiss(self.query_one(TextArea).text)
 
 
+def usage_bar_lines(usage, width=80):
+    """Claude `/usage` 한도 dict(session·week_all·week_sonnet)를 보기 좋은 표시
+    줄 목록으로 만든다. 각 줄: 라벨(10셀 패딩) + 막대 + % + 리셋(요약, 타임존 생략).
+    데이터가 없으면 None. TokenLogScreen 의 한도 섹션과 자동 /usage 팝업이 공유한다."""
+    if not isinstance(usage, dict):
+        return None
+    barw = 24 if width >= 80 else (16 if width >= 60 else 8)
+    rows = []
+    for key, name in (("session", "세션 5h"), ("week_all", "주 전체"),
+                      ("week_sonnet", "주 Sonnet")):
+        d = usage.get(key)
+        if not (isinstance(d, dict) and d.get("pct") is not None):
+            continue
+        pct = d["pct"]
+        bar = usagelog.bar(pct, 100, barw)
+        label = name + " " * max(0, 10 - sum(_char_cells(c) for c in name))
+        line = f"{label}{bar} {pct:>3}%"
+        reset = d.get("reset")
+        if reset:                            # 타임존 괄호는 자리 절약 위해 생략
+            line += "  ↻" + reset.split(" (")[0].strip()
+        rows.append(line)
+    return rows or None
+
+
 class TokenLogScreen(ModalScreen):
     """토큰 사용량 영속 로그 집계 팝업(#7). 서버가 보낸 레코드를 클라이언트가
     usagelog 로 시간/일/주/월 × 계정(=클라이언트) 집계한다. [h]시간 [d]일 [w]주
@@ -1234,30 +1258,13 @@ class TokenLogScreen(ModalScreen):
 
     def _usage_lines(self):
         """M19 그림자 /usage 한도를 **막대 그래프**로 보여준다(요청 — Claude /usage 의
-        세션/주간 사용률 바). 한도별 한 줄: 라벨 + 막대 + % + 리셋(요약). 폭에 맞춰
-        막대 칸수를 조절한다. 데이터 없으면 안내 1줄([u] 로 조회)."""
-        u = self._usage
-        if not isinstance(u, dict):
-            return ["한도(/usage): [u] 눌러 조회"]
+        세션/주간 사용률 바). 공유 포맷터(usage_bar_lines)를 쓰고, 데이터가 없으면
+        안내 1줄([u] 로 조회)로 폴백한다."""
         try:
             w = self.app.size.width
         except Exception:
             w = 80
-        barw = 24 if w >= 80 else (16 if w >= 60 else 8)
-        rows = []
-        for key, name in (("session", "세션 5h"), ("week_all", "주 전체"),
-                          ("week_sonnet", "주 Sonnet")):
-            d = u.get(key)
-            if not (isinstance(d, dict) and d.get("pct") is not None):
-                continue
-            pct = d["pct"]
-            bar = usagelog.bar(pct, 100, barw)
-            line = f"{self._cellpad(name, 10)}{bar} {pct:>3}%"
-            reset = d.get("reset")
-            if reset:                        # 타임존 괄호는 자리 절약 위해 생략
-                line += "  ↻" + reset.split(" (")[0].strip()
-            rows.append(line)
-        return rows or ["한도(/usage): [u] 눌러 조회"]
+        return usage_bar_lines(self._usage, w) or ["한도(/usage): [u] 눌러 조회"]
 
     def _sync_tabs(self):
         """탭 라벨(폭 반응형)·활성 버킷·활성 그룹차원([패널])·정렬([정렬]) 강조."""

@@ -150,6 +150,11 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         # M19 그림자 /usage 질의 결과(세션·주간 한도 %·리셋). dict|None. 수동 갱신.
         self._usage = None
         self._usage_busy = False   # 질의 진행 중(중복 방지)
+        # 사용자가 패널에서 /usage 를 띄워 패널이 화면에 처음 나타나는 순간(상승에지)
+        # 마다 증가하는 one-shot 시퀀스. status 로 실어 보내, 클라가 값이 늘면 깨끗한
+        # 전용 사용량 화면을 자동 팝업한다(요청). 백그라운드 그림자 probe·잔류 갱신과
+        # 구분하려고 '인패널 패널의 hidden→visible 전이'에서만 올린다(serverclaude).
+        self._usage_shown_seq = 0
         # M15 계정 합계 예산(0=무제한). 세션 예산은 패널 단독을 보지만(_budget_over),
         # 토큰은 계정 단위로 청구되므로 같은 계정 N개 세션의 합계(_account_token_total)
         # 가 이 값을 넘으면 경고·자동개입 보류. 멀티세션 누적(S7) 대응.

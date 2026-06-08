@@ -904,6 +904,33 @@ async def test_manual_usage_panel_captured_for_5h_pct():
         await teardown(srv, task, sock)
 
 
+async def test_inpane_usage_panel_bumps_shown_seq():
+    """인패널 /usage 패널이 처음 뜨는 순간(상승에지)에만 usage_shown_seq 가 증가해
+    클라가 전용 사용량 화면을 자동 팝업하게 한다(요청). 패널이 떠 있는 동안 재감지로는
+    안 늘고, 사라졌다 다시 뜨면 또 늘어난다(probe·잔류 갱신과 구분)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        p._claude = "idle"
+        assert srv._usage_shown_seq == 0
+        panel = ("Current session\n  blocks 10% used\n  Resets 5am (Asia/Seoul)\n"
+                 "Current week (all models)\n  blocks 14% used\n? for shortcuts\n")
+        p.feed(b"\x1b[2J\x1b[H" + panel.encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert srv._usage_shown_seq == 1, "상승에지 1회"
+        srv._scan_claude(sess, win)          # 패널이 떠 있는 채 재스캔
+        assert srv._usage_shown_seq == 1, "재감지로는 안 늘어남"
+        p.feed(b"\x1b[2J\x1b[Hplain shell output\n")   # 패널이 사라짐
+        srv._scan_claude(sess, win)
+        p.feed(b"\x1b[2J\x1b[H" + panel.encode("utf-8"))  # 다시 뜸
+        srv._scan_claude(sess, win)
+        assert srv._usage_shown_seq == 2, "재등장 시 다시 증가"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_inline_session_limit_reflected_in_5h_pct():
     """요청: /usage 패널을 안 열어도 footer 인라인 한도("used 93% of your session
     limit")를 캡처해 상태줄 5h% 가 추정치(예산) 대신 실측 93% 를 따른다."""

@@ -2000,6 +2000,38 @@ async def test_esc_down_focuses_status_bar_buttons():
     await _with_app(body)
 
 
+async def test_usage_bar_lines_format():
+    # 공유 포맷터: /usage 한도 dict → 라벨+막대+%+리셋(타임존 생략). 데이터 없으면 None.
+    from pytmuxlib.clientscreens import usage_bar_lines
+    u = {"session": {"pct": 10, "reset": "5am (Asia/Seoul)"},
+         "week_all": {"pct": 14, "reset": "Jun 13 at 3am (Asia/Seoul)"},
+         "week_sonnet": {"pct": 0, "reset": "Jun 13 at 3am (Asia/Seoul)"}}
+    lines = usage_bar_lines(u, 80)
+    assert lines and len(lines) == 3, lines
+    assert "세션 5h" in lines[0] and "10%" in lines[0], lines[0]
+    assert "↻5am" in lines[0] and "(Asia" not in lines[0], lines[0]  # 타임존 생략
+    assert usage_bar_lines(None, 80) is None
+    assert usage_bar_lines({}, 80) is None
+
+
+async def test_usage_panel_auto_popup_on_shown_seq():
+    # 인패널 /usage 가 새로 떴다는 usage_shown_seq 증가 → 전용 사용량 화면 자동 팝업.
+    # 접속 후 첫 status 는 베이스라인만(안 띄움), 그 다음 증가에서 띄운다.
+    async def body(app, pilot, srv):
+        u = {"session": {"pct": 10, "reset": "5am (Asia/Seoul)"},
+             "week_all": {"pct": 14, "reset": "Jun 13 at 3am (Asia/Seoul)"}}
+        # 접속 status 가 이미 베이스라인을 잡았을 수 있으니 명시적으로 5 로 둔다.
+        app._last_usage_shown_seq = 5
+        app._dispatch({"t": "status", "usage_limits": u, "usage_shown_seq": 5})
+        await pilot.pause(0.05)
+        assert len(app.screen_stack) == 1, "같은 seq 는 안 띄움"
+        app._dispatch({"t": "status", "usage_limits": u, "usage_shown_seq": 6})
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1].__class__.__name__ == "InfoScreen", \
+            [s.__class__.__name__ for s in app.screen_stack]
+    await _with_app(body)
+
+
 async def test_esc_status_focus_includes_host_clock_date_perm():
     # ESC 모드 하단 포커스 동선에 host(ssh:서버)·시계·달력·"auto mode on"(perm)도
     # 편입돼 ←→ 로 닿고, Enter 가 각 동작을 부른다(요청).

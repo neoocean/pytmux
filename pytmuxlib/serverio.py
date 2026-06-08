@@ -168,6 +168,8 @@ class ServerIOMixin:
                             if win and win.active_pane else None),
             # M19: 그림자 /usage 로 확보한 세션·주간 한도(없으면 None).
             "usage_limits": self._usage,
+            # 인패널 /usage 패널이 새로 떴음을 알리는 one-shot 시퀀스(클라 자동 팝업).
+            "usage_shown_seq": self._usage_shown_seq,
             # M14c: 활성 패널 모델 배지(opus-4.8 등, 없으면 None).
             "claude_model": (win.active_pane._claude_model
                              if win and win.active_pane

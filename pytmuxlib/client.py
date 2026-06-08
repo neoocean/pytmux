@@ -24,7 +24,7 @@ from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 
     ChooseBufferScreen, ChooseLayoutScreen, ChooseTreeScreen, ClaudeSaverScreen,
     CommandListScreen, CommandOptionsScreen, ConfirmScreen, InfoScreen,
     InfoTabsScreen, MenuScreen, ModelCtxScreen, PermModeScreen, PromptScreen,
-    RulesEditScreen, TokenLogScreen)
+    RulesEditScreen, TokenLogScreen, usage_bar_lines)
 from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose 에서 사용)
     MultiplexerView, StatusBar, TabBar)
 from .keymap import _key_to_ctrl_bytes, _tmux_key_to_textual, load_config
@@ -145,6 +145,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # ESC 모드에서 최하단 패널 ↓ → 하단 상태바 버튼 포커스(요청). 값은 현재
             # 포커스된 버튼 키(None=비활성). ←→ 로 버튼 순환, Enter 로 실행, ↑/Esc 복귀.
             self._status_focus = None
+            # /usage 자동 팝업: 서버 usage_shown_seq 의 직전 값(None=아직 베이스라인
+            # 미설정). 접속 후 첫 status 는 현재 seq 로 베이스만 잡고 띄우지 않는다.
+            self._last_usage_shown_seq = None
             self._claude_hidden_panes = set()  # 헤더를 숨긴 패널 id(#6 ② 팝업서 토글)
             self._tab_close_zone = None  # 현재 탭 닫기 [x] 영역 (x0, x1, y)
             self._active_hdr_row = None  # 활성 패널 프롬프트 헤더 행(닫기 [x] 위치, #15)
@@ -763,6 +766,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 tl = getattr(self, "_token_log_screen", None)
                 if tl is not None and "usage_limits" in msg:
                     tl.update_usage(msg.get("usage_limits"))
+                # /usage 자동 팝업(요청): 인패널 /usage 패널이 새로 떴다는 seq 가 늘면
+                # 깨끗한 전용 사용량 화면을 자동으로 띄운다. 접속 후 첫 status 는
+                # 베이스라인만 잡고 띄우지 않는다(과거 seq 로 엉뚱하게 안 뜨게).
+                seq = msg.get("usage_shown_seq", 0)
+                if self._last_usage_shown_seq is None:
+                    self._last_usage_shown_seq = seq
+                elif seq > self._last_usage_shown_seq:
+                    self._last_usage_shown_seq = seq
+                    self._auto_open_usage()
                 self._update_claude(msg.get("panes_claude", []))
                 self._update_tabbar()
                 if self.set_titles:
@@ -1738,6 +1750,27 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # (=클라이언트) 집계. 상태바 Σ 클릭의 진입점이기도 하다.
             self._want_token_log = True
             self.send_cmd("request_token_log", limit=5000)
+
+        def open_usage_panel(self):
+            """Claude `/usage` 한도(세션 5h·주 전체·주 Sonnet)를 깨끗한 전용 화면
+            (InfoScreen, 막대+%+리셋)으로 연다. 인패널 /usage 자동 팝업과 수동 명령
+            (`usage-panel`)이 공유한다. 한도 데이터가 없으면 안내만 표시한다."""
+            u = getattr(self.status, "usage_limits", None)
+            w = self.size.width if self.size else 80
+            lines = usage_bar_lines(u, w)
+            if not lines:
+                self.display_message(
+                    "/usage 한도 데이터 없음 — Claude 패널에서 /usage 를 먼저 실행")
+                return
+            self.push_screen(InfoScreen(lines, title="Claude 사용 한도 (/usage)"))
+
+        def _auto_open_usage(self):
+            """인패널 /usage 가 새로 떴을 때 전용 사용량 화면을 자동 팝업(요청). 다른
+            모달이 떠 있으면 건너뛴다(가림·중복 방지) — 값은 status.usage_limits 에
+            남아 토큰 팝업·`usage-panel` 로 다시 볼 수 있다."""
+            if len(self.screen_stack) > 1:
+                return
+            self.open_usage_panel()
 
         def open_version(self):
             # version 명령: 서버에 버전/업타임을 요청하고(t==version 회신), 클라 자신의
@@ -2717,6 +2750,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.open_claude_usage_tree()
             elif c in ("token-log", "tokens-log", "token-usage-log"):
                 self.open_token_log()
+            elif c in ("usage-panel", "usage-limits", "limits"):
+                self.open_usage_panel()   # 저장된 /usage 한도를 전용 화면으로(수동)
             elif c in ("claude-usage", "usage", "refresh-usage"):
                 # M19 그림자 /usage 질의: 서버가 숨은 claude 를 띄워 실 세션/주간 한도를
                 # 긁어온다(사용자 화면 무간섭, ~수초). 회신은 status 로 반영.
