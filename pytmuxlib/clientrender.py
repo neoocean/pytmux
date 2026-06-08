@@ -85,9 +85,9 @@ def draw_calendar_overlay(cells, panes, calendar_panes, W, H, styles, now=None):
     title_st = styles["title"]
     today_st = styles["today"]
     yr, mo, today = now.year, now.month, now.day
-    weeks = _calendar.Calendar(firstweekday=0).monthdayscalendar(yr, mo)
+    weeks = _calendar.Calendar(firstweekday=6).monthdayscalendar(yr, mo)
     title = f"{yr}-{mo:02d}"
-    wds = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
+    wds = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]
     for p in panes:
         if p["id"] not in calendar_panes:
             continue
