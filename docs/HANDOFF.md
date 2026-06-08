@@ -1595,8 +1595,19 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   `top`/프로파일로 feed(pyte)가 루프를 잡는지, ③ 단순 `cat 대용량` 을 ssh 로 흘려도
   재현되는지(=Claude 무관, 순수 throughput). 가능한 대응(미구현): **출력 레이트
   제한/코얼레싱**(같은 프레임 다중 리페인트 합치기), **feed 별도 스레드 분리**, 또는
-  busy 중 비활성/비가시 영역 feed 스로틀(§9 의 "남은 개선"과 동일 줄기). **현재는
-  미해결 — 기록만.**
+  busy 중 비활성/비가시 영역 feed 스로틀(§9 의 "남은 개선"과 동일 줄기).
+  - **★ 2026-06-09 재검토 — "비가시 영역 스로틀"은 이미 충족, 잔여 레버는 feed 스레드뿐.**
+    flush 경로를 다시 읽어 확인: `_flush_loop`(`serverio.py:321`)은 `sess.active_window`
+    의 패널만 render·스트리밍한다 — **비활성 탭 패널은 애초에 ssh 로 안 나간다**(클라가
+    안 보는 화면은 직렬화·전송 비용 0). 즉 ssh 채널 포화의 "비가시 영역" 측 레버는 이미
+    닫혀 있다. feed(pyte) 자체는 화면 상태 정합을 위해 비가시 패널도 **전량 먹여야** 해
+    스킵 불가(스킵하면 탭 전환 시 화면이 깨짐). 남은 단 하나의 레버는 **feed 를 별도
+    스레드로 빼는 것**인데, pyte 화면 상태를 render/scan 이 같은 루프에서 읽으므로 락
+    없이는 레이스가 나고, 증상이 Windows→ssh 의존이라 헤드리스/로컬에서 **검증 불가**.
+    검증 수단 없이 핫패스를 갈아엎는 위험이 이득보다 커 **의도적 보류 유지**(트리거: 실
+    Windows 박스에서 ①GC-드레인·②코얼레싱으로도 부족하다는 측정). 현 완화 회귀:
+    `test_feed_drain_disables_gc_during_burst`·`test_feed_drain_gc_balanced_on_cancel`
+    ·`test_coalesce_repaints_collapses_feedbuf_and_persists`·`test_feed_drain_interleaves_with_loop`.
   - **★ CL 56xxx 프로파일링 완료 — 원인 2건 정량 확정**(가설 ②/③ 검증, macOS local·
     Python 3.13, `poc/feed_profile.py`). 합성 워크로드(claude busy = alt-screen 풀
     리페인트, plain cat = main-screen 스크롤)를 FEED_SLICE(8KB) 단위로 먹이며 측정.
