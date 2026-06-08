@@ -1828,6 +1828,26 @@ async def test_hangwrap_preserves_number_alignment():
     assert _hangwrap(" 1. short", 30) == [" 1. short"]
 
 
+async def test_hangwrap_cell_aware_and_indent_preserved():
+    """요청: 좁은 폭에서 줄바꿈 시 이어줄이 이전 줄의 들여쓰기(선행 공백+목록 표지)에
+    맞춰 들여써지고, 한글 2셀을 고려해 셀폭으로 끊긴다(char 수 아님)."""
+    from pytmuxlib.clientscreens import _hangwrap
+    from pytmuxlib.clientutil import _char_cells
+    cells = lambda s: sum(_char_cells(c) for c in s)
+    # ① "  → " 들여쓴 줄 → 이어줄도 4칸 들여쓰기, 각 줄이 셀폭 28 이내
+    out = _hangwrap("  → 이 화면에서 [r] 키로 바로 토글합니다(해당 패널에 /rc 주입).", 28)
+    assert len(out) > 1, out
+    assert all(cells(o) <= 28 for o in out), [cells(o) for o in out]
+    assert out[1].startswith("    ") and out[1][4:5] != " ", out   # 정확히 4칸
+    # ② 불릿 "• " 줄 → 이어줄 2칸 들여쓰기
+    out2 = _hangwrap("• 원격 제어로 입력된 프롬프트도 상단 헤더에 반영됩니다.", 24)
+    assert len(out2) > 1 and out2[1].startswith("  ") and out2[1][2:3] != " ", out2
+    assert all(cells(o) <= 24 for o in out2), [cells(o) for o in out2]
+    # ③ 들여쓰기/표지 없는 줄은 이어줄도 0칸(이전 줄 들여쓰기=0 에 맞춤)
+    out3 = _hangwrap("원격 제어로 입력된 프롬프트가 상단 헤더에 그대로 반영됩니다.", 20)
+    assert len(out3) > 1 and not out3[1].startswith(" "), out3
+
+
 async def test_prompt_history_down_jumps_to_h_over_divider():
     """§10-A #8: 프롬프트 히스토리 — 마지막 프롬프트에서 ↓ 한 번에 구분선을 건너뛰어
     [h] footer 로 점프한다(구분선/빈 줄은 nav 에서 skip)."""

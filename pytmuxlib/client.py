@@ -985,7 +985,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             ]
             self.push_screen(InfoScreen(
                 lines, title="원격 제어(Remote Control)",
-                hide_key="r",
+                hide_key="r", max_width=92,   # 넓은 터미널에선 본문이 안 잘리게 확장(요청)
                 hide_cb=lambda: self._toggle_remote_control(pane_id)))
 
         def _draw_claude_headers(self, cells, W, H):

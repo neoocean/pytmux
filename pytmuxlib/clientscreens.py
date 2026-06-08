@@ -593,18 +593,31 @@ _DIVIDER_CHARS = {"─", "—", "-", "·", " "}
 
 
 def _hangwrap(line, width):
-    """긴 줄을 width 안으로 **하드 줄바꿈**하되, 'NN. '/'NN) ' 번호 접두사 폭만큼
-    이어줄을 들여써 번호 정렬을 보존한다(§10-A #7). 가능한 공백 경계에서 끊고,
-    공백이 없으면(긴 URL 등) 글자 단위로 자른다. 짧은 줄은 그대로 [line]."""
-    if width < 8 or len(line) <= width:
+    """긴 줄을 width(**표시 셀** 기준) 안으로 하드 줄바꿈하되, 줄 앞의 들여쓰기와
+    목록 표지('NN.'/'NN)'·•·-·*·→·▷··)만큼 이어줄도 들여써 정렬을 보존한다(요청:
+    좁은 폭에서 줄바꿈 시 이전 줄 들여쓰기에 맞춤 / §10-A #7 번호 정렬). 한글 등
+    2셀 글자를 고려해 셀폭으로 끊어, char 수로 세던 옛 방식이 한글을 과소 줄바꿈해
+    Textual 이 인덴트 없이 다시 soft-wrap 하던 문제를 없앤다. 공백 경계 우선,
+    없으면(긴 URL 등) 글자 단위. 짧은 줄은 그대로 [line]."""
+    cells = lambda s: sum(_char_cells(c) for c in s)
+    if width < 8 or cells(line) <= width:
         return [line]
-    m = re.match(r"\s*\d+[.)]\s+", line)
-    indent = " " * (len(m.group(0)) if m else 0)
+    # 선행 공백 + (있으면) 목록 표지 한 개를 들여쓰기 폭으로 잡는다.
+    m = re.match(r"\s*(?:[-*•·▷→]\s+|\d+[.)]\s+)?", line)
+    ind = m.group(0) if m else ""
+    indent = " " * min(len(ind), max(0, width // 2))   # 너무 깊으면 절반까지만
     out, cur = [], line
-    while len(cur) > width:
-        cut = cur.rfind(" ", len(indent) + 1, width)   # 들여쓰기 뒤 공백 경계
-        if cut <= len(indent):
-            cut = width                                  # 경계 없음 → 하드 컷
+    while cells(cur) > width:
+        # 누적 셀폭이 width 를 막 넘는 글자 인덱스(=하드 컷 위치).
+        acc, cut = 0, len(cur)
+        for i, ch in enumerate(cur):
+            acc += _char_cells(ch)
+            if acc > width:
+                cut = max(i, len(indent) + 1)
+                break
+        sp = cur.rfind(" ", len(indent) + 1, cut)       # 들여쓰기 뒤 공백 경계
+        if sp > len(indent):
+            cut = sp
         out.append(cur[:cut].rstrip())
         cur = indent + cur[cut:].lstrip()
     out.append(cur)
@@ -650,7 +663,7 @@ class InfoScreen(ModalScreen):
     _NAV_KEYS = ("up", "down", "pageup", "pagedown", "home", "end")
 
     def __init__(self, lines, title="info", hide_key=None, hide_cb=None,
-                 initial_index=None, max_width=None, wrap_hang=False,
+                 initial_index=None, max_width=None, wrap_hang=True,
                  col_rows=None):
         super().__init__()
         self._lines = lines
