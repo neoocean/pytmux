@@ -1142,8 +1142,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   있으면 해당 키/명령을 패널에 주입(`_inject_keys`). **열린 결정**: 토글 수단 존재
   여부(없으면 안내/상태표시 전용 팝업으로 축소), 클릭존 인프라를 위 auto-mode 항목과
   공유. **연관**: 위 auto-mode footer 클릭 항목·CL 56592. **현재는 기록만 — 미구현.**
-- **[UI 요청, 미구현 · 상위 항목에 흡수됨] 상태줄 `ssh:` 원격 호스트 세그먼트
-  클릭/터치 → 서버 정보 팝업(연결상태·속도)** — ⚠️ 이 독립 팝업 요청은 §10 최상단의
+- ~~**[UI 요청] 상태줄 `ssh:` 원격 호스트 세그먼트 + 클릭/터치 → 서버 정보 팝업**~~ →
+  **구현 완료**. 원격(SSH) 세션이면 우측 상태줄 host 세그먼트를 `ssh:` 접두사 +
+  error 색으로 그리고(`clientwidgets.py:1153`, `_is_remote`=`SSH_CONNECTION` 등 판정),
+  host 클릭존을 둬 클릭/터치 시 통합 상태 팝업의 **'서버' 탭**(연결상태·RTT 등)을 연다.
+  회귀: `test_status_right_ssh_host_prefix_when_remote`·`test_status_host_click_opens_server_tab`
+  ·`test_esc_status_focus_includes_host_clock_date_perm`. 아래는 원 분석 기록.
+  ⚠️ 이 독립 팝업 요청은 §10 최상단의
   **"하단 상태줄 정보 팝업 통합(REC·토큰·서버이름 탭)"** 항목으로 대체된다 — 서버
   정보는 통합 팝업의 **'서버' 탭**으로 구현. 아래 분석(클릭존·RTT 노출)은 그 탭
   구현에 그대로 쓰인다. 요청: 화면 하단의 **`ssh:` 로 시작하는 원격 서버 표시**
@@ -1163,7 +1168,6 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   류 필드를 더해 팝업에 "최근 RTT NNms / degraded" 로 보이게 한다. **열린 결정**:
   표시 항목 범위(IP 노출 수위·민감정보), RTT 이력(최근 N개 그래프 vs 단일 값).
   **연관**: 네트워크 응답성 외곽선(CL 56593)·REC/토큰 정보팝업(InfoScreen 공유).
-  **현재는 기록만 — 미구현.**
 - ~~**[리팩토링 요청] 코드를 LLM 친화적인 형태로 리팩토링**~~ → **핵심 목표 달성**(거대
   단일 파일 해소 — client.py·server.py 둘 다 모듈 분리). 모든 Claude 서버 코드는
   serverclaude.py 로 통합(set_claude_rules 포함, CL 56780). 추가 미세 분리(버퍼/검색/
