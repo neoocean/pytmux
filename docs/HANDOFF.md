@@ -1578,7 +1578,13 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   더 ESC → 앱으로 1회 ESC 전달) — 터미널 수식 인코딩에 의존하지 않음(가장 확실). ②
   Windows 에서 Kitty 키보드 프로토콜 활성 터미널(Windows Terminal 최신/WezTerm 등)
   사용 안내. ③ esc 모드 진입에 디바운스/타임아웃을 둬 곧이어 키가 안 오면 앱으로 ESC
-  를 흘리는 휴리스틱(오작동 위험으로 비권장). **현재는 미해결 — 기록만.**
+  를 흘리는 휴리스틱(오작동 위험으로 비권장). → **해결**(대응 ① 채택, 터미널 수식
+  인코딩 비의존). `send-escape`/`send-esc` 명령(`client.py:2671`)이 활성 패널에 ESC
+  (`\x1b`) 1회를 전달하고, `bind-key <key> send-escape`(`client.py:2847`)로 임의 키에
+  바인딩할 수 있다 — Shift+ESC 가 안 잡히는 conhost/레거시 Windows 터미널에서도 전용
+  키로 ESC 를 앱에 보낼 수 있다. Shift+ESC 패스스루(normal·esc 모드 양쪽)도 유지
+  (`client.py:2922,3232`). 회귀: `test_send_escape_command`·`test_bind_unbind_keys`·
+  `test_shift_escape_sends_esc_to_pane`·`test_shift_escape_forwards_esc_plain_escape_enters_esc_mode`.
 - **[버그·성능, 완화됨 · 근본(feed 스레드) 잔여] Windows→ssh→원격 macOS Claude Code
   사용 중 수 분 내 ssh 반응성 급락** — **요약**: 정량 프로파일로 원인 2건 확정(아래
   ★) 후 **대응 ①(드레인 중 GC 비활성)·②(alt-screen 풀스크린 리페인트 코얼레싱)
