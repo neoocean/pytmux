@@ -90,6 +90,12 @@ def _cell_sgr_for(ch) -> str:
                      ch.reverse, ch.strikethrough)
 
 
+# 폭 축소(shrink) 직후의 폭-불일치 전환 윈도우 길이(초). 이 동안만 autowrap 을 꺼
+# cascade 대신 truncate 시킨다(_BCEMixin.draw 참조). SIGWINCH 왕복+리페인트보다 넉넉히
+# 길고(분주한 박스 대비), 정상 폭에선 어차피 오버플로가 없어 무해하므로 보수적으로 잡는다.
+WRAP_GUARD_SEC = 0.4
+
+
 class _BCEMixin:
     """배경색 소거(BCE) 동작을 하는 화면 믹스인.
 
@@ -159,9 +165,24 @@ class _BCEMixin:
     # 줄 끝이 지워지거나 당겨진 stale 태그는 자동으로 무효화된다.
     def draw(self, data):
         self._drawing = True
+        # 폭 축소 직후 짧은 전환 윈도우(_wrap_guard_until): ConPTY/Claude 가 새 폭을
+        # SIGWINCH 로 인식하기 전까지 옛(넓은) 폭으로 계속 그릴 수 있다. 그 바이트가
+        # 이미 좁아진 pyte 에 들어오면 전폭 줄(예: /compact 의 ─ 구분선)이 autowrap 돼
+        # 다음 줄로 흘러, Claude 의 커서 상대 리페인트 좌표까지 어긋나며 아래 줄이 전부
+        # 밀린다(docs/HANDOFF.md — /compact 진행 표시 정렬 깨짐). 이 윈도우 동안만
+        # DECAWM(자동 줄바꿈)을 꺼 두면, 넘치는 글자가 다음 줄로 흐르는 대신 마지막
+        # 칸을 덮어쓴다(pyte draw: cursor.x==columns 또 DECAWM off → cursor.x-=width).
+        # → cascade 대신 한 칸 truncate. 폭이 맞으면 오버플로 자체가 없어 동작 불변이라
+        # (CR 이 마지막 글자 직후 오므로 wrap 분기에 안 들어감) 정상 출력엔 무해하다.
+        guard = (pyte.modes.DECAWM in self.mode
+                 and time.monotonic() < getattr(self, "_wrap_guard_until", 0.0))
+        if guard:
+            self.mode.discard(pyte.modes.DECAWM)
         try:
             super().draw(data)
         finally:
+            if guard:
+                self.mode.add(pyte.modes.DECAWM)
             self._drawing = False
 
     def linefeed(self):
@@ -175,7 +196,11 @@ class _BCEMixin:
         super().linefeed()
 
     def resize(self, lines=None, columns=None):
+        old_cols = self.columns
         super().resize(lines, columns)
+        # 폭이 줄면 전환 윈도우 동안 autowrap 을 꺼 cascade 를 막는다(draw 참조).
+        if columns is not None and columns < old_cols:
+            self._wrap_guard_until = time.monotonic() + WRAP_GUARD_SEC
         # pyte 의 resize 는 탭스톱을 재계산하지 않는다. 패널은 spawn 시 MIN_W(=3)로
         # 만든 뒤 실제 폭으로 키우는데(특히 분할 새 패널), 폭 3에선 표준 탭스톱
         # range(8,3,8) 이 빈 집합이라 그대로 남는다. 탭스톱이 비면 pyte 의 TAB 은
@@ -446,7 +471,11 @@ class Pane:
         self._adc_active = False
         # 자동 /compact(요청): idle 가 auto_compact_delay 초 지속되면 1회 '/compact'
         # +Enter 주입. _acpt_timer 는 무장된 타이머 핸들(없으면 None, 휘발성).
+        # _acpt_fired 는 이미 1회 발화했음을 표시하는 디바운스 플래그 — /compact
+        # 주입이 스스로 busy→idle 경계를 또 만들어 무한 재발화하는 것을 막는다(요청).
+        # 사용자가 실제로 입력하면(serverio) 해제돼 다음 idle 에 다시 발화 가능.
         self._acpt_timer = None
+        self._acpt_fired = False
         # 권한모드 자동 오토모드 전환(§10): idle 일 때 footer 가 auto 가 아니면
         # shift+tab 을 순환 주입한다(서버 옵션 claude_auto_mode 가 켜졌을 때만).
         # _cam_tries 는 이번 idle 진입 후 보낸 횟수(무한 순환 가드 _CAM_MAX), _cam_last
@@ -793,15 +822,7 @@ class Pane:
         self.scroll = 0
         self._match_abs = None
 
-    def resize(self, cols: int, rows: int) -> None:
-        cols = max(1, cols)
-        rows = max(1, rows)
-        if cols == self.cols and rows == self.rows:
-            return
-        self.cols, self.rows = cols, rows
-        self._main.resize(rows, cols)
-        if self._alt is not None:
-            self._alt.resize(rows, cols)
+    def _notify_winsize(self, cols: int, rows: int) -> None:
         # PTY 크기 통지는 백엔드 핸들을 통해(크로스플랫폼). 렌더 전용 패널(pty=None)은
         # 옛 fd 기반 set_winsize 로 폴백(fd=-1 이면 무해하게 실패).
         if self.pty is not None:
@@ -809,14 +830,36 @@ class Pane:
                 self.pty.set_winsize(rows, cols)
             except OSError:
                 pass
-        else:
-            # Windows 의 렌더 전용 패널: set_winsize 가 fcntl/termios 를 지연
-            # import 하므로 ModuleNotFoundError 가 날 수 있다(OSError 아님). 폭만
-            # 못 알릴 뿐 무해하므로 함께 삼킨다.
+        elif isinstance(self.master_fd, int) and self.master_fd >= 0:
+            # 렌더 전용 패널(pty=None)인데 유효한 master_fd 가 있으면 fd 기반 폴백.
+            # fd=-1(pty 없음/죽음·테스트 스텁)이면 POSIX 에서 fcntl 이 OSError 가
+            # 아니라 ValueError 를 던지므로(Python 3.13) 호출 자체를 건너뛴다.
+            # Windows 는 set_winsize 가 fcntl/termios 를 지연 import 해 ImportError
+            # 가능 — 폭만 못 알릴 뿐 무해하므로 삼킨다.
             try:
                 set_winsize(self.master_fd, rows, cols)
-            except (OSError, ImportError):
+            except (OSError, ImportError, ValueError):
                 pass
+
+    def resize(self, cols: int, rows: int) -> None:
+        cols = max(1, cols)
+        rows = max(1, rows)
+        if cols == self.cols and rows == self.rows:
+            return
+        # 폭 축소(shrink) 시엔 ConPTY/Claude 에 좁은 폭을 **먼저** 통지해, pyte 가
+        # 좁아지기 전에 SIGWINCH 로 좁은-폭 리페인트가 시작되게 한다(폭-불일치 윈도우
+        # 최소화 — Windows ConPTY set_winsize 지연 대비). 넓힐 때는 pyte 를 먼저 키워도
+        # wrap 이 안 생기므로 기존 순서(화면 먼저)를 유지한다. 어느 쪽이든 _BCEMixin 의
+        # autowrap 가드가 남은 전환 윈도우의 cascade 를 truncate 로 흡수한다.
+        shrink_w = cols < self.cols
+        self.cols, self.rows = cols, rows
+        if shrink_w:
+            self._notify_winsize(cols, rows)
+        self._main.resize(rows, cols)
+        if self._alt is not None:
+            self._alt.resize(rows, cols)
+        if not shrink_w:
+            self._notify_winsize(cols, rows)
         self.dirty = True
 
     def _history_len(self) -> int:

@@ -12,7 +12,8 @@ import json
 import time
 
 from . import tokens
-from .claude import (claude_account, claude_context_pct, claude_feedback_prompt,
+from .claude import (claude_account, claude_awaiting_answer, claude_context_pct,
+                     claude_feedback_prompt,
                      claude_model, claude_prompt, claude_perm_mode,
                      claude_remote_active, claude_remote_blocked,
                      claude_state, claude_usage,
@@ -343,8 +344,14 @@ class ServerClaudeMixin:
     def _acpt_arm(self, pane: Pane):
         """idle 진입 시점에 무장: auto_compact_delay 초 뒤 _acpt_fire 를 예약한다.
         기존 타이머가 있으면 먼저 해제(재무장). 실행 중 루프가 없으면(테스트가
-        _scan_claude 를 동기 호출) 조용히 패스한다(_adc_arm 와 동일)."""
+        _scan_claude 를 동기 호출) 조용히 패스한다(_adc_arm 와 동일).
+
+        이미 1회 발화했으면(_acpt_fired) 무장하지 않는다 — /compact 주입 자체가
+        busy→idle 경계를 또 만들어 연속 재발화('Not enough messages to compact'
+        반복)하는 것을 막는다(요청). 사용자가 실제 입력하면 플래그가 풀려 재무장된다."""
         self._acpt_disarm(pane)
+        if pane._acpt_fired:
+            return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -355,7 +362,10 @@ class ServerClaudeMixin:
     def _acpt_fire(self, pane: Pane):
         """타이머 만료(idle 가 N초 지속됨): 조건 재확인 후 '/compact'+Enter 1회 주입.
         idle 가 아니거나(그새 busy/limit/종료), 자동 doc→clear/수동 prompt-clear 시퀀스가
-        진행 중이거나, 토글이 꺼졌으면 발화하지 않는다."""
+        진행 중이거나, 토글이 꺼졌으면 발화하지 않는다. 또 화면이 질문/선택으로 끝나
+        사용자 답을 기다리는 중이면(claude_awaiting_answer) 건너뛴다 — 답 직전 압축은
+        상호작용을 끊고 무의미하다(요청). 이 경우 _acpt_fired 를 세우지 않아 사용자가
+        답해 다음 idle 경계가 오면 다시 평가된다."""
         pane._acpt_timer = None
         if not self.auto_compact:
             return
@@ -363,6 +373,9 @@ class ServerClaudeMixin:
             return
         if pane._adc_active or pane.prompt_clear_mode:
             return
+        if claude_awaiting_answer(screen_text(pane.screen)):
+            return   # 질문으로 끝남 — 사용자 답 대기 중이므로 발화하지 않음
+        pane._acpt_fired = True   # 디바운스: 다음 사용자 입력 전까지 재발화 금지
         self._pc_inject(pane, "/compact")   # 한 줄 입력 + Enter
 
     # ---- 권한모드 자동 오토모드 전환(§10) ----
@@ -559,6 +572,11 @@ class ServerClaudeMixin:
                         base.update(inline)
                         new_usage = base
                 if new_usage and new_usage != self._usage:
+                    # 그림자 probe 가 붙여 둔 계정(일치 확인용)은 인패널 갱신이
+                    # 덮지 않게 보존한다 — 인라인 parse_usage 엔 계정이 없다.
+                    if isinstance(self._usage, dict) and self._usage.get("account") \
+                            and "account" not in new_usage:
+                        new_usage["account"] = self._usage["account"]
                     self._usage = new_usage
                     changed = True
                 # 사용량 표시는 Claude 세션이 살아 있는 동안 유지한다(#5): 화면에서
@@ -919,6 +937,11 @@ class ServerClaudeMixin:
         if cap <= 0:
             return None
         return min(999, round(total / cap * 100))
+
+    def _any_claude_pane(self) -> bool:
+        """살아 있는 패널 중 Claude 세션이 하나라도 있으면 True(자동 /usage 게이트).
+        Claude 를 안 쓰는데 숨은 세션을 띄워 스크랩하는 낭비를 막는다."""
+        return any(getattr(p, "_claude", None) for p in self._all_panes())
 
     async def refresh_usage(self):
         """M19 그림자 /usage 질의: executor 스레드에서 숨은 claude 를 띄워 /usage 패널을

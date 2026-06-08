@@ -1125,6 +1125,12 @@ def usage_bar_lines(usage, width=80):
         if reset:                            # 타임존 괄호는 자리 절약 위해 생략
             line += "  ↻" + reset.split(" (")[0].strip()
         rows.append(line)
+    # 그림자 /usage 세션의 계정(일치 확인용). 키가 있을 때만 — 폰 앱과 다른 계정이면
+    # 한도가 실제로 달라지므로 눈으로 대조하라고 표시한다. 신호 못 잡으면 '미확인'.
+    if rows and "account" in usage:
+        acct = usage.get("account")
+        rows.append(f"계정(/usage): {acct}" if acct
+                    else "계정(/usage): 미확인 (폰 앱과 같은 계정인지 확인)")
     return rows or None
 
 

@@ -1,17 +1,29 @@
 """패널 출력 캡처(REC — Claude 화면 문구 분석용 무손실 로그) 서버 로직 믹스인.
 `server.Server` 가 상속한다(§10 LLM 친화 리팩토링). 각 패널 raw 출력을
-`<sock>.capture/pane-<id>.log` 로 기록(탭 매핑은 sessions.log). 동작 불변 — self.*
-상태와 Server 메서드(_save_opts 등)를 그대로 참조한다."""
+`<sock>.capture/<날짜>_<시간>_<세션>_<탭>_p<패널>.log` 로 기록(탭 매핑은 sessions.log).
+파일명에 기록 시작 시각·세션·탭·패널을 박아 한 폴더에서 바로 식별·정렬되게 한다.
+동작 불변 — self.* 상태와 Server 메서드(_save_opts 등)를 그대로 참조한다."""
 from __future__ import annotations
 
 import json
 import os
+import re
 import time
 
 from . import ipc
 from .model import Pane
 
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# 파일명에 허용할 문자(영문/숫자/한글/._-). 그 외는 제거하고 공백은 - 로 바꾼다.
+_UNSAFE_RE = re.compile(r"[^0-9A-Za-z가-힣._-]+")
+
+
+def _safe(s) -> str:
+    """세션/탭 이름을 파일명 조각으로 정리(공백→-, 비허용 문자 제거)."""
+    s = re.sub(r"\s+", "-", str(s).strip())
+    s = _UNSAFE_RE.sub("", s)
+    return s or "x"
 
 
 class ServerCaptureMixin:
@@ -41,26 +53,45 @@ class ServerCaptureMixin:
         return ipc.state_base(self.sock_path) + ".capture"
 
     def _capture_info(self, pane):
-        """활성 패널의 캡처 파일 절대경로·크기(REC 클릭 팝업용). 캡처 off 면 (None,0)."""
+        """활성 패널의 현재 캡처 파일 절대경로·크기(REC 클릭 팝업용).
+        아직 기록 시작 전(파일 미생성)이거나 캡처 off 면 (None,0)."""
         if not self.capture or pane is None:
             return None, 0
-        path = os.path.join(self.capture_dir, f"pane-{pane.id}.log")
+        path = self._cappaths.get(pane.id)   # 파일명에 시각이 박혀 핸들에서 보관해 둔 경로
+        if path is None:
+            return None, 0
         try:
             size = os.path.getsize(path)
         except OSError:
             size = 0
         return path, size
 
+    def _pane_idents(self, pane: Pane):
+        """패널의 (세션, 탭, 패널) 파일명 조각. 못 찾으면 ('x','x', pane.id).
+        탭은 '<인덱스>.<이름>'(정렬·식별 겸용), 패널은 전역 유일 pane.id 문자열."""
+        for sess in self.sessions.values():
+            for i, tab in enumerate(sess.tabs):
+                if pane in tab.window.panes():
+                    return _safe(sess.name), f"{i}.{_safe(tab.name)}", str(pane.id)
+        return "x", "x", str(pane.id)
+
     def _pane_location(self, pane: Pane) -> str:
-        """패널이 속한 탭을 'tab<idx>:<name>' 로 반환(메타 로그용)."""
+        """패널이 속한 탭을 'tab<idx>:<name>' 로 반환(sessions.log 메타용)."""
         for sess in self.sessions.values():
             for i, tab in enumerate(sess.tabs):
                 if pane in tab.window.panes():
                     return f"tab{i}:{tab.name}"
         return "tab?:?"
 
+    def _capture_filename(self, pane: Pane) -> str:
+        """REC 캡처 파일명: <날짜>_<시간>_<세션>_<탭>_p<패널>.log (기록 시작 시각 기준).
+        예: 20260608_184500_0_0.claude_p1.log"""
+        sess, tab, pn = self._pane_idents(pane)
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        return f"{ts}_{sess}_{tab}_p{pn}.log"
+
     def _capture_write(self, pane: Pane, data: bytes):
-        """패널의 raw PTY 출력을 pane-<id>.log 에 무손실 append(재생/분석용)."""
+        """패널 raw PTY 출력을 <날짜>_<시간>_<세션>_<탭>_p<패널>.log 에 무손실 append."""
         fh = self._capfiles.get(pane.id)
         if fh is None:
             try:
@@ -71,15 +102,16 @@ class ServerCaptureMixin:
                     os.chmod(self.capture_dir, 0o700)
                 except OSError:
                     pass
-                path = os.path.join(self.capture_dir, f"pane-{pane.id}.log")
+                path = os.path.join(self.capture_dir, self._capture_filename(pane))
                 fh = ipc.open_private(path, "ab", buffering=0)   # 0600(F4)
             except OSError:
                 return
             self._capfiles[pane.id] = fh
+            self._cappaths[pane.id] = path
             # 탭/패널 매핑을 별도 텍스트 로그에 기록(raw 로그는 오염하지 않음).
             try:
                 meta = (f"{time.strftime('%Y-%m-%d %H:%M:%S')} "
-                        f"pane-{pane.id} {self._pane_location(pane)} "
+                        f"{os.path.basename(path)} {self._pane_location(pane)} "
                         f"title={pane.title!r}\n")
                 with ipc.open_private(                          # 0600(F4)
                         os.path.join(self.capture_dir, "sessions.log"), "a") as mf:
@@ -92,6 +124,7 @@ class ServerCaptureMixin:
             self._close_capfile(pane.id)
 
     def _close_capfile(self, pane_id: int):
+        self._cappaths.pop(pane_id, None)   # 다음에 켤 때 새 시각 파일명으로 재오픈
         fh = self._capfiles.pop(pane_id, None)
         if fh is not None:
             try:

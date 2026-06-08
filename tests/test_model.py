@@ -205,6 +205,37 @@ async def test_wide_char_render():
         await teardown(srv, task, sock)
 
 
+async def test_shrink_wrap_guard_truncates_not_cascades():
+    """폭 축소 직후 전환 윈도우: ConPTY/Claude 가 아직 옛(넓은) 폭으로 그리는 바이트가
+    좁아진 pyte 에 들어와도, 전폭 줄(예: /compact 의 ─ 구분선)이 다음 줄로
+    autowrap(cascade)되지 않고 마지막 칸에서 truncate 돼야 한다. cascade 되면 Claude 의
+    커서-상대 리페인트 좌표까지 어긋나 아래 줄이 전부 밀린다(/compact 진행 표시 정렬
+    깨짐 회귀). draw 중 DECAWM 임시 비활성화로 흡수한다."""
+    from pytmuxlib.model import Pane
+    from pytmuxlib.replay import render_pane_lines
+
+    # 140칸 ─ 구분선 + CR + CUD(다음 줄) + 마커 — 실제 /compact 진행 표시 패턴.
+    payload = ("─" * 140 + "\r\x1b[1B" + "NEXT").encode("utf-8")
+
+    # 140 에서 시작 → 139 로 축소(가드 무장) → Claude 가 아직 140 폭으로 그린다고 가정.
+    p = Pane(-1, -1, 140, 10)
+    p.feed(b"\x1b[2J\x1b[H")
+    p.resize(139, 10)                 # shrink → autowrap 가드 무장
+    p.feed(payload)
+    lines = render_pane_lines(p)
+    assert lines[0].rstrip().count("─") == 139, repr(lines[0][:20])
+    assert lines[1].lstrip().startswith("NEXT"), repr(lines[1])
+    assert not lines[1].lstrip().startswith("─"), "전폭 줄이 다음 줄로 흘러선 안 됨(cascade)"
+
+    # 대조군: 폭 축소(가드)가 없으면(처음부터 139) 같은 오버플로 바이트는 wrap 된다
+    # — 가드가 실제로 동작을 바꿨음을 증명(버그 재현).
+    q = Pane(-1, -1, 139, 10)
+    q.feed(b"\x1b[2J\x1b[H")
+    q.feed(payload)
+    qlines = render_pane_lines(q)
+    assert qlines[1].lstrip().startswith("─"), "대조군: 가드 없으면 한 칸 wrap 돼야"
+
+
 async def test_bce_erase_drops_underline():
     # 밑줄(또는 굵게 등)을 켠 채 줄·화면을 지워도 빈 칸에 장식이 남지 않아야 한다
     # (실 터미널의 BCE = 배경색만 보존). 회귀: Claude Code 환영 화면의 가로줄.

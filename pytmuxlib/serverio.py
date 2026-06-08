@@ -389,6 +389,24 @@ class ServerIOMixin:
                 for c in clients:
                     await write_frames(c.writer, frames_by_client[c])
 
+    async def _usage_loop(self):
+        """M19+ 그림자 /usage 자동 갱신: usage_refresh_sec 마다 refresh_usage 를 돌려
+        세션·주간 한도 표시가 stale(폰 앱과 어긋남) 해지지 않게 한다. 기존엔 토큰
+        화면을 열 때만 on-demand 였다(요청). interval=0 이면 비활성. Claude 패널이
+        없으면 건너뛰어 불필요한 숨은 세션 생성을 막는다. 부팅 직후 한 번 채운 뒤 주기."""
+        interval = self.usage_refresh_sec
+        if interval <= 0:
+            return
+        # 부팅/트러스트 대화상자와 안 겹치게 약간 늦춰 첫 채움(패널이 비지 않게).
+        await asyncio.sleep(min(20.0, interval))
+        while self.running:
+            if not self._usage_busy and self._any_claude_pane():
+                try:
+                    await self.refresh_usage()
+                except Exception:
+                    pass
+            await asyncio.sleep(interval)
+
     # ---- 명령 처리 ----
     async def _handle_cmd(self, client: ClientConn, msg: dict):
         sess = client.session
@@ -852,6 +870,7 @@ class ServerIOMixin:
         self._track_prompt(p, data)   # 마지막 입력 프롬프트 추적(Claude 헤더용)
         self._adc_disarm(p)   # 사용자 입력 = 활동 중 → 자동 doc→/clear 발화 취소(§10)
         self._acpt_disarm(p)  # 사용자 입력 → 자동 /compact 발화도 취소
+        p._acpt_fired = False  # 실제 활동 재개 → 다음 idle 에 자동 /compact 재무장 허용
         self._cancel_resume(p)  # M14: 사용자가 입력했으면 자동재개 예약도 취소(§5.3
         #   선점 — 사용자가 직접 키를 쳤다 = 작업을 이어받음 → continue 중복 주입 방지)
         # 입력 동기화 시 윈도우 내 모든 패널에 동일 입력 전달
@@ -978,6 +997,7 @@ class ServerIOMixin:
                 self.restore_layout()
             flush = asyncio.create_task(self._flush_loop())
             autoname = asyncio.create_task(self._autorename_loop())
+            usage = asyncio.create_task(self._usage_loop())
             async with server:
                 try:
                     await server.serve_forever()
@@ -985,5 +1005,6 @@ class ServerIOMixin:
                     pass
             flush.cancel()
             autoname.cancel()
+            usage.cancel()
         finally:
             self._remove_signal_handlers(signals)

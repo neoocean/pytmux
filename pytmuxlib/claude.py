@@ -425,6 +425,37 @@ def claude_prompt(text: str):
     return found
 
 
+# ---- 자동 /compact 억제: Claude 가 사용자에게 질문/선택을 요청 중인지(요청) ----
+# 화면이 질문으로 끝나면(=사용자 답을 기다리는 중) 자동 /compact 를 넣지 않는다 —
+# 답하기 전에 압축하면 진행 중 상호작용을 끊거나(선택지 사라짐) 무의미하다. 두 신호:
+#   ① 대화형 선택 박스(❯ 선택자 + "1." 류 번호 옵션) — 권한 확인·옵션 선택 등
+#   ② 입력박스("> ")·footer 힌트를 제외한 마지막 본문 줄이 물음표로 끝남
+_CHOICE_RE = re.compile(r"❯\s*\d+[.)]\s")
+_FOOTER_HINT_RE = re.compile(
+    r"for shortcuts|/help|shift\s*\+\s*tab|esc to|ctrl\s*\+", re.I)
+
+
+def claude_awaiting_answer(text: str) -> bool:
+    """Claude 화면이 사용자 답변을 기다리는 질문/선택으로 끝나면 True(best-effort).
+    자동 /compact 가 질문 직후 끼어드는 것을 막는 가드(요청). 보수적으로 잡는다 —
+    오탐이어도 자동 /compact 한 번을 건너뛸 뿐이다."""
+    text = text or ""
+    # ① 대화형 선택 박스 — ❯ + 번호 옵션. 가장 확실한 '답 대기' 신호.
+    if _CHOICE_RE.search(text):
+        return True
+    # ② 입력박스·footer 힌트·글리프·빈 줄을 아래에서부터 건너뛴 첫 본문 줄을 본다.
+    for line in reversed(text.splitlines()):
+        s = line.strip().strip("│|").strip()
+        if not s or s.startswith(">"):            # 빈 줄 / 라이브 입력박스
+            continue
+        if _FOOTER_HINT_RE.search(s):             # footer 힌트 줄
+            continue
+        if not any(c.isalnum() for c in s):       # 글리프/구분선만
+            continue
+        return s.endswith("?") or s.endswith("？")   # ASCII/전각 물음표
+    return False
+
+
 def claude_perm_mode(text: str):
     """Claude Code idle 권한모드 footer 에서 현재 권한모드를 best-effort 추정.
 

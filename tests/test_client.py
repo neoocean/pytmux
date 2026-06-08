@@ -2032,6 +2032,15 @@ async def test_usage_bar_lines_format():
     assert "↻5am" in lines[0] and "(Asia" not in lines[0], lines[0]  # 타임존 생략
     assert usage_bar_lines(None, 80) is None
     assert usage_bar_lines({}, 80) is None
+    # account 키 없으면 계정 줄 안 붙음(인패널 전용 갱신 등) → 기존 3줄 유지
+    assert all("계정(/usage)" not in ln for ln in lines), lines
+    # 그림자 probe 가 계정을 실으면 일치 확인용 줄을 덧붙인다(②).
+    u2 = dict(u, account="me@woojinkim.org")
+    lines2 = usage_bar_lines(u2, 80)
+    assert lines2[-1] == "계정(/usage): me@woojinkim.org", lines2
+    # 계정 신호를 못 잡으면(account=None) '미확인' 으로 표시
+    u3 = dict(u, account=None)
+    assert "미확인" in usage_bar_lines(u3, 80)[-1], usage_bar_lines(u3, 80)
 
 
 async def test_usage_panel_auto_popup_on_shown_seq():

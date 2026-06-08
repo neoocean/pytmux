@@ -75,6 +75,8 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         # 보강의 객관 근거로 쓴다(IMPROVEMENT §3.2, TOKEN_SAVING M8). opts.json
         # 에 영속하므로 사용자가 capture-output off 로 끄면 그 선택이 유지된다.
         self._capfiles: dict[int, "object"] = {}   # pane.id -> 열린 바이너리 파일
+        self._cappaths: dict[int, str] = {}        # pane.id -> 그 핸들의 캡처 경로
+        #   (파일명에 생성 시각이 박혀 핸들에서 역산 불가 → 열 때 경로를 따로 보관)
         _opts = self._load_opts()
         self.capture = bool(_opts.get("capture", True))   # 기본 ON
         # Claude 프롬프트 헤더 전역 표시(#6 ③ opts.json 영속). 클라가 status 로 받아
@@ -147,9 +149,13 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         self.token_budget_5h = int(_opts.get("token_budget_5h", 0))
         # limit 진입 시점의 계정 누계로 5h 상한을 학습(in-memory, best-effort).
         self._learned_5h_cap = 0
-        # M19 그림자 /usage 질의 결과(세션·주간 한도 %·리셋). dict|None. 수동 갱신.
+        # M19 그림자 /usage 질의 결과(세션·주간 한도 %·리셋·계정). dict|None.
         self._usage = None
         self._usage_busy = False   # 질의 진행 중(중복 방지)
+        # M19+ 그림자 /usage 자동 갱신 주기(초). 0=비활성(토큰 화면 열 때만 on-demand).
+        # 숨은 claude 세션을 띄워 스크랩하므로 너무 짧지 않게(기본 600=10분). 폰 앱과
+        # 어긋나던 stale 표시를 줄인다 — Claude 패널이 하나도 없으면 프로브를 건너뛴다.
+        self.usage_refresh_sec = int(_opts.get("usage_refresh_sec", 600))
         # 사용자가 패널에서 /usage 를 띄워 패널이 화면에 처음 나타나는 순간(상승에지)
         # 마다 증가하는 one-shot 시퀀스. status 로 실어 보내, 클라가 값이 늘면 깨끗한
         # 전용 사용량 화면을 자동 팝업한다(요청). 백그라운드 그림자 probe·잔류 갱신과

@@ -4,9 +4,25 @@
 import datetime as dt
 
 import harness  # noqa: F401  (경로 설정)
-from pytmuxlib.claude import (claude_model, claude_perm_mode, claude_prompt,
+from pytmuxlib.claude import (claude_awaiting_answer, claude_model,
+                              claude_perm_mode, claude_prompt,
                               claude_state, claude_usage, parse_reset_delay,
                               saver_hook_events)
+
+
+async def test_claude_awaiting_answer():
+    """자동 /compact 억제용: 화면이 질문/선택으로 끝나면 True(요청)."""
+    # ① 대화형 선택 박스(❯ + 번호 옵션)
+    assert claude_awaiting_answer("질문?\n❯ 1. Yes\n  2. No\n? for shortcuts")
+    assert claude_awaiting_answer("│ ❯ 1) 진행\n│   2) 취소")
+    # ② 입력박스·footer 힌트를 건너뛴 마지막 본문 줄이 물음표로 끝남
+    assert claude_awaiting_answer("Do you want to proceed?\n> \n? for shortcuts")
+    assert claude_awaiting_answer("계속할까요?\n\n  esc to interrupt")
+    assert claude_awaiting_answer("끝줄 질문입니까？")   # 전각 물음표
+    # 질문이 아니면 False — footer 의 "? for shortcuts" 에 낚이지 않는다.
+    assert not claude_awaiting_answer("All done. Saved 3 files.\n? for shortcuts")
+    assert not claude_awaiting_answer("작업 완료.\n> \n/help for help")
+    assert not claude_awaiting_answer("")
 
 
 async def test_screen_text_matches_display():

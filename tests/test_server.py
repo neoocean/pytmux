@@ -233,6 +233,40 @@ async def test_claude_usage_persists_while_session_alive():
         await teardown(srv, task, sock)
 
 
+async def test_usage_auto_refresh_and_account(tmp_path=None):
+    """M19+: ① 자동 갱신 설정/게이트(_any_claude_pane·interval=0 즉시 반환),
+    ② 그림자 probe 계정이 인패널 /usage 갱신에도 보존되는지(일치 확인용)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        # 기본 자동 갱신 주기(10분) + interval=0 이면 루프가 즉시 반환(행 없음).
+        assert srv.usage_refresh_sec == 600, srv.usage_refresh_sec
+        assert not srv._any_claude_pane(), "Claude 패널 없으면 False(프로브 스킵)"
+        srv.usage_refresh_sec = 0
+        await srv._usage_loop()        # 비활성 → 즉시 반환(타임아웃 없이 통과)
+
+        # Claude 패널로 인식되면 게이트 통과
+        p.feed("\x1b[2J\x1b[H me@woojinkim.org's Organization\r\n"
+               "? for shortcuts\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert srv._any_claude_pane(), "Claude 패널 있으면 True"
+
+        # 그림자 probe 가 계정을 실어 둔 상태에서, 사용자가 인패널 /usage 를 띄워
+        # 퍼센트가 갱신돼도 계정(②)은 보존돼야 한다.
+        srv._usage = {"session": {"pct": 5, "reset": "2pm"},
+                      "account": "me@woojinkim.org"}
+        p.feed("\x1b[2J\x1b[HCurrent session\r\n2% used\r\n"
+               "Resets 3pm (Asia/Seoul)\r\n? for shortcuts\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert srv._usage["session"]["pct"] == 2, srv._usage
+        assert srv._usage.get("account") == "me@woojinkim.org", \
+            "인패널 갱신이 그림자 계정을 덮지 않음"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_token_usage_logging():
     """#7: 응답 확정(committed>0) 시 SQLite 에 ts/tab/pane/session/account/tokens
     한 건이 적히고, 새 Claude 세션마다 session id 가 증가하며, 계정은 화면 이메일
@@ -515,6 +549,14 @@ async def test_auto_compact_idle_injects_slash_compact():
         # 타이머 만료(N초 지속 시뮬) → '/compact' 1회 주입
         srv._acpt_fire(p)
         assert injected == ["/compact"], injected
+        assert p._acpt_fired is True, "발화 후 디바운스 플래그 셋"
+
+        # 연속 발화 방지(요청): 발화 직후 또 busy→idle 가 와도(/compact 주입이
+        # 스스로 만든 경계) _acpt_fired 때문에 재무장하지 않는다.
+        go_idle()
+        assert p._acpt_timer is None, "이미 발화 → 재무장 금지"
+        # 사용자 입력이 들어오면 플래그가 풀려(serverio) 다음 idle 에 재무장된다.
+        p._acpt_fired = False
 
         # idle 이탈(재busy) 시 _scan_claude 가 무장 해제
         go_idle()
@@ -548,6 +590,42 @@ async def test_auto_compact_idle_injects_slash_compact():
         assert p._acpt_timer is not None
         srv.set_auto_compact(False)
         assert p._acpt_timer is None
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
+async def test_auto_compact_skips_when_awaiting_answer():
+    """요청: 화면이 질문/선택으로 끝나(사용자 답 대기 중) 있으면 _acpt_fire 가
+    '/compact' 를 주입하지 않는다. 이 경우 _acpt_fired 를 세우지 않아 사용자가
+    답해 다음 idle 경계가 오면 다시 발화할 수 있다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        injected = []
+        srv._pc_inject = lambda pane, text: injected.append(text)
+        srv.set_auto_compact(True)
+        p._claude = "idle"
+
+        # 질문으로 끝나는 화면 → 발화 스킵, 디바운스 플래그도 안 섬
+        p.feed(b"\x1b[2J\x1b[HDo you want to proceed?\r\n? for shortcuts\r\n")
+        srv._acpt_fire(p)
+        assert injected == [], "질문 대기 중 → /compact 주입 안 함"
+        assert p._acpt_fired is False, "스킵은 디바운스 안 세움(답 후 재발화 가능)"
+
+        # 선택 박스(❯ + 번호 옵션)도 답 대기로 보고 스킵
+        p.feed(b"\x1b[2J\x1b[H\xe2\x9d\xaf 1. Yes\r\n  2. No\r\n? for shortcuts\r\n")
+        srv._acpt_fire(p)
+        assert injected == [], "선택 박스 → /compact 주입 안 함"
+
+        # 질문이 아닌 일반 idle 화면이면 정상 발화
+        p.feed(b"\x1b[2J\x1b[HAll done. Saved 3 files.\r\n? for shortcuts\r\n")
+        srv._acpt_fire(p)
+        assert injected == ["/compact"], injected
     finally:
         try:
             os.unlink(srv.opts_path)
@@ -1600,7 +1678,7 @@ async def test_private_files_are_0600():
         sess = srv.ensure_default_session(80, 24)
         pane = sess.active_window.active_pane
         srv._capture_write(pane, b"secret-output\n")
-        capfile = os.path.join(srv.capture_dir, f"pane-{pane.id}.log")
+        capfile = srv._cappaths[pane.id]
         assert (os.stat(capfile).st_mode & 0o777) == 0o600
         assert (os.stat(srv.capture_dir).st_mode & 0o777) == 0o700
     finally:
@@ -1834,14 +1912,15 @@ async def test_capture_output():
         pane = sess.active_window.active_pane
         assert srv.capture is True, "기본 ON(opts 미설정 시)"
 
-        # 켜진 상태에서 기록 → pane-<id>.log 에 raw 바이트 무손실
+        # 켜진 상태에서 기록 → <날짜>_<시간>_<세션>_<탭>_p<패널>.log 에 raw 바이트 무손실
         srv._capture_write(pane, b"hello\x1b[31m world")
-        path = os.path.join(srv.capture_dir, f"pane-{pane.id}.log")
+        path = srv._cappaths[pane.id]
+        assert os.path.basename(path).endswith(f"_p{pane.id}.log"), path
         with open(path, "rb") as f:
             assert f.read() == b"hello\x1b[31m world", "무손실 캡처"
-        # 메타 로그에 탭/패널 매핑
+        # 메타 로그에 파일명·탭/패널 매핑
         meta = open(os.path.join(srv.capture_dir, "sessions.log")).read()
-        assert f"pane-{pane.id}" in meta and "tab0:" in meta, meta
+        assert os.path.basename(path) in meta and "tab0:" in meta, meta
 
         # 끄면 파일 닫힘 + opts.json 영속(capture=False)
         assert srv.set_capture(False) is False
@@ -1856,12 +1935,13 @@ async def test_capture_output():
         # 재시작 영속: 같은 sock 로 새 Server 를 만들면 OFF 를 읽음
         assert pytmux.Server(sock).capture is False, "재시작 후 OFF 유지"
 
-        # 토글로 다시 ON → opts 갱신, 재기록 가능(lazy 재오픈)
+        # 토글로 다시 ON → opts 갱신, 재기록 가능. OFF→ON 은 새 시각 파일로 재오픈.
         assert srv.set_capture(None) is True
         assert json.load(open(srv.opts_path))["capture"] is True
         srv._capture_write(pane, b"again")
-        with open(path, "rb") as f:
-            assert f.read().endswith(b"again"), "재개 후 append"
+        path2 = srv._cappaths[pane.id]
+        with open(path2, "rb") as f:
+            assert f.read().endswith(b"again"), "재개 후 기록"
     finally:
         srv._close_all_capfiles()
         shutil.rmtree(srv.capture_dir, ignore_errors=True)

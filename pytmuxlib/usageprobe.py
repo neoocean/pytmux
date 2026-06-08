@@ -17,14 +17,19 @@ import struct
 import subprocess
 import time
 
-from .claude import parse_usage
+from .claude import claude_account, parse_usage
 
 
 def query_usage(cmd: str = "claude", cwd: str | None = None,
                 cols: int = 95, rows: int = 45,
                 boot_timeout: float = 12.0, panel_timeout: float = 8.0):
-    """숨은 `claude` 를 띄워 `/usage` 패널을 스크랩·파싱한다. 결과 dict(parse_usage)
-    또는 None. 입력 주입은 `/usage`+Enter 한 번뿐이고 끝나면 즉시 kill 한다."""
+    """숨은 `claude` 를 띄워 `/usage` 패널을 스크랩·파싱한다. 결과 dict(parse_usage,
+    추가로 그림자 세션 계정 `account`: 일치 확인용·없으면 None) 또는 None. 입력 주입은
+    `/usage`+Enter 한 번뿐이고 끝나면 즉시 kill 한다.
+
+    `account`: 이 숨은 세션이 로그인된 계정(claude_account 별칭). 폰/데스크탑 앱과
+    **다른 계정**이면 한도 %·리셋이 실제로 달라지므로(요청), 사용자가 눈으로
+    대조할 수 있게 함께 싣는다. 신뢰 신호(`<email>'s Organization`)가 안 보이면 None."""
     try:
         import pyte
     except Exception:
@@ -89,10 +94,17 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
         # 안 뜨면 타임아웃 → None(안전).
         if not wait_for("shortcuts", boot_timeout):
             return None
+        # 부팅 화면에 계정/조직 표시가 있으면 먼저 캡처(/usage 가 화면을 덮기 전).
+        acct = claude_account(disp())
         os.write(master, b"/usage\r")
         wait_for("% used", panel_timeout)
         pump(0.4)
-        return parse_usage(disp())
+        screen = disp()
+        usage = parse_usage(screen)
+        if usage is not None:
+            # /usage 화면에도 계정 신호가 있으면 보강(부팅서 못 잡았을 때).
+            usage["account"] = acct or claude_account(screen)
+        return usage
     except Exception:
         return None
     finally:
