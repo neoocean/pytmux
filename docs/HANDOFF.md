@@ -2038,7 +2038,12 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   `test_prompt_clear_queue_drains`(서버, 사이클별 드레인 + idle 즉시 투입)·
   `test_prompt_clear_queue_command`(클라). **서버+클라 → kill-server 재기동.** 아래는 원래
   검토한 구현 방향(참고):
-- **[참고·구현 방향] '프롬프트 단위 클리어' 모드(큐 배치 포함)** —
+- ~~**[참고·구현 방향] '프롬프트 단위 클리어' 모드(큐 배치 포함)**~~ → **구현 완료**.
+  `set_prompt_clear`(토글)·`pc_queue_add`(큐)·`_pc_drain`/`_pc_phase` 상태기계
+  (`serverclaude.py:130~`)로 busy→idle 경계마다 ① 문서화 지시 → ② `/clear` → ③ 큐의
+  다음 명령을 순서대로 진행한다. 지시문은 `prompt_clear_message`(설정 가능, opts 영속).
+  회귀: `test_prompt_clear_mode_sequence`·`test_prompt_clear_queue_drains`. 아래는 원
+  구현 방향 기록.
   Claude Code 패널의 컨텍스트 메뉴(우클릭/`&` 메뉴)에서 **'프롬프트 단위 클리어' 모드**를
   켜고 끈다(패널별 토글, 기본 off). **끄면 평소와 똑같이** 동작한다. **켜면** 그 패널에서
   **프롬프트 하나의 진행이 완료(busy→idle 전이)될 때마다**, 다음 사용자 명령을 그대로
