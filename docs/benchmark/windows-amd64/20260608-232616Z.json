@@ -1,11 +1,11 @@
 {
-  "generated_utc": "2026-06-08 23:12:38",
-  "os_slug": "linux-x86_64",
+  "generated_utc": "2026-06-08 23:25:28",
+  "os_slug": "windows-amd64",
   "env": {
-    "os": "Linux",
-    "os_release": "6.17.0-1015-azure",
-    "machine": "x86_64",
-    "python": "3.12.13",
+    "os": "Windows",
+    "os_release": "2025Server",
+    "machine": "AMD64",
+    "python": "3.12.10",
     "impl": "CPython",
     "deps": {
       "textual": "8.2.7",
@@ -22,17 +22,17 @@
   "startup": {
     "cold_import_ms": {
       "n": 5,
-      "p50": 54.128,
-      "p99": 66.284,
-      "max": 66.284,
-      "mean": 56.562
+      "p50": 83.4,
+      "p99": 99.345,
+      "max": 99.345,
+      "mean": 87.176
     },
     "framework_init_ms": {
       "n": 200,
-      "p50": 4.754,
-      "p99": 13.597,
-      "max": 155.451,
-      "mean": 5.903
+      "p50": 45.781,
+      "p99": 58.562,
+      "max": 337.868,
+      "mean": 47.559
     },
     "note": "cold_import=별도 프로세스 `import pytmux`; framework_init=Server+세션+첫 layout(셸 spawn 제외)"
   },
@@ -43,45 +43,45 @@
     "rows": 50,
     "layout_build_ms": {
       "n": 200,
-      "p50": 0.039,
-      "p99": 0.076,
-      "max": 0.135,
-      "mean": 0.041
+      "p50": 0.033,
+      "p99": 0.077,
+      "max": 0.211,
+      "mean": 0.036
     },
     "render_all_ms": {
       "n": 200,
-      "p50": 0.075,
-      "p99": 0.119,
-      "max": 5.954,
-      "mean": 0.107
+      "p50": 0.067,
+      "p99": 0.262,
+      "max": 4.984,
+      "mean": 0.095
     },
     "tab_switch_ms": {
       "n": 200,
-      "p50": 0.011,
-      "p99": 0.043,
-      "max": 0.056,
-      "mean": 0.014
+      "p50": 0.008,
+      "p99": 0.036,
+      "max": 0.097,
+      "mean": 0.012
     },
     "scaling_by_panecount": [
       {
         "panes": 1,
-        "layout_ms": 0.052,
-        "render_all_ms": 6.081
+        "layout_ms": 0.089,
+        "render_all_ms": 4.982
       },
       {
         "panes": 2,
-        "layout_ms": 0.068,
-        "render_all_ms": 5.99
+        "layout_ms": 0.104,
+        "render_all_ms": 4.967
       },
       {
         "panes": 4,
-        "layout_ms": 0.085,
-        "render_all_ms": 5.947
+        "layout_ms": 0.124,
+        "render_all_ms": 4.883
       },
       {
         "panes": 8,
-        "layout_ms": 0.172,
-        "render_all_ms": 6.372
+        "layout_ms": 0.194,
+        "render_all_ms": 5.263
       }
     ]
   },
@@ -98,11 +98,11 @@
         "rows": 50,
         "mb": 7.97,
         "slices": 974,
-        "feed_mb_s": 0.65,
-        "slice_p50_ms": 12.356,
-        "slice_p99_ms": 16.237,
-        "slice_max_ms": 25.11,
-        "render_ms_frame": 5.852
+        "feed_mb_s": 0.74,
+        "slice_p50_ms": 10.551,
+        "slice_p99_ms": 19.327,
+        "slice_max_ms": 24.807,
+        "render_ms_frame": 4.949
       },
       {
         "name": "plain_cat 200x50 (main 스크롤)",
@@ -110,11 +110,11 @@
         "rows": 50,
         "mb": 7.88,
         "slices": 963,
-        "feed_mb_s": 0.57,
-        "slice_p50_ms": 13.189,
-        "slice_p99_ms": 22.073,
-        "slice_max_ms": 203.786,
-        "render_ms_frame": 4.784
+        "feed_mb_s": 0.65,
+        "slice_p50_ms": 11.405,
+        "slice_p99_ms": 26.955,
+        "slice_max_ms": 182.217,
+        "render_ms_frame": 4.295
       },
       {
         "name": "claude_busy 80x24 (원격 흔한 크기)",
@@ -122,11 +122,11 @@
         "rows": 24,
         "mb": 7.94,
         "slices": 970,
-        "feed_mb_s": 0.6,
-        "slice_p50_ms": 12.426,
-        "slice_p99_ms": 16.311,
-        "slice_max_ms": 740.513,
-        "render_ms_frame": 1.042
+        "feed_mb_s": 0.66,
+        "slice_p50_ms": 10.684,
+        "slice_p99_ms": 19.371,
+        "slice_max_ms": 858.585,
+        "render_ms_frame": 0.939
       }
     ]
   }
