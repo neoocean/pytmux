@@ -308,14 +308,25 @@ async def remote_control(app, pilot):
 
 
 async def ncd(app, pilot):
-    # ncd(Norton Change Directory 풍 디렉토리 트리) — 명령으로 열고 실제 서버의
-    # 루트→cwd 사슬 응답(nc_list)으로 NcdScreen 이 뜰 때까지 기다린다.
+    # ncd(Norton Change Directory 풍 디렉토리 트리). 공개 저장소에 실제 파일시스템
+    # 경로·디렉토리 이름이 노출되지 않도록, 실서버 nc_list 응답 대신 **합성 트리**
+    # (가상의 /home/user/…)를 직접 NcdScreen 에 넣어 띄운다. 기능·외형(DOS 블루 패널·
+    # 시안 선택 막대·루트→cwd 펼침·찾기 안내줄)은 실제와 동일하다.
     from pytmuxlib.plugins.ncd.screen import NcdScreen
-    app.request_nc_list()
-    for _ in range(80):
-        await pilot.pause(0.05)
-        if isinstance(app.screen, NcdScreen):
-            break
+    cwd = "/home/user/projects/webapp"
+    chain = [
+        ("/", ["/home", "/etc", "/opt", "/usr", "/var"]),
+        ("/home", ["/home/user"]),
+        ("/home/user", ["/home/user/documents", "/home/user/downloads",
+                        "/home/user/projects"]),
+        ("/home/user/projects", ["/home/user/projects/api",
+                                 "/home/user/projects/cli",
+                                 "/home/user/projects/webapp"]),
+        ("/home/user/projects/webapp", ["/home/user/projects/webapp/docs",
+                                        "/home/user/projects/webapp/src",
+                                        "/home/user/projects/webapp/tests"]),
+    ]
+    app.push_screen(NcdScreen("/", chain=chain, cwd=cwd, dirs=None))
     await pilot.pause(0.6)
 
 
