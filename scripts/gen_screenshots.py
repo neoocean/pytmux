@@ -278,7 +278,10 @@ async def restart_confirm(app, pilot):
 
 async def token_saver(app, pilot):
     # 토큰 절감 설정 팝업(token-saver) — 자동 개입 토글·잔량 임계·예산·경고 설정행.
-    app.open_claude_saver()
+    # ClaudeSaverScreen 은 claude-code 플러그인으로 이전됐다(패키지명 하이픈→import_module).
+    from importlib import import_module
+    screens = import_module("pytmuxlib.plugins.claude-code.screens")
+    app.push_screen(screens.ClaudeSaverScreen())
     await pilot.pause(0.5)
 
 
