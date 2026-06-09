@@ -485,8 +485,8 @@ class ServerIOMixin:
             await write_msg(client.writer, self._tree_msg())
             return
         elif action == "request_nc_list":
-            # nc(Norton Commander 풍 디렉토리 트리): path 없으면 활성 패널 cwd 루트,
-            # 있으면 해당 노드의 직계 하위를 회신(지연 펼치기). 부작용 없음.
+            # ncd(Norton Change Directory 풍 디렉토리 트리): path 없으면 루트→cwd
+            # 사슬, 있으면 해당 노드의 직계 하위를 회신(지연 펼치기). 부작용 없음.
             await write_msg(client.writer,
                             self.nc_list_msg(sess, msg.get("path")))
             return

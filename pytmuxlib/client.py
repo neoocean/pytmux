@@ -25,6 +25,7 @@ from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 
     CommandListScreen, CommandOptionsScreen, ConfirmScreen, InfoScreen,
     InfoTabsScreen, MenuScreen, ModelCtxScreen, PermModeScreen, PromptScreen,
     RulesEditScreen, TokenLogScreen, usage_bar_lines)
+from .clientnc import NcdScreen   # noqa: F401  (push_screen 으로 사용)
 from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose 에서 사용)
     MultiplexerView, StatusBar, TabBar)
 from .keymap import _key_to_ctrl_bytes, _tmux_key_to_textual, load_config
@@ -801,6 +802,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         self._open_usage_tree(msg)
                     else:
                         self._open_choose_tree(msg)
+            elif t == "nc_list":
+                self._on_nc_list(msg)
             elif t == "token_log":
                 if getattr(self, "_want_token_log", False):
                     self._want_token_log = False
@@ -1742,6 +1745,40 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._tree_purpose = purpose   # "choose"(전환/종료) | "usage"(토큰 보기)
             self.send_cmd("request_tree")
 
+        # ---- nc(Norton Commander 풍 디렉토리 트리) ----
+        def request_nc_list(self, path=None):
+            """nc 디렉토리 목록 요청. path=None → 활성 패널 cwd 루트(화면 열기),
+            path=<dir> → 그 노드의 자식(지연 펼치기). 응답은 t==nc_list."""
+            self._want_nc = True
+            self.send_cmd("request_nc_list", path=path)
+
+        def _on_nc_list(self, msg):
+            """nc_list 수신. path 가 None 이면 초기 트리(루트→cwd chain) → ncd 화면을
+            연다(요청한 경우만). path 가 있으면 펼치기 응답 → 떠 있는 ncd 화면의 해당
+            노드에 자식을 채운다."""
+            if msg.get("path") is None:
+                if not getattr(self, "_want_nc", False):
+                    return            # 요청 안 했는데 온 응답은 무시(방어)
+                self._want_nc = False
+                self.push_screen(
+                    NcdScreen(msg.get("root"), chain=msg.get("chain"),
+                              cwd=msg.get("cwd"), dirs=msg.get("dirs")),
+                    self._nc_done)
+            else:
+                scr = self.screen
+                if isinstance(scr, NcdScreen):
+                    scr.fill_children(msg.get("path"), msg.get("dirs") or [])
+
+        def _nc_done(self, res):
+            """ncd 화면 결과 처리. Enter→현재 패널 cd, Shift+Enter/Ctrl+O→새 패널 분할."""
+            if not res:
+                return            # Esc/취소
+            action, path = res
+            if action == "cd":
+                self.send_input(f"cd {shlex.quote(path)}\n".encode())
+            elif action == "newpane":
+                self.send_cmd("split", orient="lr", path=path)
+
         def open_claude_usage_tree(self):
             # 토큰 사용량 클릭 → 통합 상태 팝업의 '토큰 사용량' 탭으로 연다(#10).
             self.show_status_tabs(initial=1)   # 1 = 토큰 탭(오른쪽)
@@ -2550,6 +2587,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif c in ("choose-tree", "choose-tab", "choose-window",
                        "overview", "tree"):
                 self.request_tree()
+            elif c in ("ncd", "nc"):
+                self.request_nc_list()
             elif c in ("select-pane", "selectp"):
                 if "-T" in args:
                     title = " ".join(args[args.index("-T") + 1:])

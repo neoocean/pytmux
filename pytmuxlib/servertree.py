@@ -211,7 +211,7 @@ class ServerTreeMixin:
             return os.path.expanduser("~")
         return os.path.expanduser(val)
 
-    # ---- nc (Norton Commander 풍 디렉토리 트리) ----
+    # ---- ncd (Norton Change Directory 풍 디렉토리 트리) ----
     def _list_dirs(self, path: str) -> list[str]:
         """`path` 의 직계 하위 **디렉토리**만 이름순(대소문자 무시)으로 나열해
         전체경로 리스트로 반환한다. nc 트리 표시·지연 펼치기용.
@@ -237,25 +237,53 @@ class ServerTreeMixin:
         out.sort(key=lambda p: os.path.basename(p).lower())
         return out
 
-    def nc_list_msg(self, sess: Session, path: str | None = None) -> dict:
-        """nc 디렉토리 목록 요청에 대한 응답 메시지.
+    @staticmethod
+    def _ancestor_chain(cwd: str) -> list[str]:
+        """`cwd` 의 조상 사슬을 루트부터 cwd 까지 순서대로 반환한다(둘 다 포함).
+        예: /a/b/c → ['/', '/a', '/a/b', '/a/b/c']. ncd 초기 트리를 현재
+        디렉토리까지 펼쳐 열기 위함."""
+        cwd = os.path.abspath(cwd)
+        parts: list[str] = []
+        p = cwd
+        while True:
+            parts.append(p)
+            parent = os.path.dirname(p)
+            if parent == p:        # 루트('/'·드라이브) 도달
+                break
+            p = parent
+        return list(reversed(parts))
 
-        - `path` 가 비면(초기 진입) **활성 패널의 cwd** 를 루트로 잡는다
-          (`_resolve_start_cwd("current")`; 추정 불가 시 서버 cwd). 응답의
-          `path` 는 None 으로 둬 클라가 "루트 목록 → 화면 열기" 로 구분한다.
-        - `path` 가 있으면(노드 펼치기) 그 경로를 루트로 그 직계 하위를 회신하고
-          `path` 에 해석된 절대경로를 echo 해 클라가 해당 노드를 매칭한다.
-        - `dirs` 는 자식들의 **절대경로**(클라의 경로 조합 버그 여지 제거; 표시명은
-          클라가 basename 으로 만든다)."""
+    def nc_list_msg(self, sess: Session, path: str | None = None) -> dict:
+        """ncd 디렉토리 목록 요청 응답.
+
+        - `path` 가 있으면(노드 펼치기) 그 경로의 직계 하위를 `dirs` 로 회신하고
+          `path` 에 절대경로를 echo 해 클라가 해당 노드를 매칭한다(지연 펼치기).
+        - `path` 가 비면(초기 진입) **루트부터 현재 패널 cwd 까지의 사슬**을 만들어
+          각 단계의 직계 하위와 함께 `chain` 으로 회신한다(+ `cwd`). 클라는 이 사슬을
+          펼친 트리로 그리고 cwd 행에 커서를 둔다(NCD: 전체 트리·현재 위치 시작).
+          cwd 추정 불가 시 루트만 1단계 회신.
+        - 모든 경로는 **절대경로**(클라 경로 조합 버그 여지 제거; 표시명=basename).
+        - 사슬 보존: 어떤 조상이 숨김(`.`)이라 부모의 `_list_dirs` 에서 빠져도, 그
+          부모의 자식 목록에 다음 사슬 원소를 보장 포함해(없으면 추가·정렬) 펼친
+          경로가 끊기지 않게 한다."""
         if path:
             root = os.path.abspath(os.path.expanduser(str(path)))
-            echo: str | None = root
-        else:
-            root = os.path.abspath(
-                self._resolve_start_cwd(sess, "current") or os.getcwd())
-            echo = None
-        return {"t": "nc_list", "root": root, "path": echo,
-                "dirs": self._list_dirs(root)}
+            return {"t": "nc_list", "root": root, "path": root,
+                    "dirs": self._list_dirs(root)}
+        cwd = self._resolve_start_cwd(sess, "current")
+        cwd = os.path.abspath(cwd) if cwd else None
+        chain_paths = self._ancestor_chain(cwd) if cwd else [os.path.abspath(os.sep)]
+        chain: list[list] = []
+        for i, p in enumerate(chain_paths):
+            dirs = self._list_dirs(p)
+            if i + 1 < len(chain_paths):
+                nxt = chain_paths[i + 1]
+                if nxt not in dirs:    # 숨김 조상도 사슬엔 보이게 보강
+                    dirs = sorted(dirs + [nxt],
+                                  key=lambda d: os.path.basename(d).lower())
+            chain.append([p, dirs])
+        return {"t": "nc_list", "root": chain_paths[0], "path": None,
+                "cwd": cwd, "chain": chain}
 
     def new_window(self, sess: Session, path: str | None = None):
         """새 탭(= 새 윈도우, 단일 패널)을 만들고 활성화한다."""
