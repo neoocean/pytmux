@@ -304,6 +304,18 @@ async def remote_control(app, pilot):
     await pilot.pause(0.5)
 
 
+async def ncd(app, pilot):
+    # ncd(Norton Change Directory 풍 디렉토리 트리) — 명령으로 열고 실제 서버의
+    # 루트→cwd 사슬 응답(nc_list)으로 NcdScreen 이 뜰 때까지 기다린다.
+    from pytmuxlib.plugins.ncd.screen import NcdScreen
+    app.request_nc_list()
+    for _ in range(80):
+        await pilot.pause(0.05)
+        if isinstance(app.screen, NcdScreen):
+            break
+    await pilot.pause(0.6)
+
+
 # 진짜 Claude Code 한 세션에서 캡처하는 §11 컷 묶음(라이브 — 실제 API 호출).
 CLAUDE_OUTPUTS = ["11-claude", "12-claude-autoresume", "13-perm-mode",
                   "20-prompt-history", "22-claude-real"]
@@ -409,6 +421,7 @@ SCENES = [
     ("23-token-saver", "토큰 절감 설정 팝업(token-saver) — 자동개입 토글·임계·예산·경고", token_saver),
     ("24-token-log", "토큰 사용량 팝업 — 마우스 서브탭(시간/일/주/월) + /usage 실측 한도", token_log),
     ("25-remote-control", "원격 제어 팝업 — [r] 로 /rc 토글", remote_control),
+    ("27-ncd", "디렉토리 트리(ncd) — 루트→cwd 펼침·시안 선택 막대·찾기 안내줄", ncd),
 ]
 # Claude 컷(11·12·13·20·22)은 결정적 장면이 아니라 진짜 `claude` 한 세션에서 캡처한다
 # (claude_suite). 실제 API 호출이라 무인자 전체 생성에선 제외하고, `claude-suite` 또는
