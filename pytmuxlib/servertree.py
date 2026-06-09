@@ -211,6 +211,52 @@ class ServerTreeMixin:
             return os.path.expanduser("~")
         return os.path.expanduser(val)
 
+    # ---- nc (Norton Commander 풍 디렉토리 트리) ----
+    def _list_dirs(self, path: str) -> list[str]:
+        """`path` 의 직계 하위 **디렉토리**만 이름순(대소문자 무시)으로 나열해
+        전체경로 리스트로 반환한다. nc 트리 표시·지연 펼치기용.
+
+        - 파일은 제외(목적이 cd/패널 열기라 디렉토리만 의미 있다).
+        - 숨김(`.` 시작) 디렉토리는 기본 제외(잡음 감소). 트리는 지연 로드이므로
+          재귀하지 않고 한 단계만 읽어 대형/네트워크 디렉토리에서도 가볍다.
+        - 권한 오류·경로 아님·심링크 깨짐 등은 빈 리스트로 graceful — nc 가
+          중간 노드에서 죽지 않게 한다(개별 항목 오류도 건너뛴다)."""
+        out: list[str] = []
+        try:
+            with os.scandir(path) as it:
+                for e in it:
+                    if e.name.startswith("."):
+                        continue
+                    try:
+                        if e.is_dir(follow_symlinks=True):
+                            out.append(e.path)
+                    except OSError:
+                        continue   # stat 실패(권한·깨진 심링크) 항목은 건너뜀
+        except OSError:
+            return []
+        out.sort(key=lambda p: os.path.basename(p).lower())
+        return out
+
+    def nc_list_msg(self, sess: Session, path: str | None = None) -> dict:
+        """nc 디렉토리 목록 요청에 대한 응답 메시지.
+
+        - `path` 가 비면(초기 진입) **활성 패널의 cwd** 를 루트로 잡는다
+          (`_resolve_start_cwd("current")`; 추정 불가 시 서버 cwd). 응답의
+          `path` 는 None 으로 둬 클라가 "루트 목록 → 화면 열기" 로 구분한다.
+        - `path` 가 있으면(노드 펼치기) 그 경로를 루트로 그 직계 하위를 회신하고
+          `path` 에 해석된 절대경로를 echo 해 클라가 해당 노드를 매칭한다.
+        - `dirs` 는 자식들의 **절대경로**(클라의 경로 조합 버그 여지 제거; 표시명은
+          클라가 basename 으로 만든다)."""
+        if path:
+            root = os.path.abspath(os.path.expanduser(str(path)))
+            echo: str | None = root
+        else:
+            root = os.path.abspath(
+                self._resolve_start_cwd(sess, "current") or os.getcwd())
+            echo = None
+        return {"t": "nc_list", "root": root, "path": echo,
+                "dirs": self._list_dirs(root)}
+
     def new_window(self, sess: Session, path: str | None = None):
         """새 탭(= 새 윈도우, 단일 패널)을 만들고 활성화한다."""
         c = self.clients_of(sess)
@@ -448,9 +494,15 @@ class ServerTreeMixin:
             # 세션에도 `/rename <이름>` 으로 반영한다(요청). 패널이 둘 이상이면 어느
             # 세션을 가리키는지 모호하므로 건너뛴다. _pc_inject 는 사용자 프롬프트와
             # 섞이지 않는 별도 입력 경로(자동재개·/compact 와 동일).
+            # busy 일 때 즉시 주입하면 Claude Code 가 슬래시 명령으로 실행하지 않으므로
+            # (compact/doc-clear 와 동일한 idle 게이트), idle 이면 지금 쏘고 아니면
+            # _pending_rename 에 보류해 _scan_claude 의 busy→idle 경계에서 발동한다.
             panes = tab.window.panes()
             if len(panes) == 1 and panes[0]._claude is not None:
-                self._pc_inject(panes[0], "/rename " + name)
+                if panes[0]._claude == "idle":
+                    self._pc_inject(panes[0], "/rename " + name)
+                else:
+                    panes[0]._pending_rename = name
 
     rename_tab = rename_window
 

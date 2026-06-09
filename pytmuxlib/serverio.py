@@ -484,6 +484,12 @@ class ServerIOMixin:
         elif action == "request_tree":
             await write_msg(client.writer, self._tree_msg())
             return
+        elif action == "request_nc_list":
+            # nc(Norton Commander 풍 디렉토리 트리): path 없으면 활성 패널 cwd 루트,
+            # 있으면 해당 노드의 직계 하위를 회신(지연 펼치기). 부작용 없음.
+            await write_msg(client.writer,
+                            self.nc_list_msg(sess, msg.get("path")))
+            return
         elif action == "request_token_log":
             # 영속 토큰 레코드(최근 N 건)를 SQLite 에서 읽어 클라이언트로. 클라가
             # usagelog 로 시간/일/월 × 계정/세션 집계해 팝업에 표시(라운드트립 없이
