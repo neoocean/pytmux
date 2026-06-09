@@ -1,7 +1,13 @@
 # pytmux 핸드오프 문서
 
 > 작성: 2026-06-03 · 대상: 이 프로젝트를 이어받는 사람/에이전트
-> 관련: [DESIGN.md](DESIGN.md) · [FEATURES.md](FEATURES.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [MEMORY.md](MEMORY.md)
+> 관련: [DESIGN.md](DESIGN.md) · [FEATURES.md](FEATURES.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [MEMORY.md](MEMORY.md) · [PLUGIN_SYSTEM.md](PLUGIN_SYSTEM.md)
+
+> **플러그인(2026-06-09~)**: 선택적 기능을 `pytmuxlib/plugins/<name>/` 로 분리하고
+> 디렉토리 삭제만으로 끌 수 있게 했다(코어는 레지스트리 경유 호출). `ncd` 완료,
+> `claude-code` 단계적 추출 진행 중(서버 delete-to-disable 완성: Phase 1·1b·3-S1·3a·3b;
+> 클라 팝업 Phase 2a·2b 완료; 남은 건 클라 렌더/ESC Phase 2c — §11.6). 설계·작성법·진행/
+> 배운 점은 [PLUGIN_SYSTEM.md](PLUGIN_SYSTEM.md) 참고.
 
 ## 1. 한눈에 보기
 
@@ -68,20 +74,29 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
 
 ## 4. 모듈 지도 (`pytmuxlib/`)
 
-| 파일 | 줄수 | 역할 |
-|------|----:|------|
-| `protocol.py` | ~170 | 상수·소켓 경로·프레이밍(read/write_msg)·색/시각 헬퍼, `parse_reset_delay`(리밋 해제 시각), `claude_state`/`claude_usage`(화면 휴리스틱) |
-| `keymap.py` | ~110 | 설정 파일 로드(`load_config`), tmux 키 표기 변환 |
-| `model.py` | ~460 | `Pane`/`Split`/`Window`/`Tab`/`Session`. 레이아웃 계산(`compute_layout`/`_layout` — **테두리 박스용 겹침 분할**), 프리셋 |
-| `server.py` | ~1720 | `Server`: PTY·flush 루프·명령 처리·세션/탭/패널 조작·검색·버퍼·캡처·레이아웃 슬롯·자동재개·Claude 감지·출력 캡처(`opts.json` 영속). 붙여넣기(`_write_paste`)도 프롬프트 추적 경유 |
-| `client.py` | ~2530 | `build_client_app()` 클로저: 위젯(MultiplexerView/TabBar/StatusBar)·모달(Prompt/Menu/CommandList/ChooseTree/ChooseLayout/Info/ChooseBuffer)·`_composite`(합성, `_draw_tab_close` 포함)·키/마우스·명령 |
-| `launcher.py` | ~160 | `main()`·서브커맨드(attach/ls/kill-server/cmd/server/record/replay)·데몬화 |
-| `replay.py` | ~200 | 렌더 진단: `record`(PTY 녹화)·`replay`(텍스트 프레임 재생) |
-| `version.py` | ~55 | 실행 코드 버전(p4 `#have` CL → git short → unknown)·업타임 포맷. `version` 명령 팝업이 씀 |
-| `clientclip.py` | ~150 | OS 클립보드 입출력(copy/paste/has_image/save_image) — 앱 비의존 순수 함수(#12, build_client_app 에서 추출) |
-| `clientrender.py` | ~30 | 셀 그리드 합성 헬퍼(`put_cell` — 와이드문자 정렬 보존) — 앱 비의존 순수 함수(#12 추출) |
+> 줄수는 대략값(자주 드리프트). 권위 트리는 [DESIGN.md](DESIGN.md) §9 참조.
 
-`pytmux.py` 는 얇은 진입점(위 심볼 재노출 + `main()`).
+| 파일 | 역할 |
+|------|------|
+| `protocol.py` | 상수·프레이밍(read/write_msg)·색/시각 헬퍼. Claude 파서(`claude_state`/`claude_usage`/`parse_reset_delay`)는 `claude.py` 로 이전됐고 여기선 하위호환 **re-export** 만 |
+| `ipc.py`/`proc.py`/`pty_backend.py`/`sshwrap.py` | OS 추상층(소켓·엔드포인트, 프로세스 spawn/kill, PTY 백엔드[POSIX pty / Windows ConPTY], ssh 래핑) — Windows 네이티브 포트의 핵심 |
+| `keymap.py` | 설정 파일 로드(`load_config`), tmux 키 표기 변환 |
+| `model.py` | `Pane`/`Split`/`Window`/`Tab`/`Session`. 레이아웃 계산(테두리 박스용 겹침 분할), 프리셋. Pane 에 Claude 상태 필드 다수(추출 시 플러그인 네임스페이스로 이전 예정) |
+| `server.py` | `Server` 본체 + **서버측 믹스인을 동적 베이스로 합성**(`plugins.server_mixins()`). PTY/세션/토큰 DB·예산 회계 |
+| `serverio.py` | flush 루프(30Hz)·`_status_msg`·명령 디스패치(`_handle_cmd`)·입력·레이아웃 메시지 |
+| `servercapture.py`/`serverpersist.py`/`serverpty.py`/`servertree.py` | 서버 믹스인: 출력 캡처 / `opts.json` 영속 / PTY 스폰·리사이즈 / 트리·검색 |
+| `claude.py` | Claude 화면 파서·휴리스틱(순수 함수: 상태/사용량/계정/프롬프트/권한모드/리셋시각) |
+| `tokens.py`/`usagedb.py`/`usagelog.py`/`usageprobe.py` | 토큰 회계: 응답 step 누계 / SQLite DB / 레코드·버킷 / 그림자 `/usage` 프로브 |
+| `client.py` | `build_client_app()` 클로저: `_composite`(합성)·키/마우스/메뉴·명령·ESC 모드 내비 |
+| `clientutil.py`/`clientscreens.py`/`clientwidgets.py` | 클라 헬퍼·상수 / 모달 Screen 군 / 위젯(MultiplexerView/TabBar/StatusBar) |
+| `clientclip.py`/`clientrender.py` | OS 클립보드 입출력 / 셀 그리드 합성 헬퍼 — 앱 비의존 순수 함수 |
+| `launcher.py`/`replay.py`/`version.py` | 데몬화·서브커맨드(attach/ls/kill/cmd/record/replay) / 렌더 진단 / 코드버전·업타임 |
+| `plugins/__init__.py` | **선택적 플러그인 레지스트리**(`load()`) — `commands`/`noarg`/`completions`/`command_options`/`attach_client`/`handle_command`/`handle_message`/`handle_server_request`/`server_mixins` 훅 |
+| `plugins/ncd/` | Norton Change Directory 플러그인(CL 57774) — `__init__`(메타·서버요청)·`server.py`(파일시스템·cwd)·`screen.py`(모달) |
+| `plugins/claude-code/` | Claude Code 통합 플러그인(Phase 1b·3-S1, CL 57789/57795/57812) — `__init__`(명령 메타·디스패치·token-saver)·`servermixin.py`(ServerClaudeMixin: 스캔·토큰·자동개입, 옛 `serverclaude.py`)·`screens.py`(규칙편집·절감설정 팝업) |
+
+`pytmux.py` 는 얇은 진입점(위 심볼 재노출 + `main()`). **Claude/NCD 등 선택 기능은 `plugins/`
+디렉토리를 통째로 지우면 조용히 비활성화된다(코어는 레지스트리로만 호출).**
 
 ### `version` 명령 — 버전/업타임 팝업
 `version`(별칭 `about`)은 **클라이언트·서버 각각이 로드한 코드의 버전(퍼포스
@@ -230,7 +245,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~57678 + git, 신→구)
+## 9. 최근 변경(CL 56279~57812 + git, 신→구)
 
 > ✅ **git 미러 동기화 완료(2026-06-04, macOS 세션).** Windows 박스(`office`)와
 > `surface-office` 병행 세션에서 낸 CL **56540~56560** 을 macOS 개발 머신에서
@@ -242,6 +257,34 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > settings.local.json` 은 전역 gitignore 로 제외 — p4 추적 스킬 파일만 미러.) 본
 > 동기화 메모를 반영한 이 CL 자체도 제출 직후 동일 동선으로 미러한다.
 
+- 57812 **서버측 Claude 로직(ServerClaudeMixin)을 claude-code 플러그인으로 이전(Phase 3-S1)**
+  — `pytmuxlib/serverclaude.py`(~1280줄)를 `pytmuxlib/plugins/claude-code/servermixin.py` 로
+  **본문 동작 불변** 이전(상대 import 만 절대경로로). 코어 `server.py` 가 믹스인을 직접 import
+  하지 않고 `plugins.Registry.server_mixins()`(신규)로 **Server 의 동적 베이스**로 합성
+  (`class Server(*_SERVER_BASES)`, 원 MRO 보존). `plugins/claude-code/__init__.py` 에 지연
+  import 콜러블 `server_mixin()` 추가. server.py 의 죽은 `from .claude import` 제거. 테스트
+  import 를 importlib(하이픈 디렉토리)로 갱신. **헤드리스 411 passed**, 라이브 2-패널 스모크
+  정상. **중간 상태**: serverio.py 가 아직 `self._scan_claude` 등 직접 호출이라
+  delete-to-disable 미완(후속 S2~S5 에서 완성 — §11.6 의 남은 작업 참조). 파일:
+  `pytmuxlib/server.py`, `pytmuxlib/plugins/__init__.py`, `pytmuxlib/plugins/claude-code/__init__.py`
+  (+`servermixin.py` 신규, `serverclaude.py` 삭제), `tests/test_claude.py`, `tests/test_server.py`.
+- 57744 **captures: `default/` 기록을 머신 이름(`woojinkim/`) 하위로 통합**(데이터 전용,
+  코드 변경 없음 — Windows `office` 세션) — `servercapture._capture_subdir` 가 기본 소켓
+  (실사용)에서 `captures/<머신이름=gethostname()>/` 로 격리하도록 바뀐 것(여러 기계가 같은
+  Perforce `captures/` 공유 시 충돌 방지)에 맞춰, 예전 고정 `default/` 에 쌓여 있던 기록을
+  **디스크·depot 양쪽에서** 머신 이름 하위로 이동.
+  - **디스크 병합**: `pane-*.log` 동일분은 `cmp` 로 내용 확인 후 default 측 제거, `pane-13.log`
+    는 옛 서버 최종본(더 최신·큼) 보존, `sessions.log` 는 default(2026-06-04~06)+woojinkim
+    (~06-09) 두 이력을 시간순 병합(중복 0줄·손실 없음). 빈 `captures/default/` 폴더 제거.
+  - **depot orphan 삭제**: depot 은 `default/pane-1~5.log`·`sessions.log` 를 추적(CL 57089)
+    했으나 이 워크스페이스에 sync된 적 없어 `reconcile` 이 delete 로 못 잡음 → `p4 sync` 로
+    have 채운 뒤 `p4 delete` 로 명시 삭제. `captures/woojinkim/*` 63개는 add. (총 add 63 +
+    delete 6 = 69파일, submit 후 depot `captures/default/` 활성 0건.)
+  - **함정 메모**(§8 보강): ① `p4 change -i` 는 PS 파이프 시 UTF-8 BOM 주입으로 실패 →
+    Write 툴 UTF-8 no-BOM 스펙 + `cmd /c "p4 change -i < spec"`. ② `p4 reconcile ... | Select-Object
+    -First N` 은 파이프 조기 종료로 reconcile 을 중단시켜 **open 이 일부만/안 됨** — p4 출력은
+    잘라 보지 말 것. git 미러는 `captures/` 가 `.gitignore` 차단이라 미반영(Perforce 전용).
+    파일: `captures/...`(데이터). `docs/HANDOFF.md`.
 - 57678 **세션 피드백 자동 Dismiss 키 `0`→`Esc`**(사용자 보고 — 프롬프트 앞 지워지지
   않는 `00`) — Claude 세션 종료 피드백 배너(`How is Claude doing this session? …
   0:Dismiss`)는 입력 컴포저 **위**에 뜨는 **비모달**이라 컴포저가 계속 포커스를 갖는다.
@@ -2333,3 +2376,89 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 전면 모듈 추출이 부담이면 **최소안**: 각 파일에서 Claude 코드를 **인접 블록으로 모으고**
 `# ---- Claude Code 연동 (분리 대상) ----` 식 **명확한 구획 주석**으로 감싼다(현재도 일부 있음).
 충돌은 줄지만 같은 파일이라 완전 분리는 아니다 — 11.2 의 전용 모듈이 본안.
+
+### 11.6 플러그인 기반 추출(현행) — 진행 상황과 남은 작업 (2026-06-10 갱신)
+
+> **§11.1~11.5 는 초기 전략(claude.py/client_claude.py 자유함수)으로, 지금은
+> `pytmuxlib/plugins/` 플러그인 시스템(CL 57774)으로 대체되었다.** 목표는 동일하되 메커니즘이
+> 바뀌었다: Claude 코드를 **`pytmuxlib/plugins/claude-code/` 디렉토리로** 모으고, 코어는
+> **plugins 레지스트리 훅**으로만 호출한다. **계약(delete-to-disable): 디렉토리를 통째로
+> 지우면 Claude 기능이 에러 없이 사라진다.** [MEMORY] `claude-code-plugin-extraction`,
+> `pytmux-plugin-system` 참조.
+
+**사용자 결정(2026-06-09):** ① **작은 중간 CL 허용**(완전 계약은 최종 CL 에서만 — 중간 CL 은
+플러그인 삭제 시 깨질 수 있음). ② Pane 의 Claude 필드(~50개)는 **플러그인 네임스페이스**
+(`pane.plugin_state`)로 이전(순수 디커플). ③ 토큰 회계 모듈(tokens/usagedb/usagelog/usageprobe)
++ `claude.py` 파서도 플러그인으로 이동. ④ 각 phase 완료 시 **라이브 attach 검증**.
+
+**완료:**
+- **Phase 1 (CL 57789)**: 명령 전용 팝업(`claude-rules`·`token-saver`) → 플러그인.
+- **Phase 1b (CL 57795)**: Claude 명령 표면(~17개) 메타데이터+디스패치 → 플러그인.
+- **Phase 3-S1 (CL 57812)**: `serverclaude.py`(ServerClaudeMixin ~1280줄) → `plugins/
+  claude-code/servermixin.py`, Server 동적 베이스 합성(`plugins.server_mixins()`). 본문 불변.
+- **Phase 3a (CL 57828)**: 레지스트리 **런타임 훅 7종** 신설(`server_scan`·`server_status`·
+  `server_pane_overview`·`server_input`·`server_paste`·`server_pending`·`server_usage_refresh`).
+  `serverio` 의 `_status_msg`(Claude 필드+`_pane_claude_entry`)·`_pane_overview`·`_flush_loop`·
+  `_usage_loop`·`_handle_input`(부수효과 5종) 라우팅, `server._write_paste` 인스턴스화,
+  죽은 `from .claude import` 제거.
+- **Phase 3b (CL 57829)**: `server_command` 훅 신설, `_handle_cmd` 의 Claude 액션 19종 이전
+  (지시어 `handled`/`send_full`/`broadcast`). **→ 코어(serverio.py·server.py)에 Claude 믹스인
+  직접 호출 0건. 서버 delete-to-disable 완성**(plugins/claude-code/ 삭제 시 서버 무에러 동작).
+- **Phase 2a (CL 57844)**: 팝업 3종(`open_model_config`/`open_perm_mode`/`open_usage_panel`)
+  +screen 2종(ModelCtxScreen·PermModeScreen) → 플러그인. `attach_client` 클로저 설치, 코어
+  콜러 getattr 가드.
+- **Phase 2b (CL 57856)**: `open_prompt_history`·`open_token_log`·`token_log` 메시지
+  (handle_message)+TokenLogScreen → 플러그인. clientscreens 에서 잉여 import 정리.
+  **잠재버그 수정**: TokenLogScreen `[s]` 의 미정의 `app.open_claude_saver()`→
+  `push_screen(ClaudeSaverScreen())` (크래시→정상).
+- 문서: PLUGIN_SYSTEM.md 갱신(57842·57860).
+
+> **설계 메모(3a/3b 가 S2/S3 를 대체)**: 원안 S2(토큰 메서드 물리 이전)·S3(호출부 라우팅)
+> 대신, **더 낮은 위험의 "호출부만 레지스트리 훅으로 라우팅"** 경로로 같은 계약을 달성했다.
+> 핵심: Claude Pane/Tab 속성은 `model.py` 코어에 안전한 기본값이 있어, 코어가 그 속성을
+> **읽는** 경로(예: `_should_reserve_header`)는 플러그인 부재 시에도 안 깨진다 → **메서드
+> 호출만** 훅으로 옮기면 충분. 토큰 회계 메서드·Pane 필드·`claude.py` 파서는 코어에 남아도
+> 플러그인 부재 시 무해한 사장 데이터다.
+
+**남은 작업 — Phase 2c(클라이언트 렌더/ESC-nav):**
+- `_draw_claude_headers`(프롬프트 헤더 렌더)·`_scan_footer_zones`(perm/remote footer 클릭존)·
+  StatusBar Claude 세그먼트(clientwidgets: model 배지·usage·tokens·warn·pending·`_model_zone`/
+  `_usage_zone`)·ESC 내비(`_handle_hdr_focus`·`_status_buttons`/`_handle_status_focus` 의 Claude
+  항목)·통합 상태탭(`InfoTabsScreen`)의 **토큰 탭**(`open_claude_usage_tree`/`_usage_tree_lines`,
+  REC/서버 탭과 혼합이라 분리 난해) → 플러그인. 신규 클라 훅 필요: `composite_overlay`(렌더
+  오버레이)·`on_status`(status 의 Claude 필드 흡수 — 현재 `update_status`/`_update_claude`
+  가 흡수)·`on_click`(클릭존)·`esc_nav`(ESC 포커스)·StatusBar 세그먼트 제공.
+- **⚠️ 선행 함정**: `_hdr_focus` 가 **Claude 헤더 포커스와 코어 탭-닫기[x] 포커스로 오버로드**
+  (헤더가 없어도 `"close"` 로 진입). 깨끗한 추출 전 이 공유 내비 상태를 분리해야 한다
+  (헤더=플러그인 / close=코어).
+- **⚠️ 구조 제약**: `PytmuxApp` 은 `build_client_app()` 팩토리 안 **지역 중첩 클래스**라 서버처럼
+  동적 베이스 믹스인을 못 쓴다 → 2a/2b 처럼 `attach_client` **인스턴스 클로저 설치**로 가거나,
+  먼저 `PytmuxApp` 을 모듈 최상위로 끌어올리는 선행 리팩토링(후자 깔끔하나 팩토리 해체 위험).
+- **⚠️ 검증 한계**: driver(소켓 클라)는 client.py 앱 코드를 실행하지 않아 smoke 로 검증 불가.
+  `tests/test_client.py` 가 PytmuxApp 인스턴스화 후 렌더/ESC/클릭/팝업을 직접 검증하므로
+  412 스위트가 회귀망. 클라 screen/심볼 이동 시 그 테스트의 import 경로도 함께 갱신할 것.
+
+**남은 작업 — (선택) Phase 3 S4/S5 물리 이전:**
+- delete-to-disable 계약엔 **불필요**(이미 완성). 코어 표면을 더 줄이려면: **S4** Pane 의
+  Claude 필드(~50개)를 `pane.plugin_state` 네임스페이스로; **S5** `claude.py` 파서 +
+  `tokens`/`usagedb`/`usagelog`/`usageprobe` 를 플러그인으로 물리 이전(코어 import 제거).
+  ⚠️ `saver_hook_events`(client.py 코어 사용)는 Phase 2c 의 status 훅 이후라야 이동 가능(순서 의존).
+
+**남은 작업 — 마무리:**
+- **계약 테스트(delete-to-disable)**: `plugins/claude-code/` 부재를 시뮬레이션(레지스트리
+  필터 / discovery monkeypatch)해 서버·클라가 에러 없이 import/구동되고 Claude 명령·렌더가
+  사라지는지 검증.
+- **신규 기능(추출과 별개, 큐)**: "Context limit reached · /compact or /clear to continue"
+  하드스톱 감지 → 자동 `/compact` 주입·완료 대기 후 작업 이어가기(기존 idle-기반 auto_compact
+  와 **다른 트리거** — `claude.py` 파서에 신호 추가). 토글 노출.
+
+**⚠️ 병렬 세션 함정(2026-06-10 갱신)**: playground 워크스페이스를 **다른 세션이 동시 편집**한다.
+2026-06-09 Phase 2 제출 중, 병렬 세션의 **clock/calendar 플러그인 추출**(미완·당시 깨짐: 미존재
+`pytmuxlib.plugins.clientutil`/`clientrender` import)이 `client.py`·`clientwidgets.py`·
+`plugins/__init__.py` 에 uncommitted 로 섞여 있었고, **untracked** `plugins/{calendar,clock}/`
+가 테스트 10개를 깨뜨렸다(내 변경과 무관). 그 세션은 작업을 보류하고 `/tmp/pytmux_clock_calendar_work/`
+에 백업해 둠(MEMORY `todo-clock-calendar-plugin`). **대응 절차**: ① 제출 전 `p4 print#head` 와
+작업본을 diff 해 내 hunk 만 격리(엉킨 파일은 depot+내hunk 재구성), ② untracked 병렬 플러그인을
+잠시 치우고 깨끗한 기준에서 전체 테스트 GREEN 확인, ③ `p4 diff` 로 병렬 마커(clock/calendar/
+overlay) 0건 확인 후 submit, ④ submit 후 병렬 작업본·플러그인 복원(파괴 금지). 상세는 MEMORY
+`shared-workspace-parallel-wip`.
