@@ -1,5 +1,11 @@
 # Claude Code 토큰 과사용 자동 회피 — 개입 시나리오
 
+> 📦 **플러그인 이전 메모(CL 57812)**: 본문의 `serverclaude.py:NNN` 참조는 현재
+> `pytmuxlib/plugins/claude-code/servermixin.py`(`ServerClaudeMixin` 클래스)에 있다 — 함수
+> 이름·동작은 동일하고 모듈 위치만 이전됐다(줄번호는 드리프트, 심볼명으로 grep). 토큰 회계
+> 모듈(`tokens`/`usagedb`/`usagelog`)·`claude.py` 파서는 아직 코어에 있으나 추출 후속(S5)에
+> 플러그인으로 이전 예정. 추출 현황: [PLUGIN_SYSTEM.md](PLUGIN_SYSTEM.md) §4·[HANDOFF.md](HANDOFF.md) §11.6.
+
 > **상태**: 🟢 **M8~M12 구현 완료**(아래 §6 로드맵 표 참조, `tests/test_token_saver.py`
 > 11케이스 + 골든 픽스처). 설정은 전역 opts(opts.json 영속)이고 `token-saver` 명령
 > (별칭 `claude-settings`/`token-settings`)으로 **설정 팝업**을 열어 각 개입을 토글

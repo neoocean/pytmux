@@ -334,15 +334,26 @@ scripts/pytmux/
 ├── pytmux.py                # 진입점(런처) — pytmuxlib 의 main 및 공개 API re-export
 ├── pytmuxlib/
 │   ├── __init__.py
-│   ├── protocol.py          # 상수·소켓 경로·프레이밍(read/write_msg)·색/리밋시각 헬퍼
+│   ├── protocol.py          # 상수·프레이밍(read/write_msg)·색 헬퍼 (claude 파서는 re-export)
+│   ├── ipc.py / proc.py / pty_backend.py / sshwrap.py  # OS 추상층(소켓·프로세스·PTY·ssh)
 │   ├── keymap.py            # 설정 파일 로드(load_config)·키 표기 변환
 │   ├── model.py             # Pane/Split/Window/Session 트리 + 레이아웃·프리셋
-│   ├── server.py            # Server(데몬): PTY·pyte·세션·명령·flush·영속
-│   ├── client.py            # Textual 클라이언트(build_client_app): 렌더·키·마우스·메뉴
-│   ├── replay.py            # 렌더 진단: record(PTY 녹화)·replay(텍스트 프레임 재생)
-│   └── launcher.py          # 데몬화·attach·ls·kill-server·cmd·record·replay·main
+│   ├── server.py            # Server(데몬) 본체 + 서버측 믹스인을 동적 베이스로 합성
+│   ├── serverio.py/servercapture.py/serverpersist.py/serverpty.py/servertree.py  # 서버 믹스인
+│   ├── claude.py            # Claude 화면 파서·휴리스틱(순수 함수)
+│   ├── tokens.py/usagedb.py/usagelog.py/usageprobe.py  # 토큰 회계·집계(서버측)
+│   ├── client.py            # Textual 클라이언트(build_client_app): 렌더·키·마우스·명령
+│   ├── clientutil.py/clientscreens.py/clientwidgets.py/clientclip.py/clientrender.py  # 클라 분할
+│   ├── replay.py / version.py / launcher.py
+│   └── plugins/             # ★ 선택적 플러그인 (디렉토리 삭제 시 해당 기능 조용히 비활성)
+│       ├── __init__.py      # 레지스트리·로더(load) — commands/handle_*/server_mixins 훅
+│       ├── ncd/             # Norton Change Directory (__init__·server.py·screen.py)
+│       └── claude-code/     # Claude Code 통합
+│           ├── __init__.py  # 명령 메타·디스패치·token-saver
+│           ├── servermixin.py # ServerClaudeMixin: 스캔·토큰·자동개입 (옛 serverclaude.py, CL 57812)
+│           └── screens.py   # 규칙편집·절감설정 팝업
 ├── tests/                   # 헤드리스 테스트(run.py) + 리플레이 골든 스냅샷
-├── docs/                    # DESIGN / FEATURES / CONTRIBUTING / INPUT_FOCUS_NOTE
+├── docs/                    # DESIGN / FEATURES / CONTRIBUTING / PLUGIN_SYSTEM / HANDOFF …
 ├── README.md
 ├── requirements.txt
 └── pytmux.conf.example

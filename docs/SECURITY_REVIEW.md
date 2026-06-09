@@ -1,5 +1,9 @@
 # pytmux 보안 검토 (서버–클라이언트 공격 표면)
 
+> 📦 **플러그인 이전 메모(CL 57812, 검토 이후)**: 본문의 `serverclaude` 모듈 참조는 현재
+> `pytmuxlib/plugins/claude-code/servermixin.py`(`ServerClaudeMixin`)다 — 위치만 이전, 보안
+> 결론 불변. 시점 스냅샷이라 본문은 보존. 참고: [PLUGIN_SYSTEM.md](PLUGIN_SYSTEM.md) §4.
+
 > **작성**: 2026-06-07 · **대상 커밋**: `main` (와이드문자 복원 수정 이후) ·
 > **방법**: 정적 코드 검토(소스 정독 + 데이터 흐름 추적). 동적 익스플로잇 미수행.
 > **범위**: 클라이언트↔서버 IPC, 직렬화/프로토콜, PTY·셸 스폰, 영속화/재시작,

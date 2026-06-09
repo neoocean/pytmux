@@ -1,5 +1,10 @@
 # pytmux 개선 기회 — 전체 코드 리뷰 (2026-06-06)
 
+> 📦 **플러그인 이전 메모(CL 57812, 리뷰 이후)**: 아래 항목의 `serverclaude.py:NNN` 참조는 현재
+> `pytmuxlib/plugins/claude-code/servermixin.py`(`ServerClaudeMixin`)다 — 위치만 이전(줄번호 드리프트,
+> 심볼명 grep). 또한 **§4.2(`_scan_claude` 의 `screen.display` per-cell wcwidth)는 해결됨** —
+> servermixin 의 경량 `screen_text()`(셀 data join, ~2.6× 빠름)로 대체. 참고: [PLUGIN_SYSTEM.md](PLUGIN_SYSTEM.md) §4.
+
 > 제품 목표 관점에서 전체 코드(~12k LOC)를 5개 차원으로 병렬 리뷰해 도출한 개선
 > 기회 목록. 목표: **Windows/macOS/Linux** 에서 단일 세션·멀티탭·멀티패널을
 > **명령어·메뉴·마우스**로 현대적으로 지원 + **Claude Code 토큰 추적/절감 자동화** +

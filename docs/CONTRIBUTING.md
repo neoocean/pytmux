@@ -55,10 +55,11 @@ git push
 
 - UI(테두리색·상태줄·팝업·탭바 등)나 매뉴얼 장면을 바꿨으면 **커밋 전에 재생성**한다:
   ```bash
-  python3 scripts/gen_screenshots.py            # 결정적 장면 전체 재생성
+  python3 scripts/gen_screenshots.py            # 결정적 장면 전체 재생성 (Windows: py …)
   python3 scripts/gen_screenshots.py 14-info    # 이름 매칭 장면만
   python3 scripts/gen_screenshots.py claude-suite  # 라이브 Claude 컷(실 API 호출)
   ```
+  (Windows 박스에선 `python3` 대신 `py` — 예 `py scripts/gen_screenshots.py`.)
 - 저장 직후 `_redact_svg` 가 (1) 계정 PII(이메일·환영 배너 이름) 마스킹, (2) 한글 등
   와이드 문자 자간 보정(Rich `textLength` 버그 교정)을 자동 적용한다 — 별도 작업 불필요.
 - 시계·호스트명 등 환경값은 실제값이 박혀 그 부분만 diff 가 날 수 있다(무해).
@@ -66,6 +67,6 @@ git push
 ## 테스트
 
 - 변경 후 **커밋 전에** 헤드리스 테스트를 돌린다: `python3 tests/run.py`
-  (화면/터미널 없이 전체 동작 검증, 종료 코드 0 = 통과).
+  (Windows 박스에선 `py tests/run.py`). 화면/터미널 없이 전체 동작 검증, 종료 코드 0 = 통과.
 - 동작을 바꾸거나 버그를 고치면 `tests/` 에 회귀 테스트를 추가한다. 화면 검증은
   `harness.pane_text()` 나 `app.view._cells`/`render_line` 의 텍스트 비교로 한다.

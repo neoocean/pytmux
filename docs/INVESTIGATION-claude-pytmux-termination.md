@@ -1,5 +1,9 @@
 # 조사: Claude Code 중단 + pytmux 클라이언트 종료 현상
 
+> 📦 **플러그인 이전 메모(CL 57812, 조사 이후)**: 본문의 `serverclaude.py`(주입 경로 등) 참조는
+> 현재 `pytmuxlib/plugins/claude-code/servermixin.py`(`ServerClaudeMixin`)다 — 동작·결론 불변,
+> 위치만 이전. 시점 기록이라 본문은 보존. 참고: [PLUGIN_SYSTEM.md](PLUGIN_SYSTEM.md) §4.
+
 > 시작: 2026-06-06 · 상태: **진행 중(LIVE)** · 작성자: 조사 에이전트
 > 목적: pytmux pane 안에서 Claude Code 를 실행하던 중 **Claude Code 가
 > 멈추고(halt) 동시에 pytmux 클라이언트(Textual 앱)가 종료되는** 재현성 있는

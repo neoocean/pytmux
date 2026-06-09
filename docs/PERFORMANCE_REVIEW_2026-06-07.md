@@ -1,5 +1,9 @@
 # pytmux 성능 리뷰 — 전체 코드 재검토 (2026-06-07)
 
+> 📦 **플러그인 이전 메모(CL 57812, 작성 이후)**: 본문의 `serverclaude.py:NNN` 참조는 현재
+> `pytmuxlib/plugins/claude-code/servermixin.py`(`ServerClaudeMixin`)다 — 함수·동작 동일, 위치만
+> 이전(줄번호 드리프트). 이 문서는 시점 스냅샷이라 본문 분석은 그대로 둔다. 참고: [PLUGIN_SYSTEM.md](PLUGIN_SYSTEM.md) §4.
+
 > **상태**: ✅ C1~C5 전부 구현·게시 완료(§4 구현 현황). 이번 패스는 `pytmuxlib/` 전체(~14k LOC)를 서버 핫패스·
 > 클라 렌더·Claude/영속 3개 축으로 다시 훑어 **신규 최적화 레버**를 도출한 결과다. 직전
 > 스프린트([PERFORMANCE_SCENARIO.md](PERFORMANCE_SCENARIO.md))에서 A1–A5·B1–B11 이
