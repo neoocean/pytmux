@@ -125,6 +125,36 @@ async def test_nc_list_msg_subpath_echoes_path():
         await teardown(srv, task, sock)
 
 
+async def test_nc_drive_roots_empty_on_posix():
+    srv, task, sock = await server_only()
+    try:
+        if os.name != "nt":
+            assert srv._drive_roots() == []
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_nc_build_chain_prepends_drives():
+    """Windows: 드라이브 목록을 합성 최상위('')의 자식으로 맨 앞에 둔다(드라이브 전환)."""
+    srv, task, sock = await server_only()
+    try:
+        srv._list_dirs = lambda p: {
+            "C:\\": ["C:\\Users", "C:\\Windows"],
+            "C:\\Users": ["C:\\Users\\me"]}.get(p, [])
+        chain = srv._build_chain(["C:\\", "C:\\Users"], ["C:\\", "D:\\"])
+        assert chain[0] == ["", ["C:\\", "D:\\"]], chain[0]   # 드라이브 = 최상위 노드
+        assert chain[1][0] == "C:\\" and "C:\\Users" in chain[1][1]
+        assert chain[2][0] == "C:\\Users"
+        # 현재 드라이브가 목록에 없으면 보강
+        c2 = srv._build_chain(["C:\\"], ["D:\\"])
+        assert "C:\\" in c2[0][1] and "D:\\" in c2[0][1]
+        # 비-Windows(드라이브 없음): 합성 최상위 없이 그대로
+        c3 = srv._build_chain(["/", "/Users"], [])
+        assert c3[0][0] == "/"
+    finally:
+        await teardown(srv, task, sock)
+
+
 # ---- 클라이언트(Textual headless) ----
 async def _with_app(coro, size=(100, 30)):
     srv, task, sock = await server_only()
@@ -321,6 +351,40 @@ async def test_ncd_uses_norton_blue_palette():
             ColorTriplet(0, 170, 170), ColorTriplet(0, 139, 139)), \
             seg.style.bgcolor
     await _with_app(body)
+
+
+async def test_ncd_windows_drives_at_top_and_switch():
+    """Windows: 드라이브 문자들이 트리 최상위 노드로 보이고, 다른 드라이브를 골라
+    Enter 하면 그 드라이브로 cd(전환)된다."""
+    async def body(app, pilot, srv):
+        app.send_cmd = lambda *a, **k: None
+        inp = []
+        app.send_input = lambda d: inp.append(d)
+        msg = {"t": "nc_list", "root": "", "path": None, "cwd": "C:\\Users",
+               "chain": [["", ["C:\\", "D:\\"]],
+                         ["C:\\", ["C:\\Users", "C:\\Windows"]],
+                         ["C:\\Users", ["C:\\Users\\me"]]]}
+        app._run_command("ncd")
+        app._dispatch(msg)
+        await pilot.pause(0.1)
+        v = app.screen._view
+        top = [p for (p, d) in v._rows if d == 0]
+        assert "C:\\" in top and "D:\\" in top, v._rows   # 드라이브 = 최상위
+        assert v._cur() == "C:\\Users"                    # cwd 선택
+        await pilot.press("d")                            # speed search → D:\
+        await pilot.pause(0.05)
+        assert v._cur() == "D:\\", v._cur()
+        await pilot.press("enter")                        # 그 드라이브로 cd
+        await pilot.pause(0.05)
+        assert inp and b"D:" in inp[0], inp
+    await _with_app(body)
+
+
+async def test_ncd_cd_command_windows_uses_slash_d():
+    """Windows(cmd.exe)에선 cd /d 로 드라이브까지 전환, 그 외엔 POSIX cd+인용."""
+    from pytmuxlib.client import _ncd_cd_command
+    assert _ncd_cd_command("D:\\Users", nt=True) == 'cd /d "D:\\Users"\n'
+    assert _ncd_cd_command("/r/a b", nt=False) == "cd '/r/a b'\n"
 
 
 async def test_ncd_esc_closes():

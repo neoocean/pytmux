@@ -80,6 +80,12 @@ class _NcdView(Widget):
         walk(self._root, 0)
         return rows
 
+    @staticmethod
+    def _disp_name(path: str) -> str:
+        # 표시·검색용 이름. basename 이 비면(루트 '/' 또는 드라이브 'C:\\') 경로 자체.
+        # 슬래시·백슬래시(Windows) 모두 끝에서 떼고 본다.
+        return os.path.basename(path.rstrip("/\\")) or path
+
     def _row_text(self, path: str, depth: int) -> str:
         if path in self._expanded:
             marker = "▾"
@@ -87,8 +93,10 @@ class _NcdView(Widget):
             marker = " "    # 로드됨·자식 없음 → 잎
         else:
             marker = "▸"    # 접힘 또는 미로드
-        name = os.path.basename(path.rstrip("/")) or path
-        return "  " * depth + f"{marker} {name}/"
+        name = self._disp_name(path)
+        # 드라이브/루트(C:\ · /)는 구분자로 끝나므로 슬래시를 덧붙이지 않는다.
+        suffix = "" if name.endswith(("/", "\\")) else "/"
+        return "  " * depth + f"{marker} {name}{suffix}"
 
     def render_line(self, y: int) -> Strip:
         width = self.size.width
@@ -180,7 +188,7 @@ class _NcdView(Widget):
         for match_prefix in (True, False):
             for off in range(n):
                 i = (start + off) % n
-                name = os.path.basename(self._rows[i][0].rstrip("/")).lower()
+                name = self._disp_name(self._rows[i][0]).lower()
                 if (name.startswith(q) if match_prefix else q in name):
                     self._move(i)
                     return
@@ -248,7 +256,7 @@ class _NcdView(Widget):
                 self._expanded.discard(cur)
                 self._rebuild_rows(keep_path=cur)
             else:
-                parent = os.path.dirname(cur.rstrip("/"))
+                parent = os.path.dirname(cur.rstrip("/\\"))
                 pi = next((i for i, (p, _d) in enumerate(self._rows)
                            if p == parent), None)
                 if pi is not None:

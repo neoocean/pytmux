@@ -37,6 +37,17 @@ _RECONNECT_RETRIES_RESTART = 300  # 서버 re-exec 재기동 대기(~6s)
 _RECONNECT_RETRIES_FORCE = 150    # degraded 강제 재접속(~3s, 서버는 살아 있음)
 
 
+def _ncd_cd_command(path: str, nt: bool | None = None) -> str:
+    r"""ncd 의 Enter(현재 패널 cd) 로 보낼 명령 문자열. Windows(cmd.exe)에선
+    `cd /d "<경로>"` 로 **드라이브까지 전환**(다른 드라이브로도 이동)하고, 그 외엔
+    `cd <shlex.quote(경로)>`. nt 인자는 테스트용 오버라이드(기본=os.name)."""
+    if nt is None:
+        nt = os.name == "nt"
+    if nt:
+        return f'cd /d "{path}"\n'
+    return f"cd {shlex.quote(path)}\n"
+
+
 def build_client_app(sock_path: str, config: dict | None = None,
                      session_name: str | None = None):
     config = config or {}
@@ -1775,7 +1786,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return            # Esc/취소
             action, path = res
             if action == "cd":
-                self.send_input(f"cd {shlex.quote(path)}\n".encode())
+                self.send_input(_ncd_cd_command(path).encode())
             elif action == "newpane":
                 self.send_cmd("split", orient="lr", path=path)
 
