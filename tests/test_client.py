@@ -3213,6 +3213,22 @@ async def test_status_tokens_persist_when_empty():
     await _with_app(body)
 
 
+async def test_tok5h_pct_clamped_to_100():
+    """5시간 한도 근접도 게이지는 0~100 범위. 추정 분모가 작아 서버가 100 을 크게
+    넘는 값(과거 999 클램프 → 상태줄 '999% / 5h' 버그)을 보내도 클라가 100 으로
+    클램프해 보여준다. 정상값·None 은 그대로."""
+    async def body(app, pilot, srv):
+        app.status.update_status({"tok5h_pct": 999})
+        assert app.status.tok5h_pct == 100, "999 → 100 클램프"
+        app.status.update_status({"tok5h_pct": 5000})
+        assert app.status.tok5h_pct == 100
+        app.status.update_status({"tok5h_pct": 73})
+        assert app.status.tok5h_pct == 73, "정상값 유지"
+        app.status.update_status({"tok5h_pct": None})
+        assert app.status.tok5h_pct is None, "None 유지(표시 생략)"
+    await _with_app(body)
+
+
 async def test_status_format():
     async def body(app, pilot, srv):
         strip = app.status.render_line(0)

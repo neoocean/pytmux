@@ -954,7 +954,12 @@ class StatusBar(Widget):
             self.claude_account = ca
         # M18-B: 5시간 한도 근접도 %(분모 미상이면 None — 표시 생략). 토큰처럼 지속
         # 표시는 안 하고(매 status 권위값), 0/None 이면 곁들임을 떼서 낡은 값이 안 남게.
-        self.tok5h_pct = msg.get("tok5h_pct")
+        # 근접도 게이지는 0~100 범위다. 추정 분모(token_budget_5h/학습상한)가 실제
+        # 사용량보다 작으면 서버 근사가 100 을 크게 넘어, 과거 상태줄에 "999% / 5h"
+        # (서버 클램프 상한)로 보이는 버그가 있었다 → 100 으로 클램프해 over=at-limit
+        # 로 보여준다(실측 세션% 경로는 이미 0~100 이라 영향 없음).
+        t5 = msg.get("tok5h_pct")
+        self.tok5h_pct = min(100, t5) if isinstance(t5, int) else t5
         self.claude_warn = msg.get("claude_warn")   # M17 grade0 경고(권위값)
         cm = msg.get("claude_model")                # M14c 모델 배지(지속표시)
         if cm:
@@ -1062,7 +1067,7 @@ class StatusBar(Widget):
                 tk = "Σ " + num
                 # M18-B: 5시간 한도 근접도(분모 미상이면 None → 생략, 지어내지 않음).
                 if self.tok5h_pct is not None:
-                    tk += f" ({self.tok5h_pct}% / 5h)"
+                    tk += f" ({self.tok5h_pct}%/5h)"
                 if self.claude_account:
                     tk += " @" + self.claude_account
                 uparts.append(tk)
