@@ -208,9 +208,30 @@ class NcdScreen(ModalScreen):
                              if p == parent), None)
                 if pidx is not None:
                     self.query_one(ListView).index = pidx
-        elif k in ("up", "down", "home", "end", "pageup", "pagedown"):
+        elif k in ("up", "down"):
             self._reset_find()              # 이동하면 speed search 리셋(증분 검색 관례)
-            # stop 안 함 → ListView 기본 이동.
+            # stop 안 함 → ListView 기본 한 칸 이동.
+        elif k in ("home", "end", "pageup", "pagedown"):
+            # ssh 원격에선 ↑↓ 한 칸 스크롤마다 뷰포트가 리페인트돼(왕복지연+그리기)
+            # 길게 누르면 느리게 느껴진다. 페이지/처음/끝 점프는 리페인트 1번으로 멀리
+            # 이동해 화살표 탐색을 빠르게 한다(이름 타이핑 speed search 와 더불어 빠른
+            # 탐색 경로). 직접 index 를 set(애니메이션 없음)해 즉시 점프.
+            event.stop()
+            self._reset_find()
+            n = len(self._rows)
+            if n:
+                lv = self.query_one(ListView)
+                i = lv.index or 0
+                page = max(1, (lv.size.height or 10) - 1)
+                if k == "home":
+                    i = 0
+                elif k == "end":
+                    i = n - 1
+                elif k == "pageup":
+                    i = max(0, i - page)
+                else:
+                    i = min(n - 1, i + page)
+                lv.index = i
         elif k == "backspace":
             event.stop()
             if self._find:

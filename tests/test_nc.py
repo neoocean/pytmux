@@ -272,6 +272,37 @@ async def test_ncd_left_collapses():
     await _with_app(body)
 
 
+async def test_ncd_page_home_end_fast_jumps():
+    """ssh 빠른 탐색: Home/End/PageUp/PageDown 로 리페인트 1번에 멀리 점프."""
+    async def body(app, pilot, srv):
+        from textual.widgets import ListView
+        app.send_cmd = lambda *a, **k: None
+        big = [f"/r/d{i:02d}" for i in range(40)]
+        app._run_command("ncd")
+        app._dispatch({"t": "nc_list", "root": "/", "path": None,
+                       "cwd": "/r/d00",
+                       "chain": [["/", ["/r"]], ["/r", big]]})
+        await pilot.pause(0.1)
+        scr = app.screen
+        lv = scr.query_one(ListView)
+        n = len(scr._rows)
+        assert n == 41, n                       # /r + d00..d39
+        await pilot.press("end")
+        await pilot.pause(0.05)
+        assert lv.index == n - 1, "End → 마지막"
+        await pilot.press("home")
+        await pilot.pause(0.05)
+        assert lv.index == 0, "Home → 처음"
+        await pilot.press("pagedown")
+        await pilot.pause(0.05)
+        assert lv.index > 1, ("PageDown 점프", lv.index)
+        prev = lv.index
+        await pilot.press("pageup")
+        await pilot.pause(0.05)
+        assert lv.index < prev, "PageUp 되돌림"
+    await _with_app(body)
+
+
 async def test_ncd_uses_norton_blue_palette():
     """과거 NCD/Norton 팔레트: 패널 DOS 블루(#0000aa), 현재 항목 시안 막대."""
     async def body(app, pilot, srv):
