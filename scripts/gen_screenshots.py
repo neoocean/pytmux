@@ -316,6 +316,20 @@ async def ncd(app, pilot):
     await pilot.pause(0.6)
 
 
+async def claude_rules(app, pilot):
+    # 시작 규칙 편집(claude-rules) — RulesEditScreen 에 예시 규칙을 넣어 띄운다.
+    # 저장하면 새 세션/`/clear` 후 첫 프롬프트에 자동 주입되는 '항상 지킬 규칙'.
+    from importlib import import_module
+    # 패키지명에 하이픈이 있어 from-import 가 안 되므로 import_module 로 로드한다.
+    screens = import_module("pytmuxlib.plugins.claude-code.screens")
+    sample = ("- 답변은 한국어로, 핵심부터 간결하게.\n"
+              "- 코드를 고치기 전 관련 파일을 먼저 읽고 기존 스타일을 따른다.\n"
+              "- 테스트를 추가/수정하면 반드시 실행해 통과를 확인한다.\n"
+              "- 커밋 메시지는 한 줄 요약 + 본문(왜).")
+    app.push_screen(screens.RulesEditScreen(sample))
+    await pilot.pause(0.5)
+
+
 # 진짜 Claude Code 한 세션에서 캡처하는 §11 컷 묶음(라이브 — 실제 API 호출).
 CLAUDE_OUTPUTS = ["11-claude", "12-claude-autoresume", "13-perm-mode",
                   "20-prompt-history", "22-claude-real"]
@@ -422,6 +436,7 @@ SCENES = [
     ("24-token-log", "토큰 사용량 팝업 — 마우스 서브탭(시간/일/주/월) + /usage 실측 한도", token_log),
     ("25-remote-control", "원격 제어 팝업 — [r] 로 /rc 토글", remote_control),
     ("27-ncd", "디렉토리 트리(ncd) — 루트→cwd 펼침·시안 선택 막대·찾기 안내줄", ncd),
+    ("28-claude-rules", "시작 규칙 편집(claude-rules) — 멀티라인 에디터·Ctrl+S 저장", claude_rules),
 ]
 # Claude 컷(11·12·13·20·22)은 결정적 장면이 아니라 진짜 `claude` 한 세션에서 캡처한다
 # (claude_suite). 실제 API 호출이라 무인자 전체 생성에선 제외하고, `claude-suite` 또는

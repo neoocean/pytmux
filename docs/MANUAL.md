@@ -539,6 +539,8 @@ Claude Code 가 패널 하단에 그리는 권한모드 footer(`auto mode on …
 - `auto-doc-clear on` — Claude 가 30초 이상 idle 일 때 진행상황을 문서화한 뒤 `/clear`
   를 자동 수행합니다.
 
+![시작 규칙 편집(claude-rules) — 멀티라인 에디터, Ctrl+S 저장 · Esc 취소](image/28-claude-rules.svg)
+
 ### 11.7 토큰 과사용 완화 설정 (`token-saver`)
 
 `token-saver`(별칭 `claude-settings`)로 **토큰 절감 자동 개입 설정 팝업**을 엽니다. 각 행을
