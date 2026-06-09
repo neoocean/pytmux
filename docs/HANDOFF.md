@@ -126,6 +126,14 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
   접두사뿐 아니라 **중간 일치**(예: `tab`→`new-tab`/`kill-tab`…)까지 입력 줄 위로
   펼쳐 보여줌(↑↓ 선택, Tab/Enter 채우기 → 다시 Enter 로 실행).
   **F12 로 바로 진입**(ESC 모드 아닐 때). `prefix F12` = 중첩 패스스루 토글.
+- **디렉토리 트리 `ncd`(별칭 `nc`, 코드네임 nc=NCD Norton Change Directory)**:
+  `:ncd` 로 **디렉토리 전용** 트리를 화면 가득. 서버가 **루트→현재 패널 cwd 사슬**
+  (`servertree.nc_list_msg` path None=chain, path 有=직계 지연로드; `_list_dirs`·
+  `_ancestor_chain`; `serverio` action `request_nc_list`)로 회신 → 클라
+  `pytmuxlib/clientnc.py:NcdScreen` 이 cwd 까지 펼쳐 열고 cwd 선택. ↑↓·→펼치기·←접기/
+  부모·**이름 타이핑 speed search**·**Enter=현재 패널 cd**·**⇧Enter/Ctrl+O=새 패널
+  분할**(`o`는 검색 글자라 폴백=Ctrl+O)·Esc. 모달은 clientscreens.py 안 건드리고 별
+  파일. 시나리오 `docs/NC_SCENARIO.md`, 테스트 `tests/test_nc.py`. (p4 57717·57721)
 - 색: p4v-tui 와 동일한 Textual `textual-dark` 팔레트(`theme_color()` 로 해석).
 - clock-mode: 현재 패널 전체를 큰 시계로 덮음(뒤 dim, [x]/명령/**하단 바 시계
   클릭**으로 토글).

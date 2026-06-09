@@ -1,8 +1,12 @@
 # 코드네임 "nc" = NCD(Norton Change Directory) — 동작 시나리오
 
-> **상태**: 🚧 구현 중. 본 문서는 구현 기준선이자 명세다.
-> 시나리오 도입 CL: **57704**(초안) · 정정 CL: **57715**(NCD 로 정정).
-> 구현 CL: **57709**(서버 디렉토리 목록 API 1차) · (이하 진행).
+> **상태**: ✅ 구현됨. 본 문서는 설계 기준선이자 구현 명세다.
+> 시나리오 도입 CL: **57704**(초안) · 정정 CL: **57717**(NCD 로 정정).
+> 구현 CL: **57709**(서버 디렉토리 목록 API 1차) · **57721**(NCD 정정·서버 chain·클라
+> `NcdScreen`·speed search·명령 `ncd`). 회귀: `tests/test_nc.py`(15 케이스).
+> **명령**: 명령 프롬프트/팔레트의 `ncd`(별칭 `nc`). 모달: `pytmuxlib/clientnc.py`
+> `NcdScreen`. 서버: `servertree.nc_list_msg`/`_list_dirs`/`_ancestor_chain`,
+> `serverio` action `request_nc_list`.
 >
 > **정정 메모(중요)**: 코드네임 "nc" 는 처음에 Norton Commander(듀얼 패널 파일
 > 매니저)로 적었으나, 실제 요구사항은 거기 들어 있던 **`ncd.exe`(Norton Change
