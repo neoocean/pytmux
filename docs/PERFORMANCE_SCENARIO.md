@@ -284,6 +284,42 @@ Python 3.11+ `frozen_modules` 효과 확인.
 
 **검증**: 다중 패널 attach 시 활성 패널 first-paint 시각(ptyshot).
 
+### A6. 서버 부팅 `code_version()` p4 호출을 listen 이후로 지연 — ✅ 구현(CL 57756, 2026-06-09)
+
+**현상/근거**: **새 기동(서버 미존재 → spawn)** 경로에서 콜드 listen-ready 가 ~1031ms
+로 측정됐다(Windows Perforce 워크스페이스). 분해하면 베어 인터프리터 ~88ms +
+`pytmuxlib.server` 전체 import ~133ms 인데, 나머지 ~800ms 가 `Server.__init__`(server.py:53)
+의 `version.code_version()` **한 호출**이었다. 이 함수는 `p4 changes -m1 ...#have`
+네트워크 왕복(version.py:31)을 돌리며 측정 ~800ms(p4 서버/VPN 부하 시 timeout 1.5s
+까지·git 폴백 없는 Perforce-only). 결정적으로 이 호출이 `serve()` 의 `ipc.start_server()`
+listen **이전**(`__init__`)이라, 클라가 붙기까지의 임계경로에 그대로 올라타 콜드
+기동이 수 초로 체감됐다(사용자 보고).
+
+**왜 §5 머리말·A1 의 "서버는 미로드" 가정이 이걸 못 잡았나(교훈)**: 그 전제는
+**실행 중 서버에 attach** 할 때만 참이다(그땐 클라 textual import 가 지배, 서버는
+이미 떠 있음). `bench.py` startup 도 *클라 cold import* 만 잰다. 하지만 **첫 기동**은
+서버를 spawn 해야 하고, 그 **서버 부팅 wall-clock 이 client-connect 임계경로**다 —
+이 경로가 벤치·문서 가정의 사각지대였다. 게다가 server.__init__ 의 기존 주석은
+"버전 캡처는 클라의 textual import 와 겹쳐 체감 영향 없음"이라 적었지만, **listen
+이전에 돌면 겹칠 수 없다**(클라는 listen 떠야 붙는다) — 주석의 추론이 코드 위치와
+모순이었다.
+
+**수정**: `__init__` 은 자리표시자 `"…"` 만 두고, `serve()` 가 listen 을 띄운 **직후**
+백그라운드 executor 태스크(`serverio._capture_version`, `loop.run_in_executor`)로
+버전을 채운다 — 클라이언트가 이미 쓰던 패턴(client.py `run_in_executor`, 자리표시자
+`"…"`)과 동일하게 서버도 비대칭을 해소. 버전은 `version` 팝업·re-exec 스냅샷에서만
+쓰여 부팅 임계경로가 아니므로 수백 ms 늦게 채워져도 무방.
+
+**검증**: 격리 상태 디렉터리(별도 `LOCALAPPDATA`)로 spawn→probe 반복 측정 —
+콜드 listen-ready **~1031ms → ~242ms**(−77%, p4 왕복이 임계경로에서 빠짐).
+백그라운드 캡처가 자리표시자 `"…"` → 실값(`p4:NNNNN`)으로 대체됨을 단위 확인.
+헤드리스 러너 `test_version`·`test_server`·`test_restart` **107 passed**.
+
+**남은 사각지대(후속 측정 권고)**: `bench.py` 에 *cold spawn→listen→first-paint*
+(서버 미존재 시작) 축을 추가하면 이런 서버 부팅 임계경로 회귀를 자동 포착한다.
+부팅 경로의 다른 동기 외부 호출(예: `proc.is_alive` 의 `tasklist` 5s, p4/git 류)도
+같은 기준으로 점검할 것 — listen 이전이면 임계경로다.
+
 ## 6. 우선순위 로드맵
 
 효과×안전(낮은 위험·높은 효과 우선):
@@ -295,6 +331,7 @@ Python 3.11+ `frozen_modules` 효과 확인.
 | 3 | **B3** render 스타일 키 캐시 | 중(render ~25-33%↓) | 낮음 | ✅ CL 56805 |
 | 5 | **B4** 메시지 배치+drain 1회 | 중(다중 패널/클라) | 낮음 | ✅ CL 56806 |
 | 7 | **A3/A2** first-paint·백오프 | 작음(체감) | 낮음 | ✅ CL 56808 |
+| — | **A6** 서버 부팅 code_version() 지연 | 높음(콜드 첫 기동) | 낮음 | ✅ CL 57756 (listen ~1031→~242ms) |
 | 2 | **B2** 행 단위 델타 전송 | 매우 높음(alt 풀리페인트·ssh) | 중~높 | ✅ CL 56852 (스피너 28×↓) |
 | 4 | **B5** 적응형 flush(이벤트 구동) | 중(입력지연) | 중 | ⏳ 보류(아래) |
 | 6 | **A1** textual import 다이어트 | 중(cold start) | 낮음 | ⏳ 미착수 |
@@ -303,6 +340,11 @@ Python 3.11+ `frozen_modules` 효과 확인.
 
 **완료(2026-06-06)**: ReDoS·B1·B3·B4·A2·A3 + 측정 중 발견한 claude_usage ReDoS. idle/
 다중패널 CPU·flush 왕복·render 직렬화·first-paint 를 개선했다(235 passed, 매 단계 동작 불변).
+
+**완료(2026-06-09)**: **A6** 서버 부팅 code_version() p4 호출을 listen 이후 백그라운드로
+지연(CL 57756). 콜드 첫 기동(서버 spawn)의 listen-ready ~1031ms→~242ms. 벤치·문서가
+*클라 cold import* 만 보던 사각지대(서버 부팅 wall-clock = client-connect 임계경로)를
+드러냈다 — §5 A6 의 교훈 참조.
 
 **남은 항목 — 권고**:
 - ~~B2(행 단위 델타)~~ → ✅ **CL 56852 완료**(per-client 델타, 스피너 28×↓).
