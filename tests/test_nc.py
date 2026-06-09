@@ -167,8 +167,8 @@ async def test_ncd_opens_expanded_to_cwd_and_enter_cds():
         scr = app.screen
         assert isinstance(scr, NcdScreen)
         # 사슬이 펼쳐져 4행, 커서는 cwd(/r/sub)
-        assert len(scr._rows) == 4, scr._rows
-        assert scr._cur_path() == "/r/sub"
+        assert len(scr._view._rows) == 4, scr._view._rows
+        assert scr._view._cur() == "/r/sub"
         await pilot.press("enter")
         await pilot.pause(0.1)
         assert inp == [b"cd /r/sub\n"], inp
@@ -209,7 +209,7 @@ async def test_ncd_shift_enter_and_ctrl_o_split_with_path():
         app._want_nc = True
         app._dispatch(dict(_CHAIN_MSG))
         await pilot.pause(0.1)
-        await app.screen.on_key(Key("shift+enter", None))
+        await app.screen._view.on_key(Key("shift+enter", None))
         await pilot.pause(0.1)
         assert ("split", {"orient": "lr", "path": "/r/sub"}) in sent
     await _with_app(body)
@@ -221,61 +221,58 @@ async def test_ncd_speed_search_jumps_by_typing():
         app._run_command("ncd")
         app._dispatch(dict(_CHAIN_MSG))
         await pilot.pause(0.1)
-        scr = app.screen
-        assert scr._cur_path() == "/r/sub"
+        v = app.screen._view
+        assert v._cur() == "/r/sub"
         await pilot.press("o")              # 'other' 로 점프(speed search)
         await pilot.pause(0.1)
-        assert scr._find == "o"
-        assert scr._cur_path() == "/r/other", scr._cur_path()
+        assert v._find == "o"
+        assert v._cur() == "/r/other", v._cur()
         # 방향키 누르면 검색어 리셋
         await pilot.press("up")
         await pilot.pause(0.05)
-        assert scr._find == ""
+        assert v._find == ""
     await _with_app(body)
 
 
 async def test_ncd_right_expands_via_lazy_load():
     async def body(app, pilot, srv):
-        from textual.widgets import ListView
         sent = []
         app.send_cmd = lambda action, **kw: sent.append((action, kw))
         app._run_command("ncd"); sent.clear()
         app._dispatch(dict(_CHAIN_MSG))
         await pilot.pause(0.1)
-        scr = app.screen
-        scr.query_one(ListView).index = 3      # /r/other (접힘·미로드)
+        v = app.screen._view
+        v._sel = 3                             # /r/other (접힘·미로드)
         await pilot.press("right")
         await pilot.pause(0.1)
         assert ("request_nc_list", {"path": "/r/other"}) in sent
         app._dispatch({"t": "nc_list", "root": "/r/other", "path": "/r/other",
                        "dirs": ["/r/other/y"]})
         await pilot.pause(0.15)
-        assert "/r/other" in scr._expanded
-        assert len(scr._rows) == 5             # +/r/other/y
+        assert "/r/other" in v._expanded
+        assert len(v._rows) == 5               # +/r/other/y
     await _with_app(body)
 
 
 async def test_ncd_left_collapses():
     async def body(app, pilot, srv):
-        from textual.widgets import ListView
         app.send_cmd = lambda *a, **k: None
         app._run_command("ncd")
         app._dispatch(dict(_CHAIN_MSG))
         await pilot.pause(0.1)
-        scr = app.screen
-        scr.query_one(ListView).index = 1      # /r/sub (펼쳐져 있음)
-        assert len(scr._rows) == 4
+        v = app.screen._view
+        v._sel = 1                             # /r/sub (펼쳐져 있음)
+        assert len(v._rows) == 4
         await pilot.press("left")              # 접기 → /r/sub/x 사라짐
         await pilot.pause(0.1)
-        assert "/r/sub" not in scr._expanded
-        assert len(scr._rows) == 3
+        assert "/r/sub" not in v._expanded
+        assert len(v._rows) == 3
     await _with_app(body)
 
 
 async def test_ncd_page_home_end_fast_jumps():
     """ssh 빠른 탐색: Home/End/PageUp/PageDown 로 리페인트 1번에 멀리 점프."""
     async def body(app, pilot, srv):
-        from textual.widgets import ListView
         app.send_cmd = lambda *a, **k: None
         big = [f"/r/d{i:02d}" for i in range(40)]
         app._run_command("ncd")
@@ -283,29 +280,30 @@ async def test_ncd_page_home_end_fast_jumps():
                        "cwd": "/r/d00",
                        "chain": [["/", ["/r"]], ["/r", big]]})
         await pilot.pause(0.1)
-        scr = app.screen
-        lv = scr.query_one(ListView)
-        n = len(scr._rows)
+        v = app.screen._view
+        n = len(v._rows)
         assert n == 41, n                       # /r + d00..d39
         await pilot.press("end")
         await pilot.pause(0.05)
-        assert lv.index == n - 1, "End → 마지막"
+        assert v._sel == n - 1, "End → 마지막"
         await pilot.press("home")
         await pilot.pause(0.05)
-        assert lv.index == 0, "Home → 처음"
+        assert v._sel == 0, "Home → 처음"
         await pilot.press("pagedown")
         await pilot.pause(0.05)
-        assert lv.index > 1, ("PageDown 점프", lv.index)
-        prev = lv.index
+        assert v._sel > 1, ("PageDown 점프", v._sel)
+        prev = v._sel
         await pilot.press("pageup")
         await pilot.pause(0.05)
-        assert lv.index < prev, "PageUp 되돌림"
+        assert v._sel < prev, "PageUp 되돌림"
     await _with_app(body)
 
 
 async def test_ncd_uses_norton_blue_palette():
     """과거 NCD/Norton 팔레트: 패널 DOS 블루(#0000aa), 현재 항목 시안 막대."""
     async def body(app, pilot, srv):
+        from rich.color import ColorTriplet
+        from pytmuxlib.clientnc import _BG, _SEL
         app.send_cmd = lambda *a, **k: None
         app._run_command("ncd")
         app._dispatch(dict(_CHAIN_MSG))
@@ -313,12 +311,15 @@ async def test_ncd_uses_norton_blue_palette():
         box = app.screen.query_one("#ncbox")
         assert box.styles.background.hex.lower() == "#0000aa", \
             box.styles.background.hex
-        # 포커스된 현재 항목 막대 = 시안
-        lv = app.screen.query_one("#nctree")
-        hi = [c for c in lv.children if c.has_class("-highlight")]
-        assert hi, "현재 항목 하이라이트 존재"
-        assert hi[0].styles.background.hex.lower() == "#00aaaa", \
-            hi[0].styles.background.hex
+        # 팔레트 상수: 패널 #0000aa, 선택 막대 #00aaaa
+        assert _BG.bgcolor.get_truecolor() == ColorTriplet(0, 0, 170)
+        assert _SEL.bgcolor.get_truecolor() == ColorTriplet(0, 170, 170)
+        # 선택 행이 실제로 시안 계열로 렌더된다(포커스=#00aaaa, 비포커스=#008b8b)
+        v = app.screen._view
+        seg = v.render_line(v._sel - v._top)._segments[0]
+        assert seg.style.bgcolor.get_truecolor() in (
+            ColorTriplet(0, 170, 170), ColorTriplet(0, 139, 139)), \
+            seg.style.bgcolor
     await _with_app(body)
 
 
