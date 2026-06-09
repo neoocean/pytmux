@@ -3,10 +3,17 @@
 > **상태**: ✅ 구현됨. 본 문서는 설계 기준선이자 구현 명세다.
 > 시나리오 도입 CL: **57704**(초안) · 정정 CL: **57717**(NCD 로 정정).
 > 구현 CL: **57709**(서버 디렉토리 목록 API 1차) · **57721**(NCD 정정·서버 chain·클라
-> `NcdScreen`·speed search·명령 `ncd`). 회귀: `tests/test_nc.py`(15 케이스).
-> **명령**: 명령 프롬프트/팔레트의 `ncd`(별칭 `nc`). 모달: `pytmuxlib/clientnc.py`
-> `NcdScreen`. 서버: `servertree.nc_list_msg`/`_list_dirs`/`_ancestor_chain`,
-> `serverio` action `request_nc_list`.
+> `NcdScreen`·speed search·명령 `ncd`). 회귀: `tests/test_nc.py`(22 케이스).
+> **플러그인 이전(CL 57774)**: ncd 는 이제 **플러그인**이다 — 코드 전체가
+> `pytmuxlib/plugins/ncd/` 하위에 있고(이 디렉토리를 지우면 `ncd`/`nc` 명령이 조용히
+> 사라진다, [PLUGIN_SYSTEM.md](PLUGIN_SYSTEM.md) 참고), 아래 본문의 옛 파일 경로
+> (`clientnc.py`·`servertree.*`)는 플러그인 모듈로 옮겨졌다(매핑은 §4 첫머리 콜아웃).
+> **현재 위치 표시(CL 57803)**: 트리에서 cwd 행을 **밝은 노랑 + 행 끝 `◀` 마커**로
+> 강조해, 커서를 옮겨도 어디가 현재 디렉토리인지 계속 보인다.
+> **명령**: 명령 프롬프트/팔레트의 `ncd`(별칭 `nc`). 모달:
+> `pytmuxlib/plugins/ncd/screen.py` 의 `NcdScreen`. 서버:
+> `pytmuxlib/plugins/ncd/server.py` 의 `nc_list_msg`/`_list_dirs`/`_ancestor_chain`
+> (서버는 `request_nc_list` 액션을 `plugins.handle_server_request` 로 위임).
 >
 > **정정 메모(중요)**: 코드네임 "nc" 는 처음에 Norton Commander(듀얼 패널 파일
 > 매니저)로 적었으나, 실제 요구사항은 거기 들어 있던 **`ncd.exe`(Norton Change
@@ -56,7 +63,9 @@
    현재 패널 cwd 까지의 조상 사슬(chain)**과 각 조상의 직계 하위 디렉토리를 함께 회신
    (`cwd` 포함).
 3. 화면 전체를 덮는 `NcdScreen` 을 push. 트리는 **루트부터 cwd 까지 이미 펼쳐져** 있고
-   **커서는 cwd 에** 놓인다 — "지금 여기"에서 시작해 어디로든 갈 수 있다.
+   **커서는 cwd 에** 놓인다 — "지금 여기"에서 시작해 어디로든 갈 수 있다. cwd 행은
+   **밝은 노랑 + 행 끝 `◀` 마커**로 상시 강조되어, 커서를 다른 곳으로 옮겨도 현재
+   디렉토리가 어디인지 계속 보인다(`_CWD` 스타일·`_CWD_MARK`). 제목엔 `ncd → <cwd>`.
 4. 조작:
    - ↑/↓: 이동.
    - →: 접힌 디렉토리의 하위를 **지연 로드**(같은 요청에 그 path)해 펼친다.
@@ -101,6 +110,18 @@
   `CommandListScreen` 패턴; 별 파일 `clientnc.py` — 진행 중 WIP 와 CL 격리).
 
 ## 4. 아키텍처 — 어디에 무엇을 붙이나
+
+> **플러그인 매핑(현행, CL 57774~)**: 아래 설명의 옛 위치는 모두 ncd 플러그인으로 옮겨졌다.
+> - 명령 메타(`COMMANDS`/`COMMAND_NOARG`)·디스패치·`request_nc_list`·`_on_nc_list`·
+>   `_nc_done` → `pytmuxlib/plugins/ncd/__init__.py`(`PLUGIN` 의 `commands`/`noarg`/
+>   `attach_client`(=`app.request_nc_list` 설치)/`handle_command`/`handle_message`/
+>   `handle_server_request`). 코어 `client`/`clientutil`/`serverio` 는 이를 직접 참조하지
+>   않고 레지스트리로만 호출한다.
+> - 모달 `NcdScreen`/`_NcdView` → `pytmuxlib/plugins/ncd/screen.py`.
+> - 서버 `nc_list_msg`/`_list_dirs`/`_ancestor_chain`/`_drive_roots`/`_build_chain`
+>   → `pytmuxlib/plugins/ncd/server.py`(범용 헬퍼 `_resolve_start_cwd`→`_pane_cwd` 만
+>   코어 `servertree` 에 남아 플러그인이 빌려 쓴다).
+> 자세한 계약·통합 지점은 [PLUGIN_SYSTEM.md](PLUGIN_SYSTEM.md).
 
 서버가 PTY·파일시스템(원격 포함)의 권위 소유자이므로 디렉토리 목록은 서버가 제공하고
 클라는 표시·탐색만 한다(기존 `request_tree`/`request_version` 와 동일 패턴).
