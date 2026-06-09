@@ -25,11 +25,20 @@ _HINT = ("↑↓ 이동 · → 펼치기 · ← 접기 · 타이핑 찾기 · "
 
 
 class NcdScreen(ModalScreen):
+    # 과거 NCD(Norton Change Directory)/Norton 팔레트 재현: DOS 블루(#0000aa) 패널,
+    # 시안(#00aaaa) 이중 테두리, 현재 항목은 시안 막대(검정 글씨) — 옛 노턴 트리 느낌.
     CSS = """
     NcdScreen { align: center middle; }
-    #ncbox { width: 90%; height: 90%; border: round $accent;
-             background: $panel; padding: 0 1; }
-    #nctree { height: 1fr; }
+    #ncbox { width: 90%; height: 90%; padding: 0 1;
+             background: #0000aa; color: #d6d6d6;
+             border: double #00aaaa;
+             border-title-color: #ffffff; border-title-background: #0000aa;
+             border-subtitle-color: #6fdcdc; border-subtitle-background: #0000aa; }
+    #nctree { height: 1fr; background: #0000aa; color: #d6d6d6; }
+    #nctree > ListItem { background: #0000aa; color: #d6d6d6; }
+    #nctree > ListItem.-highlight { background: #008b8b; color: #ffffff; }
+    #nctree:focus > ListItem.-highlight { background: #00aaaa; color: #000000;
+                                          text-style: bold; }
     """
 
     def __init__(self, root: str, chain=None, cwd: str | None = None, dirs=None):

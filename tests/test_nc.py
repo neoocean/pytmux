@@ -272,6 +272,25 @@ async def test_ncd_left_collapses():
     await _with_app(body)
 
 
+async def test_ncd_uses_norton_blue_palette():
+    """과거 NCD/Norton 팔레트: 패널 DOS 블루(#0000aa), 현재 항목 시안 막대."""
+    async def body(app, pilot, srv):
+        app.send_cmd = lambda *a, **k: None
+        app._run_command("ncd")
+        app._dispatch(dict(_CHAIN_MSG))
+        await pilot.pause(0.1)
+        box = app.screen.query_one("#ncbox")
+        assert box.styles.background.hex.lower() == "#0000aa", \
+            box.styles.background.hex
+        # 포커스된 현재 항목 막대 = 시안
+        lv = app.screen.query_one("#nctree")
+        hi = [c for c in lv.children if c.has_class("-highlight")]
+        assert hi, "현재 항목 하이라이트 존재"
+        assert hi[0].styles.background.hex.lower() == "#00aaaa", \
+            hi[0].styles.background.hex
+    await _with_app(body)
+
+
 async def test_ncd_esc_closes():
     async def body(app, pilot, srv):
         from pytmuxlib.clientnc import NcdScreen
