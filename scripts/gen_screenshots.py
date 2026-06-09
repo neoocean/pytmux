@@ -333,6 +333,19 @@ async def claude_rules(app, pilot):
     await pilot.pause(0.5)
 
 
+async def usage_panel(app, pilot):
+    # 사용량 한도 조회(/usage) — 그림자 세션이 가져온 세션 5h·주 전체·주 Sonnet 한도를
+    # 막대 그래프 전용 화면(open_usage_panel)으로 띄운다. 예시 한도 값을 주입.
+    app.status.usage_limits = {
+        "session": {"pct": 38, "reset": "2pm (Asia/Seoul)"},
+        "week_all": {"pct": 61, "reset": "Jun 13 at 3am (Asia/Seoul)"},
+        "week_sonnet": {"pct": 12, "reset": "Jun 13 at 3am (Asia/Seoul)"},
+        "account": "default",
+    }
+    app.open_usage_panel()
+    await pilot.pause(0.5)
+
+
 # 진짜 Claude Code 한 세션에서 캡처하는 §11 컷 묶음(라이브 — 실제 API 호출).
 CLAUDE_OUTPUTS = ["11-claude", "12-claude-autoresume", "13-perm-mode",
                   "20-prompt-history", "22-claude-real"]
@@ -440,6 +453,7 @@ SCENES = [
     ("25-remote-control", "원격 제어 팝업 — [r] 로 /rc 토글", remote_control),
     ("27-ncd", "디렉토리 트리(ncd) — 루트→cwd 펼침·시안 선택 막대·찾기 안내줄", ncd),
     ("28-claude-rules", "시작 규칙 편집(claude-rules) — 멀티라인 에디터·Ctrl+S 저장", claude_rules),
+    ("29-usage-panel", "사용 한도(/usage) — 세션 5h·주 전체·주 Sonnet 막대 그래프", usage_panel),
 ]
 # Claude 컷(11·12·13·20·22)은 결정적 장면이 아니라 진짜 `claude` 한 세션에서 캡처한다
 # (claude_suite). 실제 API 호출이라 무인자 전체 생성에선 제외하고, `claude-suite` 또는

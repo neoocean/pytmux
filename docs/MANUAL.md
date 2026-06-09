@@ -567,6 +567,8 @@ Claude Code 가 패널 하단에 그리는 권한모드 footer(`auto mode on …
 을 가져옵니다(현재 화면엔 전혀 안 뜹니다). 결과는 토큰 팝업 맨 위와 상태줄 `5h` 표기에
 실측값으로 반영됩니다.
 
+![사용 한도(/usage) 팝업 — 세션 5h·주 전체·주 Sonnet 막대 그래프 + % + 리셋 시각](image/29-usage-panel.svg)
+
 ### 11.9 원격 제어(Remote Control) 토글
 
 Claude 데스크탑 앱 **원격 제어**로 연결된 패널은 화면에 `Remote Control active` 가
