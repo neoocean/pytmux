@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 
+from pytmuxlib import ipc, usagedb, usagelog
 from . import tokens
 from .claude import (claude_account, claude_awaiting_answer,
                      claude_context_hardstop, claude_context_pct,
@@ -28,7 +30,7 @@ from .claude import (claude_account, claude_awaiting_answer,
                      claude_welcome, ctx_window_tokens, parse_inline_limit,
                      parse_reset_delay, parse_usage, screen_tail_key,
                      track_repeat)
-from pytmuxlib.model import Pane, Session
+from pytmuxlib.model import Pane, Session, Tab
 
 # 권한모드 자동 오토모드 전환(§10): 한 번 idle 진입 후 auto 에 도달하지 못해도 이
 # 횟수까지만 shift+tab 을 보낸다(footer 순환 순서가 고정이 아닐 수 있어 폐루프지만,
@@ -1201,6 +1203,118 @@ class ServerClaudeMixin:
             return True
         last = pane._ctx_last_fire
         return last is None or (time.monotonic() - last) >= iv
+
+    # ---- 토큰 사용량 영속 저장(#7, SQLite) — S5 토큰 모듈화 T2 에서 코어 server.py
+    # 에서 이리로 이전. 코어는 더 이상 토큰 DB·예산 누계를 모른다(usagedb/usagelog
+    # import 도 코어에서 제거). 런타임 상태(_tokens_db/_today_*/_budget_level)는
+    # server_init 훅(_init_token_state)이 설치한다 — 디렉토리 삭제 시 코어 server 에
+    # 이 속성들이 아예 안 생기고, 읽는 코드(아래 메서드들)도 함께 사라진다.
+    def _init_token_state(self):
+        """server_init 훅이 부른다 — 토큰 DB 연결/일예산 누계 런타임 상태를 코어
+        server.__init__ 에서 빼내 여기서 설치한다(delete-to-disable). 값은 이전 코어
+        __init__ 기본값과 동일: _tokens_db(지연 오픈), _today_*(일예산 시드 전 None),
+        _budget_level(0/80/100 경고 캐시)."""
+        self._tokens_db = None
+        self._today_tokens = None
+        self._today_key = None
+        self._budget_level = 0
+
+    @property
+    def tokens_log_path(self) -> str:
+        """(레거시) 응답별 확정 토큰의 JSONL 로그 경로. 이제 저장은 SQLite(tokens_db_path)
+        로 옮겼고, 이 경로는 **기존 이력을 DB 로 일회 임포트**하는 원본으로만 남는다
+        (휘발 영역 state_base, docs/TOKEN_USAGE_STORAGE_DESIGN.md §5)."""
+        return ipc.state_base(self.sock_path) + ".tokens.jsonl"
+
+    @property
+    def tokens_db_path(self) -> str:
+        """토큰 사용량 SQLite DB. 기본 소켓은 프로젝트 하위 `db/claude-tokens.db`,
+        그 외(임시 소켓 등)는 `db/claude-tokens-<sock-id>.db` 로 격리한다. captures 와
+        달리 raw 화면 잔재가 없는 집계 데이터지만, db/ 전체를 .gitignore·p4ignore 로
+        버전관리에서 제외한다(런타임·호스트 로컬, 사용자 결정 2026-06-07).
+        PYTMUX_TOKENS_DB 로 강제 지정 가능(테스트가 임시 파일을 주입해 오염 방지)."""
+        override = os.environ.get("PYTMUX_TOKENS_DB")
+        if override:
+            return override
+        from pytmuxlib.servercapture import PROJECT_DIR
+        base = os.path.join(PROJECT_DIR, "db")
+        if self.sock_path == ipc.default_endpoint():
+            return os.path.join(base, "claude-tokens.db")
+        return os.path.join(base, f"claude-tokens-{self._capture_id()}.db")
+
+    def _tokens_db_conn(self):
+        """토큰 DB 연결(최초 1회 열고 보관). 새(빈) DB 이고 기존 JSONL 이력이 있으면
+        일회 임포트해 누적 통계를 보존하고, 재임포트 방지로 JSONL 을 `.imported` 로
+        옮긴다. 실패해도 None 을 돌려 본 흐름(토큰 로깅)을 막지 않는다."""
+        if self._tokens_db is not None:
+            return self._tokens_db
+        try:
+            conn = usagedb.connect(self.tokens_db_path)
+        except Exception:
+            return None
+        try:
+            if usagedb.count(conn) == 0:
+                old = self.tokens_log_path
+                if os.path.exists(old) and usagedb.import_jsonl(conn, old) > 0:
+                    try:
+                        os.replace(old, old + ".imported")
+                    except OSError:
+                        pass
+        except Exception:
+            pass
+        self._tokens_db = conn
+        return conn
+
+    def _log_tokens(self, sess: Session, tab: Tab, pane: Pane, amount: int):
+        """응답 한 건의 확정 토큰을 SQLite 에 적는다(tokens.step committed>0 이벤트)."""
+        # M10 예산 추적은 insert **전에** — 시드(_seed_today_from_log)가 이번 레코드를
+        # 아직 포함하지 않은 상태에서 prior 누계를 읽고 amount 를 더하게 해 이중계산을
+        # 피한다(insert 후 시드하면 방금 쓴 레코드가 시드에 섞여 중복).
+        self._budget_track(amount)
+        rec = usagelog.make_record(
+            ts=time.time(), tab=tab.index, pane=pane.id,
+            session=getattr(pane, "_claude_session_id", 0),
+            account=pane._claude_account, tokens=amount)
+        conn = self._tokens_db_conn()
+        if conn is not None:
+            usagedb.insert(conn, rec)
+
+    def _seed_today_from_log(self, key: str) -> int:
+        """오늘 버킷 키에 해당하는 토큰 합(서버 기동 시 1회 시드용, M10). SQL 합산."""
+        conn = self._tokens_db_conn()
+        if conn is None:
+            return 0
+        try:
+            return usagedb.total_for_day(conn, key)
+        except Exception:
+            return 0
+
+    def _budget_track(self, amount: int):
+        """확정 토큰을 오늘 누계에 더하고 일 예산 경고 레벨을 갱신한다(M10).
+        예산이 둘 다 0(무제한)이면 누계 추적을 건너뛰고 레벨 0."""
+        if self.token_budget_day <= 0 and self.token_budget_session <= 0:
+            self._budget_level = 0
+            return
+        key = usagelog.bucket_key(time.time(), "day")
+        if self._today_key != key:
+            # 첫 호출(기동)이면 로그에서 오늘 누계 시드 — 재시작 후에도 일 예산이
+            # 이어진다. 자정 넘김(_today_key 이미 있음)이면 새 날이라 0 에서 시작.
+            self._today_tokens = (self._seed_today_from_log(key)
+                                  if self._today_key is None else 0)
+            self._today_key = key
+        self._today_tokens += max(0, int(amount))
+        self._refresh_budget_level()
+
+    def _refresh_budget_level(self):
+        """일 예산 대비 경고 레벨(0/80/100)을 _budget_level 에 캐시한다."""
+        lvl = 0
+        day = self.token_budget_day
+        if day > 0 and self._today_tokens is not None:
+            if self._today_tokens >= day:
+                lvl = 100
+            elif self._today_tokens >= day * 0.8:
+                lvl = 80
+        self._budget_level = lvl
 
     def set_token_budget(self, day=None, session=None, h5=None, acct=None):
         """일/세션/5시간/계정합계 토큰 예산 설정(0=무제한). None 인 인자는 변경하지

@@ -499,6 +499,15 @@ class _ClaudeCodePlugin:
         from .servermixin import ServerClaudeMixin
         return ServerClaudeMixin
 
+    def server_init(self, server):
+        """Server.__init__ 1회 훅 — 토큰 DB 연결·일예산 누계 런타임 상태를 설치한다
+        (S5 토큰 모듈화 T2). 코어 server.__init__ 에서 빼낸 _tokens_db/_today_*/
+        _budget_level 을 동적 합성된 믹스인 메서드로 설치한다. 디렉토리 삭제 시 이 훅이
+        사라져 코어 server 엔 토큰 상태가 안 생긴다(delete-to-disable). 형제 런타임 훅
+        (server_input→_track_prompt 등)과 같은 불변식에 기댄다 — self.plugins 에 claude 가
+        있으면 Server 에 ServerClaudeMixin 도 합성돼 있다(프로덕션·정상 테스트 순서)."""
+        server._init_token_state()
+
     # ---- 서버 런타임 훅(코어 serverio/server 가 레지스트리로만 호출) ----
     # 코어는 Claude 서버 로직을 이름으로 부르지 않고 이 훅들로만 닿는다. 각 훅은 동적
     # 합성된 ServerClaudeMixin 메서드(server.<method>)로 위임한다. 디렉토리를 지우면

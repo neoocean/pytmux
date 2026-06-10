@@ -121,6 +121,17 @@ class Registry:
                     out.append(cls)
         return out
 
+    def server_init(self, server):
+        """`Server.__init__` 마지막에 1회 — 플러그인이 서버측 런타임 상태를 설치한다
+        (pane_init 의 서버 버전). claude-code 가 토큰 DB 연결·일예산 누계 상태를 여기서
+        설치한다(S5 토큰 모듈화 T2 — 코어 server.__init__ 에서 이전). 플러그인이 없으면
+        no-op → 코어 server 에 그 상태가 안 생기고, 읽는 코드(서버 믹스인)도 함께 사라져
+        깨지지 않는다(delete-to-disable)."""
+        for p in self.plugins:
+            fn = getattr(p, "server_init", None)
+            if fn is not None:
+                fn(server)
+
     def handle_server_request(self, server, sess, action, msg):
         """서버의 알 수 없는 action 을 플러그인에 넘긴다. 회신 dict(클라로 보낼
         메시지)를 반환한 첫 플러그인의 값을 쓰고, 없으면 None."""

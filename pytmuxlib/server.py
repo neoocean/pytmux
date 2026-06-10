@@ -11,7 +11,7 @@ import subprocess
 import time
 import traceback
 
-from . import ipc, plugins, proc, pty_backend, sshwrap, usagedb, usagelog
+from . import ipc, plugins, proc, pty_backend, sshwrap
 from .model import (ClientConn, Pane, Session, Split, Tab, Window,
                     coalesce_alt_repaints)
 from .protocol import (FEED_SLICE, FLUSH_HZ, MIN_H, MIN_W, read_msg, write_msg)
@@ -80,9 +80,6 @@ class Server(*_SERVER_BASES):
         self._session_seq = 0
         # Claude 세션 일련번호(#7 토큰 로깅): 패널의 claude None→비None 전이마다 +1.
         self._claude_session_seq = 0
-        # 토큰 사용량 SQLite 연결(지연 오픈, _tokens_db_conn). 최초 사용 시 열고
-        # 기존 JSONL 이력을 일회 임포트한다(docs/TOKEN_USAGE_STORAGE_DESIGN.md).
-        self._tokens_db = None
         self.buffers: list[str] = []   # 페이스트 버퍼(최신이 앞)
         # 패널 출력 캡처(Claude 화면 문구 분석용). **기본 ON** — 실 Claude Code
         # 출력을 무손실 기록해 limit/busy/idle/ctx 화면 골든 픽스처·휴리스틱
@@ -205,12 +202,11 @@ class Server(*_SERVER_BASES):
         # 늦춘다(가역 — 사용자가 shift+tab 으로 되돌림). bypass(명시적 위험)는 불간섭.
         # claude_auto_mode(auto 유도)와 상충하면 예산 압박 시 plan 이 우선. 기본 OFF.
         self.claude_budget_plan = bool(_opts.get("claude_budget_plan", False))
-        # M10 일 예산 누계(in-memory, best-effort). 첫 확정 이벤트에서 로그로부터
-        # 오늘 누계를 시드(재시작 정합)하고 이후 메모리로 증분, 자정 넘김 시 0 리셋.
-        # _budget_level: 일 예산 기준 경고 레벨(0/80/100), status 로 클라에 전달.
-        self._today_tokens = None
-        self._today_key = None
-        self._budget_level = 0
+        # 플러그인 서버측 1회 초기화 훅(S5 토큰 모듈화 T2). claude-code 가 토큰 DB 연결·
+        # 일예산 누계 런타임 상태(_tokens_db/_today_*/_budget_level)를 설치한다 — 코어
+        # __init__ 은 더는 이 상태를 두지 않는다. 디렉토리 삭제 시 no-op 라 이 속성들이
+        # 안 생기고, 읽는 코드(서버 믹스인 토큰 메서드)도 함께 사라진다(delete-to-disable).
+        self.plugins.server_init(self)
 
     # ---- 데몬 부트스트랩 세션 ----
     def ensure_default_session(self, cols: int, rows: int) -> Session:
@@ -307,109 +303,11 @@ class Server(*_SERVER_BASES):
         self._reset_view(win.active_pane)
         self._write_paste(win.active_pane, self.buffers[index])
 
-    # ---- 토큰 사용량 영속 저장(#7, SQLite) ----
-    @property
-    def tokens_log_path(self) -> str:
-        """(레거시) 응답별 확정 토큰의 JSONL 로그 경로. 이제 저장은 SQLite(tokens_db_path)
-        로 옮겼고, 이 경로는 **기존 이력을 DB 로 일회 임포트**하는 원본으로만 남는다
-        (휘발 영역 state_base, docs/TOKEN_USAGE_STORAGE_DESIGN.md §5)."""
-        return ipc.state_base(self.sock_path) + ".tokens.jsonl"
-
-    @property
-    def tokens_db_path(self) -> str:
-        """토큰 사용량 SQLite DB. 기본 소켓은 프로젝트 하위 `db/claude-tokens.db`,
-        그 외(임시 소켓 등)는 `db/claude-tokens-<sock-id>.db` 로 격리한다. captures 와
-        달리 raw 화면 잔재가 없는 집계 데이터지만, db/ 전체를 .gitignore·p4ignore 로
-        버전관리에서 제외한다(런타임·호스트 로컬, 사용자 결정 2026-06-07).
-        PYTMUX_TOKENS_DB 로 강제 지정 가능(테스트가 임시 파일을 주입해 오염 방지)."""
-        override = os.environ.get("PYTMUX_TOKENS_DB")
-        if override:
-            return override
-        from .servercapture import PROJECT_DIR
-        base = os.path.join(PROJECT_DIR, "db")
-        if self.sock_path == ipc.default_endpoint():
-            return os.path.join(base, "claude-tokens.db")
-        return os.path.join(base, f"claude-tokens-{self._capture_id()}.db")
-
-    def _tokens_db_conn(self):
-        """토큰 DB 연결(최초 1회 열고 보관). 새(빈) DB 이고 기존 JSONL 이력이 있으면
-        일회 임포트해 누적 통계를 보존하고, 재임포트 방지로 JSONL 을 `.imported` 로
-        옮긴다. 실패해도 None 을 돌려 본 흐름(토큰 로깅)을 막지 않는다."""
-        if self._tokens_db is not None:
-            return self._tokens_db
-        try:
-            conn = usagedb.connect(self.tokens_db_path)
-        except Exception:
-            return None
-        try:
-            if usagedb.count(conn) == 0:
-                old = self.tokens_log_path
-                if os.path.exists(old) and usagedb.import_jsonl(conn, old) > 0:
-                    try:
-                        os.replace(old, old + ".imported")
-                    except OSError:
-                        pass
-        except Exception:
-            pass
-        self._tokens_db = conn
-        return conn
-
     def _tab_index_of(self, sess: Session, pane: Pane):
         for i, tab in enumerate(sess.tabs):
             if pane in tab.window.panes():
                 return i
         return None
-
-    def _log_tokens(self, sess: Session, tab: Tab, pane: Pane, amount: int):
-        """응답 한 건의 확정 토큰을 SQLite 에 적는다(tokens.step committed>0 이벤트)."""
-        # M10 예산 추적은 insert **전에** — 시드(_seed_today_from_log)가 이번 레코드를
-        # 아직 포함하지 않은 상태에서 prior 누계를 읽고 amount 를 더하게 해 이중계산을
-        # 피한다(insert 후 시드하면 방금 쓴 레코드가 시드에 섞여 중복).
-        self._budget_track(amount)
-        rec = usagelog.make_record(
-            ts=time.time(), tab=tab.index, pane=pane.id,
-            session=getattr(pane, "_claude_session_id", 0), account=pane._claude_account,
-            tokens=amount)
-        conn = self._tokens_db_conn()
-        if conn is not None:
-            usagedb.insert(conn, rec)
-
-    def _seed_today_from_log(self, key: str) -> int:
-        """오늘 버킷 키에 해당하는 토큰 합(서버 기동 시 1회 시드용, M10). SQL 합산."""
-        conn = self._tokens_db_conn()
-        if conn is None:
-            return 0
-        try:
-            return usagedb.total_for_day(conn, key)
-        except Exception:
-            return 0
-
-    def _budget_track(self, amount: int):
-        """확정 토큰을 오늘 누계에 더하고 일 예산 경고 레벨을 갱신한다(M10).
-        예산이 둘 다 0(무제한)이면 누계 추적을 건너뛰고 레벨 0."""
-        if self.token_budget_day <= 0 and self.token_budget_session <= 0:
-            self._budget_level = 0
-            return
-        key = usagelog.bucket_key(time.time(), "day")
-        if self._today_key != key:
-            # 첫 호출(기동)이면 로그에서 오늘 누계 시드 — 재시작 후에도 일 예산이
-            # 이어진다. 자정 넘김(_today_key 이미 있음)이면 새 날이라 0 에서 시작.
-            self._today_tokens = (self._seed_today_from_log(key)
-                                  if self._today_key is None else 0)
-            self._today_key = key
-        self._today_tokens += max(0, int(amount))
-        self._refresh_budget_level()
-
-    def _refresh_budget_level(self):
-        """일 예산 대비 경고 레벨(0/80/100)을 _budget_level 에 캐시한다."""
-        lvl = 0
-        day = self.token_budget_day
-        if day > 0 and self._today_tokens is not None:
-            if self._today_tokens >= day:
-                lvl = 100
-            elif self._today_tokens >= day * 0.8:
-                lvl = 80
-        self._budget_level = lvl
 
     def set_claude_account(self, sess: Session, name: str):
         """활성 패널의 Claude 계정을 수동 지정(화면 휴리스틱이 못 잡을 때 보정, #7 ②).

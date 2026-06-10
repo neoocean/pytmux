@@ -77,6 +77,7 @@ async def test_contract_server_hooks_noop_without_plugin():
     assert reg.server_scan(None, None, None) is False
     assert reg.server_pending(None, None) is None
     assert reg.server_command(None, None, None, "set_autoresume", {}) is None
+    reg.server_init(None)                 # 토큰 상태 설치 안 함(no-op, server=None 무탈)
     reg.server_input(None, None, b"x")    # 부수효과 없음(no-op)
     reg.server_paste(None, None, b"x")
     reg.server_pane_overview(None, None, {})
@@ -134,6 +135,20 @@ async def test_token_log_request_handled_by_plugin_hook():
             _FakeServer(), None, "request_token_log", {}) is None
     finally:
         os.unlink(path)
+
+
+async def test_core_no_longer_imports_token_db_backend():
+    """T2(토큰 모듈화): 코어 server.py·serverio.py 가 토큰 DB 백엔드(usagedb/usagelog)를
+    더는 모듈 전역에 두지 않는다(탈토큰). DB 연결·기록·예산 추적은 claude-code 플러그인
+    servermixin 으로 이전됐고, 코어는 server_init 훅으로 런타임 상태만 설치하게 한다.
+    이 단언이 코어→토큰 결합이 되살아나는 회귀를 잡는다."""
+    import pytmuxlib.server as server
+    import pytmuxlib.serverio as serverio
+    assert not hasattr(server, "usagedb"), "코어 server.py 가 아직 usagedb 를 import 함"
+    assert not hasattr(server, "usagelog"), "코어 server.py 가 아직 usagelog 를 import 함"
+    assert not hasattr(serverio, "usagedb"), "코어 serverio 가 아직 usagedb 를 import 함"
+    # server_init 레지스트리 훅이 존재한다(플러그인이 토큰 런타임 상태를 설치하는 경로).
+    assert hasattr(plugins.Registry, "server_init")
 
 
 async def test_contract_client_app_runs_without_claude_plugin(monkeypatch=None):
