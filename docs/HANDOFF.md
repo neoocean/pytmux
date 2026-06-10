@@ -1,7 +1,7 @@
 # pytmux 핸드오프 문서
 
 > 작성: 2026-06-03 · 대상: 이 프로젝트를 이어받는 사람/에이전트
-> 관련: [DESIGN.md](DESIGN.md) · [FEATURES.md](FEATURES.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [MEMORY.md](MEMORY.md) · [PLUGIN_SYSTEM.md](PLUGIN_SYSTEM.md)
+> 관련: [DESIGN.md](DESIGN.md) · [FEATURES.md](FEATURES.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [MEMORY.md](../MEMORY.md)(루트·Perforce 전용) · [PLUGIN_SYSTEM.md](PLUGIN_SYSTEM.md)
 
 > **플러그인(2026-06-09~)**: 선택적 기능을 `pytmuxlib/plugins/<name>/` 로 분리하고
 > 디렉토리 삭제만으로 끌 수 있게 했다(코어는 레지스트리 경유 호출). `ncd` 완료,
@@ -1046,7 +1046,9 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   (인터랙티브 + tty + 미중첩 + ssh/mosh)로 `pytmux` 한 줄 실행. 중첩 방지는
   `$TMUX` 대신 `server.py` 가 패널 셸에 심는 `$PYTMUX`(server.py:48) 검사. 문서 전용.
 - 56310 문서 최신화 + 세션 학습 메모(`docs/MEMORY.md` 신규) — 데몬 stale 판별·
-  PTY fd 진단·CLOEXEC 교훈 등 비자명한 함정 기록. 문서 전용.
+  PTY fd 진단·CLOEXEC 교훈 등 비자명한 함정 기록. 문서 전용. **(2026-06-10: docs/MEMORY.md
+  내용을 루트 MEMORY.md 로 통합하고 docs/MEMORY.md 삭제 — p4 58086. 루트 MEMORY.md 는
+  Perforce 전용 관리(git 미러 제외).)**
 - 56309 새 패널 PTY master fd 격리(CLOEXEC) + EOF 처리 강화 — **새 탭이 기존 탭을
   "복사"하던 버그 수정**(§6 참조). 서버 변경이라 `kill-server` 재기동 후 반영.
 - 56308 탭 닫기 확인을 중앙 팝업(`ConfirmScreen`)으로 통일
@@ -2445,7 +2447,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 `# ---- Claude Code 연동 (분리 대상) ----` 식 **명확한 구획 주석**으로 감싼다(현재도 일부 있음).
 충돌은 줄지만 같은 파일이라 완전 분리는 아니다 — 11.2 의 전용 모듈이 본안.
 
-### 11.6 플러그인 기반 추출(현행) — 진행 상황과 남은 작업 (2026-06-10 갱신: Phase 2c·S5·S4 + StatusBar 위젯속성(58065) 완료)
+### 11.6 플러그인 기반 추출(현행) — 진행 상황과 남은 작업 (2026-06-10 갱신: Phase 2c·S5·S4 + StatusBar 위젯속성(58065) + **토큰 사용기록 모듈화 T1~T6(58071~58083) 완료**)
 
 > **§11.1~11.5 는 초기 전략(claude.py/client_claude.py 자유함수)으로, 지금은
 > `pytmuxlib/plugins/` 플러그인 시스템(CL 57774)으로 대체되었다.** 목표는 동일하되 메커니즘이
@@ -2591,6 +2593,46 @@ test_client.py`(417) + 신규 `tests/test_plugin_contract.py`(5) 회귀망 + smo
   (b) 확정 글자만 변환(조합 중 preedit 은 앱에 안 옴 — best-effort), (c) 토글 없이 상시.
   테스트 `tests/test_client.py::test_command_prompt_converts_hangul_name_to_qwerty`("ㅜㄷㅈ"→"new",
   인자 한글 보존). 437 green. 관련: [[pytmux-ime-indicator-plugin]].
+- ~~**토큰 사용기록 모듈화(S5 T1~T6) — 코어에서 토큰 회계 완전 분리**~~ → **완료(p4
+  58071/58072/58073/58074/58078/58083, 2026-06-10)**: docs/TOKEN_USAGE_MODULARIZATION_SCENARIO.md
+  의 6단계를 **동작 보존 이전**으로 제출(전체 442 green, 단계마다 번호 CL). 회계 정확성
+  수정(§8: /usage 권위값 대사·footer 스크랩 폐기)은 **별도 세션** — 이 작업은 그 폭발
+  반경을 플러그인 안에 가두는 모듈화까지가 범위(사용자 결정 T6 정지).
+  - **T1**(58071) `request_token_log` → 플러그인 `handle_server_request` 훅(serverio
+    탈토큰). 설계 정정: server_command(상태변경 디렉티브)가 아니라 요청/회신 dict 패턴인
+    handle_server_request 가 조회 핸들러에 맞다.
+  - **T2**(58072) `_log_tokens`·예산추적·DB연결을 코어 server.py→claude-code servermixin
+    으로 이전. 설계 정정: `_scan_claude` 가 이미 플러그인이라 `server_token_commit` 훅은
+    불필요(플러그인 내부 호출)이고, 대신 런타임 상태(_tokens_db/_today_*/_budget_level)
+    초기화용 **신설 `server_init(server)` 훅**(pane_init 의 서버판). 코어 server.py 에서
+    usagedb/usagelog import 제거.
+  - **T3**(58073) `token_budget_*`(일/세션/5h/계정/resume_gate)를 **완전 플러그인 소유**
+    (사용자 결정)로 — **신설 `server_opts_init(server,opts)`/`server_opts_serialize(server)
+    →dict` 훅** + opts.json `plugin_opts` 네임스페이스 + **구 top-level 키 마이그레이션
+    shim**(타 머신 업그레이드 무중단: 신 네임스페이스 우선·구 키 폴백, 첫 _save_opts 에
+    구 키 제거). 코어 server.py __init__·serverpersist _save_opts 탈토큰-예산.
+  - **T4**(58074) Pane `_tok_state`/`_session_tokens` → panestate(pane_init/reset/
+    serialize), servertree 토큰 이관(_carry_tokens_on_close #20)을 **신설 `pane_closing
+    (server,pane)` 훅**으로 위임. 코어 model.py·servertree.py 탈토큰-누계.
+  - **T5**(58078) `usagedb.py`·`usagelog.py` **물리 이전**(`p4 move`)→plugins/claude-code/
+    (import 상대화, run.py 별칭에 usagedb/usagelog 추가) + **DB 파일도 플러그인 하위
+    db/ 로 이동**(사용자 결정) + **루트 db/→플러그인 db/ 타 머신 자동 마이그레이션**
+    (`_migrate_legacy_db`: 첫 _tokens_db_conn 에 os.replace+WAL 사이드카, EXDEV copy 폴백,
+    멱등). 중앙 playground/p4ignore.txt 에 신 db 경로 추가(루트앵커 규칙은 중첩 db/ 미포함;
+    git 의 `db/` 는 임의깊이 매칭).
+  - **T6**(58083) 종합 계약 테스트 `test_token_subsystem_fully_disabled_without_plugin`:
+    claude-code 격리 시 토큰 명령·조회·예산설정·DB연결상태·패널누계·종료이관·DB백엔드
+    import·서버믹스인이 전부 사라지고 코어 무에러임을 한 자리에서 단언 + T1~T5 분산 단언.
+  - **라이브 실증(restart-server)**: 드라이런(restart-check) SAFE → restart-server(work-
+    preserving). 실 데몬에서 opts.json 구 top-level→`plugin_opts` 이전, DB `db/`→`plugins/
+    claude-code/db/` 이전(6456행·348M 토큰 무손실), T1 토큰로그 조회 동작 확인. 마이그레이션은
+    **lazy**: opts 는 다음 _save_opts(setter), DB 는 첫 _tokens_db_conn(토큰로그/request_token_log).
+  - **⚠️ 테스트 격리 POISON(기존·비회귀)**: `test_plugin_contract` 가 **첫 import 모듈**인
+    부분집합은 `_PLUGIN_SERVER_MIXINS`(server.py import 시 1회 고정)가 빈 채 굳어, 이후
+    test_server 의 Server 가 ServerClaudeMixin 을 통째로 잃고 _scan_claude/set_auto_compact/
+    _log_tokens 가 죄다 AttributeError. **T5 베이스라인에서도 동일 재현 → 내 변경 무관**.
+    검증은 **전체 스위트**(`python3 tests/run.py`, 자연정렬은 test_bench 가 먼저라 믹스인 정상
+    고정)로. test_ime_hardware_cursor 는 부하 flaky(재시도 통과·무관). 관련: [[token-modularization-s5-complete]].
 
 **⚠️ 병렬 세션 함정(2026-06-10 갱신)**: playground 워크스페이스를 **다른 세션이 동시 편집**한다.
 2026-06-09 Phase 2 제출 중, 병렬 세션의 **clock/calendar 플러그인 추출**(미완·당시 깨짐: 미존재
