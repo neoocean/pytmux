@@ -760,6 +760,12 @@ class _ClaudeCodePlugin:
         app.open_claude_usage_tree = lambda: _open_claude_usage_tree(app)
         app._open_usage_tree = lambda tree: _open_usage_tree(app, tree)
 
+    def pane_closing(self, server, pane):
+        """패널 종료 직전(코어 servertree → pane_closing 훅) — 닫히는 Claude 패널의 확정
+        토큰을 같은 계정 생존 패널로 이관한다(#20, S5 토큰 모듈화 T4). 동적 합성된 믹스인
+        메서드로 위임 — 코어 servertree 는 토큰 누계를 모른다."""
+        server._carry_tokens_on_close(pane)
+
     # ---- Pane Claude 상태 소유(S4) — panestate 모듈에 위임 ----
     def pane_init(self, pane):
         from .panestate import init_pane

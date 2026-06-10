@@ -44,23 +44,6 @@ class ServerTreeMixin:
             pane.pty.terminate()
         self._pane_eof(pane)
 
-    def _carry_tokens_on_close(self, pane: Pane):
-        """닫히는 Claude 패널의 확정 토큰을 **같은 계정의 살아있는 패널**로 이관한다
-        (#20). 그래야 계정 합계가 패널 하나 닫혔다고 줄지 않고, 같은 계정의 Claude
-        Code 가 전부 닫힐 때까지 유지된다(살아남는 패널이 없으면 자연히 사라진다).
-        진행 중(미확정) peak 는 응답이 끊긴 것이므로 이관하지 않는다."""
-        tok = (pane._tok_state.get("total", 0)
-               if getattr(pane, "_tok_state", None) else 0)
-        acct = getattr(pane, "_claude_account", None)
-        if not tok or not acct:
-            return
-        for p in self._all_panes():
-            if p is not pane and getattr(p, "_claude_account", None) == acct:
-                p._tok_state["total"] = p._tok_state.get("total", 0) + tok
-                p._session_tokens = (p._tok_state["total"]
-                                     + p._tok_state.get("peak", 0))
-                return
-
     def _remove_pane_from_tree(self, pane: Pane):
         # 어떤 세션/탭(윈도우)에 속하는지 탐색
         for sess in list(self.sessions.values()):
@@ -68,7 +51,10 @@ class ServerTreeMixin:
                 win = tab.window
                 if pane not in win.panes():
                     continue
-                self._carry_tokens_on_close(pane)   # #20 계정 합계 유지
+                # #20 계정 합계 유지: 닫히는 Claude 패널의 확정 토큰을 같은 계정 생존
+                # 패널로 이관. 토큰 누계는 플러그인 소유(S5 T4)라 코어는 pane_closing 훅으로
+                # 위임한다 — 플러그인 부재 시 no-op(토큰 기능 자체가 없음, delete-to-disable).
+                self.plugins.pane_closing(self, pane)
                 parent = pane.parent
                 if parent is None:
                     # 윈도우의 마지막 패널 → 탭 제거

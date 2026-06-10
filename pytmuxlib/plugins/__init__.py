@@ -348,6 +348,16 @@ class Registry:
             if fn is not None:
                 fn(pane)
 
+    def pane_closing(self, server, pane):
+        """패널이 트리에서 제거되기 직전(servertree._remove_pane_from_tree) — 플러그인이
+        패널-종료 부수효과를 처리한다. claude-code 가 닫히는 패널의 확정 토큰을 같은 계정
+        생존 패널로 이관한다(#20, S5 토큰 모듈화 T4 에서 코어 servertree 에서 이전). 코어는
+        토큰 누계 의미를 모른다. 플러그인이 없으면 no-op(토큰 기능 자체가 없다)."""
+        for p in self.plugins:
+            fn = getattr(p, "pane_closing", None)
+            if fn is not None:
+                fn(server, pane)
+
     def pane_reset(self, pane):
         """respawn(새 셸) 시 — 플러그인이 Claude 필드 부분집합을 리셋한다."""
         for p in self.plugins:

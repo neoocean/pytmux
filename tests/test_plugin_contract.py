@@ -78,6 +78,7 @@ async def test_contract_server_hooks_noop_without_plugin():
     assert reg.server_pending(None, None) is None
     assert reg.server_command(None, None, None, "set_autoresume", {}) is None
     reg.server_init(None)                 # 토큰 상태 설치 안 함(no-op, server=None 무탈)
+    reg.pane_closing(None, None)          # 패널 종료 토큰 이관 안 함(no-op)
     reg.server_input(None, None, b"x")    # 부수효과 없음(no-op)
     reg.server_paste(None, None, b"x")
     reg.server_pane_overview(None, None, {})
@@ -186,6 +187,33 @@ async def test_token_budget_opts_namespace_and_migration_shim():
     reg2.server_opts_init(s3, {"token_budget_day": 5})
     assert not hasattr(s3, "token_budget_day"), "플러그인 부재인데 token_budget 설치됨"
     assert reg2.server_opts_serialize(s3) == {}
+
+
+async def test_pane_token_accumulator_owned_by_plugin():
+    """T4(토큰 모듈화): 토큰 누계(_tok_state/_session_tokens)는 코어 Pane 이 아니라
+    claude-code 의 pane_init(panestate)가 설치한다. 코어 model.Pane._RESUME_FIELDS 슬롯
+    에서 빠지고(직렬화는 plugin_state 가 담당), 플러그인 부재 시 설치되지 않으며 패널 종료
+    토큰 이관(pane_closing)도 no-op 다(delete-to-disable)."""
+    import pytmuxlib.model as model
+    reg = plugins.load()
+    # 코어 재시작 슬롯에서 빠졌다(plugin_state 가 담당).
+    assert "_tok_state" not in model.Pane._RESUME_FIELDS
+    assert "_session_tokens" not in model.Pane._RESUME_FIELDS
+
+    class _P:
+        pass
+
+    # pane_init 훅이 토큰 누계를 설치한다(기본값 = 이전 코어 model.py 정의와 동일).
+    p = _P()
+    reg.pane_init(p)
+    assert p._tok_state == {"peak": 0, "total": 0}
+    assert p._session_tokens == 0
+    # 플러그인 부재(디렉토리 삭제 시뮬) → 토큰 누계 미설치 + pane_closing no-op.
+    reg2 = _registry_without_claude()
+    q = _P()
+    reg2.pane_init(q)
+    assert not hasattr(q, "_tok_state"), "플러그인 부재인데 토큰 누계가 설치됨"
+    reg2.pane_closing(None, q)   # no-op(예외 없음)
 
 
 async def test_contract_client_app_runs_without_claude_plugin(monkeypatch=None):

@@ -7,11 +7,12 @@
 전혀 안 생기고, 코어의 몇 안 되는 읽기 지점은 `getattr(pane, …, 기본값)` 으로 안전하게
 동작한다(delete-to-disable).
 
-코어에 **남는** Claude 인접 Pane 필드(코어가 직접 읽거나 쓰는 것들 — 토큰 회계·계정·
-헤더행 예약·보류 리네임·자동재개 토글): `_tok_state`·`_session_tokens`·`_claude_account`·
-`_claude_account_manual`·`_pending_rename`·`_hdr_reserved`·`_feed_seq`·`autoresume`·
-`prompt_clear_queue`. 이는 HANDOFF §11.6 의 3a/3b 설계("코어가 읽는 Pane 속성은 코어에
-안전한 기본값으로 남겨도 무해")와 일치한다.
+코어에 **남는** Claude 인접 Pane 필드(코어가 직접 읽거나 쓰는 것들 — 계정·헤더행 예약·
+보류 리네임·자동재개 토글): `_claude_account`·`_claude_account_manual`·`_pending_rename`·
+`_hdr_reserved`·`_feed_seq`·`autoresume`·`prompt_clear_queue`. 이는 HANDOFF §11.6 의
+3a/3b 설계("코어가 읽는 Pane 속성은 코어에 안전한 기본값으로 남겨도 무해")와 일치한다.
+(토큰 누계 `_tok_state`·`_session_tokens` 는 S5 토큰 모듈화 T4 에서 이리로 이전 — 코어
+servertree 의 토큰 이관은 pane_closing 훅으로, 코어는 더는 토큰 누계를 모른다.)
 """
 from __future__ import annotations
 
@@ -24,10 +25,13 @@ def init_pane(pane) -> None:
     pane._claude_usage = None       # "ctx 42%" / "12k tok" 등(best-effort)
     pane._claude_model = None       # M14c: 모델 배지(opus-4.8 등, best-effort)
     pane._ctx_pct = None            # M15: 마지막 컨텍스트 잔량%(우선순위 정리 비교용)
-    # 토큰 영속 로깅(#7): 현재 Claude 세션 id(None→Claude 전이마다 새로 부여).
-    # (계정 _claude_account/_account_manual·토큰 누계 _tok_state/_session_tokens 는
-    #  코어가 토큰 DB 회계에 직접 쓰므로 코어 Pane 에 남는다.)
+    # 토큰 영속 로깅(#7): 현재 Claude 세션 id(None→Claude 전이마다 새로 부여)와 토큰
+    # 누계 상태(S5 토큰 모듈화 T4 에서 코어 model.py 에서 이전). _tok_state=현재 응답
+    # peak+세션 누계({"peak","total"}), _session_tokens=표시·전송용 캐시(= total+peak).
+    # (계정 _claude_account/_account_manual 은 아직 코어 Pane 에 남는다.)
     pane._claude_session_id = 0
+    pane._tok_state = {"peak": 0, "total": 0}
+    pane._session_tokens = 0
     pane._inbuf = ""                # 현재 입력 줄 누적(프롬프트 추적용)
     pane.last_prompt = ""           # 마지막으로 제출한 프롬프트(한 줄)
     pane.prompt_history = []        # 시간순 제출 프롬프트 목록(히스토리 팝업용)
@@ -98,14 +102,17 @@ def init_pane(pane) -> None:
 
 def reset_pane(pane) -> None:
     """respawn(새 셸) 시(코어 Pane.reinit → plugins.pane_reset) 리셋할 Claude 필드.
-    이전 코어 reinit 의 Claude 서브셋을 그대로 옮긴 것(코어가 쓰는 _tok_state·
-    _session_tokens·_claude_account·prompt_clear_queue 리셋은 코어 reinit 에 남는다)."""
+    이전 코어 reinit 의 Claude 서브셋을 그대로 옮긴 것(코어가 쓰는 _claude_account·
+    prompt_clear_queue 리셋은 코어 reinit 에 남는다; 토큰 누계 _tok_state/_session_tokens
+    리셋은 S5 T4 에서 이리로 이전 — 새 셸이므로 0 에서 시작)."""
     pane._scanbuf = ""
     pane._resume_pending = False
     pane._resume_handle = None      # 자동재개 예약 핸들 리셋(M12)
     pane._ctx_fired = False          # 컨텍스트 잔량 자동정리 디바운스 리셋(M11)
     pane._ctx_last_fire = None       # 정리 빈도 상한 시각 리셋(M14)
     pane._claude_session_id = 0
+    pane._tok_state = {"peak": 0, "total": 0}   # 새 셸 — 토큰 누계 0 에서 시작(S5 T4)
+    pane._session_tokens = 0
     pane._pc_phase = None            # 프롬프트 단위 클리어 상태기계 리셋(모드 자체는 유지)
     pane._adc_active = False         # 자동 doc→/clear 진행상태 리셋(§10)
     pane._cam_tries = 0              # 권한모드 자동전환 시도 카운터 리셋(§10)
@@ -125,6 +132,8 @@ _SER_FIELDS = (
     "_claude", "_claude_usage", "_scanbuf", "_resume_pending", "resume_msg",
     "last_prompt", "_claude_session_id", "prompt_clear_mode", "_rc_done",
     "prompt_history", "pending_prompts",
+    # S5 토큰 모듈화 T4: 토큰 누계도 재시작에 보존(코어 _RESUME_FIELDS 에서 이전).
+    "_tok_state", "_session_tokens",
 )
 
 

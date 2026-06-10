@@ -446,13 +446,11 @@ class Pane:
         # busy 면 보류했다가 다음 busy→idle 경계에서 발동한다. 코어 servertree 가 직접
         # 쓰므로(플러그인은 발동만) 코어 Pane 에 남긴다.
         self._pending_rename = None
-        # 토큰 누적/회계(코어 _log_tokens 가 토큰 DB 에 직접 적는다): 현재 응답 peak +
-        # 세션 누계, 표시·전송용 캐시 _session_tokens(= _tok_state["total"]).
-        self._tok_state = {"peak": 0, "total": 0}
-        self._session_tokens = 0
         # 토큰 영속 로깅(#7) 계정: 마지막 감지/지정한 계정과 manual(수동 지정) 여부.
-        # 코어 _log_tokens 가 레코드에 쓰고 set-account 명령이 갱신하므로 코어 Pane 에
-        # 남긴다(세션 id _claude_session_id 는 플러그인 pane_init 소유).
+        # 플러그인(servermixin _log_tokens)이 레코드에 쓰고 set-account 명령이 갱신하나,
+        # 코어 servertree 리네임/이관 경로가 읽어 아직 코어 Pane 에 남긴다. (토큰 누계
+        # _tok_state/_session_tokens 와 세션 id 는 claude-code 플러그인 pane_init 소유 —
+        # 누계는 S5 토큰 모듈화 T4 에서 panestate 로 이전.)
         self._claude_account = None
         self._claude_account_manual = False
         # 프롬프트 단위 클리어 큐(#4): 사용자가 미리 쌓아 둔 명령들. respawn 시 코어가
@@ -502,9 +500,8 @@ class Pane:
         self.dirty = True
         self._row_cache = None       # 행 재직렬화 캐시 리셋(#8; 새 화면 객체)
         self._row_cache_key = None
-        # 토큰 누계/계정(코어 회계) 리셋 — 새 셸이므로 0·미지정에서 시작.
-        self._tok_state = {"peak": 0, "total": 0}
-        self._session_tokens = 0
+        # 계정 리셋 — 새 셸이므로 미지정에서 시작. (토큰 누계 _tok_state/_session_tokens
+        # 리셋은 S5 T4 에서 plugins.pane_reset → panestate 로 이전.)
         self._claude_account = None
         self._claude_account_manual = False
         self.prompt_clear_queue = []  # 새 셸이므로 쌓인 명령 큐도 버린다(#4)
@@ -525,13 +522,14 @@ class Pane:
     # (child_pid·master_fd)와 크기·화면 스냅샷은 export_state 가 별도로 다룬다.
     # Claude 거동 필드(_claude·_claude_usage·_scanbuf·_resume_pending·resume_msg·
     # last_prompt·_claude_session_id·prompt_clear_mode·_rc_done·prompt_history·
-    # pending_prompts)의 직렬화는 claude-code 플러그인이 pane_serialize/pane_restore
-    # 훅으로 담당한다(S4 — export_state 가 'plugin_state' 키로 불투명하게 담는다).
-    # 여기 남는 건 코어가 직접 쓰는 토큰/계정/리네임/토글 필드뿐이다.
+    # pending_prompts·토큰 누계 _tok_state/_session_tokens)의 직렬화는 claude-code
+    # 플러그인이 pane_serialize/pane_restore 훅으로 담당한다(S4/S5 — export_state 가
+    # 'plugin_state' 키로 불투명하게 담는다). 여기 남는 건 코어가 직접 쓰는 계정/리네임/
+    # 토글 필드뿐이다.
     _RESUME_FIELDS = (
         "title", "autoresume", "_claude_account", "_claude_account_manual",
         "_pending_rename",   # 재시작 중 보류된 탭→세션 리네임도 idle 경계에서 발동
-        "_tok_state", "_session_tokens", "bracketed",
+        "bracketed",
     )
 
     def _serialize_line(self, line, columns: int) -> str:

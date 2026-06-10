@@ -1316,6 +1316,24 @@ class ServerClaudeMixin:
                 lvl = 80
         self._budget_level = lvl
 
+    def _carry_tokens_on_close(self, pane: Pane):
+        """닫히는 Claude 패널의 확정 토큰을 **같은 계정의 살아있는 패널**로 이관한다
+        (#20). 그래야 계정 합계가 패널 하나 닫혔다고 줄지 않고, 같은 계정의 Claude
+        Code 가 전부 닫힐 때까지 유지된다(살아남는 패널이 없으면 자연히 사라진다).
+        진행 중(미확정) peak 는 응답이 끊긴 것이므로 이관하지 않는다. (S5 토큰 모듈화 T4
+        에서 코어 servertree 에서 이전 — pane_closing 훅으로 호출된다.)"""
+        tok = (pane._tok_state.get("total", 0)
+               if getattr(pane, "_tok_state", None) else 0)
+        acct = getattr(pane, "_claude_account", None)
+        if not tok or not acct:
+            return
+        for p in self._all_panes():
+            if p is not pane and getattr(p, "_claude_account", None) == acct:
+                p._tok_state["total"] = p._tok_state.get("total", 0) + tok
+                p._session_tokens = (p._tok_state["total"]
+                                     + p._tok_state.get("peak", 0))
+                return
+
     def set_token_budget(self, day=None, session=None, h5=None, acct=None):
         """일/세션/5시간/계정합계 토큰 예산 설정(0=무제한). None 인 인자는 변경하지
         않는다. 예산을 바꾸면 경고 레벨을 즉시 재계산한다. opts.json 영속."""
