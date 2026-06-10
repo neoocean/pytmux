@@ -9,7 +9,10 @@ Ctrl+O = 그 디렉토리를 연 새 패널 분할. 결과는 dismiss(("cd"|"new
 렌더링: `ListView`(항목마다 위젯) 대신 **`render_line` 기반 단일 위젯**(`_NcdView`)으로
 직접 그린다 — 옛 NCD 처럼 한 줄 단위. ↑↓ 는 바뀐 **두 줄만** refresh 해 ssh 원격에서도
 빠르고, 위젯 레이아웃 비용이 없다(MultiplexerView 와 같은 방식). 색은 세그먼트 스타일로
-과거 NCD 팔레트(DOS 블루 패널·시안 선택 막대)를 입힌다."""
+과거 NCD 팔레트(DOS 블루 패널·시안 선택 막대)를 입힌다.
+
+ncd 기능은 플러그인(pytmuxlib/plugins/ncd)으로 분리돼 있다 — 이 디렉토리를 지우면
+ncd/nc 명령은 프롬프트에서 조용히 사라진다(레지스트리 경유 디스패치)."""
 from __future__ import annotations
 
 import os
@@ -28,6 +31,10 @@ from textual.widget import Widget
 _BG = Style(color="#d6d6d6", bgcolor="#0000aa")
 _SEL = Style(color="#000000", bgcolor="#00aaaa", bold=True)
 _SEL_BLUR = Style(color="#ffffff", bgcolor="#008b8b")
+# 현재 디렉토리(cwd) 행 — 커서를 옮겨도 어디가 현재 위치인지 보이도록 밝은 노랑으로
+# 강조한다(커서가 그 위에 있으면 선택 막대가 우선). 행 끝엔 ◀ 마커도 붙인다.
+_CWD = Style(color="#ffff55", bgcolor="#0000aa", bold=True)
+_CWD_MARK = " ◀"
 
 _HINT = ("↑↓·PgUp/PgDn·Home/End 이동 · →펼치기 ←접기 · 타이핑 찾기 · "
          "Enter cd · ⇧Enter/^O 새 패널 · Esc")
@@ -96,7 +103,10 @@ class _NcdView(Widget):
         name = self._disp_name(path)
         # 드라이브/루트(C:\ · /)는 구분자로 끝나므로 슬래시를 덧붙이지 않는다.
         suffix = "" if name.endswith(("/", "\\")) else "/"
-        return "  " * depth + f"{marker} {name}{suffix}"
+        row = "  " * depth + f"{marker} {name}{suffix}"
+        if self._cwd is not None and path == self._cwd:
+            row += _CWD_MARK            # 현재 디렉토리 표시(가리킴)
+        return row
 
     def render_line(self, y: int) -> Strip:
         width = self.size.width
@@ -106,6 +116,8 @@ class _NcdView(Widget):
         path, depth = self._rows[i]
         if i == self._sel:
             style = _SEL if self.has_focus else _SEL_BLUR
+        elif self._cwd is not None and path == self._cwd:
+            style = _CWD            # 현재 디렉토리 강조(커서가 다른 곳에 있을 때)
         else:
             style = _BG
         text = self._row_text(path, depth)

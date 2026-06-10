@@ -205,6 +205,28 @@ async def test_winpty_backpressure_gate():
         "stop 은 멈춘 리더를 깨워 빠져나가게 해야(교착 방지)"
 
 
+async def test_process_cwd_reads_own_cwd_on_windows():
+    """proc.process_cwd 가 대상 프로세스의 cwd 를 구한다 — ncd 현재 디렉토리 강조의
+    토대(Windows 는 /proc·lsof 가 없어 종전엔 항상 None → ncd 가 루트에서 시작).
+
+    Windows: 자기 자신의 pid 로 PEB 를 읽어 os.getcwd() 와 일치해야 한다(실제 PEB
+    경로 검증 — 권한이 보장되는 self 라 항상 성공). 비-Windows: POSIX 위임을 위해
+    None 을 돌려준다. 잘못된 pid 는 어느 OS 에서나 None.
+    """
+    from pytmuxlib import proc
+
+    assert proc.process_cwd(-1) is None
+    assert proc.process_cwd(0) is None
+    if proc.IS_WINDOWS:
+        got = proc.process_cwd(os.getpid())
+        assert got is not None, "Windows self-pid cwd 를 읽지 못함(PEB 경로 회귀)"
+        assert os.path.normcase(os.path.normpath(got)) == \
+            os.path.normcase(os.path.normpath(os.getcwd()))
+    else:
+        # POSIX: 호출부(servertree)의 /proc·lsof 가 처리하므로 헬퍼는 None.
+        assert proc.process_cwd(os.getpid()) is None
+
+
 async def test_resolve_default_endpoint_attaches_across_xdg_mismatch():
     """ssh 로그인으로 XDG_RUNTIME_DIR 유무가 갈려 소켓 경로가 어긋나도 떠 있는 서버를
     찾아 attach 한다. 서버가 없으면 canonical default 로 폴백(종전 동작).

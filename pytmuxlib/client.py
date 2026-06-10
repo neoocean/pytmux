@@ -10,22 +10,19 @@ import subprocess
 import time
 import traceback
 
-from . import clientclip, clientrender, ipc, proc, usagelog, version
-from .claude import saver_hook_events
+from . import clientclip, clientrender, ipc, plugins, proc, version
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS, DEFAULT_STYLE,
-    MENU_ITEMS, MENU_TOGGLES, SAVER_CYCLES, SPECIAL,
+    MENU_ITEMS, MENU_TOGGLES, SPECIAL,
     _BOX_BITS, _BOX_REV, _DATE_STRFTIME, _JAMO, _KEY_DIAG, _ONOFF,
     _TB_ACTIVE_STYLE, _TB_BORDER_STYLE, _TB_INACTIVE_STYLE, _TIME_STRFTIME,
-    _char_cells, _darken_style, _fmt_tokens, _is_emoji, _with_reverse,
+    _char_cells, _darken_style, _is_emoji, _with_reverse,
     has_hangul, hangul_to_qwerty, norm_sep,
     _normalize_key, _shell_argv, key_to_bytes, make_style, theme_color)
 from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 사용)
-    ChooseBufferScreen, ChooseLayoutScreen, ChooseTreeScreen, ClaudeSaverScreen,
+    ChooseBufferScreen, ChooseLayoutScreen, ChooseTreeScreen,
     CommandListScreen, CommandOptionsScreen, ConfirmScreen, InfoScreen,
-    InfoTabsScreen, MenuScreen, ModelCtxScreen, PermModeScreen, PromptScreen,
-    RulesEditScreen, TokenLogScreen, usage_bar_lines)
-from .clientnc import NcdScreen   # noqa: F401  (push_screen 으로 사용)
+    InfoTabsScreen, MenuScreen, PromptScreen)
 from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose 에서 사용)
     MultiplexerView, StatusBar, TabBar)
 from .keymap import _key_to_ctrl_bytes, _tmux_key_to_textual, load_config
@@ -35,17 +32,6 @@ from .protocol import MIN_H, MIN_W, PROTO_VERSION, read_msg, write_msg
 _RECONNECT_DELAY = 0.02            # 재시도 간격(초)
 _RECONNECT_RETRIES_RESTART = 300  # 서버 re-exec 재기동 대기(~6s)
 _RECONNECT_RETRIES_FORCE = 150    # degraded 강제 재접속(~3s, 서버는 살아 있음)
-
-
-def _ncd_cd_command(path: str, nt: bool | None = None) -> str:
-    r"""ncd 의 Enter(현재 패널 cd) 로 보낼 명령 문자열. Windows(cmd.exe)에선
-    `cd /d "<경로>"` 로 **드라이브까지 전환**(다른 드라이브로도 이동)하고, 그 외엔
-    `cd <shlex.quote(경로)>`. nt 인자는 테스트용 오버라이드(기본=os.name)."""
-    if nt is None:
-        nt = os.name == "nt"
-    if nt:
-        return f'cd /d "{path}"\n'
-    return f"cd {shlex.quote(path)}\n"
 
 
 def build_client_app(sock_path: str, config: dict | None = None,
@@ -60,6 +46,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
     from textual import events
     from textual.app import App, ComposeResult
     from textual.binding import Binding
+    from textual.geometry import Offset
     from textual.suggester import SuggestFromList
     from textual.widgets import Input
 
@@ -102,6 +89,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.session_name = session_name
             self.reader = None
             self.writer = None
+            # 선택적 플러그인(pytmuxlib/plugins/*). 명령 검색·자동완성·디스패치·메시지
+            # 처리를 기여한다(ncd 등). attach_client 로 인스턴스 글루(app.request_nc_list
+            # 등)를 설치한다. 디렉토리를 지우면 해당 명령은 프롬프트에서 조용히 사라진다.
+            self.plugins = plugins.load()
+            self.plugins.attach_client(self)
             # version 명령 팝업용(이 클라가 로드한 코드 버전·런치 시각). 버전 캡처는
             # ~수십 ms p4 호출이라 startup(첫 페인트) 핫패스를 막지 않게 on_mount 에서
             # executor 로 비동기 계산해 채운다(그 전까진 "…"). 업타임은 런치 시각 기준.
@@ -138,29 +130,23 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._want_buffers = False  # choose-buffer 응답 대기
             self._want_layouts = None  # 레이아웃 목록 응답 대기(모드: "new"/"over")
             self._want_token_log = False  # 토큰 로그 집계 팝업 응답 대기(#7)
-            self.clock_panes = set()   # clock-mode 가 켜진 패널 id 집합
-            self.calendar_panes = set()   # 달력 오버레이가 켜진 패널 id 집합
+            # 시계/달력 오버레이 상태(clock_panes/calendar_panes)와 토글
+            # (toggle_clock/set_clock/toggle_calendar/set_calendar)은 clock·calendar
+            # 플러그인이 attach_client(위 96줄)에서 이 인스턴스에 설치한다. 디렉토리를
+            # 지우면 그 상태/메서드가 없고, 코어는 getattr·레지스트리 훅으로만 닿아 no-op.
             self._menu_pane = None  # 컨텍스트 메뉴가 열린 대상 패널 id(배경 강조용)
             self._menu_open = False  # 컨텍스트 메뉴 표시 중(배경 dim 합성용)
-            # Claude Code: 패널별 상태/마지막 프롬프트
-            self.pane_claude = {}      # id -> {"claude", "prompt", "history"}
-            self.claude_header_on = True  # 프롬프트 헤더 표시(claude-header on|off)
             self.single_border_on = True  # 단일 패널 테두리 표시(single-border on|off)
-            self._claude_header_zones = {}  # id -> (x0,x1,y) 헤더 클릭존(히스토리 팝업)
-            # Claude 패널 PTY 안에 그려지는 하단 footer 클릭존(§10 item 2/3): 권한모드
-            # footer("auto mode on (shift+tab)") → 권한모드 선택 팝업, "Remote Control
-            # active" → 원격제어 정보+토글([r]=/rc) 팝업. _composite 가 채운다.
-            self._perm_zone = {}     # id -> (x0,x1,y) 권한모드 footer 클릭존
-            self._remote_zone = {}   # id -> (x0,x1,y) 원격제어 표시 클릭존
-            self._footer_hover = None  # 호버 중인 footer 클릭존 (pane_id, "perm"|"remote")(§10)
+            # Claude Code 헤더/클릭존 상태(pane_claude·claude_header_on·_claude_hidden_
+            # panes·_claude_header_zones·_perm_zone·_remote_zone·_last_usage_shown_seq)
+            # 는 claude-code 플러그인이 attach_client 로 이 인스턴스에 설치한다(Phase
+            # 2c). 코어는 이 상태를 직접 만들지 않고 헤더 렌더(client_render 훅)·ESC
+            # nav·클릭 핸들러에서 getattr 로만 읽으므로, 디렉토리를 지우면 Claude 헤더·
+            # 클릭존이 전혀 나타나지 않는다(delete-to-disable).
             self._hdr_focus = None      # ESC 모드 Claude 헤더 포커스 대상 pane id(#5)
             # ESC 모드에서 최하단 패널 ↓ → 하단 상태바 버튼 포커스(요청). 값은 현재
             # 포커스된 버튼 키(None=비활성). ←→ 로 버튼 순환, Enter 로 실행, ↑/Esc 복귀.
             self._status_focus = None
-            # /usage 자동 팝업: 서버 usage_shown_seq 의 직전 값(None=아직 베이스라인
-            # 미설정). 접속 후 첫 status 는 현재 seq 로 베이스만 잡고 띄우지 않는다.
-            self._last_usage_shown_seq = None
-            self._claude_hidden_panes = set()  # 헤더를 숨긴 패널 id(#6 ② 팝업서 토글)
             self._tab_close_zone = None  # 현재 탭 닫기 [x] 영역 (x0, x1, y)
             self._active_hdr_row = None  # 활성 패널 프롬프트 헤더 행(닫기 [x] 위치, #15)
             self._drag_split = None      # 탭→패널 드래그 미리보기 (pane_id, orient)(#19)
@@ -230,9 +216,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._composite_pending = False  # B9: 합성 코얼레싱 예약 플래그
             self._prev_winc = 0
             self._prev_bell = False
-            # M16: 절감 신호 에스컬레이션 훅의 직전 전이 상태(상승 에지 1회 발화용, §8)
-            self._saver_prev = {"budget_level": 0, "pending_kind": None,
-                                "limit": False}
             self._prompt_purpose = None
             self._prompt_action = None
             self.tab_bar_always = config.get("tab_bar_always", True)
@@ -244,6 +227,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 left=config.get("status_left", " "),
                 right=config.get("status_right",
                                  " #{pane_title}#h %H:%M %Y-%m-%d "))
+            # Claude 상태 속성(claude_active/tokens/예산 등)은 claude-code 플러그인이
+            # 위젯에 설치한다(client_statusbar_init). 플러그인 부재 시 no-op — 코어
+            # _render_main 은 이 속성을 읽지 않아 안전(delete-to-disable).
+            self.plugins.client_statusbar_init(self, self.status)
 
         def compose(self) -> ComposeResult:
             yield self.tabbar
@@ -507,8 +494,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if getattr(sb, "_date_zone", None):
                 btns.append("date")
             # 활성 패널의 권한모드 footer("auto mode on")도 같은 동선에 편입(요청).
+            # _perm_zone 은 claude-code 플러그인이 채운다(없으면 빈 dict → perm 미편입).
             act = self.layout.get("active")
-            if act is not None and act in self._perm_zone:
+            if act is not None and act in getattr(self, "_perm_zone", {}):
                 btns.append("perm")
             return btns
 
@@ -551,20 +539,26 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self._exit_status_focus()
                 self._exit_esc()
                 if cur == "model":
-                    self.open_model_config()
+                    # 모델 팝업은 claude-code 플러그인이 설치(없으면 no-op).
+                    fn = getattr(self, "open_model_config", None)
+                    fn and fn()
                 elif cur == "usage":
-                    self.open_token_log()
+                    fn = getattr(self, "open_token_log", None)  # 플러그인 설치
+                    fn and fn()
                 elif cur == "rec":
                     self.show_capture_info(self.status.capture_path,
                                            self.status.capture_size)
                 elif cur == "host":
                     self.show_status_tabs(initial=2)   # 서버 탭(#12, host 클릭과 동일)
                 elif cur == "clock":
-                    self.toggle_clock(act)             # 시계 오버레이 토글
+                    fn = getattr(self, "toggle_clock", None)  # clock 플러그인 설치
+                    fn and fn(act)                     # 시계 오버레이 토글
                 elif cur == "date":
-                    self.toggle_calendar(act)          # 달력 오버레이 토글
+                    fn = getattr(self, "toggle_calendar", None)  # calendar 플러그인 설치
+                    fn and fn(act)                     # 달력 오버레이 토글
                 elif cur == "perm":
-                    self.open_perm_mode(act)           # 권한모드 선택 팝업
+                    fn = getattr(self, "open_perm_mode", None)  # 플러그인 설치
+                    fn and fn(act)                     # 권한모드 선택 팝업
             elif k in ("up", "escape"):
                 self._exit_status_focus()   # 패널로 복귀(esc 모드 유지)
                 if k == "escape":
@@ -587,6 +581,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     # 이 reader 가 이미 새 연결로 교체됐으면(강제 재접속) 옛 태스크는
                     # 조용히 종료 — self.exit() 로 앱을 닫지 않는다(§10 degraded 회복).
                     if gen != self._conn_gen:
+                        return
+                    # 강제 재접속(§10 degraded 자동/수동 회복)이 막 옛 소켓을 close 해
+                    # 이 reader 를 깨운 경우: _force_reconnect 가 새 연결+hello 후
+                    # _start_reader 로 _conn_gen 을 올린다. 하지만 그 close 는 gen 증가
+                    # **이전**에 reader 를 깨우므로 위 gen 가드를 빠져나간다 — 여기서
+                    # _force_reconnecting 를 보고 조용히 종료해야 한다(앱을 닫지 않음).
+                    # 누락 시: pong 미지원 옛 서버에 새 클라가 붙으면 degraded 자동회복이
+                    # 떠 self.exit() 로 클라가 ~10초 만에 메시지 없이 종료됐다.
+                    if self._force_reconnecting:
                         return
                     # 작업 보존 재시작 중이면 종료 대신 재접속(ⓔ). 단 전체 재시작
                     # (restart-all)이면 in-place 재접속 대신 클라를 relaunch 한다 —
@@ -757,15 +760,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self._request_composite()
             elif t == "status":
                 self.status.update_status(msg)
-                # claude-header 전역 표시 상태를 서버 opts.json 권위값으로 반영(#6 ③)
-                if "claude_header" in msg:
-                    self.claude_header_on = bool(msg["claude_header"])
+                # Claude 상태(claude_header/claude_rules 동기화, pane_claude 갱신,
+                # /usage 자동 팝업)는 claude-code 플러그인이 client_status 훅으로 흡수
+                # 한다(없으면 no-op — delete-to-disable). 코어는 호출만 한다.
+                self.plugins.client_status(self, msg)
                 # single-border 전역 상태도 서버 권위값으로 반영(opts.json 영속)
                 if "single_border" in msg:
                     self.single_border_on = bool(msg["single_border"])
-                # Claude 시작 규칙(#27): 에디터 초기값으로 쓰려고 마지막 값을 보관.
-                if "claude_rules" in msg:
-                    self._claude_rules = msg.get("claude_rules", "")
                 # 컨텍스트 메뉴가 열려 있으면 토글 라벨(on/off)을 실제 상태로 갱신
                 ms = getattr(self, "_menu_screen", None)
                 if ms is not None:
@@ -778,16 +779,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 tl = getattr(self, "_token_log_screen", None)
                 if tl is not None and "usage_limits" in msg:
                     tl.update_usage(msg.get("usage_limits"))
-                # /usage 자동 팝업(요청): 인패널 /usage 패널이 새로 떴다는 seq 가 늘면
-                # 깨끗한 전용 사용량 화면을 자동으로 띄운다. 접속 후 첫 status 는
-                # 베이스라인만 잡고 띄우지 않는다(과거 seq 로 엉뚱하게 안 뜨게).
-                seq = msg.get("usage_shown_seq", 0)
-                if self._last_usage_shown_seq is None:
-                    self._last_usage_shown_seq = seq
-                elif seq > self._last_usage_shown_seq:
-                    self._last_usage_shown_seq = seq
-                    self._auto_open_usage()
-                self._update_claude(msg.get("panes_claude", []))
                 self._update_tabbar()
                 if self.set_titles:
                     self.title = self.status._expand(self.title_fmt)
@@ -800,9 +791,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if anybell and not self._prev_bell:
                     self._fire_hook("alert-bell")
                 self._prev_bell = anybell
-                # M16: 절감 신호 전이 → PTY 밖 에스컬레이션 훅(자리 비움 대응, §8).
-                for ev, env in saver_hook_events(self._saver_prev, msg):
-                    self._fire_hook(ev, env=env)
+                # M16 절감 신호 에스컬레이션 훅(claude-limit/budget 등)은 claude-code
+                # 플러그인의 client_status 훅(plugins.client_status, 위 766줄)으로 이전했다
+                # (S5a) — 코어가 더는 claude.py(saver_hook_events)를 import 하지 않는다.
             elif t == "tree":
                 if self._want_tree:
                     self._want_tree = False
@@ -810,19 +801,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     if purpose == "status_tabs":
                         self._open_status_tabs(msg)
                     elif purpose == "usage":
-                        self._open_usage_tree(msg)
+                        # 토큰 사용량 트리 팝업은 claude-code 플러그인이 설치한
+                        # _open_usage_tree 클로저로(없으면 no-op — delete-to-disable).
+                        fn = getattr(self, "_open_usage_tree", None)
+                        fn and fn(msg)
                     else:
                         self._open_choose_tree(msg)
-            elif t == "nc_list":
-                self._on_nc_list(msg)
-            elif t == "token_log":
-                if getattr(self, "_want_token_log", False):
-                    self._want_token_log = False
-                    self.push_screen(TokenLogScreen(
-                        msg.get("records") or [],
-                        usage=getattr(self.status, "usage_limits", None),
-                        total_all=msg.get("total_all"),
-                        accounts_total=msg.get("accounts_total")))
             elif t == "version":
                 if getattr(self, "_want_version", False):
                     self._want_version = False
@@ -854,38 +838,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.display_message("pytmux: 서버 재시작 중…")
             elif t == "bye":
                 self.exit(message="pytmux: 서버가 종료되었습니다")
-
-        # ---- Claude Code 마지막 프롬프트 스티키 헤더 ----
-        def _update_claude(self, panes_claude):
-            # history 가 빠진 항목(§4.5: 서버가 변할 때만 실음)은 직전에 받은
-            # history 를 유지한다 — 매 status 마다 30개 프롬프트를 재전송하지 않게.
-            new = {}
-            for e in panes_claude:
-                pid = e["id"]
-                if "history" not in e:
-                    prev = self.pane_claude.get(pid)
-                    if prev is not None and "history" in prev:
-                        e = {**e, "history": prev["history"]}
-                new[pid] = e
-            self.pane_claude = new
-
-        def set_claude_header(self, on: bool):
-            # claude-header on|off — 프롬프트 헤더 표시 토글(전역). 낙관적으로 즉시
-            # 반영하고 서버에 보내 opts.json 에 영속(#6 ③) — 서버가 status 로 회신.
-            self.claude_header_on = on
-            self.send_cmd("set_claude_header", value=bool(on))
-            self._composite()
-
-        def toggle_header_hidden(self, pane_id):
-            # 특정 패널의 헤더만 숨기거나 다시 보이게(#6 ② — 히스토리 팝업서 토글).
-            # 패널별·세션 한정(전역 claude-header off 와 별개). 숨겨도 prompt-history
-            # 명령이나 ESC h 로 팝업을 열어 다시 보이게 할 수 있다.
-            if pane_id in self._claude_hidden_panes:
-                self._claude_hidden_panes.discard(pane_id)
             else:
-                self._claude_hidden_panes.add(pane_id)
-            self._composite()
+                # 코어가 모르는 메시지(t)는 플러그인에 위임한다(ncd 의 nc_list 등).
+                self.plugins.handle_message(self, msg)
 
+        # Claude Code 헤더/상태 메서드(_update_claude·set_claude_header·toggle_header_
+        # hidden)는 claude-code 플러그인 attach_client 가 인스턴스 클로저로 설치한다
+        # (Phase 2c). 코어는 client_status 훅·getattr 로만 닿는다(delete-to-disable).
         def _capture_info_lines(self, path=None, size=None):
             # REC(출력 캡처) 정보 줄. 인자를 안 주면 상태줄에 마지막으로 온 값을 쓴다.
             # 맨 앞에 현재 ON/OFF 를 보여 화면에서 [c] 로 토글한 결과가 바로 반영된다.
@@ -915,231 +874,34 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._status_tab_initial = initial
             self.request_tree(purpose="status_tabs")
 
-        def open_prompt_history(self, pane_id=None):
-            # Claude 프롬프트 히스토리 팝업(시간순). 헤더 클릭/명령으로 연다(#7).
-            # [h] 로 이 패널 헤더 숨김/표시 토글(#6 ②).
-            pid = pane_id if pane_id is not None else self.layout.get("active")
-            info = self.pane_claude.get(pid) or {}
-            hist = info.get("history") or ([info["prompt"]]
-                                           if info.get("prompt") else [])
-            # 2칼럼 행: (번호, 본문) — 본문이 여러 줄이어도 번호 칼럼 아래로 새지
-            # 않고 본문 칼럼 안에 머문다(사용자 요청). 번호는 우측정렬 폭 보존.
-            rows = [(f"{i + 1}.", h) for i, h in enumerate(hist)]
-            hidden = pid in self._claude_hidden_panes
-            # 맨 나중에 입력한(최신) 프롬프트를 열 때 강조(#17). hist 는 시간순(오래된→
-            # 최신)이라 마지막 프롬프트(len(hist)-1)를 선택해 그리로 스크롤한다.
-            latest = (len(hist) - 1) if hist else None
-            # §10-A #8: 마지막 항목과 [h] footer 사이에 구분선(─, 전폭 문자열 행).
-            # nav 에서 구분선은 건너뛰므로, 마지막 프롬프트에서 ↓ 한 번에 [h] 로 점프.
-            rows.append("─" * 24)
-            rows.append("  [h] 이 헤더 " + ("다시 표시" if hidden else "숨기기"))
-            self.push_screen(InfoScreen(
-                [], title="프롬프트 히스토리(시간순)",
-                hide_key="h", hide_cb=lambda: self.toggle_header_hidden(pid),
-                initial_index=latest, max_width=110,   # 좌우로 넓게(#17)
-                col_rows=rows))                        # 번호/본문 2칼럼 표시
-
-        def open_model_config(self):
-            """Claude 모델·컨텍스트 변경 팝업(요청). 상태줄 모델 배지 클릭 / `model`
-            명령 / esc 모드 상태바 포커스로 연다. 고른 값은 활성 패널에 '/model <이름>'
-            (+컨텍스트 토큰)으로 주입한다 — 사용자가 직접 친 것과 같은 입력 경로."""
-            cur = getattr(self.status, "claude_model", None)
-            self.push_screen(ModelCtxScreen(cur), self._apply_model_config)
-
-        def _apply_model_config(self, res):
-            if not res:
-                return
-            model, ctx = res
-            arg = model if ctx in (None, "default") else f"{model} {ctx}"
-            # '/model <이름>' + Enter 주입(사용자 확인). 짧은 슬래시 명령이라 한 번에.
-            self.send_input(("/model " + arg + "\r").encode("utf-8"))
-            self.display_message(f"/model {arg} 적용 요청")
-
-        def open_perm_mode(self, pane_id):
-            """Claude 권한모드 선택 팝업을 연다(하단 footer 클릭, §10 item 2). 현재
-            모드(서버가 status 로 보낸 perm_mode)를 표시하고, 고른 목표를 서버로
-            보내면 서버가 shift+tab 폐루프로 그 모드까지 순환 주입한다."""
-            info = self.pane_claude.get(pane_id) or {}
-            current = info.get("perm_mode")
-            zone = self._perm_zone.get(pane_id)
-            anchor_y = zone[2] if zone else None   # 클릭한 footer 행 → 팝업 세로 위치 기준
-            anchor_x = zone[0] if zone else None   # footer 시작 x → 팝업 좌측 정렬 기준(#2)
-            # 클릭한 그 줄(auto mode on 등)은 팝업 dim 에서 제외해 밝게 둔다(#29).
-            self._undim_rows = {anchor_y} if anchor_y is not None else set()
-
-            def _chosen(target):
-                self._undim_rows = set()           # 닫히면 dim 제외 해제
-                if target:
-                    self.send_cmd("set_claude_perm_mode", id=pane_id,
-                                  target=target)
-                    self.display_message(f"권한모드 → {target} 전환 중…")
-            self.push_screen(PermModeScreen(current, anchor_y=anchor_y,
-                                            anchor_x=anchor_x), _chosen)
-
-        def _toggle_remote_control(self, pane_id):
-            """원격 제어 토글: 해당 Claude 패널에 `/rc` 슬래시 명령+Enter 를 주입한다.
-            Claude Code CLI 가 `/rc` 로 원격 제어를 켜고 끈다 — 사용자가 직접 친 것과
-            동일한 입력 경로(서버가 그 패널 PTY 에 그대로 쓴다)."""
-            if self.writer and pane_id is not None:
-                asyncio.create_task(write_msg(self.writer, {
-                    "t": "input", "pane": pane_id,
-                    "data": base64.b64encode(b"/rc\r").decode("ascii")}))
-
-        def open_remote_control(self, pane_id):
-            """Claude 원격제어('Remote Control active') 정보+토글 팝업(§10 item 3).
-            원격 제어는 Claude Code CLI 의 `/rc` 슬래시 명령으로 켜고 끌 수 있으므로,
-            이 팝업에서 [r] 로 바로 토글한다(해당 패널에 `/rc` 주입)."""
-            lines = [
-                "이 패널의 Claude Code 가 데스크탑 앱 '원격 제어'로 연결돼 있습니다.",
-                "(패널 화면의 'Remote Control active' 표시)",
-                "",
-                "• 원격 제어는 Claude Code CLI 의 '/rc' 명령으로 켜고 끕니다.",
-                "  → 이 화면에서 [r] 키로 바로 토글합니다(해당 패널에 /rc 주입).",
-                "• 원격 제어로 입력된 프롬프트도 상단 프롬프트 헤더에 반영됩니다.",
-                "",
-                "[r] 원격 제어 토글(/rc)   ·   닫기: Esc 또는 바깥 클릭.",
-            ]
-            self.push_screen(InfoScreen(
-                lines, title="원격 제어(Remote Control)",
-                hide_key="r", max_width=92,   # 넓은 터미널에선 본문이 안 잘리게 확장(요청)
-                hide_cb=lambda: self._toggle_remote_control(pane_id)))
-
-        def _draw_claude_headers(self, cells, W, H):
-            """Claude Code 패널 내부 맨 윗줄에 마지막 프롬프트를 스티키 헤더로 표시.
-            스크롤과 무관(합성 시 항상 내용 최상단에 덮어 그림). 표시 여부는 전역
-            옵션 claude_header_on(명령 `claude-header on|off`)으로 끄고 켠다."""
-            self._claude_header_zones = {}
-            # 활성 패널 헤더(프롬프트) 행 — 닫기 [x] 를 이 행으로 올려 그리기 위해
-            # 기록한다(#15). 헤더가 없으면 None → [x] 는 콘텐츠 첫 행에 그대로.
-            self._active_hdr_row = None
-            active = self.layout.get("active")
-            if not self.claude_header_on or not self.pane_claude:
-                return
-            # 헤더 배경은 진한 파랑(primary-darken-2) — 본문/활성 테두리(primary)보다
-            # 한 단계 어둡게. ESC 모드 헤더 포커스(#5)면 강조색(accent)으로 구분한다.
-            base_st = Style(color="white",
-                            bgcolor=theme_color(self, "primary-darken-2"),
-                            bold=True)
-            # 비활성 패널의 헤더 바는 한 단계 더 어둡게(요청) — 활성(밝은 파랑)과
-            # 비활성을 더 또렷이 구분한다. 활성 패널만 base_st(진파랑)를 쓴다.
-            inactive_hdr_st = Style(color="white",
-                                    bgcolor=theme_color(self, "primary-darken-3"),
-                                    bold=True)
-            focus_st = Style(color="black", bgcolor=theme_color(self, "accent"),
-                             bold=True)
-            for p in self.layout.get("panes", []):
-                if not p.get("claude_hdr"):   # 서버가 헤더 행을 예약한 패널만(#1)
-                    continue
-                if p["id"] in self._claude_hidden_panes:   # 팝업서 숨긴 헤더(#6 ②)
-                    continue
-                info = self.pane_claude.get(p["id"])
-                if not info or not info.get("claude") or not info.get("prompt"):
-                    continue
-                # 서버가 내용 영역을 한 행 내렸으므로(cy=p["y"]) 헤더는 그 위 한 줄
-                # (p["y"]-1, 예약된 행)에 그린다(#1).
-                cx, cy, cw = p["x"], p["y"] - 1, p["w"]
-                if cw < 6 or not (0 <= cy < H):
-                    continue
-                if p["id"] == self._hdr_focus:
-                    hdr_st = focus_st
-                elif p["id"] == active:
-                    hdr_st = base_st
-                else:
-                    hdr_st = inactive_hdr_st   # 비활성 헤더 바는 더 어둡게(요청)
-                for xx in range(cx, min(cx + cw, W)):   # 헤더 배경
-                    cells[cy][xx] = (" ", hdr_st)
-                # 헤더 본문 전체가 클릭존(프롬프트 히스토리 팝업, #7)
-                self._claude_header_zones[p["id"]] = (cx, min(cx + cw, W), cy)
-                text_start = cx + 1                      # 좌측 1칸 여백
-                # 활성 패널은 이 헤더 행 우측 끝에 닫기 [x](3칸)가 올라오므로(#15),
-                # 프롬프트 본문은 그 직전 한 칸까지만(= 3 + 1 칸 비움) 늘어나게 한다.
-                if p["id"] == active:
-                    self._active_hdr_row = cy
-                    budget = max(0, cw - 1 - 4)
-                    # 닫기 [x](우측 3칸)와 프롬프트 헤더 사이 한 칸은 헤더색이 아닌
-                    # 터미널 배경으로 비운다(빈 Style → 터미널 기본 배경, #).
-                    gapx = cx + cw - 4
-                    if 0 <= gapx < W:
-                        cells[cy][gapx] = (" ", Style())
-                else:
-                    budget = max(0, cw - 1)
-                gx = text_start
-                for chh in "▷ " + info["prompt"]:
-                    wch = _char_cells(chh)
-                    if gx - text_start + wch > budget:
-                        break
-                    if 0 <= gx < W:
-                        cells[cy][gx] = (chh, hdr_st)
-                        if wch == 2 and gx + 1 - text_start < budget and \
-                                0 <= gx + 1 < W:
-                            cells[cy][gx + 1] = ("", hdr_st)
-                    gx += wch
-
-        # ---- clock-mode(패널 전체를 덮는 큰 시계) ----
-        def toggle_clock(self, pane_id):
-            if pane_id is None:
-                return
-            if pane_id in self.clock_panes:
-                self.clock_panes.discard(pane_id)
-            else:
-                self.clock_panes.add(pane_id)
-                self.calendar_panes.discard(pane_id)  # 한 패널엔 한 오버레이만
-            self._composite()
-
-        def toggle_calendar(self, pane_id):
-            if pane_id is None:
-                return
-            if pane_id in self.calendar_panes:
-                self.calendar_panes.discard(pane_id)
-            else:
-                self.calendar_panes.add(pane_id)
-                self.clock_panes.discard(pane_id)     # 한 패널엔 한 오버레이만
-            self._composite()
-
-        def set_clock(self, pane_id, on):
-            """시계 오버레이를 명시적으로 켜거나(open-clock) 끈다(close-clock).
-            토글이 아니라 멱등 — 이미 원하는 상태면 그대로. open 시 같은 패널의
-            달력은 닫는다(한 패널엔 한 오버레이)."""
-            if pane_id is None:
-                return
-            if on:
-                self.clock_panes.add(pane_id)
-                self.calendar_panes.discard(pane_id)
-            else:
-                self.clock_panes.discard(pane_id)
-            self._composite()
-
-        def set_calendar(self, pane_id, on):
-            """달력 오버레이를 명시적으로 켜거나(open-calendar) 끈다(close-calendar).
-            멱등 — open 시 같은 패널의 시계는 닫는다."""
-            if pane_id is None:
-                return
-            if on:
-                self.calendar_panes.add(pane_id)
-                self.clock_panes.discard(pane_id)
-            else:
-                self.calendar_panes.discard(pane_id)
-            self._composite()
-
+        # 원격제어 토글/팝업(_toggle_remote_control·open_remote_control)은 claude-code
+        # 플러그인 attach_client 가 설치한다(Phase 2c). clientwidgets 의 'Remote Control
+        # active' 클릭은 getattr(app,"open_remote_control") 가드로 호출(없으면 no-op).
+        # ---- 패널 오버레이(시계/달력) — clock·calendar 플러그인 ----
+        # toggle_clock/set_clock/toggle_calendar/set_calendar 와 clock_panes/
+        # calendar_panes 는 플러그인이 attach_client 로 이 인스턴스에 설치한다(없으면
+        # 아래 코어 호출부가 getattr 로 no-op). 1초 틱·오버레이 닫기는 레지스트리
+        # 훅으로만 닿아, 플러그인 디렉토리를 지우면 조용히 비활성화된다.
         def _close_overlay(self, pane_id):
-            """해당 패널의 시계/달력 오버레이를 닫는다. 닫았으면 True(없으면 False).
-            오버레이 [x] 버튼을 폐지하고 패널 클릭/Shift+ESC 로 닫기 위한 공용 경로."""
-            if pane_id is not None and (pane_id in self.clock_panes
-                                        or pane_id in self.calendar_panes):
-                self.clock_panes.discard(pane_id)
-                self.calendar_panes.discard(pane_id)
+            """해당 패널의 플러그인 오버레이(시계/달력 등)를 닫는다(패널 클릭/Shift+ESC
+            공용 경로 — clientwidgets 의 패널 클릭이 모든 클릭마다 이걸 부른다). 닫은
+            플러그인이 있으면 재합성하고 True(코어가 입력을 소비), 없으면 False(코어가
+            기본 동작 수행). 플러그인이 하나도 없으면 항상 False라 코어에 얇은 위임자로
+            남겨 둔다."""
+            if self.plugins.client_close_overlay(self, pane_id):
                 self._composite()
                 return True
             return False
 
         def _close_active_overlay(self):
-            """활성 패널의 시계/달력 오버레이를 닫는다(Shift+ESC). 닫았으면 True."""
+            """활성 패널의 오버레이를 닫는다(Shift+ESC). 닫았으면 True."""
             return self._close_overlay(self.layout.get("active"))
 
         def _clock_tick(self):
-            # 1초마다: 시계/달력 오버레이가 있으면 갱신(뒤 화면도 함께 다시 합성).
-            # 달력은 자정을 넘어가면 '오늘' 강조가 다음 날로 이동한다.
-            if self.clock_panes or self.calendar_panes:
+            # 1초마다: 시간 갱신이 필요한 오버레이(시계/달력 등)를 띄운 플러그인이
+            # 있으면 재합성한다(없으면 idle — 아무 일도 안 함). 시계는 초, 달력은
+            # 자정 넘김 '오늘' 강조 이동을 위해 갱신된다.
+            if self.plugins.client_tick(self):
                 self._composite()
 
         # ---- 네트워크 응답성 측정(§10): ping/pong RTT + 히스테리시스 ----
@@ -1194,94 +956,25 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.reconnect_now("auto")
 
         # 셀 그리드 합성 헬퍼는 앱 비의존이라 clientrender.py 로 분리(#12). 호출은
-        # clientrender.put_cell(...) 로 직접 한다(과거 self._put_cell).
-        def _draw_clock_overlay(self, cells, W, H, active):
-            """clock-mode 패널을 큰 시계로 덮는다(테마 Style 해석 후 clientrender 의
-            앱-비의존 자유함수에 위임, #12). 뒤의 패널 출력은 흐리게(dim) 계속 보인다.
-            닫기는 패널 클릭 또는 (활성 패널일 때) Shift+ESC — 좁은 화면에서 잘 안
-            보이던 우상단 [x] 버튼은 폐지했다."""
-            if not self.clock_panes:
-                return
-            digit_st = Style(color=theme_color(self, "success"), bold=True)
-            clientrender.draw_clock_overlay(
-                cells, self.layout.get("panes", []), self.clock_panes,
-                W, H, digit_st)
-
-        def _draw_calendar_overlay(self, cells, W, H, active):
-            """달력 모드 패널을 이번 달 달력으로 덮는다(테마 Style 해석 후 clientrender
-            자유함수에 위임, #12). 뒤의 패널 출력은 흐리게(dim) 계속 보이고, 오늘
-            날짜는 강조. 닫기는 패널 클릭·(활성 패널일 때) Shift+ESC·상태줄 날짜
-            재클릭/명령 — 우상단 [x] 버튼은 폐지했다."""
-            if not self.calendar_panes:
-                return
-            styles = {
-                "day": Style(color=theme_color(self, "foreground")),
-                "title": Style(color=theme_color(self, "success"), bold=True),
-                "today": Style(color="black",
-                               bgcolor=theme_color(self, "success"), bold=True),
-                "big_today": Style(color=theme_color(self, "success"), bold=True),
-                "border": Style(color=theme_color(self, "accent")),
-            }
-            clientrender.draw_calendar_overlay(
-                cells, self.layout.get("panes", []), self.calendar_panes,
-                W, H, styles)
-
-        def _scan_footer_zones(self, p, rows, W, H):
-            """Claude 패널 content 줄에서 ① 권한모드 footer(클릭→권한모드 팝업, item 2)
-            와 ② 'Remote Control active'(클릭→원격제어 팝업, item 3)를 찾아 클릭존을
-            등록한다(§10). 패널 content 좌표(ry)를 화면 좌표(gy)로 매핑하고, 가장 아래
-            매치를 채택한다(footer 는 하단). Claude 패널만 대상."""
-            ci = self.pane_claude.get(p["id"])
-            if not (ci and ci.get("claude")):
-                return
-            for ry, row in enumerate(rows):
-                if ry >= p["h"]:
-                    break
-                gy = p["y"] + ry
-                if not (0 <= gy < H):
-                    continue
-                text = "".join(seg[0] for seg in row)
-                low = text.lower()
-                stripped = text.strip()
-                if not stripped:
-                    continue
-                # 줄의 실제 글자 범위(앞뒤 공백 제외)를 클릭존 x 범위로 — 와이드 인지.
-                lead = len(text) - len(text.lstrip())
-                x0 = p["x"] + sum(_char_cells(c) for c in text[:lead])
-                x1 = min(p["x"] + p["w"],
-                         x0 + sum(_char_cells(c) for c in stripped))
-                # 권한모드 footer(claude.py:claude_perm_mode 와 같은 신호)
-                if ("shift+tab to" in low or "mode on (shift" in low
-                        or "⏵⏵" in text or "auto-accept" in low):
-                    self._perm_zone[p["id"]] = (x0, x1, gy)
-                if "remote control" in low:
-                    self._remote_zone[p["id"]] = (x0, x1, gy)
-
-        def _footer_zone_at(self, x, y):
-            """좌표 (x,y) 가 Claude footer 클릭존(권한모드/원격제어) 안이면
-            (pane_id, "perm"|"remote") 반환, 아니면 None(§10 호버 강조·클릭 공용)."""
-            for pid, (zx0, zx1, zy) in self._perm_zone.items():
-                if zy == y and zx0 <= x < zx1:
-                    return (pid, "perm")
-            for pid, (zx0, zx1, zy) in self._remote_zone.items():
-                if zy == y and zx0 <= x < zx1:
-                    return (pid, "remote")
-            return None
-
+        # clientrender.put_cell(...) 로 직접 한다(과거 self._put_cell). 시계/달력
+        # 오버레이 그리기는 clock·calendar 플러그인의 client_overlay 훅으로 옮겼고,
+        # 그리기 자유함수(draw_clock_overlay/draw_calendar_overlay)도 각 플러그인의
+        # render.py(plugins/clock·calendar)로 옮겨 디렉토리째 지우면 함께 사라진다.
         def _composite(self):
             W = self.layout.get("cols", self.size.width)
             H = self.layout.get("rows", max(1, self.size.height - 1))
             cells = [[(" ", DEFAULT_STYLE) for _ in range(W)] for _ in range(H)]
             active = self.layout.get("active")
-            # Claude footer 클릭존(§10 item 2/3) 재계산 — 매 합성마다 비우고 채운다.
-            self._perm_zone = {}
-            self._remote_zone = {}
+            # 활성 패널 커서 셀의 전역 좌표(gx,gy) — 아래 반전커서 그리는 곳에서 채운다.
+            # 매 합성마다 None 으로 초기화해 stale 좌표가 남지 않게 한다(IME preedit 동기화용).
+            self._active_cursor_xy = None
+            # Claude footer 클릭존(§10 item 2/3) 재계산은 claude-code 플러그인의
+            # client_render 훅(아래)이 매 합성마다 비우고 다시 채운다.
             for p in self.layout.get("panes", []):
                 content = self.pane_content.get(p["id"])
                 if not content:
                     continue
                 rows, cursor = content
-                self._scan_footer_zones(p, rows, W, H)
                 for ry, row in enumerate(rows):
                     if ry >= p["h"]:
                         break
@@ -1309,6 +1002,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     if 0 <= gx < W and 0 <= gy < H:
                         ch, st = cells[gy][gx]
                         cells[gy][gx] = (ch, _with_reverse(st))   # C3: 캐시된 반전
+                        # 하드웨어(터미널) 커서를 둘 좌표 — set_frame 직전에 적용한다.
+                        # 와이드 글자 위면 ccx 가 이미 시작 칸이므로 gx 가 맞다.
+                        self._active_cursor_xy = (gx, gy)
             # 패널 테두리 박스: 비활성=회색, 활성=파란색. 경계 셀은 인접 패널이
             # 공유하므로, 비활성 박스를 먼저 그리고 활성 박스를 마지막에 덮어
             # 활성 패널의 경계 전체가 파란색이 되도록 한다.
@@ -1456,13 +1152,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
                                bgcolor="green" if p["id"] == active else "yellow")
                     for j, chh in enumerate(label):
                         clientrender.put_cell(cells, cx0 + j, cy0, chh, st, W, H)
-            # Claude Code 마지막 프롬프트 스티키 헤더(내용 최상단)
-            self._draw_claude_headers(cells, W, H)
+            # Claude Code 콘텐츠-레이어 장식(프롬프트 스티키 헤더 + footer 클릭존 스캔)은
+            # claude-code 플러그인의 client_render 훅이 그린다(없으면 no-op — 헤더·클릭존
+            # 미표시). 헤더가 활성 패널 행을 잡으면 _active_hdr_row 를 채워, 뒤이은
+            # _draw_tab_close 가 [x] 를 그 행에 올린다. 코어는 매 프레임 None 으로 초기화.
+            self._active_hdr_row = None
+            self.plugins.client_render(self, cells, W, H)
             # 현재 탭 닫기 [x]: 콘텐츠 영역 오른쪽 위 모서리(상단 테두리 위)
             self._draw_tab_close(cells, W, H)
-            # clock-mode / 달력 오버레이(패널 전체 덮기, 뒤 화면 dim)
-            self._draw_clock_overlay(cells, W, H, active)
-            self._draw_calendar_overlay(cells, W, H, active)
+            # 패널 오버레이(시계/달력 등, 패널 전체 덮기·뒤 화면 dim) — clock·calendar
+            # 플러그인이 client_overlay 훅으로 그린다(플러그인 없으면 no-op).
+            self.plugins.client_overlay(self, cells, W, H, active)
             # 경계선(divider) 호버/드래그 강조: 그 칸의 글자는 두고 배경만 살짝
             # 입혀 리사이즈 가능함을 알린다(#27).
             hov = self.view._hover_divider
@@ -1477,19 +1177,21 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         if 0 <= yy < H and 0 <= xx < W:
                             c, st = cells[yy][xx]
                             cells[yy][xx] = (c, st + tint)
-            # Claude footer(권한모드/원격제어) 클릭존 호버 강조(§10): 클릭 가능 영역
-            # 임을 알리려 그 줄 배경만 한 톤 입힌다(글자색 유지). 클릭존은 위에서 막
-            # 재계산됐으므로 호버 대상이 아직 유효할 때만 칠한다(떨림 없음).
-            # 호버, 또는 ESC 모드에서 "auto mode on"(perm) 포커스(요청) 시 강조.
-            _fh = self._footer_hover
-            if _fh is None and self._status_focus == "perm":
+            # Claude footer(권한모드/원격제어) 클릭존 강조: ESC 모드에서 "auto mode
+            # on"(perm) 키보드 포커스 시에만 그 줄 배경을 한 톤 입힌다(글자색 유지).
+            # **마우스 호버로는 배경을 바꾸지 않는다**(요청 — 호버 강조 폐지). 클릭존은
+            # 위에서 막 재계산됐으므로 대상이 아직 유효할 때만 칠한다(떨림 없음).
+            _perm_zone = getattr(self, "_perm_zone", {})
+            _remote_zone = getattr(self, "_remote_zone", {})
+            _fh = None
+            if self._status_focus == "perm":
                 _act = self.layout.get("active")
-                if _act is not None and _act in self._perm_zone:
+                if _act is not None and _act in _perm_zone:
                     _fh = (_act, "perm")
             if _fh is not None:
                 _fpid, _fkind = _fh
-                _fzone = (self._perm_zone if _fkind == "perm"
-                          else self._remote_zone).get(_fpid)
+                _fzone = (_perm_zone if _fkind == "perm"
+                          else _remote_zone).get(_fpid)
                 if _fzone:
                     zx0, zx1, zy = _fzone
                     ftint = Style(bgcolor=theme_color(self, "secondary"))
@@ -1507,14 +1209,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         for xx in range(p["x"], min(p["x"] + p["w"], W)):
                             c, st = cells[yy][xx]
                             cells[yy][xx] = (c, _darken_style(st))
-            # Shift+드래그 패널 swap 중: 들고 있는 소스 패널은 흐리게(dim), 놓을
-            # 대상 패널은 배경 강조(놓으면 두 패널이 자리를 맞바꾼다).
-            if self.view._pane_swap is not None:
+            # 패널 pick-up(헤더 드래그) 중: 들고 있는 소스 패널은 흐리게(dim), 놓을
+            # 대상 패널은 배경 강조(놓으면 두 패널이 자리를 맞바꾼다). 탭바 위로 끌면
+            # _pickup_over 가 None 이라 소스만 dim — "들고 있음"을 표시(탭/[+] 드롭 후보).
+            if self.view._pickup is not None:
                 stint = Style(bgcolor=theme_color(self, "warning"))
                 for p in self.layout.get("panes", []):
-                    if p["id"] == self.view._pane_swap:
+                    if p["id"] == self.view._pickup:
                         darken = True       # 들고 있는 소스 패널: 실색 블렌드로 흐리게
-                    elif p["id"] == self.view._pane_swap_over:
+                    elif p["id"] == self.view._pickup_over:
                         darken = False      # 놓을 대상 패널: 배경 강조(warning)
                     else:
                         continue
@@ -1554,6 +1257,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         if ch and _is_emoji(ch):
                             ch = "·"
                         row[xx] = (ch, _darken_style(st))
+            # IME preedit 동기화(docs/IME_PREEDIT_CURSOR_SCENARIO.md): 하드웨어(터미널)
+            # 커서를 활성 패널 커서 셀로 옮긴다. 호스트 터미널은 IME 조합 문자열
+            # (preedit)을 하드웨어 커서 자리에 덧그리므로, 안 옮기면 stale 커서 자리
+            # (흔히 패널 테두리 행)에 조합 글자가 박제돼 잔상으로 보인다. Textual 의
+            # Input/TextArea 가 app.cursor_position = cursor_screen_offset 로 하는 것과
+            # 동일 패턴 — Textual 은 매 프레임 끝에 move_to(cursor_position) 를 출력한다
+            # (textual.app._display). 모달(Input/TextArea)이 떠 있으면(screen_stack>1)
+            # 그 위젯이 cursor_position 을 소유하므로 덮어쓰지 않는다(경합 방지).
+            if len(self.screen_stack) == 1 and self._active_cursor_xy is not None:
+                self.cursor_position = Offset(*self._active_cursor_xy)
             self.view.set_frame(cells)
 
         def push_screen(self, *args, **kwargs):
@@ -1756,72 +1469,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._tree_purpose = purpose   # "choose"(전환/종료) | "usage"(토큰 보기)
             self.send_cmd("request_tree")
 
-        # ---- nc(Norton Commander 풍 디렉토리 트리) ----
-        def request_nc_list(self, path=None):
-            """nc 디렉토리 목록 요청. path=None → 활성 패널 cwd 루트(화면 열기),
-            path=<dir> → 그 노드의 자식(지연 펼치기). 응답은 t==nc_list."""
-            self._want_nc = True
-            self.send_cmd("request_nc_list", path=path)
-
-        def _on_nc_list(self, msg):
-            """nc_list 수신. path 가 None 이면 초기 트리(루트→cwd chain) → ncd 화면을
-            연다(요청한 경우만). path 가 있으면 펼치기 응답 → 떠 있는 ncd 화면의 해당
-            노드에 자식을 채운다."""
-            if msg.get("path") is None:
-                if not getattr(self, "_want_nc", False):
-                    return            # 요청 안 했는데 온 응답은 무시(방어)
-                self._want_nc = False
-                self.push_screen(
-                    NcdScreen(msg.get("root"), chain=msg.get("chain"),
-                              cwd=msg.get("cwd"), dirs=msg.get("dirs")),
-                    self._nc_done)
-            else:
-                scr = self.screen
-                if isinstance(scr, NcdScreen):
-                    scr.fill_children(msg.get("path"), msg.get("dirs") or [])
-
-        def _nc_done(self, res):
-            """ncd 화면 결과 처리. Enter→현재 패널 cd, Shift+Enter/Ctrl+O→새 패널 분할."""
-            if not res:
-                return            # Esc/취소
-            action, path = res
-            if action == "cd":
-                self.send_input(_ncd_cd_command(path).encode())
-            elif action == "newpane":
-                self.send_cmd("split", orient="lr", path=path)
-
-        def open_claude_usage_tree(self):
-            # 토큰 사용량 클릭 → 통합 상태 팝업의 '토큰 사용량' 탭으로 연다(#10).
-            self.show_status_tabs(initial=1)   # 1 = 토큰 탭(오른쪽)
-
-        def open_token_log(self):
-            # 토큰 사용량 영속 로그 집계 팝업(#7). 서버에 최근 로그를 요청하고,
-            # 응답(t==token_log)이 오면 TokenLogScreen 으로 시간/일/주/월×계정
-            # (=클라이언트) 집계. 상태바 Σ 클릭의 진입점이기도 하다.
-            self._want_token_log = True
-            self.send_cmd("request_token_log", limit=5000)
-
-        def open_usage_panel(self):
-            """Claude `/usage` 한도(세션 5h·주 전체·주 Sonnet)를 깨끗한 전용 화면
-            (InfoScreen, 막대+%+리셋)으로 연다. 인패널 /usage 자동 팝업과 수동 명령
-            (`usage-panel`)이 공유한다. 한도 데이터가 없으면 안내만 표시한다."""
-            u = getattr(self.status, "usage_limits", None)
-            w = self.size.width if self.size else 80
-            lines = usage_bar_lines(u, w)
-            if not lines:
-                self.display_message(
-                    "/usage 한도 데이터 없음 — Claude 패널에서 /usage 를 먼저 실행")
-                return
-            self.push_screen(InfoScreen(lines, title="Claude 사용 한도 (/usage)"))
-
-        def _auto_open_usage(self):
-            """인패널 /usage 가 새로 떴을 때 전용 사용량 화면을 자동 팝업(요청). 다른
-            모달이 떠 있으면 건너뛴다(가림·중복 방지) — 값은 status.usage_limits 에
-            남아 토큰 팝업·`usage-panel` 로 다시 볼 수 있다."""
-            if len(self.screen_stack) > 1:
-                return
-            self.open_usage_panel()
-
+        # 토큰 사용량 트리 팝업(open_claude_usage_tree·_open_usage_tree)은 claude-code
+        # 플러그인 attach_client 가 인스턴스 클로저로 설치한다(Phase 2c). 코어
+        # _open_status_tabs(통합 REC/서버 탭)는 client_status_tabs 훅으로 플러그인 탭(토큰
+        # 사용량)을 받아 끼운다 — 플러그인이 없으면 토큰 탭이 통째로 사라진다(delete-to-disable).
+        # 인패널 /usage 자동 팝업(_auto_open_usage)은 claude-code 플러그인의 client_status
+        # 훅으로 이전했다(Phase 2c — usage_shown_seq 증가 시 open_usage_panel 호출).
         def open_version(self):
             # version 명령: 서버에 버전/업타임을 요청하고(t==version 회신), 클라 자신의
             # 버전/업타임과 합쳐 팝업(InfoScreen)을 띄운다.
@@ -1936,50 +1589,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
             ]
             self.push_screen(InfoScreen(lines, title="version"))
 
-        def open_rules_editor(self):
-            # #27: Claude 시작 규칙 편집 팝업. 저장하면 서버 opts.json 에 영속하고,
-            # 새 Claude 세션 또는 /clear 직후 첫 idle 에 프롬프트로 자동 주입한다.
-            def _saved(text):
-                if text is not None:
-                    self.send_cmd("set_claude_rules", text=text)
-                    self.display_message("시작 규칙 저장됨" if text.strip()
-                                         else "시작 규칙 비움")
-            self.push_screen(RulesEditScreen(getattr(self, "_claude_rules", "")),
-                             _saved)
-
-        def _open_usage_tree(self, tree):
-            self.push_screen(InfoScreen(self._usage_tree_lines(tree),
-                                        title="Claude 토큰 사용량(세션별)"))
-
-        def _usage_tree_lines(self, tree):
-            """트리 응답 → 사용량 표시 줄. ctx(컨텍스트 %)와 함께 실제 세션 누계
-            토큰(Σ)을 탭 합계·패널별로 보인다(#18). 맨 아래에는 가로 구분선과
-            **모든 세션 토큰 합계** 한 줄을 덧붙인다(§10-A #6)."""
-            lines = []
-            grand = 0
-            for s in tree.get("sessions", []):
-                for w in s.get("windows", []):
-                    cps = [p for p in (w.get("panes") or [])
-                           if isinstance(p, dict) and p.get("claude")]
-                    if not cps:
-                        continue
-                    wtok = sum((p.get("tokens") or 0) for p in cps)  # 탭 합계
-                    grand += wtok
-                    lines.append(f"[{w['index'] + 1}] {w['name']}  —  Σ {_fmt_tokens(wtok)}")
-                    for p in cps:
-                        app = p.get("cmd") or "claude"
-                        usage = p.get("usage") or "-"
-                        state = p.get("claude")
-                        tok = _fmt_tokens(p.get("tokens") or 0)
-                        lines.append(f"    pane {p['id']} · {app} · {state} · "
-                                     f"{usage} · Σ {tok}")
-            if not lines:
-                return ["(실행 중인 Claude 패널 없음)"]
-            # 하단 가로 구분선 + 전 세션 토큰 합계(§10-A #6).
-            lines.append("─" * 36)
-            lines.append(f"전체 세션 합계  —  Σ {_fmt_tokens(grand)}")
-            return lines
-
         def _server_info_lines(self):
             """서버 정보 탭(§10-A #12) 줄 — 호스트·로컬/원격·소켓 경로·RTT·응답성.
             상태줄 서버이름(host) 클릭 시 통합 상태 팝업의 '서버' 탭으로 보인다."""
@@ -2002,11 +1611,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             return lines
 
         def _open_status_tabs(self, tree):
-            """REC(출력 캡처)·토큰 사용량·서버 정보를 **한 팝업의 세 탭**으로 연다(#10,
-            §10-A #12). 상태줄 버튼 배치에 맞춰 탭 순서는 REC(0)·토큰(1)·서버(2)다.
-            어느 버튼으로 열었는지(_status_tab_initial)에 따라 초기 탭만 다르다.
-            REC 탭에선 [c] 로 출력 캡처를 켜고 끌 수 있다."""
-            usage = self._usage_tree_lines(tree)
+            """REC(출력 캡처)·서버 정보를 **한 팝업의 탭**으로 연다(#10, §10-A #12).
+            claude-code 플러그인이 있으면 그 사이에 '토큰 사용량' 탭이 끼어 REC(0)·토큰(1)·
+            서버(2) 가 된다 — 상태줄 버튼 배치와 일치. 플러그인이 없으면 토큰 탭이 통째로
+            사라지고 REC(0)·서버(1) 만 남는다(delete-to-disable). 어느 버튼으로 열었는지
+            (_status_tab_initial)에 따라 초기 탭만 다르다. REC 탭에선 [c] 로 캡처를 켜고 끈다."""
             cap = getattr(self, "_status_cap_lines", None) or self._capture_info_lines()
             server = self._server_info_lines()
             initial = getattr(self, "_status_tab_initial", 0)
@@ -2033,9 +1642,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
             actions = {0: [("c", "[c] 캡처 켜기/끄기", _toggle_capture),
                            ("o", "[o] 기록 폴더 열기", _open_capture_dir)]}
+            # 탭 구성: REC + (플러그인 기여 탭, 예: claude-code 의 '토큰 사용량') + 서버.
+            # 플러그인 부재 시 가운데가 비어 REC·서버만 남는다(토큰 탭=claude-code 소유).
+            tabs = [("출력 캡처(REC)", cap)]
+            tabs += self.plugins.client_status_tabs(self, tree)
+            tabs.append(("서버", server))
+            # initial 은 (열기 버튼 기준) 인덱스 — 토큰 탭이 없으면 host 클릭(initial=2)이
+            # 마지막 탭=서버(2개면 1)로 자연 클램프된다. 범위 밖이면 끝 탭으로 맞춘다.
+            initial = max(0, min(initial, len(tabs) - 1))
             self.push_screen(InfoTabsScreen(
-                [("출력 캡처(REC)", cap), ("토큰 사용량", usage), ("서버", server)],
-                initial=initial, title="상태", actions=actions))
+                tabs, initial=initial, title="상태", actions=actions))
 
         def _open_choose_tree(self, tree):
             def handle(res):
@@ -2125,136 +1741,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.exit(message="detached")
             elif key == "kill_server":
                 self.send_cmd("kill_server")
-
-        # ---- 토큰 절감 설정 팝업(token-saver, docs/TOKEN_SAVING_SCENARIO.md) ----
-        def open_claude_saver(self):
-            self.push_screen(ClaudeSaverScreen())
-
-        @staticmethod
-        def _fmt_budget(v):
-            if not v:
-                return "끔(무제한)"
-            if v >= 1_000_000:
-                return f"{v / 1_000_000:.1f}M".replace(".0M", "M")
-            if v >= 1_000:
-                return f"{v // 1000}k"
-            return str(v)
-
-        def _saver_display(self, key):
-            """설정 팝업의 한 행이 보일 현재값 문자열(토글 ●/○ 또는 cycle 값)."""
-            st = self.status
-            bools = {
-                "autoresume": st.autoresume,
-                "resume_gate": st.token_budget_resume_gate,
-                "budget_plan": st.claude_budget_plan,
-                "ctx_autoclear": st.claude_ctx_autoclear,
-                "auto_doc_clear": st.auto_doc_clear,
-                "auto_compact": st.auto_compact,
-                "claude_auto_mode": st.claude_auto_mode,
-                "prompt_clear": st.prompt_clear,
-            }
-            if key in bools:
-                return "●" if bools[key] else "○"
-            if key == "ctx_action":
-                return "/compact" if st.claude_ctx_action == "compact" \
-                    else "doc+/clear"
-            if key == "ctx_threshold":
-                return f"잔량<{st.claude_ctx_threshold}%"
-            if key == "ctx_min_interval":
-                iv = int(st.claude_ctx_min_interval)
-                return "상한 없음" if iv <= 0 else f"{iv}초마다 최대 1회"
-            if key == "budget_day":
-                return self._fmt_budget(st.token_budget_day)
-            if key == "budget_session":
-                return self._fmt_budget(st.token_budget_session)
-            if key == "budget_5h":
-                return self._fmt_budget(st.token_budget_5h)
-            if key == "budget_account":
-                return self._fmt_budget(st.token_budget_account)
-            if key == "long_turn":
-                v = int(st.claude_long_turn_sec)
-                return "끔" if v <= 0 else f"{v}초 이상"
-            if key == "repeat_alert":
-                v = int(st.claude_repeat_alert)
-                return "끔" if v <= 0 else f"{v}회 이상"
-            return ""
-
-        @staticmethod
-        def _cycle_next(key, cur):
-            vals = SAVER_CYCLES[key]
-            try:
-                i = vals.index(cur)
-            except ValueError:
-                i = -1
-            return vals[(i + 1) % len(vals)]
-
-        def _saver_action(self, key):
-            """설정 팝업에서 한 행을 Enter — 동작을 서버로 보내고 status 를 낙관적으로
-            즉시 반영한다(서버 broadcast 가 권위값으로 확정). 토글은 set_* 를 인자
-            없이(서버가 반전), cycle 은 다음 프리셋 값을 보낸다."""
-            st = self.status
-            if key == "autoresume":
-                self.send_cmd("set_autoresume")
-                st.autoresume = not st.autoresume
-            elif key == "resume_gate":
-                self.send_cmd("set_token_budget_resume_gate")
-                st.token_budget_resume_gate = not st.token_budget_resume_gate
-            elif key == "budget_plan":
-                self.send_cmd("set_claude_budget_plan")
-                st.claude_budget_plan = not st.claude_budget_plan
-            elif key == "ctx_autoclear":
-                self.send_cmd("set_claude_ctx_autoclear")
-                st.claude_ctx_autoclear = not st.claude_ctx_autoclear
-            elif key == "auto_doc_clear":
-                self.send_cmd("set_auto_doc_clear", value=None)
-                st.auto_doc_clear = not st.auto_doc_clear
-            elif key == "auto_compact":
-                self.send_cmd("set_auto_compact", value=None)
-                st.auto_compact = not st.auto_compact
-            elif key == "claude_auto_mode":
-                self.send_cmd("set_claude_auto_mode", value=None)
-                st.claude_auto_mode = not st.claude_auto_mode
-            elif key == "prompt_clear":
-                self.send_cmd("set_prompt_clear", value=None)
-                st.prompt_clear = not st.prompt_clear
-            elif key == "ctx_action":
-                nxt = self._cycle_next("ctx_action", st.claude_ctx_action)
-                self.send_cmd("set_claude_ctx_action", value=nxt)
-                st.claude_ctx_action = nxt
-            elif key == "ctx_threshold":
-                nxt = self._cycle_next("ctx_threshold", st.claude_ctx_threshold)
-                self.send_cmd("set_claude_ctx_threshold", value=nxt)
-                st.claude_ctx_threshold = nxt
-            elif key == "ctx_min_interval":
-                nxt = self._cycle_next(
-                    "ctx_min_interval", int(st.claude_ctx_min_interval))
-                self.send_cmd("set_claude_ctx_min_interval", value=nxt)
-                st.claude_ctx_min_interval = nxt
-            elif key == "budget_day":
-                nxt = self._cycle_next("budget_day", st.token_budget_day)
-                self.send_cmd("set_token_budget", day=nxt)
-                st.token_budget_day = nxt
-            elif key == "budget_session":
-                nxt = self._cycle_next("budget_session", st.token_budget_session)
-                self.send_cmd("set_token_budget", session=nxt)
-                st.token_budget_session = nxt
-            elif key == "budget_5h":
-                nxt = self._cycle_next("budget_5h", int(st.token_budget_5h))
-                self.send_cmd("set_token_budget", h5=nxt)
-                st.token_budget_5h = nxt
-            elif key == "budget_account":
-                nxt = self._cycle_next("budget_account",
-                                       int(st.token_budget_account))
-                self.send_cmd("set_token_budget", acct=nxt)
-                st.token_budget_account = nxt
-            elif key == "long_turn":
-                nxt = self._cycle_next("long_turn", int(st.claude_long_turn_sec))
-                self.send_cmd("set_claude_turn_warn", long_sec=nxt)
-                st.claude_long_turn_sec = nxt
-            elif key == "repeat_alert":
-                nxt = self._cycle_next("repeat_alert", int(st.claude_repeat_alert))
-                self.send_cmd("set_claude_turn_warn", repeat=nxt)
-                st.claude_repeat_alert = nxt
 
         # ---- 프롬프트 / 명령 ----
         def display_message(self, text, secs=2.0):
@@ -2399,8 +1885,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             #   타이핑이 덧붙던 문제, 요청). 빈 입력일 땐 placeholder 로도 흐리게 보인다.
             suggester = None
             if purpose == "command":
-                suggester = SepInsensitiveSuggester(COMPLETIONS,
-                                                    case_sensitive=False)
+                suggester = SepInsensitiveSuggester(
+                    COMPLETIONS + self.plugins.completions,
+                    case_sensitive=False)
             elif suggest:
                 suggester = SuggestFromList([suggest], case_sensitive=False)
             self.push_screen(
@@ -2522,23 +2009,33 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 명령 목록 선택기(#3): 옵션 스키마가 있으면 옵션 모달에서 값을 정해
                 # 프롬프트 없이 바로 실행, 인자 없는 안전한 명령은 선택 즉시 실행,
                 # 그 외(자유 텍스트 인자)는 기존처럼 명령 프롬프트에 채워 Enter 로 실행.
+                all_commands = COMMANDS + self.plugins.commands
+                all_options = {**COMMAND_OPTIONS, **self.plugins.command_options}
+                all_noarg = COMMAND_NOARG | self.plugins.noarg
+
                 def _picked(name):
                     if not name:
                         return
-                    opts = COMMAND_OPTIONS.get(name)
+                    opts = all_options.get(name)
                     if opts:
-                        desc = next((d for n, d, *_ in COMMANDS if n == name), "")
+                        desc = next((d for n, d, *_ in all_commands
+                                     if n == name), "")
 
                         def _run(line):
                             if line:
                                 self._run_command(line)
                         self.push_screen(
                             CommandOptionsScreen(name, desc, opts), _run)
-                    elif name in COMMAND_NOARG:
+                    elif name in all_noarg:
                         self._run_command(name)
                     else:
                         self.open_prompt("command", "", initial=name + " ")
-                self.push_screen(CommandListScreen(COMMANDS), _picked)
+                self.push_screen(CommandListScreen(all_commands), _picked)
+                return
+            # 코어 명령 디스패치 전에 플러그인에 기회를 준다(ncd 등). 플러그인 명령은
+            # 코어와 이름이 겹치지 않으므로 우선순위 충돌은 없다. 디렉토리를 지우면
+            # 여기서 아무도 처리하지 않아 명령은 조용히 무시된다.
+            if self.plugins.handle_command(self, c, args):
                 return
             if c in ("run-shell", "run"):
                 if args:
@@ -2598,8 +2095,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif c in ("choose-tree", "choose-tab", "choose-window",
                        "overview", "tree"):
                 self.request_tree()
-            elif c in ("ncd", "nc"):
-                self.request_nc_list()
             elif c in ("select-pane", "selectp"):
                 if "-T" in args:
                     title = " ".join(args[args.index("-T") + 1:])
@@ -2618,13 +2113,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if idx is not None and idx - 1 >= 0:   # 사용자 1-based → 0-based(#21)
                     self.send_cmd("select_window", index=idx - 1)
             elif c in ("rename-tab", "renamet", "rename-window", "renamew"):
+                # 인자(이름)가 있으면 즉시 변경. 인자 없이 입력하면 **아무 동작 없이
+                # 취소**한다(예전 rename 프롬프트 인터페이스를 열지 않음 — 사용자 요청).
+                # 이름 입력 ghost 프롬프트는 prefix+, 키로만 연다(_handle_prefix).
                 name = " ".join(a for a in args if not a.startswith("-"))
                 if name:
                     self.send_cmd("rename_window", name=name)
-                else:
-                    cur = self._active_window_name()
-                    self.open_prompt("rename_window", cur or "rename-tab",
-                                     suggest=cur)   # ghost(타이핑=덮어쓰기)
             elif c in ("resize-pane", "resizep"):
                 if "-Z" in args:
                     self.send_cmd("zoom")
@@ -2657,15 +2151,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("join_pane", orient=("lr" if "-h" in args else "tb"))
             elif c in ("respawn-pane", "respawnp"):
                 self.send_cmd("respawn_pane")
-            elif c in ("auto-resume", "autoresume"):
-                val = None
-                if "on" in args:
-                    val = True
-                elif "off" in args:
-                    val = False
-                self.send_cmd("set_autoresume", value=val)
-            elif c in ("auto-resume-message", "autoresume-message"):
-                self.send_cmd("set_autoresume", msg=" ".join(args))
             elif c in ("capture-output", "capture-toggle"):
                 val = None
                 if "on" in args:
@@ -2762,23 +2247,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.choose_buffer()
             elif c in ("clear-history", "clearhist"):
                 self.send_cmd("clear_history")
-            elif c in ("clock-mode", "clock"):
-                self.toggle_clock(self.layout.get("active"))
-            elif c in ("calendar-mode", "calendar", "cal"):
-                self.toggle_calendar(self.layout.get("active"))
-            elif c == "open-clock":
-                self.set_clock(self.layout.get("active"), True)
-            elif c == "close-clock":
-                self.set_clock(self.layout.get("active"), False)
-            elif c in ("open-calendar", "open-cal"):
-                self.set_calendar(self.layout.get("active"), True)
-            elif c in ("close-calendar", "close-cal"):
-                self.set_calendar(self.layout.get("active"), False)
-            elif c == "claude-header":
-                # claude-header [on|off|toggle] — 프롬프트 헤더 표시 제어(기본 toggle)
-                arg = args[0].lower() if args else "toggle"
-                self.set_claude_header(arg == "on" if arg in ("on", "off")
-                                       else not self.claude_header_on)
+            # clock-mode/calendar-mode/open-clock/close-clock/open-calendar/
+            # close-calendar(별칭 clock·calendar·cal·open-cal·close-cal)은 clock·
+            # calendar 플러그인이 handle_command(위 폴백)로 처리한다.
             elif c in ("single-border", "pane-border"):
                 # single-border [on|off|toggle] — 단일 패널 테두리 표시(기본 toggle).
                 # 서버가 opts.json 에 영속하고 새 레이아웃을 다시 보낸다.
@@ -2794,73 +2265,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 arg = args[0].lower() if args else "toggle"
                 val = (arg == "on") if arg in ("on", "off") else None
                 self.send_cmd("set_coalesce", value=val)
-            elif c in ("claude-rules", "rules", "startup-rules"):
-                self.open_rules_editor()                       # #27 시작 규칙 편집
-            elif c in ("prompt-history", "prompts"):
-                self.open_prompt_history(self.layout.get("active"))
-            elif c in ("token-usage", "tokens"):
-                self.open_claude_usage_tree()
-            elif c in ("token-log", "tokens-log", "token-usage-log"):
-                self.open_token_log()
-            elif c in ("usage-panel", "usage-limits", "limits"):
-                self.open_usage_panel()   # 저장된 /usage 한도를 전용 화면으로(수동)
-            elif c in ("claude-usage", "usage", "refresh-usage"):
-                # M19 그림자 /usage 질의: 서버가 숨은 claude 를 띄워 실 세션/주간 한도를
-                # 긁어온다(사용자 화면 무간섭, ~수초). 회신은 status 로 반영.
-                self.send_cmd("refresh_usage")
-                self.display_message("사용량 조회 중… (숨은 /usage, ~수초)", 4.0)
-            elif c in ("token-account", "tokens-account"):
-                # token-account <이름> — 활성 패널 Claude 계정 수동 지정(빈값=자동).
-                self.send_cmd("set_claude_account", name=" ".join(args).strip())
-            elif c in ("prompt-clear", "prompt-clear-mode"):
-                # prompt-clear [on|off|toggle] — 활성 패널 프롬프트 단위 클리어 모드(#9).
-                arg = args[0].lower() if args else "toggle"
-                val = (arg == "on") if arg in ("on", "off") else None
-                self.send_cmd("set_prompt_clear", value=val)
             elif c in ("version", "about"):
                 # 클라/서버 버전(p4 CL)·업타임 팝업.
                 self.open_version()
-            elif c in ("token-saver", "claude-settings", "token-settings"):
-                # 토큰 절감 설정 팝업 — 각 자동 개입 토글·잔량 임계·예산(설정 팝업).
-                self.open_claude_saver()
-            elif c in ("model", "model-config", "claude-model"):
-                # 모델·컨텍스트 변경 팝업(요청). 상태줄 모델 배지 클릭으로도 열린다.
-                self.open_model_config()
-            elif c in ("auto-doc-clear", "auto-doc"):
-                # auto-doc-clear [on|off|toggle] — Claude 가 idle 로 30초 지속되면
-                # 자동으로 문서화→/clear 를 1회 수행(§10). 서버 전역 토글, opts 영속.
-                arg = args[0].lower() if args else "toggle"
-                val = (arg == "on") if arg in ("on", "off") else None
-                self.send_cmd("set_auto_doc_clear", value=val)
-            elif c in ("auto-compact", "auto-cmp"):
-                # auto-compact [on|off|toggle] — Claude 가 idle 로 30초 지속되면
-                # 자동으로 '/compact'+Enter 를 1회 주입(요청). 서버 전역 토글, opts 영속.
-                arg = args[0].lower() if args else "toggle"
-                val = (arg == "on") if arg in ("on", "off") else None
-                self.send_cmd("set_auto_compact", value=val)
-            elif c in ("claude-auto-mode", "auto-mode"):
-                # claude-auto-mode [on|off|toggle] — Claude idle 시 권한모드를 자동
-                # 으로 오토모드로 맞춤(§10). 서버 전역 토글, opts 영속.
-                arg = args[0].lower() if args else "toggle"
-                val = (arg == "on") if arg in ("on", "off") else None
-                self.send_cmd("set_claude_auto_mode", value=val)
-            elif c == "prompt-clear-message":
-                # prompt-clear-message <문구> — ① 문서화 지시문 변경(opts 영속).
-                self.send_cmd("set_prompt_clear_message", msg=" ".join(args).strip())
-            elif c in ("prompt-clear-queue", "pc-queue"):
-                # prompt-clear-queue [<명령> | -c|clear] — 빈값=현재 큐 목록 팝업(#4),
-                # -c/clear=큐 비움, 그 외=명령을 큐에 추가(모드 자동 on, doc+/clear
-                # 사이클마다 하나씩 투입).
-                if not args:
-                    q = self.status.prompt_clear_queue
-                    lines = [f"{i+1}. {cmd}" for i, cmd in enumerate(q)] or \
-                        ["(큐 비어 있음)"]
-                    self.push_screen(InfoScreen(lines, title="프롬프트 클리어 큐"))
-                elif args[0].lower() in ("-c", "clear", "--clear"):
-                    self.send_cmd("pc_queue_clear")
-                    self.display_message("큐 비움")
-                else:
-                    self.send_cmd("pc_queue_add", cmd=" ".join(args).strip())
             elif c in ("display-popup", "popup"):
                 cmd = " ".join(a for a in args if not a.startswith("-"))
                 if cmd:
@@ -3000,8 +2407,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.stop()
                 return
             # normal
-            # ESC: 명령 모드 진입(키를 명령으로 받음). 셸로는 전달하지 않음.
+            # ESC: 활성 패널에 시계/달력 오버레이가 떠 있으면 그것부터 닫는다(요청 —
+            # Shift+ESC 뿐 아니라 단순 ESC 로도 닫힘). 오버레이가 없을 때만 명령(esc)
+            # 모드로 진입한다(키를 명령으로 받음; 셸로는 전달하지 않음).
             if event.key == "escape":
+                if self._close_active_overlay():
+                    event.prevent_default()
+                    event.stop()
+                    return
                 self.mode = "esc"
                 self.status.cmd_mode = True
                 self.status.refresh()
@@ -3049,6 +2462,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.prevent_default()
                 event.stop()
                 return
+            # 패널로 보낼 확정 입력을 플러그인이 관찰하게 한다(ime-indicator 가 한/영
+            # 상태 추정). send_input 보다 먼저 호출해 패널 부재/전송 실패와 무관하게
+            # 상태가 갱신되게 한다. 플러그인 없으면 no-op(delete-to-disable).
+            self.plugins.client_key(self, event)
             data = key_to_bytes(event)
             if data:
                 self.send_input(data)
@@ -3121,7 +2538,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.open_prompt("rename_pane", cur or "set pane title",
                                  suggest=cur)   # 현재 패널 제목=ghost
             elif k == "t":
-                self.toggle_clock(self.layout.get("active"))
+                fn = getattr(self, "toggle_clock", None)  # clock 플러그인 설치
+                fn and fn(self.layout.get("active"))
             elif k == "R":
                 self.send_cmd("set_autoresume")
             elif k == "colon" or ch == ":":
@@ -3188,20 +2606,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.status.focus_btn = None
             self.status.refresh()
 
-        def _claude_header_panes(self):
-            """헤더가 그려지는 Claude 패널 id 를 레이아웃 순서로 반환(#5 헤더 포커스)."""
-            out = []
-            if not self.claude_header_on:
-                return out
-            for p in self.layout.get("panes", []):
-                if not p.get("claude_hdr"):   # 헤더 행이 실제 예약된 패널만(#1)
-                    continue
-                if p["id"] in self._claude_hidden_panes:
-                    continue
-                info = self.pane_claude.get(p["id"])
-                if info and info.get("claude") and info.get("prompt"):
-                    out.append(p["id"])
-            return out
+        def _hdr_panes(self):
+            """헤더가 그려지는 Claude 패널 id 목록(#5 헤더 포커스 동선). 실제 계산은
+            claude-code 플러그인이 attach_client 로 설치한 _claude_header_panes 클로저가
+            한다 — 디렉토리를 지우면 클로저가 없어 빈 목록 → 헤더 포커스 동선이 자연히
+            사라지고 닫기 [x] 만 남는다(delete-to-disable). 코어 ESC nav 전용 게이트."""
+            fn = getattr(self, "_claude_header_panes", None)
+            return fn() if fn else []
 
         def _focus_tabbar(self):
             self._hdr_focus = None
@@ -3221,7 +2632,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self._hdr_focus = None
                     self.confirm_kill_tab()
                 elif k == "left":          # 헤더로 복귀(없으면 패널로)
-                    panes = self._claude_header_panes()
+                    panes = self._hdr_panes()
                     active = self.layout.get("active")
                     self._hdr_focus = (active if active in panes
                                        else (panes[-1] if panes else None))
@@ -3236,7 +2647,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self._composite()
                     self._exit_esc()
                 return
-            panes = self._claude_header_panes()
+            panes = self._hdr_panes()
             if not panes or self._hdr_focus not in panes:
                 # 헤더가 없어도 닫기 [x] 는 접근 가능하게(현 상태가 close 가 아니면 해제)
                 self._hdr_focus = None
@@ -3260,7 +2671,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 pid = self._hdr_focus
                 self._hdr_focus = None
                 self._exit_esc()
-                self.open_prompt_history(pid)
+                fn = getattr(self, "open_prompt_history", None)  # 플러그인 설치
+                fn and fn(pid)
             elif k == "escape":
                 self._hdr_focus = None
                 self._composite()
@@ -3271,6 +2683,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             탭바 포커스에서는 ←→ 탭 선택, Enter 전환, +/x 추가/삭제, ↓/Esc 복귀."""
             k = event.key
             ch = event.character
+            # IME(두벌식)가 켜져 있어도 ESC 모드 단축키가 동작하도록 입력 문자를 물리
+            # QWERTY 키로 되돌린다 — 'n'(새 탭) 키가 'ㅜ' 로, 'p'(분할)가 'ㅔ' 로,
+            # 'h'/'a'/'x'/'d' 등도 자모로 들어온다. 한 글자 자모만 정규화하고 비-한글·
+            # 방향키/Enter/Esc(IME 무관)는 그대로 둔다 — 모든 단축키가 IME 무관하게 동작.
+            if ch and len(ch) == 1 and has_hangul(ch):
+                ch = hangul_to_qwerty(ch)
             tb = self.tabbar
             if self._hdr_focus is not None:       # Claude 헤더 포커스 동선(#5)
                 self._handle_hdr_focus(event)
@@ -3352,7 +2770,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 최상단 패널에서 ↑: 먼저 프롬프트 헤더(있으면)로, 다시 ↑ 면 탭바로
                 # (#31 헤더·닫기버튼을 방향키 동선에 편입). 헤더가 없어도 우상단 닫기
                 # [x] 는 항상 그려지므로 [x] 로 보낸다(#) — 거기서 다시 ↑ 면 탭바.
-                panes = self._claude_header_panes()
+                panes = self._hdr_panes()
                 active = self.layout.get("active")
                 if active in panes:
                     self._hdr_focus = active
@@ -3377,7 +2795,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self._exit_esc()
                 self._run_command("help")
             elif ch == "h":                       # Claude 헤더 포커스 진입(#5)
-                panes = self._claude_header_panes()
+                panes = self._hdr_panes()
                 if panes:
                     active = self.layout.get("active")
                     self._hdr_focus = active if active in panes else panes[0]

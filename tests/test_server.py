@@ -1154,8 +1154,9 @@ async def test_rc_not_reinjected_after_restart_transient():
         assert rc == ["/rc"] and p._rc_done is True
 
         # _rc_done 은 재시작 직렬화 대상이라 re-exec 후에도 유지된다(이 케이스의 핵심).
-        assert "_rc_done" in Pane._RESUME_FIELDS
-        assert p.export_state()["_rc_done"] is True
+        # S4 에서 직렬화 위치가 코어 _RESUME_FIELDS → claude-code 플러그인 pane_serialize
+        # 로 이전됐다 — export_state 의 불투명 'plugin_state' dict 에 담긴다(동작 불변).
+        assert p.export_state()["plugin_state"]["_rc_done"] is True
 
         # 재시작 transient 재현: 빈 프레임(None) 몇 개 뒤 다시 Claude(거짓 None→Claude).
         # 미스가 디바운스 임계에 못 미쳐 _rc_done 이 살아남아 /rc 가 재주입되지 않는다.
@@ -1659,25 +1660,16 @@ async def test_single_session_enforced():
 
 
 async def test_sync_input_broadcast():
-    # Windows 격리(헤드리스 스위트 한정 아티팩트): **전체 test_server 모듈을 끝까지 돌린
-    # 뒤** 이 테스트가 신규 split 패널에서 입력 echo 를 못 받아 **결정적으로 FAIL** 한다
-    # (행 아님 — 단언 실패). 2026-06-09 정밀 조사 결과 **격리로는 어떤 방법으로도
-    # 재현되지 않는다**: ① raw pywinpty(블로킹 read 중 setwinsize+write) 정상 echo,
-    # ② 서버 맥락에서 split/kill 60회 누적해도 정상 echo + **리더 스레드 누수 0**(핸들
-    # 누수 없음). 즉 _WinPty 백엔드 자체엔 재현 가능한 결함이 없고, 제품은 실사용에서
-    # 정상이다(실 attach·라이브 키 검증·나머지 테스트 통과). 실패는 오직 본 모듈의 80여
-    # 개 테스트를 누적 실행한 프로세스 상태에서만 나타나는 **부하·타이밍 의존 아티팩트**
-    # (갓 spawn 된 cmd.exe 가 stdin 준비 전 입력 유실 추정)로, 실사용 패턴(한 프로세스가
-    # 80개 ConPTY 를 연달아 spawn)과 무관하다.
-    #
-    # **2026-06-10 재개 시도 & 기각:** docs/WINDOWS_BOX_TASKS_SCENARIO.md §3-A 의 제안대로
-    # "입력 write 전에 각 패널 셸이 프롬프트를 출력(=stdin 준비)할 때까지 best-effort 대기"
-    # 를 넣고 Windows skip 을 풀어 봤으나, 전체 test_server 누적 실행에서 **여전히 3회 재시도
-    # 모두 FAIL**(SYNCED echo 미수신). 셸-준비 대기로도 안 닫혀 — 원인이 cmd 프롬프트 타이밍
-    # 보다 깊은(장수 프로세스의 conhost 핸들/이벤트루프 누적 상태) 것으로 재확인됨. 위험한
-    # 백엔드 재작성 없이 skip 유지가 옳다. 동기화 입력 경로 로직은 Unix 에서 그대로 검증된다.
-    if ipc.IS_WINDOWS:
-        return
+    # 2026-06-10 근본원인 규명 — 이 테스트가 Windows 에서 "실패"하던 건 **제품 버그도, 리더
+    # 레이스도, 누적 오염도 아니라 이 테스트의 검색 방식 결함**이었다(과거 가설 전부 오진).
+    # 80폭 세션을 lr 분할하면 패널 폭이 38/39 가 되는데, 테스트 cwd 프롬프트
+    # `D:\p4\office\scripts\pytmux>`(27자) + 입력 `echo SYNCED`(11자) = 정확히 38자다.
+    # 폭 38 패널에서는 그 입력 에코가 38칸을 꽉 채우고 마지막 'D' 가 **다음 행으로 하드랩**
+    # 되어 화면 텍스트가 `...SYNCE\nD...` 가 된다 → `"SYNCED" in pane_text` 부분문자열 검색이
+    # 줄바꿈에 걸려 실패한다(폭 39 는 한 줄에 들어가 통과). 즉 cwd 길이에 따라 갈리는
+    # 검색 아티팩트였고("간헐"·"단독은 통과"로 보이던 이유), 제품은 프롬프트·에코를 정상
+    # 렌더한다. **수정: 검색 전에 줄바꿈을 제거해 하드랩을 펼친다**(`replace("\n","")`).
+    # 이러면 폭과 무관하게 동작하므로 Windows skip 도 제거한다(Unix·Windows 공통 검증).
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
@@ -1692,14 +1684,17 @@ async def test_sync_input_broadcast():
         data = b"echo SYNCED\n"
         for t in win.panes():
             t.pty.write(data)
-        # 고정 sleep 대신 폴링: 셸(Windows=cmd.exe)이 echo 를 처리·출력하기까지
-        # 시간이 들쭉날쭉하다(전체 스위트 동시 ConPTY 기동 부하 하에서 특히). 모든
-        # 패널에 SYNCED 가 보일 때까지 최대 ~10s 대기.
+
+        # 하드랩(좁은 패널에서 에코가 줄바꿈으로 쪼개짐)을 펼쳐 검색 — 행 경계가 'SYNCED'
+        # 를 가르지 않게 한다. 셸(Windows=cmd.exe)이 에코를 출력하기까지 시간이 들쭉날쭉
+        # 하므로 모든 패널에 보일 때까지 최대 ~10s 폴링.
+        def _has_synced(p):
+            return "SYNCED" in pane_text(p).replace("\n", "")
         for _ in range(100):
             await asyncio.sleep(0.1)
-            if all("SYNCED" in pane_text(p) for p in win.panes()):
+            if all(_has_synced(p) for p in win.panes()):
                 break
-        assert all("SYNCED" in pane_text(p) for p in win.panes())
+        assert all(_has_synced(p) for p in win.panes())
     finally:
         await teardown(srv, task, sock)
 

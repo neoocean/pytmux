@@ -184,19 +184,6 @@ async def test_aggregate_default_dim_unchanged():
     assert "계정별" in "\n".join(usagelog.summary_lines(recs, "day"))
 
 
-async def test_bar_gauge_partial_blocks():
-    """막대 게이지: 비율→부분블록. 0/음수/빈 폭은 빈 문자열, 최대값은 가득."""
-    assert usagelog.bar(0, 100, 10) == ""
-    assert usagelog.bar(50, 0, 10) == ""        # vmax<=0
-    assert usagelog.bar(50, 100, 0) == ""       # cells<=0
-    assert usagelog.bar(100, 100, 8) == "█" * 8, repr(usagelog.bar(100, 100, 8))
-    half = usagelog.bar(50, 100, 8)
-    assert len(half) <= 8 and "█" in half       # 절반쯤
-    # 아주 작은 비율도 0칸이면 빈 문자열에 가까움(부분블록만)
-    tiny = usagelog.bar(1, 1000, 8)
-    assert tiny == "" or tiny[0] in usagelog._BAR_BLOCKS
-
-
 async def test_agg_view_buckets_groups_order_and_pct():
     recs = [
         _rec(1_700_000_000.0, 0, 1, 1, "a@x.org", 1000),   # day0

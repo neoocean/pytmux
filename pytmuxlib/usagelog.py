@@ -149,21 +149,9 @@ def _fmt_tokens(total: int) -> str:
     return str(total)
 
 
-# 막대 게이지용 부분블록(1/8 단위) — 우측 끝 잔량을 부드럽게 표현.
-_BAR_BLOCKS = " ▏▎▍▌▋▊▉█"
-
-
-def bar(value: int, vmax: int, cells: int) -> str:
-    """value/vmax 비율을 cells 칸 막대 문자열로(부분블록 포함). vmax<=0/cells<=0 이면
-    빈 문자열. 표시 계층(DataTable/InfoScreen) 공용 — 폭은 호출부가 셀폭으로 계산."""
-    if cells <= 0 or vmax <= 0 or value <= 0:
-        return ""
-    frac = max(0.0, min(1.0, value / vmax))
-    eighths = int(round(frac * cells * 8))
-    full, rem = divmod(eighths, 8)
-    full = min(full, cells)
-    s = "█" * full + (_BAR_BLOCKS[rem] if rem and full < cells else "")
-    return s
+# 막대 게이지(bar)는 순수 표시 헬퍼라 S5b 에서 clientutil.bar 로 이전했다(코어
+# clientscreens 가 데이터 모듈 usagelog 를 import 하지 않게). 표시가 필요한 곳은
+# clientutil.bar 를 직접 쓴다.
 
 
 def _bucket_short(bk: str, bucket: str) -> str:

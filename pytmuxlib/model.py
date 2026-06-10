@@ -10,6 +10,7 @@ from functools import lru_cache
 import pyte
 from pyte.screens import Margins
 
+from . import plugins
 from .protocol import HISTORY, MIN_H, MIN_W, conv_color, set_winsize
 
 
@@ -432,154 +433,34 @@ class Pane:
         self.rect = (0, 0, cols, rows)
         self.parent: Split | None = None
         self.title = "shell"
-        # 토큰 리밋 자동 재개
+        # 토큰 리밋 자동 재개(토글). 메시지·예약 보류 등 나머지 자동재개 상태와
+        # Claude 거동 필드 전반은 claude-code 플러그인이 pane_init 으로 설치한다(S4).
         self.autoresume = False
-        self.resume_msg = "continue"
-        self._scanbuf = ""
-        self._resume_pending = False
         self._activity = False   # 마지막 검사 이후 출력 있었음
         self._bell = False       # 마지막 검사 이후 BEL 수신
-        # Claude 스캔 dirty 게이팅(B1): feed 마다 _feed_seq 증가. _scan_claude 가
-        # 마지막 스캔 때 본 seq(_scan_seq)와 같으면 화면 텍스트가 그대로 → 스캔 생략.
+        # Claude 스캔 dirty 게이팅(B1): feed 마다 _feed_seq 증가(코어). _scan_claude
+        # (플러그인)가 마지막 스캔 때 본 seq(_scan_seq, 플러그인 소유)와 같으면 화면
+        # 텍스트가 그대로 → 스캔 생략. 비교 대상 _feed_seq 만 코어가 증가시킨다.
         self._feed_seq = 0
-        self._scan_seq = -1
-        # Claude Code 감지: 상태(idle/busy/limit/None)와 마지막 입력 프롬프트
-        self._claude = None
-        # 탭 리네임을 Claude 세션에 `/rename` 으로 반영(servertree.rename_window).
-        # 리네임 당시 busy 면 즉시 주입해도 슬래시 명령으로 실행되지 않으므로 여기에
-        # 보류했다가 다음 busy→idle 경계(_scan_claude)에서 발동한다.
+        # 탭 리네임을 Claude 세션에 `/rename` 으로 반영(servertree.rename_window) 시
+        # busy 면 보류했다가 다음 busy→idle 경계에서 발동한다. 코어 servertree 가 직접
+        # 쓰므로(플러그인은 발동만) 코어 Pane 에 남긴다.
         self._pending_rename = None
-        self._claude_usage = None  # "ctx 42%" / "12k tok" 등(best-effort)
-        self._claude_model = None  # M14c: 모델 배지(opus-4.8 등, best-effort)
-        self._ctx_pct = None       # M15: 마지막 컨텍스트 잔량%(우선순위 정리 비교용)
-        # 토큰 누적(tokens.py): 현재 응답 peak + 세션 누계. _session_tokens 는
-        # 표시·전송용 캐시(= _tok_state["total"]). 새 Claude 세션마다 리셋.
+        # 토큰 누적/회계(코어 _log_tokens 가 토큰 DB 에 직접 적는다): 현재 응답 peak +
+        # 세션 누계, 표시·전송용 캐시 _session_tokens(= _tok_state["total"]).
         self._tok_state = {"peak": 0, "total": 0}
         self._session_tokens = 0
-        # 토큰 영속 로깅(#7): 현재 Claude 세션 id(None→Claude 전이마다 새로 부여)와
-        # 마지막 감지/지정한 계정(로그 계정별 구분용). manual=사용자 수동 지정 여부.
-        self._claude_session_id = 0
+        # 토큰 영속 로깅(#7) 계정: 마지막 감지/지정한 계정과 manual(수동 지정) 여부.
+        # 코어 _log_tokens 가 레코드에 쓰고 set-account 명령이 갱신하므로 코어 Pane 에
+        # 남긴다(세션 id _claude_session_id 는 플러그인 pane_init 소유).
         self._claude_account = None
         self._claude_account_manual = False
-        self._inbuf = ""         # 현재 입력 줄 누적(프롬프트 추적용)
-        self.last_prompt = ""    # 마지막으로 제출한 프롬프트(한 줄)
-        self.prompt_history = []  # 시간순 제출 프롬프트 목록(히스토리 팝업용)
-        # 직전 status(주기 flush)에 실어 보낸 history[-30:] 슬라이스(§4.5 디바운스).
-        # 변할 때만 다시 싣게 비교에 쓴다(휘발성; 매 프레임 재직렬화·전송 방지).
-        self._hist_sent = None
-        self.pending_prompts = []  # busy 중 입력해 큐된 프롬프트(#4, 처리 시작 시 승격)
-        # 프롬프트 단위 클리어 모드(#9): 켜면 사용자 프롬프트가 busy→idle 로 끝날
-        # 때마다 ① 문서화 지시 ② /clear 를 순차 주입하는 소형 상태기계를 돈다.
-        # _pc_phase: None(대기) | "doc"(문서화 지시 처리 대기) | "clear"(/clear 처리 대기).
-        self.prompt_clear_mode = False
-        self._pc_phase = None
-        # 프롬프트 단위 클리어 큐(#4): 사용자가 미리 쌓아 둔 명령들. 각 명령은
-        # doc+/clear 사이클을 마칠 때마다 _pc_advance 가 하나씩 투입한다.
+        # 프롬프트 단위 클리어 큐(#4): 사용자가 미리 쌓아 둔 명령들. respawn 시 코어가
+        # 직접 비우므로(reinit) 코어 Pane 에 남긴다(모드/상태기계는 플러그인 소유).
         self.prompt_clear_queue = []
-        # 자동 doc→/clear(§10): Claude 가 idle 로 N초 지속되면 1회 문서화→/clear 를
-        # 자동 수행한다(서버 옵션 auto_doc_clear 가 켜졌을 때만). _adc_timer 는 무장된
-        # asyncio 타이머 핸들(없으면 None), _adc_active 는 자동 시퀀스 진행 중 여부
-        # (진행 중엔 _pc_phase 상태기계를 prompt_clear_mode 와 공유). 둘 다 휘발성이라
-        # 재시작 직렬화(_RESUME_FIELDS) 대상이 아니다.
-        self._adc_timer = None
-        self._adc_active = False
-        # 자동 /compact(요청): idle 가 auto_compact_delay 초 지속되면 1회 '/compact'
-        # +Enter 주입. _acpt_timer 는 무장된 타이머 핸들(없으면 None, 휘발성).
-        # _acpt_fired 는 이미 1회 발화했음을 표시하는 디바운스 플래그 — /compact
-        # 주입이 스스로 busy→idle 경계를 또 만들어 무한 재발화하는 것을 막는다(요청).
-        # 사용자가 실제로 입력하면(serverio) 해제돼 다음 idle 에 다시 발화 가능.
-        self._acpt_timer = None
-        self._acpt_fired = False
-        # 컨텍스트 하드스톱 자동복구(요청): 화면이 "Context limit reached · /compact
-        # or /clear to continue" 면 idle 지연 없이 즉시 /compact 를 1회 주입한다.
-        # _hardstop_fired 는 같은 하드스톱 화면에 반복 주입하지 않게 하는 디바운스 —
-        # 화면이 하드스톱을 벗어나면(다음 스캔) 해제돼 다음 하드스톱에 재발화 가능.
-        # 휘발성(화면 상태에서 매번 재판정 — 직렬화하지 않음).
-        self._hardstop_fired = False
-        # 시간기반 자동 compact·doc-clear 쿨다운 만료 시각(time.monotonic; 0=쿨다운
-        # 없음). 새 세션 시작·직전 compact·직전 clear 직후엔 이 시각 전까지 _acpt_arm/
-        # _adc_arm 을 무장하지 않는다(요청 — 새 세션·정리 직후 곧바로 또 압축/정리 방지).
-        # 휘발성(monotonic 은 프로세스 한정이라 직렬화 안 함 — 재시작 시 0 으로 리셋).
-        self._auto_cc_cooldown_until = 0.0
-        # 권한모드 자동 오토모드 전환(§10): idle 일 때 footer 가 auto 가 아니면
-        # shift+tab 을 순환 주입한다(서버 옵션 claude_auto_mode 가 켜졌을 때만).
-        # _cam_tries 는 이번 idle 진입 후 보낸 횟수(무한 순환 가드 _CAM_MAX), _cam_last
-        # 는 직전에 관측·작용한 권한모드(화면 갱신 전 중복 주입 방지), _cam_seen 은 이번
-        # 드라이브에서 본 모드 집합(auto 목표인데 한 바퀴 돌아 재방문하면 acceptEdits 로
-        # 폴백 — auto 미존재 계정 대비). 모두 휘발성.
-        self._cam_tries = 0
-        self._cam_last = None
-        self._cam_seen = set()
-        # 현재 관측된 권한모드(claude_perm_mode 결과: auto/plan/default/bypass/None)와
-        # 사용자가 footer 클릭 팝업으로 고른 목표 모드(§10 item 2). _perm_target 가
-        # 있으면 idle 시 그 모드까지 shift+tab 을 폐루프로 순환 주입한다(도달/포기 시
-        # None 으로). _perm_mode 는 status 로 클라에 보내 팝업의 '현재 모드' 표시에 씀.
-        self._perm_mode = None
-        self._perm_target = None
-        # bypass(권한 우회) 모드 가용 여부(§10 item 2 팝업): bypass 는 Claude 를
-        # `--dangerously-skip-permissions` 로 시작했을 때만 shift+tab 순환에 나타난다
-        # (일반 세션은 도달 불가). 그 자체를 직접 질의할 수 없어, idle footer 에서
-        # bypass 모드를 한 번이라도 관측하면(=시작 시 활성화됨) sticky True 로 둬서
-        # 팝업이 'Bypass Permission Mode' 항목을 노출하게 한다. 세션 종료 시 리셋
-        # (새 세션은 플래그가 없을 수 있음). 휘발성(직렬화 안 함 — 재관측으로 복원).
-        self._bypass_seen = False
-        # 비활성 탭 Claude 완료 알림(#22) 플리커 방지(§10 #18): busy↔idle 가 한 프레임
-        # 흔들릴 때 done 이 잘못 서는 걸 막으려고, busy 를 본 뒤 idle 이 연속 N프레임
-        # 안정될 때만 완료로 친다. _was_busy=직전에 busy 였음, _idle_frames=연속 idle 수.
-        self._was_busy = False
-        self._idle_frames = 0
-        # M17(T7): 반복 실패 루프(S8)·비정상 장기 턴(S9) 감지용. busy 진입 시각,
-        # 직전 완료 화면 꼬리 해시·연속 동일 횟수, 표시용 경고 문자열(grade0 알림만).
-        self._busy_since = None
-        self._done_tail = None
-        self._repeat_n = 0
-        self._claude_warn = None
-        # 세션 피드백 프롬프트 자동 Dismiss(#26): 첫 '0'이 누락돼도 프롬프트가
-        # 사라질 때까지 GAP 프레임마다 최대 MAX_TRIES 회 재주입(정적 화면에도 스캔
-        # 유지). active=재시도 중, tries=쏜 횟수, wait=다음 재시도까지 남은 프레임.
-        self._feedback_active = False
-        self._feedback_tries = 0
-        self._feedback_wait = 0
-        # 수동 /clear 감지 디바운스: 환영 배너가 화면에 머무는 동안 매 프레임 토큰
-        # 세션을 재리셋하지 않게, 배너가 "새로 떴을" 때만 1회 끊는다(claude_welcome).
-        self._welcome_seen = False
-        self._rules_pending = False  # 시작 규칙 주입 예약(다음 idle 에 1회, #27)
-        # 새 Claude 세션 자동 셋업(auto-launch): 시작 시 /rc(원격제어)를 1회 주입하고
-        # (_rc_pending) 그 다음 idle 에 권한모드를 auto 로 1회 유도(_perm_auto_pending).
-        # 프레임을 갈라 /rc 제출과 shift+tab 이 섞이지 않게 한다. 둘 다 휘발성.
-        self._rc_pending = False
-        self._perm_auto_pending = False
-        # _rc_done: 이 살아 있는 Claude 세션에 auto /rc 를 이미 적용했음(또는 원격제어가
-        # 켜진 걸 관측했음)을 표시하는 sticky 플래그. **재시작 시 직렬화**(_RESUME_FIELDS)
-        # 돼 re-exec 후에도 유지된다 — re-exec 직후 _induce_redraw_all 의 강제 repaint 가
-        # 순간 빈 프레임을 만들어 _claude 가 None→Claude 로 깜빡이면 거짓 "새 세션"으로
-        # 오인돼 /rc 가 재주입되던 버그(이미 켜진 원격제어 패널이 다시 뜸)를 막는다.
-        # 진짜 세션 종료(_hdr_claude 디바운스 off)에서만 해제해 다음 claude 기동엔 재무장.
-        self._rc_done = False
-        # 토큰 절감 자동화(docs/TOKEN_SAVING_SCENARIO.md). 둘 다 휘발성(재시작 비직렬화).
-        # _resume_handle: 자동재개 예약 call_later 핸들 — busy 복귀 시 cancel 하려고
-        #   들고 있는다(M12; 없으면 None). _ctx_fired: 컨텍스트 잔량 자동 정리(M11)가
-        #   이번 저잔량 구간에 이미 발화했는지 — 잔량이 임계+히스테리시스 위로 회복하거나
-        #   새 세션이 시작될 때까지 재발화를 막는다.
-        self._resume_handle = None
-        self._ctx_fired = False
-        # _ctx_last_fire: 마지막 자동 정리(M11 _ctx_intervene) 발화 시각(time.monotonic).
-        #   M14 빈도 상한 — 정리가 컨텍스트를 못 줄이는 오검출/병적 진동에서 매 완료
-        #   경계 무한 정리를 막는 시간 바닥(§5.6). None=아직 발화 안 함(휘발성).
-        self._ctx_last_fire = None
-        # _layout_msg 가 이 패널에 Claude 헤더 한 행을 예약했는지(#1). 예약 유무가
-        # 바뀌면 flush 루프가 레이아웃(PTY 리사이즈 포함)을 다시 보낸다.
+        # _layout_msg 가 이 패널에 Claude 헤더 한 행을 예약했는지(#1). 코어 레이아웃
+        # (serverio)이 직접 쓰고 읽는다 — 예약 유무가 바뀌면 flush 가 레이아웃 재전송.
         self._hdr_reserved = False
-        # 헤더 예약(#1)용 **디바운스된** Claude 존재 플래그. `_claude` 는 화면
-        # 텍스트 스크래핑이라 footer(예: "? for shortcuts")가 한 프레임 안 잡히면
-        # None 으로 깜빡일 수 있는데, 그 raw 값을 그대로 _should_reserve_header 에
-        # 쓰면 헤더 예약이 매 프레임 토글돼 PTY 가 ±1 행으로 리사이즈를 반복한다
-        # → 원격(ssh) Claude 가 SIGWINCH 마다 리플로우해 화면이 한 줄씩 위아래로
-        # 스크롤되는 떨림이 생긴다(Windows/ConPTY 는 화면이 조각나 도착해 footer
-        # 없는 중간 프레임을 잡을 확률이 커 증상이 두드러진다). 그래서 Claude 가
-        # 사라진 것으로 보여도 _HDR_CLAUDE_MISS 프레임 연속 None 이어야 예약을 푼다.
-        self._hdr_claude = False       # 디바운스된 "이 패널은 Claude" 판정
-        self._hdr_claude_miss = 0      # 연속으로 non-Claude 로 본 스캔 수
         self.search_query = ""   # 스크롤백 검색어
         self._match_abs = None   # 현재 매치된 절대 라인 인덱스
         self.bracketed = False   # 내부 앱이 bracketed paste 모드를 켰는지
@@ -593,6 +474,13 @@ class Pane:
         # PTY 백엔드 핸들(pty_backend.PtyProcess). 서버가 spawn 직후 주입한다.
         # 렌더 전용(replay/진단) 패널은 None — master_fd/child_pid 만 -1 로 둔다.
         self.pty = None
+        # 플러그인 공용 패널 네임스페이스(S4). claude-code 가 pane_init 훅으로 Claude
+        # 거동 필드(~40개: 상태/사용량/자동개입 타이머/권한모드/프롬프트 추적 등)를
+        # 패널에 설치한다. 디렉토리 삭제 시 훅이 없어 그 필드가 안 생기고, 코어의 소수
+        # 읽기 지점(_should_reserve_header·serverpty 자동재개·servertree 리네임·
+        # _log_tokens)은 getattr(…, 기본값)으로 안전하게 동작한다(delete-to-disable).
+        self.plugin_state = {}
+        plugins.get().pane_init(self)
 
     def reinit(self, pid: int, fd: int, cols: int, rows: int) -> None:
         """respawn: 새 PTY/셸로 화면 버퍼를 초기화한다."""
@@ -614,29 +502,16 @@ class Pane:
         self.dirty = True
         self._row_cache = None       # 행 재직렬화 캐시 리셋(#8; 새 화면 객체)
         self._row_cache_key = None
-        self._scanbuf = ""
-        self._resume_pending = False
-        self._resume_handle = None   # 자동재개 예약 핸들 리셋(M12; 타이머는 자가만료)
-        self._ctx_fired = False      # 컨텍스트 잔량 자동 정리 디바운스 리셋(M11)
-        self._ctx_last_fire = None   # 정리 빈도 상한 시각 리셋(M14)
+        # 토큰 누계/계정(코어 회계) 리셋 — 새 셸이므로 0·미지정에서 시작.
         self._tok_state = {"peak": 0, "total": 0}
         self._session_tokens = 0
-        self._claude_session_id = 0
         self._claude_account = None
         self._claude_account_manual = False
-        self._pc_phase = None    # 프롬프트 단위 클리어 상태기계 리셋(모드 자체는 유지)
         self.prompt_clear_queue = []  # 새 셸이므로 쌓인 명령 큐도 버린다(#4)
-        self._adc_active = False  # 자동 doc→/clear 진행상태 리셋(§10; 타이머는 만료시 자가해제)
-        self._cam_tries = 0       # 권한모드 자동전환 시도 카운터 리셋(§10)
-        self._cam_last = None
-        self._cam_seen = set()    # 이번 드라이브에서 본 모드 집합 리셋
-        self._perm_mode = None    # 새 셸 — 권한모드 관측/목표 리셋(§10 item 2)
-        self._perm_target = None
-        self._was_busy = False    # done 플리커 디바운스 리셋(§10 #18)
-        self._idle_frames = 0
         self._hdr_reserved = False
-        self._hdr_claude = False
-        self._hdr_claude_miss = 0
+        # Claude 거동 필드(스캔버퍼·자동재개·자동정리·세션id·권한모드·done 디바운스·
+        # 헤더 디바운스 등)의 새 셸 리셋은 claude-code 플러그인이 pane_reset 으로 한다(S4).
+        plugins.get().pane_reset(self)
         self.search_query = ""
         self._match_abs = None
         self.bracketed = False
@@ -648,13 +523,15 @@ class Pane:
     # 작업 보존 재시작(re-exec)용 직렬화 — docs/RESTART_SCENARIO.md ⓑ/ⓓ.
     # setattr 로 그대로 복원 가능한 JSON 가능 스칼라/딕트 필드 목록. PTY 식별자
     # (child_pid·master_fd)와 크기·화면 스냅샷은 export_state 가 별도로 다룬다.
+    # Claude 거동 필드(_claude·_claude_usage·_scanbuf·_resume_pending·resume_msg·
+    # last_prompt·_claude_session_id·prompt_clear_mode·_rc_done·prompt_history·
+    # pending_prompts)의 직렬화는 claude-code 플러그인이 pane_serialize/pane_restore
+    # 훅으로 담당한다(S4 — export_state 가 'plugin_state' 키로 불투명하게 담는다).
+    # 여기 남는 건 코어가 직접 쓰는 토큰/계정/리네임/토글 필드뿐이다.
     _RESUME_FIELDS = (
-        "title", "autoresume", "resume_msg", "last_prompt",
-        "_claude", "_claude_usage", "_scanbuf", "_resume_pending",
-        "_claude_session_id", "_claude_account", "_claude_account_manual",
+        "title", "autoresume", "_claude_account", "_claude_account_manual",
         "_pending_rename",   # 재시작 중 보류된 탭→세션 리네임도 idle 경계에서 발동
-        "_tok_state", "_session_tokens", "prompt_clear_mode", "bracketed",
-        "_rc_done",   # re-exec 후 거짓 새세션에 /rc 재주입 방지(원격제어 패널 재발)
+        "_tok_state", "_session_tokens", "bracketed",
     )
 
     def _serialize_line(self, line, columns: int) -> str:
@@ -726,9 +603,11 @@ class Pane:
             "rows": self.rows,
             "mouse_modes": sorted(self._mouse_modes),
             "mouse_sgr": self.mouse_sgr,
-            "prompt_history": list(self.prompt_history)[-100:],
-            "pending_prompts": list(self.pending_prompts),
             "prompt_clear_queue": list(self.prompt_clear_queue),
+            # Claude 보존 필드(프롬프트 히스토리/대기큐·상태/세션 등)는 플러그인이
+            # 직렬화한다(S4). 코어는 내용을 해석하지 않고 불투명 dict 로 담는다 —
+            # 플러그인 부재 시 {} 라 복원도 no-op(delete-to-disable).
+            "plugin_state": plugins.get().pane_serialize(self),
             # 스크롤백(연속성·하위호환) + 정확 뷰포트/커서(메인 화면 TUI 정합, B/C/D).
             "screen": self._export_screen(),          # 하위호환(구 이미지 읽기)
             "history": self._export_history(),         # 스크롤백만
@@ -751,9 +630,15 @@ class Pane:
         self.mouse_track = (3 if 1003 in self._mouse_modes
                             else 2 if 1002 in self._mouse_modes
                             else 1 if 1000 in self._mouse_modes else 0)
-        self.prompt_history = list(d.get("prompt_history", []))
-        self.pending_prompts = list(d.get("pending_prompts", []))
         self.prompt_clear_queue = list(d.get("prompt_clear_queue", []))
+        # Claude 보존 필드 복원은 플러그인이(S4). 구 이미지 하위호환: 예전 export 는
+        # prompt_history/pending_prompts 를 최상위 키로 담았으므로, plugin_state 가
+        # 없고 그 키가 있으면 함께 넘겨 준다.
+        ps = d.get("plugin_state")
+        if ps is None and ("prompt_history" in d or "pending_prompts" in d):
+            ps = {"prompt_history": d.get("prompt_history", []),
+                  "pending_prompts": d.get("pending_prompts", [])}
+        plugins.get().pane_restore(self, ps or {})
         view = d.get("viewport")
         if view is not None:
             # 정확 복원(B/C/D): 스크롤백 + **현재 화면(트림 없음)** 을 한 번에 피드하되

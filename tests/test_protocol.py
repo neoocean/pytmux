@@ -53,6 +53,17 @@ async def test_read_msg_frame_length_bounded_and_robust():
     assert (await read_msg(r)) == {"t": "totally-unknown", "v": 9}
 
 
+async def test_write_msg_none_writer_guard():
+    """종료/재연결 레이스로 writer 가 None 이어도 write_msg/write_frames 는
+    AttributeError 를 던지지 않고 False 를 돌려준다(awaited 안 된 태스크 크래시 방지)."""
+    from pytmuxlib.protocol import write_msg, write_frames, frame_msg
+
+    assert (await write_msg(None, {"t": "hello"})) is False
+    assert (await write_frames(None, [frame_msg({"t": "x"})])) is False
+    # 빈 프레임은 writer 와 무관하게 항상 True(아무것도 안 보냄).
+    assert (await write_frames(None, [])) is True
+
+
 async def test_key_to_ctrl_bytes():
     assert pytmux._key_to_ctrl_bytes("ctrl+a") == b"\x01"
     assert pytmux._key_to_ctrl_bytes("ctrl+b") == b"\x02"

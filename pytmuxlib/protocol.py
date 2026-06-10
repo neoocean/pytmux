@@ -73,6 +73,11 @@ def frame_msg(obj) -> bytes:
 
 
 async def write_msg(writer: asyncio.StreamWriter, obj) -> bool:
+    # 연결이 이미 끊겼거나 아직 안 맺힌 경우 writer 가 None 일 수 있다(종료/재연결
+    # 레이스). 그대로 .write 를 부르면 AttributeError 가 ConnectionError/RuntimeError
+    # catch 를 빠져나가 awaited 안 된 백그라운드 태스크가 터진다 → None 가드로 흡수.
+    if writer is None:
+        return False
     try:
         writer.write(frame_msg(obj))
         await writer.drain()
@@ -86,6 +91,8 @@ async def write_frames(writer: asyncio.StreamWriter, frames) -> bool:
     한 클라로 갈 여러 screen+status 를 모아 보낼 때 await/drain 왕복을 줄인다."""
     if not frames:
         return True
+    if writer is None:                  # write_msg 와 동일한 None 가드(종료 레이스)
+        return False
     try:
         writer.write(b"".join(frames))
         await writer.drain()
@@ -123,11 +130,4 @@ def conv_color(c):
     if c.startswith("bright"):
         return "bright_" + c[6:]
     return c
-
-
-# ---- Claude Code 휴리스틱은 pytmuxlib/claude.py 로 이전(docs/HANDOFF.md §11). ----
-# 하위호환: 기존 `from .protocol import claude_state, ...` 임포트를 유지하기 위한
-# re-export. 새 코드는 pytmuxlib.claude 에서 직접 가져올 것.
-from .claude import (  # noqa: E402,F401
-    claude_state, claude_usage, parse_reset_delay)
 

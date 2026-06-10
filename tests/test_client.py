@@ -237,6 +237,31 @@ async def test_command_prompt_via_esc():
     await _with_app(body)
 
 
+async def test_command_prompt_converts_hangul_name_to_qwerty():
+    # 한글 IME 가 켜진 채 명령 이름을 치면 자모/음절이 들어간다. 명령 이름 구간(첫 공백
+    # 이전)은 QWERTY 로 자동 변환되고, 인자 구간(공백 이후)의 한글은 보존돼야 한다.
+    from pytmuxlib.clientutil import has_hangul, hangul_to_qwerty
+
+    async def body(app, pilot, srv):
+        await pilot.press("escape")
+        await pilot.press("colon")
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "PromptScreen"
+        inp = scr.query_one(Input)
+        # 두벌식: n→ㅜ, e→ㄷ, w→ㅈ → "ㅜㄷㅈ" 가 "new" 로 변환돼야.
+        ko = "ㅜㄷㅈ"
+        inp.value = ko
+        await pilot.pause(0.2)
+        assert not has_hangul(inp.value), f"명령 이름 한글이 안 변환됨: {inp.value!r}"
+        assert inp.value == hangul_to_qwerty(ko) == "new", inp.value
+        # 인자 구간(공백 이후) 한글은 보존(rename-tab 한글탭이름).
+        inp.value = "rename-tab 안녕"
+        await pilot.pause(0.2)
+        assert inp.value == "rename-tab 안녕", \
+            f"인자 한글이 변환됨: {inp.value!r}"
+    await _with_app(body)
+
+
 async def test_command_prompt_hint_desc_arg_toggle():
     # §10: 명령을 다 치면 오른쪽 힌트(#phint)에 ① 무인자→설명, ② 자유텍스트 인자→
     # 밑줄(____), ③ 토글/선택지 인자→방향키 선택 + Enter 즉시 실행.
@@ -2157,6 +2182,22 @@ async def test_usage_bar_lines_format():
     # 계정 신호를 못 잡으면(account=None) '미확인' 으로 표시
     u3 = dict(u, account=None)
     assert "미확인" in usage_bar_lines(u3, 80)[-1], usage_bar_lines(u3, 80)
+
+
+async def test_bar_gauge_partial_blocks():
+    """막대 게이지(clientutil.bar): 비율→부분블록. 0/음수/빈 폭은 빈 문자열, 최대값은
+    가득. S5b 에서 usagelog 에서 clientutil 로 이전 — 코어 표시 헬퍼라 여기서 검증한다
+    (데이터 모듈 test_usagedb 가 표시 헬퍼를 끌고 가지 않게)."""
+    from pytmuxlib.clientutil import bar, _BAR_BLOCKS
+    assert bar(0, 100, 10) == ""
+    assert bar(50, 0, 10) == ""         # vmax<=0
+    assert bar(50, 100, 0) == ""        # cells<=0
+    assert bar(100, 100, 8) == "█" * 8, repr(bar(100, 100, 8))
+    half = bar(50, 100, 8)
+    assert len(half) <= 8 and "█" in half       # 절반쯤
+    # 아주 작은 비율도 0칸이면 빈 문자열에 가까움(부분블록만)
+    tiny = bar(1, 1000, 8)
+    assert tiny == "" or tiny[0] in _BAR_BLOCKS
 
 
 async def test_usage_panel_auto_popup_on_shown_seq():

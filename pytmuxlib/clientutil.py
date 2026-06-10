@@ -84,6 +84,25 @@ def _fmt_tokens(total: int) -> str:
     return str(total)
 
 
+# 막대 게이지용 부분블록(1/8 단위) — 우측 끝 잔량을 부드럽게 표현.
+_BAR_BLOCKS = " ▏▎▍▌▋▊▉█"
+
+
+def bar(value: int, vmax: int, cells: int) -> str:
+    """value/vmax 비율을 cells 칸 막대 문자열로(부분블록 포함). vmax<=0/cells<=0/
+    value<=0 이면 빈 문자열. 표시 계층(DataTable/InfoScreen/usage_bar_lines) 공용 —
+    폭은 호출부가 셀폭으로 계산한다. (S5b 에서 usagelog 에서 이리로 이전 — 코어
+    clientscreens.usage_bar_lines 가 데이터 모듈 usagelog 를 import 하지 않게 하려고
+    순수 표시 헬퍼를 코어 표시 유틸로 옮겼다. usagelog 는 S5c 에서 플러그인으로 이동.)"""
+    if cells <= 0 or vmax <= 0 or value <= 0:
+        return ""
+    frac = max(0.0, min(1.0, value / vmax))
+    eighths = int(round(frac * cells * 8))
+    full, rem = divmod(eighths, 8)
+    full = min(full, cells)
+    return "█" * full + (_BAR_BLOCKS[rem] if rem and full < cells else "")
+
+
 # 상태줄 오른쪽 strftime 코드 분류 — 시각(시계) vs 날짜(달력) 클릭 존 분리용.
 _TIME_STRFTIME = set("HIMSpRTrXkl")
 _DATE_STRFTIME = set("YymdbBaAjeDFuwUWxgGCV")
@@ -329,41 +348,9 @@ MENU_ITEMS = [
 # 토글 메뉴 항목(현재 on/off 표시·선택해도 메뉴 안 닫음). 상태는 status 에서 읽음.
 MENU_TOGGLES = {"zoom", "sync", "autoresume", "prompt_clear"}
 
-# 토큰 절감 설정 팝업(`token-saver` 명령, docs/TOKEN_SAVING_SCENARIO.md)의 행 목록.
-# (key, 라벨, 종류). 종류 "toggle"=●/○ 토글, "cycle"=프리셋 값 순환(Enter 로 다음
-# 값). 현재값·동작은 client.py 의 _saver_display/_saver_action 이 처리한다(앱 상태
-# 의존이라 화면이 직접 안 들고, MenuScreen 이 _run_menu_action 에 위임하는 것과 동일).
-SAVER_ROWS = [
-    ("autoresume", "토큰리밋 자동재개", "toggle"),
-    ("resume_gate", "예산 초과 시 자동재개 보류", "toggle"),
-    ("budget_plan", "예산 압박(≥80%) 시 plan 모드 유도", "toggle"),
-    ("ctx_autoclear", "컨텍스트 잔량 부족 시 자동 정리", "toggle"),
-    ("ctx_action", "  └ 정리 방식", "cycle"),
-    ("ctx_threshold", "  └ 잔량 임계", "cycle"),
-    ("ctx_min_interval", "  └ 정리 빈도 상한", "cycle"),
-    ("auto_doc_clear", "idle 지속 시 자동 문서화+/clear", "toggle"),
-    ("auto_compact", "idle 지속 시 자동 /compact", "toggle"),
-    ("claude_auto_mode", "권한모드 자동 오토", "toggle"),
-    ("prompt_clear", "프롬프트 단위 클리어(완료마다 doc+/clear)", "toggle"),
-    ("budget_day", "일 토큰 예산", "cycle"),
-    ("budget_session", "세션 토큰 예산", "cycle"),
-    ("budget_5h", "5시간 한도(근접도 표시 분모)", "cycle"),
-    ("budget_account", "계정 합계 예산(멀티세션)", "cycle"),
-    ("long_turn", "장기 턴 경고(초)", "cycle"),
-    ("repeat_alert", "반복 루프 경고(회)", "cycle"),
-]
-# cycle 행의 프리셋 값(Enter 마다 다음으로 순환). 예산 0=무제한(끔).
-SAVER_CYCLES = {
-    "ctx_action": ["compact", "doc-clear"],
-    "ctx_threshold": [10, 15, 20, 25, 30],
-    "ctx_min_interval": [0, 60, 120, 300, 600],
-    "budget_day": [0, 100_000, 200_000, 500_000, 1_000_000],
-    "budget_session": [0, 50_000, 100_000, 200_000, 500_000],
-    "budget_5h": [0, 100_000, 200_000, 350_000, 500_000, 1_000_000],
-    "budget_account": [0, 200_000, 500_000, 1_000_000, 2_000_000, 5_000_000],
-    "long_turn": [0, 300, 600, 900, 1800],
-    "repeat_alert": [0, 2, 3, 5, 10],
-}
+# 토큰 절감 설정 팝업(`token-saver`)의 행/순환 프리셋(SAVER_ROWS/SAVER_CYCLES)과
+# 시작 규칙 편집(`claude-rules`)은 claude-code 플러그인(pytmuxlib/plugins/claude-code)
+# 으로 이전했다 — 디렉토리를 지우면 두 명령·팝업이 조용히 사라진다.
 
 # 명령 프롬프트(:)에서 쓸 수 있는 명령 목록 (이름, 설명) — ? 목록·자동완성용
 # (이름, 설명, 카테고리). 카테고리는 ?/help 목록의 탭 그룹으로 쓰인다.
@@ -397,7 +384,8 @@ COMMANDS = [
     ("rename-tab", "탭 이름 변경", "탭"),
     ("automatic-rename", "탭 자동 이름 [on|off]", "탭"),
     ("choose-tree", "탭/패널 트리(전환·종료, 실행 앱·로컬/원격 표시. d/x=종료)", "탭"),
-    ("ncd", "디렉토리 트리(Norton Change Directory 풍) — 루트→cwd 펼침·↑↓ 탐색·타이핑 찾기·Enter cd·⇧Enter/^O 새 패널(별칭 nc)", "탐색"),
+    # ncd 는 플러그인(pytmuxlib/plugins/ncd)이 등록한다 — 디렉토리를 지우면 명령
+    # 검색·자동완성에서 조용히 사라진다(코어 목록엔 없음).
     ("capture-pane", "패널 내용을 버퍼로 캡처 (-S 전체)", "복사/버퍼"),
     ("pipe-pane", "패널 출력을 외부 명령으로 파이프", "복사/버퍼"),
     ("clear-history", "스크롤백 비우기", "복사/버퍼"),
@@ -413,8 +401,6 @@ COMMANDS = [
     ("layout-load-new", "레이아웃 불러오기 → 새 탭 (이름)", "레이아웃"),
     ("monitor-activity", "활동 모니터링 [on|off]", "모니터"),
     ("monitor-bell", "벨 모니터링 [on|off]", "모니터"),
-    ("auto-resume", "토큰 리밋 자동 재개 [on|off]", "Claude"),
-    ("auto-resume-message", "자동 재개 메시지 설정", "Claude"),
     ("capture-output", "패널 출력 캡처 토글 [on|off] (기본 on, 영속)", "모니터"),
     ("set", "옵션 설정 (prefix/mouse/status-*/mode-keys 등)", "설정/기타"),
     ("show-options", "현재 옵션 보기", "설정/기타"),
@@ -423,32 +409,15 @@ COMMANDS = [
     ("source-file", "설정 파일 다시 불러오기", "설정/기타"),
     ("display-message", "상태줄에 메시지 표시", "설정/기타"),
     ("display-popup", "명령 실행 결과를 팝업으로", "설정/기타"),
-    ("clock-mode", "현재 패널을 큰 시계로 덮기(토글, 우상단 [x]/명령으로 닫기)", "설정/기타"),
-    ("calendar-mode", "현재 패널을 이번 달 달력으로 덮기(토글, 상태줄 날짜 클릭/우상단 [x])", "설정/기타"),
-    ("open-clock", "현재 패널에 큰 시계 표시(이미 떠 있으면 유지)", "설정/기타"),
-    ("close-clock", "현재 패널의 큰 시계 닫기", "설정/기타"),
-    ("open-calendar", "현재 패널에 이번 달 달력 표시(이미 떠 있으면 유지)", "설정/기타"),
-    ("close-calendar", "현재 패널의 달력 닫기", "설정/기타"),
-    ("claude-header", "Claude 프롬프트 헤더 표시 on/off (claude-header on|off|toggle)", "Claude"),
+    # clock-mode/open-clock/close-clock 은 clock 플러그인(pytmuxlib/plugins/clock),
+    # calendar-mode/open-calendar/close-calendar 는 calendar 플러그인이 등록한다.
     ("single-border", "패널이 하나뿐일 때 테두리 표시 on/off (single-border on|off|toggle)", "설정/기타"),
     ("coalesce-repaints", "대량 출력 시 alt-screen 풀스크린 리페인트 합치기 on/off — ssh 반응성(coalesce-repaints on|off|toggle)", "설정/기타"),
-    ("prompt-history", "Claude 프롬프트 히스토리 팝업(헤더 클릭으로도 열림)", "Claude"),
-    ("token-usage", "Claude 실행 중 탭/패널 + 토큰 사용량 트리(상태줄 사용량 클릭)", "Claude"),
-    ("token-log", "토큰 사용량 영속 로그 집계 팝업(시간/일/월 × 계정 — h/d/m·a 전환)", "Claude"),
-    ("claude-usage", "그림자 /usage 질의 — 숨은 세션으로 실 세션/주간 한도 갱신(별칭 usage)", "Claude"),
-    ("usage-panel", "Claude 토큰 사용 한도 팝업 — /usage(세션 5h·주 전체·주 Sonnet) 막대 그래프(별칭 usage-limits·limits)", "Claude"),
-    ("token-account", "활성 패널 Claude 계정 수동 지정 (token-account <이름>, 빈값=자동)", "Claude"),
-    ("prompt-clear", "프롬프트 단위 클리어 모드 토글(완료마다 문서화+/clear) [on|off]", "Claude"),
-    ("prompt-clear-message", "프롬프트 단위 클리어의 문서화 지시문 변경", "Claude"),
-    ("prompt-clear-queue", "프롬프트 단위 클리어 큐에 명령 쌓기(빈값=목록, -c=비움)", "Claude"),
-    ("claude-rules", "Claude 시작 규칙 편집(저장 시 새 세션/clear 후 프롬프트에 자동 주입)", "Claude"),
-    ("model", "모델·컨텍스트 변경 팝업(상태줄 모델 배지 클릭으로도 열림, /model 주입; 별칭 model-config, claude-model)", "Claude"),
+    # Claude Code 명령(auto-resume·claude-header·prompt-history·token-usage·token-log·
+    # claude-usage·usage-panel·token-account·prompt-clear*·model·auto-doc-clear·
+    # auto-compact·claude-auto-mode·auto-launch 등)은 claude-code 플러그인이 등록한다
+    # (pytmuxlib/plugins/claude-code — 디렉토리 삭제 시 명령 검색·자동완성·디스패치에서 사라짐).
     ("version", "클라/서버 버전(p4 CL)·업타임 팝업(별칭 about)", "설정/기타"),
-    ("token-saver", "토큰 절감 설정 팝업 — 각 자동 개입 토글·잔량 임계·예산(별칭 claude-settings, token-settings)", "Claude"),
-    ("auto-doc-clear", "Claude idle 30초 지속 시 자동 문서화+/clear on/off (auto-doc-clear on|off|toggle)", "Claude"),
-    ("auto-compact", "Claude idle 30초 지속 시 자동 /compact on/off (auto-compact on|off|toggle)", "Claude"),
-    ("claude-auto-mode", "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off (claude-auto-mode on|off|toggle)", "Claude"),
-    ("auto-launch", "새 Claude 세션 시작 시 /rc(원격 제어)+권한모드 auto 1회 자동 적용 on/off (auto-launch on|off|toggle, 기본 on)", "Claude"),
     ("run-shell", "셸 명령 실행", "설정/기타"),
     ("if-shell", "조건부 셸 실행", "설정/기타"),
     ("bind-key", "prefix 후 키에 명령 바인딩 (bind-key <key> <command>)", "설정/기타"),
@@ -510,16 +479,12 @@ COMMAND_OPTIONS = {
     "synchronize-panes": [{"key": "state", "label": "동기화", "choices": _ONOFF}],
     "monitor-activity": [{"key": "state", "label": "활동", "choices": _ONOFF}],
     "monitor-bell": [{"key": "state", "label": "벨", "choices": _ONOFF}],
-    "auto-resume": [{"key": "state", "label": "자동재개", "choices": _ONOFF}],
     "capture-output": [{"key": "state", "label": "캡처", "choices": _ONOFF}],
     "automatic-rename": [{"key": "state", "label": "자동이름", "choices": _ONOFF}],
-    "prompt-clear": [{"key": "state", "label": "클리어모드", "choices": _ONOFF}],
-    "auto-doc-clear": [{"key": "state", "label": "자동클리어", "choices": _ONOFF}],
-    "claude-auto-mode": [{"key": "state", "label": "오토모드", "choices": _ONOFF}],
-    "auto-launch": [{"key": "state", "label": "자동셋업", "choices": _ONOFF}],
-    "claude-header": [{"key": "state", "label": "헤더", "choices": _ONOFF}],
     "single-border": [{"key": "state", "label": "단일테두리", "choices": _ONOFF}],
     "coalesce-repaints": [{"key": "state", "label": "리페인트합치기", "choices": _ONOFF}],
+    # auto-resume·prompt-clear·auto-doc-clear·claude-auto-mode·auto-launch·claude-header
+    # 의 옵션 스키마는 claude-code 플러그인이 등록한다(command_options).
 }
 # 인자 없이 바로 실행해도 되는(파괴적이지 않은) 명령 — 선택 즉시 실행한다(#3).
 # kill-*/detach/respawn 등 파괴적 명령은 의도 확인을 위해 기존처럼 프롬프트에 채운다.
@@ -527,14 +492,16 @@ COMMAND_NOARG = {
     "next-tab", "previous-tab", "last-tab",
     "move-tab-left", "move-tab-right", "move-tab-first", "move-tab-last",
     "next-layout", "rotate-window", "new-tab", "choose-tree",
-    "ncd", "nc",
+    # ncd/nc 는 플러그인(pytmuxlib/plugins/ncd)이 무인자 명령으로 등록한다.
     "choose-buffer", "paste-clipboard", "save-layout", "restore-layout",
-    "show-options", "show-hooks", "source-file", "clock-mode",
-    "calendar-mode", "open-clock", "close-clock", "open-calendar",
-    "close-calendar", "prompt-history", "token-usage", "token-log",
-    "list-keys", "send-escape", "claude-rules", "token-saver", "version",
-    "restart-check", "claude-usage", "usage",
-    "usage-panel", "usage-limits", "limits",
+    "show-options", "show-hooks", "source-file",
+    # clock-mode/open-clock/close-clock 은 clock 플러그인, calendar-mode/calendar/
+    # cal/open-calendar/open-cal/close-calendar/close-cal 은 calendar 플러그인이
+    # 무인자 명령으로 등록한다.
+    "list-keys", "send-escape", "version",
+    "restart-check",
+    # Claude Code 무인자 명령(prompt-history·token-usage·token-log·claude-usage·usage·
+    # usage-panel·usage-limits·limits·claude-rules·token-saver)은 claude-code 플러그인이 등록.
 }
 # 자유 텍스트 인자를 받는 명령 — 명령 프롬프트에서 명령을 다 치면 인자 자리에 밑줄
 # (____)을 그려 "여기에 인자를 입력" 임을 알린다(사용자 요청). 선택지형(COMMAND_OPTIONS)
@@ -556,6 +523,7 @@ PANE_SCOPED_CMDS = {
     "rename-pane", "resize-pane", "select-pane", "swap-pane", "break-pane",
     "join-pane", "respawn-pane", "kill-pane", "capture-pane", "pipe-pane",
     "clear-history", "send-keys", "send-escape", "paste-buffer",
-    "paste-clipboard", "split-window", "clock-mode", "calendar-mode",
-    "open-clock", "close-clock", "open-calendar", "close-calendar",
+    "paste-clipboard", "split-window",
+    # clock-mode/calendar-mode 등 오버레이 명령은 clock·calendar 플러그인이
+    # pane_scoped 로 등록한다(레지스트리 plugins.pane_scoped 로 합쳐짐).
 }

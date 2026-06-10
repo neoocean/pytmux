@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import time
 
 from . import ipc
@@ -29,27 +30,37 @@ def _safe(s) -> str:
 class ServerCaptureMixin:
     # ---- 패널 출력 캡처(Claude 화면 문구 분석용) ----
     def _capture_id(self) -> str:
-        """캡처 하위 폴더명(소켓별 격리). state_base 의 basename 에서 .sock 제거."""
+        """소켓별 격리 id(토큰 DB 등). state_base 의 basename 에서 .sock 제거."""
         base = os.path.basename(ipc.state_base(self.sock_path))
         if base.endswith(".sock"):
             base = base[:-len(".sock")]
         return base or "default"
 
+    def _capture_subdir(self) -> str:
+        """captures/ 하위 폴더명. 기본 소켓(실사용)은 여러 기계가 같은 Perforce
+        captures/ 를 공유하므로 **머신 이름**으로 격리한다 — 예전 고정 'default' 는
+        기계 간 같은 폴더로 충돌했다. 비기본(임시·named) 소켓은 sock-id 를 그대로 쓴다.
+        (토큰 DB·기타 격리는 _capture_id 가 'default' 를 유지해 영향 없음.)"""
+        if self.sock_path == ipc.default_endpoint():
+            return _safe(socket.gethostname()) or self._capture_id()
+        return self._capture_id()
+
     @property
     def capture_dir(self) -> str:
         """캡처(REC) 출력 루트.
 
-        기본 소켓(실사용)은 **프로젝트 디렉터리 하위 `captures/<sock-id>/`** 에 둔다 —
-        여러 기계에서 개발 시 Perforce 로 올려 공유·관리하기 위함(docs/HANDOFF.md §10).
+        기본 소켓(실사용)은 **프로젝트 디렉터리 하위 `captures/<머신이름>/`** 에 둔다 —
+        여러 기계에서 개발 시 Perforce 로 올려 공유·관리하되 기계별로 분리하기 위함
+        (`_capture_subdir`; docs/HANDOFF.md §10). 예전엔 고정 `default` 였다.
         **단 GitHub 미러에는 절대 올라가면 안 되므로** 이 경로는 `.gitignore`/`.p4ignore`
         의 `captures/` 로 차단한다(민감 화면 유출 방지). `PYTMUX_CAPTURE_DIR` 로 강제
         지정 가능(테스트는 임시 디렉터리를 주입해 프로젝트 오염을 막는다). 그 외(임시
         소켓 등 비기본 엔드포인트)는 휘발 영역(state_base 옆 `.capture`)을 그대로 쓴다."""
         override = os.environ.get("PYTMUX_CAPTURE_DIR")
         if override:
-            return os.path.join(override, self._capture_id())
+            return os.path.join(override, self._capture_subdir())
         if self.sock_path == ipc.default_endpoint():
-            return os.path.join(PROJECT_DIR, "captures", self._capture_id())
+            return os.path.join(PROJECT_DIR, "captures", self._capture_subdir())
         return ipc.state_base(self.sock_path) + ".capture"
 
     def _capture_info(self, pane):

@@ -328,6 +328,35 @@ async def test_xtmodkeys_not_parsed_as_underline():
         await teardown(srv, task, sock)
 
 
+async def test_claude_terminal_protocol_sequences_no_leak():
+    # 회귀 가드: capable 터미널로 감지된 Claude Code 가 내보내는 터미널 프로토콜
+    # private CSI 시퀀스들이 pytmux 화면에 글자를 흘리지 않아야 한다. pyte 0.8.2 는
+    # 일부 `u`/`m` 종결 private CSI 를 처리 못 해 끝 글자를 흘린다(실측: pop `\x1b[<u`
+    # → 'u' 누수, push `\x1b[>1u` 는 안 샘 / XTMODKEYS `\x1b[>4;2m` → 'm' 계열).
+    # feed 전처리(_PRIVATE_SGR_RE/_KITTY_KBD_RE)가 이를 막는다. 시퀀스를 MARK..ER
+    # 사이에 끼워 넣어, 화면에 시퀀스 잔해 없이 "MARKER" 만 남는지 확인한다.
+    seqs = [
+        b"\x1b[>1u",      # kitty 키보드 프로토콜 push
+        b"\x1b[<u",       # kitty 키보드 프로토콜 pop (실측 누수원 — 'u')
+        b"\x1b[>0q",      # XTVERSION 질의
+        b"\x1b[>4;2m",    # XTMODKEYS(modifyOtherKeys) — 'm' 누수/밑줄 오인 방지
+        b"\x1b[?2026h",   # synchronized output begin
+        b"\x1b[?9001h",   # win32-input-mode (Windows Terminal)
+        b"\x1b[?1004h",   # focus reporting
+        b"\x1b[?2031h",   # color-scheme change notification
+    ]
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(20, 2)
+        p = sess.active_window.active_pane
+        for seq in seqs:
+            p.feed(b"\x1b[2J\x1b[H\x1b[0mMARK" + seq + b"ER")
+            line0 = "".join(seg[0] for seg in p.render(False)[0][0]).rstrip()
+            assert line0 == "MARKER", f"{seq!r} leaked: {line0!r}"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_resize_keeps_content():
     srv, task, sock = await server_only()
     try:

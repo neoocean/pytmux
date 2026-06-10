@@ -11,14 +11,10 @@ import subprocess
 import time
 import traceback
 
-from . import ipc, proc, pty_backend, sshwrap, tokens, usagedb, usagelog, version
+from . import ipc, plugins, proc, pty_backend, sshwrap, usagedb, usagelog
 from .model import (ClientConn, Pane, Session, Split, Tab, Window,
                     coalesce_alt_repaints)
-from .claude import (claude_account, claude_feedback_prompt, claude_perm_mode,
-                     claude_prompt, claude_state, claude_usage, parse_reset_delay)
 from .protocol import (FEED_SLICE, FLUSH_HZ, MIN_H, MIN_W, read_msg, write_msg)
-from .serverclaude import (ServerClaudeMixin, _CAM_MAX, _HDR_CLAUDE_MISS,
-                            _DONE_IDLE_FRAMES)
 from .servercapture import ServerCaptureMixin
 from .serverpersist import ServerPersistMixin
 from .serverpty import ServerPtyMixin
@@ -31,10 +27,23 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 
-class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
-             ServerPtyMixin, ServerIOMixin, ServerTreeMixin):
+# 선택적 플러그인이 기여하는 서버측 믹스인(plugins/claude-code 의 ServerClaudeMixin 등)
+# 을 Server 의 **동적 베이스**로 합성한다. 코어는 그 믹스인을 직접 import 하지 않고
+# 오직 plugins 레지스트리로만 가져오므로, 디렉토리를 지우면 목록이 비어 해당 서버
+# 로직(예: Claude 스캔/자동개입)이 Server 에서 통째로 빠진다(delete-to-disable). 원래
+# MRO 처럼 플러그인 믹스인을 코어 믹스인보다 앞에 둔다(추가 메서드라 충돌은 없다).
+_PLUGIN_SERVER_MIXINS = tuple(plugins.load().server_mixins())
+_SERVER_BASES = _PLUGIN_SERVER_MIXINS + (
+    ServerCaptureMixin, ServerPersistMixin, ServerPtyMixin,
+    ServerIOMixin, ServerTreeMixin)
+
+
+class Server(*_SERVER_BASES):
     def __init__(self, sock_path: str, resume_path: str | None = None):
         self.sock_path = sock_path
+        # 선택적 플러그인(pytmuxlib/plugins/*). 알 수 없는 action 회신을 플러그인에
+        # 넘긴다(ncd 의 request_nc_list 등). 디렉토리를 지우면 해당 기능은 조용히 사라진다.
+        self.plugins = plugins.load()
         # 작업 보존 재시작(re-exec) 후 부트: 이 경로의 상태 파일로 상속된 PTY 를
         # 채택해 셸을 살린 채 복원한다(serve()). None 이면 평소 부트.
         self._resume_path = resume_path
@@ -47,10 +56,15 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         self.running = True
         # version 명령 팝업용: 이 프로세스가 **로드한 코드**의 버전(p4 CL)과 부팅
         # 시각. re-exec 후엔 새 프로세스라 둘 다 다시 캡처된다(= 데몬 업타임은 마지막
-        # (re-)exec 기준). 버전 캡처는 ~수십 ms p4 호출이지만 부팅 1회뿐이라 무해
-        # (클라의 textual import 와 겹쳐 체감 영향 없음).
+        # (re-)exec 기준). 버전 캡처는 `p4 changes` 네트워크 왕복이라 수백 ms~timeout
+        # (1.5s)까지 걸린다(Windows Perforce 워크스페이스에서 측정 ~800ms). 여기(__init__)
+        # 에서 동기로 부르면 serve()의 listen **이전**이라 클라가 붙기까지의 임계경로에
+        # 올라타 콜드 기동이 그만큼 느려진다(사용자 보고: 수 초). 그래서 자리표시자만
+        # 두고, serve()가 listen 을 띄운 **직후** 백그라운드로 채운다(_capture_version).
+        # 클라이언트도 동일 패턴(client.py run_in_executor)을 쓴다. 팝업/re-exec 스냅샷은
+        # 부팅 임계경로가 아니므로 약간 늦게 채워져도 무방.
         self._boot_time = time.time()
-        self._code_version = version.code_version()
+        self._code_version = "…"
         # 연결 인증 토큰(F1). serve() 가 listen 전에 무작위 토큰을 생성·게시(0600)하고
         # 채운다. None 인 동안(serve 미호출 단위 테스트)은 handle_client 가 검증을
         # 건너뛴다 — 실제 데몬은 항상 serve() 를 거치므로 토큰이 강제된다.
@@ -106,7 +120,13 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         # +Enter 1회 주입(문서화 없이 컨텍스트 압축만). 기본 OFF(명시 토글). auto-doc-
         # clear 와 같은 idle 경계에서 무장하므로 상호배타(doc-clear 우선). opts.json 영속.
         self.auto_compact = bool(_opts.get("auto_compact", False))
-        self.auto_compact_delay = float(_opts.get("auto_compact_delay", 30.0))
+        self.auto_compact_delay = float(_opts.get("auto_compact_delay", 900.0))
+        # 컨텍스트 하드스톱 자동복구(요청): "Context limit reached · /compact or /clear
+        # to continue" 화면을 보면 idle 지연 없이 즉시 '/compact' 를 1회 주입해 막힌
+        # 진행을 잇는다(claude_context_hardstop). idle-기반 auto_compact 와 다른 트리거.
+        # 기본 ON — 하드스톱은 정상 idle 이 아니라 완전 차단 상태이고 /compact 가 유일한
+        # 진행 수단이라 자동복구의 부작용이 없다(끄려면 auto-hardstop off). opts.json 영속.
+        self.auto_hardstop = bool(_opts.get("auto_hardstop", True))
         # 자동 compact·doc-clear 쿨다운(요청): 새 Claude 세션 시작 직후 또는 직전
         # compact·clear 직후 이 초만큼은 **시간기반** 자동 compact·doc-clear 를 무장하지
         # 않는다 — 세션을 막 시작했거나 방금 정리했는데 곧바로 또 압축/정리되던 문제 방지
@@ -248,16 +268,15 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         self.buffers.insert(0, text)
         del self.buffers[50:]
 
-    @staticmethod
-    def _write_paste(pane: Pane, text: str):
+    def _write_paste(self, pane: Pane, text: str):
         """텍스트를 패널에 입력. 내부 앱이 bracketed paste 를 켰으면 마커로 감싼다
         (멀티라인 붙여넣기가 줄마다 실행되지 않고 한 번의 붙여넣기로 처리됨)."""
         data = text.encode("utf-8")
-        # 붙여넣기(모바일 받아쓰기·자동완성 포함)도 프롬프트 추적에 반영한다.
-        # 이게 없으면 붙여넣은 Claude 프롬프트는 last_prompt 에 안 잡혀 헤더가
-        # 셸 실행 명령("claude")에 머문다. 이후 사용자가 Enter(\r) 를 누르면
-        # 누적된 본문이 last_prompt 로 확정된다(개행 포함 시 즉시 확정).
-        Server._track_prompt(pane, data)
+        # 붙여넣기(모바일 받아쓰기·자동완성 포함)도 프롬프트 추적에 반영한다(Claude
+        # 헤더용 — server_paste 훅, 플러그인 없으면 no-op). 이게 없으면 붙여넣은 Claude
+        # 프롬프트는 last_prompt 에 안 잡혀 헤더가 셸 실행 명령("claude")에 머문다.
+        # 이후 사용자가 Enter(\r) 를 누르면 누적 본문이 last_prompt 로 확정된다.
+        self.plugins.server_paste(self, pane, data)
         if pane.bracketed:
             data = b"\x1b[200~" + data + b"\x1b[201~"
         try:
@@ -349,7 +368,7 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         self._budget_track(amount)
         rec = usagelog.make_record(
             ts=time.time(), tab=tab.index, pane=pane.id,
-            session=pane._claude_session_id, account=pane._claude_account,
+            session=getattr(pane, "_claude_session_id", 0), account=pane._claude_account,
             tokens=amount)
         conn = self._tokens_db_conn()
         if conn is not None:
@@ -748,7 +767,10 @@ class Server(ServerClaudeMixin, ServerCaptureMixin, ServerPersistMixin,
         를 쓴다. raw 값은 footer 가 한 프레임 안 잡히면 None 으로 깜빡여(특히
         ssh/ConPTY) 예약이 매 프레임 토글→PTY ±1 행 리사이즈 반복→원격 화면이
         한 줄씩 떨리는데, 디바운스가 그 떨림을 없앤다(_scan_claude 에서 갱신)."""
-        return bool(self.claude_header and p._hdr_claude and p.last_prompt)
+        # _hdr_claude·last_prompt 는 claude-code 플러그인 pane_init 소유(S4) — 플러그인
+        # 부재 시 없으므로 getattr 기본값으로 안전하게 읽는다(헤더 미예약).
+        return bool(self.claude_header and getattr(p, "_hdr_claude", False)
+                    and getattr(p, "last_prompt", ""))
 
 def run_server(sock_path: str, resume_path: str | None = None):
     srv = Server(sock_path, resume_path)

@@ -681,6 +681,11 @@ class _ClaudeCodePlugin:
         # ClaudeSaverScreen 이 self.app._saver_display/_saver_action 를 부르므로 설치.
         app._saver_display = lambda key: saver_display(app, key)
         app._saver_action = lambda key: saver_action(app, key)
+        # M16 토큰 절감 에스컬레이션 훅의 직전 전이 상태(상승 에지 1회 발화용, §8) —
+        # 코어 client.__init__ 에서 이리로 이전(S5a). client_status 훅이 status 전이를
+        # 보고 _fire_hook 을 발화하므로, 그 상태도 플러그인이 소유한다. 디렉토리 삭제 시
+        # 이 속성이 없어 코어는 절감 훅을 전혀 발화하지 않는다(delete-to-disable).
+        app._saver_prev = {"budget_level": 0, "pending_kind": None, "limit": False}
         # ---- Claude 헤더/상태 렌더 상태(Phase 2c) — 코어 __init__ 에서 이리로 이전 ----
         # 코어는 이 속성들을 직접 만들지 않고, 헤더 렌더(client_render 훅)·ESC nav·
         # 클릭 핸들러에서 getattr(app, ..., 기본값)으로만 읽는다 → 디렉토리 삭제 시
@@ -716,6 +721,23 @@ class _ClaudeCodePlugin:
         # 코어가 client_status_tabs 훅으로 받아 끼운다(_usage_tree_lines 직접 노출 불요).
         app.open_claude_usage_tree = lambda: _open_claude_usage_tree(app)
         app._open_usage_tree = lambda tree: _open_usage_tree(app, tree)
+
+    # ---- Pane Claude 상태 소유(S4) — panestate 모듈에 위임 ----
+    def pane_init(self, pane):
+        from .panestate import init_pane
+        init_pane(pane)
+
+    def pane_reset(self, pane):
+        from .panestate import reset_pane
+        reset_pane(pane)
+
+    def pane_serialize(self, pane):
+        from .panestate import serialize
+        return serialize(pane)
+
+    def pane_restore(self, pane, data):
+        from .panestate import restore
+        restore(pane, data)
 
     def handle_message(self, app, msg):
         # 서버 token_log 회신 → TokenLogScreen 팝업(코어 _dispatch 의 else 에서 위임).
@@ -753,6 +775,20 @@ class _ClaudeCodePlugin:
                 fn = getattr(app, "open_usage_panel", None)
                 fn and fn()
         _update_claude(app, msg.get("panes_claude", []))
+        # M16: 절감 신호 전이 → PTY 밖 에스컬레이션 훅(자리 비움 대응, §8). 코어
+        # client._dispatch 에서 이리로 이전(S5a) — saver_hook_events 는 플러그인 소유
+        # claude.py 의 함수라, 코어가 더는 claude 를 import 하지 않게 된다. _fire_hook 은
+        # 코어의 범용 셸-훅 디스패처(after-new-window 등과 공유)라 그대로 호출한다.
+        from .claude import saver_hook_events
+        for ev, env in saver_hook_events(app._saver_prev, msg):
+            app._fire_hook(ev, env=env)
+
+    def client_statusbar_init(self, app, status):
+        """하단 상태줄 위젯 생성 직후 — Claude 상태 속성을 안전한 기본값으로 설치한다
+        (코어 StatusBar.__init__ 에서 빼낸 ~26개 claude_*/token_budget_*/auto_* 필드).
+        흡수(absorb)·렌더(render_segs)가 이 속성들을 읽고 쓴다."""
+        from .clientstatus import init_defaults
+        init_defaults(status)
 
     def client_statusbar_update(self, app, status, msg):
         """하단 상태줄 위젯에 status 메시지의 Claude 필드를 흡수(코어 StatusBar.

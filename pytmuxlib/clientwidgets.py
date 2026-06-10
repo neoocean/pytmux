@@ -18,7 +18,7 @@ from textual.strip import Strip
 from rich.segment import Segment
 from rich.style import Style
 
-from .clientutil import _DATE_STRFTIME, _TIME_STRFTIME, _char_cells, _fmt_tokens, theme_color
+from .clientutil import _DATE_STRFTIME, _TIME_STRFTIME, _char_cells, theme_color
 
 
 class MultiplexerView(Widget):
@@ -37,8 +37,13 @@ class MultiplexerView(Widget):
         #   정보(app.pane_wrap)를 찾아 자동 줄바꿈 줄을 한 줄로 잇는다
         self._mouse_fwd = None     # 패스스루 중인 패널 id(버튼 다운~업)
         self._mouse_fwd_btn = 0    # 그 시퀀스의 버튼(드래그/릴리스 인코딩용)
-        self._pane_swap = None     # Shift+드래그 swap 중인 소스 패널 id
-        self._pane_swap_over = None  # 드래그 중 가리키는 swap 대상 패널 id
+        # 패널 pick-up(헤더 드래그, #1): 패널의 위쪽 테두리/제목 행을 잡아 끌면 그 패널을
+        # 든다. 다른 패널에 놓으면 swap, 탭바의 탭에 놓으면 그 탭으로 이동, [+]에 놓으면
+        # 새 탭으로 분리(break). (구 Shift+드래그 swap 을 헤더 드래그로 이전 — Shift+드래그는
+        # 이제 텍스트 선택. docs 메모리 pytmux-pane-dnd-mouse-design 2026-06-05 결정.)
+        self._pickup = None        # 들고 있는 소스 패널 id(헤더 드래그 중)
+        self._pickup_over = None   # 드래그 중 가리키는 대상 패널 id(놓으면 swap)
+        self._pickup_moved = False  # 다운 후 다른 패널/탭바로 이동했나(클릭 vs 드래그 구분)
 
     def _clamp_sel(self, x, y):
         """좌표를 선택 시작 패널의 content rect 안으로 클램프(§2.4). rect 가 없으면
@@ -174,6 +179,26 @@ class MultiplexerView(Widget):
                 return p
         return None
 
+    def _header_pane_at(self, x, y):
+        """패널 pick-up(헤더 드래그, #1) 히트테스트: (x,y)가 어떤 패널의 **위쪽 가장자리
+        행**(테두리 박스 상단 행, 또는 border-status 제목줄)에 있으면 그 패널을 돌려준다.
+
+        호출부(on_mouse_down)에서 divider(리사이즈 경계)를 **먼저** 걸러내므로, 분할
+        경계와 겹치는 패널 상단(예: 상하분할의 아래 패널 윗변=divider)은 여기 닿지 않고
+        리사이즈가 우선한다 — 즉 divider 가 아닌 자기 상단 가장자리(바깥 프레임 쪽)만
+        pick-up 으로 잡힌다. 제목 글자 유무와 무관하게 테두리 한 행 전체가 손잡이다."""
+        border_status = self.app.layout.get("border_status")
+        for p in self.app.layout.get("panes", []):
+            box = p.get("box")
+            if box:
+                bx, by, bw, _bh = box
+                if y == by and bx <= x < bx + bw:
+                    return p
+            elif border_status and y == p["y"] - 1 \
+                    and p["x"] <= x < p["x"] + p["w"]:
+                return p   # border-status 제목줄(내용 한 줄 위)
+        return None
+
     # --- 내부 앱 마우스 패스스루(p4v-tui 등 마우스 1급 TUI) ---
     def _mouse_target(self, x, y):
         """패스스루 대상 패널을 반환. 내부 앱이 마우스 모드를 켰고, 좌표가 그
@@ -230,20 +255,23 @@ class MultiplexerView(Widget):
             self.app._composite()
             event.stop()
             return
-        # Shift+드래그 = 패널 swap. 좌버튼+Shift 로 패널을 잡아 다른 패널에 놓으면
-        # 두 패널 위치를 맞바꾼다(내용 앱은 그대로). passthrough/divider 보다 먼저
-        # 가로채 마우스 모드 앱 위에서도 동작한다. 패널이 둘 이상일 때만.
+        # Shift+드래그 = 텍스트 선택(normal 모드). copy-mode 에 먼저 안 들어가도 패널
+        # 본문을 끌어 OS 클립보드+pytmux 버퍼로 복사한다(copy-mode 드래그 경로 재사용).
+        # passthrough/divider 보다 먼저 가로채 마우스 모드 앱 위에서도 선택이 된다(터미널
+        # 에뮬레이터에서 Shift 가 앱 마우스를 우회해 선택하는 것과 동일 — 의도). 구
+        # Shift+swap 은 헤더 드래그 pick-up 으로 이전(아래 divider 검사 직후, 2026-06-05).
         if (getattr(event, "shift", False) and event.button == 1
-                and self.app.mode == "normal"
-                and len(self.app.layout.get("panes", [])) >= 2):
+                and self.app.mode == "normal"):
             p = self._pane_at(event.x, event.y)
-            if p:
-                self._pane_swap = p["id"]
-                self._pane_swap_over = None
-                self.capture_mouse()
-                self.app._composite()
-                event.stop()
-                return
+            self._sel_rect = (p["x"], p["y"], p["w"], p["h"]) if p else None
+            self._sel_pane_id = p["id"] if p else None
+            sx, sy = self._clamp_sel(event.x, event.y)
+            self._sel_start = (sx, sy)
+            self._sel = (sx, sy, sx, sy)
+            self.capture_mouse()
+            self.app._composite()
+            event.stop()
+            return
         # Ctrl+Click 은 무동작 — 컨텍스트 메뉴는 순수 우클릭(button 3)으로만 연다.
         # (단, 터미널이 Ctrl+Click 을 그냥 button 3 으로 합쳐 보내면 ctrl 플래그가
         #  안 와 구분 불가 — 그 경우 우클릭으로 취급됨. 터미널 의존 한계.)
@@ -264,23 +292,30 @@ class MultiplexerView(Widget):
         if op and self.app._close_overlay(op["id"]):
             event.stop()
             return
+        # Claude 클릭존(헤더/권한모드 footer/원격제어)은 claude-code 플러그인이
+        # client_render 훅으로 채운다(없으면 빈 dict → 아래 루프 no-op, 팝업도 getattr
+        # 가드로 호출 안 됨 — delete-to-disable).
         # Claude 프롬프트 헤더 클릭 → 프롬프트 히스토리 팝업(#7)
-        for pid, (zx0, zx1, zy) in self.app._claude_header_zones.items():
+        for pid, (zx0, zx1, zy) in getattr(self.app, "_claude_header_zones",
+                                           {}).items():
             if zy == event.y and zx0 <= event.x < zx1:
-                self.app.open_prompt_history(pid)
+                fn = getattr(self.app, "open_prompt_history", None)  # 플러그인 설치
+                fn and fn(pid)
                 event.stop()
                 return
         # Claude 권한모드 footer 클릭 → 권한모드 선택 팝업(§10 item 2). 패스스루
         # 보다 먼저 가로채 마우스 모드 앱 위에서도 동작한다.
-        for pid, (zx0, zx1, zy) in self.app._perm_zone.items():
+        for pid, (zx0, zx1, zy) in getattr(self.app, "_perm_zone", {}).items():
             if zy == event.y and zx0 <= event.x < zx1:
-                self.app.open_perm_mode(pid)
+                fn = getattr(self.app, "open_perm_mode", None)  # 플러그인 설치
+                fn and fn(pid)
                 event.stop()
                 return
         # Claude 'Remote Control active' 클릭 → 원격제어 정보 팝업(§10 item 3)
-        for pid, (zx0, zx1, zy) in self.app._remote_zone.items():
+        for pid, (zx0, zx1, zy) in getattr(self.app, "_remote_zone", {}).items():
             if zy == event.y and zx0 <= event.x < zx1:
-                self.app.open_remote_control(pid)
+                fn = getattr(self.app, "open_remote_control", None)  # 플러그인 설치
+                fn and fn(pid)
                 event.stop()
                 return
         # 현재 탭 닫기 버튼([x]) 클릭(콘텐츠 오른쪽 위)
@@ -293,6 +328,18 @@ class MultiplexerView(Widget):
         if d:
             self._dragging = d
             self._hover_divider = None   # 드래그 시작 → 호버 강조는 해제
+            self.capture_mouse()
+            event.stop()
+            return
+        # 패널 헤더(위쪽 테두리/제목 행) 드래그 = pick-up(#1). divider 검사 다음이라
+        # 분할 경계(리사이즈)와 안 겹치는 자기 상단 가장자리만 잡힌다. 다운 시엔 들기만
+        # 하고(클릭=포커스 보존을 위해 _pickup_moved 로 클릭/드래그 구분), 놓을 때
+        # on_mouse_up 이 대상(다른 패널=swap·탭바 탭=이동·[+]=새 탭)을 처리한다.
+        hp = self._header_pane_at(event.x, event.y)
+        if hp is not None and self.app.mode == "normal":
+            self._pickup = hp["id"]
+            self._pickup_over = None
+            self._pickup_moved = False
             self.capture_mouse()
             event.stop()
             return
@@ -315,19 +362,22 @@ class MultiplexerView(Widget):
             self.app.send_cmd("select_pane_id", id=p["id"])
         event.stop()
 
-    def _set_footer_hover(self, fh):
-        """Claude footer 호버 대상을 갱신하고, 바뀐 경우에만 재합성한다(떨림 방지)."""
-        if fh != self.app._footer_hover:
-            self.app._footer_hover = fh
-            self.app._composite()
-
     def on_mouse_move(self, event: events.MouseMove):
-        # Shift+드래그 패널 swap 중 — 대상 패널 추적(시각 강조 갱신)
-        if self._pane_swap is not None:
-            p = self._pane_at(event.x, event.y)
-            over = p["id"] if (p and p["id"] != self._pane_swap) else None
-            if over != self._pane_swap_over:
-                self._pane_swap_over = over
+        # 패널 pick-up(헤더 드래그) 중 — 드롭 대상 추적(시각 강조 갱신). capture_mouse
+        # 라 탭바 위로 끌면 event.y 가 음수(뷰 위쪽)로 온다 — 그건 탭바 드롭 후보라
+        # 패널 강조를 끈다(놓을 때 on_mouse_up 이 탭바를 hit-test). 다른 패널 위면 그
+        # 패널을 swap 대상으로 강조한다. 소스 위/같은 자리면 강조 없음.
+        if self._pickup is not None:
+            if event.y < 0:                       # 탭바 영역(뷰 위) — 탭/[+] 드롭 후보
+                over = None
+                self._pickup_moved = True
+            else:
+                p = self._pane_at(event.x, event.y)
+                over = p["id"] if (p and p["id"] != self._pickup) else None
+                if over is not None:
+                    self._pickup_moved = True
+            if over != self._pickup_over:
+                self._pickup_over = over
                 self.app._composite()
             event.stop()
             return
@@ -357,13 +407,8 @@ class MultiplexerView(Widget):
                     self._hover_divider = new_hov
                     self.app._composite()   # 변경 시에만 재합성(떨림 방지)
                 if dv:
-                    self._set_footer_hover(None)
                     event.stop()
                     return
-                # Claude footer(권한모드/원격제어) 클릭존 위 호버 → 배경 강조(클릭
-                # 가능 암시, §10). content 영역과 겹치므로 강조만 하고 패스스루는 막지
-                # 않는다(클릭은 on_mouse_down 이 패스스루보다 먼저 가로챔).
-                self._set_footer_hover(self.app._footer_zone_at(event.x, event.y))
             # 버튼 없는 모션 — any-motion(1003) 앱에만 전달
             pd = self._mouse_target(event.x, event.y)
             if pd is not None and pd.get("mouse", 0) >= 3:
@@ -391,20 +436,42 @@ class MultiplexerView(Widget):
             self.app._composite()
 
     def on_mouse_up(self, event: events.MouseUp):
-        # Shift+드래그 패널 swap 완료 — 대상이 있으면 서버에 swap 요청
-        if self._pane_swap is not None:
-            src = self._pane_swap
-            self._pane_swap = None
-            self._pane_swap_over = None
+        # 패널 pick-up(헤더 드래그) 완료 — 놓은 위치로 동작이 갈린다(#1):
+        #   • 탭바의 다른 탭 위(event.y<0, _hit→tab)     → 그 탭으로 패널 이동
+        #   • 탭바의 [+] 위(_hit→add)                    → 새 탭으로 분리(break)
+        #   • 다른 패널 위                                → 두 패널 swap
+        #   • 제자리/안 움직임(클릭)                      → 그 패널로 포커스만
+        if self._pickup is not None:
+            src = self._pickup
+            self._pickup = None
+            self._pickup_over = None
+            moved = self._pickup_moved
+            self._pickup_moved = False
             try:
                 self.release_mouse()
             except Exception:
                 pass
+            if event.y < 0:                      # 탭바 위에 드롭
+                kind, payload = self.app.tabbar._hit(event.x)
+                cur = next((t["index"] for t in self.app.tabbar.tabs
+                            if t.get("active")), None)
+                if kind == "tab" and payload != cur:
+                    self.app.send_cmd("select_pane_id", id=src)
+                    self.app.send_cmd("move_pane_to_tab", id=src, to=payload)
+                elif kind == "add":
+                    self.app.send_cmd("select_pane_id", id=src)
+                    self.app.send_cmd("break_pane")
+                else:
+                    self.app._composite()        # 같은 탭/빈 곳 — 강조만 해제
+                event.stop()
+                return
             p = self._pane_at(event.x, event.y)
-            if p and p["id"] != src:
+            if moved and p and p["id"] != src:
                 self.app.send_cmd("swap_pane_to", id=src, to_id=p["id"])
             else:
-                self.app._composite()   # 강조 해제만(제자리 놓음)
+                # 안 움직였으면(클릭) 그 패널로 포커스만 — 헤더 클릭=선택 보존.
+                self.app.send_cmd("select_pane_id", id=src)
+                self.app._composite()
             event.stop()
             return
         if self._sel_start is not None:
@@ -797,32 +864,12 @@ class StatusBar(Widget):
         self.cmd_mode = False  # ESC 명령 모드 표시
         self.message = None    # display-message 임시 메시지
         self.hide_tabs = False  # 상단 탭바가 보이면 하단 탭 목록 생략
-        self.claude_active = False  # 활성 패널이 Claude 패널인가(좌하단 토큰 표기 게이트)
-        self.claude_usage = None  # 활성 Claude 패널의 토큰/컨텍스트(best-effort)
-        self.claude_tokens = 0    # 활성 계정 누적 토큰(§10 계정별 합계, 지속표시)
-        self.claude_account = None  # 누적 토큰의 귀속 계정(표시에 곁들임)
-        self.tok5h_pct = None     # M18-B: 5시간 한도 근접도 %(분모 미상이면 None)
-        self.claude_warn = None   # M17: 장기턴/반복루프 경고(grade0, 없으면 None)
-        self.claude_model = None  # M14c: 활성 Claude 모델 배지(opus-4.8 등)
-        self.usage_limits = None  # M19: 그림자 /usage 세션·주간 한도 dict
-        # 토큰 절감 설정(설정 팝업 토글 현재값 + 예산 경고, docs/TOKEN_SAVING_SCENARIO).
-        self.auto_doc_clear = False
-        self.auto_compact = False
-        self.claude_auto_mode = False
-        self.claude_ctx_autoclear = False
-        self.claude_ctx_threshold = 15
-        self.claude_ctx_action = "compact"
-        self.claude_ctx_min_interval = 120
-        self.token_budget_day = 0
-        self.token_budget_session = 0
-        self.token_budget_5h = 0   # M18-B: 5시간 한도 근접도 표시의 분모(설정값)
-        self.token_budget_account = 0  # M15: 계정 합계 예산
-        self.claude_long_turn_sec = 600  # M17: 장기 턴 경고 임계(초, 0=끔)
-        self.claude_repeat_alert = 3     # M17: 반복 루프 경고 임계(회, 0=끔)
-        self.token_budget_resume_gate = False
-        self.claude_budget_plan = False
-        self.budget_level = 0     # 예산 경고 레벨(0/80/100, M10)
-        self.claude_pending = None  # 무장된 자동 액션 {kind, eta초}(M14 카운트다운)
+        # Claude 상태 속성(claude_active/usage/tokens/model·토큰절감 설정·예산·카운트
+        # 다운 등 ~26개)은 코어가 더 이상 두지 않는다 — claude-code 플러그인이
+        # client_statusbar_init 훅으로 이 위젯에 안전 기본값을 설치하고(client.py 생성
+        # 직후 호출), client_statusbar_update(흡수)·client_statusbar(렌더)가 읽고 쓴다.
+        # 플러그인 부재 시 속성이 안 생기지만 흡수/렌더 훅도 함께 사라지고 _render_main
+        # 은 이 속성을 읽지 않아 안전하다(delete-to-disable, Phase 2c 마무리).
         self.bg = bg
         self.fg = fg
         self.left_fmt = left
@@ -936,65 +983,12 @@ class StatusBar(Widget):
         self.prompt_clear = msg.get("prompt_clear", False)
         self.prompt_clear_queue = msg.get("prompt_clear_queue", [])
         self.capture = msg.get("capture", False)
-        # 활성 패널이 Claude 패널인지(권위값, 매 status). 값(tokens/usage)은 아래처럼
-        # 지속표시하되, 렌더는 이 플래그로 게이트해 Claude 가 아닌 탭/패널에선 좌하단
-        # 토큰 표기를 숨긴다. 탭 전환 시 status 가 곧 와 False 로 내려간다.
-        self.claude_active = msg.get("claude_active", False)
-        # §10 지속표시: usage/tokens/account 가 비어 와도(활성 패널이 Claude 가
-        # 아니거나 한 프레임 파싱 실패) 마지막 비어있지 않은 값을 유지한다.
-        # 계정이 바뀌면 서버가 새 비-0 값을 보내므로 자연히 갱신된다.
-        cu = msg.get("claude_usage")
-        if cu:
-            self.claude_usage = cu
-        ct = msg.get("claude_tokens", 0)
-        if ct:
-            self.claude_tokens = ct
-        ca = msg.get("claude_account")
-        if ca:
-            self.claude_account = ca
-        # M18-B: 5시간 한도 근접도 %(분모 미상이면 None — 표시 생략). 토큰처럼 지속
-        # 표시는 안 하고(매 status 권위값), 0/None 이면 곁들임을 떼서 낡은 값이 안 남게.
-        # 근접도 게이지는 0~100 범위다. 추정 분모(token_budget_5h/학습상한)가 실제
-        # 사용량보다 작으면 서버 근사가 100 을 크게 넘어, 과거 상태줄에 "999% / 5h"
-        # (서버 클램프 상한)로 보이는 버그가 있었다 → 100 으로 클램프해 over=at-limit
-        # 로 보여준다(실측 세션% 경로는 이미 0~100 이라 영향 없음).
-        t5 = msg.get("tok5h_pct")
-        self.tok5h_pct = min(100, t5) if isinstance(t5, int) else t5
-        self.claude_warn = msg.get("claude_warn")   # M17 grade0 경고(권위값)
-        cm = msg.get("claude_model")                # M14c 모델 배지(지속표시)
-        if cm:
-            self.claude_model = cm
-        if "usage_limits" in msg:                   # M19 그림자 /usage 결과(권위값)
-            self.usage_limits = msg.get("usage_limits")
-        # 토큰 절감 설정(설정 팝업이 현재값으로 토글을 그리는 데 씀). 항상 권위값 반영.
-        self.auto_doc_clear = msg.get("auto_doc_clear", self.auto_doc_clear)
-        self.auto_compact = msg.get("auto_compact", self.auto_compact)
-        self.claude_auto_mode = msg.get("claude_auto_mode", self.claude_auto_mode)
-        self.claude_ctx_autoclear = msg.get(
-            "claude_ctx_autoclear", self.claude_ctx_autoclear)
-        self.claude_ctx_threshold = msg.get(
-            "claude_ctx_threshold", self.claude_ctx_threshold)
-        self.claude_ctx_action = msg.get(
-            "claude_ctx_action", self.claude_ctx_action)
-        self.claude_ctx_min_interval = msg.get(
-            "claude_ctx_min_interval", self.claude_ctx_min_interval)
-        self.token_budget_day = msg.get("token_budget_day", self.token_budget_day)
-        self.token_budget_session = msg.get(
-            "token_budget_session", self.token_budget_session)
-        self.token_budget_5h = msg.get("token_budget_5h", self.token_budget_5h)
-        self.token_budget_account = msg.get(
-            "token_budget_account", self.token_budget_account)
-        self.claude_long_turn_sec = msg.get(
-            "claude_long_turn_sec", self.claude_long_turn_sec)
-        self.claude_repeat_alert = msg.get(
-            "claude_repeat_alert", self.claude_repeat_alert)
-        self.token_budget_resume_gate = msg.get(
-            "token_budget_resume_gate", self.token_budget_resume_gate)
-        self.claude_budget_plan = msg.get(
-            "claude_budget_plan", self.claude_budget_plan)
-        self.budget_level = msg.get("budget_level", 0)
-        # M14 카운트다운: 서버가 매 status 에 항상 키를 실어 보낸다(없으면 None).
-        self.claude_pending = msg.get("claude_pending")
+        # Claude 필드(claude_active/usage/tokens/model/warn/budget·토큰절감 설정 등)는
+        # claude-code 플러그인의 client_statusbar_update 훅이 이 위젯에 흡수한다(Phase
+        # 2c). 플러그인이 없으면 no-op → claude_* 속성은 __init__ 의 안전한 기본값
+        # (claude_active=False 등) 그대로라 아래 _render_main 의 Claude 세그먼트가 통째로
+        # 비활성(delete-to-disable). self.app 은 마운트 후라 항상 유효.
+        self.app.plugins.client_statusbar_update(self.app, self, msg)
         self.capture_path = msg.get("capture_path")
         self.capture_size = msg.get("capture_size", 0)
         self.refresh()
@@ -1048,85 +1042,10 @@ class StatusBar(Widget):
             segs.append(Segment(" REC ", rec_st))
         self._usage_zone = None
         self._model_zone = None   # 모델 배지 클릭존(모델·컨텍스트 변경 팝업, 요청)
-        # 활성 Claude 패널: 모델(M14c) + 컨텍스트 사용량(best-effort) + 세션 누적(#3, Σ).
-        # Claude 가 아닌 탭/패널에선 좌하단 토큰 표기를 통째로 숨긴다(claude_active 게이트)
-        # — 지속표시 값(claude_tokens 등)은 유지하되 렌더만 막는다.
-        uparts = []
-        if self.claude_active:
-            # 모델 배지는 좁은 폭에선 생략(자리 절약). claude_usage 가 있을 때만.
-            if self.claude_model and self.claude_usage and w >= 60:
-                uparts.append(self.claude_model)
-            if self.claude_usage:
-                uparts.append(self.claude_usage)
-            if self.claude_tokens:
-                # 기호(Σ)와 숫자 사이 한 칸 띄움(§10). 계정이 있으면 @계정 곁들임.
-                # 터미널 폭이 넉넉하면(≥80칸) 약어(6.3M) 대신 세 자리 콤마 전체 숫자로
-                # 보여준다(#30 사용자 요청). 좁으면 기존 약어로 자리를 아낀다.
-                num = (f"{self.claude_tokens:,}" if w >= 80
-                       else _fmt_tokens(self.claude_tokens))
-                tk = "Σ " + num
-                # M18-B: 5시간 한도 근접도(분모 미상이면 None → 생략, 지어내지 않음).
-                if self.tok5h_pct is not None:
-                    tk += f" ({self.tok5h_pct}%/5h)"
-                if self.claude_account:
-                    tk += " @" + self.claude_account
-                uparts.append(tk)
-        if uparts:
-            sec = Style(color="white", bgcolor=tc("secondary"), bold=True)
-            hi = Style(color="black", bgcolor=tc("warning"), bold=True)
-            fb = self.focus_btn
-            ux0 = sum(sum(_char_cells(c) for c in s.text) for s in segs)
-            # 모델 배지(첫 upart)와 나머지(사용량·Σ)를 **분리 세그먼트**로 그려, 각각
-            # 클릭존·esc 포커스 강조가 가능하게 한다(요청). 모델 클릭=모델 팝업,
-            # 나머지 클릭=토큰 로그.
-            has_model = uparts[0] == self.claude_model
-            rest = uparts[1:] if has_model else uparts
-            segs.append(Segment(" ", sec))
-            x = ux0 + 1
-            if has_model:
-                mw = sum(_char_cells(c) for c in uparts[0])
-                self._model_zone = (x, x + mw)
-                segs.append(Segment(uparts[0], hi if fb == "model" else sec))
-                x += mw
-                if rest:
-                    segs.append(Segment(" · ", sec))
-                    x += 3
-            if rest:
-                rtext = " · ".join(rest)
-                rw = sum(_char_cells(c) for c in rtext)
-                segs.append(Segment(rtext, hi if fb == "usage" else sec))
-                x += rw
-            segs.append(Segment(" ", sec))
-            x += 1
-            self._usage_zone = (ux0, x)
-        # M10 토큰 예산 경고(알림만 — 동작 변경 없음). 80%=노랑 ⚠, 100%=빨강 ⚠.
-        # 예산 미설정이면 budget_level 0 이라 표시 안 함(docs/TOKEN_SAVING_SCENARIO).
-        if self.budget_level >= 80:
-            over = self.budget_level >= 100
-            # ⚠ 뒤에 공백: 이모지(⚠ U+26A0)가 터미널에선 2칸으로 그려지는데
-            # wcwidth 는 1칸이라, 바로 뒤 글자가 이모지 둘째 칸에 겹쳐 그려졌다(요청).
-            # 공백 한 칸을 둬 그 둘째 칸을 흡수해 겹침을 막는다.
-            segs.append(Segment(" ⚠ 예산 " + ("초과 " if over else "80% "),
-                                Style(color="white",
-                                      bgcolor=("red" if over else "yellow"),
-                                      bold=True)))
-        # M14 카운트다운 배지: 무장된 자동 액션의 종류 + 남은 초. 비가역 동작이
-        # 곧 일어남을 알리고(발견성), 입력하면 취소됨을 함의한다(§5.3). 배지는
-        # 주황(주의)으로 강조 — 무장돼 있을 때만 나타나고 발화/취소 시 사라진다.
-        if isinstance(self.claude_pending, dict):
-            kind = self.claude_pending.get("kind")
-            eta = self.claude_pending.get("eta", 0)
-            label = "자동재개" if kind == "resume" else "자동정리"
-            segs.append(Segment(f" ⏳ {label} {eta}s(입력=취소) ",  # ⏳ 뒤 공백(겹침 방지)
-                                Style(color="black", bgcolor=tc("warning"),
-                                      bold=True)))
-        # M17(T7): 장기턴/반복루프('폭주 가능') 경고 배지(grade0 — 알림만, 개입 없음).
-        # 색은 error(핑크레드) — 테마상 warning 이 accent 와 같은 앰버(#FEA62B)라
-        # ESC 모드 배지·커서(accent)와 헷갈리던 문제를 피한다(요청).
-        if self.claude_warn:
-            segs.append(Segment(f" ⚠ {self.claude_warn} ",  # ⚠ 뒤 공백(글자 겹침 방지)
-                                Style(color="white", bgcolor=tc("error"),
-                                      bold=True)))
+        # Claude 좌하단 세그먼트(모델 배지·컨텍스트·토큰Σ·예산경고·카운트다운·폭주경고)는
+        # claude-code 플러그인의 client_statusbar 훅이 그리고 위 두 클릭존을 채운다(Phase
+        # 2c). 플러그인이 없으면 no-op → Claude 세그먼트 미표시·클릭존 None(클릭 no-op).
+        self.app.plugins.client_statusbar(self.app, self, segs, w)
         if self.prefix_off:
             segs.append(Segment("NEST ", Style(color="white",
                                                bgcolor=tc("secondary"), bold=True)))
@@ -1196,25 +1115,31 @@ class StatusBar(Widget):
             return
         z = self._clock_zone
         if z and z[0] <= event.x < z[1]:
-            self.app.toggle_clock(self.app.layout.get("active"))
+            # 시각 클릭 → clock-mode 토글(clock 플러그인 설치; 없으면 no-op).
+            fn = getattr(self.app, "toggle_clock", None)
+            fn and fn(self.app.layout.get("active"))
             event.stop()
             return
         dz = self._date_zone
         if dz and dz[0] <= event.x < dz[1]:
-            self.app.toggle_calendar(self.app.layout.get("active"))
+            # 날짜 클릭 → calendar-mode 토글(calendar 플러그인 설치; 없으면 no-op).
+            fn = getattr(self.app, "toggle_calendar", None)
+            fn and fn(self.app.layout.get("active"))
             event.stop()
             return
         mz = self._model_zone
         if mz and mz[0] <= event.x < mz[1]:
-            # 모델 배지 클릭 → 모델·컨텍스트 변경 팝업(요청).
-            self.app.open_model_config()
+            # 모델 배지 클릭 → 모델·컨텍스트 변경 팝업(claude-code 플러그인 설치).
+            fn = getattr(self.app, "open_model_config", None)
+            fn and fn()
             event.stop()
             return
         uz = self._usage_zone
         if uz and uz[0] <= event.x < uz[1]:
             # 토큰 사용량 클릭 → 영속 통계 팝업(계정=클라이언트별 · 시간/일/주/월,
-            # 모든 세션 합계 포함, pytmux 재시작 후에도 유지).
-            self.app.open_token_log()
+            # 모든 세션 합계 포함, pytmux 재시작 후에도 유지). claude-code 플러그인 설치.
+            fn = getattr(self.app, "open_token_log", None)
+            fn and fn()
             event.stop()
             return
         hz = self._host_zone

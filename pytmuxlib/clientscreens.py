@@ -14,16 +14,13 @@ from textual.screen import ModalScreen
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import (DataTable, Input, Label, ListItem, ListView,
-                             Static, TextArea)
+from textual.widgets import Input, Label, ListItem, ListView
 
 from rich.highlighter import Highlighter
-from rich.text import Text
 
-from . import usagelog
 from .clientutil import (COMMAND_FREETEXT, COMMAND_NOARG, COMMAND_OPTIONS,
                          COMMANDS, MENU_ITEMS, MENU_TOGGLES, PANE_SCOPED_CMDS,
-                         SAVER_ROWS, _char_cells, has_hangul, hangul_to_qwerty,
+                         _char_cells, bar, has_hangul, hangul_to_qwerty,
                          norm_sep, theme_color)
 
 
@@ -98,14 +95,18 @@ class CommandListScreen(ModalScreen):
         super().__init__()
         # 전체 항목을 카테고리 등장 순서로 그룹화(검색은 런타임 필터 — 전체를 보관).
         order, bucket = [], {}
+        all_items = []
         for it in items:
             cat = it[2] if len(it) > 2 else "기타"
             if cat not in bucket:
                 bucket[cat] = []
                 order.append(cat)
             bucket[cat].append((it[0], it[1]))
-        self._all_cats = [(c, bucket[c]) for c in order]
-        self._ci = 0          # 현재 카테고리 인덱스
+            all_items.append((it[0], it[1]))
+        # 맨 앞에 '전체' 가상 카테고리 — 모든 명령을 등장 순서로 모아 ↑↓ 로 한 탭에서
+        # 전부 훑어볼 수 있게 한다(요청). 길면 _CMDS_MAX_ROWS 로 클램프되어 스크롤된다.
+        self._all_cats = [("전체", all_items)] + [(c, bucket[c]) for c in order]
+        self._ci = 0          # 현재 카테고리 인덱스(기본='전체' → 바로 전부 탐색)
         self._cur = []        # 현재 카테고리의 (필터된) (이름, 설명) 목록
         self._query = query or ""   # 검색어(초기값=호출부가 넘긴 부분 입력)
 
@@ -331,88 +332,6 @@ class CommandOptionsScreen(ModalScreen):
             self._labs[i].update(self._row_text(i))
             self._update_sub()
 
-class ModelCtxScreen(ModalScreen):
-    """Claude 모델·컨텍스트 크기 변경 팝업(요청). 상태줄 모델 배지 클릭 / `model`
-    명령 / esc 모드 상태바 포커스로 연다. ←→ 로 값 변경, Enter 로 적용(=활성 패널에
-    '/model <이름> [컨텍스트]' 주입), Esc 취소. CommandOptionsScreen 의 행 패턴 재사용."""
-    CSS = """
-    ModelCtxScreen { align: center middle; }
-    #mcmenu { width: 56; height: auto; max-height: 80%;
-              border: round $accent; background: $panel; }
-    """
-    # 모델 후보(짧은 별칭 + 구체 버전). '/model <이름>' 인자로 그대로 주입한다.
-    _MODELS = ["opus", "sonnet", "haiku",
-               "opus-4.8", "sonnet-4.6", "haiku-4.5", "default"]
-    # 컨텍스트 크기: 기본 / 1M(확장). 'default' 면 모델만, 아니면 뒤에 토큰으로 덧붙임.
-    _CTX = [("기본", "default"), ("1M", "1m")]
-
-    def __init__(self, current_model=None):
-        super().__init__()
-        models = [(m, m) for m in self._MODELS]
-        mi = 0
-        if current_model:
-            cm = current_model.lower()
-            for i, (_d, v) in enumerate(models):
-                if cm.startswith(v.lower()) and v != "default":
-                    mi = i
-                    break
-        self.rows = [{"label": "모델", "choices": models},
-                     {"label": "컨텍스트", "choices": list(self._CTX)}]
-        self.sel = [mi, 0]
-
-    def compose(self) -> ComposeResult:
-        self._labs = []
-        items = []
-        for i in range(len(self.rows)):
-            lab = Label(self._row_text(i))
-            self._labs.append(lab)
-            items.append(ListItem(lab, id=f"mc_{i}"))
-        yield ListView(*items, id="mcmenu")
-
-    def on_mount(self):
-        lv = self.query_one(ListView)
-        lv.index = 0
-        lv.focus()
-        lv.border_title = "모델·컨텍스트 변경 · ←→ 값 · Enter 적용 · Esc"
-        self._update_sub()
-
-    def _row_text(self, i):
-        o, si = self.rows[i], self.sel[i]
-        cur = o["choices"][si][0]
-        arrows = "◀ ▶" if len(o["choices"]) > 1 else "    "
-        return f"{o['label']}:  {arrows}  {cur}"
-
-    def _result(self):
-        model = self.rows[0]["choices"][self.sel[0]][1]
-        ctx = self.rows[1]["choices"][self.sel[1]][1]
-        return (model, ctx)
-
-    def _update_sub(self):
-        model, ctx = self._result()
-        arg = model if ctx == "default" else f"{model} {ctx}"
-        self.query_one(ListView).border_subtitle = ": /model " + arg
-
-    def on_list_view_selected(self, event):
-        self.dismiss(self._result())
-
-    def on_key(self, event: events.Key):
-        k = event.key
-        if k == "escape":
-            event.stop()
-            self.dismiss(None)
-        elif k == "enter":
-            event.stop()
-            self.dismiss(self._result())
-        elif k in ("left", "right") and self.rows:
-            event.stop()
-            i = self.query_one(ListView).index or 0
-            o = self.rows[i]
-            self.sel[i] = (self.sel[i] + (1 if k == "right" else -1)) \
-                % len(o["choices"])
-            self._labs[i].update(self._row_text(i))
-            self._update_sub()
-
-
 class MenuScreen(ModalScreen):
     CSS = """
     MenuScreen { align: center middle; }
@@ -474,62 +393,6 @@ class MenuScreen(ModalScreen):
         if event.key == "escape":
             event.stop()
             self.dismiss(None)
-
-class ClaudeSaverScreen(ModalScreen):
-    """토큰 절감 설정 팝업(docs/TOKEN_SAVING_SCENARIO.md, `token-saver` 명령).
-
-    각 자동 개입을 ●/○ 로 토글하고, 정리 방식·잔량 임계·일/세션 예산을 Enter 로
-    프리셋 순환한다. ESC 로 닫는다. MenuScreen 과 같은 위임 구조 — 현재값/동작은
-    app._saver_display/_saver_action 이 처리하고(앱 상태 의존), 서버 status 회신마다
-    refresh_labels 로 권위값을 다시 그린다(client.py 의 _saver_screen 훅)."""
-    CSS = """
-    ClaudeSaverScreen { align: center middle; background: $background 80%; }
-    #saver { width: 64; height: auto; max-height: 90%;
-             border: round $accent; background: $panel; }
-    #saver_hint { color: $text-muted; }
-    """
-
-    def compose(self) -> ComposeResult:
-        self._labels = {}
-        items = []
-        for key, label, _kind in SAVER_ROWS:
-            lab = Label(self._fmt(key, label))
-            self._labels[key] = (lab, label)
-            items.append(ListItem(lab, id=f"s_{key}"))
-        items.append(ListItem(Label("Enter 토글/순환 · ESC 닫기", id="saver_hint"),
-                              id="s__hint", disabled=True))
-        yield ListView(*items, id="saver")
-
-    def _fmt(self, key, label):
-        return f"{label}   {self.app._saver_display(key)}"
-
-    def refresh_labels(self):
-        for key, (lab, base) in getattr(self, "_labels", {}).items():
-            lab.update(self._fmt(key, base))
-
-    def on_mount(self):
-        self.query_one(ListView).focus()
-        self.app._saver_screen = self
-
-    def on_unmount(self):
-        if getattr(self.app, "_saver_screen", None) is self:
-            self.app._saver_screen = None
-
-    def on_list_view_selected(self, event):
-        item_id = event.item.id or ""
-        if not item_id.startswith("s_") or item_id == "s__hint":
-            return
-        key = item_id[2:]
-        # 토글/순환은 팝업을 닫지 않고 동작만 보낸 뒤 라벨을 낙관적으로 갱신한다
-        # (_saver_action 이 status 를 즉시 반영). 서버 broadcast 가 권위값으로 확정.
-        self.app._saver_action(key)
-        self.refresh_labels()
-
-    def on_key(self, event: events.Key):
-        if event.key == "escape":
-            event.stop()
-            self.dismiss(None)
-
 
 class ChooseTreeScreen(ModalScreen):
     CSS = """
@@ -1039,71 +902,6 @@ class InfoTabsScreen(ModalScreen):
         # 그 외 키 → 닫기(InfoScreen 과 동일한 가벼운 닫힘)
         self.dismiss(None)
 
-class RulesEditScreen(ModalScreen):
-    """Claude 시작 규칙 편집 팝업(#27). 멀티라인 에디터에 '항상 지킬 규칙'을 적고
-    Ctrl+S 로 저장(dismiss=텍스트), Esc 로 취소(dismiss=None). 저장된 규칙은 새
-    Claude 세션/clear 후 프롬프트에 자동 주입된다(빈값이면 주입 안 함)."""
-    CSS = """
-    RulesEditScreen { align: center middle; background: $background 80%; }
-    #rulesbox { width: 90%; max-width: 100; height: auto; max-height: 90%;
-                border: round $accent; background: $panel; padding: 0 1; }
-    /* 헤더: 타이틀(1fr) + 우측 닫기 [x]. */
-    #ruleshead { width: 100%; height: 1; }
-    #rulestitle { width: 1fr; height: 1; color: $accent; text-style: bold; }
-    #rulesclose { width: 5; height: 1; content-align: center middle;
-                  background: $error; color: $text; text-style: bold; }
-    /* 타이틀과 에디터 사이 한 줄(여백). */
-    #rulesspacer { width: 100%; height: 1; }
-    #rulesedit { width: 100%; height: auto; min-height: 8; max-height: 70%; }
-    /* 하단 저장/취소 버튼(에디터와 한 줄 띄움, 우측 정렬). */
-    #rulesbtns { width: 100%; height: 1; margin-top: 1; align-horizontal: right; }
-    #rulesbtns Label { width: auto; height: 1; padding: 0 2; margin-left: 2;
-                       text-style: bold; }
-    #rulessave { background: $success; color: $text; }
-    #rulescancel { background: $panel-darken-2; color: $text; }
-    """
-
-    def __init__(self, text=""):
-        super().__init__()
-        self._text = text or ""
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="rulesbox"):
-            with Horizontal(id="ruleshead"):
-                yield Label("Claude 시작 규칙 — Ctrl+S 저장 · Esc 취소",
-                            id="rulestitle")
-                # markup=False: "[x]" 가 마크업 태그로 사라지지 않게.
-                yield Label("[x]", id="rulesclose", markup=False)  # 닫기 버튼
-            yield Label("", id="rulesspacer")        # 타이틀↔에디터 한 줄 여백
-            yield TextArea(self._text, id="rulesedit")
-            with Horizontal(id="rulesbtns"):
-                yield Label("저장", id="rulessave")
-                yield Label("취소", id="rulescancel")
-
-    def on_mount(self):
-        ta = self.query_one(TextArea)
-        ta.focus()
-
-    def on_click(self, event: events.Click):
-        # 닫기 [x]/취소 → 취소(None), 저장 → 텍스트 반환. 그 외(에디터 등) 유지.
-        w = getattr(event, "widget", None)
-        while w is not None:
-            wid = getattr(w, "id", None)
-            if wid in ("rulesclose", "rulescancel"):
-                event.stop(); self.dismiss(None); return
-            if wid == "rulessave":
-                event.stop(); self.dismiss(self.query_one(TextArea).text); return
-            w = w.parent
-
-    def on_key(self, event: events.Key):
-        if event.key == "escape":
-            event.stop()
-            self.dismiss(None)
-        elif event.key == "ctrl+s":
-            event.stop()
-            self.dismiss(self.query_one(TextArea).text)
-
-
 def usage_bar_lines(usage, width=80):
     """Claude `/usage` 한도 dict(session·week_all·week_sonnet)를 보기 좋은 표시
     줄 목록으로 만든다. 각 줄: 라벨(10셀 패딩) + 막대 + % + 리셋(요약, 타임존 생략).
@@ -1118,9 +916,9 @@ def usage_bar_lines(usage, width=80):
         if not (isinstance(d, dict) and d.get("pct") is not None):
             continue
         pct = d["pct"]
-        bar = usagelog.bar(pct, 100, barw)
+        gauge = bar(pct, 100, barw)
         label = name + " " * max(0, 10 - sum(_char_cells(c) for c in name))
-        line = f"{label}{bar} {pct:>3}%"
+        line = f"{label}{gauge} {pct:>3}%"
         reset = d.get("reset")
         if reset:                            # 타임존 괄호는 자리 절약 위해 생략
             line += "  ↻" + reset.split(" (")[0].strip()
@@ -1133,388 +931,6 @@ def usage_bar_lines(usage, width=80):
                     else "계정(/usage): 미확인 (폰 앱과 같은 계정인지 확인)")
     return rows or None
 
-
-class TokenLogScreen(ModalScreen):
-    """토큰 사용량 영속 로그 집계 팝업(#7). 서버가 보낸 레코드를 클라이언트가
-    usagelog 로 시간/일/주/월 × 계정(=클라이언트) 집계한다. [h]시간 [d]일 [w]주
-    [m]월 버킷 전환, [a] 계정 필터 순환, 방향키 스크롤, 그 외/Esc 닫기(라운드트립
-    없이 전환)."""
-    CSS = """
-    TokenLogScreen { align: center middle; }
-    /* 높이 고정(2026-06-07 사용자 요청): 내용(레코드 수)에 따라 박스가 줄거나
-       출렁이지 않게 **고정 높이**로 둔다. 표(DataTable)는 1fr 로 남는 높이를 채운다. */
-    #tklogbox { width: 96%; max-width: 86; height: 76%;
-                border: round $accent; background: $panel; padding: 0 1; }
-    #tkloghead { width: 100%; height: 1; }
-    #tklogtitle { width: 1fr; height: 1; color: $accent; text-style: bold; }
-    #tklogclose { width: 5; height: 1; content-align: center middle;
-                  background: $error; color: $text; text-style: bold; }
-    /* 버튼 행: 역할(위계)별 외곽선 그룹(기간/보기/조회)을 가로로 나란히. */
-    #tktabs { width: 100%; height: auto; align-horizontal: left; }
-    /* 같은 위계 버튼을 한 외곽선 안에 묶는 그룹 박스. 제목(기간/보기/조회)을
-       왼쪽 윗변에 옅게 달아 역할을 표시한다(높이=테두리2+버튼1=3행). */
-    .tkgroup { width: auto; height: 3; border: round $primary;
-               border-title-color: $text-muted; border-title-align: left;
-               padding: 0 1; margin: 0 1 0 0; }
-    #tktabs Label { height: 1; padding: 0 1; margin: 0 1 0 0; }
-    .tkbtab { background: $surface; color: $text-muted; }
-    .tkbtab-active { background: $accent; color: $text; text-style: bold; }
-    .tkbbtn { background: $primary-darken-2; color: $text; }
-    /* 스코프/한도(위)·키 안내(아래)는 옅게 1~몇 줄, 표가 남는 높이를 채운다. */
-    #tktop { width: 100%; height: auto; color: $text-muted; }
-    #tkhint { width: 100%; height: 1; color: $text-muted; }
-    #tktable { width: 100%; height: 1fr; }
-    """
-    _NAV_KEYS = ("up", "down", "pageup", "pagedown", "home", "end")
-    _BUCKETS = {"h": "hour", "d": "day", "w": "week", "m": "month"}
-    # 서브탭 위젯 id → 버킷.
-    _TAB_BUCKET = {"tab_hour": "hour", "tab_day": "day",
-                   "tab_week": "week", "tab_month": "month"}
-    # 탭 라벨(넓은 폭, 좁은 폭). 좁으면 한 글자로 줄여 모바일에서 탭 줄이 안 넘치게(P6).
-    _TAB_LABELS = {
-        "tab_hour": ("시간", "시"), "tab_day": ("일", "일"),
-        "tab_week": ("주", "주"), "tab_month": ("월", "월"),
-        "tab_acct": ("계정", "계"), "tab_panel": ("패널", "패"),
-        "tab_order": ("정렬", "정"), "tab_usage": ("/usage", "U"),
-        "tab_saver": ("시나리오", "S"),
-    }
-    # [패널]/계정 그룹이 많을 때 상위 N + '기타'로 접어 길이 폭주를 막는다(설계 §4).
-    _GROUP_TOP = 8
-
-    def __init__(self, records, usage=None, total_all=None, accounts_total=None):
-        super().__init__()
-        self._records = records or []
-        self._usage = usage          # M19 그림자 /usage 한도(dict|None)
-        # Phase B: 서버가 SQL 로 집계한 정확한 전체 이력 합(레코드 cap 무관). 받은
-        # 레코드(_records)는 최근 N 건이라 그 Σ 는 과소표시될 수 있으므로, lifetime
-        # 합은 이 값을 쓴다(None=구버전 서버 → 레코드 합으로 폴백).
-        self._total_all = total_all
-        self._accounts_total = accounts_total or {}
-        self._bucket = "day"
-        # 그룹 차원: "account"=계정별(기본), "session"=세션별([패널] 탭). 패널은
-        # 닫히고 재사용되므로 안정적 세션 id 로 묶는다(설계 §8, 사용자 결정).
-        self._dim = "account"
-        # 버킷(시간축) 정렬: "time"=최근 위(기본), "tokens"=많이 쓴 순([o] 토글).
-        self._order = "time"
-        # 계정 필터 순환 목록: None(전체) + 등장 계정들(정렬)
-        seen = []
-        for r in self._records:
-            a = r.get("account") or usagelog.UNKNOWN
-            if a not in seen:
-                seen.append(a)
-        self._accounts = [None] + sorted(seen)
-        self._ai = 0
-
-    @property
-    def _account(self):
-        return self._accounts[self._ai]
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="tklogbox"):
-            with Horizontal(id="tkloghead"):
-                yield Label("토큰 사용량", id="tklogtitle")
-                # markup=False: "[x]" 가 마크업 태그로 사라지지 않게(배경색만
-                # 남고 X 가 안 보이던 버그).
-                yield Label("[x]", id="tklogclose", markup=False)  # 닫기 버튼
-            # 마우스로 누르는 버튼 행. 역할(위계)별로 외곽선 그룹에 묶는다(사용자
-            # 요청): ①기간(라디오: 시간/일/주/월) ②보기(필터/토글: 계정/패널/정렬)
-            # ③조회(동작: /usage·시나리오). 같은 위계 버튼은 한 외곽선 안에 모인다.
-            with Horizontal(id="tktabs"):
-                with Horizontal(id="tkgrp_period", classes="tkgroup"):
-                    yield Label("시간", id="tab_hour", classes="tkbtab",
-                                markup=False)
-                    yield Label("일", id="tab_day", classes="tkbtab",
-                                markup=False)
-                    yield Label("주", id="tab_week", classes="tkbtab",
-                                markup=False)
-                    yield Label("월", id="tab_month", classes="tkbtab",
-                                markup=False)
-                with Horizontal(id="tkgrp_view", classes="tkgroup"):
-                    yield Label("계정", id="tab_acct", classes="tkbtab",
-                                markup=False)
-                    yield Label("패널", id="tab_panel", classes="tkbtab",
-                                markup=False)
-                    yield Label("정렬", id="tab_order", classes="tkbtab",
-                                markup=False)
-                with Horizontal(id="tkgrp_query", classes="tkgroup"):
-                    yield Label("/usage", id="tab_usage", classes="tkbbtn",
-                                markup=False)
-                    yield Label("시나리오", id="tab_saver", classes="tkbbtn",
-                                markup=False)
-            yield Static("", id="tktop", markup=False)
-            table = DataTable(id="tktable", zebra_stripes=True,
-                              cursor_type="row")
-            table.can_focus = True
-            yield table
-            yield Static("", id="tkhint", markup=False)
-
-    async def on_mount(self):
-        # status 훅이 새 /usage 결과를 이 화면에 밀어넣게 등록(M19). 자동 조회는 안
-        # 한다(매번 열 때 숨은 claude 기동은 과함) — 마지막 결과를 보여주고, 갱신은
-        # [/usage] 버튼/`claude-usage` 명령으로 명시 트리거한다.
-        self.app._token_log_screen = self
-        # 역할별 외곽선 그룹 제목(위계 표시). compose 의 as-캡처 대신 관례대로
-        # 마운트 후 위젯 참조로 설정한다.
-        for gid, title in (("#tkgrp_period", "기간"), ("#tkgrp_view", "보기"),
-                           ("#tkgrp_query", "조회")):
-            try:
-                self.query_one(gid, Horizontal).border_title = title
-            except Exception:
-                pass
-        await self._refresh()
-        self.query_one(DataTable).focus()
-
-    def on_unmount(self):
-        if getattr(self.app, "_token_log_screen", None) is self:
-            self.app._token_log_screen = None
-
-    def update_usage(self, usage):
-        """클라 status 훅이 새 /usage 결과를 전달하면 갱신·재그린다(M19)."""
-        if usage and usage != self._usage:
-            self._usage = usage
-            self.run_worker(self._refresh())
-
-    @staticmethod
-    def _cellpad(s, cells):
-        """문자열을 표시 셀폭 cells 로 우측 패딩(한글 2셀 고려) — 막대 그래프 정렬용."""
-        used = sum(_char_cells(c) for c in s)
-        return s + " " * max(0, cells - used)
-
-    def _usage_lines(self):
-        """M19 그림자 /usage 한도를 **막대 그래프**로 보여준다(요청 — Claude /usage 의
-        세션/주간 사용률 바). 공유 포맷터(usage_bar_lines)를 쓰고, 데이터가 없으면
-        안내 1줄([u] 로 조회)로 폴백한다."""
-        try:
-            w = self.app.size.width
-        except Exception:
-            w = 80
-        return usage_bar_lines(self._usage, w) or ["한도(/usage): [u] 눌러 조회"]
-
-    def _sync_tabs(self):
-        """탭 라벨(폭 반응형)·활성 버킷·활성 그룹차원([패널])·정렬([정렬]) 강조."""
-        try:
-            narrow = self.app.size.width < 64
-        except Exception:
-            narrow = False
-        for tid, (full, short) in self._TAB_LABELS.items():
-            try:
-                self.query_one("#" + tid, Label).update(short if narrow else full)
-            except Exception:
-                pass
-        for tid, bucket in self._TAB_BUCKET.items():
-            try:
-                lab = self.query_one("#" + tid, Label)
-            except Exception:
-                continue
-            lab.set_class(bucket == self._bucket, "tkbtab-active")
-        # 보기 그룹 활성 강조: [계정]은 특정 계정 필터 시, [패널]은 세션 차원일 때,
-        # [정렬]은 토큰순일 때 — 필터가 걸려 있음을 라디오와 같은 강조로 보여준다.
-        try:
-            self.query_one("#tab_acct", Label).set_class(
-                self._account is not None, "tkbtab-active")
-            self.query_one("#tab_panel", Label).set_class(
-                self._dim == "session", "tkbtab-active")
-            self.query_one("#tab_order", Label).set_class(
-                self._order == "tokens", "tkbtab-active")
-        except Exception:
-            pass
-
-    def _metrics(self):
-        """현재 폭 티어로 (라벨 셀폭, 막대 칸수)를 정한다(반응형). 막대 칸수는
-        DataTable 셀 패딩+세로 스크롤바가 폭을 먹어도 % 가 안 잘리게 여유를 둔다."""
-        try:
-            w = self.app.size.width
-        except Exception:
-            w = 0
-        if w >= 80:
-            return 26, 12
-        if w >= 60:
-            return 20, 8
-        if w >= 44:
-            return 15, 4
-        return 11, 0
-
-    @staticmethod
-    def _tok_aligned(tok, maxdigits):
-        """토큰 약식 표기를 '전체(미약식) 자릿수' 기준으로 왼쪽 들여쓴다 — 값이 클수록
-        더 왼쪽에서 시작해 한눈에 대소를 비교할 수 있다(사용자 요청). 예: 1.7M(7자리)은
-        들여쓰기 0, 5.2k(4자리)은 (maxdigits-4)칸 들여써 작은 값이 오른쪽으로 밀린다.
-        약식 문자열은 단위(M/k)로 자릿수를 가려 우측정렬만으로는 대소가 헷갈렸다."""
-        s = usagelog._fmt_tokens(tok)
-        digits = len(str(int(tok))) if tok else 1
-        return " " * max(0, maxdigits - digits) + s
-
-    @staticmethod
-    def _trunc(s, cells):
-        """문자열을 셀폭 cells 로 자른다(한글 2셀 고려, 넘치면 … 말줄임)."""
-        if cells <= 0:
-            return ""
-        used, out = 0, []
-        for ch in s:
-            cw = _char_cells(ch)
-            if used + cw > cells:
-                while out and used + 1 > cells:
-                    used -= _char_cells(out[-1])
-                    out.pop()
-                out.append("…")
-                return "".join(out)
-            out.append(ch)
-            used += cw
-        return "".join(out)
-
-    def _barcell(self, tok, vmax, pct, cells):
-        """% + 막대 셀 문자열. % 를 **앞에** 둔다 — 스크롤바/패딩이 폭을 먹어 셀
-        오른쪽이 잘려도 핵심 숫자(%)는 항상 보이고 막대 꼬리만 잘린다. cells<=0 이면 % 만."""
-        p = f"{pct:>3}%"
-        if cells <= 0:
-            return p
-        return f"{p} {usagelog.bar(tok, vmax, cells)}"
-
-    async def _refresh(self):
-        self._sync_tabs()
-        table = self.query_one(DataTable)
-        table.clear(columns=True)
-        label_w, bar_cells = self._metrics()
-        v = usagelog.agg_view(self._records, self._bucket, self._account,
-                              self._dim, self._order, top=self._GROUP_TOP)
-        dimname = "세션" if self._dim == "session" else "계정"
-        # 토큰 열: 약식(1.7M·5.2k)은 단위가 자릿수를 가려 우측정렬만으론 대소가
-        # 헷갈린다. 표시되는 모든 값의 '전체 자릿수' 최댓값을 기준으로 작은 값을
-        # 더 들여써(큰 값일수록 왼쪽에서 시작) 한눈에 비교되게 한다(사용자 요청).
-        toks = [t for _, t, _ in v["groups"]] + [t for _, t, _ in v["buckets"]]
-        maxdig = max((len(str(int(t))) for t in toks if t), default=1)
-        tok_w = min(11, max(6, max((len(self._tok_aligned(t, maxdig))
-                                    for t in toks), default=6)))
-        # 컬럼: 항목 | 토큰(자릿수 정렬, 좌측) | 비율(막대+%)
-        table.add_column("항목", key="label", width=label_w)
-        table.add_column(Text("토큰", justify="left"), key="tok", width=tok_w)
-        table.add_column("비율", key="bar", width=bar_cells + 5)
-
-        def add(label, tok, pct, vmax):
-            table.add_row(self._trunc(label, label_w),
-                          Text(self._tok_aligned(tok, maxdig), justify="left"),
-                          self._barcell(tok, vmax, pct, bar_cells))
-
-        if not self._records or v["total"] == 0:
-            table.add_row("(기록된 토큰 사용량이 없습니다)", "", "")
-        else:
-            # 그룹(계정/세션)이 2개 이상일 때만 그룹별 총합 + 구분선(단일이면 중복이라 생략).
-            if v["multi"]:
-                for label, tok, pct in v["groups"]:
-                    add(label, tok, pct, v["gmax"])
-                table.add_row(f"── 시간({self._bucket}) ──", "", "")
-            for label, tok, pct in v["buckets"]:
-                add(label, tok, pct, v["bmax"])
-
-        # 제목: 묶음·버킷·정렬·전체 합. 스코프/한도(위)·키 안내(아래)는 분리.
-        order_l = "토큰순" if self._order == "tokens" else "시간순"
-        self.query_one("#tklogtitle", Label).update(
-            f"토큰 사용량 · {self._bucket} · {dimname}별")
-        acct = self._account if self._account is not None else "전체"
-        # Σ: 정확한 전체 이력 합(서버 SQL 집계, Phase B). 현재 계정 필터에 맞춰
-        # total_all(전체) / accounts_total[acct](계정별)을 쓰고, 없으면(구버전 서버)
-        # 표시 레코드 합으로 폴백. 레코드가 cap 돼 표시 합과 다르면 그 표시 합을 병기.
-        win = v["total"]
-        if self._account is None:
-            life = self._total_all
-        else:
-            life = self._accounts_total.get(self._account)
-        if life is None:
-            life = win
-        sigma = f"Σ{usagelog._fmt_tokens(life)}"
-        if life != win:
-            sigma += f" (표시 {usagelog._fmt_tokens(win)})"
-        # 스코프는 1줄로 컴팩트(묶음/버킷은 제목에 이미 있음). 표 높이를 아낀다.
-        top = self._usage_lines() + [
-            f"계정 {acct} · {order_l} · {sigma}"]
-        self.query_one("#tktop", Static).update("\n".join(top))
-        self.query_one("#tkhint", Static).update(
-            "h시간 d일 w주 m월 · a계정 p패널 o정렬 · u/usage s시나리오 · Esc닫기")
-
-    def on_click(self, event: events.Click):
-        # 마우스 클릭: 닫기 [x]·서브탭(버킷)·동작 버튼을 위젯 id 로 분기한다.
-        w = getattr(event, "widget", None)
-        wid = None
-        while w is not None:
-            wid = getattr(w, "id", None)
-            if wid:
-                break
-            w = w.parent
-        if wid == "tklogclose":
-            event.stop()
-            self.dismiss(None)
-        elif wid in self._TAB_BUCKET:
-            event.stop()
-            self._bucket = self._TAB_BUCKET[wid]
-            self.run_worker(self._refresh())
-        elif wid == "tab_acct":
-            event.stop()
-            if len(self._accounts) > 1:
-                self._ai = (self._ai + 1) % len(self._accounts)
-                self.run_worker(self._refresh())
-        elif wid == "tab_panel":
-            event.stop()
-            # 그룹 차원 토글: 계정별 ↔ 세션별([패널]).
-            self._dim = "account" if self._dim == "session" else "session"
-            self.run_worker(self._refresh())
-        elif wid == "tab_order":
-            event.stop()
-            # 버킷 정렬 토글: 시간순 ↔ 토큰순.
-            self._order = "tokens" if self._order == "time" else "time"
-            self.run_worker(self._refresh())
-        elif wid == "tab_usage":
-            event.stop()
-            self.app.send_cmd("refresh_usage")
-            self.query_one("#tklogtitle", Label).update("/usage 조회 중… (~수초)")
-        elif wid == "tab_saver":
-            event.stop()
-            self.app.open_claude_saver()
-
-    async def on_key(self, event: events.Key):
-        k = event.key
-        if k in self._BUCKETS:
-            event.stop()
-            self._bucket = self._BUCKETS[k]
-            await self._refresh()
-            return
-        if k == "a" and len(self._accounts) > 1:
-            event.stop()
-            self._ai = (self._ai + 1) % len(self._accounts)
-            await self._refresh()
-            return
-        if k == "p":
-            event.stop()
-            # 그룹 차원 토글: 계정별 ↔ 세션별([패널]).
-            self._dim = "account" if self._dim == "session" else "session"
-            await self._refresh()
-            return
-        if k == "o":
-            event.stop()
-            # 버킷 정렬 토글: 시간순 ↔ 토큰순.
-            self._order = "tokens" if self._order == "time" else "time"
-            await self._refresh()
-            return
-        if k == "s":
-            event.stop()
-            # M18-C: 사용량 통계에서 바로 과사용 완화 시나리오 on/off 로(§9.4).
-            self.app.open_claude_saver()
-            return
-        if k == "u":
-            event.stop()
-            # M19: 그림자 /usage 갱신 요청. 결과는 status 로 와 다음 열람부터 반영.
-            self.app.send_cmd("refresh_usage")
-            self.query_one("#tklogtitle", Label).update("/usage 조회 중… (~수초)")
-            return
-        if k in self._NAV_KEYS:
-            # 스크롤/커서는 포커스된 DataTable 이 자체 처리 — 가로채지 않는다.
-            return
-        if k == "escape":
-            event.stop()
-            self.dismiss(None)
-            return
-        # 그 외 키는 닫는다(기존 동작).
-        event.stop()
-        self.dismiss(None)
 
 class PromptScreen(ModalScreen):
     """명령/이름변경/검색 등 한 줄 입력을 받는 바닥 고정 모달.
@@ -1601,27 +1017,49 @@ class PromptScreen(ModalScreen):
         # rich/Textual 마크업으로 해석되지 않게 '[' 를 이스케이프.
         return s.replace("[", r"\[")
 
+    def _commands(self):
+        """후보·힌트용 명령 풀 = 코어 COMMANDS + 등록된 플러그인 명령(clock-mode·
+        auto-compact 등). 플러그인 디렉토리를 지우면 그 명령이 후보·힌트에서 조용히
+        빠진다('?' 목록이 `COMMANDS + reg.commands` 를 쓰는 것과 동일한 풀)."""
+        reg = getattr(self.app, "plugins", None)
+        return list(COMMANDS) + (list(reg.commands) if reg else [])
+
+    def _command_options(self):
+        """코어 COMMAND_OPTIONS + 플러그인 command_options(토글/선택지 인자 스키마).
+        플러그인 명령(예: auto-compact on|off)도 인자 자리서 방향키 선택 UI 를 띄운다."""
+        reg = getattr(self.app, "plugins", None)
+        opts = dict(COMMAND_OPTIONS)
+        if reg:
+            opts.update(reg.command_options or {})
+        return opts
+
     def _refresh_cands(self):
-        """입력의 첫 토큰(명령 이름)으로 부분일치 후보를 재계산하고 후보 영역을
-        갱신한다. 토큰에 공백이 생기면(= 옵션 입력 단계) 후보를 숨긴다."""
+        """입력을 명령 이름과 부분일치시켜 후보 영역을 갱신한다. 구분자(공백·언더바·
+        하이픈)는 norm_sep 로 통일하므로 'clock m'·'clock_m'·'clock-m' 이 모두
+        'clock-mode' 에 잡힌다(공백도 언더바처럼 취급 — 멀티워드 명령 이름을 공백으로
+        검색 가능). 완성된 명령 뒤에 **실제 인자**를 치면 정규화 입력이 어떤 명령
+        이름의 부분문자열도 아니게 되어(예: 'rename-tab foo'→'rename-tab-foo') 후보가
+        자연히 사라지고, 그때 _refresh_hint 가 인자 힌트를 대신 띄운다."""
         if self._purpose != "command":
             return
         lbl = self.query_one("#pcand", Label)
         s = self.query_one(Input).value.strip()
+        pool = self._commands()
         matches = []
         if not s:
             # 빈 명령 프롬프트(esc :) → 전체 명령을 위쪽에 보여준다(↑↓ 탐색, #).
-            matches = [(n, d) for (n, d, *_) in COMMANDS]
-        elif " " not in s:
+            matches = [(n, d) for (n, d, *_) in pool]
+        else:
             ql = s.lower()
             # 한영 오타 복원: IME 켠 채 친 한글(예: "ㅏㅑㅣㅣ"=kill)을 QWERTY 로
             # 되돌려 그걸로 검색한다(요청). 한글이 섞였을 때만 변환.
             if has_hangul(ql):
                 ql = hangul_to_qwerty(ql).lower()
             # 구분자(공백/언더바/하이픈) 무시: "rename_"·"rename " 도 "rename-tab"
-            # 후보에 잡히게 검색어·이름을 norm_sep 로 통일해 부분일치한다.
+            # 후보에 잡히게 검색어·이름을 norm_sep 로 통일해 부분일치한다. 공백 게이트
+            # 없음 — 'clock m'(공백) 도 멀티워드 명령 'clock-mode' 에 매칭된다.
             qs = norm_sep(ql)
-            matches = [(n, d) for (n, d, *_) in COMMANDS
+            matches = [(n, d) for (n, d, *_) in pool
                        if qs in norm_sep(n.lower())]
             # 정확히 한 개이고 그게 입력과 동일하면 더 제안할 게 없음.
             if len(matches) == 1 and norm_sep(matches[0][0].lower()) == qs:
@@ -1668,9 +1106,9 @@ class PromptScreen(ModalScreen):
         self._refresh_cands()
         self._refresh_hint()
 
-    @staticmethod
-    def _cmd_desc(name):
-        for (n, d, *_) in COMMANDS:
+    def _cmd_desc(self, name):
+        # 코어 + 플러그인 명령에서 설명을 찾는다(플러그인 명령 힌트도 뜨게).
+        for (n, d, *_) in self._commands():
             if n == name:
                 return d
         return None
@@ -1699,7 +1137,7 @@ class PromptScreen(ModalScreen):
             self._set_hint("")
             return
         self._hint_cmd = name
-        opts = COMMAND_OPTIONS.get(name)
+        opts = self._command_options().get(name)
         if opts and not rest:
             # 선택지/토글: 방향키 강조 + Enter 즉시 실행(단일 spec 지원).
             self._choices = list(opts[0]["choices"])
@@ -1746,6 +1184,20 @@ class PromptScreen(ModalScreen):
             inp.value = event.value.lstrip(":")
             inp.cursor_position = len(inp.value)
             return                       # 값 변경이 on_input_changed 를 다시 부른다
+        # 명령 프롬프트: 한글 IME 가 켜진 채 명령 이름을 치면 자모(ㄴ/ㅁ/ㅔ…)나 조합
+        # 음절이 들어가 명령 검색·실행이 안 된다. **명령 이름 구간(첫 공백 이전)** 의 한글을
+        # QWERTY 로 되돌린다 — ESC/prefix 모드의 hangul_to_qwerty 와 동일 변환. 공백이 생기면
+        # (= 인자 입력 단계) 변환하지 않아 한글 인자(rename-tab 등)는 보존된다. 모든 명령
+        # 이름은 ASCII 라 이 변환은 항상 안전하다. 확정된 글자만 변환 가능(조합 중 preedit 은
+        # 앱에 안 옴 — best-effort). 값을 바꾸면 변경이 on_input_changed 를 다시 부른다.
+        if (self._purpose == "command" and event.value and " " not in event.value
+                and has_hangul(event.value)):
+            conv = hangul_to_qwerty(event.value)
+            if conv != event.value:
+                inp = self.query_one(Input)
+                inp.value = conv
+                inp.cursor_position = len(conv)
+                return
         # 명령 프롬프트에서 '?' 입력 → 명령 목록 선택기
         if self._purpose == "command" and event.value.endswith("?"):
             inp = self.query_one(Input)
@@ -1757,7 +1209,10 @@ class PromptScreen(ModalScreen):
                     inp.value = name + " "
                     inp.cursor_position = len(inp.value)
                 inp.focus()
-            self.app.push_screen(CommandListScreen(COMMANDS, base), fill)
+            # 코어 명령 + 플러그인 등록 명령(ncd·claude-code 등)을 함께 보여 준다.
+            reg = getattr(self.app, "plugins", None)
+            cmds = COMMANDS + reg.commands if reg else COMMANDS
+            self.app.push_screen(CommandListScreen(cmds, base), fill)
             return
         self._refresh_cands()
         self._refresh_hint()
@@ -1766,7 +1221,9 @@ class PromptScreen(ModalScreen):
             first = (event.value.split(None, 1)[0].lower()
                      if event.value.strip() else "")
             try:
-                self.app._set_cmd_target(first in PANE_SCOPED_CMDS)
+                self.app._set_cmd_target(
+                    first in PANE_SCOPED_CMDS
+                    or first in self.app.plugins.pane_scoped)
             except Exception:
                 pass
 
@@ -1971,90 +1428,6 @@ class ChooseLayoutScreen(ModalScreen):
 
     def on_key(self, event: events.Key):
         if event.key == "escape":
-            event.stop()
-            self.dismiss(None)
-
-    def on_key(self, event: events.Key):
-        if event.key == "escape":
-            event.stop()
-            self.dismiss(None)
-
-class PermModeScreen(ModalScreen):
-    """Claude 권한모드 선택 팝업(하단 footer 클릭, §10 item 2). 현재 모드를 표시
-    하고 목표 모드를 고르면 그 키를 dismiss → 서버가 shift+tab 폐루프로 목표까지
-    순환 주입한다. bypass(권한 우회)는 위험 모드라 목록에서 제외(실수 방지).
-
-    배치(§10-A #2): 클릭한 footer('auto mode on …') 줄 **바로 위**에, 그리고
-    **좌측 정렬**(footer 가 시작하는 패널 왼쪽 x 에 맞춤)로 띄운다. 그래서 팝업이
-    클릭한 그 줄에 붙어 보인다(화면 중앙이 아님). anchor 가 없으면 화면 중앙."""
-    CSS = """
-    PermModeScreen { align: left top; }
-    #perm { width: 60; height: auto; max-height: 80%;
-            border: round $accent; background: $panel; }
-    #perm ListItem Label { width: 1fr; }
-    """
-    # 박스 폭(CSS #perm width 와 일치) — 좌측 정렬 오프셋/중앙 계산에 쓴다.
-    _BOX_W = 60
-    _MODES = [
-        ("auto", "auto — 편집 자동 수락 (⏵⏵ auto-accept edits)"),
-        ("default", "default — 매번 확인 (일반 모드)"),
-        ("plan", "plan — 플랜 모드 (계획만, 실행 안 함)"),
-    ]
-
-    def __init__(self, current, anchor_y=None, anchor_x=None):
-        super().__init__()
-        self._current = current
-        # 클릭한 footer 행(화면 y). 아래에 공간이 있으면 그 아래, 없으면 위에 띄운다.
-        # None 이면 화면 세로 중앙(기존 동작).
-        self._anchor_y = anchor_y
-        # 클릭한 footer 가 시작하는 화면 x(패널 왼쪽). 좌측 정렬 기준(#2).
-        # None 이면 화면 가로 중앙.
-        self._anchor_x = anchor_x
-
-    def compose(self) -> ComposeResult:
-        items = []
-        for key, label in self._MODES:
-            mark = "  ◀ 현재" if key == self._current else ""
-            items.append(ListItem(Label(label + mark, markup=False),
-                                  id=f"M_{key}"))
-        lv = ListView(*items, id="perm")
-        lv.border_title = f"권한모드 선택 (현재: {self._current or '?'})"
-        yield lv
-
-    def on_mount(self):
-        lv = self.query_one(ListView)
-        lv.focus()
-        # 클릭 위치 기준 세로 배치: 아래 공간이 충분하면 클릭 행 바로 아래, 아니면 위.
-        box_h = len(self._MODES) + 2          # 테두리 포함 대략 높이
-        sh = self.size.height
-        if self._anchor_y is None:
-            y = max(0, (sh - box_h) // 2)     # 앵커 없으면 중앙
-        elif self._anchor_y - box_h >= 0:
-            y = self._anchor_y - box_h        # 클릭한 줄 **바로 위**(우선, #29)
-        else:
-            y = self._anchor_y + 1            # 위 공간이 없을 때만 아래
-        # 가로 배치(#2): footer 시작 x 에 좌측 정렬(align:left top 기준 offset).
-        # 박스가 화면 오른쪽을 넘지 않게 클램프. 앵커 없으면 가로 중앙.
-        sw = self.size.width
-        if self._anchor_x is None:
-            x = max(0, (sw - self._BOX_W) // 2)
-        else:
-            x = max(0, min(self._anchor_x, sw - self._BOX_W))
-        lv.styles.offset = (x, y)
-
-    def on_list_view_selected(self, event):
-        self.dismiss(event.item.id[2:])   # "M_auto" → "auto"
-
-    def on_click(self, event: events.Click):
-        # 박스(#perm) 바깥(백드롭) 클릭 → 닫기(§10-A #3). InfoScreen 패턴 재사용.
-        w = getattr(event, "widget", None)
-        inside = False
-        while w is not None:
-            if getattr(w, "id", None) == "perm":
-                inside = True
-                break
-            w = w.parent
-        if not inside:
             event.stop()
             self.dismiss(None)
 

@@ -38,7 +38,7 @@ _CREATE_NO_WINDOW = 0x08000000
 
 __all__ = ["IS_WINDOWS", "spawn_detached", "terminate", "is_alive",
            "server_argv", "shell_argv", "no_window_kwargs",
-           "open_in_file_manager"]
+           "open_in_file_manager", "process_cwd"]
 
 
 def no_window_kwargs() -> dict:
@@ -163,6 +163,123 @@ def is_alive(pid: int) -> bool:
         return True  # 존재하지만 시그널 권한 없음 → 살아 있음
     except OSError:
         return False
+
+
+def process_cwd(pid: int) -> Optional[str]:
+    """대상 프로세스(패널 셸)의 현재 작업 디렉토리(cwd)를 추정한다. 실패 시 None.
+
+    Windows 는 `/proc`·`lsof` 가 없으므로 ctypes 로 대상 프로세스의 PEB →
+    RTL_USER_PROCESS_PARAMETERS.CurrentDirectory(UNICODE_STRING)를 직접 읽는다
+    (psutil 등 외부 의존 없이). POSIX 에선 None 을 돌려, 호출부(servertree
+    `_pane_cwd`)의 `/proc`·`lsof` 경로가 처리하게 둔다 — 이 헬퍼는 Windows 갭만
+    메운다. ncd(현재 디렉토리 강조)·default-path=current 가 이 cwd 에 의존한다."""
+    if not IS_WINDOWS or pid <= 0:
+        return None
+    return _win_process_cwd(pid)
+
+
+def _win_process_cwd(pid: int) -> Optional[str]:
+    r"""Windows 전용: 대상 프로세스의 PEB 를 읽어 cwd 를 구한다.
+
+    경로: OpenProcess(QUERY_INFORMATION|VM_READ) → NtQueryInformationProcess 로
+    PebBaseAddress → ReadProcessMemory 로 PEB.ProcessParameters →
+    RTL_USER_PROCESS_PARAMETERS.CurrentDirectory.DosPath(UNICODE_STRING) →
+    Buffer(UTF-16LE) 를 읽는다. 구조체 오프셋은 32/64비트가 다르므로 우리 프로세스
+    포인터 크기로 분기한다(셸 자식은 부모와 동일 비트수가 정상). 권한·레이아웃 차이
+    등 어떤 실패든 None 으로 graceful — cwd 추정 실패는 ncd 가 루트에서 시작할 뿐."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        PROCESS_QUERY_INFORMATION = 0x0400
+        PROCESS_VM_READ = 0x0010
+
+        ntdll = ctypes.WinDLL("ntdll", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        OpenProcess = kernel32.OpenProcess
+        OpenProcess.restype = wintypes.HANDLE
+        OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        CloseHandle = kernel32.CloseHandle
+        CloseHandle.argtypes = [wintypes.HANDLE]
+        ReadProcessMemory = kernel32.ReadProcessMemory
+        ReadProcessMemory.restype = wintypes.BOOL
+        ReadProcessMemory.argtypes = [
+            wintypes.HANDLE, wintypes.LPCVOID, wintypes.LPVOID,
+            ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
+
+        class PROCESS_BASIC_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("Reserved1", ctypes.c_void_p),
+                ("PebBaseAddress", ctypes.c_void_p),
+                ("Reserved2", ctypes.c_void_p * 2),
+                ("UniqueProcessId", ctypes.c_void_p),
+                ("Reserved3", ctypes.c_void_p),
+            ]
+
+        NtQueryInformationProcess = ntdll.NtQueryInformationProcess
+        NtQueryInformationProcess.restype = ctypes.c_long  # NTSTATUS
+        NtQueryInformationProcess.argtypes = [
+            wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+            ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong)]
+
+        is64 = ctypes.sizeof(ctypes.c_void_p) == 8
+        # PEB.ProcessParameters · RTL_USER_PROCESS_PARAMETERS.CurrentDirectory ·
+        # UNICODE_STRING.Buffer 의 비트수별 오프셋(문서화된 고정값).
+        params_off = 0x20 if is64 else 0x10
+        curdir_off = 0x38 if is64 else 0x24
+        buf_off = 0x08 if is64 else 0x04
+        ptr_size = 8 if is64 else 4
+
+        h = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+                        False, pid)
+        if not h:
+            return None
+        try:
+            pbi = PROCESS_BASIC_INFORMATION()
+            ret = ctypes.c_ulong()
+            if NtQueryInformationProcess(h, 0, ctypes.byref(pbi),
+                                         ctypes.sizeof(pbi),
+                                         ctypes.byref(ret)) != 0:
+                return None
+            peb = pbi.PebBaseAddress
+            if not peb:
+                return None
+
+            def _read(addr, size):
+                buf = (ctypes.c_char * size)()
+                n = ctypes.c_size_t()
+                ok = ReadProcessMemory(h, ctypes.c_void_p(addr), buf, size,
+                                       ctypes.byref(n))
+                return buf.raw if ok and n.value == size else None
+
+            def _read_ptr(addr):
+                raw = _read(addr, ptr_size)
+                return int.from_bytes(raw, "little") if raw else None
+
+            params = _read_ptr(peb + params_off)
+            if not params:
+                return None
+            # CurrentDirectory.DosPath: UNICODE_STRING{Length(USHORT), …, Buffer}.
+            len_raw = _read(params + curdir_off, 2)
+            if not len_raw:
+                return None
+            length = int.from_bytes(len_raw, "little")  # 바이트 길이
+            if length == 0:
+                return None
+            buf_ptr = _read_ptr(params + curdir_off + buf_off)
+            if not buf_ptr:
+                return None
+            data = _read(buf_ptr, length)
+            if not data:
+                return None
+            path = data.decode("utf-16-le", "replace").rstrip("\x00")
+            # cmd.exe 는 끝에 `\` 가 붙는 경우가 있다(루트 제외하고 정규화).
+            return os.path.normpath(path) if path else None
+        finally:
+            CloseHandle(h)
+    except Exception:
+        return None
 
 
 def terminate(pid: int, *, force: bool = False) -> None:

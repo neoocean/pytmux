@@ -197,7 +197,7 @@ class ServerPtyMixin:
                 pane.pipe_proc.stdin.flush()
             except (OSError, ValueError):   # broken pipe / 닫힌 stdin
                 pane.pipe_proc = None
-        if pane.autoresume and not pane._resume_pending:
+        if pane.autoresume and not getattr(pane, "_resume_pending", False):
             self._maybe_schedule_resume(pane, data.decode("utf-8", "ignore"))
 
 

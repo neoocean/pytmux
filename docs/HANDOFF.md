@@ -8,7 +8,10 @@
 > `claude-code` 추출 **완료**(서버: Phase 1·1b·3-S1·3a·3b; 클라: Phase 2a·2b·2c —
 > 팝업·헤더 렌더·상태줄 세그먼트·footer 클릭존·ESC nav·토큰 팝업 전부 플러그인). **서버·클라
 > 양쪽 delete-to-disable 완성**, 계약 테스트 `tests/test_plugin_contract.py` 신설 — §11.6.
-> 남은 건 (선택) Phase 3 S4/S5 물리 이전뿐. 설계·작성법·진행/배운 점은
+> **Phase 3 S5/S4 도 완료(2026-06-10, CL 58031·58042·58050·58061)**: `claude.py`·`tokens.py`·
+> `usageprobe.py` 를 `plugins/claude-code/` 로 물리 이전(usagedb/usagelog 는 코어 토큰 DB
+> 백엔드라 잔류), Pane 의 Claude 거동 필드(~40개)를 `pane_init` 훅으로 플러그인 소유화
+> (`panestate.py`). 설계·작성법·진행/배운 점은
 > [PLUGIN_SYSTEM.md](PLUGIN_SYSTEM.md) 참고.
 > 현행 플러그인 로스터: `ncd`·`claude-code`·`clock`·`calendar`·`ime-indicator`(전부
 > delete-to-disable). 작성법·사례는 [PLUGIN_MANUAL.md](PLUGIN_MANUAL.md).
@@ -257,11 +260,24 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~57988 + git, 신→구)
+## 9. 최근 변경(CL 56279~57999 + git, 신→구)
 
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- 57999 **client: force-reconnect 중 `_reader_task` EOF 무음 종료 수정**(사용자 보고:
+  "이 머신에서 pytmux 시작 후 잠시 뒤 메시지 없이 종료") — **pong 미지원 옛 서버**(머신에
+  오래 떠 있던 데몬)에 새 클라가 attach 하면, 무응답 ping 이 degraded 표본으로 쌓여
+  `net_recover_n`(=20, ≈10초)에서 자동회복 `_force_reconnect` 가 발동한다. 이게 정체 소켓을
+  깨우려 옛 writer 를 close → 옛 `_reader_task` 가 EOF 로 깨어나는데, 가드 `gen != _conn_gen`
+  은 아직 거짓(`_conn_gen` 은 재접속 성공 후 `_start_reader` 에서야 증가)이고 `_reconnecting`
+  은 서버 *재시작*용 별개 플래그라 둘 다 빗나가 그대로 `self.exit()`(인자 없음=무음) 호출 →
+  클라가 약 10초 만에 종료됐다. EOF 경로에 **`if self._force_reconnecting: return`** 가드를
+  추가해 강제 재접속 중 옛 reader 는 조용히 종료(앱 유지)하게 한다. 재현·계측으로 확정(옛
+  서버 `total_pong=0`, 10.5초 force_reconnect 직후 `self.exit()`; 새 서버는 pong 정상이라
+  미발생), 수정 후 옛 서버 대상에서도 18초 생존 확인. **434 passed**. (현장의 옛 서버는
+  `restart-server` 로 현재 코드로 갱신해 근본 해소 — pong 정상.) 관련 메모:
+  `pytmux-stale-server-silent-exit`. 파일: `pytmuxlib/client.py`, `docs/HANDOFF.md`.
 - 57988 **protocol write_msg/write_frames `writer=None` 가드**(요청·크래시 방지) — 종료/
   재연결 레이스에서 `writer` 가 None 인 채 쓰기를 시도하면 `AttributeError` 가 `ConnectionError`
   catch 를 빠져나가 **awaited 안 된 백그라운드 태스크가 크래시**(office `protocol.py:77`)했다.
@@ -2429,7 +2445,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 `# ---- Claude Code 연동 (분리 대상) ----` 식 **명확한 구획 주석**으로 감싼다(현재도 일부 있음).
 충돌은 줄지만 같은 파일이라 완전 분리는 아니다 — 11.2 의 전용 모듈이 본안.
 
-### 11.6 플러그인 기반 추출(현행) — 진행 상황과 남은 작업 (2026-06-10 갱신: Phase 2c 완료)
+### 11.6 플러그인 기반 추출(현행) — 진행 상황과 남은 작업 (2026-06-10 갱신: Phase 2c·S5·S4 완료)
 
 > **§11.1~11.5 는 초기 전략(claude.py/client_claude.py 자유함수)으로, 지금은
 > `pytmuxlib/plugins/` 플러그인 시스템(CL 57774)으로 대체되었다.** 목표는 동일하되 메커니즘이
@@ -2504,14 +2520,27 @@ StatusBar Claude 세그먼트·ESC Claude 항목·통합 상태탭 토큰 탭을
 (`PytmuxApp` 지역 중첩 클래스)은 예상대로 `attach_client` 클로저 설치로 우회. 검증은 `tests/
 test_client.py`(417) + 신규 `tests/test_plugin_contract.py`(5) 회귀망 + smoke PASS.
 
-**남은 작업 — (선택) Phase 3 S4/S5 물리 이전:**
-- delete-to-disable 계약엔 **불필요**(이미 완성 — 서버·클라 양쪽). 코어 표면을 더 줄이려면:
-  **S4** Pane 의 Claude 필드(~50개)를 `pane.plugin_state` 네임스페이스로; **S5** `claude.py`
-  파서 + `tokens`/`usagedb`/`usagelog`/`usageprobe` 를 플러그인으로 물리 이전(코어 import 제거).
-  ⚠️ `saver_hook_events`(client.py 가 `from .claude import` — 코어 `pytmuxlib/claude.py`)는
-  S5 에서 `claude.py` 를 플러그인으로 옮길 때 함께 처리(현재는 코어 claude.py 라 계약 무관).
-  StatusBar 의 `claude_*` 속성도 S4 때 plugin_state 로 옮길 후보(현재는 안전한 기본값으로 코어
-  __init__ 에 남김 — model.py Pane 속성과 같은 관례).
+**Phase 3 S5/S4 — 완료(2026-06-10):**
+- **S5 모듈 물리 이전(CL 58031·58042·58050)**: 코어→Claude 결합을 끊고(58031: protocol/
+  pytmux 죽은 re-export 제거 + `saver_hook_events` 디스패치를 클라 `client_status` 훅으로),
+  `usagelog.bar`(순수 표시 헬퍼)를 `clientutil.bar` 로 이전해 코어 clientscreens 의 데이터모듈
+  의존을 끊은 뒤(58042), `claude.py`·`tokens.py`·`usageprobe.py` **3개**를 `plugins/claude-code/`
+  로 물리 이전했다(58050, `p4 move`). 하이픈 디렉토리라 일반 import 불가 → `tests/run.py` 가
+  importlib 로 로드해 `pytmuxlib.{claude,tokens,usageprobe}` 별칭을 sys.modules 에 등록(테스트
+  무수정). ⚠️ **`usagedb`·`usagelog` 는 코어 잔류** — 당초 분석과 달리 코어 server.py/serverio.py
+  가 토큰 SQLite DB(연결·insert·일예산 시딩·token_log 조회)를 직접 수행하고 플러그인 servermixin
+  이 `self._log_tokens` 로 구동하기 때문(3a/3b "토큰 회계 메서드 코어 잔류" 설계와 일치).
+- **S4 Pane 필드 플러그인 소유(CL 58061)**: 코어 `Pane.__init__` 은 `plugin_state={}` +
+  `plugins.get().pane_init(self)` 훅만 두고, claude-code 가 Claude 거동 필드(~40개)를 패널에
+  설치한다(신규 `plugins/claude-code/panestate.py` — init/reset/serialize/restore). 직렬화는
+  `pane_serialize`(JSON 가능 부분집합)→`export_state` 의 불투명 `plugin_state` 키. **코어 잔류**
+  (코어가 직접 read/write): `_tok_state`·`_session_tokens`·`_claude_account(_manual)`·
+  `_hdr_reserved`·`_pending_rename`·`_feed_seq`·`autoresume`·`prompt_clear_queue`. 코어 읽기
+  6곳 `getattr` 가드(`_should_reserve_header`·serverpty 자동재개·servertree 리네임·`_log_tokens`).
+  레지스트리 캐시 `plugins.get()`(=`Registry(_discover())`, load 패치 무관). 437 green +
+  delete-to-disable 실증(디렉토리 격리 시 Pane 에 Claude 필드 미설치·코어 무에러).
+- (선택, 미착수) StatusBar 의 `claude_*` 위젯 속성은 여전히 코어 clientwidgets `__init__` 에
+  안전 기본값으로 남아 있다(Pane 이 아닌 클라 위젯 — client_statusbar 훅이 흡수만; 옮길 후보).
 
 **남은 작업 — 마무리:**
 - ~~**계약 테스트(delete-to-disable)**~~ → **완료**: `tests/test_plugin_contract.py` 신설.
@@ -2545,6 +2574,15 @@ test_client.py`(417) + 신규 `tests/test_plugin_contract.py`(5) 회귀망 + smo
     상태전이·hidden 시 무합성, 토글, 계약 discover/부재 no-op, 라이브 on_key 배선) + test_client
     border 예외. 전체 스위트 green. **실기 수동확인**: 실제 한글 IME 로 배지가 한↔EN 전환되는지(헤드리스
     불가는 아니나 OS IME 입력 경로 자체는 라이브가 확실). 토글 `:ime-indicator`(별칭 `ime`).
+- ~~**신규 기능: 명령 프롬프트(`:`) IME 영문 변환**~~ → **완료(CL 58052, 2026-06-10)**: 한글 IME 가
+  켜진 채 `:` 명령 프롬프트에 명령 이름을 치면 자모(ㄴ/ㅁ/ㅔ…)·조합 음절이 들어가 검색·실행이
+  안 되던 것 수정. `PromptScreen.on_input_changed`(clientscreens.py, command 모드)에서 **입력에 공백이
+  없고(=명령 이름 단계) 한글이 있으면 `hangul_to_qwerty` 로 변환**해 inp.value 재설정(ESC/prefix
+  모드와 동일 변환). 공백이 생기면(= 인자 단계) 변환 안 함 → 한글 인자(rename-tab 한글탭이름)는
+  보존. 모든 명령 이름이 ASCII 라 이름 구간 변환은 항상 안전. 결정: (a) 이름 구간만 변환(공백 전),
+  (b) 확정 글자만 변환(조합 중 preedit 은 앱에 안 옴 — best-effort), (c) 토글 없이 상시.
+  테스트 `tests/test_client.py::test_command_prompt_converts_hangul_name_to_qwerty`("ㅜㄷㅈ"→"new",
+  인자 한글 보존). 437 green. 관련: [[pytmux-ime-indicator-plugin]].
 
 **⚠️ 병렬 세션 함정(2026-06-10 갱신)**: playground 워크스페이스를 **다른 세션이 동시 편집**한다.
 2026-06-09 Phase 2 제출 중, 병렬 세션의 **clock/calendar 플러그인 추출**(미완·당시 깨짐: 미존재

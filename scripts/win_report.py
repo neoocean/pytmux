@@ -105,7 +105,14 @@ def run_tests() -> dict:
     try:
         proc = subprocess.run(
             [sys.executable, os.path.join("tests", "run.py")],
-            cwd=ROOT, capture_output=True, text=True, timeout=600)
+            # 실 Windows 박스의 전체 ConPTY 스위트(385개)는 ~691s 걸린다(실측 2026-06-09).
+            # 과거 600s 는 그보다 짧아 healthy 스위트도 TimeoutExpired 로 잡혔다 → 1200s.
+            # 개별 행은 run.py 자체의 테스트별 timeout(PYTMUX_TEST_TIMEOUT, 기본 90s)이 잡는다.
+            # encoding 명시 필수: 러너 출력엔 UTF-8 한글(테스트명·메시지)이 있는데 Windows
+            # 에서 text=True 기본 디코더는 로케일(cp949)이라 UnicodeDecodeError 로 리더
+            # 스레드가 죽고 stdout 이 None 이 돼 splitlines 에서 크래시했다(실측 2026-06-09).
+            cwd=ROOT, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=1200)
     except Exception as e:
         return {"ran": False, "error": f"{e.__class__.__name__}: {e}"}
     passed = failed = None
@@ -298,7 +305,15 @@ def main(argv=None) -> int:
     # 종료해 행 위치를 남기고 CI step 을 끝낸다(자체 스레드 — 메인 블록돼도 동작).
     import faulthandler
     faulthandler.enable()
-    budget = float(os.environ.get("PYTMUX_REPORT_TIMEOUT", "180"))
+    # 글로벌 행 백스톱은 **run_tests 스텝의 자체 timeout(아래 1200s)보다 커야** 한다.
+    # 과거 180s 는 그보다 한참 짧아, 실 Windows 박스에서 385개 ConPTY 테스트(각 cmd.exe
+    # 실 spawn 으로 느림 — 실측 ~691s)를 돌리면 180s 에서 watchdog 가 suite 스텝 도중
+    # win_report 를 통째로 abort 해 "행처럼" 보였다(제품 버그 아님 — 스위트는 385 passed).
+    # 1500s = run_tests 1200s + perf + 오버헤드 여유. 이 순서(run_tests 1200 < watchdog
+    # 1500)면 스위트가 진짜 행일 때 run_tests 의 TimeoutExpired 가 먼저 우아하게 잡고,
+    # watchdog 는 그 밖(perf·리포트 쓰기 등) 행만 막는다. CI 등 빠른 환경은
+    # PYTMUX_REPORT_TIMEOUT 로 줄인다.
+    budget = float(os.environ.get("PYTMUX_REPORT_TIMEOUT", "1500"))
     if budget > 0:
         faulthandler.dump_traceback_later(budget, exit=True)
     ap = argparse.ArgumentParser(description=__doc__)

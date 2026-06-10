@@ -29,8 +29,11 @@ async def test_screen_text_matches_display():
     """serverclaude.screen_text(경량 추출)가 `"\\n".join(screen.display)`와 셀 단위로
     동일해야 한다(perf #11 — wcwidth 호출 없이 같은 결과). 와이드문자(CJK)·연속셀
     포함 화면으로 못박는다."""
+    import importlib
     import pyte
-    from pytmuxlib.serverclaude import screen_text
+    # serverclaude 는 claude-code 플러그인으로 이전됨(하이픈 디렉토리 → importlib).
+    screen_text = importlib.import_module(
+        "pytmuxlib.plugins.claude-code.servermixin").screen_text
 
     s = pyte.Screen(20, 3)
     st = pyte.Stream(s)
@@ -81,10 +84,12 @@ async def test_claude_state():
 
 
 async def test_claude_perm_mode():
-    # auto(자동 수락): ⏵⏵ / auto mode / auto-accept edits
+    # auto(진짜 auto 모드: 모든 동작 자동, 분류기 안전검사) — "auto mode on" 만.
     assert claude_perm_mode("⏵⏵ auto mode on (shift+tab to cycle)") == "auto"
-    assert claude_perm_mode("⏵⏵ accept edits on (shift+tab to cycle)") == "auto"
-    assert claude_perm_mode("auto-accept edits on (shift+tab to cycle)") == "auto"
+    # accept(acceptEdits: 편집·기본 FS 만) — auto 와 **다른** 모드(둘 다 ⏵⏵ 글리프라
+    # 문구로 가른다). 예전엔 둘 다 auto 로 봐 새 세션이 accept 에서 멈췄다(사용자 보고).
+    assert claude_perm_mode("⏵⏵ accept edits on (shift+tab to cycle)") == "accept"
+    assert claude_perm_mode("auto-accept edits on (shift+tab to cycle)") == "accept"
     # plan 모드
     assert claude_perm_mode("⏸ plan mode on (shift+tab to cycle)") == "plan"
     # default: 권한 글리프 없이 idle 입력 힌트만 보이는 일반 모드.
@@ -235,9 +240,10 @@ async def test_claude_usage_excludes_streaming_delta():
     assert claude_usage("total 12k tokens") == "12k tok"
 
 
-async def test_protocol_reexports_claude():
-    # 하위호환: protocol 에서도 여전히 import 가능해야 한다.
-    from pytmuxlib.protocol import claude_state as cs, claude_usage as cu
+async def test_claude_state_usage_canonical_import():
+    # Claude 휴리스틱은 pytmuxlib.claude 에서 직접 가져온다(S5a 에서 protocol.py 의
+    # 죽은 하위호환 re-export 를 제거 — 코어 protocol 이 더는 claude 를 import 하지 않음).
+    from pytmuxlib.claude import claude_state as cs, claude_usage as cu
     assert cs("Compacting… (esc to interrupt)") == "busy"
     assert cu("used 45.2k tokens") == "45.2k tok"
 

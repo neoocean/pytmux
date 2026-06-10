@@ -1,11 +1,10 @@
 """clientrender.py 자유함수(셀 그리드 합성) 회귀 — #12 추출 가드.
 
-put_cell / draw_clock_overlay / draw_calendar_overlay 는 앱 상태 비의존 순수
-함수라 앱·소켓 없이 직접 호출해 셀 그리드 출력을 단언한다. client.py 거대 클로저
-에서 빼낸 뒤(IMPROVEMENT #12) 화면 출력이 불변임을 고정한다.
+`put_cell` 은 앱 상태 비의존 범용 그리드 프리미티브(코어 client 와 시계·달력
+플러그인이 공유)라 앱·소켓 없이 직접 호출해 셀 그리드 출력을 단언한다. 시계·달력
+오버레이 그리기는 각 플러그인 render.py 로 옮겼고 회귀는 test_plugin_clock_render.py /
+test_plugin_calendar_render.py 가 가드한다.
 """
-from datetime import datetime
-
 import harness  # noqa: F401  (경로 설정)
 from rich.style import Style
 
@@ -40,65 +39,3 @@ async def test_put_cell_clamps_and_wide_char_alignment():
     cells[0][2] = ("", st)        # 와이드 연속칸
     clientrender.put_cell(cells, 1, 0, "A", st, W, H)
     assert cells[0][1][0] == "A" and cells[0][2][0] == " "
-
-
-# ---- 시계 오버레이 ----
-async def test_clock_overlay_big_and_fallback():
-    now = datetime(2026, 6, 6, 12, 34, 56)
-    digit = Style(color="green", bold=True)
-    panes = [{"id": 1, "x": 0, "y": 0, "w": 60, "h": 10}]
-    # 큰 시계: 클럭 폰트가 들어갈 공간 → 글자가 여러 행에 그려진다(공백 아닌 셀 다수)
-    cells = _grid(60, 10)
-    clientrender.draw_clock_overlay(cells, panes, {1}, 60, 10, digit, now=now)
-    filled = sum(1 for row in cells for c in row if c[0] not in (" ", ""))
-    assert filled > 12, filled    # 8글자×5행 폰트의 획들
-    # clock_panes 에 없으면 무동작
-    cells2 = _grid(60, 10)
-    clientrender.draw_clock_overlay(cells2, panes, set(), 60, 10, digit, now=now)
-    assert all(c[0] == " " for row in cells2 for c in row)
-    # 좁은 패널 → 단순 시각 문자열 폴백("12:34:56" 한 줄)
-    small = [{"id": 1, "x": 0, "y": 0, "w": 10, "h": 3}]
-    cells3 = _grid(10, 3)
-    clientrender.draw_clock_overlay(cells3, small, {1}, 10, 3, digit, now=now)
-    joined = "".join(_text_rows(cells3))
-    assert "12:34:56" in joined
-
-
-# ---- 달력 오버레이 ----
-def _cal_styles():
-    return {
-        "day": Style(color="white"),
-        "title": Style(color="green", bold=True),
-        "today": Style(color="black", bgcolor="green", bold=True),
-        "big_today": Style(color="green", bold=True),
-        "border": Style(color="blue"),
-    }
-
-
-async def test_calendar_overlay_grid_has_title_and_today_highlight():
-    now = datetime(2026, 6, 6)        # 2026-06, 오늘=6일
-    panes = [{"id": 1, "x": 0, "y": 0, "w": 30, "h": 12}]
-    cells = _grid(30, 12)
-    clientrender.draw_calendar_overlay(cells, panes, {1}, 30, 12,
-                                       _cal_styles(), now=now)
-    joined = "".join(_text_rows(cells))
-    assert "2026-06" in joined                      # 제목
-    assert "Mo" in joined and "Su" in joined        # 요일 헤더
-    # 오늘(6일)은 today 스타일(bgcolor=green)로 칠해진 셀이 있어야 한다
-    today_cells = [c for row in cells for c in row
-                   if c[0] == "6" and c[1].bgcolor is not None]
-    assert today_cells, "오늘 날짜 강조 셀 없음"
-    # calendar_panes 비면 무동작
-    cells2 = _grid(30, 12)
-    clientrender.draw_calendar_overlay(cells2, panes, set(), 30, 12,
-                                       _cal_styles(), now=now)
-    assert all(c[0] == " " for row in cells2 for c in row)
-
-
-async def test_calendar_overlay_small_pane_falls_back_to_date_string():
-    now = datetime(2026, 6, 6)
-    panes = [{"id": 1, "x": 0, "y": 0, "w": 12, "h": 3}]
-    cells = _grid(12, 3)
-    clientrender.draw_calendar_overlay(cells, panes, {1}, 12, 3,
-                                       _cal_styles(), now=now)
-    assert "2026-06-06" in "".join(_text_rows(cells))

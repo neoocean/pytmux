@@ -48,7 +48,7 @@ from pytmuxlib.launcher import (  # noqa: F401
     can_connect, control_request, ensure_server, main)
 from pytmuxlib.protocol import (  # noqa: F401
     FLUSH_HZ, HISTORY, MIN_H, MIN_W, conv_color,
-    parse_reset_delay, read_msg, set_winsize, write_msg)
+    read_msg, set_winsize, write_msg)
 
 # 지연 재노출: 접근 전엔 textual(client)·pyte(model/replay/server) 를 안 끌어온다.
 _LAZY = {"build_client_app": "pytmuxlib.client",

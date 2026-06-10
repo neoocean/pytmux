@@ -319,7 +319,7 @@ class PermModeScreen(ModalScreen):
 
 # TokenLogScreen 이 쓰는 코어 공유 심볼(클라 컨텍스트 지연 로드 — 서버는 안 읽음).
 from pytmuxlib import usagelog
-from pytmuxlib.clientutil import _char_cells
+from pytmuxlib.clientutil import _char_cells, bar
 from pytmuxlib.clientscreens import usage_bar_lines
 
 class TokenLogScreen(ModalScreen):
@@ -556,7 +556,7 @@ class TokenLogScreen(ModalScreen):
         p = f"{pct:>3}%"
         if cells <= 0:
             return p
-        return f"{p} {usagelog.bar(tok, vmax, cells)}"
+        return f"{p} {bar(tok, vmax, cells)}"
 
     async def _refresh(self):
         self._sync_tabs()

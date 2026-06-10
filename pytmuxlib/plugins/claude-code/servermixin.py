@@ -18,8 +18,8 @@ import asyncio
 import json
 import time
 
-from pytmuxlib import tokens
-from pytmuxlib.claude import (claude_account, claude_awaiting_answer,
+from . import tokens
+from .claude import (claude_account, claude_awaiting_answer,
                      claude_context_hardstop, claude_context_pct,
                      claude_feedback_prompt,
                      claude_model, claude_prompt, claude_perm_mode,
@@ -1048,7 +1048,7 @@ class ServerClaudeMixin:
             return self._usage
         self._usage_busy = True
         try:
-            from pytmuxlib import usageprobe
+            from . import usageprobe
             loop = asyncio.get_event_loop()
             cwd = getattr(self, "cwd", None) or None
             u = await asyncio.wait_for(

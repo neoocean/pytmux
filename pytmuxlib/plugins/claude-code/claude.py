@@ -58,6 +58,26 @@ def claude_state(text: str):
     return None
 
 
+def claude_context_hardstop(text: str) -> bool:
+    """**컨텍스트 윈도우 하드스톱** 화면인지 — 컨텍스트가 가득 차 Claude Code 가
+    더 진행하지 못하고 "Context limit reached · /compact or /clear to continue"
+    류 안내로 멈춘 상태. 이때는 /compact(또는 /clear)만이 진행을 잇는 유일한 수단.
+
+    claude_state 의 "limit"(=사용량/rate 리밋, reset·resume 대기)과 **다른 신호**다:
+    이건 사용량이 아니라 *대화 컨텍스트*가 꽉 찬 것이고, 시간이 지난다고 풀리지
+    않으며 사용자(또는 자동화)가 즉시 /compact·/clear 해야만 풀린다. 그래서 별도
+    파서로 둬 서버가 즉시(idle 지연 없이) 자동 /compact 를 주입할 수 있게 한다.
+
+    오탐 방지: 화면에 `/compact` 또는 `/clear` 리터럴이 실제로 떠 있을 때만 True
+    (하드스톱 안내는 항상 "· /compact or /clear to continue" 를 동반한다). 셸 출력에
+    우연히 'context limit' 문구만 있어도 슬래시 명령 없이는 발화하지 않는다."""
+    low = text.lower()
+    if "/compact" not in low and "/clear" not in low:
+        return False
+    return ("context limit reached" in low
+            or ("context" in low and "limit" in low and "to continue" in low))
+
+
 _CTX_PCT_RES = [
     re.compile(r"context\s+(?:low|left|remaining)[^0-9%]*?(\d{1,3})\s*%", re.I),
     re.compile(r"(\d{1,3})\s*%\s*(?:context|remaining|"
@@ -462,22 +482,29 @@ def claude_perm_mode(text: str):
     """Claude Code idle 권한모드 footer 에서 현재 권한모드를 best-effort 추정.
 
     반환:
-      "auto"    — 자동 수락(⏵⏵ / "auto-accept edits on" / "auto mode on")
+      "auto"    — 진짜 auto 모드("auto mode on"): 모든 동작을 분류기 안전검사 후
+                  자동 수락. acceptEdits 와 **다른** 모드다(Claude Code v2.1.x).
+      "accept"  — acceptEdits("accept edits on" / 구버전 "auto-accept edits on"):
+                  파일 편집·기본 FS 명령만 자동 수락(다른 Bash·네트워크는 확인).
       "bypass"  — 권한 우회("bypass permissions"). 명시적·위험 모드라 건드리지 않음.
       "plan"    — 플랜 모드("plan mode on")
       "default" — 일반 모드(footer 는 보이나 위 어느 것도 아님)
       None      — 권한모드 footer 신호가 안 보임(판정 불가)
 
-    Claude Code 버전이 footer 문구를 바꾸면 가장 먼저 손볼 곳이다(claude_state 와
-    같은 footer 를 본다)."""
+    주의: acceptEdits 와 auto 는 **둘 다 ⏵⏵ 글리프**를 쓴다(공식 permission-modes
+    문서). 그래서 글리프가 아니라 **문구**("auto mode" vs "accept edits")로만 가른다 —
+    예전엔 ⏵⏵·"accept edits on" 을 모두 auto 로 봐, 새 세션이 acceptEdits 에서 멈춰
+    진짜 auto 까지 못 가던 버그가 있었다(사용자 보고). 버전이 footer 문구를 바꾸면
+    가장 먼저 손볼 곳이다(claude_state 와 같은 footer 를 본다)."""
     low = text.lower()
-    # 명시적 권한모드 글리프/문구부터 판정한다(글리프·모드명은 footer 줄 앞쪽이라
-    # 좁은 폭(모바일)에서 뒤가 잘려도 살아남는다).
+    # 명시적 권한모드 문구부터 판정한다(모드명은 footer 줄 앞쪽이라 좁은 폭(모바일)
+    # 에서 뒤가 잘려도 살아남는다). ⏵⏵ 글리프는 auto·accept 공용이라 단독 신호로 안 쓴다.
     if "bypass permissions" in low:
         return "bypass"
-    if ("⏵⏵" in text or "auto-accept" in low or "auto mode" in low
-            or "accept edits on" in low):
+    if "auto mode" in low:                 # 진짜 auto(모든 동작 자동, 분류기 검사)
         return "auto"
+    if "accept edits" in low or "auto-accept" in low:   # acceptEdits(편집만)
+        return "accept"
     if "plan mode" in low or "⏸" in text:
         return "plan"
     # 글리프가 없으면 default(일반) 모드 후보. 실제 Claude default 모드는 권한 글리프

@@ -15,8 +15,7 @@ import signal
 import time
 import traceback
 
-from . import ipc, tokens, usagedb
-from .claude import claude_account, claude_usage, ctx_window_tokens
+from . import ipc, usagedb, version
 from .model import ClientConn, Session
 from .protocol import (FLUSH_HZ, MAX_H, MAX_W, MIN_H, MIN_W, PROTO_VERSION,
                        clamp_dim, frame_msg, read_msg, write_frames, write_msg)
@@ -95,13 +94,13 @@ class ServerIOMixin:
                     "telnet", "et", "eternal-terminal", "kitten"}
 
     def _pane_overview(self, pane):
-        """트리/개요용 패널 1건 정보: id·제목·fg 앱·로컬/원격·Claude 상태/사용량."""
+        """트리/개요용 패널 1건 정보: id·제목·fg 앱·로컬/원격. Claude 상태/사용량/토큰은
+        플러그인이 server_pane_overview 훅으로 덧붙인다(플러그인 없으면 생략)."""
         cmd = self._fg_command(pane.master_fd) or ""
-        return {"id": pane.id, "title": (pane.title or "").strip(),
-                "cmd": cmd, "remote": cmd.lower() in self._REMOTE_CMDS,
-                "claude": pane._claude, "usage": pane._claude_usage,
-                # 세션 누계 토큰(#18) — 트리 팝업이 ctx 와 함께 실제 토큰량을 보이게.
-                "tokens": pane._session_tokens}
+        info = {"id": pane.id, "title": (pane.title or "").strip(),
+                "cmd": cmd, "remote": cmd.lower() in self._REMOTE_CMDS}
+        self.plugins.server_pane_overview(self, pane, info)
+        return info
 
     def _tree_msg(self):
         return {"t": "tree", "current": None, "sessions": [
@@ -113,119 +112,32 @@ class ServerIOMixin:
                          for t in s.tabs]}
             for s in self.sessions.values()]}
 
-    def _pane_claude_entry(self, p, full):
-        """status 의 패널별 Claude 항목. history 는 드물게 바뀌는데 매 status(토큰
-        변동으로 자주 발화)마다 30개 프롬프트를 재직렬화·전송하면 ssh 트래픽이
-        커진다(§4.5). 그래서 **변할 때만** 싣는다: `full`(신규 attach·구조 변경
-        resync)이면 항상 실어 새 클라가 비어 보이지 않게 하고, 주기 flush(full=False)
-        는 직전 전송분(_hist_sent)과 다를 때만 싣고 갱신한다. full 은 _hist_sent 를
-        건드리지 않는다 — 주기 스트림(모든 클라 공유)의 추적을 오염시키면 다른 클라가
-        델타를 놓친다."""
-        e = {"id": p.id, "claude": p._claude, "prompt": p.last_prompt,
-             "perm_mode": p._perm_mode}
-        h = p.prompt_history[-30:]
-        if full or h != p._hist_sent:
-            e["history"] = h
-            if not full:
-                p._hist_sent = h
-        return e
-
     def _status_msg(self, sess: Session, full=True):
         win = sess.active_window
         cap_path, cap_size = self._capture_info(win.active_pane if win else None)
-        _tok_total = self._account_token_total(win.active_pane if win else None)
         msg = {
             "t": "status",
             "session": sess.name,
             "windows": [{"index": t.index, "name": t.name,
                          "active": (i == sess.active_index),
                          "bell": t.has_bell, "activity": t.has_activity,
-                         "claude_done": t.has_claude_done,
-                         "claude": self._tab_claude(t)}
+                         "claude_done": t.has_claude_done}
                         for i, t in enumerate(sess.tabs)],
-            # 활성 윈도우 패널별 Claude 상태/마지막 프롬프트(헤더용). history 는
-            # 변할 때만 싣는다(§4.5 — _pane_claude_entry).
-            "panes_claude": [self._pane_claude_entry(p, full)
-                             for p in (win.panes() if win else [])],
             "active_pane": win.active_pane.id if win else None,
-            # 활성 패널이 Claude 패널인가(권위값). 클라가 좌하단 토큰/사용량 표기를
-            # 이 플래그로 게이트해 Claude 가 아닌 탭/패널에선 표기를 숨긴다.
-            "claude_active": bool(win and win.active_pane
-                                  and win.active_pane._claude),
-            # 활성 패널이 Claude 면 토큰/컨텍스트 사용량(best-effort). M18-A: 점유%가
-            # 없으면 세션 누계/윈도우로 근사 사용%를 곁들인다(_usage_text).
-            "claude_usage": (self._usage_text(win.active_pane)
-                             if win and win.active_pane
-                             and win.active_pane._claude else None),
-            # 활성 패널 계정 기준 — 그 계정에 속한 모든 세션/패널의 세션 누적 토큰을
-            # 합산(§10 토큰 지속표시·계정별 합계). 계정 식별자도 함께 보내 표시에 곁들임.
-            "claude_tokens": _tok_total,
-            # M18-B: 5시간 한도 근접도 %(분모 미상이면 None — 지어내지 않음).
-            "tok5h_pct": self._tok5h_pct(
-                win.active_pane if win else None, _tok_total),
-            # M17(T7): 활성 패널 장기턴/반복루프 경고(grade0 — 없으면 None).
-            "claude_warn": (win.active_pane._claude_warn
-                            if win and win.active_pane else None),
-            # M19: 그림자 /usage 로 확보한 세션·주간 한도(없으면 None).
-            "usage_limits": self._usage,
-            # 인패널 /usage 패널이 새로 떴음을 알리는 one-shot 시퀀스(클라 자동 팝업).
-            "usage_shown_seq": self._usage_shown_seq,
-            # M14c: 활성 패널 모델 배지(opus-4.8 등, 없으면 None).
-            "claude_model": (win.active_pane._claude_model
-                             if win and win.active_pane
-                             and win.active_pane._claude else None),
-            "claude_account": (win.active_pane._claude_account
-                               if win and win.active_pane else None),
             "zoomed": bool(win.zoomed) if win else False,
             "sync": bool(win.sync) if win else False,
             "pane_title": win.active_pane.title if win and win.active_pane else "",
-            "autoresume": bool(win.active_pane.autoresume)
-            if win and win.active_pane else False,
-            "prompt_clear": bool(win.active_pane.prompt_clear_mode)
-            if win and win.active_pane else False,
-            # 프롬프트 단위 클리어 큐(#4): 활성 패널에 쌓인 명령들(표시·목록용)
-            "prompt_clear_queue": (list(win.active_pane.prompt_clear_queue)
-                                   if win and win.active_pane else []),
             "capture": self.capture,
             "capture_path": cap_path,
             "capture_size": cap_size,
-            # 낙관적 토글(클라가 즉시 반영) + 주기 status 권위값으로 화해하는 4개
-            # 불린은 매 status 에 싣는다(전용 브로드캐스트 경로 없음 — C4 주석 참조).
-            "claude_header": self.claude_header,
             "single_border": self.single_border,
-            "auto_doc_clear": self.auto_doc_clear,
-            "auto_compact": self.auto_compact,
-            "claude_auto_mode": self.claude_auto_mode,
-            # C5: claude_tokens 용으로 위에서 계산한 _tok_total 을 그대로 넘겨
-            # 계정 합계 전 패널 순회를 status 빌드당 1회로(중복 _all_panes 제거).
-            "budget_level": self._budget_level_for(
-                win.active_pane if win else None, _tok_total),
-            # M14 무장된 자동 액션 카운트다운(없으면 None): {kind, eta(초)}.
-            "claude_pending": self._pending_action(
-                win.active_pane if win else None),
         }
-        # C4(PERFORMANCE_REVIEW 2026-06-07): 토글로만 바뀌는 정적 옵션은 **full** 일
-        # 때만 싣는다(신규 attach·_broadcast_session). 이들은 전부 set_* 핸들러가
-        # _broadcast_session(→ _send_full, full=True)으로 회신하므로 변경·접속 시 항상
-        # 도달하고, 주기(full=False) status 에선 빠져도 클라가 직전 값을 유지한다
-        # (clientwidgets.update_status 의 msg.get(k, self.k) 보존 패턴). claude_rules
-        # (문자열)·예산/컨텍스트 12필드가 스트리밍 중 30Hz 재직렬화·재전송되던 것을 없앤다.
-        if full:
-            msg.update({
-                "claude_rules": self.claude_rules,   # #27 시작 규칙(에디터 초기값용)
-                "claude_ctx_autoclear": self.claude_ctx_autoclear,
-                "claude_ctx_threshold": self.claude_ctx_threshold,
-                "claude_ctx_min_interval": self.claude_ctx_min_interval,
-                "claude_ctx_action": self.claude_ctx_action,
-                "token_budget_day": self.token_budget_day,
-                "token_budget_session": self.token_budget_session,
-                "token_budget_5h": self.token_budget_5h,
-                "token_budget_account": self.token_budget_account,
-                "claude_long_turn_sec": self.claude_long_turn_sec,
-                "claude_repeat_alert": self.claude_repeat_alert,
-                "token_budget_resume_gate": self.token_budget_resume_gate,
-                "claude_budget_plan": self.claude_budget_plan,
-            })
+        # Claude 필드(패널별 상태·history·토큰·사용량·예산·팝업·full-only 옵션 12개와
+        # windows[].claude 탭 집계)는 플러그인이 server_status 훅으로 in-place 로 채운다.
+        # 플러그인이 없으면 status 에 Claude 키가 빠지고, 클라(역시 플러그인 부재)는
+        # 그 키를 읽지 않는다(delete-to-disable). 채워질 키/값은 플러그인이 있을 때
+        # 종전과 동일하다(서버 테스트가 claude_tokens 등 키를 그대로 검증).
+        self.plugins.server_status(self, sess, win, msg, full)
         return msg
 
     async def _send_full(self, client: ClientConn):
@@ -341,14 +253,14 @@ class ServerIOMixin:
                 # 새 휴리스틱(프롬프트/토큰/권한모드)이 특정 화면에서 터져도 flush
                 # 루프 전체(=모든 클라 렌더)가 죽지 않게 가드한다(§10 안정성).
                 try:
-                    if self._scan_claude(sess, win):
+                    if self.plugins.server_scan(self, sess, win):
                         status_changed = True
                 except Exception:
                     self._log_error("scan_claude")
                 # M14 카운트다운 틱: 무장된 자동 액션의 ETA(정수 초)나 종류가 바뀌면
                 # status 를 재전송한다(출력 변화가 없어도 1초마다 카운트다운 갱신).
                 # 무장/해제 전이도 여기서 잡혀 배지가 즉시 뜨고 사라진다.
-                pend = self._pending_action(win.active_pane if win else None)
+                pend = self.plugins.server_pending(self, win.active_pane if win else None)
                 pkey = (pend["kind"], pend["eta"]) if pend else None
                 if pkey != sess._pending_key:
                     sess._pending_key = pkey
@@ -400,11 +312,8 @@ class ServerIOMixin:
         # 부팅/트러스트 대화상자와 안 겹치게 약간 늦춰 첫 채움(패널이 비지 않게).
         await asyncio.sleep(min(20.0, interval))
         while self.running:
-            if not self._usage_busy and self._any_claude_pane():
-                try:
-                    await self.refresh_usage()
-                except Exception:
-                    pass
+            # 그림자 /usage 갱신 1회(플러그인 없으면 no-op → 루프는 그냥 sleep 만 돈다).
+            await self.plugins.server_usage_refresh(self)
             await asyncio.sleep(interval)
 
     # ---- 명령 처리 ----
@@ -484,12 +393,6 @@ class ServerIOMixin:
         elif action == "request_tree":
             await write_msg(client.writer, self._tree_msg())
             return
-        elif action == "request_nc_list":
-            # ncd(Norton Change Directory 풍 디렉토리 트리): path 없으면 루트→cwd
-            # 사슬, 있으면 해당 노드의 직계 하위를 회신(지연 펼치기). 부작용 없음.
-            await write_msg(client.writer,
-                            self.nc_list_msg(sess, msg.get("path")))
-            return
         elif action == "request_token_log":
             # 영속 토큰 레코드(최근 N 건)를 SQLite 에서 읽어 클라이언트로. 클라가
             # usagelog 로 시간/일/월 × 계정/세션 집계해 팝업에 표시(라운드트립 없이
@@ -521,11 +424,6 @@ class ServerIOMixin:
         elif action == "set_claude_account":
             self.set_claude_account(sess, str(msg.get("name", "")))
             return
-        elif action == "set_claude_perm_mode":
-            # footer 클릭 팝업(§10 item 2): 활성/지정 패널 권한모드 목표 설정.
-            self.set_claude_perm_mode(sess, str(msg.get("target", "")),
-                                      pane_id=msg.get("id"))
-            return
         elif action == "list_layouts":
             await write_msg(client.writer, {"t": "layouts",
                                             "names": self.list_tab_layouts()})
@@ -541,9 +439,6 @@ class ServerIOMixin:
                 for c in [x for x in self.clients if x.session is sess]:
                     await self._send_full(c)
             return
-        elif action == "set_autoresume":
-            self.set_autoresume(sess, value=msg.get("value"),
-                                msg=msg.get("msg"))
         elif action == "resize":
             self.resize_split(sess, msg.get("split_id"), msg.get("ratio", 0.5))
         elif action == "resize_dir":
@@ -586,6 +481,10 @@ class ServerIOMixin:
             # src(끌어온 탭 인덱스) 지정 가능(#19 탭→패널 드래그). 미지정이면 직전 탭.
             self.join_pane(sess, src_index=msg.get("src"),
                            orient=msg.get("orient", "tb"))
+        elif action == "move_pane_to_tab":
+            # 헤더 드래그 pick-up → 다른 탭에 드롭(#1): id 패널을 to 탭으로 옮긴다.
+            self.move_pane_to_tab(sess, int(msg.get("id", -1)),
+                                  int(msg.get("to", -1)))
         elif action == "rename_window":
             self.rename_window(sess, str(msg.get("name", "")).strip())
         elif action == "set_auto_rename":
@@ -600,52 +499,6 @@ class ServerIOMixin:
             self.set_single_border(msg.get("value"))
         elif action == "set_coalesce":
             self.set_coalesce_repaints(msg.get("value"))
-        elif action == "set_auto_doc_clear":
-            self.set_auto_doc_clear(msg.get("value"))
-        elif action == "set_auto_compact":
-            self.set_auto_compact(msg.get("value"))
-        elif action == "set_claude_auto_mode":
-            self.set_claude_auto_mode(msg.get("value"))
-        elif action == "set_claude_ctx_autoclear":   # M11 잔량 자동 정리 토글
-            self.set_claude_ctx_autoclear(msg.get("value"))
-            self._broadcast_session(sess)
-        elif action == "set_claude_ctx_action":      # M11 정리 방식(compact/doc-clear)
-            self.set_claude_ctx_action(str(msg.get("value", "")))
-            self._broadcast_session(sess)
-        elif action == "set_claude_ctx_threshold":   # M11 잔량 임계(%)
-            self.set_claude_ctx_threshold(msg.get("value"))
-            self._broadcast_session(sess)
-        elif action == "set_claude_ctx_min_interval":  # M14 정리 빈도 상한(초)
-            self.set_claude_ctx_min_interval(msg.get("value"))
-            self._broadcast_session(sess)
-        elif action == "set_token_budget":           # M10 일/세션/5h/계정 예산
-            self.set_token_budget(day=msg.get("day"), session=msg.get("session"),
-                                  h5=msg.get("h5"), acct=msg.get("acct"))
-            self._broadcast_session(sess)
-        elif action == "set_claude_turn_warn":           # M17 장기턴/반복 임계
-            self.set_claude_turn_warn(long_sec=msg.get("long_sec"),
-                                      repeat=msg.get("repeat"))
-            self._broadcast_session(sess)
-        elif action == "refresh_usage":                  # M19 그림자 /usage 질의
-            asyncio.create_task(self.refresh_usage())
-        elif action == "set_token_budget_resume_gate":   # M12 예산 게이트 토글
-            self.set_token_budget_resume_gate(msg.get("value"))
-            self._broadcast_session(sess)
-        elif action == "set_claude_budget_plan":         # M13 예산 압박 plan 유도
-            self.set_claude_budget_plan(msg.get("value"))
-            self._broadcast_session(sess)
-        elif action == "set_claude_rules":      # #27 시작 규칙 저장(영속)
-            self.set_claude_rules(msg.get("text", ""))
-            self._broadcast_session(sess)       # status 로 새 규칙 회신
-        elif action == "set_prompt_clear":
-            self.set_prompt_clear(sess, msg.get("value"))
-        elif action == "set_prompt_clear_message":
-            self.set_prompt_clear_message(str(msg.get("msg", "")))
-            return
-        elif action == "pc_queue_add":
-            self.pc_queue_add(sess, str(msg.get("cmd", "")))
-        elif action == "pc_queue_clear":
-            self.pc_queue_clear(sess)
         elif action == "kill_window":
             self.kill_window(sess)
             if sess.name not in self.sessions:
@@ -692,6 +545,24 @@ class ServerIOMixin:
             self.restart_server()
             return
         else:
+            # 먼저 플러그인 명령 훅(Claude set_claude_*/token/pc/refresh_usage 등).
+            # 후속 지시를 반환하면 그대로 따른다 — 'broadcast'/'send_full' 은 원래
+            # _handle_cmd 가 하던 _broadcast_session+_send_full 동작을 그대로 재현한다.
+            directive = self.plugins.server_command(self, client, sess, action, msg)
+            if directive == "handled":
+                return
+            if directive == "send_full":
+                await self._send_full(client)
+                return
+            if directive == "broadcast":
+                self._broadcast_session(sess)   # 세션 전 클라에 새 권위값 status
+                await self._send_full(client)
+                return
+            # 그 외 알 수 없는 action → 플러그인 요청 핸들러에 위임. 회신 메시지(dict)를
+            # 반환하면 그대로 클라로 보낸다(ncd 의 request_nc_list 등). 없으면 무시.
+            resp = self.plugins.handle_server_request(self, sess, action, msg)
+            if resp is not None:
+                await write_msg(client.writer, resp)
             return
         await self._send_full(client)
 
@@ -887,12 +758,10 @@ class ServerIOMixin:
             except OSError:
                 pass
             return
-        self._track_prompt(p, data)   # 마지막 입력 프롬프트 추적(Claude 헤더용)
-        self._adc_disarm(p)   # 사용자 입력 = 활동 중 → 자동 doc→/clear 발화 취소(§10)
-        self._acpt_disarm(p)  # 사용자 입력 → 자동 /compact 발화도 취소
-        p._acpt_fired = False  # 실제 활동 재개 → 다음 idle 에 자동 /compact 재무장 허용
-        self._cancel_resume(p)  # M14: 사용자가 입력했으면 자동재개 예약도 취소(§5.3
-        #   선점 — 사용자가 직접 키를 쳤다 = 작업을 이어받음 → continue 중복 주입 방지)
+        # 사용자 입력 1건의 Claude 부수효과(플러그인 server_input): 마지막 프롬프트
+        # 추적(헤더용)·자동 doc→/clear·자동 /compact·자동재개 예약 해제(사용자가 키를
+        # 쳤다 = 작업 이어받음 → 자동 개입/중복 주입 방지). 플러그인 없으면 no-op.
+        self.plugins.server_input(self, p, data)
         # 입력 동기화 시 윈도우 내 모든 패널에 동일 입력 전달
         targets = win.panes() if win.sync else [p]
         for t in targets:
@@ -985,6 +854,19 @@ class ServerIOMixin:
             except (RuntimeError, ValueError):
                 pass
 
+    async def _capture_version(self):
+        """실행 코드 버전(p4 CL)을 이벤트 루프 밖에서 캡처해 채운다(자리표시자 "…"
+        대체). `p4 changes` 가 수백 ms 걸리므로 executor 로 돌려 listen·입출력을
+        막지 않는다. 실패(취소 등)는 무시 — 버전은 best-effort 표기일 뿐."""
+        try:
+            loop = asyncio.get_running_loop()
+            self._code_version = await loop.run_in_executor(
+                None, version.code_version)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+
     async def serve(self):
         self.loop = asyncio.get_running_loop()
         signals = self._install_signal_handlers()
@@ -1018,6 +900,11 @@ class ServerIOMixin:
             flush = asyncio.create_task(self._flush_loop())
             autoname = asyncio.create_task(self._autorename_loop())
             usage = asyncio.create_task(self._usage_loop())
+            # 코드 버전(p4 CL) 캡처를 listen **이후** 백그라운드로 미룬다 — __init__
+            # 에서 동기로 부르면 `p4 changes` 왕복(~수백 ms)이 클라 접속 임계경로에
+            # 올라 콜드 기동이 느려졌다(server.__init__ 주석 참조). executor 로 돌려
+            # 이벤트 루프를 막지 않고, 끝나면 self._code_version 을 갱신한다.
+            asyncio.create_task(self._capture_version())
             async with server:
                 try:
                     await server.serve_forever()

@@ -125,6 +125,8 @@ Claude Code 연동, 작업 보존 재시작까지 — 은 **[사용 매뉴얼(do
 
 - **[docs/MANUAL.md](docs/MANUAL.md) — 📖 상세 사용 매뉴얼(실제 화면 스크린샷 포함). 처음
   쓰신다면 여기부터.**
+- [docs/PLUGIN_MANUAL.md](docs/PLUGIN_MANUAL.md) — 🔌 플러그인 매뉴얼: 작성법·훅 계약·
+  delete-to-disable 원칙·레퍼런스 플러그인(clock/calendar). 플러그인을 직접 만들려면 여기부터.
 - [docs/SCREENSHOT_SCENARIO.md](docs/SCREENSHOT_SCENARIO.md) — 매뉴얼 스크린샷 자동 생성
   방식·생성기(`scripts/gen_screenshots.py`)
 - [docs/DESIGN.md](docs/DESIGN.md) — 아키텍처/설계

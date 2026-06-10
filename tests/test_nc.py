@@ -10,6 +10,10 @@ import harness
 from harness import make_app, server_only, teardown
 from textual.events import Key
 
+# ncd 서버 측 로직은 플러그인으로 옮겼다(pytmuxlib/plugins/ncd/server.py). 예전엔
+# Server 의 메서드(srv._list_dirs 등)였던 것을 이제 모듈 함수로 직접 부른다.
+import pytmuxlib.plugins.ncd.server as ncds
+
 
 def _make_tree(root):
     """root 아래에 디렉토리/파일/숨김을 만들어 _list_dirs 검증용 픽스처를 세운다."""
@@ -28,7 +32,7 @@ async def test_nc_list_dirs_only_sorted_no_hidden():
     try:
         with tempfile.TemporaryDirectory() as root:
             _make_tree(root)
-            dirs = srv._list_dirs(root)
+            dirs = ncds._list_dirs(root)
             names = [os.path.basename(p) for p in dirs]
             assert names == ["alpha", "Beta", "gamma"], names
             assert all(os.path.isabs(p) for p in dirs), "절대경로 반환"
@@ -41,7 +45,7 @@ async def test_nc_list_subpath():
     try:
         with tempfile.TemporaryDirectory() as root:
             _make_tree(root)
-            dirs = srv._list_dirs(os.path.join(root, "alpha"))
+            dirs = ncds._list_dirs(os.path.join(root, "alpha"))
             assert [os.path.basename(p) for p in dirs] == ["child"]
     finally:
         await teardown(srv, task, sock)
@@ -51,10 +55,10 @@ async def test_nc_list_empty_and_missing_graceful():
     srv, task, sock = await server_only()
     try:
         with tempfile.TemporaryDirectory() as root:
-            assert srv._list_dirs(root) == []                       # 빈 디렉토리
-        assert srv._list_dirs("/no/such/path/xyzzy") == []          # 없는 경로
+            assert ncds._list_dirs(root) == []                      # 빈 디렉토리
+        assert ncds._list_dirs("/no/such/path/xyzzy") == []         # 없는 경로
         with tempfile.NamedTemporaryFile() as f:
-            assert srv._list_dirs(f.name) == []                     # 파일 → 빈
+            assert ncds._list_dirs(f.name) == []                    # 파일 → 빈
     finally:
         await teardown(srv, task, sock)
 
@@ -62,8 +66,12 @@ async def test_nc_list_empty_and_missing_graceful():
 async def test_nc_ancestor_chain_root_to_cwd():
     srv, task, sock = await server_only()
     try:
-        assert srv._ancestor_chain("/a/b/c") == ["/", "/a", "/a/b", "/a/b/c"]
-        assert srv._ancestor_chain("/") == ["/"]
+        if os.name == "nt":
+            # Windows: 드라이브 루트(C:\)까지 거슬러 올라가고 절대경로로 정규화된다.
+            assert ncds._ancestor_chain("C:\\a\\b") == ["C:\\", "C:\\a", "C:\\a\\b"]
+        else:
+            assert ncds._ancestor_chain("/a/b/c") == ["/", "/a", "/a/b", "/a/b/c"]
+            assert ncds._ancestor_chain("/") == ["/"]
     finally:
         await teardown(srv, task, sock)
 
@@ -76,14 +84,18 @@ async def test_nc_list_msg_chain_root_to_cwd():
             cwd = os.path.join(root, "alpha")       # cwd 한 단계 깊이
             sess = srv.ensure_default_session(80, 24)
             srv._pane_cwd = lambda pane, _c=cwd: _c
-            msg = srv.nc_list_msg(sess, None)
+            msg = ncds.nc_list_msg(srv, sess, None)
             assert msg["t"] == "nc_list" and msg["path"] is None
             assert msg["cwd"] == os.path.abspath(cwd)
             chain = msg["chain"]
             paths = [c[0] for c in chain]
-            assert paths[0] == "/" and paths[-1] == os.path.abspath(cwd), paths
-            # 사슬이 실제 조상 사슬과 일치(순서·연속성)
-            assert paths == srv._ancestor_chain(cwd)
+            assert paths[-1] == os.path.abspath(cwd), paths
+            if os.name == "nt":
+                # Windows: 맨 앞 합성 최상위('')[드라이브 묶음] 다음부터 실제 조상 사슬.
+                assert paths[0] == "" and paths[1:] == ncds._ancestor_chain(cwd), paths
+            else:
+                assert paths[0] == "/", paths
+                assert paths == ncds._ancestor_chain(cwd)   # 순서·연속성 일치
             # 각 단계의 자식 목록에 다음 사슬 원소가 들어 있어 펼친 경로가 안 끊김
             for parent, kids in chain[:-1]:
                 nxt = paths[paths.index(parent) + 1]
@@ -103,7 +115,7 @@ async def test_nc_list_msg_chain_keeps_hidden_ancestor_visible():
             os.makedirs(cwd)
             sess = srv.ensure_default_session(80, 24)
             srv._pane_cwd = lambda pane, _c=cwd: _c
-            chain = srv.nc_list_msg(sess, None)["chain"]
+            chain = ncds.nc_list_msg(srv, sess, None)["chain"]
             d = dict((p, kids) for p, kids in chain)
             # root 의 직계 자식엔 보통 .cfg 가 빠지지만(숨김), 사슬 보강으로 포함된다
             assert hidden in d[os.path.abspath(root)], d[os.path.abspath(root)]
@@ -117,8 +129,8 @@ async def test_nc_list_msg_subpath_echoes_path():
         with tempfile.TemporaryDirectory() as root:
             _make_tree(root)
             sub = os.path.join(root, "alpha")
-            msg = srv.nc_list_msg(sess=srv.ensure_default_session(80, 24),
-                                  path=sub)
+            msg = ncds.nc_list_msg(srv, sess=srv.ensure_default_session(80, 24),
+                                   path=sub)
             assert os.path.abspath(msg["path"]) == os.path.abspath(sub)
             assert [os.path.basename(p) for p in msg["dirs"]] == ["child"]
     finally:
@@ -129,7 +141,7 @@ async def test_nc_drive_roots_empty_on_posix():
     srv, task, sock = await server_only()
     try:
         if os.name != "nt":
-            assert srv._drive_roots() == []
+            assert ncds._drive_roots() == []
     finally:
         await teardown(srv, task, sock)
 
@@ -137,21 +149,24 @@ async def test_nc_drive_roots_empty_on_posix():
 async def test_nc_build_chain_prepends_drives():
     """Windows: 드라이브 목록을 합성 최상위('')의 자식으로 맨 앞에 둔다(드라이브 전환)."""
     srv, task, sock = await server_only()
+    orig = ncds._list_dirs
     try:
-        srv._list_dirs = lambda p: {
+        # _build_chain 은 모듈 함수 _list_dirs 를 부른다 — 픽스처로 잠시 교체(복원).
+        ncds._list_dirs = lambda p: {
             "C:\\": ["C:\\Users", "C:\\Windows"],
             "C:\\Users": ["C:\\Users\\me"]}.get(p, [])
-        chain = srv._build_chain(["C:\\", "C:\\Users"], ["C:\\", "D:\\"])
+        chain = ncds._build_chain(["C:\\", "C:\\Users"], ["C:\\", "D:\\"])
         assert chain[0] == ["", ["C:\\", "D:\\"]], chain[0]   # 드라이브 = 최상위 노드
         assert chain[1][0] == "C:\\" and "C:\\Users" in chain[1][1]
         assert chain[2][0] == "C:\\Users"
         # 현재 드라이브가 목록에 없으면 보강
-        c2 = srv._build_chain(["C:\\"], ["D:\\"])
+        c2 = ncds._build_chain(["C:\\"], ["D:\\"])
         assert "C:\\" in c2[0][1] and "D:\\" in c2[0][1]
         # 비-Windows(드라이브 없음): 합성 최상위 없이 그대로
-        c3 = srv._build_chain(["/", "/Users"], [])
+        c3 = ncds._build_chain(["/", "/Users"], [])
         assert c3[0][0] == "/"
     finally:
+        ncds._list_dirs = orig
         await teardown(srv, task, sock)
 
 
@@ -187,7 +202,7 @@ async def test_ncd_command_requests_list():
 
 async def test_ncd_opens_expanded_to_cwd_and_enter_cds():
     async def body(app, pilot, srv):
-        from pytmuxlib.clientnc import NcdScreen
+        from pytmuxlib.plugins.ncd.screen import NcdScreen
         app.send_cmd = lambda *a, **k: None
         inp = []
         app.send_input = lambda data: inp.append(data)
@@ -201,8 +216,34 @@ async def test_ncd_opens_expanded_to_cwd_and_enter_cds():
         assert scr._view._cur() == "/r/sub"
         await pilot.press("enter")
         await pilot.pause(0.1)
-        assert inp == [b"cd /r/sub\n"], inp
+        # Windows(cmd.exe)는 `cd /d "..."`(드라이브 전환), 그 외엔 POSIX `cd ...`.
+        exp = b'cd /d "/r/sub"\n' if os.name == "nt" else b"cd /r/sub\n"
+        assert inp == [exp], inp
         assert not isinstance(app.screen, NcdScreen), "닫힘"
+    await _with_app(body)
+
+
+async def test_ncd_marks_current_dir():
+    # ncd 실행 시 현재 디렉토리(cwd)를 가리킨다 — cwd 행에 ◀ 마커 + 노랑 강조,
+    # 커서를 다른 행으로 옮겨도 cwd 행은 계속 강조돼 어디가 현재 위치인지 보인다.
+    async def body(app, pilot, srv):
+        from rich.color import ColorTriplet
+        from pytmuxlib.plugins.ncd.screen import _CWD
+        app.send_cmd = lambda *a, **k: None
+        app._run_command("ncd")
+        app._dispatch(dict(_CHAIN_MSG))
+        await pilot.pause(0.1)
+        v = app.screen._view
+        assert v._cur() == "/r/sub"                 # 커서가 처음엔 cwd 에
+        i = next(idx for idx, (p, _d) in enumerate(v._rows) if p == "/r/sub")
+        # cwd 행 텍스트에 ◀ 마커
+        assert "◀" in v._row_text("/r/sub", v._rows[i][1]), v._row_text(
+            "/r/sub", v._rows[i][1])
+        # 커서를 루트로 옮겨도 cwd 행은 노랑(_CWD)으로 강조된다
+        v._sel = 0
+        seg = v.render_line(i - v._top)._segments[0]
+        assert seg.style.color.get_truecolor() == \
+            _CWD.color.get_truecolor() == ColorTriplet(255, 255, 85), seg.style
     await _with_app(body)
 
 
@@ -218,13 +259,15 @@ async def test_ncd_cd_quotes_spaces():
         await pilot.pause(0.1)
         await pilot.press("enter")
         await pilot.pause(0.1)
-        assert inp == [b"cd '/r/a b'\n"], inp
+        # Windows 는 `cd /d "..."`(공백 포함 경로는 따옴표), 그 외엔 POSIX shlex 인용.
+        exp = b'cd /d "/r/a b"\n' if os.name == "nt" else b"cd '/r/a b'\n"
+        assert inp == [exp], inp
     await _with_app(body)
 
 
 async def test_ncd_shift_enter_and_ctrl_o_split_with_path():
     async def body(app, pilot, srv):
-        from pytmuxlib.clientnc import NcdScreen
+        from pytmuxlib.plugins.ncd.screen import NcdScreen
         # Ctrl+O (폴백)
         sent = []
         app.send_cmd = lambda action, **kw: sent.append((action, kw))
@@ -333,7 +376,7 @@ async def test_ncd_uses_norton_blue_palette():
     """과거 NCD/Norton 팔레트: 패널 DOS 블루(#0000aa), 현재 항목 시안 막대."""
     async def body(app, pilot, srv):
         from rich.color import ColorTriplet
-        from pytmuxlib.clientnc import _BG, _SEL
+        from pytmuxlib.plugins.ncd.screen import _BG, _SEL
         app.send_cmd = lambda *a, **k: None
         app._run_command("ncd")
         app._dispatch(dict(_CHAIN_MSG))
@@ -382,14 +425,14 @@ async def test_ncd_windows_drives_at_top_and_switch():
 
 async def test_ncd_cd_command_windows_uses_slash_d():
     """Windows(cmd.exe)에선 cd /d 로 드라이브까지 전환, 그 외엔 POSIX cd+인용."""
-    from pytmuxlib.client import _ncd_cd_command
+    from pytmuxlib.plugins.ncd import _cd_command as _ncd_cd_command
     assert _ncd_cd_command("D:\\Users", nt=True) == 'cd /d "D:\\Users"\n'
     assert _ncd_cd_command("/r/a b", nt=False) == "cd '/r/a b'\n"
 
 
 async def test_ncd_esc_closes():
     async def body(app, pilot, srv):
-        from pytmuxlib.clientnc import NcdScreen
+        from pytmuxlib.plugins.ncd.screen import NcdScreen
         app.send_cmd = lambda *a, **k: None
         app._run_command("ncd")
         app._dispatch(dict(_CHAIN_MSG))
