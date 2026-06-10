@@ -300,8 +300,9 @@ CL 에서 delete-to-disable 완성 — §11.6 사용자 결정 ① 재적용).
 
 ---
 
-> **다음 행동**: ✅ 모듈화(§6 T1~T6) 완료. 남은 것은 **§8 회계 정확성 재설계**(별도
-> 세션) — `/usage` 권위값(usageprobe)과 스크랩 누계를 대사하거나 footer 스크랩을 폐기.
+> **다음 행동**: ✅ 모듈화(§6 T1~T6) 완료. **§8 회계 정확성 재설계는 본설계 시나리오로
+> 이행** → [TOKEN_ACCOUNTING_ACCURACY_SCENARIO.md](TOKEN_ACCOUNTING_ACCURACY_SCENARIO.md)
+> (S6, 채택안 (A) 권위값 1차화 + 세분 화면 (C) 분리 표기, T1~T6 단계 계획).
 > 이제 토큰 회계가 claude-code 플러그인 안에 완전히 갇혀 있어, 코어·다른 플러그인 기능과
 > 무관하게 통째로 교체할 수 있다([MEMORY] `usage-panel-vs-app-mismatch`·
 > `claude-usage-headless-probe` 참조).
