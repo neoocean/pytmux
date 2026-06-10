@@ -5,9 +5,13 @@
 
 > **플러그인(2026-06-09~)**: 선택적 기능을 `pytmuxlib/plugins/<name>/` 로 분리하고
 > 디렉토리 삭제만으로 끌 수 있게 했다(코어는 레지스트리 경유 호출). `ncd` 완료,
-> `claude-code` 단계적 추출 진행 중(서버 delete-to-disable 완성: Phase 1·1b·3-S1·3a·3b;
-> 클라 팝업 Phase 2a·2b 완료; 남은 건 클라 렌더/ESC Phase 2c — §11.6). 설계·작성법·진행/
-> 배운 점은 [PLUGIN_SYSTEM.md](PLUGIN_SYSTEM.md) 참고.
+> `claude-code` 추출 **완료**(서버: Phase 1·1b·3-S1·3a·3b; 클라: Phase 2a·2b·2c —
+> 팝업·헤더 렌더·상태줄 세그먼트·footer 클릭존·ESC nav·토큰 팝업 전부 플러그인). **서버·클라
+> 양쪽 delete-to-disable 완성**, 계약 테스트 `tests/test_plugin_contract.py` 신설 — §11.6.
+> 남은 건 (선택) Phase 3 S4/S5 물리 이전뿐. 설계·작성법·진행/배운 점은
+> [PLUGIN_SYSTEM.md](PLUGIN_SYSTEM.md) 참고.
+> 현행 플러그인 로스터: `ncd`·`claude-code`·`clock`·`calendar`·`ime-indicator`(전부
+> delete-to-disable). 작성법·사례는 [PLUGIN_MANUAL.md](PLUGIN_MANUAL.md).
 
 ## 1. 한눈에 보기
 
@@ -18,8 +22,8 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **135 passed**
-  (`python3 tests/run.py`).
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **434 passed**
+  (`python3 tests/run.py`, 2026-06-10).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
 ## 2. 실행 / 개발
@@ -94,6 +98,8 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
 | `plugins/__init__.py` | **선택적 플러그인 레지스트리**(`load()`) — `commands`/`noarg`/`completions`/`command_options`/`attach_client`/`handle_command`/`handle_message`/`handle_server_request`/`server_mixins` 훅 |
 | `plugins/ncd/` | Norton Change Directory 플러그인(CL 57774) — `__init__`(메타·서버요청)·`server.py`(파일시스템·cwd)·`screen.py`(모달) |
 | `plugins/claude-code/` | Claude Code 통합 플러그인(Phase 1b·3-S1, CL 57789/57795/57812) — `__init__`(명령 메타·디스패치·token-saver)·`servermixin.py`(ServerClaudeMixin: 스캔·토큰·자동개입, 옛 `serverclaude.py`)·`screens.py`(규칙편집·절감설정 팝업) |
+| `plugins/clock/`·`plugins/calendar/` | 시계·달력 오버레이 플러그인(CL 57907/57932) — `__init__`(명령·`client_render` 훅)·`render.py`(오버레이 자유함수, 옛 `clientrender.draw_clock/calendar_overlay`). delete-to-disable |
+| `plugins/ime-indicator/` | IME 한/영 배지 플러그인(CL 57983) — `__init__`(`client_key`/`client_render` 훅·`ime` 명령)·`render.py`(우상단 배지). preedit 관찰불가→확정 입력 스크립트 휴리스틱. delete-to-disable |
 
 `pytmux.py` 는 얇은 진입점(위 심볼 재노출 + `main()`). **Claude/NCD 등 선택 기능은 `plugins/`
 디렉토리를 통째로 지우면 조용히 비활성화된다(코어는 레지스트리로만 호출).**
@@ -124,7 +130,9 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
 ## 5. 구현된 주요 기능 (요지)
 
 - 패널: 분할(`-h`=가로/상하, `-v`=세로/좌우 — **tmux 와 반대, 한국어 직관 기준**),
-  이동·줌·swap/rotate·break/join·동기화·제목·테두리 아웃라인.
+  이동·줌·swap/rotate·break/join·동기화·제목·테두리 아웃라인. **헤더 드래그 pick-up**
+  (CL 57964): 패널 위 테두리/제목 행을 끌어 다른 패널에 swap·다른 탭으로 이동·`[+]` 새 탭
+  분리(안 움직이면 포커스); **Shift+드래그=본문 텍스트 선택**.
 - 탭: 새 탭(=새 윈도우)·삭제·이름변경·선택·재정렬(드래그/Shift+←→ Enter 확정/
   `move-tab-left/right/first/last`). **상단 탭바**(기본 항상 표시, `tab-bar auto`
   면 2개↑일 때만), 마우스 클릭·ESC 위 방향키 포커스→←→ 선택→Enter, 폭 초과 시 ◀▶ 스크롤.
@@ -154,7 +162,11 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
   클릭**으로 토글).
 - copy-mode 스크롤백/검색/선택복사/클립보드, 붙여넣기 패스스루.
 - **Claude Code 연동(고유)**: 토큰 리밋 자동재개(prefix R), 탭 상태 아이콘
-  (대기 ○/처리중 ◐/리밋 ⊘), 마지막 프롬프트 스티키 헤더, 토큰/컨텍스트 표시.
+  (대기 ○/처리중 ◐/리밋 ⊘), 마지막 프롬프트 스티키 헤더, 토큰/컨텍스트 표시,
+  **컨텍스트 하드스톱 자동복구**(CL 57957 — "Context limit reached" 감지 시 즉시 `/compact`,
+  토글 `auto_hardstop` 기본 ON).
+- **IME 한/영 배지**(CL 57983, 플러그인): 화면 우상단 `[한]`/`[EN]`(확정 입력 스크립트 추정,
+  토글 `:ime`).
 - **패널 출력 캡처(진단)**: 각 패널 raw 출력을 `<sock>.capture/pane-<id>.log` 로
   무손실 기록(탭 매핑은 `sessions.log`). Claude 화면 문구 분석용. 기본 ON,
   `capture-output [on|off]` 토글(상태줄 `REC`), 상태는 `<sock>.opts.json` 영속.
@@ -245,7 +257,47 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~57812 + git, 신→구)
+## 9. 최근 변경(CL 56279~57988 + git, 신→구)
+
+> 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
+> 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
+
+- 57988 **protocol write_msg/write_frames `writer=None` 가드**(요청·크래시 방지) — 종료/
+  재연결 레이스에서 `writer` 가 None 인 채 쓰기를 시도하면 `AttributeError` 가 `ConnectionError`
+  catch 를 빠져나가 **awaited 안 된 백그라운드 태스크가 크래시**(office `protocol.py:77`)했다.
+  쓰기 직전 None 가드를 더해 조용히 무시(연결이 이미 끊긴 정상 경로). 회귀
+  `tests/test_protocol.py` 신규. 파일: `pytmuxlib/protocol.py`, `tests/test_protocol.py`.
+- 57983 **IME 한/영 상태 인디케이터 플러그인**(요청 — office 세션 구현, 57941 큐 항목 완료) —
+  화면 우상단 첫 행 `[한]`/`[EN]` 배지. 새 플러그인 `pytmuxlib/plugins/ime-indicator/`
+  (`__init__.py`+`render.py`), clock/calendar 와 같은 **delete-to-disable**. 신규 클라 훅
+  `client_key`(server_input 의 클라 대응) + `client_render` 배지. **관찰의 진실**: preedit 은
+  OS 가 하드웨어 커서에 오버레이 → 앱은 확정 글자만 받음 → 한/영은 확정 입력 스크립트
+  (`has_hangul`)로 추정(숫자·기호는 모드 중립). 토글 `:ime-indicator`(별칭 `ime`), 기본 ON.
+  `tests/test_plugin_ime_indicator.py`(9). 상세 §11.6.
+- 57964 **패널 헤더 드래그 pick-up(#1)**(2026-06-05 마우스 제스처 설계 구현 — office 세션) —
+  패널 위쪽 테두리/제목 행을 좌버튼으로 끌면 패널을 "든다": 다른 패널에 놓으면 swap, 탭바의
+  다른 탭에 놓으면 그 탭으로 이동(신규 `servertree.move_pane_to_tab`=`join_pane` 거울상),
+  `[+]` 에 놓으면 새 탭 분리(`break_pane`), 안 움직이고 떼면 포커스만. **Shift+좌드래그는
+  텍스트 선택**으로 변경(구 Shift+드래그=swap 폐지·헤더로 이전). 히트테스트는 divider(리사이즈)
+  검사 *다음*이라 분할 경계와 안 충돌. 클라 `clientwidgets` `_pickup`/`_pickup_over`/`_pickup_moved`.
+  파일: `servertree.py`·`serverio.py`·`clientwidgets.py`·`tests/test_server.py`.
+- 57957 **컨텍스트 하드스톱 자동복구 — 즉시 자동 `/compact`**(요청·HANDOFF 큐) — Claude 가
+  "Context limit reached · /compact or /clear to continue" 로 **완전히 멈춘**(하드스톱) 화면을
+  서버가 감지하면 지연 없이 즉시 `/compact` 1회 주입. idle-기반 `auto_compact`(busy→idle N초)와
+  **다른 트리거**(하드스톱은 안 풀리는 차단 상태). 파서 `claude.claude_context_hardstop`(오탐
+  방지 — `/compact`·`/clear` 리터럴 동반 시에만 발화). 토글 `auto_hardstop` **기본 ON**(부작용
+  없는 복구라 idle OFF 기본과 구분; `:auto-hardstop off`). `_hardstop_fired` 디바운스 +
+  `_auto_cc_blocked` 쿨다운. 전 접점 `auto_compact` 미러링. `test_server`
+  `test_auto_hardstop_context_limit_injects_compact`. 파일: `claude.py`·`model.py`·`server.py`·
+  `serverpersist.py`·`plugins/claude-code/*`·`clientstatus.py`·`tests/test_server.py`. (§11.6)
+- 57940 **`:` 자동완성 공백 검색 + 플러그인 명령 포함**(요청 — todo-cmdprompt-space-separator) —
+  ① `:` 명령 프롬프트 실시간 후보의 `" " not in s` 게이트 제거 → 공백을 언더바처럼 구분자로
+  취급(`norm_sep` 가 공백/언더바/하이픈 통일), 멀티워드 명령 공백 검색 가능(`clock m`→`clock-mode`,
+  `move tab l`→`move-tab-left`). 완성명령+인자(`rename-tab foo`)는 정규화 입력이 부분문자열이
+  아니게 돼 후보 자연소멸→인자 힌트 전환(상태 없이 자명). ② 후보·힌트 풀을 코어+플러그인 통일
+  (신설 `_commands()`/`_command_options()` = COMMANDS+`reg.commands` 등) — 플러그인 명령
+  (`clock-mode`·`auto-compact`)이 인라인 후보·힌트에도 노출, delete 시 함께 빠짐. **420 passed**.
+  파일: `pytmuxlib/clientscreens.py`, `tests/test_client.py`.
 
 > ✅ **git 미러 동기화 완료(2026-06-04, macOS 세션).** Windows 박스(`office`)와
 > `surface-office` 병행 세션에서 낸 CL **56540~56560** 을 macOS 개발 머신에서
@@ -2377,7 +2429,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 `# ---- Claude Code 연동 (분리 대상) ----` 식 **명확한 구획 주석**으로 감싼다(현재도 일부 있음).
 충돌은 줄지만 같은 파일이라 완전 분리는 아니다 — 11.2 의 전용 모듈이 본안.
 
-### 11.6 플러그인 기반 추출(현행) — 진행 상황과 남은 작업 (2026-06-10 갱신)
+### 11.6 플러그인 기반 추출(현행) — 진행 상황과 남은 작업 (2026-06-10 갱신: Phase 2c 완료)
 
 > **§11.1~11.5 는 초기 전략(claude.py/client_claude.py 자유함수)으로, 지금은
 > `pytmuxlib/plugins/` 플러그인 시스템(CL 57774)으로 대체되었다.** 목표는 동일하되 메커니즘이
@@ -2411,7 +2463,31 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   (handle_message)+TokenLogScreen → 플러그인. clientscreens 에서 잉여 import 정리.
   **잠재버그 수정**: TokenLogScreen `[s]` 의 미정의 `app.open_claude_saver()`→
   `push_screen(ClaudeSaverScreen())` (크래시→정상).
-- 문서: PLUGIN_SYSTEM.md 갱신(57842·57860).
+- **Phase 2c (이번 세션)**: **클라이언트 렌더/상태/ESC-nav delete-to-disable 완성.**
+  - **신설 클라 훅 4종**: `client_render`(콘텐츠-레이어 — 프롬프트 헤더 그리기+footer
+    클릭존 스캔), `client_status`(status 메시지 Claude 필드 흡수), `client_statusbar_update`
+    (하단 상태줄 위젯 Claude 필드 흡수), `client_statusbar`(상태줄 좌측 Claude 세그먼트+
+    클릭존). 전부 플러그인 부재 시 no-op.
+  - **이전**: `_draw_claude_headers`·`_scan_footer_zones`·`_footer_zone_at`·`_claude_header_
+    panes`→`clientrender.py`; StatusBar `update_status`/`_render_main` Claude 블록→
+    `clientstatus.py`; `_update_claude`·`set_claude_header`·`toggle_header_hidden`·
+    `_toggle_remote_control`·`open_remote_control`·`open_claude_usage_tree`·`_open_usage_tree`·
+    `_usage_tree_lines`→`__init__.py` 클로저. 상태(`pane_claude`·`claude_header_on`·
+    `_claude_hidden_panes`·`_claude_header_zones`·`_perm_zone`·`_remote_zone`·`_last_usage_
+    shown_seq`)는 코어 `__init__` 에서 제거하고 `attach_client` 가 설치 → 코어/clientwidgets
+    는 `getattr(app,...,기본값)` 로만 읽음.
+  - **`_hdr_focus` 오버로드 분리**: 코어 `_handle_hdr_focus` 는 그대로 두되(탭-닫기[x] 는
+    코어), 헤더 패널 목록을 plugin `_claude_header_panes` 로 빼고 코어 `_hdr_panes()` 게이트
+    (없으면 빈 목록)로 호출 → 부재 시 헤더 동선이 비고 닫기[x] 만 남음.
+  - **통합 상태탭 토큰 탭(분리 난해 우려)**: 코어 `_open_status_tabs`(REC/토큰/서버 혼합)는
+    `_usage_tree_lines` 를 `getattr` 폴백으로 부른다(없으면 "토큰 — 플러그인 없음" 안내문) —
+    REC/서버 탭은 그대로, 토큰 탭만 비활성.
+  - **계약 테스트 신설**: `tests/test_plugin_contract.py`(5 테스트) — Registry 에서 claude-code
+    필터로 부재 시뮬레이션, 명령/서버훅/클라훅/믹스인 no-op + 실제 클라 앱이 렌더/ESC/클릭/
+    status 경로에서 안 깨지고 Claude 클로저·상태·세그먼트가 전혀 안 생김을 검증.
+  - **테스트 import 경로 갱신**: `_toggle_remote_control` 의 write_msg 패치를 `pytmuxlib.client`
+    →`pytmuxlib.protocol` 로(플러그인이 거기서 지연 import). **전체 417 + 신규 5 = 그린, smoke PASS.**
+- 문서: PLUGIN_SYSTEM.md 갱신(57842·57860 + 이번 Phase 2c).
 
 > **설계 메모(3a/3b 가 S2/S3 를 대체)**: 원안 S2(토큰 메서드 물리 이전)·S3(호출부 라우팅)
 > 대신, **더 낮은 위험의 "호출부만 레지스트리 훅으로 라우팅"** 경로로 같은 계약을 달성했다.
@@ -2420,37 +2496,55 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 호출만** 훅으로 옮기면 충분. 토큰 회계 메서드·Pane 필드·`claude.py` 파서는 코어에 남아도
 > 플러그인 부재 시 무해한 사장 데이터다.
 
-**남은 작업 — Phase 2c(클라이언트 렌더/ESC-nav):**
-- `_draw_claude_headers`(프롬프트 헤더 렌더)·`_scan_footer_zones`(perm/remote footer 클릭존)·
-  StatusBar Claude 세그먼트(clientwidgets: model 배지·usage·tokens·warn·pending·`_model_zone`/
-  `_usage_zone`)·ESC 내비(`_handle_hdr_focus`·`_status_buttons`/`_handle_status_focus` 의 Claude
-  항목)·통합 상태탭(`InfoTabsScreen`)의 **토큰 탭**(`open_claude_usage_tree`/`_usage_tree_lines`,
-  REC/서버 탭과 혼합이라 분리 난해) → 플러그인. 신규 클라 훅 필요: `composite_overlay`(렌더
-  오버레이)·`on_status`(status 의 Claude 필드 흡수 — 현재 `update_status`/`_update_claude`
-  가 흡수)·`on_click`(클릭존)·`esc_nav`(ESC 포커스)·StatusBar 세그먼트 제공.
-- **⚠️ 선행 함정**: `_hdr_focus` 가 **Claude 헤더 포커스와 코어 탭-닫기[x] 포커스로 오버로드**
-  (헤더가 없어도 `"close"` 로 진입). 깨끗한 추출 전 이 공유 내비 상태를 분리해야 한다
-  (헤더=플러그인 / close=코어).
-- **⚠️ 구조 제약**: `PytmuxApp` 은 `build_client_app()` 팩토리 안 **지역 중첩 클래스**라 서버처럼
-  동적 베이스 믹스인을 못 쓴다 → 2a/2b 처럼 `attach_client` **인스턴스 클로저 설치**로 가거나,
-  먼저 `PytmuxApp` 을 모듈 최상위로 끌어올리는 선행 리팩토링(후자 깔끔하나 팩토리 해체 위험).
-- **⚠️ 검증 한계**: driver(소켓 클라)는 client.py 앱 코드를 실행하지 않아 smoke 로 검증 불가.
-  `tests/test_client.py` 가 PytmuxApp 인스턴스화 후 렌더/ESC/클릭/팝업을 직접 검증하므로
-  412 스위트가 회귀망. 클라 screen/심볼 이동 시 그 테스트의 import 경로도 함께 갱신할 것.
+**Phase 2c — 완료(이번 세션):** 위 "완료" 절 참조. `_draw_claude_headers`·`_scan_footer_zones`·
+StatusBar Claude 세그먼트·ESC Claude 항목·통합 상태탭 토큰 탭을 전부 플러그인으로 이전했다.
+신규 클라 훅 4종(`client_render`/`client_status`/`client_statusbar_update`/`client_statusbar`).
+`_hdr_focus` 오버로드는 헤더 목록만 plugin `_claude_header_panes` 로 빼고 코어 `_hdr_panes()`
+게이트로 분리(닫기[x]=코어 유지). 통합 상태탭 토큰 탭은 `getattr` 폴백으로 해결. 구조 제약
+(`PytmuxApp` 지역 중첩 클래스)은 예상대로 `attach_client` 클로저 설치로 우회. 검증은 `tests/
+test_client.py`(417) + 신규 `tests/test_plugin_contract.py`(5) 회귀망 + smoke PASS.
 
 **남은 작업 — (선택) Phase 3 S4/S5 물리 이전:**
-- delete-to-disable 계약엔 **불필요**(이미 완성). 코어 표면을 더 줄이려면: **S4** Pane 의
-  Claude 필드(~50개)를 `pane.plugin_state` 네임스페이스로; **S5** `claude.py` 파서 +
-  `tokens`/`usagedb`/`usagelog`/`usageprobe` 를 플러그인으로 물리 이전(코어 import 제거).
-  ⚠️ `saver_hook_events`(client.py 코어 사용)는 Phase 2c 의 status 훅 이후라야 이동 가능(순서 의존).
+- delete-to-disable 계약엔 **불필요**(이미 완성 — 서버·클라 양쪽). 코어 표면을 더 줄이려면:
+  **S4** Pane 의 Claude 필드(~50개)를 `pane.plugin_state` 네임스페이스로; **S5** `claude.py`
+  파서 + `tokens`/`usagedb`/`usagelog`/`usageprobe` 를 플러그인으로 물리 이전(코어 import 제거).
+  ⚠️ `saver_hook_events`(client.py 가 `from .claude import` — 코어 `pytmuxlib/claude.py`)는
+  S5 에서 `claude.py` 를 플러그인으로 옮길 때 함께 처리(현재는 코어 claude.py 라 계약 무관).
+  StatusBar 의 `claude_*` 속성도 S4 때 plugin_state 로 옮길 후보(현재는 안전한 기본값으로 코어
+  __init__ 에 남김 — model.py Pane 속성과 같은 관례).
 
 **남은 작업 — 마무리:**
-- **계약 테스트(delete-to-disable)**: `plugins/claude-code/` 부재를 시뮬레이션(레지스트리
-  필터 / discovery monkeypatch)해 서버·클라가 에러 없이 import/구동되고 Claude 명령·렌더가
-  사라지는지 검증.
-- **신규 기능(추출과 별개, 큐)**: "Context limit reached · /compact or /clear to continue"
-  하드스톱 감지 → 자동 `/compact` 주입·완료 대기 후 작업 이어가기(기존 idle-기반 auto_compact
-  와 **다른 트리거** — `claude.py` 파서에 신호 추가). 토글 노출.
+- ~~**계약 테스트(delete-to-disable)**~~ → **완료**: `tests/test_plugin_contract.py` 신설.
+- ~~**신규 기능: 컨텍스트 하드스톱 자동복구**~~ → **완료(p4 57957, 2026-06-10)**:
+  "Context limit reached · /compact or /clear to continue" 하드스톱을 서버가 감지하면
+  idle 지연 없이 즉시 `/compact` 1회 주입(claude.py `claude_context_hardstop` 신설 — `/compact`·
+  `/clear` 리터럴 동반 시에만 발화해 오탐 방지; idle-기반 `auto_compact` 와 다른 트리거).
+  토글 `auto_hardstop` **기본 ON**(차단 상태·부작용 없는 복구라 idle auto_compact 의 OFF 기본과
+  구분; `:auto-hardstop off` 로 끔). `_hardstop_fired` 디바운스 + `_auto_cc_blocked` 쿨다운 재사용.
+  전 접점 auto_compact 미러링(server.py 기본값·serverpersist·setter·플러그인 commands/options/
+  saver/status/server_command/handle_command·clientstatus·StatusBar). test_server
+  `test_auto_hardstop_context_limit_injects_compact`. 421 green·smoke PASS.
+- ~~**신규 기능: IME 상태 인디케이터(우상단·플러그인)**~~ → **완료(CL 57983 office, 2026-06-10)**:
+  화면 우상단 첫 행(테두리/콘텐츠)에 `[한]`/`[EN]` 배지. 새 플러그인 `pytmuxlib/plugins/
+  ime-indicator/`(`__init__.py`+`render.py`, 하이픈 디렉토리 — claude-code 와 동일하게 importlib
+  로딩·내부 상대 import OK). **delete-to-disable**: 디렉토리를 지우면 `ime-indicator`/`ime` 명령·
+  배지·입력 관찰이 전부 사라지고 코어는 그대로(레지스트리 훅 + getattr 가드만 사용).
+  - **관찰의 진실(설계 메모 정정)**: 이전 큐 메모는 "preedit(조합 문자열)만 노출"이라 했으나,
+    docs/IME_PREEDIT_CURSOR_SCENARIO.md 의 결론대로 **preedit 은 앱이 아니라 OS 가 하드웨어 커서에
+    오버레이**하므로 **앱은 확정(committed) 글자만** 키 이벤트로 받는다 — 즉 '조합 중' 자체는 앱이
+    관찰 불가. 그래서 한/영은 **패널로 보낼 확정 입력 문자의 스크립트**로 추정한다: 한글(자모/완성형
+    `has_hangul`)→'한', ASCII 글자→'EN', 숫자·기호·공백·제어키는 **모드 중립**(직전 상태 유지).
+    한글 모드에서 ASCII 만 치면 'EN' 으로 보이는 휴리스틱 한계는 그대로(불가피).
+  - **결정(사용자 2026-06-10)**: 표시=Option A(조합중+한/영 추정), 기본 노출=ON.
+  - **배선**: 신규 클라 레지스트리 훅 `client_key(app, event)`(server_input 의 클라 대응) +
+    client.py on_key normal 경로 1줄 호출(send_input 직전, 부재 시 no-op). 배지는 `client_render`
+    훅으로 우상단 그림 — 우측 4칸은 무테 단일패널의 `[x]` 자리로 비움. 다중패널에선 첫 행=활성
+    패널 상단 테두리라, 플러그인이 `app._ime_zone` 를 노출하고 `test_active_pane_border_highlight`
+    가 `[x]`(_tab_close_zone)와 동일하게 그 구간을 파랑 예외로 둔다.
+  - **테스트**: `tests/test_plugin_ime_indicator.py`(9개 — 순수 렌더 배치/와이드/폭부족, client_key
+    상태전이·hidden 시 무합성, 토글, 계약 discover/부재 no-op, 라이브 on_key 배선) + test_client
+    border 예외. 전체 스위트 green. **실기 수동확인**: 실제 한글 IME 로 배지가 한↔EN 전환되는지(헤드리스
+    불가는 아니나 OS IME 입력 경로 자체는 라이브가 확실). 토글 `:ime-indicator`(별칭 `ime`).
 
 **⚠️ 병렬 세션 함정(2026-06-10 갱신)**: playground 워크스페이스를 **다른 세션이 동시 편집**한다.
 2026-06-09 Phase 2 제출 중, 병렬 세션의 **clock/calendar 플러그인 추출**(미완·당시 깨짐: 미존재
