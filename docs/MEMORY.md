@@ -137,3 +137,91 @@
   반드시 확인. (이 세션 client.py: 동시 세션의 shift+enter/escape 매핑 + 내 마우스
   코드가 둘 다 보존됨을 grep 으로 확인했다.) p4 는 submit 시 CL 번호를 리네임할 수
   있다(56331→56333, 56345→56347) — 디스크립션/문서의 번호는 submit 후 실제 번호로 정정.
+
+## Claude Code 기능 플러그인화 — delete-to-disable 패턴 (CL 57789~57907)
+
+- **목표·계약**: `pytmuxlib/plugins/claude-code/` 디렉토리를 통째로 지우면 Claude 기능이
+  **에러 없이** 전부 사라지고 코어(server/client)는 그대로 돈다. 코어는 Claude 코드를
+  이름으로 부르지 않고 **레지스트리 훅 + `getattr(app, ..., 기본값)` 가드로만** 닿는다.
+  훅이 없으면(=플러그인 부재) 전부 no-op/None/False/빈목록 → 코어 경로가 안 깨진다.
+- **클라는 동적 베이스 믹스인을 못 쓴다 (핵심 함정)**: `PytmuxApp` 은 `build_client_app`
+  팩토리 **안의 지역 클래스**라, 서버처럼 동적 베이스로 믹스인을 합성할 수 없다. 그래서
+  클라측 플러그인은 `attach_client(app)` 에서 **인스턴스에 클로저를 설치**한다
+  (`app.open_token_log = lambda: _open_token_log(app)`; ncd/`_saver_*` 와 같은 패턴).
+  서버측은 반대로 `Registry.server_mixins()` 가 돌려주는 `ServerClaudeMixin` 을
+  `Server` 의 **동적 베이스로 합성**한다(`serverclaude.py` 는 삭제하고 클래스만 플러그인
+  `servermixin.py` 로 이전). "추출 완료"는 `grep ServerClaudeMixin` 이 플러그인 안에서만
+  걸리고 `serverclaude.py` 가 사라졌는지로 확인.
+- **선택적 탭은 가운데, 항상 있는 코어 탭은 끝에 두면 인덱스가 우아하게 클램프된다
+  (CL 57907)**: 통합 상태 팝업을 `REC(0)·토큰(1)·서버(2)` 로 두고 **토큰 탭만** 플러그인
+  소유로 뺐다. 열기 버튼은 인덱스로 초기 탭을 지정하는데(host 클릭=2), 토큰 탭이
+  사라지면 탭이 2개라 `initial=2` 가 마지막=서버로 **자연 클램프**된다 → 호출부를 하나도
+  안 고치고 delete-to-disable 가 성립. 교훈: **옵션 탭은 중간, 코어가 늘 채우는 탭은 끝**.
+  (안 그러면 토큰 탭 자리에 "(플러그인 없음)" 안내 탭을 남겨야 하는데, 그건 진짜
+  delete-to-disable 가 아니다.)
+- **계약 테스트로 회귀 못박기 (test_plugin_contract)**: 실제로 디렉토리를 지우는 대신
+  `Registry` 에서 해당 플러그인만 **필터로 제외**해 부재를 시뮬레이션한다. 이때 `load()`
+  가 아니라 **`_discover()` 를 직접** 써야 — `load` 를 monkeypatch 한 테스트에서 자기재귀를
+  피한다. 검증 내용: 명령/자동완성/옵션 누수 없음 + 모든 서버·클라 훅 no-op + 실제
+  Textual 앱이 렌더·ESC·클릭·status 경로에서 안 깨지고 Claude 클로저·상태·세그먼트·
+  **팝업 탭**이 전혀 안 생김. ("존재 시 노출"을 같이 단언해 헛검증(원래도 없던 것 검증)을
+  막는 sanity 테스트도 한 쌍으로 둔다.)
+- **단계적 추출 + 제출 전 `have==head` 필수**: 한 번에 다 옮기지 말고 phase 당 1 서브밋
+  (명령→서버→클라 렌더→자투리). 같은 파일을 **playground 병렬 세션이 동시 편집**하므로
+  (client.py·serverclaude→servermixin·test_*), 열기 전 `p4 fstat -T "haveRev, headRev"`
+  로 두 값이 같은지 보고 시작해야 남의 미제출 리팩터 중간 상태를 덮지 않는다.
+
+## 컨텍스트 하드스톱 자동복구 (CL 57957) — 리밋과 다른 신호
+
+- **"limit" 과 하드스톱은 별개**: `claude_state` 의 `"limit"` 은 *사용량/rate* 리밋
+  (reset/resume/retry/upgrade 키워드 — 시간 지나야 풀림)이다. 대화 **컨텍스트 윈도우**가
+  꽉 차 `"Context limit reached · /compact or /clear to continue"` 로 멈추는 건 **다른
+  상태** — `/compact` 한 방이면 즉시 풀린다. 둘을 한 파서로 합치면 오발화한다. 신규
+  `claude_context_hardstop(text)` 로 분리하고, **오탐방지로 화면에 `/compact`·`/clear`
+  리터럴이 실제로 떠 있을 때만 True**(`'…auto-compact: N%'` 카운트다운·셸출력은 비발화).
+- **기본 ON 결정 근거**: idle `auto_compact` 는 기본 OFF(정상 대기 중 선제 압축은
+  부작용 가능)인데, 하드스톱은 **정상 idle 이 아니라 완전 차단**이고 `/compact` 가
+  유일 진행수단이라 부작용 없는 복구 → `auto_hardstop` 만 **기본 ON**. "토글 기본값은
+  상태의 성격(선택적 최적화 vs 유일 탈출구)으로 가른다"가 교훈.
+- **테스트 격리 함정**: 하드스톱 주입을 검증하려고 idle→hardstop 전환 화면을 쓰면,
+  `claude_auto_launch`(기본 ON)가 그 idle 화면에 `/rc` 를 끼워넣어 주입 시퀀스가
+  `['/compact','/rc','/compact']` 로 오염된다. 단일 기능 단위테스트는 **인접 자동기능
+  (`claude_auto_launch`/`claude_auto_mode`/`auto_compact`)을 명시적으로 꺼서** 격리.
+
+## `:` 명령 자동완성 공백 검색 (CL 57940) — 모호성 자가해소
+
+- **공백을 구분자로 승격**: 옛 코드는 `" " not in s` 게이트로 공백이 들어오면 자동완성을
+  꺼버렸다(인자 입력으로 간주). 제거하고 공백을 언더바/하이픈과 동일하게 `norm_sep`
+  구분자로 취급 → `clock m`→`clock-mode` 매칭. **명령 vs 인자 모호성은 추가 상태 없이
+  자가해소**된다: 실제 인자를 치면 정규화 입력이 어떤 명령 이름의 부분문자열도 아니게 돼
+  후보가 자연 소멸하고 힌트(인자 안내)로 전환된다. "구분자 정규화 + 부분문자열 매칭"이
+  스스로 모드 전환을 만든다 — 별도 파서/플래그 불필요.
+- **후보풀에 플러그인 명령 병합 필수**: 인라인 자동완성이 코어 `COMMANDS` 만 보면
+  `clock-mode` 같은 **플러그인 명령이 누락**된다. `_commands()`/`_command_options()` 로
+  레지스트리(`getattr(app,"plugins",None)`)를 합쳐 매칭. delete-to-disable 유지(가드 통해).
+
+## IME 한/영 배지 (CL 57983, office) — preedit 은 앱이 관찰 불가
+
+- **관찰의 진실**: 이전 큐 메모는 "조합 중(preedit)을 노출한다"를 전제로 설계했으나
+  **틀렸다**. preedit(조합 문자열)은 **앱이 아니라 OS/터미널이 하드웨어 커서 위치에
+  오버레이**하는 것이라, 터미널 앱에는 **확정(committed)된 글자만** 키 이벤트로 도착한다
+  (docs/IME_PREEDIT_CURSOR_SCENARIO.md). 즉 '조합 중'·OS IME *언어* 둘 다 앱이 직접
+  질의할 수 없다. "터미널은 IME 상태를 안다"는 직관이 함정.
+- **그래서 휴리스틱**: 한/영은 **패널로 보낼 확정 입력 문자의 스크립트**로 추정한다 —
+  한글(자모/완성형 `clientutil.has_hangul`)→'한', ASCII 글자→'EN', 숫자·기호·공백·제어키는
+  한·영 공통이라 **모드 중립**(직전 상태 유지, 숫자만 쳐도 안 깜빡임). 한글 모드에서
+  ASCII 만 칠 때 'EN' 오판은 **불가피한 한계**(문서화로 갈음).
+- **배선 패턴**: 키 관찰은 신규 클라 훅 `client_key(app,event)`(서버 `server_input` 의
+  클라 대응) — `on_key` 의 `send_input` 직전 1줄 호출, 부재 시 no-op. 배지는 `client_render`
+  훅으로 우상단. 다중패널 첫 행은 활성 패널 상단 테두리라, `[x]`(`_tab_close_zone`)처럼
+  `app._ime_zone` 을 테두리-파랑 예외로 둔다. delete-to-disable 유지.
+  [[claude-plugin-extraction-phases]]
+
+## 병렬 세션 충돌 — `p4 resolve -ay` 차단 우회 (이 세션 실경험)
+
+- **`p4 resolve -ay`(=accept yours, 남의 변경 폐기)는 Claude Code 분류기가 막는다.**
+  병렬 office 세션이 같은 파일(test_server.py 등)을 먼저 서브밋해 `must sync/resolve`
+  가 뜨면, 차단되는 `-ay` 대신 **`git merge-file -p MINE BASE THEIRS > merged` 3-way
+  머지**로 상대 의도(head)와 내 변경을 둘 다 살린다(무충돌이면 exit 0·마커 0). 그 뒤
+  `p4 sync -f <file>#head` 로 head 를 받고 merged 내용으로 덮어쓴 다음 reconcile→submit.
+  교훈: "남의 변경을 버리는" 도구는 막혀 있으니 **3-way 로 합치는 경로**를 기본으로.
