@@ -19,8 +19,8 @@ import json
 import os
 import time
 
-from pytmuxlib import ipc, usagedb, usagelog
-from . import tokens
+from pytmuxlib import ipc
+from . import tokens, usagedb, usagelog   # S5 T5: 토큰 DB 백엔드도 플러그인 소속(물리 이전)
 from .claude import (claude_account, claude_awaiting_answer,
                      claude_context_hardstop, claude_context_pct,
                      claude_feedback_prompt,
@@ -1226,30 +1226,69 @@ class ServerClaudeMixin:
         (휘발 영역 state_base, docs/TOKEN_USAGE_STORAGE_DESIGN.md §5)."""
         return ipc.state_base(self.sock_path) + ".tokens.jsonl"
 
+    def _tokens_db_filename(self) -> str:
+        """DB 파일명. 기본 소켓은 claude-tokens.db, 그 외(임시 소켓 등)는 소켓 id 로 격리."""
+        if self.sock_path == ipc.default_endpoint():
+            return "claude-tokens.db"
+        return f"claude-tokens-{self._capture_id()}.db"
+
     @property
     def tokens_db_path(self) -> str:
-        """토큰 사용량 SQLite DB. 기본 소켓은 프로젝트 하위 `db/claude-tokens.db`,
-        그 외(임시 소켓 등)는 `db/claude-tokens-<sock-id>.db` 로 격리한다. captures 와
-        달리 raw 화면 잔재가 없는 집계 데이터지만, db/ 전체를 .gitignore·p4ignore 로
-        버전관리에서 제외한다(런타임·호스트 로컬, 사용자 결정 2026-06-07).
+        """토큰 사용량 SQLite DB 경로. **S5 토큰 모듈화 T5** 에서 DB 파일을 플러그인
+        디렉터리 하위(`pytmuxlib/plugins/claude-code/db/`)로 옮겼다 — claude-code 를 통째로
+        지우면 토큰 이력 데이터까지 함께 사라진다(delete-to-disable 가 데이터까지). db/ 는
+        .gitignore·중앙 p4ignore 로 버전관리에서 제외한다(런타임·호스트 로컬). 이전 위치
+        (프로젝트 루트 db/)의 DB 는 _migrate_legacy_db 가 첫 연결 시 1회 이전한다.
         PYTMUX_TOKENS_DB 로 강제 지정 가능(테스트가 임시 파일을 주입해 오염 방지)."""
         override = os.environ.get("PYTMUX_TOKENS_DB")
         if override:
             return override
+        return os.path.join(os.path.dirname(__file__), "db",
+                            self._tokens_db_filename())
+
+    def _legacy_tokens_db_path(self) -> str:
+        """이 CL(S5 T5) 이전 또는 타 머신의 DB 위치: 프로젝트 루트 `db/`. 마이그레이션 원본."""
         from pytmuxlib.servercapture import PROJECT_DIR
-        base = os.path.join(PROJECT_DIR, "db")
-        if self.sock_path == ipc.default_endpoint():
-            return os.path.join(base, "claude-tokens.db")
-        return os.path.join(base, f"claude-tokens-{self._capture_id()}.db")
+        return os.path.join(PROJECT_DIR, "db", self._tokens_db_filename())
+
+    def _migrate_legacy_db(self, new_path: str):
+        """S5 T5 업그레이드 마이그레이션(타 머신 포함): 토큰 DB 가 이전 위치(프로젝트 루트
+        db/)에 있고 새 위치(플러그인 db/)엔 아직 없으면 1회 이전한다 — 이력 유실 없이 무중단.
+        WAL 사이드카(-wal/-shm)도 함께 옮긴다. 크로스 디바이스(EXDEV) 등 실패 시 복사로
+        폴백하고, 그래도 실패하면 조용히 넘어가 이후 JSONL 일회 임포트가 누계를 복구한다.
+        PYTMUX_TOKENS_DB 강제 지정(테스트) 시엔 건너뛴다."""
+        if os.environ.get("PYTMUX_TOKENS_DB"):
+            return
+        old = self._legacy_tokens_db_path()
+        if old == new_path or not os.path.exists(old) or os.path.exists(new_path):
+            return
+        try:
+            os.makedirs(os.path.dirname(new_path), exist_ok=True)
+            os.replace(old, new_path)
+        except OSError:
+            try:
+                import shutil
+                shutil.copy2(old, new_path)   # 크로스 디바이스 폴백(원본은 남겨 둠)
+            except OSError:
+                return
+        for suffix in ("-wal", "-shm"):      # SQLite WAL 사이드카도 따라 옮긴다(있으면)
+            if os.path.exists(old + suffix) and not os.path.exists(new_path + suffix):
+                try:
+                    os.replace(old + suffix, new_path + suffix)
+                except OSError:
+                    pass
 
     def _tokens_db_conn(self):
-        """토큰 DB 연결(최초 1회 열고 보관). 새(빈) DB 이고 기존 JSONL 이력이 있으면
-        일회 임포트해 누적 통계를 보존하고, 재임포트 방지로 JSONL 을 `.imported` 로
+        """토큰 DB 연결(최초 1회 열고 보관). 먼저 이전 위치(루트 db/)의 DB 를 새 위치
+        (플러그인 db/)로 1회 마이그레이션한다(S5 T5). 새(빈) DB 이고 기존 JSONL 이력이
+        있으면 일회 임포트해 누적 통계를 보존하고, 재임포트 방지로 JSONL 을 `.imported` 로
         옮긴다. 실패해도 None 을 돌려 본 흐름(토큰 로깅)을 막지 않는다."""
         if self._tokens_db is not None:
             return self._tokens_db
+        path = self.tokens_db_path
+        self._migrate_legacy_db(path)
         try:
-            conn = usagedb.connect(self.tokens_db_path)
+            conn = usagedb.connect(path)
         except Exception:
             return None
         try:

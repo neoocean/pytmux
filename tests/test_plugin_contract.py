@@ -216,6 +216,53 @@ async def test_pane_token_accumulator_owned_by_plugin():
     reg2.pane_closing(None, q)   # no-op(예외 없음)
 
 
+async def test_token_db_legacy_location_migration():
+    """T5(토큰 모듈화): DB 파일을 claude-code 플러그인 하위(db/)로 옮긴 뒤, 이전 위치
+    (프로젝트 루트 db/)에 있던 토큰 DB 를 첫 연결 시 새 위치로 1회 이전한다 — 타 머신·
+    구버전 업그레이드에서 이력 무중단. WAL 사이드카도 따라 옮기고, 새 위치가 이미 있으면
+    멱등(재이전 안 함). _migrate_legacy_db 를 직접 검증한다(PYTMUX_TOKENS_DB 미설정 경로)."""
+    import importlib
+    import os
+    import tempfile
+
+    from pytmuxlib import usagedb, usagelog
+    sm = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+
+    tmp = tempfile.mkdtemp()
+    old = os.path.join(tmp, "old", "claude-tokens.db")
+    new = os.path.join(tmp, "new", "claude-tokens.db")
+    os.makedirs(os.path.dirname(old))
+    conn = usagedb.connect(old)
+    usagedb.insert(conn, usagelog.make_record(
+        ts=1.0, tab=0, pane=1, session=1, account="me@x", tokens=777))
+    conn.close()
+    with open(old + "-wal", "w"):       # WAL 사이드카 존재 시뮬
+        pass
+
+    class _Fake(sm.ServerClaudeMixin):
+        def __init__(self, oldp):
+            self._oldp = oldp
+
+        def _legacy_tokens_db_path(self):
+            return self._oldp
+
+    env = os.environ.pop("PYTMUX_TOKENS_DB", None)   # 마이그레이션은 강제경로 시 건너뜀
+    try:
+        _Fake(old)._migrate_legacy_db(new)
+        assert os.path.exists(new) and not os.path.exists(old), "DB 가 새 위치로 이전 안 됨"
+        assert os.path.exists(new + "-wal"), "WAL 사이드카 미이전"
+        assert usagedb.total_all(usagedb.connect(new)) == 777, "이전 중 이력 유실"
+        # 멱등: 새 위치가 이미 있으면 구 파일을 건드리지 않는다(재이전 안 함).
+        old2 = os.path.join(tmp, "old2.db")
+        with open(old2, "w"):
+            pass
+        _Fake(old2)._migrate_legacy_db(new)
+        assert os.path.exists(old2), "이미 새 DB 가 있는데 또 이전함(멱등 위반)"
+    finally:
+        if env is not None:
+            os.environ["PYTMUX_TOKENS_DB"] = env
+
+
 async def test_contract_client_app_runs_without_claude_plugin(monkeypatch=None):
     """클라 앱을 claude-code 플러그인 없이 구성·렌더·ESC·입력해도 깨지지 않는다.
 

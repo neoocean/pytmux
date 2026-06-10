@@ -78,16 +78,17 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 
-# S5c: claude/tokens/usageprobe 는 plugins/claude-code/ 로 물리 이전됐다(코어는 더는
-# 이들을 import 하지 않는다). 기존 테스트가 `from pytmuxlib.claude import …`·`from
-# pytmuxlib import tokens` 로 계속 import 할 수 있게, 플러그인 서브모듈을 pytmuxlib.<name>
-# 별칭으로 sys.modules·패키지 속성에 등록한다(테스트 편의 — 코어 코드는 이 경로를 쓰지
-# 않는다). 하이픈 디렉토리라 import 문법으론 못 부르므로 importlib 로 로드. 플러그인이
-# 없으면(delete-to-disable) 조용히 건너뛴다 — 해당 모듈 테스트는 어차피 대상 부재다.
-# (usagedb/usagelog 는 코어 서버 토큰-DB 백엔드라 pytmuxlib 에 그대로 있어 별칭 불요.)
+# S5c/T5: claude/tokens/usageprobe/usagedb/usagelog 는 plugins/claude-code/ 로 물리
+# 이전됐다(코어는 더는 이들을 import 하지 않는다). 기존 테스트가 `from pytmuxlib.claude
+# import …`·`from pytmuxlib import tokens, usagedb, usagelog` 로 계속 import 할 수 있게,
+# 플러그인 서브모듈을 pytmuxlib.<name> 별칭으로 sys.modules·패키지 속성에 등록한다(테스트
+# 편의 — 코어 코드는 이 경로를 쓰지 않는다). 하이픈 디렉토리라 import 문법으론 못 부르므로
+# importlib 로 로드. 플러그인이 없으면(delete-to-disable) 조용히 건너뛴다 — 해당 모듈
+# 테스트는 어차피 대상 부재다. (usagedb 는 `from . import usagelog` 라 자동 동반 로드되나,
+# 명시 등록으로 import 순서 무관하게 둘 다 별칭이 잡히게 한다.)
 try:
     import pytmuxlib as _pt
-    for _m in ("claude", "tokens", "usageprobe"):
+    for _m in ("claude", "tokens", "usageprobe", "usagelog", "usagedb"):
         _mod = importlib.import_module(f"pytmuxlib.plugins.claude-code.{_m}")
         sys.modules[f"pytmuxlib.{_m}"] = _mod
         setattr(_pt, _m, _mod)

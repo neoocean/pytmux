@@ -317,8 +317,8 @@ class PermModeScreen(ModalScreen):
             self.dismiss(None)
 
 
-# TokenLogScreen 이 쓰는 코어 공유 심볼(클라 컨텍스트 지연 로드 — 서버는 안 읽음).
-from pytmuxlib import usagelog
+# TokenLogScreen 이 쓰는 심볼. usagelog 는 S5 T5 에서 플러그인 소속(상대 import).
+from . import usagelog
 from pytmuxlib.clientutil import _char_cells, bar
 from pytmuxlib.clientscreens import usage_bar_lines
 

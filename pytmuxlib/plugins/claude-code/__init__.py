@@ -802,7 +802,7 @@ class _ClaudeCodePlugin:
             # 버킷/차원 전환). Phase B: 버킷 전환용 N 건과 별개로, 정확한 **전체
             # 이력 합**(total_all)·계정별 합(accounts_total)을 서버가 SQL GROUP BY 로
             # 함께 보내, 이력이 N 을 넘어도 lifetime Σ 가 과소표시되지 않게 한다.
-            from pytmuxlib import usagedb
+            from . import usagedb   # S5 T5: 플러그인 소속(물리 이전)
             conn = server._tokens_db_conn()
             recs = (usagedb.query_records(conn, limit=int(msg.get("limit", 5000)))
                     if conn is not None else [])
