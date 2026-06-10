@@ -81,11 +81,30 @@ async def test_prompt_history_accumulates():
         await teardown(srv, task, sock)
 
 
+async def test_prompt_history_multiline_is_one_entry():
+    # Shift+Enter(=LF \n)로 줄바꿈해 한 번에 제출(Enter=CR \r)한 멀티라인 프롬프트는
+    # 별개 번호로 쪼개지지 않고 **한 개** 히스토리 항목이 된다(개행 보존). 헤더용
+    # last_prompt 는 한 줄이라 개행을 공백으로 접는다. (Enter 가 \r\n 으로 와도 1개.)
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        srv._track_prompt(p, b"line one\nline two\r")     # \n=줄바꿈, \r=제출
+        assert p.prompt_history == ["line one\nline two"], p.prompt_history
+        assert p.last_prompt == "line one line two"       # 헤더는 한 줄(공백 접기)
+        srv._track_prompt(p, b"next\r\n")                 # CRLF 제출도 1개
+        assert p.prompt_history == ["line one\nline two", "next"], p.prompt_history
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_inactive_tab_claude_done_flag():
     # 비활성 탭의 Claude 패널이 busy→(안정)idle 로 끝나면 has_claude_done 이 켜지고,
     # 그 탭을 보면(select_window) 해제된다(#22). idle 은 _DONE_IDLE_FRAMES 프레임
     # 안정돼야 완료로 친다(§10 #18 플리커 방지).
-    from pytmuxlib.server import _DONE_IDLE_FRAMES
+    import importlib
+    _DONE_IDLE_FRAMES = importlib.import_module(
+        "pytmuxlib.plugins.claude-code.servermixin")._DONE_IDLE_FRAMES
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
@@ -154,9 +173,13 @@ async def test_auto_dismiss_feedback_prompt():
     # _FEEDBACK_MAX_TRIES 회 재주입하고, 프롬프트가 사라지면 다시 무장된다.
     # Dismiss 키는 Esc 다 — '0' 은 비모달 배너 아래 컴포저에 그대로 찍혀 지워지지
     # 않는 "00" 을 남기던 버그(사용자 보고)라 인쇄 불가 키 Esc 로 바꿨다.
+    import importlib
     from pytmuxlib.claude import claude_feedback_prompt
-    from pytmuxlib.serverclaude import (_FEEDBACK_DISMISS_KEY, _FEEDBACK_GAP,
-                                        _FEEDBACK_MAX_TRIES)
+    # serverclaude 는 claude-code 플러그인으로 이전됨(하이픈 디렉토리 → importlib).
+    _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    _FEEDBACK_DISMISS_KEY = _sc._FEEDBACK_DISMISS_KEY
+    _FEEDBACK_GAP = _sc._FEEDBACK_GAP
+    _FEEDBACK_MAX_TRIES = _sc._FEEDBACK_MAX_TRIES
     assert _FEEDBACK_DISMISS_KEY == b"\x1b"   # Esc — 컴포저에 인쇄 문자를 남기지 않음
     assert claude_feedback_prompt("x How is Claude doing this session? (optional)")
     assert not claude_feedback_prompt("just normal output")
@@ -705,6 +728,78 @@ async def test_auto_compact_cooldown_after_new_session_and_fire():
         await teardown(srv, task, sock)
 
 
+async def test_auto_hardstop_context_limit_injects_compact():
+    """요청: 컨텍스트 하드스톱("Context limit reached · /compact or /clear to
+    continue") 화면을 _scan_claude 가 보면 즉시(idle 지연 없이) '/compact' 를 1회
+    자동 주입한다. idle-기반 auto_compact 와 다른 트리거. 같은 화면엔 디바운스
+    (_hardstop_fired)로 반복 주입 안 함, 화면이 하드스톱을 벗어나면 재무장.
+    토글 off 면 발화 안 함. 기본 ON. 토글 opts.json 영속."""
+    from pytmuxlib.claude import claude_context_hardstop
+    # 파서: 슬래시 명령이 화면에 있을 때만 하드스톱으로 본다(오탐 방지).
+    assert claude_context_hardstop(
+        "Context limit reached · /compact or /clear to continue") is True
+    assert claude_context_hardstop(
+        "the context window limit; run /clear to continue") is True
+    assert claude_context_hardstop("Context limit reached") is False, \
+        "슬래시 명령 없으면 발화 안 함"
+    assert claude_context_hardstop("Context left until auto-compact: 12%") is False
+    assert claude_context_hardstop("just some shell output") is False
+
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        injected = []
+        srv._pc_inject = lambda pane, text: injected.append(text)
+        srv.auto_cc_cooldown_sec = 0.0   # 쿨다운은 이 테스트 범위 밖
+        # 이 테스트는 하드스톱 주입만 본다 — idle 전이에서 발화하는 다른 자동화
+        # (auto-launch /rc·권한 오토모드·idle auto_compact)는 꺼 격리한다.
+        srv.claude_auto_launch = False
+        srv.claude_auto_mode = False
+        srv.auto_compact = False
+
+        assert srv.auto_hardstop is True, "기본 ON"
+        import json as _json
+        assert srv.set_auto_hardstop(False) is False
+        assert _json.load(open(srv.opts_path))["auto_hardstop"] is False
+
+        def feed_hardstop():
+            p.feed(b"\x1b[2J\x1b[HContext limit reached "
+                   b"\xc2\xb7 /compact or /clear to continue\r\n")
+            srv._scan_claude(sess, win)
+
+        # 토글 off → 하드스톱이어도 발화 안 함(플래그도 안 섬)
+        feed_hardstop()
+        assert injected == [], "토글 off → no-op"
+        assert p._hardstop_fired is False
+
+        # 토글 on → 즉시 1회 /compact 주입
+        srv.set_auto_hardstop(True)
+        feed_hardstop()
+        assert injected == ["/compact"], injected
+        assert p._hardstop_fired is True, "발화 후 디바운스 셋"
+
+        # 같은 하드스톱 화면 재스캔 → 디바운스로 재주입 안 함
+        feed_hardstop()
+        assert injected == ["/compact"], "같은 화면 재발화 금지"
+
+        # 하드스톱 벗어남 → 디바운스 해제(재무장)
+        p.feed(b"\x1b[2J\x1b[HAll done.\r\n? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._hardstop_fired is False, "화면 벗어나면 재무장"
+
+        # 다시 하드스톱 → 재발화
+        feed_hardstop()
+        assert injected == ["/compact", "/compact"], injected
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
 async def test_screen_prompt_reflects_remote_injected():
     """§10 #19: 데스크탑 앱 원격제어처럼 입력 경로(_track_prompt)를 안 거친 프롬프트
     도 화면 transcript 에서 추출해 헤더(last_prompt)/히스토리에 반영한다. 단 로컬
@@ -780,7 +875,10 @@ async def test_scan_claude_gating_skips_settled_pane():
     """B1 성능: 출력이 없으면(settled) _scan_claude 가 비싼 화면 파싱(claude_state)을
     건너뛴다. 새 출력이 오면 다시 스캔. 전이 디바운스(done 알림 등)는 별도 테스트가
     출력 없이도 진행됨을 보장한다(test_inactive_tab_claude_done_flag)."""
-    import pytmuxlib.serverclaude as sc
+    import importlib
+    # _scan_claude 은 이제 claude-code 플러그인의 servermixin 에서 돈다 — 그 모듈의
+    # claude_state 참조를 패치해야 스캔이 본다(코어 serverclaude 패치는 무효).
+    sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
     srv, task, sock = await server_only()
     orig = sc.claude_state
     calls = []
@@ -857,7 +955,9 @@ async def test_claude_auto_mode_cycles_to_auto():
     아닐 때 shift+tab(\\x1b[Z)을 폐루프로 순환 주입해 auto 로 맞춘다. 같은 모드
     반복(화면 미갱신) 시 중복 주입 안 함, auto/bypass 도달 시 정지, idle 이탈 시
     카운터 리셋, 오검출 대비 _CAM_MAX 가드. 토글 opts 영속."""
-    from pytmuxlib.server import _CAM_MAX
+    import importlib
+    _CAM_MAX = importlib.import_module(
+        "pytmuxlib.plugins.claude-code.servermixin")._CAM_MAX
     srv, task, sock = await server_only()
     try:
         srv.claude_auto_launch = False   # 상시 auto_mode 만 격리(launch /rc·auto 제외)
@@ -1033,7 +1133,8 @@ async def test_rc_not_reinjected_after_restart_transient():
     오인돼 auto /rc 가 재주입됐다 — 이미 켜진 원격제어 패널이 다시 떴다. fire 시점
     _rc_done(직렬화 sticky) 가드로 재주입을 막고, 진짜 세션 종료(디바운스)에서만 해제해
     다음 claude 기동엔 정상 재무장한다."""
-    from pytmuxlib import serverclaude as _sc
+    import importlib
+    _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
     from pytmuxlib.model import Pane
     srv, task, sock = await server_only()
     try:
@@ -1139,6 +1240,36 @@ async def test_rename_single_claude_pane_injects_rename():
         await teardown(srv, task, sock)
 
 
+async def test_rename_busy_claude_defers_until_idle():
+    """단일 Claude 패널이라도 리네임 당시 busy 면 즉시 주입하지 않고(슬래시 명령으로
+    실행 안 됨), _pending_rename 에 보류했다가 다음 busy→idle 경계(_scan_claude)에서
+    /rename 을 발동한다(요청). idle 게이트는 자동 compact/doc-clear 와 동일한 규약."""
+    srv, task, sock = await server_only()
+    try:
+        srv.claude_auto_launch = False   # 첫 idle /rc 자동주입 격리(드레인만 검증)
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        injected = []
+        srv._pc_inject = lambda pane, text: injected.append((pane, text))
+
+        # busy 중 리네임 → 즉시 주입 없음, 보류만
+        p._claude = "busy"
+        srv.rename_window(sess, "myproj")
+        assert sess.active_tab.name == "myproj"
+        assert injected == [], injected
+        assert p._pending_rename == "myproj"
+
+        # 응답 종료(busy→idle, 입력 준비됨) → 보류분 발동 후 비움
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle"
+        assert injected == [(p, "/rename myproj")], injected
+        assert p._pending_rename is None
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_inpane_usage_panel_bumps_shown_seq():
     """인패널 /usage 패널이 처음 뜨는 순간(상승에지)에만 usage_shown_seq 가 증가해
     클라가 전용 사용량 화면을 자동 팝업하게 한다(요청). 패널이 떠 있는 동안 재감지로는
@@ -1231,7 +1362,9 @@ async def test_claude_header_debounce_no_thrash():
     예약을 매 프레임 뒤집으면 PTY 가 ±1 행 리사이즈를 반복해 원격 Claude 화면이
     한 줄씩 위아래로 스크롤되는 떨림이 난다(Windows→ssh→macOS 첫 실행 증상).
     예약 해제는 _HDR_CLAUDE_MISS 프레임 연속 non-Claude 일 때만 일어난다."""
-    from pytmuxlib.server import _HDR_CLAUDE_MISS
+    import importlib
+    _HDR_CLAUDE_MISS = importlib.import_module(
+        "pytmuxlib.plugins.claude-code.servermixin")._HDR_CLAUDE_MISS
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
@@ -1407,6 +1540,52 @@ async def test_break_join_pane():
         await teardown(srv, task, sock)
 
 
+async def test_move_pane_to_tab():
+    # #1 헤더 드래그 pick-up → 다른 탭에 드롭: 활성 윈도우의 패널을 지정한 탭으로
+    # 옮긴다(대상 윈도우 활성 패널과 분할로 합침). 소스가 유일 패널이던 탭은 사라진다.
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv.new_window(sess)              # 탭 1개 추가 → 탭 0, 탭 1
+        assert len(sess.tabs) == 2
+        sess.active_index = 0             # 탭 0 활성
+        win0 = sess.tabs[0].window
+        srv.split_pane(sess, "lr")        # 탭 0 에 패널 2개
+        moved = win0.active_pane
+        moved_id = moved.id
+        # 탭 0 의 활성 패널을 탭 1 로 이동
+        ok = srv.move_pane_to_tab(sess, moved_id, 1)
+        assert ok is True
+        # 탭 수는 그대로(소스 탭 0 에 아직 패널 1개 남음 — 제거 안 됨)
+        assert len(sess.tabs) == 2
+        # 이동한 패널은 이제 탭 1 윈도우에 있고, 그 윈도우 활성 패널이다
+        win1 = next(t.window for t in sess.tabs if t.index == 1)
+        assert moved in win1.panes() and win1.active_pane is moved
+        assert moved not in sess.tabs[0].window.panes()
+        # 대상 탭이 활성이 됐다
+        assert sess.active_window is win1
+
+        # 유일 패널을 옮기면 소스 탭이 사라진다(break 의 반대)
+        n = len(sess.tabs)
+        lone = sess.active_window.active_pane   # win1 의 (방금 옮겨온) 패널 등
+        # win1 이 단일 패널이 되도록: 위에서 win1 엔 원래 패널 + 옮겨온 패널 2개.
+        # 단일-패널 탭을 만들기 위해 새 탭을 하나 더 만들고 그 유일 패널을 옮긴다.
+        srv.new_window(sess)                    # 새 단일-패널 탭(끝 인덱스)
+        src_idx = len(sess.tabs) - 1
+        sess.active_index = src_idx
+        lone_id = sess.active_window.active_pane.id
+        ok2 = srv.move_pane_to_tab(sess, lone_id, 0)   # 탭 0 으로 이동
+        assert ok2 is True
+        assert len(sess.tabs) == n, "유일 패널 이동 → 소스 탭 제거"
+
+        # 같은 탭으로의 이동은 무동작(False)
+        cur = sess.active_index
+        assert srv.move_pane_to_tab(
+            sess, sess.active_window.active_pane.id, cur) is False
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_pane_master_fd_cloexec():
     """새 패널의 PTY master 에 FD_CLOEXEC 가 걸려, 이후 만들어지는 패널의 자식 셸이
     형제 패널 fd 를 상속하지 않는다(패널 간 출력 섞임 방지)."""
@@ -1480,12 +1659,23 @@ async def test_single_session_enforced():
 
 
 async def test_sync_input_broadcast():
-    # Windows 격리(알려진 ConPTY 레이스): 헤드리스 러너에서 다수 ConPTY 패널을 같은
-    # 프로세스에 생성한 뒤(이 모듈 후반) split 신규 패널의 리더가 입력 echo 를 못 받는
-    # 일이 결정적으로 재현된다. 단독/소수 실행·실데몬 스모크에선 정상이라 로직 버그가
-    # 아니라 _WinPty 의 리더 스레드 read() ↔ 메인 스레드 set_winsize 동기화 부재로 보는
-    # 레이스다(신규 패널은 MIN_W 로 떠 _layout_msg 가 곧 리사이즈). pty_backend 동기화
-    # 수정 후 재개할 것. 동기화 입력 경로 자체는 Unix 에서 그대로 검증된다.
+    # Windows 격리(헤드리스 스위트 한정 아티팩트): **전체 test_server 모듈을 끝까지 돌린
+    # 뒤** 이 테스트가 신규 split 패널에서 입력 echo 를 못 받아 **결정적으로 FAIL** 한다
+    # (행 아님 — 단언 실패). 2026-06-09 정밀 조사 결과 **격리로는 어떤 방법으로도
+    # 재현되지 않는다**: ① raw pywinpty(블로킹 read 중 setwinsize+write) 정상 echo,
+    # ② 서버 맥락에서 split/kill 60회 누적해도 정상 echo + **리더 스레드 누수 0**(핸들
+    # 누수 없음). 즉 _WinPty 백엔드 자체엔 재현 가능한 결함이 없고, 제품은 실사용에서
+    # 정상이다(실 attach·라이브 키 검증·나머지 테스트 통과). 실패는 오직 본 모듈의 80여
+    # 개 테스트를 누적 실행한 프로세스 상태에서만 나타나는 **부하·타이밍 의존 아티팩트**
+    # (갓 spawn 된 cmd.exe 가 stdin 준비 전 입력 유실 추정)로, 실사용 패턴(한 프로세스가
+    # 80개 ConPTY 를 연달아 spawn)과 무관하다.
+    #
+    # **2026-06-10 재개 시도 & 기각:** docs/WINDOWS_BOX_TASKS_SCENARIO.md §3-A 의 제안대로
+    # "입력 write 전에 각 패널 셸이 프롬프트를 출력(=stdin 준비)할 때까지 best-effort 대기"
+    # 를 넣고 Windows skip 을 풀어 봤으나, 전체 test_server 누적 실행에서 **여전히 3회 재시도
+    # 모두 FAIL**(SYNCED echo 미수신). 셸-준비 대기로도 안 닫혀 — 원인이 cmd 프롬프트 타이밍
+    # 보다 깊은(장수 프로세스의 conhost 핸들/이벤트루프 누적 상태) 것으로 재확인됨. 위험한
+    # 백엔드 재작성 없이 skip 유지가 옳다. 동기화 입력 경로 로직은 Unix 에서 그대로 검증된다.
     if ipc.IS_WINDOWS:
         return
     srv, task, sock = await server_only()
@@ -2431,7 +2621,8 @@ async def test_attach_survives_send_full_error():
 def _claude_footer(mode):
     """권한모드 footer 텍스트 한 줄(claude_perm_mode 가 mode 로 판정하도록)."""
     return {
-        "auto": "⏵⏵ auto-accept edits on (shift+tab to cycle)",
+        "auto": "⏵⏵ auto mode on (shift+tab to cycle)",
+        "accept": "⏵⏵ accept edits on (shift+tab to cycle)",
         "plan": "plan mode on (shift+tab to cycle)",
         "default": "↑↓ history  (shift+tab to cycle)",
     }[mode]
@@ -2465,6 +2656,89 @@ async def test_claude_perm_mode_set_and_drive():
         msg = srv._status_msg(sess)
         pc = [e for e in msg["panes_claude"] if e["id"] == p.id][0]
         assert pc["perm_mode"] == "auto", pc
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_perm_drive_accept_is_not_auto_and_fallback():
+    """사용자 보고: 새 세션이 acceptEdits('accept edits on')에서 멈춰 진짜 auto
+    ('auto mode on')까지 못 갔다. acceptEdits 와 auto 는 다른 모드라(둘 다 ⏵⏵),
+    auto 목표 구동은 accept 에서 멈추지 않고 계속 순환한다. 단 auto 가 cycle 에 없는
+    계정(한 바퀴 돌아 재방문)은 accept 로 폴백해 plan/default 에 안 멈춘다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(100, 30)
+        p = sess.active_window.active_pane
+        BT = b"\x1b[Z"
+        sent = []
+        srv._inject_keys = lambda pane, data: sent.append(data)
+
+        # accept 는 auto 가 아니다 → 멈추지 않고 shift+tab(계속 순환).
+        srv._perm_reset(p)
+        done = srv._perm_step(p, _claude_footer("accept"), "auto")
+        assert done is False and sent == [BT], "accept 에서 멈추면 안 됨"
+        # 이어서 plan → auto 도달 시 종료(추가 주입은 plan 1회만).
+        assert srv._perm_step(p, _claude_footer("plan"), "auto") is False
+        assert srv._perm_step(p, _claude_footer("auto"), "auto") is True
+        assert p._cam_tries == 0, "auto 도달 → 리셋"
+
+        # 폴백: auto 가 cycle 에 없는 계정 — default→accept→plan 만 순환. 한 바퀴
+        # 돌아 재방문하면 accept(편집 자동수락)로 정착한다(plan/default 에 안 멈춤).
+        srv._perm_reset(p)
+        sent.clear()
+        seq = ["default", "accept", "plan", "default", "accept"]
+        results = [srv._perm_step(p, _claude_footer(m), "auto") for m in seq]
+        # default·accept·plan·default 까진 순환(주입), 재방문 후 accept 에서 정착(종료).
+        assert results[-1] is True, results
+        # bypass 는 자동 구동이 손대지 않는다(위험 모드).
+        srv._perm_reset(p)
+        sent.clear()
+        assert srv._perm_step(p, "bypass permissions on", "auto") is True
+        assert sent == [], "bypass → 무주입"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_bypass_availability_tracked_and_in_status():
+    """§10 item 2: bypass(권한 우회) 모드는 Claude 를 --dangerously-skip-permissions
+    로 띄웠을 때만 shift+tab 순환에 나타난다. 서버가 idle footer 에서 bypass 를 한 번
+    관측하면 Pane._bypass_seen 을 sticky True 로 두고 status(bypass_ok)로 실어, 클라
+    팝업이 'Bypass Permission Mode' 항목을 노출하게 한다. 세션 종료 시 리셋된다."""
+    srv, task, sock = await server_only()
+    try:
+        srv.claude_auto_launch = False    # auto-launch /rc·auto 격리
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+
+        def scan(s):
+            p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
+            srv._scan_claude(sess, win)
+
+        def status_bypass():
+            msg = srv._status_msg(sess)
+            e = [e for e in msg["panes_claude"] if e["id"] == p.id][0]
+            return e.get("bypass_ok")
+
+        # 일반 권한모드만 본 동안엔 bypass 미가용
+        scan("? for shortcuts")
+        assert p._bypass_seen is False and status_bypass() is False
+        scan("⏵⏵ auto mode on (shift+tab to cycle)")
+        assert p._bypass_seen is False and status_bypass() is False
+
+        # bypass footer 를 한 번 관측 → sticky True, status 에 반영
+        scan("bypass permissions on (shift+tab to cycle)")
+        assert p._bypass_seen is True and status_bypass() is True
+        assert p._perm_mode == "bypass"
+
+        # 다른 모드로 돌아가도 가용성은 sticky 유지(시작 시 활성이라 cycle 에 잔존)
+        scan("⏵⏵ auto mode on (shift+tab to cycle)")
+        assert p._bypass_seen is True and status_bypass() is True
+
+        # Claude 세션 종료(평범한 셸 화면) → 가용성 리셋
+        scan("user@host:~$ ")
+        assert p._claude is None
+        assert p._bypass_seen is False and status_bypass() is False
     finally:
         await teardown(srv, task, sock)
 

@@ -297,6 +297,16 @@ _SGR_RE = re.compile(rb"\x1b\[([0-9:;]*)m")
 # 넘길 이유가 없어 통째로 버린다. 자세한 배경은 docs/HANDOFF.md §10 참조.
 _PRIVATE_SGR_RE = re.compile(rb"\x1b\[[<>=][0-9;:]*m")
 
+# kitty 키보드 프로토콜의 push/pop/set/query 시퀀스(`CSI > flags u`, `CSI < u`,
+# `CSI = flags;mode u`, `CSI ? u`)를 제거한다. capable 터미널로 감지된 Claude Code 가
+# 입력 프롬프트 진입(push `\x1b[>1u`)·이탈(pop `\x1b[<u`)마다 내보내는데, pyte 0.8.2 는
+# 이 `u` 종결 private CSI 를 처리 못 해 끝의 `u` 가 화면에 글자로 샌다(실측: pop `<u`
+# 가 누수원, 입력칸에 `u` 가 박히는 증상). pytmux 는 키 입력을 레거시 바이트로 보내므로
+# (플래그 1=disambiguate 에선 Enter=\r 가 규격상 정상) 이 시퀀스를 pyte 에 넘길 이유가
+# 없어 통째로 버린다. private 마커(<>=?)를 요구하므로 마커 없는 레거시 `CSI u`(SCO
+# 커서 복원)는 안 건드린다.
+_KITTY_KBD_RE = re.compile(rb"\x1b\[[<>=?][0-9;:]*u")
+
 # 내부 앱의 마우스 트래킹 DECSET. 1000=press/release, 1002=+drag, 1003=any-motion,
 # 1006=SGR 확장 좌표 인코딩. 클라이언트의 마우스 패스스루 판단에 쓰인다.
 _MOUSE_RE = re.compile(rb"\x1b\[\?(1000|1002|1003|1006)(h|l)")
@@ -435,6 +445,10 @@ class Pane:
         self._scan_seq = -1
         # Claude Code 감지: 상태(idle/busy/limit/None)와 마지막 입력 프롬프트
         self._claude = None
+        # 탭 리네임을 Claude 세션에 `/rename` 으로 반영(servertree.rename_window).
+        # 리네임 당시 busy 면 즉시 주입해도 슬래시 명령으로 실행되지 않으므로 여기에
+        # 보류했다가 다음 busy→idle 경계(_scan_claude)에서 발동한다.
+        self._pending_rename = None
         self._claude_usage = None  # "ctx 42%" / "12k tok" 등(best-effort)
         self._claude_model = None  # M14c: 모델 배지(opus-4.8 등, best-effort)
         self._ctx_pct = None       # M15: 마지막 컨텍스트 잔량%(우선순위 정리 비교용)
@@ -476,6 +490,12 @@ class Pane:
         # 사용자가 실제로 입력하면(serverio) 해제돼 다음 idle 에 다시 발화 가능.
         self._acpt_timer = None
         self._acpt_fired = False
+        # 컨텍스트 하드스톱 자동복구(요청): 화면이 "Context limit reached · /compact
+        # or /clear to continue" 면 idle 지연 없이 즉시 /compact 를 1회 주입한다.
+        # _hardstop_fired 는 같은 하드스톱 화면에 반복 주입하지 않게 하는 디바운스 —
+        # 화면이 하드스톱을 벗어나면(다음 스캔) 해제돼 다음 하드스톱에 재발화 가능.
+        # 휘발성(화면 상태에서 매번 재판정 — 직렬화하지 않음).
+        self._hardstop_fired = False
         # 시간기반 자동 compact·doc-clear 쿨다운 만료 시각(time.monotonic; 0=쿨다운
         # 없음). 새 세션 시작·직전 compact·직전 clear 직후엔 이 시각 전까지 _acpt_arm/
         # _adc_arm 을 무장하지 않는다(요청 — 새 세션·정리 직후 곧바로 또 압축/정리 방지).
@@ -484,15 +504,25 @@ class Pane:
         # 권한모드 자동 오토모드 전환(§10): idle 일 때 footer 가 auto 가 아니면
         # shift+tab 을 순환 주입한다(서버 옵션 claude_auto_mode 가 켜졌을 때만).
         # _cam_tries 는 이번 idle 진입 후 보낸 횟수(무한 순환 가드 _CAM_MAX), _cam_last
-        # 는 직전에 관측·작용한 권한모드(화면 갱신 전 중복 주입 방지). 둘 다 휘발성.
+        # 는 직전에 관측·작용한 권한모드(화면 갱신 전 중복 주입 방지), _cam_seen 은 이번
+        # 드라이브에서 본 모드 집합(auto 목표인데 한 바퀴 돌아 재방문하면 acceptEdits 로
+        # 폴백 — auto 미존재 계정 대비). 모두 휘발성.
         self._cam_tries = 0
         self._cam_last = None
+        self._cam_seen = set()
         # 현재 관측된 권한모드(claude_perm_mode 결과: auto/plan/default/bypass/None)와
         # 사용자가 footer 클릭 팝업으로 고른 목표 모드(§10 item 2). _perm_target 가
         # 있으면 idle 시 그 모드까지 shift+tab 을 폐루프로 순환 주입한다(도달/포기 시
         # None 으로). _perm_mode 는 status 로 클라에 보내 팝업의 '현재 모드' 표시에 씀.
         self._perm_mode = None
         self._perm_target = None
+        # bypass(권한 우회) 모드 가용 여부(§10 item 2 팝업): bypass 는 Claude 를
+        # `--dangerously-skip-permissions` 로 시작했을 때만 shift+tab 순환에 나타난다
+        # (일반 세션은 도달 불가). 그 자체를 직접 질의할 수 없어, idle footer 에서
+        # bypass 모드를 한 번이라도 관측하면(=시작 시 활성화됨) sticky True 로 둬서
+        # 팝업이 'Bypass Permission Mode' 항목을 노출하게 한다. 세션 종료 시 리셋
+        # (새 세션은 플래그가 없을 수 있음). 휘발성(직렬화 안 함 — 재관측으로 복원).
+        self._bypass_seen = False
         # 비활성 탭 Claude 완료 알림(#22) 플리커 방지(§10 #18): busy↔idle 가 한 프레임
         # 흔들릴 때 done 이 잘못 서는 걸 막으려고, busy 를 본 뒤 idle 이 연속 N프레임
         # 안정될 때만 완료로 친다. _was_busy=직전에 busy 였음, _idle_frames=연속 idle 수.
@@ -599,6 +629,7 @@ class Pane:
         self._adc_active = False  # 자동 doc→/clear 진행상태 리셋(§10; 타이머는 만료시 자가해제)
         self._cam_tries = 0       # 권한모드 자동전환 시도 카운터 리셋(§10)
         self._cam_last = None
+        self._cam_seen = set()    # 이번 드라이브에서 본 모드 집합 리셋
         self._perm_mode = None    # 새 셸 — 권한모드 관측/목표 리셋(§10 item 2)
         self._perm_target = None
         self._was_busy = False    # done 플리커 디바운스 리셋(§10 #18)
@@ -621,6 +652,7 @@ class Pane:
         "title", "autoresume", "resume_msg", "last_prompt",
         "_claude", "_claude_usage", "_scanbuf", "_resume_pending",
         "_claude_session_id", "_claude_account", "_claude_account_manual",
+        "_pending_rename",   # 재시작 중 보류된 탭→세션 리네임도 idle 경계에서 발동
         "_tok_state", "_session_tokens", "prompt_clear_mode", "bracketed",
         "_rc_done",   # re-exec 후 거짓 새세션에 /rc 재주입 방지(원격제어 패널 재발)
     )
@@ -788,6 +820,7 @@ class Pane:
             self._altcarry = buf[m.start():]
             buf = buf[:m.start()]
         buf = _PRIVATE_SGR_RE.sub(b"", buf)   # XTMODKEYS 등 `CSI >..m` 제거(밑줄 오인 방지)
+        buf = _KITTY_KBD_RE.sub(b"", buf)     # kitty 키보드 프로토콜 `CSI >..u` 등 제거(`u` 누수 방지)
         buf = _sanitize_sgr(buf)   # 콜론식 SGR → pyte 가 이해하는 세미콜론 형태
         pos = 0
         for mo in _ALT_RE.finditer(buf):

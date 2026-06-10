@@ -314,16 +314,24 @@ async def test_command_list_and_autocomplete():
         await pilot.pause(0.2)
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "CommandListScreen"
-        # 카테고리 탭으로 그룹화됨(첫 카테고리 = 패널, 첫 명령 = split-window)
-        assert [c for c, _ in scr._all_cats][:2] == ["패널", "탭"], scr._all_cats
+        # 맨 앞 '전체' 탭(모든 명령을 한 탭에서 ↑↓ 탐색) 다음에 카테고리 탭들이 온다.
+        assert [c for c, _ in scr._all_cats][:3] == ["전체", "패널", "탭"], \
+            scr._all_cats
+        # '전체' 는 다른 모든 카테고리 명령의 합을 담는다(등장 순서, 첫 명령=split-window)
+        assert len(scr._all_cats[0][1]) == \
+            sum(len(items) for _c, items in scr._all_cats[1:])
         assert scr._ci == 0 and scr._cur[0][0] == "split-window", scr._cur[:1]
         from textual.widgets import ListView
         lv = scr.query_one(ListView)
         assert str(lv.styles.overflow_y) == "scroll", "스크롤바 항상 표시"
-        # ← → 로 카테고리(탭) 전환
+        # ← → 로 카테고리(탭) 전환: 전체 → 패널 → 탭(new-tab) → … 그리고 되돌림
         await pilot.press("right")
         await pilot.pause(0.1)
-        assert scr._ci == 1 and scr._cur[0][0] == "new-tab", (scr._ci, scr._cur[:1])
+        assert scr._ci == 1 and scr._all_cats[1][0] == "패널", scr._ci
+        await pilot.press("right")
+        await pilot.pause(0.1)
+        assert scr._ci == 2 and scr._cur[0][0] == "new-tab", (scr._ci, scr._cur[:1])
+        await pilot.press("left")
         await pilot.press("left")
         await pilot.pause(0.1)
         assert scr._ci == 0 and scr._cur[0][0] == "split-window", scr._ci
@@ -547,6 +555,30 @@ async def test_esc_n_new_tab_and_p_new_pane():
         await pilot.press("p")
         assert ("split", {"orient": "tb"}) in sent and app.mode == "normal", \
             "p=상하 분할 후 종료"
+    await _with_app(body)
+
+
+async def test_esc_shortcuts_work_with_ime_jamo():
+    # IME(두벌식)가 켜진 채 'n'(새 탭)·'p'(분할) 키를 누르면 자모 'ㅜ'·'ㅔ' 가
+    # 들어온다 — 입력 문자를 물리 QWERTY 키로 되돌려 ESC 단축키가 IME 무관하게
+    # 동작해야 한다. _handle_esc_mode 를 직접 호출(자모 character 합성)해 검증한다.
+    from textual.events import Key
+
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda a, **k: sent.append((a, k))
+        app._last_esc_ts = 0.0
+        await pilot.press("escape")
+        assert app.mode == "esc"
+        app._handle_esc_mode(Key("ㅜ", "ㅜ"))          # 'n' 자리 자모 = 새 탭
+        assert ("new_window", {}) in sent and app.mode == "normal", "ㅜ(=n)=새 탭"
+        sent.clear()
+        app._last_esc_ts = 0.0
+        await pilot.press("escape")
+        assert app.mode == "esc"
+        app._handle_esc_mode(Key("ㅔ", "ㅔ"))          # 'p' 자리 자모 = 상하 분할
+        assert ("split", {"orient": "tb"}) in sent and app.mode == "normal", \
+            "ㅔ(=p)=분할"
     await _with_app(body)
 
 
@@ -914,7 +946,9 @@ async def test_token_log_sort_toggle_and_tab():
 async def test_token_log_usage_graphs():
     """토큰 사용량 화면에서 /usage 결과를 막대 그래프로 보여준다(세션/주 전체/주
     Sonnet 각각 라벨+막대+%+리셋). 요청: Claude /usage 의 사용률 바를 포함."""
-    from pytmuxlib.clientscreens import TokenLogScreen
+    import importlib
+    TokenLogScreen = importlib.import_module(
+        "pytmuxlib.plugins.claude-code.screens").TokenLogScreen
     async def body(app, pilot, srv):
         recs = [{"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
                  "account": "me@x.org", "tokens": 100}]
@@ -943,7 +977,9 @@ async def test_token_log_usage_graphs():
 async def test_token_amounts_aligned_by_magnitude():
     """토큰 약식 표기를 전체 자릿수 기준으로 들여써, 큰 값일수록 왼쪽에서 시작한다
     (단위 M/k 가 자릿수를 가려 우측정렬만으론 대소 비교가 어렵던 문제)."""
-    from pytmuxlib.clientscreens import TokenLogScreen
+    import importlib
+    TokenLogScreen = importlib.import_module(
+        "pytmuxlib.plugins.claude-code.screens").TokenLogScreen
     # 단위 함수 단위 검증: 7.8M(7자리)=들여쓰기0, 103.1k(6자리)=1, 71.9k(5자리)=2.
     a = TokenLogScreen._tok_aligned
     assert a(7_800_000, 7) == "7.8M", repr(a(7_800_000, 7))
@@ -1243,9 +1279,14 @@ async def test_active_pane_border_highlight():
         x2, y2 = bx + bw - 1, by + bh - 1
         # 콘텐츠 오른쪽 위 모서리의 탭 닫기 [x] 는 빨강 오버레이라 예외.
         tz = app._tab_close_zone
+        # 첫 행 우상단의 IME 인디케이터 배지([한]/[EN])도 의도된 테두리 오버레이라 예외
+        # (ime-indicator 플러그인. 부재 시 None → 예외 없음. [x] 와 동일 처리).
+        iz = getattr(app, "_ime_zone", None)
 
         def ok(x, y):
-            return is_blue(x, y) or (tz and y == tz[2] and tz[0] <= x < tz[1])
+            return (is_blue(x, y)
+                    or (tz and y == tz[2] and tz[0] <= x < tz[1])
+                    or (iz and y == iz[2] and iz[0] <= x < iz[1]))
 
         # 활성 패널 박스의 네 변 전체가 파란색([x] 자리는 제외)
         assert all(ok(gx, by) and ok(gx, y2)
@@ -1534,7 +1575,7 @@ async def test_big_calendar_digit_spacing():
         app.set_calendar(active, True)
         await pilot.pause(0.1)
         ap = next(p for p in app.layout["panes"] if p["id"] == active)
-        DCW, DGAP, RHB, DIG = 8, 3, 6, 1   # client._draw_calendar_overlay 와 일치
+        DCW, DGAP, RHB, DIG = 8, 3, 6, 1   # plugins/calendar/render.draw_calendar_overlay 와 일치
         import calendar as _cal
         from datetime import datetime
         now = datetime.now()
@@ -1562,6 +1603,40 @@ async def test_big_calendar_digit_spacing():
         assert any(block_has_glyph(gx0 + k) for k in range(3)), "첫 자리 글리프"
         assert any(block_has_glyph(gx0 + 4 + k) for k in range(3)), "둘째 자리 글리프"
         assert not block_has_glyph(gx0 + 3), "두 자리 사이는 빈 칸 1개(DIG=1)"
+    await _with_app(body, size=(44, 16))
+
+
+async def test_ime_hardware_cursor_follows_active_pane_cursor():
+    """IME preedit 동기화(docs/IME_PREEDIT_CURSOR_SCENARIO.md): _composite 가 활성 패널
+    커서 셀로 app.cursor_position(Textual 이 매 프레임 끝에 move_to 하는 하드웨어 커서)
+    을 옮긴다. 호스트 터미널이 IME 조합 문자열(preedit)을 하드웨어 커서 자리에 덧그리는
+    특성상, 안 옮기면 stale 좌표(테두리 행)에 잔상이 박힌다. 모달이 떠 있으면
+    (screen_stack>1) 텍스트 위젯(Input/TextArea)이 cursor_position 을 소유하므로 덮어쓰지
+    않는다. preedit 오버레이 자체는 OS 그림이라 헤드리스론 좌표 동기화 로직만 가드한다(§6).
+    """
+    from textual.geometry import Offset
+    from pytmuxlib.clientscreens import InfoScreen
+
+    async def body(app, pilot, srv):
+        active = app.layout["active"]
+        p = next(pp for pp in app.layout["panes"] if pp["id"] == active)
+        ccx, ccy = 2, 1
+        # 활성 패널에 알려진 커서를 주입하고 재합성 → 하드웨어 커서가 그 전역 셀로.
+        app.pane_content[active] = ([], (ccx, ccy))
+        app._composite()
+        await pilot.pause(0.05)
+        assert app.cursor_position == Offset(p["x"] + ccx, p["y"] + ccy)
+        # 모달이 떠 있으면 _composite 는 cursor_position 을 건드리지 않는다(경합 방지).
+        app.push_screen(InfoScreen(["x"]))
+        await pilot.pause(0.05)
+        assert len(app.screen_stack) > 1
+        sentinel = Offset(0, 0)
+        app.cursor_position = sentinel
+        app.pane_content[active] = ([], (5, 4))   # 커서를 바꿔도
+        app._composite()
+        await pilot.pause(0.05)
+        assert app.cursor_position == sentinel, "모달 중엔 하드웨어 커서 미이동"
+    await _with_app(body, size=(60, 20))
     await _with_app(body, size=(90, 46))
 
 
@@ -1613,6 +1688,20 @@ async def test_overlay_closes_by_panel_click_and_shift_esc():
         await pilot.press("shift+escape")
         await pilot.pause(0.1)
         assert active not in app.clock_panes, "Shift+ESC 로 시계 닫힘"
+        # ③ 달력 켜고 → 활성 패널 단순 ESC 로도 닫힘(요청). 오버레이가 떠 있으면
+        #    ESC 가 esc 모드로 진입하지 않고 오버레이부터 닫는다.
+        app._last_esc_ts = 0.0
+        app.toggle_calendar(active)
+        await pilot.pause(0.1)
+        assert active in app.calendar_panes
+        app.on_key(Key(key="escape", character=None))
+        await pilot.pause(0.1)
+        assert active not in app.calendar_panes, "단순 ESC 로 달력 닫힘"
+        assert app.mode == "normal", "오버레이 닫을 때 esc 모드로 진입하지 않음"
+        # 오버레이가 없을 땐 ESC 가 평소대로 esc 모드 진입(회귀 가드)
+        app._last_esc_ts = 0.0
+        app.on_key(Key(key="escape", character=None))
+        assert app.mode == "esc", "오버레이 없으면 ESC 는 esc 모드"
     await _with_app(body, size=(44, 16))
 
 
@@ -2161,12 +2250,31 @@ async def test_command_prompt_ignores_leading_colon():
     await _with_app(body)
 
 
-async def test_rename_prompt_ghost_not_prefilled():
-    # rename- 명령은 현재 이름을 미리 채우지 않고(빈 입력) ghost(제안)로 띄운다 —
-    # 그냥 타이핑하면 덮어쓰기, Tab/→ 로 제안을 채워 편집·덧붙이기(요청).
+async def test_rename_tab_command_noarg_cancels():
+    # rename-tab 명령을 인자 없이 입력하면 **아무 동작 없이 취소**한다 — 예전 rename
+    # 프롬프트 인터페이스를 열지 않는다(사용자 요청). 인자가 있으면 즉시 변경.
     async def body(app, pilot, srv):
         app.status.windows = [{"index": 0, "name": "mytab", "active": True}]
-        app._run_command("rename-tab")      # 인자 없음 → 프롬프트
+        sent = []
+        app.send_cmd = lambda a, **k: sent.append((a, k))
+        n0 = len(app.screen_stack)
+        app._run_command("rename-tab")      # 인자 없음 → no-op(프롬프트 안 열림)
+        await pilot.pause(0.05)
+        assert len(app.screen_stack) == n0, "무인자 rename-tab 은 프롬프트를 안 연다"
+        assert not sent, "무인자 rename-tab 은 명령을 보내지 않는다"
+        app._run_command("rename-tab proj")  # 인자 있음 → 즉시 변경
+        assert sent == [("rename_window", {"name": "proj"})], sent
+    await _with_app(body)
+
+
+async def test_rename_prompt_ghost_not_prefilled():
+    # 탭 이름 변경 ghost 프롬프트는 prefix+, 키로 연다 — 현재 이름을 미리 채우지
+    # 않고(빈 입력) ghost(제안)로 띄운다. 타이핑하면 덮어쓰기, Tab/→ 로 제안 채움(요청).
+    from textual.events import Key
+    async def body(app, pilot, srv):
+        app.status.windows = [{"index": 0, "name": "mytab", "active": True}]
+        app.mode = "prefix"
+        app._handle_prefix(Key("comma", ","))   # prefix+, → rename ghost 프롬프트
         await pilot.pause(0.05)
         scr = app.screen_stack[-1]
         inp = scr.query_one(Input)
@@ -2198,45 +2306,96 @@ async def test_pane_scoped_command_highlights_target_pane():
     await _with_app(body)
 
 
-async def test_shift_drag_pane_swap():
-    # #9b: Shift+좌버튼 드래그로 패널을 잡아 다른 패널에 놓으면 두 패널 위치를
-    # 맞바꾼다(서버에 swap_pane_to 전송). 드래그 중 소스/대상 상태를 추적한다.
+class _MEv:
+    """경량 마우스 이벤트 더블(패널 DnD 단위 테스트용)."""
+    def __init__(self, x, y, shift=False, button=1, ctrl=False):
+        self.x, self.y = x, y
+        self.shift, self.button, self.ctrl = shift, button, ctrl
+
+    def stop(self):
+        pass
+
+
+def _two_pane_layout():
+    # box 가 있는(테두리) 2-패널 좌우 분할 — box 상단 행(y=0)이 헤더 손잡이.
+    return {"active": 1, "border_status": False, "dividers": [], "panes": [
+        {"id": 1, "x": 1, "y": 1, "w": 38, "h": 18, "box": [0, 0, 40, 20]},
+        {"id": 2, "x": 42, "y": 1, "w": 38, "h": 18, "box": [41, 0, 40, 20]}]}
+
+
+async def test_header_drag_pane_pickup_swap():
+    # #1: 패널의 위쪽 테두리(헤더, box 상단 행 y=0)를 잡아 다른 패널에 놓으면 두 패널을
+    # swap(서버에 swap_pane_to). 헤더에서 안 움직이고 떼면(클릭) 포커스만(select_pane_id).
     async def body(app, pilot, srv):
-        app.layout = {"active": 1, "panes": [
-            {"id": 1, "x": 0, "y": 0, "w": 40, "h": 20, "box": None},
-            {"id": 2, "x": 41, "y": 0, "w": 40, "h": 20, "box": None}]}
+        app.layout = _two_pane_layout()
         sent = []
         app.send_cmd = lambda a, **k: sent.append((a, k))
         v = app.view
-
-        class _Ev:
-            def __init__(self, x, y, shift=True, button=1, ctrl=False):
-                self.x, self.y = x, y
-                self.shift, self.button, self.ctrl = shift, button, ctrl
-
-            def stop(self):
-                pass
-
-        # Shift+좌버튼 다운 on 패널 1 → swap 시작
-        v.on_mouse_down(_Ev(5, 5))
-        assert v._pane_swap == 1, "소스 패널 = 1"
-        # 패널 2 위로 이동 → 대상 추적
-        v.on_mouse_move(_Ev(60, 5))
-        assert v._pane_swap_over == 2, "대상 패널 = 2"
-        # 놓음 → swap_pane_to 전송, 상태 초기화
-        v.on_mouse_up(_Ev(60, 5))
+        # 패널1 헤더(box 상단 행)에서 다운 → pick-up 시작
+        v.on_mouse_down(_MEv(5, 0))
+        assert v._pickup == 1, "소스 패널 = 1"
+        # 패널2 본문 위로 이동 → 대상 추적(swap 미리보기)
+        v.on_mouse_move(_MEv(60, 5))
+        assert v._pickup_over == 2 and v._pickup_moved
+        # 놓음 → swap_pane_to, 상태 초기화
+        v.on_mouse_up(_MEv(60, 5))
         assert ("swap_pane_to", {"id": 1, "to_id": 2}) in sent, sent
-        assert v._pane_swap is None and v._pane_swap_over is None
+        assert v._pickup is None and v._pickup_over is None
 
-        # 제자리(같은 패널)에 놓으면 swap 안 함
+        # 헤더에서 안 움직이고 떼면(클릭) → 포커스만, swap 없음
         sent.clear()
-        v.on_mouse_down(_Ev(5, 5))
-        v.on_mouse_up(_Ev(5, 5))
-        assert not any(a == "swap_pane_to" for a, _ in sent), "제자리는 swap 없음"
+        v.on_mouse_down(_MEv(5, 0))
+        v.on_mouse_up(_MEv(5, 0))
+        assert not any(a == "swap_pane_to" for a, _ in sent), "클릭은 swap 없음"
+        assert ("select_pane_id", {"id": 1}) in sent, "헤더 클릭=포커스"
 
-        # Shift 없으면 swap 시작 안 함(일반 클릭 경로)
-        v.on_mouse_down(_Ev(5, 5, shift=False))
-        assert v._pane_swap is None, "Shift 없으면 swap 모드 아님"
+        # 본문(헤더 아님) 다운은 pick-up 시작 안 함
+        v.on_mouse_down(_MEv(5, 5))
+        assert v._pickup is None, "본문은 pick-up 아님"
+    await _with_app(body)
+
+
+async def test_header_drag_to_tabbar_moves_and_breaks():
+    # #1: 헤더로 든 패널을 탭바(event.y<0)에 놓으면 — 다른 탭 위=그 탭으로 이동
+    # (move_pane_to_tab), [+] 위=새 탭으로 분리(break_pane). 탭바 hit-test 는 mock.
+    async def body(app, pilot, srv):
+        app.layout = _two_pane_layout()
+        sent = []
+        app.send_cmd = lambda a, **k: sent.append((a, k))
+        v = app.view
+        # 실제 탭바 탭(렌더 가능한 완전한 dict)을 그대로 쓰고 _hit 만 mock 한다 —
+        # 같은-탭 드롭은 _composite 를 타므로 mock tabs 면 렌더가 깨진다.
+        cur = next((t["index"] for t in app.tabbar.tabs if t.get("active")), 0)
+        # (1) 다른 탭(cur+1) 위에 드롭 → move_pane_to_tab
+        app.tabbar._hit = lambda x: ("tab", cur + 1)
+        v.on_mouse_down(_MEv(5, 0))
+        v.on_mouse_up(_MEv(10, -1))           # y<0 = 탭바 영역
+        assert ("select_pane_id", {"id": 1}) in sent
+        assert ("move_pane_to_tab", {"id": 1, "to": cur + 1}) in sent, sent
+        # (2) [+] 위에 드롭 → break_pane
+        sent.clear()
+        app.tabbar._hit = lambda x: ("add", None)
+        v.on_mouse_down(_MEv(5, 0))
+        v.on_mouse_up(_MEv(70, -1))
+        assert ("break_pane", {}) in sent, sent
+        # (3) 현재 활성 탭 위에 드롭 → 아무 이동/분리 없음
+        sent.clear()
+        app.tabbar._hit = lambda x: ("tab", cur)
+        v.on_mouse_down(_MEv(5, 0))
+        v.on_mouse_up(_MEv(10, -1))
+        assert not any(a in ("move_pane_to_tab", "break_pane")
+                       for a, _ in sent), "같은 탭은 무동작"
+    await _with_app(body)
+
+
+async def test_shift_drag_starts_text_selection():
+    # 2026-06-05 결정: Shift+드래그는 (구) 패널 swap 이 아니라 **텍스트 선택**이다.
+    async def body(app, pilot, srv):
+        app.layout = _two_pane_layout()
+        v = app.view
+        v.on_mouse_down(_MEv(5, 5, shift=True))
+        assert v._pickup is None, "Shift+드래그는 pick-up 아님"
+        assert v._sel_start is not None, "Shift+드래그 = 텍스트 선택 시작"
     await _with_app(body)
 
 
@@ -2986,30 +3145,33 @@ async def test_remote_control_toggle_injects_rc():
     """원격제어 토글이 해당 패널에 '/rc'+Enter(input 메시지)를 주입한다(CLI /rc 로
     켜고 끔). 사용자 보고로 '직접 토글 불가' 안내를 정정하고 추가한 동작."""
     import base64
-    import pytmuxlib.client as climod
+    # 원격제어 토글(_toggle_remote_control)은 claude-code 플러그인으로 이전됐고(Phase
+    # 2c) 거기서 pytmuxlib.protocol.write_msg 를 지연 import 한다 → 그 참조를 패치.
+    import pytmuxlib.protocol as protomod
 
     async def body(app, pilot, srv):
         pid = app.layout["panes"][0]["id"]
         sent = []
-        orig = climod.write_msg
+        orig = protomod.write_msg
 
         async def cap(writer, msg):
             sent.append(msg)
-        climod.write_msg = cap
+        protomod.write_msg = cap
         try:
             app._toggle_remote_control(pid)
             await pilot.pause(0.05)
         finally:
-            climod.write_msg = orig
+            protomod.write_msg = orig
         inp = [m for m in sent if m.get("t") == "input" and m.get("pane") == pid]
         assert inp, sent
         assert base64.b64decode(inp[0]["data"]) == b"/rc\r"
     await _with_app(body)
 
 
-async def test_claude_footer_hover_highlights_zone():
-    """§10: Claude footer(권한모드/원격제어) 클릭존 위에 호버하면 그 줄 배경이
-    강조된다(클릭 가능 암시). _footer_zone_at 히트테스트 + 호버 시 셀 배경 변화."""
+async def test_claude_footer_no_hover_highlight_but_keyboard_focus():
+    """§10: Claude footer(권한모드/원격제어) 클릭존은 여전히 클릭 가능(_footer_zone_at
+    히트테스트)하지만 **마우스 호버로는 배경을 바꾸지 않는다**(요청 — 호버 강조 폐지).
+    배경 강조는 ESC 모드 키보드 포커스(_status_focus=="perm") 일 때만 입힌다."""
     from rich.style import Style as RStyle
     from pytmuxlib.clientutil import theme_color
 
@@ -3024,25 +3186,28 @@ async def test_claude_footer_hover_highlights_zone():
             [("Remote Control active", {})],
         ]
         app.pane_content[pid] = (rows, None)
-        app._footer_hover = None
         app._composite()
-        # 히트테스트: 권한모드 줄 안 → ("perm"), 원격제어 줄 안 → ("remote"),
-        # 존 바깥(첫 줄) → None.
+        # 히트테스트(클릭은 유지): 권한모드 줄 안 → ("perm"), 원격제어 줄 안 →
+        # ("remote"), 존 바깥(첫 줄) → None.
         zx0, zx1, zy = app._perm_zone[pid]
         assert app._footer_zone_at(zx0, zy) == (pid, "perm")
         rx0, rx1, ry = app._remote_zone[pid]
         assert app._footer_zone_at(rx0, ry) == (pid, "remote")
         assert app._footer_zone_at(zx0, py) is None
-        # 호버 전/후 배경 비교: 권한모드 줄 호버 → 그 줄 배경이 secondary 로 강조.
-        bg_before = app.view._cells[zy][zx0][1].bgcolor
-        app._footer_hover = (pid, "perm")
-        app._composite()
-        bg_after = app.view._cells[zy][zx0][1].bgcolor
+        # 호버 강조는 폐지 — 호버 상태(_footer_hover)·갱신자(_set_footer_hover)가 없다.
+        assert not hasattr(app, "_footer_hover"), "마우스 호버 강조 폐지(상태 없음)"
+        assert not hasattr(app.view, "_set_footer_hover")
         sec = RStyle(bgcolor=theme_color(app, "secondary")).bgcolor
-        assert bg_after == sec, (bg_after, sec)
-        assert bg_after != bg_before
-        # 호버 해제 → 원래대로(secondary 아님)
-        app._footer_hover = None
+        # 포커스 없으면 권한모드 줄 배경은 secondary 아님(아무것도 칠하지 않음).
+        app._status_focus = None
+        app._composite()
+        assert app.view._cells[zy][zx0][1].bgcolor != sec
+        # ESC 모드 키보드 포커스(perm) → 그 줄 배경이 secondary 로 강조(유지).
+        app._status_focus = "perm"
+        app._composite()
+        assert app.view._cells[zy][zx0][1].bgcolor == sec
+        # 포커스 해제 → 원래대로(secondary 아님)
+        app._status_focus = None
         app._composite()
         assert app.view._cells[zy][zx0][1].bgcolor != sec
     await _with_app(body)
@@ -3085,6 +3250,52 @@ async def test_perm_mode_click_outside_closes():
         await pilot.pause(0.05)
         assert app.screen is not scr, "바깥 클릭은 팝업을 닫는다"
         assert ev_out.stopped
+    await _with_app(body)
+
+
+async def test_perm_mode_popup_bypass_conditional():
+    """권한모드 팝업의 'Bypass Permission Mode' 항목은 **가용할 때만** 노출한다(요청).
+    서버 status 의 bypass_ok(=idle footer 에서 bypass 관측 → 시작 시 위험 플래그 활성)
+    가 참이거나 현재 모드가 이미 bypass 일 때만 목록에 추가하고, 그 외에는 숨겨 도달
+    불가 모드를 실수로 고르지 못하게 한다. 선택 시 set_claude_perm_mode(target=bypass)."""
+    async def body(app, pilot, srv):
+        pid = app.layout["panes"][0]["id"]
+
+        def open_and_keys(info):
+            app.pane_claude = {pid: {"id": pid, "claude": "idle", **info}}
+            app.open_perm_mode(pid)
+
+        # 미가용(bypass_ok 없음·현재 default) → bypass 항목 없음
+        open_and_keys({"perm_mode": "default"})
+        await pilot.pause(0.05)
+        scr = app.screen
+        assert scr.__class__.__name__ == "PermModeScreen", scr
+        keys = [it.id[2:] for it in scr.query_one("#perm").query("ListItem")]
+        assert "bypass" not in keys, keys
+        assert keys == ["auto", "accept", "default", "plan"], keys
+        scr.dismiss(None)
+        await pilot.pause(0.05)
+
+        # 가용(bypass_ok=True) → bypass 항목이 맨 끝에 추가
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        open_and_keys({"perm_mode": "auto", "bypass_ok": True})
+        await pilot.pause(0.05)
+        scr = app.screen
+        keys = [it.id[2:] for it in scr.query_one("#perm").query("ListItem")]
+        assert keys == ["auto", "accept", "default", "plan", "bypass"], keys
+        # 선택 시 set_claude_perm_mode(target=bypass)
+        scr.dismiss("bypass")
+        await pilot.pause(0.05)
+        assert sent and sent[0] == ("set_claude_perm_mode",
+                                    {"id": pid, "target": "bypass"}), sent
+
+        # 현재가 이미 bypass 면 bypass_ok 없이도 노출(현재 모드를 목록에 표시)
+        open_and_keys({"perm_mode": "bypass"})
+        await pilot.pause(0.05)
+        scr = app.screen
+        keys = [it.id[2:] for it in scr.query_one("#perm").query("ListItem")]
+        assert "bypass" in keys, keys
     await _with_app(body)
 
 
@@ -3306,29 +3517,34 @@ async def test_command_list_search_filters_and_tab_counts():
         await pilot.pause(0.2)
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "CommandListScreen"
-        # 검색 없음 → 첫 탭(패널) 활성, 전체 2건.
-        assert scr._ci == 0 and len(scr._cur) == 2, (scr._ci, scr._cur)
-        # 'tab' 검색 → 패널 0건, 탭 2건. 현재 탭(패널)에 결과 없어 탭으로 자동 점프.
+        # 검색 없음 → 첫 탭('전체') 활성, 모든 명령 5건.
+        assert scr._ci == 0 and len(scr._cur) == 5, (scr._ci, scr._cur)
+        # 패널 탭(2건)으로 이동한 뒤 'tab' 검색 → 패널 0건이라 결과 있는 첫 탭('전체')
+        # 으로 자동 점프한다(빈 화면 방지).
+        await pilot.press("right")
+        await pilot.pause(0.1)
+        assert scr._ci == 1 and len(scr._cur) == 2, (scr._ci, scr._cur)
         for ch in "tab":
             await pilot.press(ch)
         await pilot.pause(0.1)
         assert scr._query == "tab"
-        assert scr._ci == 1, scr._ci                       # 자동 점프
+        assert scr._ci == 0, scr._ci                       # '전체'로 자동 점프(결과 보유)
         assert [n for n, _ in scr._cur] == ["new-tab", "rename-tab"], scr._cur
-        # 비활성/활성 탭 모두 일치 수가 계산된다(패널 0, 탭 2).
-        assert len(scr._matches(scr._all_cats[0][1])) == 0
-        assert len(scr._matches(scr._all_cats[1][1])) == 2
-        # 활성 탭 라벨에 (2) 표기.
+        # 카테고리별 일치 수: 전체 2, 패널 0, 탭 2.
+        assert len(scr._matches(scr._all_cats[0][1])) == 2   # 전체
+        assert len(scr._matches(scr._all_cats[1][1])) == 0   # 패널
+        assert len(scr._matches(scr._all_cats[2][1])) == 2   # 탭
+        # 활성 탭('전체') 라벨에 (2) 표기.
         from textual.widgets import Label
-        lbl = scr.query_one("#cmdtab_1", Label)
+        lbl = scr.query_one("#cmdtab_0", Label)
         assert "(2)" in str(lbl.render()), lbl.render()
         # 검색창(표시 전용)에 입력값 반영.
         assert scr.query_one("#cmdsearch", Input).value == "tab"
-        # 백스페이스로 모두 지우면 전체 복귀.
+        # 백스페이스로 모두 지우면 전체(5건) 복귀.
         for _ in "tab":
             await pilot.press("backspace")
         await pilot.pause(0.1)
-        assert scr._query == "" and len(scr._cur) == 2
+        assert scr._query == "" and len(scr._cur) == 5
     await _with_app(body)
 
 
@@ -3345,8 +3561,9 @@ async def test_command_search_separator_insensitive():
         app.push_screen(CommandListScreen(items))
         await pilot.pause(0.1)
         scr = app.screen_stack[-1]
-        names = lambda: sorted(n for n, _ in scr._matches(
-            [c for cat in scr._all_cats for c in cat[1]]))
+        # _all_cats[0] = '전체'(모든 명령, 중복 없음) — 카테고리 전체를 평탄화하면
+        # '전체'가 사본을 더해 중복되므로 '전체' 버킷만 써서 매칭한다.
+        names = lambda: sorted(n for n, _ in scr._matches(scr._all_cats[0][1]))
         # ?-목록 검색(_matches): 세 구분자 모두 동일 결과.
         for q in ("rename-", "rename_", "rename "):
             scr._query = q
@@ -3378,6 +3595,39 @@ async def test_prompt_candidates_separator_insensitive():
     await _with_app(body)
 
 
+async def test_prompt_candidates_space_separator_and_plugin_cmds():
+    # 공백도 언더바처럼 구분자로 취급한다(이전엔 `" " not in s` 게이트로 공백 입력 시
+    # 후보가 전혀 안 떴다). 또 후보 풀에 플러그인 명령(clock-mode 등)도 포함된다.
+    async def body(app, pilot, srv):
+        await pilot.press("escape")
+        await pilot.press("colon")
+        scr = app.screen_stack[-1]
+        inp = scr.query_one(Input)
+
+        # 공백으로 친 멀티워드 코어 명령: 'move tab l' → move-tab-left.
+        inp.value = "move tab l"
+        scr._refresh_cands()
+        await pilot.pause(0.05)
+        assert "move-tab-left" in [n for n, _ in scr._cand], scr._cand
+
+        # 공백으로 친 플러그인 명령: 'clock m' → clock-mode(clock 플러그인이 등록).
+        inp.value = "clock m"
+        scr._refresh_cands()
+        await pilot.pause(0.05)
+        names = [n for n, _ in scr._cand]
+        if app.plugins and any("clock-mode" == n for n, *_ in app.plugins.commands):
+            assert "clock-mode" in names, names
+
+        # 완성된 명령 + 실제 인자 → 정규화 입력이 어떤 명령 이름의 부분문자열도
+        # 아니게 되어 후보가 사라지고(인자 입력 단계), 힌트가 대신 뜬다.
+        inp.value = "rename-tab foo"
+        scr._refresh_cands(); scr._refresh_hint()
+        await pilot.pause(0.05)
+        assert scr._cand == [], scr._cand
+        assert scr._hint_cmd == "rename-tab", scr._hint_cmd
+    await _with_app(body)
+
+
 async def test_command_list_home_end_tab_click_and_close():
     # Home/End 로 목록 처음·끝, 탭 클릭으로 카테고리 전환, [x] 클릭으로 닫기.
     from pytmuxlib.clientscreens import CommandListScreen
@@ -3396,9 +3646,10 @@ async def test_command_list_home_end_tab_click_and_close():
         await pilot.press("home")                          # 맨 위
         await pilot.pause(0.1)
         assert lv.index == 0
-        await pilot.click("#cmdtab_1")                     # 탭 클릭 → 전환
+        # 탭 클릭 → 전환. cmdtab_0='전체', cmdtab_1='패널', cmdtab_2='탭'(new-tab).
+        await pilot.click("#cmdtab_2")
         await pilot.pause(0.1)
-        assert scr._ci == 1 and scr._cur[0][0] == "new-tab", (scr._ci, scr._cur[:1])
+        assert scr._ci == 2 and scr._cur[0][0] == "new-tab", (scr._ci, scr._cur[:1])
         await pilot.click("#cmdclose")                     # [x] → 닫기
         await pilot.pause(0.2)
         assert not any(s.__class__.__name__ == "CommandListScreen"
@@ -3408,7 +3659,10 @@ async def test_command_list_home_end_tab_click_and_close():
 
 async def test_rules_editor_save_cancel_and_spacer():
     # #27 규칙 에디터: 타이틀↔에디터 한 줄 여백 + 우측 닫기[x] + 하단 저장/취소.
-    from pytmuxlib.clientscreens import RulesEditScreen
+    # RulesEditScreen 은 claude-code 플러그인으로 이전(패키지명에 하이픈 → importlib).
+    import importlib
+    RulesEditScreen = importlib.import_module(
+        "pytmuxlib.plugins.claude-code.screens").RulesEditScreen
     async def body(app, pilot, srv):
         captured = []
         app.push_screen(RulesEditScreen("hello rules"),
@@ -3426,7 +3680,9 @@ async def test_rules_editor_save_cancel_and_spacer():
 
 
 async def test_rules_editor_cancel_returns_none():
-    from pytmuxlib.clientscreens import RulesEditScreen
+    import importlib
+    RulesEditScreen = importlib.import_module(
+        "pytmuxlib.plugins.claude-code.screens").RulesEditScreen
     async def body(app, pilot, srv):
         captured = []
         app.push_screen(RulesEditScreen("x"), lambda v: captured.append(v))
@@ -3439,6 +3695,7 @@ async def test_rules_editor_cancel_returns_none():
 
 async def test_command_prompt_empty_lists_all_commands():
     # esc : 로 연 빈 명령 프롬프트는 위쪽(#pcand)에 전체 명령을 펼친다(↑↓ 탐색, #).
+    # 전체 = 코어 COMMANDS + 등록된 플러그인 명령(_commands() 풀과 동일).
     from textual.widgets import Label
     from pytmuxlib.clientutil import COMMANDS
     async def body(app, pilot, srv):
@@ -3448,7 +3705,9 @@ async def test_command_prompt_empty_lists_all_commands():
         assert scr.__class__.__name__ == "PromptScreen"
         await pilot.pause(0.1)
         assert scr.query_one("#pcand", Label).display is True, "빈 입력서 후보 펼침"
-        assert len(scr._cand) == len(COMMANDS), (len(scr._cand), len(COMMANDS))
+        assert len(scr._cand) == len(scr._commands()), \
+            (len(scr._cand), len(scr._commands()))
+        assert len(scr._cand) >= len(COMMANDS)   # 최소 코어 명령 수 이상
         await pilot.press("down")                          # 윈도우 탐색
         assert scr._sel == 1, scr._sel
     await _with_app(body)
