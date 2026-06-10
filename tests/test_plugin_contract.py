@@ -96,6 +96,46 @@ async def test_contract_client_hooks_noop_without_plugin():
     assert reg.handle_message(None, {"t": "token_log"}) is False
 
 
+async def test_token_log_request_handled_by_plugin_hook():
+    """T1(토큰 모듈화): `request_token_log` 가 코어 serverio 의 elif 분기가 아니라
+    claude-code 플러그인의 `handle_server_request` 훅으로 처리된다 — serverio 가 더는
+    usagedb 를 import 하지 않게(탈토큰) 옮긴 뒤의 회귀. 플러그인 부재 시엔 무응답
+    (None)이라 토큰 로그 요청이 조용히 사라진다(delete-to-disable)."""
+    import os
+    import tempfile
+
+    import pytmuxlib.serverio as serverio
+    from pytmuxlib import usagedb, usagelog
+
+    # 코어 serverio 가 모듈 전역에 usagedb 를 더는 두지 않는다(탈토큰).
+    assert not hasattr(serverio, "usagedb"), "serverio 가 아직 usagedb 를 import 함"
+
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        conn = usagedb.connect(path)
+        usagedb.insert(conn, usagelog.make_record(
+            ts=1.0, tab=0, pane=1, session=1, account="me@x", tokens=1234))
+
+        class _FakeServer:
+            def _tokens_db_conn(self):
+                return conn
+
+        reg = plugins.load()
+        resp = reg.handle_server_request(
+            _FakeServer(), None, "request_token_log", {"limit": 10})
+        assert resp and resp["t"] == "token_log", "토큰 로그 회신이 없음"
+        assert resp["total_all"] == 1234, resp
+        assert resp["records"] and resp["records"][0]["tokens"] == 1234
+        assert resp["accounts_total"].get("me@x") == 1234, resp["accounts_total"]
+        # 플러그인 부재(디렉토리 삭제 시뮬) → 토큰 로그 요청은 무응답(None).
+        reg2 = _registry_without_claude()
+        assert reg2.handle_server_request(
+            _FakeServer(), None, "request_token_log", {}) is None
+    finally:
+        os.unlink(path)
+
+
 async def test_contract_client_app_runs_without_claude_plugin(monkeypatch=None):
     """클라 앱을 claude-code 플러그인 없이 구성·렌더·ESC·입력해도 깨지지 않는다.
 

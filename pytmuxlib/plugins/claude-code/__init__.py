@@ -746,6 +746,28 @@ class _ClaudeCodePlugin:
             return True
         return False
 
+    def handle_server_request(self, server, sess, action, msg):
+        """코어 serverio 가 알 수 없는 action 을 넘기면(레지스트리 handle_server_request)
+        토큰 영속 로그 조회를 처리해 회신 dict 를 돌려준다 — 코어가 그대로 클라로 보낸다.
+        S5(토큰 모듈화 T1)에서 serverio 의 `request_token_log` elif 분기를 이리로 이전:
+        코어 serverio 가 더는 usagedb 를 import 하지 않게 한다(탈토큰). 디렉토리를 지우면
+        이 훅이 사라져 토큰 로그 요청이 무응답(클라는 빈 팝업) — 코어는 무에러."""
+        if action == "request_token_log":
+            # 영속 토큰 레코드(최근 N 건)를 SQLite 에서 읽어 클라이언트로. 클라가
+            # usagelog 로 시간/일/월 × 계정/세션 집계해 팝업에 표시(라운드트립 없이
+            # 버킷/차원 전환). Phase B: 버킷 전환용 N 건과 별개로, 정확한 **전체
+            # 이력 합**(total_all)·계정별 합(accounts_total)을 서버가 SQL GROUP BY 로
+            # 함께 보내, 이력이 N 을 넘어도 lifetime Σ 가 과소표시되지 않게 한다.
+            from pytmuxlib import usagedb
+            conn = server._tokens_db_conn()
+            recs = (usagedb.query_records(conn, limit=int(msg.get("limit", 5000)))
+                    if conn is not None else [])
+            total_all = usagedb.total_all(conn) if conn is not None else 0
+            accts = usagedb.totals_by_account(conn) if conn is not None else {}
+            return {"t": "token_log", "records": recs,
+                    "total_all": total_all, "accounts_total": accts}
+        return None
+
     # ---- 클라이언트 콘텐츠-레이어 렌더/상태 훅(Phase 2c) ----
     def client_render(self, app, cells, W, H):
         """코어 _composite 가 콘텐츠를 그린 뒤 호출 — Claude 프롬프트 헤더를 그리고

@@ -15,7 +15,7 @@ import signal
 import time
 import traceback
 
-from . import ipc, usagedb, version
+from . import ipc, version
 from .model import ClientConn, Session
 from .protocol import (FLUSH_HZ, MAX_H, MAX_W, MIN_H, MIN_W, PROTO_VERSION,
                        clamp_dim, frame_msg, read_msg, write_frames, write_msg)
@@ -392,21 +392,6 @@ class ServerIOMixin:
             return
         elif action == "request_tree":
             await write_msg(client.writer, self._tree_msg())
-            return
-        elif action == "request_token_log":
-            # 영속 토큰 레코드(최근 N 건)를 SQLite 에서 읽어 클라이언트로. 클라가
-            # usagelog 로 시간/일/월 × 계정/세션 집계해 팝업에 표시(라운드트립 없이
-            # 버킷/차원 전환). Phase B: 버킷 전환용 N 건과 별개로, 정확한 **전체
-            # 이력 합**(total_all)·계정별 합(accounts_total)을 서버가 SQL GROUP BY 로
-            # 함께 보내, 이력이 N 을 넘어도 lifetime Σ 가 과소표시되지 않게 한다.
-            conn = self._tokens_db_conn()
-            recs = (usagedb.query_records(conn, limit=int(msg.get("limit", 5000)))
-                    if conn is not None else [])
-            total_all = usagedb.total_all(conn) if conn is not None else 0
-            accts = usagedb.totals_by_account(conn) if conn is not None else {}
-            await write_msg(client.writer, {
-                "t": "token_log", "records": recs,
-                "total_all": total_all, "accounts_total": accts})
             return
         elif action == "request_version":
             # version 명령 팝업: 이 서버가 로드한 코드 버전(p4 CL)·업타임·pid 회신.
