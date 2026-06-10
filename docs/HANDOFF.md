@@ -25,7 +25,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **434 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **437 passed**
   (`python3 tests/run.py`, 2026-06-10).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
@@ -2445,7 +2445,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 `# ---- Claude Code 연동 (분리 대상) ----` 식 **명확한 구획 주석**으로 감싼다(현재도 일부 있음).
 충돌은 줄지만 같은 파일이라 완전 분리는 아니다 — 11.2 의 전용 모듈이 본안.
 
-### 11.6 플러그인 기반 추출(현행) — 진행 상황과 남은 작업 (2026-06-10 갱신: Phase 2c·S5·S4 완료)
+### 11.6 플러그인 기반 추출(현행) — 진행 상황과 남은 작업 (2026-06-10 갱신: Phase 2c·S5·S4 + StatusBar 위젯속성(58065) 완료)
 
 > **§11.1~11.5 는 초기 전략(claude.py/client_claude.py 자유함수)으로, 지금은
 > `pytmuxlib/plugins/` 플러그인 시스템(CL 57774)으로 대체되었다.** 목표는 동일하되 메커니즘이
@@ -2539,8 +2539,16 @@ test_client.py`(417) + 신규 `tests/test_plugin_contract.py`(5) 회귀망 + smo
   6곳 `getattr` 가드(`_should_reserve_header`·serverpty 자동재개·servertree 리네임·`_log_tokens`).
   레지스트리 캐시 `plugins.get()`(=`Registry(_discover())`, load 패치 무관). 437 green +
   delete-to-disable 실증(디렉토리 격리 시 Pane 에 Claude 필드 미설치·코어 무에러).
-- (선택, 미착수) StatusBar 의 `claude_*` 위젯 속성은 여전히 코어 clientwidgets `__init__` 에
-  안전 기본값으로 남아 있다(Pane 이 아닌 클라 위젯 — client_statusbar 훅이 흡수만; 옮길 후보).
+- ~~(선택) StatusBar 의 `claude_*` 위젯 속성이 코어 clientwidgets `__init__` 에 잔류~~ →
+  **완료(CL 58065, 2026-06-10)**: StatusBar 의 Claude 상태 속성 **26개**(`claude_active`/
+  `usage`/`tokens`/`model`·토큰절감 설정·`token_budget_*`·`budget_level`·`claude_pending` 등)를
+  claude-code 플러그인 소유로 이전했다. 신규 클라 훅 `client_statusbar_init(app, status)` 가
+  StatusBar 생성 직후(`client.py`) `clientstatus.init_defaults(status)` 로 26개를 위젯에 설치하고,
+  기존 `client_statusbar_update`(흡수)·`client_statusbar`(렌더)가 읽고 쓴다. 코어 `_render_main`·
+  `update_status` 는 이 속성을 직접 읽지 않아(grep 재감사로 확인 — server.py/serverpersist.py 의
+  동명 필드는 별개의 **서버 설정 상태**) 플러그인 부재 시 속성이 아예 안 생겨도 무에러
+  (delete-to-disable). 계약 테스트 강화: 부재 시 `claude_active is False` → `not hasattr(...)`
+  (속성 미설치를 검증). 437 green. **→ Phase 2c 클라 위젯 잔여 결합 정리 완결.**
 
 **남은 작업 — 마무리:**
 - ~~**계약 테스트(delete-to-disable)**~~ → **완료**: `tests/test_plugin_contract.py` 신설.
