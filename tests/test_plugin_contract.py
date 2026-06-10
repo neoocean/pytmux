@@ -151,6 +151,43 @@ async def test_core_no_longer_imports_token_db_backend():
     assert hasattr(plugins.Registry, "server_init")
 
 
+async def test_token_budget_opts_namespace_and_migration_shim():
+    """T3(토큰 모듈화): token_budget_* 설정이 코어가 아니라 claude-code 플러그인 소유로
+    opts.json 의 plugin_opts 네임스페이스에 저장/로드된다. **마이그레이션 shim**: 구
+    top-level 키(이 CL 이전·타 머신 opts.json)는 폴백으로 읽고, plugin_opts 가 있으면
+    그쪽을 우선한다 → 업그레이드 무중단. 플러그인 부재 시 init no-op·serialize {}."""
+    reg = plugins.load()
+
+    class _S:
+        pass
+
+    # ① 구 포맷(top-level only, plugin_opts 없음) → 폴백으로 읽힘(타 머신 업그레이드).
+    s1 = _S()
+    reg.server_opts_init(s1, {"token_budget_day": 111,
+                              "token_budget_resume_gate": True})
+    assert s1.token_budget_day == 111
+    assert s1.token_budget_session == 0          # 없는 키는 기본값
+    assert s1.token_budget_5h == 0
+    assert s1.token_budget_resume_gate is True
+    # ② 신 포맷(plugin_opts) 우선 — 같은 키가 top-level 에도 있어도 nested 가 이긴다.
+    s2 = _S()
+    reg.server_opts_init(s2, {"token_budget_day": 999,
+                              "plugin_opts": {"token_budget_day": 222,
+                                              "token_budget_account": 7}})
+    assert s2.token_budget_day == 222 and s2.token_budget_account == 7
+    # ③ serialize 는 현재 server 값을 돌려준다(코어가 plugin_opts 밑에 불투명 저장).
+    out = reg.server_opts_serialize(s2)
+    assert out["token_budget_day"] == 222
+    assert set(out) == {"token_budget_day", "token_budget_session", "token_budget_5h",
+                        "token_budget_account", "token_budget_resume_gate"}
+    # ④ 플러그인 부재(디렉토리 삭제 시뮬) → init no-op(속성 안 생김), serialize {}.
+    reg2 = _registry_without_claude()
+    s3 = _S()
+    reg2.server_opts_init(s3, {"token_budget_day": 5})
+    assert not hasattr(s3, "token_budget_day"), "플러그인 부재인데 token_budget 설치됨"
+    assert reg2.server_opts_serialize(s3) == {}
+
+
 async def test_contract_client_app_runs_without_claude_plugin(monkeypatch=None):
     """클라 앱을 claude-code 플러그인 없이 구성·렌더·ESC·입력해도 깨지지 않는다.
 

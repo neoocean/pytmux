@@ -355,14 +355,13 @@ class ServerPersistMixin:
                            "claude_ctx_action": self.claude_ctx_action,
                            "claude_ctx_min_interval":
                                self.claude_ctx_min_interval,
-                           "token_budget_day": self.token_budget_day,
-                           "token_budget_session": self.token_budget_session,
-                           "token_budget_5h": self.token_budget_5h,
-                           "token_budget_account": self.token_budget_account,
                            "claude_long_turn_sec": self.claude_long_turn_sec,
                            "claude_repeat_alert": self.claude_repeat_alert,
-                           "token_budget_resume_gate":
-                               self.token_budget_resume_gate,
-                           "claude_budget_plan": self.claude_budget_plan}, f)
+                           "claude_budget_plan": self.claude_budget_plan,
+                           # 플러그인 소유 설정(S5 토큰 모듈화 T3): claude-code 가 돌려준
+                           # token_budget_* 를 plugin_opts 네임스페이스에 불투명하게 저장한다
+                           # (코어는 키 의미 모름). 디렉토리 삭제 시 {} → 설정이 사라진다.
+                           "plugin_opts": self.plugins.server_opts_serialize(self)},
+                          f)
         except OSError:
             pass

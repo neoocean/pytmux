@@ -460,11 +460,16 @@ async def test_setters_persist_to_opts():
         assert saved["claude_ctx_autoclear"] is True
         assert saved["claude_ctx_action"] == "doc-clear"
         assert saved["claude_ctx_threshold"] == 99
-        assert saved["token_budget_day"] == 123000
-        assert saved["token_budget_session"] == 45000
-        assert saved["token_budget_5h"] == 350000
-        assert saved["token_budget_account"] == 2_000_000
-        assert saved["token_budget_resume_gate"] is True
+        # S5 토큰 모듈화 T3: token_budget_* 는 코어 top-level 이 아니라 플러그인 소유
+        # plugin_opts 네임스페이스에 저장된다(claude-code server_opts_serialize).
+        po = saved["plugin_opts"]
+        assert po["token_budget_day"] == 123000
+        assert po["token_budget_session"] == 45000
+        assert po["token_budget_5h"] == 350000
+        assert po["token_budget_account"] == 2_000_000
+        assert po["token_budget_resume_gate"] is True
+        # 코어 top-level 에는 더 이상 token_budget_* 가 없다(완전 플러그인 소유).
+        assert "token_budget_day" not in saved
     finally:
         try:
             os.unlink(srv.opts_path)

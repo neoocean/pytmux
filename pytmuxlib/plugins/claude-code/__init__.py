@@ -508,6 +508,35 @@ class _ClaudeCodePlugin:
         있으면 Server 에 ServerClaudeMixin 도 합성돼 있다(프로덕션·정상 테스트 순서)."""
         server._init_token_state()
 
+    # ---- 토큰 예산 설정 소유(S5 토큰 모듈화 T3) — 코어 server.py __init__·serverpersist
+    # _save_opts 에서 이전. 코어는 token_budget 의 의미를 모르고, opts.json 의 plugin_opts
+    # 네임스페이스를 불투명하게 저장만 한다. 디렉토리 삭제 시 이 훅들이 사라져 코어 server
+    # 엔 token_budget_* 가 안 생기고 opts.json plugin_opts 가 비어 설정이 통째로 사라진다.
+    _OPTS_KEYS = (("token_budget_day", 0, int), ("token_budget_session", 0, int),
+                  ("token_budget_5h", 0, int), ("token_budget_account", 0, int),
+                  ("token_budget_resume_gate", False, bool))
+
+    def server_opts_init(self, server, opts):
+        """opts.json → server.token_budget_* 설치(코어 __init__ 의 _opts.get 들을 이전).
+        **마이그레이션 shim**: plugin_opts 네임스페이스를 우선 읽되, 없으면 구 top-level
+        키(이 CL 이전·타 머신 opts.json)로 폴백한다 → 업그레이드 무중단. 한 번 _save_opts
+        가 돌면 top-level 키는 사라지고 plugin_opts 만 남는다(코어가 더는 top-level 로
+        안 씀)."""
+        po = opts.get("plugin_opts")
+        po = po if isinstance(po, dict) else {}
+        for key, default, cast in self._OPTS_KEYS:
+            raw = po[key] if key in po else opts.get(key, default)  # nested 우선, 구 키 폴백
+            try:
+                setattr(server, key, cast(raw))
+            except (TypeError, ValueError):
+                setattr(server, key, cast(default))
+
+    def server_opts_serialize(self, server):
+        """server.token_budget_* → opts.json plugin_opts 네임스페이스(코어 _save_opts 의
+        token_budget 블록을 이전). 코어는 이 dict 를 plugin_opts 밑에 불투명하게 저장한다."""
+        return {key: getattr(server, key, default)
+                for key, default, _cast in self._OPTS_KEYS}
+
     # ---- 서버 런타임 훅(코어 serverio/server 가 레지스트리로만 호출) ----
     # 코어는 Claude 서버 로직을 이름으로 부르지 않고 이 훅들로만 닿는다. 각 훅은 동적
     # 합성된 ServerClaudeMixin 메서드(server.<method>)로 위임한다. 디렉토리를 지우면
