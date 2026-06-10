@@ -16,6 +16,21 @@ from pytmuxlib import ipc  # noqa: E402
 
 IS_WINDOWS = os.name == "nt"
 
+# ── 셸 히스토리 격리(테스트 잔재가 사용자 히스토리를 오염시키지 않게) ──────────────
+# 테스트/벤치는 진짜 자식 셸을 띄워 `echo PY=$$`(test_restart)·`echo PYTMUX_B8_DELTA_OK`
+# (test_ptyshot) 같은 프로브를 흘려보낸다. 패널 셸은 serverpty 에서 `env=dict(os.environ)`
+# 로 사용자 환경을 상속하므로, 그 zsh 가 명령을 **공유 `~/.zsh_history`** 에 append 해
+# pytmux 를 나온 뒤 ↑(히스토리 호출)에 테스트 프로브가 떠오른다. macOS `/etc/zshrc` 는
+# `HISTFILE=${ZDOTDIR:-$HOME}/.zsh_history` 로 잡으므로, `ZDOTDIR` 를 빈 임시 디렉터리로
+# 돌리면 히스토리가 그 안에 갇혀 사용자 파일을 건드리지 않는다(+ HISTFILE/SAVEHIST 도
+# 비워 bash 등 다른 셸을 커버). 모듈 import 시 **1회** 설정 → 이 프로세스가 spawn 하는
+# 서버/클라/셸(test_ptyshot 가 띄우는 별도 프로세스 포함, os.environ 상속)이 전부 격리된다.
+# 프로덕션(실사용 pytmux 데몬)은 이 모듈을 import 하지 않으므로 패널 히스토리 공유를 유지한다.
+_HIST_ISOLATE_DIR = tempfile.mkdtemp(prefix="pytmux-test-zdot-")
+os.environ["ZDOTDIR"] = _HIST_ISOLATE_DIR
+os.environ["HISTFILE"] = os.devnull
+os.environ["SAVEHIST"] = "0"
+
 
 async def server_only():
     """서버를 기동하고 listen 이 뜰 때까지 대기. (srv, task, endpoint) 반환.
