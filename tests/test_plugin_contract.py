@@ -263,6 +263,53 @@ async def test_token_db_legacy_location_migration():
             os.environ["PYTMUX_TOKENS_DB"] = env
 
 
+async def test_token_subsystem_fully_disabled_without_plugin():
+    """T6(토큰 모듈화 계약 — 종합): claude-code 를 격리하면 토큰 서브시스템 전체 —
+    명령·조회·예산설정·DB 연결상태·패널 누계·종료 이관·DB 백엔드 import·서버 믹스인 —
+    이 코어에서 흔적 없이 사라지고 코어는 무에러다. T1~T5 가 분산 검증한 delete-to-disable
+    를 한 자리에 못박는 회귀망(토큰 결합이 코어로 되살아나면 여기서 깨진다)."""
+    import pytmuxlib.server as server
+    import pytmuxlib.serverio as serverio
+
+    reg = _registry_without_claude()
+
+    class _S:
+        pass
+
+    # ① 토큰 명령(조회/설정/팝업 진입점)이 전부 사라진다.
+    names = {n for (n, *_rest) in reg.commands}
+    assert not ({"token-log", "token-usage", "token-account", "token-saver",
+                 "usage-panel"} & names), f"토큰 명령 누수: {names}"
+    # ② 토큰 로그 조회(request_token_log) 무응답.
+    assert reg.handle_server_request(
+        _S(), None, "request_token_log", {}) is None
+    # ③ 예산 설정: server_opts_init no-op(속성 미설치) + serialize {}(영속 사라짐).
+    s = _S()
+    reg.server_opts_init(s, {"token_budget_day": 9,
+                             "plugin_opts": {"token_budget_day": 9}})
+    assert not hasattr(s, "token_budget_day"), "예산 설정이 설치됨"
+    assert reg.server_opts_serialize(s) == {}
+    # ④ DB 연결·일예산 누계 런타임 상태(server_init) 미설치.
+    s2 = _S()
+    reg.server_init(s2)
+    assert not hasattr(s2, "_tokens_db") and not hasattr(s2, "_budget_level"), \
+        "토큰 DB/예산 런타임 상태가 설치됨"
+    # ⑤ 패널 토큰 누계(pane_init) 미설치 + 종료 토큰 이관(pane_closing) no-op.
+    p = _S()
+    reg.pane_init(p)
+    assert not hasattr(p, "_tok_state") and not hasattr(p, "_session_tokens"), \
+        "패널 토큰 누계가 설치됨"
+    reg.pane_closing(_S(), p)   # 예외 없음(no-op)
+    # ⑥ 코어 모듈은 토큰 DB 백엔드(usagedb/usagelog)를 import 하지 않는다(물리 이전 T5
+    #    이후에도 유지 — 코어 탈토큰 불변식).
+    assert not hasattr(server, "usagedb") and not hasattr(server, "usagelog"), \
+        "코어 server 가 토큰 DB 백엔드를 import 함"
+    assert not hasattr(serverio, "usagedb"), "코어 serverio 가 usagedb 를 import 함"
+    # ⑦ 서버측 Claude 믹스인도 사라진다(토큰 메서드 _log_tokens/_tokens_db_conn/예산이
+    #    Server 합성에서 통째로 빠진다).
+    assert reg.server_mixins() == [], "claude 서버 믹스인이 남음"
+
+
 async def test_contract_client_app_runs_without_claude_plugin(monkeypatch=None):
     """클라 앱을 claude-code 플러그인 없이 구성·렌더·ESC·입력해도 깨지지 않는다.
 

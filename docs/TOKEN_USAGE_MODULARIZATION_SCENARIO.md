@@ -1,9 +1,17 @@
 # 토큰 사용기록 모듈화 + 정확성 검증/수정 시나리오
 
-> **상태**: 🟡 **검토·계획(2026-06-10)**. 토큰 사용기록 기능을 코어에서 완전히 분리
-> (claude-code 플러그인 소유)해, **별도로 검증·대규모 수정**할 수 있게 하는 설계 문서.
-> 동기: **현재 기록값이 Claude Code 앱(/usage)에 표시되는 값과 상당히 다르다** — 회계
-> 로직을 갈아엎으려면 먼저 코어 결합을 끊어 폭발 반경을 플러그인 안으로 가둬야 한다.
+> **상태**: ✅ **모듈화 완료(2026-06-10, T1~T6)**. §6 단계 전부 동작 보존 이전으로 제출:
+> T1 request_token_log→훅(p4 58071) · T2 _log_tokens·예산·DB연결→servermixin+server_init
+> 훅(58072) · T3 token_budget_* 완전 플러그인 소유+plugin_opts 네임스페이스+마이그레이션
+> shim(58073) · T4 Pane 토큰누계→panestate+pane_closing 훅(58074) · T5 usagedb/usagelog
+> 물리이전+DB 파일 플러그인 하위 이동+타 머신 마이그레이션(58078) · T6 종합 계약 테스트.
+> 전체 442 green. 코어(server/serverio/model/servertree/serverpersist)는 토큰의 의미를
+> 전혀 모른다(delete-to-disable: claude-code 디렉토리 삭제 시 토큰 명령·DB·기록·조회·예산·
+> 누계·데이터까지 흔적 없이 사라지고 코어 무에러). **남은 것은 §8 회계 정확성 재설계(별도
+> 세션)** — 모듈화로 폭발 반경이 플러그인 안에 갇혔다.
+>
+> 동기(원안): **현재 기록값이 Claude Code 앱(/usage)에 표시되는 값과 상당히 다르다** —
+> 회계 로직을 갈아엎으려면 먼저 코어 결합을 끊어 폭발 반경을 플러그인 안으로 가둬야 한다.
 >
 > 관련: [TOKEN_USAGE_STORAGE_DESIGN.md](TOKEN_USAGE_STORAGE_DESIGN.md)(JSONL→SQLite
 > 저장 설계) · [TOKEN_USAGE_UI_SCENARIO.md](TOKEN_USAGE_UI_SCENARIO.md)(팝업 UI) ·
@@ -209,18 +217,26 @@ Claude 화면(PTY)  "✽ … (12s · ↑ 0.4k · ↓ 1.9k tokens)"   ← streami
 각 단계 후 **437+ 그린 + 라이브 attach 검증**. 중간 CL 은 계약이 깨질 수 있음(최종
 CL 에서 delete-to-disable 완성 — §11.6 사용자 결정 ① 재적용).
 
-- **T1** `request_token_log` → `server_command` 훅 이전(serverio 탈토큰). 회귀:
-  `test_usagedb`·토큰 로그 팝업 테스트.
-- **T2** `_log_tokens`·예산·DB연결을 `server.py`→`servermixin.py` 로 이전 +
-  `server_token_commit` 훅 신설(`_scan_claude` 가 코어 메서드 대신 훅 호출). 코어
-  server.py 에서 `usagedb`/`usagelog` import 제거.
-- **T3** `token_budget_*` 설정·직렬화를 플러그인 소유로(`server_opts_*` 훅).
-- **T4** Pane `_tok_state`/`_session_tokens` → panestate, servertree 이관을
-  `pane_merge` 훅으로.
-- **T5** `usagedb.py`·`usagelog.py` **물리 이전**(`p4 move`) → `plugins/claude-code/`.
-  하이픈 디렉터리 import 는 기존 importlib 별칭 방식 재사용(테스트 무수정).
-- **T6** 계약 테스트 확장: claude-code 격리 시 토큰 DB·기록·조회·예산이 전부 사라지고
-  코어 무에러임을 단언(`test_plugin_contract`).
+- ✅ **T1**(p4 58071) `request_token_log` → 플러그인 `handle_server_request` 훅(serverio
+  탈토큰). 설계 정정: `server_command` 가 아니라 요청/회신 dict 패턴인 `handle_server_request`
+  가 조회 핸들러에 맞았다.
+- ✅ **T2**(58072) `_log_tokens`·예산·DB연결을 `server.py`→`servermixin.py` 로 이전.
+  설계 정정: `_scan_claude` 가 이미 플러그인이라 `server_token_commit` 훅은 불필요(플러그인
+  내부 호출). 대신 런타임 상태 초기화용 **`server_init` 훅** 신설. 코어 server.py 에서
+  `usagedb`/`usagelog` import 제거.
+- ✅ **T3**(58073) `token_budget_*` 설정·직렬화를 **완전 플러그인 소유**(사용자 결정)로 —
+  신설 `server_opts_init`/`server_opts_serialize` 훅 + opts.json `plugin_opts` 네임스페이스
+  + **구 top-level 키 마이그레이션 shim**(타 머신 업그레이드 무중단).
+- ✅ **T4**(58074) Pane `_tok_state`/`_session_tokens` → panestate(pane_init/reset/
+  serialize), servertree 토큰 이관을 신설 **`pane_closing` 훅**으로 위임.
+- ✅ **T5**(58078) `usagedb.py`·`usagelog.py` **물리 이전**(`p4 move`) →
+  `plugins/claude-code/` + **DB 파일도 플러그인 하위 db/ 로 이동**(사용자 결정) + 루트
+  db/→플러그인 db/ **타 머신 자동 마이그레이션**(`_migrate_legacy_db`). run.py 별칭에
+  usagedb/usagelog 추가(테스트 무수정).
+- ✅ **T6** 계약 테스트 확장: claude-code 격리 시 토큰 명령·DB·기록·조회·예산·누계·이관·
+  DB 백엔드 import·서버 믹스인이 전부 사라지고 코어 무에러임을 한 테스트로 종합 단언
+  (`test_plugin_contract.test_token_subsystem_fully_disabled_without_plugin`) + T1~T5 분산
+  단언.
 
 ---
 
@@ -284,6 +300,12 @@ CL 에서 delete-to-disable 완성 — §11.6 사용자 결정 ① 재적용).
 
 ---
 
-> **다음 행동**: §6 T1(serverio 탈토큰)부터 동작 보존 이전으로 착수. 단, 착수 전
-> §1 표를 grep 으로 한 줄씩 재검증(탐색 과소보고 이력). 회계 수정(§8)은 모듈화 완료
-> 후 별도 진행.
+> **다음 행동**: ✅ 모듈화(§6 T1~T6) 완료. 남은 것은 **§8 회계 정확성 재설계**(별도
+> 세션) — `/usage` 권위값(usageprobe)과 스크랩 누계를 대사하거나 footer 스크랩을 폐기.
+> 이제 토큰 회계가 claude-code 플러그인 안에 완전히 갇혀 있어, 코어·다른 플러그인 기능과
+> 무관하게 통째로 교체할 수 있다([MEMORY] `usage-panel-vs-app-mismatch`·
+> `claude-usage-headless-probe` 참조).
+>
+> **결정 기록(2026-06-10 사용자)**: ㉠ 예산 설정=완전 플러그인 소유(plugin_opts
+> 네임스페이스), ㉡ 토큰 DB 파일=플러그인 하위 이동(+타 머신 마이그레이션), ㉢ 범위=T6
+> 에서 정지(회계 수정은 별도). §10 미해결 질문 1·4 는 이 결정으로 해소.
