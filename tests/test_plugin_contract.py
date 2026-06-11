@@ -298,6 +298,11 @@ async def test_token_subsystem_fully_disabled_without_plugin():
     reg.server_init(s2)
     assert not hasattr(s2, "_tokens_db") and not hasattr(s2, "_budget_level"), \
         "토큰 DB/예산 런타임 상태가 설치됨"
+    # ④-b(S6): 실측 신선도·이벤트 갱신 예약 상태(T3/T5)도 함께 사라진다.
+    assert not hasattr(s2, "_usage_ts") \
+        and not hasattr(s2, "_usage_probe_handle"), "S6 실측 런타임 상태가 설치됨"
+    # ④-c(S6 T4): 실측 게이트 임계 설정도 미설치(plugin_opts 소유 — ③과 동일 패턴).
+    assert not hasattr(s, "usage_gate_session_pct"), "실측 게이트 설정이 설치됨"
     # ⑤ 패널 토큰 누계(pane_init) 미설치 + 종료 토큰 이관(pane_closing) no-op.
     p = _S()
     reg.pane_init(p)

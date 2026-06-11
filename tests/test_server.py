@@ -3135,3 +3135,41 @@ async def test_token_log_reply_includes_reconcile():
         assert recon[0]["dpct"] == 4 and recon[0]["tokens"] == 300, recon[0]
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_usage_fixture_end_to_end_chain():
+    """S6 T6 골든: 실 /usage 패널 캡처(fixtures/claude/usage.txt)를 패널에 흘리면
+    파서(parse_usage)→_usage 캡처→limits 스냅샷(T1)→상태줄 5h% 실측(T3)→게이트
+    판단(T4)→status 신선도(usage_age_sec)까지 전 체인이 fixture 값으로 정합한다.
+    Claude 가 /usage 레이아웃을 바꾸면 여기서 깨진다(드리프트 회귀망)."""
+    from pytmuxlib import usagedb
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        fix = os.path.join(os.path.dirname(__file__), "fixtures", "claude",
+                           "usage.txt")
+        raw = open(fix, encoding="utf-8").read()
+        p.feed(b"\x1b[2J\x1b[H"
+               + raw.replace("\n", "\r\n").encode("utf-8"))
+        srv._scan_claude(sess, win)
+        # 파서 → _usage 캡처(세션 2%·주간 14%·Sonnet 0%)
+        assert srv._usage["session"]["pct"] == 2, srv._usage
+        assert srv._usage["week_all"]["pct"] == 14
+        # T1: limits 스냅샷 이력(source=panel)
+        snap = usagedb.last_limits(srv._tokens_db_conn())
+        assert snap and snap["session_pct"] == 2 and snap["source"] == "panel"
+        assert snap["week_all_pct"] == 14 and snap["week_sonnet_pct"] == 0
+        # T3: 상태줄 5h% = 실측 그대로(분모 근사 없음)
+        p._claude = "idle"
+        assert srv._tok5h_pct(p, 0) == 2
+        # T4: 게이트 — 신선 실측 2% < 95 → 개입 없음, 96 이면 보류
+        assert not srv._usage_gate_over(p)
+        srv._usage = dict(srv._usage, session={"pct": 96, "reset": "2pm"})
+        assert srv._usage_gate_over(p)
+        # status 에 실측 경과(usage_age_sec)가 정수로 실린다(stale 표기용)
+        m = srv._status_msg(sess)
+        assert isinstance(m["usage_age_sec"], int) and m["usage_age_sec"] >= 0
+    finally:
+        await teardown(srv, task, sock)
