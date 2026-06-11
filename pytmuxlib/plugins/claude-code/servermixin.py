@@ -798,6 +798,14 @@ class ServerClaudeMixin:
                     self._next_claude_session_id(p)
                     if not p._claude_account_manual:
                         p._claude_account = None
+                        # 계정 자동 캡처(요청 2026-06-12): 새 세션 시작 시 그림자 /usage
+                        # 프로브를 곧 1회 돌려 /status 로 계정 라벨을 잡게 한다(자동 갱신이
+                        # 켜진 경우만). 위 스캔 백필이 그 계정을 패널에 채워 unknown 적재를
+                        # 줄인다. _schedule_usage_refresh 디바운스로 중복 spawn 방지, 약간의
+                        # 지연으로 실 세션이 먼저 부팅하게 둔다.
+                        if self.usage_refresh_sec > 0:
+                            self._schedule_usage_refresh(
+                                self._USAGE_NEW_SESSION_DELAY)
                     # 시작 규칙 주입 예약(#27): 새 Claude 세션이 뜨면 다음 idle(입력
                     # 준비됨) 때 저장된 규칙을 프롬프트에 넣는다. 빈 규칙이면 안 함.
                     if self.claude_rules.strip():
@@ -844,6 +852,17 @@ class ServerClaudeMixin:
                     # 이므로 first-seen 이 의미상 정확하다.
                     if not p._claude_account_manual and p._claude_account is None:
                         acct = claude_account(txt)
+                        if not acct:
+                            # 폴백(요청 2026-06-12): 패널 자체 화면엔 계정 라벨
+                            # ('<email>'s Organization)이 안 떠 미식별이면, 그림자
+                            # /usage 프로브가 /status 로 잡은 계정으로 채운다(한
+                            # 머신=한 로그인 가정 — usagedb §5.5 단일계정 가정과 동일).
+                            # 토큰이 'unknown' 으로 적재되던 걸 줄인다. 프로브 계정도
+                            # 없거나 'unknown' 이면 종전대로 None(서버가 unknown 으로 묶음).
+                            pa = (self._usage.get("account")
+                                  if isinstance(self._usage, dict) else None)
+                            if pa and pa != "unknown":
+                                acct = pa
                         if acct:
                             p._claude_account = acct
                     # M14c: 모델 배지(Opus 4.8 등) 갱신 — 마지막 본 값 유지.
@@ -1223,6 +1242,7 @@ class ServerClaudeMixin:
     _USAGE_COMMIT_DELAY = 20.0    # 커밋 폭주를 1회로 합치는 디바운스(초)
     _USAGE_COMMIT_MIN_AGE = 180.0  # 실측이 이보다 신선하면 커밋 트리거 생략(초)
     _USAGE_NEAR_GATE_MARGIN = 10   # 임계 -N%p 이내면 '부근'(주기 단축 발동)
+    _USAGE_NEW_SESSION_DELAY = 25.0  # 새 세션 시작 후 계정 캡처 프로브까지 지연(실 세션 부팅 양보)
 
     def _schedule_usage_refresh(self, delay: float) -> bool:
         """delay 초 뒤 그림자 /usage 갱신 1회 예약. 이미 예약돼 있으면 유지(중복

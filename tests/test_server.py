@@ -424,6 +424,50 @@ async def test_token_usage_logging():
         await teardown(srv, task, sock)
 
 
+async def test_account_backfill_from_usage_probe():
+    """계정 미식별(패널 화면에 '<email>'s Organization' 라벨이 안 뜸) 시, 그림자
+    /usage 프로브가 /status 로 잡은 계정(srv._usage['account'])으로 패널 계정을 채운다
+    (요청 2026-06-12: unknown 적재 감소, 한 머신=한 로그인 가정). 'unknown'/없음이면
+    종전대로 None 유지(서버가 unknown 으로 묶음)."""
+    from pytmuxlib import usagedb
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        # 프로브 계정 없음 → 패널 화면에 라벨 없는 Claude busy → 계정 미식별(None) 유지.
+        # (_scan_claude 는 feed 로 _feed_seq 가 바뀐 패널만 재스캔하므로 매 스캔 전 feed.)
+        srv._usage = None
+        p.feed("\x1b[2J\x1b[H? for shortcuts\r\n↑ 1.5k tokens\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._claude == "busy" and p._claude_account is None, p._claude_account
+        # 프로브가 계정을 잡아 self._usage 에 실렸다 → 다음 프레임(feed→scan)에서 백필.
+        srv._usage = {"account": "pr…@team.org",
+                      "session": {"pct": 12, "reset": "2pm"}}
+        p.feed("↑ 1.6k tokens\r\n".encode("utf-8"))     # 프레임 갱신 → 재스캔
+        srv._scan_claude(sess, win)
+        assert p._claude_account == "pr…@team.org", p._claude_account
+        # 종료 후 새 세션: 계정 리셋 → 프로브 계정 'unknown' 이면 백필 안 함(None 유지).
+        p.feed(b"\x1b[2J\x1b[Huser@host ~ % ls\r\n")
+        srv._scan_claude(sess, win)
+        srv._usage = {"account": "unknown"}
+        p.feed("\x1b[2J\x1b[H? for shortcuts\r\n↑ 2k tokens\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._claude_account is None, p._claude_account
+        # 화면 라벨이 직접 뜨면 그게 우선(프로브 폴백 위에서 실측 라벨 채택).
+        p.feed("\x1b[2J\x1b[H me@woojinkim.org's Organization\r\n"
+               "↑ 2k tokens\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._claude_account.endswith("@woojinkim.org"), p._claude_account
+        _ = usagedb  # noqa
+    finally:
+        try:
+            os.unlink(srv.tokens_log_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
 async def test_tokens_db_imports_legacy_jsonl_once():
     """기존 *.tokens.jsonl 이력은 새 DB 최초 사용 시 일회 임포트되어 누적 통계가
     보존되고, 재임포트 방지로 JSONL 은 .imported 로 옮겨진다(중복 적재 없음)."""
