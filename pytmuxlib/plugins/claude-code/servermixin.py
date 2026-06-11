@@ -121,8 +121,14 @@ class ServerClaudeMixin:
             return
         if claude_state(screen_text(pane.screen)) != "limit":
             return
-        # M12 예산 게이트: 게이트가 켜져 있고 예산을 초과했으면 자동재개를 보류한다
-        # (또 한도까지 태우는 것을 막음). 사용자는 직접 continue 로 재개 가능.
+        # S6 T4 실측 한도 게이트(기본 ON, usage_gate_session_pct=95): /usage 실측
+        # 세션/주간 % 가 임계 이상이면 자동재개 보류 — 한도 직전에 자동재개로 더
+        # 태우는 것을 막는다. 실측 부재·stale·계정 불일치면 fail-open(개입 안 함).
+        # 스크랩 추정이 아니라 **실측**이 판단 기준(시나리오 §0-4 — 가장 급한 전환).
+        if self._usage_gate_over(pane):
+            return
+        # M12 예산 게이트(보조 축): 게이트가 켜져 있고 절대 토큰 예산(스크랩 추정
+        # 누계)을 초과했으면 자동재개를 보류. 사용자는 직접 continue 로 재개 가능.
         if self.token_budget_resume_gate and self._budget_over(pane):
             return
         try:
@@ -1457,10 +1463,91 @@ class ServerClaudeMixin:
         self._save_opts()
         return self.claude_budget_plan
 
+    # ---- S6 T4: 실측(/usage) 한도 게이트 — 자동개입 보류의 1차 기준 ----
+    def _usage_fresh(self) -> bool:
+        """마지막 실측이 신선한가 — 갱신 주기×2(자동 갱신 꺼져 있으면 20분) 이내.
+        stale 실측으로 게이트가 오발동(이미 리셋된 창의 옛 % 로 보류)하지 않게 하는
+        신선도 한계(시나리오 §6-3). 초과·부재면 False → 게이트 fail-open."""
+        ts = getattr(self, "_usage_ts", None)
+        if ts is None:
+            return False
+        limit = (self.usage_refresh_sec * 2
+                 if self.usage_refresh_sec > 0 else 1200)
+        return (time.time() - ts) <= limit
+
+    def _usage_gate_pcts(self, pane: Pane):
+        """게이트 판단에 쓸 (실측 세션 %, 실측 주간 %)|None — fail-open 조건을 한곳에:
+        ① 실측 부재/stale ② 그림자 세션 계정과 패널 계정이 **둘 다 알려져 있고
+        다름**(다른 계정의 한도로 이 패널을 막지 않는다 — 한쪽이라도 미상이면 같은
+        로그인으로 보고 적용). None 이면 게이트는 개입하지 않는다(fail-open —
+        지어내지 않음 원칙의 판단층 버전)."""
+        u = self._usage
+        if not isinstance(u, dict) or not self._usage_fresh():
+            return None
+        ua = u.get("account")
+        pa = getattr(pane, "_claude_account", None) if pane is not None else None
+        if ua and pa and ua != pa:
+            return None
+        def pct(key):
+            d = u.get(key)
+            return d.get("pct") if isinstance(d, dict) else None
+        return (pct("session"), pct("week_all"))
+
+    def _usage_gate_over(self, pane: Pane) -> bool:
+        """실측 세션/주간 % 가 게이트 임계(usage_gate_session_pct 기본 95 /
+        usage_gate_week_pct 기본 0=끔) 이상인가. 자동개입(자동재개 등) 보류 판단
+        전용 — 하드 차단 아님. 임계 0=그 축 끔."""
+        gs, gw = self.usage_gate_session_pct, self.usage_gate_week_pct
+        if gs <= 0 and gw <= 0:
+            return False
+        pcts = self._usage_gate_pcts(pane)
+        if pcts is None:
+            return False
+        spct, wpct = pcts
+        if gs > 0 and spct is not None and spct >= gs:
+            return True
+        if gw > 0 and wpct is not None and wpct >= gw:
+            return True
+        return False
+
+    def _usage_gate_level(self, pane: Pane) -> int:
+        """실측 기반 경고 레벨(0/80/100) — 절대 예산 레벨과 같은 눈금: 임계 도달
+        =100, 임계의 80% 도달=80(예: 임계 95 → 76%부터 예고). 표시(상태줄 ⚠)와
+        M13 plan 유도가 절대 예산과 동일하게 소비한다."""
+        lvl = 0
+        pcts = self._usage_gate_pcts(pane)
+        if pcts is None:
+            return lvl
+        for pct, gate in zip(pcts, (self.usage_gate_session_pct,
+                                    self.usage_gate_week_pct)):
+            if gate > 0 and pct is not None:
+                if pct >= gate:
+                    lvl = max(lvl, 100)
+                elif pct >= gate * 0.8:
+                    lvl = max(lvl, 80)
+        return lvl
+
+    def set_usage_gate(self, session=None, week=None):
+        """실측 한도 게이트 임계 설정(%, 0=끔). None 인자는 변경 안 함.
+        opts.json(plugin_opts) 영속."""
+        if session is not None:
+            try:
+                self.usage_gate_session_pct = max(0, min(100, int(session)))
+            except (TypeError, ValueError):
+                pass
+        if week is not None:
+            try:
+                self.usage_gate_week_pct = max(0, min(100, int(week)))
+            except (TypeError, ValueError):
+                pass
+        self._save_opts()
+        return (self.usage_gate_session_pct, self.usage_gate_week_pct)
+
     def _budget_over(self, pane: Pane) -> bool:
         """일/세션/계정합계 예산 중 하나라도 초과했는지(M10/M12/M15). 예산이 0
         (무제한)이면 그 축은 무시. 누계는 best-effort 라 하드 차단이 아니라 자동개입
-        보류 판단에만 쓴다."""
+        보류 판단에만 쓴다. (S6 T4: 실측 게이트 _usage_gate_over 가 1차 — 이 절대
+        토큰 축들은 스크랩 추정 기반 보조 축으로 유지.)"""
         if (self.token_budget_day > 0 and self._today_tokens is not None
                 and self._today_tokens >= self.token_budget_day):
             return True
@@ -1479,8 +1566,11 @@ class ServerClaudeMixin:
 
         C5(PERFORMANCE_REVIEW 2026-06-07): total 을 주면 계정 합계를 다시 순회하지
         않고 그 값을 쓴다. _status_msg 가 claude_tokens 용으로 이미 계산한
-        _account_token_total 을 넘겨, 한 status 빌드에서 전 패널 합산이 1회가 되게 한다."""
-        lvl = self._budget_level
+        _account_token_total 을 넘겨, 한 status 빌드에서 전 패널 합산이 1회가 되게 한다.
+
+        S6 T4: 실측 게이트 레벨(_usage_gate_level)을 포함한 최대치 — 실측 한도
+        압박이 절대 예산과 같은 ⚠ 배지·M13 plan 유도 임계로 보이게 한다."""
+        lvl = max(self._budget_level, self._usage_gate_level(pane))
         if pane is not None and pane._claude:
             b = self.token_budget_session
             if b > 0:

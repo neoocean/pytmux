@@ -180,7 +180,11 @@ async def test_token_budget_opts_namespace_and_migration_shim():
     out = reg.server_opts_serialize(s2)
     assert out["token_budget_day"] == 222
     assert set(out) == {"token_budget_day", "token_budget_session", "token_budget_5h",
-                        "token_budget_account", "token_budget_resume_gate"}
+                        "token_budget_account", "token_budget_resume_gate",
+                        # S6 T4: 실측 한도 게이트 임계(플러그인 소유 동일 패턴)
+                        "usage_gate_session_pct", "usage_gate_week_pct"}
+    # S6 T4 기본값: 세션 95(기본 ON)·주간 0(끔) — 구 opts.json(키 부재)에서도 적용.
+    assert s1.usage_gate_session_pct == 95 and s1.usage_gate_week_pct == 0
     # ④ 플러그인 부재(디렉토리 삭제 시뮬) → init no-op(속성 안 생김), serialize {}.
     reg2 = _registry_without_claude()
     s3 = _S()

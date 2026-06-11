@@ -476,3 +476,152 @@ async def test_setters_persist_to_opts():
         except OSError:
             pass
         await teardown(srv, task, sock)
+
+
+# ---- S6 T4: 실측(/usage) 한도 게이트 — 자동개입 보류의 1차 기준 ----
+
+def _fresh_usage(srv, spct=None, wpct=None, account=None):
+    """테스트용 실측 주입: _usage + 신선한 _usage_ts."""
+    import time
+    u = {}
+    if spct is not None:
+        u["session"] = {"pct": spct, "reset": "2pm"}
+    if wpct is not None:
+        u["week_all"] = {"pct": wpct, "reset": "Jun 13"}
+    if account is not None:
+        u["account"] = account
+    srv._usage = u
+    srv._usage_ts = time.time()
+
+
+async def test_usage_gate_blocks_autoresume_measured():
+    """실측 세션 % ≥ 게이트(기본 95, 기본 ON)면 자동재개 보류 — 절대 예산 게이트
+    (M12 토글, 기본 OFF)와 **무관하게 독립** 작동. 임계 미만이면 정상 주입."""
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p = await _claude_pane(srv)
+        assert srv.usage_gate_session_pct == 95, "기본 ON(95)"
+        assert srv.usage_gate_week_pct == 0, "주간 기본 끔"
+        assert srv.token_budget_resume_gate is False, "M12 토글은 기본 OFF 그대로"
+        fake = _FakePty()
+        p.pty = fake
+        p.feed(b"\x1b[2J\x1b[HClaude usage limit reached. resets at 5pm")
+        _fresh_usage(srv, spct=96)
+        srv._fire_resume(p)
+        assert fake.writes == [], "실측 96% ≥ 95 → 보류(M12 토글 무관)"
+        _fresh_usage(srv, spct=94)
+        srv._fire_resume(p)
+        assert fake.writes and fake.writes[-1] == b"continue\r", \
+            "임계 미만 → 정상 주입"
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
+async def test_usage_gate_fail_open():
+    """fail-open 3종: ① 실측 부재 ② stale(갱신주기×2 초과) ③ 계정 불일치(둘 다
+    알려져 있고 다름) — 어느 경우도 게이트가 개입하지 않는다. 임계 0=끔."""
+    import time
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p = await _claude_pane(srv)
+        fake = _FakePty()
+        p.pty = fake
+        p.feed(b"\x1b[2J\x1b[HClaude usage limit reached. resets at 5pm")
+        # ① 실측 부재 → 주입
+        assert srv._usage is None
+        srv._fire_resume(p)
+        assert len(fake.writes) == 1, "실측 없음 → fail-open"
+        # ② stale: 신선도 한계(usage_refresh_sec×2=1200s) 초과 → 주입
+        _fresh_usage(srv, spct=99)
+        srv._usage_ts = time.time() - (srv.usage_refresh_sec * 2 + 1)
+        srv._fire_resume(p)
+        assert len(fake.writes) == 2, "stale 실측 → fail-open"
+        # ③ 계정 불일치(실측·패널 둘 다 알려짐) → 주입
+        _fresh_usage(srv, spct=99, account="other@y.org")
+        p._claude_account = "me@woojinkim.org"
+        srv._fire_resume(p)
+        assert len(fake.writes) == 3, "계정 불일치 → fail-open"
+        # 같은 계정이면 차단
+        _fresh_usage(srv, spct=99, account="me@woojinkim.org")
+        srv._fire_resume(p)
+        assert len(fake.writes) == 3, "계정 일치 + 99% → 보류"
+        # 패널 계정 미상(한쪽만 알려짐)이면 같은 로그인으로 보고 적용 → 보류
+        p._claude_account = None
+        srv._fire_resume(p)
+        assert len(fake.writes) == 3, "한쪽 미상 → 게이트 적용(보류)"
+        # 임계 0 = 끔 → 99% 라도 주입
+        srv.set_usage_gate(session=0)
+        srv._fire_resume(p)
+        assert len(fake.writes) == 4, "게이트 끔 → 주입"
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
+async def test_usage_gate_week_axis():
+    """주간 게이트(기본 끔)를 켜면 week_all 실측도 독립 축으로 보류시킨다."""
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p = await _claude_pane(srv)
+        fake = _FakePty()
+        p.pty = fake
+        p.feed(b"\x1b[2J\x1b[HClaude usage limit reached. resets at 5pm")
+        _fresh_usage(srv, spct=10, wpct=96)        # 세션 여유·주간 압박
+        srv._fire_resume(p)
+        assert len(fake.writes) == 1, "주간 게이트 기본 끔 → 주입"
+        srv.set_usage_gate(week=95)
+        srv._fire_resume(p)
+        assert len(fake.writes) == 1, "주간 96% ≥ 95 → 보류"
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
+async def test_usage_gate_level_in_budget_level():
+    """실측 게이트 레벨이 절대 예산과 같은 눈금(0/80/100)으로 status 경고에
+    합류한다: 임계 도달=100, 임계의 80%(95→76) 도달=80."""
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p = await _claude_pane(srv)
+        p._claude = "idle"
+        assert srv._budget_level_for(p) == 0
+        _fresh_usage(srv, spct=76)                 # 95*0.8=76 → 예고(80)
+        assert srv._budget_level_for(p) == 80, "임계의 80% → 80"
+        _fresh_usage(srv, spct=95)
+        assert srv._budget_level_for(p) == 100, "임계 도달 → 100"
+        _fresh_usage(srv, spct=75)
+        assert srv._budget_level_for(p) == 0, "예고 미만 → 0"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_set_usage_gate_persists_and_clamps():
+    """set_usage_gate: 클램프(0~100)·부분 설정·plugin_opts 영속·기본값(95/0)."""
+    srv, task, sock = await server_only()
+    try:
+        assert (srv.usage_gate_session_pct, srv.usage_gate_week_pct) == (95, 0)
+        assert srv.set_usage_gate(session=90, week=98) == (90, 98)
+        assert srv.set_usage_gate(session=150) == (100, 98), "100 클램프"
+        assert srv.set_usage_gate(week=-5) == (100, 0), "0 클램프"
+        assert srv.set_usage_gate() == (100, 0), "무인자=변경 없음"
+        saved = json.load(open(srv.opts_path))
+        po = saved["plugin_opts"]
+        assert po["usage_gate_session_pct"] == 100
+        assert po["usage_gate_week_pct"] == 0
+        assert "usage_gate_session_pct" not in saved, "top-level 비저장(플러그인 소유)"
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)

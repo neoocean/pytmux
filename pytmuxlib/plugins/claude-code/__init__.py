@@ -84,7 +84,9 @@ def _onoff(args):
 # 토큰 절감 설정 팝업(ClaudeSaverScreen)의 행/순환 프리셋. clientutil 에서 이리로 이전.
 SAVER_ROWS = [
     ("autoresume", "토큰리밋 자동재개", "toggle"),
-    ("resume_gate", "예산 초과 시 자동재개 보류", "toggle"),
+    ("usage_gate_session", "실측 세션한도 게이트(자동재개 보류 %)", "cycle"),
+    ("usage_gate_week", "실측 주간한도 게이트(%)", "cycle"),
+    ("resume_gate", "예산 초과 시 자동재개 보류(추정 누계)", "toggle"),
     ("budget_plan", "예산 압박(≥80%) 시 plan 모드 유도", "toggle"),
     ("ctx_autoclear", "컨텍스트 잔량 부족 시 자동 정리", "toggle"),
     ("ctx_action", "  └ 정리 방식", "cycle"),
@@ -97,13 +99,16 @@ SAVER_ROWS = [
     ("prompt_clear", "프롬프트 단위 클리어(완료마다 doc+/clear)", "toggle"),
     ("budget_day", "일 토큰 예산", "cycle"),
     ("budget_session", "세션 토큰 예산", "cycle"),
-    ("budget_5h", "5시간 한도(근접도 표시 분모)", "cycle"),
+    ("budget_5h", "5시간 토큰 예산(레거시 — 표시 분모론 미사용)", "cycle"),
     ("budget_account", "계정 합계 예산(멀티세션)", "cycle"),
     ("long_turn", "장기 턴 경고(초)", "cycle"),
     ("repeat_alert", "반복 루프 경고(회)", "cycle"),
 ]
 # cycle 행의 프리셋 값(Enter 마다 다음으로 순환). 예산 0=무제한(끔).
 SAVER_CYCLES = {
+    # S6 T4 실측 게이트 임계(%): 0=끔. 세션 기본 95 — Enter 마다 다음으로 순환.
+    "usage_gate_session": [0, 80, 90, 95, 98],
+    "usage_gate_week": [0, 90, 95, 98],
     "ctx_action": ["compact", "doc-clear"],
     "ctx_threshold": [10, 15, 20, 25, 30],
     "ctx_min_interval": [0, 60, 120, 300, 600],
@@ -158,6 +163,12 @@ def saver_display(app, key):
     if key == "ctx_min_interval":
         iv = int(st.claude_ctx_min_interval)
         return "상한 없음" if iv <= 0 else f"{iv}초마다 최대 1회"
+    if key == "usage_gate_session":
+        v = int(st.usage_gate_session_pct)
+        return "끔" if v <= 0 else f"실측 ≥{v}%"
+    if key == "usage_gate_week":
+        v = int(st.usage_gate_week_pct)
+        return "끔" if v <= 0 else f"실측 ≥{v}%"
     if key == "budget_day":
         return _fmt_budget(st.token_budget_day)
     if key == "budget_session":
@@ -219,6 +230,14 @@ def saver_action(app, key):
         nxt = _cycle_next("ctx_min_interval", int(st.claude_ctx_min_interval))
         app.send_cmd("set_claude_ctx_min_interval", value=nxt)
         st.claude_ctx_min_interval = nxt
+    elif key == "usage_gate_session":
+        nxt = _cycle_next("usage_gate_session", int(st.usage_gate_session_pct))
+        app.send_cmd("set_usage_gate", session=nxt)
+        st.usage_gate_session_pct = nxt
+    elif key == "usage_gate_week":
+        nxt = _cycle_next("usage_gate_week", int(st.usage_gate_week_pct))
+        app.send_cmd("set_usage_gate", week=nxt)
+        st.usage_gate_week_pct = nxt
     elif key == "budget_day":
         nxt = _cycle_next("budget_day", st.token_budget_day)
         app.send_cmd("set_token_budget", day=nxt)
@@ -519,7 +538,11 @@ class _ClaudeCodePlugin:
     # 엔 token_budget_* 가 안 생기고 opts.json plugin_opts 가 비어 설정이 통째로 사라진다.
     _OPTS_KEYS = (("token_budget_day", 0, int), ("token_budget_session", 0, int),
                   ("token_budget_5h", 0, int), ("token_budget_account", 0, int),
-                  ("token_budget_resume_gate", False, bool))
+                  ("token_budget_resume_gate", False, bool),
+                  # S6 T4 실측 한도 게이트(%): 세션 기본 95(ON)·주간 기본 0(끔)
+                  # — 2026-06-10 사용자 결정. 0=그 축 끔.
+                  ("usage_gate_session_pct", 95, int),
+                  ("usage_gate_week_pct", 0, int))
 
     def server_opts_init(self, server, opts):
         """opts.json → server.token_budget_* 설치(코어 __init__ 의 _opts.get 들을 이전).
@@ -618,6 +641,9 @@ class _ClaudeCodePlugin:
                 "claude_repeat_alert": server.claude_repeat_alert,
                 "token_budget_resume_gate": server.token_budget_resume_gate,
                 "claude_budget_plan": server.claude_budget_plan,
+                # S6 T4 실측 한도 게이트 임계(설정 팝업 표시용)
+                "usage_gate_session_pct": server.usage_gate_session_pct,
+                "usage_gate_week_pct": server.usage_gate_week_pct,
             })
 
     def server_pane_overview(self, server, pane, info):
@@ -704,6 +730,10 @@ class _ClaudeCodePlugin:
             return "send_full"
         if action == "set_token_budget_resume_gate":  # M12 예산 게이트 토글
             server.set_token_budget_resume_gate(msg.get("value"))
+            return "broadcast"
+        if action == "set_usage_gate":                # S6 T4 실측 한도 게이트 임계
+            server.set_usage_gate(session=msg.get("session"),
+                                  week=msg.get("week"))
             return "broadcast"
         if action == "set_claude_budget_plan":        # M13 예산 압박 plan 유도
             server.set_claude_budget_plan(msg.get("value"))

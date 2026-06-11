@@ -42,6 +42,9 @@ def init_defaults(status):
     status.claude_repeat_alert = 3     # M17: 반복 루프 경고 임계(회, 0=끔)
     status.token_budget_resume_gate = False
     status.claude_budget_plan = False
+    # S6 T4 실측 한도 게이트 임계(%) — 서버 기본(세션 95 ON·주간 끔)과 일치.
+    status.usage_gate_session_pct = 95
+    status.usage_gate_week_pct = 0
     status.budget_level = 0        # 예산 경고 레벨(0/80/100, M10)
     status.claude_pending = None   # 무장된 자동 액션 {kind, eta초}(M14 카운트다운)
 
@@ -102,6 +105,10 @@ def absorb(status, msg):
         "token_budget_resume_gate", status.token_budget_resume_gate)
     status.claude_budget_plan = msg.get(
         "claude_budget_plan", status.claude_budget_plan)
+    status.usage_gate_session_pct = msg.get(            # S6 T4 실측 게이트 임계
+        "usage_gate_session_pct", status.usage_gate_session_pct)
+    status.usage_gate_week_pct = msg.get(
+        "usage_gate_week_pct", status.usage_gate_week_pct)
     status.budget_level = msg.get("budget_level", 0)
     # M14 카운트다운: 서버가 매 status 에 항상 키를 실어 보낸다(없으면 None).
     status.claude_pending = msg.get("claude_pending")
