@@ -13,7 +13,115 @@ from textual.widgets import DataTable, Label, ListItem, ListView, Static, TextAr
 
 from rich.text import Text
 
+from pytmuxlib import i18n
 from . import SAVER_ROWS
+
+# §6 ⑤ 플러그인 설정/로그 모달 문자열(token-saver·rules·model·perm·token-log). 정적 문자열은
+# 키=원문 한국어(gettext 식 — 렌더가 t(원문) 로 단순 조회), 포맷 문자열만 pscreen.* semantic
+# 키. SAVER_ROWS 라벨(__init__.py)도 여기서 en 보강(ko 자동 시드). 미등록은 원문 폴백.
+i18n.register({
+    "ko": {s: s for s in (
+        # 공통/버튼/힌트
+        "Enter 토글/순환 · ESC 닫기", "저장", "취소", "  ◀ 현재",
+        # rules·model
+        "Claude 시작 규칙 — Ctrl+S 저장 · Esc 취소", "기본", "모델", "컨텍스트",
+        "모델·컨텍스트 변경 · ←→ 값 · Enter 적용 · Esc",
+        # perm 모드
+        "auto — 모든 동작 자동 수락, 안전검사 (⏵⏵ auto mode)",
+        "accept — 편집·기본 FS 만 자동 수락 (⏵⏵ accept edits)",
+        "default — 매번 확인 (일반 모드)",
+        "plan — 플랜 모드 (계획만, 실행 안 함)",
+        "bypass — 권한 우회, 확인 없음 ⚠️ (Bypass Permission Mode)",
+        # token-log: 탭(넓은/좁은)·그룹·컬럼·차원·정렬
+        "시간", "시", "일", "주", "월", "계정", "계", "패널", "패", "정렬", "정",
+        "시나리오", "대사", "기간", "보기", "조회", "토큰 사용량",
+        "구간", "실측(세션 5h)", "추정Σ", "항목", "토큰", "비율",
+        "세션", "토큰순", "시간순",
+        # token-log: 안내/대사
+        "한도(/usage): [u] 눌러 조회", "(기록된 토큰 사용량이 없습니다)",
+        "토큰 대사 · 실측Δ% vs 추정Σ", "/usage 조회 중… (~수초)",
+        "r집계로 돌아가기 · u/usage 갱신 · Esc닫기",
+    )},
+    "en": {
+        "Enter 토글/순환 · ESC 닫기": "Enter toggle/cycle · ESC close",
+        "저장": "Save", "취소": "Cancel", "  ◀ 현재": "  ◀ current",
+        "Claude 시작 규칙 — Ctrl+S 저장 · Esc 취소":
+            "Claude start rules — Ctrl+S save · Esc cancel",
+        "기본": "Default", "모델": "Model", "컨텍스트": "Context",
+        "모델·컨텍스트 변경 · ←→ 값 · Enter 적용 · Esc":
+            "Model·context change · ←→ value · Enter apply · Esc",
+        "auto — 모든 동작 자동 수락, 안전검사 (⏵⏵ auto mode)":
+            "auto — auto-accept all, safety checks (⏵⏵ auto mode)",
+        "accept — 편집·기본 FS 만 자동 수락 (⏵⏵ accept edits)":
+            "accept — auto-accept edits·basic FS only (⏵⏵ accept edits)",
+        "default — 매번 확인 (일반 모드)": "default — confirm each time (normal)",
+        "plan — 플랜 모드 (계획만, 실행 안 함)": "plan — plan mode (plan only, no run)",
+        "bypass — 권한 우회, 확인 없음 ⚠️ (Bypass Permission Mode)":
+            "bypass — skip permissions, no confirm ⚠️ (Bypass Permission Mode)",
+        "시간": "Time", "시": "T", "일": "Day", "주": "Week", "월": "Month",
+        "계정": "Account", "계": "A", "패널": "Panel", "패": "P",
+        "정렬": "Sort", "정": "S", "시나리오": "Scenario", "대사": "Recon",
+        "기간": "Period", "보기": "View", "조회": "Query", "토큰 사용량": "Token usage",
+        "구간": "Span", "실측(세션 5h)": "Measured (session 5h)", "추정Σ": "Est Σ",
+        "항목": "Item", "토큰": "Tokens", "비율": "Ratio",
+        "세션": "Session", "토큰순": "by tokens", "시간순": "by time",
+        "한도(/usage): [u] 눌러 조회": "Limit (/usage): press [u] to query",
+        "(기록된 토큰 사용량이 없습니다)": "(no recorded token usage)",
+        "토큰 대사 · 실측Δ% vs 추정Σ": "Token reconcile · measured Δ% vs est Σ",
+        "/usage 조회 중… (~수초)": "querying /usage… (~a few s)",
+        "r집계로 돌아가기 · u/usage 갱신 · Esc닫기":
+            "r back to totals · u refresh /usage · Esc close",
+    },
+})
+# token-saver 행 라벨(SAVER_ROWS, __init__.py). ko 자동 시드, en 보강.
+i18n.register({
+    "ko": {r[1]: r[1] for r in SAVER_ROWS},
+    "en": {
+        "토큰리밋 자동재개": "Token-limit auto-resume",
+        "실측 세션한도 게이트(자동재개 보류 %)":
+            "Measured session-limit gate (auto-resume hold %)",
+        "실측 주간한도 게이트(%)": "Measured weekly-limit gate (%)",
+        "실측 한도 압박(게이트의 80%) 시 plan 모드 유도":
+            "Induce plan mode under limit pressure (80% of gate)",
+        "컨텍스트 잔량 부족 시 자동 정리": "Auto-clean when context runs low",
+        "  └ 정리 방식": "  └ clean method", "  └ 잔량 임계": "  └ remaining threshold",
+        "  └ 정리 빈도 상한": "  └ clean frequency cap",
+        "idle 지속 시 자동 문서화+/clear": "Auto document+/clear when idle persists",
+        "idle 지속 시 자동 /compact": "Auto /compact when idle persists",
+        "컨텍스트 하드스톱 시 즉시 자동 /compact":
+            "Auto /compact immediately on context hardstop",
+        "권한모드 자동 오토": "Auto-switch permission mode to auto",
+        "프롬프트 단위 클리어(완료마다 doc+/clear)":
+            "Per-prompt clear (doc+/clear each completion)",
+        "장기 턴 경고(초)": "Long-turn warning (sec)",
+        "반복 루프 경고(회)": "Repeat-loop warning (count)",
+    },
+})
+# 포맷 문자열(동적 인자 포함)은 semantic 키.
+i18n.register({
+    "ko": {
+        "pscreen.perm_title": "권한모드 선택 (현재: {current})",
+        "pscreen.bucket_divider": "── 시간({bucket}) ──",
+        "pscreen.tklog_title": "토큰 사용량(추정) · {bucket} · {dimname}별",
+        "pscreen.tklog_scope": "계정 {acct} · {order} · {sigma}",
+        "pscreen.tklog_disp": " (표시 {n})",
+        "pscreen.tklog_hint": "h시간 d일 w주 m월 · a계정 p패널 o정렬 · u/usage s시나리오 r대사 · Esc닫기",
+        "pscreen.recon_top": "실측(/usage Δ%)과 추정(스크랩 ~Σ)은 의미가 다른 두 출처 — 절대 일치가 아니라 추세 상관을 봅니다",
+        "pscreen.recon_empty": "(대사할 실측 스냅샷 구간이 없습니다 — /usage 실측이 2회 이상 쌓이면 생깁니다)",
+        "pscreen.acct_all": "전체",
+    },
+    "en": {
+        "pscreen.perm_title": "Select permission mode (current: {current})",
+        "pscreen.bucket_divider": "── time({bucket}) ──",
+        "pscreen.tklog_title": "Token usage (est) · {bucket} · by {dimname}",
+        "pscreen.tklog_scope": "Account {acct} · {order} · {sigma}",
+        "pscreen.tklog_disp": " (shown {n})",
+        "pscreen.tklog_hint": "h hour d day w week m month · a account p panel o sort · u /usage s scenario r recon · Esc close",
+        "pscreen.recon_top": "Measured (/usage Δ%) and est (scrape ~Σ) are two different sources — look at trend correlation, not exact match",
+        "pscreen.recon_empty": "(no measured snapshot spans to reconcile — appears once /usage measurements accumulate 2+)",
+        "pscreen.acct_all": "All",
+    },
+})
 
 
 class ClaudeSaverScreen(ModalScreen):
@@ -37,12 +145,13 @@ class ClaudeSaverScreen(ModalScreen):
             lab = Label(self._fmt(key, label))
             self._labels[key] = (lab, label)
             items.append(ListItem(lab, id=f"s_{key}"))
-        items.append(ListItem(Label("Enter 토글/순환 · ESC 닫기", id="saver_hint"),
+        items.append(ListItem(Label(i18n.t("Enter 토글/순환 · ESC 닫기"),
+                                    id="saver_hint"),
                               id="s__hint", disabled=True))
         yield ListView(*items, id="saver")
 
     def _fmt(self, key, label):
-        return f"{label}   {self.app._saver_display(key)}"
+        return f"{i18n.t(label)}   {self.app._saver_display(key)}"
 
     def refresh_labels(self):
         for key, (lab, base) in getattr(self, "_labels", {}).items():
@@ -103,15 +212,15 @@ class RulesEditScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="rulesbox"):
             with Horizontal(id="ruleshead"):
-                yield Label("Claude 시작 규칙 — Ctrl+S 저장 · Esc 취소",
+                yield Label(i18n.t("Claude 시작 규칙 — Ctrl+S 저장 · Esc 취소"),
                             id="rulestitle")
                 # markup=False: "[x]" 가 마크업 태그로 사라지지 않게.
                 yield Label("[x]", id="rulesclose", markup=False)  # 닫기 버튼
             yield Label("", id="rulesspacer")        # 타이틀↔에디터 한 줄 여백
             yield TextArea(self._text, id="rulesedit")
             with Horizontal(id="rulesbtns"):
-                yield Label("저장", id="rulessave")
-                yield Label("취소", id="rulescancel")
+                yield Label(i18n.t("저장"), id="rulessave")
+                yield Label(i18n.t("취소"), id="rulescancel")
 
     def on_mount(self):
         ta = self.query_one(TextArea)
@@ -179,14 +288,15 @@ class ModelCtxScreen(ModalScreen):
         lv = self.query_one(ListView)
         lv.index = 0
         lv.focus()
-        lv.border_title = "모델·컨텍스트 변경 · ←→ 값 · Enter 적용 · Esc"
+        lv.border_title = i18n.t("모델·컨텍스트 변경 · ←→ 값 · Enter 적용 · Esc")
         self._update_sub()
 
     def _row_text(self, i):
         o, si = self.rows[i], self.sel[i]
-        cur = o["choices"][si][0]
+        # 라벨·선택지 표시문 번역(모델 별칭 opus 등은 미등록 → 원문 폴백, "기본"만 번역).
+        cur = i18n.t(o["choices"][si][0])
         arrows = "◀ ▶" if len(o["choices"]) > 1 else "    "
-        return f"{o['label']}:  {arrows}  {cur}"
+        return f"{i18n.t(o['label'])}:  {arrows}  {cur}"
 
     def _result(self):
         model = self.rows[0]["choices"][self.sel[0]][1]
@@ -267,11 +377,12 @@ class PermModeScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         items = []
         for key, label in self._modes:
-            mark = "  ◀ 현재" if key == self._current else ""
-            items.append(ListItem(Label(label + mark, markup=False),
+            mark = i18n.t("  ◀ 현재") if key == self._current else ""
+            items.append(ListItem(Label(i18n.t(label) + mark, markup=False),
                                   id=f"M_{key}"))
         lv = ListView(*items, id="perm")
-        lv.border_title = f"권한모드 선택 (현재: {self._current or '?'})"
+        lv.border_title = i18n.t("pscreen.perm_title",
+                                 current=self._current or '?')
         yield lv
 
     def on_mount(self):
@@ -404,7 +515,7 @@ class TokenLogScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="tklogbox"):
             with Horizontal(id="tkloghead"):
-                yield Label("토큰 사용량", id="tklogtitle")
+                yield Label(i18n.t("토큰 사용량"), id="tklogtitle")
                 # markup=False: "[x]" 가 마크업 태그로 사라지지 않게(배경색만
                 # 남고 X 가 안 보이던 버그).
                 yield Label("[x]", id="tklogclose", markup=False)  # 닫기 버튼
@@ -452,7 +563,7 @@ class TokenLogScreen(ModalScreen):
         for gid, title in (("#tkgrp_period", "기간"), ("#tkgrp_view", "보기"),
                            ("#tkgrp_query", "조회")):
             try:
-                self.query_one(gid, Horizontal).border_title = title
+                self.query_one(gid, Horizontal).border_title = i18n.t(title)
             except Exception:
                 pass
         await self._refresh()
@@ -484,7 +595,7 @@ class TokenLogScreen(ModalScreen):
             w = 80
         age = getattr(getattr(self.app, "status", None), "usage_age_sec", None)
         return usage_bar_lines(self._usage, w, age_sec=age) \
-            or ["한도(/usage): [u] 눌러 조회"]
+            or [i18n.t("한도(/usage): [u] 눌러 조회")]
 
     def _sync_tabs(self):
         """탭 라벨(폭 반응형)·활성 버킷·활성 그룹차원([패널])·정렬([정렬]) 강조."""
@@ -494,7 +605,8 @@ class TokenLogScreen(ModalScreen):
             narrow = False
         for tid, (full, short) in self._TAB_LABELS.items():
             try:
-                self.query_one("#" + tid, Label).update(short if narrow else full)
+                self.query_one("#" + tid, Label).update(
+                    i18n.t(short) if narrow else i18n.t(full))
             except Exception:
                 pass
         for tid, bucket in self._TAB_BUCKET.items():
@@ -573,22 +685,20 @@ class TokenLogScreen(ModalScreen):
         스크랩 추정 Σ를 나란히 — 두 출처의 추세 상관을 눈으로 확인하는 진단 표.
         절대 일치는 기대하지 않는다(의미가 다른 두 수치 — 시나리오 §0-1)."""
         rows = usagelog.recon_view(self._reconcile)
-        table.add_column("구간", key="span", width=25)
-        table.add_column("실측(세션 5h)", key="meas", width=16)
-        table.add_column("추정Σ", key="est", width=8)
-        table.add_column("계정", key="note", width=16)
+        table.add_column(i18n.t("구간"), key="span", width=25)
+        table.add_column(i18n.t("실측(세션 5h)"), key="meas", width=16)
+        table.add_column(i18n.t("추정Σ"), key="est", width=8)
+        table.add_column(i18n.t("계정"), key="note", width=16)
         if not rows:
-            table.add_row("(대사할 실측 스냅샷 구간이 없습니다 — "
-                          "/usage 실측이 2회 이상 쌓이면 생깁니다)", "", "", "")
+            table.add_row(i18n.t("pscreen.recon_empty"), "", "", "")
         else:
             for span, meas, est, note in rows:
                 table.add_row(span, meas, est, self._trunc(note, 16))
-        self.query_one("#tklogtitle", Label).update("토큰 대사 · 실측Δ% vs 추정Σ")
-        self.query_one("#tktop", Static).update(
-            "실측(/usage Δ%)과 추정(스크랩 ~Σ)은 의미가 다른 두 출처 — "
-            "절대 일치가 아니라 추세 상관을 봅니다")
+        self.query_one("#tklogtitle", Label).update(
+            i18n.t("토큰 대사 · 실측Δ% vs 추정Σ"))
+        self.query_one("#tktop", Static).update(i18n.t("pscreen.recon_top"))
         self.query_one("#tkhint", Static).update(
-            "r집계로 돌아가기 · u/usage 갱신 · Esc닫기")
+            i18n.t("r집계로 돌아가기 · u/usage 갱신 · Esc닫기"))
 
     async def _refresh(self):
         self._sync_tabs()
@@ -600,7 +710,7 @@ class TokenLogScreen(ModalScreen):
         label_w, bar_cells = self._metrics()
         v = usagelog.agg_view(self._records, self._bucket, self._account,
                               self._dim, self._order, top=self._GROUP_TOP)
-        dimname = "세션" if self._dim == "session" else "계정"
+        dimname = i18n.t("세션") if self._dim == "session" else i18n.t("계정")
         # 토큰 열: 약식(1.7M·5.2k)은 단위가 자릿수를 가려 우측정렬만으론 대소가
         # 헷갈린다. 표시되는 모든 값의 '전체 자릿수' 최댓값을 기준으로 작은 값을
         # 더 들여써(큰 값일수록 왼쪽에서 시작) 한눈에 비교되게 한다(사용자 요청).
@@ -609,9 +719,10 @@ class TokenLogScreen(ModalScreen):
         tok_w = min(11, max(6, max((len(self._tok_aligned(t, maxdig))
                                     for t in toks), default=6)))
         # 컬럼: 항목 | 토큰(자릿수 정렬, 좌측) | 비율(막대+%)
-        table.add_column("항목", key="label", width=label_w)
-        table.add_column(Text("토큰", justify="left"), key="tok", width=tok_w)
-        table.add_column("비율", key="bar", width=bar_cells + 5)
+        table.add_column(i18n.t("항목"), key="label", width=label_w)
+        table.add_column(Text(i18n.t("토큰"), justify="left"), key="tok",
+                         width=tok_w)
+        table.add_column(i18n.t("비율"), key="bar", width=bar_cells + 5)
 
         def add(label, tok, pct, vmax):
             table.add_row(self._trunc(label, label_w),
@@ -619,22 +730,24 @@ class TokenLogScreen(ModalScreen):
                           self._barcell(tok, vmax, pct, bar_cells))
 
         if not self._records or v["total"] == 0:
-            table.add_row("(기록된 토큰 사용량이 없습니다)", "", "")
+            table.add_row(i18n.t("(기록된 토큰 사용량이 없습니다)"), "", "")
         else:
             # 그룹(계정/세션)이 2개 이상일 때만 그룹별 총합 + 구분선(단일이면 중복이라 생략).
             if v["multi"]:
                 for label, tok, pct in v["groups"]:
                     add(label, tok, pct, v["gmax"])
-                table.add_row(f"── 시간({self._bucket}) ──", "", "")
+                table.add_row(
+                    i18n.t("pscreen.bucket_divider", bucket=self._bucket), "", "")
             for label, tok, pct in v["buckets"]:
                 add(label, tok, pct, v["bmax"])
 
         # 제목: 묶음·버킷·정렬·전체 합. 스코프/한도(위)·키 안내(아래)는 분리.
-        order_l = "토큰순" if self._order == "tokens" else "시간순"
+        order_l = i18n.t("토큰순") if self._order == "tokens" else i18n.t("시간순")
         # (추정): 집계 원천(스크랩 누계)은 활동량 추정 — 실측 한도는 상단 막대(S6 T3).
         self.query_one("#tklogtitle", Label).update(
-            f"토큰 사용량(추정) · {self._bucket} · {dimname}별")
-        acct = self._account if self._account is not None else "전체"
+            i18n.t("pscreen.tklog_title", bucket=self._bucket, dimname=dimname))
+        acct = self._account if self._account is not None \
+            else i18n.t("pscreen.acct_all")
         # Σ: 정확한 전체 이력 합(서버 SQL 집계, Phase B). 현재 계정 필터에 맞춰
         # total_all(전체) / accounts_total[acct](계정별)을 쓰고, 없으면(구버전 서버)
         # 표시 레코드 합으로 폴백. 레코드가 cap 돼 표시 합과 다르면 그 표시 합을 병기.
@@ -647,14 +760,12 @@ class TokenLogScreen(ModalScreen):
             life = win
         sigma = f"~Σ{usagelog._fmt_tokens(life)}"   # ~ = 추정 라벨(S6 T3)
         if life != win:
-            sigma += f" (표시 {usagelog._fmt_tokens(win)})"
+            sigma += i18n.t("pscreen.tklog_disp", n=usagelog._fmt_tokens(win))
         # 스코프는 1줄로 컴팩트(묶음/버킷은 제목에 이미 있음). 표 높이를 아낀다.
         top = self._usage_lines() + [
-            f"계정 {acct} · {order_l} · {sigma}"]
+            i18n.t("pscreen.tklog_scope", acct=acct, order=order_l, sigma=sigma)]
         self.query_one("#tktop", Static).update("\n".join(top))
-        self.query_one("#tkhint", Static).update(
-            "h시간 d일 w주 m월 · a계정 p패널 o정렬 · u/usage s시나리오 r대사 · "
-            "Esc닫기")
+        self.query_one("#tkhint", Static).update(i18n.t("pscreen.tklog_hint"))
 
     def on_click(self, event: events.Click):
         # 마우스 클릭: 닫기 [x]·서브탭(버킷)·동작 버튼을 위젯 id 로 분기한다.
@@ -690,7 +801,7 @@ class TokenLogScreen(ModalScreen):
         elif wid == "tab_usage":
             event.stop()
             self.app.send_cmd("refresh_usage")
-            self.query_one("#tklogtitle", Label).update("/usage 조회 중… (~수초)")
+            self.query_one("#tklogtitle", Label).update(i18n.t("/usage 조회 중… (~수초)"))
         elif wid == "tab_saver":
             event.stop()
             self.app.push_screen(ClaudeSaverScreen())
@@ -739,7 +850,7 @@ class TokenLogScreen(ModalScreen):
             event.stop()
             # M19: 그림자 /usage 갱신 요청. 결과는 status 로 와 다음 열람부터 반영.
             self.app.send_cmd("refresh_usage")
-            self.query_one("#tklogtitle", Label).update("/usage 조회 중… (~수초)")
+            self.query_one("#tklogtitle", Label).update(i18n.t("/usage 조회 중… (~수초)"))
             return
         if k in self._NAV_KEYS:
             # 스크롤/커서는 포커스된 DataTable 이 자체 처리 — 가로채지 않는다.
