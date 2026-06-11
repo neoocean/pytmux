@@ -312,9 +312,10 @@ class CommandOptionsScreen(ModalScreen):
 
     def _row_text(self, i):
         o, si = self.opts[i], self.sel[i]
-        cur = o["choices"][si][0]
+        # §6 ⑤ 옵션 피커 라벨/선택지 번역(키=원문 한국어, 미등록은 원문 폴백).
+        cur = i18n.t(o["choices"][si][0])
         arrows = "◀ ▶" if len(o["choices"]) > 1 else "    "
-        return f"{o['label']}:  {arrows}  {cur}"
+        return f"{i18n.t(o['label'])}:  {arrows}  {cur}"
 
     def on_list_view_selected(self, event):
         # Enter/클릭 으로 행 선택 시 현재 값으로 바로 실행(on_key 와 이중 안전).
@@ -1221,7 +1222,7 @@ class PromptScreen(ModalScreen):
         # 토글/선택지를 한 줄에 나열하고 강조된 항목만 reverse 로 표시(↑↓ 로 이동).
         parts = []
         for i, (disp, _v) in enumerate(self._choices):
-            d = self._esc(disp)
+            d = self._esc(i18n.t(disp))   # §6 ⑤ 선택지 라벨 번역(키=원문)
             parts.append(f"[reverse] {d} [/reverse]" if i == self._choice_sel
                          else f"[dim] {d} [/dim]")
         self._set_hint("  ".join(parts))

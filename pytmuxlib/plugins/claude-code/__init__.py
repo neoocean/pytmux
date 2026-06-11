@@ -104,6 +104,18 @@ i18n.register({
     },
 })
 
+# §6 ⑤ 플러그인 옵션 피커 라벨(키=원문 한국어, 코어 옵션 피커와 동일 방식). 선택지
+# (토글/켜기/끄기)는 코어 _ONOFF 와 같은 원문이라 코어 카탈로그가 이미 번역한다.
+i18n.register({
+    "ko": {lab: lab for lab in
+           (s["label"] for specs in COMMAND_OPTIONS.values() for s in specs)},
+    "en": {
+        "자동재개": "Auto-resume", "클리어모드": "Clear mode",
+        "자동클리어": "Auto-clear", "하드스톱복구": "Hardstop recovery",
+        "오토모드": "Auto mode", "자동셋업": "Auto setup", "헤더": "Header",
+    },
+})
+
 
 def _onoff(args):
     """on/off 인자 → True/False, 없으면 None(서버가 토글). 기존 코어 디스패치와 동일."""

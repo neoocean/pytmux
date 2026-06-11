@@ -547,6 +547,43 @@ COMMAND_OPTIONS = {
     # auto-resume·prompt-clear·auto-doc-clear·claude-auto-mode·auto-launch·claude-header
     # 의 옵션 스키마는 claude-code 플러그인이 등록한다(command_options).
 }
+
+# §6 ⑤ 옵션 피커 i18n: COMMAND_OPTIONS 의 라벨·선택지 표시문(방향·줌 토글 ⛶·켜기 등)을
+# 로케일 전환 가능하게. 키=원문 한국어(gettext 식 — 피커 렌더는 t(원문) 로 단순 조회).
+# ko 는 specs 에서 자동 수집(키=값=원문, DRY), en 만 보강. 미등록 문자열은 원문 폴백.
+def _collect_opt_strings(*option_dicts):
+    out = set()
+    for od in option_dicts:
+        for specs in od.values():
+            for spec in specs:
+                out.add(spec["label"])
+                for disp, _v in spec["choices"]:
+                    out.add(disp)
+    return out
+
+
+i18n.register({
+    "ko": {s: s for s in _collect_opt_strings(COMMAND_OPTIONS)},
+    "en": {
+        # 라벨
+        "방향": "Direction", "이동": "Move", "동작": "Action", "프리셋": "Preset",
+        "범위": "Scope", "동기화": "Sync", "활동": "Activity", "벨": "Bell",
+        "캡처": "Capture", "자동이름": "Auto-rename", "단일테두리": "Single border",
+        "리페인트합치기": "Coalesce repaints", "언어": "Language",
+        # 선택지
+        "좌우 분할 │ (-h)": "Split L/R │ (-h)", "상하 분할 ─ (-v)": "Split T/B ─ (-v)",
+        "◀ 왼쪽": "◀ Left", "▶ 오른쪽": "▶ Right", "▲ 위": "▲ Up", "▼ 아래": "▼ Down",
+        "줌 토글 ⛶": "Zoom toggle ⛶",
+        "바둑판 tiled": "Tiled", "가로 균등 even-horizontal": "Even horizontal",
+        "세로 균등 even-vertical": "Even vertical",
+        "메인 세로 main-vertical": "Main vertical",
+        "메인 가로 main-horizontal": "Main horizontal",
+        "보이는 영역": "Visible area", "스크롤백 전체 -S": "Full scrollback -S",
+        "토글": "Toggle", "켜기": "On", "끄기": "Off",
+        # 언어 이름은 로케일 무관 양쪽 그대로(자기 언어로 표기).
+        "한국어": "한국어", "English": "English",
+    },
+})
 # 인자 없이 바로 실행해도 되는(파괴적이지 않은) 명령 — 선택 즉시 실행한다(#3).
 # kill-*/detach/respawn 등 파괴적 명령은 의도 확인을 위해 기존처럼 프롬프트에 채운다.
 COMMAND_NOARG = {
