@@ -1663,6 +1663,39 @@ async def test_big_calendar_digit_spacing():
     await _with_app(body, size=(44, 16))
 
 
+async def _ime_cursor_body(app, pilot, srv):
+    """IME preedit 동기화 본문(아래 두 사이즈 테스트가 공유)."""
+    from textual.geometry import Offset
+    from pytmuxlib.clientscreens import InfoScreen
+    # hello 직후엔 layout["panes"] 가 아직 비어 있거나 active 와 어긋날 수 있어
+    # (서버 layout 메시지 레이스) 활성 패널이 나타날 때까지 폴링(최대 ~2초).
+    active, p = None, None
+    for _ in range(40):
+        active = app.layout.get("active")
+        p = next((pp for pp in app.layout.get("panes", ())
+                  if pp["id"] == active), None)
+        if p is not None:
+            break
+        await pilot.pause(0.05)
+    assert p is not None, f"레이아웃 미정착: {app.layout}"
+    ccx, ccy = 2, 1
+    # 활성 패널에 알려진 커서를 주입하고 재합성 → 하드웨어 커서가 그 전역 셀로.
+    app.pane_content[active] = ([], (ccx, ccy))
+    app._composite()
+    await pilot.pause(0.05)
+    assert app.cursor_position == Offset(p["x"] + ccx, p["y"] + ccy)
+    # 모달이 떠 있으면 _composite 는 cursor_position 을 건드리지 않는다(경합 방지).
+    app.push_screen(InfoScreen(["x"]))
+    await pilot.pause(0.05)
+    assert len(app.screen_stack) > 1
+    sentinel = Offset(0, 0)
+    app.cursor_position = sentinel
+    app.pane_content[active] = ([], (5, 4))   # 커서를 바꿔도
+    app._composite()
+    await pilot.pause(0.05)
+    assert app.cursor_position == sentinel, "모달 중엔 하드웨어 커서 미이동"
+
+
 async def test_ime_hardware_cursor_follows_active_pane_cursor():
     """IME preedit 동기화(docs/IME_PREEDIT_CURSOR_SCENARIO.md): _composite 가 활성 패널
     커서 셀로 app.cursor_position(Textual 이 매 프레임 끝에 move_to 하는 하드웨어 커서)
@@ -1670,31 +1703,18 @@ async def test_ime_hardware_cursor_follows_active_pane_cursor():
     특성상, 안 옮기면 stale 좌표(테두리 행)에 잔상이 박힌다. 모달이 떠 있으면
     (screen_stack>1) 텍스트 위젯(Input/TextArea)이 cursor_position 을 소유하므로 덮어쓰지
     않는다. preedit 오버레이 자체는 OS 그림이라 헤드리스론 좌표 동기화 로직만 가드한다(§6).
-    """
-    from textual.geometry import Offset
-    from pytmuxlib.clientscreens import InfoScreen
 
-    async def body(app, pilot, srv):
-        active = app.layout["active"]
-        p = next(pp for pp in app.layout["panes"] if pp["id"] == active)
-        ccx, ccy = 2, 1
-        # 활성 패널에 알려진 커서를 주입하고 재합성 → 하드웨어 커서가 그 전역 셀로.
-        app.pane_content[active] = ([], (ccx, ccy))
-        app._composite()
-        await pilot.pause(0.05)
-        assert app.cursor_position == Offset(p["x"] + ccx, p["y"] + ccy)
-        # 모달이 떠 있으면 _composite 는 cursor_position 을 건드리지 않는다(경합 방지).
-        app.push_screen(InfoScreen(["x"]))
-        await pilot.pause(0.05)
-        assert len(app.screen_stack) > 1
-        sentinel = Offset(0, 0)
-        app.cursor_position = sentinel
-        app.pane_content[active] = ([], (5, 4))   # 커서를 바꿔도
-        app._composite()
-        await pilot.pause(0.05)
-        assert app.cursor_position == sentinel, "모달 중엔 하드웨어 커서 미이동"
-    await _with_app(body, size=(60, 20))
-    await _with_app(body, size=(90, 46))
+    flaky 수정(2026-06-11): 원래 한 테스트가 `_with_app` 을 **한 이벤트 루프에서 두 번**
+    (60×20→90×46) 돌리던 스위트 유일 패턴이었고, 두 번째 앱의 hello 가 간헐 미처리
+    (StopIteration, 15회 중 10회 재현)되거나 행으로 빠졌다. 사이즈별 테스트로 분리해
+    다른 모든 테스트와 같은 1루프-1앱 패턴으로 정상화(분리 후 12/12 결정적 통과)."""
+    await _with_app(_ime_cursor_body, size=(60, 20))
+
+
+async def test_ime_hardware_cursor_follows_active_pane_cursor_large():
+    """위 테스트의 큰 화면(90×46) 변형 — 커서 전역좌표 산식이 레이아웃(패널 위치)
+    의존이라 두 사이즈 모두 가드한다(flaky 분리, 위 독스트링 참조)."""
+    await _with_app(_ime_cursor_body, size=(90, 46))
 
 
 async def test_open_close_clock_calendar_commands():
