@@ -44,10 +44,15 @@
 >    는 같은 `-X importtime` + `tee` 진단으로 정상 회수) → 콘솔·파일 어느 쪽으로도 행
 >    지점을 못 건진다.
 > `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`(macOS fork 데드락 표준 회피)도 효과 없었다.
-> → **결론**: PTY/서브프로세스 다수 스위트 + 헤드리스 macOS 러너의 알려진 인프라
-> flakiness. `windows.yml` 에서 macos-latest 잡을 **`continue-on-error`** 로 둬, 러너가
-> 협조할 때의 신호만 취하고 wedge 가 전체 CI 를 막지 않게 했다(실패 전파 차단). 영구
-> 검증은 로컬(개발 박스)이 권위.
+> **`continue-on-error` 도 안 통한다**: wedge 한 잡을 GitHub 이 17분에 강제 **cancel** 하는데,
+> continue-on-error 는 **fail** 한 잡만 구제하고 cancel 된 잡은 그대로 run 을 cancel(빨강)
+> 시킨다. VM 자체가 wedge 라 in-VM 워치독(shell kill·python·timeout)으로 fail-fast 전환도
+> 불가(러너 아래 레벨).
+> → **결론**: PTY/서브프로세스 다수 스위트 + 헤드리스 macOS 러너의 인프라 flakiness 라
+> **push CI 에서 green 으로 둘 방법이 없다**. macos-latest 를 매트릭스에서 **제외**해
+> os-compat 을 green 으로 유지한다(ubuntu+windows blocking). macOS 검증은 로컬 개발 박스
+> (`python tests/run.py`)가 권위. 한시 재확인이 필요하면 matrix 에 `macos-latest` 를 도로
+> 넣어 보되 wedge 시 run 이 cancel(빨강) 됨을 감안. run.py startup faulthandler 백스톱은 유지.
 
 ---
 
