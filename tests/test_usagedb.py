@@ -47,6 +47,24 @@ async def test_insert_many_and_count():
     conn.close()
 
 
+async def test_max_session_seeds_restart_counter():
+    """§3.5②: max_session 이 기록된 최대 세션 id 를 돌려준다(재시작 시드용).
+    빈 DB 는 0, dup_archive(격리)는 세지 않는다."""
+    conn = usagedb.connect(":memory:")
+    assert usagedb.max_session(conn) == 0, "빈 DB 는 0"
+    usagedb.insert(conn, _rec(1_700_000_000.0, 0, 1, 3, "a@x.org", 100))
+    usagedb.insert(conn, _rec(1_700_000_100.0, 0, 1, 7, "a@x.org", 200))
+    usagedb.insert(conn, _rec(1_700_000_200.0, 0, 1, 5, "a@x.org", 50))
+    assert usagedb.max_session(conn) == 7, "최대 세션 id"
+    # 격리 보관소(dup_archive)에 더 큰 세션 id 가 있어도 활성 집계는 usage 만 본다.
+    conn.execute("CREATE TABLE IF NOT EXISTS usage_dup_archive AS "
+                 "SELECT * FROM usage WHERE 0")
+    conn.execute("INSERT INTO usage_dup_archive "
+                 "SELECT * FROM usage WHERE session=7")
+    assert usagedb.max_session(conn) == 7, "archive 는 무시"
+    conn.close()
+
+
 async def test_total_for_day_matches_bucket_key():
     conn = usagedb.connect(":memory:")
     t0 = 1_700_000_000.0

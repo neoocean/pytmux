@@ -249,6 +249,20 @@ def count(conn) -> int:
     return int(conn.execute("SELECT COUNT(*) AS n FROM usage").fetchone()["n"])
 
 
+def max_session(conn) -> int:
+    """기록된 최대 세션 id(없으면 0) — 재시작 후 세션 일련번호 시드용(§3.5②).
+
+    `_claude_session_seq` 는 코어 server.__init__ 에서 부팅마다 0 으로 초기화되는데,
+    재시작 후 새 Claude 세션이 다시 1,2,… 로 발급되면 영속 DB 에 남은 같은 id 의
+    옛 세션과 [패널] 세션 차원 집계에서 **무관 세션이 병합**된다(설계 §8 세션 기준
+    묶기를 깨뜨림). 서버는 첫 세션 부여 직전 이 값으로 카운터를 시드해 새 id 가 항상
+    옛 id 보다 크게 한다. dup_archive 는 격리 보관소라 활성 집계가 안 보므로 세지
+    않는다(usage 테이블만)."""
+    row = conn.execute(
+        "SELECT COALESCE(MAX(session), 0) AS m FROM usage").fetchone()
+    return int(row["m"])
+
+
 # ---- 실측 한도 스냅샷(limits, S6 T1) ----
 # `/usage` 권위값(세션 5h·주간 한도 %·리셋)을 시계열로 영속한다. 기존엔 서버 메모리
 # 최신값(self._usage) 하나뿐이라 재시작 시 유실·추이 조회 불가·스크랩 누계와의 대사

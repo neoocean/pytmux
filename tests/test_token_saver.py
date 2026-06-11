@@ -676,3 +676,65 @@ async def test_usage_probe_uses_claude_pane_cwd():
         assert srv._probe_cwd() == "/daemon/cwd"
     finally:
         await teardown(srv, task, sock)
+
+
+# ---- §3.5 세션/계정 귀속 정확성 ----
+async def test_session_seq_seeds_from_db_after_restart():
+    """§3.5②: 첫 세션 부여 직전 DB max(session) 으로 시드 → 재시작 후 새 세션 id 가
+    영속된 옛 세션 id 와 충돌하지 않는다(_claude_session_seq 는 부팅마다 0)."""
+    from pytmuxlib import usagedb, usagelog
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p = await _claude_pane(srv)
+        conn = srv._tokens_db_conn()
+        # 이전 부팅이 남긴 이력: 세션 id 42 까지 썼다.
+        usagedb.insert(conn, usagelog.make_record(
+            1_700_000_000.0, 0, p.id, 42, "a@x.org", 100))
+        assert srv._claude_session_seq == 0, "부팅 직후(코어)는 0"
+        assert srv._session_seq_seeded is False
+        # 첫 세션 부여 → max(42) 시드 후 +1
+        srv._next_claude_session_id(p)
+        assert p._claude_session_id == 43, p._claude_session_id
+        assert srv._session_seq_seeded is True
+        # 이후 부여는 DB 재조회 없이 메모리 카운터만 단조 증가
+        srv._next_claude_session_id(p)
+        assert p._claude_session_id == 44
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_session_seq_empty_db_starts_at_one():
+    """빈 DB(또는 연결 실패)면 시드=0 → 첫 세션 id 1(기존 동작 보존)."""
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p = await _claude_pane(srv)
+        srv._next_claude_session_id(p)
+        assert p._claude_session_id == 1, p._claude_session_id
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_account_first_seen_latched_not_overwritten():
+    """§3.5③: 세션에서 **처음** 검출된 계정만 래치하고, 이후 프레임에 뜬 다른(또는
+    오검출) 계정 라벨로 덮지 않는다(매 프레임 last-seen → first-seen). 한 Claude
+    프로세스=한 계정이므로 이미 확정된 토큰의 재귀속을 막는다."""
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p = await _claude_pane(srv)
+
+        def scan(text):
+            p.feed(b"\x1b[2J\x1b[H" + text.encode())
+            srv._scan_claude(sess, win)
+
+        # 새 세션 진입(None→idle) + 첫 계정 라벨
+        scan("first@woojinkim.org's Organization\r\n? for shortcuts")
+        assert p._claude_account == "fi…@woojinkim.org", p._claude_account
+        # 같은 세션에서 다른 계정 라벨이 떠도 first-seen 유지
+        scan("second@other.org's Organization\r\n? for shortcuts")
+        assert p._claude_account == "fi…@woojinkim.org", "first-seen 유지"
+        # 세션 종료 후 새 세션이 뜨면 다시 새 계정으로 래치
+        scan("nonclaude shell output\r\n$ ")           # claude None → 세션 끝
+        scan("third@woojinkim.org's Organization\r\n? for shortcuts")
+        assert p._claude_account == "th…@woojinkim.org", "새 세션은 재래치"
+    finally:
+        await teardown(srv, task, sock)

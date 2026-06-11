@@ -259,6 +259,30 @@ class ServerClaudeMixin:
         검출(new_cl and not old_cl)에 안 걸려 여기서 명시적으로 끊는다."""
         tokens.reset(pane._tok_state)
         pane._session_tokens = 0
+        self._next_claude_session_id(pane)
+
+    def _seed_session_seq(self):
+        """첫 Claude 세션 부여 직전 1회, 세션 일련번호를 영속 DB 의 max(session) 으로
+        시드한다(§3.5②). 서버 부팅마다 `_claude_session_seq` 가 0 으로 초기화돼(코어
+        server.py) 재시작 후 새 세션이 1,2,… 로 재발급되면 DB 의 같은 id 옛 세션과
+        [패널] 세션 차원 집계에서 병합됐다. DB 가 없거나(연결 실패) 비어 있으면 0
+        시드(기존 동작). 한 번만 DB 를 읽고(_session_seq_seeded) 이후엔 메모리 카운터만
+        증가한다 — 같은 부팅 내 세션 id 는 단조 증가가 보장된다."""
+        if getattr(self, "_session_seq_seeded", False):
+            return
+        self._session_seq_seeded = True
+        conn = self._tokens_db_conn()
+        if conn is not None:
+            try:
+                self._claude_session_seq = max(self._claude_session_seq,
+                                               usagedb.max_session(conn))
+            except Exception:
+                pass
+
+    def _next_claude_session_id(self, pane: Pane):
+        """새 Claude 세션 일련번호를 패널에 부여(시드 보장 후 +1). 두 경계가 공유한다:
+        None→Claude 신규 진입과 수동/auto `/clear`(_reset_token_session)."""
+        self._seed_session_seq()
         self._claude_session_seq += 1
         pane._claude_session_id = self._claude_session_seq
 
@@ -694,8 +718,7 @@ class ServerClaudeMixin:
                 if new_cl and not old_cl:
                     tokens.reset(p._tok_state)
                     # 새 Claude 세션 경계: 세션 id 부여, 계정 재감지(수동 지정은 유지).
-                    self._claude_session_seq += 1
-                    p._claude_session_id = self._claude_session_seq
+                    self._next_claude_session_id(p)
                     if not p._claude_account_manual:
                         p._claude_account = None
                     # 시작 규칙 주입 예약(#27): 새 Claude 세션이 뜨면 다음 idle(입력
@@ -735,10 +758,16 @@ class ServerClaudeMixin:
                     changed = True
                 p._welcome_seen = wel
                 if new_cl:
-                    # 계정 단서를 매 프레임 갱신(마지막 본 값 유지; 수동 지정 우선).
-                    if not p._claude_account_manual:
+                    # 계정 단서를 세션 first-seen 으로 고정(§3.5③). 세션 경계에서
+                    # None 으로 리셋되므로, 그 세션에서 **처음** 검출된 신뢰 계정만
+                    # 래치하고 이후 프레임의 검출로는 덮지 않는다(수동 지정 우선).
+                    # 예전엔 매 프레임 last-seen 갱신이라, 한 응답이 끝난 뒤 화면에
+                    # 우연히 뜬 다른(또는 오검출) 계정 라벨이 이미 확정된 토큰을
+                    # 엉뚱한 계정으로 재귀속할 수 있었다. 한 Claude 프로세스=한 계정
+                    # 이므로 first-seen 이 의미상 정확하다.
+                    if not p._claude_account_manual and p._claude_account is None:
                         acct = claude_account(txt)
-                        if acct and acct != p._claude_account:
+                        if acct:
                             p._claude_account = acct
                     # M14c: 모델 배지(Opus 4.8 등) 갱신 — 마지막 본 값 유지.
                     mdl = claude_model(txt)
@@ -1315,6 +1344,9 @@ class ServerClaudeMixin:
         server.__init__ 에서 빼내 여기서 설치한다(delete-to-disable).
         (§7-4: 절대 예산 deprecate 로 일예산 누계 _today_*/_budget_level 은 제거.)"""
         self._tokens_db = None
+        # §3.5②: 세션 일련번호를 DB max(session) 으로 시드했는지(첫 세션 부여 직전 1회).
+        # 재시작 후 _claude_session_seq=0(코어) 가 옛 세션 id 와 충돌하는 것 방지.
+        self._session_seq_seeded = False
         # #28 진단 로깅 스팸 가드: 반복 실패(매 커밋 DB 재연결 시도·10분 주기
         # 프로브)가 error.log 를 도배하지 않게 '첫 실패만' 기록하는 플래그.
         self._tokens_db_err = False
