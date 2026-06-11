@@ -29,10 +29,10 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **475 passed**
-  (`python3 tests/run.py`, 2026-06-11 — §7-4 절대 예산 deprecate 로 전용 테스트
-  5종 삭제 후 §10-B IME OS 실측 4종 추가. 기존 flaky 1건도 58122 에서 근본
-  수정돼 0).
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **499 passed**
+  (`python3 tests/run.py` @macOS, 2026-06-11 — Windows 트랙(58214~58228)·usage-view
+  플러그인·IME OS 실측·토큰 잔상 가드 테스트 합류. 기존 flaky 1건도 58122 에서
+  근본 수정돼 0).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
 ## 2. 실행 / 개발
@@ -267,11 +267,45 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~58133 + git, 신→구)
+## 9. 최근 변경(CL 56279~58228 + git, 신→구)
 
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- 58214~58228 **Windows 네이티브 #1.1~#1.6 + #7 완주(office 박스, 2026-06-11)** — 자율
+  진행. IMPROVEMENT_OPPORTUNITIES.md Windows 계열 미해결 항목을 전부 처리하고 의미 단위로
+  분리 서브밋. 검증: 각 항목 단위 테스트 + 블래스트 반경 288 passed/0 failed(test_proc·
+  test_windows_port·test_server·test_launcher·test_pty_backend·test_client). 메모리:
+  `pytmux-1-1-multibyte-winpty-corruption`.
+  - **#1.1 직접 소유 ConPTY 백엔드(CL 58214)** — 신규 `pytmuxlib/conpty.py`(ctypes
+    `CreatePseudoConsole`/`ResizePseudoConsole`/`ClosePseudoConsole`, 핸들 전부 `c_void_p`
+    로 64비트 절단 차단) + `pty_backend._OwnedConPty`. read 경로에서 **디코드를 안 하고 raw
+    바이트**를 서버 `pyte.ByteStream`(영속 incremental decoder)에 넘겨 멀티바이트 경계
+    손상(§1.1②)을 구조적으로 제거, write 도 raw `WriteFile`(③). **opt-in**
+    `PYTMUX_PTY_BACKEND=owned|conpty`(기본 pywinpty, 실패 시 조용히 폴백). ★ **막혔던 원인
+    규명**: "익명 파이프로는 conhost 출력이 안 온다/overlapped 명명 파이프 필요"는 틀렸고,
+    **런처가 콘솔을 상속**(NonInteractive 도구 콘솔)해 자식이 그 콘솔을 붙잡던 탓 — 런처가
+    자기 콘솔을 가지면(데몬 서버는 콘솔 없는 분리 프로세스라 자연 충족) 표준 MS 레시피 +
+    익명 파이프로 자식이 정상 attach. 실측: `_OwnedConPty` 로 cmd 배너 180B + echo 마커가
+    raw 바이트로 도달, resize/terminate/close/reap 무예외. **남은 검증(사용자 실 박스)**:
+    멀티바이트 플러드 왕복 — `scripts/validate_conpty.py`(신규) 또는 라이브 제품, 통과 시
+    기본 전환 1줄 CL. 헤드리스 한계는 docs/WINDOWS_TESTING.md §4-d.
+  - **#1.2 terminate 에스컬레이트 / #1.3 is_alive CSV 정확대조** — 이미 구현돼 있었음
+    (CL 58154/58156, `test_win_terminate_escalates`·`test_win_is_alive_csv_exact_match`),
+    문서 상태만 정정(CL 58221).
+  - **#1.4 ssh 중첩 거부 .cmd 래퍼(CL 58216)** — Windows 에서 `ssh.cmd`/`autossh.cmd` 를
+    PATH 앞단에 깔아 `ssh.exe -o SendEnv=LC_PYTMUX %*` 주입(`%~$PATH:E` 로 .exe 만 검색해
+    자기 .cmd 안 잡음). 실 박스 `ssh.cmd -V` 동작 확인.
+  - **#1.5 owned 리더 FEED_SLICE 청크(CL 58219)** — `_OwnedConPty._read_loop` 가 64KB 대신
+    `FEED_SLICE`(8KB)씩 읽어 백프레셔 응답성 + 인라인 ingest(pause 시 in-flight ≤8KB).
+  - **#1.6 회귀 가드(CL 58221)** — 헤드리스 ConPTY 수명 테스트(`test_owned_conpty_lifecycle_windows`)
+    + 라이브 `validate_conpty.py` + `test_sync_input_broadcast` 해결 확인(CL 58040). 문서 정정.
+  - **#7 자동 탭이름·ssh/원격 감지(CL 58228)** — `_fg_command(fd)`→`_fg_command(pane)`,
+    Windows 는 `proc.foreground_command(pane.child_pid)`(ToolHelp 스냅샷으로 셸 자손 트리의
+    가장 깊은 자손 추정; ConPTY 엔 fg pgrp 없음). 실측 cmd→ping → `PING`. 패널 cwd 상속은
+    이미 `proc.process_cwd`(PEB)로 동작 중. **`record()`(replay.py) Windows 는 의도적 미지원**
+    (POSIX 인터랙티브 dev 진단·헤드리스 검증 불가·제품엔 REC 캡처가 대체), **작업보존
+    re-exec 재시작은 #1.1 owned-ConPTY 핸들 상속에 의존해 범위 밖**(후속).
 - 58166 **IME 배지를 커서 줄 오른쪽 끝으로 이동**(사용자 요청 — 우상단 고정에서 변경) —
   preedit 이 보이는 커서 줄과 같은 높이라 한/영 상태를 시선 이동 없이 확인. 커서
   좌표는 `_active_cursor_xy`(IME preedit 하드웨어 커서 동기화와 같은 원천, client_render
@@ -2730,8 +2764,14 @@ test_client.py`(417) + 신규 `tests/test_plugin_contract.py`(5) 회귀망 + smo
     ⚠ 레벨은 실측 게이트(`_usage_gate_level/_over`)로 일원화(와이어 키
     `budget_level` 이름은 유지). 구 opts.json 키는 로드 시 무시→다음 저장에서
     자연 소멸(shim, S5 T3 선례). 절대 예산 테스트 5종 삭제·잔여는 실측 전환.
-  - **잔존 후속**: REC 캡처로 [대사] 뷰 실측·추정 상관 관찰.
-    관련: [[token-accounting-s6-complete]].
+  - **대사 1차 관찰 완료(2026-06-11, 시나리오 §5.5)**: 라이브 20스냅샷×270레코드
+    — ① 스크랩 중복 커밋 버그 발견(하루 83% 가 60초내 동일값 반복, 잔상 텍스트에
+    비-busy 프레임마다 재확정) → `tokens.step` **idle_mark 잔상 가드**로 수정.
+    ② 상관 r=0.049→dedup 0.376: 실측 5h%=계정 전체(타 머신 포함) vs 스크랩=로컬
+    패널이라 구조적 약상관 — 추정 강등 판단 데이터로 재확인.
+  - **잔존 후속**: ① limits/usage 의 계정 식별 전부 None/'unknown' 원인 조사
+    (계정 한정 대사·게이트 계정 대조 비활성), ② 가드 적용 후 데이터로 상관
+    재관찰. 관련: [[token-accounting-s6-complete]].
 
 **⚠️ 병렬 세션 함정(2026-06-10 갱신)**: playground 워크스페이스를 **다른 세션이 동시 편집**한다.
 2026-06-09 Phase 2 제출 중, 병렬 세션의 **clock/calendar 플러그인 추출**(미완·당시 깨짐: 미존재

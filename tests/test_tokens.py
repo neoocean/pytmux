@@ -36,13 +36,41 @@ async def test_step_handles_back_to_back_without_idle_gap():
     assert st["total"] == 2800
 
 
+async def test_step_ignores_idle_residue_no_duplicate_commits():
+    """잔상 가드(2026-06-11 [대사] 관찰 버그): 응답 종료 후에도 `↑/↓ N tokens`
+    텍스트가 화면에 남으면(완료 라인·스크롤 잔재) 비-busy 프레임마다 같은 peak 가
+    재확정돼 하루 레코드의 83% 가 중복(한 응답 최대 117회)이었다. 확정 값 이하의
+    비-busy running 은 잔상으로 무시하고, busy 재진입이 가드를 푼다."""
+    st = tokens.new_state()
+    tokens.step(st, 500, True)
+    tokens.step(st, 43_100, True)
+    assert tokens.step(st, 43_100, False) == 43_100   # 응답 종료 — 1회 확정
+    # 잔상: 같은 값이 비-busy 로 계속 보여도 재확정 없음(예전엔 매 프레임 43,100).
+    for _ in range(5):
+        assert tokens.step(st, 43_100, False) == 0
+    assert st["total"] == 43_100 and st["peak"] == 0
+    # 잔상보다 작은 값(스크롤로 일부만 보임)도 무시.
+    assert tokens.step(st, 19_300, False) == 0
+    # 새 응답: busy 진입이 가드를 풀어 작은 running 부터 정상 누적.
+    assert tokens.step(st, 400, True) == 0
+    tokens.step(st, 2_000, True)
+    assert tokens.step(st, None, False) == 2_000
+    assert st["total"] == 45_100
+    # busy 미감지인데 mark 를 넘게 커지는 드문 경우는 통과(언더카운트 방지 failsafe).
+    st2 = tokens.new_state()
+    tokens.step(st2, 1_000, True)
+    assert tokens.step(st2, 1_000, False) == 1_000
+    assert tokens.step(st2, 3_000, False) == 3_000    # mark(1k) 초과 → 새 활동으로 인정
+    assert st2["total"] == 4_000
+
+
 async def test_reset_and_fmt():
     st = tokens.new_state()
     tokens.step(st, 1000, True)
     tokens.step(st, None, False)
     assert st["total"] == 1000
     tokens.reset(st)
-    assert st == {"peak": 0, "total": 0}
+    assert st == {"peak": 0, "total": 0, "idle_mark": None}
     assert tokens.fmt(1_234_567) == "1.2M"
     assert tokens.fmt(45_200) == "45.2k"
     assert tokens.fmt(1_000) == "1k"

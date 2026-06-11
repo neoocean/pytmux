@@ -46,14 +46,16 @@ def parse_running_tokens(text: str):
 
 
 def new_state() -> dict:
-    """패널별 누적 상태. peak=현재 응답 중 본 최댓값, total=세션 누계."""
-    return {"peak": 0, "total": 0}
+    """패널별 누적 상태. peak=현재 응답 중 본 최댓값, total=세션 누계,
+    idle_mark=비-busy 확정 직후 화면에 남은 잔상 토큰 값(중복 확정 가드)."""
+    return {"peak": 0, "total": 0, "idle_mark": None}
 
 
 def reset(state: dict) -> None:
     """새 Claude 세션 시작 시 누계를 0 으로(패널 재사용/세션 경계)."""
     state["peak"] = 0
     state["total"] = 0
+    state["idle_mark"] = None
 
 
 def step(state: dict, running, busy: bool) -> int:
@@ -63,9 +65,22 @@ def step(state: dict, running, busy: bool) -> int:
 
     running: parse_running_tokens 결과(int) 또는 None(토큰 표시 없음).
     busy: 현재 패널이 처리중(claude_state == "busy")인지.
-    """
+
+    잔상 가드(idle_mark — 2026-06-11 [대사] 관찰로 발견·수정): 응답이 끝난 뒤에도
+    `↑/↓ N tokens` 텍스트가 화면에 남는 경우(완료 라인·스크롤 잔재)가 있는데,
+    예전엔 비-busy 프레임마다 "peak 재구축 → 즉시 확정"이 반복돼 **같은 응답이
+    매 스캔(≈1초)마다 다시 확정**됐다(라이브 DB 하루치의 83% 가 60초내 동일값
+    반복, 한 응답이 최대 117회 중복 — ~Σ 표시·usage 로그·대사 전부 부풀림).
+    비-busy 확정 시 그 값을 idle_mark 로 기억하고, busy 가 다시 올 때까지
+    mark 이하의 running 은 잔상으로 보고 무시한다(새 응답은 busy 진입이 mark 를
+    지우므로 정상 누적; busy 미감지 채 mark 초과로 커지는 드문 경우도 통과)."""
     committed = 0
     peak = state.get("peak", 0)
+    if busy:
+        state["idle_mark"] = None
+    elif (running is not None and state.get("idle_mark") is not None
+            and running <= state["idle_mark"]):
+        running = None                  # 확정 잔상 — 이번 프레임은 없는 셈
     if running is not None:
         # running 이 직전 peak 보다 크게 줄면(절반 이하·최소 50 토큰 여유) idle 갭
         # 없이 다음 응답이 시작된 것 — 이전 peak 를 확정하고 새로 시작.
@@ -76,9 +91,10 @@ def step(state: dict, running, busy: bool) -> int:
         if running > peak:
             peak = running
     if not busy and peak > 0:
-        # 응답 종료(busy 끝, idle/None/limit) — peak 확정.
+        # 응답 종료(busy 끝, idle/None/limit) — peak 확정 + 잔상 가드 무장.
         state["total"] = state.get("total", 0) + peak
         committed += peak
+        state["idle_mark"] = peak
         peak = 0
     state["peak"] = peak
     return committed
