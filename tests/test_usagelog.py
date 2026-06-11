@@ -152,3 +152,23 @@ async def test_migrate_token_accounts():
     assert st["after"].get("me@woojinkim.org") == 1
     assert st["after"].get("unknown") == 4
     assert "{corrupt json\n" in out and "  \n" in out   # 비레코드 줄 원형 보존
+
+
+async def test_recon_view_formats_rows():
+    """S6 T2: recon_view 가 대사 구간 dict → (구간, 실측, 추정Σ, 비고) 4튜플로
+    푼다 — 실측은 Δ 표기·리셋 구간은 '리셋', 추정은 ~ 접두사(출처 구분), 계정
+    None 은 혼합/미상 표기."""
+    base = 1_700_000_000.0
+    rows = usagelog.recon_view([
+        {"t0": base, "t1": base + 3600, "account": "me@x.org",
+         "pct0": 5, "pct1": 9, "dpct": 4, "tokens": 1500, "reset": False},
+        {"t0": base + 3600, "t1": base + 7200, "account": None,
+         "pct0": 9, "pct1": 2, "dpct": -7, "tokens": 50, "reset": True},
+    ])
+    assert len(rows) == 2
+    span, meas, est, note = rows[0]
+    assert "→" in span and meas == "5%→9% (Δ+4)"
+    assert est == "~1.5k" and note == "me@x.org"
+    _, meas2, est2, note2 = rows[1]
+    assert "리셋" in meas2 and "Δ" not in meas2, meas2
+    assert est2 == "~50" and note2 == "계정혼합/미상"

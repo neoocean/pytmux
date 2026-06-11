@@ -324,7 +324,8 @@ def _on_token_log_msg(app, msg):
         msg.get("records") or [],
         usage=getattr(app.status, "usage_limits", None),
         total_all=msg.get("total_all"),
-        accounts_total=msg.get("accounts_total")))
+        accounts_total=msg.get("accounts_total"),
+        reconcile=msg.get("reconcile")))
 
 
 def _open_prompt_history(app, pane_id=None):
@@ -808,8 +809,12 @@ class _ClaudeCodePlugin:
                     if conn is not None else [])
             total_all = usagedb.total_all(conn) if conn is not None else 0
             accts = usagedb.totals_by_account(conn) if conn is not None else {}
+            # S6 T2: 대사(reconcile) 구간 — 실측 스냅샷 Δpct vs 스크랩 Σ. 진단
+            # 전용 데이터라 표시는 TokenLogScreen [대사] 뷰만 소비한다.
+            recon = usagedb.reconcile(conn) if conn is not None else []
             return {"t": "token_log", "records": recs,
-                    "total_all": total_all, "accounts_total": accts}
+                    "total_all": total_all, "accounts_total": accts,
+                    "reconcile": recon}
         return None
 
     # ---- 클라이언트 콘텐츠-레이어 렌더/상태 훅(Phase 2c) ----

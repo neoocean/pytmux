@@ -388,3 +388,66 @@ async def test_limits_v1_db_upgrades_on_connect():
         conn.close()
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_reconcile_intervals_sum_and_flags():
+    """S6 T2: 연속 실측 스냅샷 쌍 사이 구간의 스크랩 Σ·Δpct·계정 한정·리셋 플래그.
+    절대 일치 검증이 아니라 '구간 묶기'가 맞는지를 본다(두 출처는 의미가 다름)."""
+    conn = usagedb.connect(":memory:")
+    A = "me@woojinkim.org"
+    # 실측 스냅샷 3개: pct 5 →(A) 9 →(리셋) 2
+    for ts, pct, acct in [(100.0, 5, A), (500.0, 9, A), (900.0, 2, A)]:
+        usagedb.insert_limits(conn, usagedb.snap_from_usage(
+            {"session": {"pct": pct, "reset": "2pm"}, "account": acct},
+            ts, "probe"))
+    # 스크랩 레코드: 구간1(100,500]에 A 300+200, 타계정 999(제외돼야 함).
+    # 경계: ts=100(=t0)은 이전 구간 몫(미포함), ts=500(=t1)은 포함.
+    usagedb.insert(conn, _rec(100.0, 0, 1, 1, A, 7777))      # t0 정확히 → 미포함
+    usagedb.insert(conn, _rec(200.0, 0, 1, 1, A, 300))
+    usagedb.insert(conn, _rec(500.0, 0, 1, 1, A, 200))       # t1 정확히 → 포함
+    usagedb.insert(conn, _rec(300.0, 0, 2, 2, "b@y.org", 999))
+    # 구간2(500,900]: A 50
+    usagedb.insert(conn, _rec(700.0, 0, 1, 1, A, 50))
+    ivs = usagedb.reconcile(conn)
+    assert len(ivs) == 2, ivs
+    iv1, iv2 = ivs
+    assert (iv1["pct0"], iv1["pct1"], iv1["dpct"]) == (5, 9, 4)
+    assert iv1["tokens"] == 500, "같은 계정만 + (t0,t1] 경계"
+    assert iv1["account"] == A and not iv1["reset"]
+    assert iv2["reset"] and iv2["dpct"] == -7, "pct 감소 → 5h 리셋 플래그"
+    assert iv2["tokens"] == 50
+    # limit: 최근 1구간만
+    assert [i["t1"] for i in usagedb.reconcile(conn, limit=1)] == [900.0]
+    conn.close()
+
+
+async def test_reconcile_mixed_account_sums_all():
+    """양 끝 스냅샷 계정이 다르거나 미상이면 계정 필터 없이 전체 합 + account=None
+    (혼합 표시는 표시층 몫) — 잘못된 한쪽 계정으로 좁혀 과소집계하지 않는다."""
+    conn = usagedb.connect(":memory:")
+    usagedb.insert_limits(conn, usagedb.snap_from_usage(
+        {"session": {"pct": 1, "reset": None}, "account": "a@x.org"}, 100.0,
+        "probe"))
+    usagedb.insert_limits(conn, usagedb.snap_from_usage(
+        {"session": {"pct": 3, "reset": None}}, 500.0, "inline"))  # 계정 미상
+    usagedb.insert(conn, _rec(200.0, 0, 1, 1, "a@x.org", 100))
+    usagedb.insert(conn, _rec(300.0, 0, 2, 2, "b@y.org", 40))
+    ivs = usagedb.reconcile(conn)
+    assert len(ivs) == 1
+    assert ivs[0]["account"] is None and ivs[0]["tokens"] == 140
+    conn.close()
+
+
+async def test_reconcile_skips_snapshot_without_session_pct():
+    """세션 pct 없는 스냅샷(주간만 잡힌 인라인 등)은 대사 축에서 제외 — 남은
+    스냅샷끼리 이어 구간을 만든다."""
+    conn = usagedb.connect(":memory:")
+    usagedb.insert_limits(conn, usagedb.snap_from_usage(
+        {"session": {"pct": 1, "reset": None}}, 100.0, "probe"))
+    usagedb.insert_limits(conn, usagedb.snap_from_usage(
+        {"week_all": {"pct": 50, "reset": None}}, 200.0, "inline"))  # 세션 없음
+    usagedb.insert_limits(conn, usagedb.snap_from_usage(
+        {"session": {"pct": 4, "reset": None}}, 300.0, "probe"))
+    ivs = usagedb.reconcile(conn)
+    assert len(ivs) == 1 and (ivs[0]["t0"], ivs[0]["t1"]) == (100.0, 300.0)
+    conn.close()

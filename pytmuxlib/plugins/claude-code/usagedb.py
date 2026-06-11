@@ -305,3 +305,41 @@ def prune_limits(conn, before_ts: float) -> int:
 def limits_count(conn) -> int:
     """스냅샷 총수(테스트용)."""
     return int(conn.execute("SELECT COUNT(*) AS n FROM limits").fetchone()["n"])
+
+
+def reconcile(conn, limit: int | None = 20) -> list:
+    """대사(reconcile) 구간 목록 — S6 T2(docs/TOKEN_ACCOUNTING_ACCURACY_SCENARIO.md §4).
+
+    연속한 실측 스냅샷 쌍(세션 pct 가 있는 것만) 사이 구간마다, **실측 Δpct(세션
+    5h)** 와 그 구간에 적힌 **스크랩 committed Σ** 를 나란히 돌려준다. 두 값은 의미가
+    달라(점유 % vs streaming 추정) 절대 일치를 기대하지 않는다 — 목적은 스크랩 추정이
+    상대 지표(활동량)로 쓸 만한지(상관)를 데이터로 판단하는 것(§0-3 강등의 근거).
+
+    계정: 양 끝 스냅샷 계정이 같고 비어있지 않으면 그 계정의 스크랩만 합산(같은 계정
+    한정 — 다른 계정 패널의 토큰이 섞여 비교가 무의미해지는 것 방지). 다르거나 미상
+    이면 전체 합 + account=None(혼합 표시는 표시층 몫).
+
+    reset: 실측 pct 가 감소한 구간(5h 창 리셋이 낀 것) — Δpct 비교가 무의미하므로
+    표시층이 구분하도록 플래그만 단다. limit=N 이면 최근 N 구간."""
+    snaps = [s for s in query_limits(conn) if s["session_pct"] is not None]
+    out = []
+    for a, b in zip(snaps, snaps[1:]):
+        acct = (b["account"]
+                if b["account"] and a["account"] == b["account"] else None)
+        if acct:
+            cur = conn.execute(
+                "SELECT COALESCE(SUM(tokens),0) AS s FROM usage "
+                "WHERE ts > ? AND ts <= ? AND account = ?",
+                (a["ts"], b["ts"], acct))
+        else:
+            cur = conn.execute(
+                "SELECT COALESCE(SUM(tokens),0) AS s FROM usage "
+                "WHERE ts > ? AND ts <= ?", (a["ts"], b["ts"]))
+        out.append({"t0": a["ts"], "t1": b["ts"], "account": acct,
+                    "pct0": int(a["session_pct"]), "pct1": int(b["session_pct"]),
+                    "dpct": int(b["session_pct"]) - int(a["session_pct"]),
+                    "tokens": int(cur.fetchone()["s"]),
+                    "reset": b["session_pct"] < a["session_pct"]})
+    if limit is not None and limit >= 0:
+        out = out[-limit:]
+    return out

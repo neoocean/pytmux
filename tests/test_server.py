@@ -3112,3 +3112,29 @@ async def test_header_reservation_skipped_on_short_panel():
             p, p.rows + (1 if p._hdr_reserved else 0)) == p._hdr_reserved
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_token_log_reply_includes_reconcile():
+    """S6 T2: request_token_log 회신에 대사 구간(reconcile)이 실린다 — 실측 스냅샷
+    Δpct 와 그 구간 스크랩 Σ(같은 계정 한정). 플러그인 handle_server_request 훅 경유
+    (코어 serverio 는 내용을 모름)."""
+    from pytmuxlib import usagedb
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        conn = srv._tokens_db_conn()
+        A = "me@woojinkim.org"
+        for ts, pct in [(100.0, 5), (500.0, 9)]:
+            usagedb.insert_limits(conn, usagedb.snap_from_usage(
+                {"session": {"pct": pct, "reset": "2pm"}, "account": A},
+                ts, "probe"))
+        usagedb.insert(conn, {"ts": 200.0, "tab": 0, "pane": 1, "session": 1,
+                              "account": A, "tokens": 300})
+        resp = srv.plugins.handle_server_request(
+            srv, sess, "request_token_log", {"limit": 100})
+        assert resp and resp["t"] == "token_log"
+        recon = resp.get("reconcile")
+        assert isinstance(recon, list) and len(recon) == 1, recon
+        assert recon[0]["dpct"] == 4 and recon[0]["tokens"] == 300, recon[0]
+    finally:
+        await teardown(srv, task, sock)

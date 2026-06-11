@@ -364,15 +364,19 @@ class TokenLogScreen(ModalScreen):
         "tab_week": ("주", "주"), "tab_month": ("월", "월"),
         "tab_acct": ("계정", "계"), "tab_panel": ("패널", "패"),
         "tab_order": ("정렬", "정"), "tab_usage": ("/usage", "U"),
-        "tab_saver": ("시나리오", "S"),
+        "tab_saver": ("시나리오", "S"), "tab_recon": ("대사", "R"),
     }
     # [패널]/계정 그룹이 많을 때 상위 N + '기타'로 접어 길이 폭주를 막는다(설계 §4).
     _GROUP_TOP = 8
 
-    def __init__(self, records, usage=None, total_all=None, accounts_total=None):
+    def __init__(self, records, usage=None, total_all=None, accounts_total=None,
+                 reconcile=None):
         super().__init__()
         self._records = records or []
         self._usage = usage          # M19 그림자 /usage 한도(dict|None)
+        # S6 T2: 대사 구간(서버 usagedb.reconcile 결과). [대사] 뷰 전용 진단 데이터.
+        self._reconcile = reconcile or []
+        self._recon_mode = False     # True 면 표가 대사 구간을 보여준다([r] 토글)
         # Phase B: 서버가 SQL 로 집계한 정확한 전체 이력 합(레코드 cap 무관). 받은
         # 레코드(_records)는 최근 N 건이라 그 Σ 는 과소표시될 수 있으므로, lifetime
         # 합은 이 값을 쓴다(None=구버전 서버 → 레코드 합으로 폴백).
@@ -428,6 +432,8 @@ class TokenLogScreen(ModalScreen):
                     yield Label("/usage", id="tab_usage", classes="tkbbtn",
                                 markup=False)
                     yield Label("시나리오", id="tab_saver", classes="tkbbtn",
+                                markup=False)
+                    yield Label("대사", id="tab_recon", classes="tkbtab",
                                 markup=False)
             yield Static("", id="tktop", markup=False)
             table = DataTable(id="tktable", zebra_stripes=True,
@@ -504,6 +510,8 @@ class TokenLogScreen(ModalScreen):
                 self._dim == "session", "tkbtab-active")
             self.query_one("#tab_order", Label).set_class(
                 self._order == "tokens", "tkbtab-active")
+            self.query_one("#tab_recon", Label).set_class(
+                self._recon_mode, "tkbtab-active")
         except Exception:
             pass
 
@@ -558,10 +566,35 @@ class TokenLogScreen(ModalScreen):
             return p
         return f"{p} {bar(tok, vmax, cells)}"
 
+    def _refresh_recon(self, table):
+        """[대사] 뷰(S6 T2): 연속 실측 스냅샷 구간마다 실측 Δ%(세션 5h)와 그 구간의
+        스크랩 추정 Σ를 나란히 — 두 출처의 추세 상관을 눈으로 확인하는 진단 표.
+        절대 일치는 기대하지 않는다(의미가 다른 두 수치 — 시나리오 §0-1)."""
+        rows = usagelog.recon_view(self._reconcile)
+        table.add_column("구간", key="span", width=25)
+        table.add_column("실측(세션 5h)", key="meas", width=16)
+        table.add_column("추정Σ", key="est", width=8)
+        table.add_column("계정", key="note", width=16)
+        if not rows:
+            table.add_row("(대사할 실측 스냅샷 구간이 없습니다 — "
+                          "/usage 실측이 2회 이상 쌓이면 생깁니다)", "", "", "")
+        else:
+            for span, meas, est, note in rows:
+                table.add_row(span, meas, est, self._trunc(note, 16))
+        self.query_one("#tklogtitle", Label).update("토큰 대사 · 실측Δ% vs 추정Σ")
+        self.query_one("#tktop", Static).update(
+            "실측(/usage Δ%)과 추정(스크랩 ~Σ)은 의미가 다른 두 출처 — "
+            "절대 일치가 아니라 추세 상관을 봅니다")
+        self.query_one("#tkhint", Static).update(
+            "r집계로 돌아가기 · u/usage 갱신 · Esc닫기")
+
     async def _refresh(self):
         self._sync_tabs()
         table = self.query_one(DataTable)
         table.clear(columns=True)
+        if self._recon_mode:
+            self._refresh_recon(table)
+            return
         label_w, bar_cells = self._metrics()
         v = usagelog.agg_view(self._records, self._bucket, self._account,
                               self._dim, self._order, top=self._GROUP_TOP)
@@ -617,7 +650,8 @@ class TokenLogScreen(ModalScreen):
             f"계정 {acct} · {order_l} · {sigma}"]
         self.query_one("#tktop", Static).update("\n".join(top))
         self.query_one("#tkhint", Static).update(
-            "h시간 d일 w주 m월 · a계정 p패널 o정렬 · u/usage s시나리오 · Esc닫기")
+            "h시간 d일 w주 m월 · a계정 p패널 o정렬 · u/usage s시나리오 r대사 · "
+            "Esc닫기")
 
     def on_click(self, event: events.Click):
         # 마우스 클릭: 닫기 [x]·서브탭(버킷)·동작 버튼을 위젯 id 로 분기한다.
@@ -657,6 +691,11 @@ class TokenLogScreen(ModalScreen):
         elif wid == "tab_saver":
             event.stop()
             self.app.push_screen(ClaudeSaverScreen())
+        elif wid == "tab_recon":
+            event.stop()
+            # S6 T2: 집계 ↔ 대사(실측Δ% vs 추정Σ) 뷰 토글.
+            self._recon_mode = not self._recon_mode
+            self.run_worker(self._refresh())
 
     async def on_key(self, event: events.Key):
         k = event.key
@@ -686,6 +725,12 @@ class TokenLogScreen(ModalScreen):
             event.stop()
             # M18-C: 사용량 통계에서 바로 과사용 완화 시나리오 on/off 로(§9.4).
             self.app.push_screen(ClaudeSaverScreen())
+            return
+        if k == "r":
+            event.stop()
+            # S6 T2: 집계 ↔ 대사(실측Δ% vs 추정Σ) 뷰 토글.
+            self._recon_mode = not self._recon_mode
+            await self._refresh()
             return
         if k == "u":
             event.stop()

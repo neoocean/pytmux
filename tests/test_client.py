@@ -873,6 +873,38 @@ async def test_token_log_screen_aggregates_and_switches():
     await _with_app(body)
 
 
+async def test_token_log_recon_view_toggle():
+    """S6 T2: [r]/[대사] 가 집계 ↔ 대사 뷰를 토글한다 — 대사 뷰는 실측 Δ%(리셋
+    구분)와 추정 ~Σ 를 나란히 보이고, 다시 [r] 로 집계로 돌아온다(닫히지 않음)."""
+    async def body(app, pilot, srv):
+        base = 1_700_000_000.0
+        recs = [{"ts": base + 200, "tab": 0, "pane": 1, "session": 1,
+                 "account": "me@x.org", "tokens": 1500}]
+        app._want_token_log = True
+        app._dispatch({"t": "token_log", "records": recs, "reconcile": [
+            {"t0": base, "t1": base + 3600, "account": "me@x.org",
+             "pct0": 5, "pct1": 9, "dpct": 4, "tokens": 1500, "reset": False},
+            {"t0": base + 3600, "t1": base + 7200, "account": None,
+             "pct0": 9, "pct1": 2, "dpct": -7, "tokens": 50, "reset": True},
+        ]})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "TokenLogScreen"
+        await pilot.press("r")
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1] is scr, "[r] 는 닫지 않음"
+        joined = _tok_text(scr)
+        assert "5%→9% (Δ+4)" in joined, joined
+        assert "9%→2% (리셋)" in joined, joined
+        assert "~1.5k" in joined and "~50" in joined, joined
+        assert "계정혼합/미상" in joined, joined
+        await pilot.press("r")                     # 집계 뷰로 복귀
+        await pilot.pause(0.1)
+        joined2 = _tok_text(scr)
+        assert "Δ+4" not in joined2 and "Σ1.5k" in joined2, joined2
+    await _with_app(body)
+
+
 async def test_token_log_lifetime_total_from_server_agg():
     """Phase B: 서버가 보낸 total_all(전체 이력 합, SQL 집계)이 받은 레코드 cap 합보다
     크면, Σ 는 전체 이력 합을 보이고 표시 레코드 합을 병기한다(과소표시 방지)."""

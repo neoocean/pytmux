@@ -261,3 +261,29 @@ def summary_lines(records: list, bucket: str = "day",
         bucket_total = sum(per.values())
         lines.append(f"{bk}  Σ{_fmt_tokens(bucket_total)}   {parts}")
     return lines
+
+
+def recon_view(intervals: list) -> list:
+    """대사(reconcile) 구간 → 표시용 행 (구간, 실측, 추정Σ, 비고) 튜플 목록 — S6 T2.
+
+    usagedb.reconcile 의 dict 목록을 받아 TokenLogScreen [대사] 표가 그대로 꽂을
+    수 있는 문자열 4튜플로 푼다(순수 함수 — 헤드리스 테스트 대상). 실측과 추정은
+    의미가 다른 두 출처라 같은 행에서도 라벨/형식을 구분한다: 실측은 'p0%→p1%
+    (Δ±n)', 추정은 '~Σ'. 리셋 구간(pct 감소)은 Δ 대신 '리셋' — 5h 창이 새로
+    시작돼 Δpct 비교가 무의미하다. 계정 미상/혼합(account None)은 비고에 표시."""
+    import time as _t
+    rows = []
+    for iv in intervals:
+        span = "{}→{}".format(
+            _t.strftime("%m-%d %H:%M", _t.localtime(iv["t0"])),
+            _t.strftime("%H:%M" if _t.localtime(iv["t0"])[:3]
+                        == _t.localtime(iv["t1"])[:3] else "%m-%d %H:%M",
+                        _t.localtime(iv["t1"])))
+        if iv.get("reset"):
+            measured = f"{iv['pct0']}%→{iv['pct1']}% (리셋)"
+        else:
+            measured = f"{iv['pct0']}%→{iv['pct1']}% (Δ{iv['dpct']:+d})"
+        est = "~" + _fmt_tokens(iv.get("tokens", 0))
+        note = iv.get("account") or "계정혼합/미상"
+        rows.append((span, measured, est, note))
+    return rows
