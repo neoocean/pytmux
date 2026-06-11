@@ -84,6 +84,29 @@ async def test_claude_limit_precision():
         " ✗ Claude usage limit reached. Your limit will reset at 5pm")
 
 
+async def test_claude_api_error():
+    """전송 에러(API error·rate limit·overloaded) 감지(요청 2026-06-12) — 1분 뒤 "계속"
+    자동 재시도 트리거. 사용량 5h 배너("usage limit reached")는 안 잡고, 사용자 입력·
+    소스/diff 줄은 제외(claude_limit 과 동일 _claude_body 가드)."""
+    from pytmuxlib.claude import claude_api_error
+    # 전송 에러 형태들
+    assert claude_api_error("⎿ API Error: Connection error.")
+    assert claude_api_error("API Error (500 internal_server_error)")
+    assert claude_api_error("rate_limit_error: please retry")
+    assert claude_api_error("You are rate limited. Try again shortly.")
+    assert claude_api_error("Overloaded (overloaded_error)")
+    # 5h 사용량 배너는 전송 에러가 아니다(autoresume 가 reset 시각으로 다룸)
+    assert not claude_api_error("Claude usage limit reached. resets at 5pm")
+    assert not claude_api_error("You've used 93% of your session limit")
+    # 사용자 입력(>)·소스/diff 줄의 'rate limit'·'api error' 는 무시(오탐 방지)
+    assert not claude_api_error("> how do I handle an api error in my code?")
+    assert not claude_api_error("│ > rate limit me please")
+    assert not claude_api_error('57 +    assert "API Error" in resp')
+    assert not claude_api_error("- # overloaded retry logic")
+    # 정상 화면은 False
+    assert not claude_api_error("? for shortcuts\n⏵⏵ auto mode on")
+
+
 async def test_claude_state():
     assert claude_state("blah blah\n? for shortcuts") == "idle"
     assert claude_state("Compacting… (esc to interrupt)") == "busy"

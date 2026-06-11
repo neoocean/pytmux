@@ -102,6 +102,10 @@ def init_pane(pane) -> None:
     # 코어 Pane 에 남고, 여기선 메시지/보류만 둔다.)
     pane.resume_msg = "continue"
     pane._resume_pending = False
+    # 전송 에러(API error/rate limit) 자동 재시도(요청): _retry_handle=1분 뒤 "계속"
+    # 주입 예약 call_later 핸들(에러 해소·busy 복귀 시 cancel), _retry_pending=예약 보류.
+    pane._retry_handle = None
+    pane._retry_pending = False
     # Claude 스캔 버퍼·마지막 스캔 시 본 feed seq(dirty 게이팅; 코어 _feed_seq 와 비교).
     pane._scanbuf = ""
     pane._scan_seq = -1

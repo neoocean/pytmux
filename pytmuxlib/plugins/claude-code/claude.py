@@ -113,6 +113,28 @@ def claude_context_hardstop(text: str) -> bool:
             or ("context" in low and "limit" in low and "to continue" in low))
 
 
+# ---- 전송 에러(API error / rate limit / overloaded) 자동 재시도(요청) ----
+# Claude Code 가 서버측 전송 에러(API Error·429 rate limit·Overloaded)로 응답을 못 마치고
+# 멈춘 상태. 사용량 5h 리밋(claude_limit)과는 **다른 신호** — 그건 reset 시각까지 기다려야
+# 풀리고 autoresume 가 그 시각으로 다루지만, 전송 에러는 보통 잠깐 뒤 재시도하면 풀린다.
+# 그래서 별도 파서로 두고, 서버가 **고정 1분 뒤 "계속" 을 주입**해 이어가게 한다(요청).
+_API_ERROR_RE = re.compile(
+    r"\bapi\s+error\b"                          # "API Error", "⎿ API Error: …"
+    r"|\brate[\s_\-]*limit(?:ed|_error)?\b"     # rate limit / rate limited / rate_limit_error
+    r"|\boverloaded(?:_error)?\b",              # overloaded / overloaded_error(529)
+    re.I)
+
+
+def claude_api_error(text: str) -> bool:
+    """화면이 **전송 에러(API error·rate limit·overloaded)** 로 멈춘 상태면 True.
+
+    claude_limit(사용량 5h 리밋)·claude_context_hardstop(컨텍스트 꽉 참)과 다른 신호다.
+    사용자 입력(>)·소스/diff 줄을 제외한 Claude 출력에서만 본다(claude_limit 과 동일
+    _claude_body 가드 — 사용자가 친 'rate limit'·테스트/소스 리터럴 오탐 방지). 호출부는
+    사용량 리밋(claude_limit) 이 아닐 때만 이 신호로 1분 뒤 "계속" 재시도를 건다."""
+    return bool(_API_ERROR_RE.search(_claude_body(text)))
+
+
 _CTX_PCT_RES = [
     re.compile(r"context\s+(?:low|left|remaining)[^0-9%]*?(\d{1,3})\s*%", re.I),
     re.compile(r"(\d{1,3})\s*%\s*(?:context|remaining|"

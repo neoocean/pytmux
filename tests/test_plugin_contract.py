@@ -183,7 +183,9 @@ async def test_plugin_opts_namespace_and_migration_shim():
     # ③ serialize 는 현재 server 값을 돌려준다(코어가 plugin_opts 밑에 불투명 저장).
     out = reg.server_opts_serialize(s2)
     assert out["usage_gate_session_pct"] == 90
-    assert set(out) == {"usage_gate_session_pct", "usage_gate_week_pct"}
+    assert set(out) == {"usage_gate_session_pct", "usage_gate_week_pct",
+                        "claude_auto_retry"}
+    assert out["claude_auto_retry"] is True   # 기본 ON(opts 부재 시)
     # §7-4 deprecate shim: 구 opts.json 에 남은 token_budget_* 는 무시(속성 미설치).
     s4 = _S()
     reg.server_opts_init(s4, {"token_budget_day": 111,

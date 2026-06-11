@@ -23,7 +23,7 @@ import subprocess
 
 from pytmuxlib import ipc, proc, pty_backend
 from . import tokens, usagedb, usagelog   # S5 T5: 토큰 DB 백엔드도 플러그인 소속(물리 이전)
-from .claude import (claude_account, claude_awaiting_answer,
+from .claude import (claude_account, claude_api_error, claude_awaiting_answer,
                      claude_context_hardstop, claude_context_pct,
                      claude_feedback_prompt, fmt_unknown_update,
                      claude_model, claude_prompt, claude_perm_mode,
@@ -141,6 +141,56 @@ class ServerClaudeMixin:
             pane.pty.write((pane.resume_msg + "\r").encode("utf-8"))
         except OSError:
             pass
+
+    # ---- 전송 에러(API error/rate limit/overloaded) 자동 재시도(요청 2026-06-12) ----
+    # 사용량 5h 리밋(autoresume, reset 시각 대기)과 별개로, 전송 에러로 멈추면 **고정
+    # 1분 뒤 "계속" 을 주입**해 이어가게 한다. 토글 claude_auto_retry(기본 ON).
+    _RETRY_DELAY = 60.0     # 에러 관측 후 "계속" 주입까지(요청: 1분)
+    _RETRY_MSG = "계속"      # 재시도 프롬프트(요청)
+
+    def _maybe_schedule_retry(self, pane: Pane):
+        """전송 에러가 관측됐을 때(호출부가 보장) 1분 뒤 "계속" 주입을 1회 예약한다
+        (이미 예약 중이면 유지 — 디바운스). 토글이 꺼졌으면 무동작."""
+        if not getattr(self, "claude_auto_retry", True) or pane._retry_pending:
+            return
+        pane._retry_pending = True
+        pane._retry_handle = self.loop.call_later(
+            self._RETRY_DELAY, self._fire_retry, pane)
+
+    def _cancel_retry(self, pane: Pane):
+        """무장된 재시도 예약을 취소한다(에러 해소·busy 복귀·세션 종료 시)."""
+        h = getattr(pane, "_retry_handle", None)
+        if h is not None:
+            h.cancel()
+            pane._retry_handle = None
+        pane._retry_pending = False
+
+    def _fire_retry(self, pane: Pane):
+        """1분 만료: 화면이 **여전히** 전송 에러면 "계속"+Enter 를 주입한다. 그새
+        Claude 가 스스로 재시도해 busy/idle 로 돌아갔거나 화면이 바뀌었으면(에러 해소)
+        주입하지 않는다(작업 중 끼어들기 방지 — autoresume _fire_resume 와 같은 가드)."""
+        pane._retry_pending = False
+        pane._retry_handle = None
+        if pane.pty is None:
+            return
+        # 그새 Claude 가 스스로 재시도해 에러가 사라졌으면(busy/idle 복귀) 주입 안 함
+        # (작업 중 끼어들기 방지 — autoresume _fire_resume 와 같은 발화직전 재확인).
+        if not claude_api_error(screen_text(pane.screen)):
+            return
+        try:
+            pane.pty.write((self._RETRY_MSG + "\r").encode("utf-8"))
+        except OSError:
+            pass
+
+    def set_claude_auto_retry(self, value=None):
+        """전송 에러 자동 재시도 토글(요청). 끄면 무장된 모든 패널 예약을 해제. opts 영속."""
+        self.claude_auto_retry = (not self.claude_auto_retry) \
+            if value is None else bool(value)
+        if not self.claude_auto_retry:
+            for p in self._all_panes():
+                self._cancel_retry(p)
+        self._save_opts()
+        return self.claude_auto_retry
 
     def set_autoresume(self, sess: Session, value=None, msg: str | None = None):
         win = sess.active_window
@@ -953,6 +1003,18 @@ class ServerClaudeMixin:
                 # 막지만(#6), 예약을 일찍 거둬 헤더 카운트다운도 즉시 사라지게 한다.
                 if new_cl != "limit" and p._resume_handle is not None:
                     self._cancel_resume(p)
+                # 전송 에러(API error/rate limit/overloaded) 자동 재시도(요청): 에러로
+                # 멈추면 1분 뒤 "계속" 주입을 예약하고, 에러 해소(busy 복귀 등) 시 취소한다.
+                # 게이트는 new_cl 이 아니라 **_hdr_claude**(이 패널이 Claude 임 — 디바운스):
+                # API 에러 화면은 idle/busy footer 가 없어 claude_state=None 일 수 있고,
+                # Claude 아닌 셸이 우연히 "API Error" 를 찍어도 오발화하지 않게 한다.
+                # 5h 사용량 배너("usage limit reached")는 claude_api_error 에 안 잡히고,
+                # "rate limit exceeded" 처럼 둘 다 걸리는 경우만 autoresume 가 이미 재개를
+                # 무장(_resume_pending)했으면 양보해 중복 주입을 막는다(reset 시각으로 다룸).
+                if p._hdr_claude and claude_api_error(txt) and not p._resume_pending:
+                    self._maybe_schedule_retry(p)
+                elif p._retry_handle is not None:
+                    self._cancel_retry(p)
                 # 자동 doc→/clear(§10): idle 이탈(busy/limit/종료) 시 무장된 타이머를
                 # 즉시 해제한다 — idle 이 끊기면 "N초 지속" 전제가 깨진다. 권한모드
                 # 자동전환 시도 카운터도 idle 이탈 시 리셋(다음 idle 진입에 다시 시도).

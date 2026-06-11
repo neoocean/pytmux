@@ -52,6 +52,8 @@ COMMANDS = [
     ("auto-hardstop", "컨텍스트 하드스톱('Context limit reached') 시 즉시 자동 "
                       "/compact on/off (auto-hardstop on|off|toggle, 기본 on)",
                       "Claude"),
+    ("auto-retry", "전송 에러(API error·rate limit) 시 1분 뒤 '계속' 자동 주입 on/off "
+                   "(auto-retry on|off|toggle, 기본 on)", "Claude"),
     ("claude-auto-mode", "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off "
                          "(claude-auto-mode on|off|toggle)", "Claude"),
     ("auto-launch", "새 Claude 세션 시작 시 /rc(원격 제어)+권한모드 auto 1회 자동 적용 "
@@ -69,6 +71,7 @@ COMMAND_OPTIONS = {
     "prompt-clear": [{"key": "state", "label": "클리어모드", "choices": _ONOFF}],
     "auto-doc-clear": [{"key": "state", "label": "자동클리어", "choices": _ONOFF}],
     "auto-hardstop": [{"key": "state", "label": "하드스톱복구", "choices": _ONOFF}],
+    "auto-retry": [{"key": "state", "label": "자동재시도", "choices": _ONOFF}],
     "claude-auto-mode": [{"key": "state", "label": "오토모드", "choices": _ONOFF}],
     "auto-launch": [{"key": "state", "label": "자동셋업", "choices": _ONOFF}],
     "claude-header": [{"key": "state", "label": "헤더", "choices": _ONOFF}],
@@ -99,6 +102,7 @@ i18n.register({
         "cmd.auto-doc-clear": "Auto document + /clear when Claude idle 30s on/off (auto-doc-clear on|off|toggle)",
         "cmd.auto-compact": "Auto /compact when Claude idle 30s on/off (auto-compact on|off|toggle)",
         "cmd.auto-hardstop": "Auto /compact immediately on context hardstop ('Context limit reached') on/off (auto-hardstop on|off|toggle, default on)",
+        "cmd.auto-retry": "Auto-inject '계속' 1 min after a transmission error (API error·rate limit) on/off (auto-retry on|off|toggle, default on)",
         "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",
         "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
     },
@@ -113,6 +117,7 @@ i18n.register({
         "자동재개": "Auto-resume", "클리어모드": "Clear mode",
         "자동클리어": "Auto-clear", "하드스톱복구": "Hardstop recovery",
         "오토모드": "Auto mode", "자동셋업": "Auto setup", "헤더": "Header",
+        "자동재시도": "Auto-retry",
     },
 })
 
@@ -540,7 +545,10 @@ class _ClaudeCodePlugin:
                   # S6 T4 실측 한도 게이트(%): 세션 기본 95(ON)·주간 기본 0(끔)
                   # — 2026-06-10 사용자 결정. 0=그 축 끔.
                   ("usage_gate_session_pct", 95, int),
-                  ("usage_gate_week_pct", 0, int))
+                  ("usage_gate_week_pct", 0, int),
+                  # 전송 에러(API error/rate limit) 자동 재시도(요청 2026-06-12): 에러로
+                  # 멈추면 1분 뒤 "계속" 주입. 기본 ON.
+                  ("claude_auto_retry", True, bool))
 
     def server_opts_init(self, server, opts):
         """opts.json → server 속성 설치(코어 __init__ 의 _opts.get 들을 이전).
@@ -696,6 +704,9 @@ class _ClaudeCodePlugin:
             return "send_full"
         if action == "set_auto_hardstop":
             server.set_auto_hardstop(msg.get("value"))
+            return "send_full"
+        if action == "set_claude_auto_retry":
+            server.set_claude_auto_retry(msg.get("value"))
             return "send_full"
         if action == "set_claude_auto_mode":
             server.set_claude_auto_mode(msg.get("value"))
@@ -949,6 +960,8 @@ class _ClaudeCodePlugin:
             app.send_cmd("set_auto_compact", value=_onoff(args))
         elif c in ("auto-hardstop", "auto-hard", "hardstop"):
             app.send_cmd("set_auto_hardstop", value=_onoff(args))
+        elif c in ("auto-retry", "retry"):
+            app.send_cmd("set_claude_auto_retry", value=_onoff(args))
         elif c in ("claude-auto-mode", "auto-mode"):
             app.send_cmd("set_claude_auto_mode", value=_onoff(args))
         elif c == "prompt-clear-message":

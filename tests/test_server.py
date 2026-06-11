@@ -1018,6 +1018,66 @@ async def test_autoresume_schedules_on_limit_reset():
         await teardown(srv, task, sock)
 
 
+async def test_auto_retry_on_api_error():
+    """전송 에러 자동 재시도(요청 2026-06-12): Claude 패널에 API error/rate limit 가 뜨면
+    _scan_claude 가 1분 뒤 _fire_retry 를 예약하고, _fire_retry 는 화면이 **여전히** 에러일
+    때만 "계속"+Enter 를 주입한다. 에러 해소(busy 복귀) 시 예약 취소, 토글 off 면 미예약."""
+    import types
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        scheduled = []
+
+        class _FakeLoop:
+            def call_later(self, delay, fn, *a):
+                scheduled.append((delay, fn, a))
+                return types.SimpleNamespace(cancel=lambda: None)
+        srv.loop = _FakeLoop()
+        assert srv.claude_auto_retry is True                 # 기본 ON
+
+        # 먼저 Claude 패널임을 확립(_hdr_claude=True) — busy 한 프레임
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (esc to interrupt)\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._hdr_claude is True
+        # API 에러 화면 → 1분 뒤 _fire_retry 예약
+        p.feed("\x1b[2J\x1b[H⎿ API Error: Connection error.\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._retry_pending is True, "에러 시 재시도 예약"
+        assert scheduled and scheduled[-1][0] == srv._RETRY_DELAY
+        assert scheduled[-1][1] == srv._fire_retry
+        # 중복 예약 방지
+        n = len(scheduled)
+        p.feed("\x1b[2J\x1b[H⎿ API Error: Connection error.\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert len(scheduled) == n, "이미 무장이면 재예약 안 함"
+
+        # _fire_retry: 화면이 여전히 에러 → "계속\r" 주입
+        writes = []
+        p.pty.write = lambda b: writes.append(b)
+        srv._fire_retry(p)
+        assert writes == ["계속\r".encode("utf-8")], writes
+
+        # 에러 해소(busy 복귀) → 예약 취소
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (esc to interrupt)\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._retry_handle is None and p._retry_pending is False
+        # 에러 아닐 때 _fire_retry 는 주입 안 함
+        writes.clear()
+        srv._fire_retry(p)
+        assert writes == [], "에러 해소 후엔 주입 안 함"
+
+        # 토글 off → 예약 안 함(무장 해제)
+        srv.set_claude_auto_retry(False)
+        scheduled.clear()
+        p.feed("\x1b[2J\x1b[HAPI Error (500 internal)\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert not scheduled and p._retry_pending is False
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_scan_claude_gating_skips_settled_pane():
     """B1 성능: 출력이 없으면(settled) _scan_claude 가 비싼 화면 파싱(claude_state)을
     건너뛴다. 새 출력이 오면 다시 스캔. 전이 디바운스(done 알림 등)는 별도 테스트가
