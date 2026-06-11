@@ -21,6 +21,7 @@ i18n.register({
         "claude.auto_resume": "자동재개",
         "claude.auto_cleanup": "자동정리",
         "claude.countdown": " ⏳ {label} {eta}s(입력=취소) ",
+        "claude.limit_remaining": "5h {pct}% 남음",
     },
     "en": {
         "claude.limit_reached": " ⚠ Limit reached ",
@@ -28,6 +29,7 @@ i18n.register({
         "claude.auto_resume": "auto-resume",
         "claude.auto_cleanup": "auto-cleanup",
         "claude.countdown": " ⏳ {label} {eta}s (input=cancel) ",
+        "claude.limit_remaining": "5h {pct}% left",
     },
 })
 
@@ -130,7 +132,7 @@ def render_segs(status, segs, w):
     이어 그린 뒤 코어가 NEST/윈도우 목록을 계속 붙인다. 클릭존은 누적 폭으로 계산한다."""
     from rich.segment import Segment
     from rich.style import Style
-    from pytmuxlib.clientutil import _char_cells, _fmt_tokens, theme_color
+    from pytmuxlib.clientutil import _char_cells, theme_color
     tc = lambda n: theme_color(status, n)  # noqa: E731
     # 활성 Claude 패널: 모델(M14c) + 컨텍스트 사용량(best-effort) + 세션 누적(#3, Σ).
     uparts = []
@@ -138,23 +140,26 @@ def render_segs(status, segs, w):
         # 모델 배지는 좁은 폭에선 생략(자리 절약). claude_usage 가 있을 때만.
         if status.claude_model and status.claude_usage and w >= 60:
             uparts.append(status.claude_model)
-        if status.claude_usage:
-            uparts.append(status.claude_usage)
-        # S6 T3 표시 1차화: 실측 세션(5h) % 가 **주 표시** — 추정 누계(~Σ)보다 앞.
-        # 실측 없으면 생략(지어내지 않음 — 분모 근사 폐기로 이 값은 항상 /usage 실측).
+        # 좌하단 표기(사용자 요청 2026-06-11): 하이라이트 패널의 계정 기준으로 ①현재
+        # 패널 세션의 컨텍스트 비율% ②5시간 리밋까지 남은 비율%만 보인다. **토큰 수치는
+        # 직접 표시하지 않는다**(누계 ~Σ 제거). 기록(계정·시간·토큰 단위)은 서버측
+        # _log_tokens 가 그대로 유지 — 이건 표시만 바꾼 것이고 클릭하면 토큰 로그가 열린다.
+        usage_parts = []
+        # ① 컨텍스트 비율%: claude_usage 가 'ctx…' 일 때만(토큰 폴백 'Xk tok' 은
+        #    토큰 수치라 표시 안 함). best-effort 라 없으면 생략.
+        cu = status.claude_usage
+        if isinstance(cu, str) and cu.startswith("ctx"):
+            usage_parts.append(cu)
+        # ② 5시간 리밋까지 **남은** 비율%(실측만; 100 - 사용%). 실측 없으면 생략
+        #    (지어내지 않음 — 분모 근사 폐기로 이 값은 항상 /usage 실측).
         if status.tok5h_pct is not None:
-            uparts.append(f"{status.tok5h_pct}%/5h")
-        if status.claude_tokens:
-            # 기호와 숫자 사이 한 칸 띄움(§10). 계정이 있으면 @계정 곁들임. 폭이
-            # 넉넉하면(≥80칸) 약어(6.3M) 대신 세 자리 콤마 전체 숫자로(#30).
-            # ~ 접두사(S6 T3): 스크랩 누계는 패널별 활동량 **추정**이지 과금 실측이
-            # 아니다 — 실측(5h%)과 한 줄에 섞이므로 라벨로 구분한다(원칙 2).
-            num = (f"{status.claude_tokens:,}" if w >= 80
-                   else _fmt_tokens(status.claude_tokens))
-            tk = "~Σ " + num
-            if status.claude_account:
-                tk += " @" + status.claude_account
-            uparts.append(tk)
+            usage_parts.append(
+                i18n.t("claude.limit_remaining",
+                       pct=max(0, 100 - int(status.tok5h_pct))))
+        # 표시 %들의 기준 계정(하이라이트 패널의 계정)을 마지막 항목에 곁들임.
+        if usage_parts and status.claude_account:
+            usage_parts[-1] += " @" + status.claude_account
+        uparts.extend(usage_parts)
     if uparts:
         sec = Style(color="white", bgcolor=tc("secondary"), bold=True)
         hi = Style(color="black", bgcolor=tc("warning"), bold=True)
