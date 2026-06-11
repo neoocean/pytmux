@@ -31,6 +31,42 @@ _BUSY_SPINNER_RE = re.compile(
 )
 
 
+# ---- §3.2: 사용량 리밋(차단) 정밀 판정 ----
+# 예전엔 `"limit" in low AND any(reset/again/…)` 로 화면 아무 곳의 두 키워드 공존만
+# 봐서 오탐이 많았다: ① 사용률 경고("used 93% of your session limit · resets …", 차단
+# 아님)를 차단으로 오인 ② 사용자가 입력창에 친 'rate limit'·산문 ③ Claude 가 **우리
+# 소스/diff**(테스트 코드에 "usage limit reached" 리터럴이 있음 — 실측 캡처로 확인)를
+# 띄우면 그 텍스트가 차단으로 오판. 정밀화: **사용자 입력(>)·소스/diff 줄을 제외한**
+# Claude 출력에서, **차단 동사**(reached/exceeded/hit · "limit will reset")를 동반한
+# 연속 구(phrase)만 차단으로 본다. "used N% … limit"(사용률 경고)는 차단 동사가 없어
+# 자연히 빠진다.
+_USER_LINE_RE = re.compile(r"^\s*(?:[│|]\s*)?>")          # 사용자 입력/제출 턴
+_CODE_LINE_RE = re.compile(r"^\s*(?:\d+\s*[-+|]|[-+]\s)")  # 행번호+diff·diff 접두
+_LIMIT_BLOCKED_RE = re.compile(
+    r"\blimit\s+(?:has\s+been\s+)?(?:reached|exceeded)\b"        # "usage limit reached"
+    r"|\b(?:reached|hit|exceeded)\s+(?:your|the|a|my)?\s*"
+    r"(?:[\w%]+\s+){0,3}limit\b"                                 # "reached your usage limit"
+    r"|\blimit\s+will\s+reset\b",                               # "your limit will reset at 5pm"
+    re.I)
+
+
+def _claude_body(text: str) -> str:
+    """사용자 입력(>)·소스/diff 줄을 제외한 Claude **출력**만 한 문자열로(리밋/리셋
+    판정용). 리밋 배너는 항상 Claude 출력에 뜨고 사용자 입력·코드 표시엔 안 뜨므로,
+    그 두 영역을 떼어 오탐(사용자 타이핑·소스 리터럴)을 막는다."""
+    keep = [ln for ln in (text or "").splitlines()
+            if not _USER_LINE_RE.match(ln) and not _CODE_LINE_RE.match(ln)]
+    return "\n".join(keep)
+
+
+def claude_limit(text: str) -> bool:
+    """화면이 **사용량 리밋으로 차단된** 상태면 True(정밀). 사용자 입력·소스/diff 줄을
+    제외한 Claude 출력에서 차단 배너 문구(reached/exceeded/hit · "limit will reset")만
+    본다 — 사용률 경고("used N% of your limit")·산문 속 'rate limit' 언급·소스 표시를
+    리밋으로 오판하지 않는다. claude_state·parse_reset_delay 가 공유하는 단일 신호."""
+    return bool(_LIMIT_BLOCKED_RE.search(_claude_body(text)))
+
+
 def claude_state(text: str):
     """패널의 최근 화면 텍스트로 Claude Code CLI 상태를 추정한다.
 
@@ -42,9 +78,8 @@ def claude_state(text: str):
     모드 footer 는 busy 중에도 같이 보이므로 반드시 busy 를 먼저 판정한다.
     """
     low = text.lower()
-    # 사용량 리밋 안내(자동재개 파서와 동일 신호)
-    if "limit" in low and any(k in low for k in
-                              ("reset", "again", "resume", "retry", "upgrade")):
+    # 사용량 리밋(차단) — 정밀 판정(§3.2). 자동재개 파서와 동일 신호(claude_limit).
+    if claude_limit(text):
         return "limit"
     # 처리중: 현행 작업 스피너 또는 레거시 "esc to interrupt"
     if (_BUSY_SPINNER_RE.search(text)
@@ -545,12 +580,14 @@ def claude_perm_mode(text: str):
 
 def parse_reset_delay(text: str, now: "_dt.datetime | None" = None):
     """Claude Code 등의 사용량 리밋 안내 문구에서 해제 시각을 찾아
-    지금부터 그때까지의 지연(초)을 반환. 못 찾으면 None."""
-    low = text.lower()
-    if "limit" not in low:
+    지금부터 그때까지의 지연(초)을 반환. 못 찾으면 None.
+
+    §3.2: **차단 상태일 때만**(claude_limit) 시각을 찾고, 시각도 사용자 입력·소스/diff
+    를 제외한 Claude 출력(_claude_body)에서만 본다 — 화면 아무 곳의 우연한 시각 숫자를
+    리셋 시각으로 오인하던 위험을 줄인다(자동재개가 엉뚱한 delay 로 트리거되는 것 방지)."""
+    if not claude_limit(text):
         return None
-    if not any(k in low for k in ("reset", "again", "resume", "retry")):
-        return None
+    text = _claude_body(text)
     now = now or _dt.datetime.now()
     m = _RESET_RE12.search(text)
     if m:

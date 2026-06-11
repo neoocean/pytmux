@@ -1,0 +1,9 @@
+ ⏺ Done — I updated the parser and added tests.
+
+ ⎿  Wrote tests/test_claude.py (+24 lines)
+
+ You've used 93% of your session limit · resets 1:40pm (Asia/Seoul)
+ · /usage-credits to request more
+
+ > keep going
+ ⏵⏵ auto mode on (shift+tab to cycle)

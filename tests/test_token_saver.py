@@ -40,6 +40,8 @@ async def test_golden_fixtures():
     """골든 픽스처가 기대 상태/사용량/잔량%/모델을 낸다(claude.py 회귀 고정).
     busy/idle/badge_1m/ctx_low 는 실 캡처 보강분(README), 나머지는 합성."""
     assert claude_state(_fix("limit.txt")) == "limit"
+    # §3.2: 사용률 경고 화면(used 93% … limit)은 차단이 아니라 idle(footer 있음).
+    assert claude_state(_fix("limit_warn.txt")) == "idle"
     assert claude_state(_fix("busy.txt")) == "busy"
     assert claude_state(_fix("idle.txt")) == "idle"
     assert claude_state(_fix("ctx_low.txt")) == "idle"

@@ -44,11 +44,44 @@ async def test_screen_text_matches_display():
 async def test_parse_reset_delay():
     now = dt.datetime(2026, 6, 2, 14, 0, 0)
     assert parse_reset_delay("limit reached, resets at 3:00pm", now) == 3600
-    assert parse_reset_delay("rate limit, resets at 15:30", now) == 5400
+    # §3.2: 차단 동사(reached/exceeded/will reset)가 있어야 리밋으로 본다.
+    assert parse_reset_delay("rate limit reached, resets at 15:30", now) == 5400
     assert parse_reset_delay("normal output, nothing", now) is None
+    # 바뀐 정밀 규약: 차단 동사 없는 'rate limit' 단독 언급은 리밋 아님(None)
+    assert parse_reset_delay("rate limit, resets at 15:30", now) is None
+    # 사용률 경고(used N% … limit · resets)는 차단이 아니라 None
+    assert parse_reset_delay(
+        "You've used 93% of your session limit · resets 1:40pm", now) is None
     # 과거 시각이면 익일로
     d = parse_reset_delay("limit reached resets 9am", now)
     assert d is not None and d > 3600
+
+
+async def test_claude_limit_precision():
+    """§3.2 정밀화: 차단 배너만 limit, 사용률 경고·사용자 입력·소스/diff 는 제외."""
+    from pytmuxlib.claude import claude_limit
+    # 차단 배너(여러 실제 문구)
+    assert claude_limit("Claude usage limit reached. Your limit will reset at 5pm")
+    assert claude_limit("You've reached your usage limit.")
+    assert claude_limit("rate limit exceeded — try again later")
+    assert claude_limit("your weekly limit will reset Jun 13")
+    # 사용률 경고(차단 아님)
+    assert not claude_limit(
+        "You've used 93% of your session limit · resets 1:40pm")
+    # 산문/단독 언급(차단 동사 없음)
+    assert not claude_limit("how do I handle a rate limit in my code?")
+    assert not claude_limit("the API has a limit; remember to reset it")
+    # 사용자 입력 줄(>)에 친 차단 문구는 무시(오탐 방지)
+    assert not claude_limit("> what does 'usage limit reached' mean?")
+    assert not claude_limit("│ > my usage limit reached yesterday")
+    # 소스/diff 표시(우리 테스트 코드의 리터럴)는 무시 — 실측 캡처 오탐 사례
+    assert not claude_limit(
+        '57 +        assert claude_state("Claude usage limit reached")')
+    assert not claude_limit('- assert "usage limit reached" in msg')
+    # 단, 차단 배너가 같은 화면의 코드/입력 줄과 섞여 있어도 배너는 잡는다
+    assert claude_limit(
+        "> show me the error\n"
+        " ✗ Claude usage limit reached. Your limit will reset at 5pm")
 
 
 async def test_claude_state():
@@ -56,6 +89,11 @@ async def test_claude_state():
     assert claude_state("Compacting… (esc to interrupt)") == "busy"
     assert claude_state("Claude usage limit reached. resets at 5pm") == "limit"
     assert claude_state("user@host ~ % ls") is None
+    # §3.2 정밀화: 사용률 경고(used N% … limit)는 차단 아님 → limit 으로 안 잡음.
+    # (idle footer 가 같이 있으면 idle, 없으면 None — 어느 쪽이든 "limit" 은 아님)
+    assert claude_state(
+        "You've used 93% of your session limit · resets 1:40pm\n"
+        "? for shortcuts") == "idle"
     # 현행 Claude Code(2026): 작업 스피너 줄(esc to interrupt 없음)
     assert claude_state("✽ Crunching… (38s · ↓ 1.9k tokens)") == "busy"
     assert claude_state("✻ Choreographing… (3m 28s)") == "busy"
