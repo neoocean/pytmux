@@ -114,6 +114,7 @@ async def test_token_log_request_handled_by_plugin_hook():
 
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
+    conn = None
     try:
         conn = usagedb.connect(path)
         usagedb.insert(conn, usagelog.make_record(
@@ -135,6 +136,10 @@ async def test_token_log_request_handled_by_plugin_hook():
         assert reg2.handle_server_request(
             _FakeServer(), None, "request_token_log", {}) is None
     finally:
+        # Windows: 열린 SQLite 연결이 파일을 잡고 있으면 unlink 가 WinError 32 로
+        # 실패한다(POSIX 는 열린 파일도 unlink 가능). 연결을 먼저 닫는다.
+        if conn is not None:
+            conn.close()
         os.unlink(path)
 
 
