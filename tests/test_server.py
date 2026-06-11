@@ -294,6 +294,44 @@ async def test_usage_auto_refresh_and_account(tmp_path=None):
         await teardown(srv, task, sock)
 
 
+async def test_usage_snapshot_persisted_on_scan():
+    """S6 T1: 인패널 /usage·footer 인라인 한도가 _usage 를 갱신하는 순간 limits
+    스냅샷이 SQLite 에 적힌다(source=panel/inline, 그림자 계정 보존 포함). 같은
+    값이 반복 관찰되면 이력이 늘지 않는다(연속 중복 skip)."""
+    from pytmuxlib import usagedb
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        # 그림자 probe 가 계정을 실어 둔 상태(직접 주입 — probe 자체는 외부 의존)
+        srv._usage = {"session": {"pct": 5, "reset": "2pm"},
+                      "account": "me@woojinkim.org"}
+        # ① 인패널 /usage 패널 → source=panel, 보존된 계정까지 스냅샷에 포함
+        p.feed("\x1b[2J\x1b[HCurrent session\r\n2% used\r\n"
+               "Resets 3pm (Asia/Seoul)\r\n? for shortcuts\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        conn = srv._tokens_db_conn()
+        rows = usagedb.query_limits(conn)
+        assert len(rows) == 1, rows
+        assert rows[0]["session_pct"] == 2 and rows[0]["source"] == "panel"
+        assert rows[0]["account"] == "me@woojinkim.org", "그림자 계정 보존"
+        # 같은 패널이 계속 보여도(값 불변) 스냅샷은 안 늘어난다 — _usage 불변이라
+        # 기록 분기 자체를 안 타고, 탄다 해도 insert_limits 연속 중복 skip.
+        srv._scan_claude(sess, win)
+        assert usagedb.limits_count(conn) == 1
+        # ② footer 인라인 한도 문구 → source=inline
+        p.feed("\x1b[2J\x1b[HYou've used 93% of your session limit · resets "
+               "1:40pm (Asia/Seoul)\r\n? for shortcuts\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        rows = usagedb.query_limits(conn)
+        assert len(rows) == 2, rows
+        assert rows[1]["session_pct"] == 93 and rows[1]["source"] == "inline"
+        assert usagedb.last_limits(conn)["session_pct"] == 93
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_token_usage_logging():
     """#7: 응답 확정(committed>0) 시 SQLite 에 ts/tab/pane/session/account/tokens
     한 건이 적히고, 새 Claude 세션마다 session id 가 증가하며, 계정은 화면 이메일

@@ -17,7 +17,9 @@ import sqlite3
 from . import usagelog
 
 # 스키마 버전(PRAGMA user_version). 향후 컬럼 추가 시 분기에 사용.
-SCHEMA_VERSION = 1
+# v2(S6 T1): limits 테이블(실측 /usage 스냅샷 이력) 추가 — CREATE IF NOT EXISTS 라
+# v1 DB 도 connect() 시 자동 업그레이드된다(기존 usage 테이블 무접촉).
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS usage (
@@ -32,6 +34,19 @@ CREATE INDEX IF NOT EXISTS ix_usage_ts      ON usage(ts);
 CREATE INDEX IF NOT EXISTS ix_usage_account ON usage(account);
 CREATE INDEX IF NOT EXISTS ix_usage_pane    ON usage(pane);
 CREATE INDEX IF NOT EXISTS ix_usage_session ON usage(session);
+
+CREATE TABLE IF NOT EXISTS limits (
+  ts               REAL NOT NULL,
+  account          TEXT,
+  session_pct      INTEGER,
+  session_reset    TEXT,
+  week_all_pct     INTEGER,
+  week_all_reset   TEXT,
+  week_sonnet_pct  INTEGER,
+  week_sonnet_reset TEXT,
+  source           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_limits_ts ON limits(ts);
 """
 
 _COLS = ("ts", "tab", "pane", "session", "account", "tokens")
@@ -188,3 +203,105 @@ def import_jsonl(conn, jsonl_path: str) -> int:
 def count(conn) -> int:
     """레코드 총수(임포트 가드·테스트용)."""
     return int(conn.execute("SELECT COUNT(*) AS n FROM usage").fetchone()["n"])
+
+
+# ---- 실측 한도 스냅샷(limits, S6 T1) ----
+# `/usage` 권위값(세션 5h·주간 한도 %·리셋)을 시계열로 영속한다. 기존엔 서버 메모리
+# 최신값(self._usage) 하나뿐이라 재시작 시 유실·추이 조회 불가·스크랩 누계와의 대사
+# (reconcile) 검증이 불가능했다(docs/TOKEN_ACCOUNTING_ACCURACY_SCENARIO.md §0-5).
+# source: probe(그림자 질의)|panel(인패널 /usage)|inline(footer 한도 문구) — 출처 추적.
+# 보존: 무제한(2026-06-10 사용자 결정 — 행이 작고 값 변화 시에만 쌓여 부담 적음).
+# prune_limits 는 수동/후속 정책용으로만 둔다.
+
+_LIMITS_VAL_COLS = ("account", "session_pct", "session_reset",
+                    "week_all_pct", "week_all_reset",
+                    "week_sonnet_pct", "week_sonnet_reset")
+
+
+def snap_from_usage(usage: dict, ts: float, source: str) -> dict:
+    """claude.parse_usage 형식 dict({"session": {"pct","reset"}, "week_all": …,
+    "week_sonnet": …, "account": …}) → limits 행 dict. 없는 블록은 None."""
+    def pct(key):
+        b = usage.get(key)
+        return b.get("pct") if isinstance(b, dict) else None
+
+    def reset(key):
+        b = usage.get(key)
+        return b.get("reset") if isinstance(b, dict) else None
+
+    return {"ts": float(ts), "account": usage.get("account"),
+            "session_pct": pct("session"), "session_reset": reset("session"),
+            "week_all_pct": pct("week_all"), "week_all_reset": reset("week_all"),
+            "week_sonnet_pct": pct("week_sonnet"),
+            "week_sonnet_reset": reset("week_sonnet"),
+            "source": str(source)}
+
+
+def insert_limits(conn, snap: dict) -> bool:
+    """스냅샷 한 건 삽입. **직전 스냅샷과 값(ts·source 제외)이 전부 같으면 skip**
+    (False) — 주기 프로브가 같은 값을 반복 측정해도 DB 가 부풀지 않게, '값이 바뀐
+    순간'만 이력에 남긴다. 실패도 조용히 False(본 흐름 비차단, insert 와 동일 계약)."""
+    try:
+        last = last_limits(conn)
+        if last is not None and all(
+                last.get(c) == snap.get(c) for c in _LIMITS_VAL_COLS):
+            return False
+        conn.execute(
+            "INSERT INTO limits (ts,account,session_pct,session_reset,"
+            "week_all_pct,week_all_reset,week_sonnet_pct,week_sonnet_reset,"
+            "source) VALUES (?,?,?,?,?,?,?,?,?)",
+            (float(snap.get("ts", 0.0)), snap.get("account"),
+             snap.get("session_pct"), snap.get("session_reset"),
+             snap.get("week_all_pct"), snap.get("week_all_reset"),
+             snap.get("week_sonnet_pct"), snap.get("week_sonnet_reset"),
+             snap.get("source") or "probe"))
+        conn.commit()
+        return True
+    except sqlite3.Error:
+        return False
+
+
+def _row_to_limits(row) -> dict:
+    return {"ts": row["ts"], "account": row["account"],
+            "session_pct": row["session_pct"],
+            "session_reset": row["session_reset"],
+            "week_all_pct": row["week_all_pct"],
+            "week_all_reset": row["week_all_reset"],
+            "week_sonnet_pct": row["week_sonnet_pct"],
+            "week_sonnet_reset": row["week_sonnet_reset"],
+            "source": row["source"]}
+
+
+def last_limits(conn):
+    """최신 스냅샷 dict|None (게이트·표시의 신선도 판단은 ts 로)."""
+    row = conn.execute(
+        "SELECT * FROM limits ORDER BY ts DESC, rowid DESC LIMIT 1").fetchone()
+    return _row_to_limits(row) if row is not None else None
+
+
+def query_limits(conn, since_ts: float | None = None,
+                 limit: int | None = None) -> list:
+    """스냅샷을 ts 오름차순으로 반환. since_ts 이후만/최근 limit 건만 옵션."""
+    if limit is not None and limit >= 0:
+        # 서브쿼리 밖에선 rowid 가 안 보이므로 별칭(rid)으로 끌고 나와 정렬한다.
+        cur = conn.execute(
+            "SELECT * FROM (SELECT *, rowid AS rid FROM limits WHERE ts >= ? "
+            "ORDER BY ts DESC, rowid DESC LIMIT ?) ORDER BY ts ASC, rid ASC",
+            (float(since_ts) if since_ts is not None else 0.0, limit))
+    else:
+        cur = conn.execute(
+            "SELECT * FROM limits WHERE ts >= ? ORDER BY ts ASC, rowid ASC",
+            (float(since_ts) if since_ts is not None else 0.0,))
+    return [_row_to_limits(r) for r in cur.fetchall()]
+
+
+def prune_limits(conn, before_ts: float) -> int:
+    """before_ts 이전 스냅샷 삭제. 자동 호출 없음(보존 무제한 결정) — 수동 정책용."""
+    cur = conn.execute("DELETE FROM limits WHERE ts < ?", (float(before_ts),))
+    conn.commit()
+    return cur.rowcount
+
+
+def limits_count(conn) -> int:
+    """스냅샷 총수(테스트용)."""
+    return int(conn.execute("SELECT COUNT(*) AS n FROM limits").fetchone()["n"])

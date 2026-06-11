@@ -651,6 +651,11 @@ class ServerClaudeMixin:
                             and "account" not in new_usage:
                         new_usage["account"] = self._usage["account"]
                     self._usage = new_usage
+                    # S6 T1: 실측 한도 스냅샷 이력화 — 값이 바뀐 순간만 적힌다
+                    # (insert_limits 가 직전과 동일값이면 skip). 이 분기는
+                    # new_usage != self._usage 일 때만 오므로 30Hz 스캔 부담 없음.
+                    self._record_usage_snapshot(
+                        new_usage, "panel" if panel_now else "inline")
                     changed = True
                 # 사용량 표시는 Claude 세션이 살아 있는 동안 유지한다(#5): 화면에서
                 # 토큰 문구가 잠시 사라져도(스크롤 등) 마지막 값을 보존하고, 세션이
@@ -1062,6 +1067,7 @@ class ServerClaudeMixin:
             self._usage_busy = False
         if u:
             self._usage = u
+            self._record_usage_snapshot(u, "probe")   # S6 T1: 실측 이력화
             for s in list(self.sessions.values()):
                 self._broadcast_session(s)
         return u
@@ -1317,6 +1323,23 @@ class ServerClaudeMixin:
         conn = self._tokens_db_conn()
         if conn is not None:
             usagedb.insert(conn, rec)
+
+    def _record_usage_snapshot(self, usage, source: str):
+        """실측 `/usage` 한도 스냅샷을 SQLite limits 테이블에 적는다(S6 T1,
+        docs/TOKEN_ACCOUNTING_ACCURACY_SCENARIO.md). 호출처: 그림자 프로브
+        (refresh_usage, source=probe)·인패널 /usage(panel)·footer 인라인 한도
+        (inline). 직전 스냅샷과 동일값이면 insert_limits 가 skip 해 '값이 바뀐
+        순간'만 이력에 남는다. 실패는 조용히 무시(표시/스캔 본 흐름 비차단)."""
+        if not isinstance(usage, dict):
+            return
+        conn = self._tokens_db_conn()
+        if conn is None:
+            return
+        try:
+            usagedb.insert_limits(
+                conn, usagedb.snap_from_usage(usage, time.time(), source))
+        except Exception:
+            pass
 
     def _seed_today_from_log(self, key: str) -> int:
         """오늘 버킷 키에 해당하는 토큰 합(서버 기동 시 1회 시드용, M10). SQL 합산."""

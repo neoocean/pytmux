@@ -294,3 +294,97 @@ async def test_migrate_db_mode_remaps_untrusted():
         conn.close()
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+# ---- 실측 한도 스냅샷(limits, S6 T1) ----
+
+def _usage_dict(spct=5, wpct=14, account="me@woojinkim.org"):
+    return {"session": {"pct": spct, "reset": "2pm (Asia/Seoul)"},
+            "week_all": {"pct": wpct, "reset": "Jun 13 at 3am (Asia/Seoul)"},
+            "week_sonnet": {"pct": 0, "reset": None},
+            "account": account}
+
+
+async def test_limits_snap_insert_query_roundtrip():
+    """parse_usage 형식 → snap_from_usage → insert/last/query 왕복. 없는 블록은
+    None 으로 평탄화되고, last_limits 가 최신 스냅샷을 돌려준다."""
+    conn = usagedb.connect(":memory:")
+    assert usagedb.last_limits(conn) is None, "빈 DB"
+    snap = usagedb.snap_from_usage(_usage_dict(), 1_700_000_000.0, "probe")
+    assert snap["session_pct"] == 5 and snap["week_all_pct"] == 14
+    assert snap["session_reset"] == "2pm (Asia/Seoul)"
+    assert snap["week_sonnet_pct"] == 0 and snap["week_sonnet_reset"] is None
+    assert usagedb.insert_limits(conn, snap)
+    # 부분 dict(인라인 한도: 세션만)도 누락 키가 None 으로 들어간다
+    partial = usagedb.snap_from_usage(
+        {"session": {"pct": 9, "reset": "3pm"}}, 1_700_000_100.0, "inline")
+    assert partial["week_all_pct"] is None and partial["account"] is None
+    assert usagedb.insert_limits(conn, partial)
+    rows = usagedb.query_limits(conn)
+    assert [r["session_pct"] for r in rows] == [5, 9], rows
+    assert rows[0]["source"] == "probe" and rows[1]["source"] == "inline"
+    last = usagedb.last_limits(conn)
+    assert last["session_pct"] == 9 and last["ts"] == 1_700_000_100.0
+    conn.close()
+
+
+async def test_limits_dedup_consecutive_identical():
+    """직전 스냅샷과 값이 전부 같으면(ts·source 무관) skip — 주기 프로브가 같은
+    값을 반복해도 '값이 바뀐 순간'만 쌓인다."""
+    conn = usagedb.connect(":memory:")
+    s1 = usagedb.snap_from_usage(_usage_dict(spct=5), 100.0, "probe")
+    assert usagedb.insert_limits(conn, s1)
+    # 같은 값, 다른 ts/source → skip
+    s2 = usagedb.snap_from_usage(_usage_dict(spct=5), 200.0, "panel")
+    assert not usagedb.insert_limits(conn, s2)
+    assert usagedb.limits_count(conn) == 1
+    # 값 변화(pct 5→7) → insert
+    s3 = usagedb.snap_from_usage(_usage_dict(spct=7), 300.0, "probe")
+    assert usagedb.insert_limits(conn, s3)
+    # 되돌아감(7→5) — '직전'과 다르므로 insert(연속 중복만 거른다)
+    s4 = usagedb.snap_from_usage(_usage_dict(spct=5), 400.0, "probe")
+    assert usagedb.insert_limits(conn, s4)
+    assert usagedb.limits_count(conn) == 3
+    conn.close()
+
+
+async def test_limits_query_since_and_prune():
+    """query_limits(since_ts/limit) 경계와 prune_limits(수동 보존정책) 동작."""
+    conn = usagedb.connect(":memory:")
+    for i, pct in enumerate([1, 2, 3, 4]):
+        usagedb.insert_limits(conn, usagedb.snap_from_usage(
+            _usage_dict(spct=pct), 100.0 * (i + 1), "probe"))
+    assert [r["session_pct"] for r in usagedb.query_limits(conn, since_ts=200.0)] \
+        == [2, 3, 4]
+    assert [r["session_pct"] for r in usagedb.query_limits(conn, limit=2)] \
+        == [3, 4], "최근 2건을 ts 오름차순으로"
+    assert usagedb.prune_limits(conn, 250.0) == 2
+    assert [r["session_pct"] for r in usagedb.query_limits(conn)] == [3, 4]
+    conn.close()
+
+
+async def test_limits_v1_db_upgrades_on_connect():
+    """v1(usage 테이블만) DB 파일도 connect() 가 limits 테이블을 자동 추가한다
+    (CREATE IF NOT EXISTS — 기존 usage 데이터 무접촉, 타 머신 업그레이드 무중단)."""
+    import shutil
+    import sqlite3
+    d = tempfile.mkdtemp()
+    try:
+        db = os.path.join(d, "claude-tokens.db")
+        old = sqlite3.connect(db)
+        old.execute("CREATE TABLE usage (ts REAL NOT NULL, tab INTEGER, "
+                    "pane INTEGER NOT NULL, session INTEGER, "
+                    "account TEXT NOT NULL, tokens INTEGER NOT NULL)")
+        old.execute("INSERT INTO usage VALUES (1.0, 0, 1, 1, 'a@x.org', 42)")
+        old.execute("PRAGMA user_version=1")
+        old.commit()
+        old.close()
+        conn = usagedb.connect(db)
+        assert usagedb.count(conn) == 1, "기존 usage 데이터 보존"
+        assert usagedb.limits_count(conn) == 0, "limits 테이블 생성됨(빈 상태)"
+        assert usagedb.insert_limits(conn, usagedb.snap_from_usage(
+            _usage_dict(), 2.0, "probe"))
+        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 2
+        conn.close()
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
