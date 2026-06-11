@@ -625,3 +625,99 @@ async def test_set_usage_gate_persists_and_clamps():
         except OSError:
             pass
         await teardown(srv, task, sock)
+
+
+# ---- S6 T5: 이벤트 트리거 실측 갱신(커밋 디바운스·임계 부근 단축) ----
+
+async def test_commit_schedules_debounced_usage_refresh():
+    """응답 종료(committed) 이벤트: 실측이 묵었으면(부재 포함) 20초 디바운스 갱신을
+    1회만 예약하고, 연속 커밋은 합쳐진다. 실측이 신선(<3분)하면 예약 안 함."""
+    import time
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p = await _claude_pane(srv)
+        assert srv._usage_probe_handle is None
+        # 실측 부재 + 커밋 → 예약
+        srv._log_tokens(sess, sess.tabs[0], p, 100)
+        h1 = srv._usage_probe_handle
+        assert h1 is not None, "커밋 → 디바운스 예약"
+        # 연속 커밋 → 기존 예약 유지(중복 없음)
+        srv._log_tokens(sess, sess.tabs[0], p, 100)
+        assert srv._usage_probe_handle is h1, "디바운스 — 예약 1개 유지"
+        h1.cancel()
+        srv._usage_probe_handle = None
+        # 신선한 실측(<3분) → 커밋이 와도 예약 생략(프로브 비용 절약)
+        _fresh_usage(srv, spct=10)
+        srv._log_tokens(sess, sess.tabs[0], p, 100)
+        assert srv._usage_probe_handle is None, "신선 실측 → 생략"
+        # 3분 넘게 묵으면 다시 예약
+        srv._usage_ts = time.time() - 181
+        srv._log_tokens(sess, sess.tabs[0], p, 100)
+        assert srv._usage_probe_handle is not None, "묵은 실측 → 예약"
+        srv._usage_probe_handle.cancel()
+        srv._usage_probe_handle = None
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_fire_usage_refresh_gates_and_calls_probe():
+    """발화 시 Claude 패널이 없으면 프로브 생략, 있으면 refresh_usage 호출.
+    (실 프로브는 숨은 claude spawn — 스텁으로 배선만 검증.)"""
+    import asyncio
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p = await _claude_pane(srv)
+        calls = []
+
+        async def fake_refresh():
+            calls.append(1)
+        srv.refresh_usage = fake_refresh
+        # Claude 패널 없음 → 생략
+        srv._fire_usage_refresh()
+        await asyncio.sleep(0)
+        assert calls == [], "Claude 패널 없으면 spawn 낭비 안 함"
+        # Claude 패널 있음 → refresh_usage 1회
+        p._claude = "idle"
+        srv._fire_usage_refresh()
+        await asyncio.sleep(0)
+        assert calls == [1], calls
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_near_gate_shortens_refresh_interval():
+    """프로브 성공 직후(_after_usage_probe): 실측이 게이트 임계 -10%p 이내면 다음
+    갱신을 주기/4(최소 60초)로 앞당겨 예약. 자동 갱신 꺼짐(0)이면 존중해 생략."""
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p = await _claude_pane(srv)
+        # 임계(95) 부근 아님(84 < 85) → 예약 없음
+        _fresh_usage(srv, spct=84)
+        srv._after_usage_probe()
+        assert srv._usage_probe_handle is None, "부근 아님 → 주기 유지"
+        # 부근(85 ≥ 95-10) → 앞당김 예약
+        _fresh_usage(srv, spct=85)
+        srv._after_usage_probe()
+        assert srv._usage_probe_handle is not None, "임계 부근 → 단축 예약"
+        srv._usage_probe_handle.cancel()
+        srv._usage_probe_handle = None
+        # 주간 축도 독립 발동(켜져 있을 때만)
+        _fresh_usage(srv, spct=10, wpct=92)
+        srv._after_usage_probe()
+        assert srv._usage_probe_handle is None, "주간 게이트 꺼짐 → 미발동"
+        srv.set_usage_gate(week=95)
+        srv._after_usage_probe()
+        assert srv._usage_probe_handle is not None, "주간 92 ≥ 95-10 → 발동"
+        srv._usage_probe_handle.cancel()
+        srv._usage_probe_handle = None
+        # 자동 갱신 꺼짐(usage_refresh_sec=0) → 사용자 의사 존중, 앞당기지 않음
+        srv.usage_refresh_sec = 0
+        _fresh_usage(srv, spct=94)
+        srv._after_usage_probe()
+        assert srv._usage_probe_handle is None, "자동 갱신 끔 → 생략"
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)

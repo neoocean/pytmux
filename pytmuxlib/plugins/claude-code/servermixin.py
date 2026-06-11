@@ -1070,9 +1070,72 @@ class ServerClaudeMixin:
             self._usage = u
             self._usage_ts = time.time()              # S6 T3: 신선도(표시·게이트)
             self._record_usage_snapshot(u, "probe")   # S6 T1: 실측 이력화
+            self._after_usage_probe()                 # S6 T5: 임계 부근 주기 단축
             for s in list(self.sessions.values()):
                 self._broadcast_session(s)
         return u
+
+    # ---- S6 T5: 이벤트 트리거 실측 갱신(주기 600초의 보강) ----
+    # 숨은 claude 세션 spawn 은 비싸다(부팅 ~12초·타임아웃 35초) — 공격적 단축 금지.
+    # 트리거 2종만: ① 응답 종료(committed) 후 디바운스 1회(실측이 묵었을 때만)
+    # ② 프로브 성공 직후 임계 부근이면 다음 프로브를 주기/4 로 앞당김(게이트 직전
+    # 해상도 — 95% 게이트가 10분 묵은 85% 실측 위에서 졸지 않게).
+    _USAGE_COMMIT_DELAY = 20.0    # 커밋 폭주를 1회로 합치는 디바운스(초)
+    _USAGE_COMMIT_MIN_AGE = 180.0  # 실측이 이보다 신선하면 커밋 트리거 생략(초)
+    _USAGE_NEAR_GATE_MARGIN = 10   # 임계 -N%p 이내면 '부근'(주기 단축 발동)
+
+    def _schedule_usage_refresh(self, delay: float) -> bool:
+        """delay 초 뒤 그림자 /usage 갱신 1회 예약. 이미 예약돼 있으면 유지(중복
+        없음 — 디바운스). 예약 성공 True."""
+        if getattr(self, "_usage_probe_handle", None) is not None:
+            return False
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            return False
+        self._usage_probe_handle = loop.call_later(
+            max(0.0, delay), self._fire_usage_refresh)
+        return True
+
+    def _fire_usage_refresh(self):
+        """예약된 이벤트 트리거 갱신 발화 — Claude 패널이 남아 있을 때만(게이트는
+        refresh_usage 의 _usage_busy 중복 방지에 더해 빈 서버 spawn 낭비 방지)."""
+        self._usage_probe_handle = None
+        if not self._any_claude_pane() or not self.running:
+            return
+        asyncio.create_task(self.refresh_usage())
+
+    def _usage_near_gate(self) -> bool:
+        """마지막 실측이 게이트 임계 -10%p 이내인가(세션/주간 중 하나라도, 켜진 축만).
+        계정 일치는 안 본다 — 주기 단축은 패널 무관한 전역 해상도 결정이다."""
+        u = self._usage
+        if not isinstance(u, dict):
+            return False
+        for key, gate in (("session", self.usage_gate_session_pct),
+                          ("week_all", self.usage_gate_week_pct)):
+            d = u.get(key)
+            pct = d.get("pct") if isinstance(d, dict) else None
+            if gate > 0 and pct is not None \
+                    and pct >= gate - self._USAGE_NEAR_GATE_MARGIN:
+                return True
+        return False
+
+    def _after_usage_probe(self):
+        """프로브 성공 직후: 임계 부근이면 다음 갱신을 주기/4(최소 60초)로 앞당겨
+        예약한다. 자동 갱신이 꺼져 있으면(usage_refresh_sec=0) 사용자 의사를 존중해
+        앞당기지도 않는다."""
+        if self.usage_refresh_sec <= 0 or not self._usage_near_gate():
+            return
+        self._schedule_usage_refresh(max(60.0, self.usage_refresh_sec / 4))
+
+    def _on_token_commit_refresh(self):
+        """응답 종료(committed>0) 이벤트: 실측이 묵었으면(>3분) 디바운스(20초) 갱신
+        예약 — 연속 응답 폭주는 1회로 합쳐진다. 신선하면 아무것도 안 한다(프로브
+        비용 절약 — 실측 %는 분 단위로만 움직인다)."""
+        ts = getattr(self, "_usage_ts", None)
+        if ts is not None and (time.time() - ts) < self._USAGE_COMMIT_MIN_AGE:
+            return
+        self._schedule_usage_refresh(self._USAGE_COMMIT_DELAY)
 
     @staticmethod
     def _track_prompt(pane: Pane, data: bytes):
@@ -1229,6 +1292,8 @@ class ServerClaudeMixin:
         # S6 T3: 마지막 실측(/usage) 수신 시각 — 표시층 stale 표기·T4 게이트 신선도
         # 판단용. _usage(값)는 코어 잔류 초기화(§1.4)지만 ts 는 플러그인 소유.
         self._usage_ts = None
+        # S6 T5: 이벤트 트리거 갱신 예약 핸들(call_later) — 중복 예약 방지 디바운스.
+        self._usage_probe_handle = None
 
     @property
     def tokens_log_path(self) -> str:
@@ -1328,6 +1393,8 @@ class ServerClaudeMixin:
         conn = self._tokens_db_conn()
         if conn is not None:
             usagedb.insert(conn, rec)
+        # S6 T5: 응답 종료 이벤트 → 실측이 묵었으면 디바운스 갱신 예약.
+        self._on_token_commit_refresh()
 
     def _record_usage_snapshot(self, usage, source: str):
         """실측 `/usage` 한도 스냅샷을 SQLite limits 테이블에 적는다(S6 T1,
