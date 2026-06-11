@@ -3173,3 +3173,50 @@ async def test_usage_fixture_end_to_end_chain():
         assert isinstance(m["usage_age_sec"], int) and m["usage_age_sec"] >= 0
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_token_db_failure_logged_once():
+    """#28 진단 로깅: 토큰 DB 연결 실패(토큰 영속 통째 정지)가 error.log 에 남되,
+    매 커밋 재시도가 도배하지 않게 **첫 실패만** 기록된다. 성공으로 회복하면
+    플래그가 풀려 재발 시 다시 1회 기록된다."""
+    srv, task, sock = await server_only()
+    old_db = os.environ.get("PYTMUX_TOKENS_DB")
+    try:
+        # 부모가 '파일'인 경로 → usagedb.connect 의 makedirs 가 실패한다.
+        blocker = old_db  # harness 가 만든 임시 DB 경로(파일)를 디렉터리처럼 사용
+        open(blocker, "w").close()
+        os.environ["PYTMUX_TOKENS_DB"] = os.path.join(blocker, "x.db")
+        assert srv._tokens_db_conn() is None
+        assert srv._tokens_db_conn() is None      # 반복 실패
+        elog = ipc.state_base(sock) + ".error.log"
+        body = open(elog, encoding="utf-8").read()
+        assert body.count("[tokens_db_connect]") == 1, "첫 실패만 기록(스팸 가드)"
+        # 회복(정상 경로) → 연결 성공 + 플래그 해제
+        os.environ["PYTMUX_TOKENS_DB"] = blocker + ".ok.db"
+        assert srv._tokens_db_conn() is not None
+        assert srv._tokens_db_err is False
+    finally:
+        if old_db is not None:
+            os.environ["PYTMUX_TOKENS_DB"] = old_db
+        await teardown(srv, task, sock)
+
+
+async def test_usage_snapshot_failure_logged():
+    """#28: 스냅샷 변환/계약 버그(sqlite 외 예외)가 조용히 사라지지 않고
+    error.log 에 남는다(본 흐름 비차단 — 예외 전파 없음)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        from pytmuxlib import usagedb
+        orig = usagedb.snap_from_usage
+        usagedb.snap_from_usage = lambda *a, **k: (_ for _ in ()).throw(
+            ValueError("계약 버그 시뮬"))
+        try:
+            srv._record_usage_snapshot({"session": {"pct": 1}}, "probe")  # 비차단
+        finally:
+            usagedb.snap_from_usage = orig
+        elog = ipc.state_base(sock) + ".error.log"
+        body = open(elog, encoding="utf-8").read()
+        assert "[usage_snapshot]" in body and "계약 버그 시뮬" in body
+    finally:
+        await teardown(srv, task, sock)

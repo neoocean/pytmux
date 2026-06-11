@@ -530,7 +530,9 @@ class ServerTreeMixin:
             out = subprocess.run(
                 ["ps", "-o", "comm=", "-p", str(pgid)], capture_output=True,
                 text=True, timeout=1, **proc.no_window_kwargs()).stdout.strip()
-        except Exception:
+        except (subprocess.SubprocessError, OSError):
+            # #28 좁힘: 프로세스 소멸·ps 부재·타임아웃 = 기대 가능한 실패(None
+            # 폴백이 정답). 그 외 예외는 버그이므로 삼키지 않고 전파한다.
             return None
         if not out:
             return None

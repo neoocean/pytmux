@@ -51,7 +51,12 @@
   (`_draw_claude_headers`·footer 존) ✅ — 플러그인 추출 Phase 2c(CL 57899)에서
   `plugins/claude-code/clientrender.py` 로 이전(코어는 `client_render` 훅만).
   client.py 추가 분할(~2.9k 줄)은 필요 시 별도 발의.
-- **#28 광역 except 좁히기**(M): 로깅 도입과 함께(서버 `_log_error` 활용) 후속.
+- ~~**#28 광역 except 좁히기**(M)~~ → **해결**(2단계): 서버 핵심 경로(dispatch/
+  scan/send_full/handle_client 등)는 B 묶음(56995~57024)에서 `_log_error` 와 함께
+  좁혀졌고, 잔여분(토큰 영속층 connect/import/snapshot/seed·usage 프로브·
+  code_version·servertree ps 프로브 좁힘)은 2026-06-11 마무리 CL 에서 처리 —
+  반복 실패 경로는 첫 실패만 기록(스팸 가드). 남은 broad except 는 전부 '의도된
+  best-effort'(치명 로깅 자체·시그널 로그·pyte wrap 태그 등 — 주석으로 사유 명시).
 - **#9/#21~24/#22**(M, Claude): 실 Claude 화면 캡처·로그 포맷 마이그레이션 필요.
   (~~컨텍스트 잔량% 기반 절감 트리거가 가장 큰 자동화 공백~~ → M11 `claude_ctx_autoclear`
   +`claude_ctx_threshold` 로 구현 완료 — 이 문장은 stale 이었음, 2026-06-11 정정.)

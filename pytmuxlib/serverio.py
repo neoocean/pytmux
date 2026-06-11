@@ -850,7 +850,7 @@ class ServerIOMixin:
         except asyncio.CancelledError:
             raise
         except Exception:
-            pass
+            self._log_error("code_version")   # #28: 버전 '미상' 폴백의 진단 단서
 
     async def serve(self):
         self.loop = asyncio.get_running_loop()

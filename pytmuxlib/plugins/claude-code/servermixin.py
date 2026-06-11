@@ -1063,10 +1063,16 @@ class ServerClaudeMixin:
                 loop.run_in_executor(None, usageprobe.query_usage, "claude", cwd),
                 timeout=35)
         except Exception:
+            # #28: 프로브 실패(타임아웃·spawn 불가)는 표시상 '미확인' 폴백으로
+            # 충분하지만, 진단 단서는 남긴다 — 10분 주기 반복이라 첫 실패만 기록.
+            if not self._usage_probe_err:
+                self._usage_probe_err = True
+                self._log_error("usage_probe")
             u = None
         finally:
             self._usage_busy = False
         if u:
+            self._usage_probe_err = False             # 회복 — 재발 시 다시 1회 기록
             self._usage = u
             self._usage_ts = time.time()              # S6 T3: 신선도(표시·게이트)
             self._record_usage_snapshot(u, "probe")   # S6 T1: 실측 이력화
@@ -1289,6 +1295,10 @@ class ServerClaudeMixin:
         self._today_tokens = None
         self._today_key = None
         self._budget_level = 0
+        # #28 진단 로깅 스팸 가드: 반복 실패(매 커밋 DB 재연결 시도·10분 주기
+        # 프로브)가 error.log 를 도배하지 않게 '첫 실패만' 기록하는 플래그.
+        self._tokens_db_err = False
+        self._usage_probe_err = False
         # S6 T3: 마지막 실측(/usage) 수신 시각 — 표시층 stale 표기·T4 게이트 신선도
         # 판단용. _usage(값)는 코어 잔류 초기화(§1.4)지만 ts 는 플러그인 소유.
         self._usage_ts = None
@@ -1366,7 +1376,14 @@ class ServerClaudeMixin:
         try:
             conn = usagedb.connect(path)
         except Exception:
+            # #28: 토큰 영속이 통째로 멈추는 치명 실패가 조용히 사라지지 않게
+            # error.log 에 남긴다. 매 커밋마다 재시도하므로 첫 실패만 기록(스팸 가드)
+            # — 디스크가 돌아오면 다음 성공 시 플래그를 풀어 재발도 잡힌다.
+            if not self._tokens_db_err:
+                self._tokens_db_err = True
+                self._log_error("tokens_db_connect")
             return None
+        self._tokens_db_err = False
         try:
             if usagedb.count(conn) == 0:
                 old = self.tokens_log_path
@@ -1376,7 +1393,7 @@ class ServerClaudeMixin:
                     except OSError:
                         pass
         except Exception:
-            pass
+            self._log_error("tokens_jsonl_import")   # 이력 임포트 실패(1회성 경로)
         self._tokens_db = conn
         return conn
 
@@ -1411,7 +1428,9 @@ class ServerClaudeMixin:
             usagedb.insert_limits(
                 conn, usagedb.snap_from_usage(usage, time.time(), source))
         except Exception:
-            pass
+            # #28: sqlite 오류는 insert_limits 가 자체 흡수(False)하므로 여기 오는
+            # 건 변환/계약 버그 — 조용히 잃지 말고 흔적을 남긴다(본 흐름 비차단).
+            self._log_error("usage_snapshot")
 
     def _seed_today_from_log(self, key: str) -> int:
         """오늘 버킷 키에 해당하는 토큰 합(서버 기동 시 1회 시드용, M10). SQL 합산."""
@@ -1421,6 +1440,7 @@ class ServerClaudeMixin:
         try:
             return usagedb.total_for_day(conn, key)
         except Exception:
+            self._log_error("seed_today")   # #28: 시드 실패 = 일예산 0 부터 시작
             return 0
 
     def _budget_track(self, amount: int):
