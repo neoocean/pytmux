@@ -78,6 +78,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 
+# 모듈 로드(아래 플러그인 별칭 import)도 백스톱으로 감싼다. 과거 macOS CI 에서 스위트가
+# **첫 출력(`:: import …`)도 없이** 17분 매달리던 지점이 바로 이 top-level import 단계였다
+# — _arm 은 main() 의 테스트 루프 안에서만 걸려 여기는 무방비였다(faulthandler 타이머
+# 미무장). 여기서 일찍 무장하면 import 가 매달려도 전 스레드 트레이스백을 stderr 에 덤프
+# 하고 프로세스를 종료해 **행 지점이 CI 로그에 남는다**(17분 침묵 → 빠른-실패+진단).
+# main() 진입 시 cancel 하고 per-test _arm 으로 넘긴다(단일 타이머라 교체도 가능).
+_STARTUP_TIMEOUT = max(60.0, TEST_TIMEOUT) if TEST_TIMEOUT > 0 else 0
+if _STARTUP_TIMEOUT > 0:
+    faulthandler.dump_traceback_later(_STARTUP_TIMEOUT, exit=True)
+
 # S5c/T5: claude/tokens/usageprobe/usagedb/usagelog 는 plugins/claude-code/ 로 물리
 # 이전됐다(코어는 더는 이들을 import 하지 않는다). 기존 테스트가 `from pytmuxlib.claude
 # import …`·`from pytmuxlib import tokens, usagedb, usagelog` 로 계속 import 할 수 있게,
@@ -120,6 +130,11 @@ def discover(names):
 
 
 def main(argv):
+    # 모듈 로드 단계의 startup 백스톱(위)을 거둔다 — 이제부터 per-test _arm 이 관리한다
+    # (modname 별 import·테스트마다 재무장). discover 가 빈 경우에도 stray 타이머가
+    # 성공 실행을 90초 뒤 종료시키지 않게 명시적으로 끈다.
+    if TEST_TIMEOUT > 0:
+        faulthandler.cancel_dump_traceback_later()
     names = [a[:-3] if a.endswith(".py") else a for a in argv]
     passed = failed = flaky = 0
     failures = []
