@@ -400,11 +400,14 @@ async def test_reconcile_intervals_sum_and_flags():
         usagedb.insert_limits(conn, usagedb.snap_from_usage(
             {"session": {"pct": pct, "reset": "2pm"}, "account": acct},
             ts, "probe"))
-    # 스크랩 레코드: 구간1(100,500]에 A 300+200, 타계정 999(제외돼야 함).
+    # 스크랩 레코드: 구간1(100,500]에 A 300+200 + 미식별 80(포함 — §5.5 패널
+    # 화면엔 계정 라벨이 거의 안 떠 미식별이 대부분이라, 빼면 Σ=0 왜곡),
+    # 타계정 999(제외돼야 함).
     # 경계: ts=100(=t0)은 이전 구간 몫(미포함), ts=500(=t1)은 포함.
     usagedb.insert(conn, _rec(100.0, 0, 1, 1, A, 7777))      # t0 정확히 → 미포함
     usagedb.insert(conn, _rec(200.0, 0, 1, 1, A, 300))
     usagedb.insert(conn, _rec(500.0, 0, 1, 1, A, 200))       # t1 정확히 → 포함
+    usagedb.insert(conn, _rec(250.0, 0, 3, 3, "unknown", 80))  # 미식별 → 포함
     usagedb.insert(conn, _rec(300.0, 0, 2, 2, "b@y.org", 999))
     # 구간2(500,900]: A 50
     usagedb.insert(conn, _rec(700.0, 0, 1, 1, A, 50))
@@ -412,7 +415,7 @@ async def test_reconcile_intervals_sum_and_flags():
     assert len(ivs) == 2, ivs
     iv1, iv2 = ivs
     assert (iv1["pct0"], iv1["pct1"], iv1["dpct"]) == (5, 9, 4)
-    assert iv1["tokens"] == 500, "같은 계정만 + (t0,t1] 경계"
+    assert iv1["tokens"] == 580, "같은 계정+미식별 + (t0,t1] 경계 (타계정 제외)"
     assert iv1["account"] == A and not iv1["reset"]
     assert iv2["reset"] and iv2["dpct"] == -7, "pct 감소 → 5h 리셋 플래그"
     assert iv2["tokens"] == 50

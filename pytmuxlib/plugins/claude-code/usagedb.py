@@ -318,6 +318,10 @@ def reconcile(conn, limit: int | None = 20) -> list:
     계정: 양 끝 스냅샷 계정이 같고 비어있지 않으면 그 계정의 스크랩만 합산(같은 계정
     한정 — 다른 계정 패널의 토큰이 섞여 비교가 무의미해지는 것 방지). 다르거나 미상
     이면 전체 합 + account=None(혼합 표시는 표시층 몫).
+    미식별('unknown'/NULL) 레코드는 같은-계정 합산에 **포함**한다(2026-06-11 §5.5):
+    패널 화면엔 계정 라벨이 거의 안 떠(라벨은 /status 에만) 레코드 대부분이
+    미식별인데, 이를 빼면 같은 계정 활동이 Σ=0 으로 보인다 — 식별 계정이 사실상
+    하나인 환경(§10-B 단일 계정 귀속과 같은 가정)에서 미식별=그 계정 활동으로 본다.
 
     reset: 실측 pct 가 감소한 구간(5h 창 리셋이 낀 것) — Δpct 비교가 무의미하므로
     표시층이 구분하도록 플래그만 단다. limit=N 이면 최근 N 구간."""
@@ -329,7 +333,8 @@ def reconcile(conn, limit: int | None = 20) -> list:
         if acct:
             cur = conn.execute(
                 "SELECT COALESCE(SUM(tokens),0) AS s FROM usage "
-                "WHERE ts > ? AND ts <= ? AND account = ?",
+                "WHERE ts > ? AND ts <= ? AND (account = ? "
+                "OR account IS NULL OR account = 'unknown')",
                 (a["ts"], b["ts"], acct))
         else:
             cur = conn.execute(

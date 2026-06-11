@@ -2769,9 +2769,12 @@ test_client.py`(417) + 신규 `tests/test_plugin_contract.py`(5) 회귀망 + smo
     비-busy 프레임마다 재확정) → `tokens.step` **idle_mark 잔상 가드**로 수정.
     ② 상관 r=0.049→dedup 0.376: 실측 5h%=계정 전체(타 머신 포함) vs 스크랩=로컬
     패널이라 구조적 약상관 — 추정 강등 판단 데이터로 재확인.
-  - **잔존 후속**: ① limits/usage 의 계정 식별 전부 None/'unknown' 원인 조사
-    (계정 한정 대사·게이트 계정 대조 비활성), ② 가드 적용 후 데이터로 상관
-    재관찰. 관련: [[token-accounting-s6-complete]].
+  - **계정 식별 원인 해소(2026-06-11 후속 CL, 시나리오 §5.5)**: 계정 라벨은
+    /status(Status 탭)에만 존재(부팅·Usage 탭 부재 — 원천 부재이지 파서 문제
+    아님). 프로브가 미식별 시에만 Esc+`/status` 폴백 스크랩 + reconcile 같은-계정
+    합산에 미식별('unknown') 레코드 포함(§10-B 단일 계정 귀속과 같은 가정).
+  - **잔존 후속**: 가드·계정 식별 적용 후 데이터로 상관 재관찰.
+    관련: [[token-accounting-s6-complete]].
 
 **⚠️ 병렬 세션 함정(2026-06-10 갱신)**: playground 워크스페이스를 **다른 세션이 동시 편집**한다.
 2026-06-09 Phase 2 제출 중, 병렬 세션의 **clock/calendar 플러그인 추출**(미완·당시 깨짐: 미존재

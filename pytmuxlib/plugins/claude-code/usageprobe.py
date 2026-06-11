@@ -171,11 +171,13 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
                 boot_timeout: float = 12.0, panel_timeout: float = 8.0):
     """숨은 `claude` 를 띄워 `/usage` 패널을 스크랩·파싱한다. 결과 dict(parse_usage,
     추가로 그림자 세션 계정 `account`: 일치 확인용·없으면 None) 또는 None. 입력 주입은
-    `/usage`+Enter 한 번뿐이고 끝나면 즉시 kill 한다.
+    `/usage`+Enter (계정 미식별 시에만 Esc+`/status` 1회 추가 — 아래) 뿐이고
+    끝나면 즉시 kill 한다.
 
     `account`: 이 숨은 세션이 로그인된 계정(claude_account 별칭). 폰/데스크탑 앱과
     **다른 계정**이면 한도 %·리셋이 실제로 달라지므로(요청), 사용자가 눈으로
-    대조할 수 있게 함께 싣는다. 신뢰 신호(`<email>'s Organization`)가 안 보이면 None."""
+    대조할 수 있게 함께 싣는다. 계정 라벨은 /status(Status 탭)에만 있어(부팅·
+    Usage 탭엔 부재 — 2026-06-11 실관찰) 거기까지 못 잡으면 None."""
     try:
         import pyte
     except Exception:
@@ -234,7 +236,22 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
         usage = parse_usage(screen)
         if usage is not None:
             # /usage 화면에도 계정 신호가 있으면 보강(부팅서 못 잡았을 때).
-            usage["account"] = acct or claude_account(screen)
+            acct = acct or claude_account(screen)
+            if not acct:
+                # 계정 식별 폴백(2026-06-11 §5.5 관찰): 부팅 화면·/usage(Usage 탭)
+                # 에는 계정 라벨이 **아예 없다**(실캡처 — limits 스냅샷 20/20 이
+                # account None 이던 원인). 같은 설정 패널의 Status 탭(/status)에만
+                # `Organization:`/`Email:` 라벨이 있으므로, 패널을 닫고 /status 를
+                # 한 번 더 스크랩한다(같은 숨은 세션 재사용·토큰 비용 0·계정이
+                # 이미 잡혔으면 생략).
+                sess.write(b"\x1b")             # /usage 패널 닫기(Esc to cancel)
+                pump(0.2)
+                sess.write(b"/status\r")
+                if wait_for(("Organization:", "Email:", "Login method"),
+                            panel_timeout):
+                    pump(0.4)
+                    acct = claude_account(disp())
+            usage["account"] = acct
         return usage
     except Exception:
         return None
