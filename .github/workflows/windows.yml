@@ -4,13 +4,14 @@ name: os-compat
 # 보는 것이다: ① Windows 네이티브 경로(pywinpty/ConPTY, proc.py 실경로, ipc TCP) ②
 # 깨끗한 Linux(POSIX-but-not-macOS) 이식성. 자세한 배경은 docs/WINDOWS_TESTING.md.
 #
-# macОS 러너는 매트릭스에서 **뺐다**(2026-06-07): (a) 개발이 macOS 에서 이뤄져 로컬
-# `python tests/run.py`(322 passed)가 같은 커버리지를 주므로 **중복**이고, (b) GitHub
-# macOS 러너에서 **간헐적 데드락**(PTY/서브프로세스, 헤드리스·tty 부재 환경 특이)이 나
-# 잡이 17분씩 매달리다 취소됐다 — 로컬·Linux·Windows 어디서도 재현 안 됨. SIGALRM·
-# faulthandler·step/job 타임아웃 백스톱으로도 그 환경에선 신뢰성 있게 못 끊겨, 비싼
-# 러너 분만 태우고 신호는 거짓-적색이었다. macOS 특이 검증이 필요하면 로컬에서 직접
-# 돌리거나(개발 박스), 아래 matrix 에 `macos-latest` 를 한시적으로 도로 넣어 확인한다.
+# macOS 러너 이력: 2026-06-07 에 **뺐었다** — GitHub macOS 러너에서 **간헐적 데드락**
+# (PTY/서브프로세스, 헤드리스·tty 부재 환경 특이)이 나 잡이 17분씩 매달리다 취소됐고,
+# 당시 백스톱(SIGALRM 등)으로 신뢰성 있게 못 끊겨 비싼 러너 분만 태웠다.
+# 2026-06-11 **도로 넣었다**(사용자 요청): 그새 run.py 백스톱이 강화됐다 —
+# faulthandler.dump_traceback_later(TIMEOUT+15s, exit=True)가 SIGALRM 으로도 안 끊기는
+# 행을 **트레이스백과 함께 강제 종료**한다(17분 행 → ~2분 빠른-실패 + 행 지점 가시).
+# 즉 macOS 특이 행이 재발해도 매달리지 않고 진단 가능한 실패로 떨어진다. 헤드리스
+# macOS 에서 의미 없는(실 tty 의존) 테스트는 POSIX-but-headless 가드로 건너뛴다.
 
 on:
   push:
@@ -29,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]   # Linux x86-64 / Win Server (macOS=개발 박스, 위 주석)
+        os: [ubuntu-latest, windows-latest, macos-latest]   # Linux x86-64 / Win Server / macOS arm64
         python: ["3.11", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
     # 어떤 잡이든 매달리면 12분에 끊어 러너 분 낭비를 막는다(정상 ~5분). tests/run.py
