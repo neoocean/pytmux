@@ -150,6 +150,48 @@ register({
     },
 })
 
+# §6 ④ 모달 스크린 — 명령목록·옵션·정보·확인·버퍼/레이아웃 피커의 furniture(제목·
+# 서브타이틀·빈 상태·네비 힌트·버튼). 다이얼로그 본문(메시지)은 호출부(client.py)가
+# 넘기므로 별도 단계에서 다룬다.
+register({
+    "ko": {
+        "screen.empty": "(없음)",
+        "screen.close": "닫기",
+        "screen.cancel": "취소",
+        "screen.info": "정보",
+        "screen.confirm": "확인",
+        "screen.no_search_results": "(검색 결과 없음)",
+        "screen.command_list": "명령 목록",
+        "screen.cmdlist_sub": "타이핑 검색 · ←→/클릭 탭 · ↑↓ 명령 · Home/End 처음·끝 · Enter 선택 · Esc 닫기",
+        "screen.options_title": "{cmd} 옵션 · ←→ 값 · Enter 실행 · Esc",
+        "screen.infotabs_sub": "←→ 탭·닫기[x] · ↑↓ 항목 · Enter/Esc 닫기",
+        "screen.confirm_sub": "←→ 이동 · Enter 확정 · y/n · Esc 취소",
+        "screen.no_buffers": "(버퍼 없음)",
+        "screen.layout_load": "레이아웃 불러오기",
+        "screen.no_layouts": "(저장된 레이아웃 없음)",
+        "screen.more_up": "  ↑ 더 …",
+        "screen.more_down": "  ↓ 더 …",
+    },
+    "en": {
+        "screen.empty": "(none)",
+        "screen.close": "Close",
+        "screen.cancel": "Cancel",
+        "screen.info": "Info",
+        "screen.confirm": "Confirm",
+        "screen.no_search_results": "(no results)",
+        "screen.command_list": "Commands",
+        "screen.cmdlist_sub": "Type to search · ←→/click tabs · ↑↓ commands · Home/End first·last · Enter select · Esc close",
+        "screen.options_title": "{cmd} options · ←→ value · Enter run · Esc",
+        "screen.infotabs_sub": "←→ tabs·close[x] · ↑↓ items · Enter/Esc close",
+        "screen.confirm_sub": "←→ move · Enter confirm · y/n · Esc cancel",
+        "screen.no_buffers": "(no buffers)",
+        "screen.layout_load": "Load layout",
+        "screen.no_layouts": "(no saved layouts)",
+        "screen.more_up": "  ↑ more …",
+        "screen.more_down": "  ↓ more …",
+    },
+})
+
 # §6 ② 상태줄·경고·헤더 — 클라 transient 알림(display_message)/종료 메시지/캡처 정보.
 register({
     "ko": {

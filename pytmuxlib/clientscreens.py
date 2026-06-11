@@ -181,12 +181,11 @@ class CommandListScreen(ModalScreen):
                              for n, d in self._cur])
             lv.index = 0
         else:
-            await lv.extend([ListItem(Label("[dim](검색 결과 없음)[/]",
-                                            markup=True))])
+            await lv.extend([ListItem(Label(
+                f"[dim]{i18n.t('screen.no_search_results')}[/]", markup=True))])
         box = self.query_one("#cmdbox", Vertical)
-        box.border_title = "명령 목록"
-        box.border_subtitle = ("타이핑 검색 · ←→/클릭 탭 · ↑↓ 명령 · "
-                               "Home/End 처음·끝 · Enter 선택 · Esc 닫기")
+        box.border_title = i18n.t("screen.command_list")
+        box.border_subtitle = i18n.t("screen.cmdlist_sub")
 
     def _select_current(self):
         idx = self.query_one(ListView).index
@@ -297,7 +296,7 @@ class CommandOptionsScreen(ModalScreen):
         if self.opts:
             lv.index = 0
         lv.focus()
-        lv.border_title = f"{self.cmd_name} 옵션 · ←→ 값 · Enter 실행 · Esc"
+        lv.border_title = i18n.t("screen.options_title", cmd=self.cmd_name)
         self._update_sub()
 
     def _update_sub(self):
@@ -580,11 +579,11 @@ class InfoScreen(ModalScreen):
                 yield Label("[x]", id="infoclose", markup=False)  # 닫기 버튼
             if self._col_rows is not None:
                 yield ListView(*[self._col_item(r) for r in self._col_rows]
-                               or [ListItem(Label("(없음)"))], id="info")
+                               or [ListItem(Label(i18n.t("screen.empty")))], id="info")
             else:
                 yield ListView(*[ListItem(Label(ln, markup=False))
                                  for ln in self._lines] or
-                               [ListItem(Label("(없음)"))], id="info")
+                               [ListItem(Label(i18n.t("screen.empty")))], id="info")
 
     @staticmethod
     def _is_skip(line):
@@ -640,7 +639,7 @@ class InfoScreen(ModalScreen):
         self._skip = self._compute_skip(disp)
         await lv.clear()
         await lv.extend([ListItem(Label(d, markup=False)) for d in disp]
-                        or [ListItem(Label("(없음)"))])
+                        or [ListItem(Label(i18n.t("screen.empty")))])
         if self._initial_index is not None and orig_to_disp:
             oi = max(0, min(self._initial_index, len(orig_to_disp) - 1))
             self._select_index(lv, orig_to_disp[oi])
@@ -745,13 +744,14 @@ class InfoTabsScreen(ModalScreen):
     """
     _NAV = ("up", "down", "pageup", "pagedown", "home", "end")
 
-    def __init__(self, tabs, initial=0, title="정보", actions=None):
+    def __init__(self, tabs, initial=0, title=None, actions=None):
         super().__init__()
         self._tabs = tabs              # [(탭이름, [줄, ...]), ...]
         self._ti = max(0, min(initial, len(tabs) - 1)) if tabs else 0
         # ←→ 포커스 위치: 0..N-1=탭, N=닫기[x]. 초기엔 현재 탭.
         self._sel = self._ti
-        self._title = title
+        # title 미지정 시 로케일 기본("정보"/"Info"). 호출부가 명시하면 그대로 쓴다.
+        self._title = title if title is not None else i18n.t("screen.info")
         # {탭인덱스: (키,힌트,콜백) | [(키,힌트,콜백), ...]} — 그 탭에서 키를 누르면
         # 콜백 실행. 콜백이 줄 리스트를 돌려주면 그 탭 내용을 갱신한다(예: REC 캡처
         # 토글). 한 탭에 여러 동작(예: [c] 토글 · [o] 폴더 열기)을 둘 수 있게 리스트로
@@ -768,7 +768,8 @@ class InfoTabsScreen(ModalScreen):
                 yield Label("", id="itgap")        # [x] 를 우측 끝으로 미는 여백
                 yield Label("[x]", id="itclose", markup=False)
             yield ListView(id="itbody")
-            yield Label("닫기", id="itclosebtn", markup=False)  # 하단 닫기(§10-A #6)
+            yield Label(i18n.t("screen.close"), id="itclosebtn",
+                        markup=False)  # 하단 닫기(§10-A #6)
 
     async def on_mount(self):
         await self._render_tab()
@@ -810,13 +811,13 @@ class InfoTabsScreen(ModalScreen):
         items = [ListItem(Label(f"▸ {a[1]}", markup=False),
                           id=f"itact_{a[0]}", classes="itactbtn") for a in acts]
         items += [ListItem(Label(ln, markup=False))
-                  for ln in (lines or ["(없음)"])]
+                  for ln in (lines or [i18n.t("screen.empty")])]
         await lv.extend(items)
         # 커서 초깃값은 첫 내용 줄(액션 버튼 위가 아니라) — 정보가 먼저 보이게.
         if items:
             lv.index = len(acts) if lines else 0
         box = self.query_one("#itbox", Vertical)
-        sub = "←→ 탭·닫기[x] · ↑↓ 항목 · Enter/Esc 닫기"
+        sub = i18n.t("screen.infotabs_sub")
         acts = self._actions.get(self._ti)
         if acts:                        # 이 탭의 동작들(예: [c] 캡처 토글 · [o] 폴더)
             sub = " · ".join(a[1] for a in acts) + " · " + sub
@@ -1150,7 +1151,7 @@ class PromptScreen(ModalScreen):
             start = max(0, min(self._sel - body // 2, n - body))
         rows = []
         if start > 0:
-            rows.append("[dim]  ↑ 더 …[/dim]")
+            rows.append(f"[dim]{i18n.t('screen.more_up')}[/dim]")
         for i in range(start, min(start + body, n)):
             nm, d = self._cand[i]
             if i == self._sel:
@@ -1158,7 +1159,7 @@ class PromptScreen(ModalScreen):
             else:
                 rows.append(f"{self._esc(nm):<20} [dim]{self._esc(d)}[/dim]")
         if start + body < n:
-            rows.append("[dim]  ↓ 더 …[/dim]")
+            rows.append(f"[dim]{i18n.t('screen.more_down')}[/dim]")
         lbl.update("\n".join(rows))
 
     def _accept_cand(self):
@@ -1363,13 +1364,14 @@ class ConfirmScreen(ModalScreen):
         border: round $error; background: $error; color: $text; }
     """
 
-    def __init__(self, message, yes_label="닫기", no_label="취소",
-                 title="확인", default_yes=False, danger=False):
+    def __init__(self, message, yes_label=None, no_label=None,
+                 title=None, default_yes=False, danger=False):
         super().__init__()
         self._message = message
-        self._yes = yes_label
-        self._no = no_label
-        self._title = title
+        # 라벨/제목 미지정 시 로케일 기본. 호출부가 명시하면 그대로 쓴다.
+        self._yes = yes_label if yes_label is not None else i18n.t("screen.close")
+        self._no = no_label if no_label is not None else i18n.t("screen.cancel")
+        self._title = title if title is not None else i18n.t("screen.confirm")
         self._danger = danger   # True 면 선택 강조를 $error(붉은색)로
         self._sel = 0 if default_yes else 1   # 0=예 / 1=아니오(기본 '취소')
 
@@ -1383,7 +1385,7 @@ class ConfirmScreen(ModalScreen):
     def on_mount(self):
         box = self.query_one("#confirmbox", Vertical)
         box.border_title = self._title
-        box.border_subtitle = "←→ 이동 · Enter 확정 · y/n · Esc 취소"
+        box.border_subtitle = i18n.t("screen.confirm_sub")
         opts = self.query_one("#confirmopts", Horizontal)
         opts.can_focus = True          # 화면이 키 입력을 받도록 포커스 대상 확보
         opts.focus()
@@ -1444,7 +1446,8 @@ class ChooseBufferScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         rows = [ListItem(Label(f"{it['i']}: {it['preview']}"), id=f"b{it['i']}")
-                for it in self._items] or [ListItem(Label("(버퍼 없음)"), id="bnone")]
+                for it in self._items] or [ListItem(
+                    Label(i18n.t("screen.no_buffers")), id="bnone")]
         yield ListView(*rows, id="buf")
 
     def on_mount(self):
@@ -1469,15 +1472,15 @@ class ChooseLayoutScreen(ModalScreen):
            border: round $accent; background: $panel; }
     """
 
-    def __init__(self, names, title="레이아웃 불러오기"):
+    def __init__(self, names, title=None):
         super().__init__()
         self._names = names
-        self._title = title
+        self._title = title if title is not None else i18n.t("screen.layout_load")
 
     def compose(self) -> ComposeResult:
         rows = [ListItem(Label(nm), id=f"L{i}")
                 for i, nm in enumerate(self._names)] or \
-               [ListItem(Label("(저장된 레이아웃 없음)"), id="Lnone")]
+               [ListItem(Label(i18n.t("screen.no_layouts")), id="Lnone")]
         lv = ListView(*rows, id="lay")
         lv.border_title = self._title
         yield lv

@@ -170,4 +170,9 @@ async def first_session(srv, timeout=1.0):
 
 
 def make_app(sock, cfg=None, session=None):
-    return pytmux.build_client_app(sock, cfg or {}, session)
+    # 테스트 UI 단언은 한국어 라벨 기준(§6 i18n 이전 작성)이다. 앱은 환경 LANG 으로
+    # 로케일을 정하므로(CI 는 ko 가 아닐 수 있음) cfg 에 lang=ko 를 기본 주입해
+    # 결정론적으로 만든다(테스트가 명시 lang 을 주면 그대로 둔다).
+    cfg = dict(cfg or {})
+    cfg.setdefault("lang", "ko")
+    return pytmux.build_client_app(sock, cfg, session)
