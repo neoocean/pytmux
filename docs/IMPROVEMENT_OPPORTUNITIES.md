@@ -42,16 +42,19 @@
 **보류(사유 명시 — 후속 별도 진행)**:
 - **#2 IPC 인증 토큰**(H): 보안 경계 핸드셰이크. 주 수혜인 Windows TCP 무인증을 개발
   박스(macOS)에서 검증 불가 + 데몬 영속상 구클라 락아웃 위험. M5의 #7 이 협상 기반 마련.
-- **#8 서버 render-후-폐기 → dirty 행 재직렬화**(H): 플러시 핫패스 재구성, pyte
-  `screen.dirty` 클리어 시점 추적 정확성 필수, §8 B3 미구현분과 중복. ptyshot 골든 게이트.
-- **#12 build_client_app 분할**(H): 단계적 추출 진행 중. **1/N**(`clientrender.put_cell`·
-  `clientclip` 클립보드) ✅. **2/N**(시계/달력 오버레이 → `clientrender.draw_clock_overlay`·
-  `draw_calendar_overlay`, 테마 Style 만 클로저가 해석해 위임) ✅ — `tests/test_clientrender.py`
-  로 그리드 출력 회귀 가드 + ptyshot 골든. 남은 분: Claude 렌더(`_draw_claude_headers`·
-  footer 존)는 app 상태(zone 등록·layout) 결합이 커 후속.
+- ~~**#8 서버 render-후-폐기 → dirty 행 재직렬화**(H)~~ → **해결**(B 묶음 CL
+  56995~57024 — `model.render()` 가 라이브 뷰·검색 비활성·캐시 유효 시 `screen.dirty`
+  행만 재직렬화, 스크롤/검색/리사이즈/alt 전환은 전체 폴백. §4.1 도 같은 건으로 해소).
+  한때 이 보류 목록과 진행표 ✅ 가 모순돼 있었음(2026-06-11 코드 검증으로 정정).
+- ~~**#12 build_client_app 분할**(H)~~ → **명시된 추출 전부 완료**: **1/N**(`clientrender.
+  put_cell`·`clientclip`) ✅ · **2/N**(시계/달력 오버레이) ✅ · **3/N Claude 렌더**
+  (`_draw_claude_headers`·footer 존) ✅ — 플러그인 추출 Phase 2c(CL 57899)에서
+  `plugins/claude-code/clientrender.py` 로 이전(코어는 `client_render` 훅만).
+  client.py 추가 분할(~2.9k 줄)은 필요 시 별도 발의.
 - **#28 광역 except 좁히기**(M): 로깅 도입과 함께(서버 `_log_error` 활용) 후속.
-- **#9/#21~24/#22·컨텍스트 잔량 트리거**(M, Claude): 실 Claude 화면 캡처·로그 포맷
-  마이그레이션 필요. **컨텍스트 잔량% 기반 절감 트리거**가 가장 큰 자동화 공백.
+- **#9/#21~24/#22**(M, Claude): 실 Claude 화면 캡처·로그 포맷 마이그레이션 필요.
+  (~~컨텍스트 잔량% 기반 절감 트리거가 가장 큰 자동화 공백~~ → M11 `claude_ctx_autoclear`
+  +`claude_ctx_threshold` 로 구현 완료 — 이 문장은 stale 이었음, 2026-06-11 정정.)
 - **Windows 계열 #1.1~#1.5**(H/M): 실 Windows 박스 검증 필요(헤드리스 대리 불가).
 
 > 아래 §1~§5 는 원본 리뷰 결과(변경 없음). 각 항목 옆 상태는 위 표를 참조.
