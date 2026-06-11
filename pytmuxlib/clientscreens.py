@@ -1073,6 +1073,10 @@ class PromptScreen(ModalScreen):
             # 정확히 한 개이고 그게 입력과 동일하면 더 제안할 게 없음.
             if len(matches) == 1 and norm_sep(matches[0][0].lower()) == qs:
                 matches = []
+            # 맥락 우선 정렬(요청): 접두사가 모호할 때 무조건 맨 위(선언 순서) 항목을
+            # 고르지 말고 현재 맥락에 맞는 명령을 먼저 하이라이트한다. 빈 입력(전체
+            # 목록)에는 적용하지 않는다 — 카탈로그 순서를 흔들지 않으려는 것.
+            matches = self._context_rank(matches)
         # 전체 목록을 보관(자르지 않음) — _render_cands 가 MAX_CAND 윈도우로 그린다.
         self._cand = matches
         self._sel = 0
@@ -1083,6 +1087,33 @@ class PromptScreen(ModalScreen):
         self._cand_shown = True
         lbl.display = True
         self._render_cands()
+
+    def _context_rank(self, matches):
+        """후보를 현재 맥락에 맞게 안정 정렬한다(기본 하이라이트=정렬 후 첫 항목).
+
+        규칙(현재): **활성 탭에 패널이 하나뿐**이면 패널-상대 명령(rename-pane·
+        resize-pane·swap-pane 등 PANE_SCOPED_CMDS + 플러그인 pane_scoped)을 탭/서버
+        범위 명령 **뒤로** 내린다. 단일 패널에선 그 패널이 곧 탭 전체라, 같은 접두사를
+        공유하는 모호한 경우(예: 'rename' → rename-pane vs rename-tab) 탭 범위 쪽이
+        의도일 가능성이 높고 swap/resize/select/break/join 류는 사실상 무효이기 때문.
+        패널이 2개 이상이면 재정렬하지 않고 기존(선언) 순서를 보존한다.
+
+        Python sorted 는 안정적이라 같은 순위 안에서는 원래 순서가 유지된다. 유일
+        매치(예: 'split' → split-window)는 순위와 무관하게 그대로 보이므로 패널 생성
+        명령의 발견성은 영향을 받지 않는다."""
+        if len(matches) < 2:
+            return matches
+        try:
+            npanes = len(self.app.layout.get("panes", []))
+        except Exception:
+            npanes = 0
+        if npanes >= 2:
+            return matches
+        pane_scoped = set(PANE_SCOPED_CMDS)
+        reg = getattr(self.app, "plugins", None)
+        if reg and getattr(reg, "pane_scoped", None):
+            pane_scoped |= set(reg.pane_scoped)
+        return sorted(matches, key=lambda m: 1 if m[0] in pane_scoped else 0)
 
     def _render_cands(self):
         lbl = self.query_one("#pcand", Label)

@@ -427,6 +427,33 @@ async def test_command_substring_candidates():
     await _with_app(body)
 
 
+async def test_command_completion_context_aware_highlight():
+    """접두사가 모호하면(rename → rename-pane/rename-tab) 무조건 첫(선언 순서)
+    항목을 고르지 않고 맥락에 맞는 명령을 하이라이트한다(요청). 단일 패널 탭이면
+    패널-상대 rename-pane 대신 rename-tab 을 먼저, 패널이 2개 이상이면 기존 선언
+    순서(rename-pane 먼저)로 복귀한다."""
+    async def body(app, pilot, srv):
+        await pilot.press("escape")
+        await pilot.press("colon")
+        scr = app.screen_stack[-1]
+        # 기본 레이아웃은 단일 패널 — rename 입력 시 rename-tab 이 기본 하이라이트
+        for ch in "rename":
+            await pilot.press(ch)
+        await pilot.pause(0.1)
+        names = [n for n, _ in scr._cand]
+        assert "rename-pane" in names and "rename-tab" in names, names
+        assert scr._cand[scr._sel][0] == "rename-tab", \
+            ("단일 패널: 맥락상 rename-tab 우선", scr._sel, names)
+        # 패널을 2개로 늘리면 재정렬하지 않고 선언 순서(rename-pane 먼저) 복귀
+        app.layout = dict(app.layout)
+        app.layout["panes"] = [{"id": 1}, {"id": 2}]
+        scr._refresh_cands()
+        names2 = [n for n, _ in scr._cand]
+        assert scr._cand[scr._sel][0] == "rename-pane", \
+            ("다중 패널: 선언 순서 보존", scr._sel, names2)
+    await _with_app(body)
+
+
 async def test_help_command():
     async def body(app, pilot, srv):
         sess = next(iter(srv.sessions.values()))
