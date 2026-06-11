@@ -244,86 +244,35 @@ async def test_ctx_min_interval_setter_clamp_persist():
         await teardown(srv, task, sock)
 
 
-# ---- M10: 토큰 예산 추적·경고 레벨 ----
-async def test_budget_tracking_and_level():
-    """확정 토큰이 일 누계에 더해지고 일 예산 대비 경고 레벨(0/80/100)이 갱신된다.
-    예산 0(무제한)이면 추적/경고 없음."""
-    srv, task, sock = await server_only()
-    try:
-        srv.token_budget_day = 1000
-        srv._budget_track(700)
-        assert srv._today_tokens == 700 and srv._budget_level == 0   # 70%
-        srv._budget_track(150)
-        assert srv._today_tokens == 850 and srv._budget_level == 80  # 85%
-        srv._budget_track(300)
-        assert srv._today_tokens == 1150 and srv._budget_level == 100
-        # 무제한이면 추적 안 함
-        srv.token_budget_day = 0
-        srv.token_budget_session = 0
-        srv._budget_track(500)
-        assert srv._budget_level == 0
-    finally:
-        try:
-            os.unlink(srv.opts_path)
-        except OSError:
-            pass
-        await teardown(srv, task, sock)
-
-
-async def test_budget_over_day_and_session():
-    """_budget_over 는 일/세션 예산 중 어느 쪽이라도 초과면 True(0=그 축 무시)."""
-    srv, task, sock = await server_only()
-    try:
-        sess, win, p = await _claude_pane(srv)
-        srv.token_budget_day = 1000
-        srv._today_tokens = 1200
-        assert srv._budget_over(p) is True
-        srv._today_tokens = 100
-        assert srv._budget_over(p) is False
-        srv.token_budget_day = 0
-        srv.token_budget_session = 500
-        p._session_tokens = 600
-        assert srv._budget_over(p) is True
-        p._session_tokens = 100
-        assert srv._budget_over(p) is False
-    finally:
-        try:
-            os.unlink(srv.opts_path)
-        except OSError:
-            pass
-        await teardown(srv, task, sock)
-
-
-# ---- M13: 예산 압박 시 plan 유도 ----
+# ---- M13: 실측 한도 압박 시 plan 유도(§7-4: 절대 예산 deprecate 후 실측 게이트 기반) ----
 async def test_budget_plan_induction():
-    """claude_budget_plan + 예산≥80% + idle + 권한모드 非plan/非bypass 면 shift+tab
-    (\\x1b[Z)으로 plan 유도. bypass 는 불간섭, 예산<80% 면 무동작."""
+    """claude_budget_plan + 실측 게이트 레벨≥80(기본 임계 95 의 80%=76% 도달) + idle
+    + 권한모드 非plan/非bypass 면 shift+tab(\\x1b[Z)으로 plan 유도. bypass 는 불간섭,
+    레벨<80 이면 무동작."""
     srv, task, sock = await server_only()
     try:
         sess, win, p = await _claude_pane(srv)
         keys = []
         srv._inject_keys = lambda pane, data: keys.append(data)
         srv.claude_budget_plan = True
-        srv.token_budget_day = 1000      # 일 예산(스캔이 _session_tokens 처럼 안 덮음)
 
-        def idle(text, today):
-            srv._today_tokens = today
-            srv._refresh_budget_level()
+        def idle(text, spct):
+            _fresh_usage(srv, spct=spct)
             p._claude = "idle"
             p.feed(b"\x1b[2J\x1b[H" + text.encode())
             srv._scan_claude(sess, win)
 
-        # 예산<80%(70%) → 유도 안 함
-        idle("? for shortcuts", 700)
+        # 실측 70% < 76(임계의 80%) → 레벨 0 → 유도 안 함
+        idle("? for shortcuts", 70)
         assert keys == []
-        # 예산≥80%(90%) + default footer → plan 유도(shift+tab)
-        idle("? for shortcuts", 900)
+        # 실측 80% ≥ 76 → 레벨 80 + default footer → plan 유도(shift+tab)
+        idle("? for shortcuts", 80)
         assert keys == [b"\x1b[Z"], keys
         # bypass 는 불간섭(명시적 위험 모드)
         keys.clear()
         p._cam_tries = 0
         p._cam_last = None
-        idle("bypass permissions", 950)
+        idle("bypass permissions", 96)
         assert keys == [], "bypass 는 안 건드림"
     finally:
         try:
@@ -333,38 +282,13 @@ async def test_budget_plan_induction():
         await teardown(srv, task, sock)
 
 
-# ---- M12: 자동재개 예산 게이트·예약 취소 ----
+# ---- 자동재개 예약 취소 ----
 class _FakePty:
     def __init__(self):
         self.writes = []
 
     def write(self, data):
         self.writes.append(data)
-
-
-async def test_resume_budget_gate():
-    """예산 게이트가 켜져 있고 예산 초과면 _fire_resume 가 continue 주입을 보류.
-    게이트 꺼지거나 예산 이내면 정상 주입."""
-    srv, task, sock = await server_only()
-    try:
-        sess, win, p = await _claude_pane(srv)
-        fake = _FakePty()
-        p.pty = fake
-        p.feed(b"\x1b[2J\x1b[HClaude usage limit reached. resets at 5pm")
-        srv.token_budget_day = 1000
-        srv._today_tokens = 1500            # 초과
-        srv.token_budget_resume_gate = True
-        srv._fire_resume(p)
-        assert fake.writes == [], "예산 초과 + 게이트 ON → 보류"
-        srv.token_budget_resume_gate = False
-        srv._fire_resume(p)
-        assert fake.writes and fake.writes[-1] == b"continue\r", fake.writes
-    finally:
-        try:
-            os.unlink(srv.opts_path)
-        except OSError:
-            pass
-        await teardown(srv, task, sock)
 
 
 async def test_cancel_resume_clears_pending():
@@ -448,27 +372,21 @@ async def test_setters_persist_to_opts():
         assert srv.set_claude_ctx_action("doc-clear") == "doc-clear"
         assert srv.set_claude_ctx_action("bogus") == "doc-clear"   # 무효 무시
         assert srv.set_claude_ctx_threshold(200) == 99             # 클램프
-        assert srv.set_token_budget(day=123000, session=45000) == (123000, 45000, 0, 0)
-        assert srv.set_token_budget(h5=350000) == (123000, 45000, 350000, 0)
-        assert srv.set_token_budget(acct=2_000_000) == (123000, 45000, 350000,
-                                                        2_000_000)
         assert srv.set_claude_turn_warn(long_sec=900, repeat=0) == (900, 0)
-        assert srv.set_token_budget_resume_gate(True) is True
         saved = json.load(open(srv.opts_path))
         assert saved["claude_long_turn_sec"] == 900
         assert saved["claude_repeat_alert"] == 0
         assert saved["claude_ctx_autoclear"] is True
         assert saved["claude_ctx_action"] == "doc-clear"
         assert saved["claude_ctx_threshold"] == 99
-        # S5 토큰 모듈화 T3: token_budget_* 는 코어 top-level 이 아니라 플러그인 소유
-        # plugin_opts 네임스페이스에 저장된다(claude-code server_opts_serialize).
+        # S5 토큰 모듈화 T3: 플러그인 소유 설정은 plugin_opts 네임스페이스에 저장된다
+        # (claude-code server_opts_serialize). §7-4: deprecate 된 절대 예산
+        # token_budget_* 는 더 이상 저장되지 않는다(구 키는 다음 저장에서 자연 소멸).
         po = saved["plugin_opts"]
-        assert po["token_budget_day"] == 123000
-        assert po["token_budget_session"] == 45000
-        assert po["token_budget_5h"] == 350000
-        assert po["token_budget_account"] == 2_000_000
-        assert po["token_budget_resume_gate"] is True
-        # 코어 top-level 에는 더 이상 token_budget_* 가 없다(완전 플러그인 소유).
+        assert "token_budget_day" not in po
+        assert "token_budget_resume_gate" not in po
+        assert "usage_gate_session_pct" in po
+        # 코어 top-level 에는 token_budget_* 가 없다.
         assert "token_budget_day" not in saved
     finally:
         try:
@@ -495,20 +413,19 @@ def _fresh_usage(srv, spct=None, wpct=None, account=None):
 
 
 async def test_usage_gate_blocks_autoresume_measured():
-    """실측 세션 % ≥ 게이트(기본 95, 기본 ON)면 자동재개 보류 — 절대 예산 게이트
-    (M12 토글, 기본 OFF)와 **무관하게 독립** 작동. 임계 미만이면 정상 주입."""
+    """실측 세션 % ≥ 게이트(기본 95, 기본 ON)면 자동재개 보류.
+    임계 미만이면 정상 주입."""
     srv, task, sock = await server_only()
     try:
         sess, win, p = await _claude_pane(srv)
         assert srv.usage_gate_session_pct == 95, "기본 ON(95)"
         assert srv.usage_gate_week_pct == 0, "주간 기본 끔"
-        assert srv.token_budget_resume_gate is False, "M12 토글은 기본 OFF 그대로"
         fake = _FakePty()
         p.pty = fake
         p.feed(b"\x1b[2J\x1b[HClaude usage limit reached. resets at 5pm")
         _fresh_usage(srv, spct=96)
         srv._fire_resume(p)
-        assert fake.writes == [], "실측 96% ≥ 95 → 보류(M12 토글 무관)"
+        assert fake.writes == [], "실측 96% ≥ 95 → 보류"
         _fresh_usage(srv, spct=94)
         srv._fire_resume(p)
         assert fake.writes and fake.writes[-1] == b"continue\r", \
@@ -587,20 +504,22 @@ async def test_usage_gate_week_axis():
         await teardown(srv, task, sock)
 
 
-async def test_usage_gate_level_in_budget_level():
-    """실측 게이트 레벨이 절대 예산과 같은 눈금(0/80/100)으로 status 경고에
-    합류한다: 임계 도달=100, 임계의 80%(95→76) 도달=80."""
+async def test_usage_gate_level_scale():
+    """실측 게이트 레벨(0/80/100) 눈금 — status 경고(와이어 키 budget_level)가 이
+    값을 그대로 싣는다(§7-4 이후 유일한 경고 축): 임계 도달=100, 임계의 80%
+    (95→76) 도달=80."""
     srv, task, sock = await server_only()
     try:
         sess, win, p = await _claude_pane(srv)
         p._claude = "idle"
-        assert srv._budget_level_for(p) == 0
+        assert srv._usage_gate_level(p) == 0
         _fresh_usage(srv, spct=76)                 # 95*0.8=76 → 예고(80)
-        assert srv._budget_level_for(p) == 80, "임계의 80% → 80"
+        assert srv._usage_gate_level(p) == 80, "임계의 80% → 80"
         _fresh_usage(srv, spct=95)
-        assert srv._budget_level_for(p) == 100, "임계 도달 → 100"
+        assert srv._usage_gate_level(p) == 100, "임계 도달 → 100"
         _fresh_usage(srv, spct=75)
-        assert srv._budget_level_for(p) == 0, "예고 미만 → 0"
+        assert srv._usage_gate_level(p) == 0, "예고 미만 → 0"
+        assert srv._status_msg(sess)["budget_level"] == 0
     finally:
         await teardown(srv, task, sock)
 

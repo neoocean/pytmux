@@ -123,7 +123,7 @@ class Registry:
 
     def server_init(self, server):
         """`Server.__init__` 마지막에 1회 — 플러그인이 서버측 런타임 상태를 설치한다
-        (pane_init 의 서버 버전). claude-code 가 토큰 DB 연결·일예산 누계 상태를 여기서
+        (pane_init 의 서버 버전). claude-code 가 토큰 DB 연결 상태를 여기서
         설치한다(S5 토큰 모듈화 T2 — 코어 server.__init__ 에서 이전). 플러그인이 없으면
         no-op → 코어 server 에 그 상태가 안 생기고, 읽는 코드(서버 믹스인)도 함께 사라져
         깨지지 않는다(delete-to-disable)."""
@@ -135,9 +135,9 @@ class Registry:
     def server_opts_init(self, server, opts):
         """`Server.__init__` 에서 opts.json 로드 직후 1회 — 플러그인이 자기 소유 설정을
         opts dict 에서 읽어 server 속성으로 설치한다(S5 토큰 모듈화 T3). claude-code 가
-        token_budget_* 를 plugin_opts 네임스페이스에서 읽는다(구 top-level 키 하위호환).
+        usage_gate_* 등을 plugin_opts 네임스페이스에서 읽는다(구 top-level 키 하위호환).
         플러그인이 없으면 no-op → 코어 server 엔 그 설정이 안 생기고, 읽는 코드(플러그인)도
-        함께 사라진다(delete-to-disable). 코어는 token_budget 의 의미를 모른다."""
+        함께 사라진다(delete-to-disable). 코어는 키의 의미를 모른다."""
         for p in self.plugins:
             fn = getattr(p, "server_opts_init", None)
             if fn is not None:
@@ -146,8 +146,8 @@ class Registry:
     def server_opts_serialize(self, server) -> dict:
         """`_save_opts` 가 opts.json 직렬화 시 1회 — 플러그인 소유 설정을 한 dict 로 모아
         코어가 `plugin_opts` 키 밑에 불투명하게 저장한다(코어는 키 의미 모름). claude-code
-        가 token_budget_* 를 돌려준다. 플러그인이 없으면 {} → opts.json 에 plugin_opts 가
-        비어 token_budget 설정이 통째로 사라진다(delete-to-disable)."""
+        가 usage_gate_* 등을 돌려준다. 플러그인이 없으면 {} → opts.json 에 plugin_opts 가
+        비어 그 설정이 통째로 사라진다(delete-to-disable)."""
         out = {}
         for p in self.plugins:
             fn = getattr(p, "server_opts_serialize", None)

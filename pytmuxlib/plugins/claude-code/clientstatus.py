@@ -34,18 +34,14 @@ def init_defaults(status):
     status.claude_ctx_threshold = 15
     status.claude_ctx_action = "compact"
     status.claude_ctx_min_interval = 120
-    status.token_budget_day = 0
-    status.token_budget_session = 0
-    status.token_budget_5h = 0     # M18-B: 5시간 한도 근접도 표시의 분모(설정값)
-    status.token_budget_account = 0  # M15: 계정 합계 예산
     status.claude_long_turn_sec = 600  # M17: 장기 턴 경고 임계(초, 0=끔)
     status.claude_repeat_alert = 3     # M17: 반복 루프 경고 임계(회, 0=끔)
-    status.token_budget_resume_gate = False
     status.claude_budget_plan = False
     # S6 T4 실측 한도 게이트 임계(%) — 서버 기본(세션 95 ON·주간 끔)과 일치.
     status.usage_gate_session_pct = 95
     status.usage_gate_week_pct = 0
-    status.budget_level = 0        # 예산 경고 레벨(0/80/100, M10)
+    # 한도 경고 레벨(0/80/100) — §7-4 이후 실측 게이트 기반(키 이름은 유지).
+    status.budget_level = 0
     status.claude_pending = None   # 무장된 자동 액션 {kind, eta초}(M14 카운트다운)
 
 
@@ -91,18 +87,10 @@ def absorb(status, msg):
         "claude_ctx_action", status.claude_ctx_action)
     status.claude_ctx_min_interval = msg.get(
         "claude_ctx_min_interval", status.claude_ctx_min_interval)
-    status.token_budget_day = msg.get("token_budget_day", status.token_budget_day)
-    status.token_budget_session = msg.get(
-        "token_budget_session", status.token_budget_session)
-    status.token_budget_5h = msg.get("token_budget_5h", status.token_budget_5h)
-    status.token_budget_account = msg.get(
-        "token_budget_account", status.token_budget_account)
     status.claude_long_turn_sec = msg.get(
         "claude_long_turn_sec", status.claude_long_turn_sec)
     status.claude_repeat_alert = msg.get(
         "claude_repeat_alert", status.claude_repeat_alert)
-    status.token_budget_resume_gate = msg.get(
-        "token_budget_resume_gate", status.token_budget_resume_gate)
     status.claude_budget_plan = msg.get(
         "claude_budget_plan", status.claude_budget_plan)
     status.usage_gate_session_pct = msg.get(            # S6 T4 실측 게이트 임계
@@ -173,12 +161,13 @@ def render_segs(status, segs, w):
         segs.append(Segment(" ", sec))
         x += 1
         status._usage_zone = (ux0, x)
-    # M10 토큰 예산 경고(알림만 — 동작 변경 없음). 80%=노랑 ⚠, 100%=빨강 ⚠.
+    # 실측 한도 경고(알림만 — 동작 변경 없음, §7-4 이후 게이트 임계 기반).
+    # 임계 도달=빨강 ⚠, 임계의 80% 도달=노랑 ⚠.
     if status.budget_level >= 80:
         over = status.budget_level >= 100
         # ⚠ 뒤에 공백: 이모지(⚠ U+26A0)가 터미널에선 2칸으로 그려지는데 wcwidth 는
         # 1칸이라, 바로 뒤 글자가 둘째 칸에 겹쳐 그려졌다(요청) → 공백으로 흡수.
-        segs.append(Segment(" ⚠ 예산 " + ("초과 " if over else "80% "),
+        segs.append(Segment(" ⚠ 한도 " + ("도달 " if over else "근접 "),
                             Style(color="white",
                                   bgcolor=("red" if over else "yellow"),
                                   bold=True)))

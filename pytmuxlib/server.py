@@ -182,18 +182,18 @@ class Server(*_SERVER_BASES):
         # 0=끔), repeat=동일 완료 출력 반복 횟수(0=끔). 상태줄 ⚠배지로만 알린다.
         self.claude_long_turn_sec = int(_opts.get("claude_long_turn_sec", 600))
         self.claude_repeat_alert = int(_opts.get("claude_repeat_alert", 3))
-        # M13 예산 압박 시 plan 유도: 켜면 예산 경고(≥80%) + idle 일 때 권한모드를
-        # plan 으로 폐루프 유도해(편집 전 검토 → 맹목 도구 호출 감소) 토큰 소모를
-        # 늦춘다(가역 — 사용자가 shift+tab 으로 되돌림). bypass(명시적 위험)는 불간섭.
-        # claude_auto_mode(auto 유도)와 상충하면 예산 압박 시 plan 이 우선. 기본 OFF.
+        # M13 실측 한도 압박 시 plan 유도: 켜면 실측 게이트 경고(레벨≥80) + idle 일
+        # 때 권한모드를 plan 으로 폐루프 유도해(편집 전 검토 → 맹목 도구 호출 감소)
+        # 토큰 소모를 늦춘다(가역 — 사용자가 shift+tab 으로 되돌림). bypass(명시적
+        # 위험)는 불간섭. claude_auto_mode(auto 유도)와 상충하면 plan 이 우선. 기본 OFF.
         self.claude_budget_plan = bool(_opts.get("claude_budget_plan", False))
-        # 플러그인 소유 설정 로드 훅(S5 토큰 모듈화 T3). claude-code 가 token_budget_*
-        # (일/세션/5h/계정/resume_gate)를 opts.json 의 plugin_opts 네임스페이스(+구 top-level
+        # 플러그인 소유 설정 로드 훅(S5 토큰 모듈화 T3). claude-code 가 자기 설정
+        # (usage_gate_* 등)을 opts.json 의 plugin_opts 네임스페이스(+구 top-level
         # 키 하위호환 shim)에서 읽어 server 속성으로 설치한다 — 코어 __init__ 은 더는
-        # token_budget 을 직접 읽지 않는다. 디렉토리 삭제 시 no-op(코어는 의미 모름).
+        # 이 설정을 직접 읽지 않는다. 디렉토리 삭제 시 no-op(코어는 의미 모름).
         self.plugins.server_opts_init(self, _opts)
-        # 플러그인 서버측 1회 초기화 훅(S5 토큰 모듈화 T2). claude-code 가 토큰 DB 연결·
-        # 일예산 누계 런타임 상태(_tokens_db/_today_*/_budget_level)를 설치한다 — 코어
+        # 플러그인 서버측 1회 초기화 훅(S5 토큰 모듈화 T2). claude-code 가 토큰 DB 연결
+        # 런타임 상태(_tokens_db)를 설치한다 — 코어
         # __init__ 은 더는 이 상태를 두지 않는다. 디렉토리 삭제 시 no-op 라 이 속성들이
         # 안 생기고, 읽는 코드(서버 믹스인 토큰 메서드)도 함께 사라진다(delete-to-disable).
         self.plugins.server_init(self)
@@ -400,7 +400,6 @@ class Server(*_SERVER_BASES):
         "auto-launch": "set_claude_auto_launch",
         # 토큰 절감 on/off 토글의 외부 cmd 파리티(설정 팝업과 같은 setter).
         "ctx-autoclear": "set_claude_ctx_autoclear",
-        "resume-gate": "set_token_budget_resume_gate",
         "budget-plan": "set_claude_budget_plan",
     }
 

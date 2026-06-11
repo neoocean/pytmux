@@ -1,5 +1,11 @@
 # Claude Code 토큰 과사용 자동 회피 — 개입 시나리오
 
+> ⚠️ **§7-4 deprecate 메모(2026-06-11)**: 본문의 절대 토큰 예산(M10 일/세션 예산,
+> M12 예산 게이트, M15 계정 예산, `token_budget_*`)은 S6 §7-4 에서 **제거됐다** —
+> 스크랩 추정 누계 대신 실측(/usage) 게이트(`usage_gate_*`)가 같은 소비처(자동재개
+> 보류·plan 유도·우선 정리·⚠ 경고)를 담당한다. 해당 절은 설계 이력으로만 유효.
+> 상세: [TOKEN_ACCOUNTING_ACCURACY_SCENARIO.md](TOKEN_ACCOUNTING_ACCURACY_SCENARIO.md) §7-4.
+>
 > 📦 **플러그인 이전 메모(CL 57812)**: 본문의 `serverclaude.py:NNN` 참조는 현재
 > `pytmuxlib/plugins/claude-code/servermixin.py`(`ServerClaudeMixin` 클래스)에 있다 — 함수
 > 이름·동작은 동일하고 모듈 위치만 이전됐다(줄번호는 드리프트, 심볼명으로 grep). 토큰 회계

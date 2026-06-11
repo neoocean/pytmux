@@ -127,10 +127,6 @@ class ServerClaudeMixin:
         # 스크랩 추정이 아니라 **실측**이 판단 기준(시나리오 §0-4 — 가장 급한 전환).
         if self._usage_gate_over(pane):
             return
-        # M12 예산 게이트(보조 축): 게이트가 켜져 있고 절대 토큰 예산(스크랩 추정
-        # 누계)을 초과했으면 자동재개를 보류. 사용자는 직접 continue 로 재개 가능.
-        if self.token_budget_resume_gate and self._budget_over(pane):
-            return
         try:
             pane.pty.write((pane.resume_msg + "\r").encode("utf-8"))
         except OSError:
@@ -891,10 +887,12 @@ class ServerClaudeMixin:
                     if p._perm_target:
                         self._drive_perm_mode(p, txt, p._perm_target)
                     elif (self.claude_budget_plan
-                          and self._budget_level_for(p) >= 80
+                          and self._usage_gate_level(p) >= 80
                           and claude_perm_mode(txt) not in ("plan", "bypass")):
-                        # M13: 예산 압박(≥80%) → plan 유도. bypass(명시적 위험)는
-                        # 불간섭, 이미 plan 이면 무동작. claude_auto_mode 보다 우선.
+                        # M13: 실측 한도 압박(게이트 임계의 80% 도달) → plan 유도.
+                        # bypass(명시적 위험)는 불간섭, 이미 plan 이면 무동작.
+                        # claude_auto_mode 보다 우선. (§7-4: 절대 예산 deprecate 로
+                        # 스크랩 추정 축 제거 — 실측 게이트 레벨만 본다.)
                         self._drive_perm_mode(p, txt, "plan")
                     elif self.claude_auto_mode:
                         self._maybe_auto_mode(p, txt)
@@ -927,11 +925,13 @@ class ServerClaudeMixin:
                         pct = (claude_context_pct(txt)
                                if self.claude_ctx_autoclear and not p._ctx_fired
                                else None)
-                        # M15 우선순위 정리: 계정 합계가 예산을 넘고, 이 패널이 그 계정
-                        # idle 세션 중 가장 꽉 찬(잔량% 최저) 패널이면, 개별 임계 미만이
-                        # 아니어도 정리한다 — 멀티세션 누적 시 가장 비싼 세션부터 비운다.
+                        # M15 우선순위 정리: 계정 실측 사용량이 게이트 임계 이상이고
+                        # (§7-4: 절대 계정 예산 deprecate → 실측 게이트로 전환), 이
+                        # 패널이 그 계정 idle 세션 중 가장 꽉 찬(잔량% 최저) 패널이면,
+                        # 개별 임계 미만이 아니어도 정리한다 — 멀티세션 누적 시 가장
+                        # 비싼 세션부터 비운다. 실측 부재·stale 이면 fail-open(미발화).
                         priority = (self.claude_ctx_autoclear and not p._ctx_fired
-                                    and self._account_over_budget(p)
+                                    and self._usage_gate_over(p)
                                     and self._is_fullest_idle(p))
                         if ((pct is not None and pct < self.claude_ctx_threshold)
                                 or priority):
@@ -992,11 +992,6 @@ class ServerClaudeMixin:
         if ap._claude:
             return ap._session_tokens
         return 0
-
-    def _account_over_budget(self, pane) -> bool:
-        """M15: pane 의 계정 합계가 계정 예산을 넘었는지(예산 0이면 False)."""
-        ba = self.token_budget_account
-        return ba > 0 and self._account_token_total(pane) >= ba
 
     def _is_fullest_idle(self, pane) -> bool:
         """M15: pane 이 **같은 계정의 idle Claude 패널 중 잔량%가 가장 낮은**(=가장 꽉
@@ -1296,19 +1291,15 @@ class ServerClaudeMixin:
         return last is None or (time.monotonic() - last) >= iv
 
     # ---- 토큰 사용량 영속 저장(#7, SQLite) — S5 토큰 모듈화 T2 에서 코어 server.py
-    # 에서 이리로 이전. 코어는 더 이상 토큰 DB·예산 누계를 모른다(usagedb/usagelog
-    # import 도 코어에서 제거). 런타임 상태(_tokens_db/_today_*/_budget_level)는
+    # 에서 이리로 이전. 코어는 더 이상 토큰 DB를 모른다(usagedb/usagelog
+    # import 도 코어에서 제거). 런타임 상태(_tokens_db 등)는
     # server_init 훅(_init_token_state)이 설치한다 — 디렉토리 삭제 시 코어 server 에
     # 이 속성들이 아예 안 생기고, 읽는 코드(아래 메서드들)도 함께 사라진다.
     def _init_token_state(self):
-        """server_init 훅이 부른다 — 토큰 DB 연결/일예산 누계 런타임 상태를 코어
-        server.__init__ 에서 빼내 여기서 설치한다(delete-to-disable). 값은 이전 코어
-        __init__ 기본값과 동일: _tokens_db(지연 오픈), _today_*(일예산 시드 전 None),
-        _budget_level(0/80/100 경고 캐시)."""
+        """server_init 훅이 부른다 — 토큰 DB 연결 런타임 상태를 코어
+        server.__init__ 에서 빼내 여기서 설치한다(delete-to-disable).
+        (§7-4: 절대 예산 deprecate 로 일예산 누계 _today_*/_budget_level 은 제거.)"""
         self._tokens_db = None
-        self._today_tokens = None
-        self._today_key = None
-        self._budget_level = 0
         # #28 진단 로깅 스팸 가드: 반복 실패(매 커밋 DB 재연결 시도·10분 주기
         # 프로브)가 error.log 를 도배하지 않게 '첫 실패만' 기록하는 플래그.
         self._tokens_db_err = False
@@ -1413,10 +1404,6 @@ class ServerClaudeMixin:
 
     def _log_tokens(self, sess: Session, tab: Tab, pane: Pane, amount: int):
         """응답 한 건의 확정 토큰을 SQLite 에 적는다(tokens.step committed>0 이벤트)."""
-        # M10 예산 추적은 insert **전에** — 시드(_seed_today_from_log)가 이번 레코드를
-        # 아직 포함하지 않은 상태에서 prior 누계를 읽고 amount 를 더하게 해 이중계산을
-        # 피한다(insert 후 시드하면 방금 쓴 레코드가 시드에 섞여 중복).
-        self._budget_track(amount)
         rec = usagelog.make_record(
             ts=time.time(), tab=tab.index, pane=pane.id,
             session=getattr(pane, "_claude_session_id", 0),
@@ -1446,44 +1433,6 @@ class ServerClaudeMixin:
             # 건 변환/계약 버그 — 조용히 잃지 말고 흔적을 남긴다(본 흐름 비차단).
             self._log_error("usage_snapshot")
 
-    def _seed_today_from_log(self, key: str) -> int:
-        """오늘 버킷 키에 해당하는 토큰 합(서버 기동 시 1회 시드용, M10). SQL 합산."""
-        conn = self._tokens_db_conn()
-        if conn is None:
-            return 0
-        try:
-            return usagedb.total_for_day(conn, key)
-        except Exception:
-            self._log_error("seed_today")   # #28: 시드 실패 = 일예산 0 부터 시작
-            return 0
-
-    def _budget_track(self, amount: int):
-        """확정 토큰을 오늘 누계에 더하고 일 예산 경고 레벨을 갱신한다(M10).
-        예산이 둘 다 0(무제한)이면 누계 추적을 건너뛰고 레벨 0."""
-        if self.token_budget_day <= 0 and self.token_budget_session <= 0:
-            self._budget_level = 0
-            return
-        key = usagelog.bucket_key(time.time(), "day")
-        if self._today_key != key:
-            # 첫 호출(기동)이면 로그에서 오늘 누계 시드 — 재시작 후에도 일 예산이
-            # 이어진다. 자정 넘김(_today_key 이미 있음)이면 새 날이라 0 에서 시작.
-            self._today_tokens = (self._seed_today_from_log(key)
-                                  if self._today_key is None else 0)
-            self._today_key = key
-        self._today_tokens += max(0, int(amount))
-        self._refresh_budget_level()
-
-    def _refresh_budget_level(self):
-        """일 예산 대비 경고 레벨(0/80/100)을 _budget_level 에 캐시한다."""
-        lvl = 0
-        day = self.token_budget_day
-        if day > 0 and self._today_tokens is not None:
-            if self._today_tokens >= day:
-                lvl = 100
-            elif self._today_tokens >= day * 0.8:
-                lvl = 80
-        self._budget_level = lvl
-
     def _carry_tokens_on_close(self, pane: Pane):
         """닫히는 Claude 패널의 확정 토큰을 **같은 계정의 살아있는 패널**로 이관한다
         (#20). 그래야 계정 합계가 패널 하나 닫혔다고 줄지 않고, 같은 계정의 Claude
@@ -1502,34 +1451,6 @@ class ServerClaudeMixin:
                                      + p._tok_state.get("peak", 0))
                 return
 
-    def set_token_budget(self, day=None, session=None, h5=None, acct=None):
-        """일/세션/5시간/계정합계 토큰 예산 설정(0=무제한). None 인 인자는 변경하지
-        않는다. 예산을 바꾸면 경고 레벨을 즉시 재계산한다. opts.json 영속."""
-        if day is not None:
-            try:
-                self.token_budget_day = max(0, int(day))
-            except (TypeError, ValueError):
-                pass
-        if session is not None:
-            try:
-                self.token_budget_session = max(0, int(session))
-            except (TypeError, ValueError):
-                pass
-        if h5 is not None:
-            try:
-                self.token_budget_5h = max(0, int(h5))
-            except (TypeError, ValueError):
-                pass
-        if acct is not None:
-            try:
-                self.token_budget_account = max(0, int(acct))
-            except (TypeError, ValueError):
-                pass
-        self._refresh_budget_level()
-        self._save_opts()
-        return (self.token_budget_day, self.token_budget_session,
-                self.token_budget_5h, self.token_budget_account)
-
     def set_claude_turn_warn(self, long_sec=None, repeat=None):
         """M17 표시 경고 임계 설정(0=끔). long_sec=장기 턴 초, repeat=동일 완료 반복
         횟수. None 인자는 변경 안 함. opts.json 영속."""
@@ -1545,13 +1466,6 @@ class ServerClaudeMixin:
                 pass
         self._save_opts()
         return (self.claude_long_turn_sec, self.claude_repeat_alert)
-
-    def set_token_budget_resume_gate(self, value=None):
-        """자동재개 예산 게이트(M12) 토글. value 미지정 시 반전. opts.json 영속."""
-        self.token_budget_resume_gate = (not self.token_budget_resume_gate) \
-            if value is None else bool(value)
-        self._save_opts()
-        return self.token_budget_resume_gate
 
     def set_claude_budget_plan(self, value=None):
         """예산 압박 시 plan 유도(M13) 토글. value 미지정 시 반전. 끄면 다음 프레임에
@@ -1643,53 +1557,6 @@ class ServerClaudeMixin:
                 pass
         self._save_opts()
         return (self.usage_gate_session_pct, self.usage_gate_week_pct)
-
-    def _budget_over(self, pane: Pane) -> bool:
-        """일/세션/계정합계 예산 중 하나라도 초과했는지(M10/M12/M15). 예산이 0
-        (무제한)이면 그 축은 무시. 누계는 best-effort 라 하드 차단이 아니라 자동개입
-        보류 판단에만 쓴다. (S6 T4: 실측 게이트 _usage_gate_over 가 1차 — 이 절대
-        토큰 축들은 스크랩 추정 기반 보조 축으로 유지.)"""
-        if (self.token_budget_day > 0 and self._today_tokens is not None
-                and self._today_tokens >= self.token_budget_day):
-            return True
-        if (self.token_budget_session > 0 and pane is not None
-                and pane._session_tokens >= self.token_budget_session):
-            return True
-        # M15: 계정 단위 청구 — 같은 계정 모든 세션 합계가 계정 예산을 넘으면 초과.
-        if (self.token_budget_account > 0 and pane is not None
-                and self._account_token_total(pane) >= self.token_budget_account):
-            return True
-        return False
-
-    def _budget_level_for(self, pane: Pane, total: int | None = None) -> int:
-        """status 표시용 경고 레벨(0/80/100). 일 예산(_budget_level)·활성 패널 세션
-        예산·계정 합계 예산(M15) 중 가장 높은 쪽. 예산 미설정이면 0.
-
-        C5(PERFORMANCE_REVIEW 2026-06-07): total 을 주면 계정 합계를 다시 순회하지
-        않고 그 값을 쓴다. _status_msg 가 claude_tokens 용으로 이미 계산한
-        _account_token_total 을 넘겨, 한 status 빌드에서 전 패널 합산이 1회가 되게 한다.
-
-        S6 T4: 실측 게이트 레벨(_usage_gate_level)을 포함한 최대치 — 실측 한도
-        압박이 절대 예산과 같은 ⚠ 배지·M13 plan 유도 임계로 보이게 한다."""
-        lvl = max(self._budget_level, self._usage_gate_level(pane))
-        if pane is not None and pane._claude:
-            b = self.token_budget_session
-            if b > 0:
-                used = pane._session_tokens
-                if used >= b:
-                    lvl = max(lvl, 100)
-                elif used >= b * 0.8:
-                    lvl = max(lvl, 80)
-            # M15: 계정 합계 vs 계정 예산
-            ba = self.token_budget_account
-            if ba > 0:
-                tot = (self._account_token_total(pane)
-                       if total is None else total)
-                if tot >= ba:
-                    lvl = max(lvl, 100)
-                elif tot >= ba * 0.8:
-                    lvl = max(lvl, 80)
-        return lvl
 
     def _ctx_intervene(self, pane: Pane):
         """컨텍스트 잔량 부족(M11): 설정된 방식으로 1회 정리한다. "compact" 는

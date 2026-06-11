@@ -2861,43 +2861,16 @@ async def test_status_usage_display_m18():
         # Claude 가 점유%를 그리면 그대로(콤팩트 포맷)
         p._claude_usage = "ctx:23%/1M"
         assert srv._usage_text(p) == "ctx:23%/1M"
-        # B(S6 T3): 실측 없으면 항상 None — 분모 근사 폐기. token_budget_5h 설정은
-        # 잔존(호환)하지만 표시 분모로는 더 이상 안 쓴다(지어내지 않음 일관).
+        # B(S6 T3): 실측 없으면 항상 None — 분모 근사 폐기(지어내지 않음 일관).
+        # §7-4: token_budget_5h 설정 자체도 deprecate 로 제거됨.
         p._session_tokens = 100_000
         assert srv._tok5h_pct(p, 25_000) is None
-        assert srv.set_token_budget(h5=350_000)[2] == 350_000, "설정은 잔존(호환)"
-        assert srv._tok5h_pct(p, 25_000) is None, "설정해도 근사 안 함(실측만)"
         # 실측이 오면 그 값(분자/분모 불필요)
         srv._usage = {"session": {"pct": 7, "reset": "2pm"}}
         assert srv._tok5h_pct(p, 25_000) == 7
         # 비-Claude 면 None
         p._claude = None
         assert srv._tok5h_pct(p, 25_000) is None
-    finally:
-        await teardown(srv, task, sock)
-
-
-async def test_account_budget_gate_m15():
-    """M15: 예산 경고/초과가 패널 단독뿐 아니라 계정 합계(_account_token_total)도
-    본다. 같은 계정 세션 합계가 계정 예산을 넘으면 80/100 경고·_budget_over."""
-    srv, task, sock = await server_only()
-    try:
-        sess = srv.ensure_default_session(80, 24)
-        p = sess.active_window.active_pane
-        p._claude = "idle"
-        p._claude_account = "wo…@woojinkim.org"
-        p._session_tokens = 900_000
-        # 계정 예산 미설정 → 레벨 0, 미초과
-        assert srv._budget_level_for(p) == 0
-        assert srv._budget_over(p) is False
-        # 계정 예산 1M, 합계 0.9M → 90% → 80 경고(아직 미초과)
-        assert srv.set_token_budget(acct=1_000_000)[3] == 1_000_000
-        assert srv._budget_level_for(p) == 80
-        assert srv._budget_over(p) is False
-        # 합계가 계정 예산 초과 → 100 + _budget_over
-        p._session_tokens = 1_100_000
-        assert srv._budget_level_for(p) == 100
-        assert srv._budget_over(p) is True
     finally:
         await teardown(srv, task, sock)
 
@@ -2956,8 +2929,10 @@ async def test_claude_model_status_m14c():
 
 
 async def test_account_priority_cleanup_m15():
-    """M15 우선순위 정리: 계정 합계가 예산을 넘고 이 패널이 가장 꽉 찬 idle 이면,
-    개별 잔량 임계 미만이 아니어도(잔량 50% > 15%) 정리를 발화한다."""
+    """M15 우선순위 정리(§7-4 이후 실측 게이트 기반): 계정 실측 사용량이 게이트
+    임계 이상이고 이 패널이 가장 꽉 찬 idle 이면, 개별 잔량 임계 미만이 아니어도
+    (잔량 50% > 15%) 정리를 발화한다."""
+    import time as _t
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
@@ -2969,10 +2944,12 @@ async def test_account_priority_cleanup_m15():
         srv._scan_claude(sess, win)
         assert p._claude == "busy"
         p._ctx_pct = 50                       # 잔량 50%(임계 15%보다 높음)
-        # 예산 미설정 → 우선순위 조건 거짓
-        assert srv._account_over_budget(p) is False
-        srv.token_budget_account = 100_000    # 200k >= 100k → 초과
-        assert srv._account_over_budget(p) is True
+        # 실측 부재 → fail-open(우선순위 조건 거짓)
+        assert srv._usage_gate_over(p) is False
+        # 실측 96% ≥ 게이트(기본 95) → 우선순위 조건 참
+        srv._usage = {"session": {"pct": 96, "reset": "2pm"}}
+        srv._usage_ts = _t.time()
+        assert srv._usage_gate_over(p) is True
         # idle 완료 경계 → 우선순위 정리 발화(개별 임계 미만 아님에도)
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
         srv._scan_claude(sess, win)
@@ -3003,32 +2980,8 @@ async def test_usage_limits_status_m19():
         await teardown(srv, task, sock)
 
 
-async def test_budget_level_for_accepts_precomputed_total_c5():
-    """C5: _budget_level_for 에 total 을 넘기면 계정 합계를 다시 순회하지 않고 그 값을
-    쓴다(status 빌드당 _account_token_total 1회). total 미지정과 동일 결과여야 하고,
-    넘긴 total 이 실제로 판정에 쓰이는지 검증."""
-    srv, task, sock = await server_only()
-    try:
-        sess = srv.ensure_default_session(80, 24)
-        p = sess.active_window.active_pane
-        p._claude = "idle"
-        p._claude_account = "wo…@woojinkim.org"
-        p._session_tokens = 900_000
-        srv.set_token_budget(acct=1_000_000)
-        # total 미지정(내부 계산) == total 명시(같은 값) — 동치
-        auto = srv._budget_level_for(p)
-        tot = srv._account_token_total(p)
-        assert srv._budget_level_for(p, tot) == auto == 80
-        # 넘긴 total 이 실제로 쓰임: 합계를 초과값으로 주면 패널 누계와 무관히 100
-        assert srv._budget_level_for(p, 1_200_000) == 100
-        # 낮은 total 을 주면 80 미만(계정 분기는 total 만 보고, 세션 예산 미설정)
-        assert srv._budget_level_for(p, 100) == 0
-    finally:
-        await teardown(srv, task, sock)
-
-
 async def test_status_static_opts_only_on_full_c4():
-    """C4: 토글로만 바뀌는 정적 옵션(claude_rules·예산/컨텍스트 12)은 full status
+    """C4: 토글로만 바뀌는 정적 옵션(claude_rules·컨텍스트/경고 임계)은 full status
     (attach·_broadcast_session)에만 싣고 주기(full=False) status 에선 뺀다. 낙관적
     토글 4개 불린은 주기에도 유지(전용 브로드캐스트 경로 없음)."""
     srv, task, sock = await server_only()
@@ -3036,9 +2989,7 @@ async def test_status_static_opts_only_on_full_c4():
         sess = srv.ensure_default_session(80, 24)
         STATIC = ["claude_rules", "claude_ctx_autoclear", "claude_ctx_threshold",
                   "claude_ctx_min_interval", "claude_ctx_action",
-                  "token_budget_day", "token_budget_session", "token_budget_5h",
-                  "token_budget_account", "claude_long_turn_sec",
-                  "claude_repeat_alert", "token_budget_resume_gate",
+                  "claude_long_turn_sec", "claude_repeat_alert",
                   "claude_budget_plan"]
         full = srv._status_msg(sess, full=True)
         for k in STATIC:

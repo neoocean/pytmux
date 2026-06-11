@@ -29,8 +29,9 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **476 passed**
-  (`python3 tests/run.py`, 2026-06-11 — 기존 flaky 1건도 58122 에서 근본 수정돼 0).
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **471 passed**
+  (`python3 tests/run.py`, 2026-06-11 — §7-4 절대 예산 deprecate 로 전용 테스트
+  5종 삭제. 기존 flaky 1건도 58122 에서 근본 수정돼 0).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
 ## 2. 실행 / 개발
@@ -2697,8 +2698,14 @@ test_client.py`(417) + 신규 `tests/test_plugin_contract.py`(5) 회귀망 + smo
   - **라이브 검증 중 FIX**(58133): 프로브가 데몬 cwd(홈) 신뢰 대화상자에 막히던
     잠복 버그 → Claude 패널 셸 cwd 로 spawn(§9 상세). 재시작 2회(드라이런 SAFE)로
     p4:58133 실행 중, 상태줄 `24%/5h · ~Σ` 실화면 캡처 확인.
-  - **잔존 후속**: §7-4(token_budget_* 절대 예산 deprecate — 실사용 검증 후)·REC
-    캡처로 [대사] 뷰 실측·추정 상관 관찰. 관련: [[token-accounting-s6-complete]].
+  - **§7-4 해소(2026-06-11)**: 절대 예산 `token_budget_*`(day/session/5h/account/
+    resume_gate) **deprecate 실행** — 설정·setter·`_budget_track`/`_budget_over`/
+    `_budget_level_for`·팝업 행·status full 키 제거, M13 plan 유도·M15 우선 정리·
+    ⚠ 레벨은 실측 게이트(`_usage_gate_level/_over`)로 일원화(와이어 키
+    `budget_level` 이름은 유지). 구 opts.json 키는 로드 시 무시→다음 저장에서
+    자연 소멸(shim, S5 T3 선례). 절대 예산 테스트 5종 삭제·잔여는 실측 전환.
+  - **잔존 후속**: REC 캡처로 [대사] 뷰 실측·추정 상관 관찰.
+    관련: [[token-accounting-s6-complete]].
 
 **⚠️ 병렬 세션 함정(2026-06-10 갱신)**: playground 워크스페이스를 **다른 세션이 동시 편집**한다.
 2026-06-09 Phase 2 제출 중, 병렬 세션의 **clock/calendar 플러그인 추출**(미완·당시 깨짐: 미존재

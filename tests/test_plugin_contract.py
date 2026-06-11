@@ -157,11 +157,13 @@ async def test_core_no_longer_imports_token_db_backend():
     assert hasattr(plugins.Registry, "server_init")
 
 
-async def test_token_budget_opts_namespace_and_migration_shim():
-    """T3(토큰 모듈화): token_budget_* 설정이 코어가 아니라 claude-code 플러그인 소유로
-    opts.json 의 plugin_opts 네임스페이스에 저장/로드된다. **마이그레이션 shim**: 구
-    top-level 키(이 CL 이전·타 머신 opts.json)는 폴백으로 읽고, plugin_opts 가 있으면
-    그쪽을 우선한다 → 업그레이드 무중단. 플러그인 부재 시 init no-op·serialize {}."""
+async def test_plugin_opts_namespace_and_migration_shim():
+    """T3(토큰 모듈화)+§7-4: 플러그인 소유 설정(usage_gate_*)이 코어가 아니라
+    claude-code 플러그인 소유로 opts.json 의 plugin_opts 네임스페이스에 저장/로드된다.
+    **마이그레이션 shim**: 구 top-level 키는 폴백으로 읽고, plugin_opts 가 있으면
+    그쪽을 우선한다. §7-4 deprecate shim: 구 opts.json 의 token_budget_* 키는 로드
+    시 무시(속성 미설치)되고 serialize 에서 빠져 다음 저장에서 자연 소멸한다.
+    플러그인 부재 시 init no-op·serialize {}."""
     reg = plugins.load()
 
     class _S:
@@ -169,32 +171,33 @@ async def test_token_budget_opts_namespace_and_migration_shim():
 
     # ① 구 포맷(top-level only, plugin_opts 없음) → 폴백으로 읽힘(타 머신 업그레이드).
     s1 = _S()
-    reg.server_opts_init(s1, {"token_budget_day": 111,
-                              "token_budget_resume_gate": True})
-    assert s1.token_budget_day == 111
-    assert s1.token_budget_session == 0          # 없는 키는 기본값
-    assert s1.token_budget_5h == 0
-    assert s1.token_budget_resume_gate is True
+    reg.server_opts_init(s1, {"usage_gate_session_pct": 80})
+    assert s1.usage_gate_session_pct == 80
+    assert s1.usage_gate_week_pct == 0           # 없는 키는 기본값
     # ② 신 포맷(plugin_opts) 우선 — 같은 키가 top-level 에도 있어도 nested 가 이긴다.
     s2 = _S()
-    reg.server_opts_init(s2, {"token_budget_day": 999,
-                              "plugin_opts": {"token_budget_day": 222,
-                                              "token_budget_account": 7}})
-    assert s2.token_budget_day == 222 and s2.token_budget_account == 7
+    reg.server_opts_init(s2, {"usage_gate_session_pct": 99,
+                              "plugin_opts": {"usage_gate_session_pct": 90,
+                                              "usage_gate_week_pct": 7}})
+    assert s2.usage_gate_session_pct == 90 and s2.usage_gate_week_pct == 7
     # ③ serialize 는 현재 server 값을 돌려준다(코어가 plugin_opts 밑에 불투명 저장).
     out = reg.server_opts_serialize(s2)
-    assert out["token_budget_day"] == 222
-    assert set(out) == {"token_budget_day", "token_budget_session", "token_budget_5h",
-                        "token_budget_account", "token_budget_resume_gate",
-                        # S6 T4: 실측 한도 게이트 임계(플러그인 소유 동일 패턴)
-                        "usage_gate_session_pct", "usage_gate_week_pct"}
+    assert out["usage_gate_session_pct"] == 90
+    assert set(out) == {"usage_gate_session_pct", "usage_gate_week_pct"}
+    # §7-4 deprecate shim: 구 opts.json 에 남은 token_budget_* 는 무시(속성 미설치).
+    s4 = _S()
+    reg.server_opts_init(s4, {"token_budget_day": 111,
+                              "plugin_opts": {"token_budget_day": 222,
+                                              "token_budget_resume_gate": True}})
+    assert not hasattr(s4, "token_budget_day"), "deprecate 키가 설치됨"
+    assert not hasattr(s4, "token_budget_resume_gate"), "deprecate 키가 설치됨"
     # S6 T4 기본값: 세션 95(기본 ON)·주간 0(끔) — 구 opts.json(키 부재)에서도 적용.
-    assert s1.usage_gate_session_pct == 95 and s1.usage_gate_week_pct == 0
+    assert s4.usage_gate_session_pct == 95 and s4.usage_gate_week_pct == 0
     # ④ 플러그인 부재(디렉토리 삭제 시뮬) → init no-op(속성 안 생김), serialize {}.
     reg2 = _registry_without_claude()
     s3 = _S()
-    reg2.server_opts_init(s3, {"token_budget_day": 5})
-    assert not hasattr(s3, "token_budget_day"), "플러그인 부재인데 token_budget 설치됨"
+    reg2.server_opts_init(s3, {"usage_gate_session_pct": 5})
+    assert not hasattr(s3, "usage_gate_session_pct"), "플러그인 부재인데 설정 설치됨"
     assert reg2.server_opts_serialize(s3) == {}
 
 
@@ -292,17 +295,15 @@ async def test_token_subsystem_fully_disabled_without_plugin():
     # ② 토큰 로그 조회(request_token_log) 무응답.
     assert reg.handle_server_request(
         _S(), None, "request_token_log", {}) is None
-    # ③ 예산 설정: server_opts_init no-op(속성 미설치) + serialize {}(영속 사라짐).
+    # ③ 플러그인 소유 설정: server_opts_init no-op(속성 미설치) + serialize {}.
     s = _S()
-    reg.server_opts_init(s, {"token_budget_day": 9,
-                             "plugin_opts": {"token_budget_day": 9}})
-    assert not hasattr(s, "token_budget_day"), "예산 설정이 설치됨"
+    reg.server_opts_init(s, {"usage_gate_session_pct": 9,
+                             "plugin_opts": {"usage_gate_session_pct": 9}})
     assert reg.server_opts_serialize(s) == {}
-    # ④ DB 연결·일예산 누계 런타임 상태(server_init) 미설치.
+    # ④ DB 연결 런타임 상태(server_init) 미설치.
     s2 = _S()
     reg.server_init(s2)
-    assert not hasattr(s2, "_tokens_db") and not hasattr(s2, "_budget_level"), \
-        "토큰 DB/예산 런타임 상태가 설치됨"
+    assert not hasattr(s2, "_tokens_db"), "토큰 DB 런타임 상태가 설치됨"
     # ④-b(S6): 실측 신선도·이벤트 갱신 예약 상태(T3/T5)도 함께 사라진다.
     assert not hasattr(s2, "_usage_ts") \
         and not hasattr(s2, "_usage_probe_handle"), "S6 실측 런타임 상태가 설치됨"

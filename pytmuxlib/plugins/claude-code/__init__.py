@@ -19,7 +19,7 @@ import time as _time
 COMMANDS = [
     ("claude-rules", "Claude 시작 규칙 편집(저장 시 새 세션/clear 후 프롬프트에 "
                      "자동 주입)", "Claude"),
-    ("token-saver", "토큰 절감 설정 팝업 — 각 자동 개입 토글·잔량 임계·예산"
+    ("token-saver", "토큰 절감 설정 팝업 — 각 자동 개입 토글·잔량 임계·실측 게이트"
                     "(별칭 claude-settings, token-settings)", "Claude"),
     ("auto-resume", "토큰 리밋 자동 재개 [on|off]", "Claude"),
     ("auto-resume-message", "자동 재개 메시지 설정", "Claude"),
@@ -86,8 +86,7 @@ SAVER_ROWS = [
     ("autoresume", "토큰리밋 자동재개", "toggle"),
     ("usage_gate_session", "실측 세션한도 게이트(자동재개 보류 %)", "cycle"),
     ("usage_gate_week", "실측 주간한도 게이트(%)", "cycle"),
-    ("resume_gate", "예산 초과 시 자동재개 보류(추정 누계)", "toggle"),
-    ("budget_plan", "예산 압박(≥80%) 시 plan 모드 유도", "toggle"),
+    ("budget_plan", "실측 한도 압박(게이트의 80%) 시 plan 모드 유도", "toggle"),
     ("ctx_autoclear", "컨텍스트 잔량 부족 시 자동 정리", "toggle"),
     ("ctx_action", "  └ 정리 방식", "cycle"),
     ("ctx_threshold", "  └ 잔량 임계", "cycle"),
@@ -97,14 +96,10 @@ SAVER_ROWS = [
     ("auto_hardstop", "컨텍스트 하드스톱 시 즉시 자동 /compact", "toggle"),
     ("claude_auto_mode", "권한모드 자동 오토", "toggle"),
     ("prompt_clear", "프롬프트 단위 클리어(완료마다 doc+/clear)", "toggle"),
-    ("budget_day", "일 토큰 예산", "cycle"),
-    ("budget_session", "세션 토큰 예산", "cycle"),
-    ("budget_5h", "5시간 토큰 예산(레거시 — 표시 분모론 미사용)", "cycle"),
-    ("budget_account", "계정 합계 예산(멀티세션)", "cycle"),
     ("long_turn", "장기 턴 경고(초)", "cycle"),
     ("repeat_alert", "반복 루프 경고(회)", "cycle"),
 ]
-# cycle 행의 프리셋 값(Enter 마다 다음으로 순환). 예산 0=무제한(끔).
+# cycle 행의 프리셋 값(Enter 마다 다음으로 순환). 0=끔.
 SAVER_CYCLES = {
     # S6 T4 실측 게이트 임계(%): 0=끔. 세션 기본 95 — Enter 마다 다음으로 순환.
     "usage_gate_session": [0, 80, 90, 95, 98],
@@ -112,23 +107,9 @@ SAVER_CYCLES = {
     "ctx_action": ["compact", "doc-clear"],
     "ctx_threshold": [10, 15, 20, 25, 30],
     "ctx_min_interval": [0, 60, 120, 300, 600],
-    "budget_day": [0, 100_000, 200_000, 500_000, 1_000_000],
-    "budget_session": [0, 50_000, 100_000, 200_000, 500_000],
-    "budget_5h": [0, 100_000, 200_000, 350_000, 500_000, 1_000_000],
-    "budget_account": [0, 200_000, 500_000, 1_000_000, 2_000_000, 5_000_000],
     "long_turn": [0, 300, 600, 900, 1800],
     "repeat_alert": [0, 2, 3, 5, 10],
 }
-
-
-def _fmt_budget(v):
-    if not v:
-        return "끔(무제한)"
-    if v >= 1_000_000:
-        return f"{v / 1_000_000:.1f}M".replace(".0M", "M")
-    if v >= 1_000:
-        return f"{v // 1000}k"
-    return str(v)
 
 
 def _cycle_next(key, cur):
@@ -145,7 +126,6 @@ def saver_display(app, key):
     st = app.status
     bools = {
         "autoresume": st.autoresume,
-        "resume_gate": st.token_budget_resume_gate,
         "budget_plan": st.claude_budget_plan,
         "ctx_autoclear": st.claude_ctx_autoclear,
         "auto_doc_clear": st.auto_doc_clear,
@@ -169,14 +149,6 @@ def saver_display(app, key):
     if key == "usage_gate_week":
         v = int(st.usage_gate_week_pct)
         return "끔" if v <= 0 else f"실측 ≥{v}%"
-    if key == "budget_day":
-        return _fmt_budget(st.token_budget_day)
-    if key == "budget_session":
-        return _fmt_budget(st.token_budget_session)
-    if key == "budget_5h":
-        return _fmt_budget(st.token_budget_5h)
-    if key == "budget_account":
-        return _fmt_budget(st.token_budget_account)
     if key == "long_turn":
         v = int(st.claude_long_turn_sec)
         return "끔" if v <= 0 else f"{v}초 이상"
@@ -194,9 +166,6 @@ def saver_action(app, key):
     if key == "autoresume":
         app.send_cmd("set_autoresume")
         st.autoresume = not st.autoresume
-    elif key == "resume_gate":
-        app.send_cmd("set_token_budget_resume_gate")
-        st.token_budget_resume_gate = not st.token_budget_resume_gate
     elif key == "budget_plan":
         app.send_cmd("set_claude_budget_plan")
         st.claude_budget_plan = not st.claude_budget_plan
@@ -238,22 +207,6 @@ def saver_action(app, key):
         nxt = _cycle_next("usage_gate_week", int(st.usage_gate_week_pct))
         app.send_cmd("set_usage_gate", week=nxt)
         st.usage_gate_week_pct = nxt
-    elif key == "budget_day":
-        nxt = _cycle_next("budget_day", st.token_budget_day)
-        app.send_cmd("set_token_budget", day=nxt)
-        st.token_budget_day = nxt
-    elif key == "budget_session":
-        nxt = _cycle_next("budget_session", st.token_budget_session)
-        app.send_cmd("set_token_budget", session=nxt)
-        st.token_budget_session = nxt
-    elif key == "budget_5h":
-        nxt = _cycle_next("budget_5h", int(st.token_budget_5h))
-        app.send_cmd("set_token_budget", h5=nxt)
-        st.token_budget_5h = nxt
-    elif key == "budget_account":
-        nxt = _cycle_next("budget_account", int(st.token_budget_account))
-        app.send_cmd("set_token_budget", acct=nxt)
-        st.token_budget_account = nxt
     elif key == "long_turn":
         nxt = _cycle_next("long_turn", int(st.claude_long_turn_sec))
         app.send_cmd("set_claude_turn_warn", long_sec=nxt)
@@ -524,28 +477,29 @@ class _ClaudeCodePlugin:
         return ServerClaudeMixin
 
     def server_init(self, server):
-        """Server.__init__ 1회 훅 — 토큰 DB 연결·일예산 누계 런타임 상태를 설치한다
-        (S5 토큰 모듈화 T2). 코어 server.__init__ 에서 빼낸 _tokens_db/_today_*/
-        _budget_level 을 동적 합성된 믹스인 메서드로 설치한다. 디렉토리 삭제 시 이 훅이
+        """Server.__init__ 1회 훅 — 토큰 DB 연결 런타임 상태를 설치한다
+        (S5 토큰 모듈화 T2). 코어 server.__init__ 에서 빼낸 _tokens_db 를
+        동적 합성된 믹스인 메서드로 설치한다. 디렉토리 삭제 시 이 훅이
         사라져 코어 server 엔 토큰 상태가 안 생긴다(delete-to-disable). 형제 런타임 훅
         (server_input→_track_prompt 등)과 같은 불변식에 기댄다 — self.plugins 에 claude 가
         있으면 Server 에 ServerClaudeMixin 도 합성돼 있다(프로덕션·정상 테스트 순서)."""
         server._init_token_state()
 
-    # ---- 토큰 예산 설정 소유(S5 토큰 모듈화 T3) — 코어 server.py __init__·serverpersist
-    # _save_opts 에서 이전. 코어는 token_budget 의 의미를 모르고, opts.json 의 plugin_opts
+    # ---- 토큰 설정 소유(S5 토큰 모듈화 T3) — 코어 server.py __init__·serverpersist
+    # _save_opts 에서 이전. 코어는 키의 의미를 모르고, opts.json 의 plugin_opts
     # 네임스페이스를 불투명하게 저장만 한다. 디렉토리 삭제 시 이 훅들이 사라져 코어 server
-    # 엔 token_budget_* 가 안 생기고 opts.json plugin_opts 가 비어 설정이 통째로 사라진다.
-    _OPTS_KEYS = (("token_budget_day", 0, int), ("token_budget_session", 0, int),
-                  ("token_budget_5h", 0, int), ("token_budget_account", 0, int),
-                  ("token_budget_resume_gate", False, bool),
+    # 엔 이 속성들이 안 생기고 opts.json plugin_opts 가 비어 설정이 통째로 사라진다.
+    # §7-4(2026-06-11): 절대 예산 token_budget_*(day/session/5h/account/resume_gate)
+    # deprecate — 목록에서 제거. 구 opts.json 에 남은 키는 로드 시 무시되고 다음
+    # _save_opts 에서 자연 소멸한다(마이그레이션 shim — S5 T3 선례와 같은 방식).
+    _OPTS_KEYS = (
                   # S6 T4 실측 한도 게이트(%): 세션 기본 95(ON)·주간 기본 0(끔)
                   # — 2026-06-10 사용자 결정. 0=그 축 끔.
                   ("usage_gate_session_pct", 95, int),
                   ("usage_gate_week_pct", 0, int))
 
     def server_opts_init(self, server, opts):
-        """opts.json → server.token_budget_* 설치(코어 __init__ 의 _opts.get 들을 이전).
+        """opts.json → server 속성 설치(코어 __init__ 의 _opts.get 들을 이전).
         **마이그레이션 shim**: plugin_opts 네임스페이스를 우선 읽되, 없으면 구 top-level
         키(이 CL 이전·타 머신 opts.json)로 폴백한다 → 업그레이드 무중단. 한 번 _save_opts
         가 돌면 top-level 키는 사라지고 plugin_opts 만 남는다(코어가 더는 top-level 로
@@ -560,8 +514,8 @@ class _ClaudeCodePlugin:
                 setattr(server, key, cast(default))
 
     def server_opts_serialize(self, server):
-        """server.token_budget_* → opts.json plugin_opts 네임스페이스(코어 _save_opts 의
-        token_budget 블록을 이전). 코어는 이 dict 를 plugin_opts 밑에 불투명하게 저장한다."""
+        """server 속성 → opts.json plugin_opts 네임스페이스(코어 _save_opts 의
+        해당 블록을 이전). 코어는 이 dict 를 plugin_opts 밑에 불투명하게 저장한다."""
         return {key: getattr(server, key, default)
                 for key, default, _cast in self._OPTS_KEYS}
 
@@ -579,7 +533,7 @@ class _ClaudeCodePlugin:
         토큰·사용량·예산·팝업 시퀀스와 full-only 정적 옵션 12개를 추가한다. 키/값은
         이전 코어 _status_msg 와 동일 — 서버 테스트가 그대로 검증한다."""
         ap = win.active_pane if win else None
-        # C5: 계정 합계는 한 번만 계산해 claude_tokens·tok5h_pct·budget_level 에 재사용.
+        # C5: 계정 합계는 한 번만 계산해 claude_tokens·tok5h_pct 에 재사용.
         tok_total = server._account_token_total(ap)
         # 코어 windows[] 항목에 탭별 Claude 집계를 덧붙인다(순서=sess.tabs 와 일치).
         for wd, t in zip(msg.get("windows", ()), sess.tabs):
@@ -620,7 +574,9 @@ class _ClaudeCodePlugin:
         msg["auto_compact"] = server.auto_compact
         msg["auto_hardstop"] = server.auto_hardstop
         msg["claude_auto_mode"] = server.claude_auto_mode
-        msg["budget_level"] = server._budget_level_for(ap, tok_total)
+        # §7-4: 절대 예산 deprecate — 경고 레벨은 실측 게이트(0/80/100)만. 와이어
+        # 키 이름(budget_level)은 유지(클라 ⚠ 배지·전이 팝업이 그대로 소비).
+        msg["budget_level"] = server._usage_gate_level(ap)
         # M14 무장된 자동 액션 카운트다운(없으면 None): {kind, eta(초)}.
         msg["claude_pending"] = server._pending_action(ap)
         # C4: 토글로만 바뀌는 정적 옵션은 full(신규 attach·_broadcast_session)일 때만
@@ -633,13 +589,8 @@ class _ClaudeCodePlugin:
                 "claude_ctx_threshold": server.claude_ctx_threshold,
                 "claude_ctx_min_interval": server.claude_ctx_min_interval,
                 "claude_ctx_action": server.claude_ctx_action,
-                "token_budget_day": server.token_budget_day,
-                "token_budget_session": server.token_budget_session,
-                "token_budget_5h": server.token_budget_5h,
-                "token_budget_account": server.token_budget_account,
                 "claude_long_turn_sec": server.claude_long_turn_sec,
                 "claude_repeat_alert": server.claude_repeat_alert,
-                "token_budget_resume_gate": server.token_budget_resume_gate,
                 "claude_budget_plan": server.claude_budget_plan,
                 # S6 T4 실측 한도 게이트 임계(설정 팝업 표시용)
                 "usage_gate_session_pct": server.usage_gate_session_pct,
@@ -717,10 +668,6 @@ class _ClaudeCodePlugin:
         if action == "set_claude_ctx_min_interval":   # M14 정리 빈도 상한(초)
             server.set_claude_ctx_min_interval(msg.get("value"))
             return "broadcast"
-        if action == "set_token_budget":              # M10 일/세션/5h/계정 예산
-            server.set_token_budget(day=msg.get("day"), session=msg.get("session"),
-                                    h5=msg.get("h5"), acct=msg.get("acct"))
-            return "broadcast"
         if action == "set_claude_turn_warn":          # M17 장기턴/반복 임계
             server.set_claude_turn_warn(long_sec=msg.get("long_sec"),
                                         repeat=msg.get("repeat"))
@@ -728,9 +675,6 @@ class _ClaudeCodePlugin:
         if action == "refresh_usage":                 # M19 그림자 /usage 질의
             asyncio.create_task(server.refresh_usage())
             return "send_full"
-        if action == "set_token_budget_resume_gate":  # M12 예산 게이트 토글
-            server.set_token_budget_resume_gate(msg.get("value"))
-            return "broadcast"
         if action == "set_usage_gate":                # S6 T4 실측 한도 게이트 임계
             server.set_usage_gate(session=msg.get("session"),
                                   week=msg.get("week"))
@@ -895,7 +839,7 @@ class _ClaudeCodePlugin:
 
     def client_statusbar_init(self, app, status):
         """하단 상태줄 위젯 생성 직후 — Claude 상태 속성을 안전한 기본값으로 설치한다
-        (코어 StatusBar.__init__ 에서 빼낸 ~26개 claude_*/token_budget_*/auto_* 필드).
+        (코어 StatusBar.__init__ 에서 빼낸 claude_*/usage_gate_*/auto_* 필드).
         흡수(absorb)·렌더(render_segs)가 이 속성들을 읽고 쓴다."""
         from .clientstatus import init_defaults
         init_defaults(status)

@@ -359,8 +359,8 @@ class ServerPersistMixin:
                            "claude_repeat_alert": self.claude_repeat_alert,
                            "claude_budget_plan": self.claude_budget_plan,
                            # 플러그인 소유 설정(S5 토큰 모듈화 T3): claude-code 가 돌려준
-                           # token_budget_* 를 plugin_opts 네임스페이스에 불투명하게 저장한다
-                           # (코어는 키 의미 모름). 디렉토리 삭제 시 {} → 설정이 사라진다.
+                           # 설정(usage_gate_* 등)을 plugin_opts 네임스페이스에 불투명하게
+                           # 저장한다(코어는 키 의미 모름). 디렉토리 삭제 시 {} → 설정이 사라진다.
                            "plugin_opts": self.plugins.server_opts_serialize(self)},
                           f)
         except OSError:

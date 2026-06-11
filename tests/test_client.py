@@ -4143,19 +4143,17 @@ async def test_status_retains_static_opts_when_omitted_c4():
     값을 그리지 않게 하는 핵심 불변식."""
     async def body(app, pilot, srv):
         st = app.status
-        st.update_status({"t": "status", "token_budget_day": 5000,
-                          "claude_ctx_threshold": 22, "claude_ctx_action": "doc-clear",
-                          "token_budget_account": 1_000_000})
-        assert st.token_budget_day == 5000
+        st.update_status({"t": "status", "claude_ctx_threshold": 22,
+                          "claude_ctx_action": "doc-clear",
+                          "usage_gate_session_pct": 90})
         assert st.claude_ctx_threshold == 22
         assert st.claude_ctx_action == "doc-clear"
-        assert st.token_budget_account == 1_000_000
+        assert st.usage_gate_session_pct == 90
         # 정적 옵션 키가 모두 빠진 주기 status → 직전 값 그대로 유지
         st.update_status({"t": "status"})
-        assert st.token_budget_day == 5000, "토큰 예산 유실"
         assert st.claude_ctx_threshold == 22, "컨텍스트 임계 유실"
         assert st.claude_ctx_action == "doc-clear", "정리 방식 유실"
-        assert st.token_budget_account == 1_000_000, "계정 예산 유실"
+        assert st.usage_gate_session_pct == 90, "실측 게이트 임계 유실"
     await _with_app(body)
 
 
