@@ -29,6 +29,25 @@
 > ubuntu+windows 로 충족된다. macOS 특이 검증이 필요하면 로컬 실행 또는 `windows.yml`
 > matrix 에 `macos-latest` 한시 재추가(주석 안내). 러너 견고성(UTF-8 출력·테스트별
 > 타임아웃·faulthandler 행 덤프)은 유지된다.
+>
+> **macOS 재추가 + non-blocking 결론(2026-06-12)**: 사용자 요청으로 `macos-latest` 를
+> 매트릭스에 도로 넣고 "실패 안 할 때까지" 수정을 시도했다. 진단 4회로 **인프라 레벨
+> wedge** 임이 확정됐다 — 우리 코드/설정으론 못 고친다:
+> 1. 스위트 **startup 에서 간헐적**으로 매달린다(3.11 이 한 번 3분에 통과 → 데드락이
+>    아니라 경쟁/인프라 타이밍, 특정 테스트가 아님).
+> 2. run.py 의 **startup faulthandler**(`dump_traceback_later(exit=True)`, 이번에 추가)·
+>    SIGALRM 도 **안 끊긴다** → 파이썬 워치독 스레드조차 못 도는, 프로세스/스레드 **아래**
+>    레벨 wedge.
+> 3. GitHub 의 **step(8분)·job(12분) 타임아웃도 안 지켜진다**(17분까지 매달림) → GitHub
+>    자신의 제어 아래로 wedge.
+> 4. **`if: always()` 업로드 post-step 조차 안 돈다**(macOS 만 아티팩트 0개; ubuntu/windows
+>    는 같은 `-X importtime` + `tee` 진단으로 정상 회수) → 콘솔·파일 어느 쪽으로도 행
+>    지점을 못 건진다.
+> `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`(macOS fork 데드락 표준 회피)도 효과 없었다.
+> → **결론**: PTY/서브프로세스 다수 스위트 + 헤드리스 macOS 러너의 알려진 인프라
+> flakiness. `windows.yml` 에서 macos-latest 잡을 **`continue-on-error`** 로 둬, 러너가
+> 협조할 때의 신호만 취하고 wedge 가 전체 CI 를 막지 않게 했다(실패 전파 차단). 영구
+> 검증은 로컬(개발 박스)이 권위.
 
 ---
 
