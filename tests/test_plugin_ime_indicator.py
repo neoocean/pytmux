@@ -153,6 +153,100 @@ async def test_toggle_command():
     assert PLUGIN.handle_command(app, "clock-mode", []) is False
 
 
+# ---- 3.5) §10-B OS 실측(macOS TIS) 경로 — 전부 스텁(환경 비의존) ----
+_oskbd = importlib.import_module("pytmuxlib.plugins.ime-indicator.oskbd")
+
+
+def _stub_source(sid):
+    """oskbd.current_source_id 를 고정값 스텁으로 교체하고 원본을 돌려준다."""
+    orig = _oskbd.current_source_id
+    _oskbd.current_source_id = lambda: sid
+    return orig
+
+
+async def test_oskbd_is_korean_mapping():
+    assert _oskbd.is_korean("com.apple.inputmethod.Korean.2SetKorean") is True
+    assert _oskbd.is_korean("org.youknowone.inputmethod.Gureum.han2") is True
+    assert _oskbd.is_korean("com.apple.keylayout.ABC") is False
+    assert _oskbd.is_korean("com.apple.keylayout.US") is False
+    assert _oskbd.is_korean(None) is False
+    assert _oskbd.is_korean("") is False
+
+
+async def test_os_probe_sets_initial_state_and_suppresses_heuristic():
+    """OS 질의가 가능하면(스텁) attach_client 가 실측으로 초기 상태를 잡고,
+    client_key 휴리스틱은 침묵한다(한글 모드에서 영문을 쳐도 'EN' 오판 없음).
+    폴링(_poll)은 소스 변경을 즉시 반영하고, 일시 실패(None)는 직전 상태 유지."""
+    orig = _stub_source("com.apple.inputmethod.Korean.2SetKorean")
+    try:
+        app = _FakeApp()
+        PLUGIN.attach_client(app)
+        assert app._ime_os is True and app.ime_state == "한"
+        # 휴리스틱 침묵: 영문 확정 입력이 와도 실측('한') 그대로.
+        PLUGIN.client_key(app, _Ev("b"))
+        assert app.ime_state == "한" and app.composited == 0
+        # 폴링: 영어 소스로 바뀌면 즉시 'EN' + 재합성.
+        _oskbd.current_source_id = lambda: "com.apple.keylayout.ABC"
+        PLUGIN._poll(app)
+        assert app.ime_state == "EN" and app.composited == 1
+        # 일시 실패(None)는 상태 유지(깜빡임 방지).
+        _oskbd.current_source_id = lambda: None
+        PLUGIN._poll(app)
+        assert app.ime_state == "EN" and app.composited == 1
+    finally:
+        _oskbd.current_source_id = orig
+
+
+async def test_os_unavailable_falls_back_to_heuristic():
+    """OS 질의 불가(None — 비 macOS·ssh 원격 등 스텁)면 attach_client 는 폴백
+    모드(EN 시작), client_tick 은 타이머 없이 False, client_key 휴리스틱 동작."""
+    orig = _stub_source(None)
+    try:
+        app = _FakeApp()
+        PLUGIN.attach_client(app)
+        assert app._ime_os is False and app.ime_state == "EN"
+        assert PLUGIN.client_tick(app) is False
+        assert app._ime_os_timer is None, "OS 불가면 폴링 타이머도 안 깐다"
+        PLUGIN.client_key(app, _Ev("가"))
+        assert app.ime_state == "한"
+    finally:
+        _oskbd.current_source_id = orig
+
+
+async def test_client_tick_lazily_installs_fast_timer_once():
+    """첫 client_tick 이 0.25초 전용 폴링 타이머를 1회만 지연 설치한다(attach 시점엔
+    앱이 안 돌아 set_interval 불가). set_interval 이 없는 환경(테스트 더미)은 False
+    마킹으로 재시도하지 않는다."""
+    orig = _stub_source("com.apple.keylayout.ABC")
+    try:
+        calls = []
+
+        class _TimerApp(_FakeApp):
+            def set_interval(self, sec, fn):
+                calls.append((sec, fn))
+                return ("timer", len(calls))
+
+        app = _TimerApp()
+        PLUGIN.attach_client(app)
+        assert app._ime_os is True
+        assert PLUGIN.client_tick(app) is False
+        assert len(calls) == 1 and calls[0][0] == 0.25
+        PLUGIN.client_tick(app)
+        assert len(calls) == 1, "타이머는 1회만 설치"
+        # 타이머 콜백이 _poll 을 부른다 — 소스 전환 반영.
+        _oskbd.current_source_id = lambda: "com.apple.inputmethod.Korean.2SetKorean"
+        calls[0][1]()
+        assert app.ime_state == "한"
+        # set_interval 없는 앱은 False 마킹(재시도 안 함) + 틱 폴링은 그대로 동작.
+        app2 = _FakeApp()
+        PLUGIN.attach_client(app2)
+        PLUGIN.client_tick(app2)
+        assert app2._ime_os_timer is False
+        assert app2.ime_state == "한"
+    finally:
+        _oskbd.current_source_id = orig
+
+
 # ---- 4) 계약(delete-to-disable) ----
 async def test_plugin_discovered_when_loaded():
     reg = plugins.load()
@@ -173,13 +267,18 @@ async def test_registry_without_ime_has_no_commands_and_noop_hook():
 
 # ---- 5) 코어 on_key 배선(라이브) ----
 async def test_core_on_key_updates_ime_state():
-    """코어 normal-mode 입력이 plugins.client_key 를 호출해 상태가 갱신되는지."""
+    """코어 normal-mode 입력이 plugins.client_key 를 호출해 상태가 갱신되는지.
+    §10-B: 실행 환경(macOS 로컬)에선 attach_client 가 OS 실측(_ime_os)을 켜
+    휴리스틱이 침묵하므로, 여기선 **폴백 경로를 강제**(_ime_os=False)해 환경
+    무관하게 client_key 배선을 검증한다(OS 경로는 6) 절에서 스텁으로 검증)."""
     srv, task, sock = await server_only()
     try:
         app = make_app(sock, None, None)
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause(0.4)
-            assert app.ime_show is True and app.ime_state == "EN"  # 기본
+            assert app.ime_show is True  # 기본 ON(상태 초깃값은 환경 따라 실측/EN)
+            app._ime_os = False          # 폴백 경로 강제(환경 비의존 결정성)
+            app.ime_state = "EN"
             app.mode = "normal"
             # 코어 on_key(normal) 가 plugins.client_key 를 부르는지 — 핸들러 직접 호출
             # (Textual 의 _on_key 디스패치는 프레임워크 영역이라 핸들러만 가드한다).

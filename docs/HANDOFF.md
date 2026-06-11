@@ -29,9 +29,10 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **471 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **475 passed**
   (`python3 tests/run.py`, 2026-06-11 — §7-4 절대 예산 deprecate 로 전용 테스트
-  5종 삭제. 기존 flaky 1건도 58122 에서 근본 수정돼 0).
+  5종 삭제 후 §10-B IME OS 실측 4종 추가. 기존 flaky 1건도 58122 에서 근본
+  수정돼 0).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
 ## 2. 실행 / 개발
@@ -1126,17 +1127,16 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 
 ### 10-B. 2026-06-11 세션 미착수 큐 (사용자 요청, 기록만)
 
-- **IME 한/영 배지를 IME 상태 변경 직후 반영할 방법 찾기** (2026-06-11 요청).
-  현행 ime-indicator 플러그인(57983, 배지 위치 58166)은 **확정 입력 문자의
-  스크립트(has_hangul) 추정**이라, 한/영 키로 모드만 바꾸고 아직 글자를 입력하지
-  않은 동안은 배지가 직전 상태로 남는다(preedit 은 OS 가 하드웨어 커서에
-  오버레이라 앱이 관측 불가 — IME_PREEDIT_CURSOR_SCENARIO.md 의 설계 제약).
-  과제: 모드 전환 **즉시** 배지를 갱신할 관측 경로 탐색 — 후보: ① macOS
-  입력소스 변경 알림(`kTISNotifySelectedKeyboardInputSourceChanged` 구독,
-  데몬/클라 중 어디서 듣고 어떻게 전달할지), ② `TISCopyCurrentKeyboardInputSource`
-  주기/이벤트 폴링, ③ 터미널이 IME 상태를 노출하는 시퀀스가 있는지 조사(없을
-  가능성 높음), ④ ssh 원격 클라에선 로컬 OS 상태가 필요하다는 제약 정리.
-  조사 후 시나리오 문서로 정리하고 나서 구현.
+- ~~**IME 한/영 배지를 IME 상태 변경 직후 반영할 방법 찾기**~~ (2026-06-11
+  요청) → **같은 날 조사·구현 완료**. 채택: ② macOS TIS
+  (`TISCopyCurrentKeyboardInputSource`) ctypes 폴링 — CLI 프로세스에서도 동작,
+  호출당 ~1µs 실측이라 0.25초 폴링 무비용(`plugins/ime-indicator/oskbd.py`,
+  첫 client_tick 에서 타이머 지연 설치). OS 실측이 권위값이 되고 client_key
+  휴리스틱은 폴백(ssh 원격·리눅스·Windows)으로 강등 — 한글 모드에서 영문 입력
+  시 'EN' 오판도 실측 경로에선 사라짐. ① 알림 구독은 CFRunLoop 스레드 복잡도로
+  기각, ③ 터미널 시퀀스는 표준 부재로 기각, ④ ssh 제약은 폴백 문서화, Windows
+  (IMM32)는 office 박스 검증 후속. 상세:
+  [IME_INSTANT_STATE_SCENARIO.md](IME_INSTANT_STATE_SCENARIO.md).
 
 - ~~**좌하단 Claude 토큰 사용량을 같은 계정의 모든 탭·패널 합계로 고정**~~
   (2026-06-11 요청) → **같은 날 해결**. 원인: `_account_token_total(ap)` 이
