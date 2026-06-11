@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import time as _time
 
+from pytmuxlib import i18n
+
 # ---- 명령 메타데이터(코어 COMMANDS/COMPLETIONS/COMMAND_NOARG 에 합쳐짐) ----
 COMMANDS = [
     ("claude-rules", "Claude 시작 규칙 편집(저장 시 새 세션/clear 후 프롬프트에 "
@@ -71,6 +73,36 @@ COMMAND_OPTIONS = {
     "auto-launch": [{"key": "state", "label": "자동셋업", "choices": _ONOFF}],
     "claude-header": [{"key": "state", "label": "헤더", "choices": _ONOFF}],
 }
+
+# §6 ⑤ 플러그인 명령 i18n: '?' 목록·힌트는 코어 CommandListScreen/_cmd_desc 가
+# t("cmd.<name>", default=원본) 으로 번역한다. ko 는 위 COMMANDS 에서 자동 시드(원본=ko),
+# en 만 보강. 플러그인 명령이라 코어 cmd.* 키와 이름이 겹치지 않는다(delete-to-disable:
+# 디렉토리를 지우면 이 등록도 사라짐).
+i18n.register({
+    "ko": {f"cmd.{n}": d for n, d, *_ in COMMANDS},
+    "en": {
+        "cmd.claude-rules": "Edit Claude start rules (auto-injected into the prompt after a new session/clear)",
+        "cmd.token-saver": "Token-saving settings popup — toggle each auto-intervention·remaining threshold·measured gate (alias claude-settings, token-settings)",
+        "cmd.auto-resume": "Auto-resume on token limit [on|off]",
+        "cmd.auto-resume-message": "Set the auto-resume message",
+        "cmd.claude-header": "Show Claude prompt header on/off (claude-header on|off|toggle)",
+        "cmd.prompt-history": "Claude prompt history popup (also opens by clicking the header)",
+        "cmd.token-usage": "Tab/pane tree of running Claude + token usage (click status usage)",
+        "cmd.token-log": "Persistent token-usage log aggregation popup (hour/day/month × account — h/d/m·a)",
+        "cmd.claude-usage": "Shadow /usage query — refresh real session/weekly limits via a hidden session (alias usage)",
+        "cmd.usage-panel": "Claude token usage-limit popup — /usage (session 5h·week all·week Sonnet) bar graph (alias usage-limits·limits)",
+        "cmd.token-account": "Manually set the active pane's Claude account (token-account <name>, empty=auto)",
+        "cmd.prompt-clear": "Toggle per-prompt clear mode (document + /clear each completion) [on|off]",
+        "cmd.prompt-clear-message": "Change the per-prompt-clear documentation directive",
+        "cmd.prompt-clear-queue": "Queue commands for per-prompt clear (empty=list, -c=clear)",
+        "cmd.model": "Model·context change popup (also opens via the status model badge, injects /model; alias model-config, claude-model)",
+        "cmd.auto-doc-clear": "Auto document + /clear when Claude idle 30s on/off (auto-doc-clear on|off|toggle)",
+        "cmd.auto-compact": "Auto /compact when Claude idle 30s on/off (auto-compact on|off|toggle)",
+        "cmd.auto-hardstop": "Auto /compact immediately on context hardstop ('Context limit reached') on/off (auto-hardstop on|off|toggle, default on)",
+        "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",
+        "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
+    },
+})
 
 
 def _onoff(args):

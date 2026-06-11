@@ -9,6 +9,28 @@ Claude 세그먼트 렌더(모델 배지·컨텍스트·토큰Σ·예산경고·
 무게: rich.Segment/Style 과 clientutil 헬퍼만 쓴다(textual 클래스 import 안 함)."""
 from __future__ import annotations
 
+from pytmuxlib import i18n
+
+# §6 ⑤ 플러그인 i18n: claude-code 가 자기 표면 문자열을 코어 레지스트리에 등록한다
+# (delete-to-disable — 플러그인을 지우면 이 모듈이 import 안 돼 키도 사라진다). 키는
+# "claude.*" 네임스페이스. 모듈 import 시점(플러그인 활성)에 1회 병합한다.
+i18n.register({
+    "ko": {
+        "claude.limit_reached": " ⚠ 한도 도달 ",
+        "claude.limit_near": " ⚠ 한도 근접 ",
+        "claude.auto_resume": "자동재개",
+        "claude.auto_cleanup": "자동정리",
+        "claude.countdown": " ⏳ {label} {eta}s(입력=취소) ",
+    },
+    "en": {
+        "claude.limit_reached": " ⚠ Limit reached ",
+        "claude.limit_near": " ⚠ Limit near ",
+        "claude.auto_resume": "auto-resume",
+        "claude.auto_cleanup": "auto-cleanup",
+        "claude.countdown": " ⏳ {label} {eta}s (input=cancel) ",
+    },
+})
+
 
 def init_defaults(status):
     """하단 상태줄 위젯에 Claude 상태 속성을 안전한 기본값으로 설치한다(코어
@@ -167,16 +189,20 @@ def render_segs(status, segs, w):
         over = status.budget_level >= 100
         # ⚠ 뒤에 공백: 이모지(⚠ U+26A0)가 터미널에선 2칸으로 그려지는데 wcwidth 는
         # 1칸이라, 바로 뒤 글자가 둘째 칸에 겹쳐 그려졌다(요청) → 공백으로 흡수.
-        segs.append(Segment(" ⚠ 한도 " + ("도달 " if over else "근접 "),
-                            Style(color="white",
+        # 텍스트 색은 배경 대비로: 노랑(근접) 배경엔 흰 글자가 묻혀 안 보이므로
+        # 검은 글자(아래 ⏳ 카운트다운 배지와 동일 패턴), 빨강(도달) 배경엔 흰 글자.
+        segs.append(Segment(i18n.t("claude.limit_reached") if over
+                            else i18n.t("claude.limit_near"),
+                            Style(color=("white" if over else "black"),
                                   bgcolor=("red" if over else "yellow"),
                                   bold=True)))
     # M14 카운트다운 배지: 무장된 자동 액션의 종류 + 남은 초(비가역 동작 발견성).
     if isinstance(status.claude_pending, dict):
         kind = status.claude_pending.get("kind")
         eta = status.claude_pending.get("eta", 0)
-        label = "자동재개" if kind == "resume" else "자동정리"
-        segs.append(Segment(f" ⏳ {label} {eta}s(입력=취소) ",  # ⏳ 뒤 공백(겹침 방지)
+        label = (i18n.t("claude.auto_resume") if kind == "resume"
+                 else i18n.t("claude.auto_cleanup"))
+        segs.append(Segment(i18n.t("claude.countdown", label=label, eta=eta),
                             Style(color="black", bgcolor=tc("warning"),
                                   bold=True)))
     # M17(T7): 장기턴/반복루프('폭주 가능') 경고 배지(grade0 — 알림만, 개입 없음).

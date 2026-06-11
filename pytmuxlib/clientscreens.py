@@ -927,8 +927,9 @@ def usage_bar_lines(usage, width=80, age_sec=None, right_align=False):
         return None
     barw = 24 if width >= 80 else (16 if width >= 60 else 8)
     rows = []
-    for key, name in (("session", "세션 5h"), ("week_all", "주 전체"),
-                      ("week_sonnet", "주 Sonnet")):
+    for key, name in (("session", i18n.t("usage.session_5h")),
+                      ("week_all", i18n.t("usage.week_all")),
+                      ("week_sonnet", i18n.t("usage.week_sonnet"))):
         d = usage.get(key)
         if not (isinstance(d, dict) and d.get("pct") is not None):
             continue
@@ -956,13 +957,14 @@ def usage_bar_lines(usage, width=80, age_sec=None, right_align=False):
     # 한도가 실제로 달라지므로 눈으로 대조하라고 표시한다. 신호 못 잡으면 '미확인'.
     if rows and "account" in usage:
         acct = usage.get("account")
-        rows.append(f"계정(/usage): {acct}" if acct
-                    else "계정(/usage): 미확인 (폰 앱과 같은 계정인지 확인)")
+        rows.append(i18n.t("usage.account", acct=acct) if acct
+                    else i18n.t("usage.account_unknown"))
     # S6 T3: 실측 신선도 — 2분 미만이면 표기 생략(잡음), 그 이상은 분/시간 단위.
     if rows and isinstance(age_sec, (int, float)) and age_sec >= 120:
         m = int(age_sec // 60)
-        ago = f"{m // 60}시간 {m % 60}분" if m >= 60 else f"{m}분"
-        rows.append(f"({ago} 전 실측 — 갱신은 [u]/claude-usage)")
+        ago = (i18n.t("usage.ago_hm", h=m // 60, m=m % 60) if m >= 60
+               else i18n.t("usage.ago_m", m=m))
+        rows.append(i18n.t("usage.measured_ago", ago=ago))
     return rows or None
 
 

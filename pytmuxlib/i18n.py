@@ -150,6 +150,31 @@ register({
     },
 })
 
+# §6 ⑤ 사용량 트리(core clientscreens.usage_bar_lines) — Claude /usage 한도 표시.
+# Claude 도메인이지만 core 코드라 core 시드에 둔다(라벨 폭은 _char_cells 로 로케일 적응).
+register({
+    "ko": {
+        "usage.session_5h": "세션 5h",
+        "usage.week_all": "주 전체",
+        "usage.week_sonnet": "주 Sonnet",
+        "usage.account": "계정(/usage): {acct}",
+        "usage.account_unknown": "계정(/usage): 미확인 (폰 앱과 같은 계정인지 확인)",
+        "usage.ago_hm": "{h}시간 {m}분",
+        "usage.ago_m": "{m}분",
+        "usage.measured_ago": "({ago} 전 실측 — 갱신은 [u]/claude-usage)",
+    },
+    "en": {
+        "usage.session_5h": "Session 5h",
+        "usage.week_all": "Week all",
+        "usage.week_sonnet": "Week Sonnet",
+        "usage.account": "Account (/usage): {acct}",
+        "usage.account_unknown": "Account (/usage): unknown (verify it matches your phone app)",
+        "usage.ago_hm": "{h}h {m}m",
+        "usage.ago_m": "{m}m",
+        "usage.measured_ago": "(measured {ago} ago — refresh: [u]/claude-usage)",
+    },
+})
+
 # §6 ④ 모달 스크린 — 명령목록·옵션·정보·확인·버퍼/레이아웃 피커의 furniture(제목·
 # 서브타이틀·빈 상태·네비 힌트·버튼). 다이얼로그 본문(메시지)은 호출부(client.py)가
 # 넘기므로 별도 단계에서 다룬다.

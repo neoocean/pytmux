@@ -132,6 +132,27 @@ async def test_command_catalog_symmetric_and_translated():
     _reset()
 
 
+async def test_plugin_catalog_registered_and_translated():
+    """플러그인(claude-code) 로드 시 claude.*/플러그인 cmd.* 카탈로그가 등록되고,
+    core usage.* 와 함께 ko/en 대칭·번역돼야 한다(§6 ⑤)."""
+    from pytmuxlib import plugins
+    plugins.load()        # 플러그인 import → 카탈로그 등록(claude.*·cmd.<plugin>)
+    for pfx in ("claude.", "usage."):
+        ko = {k for k in i18n._CATALOG["ko"] if k.startswith(pfx)}
+        en = {k for k in i18n._CATALOG["en"] if k.startswith(pfx)}
+        assert ko and ko == en, {"prefix": pfx, "ko_only": sorted(ko - en),
+                                "en_only": sorted(en - ko)}
+    # 플러그인 명령 설명이 코어 cmd.* 키로 등록돼 번역된다.
+    i18n.set_locale("en")
+    assert i18n.t("cmd.auto-resume") == "Auto-resume on token limit [on|off]"
+    assert i18n.t("claude.auto_resume") == "auto-resume"
+    assert i18n.t("usage.session_5h") == "Session 5h"
+    i18n.set_locale("ko")
+    assert i18n.t("claude.auto_resume") == "자동재개"
+    assert i18n.t("usage.session_5h") == "세션 5h"
+    _reset()
+
+
 async def test_seed_catalog_has_both_locales():
     """코어 시드 키는 ko·en 둘 다 존재해야 한다(누락 시 폴백이지만 시드는 완전성 유지)."""
     for key in ("lang.usage", "capture.status_on", "capture.status_off"):
