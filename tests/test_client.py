@@ -2214,6 +2214,13 @@ async def test_usage_bar_lines_format():
     # 계정 신호를 못 잡으면(account=None) '미확인' 으로 표시
     u3 = dict(u, account=None)
     assert "미확인" in usage_bar_lines(u3, 80)[-1], usage_bar_lines(u3, 80)
+    # S6 T3: 실측 경과(age_sec) — 2분 미만은 표기 생략(잡음), 이상은 'N분 전 실측'
+    assert all("전 실측" not in ln for ln in usage_bar_lines(u, 80, age_sec=60))
+    aged = usage_bar_lines(u, 80, age_sec=600)
+    assert "(10분 전 실측" in aged[-1], aged
+    aged2 = usage_bar_lines(u, 80, age_sec=7800)
+    assert "(2시간 10분 전 실측" in aged2[-1], aged2
+    assert usage_bar_lines(u, 80, age_sec=None)[-1] == lines[-1], "None=표기 없음"
 
 
 async def test_bar_gauge_partial_blocks():
@@ -3424,25 +3431,32 @@ async def test_popup_dims_and_substitutes_emoji():
 
 
 async def test_status_session_tokens():
-    # 세션 누적 토큰(#3)을 상태줄에 Σ 표기로 보여준다. 넓은 폭(≥80)에서는 세 자리
-    # 콤마 전체 숫자(#30), 좁은 폭에서는 약어(k/M).
+    # 세션 누적 토큰(#3)을 상태줄에 표기. 넓은 폭(≥80)에서는 세 자리 콤마 전체
+    # 숫자(#30), 좁은 폭에서는 약어(k/M). S6 T3: 누계는 추정 라벨 ~Σ 로 강등,
+    # 실측 세션 5h% 가 있으면 그게 주 표시(누계보다 앞).
     async def body(app, pilot, srv):
         app.status.claude_active = True
         app.status.claude_usage = "ctx 42%"
         app.status.claude_tokens = 45200
         txt = "".join(s.text for s in app.status.render_line(0))
-        # 기호 Σ 와 숫자 사이 한 칸 띄움 + 넓은 폭이라 전체 숫자(콤마)
-        assert "Σ 45,200" in txt, repr(txt)
+        # ~Σ(추정 라벨) + 기호와 숫자 사이 한 칸 + 넓은 폭이라 전체 숫자(콤마)
+        assert "~Σ 45,200" in txt, repr(txt)
         # 계정이 있으면 @계정 곁들임(§10 계정별 합계)
         app.status.claude_account = "alice"
         txt_a = "".join(s.text for s in app.status.render_line(0))
-        assert "Σ 45,200 @alice" in txt_a, repr(txt_a)
+        assert "~Σ 45,200 @alice" in txt_a, repr(txt_a)
+        # 실측 세션 5h% 가 오면 주 표시 — 추정(~Σ)보다 앞에 선다(S6 T3 1차화)
+        app.status.tok5h_pct = 37
+        txt_m = "".join(s.text for s in app.status.render_line(0))
+        assert "37%/5h" in txt_m, repr(txt_m)
+        assert txt_m.index("37%/5h") < txt_m.index("~Σ"), repr(txt_m)
+        app.status.tok5h_pct = None
         # 사용량 문구 없이 누계만 있어도 표시
         app.status.claude_usage = None
         app.status.claude_account = None
         app.status.claude_tokens = 1_200_000
         txt2 = "".join(s.text for s in app.status.render_line(0))
-        assert "Σ 1,200,000" in txt2, repr(txt2)
+        assert "~Σ 1,200,000" in txt2, repr(txt2)
     await _with_app(body)
 
 

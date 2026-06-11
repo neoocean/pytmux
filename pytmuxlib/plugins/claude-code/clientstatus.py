@@ -24,6 +24,7 @@ def init_defaults(status):
     status.claude_warn = None      # M17: 장기턴/반복루프 경고(grade0, 없으면 None)
     status.claude_model = None     # M14c: 활성 Claude 모델 배지(opus-4.8 등)
     status.usage_limits = None     # M19: 그림자 /usage 세션·주간 한도 dict
+    status.usage_age_sec = None    # S6 T3: 실측 경과(초) — stale 표기용
     # 토큰 절감 설정(설정 팝업 토글 현재값 + 예산 경고).
     status.auto_doc_clear = False
     status.auto_compact = False
@@ -72,6 +73,8 @@ def absorb(status, msg):
         status.claude_model = cm
     if "usage_limits" in msg:                     # M19 그림자 /usage 결과(권위값)
         status.usage_limits = msg.get("usage_limits")
+    if "usage_age_sec" in msg:                    # S6 T3: 실측 경과(stale 표기)
+        status.usage_age_sec = msg.get("usage_age_sec")
     # 토큰 절감 설정(설정 팝업이 현재값으로 토글을 그리는 데 씀). 항상 권위값 반영.
     status.auto_doc_clear = msg.get("auto_doc_clear", status.auto_doc_clear)
     status.auto_compact = msg.get("auto_compact", status.auto_compact)
@@ -120,15 +123,18 @@ def render_segs(status, segs, w):
             uparts.append(status.claude_model)
         if status.claude_usage:
             uparts.append(status.claude_usage)
+        # S6 T3 표시 1차화: 실측 세션(5h) % 가 **주 표시** — 추정 누계(~Σ)보다 앞.
+        # 실측 없으면 생략(지어내지 않음 — 분모 근사 폐기로 이 값은 항상 /usage 실측).
+        if status.tok5h_pct is not None:
+            uparts.append(f"{status.tok5h_pct}%/5h")
         if status.claude_tokens:
-            # 기호(Σ)와 숫자 사이 한 칸 띄움(§10). 계정이 있으면 @계정 곁들임. 폭이
+            # 기호와 숫자 사이 한 칸 띄움(§10). 계정이 있으면 @계정 곁들임. 폭이
             # 넉넉하면(≥80칸) 약어(6.3M) 대신 세 자리 콤마 전체 숫자로(#30).
+            # ~ 접두사(S6 T3): 스크랩 누계는 패널별 활동량 **추정**이지 과금 실측이
+            # 아니다 — 실측(5h%)과 한 줄에 섞이므로 라벨로 구분한다(원칙 2).
             num = (f"{status.claude_tokens:,}" if w >= 80
                    else _fmt_tokens(status.claude_tokens))
-            tk = "Σ " + num
-            # M18-B: 5시간 한도 근접도(분모 미상이면 None → 생략, 지어내지 않음).
-            if status.tok5h_pct is not None:
-                tk += f" ({status.tok5h_pct}%/5h)"
+            tk = "~Σ " + num
             if status.claude_account:
                 tk += " @" + status.claude_account
             uparts.append(tk)

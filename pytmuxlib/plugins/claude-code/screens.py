@@ -482,7 +482,9 @@ class TokenLogScreen(ModalScreen):
             w = self.app.size.width
         except Exception:
             w = 80
-        return usage_bar_lines(self._usage, w) or ["한도(/usage): [u] 눌러 조회"]
+        age = getattr(getattr(self.app, "status", None), "usage_age_sec", None)
+        return usage_bar_lines(self._usage, w, age_sec=age) \
+            or ["한도(/usage): [u] 눌러 조회"]
 
     def _sync_tabs(self):
         """탭 라벨(폭 반응형)·활성 버킷·활성 그룹차원([패널])·정렬([정렬]) 강조."""
@@ -629,8 +631,9 @@ class TokenLogScreen(ModalScreen):
 
         # 제목: 묶음·버킷·정렬·전체 합. 스코프/한도(위)·키 안내(아래)는 분리.
         order_l = "토큰순" if self._order == "tokens" else "시간순"
+        # (추정): 집계 원천(스크랩 누계)은 활동량 추정 — 실측 한도는 상단 막대(S6 T3).
         self.query_one("#tklogtitle", Label).update(
-            f"토큰 사용량 · {self._bucket} · {dimname}별")
+            f"토큰 사용량(추정) · {self._bucket} · {dimname}별")
         acct = self._account if self._account is not None else "전체"
         # Σ: 정확한 전체 이력 합(서버 SQL 집계, Phase B). 현재 계정 필터에 맞춰
         # total_all(전체) / accounts_total[acct](계정별)을 쓰고, 없으면(구버전 서버)
@@ -642,7 +645,7 @@ class TokenLogScreen(ModalScreen):
             life = self._accounts_total.get(self._account)
         if life is None:
             life = win
-        sigma = f"Σ{usagelog._fmt_tokens(life)}"
+        sigma = f"~Σ{usagelog._fmt_tokens(life)}"   # ~ = 추정 라벨(S6 T3)
         if life != win:
             sigma += f" (표시 {usagelog._fmt_tokens(win)})"
         # 스코프는 1줄로 컴팩트(묶음/버킷은 제목에 이미 있음). 표 높이를 아낀다.

@@ -164,11 +164,9 @@ class Server(*_SERVER_BASES):
         # 못 늘리는 오검출·병적 진동에서 매 완료경계 무한 정리를 막는 시간 바닥(§5.6).
         self.claude_ctx_min_interval = float(
             _opts.get("claude_ctx_min_interval", 120.0))
-        # M18-B 5시간 한도 근접도 표시의 분모(token_budget_5h, S5 T3 에서 플러그인 소유로
-        # 이전)가 0=설정 안 함이면 limit 관측 학습치(_learned_5h_cap)를 분모로 쓰고, 그것도
-        # 없으면 %를 숨긴다(지어내지 않음). limit 진입 시점의 계정 누계로 5h 상한을 학습.
-        self._learned_5h_cap = 0
         # M19 그림자 /usage 질의 결과(세션·주간 한도 %·리셋·계정). dict|None.
+        # (M18-B 의 5h 분모 학습 _learned_5h_cap 은 S6 T3 분모 근사 폐기로 제거 —
+        #  5h% 는 /usage 실측만 따른다.)
         self._usage = None
         self._usage_busy = False   # 질의 진행 중(중복 방지)
         # M19+ 그림자 /usage 자동 갱신 주기(초). 0=비활성(토큰 화면 열 때만 on-demand).

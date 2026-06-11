@@ -902,10 +902,14 @@ class InfoTabsScreen(ModalScreen):
         # 그 외 키 → 닫기(InfoScreen 과 동일한 가벼운 닫힘)
         self.dismiss(None)
 
-def usage_bar_lines(usage, width=80):
+def usage_bar_lines(usage, width=80, age_sec=None):
     """Claude `/usage` 한도 dict(session·week_all·week_sonnet)를 보기 좋은 표시
     줄 목록으로 만든다. 각 줄: 라벨(10셀 패딩) + 막대 + % + 리셋(요약, 타임존 생략).
-    데이터가 없으면 None. TokenLogScreen 의 한도 섹션과 자동 /usage 팝업이 공유한다."""
+    데이터가 없으면 None. TokenLogScreen 의 한도 섹션과 자동 /usage 팝업이 공유한다.
+
+    age_sec: 실측 경과(초, S6 T3). 2분 이상 묵었으면 마지막에 'N분 전 실측'을 붙여
+    stale 임을 알린다 — 실측이 주 표시로 승격되면서 묵은 값을 현재값으로 오독하지
+    않게 하는 표시측 대응(stale 스냅샷 혼동 방지)."""
     if not isinstance(usage, dict):
         return None
     barw = 24 if width >= 80 else (16 if width >= 60 else 8)
@@ -929,6 +933,11 @@ def usage_bar_lines(usage, width=80):
         acct = usage.get("account")
         rows.append(f"계정(/usage): {acct}" if acct
                     else "계정(/usage): 미확인 (폰 앱과 같은 계정인지 확인)")
+    # S6 T3: 실측 신선도 — 2분 미만이면 표기 생략(잡음), 그 이상은 분/시간 단위.
+    if rows and isinstance(age_sec, (int, float)) and age_sec >= 120:
+        m = int(age_sec // 60)
+        ago = f"{m // 60}시간 {m % 60}분" if m >= 60 else f"{m}분"
+        rows.append(f"({ago} 전 실측 — 갱신은 [u]/claude-usage)")
     return rows or None
 
 

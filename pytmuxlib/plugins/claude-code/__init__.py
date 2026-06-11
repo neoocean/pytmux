@@ -13,6 +13,8 @@
 화면(screens.py)은 실제로 열 때 지연 import 한다."""
 from __future__ import annotations
 
+import time as _time
+
 # ---- 명령 메타데이터(코어 COMMANDS/COMPLETIONS/COMMAND_NOARG 에 합쳐짐) ----
 COMMANDS = [
     ("claude-rules", "Claude 시작 규칙 편집(저장 시 새 세션/clear 후 프롬프트에 "
@@ -360,7 +362,8 @@ def _open_usage_panel(app):
     from pytmuxlib.clientscreens import InfoScreen, usage_bar_lines
     u = getattr(app.status, "usage_limits", None)
     w = app.size.width if app.size else 80
-    lines = usage_bar_lines(u, w)
+    lines = usage_bar_lines(u, w,
+                            age_sec=getattr(app.status, "usage_age_sec", None))
     if not lines:
         app.display_message(
             "/usage 한도 데이터 없음 — Claude 패널에서 /usage 를 먼저 실행")
@@ -469,19 +472,20 @@ def _usage_tree_lines(app, tree):
                 continue
             wtok = sum((p.get("tokens") or 0) for p in cps)  # 탭 합계
             grand += wtok
-            lines.append(f"[{w['index'] + 1}] {w['name']}  —  Σ {_fmt_tokens(wtok)}")
+            # ~Σ(S6 T3): 패널별 누계는 스크랩 추정(활동량) — 실측 한도가 아니다.
+            lines.append(f"[{w['index'] + 1}] {w['name']}  —  ~Σ {_fmt_tokens(wtok)}")
             for p in cps:
                 a = p.get("cmd") or "claude"
                 usage = p.get("usage") or "-"
                 state = p.get("claude")
                 tok = _fmt_tokens(p.get("tokens") or 0)
                 lines.append(f"    pane {p['id']} · {a} · {state} · "
-                             f"{usage} · Σ {tok}")
+                             f"{usage} · ~Σ {tok}")
     if not lines:
         return ["(실행 중인 Claude 패널 없음)"]
     # 하단 가로 구분선 + 전 세션 토큰 합계(§10-A #6).
     lines.append("─" * 36)
-    lines.append(f"전체 세션 합계  —  Σ {_fmt_tokens(grand)}")
+    lines.append(f"전체 세션 합계(추정)  —  ~Σ {_fmt_tokens(grand)}")
     return lines
 
 
@@ -573,6 +577,11 @@ class _ClaudeCodePlugin:
         msg["claude_warn"] = ap._claude_warn if ap else None
         # M19: 그림자 /usage 세션·주간 한도(없으면 None) + 자동 팝업 one-shot 시퀀스.
         msg["usage_limits"] = server._usage
+        # S6 T3: 실측 경과(초) — 클라가 stale 표기("N분 전 실측")에 쓴다. 시계 동기
+        # 가정 없이 서버가 경과로 환산해 보낸다. 실측 없으면 None.
+        uts = getattr(server, "_usage_ts", None)
+        msg["usage_age_sec"] = (max(0, int(_time.time() - uts))
+                                if uts is not None else None)
         msg["usage_shown_seq"] = server._usage_shown_seq
         # M14c: 활성 패널 모델 배지(없으면 None) + 계정 식별자.
         msg["claude_model"] = (ap._claude_model

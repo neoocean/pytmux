@@ -1220,16 +1220,15 @@ async def test_rc_not_reinjected_after_restart_transient():
 
 async def test_manual_usage_panel_captured_for_5h_pct():
     """요청: 사용자가 패널에서 직접 /usage 를 띄우면 그 **실측** 한도를 캡처해 상태줄
-    5h% 가 /usage 의 세션 %와 일치한다(예전엔 예산 추정치라 /usage 와 어긋남)."""
+    5h% 가 /usage 의 세션 %와 일치한다. S6 T3: 분모 근사 폐기 — 실측 전엔 None
+    (지어내지 않음)."""
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
         win = sess.active_window
         p = win.active_pane
-        # /usage 권위값이 없을 땐 추정 분모(학습 상한)로 100% 로 보이던 상황.
-        srv._learned_5h_cap = 1000
         p._claude = "idle"
-        assert srv._tok5h_pct(p, 1000) == 100, "추정치(분모=학습상한)"
+        assert srv._tok5h_pct(p, 1000) is None, "실측 전엔 None(근사 폐기)"
         # 사용자가 /usage 를 띄움(패널 + Claude footer 동반) → 세션 61% 를 캡처.
         panel = ("Current session\n  blocks 61% used\n  Resets 1:40pm (Asia/Seoul)\n"
                  "Current week (all models)\n  blocks 41% used\n"
@@ -1338,15 +1337,14 @@ async def test_inpane_usage_panel_bumps_shown_seq():
 
 async def test_inline_session_limit_reflected_in_5h_pct():
     """요청: /usage 패널을 안 열어도 footer 인라인 한도("used 93% of your session
-    limit")를 캡처해 상태줄 5h% 가 추정치(예산) 대신 실측 93% 를 따른다."""
+    limit")를 캡처해 상태줄 5h% 가 실측 93% 를 따른다. S6 T3: 실측 전엔 None."""
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
         win = sess.active_window
         p = win.active_pane
-        srv._learned_5h_cap = 1000
         p._claude = "idle"
-        assert srv._tok5h_pct(p, 1000) == 100, "처음엔 추정치"
+        assert srv._tok5h_pct(p, 1000) is None, "실측 전엔 None(근사 폐기)"
         p.feed("\x1b[2J\x1b[H"
                "You've used 93% of your session limit · resets 1:40pm "
                "(Asia/Seoul) · /usage-credits to request more\r\n"
@@ -2863,17 +2861,16 @@ async def test_status_usage_display_m18():
         # Claude 가 점유%를 그리면 그대로(콤팩트 포맷)
         p._claude_usage = "ctx:23%/1M"
         assert srv._usage_text(p) == "ctx:23%/1M"
-        # B: 분모 미상(설정·학습 0) → None(% 지어내지 않음)
+        # B(S6 T3): 실측 없으면 항상 None — 분모 근사 폐기. token_budget_5h 설정은
+        # 잔존(호환)하지만 표시 분모로는 더 이상 안 쓴다(지어내지 않음 일관).
         p._session_tokens = 100_000
         assert srv._tok5h_pct(p, 25_000) is None
-        # 설정 분모 → %
-        assert srv.set_token_budget(h5=350_000)[2] == 350_000
+        assert srv.set_token_budget(h5=350_000)[2] == 350_000, "설정은 잔존(호환)"
+        assert srv._tok5h_pct(p, 25_000) is None, "설정해도 근사 안 함(실측만)"
+        # 실측이 오면 그 값(분자/분모 불필요)
+        srv._usage = {"session": {"pct": 7, "reset": "2pm"}}
         assert srv._tok5h_pct(p, 25_000) == 7
-        # 설정 0 이면 limit 관측 학습치를 분모로
-        srv.set_token_budget(h5=0)
-        srv._learned_5h_cap = 500_000
-        assert srv._tok5h_pct(p, 25_000) == 5
-        # 토큰 0 이거나 비-Claude 면 None
+        # 비-Claude 면 None
         p._claude = None
         assert srv._tok5h_pct(p, 25_000) is None
     finally:

@@ -651,6 +651,7 @@ class ServerClaudeMixin:
                             and "account" not in new_usage:
                         new_usage["account"] = self._usage["account"]
                     self._usage = new_usage
+                    self._usage_ts = time.time()   # S6 T3: 신선도(표시·게이트)
                     # S6 T1: 실측 한도 스냅샷 이력화 — 값이 바뀐 순간만 적힌다
                     # (insert_limits 가 직전과 동일값이면 skip). 이 분기는
                     # new_usage != self._usage 일 때만 오므로 30Hz 스캔 부담 없음.
@@ -764,12 +765,8 @@ class ServerClaudeMixin:
                     p._tok_state["peak"] = 0
                     p._tok_state["total"] = 0
                     changed = True
-                # M18-B: limit 진입 시점의 계정 누계로 5h 상한을 학습(설정 미지정 시
-                # 5h 근접도 표시의 분모로 쓴다, §9.3 (b) 관측 학습).
-                if new_cl == "limit":
-                    tot = self._account_token_total(p)
-                    if tot > self._learned_5h_cap:
-                        self._learned_5h_cap = tot
+                # (M18-B 의 limit 진입 시 5h 상한 학습(_learned_5h_cap)은 S6 T3 에서
+                #  분모 근사 폐기와 함께 제거 — 5h% 는 이제 /usage 실측만 따른다.)
                 # 큐된 프롬프트 승격(#4): 헤더는 "지금 처리 중인 프롬프트"를 보여야
                 # 한다. busy 중 입력한 프롬프트는 _track_prompt 가 pending_prompts 에
                 # 쌓아 뒀다(last_prompt 즉시 안 바꿈). 응답 경계 — ① busy→non-busy(응답
@@ -1025,22 +1022,20 @@ class ServerClaudeMixin:
         return u
 
     def _tok5h_pct(self, p, total):
-        """M18-B/M19: 5시간 한도 근접도 %(int)|None.
-        ① M19 그림자 /usage 로 확보한 **세션(5h) 실측 %** 가 있으면 그걸 그대로(분모
-           추정 불필요). ② 없으면 분모(token_budget_5h 설정/limit 학습 _learned_5h_cap)
-           기반 근사. ③ 둘 다 없으면 None(§5.5 — 지어내지 않음)."""
+        """세션(5h) 한도 근접도 %(int)|None — **실측만**(S6 T3).
+        /usage 실측(그림자 probe·인패널 패널·footer 인라인)이 있으면 그 세션 % 를
+        그대로, 없으면 None(지어내지 않음). 과거 ② 분모 근사(token_budget_5h 설정/
+        limit 관측 학습 _learned_5h_cap 기반 total/cap)는 실측 1차화로 죽은 코드가
+        돼 폐기했다(2026-06-10 사용자 결정, 시나리오 §7-3) — 근사가 실측과 섞여
+        보이던 모순(999%/5h 류)도 함께 사라진다. total 인자는 호출부(C5 재사용
+        합계) 시그니처 유지용으로만 남는다."""
         if p is None or not p._claude:
             return None
         u = self._usage
         if u and isinstance(u.get("session"), dict) \
                 and u["session"].get("pct") is not None:
             return int(u["session"]["pct"])          # M19 실측 — 분자/분모 불필요
-        if total <= 0:
-            return None
-        cap = self.token_budget_5h or self._learned_5h_cap
-        if cap <= 0:
-            return None
-        return min(999, round(total / cap * 100))
+        return None
 
     def _any_claude_pane(self) -> bool:
         """살아 있는 패널 중 Claude 세션이 하나라도 있으면 True(자동 /usage 게이트).
@@ -1067,6 +1062,7 @@ class ServerClaudeMixin:
             self._usage_busy = False
         if u:
             self._usage = u
+            self._usage_ts = time.time()              # S6 T3: 신선도(표시·게이트)
             self._record_usage_snapshot(u, "probe")   # S6 T1: 실측 이력화
             for s in list(self.sessions.values()):
                 self._broadcast_session(s)
@@ -1224,6 +1220,9 @@ class ServerClaudeMixin:
         self._today_tokens = None
         self._today_key = None
         self._budget_level = 0
+        # S6 T3: 마지막 실측(/usage) 수신 시각 — 표시층 stale 표기·T4 게이트 신선도
+        # 판단용. _usage(값)는 코어 잔류 초기화(§1.4)지만 ts 는 플러그인 소유.
+        self._usage_ts = None
 
     @property
     def tokens_log_path(self) -> str:
