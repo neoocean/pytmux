@@ -13,6 +13,10 @@
 > 백엔드라 잔류), Pane 의 Claude 거동 필드(~40개)를 `pane_init` 훅으로 플러그인 소유화
 > (`panestate.py`). 설계·작성법·진행/배운 점은
 > [PLUGIN_SYSTEM.md](PLUGIN_SYSTEM.md) 참고.
+> **S6 토큰 회계 정확성 재설계 완료(2026-06-11, CL 58088~58133)**: 회계 1차 기준을
+> footer 스크랩 추정에서 **`/usage` 실측**으로 전환 — 스냅샷 이력화·대사 뷰·표시 1차화
+> (`24%/5h · ~Σ`)·실측 게이트 기본 ON·갱신 전략 + 프로브 cwd 신뢰 대화상자 FIX.
+> 라이브 반영 완료. [TOKEN_ACCOUNTING_ACCURACY_SCENARIO.md](TOKEN_ACCOUNTING_ACCURACY_SCENARIO.md) — §11.6·§9.
 > 현행 플러그인 로스터: `ncd`·`claude-code`·`clock`·`calendar`·`ime-indicator`(전부
 > delete-to-disable). 작성법·사례는 [PLUGIN_MANUAL.md](PLUGIN_MANUAL.md).
 
@@ -25,8 +29,8 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **437 passed**
-  (`python3 tests/run.py`, 2026-06-10).
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **467 passed**
+  (`python3 tests/run.py`, 2026-06-11 — 기존 flaky 1건도 58122 에서 근본 수정돼 0).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
 ## 2. 실행 / 개발
@@ -260,10 +264,34 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~57999 + git, 신→구)
+## 9. 최근 변경(CL 56279~58133 + git, 신→구)
 
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
+
+- 58133 **FIX 그림자 /usage 프로브가 데몬 cwd(홈)의 Claude 신뢰 대화상자에 막힘** —
+  M19 도입 이래 데몬 cwd 가 비신뢰 폴더면 숨은 claude 가 trust 화면에서 멈춰 프로브가
+  **조용히 None**(예외 없음 → 로그도 없음)이던 잠복 버그. S6 라이브 검증에서 발견
+  (limits 0건·실측 미표시), 같은 조건 pyte 재렌더로 trust 화면 재현해 확정. 수정:
+  신규 `_probe_cwd()` — **실행 중인 Claude 패널의 셸 cwd**(`_pane_cwd`, 사용자가 이미
+  신뢰한 폴더)로 spawn(자동 신뢰 우회는 안 함), 패널 없으면 데몬 cwd 폴백.
+  `usage-panel-vs-app-mismatch`(stale 스냅샷)의 숨은 원인 중 하나로 추정. 수정 직후
+  라이브에서 실측 첫 도착(세션 24%·주간 20%) + 상태줄 `24%/5h · ~Σ` 실화면 캡처 확인.
+- 58119/58125/58126 **백로그 stale 4건 코드 검증 정정 + #28 except 마무리** — "남은
+  작업" 검증 원칙(§10 교훈)을 IMPROVEMENT 보류 목록에 적용해 4건이 **이미 구현**임을
+  확인·정정: #8 dirty 행 재직렬화(B 묶음, 진행표 ✅와 보류 모순)·#12 Claude 렌더
+  (Phase 2c 57899)·컨텍스트 잔량 트리거(M11)·**#2 IPC 인증 토큰(보안 F1 57238~57283
+  — "보류(H)"로 남아 있던 최대 오정보)**. #28 잔여분(58125)은 토큰 영속층 silent
+  실패 5곳에 `_log_error` 추가(반복 경로는 첫 실패만 기록하는 스팸 가드 —
+  `_tokens_db_err`/`_usage_probe_err` 플래그) + servertree ps 프로브 except 좁힘.
+- 58122 **flaky `test_ime_hardware_cursor` 근본 수정** — 스위트 유일 flaky(간헐
+  StopIteration→재시도 통과로 가려짐)의 원인은 레이아웃 타이밍이 아니라 **그 테스트만
+  `_with_app`(Textual run_test)을 한 이벤트 루프에서 두 번** 돌리던 패턴(두 번째 앱
+  hello 간헐 미처리/행, 스트레스 15회 중 10회 재현). 사이즈별 테스트 2개로 분리
+  (1루프-1앱 정상화, 24/24 결정적) + 레이아웃 정착 폴링 보강. 이후 전체 스위트
+  flaky 0. 교훈: 한 테스트에서 Textual 앱을 연속 두 번 띄우지 말 것.
+- 58088~58109 **S6 토큰 회계 정확성 재설계(T1~T6)** — 상세는 §11.6 ·
+  [TOKEN_ACCOUNTING_ACCURACY_SCENARIO.md](TOKEN_ACCOUNTING_ACCURACY_SCENARIO.md).
 
 - 57999 **client: force-reconnect 중 `_reader_task` EOF 무음 종료 수정**(사용자 보고:
   "이 머신에서 pytmux 시작 후 잠시 뒤 메시지 없이 종료") — **pong 미지원 옛 서버**(머신에
@@ -2447,7 +2475,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 `# ---- Claude Code 연동 (분리 대상) ----` 식 **명확한 구획 주석**으로 감싼다(현재도 일부 있음).
 충돌은 줄지만 같은 파일이라 완전 분리는 아니다 — 11.2 의 전용 모듈이 본안.
 
-### 11.6 플러그인 기반 추출(현행) — 진행 상황과 남은 작업 (2026-06-10 갱신: Phase 2c·S5·S4 + StatusBar 위젯속성(58065) + **토큰 사용기록 모듈화 T1~T6(58071~58083) 완료**)
+### 11.6 플러그인 기반 추출(현행) — 진행 상황과 남은 작업 (2026-06-11 갱신: Phase 2c·S5·S4 + StatusBar 위젯속성(58065) + 토큰 사용기록 모듈화 T1~T6(58071~58083) + **S6 회계 정확성 재설계(58088~58133) 완료**)
 
 > **§11.1~11.5 는 초기 전략(claude.py/client_claude.py 자유함수)으로, 지금은
 > `pytmuxlib/plugins/` 플러그인 시스템(CL 57774)으로 대체되었다.** 목표는 동일하되 메커니즘이
@@ -2632,7 +2660,36 @@ test_client.py`(417) + 신규 `tests/test_plugin_contract.py`(5) 회귀망 + smo
     test_server 의 Server 가 ServerClaudeMixin 을 통째로 잃고 _scan_claude/set_auto_compact/
     _log_tokens 가 죄다 AttributeError. **T5 베이스라인에서도 동일 재현 → 내 변경 무관**.
     검증은 **전체 스위트**(`python3 tests/run.py`, 자연정렬은 test_bench 가 먼저라 믹스인 정상
-    고정)로. test_ime_hardware_cursor 는 부하 flaky(재시도 통과·무관). 관련: [[token-modularization-s5-complete]].
+    고정)로. (test_ime_hardware_cursor flaky 는 58122 에서 근본 수정 — §9.) 관련:
+    [[token-modularization-s5-complete]].
+
+- ~~**S6 토큰 회계 정확성 재설계 — 실측(/usage) 1차화**~~ → **완료(p4 58088~58133,
+  2026-06-11, 라이브 반영·실화면 검증까지)**: S5 §8 의 본설계
+  [TOKEN_ACCOUNTING_ACCURACY_SCENARIO.md](TOKEN_ACCOUNTING_ACCURACY_SCENARIO.md)(58088)
+  를 T1~T6 로 구현. 채택안 = **(A) /usage 권위값 1차화 + 세분 화면만 (C) 추정/실측
+  분리 표기**(footer 스크랩과 실측은 의미가 달라 보정(B)은 성립 불가 — 스크랩은
+  "패널별 활동량 추정 `~`"으로 강등, 세분의 유일한 출처라 폐기는 안 함). 전부
+  플러그인 안(S5 격리의 실증 — 코어 변경은 죽은 속성 제거·표시 헬퍼 확장뿐).
+  - **T1**(58089) `limits` 테이블(usagedb v2) — 실측 스냅샷 시계열 영속(연속 동일값
+    skip·보존 무제한·v1 자동 업그레이드). source=probe/panel/inline 출처 추적.
+  - **T2**(58093) 대사(reconcile) — 연속 스냅샷 구간의 실측 Δpct vs 스크랩 Σ(같은
+    계정 한정·리셋 플래그), TokenLogScreen **[r]/[대사] 뷰**(추세 상관 진단 전용).
+  - **T3**(58101) 표시 1차화 — 상태줄 `실측%/5h` 주 표시 + `~Σ` 추정 라벨,
+    **분모 근사 폐기**(`_learned_5h_cap`·`_tok5h_pct` ②경로 제거 — 실측 없으면
+    None), `usage_age_sec` 로 "N분 전 실측" stale 표기.
+  - **T4**(58106) 게이트 실측 전환 — `usage_gate_session_pct=95` **기본 ON**(주간
+    0=끔, plugin_opts 소유). 자동재개 보류를 실측 기준으로(M12 절대 예산 토글과
+    독립 — 기본 ON 결정과 토글 기본 OFF 충돌 해소 설계 정정). **fail-open**: 실측
+    부재·stale(주기×2)·계정 불일치면 개입 안 함. 경고 0/80/100 눈금에도 합류.
+  - **T5**(58107) 갱신 전략 — 응답 종료(committed) 후 20초 디바운스(실측 >3분
+    묵었을 때만)·게이트 임계 -10%p 부근이면 주기/4 단축(프로브 비용 보수 원칙).
+  - **T6**(58109) usage.txt 실캡처 골든으로 파서→스냅샷→표시→게이트 전 체인 회귀망
+    + 계약 테스트 ④-b/c 확장(S6 런타임 상태도 delete-to-disable).
+  - **라이브 검증 중 FIX**(58133): 프로브가 데몬 cwd(홈) 신뢰 대화상자에 막히던
+    잠복 버그 → Claude 패널 셸 cwd 로 spawn(§9 상세). 재시작 2회(드라이런 SAFE)로
+    p4:58133 실행 중, 상태줄 `24%/5h · ~Σ` 실화면 캡처 확인.
+  - **잔존 후속**: §7-4(token_budget_* 절대 예산 deprecate — 실사용 검증 후)·REC
+    캡처로 [대사] 뷰 실측·추정 상관 관찰. 관련: [[token-accounting-s6-complete]].
 
 **⚠️ 병렬 세션 함정(2026-06-10 갱신)**: playground 워크스페이스를 **다른 세션이 동시 편집**한다.
 2026-06-09 Phase 2 제출 중, 병렬 세션의 **clock/calendar 플러그인 추출**(미완·당시 깨짐: 미존재
