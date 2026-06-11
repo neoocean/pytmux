@@ -10,13 +10,14 @@ import subprocess
 import time
 import traceback
 
-from . import clientclip, clientrender, ipc, plugins, proc, version
+from . import clientclip, clientrender, i18n, ipc, plugins, proc, version
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS, DEFAULT_STYLE,
     MENU_ITEMS, MENU_TOGGLES, SPECIAL,
     _BOX_BITS, _BOX_REV, _DATE_STRFTIME, _JAMO, _KEY_DIAG, _ONOFF,
     _TB_ACTIVE_STYLE, _TB_BORDER_STYLE, _TB_INACTIVE_STYLE, _TIME_STRFTIME,
-    _char_cells, _darken_style, _is_emoji, _with_reverse,
+    _char_cells, _client_relaunch_ok, _darken_style, _first_int, _is_emoji,
+    _opt_value, _restart_check_eval, _with_reverse,
     has_hangul, hangul_to_qwerty, norm_sep,
     _normalize_key, _shell_argv, key_to_bytes, make_style, theme_color)
 from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 사용)
@@ -25,7 +26,8 @@ from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 
     InfoTabsScreen, MenuScreen, PromptScreen)
 from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose 에서 사용)
     MultiplexerView, StatusBar, TabBar)
-from .keymap import _key_to_ctrl_bytes, _tmux_key_to_textual, load_config
+from .keymap import (_key_to_ctrl_bytes, _tmux_key_to_textual,
+                     load_config, normalize_binding_key)
 from .protocol import MIN_H, MIN_W, PROTO_VERSION, read_msg, write_msg
 
 # IPC 소켓 재접속 재시도 파라미터 — 흩어져 있던 매직 상수를 한곳에 모았다(M4 #30).
@@ -190,6 +192,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
             self.prefix_enabled = True  # 중첩 시 F12 로 outer prefix 일시 해제
             self.bindings = config.get("bindings", {})
+            # 설정 로드 중 모은 경고(잘못된 키 표기 등) — startup 에서 한 번 표시.
+            self._config_warnings = list(config.get("warnings", []))
             self.mouse_enabled = config.get("mouse", True)
             # 마우스 이벤트 진단 로그(원격 SSH 휠 스크롤 미동작 등 환경 의존 문제용).
             # `set mouse-debug on` 으로 켜면 클라이언트가 받은 마우스/휠 이벤트와
@@ -212,6 +216,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.title_fmt = config.get("title_fmt", "#S:#I:#W")
             self.aliases = config.get("aliases", {})
             self.hooks = config.get("hooks", {})
+            # 로케일(§6 i18n): 우선순위 = 영속된 `lang` 명령 선택 > config `lang` >
+            # 환경 LANG. 클라이언트-로컬(표현 계층, per-user)이라 서버 왕복 없음.
+            self.lang = (i18n.load_persisted(sock_path)
+                         or i18n.resolve(config.get("lang"), os.environ))
+            i18n.set_locale(self.lang)
             self._attached = False
             self._composite_pending = False  # B9: 합성 코얼레싱 예약 플래그
             self._prev_winc = 0
@@ -279,7 +288,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # OS 별 전송 분기(Unix=AF_UNIX, Windows=TCP 루프백)는 ipc 가 담당.
                 self.reader, self.writer = await ipc.open_connection(self.sock_path)
             except (ConnectionError, FileNotFoundError, OSError):
-                self.exit(message="pytmux: 서버에 연결할 수 없습니다")
+                self.exit(message=i18n.t("msg.connect_failed"))
                 return
             cols, rows = self._content_size()
             hello = {"t": "hello", "proto": PROTO_VERSION, "cols": cols, "rows": rows}
@@ -290,6 +299,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 hello["session"] = self.session_name
             await write_msg(self.writer, hello)
             self._start_reader()
+            # 설정 파일의 키 바인딩 경고가 있으면 startup 직후 한 번 보여준다
+            # (과거엔 잘못된 키가 조용히 묻혀 사용자가 원인을 몰랐다).
+            if self._config_warnings:
+                msg = " / ".join(self._config_warnings[:3])
+                if len(self._config_warnings) > 3:
+                    msg += i18n.t("msg.config_warn_more",
+                                  n=len(self._config_warnings) - 3)
+                self.set_timer(0.5, lambda: self.display_message(msg, secs=5.0))
 
         def on_unmount(self):
             # 마운트 시 끈 대체 스크롤 모드(1007)를 복원해 터미널을 원상태로 둔다.
@@ -635,9 +652,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             새 서버가 listen 을 다시 열 때까지 잠깐 재시도한 뒤 hello 로 재개."""
             self._reconnecting = False
             if not await self._connect_and_hello(_RECONNECT_RETRIES_RESTART):
-                self.exit(message="pytmux: 서버 재접속 실패")
+                self.exit(message=i18n.t("msg.reconnect_failed"))
                 return
-            self.display_message("pytmux: 서버 재시작 완료 — 재접속됨")
+            self.display_message(i18n.t("msg.restart_done"))
             self._start_reader()
 
         async def _force_reconnect(self, reason="manual"):
@@ -667,7 +684,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         pass
                 # 새 연결(서버는 살아 있으니 보통 즉시 — 잠깐 재시도) + hello.
                 if not await self._connect_and_hello(_RECONNECT_RETRIES_FORCE):
-                    self.display_message("pytmux: 재접속 실패 — 네트워크 확인")
+                    self.display_message(i18n.t("msg.reconnect_failed_net"))
                     return
                 # 네트워크 상태 리셋: 새 채널이니 degraded 해제하고 표본 카운터 비움.
                 self._net_ping_ts = None
@@ -675,7 +692,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if self._net_degraded:
                     self._net_degraded = False
                     self._composite()
-                self.display_message("pytmux: 재접속됨 — 화면 재동기")
+                self.display_message(i18n.t("msg.reconnected_resync"))
                 self._start_reader()   # 새 reader 태스크(새 세대) — 서버 _send_full 수신
             finally:
                 self._force_reconnecting = False
@@ -831,13 +848,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif t == "pong":
                 self._on_pong()   # 네트워크 RTT 표본(§10)
             elif t == "captured":
-                self.display_message(f"{msg.get('chars', 0)} chars 버퍼에 캡처됨")
+                self.display_message(i18n.t("msg.captured_chars",
+                                            n=msg.get('chars', 0)))
             elif t == "restarting":
                 # 작업 보존 재시작 통지(ⓔ): 곧 끊길 연결을 재접속으로 다룬다.
                 self._reconnecting = True
-                self.display_message("pytmux: 서버 재시작 중…")
+                self.display_message(i18n.t("msg.server_restarting"))
             elif t == "bye":
-                self.exit(message="pytmux: 서버가 종료되었습니다")
+                self.exit(message=i18n.t("msg.server_terminated"))
             else:
                 # 코어가 모르는 메시지(t)는 플러그인에 위임한다(ncd 의 nc_list 등).
                 self.plugins.handle_message(self, msg)
@@ -849,7 +867,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # REC(출력 캡처) 정보 줄. 인자를 안 주면 상태줄에 마지막으로 온 값을 쓴다.
             # 맨 앞에 현재 ON/OFF 를 보여 화면에서 [c] 로 토글한 결과가 바로 반영된다.
             on = bool(getattr(self.status, "capture", False))
-            head = "상태: ON (캡처 중)" if on else "상태: OFF"
+            head = i18n.t("capture.status_on") if on \
+                else i18n.t("capture.status_off")
             if path is None:
                 path = self.status.capture_path
                 size = self.status.capture_size or 0
@@ -1409,7 +1428,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.send_cmd("set_buffer", text=text)
             clip = clientclip.copy(text)
             self.display_message(
-                f"{len(text)} chars 복사됨" + (" (클립보드)" if clip else ""))
+                i18n.t("msg.copied_chars", n=len(text))
+                + (i18n.t("msg.clipboard_suffix") if clip else ""))
 
         def paste_os_clipboard(self):
             """OS 클립보드 내용을 활성 패널에 붙여넣는다(명령 `paste-clipboard`, Ctrl+V).
@@ -1429,7 +1449,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self._pasting:
                 return
             self._pasting = True
-            self.display_message("클립보드 붙여넣기 중… 잠시만요 (ESC 로 빠져나가기)")
+            self.display_message(i18n.t("msg.paste_in_progress"))
             self.run_worker(self._do_paste_clipboard(), exclusive=False)
 
         async def _do_paste_clipboard(self):
@@ -1443,13 +1463,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     if path:
                         # 경로를 붙여넣어 앱이 첨부 이미지로 인식하게 한다(결정 ①).
                         self.send_cmd("paste", text=path)
-                        self.display_message(f"클립보드 이미지 → 경로 붙여넣기: {path}")
+                        self.display_message(
+                            i18n.t("msg.paste_image_path", path=path))
                         return
                     # 폴백: 내부 앱이 공유 클립보드에서 직접 읽도록 Alt+V.
                     self.send_input(b"\x1bv")   # ESC v = Alt+V
-                    self.display_message("이미지 붙여넣기 → 내부 앱(Alt+V)")
+                    self.display_message(i18n.t("msg.paste_image_app"))
                     return
-                self.display_message("클립보드가 비어있거나 읽을 수 없음")
+                self.display_message(i18n.t("msg.clipboard_empty"))
             finally:
                 self._pasting = False
 
@@ -1481,14 +1502,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._want_version = True
             self.send_cmd("request_version")
 
-        @staticmethod
-        def _client_relaunch_ok():
-            """restart-all 의 클라 relaunch(os.execv)가 인자를 해석할 수 있는지(run_client
-            의 재실행 로직과 동일 판정)."""
-            import sys
-            a0 = sys.argv[0]
-            return bool(a0) and (a0.endswith(".py") or os.access(a0, os.X_OK))
-
         def open_restart_check(self):
             # restart-check: 작업 보존 전체 재시작이 안전한지 드라이런 점검(실행 안 함).
             # 서버 점검(re-exec/직렬화/fd)을 요청하고, 회신에 클라 측 점검을 합쳐 팝업.
@@ -1500,7 +1513,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 회신(restart_check)에서 _pending_restart 를 보고 안전하면 곧장 실행,
             # FAIL 이면 재확인 팝업으로 진행 여부를 다시 묻는다(do_restart).
             self._pending_restart = kind
-            self.display_message("pytmux: 재시작 전 드라이런 점검 중…")
+            self.display_message(i18n.t("msg.restart_dryrun"))
             self.send_cmd("request_restart_check")
 
         def do_restart(self, kind):
@@ -1510,32 +1523,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.display_message(
                     "pytmux: 전체 재시작 — 서버 재시작 + 클라 재기동…")
             else:
-                self.display_message("pytmux: 서버 재시작…")
+                self.display_message(i18n.t("msg.server_restart"))
             self.send_cmd("restart_server")
-
-        @staticmethod
-        def _restart_check_eval(m, cli_ok, kind="all"):
-            """서버 restart_check 결과 + 클라 측 점검을 (safe, checks) 로 평가.
-            kind="server" 는 클라를 relaunch 하지 않으므로 relaunch 점검을 제외한다."""
-            panes, with_fd = m.get("panes", 0), m.get("panes_with_fd", 0)
-            fd_ok = (panes == with_fd and panes > 0)
-            checks = [
-                (m.get("reexec_supported"), "서버 re-exec 지원(POSIX·이벤트루프)"),
-                (m.get("has_sessions"), "복원할 세션 존재"),
-                (m.get("serialize_ok"), "상태 직렬화 round-trip"),
-                (fd_ok, f"패널 master fd 보유 ({with_fd}/{panes})"),
-            ]
-            if kind == "all":
-                checks.append((cli_ok, "클라이언트 relaunch 인자 해석"))
-            return all(ok for ok, _ in checks), checks
 
         def _gate_restart_on_check(self, m):
             """대기 중인 재시작(_pending_restart)을 드라이런 결과로 게이트한다.
             안전하면 곧장 실행, FAIL 이면 재시작 여부를 재확인 팝업으로 묻는다."""
             kind = self._pending_restart
             self._pending_restart = None
-            safe, checks = self._restart_check_eval(
-                m, self._client_relaunch_ok(), kind)
+            safe, checks = _restart_check_eval(
+                m, _client_relaunch_ok(), kind)
             if safe:
                 self.do_restart(kind)
                 return
@@ -1551,8 +1548,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def _show_restart_check_popup(self, m):
             """서버 restart_check 결과 + 클라 측 점검을 PASS/WARN/FAIL 로 팝업."""
-            cli_ok = self._client_relaunch_ok()
-            safe, checks = self._restart_check_eval(m, cli_ok)
+            cli_ok = _client_relaunch_ok()
+            safe, checks = _restart_check_eval(m, cli_ok)
             lines = [
                 ("✅ 안전 — restart-all 수행 가능" if safe
                  else "⚠️ 주의 — 아래 FAIL 항목 확인 후 진행"),
@@ -1635,9 +1632,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 캡처 경로는 클라이언트 머신 기준(서버=로컬일 때 유효). 없으면 안내.
                 path = getattr(self.status, "capture_path", None)
                 if path and proc.open_in_file_manager(os.path.dirname(path)):
-                    self.display_message("기록 폴더 열기")
+                    self.display_message(i18n.t("msg.open_capture_dir"))
                 else:
-                    self.display_message("열 기록 폴더가 없습니다(캡처 꺼짐)")
+                    self.display_message(i18n.t("msg.no_capture_dir"))
                 return None   # 줄 갱신 없음(팝업 유지)
 
             actions = {0: [("c", "[c] 캡처 켜기/끄기", _toggle_capture),
@@ -1709,6 +1706,27 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("zoom")
             elif key == "kill_pane":
                 self.send_cmd("kill_pane")
+            elif key == "rotate":
+                self.send_cmd("rotate", forward=True)
+            elif key == "swap_pane":
+                self.send_cmd("swap_pane", forward=True)
+            elif key == "break_pane":
+                self.send_cmd("break_pane")
+            elif key == "rename_pane":
+                self.open_prompt("command", "", initial="rename-pane ")
+            elif key == "next_layout":
+                self.send_cmd("cycle_layout")
+            elif key == "select_layout":
+                # 레이아웃 프리셋 선택기(명령 옵션 모달 재사용 — 키보드만으로 선택).
+                opts = COMMAND_OPTIONS.get("select-layout")
+                if opts:
+                    def _run(line):
+                        if line:
+                            self._run_command(line)
+                    self.push_screen(CommandOptionsScreen(
+                        "select-layout", "레이아웃 프리셋", opts), _run)
+            elif key == "search":
+                self.open_prompt("search", "스크롤백 검색")
             elif key == "sync":
                 self.send_cmd("set_sync")
             elif key == "autoresume":
@@ -1768,7 +1786,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif name in ("mouse-debug", "mouse-log"):
                 self.mouse_debug = val.lower() in ("on", "true", "1", "yes")
                 if self.mouse_debug:
-                    self.display_message(f"마우스 진단 로그: {self._mouse_log_path}")
+                    self.display_message(
+                        i18n.t("msg.mouse_log", path=self._mouse_log_path))
             elif name == "alt-scroll":
                 # on = 대체 스크롤 모드(1007) 비활성(휠을 실제 마우스 이벤트로) — 기본.
                 # off = 터미널 기본 동작에 맡김(휠이 화살표로 갈 수 있음).
@@ -1920,26 +1939,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if val.lower().startswith("y") and action:
                     action()
 
-        @staticmethod
-        def _opt_value(args, flag):
-            if flag in args:
-                i = args.index(flag)
-                if i + 1 < len(args):
-                    return args[i + 1]
-            return None
-
-        @staticmethod
-        def _first_int(args):
-            for a in args:
-                # 플래그(-t)·음수 토큰은 인덱스로 보지 않고 **계속 스캔**한다 — 과거엔
-                # 첫 음수에서 None 을 반환해 뒤따르는 양수 인덱스를 가려, `move-tab`
-                # 등이 조용히 무시됐다.
-                if a.startswith("-"):
-                    continue
-                if a.isdigit():
-                    return int(a)
-            return None
-
         def _run_shell(self, cmd):
             try:
                 res = subprocess.run(_shell_argv(cmd), capture_output=True,
@@ -2083,13 +2082,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
                        "move-tab-first", "move-tab-last"):
                 self.send_cmd("move_current_tab", where=c[len("move-tab-"):])
             elif c in ("move-tab", "movet", "move-window", "movew"):
-                idx = self._opt_value(args, "-t")
-                idx = int(idx) if idx and idx.isdigit() else self._first_int(args)
+                idx = _opt_value(args, "-t")
+                idx = int(idx) if idx and idx.isdigit() else _first_int(args)
                 if idx is not None and idx - 1 >= 0:   # 사용자 1-based → 0-based(#21)
                     self.send_cmd("move_window", index=idx - 1)
             elif c in ("swap-tab", "swapt", "swap-window", "swapw"):
-                idx = self._opt_value(args, "-t")
-                idx = int(idx) if idx and idx.isdigit() else self._first_int(args)
+                idx = _opt_value(args, "-t")
+                idx = int(idx) if idx and idx.isdigit() else _first_int(args)
                 if idx is not None and idx - 1 >= 0:   # 사용자 1-based → 0-based(#21)
                     self.send_cmd("swap_window", index=idx - 1)
             elif c in ("choose-tree", "choose-tab", "choose-window",
@@ -2108,8 +2107,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif c == "rename-pane":
                 self.send_cmd("set_pane_title", title=" ".join(args))
             elif c in ("select-tab", "selectt", "select-window", "selectw"):
-                idx = self._opt_value(args, "-t")
-                idx = int(idx) if idx and idx.isdigit() else self._first_int(args)
+                idx = _opt_value(args, "-t")
+                idx = int(idx) if idx and idx.isdigit() else _first_int(args)
                 if idx is not None and idx - 1 >= 0:   # 사용자 1-based → 0-based(#21)
                     self.send_cmd("select_window", index=idx - 1)
             elif c in ("rename-tab", "renamet", "rename-window", "renamew"):
@@ -2131,7 +2130,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     d = next((_dmap[a] for a in args if a in _dmap), None)
                     if d is not None:
                         self.send_cmd("resize_dir", dir=d,
-                                      cells=(self._first_int(args) or 3))
+                                      cells=(_first_int(args) or 3))
             elif c == "zoom":
                 self.send_cmd("zoom")
             elif c in ("select-layout", "selectl"):
@@ -2144,7 +2143,23 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif c in ("rotate-window", "rotatew"):
                 self.send_cmd("rotate", forward=("-D" not in args))
             elif c in ("swap-pane", "swapp"):
-                self.send_cmd("swap_pane", forward=("-U" not in args))
+                # -s/-t <번호>: display-panes(prefix q) 오버레이의 0-based 패널
+                # 번호로 임의의 두 패널을 교환(마우스 헤더 드래그와 같은
+                # swap_pane_to 경로). -t 만 주면 활성 패널과, -s -t 둘 다면 그 두
+                # 패널을 맞바꾼다. -s/-t 가 없으면 기존 인접 순환 swap(-U=이전·기본
+                # 다음). §2.3: 마우스 전용이던 임의 swap 을 명령/키 경로로 대칭화.
+                if "-s" in args or "-t" in args:
+                    a = self._pane_id_by_index(_opt_value(args, "-s"))
+                    b = self._pane_id_by_index(_opt_value(args, "-t"))
+                    act = self.layout.get("active")
+                    a = a if a is not None else act
+                    b = b if b is not None else act
+                    if a is not None and b is not None and a != b:
+                        self.send_cmd("swap_pane_to", id=a, to_id=b)
+                    # 유효하지 않은 번호(범위밖·비숫자)면 조용히 무시 — 인접
+                    # swap 으로 떨어지지 않는다(엉뚱한 패널 교환 방지).
+                else:
+                    self.send_cmd("swap_pane", forward=("-U" not in args))
             elif c in ("break-pane", "breakp"):
                 self.send_cmd("break_pane")
             elif c in ("join-pane", "joinp"):
@@ -2158,8 +2173,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 elif "off" in args:
                     val = False
                 self.send_cmd("set_capture", value=val)
-                self.display_message("출력 캡처 " + ("토글" if val is None else
-                                     ("ON" if val else "OFF")) + " (상태줄 REC)")
+                state = (i18n.t("word.toggle") if val is None
+                         else ("ON" if val else "OFF"))
+                self.display_message(i18n.t("msg.capture_toggle", state=state))
             elif c in ("synchronize-panes", "syncp") or (
                     c == "setw" and "synchronize-panes" in args):
                 val = None
@@ -2211,7 +2227,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 터미널에서 `bind-key <key> send-escape` 로 전용 키를 둘 수 있다.
                 self.send_input(b"\x1b")
             elif c in ("paste-buffer", "pasteb"):
-                idx = self._first_int(args)
+                idx = _first_int(args)
                 self.send_cmd("paste_buffer", index=idx or 0)
             elif c in ("capture-pane", "capturep"):
                 self.send_cmd("capture_pane", full=("-S" in args or "-a" in args))
@@ -2265,6 +2281,19 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 arg = args[0].lower() if args else "toggle"
                 val = (arg == "on") if arg in ("on", "off") else None
                 self.send_cmd("set_coalesce", value=val)
+            elif c in ("lang", "language"):
+                # lang ko|en — UI 로케일 전환(§6 i18n). 클라이언트-로컬: 즉시 set_locale
+                # +영속 후 전체 재합성으로 상태줄·헤더·메뉴를 새 언어로 다시 그린다(언어
+                # 전환 자체가 즉시 보이는 피드백). 인자가 없거나 미지원이면 사용법 팝업.
+                arg = args[0].lower() if args else ""
+                if arg in i18n.available():
+                    self.lang = arg
+                    i18n.set_locale(arg)
+                    i18n.save_persisted(self.sock_path, arg)
+                    self._composite()
+                else:
+                    self.push_screen(InfoScreen([i18n.t("lang.usage")],
+                                                title="lang"))
             elif c in ("version", "about"):
                 # 클라/서버 버전(p4 CL)·업타임 팝업.
                 self.open_version()
@@ -2308,9 +2337,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 키는 tmux 표기(C-x)도 받아 textual(ctrl+x)로 정규화. 한 글자는 그대로.
                 # 첫 인자만 키, 나머지는 명령 원문(플래그 -h 등 보존)으로 그대로 쓴다.
                 if len(args) >= 2:
-                    key = _tmux_key_to_textual(args[0])
+                    key, warn = normalize_binding_key(args[0])
                     self.bindings[key] = " ".join(args[1:])
-                    self.display_message(f"bound {key}")
+                    self.display_message(warn if warn else f"bound {key}")
             elif c in ("unbind-key", "unbind", "unbindkey"):
                 # unbind-key <key> | -a (전체 해제). 없는 키는 조용히 무시.
                 if "-a" in args:
@@ -2591,6 +2620,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("select_pane_id", id=panes[int(k)]["id"])
             self._exit_display()
 
+        def _pane_id_by_index(self, idx):
+            """display-panes 오버레이의 0-based 패널 번호(문자열/None)를 현재
+            레이아웃의 패널 id 로 변환한다. None·비숫자·범위밖이면 None.
+            swap-pane -s/-t 가 사용자에게 보이는 그 번호로 패널을 지정하게 한다
+            (_handle_display_key 의 숫자→id 매핑과 같은 0-based 규칙)."""
+            if idx is None or not idx.isdigit():
+                return None
+            panes = self.layout.get("panes", [])
+            i = int(idx)
+            return panes[i]["id"] if 0 <= i < len(panes) else None
+
         # ---- ESC(명령) 모드 ----
         def _exit_esc(self):
             self.mode = "normal"
@@ -2801,7 +2841,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self._hdr_focus = active if active in panes else panes[0]
                     self._composite()
                 else:
-                    self.display_message("Claude 헤더 없음")
+                    self.display_message(i18n.t("msg.no_claude_header"))
             elif k == "escape":
                 # ESC 모드에서 ESC 를 한 번 더 → **모드만 빠진다(패널로 ESC 전달 없음)**.
                 # 패널(앱)에 실제 ESC(\x1b)를 보내는 통로는 **항상 Shift+ESC 일 때만**

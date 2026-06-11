@@ -272,6 +272,17 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- **#1.1 owned ConPTY 미해결 재확정(2026-06-11)** — CL 58214 의 "★ 해결(익명 파이프로
+  동작, 막힌 건 콘솔 상속)" 결론이 **라이브 데몬 재검증에서 반증**됐다. 실태: owned 백엔드는
+  **콘솔-less 데몬에서 자식 출력 0바이트(패널 백지)**. 단계별 규명 — (1) 파이프 종류(익명 vs
+  overlapped 명명) 무관, 둘 다 conout 0, (2) `ResizePseudoConsole` 킥을 받아야 초기 페인트
+  1회가 오지만, (3) 이후 지속 출력은 여전히 안 흐름(잔여 블로커), (4) pywinpty 의 ConPTY 는
+  같은 조건에서 정상 — winpty-rs 가 번들 OpenConsole 을 쓰는 반면 우리는 시스템 conhost 를
+  호출하는 차이로 추정. 이번 CL 은 `conpty.py` 를 overlapped 명명 파이프 + conin 배선 정정 +
+  resize 킥까지 끌어올려 발견을 코드로 보존하되, docstring·`pty_backend` 선택 주석·§1.1 에
+  **비동작·잔여 블로커**를 명기. owned 는 opt-in·비동작 유지(켜지 말 것), **기본 pywinpty 로
+  제품 정상**. §1.1② 멀티바이트 손상은 미해결로 남음. test_pty_backend·test_windows_port
+  19/0 그린. 상세: docs/IMPROVEMENT_OPPORTUNITIES.md §1.1, conpty.py 모듈 docstring.
 - 58214~58228 **Windows 네이티브 #1.1~#1.6 + #7 완주(office 박스, 2026-06-11)** — 자율
   진행. IMPROVEMENT_OPPORTUNITIES.md Windows 계열 미해결 항목을 전부 처리하고 의미 단위로
   분리 서브밋. 검증: 각 항목 단위 테스트 + 블래스트 반경 288 passed/0 failed(test_proc·

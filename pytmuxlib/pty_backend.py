@@ -83,9 +83,12 @@ def spawn(argv, *, cols: int, rows: int,
     cwd: 시작 디렉터리(None=상속). env: 환경(None=현재 프로세스 환경 상속).
     """
     if IS_WINDOWS:
-        # PYTMUX_PTY_BACKEND=owned|conpty 면 직접 소유 ConPTY(raw 바이트, §1.1② 손상
-        # 해결)를 쓰고, 실패하면 조용히 pywinpty 로 폴백한다(안전망). 기본값은 검증된
-        # pywinpty(_WinPty) — 직접 소유 백엔드를 실 박스에서 검증한 뒤 기본 전환 예정.
+        # PYTMUX_PTY_BACKEND=owned|conpty 면 직접 소유 ConPTY 를 쓰고, 실패하면 조용히
+        # pywinpty 로 폴백한다(안전망). ⚠️ **owned 는 현재 비동작**(시스템 conhost 가
+        # 콘솔-less 데몬에서 자식 출력을 스트리밍하지 못해 패널이 백지가 된다 —
+        # 2026-06-11 라이브 검증, conpty.py 모듈 docstring·§1.1② 참조). 기본값은 검증된
+        # pywinpty(_WinPty); owned 는 켜지 말 것. spawn 실패가 아니라 출력 미스트리밍이라
+        # 자동 폴백도 안 걸린다(spawn 자체는 성공).
         choice = (os.environ.get("PYTMUX_PTY_BACKEND") or "").strip().lower()
         if choice in ("owned", "conpty"):
             try:
@@ -351,6 +354,12 @@ class _WinPty(PtyProcess):
     `pyte.ByteStream` 의 incremental decoder 가 경계 carry, Unix 와 동일). 익명 CreatePipe
     로는 이 빌드에서 conhost 출력이 read 단에 도달하지 않아 winpty-rs 처럼 overlapped
     명명 파이프가 필요함을 실측 확인. 상세·진행은 docs/IMPROVEMENT_OPPORTUNITIES.md §1.1.
+
+    참고(검토 완료·기각, 2026-06-11): pywinpty `PTY(...,backend=1)` 의 **WinPTY agent
+    백엔드**(콘솔 화면버퍼 스크랩)는 32KB 경계 CJK 손상은 피하지만 ① 아스트랄/이모지(서로게이트
+    쌍)를 100% U+FFFD 로 파괴(`ReadConsoleOutputW` 셀당 WCHAR 1개 한계, AgentConfig 무관)하고
+    ② 대량 플러드 스크롤백을 합쳐 CJK 도 일부만 포착(손실성 화면 모델)한다 — 순 열화라 쓰지
+    않는다. 남은 진짜 후보는 번들 OpenConsole 경로 재현뿐(§1.1 (a)).
 
     write(§1.1③): `PTY.write` 는 str 만 받으므로 입력은 `bytes→utf-8 디코드` 한다 —
     정상 UTF-8(한글 붙여넣기 포함)은 무손실이고, **순수 비-UTF-8 raw 바이트 전송은

@@ -322,6 +322,59 @@ async def test_execv_restart_preserves_shell_pid():
             pass
 
 
+# ── 5b. execv 실패 폴백(§5.6): fd 누수·stale-소켓 좀비 방지 ────────────────────
+async def test_execv_failure_fallback_rearms_and_cleans():
+    """§5.6: os.execv 가 실패하면 _do_execv 폴백이 ① CLOEXEC 재무장 ② 엔드포인트
+    파일 정리 ③ 질서 종료 통지를 수행하고 예외를 던지지 않는다. 재시작은 POSIX
+    전용(IS_WINDOWS 가드)이라 e2e 라이브 불가 — _do_execv 를 직접 부르고, 존재하지
+    않는 바이너리를 argv 로 줘 os.execv 가 자연히 OSError 를 던지게 한다."""
+    srv, task, sock = await server_only()
+    try:
+        srv.ensure_default_session(80, 24)
+        calls = {"rearm": 0, "cleanup": 0, "notify": 0}
+        srv._rearm_master_cloexec = lambda: calls.__setitem__(
+            "rearm", calls["rearm"] + 1)
+        srv._cleanup_endpoint_files = lambda: calls.__setitem__(
+            "cleanup", calls["cleanup"] + 1)
+        srv._notify_no_sessions = lambda: calls.__setitem__(
+            "notify", calls["notify"] + 1)
+        # 존재하지 않는 경로 → os.execv 가 OSError → 폴백 경로로 진입.
+        srv._do_execv(["/no/such/binary/pytmux-xyz-zzz", "server"])
+        assert calls["rearm"] == 1, "CLOEXEC 재무장 호출"
+        assert calls["cleanup"] == 1, "엔드포인트 파일 정리 호출"
+        assert calls["notify"] == 1, "질서 종료 통지 호출"
+        assert srv.running is False
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_cleanup_endpoint_files_unlinks_socket_portfile_token():
+    """§5.6: _cleanup_endpoint_files 가 unix 소켓·포트파일·토큰 파일을 실제로
+    지운다(새 서버가 stale 엔드포인트에 막히지 않게). 라이브 서버의 진짜 엔드포인트
+    는 건드리지 않도록 임시 .sock 경로로 갈아끼워 헬퍼 로직만 검증한다."""
+    import tempfile
+    srv, task, sock = await server_only()
+    try:
+        d = tempfile.mkdtemp()
+        fake = os.path.join(d, "fake.sock")     # is_tcp=False → unix 분기
+        saved = srv.sock_path
+        srv.sock_path = fake
+        try:
+            made = [ipc.portfile_for(fake), ipc.token_path(fake)]
+            if not ipc.is_tcp(fake):
+                made.append(fake)
+            for p in made:
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write("x")
+            srv._cleanup_endpoint_files()
+            for p in made:
+                assert not os.path.exists(p), f"미삭제: {p}"
+        finally:
+            srv.sock_path = saved
+    finally:
+        await teardown(srv, task, sock)
+
+
 # ── 6. 클라이언트 재접속(ⓔ): restarting 통지 → 끊김 → 새 서버에 재접속 ──────────
 async def test_client_reconnects_on_restarting():
     """서버가 {"t":"restarting"} 을 보낸 뒤 연결이 끊기면, 클라이언트가 종료하지

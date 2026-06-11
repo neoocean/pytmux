@@ -70,8 +70,45 @@ async def test_key_to_ctrl_bytes():
 
 
 async def test_tmux_key_to_textual():
-    assert pytmux._tmux_key_to_textual("C-a") == "ctrl+a"
-    assert pytmux._tmux_key_to_textual("ctrl+x") == "ctrl+x"
+    k = pytmux._tmux_key_to_textual
+    # 하위호환
+    assert k("C-a") == "ctrl+a"
+    assert k("ctrl+x") == "ctrl+x"        # 이미 textual 표기 → 멱등
+    # §2.5: meta/alt·shift·풀네임 수정자
+    assert k("M-x") == "alt+x"
+    assert k("A-x") == "alt+x"            # A- 도 alt 별칭
+    assert k("meta-x") == "alt+x"
+    assert k("S-Tab") == "shift+tab"
+    assert k("shift-left") == "shift+left"
+    # §2.5: 함수키
+    assert k("F5") == "f5"
+    assert k("f12") == "f12"
+    assert k("C-F1") == "ctrl+f1"
+    # §2.5: 이름 키(tmux 표기)
+    assert k("PPage") == "pageup" and k("NPage") == "pagedown"
+    assert k("Up") == "up" and k("BSpace") == "backspace"
+    assert k("Esc") == "escape"
+    # §2.5: 다중 수정자 — Textual 규약(알파벳순 정렬)으로 직렬화
+    assert k("C-S-Left") == "ctrl+shift+left"
+    assert k("S-C-Left") == "ctrl+shift+left"   # 순서 무관, 항상 정렬
+    assert k("C-M-a") == "alt+ctrl+a"            # alt < ctrl
+    # 수정자 없는 한 글자는 대소문자 보존(prefix 핸들러가 character 로 매칭)
+    assert k("x") == "x" and k("X") == "X"
+    # 인식 못 하는 다중 글자는 원문 유지(하위호환)
+    assert k("bogus") == "bogus"
+
+
+async def test_normalize_binding_key_warns():
+    nk = pytmux.normalize_binding_key
+    # 정상 키는 경고 없음
+    assert nk("C-a") == ("ctrl+a", None)
+    assert nk("F5")[1] is None and nk("Up")[1] is None
+    assert nk("x")[1] is None
+    # 오타(알 수 없는 다중 글자) → 그대로 두되 경고 메시지
+    key, warn = nk("Ennter")
+    assert key == "Ennter" and warn and "Ennter" in warn
+    # 빈 토큰 → 경고
+    assert nk("   ")[1] is not None
 
 
 async def test_load_config():
@@ -79,7 +116,8 @@ async def test_load_config():
     with open(cp, "w") as f:
         f.write("# c\nset prefix C-a\nset mouse off\nset mode-keys emacs\n"
                 "set status-bg blue\nset status-left L#S\n"
-                "bind | split-window -h\nalias v split-window -h\n"
+                "bind | split-window -h\nbind C-g new-window\nbind F5 next-window\n"
+                "alias v split-window -h\n"
                 "hook after-new-window rename-window H\n")
     cfg = pytmux.load_config(cp)
     assert cfg["prefix"] == "ctrl+a"
@@ -87,5 +125,9 @@ async def test_load_config():
     assert cfg["mode_keys"] == "emacs"
     assert cfg["status_bg"] == "blue" and cfg["status_left"] == "L#S"
     assert cfg["bindings"]["|"] == "split-window -h"
+    # §2.5: config 의 tmux 표기 bind 키는 Textual 표기로 정규화돼 저장된다 —
+    # 과거엔 raw "C-g"/"F5" 로 저장돼 런타임 토큰(ctrl+g/f5)과 절대 안 맞았다.
+    assert cfg["bindings"]["ctrl+g"] == "new-window"
+    assert cfg["bindings"]["f5"] == "next-window"
     assert cfg["aliases"]["v"] == "split-window -h"
     assert cfg["hooks"]["after-new-window"] == "rename-window H"

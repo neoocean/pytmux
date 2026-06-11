@@ -43,7 +43,8 @@
 # 로드한다(`import pytmux; pytmux.Server` 같은 테스트/외부 호환 유지). 경량 명령
 # 경로(main→launcher)는 이 무거운 재노출을 전혀 건드리지 않는다(A4).
 from pytmuxlib.keymap import (  # noqa: F401
-    _key_to_ctrl_bytes, _tmux_key_to_textual, load_config)
+    _key_to_ctrl_bytes, _tmux_key_to_textual, load_config,
+    normalize_binding_key)
 from pytmuxlib.launcher import (  # noqa: F401
     can_connect, control_request, ensure_server, main)
 from pytmuxlib.protocol import (  # noqa: F401

@@ -152,13 +152,43 @@ async def test_resize_pane_directional_command():
     await _with_app(body)
 
 
+async def test_swap_pane_index_command():
+    """swap-pane -s/-t <번호> 가 display-panes 0-based 번호로 임의의 두 패널을
+    swap_pane_to 로 교환한다(§2.3 — 과거엔 인접 순환 -U/-D 만 가능, 임의 swap 은
+    마우스 헤더 드래그 전용이었다). -t 만 주면 활성 패널과 교환, 번호가 없으면
+    기존 인접 순환을 유지하고, 범위밖 번호는 조용히 무시한다."""
+    async def body(app, pilot, srv):
+        app.layout = {"active": 1, "panes": [
+            {"id": 1, "x": 0, "y": 0, "w": 40, "h": 20},
+            {"id": 2, "x": 40, "y": 0, "w": 40, "h": 20},
+            {"id": 3, "x": 0, "y": 20, "w": 80, "h": 20}]}
+        sent = []
+        orig = app.send_cmd
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        try:
+            app._run_command("swap-pane -t 2")        # 활성(id1) ↔ 번호2(id3)
+            app._run_command("swap-pane -s 0 -t 1")   # 번호0(id1) ↔ 번호1(id2)
+            app._run_command("swap-pane -U")          # 번호 없음 → 인접 순환(이전)
+            app._run_command("swap-pane -t 9")        # 범위밖 → no-op
+        finally:
+            app.send_cmd = orig
+        assert ("swap_pane_to", {"id": 1, "to_id": 3}) in sent, sent
+        assert ("swap_pane_to", {"id": 1, "to_id": 2}) in sent, sent
+        assert ("swap_pane", {"forward": False}) in sent, sent
+        # 범위밖 -t 9 는 어떤 swap 도 일으키지 않는다(인접 swap 으로도 안 떨어짐):
+        # 정확히 위 세 번의 swap 만 발생.
+        swaps = [s for s in sent if s[0] in ("swap_pane", "swap_pane_to")]
+        assert len(swaps) == 3, swaps
+    await _with_app(body)
+
+
 async def test_first_int_skips_flags_and_negatives():
     """_first_int 가 플래그/음수 토큰을 건너뛰고 뒤따르는 양수 인덱스를 찾는다.
 
     과거엔 첫 음수 토큰에서 None 을 반환해 `move-tab foo -2 3` 같은 입력에서 뒤의
     3 을 가렸다(인덱스 명령 침묵 실패)."""
     async def body(app, pilot, srv):
-        f = app._first_int
+        from pytmuxlib.clientutil import _first_int as f   # §5.4: 클로저서 분리됨
         assert f(["3"]) == 3
         assert f(["-t", "2"]) == 2            # 플래그 건너뛰고 2
         assert f(["foo", "-2", "3"]) == 3     # 음수 가려도 뒤 양수 발견(회귀)
@@ -321,6 +351,11 @@ async def test_command_prompt_colon_prefix():
 
 async def test_command_list_and_autocomplete():
     async def body(app, pilot, srv):
+        # 이 테스트는 한국어 카테고리/명령 라벨을 단언한다(§6 i18n 이전 작성). 앱이
+        # 환경 LANG 으로 로케일을 정하므로(CI 는 ko 가 아닐 수 있음) ko 로 고정해
+        # 결정론적으로 만든다. CommandListScreen 은 구성(아래 ? 입력) 시점 로케일을 읽는다.
+        from pytmuxlib import i18n
+        i18n.set_locale("ko")
         await pilot.press("escape")
         await pilot.press("colon")
         inp = app.screen_stack[-1].query_one(Input)
@@ -1154,6 +1189,35 @@ async def test_context_menu_toggle_shows_state_and_stays_open():
         menu.on_list_view_selected(_Sel("m_new_window"))
         await pilot.pause(0.1)
         assert app.screen_stack[-1] is not menu, "비토글 선택 → 닫힘"
+    await _with_app(body)
+
+
+async def test_context_menu_new_pane_ops_wired():
+    # §2.7: 컨텍스트 메뉴에 추가된 패널 동작(회전/교환/분리/레이아웃/검색/제목)이
+    # 알맞은 서버 명령·프롬프트로 배선됐는지 _run_menu_action 직접 호출로 검증.
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda a, **k: sent.append((a, k))
+        app._run_menu_action("rotate")
+        app._run_menu_action("swap_pane")
+        app._run_menu_action("break_pane")
+        app._run_menu_action("next_layout")
+        assert ("rotate", {"forward": True}) in sent
+        assert ("swap_pane", {"forward": True}) in sent
+        assert ("break_pane", {}) in sent
+        assert ("cycle_layout", {}) in sent
+        # rename_pane → 명령 프롬프트를 "rename-pane " 로 연다
+        opened = []
+        app.open_prompt = lambda purpose, ph="", **k: opened.append((purpose, k))
+        app._run_menu_action("rename_pane")
+        app._run_menu_action("search")
+        assert ("command", {"initial": "rename-pane "}) in opened
+        assert any(p == "search" for p, _ in opened), "스크롤백 검색 프롬프트"
+        # select_layout → 레이아웃 프리셋 옵션 모달을 push
+        pushed = []
+        app.push_screen = lambda scr, *a, **k: pushed.append(scr.__class__.__name__)
+        app._run_menu_action("select_layout")
+        assert "CommandOptionsScreen" in pushed, "레이아웃 프리셋 선택기"
     await _with_app(body)
 
 
@@ -2825,13 +2889,14 @@ async def test_status_usage_click_opens_token_log():
     (계정=클라이언트별 · 시간/일/주/월)을 여는 open_token_log 를 호출한다."""
     async def body(app, pilot, srv):
         from textual import events
-        # 사용량 존이 그려지도록 누적 토큰/계정을 채운 뒤 렌더(활성 Claude 패널).
+        # 사용량 존이 그려지도록 ctx%/계정을 채운 뒤 렌더(활성 Claude 패널). 좌하단
+        # 표기는 토큰 수치 대신 ctx%/5h 잔여%지만, 클릭하면 여전히 토큰 로그가 열린다.
         app.status.claude_active = True
-        app.status.claude_tokens = 1500
+        app.status.claude_usage = "ctx 12%"
         app.status.claude_account = "me@x.org"
         app.status.render_line(0)
         uz = app.status._usage_zone
-        assert uz is not None, "토큰 사용량(Σ) 클릭존 등록"
+        assert uz is not None, "사용량(ctx%/5h) 클릭존 등록"
         called = []
         app.open_token_log = lambda: called.append(True)
         y = app.status.size.height - 1
@@ -3477,40 +3542,40 @@ async def test_popup_dims_and_substitutes_emoji():
     await _with_app(body)
 
 
-async def test_status_session_tokens():
-    # 세션 누적 토큰(#3)을 상태줄에 표기. 넓은 폭(≥80)에서는 세 자리 콤마 전체
-    # 숫자(#30), 좁은 폭에서는 약어(k/M). S6 T3: 누계는 추정 라벨 ~Σ 로 강등,
-    # 실측 세션 5h% 가 있으면 그게 주 표시(누계보다 앞).
+async def test_status_session_ctx_and_5h():
+    # 좌하단(사용자 요청 2026-06-11): 하이라이트 패널 계정 기준 ①현재 패널 세션의
+    # 컨텍스트 비율% ②5h 리밋까지 **남은** 비율%. 토큰 수치(~Σ)는 직접 표시하지
+    # 않는다(기록은 서버측 _log_tokens 가 유지). claude_tokens 는 받아도 표시 안 함.
     async def body(app, pilot, srv):
         app.status.claude_active = True
         app.status.claude_usage = "ctx 42%"
-        app.status.claude_tokens = 45200
+        app.status.claude_tokens = 45200          # 받지만 표시 안 함
         txt = "".join(s.text for s in app.status.render_line(0))
-        # ~Σ(추정 라벨) + 기호와 숫자 사이 한 칸 + 넓은 폭이라 전체 숫자(콤마)
-        assert "~Σ 45,200" in txt, repr(txt)
-        # 계정이 있으면 @계정 곁들임(§10 계정별 합계)
+        assert "ctx 42%" in txt, repr(txt)
+        # 토큰 수치/누계 기호는 표시되지 않는다
+        assert "Σ" not in txt and "45,200" not in txt, repr(txt)
+        # 계정은 표시 %들의 기준 — 마지막 항목에 @계정 곁들임
         app.status.claude_account = "alice"
         txt_a = "".join(s.text for s in app.status.render_line(0))
-        assert "~Σ 45,200 @alice" in txt_a, repr(txt_a)
-        # 실측 세션 5h% 가 오면 주 표시 — 추정(~Σ)보다 앞에 선다(S6 T3 1차화)
+        assert "ctx 42% @alice" in txt_a, repr(txt_a)
+        # 5h 리밋 **남은** 비율(실측 사용 37% → 남음 63%). 계정은 마지막(5h)에 붙는다.
         app.status.tok5h_pct = 37
         txt_m = "".join(s.text for s in app.status.render_line(0))
-        assert "37%/5h" in txt_m, repr(txt_m)
-        assert txt_m.index("37%/5h") < txt_m.index("~Σ"), repr(txt_m)
+        assert "5h 63% 남음 @alice" in txt_m, repr(txt_m)
+        assert txt_m.index("ctx 42%") < txt_m.index("5h 63%"), repr(txt_m)
+        # claude_usage 가 토큰 폴백('Xk tok')이면 표시하지 않는다(토큰 수치 비표시 원칙)
+        app.status.claude_usage = "12k tok"
         app.status.tok5h_pct = None
-        # 사용량 문구 없이 누계만 있어도 표시
-        app.status.claude_usage = None
         app.status.claude_account = None
-        app.status.claude_tokens = 1_200_000
-        txt2 = "".join(s.text for s in app.status.render_line(0))
-        assert "~Σ 1,200,000" in txt2, repr(txt2)
+        txt3 = "".join(s.text for s in app.status.render_line(0))
+        assert "tok" not in txt3 and "12k" not in txt3, repr(txt3)
     await _with_app(body)
 
 
 async def test_status_tokens_hidden_when_not_claude():
-    """Claude 가 아닌 탭/패널(claude_active False)에선 좌하단 토큰/사용량 표기를
-    숨긴다 — 지속표시 값이 남아 있어도 렌더하지 않는다. 값 자체는 보존되어
-    (다시 Claude 패널로 돌아오면 표시), 클릭존도 등록되지 않는다."""
+    """Claude 가 아닌 탭/패널(claude_active False)에선 좌하단 ctx%/5h 표기를 숨긴다
+    — 지속표시 값이 남아 있어도 렌더하지 않는다. 값은 보존되어(다시 Claude 패널로
+    돌아오면 표시), 클릭존도 등록되지 않는다."""
     async def body(app, pilot, srv):
         # 값은 채워 두되 활성 패널은 Claude 가 아님.
         app.status.claude_active = False
@@ -3518,23 +3583,13 @@ async def test_status_tokens_hidden_when_not_claude():
         app.status.claude_tokens = 45200
         app.status.claude_account = "alice"
         txt = "".join(s.text for s in app.status.render_line(0))
-        assert "Σ" not in txt and "ctx 42%" not in txt, repr(txt)
+        assert "ctx 42%" not in txt and "Σ" not in txt, repr(txt)
         assert app.status._usage_zone is None, "클릭존 미등록"
         # 다시 Claude 패널이 활성화되면 보존된 값이 그대로 표시된다.
         app.status.claude_active = True
         txt2 = "".join(s.text for s in app.status.render_line(0))
-        assert "Σ 45,200 @alice" in txt2, repr(txt2)
+        assert "ctx 42% @alice" in txt2, repr(txt2)
     await _with_app(body)
-
-
-async def test_status_tokens_abbrev_when_narrow():
-    # 좁은 폭(<80칸)에서는 토큰 누계를 약어(k/M)로 줄여 자리를 아낀다(#30).
-    async def body(app, pilot, srv):
-        app.status.claude_active = True
-        app.status.claude_tokens = 1_200_000
-        txt = "".join(s.text for s in app.status.render_line(0))
-        assert "Σ 1.2M" in txt, repr(txt)
-    await _with_app(body, size=(60, 20))
 
 
 async def test_status_tokens_persist_when_empty():

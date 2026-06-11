@@ -5,12 +5,14 @@ client.py 의 거대 클로저(build_client_app)에서 분리한, 클로저 상�
 그대로 import 해 쓰므로 동작은 불변이다."""
 from __future__ import annotations
 
+import os
+import sys
 from functools import lru_cache
 
 from rich.style import Style
 from wcwidth import wcwidth
 
-from . import proc
+from . import i18n, proc
 
 def _shell_argv(cmd: str) -> list:
     """run-shell/if-shell/display-popup 의 셸 명령 argv. OS 별 셸로 분기.
@@ -324,10 +326,66 @@ def key_to_bytes(event: events.Key) -> bytes:
         return event.character.encode("utf-8", "replace")
     return b""
 
+# ── 명령 인자 파싱 / 재시작 드라이런 평가 (§5.4: build_client_app 클로저에서 분리한
+#    app-상태 비의존 순수 함수). client.py 가 이름 그대로 import 해 쓴다 — 동작 불변.
+def _opt_value(args, flag):
+    """args 에서 flag 바로 뒤 토큰을 돌려준다(없으면 None). 예: ["-t","3"] → "3"."""
+    if flag in args:
+        i = args.index(flag)
+        if i + 1 < len(args):
+            return args[i + 1]
+    return None
+
+
+def _first_int(args):
+    """args 에서 첫 양의 정수 토큰을 int 로 돌려준다(없으면 None).
+
+    플래그(-t)·음수 토큰은 건너뛰고 계속 스캔한다 — 과거엔 첫 음수에서 None 을
+    반환해 뒤따르는 양수 인덱스를 가려 move-tab 등이 조용히 무시됐다(§2.8/#34)."""
+    for a in args:
+        if a.startswith("-"):
+            continue
+        if a.isdigit():
+            return int(a)
+    return None
+
+
+def _client_relaunch_ok() -> bool:
+    """restart-all 의 클라 relaunch(os.execv)가 인자를 해석할 수 있는지 — run_client
+    의 재실행 로직과 동일 판정(.py 진입점이거나 실행 가능 파일)."""
+    a0 = sys.argv[0]
+    return bool(a0) and (a0.endswith(".py") or os.access(a0, os.X_OK))
+
+
+def _restart_check_eval(m, cli_ok, kind="all"):
+    """서버 restart_check 결과(m) + 클라 측 점검(cli_ok)을 (safe, checks) 로 평가.
+
+    kind="server" 는 클라를 relaunch 하지 않으므로 relaunch 점검을 제외한다.
+    checks 는 (통과여부, 라벨) 리스트(팝업 표시용), safe 는 전체 AND."""
+    panes, with_fd = m.get("panes", 0), m.get("panes_with_fd", 0)
+    fd_ok = (panes == with_fd and panes > 0)
+    checks = [
+        (m.get("reexec_supported"), "서버 re-exec 지원(POSIX·이벤트루프)"),
+        (m.get("has_sessions"), "복원할 세션 존재"),
+        (m.get("serialize_ok"), "상태 직렬화 round-trip"),
+        (fd_ok, f"패널 master fd 보유 ({with_fd}/{panes})"),
+    ]
+    if kind == "all":
+        checks.append((cli_ok, "클라이언트 relaunch 인자 해석"))
+    return all(ok for ok, _ in checks), checks
+
+
 MENU_ITEMS = [
     ("split_lr", "패널 분할 │ (좌우)"),
     ("split_tb", "패널 분할 ─ (상하)"),
     ("zoom", "패널 줌 토글 ⛶"),
+    ("rotate", "패널 회전 ↻"),
+    ("swap_pane", "패널 교환 (다음 패널과)"),
+    ("break_pane", "패널 → 새 탭으로 분리"),
+    ("rename_pane", "패널 제목 변경"),
+    ("select_layout", "레이아웃 프리셋…"),
+    ("next_layout", "다음 레이아웃 프리셋"),
+    ("search", "스크롤백 검색"),
     ("kill_pane", "패널 삭제 ✕"),
     ("sync", "입력 동기화 토글"),
     ("autoresume", "토큰리밋 자동재개 토글"),
@@ -361,7 +419,7 @@ COMMANDS = [
     ("resize-pane", "패널 크기 (-Z 줌 · -L/-R/-U/-D 분할선 이동)", "패널"),
     ("select-pane", "패널 이동 (-L/-R/-U/-D) 또는 제목 (-T)", "패널"),
     ("rename-pane", "패널 제목 변경", "패널"),
-    ("swap-pane", "패널 위치 교환 (-U/-D)", "패널"),
+    ("swap-pane", "패널 위치 교환 (-U/-D 인접 · -s/-t 번호 임의)", "패널"),
     ("rotate-window", "윈도우 내 패널 회전", "패널"),
     ("break-pane", "패널을 새 탭으로 분리", "패널"),
     ("join-pane", "다른 탭의 패널을 현재로 합치기 (-h)", "패널"),
@@ -418,6 +476,7 @@ COMMANDS = [
     # auto-compact·claude-auto-mode·auto-launch 등)은 claude-code 플러그인이 등록한다
     # (pytmuxlib/plugins/claude-code — 디렉토리 삭제 시 명령 검색·자동완성·디스패치에서 사라짐).
     ("version", "클라/서버 버전(p4 CL)·업타임 팝업(별칭 about)", "설정/기타"),
+    ("lang", "UI 언어 전환 (lang ko|en) — 한국어/영어", "설정/기타"),
     ("run-shell", "셸 명령 실행", "설정/기타"),
     ("if-shell", "조건부 셸 실행", "설정/기타"),
     ("bind-key", "prefix 후 키에 명령 바인딩 (bind-key <key> <command>)", "설정/기타"),
@@ -444,7 +503,7 @@ COMPLETIONS = [
     "resize-pane -Z",
     "resize-pane -L", "resize-pane -R", "resize-pane -U", "resize-pane -D",
     "select-pane -L", "select-pane -R", "select-pane -U", "select-pane -D",
-    "swap-pane -U", "swap-pane -D",
+    "swap-pane -U", "swap-pane -D", "swap-pane -s", "swap-pane -t",
     "join-pane -h",
     "select-layout tiled", "select-layout even-horizontal",
     "select-layout even-vertical", "select-layout main-vertical",
@@ -483,6 +542,8 @@ COMMAND_OPTIONS = {
     "automatic-rename": [{"key": "state", "label": "자동이름", "choices": _ONOFF}],
     "single-border": [{"key": "state", "label": "단일테두리", "choices": _ONOFF}],
     "coalesce-repaints": [{"key": "state", "label": "리페인트합치기", "choices": _ONOFF}],
+    "lang": [{"key": "lang", "label": "언어",
+              "choices": [("한국어", "ko"), ("English", "en")]}],
     # auto-resume·prompt-clear·auto-doc-clear·claude-auto-mode·auto-launch·claude-header
     # 의 옵션 스키마는 claude-code 플러그인이 등록한다(command_options).
 }
@@ -513,7 +574,7 @@ COMMAND_FREETEXT = {
     "set", "set-hook", "display-message", "display-popup", "run-shell",
     "if-shell", "bind-key", "unbind-key", "token-account",
     "prompt-clear-message", "prompt-clear-queue", "select-tab", "move-tab",
-    "swap-tab", "resize-pane", "capture-pane", "join-pane",
+    "swap-tab", "resize-pane", "swap-pane", "capture-pane", "join-pane",
 }
 
 # 활성 패널에 적용되는 명령들. 명령 프롬프트에서 이 명령을 작성 중이면 대상(활성)
@@ -527,3 +588,121 @@ PANE_SCOPED_CMDS = {
     # clock-mode/calendar-mode 등 오버레이 명령은 clock·calendar 플러그인이
     # pane_scoped 로 등록한다(레지스트리 plugins.pane_scoped 로 합쳐짐).
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# §6 ③ i18n: 명령 설명·카테고리·컨텍스트 메뉴 라벨의 ko/en 카탈로그.
+# ko 는 위 데이터(COMMANDS/MENU_ITEMS)에서 자동 시드해 중복·드리프트를 없애고(원본=ko),
+# en 만 아래에 보강한다. 소비부(clientscreens CommandListScreen·_cmd_desc·컨텍스트 메뉴)는
+# t("cmd.<name>"/"cat.<범주>"/"menu.<key>", default=원본) 로 표시 시점에 번역한다.
+# (COMMAND_OPTIONS 선택 피커 라벨은 후속 — 주 발견 표면인 ?목록·힌트·메뉴를 우선.)
+i18n.register({
+    "ko": {
+        **{f"cmd.{n}": d for n, d, *_ in COMMANDS},
+        **{f"cat.{c}": c for *_rest, c in COMMANDS},
+        "cat.전체": "전체", "cat.기타": "기타",
+        **{f"menu.{k}": v for k, v in MENU_ITEMS},
+    },
+    "en": {
+        # 카테고리(?목록 탭)
+        "cat.패널": "Pane", "cat.탭": "Tab", "cat.복사/버퍼": "Copy/Buffer",
+        "cat.레이아웃": "Layout", "cat.모니터": "Monitor",
+        "cat.설정/기타": "Settings/Misc", "cat.전체": "All", "cat.기타": "Misc",
+        # 명령 설명(?목록·힌트)
+        "cmd.split-window": "Split pane (-h side-by-side │ · -v/default stacked ─)",
+        "cmd.kill-pane": "Delete current pane",
+        "cmd.resize-pane": "Resize pane (-Z zoom · -L/-R/-U/-D move divider)",
+        "cmd.select-pane": "Move to pane (-L/-R/-U/-D) or set title (-T)",
+        "cmd.rename-pane": "Rename pane title",
+        "cmd.swap-pane": "Swap pane position (-U/-D adjacent · -s/-t by number)",
+        "cmd.rotate-window": "Rotate panes in window",
+        "cmd.break-pane": "Break pane into a new tab",
+        "cmd.join-pane": "Join a pane from another tab (-h)",
+        "cmd.respawn-pane": "Restart pane shell",
+        "cmd.select-layout": "Layout preset (even-h/v, main-h/v, tiled)",
+        "cmd.next-layout": "Next layout preset",
+        "cmd.synchronize-panes": "Toggle input sync [on|off]",
+        "cmd.new-tab": "New tab (creates one new window, = new-window)",
+        "cmd.kill-tab": "Delete tab (= kill-window)",
+        "cmd.next-tab": "Next tab",
+        "cmd.previous-tab": "Previous tab",
+        "cmd.last-tab": "Last (previous) tab",
+        "cmd.select-tab": "Select tab (-t N)",
+        "cmd.move-tab": "Move tab (-t N)",
+        "cmd.move-tab-left": "Move current tab left",
+        "cmd.move-tab-right": "Move current tab right",
+        "cmd.move-tab-first": "Move current tab to front",
+        "cmd.move-tab-last": "Move current tab to end",
+        "cmd.swap-tab": "Swap tabs (-t N)",
+        "cmd.rename-tab": "Rename tab",
+        "cmd.automatic-rename": "Auto-rename tab [on|off]",
+        "cmd.choose-tree": "Tab/pane tree (switch·kill, shows app·local/remote. d/x=kill)",
+        "cmd.capture-pane": "Capture pane content to buffer (-S all)",
+        "cmd.pipe-pane": "Pipe pane output to external command",
+        "cmd.clear-history": "Clear scrollback",
+        "cmd.send-keys": "Inject keys to pane (e.g. Enter, C-c)",
+        "cmd.send-escape": "Send ESC to active pane (for terminals where Shift+ESC fails; also ESC again in ESC mode)",
+        "cmd.paste-buffer": "Paste from paste buffer (N)",
+        "cmd.choose-buffer": "Paste buffer picker",
+        "cmd.paste-clipboard": "Paste from OS clipboard",
+        "cmd.save-layout": "Save full layout (server-persisted)",
+        "cmd.restore-layout": "Restore full layout (server-persisted)",
+        "cmd.layout-save": "Save current tab layout (name)",
+        "cmd.layout-load": "Load layout → overwrite current tab (name)",
+        "cmd.layout-load-new": "Load layout → new tab (name)",
+        "cmd.monitor-activity": "Activity monitoring [on|off]",
+        "cmd.monitor-bell": "Bell monitoring [on|off]",
+        "cmd.capture-output": "Toggle pane output capture [on|off] (default on, persisted)",
+        "cmd.set": "Set option (prefix/mouse/status-*/mode-keys etc.)",
+        "cmd.show-options": "Show current options",
+        "cmd.set-hook": "Set event hook (<event> <cmd>)",
+        "cmd.show-hooks": "Show hook list",
+        "cmd.source-file": "Reload config file",
+        "cmd.display-message": "Show message in status bar",
+        "cmd.display-popup": "Show command output in a popup",
+        "cmd.single-border": "Show border when only one pane on/off (single-border on|off|toggle)",
+        "cmd.coalesce-repaints": "Coalesce alt-screen full repaints on heavy output on/off — ssh responsiveness (coalesce-repaints on|off|toggle)",
+        "cmd.version": "Client/server version (p4 CL)·uptime popup (alias about)",
+        "cmd.lang": "Switch UI language (lang ko|en) — Korean/English",
+        "cmd.run-shell": "Run shell command",
+        "cmd.if-shell": "Conditional shell run",
+        "cmd.bind-key": "Bind command to key after prefix (bind-key <key> <command>)",
+        "cmd.unbind-key": "Unbind key (unbind-key <key> | -a)",
+        "cmd.list-keys": "Popup current key bindings",
+        "cmd.help": "Show full command list ('?' too, category tabs)",
+        "cmd.commands": "Show full command list (alias of help)",
+        "cmd.list-commands": "Show full command list (alias of help)",
+        "cmd.detach-client": "detach (quit app, keep shells)",
+        "cmd.kill-server": "Kill server and all tabs/shells",
+        "cmd.restart-server": "Work-preserving restart — swap server code keeping shells/PTY (reconnect). Auto dry-run first, re-confirm on FAIL",
+        "cmd.restart-all": "Full restart — server session-preserving restart + client relaunch (alias full-restart). Updates both server·client code. Auto dry-run first, re-confirm on FAIL",
+        "cmd.restart-check": "Standalone dry-run — check safety (re-exec·serialize·fd·relaunch) without running, popup (alias restart-dry-run)",
+        "cmd.reconnect": "Force IPC reconnect — recover stuck degraded (red border) state (server preserved)",
+        # 컨텍스트 메뉴(우클릭)
+        "menu.split_lr": "Split pane │ (left/right)",
+        "menu.split_tb": "Split pane ─ (top/bottom)",
+        "menu.zoom": "Toggle pane zoom ⛶",
+        "menu.rotate": "Rotate panes ↻",
+        "menu.swap_pane": "Swap pane (with next)",
+        "menu.break_pane": "Pane → break to new tab",
+        "menu.rename_pane": "Rename pane title",
+        "menu.select_layout": "Layout preset…",
+        "menu.next_layout": "Next layout preset",
+        "menu.search": "Search scrollback",
+        "menu.kill_pane": "Delete pane ✕",
+        "menu.sync": "Toggle input sync",
+        "menu.autoresume": "Toggle token-limit auto-resume",
+        "menu.prompt_clear": "Toggle per-prompt clear (document + /clear each completion)",
+        "menu.new_window": "New tab",
+        "menu.rename_window": "Rename tab",
+        "menu.kill_window": "Delete tab",
+        "menu.choose_tree": "Tab picker (tree)",
+        "menu.next_window": "Next tab",
+        "menu.prev_window": "Previous tab",
+        "menu.layout_save": "Save layout (current tab)",
+        "menu.layout_load_over": "Load layout (overwrite current tab)",
+        "menu.layout_load_new": "Load layout (new tab)",
+        "menu.command": "Enter command",
+        "menu.detach": "detach (quit app, keep shell)",
+        "menu.kill_server": "Kill server (all tabs/shells)",
+    },
+})

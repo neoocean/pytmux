@@ -142,6 +142,40 @@ class ServerPersistMixin:
                 except OSError:
                     pass
 
+    def _rearm_master_cloexec(self):
+        """execv 실패 폴백(ⓐ 되돌리기): _release_master_cloexec 로 풀었던 master fd
+        의 CLOEXEC 를 다시 건다. 안 걸면, 종료 직전(shutdown 의 0.2s 창)에 떠 있는
+        subprocess(예: p4 버전 프로브)가 이 fd 를 상속해 PTY master 를 계속 붙들어,
+        서버가 죽어도 셸이 SIGHUP 을 못 받고 고아가 되며 fd 가 샌다(§5.6).
+        평상시 불변식(master fd 는 CLOEXEC) 복귀."""
+        try:
+            import fcntl
+        except ImportError:
+            return
+        for p in self._all_panes():
+            if p.master_fd is not None and p.master_fd >= 0:
+                try:
+                    flags = fcntl.fcntl(p.master_fd, fcntl.F_GETFD)
+                    fcntl.fcntl(p.master_fd, fcntl.F_SETFD,
+                                flags | fcntl.FD_CLOEXEC)
+                except OSError:
+                    pass
+
+    def _cleanup_endpoint_files(self):
+        """execv 실패 폴백: listen 엔드포인트의 영속 파일(unix 소켓·포트파일·토큰)을
+        즉시 정리한다. _notify_no_sessions 가 거는 0.2s 지연 shutdown 만 믿으면, 그
+        창에 새 서버 기동이 아직 살아 있는(=곧 죽을) 소켓에 probe 성공해 좀비로
+        붙는다(§5.6 stale-소켓 차단). best-effort — 새 서버가 어차피 다시 게시한다."""
+        paths = [ipc.portfile_for(self.sock_path), ipc.token_path(self.sock_path)]
+        if not ipc.is_tcp(self.sock_path):
+            paths.append(self.sock_path)   # AF_UNIX 소켓 파일
+        for path in paths:
+            try:
+                if path and os.path.exists(path):
+                    os.unlink(path)
+            except OSError:
+                pass
+
     def _build_resume_node(self, spec):
         if spec.get("type") == "split":
             a = self._build_resume_node(spec["a"])
@@ -296,7 +330,15 @@ class ServerPersistMixin:
         try:
             os.execv(argv[0], argv)
         except OSError:
-            # execv 실패(드묾): 깨끗한 종료로 폴백. 셸은 SIGHUP 으로 정리된다.
+            # execv 실패(드묾): 채택 인수인계가 무산됐다. 깨끗한 종료로 폴백하되,
+            # ① ⓐ 에서 푼 CLOEXEC 를 즉시 되걸어(평상시 불변식 복귀) 종료 직전 떠
+            #    있는 subprocess 가 master fd 를 상속해 셸을 고아로 만들지 않게 하고,
+            # ② listen 엔드포인트 파일(소켓·포트파일·토큰)을 즉시 정리해 새 서버
+            #    기동이 stale 소켓에 붙는 좀비를 막는다(§5.6).
+            self._log_error("execv")   # #28: 드문 실패의 진단 단서
+            self._rearm_master_cloexec()
+            self._cleanup_endpoint_files()
+            # 셸은 SIGHUP 으로 정리된다(_notify_no_sessions → shutdown).
             self._notify_no_sessions()
 
     # ---- 탭(윈도우+패널) 레이아웃 슬롯: 이름으로 저장/불러오기 ----

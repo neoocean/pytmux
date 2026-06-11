@@ -948,6 +948,7 @@ class Window:
         self.border_status = False  # 패널 제목 경계선 표시(pane-border-status)
         self.auto_rename = True  # 활성 패널 명령으로 탭 이름 자동 갱신
         # 활동/벨 모니터 플래그(monitor_*/has_*)는 상위 Tab 이 보유한다.
+        self._panes_cache = None  # panes() 캐시(§4.6 — 트리 변경 시 invalidate_panes)
 
     @property
     def active_pane(self):
@@ -963,17 +964,30 @@ class Window:
         if self._last is not None and self._last in self.panes():
             self.active_pane = self._last
 
+    def invalidate_panes(self):
+        """트리 구조 변경(분할/종료/이동/swap/rotate/프리셋) 직후 호출 — 다음
+        panes() 가 재-DFS 하도록 캐시를 버린다(§4.6). 리프 집합 **또는 순서**가
+        바뀔 수 있는 모든 트리 수술 뒤에 둬야 한다(swap/rotate 는 집합은 같아도
+        순서가 바뀌고, swap_pane 등이 panes() 순서로 이웃을 계산하므로 중요)."""
+        self._panes_cache = None
+
     def panes(self):
-        out = []
-        stack = [self.root]
-        while stack:
-            n = stack.pop()
-            if isinstance(n, Pane):
-                out.append(n)
-            else:
-                stack.append(n.a)
-                stack.append(n.b)
-        return out
+        # §4.6: 리프 패널 리스트를 캐시한다(트리는 split/kill/break/join/swap/rotate/
+        # preset 때만 바뀌고 그때 invalidate_panes 로 무효화). flush 루프가 프레임마다
+        # 여러 번(활성 창 + 전 창) 호출하던 트리 DFS 를 트리 변경 시로 줄인다. 반환
+        # 리스트는 read-only 로 다뤄야 한다(호출부는 순회/index 만 — append/remove 금지).
+        if self._panes_cache is None:
+            out = []
+            stack = [self.root]
+            while stack:
+                n = stack.pop()
+                if isinstance(n, Pane):
+                    out.append(n)
+                else:
+                    stack.append(n.a)
+                    stack.append(n.b)
+            self._panes_cache = out
+        return self._panes_cache
 
     def pane_by_id(self, pid: int):
         for p in self.panes():
@@ -1051,6 +1065,7 @@ class Window:
         if not leaves:
             return
         self.zoomed = False
+        self.invalidate_panes()  # 아래에서 self.root 재구성 → panes() 순서 변동
         if preset in ("even-horizontal", "even-h"):
             self.root = self._chain(leaves, "lr")
         elif preset in ("even-vertical", "even-v"):

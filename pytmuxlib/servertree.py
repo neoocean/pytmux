@@ -37,6 +37,7 @@ class ServerTreeMixin:
         else:
             parent.b = split
         win.active_pane = new
+        win.invalidate_panes()  # §4.6: 리프 추가 → panes() 캐시 무효화
 
     def kill_pane(self, sess: Session, pane: Pane):
         # 셸 자식 종료(graceful = SIGHUP). 나머지 정리는 _pane_eof.
@@ -74,6 +75,7 @@ class ServerTreeMixin:
                         gp.b = sibling
                     if win.active_pane is pane:
                         win.active_pane = sibling.first_pane()
+                win.invalidate_panes()  # §4.6: 리프 제거 → panes() 캐시 무효화
                 self._broadcast_session(sess)
                 if not self.sessions:
                     self._notify_no_sessions()
@@ -318,6 +320,7 @@ class ServerTreeMixin:
         for (par, attr), pane in zip(slots, new):
             setattr(par, attr, pane)
             pane.parent = par
+        win.invalidate_panes()  # §4.6: 리프 순서 변동 → 캐시 무효화
 
     def swap_pane(self, sess: Session, forward: bool = True):
         win = sess.active_window
@@ -337,6 +340,7 @@ class ServerTreeMixin:
         b.parent = pa
         setattr(pb, battr, a)
         a.parent = pb
+        win.invalidate_panes()  # §4.6: 리프 순서 변동 → 캐시 무효화
         # 활성 패널은 그대로 따라간다(같은 셸)
 
     def swap_pane_ids(self, sess: Session, id_a: int, id_b: int) -> bool:
@@ -357,6 +361,7 @@ class ServerTreeMixin:
         b.parent = pa
         setattr(pb, battr, a)
         a.parent = pb
+        win.invalidate_panes()  # §4.6: 리프 순서 변동 → 캐시 무효화
         return True
 
     def _detach_pane(self, win: Window, pane: Pane):
@@ -376,6 +381,7 @@ class ServerTreeMixin:
         if win.active_pane is pane:
             win.active_pane = sibling.first_pane()
         pane.parent = None
+        win.invalidate_panes()  # §4.6: 리프 제거(break/join/move 소스측)
         return True
 
     def break_pane(self, sess: Session):
@@ -420,6 +426,7 @@ class ServerTreeMixin:
             pp.b = new
         win.active_pane = pane
         win.zoomed = False
+        win.invalidate_panes()  # §4.6: 대상 창에 리프 추가(소스측은 _detach_pane)
         if src_single:
             sess.tabs.remove(src_tab)
             self._reindex(sess)
@@ -466,6 +473,7 @@ class ServerTreeMixin:
             pp.b = new
         target_win.active_pane = pane
         target_win.zoomed = False
+        target_win.invalidate_panes()  # §4.6: 대상 창 리프 추가(소스측 _detach_pane)
         if src_single:                        # 소스가 비었으면 그 탭 제거 + 재인덱스
             sess.tabs.remove(src_tab)
             self._reindex(sess)

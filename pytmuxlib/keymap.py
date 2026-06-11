@@ -4,12 +4,106 @@ from __future__ import annotations
 import os
 
 
+# tmux 수정자 접두사 → Textual 수정자 이름. C-=ctrl, M-=meta(=alt), A-=alt,
+# S-=shift. 풀네임(ctrl-/alt-/meta-/shift-)도 허용. 임의 순서로 쌓을 수 있다.
+_MOD_PREFIXES = {
+    "c-": "ctrl", "ctrl-": "ctrl",
+    "m-": "alt", "meta-": "alt", "a-": "alt", "alt-": "alt",
+    "s-": "shift", "shift-": "shift",
+}
+# tmux/일반 키 이름(소문자) → Textual 키 이름.
+_NAMED_KEYS = {
+    "up": "up", "down": "down", "left": "left", "right": "right",
+    "home": "home", "end": "end",
+    "pageup": "pageup", "ppage": "pageup", "pgup": "pageup",
+    "pagedown": "pagedown", "npage": "pagedown", "pgdn": "pagedown",
+    "tab": "tab", "space": "space", "enter": "enter", "return": "enter",
+    "escape": "escape", "esc": "escape",
+    "bspace": "backspace", "backspace": "backspace", "bs": "backspace",
+    "delete": "delete", "dc": "delete", "del": "delete",
+    "insert": "insert", "ic": "insert",
+}
+
+
+def _normalize_base(base: str) -> str | None:
+    """수정자를 떼어낸 기본 키 토큰을 Textual 키 이름으로 정규화. 모르면 None.
+
+    함수키 F1..F12 → f1..f12, 이름 키(Up/Home/Tab/Esc/BSpace…) → Textual 이름,
+    한 글자 → 소문자. 인식 못 하는 다중 글자(오타 등)는 None.
+    """
+    if not base:
+        return None
+    low = base.lower()
+    if len(low) >= 2 and low[0] == "f" and low[1:].isdigit():
+        return "f" + str(int(low[1:]))   # F5 → f5
+    if low in _NAMED_KEYS:
+        return _NAMED_KEYS[low]
+    if len(base) == 1:
+        return low
+    return None
+
+
 def _tmux_key_to_textual(tok: str) -> str:
-    """tmux 키 표기(C-a)를 Textual 키 이름(ctrl+a)으로 변환."""
-    tok = tok.strip()
-    if tok.lower().startswith("c-") and len(tok) == 3:
-        return "ctrl+" + tok[2].lower()
-    return tok
+    """tmux/일반 키 표기를 Textual 키 이름으로 변환.
+
+    예: C-a→ctrl+a, M-x→alt+x, S-Tab→shift+tab, F5→f5, C-S-Left→ctrl+shift+left.
+    수정자(C-/M-/S-/A-, 풀네임 포함)는 임의 순서로 쌓을 수 있고, **알파벳순 정렬**
+    후 '+' 로 이어 붙인다 — Textual 의 xterm 파서가 modifier 토큰을 sort 해서
+    event.key 를 만들기 때문에(예: "ctrl+shift+left") 같은 순서여야 바인딩이
+    매칭된다. 인식 못 하는 토큰은 **원문 그대로** 돌려준다(하위호환). 수정자 없는
+    한 글자는 대소문자를 보존한다 — prefix 핸들러가 인쇄 가능한 글자는 event.key
+    가 아니라 character(예: 'X')로 매칭하므로 소문자화하면 안 된다.
+
+    주의: 글자에 shift 만 붙은 조합(S-a)은 터미널이 보통 대문자 글자(event.key
+    'A')로 보고하므로 shift+letter 바인딩은 안 먹을 수 있다. S- 는 특수키
+    (S-Tab/S-Left/S-F5 등)에 쓰는 게 안전하다.
+    """
+    raw = tok.strip()
+    if not raw:
+        return tok
+    mods: set[str] = set()
+    rest = raw
+    while True:
+        low = rest.lower()
+        for pre, mod in _MOD_PREFIXES.items():
+            if low.startswith(pre) and len(rest) > len(pre):
+                mods.add(mod)
+                rest = rest[len(pre):]
+                break
+        else:
+            break
+    if not mods:
+        # 수정자 없음 — 함수키/이름키만 정규화, 한 글자(대소문자 보존)·이미-Textual
+        # 이름 등은 원문 유지.
+        low = raw.lower()
+        if len(low) >= 2 and low[0] == "f" and low[1:].isdigit():
+            return "f" + str(int(low[1:]))
+        if low in _NAMED_KEYS:
+            return _NAMED_KEYS[low]
+        return raw
+    base = _normalize_base(rest)
+    if base is None:
+        return raw   # 파싱 실패 — 원문 유지(normalize_binding_key 가 경고)
+    return "+".join(sorted(mods)) + "+" + base
+
+
+def normalize_binding_key(tok: str) -> tuple[str, str | None]:
+    """bind 용 키 정규화 + 경고 메시지(정상이면 None).
+
+    인식 못 한 다중 글자 토큰(오타 'Ennter' 등)이나 빈 토큰이면 그대로 바인딩하되
+    경고 문자열을 돌려주어 호출부(bind-key 명령·설정 로드)가 사용자에게 알릴 수
+    있게 한다 — 과거엔 잘못된 키가 조용히 (매칭 안 되는) 바인딩으로 묻혔다.
+    """
+    key = _tmux_key_to_textual(tok)
+    raw = tok.strip()
+    if not raw:
+        return key, "빈 키 — 바인딩할 키가 없음"
+    suspicious = (len(raw) > 1 and "+" not in raw and key == raw
+                  and raw.lower() not in _NAMED_KEYS
+                  and not (raw[0] in "fF" and raw[1:].isdigit()))
+    if suspicious:
+        return key, f"알 수 없는 키 표기 '{tok}' (오타 확인 — 그대로 바인딩)"
+    return key, None
 
 
 def _key_to_ctrl_bytes(prefix_key: str) -> bytes:
@@ -97,8 +191,20 @@ def load_config(path: str | None = None) -> dict:
                         #   home    = $HOME
                         #   <경로>  = 해당 절대/~ 경로
                         cfg["default_path"] = val.strip()
+                    elif opt in ("lang", "language"):
+                        # UI 로케일(§6 i18n): ko|en. 미지원 값은 무시(런타임 resolve 가
+                        # 환경 LANG 으로 폴백). 런타임 `lang` 명령 선택이 이보다 우선.
+                        v = val.strip().lower()
+                        if v in ("ko", "en"):
+                            cfg["lang"] = v
                 elif parts[0] == "bind" and len(parts) >= 3:
-                    cfg["bindings"][parts[1]] = " ".join(parts[2:])
+                    # 키를 Textual 표기로 정규화해 저장한다 — 런타임 매칭 토큰이
+                    # event.key(ctrl+x 등)이므로 raw "C-x" 로 두면 절대 안 먹는다.
+                    bkey, warn = normalize_binding_key(parts[1])
+                    cfg["bindings"][bkey] = " ".join(parts[2:])
+                    if warn:
+                        cfg.setdefault("warnings", []).append(
+                            f"config bind: {warn}")
                 elif parts[0] == "alias" and len(parts) >= 3:
                     cfg["aliases"][parts[1]] = " ".join(parts[2:])
                 elif parts[0] in ("hook", "set-hook") and len(parts) >= 3:

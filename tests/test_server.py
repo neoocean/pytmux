@@ -34,6 +34,44 @@ async def test_pane_tree_ops():
         await teardown(srv, task, sock)
 
 
+async def test_panes_cache_invalidates_on_tree_change():
+    # §4.6: Window.panes() 는 결과를 캐시하되 트리 수술 때마다 무효화해야 한다.
+    # 캐시가 stale 이면 split 후 새 패널 누락, swap/rotate 후 순서 오류(이웃 계산
+    # 깨짐)가 난다. 캐시 동작 + 각 수술의 무효화를 객체 동일성으로 검증한다.
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        # 같은 트리면 두 번 호출이 동일 리스트 객체를 돌려준다(캐시 적중).
+        a = win.panes()
+        assert win.panes() is a, "트리 불변 → 캐시된 동일 객체"
+        # split → 리프 추가 + 캐시 무효화(새 객체, +1)
+        srv.split_pane(sess, "lr")
+        b = win.panes()
+        assert b is not a and len(b) == len(a) + 1, "split → 무효화 + 새 패널"
+        srv.split_pane(sess, "tb")
+        assert len(win.panes()) == 3
+        # swap/rotate 는 리프 집합은 같아도 순서가 바뀌므로 무효화돼야 한다
+        # (이 연산들이 panes() 순서로 이웃을 계산 → stale 이면 오동작).
+        before = win.panes()
+        srv.swap_pane(sess, True)
+        assert win.panes() is not before, "swap → 무효화(순서 변동)"
+        before = win.panes()
+        srv.rotate_panes(sess, True)
+        assert win.panes() is not before, "rotate → 무효화(순서 변동)"
+        # apply_preset(root 재구성)도 무효화
+        before = win.panes()
+        win.apply_preset("tiled")
+        assert win.panes() is not before, "preset → 무효화"
+        # 패널 제거 → 캐시 무효화 + 그 패널이 목록에서 사라짐
+        victim = win.panes()[0]
+        srv._remove_pane_from_tree(victim)
+        after = win.panes()
+        assert victim not in after and len(after) == 2, "remove → 무효화 + 제거"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_tree_msg_includes_panes_and_remote():
     # _tree_msg 가 윈도우별 패널 목록(id·title·cmd·remote)을 담고, fg 명령이 ssh
     # 류면 remote=True 로 판정하는지(#14/#24 데이터 인프라).
