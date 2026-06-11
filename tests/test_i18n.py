@@ -109,6 +109,29 @@ async def test_catalog_locales_symmetric():
     }
 
 
+async def test_command_catalog_symmetric_and_translated():
+    """clientutil 을 import 하면 §6 ③ 명령/카테고리/메뉴 카탈로그가 ko(데이터 자동시드)
+    +en 으로 등록되고, cmd.*/cat.*/menu.* 키가 양 로케일 대칭이며 실제로 번역돼야 한다."""
+    from pytmuxlib import clientutil  # noqa: F401  (import 시 카탈로그 시드)
+    for pfx in ("cmd.", "cat.", "menu."):
+        ko = {k for k in i18n._CATALOG["ko"] if k.startswith(pfx)}
+        en = {k for k in i18n._CATALOG["en"] if k.startswith(pfx)}
+        assert ko and en, pfx
+        assert ko == en, {"prefix": pfx, "ko_only": sorted(ko - en),
+                          "en_only": sorted(en - ko)}
+    # 자동 시드된 ko = COMMANDS 원본, en = 번역
+    i18n.set_locale("ko")
+    assert i18n.t("cmd.kill-pane") == "현재 패널 삭제"
+    assert i18n.t("cat.패널") == "패널"
+    i18n.set_locale("en")
+    assert i18n.t("cmd.kill-pane") == "Delete current pane"
+    assert i18n.t("cat.패널") == "Pane"
+    assert i18n.t("menu.zoom") == "Toggle pane zoom ⛶"
+    # 미등록(플러그인 가정) 명령은 default 로 원본 유지
+    assert i18n.t("cmd.__nonexistent__", default="원본") == "원본"
+    _reset()
+
+
 async def test_seed_catalog_has_both_locales():
     """코어 시드 키는 ko·en 둘 다 존재해야 한다(누락 시 폴백이지만 시드는 완전성 유지)."""
     for key in ("lang.usage", "capture.status_on", "capture.status_off"):

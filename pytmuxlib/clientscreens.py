@@ -18,6 +18,7 @@ from textual.widgets import Input, Label, ListItem, ListView
 
 from rich.highlighter import Highlighter
 
+from . import i18n
 from .clientutil import (COMMAND_FREETEXT, COMMAND_NOARG, COMMAND_OPTIONS,
                          COMMANDS, MENU_ITEMS, MENU_TOGGLES, PANE_SCOPED_CMDS,
                          _char_cells, bar, has_hangul, hangul_to_qwerty,
@@ -97,15 +98,20 @@ class CommandListScreen(ModalScreen):
         order, bucket = [], {}
         all_items = []
         for it in items:
-            cat = it[2] if len(it) > 2 else "기타"
+            # §6 ③ 표시 시점 번역: 카테고리·설명을 현재 로케일로(코어는 카탈로그,
+            # 플러그인 명령은 등록 전이면 default 로 원본 ko 유지).
+            rawcat = it[2] if len(it) > 2 else "기타"
+            cat = i18n.t(f"cat.{rawcat}", default=rawcat)
+            desc = i18n.t(f"cmd.{it[0]}", default=it[1])
             if cat not in bucket:
                 bucket[cat] = []
                 order.append(cat)
-            bucket[cat].append((it[0], it[1]))
-            all_items.append((it[0], it[1]))
+            bucket[cat].append((it[0], desc))
+            all_items.append((it[0], desc))
         # 맨 앞에 '전체' 가상 카테고리 — 모든 명령을 등장 순서로 모아 ↑↓ 로 한 탭에서
         # 전부 훑어볼 수 있게 한다(요청). 길면 _CMDS_MAX_ROWS 로 클램프되어 스크롤된다.
-        self._all_cats = [("전체", all_items)] + [(c, bucket[c]) for c in order]
+        self._all_cats = [(i18n.t("cat.전체", default="전체"), all_items)] \
+            + [(c, bucket[c]) for c in order]
         self._ci = 0          # 현재 카테고리 인덱스(기본='전체' → 바로 전부 탐색)
         self._cur = []        # 현재 카테고리의 (필터된) (이름, 설명) 목록
         self._query = query or ""   # 검색어(초기값=호출부가 넘긴 부분 입력)
@@ -118,7 +124,7 @@ class CommandListScreen(ModalScreen):
                         yield Label("", id=f"cmdtab_{i}", markup=True)
                 yield Label("", id="cmdgap")          # [x] 를 우측 끝으로 미는 여백
                 yield Label("[x]", id="cmdclose", markup=False)
-            yield Input(placeholder="검색…", id="cmdsearch")
+            yield Input(placeholder=i18n.t("ui.search"), id="cmdsearch")
             yield ListView(id="cmds")
 
     async def on_mount(self):
@@ -342,7 +348,8 @@ class MenuScreen(ModalScreen):
         self._labels = {}     # key -> (Label 위젯, 원본 라벨)
         self._optim = {}      # 토글 낙관적 상태(status 회신 전 즉시 반영)
         items = []
-        for key, label in MENU_ITEMS:
+        for key, raw in MENU_ITEMS:
+            label = i18n.t(f"menu.{key}", default=raw)   # §6 ③ 로케일 번역
             lab = Label(self._fmt(key, label))
             self._labels[key] = (lab, label)
             items.append(ListItem(lab, id=f"m_{key}"))
@@ -1165,9 +1172,10 @@ class PromptScreen(ModalScreen):
 
     def _cmd_desc(self, name):
         # 코어 + 플러그인 명령에서 설명을 찾는다(플러그인 명령 힌트도 뜨게).
+        # §6 ③ 표시 시점 번역(코어=카탈로그, 플러그인 미등록은 default 로 원본 유지).
         for (n, d, *_) in self._commands():
             if n == name:
-                return d
+                return i18n.t(f"cmd.{n}", default=d)
         return None
 
     def _set_hint(self, markup):

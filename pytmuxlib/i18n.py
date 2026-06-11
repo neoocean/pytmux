@@ -63,14 +63,18 @@ def available() -> tuple:
     return LOCALES
 
 
-def t(key: str, **kw) -> str:
-    """키를 현재 로케일 문자열로. 없으면 ko 폴백, 그래도 없으면 키 자체(개발 중 가시).
+def t(key: str, default: Optional[str] = None, **kw) -> str:
+    """키를 현재 로케일 문자열로. 없으면 ko 폴백, 그래도 없으면 default(또는 키 자체).
 
+    default 는 카탈로그에 키가 전혀 없을 때 쓸 대체 문자열(예: 플러그인이 아직 카탈로그를
+    등록 안 한 명령 설명은 원본 한국어를 그대로 보이게). 미지정이면 키 자체(개발 중 가시).
     kw 가 있으면 `str.format(**kw)` 로 치환한다(예: t("foo", n=3) → "...{n}..." 포맷).
     포맷 실패(키 불일치 등)는 원문을 그대로 돌려 렌더가 죽지 않게 한다."""
     s = _CATALOG.get(_locale, {}).get(key)
     if s is None:
-        s = _CATALOG.get(_FALLBACK, {}).get(key, key)
+        s = _CATALOG.get(_FALLBACK, {}).get(key)
+    if s is None:
+        s = default if default is not None else key
     if kw:
         try:
             return s.format(**kw)
@@ -133,6 +137,7 @@ register({
         "lang.name.en": "English",
         "capture.status_on": "상태: ON (캡처 중)",
         "capture.status_off": "상태: OFF",
+        "ui.search": "검색…",
     },
     "en": {
         "lang.changed": "Language: {name}",
@@ -141,6 +146,7 @@ register({
         "lang.name.en": "English",
         "capture.status_on": "Status: ON (capturing)",
         "capture.status_off": "Status: OFF",
+        "ui.search": "Search…",
     },
 })
 
