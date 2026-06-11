@@ -43,6 +43,14 @@ jobs:
       # 것 방지(러너의 stdout reconfigure 와 함께 이중 방어). 파이썬 전 출력 UTF-8.
       PYTHONUTF8: "1"
       PYTHONIOENCODING: "utf-8"
+      # macOS 행(데드락) 1차 의심: subprocess/pty 가 **fork** 한 뒤(서버·그림자 probe·
+      # PtyProcess.spawn) 부모가 CoreFoundation/ObjC 를 초기화한 상태면 macOS 의 fork-safety
+      # 검사가 자식을 데드락시킨다(__THE_PROCESS_HAS_FORKED…). 스레드(asyncio·faulthandler
+      # 워치독)와 fork 의 경쟁이라 **간헐적**이고(3.11 통과·3.12/3.13 행) 로컬 tty 환경엔
+      # 안 나는 헤드리스 CI 특이 증상과 일치한다. 이 검사를 끄는 게 macOS CI 표준 회피책.
+      # (Linux/Windows 엔 무의미·무해한 변수.) 효과 없으면 run.py 의 startup faulthandler
+      # 트레이스백으로 정확한 fork 지점을 잡아 spawn 경로를 fork-안전하게 고친다.
+      OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
     steps:
       - uses: actions/checkout@v4
 
