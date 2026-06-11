@@ -296,3 +296,34 @@ register({
         "word.toggle": "toggle",
     },
 })
+
+# §2.2 마우스 기능 발견성 — list-keys 팝업이 1급 마우스 제스처를 노출(구현됐으나
+# ?목록·메뉴 어디에도 안 떠 사장됐던 것). 키 자체는 비번역(예: "Shift").
+register({
+    "ko": {
+        "keys.title": "키 · 마우스",
+        "keys.mouse_header": "마우스 제스처",
+        "keys.g_click": "휠 — 스크롤백 스크롤 · 클릭 — 패널 포커스",
+        "keys.g_rclick": "우클릭 — 패널 메뉴(분할·줌·회전·삭제…)",
+        "keys.g_divider": "경계선 드래그 — 패널 크기 조절",
+        "keys.g_header": "패널 헤더(위 테두리) 드래그 — 패널을 들어 다른 패널과 "
+                         "swap · 탭으로 이동 · [+]에 놓아 새 탭",
+        "keys.g_shift": "Shift+드래그 — 텍스트 선택(클립보드 복사)",
+        "keys.g_tab": "탭 드래그 — 탭 재정렬 · 패널 위로 끌어 분할",
+        "keys.user_header": "사용자 키 바인딩",
+        "keys.none": "(없음)",
+    },
+    "en": {
+        "keys.title": "Keys & Mouse",
+        "keys.mouse_header": "Mouse gestures",
+        "keys.g_click": "Wheel — scroll scrollback · Click — focus pane",
+        "keys.g_rclick": "Right-click — pane menu (split·zoom·rotate·kill…)",
+        "keys.g_divider": "Drag divider — resize panes",
+        "keys.g_header": "Drag pane header (top border) — pick up the pane: swap "
+                         "with another · move to a tab · drop on [+] for a new tab",
+        "keys.g_shift": "Shift+drag — select text (copy to clipboard)",
+        "keys.g_tab": "Drag tab — reorder · drop onto a pane to split",
+        "keys.user_header": "User key bindings",
+        "keys.none": "(none)",
+    },
+})
