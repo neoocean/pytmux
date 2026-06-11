@@ -292,11 +292,7 @@ class ModelCtxScreen(ModalScreen):
         self._update_sub()
 
     def _row_text(self, i):
-        o, si = self.rows[i], self.sel[i]
-        # 라벨·선택지 표시문 번역(모델 별칭 opus 등은 미등록 → 원문 폴백, "기본"만 번역).
-        cur = i18n.t(o["choices"][si][0])
-        arrows = "◀ ▶" if len(o["choices"]) > 1 else "    "
-        return f"{i18n.t(o['label'])}:  {arrows}  {cur}"
+        return format_option_row(self.rows[i], self.sel[i])
 
     def _result(self):
         model = self.rows[0]["choices"][self.sel[0]][1]
@@ -430,7 +426,7 @@ class PermModeScreen(ModalScreen):
 
 # TokenLogScreen 이 쓰는 심볼. usagelog 는 S5 T5 에서 플러그인 소속(상대 import).
 from . import usagelog
-from pytmuxlib.clientutil import _char_cells, bar
+from pytmuxlib.clientutil import _char_cells, bar, format_option_row
 from pytmuxlib.clientscreens import usage_bar_lines
 
 class TokenLogScreen(ModalScreen):

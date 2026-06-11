@@ -21,8 +21,8 @@ from rich.highlighter import Highlighter
 from . import i18n
 from .clientutil import (COMMAND_FREETEXT, COMMAND_NOARG, COMMAND_OPTIONS,
                          COMMANDS, MENU_ITEMS, MENU_TOGGLES, PANE_SCOPED_CMDS,
-                         _char_cells, bar, has_hangul, hangul_to_qwerty,
-                         norm_sep, theme_color)
+                         _char_cells, bar, format_option_row, has_hangul,
+                         hangul_to_qwerty, norm_sep, theme_color)
 
 
 class _CommandWordHighlighter(Highlighter):
@@ -311,11 +311,7 @@ class CommandOptionsScreen(ModalScreen):
         return " ".join(toks)
 
     def _row_text(self, i):
-        o, si = self.opts[i], self.sel[i]
-        # §6 ⑤ 옵션 피커 라벨/선택지 번역(키=원문 한국어, 미등록은 원문 폴백).
-        cur = i18n.t(o["choices"][si][0])
-        arrows = "◀ ▶" if len(o["choices"]) > 1 else "    "
-        return f"{i18n.t(o['label'])}:  {arrows}  {cur}"
+        return format_option_row(self.opts[i], self.sel[i])
 
     def on_list_view_selected(self, event):
         # Enter/클릭 으로 행 선택 시 현재 값으로 바로 실행(on_key 와 이중 안전).

@@ -105,6 +105,16 @@ def bar(value: int, vmax: int, cells: int) -> str:
     return "█" * full + (_BAR_BLOCKS[rem] if rem and full < cells else "")
 
 
+def format_option_row(spec, sel_idx):
+    """옵션 피커 한 행 표시문: '라벨:  ◀ ▶  현재선택지'. 라벨·선택지를 로케일 번역(t,
+    미등록은 원문 폴백)하고 선택지가 2개 이상이면 ←→ 화살표를 붙인다. 코어
+    CommandOptionsScreen·플러그인 ModelCtxScreen 의 옵션 행 렌더 공유(중복 제거)."""
+    choices = spec["choices"]
+    cur = i18n.t(choices[sel_idx][0])
+    arrows = "◀ ▶" if len(choices) > 1 else "    "
+    return f"{i18n.t(spec['label'])}:  {arrows}  {cur}"
+
+
 # 상태줄 오른쪽 strftime 코드 분류 — 시각(시계) vs 날짜(달력) 클릭 존 분리용.
 _TIME_STRFTIME = set("HIMSpRTrXkl")
 _DATE_STRFTIME = set("YymdbBaAjeDFuwUWxgGCV")
