@@ -29,7 +29,7 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **467 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **476 passed**
   (`python3 tests/run.py`, 2026-06-11 — 기존 flaky 1건도 58122 에서 근본 수정돼 0).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
