@@ -78,6 +78,37 @@ async def test_is_alive_false_for_bogus_pid():
     assert proc.is_alive(0) is False
 
 
+async def test_win_is_alive_csv_exact_match():
+    """Windows is_alive 가 PID 컬럼을 정확 대조 — 메모리 컬럼 부분일치 오탐 방지.
+
+    실 Windows 가 아니어도 _win_is_alive 의 파싱을 직접 검증한다(subprocess.run 을
+    가짜 CSV 로 대체). 과거 `str(pid) in out` 은 pid 892 가 메모리 "68,892 K" 에
+    부분일치해 False positive 를 냈다 — 그 회귀를 고정한다.
+    """
+    import subprocess as _sp
+
+    class _R:
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    # 1) pid 892 가 *다른* 프로세스의 메모리 컬럼에만 등장 → 살아있지 않음.
+    def fake_run_mem(cmd, **kw):
+        return _R('"chrome.exe","4096","Console","1","68,892 K"\r\n')
+    orig = _sp.run
+    _sp.run = fake_run_mem
+    try:
+        assert proc._win_is_alive(892) is False, "메모리 컬럼 부분일치 오탐"
+        # 2) PID 컬럼이 정확히 892 인 행 → 살아 있음.
+        _sp.run = lambda cmd, **kw: _R('"cmd.exe","892","Console","1","5,000 K"\r\n')
+        assert proc._win_is_alive(892) is True
+        # 3) 대상 없음(INFO 줄) → 살아있지 않음.
+        _sp.run = lambda cmd, **kw: _R(
+            "INFO: No tasks are running which match the specified criteria.\r\n")
+        assert proc._win_is_alive(892) is False
+    finally:
+        _sp.run = orig
+
+
 async def test_terminate_bogus_pid_noop():
     # 없는 pid 종료는 조용히 통과해야 한다(예외 없음).
     proc.terminate(2_000_000_000, force=True)

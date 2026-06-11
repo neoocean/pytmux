@@ -145,15 +145,7 @@ def is_alive(pid: int) -> bool:
     if pid <= 0:
         return False
     if IS_WINDOWS:
-        # tasklist 로 존재 확인(권한 불문). 출력에 PID 가 있으면 살아 있음.
-        try:
-            out = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-                capture_output=True, text=True, timeout=5,
-                **no_window_kwargs()).stdout
-        except (OSError, subprocess.SubprocessError):
-            return False
-        return str(pid) in out
+        return _win_is_alive(pid)
     try:
         os.kill(pid, 0)
         return True
@@ -163,6 +155,34 @@ def is_alive(pid: int) -> bool:
         return True  # 존재하지만 시그널 권한 없음 → 살아 있음
     except OSError:
         return False
+
+
+def _win_is_alive(pid: int) -> bool:
+    r"""Windows: tasklist 로 pid 존재 확인. **PID 컬럼을 정확히 대조**한다.
+
+    과거엔 `str(pid) in tasklist_output` 으로 판정했는데, 이는 메모리 사용량 컬럼
+    (예: `68,892 K`)에 pid 숫자열이 부분일치하면 **죽은 프로세스를 살았다고 오판**한다
+    (pid 892 → "68,**892** K" 매치). `/FI "PID eq <pid>"` 필터가 이미 행을 좁히지만,
+    필터는 best-effort 라 정확 대조를 안전망으로 둔다. `/FO CSV /NH` 로 받아 csv 로
+    파싱하고 **두 번째 컬럼(PID)이 정확히 일치**하는 행이 있을 때만 살아 있다고 본다
+    (대상 없으면 tasklist 가 stdout 에 "INFO: No tasks ..." 를 출력 → 파싱 행 0개).
+    """
+    import csv
+    import io
+
+    try:
+        out = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, timeout=5,
+            **no_window_kwargs()).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    target = str(pid)
+    for row in csv.reader(io.StringIO(out)):
+        # CSV 행: "이미지","PID","세션","세션#","메모리". PID 컬럼만 정확 대조.
+        if len(row) >= 2 and row[1].strip() == target:
+            return True
+    return False
 
 
 def process_cwd(pid: int) -> Optional[str]:
