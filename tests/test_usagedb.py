@@ -384,7 +384,46 @@ async def test_limits_v1_db_upgrades_on_connect():
         assert usagedb.limits_count(conn) == 0, "limits 테이블 생성됨(빈 상태)"
         assert usagedb.insert_limits(conn, usagedb.snap_from_usage(
             _usage_dict(), 2.0, "probe"))
-        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 2
+        assert (int(conn.execute("PRAGMA user_version").fetchone()[0])
+                == usagedb.SCHEMA_VERSION)
+        conn.close()
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_v3_dedup_residue_migration():
+    """v3(§5.5 ③): 잔상 중복 런(같은 pane·session·tokens, 60초내 연쇄)을 첫 건만
+    남기고 usage_dup_archive 로 격리. 60초 밖 동일값(정상 재발)·다른 패널/값은
+    보존. v2 DB 가 connect 로 자동 업그레이드되고, 재연결(이미 v3)은 멱등."""
+    import shutil
+    d = tempfile.mkdtemp()
+    try:
+        p = os.path.join(d, "t.db")
+        conn = usagedb.connect(p)
+        # 잔상 런: (pane1, sess1, 19300) 1초 간격 5건 → 첫 건만 남아야 한다.
+        for i in range(5):
+            usagedb.insert(conn, _rec(100.0 + i, 0, 1, 1, "unknown", 19300))
+        usagedb.insert(conn, _rec(300.0, 0, 1, 1, "unknown", 19300))  # 60초 밖 → 보존
+        usagedb.insert(conn, _rec(101.0, 0, 2, 1, "me@x.org", 500))   # 다른 패널 → 보존
+        conn.execute("PRAGMA user_version=2")        # 구버전으로 되돌려 업그레이드 유도
+        conn.commit()
+        conn.close()
+        conn = usagedb.connect(p)                    # v2→v3 마이그레이션 실행
+        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 3
+        rows = [(r["ts"], r["pane"], r["tokens"]) for r in conn.execute(
+            "SELECT ts, pane, tokens FROM usage ORDER BY ts")]
+        assert rows == [(100.0, 1, 19300), (101.0, 2, 500),
+                        (300.0, 1, 19300)], rows
+        arch = [r["ts"] for r in conn.execute(
+            "SELECT ts FROM usage_dup_archive ORDER BY ts")]
+        assert arch == [101.0, 102.0, 103.0, 104.0], "런의 2번째부터 아카이브"
+        # 재연결(이미 v3) — 멱등: usage/archive 불변.
+        conn.close()
+        conn = usagedb.connect(p)
+        assert int(conn.execute(
+            "SELECT COUNT(*) FROM usage").fetchone()[0]) == 3
+        assert int(conn.execute(
+            "SELECT COUNT(*) FROM usage_dup_archive").fetchone()[0]) == 4
         conn.close()
     finally:
         shutil.rmtree(d, ignore_errors=True)

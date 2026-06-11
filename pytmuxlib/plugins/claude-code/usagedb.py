@@ -19,7 +19,10 @@ from . import usagelog
 # 스키마 버전(PRAGMA user_version). 향후 컬럼 추가 시 분기에 사용.
 # v2(S6 T1): limits 테이블(실측 /usage 스냅샷 이력) 추가 — CREATE IF NOT EXISTS 라
 # v1 DB 도 connect() 시 자동 업그레이드된다(기존 usage 테이블 무접촉).
-SCHEMA_VERSION = 2
+# v3(§5.5 2026-06-11): 데이터 정리 — tokens.step 잔상 가드(58236) **이전**에 쌓인
+# 중복 커밋(같은 pane·session·tokens 가 60초 안에 연속 반복 — 하루치의 83% 사례)을
+# 첫 건만 남기고 usage_dup_archive 로 격리(하드 삭제 아님). 스키마 자체는 v2 동일.
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS usage (
@@ -74,7 +77,14 @@ def connect(path: str) -> sqlite3.Connection:
         conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=3000")
     conn.executescript(_SCHEMA)
-    conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+    cur_v = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    new_v = SCHEMA_VERSION
+    if cur_v < 3:
+        try:
+            _migrate_v3_dedup_residue(conn)
+        except sqlite3.Error:
+            new_v = min(cur_v, 2) or 2   # 실패 시 버전 유지 → 다음 connect 재시도
+    conn.execute(f"PRAGMA user_version={new_v}")
     conn.commit()
     if path != ":memory:" and not existed:
         try:
@@ -82,6 +92,40 @@ def connect(path: str) -> sqlite3.Connection:
         except OSError:
             pass
     return conn
+
+
+def _migrate_v3_dedup_residue(conn) -> int:
+    """v3 데이터 마이그레이션(§5.5 ③): 잔상 중복 커밋 정리. 옮긴 행 수를 반환.
+
+    tokens.step 의 idle_mark 잔상 가드(p4 58236) **이전** 기록엔 '응답 종료 후
+    화면에 남은 ↑/↓ 토큰 잔상'이 비-busy 프레임(≈1초)마다 같은 값으로 재확정돼
+    같은 (pane, session, tokens) 가 60초 안에 연쇄 반복된 런이 섞여 있다(2026-06-11
+    하루치의 83%, 한 응답 최대 117회 — 토큰로그 시간/일/주/월 집계와 전체 합계를
+    부풀림). 각 런의 **첫 건만** 남기고 나머지를 `usage_dup_archive` 로 옮긴다
+    (하드 삭제 아님 — 포렌식·복구 보존, 집계 쿼리는 usage 만 본다).
+
+    런 판정 = 분석 스크립트와 동일: (pane, session, tokens) 파티션에서 직전 동일
+    레코드와의 간격 ≤60초(LAG 윈도 함수, SQLite ≥3.25). 60초 밖에서 우연히 같은
+    토큰 수가 다시 확정된 정상 레코드는 보존된다."""
+    conn.execute("CREATE TABLE IF NOT EXISTS usage_dup_archive AS "
+                 "SELECT * FROM usage WHERE 0")
+    conn.execute("DROP TABLE IF EXISTS _v3_dups")
+    conn.execute(
+        "CREATE TEMP TABLE _v3_dups AS "
+        "SELECT rowid AS rid FROM ("
+        "  SELECT rowid, ts - LAG(ts) OVER ("
+        "    PARTITION BY pane, session, tokens ORDER BY ts) AS gap"
+        "  FROM usage)"
+        " WHERE gap IS NOT NULL AND gap <= 60")
+    n = int(conn.execute("SELECT COUNT(*) FROM _v3_dups").fetchone()[0])
+    if n:
+        conn.execute("INSERT INTO usage_dup_archive "
+                     "SELECT u.* FROM usage u "
+                     "JOIN _v3_dups d ON u.rowid = d.rid")
+        conn.execute("DELETE FROM usage WHERE rowid IN "
+                     "(SELECT rid FROM _v3_dups)")
+    conn.execute("DROP TABLE _v3_dups")
+    return n
 
 
 def _row_to_rec(row) -> dict:

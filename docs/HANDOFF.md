@@ -2773,6 +2773,10 @@ test_client.py`(417) + 신규 `tests/test_plugin_contract.py`(5) 회귀망 + smo
     /status(Status 탭)에만 존재(부팅·Usage 탭 부재 — 원천 부재이지 파서 문제
     아님). 프로브가 미식별 시에만 Esc+`/status` 폴백 스크랩 + reconcile 같은-계정
     합산에 미식별('unknown') 레코드 포함(§10-B 단일 계정 귀속과 같은 가정).
+  - **DB 이력 중복 정리(2026-06-11 후속 CL)**: usagedb v3 데이터 마이그레이션 —
+    잔상 런(같은 pane·session·tokens 60초내 연쇄) 첫 건만 남기고
+    `usage_dup_archive` 로 격리(가드 58236 이전 이력의 토큰로그 집계·전체 합계
+    부풀림 해소). connect 시 1회 자동, 실패 시 버전 유지로 재시도.
   - **잔존 후속**: 가드·계정 식별 적용 후 데이터로 상관 재관찰.
     관련: [[token-accounting-s6-complete]].
 
