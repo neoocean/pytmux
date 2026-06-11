@@ -979,18 +979,33 @@ class ServerClaudeMixin:
         return best
 
     def _account_token_total(self, ap) -> int:
-        """활성 패널의 Claude 계정을 키로, 그 계정에 속한 모든 패널(전체 세션 순회)
-        의 세션 누적 토큰을 합산한다(§10 계정별 합계). 계정 추정 전이면 활성 패널
-        단독 누계로 폴백하고, 활성 패널이 Claude 가 아니면 0 을 보낸다(이 경우
-        클라이언트가 마지막 비어있지 않은 값을 유지해 표시가 사라지지 않게 한다)."""
-        if not ap:
+        """활성 패널의 Claude 계정을 키로, 그 계정에 속한 모든 패널(전체 세션·탭
+        순회)의 세션 누적 토큰을 합산한다(§10 계정별 합계).
+
+        §10-B(2026-06-11): **같은 계정이면 어느 탭/패널이 활성이어도 같은 합계**가
+        보이게 한다. 과거엔 계정 추정 전(미식별) 패널에서 활성 패널 단독 누계로
+        폴백해, 식별된 패널(계정 합계)과 미식별 패널(단독 누계)을 오갈 때 좌하단
+        숫자가 출렁였다. 규칙:
+        - 식별된 계정이 **하나뿐**(또는 전부 미식별)이면 단일 계정으로 보고,
+          미식별 패널까지 포함해 Claude 흔적이 있는 전 패널을 합산한다 — 어떤
+          패널이 활성이어도 같은 숫자.
+        - 계정이 **둘 이상** 식별된 상태에선 활성 패널 계정의 합계(기존 동작).
+          활성 패널이 미식별이면 귀속이 모호하므로 0 을 보낸다 — 클라이언트가
+          마지막 비어있지 않은 값을 유지해 표시 숫자는 그대로 머문다.
+        활성 패널이 Claude 가 아니면 0(클라 지속표시·렌더는 claude_active 게이트)."""
+        if not ap or not (ap._claude or ap._claude_account):
             return 0
+        # Claude 흔적(실행 중이거나 계정이 식별됐던) 패널만 모은다 — 종료된 패널도
+        # 계정이 남아 있으면 누계를 유지한다(기존 합산과 동일한 포함 기준 + 미식별).
+        panes = [p for p in self._all_panes()
+                 if p._claude or p._claude_account]
+        known = {p._claude_account for p in panes if p._claude_account}
+        if len(known) <= 1:
+            return sum(p._session_tokens for p in panes)
         acct = ap._claude_account
         if acct:
-            return sum(p._session_tokens for p in self._all_panes()
+            return sum(p._session_tokens for p in panes
                        if p._claude_account == acct)
-        if ap._claude:
-            return ap._session_tokens
         return 0
 
     def _is_fullest_idle(self, pane) -> bool:

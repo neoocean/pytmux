@@ -416,10 +416,12 @@ async def test_tokens_db_imports_legacy_jsonl_once():
 
 
 async def test_account_token_total_aggregates_across_panes():
-    """§10 계정별 합계: 활성 패널의 Claude 계정을 키로, 같은 계정에 속한 모든
-    패널(전체 세션 순회)의 _session_tokens 를 합산해 status 의 claude_tokens 로
-    내보낸다. 계정 미상이면 활성 패널 단독 누계, Claude 아니면 0(클라가 마지막값
-    유지). claude_account 식별자도 함께 보낸다."""
+    """§10 계정별 합계 + §10-B(2026-06-11) 안정화: 활성 패널의 Claude 계정을 키로,
+    같은 계정에 속한 모든 패널(전체 세션 순회)의 _session_tokens 를 합산해 status
+    의 claude_tokens 로 내보낸다. **같은 계정이면 어느 패널이 활성이어도 같은
+    숫자**: 식별 계정이 하나뿐이면 미식별 패널까지 포함해 합산하고, 둘 이상이면
+    활성 패널 계정의 합계(미식별 패널 활성이면 0 — 클라가 마지막값 유지). Claude
+    아니면 0. claude_account 식별자도 함께 보낸다."""
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
@@ -443,15 +445,40 @@ async def test_account_token_total_aggregates_across_panes():
         msg = srv._status_msg(sess)
         assert msg["claude_tokens"] == 3500, msg["claude_tokens"]
         assert msg["claude_account"] == "alice", msg["claude_account"]
-        # 활성=bob 패널 → bob 단독 700
+        # §10-B: 같은 계정의 다른 패널로 전환해도 같은 숫자
+        win.active_pane = panes[1]
+        assert srv._status_msg(sess)["claude_tokens"] == 3500
+        # 활성=bob 패널 → bob 합계 700(다계정 식별 시 활성 계정 기준)
         win.active_pane = panes[2]
         assert srv._status_msg(sess)["claude_tokens"] == 700
-        # 계정 미상 + Claude 패널 → 단독 누계 폴백
-        panes[2]._claude_account = None
-        assert srv._status_msg(sess)["claude_tokens"] == 700
-        # 계정 미상 + Claude 아님 → 0(클라가 마지막값 유지)
-        panes[2]._claude = None
+        # 다계정(alice·bob) 식별 상태에서 **미식별** Claude 패널이 활성 → 귀속
+        # 모호 → 0(클라가 마지막값 유지). 미식별 패널은 식별 계정 합계에도 안 섞임.
+        panes[1]._claude_account = None        # known={alice, bob} 유지
+        win.active_pane = panes[1]
         assert srv._status_msg(sess)["claude_tokens"] == 0
+        win.active_pane = panes[0]
+        assert srv._status_msg(sess)["claude_tokens"] == 1000, \
+            "다계정에선 미식별 패널을 임의 계정에 귀속하지 않는다"
+        # §10-B 단일 계정 귀속: bob 패널이 사라져 식별 계정이 alice 하나뿐이면
+        # 미식별 패널까지 포함해 합산 — 어느 Claude 패널이 활성이어도 같은 숫자.
+        panes[2]._claude = None
+        panes[2]._claude_account = None        # Claude 흔적 제거(known={alice})
+        for active in (panes[0], panes[1]):
+            win.active_pane = active
+            assert srv._status_msg(sess)["claude_tokens"] == 3500, \
+                "단일 계정이면 미식별 포함 전체 합 — 전환해도 동일"
+        # Claude 흔적 없는 패널 활성 → 0(클라가 마지막값 유지)
+        win.active_pane = panes[2]
+        assert srv._status_msg(sess)["claude_tokens"] == 0
+        # §10-B 탭 전환: 다른 탭의 같은 계정 Claude 패널이 활성이어도 같은 숫자
+        # (_all_panes 가 전 세션·탭 순회 — 새 탭 패널 누계도 합계에 합류).
+        srv.new_window(sess)
+        p_tab1 = sess.active_window.active_pane
+        p_tab1._claude = "idle"
+        p_tab1._claude_account = "alice"
+        p_tab1._session_tokens = 500
+        assert srv._status_msg(sess)["claude_tokens"] == 4000, \
+            "탭을 전환해도 같은 계정이면 전체 합계(3500+500)가 그대로"
     finally:
         await teardown(srv, task, sock)
 
