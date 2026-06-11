@@ -401,9 +401,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 _a.create_task(write_msg(
                     self.writer, {"t": "resize", "cols": cols, "rows": rows}))
 
-        def confirm_popup(self, message, action, title="확인",
-                          yes_label="닫기", danger=False):
-            """중앙 확인 팝업을 띄우고, '예'면 action 실행."""
+        def confirm_popup(self, message, action, title=None,
+                          yes_label=None, danger=False):
+            """중앙 확인 팝업을 띄우고, '예'면 action 실행. title/yes_label 미지정 시
+            ConfirmScreen 이 로케일 기본(확인/닫기)을 채운다(§6 i18n)."""
             def done(ok):
                 if ok and action:
                     action()
@@ -415,14 +416,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 이 탭을 닫으면 pytmux 가 끝나는가 = 탭이 하나뿐인가(#16).
             last = len(self.tabbar.tabs) <= 1
             if last:
-                msg = ("이 탭을 닫으면 pytmux 가 종료됩니다(모든 셸 종료). 닫을까요?")
-                title = "pytmux 종료"
+                msg = i18n.t("dialog.kill_pytmux_msg")
+                title = i18n.t("dialog.kill_pytmux_title")
             else:
-                msg = "이 탭을 닫을까요? 탭의 셸이 종료됩니다."
-                title = "탭 닫기"
+                msg = i18n.t("dialog.kill_tab_msg")
+                title = i18n.t("dialog.kill_tab_title")
             self.confirm_popup(
                 msg, action=lambda: self.send_cmd("kill_window"),
-                title=title, yes_label="닫기", danger=last)
+                title=title, yes_label=None, danger=last)
 
         def _set_cmd_target(self, on):
             """패널 대상 명령을 프롬프트에서 작성 중일 때 대상 패널(활성)을 밝게
@@ -1544,7 +1545,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 + ["", "그래도 재시작할까요?"])
             self.confirm_popup(
                 msg, action=lambda: self.do_restart(kind),
-                title="재시작 확인", yes_label="재시작", danger=True)
+                title=i18n.t("dialog.restart_confirm_title"),
+                yes_label=i18n.t("dialog.restart_yes"), danger=True)
 
         def _show_restart_check_popup(self, m):
             """서버 restart_check 결과 + 클라 측 점검을 PASS/WARN/FAIL 로 팝업."""
@@ -1648,7 +1650,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 마지막 탭=서버(2개면 1)로 자연 클램프된다. 범위 밖이면 끝 탭으로 맞춘다.
             initial = max(0, min(initial, len(tabs) - 1))
             self.push_screen(InfoTabsScreen(
-                tabs, initial=initial, title="상태", actions=actions))
+                tabs, initial=initial, title=i18n.t("dialog.status_title"),
+                actions=actions))
 
         def _open_choose_tree(self, tree):
             def handle(res):
@@ -2355,9 +2358,26 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         else:
                             self.display_message(f"no binding: {key}")
             elif c in ("list-keys", "lsk", "list-binds"):
-                lines = [f"{k} → {v}" for k, v in sorted(self.bindings.items())]
-                self.push_screen(InfoScreen(lines or ["(바인딩 없음)"],
-                                            title="key bindings"))
+                # §2.2 발견성: 구현된 마우스 제스처(헤더 드래그 pick-up→swap/탭이동,
+                # 탭 드래그 재정렬·분할, Shift+드래그 선택 등)는 명령이 아니라 ?목록·
+                # 메뉴 어디에도 안 떠 사장돼 있었다. list-keys 가 사용자 바인딩과 함께
+                # 1급 마우스 제스처를 먼저 보여 노출한다(동작 변경 없음, 표시만 추가).
+                tr = i18n.t
+                lines = [tr("keys.mouse_header", default="마우스 제스처")]
+                lines += ["  " + tr(k, default=d) for k, d in (
+                    ("keys.g_click", "휠 — 스크롤백 스크롤 · 클릭 — 패널 포커스"),
+                    ("keys.g_rclick", "우클릭 — 패널 메뉴(분할·줌·회전·삭제…)"),
+                    ("keys.g_divider", "경계선 드래그 — 패널 크기 조절"),
+                    ("keys.g_header", "패널 헤더(위 테두리) 드래그 — 패널을 들어 "
+                     "다른 패널과 swap · 탭으로 이동 · [+]에 놓아 새 탭"),
+                    ("keys.g_shift", "Shift+드래그 — 텍스트 선택(클립보드 복사)"),
+                    ("keys.g_tab", "탭 드래그 — 탭 재정렬 · 패널 위로 끌어 분할"),
+                )]
+                binds = [f"{k} → {v}" for k, v in sorted(self.bindings.items())]
+                lines += ["", tr("keys.user_header", default="사용자 키 바인딩")]
+                lines += binds or ["  " + tr("keys.none", default="(없음)")]
+                self.push_screen(InfoScreen(
+                    lines, title=tr("keys.title", default="키 · 마우스")))
             # 알 수 없는 명령은 조용히 무시
 
         def on_paste(self, event: events.Paste):

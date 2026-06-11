@@ -175,6 +175,28 @@ register({
     },
 })
 
+# §6 ⑤+ 다이얼로그 본문 — client.py confirm/InfoScreen 이 넘기는 메시지·제목.
+register({
+    "ko": {
+        "dialog.kill_pytmux_msg": "이 탭을 닫으면 pytmux 가 종료됩니다(모든 셸 종료). 닫을까요?",
+        "dialog.kill_pytmux_title": "pytmux 종료",
+        "dialog.kill_tab_msg": "이 탭을 닫을까요? 탭의 셸이 종료됩니다.",
+        "dialog.kill_tab_title": "탭 닫기",
+        "dialog.restart_confirm_title": "재시작 확인",
+        "dialog.restart_yes": "재시작",
+        "dialog.status_title": "상태",
+    },
+    "en": {
+        "dialog.kill_pytmux_msg": "Closing this tab will quit pytmux (all shells end). Close?",
+        "dialog.kill_pytmux_title": "Quit pytmux",
+        "dialog.kill_tab_msg": "Close this tab? The tab's shells will end.",
+        "dialog.kill_tab_title": "Close tab",
+        "dialog.restart_confirm_title": "Restart confirmation",
+        "dialog.restart_yes": "Restart",
+        "dialog.status_title": "Status",
+    },
+})
+
 # §6 ④ 모달 스크린 — 명령목록·옵션·정보·확인·버퍼/레이아웃 피커의 furniture(제목·
 # 서브타이틀·빈 상태·네비 힌트·버튼). 다이얼로그 본문(메시지)은 호출부(client.py)가
 # 넘기므로 별도 단계에서 다룬다.
