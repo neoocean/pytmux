@@ -71,7 +71,23 @@ jobs:
 
       - name: Headless test suite
         timeout-minutes: 8        # 스위트는 보통 ~수분 — 매달리면 여기서 끊어 잡 전체를 안 먹게
-        run: python -u tests/run.py   # -u: 버퍼링 없이 진행 즉시 출력(행 지점 식별)
+        # 진단(macOS 행 추적, 2026-06-12): macOS 러너가 GitHub 의 step/job 타임아웃(8/12분)
+        # 보다 더(17분) 매달려 콘솔 출력이 통째로 유실됐다(스위트 첫 줄도 안 보임). ① echo
+        # 마커로 셸 스텝 진입 자체를 확인 ② `-X importtime` 로 import 완료를 즉시 stderr 에
+        # 흘려 행 직전 마지막 import 를 가시화 ③ `tee` 로 디스크 파일에 줄 단위 기록 →
+        # 콘솔이 유실돼도 파일에 진행이 남아 아래 always 업로드로 회수한다(행 지점 식별).
+        run: |
+          echo "=== suite step start $(date -u) ==="
+          python -u -X importtime tests/run.py 2>&1 | tee suite-output.log
+          echo "=== suite step end $(date -u) ==="
+
+      - name: Upload suite log (diagnostic)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite-log-${{ matrix.os }}-py${{ matrix.python }}
+          path: suite-output.log
+          if-no-files-found: warn
 
       - name: Perf report (env + perf only)
         timeout-minutes: 4        # win_report 가 매달려도 스위트 결과는 남게
