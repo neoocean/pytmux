@@ -151,5 +151,22 @@ async def test_terminate_bogus_pid_noop():
     proc.terminate(0)
 
 
+async def test_foreground_command():
+    """foreground_command(#7): POSIX 는 None(servertree 가 직접), Windows 는 자손 추정.
+
+    Windows 에선 우리 프로세스(os.getpid())의 가장 깊은 자손을 구하는데, 보통 자손이 없어
+    셸/자기 자신(python) 이름을 돌려준다 — 비어있지 않은 문자열이면 OK(.exe 제거 확인).
+    잘못된 pid·POSIX 는 None."""
+    import os as _os
+    assert proc.foreground_command(-1) is None
+    assert proc.foreground_command(0) is None
+    if not proc.IS_WINDOWS:
+        assert proc.foreground_command(_os.getpid()) is None  # POSIX 갭 전용
+        return
+    name = proc.foreground_command(_os.getpid())
+    assert name and isinstance(name, str), name
+    assert not name.lower().endswith(".exe"), name  # 확장자 제거됨
+
+
 async def test_run_sync_units():
     test_server_argv()

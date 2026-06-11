@@ -48,8 +48,8 @@ async def test_tree_msg_includes_panes_and_remote():
         ids = [p.id for p in win.panes()]
         # fg 명령을 흉내: 첫 패널은 ssh(원격), 나머지는 zsh(로컬)
         first = win.panes()[0]
-        srv._fg_command = lambda fd, _f=first: ("ssh" if fd == _f.master_fd
-                                                else "zsh")
+        srv._fg_command = lambda pane, _f=first: ("ssh" if pane is _f
+                                                  else "zsh")
         msg = srv._tree_msg()
         w = msg["sessions"][0]["windows"][0]
         assert isinstance(w["panes"], list) and len(w["panes"]) == len(ids)

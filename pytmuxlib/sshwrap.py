@@ -16,6 +16,15 @@ LC_* 를 못 받는(드문) sshd 면 표식이 전파되지 않아 원격 거부
 동작은 없다(우아한 열화). mosh 는 `-o` 옵션을 직접 받지 않으므로(–-ssh 경유) 래핑
 대상에서 제외한다 — ssh/autossh 만 감싼다(둘 다 `-o` 를 ssh 로 전달).
 
+**Windows(#1.4)**: 패널 셸이 cmd.exe 라 POSIX sh 래퍼 대신 `.cmd` 배치 래퍼를 깐다.
+명령 해석이 PATH 디렉터리 순서를 먼저 따르므로(같은 dir 안에서만 PATHEXT 순서) 래퍼
+디렉터리를 PATH 앞단에 두면 우리 `ssh.cmd` 가 진짜 `ssh.exe` 를 가린다. 래퍼는
+`%~$PATH:E` 로 **확장자 .exe 만** 골라 진짜 ssh.exe 를 찾으므로(우리 dir 엔 .cmd 만
+있어 자기 자신을 안 잡음) PATH 에서 자기 dir 을 빼는 수고가 필요 없다. 그 뒤
+`ssh.exe -o SendEnv=LC_PYTMUX %*` 로 exec 한다. Windows OpenSSH 클라이언트는 SendEnv 를
+지원하고, 원격 전파 여부는 POSIX 와 동일하게 sshd AcceptEnv 에 달렸다(우아한 열화).
+PowerShell 패널에서도 .cmd 는 동일하게 해석된다.
+
 표식 이름은 launcher.NEST_MARKER 와 동일해야 한다(여기 import 하면 순환이라 상수만 공유).
 """
 from __future__ import annotations
@@ -48,27 +57,47 @@ fi
 exec "$real" -o SendEnv=%(marker)s "$@"
 """
 
+# Windows .cmd 배치 래퍼 본문. 배치 파일이라 for 변수는 %%E, 변수 확장은 %_real%,
+# 모든 인자는 %*. `%%~$PATH:E`(E=ssh.exe 등 .exe 만)로 진짜 바이너리를 찾아 우리
+# .cmd 자기 자신을 안 잡는다(PATH 에서 자기 dir 제거 불필요). marker 를 SendEnv 로 끼워
+# exec(call 후 같은 종료코드로 종료). .format() 으로 채우므로 % 는 그대로 리터럴.
+_WRAPPER_CMD = """@echo off
+rem pytmux ssh wrapper: propagate nesting marker ({marker}) via SendEnv.
+setlocal
+set "_real="
+for %%E in ({exe}) do set "_real=%%~$PATH:E"
+if not defined _real (
+  echo pytmux: {exe} not found in PATH 1>&2
+  exit /b 127
+)
+"%_real%" -o SendEnv={marker} %*
+"""
+
 
 def ensure_wrapper_dir(state_dir: str) -> str | None:
     """ssh 래퍼들을 담은 디렉터리를 (없으면) 만들고 경로를 반환한다.
 
-    POSIX 전용(Windows 는 None — cmd 셸 PATH 셰임 동작이 달라 미지원). 멱등:
-    이미 있으면 그대로 둔다. 생성 실패 시 None(표식 전파 없이 우아하게 동작)."""
-    if os.name == "nt":
-        return None
+    멱등: 이미 있으면 그대로 둔다. 생성 실패 시 None(표식 전파 없이 우아하게 동작).
+    POSIX 는 `ssh`/`autossh` sh 래퍼(0o755), Windows 는 `ssh.cmd`/`autossh.cmd` 배치
+    래퍼를 만든다(#1.4 — 패널 cmd.exe/PowerShell 이 .cmd 를 해석)."""
     wd = os.path.join(state_dir, "sshwrap")
     try:
         os.makedirs(wd, exist_ok=True)
+        if os.name == "nt":
+            for name in _WRAPPED:
+                body = _WRAPPER_CMD.format(
+                    exe=name + ".exe", marker=NEST_MARKER).encode("utf-8")
+                path = os.path.join(wd, name + ".cmd")
+                if _same_file(path, body):
+                    continue
+                with open(path, "wb") as f:
+                    f.write(body)
+            return wd
         body = (_WRAPPER_SH % {"marker": NEST_MARKER}).encode("utf-8")
         for name in _WRAPPED:
             path = os.path.join(wd, name)
-            # 내용이 같으면 다시 쓰지 않는다(멱등·불필요한 chmod 방지).
-            try:
-                with open(path, "rb") as f:
-                    if f.read() == body:
-                        continue
-            except OSError:
-                pass
+            if _same_file(path, body):
+                continue
             with open(path, "wb") as f:
                 f.write(body)
             os.chmod(path, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP
@@ -76,6 +105,15 @@ def ensure_wrapper_dir(state_dir: str) -> str | None:
         return wd
     except OSError:
         return None
+
+
+def _same_file(path: str, body: bytes) -> bool:
+    """파일 내용이 body 와 같으면 True(멱등 — 불필요한 재작성/chmod 방지)."""
+    try:
+        with open(path, "rb") as f:
+            return f.read() == body
+    except OSError:
+        return False
 
 
 def panel_env(env: dict, state_dir: str) -> dict:

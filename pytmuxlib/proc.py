@@ -38,7 +38,7 @@ _CREATE_NO_WINDOW = 0x08000000
 
 __all__ = ["IS_WINDOWS", "spawn_detached", "terminate", "is_alive",
            "server_argv", "shell_argv", "no_window_kwargs",
-           "open_in_file_manager", "process_cwd"]
+           "open_in_file_manager", "process_cwd", "foreground_command"]
 
 
 def no_window_kwargs() -> dict:
@@ -298,6 +298,96 @@ def _win_process_cwd(pid: int) -> Optional[str]:
             return os.path.normpath(path) if path else None
         finally:
             CloseHandle(h)
+    except Exception:
+        return None
+
+
+def foreground_command(pid: int) -> Optional[str]:
+    """패널 셸(pid)의 '현재 포그라운드 명령' 이름을 추정한다(자동 탭이름·ssh/원격 감지).
+
+    POSIX 는 servertree 가 `tcgetpgrp`+`ps` 로 직접 구하므로 이 헬퍼는 **Windows 갭만**
+    메운다(#7). ConPTY 엔 포그라운드 프로세스 그룹 개념이 없어, 셸의 **가장 깊은 자손
+    프로세스**를 그 시점의 실행 명령으로 보고 그 exe 이름(.exe 제거, 소문자 아님)을 돌려준다
+    (셸 -> ssh, 셸 -> python -> child 등). 자손이 없으면(idle) 셸 자신의 이름을 돌려준다
+    (POSIX 가 idle 시 fg pgrp = 셸 이름을 주는 것과 동일). 실패 시 None — 고정 탭이름 폴백."""
+    if not IS_WINDOWS or pid <= 0:
+        return None
+    return _win_foreground_command(pid)
+
+
+def _win_foreground_command(pid: int) -> Optional[str]:
+    r"""Windows: ToolHelp 스냅샷으로 pid 의 가장 깊은 자손 프로세스 exe 이름을 구한다.
+
+    CreateToolhelp32Snapshot(SNAPPROCESS) -> Process32FirstW/NextW 로 (pid, ppid, exe)
+    를 모아 자식 맵을 만들고, pid 에서 BFS 로 가장 깊은 자손을 고른다(여러 leaf 면 깊이
+    최댓값). 자손이 없으면 셸 자신의 exe. exe 는 basename 에서 `.exe`(대소문자 무시) 제거.
+    어떤 실패든 None 으로 graceful — 자동 이름은 고정 탭이름으로 폴백된다."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        TH32CS_SNAPPROCESS = 0x00000002
+        INVALID = wintypes.HANDLE(-1).value
+
+        class PROCESSENTRY32W(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+                ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+                ("szExeFile", ctypes.c_wchar * 260)]
+
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        k.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        k.Process32FirstW.argtypes = [wintypes.HANDLE,
+                                      ctypes.POINTER(PROCESSENTRY32W)]
+        k.Process32NextW.argtypes = [wintypes.HANDLE,
+                                     ctypes.POINTER(PROCESSENTRY32W)]
+        k.CloseHandle.argtypes = [wintypes.HANDLE]
+
+        snap = k.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if not snap or snap == INVALID:
+            return None
+        exe_of: dict[int, str] = {}
+        children: dict[int, list[int]] = {}
+        try:
+            entry = PROCESSENTRY32W()
+            entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+            ok = k.Process32FirstW(snap, ctypes.byref(entry))
+            while ok:
+                cpid = int(entry.th32ProcessID)
+                ppid = int(entry.th32ParentProcessID)
+                exe_of[cpid] = entry.szExeFile
+                children.setdefault(ppid, []).append(cpid)
+                ok = k.Process32NextW(snap, ctypes.byref(entry))
+        finally:
+            k.CloseHandle(snap)
+
+        if pid not in exe_of:
+            return None
+        # pid 에서 BFS — 가장 깊은 자손(leaf 후보)을 고른다. ppid 재사용 오탐을 막으려
+        # 방문 집합으로 사이클/재사용을 차단한다.
+        best_pid, best_depth = pid, 0
+        seen = {pid}
+        frontier = [(pid, 0)]
+        while frontier:
+            cur, depth = frontier.pop()
+            if depth > best_depth:
+                best_pid, best_depth = cur, depth
+            for ch in children.get(cur, ()):
+                if ch not in seen:
+                    seen.add(ch)
+                    frontier.append((ch, depth + 1))
+        name = exe_of.get(best_pid, "")
+        if not name:
+            return None
+        base = os.path.basename(name)
+        if base.lower().endswith(".exe"):
+            base = base[:-4]
+        return base or None
     except Exception:
         return None
 

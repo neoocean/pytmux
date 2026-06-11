@@ -143,24 +143,29 @@ async def test_replay_record_guarded_on_windows():
     assert rc == 2
 
 
-async def test_fg_command_guarded_on_windows():
-    """Server._fg_command 는 Windows 에서 os.tcgetpgrp 호출 전에 None 으로 폴백.
+async def test_fg_command_windows_uses_process_tree():
+    """Windows(#7): _fg_command 는 os.tcgetpgrp 대신 proc.foreground_command(child_pid).
 
-    os.tcgetpgrp 는 Windows 에 아예 없어 AttributeError 가 나는데, 함수의
-    except 는 OSError 만 잡는다. IS_WINDOWS 가드가 먼저 끊지 않으면 자동 탭이름
-    루프가 깨진다. tcgetpgrp 가 AttributeError 를 던지게 해 가드 효력을 못박는다.
-    """
+    ConPTY 엔 포그라운드 pgrp 가 없어 셸 자손 트리로 추정한다 — Windows 분기가
+    tcgetpgrp 를 절대 호출하지 않고(없어서 AttributeError) child_pid 를 넘기는지 확인.
+    None 패널은 None 으로 폴백."""
     from unittest import mock
-    from pytmuxlib import pty_backend
+    from pytmuxlib import proc, pty_backend
     from pytmuxlib.server import Server
 
-    # create=True: 실제 Windows 에는 os.tcgetpgrp 가 아예 없어 패치 대상이 없으므로
-    # (mock 이 원본 속성을 못 찾아 AttributeError) 강제로 만들어 패치한다. macOS 에선
-    # 원래 존재하므로 무해.
+    class _FakePane:
+        child_pid = 4321
+        master_fd = -1
+
     with mock.patch.object(pty_backend, "IS_WINDOWS", True), \
-            mock.patch("os.tcgetpgrp", side_effect=AttributeError, create=True):
-        # self 를 쓰지 않는 메서드라 더미 인스턴스 없이 호출 가능.
-        assert Server._fg_command(None, -1) is None
+            mock.patch.object(proc, "foreground_command",
+                              return_value="ssh") as fg, \
+            mock.patch("os.tcgetpgrp",
+                       side_effect=AssertionError("Windows 는 tcgetpgrp 미호출"),
+                       create=True):
+        assert Server._fg_command(None, _FakePane()) == "ssh"
+        fg.assert_called_once_with(4321)
+    assert Server._fg_command(None, None) is None
 
 
 async def test_render_only_resize_without_fcntl():

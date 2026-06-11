@@ -96,7 +96,7 @@ class ServerIOMixin:
     def _pane_overview(self, pane):
         """트리/개요용 패널 1건 정보: id·제목·fg 앱·로컬/원격. Claude 상태/사용량/토큰은
         플러그인이 server_pane_overview 훅으로 덧붙인다(플러그인 없으면 생략)."""
-        cmd = self._fg_command(pane.master_fd) or ""
+        cmd = self._fg_command(pane) or ""
         info = {"id": pane.id, "title": (pane.title or "").strip(),
                 "cmd": cmd, "remote": cmd.lower() in self._REMOTE_CMDS}
         self.plugins.server_pane_overview(self, pane, info)

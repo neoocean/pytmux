@@ -49,6 +49,31 @@ async def test_sshwrap_marker_and_path():
     assert sshwrap.NEST_MARKER == NEST_MARKER
 
 
+async def test_sshwrap_windows_cmd_wrapper():
+    """Windows(#1.4): panel_env 가 ssh.cmd/autossh.cmd 배치 래퍼를 PATH 앞단에 깐다.
+
+    래퍼는 `%~$PATH:E`(.exe 만 검색)로 진짜 ssh.exe 를 찾고 SendEnv 표식을 끼운다 —
+    PATH 에서 자기 dir 을 빼는 수고 없이 자기 .cmd 를 안 잡는다."""
+    if os.name != "nt":
+        return  # Windows 전용
+    state = tempfile.mkdtemp(prefix="pytmux-sshwrap-")
+    env = {"PATH": r"C:\Windows\System32"}
+    out = sshwrap.panel_env(env, state)
+    assert out[sshwrap.NEST_MARKER] == "1", "표식 env 주입"
+    wd = os.path.join(state, "sshwrap")
+    assert out["PATH"].startswith(wd + os.pathsep), "래퍼 디렉터리가 PATH 앞단"
+    for name in ("ssh", "autossh"):
+        p = os.path.join(wd, name + ".cmd")
+        assert os.path.exists(p), f"{name}.cmd 래퍼 생성"
+        body = open(p, encoding="utf-8").read()
+        assert f"SendEnv={sshwrap.NEST_MARKER}" in body, "SendEnv 표식 전파"
+        # .exe 만 검색해 자기 .cmd 를 안 잡는다(무한 재귀 방지).
+        assert f"in ({name}.exe)" in body, ".exe 만 PATH 검색"
+    # 멱등: 다시 호출해도 내용 동일(재작성 무해).
+    sshwrap.ensure_wrapper_dir(state)
+    assert sshwrap.NEST_MARKER == NEST_MARKER
+
+
 async def test_main_refuses_nested_attach():
     # PYTMUX 가 설정된 상태에서 attach → SystemExit(1)(ensure_server 도달 전 차단).
     old = os.environ.get("PYTMUX")

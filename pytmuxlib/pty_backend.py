@@ -6,10 +6,11 @@
   * **Unix** (`_UnixPty`): 기존과 동일하게 `pty.fork()` 로 fork+exec+PTY 를 한 번에
     만들고, master fd 를 asyncio `add_reader` 로 읽는다. `fcntl`/`termios`/`os.killpg`
     /`os.waitpid` 의미를 그대로 보존한다.
-  * **Windows** (`_WinPty`): fork 가 없으므로 ConPTY(`pywinpty`) 로 셸을 띄우고,
-    Proactor 루프가 ConPTY 파이프에 `add_reader` 를 못 거는 한계(§6②) 때문에
-    **전용 리더 스레드**가 블로킹 read 후 `loop.call_soon_threadsafe` 로 바이트를
-    이벤트 루프에 펌프한다. (poc/winpty_poc.py 에서 검증한 모델 그대로.)
+  * **Windows** (`_WinPty`): fork 가 없으므로 ConPTY 를 **저수준 `winpty.PTY`** 로
+    직접 띄우고(고수준 PtyProcess 의 여분 리더 스레드+localhost 소켓+트랜스코드를
+    제거 — §1.1), Proactor 루프가 ConPTY 핸들에 `add_reader` 를 못 거는 한계(§6②)
+    때문에 **전용 리더 스레드**가 read 후 `loop.call_soon_threadsafe` 로 바이트를
+    이벤트 루프에 펌프한다.
 
 두 백엔드는 동일한 표면을 노출한다:
 
@@ -33,10 +34,18 @@ import struct
 import threading
 from typing import Callable, Optional
 
+from .protocol import FEED_SLICE  # PTY feed 슬라이스 크기(순환 import 없음)
+
 
 IS_WINDOWS = os.name == "nt"
 
 DEFAULT_READ = 65536
+
+# 직접 소유 ConPTY 리더의 한 read 상한(#1.5). 64KB 대신 FEED_SLICE 로 끊어 읽으면 ①
+# 백프레셔로 pause 가 걸렸을 때 in-flight read 가 최대 이 크기만 비집고 들어와(64KB 가
+# 아니라) pause 가 더 빨리 듣고, ② 전달 청크가 서버 인라인 처리 한계(FEED_SLICE) 이하라
+# 64KB 드레인 태스크 없이 곧장 ingest 된다.
+_OWNED_READ_CHUNK = FEED_SLICE
 
 # Unix 시그널 상수(Windows 에는 SIGHUP 이 없어 자리표시자). 메서드 본문에서
 # 전역으로 참조하므로 호출 시점(=Unix 런타임)에만 의미를 가진다.
@@ -74,6 +83,17 @@ def spawn(argv, *, cols: int, rows: int,
     cwd: 시작 디렉터리(None=상속). env: 환경(None=현재 프로세스 환경 상속).
     """
     if IS_WINDOWS:
+        # PYTMUX_PTY_BACKEND=owned|conpty 면 직접 소유 ConPTY(raw 바이트, §1.1② 손상
+        # 해결)를 쓰고, 실패하면 조용히 pywinpty 로 폴백한다(안전망). 기본값은 검증된
+        # pywinpty(_WinPty) — 직접 소유 백엔드를 실 박스에서 검증한 뒤 기본 전환 예정.
+        choice = (os.environ.get("PYTMUX_PTY_BACKEND") or "").strip().lower()
+        if choice in ("owned", "conpty"):
+            try:
+                from . import conpty as _conpty
+                if _conpty.conpty_supported():
+                    return _OwnedConPty(argv, cols=cols, rows=rows, cwd=cwd, env=env)
+            except Exception:
+                pass  # 폴백: pywinpty
         return _WinPty(argv, cols=cols, rows=rows, cwd=cwd, env=env)
     return _UnixPty(argv, cols=cols, rows=rows, cwd=cwd, env=env)
 
@@ -303,17 +323,51 @@ class _UnixPty(PtyProcess):
 # Windows: pywinpty(ConPTY) + 리더 스레드 펌프
 # ─────────────────────────────────────────────────────────────────────────────
 class _WinPty(PtyProcess):
-    """ConPTY 백엔드. poc/winpty_poc.py 의 리더-스레드 펌프 모델을 일반화.
+    """ConPTY 백엔드 — **저수준 `winpty.PTY` 직접** 사용 + 리더-스레드 펌프(#1.1① 일부·#1.5).
 
-    주의(멀티바이트): pywinpty 의 고수준 `PtyProcess` 는 `read()`/`write()` 가 `str`
-    이라, 멀티바이트(UTF-8) 시퀀스가 read 경계에서 잘리면 디코드가 깨질 수 있다. 본
-    구현은 PoC 와 동일하게 utf-8 재인코딩으로 바이트 경로를 흉내 낸다. 실제 운영에서
-    CJK/이모지 깨짐이 보이면 저수준 `winpty.PTY`(바이트) 경로로 교체한다(§6 NOTE).
+    주의: #1.1②(멀티바이트 경계 손상)는 **미해결**이다 — 아래 멀티바이트 절 참조.
+
+    과거엔 고수준 `winpty.PtyProcess` 를 썼는데, 그건 내부에 **자체 리더 스레드 +
+    localhost 소켓**을 두고 ConPTY 바이트를 `str→소켓 bytes→str` 로 나르며, 우리
+    리더가 그 위에서 다시 `str→bytes` 로 재인코딩했다(패널당 스레드 2개·소켓 1개 +
+    트랜스코드 4회, §1.1①). 저수준 `winpty.PTY` 로 내려가면 그 여분 스레드·소켓·
+    트랜스코드 홉이 사라지고(C 디코드 1 + 우리 인코드 1), 리더 스레드가 read 전에
+    백프레셔 게이트(_resume_evt)를 확인해 #1.5(in-flight 64KB read 가 드레인 중 끼어듦)도
+    완화된다 — 저수준 read 는 보통 ConPTY 화면 diff 단위(작음)라 청크가 작다(단, CJK
+    플러드처럼 producer 가 리더를 앞지르면 read 가 32768B 상한까지 차며, 이때 §1.1②
+    경계 손상이 난다).
+
+    멀티바이트 경계 손상(§1.1② — **미해결, 실측 재현됨 2026-06-11**): 이전 주석은
+    `PTY.read()` 가 "완결 디코드한 유효 str" 이라 경계 절단이 없다고 했으나 **틀렸다**.
+    pywinpty 가 래핑하는 winpty-rs 의 `read()` 는 `ReadFile` 로 **최대 32768 바이트**를
+    읽어 `MultiByteToWideChar(CP_UTF8)` 로 디코드하는데, **read 경계를 넘는 미완결
+    멀티바이트를 carry 하지 않는다**(청크마다 독립 디코드). 따라서 CJK/이모지가 32768B
+    경계에 걸리면 winpty-rs 가 우리에게 str 을 넘기기 전에 이미 U+FFFD 로 영구 손상한다.
+    실측(office 박스): CJK 플러드 시 **연속 읽기에서도** U+FFFD 발생(348KB→24개, 696KB
+    →50개; max 청크 ~11k자 ≈ 33KB > 32768). 손상은 winpty-rs 안에서 일어나 우리 층에서
+    carry 로 복구 불가(이미 U+FFFD). pywinpty 의 `PTY.read()` 는 str 전용이고 conout
+    핸들도 미노출이라 raw 바이트 우회가 불가능하다. **진짜 해결책 = ConPTY 를 직접
+    소유**(ctypes CreatePseudoConsole + overlapped 명명 파이프로 raw 바이트 읽기 → 서버
+    `pyte.ByteStream` 의 incremental decoder 가 경계 carry, Unix 와 동일). 익명 CreatePipe
+    로는 이 빌드에서 conhost 출력이 read 단에 도달하지 않아 winpty-rs 처럼 overlapped
+    명명 파이프가 필요함을 실측 확인. 상세·진행은 docs/IMPROVEMENT_OPPORTUNITIES.md §1.1.
+
+    write(§1.1③): `PTY.write` 는 str 만 받으므로 입력은 `bytes→utf-8 디코드` 한다 —
+    정상 UTF-8(한글 붙여넣기 포함)은 무손실이고, **순수 비-UTF-8 raw 바이트 전송은
+    pywinpty 한계상 불가**(라이브러리가 str 전용). 위 ConPTY 직접 소유 시 raw WriteFile
+    로 함께 해소된다.
+
+    종료(§1.2): close() 가 ConPTY 핸들을 드롭하면 **콘솔 hangup 이 attach 된 자식
+    트리(셸+손주)를 정리**한다(실측 확인 — 고아 없음). terminate/kill 은 직접 자식
+    셸을 TerminateProcess 로 즉시 내리고, 손주 정리는 close() 가 맡는다.
     """
 
     def __init__(self, argv, *, cols: int, rows: int, cwd, env):
-        from winpty import PtyProcess as _WinPtyProcess  # 지연 import
+        import shutil
+        import subprocess
+        from winpty import PTY  # 지연 import(POSIX 에 winpty 부재)
 
+        self._pty = None
         self._loop = None
         self._on_data: Optional[OnData] = None
         self._on_eof: Optional[OnEof] = None
@@ -321,15 +375,27 @@ class _WinPty(PtyProcess):
         self._stop = threading.Event()
         # 백프레셔용 게이트: set=읽기 허용(기본), clear=리더 스레드를 다음 read 전에
         # 멈춤(pause_reader). POSIX 의 remove_reader 와 같은 역할 — 대량 출력 드레인
-        # 중(server._feed_drain) 더 읽지 않아 ConPTY/커널 버퍼가 producer 를 막게 한다.
+        # 중(server._feed_drain) 더 읽지 않아 ConPTY 버퍼가 producer 를 막게 한다.
         self._resume_evt = threading.Event()
         self._resume_evt.set()
         self._eof_fired = False
+        self._exit: Optional[int] = None
 
-        spec = argv if len(argv) > 1 else argv[0]
-        self._proc = _WinPtyProcess.spawn(
-            spec, cwd=cwd, env=env, dimensions=(max(1, rows), max(1, cols)))
-        self.pid = self._proc.pid
+        # 고수준 PtyProcess.spawn 의 인자 구성을 그대로 재현: argv[0] 을 PATH 에서
+        # 해석하고, 나머지를 cmdline 으로, env 는 "K=V\0...\0" 문자열로 넘긴다.
+        appname = shutil.which(argv[0]) or argv[0]
+        cmdline = (" " + subprocess.list2cmdline(list(argv[1:]))
+                   if len(argv) > 1 else None)
+        env_str = None
+        if env is not None:
+            env_str = "\0".join(f"{k}={v}" for k, v in env.items()) + "\0"
+
+        self._pty = PTY(max(1, cols), max(1, rows))  # 주의: (cols, rows) 순서
+        if cmdline is None:
+            self._pty.spawn(appname, cwd=cwd, env=env_str)
+        else:
+            self._pty.spawn(appname, cmdline=cmdline, cwd=cwd, env=env_str)
+        self.pid = self._pty.pid
 
     def start_reader(self, loop, on_data: OnData, on_eof: OnEof) -> None:
         self._loop = loop
@@ -340,29 +406,31 @@ class _WinPty(PtyProcess):
         self._reader.start()
 
     def _read_loop(self) -> None:
-        proc = self._proc
+        pty = self._pty
         while not self._stop.is_set():
-            # 백프레셔: pause_reader 로 게이트가 닫히면 드레인이 끝나(resume_reader)
-            # 게이트가 다시 열릴 때까지 read 를 멈춘다. stop_reader/close 도 게이트를
-            # 열어(+_stop) 멈춘 리더를 깨워 빠져나가게 한다. 이미 진행 중인 read 한
-            # 건(≤DEFAULT_READ)은 마저 전달될 수 있다(POSIX 와 동일하게 무해·유한).
+            # 백프레셔: pause_reader 로 게이트가 닫히면 드레인이 끝날 때까지 read 를
+            # 멈춘다(게이트를 read *전에* 확인하므로 일시정지 중엔 read 가 아예 안 일어남
+            # — POSIX remove_reader 와 동치). stop_reader/close 가 게이트+_stop 으로 깨운다.
             if not self._resume_evt.is_set():
                 self._resume_evt.wait()
                 if self._stop.is_set():
                     break
             try:
-                s = proc.read(DEFAULT_READ)
-            except EOFError:
+                # blocking=True: 데이터 올 때까지 블록(유휴 CPU 0). 저수준 read 는
+                # ConPTY 화면 diff 단위라 청크가 작아, in-flight read 1건이 드레인에
+                # 끼어들어도 무해·유한(#1.5). cancel_io()/EOF 는 WinptyError 로 깨운다.
+                s = pty.read(blocking=True)
+            except Exception:  # WinptyError(EOF/닫힘/cancel_io) 등 — 정리로 본다
                 break
-            except Exception:  # ConPTY 종료 시 잡다한 OSError 방어
-                break
-            if s:
-                b = s.encode("utf-8", "replace")
-                loop = self._loop
-                if loop is not None:
-                    loop.call_soon_threadsafe(self._deliver, b)
-            elif not proc.isalive():
-                break
+            if not s:
+                if not pty.isalive():
+                    break
+                continue
+            # winpty C 레이어가 완결 디코드한 유효 str → utf-8 인코드는 무손실.
+            b = s.encode("utf-8", "replace")
+            loop = self._loop
+            if loop is not None:
+                loop.call_soon_threadsafe(self._deliver, b)
         # EOF: 루프 스레드에서 콜백을 직접 부르지 않고 이벤트 루프로 넘긴다.
         loop = self._loop
         if loop is not None:
@@ -383,6 +451,7 @@ class _WinPty(PtyProcess):
     def stop_reader(self) -> None:
         self._stop.set()       # daemon 스레드는 다음 read/EOF 에서 빠져나감
         self._resume_evt.set()  # 백프레셔로 멈춰 있던 리더를 깨워 _stop 을 보게 한다
+        self._cancel_read()     # 블로킹 read 를 깨워 즉시 빠져나가게 한다
 
     def pause_reader(self) -> None:
         # 리더 스레드를 다음 read 전에 멈춰 ConPTY 버퍼가 백프레셔하게 한다(메모리
@@ -394,44 +463,240 @@ class _WinPty(PtyProcess):
     def resume_reader(self) -> None:
         self._resume_evt.set()
 
+    def _cancel_read(self) -> None:
+        """진행 중인 블로킹 read 를 취소해 리더 스레드를 깨운다(best-effort)."""
+        pty = getattr(self, "_pty", None)  # __new__ 인스턴스(테스트) 안전
+        if pty is not None:
+            try:
+                pty.cancel_io()
+            except Exception:
+                pass
+
     def write(self, data: bytes) -> None:
-        # 고수준 API 는 str 을 받는다. 바이트 → utf-8 디코드(§6 NOTE 의 멀티바이트 주의).
-        self._proc.write(data.decode("utf-8", "replace"))
+        # PTY.write 는 str 전용 → bytes 를 utf-8 디코드(§1.1③ 멀티바이트 주의).
+        pty = self._pty
+        if pty is None:
+            return
+        try:
+            pty.write(data.decode("utf-8", "replace"))
+        except Exception:
+            pass  # 이미 닫힘/죽음 — 무해(연결 끊긴 정상 경로)
 
     def set_winsize(self, rows: int, cols: int) -> None:
-        self._proc.setwinsize(max(1, rows), max(1, cols))
-
-    # NOTE(#28): 아래 winpty 정리 경로의 `except Exception` 은 **의도적으로 광역**이다.
-    # pywinpty 는 OSError 가 아닌 자체 `winpty.WinptyError`(또는 RuntimeError)를 던질
-    # 수 있어 OSError 로 좁히면 종료/정리 중 그 예외가 새어 teardown 을 깨뜨린다. 정리
-    # 경로라 best-effort 로 삼키는 게 맞다(POSIX 쪽 _UnixPty 는 표준 OSError 라 호출부에서
-    # 좁혔다). 실 Windows 박스 없이 타입을 좁히는 건 검증 불가라 광역 유지.
-    def terminate(self) -> None:
+        pty = self._pty
+        if pty is None:
+            return
         try:
-            self._proc.terminate(force=False)
+            pty.set_size(max(1, cols), max(1, rows))  # 주의: (cols, rows) 순서
         except Exception:
             pass
+
+    # NOTE(#28): 아래 정리 경로의 광역 `except Exception` 은 의도적이다 — pywinpty 는
+    # OSError 가 아닌 자체 `winpty.WinptyError` 를 던질 수 있어, 좁히면 종료/정리 중
+    # 그 예외가 새어 teardown 을 깨뜨린다. 정리 경로라 best-effort 로 삼킨다.
+    def _terminate_child(self) -> None:
+        """직접 자식 셸을 즉시 종료(TerminateProcess). 손주는 close() 의 콘솔
+        hangup 이 정리한다(§1.2). Windows 엔 콘솔 외부에서 보낼 graceful 시그널이
+        없어 graceful/force 가 사실상 동일하다."""
+        if self.pid and self.pid > 0:
+            try:
+                import signal
+                os.kill(self.pid, signal.SIGTERM)  # Windows: TerminateProcess
+            except (OSError, ProcessLookupError, ValueError):
+                pass
+
+    def terminate(self) -> None:
+        self._terminate_child()
 
     def kill(self) -> None:
-        try:
-            self._proc.terminate(force=True)
-        except Exception:
-            pass
+        self._terminate_child()
 
     def reap(self, *, block: bool = False) -> Optional[int]:
+        # Windows 프로세스는 좀비가 없어(회수 불필요) 생존/종료코드만 본다. close()
+        # 후엔 _pty 가 없으니 pid 로 종료를 기다린다(WaitForSingleObject — 효율적).
+        if block and self.pid and self.pid > 0:
+            try:
+                from . import proc
+                proc._win_wait_dead(self.pid, 5.0)
+            except Exception:
+                pass
+        pty = self._pty
+        if pty is None:
+            return self._exit
         try:
-            if block:
-                return self._proc.wait()
-            if self._proc.isalive():
+            if pty.isalive():
                 return None
-            return getattr(self._proc, "exitstatus", 0)
+            return pty.get_exitstatus()
         except Exception:
-            return None
+            return self._exit
 
     def close(self) -> None:
         self._stop.set()
         self._resume_evt.set()  # 멈춘 리더를 깨워 빠져나가게 한다(teardown 교착 방지)
+        pty, self._pty = self._pty, None
+        if pty is not None:
+            try:
+                self._exit = pty.get_exitstatus()
+            except Exception:
+                pass
+            self._cancel_read_on(pty)  # 블로킹 read 깨우기
+        # pty 로컬 참조가 소멸하고 리더 스레드의 지역 ref 도 빠져나가면 refcount=0 →
+        # Cython __dealloc__ 가 pseudoconsole 을 해제 → 콘솔 hangup 으로 attach 된
+        # 자식 트리(셸+손주)가 종료된다(§1.2 — 고아 방지, 실측 확인).
+
+    @staticmethod
+    def _cancel_read_on(pty) -> None:
         try:
-            self._proc.close()
+            pty.cancel_io()
         except Exception:
             pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Windows: 직접 소유 ConPTY(raw 바이트) — §1.1② 멀티바이트 손상 해결
+# ─────────────────────────────────────────────────────────────────────────────
+class _OwnedConPty(PtyProcess):
+    """우리가 직접 소유하는 ConPTY 백엔드 — **raw 바이트** 입출력으로 §1.1②(멀티바이트
+    경계 손상)·§1.1③(비-UTF-8 write 손상)을 동시에 해결한다.
+
+    `conpty._ConPty`(ctypes `CreatePseudoConsole`)가 의사 콘솔을 소유하고 우리 파이프로
+    raw 바이트를 읽고 쓴다. pywinpty(`_WinPty`)와 달리 **read 경로에서 디코드를 전혀 하지
+    않는다** — winpty-rs 가 ReadFile 청크마다 carry 없이 `MultiByteToWideChar` 하던 손상
+    원점을 우회한다. 받은 raw 바이트는 서버 feed 경로(`pyte.ByteStream`)의 영속 incremental
+    decoder 가 경계 carry 해 Unix PTY 와 동일하게 무손상으로 처리된다.
+
+    리더 모델은 `_WinPty` 와 동일(Proactor 가 콘솔 핸들에 add_reader 불가 → 전용 스레드가
+    블로킹 read 후 `call_soon_threadsafe` 로 이벤트 루프에 펌프). `close()` 가
+    `ClosePseudoConsole` 로 conhost 를 내리면 출력 쓰기단이 닫혀 블로킹 read 가 EOF(0)로
+    빠져나오므로 별도 취소가 필요 없다.
+
+    write 는 익명 파이프라 오버랩이 안 돼 대량 paste 버스트에서 블로킹할 수 있다(keystroke
+    단위 소량은 무해). 필요 시 후속에서 오버랩 명명 파이프로 승급(§1.1 설계 메모).
+    """
+
+    def __init__(self, argv, *, cols: int, rows: int, cwd, env):
+        from . import conpty
+
+        self._cp = None
+        self._loop = None
+        self._on_data: Optional[OnData] = None
+        self._on_eof: Optional[OnEof] = None
+        self._reader: Optional[threading.Thread] = None
+        self._stop = threading.Event()
+        # 백프레셔 게이트(_WinPty 와 동일): set=읽기 허용(기본), clear=다음 read 전에 멈춤.
+        self._resume_evt = threading.Event()
+        self._resume_evt.set()
+        self._eof_fired = False
+        self._exit: Optional[int] = None
+
+        cp = conpty._ConPty(max(1, cols), max(1, rows))
+        cp.spawn(list(argv), cwd=cwd, env=env)
+        self._cp = cp
+        self.pid = cp.pid
+
+    def start_reader(self, loop, on_data: OnData, on_eof: OnEof) -> None:
+        self._loop = loop
+        self._on_data = on_data
+        self._on_eof = on_eof
+        self._reader = threading.Thread(
+            target=self._read_loop, name=f"owned-conpty-{self.pid}", daemon=True)
+        self._reader.start()
+
+    def _read_loop(self) -> None:
+        cp = self._cp
+        while not self._stop.is_set():
+            if not self._resume_evt.is_set():
+                self._resume_evt.wait()
+                if self._stop.is_set():
+                    break
+            try:
+                # FEED_SLICE 단위로 끊어 읽어 백프레셔 응답성 + 인라인 ingest(#1.5).
+                data = cp.read(_OWNED_READ_CHUNK)   # 블로킹, raw 바이트
+            except OSError:
+                break
+            if not data:
+                break   # EOF: 자식 종료 / conhost 닫힘 / close()
+            loop = self._loop
+            if loop is not None:
+                # raw 바이트를 그대로 전달(디코드 안 함) — 손상 원점 회피.
+                loop.call_soon_threadsafe(self._deliver, data)
+        loop = self._loop
+        if loop is not None:
+            loop.call_soon_threadsafe(self._fire_eof)
+
+    def _deliver(self, b: bytes) -> None:
+        if not self._stop.is_set() and self._on_data:
+            self._on_data(b)
+
+    def _fire_eof(self) -> None:
+        if self._eof_fired:
+            return
+        self._eof_fired = True
+        cb, self._on_eof = self._on_eof, None
+        if cb and not self._stop.is_set():
+            cb()
+
+    def stop_reader(self) -> None:
+        self._stop.set()
+        self._resume_evt.set()   # 백프레셔로 멈춘 리더를 깨워 _stop 을 보게 한다
+        # 블로킹 read 는 close()/ClosePseudoConsole 의 EOF 로 빠져나온다.
+
+    def pause_reader(self) -> None:
+        self._resume_evt.clear()
+
+    def resume_reader(self) -> None:
+        self._resume_evt.set()
+
+    def write(self, data: bytes) -> None:
+        cp = self._cp
+        if cp is None:
+            return
+        try:
+            cp.write(data)   # raw 바이트(§1.1③ — 디코드/재인코드 없음)
+        except OSError:
+            pass
+
+    def set_winsize(self, rows: int, cols: int) -> None:
+        cp = self._cp
+        if cp is None:
+            return
+        try:
+            cp.resize(cols, rows)   # 주의: (cols, rows) 순서
+        except OSError:
+            pass
+
+    def terminate(self) -> None:
+        cp = self._cp
+        if cp is not None:
+            cp.terminate()
+
+    def kill(self) -> None:
+        cp = self._cp
+        if cp is not None:
+            cp.terminate()   # Windows 엔 graceful/force 구분이 없음
+
+    def reap(self, *, block: bool = False) -> Optional[int]:
+        cp = self._cp
+        if cp is None:
+            return self._exit
+        try:
+            return cp.wait(5000) if block else cp.exit_code()
+        except OSError:
+            return self._exit
+
+    def close(self) -> None:
+        self._stop.set()
+        self._resume_evt.set()
+        cp, self._cp = self._cp, None
+        if cp is not None:
+            try:
+                ec = cp.exit_code()
+                if ec is not None:
+                    self._exit = ec
+            except OSError:
+                pass
+            # ClosePseudoConsole → conhost hangup → 자식 트리 종료 + 블로킹 read EOF.
+            try:
+                cp.close()
+            except OSError:
+                pass

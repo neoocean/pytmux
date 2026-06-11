@@ -902,14 +902,19 @@ class InfoTabsScreen(ModalScreen):
         # 그 외 키 → 닫기(InfoScreen 과 동일한 가벼운 닫힘)
         self.dismiss(None)
 
-def usage_bar_lines(usage, width=80, age_sec=None):
+def usage_bar_lines(usage, width=80, age_sec=None, right_align=False):
     """Claude `/usage` 한도 dict(session·week_all·week_sonnet)를 보기 좋은 표시
     줄 목록으로 만든다. 각 줄: 라벨(10셀 패딩) + 막대 + % + 리셋(요약, 타임존 생략).
     데이터가 없으면 None. TokenLogScreen 의 한도 섹션과 자동 /usage 팝업이 공유한다.
 
     age_sec: 실측 경과(초, S6 T3). 2분 이상 묵었으면 마지막에 'N분 전 실측'을 붙여
     stale 임을 알린다 — 실측이 주 표시로 승격되면서 묵은 값을 현재값으로 오독하지
-    않게 하는 표시측 대응(stale 스냅샷 혼동 방지)."""
+    않게 하는 표시측 대응(stale 스냅샷 혼동 방지).
+
+    right_align: 켜면 막대를 트랙 폭(barw)으로 채워 행마다 리셋 시작 열을 맞추고,
+    % 숫자를 막대 바로 옆이 아니라 **줄 오른쪽 끝(width)** 에 우측정렬한다(리셋은
+    막대 뒤). usage-view 플러그인 팝업/오버레이가 켠다 — 기본 False 라 기존 소비자
+    (usage-panel·TokenLogScreen)의 표시는 그대로다(opt-in)."""
     if not isinstance(usage, dict):
         return None
     barw = 24 if width >= 80 else (16 if width >= 60 else 8)
@@ -922,10 +927,22 @@ def usage_bar_lines(usage, width=80, age_sec=None):
         pct = d["pct"]
         gauge = bar(pct, 100, barw)
         label = name + " " * max(0, 10 - sum(_char_cells(c) for c in name))
-        line = f"{label}{gauge} {pct:>3}%"
         reset = d.get("reset")
-        if reset:                            # 타임존 괄호는 자리 절약 위해 생략
-            line += "  ↻" + reset.split(" (")[0].strip()
+        # 타임존 괄호는 자리 절약 위해 생략.
+        reset_txt = ("↻" + reset.split(" (")[0].strip()) if reset else ""
+        if right_align:
+            # 막대를 트랙 폭으로 채워(공백) 리셋 시작 열을 행마다 맞추고, % 숫자는
+            # 줄 오른쪽 끝(width)에 우측정렬한다 — 막대/리셋과 % 사이를 공백으로 채움.
+            gauge = gauge + " " * max(0, barw - len(gauge))
+            tail = f"{pct:>3}%"
+            body = f"{label}{gauge}  {reset_txt}".rstrip()
+            gap = (width - sum(_char_cells(c) for c in body)
+                   - sum(_char_cells(c) for c in tail))
+            line = body + " " * max(1, gap) + tail
+        else:
+            line = f"{label}{gauge} {pct:>3}%"
+            if reset_txt:
+                line += "  " + reset_txt
         rows.append(line)
     # 그림자 /usage 세션의 계정(일치 확인용). 키가 있을 때만 — 폰 앱과 다른 계정이면
     # 한도가 실제로 달라지므로 눈으로 대조하라고 표시한다. 신호 못 잡으면 '미확인'.

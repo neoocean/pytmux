@@ -513,15 +513,21 @@ class ServerTreeMixin:
         if win:
             win.auto_rename = (not win.auto_rename) if value is None else bool(value)
 
-    def _fg_command(self, fd: int):
-        """PTY 의 포그라운드 프로세스 그룹 명령 이름(자동 탭이름·ssh 감지용).
+    def _fg_command(self, pane):
+        """패널의 포그라운드 명령 이름(자동 탭이름·ssh/원격 감지용).
 
-        Windows(ConPTY)에는 포그라운드 프로세스 그룹 개념과 os.tcgetpgrp/ps 가
-        없어 지원하지 않는다(docs/WINDOWS_PORT.md §4 기능 열화). 자동 이름은
-        고정 탭이름으로 우아하게 폴백된다. os.tcgetpgrp 는 Windows 에 아예
-        없어(AttributeError) OSError 핸들러로는 못 잡으므로 먼저 분기한다."""
-        if pty_backend.IS_WINDOWS:
+        POSIX: PTY master fd 의 포그라운드 프로세스 그룹을 `tcgetpgrp`+`ps` 로 구한다.
+        Windows(ConPTY, #7): 포그라운드 pgrp 개념이 없어 셸 자손 프로세스 트리에서 가장
+        깊은 자손을 추정한다(`proc.foreground_command(pane.child_pid)`) — idle 이면 셸
+        이름, ssh/python 등을 띄우면 그 이름. 실패 시 None(고정 탭이름 폴백).
+
+        과거엔 fd 만 받아 Windows 를 무조건 None 으로 폴백했으나, child_pid 기반으로
+        Windows 자동 이름·원격 감지를 지원하도록 pane 을 받는다."""
+        if pane is None:
             return None
+        if pty_backend.IS_WINDOWS:
+            return proc.foreground_command(getattr(pane, "child_pid", -1))
+        fd = getattr(pane, "master_fd", -1)
         try:
             pgid = os.tcgetpgrp(fd)
         except OSError:
@@ -551,7 +557,7 @@ class ServerTreeMixin:
                     win = tab.window
                     if not getattr(win, "auto_rename", False) or not win.active_pane:
                         continue
-                    cmd = self._fg_command(win.active_pane.master_fd)
+                    cmd = self._fg_command(win.active_pane)
                     if cmd and cmd != tab.name:
                         tab.name = cmd
                         changed = True

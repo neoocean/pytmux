@@ -357,6 +357,26 @@ async def usage_panel(app, pilot):
     await pilot.pause(0.5)
 
 
+async def usage_view(app, pilot):
+    # claude-token-usage-view 플러그인 팝업(usage-view) — 한도 막대(% 우측정렬)+다음
+    # 리셋 블록 카운트다운. 예시 한도를 주입한다. 실서버 status flush 가 usage_limits 를
+    # None 으로 덮어 1초 틱이 '데이터 없음'으로 재렌더할 수 있으므로(레이스), 캡처 직전
+    # 데이터를 다시 박고 화면을 재렌더해 안정적으로 찍는다(usage_panel 의 스냅샷 대응).
+    data = {
+        "session": {"pct": 18, "reset": "5:59pm (Asia/Seoul)"},
+        "week_all": {"pct": 3, "reset": "Jun 18, 12:59pm (Asia/Seoul)"},
+        "week_sonnet": {"pct": 0, "reset": "Jun 18, 12:59pm (Asia/Seoul)"},
+        "account": "default",
+    }
+    app.status.usage_limits = data
+    app.status.usage_age_sec = 5
+    app.open_usage_view("popup")
+    await pilot.pause(0.4)
+    app.status.usage_limits = data
+    app.screen_stack[-1]._redraw()
+    await pilot.pause(0.2)
+
+
 # 진짜 Claude Code 한 세션에서 캡처하는 §11 컷 묶음(라이브 — 실제 API 호출).
 CLAUDE_OUTPUTS = ["11-claude", "12-claude-autoresume", "13-perm-mode",
                   "20-prompt-history", "22-claude-real"]
@@ -465,6 +485,7 @@ SCENES = [
     ("27-ncd", "디렉토리 트리(ncd) — 루트→cwd 펼침·시안 선택 막대·찾기 안내줄", ncd),
     ("28-claude-rules", "시작 규칙 편집(claude-rules) — 멀티라인 에디터·Ctrl+S 저장", claude_rules),
     ("29-usage-panel", "사용 한도(/usage) — 세션 5h·주 전체·주 Sonnet 막대 그래프", usage_panel),
+    ("30-usage-view", "usage-view 팝업 — 한도 막대(% 우측정렬)+다음 리셋 블록 카운트다운", usage_view),
 ]
 # Claude 컷(11·12·13·20·22)은 결정적 장면이 아니라 진짜 `claude` 한 세션에서 캡처한다
 # (claude_suite). 실제 API 호출이라 무인자 전체 생성에선 제외하고, `claude-suite` 또는
