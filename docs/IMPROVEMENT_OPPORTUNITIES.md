@@ -40,8 +40,13 @@
 | §4.4 | feed ESC-없는 플레인 텍스트 빠른 경로 | ✅ | 57052 |
 
 **보류(사유 명시 — 후속 별도 진행)**:
-- **#2 IPC 인증 토큰**(H): 보안 경계 핸드셰이크. 주 수혜인 Windows TCP 무인증을 개발
-  박스(macOS)에서 검증 불가 + 데몬 영속상 구클라 락아웃 위험. M5의 #7 이 협상 기반 마련.
+- ~~**#2 IPC 인증 토큰**(H)~~ → **해결**(보안 감사 시리즈 CL 57238~57283, F1):
+  서버가 listen 전에 `secrets.token_hex(32)` 를 0600 토큰 파일로 게시, 클라가 읽어
+  hello/control 에 실어 보내고 `handle_client` 가 `hmac.compare_digest` 상수시간
+  비교로 검증(불일치=auth_failed 거절, Windows TCP 루프백 포함) —
+  [SECURITY_REVIEW.md](SECURITY_REVIEW.md) F1 "✅적용". 보류 사유였던 구클라
+  락아웃은 토큰 파일 자동 게시/재읽기로 해소됨. (2026-06-11 코드 검증으로 stale 정정
+  — 실 Windows 박스 동작 확인만 Windows 계열 #1.x 에 잔존.)
 - ~~**#8 서버 render-후-폐기 → dirty 행 재직렬화**(H)~~ → **해결**(B 묶음 CL
   56995~57024 — `model.render()` 가 라이브 뷰·검색 비활성·캐시 유효 시 `screen.dirty`
   행만 재직렬화, 스크롤/검색/리사이즈/alt 전환은 전체 폴백. §4.1 도 같은 건으로 해소).
