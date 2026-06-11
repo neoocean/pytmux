@@ -302,22 +302,77 @@ def _win_process_cwd(pid: int) -> Optional[str]:
         return None
 
 
-def terminate(pid: int, *, force: bool = False) -> None:
+def _win_taskkill(pid: int, *, force: bool, timeout: float = 10.0) -> None:
+    """taskkill 1회 호출(/T=자식 트리, /F=강제). 실패·타임아웃은 조용히 무시.
+
+    graceful(/F 없음) 은 창 없는 콘솔/분리 프로세스에서 WM_CLOSE 응답을 기다리며
+    오래 블록될 수 있어, 호출부가 짧은 timeout 을 줄 수 있게 한다(타임아웃 시
+    TimeoutExpired → SubprocessError 로 삼키고 에스컬레이트가 처리)."""
+    cmd = ["taskkill", "/PID", str(pid), "/T"]
+    if force:
+        cmd.append("/F")
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=timeout,
+                       **no_window_kwargs())
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def _win_wait_dead(pid: int, timeout: float) -> bool:
+    r"""대상 프로세스가 timeout 초 안에 종료되길 기다린다. 죽었으면 True.
+
+    grace 동안 tasklist(is_alive)를 반복 폴링하면 호출당 수백 ms 라 비용이 크다.
+    대신 ctypes `OpenProcess(SYNCHRONIZE)` + `WaitForSingleObject` 로 **한 번에**
+    대기한다(프로세스 핸들이 시그널되면=종료되면 즉시 깨어남). 핸들을 못 열면
+    (이미 종료/접근 불가) 죽은 것으로 간주(True)."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        SYNCHRONIZE = 0x00100000
+        WAIT_TIMEOUT = 0x00000102
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        OpenProcess = k.OpenProcess
+        OpenProcess.restype = wintypes.HANDLE
+        OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        h = OpenProcess(SYNCHRONIZE, False, pid)
+        if not h:
+            return True
+        try:
+            r = k.WaitForSingleObject(h, int(max(0.0, timeout) * 1000))
+            return r != WAIT_TIMEOUT
+        finally:
+            k.CloseHandle(h)
+    except Exception:
+        # ctypes 경로 실패 시 보수적으로 is_alive 한 번만 확인.
+        return not is_alive(pid)
+
+
+def terminate(pid: int, *, force: bool = False, grace: float = 3.0) -> None:
     """프로세스(와 그 자식 트리)를 종료한다. 이미 없으면 조용히 무시.
 
     force=False 는 graceful(SIGTERM / taskkill), True 는 강제(SIGKILL / taskkill /F).
+
+    Windows graceful 의 함정(#1.2): `taskkill /T`(/F 없음)는 대상의 **최상위 창에
+    WM_CLOSE** 를 보낼 뿐이라, **창 없는 콘솔/분리(detached) 프로세스**(우리 서버
+    데몬·콘솔 서브시스템 셸)는 그 신호를 받을 창이 없어 **종료되지 않는다**. 그러면
+    트리가 그대로 남아 고아가 된다. 그래서 force=False 라도 graceful 시도 후 `grace`
+    초 동안 생존을 확인하고, **아직 살아 있으면 `/F /T` 로 에스컬레이트**해 트리를
+    확실히 내린다(force=True 는 처음부터 `/F /T`). POSIX 는 의미가 분명해(killpg
+    SIGTERM/SIGKILL) 에스컬레이트 없이 그대로 둔다 — 호출부가 필요 시 SIGKILL 한다.
     """
     if pid <= 0:
         return
     if IS_WINDOWS:
-        cmd = ["taskkill", "/PID", str(pid), "/T"]
         if force:
-            cmd.append("/F")
-        try:
-            subprocess.run(cmd, capture_output=True, timeout=10,
-                           **no_window_kwargs())
-        except (OSError, subprocess.SubprocessError):
-            pass
+            _win_taskkill(pid, force=True)
+            return
+        # graceful 시도(짧은 timeout — 창 없는 대상에서 오래 블록 방지) → grace 동안
+        # 종료를 한 번에 대기 → 안 죽었으면 /F /T 에스컬레이트.
+        _win_taskkill(pid, force=False, timeout=2.0)
+        if _win_wait_dead(pid, grace):
+            return
+        _win_taskkill(pid, force=True)  # 고아 방지 — 강제 트리 종료
         return
     import signal
     sig = signal.SIGKILL if force else signal.SIGTERM

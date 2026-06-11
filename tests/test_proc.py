@@ -109,6 +109,42 @@ async def test_win_is_alive_csv_exact_match():
         _sp.run = orig
 
 
+async def test_win_terminate_escalates():
+    """Windows terminate(force=False): graceful 후 안 죽으면 /F /T 에스컬레이트(#1.2).
+
+    창 없는/분리 프로세스는 taskkill /T(/F 없음)로 안 죽어 고아가 되던 문제. 실제
+    taskkill 대신 _win_taskkill/_win_wait_dead 를 가짜로 대체해 **호출 순서**만 검증
+    (실 프로세스 종료는 _probe_term.py 로 박스에서 별도 실측). Windows 분기만 의미가
+    있어 POSIX 에선 건너뛴다."""
+    if not proc.IS_WINDOWS:
+        return
+    calls = []
+    orig_kill = proc._win_taskkill
+    orig_wait = proc._win_wait_dead
+    proc._win_taskkill = lambda pid, *, force, timeout=10.0: calls.append(
+        ("kill", force))
+    try:
+        # 1) force=True → 곧장 강제 1회, graceful/wait 없음.
+        calls.clear()
+        proc.terminate(123, force=True)
+        assert calls == [("kill", True)]
+
+        # 2) force=False, graceful 후 죽음 → 에스컬레이트 없음.
+        calls.clear()
+        proc._win_wait_dead = lambda pid, timeout: True
+        proc.terminate(123, force=False)
+        assert calls == [("kill", False)]
+
+        # 3) force=False, 안 죽음 → graceful 후 강제 에스컬레이트.
+        calls.clear()
+        proc._win_wait_dead = lambda pid, timeout: False
+        proc.terminate(123, force=False)
+        assert calls == [("kill", False), ("kill", True)]
+    finally:
+        proc._win_taskkill = orig_kill
+        proc._win_wait_dead = orig_wait
+
+
 async def test_terminate_bogus_pid_noop():
     # 없는 pid 종료는 조용히 통과해야 한다(예외 없음).
     proc.terminate(2_000_000_000, force=True)
