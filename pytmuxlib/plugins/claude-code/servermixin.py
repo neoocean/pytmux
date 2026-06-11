@@ -1048,6 +1048,20 @@ class ServerClaudeMixin:
         Claude 를 안 쓰는데 숨은 세션을 띄워 스크랩하는 낭비를 막는다."""
         return any(getattr(p, "_claude", None) for p in self._all_panes())
 
+    def _probe_cwd(self):
+        """그림자 /usage 프로브의 cwd — **실행 중인 Claude 패널의 셸 cwd**(사용자가
+        이미 신뢰한 폴더). 데몬 cwd(보통 홈 ~)로 띄우면 숨은 claude 가 Claude Code
+        신뢰 대화상자("Is this a project you trust?")에 막혀 /usage 패널이 영영 안
+        뜨고 프로브가 조용히 None 이었다(2026-06-11 라이브 진단 — 재시작 후 limits
+        0건·실측 미표시의 원인. 직접 같은 조건으로 재현해 트러스트 화면 확인).
+        Claude 패널이 없으면(프로브 게이트상 드묾) 기존 데몬 cwd 폴백."""
+        for p in self._all_panes():
+            if getattr(p, "_claude", None):
+                d = self._pane_cwd(p)
+                if d:
+                    return d
+        return getattr(self, "cwd", None) or None
+
     async def refresh_usage(self):
         """M19 그림자 /usage 질의: executor 스레드에서 숨은 claude 를 띄워 /usage 패널을
         스크랩(usageprobe.query_usage)해 self._usage 에 저장하고 broadcast 한다. 사용자
@@ -1058,7 +1072,7 @@ class ServerClaudeMixin:
         try:
             from . import usageprobe
             loop = asyncio.get_event_loop()
-            cwd = getattr(self, "cwd", None) or None
+            cwd = self._probe_cwd()   # 신뢰된 폴더(Claude 패널 cwd) — 위 docstring
             u = await asyncio.wait_for(
                 loop.run_in_executor(None, usageprobe.query_usage, "claude", cwd),
                 timeout=35)

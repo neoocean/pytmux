@@ -721,3 +721,39 @@ async def test_near_gate_shortens_refresh_interval():
         except OSError:
             pass
         await teardown(srv, task, sock)
+
+
+async def test_usage_probe_uses_claude_pane_cwd():
+    """그림자 /usage 프로브 cwd = 실행 중인 Claude 패널의 셸 cwd(신뢰된 폴더).
+    데몬 cwd(홈)로 띄우면 신뢰 대화상자에 막혀 프로브가 조용히 None 이 되는 라이브
+    버그의 회귀 가드(2026-06-11). Claude 패널 없으면 데몬 cwd 폴백."""
+    import importlib
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p = await _claude_pane(srv)
+        # Claude 패널 없음 → 데몬 cwd 폴백
+        srv.cwd = "/daemon/cwd"
+        assert srv._probe_cwd() == "/daemon/cwd"
+        # Claude 패널 있음 → 그 패널 셸 cwd
+        p._claude = "idle"
+        srv._pane_cwd = lambda pane: "/trusted/proj"
+        assert srv._probe_cwd() == "/trusted/proj"
+        # refresh_usage 가 그 cwd 로 query_usage 를 부른다(스텁 — 실 spawn 없음)
+        up = importlib.import_module("pytmuxlib.plugins.claude-code.usageprobe")
+        seen = {}
+        orig = up.query_usage
+
+        def fake_query(cmd, cwd, **kw):
+            seen["cwd"] = cwd
+            return {"session": {"pct": 1, "reset": None}}
+        up.query_usage = fake_query
+        try:
+            u = await srv.refresh_usage()
+        finally:
+            up.query_usage = orig
+        assert u and seen["cwd"] == "/trusted/proj", seen
+        # 패널 cwd 미상이면 폴백 체인 유지
+        srv._pane_cwd = lambda pane: None
+        assert srv._probe_cwd() == "/daemon/cwd"
+    finally:
+        await teardown(srv, task, sock)
