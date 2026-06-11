@@ -15,6 +15,10 @@ set mouse on
 # 스크롤백(copy) 모드 키 스타일: vi 또는 emacs
 set mode-keys vi
 
+# UI 언어(로케일): ko(한국어) 또는 en(English). 미지정 시 환경 LANG 으로 결정
+# (ko* → 한국어, 그 외 → 영어). 런타임 `:lang ko|en` 명령이 이보다 우선(영속).
+# set lang ko
+
 # 상단 탭바: always(기본) = 탭이 하나여도 항상 표시 / auto = 탭 2개 이상일 때만
 set tab-bar always
 
