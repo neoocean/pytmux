@@ -738,3 +738,77 @@ async def test_account_first_seen_latched_not_overwritten():
         assert p._claude_account == "th…@woojinkim.org", "새 세션은 재래치"
     finally:
         await teardown(srv, task, sock)
+
+
+# ---- §3.7 포맷 미인식 가시화(silent failure) ----
+async def test_fmt_unknown_warning_surfaces_and_clears():
+    """Claude 가 실행 중(fg 명령에 'claude')인데 화면 파서가 상태를 못 읽는 상태가
+    지속되면 상태줄에 '포맷 미인식' ⚠ 경고를 세우고(추적 중단 가시화), 파서가 다시
+    인식하거나 Claude 가 아니면 즉시 해제한다(§3.7). throttle/임계 상수는 0 으로 패치."""
+    import sys as _sys
+    srv, task, sock = await server_only()
+    sm = _sys.modules[srv._update_fmt_unknown.__module__]
+    orig_iv, orig_sec = sm._FMT_CHECK_INTERVAL, sm._FMT_UNKNOWN_SEC
+    try:
+        sess, win, p = await _claude_pane(srv)
+        sm._FMT_CHECK_INTERVAL = 0.0
+        sm._FMT_UNKNOWN_SEC = 0.0                 # 첫 검사에서 즉시 unknown
+        srv._fg_is_claude = lambda pane: True     # ground-truth: Claude 실행 중
+
+        def scan(text):
+            p.feed(b"\x1b[2J\x1b[H" + text.encode())
+            srv._scan_claude(sess, win)
+
+        # 파서가 못 읽는 화면(claude_state None) + Claude fg → 포맷 미인식
+        scan("garbled unrecognized footer xyz")
+        assert p._claude is None, "파서가 상태를 못 읽음"
+        assert p._fmt_unknown is True
+        assert p._claude_warn and "포맷 미인식" in p._claude_warn
+        # 와이어(활성 패널 경고)에도 실린다 — 클라 상태줄 ⚠ 세그먼트가 이걸 그린다.
+        assert "포맷 미인식" in (srv._status_msg(sess).get("claude_warn") or "")
+        # Claude 가 다시 인식되면 즉시 해제(throttle 무시)
+        srv._fg_is_claude = lambda pane: True
+        scan("? for shortcuts")                   # idle 로 인식
+        assert p._claude == "idle"
+        assert p._fmt_unknown is False
+        assert p._claude_warn is None
+        # 미인식 재발 후, Claude 아님(fg False)이면 해제(셸로 빠진 정상 None)
+        srv._fg_is_claude = lambda pane: True
+        scan("garbled again zzz")
+        assert p._fmt_unknown is True
+        srv._fg_is_claude = lambda pane: False
+        scan("plain shell output\r\n$ ")
+        assert p._fmt_unknown is False and p._claude_warn is None
+    finally:
+        sm._FMT_CHECK_INTERVAL, sm._FMT_UNKNOWN_SEC = orig_iv, orig_sec
+        await teardown(srv, task, sock)
+
+
+async def test_fmt_unknown_throttles_fg_check():
+    """fg 검사(ps)는 비싸므로 인식 실패 패널에 한해 _FMT_CHECK_INTERVAL 간격으로만
+    호출한다(throttle). 인식 성공 프레임은 즉시 해제하며 fg 검사를 부르지 않는다."""
+    import sys as _sys
+    srv, task, sock = await server_only()
+    sm = _sys.modules[srv._update_fmt_unknown.__module__]
+    orig_iv = sm._FMT_CHECK_INTERVAL
+    try:
+        sess, win, p = await _claude_pane(srv)
+        sm._FMT_CHECK_INTERVAL = 9999.0           # 사실상 1회만 통과
+        calls = []
+        srv._fg_is_claude = lambda pane: (calls.append(1), True)[1]
+
+        def scan(text):
+            p.feed(b"\x1b[2J\x1b[H" + text.encode())
+            srv._scan_claude(sess, win)
+
+        scan("garbled a")       # 첫 미인식 → fg 검사 1회
+        scan("garbled b")       # throttle 창 → fg 검사 생략
+        scan("garbled c")
+        assert calls == [1], calls
+        # 인식 프레임은 fg 검사 없이 즉시 해제
+        scan("? for shortcuts")
+        assert calls == [1], "인식 프레임은 fg 검사 안 함"
+        assert p._fmt_unknown is False
+    finally:
+        sm._FMT_CHECK_INTERVAL = orig_iv
+        await teardown(srv, task, sock)

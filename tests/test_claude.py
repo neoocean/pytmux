@@ -200,6 +200,26 @@ async def test_screen_tail_key_and_track_repeat():
     tail, n = track_repeat(tail, n, "B");  assert (tail, n) == ("B", 0)   # 변경 리셋
 
 
+async def test_fmt_unknown_update():
+    """§3.7: Claude fg + 파서 미인식이 지속되면 unknown=True(가시화). 인식 성공이나
+    Claude 아님이면 즉시 해제."""
+    from pytmuxlib.claude import fmt_unknown_update
+    AFTER = 20.0
+    # 파서가 인식(recognized=True) → 의심 없음(앵커 무관)
+    assert fmt_unknown_update(None, True, True, 100.0, AFTER) == (None, False)
+    # Claude 아님(fg_claude=False) → 의심 없음
+    assert fmt_unknown_update(None, False, False, 100.0, AFTER) == (None, False)
+    # Claude fg + 미인식: 처음 본 시각 기록, 아직 임계 미만 → unknown=False
+    first, unk = fmt_unknown_update(None, False, True, 100.0, AFTER)
+    assert first == 100.0 and unk is False
+    # 같은 의심 지속, 임계 직전 → 여전히 False
+    assert fmt_unknown_update(first, False, True, 119.9, AFTER) == (100.0, False)
+    # 임계 도달 → unknown=True
+    assert fmt_unknown_update(first, False, True, 120.0, AFTER) == (100.0, True)
+    # 도중에 인식되면 first 도 리셋(다음 의심은 새로 카운트)
+    assert fmt_unknown_update(first, True, True, 121.0, AFTER) == (None, False)
+
+
 async def test_claude_model():
     # M14c: 실 배지 'Opus 4.8 (1M context)' + 하이픈 표기 둘 다.
     assert claude_model("Opus 4.8 (1M context) · /model to change") == "opus-4.8"

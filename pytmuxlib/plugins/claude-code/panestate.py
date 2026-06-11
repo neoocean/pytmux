@@ -68,6 +68,13 @@ def init_pane(pane) -> None:
     pane._done_tail = None
     pane._repeat_n = 0
     pane._claude_warn = None
+    # §3.7 포맷 미인식 가시화: _fmt_unknown=경고 활성, _fmt_first_mono=의심 시작 시각
+    # (Claude fg + 파서 None), _fmt_logged=error.log 1회 기록 가드, _fmt_check_mono=
+    # 다음 fg(ps) 검사 허용 시각(throttle).
+    pane._fmt_unknown = False
+    pane._fmt_first_mono = None
+    pane._fmt_logged = False
+    pane._fmt_check_mono = 0.0
     # 세션 피드백 프롬프트 자동 Dismiss(#26): 재시도중·쏜 횟수·다음 재시도 대기 프레임.
     pane._feedback_active = False
     pane._feedback_tries = 0

@@ -228,6 +228,28 @@ def track_repeat(prev_tail, repeat_n, new_tail):
     return new_tail, 0
 
 
+# ---- §3.7: Claude 포맷 미인식 가시화(silent failure) ----
+def fmt_unknown_update(prev_first, recognized, fg_claude, now, unknown_after):
+    """Claude 가 **실행 중인데**(포그라운드 명령에 'claude') 화면 파서가 상태를 못
+    읽는 상태가 지속되는지 판정하는 순수 상태전이. 반환 `(first_mono, unknown_bool)`.
+
+    토큰 추적·자동화는 모두 `claude_state`/`claude_usage` 등 현행 화면 포맷 가정에
+    강결합돼 있어(§3.7), Claude Code 가 표시 문구를 바꾸면 상태머신이 **조용히 멈춘다**.
+    이를 가시화하려면 파서와 **무관한** ground-truth 가 필요한데, 그것이 포그라운드
+    프로세스의 명령행에 'claude' 가 있는지(fg_claude)다.
+
+    규약:
+      · recognized=True(파서가 상태 인식) 또는 fg_claude=False(Claude 아님)
+        → 의심 해제(None, False).
+      · recognized=False + fg_claude=True → 의심 누적: 처음 본 시각(first)을 기록하고,
+        now-first 가 unknown_after 이상 지속되면 unknown=True.
+    호출부(서버)는 fg 검사(ps)가 비싸므로 이 함수를 **throttle 간격**으로만 부른다."""
+    if recognized or not fg_claude:
+        return None, False
+    first = prev_first if prev_first is not None else now
+    return first, (now - first >= unknown_after)
+
+
 # M14c: 모델 배지 파서. 실 캡처 'Opus 4.8 (1M context)' · 'claude-opus-4-8' 둘 다 잡는다.
 # 계열 뒤 버전은 점(4.8) 또는 하이픈(4-8) 표기 모두 허용하고 점으로 정규화한다.
 _MODEL_RE = re.compile(r"\b(Opus|Sonnet|Haiku)\b[\s-]*([0-9]+(?:[.\-][0-9]+)*)?", re.I)

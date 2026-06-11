@@ -19,11 +19,13 @@ import json
 import os
 import time
 
-from pytmuxlib import ipc
+import subprocess
+
+from pytmuxlib import ipc, proc, pty_backend
 from . import tokens, usagedb, usagelog   # S5 T5: 토큰 DB 백엔드도 플러그인 소속(물리 이전)
 from .claude import (claude_account, claude_awaiting_answer,
                      claude_context_hardstop, claude_context_pct,
-                     claude_feedback_prompt,
+                     claude_feedback_prompt, fmt_unknown_update,
                      claude_model, claude_prompt, claude_perm_mode,
                      claude_remote_active, claude_remote_blocked,
                      claude_state, claude_usage,
@@ -60,6 +62,14 @@ def screen_text(screen) -> str:
 # 스크롤되는 떨림이 난다. 그래서 예약 해제(=PTY 한 행 키우기)만 디바운스한다(설정
 # 은 즉시). 30Hz flush 기준 ~1초 — 진짜 Claude 종료 시 행을 되찾는 지연은 미미하다.
 _HDR_CLAUDE_MISS = 30
+
+# §3.7 포맷 미인식 가시화: Claude 가 실행 중(fg 명령에 'claude')인데 화면 파서가
+# 상태를 못 읽는 상태가 _FMT_UNKNOWN_SEC 초 지속되면 "포맷 미인식" 경고를 세운다.
+# fg 검사(ps)는 비싸므로 인식 실패 패널에 한해 _FMT_CHECK_INTERVAL 초 간격으로만 한다.
+_FMT_CHECK_INTERVAL = 5.0
+_FMT_UNKNOWN_SEC = 20.0
+# 경고 문구(상태줄 ⚠ 세그먼트로 표시 — _claude_warn 재사용).
+_FMT_UNKNOWN_MSG = "Claude 포맷 미인식 — 추적 중단(버전 업데이트?)"
 
 
 # 비활성 탭 Claude 완료 알림(#22) 플리커 방지(§10 #18): busy→idle 후 idle 이 연속
@@ -285,6 +295,69 @@ class ServerClaudeMixin:
         self._seed_session_seq()
         self._claude_session_seq += 1
         pane._claude_session_id = self._claude_session_seq
+
+    def _fg_is_claude(self, pane) -> bool:
+        """패널 포그라운드 프로세스의 **전체 명령행**에 'claude' 가 있으면 True(§3.7
+        앵커). comm 만으론 Claude Code(node CLI)를 'node'와 구분 못 하므로 명령행을
+        본다(예: 'node …/claude/cli.js' · 'claude'). 화면 파서와 무관한 ground-truth
+        라, 포맷이 바뀌어 claude_state 가 None 이어도 Claude 실행 여부를 독립 확인한다.
+        실패·미상·다른 node 프로세스는 False(보수적 — 경고는 확실할 때만)."""
+        if pty_backend.IS_WINDOWS:
+            # Windows(ConPTY): fg pgrp 개념이 없어 자손 트리 comm 만 best-effort.
+            cmd = proc.foreground_command(getattr(pane, "child_pid", -1)) or ""
+            return "claude" in cmd.lower()
+        fd = getattr(pane, "master_fd", -1)
+        try:
+            pgid = os.tcgetpgrp(fd)
+        except OSError:
+            return False
+        try:
+            out = subprocess.run(
+                ["ps", "-o", "command=", "-p", str(pgid)], capture_output=True,
+                text=True, timeout=1, **proc.no_window_kwargs()).stdout
+        except (subprocess.SubprocessError, OSError):
+            # 프로세스 소멸·ps 부재·타임아웃 = 기대 가능한 실패 → False 폴백.
+            return False
+        return "claude" in out.lower()
+
+    def _update_fmt_unknown(self, pane, recognized: bool) -> bool:
+        """§3.7: Claude 실행 중인데 화면 파서가 상태를 못 읽는 상태가 지속되면 패널에
+        '포맷 미인식' 플래그(_fmt_unknown)를 세운다. 포맷이 바뀌어 토큰 추적·자동화가
+        조용히 멈추는 것을 상태줄 ⚠ 로 가시화한다. 변경되면 True 반환(상태 재전송).
+
+        fg 검사(ps)는 비싸므로 **인식 실패 패널에 한해** _FMT_CHECK_INTERVAL 초 간격
+        throttle 한다. recognized=True(파서 인식)면 throttle 무시하고 즉시 해제.
+
+        한계: 처음부터 인식 안 되는 **정적 idle** 패널은 출력이 없어 스캔이 건너뛰어져
+        (_scan_claude dirty 게이트) 이 경로를 안 탄다 — 추적이 실제로 멈춰 손해가 큰
+        쪽은 **출력이 계속 도는 busy** 구간이고 그건 매 프레임 스캔되므로 잡힌다."""
+        now = time.monotonic()
+        if recognized:
+            # 파서가 다시 상태를 인식 → 의심 즉시 해제(throttle 무시).
+            pane._fmt_check_mono = 0.0
+            if pane._fmt_unknown or pane._fmt_first_mono is not None:
+                pane._fmt_first_mono = None
+                pane._fmt_logged = False
+                was = pane._fmt_unknown
+                pane._fmt_unknown = False
+                return was
+            return False
+        if now < pane._fmt_check_mono:
+            return False                       # throttle 창 — 상태 유지
+        pane._fmt_check_mono = now + _FMT_CHECK_INTERVAL
+        first, unknown = fmt_unknown_update(
+            pane._fmt_first_mono, False, self._fg_is_claude(pane), now,
+            _FMT_UNKNOWN_SEC)
+        pane._fmt_first_mono = first
+        if unknown and not pane._fmt_logged:
+            pane._fmt_logged = True
+            self._log_error("claude_format_unrecognized")   # 1회만(스팸 가드)
+        elif not unknown:
+            pane._fmt_logged = False
+        if unknown != pane._fmt_unknown:
+            pane._fmt_unknown = unknown
+            return True
+        return False
 
     def _pc_advance(self, pane: Pane):
         """프롬프트 단위 클리어 상태기계를 busy→idle 경계에서 한 단계 전진한다.
@@ -591,6 +664,10 @@ class ServerClaudeMixin:
                 txt = screen_text(p.screen)
                 old_cl = p._claude
                 new_cl = claude_state(txt)
+                # §3.7: 파서가 상태를 못 읽는데 Claude 가 실제 실행 중이면(throttle 된
+                # fg 검사) '포맷 미인식' 경고를 세워 추적 중단을 가시화한다.
+                if self._update_fmt_unknown(p, new_cl is not None):
+                    changed = True
                 # Claude 세션 피드백 프롬프트 자동 Dismiss(#26): "How is Claude doing
                 # this session?" 가 뜨면 Esc(_FEEDBACK_DISMISS_KEY)를 한 번 주입해
                 # 치운다. 같은 화면에 반복 주입하지 않도록 사라질 때까지 디바운스한다.
@@ -991,6 +1068,10 @@ class ServerClaudeMixin:
                     p._busy_since = None
                     p._repeat_n = 0
                     p._done_tail = None
+                # §3.7: 포맷 미인식이면 ⚠ 경고로 가시화(다른 경고가 없을 때만 — 미인식은
+                # new_cl=None 이라 위 long-turn/repeat 와 상호배타지만 안전하게 or 사용).
+                if p._fmt_unknown:
+                    warn = warn or _FMT_UNKNOWN_MSG
                 if warn != p._claude_warn:
                     p._claude_warn = warn
                     changed = True
