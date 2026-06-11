@@ -106,7 +106,7 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
 | `plugins/ncd/` | Norton Change Directory 플러그인(CL 57774) — `__init__`(메타·서버요청)·`server.py`(파일시스템·cwd)·`screen.py`(모달) |
 | `plugins/claude-code/` | Claude Code 통합 플러그인(Phase 1b·3-S1, CL 57789/57795/57812) — `__init__`(명령 메타·디스패치·token-saver)·`servermixin.py`(ServerClaudeMixin: 스캔·토큰·자동개입, 옛 `serverclaude.py`)·`screens.py`(규칙편집·절감설정 팝업) |
 | `plugins/clock/`·`plugins/calendar/` | 시계·달력 오버레이 플러그인(CL 57907/57932) — `__init__`(명령·`client_render` 훅)·`render.py`(오버레이 자유함수, 옛 `clientrender.draw_clock/calendar_overlay`). delete-to-disable |
-| `plugins/ime-indicator/` | IME 한/영 배지 플러그인(CL 57983) — `__init__`(`client_key`/`client_render` 훅·`ime` 명령)·`render.py`(우상단 배지). preedit 관찰불가→확정 입력 스크립트 휴리스틱. delete-to-disable |
+| `plugins/ime-indicator/` | IME 한/영 배지 플러그인(CL 57983, 위치 변경 58166) — `__init__`(`client_key`/`client_render` 훅·`ime` 명령)·`render.py`(**커서 줄 오른쪽 끝** 배지). preedit 관찰불가→확정 입력 스크립트 휴리스틱. delete-to-disable |
 
 `pytmux.py` 는 얇은 진입점(위 심볼 재노출 + `main()`). **Claude/NCD 등 선택 기능은 `plugins/`
 디렉토리를 통째로 지우면 조용히 비활성화된다(코어는 레지스트리로만 호출).**
@@ -172,8 +172,9 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
   (대기 ○/처리중 ◐/리밋 ⊘), 마지막 프롬프트 스티키 헤더, 토큰/컨텍스트 표시,
   **컨텍스트 하드스톱 자동복구**(CL 57957 — "Context limit reached" 감지 시 즉시 `/compact`,
   토글 `auto_hardstop` 기본 ON).
-- **IME 한/영 배지**(CL 57983, 플러그인): 화면 우상단 `[한]`/`[EN]`(확정 입력 스크립트 추정,
-  토글 `:ime`).
+- **IME 한/영 배지**(CL 57983·위치 58166, 플러그인): **커서가 있는 줄의 오른쪽 끝**에
+  `[한]`/`[EN]`(확정 입력 스크립트 추정, 토글 `:ime`). 커서 미상이면 첫 행 폴백,
+  탭 닫기 [x] 행과 겹치면 우측 4칸 회피.
 - **패널 출력 캡처(진단)**: 각 패널 raw 출력을 `<sock>.capture/pane-<id>.log` 로
   무손실 기록(탭 매핑은 `sessions.log`). Claude 화면 문구 분석용. 기본 ON,
   `capture-output [on|off]` 토글(상태줄 `REC`), 상태는 `<sock>.opts.json` 영속.
@@ -269,6 +270,14 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- 58166 **IME 배지를 커서 줄 오른쪽 끝으로 이동**(사용자 요청 — 우상단 고정에서 변경) —
+  preedit 이 보이는 커서 줄과 같은 높이라 한/영 상태를 시선 이동 없이 확인. 커서
+  좌표는 `_active_cursor_xy`(IME preedit 하드웨어 커서 동기화와 같은 원천, client_render
+  훅 앞에서 채워짐), 커서 미상이면 첫 행 폴백. **탭 닫기 [x] 와 같은 행**이면 우측 4칸
+  회피(전 프레임 `_tab_close_zone` 행 판정 — [x] 행은 무테 0행·유테 1행·헤더 행으로
+  변함), 그 외 행은 진짜 오른쪽 끝(테두리 위 의도된 오버레이, `_ime_zone` y 일반화).
+  라이브 ptyshot 검증: 폴백 0행 → `│❯` 프롬프트(커서) 행으로 따라옴. 475 passed.
+  파일: `plugins/ime-indicator/`(`render.py`·`__init__.py`), `tests/test_plugin_ime_indicator.py`.
 - 58133 **FIX 그림자 /usage 프로브가 데몬 cwd(홈)의 Claude 신뢰 대화상자에 막힘** —
   M19 도입 이래 데몬 cwd 가 비신뢰 폴더면 숨은 claude 가 trust 화면에서 멈춰 프로브가
   **조용히 None**(예외 없음 → 로그도 없음)이던 잠복 버그. S6 라이브 검증에서 발견

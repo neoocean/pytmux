@@ -80,7 +80,12 @@ class _ImeIndicatorPlugin:
                 app._composite()
 
     def client_render(self, app, cells, W, H):
-        """배지가 켜져 있으면 화면 우상단에 `[한]`/`[EN]` 을 그린다(없으면 no-op).
+        """배지가 켜져 있으면 **커서가 있는 줄의 오른쪽 끝**에 `[한]`/`[EN]` 을 그린다
+        (2026-06-11 사용자 요청 — 우상단 고정에서 변경: preedit 이 보이는 커서 줄과
+        같은 높이라 시선 이동 없이 확인). 커서 좌표는 코어 _composite 가 이 훅 **앞**
+        에서 채우는 `_active_cursor_xy`(IME preedit 하드웨어 커서 동기화와 같은 원천)
+        를 읽고, 없으면(활성 패널 커서 미상) 종전처럼 첫 행(y=0) 폴백. y=0 일 때만
+        탭 닫기 [x] 회피로 우측 4칸을 비운다(다른 행엔 [x] 가 없어 진짜 오른쪽 끝).
         '한'=success 색, 'EN'=primary 색 배경의 검은 글자(테마 해석은 호출 시점)."""
         if not getattr(app, "ime_show", False):
             app._ime_zone = None
@@ -91,9 +96,18 @@ class _ImeIndicatorPlugin:
         state = getattr(app, "ime_state", "EN")
         color = "success" if state == "한" else "primary"
         st = Style(color="black", bgcolor=theme_color(app, color), bold=True)
-        span = draw_ime_indicator(cells, W, H, state, st)
+        cxy = getattr(app, "_active_cursor_xy", None)
+        y = cxy[1] if cxy else 0
+        # 탭 닫기 [x] 와 같은 행이면 우측 4칸 회피(이 훅 뒤에 그려져 배지를 덮는다).
+        # [x] 행은 콘텐츠 우상단이라 테두리 유무에 따라 변한다(무테 0행·유테 1행·헤더
+        # 행 등) — 전 프레임의 _tab_close_zone 행으로 판정(프레임 간 안정, 첫 프레임
+        # 미상이면 0행 가정 = 종전 동작).
+        tz = getattr(app, "_tab_close_zone", None)
+        xrow = tz[2] if tz else 0
+        span = draw_ime_indicator(cells, W, H, state, st, y=y,
+                                  reserve_right=4 if y == xrow else 0)
         # 그린 칸 범위를 노출(테두리 강조 테스트의 [x] 동급 예외). 폭 부족 시 None.
-        app._ime_zone = (span[0], span[1], 0) if span else None
+        app._ime_zone = (span[0], span[1], y) if span else None
 
 
 PLUGIN = _ImeIndicatorPlugin()

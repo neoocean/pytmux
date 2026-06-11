@@ -14,17 +14,21 @@ def _text_width(s: str) -> int:
     return sum(_char_cells(c) for c in s)
 
 
-def draw_ime_indicator(cells, W, H, label, st, reserve_right=4):
-    """화면 우상단(첫 행 y=0)에 `[label]` 배지를 우측정렬로 그린다.
+def draw_ime_indicator(cells, W, H, label, st, y=0, reserve_right=4):
+    """행 `y` 의 오른쪽 끝에 `[label]` 배지를 우측정렬로 그린다.
 
-    배치: 다중 패널이면 첫 행은 최상단 패널의 **상단 테두리 선**이고, 단일 패널(무테)이면
-    콘텐츠 첫 행이다. 어느 쪽이든 우측 `reserve_right` 칸은 비워 둔다 — 무테 단일 패널에서
-    탭 닫기 `[x]`(콘텐츠 우상단, client_render 뒤에 그려져 겹치면 덮어씀)와 겹치지 않게
-    하기 위함이다. 한글(와이드 2칸)은 본체 셀 + 빈 연속 셀("")로 써 정렬을 보존한다.
+    배치(2026-06-11 사용자 요청으로 우상단 고정 → 커서 줄로 변경): 기본은 **커서가
+    있는 줄**(호출부가 y 로 전달)의 오른쪽 끝 — 조합(preedit)이 보이는 커서 줄과 같은
+    높이라 한/영 상태를 시선 이동 없이 확인한다. `reserve_right` 만큼 우측을 비운다 —
+    y=0(첫 행)에서 탭 닫기 `[x]`(콘텐츠 우상단, client_render 뒤에 그려짐)와 겹치지
+    않게 하기 위함이고, 다른 행엔 [x] 가 없어 호출부가 0 을 넘겨 진짜 오른쪽 끝까지
+    쓴다. 행 오른쪽 끝이 패널 테두리(│)면 그 위에 덮는다 — 상단 테두리에 그리던
+    기존과 같은 '의도된 오버레이'(_ime_zone 으로 테두리 강조 검사가 예외 처리).
+    한글(와이드 2칸)은 본체 셀 + 빈 연속 셀("")로 써 정렬을 보존한다.
 
     반환: 그린 칸 범위 `(x0, x_end_exclusive)`(테두리 강조 테스트가 이 구간을 [x] 처럼
-    예외로 두게 함) 또는 폭 부족/높이 부족으로 생략하면 `None`."""
-    if H < 1:
+    예외로 두게 함) 또는 폭 부족·y 범위 밖으로 생략하면 `None`."""
+    if not (0 <= y < H):
         return None
     text = "[" + label + "]"
     w = _text_width(text)
@@ -36,8 +40,8 @@ def draw_ime_indicator(cells, W, H, label, st, reserve_right=4):
     for ch in text:
         cw = _char_cells(ch)
         if 0 <= cx < W:
-            cells[0][cx] = (ch, st)
+            cells[y][cx] = (ch, st)
             if cw == 2 and cx + 1 < W:
-                cells[0][cx + 1] = ("", st)   # 와이드 연속 셀
+                cells[y][cx + 1] = ("", st)   # 와이드 연속 셀
         cx += cw
     return (x0, x_end)

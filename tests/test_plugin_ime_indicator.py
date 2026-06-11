@@ -88,6 +88,22 @@ async def test_badge_wide_continuation_cell():
     assert chars[i + 1] == "", chars[i:i + 3]
 
 
+async def test_badge_on_cursor_row_right_end():
+    """2026-06-11 요청: 배지는 커서가 있는 줄(y)의 오른쪽 끝 — y≠0 이면 reserve 0
+    으로 진짜 끝까지, 행 범위 밖 y 는 생략(None)."""
+    cells = _grid(40, 5)
+    span = draw_ime_indicator(cells, 40, 5, "한", Style(), y=3, reserve_right=0)
+    assert span == (36, 40), span
+    row3 = _text_rows(cells)[3]
+    assert row3.endswith("[한]" + ""), repr(row3[-6:])
+    assert "[한]" in row3 and all(
+        c[0] == " " for r, row in enumerate(cells) if r != 3 for c in row)
+    # y 가 화면 밖이면 생략
+    cells2 = _grid(40, 5)
+    assert draw_ime_indicator(cells2, 40, 5, "EN", Style(), y=7) is None
+    assert all(c[0] == " " for row in cells2 for c in row)
+
+
 # ---- 2) client_key 한/영 추정 상태 전이 ----
 async def test_client_key_state_transitions():
     app = _FakeApp()
@@ -176,8 +192,13 @@ async def test_core_on_key_updates_ime_state():
             # 숫자는 모드 중립 — 'EN' 유지(여기선 변화 없음).
             app.on_key(Key("5", "5"))
             assert app.ime_state == "EN"
-            # 배지가 콘텐츠 프레임에 그려졌는지(우상단 [EN]).
-            row0 = "".join(c[0] for c in app.view._cells[0])
-            assert "[EN]" in row0, row0
+            # 배지가 콘텐츠 프레임에 그려졌는지 — **커서가 있는 줄**(2026-06-11 변경,
+            # _active_cursor_xy 원천)의 오른쪽 끝. 커서 미상이면 첫 행 폴백.
+            cxy = getattr(app, "_active_cursor_xy", None)
+            by = cxy[1] if cxy else 0
+            rowb = "".join(c[0] for c in app.view._cells[by])
+            assert "[EN]" in rowb, (by, rowb)
+            # _ime_zone 의 y 도 같은 행을 가리킨다(테두리 강조 예외 소비처 계약).
+            assert app._ime_zone and app._ime_zone[2] == by, app._ime_zone
     finally:
         await teardown(srv, task, sock)
