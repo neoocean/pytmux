@@ -156,9 +156,10 @@ def render_segs(status, segs, w):
             usage_parts.append(
                 i18n.t("claude.limit_remaining",
                        pct=max(0, 100 - int(status.tok5h_pct))))
-        # 표시 %들의 기준 계정(하이라이트 패널의 계정)을 마지막 항목에 곁들임.
+        # 표시 %들의 기준 계정(하이라이트 패널의 계정)을 마지막 항목에 곁들임. 계정은
+        # 보통 이메일(me@…)이라 앞에 @ 를 붙이지 않는다(@me@… 중복 방지, 요청).
         if usage_parts and status.claude_account:
-            usage_parts[-1] += " @" + status.claude_account
+            usage_parts[-1] += " " + status.claude_account
         uparts.extend(usage_parts)
     if uparts:
         sec = Style(color="white", bgcolor=tc("secondary"), bold=True)
