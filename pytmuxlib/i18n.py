@@ -143,3 +143,61 @@ register({
         "capture.status_off": "Status: OFF",
     },
 })
+
+# §6 ② 상태줄·경고·헤더 — 클라 transient 알림(display_message)/종료 메시지/캡처 정보.
+register({
+    "ko": {
+        # 연결/재접속/재시작 상태 알림
+        "msg.connect_failed": "pytmux: 서버에 연결할 수 없습니다",
+        "msg.reconnect_failed": "pytmux: 서버 재접속 실패",
+        "msg.restart_done": "pytmux: 서버 재시작 완료 — 재접속됨",
+        "msg.reconnect_failed_net": "pytmux: 재접속 실패 — 네트워크 확인",
+        "msg.reconnected_resync": "pytmux: 재접속됨 — 화면 재동기",
+        "msg.server_restarting": "pytmux: 서버 재시작 중…",
+        "msg.server_terminated": "pytmux: 서버가 종료되었습니다",
+        "msg.restart_dryrun": "pytmux: 재시작 전 드라이런 점검 중…",
+        "msg.server_restart": "pytmux: 서버 재시작…",
+        "msg.config_warn_more": " 외 {n}건",
+        # 클립보드/복사
+        "msg.paste_in_progress": "클립보드 붙여넣기 중… 잠시만요 (ESC 로 빠져나가기)",
+        "msg.paste_image_path": "클립보드 이미지 → 경로 붙여넣기: {path}",
+        "msg.paste_image_app": "이미지 붙여넣기 → 내부 앱(Alt+V)",
+        "msg.clipboard_empty": "클립보드가 비어있거나 읽을 수 없음",
+        "msg.copied_chars": "{n} chars 복사됨",
+        "msg.clipboard_suffix": " (클립보드)",
+        # 캡처(REC)
+        "msg.captured_chars": "{n} chars 버퍼에 캡처됨",
+        "msg.capture_toggle": "출력 캡처 {state} (상태줄 REC)",
+        "msg.open_capture_dir": "기록 폴더 열기",
+        "msg.no_capture_dir": "열 기록 폴더가 없습니다(캡처 꺼짐)",
+        # 진단/기타
+        "msg.mouse_log": "마우스 진단 로그: {path}",
+        "msg.no_claude_header": "Claude 헤더 없음",
+        "word.toggle": "토글",
+    },
+    "en": {
+        "msg.connect_failed": "pytmux: cannot connect to server",
+        "msg.reconnect_failed": "pytmux: server reconnect failed",
+        "msg.restart_done": "pytmux: server restarted — reconnected",
+        "msg.reconnect_failed_net": "pytmux: reconnect failed — check network",
+        "msg.reconnected_resync": "pytmux: reconnected — resyncing screen",
+        "msg.server_restarting": "pytmux: server restarting…",
+        "msg.server_terminated": "pytmux: server has terminated",
+        "msg.restart_dryrun": "pytmux: pre-restart dry-run check…",
+        "msg.server_restart": "pytmux: restarting server…",
+        "msg.config_warn_more": " +{n} more",
+        "msg.paste_in_progress": "Pasting clipboard… please wait (ESC to abort)",
+        "msg.paste_image_path": "Clipboard image → pasted path: {path}",
+        "msg.paste_image_app": "Image paste → inner app (Alt+V)",
+        "msg.clipboard_empty": "Clipboard is empty or unreadable",
+        "msg.copied_chars": "{n} chars copied",
+        "msg.clipboard_suffix": " (clipboard)",
+        "msg.captured_chars": "{n} chars captured to buffer",
+        "msg.capture_toggle": "Output capture {state} (status REC)",
+        "msg.open_capture_dir": "Opening capture folder",
+        "msg.no_capture_dir": "No capture folder to open (capture off)",
+        "msg.mouse_log": "Mouse debug log: {path}",
+        "msg.no_claude_header": "No Claude header",
+        "word.toggle": "toggle",
+    },
+})

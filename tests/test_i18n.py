@@ -94,6 +94,21 @@ async def test_persist_roundtrip():
         assert i18n.load_persisted(sock) is None
 
 
+async def test_catalog_locales_symmetric():
+    """코어 시드 카탈로그의 ko·en 키 집합이 일치해야 한다(단계 ②~⑤ 누락 가드).
+
+    한쪽에만 있는 키는 폴백으로 동작하긴 하지만, 시드(코어 문자열)는 항상 양 로케일을
+    완비해 영어 사용자가 한국어로 새는 문자열을 빌드 시점에 잡는다."""
+    # 다른 테스트가 주입하는 비대칭 테스트 전용 키("x.*")는 제외 — 모듈 전역 카탈로그라
+    # 실행 순서에 따라 섞일 수 있다. 시드(실 도메인 키)만 대칭이면 된다.
+    ko_keys = {k for k in i18n._CATALOG["ko"] if not k.startswith("x.")}
+    en_keys = {k for k in i18n._CATALOG["en"] if not k.startswith("x.")}
+    assert ko_keys == en_keys, {
+        "ko_only": sorted(ko_keys - en_keys),
+        "en_only": sorted(en_keys - ko_keys),
+    }
+
+
 async def test_seed_catalog_has_both_locales():
     """코어 시드 키는 ko·en 둘 다 존재해야 한다(누락 시 폴백이지만 시드는 완전성 유지)."""
     for key in ("lang.usage", "capture.status_on", "capture.status_off"):
