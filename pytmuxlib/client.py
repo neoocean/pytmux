@@ -2497,6 +2497,21 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.prevent_default()
                 event.stop()
                 return
+            # ` (backtick): ESC 와 더불어 esc(명령) 모드 진입(요청 2026-06-12). ESC 는
+            # 누른 직후 빠른 숫자가 \x1b+숫자=Alt+숫자로 병합되는 터미널 타이밍 이슈가
+            # 있는데, ` 진입키는 그 영향을 안 받는 대체 경로다. 패널에 **리터럴 `** 를
+            # 넣으려면 esc 모드에서 ` 를 한 번 더(double-tap) — tmux prefix 관례와 동일.
+            if event.key == "grave_accent" or event.character == "`":
+                if self._close_active_overlay():
+                    event.prevent_default()
+                    event.stop()
+                    return
+                self.mode = "esc"
+                self.status.cmd_mode = True
+                self.status.refresh()
+                event.prevent_default()
+                event.stop()
+                return
             # ESC 모드 진입은 위에서 즉시(동기) 이뤄지지만, 'ESC' 한 키를 누른 직후
             # 아주 빨리 숫자를 누르면 터미널이 둘을 한 escape 시퀀스(\x1b<digit>)로
             # 합쳐 **Alt+숫자**로 보내, ESC 가 단독 키로 안 와 모드 진입이 누락되고
@@ -2796,6 +2811,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 방향키/Enter/Esc(IME 무관)는 그대로 둔다 — 모든 단축키가 IME 무관하게 동작.
             if ch and len(ch) == 1 and has_hangul(ch):
                 ch = hangul_to_qwerty(ch)
+            # ` (double-tap): ` 로 esc 모드에 들어온 뒤 ` 를 한 번 더 → 패널에 리터럴
+            # backtick 을 전달하고 모드 종료(요청 2026-06-12). esc 모드 어디서든(탭바·헤더
+            # 포커스 포함) 일관되게 동작하도록 하위 포커스 동선보다 먼저 처리한다.
+            if event.key == "grave_accent" or ch == "`":
+                self.send_input(b"`")
+                self._exit_esc()
+                return
             tb = self.tabbar
             if self._hdr_focus is not None:       # Claude 헤더 포커스 동선(#5)
                 self._handle_hdr_focus(event)

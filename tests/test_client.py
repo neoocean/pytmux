@@ -700,6 +700,22 @@ async def test_esc_mode_question_opens_help():
     await _with_app(body)
 
 
+async def test_esc_mode_entry_via_backtick_and_double_tap_literal():
+    # ` 도 ESC 처럼 esc(명령) 모드에 진입한다(요청 2026-06-12). esc 모드에서 ` 를 한 번
+    # 더 누르면(double-tap) 패널에 리터럴 backtick 을 전달하고 모드를 빠진다(tmux prefix
+    # 관례) — ` 진입키 때문에 패널에 백틱을 못 넣는 일이 없게 한다.
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_input = lambda d: sent.append(d)
+        await pilot.press("grave_accent")            # ` → esc 모드 진입
+        assert app.mode == "esc" and app.status.cmd_mode is True
+        assert sent == [], "진입 시엔 패널로 아무것도 보내지 않는다"
+        await pilot.press("grave_accent")            # ` 한 번 더 → 리터럴 ` + 종료
+        assert app.mode == "normal", "double-tap 은 모드를 빠진다"
+        assert sent == [b"`"], sent
+    await _with_app(body)
+
+
 async def test_esc_n_new_tab_and_p_new_pane():
     # ESC+n = 새 탭(new_window), ESC+p = 새 패널(상하 분할, 새 패널 아래). 둘 다
     # 액션 후 esc 모드를 빠진다. (멀티 ESC 라 디바운스#36 를 매번 리셋)
