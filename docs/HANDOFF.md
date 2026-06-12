@@ -34,7 +34,7 @@
   플러그인·IME OS 실측·esc ` 진입키·토큰버킷 cap·토큰
   5h/주간 창 추정(58543)·§1.7 중첩 in-band 감지+stdio-proxy+**원격 탭 페더레이션
   Stage 2·3**(test_remote 9건 — in-process 2~3서버 E2E·per-client status·자동 재연결·
-  re-exec 복원) 테스트 합류. §3.8 프롬프트 히스토리 기능은 58589 에서 제거).
+  re-exec 복원) 테스트 합류. §3.8 프롬프트 히스토리 기능은 58592 에서 제거).
   ⚠️ 관찰: 58519/58543 신규 client 테스트 영역(토큰 화면·status 계정)에서 full-suite
   한정 one-off 3회(assert/AttributeError `_dim`/90s 타임아웃) — 전부 격리·재실행 통과.
   재발 시 테스트 순서 의존 격리 필요.
@@ -277,7 +277,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
-- **프롬프트 히스토리 기능 제거(2026-06-12, CL 58589)** — 06-12
+- **프롬프트 히스토리 기능 제거(2026-06-12, CL 58592)** — 06-12
   사용자 요청으로 §3.8 프롬프트 히스토리 관련 기능 일괄 제거: 히스토리 팝업(`prompt-history`/
   `prompts`)·점프(`prompt-jump`·`scroll_to_prompt`)·펼치기(`prompt-expand`·`prompt_segment`/
   `request_prompt_segment`)·스크롤 맨 위 오버레이(`scroll_at_top`)·회전 강건 anchor
