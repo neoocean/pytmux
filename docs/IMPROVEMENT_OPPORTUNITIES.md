@@ -488,12 +488,21 @@ SO_PEERCRED uid 일치 권장. **위험**: 프로토콜 변경(§5.3 과 함께)
 깨짐. **개선**: hello 에 `proto:N`, 불일치 시 명시적 거절 + 메시지 키 셋 모듈 상수화
 (HANDOFF §11.2 "명시적 계약"). **위험**: 낮음(hello 확장).
 
-### [H] 5.4 `build_client_app` 단일 클로저 2921줄 — `client.py:30-2921`
-`PytmuxApp` + ~120 중첩 메서드가 한 팩토리 안. 단위 테스트가 앱 부팅 필요, 머지 충돌면
-거대. 클립보드(1473-1605)·clock/calendar 오버레이(865-1030)·Claude 렌더(558-728) 등
-**app 상태 비의존 순수 함수**가 클로저에 갇힘. **개선**(HANDOFF §11.4-4): `clientclip.py`·
-오버레이 자유함수·`client_claude.py` 로 단계 추출, 클로저엔 위임만. **위험**: 좌표 회귀
-(ptyshot 골든 가드).
+### [L] 5.4 `build_client_app` 거대 팩토리(~2885줄) — `client.py:40-2925` ✅ **명명된 추출 완료, 구조 잔여만(2026-06-12 코드 검증으로 강등 [H]→[L])**
+`build_client_app`(40-2925)가 `class PytmuxApp(App)`(108 중첩 메서드)를 통째 감싼다.
+**검증(2026-06-12)**: 문서가 지목했던 "클로저에 갇힌 app 상태 비의존 순수 함수" 3종은
+**전부 이미 추출**됐다 — ① 클립보드 → `clientclip.py`(copy/paste/has_image/save_image),
+클로저엔 얇은 위임자(`paste_os_clipboard`/`_do_paste_clipboard`)만; ② clock/calendar 오버레이
+→ 별도 플러그인(`plugins/clock`·`plugins/calendar`); ③ Claude 렌더 → `claude-code` 플러그인
+(client.py 에 claude 렌더 메서드 0개); 추가로 `clientrender.py`(`put_cell`). **위 옛 줄
+번호(1473-1605/865-1030/558-728)는 전부 stale** — 그 자리 코드는 이미 다른 내용이다.
+- **잔여(구조, 저우선)**: `PytmuxApp` 자체는 아직 팩토리 안 거대 클래스다. 단 이 중첩은
+  **부분 load-bearing** — `App`(지연 import, 모듈 import 를 가볍게 유지하려는 의도)을
+  상속하므로 클래스를 그냥 모듈 최상위로 못 옮긴다. 남은 정석은 서버 `ServerClaudeMixin`
+  패턴 미러링: 108 메서드를 **최상위 mixin** 들로 쪼개(mixin 은 `App` 베이스 불필요 →
+  최상위 가능) `class PytmuxApp(App, ClipMixin, …)` 만 팩토리에 남긴다. 메서드가 쓰는 지연
+  textual 타입(`events`/`Style`/`Input`)은 mixin 모듈 로컬 import 로 해결. **위험**: 좌표/
+  렌더 회귀(ptyshot 골든 가드) — 가치 대비 위험이 높아 후속 보류.
 
 ### [M] 5.5 광역 `except Exception: pass` 다수 — 조용한 실패 — serverio 7·pty_backend 6·client 11·serverpty 3
 PTY/소켓 정리 경로가 무로그 삼킴 → fd 누수·좀비 파이프(§6 CLOEXEC 류)가 흔적 없이 발생.
