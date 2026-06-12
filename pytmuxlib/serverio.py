@@ -19,7 +19,7 @@ from . import ipc, version
 from .model import ClientConn, Session
 from .protocol import (FLUSH_HZ, MAX_H, MAX_W, MIN_H, MIN_W, PROTO_VERSION,
                        clamp_dim, frame_msg, read_msg, write_frames, write_msg)
-from .serverremote import _REMOTE_RELAY_ACTIONS
+from .serverremote import _REMOTE_BLOCK_ACTIONS, _REMOTE_RELAY_ACTIONS
 
 
 # Claude 프롬프트 헤더 예약(#1) 최소 패널 높이. 헤더는 내용 영역에서 1행을 가져가는데,
@@ -380,6 +380,32 @@ class ServerIOMixin:
                 client.remote_view = None   # 로컬 탭 복귀(아래 평소 경로)
         elif client.remote_view and action in _REMOTE_RELAY_ACTIONS:
             if self.remote_relay(client, msg):
+                return
+        elif client.remote_view and action in _REMOTE_BLOCK_ACTIONS:
+            # §1.7-c 섞임 금지: 원격 보기 중 경계 횡단/로컬 트리 조작은 거부.
+            # (조용한 로컬 실행도, index 공간이 안 맞는 릴레이도 모두 위험.)
+            await write_msg(client.writer, {"t": "notice", "text":
+                            "원격 탭에서는 사용할 수 없는 명령입니다 — "
+                            "원격↔로컬 패널/탭은 섞을 수 없습니다(§1.7)"})
+            return
+        elif client.remote_view and action == "new_window":
+            # 원격 보기 중 새 탭 = 로컬 새 탭 의도로 본다 — 보기를 해제하고 아래
+            # 평소 경로로 진행해 사용자가 새 로컬 탭을 **보면서** 받게 한다(종전엔
+            # 화면은 원격인 채 보이지 않는 로컬 탭이 생겼다).
+            client.remote_view = None
+        elif client.remote_view is None and action in (
+                "join_pane", "move_pane_to_tab", "move_tab", "move_window",
+                "swap_window"):
+            # §1.7-c 섞임 금지(로컬 쪽): 병합 전역 index 의 원격 탭을 겨냥한 패널/탭
+            # 이동을 거부한다(탭 드래그로 원격 탭 위에 드롭, 패널을 원격 탭으로 이동
+            # 등). 원격 index 는 len(sess.tabs) 이상의 병합 공간이다.
+            n = len(sess.tabs)
+            refs = [msg.get(k) for k in ("src", "to", "index")
+                    if msg.get(k) is not None]
+            if any(isinstance(r, int) and r >= n for r in refs):
+                await write_msg(client.writer, {"t": "notice", "text":
+                                "원격 탭으로/원격 탭을 이동할 수 없습니다 — "
+                                "원격↔로컬 패널/탭은 섞을 수 없습니다(§1.7)"})
                 return
         if action == "split":
             self.split_pane(sess, msg.get("orient", "lr"), path=msg.get("path"))

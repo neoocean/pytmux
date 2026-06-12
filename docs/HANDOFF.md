@@ -29,12 +29,13 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **575 passed**
-  (`python3 tests/run.py` @macOS, 2026-06-12 — Windows 트랙(58214~58228)·usage-view
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **580 passed**
+  (`python3 tests/run.py` @macOS, 2026-06-13 — Windows 트랙(58214~58228)·usage-view
   플러그인·IME OS 실측·esc ` 진입키·토큰버킷 cap·토큰
   5h/주간 창 추정(58543)·§1.7 중첩 in-band 감지+stdio-proxy+**원격 탭 페더레이션
-  Stage 2·3**(test_remote 9건 — in-process 2~3서버 E2E·per-client status·자동 재연결·
-  re-exec 복원) 테스트 합류. §3.8 프롬프트 히스토리 기능은 58592 에서 제거).
+  Stage 2·3·4**(test_remote 12건 — in-process 2~3서버 E2E·per-client status·자동 재연결·
+  re-exec 복원·멀티탭 전환·detach 왕복·섞임 가드 + client 분홍 렌더 2건) 테스트 합류.
+  §3.8 프롬프트 히스토리 기능은 58592 에서 제거).
   ⚠️ 관찰: 58519/58543 신규 client 테스트 영역(토큰 화면·status 계정)에서 full-suite
   한정 one-off 3회(assert/AttributeError `_dim`/90s 타임아웃) — 전부 격리·재실행 통과.
   재발 시 테스트 순서 의존 격리 필요.
@@ -277,6 +278,21 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- **§1.7 Stage 4 — 원격 탭 분홍 구분·멀티탭 검증·원격↔로컬 섞임 금지(2026-06-13)** — 06-13
+  사용자 요청(분홍 — §1.7-a 의 '연두'를 대체·58639 삭제분, §1.7-b, detach 왕복, 섞기 금지).
+  ① **분홍 구분**: 원격 탭 엔트리 와이어 플래그 `remote: True`(serverremote `_remote_tabs`)
+  → 탭바 활성=분홍 배경/비활성=분홍 글자(clientwidgets), 하단 상태줄 탭 목록 동일, 원격
+  보기 중 패널 외곽선 활성=`REMOTE_PINK`/비활성=`REMOTE_PINK_DIM`(clientutil 상수)+노트북
+  연결부 분홍(client `_viewing_remote()`), degraded 빨강 우선. ② **§1.7-b 는 이미 동작**
+  — "단일 탭만" 전제가 부정확(link.windows=업스트림 탭 전체 병합·전역 index 개별 진입),
+  실측+회귀 `test_remote_multi_tab_merge_switch_all` 고정. ③ **§1.7-c 섞임 금지**: 원격
+  보기 중 탭 내 조작(split/kill_pane 등 12종) 업스트림 릴레이(종전엔 **보이지 않는 로컬
+  트리**에 실행되던 위험), 경계 횡단(`_REMOTE_BLOCK_ACTIONS`: break/join/move_pane_to_tab/
+  move_tab/kill_window 등) notice 거부, 로컬→원격 index 겨냥 이동 거부, 탭 드래그
+  join/재정렬 클라 차단(TabBar `_is_remote`), 원격 보기 중 new_window 는 보기 해제 후
+  로컬 새 탭. ④ **detach/재attach 왕복 명세화**(동작은 종전대로): detach=그 원격의 병합
+  탭 전부 제거(원격 서버/셸 생존)·재attach=동일 복원, `test_remote_detach_closes_all_tabs_
+  reattach_restores`. 시나리오 Stage 4 절·테스트 remote +3/client +2. **580 passed.**
 - **프롬프트 히스토리 기능 제거(2026-06-12, CL 58592)** — 06-12
   사용자 요청으로 §3.8 프롬프트 히스토리 관련 기능 일괄 제거: 히스토리 팝업(`prompt-history`/
   `prompts`)·점프(`prompt-jump`·`scroll_to_prompt`)·펼치기(`prompt-expand`·`prompt_segment`/

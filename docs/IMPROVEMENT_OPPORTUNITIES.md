@@ -258,7 +258,7 @@ grace 한 번에 대기)로 종료 확인, 아직 살아 있으면 `taskkill /F 
 - **남음**: 라이브 attach(새 콘솔 창)·실 ssh 반응성·키 인코딩 인터랙티브 검증은 여전히 실
   박스 수동(§4), **arm64 Windows pywinpty 휠 부재** 대비(소스 빌드 필요 — §4-b).
 
-### [H] 1.7 ssh 로 원격 pytmux 접속 시 이중 실행·재접속 루프 → 원격 탭 어태치로 전환 (요청 2026-06-12) ✅ **완결(2026-06-12) — Stage 0~3 + 실 ssh(office1) 라이브 검증** · 후속 할일 1건(§1.7-b, 2026-06-13)
+### [H] 1.7 ssh 로 원격 pytmux 접속 시 이중 실행·재접속 루프 → 원격 탭 어태치로 전환 (요청 2026-06-12) ✅ **완결(2026-06-12) — Stage 0~3 + 실 ssh(office1) 라이브 검증** · Stage 4(분홍 구분·섞임 금지·§1.7-b 검증) ✅ 2026-06-13
 **증상(사용자 보고 2026-06-12)**: 로컬 pytmux 패널에서 원격 ssh 서버에 접속했을 때, 그 서버
 **하위에 이미 pytmux 탭이 열려 있으면** 원격 pytmux 가 **재접속을 반복하며 정상 동작하지 않는다**.
 **원하는 거동**: pytmux 안에서 또 pytmux 가 뜨는 **이중 실행을 막고**, 원격 서버에서 pytmux 를
@@ -302,11 +302,24 @@ grace 한 번에 대기)로 종료 확인, 아직 살아 있으면 `taskkill /F 
   (Windows, ControlMaster 경유)** — TOKEN 핸드셰이크·`remote-attach office1` 병합
   (`⇄office1:cmd`)·원격 탭 진입(layout/screen ssh 릴레이)·**⇄ active 하이라이트**·
   복귀·detach 전 구간 확인. 시나리오 §4 검증 절 참조. **§1.7 잔여 없음.**
-- **[할일] §1.7-b 원격 서버 한 대에 여러 탭 연결 (요청 2026-06-13)**: 현재
-  `remote-attach <host>` 는 원격 서버의 **단일 세션만** 열 수 있다(host 당 링크 1개,
-  탭 1세트 병합). 원격 서버 한 대의 **여러 pytmux 탭**에 동시에 연결(병합)할 수 있어야
-  한다 — 링크가 원격의 탭 목록 전체를 받아 탭별로 노출하거나, host 당 다중 attach 를
-  허용하는 방향 검토(자기 attach 가드·전역 index 병합과의 상호작용 포함).
+- **Stage 4 완료(2026-06-13)** — 시나리오 Stage 4 절 상세. 요약:
+  - **분홍 구분(구 §1.7-a, 색은 사용자 지시로 분홍 확정)**: 원격 탭 와이어 플래그
+    `remote: True` → 탭바(활성=분홍 배경·비활성=분홍 글자)·하단 상태줄 탭 목록·
+    패널 외곽선(`REMOTE_PINK`/`REMOTE_PINK_DIM`)·노트북 연결부 분홍. degraded
+    빨강 우선. `test_remote_tab_pink_styles_in_tabbar`·`test_remote_view_outline_pink`.
+  - ~~**[할일] §1.7-b 원격 서버 한 대에 여러 탭 연결**~~ → **검증 결과 이미 동작**
+    ("단일 세션/탭 1세트" 전제가 부정확 — `link.windows` 가 업스트림 탭 전체를 담아
+    모두 병합·전역 index 개별 진입). 실측 + `test_remote_multi_tab_merge_switch_all`
+    회귀 고정. 한계(설계 유지): 같은 호스트의 다른 탭을 여러 클라가 동시에 볼 수는
+    없다(업스트림 연결 1개·원격 서버 무변경 원칙).
+  - **§1.7-c 원격↔로컬 섞임 금지(신규)**: 원격 보기 중 탭 내 패널 조작(split/
+    kill_pane 등 12종) 업스트림 릴레이(종전엔 보이지 않는 로컬 트리에 실행),
+    경계 횡단(break/join/move_pane_to_tab/move_tab/kill_window 등) 거부 notice,
+    로컬→원격 index 겨냥 이동 거부, 탭 드래그 join/재정렬 클라 차단, 원격 보기 중
+    new_window 는 보기 해제 후 로컬 새 탭. `test_remote_no_mixing_guards`.
+  - **detach/재attach 왕복 명세화**: detach 는 그 원격의 병합 탭 전부 제거(원격
+    서버/셸은 생존), 재attach 시 동일 복원 — `test_remote_detach_closes_all_tabs_
+    reattach_restores`.
 
 ### 의도된 기능 열화(공백) — #7 대부분 해결
 - ~~자동 탭이름/ssh 감지~~ → **해결(#7)**: `_fg_command(pane)` 이 Windows 에서

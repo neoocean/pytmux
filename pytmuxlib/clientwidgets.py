@@ -19,8 +19,8 @@ from textual.suggester import SuggestFromList
 from rich.segment import Segment
 from rich.style import Style
 
-from .clientutil import (_DATE_STRFTIME, _TIME_STRFTIME, _char_cells, norm_sep,
-                         theme_color)
+from .clientutil import (_DATE_STRFTIME, _TIME_STRFTIME, REMOTE_PINK,
+                         _char_cells, norm_sep, theme_color)
 
 
 class SepInsensitiveSuggester(SuggestFromList):
@@ -737,6 +737,10 @@ class TabBar(Widget):
         # 피드백(#31) → **배경은 그대로 두고 탭 이름 글자색만** 호박색(warning)+굵게로
         # 바꿔 알린다. 활성(primary 배경)·선택(accent 배경)과 자연히 구분된다.
         done_st = Style(color=theme_color(self, "warning"), bold=True)
+        # §1.7-a 원격 탭(remote-attach 병합 ⇄) 분홍 구분: 활성=분홍 배경(로컬의
+        # 파랑 자리), 비활성=분홍 글자(claude_done 패턴) — 로컬/원격이 한눈에.
+        remote_active_st = Style(color="black", bgcolor=REMOTE_PINK, bold=True)
+        remote_st = Style(color=REMOTE_PINK)
         # 드래그 재정렬 시각 피드백: 들고 있는 탭(소스)은 흐리게, 놓을 위치
         # (드롭 대상)은 밑줄+강조색으로 표시(놓으면 그 자리로 이동).
         dragging = self._drag is not None
@@ -767,9 +771,11 @@ class TabBar(Widget):
                 elif self.bar_focus and payload == self.sel:
                     st = sel_st
                 elif t.get("active"):
-                    st = active_st
+                    st = remote_active_st if t.get("remote") else active_st
                 elif t.get("claude_done"):
                     st = done_st   # 비활성 탭 Claude 완료 알림(#22)
+                elif t.get("remote"):
+                    st = remote_st  # §1.7-a 비활성 원격 탭(분홍 글자)
                 else:
                     st = base
             wdt = sum(_char_cells(c) for c in text)
@@ -788,6 +794,10 @@ class TabBar(Widget):
             if x0 <= x < x1:
                 return kind, payload
         return None, None
+
+    def _is_remote(self, idx) -> bool:
+        """§1.7-a/c: 이 index 의 탭이 원격(remote-attach 병합) 탭인가."""
+        return any(t["index"] == idx and t.get("remote") for t in self.tabs)
 
     def active_tab_xrange(self):
         """현재 활성 탭의 화면 x 범위 (x0, x1). 콘텐츠 상단 테두리를 활성 탭과
@@ -827,7 +837,11 @@ class TabBar(Widget):
             return
         # 탭바 아래(콘텐츠 영역)로 끌어내리면 패널 분할 드롭 모드(#19): 커서 아래 패널과
         # 분할 방향을 미리보기로 표시한다. 탭바는 1행이라 event.y>=1 이 콘텐츠 행이다.
-        if event.y >= 1:
+        # §1.7-c: 원격 탭은 탭→패널 합치기(join_pane) 대상이 아니다 — 분홍 탭을
+        # 끌어내려도, 지금 보는 콘텐츠가 원격 화면이어도(로컬 탭을 원격 패널 위에
+        # 떨어뜨리는 방향) 분할 미리보기를 켜지 않는다(원격↔로컬 패널 섞기 금지).
+        if (event.y >= 1 and not self._is_remote(self._drag)
+                and not self.app._viewing_remote()):
             drop = self.app._tabdrop_at(event.x, event.y - 1)
             if drop != self.app._drag_split:
                 self.app._drag_split = drop
@@ -839,7 +853,11 @@ class TabBar(Widget):
             self.app._drag_split = None
             self.app._composite()
         kind, payload = self._hit(event.x)
-        over = payload if (kind == "tab" and payload != self._drag) else None
+        # §1.7-c: 원격 탭을 옮기거나(소스) 원격 탭 위치로 끼워넣는(대상) 재정렬은
+        # 불가 — 원격 탭 순서는 업스트림 소유라 드롭 마커 자체를 켜지 않는다.
+        over = payload if (kind == "tab" and payload != self._drag
+                           and not self._is_remote(self._drag)
+                           and not self._is_remote(payload)) else None
         if over != self._drag_over:
             self._drag_over = over
             self.refresh()
@@ -860,7 +878,10 @@ class TabBar(Widget):
             pass
         # 콘텐츠 위에 놓았으면(드롭 대상 패널 있음) 그 패널을 활성화하고, 끌어온 탭의
         # 패널을 그 패널에 분할로 합친다(#19 탭→패널). 아니면 기존 재정렬/전환.
-        if event.y >= 1 and drop is not None:
+        # §1.7-c: 원격 탭(소스/대상)·원격 화면 위 드롭은 join/재정렬에서 제외 —
+        # 단순 전환만(서버 가드와 대칭).
+        if (event.y >= 1 and drop is not None and not self._is_remote(src)
+                and not self.app._viewing_remote()):
             pane_id, orient = drop
             self.app.send_cmd("select_pane_id", id=pane_id)
             self.app.send_cmd("join_pane", src=src, orient=orient)
@@ -868,7 +889,8 @@ class TabBar(Widget):
             event.stop()
             return
         kind, payload = self._hit(event.x)
-        if kind == "tab" and payload != src:
+        if (kind == "tab" and payload != src
+                and not self._is_remote(src) and not self._is_remote(payload)):
             # index==위치(연속) 이므로 그대로 사용
             self.app.send_cmd("move_tab", index=src, to=payload)
         else:
@@ -1081,11 +1103,15 @@ class StatusBar(Widget):
             flag = "!" if win.get("bell") else ("#" if win.get("activity") else "")
             label = f"{win['index'] + 1}:{win['name']}{flag} "   # 표시 1-based(#21)
             if win["active"]:
-                st = active
+                # §1.7-a: 원격 탭은 활성도 분홍 배경(탭바와 동일 구분).
+                st = (Style(color="black", bgcolor=REMOTE_PINK, bold=True)
+                      if win.get("remote") else active)
             elif win.get("bell"):
                 st = Style(color="white", bgcolor=tc("error"), bold=True)
             elif win.get("activity"):
                 st = Style(color="black", bgcolor=tc("warning"))
+            elif win.get("remote"):
+                st = Style(color=REMOTE_PINK, bgcolor=self.bg)  # §1.7-a 분홍 글자
             else:
                 st = base
             segs.append(Segment(label, st))

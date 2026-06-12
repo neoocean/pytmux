@@ -235,6 +235,11 @@ _KEY_DIAG = frozenset({
 DEFAULT_STYLE = Style()
 _style_cache: dict = {}
 
+# §1.7-a 원격(remote-attach) 탭/외곽선 분홍 — 로컬(파랑 primary)과 한눈에 구분.
+# 활성 탭 배경·활성 패널 외곽선용 본색과, 비활성 외곽선용 어두운 변형.
+REMOTE_PINK = "#ff5fd7"        # hot pink (256색 #206 근사)
+REMOTE_PINK_DIM = "#af5f87"    # 비활성 외곽선(어두운 분홍)
+
 # p4v-tui 와 동일한 textual-dark 테마 색을 따른다(없으면 폴백).
 _THEME_FALLBACK = {
     "primary": "#0178D4", "secondary": "#004578", "accent": "#FEA62B",

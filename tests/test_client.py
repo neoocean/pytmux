@@ -153,6 +153,76 @@ async def test_net_degraded_recover_triggers_reconnect():
     await _with_app(body)
 
 
+async def test_remote_tab_pink_styles_in_tabbar():
+    """§1.7-a: remote-attach 병합 탭(remote=True)은 탭바에서 분홍으로 구분된다 —
+    활성=분홍 배경, 비활성=분홍 글자. 로컬 탭은 종전 그대로(활성=primary 파랑)."""
+    async def body(app, pilot, srv):
+        from rich.style import Style
+        from pytmuxlib.clientutil import REMOTE_PINK
+        pink = Style(color=REMOTE_PINK).color
+        pink_bg = Style(bgcolor=REMOTE_PINK).bgcolor
+        # 비활성 원격 탭 → 분홍 글자
+        app.tabbar.tabs = [
+            {"index": 0, "name": "local", "active": True},
+            {"index": 1, "name": "⇄h:win", "active": False, "remote": True}]
+        segs = list(app.tabbar.render_line(0))
+        seg_r = next(s for s in segs if "⇄h:win" in s.text)
+        assert seg_r.style.color == pink, seg_r.style
+        seg_l = next(s for s in segs if "local" in s.text)
+        assert seg_l.style.color != pink, seg_l.style
+        # 활성 원격 탭 → 분홍 배경(로컬 활성 primary 파랑 자리)
+        app.tabbar.tabs = [
+            {"index": 0, "name": "local", "active": False},
+            {"index": 1, "name": "⇄h:win", "active": True, "remote": True}]
+        app.tabbar._entries_sig = None     # 기하 캐시 무효화(탭 교체)
+        segs = list(app.tabbar.render_line(0))
+        seg_r = next(s for s in segs if "⇄h:win" in s.text)
+        assert seg_r.style.bgcolor == pink_bg, seg_r.style
+    await _with_app(body)
+
+
+async def test_remote_view_outline_pink():
+    """§1.7-a: 활성 탭이 원격(remote=True)이면 패널 외곽선이 분홍(활성=REMOTE_PINK·
+    비활성=REMOTE_PINK_DIM)으로, 로컬 탭으로 돌아오면 종전 색(활성=primary)으로
+    그려진다. degraded(빨강)는 분홍보다 우선."""
+    async def body(app, pilot, srv):
+        from rich.style import Style
+        from pytmuxlib.clientutil import REMOTE_PINK, REMOTE_PINK_DIM
+        pink = Style(color=REMOTE_PINK).color
+        pink_dim = Style(color=REMOTE_PINK_DIM).color
+        app.layout = {"panes": [{"id": 1, "x": 0, "y": 0, "w": 10, "h": 5,
+                                 "box": [0, 0, 10, 5]},
+                                {"id": 2, "x": 10, "y": 0, "w": 10, "h": 5,
+                                 "box": [10, 0, 10, 5]}],
+                      "active": 1, "cols": 20, "rows": 5, "dividers": []}
+        app.pane_content = {1: ([[("x" * 10, {})] for _ in range(5)], None),
+                            2: ([[("y" * 10, {})] for _ in range(5)], None)}
+        app._net_degraded = False
+        # 원격 탭 보기 → 활성 박스 분홍·비활성 박스 어두운 분홍
+        app.status.windows = [{"index": 0, "name": "local", "active": False},
+                              {"index": 1, "name": "⇄h:w", "active": True,
+                               "remote": True}]
+        app._composite()
+        cells = app.view._cells
+        assert cells[4][0][1].color == pink, cells[4][0][1]       # 활성(1) 모서리
+        assert cells[4][19][1].color == pink_dim, cells[4][19][1]  # 비활성(2)
+        # 로컬 탭 복귀 → 종전 색(분홍 아님)
+        app.status.windows = [{"index": 0, "name": "local", "active": True},
+                              {"index": 1, "name": "⇄h:w", "active": False,
+                               "remote": True}]
+        app._composite()
+        cells = app.view._cells
+        assert cells[4][0][1].color != pink, cells[4][0][1]
+        # degraded 는 분홍보다 우선(빨강 경고 유지)
+        app.status.windows = [{"index": 0, "name": "local", "active": False},
+                              {"index": 1, "name": "⇄h:w", "active": True,
+                               "remote": True}]
+        app._net_degraded = True
+        app._composite()
+        assert app.view._cells[4][0][1].color != pink
+    await _with_app(body)
+
+
 async def test_resize_pane_directional_command():
     """resize-pane -L/-R/-U/-D [N] 이 resize_dir 로 매핑된다(#17 — 키·명령·마우스
     리사이즈 대칭). 과거엔 -Z(줌)만 처리해 명령/팔레트로 분할선 이동이 불가했다."""
@@ -3417,6 +3487,7 @@ async def test_claude_icon_and_header():
         # (ap["y"]-1)에 그려진다(#1).
         app.pane_claude = {active: {"id": active, "claude": "idle",
                                     "prompt": "do the thing"}}
+        app.claude_header_on = True    # 기본 OFF 라 명시적으로 켠다(claude-header 옵트인)
         ap = next(p for p in app.layout["panes"] if p["id"] == active)
         # 서버 예약을 모사: claude_hdr=True 면 내용 영역이 한 행 내려오고(y+1, h-1)
         # 헤더는 그 위 한 줄(내부 행)에 그려진다. y 를 안 내리면 헤더가 박스 윗
@@ -3462,6 +3533,7 @@ async def test_esc_header_focus_highlight_and_exit():
     async def body(app, pilot, srv):
         active = app.layout["active"]
         app._update_claude([{"id": active, "claude": "idle", "prompt": "latest"}])
+        app.claude_header_on = True            # 기본 OFF 라 명시적으로 켠다
         ap = next(p for p in app.layout["panes"] if p["id"] == active)
         ap["claude_hdr"] = True                # 서버 헤더 행 예약(#1)
         app._composite()

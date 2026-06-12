@@ -13,7 +13,7 @@ import traceback
 from . import clientclip, clientrender, i18n, ipc, plugins, proc, version
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS, DEFAULT_STYLE,
-    MENU_ITEMS, MENU_TOGGLES, SPECIAL,
+    MENU_ITEMS, MENU_TOGGLES, REMOTE_PINK, REMOTE_PINK_DIM, SPECIAL,
     _BOX_BITS, _BOX_REV, _DATE_STRFTIME, _JAMO, _KEY_DIAG, _ONOFF,
     _TB_ACTIVE_STYLE, _TB_BORDER_STYLE, _TB_INACTIVE_STYLE, _TIME_STRFTIME,
     _char_cells, _client_relaunch_ok, _darken_style, _dim_inactive_style,
@@ -353,6 +353,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if t.get("active"):
                     return t["index"]
             return 0
+
+        def _viewing_remote(self) -> bool:
+            """§1.7-a: 지금 보는(활성) 탭이 remote-attach 병합 원격 탭인가 —
+            탭바·외곽선 분홍 구분과 드래그 가드의 클라측 판정 기준."""
+            return any(t.get("active") and t.get("remote")
+                       for t in self.status.windows)
 
         def _update_tabbar(self):
             """상태 갱신 시 탭바 데이터/표시 여부를 동기화. 표시가 바뀌면 뷰 크기가
@@ -1026,6 +1032,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 활성 패널의 경계 전체가 파란색이 되도록 한다.
             inactive_box = Style(color="grey42")
             active_box = Style(color=theme_color(self, "primary"), bold=True)
+            # §1.7-a 원격 탭을 보는 중(활성 탭이 remote-attach 병합 탭)이면 외곽선을
+            # 분홍으로 — 지금 보는 패널들이 원격임을 탭바(분홍 탭)와 같은 색으로
+            # 알린다. degraded(아래 빨강)는 네트워크 경고라 분홍보다 우선.
+            if self._viewing_remote():
+                inactive_box = Style(color=REMOTE_PINK_DIM)
+                active_box = Style(color=REMOTE_PINK, bold=True)
             # 패널 선택 깜빡임(ESC 모드 방향키): 위상 on 일 때 그 패널 테두리를
             # warning 색으로 그려 active(파랑)와 교차 점멸시킨다(선택 가시화, 요청).
             flash_box = Style(color=theme_color(self, "warning"), bold=True)
@@ -1123,7 +1135,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 xr = self.tabbar.active_tab_xrange()
                 if xr:
                     tx0, tx1 = xr
-                    conn = Style(color=theme_color(self, "primary"), bgcolor=None)
+                    # §1.7-a: 원격 탭이 활성이면 연결부도 탭과 같은 분홍.
+                    conn_color = (REMOTE_PINK if self._viewing_remote()
+                                  else theme_color(self, "primary"))
+                    conn = Style(color=conn_color, bgcolor=None)
                     for xx in range(max(0, tx0), min(tx1, W)):
                         cells[0][xx] = ("▀", conn)
             # 패널 제목 경계선(pane-border-status)

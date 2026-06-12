@@ -399,6 +399,186 @@ async def test_remote_multi_link_merge_and_detach_one():
         await teardown(srvC, taskC, sockC)
 
 
+async def test_remote_multi_tab_merge_switch_all():
+    """§1.7-b: 원격 서버에 탭이 여러 개면 **전부** 병합되고(remote=True 플래그
+    포함), 각 원격 탭을 전역 index 로 개별 전환해 그 탭의 화면을 받을 수 있다.
+    로컬 탭 엔트리에는 remote 플래그가 없다(§1.7-a 분홍 구분의 와이어 기준)."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    reader = writer = None
+    try:
+        sessB = srvB.ensure_default_session(80, 24)
+        srvB.new_window(sessB)
+        srvB.new_window(sessB)
+        ids = [t.window.active_pane.id for t in sessB.tabs]
+        assert len(ids) == 3
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        st0 = await _read_until(reader, lambda m: m.get("t") == "status",
+                                what="initial status")
+        n_local = len(st0["windows"])
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        stm = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and sum(w["name"].startswith("⇄") for w in m["windows"]) == 3,
+            what="3 merged remote tabs")
+        rtabs = [w for w in stm["windows"] if w["name"].startswith("⇄")]
+        assert [w["index"] for w in rtabs] == [n_local, n_local + 1,
+                                               n_local + 2], rtabs
+        assert all(w.get("remote") is True for w in rtabs), rtabs
+        ltabs = [w for w in stm["windows"] if not w["name"].startswith("⇄")]
+        assert not any(w.get("remote") for w in ltabs), ltabs
+        # 각 원격 탭 전환 → 그 탭의 패널이 활성인 업스트림 layout 이 도착
+        for k, want in enumerate(ids):
+            await write_msg(writer, {"t": "cmd", "action": "select_window",
+                                     "index": n_local + k})
+            await _read_until(
+                reader, lambda m, w=want: m.get("t") == "layout"
+                and m.get("active") == w,
+                what=f"remote tab {k} layout")
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
+async def test_remote_detach_closes_all_tabs_reattach_restores():
+    """§1.7: remote-detach 는 그 원격의 병합 탭 **전부**를 닫지만 원격 서버의
+    탭/셸은 살아 있고, 재attach 하면 같은 탭 세트(remote 플래그 포함)가 다시
+    병합된다."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    reader = writer = None
+    try:
+        sessB = srvB.ensure_default_session(80, 24)
+        srvB.new_window(sessB)
+        assert len(sessB.tabs) == 2
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and sum(w["name"].startswith("⇄") for w in m["windows"]) == 2,
+            what="2 merged remote tabs")
+        # detach → ⇄ 전부 제거, 원격은 그대로 살아 있다
+        await write_msg(writer, {"t": "cmd", "action": "remote_detach"})
+        await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and not any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="all remote tabs gone")
+        assert len(sessB.tabs) == 2, "원격 탭은 detach 후에도 살아 있어야"
+        assert all(t.window.active_pane.pty is not None for t in sessB.tabs)
+        # 재attach → 동일 탭 세트 복원(remote 플래그 포함)
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        stm = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and sum(w["name"].startswith("⇄") for w in m["windows"]) == 2,
+            what="re-merged 2 remote tabs")
+        rtabs = [w for w in stm["windows"] if w["name"].startswith("⇄")]
+        assert all(w.get("remote") is True for w in rtabs), rtabs
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
+async def test_remote_no_mixing_guards():
+    """§1.7-c 섞임 금지: ① 로컬 보기에서 원격 전역 index 를 겨냥한 join/move 는
+    거부(notice)되고 로컬 트리는 불변. ② 원격 보기 중 split/kill_pane 은 업스트림
+    으로 릴레이돼 **원격** 탭에만 작용(로컬 불변). ③ 원격 보기 중 break_pane 등
+    경계 횡단 조작은 거부(notice). ④ 원격 보기 중 new_window 는 보기를 해제하고
+    로컬 새 탭으로 빠져나온다(보이지 않는 로컬 탭 생성 금지)."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    reader = writer = None
+    try:
+        sessB = srvB.ensure_default_session(80, 24)
+        sessA = srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        stm = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="merged status")
+        gidx = next(w["index"] for w in stm["windows"]
+                    if w["name"].startswith("⇄"))
+
+        # ① 로컬 보기: 원격 index 겨냥 이동/합치기 거부 + 로컬 불변
+        nA_tabs = len(sessA.tabs)
+        nA_panes = len(sessA.active_window.panes())
+        for cmd in ({"action": "join_pane", "src": gidx, "orient": "tb"},
+                    {"action": "move_pane_to_tab", "id": 1, "to": gidx},
+                    {"action": "move_tab", "index": gidx, "to": 0}):
+            await write_msg(writer, {"t": "cmd", **cmd})
+            n = await _read_until(reader, lambda m: m.get("t") == "notice",
+                                  what=f"mixing notice for {cmd['action']}")
+            assert "섞을 수 없습니다" in n.get("text", ""), n
+        assert len(sessA.tabs) == nA_tabs
+        assert len(sessA.active_window.panes()) == nA_panes
+
+        # ② 원격 보기 진입 → split 릴레이: 원격 패널 +1, 로컬 불변
+        await write_msg(writer, {"t": "cmd", "action": "select_window",
+                                 "index": gidx})
+        await _read_until(reader, lambda m: m.get("t") == "layout",
+                          what="remote layout")
+        nB_panes = len(sessB.active_window.panes())
+        await write_msg(writer, {"t": "cmd", "action": "split", "orient": "lr"})
+        for _ in range(80):
+            if len(sessB.active_window.panes()) == nB_panes + 1:
+                break
+            await asyncio.sleep(0.05)
+        assert len(sessB.active_window.panes()) == nB_panes + 1, \
+            "split 은 원격 탭에 릴레이되어야"
+        assert len(sessA.active_window.panes()) == nA_panes, "로컬 불변"
+        # kill_pane 도 릴레이 → 원격 패널 원복
+        await write_msg(writer, {"t": "cmd", "action": "kill_pane"})
+        for _ in range(80):
+            if len(sessB.active_window.panes()) == nB_panes:
+                break
+            await asyncio.sleep(0.05)
+        assert len(sessB.active_window.panes()) == nB_panes
+
+        # ③ 원격 보기 중 경계 횡단 조작 거부(notice) + 양쪽 불변
+        nB_tabs = len(sessB.tabs)
+        await write_msg(writer, {"t": "cmd", "action": "break_pane"})
+        n = await _read_until(reader, lambda m: m.get("t") == "notice",
+                              what="break_pane blocked notice")
+        assert "섞을 수 없습니다" in n.get("text", ""), n
+        assert len(sessA.tabs) == nA_tabs and len(sessB.tabs) == nB_tabs
+
+        # ④ 원격 보기 중 new_window → 보기 해제 + 로컬 새 탭(보이는 채로)
+        await write_msg(writer, {"t": "cmd", "action": "new_window"})
+        for _ in range(80):
+            if len(sessA.tabs) == nA_tabs + 1:
+                break
+            await asyncio.sleep(0.05)
+        assert len(sessA.tabs) == nA_tabs + 1, "로컬 새 탭이 생겨야"
+        cA = next(c for c in srvA.clients)
+        assert cA.remote_view is None, "new_window 가 원격 보기를 해제해야"
+        assert len(sessB.tabs) == nB_tabs, "원격 탭 수는 불변"
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
 async def test_remote_link_death_recovers_viewer_to_local():
     """링크 사망(원격 서버 종료): 보던 클라는 로컬 화면으로 복귀(_send_full)하고
     탭바에서 ⇄ 탭이 제거된다 — '재접속 루프' 대신 명시적 끊김 처리."""

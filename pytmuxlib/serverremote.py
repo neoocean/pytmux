@@ -51,11 +51,27 @@ class RemoteLink:
 
 
 # 원격 탭을 보는 동안 업스트림으로 릴레이하는 cmd action 화이트리스트.
-# 입력/스크롤/리사이즈는 별도 경로(메시지 타입)로 릴레이한다. 파괴적(kill_*)·로컬
-# 제어(restart/kill-server/remote_*)는 의도적으로 제외 — 로컬에서 처리되거나 무시.
+# 입력/스크롤/리사이즈는 별도 경로(메시지 타입)로 릴레이한다. §1.7-c(섞임 금지):
+# **탭 안에서 닫히는** 패널 조작(split/kill_pane/레이아웃/스왑 등)은 릴레이해
+# 원격 탭엔 원격 패널만 생기게 한다 — 종전엔 비릴레이 액션이 **보이지 않는 로컬
+# 트리**에 조용히 실행됐다(예: 원격 보기 중 split 이 로컬 탭을 분할). 탭 경계를
+# 넘는 조작(break/join/move_pane_to_tab — 병합 전역 index 와 업스트림 로컬 index
+# 공간 불일치)은 _REMOTE_BLOCK_ACTIONS 로 거부한다. 로컬 제어(restart/kill-server/
+# remote_*)·kill_window(원격 탭 제거는 remote-detach 가 정문)는 여전히 제외.
 _REMOTE_RELAY_ACTIONS = {
     "select_pane_id", "select_pane", "zoom", "next_window", "prev_window",
     "resize", "resize_dir",
+    "split", "kill_pane", "cycle_pane", "last_pane", "rotate",
+    "swap_pane", "swap_pane_to", "select_layout", "cycle_layout",
+    "set_sync", "set_pane_title", "respawn_pane",
+}
+
+# §1.7-c 원격 탭을 보는 동안 거부하는 경계 횡단 조작(notice 회신). 로컬 트리에
+# 조용히 실행되지도, 업스트림으로 릴레이되지도 않는다 — 원격 탭은 원격 패널만,
+# 로컬 탭은 로컬 패널만(섞기 금지).
+_REMOTE_BLOCK_ACTIONS = {
+    "break_pane", "join_pane", "move_pane_to_tab", "kill_window",
+    "move_tab", "move_window", "swap_window", "move_current_tab",
 }
 
 
@@ -342,7 +358,9 @@ class ServerRemoteMixin:
     def _remote_tabs(self, base: int, client=None) -> list:
         """병합 탭 목록에 덧붙일 원격 탭 엔트리(전역 index 는 base 부터 연속).
         active 는 클라별(Stage 3) — 그 링크를 보는 클라에게만 업스트림 active 를
-        보존해 원격 탭이 하이라이트된다(안 보는 클라/클라 미지정은 False)."""
+        보존해 원격 탭이 하이라이트된다(안 보는 클라/클라 미지정은 False).
+        remote=True(§1.7-a)로 클라가 탭바/외곽선을 분홍으로 그려 로컬과 구분한다
+        (이름 ⇄ 접두사 파싱 대신 명시 플래그 — 이름은 표시 전용으로 남긴다)."""
         out = []
         gi = base
         for link in self._remotes_dict().values():
@@ -351,6 +369,7 @@ class ServerRemoteMixin:
             for rw in link.windows:
                 out.append({"index": gi, "name": f"⇄{link.host}:{rw.get('name', '')}",
                             "active": bool(viewing and rw.get("active")),
+                            "remote": True,
                             "bell": rw.get("bell", False),
                             "activity": rw.get("activity", False),
                             "claude_done": rw.get("claude_done", False)})
