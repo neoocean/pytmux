@@ -272,6 +272,29 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- **footer 계정명 전체표시 + 폭주경고 ❗분:초 + esc 진입키 ` + prefix↔esc 통합검토 문서 + owned soak(2026-06-12, CL 58476·58484·58482)** — 06-12
+  사용자 요청 묶음(office 박스). 동기화된 트리 헤드리스 **547 passed**. 공유 워크스페이스:
+  병렬 세션 §2.9 dim(58475)과 client.py/test_client.py 3-way 머지(충돌 0), 미싱크였던
+  `clientutil._dim_inactive_style` 의존은 전체 트리 head 싱크로 해소.
+  - **CL 58476 — footer 2건.** ① 좌하단 계정명: 폭 충분하면 전체 이메일, 우측(시각/날짜)을
+    밀어낼 만큼 좁으면 별칭(앞2글자…@도메인). 별칭(`claude_account`)은 디스크 토큰 로그·훅
+    이벤트의 원문 미노출 장치라 그대로 두고, 비별칭 전체값(`claude_account_full`)을 상태
+    메시지로만 전달해 footer 가 폭에 맞춰 고른다(클라 폭 게이트 `_trailing_cells`). 스크랩
+    판정은 `_resolve_account` 로 별칭과 공유. ② 장기턴 폭주경고 "이 턴 N분째 — 폭주 가능"
+    → **"❗ 분:초"**. 각 warn 문자열이 자기 아이콘을 포함하고 렌더는 아이콘 비부가(장기턴
+    ❗ / 반복·포맷미인식 ⚠) — 이모지 뒤 공백도 문자열에 넣어 글자 겹침 방지.
+  - **CL 58484 — esc 진입키에 `(backtick) 추가.** ESC 외 ` 로도 esc(명령) 모드 진입(ESC 의
+    \x1b+숫자=Alt+숫자 병합 타이밍 이슈를 안 받는 대체키). esc 모드에서 ` 연타 → 패널에
+    **리터럴 backtick** 전달 후 종료(double-tap, tmux prefix 관례 — Claude 패널 백틱 입력 보존).
+  - **CL 58482 — docs/PREFIX_ESC_UNIFICATION_REVIEW.md.** prefix(one-shot 키맵)↔esc(sticky 포커스
+    내비) 통합 검토. n/p 키 의미가 정반대(탭 순회 vs 생성/분할)로 충돌. 권고=옵션 C(진입 키·생애는
+    유지, 동일 의도 액션만 공유 디스패치). 코드 변경 없음.
+  - **owned-ConPTY soak(#1) 재실행 — viable, flip 보류(사용자 선택).** owned 백엔드 **541 green**,
+    ~600KB CJK/이모지/박스 버스트(32KB 경계 ~18회 횡단) 렌더 **안정화면 0 FFFD**, SENTINEL 무손상.
+    **부작용 ② 무해 판정**: 데몬은 이미 stdin/out/err 를 `DEVNULL`(`proc.spawn_detached`)로 보내
+    AllocConsole+SetStdHandle 이 숨은 콘솔로 돌려도 보이던 출력이 없음. 남은 유일 게이트 = 실
+    Claude 패널 사람 눈 확인(보더 정렬, 헤드리스 픽셀 캡처 불가). 사용자가 "확인 후 flip" 선택 →
+    `pty_backend.spawn()` 기본값 ~3줄 flip 대기(env override 롤백 유지). §10-C 참조.
 - **Claude 원격제어 /rc 응답대기 멈춤 수정 + 맥 이미지 붙여넣기 + 할일 정리(2026-06-12, CL 58452·58456·58459·58460·58461)** — 06-12
   사용자 요청 묶음(원격제어·붙여넣기·할일). 모두 헤드리스 **542 passed**.
   - **CL 58452 — auto `/rc` 디바운스.** 버그(요청): 원격제어가 **이미 켜진** 새 Claude
@@ -1343,8 +1366,15 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 열린 후속 결정/조사** — 코드는 동작하므로 급하지 않으나 §1.1② 를 "기본값으로 종결"하려면
 > 픽업 필요.
 
-- **[결정 대기] owned 를 기본 백엔드로 전환할지** — 검증상 **viable**(모든 현실 시나리오
-  스트리밍·안정 CJK 0 FFFD·539 테스트 그린). 보류 사유는 게이팅이 아니라 신중함이다.
+> **2026-06-12 갱신(later session): soak 재실행 완료 + 부작용 ② 무해 판정 + 사용자 "확인 후
+> flip" 선택.** owned 541 green, ~600KB CJK 버스트 렌더 0 FFFD(SENTINEL 무손상). **체크리스트
+> ② 해소**: 데몬은 이미 stdin/out/err 를 `DEVNULL`(`proc.spawn_detached`)로 보내므로 AllocConsole+
+> SetStdHandle 의 std 리다이렉트가 잃을 가시 출력이 없다(stderr 부작용 우려는 moot). 남은 유일
+> 게이트 = ① 실 Claude 패널 사람 눈 확인. 사용자가 "먼저 실 Claude 로 확인 후 flip" 선택 → 확인
+> 결과 받으면 ③ 1줄 flip(`pty_backend.spawn()` 기본값을 owned 로; env override 롤백 유지) 제출.
+
+- **[결정 대기→확인 후 flip] owned 를 기본 백엔드로 전환할지** — 검증상 **viable**(모든 현실 시나리오
+  스트리밍·안정 CJK 0 FFFD·541 테스트 그린). 보류 사유는 게이팅이 아니라 신중함이다.
   전환 전 체크리스트: **①** 실 **Claude 패널 장시간 soak**(멀티바이트 무손상 + 우하단
   보더 정렬이 §1.1② 증상 없이 유지되는지 — run-pytmux 텍스트 스크린샷은 픽셀 캡처 불가라
   실 TUI 는 사람 눈 확인 권장). **②** `AllocConsole`+`SetStdHandle`(OUT·ERR·IN)이 데몬
