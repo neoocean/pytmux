@@ -268,6 +268,7 @@ register({
         # 진단/기타
         "msg.mouse_log": "마우스 진단 로그: {path}",
         "msg.no_claude_header": "Claude 헤더 없음",
+        "msg.bad_tab_index": "탭 번호 범위 초과: {v}",
         "word.toggle": "토글",
     },
     "en": {
@@ -293,6 +294,7 @@ register({
         "msg.no_capture_dir": "No capture folder to open (capture off)",
         "msg.mouse_log": "Mouse debug log: {path}",
         "msg.no_claude_header": "No Claude header",
+        "msg.bad_tab_index": "Tab number out of range: {v}",
         "word.toggle": "toggle",
     },
 })

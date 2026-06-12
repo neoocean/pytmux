@@ -351,12 +351,35 @@ def _first_int(args):
     """args 에서 첫 양의 정수 토큰을 int 로 돌려준다(없으면 None).
 
     플래그(-t)·음수 토큰은 건너뛰고 계속 스캔한다 — 과거엔 첫 음수에서 None 을
-    반환해 뒤따르는 양수 인덱스를 가려 move-tab 등이 조용히 무시됐다(§2.8/#34)."""
+    반환해 뒤따르는 양수 인덱스를 가려 move-tab 등이 조용히 무시됐다(§2.8/#34).
+    카운트·셀 수처럼 음수가 무의미한 인자용. 인덱스(음수=끝에서)는 _first_signed_int."""
     for a in args:
         if a.startswith("-"):
             continue
         if a.isdigit():
             return int(a)
+    return None
+
+
+def _signed_int(tok):
+    """정수 토큰(앞 '-' 부호 허용)을 int 로. 정수가 아니면(또는 None) None.
+    '3'→3, '-2'→-2, '-t'·'foo'·None→None."""
+    if not tok:
+        return None
+    body = tok[1:] if tok[0] == "-" else tok
+    return int(tok) if body.isdigit() else None
+
+
+def _first_signed_int(args):
+    """args 에서 첫 정수 토큰(음수 포함)을 int 로 돌려준다(없으면 None).
+
+    _first_int 와 달리 음수도 값으로 본다 — 탭 인덱스 명령이 '끝에서 N번째'
+    (-1=마지막)를 받게 하려는 것(§2.8). '-t 2' 의 -t 는 정수가 아니라 건너뛰고 2 를
+    잡고, 'move-tab -2' 의 -2 는 값으로 잡는다."""
+    for a in args:
+        v = _signed_int(a)
+        if v is not None:
+            return v
     return None
 
 

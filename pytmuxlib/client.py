@@ -16,8 +16,9 @@ from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     MENU_ITEMS, MENU_TOGGLES, SPECIAL,
     _BOX_BITS, _BOX_REV, _DATE_STRFTIME, _JAMO, _KEY_DIAG, _ONOFF,
     _TB_ACTIVE_STYLE, _TB_BORDER_STYLE, _TB_INACTIVE_STYLE, _TIME_STRFTIME,
-    _char_cells, _client_relaunch_ok, _darken_style, _first_int, _is_emoji,
-    _opt_value, _restart_check_eval, _with_reverse,
+    _char_cells, _client_relaunch_ok, _darken_style, _first_int,
+    _first_signed_int, _is_emoji, _opt_value, _restart_check_eval, _signed_int,
+    _with_reverse,
     has_hangul, hangul_to_qwerty, norm_sep,
     _normalize_key, _shell_argv, key_to_bytes, make_style, theme_color)
 from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 사용)
@@ -2085,15 +2086,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
                        "move-tab-first", "move-tab-last"):
                 self.send_cmd("move_current_tab", where=c[len("move-tab-"):])
             elif c in ("move-tab", "movet", "move-window", "movew"):
-                idx = _opt_value(args, "-t")
-                idx = int(idx) if idx and idx.isdigit() else _first_int(args)
-                if idx is not None and idx - 1 >= 0:   # 사용자 1-based → 0-based(#21)
-                    self.send_cmd("move_window", index=idx - 1)
+                idx = self._tab_target_index(args)     # 양수 1-based·음수 끝에서(§2.8)
+                if idx is not None:
+                    self.send_cmd("move_window", index=idx)
             elif c in ("swap-tab", "swapt", "swap-window", "swapw"):
-                idx = _opt_value(args, "-t")
-                idx = int(idx) if idx and idx.isdigit() else _first_int(args)
-                if idx is not None and idx - 1 >= 0:   # 사용자 1-based → 0-based(#21)
-                    self.send_cmd("swap_window", index=idx - 1)
+                idx = self._tab_target_index(args)     # 양수 1-based·음수 끝에서(§2.8)
+                if idx is not None:
+                    self.send_cmd("swap_window", index=idx)
             elif c in ("choose-tree", "choose-tab", "choose-window",
                        "overview", "tree"):
                 self.request_tree()
@@ -2110,10 +2109,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif c == "rename-pane":
                 self.send_cmd("set_pane_title", title=" ".join(args))
             elif c in ("select-tab", "selectt", "select-window", "selectw"):
-                idx = _opt_value(args, "-t")
-                idx = int(idx) if idx and idx.isdigit() else _first_int(args)
-                if idx is not None and idx - 1 >= 0:   # 사용자 1-based → 0-based(#21)
-                    self.send_cmd("select_window", index=idx - 1)
+                idx = self._tab_target_index(args)     # 양수 1-based·음수 끝에서(§2.8)
+                if idx is not None:
+                    self.send_cmd("select_window", index=idx)
             elif c in ("rename-tab", "renamet", "rename-window", "renamew"):
                 # 인자(이름)가 있으면 즉시 변경. 인자 없이 입력하면 **아무 동작 없이
                 # 취소**한다(예전 rename 프롬프트 인터페이스를 열지 않음 — 사용자 요청).
@@ -2650,6 +2648,26 @@ def build_client_app(sock_path: str, config: dict | None = None,
             panes = self.layout.get("panes", [])
             i = int(idx)
             return panes[i]["id"] if 0 <= i < len(panes) else None
+
+        def _tab_target_index(self, args):
+            """select/move/swap-tab 의 대상 탭을 0-based 인덱스로 해석한다.
+
+            `-t N` 또는 첫 정수 토큰. **양수는 1-based**(1=첫 탭), **음수는 끝에서**
+            (-1=마지막, -2=뒤에서 둘째). 인덱스가 아예 없으면 조용히 None(무동작).
+            인덱스는 주어졌으나 범위 밖(0·-99·탭수 초과)이면 상태줄에 알리고 None —
+            과거엔 음수·범위밖을 모두 조용히 무시해 `move-tab -2` 등이 먹통이었다
+            (§2.8 인덱스 명령 음수/침묵 실패)."""
+            raw = _signed_int(_opt_value(args, "-t"))
+            val = raw if raw is not None else _first_signed_int(args)
+            if val is None:
+                return None                       # 인덱스 미지정 → 무동작(기존)
+            n = len(self.tabbar.tabs)
+            i = (val - 1) if val > 0 else (n + val if val < 0 else -1)
+            if 0 <= i < n:
+                return i
+            self.display_message(i18n.t(
+                "msg.bad_tab_index", default="탭 번호 범위 초과: {v}", v=val))
+            return None
 
         # ---- ESC(명령) 모드 ----
         def _exit_esc(self):

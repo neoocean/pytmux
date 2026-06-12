@@ -93,6 +93,26 @@ async def test_version_command_opens_popup():
     await _with_app(body)
 
 
+async def test_list_keys_shows_mouse_gestures():
+    """list-keys 팝업이 사용자 바인딩뿐 아니라 구현된 1급 마우스 제스처(헤더 드래그
+    pick-up→swap·탭 드래그 분할·Shift+드래그 선택 등)를 노출한다(§2.2 발견성 — 과거엔
+    제스처가 명령이 아니라 ?목록·메뉴 어디에도 안 떠 사장됐다). 키워드는 ko/en 양쪽에
+    공통이라 로케일과 무관하게 단언한다."""
+    from pytmuxlib.clientscreens import InfoScreen
+    from textual.widgets import Label
+
+    async def body(app, pilot, srv):
+        app._run_command("list-keys")
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert isinstance(scr, InfoScreen)
+        joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        assert "swap" in joined, joined            # 헤더 드래그 pick-up→swap
+        assert "Shift" in joined, joined           # Shift+드래그 텍스트 선택
+        assert ("드래그" in joined or "drag" in joined.lower()), joined
+    await _with_app(body)
+
+
 async def test_net_degraded_hysteresis():
     """degraded 히스테리시스(#5.8): 임계 초과 RTT 가 net_bad_n 회 연속이면 degraded
     ON, 임계 이하가 net_good_n 회 연속이면 OFF. 한두 표본 깜빡임엔 안 뒤집힌다."""
@@ -182,6 +202,40 @@ async def test_swap_pane_index_command():
     await _with_app(body)
 
 
+async def test_tab_index_command_negative_and_out_of_range():
+    """select/move/swap-tab 의 인덱스가 양수면 1-based, 음수면 끝에서(-1=마지막).
+    범위를 벗어난 인덱스는 조용히 무시하지 않고 상태줄에 알린다(§2.8 — 과거엔
+    음수·범위밖이 _first_int 에서 None 으로 떨어져 move-tab -2 등이 먹통이었다)."""
+    async def body(app, pilot, srv):
+        app.status.windows = [{"index": i, "name": f"w{i}", "active": (i == 0)}
+                              for i in range(4)]            # 탭 4개(0..3)
+        app.tabbar.set_tabs(app.status.windows, 0)
+        sent = []
+        msgs = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app.display_message = lambda m, *a, **k: msgs.append(m)
+        app._run_command("select-tab 2")     # 양수 1-based → 0-based 1
+        app._run_command("move-tab -1")       # 음수 끝에서 → 마지막(3)
+        app._run_command("swap-tab -t -2")    # -t 음수 → 뒤에서 둘째(2)
+        app._run_command("select-tab -t 4")   # 1-based 4 → 마지막(3)
+        assert ("select_window", {"index": 1}) in sent, sent
+        assert ("move_window", {"index": 3}) in sent, sent
+        assert ("swap_window", {"index": 2}) in sent, sent
+        assert ("select_window", {"index": 3}) in sent, sent
+        # 범위밖: 인덱스가 주어졌으나 무효 → send 안 하고 상태줄 알림
+        sent.clear(); msgs.clear()
+        app._run_command("move-tab -99")      # 끝에서 99번째 → 음수 → 범위밖
+        app._run_command("select-tab 9")      # 1-based 9 → 탭 4개 초과
+        app._run_command("move-tab 0")        # 0 은 무효
+        assert not sent, sent                 # 어떤 윈도우 명령도 안 보냄
+        assert len(msgs) == 3, msgs           # 셋 다 알림
+        # 인덱스 자체가 없으면 조용히 무동작(알림도 없음)
+        sent.clear(); msgs.clear()
+        app._run_command("move-tab")
+        assert not sent and not msgs, (sent, msgs)
+    await _with_app(body)
+
+
 async def test_first_int_skips_flags_and_negatives():
     """_first_int 가 플래그/음수 토큰을 건너뛰고 뒤따르는 양수 인덱스를 찾는다.
 
@@ -194,6 +248,22 @@ async def test_first_int_skips_flags_and_negatives():
         assert f(["foo", "-2", "3"]) == 3     # 음수 가려도 뒤 양수 발견(회귀)
         assert f(["-2"]) is None              # 음수 단독은 미지원(불변)
         assert f(["bar", "baz"]) is None
+    await _with_app(body)
+
+
+async def test_signed_int_helpers():
+    """_signed_int·_first_signed_int 는 음수 부호를 값으로 본다(§2.8 탭 인덱스의
+    '끝에서 N번째'용). _first_int 와 달리 음수를 건너뛰지 않는다."""
+    async def body(app, pilot, srv):
+        from pytmuxlib.clientutil import _signed_int, _first_signed_int
+        assert _signed_int("3") == 3
+        assert _signed_int("-2") == -2
+        assert _signed_int("-t") is None and _signed_int("foo") is None
+        assert _signed_int(None) is None and _signed_int("") is None
+        assert _first_signed_int(["-t", "2"]) == 2     # -t 건너뛰고 2
+        assert _first_signed_int(["-2"]) == -2          # 음수도 값
+        assert _first_signed_int(["move", "-1"]) == -1
+        assert _first_signed_int(["foo", "bar"]) is None
     await _with_app(body)
 
 
@@ -3554,14 +3624,14 @@ async def test_status_session_ctx_and_5h():
         assert "ctx 42%" in txt, repr(txt)
         # 토큰 수치/누계 기호는 표시되지 않는다
         assert "Σ" not in txt and "45,200" not in txt, repr(txt)
-        # 계정은 표시 %들의 기준 — 마지막 항목에 @계정 곁들임
+        # 계정은 표시 %들의 기준 — 마지막 항목에 계정 곁들임(@ 없이, 요청: 이메일 중복 방지)
         app.status.claude_account = "alice"
         txt_a = "".join(s.text for s in app.status.render_line(0))
-        assert "ctx 42% @alice" in txt_a, repr(txt_a)
+        assert "ctx 42% alice" in txt_a and "@alice" not in txt_a, repr(txt_a)
         # 5h 리밋 **남은** 비율(실측 사용 37% → 남음 63%). 계정은 마지막(5h)에 붙는다.
         app.status.tok5h_pct = 37
         txt_m = "".join(s.text for s in app.status.render_line(0))
-        assert "5h 63% 남음 @alice" in txt_m, repr(txt_m)
+        assert "5h 63% 남음 alice" in txt_m, repr(txt_m)
         assert txt_m.index("ctx 42%") < txt_m.index("5h 63%"), repr(txt_m)
         # claude_usage 가 토큰 폴백('Xk tok')이면 표시하지 않는다(토큰 수치 비표시 원칙)
         app.status.claude_usage = "12k tok"
@@ -3588,7 +3658,7 @@ async def test_status_tokens_hidden_when_not_claude():
         # 다시 Claude 패널이 활성화되면 보존된 값이 그대로 표시된다.
         app.status.claude_active = True
         txt2 = "".join(s.text for s in app.status.render_line(0))
-        assert "ctx 42% @alice" in txt2, repr(txt2)
+        assert "ctx 42% alice" in txt2, repr(txt2)
     await _with_app(body)
 
 
