@@ -115,7 +115,21 @@
 
 ## 1. 크로스플랫폼 (Windows/macOS/Linux)
 
-### [H] 1.1 Windows 출력 스트림 bytes→str→bytes 이중 트랜스코드 + 경계 손상 — `pty_backend.py:354-360,399` [검증됨]
+### [H] 1.1 Windows 출력 스트림 bytes→str→bytes 이중 트랜스코드 + 경계 손상 — `pty_backend.py:354-360,399` ✅ **해결(CL 58457 돌파 + 58503 기본 전환, 2026-06-12 — 아래 최신 상태 참조)**
+
+> **✅ 최종 상태(2026-06-12, CL 58457·58503 — 아래 06-11 "미해결 재확정"은 그 뒤 뒤집힘):**
+> owned-ConPTY 가 **Windows 기본 백엔드**다. ② 스트리밍 블로커의 돌파 레시피(CL 58457) =
+> **동기 128KB 명명 파이프 + 블로킹 ReadFile/WriteFile** + 콘솔-less 데몬에 1회
+> **AllocConsole(SW_HIDE)+CONOUT$/CONIN$ 재오픈+SetStdHandle** 로 자식 attach 성립
+> (`conpty.py` `_ensure_hidden_console`/`_make_sync_pipe`). "비대화형 batch-writer 23B 스톨"
+> 은 probe 단독 루트 프로세스 한정 — 제품(대화형 셸의 자식)에선 미재현으로 정정.
+> CL 58503 이 기본 flip: `spawn()` env 미설정/`owned`/`conpty` → `_OwnedConPty`, 롤백
+> `PYTMUX_PTY_BACKEND=pywinpty`, spawn 예외 시 조용히 pywinpty 폴백. **라이브 검증**: 실
+> Claude Code v2.1.175 TUI 완벽 렌더(0 U+FFFD), 250KB CJK/이모지 버스트에서 owned ==
+> pywinpty(둘 다 일시 FFFD 9개·동일 위치 — 번들 OpenConsole 공통·스크롤오프라 안정 화면
+> 무영향, owned 회귀 아님·저우선). **owned 우위 = raw 바이트→pyte incremental 디코드로
+> 32KB 청크경계 손상(이 항목의 ②) 구조적 제거 + write raw(③) 해소.** 잔여 = 번들
+> OpenConsole 공통의 스크롤 중 일시 FFFD 만(저우선, 양 백엔드 동일). 아래는 과정 기록.
 리더 스레드가 `proc.read()`(pywinpty 가 이미 내부 utf-8 디코드한 **str**)를 받아
 `encode("utf-8","replace")` 로 **재인코딩**한다. write 도 `data.decode("utf-8","replace")`.
 ① 전 출력 스트림을 두 번 트랜스코드(throughput 비용), ② 멀티바이트가 read 경계
