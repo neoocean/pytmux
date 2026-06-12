@@ -1086,6 +1086,45 @@ async def test_token_log_lifetime_total_from_server_agg():
     await _with_app(body)
 
 
+async def test_token_log_day_bucket_full_history_not_capped():
+    """버킷(일/주/월)은 서버 daily(전체 이력 일자 GROUP BY) 로 집계해 레코드 cap 에
+    옛 날짜가 잘리지 않는다. records(서버가 보내는 cap 된 최근 N 건)엔 최근 하루만,
+    daily 엔 12일치 전체 이력을 넣으면 day 뷰에 12일이 모두 나와야 한다(수정 전엔
+    records 만 써서 최근 하루만 보였다). hour 버킷은 일자 합성으론 시간 복원이 안 돼
+    raw records(최근치)만 쓴다 — 그 경계도 함께 확인한다."""
+    async def body(app, pilot, srv):
+        ACCT = "me@x.org"
+        # daily: 2026-06-01..06-12 전체 이력(각 1000) — 합 12000.
+        daily = [{"day": f"2026-06-{d:02d}", "account": ACCT, "session": 1,
+                  "tab": 0, "pane": 1, "tokens": 1000} for d in range(1, 13)]
+        # records: 최근 하루(06-12)치 1건만 — cap 으로 옛 날짜가 안 온 상황 시뮬.
+        recs = [{"ts": 1_780_000_000.0, "tab": 0, "pane": 1, "session": 1,
+                 "account": ACCT, "tokens": 1000}]
+        app._want_token_log = True
+        app._dispatch({"t": "token_log", "records": recs, "total_all": 12000,
+                       "accounts_total": {ACCT: 12000}, "daily": daily})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "TokenLogScreen", scr
+        # day 뷰 — 12일 전부(특히 records 에 없는 06-01) 가 나와야 한다.
+        await pilot.click("#tab_day")
+        await pilot.pause(0.1)
+        assert scr._bucket == "day", scr._bucket
+        joined = _tok_text(scr)
+        days = [f"06-{d:02d}" for d in range(1, 13)]
+        missing = [d for d in days if d not in joined]
+        assert not missing, f"day 뷰에 빠진 날짜(cap 절단): {missing}\n{joined}"
+        # Σ 는 전체 이력 합(12k); 표시 합도 12k 라 '(표시 …)' 병기 없음.
+        assert "Σ12k" in joined, joined
+        assert "표시" not in joined, f"전체 이력 day 뷰엔 과소표시 병기가 없어야: {joined}"
+        # hour 뷰는 raw records(최근 1건)만 — 옛 날짜(06-01)는 안 보인다.
+        await pilot.click("#tab_hour")
+        await pilot.pause(0.1)
+        assert scr._bucket == "hour", scr._bucket
+        assert "06-01" not in _tok_text(scr), "hour 는 raw records 만 써야(06-01 없음)"
+    await _with_app(body)
+
+
 async def test_token_log_panel_subtab_groups_by_session():
     """[패널] 서브탭: 그룹 차원을 계정↔세션으로 토글한다. 세션 차원은 (재사용되는)
     패널 id 가 아니라 세션 id 로 묶어 보인다(설계 §8 — 세션 기준)."""
