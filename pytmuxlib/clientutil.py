@@ -283,6 +283,33 @@ def _darken_style(st: Style, ratio: float = 0.55) -> Style:
     return Style(color=_dark(st.color, Color.parse("grey23")),
                  bgcolor=_dark(st.bgcolor, None), bold=False)
 
+
+@lru_cache(maxsize=8192)
+def _dim_inactive_style(st: Style, ratio: float = 0.30) -> Style:
+    """비활성 패널 셀을 활성 대비 '약간 옅게'(§2.9, 요청): 전경/배경 실색을 검정 쪽으로
+    ratio(기본 0.30)만큼 살짝 블렌드해 패널 전체가 한 톤 가라앉아 보이게 한다 — 외곽선
+    없이도 활성 패널이 도드라진다. ANSI dim 은 터미널 의존(bold 글자 상쇄 등)이라
+    _darken_style 처럼 실색 블렌드를 쓰되, 그건 팝업용 강한 dim(검정 0.55 + 기본전경
+    grey23 고정)이라 여기선 더 약하게 + 기본 전경은 중간 회색(grey46)으로 둬 평문도
+    과하지 않게 옅어진다(전경 없는 셀이 새카매지지 않게). bold/italic 등 다른 속성은
+    `+` 오버레이로 보존하고 색만 덮는다. 전 화면 셀(수천)에 부르므로 (st, ratio) lru_cache."""
+    from rich.color import Color
+
+    def _dim(col, fb):
+        if col is None:
+            return fb
+        try:
+            t = col.get_truecolor()
+        except Exception:
+            return col
+        return Color.from_rgb(t.red * (1 - ratio),
+                              t.green * (1 - ratio),
+                              t.blue * (1 - ratio))
+
+    new_bg = _dim(st.bgcolor, None) if st.bgcolor is not None else None
+    return st + Style(color=_dim(st.color, Color.parse("grey46")), bgcolor=new_bg)
+
+
 def make_style(d: dict) -> Style:
     if not d:
         return DEFAULT_STYLE
@@ -495,6 +522,7 @@ COMMANDS = [
     ("monitor-activity", "활동 모니터링 [on|off]", "모니터"),
     ("monitor-bell", "벨 모니터링 [on|off]", "모니터"),
     ("capture-output", "패널 출력 캡처 토글 [on|off] (기본 on, 영속)", "모니터"),
+    ("inactive-dim", "비활성 패널 흐리게 토글 [on|off]", "설정/기타"),
     ("set", "옵션 설정 (prefix/mouse/status-*/mode-keys 등)", "설정/기타"),
     ("show-options", "현재 옵션 보기", "설정/기타"),
     ("set-hook", "이벤트 훅 설정 (<event> <cmd>)", "설정/기타"),
@@ -574,6 +602,7 @@ COMMAND_OPTIONS = {
     "monitor-activity": [{"key": "state", "label": "활동", "choices": _ONOFF}],
     "monitor-bell": [{"key": "state", "label": "벨", "choices": _ONOFF}],
     "capture-output": [{"key": "state", "label": "캡처", "choices": _ONOFF}],
+    "inactive-dim": [{"key": "state", "label": "비활성흐리게", "choices": _ONOFF}],
     "automatic-rename": [{"key": "state", "label": "자동이름", "choices": _ONOFF}],
     "single-border": [{"key": "state", "label": "단일테두리", "choices": _ONOFF}],
     "coalesce-repaints": [{"key": "state", "label": "리페인트합치기", "choices": _ONOFF}],
@@ -604,6 +633,7 @@ i18n.register({
         "방향": "Direction", "이동": "Move", "동작": "Action", "프리셋": "Preset",
         "범위": "Scope", "동기화": "Sync", "활동": "Activity", "벨": "Bell",
         "캡처": "Capture", "자동이름": "Auto-rename", "단일테두리": "Single border",
+        "비활성흐리게": "Inactive dim",
         "리페인트합치기": "Coalesce repaints", "언어": "Language",
         # 선택지
         "좌우 분할 │ (-h)": "Split L/R │ (-h)", "상하 분할 ─ (-v)": "Split T/B ─ (-v)",
@@ -724,6 +754,7 @@ i18n.register({
         "cmd.monitor-activity": "Activity monitoring [on|off]",
         "cmd.monitor-bell": "Bell monitoring [on|off]",
         "cmd.capture-output": "Toggle pane output capture [on|off] (default on, persisted)",
+        "cmd.inactive-dim": "Toggle dimming of inactive panes [on|off]",
         "cmd.set": "Set option (prefix/mouse/status-*/mode-keys etc.)",
         "cmd.show-options": "Show current options",
         "cmd.set-hook": "Set event hook (<event> <cmd>)",

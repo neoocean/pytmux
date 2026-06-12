@@ -16,9 +16,9 @@ from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     MENU_ITEMS, MENU_TOGGLES, SPECIAL,
     _BOX_BITS, _BOX_REV, _DATE_STRFTIME, _JAMO, _KEY_DIAG, _ONOFF,
     _TB_ACTIVE_STYLE, _TB_BORDER_STYLE, _TB_INACTIVE_STYLE, _TIME_STRFTIME,
-    _char_cells, _client_relaunch_ok, _darken_style, _first_int,
-    _first_signed_int, _is_emoji, _opt_value, _restart_check_eval, _signed_int,
-    _with_reverse,
+    _char_cells, _client_relaunch_ok, _darken_style, _dim_inactive_style,
+    _first_int, _first_signed_int, _is_emoji, _opt_value, _restart_check_eval,
+    _signed_int, _with_reverse,
     has_hangul, hangul_to_qwerty, norm_sep,
     _normalize_key, _shell_argv, key_to_bytes, make_style, theme_color)
 from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 사용)
@@ -215,6 +215,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._status_timer = None
             self.set_titles = config.get("set_titles", False)
             self.title_fmt = config.get("title_fmt", "#S:#I:#W")
+            # 비활성 패널 dim(§2.9, 요청): 한 탭에 패널이 둘 이상일 때 비활성 패널을
+            # 활성 대비 한 톤 옅게 그려 외곽선 없이도 활성 패널을 구분한다. config 로
+            # on/off·세기(0~0.8) 조정, 런타임 `inactive-dim` 명령으로 세션 토글(영속=config).
+            self.inactive_dim = bool(config.get("inactive_dim", True))
+            try:
+                self.inactive_dim_ratio = max(0.0, min(0.8,
+                    float(config.get("inactive_dim_ratio", 0.30))))
+            except (TypeError, ValueError):
+                self.inactive_dim_ratio = 0.30
             self.aliases = config.get("aliases", {})
             self.hooks = config.get("hooks", {})
             # 로케일(§6 i18n): 우선순위 = 영속된 `lang` 명령 선택 > config `lang` >
@@ -986,6 +995,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             H = self.layout.get("rows", max(1, self.size.height - 1))
             cells = [[(" ", DEFAULT_STYLE) for _ in range(W)] for _ in range(H)]
             active = self.layout.get("active")
+            # 비활성 패널 dim(§2.9): 패널이 둘 이상일 때만 — 단일 패널은 구분할 대상이 없다.
+            _dim_on = self.inactive_dim and len(self.layout.get("panes", [])) > 1
+            _dim_ratio = self.inactive_dim_ratio
             # 활성 패널 커서 셀의 전역 좌표(gx,gy) — 아래 반전커서 그리는 곳에서 채운다.
             # 매 합성마다 None 으로 초기화해 stale 좌표가 남지 않게 한다(IME preedit 동기화용).
             self._active_cursor_xy = None
@@ -996,6 +1008,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if not content:
                     continue
                 rows, cursor = content
+                # 비활성 패널이면 이 패널 셀 스타일을 한 톤 옅게(§2.9). 활성 패널은 원색.
+                p_dim = _dim_on and p["id"] != active
                 for ry, row in enumerate(rows):
                     if ry >= p["h"]:
                         break
@@ -1005,6 +1019,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     cx = p["x"]
                     for text, style_d in row:
                         st = make_style(style_d)
+                        if p_dim:
+                            st = _dim_inactive_style(st, _dim_ratio)
                         for chh in text:
                             if cx - p["x"] >= p["w"]:
                                 break
@@ -2193,6 +2209,19 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 elif "off" in args:
                     val = False
                 self.send_cmd("set_border_status", value=val)
+            elif c in ("inactive-dim", "dim-inactive"):
+                # §2.9 비활성 패널 dim 세션 토글(클라-로컬 표현; 영속 기본값은 config
+                # inactive_dim). 인자 on/off, 없으면 반전. 즉시 재합성해 반영.
+                if "on" in args:
+                    self.inactive_dim = True
+                elif "off" in args:
+                    self.inactive_dim = False
+                else:
+                    self.inactive_dim = not self.inactive_dim
+                self._composite()
+                self.display_message(i18n.t(
+                    "msg.inactive_dim",
+                    state=("ON" if self.inactive_dim else "OFF")))
             elif c in ("detach-client", "detach"):
                 if "-a" in args:
                     self.send_cmd("detach_others")

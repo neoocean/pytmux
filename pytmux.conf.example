@@ -8,6 +8,11 @@ set prefix C-a
 # 마우스 사용 (on/off)
 set mouse on
 
+# 비활성 패널 흐리게 (한 탭에 패널이 둘 이상일 때 비활성 패널을 활성 대비 한 톤
+# 옅게 그려 외곽선 없이도 활성 패널을 구분). 기본 on. 런타임 `:inactive-dim` 토글.
+# set inactive-dim off
+# set inactive-dim-ratio 0.30   # 흐리게 세기 0~0.8 (클수록 더 옅음)
+
 # 상태줄 색상(미지정 시 p4v-tui 와 동일한 textual-dark 테마 색을 사용)
 # set status-bg green
 # set status-fg black

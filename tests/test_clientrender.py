@@ -39,3 +39,22 @@ async def test_put_cell_clamps_and_wide_char_alignment():
     cells[0][2] = ("", st)        # 와이드 연속칸
     clientrender.put_cell(cells, 1, 0, "A", st, W, H)
     assert cells[0][1][0] == "A" and cells[0][2][0] == " "
+
+
+# ---- §2.9 비활성 패널 dim 스타일 ----
+async def test_dim_inactive_style_blends_darker_preserving_attrs():
+    """`_dim_inactive_style` 은 전경/배경 실색을 검정 쪽으로 ratio 만큼 블렌드해 한 톤
+    옅게 만들고(터미널 의존 ANSI dim 대신), bold/italic 등 다른 속성은 보존한다. 기본
+    전경(None)은 평문이 새카매지지 않게 중간 회색 폴백을 둔다."""
+    from pytmuxlib.clientutil import _dim_inactive_style
+    st = Style(color="#ffffff", bgcolor="#202020", bold=True)
+    d = _dim_inactive_style(st, 0.30)
+    # 전경 255 → 30% 어두워진 178, 배경도 어두워짐, bold 보존
+    assert d.color.get_truecolor().red == 178, d.color.get_truecolor()
+    assert d.bgcolor.get_truecolor().red < 0x20, d.bgcolor.get_truecolor()
+    assert d.bold is True, "bold 등 속성 보존"
+    # 세기가 클수록 더 어둡다(단조)
+    assert _dim_inactive_style(st, 0.50).color.get_truecolor().red < 178
+    # 기본 전경(None) → 회색 폴백(새카맣지 않게), 0 이면 사실상 무변(폴백만)
+    d0 = _dim_inactive_style(Style(), 0.30)
+    assert d0.color is not None and d0.color.get_truecolor().red > 0, "평문 폴백 회색"

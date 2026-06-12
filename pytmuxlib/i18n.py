@@ -263,6 +263,7 @@ register({
         # 캡처(REC)
         "msg.captured_chars": "{n} chars 버퍼에 캡처됨",
         "msg.capture_toggle": "출력 캡처 {state} (상태줄 REC)",
+        "msg.inactive_dim": "비활성 패널 흐리게 {state}",
         "msg.open_capture_dir": "기록 폴더 열기",
         "msg.no_capture_dir": "열 기록 폴더가 없습니다(캡처 꺼짐)",
         # 진단/기타
@@ -290,6 +291,7 @@ register({
         "msg.clipboard_suffix": " (clipboard)",
         "msg.captured_chars": "{n} chars captured to buffer",
         "msg.capture_toggle": "Output capture {state} (status REC)",
+        "msg.inactive_dim": "Inactive-pane dim {state}",
         "msg.open_capture_dir": "Opening capture folder",
         "msg.no_capture_dir": "No capture folder to open (capture off)",
         "msg.mouse_log": "Mouse debug log: {path}",

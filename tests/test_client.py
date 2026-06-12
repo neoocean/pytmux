@@ -1301,6 +1301,7 @@ async def test_context_menu_dims_other_panes():
     # 컨텍스트 메뉴가 열려 있는 동안 대상 패널 외 나머지 패널은 흐리게(dim) 그려
     # 어느 패널 대상인지 배경으로 구분한다(#18).
     async def body(app, pilot, srv):
+        app.inactive_dim = False   # §2.9 비활성 dim 격리(이 테스트는 메뉴 dim 만 검증)
         app.layout = {"panes": [{"id": 1, "x": 0, "y": 0, "w": 10, "h": 5,
                                  "box": [0, 0, 10, 5]},
                                 {"id": 2, "x": 10, "y": 0, "w": 10, "h": 5,
@@ -1325,6 +1326,45 @@ async def test_context_menu_dims_other_panes():
         app._composite()
         cells = app.view._cells
         assert cells[2][15][1].color == cells[2][5][1].color, "닫으면 원복"
+    await _with_app(body)
+
+
+async def test_inactive_pane_dimmed_unless_toggled_or_single():
+    """§2.9(요청): 한 탭에 패널이 둘 이상이면 비활성 패널을 활성 대비 한 톤 옅게(dim)
+    그려 외곽선 없이도 활성 패널을 구분한다. 활성 패널은 원색, 토글 off·단일 패널이면
+    dim 없음."""
+    async def body(app, pilot, srv):
+        # 테두리(행 0/마지막·좌우 끝)는 활성/비활성 box 색이 원래 다르므로, 내부 콘텐츠
+        # 셀(행 2)을 본다(context-menu dim 테스트와 동일 관례).
+        app.inactive_dim = True
+        app.inactive_dim_ratio = 0.30
+        app.layout = {"panes": [{"id": 1, "x": 0, "y": 0, "w": 10, "h": 5,
+                                 "box": [0, 0, 10, 5]},
+                                {"id": 2, "x": 10, "y": 0, "w": 10, "h": 5,
+                                 "box": [10, 0, 10, 5]}],
+                      "active": 1, "cols": 20, "rows": 5, "dividers": []}
+        app.pane_content = {1: ([[("a" * 10, {})] for _ in range(5)], None),
+                            2: ([[("b" * 10, {})] for _ in range(5)], None)}
+        app._composite()
+        cells = app.view._cells
+        s_active = cells[2][5][1]       # 패널 1(활성) 내부 콘텐츠
+        s_inactive = cells[2][15][1]    # 패널 2(비활성) 내부 콘텐츠
+        # 활성=원색(기본 None), 비활성=흐린 실색 폴백 → 색이 달라야 한다
+        assert s_inactive.color is not None, "비활성은 흐린 실색 적용"
+        assert s_inactive.color != s_active.color, (s_active.color, s_inactive.color)
+        # 토글 off → 비활성도 원색 복귀(활성과 동일)
+        app.inactive_dim = False
+        app._composite()
+        assert app.view._cells[2][15][1].color == app.view._cells[2][5][1].color, \
+            "off 면 dim 없음"
+        # 단일 패널 → inactive_dim on 이어도 dim 안 함(구분 대상 없음)
+        app.inactive_dim = True
+        app.layout = {"panes": [{"id": 1, "x": 0, "y": 0, "w": 20, "h": 5,
+                                 "box": [0, 0, 20, 5]}],
+                      "active": 1, "cols": 20, "rows": 5, "dividers": []}
+        app.pane_content = {1: ([[("a" * 20, {})] for _ in range(5)], None)}
+        app._composite()
+        assert app.view._cells[2][5][1].color == s_active.color, "단일 패널은 dim 없음"
     await _with_app(body)
 
 

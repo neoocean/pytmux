@@ -130,6 +130,8 @@ def load_config(path: str | None = None) -> dict:
         set status-fg <color>     # 상태줄 글자색
         set default-path <val>    # 새 탭/패널 시작 디렉토리
                                   #   current(기본)=현재 패널, home=$HOME, 또는 경로
+        set inactive-dim on|off   # 비활성 패널 흐리게(§2.9, 기본 on)
+        set inactive-dim-ratio <0~0.8>   # 흐리게 세기(기본 0.30)
         bind <key> <command...>   # prefix 후 <key> 에 명령 바인딩
     """
     cfg = {"prefix": "ctrl+b", "mouse": True, "bindings": {}, "aliases": {},
@@ -197,6 +199,17 @@ def load_config(path: str | None = None) -> dict:
                         v = val.strip().lower()
                         if v in ("ko", "en"):
                             cfg["lang"] = v
+                    elif opt in ("inactive-dim", "inactive_dim"):
+                        # §2.9 비활성 패널 흐리게(on/off). 런타임 `inactive-dim` 명령이
+                        # 세션 우선(이 값은 기본/영속).
+                        cfg["inactive_dim"] = val.lower() in (
+                            "on", "true", "1", "yes")
+                    elif opt in ("inactive-dim-ratio", "inactive_dim_ratio"):
+                        # 흐리게 세기(0~0.8). 클라가 범위 클램프. 파싱 실패는 무시.
+                        try:
+                            cfg["inactive_dim_ratio"] = float(val)
+                        except ValueError:
+                            pass
                 elif parts[0] == "bind" and len(parts) >= 3:
                     # 키를 Textual 표기로 정규화해 저장한다 — 런타임 매칭 토큰이
                     # event.key(ctrl+x 등)이므로 raw "C-x" 로 두면 절대 안 먹는다.
