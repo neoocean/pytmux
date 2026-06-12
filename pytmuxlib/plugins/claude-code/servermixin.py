@@ -145,17 +145,24 @@ class ServerClaudeMixin:
     # ---- 전송 에러(API error/rate limit/overloaded) 자동 재시도(요청 2026-06-12) ----
     # 사용량 5h 리밋(autoresume, reset 시각 대기)과 별개로, 전송 에러로 멈추면 **고정
     # 1분 뒤 "계속" 을 주입**해 이어가게 한다. 토글 claude_auto_retry(기본 ON).
-    _RETRY_DELAY = 60.0     # 에러 관측 후 "계속" 주입까지(요청: 1분)
+    _RETRY_DELAYS = (60.0, 120.0, 300.0)  # 1·2·3+차 주입 간격(요청 1분→백오프 2·5분)
+    _RETRY_MAX_ATTEMPTS = 5  # 연속 주입 상한(지속 outage 무한 "계속" 주입 방지, #9 H3)
     _RETRY_MSG = "계속"      # 재시도 프롬프트(요청)
 
     def _maybe_schedule_retry(self, pane: Pane):
-        """전송 에러가 관측됐을 때(호출부가 보장) 1분 뒤 "계속" 주입을 1회 예약한다
-        (이미 예약 중이면 유지 — 디바운스). 토글이 꺼졌으면 무동작."""
-        if not getattr(self, "claude_auto_retry", True) or pane._retry_pending:
+        """전송 에러가 관측됐을 때(호출부가 보장) "계속" 주입을 1회 예약한다(이미 예약
+        중이면 유지 — 디바운스). 토글이 꺼졌거나 연속 주입 상한 도달이면 무동작. 간격은
+        시도 횟수에 따라 백오프(60→120→300초)하고 _RETRY_MAX_ATTEMPTS 를 넘으면 단념한다
+        (#9 H3): 지속 outage(429/overloaded)에 매분 "계속" 을 무한 주입하면 각 주입이
+        rate-limited 계정에 요청을 더 태워 역효과다. 에러 해소 시 호출부가 _retry_attempts
+        를 0 으로 리셋해 다음 새 에러는 다시 1분(1차)부터 시작한다."""
+        n = getattr(pane, "_retry_attempts", 0)
+        if (not getattr(self, "claude_auto_retry", True) or pane._retry_pending
+                or n >= self._RETRY_MAX_ATTEMPTS):
             return
         pane._retry_pending = True
-        pane._retry_handle = self.loop.call_later(
-            self._RETRY_DELAY, self._fire_retry, pane)
+        delay = self._RETRY_DELAYS[min(n, len(self._RETRY_DELAYS) - 1)]
+        pane._retry_handle = self.loop.call_later(delay, self._fire_retry, pane)
 
     def _cancel_retry(self, pane: Pane):
         """무장된 재시도 예약을 취소한다(에러 해소·busy 복귀·세션 종료 시)."""
@@ -166,19 +173,23 @@ class ServerClaudeMixin:
         pane._retry_pending = False
 
     def _fire_retry(self, pane: Pane):
-        """1분 만료: 화면이 **여전히** 전송 에러면 "계속"+Enter 를 주입한다. 그새
-        Claude 가 스스로 재시도해 busy/idle 로 돌아갔거나 화면이 바뀌었으면(에러 해소)
-        주입하지 않는다(작업 중 끼어들기 방지 — autoresume _fire_resume 와 같은 가드)."""
+        """백오프 만료: 화면이 **여전히** 전송 에러로 멈춰 있으면 "계속"+Enter 를
+        주입한다. 그새 Claude 가 스스로 재시도해 busy/idle 로 돌아갔거나 화면이 바뀌었으면
+        (에러 해소) 주입하지 않는다(작업 중 끼어들기 방지 — autoresume _fire_resume 와
+        같은 발화직전 재확인). 주입에 성공하면 _retry_attempts 를 올려 백오프·상한을 전진."""
         pane._retry_pending = False
         pane._retry_handle = None
         if pane.pty is None:
             return
-        # 그새 Claude 가 스스로 재시도해 에러가 사라졌으면(busy/idle 복귀) 주입 안 함
-        # (작업 중 끼어들기 방지 — autoresume _fire_resume 와 같은 발화직전 재확인).
-        if not claude_api_error(screen_text(pane.screen)):
+        # 발화직전 재확인: 에러가 사라졌으면(busy/idle 복귀) 주입 안 함. 추가로 Claude 가
+        # **이미 busy**(스스로 재시도 중 — 전사에 에러 줄이 남아 있어도)면 작업에 끼어들지
+        # 않는다(#9 — 산문/잔상 에러로 working Claude 를 방해하지 않게).
+        text = screen_text(pane.screen)
+        if not claude_api_error(text) or claude_state(text) == "busy":
             return
         try:
             pane.pty.write((self._RETRY_MSG + "\r").encode("utf-8"))
+            pane._retry_attempts = getattr(pane, "_retry_attempts", 0) + 1
         except OSError:
             pass
 
@@ -1013,8 +1024,12 @@ class ServerClaudeMixin:
                 # 무장(_resume_pending)했으면 양보해 중복 주입을 막는다(reset 시각으로 다룸).
                 if p._hdr_claude and claude_api_error(txt) and not p._resume_pending:
                     self._maybe_schedule_retry(p)
-                elif p._retry_handle is not None:
-                    self._cancel_retry(p)
+                else:
+                    # 에러 아님(해소·busy/idle 복귀·autoresume 양보·non-Claude) → 무장
+                    # 예약 취소 + 연속 재시도 카운터 리셋(다음 새 에러는 다시 1분부터, #9 H3).
+                    if p._retry_handle is not None:
+                        self._cancel_retry(p)
+                    p._retry_attempts = 0
                 # 자동 doc→/clear(§10): idle 이탈(busy/limit/종료) 시 무장된 타이머를
                 # 즉시 해제한다 — idle 이 끊기면 "N초 지속" 전제가 깨진다. 권한모드
                 # 자동전환 시도 카운터도 idle 이탈 시 리셋(다음 idle 진입에 다시 시도).

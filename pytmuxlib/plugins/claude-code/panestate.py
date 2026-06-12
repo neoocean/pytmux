@@ -102,10 +102,12 @@ def init_pane(pane) -> None:
     # 코어 Pane 에 남고, 여기선 메시지/보류만 둔다.)
     pane.resume_msg = "continue"
     pane._resume_pending = False
-    # 전송 에러(API error/rate limit) 자동 재시도(요청): _retry_handle=1분 뒤 "계속"
-    # 주입 예약 call_later 핸들(에러 해소·busy 복귀 시 cancel), _retry_pending=예약 보류.
+    # 전송 에러(API error/rate limit) 자동 재시도(요청): _retry_handle=백오프 후 "계속"
+    # 주입 예약 call_later 핸들(에러 해소·busy 복귀 시 cancel), _retry_pending=예약 보류,
+    # _retry_attempts=연속 주입 횟수(상한·백오프; 에러 해소 시 0 으로 리셋, #9 H3).
     pane._retry_handle = None
     pane._retry_pending = False
+    pane._retry_attempts = 0
     # Claude 스캔 버퍼·마지막 스캔 시 본 feed seq(dirty 게이팅; 코어 _feed_seq 와 비교).
     pane._scanbuf = ""
     pane._scan_seq = -1
@@ -117,8 +119,18 @@ def reset_pane(pane) -> None:
     prompt_clear_queue 리셋은 코어 reinit 에 남는다; 토큰 누계 _tok_state/_session_tokens
     리셋은 S5 T4 에서 이리로 이전 — 새 셸이므로 0 에서 시작)."""
     pane._scanbuf = ""
+    # 무장된 자동재개/재시도 타이머는 **취소**한 뒤 리셋한다(respawn=새 셸). 핸들을
+    # 드롭만 하면 ① 살아있는 타이머가 새 셸로 발화하고 ② _retry_pending 잔류로 새
+    # 에러의 재무장이 막힌다(#9 H1). reset_pane 은 server 핸들이 없어 _cancel_* 대신
+    # 핸들을 직접 cancel(_fire_* 의 pty/state 가드만으론 새 셸 발화를 못 막는다).
+    for _h in (pane._resume_handle, pane._retry_handle):
+        if _h is not None:
+            _h.cancel()
     pane._resume_pending = False
     pane._resume_handle = None      # 자동재개 예약 핸들 리셋(M12)
+    pane._retry_pending = False
+    pane._retry_handle = None       # 전송 에러 재시도 예약 핸들 리셋(#9 H1)
+    pane._retry_attempts = 0
     pane._ctx_fired = False          # 컨텍스트 잔량 자동정리 디바운스 리셋(M11)
     pane._ctx_last_fire = None       # 정리 빈도 상한 시각 리셋(M14)
     pane._claude_session_id = 0

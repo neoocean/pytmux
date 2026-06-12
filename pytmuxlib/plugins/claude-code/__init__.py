@@ -665,6 +665,10 @@ class _ClaudeCodePlugin:
         pane._acpt_fired = False  # 활동 재개 → 다음 idle 에 자동 /compact 재무장 허용
         pane._hardstop_fired = False  # 사용자가 직접 대응 중 → 하드스톱 자동복구 재무장
         server._cancel_resume(pane)
+        # 사용자가 직접 대응(예: 손수 "계속" 입력) 중이면 무장된 자동 재시도도 거둔다 —
+        # 안 거두면 잔상 에러 줄 때문에 발화직전 재확인을 통과해 "계속" 이 중복 주입된다(#9 H2).
+        server._cancel_retry(pane)
+        pane._retry_attempts = 0
 
     def server_paste(self, server, pane, data):
         """붙여넣기(모바일 받아쓰기·자동완성 포함)도 프롬프트 추적에 반영(헤더용)."""
@@ -805,6 +809,11 @@ class _ClaudeCodePlugin:
         토큰을 같은 계정 생존 패널로 이관한다(#20, S5 토큰 모듈화 T4). 동적 합성된 믹스인
         메서드로 위임 — 코어 servertree 는 토큰 누계를 모른다."""
         server._carry_tokens_on_close(pane)
+        # 닫히는 패널에 무장된 자동재개/재시도 타이머를 거둬 닫힌 Pane 참조가 최대
+        # 백오프 간격(최대 5분) 동안 살아있지 않게 한다(#9 M1 — _fire_* 의 pty 가드가
+        # 오발화는 막지만 참조 누수는 남는다).
+        server._cancel_resume(pane)
+        server._cancel_retry(pane)
 
     # ---- Pane Claude 상태 소유(S4) — panestate 모듈에 위임 ----
     def pane_init(self, pane):

@@ -1045,7 +1045,7 @@ async def test_auto_retry_on_api_error():
         p.feed("\x1b[2J\x1b[H⎿ API Error: Connection error.\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
         assert p._retry_pending is True, "에러 시 재시도 예약"
-        assert scheduled and scheduled[-1][0] == srv._RETRY_DELAY
+        assert scheduled and scheduled[-1][0] == srv._RETRY_DELAYS[0]   # 1차=1분
         assert scheduled[-1][1] == srv._fire_retry
         # 중복 예약 방지
         n = len(scheduled)
@@ -1074,6 +1074,148 @@ async def test_auto_retry_on_api_error():
         p.feed("\x1b[2J\x1b[HAPI Error (500 internal)\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
         assert not scheduled and p._retry_pending is False
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_auto_retry_cancelled_on_respawn():
+    """#9 H1: respawn(새 셸) 시 무장된 재시도 타이머를 **취소+리셋**한다. 안 하면 살아있는
+    타이머가 새 셸로 "계속" 을 발화하고, _retry_pending 잔류로 새 에러의 재무장이 막힌다."""
+    import importlib
+    import types
+    ps = importlib.import_module("pytmuxlib.plugins.claude-code.panestate")
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        cancelled = []
+
+        class _FakeLoop:
+            def call_later(self, delay, fn, *a):
+                h = types.SimpleNamespace()
+                h.cancel = lambda: cancelled.append(h)
+                return h
+        srv.loop = _FakeLoop()
+        # Claude 패널 확립(busy 프레임) 후 API 에러 → 재시도 무장
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (esc to interrupt)\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        p.feed("\x1b[2J\x1b[H⎿ API Error: Connection error.\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._retry_pending and p._retry_handle is not None
+        h = p._retry_handle
+        # respawn → 살아있는 타이머 취소 + 상태 리셋
+        ps.reset_pane(p)
+        assert h in cancelled, "respawn 이 살아있는 재시도 타이머를 취소"
+        assert p._retry_handle is None and p._retry_pending is False
+        assert p._retry_attempts == 0
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_auto_retry_cancelled_on_user_input():
+    """#9 H2: 사용자가 패널에 입력하면(작업 이어받음) 무장된 재시도 예약을 취소한다. 안
+    하면 전사에 남은 잔상 에러 줄 때문에 _fire_retry 의 발화직전 재확인을 통과해 "계속"
+    이 사용자 입력에 더해 중복 주입된다(_handle_input → server_input → _cancel_retry)."""
+    import base64
+    from pytmuxlib.model import ClientConn
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        p._retry_handle = srv.loop.call_later(100, lambda: None)
+        p._retry_pending = True
+        p._retry_attempts = 2
+        client = ClientConn(None)
+        client.session = sess
+        srv._handle_input(client, {"pane": p.id,
+                                   "data": base64.b64encode(b"x").decode()})
+        assert p._retry_handle is None and p._retry_pending is False
+        assert p._retry_attempts == 0
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_auto_retry_backoff_and_cap():
+    """#9 H3: 연속 재시도는 백오프(60→120→300초)하고 _RETRY_MAX_ATTEMPTS 회에서 단념한다 —
+    지속 outage 에 매분 "계속" 을 무한 주입(각 주입이 rate-limited 계정에 요청을 더 태움)
+    하지 않는다. 에러 해소 시 카운터가 0 으로 리셋돼 다음 새 에러는 다시 1분(1차)부터."""
+    import types
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        scheduled = []
+
+        class _FakeLoop:
+            def call_later(self, delay, fn, *a):
+                scheduled.append(delay)
+                return types.SimpleNamespace(cancel=lambda: None)
+        srv.loop = _FakeLoop()
+        writes = []
+        p.pty.write = lambda b: writes.append(b)
+        # 화면을 에러 상태로 고정(스캔 디바운스와 분리해 무장/발화 로직만 검증)
+        p.feed("\x1b[2J\x1b[H⎿ API Error: Connection error.\r\n".encode("utf-8"))
+        seen = []
+        for i in range(srv._RETRY_MAX_ATTEMPTS):
+            srv._maybe_schedule_retry(p)
+            assert p._retry_pending, f"{i}차 무장"
+            seen.append(scheduled[-1])
+            srv._fire_retry(p)                # 여전히 에러 → 주입 + attempts++
+        assert seen == [60.0, 120.0, 300.0, 300.0, 300.0], seen
+        assert len(writes) == srv._RETRY_MAX_ATTEMPTS
+        assert p._retry_attempts == srv._RETRY_MAX_ATTEMPTS
+        # 상한 도달 → 더는 무장 안 함(단념)
+        n = len(scheduled)
+        srv._maybe_schedule_retry(p)
+        assert p._retry_pending is False and len(scheduled) == n
+        # 에러 해소(idle 복귀, 새 출력) → dispatch else 분기가 카운터 리셋
+        p.feed("\x1b[2J\x1b[H? for shortcuts\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._retry_attempts == 0, "에러 해소 시 카운터 리셋"
+        # 리셋 후 새 에러 → 다시 1분(1차)부터
+        srv._maybe_schedule_retry(p)
+        assert scheduled[-1] == 60.0, "리셋 후 1차=1분"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_auto_retry_not_fired_when_busy():
+    """#9: _fire_retry 는 Claude 가 **이미 busy**(스스로 재시도 중)면 주입하지 않는다 —
+    전사에 잔상 에러 줄이 남아 claude_api_error 가 True 라도 working Claude 를 방해 안 함."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        writes = []
+        p.pty.write = lambda b: writes.append(b)
+        # busy 스피너 + 위쪽 전사에 잔상 "API Error" 가 같이 보이는 프레임
+        p.feed(("\x1b[2J\x1b[H⎿ API Error: Connection error.\r\n"
+                "✽ Crunching… (8s · ↑ 1.2k tokens)\r\n").encode("utf-8"))
+        srv._fire_retry(p)
+        assert writes == [], "busy(재시도 중)면 주입 안 함"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_auto_retry_cancelled_on_pane_close():
+    """#9 M1: 패널 종료 시 무장된 재시도/재개 타이머를 거둔다 — 닫힌 Pane 참조가 최대
+    백오프 간격(최대 5분) 동안 call_later 큐에 살아있지 않게(pane_closing → _cancel_*)."""
+    import types
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        cancelled = []
+        hr = types.SimpleNamespace(cancel=lambda: cancelled.append("retry"))
+        hs = types.SimpleNamespace(cancel=lambda: cancelled.append("resume"))
+        p._retry_handle, p._retry_pending = hr, True
+        p._resume_handle, p._resume_pending = hs, True
+        srv.plugins.pane_closing(srv, p)
+        assert "retry" in cancelled and "resume" in cancelled
+        assert p._retry_handle is None and p._retry_pending is False
+        assert p._resume_handle is None and p._resume_pending is False
     finally:
         await teardown(srv, task, sock)
 
