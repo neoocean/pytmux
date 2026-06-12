@@ -272,6 +272,29 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- **캡처 오탐 감사(#9) + 신규 코드리뷰 라운드 자율 진행(2026-06-12, CL 58430·58434·58436)** —
+  백로그 소진 후 사용자 "A·B 자율 진행" 요청. **A = 로컬 Claude 캡처(`captures/woojinkim`
+  ~313 로그) 재생 오탐 감사**, **B = 신규 코드리뷰 라운드**(병렬 조사 에이전트 2개 → 발견을
+  사람이 검증·수정·서브밋). 의미 단위 named CL 3개:
+  - **CL 58430 — 스크래핑 state 오탐 2건(#9 F1/F2).** F1(HIGH): `/usage-credits` 슬래시
+    메뉴 도움말 'when you hit a limit' 가 idle 화면을 차단(limit)으로 오인(실측 corpus 의
+    limit 오판 **4/4**) → `_claude_body` 가 `/명령` UI 크롬 행 제외(`_SLASH_MENU_RE`).
+    F2(MED): 컨텍스트 하드스톱('Context limit reached')을 usage-limit 으로 이중분류 →
+    `claude_limit` 이 `claude_context_hardstop` 일 때 단락. 계정검출·`/usage` 파서는 clean.
+  - **CL 58434 — auto-retry(58374) 생명주기·안전 가드 4건.** H1 respawn 미취소(새 셸
+    오발화+재무장 차단) → `reset_pane` 타이머 cancel+리셋. H2 사용자 입력 미취소(중복
+    "계속" 주입) → `server_input` 에 `_cancel_retry`. H3 상한·백오프 없음(지속 outage
+    무한주입) → `_RETRY_DELAYS`(60/120/300)+`_RETRY_MAX_ATTEMPTS`(5)+에러해소 리셋,
+    `_fire_retry` 가 busy 면 미발화. M1 종료 미취소(Pane 참조 최대 5분 잔존) → `pane_closing`
+    에 `_cancel_resume/_cancel_retry`. test_server 신규 5건. **서버측 — 재기동 후 반영.**
+  - **CL 58436 — 저심각 견고성 2건.** L2 `_signed_int`/`_first_int` 비ASCII 숫자(²·③ —
+    `isdigit()`=True 지만 `int()` 깨짐) ASCII 가드. L1 `serverio._tree_msg` 세션-레벨
+    `active=(s is None)` 항상-False 우회표현 → 명시적 False+주석(윈도우-레벨이 권위값).
+  - **보류(LOW·코퍼스 실오탐 없음)**: F3 토큰 산문 스크랩·F4 api_error 산문·F5 inline_limit
+    산문 — 정밀화는 false-negative 위험, 실 캡처 fixture 확보 후 재고(IMPROVEMENT §보류 기록).
+  - **공유 워크스페이스**: CL 58436 서브밋 시 `tests/test_client.py` 가 병렬 세션 #160 과
+    충돌 → `p4 resolve -am` 자동머지(충돌 0)·재서브밋. git 미러는 내 헝크만 인덱스 스테이징
+    (`git apply --cached`)해 상대 CL 과 섞이지 않게 분리. 전 단계 538 green.
 - **git 미러 캐치업 → p4 @58401(2026-06-12)** — p4 sync 후 git HEAD(`bd22163`=CL 58374)가
   depot 보다 4 CL 뒤처져, 각 CL 경계를 별도 git 커밋으로 재현하고 푸시했다(미러 커밋
   마다 `Perforce: change N` 트레일러로 CL↔커밋 추적). 매핑: **58350** §2.2 마우스 제스처

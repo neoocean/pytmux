@@ -65,6 +65,15 @@
 - **#9/#21~24/#22**(M, Claude): 실 Claude 화면 캡처·로그 포맷 마이그레이션 필요.
   (~~컨텍스트 잔량% 기반 절감 트리거가 가장 큰 자동화 공백~~ → M11 `claude_ctx_autoclear`
   +`claude_ctx_threshold` 로 구현 완료 — 이 문장은 stale 이었음, 2026-06-11 정정.)
+  - **2026-06-12 캡처 오탐 감사 1차 완료**: `captures/woojinkim`(~313 로그)를 `replay`
+    로 재생해 스크래핑 휴리스틱을 실측 텍스트로 점검. **F1(HIGH)·F2(MED) 수정(CL 58430)**:
+    `/usage-credits` 슬래시 메뉴 도움말('…hit a limit')이 idle 화면을 차단(limit)으로
+    오인(코퍼스 limit 오판 4/4)·컨텍스트 하드스톱을 usage-limit 으로 이중분류. 계정
+    검출·`/usage` 실측 파서는 **clean**(`'s Organization`/git URL 거부/플랜 배지 모두 정상).
+    **보류(LOW·코퍼스에 실오탐 없음)**: F3 `claude_usage` 토큰 산문 스크랩('50k tokens
+    per run' → 표시 전용·`/usage` 실측이 1차라 무해), F4 `claude_api_error` 산문 매칭
+    (지속 outage 무한주입은 CL 58434 의 상한·busy 가드로 이미 완화), F5 `parse_inline_limit`
+    산문(contrived). 정밀화는 false-negative 위험이 있어 실 캡처 fixture 확보 후 재고.
 - ~~**Windows 계열 #1.1~#1.5**(H/M): 실 Windows 박스 검증 필요~~ → **전부 구현 완료**
   (2026-06-11, office 박스): #1.1 직접 소유 ConPTY raw-바이트 백엔드(CL 58214, opt-in
   `PYTMUX_PTY_BACKEND=owned`·pywinpty 폴백; 멀티바이트 플러드 왕복만 실 박스 라이브 검증
