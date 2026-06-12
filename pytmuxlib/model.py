@@ -247,6 +247,10 @@ class _ScrollbackScreen(_BCEMixin, pyte.Screen):
         # super().__init__ 가 reset() 을 호출하므로 history 를 먼저 만든다
         # (HistoryScreen 과 동일한 순서).
         self.history = _History(history)
+        # §3.8 프롬프트↔스크롤백 매핑: top 히스토리에 들어간 누적 줄 수(단조 증가).
+        # deque 가 maxlen 으로 회전해도 줄지 않아, 회전에 강건한 **절대** 라인 인덱스
+        # (anchor)를 만든다 — 현재 deque 의 줄 i 는 절대 인덱스 hist_total-len(top)+i.
+        self.hist_total = 0
         super().__init__(columns, lines)
 
     def index(self) -> None:
@@ -255,6 +259,7 @@ class _ScrollbackScreen(_BCEMixin, pyte.Screen):
         top, bottom = self.margins or Margins(0, self.lines - 1)
         if self.cursor.y == bottom:
             self.history.top.append(self.buffer[top])
+            self.hist_total += 1   # §3.8 절대 라인 카운터(회전 무관 단조 증가)
         super().index()
 
     def reverse_index(self) -> None:
@@ -272,6 +277,7 @@ class _ScrollbackScreen(_BCEMixin, pyte.Screen):
         super().reset()
         self.history.top.clear()
         self.history.bottom.clear()
+        self.hist_total = 0   # §3.8 스크롤백 비움 → 절대 카운터도 리셋(anchor 무효화)
 
 
 # 대체 화면 버퍼(alternate screen) 전환 시퀀스. pyte 가 직접 지원하지 않아
@@ -452,6 +458,10 @@ class Pane:
         # _tok_state/_session_tokens 와 세션 id 는 claude-code 플러그인 pane_init 소유 —
         # 누계는 S5 토큰 모듈화 T4 에서 panestate 로 이전.)
         self._claude_account = None
+        # footer 표시용 비별칭(전체) 계정 — 폭이 충분하면 전체 이메일을 보인다(요청
+        # 2026-06-12). 로그·이벤트는 별칭(_claude_account)을 그대로 쓰고, 이 값은 상태
+        # 메시지로만 클라에 전달된다. 별칭과 같은 스크랩 판정으로 함께 갱신된다.
+        self._claude_account_full = None
         self._claude_account_manual = False
         # 프롬프트 단위 클리어 큐(#4): 사용자가 미리 쌓아 둔 명령들. respawn 시 코어가
         # 직접 비우므로(reinit) 코어 Pane 에 남긴다(모드/상태기계는 플러그인 소유).
@@ -503,6 +513,7 @@ class Pane:
         # 계정 리셋 — 새 셸이므로 미지정에서 시작. (토큰 누계 _tok_state/_session_tokens
         # 리셋은 S5 T4 에서 plugins.pane_reset → panestate 로 이전.)
         self._claude_account = None
+        self._claude_account_full = None
         self._claude_account_manual = False
         self.prompt_clear_queue = []  # 새 셸이므로 쌓인 명령 큐도 버린다(#4)
         self._hdr_reserved = False
@@ -527,7 +538,8 @@ class Pane:
     # 'plugin_state' 키로 불투명하게 담는다). 여기 남는 건 코어가 직접 쓰는 계정/리네임/
     # 토글 필드뿐이다.
     _RESUME_FIELDS = (
-        "title", "autoresume", "_claude_account", "_claude_account_manual",
+        "title", "autoresume", "_claude_account", "_claude_account_full",
+        "_claude_account_manual",
         "_pending_rename",   # 재시작 중 보류된 탭→세션 리네임도 idle 경계에서 발동
         "bracketed",
     )
@@ -801,6 +813,28 @@ class Pane:
 
     def scroll_to(self, where: str) -> None:
         self.scroll = self._history_len() if where == "top" else 0
+        self.dirty = True
+
+    def current_anchor(self) -> int:
+        """지금 커서 줄의 **절대 스크롤백 라인 인덱스**(§3.8). 스크롤백으로 밀려나도
+        변치 않는 값 = hist_total(밀려난 누적 줄 수) + 커서 y(화면 내 행). 프롬프트 제출
+        시점에 호출해 그 프롬프트 줄의 anchor 로 저장한다. 스크롤백 없는 화면(대체
+        버퍼 등)은 커서 y 만(0 기준)."""
+        scr = self.screen
+        total = getattr(scr, "hist_total", 0)
+        return total + scr.cursor.y
+
+    def scroll_to_anchor(self, anchor: int) -> None:
+        """절대 라인 인덱스 anchor 가 뷰포트 맨 위에 오도록 scroll 을 설정(§3.8 — 프롬프트
+        점프). 회전 강건: render 의 `start = len(hist) - scroll` 가 hist 의 줄 인덱스
+        anchor-(hist_total-len(hist)) 를 가리키게 풀면 scroll = hist_total - anchor.
+        [0, len(hist)] 로 클램프 — anchor 가 아직 라이브 화면 위(>=hist_total)면 0(라이브),
+        deque 회전으로 사라졌으면 len(hist)(맨 위)."""
+        h = getattr(self.screen, "history", None)
+        if h is None:
+            return
+        total = getattr(self.screen, "hist_total", 0)
+        self.scroll = max(0, min(total - anchor, len(h.top)))
         self.dirty = True
 
     def _serialize_row(self, line, cols):

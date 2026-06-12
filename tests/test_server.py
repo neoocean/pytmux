@@ -119,6 +119,64 @@ async def test_prompt_history_accumulates():
         await teardown(srv, task, sock)
 
 
+async def test_prompt_anchors_aligned_with_history():
+    """§3.8: 제출 프롬프트마다 절대 스크롤백 anchor 를 prompt_history 와 **인덱스 정렬**해
+    쌓는다(_track_prompt 경로). 200 초과 트림도 두 리스트가 함께 잘려 정렬을 유지한다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        srv._track_prompt(p, b"alpha\r")
+        srv._track_prompt(p, b"beta\r")
+        srv._track_prompt(p, b"beta\r")        # 연속 중복 → 둘 다 안 늘어남
+        assert p.prompt_history == ["alpha", "beta"]
+        assert len(p._prompt_anchors) == 2
+        assert all(isinstance(a, int) for a in p._prompt_anchors)
+        for i in range(205):                   # 트림 경계 넘기기
+            srv._track_prompt(p, f"p{i}\r".encode())
+        assert len(p.prompt_history) == 200
+        assert len(p._prompt_anchors) == 200, "anchor 도 함께 트림(정렬 유지)"
+        # 재시작 복원: anchor 는 화면-수명(hist_total 리셋)이라 직렬화하지 않고, 복원
+        # 시 prompt_history 길이에 맞춰 None 패딩해 정렬 유지(복원분은 점프 불가).
+        import importlib
+        ps = importlib.import_module("pytmuxlib.plugins.claude-code.panestate")
+        data = ps.serialize(p)
+        assert "_prompt_anchors" not in data, "anchor 는 직렬화 안 함(화면-수명)"
+        ps.restore(p, {**data, "prompt_history": ["x", "y", "z"]})
+        assert p._prompt_anchors == [None, None, None], p._prompt_anchors
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_scroll_to_prompt_maps_tail_index_and_guards():
+    """§3.8: scroll_to_prompt(index) 는 히스토리 팝업 번호(상태로 보낸 마지막 30개 슬라이스
+    기준)를 서버 전체 prompt_history 의 절대 인덱스로 환산(base=len-30)해 그 anchor 로
+    점프한다. 범위 밖·anchor None(재시작 복원분)은 무동작."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        picked = []
+        p.scroll_to_anchor = lambda a: picked.append(a)   # 선택된 anchor 캡처(렌더 격리)
+        p.prompt_history = [f"p{i}" for i in range(35)]
+        p._prompt_anchors = list(range(1000, 1035))        # 정렬된 anchor
+        # 팝업 1번(index 0) = 마지막 30 슬라이스의 첫 = 절대 인덱스 5(=35-30)
+        assert srv.scroll_to_prompt(sess, 0) is True
+        assert picked == [p._prompt_anchors[5]], picked
+        # 팝업 30번(index 29) = 절대 34(최신)
+        picked.clear()
+        assert srv.scroll_to_prompt(sess, 29) is True
+        assert picked == [p._prompt_anchors[34]]
+        # 범위 밖 → 무동작
+        picked.clear()
+        assert srv.scroll_to_prompt(sess, 99) is False and picked == []
+        # anchor None(복원분) → 점프 불가
+        p._prompt_anchors[34] = None
+        assert srv.scroll_to_prompt(sess, 29) is False
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_prompt_history_multiline_is_one_entry():
     # Shift+Enter(=LF \n)로 줄바꿈해 한 번에 제출(Enter=CR \r)한 멀티라인 프롬프트는
     # 별개 번호로 쪼개지지 않고 **한 개** 히스토리 항목이 된다(개행 보존). 헤더용

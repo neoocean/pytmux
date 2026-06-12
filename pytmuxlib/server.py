@@ -317,10 +317,13 @@ class Server(*_SERVER_BASES):
         name = (name or "").strip()
         if name:
             p._claude_account = name
+            # 수동 지정은 사용자가 친 문자열 그대로 — footer 전체 표시도 동일 값.
+            p._claude_account_full = name
             p._claude_account_manual = True
         else:
             p._claude_account_manual = False
             p._claude_account = None
+            p._claude_account_full = None
 
 
     def set_claude_header(self, value=None):

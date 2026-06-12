@@ -28,6 +28,7 @@ COMMANDS = [
     ("claude-header", "Claude 프롬프트 헤더 표시 on/off (claude-header on|off|toggle)",
                       "Claude"),
     ("prompt-history", "Claude 프롬프트 히스토리 팝업(헤더 클릭으로도 열림)", "Claude"),
+    ("prompt-jump", "프롬프트 히스토리 n번으로 스크롤 점프 (prompt-jump <n>)", "Claude"),
     ("token-usage", "Claude 실행 중 탭/패널 + 토큰 사용량 트리(상태줄 사용량 클릭)",
                     "Claude"),
     ("token-log", "토큰 사용량 영속 로그 집계 팝업(시간/일/월 × 계정 — h/d/m·a 전환)",
@@ -90,6 +91,7 @@ i18n.register({
         "cmd.auto-resume-message": "Set the auto-resume message",
         "cmd.claude-header": "Show Claude prompt header on/off (claude-header on|off|toggle)",
         "cmd.prompt-history": "Claude prompt history popup (also opens by clicking the header)",
+        "cmd.prompt-jump": "Scroll-jump to prompt #n in history (prompt-jump <n>)",
         "cmd.token-usage": "Tab/pane tree of running Claude + token usage (click status usage)",
         "cmd.token-log": "Persistent token-usage log aggregation popup (hour/day/month × account — h/d/m·a)",
         "cmd.claude-usage": "Shadow /usage query — refresh real session/weekly limits via a hidden session (alias usage)",
@@ -275,6 +277,8 @@ def _pane_claude_entry(p, full):
     추적을 오염시키면 다른 클라가 델타를 놓친다. (serverio 코어에서 이리로 이전.)"""
     e = {"id": p.id, "claude": p._claude, "prompt": p.last_prompt,
          "perm_mode": p._perm_mode, "bypass_ok": p._bypass_seen}
+    # 마지막 30개만 싣는다(상태 경량). §3.8 prompt-jump 는 이 슬라이스 번호를 서버에서
+    # 절대 인덱스로 환산하므로, 이 30 은 servermixin._PROMPT_HIST_TAIL 과 **동일해야** 한다.
     h = p.prompt_history[-30:]
     if full or h != p._hist_sent:
         e["history"] = h
@@ -617,6 +621,10 @@ class _ClaudeCodePlugin:
         msg["claude_model"] = (ap._claude_model
                                if ap and ap._claude else None)
         msg["claude_account"] = ap._claude_account if ap else None
+        # footer 전체 표시용 비별칭 계정(폭 충분 시 전체, 아니면 클라가 별칭으로 폴백).
+        # 로그·이벤트는 위 별칭(claude_account)만 쓴다 — 이 키는 클라 표시 전용.
+        msg["claude_account_full"] = (
+            getattr(ap, "_claude_account_full", None) if ap else None)
         msg["autoresume"] = bool(ap.autoresume) if ap else False
         msg["prompt_clear"] = bool(ap.prompt_clear_mode) if ap else False
         # 프롬프트 단위 클리어 큐(#4): 활성 패널에 쌓인 명령들(표시·목록용).
@@ -940,6 +948,13 @@ class _ClaudeCodePlugin:
             self._open_saver(app)
         elif c in ("prompt-history", "prompts"):
             app.open_prompt_history(app.layout.get("active"))
+        elif c in ("prompt-jump", "prompt-goto", "jump-prompt"):
+            # §3.8: prompt-jump <n> → 활성 패널을 히스토리 팝업의 n 번째(1 기반) 프롬프트가
+            # 제출된 스크롤백 위치로 점프(그 프롬프트로 진행된 기록을 위에서부터 본다).
+            # 인자 없으면 무동작. 서버가 anchor→scroll 환산(scroll_to_prompt).
+            n = next((int(a) for a in args if a.lstrip("-").isdigit()), None)
+            if n is not None:
+                app.send_cmd("scroll_to_prompt", index=n - 1)
         elif c in ("token-usage", "tokens"):
             app.open_claude_usage_tree()
         elif c in ("token-log", "tokens-log", "token-usage-log"):

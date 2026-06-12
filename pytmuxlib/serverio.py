@@ -364,6 +364,13 @@ class ServerIOMixin:
         elif action == "paste":
             self.paste_text(sess, str(msg.get("text", "")))
             return
+        elif action == "scroll_to_prompt":
+            # §3.8: 활성 패널을 prompt_history[index] 의 스크롤백 위치로 점프. claude-code
+            # 플러그인이 제공하는 메서드라 getattr 가드(플러그인 삭제 시 no-op).
+            fn = getattr(self, "scroll_to_prompt", None)
+            if fn:
+                fn(sess, int(msg.get("index", 0)))
+            return
         elif action == "request_buffers":
             await write_msg(client.writer, self._buffers_msg())
             return

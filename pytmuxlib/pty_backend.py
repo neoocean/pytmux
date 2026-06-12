@@ -83,12 +83,13 @@ def spawn(argv, *, cols: int, rows: int,
     cwd: 시작 디렉터리(None=상속). env: 환경(None=현재 프로세스 환경 상속).
     """
     if IS_WINDOWS:
-        # PYTMUX_PTY_BACKEND=owned|conpty 면 직접 소유 ConPTY 를 쓰고, 실패하면 조용히
-        # pywinpty 로 폴백한다(안전망). ⚠️ **owned 는 현재 비동작**(시스템 conhost 가
-        # 콘솔-less 데몬에서 자식 출력을 스트리밍하지 못해 패널이 백지가 된다 —
-        # 2026-06-11 라이브 검증, conpty.py 모듈 docstring·§1.1② 참조). 기본값은 검증된
-        # pywinpty(_WinPty); owned 는 켜지 말 것. spawn 실패가 아니라 출력 미스트리밍이라
-        # 자동 폴백도 안 걸린다(spawn 자체는 성공).
+        # PYTMUX_PTY_BACKEND=owned|conpty 면 직접 소유 ConPTY(§1.1② 돌파 레시피 배선됨:
+        # 숨은 콘솔 + 동기 128KB 명명 파이프 + 블로킹 read)를 쓰고, spawn 실패 시 조용히
+        # pywinpty 로 폴백한다(안전망). 대화형 cmd 는 detached(데몬) 조건에서 완전
+        # 스트리밍됨을 실증(2026-06-12). **기본값은 여전히 검증된 pywinpty(_WinPty)**,
+        # owned 는 opt-in — 실 Claude 패널 무손상 스트리밍 라이브 검증이 끝나면 기본 전환.
+        # 비대화형 batch-writer 잔여 갭은 conpty.py 모듈 docstring·§1.1② 참조(출력
+        # 미스트리밍은 spawn 자체는 성공이라 자동 폴백이 안 걸림).
         choice = (os.environ.get("PYTMUX_PTY_BACKEND") or "").strip().lower()
         if choice in ("owned", "conpty"):
             try:
@@ -579,8 +580,8 @@ class _OwnedConPty(PtyProcess):
     `ClosePseudoConsole` 로 conhost 를 내리면 출력 쓰기단이 닫혀 블로킹 read 가 EOF(0)로
     빠져나오므로 별도 취소가 필요 없다.
 
-    write 는 익명 파이프라 오버랩이 안 돼 대량 paste 버스트에서 블로킹할 수 있다(keystroke
-    단위 소량은 무해). 필요 시 후속에서 오버랩 명명 파이프로 승급(§1.1 설계 메모).
+    파이프는 동기 명명 파이프(128KB 버퍼) — write 는 keystroke·중소 paste 는 블로킹 없이
+    들어가고, 버퍼를 넘는 대량 paste 버스트만 conhost 드레인까지 블록할 수 있다(opt-in 한계).
     """
 
     def __init__(self, argv, *, cols: int, rows: int, cwd, env):

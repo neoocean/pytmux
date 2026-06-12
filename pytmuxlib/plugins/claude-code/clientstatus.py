@@ -43,7 +43,8 @@ def init_defaults(status):
     status.claude_active = False   # 활성 패널이 Claude 패널인가(좌하단 토큰 표기 게이트)
     status.claude_usage = None     # 활성 Claude 패널의 토큰/컨텍스트(best-effort)
     status.claude_tokens = 0       # 활성 계정 누적 토큰(§10 계정별 합계, 지속표시)
-    status.claude_account = None   # 누적 토큰의 귀속 계정(표시에 곁들임)
+    status.claude_account = None   # 누적 토큰의 귀속 계정 별칭(폭 좁을 때 표시)
+    status.claude_account_full = None  # 비별칭 전체 계정(폭 충분 시 표시, 요청)
     status.tok5h_pct = None        # M18-B: 5시간 한도 근접도 %(분모 미상이면 None)
     status.claude_warn = None      # M17: 장기턴/반복루프 경고(grade0, 없으면 None)
     status.claude_model = None     # M14c: 활성 Claude 모델 배지(opus-4.8 등)
@@ -86,6 +87,10 @@ def absorb(status, msg):
     ca = msg.get("claude_account")
     if ca:
         status.claude_account = ca
+    # 전체 계정(footer 폭 충분 시 표시). 별칭과 함께 와도 빈 값이면 직전값 유지.
+    caf = msg.get("claude_account_full")
+    if caf:
+        status.claude_account_full = caf
     # M18-B: 5시간 한도 근접도 %(분모 미상이면 None — 표시 생략). 100 으로 클램프해
     # 과거 "999%/5h" 버그를 막는다(실측 세션% 경로는 0~100 이라 영향 없음).
     t5 = msg.get("tok5h_pct")
@@ -126,6 +131,30 @@ def absorb(status, msg):
     status.claude_pending = msg.get("claude_pending")
 
 
+def _trailing_cells(status, _char_cells) -> int:
+    """render_segs 이후 코어 _render_main 이 우측에 덧붙일 폭(NEST + 윈도우목록 +
+    host/시각/날짜) 추정. 계정명을 **전체로 보일 폭이 되는지** 판단에만 쓴다 —
+    clientwidgets._render_main 의 해당 구간(NEST·windows·right_parts)과 같은 계산이다
+    (drift 나도 표시 결정만 보수적으로 틀어질 뿐 동작엔 영향 없음). 계정이 이메일이라
+    전체/별칭 갈림이 있을 때만 호출돼 비용도 미미하다."""
+    char = lambda s: sum(_char_cells(c) for c in s)  # noqa: E731
+    n = 0
+    if getattr(status, "prefix_off", False):
+        n += char("NEST ")
+    if not getattr(status, "hide_tabs", False):
+        for win in (getattr(status, "windows", None) or []):
+            flag = "!" if win.get("bell") else ("#" if win.get("activity") else "")
+            n += char("%d:%s%s " % (win["index"] + 1, win["name"], flag))
+    try:
+        for kind, text in status._expand_parts(status.right_fmt):
+            if kind == "host" and getattr(status, "_is_remote", False):
+                text = "ssh:" + text
+            n += char(text)
+    except Exception:
+        pass
+    return n
+
+
 def render_segs(status, segs, w):
     """하단 상태줄 좌측에 Claude 세그먼트를 append 하고 클릭존을 status 에 채운다(코어
     _render_main 의 Claude 블록 이전). segs 는 REC 까지 누적된 상태로 들어오고, 여기서
@@ -158,8 +187,22 @@ def render_segs(status, segs, w):
                        pct=max(0, 100 - int(status.tok5h_pct))))
         # 표시 %들의 기준 계정(하이라이트 패널의 계정)을 마지막 항목에 곁들임. 계정은
         # 보통 이메일(me@…)이라 앞에 @ 를 붙이지 않는다(@me@… 중복 방지, 요청).
+        # 폭이 충분하면 전체 계정명(claude_account_full)을, 우측(시각·날짜 등)을 밀어낼
+        # 만큼 좁으면 별칭(claude_account)을 쓴다(요청 2026-06-12: 폭 충분 시 안 줄임).
         if usage_parts and status.claude_account:
-            usage_parts[-1] += " " + status.claude_account
+            acct = status.claude_account
+            full = status.claude_account_full or acct
+            chosen = acct
+            if full != acct:
+                # 좌측(REC 등 누적) + 사용량 클러스터(전체계정 포함, 앞뒤 공백 2) + 우측
+                # 추정 ≤ 전체폭이면 전체 계정명을 보인다.
+                left = sum(sum(_char_cells(c) for c in s.text) for s in segs)
+                cluster_full = " · ".join(
+                    uparts + usage_parts[:-1] + [usage_parts[-1] + " " + full])
+                cw_full = 2 + sum(_char_cells(c) for c in cluster_full)
+                if left + cw_full + _trailing_cells(status, _char_cells) <= w:
+                    chosen = full
+            usage_parts[-1] += " " + chosen
         uparts.extend(usage_parts)
     if uparts:
         sec = Style(color="white", bgcolor=tc("secondary"), bold=True)
@@ -211,8 +254,10 @@ def render_segs(status, segs, w):
         segs.append(Segment(i18n.t("claude.countdown", label=label, eta=eta),
                             Style(color="black", bgcolor=tc("warning"),
                                   bold=True)))
-    # M17(T7): 장기턴/반복루프('폭주 가능') 경고 배지(grade0 — 알림만, 개입 없음).
+    # M17(T7): 장기턴/반복루프 경고 배지(grade0 — 알림만, 개입 없음). 아이콘은 warn
+    # 문자열이 직접 포함한다(장기턴 ❗ 분:초 / 그 외 ⚠ …) — 이모지(2칸) 뒤 공백도 그
+    # 문자열에 들어 있어 다음 글자 겹침이 없다(요청 2026-06-12).
     if status.claude_warn:
-        segs.append(Segment(f" ⚠ {status.claude_warn} ",  # ⚠ 뒤 공백(글자 겹침 방지)
+        segs.append(Segment(f" {status.claude_warn} ",
                             Style(color="white", bgcolor=tc("error"),
                                   bold=True)))

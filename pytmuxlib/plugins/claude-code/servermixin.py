@@ -23,7 +23,8 @@ import subprocess
 
 from pytmuxlib import ipc, proc, pty_backend
 from . import tokens, usagedb, usagelog   # S5 T5: 토큰 DB 백엔드도 플러그인 소속(물리 이전)
-from .claude import (claude_account, claude_api_error, claude_awaiting_answer,
+from .claude import (claude_account, claude_account_full, claude_api_error,
+                     claude_awaiting_answer,
                      claude_context_hardstop, claude_context_pct,
                      claude_feedback_prompt, fmt_unknown_update,
                      claude_model, claude_prompt, claude_perm_mode,
@@ -68,8 +69,9 @@ _HDR_CLAUDE_MISS = 30
 # fg 검사(ps)는 비싸므로 인식 실패 패널에 한해 _FMT_CHECK_INTERVAL 초 간격으로만 한다.
 _FMT_CHECK_INTERVAL = 5.0
 _FMT_UNKNOWN_SEC = 20.0
-# 경고 문구(상태줄 ⚠ 세그먼트로 표시 — _claude_warn 재사용).
-_FMT_UNKNOWN_MSG = "Claude 포맷 미인식 — 추적 중단(버전 업데이트?)"
+# 경고 문구(상태줄 경고 세그먼트로 표시 — _claude_warn 재사용). 아이콘은 각 warn 문자열이
+# 직접 갖는다(렌더는 비부가) — 장기턴은 ❗, 그 외는 ⚠.
+_FMT_UNKNOWN_MSG = "⚠ Claude 포맷 미인식 — 추적 중단(버전 업데이트?)"
 
 
 # 비활성 탭 Claude 완료 알림(#22) 플리커 방지(§10 #18): busy→idle 후 idle 이 연속
@@ -268,6 +270,29 @@ class ServerClaudeMixin:
         win = sess.active_window
         if win and win.active_pane:
             win.active_pane.prompt_clear_queue.clear()
+
+    # 상태로 클라에 보내는 프롬프트 히스토리 슬라이스 길이(__init__.py client_status 의
+    # `prompt_history[-30:]` 와 **동일해야** 한다 — 히스토리 팝업 번호↔절대 인덱스 환산).
+    _PROMPT_HIST_TAIL = 30
+
+    def scroll_to_prompt(self, sess: Session, index: int) -> bool:
+        """§3.8: 활성 패널을 히스토리 팝업의 `index`(0 기반 = 팝업 번호-1) 프롬프트가
+        제출된 스크롤백 위치로 점프한다 — 그 프롬프트 줄을 뷰포트 맨 위에 올려, 그
+        프롬프트로 진행된 기록(응답·툴 실행)을 그 아래로 보게 한다. 팝업 번호는 상태로
+        보낸 **마지막 _PROMPT_HIST_TAIL 개** 슬라이스 기준이라, 서버의 전체 prompt_history
+        절대 인덱스로 환산한다. anchor 가 None(재시작 후 복원분 — 점프 불가)이거나 범위
+        밖이면 무동작(False). 점프하면 True(serverio 가 화면 재전송)."""
+        win = sess.active_window
+        if not win or not win.active_pane:
+            return False
+        p = win.active_pane
+        anchors = getattr(p, "_prompt_anchors", [])
+        base = max(0, len(p.prompt_history) - self._PROMPT_HIST_TAIL)
+        abs_i = base + index
+        if 0 <= abs_i < len(anchors) and anchors[abs_i] is not None:
+            p.scroll_to_anchor(anchors[abs_i])
+            return True
+        return False
 
     def set_prompt_clear_message(self, msg: str):
         """① 문서화 지시문 문구를 바꾸고 opts.json 에 영속."""
@@ -888,6 +913,7 @@ class ServerClaudeMixin:
                     self._next_claude_session_id(p)
                     if not p._claude_account_manual:
                         p._claude_account = None
+                        p._claude_account_full = None
                         # 계정 자동 캡처(요청 2026-06-12): 새 세션 시작 시 그림자 /usage
                         # 프로브를 곧 1회 돌려 /status 로 계정 라벨을 잡게 한다(자동 갱신이
                         # 켜진 경우만). 위 스캔 백필이 그 계정을 패널에 채워 unknown 적재를
@@ -942,6 +968,9 @@ class ServerClaudeMixin:
                     # 이므로 first-seen 이 의미상 정확하다.
                     if not p._claude_account_manual and p._claude_account is None:
                         acct = claude_account(txt)
+                        # footer 전체 표시용 비별칭 계정(같은 판정). 스크랩에서 못 잡고
+                        # 프로브 폴백을 쓰는 경우엔 전체가 없어 None → 클라가 별칭으로 폴백.
+                        acct_full = claude_account_full(txt)
                         if not acct:
                             # 폴백(요청 2026-06-12): 패널 자체 화면엔 계정 라벨
                             # ('<email>'s Organization)이 안 떠 미식별이면, 그림자
@@ -953,8 +982,10 @@ class ServerClaudeMixin:
                                   if isinstance(self._usage, dict) else None)
                             if pa and pa != "unknown":
                                 acct = pa
+                                acct_full = None   # 프로브는 별칭만 → 전체 미상
                         if acct:
                             p._claude_account = acct
+                            p._claude_account_full = acct_full
                     # M14c: 모델 배지(Opus 4.8 등) 갱신 — 마지막 본 값 유지.
                     mdl = claude_model(txt)
                     if mdl and mdl != p._claude_model:
@@ -1017,8 +1048,10 @@ class ServerClaudeMixin:
                             and sp not in p.prompt_history[-5:]):
                         p.last_prompt = sp
                         p.prompt_history.append(sp)
+                        p._prompt_anchors.append(p.current_anchor())  # §3.8 점프 anchor
                         if len(p.prompt_history) > 200:
                             p.prompt_history = p.prompt_history[-200:]
+                            p._prompt_anchors = p._prompt_anchors[-200:]
                         changed = True
                 # 비활성 탭에서 처리(busy)→대기(idle) 전이 = 작업 완료. limit 은
                 # "대기"가 아니므로 대상 아님. 플리커 방지(§10 #18): raw busy→idle 즉시
@@ -1200,9 +1233,11 @@ class ServerClaudeMixin:
                 if (lt > 0 and new_cl == "busy" and p._busy_since is not None):
                     el = time.monotonic() - p._busy_since
                     if el >= lt:
-                        warn = f"이 턴 {int(el // 60)}분째 — 폭주 가능"
+                        # 장기 턴 경고: 느낌표 이모지 + 경과 분:초만 간단히(요청
+                        # 2026-06-12). 초가 매초 바뀌므로 정수 초 경계에서만 changed.
+                        warn = "❗ %d:%02d" % (int(el // 60), int(el % 60))
                 elif ra > 0 and new_cl == "idle" and p._repeat_n >= ra:
-                    warn = f"동일 결과 {p._repeat_n + 1}회 반복 — 루프 의심"
+                    warn = f"⚠ 동일 결과 {p._repeat_n + 1}회 반복 — 루프 의심"
                 if not new_cl:
                     p._busy_since = None
                     p._repeat_n = 0
@@ -1452,8 +1487,11 @@ class ServerClaudeMixin:
                     # 개행을 보존해 한 항목으로 저장(팝업은 본문 칼럼에 여러 줄 표시).
                     if not pane.prompt_history or pane.prompt_history[-1] != line:
                         pane.prompt_history.append(line)
+                        # §3.8: 제출 시점 커서 줄의 절대 anchor 를 정렬 저장(점프용).
+                        pane._prompt_anchors.append(pane.current_anchor())
                         if len(pane.prompt_history) > 200:
                             pane.prompt_history = pane.prompt_history[-200:]
+                            pane._prompt_anchors = pane._prompt_anchors[-200:]
                     # 헤더용 last_prompt(#4): 이전 프롬프트가 아직 처리중(busy)이면
                     # 즉시 덮지 말고 pending 큐에 쌓는다 — _scan_claude 가 응답 경계에
                     # 다음 프롬프트를 승격한다(헤더 = "지금 처리 중인 프롬프트").

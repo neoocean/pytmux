@@ -474,8 +474,40 @@ def _alias_email(local: str, domain: str) -> str:
     return f"{alias}@{domain}"
 
 
+def _resolve_account(text: str):
+    """화면 텍스트에서 신뢰할 수 있는 계정을 (전체, 별칭) 튜플로 추출(없으면 None).
+
+    이메일이면 전체=`local@domain`, 별칭=`local앞2글자…@domain`(원문 미노출). 조직/팀명·
+    플랜처럼 이메일이 아닌 식별자는 전체=별칭(가릴 게 없음). claude_account(별칭, 로그·
+    이벤트용)와 claude_account_full(전체, footer 표시용)이 같은 판정을 공유하게 한다."""
+    # ① Claude 계정/조직 표시 — 사실상 유일하게 믿을 수 있는 출처.
+    m = _ACCT_ORG_RE.search(text)
+    if m and not _is_reserved_email_domain(m.group(2)):
+        local, domain = m.group(1), m.group(2)
+        return (f"{local}@{domain}", _alias_email(local, domain))
+    # ② 계정 라벨 바로 뒤 이메일(예약 도메인·git SSH URL 배제).
+    for m in _ACCT_LABEL_EMAIL_RE.finditer(text):
+        local, domain = m.group(1), m.group(2)
+        if _is_reserved_email_domain(domain):
+            continue
+        if text[m.end():m.end() + 1] == ":":   # git@host:path 등 SSH URL → 배제
+            continue
+        return (f"{local}@{domain}", _alias_email(local, domain))
+    # ③ 라벨 기반 조직/팀명·플랜(약한 신호 — 이메일을 못 찾을 때만). 이메일이 아니라
+    #    가릴 게 없으므로 전체=별칭.
+    m = _ORG_RE.search(text)
+    if m:
+        v = m.group(1).strip()
+        return (v, v)
+    m = _PLAN_RE.search(text)
+    if m:
+        v = m.group(1).lower()
+        return (v, v)
+    return None
+
+
 def claude_account(text: str):
-    """Claude Code 화면 텍스트에서 **신뢰할 수 있는** 계정 식별자만 추출(없으면 None).
+    """Claude Code 화면 텍스트에서 **신뢰할 수 있는** 계정 식별자(별칭)만 추출(없으면 None).
 
     개인/팀 계정을 토큰 로그에서 구분하기 위함(요금·한도 별개). 화면 본문에는 코드·
     diff·git URL·예시 등 **계정과 무관한 이메일**이 흔하므로(예: git SSH URL
@@ -487,27 +519,21 @@ def claude_account(text: str):
       ① Claude UI 의 `<email>'s Organization` 표시(가장 신뢰).
       ② 계정 라벨 바로 뒤 이메일(Login:/Account:/Email: <addr>). git SSH URL 제외.
       ③ 조직/팀명 라벨(`organization: Foo`)·플랜명(라벨 기반, 약한 신호).
-    어디서도 못 찾으면 None. 이메일은 별칭화(_alias_email)해 원문을 로그에 안 남긴다."""
-    # ① Claude 계정/조직 표시 — 사실상 유일하게 믿을 수 있는 출처.
-    m = _ACCT_ORG_RE.search(text)
-    if m and not _is_reserved_email_domain(m.group(2)):
-        return _alias_email(m.group(1), m.group(2))
-    # ② 계정 라벨 바로 뒤 이메일(예약 도메인·git SSH URL 배제).
-    for m in _ACCT_LABEL_EMAIL_RE.finditer(text):
-        local, domain = m.group(1), m.group(2)
-        if _is_reserved_email_domain(domain):
-            continue
-        if text[m.end():m.end() + 1] == ":":   # git@host:path 등 SSH URL → 배제
-            continue
-        return _alias_email(local, domain)
-    # ③ 라벨 기반 조직/팀명·플랜(약한 신호 — 이메일을 못 찾을 때만).
-    m = _ORG_RE.search(text)
-    if m:
-        return m.group(1).strip()
-    m = _PLAN_RE.search(text)
-    if m:
-        return m.group(1).lower()
-    return None
+    어디서도 못 찾으면 None. 이메일은 별칭화(_alias_email)해 원문을 로그·이벤트에 안
+    남긴다(footer 표시용 전체 이메일은 claude_account_full 참조)."""
+    r = _resolve_account(text)
+    return r[1] if r else None
+
+
+def claude_account_full(text: str):
+    """claude_account 과 동일 판정의 **별칭 미적용(전체)** 계정 — footer 표시 전용.
+
+    별칭(claude_account)은 디스크 토큰 로그·훅 이벤트 env 에 원문 이메일을 남기지 않으려는
+    프라이버시 장치다. 반면 하단 상태줄은 사용자 본인의 휘발성 화면이라, 폭이 충분하면
+    전체 계정명을 보이고 싶다는 요청(2026-06-12)이 있었다. 이 값은 상태 메시지로만 클라에
+    전달돼 footer 가 폭에 맞춰 전체/별칭을 고르는 데 쓰인다(로그·이벤트는 별칭 그대로)."""
+    r = _resolve_account(text)
+    return r[0] if r else None
 
 
 # ---- 화면에서 사용자 프롬프트 추출(데스크탑 앱 원격제어 등 입력 경로 미경유, §10) ----

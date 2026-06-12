@@ -35,6 +35,10 @@ def init_pane(pane) -> None:
     pane._inbuf = ""                # 현재 입력 줄 누적(프롬프트 추적용)
     pane.last_prompt = ""           # 마지막으로 제출한 프롬프트(한 줄)
     pane.prompt_history = []        # 시간순 제출 프롬프트 목록(히스토리 팝업용)
+    # §3.8 프롬프트↔스크롤백 점프: prompt_history 와 **인덱스 정렬**된 절대 라인 anchor
+    # 목록(제출 시 pane.current_anchor()). 화면-수명 값이라 직렬화하지 않는다 — 재시작 후
+    # 복원되는 prompt_history 항목은 None(점프 불가)으로 패딩해 정렬을 유지한다(restore).
+    pane._prompt_anchors = []
     pane._hist_sent = None          # 직전 status 에 실어 보낸 history 슬라이스(디바운스)
     pane.pending_prompts = []       # busy 중 입력해 큐된 프롬프트(#4)
     # 프롬프트 단위 클리어 모드(#9). prompt_clear_queue(쌓인 명령 큐)는 코어가
@@ -184,3 +188,6 @@ def restore(pane, data: dict) -> None:
             setattr(pane, f, data[f])
     pane.prompt_history = list(data.get("prompt_history", pane.prompt_history))
     pane.pending_prompts = list(data.get("pending_prompts", pane.pending_prompts))
+    # §3.8: anchor 는 화면-수명(재시작 시 hist_total 리셋)이라 복원 불가 — 복원된
+    # prompt_history 와 길이만 맞춰 None(점프 불가)으로 패딩해 인덱스 정렬을 유지한다.
+    pane._prompt_anchors = [None] * len(pane.prompt_history)

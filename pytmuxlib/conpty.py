@@ -16,41 +16,51 @@ pywinpty(winpty-rs)의 ConPTY 백엔드는 `read()` 가 **str 전용**이고 내
 (2026-06-11 실측: pywinpty 와 핸드셰이크 동일 = 호스트 패리티 달성). 번들 부재 시 시스템
 conhost(평문 export)로 폴백.
 
-⚠️ **현재 비동작 — 기본 백엔드는 pywinpty(`_WinPty`)다. owned 를 켜지 말 것**
-(`PYTMUX_PTY_BACKEND=owned` 은 패널이 백지가 된다). 미해결 잔여 블로커는
-§1.1②(docs/IMPROVEMENT_OPPORTUNITIES.md). 2026-06-11 정밀 이등분(probe `_probe_owned_*`,
-detached=데몬 동일 조건, pywinpty 양성대조):
+**2026-06-12: §1.1② 돌파 레시피 배선됨**(opt-in `PYTMUX_PTY_BACKEND=owned`, 라이브 검증 대기).
+winpty-rs(`andfoy/winpty-rs` `pty_impl.rs`)를 detached(콘솔-less = 데몬 동일) 조건에서 충실히
+복제한 probe 로, 직접 소유 ConPTY 가 **대화형 cmd.exe 출력을 완전 스트리밍**(배너+프롬프트+
+`dir` 결과, U+FFFD 0)함을 실증했다. 과거 "attach 돼도 23B 핸드셰이크만 흐른다"는 단정은
+오류였고, 실패 원인은 **overlapped+0버퍼 파이프 + 숨은 콘솔(AllocConsole/SetStdHandle) 누락**
+이었다. 본 모듈은 그 레시피를 그대로 배선한다:
 
-블로커는 **독립된 두 단계**로 갈렸다 — 하나는 해결, 하나는 미해결:
-1. **자식 attach (해결됨, 단 미배선)**: 콘솔-less(DETACHED) 프로세스에서 `CreateProcessW`+
-   `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` 가 자식을 의사콘솔에 **attach 하지 못한다**(자식
-   stdout 이 부모의 nul std 핸들을 상속 → `GetConsoleScreenBufferInfo`=ERROR_INVALID_HANDLE,
-   buf=0). MS EchoCon 표준 레시피도 동일 실패 = 문서화된 API 의 콘솔-less 한계(내 코드 버그
-   아님). **숨은 콘솔**(`AllocConsole`+`CONOUT$/CONIN$` 재오픈+`SetStdHandle`)을 두면 자식이
-   정상 attach(buf=100, pywinpty 와 동일)된다 — 이 한 줄이 핵심 발견. 단 (2)가 미해결이라
-   제품에는 배선하지 않음(비동작 백엔드 위해 데몬에 콘솔 할당은 부당). bInheritHandles 는
-   **FALSE** 여야 함(TRUE 면 자식이 부모 CONOUT$ 를 상속해 attach 를 덮어쓰고 filetype=0).
-2. **conout VT-diff 스트리밍 정지 (미해결, 진짜 마지막 블로커)**: attach 후에도 OpenConsole 이
-   init 핸드셰이크(~23B)만 우리 conout 에 쓰고 **이후 자식 출력을 흘리지 않는다**(자식은
-   콘솔버퍼에 렌더됨 — resize 반영·buf 갱신 확인 — 되지만 VT diff 가 conout 으로 안 나옴 →
-   자식이 back-pressure 로 블록). 파이프 종류(익명/명명)·resize 킥·DA 응답(`\x1b[?...c`) 모두
-   무효. pywinpty(winpty-rs)는 같은 번들 OpenConsole 로 1.26MB 전량 스트리밍하므로 차이는
-   winpty-rs 의 conout 처리 내부에 있고 공개 API 로 재현 못 함. ← 차기 공략 지점.
+  ① **숨은 콘솔**: 콘솔-less 데몬은 `CreateProcessW`+PSEUDOCONSOLE attribute 만으로는 자식을
+     attach 시키지 못한다(자식 stdout 이 부모 NUL std 핸들 상속 → `GetConsoleScreenBufferInfo`
+     실패, buf=0; MS EchoCon 표준 레시피도 동일 = 문서화된 콘솔-less 한계). 프로세스당 1회
+     `AllocConsole`(창은 `SW_HIDE`) + `CONOUT$`/`CONIN$` 재오픈 + `SetStdHandle`(STD_OUTPUT·
+     STD_ERROR·STD_INPUT — ERROR 도 포함)을 해 두면 자식이 정상 attach(buf=100, pywinpty 와
+     동일)된다. `_ensure_hidden_console()` 가 담당(idempotent, 스레드 안전).
+  ② **동기 파이프, 128KB 버퍼**: overlapped 가 아니라 **동기(non-overlapped) 명명 파이프**를
+     128KB 버퍼로 만든다(`_make_sync_pipe`). 명명 파이프 토폴로지는 conout 도달이 실증됨(익명
+     파이프는 이 빌드에서 미도달) — 스트리밍을 막던 건 **overlapped+0버퍼**라 그 둘만 제거.
+  ③ **블로킹 ReadFile**: 전용 리더 스레드가 동기 블로킹 ReadFile 로 raw 바이트를 읽는다
+     (`pty_backend._OwnedConPty`). write 도 동기 블로킹 WriteFile(§1.1③ — 비-UTF-8 무손상).
+     `close()` 의 `ClosePseudoConsole` 가 conhost 쓰기단을 닫아 read 가 EOF(0)/BROKEN_PIPE 로
+     빠져나오고, `CancelIoEx` 가 in-flight read 를 깨운다 → 스레드 정상 종료.
 
-설계 메모(2026-06-11 실측, 전부 데몬과 동일한 detached 조건):
-- **파이프 종류는 원인이 아니다**: 익명 `CreatePipe`(MS 공식 샘플)·overlapped 명명 파이프
-  둘 다 위 (2) 동일(핸드셰이크 후 정지). 과거 "명명 파이프로 가면 해결" 가설은 틀렸다.
-- **resize 킥**: spawn 끝의 크기 토글은 시스템 conhost 의 초기 페인트 1회는 유도하나, 번들
-  OpenConsole 의 (2) 정지는 못 푼다. 반복 킥도 무효(자식 버퍼 크기만 바뀜).
-- **호스트 패리티 달성**: 번들 OpenConsole 출력이 `\x1b[c`·`\x1b[?9001h`(win32-input-mode)로
-  시작 = pywinpty 와 동일. 시스템 conhost 출력엔 그게 없다(평문 CreatePseudoConsole 위임).
+서버 feed 경로(`pyte.ByteStream`)는 영속 incremental decoder 로 바이트 경계를 carry 하므로
+**raw 바이트만 받으면 Unix PTY 와 동일하게 무손상**이다(read 가 디코드 안 함 = 손상 원점 회피).
+PseudoConsole 3종(Create/Resize/Close)은 pywinpty 동봉 `conpty.dll` 의 `Conpty`-접두 export
+로 라우팅한다(번들 OpenConsole 호스트 = 시스템 conhost 와 핸드셰이크 패리티). 번들 부재 시
+시스템 conhost 폴백.
+
+**잔여 갭(라이브 검증으로 판정)**: 비대화형 raw-writer 자식(`python -c "stdout.write × N"`)은
+레시피를 전부 복제해도 23B 스톨(자식은 완벽 attach 하나 conhost 가 VT diff 를 emit 안 함;
+pywinpty 는 같은 자식을 스트리밍 = 양성대조). 단 패널이 실제 돌리는 cmd/pwsh/**Claude** 는
+콘솔 API 로 렌더하는 대화형이라 cmd 처럼 스트리밍될 것으로 본다 → run-pytmux 드라이버로 실
+Claude 패널 무손상 스트리밍 검증이 §1.1② 해결 판정의 결정타. 상세: docs/HANDOFF.md §9,
+메모리 `pytmux-1-1-multibyte-winpty-corruption`.
+
+설계 메모(전부 데몬과 동일한 detached 조건 실측):
+- **호스트 패리티**: 번들 OpenConsole 출력이 `\x1b[c`·`\x1b[?9001h`(win32-input-mode)로 시작
+  = pywinpty 와 동일. 시스템 conhost 출력엔 그게 없다(평문 CreatePseudoConsole 위임).
 - 핸들 타입을 엄격히(`c_void_p`) 지정해 64비트 핸들 절단(흔한 ctypes×x64 함정)을 막는다.
-- read/write 는 overlapped(ERROR_IO_PENDING 후 `GetOverlappedResult(bWait=True)`), 전용
-  스레드에서 블록(`pty_backend._OwnedConPty`). `close()` 가 `CancelIoEx`+`ClosePseudoConsole`
-  로 in-flight read 를 깨우고 쓰기단을 닫아 EOF(0)로 빠져나온다 → 스레드 정상 종료.
-- conin 배선 주의: `_make_overlapped_pipe` 반환은 (우리단, conhost단). 뒤집으면 conhost 가
-  입력을 못 읽어 자식(cmd)이 콘솔입력 EOF 로 즉시 종료한다(ping 처럼 stdin 안 읽는 자식은
-  생존).
+- conin 배선 주의: `_make_sync_pipe` 반환은 (우리단, conhost단). 뒤집으면 conhost 가 입력을
+  못 읽어 자식(cmd)이 콘솔입력 EOF 로 즉시 종료한다(ping 처럼 stdin 안 읽는 자식은 생존).
+- bInheritHandles 는 **FALSE** 여야 함(TRUE 면 자식이 부모 CONOUT$ 를 상속해 attach 를
+  덮어쓰고 filetype=0). 숨은 콘솔(①)과 무관하게 자식 std 핸들은 PSEUDOCONSOLE attribute 가
+  의사콘솔로 연결한다.
+- ⚠️ `SetStdHandle`(①)은 데몬 프로세스 전역 std 핸들을 숨은 콘솔로 돌린다. 데몬이 stderr 로
+  로깅하면 그 출력이 숨은 콘솔로 가 안 보일 수 있다(owned 는 opt-in·실험적이라 용인).
 """
 from __future__ import annotations
 
@@ -58,6 +68,7 @@ import ctypes
 import os
 import shutil
 import subprocess
+import threading
 from ctypes import wintypes
 from typing import Optional
 
@@ -70,24 +81,37 @@ _PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016
 _EXTENDED_STARTUPINFO_PRESENT = 0x00080000
 _CREATE_UNICODE_ENVIRONMENT = 0x00000400
 
-# overlapped 명명 파이프(§1.1② — 익명 파이프 대체) 상수.
+# 동기(non-overlapped) 명명 파이프 상수(§1.1② 돌파 레시피 ②). overlapped 를 빼고 128KB
+# 버퍼를 준다 — overlapped+0버퍼가 detached 스트리밍을 막던 원인이었다.
 _PIPE_ACCESS_INBOUND = 0x00000001
 _PIPE_ACCESS_OUTBOUND = 0x00000002
-_FILE_FLAG_OVERLAPPED = 0x40000000
 _FILE_FLAG_FIRST_PIPE_INSTANCE = 0x00080000
 _PIPE_TYPE_BYTE = 0x00000000
 _PIPE_WAIT = 0x00000000
 _GENERIC_READ = 0x80000000
 _GENERIC_WRITE = 0x40000000
+_FILE_SHARE_READ = 0x00000001
+_FILE_SHARE_WRITE = 0x00000002
 _OPEN_EXISTING = 3
-_ERROR_IO_PENDING = 997
 _ERROR_BROKEN_PIPE = 109
 _ERROR_HANDLE_EOF = 38
 _ERROR_OPERATION_ABORTED = 995
 _INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+# 파이프 버퍼 크기(레시피 ②). winpty-rs 와 동일한 128KB.
+_PIPE_BUF = 128 * 1024
+
+# 숨은 콘솔 setup 용 상수(레시피 ①). 표준 핸들 ID 는 음수라 DWORD(unsigned)로 표기.
+_STD_INPUT_HANDLE = 0xFFFFFFF6   # -10
+_STD_OUTPUT_HANDLE = 0xFFFFFFF5  # -11
+_STD_ERROR_HANDLE = 0xFFFFFFF4   # -12
+_SW_HIDE = 0
 
 # 명명 파이프 이름 충돌 방지용 프로세스-전역 카운터(난수/시각 의존 회피).
 _pipe_seq = 0
+
+# 숨은 콘솔(레시피 ①)은 프로세스당 1회만 셋업한다 — 여러 패널이 동시에 spawn 해도 idempotent.
+_console_lock = threading.Lock()
+_console_ready = False
 
 
 def conpty_supported() -> bool:
@@ -232,17 +256,23 @@ if IS_WINDOWS:
         wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, _LPVOID,
         wintypes.DWORD, wintypes.DWORD, _HANDLE]
     _k32.CreateFileW.restype = _HANDLE
-    _k32.CreateEventW.argtypes = [_LPVOID, wintypes.BOOL, wintypes.BOOL,
-                                  wintypes.LPCWSTR]
-    _k32.CreateEventW.restype = _HANDLE
-    _k32.ResetEvent.argtypes = [_HANDLE]
-    _k32.ResetEvent.restype = wintypes.BOOL
-    _k32.GetOverlappedResult.argtypes = [
-        _HANDLE, ctypes.POINTER(_OVERLAPPED), ctypes.POINTER(wintypes.DWORD),
-        wintypes.BOOL]
-    _k32.GetOverlappedResult.restype = wintypes.BOOL
     _k32.CancelIoEx.argtypes = [_HANDLE, ctypes.POINTER(_OVERLAPPED)]
     _k32.CancelIoEx.restype = wintypes.BOOL
+    # 숨은 콘솔 setup(레시피 ①) — AllocConsole/CONOUT$·CONIN$ 재오픈/SetStdHandle.
+    _k32.AllocConsole.argtypes = []
+    _k32.AllocConsole.restype = wintypes.BOOL
+    _k32.GetConsoleWindow.argtypes = []
+    _k32.GetConsoleWindow.restype = _HANDLE
+    _k32.GetStdHandle.argtypes = [wintypes.DWORD]
+    _k32.GetStdHandle.restype = _HANDLE
+    _k32.SetStdHandle.argtypes = [wintypes.DWORD, _HANDLE]
+    _k32.SetStdHandle.restype = wintypes.BOOL
+    try:
+        _user32 = ctypes.WinDLL("user32", use_last_error=True)
+        _user32.ShowWindow.argtypes = [_HANDLE, ctypes.c_int]
+        _user32.ShowWindow.restype = wintypes.BOOL
+    except OSError:
+        _user32 = None
     _k32.WaitForSingleObject.argtypes = [_HANDLE, wintypes.DWORD]
     _k32.WaitForSingleObject.restype = wintypes.DWORD
     _k32.GetExitCodeProcess.argtypes = [_HANDLE, ctypes.POINTER(wintypes.DWORD)]
@@ -264,29 +294,72 @@ def _build_env_block(env: Optional[dict]) -> Optional[ctypes.Array]:
     return ctypes.create_unicode_buffer(block, len(block))
 
 
-def _make_overlapped_pipe(inbound: bool):
-    """overlapped 명명 파이프 한 쌍을 만든다(§1.1② — 익명 CreatePipe 대체).
+def _ensure_hidden_console() -> None:
+    """프로세스에 숨은 콘솔을 1회 셋업한다(§1.1② 돌파 레시피 ①).
 
-    익명 파이프는 `FILE_FLAG_OVERLAPPED` 를 못 받아 동기 ReadFile 만 가능한데, 콘솔-less
-    데몬(서버가 DETACHED_PROCESS)에서 ConPTY(conhost) 출력이 그 동기 read 단에 도달하지
-    않는다(실측 2026-06-11: cmd 배너·echo·CJK 출력 0바이트). winpty-rs/Windows Terminal
-    처럼 **overlapped 명명 파이프**로 conout/conin 을 만들면 conhost 출력이 정상 도달한다.
+    콘솔-less 데몬(서버=DETACHED_PROCESS)은 `CreateProcessW`+PSEUDOCONSOLE attribute 만으로는
+    자식을 의사콘솔에 attach 시키지 못한다(자식 stdout 이 부모 NUL std 핸들 상속 →
+    `GetConsoleScreenBufferInfo` 실패). `AllocConsole`(창은 SW_HIDE)로 콘솔을 붙이고
+    `CONOUT$`/`CONIN$` 를 재오픈해 STD_OUTPUT·STD_ERROR·STD_INPUT 표준 핸들로 걸어 두면 자식이
+    정상 attach(buf=100, pywinpty 와 동일)한다 — 이 셋업이 핵심 발견(2026-06-12).
+
+    idempotent·스레드 안전(여러 패널 동시 spawn 안전). 이미 콘솔이 있으면 AllocConsole 은
+    건너뛰고 표준 핸들만 (재)연결한다. 전부 best-effort — 실패해도 spawn 은 시도한다."""
+    global _console_ready
+    if _console_ready or not IS_WINDOWS:
+        return
+    with _console_lock:
+        if _console_ready:
+            return
+        try:
+            # 콘솔이 아직 없으면 새로 할당하고 창을 숨긴다(데몬은 GetConsoleWindow()=0).
+            if not _k32.GetConsoleWindow():
+                if _k32.AllocConsole() and _user32 is not None:
+                    hwnd = _k32.GetConsoleWindow()
+                    if hwnd:
+                        try:
+                            _user32.ShowWindow(_HANDLE(hwnd), _SW_HIDE)
+                        except OSError:
+                            pass
+            # CONOUT$/CONIN$ 를 재오픈해 표준 핸들로 건다(레시피상 ERROR 도 OUT 과 동일 핸들).
+            share = _FILE_SHARE_READ | _FILE_SHARE_WRITE
+            access = _GENERIC_READ | _GENERIC_WRITE
+            h_out = _k32.CreateFileW("CONOUT$", access, share, None,
+                                     _OPEN_EXISTING, 0, None)
+            if h_out and h_out != _INVALID_HANDLE_VALUE:
+                _k32.SetStdHandle(_STD_OUTPUT_HANDLE, _HANDLE(h_out))
+                _k32.SetStdHandle(_STD_ERROR_HANDLE, _HANDLE(h_out))
+            h_in = _k32.CreateFileW("CONIN$", access, share, None,
+                                    _OPEN_EXISTING, 0, None)
+            if h_in and h_in != _INVALID_HANDLE_VALUE:
+                _k32.SetStdHandle(_STD_INPUT_HANDLE, _HANDLE(h_in))
+        except OSError:
+            pass
+        _console_ready = True
+
+
+def _make_sync_pipe(inbound: bool):
+    """동기(non-overlapped) 명명 파이프 한 쌍(§1.1② 돌파 레시피 ②). 128KB 버퍼.
+
+    overlapped+0버퍼 명명 파이프는 콘솔-less 데몬에서 ConPTY(번들 OpenConsole) 출력이 우리
+    read 단에 스트리밍되지 않았다(2026-06-12 실측: 초기 핸드셰이크 뒤 정지). overlapped 를
+    빼고 128KB 버퍼를 주면 대화형 cmd 가 완전 스트리밍된다(=레시피 ②). 명명 파이프 토폴로지
+    자체는 conout 도달이 실증돼 유지한다(익명 CreatePipe 는 이 빌드에서 read 단 미도달).
 
     inbound=True  → conout: 우리(서버)가 *읽고* conhost 가 쓴다(PIPE_ACCESS_INBOUND).
     inbound=False → conin : 우리(서버)가 *쓰고* conhost 가 읽는다(PIPE_ACCESS_OUTBOUND).
 
     반환: (our_end, conhost_end). conhost_end 는 CreatePseudoConsole 에 넘긴 뒤 닫는다.
-    our_end 는 overlapped. 같은 프로세스에서 CreateFile 로 상대단을 곧장 열어 연결하므로
-    ConnectNamedPipe 가 필요 없다."""
+    같은 프로세스에서 CreateFile 로 상대단을 곧장 열어 연결하므로 ConnectNamedPipe 불필요."""
     global _pipe_seq
     _pipe_seq += 1
     name = r"\\.\pipe\pytmux-conpty-%d-%d-%d" % (
         os.getpid(), _pipe_seq, 1 if inbound else 0)
     access = _PIPE_ACCESS_INBOUND if inbound else _PIPE_ACCESS_OUTBOUND
-    # 서버단(우리): overlapped, 단일 인스턴스.
+    # 서버단(우리): 동기(블로킹), 단일 인스턴스, 128KB 입출력 버퍼.
     srv = _k32.CreateNamedPipeW(
-        name, access | _FILE_FLAG_OVERLAPPED | _FILE_FLAG_FIRST_PIPE_INSTANCE,
-        _PIPE_TYPE_BYTE | _PIPE_WAIT, 1, 0, 0, 0, None)
+        name, access | _FILE_FLAG_FIRST_PIPE_INSTANCE,
+        _PIPE_TYPE_BYTE | _PIPE_WAIT, 1, _PIPE_BUF, _PIPE_BUF, 0, None)
     if not srv or srv == _INVALID_HANDLE_VALUE:
         raise ctypes.WinError(ctypes.get_last_error())
     # conhost단(상대): 우리가 읽으면 conhost 는 GENERIC_WRITE, 반대면 GENERIC_READ.
@@ -309,28 +382,28 @@ class _ConPty:
     def __init__(self, cols: int, rows: int):
         if not IS_WINDOWS:
             raise NotImplementedError("ConPTY 는 Windows 전용")
+        # 레시피 ①: 콘솔-less 데몬에 숨은 콘솔을 1회 붙여 자식 attach 를 성립시킨다.
+        _ensure_hidden_console()
         self.pid = -1
         self._hpc = _HPCON()
         self._proc = _HANDLE()      # 자식 프로세스 핸들(wait/terminate)
-        self._read = _HANDLE()      # 우리가 읽는 쪽(conhost 출력) — overlapped
-        self._write = _HANDLE()     # 우리가 쓰는 쪽(conhost 입력) — overlapped
-        self._read_evt = _HANDLE()  # overlapped read 완료 이벤트(수동 리셋)
-        self._write_evt = _HANDLE()  # overlapped write 완료 이벤트(수동 리셋)
+        self._read = _HANDLE()      # 우리가 읽는 쪽(conhost 출력) — 동기 블로킹
+        self._write = _HANDLE()     # 우리가 쓰는 쪽(conhost 입력) — 동기 블로킹
         self._closed = False
         self._exit: Optional[int] = None
         self._attrbuf = None        # 자식 spawn 후까지 유지(GC 방지)
         self._cmdbuf = None
         self._envbuf = None
 
-        # conout(우리가 읽음) / conin(우리가 씀) overlapped 명명 파이프. conhost 측
-        # 핸들은 CreatePseudoConsole 이 내부 복제하므로 직후 닫는다.
-        # _make_overlapped_pipe 반환은 (우리단, conhost단) 순서다 — conout 은 우리가
-        # 읽고 conin 은 우리가 쓰므로, 우리단을 self._read/_write 로, conhost단을
-        # CreatePseudoConsole 의 hOutput/hInput 으로 넘긴다(이 순서를 뒤집으면 conhost 가
-        # 입력을 못 읽어 자식이 콘솔입력 EOF 로 즉시 종료한다).
-        h_read_out, h_pty_out = _make_overlapped_pipe(inbound=True)
+        # conout(우리가 읽음) / conin(우리가 씀) 동기 명명 파이프. conhost 측 핸들은
+        # CreatePseudoConsole 이 내부 복제하므로 직후 닫는다. _make_sync_pipe 반환은
+        # (우리단, conhost단) 순서다 — conout 은 우리가 읽고 conin 은 우리가 쓰므로,
+        # 우리단을 self._read/_write 로, conhost단을 CreatePseudoConsole 의 hOutput/hInput
+        # 으로 넘긴다(이 순서를 뒤집으면 conhost 가 입력을 못 읽어 자식이 콘솔입력 EOF 로
+        # 즉시 종료한다).
+        h_read_out, h_pty_out = _make_sync_pipe(inbound=True)
         try:
-            h_write_in, h_pty_in = _make_overlapped_pipe(inbound=False)
+            h_write_in, h_pty_in = _make_sync_pipe(inbound=False)
         except OSError:
             _k32.CloseHandle(h_read_out); _k32.CloseHandle(h_pty_out)
             raise
@@ -346,9 +419,6 @@ class _ConPty:
         self._write = h_write_in
         self._cols = max(1, cols)
         self._rows = max(1, rows)
-        # 완료 이벤트(수동 리셋, 초기 비신호). read/write 가 재사용한다.
-        self._read_evt = _HANDLE(_k32.CreateEventW(None, True, False, None))
-        self._write_evt = _HANDLE(_k32.CreateEventW(None, True, False, None))
 
     def spawn(self, argv, cwd: Optional[str] = None, env: Optional[dict] = None) -> int:
         """argv 를 의사 콘솔에 attach 해 띄운다. 자식 pid 반환."""
@@ -399,11 +469,10 @@ class _ConPty:
         self._attrbuf = attrbuf
         self._cmdbuf = cmdbuf
         self._envbuf = envbuf
-        # conhost 킥(필수): conhost 는 spawn 직후 자체적으로는 출력을 내보내지 않고
-        # **첫 ResizePseudoConsole 신호를 받아야** 화면 페인트·이후 출력 diff 를 우리
-        # 출력 파이프로 흘린다(실측 2026-06-11: 킥 없으면 anon/named 모두 conout 0바이트,
-        # 자식은 살아있음). winpty-rs/Windows Terminal 도 attach 직후 초기 resize 를 보낸다.
-        # 같은 크기 resize 는 무시될 수 있어 1행 줄였다가 본래 크기로 토글해 변경을 만든다.
+        # conhost 킥: winpty-rs/Windows Terminal 처럼 attach 직후 초기 resize 를 한 번
+        # 보낸다(화면 페인트·diff 펌프를 깨운다). 돌파 레시피로 대화형 cmd 는 킥 없이도
+        # 스트리밍되지만, 킥은 무해하고 호스트 정착을 돕는다. 같은 크기 resize 는 무시될
+        # 수 있어 1행 줄였다가 본래 크기로 토글해 변경을 만든다.
         try:
             _resize_pc(self._hpc,
                        _COORD(self._cols, max(1, self._rows - 1)))
@@ -413,51 +482,35 @@ class _ConPty:
         return self.pid
 
     def read(self, maxlen: int = 65536) -> bytes:
-        """블로킹 read(overlapped). 자식/콘솔이 닫히면 b"" (EOF). raw 바이트(디코드 안 함).
+        """동기 블로킹 read(§1.1② 돌파 레시피 ③). 자식/콘솔이 닫히면 b"" (EOF).
+        raw 바이트(디코드 안 함) — 멀티바이트 경계 손상 원점을 회피한다.
 
-        overlapped 명명 파이프라 ReadFile 가 즉시 완료(동기)되거나 ERROR_IO_PENDING 후
-        GetOverlappedResult(bWait=True)로 블록한다. close() 의 CancelIoEx/핸들 드롭이
-        대기를 ERROR_OPERATION_ABORTED/BROKEN_PIPE 로 깨워 b"" 로 빠져나온다."""
+        동기 명명 파이프라 ReadFile 가 데이터가 올 때까지 블록한다(전용 리더 스레드에서).
+        close() 의 ClosePseudoConsole 이 conhost 쓰기단을 닫으면 ERROR_BROKEN_PIPE 로,
+        CancelIoEx 는 ERROR_OPERATION_ABORTED 로 대기를 깨워 b"" 로 빠져나온다."""
         if self._closed or not self._read:
             return b""
         buf = (ctypes.c_byte * maxlen)()
         n = wintypes.DWORD(0)
-        ov = _OVERLAPPED()
-        ov.hEvent = self._read_evt
-        _k32.ResetEvent(self._read_evt)
-        ok = _k32.ReadFile(self._read, buf, maxlen, ctypes.byref(n), ctypes.byref(ov))
-        if not ok:
-            err = ctypes.get_last_error()
-            if err == _ERROR_IO_PENDING:
-                if not _k32.GetOverlappedResult(
-                        self._read, ctypes.byref(ov), ctypes.byref(n), True):
-                    return b""      # ABORTED/BROKEN_PIPE/EOF → 종료
-            else:
-                return b""          # BROKEN_PIPE/HANDLE_EOF/기타 → 종료
-        if n.value == 0:
-            return b""
-        return bytes(buf[:n.value])
+        ok = _k32.ReadFile(self._read, buf, maxlen, ctypes.byref(n), None)
+        if not ok or n.value == 0:
+            return b""          # BROKEN_PIPE/HANDLE_EOF/ABORTED/0바이트 → EOF·종료
+        # c_byte 는 부호 있음(128~255 가 음수 int) → bytes(buf[:n]) 는 ValueError.
+        # string_at 으로 raw 바이트를 그대로 복사한다(멀티바이트 무손상의 핵심).
+        return ctypes.string_at(buf, n.value)
 
     def write(self, data: bytes) -> int:
-        """raw 바이트 write(overlapped, §1.1③ — 디코드/재인코드 없음). 쓴 바이트 수 반환.
+        """동기 블로킹 write(§1.1③ — 디코드/재인코드 없음). 쓴 바이트 수 반환.
 
-        overlapped 라 대량 paste 도 블로킹하지 않고 커널이 펌프한다(익명 파이프의 write
-        오버랩 불가 제약 해소). 호출자 관점은 동기(완료까지 대기)."""
+        128KB 파이프 버퍼라 일반 키스트로크·중소 paste 는 블로킹 없이 들어간다. 버퍼를
+        넘는 대량 paste 버스트는 conhost 가 드레인할 때까지 블록할 수 있다(opt-in 한계)."""
         if self._closed or not self._write or not data:
             return 0
         n = wintypes.DWORD(0)
-        ov = _OVERLAPPED()
-        ov.hEvent = self._write_evt
-        _k32.ResetEvent(self._write_evt)
         cbuf = (ctypes.c_byte * len(data)).from_buffer_copy(data)
-        ok = _k32.WriteFile(self._write, cbuf, len(data), ctypes.byref(n),
-                            ctypes.byref(ov))
+        ok = _k32.WriteFile(self._write, cbuf, len(data), ctypes.byref(n), None)
         if not ok:
-            if ctypes.get_last_error() != _ERROR_IO_PENDING:
-                return 0
-            if not _k32.GetOverlappedResult(
-                    self._write, ctypes.byref(ov), ctypes.byref(n), True):
-                return 0
+            return 0
         return int(n.value)
 
     def resize(self, cols: int, rows: int) -> None:
@@ -504,10 +557,9 @@ class _ConPty:
     def close(self) -> None:
         """ClosePseudoConsole → conhost hangup → attach 된 자식 트리 종료. 그 후 핸들 해제.
 
-        overlapped read 가 GetOverlappedResult 로 대기 중일 수 있으므로 먼저 CancelIoEx 로
-        in-flight I/O 를 취소(ERROR_OPERATION_ABORTED 로 깨움)하고, ClosePseudoConsole 로
-        conhost 를 내려 쓰기단이 닫히게 한 뒤 핸들·이벤트를 해제한다 → 리더 스레드가 b""(EOF)
-        로 자연 종료."""
+        동기 블로킹 read 가 대기 중일 수 있으므로 먼저 CancelIoEx 로 in-flight I/O 를 취소
+        (ERROR_OPERATION_ABORTED 로 깨움)하고, ClosePseudoConsole 로 conhost 를 내려 쓰기단이
+        닫히게 한 뒤 핸들을 해제한다 → 리더 스레드가 b""(EOF)로 자연 종료."""
         if self._closed:
             return
         self._closed = True
@@ -532,7 +584,7 @@ class _ConPty:
             except OSError:
                 pass
             self._hpc = _HPCON()
-        for h_attr in ("_write", "_read", "_proc", "_read_evt", "_write_evt"):
+        for h_attr in ("_write", "_read", "_proc"):
             h = getattr(self, h_attr)
             if h:
                 try:

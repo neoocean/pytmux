@@ -415,3 +415,31 @@ async def test_feed_plain_text_fast_path():
     assert p3._altcarry
     p3.feed(b";31mRED")               # 캐리+이어붙여 완성 → RED 정상 렌더
     assert "RED" in pane_text(p3)
+
+
+async def test_scroll_to_anchor_lands_line_at_top():
+    """§3.8: current_anchor() 가 커서 줄의 **회전 강건한 절대** 라인 인덱스를 주고,
+    scroll_to_anchor() 가 그 줄을 뷰포트 맨 위에 올린다 — 그 사이 스크롤백이 deque
+    maxlen 회전을 겪어도(절대 인덱스는 hist_total 로 단조) 정확히 안착한다."""
+    from pytmuxlib.model import Pane
+    p = Pane(-1, -1, 40, 6)        # 6줄 화면
+    for i in range(20):
+        p.feed(f"line{i:02d}\r\n".encode())
+    p.feed(b"MARKER_LINE")        # 개행 없이 — 커서가 이 줄
+    anchor = p.current_anchor()
+    assert anchor == p.screen.hist_total + p.screen.cursor.y
+    p.feed(b"\r\n")
+    for i in range(40):           # MARKER 를 스크롤백 위로 밀어냄
+        p.feed(f"after{i:02d}\r\n".encode())
+    assert p.scroll == 0          # 라이브
+    p.scroll_to_anchor(anchor)
+    assert p.scroll > 0
+    rows, _ = p.render(False)
+    top = "".join(s[0] for s in rows[0])
+    assert "MARKER_LINE" in top, (p.scroll, repr(top))
+    # 아직 라이브 화면 위(아주 큰 anchor)면 scroll 0(라이브 유지)
+    p.scroll_to_anchor(p.screen.hist_total + 999)
+    assert p.scroll == 0
+    # 회전으로 사라진 아주 작은 anchor → 맨 위로 클램프
+    p.scroll_to_anchor(-100)
+    assert p.scroll == len(p.screen.history.top)
