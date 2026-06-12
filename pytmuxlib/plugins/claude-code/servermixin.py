@@ -294,6 +294,30 @@ class ServerClaudeMixin:
             return True
         return False
 
+    def prompt_segment(self, sess: Session, index: int):
+        """§3.8 Stage 2③ '펼치기': 히스토리 팝업 `index`(0 기반) 프롬프트의 스크롤백
+        구간 [anchor_i, anchor_{i+1}) 평문 텍스트를 추출해 회신 dict 로 돌려준다 — 그
+        프롬프트로 진행된 기록(응답·툴 실행)을 따로 떼어 본다. 마지막 프롬프트면 다음
+        경계가 없어 현재 화면 맨 아래까지. index 환산은 scroll_to_prompt 와 동일
+        (base=len-_PROMPT_HIST_TAIL). anchor 가 None(복원분)/범위 밖이면 ok=False."""
+        win = sess.active_window
+        if not win or not win.active_pane:
+            return {"ok": False}
+        p = win.active_pane
+        anchors = getattr(p, "_prompt_anchors", [])
+        base = max(0, len(p.prompt_history) - self._PROMPT_HIST_TAIL)
+        abs_i = base + index
+        if not (0 <= abs_i < len(anchors)) or anchors[abs_i] is None:
+            return {"ok": False}
+        a0 = anchors[abs_i]
+        # 다음 프롬프트 anchor 가 구간 끝(없거나 None=복원분이면 현재 맨 아래까지).
+        nxt = anchors[abs_i + 1] if abs_i + 1 < len(anchors) else None
+        a1 = nxt if nxt is not None else None
+        lines, truncated = p.prompt_segment_lines(a0, a1)
+        prompt = p.prompt_history[abs_i] if abs_i < len(p.prompt_history) else ""
+        return {"ok": True, "index": index, "prompt": prompt,
+                "lines": lines, "truncated": truncated}
+
     def set_prompt_clear_message(self, msg: str):
         """① 문서화 지시문 문구를 바꾸고 opts.json 에 영속."""
         msg = (msg or "").strip()

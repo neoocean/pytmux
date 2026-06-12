@@ -21,7 +21,7 @@ i18n.register({
         "claude.auto_resume": "자동재개",
         "claude.auto_cleanup": "자동정리",
         "claude.countdown": " ⏳ {label} {eta}s(입력=취소) ",
-        "claude.limit_remaining": "5h {pct}% 남음",
+        "claude.limit_remaining": "{pct}%/5h 남음",
     },
     "en": {
         "claude.limit_reached": " ⚠ Limit reached ",
@@ -29,7 +29,7 @@ i18n.register({
         "claude.auto_resume": "auto-resume",
         "claude.auto_cleanup": "auto-cleanup",
         "claude.countdown": " ⏳ {label} {eta}s (input=cancel) ",
-        "claude.limit_remaining": "5h {pct}% left",
+        "claude.limit_remaining": "{pct}%/5h left",
     },
 })
 

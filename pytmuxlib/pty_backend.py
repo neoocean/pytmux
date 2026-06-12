@@ -1,16 +1,18 @@
 """크로스플랫폼 PTY 백엔드 추상층 (docs/WINDOWS_PORT.md §6-1 ①②).
 
 `server.py` 가 OS 별 PTY/프로세스 분기를 직접 알지 않고 이 모듈의 `spawn()` 과
-반환된 `PtyProcess` 의 메서드만 부르도록 갇히는 곳이다. 두 백엔드를 제공한다.
+반환된 `PtyProcess` 의 메서드만 부르도록 갇히는 곳이다. 세 백엔드를 제공한다.
 
   * **Unix** (`_UnixPty`): 기존과 동일하게 `pty.fork()` 로 fork+exec+PTY 를 한 번에
     만들고, master fd 를 asyncio `add_reader` 로 읽는다. `fcntl`/`termios`/`os.killpg`
     /`os.waitpid` 의미를 그대로 보존한다.
-  * **Windows** (`_WinPty`): fork 가 없으므로 ConPTY 를 **저수준 `winpty.PTY`** 로
-    직접 띄우고(고수준 PtyProcess 의 여분 리더 스레드+localhost 소켓+트랜스코드를
-    제거 — §1.1), Proactor 루프가 ConPTY 핸들에 `add_reader` 를 못 거는 한계(§6②)
-    때문에 **전용 리더 스레드**가 read 후 `loop.call_soon_threadsafe` 로 바이트를
-    이벤트 루프에 펌프한다.
+  * **Windows 기본** (`_OwnedConPty`): 직접 소유 ConPTY(§1.1② 돌파 레시피 — 숨은 콘솔
+    + 동기 128KB 명명 파이프 + 블로킹 read). raw 바이트를 읽어 winpty-rs 의 32KB
+    청크경계 디코드 손상을 구조적으로 회피한다(2026-06-12 기본 전환).
+  * **Windows 롤백** (`_WinPty`): `PYTMUX_PTY_BACKEND=pywinpty` 일 때 쓰는 저수준
+    `winpty.PTY` 경로. Proactor 루프가 ConPTY 핸들에 `add_reader` 를 못 거는 한계(§6②)
+    때문에, 양 Windows 백엔드 모두 **전용 리더 스레드**가 read 후
+    `loop.call_soon_threadsafe` 로 바이트를 이벤트 루프에 펌프한다.
 
 두 백엔드는 동일한 표면을 노출한다:
 
@@ -83,15 +85,17 @@ def spawn(argv, *, cols: int, rows: int,
     cwd: 시작 디렉터리(None=상속). env: 환경(None=현재 프로세스 환경 상속).
     """
     if IS_WINDOWS:
-        # PYTMUX_PTY_BACKEND=owned|conpty 면 직접 소유 ConPTY(§1.1② 돌파 레시피 배선됨:
-        # 숨은 콘솔 + 동기 128KB 명명 파이프 + 블로킹 read)를 쓰고, spawn 실패 시 조용히
-        # pywinpty 로 폴백한다(안전망). 대화형 cmd 는 detached(데몬) 조건에서 완전
-        # 스트리밍됨을 실증(2026-06-12). **기본값은 여전히 검증된 pywinpty(_WinPty)**,
-        # owned 는 opt-in — 실 Claude 패널 무손상 스트리밍 라이브 검증이 끝나면 기본 전환.
-        # 비대화형 batch-writer 잔여 갭은 conpty.py 모듈 docstring·§1.1② 참조(출력
-        # 미스트리밍은 spawn 자체는 성공이라 자동 폴백이 안 걸림).
+        # **기본 백엔드 = 직접 소유 ConPTY(_OwnedConPty)** — §1.1② 돌파 레시피(숨은 콘솔
+        # AllocConsole + 동기 128KB 명명 파이프 + 블로킹 read). raw 바이트를 읽어 pyte 에
+        # 그대로 먹이므로 winpty-rs 의 32KB 청크경계 no-carry 디코드 손상(U+FFFD 폭주)을
+        # 구조적으로 회피한다. 실 Claude 패널 + 250KB CJK/이모지/박스 버스트 라이브 검증
+        # (2026-06-12): 안정 화면 손상이 pywinpty 와 동등(잔여 일시 FFFD 는 번들 OpenConsole
+        # 공통이라 양 백엔드 1:1 동일) + 청크경계 무손상 우위. detached(데몬) 조건에서
+        # 대화형 cmd 완전 스트리밍 실증.
+        #   롤백: PYTMUX_PTY_BACKEND=pywinpty(또는 winpty) → 검증된 _WinPty 강제.
+        #   안전망: owned 가 미지원이거나 spawn 이 던지면 조용히 _WinPty 로 폴백.
         choice = (os.environ.get("PYTMUX_PTY_BACKEND") or "").strip().lower()
-        if choice in ("owned", "conpty"):
+        if choice not in ("pywinpty", "winpty"):
             try:
                 from . import conpty as _conpty
                 if _conpty.conpty_supported():

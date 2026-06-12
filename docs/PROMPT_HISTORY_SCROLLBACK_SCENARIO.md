@@ -45,40 +45,49 @@ MARKER 줄이 정확히 뷰포트 맨 위).
 테스트: `test_server.py::{test_prompt_anchors_aligned_with_history,
 test_scroll_to_prompt_maps_tail_index_and_guards}`, `test_model.py::test_scroll_to_anchor_…`.
 
-## Stage 2 ② — 구현 완료 (CL 미정, 2026-06-12): 팝업에서 직접 선택 점프
+## Stage 2 ②③ — 구현 완료 (CL 미정, 2026-06-12): 선택 점프 → 선택 '펼치기'
 
-`_open_prompt_history` 의 InfoScreen 을 **표시 전용 → 선택 점프**로 확장했다. `prompt-jump
-<n>` 을 타이핑하지 않고 목록에서 골라 바로 그 프롬프트 위치로 스크롤한다.
+`_open_prompt_history` 의 InfoScreen 을 **표시 전용 → 선택 동작**으로 확장했다. ② 에서 선택
+점프를 넣고, ③ 에서 **Enter/클릭 = '펼치기'**(원 요청의 헤드라인)로 승격했다 — 그 프롬프트로
+진행된 스크롤백 기록(응답·툴 실행) 구간 `[anchor_i, anchor_{i+1})` 만 떼어 별도 팝업으로 본다.
+점프(②)는 펼친 팝업의 **[j]** 와 `prompt-jump <n>` 명령으로 유지(잃지 않음).
 
-- **InfoScreen `select_cb`**(clientscreens): 선택형 콜백 파라미터를 추가. **Enter**(또는
-  **행 클릭** — 마우스 1급 지원) 시 현재 ListView 인덱스를 `select_cb(idx)` 로 넘기고 닫는다.
-  `select_cb` 가 `None` 이면 기존 읽기전용(아무 키나 닫기) 동작 그대로라, REC/토큰/사용량 등
-  다른 InfoScreen 공유 화면은 영향 없음. 구분선/빈 줄(skip 집합)은 Enter 점프 대상에서 제외.
-- **점프 배선**(claude-code `_open_prompt_history`): `select_cb=_jump` 전달. `_jump(idx)` 는
-  실제 프롬프트 행(`0 ≤ idx < len(hist)`)일 때만 `send_cmd("scroll_to_prompt", index=idx)`.
-  idx = ListView 인덱스 = 팝업 번호−1 = 서버 `scroll_to_prompt` 의 tail-slice 인덱스(Stage 1
-  의 `prompt-jump <n>` 과 **동일 환산**이라 서버 측 변경 0). 구분선/`[h]` footer(idx ≥ len)는
-  콜백이 무시 → footer 의 `[h]` 헤더 토글 기능과 충돌하지 않음. 팝업 제목에 "Enter/클릭 점프"
-  힌트 추가(발견성).
+- **InfoScreen `select_cb`**(clientscreens): 선택형 콜백 파라미터. **Enter**(또는 **행 클릭** —
+  마우스 1급) 시 현재 ListView 인덱스를 `select_cb(idx)` 로 넘기고 닫는다. `None` 이면 기존
+  읽기전용(아무 키나 닫기)이라 REC/토큰/사용량 등 공유 InfoScreen 무영향. 구분선/빈 줄(skip)은
+  제외.
+- **구간 추출**(model `Pane.prompt_segment_lines(a0, a1)`): 절대 라인 인덱스 구간 `[a0, a1)` 의
+  스크롤백 평문을 떼어 낸다. 절대→deque/버퍼 매핑은 render 와 동일(`full = hist + buffer`,
+  `full[j]` 절대 = `j + (hist_total − len(hist))`). `a1=None` 이면 현재 맨 아래까지(마지막
+  프롬프트). deque 회전으로 앞이 소실됐거나 안전 캡(기본 800줄) 초과면 `truncated=True`.
+- **서버 회신**(servermixin `prompt_segment(sess, index)` + `handle_server_request` 의
+  `request_prompt_segment`): index→`[anchor_i, anchor_{i+1})` 환산은 `scroll_to_prompt` 와 동일
+  (`base = len − _PROMPT_HIST_TAIL`). 다음 anchor 가 없거나 None(복원분)이면 `a1=None`(맨
+  아래까지). anchor None/범위 밖이면 `{"ok": False}`. 회신 `{"t":"prompt_segment", ok, index,
+  prompt, lines, truncated}` 은 **코어 변경 0** — 미지 action/메시지를 코어가 플러그인에 위임
+  (`handle_server_request`/`handle_message`)하는 기존 경로(ncd `nc_list` 식)를 그대로 탄다.
+- **펼친 팝업**(client `_on_prompt_segment_msg`): 구간 줄을 InfoScreen 으로(제목=프롬프트 첫
+  줄). 끝에 구분선+`[j] 이 위치로 라이브 점프 · Esc 닫기` footer(`hide_key="j"` →
+  `scroll_to_prompt` 점프 후 닫힘). `truncated` 면 앞에 잘림 안내, 빈 구간이면 "(기록 없음)".
+  `ok=False` 면 팝업 대신 안내 메시지.
+- **명령**: `prompt-expand <n>`(= `prompt-jump <n>` 대칭) 도 추가 — n번 프롬프트 구간 펼치기.
 
-테스트(3건): `test_client.py::{test_prompt_history_enter_jumps_to_selected_prompt(최신 초기선택+
-임의 항목 골라 Enter→scroll_to_prompt 전송·닫힘), test_prompt_history_row_click_jumps(실제 행
-Label 클릭→점프), test_prompt_history_enter_on_footer_does_not_jump([h] footer Enter→무전송)}`.
+테스트(7건): `test_model::test_prompt_segment_lines_extracts_absolute_range`(구간 추출·a1=None·
+회전 truncated), `test_server::test_prompt_segment_maps_index_and_guards`(index 환산·a1 경계·
+가드), `test_client::{test_prompt_history_enter_expands_selected_prompt, ..._row_click_expands,
+..._enter_on_footer_does_not_expand, test_prompt_segment_msg_opens_expanded_popup_with_jump([j]→
+점프), test_prompt_segment_msg_not_ok_shows_message}`.
 
-사용: 헤더 클릭/`:prompt-history` 로 목록을 열고 **↑↓ 로 프롬프트를 골라 Enter**(또는 클릭)
-하면 그 프롬프트로 점프(최신 프롬프트가 초기 선택이라 바로 Enter = 가장 최근 작업으로).
+사용: 헤더 클릭/`:prompt-history` → **↑↓ 로 고르고 Enter(또는 클릭)** → 그 프롬프트의 기록이
+펼쳐진다. 그 팝업에서 **[j]** 면 실제 터미널이 그 위치로 스크롤(라이브 점프).
 
-## Stage 2 — 잔여 후속
+## Stage 2 ① — 잔여 후속 (제품 결정 대기)
 
 1. **위로 스크롤 → 오버레이 자동 표시**: Claude 패널에서 스크롤백 맨 위(또는 특정 키)에
    닿으면 raw 스크롤 대신 프롬프트 목록 오버레이를 띄운다. **열린 결정**: ① 스크롤-업이
    raw 스크롤을 **대체**하나 vs 별도 키/제스처인가(raw 스크롤도 필요한 사용자 보호), ②
-   Claude 패널 한정(비-Claude 는 기존 raw 스크롤 유지). 안전상 Stage 1/2② 는 명령·팝업
+   Claude 패널 한정(비-Claude 는 기존 raw 스크롤 유지). 안전상 Stage 1/2②③ 는 명령·팝업
    선택으로만 노출하고, 스크롤 거동 변경은 분리(제품 결정 대기).
-3. **선택 '펼치기'(그 프롬프트 구간만 표시)**: 다음 프롬프트 anchor 까지를 한 구간으로 떼어
-   접힌 목록↔펼친 구간 뷰. anchor 가 인접 프롬프트 경계를 주므로 구간 = `[anchor_i, anchor_{i+1})`.
-   (현재 ②의 점프는 그 프롬프트 줄을 뷰포트 맨 위로 올려 "위에서부터" 보게 하므로 원 요청의
-   '펼쳐 그 진행 기록 보기'를 대체로 충족 — 경계 한정 표시는 별도 후속.)
 
 ## 주의/한계
 

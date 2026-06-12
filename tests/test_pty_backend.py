@@ -136,11 +136,15 @@ async def test_spawn_selects_backend(monkeypatch=None):
     pty_backend._OwnedConPty = _StubOwned
     pty_backend._WinPty = _StubWin
     try:
-        os.environ["PYTMUX_PTY_BACKEND"] = "owned"
+        os.environ["PYTMUX_PTY_BACKEND"] = "owned"   # 명시 owned
         pty_backend.spawn(["cmd.exe"], cols=40, rows=10)
-        os.environ["PYTMUX_PTY_BACKEND"] = ""        # 기본 = pywinpty
+        os.environ.pop("PYTMUX_PTY_BACKEND", None)    # 미설정 = 기본 owned (flip)
         pty_backend.spawn(["cmd.exe"], cols=40, rows=10)
-        os.environ["PYTMUX_PTY_BACKEND"] = "pywinpty"
+        os.environ["PYTMUX_PTY_BACKEND"] = ""         # 빈값 = 기본 owned
+        pty_backend.spawn(["cmd.exe"], cols=40, rows=10)
+        os.environ["PYTMUX_PTY_BACKEND"] = "pywinpty" # 롤백 → pywinpty 강제
+        pty_backend.spawn(["cmd.exe"], cols=40, rows=10)
+        os.environ["PYTMUX_PTY_BACKEND"] = "winpty"   # 롤백 별칭 → pywinpty 강제
         pty_backend.spawn(["cmd.exe"], cols=40, rows=10)
     finally:
         pty_backend._OwnedConPty = orig_owned
@@ -149,7 +153,8 @@ async def test_spawn_selects_backend(monkeypatch=None):
             os.environ.pop("PYTMUX_PTY_BACKEND", None)
         else:
             os.environ["PYTMUX_PTY_BACKEND"] = orig_env
-    assert calls["owned"] == 1, calls
+    # 기본(미설정/빈값)·명시 owned 3건 → owned; pywinpty/winpty 롤백 2건 → winpty
+    assert calls["owned"] == 3, calls
     assert calls["winpty"] == 2, calls
 
 

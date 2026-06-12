@@ -837,6 +837,44 @@ class Pane:
         self.scroll = max(0, min(total - anchor, len(h.top)))
         self.dirty = True
 
+    @staticmethod
+    def _plain_line(line, cols) -> str:
+        """pyte 줄(line)을 평문 문자열로(SGR 없이). 와이드 문자의 연속 빈 셀(data=="")
+        은 건너뛴다(_serialize_row 와 동일 규칙) — 한 칸씩 밀리지 않게. 뒤 공백 제거."""
+        chars = []
+        for x in range(cols):
+            d = line[x].data
+            if d == "":          # 와이드 문자(이모지·CJK) 연속 셀
+                continue
+            chars.append(d if d else " ")
+        return "".join(chars).rstrip()
+
+    def prompt_segment_lines(self, a0: int, a1=None, max_lines: int = 800):
+        """§3.8 Stage 2③ '펼치기': 절대 라인 인덱스 구간 [a0, a1) 의 스크롤백 텍스트를
+        평문 줄 목록으로 떼어 낸다(그 프롬프트로 진행된 기록 — 응답·툴 실행). a1=None 이면
+        현재 화면 맨 아래까지(가장 최근 프롬프트). 절대→deque/버퍼 매핑은 render 와 동일:
+        full=hist+buffer 라 full[j] 의 절대 인덱스 = j + (hist_total - len(hist)).
+        반환=(줄목록, truncated). truncated 는 a0 이 deque 회전으로 사라져 앞이 잘렸거나
+        max_lines 캡에 걸렸음을 뜻한다(맨 위/앞부터 best-effort)."""
+        scr = self.screen
+        h = getattr(scr, "history", None)
+        hist = list(h.top) if h is not None else []
+        full = hist + [scr.buffer[y] for y in range(scr.lines)]
+        base_abs = getattr(scr, "hist_total", 0) - len(hist)   # full[0] 의 절대 인덱스
+        start = a0 - base_abs
+        truncated = start < 0
+        start = max(0, start)
+        end = len(full) if a1 is None else (a1 - base_abs)
+        end = max(start, min(end, len(full)))
+        cols = scr.columns
+        out = [self._plain_line(full[j], cols) for j in range(start, end)]
+        while out and not out[-1]:        # 구간 경계 뒤 빈 줄 트림
+            out.pop()
+        if len(out) > max_lines:          # 거대 구간 안전 캡
+            out = out[:max_lines]
+            truncated = True
+        return out, truncated
+
     def _serialize_row(self, line, cols):
         """한 줄(line)을 [text, style] 런(run) 목록으로 직렬화한다(매치 하이라이트
         제외). render 의 빠른 경로/전체 경로가 공유한다(#8)."""

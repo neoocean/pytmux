@@ -29,6 +29,7 @@ COMMANDS = [
                       "Claude"),
     ("prompt-history", "Claude 프롬프트 히스토리 팝업(헤더 클릭으로도 열림)", "Claude"),
     ("prompt-jump", "프롬프트 히스토리 n번으로 스크롤 점프 (prompt-jump <n>)", "Claude"),
+    ("prompt-expand", "프롬프트 n번 구간을 펼쳐 응답·툴 기록 팝업 (prompt-expand <n>)", "Claude"),
     ("token-usage", "Claude 실행 중 탭/패널 + 토큰 사용량 트리(상태줄 사용량 클릭)",
                     "Claude"),
     ("token-log", "토큰 사용량 영속 로그 집계 팝업(시간/일/월 × 계정 — h/d/m·a 전환)",
@@ -92,6 +93,7 @@ i18n.register({
         "cmd.claude-header": "Show Claude prompt header on/off (claude-header on|off|toggle)",
         "cmd.prompt-history": "Claude prompt history popup (also opens by clicking the header)",
         "cmd.prompt-jump": "Scroll-jump to prompt #n in history (prompt-jump <n>)",
+        "cmd.prompt-expand": "Expand prompt #n's segment — response·tool record popup (prompt-expand <n>)",
         "cmd.token-usage": "Tab/pane tree of running Claude + token usage (click status usage)",
         "cmd.token-log": "Persistent token-usage log aggregation popup (hour/day/month × account — h/d/m·a)",
         "cmd.claude-usage": "Shadow /usage query — refresh real session/weekly limits via a hidden session (alias usage)",
@@ -373,22 +375,51 @@ def _open_prompt_history(app, pane_id=None):
     # §10-A #8: 마지막 항목과 [h] footer 사이에 구분선(nav 에서 건너뜀).
     rows.append("─" * 24)
     rows.append("  [h] 이 헤더 " + ("다시 표시" if hidden else "숨기기"))
-    # §3.8 Stage 2 ②: 목록에서 프롬프트를 Enter/클릭으로 고르면 그 위치로 스크롤
-    # 점프(`prompt-jump <n>` 타이핑 불필요). idx 는 ListView 인덱스 = 팝업 번호-1 =
-    # 서버 scroll_to_prompt 의 tail-slice 인덱스(prompt-jump 와 동일 환산). 구분선/
-    # [h] footer(idx>=len(hist))는 무시한다.
+    # §3.8 Stage 2 ②③: 목록에서 프롬프트를 Enter/클릭으로 고르면 그 프롬프트로 진행된
+    # 기록(응답·툴 실행) 구간을 '펼쳐' 별도 팝업으로 본다(원 요청의 헤드라인). 서버에
+    # 구간 텍스트를 요청(request_prompt_segment)하고 회신(handle_message)이 펼친 팝업을
+    # 연다. 점프(②)는 펼친 팝업의 [j] 와 `prompt-jump <n>` 명령으로 유지. idx 는 ListView
+    # 인덱스 = 팝업 번호-1 = 서버 tail-slice 인덱스(scroll_to_prompt/prompt_segment 동일
+    # 환산). 구분선/[h] footer(idx>=len(hist))는 무시한다.
     n_hist = len(hist)
 
-    def _jump(idx):
+    def _expand(idx):
         if 0 <= idx < n_hist:
-            app.send_cmd("scroll_to_prompt", index=idx)
+            app.send_cmd("request_prompt_segment", index=idx)
 
     app.push_screen(InfoScreen(
-        [], title="프롬프트 히스토리(시간순) — Enter/클릭 점프",
+        [], title="프롬프트 히스토리(시간순) — Enter/클릭 펼치기",
         hide_key="h", hide_cb=lambda: app.toggle_header_hidden(pid),
         initial_index=latest, max_width=110,   # 좌우로 넓게(#17)
         col_rows=rows,                         # 번호/본문 2칼럼 표시
-        select_cb=_jump))                      # Enter/클릭 → 그 프롬프트로 점프
+        select_cb=_expand))                    # Enter/클릭 → 그 프롬프트 구간 펼치기
+
+
+def _on_prompt_segment_msg(app, msg):
+    """§3.8 Stage 2③ 서버 prompt_segment 회신 → 펼친 구간 팝업. 선택 프롬프트로 진행된
+    스크롤백 기록(응답·툴 실행)을 평문으로 보여 준다. [j] 로 그 위치로 라이브 점프(②),
+    Esc/[x]/바깥클릭으로 닫는다. ok=False(anchor 회전·복원분)면 안내만."""
+    from pytmuxlib.clientscreens import InfoScreen
+    if not msg.get("ok"):
+        app.display_message(
+            "이 프롬프트 구간을 펼칠 수 없음 — 스크롤백에서 사라졌거나 재시작 복원분")
+        return
+    lines = list(msg.get("lines") or [])
+    if msg.get("truncated"):
+        lines = ["… (앞부분이 스크롤백 회전/길이로 잘림)"] + lines
+    if not lines:
+        lines = ["(이 프롬프트로 진행된 기록 없음)"]
+    idx = int(msg.get("index", 0))
+    # footer: [j] 라이브 점프 안내(hide_key='j' → hide_cb 호출 후 닫힘). nav 에서
+    # 건너뛰도록 위에 구분선을 둔다(InfoScreen 의 skip 규칙).
+    lines = lines + ["─" * 24, "  [j] 이 위치로 라이브 점프 · Esc 닫기"]
+    prompt0 = (msg.get("prompt") or "").splitlines()
+    head = prompt0[0][:48] if prompt0 else ""
+    title = "펼친 프롬프트" + (f": {head}" if head else "")
+    app.push_screen(InfoScreen(
+        lines, title=title, max_width=120,
+        hide_key="j",
+        hide_cb=lambda: app.send_cmd("scroll_to_prompt", index=idx)))
 
 
 def _open_usage_panel(app):
@@ -856,6 +887,10 @@ class _ClaudeCodePlugin:
         if msg.get("t") == "token_log":
             _on_token_log_msg(app, msg)
             return True
+        # §3.8 Stage 2③ 서버 prompt_segment 회신 → 펼친 구간 팝업.
+        if msg.get("t") == "prompt_segment":
+            _on_prompt_segment_msg(app, msg)
+            return True
         return False
 
     def handle_server_request(self, server, sess, action, msg):
@@ -885,6 +920,13 @@ class _ClaudeCodePlugin:
             return {"t": "token_log", "records": recs,
                     "total_all": total_all, "accounts_total": accts,
                     "daily": daily, "reconcile": recon}
+        if action == "request_prompt_segment":
+            # §3.8 Stage 2③ '펼치기': 활성 패널의 index 프롬프트 구간 텍스트를 추출해
+            # 회신(코어가 그대로 클라로). prompt_segment 는 servermixin 소속이라 getattr
+            # 가드(없으면 ok=False — delete-to-disable).
+            fn = getattr(server, "prompt_segment", None)
+            seg = fn(sess, int(msg.get("index", 0))) if fn else {"ok": False}
+            return {"t": "prompt_segment", **seg}
         return None
 
     # ---- 클라이언트 콘텐츠-레이어 렌더/상태 훅(Phase 2c) ----
@@ -966,6 +1008,12 @@ class _ClaudeCodePlugin:
             n = next((int(a) for a in args if a.lstrip("-").isdigit()), None)
             if n is not None:
                 app.send_cmd("scroll_to_prompt", index=n - 1)
+        elif c in ("prompt-expand", "expand-prompt"):
+            # §3.8 Stage 2③: prompt-expand <n> → n 번째(1 기반) 프롬프트 구간을 펼친
+            # 팝업으로(응답·툴 실행 기록). 서버가 [a_i, a_{i+1}) 텍스트 추출해 회신.
+            n = next((int(a) for a in args if a.lstrip("-").isdigit()), None)
+            if n is not None:
+                app.send_cmd("request_prompt_segment", index=n - 1)
         elif c in ("token-usage", "tokens"):
             app.open_claude_usage_tree()
         elif c in ("token-log", "tokens-log", "token-usage-log"):

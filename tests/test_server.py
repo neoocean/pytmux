@@ -177,6 +177,37 @@ async def test_scroll_to_prompt_maps_tail_index_and_guards():
         await teardown(srv, task, sock)
 
 
+async def test_prompt_segment_maps_index_and_guards():
+    """§3.8 Stage 2③: prompt_segment(index) 는 scroll_to_prompt 와 동일 환산(base=len-30)
+    으로 [a_i, a_{i+1}) 를 잡아 prompt_segment_lines 에 넘기고 회신 dict 를 만든다. 마지막
+    프롬프트는 다음 경계가 없어 a1=None(맨 아래까지). 범위 밖·anchor None 은 ok=False."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        calls = []
+        p.prompt_segment_lines = lambda a0, a1=None: (
+            calls.append((a0, a1)) or (["X"], False))
+        p.prompt_history = [f"p{i}" for i in range(35)]
+        p._prompt_anchors = list(range(1000, 1035))
+        # 팝업 1번(index 0)=절대 5 → [anchors[5], anchors[6]) , prompt="p5"
+        r = srv.prompt_segment(sess, 0)
+        assert r["ok"] and r["index"] == 0 and r["prompt"] == "p5", r
+        assert r["lines"] == ["X"] and r["truncated"] is False
+        assert calls[-1] == (p._prompt_anchors[5], p._prompt_anchors[6]), calls
+        # 마지막(index 29=절대 34) → 다음 경계 없음 → a1=None
+        r2 = srv.prompt_segment(sess, 29)
+        assert r2["ok"] and r2["prompt"] == "p34"
+        assert calls[-1] == (p._prompt_anchors[34], None), calls
+        # 범위 밖 → ok False
+        assert srv.prompt_segment(sess, 99) == {"ok": False}
+        # anchor None(복원분) → ok False
+        p._prompt_anchors[34] = None
+        assert srv.prompt_segment(sess, 29) == {"ok": False}
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_prompt_history_multiline_is_one_entry():
     # Shift+Enter(=LF \n)로 줄바꿈해 한 번에 제출(Enter=CR \r)한 멀티라인 프롬프트는
     # 별개 번호로 쪼개지지 않고 **한 개** 히스토리 항목이 된다(개행 보존). 헤더용

@@ -29,10 +29,10 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **551 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **555 passed**
   (`python3 tests/run.py` @macOS, 2026-06-12 — Windows 트랙(58214~58228)·usage-view
-  플러그인·IME OS 실측·토큰 잔상 가드·esc ` 진입키·토큰버킷 cap 회귀·§3.8 Stage 2②
-  프롬프트 점프 선택 테스트 합류. 기존 flaky 1건도 58122 에서 근본 수정돼 0).
+  플러그인·IME OS 실측·토큰 잔상 가드·esc ` 진입키·토큰버킷 cap 회귀·§3.8 Stage 2②③
+  프롬프트 펼치기(구간 추출·점프) 테스트 합류. 기존 flaky 1건도 58122 에서 근본 수정돼 0).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
 ## 2. 실행 / 개발
@@ -272,6 +272,35 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- **footer: 5h 잔여% 재배치(`N%/5h left`) + 계정 이메일 전체표시 회귀 고정(2026-06-12, CL 58519)** — 06-12
+  사용자 요청 2건(둘 다 클라 렌더 — 재attach 시 반영). 헤드리스 `test_client` **174 passed / 0 failed**.
+  - **5h 잔여% 표기 재배치.** `5h {pct}% left`(/`5h {pct}% 남음`) → **`{pct}%/5h left`**(/`{pct}%/5h 남음`).
+    `clientstatus.py` i18n 두 로케일 문자열만 변경(자리수 동일 → 폭 영향 0). 기존
+    `test_status_session_ctx_and_5h` 단언을 `63%/5h 남음 alice`·순서검사 `63%/5h` 로 갱신.
+  - **계정 이메일 폭 충분 시 전체표시 — 코드는 이미 맞음, 회귀로 고정.** 사용자 보고(폭이
+    충분한데 `xx…@domain` 축약)로 조사 → `render_segs` 의 폭 게이트는 이미 의도대로 동작
+    (전체 cluster + 탭목록 + 시계가 한 줄에 들어가면 `claude_account_full`, 넘치면 별칭).
+    신규 `test_status_account_full_when_wide_alias_when_narrow`(폭 200→전체 `alice@example.com`,
+    폭 58→별칭)로 회귀 고정. **실화면 축약의 진짜 원인 2종**: ① 실행 중 데몬이 **CL 58476 이전**
+    이면 `claude_account_full` 자체를 안 실어 보냄(클라 폭과 무관히 별칭) → work-preserving
+    `restart-server` 로 해소, ② 탭이 많아(이 박스 보고 시 4탭) 탭목록+시계가 전체 이메일을
+    밀어내면 설계상 축약(진짜 "자리 없음"). 폭 게이트는 `_trailing_cells` 가 NEST+창목록+
+    right_fmt(시각/날짜/host) 전부를 예약하는 충돌회피 계산이라 수학적으로 옳음 — 탭목록보다
+    이메일을 우선하려면 별도 결정 필요(미요청).
+- **§1.1② owned-ConPTY 를 Windows 기본 백엔드로 flip + 실 Claude 패널 라이브 검증(2026-06-12, CL 58503)** — 06-12
+  CL 58457 로 배선·opt-in 이던 owned-ConPTY 를 **Windows 기본 백엔드로 전환**(§10-C 결정 항목 종결).
+  `pty_backend.spawn()`: env 미설정/빈값/`owned`/`conpty` → `_OwnedConPty`, **롤백 토글
+  `PYTMUX_PTY_BACKEND=pywinpty`(또는 `winpty`) → `_WinPty`**, conpty 미지원·owned spawn 예외 시
+  조용히 `_WinPty` 폴백(안전망). `test_pty_backend.test_spawn_selects_backend` 갱신(미설정/빈값/
+  명시 owned 3건→owned, pywinpty/winpty 2건→winpty) + 모듈 docstring 3-백엔드 반영. 헤드리스
+  **551 passed / 0 failed**.
+  - **라이브 검증(run-pytmux 드라이버, owned 기본)**: ① 실 **Claude Code v2.1.175 TUI 가 owned 통해
+    완벽 렌더**(로고·박스드로잉·우측 보더 col 정렬, **0 U+FFFD**) ② 250KB CJK/이모지/박스 버스트:
+    owned == 기본 pywinpty(**둘 다 일시 FFFD 9개·동일 위치**) → 잔여 일시 손상은 번들 OpenConsole
+    공통이지 owned 회귀 아님(§10-C 저우선 항목과 일치) ③ `spawn()` 직접 확인: env 미설정→
+    `_OwnedConPty`, `=pywinpty`→`_WinPty`. **owned 우위 = 32KB 청크경계 no-carry 디코드 무손상**.
+  - **공유 워크스페이스**: 서브밋 시 `pty_backend.py`/`test_pty_backend.py` 병렬 세션 미충돌
+    (`p4 resolve -n` = none). 메모리 `pytmux-1-1-multibyte-winpty-corruption` 종결로 갱신.
 - **§2.9 비활성 패널 dim + §3.8 Stage 1 스크롤백 anchor + 토큰버킷 cap 회귀 + 병렬 sync 3-way 머지(2026-06-12, CL 58475·58483·58489)** — 06-12
   CL 58460 에 할일로 적어둔 §2.9/§3.8 의 구현 1단계 + 회귀 테스트. 헤드리스 **548 passed / 0 failed**.
   (esc 진입키 ` = office CL 58484 — 바로 아래 office 박스 항목 참조.)
@@ -1398,8 +1427,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 게이트 = ① 실 Claude 패널 사람 눈 확인. 사용자가 "먼저 실 Claude 로 확인 후 flip" 선택 → 확인
 > 결과 받으면 ③ 1줄 flip(`pty_backend.spawn()` 기본값을 owned 로; env override 롤백 유지) 제출.
 
-- **[결정 대기→확인 후 flip] owned 를 기본 백엔드로 전환할지** — 검증상 **viable**(모든 현실 시나리오
-  스트리밍·안정 CJK 0 FFFD·541 테스트 그린). 보류 사유는 게이팅이 아니라 신중함이다.
+- ~~**[결정 대기→확인 후 flip] owned 를 기본 백엔드로 전환할지**~~ → **완료(CL 58503, 2026-06-12).**
+  실 Claude 패널 라이브 검증(0 FFFD·보더 정렬) + owned==pywinpty(잔여 FFFD 동일 위치) 확인 후
+  기본 전환·551 그린·롤백 토글(`PYTMUX_PTY_BACKEND=pywinpty`) 유지. 상세는 §9 최상단 항목.
+  (아래는 전환 전 분석 — 기록 보존용.) 검증상 **viable**(모든 현실 시나리오
+  스트리밍·안정 CJK 0 FFFD·541 테스트 그린). 보류 사유는 게이팅이 아니라 신중함이었다.
   전환 전 체크리스트: **①** 실 **Claude 패널 장시간 soak**(멀티바이트 무손상 + 우하단
   보더 정렬이 §1.1② 증상 없이 유지되는지 — run-pytmux 텍스트 스크린샷은 픽셀 캡처 불가라
   실 TUI 는 사람 눈 확인 권장). **②** `AllocConsole`+`SetStdHandle`(OUT·ERR·IN)이 데몬

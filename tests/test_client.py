@@ -2368,10 +2368,10 @@ async def test_prompt_history_two_column_layout():
     await _with_app(body)
 
 
-async def test_prompt_history_enter_jumps_to_selected_prompt():
-    """§3.8 Stage 2 ②: 프롬프트 히스토리에서 항목을 골라 Enter 하면 그 프롬프트
-    위치로 스크롤 점프(scroll_to_prompt)를 서버에 보내고 팝업을 닫는다. 보내는
-    index 는 팝업 ListView 인덱스(=`prompt-jump <n>` 의 n-1 환산과 동일)."""
+async def test_prompt_history_enter_expands_selected_prompt():
+    """§3.8 Stage 2 ②③: 프롬프트 히스토리에서 항목을 골라 Enter 하면 그 프롬프트
+    구간을 '펼친다' — 서버에 request_prompt_segment(index)를 보내고 팝업을 닫는다.
+    index 는 팝업 ListView 인덱스(=`prompt-expand <n>` 의 n-1 환산과 동일)."""
     async def body(app, pilot, srv):
         from textual.widgets import ListView
         sent = []
@@ -2382,23 +2382,23 @@ async def test_prompt_history_enter_jumps_to_selected_prompt():
         await wait_until(pilot, lambda: app.screen_stack[-1].query_one(ListView))
         scr = app.screen_stack[-1]
         lv = scr.query_one(ListView)
-        # 최신 프롬프트(index 2)가 초기 선택 → Enter 즉시 그 프롬프트로 점프.
+        # 최신 프롬프트(index 2)가 초기 선택 → Enter 즉시 그 프롬프트 펼치기.
         assert lv.index == 2, lv.index
         # 2번 프롬프트(index 1)를 골라 Enter.
         lv.index = 1
         scr.on_key(Key(key="enter", character=None))
         await wait_until(pilot, lambda: sent)
-        assert sent == [("scroll_to_prompt", {"index": 1})], sent
-        # 점프 후 팝업은 닫힌다.
+        assert sent == [("request_prompt_segment", {"index": 1})], sent
+        # 펼치기 요청 후 목록 팝업은 닫힌다(회신이 펼친 팝업을 새로 연다).
         await wait_until(pilot, lambda: not isinstance(
             app.screen_stack[-1], scr.__class__))
     await _with_app(body)
 
 
-async def test_prompt_history_row_click_jumps():
-    """§3.8 Stage 2 ②: 박스 안 프롬프트 행을 **클릭**해도 그 프롬프트로 점프한다
-    (마우스 1급 지원). 실제 ListItem 자손(Label)을 클릭 대상으로 둬 on_click 의
-    조상 탐색(ListItem→infobox)을 실제로 태운다."""
+async def test_prompt_history_row_click_expands():
+    """§3.8 Stage 2 ②③: 박스 안 프롬프트 행을 **클릭**해도 펼친다(마우스 1급).
+    실제 ListItem 자손(Label)을 클릭 대상으로 둬 on_click 의 조상 탐색
+    (ListItem→infobox)을 실제로 태운다."""
     async def body(app, pilot, srv):
         from textual.widgets import Label, ListView
         sent = []
@@ -2420,14 +2420,14 @@ async def test_prompt_history_row_click_jumps():
 
         scr.on_click(_Ev(target))
         await wait_until(pilot, lambda: sent)
-        assert sent == [("scroll_to_prompt", {"index": 0})], sent
+        assert sent == [("request_prompt_segment", {"index": 0})], sent
     await _with_app(body)
 
 
-async def test_prompt_history_enter_on_footer_does_not_jump():
-    """§3.8 Stage 2 ②: 점프 콜백은 실제 프롬프트(0..len-1)만 보낸다 — 구분선/[h]
-    footer 같은 비-프롬프트 행에서 Enter 하면 scroll_to_prompt 를 보내지 않고 닫기만
-    한다(예: '이 헤더 숨기기' footer 를 잘못 점프하지 않게)."""
+async def test_prompt_history_enter_on_footer_does_not_expand():
+    """§3.8 Stage 2 ②③: 선택 콜백은 실제 프롬프트(0..len-1)만 보낸다 — 구분선/[h]
+    footer 같은 비-프롬프트 행에서 Enter 하면 request_prompt_segment 를 보내지 않고
+    닫기만 한다(예: '이 헤더 숨기기' footer 를 잘못 펼치지 않게)."""
     async def body(app, pilot, srv):
         from textual.widgets import Label, ListView
         sent = []
@@ -2444,7 +2444,49 @@ async def test_prompt_history_enter_on_footer_does_not_jump():
         lv.index = hidx                          # [h] footer 선택
         scr.on_key(Key(key="enter", character=None))
         await pilot.pause(0.1)
-        assert sent == [], ("footer 점프 금지", sent)
+        assert sent == [], ("footer 펼치기 금지", sent)
+    await _with_app(body)
+
+
+async def test_prompt_segment_msg_opens_expanded_popup_with_jump():
+    """§3.8 Stage 2③: 서버 prompt_segment 회신(handle_message 위임)이 펼친 구간을
+    InfoScreen 으로 띄우고, [j] 로 그 위치로 라이브 점프(scroll_to_prompt)한 뒤 닫는다."""
+    async def body(app, pilot, srv):
+        from pytmuxlib.clientscreens import InfoScreen
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        # 서버 회신을 모사해 코어 _dispatch(else→plugins.handle_message) 경로로 투입.
+        from textual.widgets import Label, ListView
+        app._dispatch({"t": "prompt_segment", "ok": True, "index": 2,
+                       "prompt": "세 번째 프롬프트",
+                       "lines": ["> 세 번째 프롬프트", "응답 첫 줄", "● 툴 실행"],
+                       "truncated": False})
+        await wait_until(pilot, lambda: app.screen_stack[-1].query_one(ListView))
+        scr = app.screen_stack[-1]
+        assert isinstance(scr, InfoScreen)
+        # 구간 본문 + [j] footer 가 보인다(rewrap 후 라벨에 텍스트가 들어올 때까지 대기).
+        body_text = lambda: " ".join(str(l.render()) for l in scr.query(Label))
+        await wait_until(pilot, lambda: "응답 첫 줄" in body_text())
+        bt = body_text()
+        assert "툴 실행" in bt and "[j]" in bt, bt
+        # [j] → 그 index(2)로 라이브 점프 + 닫힘.
+        scr.on_key(Key(key="j", character="j"))
+        await wait_until(pilot, lambda: sent)
+        assert sent == [("scroll_to_prompt", {"index": 2})], sent
+        await wait_until(pilot, lambda: not isinstance(
+            app.screen_stack[-1], InfoScreen))
+    await _with_app(body)
+
+
+async def test_prompt_segment_msg_not_ok_shows_message():
+    """§3.8 Stage 2③: ok=False(anchor 회전/복원분) 회신이면 펼친 팝업 대신 안내만."""
+    async def body(app, pilot, srv):
+        from pytmuxlib.clientscreens import InfoScreen
+        n0 = len(app.screen_stack)
+        app._dispatch({"t": "prompt_segment", "ok": False})
+        await pilot.pause(0.1)
+        assert not isinstance(app.screen_stack[-1], InfoScreen), "팝업 안 뜸"
+        assert len(app.screen_stack) == n0
     await _with_app(body)
 
 
@@ -3812,8 +3854,8 @@ async def test_status_session_ctx_and_5h():
         # 5h 리밋 **남은** 비율(실측 사용 37% → 남음 63%). 계정은 마지막(5h)에 붙는다.
         app.status.tok5h_pct = 37
         txt_m = "".join(s.text for s in app.status.render_line(0))
-        assert "5h 63% 남음 alice" in txt_m, repr(txt_m)
-        assert txt_m.index("ctx 42%") < txt_m.index("5h 63%"), repr(txt_m)
+        assert "63%/5h 남음 alice" in txt_m, repr(txt_m)
+        assert txt_m.index("ctx 42%") < txt_m.index("63%/5h"), repr(txt_m)
         # claude_usage 가 토큰 폴백('Xk tok')이면 표시하지 않는다(토큰 수치 비표시 원칙)
         app.status.claude_usage = "12k tok"
         app.status.tok5h_pct = None
@@ -3821,6 +3863,30 @@ async def test_status_session_ctx_and_5h():
         txt3 = "".join(s.text for s in app.status.render_line(0))
         assert "tok" not in txt3 and "12k" not in txt3, repr(txt3)
     await _with_app(body)
+
+
+async def test_status_account_full_when_wide_alias_when_narrow():
+    # 계정 이메일: 좌우 폭이 충분하면 전체(claude_account_full)를, 우측(시각/날짜/창목록)을
+    # 밀어낼 만큼 좁으면 별칭(claude_account)을 쓴다(요청 2026-06-12: 폭 충분 시 안 줄임).
+    async def wide(app, pilot, srv):
+        app.status.claude_active = True
+        app.status.claude_usage = "ctx 42%"
+        app.status.tok5h_pct = 37
+        app.status.claude_account = "al…@example.com"        # 별칭(축약)
+        app.status.claude_account_full = "alice@example.com"  # 전체
+        txt = "".join(s.text for s in app.status.render_line(0))
+        assert "alice@example.com" in txt, repr(txt)          # 폭 충분 → 전체
+    await _with_app(wide, size=(200, 30))
+
+    async def narrow(app, pilot, srv):
+        app.status.claude_active = True
+        app.status.claude_usage = "ctx 42%"
+        app.status.tok5h_pct = 37
+        app.status.claude_account = "al…@example.com"
+        app.status.claude_account_full = "alice@example.com"
+        txt = "".join(s.text for s in app.status.render_line(0))
+        assert "al…@example.com" in txt and "alice@example.com" not in txt, repr(txt)
+    await _with_app(narrow, size=(58, 30))
 
 
 async def test_status_tokens_hidden_when_not_claude():
