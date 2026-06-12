@@ -258,7 +258,7 @@ grace 한 번에 대기)로 종료 확인, 아직 살아 있으면 `taskkill /F 
 - **남음**: 라이브 attach(새 콘솔 창)·실 ssh 반응성·키 인코딩 인터랙티브 검증은 여전히 실
   박스 수동(§4), **arm64 Windows pywinpty 휠 부재** 대비(소스 빌드 필요 — §4-b).
 
-### [H] 1.7 ssh 로 원격 pytmux 접속 시 이중 실행·재접속 루프 → 원격 탭 어태치로 전환 (요청 2026-06-12) 🚧 **Stage 0·1 구현(2026-06-12)**
+### [H] 1.7 ssh 로 원격 pytmux 접속 시 이중 실행·재접속 루프 → 원격 탭 어태치로 전환 (요청 2026-06-12) ✅ **Stage 0·1·2 구현(2026-06-12) — Stage 3 폴리시 잔여**
 **증상(사용자 보고 2026-06-12)**: 로컬 pytmux 패널에서 원격 ssh 서버에 접속했을 때, 그 서버
 **하위에 이미 pytmux 탭이 열려 있으면** 원격 pytmux 가 **재접속을 반복하며 정상 동작하지 않는다**.
 **원하는 거동**: pytmux 안에서 또 pytmux 가 뜨는 **이중 실행을 막고**, 원격 서버에서 pytmux 를
@@ -281,11 +281,18 @@ grace 한 번에 대기)로 종료 확인, 아직 살아 있으면 `taskkill /F 
   로 원격 서버 소켓↔stdio 스플라이스(첫 줄 `TOKEN <hex>` 로 F1 인증 토큰 전달). ssh exec
   채널은 8-bit clean 이라 와이어 프레임 무손상(tmux -CC 식 in-pane DCS 인코딩 불필요).
   POSIX 전용. 테스트 1건(TOKEN+list 프레임 왕복, 실 서브프로세스).
-- **Stage 2+ 후속(설계 — 시나리오 §4)**: 로컬 서버가 stdio-proxy 위로 원격 서버에 hello
-  attach 해 원격 layout/screen 을 받는 **업스트림 클라이언트** → 원격 탭을 로컬 탭바 별도
-  그룹(`⇄host`)으로, 원격 screen 행([text,style] 런)을 로컬 렌더 파이프라인에 직결, 입력/
-  리사이즈 업스트림 라우팅, 끊김 시 "끊김" 표시+백오프 재연결, `remote-attach <host>` 명령.
-  난점: 탭/패널 id 네임스페이스·포커스 의미론·다중 원격·Windows proxy.
+- **Stage 2 완료(원격 탭 흡수)**: `serverremote.py`(ServerRemoteMixin/RemoteLink) — 로컬
+  서버가 stdio-proxy(또는 직결 endpoint) 위로 원격 서버에 hello attach 하는 **업스트림
+  클라이언트**. 핵심 단순화: 원격 패널을 로컬 모델로 미러링하지 않고 **클라별 보기 플래그**
+  (`ClientConn.remote_view`)로 통째 릴레이(id 재작성 0). 탭바에 `⇄host:이름` 병합(전역
+  연속 index, select_window 그대로) → 진입 시 업스트림 화면 전달·입력/스크롤/리사이즈/cmd
+  화이트리스트 릴레이 → 로컬 탭 선택으로 복귀, `remote-attach <host>`/`remote-detach`,
+  링크 EOF 시 보던 클라 자동 로컬 복귀+탭 제거(루프 대신 명시적 끊김). 테스트 2건
+  (test_remote.py — **in-process 서버 2대 실소켓 직결 E2E**: 병합→진입→마커 화면→입력
+  도달→복귀→해제 / 링크사망 복귀).
+- **Stage 3 잔여(폴리시·후속)**: 원격 탭 active 하이라이트(per-client status 필요)·끊김
+  백오프 자동 재연결·re-exec 후 링크 복원·원격 Claude 헤더 등 status 부가필드·다중 원격
+  정리·Windows·실 ssh 라이브 검증. 시나리오 §4.
 
 ### 의도된 기능 열화(공백) — #7 대부분 해결
 - ~~자동 탭이름/ssh 감지~~ → **해결(#7)**: `_fg_command(pane)` 이 Windows 에서

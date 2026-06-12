@@ -1239,6 +1239,9 @@ class ClientConn:
         self.session: Session | None = None
         self.cols = 80
         self.rows = 24
+        # §1.7 페더레이션: 이 클라가 보는 원격 링크 이름(None=로컬). 설정 중엔 화면/
+        # 레이아웃이 업스트림에서 전달되고 입력/스크롤/리사이즈가 릴레이된다(serverremote).
+        self.remote_view: str | None = None
         # B2 행 단위 델타: 이 클라에 마지막으로 보낸 패널별 rows 스냅샷
         # {pane_id -> rows}. 다음 프레임에 바뀐 행만 screen-delta 로 보낸다(클라마다
         # 자기 상태 기준이라 다중 클라·신규 attach 도 정합 — seq/resync 불필요).

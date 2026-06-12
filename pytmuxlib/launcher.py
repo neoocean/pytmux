@@ -321,8 +321,9 @@ def main(argv=None):
     # 중첩 실행 거부: pytmux 패널 안($PYTMUX 설정)에서 다시 attach 하면 막는다
     # (재귀 렌더·입력 꼬임 방지). `unset PYTMUX LC_PYTMUX` 로만 우회(강제 옵션 없음).
     if nesting_blocked():
-        print("pytmux: 이미 pytmux 안에서 실행 중입니다(로컬/원격 중첩). 우회하려면 "
-              "'unset PYTMUX LC_PYTMUX'.", file=sys.stderr)
+        print("pytmux: 이미 pytmux 안에서 실행 중입니다(로컬/원격 중첩). 원격 탭이 "
+              "필요하면 로컬 pytmux 에서 ':remote-attach <이 호스트>' (§1.7 페더레이션). "
+              "우회는 'unset PYTMUX LC_PYTMUX'.", file=sys.stderr)
         sys.exit(1)
     # §1.7 env 마커가 전파되지 않는 원격 경로(ssh 래퍼 우회·sshd AcceptEnv 부재) 대비
     # in-band 감지: 원격 로그인(SSH_*)에서만 단말에 XTVERSION 을 질의해, 호스트가
@@ -332,7 +333,8 @@ def main(argv=None):
     if (os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY")) \
             and host_terminal_is_pytmux():
         print("pytmux: 호스트 단말이 pytmux 입니다(원격 중첩 감지 — env 마커 없이 "
-              "단말 질의로 확인). 이중 실행을 막습니다.", file=sys.stderr)
+              "단말 질의로 확인). 이중 실행을 막습니다. 원격 탭이 필요하면 로컬 "
+              "pytmux 에서 ':remote-attach <이 호스트>'.", file=sys.stderr)
         sys.exit(1)
     # 서버 기동(없으면)과 textual 로드를 **겹쳐서** 체감 기동을 줄인다: 서버를 먼저
     # 띄워두고(분리 프로세스), 그 부팅(수백 ms)이 도는 동안 무거운 client(=textual)

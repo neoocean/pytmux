@@ -534,7 +534,7 @@ COMMANDS = [
     # calendar-mode/open-calendar/close-calendar 는 calendar 플러그인이 등록한다.
     ("single-border", "패널이 하나뿐일 때 테두리 표시 on/off (single-border on|off|toggle)", "설정/기타"),
     ("coalesce-repaints", "대량 출력 시 alt-screen 풀스크린 리페인트 합치기 on/off — ssh 반응성(coalesce-repaints on|off|toggle)", "설정/기타"),
-    # Claude Code 명령(auto-resume·claude-header·prompt-history·token-usage·token-log·
+    # Claude Code 명령(auto-resume·claude-header·prompt-history·token-log·
     # claude-usage·usage-panel·token-account·prompt-clear*·model·auto-doc-clear·
     # auto-compact·claude-auto-mode·auto-launch 등)은 claude-code 플러그인이 등록한다
     # (pytmuxlib/plugins/claude-code — 디렉토리 삭제 시 명령 검색·자동완성·디스패치에서 사라짐).
@@ -556,6 +556,8 @@ COMMANDS = [
     ("restart-all", "전체 재시작 — 서버 세션유지 재시작 + 클라 재기동(별칭 full-restart). 서버·클라 코드 모두 갱신. 실행 전 드라이런 자동 점검, FAIL 시 재확인", "설정/기타"),
     ("restart-check", "독립 드라이런 — 실행 없이 안전성(re-exec·직렬화·fd·relaunch) 점검 팝업(별칭 restart-dry-run)", "설정/기타"),
     ("reconnect", "IPC 강제 재접속 — degraded(빨간 외곽선) 고착 회복(서버 보존)", "설정/기타"),
+    ("remote-attach", "원격 pytmux 서버의 탭을 이 pytmux 에 어태치 (remote-attach <host>) — §1.7 페더레이션", "설정/기타"),
+    ("remote-detach", "원격 어태치 해제 (remote-detach [host], 생략=전부)", "설정/기타"),
 ]
 
 # 명령 프롬프트 자동완성 후보. 자주 쓰는 옵션 템플릿을 앞에 두어, 명령을 다 치면
@@ -663,7 +665,7 @@ COMMAND_NOARG = {
     # 무인자 명령으로 등록한다.
     "list-keys", "send-escape", "version",
     "restart-check",
-    # Claude Code 무인자 명령(prompt-history·token-usage·token-log·claude-usage·usage·
+    # Claude Code 무인자 명령(prompt-history·token-log(별칭 token-usage)·claude-usage·usage·
     # usage-panel·usage-limits·limits·claude-rules·token-saver)은 claude-code 플러그인이 등록.
 }
 # 자유 텍스트 인자를 받는 명령 — 명령 프롬프트에서 명령을 다 치면 인자 자리에 밑줄
@@ -776,6 +778,8 @@ i18n.register({
         "cmd.list-commands": "Show full command list (alias of help)",
         "cmd.detach-client": "detach (quit app, keep shells)",
         "cmd.kill-server": "Kill server and all tabs/shells",
+        "cmd.remote-attach": "Attach a remote pytmux server's tabs into this one (remote-attach <host>) — federation",
+        "cmd.remote-detach": "Detach remote attach (remote-detach [host], omit=all)",
         "cmd.restart-server": "Work-preserving restart — swap server code keeping shells/PTY (reconnect). Auto dry-run first, re-confirm on FAIL",
         "cmd.restart-all": "Full restart — server session-preserving restart + client relaunch (alias full-restart). Updates both server·client code. Auto dry-run first, re-confirm on FAIL",
         "cmd.restart-check": "Standalone dry-run — check safety (re-exec·serialize·fd·relaunch) without running, popup (alias restart-dry-run)",

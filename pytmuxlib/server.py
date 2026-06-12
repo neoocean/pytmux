@@ -19,6 +19,7 @@ from .servercapture import ServerCaptureMixin
 from .serverpersist import ServerPersistMixin
 from .serverpty import ServerPtyMixin
 from .serverio import ServerIOMixin
+from .serverremote import ServerRemoteMixin
 from .servertree import ServerTreeMixin
 
 # pytmux 프로젝트 루트(= pytmuxlib 패키지의 상위). 캡처 출력 등 "프로젝트에 영속해
@@ -35,7 +36,7 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _PLUGIN_SERVER_MIXINS = tuple(plugins.load().server_mixins())
 _SERVER_BASES = _PLUGIN_SERVER_MIXINS + (
     ServerCaptureMixin, ServerPersistMixin, ServerPtyMixin,
-    ServerIOMixin, ServerTreeMixin)
+    ServerIOMixin, ServerRemoteMixin, ServerTreeMixin)
 
 
 class Server(*_SERVER_BASES):

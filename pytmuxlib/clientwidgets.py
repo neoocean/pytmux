@@ -918,7 +918,7 @@ class StatusBar(Widget):
         self.extra = {}          # {line_index(>=1): fmt 문자열}
         self._clock_zone = None  # (x0, x1) 시각(시계) 클릭 영역
         self._date_zone = None   # (x0, x1) 날짜(달력) 클릭 영역
-        self._usage_zone = None  # (x0, x1) 토큰 사용량 클릭 영역(Claude 트리)
+        self._usage_zone = None  # (x0, x1) 토큰 사용량 클릭 영역(token-log 팝업)
         self._rec_zone = None    # (x0, x1) REC 클릭 영역(캡처 정보 팝업)
         self._model_zone = None  # (x0, x1) 모델 배지 클릭 영역(모델·컨텍스트 팝업, 요청)
         self._host_zone = None   # (x0, x1) 서버이름(host) 클릭 영역(서버 탭, §10-A #12)

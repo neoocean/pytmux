@@ -30,10 +30,8 @@ COMMANDS = [
     ("prompt-history", "Claude 프롬프트 히스토리 팝업(헤더 클릭으로도 열림)", "Claude"),
     ("prompt-jump", "프롬프트 히스토리 n번으로 스크롤 점프 (prompt-jump <n>)", "Claude"),
     ("prompt-expand", "프롬프트 n번 구간을 펼쳐 응답·툴 기록 팝업 (prompt-expand <n>)", "Claude"),
-    ("token-usage", "Claude 실행 중 탭/패널 + 토큰 사용량 트리(상태줄 사용량 클릭)",
-                    "Claude"),
-    ("token-log", "토큰 사용량 영속 로그 집계 팝업(시간/일/월 × 계정 — h/d/m·a 전환)",
-                  "Claude"),
+    ("token-log", "토큰 사용량 팝업 — 기간(시/일/주/월)·계정·세션 뷰 + 실측 한도·5h창"
+                  "(별칭 token-usage, 상태줄 사용량 클릭)", "Claude"),
     ("claude-usage", "그림자 /usage 질의 — 숨은 세션으로 실 세션/주간 한도 갱신"
                      "(별칭 usage)", "Claude"),
     ("usage-panel", "Claude 토큰 사용 한도 팝업 — /usage(세션 5h·주 전체·주 Sonnet) "
@@ -94,8 +92,7 @@ i18n.register({
         "cmd.prompt-history": "Claude prompt history popup (also opens by clicking the header)",
         "cmd.prompt-jump": "Scroll-jump to prompt #n in history (prompt-jump <n>)",
         "cmd.prompt-expand": "Expand prompt #n's segment — response·tool record popup (prompt-expand <n>)",
-        "cmd.token-usage": "Tab/pane tree of running Claude + token usage (click status usage)",
-        "cmd.token-log": "Persistent token-usage log aggregation popup (hour/day/month × account — h/d/m·a)",
+        "cmd.token-log": "Token usage popup — period (h/d/w/m)·account·session views + measured limits·5h window (alias token-usage, click status usage)",
         "cmd.claude-usage": "Shadow /usage query — refresh real session/weekly limits via a hidden session (alias usage)",
         "cmd.usage-panel": "Claude token usage-limit popup — /usage (session 5h·week all·week Sonnet) bar graph (alias usage-limits·limits)",
         "cmd.token-account": "Manually set the active pane's Claude account (token-account <name>, empty=auto)",
@@ -528,51 +525,11 @@ def _open_remote_control(app, pane_id):
         hide_cb=lambda: app._toggle_remote_control(pane_id)))
 
 
-# ---- 토큰 사용량 트리 팝업(클라) — Phase 2c 에서 코어 client.py 에서 이리로 이전 ----
-def _open_claude_usage_tree(app):
-    """토큰 사용량 클릭/`token-usage` 명령 → 통합 상태 팝업의 '토큰 사용량' 탭(#10).
-    탭 팝업 자체(REC/토큰/서버)는 코어 show_status_tabs 가 연다(REC/서버는 코어)."""
-    app.show_status_tabs(initial=1)   # 1 = 토큰 탭(오른쪽)
-
-
-def _open_usage_tree(app, tree):
-    """purpose=="usage" 트리 회신 → 세션별 토큰 사용량 전용 InfoScreen 팝업."""
-    from pytmuxlib.clientscreens import InfoScreen
-    app.push_screen(InfoScreen(_usage_tree_lines(app, tree),
-                               title="Claude 토큰 사용량(세션별)"))
-
-
-def _usage_tree_lines(app, tree):
-    """트리 응답 → 사용량 표시 줄. ctx(컨텍스트 %)와 함께 실제 세션 누계 토큰(Σ)을
-    탭 합계·패널별로 보인다(#18). 맨 아래에는 가로 구분선과 **모든 세션 토큰 합계**
-    한 줄을 덧붙인다(§10-A #6). 코어 통합 상태탭(_open_status_tabs)의 토큰 탭도 이
-    함수를 getattr 로 불러 쓴다(없으면 안내문)."""
-    from pytmuxlib.clientutil import _fmt_tokens
-    lines = []
-    grand = 0
-    for s in tree.get("sessions", []):
-        for w in s.get("windows", []):
-            cps = [p for p in (w.get("panes") or [])
-                   if isinstance(p, dict) and p.get("claude")]
-            if not cps:
-                continue
-            wtok = sum((p.get("tokens") or 0) for p in cps)  # 탭 합계
-            grand += wtok
-            # ~Σ(S6 T3): 패널별 누계는 스크랩 추정(활동량) — 실측 한도가 아니다.
-            lines.append(f"[{w['index'] + 1}] {w['name']}  —  ~Σ {_fmt_tokens(wtok)}")
-            for p in cps:
-                a = p.get("cmd") or "claude"
-                usage = p.get("usage") or "-"
-                state = p.get("claude")
-                tok = _fmt_tokens(p.get("tokens") or 0)
-                lines.append(f"    pane {p['id']} · {a} · {state} · "
-                             f"{usage} · ~Σ {tok}")
-    if not lines:
-        return ["(실행 중인 Claude 패널 없음)"]
-    # 하단 가로 구분선 + 전 세션 토큰 합계(§10-A #6).
-    lines.append("─" * 36)
-    lines.append(f"전체 세션 합계(추정)  —  ~Σ {_fmt_tokens(grand)}")
-    return lines
+# (토큰 사용량 트리 팝업(_open_claude_usage_tree/_open_usage_tree/_usage_tree_lines,
+#  통합 상태 팝업의 '토큰 사용량' 탭 포함)은 2026-06-12 token-log 로 통합·제거 —
+#  같은 데이터(세션별 Σ)는 TokenLogScreen 세션 뷰([p])가 영속 이력으로 보여 주고,
+#  라이브 ctx% 는 상태줄·프롬프트 헤더가 이미 보인다. `token-usage` 명령은 token-log
+#  별칭으로 남는다(handle_command). 통합 상태 팝업은 REC·서버 두 탭으로 줄었다.)
 
 
 class _ClaudeCodePlugin:
@@ -866,11 +823,9 @@ class _ClaudeCodePlugin:
         app.open_usage_panel = lambda: _open_usage_panel(app)
         app.open_prompt_history = lambda pane_id=None: _open_prompt_history(app, pane_id)
         app.open_token_log = lambda: _open_token_log(app)
-        # 토큰 사용량 팝업(Phase 2c) — 코어 tree 디스패치(purpose=="usage")가 getattr 로
-        # _open_usage_tree 를 부른다(없으면 no-op). 통합 상태 팝업의 '토큰 사용량' 탭은
-        # 코어가 client_status_tabs 훅으로 받아 끼운다(_usage_tree_lines 직접 노출 불요).
-        app.open_claude_usage_tree = lambda: _open_claude_usage_tree(app)
-        app._open_usage_tree = lambda tree: _open_usage_tree(app, tree)
+        # (open_claude_usage_tree/_open_usage_tree 설치는 token-usage→token-log 통합
+        #  (2026-06-12)으로 제거 — 상태줄 사용량 클릭·esc 포커스 Enter 는 이미
+        #  open_token_log 를 부른다.)
 
     def pane_closing(self, server, pane):
         """패널 종료 직전(코어 servertree → pane_closing 훅) — 닫히는 Claude 패널의 확정
@@ -1007,11 +962,8 @@ class _ClaudeCodePlugin:
         from .clientstatus import render_segs
         render_segs(status, segs, w)
 
-    def client_status_tabs(self, app, tree):
-        """통합 상태 팝업(코어 _open_status_tabs)의 '토큰 사용량' 탭을 기여한다 — 코어가
-        REC 탭과 서버 탭 사이에 끼운다(REC(0)·토큰(1)·서버(2)). 디렉토리를 지우면 이 훅이
-        사라져 토큰 탭이 통째로 빠지고 REC·서버만 남는다(delete-to-disable)."""
-        return [("토큰 사용량", _usage_tree_lines(app, tree))]
+    # (client_status_tabs 훅 — 통합 상태 팝업의 '토큰 사용량' 탭 — 은 token-log 통합
+    #  (2026-06-12)으로 제거. 통합 상태 팝업은 REC·서버 두 탭, 토큰은 token-log 팝업.)
 
     def handle_command(self, app, c, args):
         # 팝업(명령 전용 + 클릭/ESC 겸용) — 클릭/렌더 경로의 open_* 는 아직 코어에 있어
@@ -1036,9 +988,9 @@ class _ClaudeCodePlugin:
             n = next((int(a) for a in args if a.lstrip("-").isdigit()), None)
             if n is not None:
                 app.send_cmd("request_prompt_segment", index=n - 1)
-        elif c in ("token-usage", "tokens"):
-            app.open_claude_usage_tree()
-        elif c in ("token-log", "tokens-log", "token-usage-log"):
+        elif c in ("token-log", "tokens-log", "token-usage-log",
+                   "token-usage", "tokens"):
+            # token-usage 는 token-log 로 통합(2026-06-12) — 별칭으로만 남는다.
             app.open_token_log()
         elif c in ("usage-panel", "usage-limits", "limits"):
             app.open_usage_panel()

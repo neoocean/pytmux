@@ -19,6 +19,7 @@ from . import ipc, version
 from .model import ClientConn, Session
 from .protocol import (FLUSH_HZ, MAX_H, MAX_W, MIN_H, MIN_W, PROTO_VERSION,
                        clamp_dim, frame_msg, read_msg, write_frames, write_msg)
+from .serverremote import _REMOTE_RELAY_ACTIONS
 
 
 # Claude 프롬프트 헤더 예약(#1) 최소 패널 높이. 헤더는 내용 영역에서 1행을 가져가는데,
@@ -143,11 +144,20 @@ class ServerIOMixin:
         # 그 키를 읽지 않는다(delete-to-disable). 채워질 키/값은 플러그인이 있을 때
         # 종전과 동일하다(서버 테스트가 claude_tokens 등 키를 그대로 검증).
         self.plugins.server_status(self, sess, win, msg, full)
+        # §1.7: 원격 링크의 탭을 병합(⇄host:이름, 전역 index 는 로컬 뒤 연속) — 탭바에
+        # 양쪽이 항상 보이고, select_window(전역 index)로 원격 탭에 진입한다.
+        msg["windows"] += self._remote_tabs(len(sess.tabs))
         return msg
 
     async def _send_full(self, client: ClientConn):
         sess = client.session
         if not sess:
+            return
+        # §1.7: 원격 탭을 보는 클라에겐 로컬 layout/screen 을 보내지 않는다(화면은
+        # 업스트림 전달분이 권위) — 병합 탭바용 status 만 갱신한다. 모든 브로드캐스트
+        # 경로(_broadcast_session·flush 헤더예약·resize 미러링)가 이 가드를 공유한다.
+        if getattr(client, "remote_view", None):
+            await write_msg(client.writer, self._status_msg(sess))
             return
         lay = self._layout_msg(sess)  # 세션 공유 크기(최소)로 계산
         if not lay:
@@ -241,6 +251,8 @@ class ServerIOMixin:
                     rows, cursor = p.render(p is win.active_pane)
                     p.dirty = False
                     for c in clients:
+                        if c.remote_view:   # §1.7 원격 보기 중 — 로컬 화면 미전송
+                            continue
                         frames_by_client[c].append(
                             self._screen_frame(c, p.id, rows, cursor,
                                                p._last_wrap))
@@ -251,6 +263,8 @@ class ServerIOMixin:
                     rows, cursor = pp.render(True)
                     pp.dirty = False
                     for c in clients:
+                        if c.remote_view:   # §1.7
+                            continue
                         frames_by_client[c].append(
                             self._screen_frame(c, pp.id, rows, cursor,
                                                pp._last_wrap))
@@ -327,6 +341,31 @@ class ServerIOMixin:
         if not sess:
             return
         action = msg.get("action")
+        # §1.7 페더레이션 진입/해제·릴레이 — 다른 분기보다 먼저:
+        # ① remote_attach/remote_detach 는 어디서든 로컬 처리.
+        # ② select_window 는 병합 전역 index 공간 — 원격 index 면 보기 진입(릴레이),
+        #    로컬 index 면 보기 해제 후 평소대로(아래로 진행 → 끝의 _send_full 이
+        #    로컬 화면 복귀까지 처리).
+        # ③ 보는 중엔 화이트리스트 action 을 업스트림으로 릴레이.
+        if action == "remote_attach":
+            ok = await self.remote_attach(sess, host=msg.get("host"),
+                                          endpoint=msg.get("endpoint"))
+            if ok:
+                self._remote_status_broadcast()
+            return
+        if action == "remote_detach":
+            self.remote_detach(msg.get("host"))
+            return
+        if action == "select_window":
+            idx = int(msg.get("index", 0))
+            if idx >= len(sess.tabs):
+                if await self.remote_select_window(client, sess, idx):
+                    return     # 화면은 업스트림 _send_full 전달분이 그린다
+            elif client.remote_view:
+                client.remote_view = None   # 로컬 탭 복귀(아래 평소 경로)
+        elif client.remote_view and action in _REMOTE_RELAY_ACTIONS:
+            if self.remote_relay(client, msg):
+                return
         if action == "split":
             self.split_pane(sess, msg.get("orient", "lr"), path=msg.get("path"))
         elif action == "kill_pane":
@@ -687,8 +726,18 @@ class ServerIOMixin:
                         await write_msg(client.writer, {"t": "pong",
                                                         "ts": msg.get("ts")})
                     elif mt == "input":
+                        # §1.7 원격 보기: 입력을 업스트림으로(릴레이 실패=링크 사망
+                        # 직후 레이스 → 보기 해제돼 로컬 처리로 폴백).
+                        if client.remote_view and self.remote_relay(client, msg):
+                            continue
                         self._handle_input(client, msg)
                     elif mt == "resize":
+                        # §1.7: 보는 중이면 업스트림에도 리사이즈를 알려 원격이 이
+                        # 크기로 다시 렌더하게 한다(로컬 갱신도 그대로 — 돌아올 때
+                        # 정확한 로컬 레이아웃 유지. _send_full 의 보기 가드가 보는
+                        # 클라에겐 status 만 보낸다).
+                        if client.remote_view:
+                            self.remote_relay(client, msg)
                         client.cols = clamp_dim(msg.get("cols", 80),
                                                 MIN_W, MAX_W, 80)
                         client.rows = clamp_dim(msg.get("rows", 24),
@@ -698,6 +747,8 @@ class ServerIOMixin:
                                   if x.session is client.session]:
                             await self._send_full(c)
                     elif mt == "scroll":
+                        if client.remote_view and self.remote_relay(client, msg):
+                            continue
                         self._handle_scroll(client, msg)
                     elif mt == "cmd":
                         await self._handle_cmd(client, msg)

@@ -29,10 +29,11 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **572 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **575 passed**
   (`python3 tests/run.py` @macOS, 2026-06-12 — Windows 트랙(58214~58228)·usage-view
   플러그인·IME OS 실측·esc ` 진입키·토큰버킷 cap·§3.8 프롬프트 펼치기/오버레이·토큰
-  5h/주간 창 추정(58543)·§1.7 중첩 in-band 감지+stdio-proxy 테스트 합류).
+  5h/주간 창 추정(58543)·§1.7 중첩 in-band 감지+stdio-proxy+**원격 탭 페더레이션
+  Stage 2**(test_remote, in-process 2서버 E2E) 테스트 합류).
   ⚠️ 관찰: 58519/58543 신규 client 테스트 영역(토큰 화면·status 계정)에서 full-suite
   한정 one-off 3회(assert/AttributeError `_dim`/90s 타임아웃) — 전부 격리·재실행 통과.
   재발 시 테스트 순서 의존 격리 필요.

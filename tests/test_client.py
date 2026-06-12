@@ -486,7 +486,7 @@ async def test_command_list_and_autocomplete():
         assert "Claude" in catmap and "모니터" in catmap, list(catmap)
         claude_names = [n for n, _ in catmap["Claude"]]
         for nm in ("claude-auto-mode", "auto-doc-clear", "auto-resume",
-                   "token-usage", "claude-header", "prompt-clear"):
+                   "token-log", "claude-header", "prompt-clear"):
             assert nm in claude_names, (nm, claude_names)
         mon_names = [n for n, _ in catmap["모니터"]]
         assert "monitor-activity" in mon_names, mon_names
@@ -933,24 +933,19 @@ class _FakeMouse:
         self.stopped = True
 
 
-async def test_token_usage_tree_popup():
-    # 토큰 사용량 클릭 → Claude 실행 중 패널 + 사용량 트리 팝업(#19). Claude 아닌
-    # 패널은 제외.
+async def test_token_usage_alias_opens_token_log():
+    # token-usage 는 token-log 로 통합(2026-06-12) — 명령은 별칭으로만 남아 같은
+    # 영속 토큰 팝업을 연다(트리 팝업·통합 상태 팝업의 토큰 탭은 제거됨).
     async def body(app, pilot, srv):
-        from textual.widgets import Label
-        tree = {"sessions": [{"name": "s", "windows": [
-            {"index": 0, "name": "w", "panes": [
-                {"id": 5, "cmd": "claude", "claude": "busy", "usage": "ctx 42%",
-                 "remote": False},
-                {"id": 6, "cmd": "zsh", "claude": None, "usage": None,
-                 "remote": False}]}]}]}
-        app._open_usage_tree(tree)
-        await pilot.pause(0.1)
-        scr = app.screen_stack[-1]
-        assert scr.__class__.__name__ == "InfoScreen"
-        joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
-        assert "ctx 42%" in joined and "pane 5" in joined, joined
-        assert "pane 6" not in joined, "Claude 아닌 패널은 제외"
+        called = []
+        app.open_token_log = lambda: called.append(True)
+        app._run_command("token-usage")
+        app._run_command("tokens")
+        app._run_command("token-log")
+        assert called == [True, True, True], called
+        # 트리 팝업 클로저는 더 이상 설치되지 않는다.
+        assert getattr(app, "_open_usage_tree", None) is None
+        assert getattr(app, "open_claude_usage_tree", None) is None
     await _with_app(body)
 
 
@@ -3303,8 +3298,8 @@ async def test_bars_use_terminal_default_background():
 
 
 async def test_status_tabs_popup_merged():
-    # #10: REC·토큰 사용량 두 버튼이 **한 팝업**(InfoTabsScreen)의 서로 다른 탭을
-    # 연다. REC → '출력 캡처' 탭(초기), ←→ 로 '토큰 사용량' 탭(ctx + Σ 토큰).
+    # #10: REC 버튼이 통합 팝업(InfoTabsScreen)을 연다. token-usage→token-log 통합
+    # (2026-06-12)으로 토큰 탭은 빠지고 REC(0)·서버(1) 두 탭 — ←→ 로 서버 탭 이동.
     async def body(app, pilot, srv):
         from textual.widgets import Label
         app.status.capture = True
@@ -3314,27 +3309,22 @@ async def test_status_tabs_popup_merged():
         app.show_capture_info("/tmp/x.sock.capture/pane-1.log", 2048)
         assert app._tree_purpose == "status_tabs" and app._status_tab_initial == 0
         app._want_tree = False     # 서버의 실제 트리 응답이 또 팝업을 띄우지 않게(결정성)
-        # 트리 응답을 직접 넣어 팝업 구성(라운드트립 비의존)
-        tree = {"sessions": [{"name": "s", "windows": [
-            {"index": 0, "name": "w", "panes": [
-                {"id": 5, "cmd": "claude", "claude": "busy", "usage": "ctx 42%",
-                 "tokens": 8200}]}]}]}
-        app._open_status_tabs(tree)
+        app._open_status_tabs({"sessions": []})
         await pilot.pause(0.1)
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoTabsScreen"
+        names = [t[0] for t in scr._tabs]
+        assert names == ["출력 캡처(REC)", "서버"], \
+            f"토큰 탭은 token-log 로 통합돼 빠져야: {names}"
         # 초기 탭 = 캡처(0=왼쪽): 캡처 정보 보임
         joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
         assert "pane-1.log" in joined and "2,048" in joined, joined
-        # → 로 토큰 사용량 탭(1=오른쪽) → ctx 와 실제 토큰(Σ 8.2k) 보임(#18).
+        # → 로 서버 탭(1=오른쪽) → 호스트/소켓 정보 보임.
         # (←→ 순환에 닫기[x] 가 포함되므로 탭0→탭1 은 'right' 다.)
         await pilot.press("right")
         await pilot.pause(0.1)
         j2 = " ".join(str(lbl.render()) for lbl in scr.query(Label))
-        assert "ctx 42%" in j2 and "8.2k" in j2, j2
-        # §10-A #6: 토큰 탭 맨 아래 가로 구분선 + 전 세션 합계 한 줄
-        assert "전체 세션 합계" in j2, j2
-        assert "─" in j2, "하단 가로 구분선"
+        assert "호스트:" in j2 and "소켓:" in j2, j2
         # §10-A #6: 팝업 하단 닫기 버튼 존재
         assert scr.query_one("#itclosebtn", Label).render().plain.strip() == "닫기"
     await _with_app(body)
@@ -3361,14 +3351,14 @@ async def test_status_tabs_has_server_tab():
     async def body(app, pilot, srv):
         from textual.widgets import Label
         app._status_cap_lines = ["파일: /tmp/x/pane-1.log"]
-        app._status_tab_initial = 2
+        app._status_tab_initial = 2          # host 클릭 의도(서버 탭)
         app._open_status_tabs({"sessions": []})
         await pilot.pause(0.1)
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoTabsScreen"
         names = [t[0] for t in scr._tabs]
-        assert names == ["출력 캡처(REC)", "토큰 사용량", "서버"], names
-        assert scr._ti == 2, "초기 탭=서버"
+        assert names == ["출력 캡처(REC)", "서버"], names
+        assert scr._ti == 1, "initial=2 가 마지막 탭=서버(인덱스 1)로 클램프"
         joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
         assert "호스트:" in joined and "소켓:" in joined, joined
     await _with_app(body)

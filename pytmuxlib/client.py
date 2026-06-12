@@ -807,12 +807,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     purpose = getattr(self, "_tree_purpose", "choose")
                     if purpose == "status_tabs":
                         self._open_status_tabs(msg)
-                    elif purpose == "usage":
-                        # 토큰 사용량 트리 팝업은 claude-code 플러그인이 설치한
-                        # _open_usage_tree 클로저로(없으면 no-op — delete-to-disable).
-                        fn = getattr(self, "_open_usage_tree", None)
-                        fn and fn(msg)
                     else:
+                        # (purpose=="usage" 트리 팝업은 token-usage→token-log 통합
+                        #  (2026-06-12)으로 제거 — 요청자가 더 없다.)
                         self._open_choose_tree(msg)
             elif t == "version":
                 if getattr(self, "_want_version", False):
@@ -1484,15 +1481,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
         # ---- choose-tree ----
         def request_tree(self, purpose="choose"):
             self._want_tree = True
-            self._tree_purpose = purpose   # "choose"(전환/종료) | "usage"(토큰 보기)
+            self._tree_purpose = purpose   # "choose"(전환/종료) | "status_tabs"
             self.send_cmd("request_tree")
 
-        # 토큰 사용량 트리 팝업(open_claude_usage_tree·_open_usage_tree)은 claude-code
-        # 플러그인 attach_client 가 인스턴스 클로저로 설치한다(Phase 2c). 코어
-        # _open_status_tabs(통합 REC/서버 탭)는 client_status_tabs 훅으로 플러그인 탭(토큰
-        # 사용량)을 받아 끼운다 — 플러그인이 없으면 토큰 탭이 통째로 사라진다(delete-to-disable).
-        # 인패널 /usage 자동 팝업(_auto_open_usage)은 claude-code 플러그인의 client_status
-        # 훅으로 이전했다(Phase 2c — usage_shown_seq 증가 시 open_usage_panel 호출).
+        # 코어 _open_status_tabs(통합 REC/서버 탭)는 client_status_tabs 훅으로 플러그인
+        # 탭을 받아 끼운다(현재 기여 플러그인 없음 — 구 '토큰 사용량' 탭은 2026-06-12
+        # token-log 팝업으로 통합·제거). 인패널 /usage 자동 팝업(_auto_open_usage)은
+        # claude-code 플러그인의 client_status 훅으로 이전했다(Phase 2c —
+        # usage_shown_seq 증가 시 open_usage_panel 호출).
         def open_version(self):
             # version 명령: 서버에 버전/업타임을 요청하고(t==version 회신), 클라 자신의
             # 버전/업타임과 합쳐 팝업(InfoScreen)을 띄운다.
@@ -1607,10 +1603,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def _open_status_tabs(self, tree):
             """REC(출력 캡처)·서버 정보를 **한 팝업의 탭**으로 연다(#10, §10-A #12).
-            claude-code 플러그인이 있으면 그 사이에 '토큰 사용량' 탭이 끼어 REC(0)·토큰(1)·
-            서버(2) 가 된다 — 상태줄 버튼 배치와 일치. 플러그인이 없으면 토큰 탭이 통째로
-            사라지고 REC(0)·서버(1) 만 남는다(delete-to-disable). 어느 버튼으로 열었는지
-            (_status_tab_initial)에 따라 초기 탭만 다르다. REC 탭에선 [c] 로 캡처를 켜고 끈다."""
+            플러그인이 client_status_tabs 훅으로 탭을 기여하면 그 사이에 끼는다(현재
+            기본 구성은 REC(0)·서버(1) — 구 '토큰 사용량' 탭은 2026-06-12 token-log
+            팝업으로 통합·제거). 어느 버튼으로 열었는지(_status_tab_initial)에 따라
+            초기 탭만 다르다(범위 밖이면 끝 탭으로 클램프 — host 클릭 initial=2 가
+            서버 탭에 안착). REC 탭에선 [c] 로 캡처를 켜고 끈다."""
             cap = getattr(self, "_status_cap_lines", None) or self._capture_info_lines()
             server = self._server_info_lines()
             initial = getattr(self, "_status_tab_initial", 0)
@@ -2208,6 +2205,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.exit(message="detached")
             elif c == "kill-server":
                 self.send_cmd("kill_server")
+            elif c in ("remote-attach", "remote_attach"):
+                # §1.7 페더레이션: 원격 pytmux 서버 탭을 이 pytmux 탭바에 병합.
+                # 성공하면 ⇄host:이름 탭이 나타난다(선택=진입). ssh -T 가 전송.
+                if args:
+                    self.send_cmd("remote_attach", host=args[0])
+                else:
+                    self.display_message("사용법: remote-attach <host>")
+            elif c in ("remote-detach", "remote_detach"):
+                self.send_cmd("remote_detach",
+                              **({"host": args[0]} if args else {}))
             elif c in ("restart-server", "restart"):
                 # 작업 보존 재시작: 셸/PTY 를 살린 채 서버 코드만 교체(re-exec).
                 # 화면이 잠깐 끊겼다 재접속된다(docs/RESTART_SCENARIO.md).

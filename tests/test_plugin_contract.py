@@ -21,7 +21,7 @@ import pytmuxlib.plugins as plugins
 # claude-code 가 코어에 노출하던 명령(이 플러그인 부재 시 전부 사라져야 함).
 _CLAUDE_CMDS = {
     "claude-rules", "token-saver", "auto-resume", "claude-header",
-    "prompt-history", "token-usage", "token-log", "claude-usage",
+    "prompt-history", "token-log", "claude-usage",
     "usage-panel", "token-account", "prompt-clear", "model",
     "auto-doc-clear", "auto-compact", "claude-auto-mode", "auto-launch",
 }
@@ -293,7 +293,7 @@ async def test_token_subsystem_fully_disabled_without_plugin():
 
     # ① 토큰 명령(조회/설정/팝업 진입점)이 전부 사라진다.
     names = {n for (n, *_rest) in reg.commands}
-    assert not ({"token-log", "token-usage", "token-account", "token-saver",
+    assert not ({"token-log", "token-account", "token-saver",
                  "usage-panel"} & names), f"토큰 명령 누수: {names}"
     # ② 토큰 로그 조회(request_token_log) 무응답.
     assert reg.handle_server_request(
@@ -348,8 +348,7 @@ async def test_contract_client_app_runs_without_claude_plugin(monkeypatch=None):
                          "open_remote_control", "_toggle_remote_control",
                          "_update_claude", "set_claude_header",
                          "toggle_header_hidden", "_footer_zone_at",
-                         "_claude_header_panes", "open_claude_usage_tree",
-                         "_open_usage_tree",
+                         "_claude_header_panes",
                          # Phase 2c 헤더/클릭존 상태도 코어가 만들지 않는다.
                          "pane_claude", "claude_header_on", "_claude_hidden_panes",
                          "_claude_header_zones", "_perm_zone", "_remote_zone",
@@ -391,8 +390,8 @@ async def test_contract_client_app_runs_without_claude_plugin(monkeypatch=None):
             app._run_command("token-saver")
             await pilot.pause(0.1)
             assert app.view._cells, "Claude 명령 후 렌더 깨짐"
-            # 5) 통합 상태 팝업: 플러그인 부재 시 '토큰 사용량' 탭이 통째로 사라지고
-            # REC·서버 두 탭만 남는다(client_status_tabs 훅 부재 → 안내문도 없음).
+            # 5) 통합 상태 팝업: REC·서버 두 탭(토큰 탭은 2026-06-12 token-log 로
+            # 통합·제거 — 플러그인 유무와 무관하게 동일 구성).
             app._status_cap_lines = ["파일: /tmp/x/pane-1.log"]
             app._status_tab_initial = 2          # host 클릭 = 서버 탭 의도
             app._open_status_tabs({"sessions": []})
