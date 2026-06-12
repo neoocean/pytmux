@@ -118,7 +118,13 @@ class ServerIOMixin:
                          for t in s.tabs]}
             for s in self.sessions.values()]}
 
-    def _status_msg(self, sess: Session, full=True):
+    def _status_msg(self, sess: Session, full=True, client=None):
+        # §1.7 Stage 3: 원격 탭을 보는 클라는 업스트림 status 기반 머지본(원격 탭
+        # active 하이라이트 + Claude 헤더 등 부가필드)을 받는다 — per-client.
+        if client is not None:
+            rs = self._remote_status_override(sess, client)
+            if rs is not None:
+                return rs
         win = sess.active_window
         cap_path, cap_size = self._capture_info(win.active_pane if win else None)
         msg = {
@@ -146,7 +152,7 @@ class ServerIOMixin:
         self.plugins.server_status(self, sess, win, msg, full)
         # §1.7: 원격 링크의 탭을 병합(⇄host:이름, 전역 index 는 로컬 뒤 연속) — 탭바에
         # 양쪽이 항상 보이고, select_window(전역 index)로 원격 탭에 진입한다.
-        msg["windows"] += self._remote_tabs(len(sess.tabs))
+        msg["windows"] += self._remote_tabs(len(sess.tabs), client)
         return msg
 
     async def _send_full(self, client: ClientConn):
@@ -157,7 +163,7 @@ class ServerIOMixin:
         # 업스트림 전달분이 권위) — 병합 탭바용 status 만 갱신한다. 모든 브로드캐스트
         # 경로(_broadcast_session·flush 헤더예약·resize 미러링)가 이 가드를 공유한다.
         if getattr(client, "remote_view", None):
-            await write_msg(client.writer, self._status_msg(sess))
+            await write_msg(client.writer, self._status_msg(sess, client=client))
             return
         lay = self._layout_msg(sess)  # 세션 공유 크기(최소)로 계산
         if not lay:
@@ -190,7 +196,7 @@ class ServerIOMixin:
             await write_msg(client.writer, {"t": "screen", "pane": pp.id,
                                             "rows": rows, "cursor": cursor,
                                             "wrap": pp._last_wrap})
-        await write_msg(client.writer, self._status_msg(sess))
+        await write_msg(client.writer, self._status_msg(sess, client=client))
 
     _DELTA_MAX_RATIO = 0.7   # 바뀐 행이 이 비율 초과면 full screen 으로 폴백
 
@@ -312,10 +318,12 @@ class ServerIOMixin:
                         await self._send_full(c)
                     continue
                 if status_changed:
-                    # 주기 status: history 는 변할 때만(§4.5, full=False).
-                    sframe = frame_msg(self._status_msg(sess, full=False))
+                    # 주기 status: history 는 변할 때만(§4.5, full=False). §1.7
+                    # Stage 3: status 가 클라별(원격 보기 오버라이드)이라 프레임도
+                    # 클라별로 만든다(클라 수는 보통 1~2 — 비용 미미).
                     for c in clients:
-                        frames_by_client[c].append(sframe)
+                        frames_by_client[c].append(frame_msg(
+                            self._status_msg(sess, full=False, client=c)))
                 # 클라마다 이 프레임의 모든 메시지를 한 번에 write+drain(B4).
                 for c in clients:
                     await write_frames(c.writer, frames_by_client[c])
@@ -854,6 +862,7 @@ class ServerIOMixin:
 
     def shutdown(self):
         self.running = False
+        self.remote_shutdown()   # §1.7: 링크/ssh/보류 재연결 동기 정리
         self._close_all_capfiles()
         for sess in self.sessions.values():
             for tab in sess.tabs:
@@ -961,6 +970,9 @@ class ServerIOMixin:
             if not resumed and os.path.exists(self.layout_path) \
                     and not self.sessions:
                 self.restore_layout()
+            # §1.7 Stage 3: re-exec 복원이 보관한 원격 링크 spec 재연결(비동기).
+            if resumed:
+                self.remote_restore_links()
             flush = asyncio.create_task(self._flush_loop())
             autoname = asyncio.create_task(self._autorename_loop())
             usage = asyncio.create_task(self._usage_loop())

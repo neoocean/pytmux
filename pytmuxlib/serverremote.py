@@ -13,10 +13,14 @@ screen-delta 등)를 그대로 전달**하고, 그 클라의 input/scroll/resize
 원격 것이고, 로컬 탭으로 돌아오면 로컬 _send_full 이 다시 그린다. 탭바는 로컬 status
 의 windows 에 원격 탭을 병합(`⇄host:이름`)해 항상 양쪽이 보인다.
 
-MVP 한계(후속 Stage 3): 원격 탭 active 하이라이트는 클라별 차이를 status 공유 방송에
-못 실어 생략, 끊김 시 자동 재연결 없음(탭 제거 + 재-attach 수동), 재시작(re-exec) 후
-링크 미복원, Windows 미지원(stdio-proxy POSIX), 원격 status 의 Claude 헤더 등 부가
-필드는 미전달(화면 자체는 보임).
+Stage 3(2026-06-12): status 를 **클라별**로 조립한다 — 보는 클라는 업스트림 status
+누적본(`link.last_status`: active_pane·pane_title·Claude 헤더/토큰 등 부가필드 포함)에
+병합 탭바(로컬=비활성, 원격=업스트림 active 보존 → **원격 탭 하이라이트**)를 얹어
+받고, 안 보는 클라는 종전 로컬 status(원격 탭 비활성). 링크가 비명시적으로 죽으면
+(_remote_reader EOF) **백오프 자동 재연결**(_RECONNECT_DELAYS, 명시 detach/재attach 가
+취소), 재시작(re-exec)은 _resume_payload 의 remotes spec 으로 **링크 복원**
+(remote_restore_links). 자기 자신 endpoint attach 는 거부(status 병합이 자기 ⇄ 탭을
+무한 증식시키는 루프 차단).
 """
 from __future__ import annotations
 
@@ -38,6 +42,12 @@ class RemoteLink:
         self.windows: list = []   # 업스트림 status 의 windows(탭 목록) 최신본
         self.task: asyncio.Task | None = None
         self.alive = True
+        # Stage 3: 재연결/재시작 복원용 원 spec({"host":…,"endpoint":…})과 소속 세션.
+        self.spec: dict = {}
+        self.sess = None
+        # 업스트림 status 누적본(full 이 채운 옵션 키를 light 가 안 지우게 update 로
+        # 합친다) — 보는 클라용 status 오버라이드(_remote_status_override)의 원천.
+        self.last_status: dict = {}
 
 
 # 원격 탭을 보는 동안 업스트림으로 릴레이하는 cmd action 화이트리스트.
@@ -50,11 +60,22 @@ _REMOTE_RELAY_ACTIONS = {
 
 
 class ServerRemoteMixin:
+    # 끊김(비명시) 시 자동 재연결 백오프(초). 무상한이 아니다 — §1 의 "재접속 루프"
+    # 재발을 막기 위해 유한 회수 후 포기(notice)하고 수동 재시도에 맡긴다.
+    _RECONNECT_DELAYS = (1, 2, 4, 8, 16, 30, 30, 30)
+
     # Server.__init__ 가 부르지 않아도 동작하도록 지연 초기화 헬퍼.
     def _remotes_dict(self) -> dict:
         d = getattr(self, "_remotes", None)
         if d is None:
             d = self._remotes = {}
+        return d
+
+    def _remote_reconn_dict(self) -> dict:
+        """진행 중 자동 재연결 태스크 {이름: Task} — 명시 detach/재attach 가 취소."""
+        d = getattr(self, "_remote_reconn", None)
+        if d is None:
+            d = self._remote_reconn = {}
         return d
 
     # ---- 전송 열기 ----
@@ -101,9 +122,21 @@ class ServerRemoteMixin:
         name = host or endpoint
         if not name:
             return False
+        # 자기 자신 attach 가드: 자기 status 의 ⇄ 탭을 다시 흡수해 탭 목록이 status
+        # 왕복마다 한 단계씩 무한 증식하는 루프를 차단한다.
+        if endpoint and endpoint in (self.sock_path,
+                                     getattr(self, "resolved_endpoint", None)):
+            self._remote_last_err = "자기 자신에는 attach 할 수 없습니다"
+            return False
         remotes = self._remotes_dict()
         if name in remotes:
             await self.remote_drop(remotes[name], notify=False)
+        # 같은 이름의 보류 자동 재연결은 취소(이 attach 가 권위) — 단, 재연결 루프
+        # 자신이 부른 경우는 자기 태스크라 건드리지 않는다.
+        pend = self._remote_reconn_dict().get(name)
+        if pend is not None and pend is not asyncio.current_task():
+            self._remote_reconn_dict().pop(name, None)
+            pend.cancel()
         self._remote_last_err = ""
         try:
             reader, writer, tok, proc = await self._remote_transport(
@@ -113,6 +146,8 @@ class ServerRemoteMixin:
             self._log_error(f"remote_attach({name})")
             return False
         link = RemoteLink(name, reader, writer, proc)
+        link.spec = {"host": host, "endpoint": endpoint}
+        link.sess = sess
         cols, rows = self._session_size(sess)
         hello = {"t": "hello", "proto": PROTO_VERSION,
                  "cols": cols, "rows": rows}
@@ -128,8 +163,10 @@ class ServerRemoteMixin:
         link.task = self.loop.create_task(self._remote_reader(link))
         return True
 
-    async def remote_drop(self, link: RemoteLink, notify: bool = True):
-        """링크 해제: 보던 클라는 로컬 화면으로 복귀, 탭바에서 원격 탭 제거."""
+    async def remote_drop(self, link: RemoteLink, notify: bool = True,
+                          reconnect: bool = False):
+        """링크 해제: 보던 클라는 로컬 화면으로 복귀, 탭바에서 원격 탭 제거.
+        reconnect=True(비명시적 죽음 — EOF/오류)면 백오프 자동 재연결을 건다."""
         link.alive = False
         self._remotes_dict().pop(link.host, None)
         if link.task is not None and not link.task.done():
@@ -147,15 +184,114 @@ class ServerRemoteMixin:
                     asyncio.create_task(self._send_full(c))
         if notify:
             self._remote_status_broadcast()
+        if reconnect:
+            self._remote_schedule_reconnect(link)
 
     def remote_detach(self, name: str | None = None):
-        """이름 지정(없으면 전부) 링크 해제 — `remote-detach [host]`."""
+        """이름 지정(없으면 전부) 링크 해제 — `remote-detach [host]`. 보류 중인
+        자동 재연결도 함께 취소한다(명시 해제 = 사용자 의사)."""
+        reconn = self._remote_reconn_dict()
+        for n in ([name] if name else list(reconn)):
+            t = reconn.pop(n, None)
+            if t is not None:
+                t.cancel()
         remotes = self._remotes_dict()
         targets = ([remotes[name]] if name and name in remotes
                    else list(remotes.values()) if not name else [])
         for link in targets:
             asyncio.create_task(self.remote_drop(link))
         return bool(targets)
+
+    # ---- 끊김 백오프 자동 재연결(Stage 3) ----
+    def _remote_schedule_reconnect(self, link: RemoteLink):
+        # 서버 종료 중(EOF 가 teardown 에서 옴)엔 예약하지 않는다 — 종료 후 남는
+        # 고아 재연결 태스크("Task was destroyed but it is pending") 방지.
+        if not self.running:
+            return
+        reconn = self._remote_reconn_dict()
+        if link.host in reconn or link.sess is None or not link.spec:
+            return
+        reconn[link.host] = self.loop.create_task(
+            self._remote_reconnect_loop(link))
+
+    async def _remote_reconnect_loop(self, link: RemoteLink):
+        """비명시적 끊김 후 백오프 재시도. 성공/포기를 notice 로 알린다. 유한 회수
+        — §1 의 무상한 '재접속 루프'를 페더레이션에 재현하지 않는다."""
+        name, sess = link.host, link.sess
+        try:
+            for i, delay in enumerate(self._RECONNECT_DELAYS, 1):
+                await asyncio.sleep(delay)
+                if not self.running or sess not in self.sessions.values():
+                    return
+                if await self.remote_attach(sess, host=link.spec.get("host"),
+                                            endpoint=link.spec.get("endpoint")):
+                    self._remote_status_broadcast()
+                    self._remote_notice(
+                        sess, f"remote-attach {name}: 끊김 후 자동 재연결됨"
+                              f"(시도 {i})")
+                    return
+            self._remote_notice(
+                sess, f"remote-attach {name}: 자동 재연결 포기"
+                      f"({len(self._RECONNECT_DELAYS)}회) — "
+                      f":remote-attach 로 수동 재시도")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._log_error(f"remote_reconnect({name})")
+        finally:
+            self._remote_reconn_dict().pop(name, None)
+
+    def remote_shutdown(self):
+        """서버 종료 시 동기 정리: 보류 재연결 취소 + 링크 전송/ssh 종료(루프가 곧
+        멈추므로 코루틴 drop 대신 즉시 닫는다)."""
+        for t in list(self._remote_reconn_dict().values()):
+            t.cancel()
+        self._remote_reconn_dict().clear()
+        for link in list(self._remotes_dict().values()):
+            link.alive = False
+            if link.task is not None and not link.task.done():
+                link.task.cancel()
+            for closer in (lambda l=link: l.writer.close(),
+                           lambda l=link: l.proc and l.proc.kill()):
+                try:
+                    closer()
+                except (OSError, ProcessLookupError):
+                    pass
+        self._remotes_dict().clear()
+
+    def _remote_notice(self, sess, text: str):
+        """세션의 모든 클라에 상태줄 notice(§1.7 attach 결과와 동일 표면)."""
+        for c in list(self.clients):
+            if c.session is sess:
+                asyncio.create_task(
+                    write_msg(c.writer, {"t": "notice", "text": text}))
+
+    # ---- 재시작(re-exec) 후 링크 복원(Stage 3) ----
+    def remote_restore_links(self):
+        """restore_resume_state 가 보관한 spec(_remote_resume)으로 부트 후 재연결.
+        serve() 가 이벤트 루프 가동 직후 1회 호출한다. ssh 서브프로세스는 execv 를
+        살아남지 못하므로(파이프 CLOEXEC) 링크는 항상 새로 연다."""
+        specs = getattr(self, "_remote_resume", None) or []
+        self._remote_resume = []
+        if not specs or not self.sessions:
+            return
+        sess = next(iter(self.sessions.values()))
+
+        async def _restore():
+            for spec in specs:
+                name = spec.get("host") or spec.get("endpoint") or "?"
+                try:
+                    if await self.remote_attach(sess, host=spec.get("host"),
+                                                endpoint=spec.get("endpoint")):
+                        self._remote_status_broadcast()
+                    else:
+                        self._remote_notice(
+                            sess, f"remote-attach {name}: 재시작 후 복원 실패 — "
+                                  f"{getattr(self, '_remote_last_err', '')}")
+                except Exception:
+                    self._log_error(f"remote_restore({name})")
+
+        self.loop.create_task(_restore())
 
     # ---- 업스트림 수신 ----
     async def _remote_reader(self, link: RemoteLink):
@@ -172,10 +308,18 @@ class ServerRemoteMixin:
                     break
                 t = msg.get("t")
                 if t == "status":
+                    # 누적(update): 업스트림 full status 가 채운 옵션 키를 이후
+                    # light status 가 지우지 않게 합친다 — 보는 클라 오버라이드의
+                    # 원천(_remote_status_override).
+                    link.last_status.update(msg)
                     wins = msg.get("windows", [])
                     if wins != link.windows:
                         link.windows = wins
                         self._remote_status_broadcast()
+                    else:
+                        # 탭 목록 불변이어도 부가필드(Claude 헤더/토큰·pane_title
+                        # 등)는 변했을 수 있다 — 보는 클라만 갱신.
+                        self._remote_viewer_status(link)
                     continue
                 if t in ("bye", "restarting"):
                     break
@@ -191,19 +335,22 @@ class ServerRemoteMixin:
         except Exception:
             self._log_error(f"remote_reader({link.host})")
         finally:
-            if link.alive:                 # EOF/오류로 끝났으면 정리+복귀
-                await self.remote_drop(link)
+            if link.alive:                 # EOF/오류로 끝났으면 정리+복귀+자동재연결
+                await self.remote_drop(link, reconnect=True)
 
     # ---- 탭바 병합 ----
-    def _remote_tabs(self, base: int) -> list:
+    def _remote_tabs(self, base: int, client=None) -> list:
         """병합 탭 목록에 덧붙일 원격 탭 엔트리(전역 index 는 base 부터 연속).
-        active 는 클라별 상태라 공유 status 에 못 실어 False(MVP 한계)."""
+        active 는 클라별(Stage 3) — 그 링크를 보는 클라에게만 업스트림 active 를
+        보존해 원격 탭이 하이라이트된다(안 보는 클라/클라 미지정은 False)."""
         out = []
         gi = base
         for link in self._remotes_dict().values():
+            viewing = (client is not None
+                       and getattr(client, "remote_view", None) == link.host)
             for rw in link.windows:
                 out.append({"index": gi, "name": f"⇄{link.host}:{rw.get('name', '')}",
-                            "active": False,
+                            "active": bool(viewing and rw.get("active")),
                             "bell": rw.get("bell", False),
                             "activity": rw.get("activity", False),
                             "claude_done": rw.get("claude_done", False)})
@@ -221,14 +368,40 @@ class ServerRemoteMixin:
         return None
 
     def _remote_status_broadcast(self):
-        """원격 탭 목록 변동을 모든 세션 클라의 탭바에 반영(가벼운 status 재전송)."""
+        """원격 탭 목록 변동을 모든 세션 클라의 탭바에 반영. status 는 클라별
+        (Stage 3 — 보는 클라=업스트림 오버라이드, 그 외=로컬)로 조립한다."""
         for sess in self.sessions.values():
-            clients = [c for c in self.clients if c.session is sess]
-            if not clients:
-                continue
-            frame = frame_msg(self._status_msg(sess, full=False))
-            for c in clients:
+            for c in [c for c in self.clients if c.session is sess]:
+                frame = frame_msg(self._status_msg(sess, full=False, client=c))
                 asyncio.create_task(write_frames(c.writer, [frame]))
+
+    def _remote_viewer_status(self, link: RemoteLink):
+        """이 링크를 보는 클라에게만 status 재전송(업스트림 부가필드 갱신 반영)."""
+        for c in list(self.clients):
+            if c.remote_view == link.host and c.session is not None:
+                frame = frame_msg(
+                    self._status_msg(c.session, full=False, client=c))
+                asyncio.create_task(write_frames(c.writer, [frame]))
+
+    def _remote_status_override(self, sess, client):
+        """보는 클라용 status(Stage 3): 업스트림 status 누적본을 기반으로 —
+        active_pane/zoomed/pane_title/Claude 헤더·토큰 등 부가필드가 원격 것 그대로
+        전달돼 클라가 원격 패널 헤더/상태줄을 로컬과 동일하게 그린다 — windows 만
+        병합 탭바(로컬=비활성, 원격=업스트림 active 보존)로 바꾼다. 업스트림 status
+        를 아직 못 받았으면 None(호출부가 로컬 status 경로)."""
+        link = self._remote_link_for(client)
+        if link is None or not link.last_status:
+            return None
+        msg = dict(link.last_status)
+        msg["t"] = "status"
+        msg["session"] = sess.name                   # #S 등 세션명은 로컬 유지
+        msg["single_border"] = self.single_border    # 보더 스타일은 로컬 취향
+        msg["windows"] = [
+            {"index": t.index, "name": t.name, "active": False,
+             "bell": t.has_bell, "activity": t.has_activity,
+             "claude_done": t.has_claude_done}
+            for t in sess.tabs] + self._remote_tabs(len(sess.tabs), client)
+        return msg
 
     # ---- 릴레이 ----
     def _remote_link_for(self, client) -> RemoteLink | None:

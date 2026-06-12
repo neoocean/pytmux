@@ -258,7 +258,7 @@ grace 한 번에 대기)로 종료 확인, 아직 살아 있으면 `taskkill /F 
 - **남음**: 라이브 attach(새 콘솔 창)·실 ssh 반응성·키 인코딩 인터랙티브 검증은 여전히 실
   박스 수동(§4), **arm64 Windows pywinpty 휠 부재** 대비(소스 빌드 필요 — §4-b).
 
-### [H] 1.7 ssh 로 원격 pytmux 접속 시 이중 실행·재접속 루프 → 원격 탭 어태치로 전환 (요청 2026-06-12) ✅ **Stage 0·1·2 구현(2026-06-12) — Stage 3 폴리시 잔여**
+### [H] 1.7 ssh 로 원격 pytmux 접속 시 이중 실행·재접속 루프 → 원격 탭 어태치로 전환 (요청 2026-06-12) ✅ **Stage 0~3 구현 완료(2026-06-12) — 실 ssh 라이브 검증만 잔여**
 **증상(사용자 보고 2026-06-12)**: 로컬 pytmux 패널에서 원격 ssh 서버에 접속했을 때, 그 서버
 **하위에 이미 pytmux 탭이 열려 있으면** 원격 pytmux 가 **재접속을 반복하며 정상 동작하지 않는다**.
 **원하는 거동**: pytmux 안에서 또 pytmux 가 뜨는 **이중 실행을 막고**, 원격 서버에서 pytmux 를
@@ -290,9 +290,14 @@ grace 한 번에 대기)로 종료 확인, 아직 살아 있으면 `taskkill /F 
   링크 EOF 시 보던 클라 자동 로컬 복귀+탭 제거(루프 대신 명시적 끊김). 테스트 2건
   (test_remote.py — **in-process 서버 2대 실소켓 직결 E2E**: 병합→진입→마커 화면→입력
   도달→복귀→해제 / 링크사망 복귀).
-- **Stage 3 잔여(폴리시·후속)**: 원격 탭 active 하이라이트(per-client status 필요)·끊김
-  백오프 자동 재연결·re-exec 후 링크 복원·원격 Claude 헤더 등 status 부가필드·다중 원격
-  정리·Windows·실 ssh 라이브 검증. 시나리오 §4.
+- **Stage 3 완료(2026-06-12)**: ① per-client status — 보는 클라는 업스트림 status 누적본
+  (`link.last_status`) 기반 머지본을 받아 **⇄ 탭 active 하이라이트 + Claude 헤더/토큰 등
+  부가필드가 원격 것 그대로** 전달(`_remote_status_override`, 안 보는 클라는 종전 로컬
+  status) ② 끊김 백오프 자동 재연결(유한 `_RECONNECT_DELAYS`, 성공/포기 notice, 명시
+  detach/재attach 가 취소) ③ re-exec 복원(`_resume_payload.remotes` → `remote_restore_
+  links`) ④ 다중 원격 전역 index 병합·개별 detach + **자기 자신 attach 거부**(탭 무한
+  증식 루프 차단) + shutdown 동기 정리 ⑤ Windows stdio-proxy(스레드 스플라이스).
+  테스트 +6(test_remote 총 9). 시나리오 §4. **잔여: 실 ssh 라이브 검증만**(§5 수동 절차).
 
 ### 의도된 기능 열화(공백) — #7 대부분 해결
 - ~~자동 탭이름/ssh 감지~~ → **해결(#7)**: `_fg_command(pane)` 이 Windows 에서

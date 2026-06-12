@@ -101,12 +101,40 @@ add_reader 의 POSIX 전용이었다).
 화면 마커 수신→입력 B 패널 도달→로컬 복귀→해제), `test_remote_link_death_recovers_
 viewer_to_local`(EOF→자동 복귀+탭 제거).
 
-### Stage 3 잔여(후속)
-원격 탭 active 하이라이트(status 가 클라별이 아님 — per-client status 필요), 끊김 시
-백오프 자동 재연결, 재시작(re-exec) 후 링크 복원, 원격 status 부가 필드(Claude 헤더
-등) 전달, 다중 원격 동시·이름 충돌 정리, 실 ssh 라이브 검증(헤드리스는 직결 검증 —
-ssh 경로는 TOKEN 핸드셰이크 테스트로만 커버). ~~Windows(stdio-proxy POSIX)~~ →
-**완료(2026-06-12)**: 스레드 스플라이스로 재작성, §5 전제 3.
+### Stage 3 (구현 완료, 2026-06-12)
+
+- **per-client status — 원격 탭 active 하이라이트 + 업스트림 부가필드 전달**:
+  업스트림 status 를 `link.last_status` 에 **누적**(`update` — full 이 채운 옵션
+  키를 light 가 안 지움)하고, status 조립을 클라별로 바꿨다(`_status_msg(...,
+  client=)`). 보는 클라는 업스트림 status 기반 머지본을 받는다 — active_pane/
+  zoomed/pane_title/**Claude 헤더·토큰 등 부가필드가 원격 것 그대로**(클라는 원격
+  패널 헤더를 로컬과 동일하게 그림), windows 만 병합 탭바(로컬=비활성, 원격=업스트림
+  active 보존 → **⇄ 탭 하이라이트**)로 교체(`_remote_status_override` — session
+  명·single_border 는 로컬 유지). 안 보는 클라는 종전 로컬 status(⇄ 비활성).
+  전송 3지점(_send_full·flush status_changed·_remote_status_broadcast)이 클라별
+  프레임을 만든다(클라 1~2 — 비용 미미). 한계: 보는 동안 로컬 탭의 플러그인 탭
+  집계(claude 배지)는 기본 필드(bell/activity/claude_done)만 반영.
+- **끊김 백오프 자동 재연결**: 링크가 비명시적으로 죽으면(EOF/오류) `_RECONNECT_
+  DELAYS`(1,2,4,8,16,30×3초 — **유한**, §1 의 무상한 '재접속 루프'를 페더레이션에
+  재현하지 않음) 백오프로 재시도, 성공/포기를 notice 로 알린다. 명시 `remote-
+  detach`/재-attach 가 보류 재연결을 취소한다(사용자 의사 우선).
+- **재시작(re-exec) 후 링크 복원**: `_resume_payload` 에 링크 spec(`remotes`)을
+  실어 새 이미지가 부트 후 `remote_restore_links` 로 재연결(ssh 파이프는 CLOEXEC
+  라 execv 를 살아남지 못하므로 항상 새로 연다). 복원 실패는 notice.
+- **다중 원격 정리**: 링크별 탭이 전역 index 연속 병합·개별 detach. **자기 자신
+  endpoint attach 거부**(자기 ⇄ 탭 재흡수로 탭 목록이 status 왕복마다 무한 증식하는
+  루프 차단). 서버 shutdown 시 링크/ssh/보류 재연결 동기 정리(`remote_shutdown`).
+- ~~Windows(stdio-proxy POSIX)~~ → **완료(2026-06-12)**: 스레드 스플라이스로
+  재작성, §5 전제 3.
+
+테스트(`tests/test_remote.py`, +6): active 하이라이트/부가필드 passthrough(2클라
+대조), 백오프 재연결 re-merge(notice+⇄ 복귀), detach 의 보류 재연결 취소, resume
+payload+restore_links 복원(서버 3대), 자기 attach 거부 notice, 다중 원격 병합/개별
+detach.
+
+### 잔여(후속)
+실 ssh 라이브 검증만 남음 — 헤드리스는 직결(in-process 소켓)로 전 구간 검증,
+ssh 경로는 TOKEN 핸드셰이크 테스트로만 커버. §5 의 수동 점검 절차로 확인.
 
 ## 5. 사용
 

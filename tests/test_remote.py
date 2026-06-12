@@ -1,8 +1,11 @@
-"""§1.7 Stage 2 페더레이션 — 원격 pytmux 탭 흡수(서버=업스트림 클라이언트).
+"""§1.7 Stage 2·3 페더레이션 — 원격 pytmux 탭 흡수(서버=업스트림 클라이언트).
 
-ssh 없이 **in-process 서버 2대를 실 소켓으로 직결**해 전 구간(와이어 2홉)을 검증한다:
-로컬 A 의 실 클라 연결에서 remote_attach(B 엔드포인트) → 탭바 병합(⇄) → 원격 탭
-선택(전역 index) → 업스트림 화면 전달 → 입력 릴레이 → 로컬 복귀/해제/링크 사망."""
+ssh 없이 **in-process 서버 2대(이상)를 실 소켓으로 직결**해 전 구간(와이어 2홉)을
+검증한다: 로컬 A 의 실 클라 연결에서 remote_attach(B 엔드포인트) → 탭바 병합(⇄) →
+원격 탭 선택(전역 index) → 업스트림 화면 전달 → 입력 릴레이 → 로컬 복귀/해제/링크
+사망. Stage 3: per-client status(원격 탭 active 하이라이트·업스트림 부가필드 전달)·
+끊김 백오프 자동 재연결(+명시 detach 취소)·re-exec 복원 spec·다중 원격·자기 attach
+거부."""
 import asyncio
 import base64
 import os
@@ -154,6 +157,248 @@ async def test_remote_attach_failure_sends_notice():
         await teardown(srvA, taskA, sockA)
 
 
+async def test_remote_tab_active_highlight_and_status_passthrough():
+    """Stage 3 per-client status: 원격 탭을 보는 클라는 ① ⇄ 탭이 active(업스트림
+    active 보존)·로컬 탭 전부 비활성, ② 업스트림 status 부가필드(pane_title 등 —
+    Claude 헤더/토큰도 같은 경로)가 그대로 전달된다. 안 보는 클라는 종전 로컬
+    status(⇄ 비활성·로컬 active)다."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    reader = writer = reader2 = writer2 = None
+    try:
+        sessB = srvB.ensure_default_session(80, 24)
+        pB = sessB.active_window.active_pane
+        pB.title = "B-PANE-TITLE"          # 업스트림 식별 마커(passthrough 검증)
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        stm = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="merged status")
+        gidx = next(w["index"] for w in stm["windows"]
+                    if w["name"].startswith("⇄"))
+        # 진입 → 업스트림 status 기반 머지본(pane_title 마커)이 도착할 때까지
+        await write_msg(writer, {"t": "cmd", "action": "select_window",
+                                 "index": gidx})
+        stv = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and m.get("pane_title") == "B-PANE-TITLE",
+            what="viewer status with upstream fields")
+        rtabs = [w for w in stv["windows"] if w["name"].startswith("⇄")]
+        ltabs = [w for w in stv["windows"] if not w["name"].startswith("⇄")]
+        assert any(w["active"] for w in rtabs), ("원격 탭 하이라이트", rtabs)
+        assert not any(w["active"] for w in ltabs), ("로컬 탭 비활성", ltabs)
+        # 안 보는 둘째 클라: 종전 로컬 status — 로컬 active·⇄ 비활성·로컬 pane_title
+        reader2, writer2 = await _attach_client(sockA)
+        st2 = await _read_until(reader2, lambda m: m.get("t") == "status",
+                                what="2nd client status")
+        assert st2.get("pane_title") != "B-PANE-TITLE"
+        assert not any(w["active"] for w in st2["windows"]
+                       if w["name"].startswith("⇄"))
+        assert any(w["active"] for w in st2["windows"]
+                   if not w["name"].startswith("⇄"))
+    finally:
+        for w in (writer, writer2):
+            if w is not None:
+                w.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
+async def test_remote_reconnect_backoff_remerges_tab():
+    """Stage 3 자동 재연결: 링크가 비명시적으로 죽으면(EOF) 백오프 후 재연결을
+    시도하고, 성공하면 notice + ⇄ 탭이 다시 병합된다."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    reader = writer = None
+    try:
+        srvA._RECONNECT_DELAYS = (0.05, 0.1)   # 테스트 가속(인스턴스 한정)
+        srvB.ensure_default_session(80, 24)
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="merged status")
+        # 비명시적 죽음(EOF): B 측 연결 닫기 → A 가 ⇄ 제거 후 자동 재연결
+        for cB in list(srvB.clients):
+            try:
+                cB.writer.close()
+            except OSError:
+                pass
+        await _read_until(
+            reader, lambda m: m.get("t") == "notice"
+            and "자동 재연결" in m.get("text", ""),
+            what="reconnect notice")
+        await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="re-merged status")
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
+async def test_remote_detach_cancels_pending_reconnect():
+    """Stage 3: 명시 remote-detach 는 보류 중인 자동 재연결을 취소한다(사용자
+    의사 우선 — 백그라운드 ssh 재시도가 남지 않는다)."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    reader = writer = None
+    try:
+        srvA._RECONNECT_DELAYS = (30,)   # 절대 발화 전 취소되도록 길게
+        srvB.ensure_default_session(80, 24)
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="merged status")
+        for cB in list(srvB.clients):
+            try:
+                cB.writer.close()
+            except OSError:
+                pass
+        for _ in range(80):                       # drop → 재연결 예약 대기
+            if srvA._remote_reconn_dict():
+                break
+            await asyncio.sleep(0.05)
+        assert srvA._remote_reconn_dict(), "재연결이 예약되어야 함"
+        await write_msg(writer, {"t": "cmd", "action": "remote_detach"})
+        for _ in range(80):
+            if not srvA._remote_reconn_dict():
+                break
+            await asyncio.sleep(0.05)
+        assert not srvA._remote_reconn_dict(), "detach 가 재연결을 취소해야 함"
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
+async def test_remote_resume_payload_and_restore_links():
+    """Stage 3 re-exec 복원: ① _resume_payload 에 링크 spec 이 실리고 ② 새 서버가
+    remote_restore_links 로 그 spec 을 재연결해 ⇄ 탭이 복원된다."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    srvC, taskC, sockC = await server_only()
+    reader = writer = None
+    try:
+        srvB.ensure_default_session(80, 24)
+        sessA = srvA.ensure_default_session(80, 24)
+        ok = await srvA.remote_attach(sessA, endpoint=sockB)
+        assert ok
+        specs = srvA._resume_payload().get("remotes")
+        assert specs == [{"host": None, "endpoint": sockB}], specs
+        # 새 서버(re-exec 후 이미지 역)가 spec 으로 복원
+        srvC.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockC)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        srvC._remote_resume = specs
+        srvC.remote_restore_links()
+        await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="restored merged status")
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+        await teardown(srvC, taskC, sockC)
+
+
+async def test_remote_attach_self_rejected():
+    """Stage 3: 자기 자신 endpoint attach 는 거부된다(자기 ⇄ 탭 재흡수로 탭
+    목록이 status 왕복마다 무한 증식하는 루프 차단)."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    reader = writer = None
+    try:
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockA})
+        n = await _read_until(reader, lambda m: m.get("t") == "notice",
+                              what="self-attach notice")
+        assert "실패" in n.get("text", "") and "자기 자신" in n.get("text", ""), n
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+
+
+async def test_remote_multi_link_merge_and_detach_one():
+    """Stage 3 다중 원격: 두 링크의 탭이 전역 index 연속으로 병합되고, 하나만
+    detach 하면 나머지는 유지된다."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    srvC, taskC, sockC = await server_only()
+    reader = writer = None
+    try:
+        srvB.ensure_default_session(80, 24)
+        srvC.ensure_default_session(80, 24)
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        st0 = await _read_until(reader, lambda m: m.get("t") == "status",
+                                what="initial status")
+        n_local = len(st0["windows"])
+        for ep in (sockB, sockC):
+            await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                     "endpoint": ep})
+        stm = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and sum(w["name"].startswith("⇄") for w in m["windows"]) == 2,
+            what="two merged remotes")
+        rtabs = [w for w in stm["windows"] if w["name"].startswith("⇄")]
+        assert [w["index"] for w in rtabs] == [n_local, n_local + 1], rtabs
+        assert any(sockB in w["name"] for w in rtabs)
+        assert any(sockC in w["name"] for w in rtabs)
+        await write_msg(writer, {"t": "cmd", "action": "remote_detach",
+                                 "host": sockB})
+        stl = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and sum(w["name"].startswith("⇄") for w in m["windows"]) == 1,
+            what="one remote left")
+        left = [w for w in stl["windows"] if w["name"].startswith("⇄")]
+        assert sockC in left[0]["name"], left
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+        await teardown(srvC, taskC, sockC)
+
+
 async def test_remote_link_death_recovers_viewer_to_local():
     """링크 사망(원격 서버 종료): 보던 클라는 로컬 화면으로 복귀(_send_full)하고
     탭바에서 ⇄ 탭이 제거된다 — '재접속 루프' 대신 명시적 끊김 처리."""
@@ -163,6 +408,7 @@ async def test_remote_link_death_recovers_viewer_to_local():
     srvB, taskB, sockB = await server_only()
     reader = writer = None
     try:
+        srvA._RECONNECT_DELAYS = (3600,)   # 이 테스트는 복귀만 검증(재연결 미발화)
         srvB.ensure_default_session(80, 24)
         sessA = srvA.ensure_default_session(80, 24)
         pA_id = sessA.active_window.active_pane.id

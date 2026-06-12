@@ -29,11 +29,12 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **575 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **583 passed**
   (`python3 tests/run.py` @macOS, 2026-06-12 — Windows 트랙(58214~58228)·usage-view
   플러그인·IME OS 실측·esc ` 진입키·토큰버킷 cap·§3.8 프롬프트 펼치기/오버레이·토큰
   5h/주간 창 추정(58543)·§1.7 중첩 in-band 감지+stdio-proxy+**원격 탭 페더레이션
-  Stage 2**(test_remote, in-process 2서버 E2E) 테스트 합류).
+  Stage 2·3**(test_remote 9건 — in-process 2~3서버 E2E·per-client status·자동 재연결·
+  re-exec 복원) 테스트 합류).
   ⚠️ 관찰: 58519/58543 신규 client 테스트 영역(토큰 화면·status 계정)에서 full-suite
   한정 one-off 3회(assert/AttributeError `_dim`/90s 타임아웃) — 전부 격리·재실행 통과.
   재발 시 테스트 순서 의존 격리 필요.
@@ -276,6 +277,31 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- **§1.7 Stage 3 — 페더레이션 폴리시 완결(2026-06-12, CL 58579)** — 06-12
+  IMPROVEMENT §1.7 의 Stage 3 잔여 5건을 일괄 구현 — **코드 잔여는 실 ssh 라이브 검증만**
+  (시나리오 §5 수동 절차). 서버 코드 — restart-server 필요. `serverremote.py` 중심 +
+  serverio(_status_msg client 인자·serve 복원 훅·shutdown 정리)·serverpersist(remotes spec).
+  - **per-client status — ⇄ 탭 active 하이라이트 + 원격 Claude 헤더/토큰 부가필드 전달.**
+    업스트림 status 를 `link.last_status` 에 누적(update — full 의 옵션 키를 light 가 안
+    지움). 보는 클라는 업스트림 기반 머지본(`_remote_status_override`: active_pane/zoomed/
+    pane_title/Claude 필드 전부 원격 것, windows=로컬(비활성)+원격(업스트림 active 보존),
+    session 명·single_border 는 로컬 유지), 안 보는 클라는 종전 로컬 status. 전송 3지점
+    (_send_full·flush status_changed·_remote_status_broadcast)이 클라별 프레임 조립.
+  - **끊김 백오프 자동 재연결.** 비명시적 죽음(EOF/오류) 시 `_RECONNECT_DELAYS`
+    (1,2,4,8,16,30×3초 — **유한**: §1.7 원래 증상인 무상한 재접속 루프를 페더레이션에
+    재현하지 않음) 백오프 재시도, 성공/포기 notice. 명시 remote-detach/재attach 가 보류
+    재연결 취소(`_remote_reconn_dict`). 서버 종료 중(running=False)엔 예약 안 함.
+  - **re-exec(restart-server) 후 링크 복원.** `_resume_payload()["remotes"]` 에 링크 spec
+    저장 → restore_resume_state 가 보관 → serve() 부트 후 `remote_restore_links()` 가
+    재연결(ssh 파이프 CLOEXEC 라 execv 생존 불가 — 항상 새로 연다). 실패 notice.
+  - **다중 원격 정리 + 자기 attach 가드.** 링크별 탭 전역 index 연속 병합·개별 detach 는
+    기존 구조 그대로 테스트로 고정. **자기 자신 endpoint attach 거부**(자기 status 의 ⇄
+    탭을 재흡수해 탭 목록이 왕복마다 1단계씩 무한 증식하는 루프 차단). `shutdown()` 이
+    `remote_shutdown()` 으로 링크/ssh/보류 재연결을 동기 정리(고아 태스크 방지).
+  - 테스트 +6(`test_remote` 총 9): 하이라이트/부가필드 passthrough(보는 클라 vs 안 보는
+    클라 대조), 백오프 재연결 re-merge, detach 의 재연결 취소, resume payload+복원(서버
+    3대), 자기 attach 거부, 다중 병합/개별 detach. 기존 링크사망 테스트는
+    `_RECONNECT_DELAYS=(3600,)` 인스턴스 오버라이드로 재연결 미발화 고정.
 - **footer 5h 표기 잔여→사용률 통일(2026-06-12, CL 58568)** — 06-12
   58559(막대 '사용' 라벨)로도 "팝업 15% vs footer 85%" 가 다른 값으로 읽힌다는 보고가
   이어져, 사용자 결정으로 **모든 표면을 사용률로 통일**: footer "{pct}%/5h 사용(used)"

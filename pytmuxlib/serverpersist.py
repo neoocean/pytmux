@@ -111,7 +111,12 @@ class ServerPersistMixin:
                        "monitor_bell": t.monitor_bell,
                        "monitor_claude": t.monitor_claude}
                       for t in s.tabs]}
-            for s in self.sessions.values()]}
+            for s in self.sessions.values()],
+            # §1.7 Stage 3: 원격 링크 spec — 새 이미지가 remote_restore_links 로
+            # 재연결한다(ssh 파이프는 CLOEXEC 라 execv 를 살아남지 못함).
+            "remotes": [dict(link.spec)
+                        for link in getattr(self, "_remotes", {}).values()
+                        if getattr(link, "spec", None)]}
 
     def save_resume_state(self, path: str | None = None) -> bool:
         """현재 트리·패널 상태(살아 있는 셸 PTY 포함)를 상태 파일에 직렬화한다.
@@ -205,6 +210,9 @@ class ServerPersistMixin:
             return False
         if data.get("version") != 1:
             return False
+        # §1.7 Stage 3: 원격 링크 spec 보관 — serve() 가 루프 가동 후
+        # remote_restore_links 로 재연결한다(여기선 루프가 아직 없을 수 있음).
+        self._remote_resume = data.get("remotes", [])
         for ss in data.get("sessions", []):
             tabs = []
             for wt in ss.get("tabs", []):
