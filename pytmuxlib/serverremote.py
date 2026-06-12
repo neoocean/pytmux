@@ -83,6 +83,12 @@ class ServerRemoteMixin:
             proc.kill()
             detail = (err or line).decode("utf-8", "replace").strip()
             detail = detail.splitlines()[-1] if detail else "응답 없음"
+            if "Permission denied" in detail:
+                # 비대화 ssh(BatchMode)는 비밀번호를 못 묻는다 — 패스워드 전용
+                # 호스트는 ControlMaster 로 인증된 연결을 공유하면 된다(§5).
+                detail += (" — 키 미설정. 패스워드 호스트는 ssh config 에 "
+                           "ControlMaster 설정 후 패널에서 한 번 로그인"
+                           "(REMOTE_ATTACH_SCENARIO §5)")
             raise ConnectionError(f"stdio-proxy 핸드셰이크 실패: {detail}")
         tok = line.split(b" ", 1)[1].strip().decode()
         return proc.stdout, proc.stdin, tok, proc

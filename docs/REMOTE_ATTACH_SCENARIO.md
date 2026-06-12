@@ -116,9 +116,24 @@ ssh 경로는 TOKEN 핸드셰이크 테스트로만 커버). ~~Windows(stdio-pro
   첫 보고에서 shlex 가 삼켜 엉뚱한 host 로 가던 버그 수정). 결과는 상태줄
   **notice**(성공/실패+원인)로 표시된다.
 - **전제조건**:
-  1. **ssh 키 인증** — 서버가 띄우는 ssh 는 TTY 가 없어 비밀번호를 못 묻는다
-     (`BatchMode=yes`). 미리 `ssh-copy-id <host>`(또는 동등 설정). 미설정이면
-     notice 에 `Permission denied` 가 그대로 보인다.
+  1. **무인증 접속 수단** — 서버가 띄우는 ssh 는 TTY 가 없어 비밀번호를 못 묻는다
+     (`BatchMode=yes`). 미설정이면 notice 에 `Permission denied` 가 그대로 보인다.
+     둘 중 하나:
+     - **키 인증**: `ssh-copy-id <host>`(또는 동등 설정).
+     - **패스워드 전용 호스트 → ControlMaster(연결 공유)**: `~/.ssh/config` 에
+       ```
+       Host office1
+         HostName office1
+         User NATGAMES\woojinkim
+         ControlMaster auto
+         ControlPath ~/.ssh/cm-%C
+         ControlPersist 10m
+       ```
+       후 **아무 패널에서 `ssh office1` 로 한 번 로그인**(비밀번호 입력) — 이후
+       remote-attach 의 비대화 ssh 가 그 인증된 연결을 **재인증 없이** 다중화해
+       탄다(mux 는 클라(macOS) 기능이라 Windows 서버와 무관, 2FA 도 동일하게
+       해결). 로그인 셸을 닫아도 `ControlPersist` 동안 마스터가 살아 있다.
+       부수효과: config 별칭 덕에 `:remote-attach office1` 로 짧게 쓴다.
   2. 원격 pytmux 가 **stdio-proxy 보유 버전**(POSIX 58551+/Windows 58565+)이고
      비대화 ssh 의 PATH 에서 `pytmux` 가 실행 가능해야 한다(없으면 `command not
      found`). Windows 는 `install.ps1` 이 까는 래퍼가 **사용자 PATH(레지스트리)**에
