@@ -798,6 +798,17 @@ class ServerClaudeMixin:
                 # 띄우지 않게 한다(_rc_done 은 _RESUME_FIELDS 로 직렬화돼 유지).
                 if claude_remote_active(txt):
                     p._rc_done = True
+                    # 추가(요청): 원격제어가 이미 켜진 걸 한 번이라도 관측하면 **서버
+                    # 전역** sticky 를 세워, 이후 새 세션의 auto-launch fire 시점에 /rc 를
+                    # 확정 스킵한다(아래 fire 블록의 skip 조건에 _rc_seen_active 포함).
+                    # 데스크탑 앱이 세션마다 원격제어를 지속 연결하는 환경에선 이미 켜진
+                    # 세션에 /rc 를 보내면 Claude 의 `/remote-control` 관리 대화가 다시 떠
+                    # 진행이 멈추는데, 디바운스(타이밍)만으론 첫 프레임 레이스를 완전히 못
+                    # 막으므로 "한 번 본 적 있으면 더는 안 쏨"으로 보장한다. **무장은
+                    # 그대로 둔다** — auto-launch 는 /rc 외에 권한모드 auto 유도도 겸하므로
+                    # (fire 블록이 /rc 만 건너뛰고 _perm_auto_pending 은 정상 인계). 수동
+                    # 토글(footer 클릭→팝업 [r])은 영향 없음.
+                    self._rc_seen_active = True
                 # 사용자가 패널에서 직접 /usage 를 띄우면 그 **실측** 한도를 캡처해
                 # 권위값(self._usage)으로 둔다 — 상태줄 5h%·토큰 화면 그래프가 /usage 와
                 # 어긋나던 문제(요청). 그림자 probe 결과와 같은 형식이라 그대로 저장하고,
@@ -1074,13 +1085,14 @@ class ServerClaudeMixin:
                     # (resume 후 오인·데스크탑 앱 재연결 등)에선 /rc 를 건너뛰어 도로
                     # 끄거나 /remote-control 응답 대기 대화로 멈추지 않게 한다.
                     if p._rc_pending:
-                        # /rc 생략 조건: ① 조직 정책 차단 ② 이미 이 세션에 적용함
-                        # (_rc_done — 재시작 re-exec 후 거짓 새세션 오인 방지, 직렬화됨.
-                        # 위 claude_remote_active 분기가 'Remote Control active' 관측 시
-                        # 이미 셋해 둠) ③ 지금 화면이 이미 원격제어 ON. 어느 하나라도면
-                        # 즉시 종료(도로 끄지/응답 대기 대화 띄우지 않음).
-                        if (self._rc_policy_blocked or p._rc_done
-                                or claude_remote_active(txt)):
+                        # /rc 생략 조건: ① 조직 정책 차단 ② 원격제어 기관측 sticky
+                        # (_rc_seen_active — 서버 전역) ③ 이미 이 세션에 적용함(_rc_done —
+                        # 재시작 re-exec 후 거짓 새세션 오인 방지, 직렬화됨. 위
+                        # claude_remote_active 분기가 'Remote Control active' 관측 시 셋)
+                        # ④ 지금 화면이 이미 원격제어 ON. 어느 하나라도면 즉시 종료
+                        # (도로 끄지/응답 대기 대화 띄우지 않음).
+                        if (self._rc_policy_blocked or self._rc_seen_active
+                                or p._rc_done or claude_remote_active(txt)):
                             p._rc_pending = False
                             p._rc_done = True
                             p._perm_auto_pending = True

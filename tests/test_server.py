@@ -1478,11 +1478,55 @@ async def test_rc_skipped_when_remote_active_appears_during_debounce():
         scan("⏵⏵ auto mode on (shift+tab to cycle)Remote Control active")
         assert p._rc_done is True
         assert p._rc_pending is False, "원격 ON 관측 → 디바운스 종료"
+        assert srv._rc_seen_active is True, "원격 ON 관측 → 서버 전역 sticky 셋"
         assert rc == [], "이미 원격제어 ON — /rc 안 쏨(응답 대기 대화 방지)"
         # 이후 오버레이가 안 보이는 프레임이 와도 재주입 없음(sticky _rc_done).
         for _ in range(_sc._RC_CONFIRM_FRAMES + 2):
             scan("? for shortcuts")
         assert rc == [], "원격 ON 관측 후엔 /rc 재발 없음"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_rc_globally_suppressed_after_remote_seen_active():
+    """버그 수정 강화(요청 2026-06-12 — "이미 리모트컨트롤 켜져있을 때 /remote-control
+    대화 다시 띄우지 마세요"): 원격제어가 **이미 켜진** 게 한 번이라도 관측되면 이 서버
+    세션 동안 auto /rc 를 **서버 전역**으로 영구 중단한다(데스크탑 앱이 세션마다 원격제어
+    지속 연결). 디바운스(타이밍)만으론 첫 프레임 레이스를 완전히 못 막으므로, 정책 차단과
+    같은 sticky(_rc_seen_active)로 새 세션의 /rc 재무장 자체를 막아 확정 보장한다."""
+    srv, task, sock = await server_only()
+    try:
+        import importlib
+        _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        rc = []
+        srv._pc_inject = lambda pane, text: rc.append(text)
+        srv._inject_keys = lambda pane, data: None
+
+        def scan(s):
+            p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
+            srv._scan_claude(sess, win)
+
+        assert srv._rc_seen_active is False
+        # 세션 A: 원격제어가 이미 켜진 화면 관측 → 서버 전역 sticky 셋, /rc 안 쏨.
+        scan("⏵⏵ auto mode on (shift+tab to cycle)Remote Control active")
+        assert srv._rc_seen_active is True and rc == []
+        # 세션 종료(디바운스 확정) → 새 세션 시작.
+        for _ in range(_sc._HDR_CLAUDE_MISS + 1):
+            scan("$ ")
+        assert p._claude is None
+        rc.clear()
+        # 새 세션이 원격제어 표시 **없이** 떠도(오버레이 늦음) — sticky 로 fire 시점에
+        # /rc 확정 스킵. 단 권한모드 auto 유도(_perm_auto_pending)는 디커플링되어 정상
+        # 인계된다(auto-launch 는 /rc 외에 perm-auto 도 겸함 — 그건 막지 않는다).
+        scan("? for shortcuts")
+        assert p._claude == "idle"
+        assert p._perm_auto_pending is True, "perm-auto 는 sticky 와 무관하게 인계"
+        for _ in range(_sc._RC_CONFIRM_FRAMES + 2):
+            scan("? for shortcuts")
+        assert rc == [], "원격 기관측 후엔 새 세션에도 /rc 안 쏨(대화 재호출 방지)"
     finally:
         await teardown(srv, task, sock)
 
