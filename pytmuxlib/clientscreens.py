@@ -972,10 +972,10 @@ def usage_bar_lines(usage, width=80, age_sec=None, right_align=False):
                    - sum(_char_cells(c) for c in tail))
             line = body + " " * max(1, gap) + tail
         else:
-            # % 뒤에 '사용/used' 를 명시한다(2026-06-12 사용자 보고): footer 의 5h
-            # 표기는 잔여("90%/5h 남음")인데 이 막대 % 는 사용률이라, 라벨 없이는 두
-            # 표면의 값(10 vs 90)이 달라 보였다 — Claude /usage 의 "N% used" 와 동일
-            # 표기로 방향을 못박는다(같은 실측의 보수 관계: 사용 10% = 남음 90%).
+            # % 뒤에 '사용/used' 를 명시한다(2026-06-12 사용자 보고): 방향 라벨이
+            # 없으면 잔여 표기와 섞여 다른 값처럼 읽혔다 — Claude /usage 의 "N% used"
+            # 와 동일 표기. footer 5h 도 같은 사용률로 통일됐다(clientstatus
+            # claude.limit_used — 모든 표면이 같은 방향·같은 숫자).
             line = f"{label}{gauge} {pct:>3}% {i18n.t('usage.used')}"
             if reset_txt:
                 line += "  " + reset_txt

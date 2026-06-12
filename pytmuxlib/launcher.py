@@ -175,72 +175,76 @@ def host_terminal_is_pytmux(timeout: float = NEST_PROBE_TIMEOUT,
 
 
 def run_stdio_proxy(sock_path: str) -> int:
-    """원격 어태치 페더레이션의 원격 측 전송 프리미티브(§1.7 Stage 1).
+    """원격 어태치 페더레이션의 원격 측 전송 프리미티브(§1.7 Stage 1·3).
 
     `ssh -T <host> pytmux stdio-proxy` 로 실행되면 ① 이 머신(원격)의 서버 인증
     토큰을 `TOKEN <hex>\\n` 한 줄로 알리고 ② 이후 stdin↔서버소켓↔stdout 을 그대로
     스플라이스한다. ssh exec 채널(-T, TTY 없음)은 8-bit clean 파이프라 와이어
     프로토콜의 길이-프레임이 무손상으로 통과한다 — 로컬 pytmux 서버는 이 파이프
-    위에서 원격 서버에 hello(+토큰)로 attach 해 원격 탭/패널을 흡수한다(후속 Stage).
+    위에서 원격 서버에 hello(+토큰)로 attach 해 원격 탭/패널을 흡수한다.
 
-    POSIX 전용(stdin add_reader). 서버 없으면 1. v1 단순화: stdout 쓰기는 블로킹
-    os.write — 프록시 루프엔 다른 일이 없어 무해(상세 docs/REMOTE_ATTACH_SCENARIO.md)."""
-    if os.name == "nt":
-        print("pytmux: stdio-proxy 는 POSIX 전용입니다", file=sys.stderr)
-        return 1
+    **POSIX·Windows 공통**(Stage 3, 사용자 보고 — office Windows 박스): asyncio
+    add_reader(POSIX 전용) 대신 **블로킹 스레드 2개 + 동기 소켓**(ipc.control_socket
+    — Unix=AF_UNIX, Windows=TCP 루프백+포트파일)으로 스플라이스한다. 새 프로세스라
+    원격 서버 재시작 없이 코드 동기화만으로 동작. 서버 없으면 1."""
     if not ipc.probe(sock_path):
         print("pytmux: 실행 중인 서버 없음", file=sys.stderr)
         return 1
+    import socket as _socket
+    sock = ipc.control_socket(sock_path)
+    if sock is None:
+        print("pytmux: 서버 접속 실패", file=sys.stderr)
+        return 1
+    sock.settimeout(None)              # 스플라이스는 무기한 블로킹 read/recv
+    out = sys.stdout.buffer            # 바이너리(Windows CRLF 변환 없음)
     tok = ipc.read_token(sock_path) or ""
-    os.write(1, f"TOKEN {tok}\n".encode())
+    out.write(f"TOKEN {tok}\n".encode())
+    out.flush()
 
-    import asyncio
+    import threading
+    done = threading.Event()
 
-    async def _run() -> None:
-        loop = asyncio.get_running_loop()
-        reader, writer = await ipc.open_connection(sock_path)
-        done = loop.create_future()
-
-        def _finish():
-            if not done.done():
-                done.set_result(None)
-
-        def _on_stdin():
-            try:
-                data = os.read(0, 65536)
-            except OSError:
-                data = b""
-            if data:
-                writer.write(data)
-            else:                      # ssh 끊김/로컬 측 종료 → 정리
-                loop.remove_reader(0)
-                _finish()
-
-        os.set_blocking(0, False)
-        loop.add_reader(0, _on_stdin)
-
-        async def _sock_to_stdout():
-            try:
-                while True:
-                    data = await reader.read(65536)
-                    if not data:       # 서버 종료
-                        break
-                    os.write(1, data)
-            finally:
-                _finish()
-
-        t = loop.create_task(_sock_to_stdout())
+    def _stdin_to_sock():
         try:
-            await done
+            while True:
+                data = sys.stdin.buffer.read1(65536)
+                if not data:           # ssh 끊김/로컬 측 종료
+                    break
+                sock.sendall(data)
+        except (OSError, ValueError):
+            pass
         finally:
-            loop.remove_reader(0)
-            t.cancel()
-            try:
-                writer.close()
+            try:                       # 서버에 EOF 전달(half-close)
+                sock.shutdown(_socket.SHUT_WR)
             except OSError:
                 pass
+            done.set()
 
-    asyncio.run(_run())
+    def _sock_to_stdout():
+        try:
+            while True:
+                data = sock.recv(65536)
+                if not data:           # 서버 종료
+                    break
+                out.write(data)
+                out.flush()
+        except (OSError, ValueError):
+            pass
+        finally:
+            done.set()
+
+    t_out = threading.Thread(target=_sock_to_stdout, daemon=True)
+    t_in = threading.Thread(target=_stdin_to_sock, daemon=True)
+    t_out.start()
+    t_in.start()
+    done.wait()
+    # 한쪽이 끝나면 반대쪽 잔여(서버가 보내던 마지막 프레임)를 짧게 드레인한 뒤
+    # 닫는다. 데몬 스레드라 남은 블로킹 read 는 프로세스 종료와 함께 정리된다.
+    t_out.join(timeout=3)
+    try:
+        sock.close()
+    except OSError:
+        pass
     return 0
 
 

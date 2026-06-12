@@ -60,9 +60,9 @@ env 전파와 무관한 **in-band 능동 감지**로 "중첩 TUI 가 뜨는 것 
 
 ssh exec 채널(`-T`, TTY 없음)은 8-bit clean 파이프라 와이어 프로토콜의 길이-프레임이
 무손상 통과한다 — tmux -CC 식 in-pane DCS 인코딩(TTY 변형·이스케이프 충돌 위험) 대신
-**별도 ssh exec 채널**을 전송으로 쓴다. 서버 없으면 exit 1. POSIX 전용(stdin
-add_reader). v1 단순화: stdout 쓰기는 블로킹 `os.write` — 프록시 루프에 다른 일이
-없어 무해.
+**별도 ssh exec 채널**을 전송으로 쓴다. 서버 없으면 exit 1. 구현은 Stage 3 에서
+**스레드 스플라이스로 재작성돼 POSIX·Windows 공통**(§5 전제 3 — 초기 v1 은 stdin
+add_reader 의 POSIX 전용이었다).
 
 테스트: `test_launcher::test_stdio_proxy_token_and_frame_roundtrip`(TOKEN 줄 + list
 프레임 왕복, 실제 서브프로세스).
@@ -104,8 +104,9 @@ viewer_to_local`(EOF→자동 복귀+탭 제거).
 ### Stage 3 잔여(후속)
 원격 탭 active 하이라이트(status 가 클라별이 아님 — per-client status 필요), 끊김 시
 백오프 자동 재연결, 재시작(re-exec) 후 링크 복원, 원격 status 부가 필드(Claude 헤더
-등) 전달, 다중 원격 동시·이름 충돌 정리, Windows(stdio-proxy POSIX), 실 ssh 라이브
-검증(헤드리스는 직결 검증 — ssh 경로는 TOKEN 핸드셰이크 테스트로만 커버).
+등) 전달, 다중 원격 동시·이름 충돌 정리, 실 ssh 라이브 검증(헤드리스는 직결 검증 —
+ssh 경로는 TOKEN 핸드셰이크 테스트로만 커버). ~~Windows(stdio-proxy POSIX)~~ →
+**완료(2026-06-12)**: 스레드 스플라이스로 재작성, §5 전제 3.
 
 ## 5. 사용
 
@@ -118,9 +119,17 @@ viewer_to_local`(EOF→자동 복귀+탭 제거).
   1. **ssh 키 인증** — 서버가 띄우는 ssh 는 TTY 가 없어 비밀번호를 못 묻는다
      (`BatchMode=yes`). 미리 `ssh-copy-id <host>`(또는 동등 설정). 미설정이면
      notice 에 `Permission denied` 가 그대로 보인다.
-  2. 원격 pytmux 가 **58551+**(stdio-proxy 보유)이고 비대화 ssh 의 PATH 에서
-     `pytmux` 가 실행 가능해야 한다(없으면 `command not found`).
-  3. 원격은 **POSIX**(macOS/Linux) — Windows 원격(stdio-proxy POSIX 전용)은 Stage 3.
+  2. 원격 pytmux 가 **stdio-proxy 보유 버전**(POSIX 58551+/Windows 58565+)이고
+     비대화 ssh 의 PATH 에서 `pytmux` 가 실행 가능해야 한다(없으면 `command not
+     found`). Windows 는 `install.ps1` 이 까는 래퍼가 **사용자 PATH(레지스트리)**에
+     있어야 sshd 가 띄우는 cmd.exe 에서도 보인다.
+  3. **Windows 원격 지원**(Stage 3, 2026-06-12): stdio-proxy 를 스레드 스플라이스
+     (블로킹 소켓 2 스레드, `ipc.control_socket` — Windows=TCP 루프백+포트파일)로
+     재작성해 POSIX·Windows 공통. 새 프로세스라 **원격 서버 재시작 불필요**(코드
+     동기화만). ⚠️ Windows OpenSSH 함정: 계정이 Administrators 그룹이면 sshd 가
+     `%USERPROFILE%\.ssh\authorized_keys` 대신
+     `C:\ProgramData\ssh\administrators_authorized_keys` 를 읽는다 — ssh-copy-id
+     가 성공해 보여도 인증이 계속 실패하면 이 파일에 공개키를 넣어야 한다.
 - 원격 pytmux 가 "호스트 단말이 pytmux 입니다(원격 중첩 감지…)" 로 거부하면 정상 —
   거부 메시지의 힌트대로 remote-attach 를 사용.
 - 수동 점검: `ssh -T -o BatchMode=yes <host> pytmux stdio-proxy < /dev/null`

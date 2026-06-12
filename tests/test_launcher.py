@@ -106,11 +106,11 @@ async def test_host_terminal_probe_inband_detection():
 
 
 async def test_stdio_proxy_token_and_frame_roundtrip():
-    """§1.7 페더레이션 Stage 1: `pytmux stdio-proxy` 가 ① 서버 인증 토큰을
+    """§1.7 페더레이션 Stage 1·3: `pytmux stdio-proxy` 가 ① 서버 인증 토큰을
     `TOKEN <hex>` 첫 줄로 알리고 ② stdio↔서버소켓을 스플라이스해 와이어 프레임
-    (list 요청→sessions 응답)이 무손상 왕복한다 — `ssh -T` exec 채널 전송 모델."""
-    if os.name == "nt":
-        return  # stdio-proxy 는 POSIX 전용
+    (list 요청→sessions 응답)이 무손상 왕복한다 — `ssh -T` exec 채널 전송 모델.
+    스레드 스플라이스라 **POSIX·Windows 공통**(Windows 원격 = office 박스, 사용자
+    보고 2026-06-12). Windows 는 TCP 루프백+포트파일(ipc.control_socket) 경로."""
     import asyncio
     import json
     import sys

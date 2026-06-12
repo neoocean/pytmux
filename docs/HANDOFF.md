@@ -276,6 +276,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- **footer 5h 표기 잔여→사용률 통일(2026-06-12, CL 58568)** — 06-12
+  58559(막대 '사용' 라벨)로도 "팝업 15% vs footer 85%" 가 다른 값으로 읽힌다는 보고가
+  이어져, 사용자 결정으로 **모든 표면을 사용률로 통일**: footer "{pct}%/5h 사용(used)"
+  (claude.limit_remaining→claude.limit_used, 표시층만 — tok5h_pct 와이어 의미 불변).
+  58519 의 잔여 방향 표기를 대체한다. 전체 스위트 green(577).
 - **token-usage→token-log 통합 + 사용량 막대 '사용' 라벨(2026-06-12, CL 58556/58559)** — 06-12
   재설계(58545) 후속 사용자 요청 2건. 전체 스위트 green(573).
   - **58556**: `token-usage` 트리 팝업·통합 상태 팝업의 '토큰 사용량' 탭 제거 — token-log
