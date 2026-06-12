@@ -272,6 +272,48 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- **IMPROVEMENT 배치 자율 진행·서브밋(§2.5/§2.7/§4.6/§5.6 + 한도배지, 2026-06-11)** —
+  사용자 요청으로 IMPROVEMENT_OPPORTUNITIES.md 항목을 의미 단위 named CL 로 분리
+  서브밋(디폴트 CL 미사용, 디스크립션에 무엇·왜·범위·제외사유·테스트 기입). 전 항목
+  헤드리스 그린(누적 전체 505 passed). 메모리: `improvement-batch-2026-06-11`.
+  - **CL 58260 한도 근접 배지 가독성** — 5h 한도 80% 근접 시 뜨는 노랑 배경
+    "⚠ 한도 근접" 텍스트가 흰색이라 배경에 묻혀 안 보였다(사용자 보고+스크린샷).
+    배경 대비로 분기(노랑→검정, 빨강 "도달"→흰색 유지). clientstatus.py. (이후 병렬
+    i18n 리팩토링이 같은 블록을 `i18n.t("claude.limit_near")` 로 감쌌으나 색 수정은 생존.)
+  - **CL 58261 §2.5 keymap 표현력** — `_tmux_key_to_textual` 이 C-/M-/S-/A-(+풀네임)
+    수정자를 임의 순서로 쌓아 파싱, F1-F12·이름키(Up/PPage/BSpace/Esc…)·다중수정자를
+    Textual 규약(modifier 알파벳 정렬)으로 직렬화. `normalize_binding_key`(오타/빈키
+    경고) 추가. **잠재 버그 수정**: config `bind C-x` 가 raw 로 저장돼 런타임 토큰
+    `ctrl+x` 와 영영 안 맞던 것을 load_config 에서도 정규화. keymap.py·client.py·
+    pytmux.py·test_protocol.
+  - **CL 58266 §2.7 컨텍스트 메뉴 보강** — 명령 전용이던 회전/교환/새탭분리/제목변경/
+    레이아웃 프리셋 선택기/다음 레이아웃/스크롤백 검색을 우클릭 메뉴(MENU_ITEMS+
+    _run_menu_action)에 추가. clock·calendar 는 플러그인 격리 위해 제외(코어 하드코딩
+    금지), join-pane 은 교차탭 소스 인자 필요로 제외. clientutil.py·client.py·test_client.
+  - **CL 58270 §4.6 panes() 트리 DFS 캐시** — Window._panes_cache + 모든 트리 수술
+    직후 invalidate_panes()(split/_remove_pane_from_tree/_detach_pane/swap_pane/
+    swap_pane_ids/rotate_panes/join_pane/move_pane_to_tab + apply_preset). flush 루프가
+    프레임마다 ~2+3T 회 돌던 트리 워크를 트리 변경 시로 줄임. **주의**: swap/rotate 는
+    리프 집합은 같아도 **순서**가 바뀌고 그 연산들이 panes() 순서로 이웃을 계산하므로
+    반드시 무효화. model.py·servertree.py·test_server.
+  - **CL 58271 §5.6 execv 폴백 fd 누수·좀비** — `_do_execv` 의 execv 실패 폴백에서
+    ① 풀었던 master fd CLOEXEC 재무장(종료 직전 떠 있는 subprocess 가 상속해 PTY 를
+    붙들어 셸을 고아로 만드는 누수 방지) ② 엔드포인트 파일(소켓·포트파일·토큰) 즉시
+    정리(0.2s 지연 shutdown 창의 stale-소켓 좀비 방지). 재시작은 POSIX 전용
+    (IS_WINDOWS 가드)이라 _do_execv 직접 호출로 단위 검증. serverpersist.py·test_restart.
+  - **§1.2** Windows terminate graceful→`/F /T` 에스컬레이트 — 이미 구현됨
+    (CL 58154/58156), 코드·테스트 검증만(신규 코드 없음).
+  - **§5.4** build_client_app 순수함수 분리 — 4개 staticmethod(_opt_value/_first_int/
+    _client_relaunch_ok/_restart_check_eval)의 clientutil 추출은 **이미 depot head 에
+    존재**(병렬/머지), 별도 서브밋 안 함.
+  - **§1.1② 멀티바이트 손상** — 병렬 세션이 활성 작업 중(conpty.py 미커밋 번들-
+    OpenConsole 구현 — 위 항목·MEMORY.md 참조)이라 사용자 결정으로 **보류**, conpty.py
+    건드리지 않음.
+  - ⚠️ **작업 트리 주의(겪음)**: 이 배치 동안 병렬 surface-office 세션이 ~100 CL 서브밋
+    (depot head 58271→58367+), 클라 파일(clientutil/client/clientstatus) 작업복사본을
+    커밋+미커밋 혼합 tangle(`_signed_int`/`format_option_row`/i18n 등)로 남겼다. 서브밋
+    전 반드시 `p4 print` 로 depot-head 를 받아 대조하고 내 변경만 분리할 것 — 작업복사본은
+    깨끗한 베이스가 아니다([[surface-office-parallel-windows-port]] 재확인).
 - **#1.1 owned ConPTY 미해결 재확정(2026-06-11)** — CL 58214 의 "★ 해결(익명 파이프로
   동작, 막힌 건 콘솔 상속)" 결론이 **라이브 데몬 재검증에서 반증**됐다. 실태: owned 백엔드는
   **콘솔-less 데몬에서 자식 출력 0바이트(패널 백지)**. 단계별 규명 — (1) 파이프 종류(익명 vs
