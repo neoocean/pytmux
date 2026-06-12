@@ -121,8 +121,23 @@ def save_image() -> str | None:
                 capture_output=True, timeout=8, **proc.no_window_kwargs()
             ).stdout.decode("utf-8", "ignore")
             ok = "OK" in out
-        elif shutil.which("pngpaste"):           # macOS
+        elif shutil.which("pngpaste"):           # macOS (설치 시 우선 — 빠름)
             ok = subprocess.run(["pngpaste", path], capture_output=True,
+                                timeout=8).returncode == 0
+        elif shutil.which("osascript"):          # macOS (pngpaste 없이 기본 도구로)
+            # 서드파티 pngpaste 가 없을 때(맥 기본 설치 아님 — 사용자 보고: 이미지
+            # 붙여넣기 무동작) AppleScript 로 클립보드 PNG(«class PNGf»)를 직접 파일로
+            # 쓴다. 스크린샷 클립보드는 PNGf 표현을 포함하므로 의존성 없이 동작한다.
+            # PNGf 표현이 없으면(드묾) osascript 가 에러 → ok=False 로 폴백(호출부 Alt+V).
+            ap = path.replace("\\", "\\\\").replace('"', '\\"')
+            scr = ['set p to POSIX file "%s"' % ap,
+                   "set d to (the clipboard as «class PNGf»)",
+                   "set f to open for access p with write permission",
+                   "set eof f to 0", "write d to f", "close access f"]
+            args = ["osascript"]
+            for line in scr:
+                args += ["-e", line]
+            ok = subprocess.run(args, capture_output=True,
                                 timeout=8).returncode == 0
         elif shutil.which("xclip"):              # Linux/X11
             with open(path, "wb") as f:

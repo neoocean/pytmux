@@ -4087,6 +4087,57 @@ async def test_paste_clipboard_text_image_and_fallback():
         clientclip.paste, clientclip.has_image, clientclip.save_image = _orig
 
 
+async def test_clientclip_save_image_macos_osascript_without_pngpaste():
+    """맥에서 이미지 붙여넣기가 무동작이던 버그 수정(요청 2026-06-12): pngpaste(서드파티,
+    기본 미설치)가 없으면 osascript 로 클립보드 PNG(«class PNGf»)를 직접 파일로 저장한다.
+    which/subprocess/IS_WINDOWS 를 모킹해 ① pngpaste 부재 시 osascript 분기 선택 ② PNGf
+    코어션 명령 구성 ③ 성공 경로(경로 반환)를 단언한다(실 클립보드 불필요·포터블)."""
+    import os
+    import subprocess as _sp
+    from pytmuxlib import clientclip
+    _which = clientclip.shutil.which
+    _run = clientclip.subprocess.run
+    _isw = clientclip.proc.IS_WINDOWS
+    calls = []
+
+    def fake_which(tool):
+        return "/usr/bin/osascript" if tool == "osascript" else None  # pngpaste 없음
+
+    def fake_run(args, **kw):
+        calls.append(list(args))
+        if args and args[0] == "osascript":
+            # 첫 -e 라인('set p to POSIX file "<path>"')에서 경로를 떼어 비어있지 않은
+            # 파일을 써, save_image 의 getsize>0 검사를 통과시킨다(osascript 성공 모사).
+            for a in args:
+                if a.startswith('set p to POSIX file "'):
+                    pth = a[len('set p to POSIX file "'):-1]
+                    with open(pth, "wb") as f:
+                        f.write(b"\x89PNG\r\n\x1a\n")
+            return _sp.CompletedProcess(args, 0, b"", b"")
+        return _sp.CompletedProcess(args, 1, b"", b"")
+
+    try:
+        clientclip.proc.IS_WINDOWS = False
+        clientclip.shutil.which = fake_which
+        clientclip.subprocess.run = fake_run
+        path = clientclip.save_image()
+        assert path and path.endswith(".png"), path
+        osa = [c for c in calls if c and c[0] == "osascript"]
+        assert osa, ("osascript 분기 선택", calls)
+        joined = " ".join(osa[0])
+        assert "«class PNGf»" in joined, joined
+        assert "open for access" in joined and "write d to f" in joined, joined
+    finally:
+        clientclip.shutil.which = _which
+        clientclip.subprocess.run = _run
+        clientclip.proc.IS_WINDOWS = _isw
+        try:
+            if path:
+                os.remove(path)
+        except (OSError, NameError):
+            pass
+
+
 async def test_paste_clipboard_ignores_keys_until_done():
     """붙여넣기 진행 중(_pasting)엔 ESC 외 키 입력을 무시한다(요청 — 외부 도구로
     붙여넣는 동안 친 키가 완료 후 패널로 새는 것 방지). ESC 는 그대로 동작."""
