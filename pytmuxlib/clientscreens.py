@@ -530,7 +530,7 @@ class InfoScreen(ModalScreen):
 
     def __init__(self, lines, title="info", hide_key=None, hide_cb=None,
                  initial_index=None, max_width=None, wrap_hang=True,
-                 col_rows=None):
+                 col_rows=None, select_cb=None):
         super().__init__()
         self._lines = lines
         # 2칼럼 행 모드(프롬프트 히스토리 #17): 각 항목을 [번호칼럼 | 본문칼럼]
@@ -553,6 +553,10 @@ class InfoScreen(ModalScreen):
         # §10-A #8: nav 에서 건너뛸(구분선/빈) 표시 줄 인덱스 — 마지막 항목서 ↓ 시
         # 구분선을 건너뛰어 [h] footer 로 바로 점프.
         self._skip = set()
+        # §3.8 Stage 2 ②: Enter/행 클릭으로 선택한 항목 인덱스를 콜백에 넘기고 닫는다
+        # (프롬프트 히스토리에서 골라 그 위치로 점프). None 이면 읽기전용(아무 키나
+        # 닫기) 기존 동작 유지. 콜백이 점프 불가 항목(구분선/footer)을 직접 걸러낸다.
+        self._select_cb = select_cb
 
     @staticmethod
     def _col_item(row):
@@ -658,15 +662,30 @@ class InfoScreen(ModalScreen):
         # (백드롭) 클릭이면 닫음(§10 #13 — REC/프롬프트 히스토리/토큰 팝업 공통).
         w = getattr(event, "widget", None)
         inside_box = False
+        item = None               # 클릭이 떨어진 ListItem(있으면) — §3.8 행 클릭 점프
         while w is not None:
             wid = getattr(w, "id", None)
             if wid == "infoclose":
                 event.stop()
                 self.dismiss(None)
                 return
+            if isinstance(w, ListItem):
+                item = w
             if wid == "infobox":
                 inside_box = True
             w = w.parent
+        # §3.8 Stage 2 ②: 박스 안 행 클릭 → 그 항목으로 점프(콜백). 마우스 1급 지원.
+        if inside_box and item is not None and self._select_cb is not None:
+            lv = self.query_one(ListView)
+            try:
+                idx = lv.children.index(item)
+            except ValueError:
+                idx = None
+            if idx is not None and idx not in self._skip:
+                event.stop()
+                self._select_cb(idx)
+                self.dismiss(None)
+                return
         if not inside_box:        # 박스 바깥/백드롭 클릭 → 닫기
             event.stop()
             self.dismiss(None)
@@ -698,6 +717,13 @@ class InfoScreen(ModalScreen):
             elif event.key == "end" and n:
                 lv.index = n - 1
                 self._skip_over(lv, -1)
+            return
+        # §3.8 Stage 2 ②: Enter → 현재 선택 항목으로 점프(콜백). 그 외 키는 닫기.
+        if event.key == "enter" and self._select_cb is not None:
+            lv = self.query_one(ListView)
+            if lv.index is not None and lv.index not in self._skip:
+                self._select_cb(lv.index)
+            self.dismiss(None)
             return
         if self._hide_key and event.key == self._hide_key and self._hide_cb:
             self._hide_cb()

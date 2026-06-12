@@ -2368,6 +2368,86 @@ async def test_prompt_history_two_column_layout():
     await _with_app(body)
 
 
+async def test_prompt_history_enter_jumps_to_selected_prompt():
+    """§3.8 Stage 2 ②: 프롬프트 히스토리에서 항목을 골라 Enter 하면 그 프롬프트
+    위치로 스크롤 점프(scroll_to_prompt)를 서버에 보내고 팝업을 닫는다. 보내는
+    index 는 팝업 ListView 인덱스(=`prompt-jump <n>` 의 n-1 환산과 동일)."""
+    async def body(app, pilot, srv):
+        from textual.widgets import ListView
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app.pane_claude = {5: {"id": 5, "claude": "idle", "prompt": "p3",
+                               "history": ["p1", "p2", "p3"]}}
+        app.open_prompt_history(5)
+        await wait_until(pilot, lambda: app.screen_stack[-1].query_one(ListView))
+        scr = app.screen_stack[-1]
+        lv = scr.query_one(ListView)
+        # 최신 프롬프트(index 2)가 초기 선택 → Enter 즉시 그 프롬프트로 점프.
+        assert lv.index == 2, lv.index
+        # 2번 프롬프트(index 1)를 골라 Enter.
+        lv.index = 1
+        scr.on_key(Key(key="enter", character=None))
+        await wait_until(pilot, lambda: sent)
+        assert sent == [("scroll_to_prompt", {"index": 1})], sent
+        # 점프 후 팝업은 닫힌다.
+        await wait_until(pilot, lambda: not isinstance(
+            app.screen_stack[-1], scr.__class__))
+    await _with_app(body)
+
+
+async def test_prompt_history_row_click_jumps():
+    """§3.8 Stage 2 ②: 박스 안 프롬프트 행을 **클릭**해도 그 프롬프트로 점프한다
+    (마우스 1급 지원). 실제 ListItem 자손(Label)을 클릭 대상으로 둬 on_click 의
+    조상 탐색(ListItem→infobox)을 실제로 태운다."""
+    async def body(app, pilot, srv):
+        from textual.widgets import Label, ListView
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app.pane_claude = {8: {"id": 8, "claude": "idle", "prompt": "p3",
+                               "history": ["p1", "p2", "p3"]}}
+        app.open_prompt_history(8)
+        await wait_until(pilot, lambda: app.screen_stack[-1].query_one(ListView))
+        scr = app.screen_stack[-1]
+        lv = scr.query_one(ListView)
+        # 첫 프롬프트(index 0) 행의 본문 Label 을 클릭 대상으로.
+        target = lv.children[0].query_one(".histbody", Label)
+
+        class _Ev:
+            def __init__(self, widget):
+                self.widget = widget
+            def stop(self):
+                pass
+
+        scr.on_click(_Ev(target))
+        await wait_until(pilot, lambda: sent)
+        assert sent == [("scroll_to_prompt", {"index": 0})], sent
+    await _with_app(body)
+
+
+async def test_prompt_history_enter_on_footer_does_not_jump():
+    """§3.8 Stage 2 ②: 점프 콜백은 실제 프롬프트(0..len-1)만 보낸다 — 구분선/[h]
+    footer 같은 비-프롬프트 행에서 Enter 하면 scroll_to_prompt 를 보내지 않고 닫기만
+    한다(예: '이 헤더 숨기기' footer 를 잘못 점프하지 않게)."""
+    async def body(app, pilot, srv):
+        from textual.widgets import Label, ListView
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app.pane_claude = {6: {"id": 6, "claude": "idle", "prompt": "p2",
+                               "history": ["p1", "p2"]}}
+        app.open_prompt_history(6)
+        await wait_until(pilot, lambda: app.screen_stack[-1].query_one(ListView))
+        scr = app.screen_stack[-1]
+        lv = scr.query_one(ListView)
+        texts = [" ".join(str(l.render()) for l in it.query(Label))
+                 for it in lv.children]
+        hidx = next(i for i, t in enumerate(texts) if "[h]" in t)
+        lv.index = hidx                          # [h] footer 선택
+        scr.on_key(Key(key="enter", character=None))
+        await pilot.pause(0.1)
+        assert sent == [], ("footer 점프 금지", sent)
+    await _with_app(body)
+
+
 async def test_esc_arrow_flashes_selected_pane():
     # ESC 모드 방향키로 패널 전환을 요청하면 깜빡임을 예약하고(select_pane 전송),
     # 서버가 active 를 바꿔 layout 을 보내면 새 활성 패널을 깜빡인다(가시화 요청).

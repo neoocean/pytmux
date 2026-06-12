@@ -373,11 +373,22 @@ def _open_prompt_history(app, pane_id=None):
     # §10-A #8: 마지막 항목과 [h] footer 사이에 구분선(nav 에서 건너뜀).
     rows.append("─" * 24)
     rows.append("  [h] 이 헤더 " + ("다시 표시" if hidden else "숨기기"))
+    # §3.8 Stage 2 ②: 목록에서 프롬프트를 Enter/클릭으로 고르면 그 위치로 스크롤
+    # 점프(`prompt-jump <n>` 타이핑 불필요). idx 는 ListView 인덱스 = 팝업 번호-1 =
+    # 서버 scroll_to_prompt 의 tail-slice 인덱스(prompt-jump 와 동일 환산). 구분선/
+    # [h] footer(idx>=len(hist))는 무시한다.
+    n_hist = len(hist)
+
+    def _jump(idx):
+        if 0 <= idx < n_hist:
+            app.send_cmd("scroll_to_prompt", index=idx)
+
     app.push_screen(InfoScreen(
-        [], title="프롬프트 히스토리(시간순)",
+        [], title="프롬프트 히스토리(시간순) — Enter/클릭 점프",
         hide_key="h", hide_cb=lambda: app.toggle_header_hidden(pid),
         initial_index=latest, max_width=110,   # 좌우로 넓게(#17)
-        col_rows=rows))                        # 번호/본문 2칼럼 표시
+        col_rows=rows,                         # 번호/본문 2칼럼 표시
+        select_cb=_jump))                      # Enter/클릭 → 그 프롬프트로 점프
 
 
 def _open_usage_panel(app):
