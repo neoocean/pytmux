@@ -3253,6 +3253,11 @@ async def test_token_log_reply_includes_reconcile():
         recon = resp.get("reconcile")
         assert isinstance(recon, list) and len(recon) == 1, recon
         assert recon[0]["dpct"] == 4 and recon[0]["tokens"] == 300, recon[0]
+        # 버킷 전체 이력 집계용 일자별 합성 레코드도 함께 실린다(cap 무관 일/주/월).
+        daily = resp.get("daily")
+        assert isinstance(daily, list) and len(daily) == 1, daily
+        assert daily[0]["tokens"] == 300 and daily[0]["account"] == A, daily[0]
+        assert sum(d["tokens"] for d in daily) == usagedb.total_all(conn)
     finally:
         await teardown(srv, task, sock)
 

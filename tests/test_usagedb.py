@@ -134,6 +134,57 @@ async def test_total_all_empty_db_is_zero():
     conn.close()
 
 
+async def test_daily_breakdown_matches_raw_bucket_aggregation():
+    """버킷 전체 이력 집계(팝업 일/주/월): 서버 daily_breakdown(일자별 GROUP BY)을
+    usagelog.daily_to_records 로 합성 레코드화해 agg_view 에 먹이면, **전체 raw
+    레코드**를 직접 agg_view 한 day/week/month 버킷·계정 합과 정확히 일치한다 — 즉
+    레코드 cap 으로 옛 버킷이 잘리던 문제를 cap 무관하게 해소한다(설계 Phase B 완성).
+
+    hour 는 일자 합성으로 복원 불가라 검증 대상이 아니다(호출부가 raw 사용)."""
+    conn = usagedb.connect(":memory:")
+    # 여러 날·여러 계정·여러 세션·하루에 여러 건(SUM 접힘 검증)에 걸친 레코드.
+    base = 1_700_000_000.0       # 2023-11-14 (로컬) 부근
+    day = 86_400.0
+    recs = [
+        _rec(base + 0,            0, 1, 1, "me@x.org", 1000),
+        _rec(base + 100,          0, 1, 1, "me@x.org", 500),     # 같은 날 합쳐짐
+        _rec(base + 200,          1, 2, 2, "you@y.org", 300),
+        _rec(base + day + 50,     0, 1, 1, "me@x.org", 700),     # 다음 날
+        _rec(base + day + 60,     1, 3, 3, None, 9),             # unknown
+        _rec(base + 9 * day,      2, 4, 4, "me@x.org", 42),      # 다른 주/월 가능
+    ]
+    usagedb.insert_many(conn, recs)
+    daily = usagedb.daily_breakdown(conn)
+    syn = usagelog.daily_to_records(daily)
+    # 합성 레코드 총합 == 전체 이력 합(접힘 손실 없음).
+    assert sum(r["tokens"] for r in syn) == usagedb.total_all(conn) == 2551
+    for bucket in ("day", "week", "month"):
+        got = usagelog.aggregate(syn, bucket=bucket, dim="account")
+        want = usagelog.aggregate(recs, bucket=bucket, dim="account")
+        # 버킷×그룹 분해, 그룹 합, 총합이 raw 직접 집계와 동일.
+        assert got["buckets"] == want["buckets"], (bucket, got, want)
+        assert got["groups"] == want["groups"], (bucket, got, want)
+        assert got["total"] == want["total"]
+    # 계정 필터(account=) 도 동일.
+    assert (usagelog.aggregate(syn, "day", account="me@x.org")["total"]
+            == usagelog.aggregate(recs, "day", account="me@x.org")["total"]
+            == 2242)
+    conn.close()
+
+
+async def test_daily_breakdown_empty_and_malformed():
+    """빈 DB 는 빈 목록. daily_to_records 는 깨진 일자 행을 조용히 건너뛴다."""
+    conn = usagedb.connect(":memory:")
+    assert usagedb.daily_breakdown(conn) == []
+    conn.close()
+    assert usagelog.daily_to_records(None) == []
+    assert usagelog.daily_to_records([{"day": "not-a-date", "tokens": 5}]) == []
+    ok = usagelog.daily_to_records([{"day": "2023-11-14", "account": "a",
+                                     "session": 1, "tab": 0, "pane": 2,
+                                     "tokens": 5}])
+    assert len(ok) == 1 and ok[0]["tokens"] == 5 and ok[0]["account"] == "a"
+
+
 async def test_import_jsonl_preserves_history():
     path = tempfile.mktemp(suffix=".tokens.jsonl")
     try:

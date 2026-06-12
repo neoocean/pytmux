@@ -99,6 +99,31 @@ def bucket_key(ts: float, bucket: str) -> str:
     return _dt.datetime.fromtimestamp(ts).strftime(fmt)
 
 
+def daily_to_records(daily) -> list:
+    """서버 usagedb.daily_breakdown(일자별 합성 레코드)을 aggregate/agg_view 가 먹는
+    레코드 형태로 변환한다 — 팝업의 day/week/month 버킷을 **이력 전체**로 집계해 옛
+    버킷이 레코드 cap 에 잘리지 않게 하는 입력이다.
+
+    각 행의 ts 는 그 일자의 **로컬 정오 epoch** 로 둔다: bucket_key 가 day(%Y-%m-%d)·
+    week(%G-W%V)·month(%Y-%m) 키를 그 달력일에 정확히 떨어뜨리고(정오라 자정 근처
+    DST/주경계 흔들림이 없다), 같은 날의 raw 레코드와 동일한 버킷 키를 만든다. 주/월
+    키는 여기(파이썬 strftime)서 파생하므로 SQLite 의 %G-W%V(3.46+) 의존을 피한다.
+    hour 버킷엔 쓰지 않는다(일자 합성으론 시간을 복원 못 함 — 호출부가 raw 사용).
+    일자 파싱이 깨진 행은 건너뛴다."""
+    out = []
+    for d in daily or []:
+        try:
+            ts = _dt.datetime.strptime(d["day"], "%Y-%m-%d").replace(
+                hour=12).timestamp()
+        except (ValueError, KeyError, TypeError):
+            continue
+        out.append({"ts": ts, "tab": d.get("tab"), "pane": d.get("pane") or 0,
+                    "session": d.get("session"),
+                    "account": d.get("account") or UNKNOWN,
+                    "tokens": int(d.get("tokens", 0))})
+    return out
+
+
 def group_key(r: dict, dim: str = "account") -> str:
     """레코드의 그룹 차원 키(라벨). dim="account"=계정, dim="session"=세션 기준.
 

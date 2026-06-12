@@ -429,6 +429,7 @@ from . import usagelog
 from pytmuxlib.clientutil import _char_cells, bar, format_option_row
 from pytmuxlib.clientscreens import usage_bar_lines
 
+
 class TokenLogScreen(ModalScreen):
     """토큰 사용량 영속 로그 집계 팝업(#7). 서버가 보낸 레코드를 클라이언트가
     usagelog 로 시간/일/주/월 × 계정(=클라이언트) 집계한다. [h]시간 [d]일 [w]주
@@ -477,9 +478,13 @@ class TokenLogScreen(ModalScreen):
     _GROUP_TOP = 8
 
     def __init__(self, records, usage=None, total_all=None, accounts_total=None,
-                 reconcile=None):
+                 daily=None, reconcile=None):
         super().__init__()
         self._records = records or []
+        # 전체 이력 일자별 합성 레코드(서버 daily_breakdown). day/week/month 버킷은
+        # 이걸로 집계해 옛 버킷이 cap 에 잘리지 않게 한다(None=구버전 서버 → 폴백으로
+        # 최근 N 건 _records 사용). hour 버킷만 raw _records 를 쓴다(_refresh 참고).
+        self._full_recs = usagelog.daily_to_records(daily) if daily else None
         self._usage = usage          # M19 그림자 /usage 한도(dict|None)
         # S6 T2: 대사 구간(서버 usagedb.reconcile 결과). [대사] 뷰 전용 진단 데이터.
         self._reconcile = reconcile or []
@@ -495,12 +500,13 @@ class TokenLogScreen(ModalScreen):
         self._dim = "account"
         # 버킷(시간축) 정렬: "time"=최근 위(기본), "tokens"=많이 쓴 순([o] 토글).
         self._order = "time"
-        # 계정 필터 순환 목록: None(전체) + 등장 계정들(정렬)
-        seen = []
-        for r in self._records:
-            a = r.get("account") or usagelog.UNKNOWN
-            if a not in seen:
-                seen.append(a)
+        # 계정 필터 순환 목록: None(전체) + 등장 계정들(정렬). 전체 이력 기준이라
+        # accounts_total(서버 전이력 계정합) 키 ∪ 받은 레코드 계정으로 모은다 —
+        # 옛 계정도 필터에서 고를 수 있게(과거엔 capped _records 에 든 계정만 보였다).
+        seen = set(self._accounts_total)
+        for r in (self._full_recs or self._records):
+            seen.add(r.get("account") or usagelog.UNKNOWN)
+        seen.discard(None)
         self._accounts = [None] + sorted(seen)
         self._ai = 0
 
@@ -704,7 +710,14 @@ class TokenLogScreen(ModalScreen):
             self._refresh_recon(table)
             return
         label_w, bar_cells = self._metrics()
-        v = usagelog.agg_view(self._records, self._bucket, self._account,
+        # day/week/month 는 전체 이력 일자 합성 레코드(_full_recs)로 집계해 옛 버킷이
+        # cap 에 안 잘리게 한다. hour 는 일자 합성으로 못 만들어 raw _records 사용
+        # (시간단위 전체 이력은 무의미·과대 — 최근 N 건이면 충분). _full_recs 가 없으면
+        # (구버전 서버) 모든 버킷이 _records 폴백.
+        src = (self._records if self._bucket == "hour"
+               else (self._full_recs if self._full_recs is not None
+                     else self._records))
+        v = usagelog.agg_view(src, self._bucket, self._account,
                               self._dim, self._order, top=self._GROUP_TOP)
         dimname = i18n.t("세션") if self._dim == "session" else i18n.t("계정")
         # 토큰 열: 약식(1.7M·5.2k)은 단위가 자릿수를 가려 우측정렬만으론 대소가
@@ -725,7 +738,7 @@ class TokenLogScreen(ModalScreen):
                           Text(self._tok_aligned(tok, maxdig), justify="left"),
                           self._barcell(tok, vmax, pct, bar_cells))
 
-        if not self._records or v["total"] == 0:
+        if v["total"] == 0:        # 선택 버킷/계정 집계 합이 0 (소스 무관)
             table.add_row(i18n.t("(기록된 토큰 사용량이 없습니다)"), "", "")
         else:
             # 그룹(계정/세션)이 2개 이상일 때만 그룹별 총합 + 구분선(단일이면 중복이라 생략).

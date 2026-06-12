@@ -197,8 +197,11 @@ def account_counts(conn) -> dict:
 # 최근 N 건(query_records)만 받아 usagelog.aggregate 로 버킷×차원 전환을 라운드트립
 # 없이 하지만, 그 'Σ 합계'는 받은 N 건 한정이라 이력이 N 을 넘으면 과소표시된다.
 # 아래 함수들은 그 정확한 **전체 이력 합**을 서버가 SUM/GROUP BY 로 돌려준다.
-# (버킷별 GROUP BY 는 week 키 %G-W%V 가 SQLite 3.46+ 에서만 지원돼 usagelog 와
-#  바이트 동일 보장이 어렵다 — 버킷 전환은 클라측 집계 유지가 정확·즉시. 설계 §Phase B.)
+# (week 키 %G-W%V 의 SQLite 3.46+ 의존 때문에 버킷별 GROUP BY 를 SQL 로 직접 하진
+#  않는다 — 대신 daily_breakdown 이 일자별(%Y-%m-%d, 전버전 호환)로만 GROUP BY 하고
+#  클라가 그 일자에서 주/월 키를 파이썬 strftime 으로 파생해 버킷 전체 합도 cap 무관
+#  하게 만든다. 즉 버킷 전환은 여전히 클라측 집계지만 입력이 '전체 이력 일자 합'이라
+#  정확·즉시이면서 옛 버킷도 안 잘린다. 설계 §Phase B.)
 def total_all(conn) -> int:
     """전체 이력 토큰 총합(레코드 수 무관). 정확한 lifetime Σ."""
     return int(conn.execute(
@@ -210,6 +213,29 @@ def totals_by_account(conn) -> dict:
     cur = conn.execute(
         "SELECT account, COALESCE(SUM(tokens),0) AS s FROM usage GROUP BY account")
     return {r["account"]: int(r["s"]) for r in cur.fetchall()}
+
+
+def daily_breakdown(conn) -> list:
+    """전체 이력을 (일자, 계정, 세션, 탭, 패널)별 토큰 합으로 GROUP BY 한 '합성 레코드'
+    목록(레코드 cap 무관). 클라가 이걸 usagelog.agg_view 에 그대로 먹여 day/week/month
+    × 계정/세션 집계를 **이력 전체**로 재구성한다 — 팝업이 최근 N 건(query_records)만
+    받아 옛 일/주/월 버킷이 잘리던 것을 해소한다(설계 Phase B 의 미진 부분 완성).
+
+    일자 키는 어느 SQLite 버전에서나 되는 %Y-%m-%d 만 SQL 로 뽑고, 주(%G-W%V)·월
+    키는 클라가 그 일자에서 파이썬 strftime(usagelog.bucket_key)으로 파생한다 —
+    week 키의 SQLite 3.46+ 의존(아래 Phase B 주석이 경계한 바로 그 문제)을 피하면서도
+    버킷별 전체 합을 정확히 돌려준다. tab/pane 은 [패널] 세션 뷰의 대표 '탭:p' 라벨
+    산출(usagelog._session_tabpane)용으로 함께 묶는다(시간단위 hour 버킷은 일자 합성
+    레코드로 못 만들어 클라가 raw 레코드를 쓴다 — 전체 이력 시간단위는 무의미)."""
+    cur = conn.execute(
+        "SELECT strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') AS day, "
+        "       account, session, tab, pane, "
+        "       COALESCE(SUM(tokens), 0) AS tokens "
+        "FROM usage GROUP BY day, account, session, tab, pane "
+        "HAVING SUM(tokens) <> 0")
+    return [{"day": r["day"], "account": r["account"], "session": r["session"],
+             "tab": r["tab"], "pane": r["pane"], "tokens": int(r["tokens"])}
+            for r in cur.fetchall()]
 
 
 def update_accounts(conn, keep_accounts, keep_domains) -> int:
