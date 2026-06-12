@@ -267,11 +267,67 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~58228 + git, 신→구)
+## 9. 최근 변경(CL 56279~58461 + git, 신→구)
 
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- **Claude 원격제어 /rc 응답대기 멈춤 수정 + 맥 이미지 붙여넣기 + 할일 정리(2026-06-12, CL 58452·58456·58459·58460·58461)** — 06-12
+  사용자 요청 묶음(원격제어·붙여넣기·할일). 모두 헤드리스 **542 passed**.
+  - **CL 58452 — auto `/rc` 디바운스.** 버그(요청): 원격제어가 **이미 켜진** 새 Claude
+    세션에 auto-launch 가 `/rc`(`/remote-control`)를 재주입 → 이미 켜진 세션엔 Claude 의
+    관리/응답-대기 대화가 떠 **진행이 멈춤**. 원인: 데스크탑 앱의 'Remote Control active'
+    오버레이가 첫 idle 직후 한두 프레임 늦게 그려져 첫 프레임 가드(`claude_remote_active`/
+    `_rc_done`)를 못 세움. 수정: `_RC_CONFIRM_FRAMES`(30=~1초) 디바운스 — idle 이 연속
+    안정될 때까지 기다려 그 사이 오버레이가 뜨면 스킵. B1 스캔 게이트에 디바운스 패널
+    계속 스캔 조건 추가. **라이브 반영됨**(restart-server).
+  - **CL 58459 — 원격제어 기관측 시 `/rc` 서버 전역 확정 중단(요청 재강조: "이미 켜져있을
+    때 그 대화 다시 띄우지 마세요").** 디바운스는 타이밍 기반이라 첫 프레임 레이스를
+    완전히 못 막음 → 서버 전역 sticky `_rc_seen_active`(정책 차단 `_rc_policy_blocked`
+    패턴 미러) 신설: `claude_remote_active` 한 번 관측하면 이후 새 세션 fire 시점에 `/rc`
+    확정 스킵("본 적 있으면 더는 안 쏨"). **디커플링** — 무장·`_perm_auto_pending`(권한모드
+    auto 유도)은 그대로, `/rc` 만 건너뜀. 수동 토글(footer 클릭→팝업 [r]) 무영향.
+    비영속(재시작 후 재감지). 신규 테스트 2건. **서버 코드 — restart-server 필요(미반영 시점)**.
+  - **CL 58461 — 맥 이미지 붙여넣기(`paste-clipboard`) 무동작 수정.** 원인: `clientclip.
+    save_image` 가 서드파티 `pngpaste`(맥 기본 미설치)에만 의존 → None 반환→Alt+V 폴백(셸
+    무동작). **텍스트는 정상**(pbpaste, e2e 재현 확인). 수정: `pngpaste` 없으면 맥 기본
+    `osascript` 로 클립보드 PNG(`«class PNGf»`)를 임시 파일에 직접 저장(실 screencapture
+    클립보드로 검증 — 유효 PNG). PNGf 없으면 기존 Alt+V 폴백 유지. 포터블 모킹 테스트 신규.
+    **클라이언트 코드 — 클라 재실행 시 반영(서버 재시작 불필요)**.
+  - **CL 58456 — IMPROVEMENT §5.4(거대 클로저) 정정·강등 [H]→[L].** 코드 검증: 문서가
+    지목했던 순수함수 3종(클립보드/clock·calendar 오버레이/Claude 렌더)은 이미
+    `clientclip.py`·플러그인·`clientrender.py` 로 추출 완료, 옛 줄 번호 stale. 잔여는
+    `PytmuxApp` 거대 클래스 구조(부분 load-bearing: `App` 지연 import)뿐 — 최상위 mixin
+    분해는 회귀 위험 대비 가치 낮아 후속 보류.
+  - **CL 58460 — IMPROVEMENT 할일 2건 추가(요청).** §2.9 [M] 비활성 패널을 활성 대비
+    약간 옅게(dim) — 외곽선 없이 활성 식별; §3.8 [M] Claude 스크롤백을 '프롬프트' 단위로
+    묶어 히스토리 표시(위로 스크롤 시 프롬프트 목록→선택 펼침). 둘 다 설계 메모·난점·
+    단계화 기록(별도 시나리오 문서 권장).
+  - **공유 워크스페이스**: 이 세션 내내 `tests/test_client.py`(병렬 세션 토큰버킷 WIP)·
+    office #1.1 p4-sync 파일(`conpty.py`·`pty_backend.py`·`HANDOFF.md`)은 stash/pop 로
+    격리해 내 커밋에 안 섞이게 했다. git push 마다 origin 선행분 rebase.
+- **§1.1② owned-ConPTY 돌파 레시피 배선·서브밋·라이브 검증(CL 58457, 2026-06-12)** — 06-12
+  조사(§9 아래 "owned-ConPTY 스트리밍 — 돌파구" 항목)에서 격리한 레시피를 owned 백엔드에 정식
+  배선·서브밋. 구 overlapped+0버퍼 명명 파이프(CL 58277)를 **동기(non-overlapped) 128KB 명명
+  파이프 + 블로킹 ReadFile/WriteFile** 로 바꾸고, 콘솔-less 데몬에 1회 **AllocConsole(SW_HIDE)+
+  CONOUT$/CONIN$ 재오픈+SetStdHandle(OUT·ERR·IN)** 로 숨은 콘솔을 붙여 자식 attach 를 성립시킨다
+  (`conpty.py` _ensure_hidden_console·_make_sync_pipe·블로킹 read/write; `pty_backend.py`
+  _OwnedConPty 를 새 _ConPty API 에 정합). 2파일, opt-in `PYTMUX_PTY_BACKEND=owned` 유지(기본
+  pywinpty 그대로).
+  - **라이브 검증(실제 제품 서버→pyte→합성화면, run-pytmux 드라이버)**: ① 대화형 cmd.exe 완전
+    스트리밍 ② 217KB `type` 버스트 전체(HEAD+TAIL) 스트리밍 ③ 안정 CJK+보더 화면 **0 U+FFFD·
+    보더 정렬 정상** ④ 청크경계 손상: raw바이트→pyte incremental 로 구조적 회피(no-carry 디코드
+    대비 18개 손상 제거 — 바이트레벨 측정) ⑤ 헤드리스 **539 passed / 0 failed**.
+  - **문서화된 '비대화형 batch-writer 23B 스톨' 갭 = 실제 제품 미재현으로 정정.** 스톨은 python 을
+    _ConPty 의 **단독 루트 프로세스**로 띄운 probe 한정. 제품에선 패널 셸이 항상 대화형 cmd.exe
+    이고 사용자 명령(python 등)은 그 **자식**이라 콘솔이 warm → conhost 가 VT diff 정상 emit
+    (python batch-writer 20/30 가시 스트리밍 확인). → 기본 전환 게이팅 이슈 사실상 해소.
+  - **신규 발견(잔여 관찰)**: 빠른 wide-문자 스크롤 중 번들 OpenConsole 이 **일시 U+FFFD** 를 raw
+    VT 스트림에 emit(200KB CJK 버스트 654개; 符→��� 처럼 약 523B 주기). **양 백엔드 공통**(둘 다
+    번들 OpenConsole)·스크롤오프되어 안정 화면 무영향(안정 화면 0 FFFD 확인). owned 고유 회귀 아님.
+    교훈: **raw 스트림 FFFD 카운트 ≠ 사용자 가시 화면**(스크롤로 덮어써짐) — 판정은 렌더 화면 기준.
+  - **기본 전환 보류**: opt-in 유지. AllocConsole/SetStdHandle 의 데몬 stderr 부작용 + 위 잔여
+    관찰 + 실 Claude 패널 장시간 soak 후 별도 follow-up. 메모리 `pytmux-1-1-multibyte-winpty-corruption` 갱신.
 - **캡처 오탐 감사(#9) + 신규 코드리뷰 라운드 자율 진행(2026-06-12, CL 58430·58434·58436)** —
   백로그 소진 후 사용자 "A·B 자율 진행" 요청. **A = 로컬 Claude 캡처(`captures/woojinkim`
   ~313 로그) 재생 오탐 감사**, **B = 신규 코드리뷰 라운드**(병렬 조사 에이전트 2개 → 발견을
@@ -295,6 +351,41 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   - **공유 워크스페이스**: CL 58436 서브밋 시 `tests/test_client.py` 가 병렬 세션 #160 과
     충돌 → `p4 resolve -am` 자동머지(충돌 0)·재서브밋. git 미러는 내 헝크만 인덱스 스테이징
     (`git apply --cached`)해 상대 CL 과 섞이지 않게 분리. 전 단계 538 green.
+- **§1.1② owned-ConPTY 스트리밍 — 돌파구 + 잔여 갭 정밀 격리(2026-06-12, 코드 미서브밋·조사)** —
+  winpty-rs 실소스(`github andfoy/winpty-rs` `src/pty/conpty/pty_impl.rs`)를 받아 그 ConPTY 셋업을
+  **detached(콘솔-less = 데몬 동일 조건; `GetConsoleWindow()`=0 확인) 단발 probe** 로 충실히 복제.
+  레시피 = **① `AllocConsole`+CONOUT$/CONIN$ 재오픈+`SetStdHandle`(STD_OUTPUT·STD_ERROR·STD_INPUT —
+  ERROR 도 포함) ② 동기(non-overlapped) 파이프, 128KB 버퍼 ③ 블로킹 ReadFile**.
+  - **대화형 cmd.exe 는 detached 에서 완전 스트리밍**: cold-start 157B(핸드셰이크+배너+프롬프트),
+    conin 으로 `dir /b pytmuxlib` 전송 시 **전체 목록 665B 스트리밍, U+FFFD 0**. → 기존 "attach 돼도
+    23B 핸드셰이크만" 단정은 **오류**였다. 기존 owned 실패 원인은 conhost 가 detached 에서 못 흘려서가
+    아니라 **overlapped+0버퍼 파이프 + AllocConsole/SetStdHandle 누락**.
+  - **잔여 갭**: 비대화형 raw-writer 자식(`python -c "[stdout.write(...) for 30]"`)은 레시피 전부
+    복제해도 23B 스톨. 단 자식 자가진단상 **완벽 attach**(`isatty=True`, `GetConsoleScreenBufferInfo
+    ok size=80,24`, CONOUT$ 직접 쓰기 성공) — 콘솔 버퍼엔 렌더되나 conhost 가 VT diff 를 emit 안 함.
+    **pywinpty 는 같은 python 자식을 detached 에서 653B 스트리밍**(양성 대조).
+  - **원인서 제거**(전부 시험, python 계속 스톨): 파이프 API(Win32 `CreateNamedPipeW` ∧ NT
+    `NtCreateNamedPipeFile`), 버퍼 크기, 토폴로지(별도 2파이프 ∧ 단일 duplex+client DuplicateHandle
+    2회), read 모드(overlapped ∧ blocking), resize 킥(초기 ∧ 지연 post-output), AllocConsole/SetStdHandle.
+  - **실무 결론**: 패널이 실제 돌리는 cmd/pwsh/**Claude** 는 콘솔 API 로 커서 렌더링하는 대화형이라
+    cmd 처럼 스트리밍될 것(=§1.1② 사실상 해결 가능). 스톨은 인공적 batch-writer 한정.
+  - **다음 단계(권장)**: ① 레시피를 `conpty.py` 에 배선(현재 overlapped+0버퍼·AllocConsole 없음) 후
+    **run-pytmux 드라이버로 실제 Claude 패널 스트리밍·무손상 검증** — §1.1② 해결 판정의 결정타.
+    ② batch-writer 갭은 winpty-rs `src/pty/conpty/base.rs` read/`--signal` 파이프 루프 비교로 추격.
+    상세 실측·제거 목록은 메모리 `pytmux-1-1-multibyte-winpty-corruption`.
+- **토큰 팝업 일/주/월 버킷 전체 이력 집계 + 회귀 테스트(CL 58401·58425, 2026-06-12)** — `/usage` 토큰
+  사용량 팝업의 일/주/월 목록이 최근 N 건(`request_token_log limit=5000`)만 받아 클라 집계해, 이력이
+  N 을 넘으면 옛 날짜 버킷이 통째로 잘렸다(사용자 보고: day 뷰에 하루 전까지만, Σ 3188.1M 중 표시
+  64.1M). 서버 `usagedb.daily_breakdown`(전체 이력을 일자×계정×세션×탭×패널 GROUP BY 한 '합성
+  레코드')를 회신에 동봉 → 클라 `usagelog.daily_to_records`(ts=일자 로컬 정오)로 기존 `agg_view` 에
+  먹여 cap 무관 재구성. 주/월 키는 클라 strftime 파생으로 week `%G-W%V` 의 SQLite 3.46+ 의존 회피
+  (Phase B 미진분 완성). hour 만 raw, 구버전 서버는 `_records` 폴백(하위호환). 라이브 검증(실서버+
+  pilot: records 1일+daily 12일 → day 뷰 12일 전부) 완료. CL 58425 화면계층 회귀 테스트 추가. 533→ 그린.
+- **우하단 오른쪽 외곽선 오출력 = §1.1② 증상으로 확정(2026-06-12, 조사)** — "문자에 따라 오른쪽
+  외곽선이 어긋난다"는 보고. **깨진 ◊(U+FFFD) 글자가 있는 줄에서만** 발생 확인 → 렌더 버그가 아니라
+  멀티바이트 손상(#1.1②)의 증상. 폭 2 CJK 가 폭 1 U+FFFD 로 바뀌며 열 계산이 자식이 그릴 때 가정과
+  틀어져 자식이 그린 보더가 엉뚱한 열에 떨어진다. 렌더 계층(`client.py _composite`/`_serialize_row`)은
+  정상(서버 pyte·클라 `_char_cells` 둘 다 `wcwidth`) — **재조사 불필요**. 해결은 §1.1② 손상 자체.
 - **git 미러 캐치업 → p4 @58401(2026-06-12)** — p4 sync 후 git HEAD(`bd22163`=CL 58374)가
   depot 보다 4 CL 뒤처져, 각 CL 경계를 별도 git 커밋으로 재현하고 푸시했다(미러 커밋
   마다 `Perforce: change N` 트레일러로 CL↔커밋 추적). 매핑: **58350** §2.2 마우스 제스처
@@ -1244,6 +1335,34 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 뒤집는 마무리를 자주 빠뜨린다. **적용**: (a) §10 항목을 처리하기 전 `grep`/테스트로
 > 실재 여부부터 확인(심볼·`def test_...` 검색), (b) 기능을 ship 하면 **같은 CL 에서** §10
 > 항목을 해결로 뒤집어 stale 을 만들지 말 것, (c) "남은 작업 나열" 요청엔 검증 후 답할 것.
+
+### 10-C. 2026-06-12 세션 핸드오프 (다음 세션 픽업)
+
+> §1.1② owned-ConPTY 돌파 레시피를 정식 배선·서브밋(CL 58457)하고 실제 제품으로 라이브
+> 검증 완료(§9 최상단·메모리 `pytmux-1-1-multibyte-winpty-corruption`). 아래는 **검증으로
+> 열린 후속 결정/조사** — 코드는 동작하므로 급하지 않으나 §1.1② 를 "기본값으로 종결"하려면
+> 픽업 필요.
+
+- **[결정 대기] owned 를 기본 백엔드로 전환할지** — 검증상 **viable**(모든 현실 시나리오
+  스트리밍·안정 CJK 0 FFFD·539 테스트 그린). 보류 사유는 게이팅이 아니라 신중함이다.
+  전환 전 체크리스트: **①** 실 **Claude 패널 장시간 soak**(멀티바이트 무손상 + 우하단
+  보더 정렬이 §1.1② 증상 없이 유지되는지 — run-pytmux 텍스트 스크린샷은 픽셀 캡처 불가라
+  실 TUI 는 사람 눈 확인 권장). **②** `AllocConsole`+`SetStdHandle`(OUT·ERR·IN)이 데몬
+  프로세스-전역 std 핸들을 숨은 콘솔로 돌리는 **부작용**(데몬이 stderr 로 뭔가 찍으면 안
+  보일 수 있음 — `conpty.py` docstring ⚠️ 참조) 점검. **③** 전환은 `pty_backend` 백엔드
+  선택부의 기본값만 바꾸면 됨(현 `PYTMUX_PTY_BACKEND` in `("owned","conpty")` 게이트는
+  opt-in 토글/롤백 경로로 유지). pywinpty 잔치(emoji 보존·청크경계만 손상) 대비 owned 의
+  유일 우위는 **청크경계 무손상**이므로, 손상 빈도(대용량 멀티바이트 버스트가 TUI 안정행에
+  남는 경우)가 낮다고 보면 soak 후 전환이 합리적.
+- **[저우선 조사] 번들 OpenConsole 스크롤 중 일시 U+FFFD** — 200KB CJK `type` 버스트의 raw
+  VT 스트림에 654개 FFFD(符→��� 약 523B 주기). **양 백엔드 공통**(둘 다 번들 OpenConsole)·
+  스크롤오프되어 **안정 화면 영향 없음**(안정 화면 0 FFFD 확인) — 그래서 저우선. 근원을
+  쫓으려면 winpty-rs `src/pty/conpty/base.rs` 의 read/`--signal` 파이프 루프와 우리 리더를
+  비교. **주의: raw 스트림 FFFD 카운트로 판정하지 말 것**(스크롤로 덮어써지는 일시 행 포함)
+  — 손상 판정은 항상 **렌더된 화면** 기준.
+- **[참고] 문서화됐던 'batch-writer 23B 스톨' 갭은 더 쫓지 말 것** — 실제 제품 미재현으로
+  정정됨(패널 셸이 대화형 cmd.exe 이고 사용자 명령은 그 자식이라 콘솔 warm). 단독 루트
+  `_ConPty` probe 한정 현상이라 제품 영향 없음.
 
 ### 10-B. 2026-06-11 세션 미착수 큐 (사용자 요청, 기록만)
 
