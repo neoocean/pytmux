@@ -132,9 +132,15 @@ viewer_to_local`(EOF→자동 복귀+탭 제거).
 payload+restore_links 복원(서버 3대), 자기 attach 거부 notice, 다중 원격 병합/개별
 detach.
 
-### 잔여(후속)
-실 ssh 라이브 검증만 남음 — 헤드리스는 직결(in-process 소켓)로 전 구간 검증,
-ssh 경로는 TOKEN 핸드셰이크 테스트로만 커버. §5 의 수동 점검 절차로 확인.
+### 실 ssh 라이브 검증 (완료, 2026-06-12 — §1.7 완결)
+macOS(로컬 라이브 데몬 p4:58579) → **office1(Windows, 패스워드 호스트 →
+ControlMaster 경유)** 실 ssh 로 전 구간 확인: ① `ssh -T -o BatchMode=yes office1
+pytmux stdio-proxy` TOKEN 핸드셰이크 ② `remote-attach office1` notice 성공 ③
+`⇄office1:cmd` 탭 병합 ④ 원격 탭 진입 → 업스트림 layout/screen(21행) ssh 릴레이
+수신 ⑤ Stage 3 **⇄ 탭 active 하이라이트** 확인 ⑥ 로컬 복귀·detach 정리. 즉
+ssh exec 채널·Windows stdio-proxy(스레드 스플라이스)·ControlMaster 레시피·Stage 3
+per-client status 가 실전 조합으로 동작. 검증 프로브: 라이브 서버에 2000×2000
+보조 클라로 attach(세션 min 크기 비훼손)해 와이어로 구동 — 실 클라 화면 무영향.
 
 ## 5. 사용
 

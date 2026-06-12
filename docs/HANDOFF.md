@@ -277,9 +277,11 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
-- **§1.7 Stage 3 — 페더레이션 폴리시 완결(2026-06-12, CL 58579)** — 06-12
-  IMPROVEMENT §1.7 의 Stage 3 잔여 5건을 일괄 구현 — **코드 잔여는 실 ssh 라이브 검증만**
-  (시나리오 §5 수동 절차). 서버 코드 — restart-server 필요. `serverremote.py` 중심 +
+- **§1.7 Stage 3 — 페더레이션 폴리시 완결 + 실 ssh 라이브 검증(2026-06-12, CL 58579)** — 06-12
+  IMPROVEMENT §1.7 의 Stage 3 잔여 5건을 일괄 구현하고, 라이브 데몬 재시작(드라이런→
+  사용자 확인→re-exec, 패널 보존) 후 **office1(Windows, ControlMaster 경유) 실 ssh 로 전
+  구간 라이브 검증**(TOKEN→병합 `⇄office1:cmd`→진입 화면 릴레이→active 하이라이트→복귀/
+  detach — 시나리오 §4 검증 절). **§1.7 잔여 없음(완결).** `serverremote.py` 중심 +
   serverio(_status_msg client 인자·serve 복원 훅·shutdown 정리)·serverpersist(remotes spec).
   - **per-client status — ⇄ 탭 active 하이라이트 + 원격 Claude 헤더/토큰 부가필드 전달.**
     업스트림 status 를 `link.last_status` 에 누적(update — full 의 옵션 키를 light 가 안
