@@ -477,8 +477,9 @@ async def test_v3_dedup_residue_migration():
         conn.execute("PRAGMA user_version=2")        # 구버전으로 되돌려 업그레이드 유도
         conn.commit()
         conn.close()
-        conn = usagedb.connect(p)                    # v2→v3 마이그레이션 실행
-        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 3
+        conn = usagedb.connect(p)                    # v2→v3(이후 체인 v4) 마이그레이션 실행
+        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) \
+            == usagedb.SCHEMA_VERSION
         rows = [(r["ts"], r["pane"], r["tokens"]) for r in conn.execute(
             "SELECT ts, pane, tokens FROM usage ORDER BY ts")]
         assert rows == [(100.0, 1, 19300), (101.0, 2, 500),
@@ -493,6 +494,45 @@ async def test_v3_dedup_residue_migration():
             "SELECT COUNT(*) FROM usage").fetchone()[0]) == 3
         assert int(conn.execute(
             "SELECT COUNT(*) FROM usage_dup_archive").fetchone()[0]) == 4
+        conn.close()
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_v4_nonemail_account_fix_migration():
+    """v4(2026-06-12): 비이메일 가짜 계정(스크랩 약신호 오탐 — 실측 "Running 1 shell
+    command")을 unknown 으로 정정하고 원값을 usage_acct_fixlog 에 보존. 이메일
+    (전체·별칭)·unknown 은 무접촉. v3 DB 가 connect 로 자동 업그레이드, 재연결 멱등."""
+    import shutil
+    import tempfile as _tf
+    d = _tf.mkdtemp()
+    try:
+        p = os.path.join(d, "t.db")
+        conn = usagedb.connect(p)
+        usagedb.insert(conn, _rec(100.0, 0, 1, 1, "Running 1 shell command", 146600))
+        usagedb.insert(conn, _rec(200.0, 0, 1, 1, "max", 500))            # 플랜명 오탐
+        usagedb.insert(conn, _rec(300.0, 0, 2, 2, "me@woojinkim.org", 1900))
+        usagedb.insert(conn, _rec(400.0, 0, 2, 2, "wo…@woojinkim.org", 700))  # 별칭
+        usagedb.insert(conn, _rec(500.0, 0, 3, 3, "unknown", 300))
+        conn.execute("PRAGMA user_version=3")        # 구버전으로 되돌려 업그레이드 유도
+        conn.commit()
+        conn.close()
+        conn = usagedb.connect(p)                    # v3→v4 마이그레이션 실행
+        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) \
+            == usagedb.SCHEMA_VERSION
+        accts = usagedb.totals_by_account(conn)
+        # 비이메일 2건(146600+500)이 기존 unknown(300)에 합산, 이메일·별칭 보존.
+        assert accts == {"unknown": 147400, "me@woojinkim.org": 1900,
+                         "wo…@woojinkim.org": 700}, accts
+        fixlog = [(r["rid"], r["account"]) for r in conn.execute(
+            "SELECT rid, account FROM usage_acct_fixlog ORDER BY rid")]
+        assert [a for _, a in fixlog] == ["Running 1 shell command", "max"]
+        # 재연결(이미 v4) — 멱등: 정정·fixlog 불변.
+        conn.close()
+        conn = usagedb.connect(p)
+        assert usagedb.totals_by_account(conn)["unknown"] == 147400
+        assert int(conn.execute(
+            "SELECT COUNT(*) FROM usage_acct_fixlog").fetchone()[0]) == 2
         conn.close()
     finally:
         shutil.rmtree(d, ignore_errors=True)

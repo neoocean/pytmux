@@ -18,25 +18,50 @@ from pytmuxlib.clientrender import put_cell
 from pytmuxlib.clientutil import _CLOCK_FONT, _darken_style
 
 
-def draw_calendar_overlay(cells, panes, calendar_panes, W, H, styles, now=None):
-    """달력 모드 패널을 이번 달 달력으로 덮는다(clock-mode 미러). 뒤의 패널 출력은
-    흐리게(dim) 계속 보이고 오늘 날짜는 강조. `styles`=해석된 Style dict
+def draw_calendar_overlay(cells, panes, calendar_panes, W, H, styles, now=None,
+                          offsets=None, nav_zones=None):
+    """달력 모드 패널을 달력으로 덮는다(clock-mode 미러). 뒤의 패널 출력은 흐리게(dim)
+    계속 보이고 오늘 날짜는 강조. `styles`=해석된 Style dict
     (`day`/`title`/`today`/`big_today`/`border`), `now`=기준 datetime(테스트
-    결정성용; None 이면 현재). 패널이 아주 크면 시계 폰트로 '큰 달력'(#16), 충분하면
-    일반 그리드+외곽선, 좁으면 단순 날짜 문자열로 단계적 폴백한다."""
+    결정성용; None 이면 현재). `offsets`=패널 id→표시할 월의 '이번 달' 기준 오프셋
+    (예: -1 이면 지난달, +1 이면 다음달; 없으면 0=이번 달). 오프셋이 0 이 아닌 패널은
+    '오늘' 강조가 없다(그 달엔 오늘이 없으므로). 제목은 ‹ YYYY-MM › 으로 좌우 화살표를
+    붙여 ←/→ 로 달을 넘길 수 있음을 넌지시 알린다. `nav_zones`=주어지면 패널 id→
+    [(x0, x1, y, delta), …] 로 ‹/› 클릭 영역을 채운다(코어 마우스 핸들러가 클릭을
+    delta 만큼 월 이동으로 디스패치; 단순 날짜 폴백엔 화살표가 없어 zone 도 없다).
+    패널이 아주 크면 시계 폰트로 '큰 달력'(#16), 충분하면 일반 그리드, 좁으면 단순
+    날짜 문자열로 단계적 폴백한다."""
     if not calendar_panes:
         return
+
+    def _record_title_zones(pid, tx, oy):
+        """제목 ‹ YYYY-MM › 의 좌(‹ )·우( ›) 두 칸을 각각 이전/다음 달 클릭존으로
+        기록한다(클릭 타깃을 넉넉히 2칸; 가운데 날짜 숫자와는 안 겹친다)."""
+        if nav_zones is None:
+            return
+        tlen = len(title)
+        nav_zones.setdefault(pid, []).extend([
+            (tx, tx + 2, oy, -1),                 # "‹ " → 이전 달
+            (tx + tlen - 2, tx + tlen, oy, +1),   # " ›" → 다음 달
+        ])
     now = now or _datetime.now()
+    offsets = offsets or {}
     day_st = styles["day"]
     title_st = styles["title"]
     today_st = styles["today"]
-    yr, mo, today = now.year, now.month, now.day
-    weeks = _calendar.Calendar(firstweekday=6).monthdayscalendar(yr, mo)
-    title = f"{yr}-{mo:02d}"
+    cur_yr, cur_mo, cur_day = now.year, now.month, now.day
     wds = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]
     for p in panes:
         if p["id"] not in calendar_panes:
             continue
+        # 패널별 월 오프셋을 적용해 표시할 연·월을 정한다(이번 달=0). 오프셋이 0이
+        # 아니면 그 달엔 오늘이 없으므로 today=0(어떤 날짜와도 안 맞아 강조 없음).
+        off = offsets.get(p["id"], 0)
+        m0 = cur_yr * 12 + (cur_mo - 1) + off
+        yr, mo = m0 // 12, m0 % 12 + 1
+        today = cur_day if off == 0 else 0
+        weeks = _calendar.Calendar(firstweekday=6).monthdayscalendar(yr, mo)
+        title = f"‹ {yr}-{mo:02d} ›"   # ‹ YYYY-MM › (←/→ 넘김 힌트)
         px, py, pw, ph = p["x"], p["y"], p["w"], p["h"]
         # 1) 뒤 화면 흐리게(실색 블렌드 — §10, 터미널 무관 균일)
         for yy in range(py, min(py + ph, H)):
@@ -59,6 +84,7 @@ def draw_calendar_overlay(cells, panes, calendar_panes, W, H, styles, now=None):
             tx = ox + (gw_big - len(title)) // 2
             for j, c in enumerate(title):                 # 제목
                 put_cell(cells, tx + j, oy, c, title_st, W, H)
+            _record_title_zones(p["id"], tx, oy)          # ‹/› 클릭존
             for col, wd in enumerate(wds):                # 요일(칸 중앙)
                 hx = ox + col * (DCW + DGAP) + (DCW - len(wd)) // 2
                 for k, c in enumerate(wd):
@@ -98,6 +124,7 @@ def draw_calendar_overlay(cells, panes, calendar_panes, W, H, styles, now=None):
             tx = ox + (grid_w - len(title)) // 2
             for j, c in enumerate(title):       # 제목(YYYY-MM, 중앙)
                 put_cell(cells, tx + j, oy, c, title_st, W, H)
+            _record_title_zones(p["id"], tx, oy)   # ‹/› 클릭존
             for col, wd in enumerate(wds):       # 요일 헤더(칸 간격 colw)
                 for k, c in enumerate(wd):
                     put_cell(cells, ox + col * colw + k, oy + 1,
@@ -113,7 +140,8 @@ def draw_calendar_overlay(cells, panes, calendar_panes, W, H, styles, now=None):
                         put_cell(cells, cxp + k, ry, c, st, W, H)
             # (외곽선 제거: 사용자 요청으로 달력 둘레 박스를 그리지 않는다.)
         else:
-            s = now.strftime("%Y-%m-%d")
+            # 이번 달이면 오늘 날짜까지, 넘긴 달이면 연-월만(그 달엔 오늘이 없음).
+            s = f"{yr}-{mo:02d}-{cur_day:02d}" if off == 0 else f"{yr}-{mo:02d}"
             ox = px + max(0, (pw - len(s)) // 2)
             oy = py + ph // 2
             for j, c in enumerate(s):

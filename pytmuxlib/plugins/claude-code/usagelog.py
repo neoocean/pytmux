@@ -124,6 +124,53 @@ def daily_to_records(daily) -> list:
     return out
 
 
+def window_sum(records: list, since_ts: float, until_ts: float | None = None,
+               account: str | None = None) -> int:
+    """창 구간 (since_ts, until_ts] 의 토큰 합(추정 Σ). until_ts=None 이면 끝 무제한.
+    account 가 주어지면 그 계정만. 경계 규약은 usagedb.reconcile 과 동일(ts > since,
+    ts <= until) — 토큰 팝업이 실측 리셋 시각으로 역산한 현재 5h/주간 창의 스크랩
+    추정 합을 보일 때 쓴다(claude.parse_reset_ts 와 짝)."""
+    total = 0
+    for r in records:
+        ts = r.get("ts", 0.0)
+        if ts <= since_ts or (until_ts is not None and ts > until_ts):
+            continue
+        if account is not None and (r.get("account") or UNKNOWN) != account:
+            continue
+        total += int(r.get("tokens", 0))
+    return total
+
+
+def fold_target(accounts):
+    """계정 키 모음에서 **식별 계정(이메일 — '@' 포함)이 정확히 하나**면 그 계정을
+    반환, 둘 이상이거나 없으면 None(귀속 불가).
+
+    §5.5 단일 계정 귀속(2026-06-12 표시층 확장): 패널 화면엔 계정 라벨이 거의 안 떠
+    (라벨은 /status 에만) 레코드 대부분이 미식별(unknown)로 적재되는데, 식별 계정이
+    사실상 하나인 환경에선 미식별=그 계정 활동이다 — reconcile 의 같은-계정 합산,
+    서버 _account_token_total 의 단일계정 전합산과 동일한 가정. 식별 계정이 둘
+    이상이면 귀속이 모호하므로 접지 않는다(unknown 유지). v4 정정 이후 식별 계정은
+    항상 이메일 형태('@' 포함)라 '@' 가 식별/미식별 판별식이다."""
+    idd = {a for a in accounts if a and a != UNKNOWN and "@" in a}
+    if len(idd) == 1:
+        return next(iter(idd))
+    return None
+
+
+def fold_unknown(records: list, target) -> list:
+    """미식별(unknown/계정 없음) 레코드를 target 계정으로 재라벨한 **새 목록**을
+    반환한다(원본 레코드 불변 — 재라벨되는 행만 얕은 복사). target 이 거짓이면
+    원본 그대로. fold_target 과 짝으로 쓴다(표시층 귀속 — DB 는 건드리지 않는다)."""
+    if not target:
+        return records
+    out = []
+    for r in records:
+        if (r.get("account") or UNKNOWN) == UNKNOWN:
+            r = dict(r, account=target)
+        out.append(r)
+    return out
+
+
 def group_key(r: dict, dim: str = "account") -> str:
     """레코드의 그룹 차원 키(라벨). dim="account"=계정, dim="session"=세션 기준.
 
@@ -179,11 +226,22 @@ def _fmt_tokens(total: int) -> str:
 # clientutil.bar 를 직접 쓴다.
 
 
-def _bucket_short(bk: str, bucket: str) -> str:
-    """버킷 키를 짧은 표시 라벨로(연도 등 반복 정보 제거). day=MM-DD, month=YYYY-MM,
-    week=W##(연도는 헤더에 한 번), hour=MM-DD HH시."""
-    if bucket == "day" and len(bk) == 10:          # YYYY-MM-DD → MM-DD
-        return bk[5:]
+def _bucket_short(bk: str, bucket: str, weekdays=None) -> str:
+    """버킷 키를 짧은 표시 라벨로(연도 등 반복 정보 제거). day=MM-DD(+요일),
+    month=YYYY-MM, week=W##(연도는 헤더에 한 번), hour=MM-DD HH시.
+
+    weekdays: 7개 요일 라벨 시퀀스(월요일부터 — datetime.weekday() 인덱스).
+    주어지면 day 라벨에 'MM-DD(목)' 처럼 곁들인다(달력일을 알기 쉽게 — ccusage
+    daily 뷰 참고). i18n 라벨은 표시층(screens)이 주입한다(이 모듈은 순수 유지)."""
+    if bucket == "day" and len(bk) == 10:          # YYYY-MM-DD → MM-DD(요일)
+        lab = bk[5:]
+        if weekdays:
+            try:
+                wd = _dt.datetime.strptime(bk, "%Y-%m-%d").weekday()
+                lab += f"({weekdays[wd]})"
+            except ValueError:
+                pass
+        return lab
     if bucket == "week" and "-W" in bk:            # YYYY-W## → W##
         return "W" + bk.split("-W", 1)[1]
     if bucket == "hour" and len(bk) >= 13:         # YYYY-MM-DD HH:00 → MM-DD HH시
@@ -211,7 +269,7 @@ def _session_tabpane(records: list) -> dict:
 
 def agg_view(records: list, bucket: str = "day", account: str | None = None,
              dim: str = "account", order: str = "time",
-             top: int | None = None) -> dict:
+             top: int | None = None, weekdays=None) -> dict:
     """표시(DataTable) 전용 집계 — 정렬·라벨·비율까지 계산해 렌더가 바로 쓰게 한다.
 
     반환:
@@ -251,7 +309,8 @@ def agg_view(records: list, bucket: str = "day", account: str | None = None,
         bkeys = sorted(bucket_tot, key=lambda k: -bucket_tot[k])
     else:
         bkeys = sorted(bucket_tot, reverse=True)        # 시간 내림차순(최근 위)
-    brows = [(_bucket_short(bk, bucket), bucket_tot[bk], pct(bucket_tot[bk]))
+    brows = [(_bucket_short(bk, bucket, weekdays), bucket_tot[bk],
+              pct(bucket_tot[bk]))
              for bk in bkeys]
     return {"total": total, "groups": grows, "buckets": brows,
             "multi": len(grows) > 1,

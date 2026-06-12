@@ -423,6 +423,9 @@ class Pane:
         self.alt_active = False
         self.screen = self._main      # 현재 활성 화면(렌더 대상)
         self._altcarry = b""          # feed 경계의 미완성 시퀀스 보관
+        # §1.7 중첩 능동 감지: XTVERSION 질의(ESC[>0q)가 read 경계에 걸쳐 쪼개져도
+        # 놓치지 않게 직전 청크 꼬리(질의 길이-1 바이트)를 보관(serverpty 스캔용).
+        self._nestq_carry = b""
         # 대량 출력 청크 드레인(server._feed_drain): PTY 에서 읽었으나 아직 pyte 에
         # 안 먹인 바이트와, 진행 중인 비동기 드레인 태스크(서버가 생성/취소 관리).
         self._feedbuf = b""

@@ -29,10 +29,13 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **563 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **572 passed**
   (`python3 tests/run.py` @macOS, 2026-06-12 — Windows 트랙(58214~58228)·usage-view
-  플러그인·IME OS 실측·토큰 잔상 가드·esc ` 진입키·토큰버킷 cap 회귀·§3.8 Stage 2①②③
-  프롬프트 펼치기·위로스크롤 오버레이 테스트 합류. 기존 flaky 1건은 58122 에서 근본 수정).
+  플러그인·IME OS 실측·esc ` 진입키·토큰버킷 cap·§3.8 프롬프트 펼치기/오버레이·토큰
+  5h/주간 창 추정(58543)·§1.7 중첩 in-band 감지+stdio-proxy 테스트 합류).
+  ⚠️ 관찰: 58519/58543 신규 client 테스트 영역(토큰 화면·status 계정)에서 full-suite
+  한정 one-off 3회(assert/AttributeError `_dim`/90s 타임아웃) — 전부 격리·재실행 통과.
+  재발 시 테스트 순서 의존 격리 필요.
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
 ## 2. 실행 / 개발
@@ -272,6 +275,23 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- **토큰 사용량 정확성 + 팝업 재설계(2026-06-12, CL 58538/58540/58543/58545)** — 06-12
+  사용자 보고 3건(가짜 계정이 토큰 사용 주장·시간/일 뷰 부정확·인터페이스 복잡) 일괄 대응.
+  라이브 DB 진단으로 원인 확정 후 4개 CL 로 분리, 각 CL 전체 스위트 green(557→566).
+  - **계정 식별(58538)**: 비이메일 약신호(_ORG_RE 조직/팀 라벨·_PLAN_RE 플랜명) 제거 —
+    Claude 산문/도구 출력("Account: Running 1 shell command")을 계정으로 오검출해 DB 에
+    가짜 계정이 적재됐다(158.4k 실측). 계정 신호는 이메일 ①②만. usagedb **v4 마이그레이션**:
+    '@' 없는 비-unknown 계정 → unknown 정정, 원값 `usage_acct_fixlog` 보존(재시작 시 적용).
+  - **미식별 귀속(58540)**: 식별 계정이 하나뿐이면(라이브 DB unknown 86% — 계정 라벨이
+    /status 에만 떠 대부분 미식별) unknown 레코드·합계를 표시층에서 그 계정에 귀속
+    (`usagelog.fold_target/fold_unknown`, 스코프에 '미식별 포함'). reconcile §5.5·footer
+    계정합계와 동일 가정으로 세 표면의 숫자 일원화. 계정 필터 시 일자 누락 증상도 해소.
+  - **창 추정 Σ(58543)**: `claude.parse_reset_ts`(시각만/월·일/24h/연도 롤오버) +
+    `usagelog.window_sum` 으로 실측 리셋에서 현재 5h/주간 창을 역산 — 팝업 상단에
+    "이번 5h창 ~Σ·이번 주 ~Σ·리셋까지 남은 시간"(ccusage blocks 참고).
+  - **팝업 v2(58545)**: 한 표에 한 차원 — 기간 뷰(h/d/w/m, 일 라벨에 요일) · 계정 뷰
+    ([c], 행=계정별 전체합, 행 선택=필터+일별 드릴다운) · 세션 뷰([p]). 혼합표(그룹행+
+    구분선+버킷행) 제거. [a] 필터·[o] 정렬 유지. TOKEN_USAGE_UI_SCENARIO.md v2 참조.
 - **footer: 5h 잔여% 재배치(`N%/5h left`) + 계정 이메일 전체표시 회귀 고정(2026-06-12, CL 58519)** — 06-12
   사용자 요청 2건(둘 다 클라 렌더 — 재attach 시 반영). 헤드리스 `test_client` **174 passed / 0 failed**.
   - **5h 잔여% 표기 재배치.** `5h {pct}% left`(/`5h {pct}% 남음`) → **`{pct}%/5h left`**(/`{pct}%/5h 남음`).

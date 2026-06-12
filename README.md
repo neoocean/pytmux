@@ -97,11 +97,19 @@ Windows(PowerShell)에서는 `install.ps1` / `uninstall.ps1` 을 사용합니다
 
 ```sh
 # 인터랙티브 SSH/mosh 로그인일 때만 pytmux 세션에 attach.
+# $LC_PYTMUX = pytmux 패널에서 들어온 원격 로그인 표식(중첩 방지 — pytmux 자체도
+# 거부하지만 가드에서 먼저 거르면 거부 메시지·단말 질의 비용 없이 조용히 지나간다).
 if command -v pytmux >/dev/null && [[ -o interactive ]] && [[ -t 1 ]] \
-   && [[ -z "$PYTMUX" ]] && [[ -n "$SSH_CONNECTION$SSH_TTY" ]]; then
+   && [[ -z "$PYTMUX" ]] && [[ -z "$LC_PYTMUX" ]] \
+   && [[ -n "$SSH_CONNECTION$SSH_TTY" ]]; then
   pytmux
 fi
 ```
+
+> ⚠️ `exec pytmux` 는 권하지 않습니다 — pytmux 가 (중첩 거부 등으로) 즉시 종료하면
+> 로그인 셸이 함께 죽고, autossh 등 자동 재접속과 만나면 **재접속 루프**가 됩니다.
+> pytmux 는 중첩을 env 마커 + 단말 질의(XTVERSION) 두 겹으로 감지해 이중 실행을
+> 거부합니다.
 
 ## 빠른 시작
 

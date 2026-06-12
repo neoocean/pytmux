@@ -93,6 +93,7 @@ async def test_contract_client_hooks_noop_without_plugin():
     reg.client_overlay(None, None, 0, 0, None)      # no-op
     assert reg.client_tick(None) is False
     assert reg.client_close_overlay(None, None) is False
+    assert reg.client_overlay_key(None, None) is False
     assert reg.handle_command(None, "model", []) is False
     assert reg.handle_command(None, "token-saver", []) is False
     assert reg.handle_message(None, {"t": "token_log"}) is False

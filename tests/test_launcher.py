@@ -74,6 +74,78 @@ async def test_sshwrap_windows_cmd_wrapper():
     assert sshwrap.NEST_MARKER == NEST_MARKER
 
 
+async def test_host_terminal_probe_inband_detection():
+    """§1.7 in-band 중첩 감지: 단말에 XTVERSION 을 질의해 ① pytmux 응답이면 True,
+    ② 타 단말의 완결 DCS 응답이면 조기 False, ③ 무응답이면 타임아웃 False.
+    env 마커가 전파되지 않는 원격 경로의 중첩(→ 재접속 루프)을 전송 무관 차단."""
+    if os.name == "nt":
+        return  # POSIX 전용(프로브 자체가 nt 에서 False)
+    import asyncio
+    import pty
+    from pytmuxlib.launcher import host_terminal_is_pytmux
+    from pytmuxlib.serverpty import NEST_QUERY, NEST_REPLY
+
+    async def probe(reply, timeout=1.0):
+        m, s = pty.openpty()
+        try:
+            fut = asyncio.create_task(asyncio.to_thread(
+                host_terminal_is_pytmux, timeout, s, s))
+            q = await asyncio.wait_for(asyncio.to_thread(os.read, m, 64), 5)
+            assert NEST_QUERY in q, ("프로브가 XTVERSION 질의를 쓴다", q)
+            if reply is not None:
+                os.write(m, reply)
+            return await asyncio.wait_for(fut, 5)
+        finally:
+            os.close(m)
+            os.close(s)
+
+    assert await probe(NEST_REPLY) is True, "pytmux 응답 → 중첩"
+    assert await probe(b"\x1bP>|iTerm2 3.5.0\x1b\\") is False, \
+        "타 단말 완결 응답 → 조기 비중첩"
+    assert await probe(None, timeout=0.15) is False, "무응답 → 타임아웃 비중첩"
+
+
+async def test_stdio_proxy_token_and_frame_roundtrip():
+    """§1.7 페더레이션 Stage 1: `pytmux stdio-proxy` 가 ① 서버 인증 토큰을
+    `TOKEN <hex>` 첫 줄로 알리고 ② stdio↔서버소켓을 스플라이스해 와이어 프레임
+    (list 요청→sessions 응답)이 무손상 왕복한다 — `ssh -T` exec 채널 전송 모델."""
+    if os.name == "nt":
+        return  # stdio-proxy 는 POSIX 전용
+    import asyncio
+    import json
+    import sys
+    from harness import server_only, teardown
+    from pytmuxlib import protocol
+    srv, task, sock = await server_only()
+    p = None
+    try:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        p = await asyncio.create_subprocess_exec(
+            sys.executable, os.path.join(root, "pytmux.py"),
+            "--socket", sock, "stdio-proxy",
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE)
+        line = await asyncio.wait_for(p.stdout.readline(), 10)
+        assert line.startswith(b"TOKEN "), line
+        tok = line.split(b" ", 1)[1].strip().decode()
+        frame = {"proto": protocol.PROTO_VERSION, "t": "list"}
+        if tok:
+            frame["token"] = tok
+        payload = json.dumps(frame).encode()
+        p.stdin.write(len(payload).to_bytes(4, "big") + payload)
+        await p.stdin.drain()
+        hdr = await asyncio.wait_for(p.stdout.readexactly(4), 10)
+        body = await asyncio.wait_for(
+            p.stdout.readexactly(int.from_bytes(hdr, "big")), 10)
+        assert "sessions" in json.loads(body), body
+        p.stdin.close()                      # 로컬 측 종료 → 프록시 정리
+        await asyncio.wait_for(p.wait(), 10)
+    finally:
+        if p is not None and p.returncode is None:
+            p.kill()
+        await teardown(srv, task, sock)
+
+
 async def test_main_refuses_nested_attach():
     # PYTMUX 가 설정된 상태에서 attach → SystemExit(1)(ensure_server 도달 전 차단).
     old = os.environ.get("PYTMUX")

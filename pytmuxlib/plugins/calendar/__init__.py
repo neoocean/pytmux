@@ -18,7 +18,7 @@ from __future__ import annotations
 
 # 명령 메타데이터 — 코어가 COMMANDS/COMPLETIONS/COMMAND_NOARG/PANE_SCOPED_CMDS 에 합쳐 쓴다.
 COMMANDS = [
-    ("calendar-mode", "현재 패널을 이번 달 달력으로 덮기(토글, 상태줄 날짜 클릭/패널 클릭으로 닫기)", "설정/기타"),
+    ("calendar-mode", "현재 패널을 이번 달 달력으로 덮기(토글, ←/→ 이전·다음 달, ↑/↓ 연 이동, Home 오늘)", "설정/기타"),
     ("open-calendar", "현재 패널에 이번 달 달력 표시(이미 떠 있으면 유지)", "설정/기타"),
     ("close-calendar", "현재 패널의 달력 닫기", "설정/기타"),
 ]
@@ -42,14 +42,19 @@ class _CalendarPlugin:
         테스트가 app.calendar_panes / app.toggle_calendar / app.set_calendar 을
         직접 부른다 — clock 플러그인과 같은 패턴)."""
         app.calendar_panes = set()   # 달력 오버레이가 켜진 패널 id 집합
+        # 패널별 표시 월 오프셋(이번 달=0; -1=지난달, +1=다음달 …). 달력을 켤 때마다
+        # 이번 달(0)에서 시작하고, 닫으면 항목을 지운다.
+        app.calendar_offset = {}
 
         def toggle_calendar(pane_id):
             if pane_id is None:
                 return
             if pane_id in app.calendar_panes:
                 app.calendar_panes.discard(pane_id)
+                app.calendar_offset.pop(pane_id, None)
             else:
                 app.calendar_panes.add(pane_id)
+                app.calendar_offset[pane_id] = 0      # 항상 이번 달부터
                 # 한 패널엔 한 오버레이만 — 시계(있으면)를 닫는다.
                 cp = getattr(app, "clock_panes", None)
                 if cp is not None:
@@ -63,15 +68,30 @@ class _CalendarPlugin:
                 return
             if on:
                 app.calendar_panes.add(pane_id)
+                app.calendar_offset.setdefault(pane_id, 0)
                 cp = getattr(app, "clock_panes", None)
                 if cp is not None:
                     cp.discard(pane_id)
             else:
                 app.calendar_panes.discard(pane_id)
+                app.calendar_offset.pop(pane_id, None)
+            app._composite()
+
+        def calendar_nav(pane_id, delta):
+            """표시 월을 delta(±1=달, ±12=해) 만큼 옮긴다 — ‹/› 클릭존이 부르는 글루.
+            해당 패널에 달력이 떠 있을 때만 동작."""
+            if pane_id is None or pane_id not in app.calendar_panes:
+                return
+            app.calendar_offset[pane_id] = \
+                app.calendar_offset.get(pane_id, 0) + delta
             app._composite()
 
         app.toggle_calendar = toggle_calendar
         app.set_calendar = set_calendar
+        app.calendar_nav = calendar_nav
+        # ‹/› 클릭존: 패널 id → [(x0, x1, y, delta), …]. client_overlay 가 매 렌더마다
+        # 다시 채우고, 코어 마우스 핸들러가 getattr 로 읽어 클릭을 calendar_nav 로 보낸다.
+        app._calendar_nav_zones = {}
 
     def handle_command(self, app, c, args):
         if c in ("calendar-mode", "calendar", "cal"):
@@ -103,8 +123,43 @@ class _CalendarPlugin:
             "big_today": Style(color=theme_color(app, "success"), bold=True),
             "border": Style(color=theme_color(app, "accent")),
         }
+        # 매 렌더마다 ‹/› 클릭존을 새로 채운다(레이아웃/오프셋 변화 반영). 코어 마우스
+        # 핸들러가 app._calendar_nav_zones 를 getattr 로 읽어 클릭을 디스패치한다.
+        zones = app._calendar_nav_zones
+        zones.clear()
         draw_calendar_overlay(cells, app.layout.get("panes", []),
-                              app.calendar_panes, W, H, styles)
+                              app.calendar_panes, W, H, styles,
+                              offsets=getattr(app, "calendar_offset", None),
+                              nav_zones=zones)
+
+    def client_overlay_key(self, app, event):
+        """활성 패널에 달력이 떠 있을 때 네비게이션 키를 가로채(소비) 표시 월을 옮긴다.
+        ←/PageUp=이전 달, →/PageDown=다음 달, ↑=이전 해, ↓=다음 해, Home/`.`=오늘(이번
+        달). 소비하면 True(코어가 키를 패널로 보내지 않음). 달력이 없거나 다른 키면
+        False(코어 기본 입력 경로). 패널이 달력에 덮여 있으므로 이 키들을 가져가도 셸
+        입력을 가리지 않는다."""
+        cp = getattr(app, "calendar_panes", None)
+        if not cp:
+            return False
+        pid = app.layout.get("active")
+        if pid is None or pid not in cp:
+            return False
+        off = app.calendar_offset.get(pid, 0)
+        ch = event.character
+        if event.key in ("left", "pageup") or ch == "[":
+            app.calendar_offset[pid] = off - 1
+        elif event.key in ("right", "pagedown") or ch == "]":
+            app.calendar_offset[pid] = off + 1
+        elif event.key == "up":
+            app.calendar_offset[pid] = off - 12
+        elif event.key == "down":
+            app.calendar_offset[pid] = off + 12
+        elif event.key == "home" or ch == ".":
+            app.calendar_offset[pid] = 0
+        else:
+            return False
+        app._composite()
+        return True
 
     def client_tick(self, app):
         """1초마다 달력이 떠 있으면 True(코어가 재합성 — 자정 넘으면 '오늘' 강조 이동)."""
@@ -115,6 +170,7 @@ class _CalendarPlugin:
         cp = getattr(app, "calendar_panes", None)
         if cp and pane_id in cp:
             cp.discard(pane_id)
+            getattr(app, "calendar_offset", {}).pop(pane_id, None)
             return True
         return False
 

@@ -22,7 +22,10 @@ from . import usagelog
 # v3(§5.5 2026-06-11): 데이터 정리 — tokens.step 잔상 가드(58236) **이전**에 쌓인
 # 중복 커밋(같은 pane·session·tokens 가 60초 안에 연속 반복 — 하루치의 83% 사례)을
 # 첫 건만 남기고 usage_dup_archive 로 격리(하드 삭제 아님). 스키마 자체는 v2 동일.
-SCHEMA_VERSION = 3
+# v4(2026-06-12): 데이터 정정 — 화면 스크랩 약신호(_ORG_RE/_PLAN_RE, 같은 날 제거)가
+# 적재한 **이메일 형태가 아닌** 가짜 계정(실측 사례 "Running 1 shell command")을
+# unknown 으로 일괄 정정. 원값은 usage_acct_fixlog(rowid·원 계정)에 보존(포렌식·복구).
+SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS usage (
@@ -83,7 +86,12 @@ def connect(path: str) -> sqlite3.Connection:
         try:
             _migrate_v3_dedup_residue(conn)
         except sqlite3.Error:
-            new_v = min(cur_v, 2) or 2   # 실패 시 버전 유지 → 다음 connect 재시도
+            new_v = min(new_v, 2)   # 실패 시 버전 유지 → 다음 connect 재시도
+    if cur_v < 4 and new_v >= 3:    # v3 실패 시 v4 도 보류(다음 connect 재시도)
+        try:
+            _migrate_v4_nonemail_accounts(conn)
+        except sqlite3.Error:
+            new_v = min(new_v, 3)
     conn.execute(f"PRAGMA user_version={new_v}")
     conn.commit()
     if path != ":memory:" and not existed:
@@ -126,6 +134,37 @@ def _migrate_v3_dedup_residue(conn) -> int:
                      "(SELECT rid FROM _v3_dups)")
     conn.execute("DROP TABLE _v3_dups")
     return n
+
+
+def _migrate_v4_nonemail_accounts(conn) -> int:
+    """v4 데이터 정정(2026-06-12): 비이메일 가짜 계정 → unknown. 정정 행 수 반환.
+
+    화면 스크랩의 약신호(_ORG_RE 조직/팀명 라벨·_PLAN_RE 플랜명 — 같은 CL 에서
+    제거)는 Claude 가 산문/도구 출력에 띄운 임의 구절을 계정으로 오검출했다(실측
+    사례: 'Account: Running 1 shell command' 류 → "Running 1 shell command" 계정으로
+    158k 토큰 적재 — 존재하지 않는 계정이 토큰을 쓴 것처럼 보임). 신뢰 신호(①②)는
+    모두 이메일이라 정상 계정은 항상 '@' 를 포함하므로, '@' 없는 비-unknown 계정을
+    전부 unknown 으로 정정한다. 원값은 usage_acct_fixlog(rowid·원 계정)에 남겨
+    포렌식·수동 복구가 가능하게 한다(v3 의 usage_dup_archive 와 같은 보존 원칙).
+
+    한계: `token-account` 수동 지정으로 비이메일 라벨을 쓴 이력도 함께 접힌다 —
+    수동 라벨과 스크랩 오탐을 DB 만으로는 구분할 수 없고, 잘못된 계정 표시보다
+    unknown 이 옳다는 동일 원칙을 따른다(필요 시 fixlog 로 복구)."""
+    conn.execute("CREATE TABLE IF NOT EXISTS usage_acct_fixlog ("
+                 "rid INTEGER, account TEXT)")
+    cur = conn.execute(
+        "SELECT rowid, account FROM usage "
+        "WHERE account <> ? AND instr(account, '@') = 0", (usagelog.UNKNOWN,))
+    rows = cur.fetchall()
+    if rows:
+        conn.executemany("INSERT INTO usage_acct_fixlog (rid, account) "
+                         "VALUES (?, ?)",
+                         [(r["rowid"], r["account"]) for r in rows])
+        conn.execute(
+            "UPDATE usage SET account = ? "
+            "WHERE account <> ? AND instr(account, '@') = 0",
+            (usagelog.UNKNOWN, usagelog.UNKNOWN))
+    return len(rows)
 
 
 def _row_to_rec(row) -> dict:

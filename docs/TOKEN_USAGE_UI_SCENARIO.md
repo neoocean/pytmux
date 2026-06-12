@@ -13,6 +13,18 @@
 > 관련: `pytmuxlib/usagelog.py`(`summary_lines`·`aggregate`·`_fmt_tokens`) ·
 > `pytmuxlib/clientscreens.py`(`TokenLogScreen` compose/_refresh) ·
 > [TOKEN_SAVING_SCENARIO.md](TOKEN_SAVING_SCENARIO.md) §9(가시성 기능).
+>
+> **v2 재설계(2026-06-12, p4 58538~58545)** — 모듈은 플러그인으로 이전됨
+> (`pytmuxlib/plugins/claude-code/screens.py`·`usagelog.py`). 위 v1 의 혼합표(계정
+> 그룹행 + '── 시간 ──' 구분선 + 버킷행)가 여전히 읽기 어렵고 데이터도 부정확하다는
+> 피드백(가짜 계정·unknown 86%·계정 필터 시 일자 누락)으로 2차 개편:
+> · **정확성**: 비이메일 약신호 계정 검출 제거 + DB v4 정정(58538) · 단일 식별 계정
+>   환경에서 미식별(unknown) 귀속 — 스코프에 '미식별 포함' 명시(58540).
+> · **창 요약**: 실측 리셋 시각(`parse_reset_ts`)으로 현재 5h/주간 창을 역산해
+>   "이번 5h창 ~Σ·이번 주 ~Σ·리셋까지 남은 시간" 한 줄(58543, ccusage blocks 참고).
+> · **한 표에 한 차원**(58545): 기간 뷰(h/d/w/m, 행=시간 버킷, 일엔 요일) ·
+>   계정 뷰([c], 행=계정별 전체합, 행 선택=필터+일별 드릴다운) · 세션 뷰([p]).
+>   [a]=필터 순환, [o]=정렬은 유지. 제목 "토큰 사용량(추정) · {차원}별".
 
 ---
 

@@ -208,6 +208,41 @@ async def test_prompt_segment_maps_index_and_guards():
         await teardown(srv, task, sock)
 
 
+async def test_pane_xtversion_query_gets_pytmux_reply():
+    """§1.7 in-band 중첩 감지(외부 측): 패널 출력에 XTVERSION 질의(ESC[>0q)가 보이면
+    실제 터미널처럼 `DCS >| pytmux ST` 를 그 패널 stdin 으로 응답한다. read 경계에
+    질의가 쪼개져도 carry 로 감지. 무관 출력엔 무응답."""
+    from pytmuxlib.serverpty import NEST_QUERY, NEST_REPLY
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        real = p.pty
+        writes = []
+
+        class _Spy:
+            def write(self, b):
+                writes.append(b)
+        try:
+            p.pty = _Spy()
+            # ① 한 청크 안의 질의 → 응답
+            srv._on_pane_data(p, b"hello \x1b[>0q world\r\n")
+            assert writes == [NEST_REPLY], writes
+            # ② 무관 출력 → 무응답
+            writes.clear()
+            srv._on_pane_data(p, b"plain output\r\n")
+            assert writes == [], writes
+            # ③ 경계 분할: 질의가 두 read 에 걸쳐도 carry 로 감지
+            srv._on_pane_data(p, b"abc\x1b[>")
+            srv._on_pane_data(p, b"0q tail")
+            assert writes == [NEST_REPLY], writes
+            assert NEST_QUERY not in b"abc\x1b[>" and NEST_QUERY not in b"0q tail"
+        finally:
+            p.pty = real
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_scroll_at_top_signals_only_when_already_at_top():
     """§3.8 ①: _handle_scroll 은 위로 스크롤(delta>0)인데 스크롤백이 있고 이미 그 맨
     위면 그 클라에 scroll_at_top 을 보낸다(맨 위 도달 전·아래 스크롤·스크롤백 없음은

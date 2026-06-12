@@ -2532,6 +2532,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.prevent_default()
                 event.stop()
                 return
+            # 활성 패널에 플러그인 오버레이(달력 등)가 떠 있으면 네비게이션 키를
+            # 플러그인이 가로챈다(예: 달력 ←/→ 이전·다음 달). 소비되면 그 키는 패널로
+            # 보내지 않는다. 플러그인이 없으면 False → 아래 일반 입력 경로로 흐른다.
+            if self.plugins.client_overlay_key(self, event):
+                event.prevent_default()
+                event.stop()
+                return
             # 패널로 보낼 확정 입력을 플러그인이 관찰하게 한다(ime-indicator 가 한/영
             # 상태 추정). send_input 보다 먼저 호출해 패널 부재/전송 실패와 무관하게
             # 상태가 갱신되게 한다. 플러그인 없으면 no-op(delete-to-disable).

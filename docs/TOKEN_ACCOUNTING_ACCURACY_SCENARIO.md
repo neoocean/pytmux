@@ -9,6 +9,15 @@
 > 로드 시 무시→다음 저장에서 자연 소멸하는 shim). 남은 후속:
 > REC 실캡처 기반 대사([대사] 뷰) 상관 관찰. 라이브 반영은 restart-server 필요.
 >
+> **2026-06-12 정확성 후속(p4 58538/58540/58543)**: ① 계정 검출 비이메일 약신호
+> (_ORG_RE/_PLAN_RE) 제거 + usagedb **v4** 정정 마이그레이션(비이메일 가짜 계정
+> "Running 1 shell command" 류 → unknown, 원값 `usage_acct_fixlog` 보존) ② 단일
+> 식별 계정 환경의 미식별(unknown 86%) 토큰을 표시층에서 그 계정에 귀속
+> (`usagelog.fold_target/fold_unknown` — 본 문서 §5.5 reconcile 합산과 동일 가정,
+> 화면에 '미식별 포함' 명시) ③ 실측 리셋 표기 파서(`claude.parse_reset_ts`)로
+> 현재 5h/주간 창을 역산해 창 추정 Σ·리셋 남은 시간을 토큰 팝업에 표시.
+> UI 재설계(58545)는 [TOKEN_USAGE_UI_SCENARIO.md](TOKEN_USAGE_UI_SCENARIO.md) v2.
+>
 > 선행 조건: S5 토큰 모듈화
 > T1~T6 완료([TOKEN_USAGE_MODULARIZATION_SCENARIO.md](TOKEN_USAGE_MODULARIZATION_SCENARIO.md)
 > §6, p4 58071~58083)로 토큰 회계가 `plugins/claude-code/` 안에 완전히 갇혔다.

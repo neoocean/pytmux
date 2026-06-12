@@ -258,27 +258,34 @@ grace 한 번에 대기)로 종료 확인, 아직 살아 있으면 `taskkill /F 
 - **남음**: 라이브 attach(새 콘솔 창)·실 ssh 반응성·키 인코딩 인터랙티브 검증은 여전히 실
   박스 수동(§4), **arm64 Windows pywinpty 휠 부재** 대비(소스 빌드 필요 — §4-b).
 
-### [H] 1.7 ssh 로 원격 pytmux 접속 시 이중 실행·재접속 루프 → 원격 탭 어태치로 전환 (요청 2026-06-12) 🔴 **미구현**
+### [H] 1.7 ssh 로 원격 pytmux 접속 시 이중 실행·재접속 루프 → 원격 탭 어태치로 전환 (요청 2026-06-12) 🚧 **Stage 0·1 구현(2026-06-12)**
 **증상(사용자 보고 2026-06-12)**: 로컬 pytmux 패널에서 원격 ssh 서버에 접속했을 때, 그 서버
 **하위에 이미 pytmux 탭이 열려 있으면** 원격 pytmux 가 **재접속을 반복하며 정상 동작하지 않는다**.
 **원하는 거동**: pytmux 안에서 또 pytmux 가 뜨는 **이중 실행을 막고**, 원격 서버에서 pytmux 를
 실행하면 새 인스턴스를 띄우는 대신 **원격 서버의 탭·패널을 현재(로컬) pytmux 에 어태치**해
-**'원격 탭' 모양**으로 나타나게 한다.
+**'원격 탭' 모양**으로 나타나게 한다. 상세 설계·단계화는
+[REMOTE_ATTACH_SCENARIO.md](REMOTE_ATTACH_SCENARIO.md).
 
-- **현재 상태**: #1.4 의 ssh 중첩 처리는 `LC_PYTMUX`/`$PYTMUX` env 전파로 원격 pytmux 자동 실행을
-  **거부(중첩 방지)**하는 방향이다(README "SSH/mosh 자동 실행" 가드, sshwrap). 즉 "거부"는 있으나
-  사용자가 원하는 "**원격 세션 어태치(페더레이션)**"는 미구현. 보고된 재접속 루프는 거부 가드와
-  원격 자동-attach 가 서로 맞물려 깜빡이는 것으로 추정(원인 1차 격리 필요).
-- **설계 방향(초안)**: 원격에서 `pytmux` 실행 시 (a) 중첩 감지(`$PYTMUX` 존재)면 새 클라/서버를
-  안 띄우고, (b) 원격 pytmux **서버**(원격 머신의 데몬)에 stdio 로 붙어 그 세션의 탭/패널 트리를
-  **로컬 클라가 '원격 탭'으로 흡수**한다 — 로컬 탭바에 원격 탭을 별도 그룹/표식으로. 전송은 ssh
-  파이프(원격 `pytmux` 가 control 모드로 stdout↔stdin 프레임 릴레이) 위 기존 와이어 프로토콜
-  재사용 가능성 검토. 키/리사이즈/렌더 라우팅을 로컬↔원격 서버로 다중화.
-- **핵심 난점**: ① 로컬 클라가 **두 서버(로컬·원격)** 동시 attach·먹스 ② 탭 네임스페이스/id 충돌
-  회피(원격 prefix) ③ 재접속/끊김 시 루프 방지(현 증상) ④ 프로토콜 버전 협상(§5.3)·인증(§5.2)
-  의 원격 적용 ⑤ 원격 서버 미존재 시 폴백(그냥 셸). **위험**: 높음(연결·프로토콜·렌더 라우팅
-  전반). **우선**: 먼저 재접속 루프 **원인 격리 + 즉시 완화**(중첩 시 자동-attach 억제로 루프
-  정지), 그다음 어태치 페더레이션을 단계화.
+- **원인 격리(완료)**: 기존 중첩 방지는 env 마커 전파(`$PYTMUX`/SendEnv `LC_PYTMUX`)에 100%
+  의존 — 래퍼 우회(절대경로/alias ssh)·sshd `AcceptEnv` 에 LC_* 부재·비-SendEnv 클라이언트
+  경로에서 **중첩 TUI 가 실제로 떠 버리면** crash-relaunch(30초 창 5회)·net 워치독 자동 재접속
+  (무상한, 의도)·zshrc `exec pytmux`+autossh 의 ssh 레벨 루프가 "재접속 반복"으로 나타난다.
+- **Stage 0 완화(완료)**: env 무관 **in-band 능동 감지** — 원격 attach 직전 단말에 XTVERSION
+  (`ESC[>0q`) 질의(`launcher.host_terminal_is_pytmux`, SSH_* 한정·상한 0.4초), 외부 pytmux
+  서버는 패널 출력의 질의를 보고 `DCS >| pytmux ST` 응답(`serverpty.NEST_QUERY/NEST_REPLY`,
+  read 경계 carry). pytmux 응답 → 거부(중첩 TUI 차단=루프 차단), 실제 터미널은 자기 이름으로
+  응답해 조기 통과. README 가드에 `$LC_PYTMUX` 추가 + `exec pytmux` 경고. 부수효과: 패널 안
+  neovim 등 XTVERSION 질의에 올바른 응답. 한계: mosh 는 자체 에뮬레이션이 DCS 를 떨어뜨릴 수
+  있어 env 마커가 1차 방어로 남음. 테스트 2건(server 응답/경계분할·launcher 프로브 3분기).
+- **Stage 1 전송 프리미티브(완료)**: `pytmux stdio-proxy` — `ssh -T <host> pytmux stdio-proxy`
+  로 원격 서버 소켓↔stdio 스플라이스(첫 줄 `TOKEN <hex>` 로 F1 인증 토큰 전달). ssh exec
+  채널은 8-bit clean 이라 와이어 프레임 무손상(tmux -CC 식 in-pane DCS 인코딩 불필요).
+  POSIX 전용. 테스트 1건(TOKEN+list 프레임 왕복, 실 서브프로세스).
+- **Stage 2+ 후속(설계 — 시나리오 §4)**: 로컬 서버가 stdio-proxy 위로 원격 서버에 hello
+  attach 해 원격 layout/screen 을 받는 **업스트림 클라이언트** → 원격 탭을 로컬 탭바 별도
+  그룹(`⇄host`)으로, 원격 screen 행([text,style] 런)을 로컬 렌더 파이프라인에 직결, 입력/
+  리사이즈 업스트림 라우팅, 끊김 시 "끊김" 표시+백오프 재연결, `remote-attach <host>` 명령.
+  난점: 탭/패널 id 네임스페이스·포커스 의미론·다중 원격·Windows proxy.
 
 ### 의도된 기능 열화(공백) — #7 대부분 해결
 - ~~자동 탭이름/ssh 감지~~ → **해결(#7)**: `_fg_command(pane)` 이 Windows 에서

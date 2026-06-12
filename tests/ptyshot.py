@@ -47,6 +47,11 @@ def capture(argv, *, cols: int = 100, rows: int = 30, seconds: float = 4.0,
     e = dict(os.environ)
     e.pop("PYTMUX", None)
     e.pop("LC_PYTMUX", None)
+    # §1.7: 개발 셸이 ssh 세션이어도 캡처 자식은 "맨 로컬 터미널" 로 흉내낸다 —
+    # SSH_* 가 새면 attach 의 in-band 중첩 프로브(XTVERSION)가 발화해 캡처마다
+    # 0.4초 대기 + 질의 바이트가 끼어든다.
+    e.pop("SSH_CONNECTION", None)
+    e.pop("SSH_TTY", None)
     e["TERM"] = "xterm-256color"
     if env:
         e.update(env)

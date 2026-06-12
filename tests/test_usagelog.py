@@ -72,16 +72,18 @@ async def test_claude_account_heuristics():
     # ② 계정 라벨 바로 뒤 이메일(Login:/Logged in as) → 별칭화. 짧은 로컬은 그대로.
     assert claude_account("Logged in as woojin@woojinkim.org\n") == "wo…@woojinkim.org"
     assert claude_account("Login: me@x.org") == "me@x.org"
-    # 조직/팀명·플랜명(약한 신호)
-    assert claude_account("Organization: Acme Corp") == "Acme Corp"
-    assert claude_account("You are on the Max plan").startswith("max")
+    # 비이메일 약신호(조직/팀명·플랜명)는 2026-06-12 제거 — 산문/도구 출력 임의
+    # 구절을 계정으로 오검출(실측 "Running 1 shell command" 적재). 이젠 None.
+    assert claude_account("Organization: Acme Corp") is None
+    assert claude_account("You are on the Max plan") is None
+    assert claude_account("Account: Running 1 shell command") is None
     # 단서 없음 → None
     assert claude_account("? for shortcuts") is None
     # 예약/플레이스홀더 도메인은 계정으로 잡지 않는다. 다른 단서 없으면 None.
     assert claude_account("Transcript: email user@example.com to confirm") is None
     assert claude_account("contact a@b.invalid or x@y.test") is None
-    # 예시 이메일은 건너뛰되 실제 단서(조직)는 살린다
-    assert claude_account("see admin@example.org\nOrganization: Acme") == "Acme"
+    # 예시 이메일·비이메일 조직 라벨이 섞여 있어도 None(이메일 신호만 신뢰)
+    assert claude_account("see admin@example.org\nOrganization: Acme") is None
     # 계정 라벨의 이메일이 본문 이메일보다 우선
     assert claude_account(
         "ref bob@contractor.net in notes\nLogin: woojin@woojinkim.org"
@@ -104,6 +106,47 @@ async def test_claude_account_rejects_screen_emails():
     assert claude_account(
         "remote git@github.com:woojinkim/x.git\nme@woojinkim.org's Organization"
     ) == "me@woojinkim.org"
+
+
+async def test_window_sum_boundaries_and_account():
+    """창 구간 (since, until] 토큰 합 — 경계 규약은 usagedb.reconcile 과 동일
+    (ts > since, ts <= until). 계정 필터 옵션 포함."""
+    recs = [
+        {"ts": 100.0, "account": "me@x.org", "tokens": 10},
+        {"ts": 200.0, "account": "me@x.org", "tokens": 20},
+        {"ts": 300.0, "account": "unknown", "tokens": 40},
+    ]
+    assert usagelog.window_sum(recs, 100.0) == 60, "since 경계는 배타(>100)"
+    assert usagelog.window_sum(recs, 0.0) == 70
+    assert usagelog.window_sum(recs, 0.0, until_ts=200.0) == 30, "until 은 포함(<=)"
+    assert usagelog.window_sum(recs, 0.0, account="me@x.org") == 30
+    assert usagelog.window_sum(recs, 0.0, account="unknown") == 40
+    assert usagelog.window_sum([], 0.0) == 0
+
+
+async def test_fold_unknown_single_identified_account():
+    """§5.5 단일 식별 계정 귀속(표시층): 식별(이메일) 계정이 정확히 하나면 미식별
+    (unknown/None) 레코드를 그 계정으로 재라벨한다 — 'unknown 86%' 소음과 계정
+    필터 시 일자 누락의 해소. 둘 이상이면 모호 → 귀속 안 함(원본 그대로)."""
+    # 귀속 대상 판정: 식별 1개 → 그 계정, 0개/2개 → None.
+    assert usagelog.fold_target({"me@x.org", "unknown"}) == "me@x.org"
+    assert usagelog.fold_target({"wo…@y.org"}) == "wo…@y.org"   # 별칭도 '@' 포함
+    assert usagelog.fold_target({"unknown"}) is None
+    assert usagelog.fold_target({"me@x.org", "a@b.org"}) is None
+    assert usagelog.fold_target(set()) is None
+    # 재라벨: 미식별만 target 으로, 식별 레코드는 불변. 원본 리스트도 불변.
+    recs = [
+        {"ts": 1.0, "account": "unknown", "tokens": 100},
+        {"ts": 2.0, "account": None, "tokens": 50},
+        {"ts": 3.0, "account": "me@x.org", "tokens": 7},
+    ]
+    out = usagelog.fold_unknown(recs, "me@x.org")
+    assert [r["account"] for r in out] == ["me@x.org"] * 3
+    assert recs[0]["account"] == "unknown", "원본 불변(얕은 복사)"
+    agg = usagelog.aggregate(out, "day")
+    assert agg["groups"] == {"me@x.org": 157}
+    # target 없음(None) → 원본 그대로.
+    assert usagelog.fold_unknown(recs, None) is recs
 
 
 async def test_migrate_token_accounts():

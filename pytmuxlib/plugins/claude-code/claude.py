@@ -418,13 +418,11 @@ def _is_reserved_email_domain(domain: str) -> bool:
     return d in _RESERVED_EMAIL_DOMAINS or d.rsplit(".", 1)[-1] in _RESERVED_EMAIL_TLDS
 
 
-# 구분자는 콜론(`org: Foo`) 또는 **공백으로 둘러싼** 대시(`account - Foo`)만 인정한다.
-# 앞에 단어문자/슬래시/대시가 붙은 경우는 제외해 `/team-onboarding …` 같은 슬래시
-# 명령·하이픈 단어를 계정명으로 오검출하지 않는다(상태줄 @계정에 튐, 사용자 보고).
-_ORG_RE = re.compile(r"(?<![\w/\-])(?:organization|org|team|workspace|account)\s*"
-                     r"(?::|\s[-–]\s)\s*([A-Za-z0-9 ._\-]{2,40})", re.I)
-_PLAN_RE = re.compile(r"\b(Pro|Max|Team|Enterprise|Free)\b\s*"
-                      r"(?:plan|subscription|tier)", re.I)
+# (조직/팀명 라벨 `_ORG_RE`·플랜명 `_PLAN_RE` 약신호는 2026-06-12 제거: Claude 가
+# 산문/도구 출력에 띄운 임의 구절을 계정으로 오검출해 — 실측 사례 'Account: Running 1
+# shell command' 류가 토큰 DB 에 "Running 1 shell command" 계정으로 적재 — 존재하지
+# 않는 계정이 토큰을 쓴 것처럼 보였다. 계정 신호는 이메일 기반 ①②만 신뢰한다.
+# 정확히 못 잡으면 None → unknown(2026-06-07 사용자 지시)이 옳다.)
 
 
 # Claude Code 세션 종료 시 뜨는 피드백 프롬프트("How is Claude doing this session?
@@ -493,16 +491,7 @@ def _resolve_account(text: str):
         if text[m.end():m.end() + 1] == ":":   # git@host:path 등 SSH URL → 배제
             continue
         return (f"{local}@{domain}", _alias_email(local, domain))
-    # ③ 라벨 기반 조직/팀명·플랜(약한 신호 — 이메일을 못 찾을 때만). 이메일이 아니라
-    #    가릴 게 없으므로 전체=별칭.
-    m = _ORG_RE.search(text)
-    if m:
-        v = m.group(1).strip()
-        return (v, v)
-    m = _PLAN_RE.search(text)
-    if m:
-        v = m.group(1).lower()
-        return (v, v)
+    # (③ 조직/팀명·플랜 약신호는 제거 — 위 _ORG_RE/_PLAN_RE 제거 주석 참조.)
     return None
 
 
@@ -515,10 +504,9 @@ def claude_account(text: str):
     잡지 않는다. **정확히 못 잡으면 None 을 돌려 서버가 "unknown" 으로 묶게 한다**
     (사용자 지시 2026-06-07 — 잘못된 계정 표시보다 Unknown 이 옳다).
 
-    우선순위:
+    우선순위(이메일 신호만 — 비이메일 약신호 ③은 2026-06-12 오검출로 제거):
       ① Claude UI 의 `<email>'s Organization` 표시(가장 신뢰).
       ② 계정 라벨 바로 뒤 이메일(Login:/Account:/Email: <addr>). git SSH URL 제외.
-      ③ 조직/팀명 라벨(`organization: Foo`)·플랜명(라벨 기반, 약한 신호).
     어디서도 못 찾으면 None. 이메일은 별칭화(_alias_email)해 원문을 로그·이벤트에 안
     남긴다(footer 표시용 전체 이메일은 claude_account_full 참조)."""
     r = _resolve_account(text)
@@ -673,6 +661,80 @@ def parse_reset_delay(text: str, now: "_dt.datetime | None" = None):
         target += _dt.timedelta(days=1)
     delay = (target - now).total_seconds()
     return delay if 0 < delay <= 26 * 3600 else None
+
+
+# ---- /usage 리셋 표기 → 절대 시각(epoch) 파서 ----
+# parse_reset_delay(위)는 "리밋 차단 화면"에서 지연(초)을 구하는 자동재개 전용이고,
+# 이건 /usage 패널·footer 인라인이 주는 **리셋 표기 문자열**("6:59pm (Asia/Seoul)" ·
+# "Jun 13 at 3am (Asia/Seoul)")을 epoch 로 바꾼다 — 토큰 팝업이 ① 리셋까지 남은
+# 시간 표시 ② 현재 5h/주간 창 구간 역산(창 시작 = 리셋 - 5h/7일)에 쓴다.
+_RESET_MD_RE = re.compile(
+    r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2})"
+    r"(?:\s+at\s+(\d{1,2})(?::(\d{2}))?\s*([ap]m)?)?", re.I)
+_MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+           "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
+
+
+def parse_reset_ts(reset, now: "_dt.datetime | None" = None):
+    """`/usage` 리셋 표기 문자열을 epoch 초(float)로 변환한다(못 읽으면 None).
+
+    실측 표기 형태(parse_usage 가 긁는 그대로): 세션 "6:59pm (Asia/Seoul)" ·
+    "7pm (Asia/Seoul)", 주간 "Jun 13 at 3am (Asia/Seoul)", 드물게 24시간 "14:30".
+    표기 타임존은 이 머신 로컬과 같다고 가정한다 — 실측은 같은 머신에서 띄운
+    claude(그림자 프로브/인패널)의 표기라 로컬 타임존으로 그려진다.
+
+    해석 규약: 월·일이 있으면 그 달력일(200일 넘게 지난 월일이면 내년 — 12월 말
+    실측의 'Jan 2' 연도 롤오버). **약간 지난** 월일은 그대로 과거를 돌려줘 호출부가
+    stale 실측을 판단하게 한다(내년으로 잘못 점프하지 않음). 시각만 있으면 지금
+    이후 가장 가까운 그 시각(지났으면 다음날 — parse_reset_delay 와 동일 규약)."""
+    text = reset or ""
+    now = now or _dt.datetime.now()
+    m = _RESET_MD_RE.search(text)
+    if m and m.group(2):
+        month = _MONTHS[m.group(1).lower()[:3]]
+        day = int(m.group(2))
+        hour = minute = 0
+        if m.group(3):
+            hour = int(m.group(3))
+            minute = int(m.group(4) or 0)
+            ap = (m.group(5) or "").lower()
+            if ap == "pm" and hour != 12:
+                hour += 12
+            if ap == "am" and hour == 12:
+                hour = 0
+        if hour > 23 or minute > 59:
+            return None
+        try:
+            target = now.replace(month=month, day=day, hour=hour,
+                                 minute=minute, second=0, microsecond=0)
+        except ValueError:
+            return None                      # 잘못된 월일(예: Feb 30)
+        if (now - target).days > 200:        # 한참 지난 월일 → 내년(연도 롤오버)
+            try:
+                target = target.replace(year=now.year + 1)
+            except ValueError:
+                return None                  # 내년에 없는 날(2/29)
+        return target.timestamp()
+    m = _RESET_RE12.search(text)
+    if m:
+        hour = int(m.group(1))
+        minute = int(m.group(2) or 0)
+        ap = m.group(3).lower()
+        if ap == "pm" and hour != 12:
+            hour += 12
+        if ap == "am" and hour == 12:
+            hour = 0
+    else:
+        m = _RESET_RE24.search(text)
+        if not m:
+            return None
+        hour, minute = int(m.group(1)), int(m.group(2))
+    if hour > 23 or minute > 59:
+        return None
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += _dt.timedelta(days=1)      # 지난 시각 → 다음날 그 시각
+    return target.timestamp()
 
 
 # ---- M16: PTY 밖 에스컬레이션 훅 — status 전이 → (event, env) (§8) ----

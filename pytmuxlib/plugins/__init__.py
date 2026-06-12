@@ -275,6 +275,17 @@ class Registry:
                 closed = True
         return closed
 
+    def client_overlay_key(self, app, event):
+        """활성 패널에 플러그인 오버레이가 떠 있을 때 키 1건을 가로채(소비) 오버레이를
+        조작한다(달력 월 이동 등). 소비한 플러그인이 하나라도 있으면 True(코어가 키를
+        패널로 보내지 않음), 없으면 False(코어 기본 입력 경로). 플러그인이 없으면
+        False(no-op) → 코어 입력 경로는 그대로다(delete-to-disable)."""
+        for p in self.plugins:
+            fn = getattr(p, "client_overlay_key", None)
+            if fn is not None and fn(app, event):
+                return True
+        return False
+
     def client_key(self, app, event):
         """normal 모드에서 패널로 보낼 **확정(committed) 키 입력** 1건을 플러그인이
         관찰한다 — 서버측 server_input 의 클라이언트 대응. ime-indicator 가 최근 입력

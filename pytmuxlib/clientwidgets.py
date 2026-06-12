@@ -312,6 +312,17 @@ class MultiplexerView(Widget):
             self.app.open_menu(p["id"] if p else None)
             event.stop()
             return
+        # 달력 ‹/› 화살표 클릭 → 이전/다음 달(아래 '패널 클릭=닫기' 보다 먼저 가로챈다
+        # — 안 그러면 달력 패널 클릭이 곧 닫기라 화살표를 누를 수 없다). 존은 calendar
+        # 플러그인이 client_overlay 훅으로 채운다(없으면 빈 dict → no-op, calendar_nav
+        # 도 getattr 가드 — delete-to-disable).
+        for pid, zs in getattr(self.app, "_calendar_nav_zones", {}).items():
+            for (zx0, zx1, zy, delta) in zs:
+                if zy == event.y and zx0 <= event.x < zx1:
+                    fn = getattr(self.app, "calendar_nav", None)
+                    fn and fn(pid, delta)
+                    event.stop()
+                    return
         # 시계/달력 오버레이가 켜진 패널을 클릭하면 닫는다([x] 버튼 폐지).
         op = self._pane_at(event.x, event.y)
         if op and self.app._close_overlay(op["id"]):

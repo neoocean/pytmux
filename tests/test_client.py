@@ -969,8 +969,9 @@ def _tok_text(scr):
 
 
 async def test_token_log_screen_aggregates_and_switches():
-    # #7: token_log 응답 → TokenLogScreen 이 시간/일/월 × 계정 집계를 보이고,
-    # [m] 월 버킷 전환·[a] 계정 필터 순환이 라운드트립 없이 동작.
+    # #7(2026-06-12 재설계): token_log 응답 → TokenLogScreen. 표는 한 번에 한
+    # 차원만 — 기간 뷰(기본)는 시간 버킷 행만, [c] 계정 뷰는 계정 행만. [m] 월
+    # 버킷 전환·[a] 계정 필터 순환이 라운드트립 없이 동작.
     async def body(app, pilot, srv):
         from textual.widgets import Label
         recs = [
@@ -986,13 +987,29 @@ async def test_token_log_screen_aggregates_and_switches():
         assert scr.__class__.__name__ == "TokenLogScreen"
         joined = _tok_text(scr)
         assert "Σ3.5k" in joined, joined
-        assert "me@x.org" in joined and "team@y.org" in joined
+        # 기간 뷰(기본)엔 계정 행이 없다(차원 혼합 제거 — 재설계).
+        assert scr._view == "time"
+        assert "team@y.org" not in joined, joined
+        # 일 버킷 라벨에 요일이 곁들여진다(MM-DD(요일)).
+        import time as _t
+        wd = "월화수목금토일"[_t.localtime(1_700_500_000.0).tm_wday]
+        assert f"({wd})" in joined, joined
+        # [c] 계정 뷰: 계정별 합 행(둘 다 보임).
+        await pilot.press("c")
+        await pilot.pause(0.1)
+        assert scr._view == "account" and app.screen_stack[-1] is scr
+        joined_c = _tok_text(scr)
+        assert "me@x.org" in joined_c and "team@y.org" in joined_c, joined_c
+        assert "계정별" in joined_c, joined_c
+        await pilot.press("c")                    # 토글 복귀 → 기간 뷰
+        await pilot.pause(0.1)
+        assert scr._view == "time"
         # 닫기 버튼 [x] 가 글자까지 보여야 함(markup=False — 예전엔 마크업으로
         # 해석돼 배경색만 남고 X 가 사라졌다).
         close = scr.query_one("#tklogclose", Label)
         assert "[x]" in close.render().plain, \
             f"닫기 버튼에 [x] 글자가 보여야 함: {close.render().plain!r}"
-        # 계정 필터 순환([a]): 전체 → 첫 계정만
+        # 계정 필터 순환([a]): 전체 → 첫 계정만(스코프 줄에 필터 계정 표시).
         await pilot.press("a")
         await pilot.pause(0.1)
         joined2 = _tok_text(scr)
@@ -1086,6 +1103,104 @@ async def test_token_log_lifetime_total_from_server_agg():
     await _with_app(body)
 
 
+async def test_token_log_folds_unknown_into_single_account():
+    """§5.5 단일 식별 계정 귀속(표시층): 식별(이메일) 계정이 하나뿐이면 미식별
+    (unknown) 레코드·계정합계를 그 계정에 귀속해 보인다 — 'unknown 86%' 행이
+    사라지고, 계정 필터를 걸어도 미식별만 있던 날짜가 함께 보인다. 스코프 줄에
+    '미식별 포함' 을 명시한다(침묵 변형 금지)."""
+    async def body(app, pilot, srv):
+        recs = [
+            {"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
+             "account": "unknown", "tokens": 3000},
+            {"ts": 1_700_500_000.0, "tab": 0, "pane": 1, "session": 1,
+             "account": "me@x.org", "tokens": 1000},
+        ]
+        app._want_token_log = True
+        app._dispatch({"t": "token_log", "records": recs, "total_all": 4000,
+                       "accounts_total": {"unknown": 3000, "me@x.org": 1000}})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        joined = _tok_text(scr)
+        assert "unknown" not in joined, f"미식별이 귀속돼 안 보여야: {joined}"
+        assert "미식별 포함" in joined, joined   # 스코프 줄의 귀속 명시
+        # [c] 계정 뷰: 귀속된 단일 계정 행(4k)만 — unknown 행 없음.
+        await pilot.press("c")
+        await pilot.pause(0.1)
+        joined_c = _tok_text(scr)
+        assert "me@x.org" in joined_c and "unknown" not in joined_c, joined_c
+        await pilot.press("c")
+        await pilot.pause(0.1)
+        # 계정 필터([a]) → me@x.org: 귀속된 미식별분까지 lifetime 4k 가 그대로.
+        await pilot.press("a")
+        await pilot.pause(0.1)
+        joined2 = _tok_text(scr)
+        assert "me@x.org" in joined2 and "Σ4k" in joined2, joined2
+        # 미식별만 있던 날짜(1_700_000_000 일자)도 필터 후 사라지지 않는다.
+        import time as _t
+        day0 = _t.strftime("%m-%d", _t.localtime(1_700_000_000.0))
+        assert day0 in joined2, f"{day0} 가 계정 필터 후에도 보여야: {joined2}"
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+    await _with_app(body)
+
+
+async def test_token_log_no_fold_with_multiple_accounts():
+    """식별 계정이 둘 이상이면 귀속이 모호 — unknown 을 접지 않고 그대로 보인다."""
+    async def body(app, pilot, srv):
+        recs = [
+            {"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
+             "account": "unknown", "tokens": 300},
+            {"ts": 1_700_000_100.0, "tab": 0, "pane": 1, "session": 1,
+             "account": "me@x.org", "tokens": 100},
+            {"ts": 1_700_000_200.0, "tab": 0, "pane": 2, "session": 2,
+             "account": "team@y.org", "tokens": 200},
+        ]
+        app._want_token_log = True
+        app._dispatch({"t": "token_log", "records": recs})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert "미식별 포함" not in _tok_text(scr)
+        await pilot.press("c")                    # 계정 뷰에서 행 확인
+        await pilot.pause(0.1)
+        joined = _tok_text(scr)
+        assert "unknown" in joined, f"식별 2개면 unknown 유지: {joined}"
+        assert "미식별 포함" not in joined, joined
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+    await _with_app(body)
+
+
+async def test_token_log_window_estimate_line():
+    """실측 리셋 표기로 현재 5h 창을 역산(리셋-5h)해 그 창의 스크랩 추정 Σ 와
+    리셋까지 남은 시간을 한 줄로 보인다(요청: 5시간 내 사용량·리셋 시점을 알기
+    쉽게). 창 밖(5h 이전) 레코드는 합산되지 않아야 한다."""
+    async def body(app, pilot, srv):
+        import time as _t
+        now = _t.time()
+        # 리셋 = 지금+30분 — 로컬 12시간제 표기로 구성("H:MMam/pm (Asia/Seoul)").
+        tm = _t.localtime(now + 1800)
+        h12 = (tm.tm_hour + 11) % 12 + 1
+        ap = "am" if tm.tm_hour < 12 else "pm"
+        reset = f"{h12}:{tm.tm_min:02d}{ap} (Asia/Seoul)"
+        recs = [   # 창 안(1시간 전) 1k + 창 밖(6시간 전) 500
+            {"ts": now - 3600, "tab": 0, "pane": 1, "session": 1,
+             "account": "me@x.org", "tokens": 1000},
+            {"ts": now - 6 * 3600, "tab": 0, "pane": 1, "session": 1,
+             "account": "me@x.org", "tokens": 500},
+        ]
+        app.status.usage_limits = {"session": {"pct": 7, "reset": reset}}
+        app._want_token_log = True
+        app._dispatch({"t": "token_log", "records": recs})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        joined = _tok_text(scr)
+        assert "이번 5h창 ~Σ1k" in joined, joined   # 창 밖 500 은 제외돼야
+        assert "리셋" in joined and "후" in joined, joined
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+    await _with_app(body)
+
+
 async def test_token_log_day_bucket_full_history_not_capped():
     """버킷(일/주/월)은 서버 daily(전체 이력 일자 GROUP BY) 로 집계해 레코드 cap 에
     옛 날짜가 잘리지 않는다. records(서버가 보내는 cap 된 최근 N 건)엔 최근 하루만,
@@ -1126,8 +1241,8 @@ async def test_token_log_day_bucket_full_history_not_capped():
 
 
 async def test_token_log_panel_subtab_groups_by_session():
-    """[패널] 서브탭: 그룹 차원을 계정↔세션으로 토글한다. 세션 차원은 (재사용되는)
-    패널 id 가 아니라 세션 id 로 묶어 보인다(설계 §8 — 세션 기준)."""
+    """[세션] 서브탭/[p]: 기간 뷰 ↔ 세션 뷰 토글. 세션 뷰는 (재사용되는) 패널 id 가
+    아니라 세션 id 로 묶어 보인다(설계 §8 — 세션 기준)."""
     async def body(app, pilot, srv):
         from textual.widgets import Label
         recs = [
@@ -1143,11 +1258,11 @@ async def test_token_log_panel_subtab_groups_by_session():
         app._dispatch({"t": "token_log", "records": recs})
         await pilot.pause(0.1)
         scr = app.screen_stack[-1]
-        assert scr._dim == "account", "기본은 계정 차원"
-        # 키 [p] 로 세션 차원 토글
+        assert scr._view == "time", "기본은 기간 뷰"
+        # 키 [p] 로 세션 뷰 토글
         await pilot.press("p")
         await pilot.pause(0.1)
-        assert scr._dim == "session" and app.screen_stack[-1] is scr
+        assert scr._view == "session" and app.screen_stack[-1] is scr
         joined = _tok_text(scr)
         assert "세션 1" in joined and "세션 2" in joined, joined
         # 세션 라벨에 대표 탭:패널이 곁들여진다(식별성, 사용자 결정)
@@ -1155,10 +1270,37 @@ async def test_token_log_panel_subtab_groups_by_session():
         assert "세션별" in joined, joined
         # 세션1=2000(1500+500), 세션2=2000 — 합 4000 유지
         assert "Σ4k" in joined, joined
-        # 마우스로 [패널] 탭 클릭 → 계정 차원으로 되돌림
+        # 마우스로 [세션] 탭 클릭 → 기간 뷰로 되돌림(토글)
         await pilot.click("#tab_panel")
         await pilot.pause(0.1)
-        assert scr._dim == "account" and app.screen_stack[-1] is scr
+        assert scr._view == "time" and app.screen_stack[-1] is scr
+    await _with_app(body)
+
+
+async def test_token_log_account_view_drilldown():
+    """계정 뷰에서 행 선택(Enter) → 그 계정을 필터로 걸고 일별 기간 뷰로 드릴다운."""
+    async def body(app, pilot, srv):
+        recs = [
+            {"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
+             "account": "me@x.org", "tokens": 1500},
+            {"ts": 1_700_500_000.0, "tab": 1, "pane": 2, "session": 2,
+             "account": "team@y.org", "tokens": 2000},
+        ]
+        app._want_token_log = True
+        app._dispatch({"t": "token_log", "records": recs})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        await pilot.press("c")                    # 계정 뷰
+        await pilot.pause(0.1)
+        assert scr._view == "account"
+        # 첫 행 = 토큰 많은 계정(team@y.org 2000). Enter → 드릴다운.
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1] is scr, "Enter(계정 뷰)는 닫지 않음"
+        assert scr._view == "time" and scr._bucket == "day", \
+            (scr._view, scr._bucket)
+        assert scr._account == "team@y.org", scr._account
+        assert "team@y.org" in _tok_text(scr)     # 스코프 줄의 필터 계정
     await _with_app(body)
 
 
@@ -1884,6 +2026,79 @@ async def test_calendar_overlay_and_date_click():
     await _with_app(body, size=(44, 16))
 
 
+async def test_calendar_month_navigation():
+    """달력이 활성 패널에 떠 있을 때 ←/→ 로 이전·다음 달, ↑/↓ 로 연 이동, Home 으로
+    이번 달 복귀. 닫으면 오프셋 상태도 사라진다. 키는 패널로 새지 않고 소비된다."""
+    async def body(app, pilot, srv):
+        active = app.layout["active"]
+        app.set_calendar(active, True)
+        await pilot.pause(0.1)
+        assert app.calendar_offset[active] == 0, "달력은 이번 달(0)에서 시작"
+        await pilot.press("right")
+        await pilot.pause(0.05)
+        assert app.calendar_offset[active] == 1, "→ 다음 달"
+        await pilot.press("left", "left")
+        await pilot.pause(0.05)
+        assert app.calendar_offset[active] == -1, "← 이전 달"
+        await pilot.press("down")              # 다음 해(+12)
+        await pilot.pause(0.05)
+        assert app.calendar_offset[active] == 11
+        await pilot.press("up", "up")          # 이전 해 두 번(-24)
+        await pilot.pause(0.05)
+        assert app.calendar_offset[active] == -13
+        await pilot.press("home")              # 이번 달로 복귀
+        await pilot.pause(0.05)
+        assert app.calendar_offset[active] == 0
+        # 화면에 옮긴 달 제목이 반영되는지(다음 달)
+        await pilot.press("right")
+        await pilot.pause(0.05)
+        from datetime import datetime
+        now = datetime.now()
+        m0 = now.year * 12 + (now.month - 1) + 1   # 이번 달 +1 (render 와 동일 계산)
+        yr, mo = m0 // 12, m0 % 12 + 1
+        flat = "".join(app.view._cells[y][x][0] or ""
+                       for y in range(len(app.view._cells))
+                       for x in range(len(app.view._cells[0])))
+        assert f"{yr}-{mo:02d}" in flat, "다음 달 제목 렌더"
+        # 달력을 닫으면 오프셋 항목도 사라진다
+        app.set_calendar(active, False)
+        await pilot.pause(0.05)
+        assert active not in app.calendar_offset
+    await _with_app(body, size=(44, 16))
+
+
+async def test_calendar_nav_click_zones():
+    """달력 제목 ‹/› 화살표를 마우스로 클릭해 이전·다음 달로 넘긴다. 화살표 클릭은
+    '패널 클릭=닫기' 보다 먼저 가로채지므로 달력이 닫히지 않고, 본문(화살표 밖)을
+    클릭하면 기존처럼 닫힌다."""
+    async def body(app, pilot, srv):
+        active = app.layout["active"]
+        app.set_calendar(active, True)
+        await pilot.pause(0.1)
+        assert app.calendar_offset[active] == 0
+        zones = app._calendar_nav_zones.get(active)
+        assert zones and len(zones) == 2, "‹/› 클릭존 기록"
+        # › (delta +1) 클릭 → 다음 달, 달력은 유지
+        x0, x1, y, _ = next(z for z in zones if z[3] == 1)
+        app.view.on_mouse_down(_FakeMouse((x0 + x1) // 2, y, button=1))
+        await pilot.pause(0.05)
+        assert app.calendar_offset[active] == 1, "› 클릭 → 다음 달"
+        assert active in app.calendar_panes, "화살표 클릭으로 닫히지 않음"
+        # ‹ (delta -1) 클릭 → 이전 달(렌더 후 갱신된 zone 을 다시 읽는다)
+        x0, x1, y, _ = next(z for z in app._calendar_nav_zones[active]
+                            if z[3] == -1)
+        app.view.on_mouse_down(_FakeMouse((x0 + x1) // 2, y, button=1))
+        await pilot.pause(0.05)
+        assert app.calendar_offset[active] == 0, "‹ 클릭 → 이전 달"
+        # 달력 본문(화살표 아닌 곳, 좌하단) 클릭은 여전히 닫는다
+        ap = next(p for p in app.layout["panes"] if p["id"] == active)
+        app.view.on_mouse_down(
+            _FakeMouse(ap["x"] + 1, ap["y"] + ap["h"] - 1, button=1))
+        await pilot.pause(0.05)
+        assert active not in app.calendar_panes, "본문 클릭 → 닫힘"
+    await _with_app(body, size=(44, 16))
+
+
 async def test_big_calendar_digit_spacing():
     """§10-A #9: 큰 패널에서 '큰 달력'(시계 폰트) 경로가 렌더되고, 한 날짜의 두 자리
     숫자 사이 간격이 DIG=1(글리프 폭 3 + 간격 1)로 좁다 — 두 자리가 한 덩어리로 읽힘.
@@ -2487,6 +2702,36 @@ async def test_prompt_segment_msg_not_ok_shows_message():
         await pilot.pause(0.1)
         assert not isinstance(app.screen_stack[-1], InfoScreen), "팝업 안 뜸"
         assert len(app.screen_stack) == n0
+    await _with_app(body)
+
+
+async def test_scroll_at_top_opens_prompt_history_for_claude_only():
+    """§3.8 ①: 서버 scroll_at_top 신호(맨 위에서 더 위로) → Claude 패널이고 히스토리가
+    있으며 모달이 없을 때만 프롬프트 히스토리 오버레이를 연다. 비-Claude·히스토리 없음·
+    모달 열림이면 무동작."""
+    async def body(app, pilot, srv):
+        from pytmuxlib.clientscreens import InfoScreen
+        opened = []
+        app.open_prompt_history = lambda pid=None: opened.append(pid)
+        # 비-Claude 패널 → 무동작
+        app.pane_claude = {3: {"id": 3, "claude": "", "history": ["p"]}}
+        app._dispatch({"t": "scroll_at_top", "pane": 3})
+        assert opened == [], "비-Claude 무동작"
+        # Claude + 히스토리 + 모달 없음 → 오버레이(그 패널 id 로)
+        app.pane_claude = {5: {"id": 5, "claude": "idle",
+                               "history": ["p1", "p2"]}}
+        app._dispatch({"t": "scroll_at_top", "pane": 5})
+        assert opened == [5], opened
+        # 히스토리/프롬프트 없음 → 무동작
+        app.pane_claude = {6: {"id": 6, "claude": "idle"}}
+        app._dispatch({"t": "scroll_at_top", "pane": 6})
+        assert opened == [5], "히스토리 없으면 무동작"
+        # 모달이 떠 있으면 → 무동작(중복 방지)
+        from textual.widgets import ListView
+        app.push_screen(InfoScreen(["x"]))
+        await wait_until(pilot, lambda: app.screen_stack[-1].query_one(ListView))
+        app._dispatch({"t": "scroll_at_top", "pane": 5})
+        assert opened == [5], "모달 열림 중엔 무동작"
     await _with_app(body)
 
 

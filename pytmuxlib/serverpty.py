@@ -12,6 +12,15 @@ from .model import Pane, Session, coalesce_alt_repaints
 from .protocol import FEED_SLICE, MIN_H, MIN_W
 
 
+# §1.7 중첩 능동 감지(in-band): 패널 안 프로그램이 XTVERSION(ESC[>0q)으로 "호스트
+# 단말이 누구냐"를 질의하면 실제 터미널처럼 단말명으로 응답한다. env 마커(LC_PYTMUX)가
+# 전파되지 않는 경로(ssh 래퍼 우회·sshd AcceptEnv 부재)에서도 원격 pytmux 가 자신이
+# pytmux 패널 안임을 알아채 중첩 TUI(→ crash-relaunch/재접속 루프)를 띄우지 않게 한다.
+# 부수효과로 패널 안 일반 프로그램(neovim 등)의 XTVERSION 질의에도 올바로 응답.
+NEST_QUERY = b"\x1b[>0q"            # XTVERSION 질의
+NEST_REPLY = b"\x1bP>|pytmux\x1b\\"  # DCS > | <name> ST
+
+
 class ServerPtyMixin:
     # ---- PTY/패널 생성 ----
     def _fork_shell(self, cols: int, rows: int, cwd: str | None = None,
@@ -82,6 +91,21 @@ class ServerPtyMixin:
     def _on_pane_data(self, pane: Pane, data: bytes):
         # PTY 읽기/EOF/EIO 처리는 pty_backend 가 담당하고, 여기엔 수신 바이트 처리만
         # 남는다(backend 가 on_data 를 이벤트 루프 스레드에서 부른다).
+        #
+        # §1.7 XTVERSION 질의 스캔(전 청크가 이 진입점을 지나므로 여기 한 곳에서):
+        # 전체 복사 없이 data 본문 + (carry+머리 4바이트)만 검사한다. 질의를 보면
+        # 단말명 응답을 그 패널 stdin 으로 써 준다(실제 터미널과 동일 의미론 —
+        # cat 된 파일 속 질의에도 응답하는 것까지 같다).
+        if NEST_QUERY in data or NEST_QUERY in (
+                pane._nestq_carry + data[:len(NEST_QUERY) - 1]):
+            if pane.pty is not None:
+                try:
+                    pane.pty.write(NEST_REPLY)
+                except OSError:
+                    pass
+        tail = len(NEST_QUERY) - 1
+        pane._nestq_carry = (data[-tail:] if len(data) >= tail
+                             else (pane._nestq_carry + data)[-tail:])
         #
         # 대량 출력 비차단 처리: pyte feed 는 순수 파이썬이라 64KB 한 읽기를 통째로
         # 먹이면 ~50ms 동안 이벤트 루프가 막혀 입력·flush 가 지연된다. 그래서 버스트는

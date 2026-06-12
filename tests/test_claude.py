@@ -57,6 +57,41 @@ async def test_parse_reset_delay():
     assert d is not None and d > 3600
 
 
+async def test_parse_reset_ts():
+    """/usage 리셋 표기 → epoch(현재 5h/주간 창 역산·남은 시간 표시용). 세션
+    시각-만 표기, 주간 월·일 표기, 24시간, 연도 롤오버, 미파싱 None 을 못박는다."""
+    from pytmuxlib.claude import parse_reset_ts
+    now = dt.datetime(2026, 6, 12, 18, 0, 0)
+    # 세션: 시각만(12시간제, 분 유무) — 오늘 그 시각.
+    assert parse_reset_ts("6:59pm (Asia/Seoul)", now) == \
+        dt.datetime(2026, 6, 12, 18, 59).timestamp()
+    assert parse_reset_ts("7pm (Asia/Seoul)", now) == \
+        dt.datetime(2026, 6, 12, 19, 0).timestamp()
+    # 지난 시각 → 다음날(parse_reset_delay 와 동일 규약).
+    assert parse_reset_ts("3am", now) == \
+        dt.datetime(2026, 6, 13, 3, 0).timestamp()
+    # 24시간제.
+    assert parse_reset_ts("19:30", now) == \
+        dt.datetime(2026, 6, 12, 19, 30).timestamp()
+    # 주간: 월·일(+시각) 표기.
+    assert parse_reset_ts("Jun 13 at 3am (Asia/Seoul)", now) == \
+        dt.datetime(2026, 6, 13, 3, 0).timestamp()
+    assert parse_reset_ts("Dec 31 at 11pm", now) == \
+        dt.datetime(2026, 12, 31, 23, 0).timestamp()
+    # 약간 지난 월일은 과거 그대로(호출부가 stale 판단) — 내년으로 점프하지 않음.
+    assert parse_reset_ts("Jun 11 at 3am", now) == \
+        dt.datetime(2026, 6, 11, 3, 0).timestamp()
+    # 한참(>200일) 지난 월일 = 연도 롤오버(12월 말 실측의 'Jan 2') → 내년.
+    dec = dt.datetime(2026, 12, 30, 18, 0, 0)
+    assert parse_reset_ts("Jan 2 at 3am", dec) == \
+        dt.datetime(2027, 1, 2, 3, 0).timestamp()
+    # 미파싱/없음 → None.
+    assert parse_reset_ts(None, now) is None
+    assert parse_reset_ts("", now) is None
+    assert parse_reset_ts("soon", now) is None
+    assert parse_reset_ts("99:99", now) is None
+
+
 async def test_claude_limit_precision():
     """§3.2 정밀화: 차단 배너만 limit, 사용률 경고·사용자 입력·소스/diff 는 제외."""
     from pytmuxlib.claude import claude_limit

@@ -107,10 +107,18 @@ PTY master fd + 자식 셸이고, Claude Code 는 그 셸 안에서 도는 한 T
 > `git@github.com:user/repo` → 과거 상태줄·토큰로그에 `gi…@github.com` 으로 튐;
 > `a@x.org`·`us…@example.com` 도 동류). 이제 **Claude UI 가 직접 그린 신뢰 신호에서만**
 > 계정을 잡는다 — ① `<email>'s Organization`(계정/조직 표시, 최우선) ② 계정 라벨 **바로
-> 뒤** 이메일(`Login:`/`Account:`/`Logged in as <addr>`, git SSH URL 제외) ③ 라벨 기반
-> 조직/팀명·플랜(약한 신호). **신뢰 신호가 없으면 `None`** → `usagelog` 가 `unknown` 으로
-> 묶는다(잘못된 계정 표시보다 Unknown 이 옳다 — 사용자 지시). 맨 이메일(라벨 없는)·예약
-> 도메인은 더 이상 계정으로 잡지 않는다. 회귀: `test_claude_account_rejects_screen_emails`.
+> 뒤** 이메일(`Login:`/`Account:`/`Logged in as <addr>`, git SSH URL 제외). **신뢰 신호가
+> 없으면 `None`** → `usagelog` 가 `unknown` 으로 묶는다(잘못된 계정 표시보다 Unknown 이
+> 옳다 — 사용자 지시). 맨 이메일(라벨 없는)·예약 도메인은 더 이상 계정으로 잡지 않는다.
+> 회귀: `test_claude_account_rejects_screen_emails`.
+>
+> **2026-06-12 추가 정밀화(p4 58538)**: ③ 라벨 기반 조직/팀명·플랜(비이메일 약신호)도
+> 제거 — Claude 산문/도구 출력 구절(실측 사례 "Running 1 shell command")을 계정으로
+> 오검출해 존재하지 않는 계정이 토큰을 쓴 것처럼 보였다. 이제 계정 신호는 **이메일 기반
+> ①②뿐**이고, 기존 오염 데이터는 usagedb **v4 마이그레이션**('@' 없는 비-unknown 계정
+> → unknown 정정, 원값 `usage_acct_fixlog` 보존)이 connect 시 일괄 정정한다. 미식별
+> (unknown) 레코드는 식별 계정이 하나뿐이면 표시층이 그 계정에 귀속한다(p4 58540 —
+> reconcile §5.5·footer 계정합계와 동일 가정, 스코프 줄에 '미식별 포함' 명시).
 >
 > **과거 로그 정리**: 검출 수정 전 `*.tokens.jsonl` 에 적힌 옛 오탐 계정은
 > `scripts/migrate_token_accounts.py` 로 일괄 `unknown` 처리한다 — 신뢰 allowlist
