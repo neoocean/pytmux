@@ -42,6 +42,12 @@ _BUSY_SPINNER_RE = re.compile(
 # 자연히 빠진다.
 _USER_LINE_RE = re.compile(r"^\s*(?:[│|]\s*)?>")          # 사용자 입력/제출 턴
 _CODE_LINE_RE = re.compile(r"^\s*(?:\d+\s*[-+|]|[-+]\s)")  # 행번호+diff·diff 접두
+# 슬래시 명령 메뉴/도움말 행("  /usage-credits   Configure … when you hit a limit").
+# Claude Code 가 `/` 입력 시 띄우는 명령 목록의 도움말 텍스트가 'hit a limit' 같은
+# 차단-동사 구를 품어 idle 화면을 차단(limit)으로 오인시키는 실측 오탐 사례(#9 F1,
+# 캡처 corpus 의 limit 오판 4/4 가 이 줄). 줄 첫 토큰이 `/명령` 인 행은 UI 크롬이므로
+# 리밋/에러 판정 본문에서 제외(차단 배너·전송 에러는 절대 `/` 로 시작하지 않는다).
+_SLASH_MENU_RE = re.compile(r"^\s*(?:[│|]\s*)?/[\w-]+(?:\s|$)")
 _LIMIT_BLOCKED_RE = re.compile(
     r"\blimit\s+(?:has\s+been\s+)?(?:reached|exceeded)\b"        # "usage limit reached"
     r"|\b(?:reached|hit|exceeded)\s+(?:your|the|a|my)?\s*"
@@ -51,11 +57,13 @@ _LIMIT_BLOCKED_RE = re.compile(
 
 
 def _claude_body(text: str) -> str:
-    """사용자 입력(>)·소스/diff 줄을 제외한 Claude **출력**만 한 문자열로(리밋/리셋
-    판정용). 리밋 배너는 항상 Claude 출력에 뜨고 사용자 입력·코드 표시엔 안 뜨므로,
-    그 두 영역을 떼어 오탐(사용자 타이핑·소스 리터럴)을 막는다."""
+    """사용자 입력(>)·소스/diff 줄·슬래시 메뉴 행을 제외한 Claude **출력**만 한
+    문자열로(리밋/리셋 판정용). 리밋 배너·전송 에러는 항상 Claude 출력에 뜨고 사용자
+    입력·코드 표시·슬래시 명령 도움말엔 안 뜨므로, 그 영역을 떼어 오탐(사용자 타이핑·
+    소스 리터럴·`/usage-credits` 도움말 'hit a limit')을 막는다."""
     keep = [ln for ln in (text or "").splitlines()
-            if not _USER_LINE_RE.match(ln) and not _CODE_LINE_RE.match(ln)]
+            if not _USER_LINE_RE.match(ln) and not _CODE_LINE_RE.match(ln)
+            and not _SLASH_MENU_RE.match(ln)]
     return "\n".join(keep)
 
 
@@ -64,6 +72,13 @@ def claude_limit(text: str) -> bool:
     제외한 Claude 출력에서 차단 배너 문구(reached/exceeded/hit · "limit will reset")만
     본다 — 사용률 경고("used N% of your limit")·산문 속 'rate limit' 언급·소스 표시를
     리밋으로 오판하지 않는다. claude_state·parse_reset_delay 가 공유하는 단일 신호."""
+    # 컨텍스트 하드스톱("Context limit reached · /compact or /clear to continue")은
+    # 'limit reached' 로 _LIMIT_BLOCKED_RE 에 걸리지만 사용량/rate 리밋이 아니라
+    # *대화 컨텍스트* 가 꽉 찬 별도 신호다(#9 F2). claude_context_hardstop 이 즉시
+    # /compact 로 처리하므로, 여기서 단락해 usage-limit 으로 오인(=오지 않을 reset
+    # 시각을 기다리는 autoresume 무장)하지 않는다.
+    if claude_context_hardstop(text):
+        return False
     return bool(_LIMIT_BLOCKED_RE.search(_claude_body(text)))
 
 

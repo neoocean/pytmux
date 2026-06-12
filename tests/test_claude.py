@@ -82,6 +82,17 @@ async def test_claude_limit_precision():
     assert claude_limit(
         "> show me the error\n"
         " ✗ Claude usage limit reached. Your limit will reset at 5pm")
+    # #9 F1: /usage-credits 슬래시 메뉴 도움말 줄("…when you hit a limit")은 차단 아님
+    # (실측 캡처에서 idle 슬래시 메뉴를 차단으로 오인하던 지배적 오탐).
+    assert not claude_limit(
+        "  /usage-credits   Configure usage credits to keep working "
+        "when you hit a limit")
+    assert not claude_limit("│ /upgrade   reached your plan limit? upgrade")
+    # #9 F2: 컨텍스트 하드스톱은 usage-limit 이 아니다(claude_context_hardstop 이 다룸).
+    from pytmuxlib.claude import claude_context_hardstop
+    hardstop = "Context limit reached · /compact or /clear to continue"
+    assert not claude_limit(hardstop)
+    assert claude_context_hardstop(hardstop)   # 별도 신호로는 여전히 잡힘
 
 
 async def test_claude_api_error():
@@ -142,6 +153,13 @@ async def test_claude_state():
     assert claude_state("⎿  … +38 lines (ctrl+o to expand)") is None
     # 오탐 방지: 화살표 없는 토큰 언급은 busy 아님
     assert claude_state("Cost: 1.2k tokens used today") is None
+    # #9 F1: 슬래시 메뉴(/usage-credits) 가 떠 있는 idle 화면을 limit 으로 오인하지 않음
+    assert claude_state(
+        "  /usage-credits   Configure usage credits to keep working "
+        "when you hit a limit\n? for shortcuts") == "idle"
+    # #9 F2: 컨텍스트 하드스톱은 "limit"(사용량) 이 아니다 — 별도 하드스톱 신호로 처리
+    assert claude_state(
+        "Context limit reached · /compact or /clear to continue") != "limit"
 
 
 async def test_claude_perm_mode():
