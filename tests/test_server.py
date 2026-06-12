@@ -1233,6 +1233,7 @@ async def test_scan_claude_gating_skips_settled_pane():
     calls = []
     sc.claude_state = lambda txt: (calls.append(1), orig(txt))[1]
     try:
+        srv.claude_auto_launch = False   # auto /rc 디바운스(_rc_pending 스캔 지속) 제외 — B1 게이팅만 격리
         sess = srv.ensure_default_session(80, 24)
         win = sess.active_window
         p = win.active_pane
@@ -1384,13 +1385,25 @@ async def test_claude_auto_launch_rc_and_perm_auto():
 
         assert srv.claude_auto_launch is True, "기본 on"
 
+        import importlib
+        _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+
         def scan(s):
             p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
             srv._scan_claude(sess, win)
 
-        # 새 세션(None→idle): 첫 idle 에 /rc 1회, 권한 유도는 예약만(이 프레임엔 안 함)
+        # 새 세션(None→idle): auto /rc 는 첫 idle 한 프레임에 즉발하지 않는다(버그 수정)
+        # — 데스크탑 앱이 원격제어를 이미 켜 둔 경우 'Remote Control active' 오버레이가
+        # 한두 프레임 늦게 떠도 잡도록 idle 이 _RC_CONFIRM_FRAMES 안정될 때까지 디바운스.
         scan("? for shortcuts")
         assert p._claude == "idle"
+        assert rc == [], "첫 idle 프레임엔 /rc 즉발 안 함(디바운스 시작)"
+        assert p._rc_pending is True
+        for _ in range(_sc._RC_CONFIRM_FRAMES - 2):
+            scan("? for shortcuts")
+        assert rc == [], "디바운스 만료 전엔 여전히 /rc 없음"
+        # 이 프레임에 _idle_frames 가 임계 도달 → /rc 1회, 권한 유도는 예약만(프레임 분리)
+        scan("? for shortcuts")
         assert rc == ["/rc"], rc
         assert p._rc_pending is False and p._perm_auto_pending is True
         assert bt == [], "이 프레임엔 shift+tab 없음(프레임 분리)"
@@ -1433,6 +1446,47 @@ async def test_claude_auto_launch_rc_and_perm_auto():
         await teardown(srv, task, sock)
 
 
+async def test_rc_skipped_when_remote_active_appears_during_debounce():
+    """버그 수정(요청 2026-06-12): 원격제어가 **이미 활성**인 세션에 auto /rc 를 쏘면
+    /remote-control 이 응답 대기 대화로 멈춰 진행이 정지한다. 데스크탑 앱의 'Remote
+    Control active' 오버레이는 새 세션 첫 idle 직후 한두 프레임 늦게 그려질 수 있어,
+    첫 프레임만 보고 쏘면 가드를 못 세운다. 수정: idle 이 _RC_CONFIRM_FRAMES 안정될
+    때까지 디바운스 — 그 사이 오버레이가 뜨면 _rc_done 이 서서 /rc 를 건너뛴다."""
+    srv, task, sock = await server_only()
+    try:
+        import importlib
+        _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        rc = []
+        srv._pc_inject = lambda pane, text: rc.append(text)
+        srv._inject_keys = lambda pane, data: None
+
+        def scan(s):
+            p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
+            srv._scan_claude(sess, win)
+
+        # 새 세션: 첫 idle 몇 프레임은 오버레이 없이 평범한 프롬프트(데스크탑 앱 재연결
+        # 직전) — /rc 즉발 금지, 디바운스 진행 중.
+        scan("? for shortcuts")
+        assert p._claude == "idle" and p._rc_pending is True
+        for _ in range(_sc._RC_CONFIRM_FRAMES // 2):
+            scan("? for shortcuts")
+        assert rc == [], "디바운스 중엔 아직 /rc 없음"
+        # 디바운스 임계 전에 'Remote Control active' 오버레이가 뜸 → _rc_done 셋·/rc 스킵.
+        scan("⏵⏵ auto mode on (shift+tab to cycle)Remote Control active")
+        assert p._rc_done is True
+        assert p._rc_pending is False, "원격 ON 관측 → 디바운스 종료"
+        assert rc == [], "이미 원격제어 ON — /rc 안 쏨(응답 대기 대화 방지)"
+        # 이후 오버레이가 안 보이는 프레임이 와도 재주입 없음(sticky _rc_done).
+        for _ in range(_sc._RC_CONFIRM_FRAMES + 2):
+            scan("? for shortcuts")
+        assert rc == [], "원격 ON 관측 후엔 /rc 재발 없음"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_rc_suppressed_after_org_policy_block():
     """요청: '원격 제어가 조직 정책으로 비활성화' 메시지를 한 번 보면 이 세션(서버
     프로세스) 동안 자동 /rc 를 영구 중단한다 — 매 새 세션마다 /rc 를 재시도해 같은
@@ -1448,12 +1502,20 @@ async def test_rc_suppressed_after_org_policy_block():
 
         assert srv.claude_auto_launch is True and srv._rc_policy_blocked is False
 
+        import importlib
+        _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+
         def scan(s):
             p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
             srv._scan_claude(sess, win)
 
-        # 새 세션 → 첫 idle 에 /rc 1회 주입
-        scan("? for shortcuts")
+        def settle_rc():
+            # auto /rc 디바운스(_RC_CONFIRM_FRAMES) 통과까지 idle 을 반복 스캔.
+            for _ in range(_sc._RC_CONFIRM_FRAMES):
+                scan("? for shortcuts")
+
+        # 새 세션 → 디바운스 통과 후 /rc 1회 주입
+        settle_rc()
         assert p._claude == "idle" and rc == ["/rc"], rc
         # /rc 결과로 조직 정책 거부 메시지가 뜸 → sticky 차단 + 무장 해제
         scan("/remote-control\n"
@@ -1498,8 +1560,13 @@ async def test_rc_not_reinjected_after_restart_transient():
             p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
             srv._scan_claude(sess, win)
 
-        # 최초 세션 → /rc 1회 주입, _rc_done 셋
-        scan("? for shortcuts")
+        def settle_rc():
+            # auto /rc 디바운스(_RC_CONFIRM_FRAMES) 통과까지 idle 을 반복 스캔.
+            for _ in range(_sc._RC_CONFIRM_FRAMES):
+                scan("? for shortcuts")
+
+        # 최초 세션 → 디바운스 통과 후 /rc 1회 주입, _rc_done 셋
+        settle_rc()
         assert rc == ["/rc"] and p._rc_done is True
 
         # _rc_done 은 재시작 직렬화 대상이라 re-exec 후에도 유지된다(이 케이스의 핵심).
@@ -1523,7 +1590,7 @@ async def test_rc_not_reinjected_after_restart_transient():
             scan("$ ")
         assert p._rc_done is False, "디바운스 확정 종료 후 sticky 해제"
         rc.clear()
-        scan("? for shortcuts")
+        settle_rc()
         assert rc == ["/rc"], "진짜 새 세션엔 /rc 재주입"
     finally:
         await teardown(srv, task, sock)
