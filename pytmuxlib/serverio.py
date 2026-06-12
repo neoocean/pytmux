@@ -348,10 +348,17 @@ class ServerIOMixin:
         #    로컬 화면 복귀까지 처리).
         # ③ 보는 중엔 화이트리스트 action 을 업스트림으로 릴레이.
         if action == "remote_attach":
+            target = msg.get("host") or msg.get("endpoint") or "?"
             ok = await self.remote_attach(sess, host=msg.get("host"),
                                           endpoint=msg.get("endpoint"))
             if ok:
                 self._remote_status_broadcast()
+            # 결과를 요청 클라에 알린다(notice) — 실패가 서버 로그에만 남아
+            # "아무 일도 안 일어남"으로 보이던 갭(사용자 보고 2026-06-12) 해소.
+            text = (f"remote-attach {target}: 원격 탭 병합됨" if ok else
+                    f"remote-attach {target} 실패 — "
+                    f"{getattr(self, '_remote_last_err', '') or '서버 error.log 참조'}")
+            await write_msg(client.writer, {"t": "notice", "text": text})
             return
         if action == "remote_detach":
             self.remote_detach(msg.get("host"))

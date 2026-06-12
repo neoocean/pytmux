@@ -64,14 +64,26 @@ class ServerRemoteMixin:
         if endpoint:
             reader, writer = await ipc.open_connection(endpoint)
             return reader, writer, (ipc.read_token(endpoint) or ""), None
+        # BatchMode: 서버가 띄우는 ssh 는 TTY 가 없어 비밀번호를 못 묻는다 — 키
+        # 인증 미설정이면 즉시 명확한 stderr(Permission denied)로 실패하게 한다.
         proc = await asyncio.create_subprocess_exec(
-            "ssh", "-T", host, "pytmux", "stdio-proxy",
+            "ssh", "-T", "-o", "BatchMode=yes", host, "pytmux", "stdio-proxy",
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL)
+            stderr=asyncio.subprocess.PIPE)
         line = await asyncio.wait_for(proc.stdout.readline(), 15)
         if not line.startswith(b"TOKEN "):
+            # 실패 원인(ssh/원격 stderr 의 마지막 줄)을 사용자 알림에 실어 준다 —
+            # 'Permission denied'(키 미설정)·'command not found'(원격 PATH/미설치)
+            # 등이 그대로 보이게.
+            err = b""
+            try:
+                err = await asyncio.wait_for(proc.stderr.read(2048), 2)
+            except asyncio.TimeoutError:
+                pass
             proc.kill()
-            raise ConnectionError(f"stdio-proxy 핸드셰이크 실패: {line!r}")
+            detail = (err or line).decode("utf-8", "replace").strip()
+            detail = detail.splitlines()[-1] if detail else "응답 없음"
+            raise ConnectionError(f"stdio-proxy 핸드셰이크 실패: {detail}")
         tok = line.split(b" ", 1)[1].strip().decode()
         return proc.stdout, proc.stdin, tok, proc
 
@@ -86,10 +98,12 @@ class ServerRemoteMixin:
         remotes = self._remotes_dict()
         if name in remotes:
             await self.remote_drop(remotes[name], notify=False)
+        self._remote_last_err = ""
         try:
             reader, writer, tok, proc = await self._remote_transport(
                 host, endpoint)
-        except (OSError, ConnectionError, asyncio.TimeoutError):
+        except (OSError, ConnectionError, asyncio.TimeoutError) as e:
+            self._remote_last_err = str(e) or type(e).__name__
             self._log_error(f"remote_attach({name})")
             return False
         link = RemoteLink(name, reader, writer, proc)
@@ -100,7 +114,8 @@ class ServerRemoteMixin:
             hello["token"] = tok
         try:
             await write_msg(writer, hello)
-        except (OSError, ConnectionError):
+        except (OSError, ConnectionError) as e:
+            self._remote_last_err = f"hello 실패: {e}"
             self._log_error(f"remote_attach hello({name})")
             return False
         remotes[name] = link

@@ -834,6 +834,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self._open_choose_buffer(msg.get("items", []))
             elif t == "pong":
                 self._on_pong()   # 네트워크 RTT 표본(§10)
+            elif t == "notice":
+                # 서버발 일반 알림(§1.7 remote-attach 결과 등) — 상태줄 메시지로.
+                self.display_message(str(msg.get("text", "")))
             elif t == "captured":
                 self.display_message(i18n.t("msg.captured_chars",
                                             n=msg.get('chars', 0)))
@@ -2208,13 +2211,19 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif c in ("remote-attach", "remote_attach"):
                 # §1.7 페더레이션: 원격 pytmux 서버 탭을 이 pytmux 탭바에 병합.
                 # 성공하면 ⇄host:이름 탭이 나타난다(선택=진입). ssh -T 가 전송.
-                if args:
-                    self.send_cmd("remote_attach", host=args[0])
+                # host 는 shlex 토큰이 아니라 **원시 잔여 문자열** — 도메인 계정
+                # (NATGAMES\user@host)의 백슬래시를 shlex(posix)가 삼키지 않게.
+                rest = line.split(None, 1)
+                host = rest[1].strip() if len(rest) > 1 else ""
+                if host:
+                    self.send_cmd("remote_attach", host=host)
                 else:
                     self.display_message("사용법: remote-attach <host>")
             elif c in ("remote-detach", "remote_detach"):
+                rest = line.split(None, 1)
+                host = rest[1].strip() if len(rest) > 1 else ""
                 self.send_cmd("remote_detach",
-                              **({"host": args[0]} if args else {}))
+                              **({"host": host} if host else {}))
             elif c in ("restart-server", "restart"):
                 # 작업 보존 재시작: 셸/PTY 를 살린 채 서버 코드만 교체(re-exec).
                 # 화면이 잠깐 끊겼다 재접속된다(docs/RESTART_SCENARIO.md).

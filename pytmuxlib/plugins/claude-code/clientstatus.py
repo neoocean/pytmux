@@ -21,7 +21,7 @@ i18n.register({
         "claude.auto_resume": "자동재개",
         "claude.auto_cleanup": "자동정리",
         "claude.countdown": " ⏳ {label} {eta}s(입력=취소) ",
-        "claude.limit_remaining": "{pct}%/5h 남음",
+        "claude.limit_used": "{pct}%/5h 사용",
     },
     "en": {
         "claude.limit_reached": " ⚠ Limit reached ",
@@ -29,7 +29,7 @@ i18n.register({
         "claude.auto_resume": "auto-resume",
         "claude.auto_cleanup": "auto-cleanup",
         "claude.countdown": " ⏳ {label} {eta}s (input=cancel) ",
-        "claude.limit_remaining": "{pct}%/5h left",
+        "claude.limit_used": "{pct}%/5h used",
     },
 })
 
@@ -179,12 +179,15 @@ def render_segs(status, segs, w):
         cu = status.claude_usage
         if isinstance(cu, str) and cu.startswith("ctx"):
             usage_parts.append(cu)
-        # ② 5시간 리밋까지 **남은** 비율%(실측만; 100 - 사용%). 실측 없으면 생략
-        #    (지어내지 않음 — 분모 근사 폐기로 이 값은 항상 /usage 실측).
+        # ② 5시간 리밋 **사용률**%(실측만 — 지어내지 않음; 분모 근사 폐기로 이 값은
+        #    항상 /usage 실측). 2026-06-12 사용자 결정: 잔여("N%/5h 남음")가 아니라
+        #    사용률로 — 토큰 팝업/usage-panel 막대("N% 사용")·Claude /usage 원문
+        #    ("N% used")과 같은 방향·같은 숫자가 모든 표면에 보이게 통일한다(잔여
+        #    표기와 섞이면 같은 실측이 다른 값처럼 읽혔다 — 사용자 보고 2회).
         if status.tok5h_pct is not None:
             usage_parts.append(
-                i18n.t("claude.limit_remaining",
-                       pct=max(0, 100 - int(status.tok5h_pct))))
+                i18n.t("claude.limit_used",
+                       pct=max(0, min(100, int(status.tok5h_pct)))))
         # 표시 %들의 기준 계정(하이라이트 패널의 계정)을 마지막 항목에 곁들임. 계정은
         # 보통 이메일(me@…)이라 앞에 @ 를 붙이지 않는다(@me@… 중복 방지, 요청).
         # 폭이 충분하면 전체 계정명(claude_account_full)을, 우측(시각·날짜 등)을 밀어낼

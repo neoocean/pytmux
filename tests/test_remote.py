@@ -130,6 +130,30 @@ async def test_remote_attach_merge_select_input_detach():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_remote_attach_failure_sends_notice():
+    """실패가 서버 로그에만 남아 '아무 일도 안 일어남'으로 보이던 갭(사용자 보고):
+    remote_attach 가 실패하면 요청 클라에 notice(원인 포함)가 회신된다."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    reader = writer = None
+    try:
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        # 존재하지 않는 endpoint → 즉시 실패 + notice
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": "/nonexistent/no.sock"})
+        n = await _read_until(reader, lambda m: m.get("t") == "notice",
+                              what="failure notice")
+        assert "실패" in n.get("text", ""), n
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+
+
 async def test_remote_link_death_recovers_viewer_to_local():
     """링크 사망(원격 서버 종료): 보던 클라는 로컬 화면으로 복귀(_send_full)하고
     탭바에서 ⇄ 탭이 제거된다 — '재접속 루프' 대신 명시적 끊김 처리."""

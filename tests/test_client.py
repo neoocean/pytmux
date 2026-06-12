@@ -1350,8 +1350,9 @@ async def test_token_log_usage_graphs():
             "week_sonnet": {"pct": 0, "reset": None}})
         await pilot.pause(0.1)
         joined = _tok_text(scr)
-        # 세 한도 라벨 + 각 % 가 보인다.
-        assert "세션 5h" in joined and "54%" in joined, joined
+        # 세 한도 라벨 + 각 % 가 보인다 — % 는 '사용' 라벨로 방향을 명시한다
+        # (footer 의 5h 표기도 같은 사용률로 통일 — 2026-06-12).
+        assert "세션 5h" in joined and "54% 사용" in joined, joined
         assert "주 전체" in joined and "41%" in joined, joined
         assert "주 Sonnet" in joined and "0%" in joined, joined
         # 리셋 요약(타임존 괄호 제거).
@@ -2697,6 +2698,28 @@ async def test_prompt_segment_msg_not_ok_shows_message():
         await pilot.pause(0.1)
         assert not isinstance(app.screen_stack[-1], InfoScreen), "팝업 안 뜸"
         assert len(app.screen_stack) == n0
+    await _with_app(body)
+
+
+async def test_remote_attach_preserves_backslash_host_and_notice():
+    """§1.7: ① `:remote-attach NATGAMES\\user@host` 의 host 는 shlex 토큰이 아니라
+    원시 잔여 문자열 — 도메인 계정 백슬래시가 보존된다(사용자 보고: 백슬래시가
+    삼켜져 엉뚱한 host 로 ssh). ② 서버 notice 메시지는 상태줄에 표시된다."""
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app._run_command("remote-attach NATGAMES\\woojinkim@office1")
+        assert sent == [("remote_attach",
+                         {"host": "NATGAMES\\woojinkim@office1"})], sent
+        # notice → display_message(상태줄)
+        shown = []
+        app.display_message = lambda m, *a, **k: shown.append(m)
+        app._dispatch({"t": "notice", "text": "remote-attach x 실패 — 이유"})
+        assert shown == ["remote-attach x 실패 — 이유"], shown
+        # 인자 없으면 사용법 안내(전송 없음)
+        sent.clear()
+        app._run_command("remote-attach")
+        assert sent == [], sent
     await _with_app(body)
 
 
@@ -4072,7 +4095,7 @@ async def test_popup_dims_and_substitutes_emoji():
 
 async def test_status_session_ctx_and_5h():
     # 좌하단(사용자 요청 2026-06-11): 하이라이트 패널 계정 기준 ①현재 패널 세션의
-    # 컨텍스트 비율% ②5h 리밋까지 **남은** 비율%. 토큰 수치(~Σ)는 직접 표시하지
+    # 컨텍스트 비율% ②5h 리밋 사용률%(2026-06-12 잔여→사용 통일). 토큰 수치(~Σ)는 직접 표시하지
     # 않는다(기록은 서버측 _log_tokens 가 유지). claude_tokens 는 받아도 표시 안 함.
     async def body(app, pilot, srv):
         app.status.claude_active = True
@@ -4086,11 +4109,12 @@ async def test_status_session_ctx_and_5h():
         app.status.claude_account = "alice"
         txt_a = "".join(s.text for s in app.status.render_line(0))
         assert "ctx 42% alice" in txt_a and "@alice" not in txt_a, repr(txt_a)
-        # 5h 리밋 **남은** 비율(실측 사용 37% → 남음 63%). 계정은 마지막(5h)에 붙는다.
+        # 5h 리밋 **사용률**(실측 37% 사용 — 2026-06-12 사용자 결정: 팝업 막대
+        # "N% 사용"·Claude /usage "N% used" 와 같은 방향·같은 숫자로 전 표면 통일).
         app.status.tok5h_pct = 37
         txt_m = "".join(s.text for s in app.status.render_line(0))
-        assert "63%/5h 남음 alice" in txt_m, repr(txt_m)
-        assert txt_m.index("ctx 42%") < txt_m.index("63%/5h"), repr(txt_m)
+        assert "37%/5h 사용 alice" in txt_m, repr(txt_m)
+        assert txt_m.index("ctx 42%") < txt_m.index("37%/5h"), repr(txt_m)
         # claude_usage 가 토큰 폴백('Xk tok')이면 표시하지 않는다(토큰 수치 비표시 원칙)
         app.status.claude_usage = "12k tok"
         app.status.tok5h_pct = None

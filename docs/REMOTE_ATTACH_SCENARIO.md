@@ -111,6 +111,17 @@ viewer_to_local`(EOF→자동 복귀+탭 제거).
 
 - 로컬 pytmux 에서 `:remote-attach <host>` → 탭바에 `⇄host:이름` 탭 등장 → 클릭/
   alt+N 으로 진입(원격 화면·입력 그대로), 로컬 탭 클릭으로 복귀, `:remote-detach`.
+  host 는 **원시 문자열 그대로**(도메인 계정 `NATGAMES\\user@host` 의 백슬래시 보존 —
+  첫 보고에서 shlex 가 삼켜 엉뚱한 host 로 가던 버그 수정). 결과는 상태줄
+  **notice**(성공/실패+원인)로 표시된다.
+- **전제조건**:
+  1. **ssh 키 인증** — 서버가 띄우는 ssh 는 TTY 가 없어 비밀번호를 못 묻는다
+     (`BatchMode=yes`). 미리 `ssh-copy-id <host>`(또는 동등 설정). 미설정이면
+     notice 에 `Permission denied` 가 그대로 보인다.
+  2. 원격 pytmux 가 **58551+**(stdio-proxy 보유)이고 비대화 ssh 의 PATH 에서
+     `pytmux` 가 실행 가능해야 한다(없으면 `command not found`).
+  3. 원격은 **POSIX**(macOS/Linux) — Windows 원격(stdio-proxy POSIX 전용)은 Stage 3.
 - 원격 pytmux 가 "호스트 단말이 pytmux 입니다(원격 중첩 감지…)" 로 거부하면 정상 —
   거부 메시지의 힌트대로 remote-attach 를 사용.
-- 수동 점검: 원격에서 `pytmux stdio-proxy < /dev/null` → `TOKEN …` 한 줄 후 종료.
+- 수동 점검: `ssh -T -o BatchMode=yes <host> pytmux stdio-proxy < /dev/null`
+  → `TOKEN …` 한 줄이면 전 구간 준비 완료.
