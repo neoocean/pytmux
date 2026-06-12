@@ -29,10 +29,10 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **499 passed**
-  (`python3 tests/run.py` @macOS, 2026-06-11 — Windows 트랙(58214~58228)·usage-view
-  플러그인·IME OS 실측·토큰 잔상 가드 테스트 합류. 기존 flaky 1건도 58122 에서
-  근본 수정돼 0).
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **548 passed**
+  (`python3 tests/run.py` @macOS, 2026-06-12 — Windows 트랙(58214~58228)·usage-view
+  플러그인·IME OS 실측·토큰 잔상 가드·esc ` 진입키·토큰버킷 cap 회귀 테스트 합류.
+  기존 flaky 1건도 58122 에서 근본 수정돼 0).
 - **플랫폼**: macOS/Linux(POSIX PTY), Python 3.11+.
 
 ## 2. 실행 / 개발
@@ -267,11 +267,36 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 파일 단위로 `git add` 해서 같은 수의 커밋으로 나눈다(메시지에 `Perforce: change NNNN`
 푸터를 달아 둠).
 
-## 9. 최근 변경(CL 56279~58461 + git, 신→구)
+## 9. 최근 변경(CL 56279~58489 + git, 신→구)
 
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- **§2.9 비활성 패널 dim + §3.8 Stage 1 스크롤백 anchor + 토큰버킷 cap 회귀 + 병렬 sync 3-way 머지(2026-06-12, CL 58475·58483·58489)** — 06-12
+  CL 58460 에 할일로 적어둔 §2.9/§3.8 의 구현 1단계 + 회귀 테스트. 헤드리스 **548 passed / 0 failed**.
+  (esc 진입키 ` = office CL 58484 — 바로 아래 office 박스 항목 참조.)
+  - **CL 58475 — §2.9 비활성 패널 dim.** 한 탭에 패널 2개 이상일 때 비활성 패널 콘텐츠 셀을
+    활성 대비 한 톤 옅게 그려 **외곽선 없이** 활성 패널을 식별(요청). `clientutil._dim_inactive_style`
+    (전경·배경을 검정 쪽으로 ratio 0.30 블렌드, 평문은 grey46 폴백, bold 등 속성 보존, lru_cache;
+    팝업용 강한 `_darken_style` 과 별개). `client._composite` 가 inactive_dim ON + 패널≥2 일 때만
+    비활성 콘텐츠 셀에 적용 — 활성/단일 패널은 원색, 커서·하이라이트는 활성 기준. **클라 코드.**
+  - **CL 58483 — §3.8 Stage 1 Claude 스크롤백 프롬프트-단위 점프(anchor).** 긴 raw 스크롤백을
+    사용자 프롬프트 경계로 탐색하는 1단계의 토대 = **회전에 강건한 절대 라인 anchor**. pyte 스크롤백
+    deque(maxlen 10000) 회전에도 안 밀리는 누적 인덱스: `_ScrollbackScreen.hist_total`(밀려난 줄
+    누적, `index()`+1·`reset()` 0) + `Pane.current_anchor()`=hist_total+cursor.y +
+    `Pane.scroll_to_anchor()`(scroll=hist_total−anchor, [0,len] 클램프). 설계=docs/
+    PROMPT_HISTORY_SCROLLBACK_SCENARIO.md, 검증 test_model.scroll_to_anchor_lands_line_at_top.
+    **서버/모델 코드 — restart-server 필요.** (UI 점프 동선은 후속 Stage.)
+  - **CL 58489 — 토큰로그 일/주/월 버킷 cap 절단 방지 회귀(test-only).** records(서버가 보내는
+    cap 된 최근 N 건)만 쓰면 옛 날짜가 잘려 day 뷰에 최근 하루만 보이던 문제를, 서버 `daily`(전체
+    이력 일자 GROUP BY) 집계로 절단 없이 전 기간 표시하는 동작을 회귀로 고정. 신규
+    `test_token_log_day_bucket_full_history_not_capped`(daily 12일+records 1건 → day 뷰 06-01..06-12
+    전부·Σ12k·과소표시 병기 없음; hour 는 raw records 만 쓰는 경계도 확인).
+  - **공유 워크스페이스(이 세션 작업)**: p4 sync 시 office #58484(esc) 가 내 미커밋 `test_client.py`
+    (토큰버킷 WIP)와 같은 파일을 건드려 충돌 → naive sync 면 내 WIP 가 조용히 덮어써질 상황. base/
+    ours/theirs **3-way `git merge-file`**(703행 esc vs 1073행 토큰버킷, 비겹침 → 충돌 0)으로 둘 다
+    보존하고 CL 58489 서브밋. git 미러는 office 58484 를 별도 커밋으로 캐치업한 뒤 내 커밋을 쌓아
+    p4 head 와 일치(자동 bench 커밋 위로 rebase). 절차는 §11 공유 워크스페이스 충돌 가이드.
 - **footer 계정명 전체표시 + 폭주경고 ❗분:초 + esc 진입키 ` + prefix↔esc 통합검토 문서 + owned soak(2026-06-12, CL 58476·58484·58482)** — 06-12
   사용자 요청 묶음(office 박스). 동기화된 트리 헤드리스 **547 passed**. 공유 워크스페이스:
   병렬 세션 §2.9 dim(58475)과 client.py/test_client.py 3-way 머지(충돌 0), 미싱크였던
