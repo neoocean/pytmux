@@ -27,9 +27,6 @@ COMMANDS = [
     ("auto-resume-message", "자동 재개 메시지 설정", "Claude"),
     ("claude-header", "Claude 프롬프트 헤더 표시 on/off (claude-header on|off|toggle)",
                       "Claude"),
-    ("prompt-history", "Claude 프롬프트 히스토리 팝업(헤더 클릭으로도 열림)", "Claude"),
-    ("prompt-jump", "프롬프트 히스토리 n번으로 스크롤 점프 (prompt-jump <n>)", "Claude"),
-    ("prompt-expand", "프롬프트 n번 구간을 펼쳐 응답·툴 기록 팝업 (prompt-expand <n>)", "Claude"),
     ("token-log", "토큰 사용량 팝업 — 기간(시/일/주/월)·계정·세션 뷰 + 실측 한도·5h창"
                   "(별칭 token-usage, 상태줄 사용량 클릭)", "Claude"),
     ("claude-usage", "그림자 /usage 질의 — 숨은 세션으로 실 세션/주간 한도 갱신"
@@ -61,7 +58,7 @@ COMMANDS = [
 ]
 NOARG = {
     "claude-rules", "token-saver",
-    "prompt-history", "token-usage", "token-log",
+    "token-usage", "token-log",
     "claude-usage", "usage", "usage-panel", "usage-limits", "limits",
 }
 # 옵션(선택지) 스키마 — 팔레트에서 on/off/토글을 키보드로 고른다(코어 COMMAND_OPTIONS 병합).
@@ -89,9 +86,6 @@ i18n.register({
         "cmd.auto-resume": "Auto-resume on token limit [on|off]",
         "cmd.auto-resume-message": "Set the auto-resume message",
         "cmd.claude-header": "Show Claude prompt header on/off (claude-header on|off|toggle)",
-        "cmd.prompt-history": "Claude prompt history popup (also opens by clicking the header)",
-        "cmd.prompt-jump": "Scroll-jump to prompt #n in history (prompt-jump <n>)",
-        "cmd.prompt-expand": "Expand prompt #n's segment — response·tool record popup (prompt-expand <n>)",
         "cmd.token-log": "Token usage popup — period (h/d/w/m)·account·session views + measured limits·5h window (alias token-usage, click status usage)",
         "cmd.claude-usage": "Shadow /usage query — refresh real session/weekly limits via a hidden session (alias usage)",
         "cmd.usage-panel": "Claude token usage-limit popup — /usage (session 5h·week all·week Sonnet) bar graph (alias usage-limits·limits)",
@@ -268,22 +262,10 @@ def saver_action(app, key):
 
 
 def _pane_claude_entry(p, full):
-    """status 의 패널별 Claude 항목. history 는 드물게 바뀌는데 매 status(토큰 변동으로
-    자주 발화)마다 30개 프롬프트를 재직렬화·전송하면 ssh 트래픽이 커진다(§4.5). 그래서
-    **변할 때만** 싣는다: `full`(신규 attach·구조 변경 resync)이면 항상 실어 새 클라가
-    비어 보이지 않게 하고, 주기 flush(full=False)는 직전 전송분(_hist_sent)과 다를 때만
-    싣고 갱신한다. full 은 _hist_sent 를 건드리지 않는다 — 주기 스트림(모든 클라 공유)의
-    추적을 오염시키면 다른 클라가 델타를 놓친다. (serverio 코어에서 이리로 이전.)"""
-    e = {"id": p.id, "claude": p._claude, "prompt": p.last_prompt,
-         "perm_mode": p._perm_mode, "bypass_ok": p._bypass_seen}
-    # 마지막 30개만 싣는다(상태 경량). §3.8 prompt-jump 는 이 슬라이스 번호를 서버에서
-    # 절대 인덱스로 환산하므로, 이 30 은 servermixin._PROMPT_HIST_TAIL 과 **동일해야** 한다.
-    h = p.prompt_history[-30:]
-    if full or h != p._hist_sent:
-        e["history"] = h
-        if not full:
-            p._hist_sent = h
-    return e
+    """status 의 패널별 Claude 항목(헤더/권한모드 표시용). (serverio 코어에서 이리로
+    이전.)"""
+    return {"id": p.id, "claude": p._claude, "prompt": p.last_prompt,
+            "perm_mode": p._perm_mode, "bypass_ok": p._bypass_seen}
 
 
 # ---- Claude 팝업(클라) — Phase 2a 에서 코어 client.py 에서 이리로 이전 ----
@@ -355,88 +337,6 @@ def _on_token_log_msg(app, msg):
         reconcile=msg.get("reconcile")))
 
 
-def _open_prompt_history(app, pane_id=None):
-    """Claude 프롬프트 히스토리 팝업(시간순). 헤더 클릭/명령으로 연다(#7). [h] 로 이
-    패널 헤더 숨김/표시 토글(#6 ②). InfoScreen(코어 공유)에 2칼럼(번호/본문)으로 싣고,
-    pane_claude/_claude_hidden_panes/toggle_header_hidden(코어 렌더 상태)을 읽고 쓴다."""
-    from pytmuxlib.clientscreens import InfoScreen
-    pid = pane_id if pane_id is not None else app.layout.get("active")
-    info = app.pane_claude.get(pid) or {}
-    hist = info.get("history") or ([info["prompt"]] if info.get("prompt") else [])
-    # 2칼럼 행: (번호, 본문) — 본문이 여러 줄이어도 번호 칼럼 아래로 새지 않고 본문
-    # 칼럼 안에 머문다(사용자 요청). 번호는 우측정렬 폭 보존.
-    rows = [(f"{i + 1}.", h) for i, h in enumerate(hist)]
-    hidden = pid in app._claude_hidden_panes
-    # 맨 나중에 입력한(최신) 프롬프트를 열 때 강조(#17). hist 는 시간순이라 마지막을 선택.
-    latest = (len(hist) - 1) if hist else None
-    # §10-A #8: 마지막 항목과 [h] footer 사이에 구분선(nav 에서 건너뜀).
-    rows.append("─" * 24)
-    rows.append("  [h] 이 헤더 " + ("다시 표시" if hidden else "숨기기"))
-    # §3.8 Stage 2 ②③: 목록에서 프롬프트를 Enter/클릭으로 고르면 그 프롬프트로 진행된
-    # 기록(응답·툴 실행) 구간을 '펼쳐' 별도 팝업으로 본다(원 요청의 헤드라인). 서버에
-    # 구간 텍스트를 요청(request_prompt_segment)하고 회신(handle_message)이 펼친 팝업을
-    # 연다. 점프(②)는 펼친 팝업의 [j] 와 `prompt-jump <n>` 명령으로 유지. idx 는 ListView
-    # 인덱스 = 팝업 번호-1 = 서버 tail-slice 인덱스(scroll_to_prompt/prompt_segment 동일
-    # 환산). 구분선/[h] footer(idx>=len(hist))는 무시한다.
-    n_hist = len(hist)
-
-    def _expand(idx):
-        if 0 <= idx < n_hist:
-            app.send_cmd("request_prompt_segment", index=idx)
-
-    app.push_screen(InfoScreen(
-        [], title="프롬프트 히스토리(시간순) — Enter/클릭 펼치기",
-        hide_key="h", hide_cb=lambda: app.toggle_header_hidden(pid),
-        initial_index=latest, max_width=110,   # 좌우로 넓게(#17)
-        col_rows=rows,                         # 번호/본문 2칼럼 표시
-        select_cb=_expand))                    # Enter/클릭 → 그 프롬프트 구간 펼치기
-
-
-def _on_prompt_segment_msg(app, msg):
-    """§3.8 Stage 2③ 서버 prompt_segment 회신 → 펼친 구간 팝업. 선택 프롬프트로 진행된
-    스크롤백 기록(응답·툴 실행)을 평문으로 보여 준다. [j] 로 그 위치로 라이브 점프(②),
-    Esc/[x]/바깥클릭으로 닫는다. ok=False(anchor 회전·복원분)면 안내만."""
-    from pytmuxlib.clientscreens import InfoScreen
-    if not msg.get("ok"):
-        app.display_message(
-            "이 프롬프트 구간을 펼칠 수 없음 — 스크롤백에서 사라졌거나 재시작 복원분")
-        return
-    lines = list(msg.get("lines") or [])
-    if msg.get("truncated"):
-        lines = ["… (앞부분이 스크롤백 회전/길이로 잘림)"] + lines
-    if not lines:
-        lines = ["(이 프롬프트로 진행된 기록 없음)"]
-    idx = int(msg.get("index", 0))
-    # footer: [j] 라이브 점프 안내(hide_key='j' → hide_cb 호출 후 닫힘). nav 에서
-    # 건너뛰도록 위에 구분선을 둔다(InfoScreen 의 skip 규칙).
-    lines = lines + ["─" * 24, "  [j] 이 위치로 라이브 점프 · Esc 닫기"]
-    prompt0 = (msg.get("prompt") or "").splitlines()
-    head = prompt0[0][:48] if prompt0 else ""
-    title = "펼친 프롬프트" + (f": {head}" if head else "")
-    app.push_screen(InfoScreen(
-        lines, title=title, max_width=120,
-        hide_key="j",
-        hide_cb=lambda: app.send_cmd("scroll_to_prompt", index=idx)))
-
-
-def _on_scroll_at_top(app, msg):
-    """§3.8 ①: 서버가 '스크롤백 맨 위에서 더 위로' 신호(scroll_at_top)를 보냈을 때 —
-    그 패널이 Claude 이고 띄울 프롬프트가 있으며 모달이 안 떠 있으면 프롬프트 히스토리
-    오버레이를 자동으로 연다. raw 스크롤은 서버가 맨 위 도달까지 그대로 보존하고, 맨
-    위에서 한 번 더 올릴 때만 이 신호가 온다(스크롤 거동 비대체 — 사용자 보호). 비-Claude
-    패널·히스토리 없음·모달 열림이면 무동작."""
-    pid = msg.get("pane")
-    info = (getattr(app, "pane_claude", {}) or {}).get(pid)
-    if not (info and info.get("claude")):
-        return
-    if not (info.get("history") or info.get("prompt")):
-        return
-    if len(app.screen_stack) > 1:          # 이미 모달이 떠 있으면 중복 방지
-        return
-    fn = getattr(app, "open_prompt_history", None)
-    fn and fn(pid)
-
-
 def _open_usage_panel(app):
     """Claude `/usage` 한도(세션 5h·주 전체·주 Sonnet)를 깨끗한 전용 화면(InfoScreen,
     막대+%+리셋)으로 연다. 인패널 /usage 자동 팝업과 수동 명령(`usage-panel`)이 공유.
@@ -456,19 +356,8 @@ def _open_usage_panel(app):
 
 # ---- Claude 헤더/상태 (클라) — Phase 2c 에서 코어 client.py 에서 이리로 이전 ----
 def _update_claude(app, panes_claude):
-    """status 의 패널별 Claude 항목으로 app.pane_claude 를 갱신(헤더용). history 가
-    빠진 항목(§4.5: 서버가 변할 때만 실음)은 직전 history 를 유지한다 — 매 status
-    마다 30개 프롬프트를 재전송하지 않게."""
-    prev_all = getattr(app, "pane_claude", {})
-    new = {}
-    for e in panes_claude:
-        pid = e["id"]
-        if "history" not in e:
-            prev = prev_all.get(pid)
-            if prev is not None and "history" in prev:
-                e = {**e, "history": prev["history"]}
-        new[pid] = e
-    app.pane_claude = new
+    """status 의 패널별 Claude 항목으로 app.pane_claude 를 갱신(헤더용)."""
+    app.pane_claude = {e["id"]: e for e in panes_claude}
 
 
 def _set_claude_header(app, on):
@@ -476,17 +365,6 @@ def _set_claude_header(app, on):
     서버에 보내 opts.json 에 영속(#6 ③) — 서버가 status 로 회신."""
     app.claude_header_on = on
     app.send_cmd("set_claude_header", value=bool(on))
-    app._composite()
-
-
-def _toggle_header_hidden(app, pane_id):
-    """특정 패널의 헤더만 숨기거나 다시 보이게(#6 ② — 히스토리 팝업서 토글). 패널별·
-    세션 한정(전역 claude-header off 와 별개)."""
-    hidden = app._claude_hidden_panes
-    if pane_id in hidden:
-        hidden.discard(pane_id)
-    else:
-        hidden.add(pane_id)
     app._composite()
 
 
@@ -797,17 +675,14 @@ class _ClaudeCodePlugin:
         # 코어는 이 속성들을 직접 만들지 않고, 헤더 렌더(client_render 훅)·ESC nav·
         # 클릭 핸들러에서 getattr(app, ..., 기본값)으로만 읽는다 → 디렉토리 삭제 시
         # 속성이 없어 Claude 헤더/클릭존이 전혀 나타나지 않는다(delete-to-disable).
-        app.pane_claude = {}            # id -> {"claude","prompt","history"}
+        app.pane_claude = {}            # id -> {"claude","prompt",…}
         app.claude_header_on = True     # 프롬프트 헤더 표시(claude-header on|off)
-        app._claude_hidden_panes = set()  # 헤더를 숨긴 패널 id(#6 ② 팝업서 토글)
-        app._claude_header_zones = {}   # id -> (x0,x1,y) 헤더 클릭존(히스토리 팝업)
         app._perm_zone = {}             # id -> (x0,x1,y) 권한모드 footer 클릭존
         app._remote_zone = {}           # id -> (x0,x1,y) 원격제어 표시 클릭존
         app._last_usage_shown_seq = None  # /usage 자동 팝업 one-shot 시퀀스 베이스라인
         # 헤더 상태/클릭존 글루(코어/clientwidgets 가 getattr 로 호출 — 없으면 no-op).
         app._update_claude = lambda pc: _update_claude(app, pc)
         app.set_claude_header = lambda on: _set_claude_header(app, on)
-        app.toggle_header_hidden = lambda pid: _toggle_header_hidden(app, pid)
         app._toggle_remote_control = lambda pid: _toggle_remote_control(app, pid)
         app.open_remote_control = lambda pid: _open_remote_control(app, pid)
         from .clientrender import claude_header_panes, footer_zone_at
@@ -821,7 +696,6 @@ class _ClaudeCodePlugin:
         app._apply_model_config = lambda res: _apply_model_config(app, res)
         app.open_perm_mode = lambda pane_id: _open_perm_mode(app, pane_id)
         app.open_usage_panel = lambda: _open_usage_panel(app)
-        app.open_prompt_history = lambda pane_id=None: _open_prompt_history(app, pane_id)
         app.open_token_log = lambda: _open_token_log(app)
         # (open_claude_usage_tree/_open_usage_tree 설치는 token-usage→token-log 통합
         #  (2026-06-12)으로 제거 — 상태줄 사용량 클릭·esc 포커스 Enter 는 이미
@@ -860,14 +734,6 @@ class _ClaudeCodePlugin:
         if msg.get("t") == "token_log":
             _on_token_log_msg(app, msg)
             return True
-        # §3.8 Stage 2③ 서버 prompt_segment 회신 → 펼친 구간 팝업.
-        if msg.get("t") == "prompt_segment":
-            _on_prompt_segment_msg(app, msg)
-            return True
-        # §3.8 ① 서버 scroll_at_top 신호 → Claude 패널이면 프롬프트 오버레이.
-        if msg.get("t") == "scroll_at_top":
-            _on_scroll_at_top(app, msg)
-            return True
         return False
 
     def handle_server_request(self, server, sess, action, msg):
@@ -897,13 +763,6 @@ class _ClaudeCodePlugin:
             return {"t": "token_log", "records": recs,
                     "total_all": total_all, "accounts_total": accts,
                     "daily": daily, "reconcile": recon}
-        if action == "request_prompt_segment":
-            # §3.8 Stage 2③ '펼치기': 활성 패널의 index 프롬프트 구간 텍스트를 추출해
-            # 회신(코어가 그대로 클라로). prompt_segment 는 servermixin 소속이라 getattr
-            # 가드(없으면 ok=False — delete-to-disable).
-            fn = getattr(server, "prompt_segment", None)
-            seg = fn(sess, int(msg.get("index", 0))) if fn else {"ok": False}
-            return {"t": "prompt_segment", **seg}
         return None
 
     # ---- 클라이언트 콘텐츠-레이어 렌더/상태 훅(Phase 2c) ----
@@ -973,21 +832,6 @@ class _ClaudeCodePlugin:
             self._open_rules(app)
         elif c in ("token-saver", "claude-settings", "token-settings"):
             self._open_saver(app)
-        elif c in ("prompt-history", "prompts"):
-            app.open_prompt_history(app.layout.get("active"))
-        elif c in ("prompt-jump", "prompt-goto", "jump-prompt"):
-            # §3.8: prompt-jump <n> → 활성 패널을 히스토리 팝업의 n 번째(1 기반) 프롬프트가
-            # 제출된 스크롤백 위치로 점프(그 프롬프트로 진행된 기록을 위에서부터 본다).
-            # 인자 없으면 무동작. 서버가 anchor→scroll 환산(scroll_to_prompt).
-            n = next((int(a) for a in args if a.lstrip("-").isdigit()), None)
-            if n is not None:
-                app.send_cmd("scroll_to_prompt", index=n - 1)
-        elif c in ("prompt-expand", "expand-prompt"):
-            # §3.8 Stage 2③: prompt-expand <n> → n 번째(1 기반) 프롬프트 구간을 펼친
-            # 팝업으로(응답·툴 실행 기록). 서버가 [a_i, a_{i+1}) 텍스트 추출해 회신.
-            n = next((int(a) for a in args if a.lstrip("-").isdigit()), None)
-            if n is not None:
-                app.send_cmd("request_prompt_segment", index=n - 1)
         elif c in ("token-log", "tokens-log", "token-usage-log",
                    "token-usage", "tokens"):
             # token-usage 는 token-log 로 통합(2026-06-12) — 별칭으로만 남는다.

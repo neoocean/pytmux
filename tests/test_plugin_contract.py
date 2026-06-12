@@ -21,7 +21,7 @@ import pytmuxlib.plugins as plugins
 # claude-code 가 코어에 노출하던 명령(이 플러그인 부재 시 전부 사라져야 함).
 _CLAUDE_CMDS = {
     "claude-rules", "token-saver", "auto-resume", "claude-header",
-    "prompt-history", "token-log", "claude-usage",
+    "token-log", "claude-usage",
     "usage-panel", "token-account", "prompt-clear", "model",
     "auto-doc-clear", "auto-compact", "claude-auto-mode", "auto-launch",
 }
@@ -184,8 +184,10 @@ async def test_plugin_opts_namespace_and_migration_shim():
     # ③ serialize 는 현재 server 값을 돌려준다(코어가 plugin_opts 밑에 불투명 저장).
     out = reg.server_opts_serialize(s2)
     assert out["usage_gate_session_pct"] == 90
-    assert set(out) == {"usage_gate_session_pct", "usage_gate_week_pct",
-                        "claude_auto_retry"}
+    # ph_max_lines 는 claude-prompt-history 플러그인 소유 opt(별개) — claude-code 계약을
+    # 엄격히 검증하기 위해 그 키만 빼고 비교한다.
+    assert set(out) - {"ph_max_lines"} == {"usage_gate_session_pct",
+                                           "usage_gate_week_pct", "claude_auto_retry"}
     assert out["claude_auto_retry"] is True   # 기본 ON(opts 부재 시)
     # §7-4 deprecate shim: 구 opts.json 에 남은 token_budget_* 는 무시(속성 미설치).
     s4 = _S()
@@ -201,7 +203,8 @@ async def test_plugin_opts_namespace_and_migration_shim():
     s3 = _S()
     reg2.server_opts_init(s3, {"usage_gate_session_pct": 5})
     assert not hasattr(s3, "usage_gate_session_pct"), "플러그인 부재인데 설정 설치됨"
-    assert reg2.server_opts_serialize(s3) == {}
+    # claude-code 의 opts 는 사라진다(잔존 키는 claude-prompt-history 의 ph_max_lines 뿐).
+    assert set(reg2.server_opts_serialize(s3)) - {"ph_max_lines"} == set()
 
 
 async def test_pane_token_accumulator_owned_by_plugin():
@@ -302,7 +305,8 @@ async def test_token_subsystem_fully_disabled_without_plugin():
     s = _S()
     reg.server_opts_init(s, {"usage_gate_session_pct": 9,
                              "plugin_opts": {"usage_gate_session_pct": 9}})
-    assert reg.server_opts_serialize(s) == {}
+    # claude-code 의 opts 가 사라진다(잔존 키는 claude-prompt-history 의 ph_max_lines 뿐).
+    assert set(reg.server_opts_serialize(s)) - {"ph_max_lines"} == set()
     # ④ DB 연결 런타임 상태(server_init) 미설치.
     s2 = _S()
     reg.server_init(s2)
@@ -344,14 +348,14 @@ async def test_contract_client_app_runs_without_claude_plugin(monkeypatch=None):
             await pilot.pause(0.4)
             # 1) Claude 팝업·헤더 클로저·상태가 설치되지 않았다(delete-to-disable).
             for attr in ("open_model_config", "open_perm_mode", "open_token_log",
-                         "open_prompt_history", "open_usage_panel",
+                         "open_usage_panel",
                          "open_remote_control", "_toggle_remote_control",
                          "_update_claude", "set_claude_header",
-                         "toggle_header_hidden", "_footer_zone_at",
+                         "_footer_zone_at",
                          "_claude_header_panes",
                          # Phase 2c 헤더/클릭존 상태도 코어가 만들지 않는다.
-                         "pane_claude", "claude_header_on", "_claude_hidden_panes",
-                         "_claude_header_zones", "_perm_zone", "_remote_zone",
+                         "pane_claude", "claude_header_on",
+                         "_perm_zone", "_remote_zone",
                          "_last_usage_shown_seq"):
                 assert getattr(app, attr, None) is None, \
                     f"{attr} 가 설치됨(플러그인 부재인데)"

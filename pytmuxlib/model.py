@@ -247,10 +247,6 @@ class _ScrollbackScreen(_BCEMixin, pyte.Screen):
         # super().__init__ 가 reset() 을 호출하므로 history 를 먼저 만든다
         # (HistoryScreen 과 동일한 순서).
         self.history = _History(history)
-        # §3.8 프롬프트↔스크롤백 매핑: top 히스토리에 들어간 누적 줄 수(단조 증가).
-        # deque 가 maxlen 으로 회전해도 줄지 않아, 회전에 강건한 **절대** 라인 인덱스
-        # (anchor)를 만든다 — 현재 deque 의 줄 i 는 절대 인덱스 hist_total-len(top)+i.
-        self.hist_total = 0
         super().__init__(columns, lines)
 
     def index(self) -> None:
@@ -259,7 +255,6 @@ class _ScrollbackScreen(_BCEMixin, pyte.Screen):
         top, bottom = self.margins or Margins(0, self.lines - 1)
         if self.cursor.y == bottom:
             self.history.top.append(self.buffer[top])
-            self.hist_total += 1   # §3.8 절대 라인 카운터(회전 무관 단조 증가)
         super().index()
 
     def reverse_index(self) -> None:
@@ -277,7 +272,6 @@ class _ScrollbackScreen(_BCEMixin, pyte.Screen):
         super().reset()
         self.history.top.clear()
         self.history.bottom.clear()
-        self.hist_total = 0   # §3.8 스크롤백 비움 → 절대 카운터도 리셋(anchor 무효화)
 
 
 # 대체 화면 버퍼(alternate screen) 전환 시퀀스. pyte 가 직접 지원하지 않아
@@ -535,7 +529,7 @@ class Pane:
     # setattr 로 그대로 복원 가능한 JSON 가능 스칼라/딕트 필드 목록. PTY 식별자
     # (child_pid·master_fd)와 크기·화면 스냅샷은 export_state 가 별도로 다룬다.
     # Claude 거동 필드(_claude·_claude_usage·_scanbuf·_resume_pending·resume_msg·
-    # last_prompt·_claude_session_id·prompt_clear_mode·_rc_done·prompt_history·
+    # last_prompt·_claude_session_id·prompt_clear_mode·_rc_done·
     # pending_prompts·토큰 누계 _tok_state/_session_tokens)의 직렬화는 claude-code
     # 플러그인이 pane_serialize/pane_restore 훅으로 담당한다(S4/S5 — export_state 가
     # 'plugin_state' 키로 불투명하게 담는다). 여기 남는 건 코어가 직접 쓰는 계정/리네임/
@@ -617,7 +611,7 @@ class Pane:
             "mouse_modes": sorted(self._mouse_modes),
             "mouse_sgr": self.mouse_sgr,
             "prompt_clear_queue": list(self.prompt_clear_queue),
-            # Claude 보존 필드(프롬프트 히스토리/대기큐·상태/세션 등)는 플러그인이
+            # Claude 보존 필드(프롬프트 대기큐·상태/세션 등)는 플러그인이
             # 직렬화한다(S4). 코어는 내용을 해석하지 않고 불투명 dict 로 담는다 —
             # 플러그인 부재 시 {} 라 복원도 no-op(delete-to-disable).
             "plugin_state": plugins.get().pane_serialize(self),
@@ -645,12 +639,11 @@ class Pane:
                             else 1 if 1000 in self._mouse_modes else 0)
         self.prompt_clear_queue = list(d.get("prompt_clear_queue", []))
         # Claude 보존 필드 복원은 플러그인이(S4). 구 이미지 하위호환: 예전 export 는
-        # prompt_history/pending_prompts 를 최상위 키로 담았으므로, plugin_state 가
-        # 없고 그 키가 있으면 함께 넘겨 준다.
+        # pending_prompts 를 최상위 키로 담았으므로, plugin_state 가 없고 그 키가
+        # 있으면 함께 넘겨 준다.
         ps = d.get("plugin_state")
-        if ps is None and ("prompt_history" in d or "pending_prompts" in d):
-            ps = {"prompt_history": d.get("prompt_history", []),
-                  "pending_prompts": d.get("pending_prompts", [])}
+        if ps is None and "pending_prompts" in d:
+            ps = {"pending_prompts": d.get("pending_prompts", [])}
         plugins.get().pane_restore(self, ps or {})
         view = d.get("viewport")
         if view is not None:
@@ -817,66 +810,6 @@ class Pane:
     def scroll_to(self, where: str) -> None:
         self.scroll = self._history_len() if where == "top" else 0
         self.dirty = True
-
-    def current_anchor(self) -> int:
-        """지금 커서 줄의 **절대 스크롤백 라인 인덱스**(§3.8). 스크롤백으로 밀려나도
-        변치 않는 값 = hist_total(밀려난 누적 줄 수) + 커서 y(화면 내 행). 프롬프트 제출
-        시점에 호출해 그 프롬프트 줄의 anchor 로 저장한다. 스크롤백 없는 화면(대체
-        버퍼 등)은 커서 y 만(0 기준)."""
-        scr = self.screen
-        total = getattr(scr, "hist_total", 0)
-        return total + scr.cursor.y
-
-    def scroll_to_anchor(self, anchor: int) -> None:
-        """절대 라인 인덱스 anchor 가 뷰포트 맨 위에 오도록 scroll 을 설정(§3.8 — 프롬프트
-        점프). 회전 강건: render 의 `start = len(hist) - scroll` 가 hist 의 줄 인덱스
-        anchor-(hist_total-len(hist)) 를 가리키게 풀면 scroll = hist_total - anchor.
-        [0, len(hist)] 로 클램프 — anchor 가 아직 라이브 화면 위(>=hist_total)면 0(라이브),
-        deque 회전으로 사라졌으면 len(hist)(맨 위)."""
-        h = getattr(self.screen, "history", None)
-        if h is None:
-            return
-        total = getattr(self.screen, "hist_total", 0)
-        self.scroll = max(0, min(total - anchor, len(h.top)))
-        self.dirty = True
-
-    @staticmethod
-    def _plain_line(line, cols) -> str:
-        """pyte 줄(line)을 평문 문자열로(SGR 없이). 와이드 문자의 연속 빈 셀(data=="")
-        은 건너뛴다(_serialize_row 와 동일 규칙) — 한 칸씩 밀리지 않게. 뒤 공백 제거."""
-        chars = []
-        for x in range(cols):
-            d = line[x].data
-            if d == "":          # 와이드 문자(이모지·CJK) 연속 셀
-                continue
-            chars.append(d if d else " ")
-        return "".join(chars).rstrip()
-
-    def prompt_segment_lines(self, a0: int, a1=None, max_lines: int = 800):
-        """§3.8 Stage 2③ '펼치기': 절대 라인 인덱스 구간 [a0, a1) 의 스크롤백 텍스트를
-        평문 줄 목록으로 떼어 낸다(그 프롬프트로 진행된 기록 — 응답·툴 실행). a1=None 이면
-        현재 화면 맨 아래까지(가장 최근 프롬프트). 절대→deque/버퍼 매핑은 render 와 동일:
-        full=hist+buffer 라 full[j] 의 절대 인덱스 = j + (hist_total - len(hist)).
-        반환=(줄목록, truncated). truncated 는 a0 이 deque 회전으로 사라져 앞이 잘렸거나
-        max_lines 캡에 걸렸음을 뜻한다(맨 위/앞부터 best-effort)."""
-        scr = self.screen
-        h = getattr(scr, "history", None)
-        hist = list(h.top) if h is not None else []
-        full = hist + [scr.buffer[y] for y in range(scr.lines)]
-        base_abs = getattr(scr, "hist_total", 0) - len(hist)   # full[0] 의 절대 인덱스
-        start = a0 - base_abs
-        truncated = start < 0
-        start = max(0, start)
-        end = len(full) if a1 is None else (a1 - base_abs)
-        end = max(start, min(end, len(full)))
-        cols = scr.columns
-        out = [self._plain_line(full[j], cols) for j in range(start, end)]
-        while out and not out[-1]:        # 구간 경계 뒤 빈 줄 트림
-            out.pop()
-        if len(out) > max_lines:          # 거대 구간 안전 캡
-            out = out[:max_lines]
-            truncated = True
-        return out, truncated
 
     def _serialize_row(self, line, cols):
         """한 줄(line)을 [text, style] 런(run) 목록으로 직렬화한다(매치 하이라이트

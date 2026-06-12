@@ -534,7 +534,7 @@ COMMANDS = [
     # calendar-mode/open-calendar/close-calendar 는 calendar 플러그인이 등록한다.
     ("single-border", "패널이 하나뿐일 때 테두리 표시 on/off (single-border on|off|toggle)", "설정/기타"),
     ("coalesce-repaints", "대량 출력 시 alt-screen 풀스크린 리페인트 합치기 on/off — ssh 반응성(coalesce-repaints on|off|toggle)", "설정/기타"),
-    # Claude Code 명령(auto-resume·claude-header·prompt-history·token-log·
+    # Claude Code 명령(auto-resume·claude-header·token-log·
     # claude-usage·usage-panel·token-account·prompt-clear*·model·auto-doc-clear·
     # auto-compact·claude-auto-mode·auto-launch 등)은 claude-code 플러그인이 등록한다
     # (pytmuxlib/plugins/claude-code — 디렉토리 삭제 시 명령 검색·자동완성·디스패치에서 사라짐).
@@ -665,7 +665,7 @@ COMMAND_NOARG = {
     # 무인자 명령으로 등록한다.
     "list-keys", "send-escape", "version",
     "restart-check",
-    # Claude Code 무인자 명령(prompt-history·token-log(별칭 token-usage)·claude-usage·usage·
+    # Claude Code 무인자 명령(token-log(별칭 token-usage)·claude-usage·usage·
     # usage-panel·usage-limits·limits·claude-rules·token-saver)은 claude-code 플러그인이 등록.
 }
 # 자유 텍스트 인자를 받는 명령 — 명령 프롬프트에서 명령을 다 치면 인자 자리에 밑줄

@@ -55,7 +55,7 @@ class RemoteLink:
 # 제어(restart/kill-server/remote_*)는 의도적으로 제외 — 로컬에서 처리되거나 무시.
 _REMOTE_RELAY_ACTIONS = {
     "select_pane_id", "select_pane", "zoom", "next_window", "prev_window",
-    "resize", "resize_dir", "scroll_to_prompt", "request_prompt_segment",
+    "resize", "resize_dir",
 }
 
 
@@ -296,8 +296,8 @@ class ServerRemoteMixin:
     # ---- 업스트림 수신 ----
     async def _remote_reader(self, link: RemoteLink):
         """업스트림 메시지 루프: status 는 흡수(탭바 병합), bye/EOF 는 링크 해제,
-        그 외(layout/screen/screen-delta/prompt_segment 등)는 이 링크를 **보는**
-        클라에 그대로 전달한다."""
+        그 외(layout/screen/screen-delta 등)는 이 링크를 **보는** 클라에 그대로
+        전달한다."""
         try:
             while link.alive:
                 try:

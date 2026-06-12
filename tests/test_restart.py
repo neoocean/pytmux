@@ -30,7 +30,7 @@ async def test_pane_export_import_roundtrip():
     p._tok_state = {"peak": 100, "total": 4321}
     p._mouse_modes = {1000, 1002}
     p.mouse_sgr = True
-    p.prompt_history = ["a", "b", "c"]
+    p.pending_prompts = ["a", "b"]
     p.feed(b"hello world\r\nsecond line\r\n")
 
     d = p.export_state()
@@ -51,7 +51,7 @@ async def test_pane_export_import_roundtrip():
     assert q._mouse_modes == {1000, 1002}
     assert q.mouse_sgr is True
     assert q.mouse_track == 2   # 1002 → drag
-    assert q.prompt_history == ["a", "b", "c"]
+    assert q.pending_prompts == ["a", "b"]
     # 화면 스냅샷이 복원돼 내용이 비어 있지 않다.
     from harness import pane_text
     assert "hello world" in pane_text(q)

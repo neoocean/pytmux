@@ -2439,16 +2439,15 @@ async def test_bind_unbind_keys():
     await _with_app(body)
 
 
-async def test_prompt_history_arrows_navigate_not_close():
-    # #7: 프롬프트 히스토리 팝업에서 방향키는 팝업을 닫지 않고 항목을 내비게이션한다
-    # (이전엔 아무 키나 닫혀 방향키도 즉시 닫혔다). 긴 프롬프트는 잘리지 않고 여러
+async def test_infoscreen_arrows_navigate_not_close():
+    # #7: InfoScreen 에서 방향키는 팝업을 닫지 않고 항목을 내비게이션한다
+    # (이전엔 아무 키나 닫혀 방향키도 즉시 닫혔다). 긴 줄은 잘리지 않고 여러
     # 줄로 줄바꿈되며, 방향키 외 키는 기존대로 닫는다.
     async def body(app, pilot, srv):
         from textual.widgets import Label, ListView
-        long_prompt = "이것은 " + "아주 " * 40 + "긴 프롬프트입니다"
-        app.pane_claude = {5: {"id": 5, "claude": "idle", "prompt": "p3",
-                               "history": ["p1", long_prompt, "p3"]}}
-        app.open_prompt_history(5)
+        from pytmuxlib.clientscreens import InfoScreen
+        long_line = "이것은 " + "아주 " * 40 + "긴 줄입니다"
+        app.push_screen(InfoScreen(["p1", long_line, "p3"]))
         await pilot.pause(0.05)
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoScreen"
@@ -2469,9 +2468,9 @@ async def test_prompt_history_arrows_navigate_not_close():
         scr.on_key(Key(key="home", character=None))
         await pilot.pause(0.05)
         assert app.screen_stack[-1] is scr and lv.index == 0
-        # 긴 프롬프트가 잘리지 않고 보존(줄바꿈 표시)
+        # 긴 줄이 잘리지 않고 보존(줄바꿈 표시)
         joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
-        assert "긴 프롬프트입니다" in joined, joined
+        assert "긴 줄입니다" in joined, joined
         # 방향키 외 키는 닫는다
         scr.on_key(Key(key="enter", character=None))
         await pilot.pause(0.05)
@@ -2514,190 +2513,33 @@ async def test_hangwrap_cell_aware_and_indent_preserved():
     assert len(out3) > 1 and not out3[1].startswith(" "), out3
 
 
-async def test_prompt_history_down_jumps_to_h_over_divider():
-    """§10-A #8: 프롬프트 히스토리 — 마지막 프롬프트에서 ↓ 한 번에 구분선을 건너뛰어
-    [h] footer 로 점프한다(구분선/빈 줄은 nav 에서 skip)."""
+async def test_infoscreen_down_jumps_over_divider():
+    """§10-A #8: InfoScreen — 마지막 항목에서 ↓ 한 번에 구분선을 건너뛰어 footer 로
+    점프한다(구분선/빈 줄은 nav 에서 skip)."""
     async def body(app, pilot, srv):
         from textual.widgets import Label, ListView
-        app.pane_claude = {7: {"id": 7, "claude": "idle", "prompt": "p2",
-                               "history": ["p1", "p2"]}}
-        app.open_prompt_history(7)
+        from pytmuxlib.clientscreens import InfoScreen
+        app.push_screen(InfoScreen(["p1", "p2", "─" * 24, "  [r] footer"]))
         # InfoScreen 이 top 이 되고 **그 안의 ListView 가 mount** 될 때까지 대기
         # (push 직후엔 자식이 아직 안 그려져 query_one 이 실패할 수 있다 — CI 플레이크).
         await wait_until(pilot, lambda: app.screen_stack[-1].query_one(ListView))
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoScreen"
         lv = scr.query_one(ListView)
-        # 2칼럼 항목은 Label 이 2개(번호+본문)라 query_one 대신 전부 합친다.
         texts = [" ".join(str(l.render()) for l in it.query(Label))
                  for it in lv.children]
         assert any("─" in t for t in texts), ("구분선 표시", texts)
-        hidx = next(i for i, t in enumerate(texts) if "[h]" in t)
+        ridx = next(i for i, t in enumerate(texts) if "[r]" in t)
         p2idx = next(i for i, t in enumerate(texts) if "p2" in t)
-        # 마지막 프롬프트(p2) 선택 후 ↓ → 구분선 건너뛰고 [h] 로 점프
+        # 마지막 항목(p2) 선택 후 ↓ → 구분선 건너뛰고 footer 로 점프
         lv.index = p2idx
         scr.on_key(Key(key="down", character=None))
-        await wait_until(pilot, lambda: lv.index == hidx)
-        assert lv.index == hidx, (lv.index, hidx, texts)
+        await wait_until(pilot, lambda: lv.index == ridx)
+        assert lv.index == ridx, (lv.index, ridx, texts)
         # ↑ → 다시 p2 로(구분선 건너뜀)
         scr.on_key(Key(key="up", character=None))
         await wait_until(pilot, lambda: lv.index == p2idx)
         assert lv.index == p2idx, (lv.index, p2idx, texts)
-    await _with_app(body)
-
-
-async def test_prompt_history_two_column_layout():
-    """프롬프트 히스토리는 번호/본문 2칼럼으로 그린다. 본문이 여러 줄(내장 \\n)이어도
-    번호 칼럼이 아니라 본문 칼럼 한 항목(ListItem) 안에 머문다 — 번호와 분리 정렬."""
-    async def body(app, pilot, srv):
-        from textual.widgets import Label, ListView
-        from textual.containers import Horizontal
-        multiline = "첫 줄 지시\n둘째 줄 계속\n셋째 줄"
-        app.pane_claude = {3: {"id": 3, "claude": "idle", "prompt": multiline,
-                               "history": ["짧은 프롬프트", multiline]}}
-        app.open_prompt_history(3)
-        await wait_until(pilot, lambda: app.screen_stack[-1].query_one(ListView))
-        scr = app.screen_stack[-1]
-        lv = scr.query_one(ListView)
-        # 프롬프트 항목은 [번호칼럼 | 본문칼럼] Horizontal(.histrow) 을 갖는다.
-        rows = lv.query(".histrow")
-        assert len(rows) == 2, ("프롬프트 2개가 각각 1 항목", len(rows))
-        first = rows[0]
-        nums = first.query(".histnum")
-        bodies = first.query(".histbody")
-        assert len(nums) == 1 and len(bodies) == 1, (len(nums), len(bodies))
-        assert "1." in str(nums.first().render()), nums.first().render()
-        # 다중 행 본문은 통째로 본문 칼럼에 들어간다(번호 칼럼엔 번호만).
-        body2 = rows[1].query_one(".histbody", Label)
-        bt = str(body2.render())
-        assert "첫 줄 지시" in bt and "셋째 줄" in bt, bt
-        assert "2." not in str(rows[1].query_one(".histbody", Label).render())
-        num2 = str(rows[1].query_one(".histnum", Label).render())
-        assert num2.strip() == "2.", num2
-        # 최신(마지막) 프롬프트가 초기 선택된다(#17).
-        assert lv.index == 1, lv.index
-    await _with_app(body)
-
-
-async def test_prompt_history_enter_expands_selected_prompt():
-    """§3.8 Stage 2 ②③: 프롬프트 히스토리에서 항목을 골라 Enter 하면 그 프롬프트
-    구간을 '펼친다' — 서버에 request_prompt_segment(index)를 보내고 팝업을 닫는다.
-    index 는 팝업 ListView 인덱스(=`prompt-expand <n>` 의 n-1 환산과 동일)."""
-    async def body(app, pilot, srv):
-        from textual.widgets import ListView
-        sent = []
-        app.send_cmd = lambda action, **kw: sent.append((action, kw))
-        app.pane_claude = {5: {"id": 5, "claude": "idle", "prompt": "p3",
-                               "history": ["p1", "p2", "p3"]}}
-        app.open_prompt_history(5)
-        await wait_until(pilot, lambda: app.screen_stack[-1].query_one(ListView))
-        scr = app.screen_stack[-1]
-        lv = scr.query_one(ListView)
-        # 최신 프롬프트(index 2)가 초기 선택 → Enter 즉시 그 프롬프트 펼치기.
-        assert lv.index == 2, lv.index
-        # 2번 프롬프트(index 1)를 골라 Enter.
-        lv.index = 1
-        scr.on_key(Key(key="enter", character=None))
-        await wait_until(pilot, lambda: sent)
-        assert sent == [("request_prompt_segment", {"index": 1})], sent
-        # 펼치기 요청 후 목록 팝업은 닫힌다(회신이 펼친 팝업을 새로 연다).
-        await wait_until(pilot, lambda: not isinstance(
-            app.screen_stack[-1], scr.__class__))
-    await _with_app(body)
-
-
-async def test_prompt_history_row_click_expands():
-    """§3.8 Stage 2 ②③: 박스 안 프롬프트 행을 **클릭**해도 펼친다(마우스 1급).
-    실제 ListItem 자손(Label)을 클릭 대상으로 둬 on_click 의 조상 탐색
-    (ListItem→infobox)을 실제로 태운다."""
-    async def body(app, pilot, srv):
-        from textual.widgets import Label, ListView
-        sent = []
-        app.send_cmd = lambda action, **kw: sent.append((action, kw))
-        app.pane_claude = {8: {"id": 8, "claude": "idle", "prompt": "p3",
-                               "history": ["p1", "p2", "p3"]}}
-        app.open_prompt_history(8)
-        await wait_until(pilot, lambda: app.screen_stack[-1].query_one(ListView))
-        scr = app.screen_stack[-1]
-        lv = scr.query_one(ListView)
-        # 첫 프롬프트(index 0) 행의 본문 Label 을 클릭 대상으로.
-        target = lv.children[0].query_one(".histbody", Label)
-
-        class _Ev:
-            def __init__(self, widget):
-                self.widget = widget
-            def stop(self):
-                pass
-
-        scr.on_click(_Ev(target))
-        await wait_until(pilot, lambda: sent)
-        assert sent == [("request_prompt_segment", {"index": 0})], sent
-    await _with_app(body)
-
-
-async def test_prompt_history_enter_on_footer_does_not_expand():
-    """§3.8 Stage 2 ②③: 선택 콜백은 실제 프롬프트(0..len-1)만 보낸다 — 구분선/[h]
-    footer 같은 비-프롬프트 행에서 Enter 하면 request_prompt_segment 를 보내지 않고
-    닫기만 한다(예: '이 헤더 숨기기' footer 를 잘못 펼치지 않게)."""
-    async def body(app, pilot, srv):
-        from textual.widgets import Label, ListView
-        sent = []
-        app.send_cmd = lambda action, **kw: sent.append((action, kw))
-        app.pane_claude = {6: {"id": 6, "claude": "idle", "prompt": "p2",
-                               "history": ["p1", "p2"]}}
-        app.open_prompt_history(6)
-        await wait_until(pilot, lambda: app.screen_stack[-1].query_one(ListView))
-        scr = app.screen_stack[-1]
-        lv = scr.query_one(ListView)
-        texts = [" ".join(str(l.render()) for l in it.query(Label))
-                 for it in lv.children]
-        hidx = next(i for i, t in enumerate(texts) if "[h]" in t)
-        lv.index = hidx                          # [h] footer 선택
-        scr.on_key(Key(key="enter", character=None))
-        await pilot.pause(0.1)
-        assert sent == [], ("footer 펼치기 금지", sent)
-    await _with_app(body)
-
-
-async def test_prompt_segment_msg_opens_expanded_popup_with_jump():
-    """§3.8 Stage 2③: 서버 prompt_segment 회신(handle_message 위임)이 펼친 구간을
-    InfoScreen 으로 띄우고, [j] 로 그 위치로 라이브 점프(scroll_to_prompt)한 뒤 닫는다."""
-    async def body(app, pilot, srv):
-        from pytmuxlib.clientscreens import InfoScreen
-        sent = []
-        app.send_cmd = lambda action, **kw: sent.append((action, kw))
-        # 서버 회신을 모사해 코어 _dispatch(else→plugins.handle_message) 경로로 투입.
-        from textual.widgets import Label, ListView
-        app._dispatch({"t": "prompt_segment", "ok": True, "index": 2,
-                       "prompt": "세 번째 프롬프트",
-                       "lines": ["> 세 번째 프롬프트", "응답 첫 줄", "● 툴 실행"],
-                       "truncated": False})
-        await wait_until(pilot, lambda: app.screen_stack[-1].query_one(ListView))
-        scr = app.screen_stack[-1]
-        assert isinstance(scr, InfoScreen)
-        # 구간 본문 + [j] footer 가 보인다(rewrap 후 라벨에 텍스트가 들어올 때까지 대기).
-        body_text = lambda: " ".join(str(l.render()) for l in scr.query(Label))
-        await wait_until(pilot, lambda: "응답 첫 줄" in body_text())
-        bt = body_text()
-        assert "툴 실행" in bt and "[j]" in bt, bt
-        # [j] → 그 index(2)로 라이브 점프 + 닫힘.
-        scr.on_key(Key(key="j", character="j"))
-        await wait_until(pilot, lambda: sent)
-        assert sent == [("scroll_to_prompt", {"index": 2})], sent
-        await wait_until(pilot, lambda: not isinstance(
-            app.screen_stack[-1], InfoScreen))
-    await _with_app(body)
-
-
-async def test_prompt_segment_msg_not_ok_shows_message():
-    """§3.8 Stage 2③: ok=False(anchor 회전/복원분) 회신이면 펼친 팝업 대신 안내만."""
-    async def body(app, pilot, srv):
-        from pytmuxlib.clientscreens import InfoScreen
-        n0 = len(app.screen_stack)
-        app._dispatch({"t": "prompt_segment", "ok": False})
-        await pilot.pause(0.1)
-        assert not isinstance(app.screen_stack[-1], InfoScreen), "팝업 안 뜸"
-        assert len(app.screen_stack) == n0
     await _with_app(body)
 
 
@@ -2720,36 +2562,6 @@ async def test_remote_attach_preserves_backslash_host_and_notice():
         sent.clear()
         app._run_command("remote-attach")
         assert sent == [], sent
-    await _with_app(body)
-
-
-async def test_scroll_at_top_opens_prompt_history_for_claude_only():
-    """§3.8 ①: 서버 scroll_at_top 신호(맨 위에서 더 위로) → Claude 패널이고 히스토리가
-    있으며 모달이 없을 때만 프롬프트 히스토리 오버레이를 연다. 비-Claude·히스토리 없음·
-    모달 열림이면 무동작."""
-    async def body(app, pilot, srv):
-        from pytmuxlib.clientscreens import InfoScreen
-        opened = []
-        app.open_prompt_history = lambda pid=None: opened.append(pid)
-        # 비-Claude 패널 → 무동작
-        app.pane_claude = {3: {"id": 3, "claude": "", "history": ["p"]}}
-        app._dispatch({"t": "scroll_at_top", "pane": 3})
-        assert opened == [], "비-Claude 무동작"
-        # Claude + 히스토리 + 모달 없음 → 오버레이(그 패널 id 로)
-        app.pane_claude = {5: {"id": 5, "claude": "idle",
-                               "history": ["p1", "p2"]}}
-        app._dispatch({"t": "scroll_at_top", "pane": 5})
-        assert opened == [5], opened
-        # 히스토리/프롬프트 없음 → 무동작
-        app.pane_claude = {6: {"id": 6, "claude": "idle"}}
-        app._dispatch({"t": "scroll_at_top", "pane": 6})
-        assert opened == [5], "히스토리 없으면 무동작"
-        # 모달이 떠 있으면 → 무동작(중복 방지)
-        from textual.widgets import ListView
-        app.push_screen(InfoScreen(["x"]))
-        await wait_until(pilot, lambda: app.screen_stack[-1].query_one(ListView))
-        app._dispatch({"t": "scroll_at_top", "pane": 5})
-        assert opened == [5], "모달 열림 중엔 무동작"
     await _with_app(body)
 
 
@@ -3645,32 +3457,11 @@ async def test_claude_icon_and_header():
     await _with_app(body)
 
 
-async def test_prompt_history_popup():
-    # Claude 헤더 클릭/명령으로 프롬프트 히스토리 팝업(시간순)이 열린다(#7).
-    async def body(app, pilot, srv):
-        from textual.widgets import Label
-        active = app.layout["active"]
-        app._update_claude([{"id": active, "claude": "idle", "prompt": "latest",
-                             "history": ["do a", "do b", "latest"]}])
-        next(p for p in app.layout["panes"]
-             if p["id"] == active)["claude_hdr"] = True  # 서버 헤더 행 예약(#1)
-        app._composite()
-        assert active in app._claude_header_zones, "헤더 클릭존 등록"
-        app.open_prompt_history(active)
-        await pilot.pause(0.1)
-        scr = app.screen_stack[-1]
-        assert scr.__class__.__name__ == "InfoScreen"
-        joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
-        assert "do a" in joined and "latest" in joined, joined
-    await _with_app(body)
-
-
-async def test_esc_header_focus_opens_history():
-    # #5: ESC 모드에서 h 로 Claude 헤더 포커스 진입(accent 강조), Enter 로 히스토리 팝업.
+async def test_esc_header_focus_highlight_and_exit():
+    # #5: ESC 모드에서 h 로 Claude 헤더 포커스 진입(accent 강조), Enter 로 해제+모드 종료.
     async def body(app, pilot, srv):
         active = app.layout["active"]
-        app._update_claude([{"id": active, "claude": "idle", "prompt": "latest",
-                             "history": ["do a", "latest"]}])
+        app._update_claude([{"id": active, "claude": "idle", "prompt": "latest"}])
         ap = next(p for p in app.layout["panes"] if p["id"] == active)
         ap["claude_hdr"] = True                # 서버 헤더 행 예약(#1)
         app._composite()
@@ -3683,12 +3474,10 @@ async def test_esc_header_focus_opens_history():
         cellbg = app.view._cells[ap["y"] - 1][ap["x"] + 1][1]
         assert cellbg and cellbg.bgcolor and accent in str(cellbg.bgcolor).lower(), \
             f"헤더 포커스 강조색 기대, got {cellbg.bgcolor if cellbg else None}"
-        await pilot.press("enter")             # 히스토리 팝업 + 모드 종료
-        await wait_until(pilot, lambda: app.screen_stack[-1].__class__.__name__
-                         == "InfoScreen")
-        scr = app.screen_stack[-1]
-        assert scr.__class__.__name__ == "InfoScreen"
+        await pilot.press("enter")             # 포커스 해제 + 모드 종료
+        await wait_until(pilot, lambda: app.mode == "normal")
         assert app._hdr_focus is None and app.mode == "normal"
+        assert len(app.screen_stack) == 1, "팝업이 뜨지 않는다"
     await _with_app(body)
 
 
@@ -4226,36 +4015,6 @@ async def test_alt_scroll_toggle():
     await _with_app(body)
 
 
-async def test_header_hide_toggle_from_history():
-    # #6 ②: 히스토리 팝업에서 h 로 그 패널 헤더를 숨기고/다시 보이게 토글.
-    async def body(app, pilot, srv):
-        active = app.layout["active"]
-        app._update_claude([{"id": active, "claude": "idle", "prompt": "latest",
-                             "history": ["latest"]}])
-        ap = next(p for p in app.layout["panes"] if p["id"] == active)
-        ap["claude_hdr"] = True                # 서버 헤더 행 예약(#1)
-        hy = ap["y"] - 1                        # 헤더는 내용 위 한 줄
-        app._composite()
-        row = "".join((c[0] or " ") for c in app.view._cells[hy])
-        assert "latest" in row, "처음엔 헤더 표시"
-        # 팝업 열고 h → 숨김
-        app.open_prompt_history(active)
-        await pilot.pause(0.1)
-        await pilot.press("h")
-        await pilot.pause(0.1)
-        assert active in app._claude_hidden_panes
-        app._composite()
-        row2 = "".join((c[0] or " ") for c in app.view._cells[hy])
-        assert "latest" not in row2, "헤더 숨김"
-        # 다시 팝업 h → 표시 복원
-        app.open_prompt_history(active)
-        await pilot.pause(0.1)
-        await pilot.press("h")
-        await pilot.pause(0.1)
-        assert active not in app._claude_hidden_panes
-    await _with_app(body)
-
-
 async def test_claude_header_status_applies():
     # #6 ③: 서버 status 의 claude_header 권위값이 claude_header_on 에 반영된다.
     async def body(app, pilot, srv):
@@ -4721,26 +4480,6 @@ async def test_copy_mode_joins_soft_wrapped_lines():
     v = _mk({0, 1})
     v._sel = (0, 0, 9, 0)
     assert v._extract_selection() == "ABCDEFGHIJ"
-
-
-# ---- §4.5: history 누락 시 직전 값 유지 ----
-async def test_claude_history_retained_when_omitted():
-    """서버가 history 를 변할 때만 싣는(§4.5) 것에 맞춰, history 키가 빠진 status
-    항목은 직전에 받은 history 를 유지하고 나머지 필드는 갱신한다."""
-    async def body(app, pilot, srv):
-        app._update_claude([{"id": 1, "claude": "idle", "prompt": "p",
-                             "perm_mode": "default", "history": ["a", "b"]}])
-        assert app.pane_claude[1]["history"] == ["a", "b"]
-        # history 빠진 갱신 → 직전 값 유지, 나머지는 새 값
-        app._update_claude([{"id": 1, "claude": "busy", "prompt": "p2",
-                             "perm_mode": "default"}])
-        assert app.pane_claude[1]["history"] == ["a", "b"]
-        assert app.pane_claude[1]["claude"] == "busy"
-        # history 다시 오면 교체
-        app._update_claude([{"id": 1, "claude": "idle", "prompt": "p3",
-                             "perm_mode": "default", "history": ["a", "b", "c"]}])
-        assert app.pane_claude[1]["history"] == ["a", "b", "c"]
-    await _with_app(body)
 
 
 # ---- C1(PERFORMANCE_REVIEW 2026-06-07): _char_cells 메모이즈 ----

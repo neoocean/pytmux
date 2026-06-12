@@ -34,12 +34,6 @@ def init_pane(pane) -> None:
     pane._session_tokens = 0
     pane._inbuf = ""                # 현재 입력 줄 누적(프롬프트 추적용)
     pane.last_prompt = ""           # 마지막으로 제출한 프롬프트(한 줄)
-    pane.prompt_history = []        # 시간순 제출 프롬프트 목록(히스토리 팝업용)
-    # §3.8 프롬프트↔스크롤백 점프: prompt_history 와 **인덱스 정렬**된 절대 라인 anchor
-    # 목록(제출 시 pane.current_anchor()). 화면-수명 값이라 직렬화하지 않는다 — 재시작 후
-    # 복원되는 prompt_history 항목은 None(점프 불가)으로 패딩해 정렬을 유지한다(restore).
-    pane._prompt_anchors = []
-    pane._hist_sent = None          # 직전 status 에 실어 보낸 history 슬라이스(디바운스)
     pane.pending_prompts = []       # busy 중 입력해 큐된 프롬프트(#4)
     # 프롬프트 단위 클리어 모드(#9). prompt_clear_queue(쌓인 명령 큐)는 코어가
     # respawn 시 직접 비우므로 코어 Pane 에 남고, 여기선 모드/상태기계만 둔다.
@@ -158,7 +152,7 @@ def reset_pane(pane) -> None:
 _SER_FIELDS = (
     "_claude", "_claude_usage", "_scanbuf", "_resume_pending", "resume_msg",
     "last_prompt", "_claude_session_id", "prompt_clear_mode", "_rc_done",
-    "prompt_history", "pending_prompts",
+    "pending_prompts",
     # S5 토큰 모듈화 T4: 토큰 누계도 재시작에 보존(코어 _RESUME_FIELDS 에서 이전).
     "_tok_state", "_session_tokens",
 )
@@ -166,13 +160,11 @@ _SER_FIELDS = (
 
 def serialize(pane) -> dict:
     """재시작 보존용 Claude 필드 부분집합을 dict 로(코어 export_state 가 'plugin_state'
-    키로 담는다 — 코어는 내용을 해석하지 않는다). history 류는 길이 상한을 둔다."""
+    키로 담는다 — 코어는 내용을 해석하지 않는다)."""
     d = {}
     for f in _SER_FIELDS:
         if hasattr(pane, f):
             d[f] = getattr(pane, f)
-    if "prompt_history" in d:
-        d["prompt_history"] = list(d["prompt_history"])[-100:]
     if "pending_prompts" in d:
         d["pending_prompts"] = list(d["pending_prompts"])
     return d
@@ -186,8 +178,4 @@ def restore(pane, data: dict) -> None:
     for f in _SER_FIELDS:
         if f in data:
             setattr(pane, f, data[f])
-    pane.prompt_history = list(data.get("prompt_history", pane.prompt_history))
     pane.pending_prompts = list(data.get("pending_prompts", pane.pending_prompts))
-    # §3.8: anchor 는 화면-수명(재시작 시 hist_total 리셋)이라 복원 불가 — 복원된
-    # prompt_history 와 길이만 맞춰 None(점프 불가)으로 패딩해 인덱스 정렬을 유지한다.
-    pane._prompt_anchors = [None] * len(pane.prompt_history)

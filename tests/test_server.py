@@ -100,110 +100,19 @@ async def test_tree_msg_includes_panes_and_remote():
         await teardown(srv, task, sock)
 
 
-async def test_prompt_history_accumulates():
-    # _track_prompt 가 제출 프롬프트를 시간순 히스토리에 쌓고(연속 중복 제외),
-    # status 의 panes_claude 에 최근 목록을 전달한다(#7).
+async def test_track_prompt_sets_last_prompt():
+    # _track_prompt 가 제출 프롬프트를 last_prompt(헤더 표시)로 확정하고,
+    # status 의 panes_claude 에 전달한다(#4).
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
         p = sess.active_window.active_pane
         srv._track_prompt(p, b"first\r")
         srv._track_prompt(p, b"second\r")
-        srv._track_prompt(p, b"second\r")   # 연속 중복 → 제외
-        srv._track_prompt(p, b"third\r")
-        assert p.prompt_history == ["first", "second", "third"], p.prompt_history
+        assert p.last_prompt == "second", p.last_prompt
         msg = srv._status_msg(sess)
         pc = next(e for e in msg["panes_claude"] if e["id"] == p.id)
-        assert pc["history"][-1] == "third" and "first" in pc["history"]
-    finally:
-        await teardown(srv, task, sock)
-
-
-async def test_prompt_anchors_aligned_with_history():
-    """§3.8: 제출 프롬프트마다 절대 스크롤백 anchor 를 prompt_history 와 **인덱스 정렬**해
-    쌓는다(_track_prompt 경로). 200 초과 트림도 두 리스트가 함께 잘려 정렬을 유지한다."""
-    srv, task, sock = await server_only()
-    try:
-        sess = srv.ensure_default_session(80, 24)
-        p = sess.active_window.active_pane
-        srv._track_prompt(p, b"alpha\r")
-        srv._track_prompt(p, b"beta\r")
-        srv._track_prompt(p, b"beta\r")        # 연속 중복 → 둘 다 안 늘어남
-        assert p.prompt_history == ["alpha", "beta"]
-        assert len(p._prompt_anchors) == 2
-        assert all(isinstance(a, int) for a in p._prompt_anchors)
-        for i in range(205):                   # 트림 경계 넘기기
-            srv._track_prompt(p, f"p{i}\r".encode())
-        assert len(p.prompt_history) == 200
-        assert len(p._prompt_anchors) == 200, "anchor 도 함께 트림(정렬 유지)"
-        # 재시작 복원: anchor 는 화면-수명(hist_total 리셋)이라 직렬화하지 않고, 복원
-        # 시 prompt_history 길이에 맞춰 None 패딩해 정렬 유지(복원분은 점프 불가).
-        import importlib
-        ps = importlib.import_module("pytmuxlib.plugins.claude-code.panestate")
-        data = ps.serialize(p)
-        assert "_prompt_anchors" not in data, "anchor 는 직렬화 안 함(화면-수명)"
-        ps.restore(p, {**data, "prompt_history": ["x", "y", "z"]})
-        assert p._prompt_anchors == [None, None, None], p._prompt_anchors
-    finally:
-        await teardown(srv, task, sock)
-
-
-async def test_scroll_to_prompt_maps_tail_index_and_guards():
-    """§3.8: scroll_to_prompt(index) 는 히스토리 팝업 번호(상태로 보낸 마지막 30개 슬라이스
-    기준)를 서버 전체 prompt_history 의 절대 인덱스로 환산(base=len-30)해 그 anchor 로
-    점프한다. 범위 밖·anchor None(재시작 복원분)은 무동작."""
-    srv, task, sock = await server_only()
-    try:
-        sess = srv.ensure_default_session(80, 24)
-        p = sess.active_window.active_pane
-        picked = []
-        p.scroll_to_anchor = lambda a: picked.append(a)   # 선택된 anchor 캡처(렌더 격리)
-        p.prompt_history = [f"p{i}" for i in range(35)]
-        p._prompt_anchors = list(range(1000, 1035))        # 정렬된 anchor
-        # 팝업 1번(index 0) = 마지막 30 슬라이스의 첫 = 절대 인덱스 5(=35-30)
-        assert srv.scroll_to_prompt(sess, 0) is True
-        assert picked == [p._prompt_anchors[5]], picked
-        # 팝업 30번(index 29) = 절대 34(최신)
-        picked.clear()
-        assert srv.scroll_to_prompt(sess, 29) is True
-        assert picked == [p._prompt_anchors[34]]
-        # 범위 밖 → 무동작
-        picked.clear()
-        assert srv.scroll_to_prompt(sess, 99) is False and picked == []
-        # anchor None(복원분) → 점프 불가
-        p._prompt_anchors[34] = None
-        assert srv.scroll_to_prompt(sess, 29) is False
-    finally:
-        await teardown(srv, task, sock)
-
-
-async def test_prompt_segment_maps_index_and_guards():
-    """§3.8 Stage 2③: prompt_segment(index) 는 scroll_to_prompt 와 동일 환산(base=len-30)
-    으로 [a_i, a_{i+1}) 를 잡아 prompt_segment_lines 에 넘기고 회신 dict 를 만든다. 마지막
-    프롬프트는 다음 경계가 없어 a1=None(맨 아래까지). 범위 밖·anchor None 은 ok=False."""
-    srv, task, sock = await server_only()
-    try:
-        sess = srv.ensure_default_session(80, 24)
-        p = sess.active_window.active_pane
-        calls = []
-        p.prompt_segment_lines = lambda a0, a1=None: (
-            calls.append((a0, a1)) or (["X"], False))
-        p.prompt_history = [f"p{i}" for i in range(35)]
-        p._prompt_anchors = list(range(1000, 1035))
-        # 팝업 1번(index 0)=절대 5 → [anchors[5], anchors[6]) , prompt="p5"
-        r = srv.prompt_segment(sess, 0)
-        assert r["ok"] and r["index"] == 0 and r["prompt"] == "p5", r
-        assert r["lines"] == ["X"] and r["truncated"] is False
-        assert calls[-1] == (p._prompt_anchors[5], p._prompt_anchors[6]), calls
-        # 마지막(index 29=절대 34) → 다음 경계 없음 → a1=None
-        r2 = srv.prompt_segment(sess, 29)
-        assert r2["ok"] and r2["prompt"] == "p34"
-        assert calls[-1] == (p._prompt_anchors[34], None), calls
-        # 범위 밖 → ok False
-        assert srv.prompt_segment(sess, 99) == {"ok": False}
-        # anchor None(복원분) → ok False
-        p._prompt_anchors[34] = None
-        assert srv.prompt_segment(sess, 29) == {"ok": False}
+        assert pc["prompt"] == "second"
     finally:
         await teardown(srv, task, sock)
 
@@ -243,62 +152,18 @@ async def test_pane_xtversion_query_gets_pytmux_reply():
         await teardown(srv, task, sock)
 
 
-async def test_scroll_at_top_signals_only_when_already_at_top():
-    """§3.8 ①: _handle_scroll 은 위로 스크롤(delta>0)인데 스크롤백이 있고 이미 그 맨
-    위면 그 클라에 scroll_at_top 을 보낸다(맨 위 도달 전·아래 스크롤·스크롤백 없음은
-    무신호 — raw 스크롤 보존)."""
-    import pytmuxlib.serverio as sio
-    from pytmuxlib.model import ClientConn
-    srv, task, sock = await server_only()
-    try:
-        sess = srv.ensure_default_session(80, 24)
-        client = ClientConn(None)
-        client.session = sess
-        p = sess.active_window.active_pane
-        for i in range(40):                       # 스크롤백 누적
-            p.feed(f"line{i}\r\n".encode())
-        assert p._history_len() > 0
-        sent = []
-        orig = sio.write_msg
-
-        async def _cap(writer, obj):
-            sent.append(obj)
-        sio.write_msg = _cap
-        try:
-            # 맨 위 아님(scroll=0) + 위로 → 무신호(아직 raw 스크롤 여지)
-            srv._handle_scroll(client, {"pane": p.id, "delta": 3})
-            await asyncio.sleep(0)
-            assert sent == [], ("맨 위 전엔 무신호", sent)
-            # 맨 위로 이동 후 더 위로 → scroll_at_top
-            p.scroll_to("top")
-            assert p.scroll == p._history_len()
-            srv._handle_scroll(client, {"pane": p.id, "delta": 3})
-            await asyncio.sleep(0)
-            assert sent == [{"t": "scroll_at_top", "pane": p.id}], sent
-            # 아래로 스크롤(delta<0)은 맨 위여도 무신호
-            sent.clear()
-            srv._handle_scroll(client, {"pane": p.id, "delta": -3})
-            await asyncio.sleep(0)
-            assert sent == [], ("아래 스크롤 무신호", sent)
-        finally:
-            sio.write_msg = orig
-    finally:
-        await teardown(srv, task, sock)
-
-
-async def test_prompt_history_multiline_is_one_entry():
+async def test_prompt_multiline_is_one_submission():
     # Shift+Enter(=LF \n)로 줄바꿈해 한 번에 제출(Enter=CR \r)한 멀티라인 프롬프트는
-    # 별개 번호로 쪼개지지 않고 **한 개** 히스토리 항목이 된다(개행 보존). 헤더용
-    # last_prompt 는 한 줄이라 개행을 공백으로 접는다. (Enter 가 \r\n 으로 와도 1개.)
+    # 한 개의 제출 단위가 된다. 헤더용 last_prompt 는 한 줄이라 개행을 공백으로
+    # 접는다. (Enter 가 \r\n 으로 와도 1개.)
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
         p = sess.active_window.active_pane
         srv._track_prompt(p, b"line one\nline two\r")     # \n=줄바꿈, \r=제출
-        assert p.prompt_history == ["line one\nline two"], p.prompt_history
         assert p.last_prompt == "line one line two"       # 헤더는 한 줄(공백 접기)
         srv._track_prompt(p, b"next\r\n")                 # CRLF 제출도 1개
-        assert p.prompt_history == ["line one\nline two", "next"], p.prompt_history
+        assert p.last_prompt == "next", p.last_prompt
     finally:
         await teardown(srv, task, sock)
 
@@ -1116,8 +981,8 @@ async def test_auto_hardstop_context_limit_injects_compact():
 
 async def test_screen_prompt_reflects_remote_injected():
     """§10 #19: 데스크탑 앱 원격제어처럼 입력 경로(_track_prompt)를 안 거친 프롬프트
-    도 화면 transcript 에서 추출해 헤더(last_prompt)/히스토리에 반영한다. 단 로컬
-    입력으로 이미 히스토리에 있는 프롬프트는 화면에서 중복으로 다시 잡지 않는다."""
+    도 화면 transcript 에서 추출해 헤더(last_prompt)에 반영한다. 같은 화면 재스캔은
+    last_prompt 가 이미 같으므로 변화가 없다."""
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
@@ -1130,20 +995,17 @@ async def test_screen_prompt_reflects_remote_injected():
         srv._scan_claude(sess, win)
         assert p._claude == "idle"
         assert p.last_prompt == "원격에서 보낸 프롬프트", p.last_prompt
-        assert p.prompt_history[-1] == "원격에서 보낸 프롬프트"
-        # 같은 화면 재스캔 → 이미 last_prompt/히스토리에 있으니 중복 추가 안 함
-        n = len(p.prompt_history)
+        # 같은 화면 재스캔 → last_prompt 유지
         srv._scan_claude(sess, win)
-        assert len(p.prompt_history) == n, "중복 방지"
-        # 로컬 입력(_track_prompt)으로 들어온 프롬프트가 화면에도 보여도 중복 안 됨
+        assert p.last_prompt == "원격에서 보낸 프롬프트"
+        # 로컬 입력(_track_prompt)으로 들어온 프롬프트가 화면에도 보여도 유지
         srv._track_prompt(p, "로컬 타이핑 프롬프트\r".encode("utf-8"))
         assert p.last_prompt == "로컬 타이핑 프롬프트"
-        hist_len = len(p.prompt_history)
         p.feed("\x1b[2J\x1b[H> 로컬 타이핑 프롬프트\r\n"
                "답변...\r\n출력\r\n"
                "⏵⏵ auto mode on (shift+tab to cycle)\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
-        assert len(p.prompt_history) == hist_len, "로컬 입력은 화면 파싱이 중복 안 함"
+        assert p.last_prompt == "로컬 타이핑 프롬프트"
     finally:
         await teardown(srv, task, sock)
 
@@ -2085,7 +1947,7 @@ async def test_prompt_clear_queue_drains():
 
 async def test_queued_prompt_header_defers():
     # #4: busy 중 입력한 프롬프트는 헤더(last_prompt)를 즉시 안 바꾸고 큐에 쌓였다가
-    # 응답 경계(busy→idle)에 순서대로 승격된다. 히스토리는 제출 즉시 기록.
+    # 응답 경계(busy→idle)에 순서대로 승격된다.
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
@@ -2115,8 +1977,6 @@ async def test_queued_prompt_header_defers():
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
         srv._scan_claude(sess, win)
         assert p.last_prompt == "prompt C" and p.pending_prompts == []
-        # 히스토리에는 A,B,C 모두 즉시 기록
-        assert p.prompt_history == ["prompt A", "prompt B", "prompt C"]
     finally:
         await teardown(srv, task, sock)
 
@@ -3400,36 +3260,6 @@ async def test_no_window_kwargs():
         assert kw.get("creationflags", 0) & 0x08000000, kw  # CREATE_NO_WINDOW
     else:
         assert kw == {}, kw
-
-
-async def test_status_history_debounce():
-    """§4.5: 주기 status(full=False)는 prompt_history 가 바뀔 때만 history 를 싣고,
-    full=True(신규 attach·구조 resync)는 항상 싣는다. full 은 _hist_sent 추적을
-    건드리지 않아 주기 스트림의 델타를 오염시키지 않는다."""
-    srv, task, sock = await server_only()
-    try:
-        sess = srv.ensure_default_session(80, 24)
-        p = sess.active_window.active_pane
-        p.prompt_history = ["a"]
-        # full=True 는 항상 history 포함
-        m = srv._status_msg(sess, full=True)
-        assert m["panes_claude"][0]["history"] == ["a"]
-        # 주기 첫 전송: 직전 전송분 없음(None) → 포함 + _hist_sent 갱신
-        m = srv._status_msg(sess, full=False)
-        assert m["panes_claude"][0]["history"] == ["a"]
-        # 변화 없음 → history 키 생략(재직렬화·전송 방지)
-        m = srv._status_msg(sess, full=False)
-        assert "history" not in m["panes_claude"][0]
-        # 변경 → 다시 포함
-        p.prompt_history.append("b")
-        m = srv._status_msg(sess, full=False)
-        assert m["panes_claude"][0]["history"] == ["a", "b"]
-        # full 은 _hist_sent 를 안 바꿈 → 직후 주기는 변화 없으니 여전히 생략
-        srv._status_msg(sess, full=True)
-        m = srv._status_msg(sess, full=False)
-        assert "history" not in m["panes_claude"][0]
-    finally:
-        await teardown(srv, task, sock)
 
 
 async def test_status_usage_display_m18():

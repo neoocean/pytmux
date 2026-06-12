@@ -29,12 +29,12 @@
   `https://github.com/neoocean/pytmux` (origin, main).
 - **진입점**: `python3 pytmux.py` (서버 없으면 자동 기동 후 attach). 어디서든
   `pytmux` 로 띄우려면 `./install.sh` (PATH 에 래퍼 설치, `./uninstall.sh` 로 제거).
-- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **583 passed**
+- **상태**: `docs/FEATURES.md` 의 모든 항목 구현. 헤드리스 테스트 **575 passed**
   (`python3 tests/run.py` @macOS, 2026-06-12 — Windows 트랙(58214~58228)·usage-view
-  플러그인·IME OS 실측·esc ` 진입키·토큰버킷 cap·§3.8 프롬프트 펼치기/오버레이·토큰
+  플러그인·IME OS 실측·esc ` 진입키·토큰버킷 cap·토큰
   5h/주간 창 추정(58543)·§1.7 중첩 in-band 감지+stdio-proxy+**원격 탭 페더레이션
   Stage 2·3**(test_remote 9건 — in-process 2~3서버 E2E·per-client status·자동 재연결·
-  re-exec 복원) 테스트 합류).
+  re-exec 복원) 테스트 합류. §3.8 프롬프트 히스토리 기능은 58589 에서 제거).
   ⚠️ 관찰: 58519/58543 신규 client 테스트 영역(토큰 화면·status 계정)에서 full-suite
   한정 one-off 3회(assert/AttributeError `_dim`/90s 타임아웃) — 전부 격리·재실행 통과.
   재발 시 테스트 순서 의존 격리 필요.
@@ -277,6 +277,18 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- **프롬프트 히스토리 기능 제거(2026-06-12, CL 58589)** — 06-12
+  사용자 요청으로 §3.8 프롬프트 히스토리 관련 기능 일괄 제거: 히스토리 팝업(`prompt-history`/
+  `prompts`)·점프(`prompt-jump`·`scroll_to_prompt`)·펼치기(`prompt-expand`·`prompt_segment`/
+  `request_prompt_segment`)·스크롤 맨 위 오버레이(`scroll_at_top`)·회전 강건 anchor
+  (`hist_total`·`current_anchor`·`scroll_to_anchor`·`prompt_segment_lines`)·status history
+  전송(§4.5 디바운스 포함)·Claude 헤더 클릭존(`_claude_header_zones`)·패널별 헤더 숨김
+  (`_claude_hidden_panes`/`toggle_header_hidden`)·Pane `prompt_history`/`_prompt_anchors`/
+  `_hist_sent` 필드(직렬화 포함)·InfoScreen 2칼럼(col_rows)/선택(select_cb)/initial_index
+  모드·스크린샷 20-prompt-history 컷·PROMPT_HISTORY_SCROLLBACK_SCENARIO.md.
+  **유지(별개 기능)**: `last_prompt` 스티키 헤더, `pending_prompts` busy 큐 승격, ESC 헤더
+  포커스(#5 — Enter 는 이제 해제만), 화면 스크랩 원격 프롬프트 헤더 반영(§10 #19 — 중복
+  가드는 history[-5:] → pending_prompts[-5:] 로 대체). 헤드리스 **575 passed / 0 failed**.
 - **§1.7 Stage 3 — 페더레이션 폴리시 완결 + 실 ssh 라이브 검증(2026-06-12, CL 58579)** — 06-12
   IMPROVEMENT §1.7 의 Stage 3 잔여 5건을 일괄 구현하고, 라이브 데몬 재시작(드라이런→
   사용자 확인→re-exec, 패널 보존) 후 **office1(Windows, ControlMaster 경유) 실 ssh 로 전

@@ -101,35 +101,6 @@ async def test_feed_and_scrollback():
         await teardown(srv, task, sock)
 
 
-async def test_prompt_segment_lines_extracts_absolute_range():
-    """§3.8 Stage 2③: prompt_segment_lines(a0,a1) 가 절대 라인 인덱스 구간 [a0,a1) 의
-    평문을 떼어 낸다(피드 한 줄=절대 인덱스 k=="line{k}"). a1=None 은 현재 맨 아래까지.
-    deque 회전(앞 소실) 구간은 truncated=True 로 맨 앞부터 best-effort."""
-    srv, task, sock = await server_only()
-    try:
-        sess = srv.ensure_default_session(80, 24)
-        p = sess.active_window.active_pane
-        for i in range(60):
-            p.feed(f"line{i}\r\n".encode())
-        # 스크롤백 안 구간 [10,13) → line10..12.
-        seg, trunc = p.prompt_segment_lines(10, 13)
-        assert seg == ["line10", "line11", "line12"], seg
-        assert trunc is False
-        # a1=None → 그 인덱스부터 현재 맨 아래까지(마지막 프롬프트). 뒤 빈 줄 트림.
-        seg2, _ = p.prompt_segment_lines(57, None)
-        assert seg2 == ["line57", "line58", "line59"], seg2
-        # 회전 시뮬레이션: deque 앞 5줄을 떨어뜨려(hist_total 불변) base_abs=5.
-        h = p.screen.history.top
-        for _ in range(5):
-            h.popleft()
-        # [3,8) 중 abs 3·4 는 소실 → truncated, 가용 line5..7 만.
-        seg3, trunc3 = p.prompt_segment_lines(3, 8)
-        assert trunc3 is True
-        assert seg3 == ["line5", "line6", "line7"], seg3
-    finally:
-        await teardown(srv, task, sock)
-
-
 async def test_resized_pane_restores_tabstops():
     """분할 새 패널(spawn MIN_W → 실제 폭 resize)에서 탭 정렬 출력이 줄바꿈에서
     쪼개지지 않아야 한다(사용자 보고: 좁은 우측 패널의 ls 이름 첫 글자가 이전 줄
@@ -444,31 +415,3 @@ async def test_feed_plain_text_fast_path():
     assert p3._altcarry
     p3.feed(b";31mRED")               # 캐리+이어붙여 완성 → RED 정상 렌더
     assert "RED" in pane_text(p3)
-
-
-async def test_scroll_to_anchor_lands_line_at_top():
-    """§3.8: current_anchor() 가 커서 줄의 **회전 강건한 절대** 라인 인덱스를 주고,
-    scroll_to_anchor() 가 그 줄을 뷰포트 맨 위에 올린다 — 그 사이 스크롤백이 deque
-    maxlen 회전을 겪어도(절대 인덱스는 hist_total 로 단조) 정확히 안착한다."""
-    from pytmuxlib.model import Pane
-    p = Pane(-1, -1, 40, 6)        # 6줄 화면
-    for i in range(20):
-        p.feed(f"line{i:02d}\r\n".encode())
-    p.feed(b"MARKER_LINE")        # 개행 없이 — 커서가 이 줄
-    anchor = p.current_anchor()
-    assert anchor == p.screen.hist_total + p.screen.cursor.y
-    p.feed(b"\r\n")
-    for i in range(40):           # MARKER 를 스크롤백 위로 밀어냄
-        p.feed(f"after{i:02d}\r\n".encode())
-    assert p.scroll == 0          # 라이브
-    p.scroll_to_anchor(anchor)
-    assert p.scroll > 0
-    rows, _ = p.render(False)
-    top = "".join(s[0] for s in rows[0])
-    assert "MARKER_LINE" in top, (p.scroll, repr(top))
-    # 아직 라이브 화면 위(아주 큰 anchor)면 scroll 0(라이브 유지)
-    p.scroll_to_anchor(p.screen.hist_total + 999)
-    assert p.scroll == 0
-    # 회전으로 사라진 아주 작은 anchor → 맨 위로 클램프
-    p.scroll_to_anchor(-100)
-    assert p.scroll == len(p.screen.history.top)

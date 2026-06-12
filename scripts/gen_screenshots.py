@@ -379,14 +379,14 @@ async def usage_view(app, pilot):
 
 # 진짜 Claude Code 한 세션에서 캡처하는 §11 컷 묶음(라이브 — 실제 API 호출).
 CLAUDE_OUTPUTS = ["11-claude", "12-claude-autoresume", "13-perm-mode",
-                  "20-prompt-history", "22-claude-real"]
+                  "22-claude-real"]
 
 
 async def _claude_suite_once():
-    """진짜 `claude` 한 세션을 운전해 §11 세부 컷 5장을 모두 캡처한다.
+    """진짜 `claude` 한 세션을 운전해 §11 세부 컷 4장을 모두 캡처한다.
 
-    프롬프트 1회로 idle(응답완료)·autoresume·권한모드 팝업·히스토리 팝업을 찍고,
-    프롬프트 2회째의 busy 상태로 처리중(◐) 컷을 찍는다(환영 배너가 위로 밀려 계정
+    프롬프트 1회로 idle(응답완료)·autoresume·권한모드 팝업을 찍고, 프롬프트
+    2회째의 busy 상태로 처리중(◐) 컷을 찍는다(환영 배너가 위로 밀려 계정
     이름이 안 보이는 상태). 저장 시 _redact_svg 가 이메일 등 PII 를 마스킹한다."""
     srv, task, sock = await server_only()
     app = make_app(sock, {}, "main")
@@ -429,12 +429,6 @@ async def _claude_suite_once():
             await _wait_claude(pilot, app, "busy")
             await pilot.pause(1.0)
             await shot(pilot, "11-claude")
-            # ── 프롬프트 히스토리 팝업(헤더 클릭) — 보낸 프롬프트 2개가 시간순
-            app.open_prompt_history(aid)
-            await pilot.pause(0.5)
-            await shot(pilot, "20-prompt-history")
-            await pilot.press("escape")
-            await pilot.pause(0.2)
     finally:
         await teardown(srv, task, sock)
 

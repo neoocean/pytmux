@@ -119,8 +119,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._menu_pane = None  # 컨텍스트 메뉴가 열린 대상 패널 id(배경 강조용)
             self._menu_open = False  # 컨텍스트 메뉴 표시 중(배경 dim 합성용)
             self.single_border_on = True  # 단일 패널 테두리 표시(single-border on|off)
-            # Claude Code 헤더/클릭존 상태(pane_claude·claude_header_on·_claude_hidden_
-            # panes·_claude_header_zones·_perm_zone·_remote_zone·_last_usage_shown_seq)
+            # Claude Code 헤더/클릭존 상태(pane_claude·claude_header_on·_perm_zone·
+            # _remote_zone·_last_usage_shown_seq)
             # 는 claude-code 플러그인이 attach_client 로 이 인스턴스에 설치한다(Phase
             # 2c). 코어는 이 상태를 직접 만들지 않고 헤더 렌더(client_render 훅)·ESC
             # nav·클릭 핸들러에서 getattr 로만 읽으므로, 디렉토리를 지우면 Claude 헤더·
@@ -2791,13 +2791,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self._hdr_focus = ("close" if cur == len(panes) - 1
                                    else panes[cur + 1])
                 self._composite()
-            elif k == "enter":
-                pid = self._hdr_focus
-                self._hdr_focus = None
-                self._exit_esc()
-                fn = getattr(self, "open_prompt_history", None)  # 플러그인 설치
-                fn and fn(pid)
-            elif k == "escape":
+            elif k in ("enter", "escape"):
                 self._hdr_focus = None
                 self._composite()
                 self._exit_esc()

@@ -659,8 +659,7 @@ class Server(*_SERVER_BASES):
         """클라이언트가 이 패널에 Claude 프롬프트 헤더를 그릴지 여부(#1). 그러면
         내용 영역에서 한 행을 빼(헤더가 차지) 헤더가 1행짜리 패널 내용을 가리지
         않게 한다. 전역 옵션 claude_header + 그 패널이 Claude 이고 표시할 프롬프트가
-        있을 때 참. (클라 전용 _claude_hidden_panes 팝업 숨김은 서버가 모르므로 그
-        경우 예약 행은 비워둔다 — 토글 시 터미널 리플로우를 피하는 이점도 있다.)
+        있을 때 참.
 
         Claude 존재 판정은 raw `_claude` 가 아니라 **디바운스된 `_hdr_claude`**
         를 쓴다. raw 값은 footer 가 한 프레임 안 잡히면 None 으로 깜빡여(특히

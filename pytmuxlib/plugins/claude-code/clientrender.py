@@ -2,9 +2,9 @@
 
 코어 client.py 의 `_draw_claude_headers`·`_scan_footer_zones` 를 이리로 이전했다.
 코어 `_composite` 는 `plugins.client_render(app, cells, W, H)` 훅으로만 닿고, 이
-모듈의 함수들이 `app` 의 Claude 상태(pane_claude/claude_header_on/_hdr_focus/
-_claude_hidden_panes)를 읽어 헤더를 그리고, footer 클릭존(_perm_zone/_remote_zone)·
-헤더 클릭존(_claude_header_zones)·활성 헤더 행(_active_hdr_row)을 app 에 채운다.
+모듈의 함수들이 `app` 의 Claude 상태(pane_claude/claude_header_on/_hdr_focus)를
+읽어 헤더를 그리고, footer 클릭존(_perm_zone/_remote_zone)·활성 헤더 행
+(_active_hdr_row)을 app 에 채운다.
 
 무게: textual 을 import 하지 않는다(rich.Style 과 clientutil 헬퍼만 — 둘 다 가볍다).
 이 모듈은 매 프레임 호출되는 client_render 훅이 지연 import 한다(첫 호출 후 캐시)."""
@@ -66,7 +66,6 @@ def _draw_headers(app, cells, W, H):
     claude_header_on(명령 `claude-header on|off`)으로 끄고 켠다."""
     from rich.style import Style
     from pytmuxlib.clientutil import _char_cells, theme_color
-    app._claude_header_zones = {}
     # 활성 패널 헤더(프롬프트) 행 — 닫기 [x] 를 이 행으로 올려 그리기 위해 기록한다
     # (#15). 헤더가 없으면 None → [x] 는 콘텐츠 첫 행에 그대로(코어 _draw_tab_close).
     app._active_hdr_row = None
@@ -74,7 +73,6 @@ def _draw_headers(app, cells, W, H):
     pane_claude = getattr(app, "pane_claude", {})
     if not getattr(app, "claude_header_on", False) or not pane_claude:
         return
-    hidden = getattr(app, "_claude_hidden_panes", set())
     hdr_focus = getattr(app, "_hdr_focus", None)
     # 헤더 배경은 진한 파랑(primary-darken-2) — 본문/활성 테두리(primary)보다 한 단계
     # 어둡게. ESC 모드 헤더 포커스(#5)면 강조색(accent)으로 구분한다.
@@ -89,8 +87,6 @@ def _draw_headers(app, cells, W, H):
                      bold=True)
     for p in app.layout.get("panes", []):
         if not p.get("claude_hdr"):   # 서버가 헤더 행을 예약한 패널만(#1)
-            continue
-        if p["id"] in hidden:         # 팝업서 숨긴 헤더(#6 ②)
             continue
         info = pane_claude.get(p["id"])
         if not info or not info.get("claude") or not info.get("prompt"):
@@ -108,8 +104,6 @@ def _draw_headers(app, cells, W, H):
             hdr_st = inactive_hdr_st   # 비활성 헤더 바는 더 어둡게(요청)
         for xx in range(cx, min(cx + cw, W)):   # 헤더 배경
             cells[cy][xx] = (" ", hdr_st)
-        # 헤더 본문 전체가 클릭존(프롬프트 히스토리 팝업, #7)
-        app._claude_header_zones[p["id"]] = (cx, min(cx + cw, W), cy)
         text_start = cx + 1                      # 좌측 1칸 여백
         # 활성 패널은 이 헤더 행 우측 끝에 닫기 [x](3칸)가 올라오므로(#15), 프롬프트
         # 본문은 그 직전 한 칸까지만(= 3 + 1 칸 비움) 늘어나게 한다.
@@ -154,11 +148,8 @@ def claude_header_panes(app):
     if not getattr(app, "claude_header_on", False):
         return out
     pane_claude = getattr(app, "pane_claude", {})
-    hidden = getattr(app, "_claude_hidden_panes", set())
     for p in app.layout.get("panes", []):
         if not p.get("claude_hdr"):   # 헤더 행이 실제 예약된 패널만(#1)
-            continue
-        if p["id"] in hidden:
             continue
         info = pane_claude.get(p["id"])
         if info and info.get("claude") and info.get("prompt"):

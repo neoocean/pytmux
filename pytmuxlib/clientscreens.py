@@ -492,9 +492,9 @@ def _hangwrap(line, width):
 
 class InfoScreen(ModalScreen):
     """간단한 읽기전용 목록 표시(show-options 등). 방향키로 항목을 내비게이션하고
-    그 외 키를 누르면 닫힌다. 긴 줄(예: 프롬프트 히스토리)은 여러 줄로 줄바꿈."""
+    그 외 키를 누르면 닫힌다. 긴 줄은 여러 줄로 줄바꿈."""
     # 항목 Label 을 컨테이너 폭(1fr)에 맞춰 줄바꿈(text-wrap 기본 wrap) → 긴
-    # 프롬프트가 잘리지 않고 여러 줄로 펼쳐진다. ListItem 은 height:auto 로 늘어남.
+    # 줄이 잘리지 않고 여러 줄로 펼쳐진다. ListItem 은 height:auto 로 늘어남.
     # 폭은 좁은 화면(모바일)에 맞춰 반응형: 96% 로 채우되 넓은 화면에선 66 칸으로
     # 캡. 제목 줄은 [제목 … [x]] 헤더로 두어 좁아도 닫기 [x] 가 (고정폭이라) 항상
     # 오른쪽에 보인다(예전엔 고정폭 박스가 화면을 넘쳐 닫기 수단이 안 보였다).
@@ -513,78 +513,43 @@ class InfoScreen(ModalScreen):
        내용 높이(height:auto)만큼 자라고, 박스(#infobox)가 화면의 95%까지만 커지도록
        막는다. 따라서 내용이 화면보다 작으면 스크롤 없이 전부 보이고, 넘칠 때만 박스
        한도에서 리스트가 스크롤된다(예전엔 85% 고정 상한이라 공간이 남아도 잘렸다).
-       프롬프트 히스토리/REC/토큰 팝업이 InfoScreen 을 공유하므로 모두 적용된다. */
+       REC/토큰 팝업이 InfoScreen 을 공유하므로 모두 적용된다. */
     #info { width: 100%; height: auto; }
     #info ListItem { height: auto; }
     #info ListItem Label { width: 1fr; }
-    /* 2칼럼 행 모드(프롬프트 히스토리): 번호 칼럼(고정폭)+본문 칼럼(1fr, 자동
-       줄바꿈). 본문이 여러 줄이어도 번호 칼럼 아래로 내려가지 않고 본문 칼럼
-       안에 정렬돼 머문다. #info .histnum 은 id+class 라 위의 Label 규칙을 이긴다. */
-    #info ListItem .histrow { width: 1fr; height: auto; }
-    #info .histnum { width: 5; color: $text-muted; text-align: right; }
-    #info .histbody { width: 1fr; height: auto; }
     """
 
     # 방향키(내비게이션) — 닫지 않고 ListView 선택을 옮긴다.
     _NAV_KEYS = ("up", "down", "pageup", "pagedown", "home", "end")
 
     def __init__(self, lines, title="info", hide_key=None, hide_cb=None,
-                 initial_index=None, max_width=None, wrap_hang=True,
-                 col_rows=None, select_cb=None):
+                 max_width=None, wrap_hang=True):
         super().__init__()
         self._lines = lines
-        # 2칼럼 행 모드(프롬프트 히스토리 #17): 각 항목을 [번호칼럼 | 본문칼럼]
-        # Horizontal 로 그린다. 본문이 여러 줄(내장 \n)·자동 줄바꿈이어도 전부
-        # 본문 칼럼 안에 머물러 번호와 시각적으로 분리된다. 항목은 str(전폭:
-        # 구분선/footer) 또는 (번호, 본문) 튜플. 주어지면 wrap_hang/lines 표시 경로
-        # 대신 이 경로를 쓴다(번호↔항목 1:1 이라 initial_index 가 곧 ListItem index).
-        self._col_rows = col_rows
         self._title = title
-        # 특정 키(hide_key)를 누르면 hide_cb 를 부르고 닫는다(#6 ② '이 헤더 숨기기').
+        # 특정 키(hide_key)를 누르면 hide_cb 를 부르고 닫는다(원격제어 [r] 등).
         self._hide_key = hide_key
         self._hide_cb = hide_cb
-        # 열 때 강조(선택)할 항목 인덱스(예: 프롬프트 히스토리의 최신 항목, #17).
-        self._initial_index = initial_index
-        # 박스 가로 최대폭 오버라이드(없으면 CSS 기본 66). 프롬프트 히스토리는 넓게(#17).
+        # 박스 가로 최대폭 오버라이드(없으면 CSS 기본 66).
         self._max_width = max_width
         # §10-A #7: 긴 줄(URL 등)을 박스 폭에 맞춰 행잉-인덴트 하드 줄바꿈한다
         # (번호 정렬 보존). 폭은 마운트 후 측정하므로 call_after_refresh 로 재구성.
         self._wrap_hang = wrap_hang
         # §10-A #8: nav 에서 건너뛸(구분선/빈) 표시 줄 인덱스 — 마지막 항목서 ↓ 시
-        # 구분선을 건너뛰어 [h] footer 로 바로 점프.
+        # 구분선을 건너뛰어 footer 로 바로 점프.
         self._skip = set()
-        # §3.8 Stage 2 ②: Enter/행 클릭으로 선택한 항목 인덱스를 콜백에 넘기고 닫는다
-        # (프롬프트 히스토리에서 골라 그 위치로 점프). None 이면 읽기전용(아무 키나
-        # 닫기) 기존 동작 유지. 콜백이 점프 불가 항목(구분선/footer)을 직접 걸러낸다.
-        self._select_cb = select_cb
-
-    @staticmethod
-    def _col_item(row):
-        """2칼럼 행 모드의 한 항목을 ListItem 으로 만든다. (번호, 본문) 튜플은
-        [번호칼럼 | 본문칼럼] Horizontal 로, 문자열(구분선/footer)은 전폭 Label 로."""
-        if isinstance(row, (tuple, list)):
-            num, body = row
-            return ListItem(Horizontal(
-                Label(str(num), classes="histnum", markup=False),
-                Label(str(body), classes="histbody", markup=False),
-                classes="histrow"))
-        return ListItem(Label(str(row), markup=False))
 
     def compose(self) -> ComposeResult:
-        # markup=False: 임의 텍스트(프롬프트 등)의 대괄호가 마크업으로 사라지지 않게.
+        # markup=False: 임의 텍스트의 대괄호가 마크업으로 사라지지 않게.
         with Vertical(id="infobox"):
             with Horizontal(id="infohead"):
                 yield Label(self._title, id="infotitle", markup=False)
                 # markup=False: "[x]" 가 Textual 마크업 태그로 해석돼 사라지지
                 # 않게(그러면 배경색만 남고 글자가 안 보인다).
                 yield Label("[x]", id="infoclose", markup=False)  # 닫기 버튼
-            if self._col_rows is not None:
-                yield ListView(*[self._col_item(r) for r in self._col_rows]
-                               or [ListItem(Label(i18n.t("screen.empty")))], id="info")
-            else:
-                yield ListView(*[ListItem(Label(ln, markup=False))
-                                 for ln in self._lines] or
-                               [ListItem(Label(i18n.t("screen.empty")))], id="info")
+            yield ListView(*[ListItem(Label(ln, markup=False))
+                             for ln in self._lines] or
+                           [ListItem(Label(i18n.t("screen.empty")))], id="info")
 
     @staticmethod
     def _is_skip(line):
@@ -594,56 +559,30 @@ class InfoScreen(ModalScreen):
     def _compute_skip(self, lines):
         return {i for i, ln in enumerate(lines) if self._is_skip(ln)}
 
-    def _select_index(self, lv, idx):
-        n = len(lv.children)
-        if not n:
-            return
-        idx = max(0, min(idx, n - 1))
-        lv.index = idx
-        try:
-            lv.scroll_to_widget(lv.children[idx])
-        except Exception:
-            pass
-
     def on_mount(self):
-        if self._max_width is not None:        # 가로 넓히기(#17)
+        if self._max_width is not None:        # 가로 넓히기
             self.query_one("#infobox").styles.max_width = self._max_width
         lv = self.query_one(ListView)
         lv.focus()
-        if self._col_rows is not None:
-            # 2칼럼 모드: 번호↔ListItem 1:1 이라 행잉 줄바꿈/인덱스 재매핑이 불필요.
-            # 구분선(전폭 문자열 항목)만 nav 에서 건너뛴다.
-            self._skip = {i for i, r in enumerate(self._col_rows)
-                          if not isinstance(r, (tuple, list))
-                          and self._is_skip(r)}
-            if self._initial_index is not None:
-                self._select_index(lv, self._initial_index)
-            return
         if self._wrap_hang:
             # 폭이 정해진 뒤(레이아웃 후) 하드 줄바꿈으로 목록을 다시 만든다.
             self.call_after_refresh(self._rewrap)
             return
         self._skip = self._compute_skip(self._lines)
-        if self._initial_index is not None:    # 최신 항목 강조 + 스크롤(#17)
-            self._select_index(lv, self._initial_index)
 
     async def _rewrap(self):
         """박스 실제 폭을 재서 각 줄을 행잉-인덴트로 하드 줄바꿈하고 목록을 재구성
-        (§10-A #7). 원래 줄→첫 표시줄 매핑으로 initial_index 도 옮긴다."""
+        (§10-A #7)."""
         lv = self.query_one(ListView)
         w = self.query_one("#infobox").size.width or (self._max_width or 66)
         inner = max(20, w - 4 - 2)             # 테두리(2)+패딩(2)+스크롤바(2)
-        disp, orig_to_disp = [], []
+        disp = []
         for ln in self._lines:
-            orig_to_disp.append(len(disp))
             disp.extend(_hangwrap(ln, inner))
         self._skip = self._compute_skip(disp)
         await lv.clear()
         await lv.extend([ListItem(Label(d, markup=False)) for d in disp]
                         or [ListItem(Label(i18n.t("screen.empty")))])
-        if self._initial_index is not None and orig_to_disp:
-            oi = max(0, min(self._initial_index, len(orig_to_disp) - 1))
-            self._select_index(lv, orig_to_disp[oi])
 
     def _skip_over(self, lv, step):
         """현재 선택이 건너뛸 줄(구분선/빈)이면 step 방향의 가장 가까운 실제 줄로
@@ -659,33 +598,18 @@ class InfoScreen(ModalScreen):
 
     def on_click(self, event: events.Click):
         # 조상 체인을 거슬러: 닫기 [x] → 닫음. 박스(#infobox) 안이면 유지, 바깥
-        # (백드롭) 클릭이면 닫음(§10 #13 — REC/프롬프트 히스토리/토큰 팝업 공통).
+        # (백드롭) 클릭이면 닫음(§10 #13 — REC/토큰 팝업 공통).
         w = getattr(event, "widget", None)
         inside_box = False
-        item = None               # 클릭이 떨어진 ListItem(있으면) — §3.8 행 클릭 점프
         while w is not None:
             wid = getattr(w, "id", None)
             if wid == "infoclose":
                 event.stop()
                 self.dismiss(None)
                 return
-            if isinstance(w, ListItem):
-                item = w
             if wid == "infobox":
                 inside_box = True
             w = w.parent
-        # §3.8 Stage 2 ②: 박스 안 행 클릭 → 그 항목으로 점프(콜백). 마우스 1급 지원.
-        if inside_box and item is not None and self._select_cb is not None:
-            lv = self.query_one(ListView)
-            try:
-                idx = lv.children.index(item)
-            except ValueError:
-                idx = None
-            if idx is not None and idx not in self._skip:
-                event.stop()
-                self._select_cb(idx)
-                self.dismiss(None)
-                return
         if not inside_box:        # 박스 바깥/백드롭 클릭 → 닫기
             event.stop()
             self.dismiss(None)
@@ -696,7 +620,7 @@ class InfoScreen(ModalScreen):
         if event.key in self._NAV_KEYS:
             lv = self.query_one(ListView)
             n = len(lv.children)
-            # 이동 후 구분선/빈 줄은 같은 방향으로 건너뛴다(§10-A #8: ↓ → [h] 점프).
+            # 이동 후 구분선/빈 줄은 같은 방향으로 건너뛴다(§10-A #8).
             if event.key == "up":
                 lv.action_cursor_up()
                 self._skip_over(lv, -1)
@@ -717,13 +641,6 @@ class InfoScreen(ModalScreen):
             elif event.key == "end" and n:
                 lv.index = n - 1
                 self._skip_over(lv, -1)
-            return
-        # §3.8 Stage 2 ②: Enter → 현재 선택 항목으로 점프(콜백). 그 외 키는 닫기.
-        if event.key == "enter" and self._select_cb is not None:
-            lv = self.query_one(ListView)
-            if lv.index is not None and lv.index not in self._skip:
-                self._select_cb(lv.index)
-            self.dismiss(None)
             return
         if self._hide_key and event.key == self._hide_key and self._hide_cb:
             self._hide_cb()

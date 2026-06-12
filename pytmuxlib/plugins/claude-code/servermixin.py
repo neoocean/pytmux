@@ -271,53 +271,6 @@ class ServerClaudeMixin:
         if win and win.active_pane:
             win.active_pane.prompt_clear_queue.clear()
 
-    # 상태로 클라에 보내는 프롬프트 히스토리 슬라이스 길이(__init__.py client_status 의
-    # `prompt_history[-30:]` 와 **동일해야** 한다 — 히스토리 팝업 번호↔절대 인덱스 환산).
-    _PROMPT_HIST_TAIL = 30
-
-    def scroll_to_prompt(self, sess: Session, index: int) -> bool:
-        """§3.8: 활성 패널을 히스토리 팝업의 `index`(0 기반 = 팝업 번호-1) 프롬프트가
-        제출된 스크롤백 위치로 점프한다 — 그 프롬프트 줄을 뷰포트 맨 위에 올려, 그
-        프롬프트로 진행된 기록(응답·툴 실행)을 그 아래로 보게 한다. 팝업 번호는 상태로
-        보낸 **마지막 _PROMPT_HIST_TAIL 개** 슬라이스 기준이라, 서버의 전체 prompt_history
-        절대 인덱스로 환산한다. anchor 가 None(재시작 후 복원분 — 점프 불가)이거나 범위
-        밖이면 무동작(False). 점프하면 True(serverio 가 화면 재전송)."""
-        win = sess.active_window
-        if not win or not win.active_pane:
-            return False
-        p = win.active_pane
-        anchors = getattr(p, "_prompt_anchors", [])
-        base = max(0, len(p.prompt_history) - self._PROMPT_HIST_TAIL)
-        abs_i = base + index
-        if 0 <= abs_i < len(anchors) and anchors[abs_i] is not None:
-            p.scroll_to_anchor(anchors[abs_i])
-            return True
-        return False
-
-    def prompt_segment(self, sess: Session, index: int):
-        """§3.8 Stage 2③ '펼치기': 히스토리 팝업 `index`(0 기반) 프롬프트의 스크롤백
-        구간 [anchor_i, anchor_{i+1}) 평문 텍스트를 추출해 회신 dict 로 돌려준다 — 그
-        프롬프트로 진행된 기록(응답·툴 실행)을 따로 떼어 본다. 마지막 프롬프트면 다음
-        경계가 없어 현재 화면 맨 아래까지. index 환산은 scroll_to_prompt 와 동일
-        (base=len-_PROMPT_HIST_TAIL). anchor 가 None(복원분)/범위 밖이면 ok=False."""
-        win = sess.active_window
-        if not win or not win.active_pane:
-            return {"ok": False}
-        p = win.active_pane
-        anchors = getattr(p, "_prompt_anchors", [])
-        base = max(0, len(p.prompt_history) - self._PROMPT_HIST_TAIL)
-        abs_i = base + index
-        if not (0 <= abs_i < len(anchors)) or anchors[abs_i] is None:
-            return {"ok": False}
-        a0 = anchors[abs_i]
-        # 다음 프롬프트 anchor 가 구간 끝(없거나 None=복원분이면 현재 맨 아래까지).
-        nxt = anchors[abs_i + 1] if abs_i + 1 < len(anchors) else None
-        a1 = nxt if nxt is not None else None
-        lines, truncated = p.prompt_segment_lines(a0, a1)
-        prompt = p.prompt_history[abs_i] if abs_i < len(p.prompt_history) else ""
-        return {"ok": True, "index": index, "prompt": prompt,
-                "lines": lines, "truncated": truncated}
-
     def set_prompt_clear_message(self, msg: str):
         """① 문서화 지시문 문구를 바꾸고 opts.json 에 영속."""
         msg = (msg or "").strip()
@@ -1062,20 +1015,15 @@ class ServerClaudeMixin:
                         changed = True
                 # 데스크탑 앱 원격제어 등 입력 경로(_track_prompt)를 안 거친 프롬프트
                 # 반영(§10 #19): 화면 transcript 에서 최신 사용자 프롬프트를 best-effort
-                # 추출해, 입력으로 안 잡힌(last_prompt 와 다르고 최근 히스토리에도 없는)
-                # 경우에만 헤더/히스토리를 갱신한다. 로컬 입력은 _track_prompt 가 제출
-                # 즉시 히스토리에 남기므로 여기 가드(히스토리 멤버십)에 걸려 중복되지
-                # 않는다. 화면 파싱은 best-effort 라 보수적으로 매칭한다.
+                # 추출해, 입력으로 안 잡힌(last_prompt 와 다르고 승격 대기 큐에도 없는)
+                # 경우에만 헤더를 갱신한다. 로컬 입력은 _track_prompt 가 제출 즉시
+                # last_prompt/pending 큐에 남기므로 여기 가드에 걸려 중복되지 않는다.
+                # 화면 파싱은 best-effort 라 보수적으로 매칭한다.
                 if new_cl:
                     sp = claude_prompt(txt)
                     if (sp and sp != p.last_prompt
-                            and sp not in p.prompt_history[-5:]):
+                            and sp not in p.pending_prompts[-5:]):
                         p.last_prompt = sp
-                        p.prompt_history.append(sp)
-                        p._prompt_anchors.append(p.current_anchor())  # §3.8 점프 anchor
-                        if len(p.prompt_history) > 200:
-                            p.prompt_history = p.prompt_history[-200:]
-                            p._prompt_anchors = p._prompt_anchors[-200:]
                         changed = True
                 # 비활성 탭에서 처리(busy)→대기(idle) 전이 = 작업 완료. limit 은
                 # "대기"가 아니므로 대상 아님. 플리커 방지(§10 #18): raw busy→idle 즉시
@@ -1479,14 +1427,14 @@ class ServerClaudeMixin:
     @staticmethod
     def _track_prompt(pane: Pane, data: bytes):
         r"""입력 바이트에서 현재 (멀티라인) 프롬프트를 누적하고 **제출(Enter=\r)** 시
-        히스토리/last_prompt 로 확정한다. CSI/ESC 시퀀스는 건너뛰고(화살표 등),
+        last_prompt(헤더 표시)로 확정한다. CSI/ESC 시퀀스는 건너뛰고(화살표 등),
         bracketed paste 본문은 포함한다.
 
         멀티라인: Shift+Enter(또는 Ctrl+J)는 LF(`\n`)를 보내 **줄바꿈만** 하고 제출은
         안 한다 — 이때는 버퍼에 개행으로 이어 붙여, 한 번에 입력된 여러 줄이 **한 개의**
-        히스토리 항목이 되게 한다(과거엔 `\n` 마다 끊어 별개 번호로 쪼개졌다). 제출은
-        오직 CR(`\r`)만(docs: Enter→`\r`, Shift+Enter→`\n`). Enter 가 `\r\n` 으로 와도
-        `\r` 에서 확정하고 뒤따르는 `\n` 은 빈 버퍼라 무시된다."""
+        제출 단위가 되게 한다. 제출은 오직 CR(`\r`)만(docs: Enter→`\r`, Shift+Enter→
+        `\n`). Enter 가 `\r\n` 으로 와도 `\r` 에서 확정하고 뒤따르는 `\n` 은 빈 버퍼라
+        무시된다."""
         text = data.decode("utf-8", "ignore")
         buf = pane._inbuf
         i, n = 0, len(text)
@@ -1507,15 +1455,6 @@ class ServerClaudeMixin:
             elif ch == "\r":                 # Enter: 제출 경계 → 누적분을 한 항목으로 확정
                 line = buf.strip()
                 if line:
-                    # 히스토리는 제출 즉시 기록(큐잉돼도 제출된 것은 맞다). 멀티라인은
-                    # 개행을 보존해 한 항목으로 저장(팝업은 본문 칼럼에 여러 줄 표시).
-                    if not pane.prompt_history or pane.prompt_history[-1] != line:
-                        pane.prompt_history.append(line)
-                        # §3.8: 제출 시점 커서 줄의 절대 anchor 를 정렬 저장(점프용).
-                        pane._prompt_anchors.append(pane.current_anchor())
-                        if len(pane.prompt_history) > 200:
-                            pane.prompt_history = pane.prompt_history[-200:]
-                            pane._prompt_anchors = pane._prompt_anchors[-200:]
                     # 헤더용 last_prompt(#4): 이전 프롬프트가 아직 처리중(busy)이면
                     # 즉시 덮지 말고 pending 큐에 쌓는다 — _scan_claude 가 응답 경계에
                     # 다음 프롬프트를 승격한다(헤더 = "지금 처리 중인 프롬프트").
