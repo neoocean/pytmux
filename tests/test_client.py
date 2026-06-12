@@ -264,6 +264,12 @@ async def test_signed_int_helpers():
         assert _first_signed_int(["-2"]) == -2          # 음수도 값
         assert _first_signed_int(["move", "-1"]) == -1
         assert _first_signed_int(["foo", "bar"]) is None
+        # 견고성: 비ASCII 유니코드 "숫자"(²·③ — isdigit()=True 지만 int() 가 깨짐)는
+        # 정수로 보지 않고 None(크래시 대신 무동작). _first_int 도 같은 가드.
+        from pytmuxlib.clientutil import _first_int
+        assert _signed_int("²") is None and _signed_int("-③") is None
+        assert _first_int(["③"]) is None and _first_signed_int(["²"]) is None
+        assert _first_int(["²", "5"]) == 5              # 비ASCII 건너뛰고 5
     await _with_app(body)
 
 

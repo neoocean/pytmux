@@ -104,7 +104,12 @@ class ServerIOMixin:
 
     def _tree_msg(self):
         return {"t": "tree", "current": None, "sessions": [
-            {"name": s.name, "active": (s is None),
+            # 세션-레벨 active 는 이 계층에 개념이 없다(어느 클라가 어느 세션에 attach
+            # 했는지는 클라마다 달라 서버 전역의 '활성 세션'이 없음) — 항상 False.
+            # 윈도우-레벨 active(아래 t is s.active_tab)가 권위값이고 소비자(ChooseTreeScreen)
+            # 도 그것만 읽는다. (과거 `s is None` 은 항상-False 를 우회 표현해, 미래의 트리
+            # 소비자가 무심코 물려받을 오인 소지가 있었다 — 명시적 False 로 교체.)
+            {"name": s.name, "active": False,
              "windows": [{"index": t.index, "name": t.name,
                           "active": (t is s.active_tab),
                           "panes": [self._pane_overview(p)

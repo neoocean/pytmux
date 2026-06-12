@@ -356,7 +356,7 @@ def _first_int(args):
     for a in args:
         if a.startswith("-"):
             continue
-        if a.isdigit():
+        if a.isascii() and a.isdigit():   # 비ASCII 유니코드 숫자(²·③)는 int() 가 깨짐
             return int(a)
     return None
 
@@ -367,7 +367,9 @@ def _signed_int(tok):
     if not tok:
         return None
     body = tok[1:] if tok[0] == "-" else tok
-    return int(tok) if body.isdigit() else None
+    # body.isdigit() 는 비ASCII 유니코드 숫자(²·③ 등)에도 True 지만 int() 는 그중 일부에
+    # ValueError → ASCII 숫자만 정수로 본다(그런 토큰이 인자로 오면 None=무동작).
+    return int(tok) if (body.isascii() and body.isdigit()) else None
 
 
 def _first_signed_int(args):
