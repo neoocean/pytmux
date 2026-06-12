@@ -208,6 +208,49 @@ async def test_prompt_segment_maps_index_and_guards():
         await teardown(srv, task, sock)
 
 
+async def test_scroll_at_top_signals_only_when_already_at_top():
+    """§3.8 ①: _handle_scroll 은 위로 스크롤(delta>0)인데 스크롤백이 있고 이미 그 맨
+    위면 그 클라에 scroll_at_top 을 보낸다(맨 위 도달 전·아래 스크롤·스크롤백 없음은
+    무신호 — raw 스크롤 보존)."""
+    import pytmuxlib.serverio as sio
+    from pytmuxlib.model import ClientConn
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        client = ClientConn(None)
+        client.session = sess
+        p = sess.active_window.active_pane
+        for i in range(40):                       # 스크롤백 누적
+            p.feed(f"line{i}\r\n".encode())
+        assert p._history_len() > 0
+        sent = []
+        orig = sio.write_msg
+
+        async def _cap(writer, obj):
+            sent.append(obj)
+        sio.write_msg = _cap
+        try:
+            # 맨 위 아님(scroll=0) + 위로 → 무신호(아직 raw 스크롤 여지)
+            srv._handle_scroll(client, {"pane": p.id, "delta": 3})
+            await asyncio.sleep(0)
+            assert sent == [], ("맨 위 전엔 무신호", sent)
+            # 맨 위로 이동 후 더 위로 → scroll_at_top
+            p.scroll_to("top")
+            assert p.scroll == p._history_len()
+            srv._handle_scroll(client, {"pane": p.id, "delta": 3})
+            await asyncio.sleep(0)
+            assert sent == [{"t": "scroll_at_top", "pane": p.id}], sent
+            # 아래로 스크롤(delta<0)은 맨 위여도 무신호
+            sent.clear()
+            srv._handle_scroll(client, {"pane": p.id, "delta": -3})
+            await asyncio.sleep(0)
+            assert sent == [], ("아래 스크롤 무신호", sent)
+        finally:
+            sio.write_msg = orig
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_prompt_history_multiline_is_one_entry():
     # Shift+Enter(=LF \n)로 줄바꿈해 한 번에 제출(Enter=CR \r)한 멀티라인 프롬프트는
     # 별개 번호로 쪼개지지 않고 **한 개** 히스토리 항목이 된다(개행 보존). 헤더용

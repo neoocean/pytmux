@@ -81,13 +81,27 @@ test_scroll_to_prompt_maps_tail_index_and_guards}`, `test_model.py::test_scroll_
 사용: 헤더 클릭/`:prompt-history` → **↑↓ 로 고르고 Enter(또는 클릭)** → 그 프롬프트의 기록이
 펼쳐진다. 그 팝업에서 **[j]** 면 실제 터미널이 그 위치로 스크롤(라이브 점프).
 
-## Stage 2 ① — 잔여 후속 (제품 결정 대기)
+## Stage 2 ① — 구현 완료 (CL 미정, 2026-06-12): 위로 스크롤 → 오버레이 자동 표시
 
-1. **위로 스크롤 → 오버레이 자동 표시**: Claude 패널에서 스크롤백 맨 위(또는 특정 키)에
-   닿으면 raw 스크롤 대신 프롬프트 목록 오버레이를 띄운다. **열린 결정**: ① 스크롤-업이
-   raw 스크롤을 **대체**하나 vs 별도 키/제스처인가(raw 스크롤도 필요한 사용자 보호), ②
-   Claude 패널 한정(비-Claude 는 기존 raw 스크롤 유지). 안전상 Stage 1/2②③ 는 명령·팝업
-   선택으로만 노출하고, 스크롤 거동 변경은 분리(제품 결정 대기).
+Claude 패널에서 **스크롤백 맨 위에 닿은 뒤 한 번 더 위로** 스크롤하면 프롬프트 히스토리
+오버레이가 뜬다. **제품 결정 확정**: raw 스크롤을 **대체하지 않는다** — 맨 위 도달까지는
+그대로 raw 스크롤되고(사용자 보호), 맨 위에서 **추가** 스크롤업일 때만 오버레이가 뜬다.
+Claude 패널 한정(비-Claude 는 기존 raw 스크롤 유지).
+
+- **서버 신호**(serverio `_handle_scroll`): 위로 스크롤(delta>0)인데 `_history_len()>0` 이고
+  이미 `scroll >= _history_len()`(맨 위)이면 그 클라에 `{"t":"scroll_at_top","pane":id}` 를
+  보낸다(`asyncio.create_task(write_msg)`). 코어는 **신호만** — 오버레이 거동은 플러그인 결정.
+- **클라 게이트**(claude-code `handle_message`→`_on_scroll_at_top`): 그 패널이 **Claude**이고
+  (`pane_claude[id]["claude"]`) **히스토리/프롬프트가 있고** **모달이 안 떠 있으면**
+  (`len(screen_stack)<=1`, 중복 방지) `open_prompt_history(pid)` 로 오버레이를 연다. 비-Claude·
+  히스토리 없음·모달 열림이면 무동작. 코어 미지 메시지→플러그인 위임(delete-to-disable).
+
+테스트(2건): `test_server::test_scroll_at_top_signals_only_when_already_at_top`(맨 위 전·아래
+스크롤·스크롤백 없음은 무신호), `test_client::test_scroll_at_top_opens_prompt_history_for_claude_only`
+(Claude·히스토리·모달 게이트).
+
+사용: Claude 패널을 마우스 휠로 위로 굴려 스크롤백 맨 위까지 본 뒤, **맨 위에서 한 번 더**
+굴리면 프롬프트 히스토리가 자동으로 뜬다(→ Enter 로 펼치기·[j] 로 점프).
 
 ## 주의/한계
 

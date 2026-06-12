@@ -15,10 +15,35 @@ from textual.widget import Widget
 from textual import events
 from textual.geometry import Region
 from textual.strip import Strip
+from textual.suggester import SuggestFromList
 from rich.segment import Segment
 from rich.style import Style
 
-from .clientutil import _DATE_STRFTIME, _TIME_STRFTIME, _char_cells, theme_color
+from .clientutil import (_DATE_STRFTIME, _TIME_STRFTIME, _char_cells, norm_sep,
+                         theme_color)
+
+
+class SepInsensitiveSuggester(SuggestFromList):
+    """ghost 자동완성에서 공백·언더바·하이픈을 동일 취급한다(norm_sep). §5.4 에서 client.py
+    의 build_client_app 팩토리(거대 PytmuxApp 옆) 안 지역 클래스를 모듈로 빼낸 것.
+
+    'rename_'·'rename ' 를 쳐도 'rename-tab' 를 제안 — 명령 검색이 구분자 선택에
+    좌우되지 않게 한다. 후보·입력을 모두 norm_sep 로 통일해 prefix 비교."""
+    def __init__(self, suggestions, *, case_sensitive=False):
+        sugg = list(suggestions)
+        super().__init__(sugg, case_sensitive=case_sensitive)
+        # base 의 casefold 는 부모와 동일 규칙(case_sensitive=False → casefold).
+        base = sugg if case_sensitive else [s.casefold() for s in sugg]
+        self._sep_orig = sugg
+        self._sep_norm = [norm_sep(s) for s in base]
+
+    async def get_suggestion(self, value):
+        # 부모 _get_suggestion 이 case_sensitive=False 면 value 를 이미 casefold 함.
+        v = norm_sep(value)
+        for orig, norm in zip(self._sep_orig, self._sep_norm):
+            if norm.startswith(v):
+                return orig
+        return None
 
 
 class MultiplexerView(Widget):

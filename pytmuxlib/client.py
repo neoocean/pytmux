@@ -19,14 +19,14 @@ from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     _char_cells, _client_relaunch_ok, _darken_style, _dim_inactive_style,
     _first_int, _first_signed_int, _is_emoji, _opt_value, _restart_check_eval,
     _signed_int, _with_reverse,
-    has_hangul, hangul_to_qwerty, norm_sep,
+    has_hangul, hangul_to_qwerty,
     _normalize_key, _shell_argv, key_to_bytes, make_style, theme_color)
 from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 사용)
     ChooseBufferScreen, ChooseLayoutScreen, ChooseTreeScreen,
     CommandListScreen, CommandOptionsScreen, ConfirmScreen, InfoScreen,
     InfoTabsScreen, MenuScreen, PromptScreen)
-from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose 에서 사용)
-    MultiplexerView, StatusBar, TabBar)
+from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose·ghost suggester)
+    MultiplexerView, SepInsensitiveSuggester, StatusBar, TabBar)
 from .keymap import (_key_to_ctrl_bytes, _tmux_key_to_textual,
                      load_config, normalize_binding_key)
 from .protocol import MIN_H, MIN_W, PROTO_VERSION, read_msg, write_msg
@@ -52,27 +52,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
     from textual.geometry import Offset
     from textual.suggester import SuggestFromList
     from textual.widgets import Input
-
-    class SepInsensitiveSuggester(SuggestFromList):
-        """ghost 자동완성에서 공백·언더바·하이픈을 동일 취급한다(norm_sep).
-
-        'rename_'·'rename ' 를 쳐도 'rename-tab' 를 제안 — 명령 검색이 구분자
-        선택에 좌우되지 않게 한다. 후보·입력을 모두 norm_sep 로 통일해 prefix 비교."""
-        def __init__(self, suggestions, *, case_sensitive=False):
-            sugg = list(suggestions)
-            super().__init__(sugg, case_sensitive=case_sensitive)
-            # base 의 casefold 는 부모와 동일 규칙(case_sensitive=False → casefold).
-            base = sugg if case_sensitive else [s.casefold() for s in sugg]
-            self._sep_orig = sugg
-            self._sep_norm = [norm_sep(s) for s in base]
-
-        async def get_suggestion(self, value):
-            # 부모 _get_suggestion 이 case_sensitive=False 면 value 를 이미 casefold 함.
-            v = norm_sep(value)
-            for orig, norm in zip(self._sep_orig, self._sep_norm):
-                if norm.startswith(v):
-                    return orig
-            return None
 
     class PytmuxApp(App):
         ENABLE_COMMAND_PALETTE = False

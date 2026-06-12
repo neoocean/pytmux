@@ -422,6 +422,24 @@ def _on_prompt_segment_msg(app, msg):
         hide_cb=lambda: app.send_cmd("scroll_to_prompt", index=idx)))
 
 
+def _on_scroll_at_top(app, msg):
+    """§3.8 ①: 서버가 '스크롤백 맨 위에서 더 위로' 신호(scroll_at_top)를 보냈을 때 —
+    그 패널이 Claude 이고 띄울 프롬프트가 있으며 모달이 안 떠 있으면 프롬프트 히스토리
+    오버레이를 자동으로 연다. raw 스크롤은 서버가 맨 위 도달까지 그대로 보존하고, 맨
+    위에서 한 번 더 올릴 때만 이 신호가 온다(스크롤 거동 비대체 — 사용자 보호). 비-Claude
+    패널·히스토리 없음·모달 열림이면 무동작."""
+    pid = msg.get("pane")
+    info = (getattr(app, "pane_claude", {}) or {}).get(pid)
+    if not (info and info.get("claude")):
+        return
+    if not (info.get("history") or info.get("prompt")):
+        return
+    if len(app.screen_stack) > 1:          # 이미 모달이 떠 있으면 중복 방지
+        return
+    fn = getattr(app, "open_prompt_history", None)
+    fn and fn(pid)
+
+
 def _open_usage_panel(app):
     """Claude `/usage` 한도(세션 5h·주 전체·주 Sonnet)를 깨끗한 전용 화면(InfoScreen,
     막대+%+리셋)으로 연다. 인패널 /usage 자동 팝업과 수동 명령(`usage-panel`)이 공유.
@@ -890,6 +908,10 @@ class _ClaudeCodePlugin:
         # §3.8 Stage 2③ 서버 prompt_segment 회신 → 펼친 구간 팝업.
         if msg.get("t") == "prompt_segment":
             _on_prompt_segment_msg(app, msg)
+            return True
+        # §3.8 ① 서버 scroll_at_top 신호 → Claude 패널이면 프롬프트 오버레이.
+        if msg.get("t") == "scroll_at_top":
+            _on_scroll_at_top(app, msg)
             return True
         return False
 

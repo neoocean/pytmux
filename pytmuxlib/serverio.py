@@ -783,7 +783,16 @@ class ServerIOMixin:
         elif msg.get("top"):
             p.scroll_to("top")
         else:
-            p.scroll_by(int(msg.get("delta", 0)))
+            delta = int(msg.get("delta", 0))
+            # §3.8 ①: 위로 스크롤(delta>0)인데 스크롤백이 있고 이미 그 맨 위면, 더
+            # 올라갈 곳이 없다는 신호를 그 클라에 보낸다 — claude-code 플러그인이 Claude
+            # 패널이면 프롬프트 히스토리 오버레이를 띄운다(raw 스크롤은 맨 위 도달까지
+            # 그대로 보존, 맨 위에서 한 번 더 올릴 때만 발화). 코어는 신호만 — 오버레이
+            # 거동은 플러그인 결정(미설치/비-Claude/모달이면 무동작, delete-to-disable).
+            if delta > 0 and p._history_len() > 0 and p.scroll >= p._history_len():
+                asyncio.create_task(write_msg(
+                    client.writer, {"t": "scroll_at_top", "pane": p.id}))
+            p.scroll_by(delta)
 
     def shutdown(self):
         self.running = False
