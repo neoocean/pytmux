@@ -424,7 +424,7 @@ opt 화는 후속.
 | **M13** | T3 권한모드 plan 유도(예산≥80%+idle, opt-in 토글, bypass 불간섭) | 1 | 낮음 | `serverclaude.py`(`_scan_claude` 권한구동) | ✅ |
 | **M14a** | 정리 **빈도 상한**(time floor `claude_ctx_min_interval`, 기본 120초) — `_ctx_fired` 디바운스에 직교하는 시간 바닥(§5.6) | 3 | 낮음 | `serverclaude.py`(`_ctx_cap_ok`), `server.py`, 설정 팝업 | ✅ |
 | **M14b** | 무장 자동액션 카운트다운/취소 힌트 UI(`claude_pending`) + 입력 시 자동재개 취소(§5.3) | 2 | 중 | `serverio.py`, `client.py` | ✅ |
-| **M14c** | 모델 배지 파서 `claude_model`(T3) — 실 캡처 `Opus 4.8 (1M context)` 로 검증. 힌트 UI 는 후속 | 1 | 낮음 | `claude.py`(`claude_model`), `tests/fixtures/claude/badge_1m.txt` | ✅ 파서(힌트 UI 미구현) |
+| **M14c** | 모델 배지 파서 `claude_model`(T3) + **힌트 UI 완료**(2026-06-13): `model_overselect_hint` 순수함수(Opus 계열 + `_repeat_n`≥3 반복 + 잔량%≥40 여유면 "가벼운 모델 고려" 헤더 배지). **알림만 — 자동 전환 없음**(S4 설계). opt `claude_model_hint`(기본 OFF·`model-hint` 명령·설정 팝업 행). 서버 idle 완료 경계 평가→`claude_model_tip` 송출, 클라 secondary 톤 배지 | 1 | 낮음 | `claude.py`(`claude_model`/`model_overselect_hint`)·`servermixin.py`·`clientstatus.py`·`__init__.py`·`screens.py`·`tests/fixtures/claude/badge_1m.txt` | ✅ 파서+힌트 UI |
 | **M15** | **계정 합계 예산 + 멀티세션 우선순위 정리**(T5) — `_budget_*` 가 `_account_token_total` 도 봄(opt `token_budget_account`). 계정 예산 초과 시 per-pane `_ctx_pct` 로 **가장 꽉 찬 idle 부터** 정리(`_is_fullest_idle`/`_account_over_budget`) | 3 | 낮음 | `serverclaude.py`·`model.py`(`_ctx_pct`)·`server.py`·`clientutil.py`·`client.py` | ✅ |
 | **M16** | **PTY 밖 에스컬레이션 훅**(T6) — `claude-budget-warn/over`·`claude-auto-armed`·`claude-limit` 훅(클라 status 전이에 발화) | 0 | 낮음 | `claude.py`(`saver_hook_events`), `client.py`(status 핸들러·`_fire_hook` env); 서버 무변경 | ✅ |
 | **M17** | **반복 실패·장기 턴 감지 알림**(T7) — 완료 꼬리 비교(S8 `screen_tail_key`/`track_repeat`)+`_busy_since`(S9). 상태줄 ⚠배지(grade0) | 0 | 낮음 | `claude.py`·`serverclaude.py`·`model.py`·`serverio.py`·`clientwidgets.py` | ✅ |
@@ -434,7 +434,7 @@ opt 화는 후속.
 
 > 순서 원칙: **감지 정확도(M8·M9)를 먼저 고정**한 뒤에야 비가역 자동화(M11)를
 > 켠다(§5.4). M10(알림)은 위험 0. 모든 자동 개입은 **기본 OFF**, `token-saver` 팝업
-> 으로 옵트인. **남은 후속(M13·M14)**: plan 유도·모델 힌트(T3), 정리 빈도 상한,
+> 으로 옵트인. ~~**남은 후속(M13·M14)**: plan 유도·모델 힌트(T3)~~(완료), 정리 빈도 상한,
 > 카운트다운 UI, **실 Claude limit 화면 골든 캡처**(M8 의 가장 중요한 보강 — 현재
 > 픽스처는 문서화 포맷 합성이라 실화면 검증은 미완, `tests/fixtures/claude/README.md`).
 >

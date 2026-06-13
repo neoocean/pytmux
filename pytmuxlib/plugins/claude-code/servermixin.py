@@ -27,7 +27,8 @@ from .claude import (claude_account, claude_account_full, claude_api_error,
                      claude_awaiting_answer,
                      claude_context_hardstop, claude_context_pct,
                      claude_feedback_prompt, fmt_unknown_update,
-                     claude_model, claude_prompt, claude_perm_mode,
+                     claude_model, model_overselect_hint,
+                     claude_prompt, claude_perm_mode,
                      claude_remote_active, claude_remote_blocked,
                      claude_state, claude_usage,
                      claude_welcome, ctx_window_tokens, parse_inline_limit,
@@ -1240,6 +1241,16 @@ class ServerClaudeMixin:
                 if warn != p._claude_warn:
                     p._claude_warn = warn
                     changed = True
+                # M14c 힌트(T3/S4): Opus 로 반복 작업 + 컨텍스트 여유 충분이면 더 가벼운
+                # 모델 "고려" 힌트만(알림 전용 — 자동 전환 없음). opt-in(기본 끔)이라
+                # 토글이 켜져 있고 idle 완료 경계일 때만 평가한다. 세션 종료(new_cl=None)면
+                # 위 _repeat_n 리셋과 함께 자연히 None(repeat_n<min)으로 떨어진다.
+                tip = (model_overselect_hint(p._claude_model, p._repeat_n,
+                                             claude_context_pct(txt))
+                       if self.claude_model_hint and new_cl == "idle" else None)
+                if tip != p._model_tip:
+                    p._model_tip = tip
+                    changed = True
         return changed
 
     @staticmethod
@@ -1765,6 +1776,18 @@ class ServerClaudeMixin:
             p._scan_seq = -1
         self._save_opts()
         return self.claude_budget_plan
+
+    def set_claude_model_hint(self, value=None):
+        """M14c 모델 과선택 힌트(알림만) 토글. value 미지정 시 반전. 끄면 잔존 힌트
+        배지를 즉시 거두고(다음 status 에 None 송출), 켜면 다음 idle 완료 경계에서
+        재평가된다. opts.json 영속(plugin_opts)."""
+        self.claude_model_hint = (not self.claude_model_hint) \
+            if value is None else bool(value)
+        if not self.claude_model_hint:
+            for p in self._all_panes():
+                p._model_tip = None
+        self._save_opts()
+        return self.claude_model_hint
 
     # ---- S6 T4: 실측(/usage) 한도 게이트 — 자동개입 보류의 1차 기준 ----
     def _usage_fresh(self) -> bool:

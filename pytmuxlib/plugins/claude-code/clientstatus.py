@@ -48,6 +48,8 @@ def init_defaults(status):
     status.tok5h_pct = None        # M18-B: 5시간 한도 근접도 %(분모 미상이면 None)
     status.claude_warn = None      # M17: 장기턴/반복루프 경고(grade0, 없으면 None)
     status.claude_model = None     # M14c: 활성 Claude 모델 배지(opus-4.8 등)
+    status.claude_model_tip = None # M14c: 모델 과선택 힌트 배지(알림만, 없으면 None)
+    status.claude_model_hint = False  # M14c 힌트 토글(설정 팝업 표시용·기본 OFF)
     status.usage_limits = None     # M19: 그림자 /usage 세션·주간 한도 dict
     status.usage_age_sec = None    # S6 T3: 실측 경과(초) — stale 표기용
     # 토큰 절감 설정(설정 팝업 토글 현재값 + 예산 경고).
@@ -96,6 +98,7 @@ def absorb(status, msg):
     t5 = msg.get("tok5h_pct")
     status.tok5h_pct = min(100, t5) if isinstance(t5, int) else t5
     status.claude_warn = msg.get("claude_warn")   # M17 grade0 경고(권위값)
+    status.claude_model_tip = msg.get("claude_model_tip")  # M14c 힌트(권위값, 매 status)
     cm = msg.get("claude_model")                  # M14c 모델 배지(지속표시)
     if cm:
         status.claude_model = cm
@@ -122,6 +125,8 @@ def absorb(status, msg):
         "claude_repeat_alert", status.claude_repeat_alert)
     status.claude_budget_plan = msg.get(
         "claude_budget_plan", status.claude_budget_plan)
+    status.claude_model_hint = msg.get(            # M14c 힌트 토글(full 시만 도달)
+        "claude_model_hint", status.claude_model_hint)
     status.usage_gate_session_pct = msg.get(            # S6 T4 실측 게이트 임계
         "usage_gate_session_pct", status.usage_gate_session_pct)
     status.usage_gate_week_pct = msg.get(
@@ -263,4 +268,11 @@ def render_segs(status, segs, w):
     if status.claude_warn:
         segs.append(Segment(f" {status.claude_warn} ",
                             Style(color="white", bgcolor=tc("error"),
+                                  bold=True)))
+    # M14c 모델 과선택 힌트 배지(알림만 — 개입 없음). 경고(error 빨강)와 구분되게
+    # secondary 배경의 소프트 톤으로 그린다. 힌트 문자열은 💡(2칸) 뒤 공백을 직접
+    # 포함해 다음 글자 겹침이 없다(claude_warn 의 이모지 패턴과 동일).
+    if status.claude_model_tip:
+        segs.append(Segment(f" {status.claude_model_tip} ",
+                            Style(color="white", bgcolor=tc("secondary"),
                                   bold=True)))

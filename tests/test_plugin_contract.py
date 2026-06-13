@@ -187,8 +187,10 @@ async def test_plugin_opts_namespace_and_migration_shim():
     # ph_max_lines 는 claude-prompt-history 플러그인 소유 opt(별개) — claude-code 계약을
     # 엄격히 검증하기 위해 그 키만 빼고 비교한다.
     assert set(out) - {"ph_max_lines"} == {"usage_gate_session_pct",
-                                           "usage_gate_week_pct", "claude_auto_retry"}
+                                           "usage_gate_week_pct", "claude_auto_retry",
+                                           "claude_model_hint"}
     assert out["claude_auto_retry"] is True   # 기본 ON(opts 부재 시)
+    assert out["claude_model_hint"] is False  # M14c 힌트 opt-in — 기본 OFF
     # §7-4 deprecate shim: 구 opts.json 에 남은 token_budget_* 는 무시(속성 미설치).
     s4 = _S()
     reg.server_opts_init(s4, {"token_budget_day": 111,

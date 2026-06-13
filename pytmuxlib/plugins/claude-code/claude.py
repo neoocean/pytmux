@@ -344,6 +344,30 @@ def claude_model(text):
     return f"{fam}-{ver.replace('-', '.')}" if ver else fam
 
 
+# M14c 힌트 UI(T3/S4): "모델 과선택" 알림 — **자동 전환은 하지 않는다**(모델 교체는
+# 작업 의미를 바꿀 위험이 커 설계상 비채택, docs/TOKEN_SAVING_SCENARIO.md §4 T3). 프리
+# 미엄 모델(Opus)로 동일 결과가 반복(루프 의심)되는데 컨텍스트 여유까지 충분하면(잔량%
+# 높음 → 컨텍스트가 병목이 아니라 모델만 비쌈), 더 가벼운 모델을 "고려"하라는 헤더 힌트만
+# 낸다. 컨텍스트가 거의 찼으면(잔량 낮음) 모델 교체가 아니라 /compact 가 답이라 힌트를
+# 억제한다. 순수 함수 — 서버 _scan_claude 가 idle 완료 경계에서 부른다(단위 테스트 용이).
+def model_overselect_hint(model, repeat_n, ctx_pct=None,
+                          repeat_min=3, headroom_min=40):
+    """모델 과선택 힌트 문자열(또는 None). 조건 셋이 모두 참일 때만 힌트를 낸다:
+      · model 이 Opus 계열(claude_model() 결과의 'opus' 접두)일 것 — 프리미엄만 대상.
+      · repeat_n >= repeat_min — 동일 결과 반복(M17 _repeat_n 재사용, S8 '단순 반복').
+      · ctx_pct(잔량%)가 None 이 아니고 headroom_min 미만이면 **억제**(컨텍스트가 병목 →
+        /compact 가 답). None(미상, best-effort)이면 반복 신호를 1차로 보고 통과한다.
+    충족 시 헤더 배지로 그릴 힌트 문자열을 낸다(claude_warn 처럼 서버가 만든 한국어
+    리터럴 — 클라는 그대로 렌더). 자동 액션은 절대 발화하지 않는다(알림만)."""
+    if not model or not model.lower().startswith("opus"):
+        return None
+    if repeat_n < repeat_min:
+        return None
+    if ctx_pct is not None and ctx_pct < headroom_min:
+        return None
+    return "💡 Opus 로 반복 작업 — 가벼운 모델 고려(/model)"
+
+
 _WINDOW_RE = re.compile(r"(\d+)\s*([kKmM])")
 
 

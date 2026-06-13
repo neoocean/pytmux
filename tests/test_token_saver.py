@@ -13,7 +13,8 @@ import os
 import harness  # noqa: F401  (경로 설정)
 from harness import server_only, teardown
 from pytmuxlib.claude import (claude_context_pct, claude_feedback_prompt,
-                              claude_model, claude_state, claude_usage)
+                              claude_model, claude_state, claude_usage,
+                              model_overselect_hint)
 
 FIXDIR = os.path.join(os.path.dirname(__file__), "fixtures", "claude")
 
@@ -54,6 +55,23 @@ async def test_golden_fixtures():
     assert "1M" in (claude_usage(_fix("badge_1m.txt")) or "")
     # M14c: 실 모델 배지 'Opus 4.8 (1M context)' 에서 모델 계열·버전 추출.
     assert claude_model(_fix("badge_1m.txt")) == "opus-4.8"
+
+
+async def test_model_overselect_hint():
+    """M14c 힌트(T3/S4) 순수 함수 — Opus 반복+컨텍스트 여유일 때만 힌트, 그 외 None.
+    자동 전환은 절대 없고(알림 전용), 컨텍스트가 꽉 차면(/compact 영역) 억제한다."""
+    # 셋 다 충족: Opus 계열 + 반복 임계 도달 + 잔량 충분 → 힌트.
+    tip = model_overselect_hint("opus-4.8", 3, 72)
+    assert tip and "model" in tip.lower()
+    # 잔량 미상(None, best-effort)이면 반복 신호만으로 통과.
+    assert model_overselect_hint("opus", 5, None)
+    # 비-Opus(가벼운 모델)는 대상 아님 — 이미 절감 모델.
+    assert model_overselect_hint("sonnet-4.6", 9, 90) is None
+    assert model_overselect_hint(None, 9, 90) is None
+    # 반복 부족(임계 미만)이면 단발 작업 — 힌트 없음.
+    assert model_overselect_hint("opus-4.8", 2, 90) is None
+    # 컨텍스트가 거의 참(잔량<headroom)이면 모델 교체가 아니라 /compact 가 답 → 억제.
+    assert model_overselect_hint("opus-4.8", 5, 10) is None
 
 
 # ---- M11: 컨텍스트 잔량 기반 자동 정리 ----

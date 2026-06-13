@@ -69,6 +69,7 @@ def init_pane(pane) -> None:
     pane._done_tail = None
     pane._repeat_n = 0
     pane._claude_warn = None
+    pane._model_tip = None   # M14c 힌트: 모델 과선택 알림 배지 문자열(없으면 None)
     # §3.7 포맷 미인식 가시화: _fmt_unknown=경고 활성, _fmt_first_mono=의심 시작 시각
     # (Claude fg + 파서 None), _fmt_logged=error.log 1회 기록 가드, _fmt_check_mono=
     # 다음 fg(ps) 검사 허용 시각(throttle).

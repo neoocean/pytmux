@@ -59,6 +59,9 @@ COMMANDS = [
                          "(claude-auto-mode on|off|toggle)", "Claude"),
     ("auto-launch", "새 Claude 세션 시작 시 /rc(원격 제어)+권한모드 auto 1회 자동 적용 "
                     "on/off (auto-launch on|off|toggle, 기본 on)", "Claude"),
+    ("model-hint", "Opus 로 반복 작업+컨텍스트 여유 시 가벼운 모델 '고려' 힌트 표시 "
+                   "(알림만·자동 전환 없음) on/off (model-hint on|off|toggle, 기본 off)",
+                   "Claude"),
 ]
 NOARG = {
     "claude-rules", "token-saver",
@@ -75,6 +78,7 @@ COMMAND_OPTIONS = {
     "auto-retry": [{"key": "state", "label": "자동재시도", "choices": _ONOFF}],
     "claude-auto-mode": [{"key": "state", "label": "오토모드", "choices": _ONOFF}],
     "auto-launch": [{"key": "state", "label": "자동셋업", "choices": _ONOFF}],
+    "model-hint": [{"key": "state", "label": "모델힌트", "choices": _ONOFF}],
 }
 
 # §6 ⑤ 플러그인 명령 i18n: '?' 목록·힌트는 코어 CommandListScreen/_cmd_desc 가
@@ -102,6 +106,7 @@ i18n.register({
         "cmd.auto-retry": "Auto-inject '계속' 1 min after a transmission error (API error·rate limit) on/off (auto-retry on|off|toggle, default on)",
         "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",
         "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
+        "cmd.model-hint": "Show a 'consider a lighter model' hint when Opus repeats work with context headroom (alert only, never auto-switches) on/off (model-hint on|off|toggle, default off)",
     },
 })
 
@@ -114,7 +119,7 @@ i18n.register({
         "자동재개": "Auto-resume", "클리어모드": "Clear mode",
         "자동클리어": "Auto-clear", "하드스톱복구": "Hardstop recovery",
         "오토모드": "Auto mode", "자동셋업": "Auto setup",
-        "자동재시도": "Auto-retry",
+        "자동재시도": "Auto-retry", "모델힌트": "Model hint",
     },
 })
 
@@ -144,6 +149,7 @@ SAVER_ROWS = [
     ("prompt_clear", "프롬프트 단위 클리어(완료마다 doc+/clear)", "toggle"),
     ("long_turn", "장기 턴 경고(초)", "cycle"),
     ("repeat_alert", "반복 루프 경고(회)", "cycle"),
+    ("model_hint", "모델 과선택 힌트(Opus 반복+여유 시 가벼운 모델 제안)", "toggle"),
 ]
 # cycle 행의 프리셋 값(Enter 마다 다음으로 순환). 0=끔.
 SAVER_CYCLES = {
@@ -179,6 +185,7 @@ def saver_display(app, key):
         "auto_hardstop": st.auto_hardstop,
         "claude_auto_mode": st.claude_auto_mode,
         "prompt_clear": st.prompt_clear,
+        "model_hint": st.claude_model_hint,
     }
     if key in bools:
         return "●" if bools[key] else "○"
@@ -233,6 +240,9 @@ def saver_action(app, key):
     elif key == "prompt_clear":
         app.send_cmd("set_prompt_clear", value=None)
         st.prompt_clear = not st.prompt_clear
+    elif key == "model_hint":
+        app.send_cmd("set_claude_model_hint", value=None)
+        st.claude_model_hint = not st.claude_model_hint
     elif key == "ctx_action":
         nxt = _cycle_next("ctx_action", st.claude_ctx_action)
         app.send_cmd("set_claude_ctx_action", value=nxt)
@@ -442,7 +452,10 @@ class _ClaudeCodePlugin:
                   ("usage_gate_week_pct", 0, int),
                   # 전송 에러(API error/rate limit) 자동 재시도(요청 2026-06-12): 에러로
                   # 멈추면 1분 뒤 "계속" 주입. 기본 ON.
-                  ("claude_auto_retry", True, bool))
+                  ("claude_auto_retry", True, bool),
+                  # M14c 모델 과선택 힌트(T3/S4): Opus 반복+여유 시 가벼운 모델 "고려"
+                  # 헤더 힌트(알림만, 자동 전환 없음). opt-in 이라 기본 OFF.
+                  ("claude_model_hint", False, bool))
 
     def server_opts_init(self, server, opts):
         """opts.json → server 속성 설치(코어 __init__ 의 _opts.get 들을 이전).
@@ -498,6 +511,8 @@ class _ClaudeCodePlugin:
         msg["tok5h_pct"] = server._tok5h_pct(ap, tok_total)
         # M17(T7): 장기턴/반복루프 경고(없으면 None).
         msg["claude_warn"] = ap._claude_warn if ap else None
+        # M14c 모델 과선택 힌트 배지(알림만, 없으면 None — claude_warn 과 같은 송출 방식).
+        msg["claude_model_tip"] = ap._model_tip if ap else None
         # M19: 그림자 /usage 세션·주간 한도(없으면 None) + 자동 팝업 one-shot 시퀀스.
         msg["usage_limits"] = server._usage
         # S6 T3: 실측 경과(초) — 클라가 stale 표기("N분 전 실측")에 쓴다. 시계 동기
@@ -540,6 +555,8 @@ class _ClaudeCodePlugin:
                 "claude_long_turn_sec": server.claude_long_turn_sec,
                 "claude_repeat_alert": server.claude_repeat_alert,
                 "claude_budget_plan": server.claude_budget_plan,
+                # M14c 모델 과선택 힌트 토글(설정 팝업 표시용 — 정적 옵션, full 시만).
+                "claude_model_hint": server.claude_model_hint,
                 # S6 T4 실측 한도 게이트 임계(설정 팝업 표시용)
                 "usage_gate_session_pct": server.usage_gate_session_pct,
                 "usage_gate_week_pct": server.usage_gate_week_pct,
@@ -636,6 +653,9 @@ class _ClaudeCodePlugin:
             return "broadcast"
         if action == "set_claude_budget_plan":        # M13 예산 압박 plan 유도
             server.set_claude_budget_plan(msg.get("value"))
+            return "broadcast"
+        if action == "set_claude_model_hint":         # M14c 모델 과선택 힌트(알림만)
+            server.set_claude_model_hint(msg.get("value"))
             return "broadcast"
         if action == "set_claude_rules":              # #27 시작 규칙 저장(영속)
             server.set_claude_rules(msg.get("text", ""))
@@ -851,6 +871,8 @@ class _ClaudeCodePlugin:
             app.send_cmd("set_claude_auto_retry", value=_onoff(args))
         elif c in ("claude-auto-mode", "auto-mode"):
             app.send_cmd("set_claude_auto_mode", value=_onoff(args))
+        elif c in ("model-hint", "model-advice"):
+            app.send_cmd("set_claude_model_hint", value=_onoff(args))
         elif c == "prompt-clear-message":
             app.send_cmd("set_prompt_clear_message", msg=" ".join(args).strip())
         elif c in ("prompt-clear-queue", "pc-queue"):

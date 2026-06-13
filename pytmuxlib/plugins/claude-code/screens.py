@@ -95,6 +95,8 @@ i18n.register({
             "Per-prompt clear (doc+/clear each completion)",
         "장기 턴 경고(초)": "Long-turn warning (sec)",
         "반복 루프 경고(회)": "Repeat-loop warning (count)",
+        "모델 과선택 힌트(Opus 반복+여유 시 가벼운 모델 제안)":
+            "Model over-selection hint (suggest a lighter model when Opus repeats with headroom)",
     },
 })
 # 포맷 문자열(동적 인자 포함)은 semantic 키.
