@@ -240,6 +240,58 @@ async def clock(app, pilot):
     await pilot.pause(0.4)
 
 
+async def prompt_history(app, pilot):
+    # claude-prompt-history 플러그인 팝업(prompt-history). 공개 저장소에 실제 작업
+    # 내용이 노출되지 않도록 **합성 프롬프트** 목록을 직접 PromptHistoryScreen 에 넣어
+    # 띄운다(실서버 ph_list 응답 대신). 외형(시안 라운드 보더·시간순·미리보기 행수)은
+    # 실제와 동일하다.
+    from importlib import import_module
+    screen = import_module("pytmuxlib.plugins.claude-prompt-history.screen")
+    hist = [
+        "이 저장소 구조를 한눈에 설명해줘",
+        "tests/run.py 가 왜 실패하는지 찾아서 고쳐줘",
+        "방금 고친 부분에 회귀 테스트를 추가해줘",
+        "변경사항을 한 줄 요약으로 커밋해줘",
+    ]
+    app.push_screen(screen.PromptHistoryScreen(_aid(app), hist, 2))
+    await pilot.pause(0.5)
+
+
+async def p4_changes(app, pilot):
+    # p4-show-submitted-changelists 플러그인(p4changes). 실 퍼포스 서버·계정·경로가
+    # 노출되지 않도록 **합성 CL 목록**을 직접 ChangesScreen 에 넣어 띄운다(실서버
+    # p4 changes 응답 대신). 외형(풀스크린·CL/시각/사용자/설명 열·시안 보더)은 동일.
+    from importlib import import_module
+    screen = import_module(
+        "pytmuxlib.plugins.p4-show-submitted-changelists.screen")
+    rows = [
+        {"change": "58694", "when": "2026/06/13", "user": "dev",
+         "desc": "docs: IMPROVEMENT stale 헤딩 5건 정정"},
+        {"change": "58681", "when": "2026/06/13", "user": "dev",
+         "desc": "패널 닫기 [x] 버튼 한 칸 위로"},
+        {"change": "58672", "when": "2026/06/13", "user": "dev",
+         "desc": "원격 중첩 자동 승격 구현 N1~N3"},
+        {"change": "58660", "when": "2026/06/13", "user": "dev",
+         "desc": "p4-show-submitted-changelists 플러그인"},
+        {"change": "58648", "when": "2026/06/12", "user": "dev",
+         "desc": "claude-prompt-history 플러그인 재구현"},
+    ]
+    app.push_screen(screen.ChangesScreen(rows, info={"port": "perforce:1666"}))
+    await pilot.pause(0.5)
+
+
+async def ime_badge(app, pilot):
+    # ime-indicator 플러그인 — 화면 우상단 IME(한/영) 상태 배지. OS 실측 폴링이
+    # 캡처 머신의 현재 입력기(영문)로 덮어쓰지 않게 _ime_os=False(폴백 경로)로 두고
+    # 한글 모드를 박아 '[한]' 배지를 합성한다. 배지는 client_render 훅이 매 합성 때
+    # 우상단 첫 행에 그린다(작지만 확정 표식).
+    app._ime_os = False
+    app.ime_show = True
+    app.ime_state = "한"
+    app._composite()
+    await pilot.pause(0.4)
+
+
 async def calendar_big(app, pilot):
     # 큰 달력(숫자가 블록 문자) — 패널이 충분히 크면 자동으로 블록-숫자 달력이 된다.
     app.set_calendar(_aid(app), True)
@@ -480,6 +532,9 @@ SCENES = [
     ("28-claude-rules", "시작 규칙 편집(claude-rules) — 멀티라인 에디터·Ctrl+S 저장", claude_rules),
     ("29-usage-panel", "사용 한도(/usage) — 세션 5h·주 전체·주 Sonnet 막대 그래프", usage_panel),
     ("30-usage-view", "usage-view 팝업 — 한도 막대(% 우측정렬)+다음 리셋 블록 카운트다운", usage_view),
+    ("31-prompt-history", "프롬프트 히스토리 팝업(prompt-history) — 시간순·미리보기 행수", prompt_history),
+    ("32-p4changes", "submitted CL 목록(p4changes) — 풀스크린·CL/시각/사용자/설명", p4_changes),
+    ("33-ime", "IME 한/영 배지(ime-indicator) — 우상단 상태 배지", ime_badge),
 ]
 # Claude 컷(11·12·13·20·22)은 결정적 장면이 아니라 진짜 `claude` 한 세션에서 캡처한다
 # (claude_suite). 실제 API 호출이라 무인자 전체 생성에선 제외하고, `claude-suite` 또는

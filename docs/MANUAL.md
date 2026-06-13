@@ -5,7 +5,11 @@
 **실제 화면 스크린샷**과 함께 차근차근 설명합니다.
 
 > 더 짧은 요약은 [README](../README.md), 설계/내부는 [DESIGN.md](DESIGN.md),
-> 기능 목록은 [FEATURES.md](FEATURES.md) 를 참고하세요.
+> 기능 목록은 [FEATURES.md](FEATURES.md) 를 참고하세요. 주요 화면을 빠르게 훑어보려면
+> [🖼️ 화면 갤러리(GALLERY.md)](GALLERY.md), 플러그인을 직접 만들려면
+> [🔌 플러그인 매뉴얼(PLUGIN_MANUAL.md)](PLUGIN_MANUAL.md) 을 보세요. pytmux 의 시계·달력·
+> 디렉토리 트리(ncd)·IME 배지·Claude 통합·프롬프트 히스토리·사용 한도·퍼포스 CL 목록은
+> 모두 **플러그인**입니다(디렉토리를 지우면 조용히 사라짐).
 
 ---
 
@@ -834,9 +838,13 @@ tmux 의 윈도우 명령 이름과 별칭을 **둘 다** 받습니다.
 
 | 명령 | 동작 |
 |------|------|
+| `clock-mode` | 현재 패널을 큰 블록 시계로 덮기(토글) |
 | `calendar-mode` / `cal` | 이번 달 달력 오버레이 토글 |
 | `open-clock` / `close-clock` | 시계 모드 멱등 켜기/끄기 |
 | `open-calendar` / `close-calendar` | 달력 멱등 켜기/끄기 |
+| `ncd` / `nc` | 디렉토리 트리(루트→cwd 펼침·찾기·Enter cd) |
+| `ime-indicator` | 우상단 IME(한/영) 상태 배지 토글 |
+| `p4changes` / `submitted` | 퍼포스 submitted CL 목록(풀스크린, Enter=describe) |
 
 ### 클립보드
 
@@ -849,11 +857,20 @@ tmux 의 윈도우 명령 이름과 별칭을 **둘 다** 받습니다.
 
 | 명령 | 동작 |
 |------|------|
-| `token-log` | 토큰 사용량 파일 기록 |
+| `token-log` / `token-usage` | 토큰 사용량 팝업(기간·계정·세션 뷰 + 실측 한도) |
+| `token-saver` / `claude-settings` | 토큰 절감 설정 팝업(자동 개입·임계·실측 게이트) |
+| `usage-view` | 사용 한도 막대 + 다음 리셋 카운트다운 화면 |
+| `claude-usage` / `usage-panel` | 그림자 `/usage` 갱신 / 한도 막대 그래프 |
+| `prompt-history` / `prompts` / `ph` | Claude 프롬프트 히스토리 팝업·미리보기 |
+| `model` | 모델·컨텍스트 변경 팝업(`/model` 주입) |
 | `claude-rules` | 시작 규칙 편집(새 세션/clear 후 자동 주입) |
 | `claude-auto-mode on\|off` | idle 시 권한모드 자동 오토모드 전환 |
 | `auto-launch on\|off` | 새 세션 시작 시 `/rc`(원격 제어)+권한 `auto` 1회 자동 적용(기본 ON) |
 | `auto-doc-clear on\|off` | 30초 idle 시 자동 문서화 + `/clear` |
+| `auto-compact on\|off` | 30초 idle 시 자동 `/compact` |
+| `auto-hardstop on\|off` | 컨텍스트 하드스톱 시 즉시 자동 `/compact`(기본 ON) |
+| `auto-retry on\|off` | 전송 에러 1분 뒤 `계속` 자동 주입(기본 ON) |
+| `auto-resume on\|off` | 토큰 리밋 자동 재개 |
 
 ### 키 바인딩 / 진단 / 운영
 
@@ -862,6 +879,8 @@ tmux 의 윈도우 명령 이름과 별칭을 **둘 다** 받습니다.
 | `bind-key <키> <명령>` / `unbind-key <키>` / `list-keys` | 런타임 키 바인딩 |
 | `capture-output on\|off` | 패널 출력 캡처(진단) 토글 |
 | `reconnect` / `resync` | IPC 강제 재접속(degraded 회복, 서버 보존) |
+| `remote-attach <host>` / `remote-detach` | 원격 pytmux 의 탭을 분홍 탭으로 어태치/해제 |
+| `nest-auto-attach on\|off` | 원격에서 `pytmux` 실행 시 거부 대신 자동 remote-attach 승격(기본 ON) |
 | `restart-server` | 작업 보존 재시작(셸/PTY 유지, 서버 코드만 교체) |
 | `restart-all` / `restart-check` | 세션유지 재시작 + 클라 relaunch / 그 드라이런 |
 | `version` | 클라/서버 버전(p4 CL)·업타임 팝업 |
