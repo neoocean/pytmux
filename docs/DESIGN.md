@@ -341,17 +341,24 @@ scripts/pytmux/
 │   ├── server.py            # Server(데몬) 본체 + 서버측 믹스인을 동적 베이스로 합성
 │   ├── serverio.py/servercapture.py/serverpersist.py/serverpty.py/servertree.py  # 서버 믹스인
 │   ├── claude.py            # Claude 화면 파서·휴리스틱(순수 함수)
-│   ├── tokens.py/usagedb.py/usagelog.py/usageprobe.py  # 토큰 회계·집계(서버측)
 │   ├── client.py            # Textual 클라이언트(build_client_app): 렌더·키·마우스·명령
 │   ├── clientutil.py/clientscreens.py/clientwidgets.py/clientclip.py/clientrender.py  # 클라 분할
 │   ├── replay.py / version.py / launcher.py
-│   └── plugins/             # ★ 선택적 플러그인 (디렉토리 삭제 시 해당 기능 조용히 비활성)
+│   └── plugins/             # ★ 선택적 플러그인 8개 (디렉토리 삭제 시 해당 기능 조용히 비활성)
 │       ├── __init__.py      # 레지스트리·로더(load) — commands/handle_*/server_mixins 훅
+│       ├── clock/           # 시계 오버레이 (레퍼런스)
+│       ├── calendar/        # 달력 오버레이 (clock 미러)
 │       ├── ncd/             # Norton Change Directory (__init__·server.py·screen.py)
-│       └── claude-code/     # Claude Code 통합
+│       ├── ime-indicator/   # 우상단 IME(한/영) 배지 (oskbd.py·render.py)
+│       ├── claude-prompt-history/  # 프롬프트 히스토리 미리보기·팝업·점프
+│       ├── claude-token-usage-view/ # 사용 한도 막대 + 리셋 카운트다운
+│       ├── p4-show-submitted-changelists/ # 퍼포스 submitted CL 목록
+│       └── claude-code/     # Claude Code 통합(가장 큼 — 모든 축)
 │           ├── __init__.py  # 명령 메타·디스패치·token-saver
 │           ├── servermixin.py # ServerClaudeMixin: 스캔·토큰·자동개입 (옛 serverclaude.py, CL 57812)
-│           └── screens.py   # 규칙편집·절감설정 팝업
+│           ├── clientrender.py/clientstatus.py # 클라 렌더·상태줄 세그먼트
+│           ├── tokens.py/usagedb.py/usagelog.py/usageprobe.py # 토큰 회계·집계(플러그인 이전)
+│           └── screens.py   # 규칙편집·절감설정·토큰로그·모델 팝업
 ├── tests/                   # 헤드리스 테스트(run.py) + 리플레이 골든 스냅샷
 ├── docs/                    # DESIGN / FEATURES / CONTRIBUTING / PLUGIN_SYSTEM / HANDOFF …
 ├── README.md

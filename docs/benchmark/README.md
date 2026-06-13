@@ -20,7 +20,7 @@ docs/benchmark/
    layout 메시지 빌드·전 패널 render+직렬화·탭 전환 지연(p50/p99/max ms) + 패널 수별
    스케일링.
 3. **터미널 출력 폭증** — 처리량(feed MB/s)과 반응성(슬라이스 지연 p50/p99/max).
-   claude busy 풀리페인트 / plain cat 스크롤 합성 워크로드(`poc/feed_profile.py` 재사용).
+   claude busy 풀리페인트 / plain cat 스크롤 합성 워크로드(`scripts/poc/feed_profile.py` 재사용).
 
 ## 동기화 모델 (git-우선 + Perforce 미러)
 

@@ -60,7 +60,7 @@ def _char_cells(ch: str) -> int:
 ```
 **효과**: 중~높(텍스트가 빽빽한 패널·다중 탭에서 프레임당 수천 호출의 `wcwidth` 왕복 제거).
 **위험**: 낮음(부작용 없는 순수함수, 해시 안정). **검증**: `tests/run.py` 동작 불변 +
-`poc/feed_profile.py`/`scripts/bench.py` 의 전 패널 render+직렬화 p50 비교, 적중률 측정.
+`scripts/poc/feed_profile.py`/`scripts/bench.py` 의 전 패널 render+직렬화 p50 비교, 적중률 측정.
 
 ### C2. TabBar `_entries()` — 프레임당 1회로 [검증됨]
 

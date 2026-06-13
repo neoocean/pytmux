@@ -55,9 +55,9 @@ git push
 
 - UI(테두리색·상태줄·팝업·탭바 등)나 매뉴얼 장면을 바꿨으면 **커밋 전에 재생성**한다:
   ```bash
-  python3 scripts/gen_screenshots.py            # 결정적 장면 전체 재생성 (Windows: py …)
+  python3 scripts/gen_screenshots.py            # 결정적 장면 29개 전체 재생성 → docs/image/*.svg
   python3 scripts/gen_screenshots.py 14-info    # 이름 매칭 장면만
-  python3 scripts/gen_screenshots.py claude-suite  # 라이브 Claude 컷(실 API 호출)
+  python3 scripts/gen_screenshots.py claude-suite  # 라이브 Claude 컷 4개(11/12/13/22, 실 API 호출)
   ```
   (Windows 박스에선 `python3` 대신 `py` — 예 `py scripts/gen_screenshots.py`.)
 - 저장 직후 `_redact_svg` 가 (1) 계정 PII(이메일·환영 배너 이름) 마스킹, (2) 한글 등

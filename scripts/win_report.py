@@ -7,7 +7,7 @@
 
 설계 메모(§10 열린 결정에 대한 선택):
 - **단일 스크립트**로 기존 자산을 래핑한다: 호환성=`tests/run.py`(헤드리스 러너),
-  성능=`poc/feed_profile.py`(feed/render 프로파일러)의 순수 함수를 재사용한다.
+  성능=`scripts/poc/feed_profile.py`(feed/render 프로파일러)의 순수 함수를 재사용한다.
 - **측정만** 한다(성능 회귀 게이트는 두지 않음) — 다만 슬라이스 지연을 60/30fps
   기준선과 비교해 advisory 로 표시한다.
 - 호환성은 **헤드리스 범위**(tests/run.py + import 가드)만 본다 — 라이브 attach
@@ -32,10 +32,13 @@ import platform
 import subprocess
 import sys
 
-# 리포지토리 루트(= scripts/ 의 부모)를 import 경로에 추가해 pytmuxlib/poc 를 쓴다.
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+# 리포지토리 루트(= scripts/ 의 부모)를 import 경로에 추가해 pytmuxlib 를 쓰고,
+# scripts/ 도 추가해 poc 패키지(scripts/poc/feed_profile.py)를 import 한다.
+_SCRIPTS = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(_SCRIPTS)
+for _p in (ROOT, _SCRIPTS):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 
 # ---------------------------------------------------------------- 환경 수집
@@ -150,7 +153,7 @@ def check_imports() -> dict:
 
 # ----------------------------------------------------------------- 성능
 def run_perf(mb: float) -> dict:
-    """poc/feed_profile.py 의 순수 함수를 재사용해 feed/render 핫패스를 측정."""
+    """scripts/poc/feed_profile.py 의 순수 함수를 재사용해 feed/render 핫패스를 측정."""
     try:
         fp = importlib.import_module("poc.feed_profile")
         from pytmuxlib.model import Pane

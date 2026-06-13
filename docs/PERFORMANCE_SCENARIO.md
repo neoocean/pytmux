@@ -6,7 +6,7 @@
 > 다. 각 항목은 코드 근거(`file:line`)·개선안·예상 효과·위험·검증 게이트를 갖는다.
 > 후속 리뷰(2026-06-07, 신규 레버 C1~C5 **구현·게시 완료**)는 [PERFORMANCE_REVIEW_2026-06-07.md](PERFORMANCE_REVIEW_2026-06-07.md).
 > 관련: [HANDOFF.md](HANDOFF.md) §9(throughput 작업 이력)·§10 · [WINDOWS_TESTING.md](WINDOWS_TESTING.md)
-> 측정 도구: `scripts/bench.py`(startup·탭/패널 반응성·출력폭증 3축), `poc/feed_profile.py`(feed/render 핫패스).
+> 측정 도구: `scripts/bench.py`(startup·탭/패널 반응성·출력폭증 3축), `scripts/poc/feed_profile.py`(feed/render 핫패스).
 
 ## 0. 측정 우선 원칙 (필수)
 
@@ -231,7 +231,7 @@ json 직렬화가 포함돼 측정된다.
 
 **현상/근거**: feed 비용은 거의 100% pyte 내부다 — cProfile 상 `Screen.draw` 안의
 `Char` namedtuple 할당(`_replace`/`_make`/`__new__`)이 천장의 정체(HANDOFF §9 ★,
-`poc/feed_profile.py`). 전처리 정규식은 ~0.2s 로 무시 수준.
+`scripts/poc/feed_profile.py`). 전처리 정규식은 ~0.2s 로 무시 수준.
 
 **개선안(난이도순)**:
 - **(쉬움) 비가시 패널 feed 스로틀** — 비활성 탭/가려진 패널은 슬라이스 주기를
@@ -242,7 +242,7 @@ json 직렬화가 포함돼 측정된다.
   Windows→ssh 환경 의존이라 헤드리스/로컬 재현·검증 불가 → **의도적 보류**
   (HANDOFF §10). 실 Windows 박스에서 B1~B5 로도 부족하다는 측정이 나오면 착수.
 
-**검증**: `poc/feed_profile.py --profile` 로 천장 원인 재확인 후 착수.
+**검증**: `scripts/poc/feed_profile.py --profile` 로 천장 원인 재확인 후 착수.
 
 ## 5. 시나리오 (A) — 실행(startup) 가속
 

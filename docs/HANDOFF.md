@@ -280,6 +280,19 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- **문서 일제 최신화 + GALLERY 신설 + poc→scripts/poc 이동(2026-06-13)** — 사용자
+  "현재 상태 기준 전 문서 점검/최신화" + "poc 를 scripts/poc 로 이동". ① **GALLERY.md
+  신설**(pytmux 본체+8개 플러그인 매력 컷)·README/MANUAL 에 갤러리·플러그인 매뉴얼 링크,
+  테스트수 286→591. ② **PLUGIN_MANUAL 8개 플러그인 전부 소개**(§1 표 축 열·신규 사례
+  §9~§13). ③ 새 스크린샷 4종(31-prompt-history·32-p4changes·33-ime·34-remote-attach —
+  전부 합성 데이터). ④ **stale 정정**: FEATURES(스티키 헤더 제거→prompt-history 플러그인)·
+  DESIGN(플러그인 8개 트리·토큰 모듈 코어 잔류 오기 삭제)·PLUGIN_SYSTEM(레퍼런스 8개
+  표·claude-code "진행 중"→완료·S4/S5 물리이전 완료 반영)·SCREENSHOT_SCENARIO(장면
+  카탈로그 현재 SCENES 기준)·CONTRIBUTING(장면 수). ⑤ **poc→scripts/poc** p4 move:
+  feed_profile.py(`dirname×2→×3` 루트 보정)·winpty_poc.py(`dirname` 한 단계 보정),
+  bench.py/win_report.py 주석+win_report sys.path 에 scripts 추가, 문서 9곳 경로 치환.
+  bench --quick 로 `import poc.feed_profile`(scripts/poc) 동작 검증·591 green. (벤치 결과
+  산출물 docs/benchmark/<os>/*.json|md 는 별도 동기화 건이라 이 CL 에서 제외.)
 - **원격 중첩 자동 승격 구현 N1~N3(2026-06-13, CL 58672)** — 58665 시나리오의 구현.
   열린 결정 사용자 확정(㉠ argv b64→서버 parse_dest·㉡ Windows 래퍼 1차 제외·㉢ 기본
   ON+자동 탭 전환·㉣ 접두 대조·㉤ 1.0s). ① **N1**: sh 래퍼가 exec 직전 NEST_DEST
@@ -2047,7 +2060,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   출력. 재사용/재실행 시 비교 가능해야. 기존 자산(재사용·통합 대상): ① **헤드리스
   테스트 러너** `tests/run.py`(`py tests/run.py`, 현재 150/150) — 호환성 회귀. ②
   **Windows 포팅 import 가드** `tests/test_windows_port.py`(fcntl/termios 부재
-  시뮬레이션). ③ **feed/render 처리량 프로파일러** `poc/feed_profile.py`(feed MB/s,
+  시뮬레이션). ③ **feed/render 처리량 프로파일러** `scripts/poc/feed_profile.py`(feed MB/s,
   FEED_SLICE 슬라이스 지연 ms, alt-screen vs main-screen, cProfile) — 성능 핫패스.
   ④ 문서 `docs/WINDOWS_PORT.md`(§7-d 실 Windows 11 검증 절차)·`docs/
   ENV_SETUP_WINDOWS.md`·`install.ps1`. **제안 스코프**: A) **환경 수집** — OS/빌드,
@@ -2336,7 +2349,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
     `test_feed_drain_disables_gc_during_burst`·`test_feed_drain_gc_balanced_on_cancel`
     ·`test_coalesce_repaints_collapses_feedbuf_and_persists`·`test_feed_drain_interleaves_with_loop`.
   - **★ CL 56xxx 프로파일링 완료 — 원인 2건 정량 확정**(가설 ②/③ 검증, macOS local·
-    Python 3.13, `poc/feed_profile.py`). 합성 워크로드(claude busy = alt-screen 풀
+    Python 3.13, `scripts/poc/feed_profile.py`). 합성 워크로드(claude busy = alt-screen 풀
     리페인트, plain cat = main-screen 스크롤)를 FEED_SLICE(8KB) 단위로 먹이며 측정.
     - **(원인 1) feed 처리량 천장 ≈ 2.2 MB/s — 전적으로 pyte 내부 비용**. cProfile:
       feed 10.5s 중 `pyte streams.feed` 10.49s(99.6%), 그중 `Screen.draw` 7.89s,
@@ -2362,7 +2375,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
       `gc.collect()`, 또는 `gc.set_threshold` 상향/`gc.freeze()`) — 가장 싸고 즉효, 입력
       스파이크 제거. ② **풀스크린 리페인트 코얼레싱** — `_feedbuf` 에서 마지막 화면-무효화
       경계(`2J`/alt 전환) 이전을 드롭해 throughput 천장을 사실상 우회. ③ feed 별도 스레드
-      (가장 큰 공사). 재현·측정은 `python poc/feed_profile.py [--profile]`.
+      (가장 큰 공사). 재현·측정은 `python scripts/poc/feed_profile.py [--profile]`.
     - **✅ 대응 ① GC 튜닝 구현 완료(CL 56xxx)**: `server._feed_drain` 이 드레인 창 동안만
       순환 GC 를 끈다 — `_gc_drain_enter`(첫 드레인 0→1 에서 `gc.disable()`)/`_gc_drain_exit`
       (마지막 1→0 에서 원래 켜져 있었으면 `gc.enable()`+`gc.collect()` 1회). 동시 드레인은
@@ -2906,7 +2919,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
   `AF_UNIX` 등 POSIX 전용 의존 때문에 Windows 네이티브 Python 에서 import 단계부터 막힘.
   범위 조사는 [`docs/WINDOWS_PORT.md`](WINDOWS_PORT.md) 에 파일별로 정리됨(작업의 ~70%가
   `server.py` 의 PTY·이벤트루프·프로세스·시그널 재작성). 리스크 집중부(① ConPTY,
-  ② asyncio×파이프 읽기)를 찌르는 **PoC 슬라이스 작성 완료** → [`poc/winpty_poc.py`](../poc/winpty_poc.py):
+  ② asyncio×파이프 읽기)를 찌르는 **PoC 슬라이스 작성 완료** → [`scripts/poc/winpty_poc.py`](../scripts/poc/winpty_poc.py):
   `pywinpty`(ConPTY)→리더 스레드→`call_soon_threadsafe`→**기존** `Pane`(pyte)→**기존**
   `render_pane_lines`. pytmuxlib **무수정**(Windows 에서 `protocol.py` 의 fcntl import 깨짐을
   no-op 스텁으로 우회). macOS 에서 렌더 파이프라인 절반(`--selftest` + fcntl 차단 시뮬)은
