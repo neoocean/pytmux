@@ -117,10 +117,19 @@ class ServerRemoteMixin:
         if endpoint:
             reader, writer = await ipc.open_connection(endpoint)
             return reader, writer, (ipc.read_token(endpoint) or ""), None
+        # S2: host 는 클라 cmd(remote_attach)에서 온 **비신뢰** 문자열이다. argv 형이라
+        # 셸 인젝션은 없지만 ssh 자체가 argv 의 '-...' 를 옵션으로 해석하므로, host 가
+        # '-oProxyCommand=<명령>' 이면 임의 명령이 실행된다(옵션 인젝션 → RCE). 선행 '-'·
+        # 공백을 거부하고, '--' 로 ssh 옵션 파싱을 끊어 host 를 목적지로만 해석시킨다.
+        # (host-key 정책은 사용자 ssh config/known_hosts 를 그대로 따른다 — 강제 변경은
+        #  동작하는 설정을 깨거나 보안을 느슨하게 만들 수 있어 건드리지 않는다.)
+        if not host or host.startswith("-") or any(c.isspace() for c in host):
+            raise ConnectionError(f"잘못된 원격 호스트: {host!r}")
         # BatchMode: 서버가 띄우는 ssh 는 TTY 가 없어 비밀번호를 못 묻는다 — 키
         # 인증 미설정이면 즉시 명확한 stderr(Permission denied)로 실패하게 한다.
         proc = await asyncio.create_subprocess_exec(
-            "ssh", "-T", "-o", "BatchMode=yes", host, "pytmux", "stdio-proxy",
+            "ssh", "-T", "-o", "BatchMode=yes", "--",
+            host, "pytmux", "stdio-proxy",
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE)
         line = await asyncio.wait_for(proc.stdout.readline(), 15)

@@ -18,6 +18,13 @@ def test_parse_endpoint():  # 동기 단위(러너는 async 만 모으므로 아
     assert ipc.parse_endpoint("tcp:127.0.0.1:54321") == ("tcp", "127.0.0.1", 54321)
     assert ipc.parse_endpoint("tcp:127.0.0.1:0") == ("tcp", "127.0.0.1", 0)
     assert ipc.is_tcp("tcp:127.0.0.1:0") and not ipc.is_tcp("/tmp/x.sock")
+    # S3: 잘못된 포트는 미처리 ValueError 대신 명확한 ValueError 로 가드된다.
+    for bad in ("tcp:", "tcp:127.0.0.1:abc", "tcp:host:"):
+        try:
+            ipc.parse_endpoint(bad)
+            assert False, f"기대: ValueError for {bad!r}"
+        except ValueError:
+            pass
 
 
 async def _echo_roundtrip(endpoint, portfile):

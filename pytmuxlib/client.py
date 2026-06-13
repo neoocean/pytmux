@@ -1341,24 +1341,28 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 패널 테두리 박스: 비활성=회색, 활성=파란색. 경계 셀은 인접 패널이
             # 공유하므로, 비활성 박스를 먼저 그리고 활성 박스를 마지막에 덮어
             # 활성 패널의 경계 전체가 파란색이 되도록 한다.
-            inactive_box = Style(color="grey42")
-            active_box = Style(color=theme_color(self, "primary"), bold=True)
-            # §1.7-a 원격 탭을 보는 중(활성 탭이 remote-attach 병합 탭)이면 외곽선을
-            # 분홍으로 — 지금 보는 패널들이 원격임을 탭바(분홍 탭)와 같은 색으로
-            # 알린다. degraded(아래 빨강)는 네트워크 경고라 분홍보다 우선.
-            if self._viewing_remote():
-                inactive_box = Style(color=REMOTE_PINK_DIM)
-                active_box = Style(color=REMOTE_PINK, bold=True)
-            # 패널 선택 깜빡임(ESC 모드 방향키): 위상 on 일 때 그 패널 테두리를
-            # warning 색으로 그려 active(파랑)와 교차 점멸시킨다(선택 가시화, 요청).
-            flash_box = Style(color=theme_color(self, "warning"), bold=True)
-            # 네트워크 응답성 저하(§10): RTT 히스테리시스로 degraded 면 모든 패널
-            # 테두리를 error(빨강)로 덮어 사용자에게 알린다(회복되면 원복). 단일
-            # ssh 채널을 전 패널이 공유하므로 전 패널 공통 상태.
-            if self._net_degraded:
-                err = theme_color(self, "error")
-                inactive_box = Style(color=err)
-                active_box = Style(color=err, bold=True)
+            # P4: 이 Style 들은 (테마, 원격뷰, degraded) 시그니처에만 의존하고 프레임
+            # 내내 불변이므로, 시그니처가 바뀔 때만 재생성해 self 에 캐시한다(예전엔
+            # 매 _composite 마다 ~5개 Style 신규 할당). 우선순위 degraded>원격>기본.
+            # §1.7-a 원격 탭(remote-attach 병합 탭)을 보면 분홍, §10 degraded 면 error(빨강).
+            _box_sig = (getattr(self.app, "theme", ""),
+                        self._viewing_remote(), self._net_degraded)
+            if getattr(self, "_box_style_sig", None) != _box_sig:
+                if self._net_degraded:
+                    err = theme_color(self, "error")
+                    ib = Style(color=err)
+                    ab = Style(color=err, bold=True)
+                elif self._viewing_remote():
+                    ib = Style(color=REMOTE_PINK_DIM)
+                    ab = Style(color=REMOTE_PINK, bold=True)
+                else:
+                    ib = Style(color="grey42")
+                    ab = Style(color=theme_color(self, "primary"), bold=True)
+                # 패널 선택 깜빡임(ESC 모드 방향키): warning 색 테두리로 active 와 교차 점멸.
+                fb = Style(color=theme_color(self, "warning"), bold=True)
+                self._box_styles = (ib, ab, fb)
+                self._box_style_sig = _box_sig
+            inactive_box, active_box, flash_box = self._box_styles
             show_title = self.layout.get("border_status")
             # 박스 문자 ↔ 변 비트(U=8,D=4,L=2,R=1): 겹치는 경계를 합쳐 ┬┴├┤┼ 로 연결.
             # C3: 상수 dict 를 매 _composite 마다 새로 만들지 않고 모듈 상수를 재사용.

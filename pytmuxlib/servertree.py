@@ -565,7 +565,12 @@ class ServerTreeMixin:
                     win = tab.window
                     if not getattr(win, "auto_rename", False) or not win.active_pane:
                         continue
-                    cmd = self._fg_command(win.active_pane)
+                    # P8: _fg_command 는 동기 `ps`/tcgetpgrp(POSIX) 호출이라 이벤트
+                    # 루프를 막는다(2초마다 auto_rename 탭마다). 읽기전용 OS 호출이라
+                    # 스레드 안전 → executor 로 오프로드해 루프 응답성을 지킨다(_fg_command
+                    # 자체는 동기 유지 — 다른 동기 호출부 영향 없음).
+                    cmd = await asyncio.get_event_loop().run_in_executor(
+                        None, self._fg_command, win.active_pane)
                     if cmd and cmd != tab.name:
                         tab.name = cmd
                         changed = True

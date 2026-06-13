@@ -645,3 +645,29 @@ async def test_import_backward_compat_old_screen_only():
     q.import_state({"screen": ["hello", "world"]})   # 구 포맷
     txt = pane_text(q)
     assert "hello" in txt and "world" in txt
+
+
+async def test_resume_node_rejects_tampered_fd_pid():
+    """S4: resume 상태파일이 변조됐을 때 _build_resume_node 가 임의 fd/pid 로
+    ioctl·killpg(confused-deputy)하지 않게 의미검증한다 — 음수/비정수 fd·pid,
+    열리지 않은 fd, char device 아닌 fd(일반파일)는 ValueError 로 거부되고
+    상위 복원 루프가 해당 노드를 건너뛴다."""
+    import tempfile
+    srv, task, sock = await server_only()
+    f = tempfile.TemporaryFile()   # 일반파일 fd(= char device 아님)
+    try:
+        bad_panes = [
+            {"cols": 80, "rows": 24, "master_fd": -1, "child_pid": 123},     # 음수 fd
+            {"cols": 80, "rows": 24, "master_fd": 999999, "child_pid": 123}, # 미열림 fd
+            {"cols": 80, "rows": 24, "master_fd": 2, "child_pid": -5},       # 비정상 pid
+            {"cols": 80, "rows": 24, "master_fd": f.fileno(), "child_pid": 1},  # 일반파일(비 char)
+        ]
+        for ps in bad_panes:
+            try:
+                srv._build_resume_node({"pane": ps})
+                assert False, f"기대: ValueError for {ps}"
+            except ValueError:
+                pass
+    finally:
+        f.close()
+        await teardown(srv, task, sock)

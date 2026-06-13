@@ -250,15 +250,27 @@ _THEME_FALLBACK = {
     "primary-darken-3": "#004295",   # 명령 프롬프트 명령어 배경(옅은 진파랑)
 }
 
+# P5: (테마이름, 변수명) → 해석색 캐시. theme_color 는 _composite·상태바·clientstatus
+# 가 프레임/세그먼트마다 호출하는데, 매번 try/except + 이중 dict.get 였다. 활성 테마가
+# 같은 동안 결과는 불변이므로 메모한다. 테마 전환 시 app.theme(이름)이 바뀌어 키가
+# 갈리니 자연 무효화된다(이 앱은 테마를 바꾸지 않지만 정확성 위해 키에 포함).
+_THEME_COLOR_CACHE: dict = {}
+
+
 def theme_color(widget, name: str) -> str:
-    """현재 Textual 테마에서 색을 해석(없으면 textual-dark 폴백)."""
+    """현재 Textual 테마에서 색을 해석(없으면 textual-dark 폴백). (P5) 테마이름+변수명으로 메모."""
     try:
-        v = widget.app.theme_variables.get(name)
-        if v:
-            return v
+        app = widget.app
+        key = (getattr(app, "theme", ""), name)
+        hit = _THEME_COLOR_CACHE.get(key)
+        if hit is not None:
+            return hit
+        v = app.theme_variables.get(name)
+        result = v if v else _THEME_FALLBACK.get(name, "white")
+        _THEME_COLOR_CACHE[key] = result
+        return result
     except Exception:
-        pass
-    return _THEME_FALLBACK.get(name, "white")
+        return _THEME_FALLBACK.get(name, "white")
 
 @lru_cache(maxsize=8192)
 def _darken_style(st: Style, ratio: float = 0.55) -> Style:

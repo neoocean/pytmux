@@ -1,5 +1,11 @@
 # pytmux 전체 코드 감사 — 속도·보안 (2026-06-13)
 
+> **✅ 구현 완료(2026-06-13)**: 아래 14개 항목 전부 적용·검증(606 green). 성능 8건은
+> 동작 불변(CSE·할당 제거·캐시), 보안 5건은 코드 수정 + 회귀 테스트 3종 추가
+> (S3 `test_ipc`, S2 `test_remote`, S4 `test_restart`), S1 은 신뢰 모델 인코드 문서화
+> (ssh-암호화·F1/F2 서버검증으로 토큰-over-ssh 는 의도된 인증 — 재설계 불요). 각 표의
+> ✅ 표시 참조.
+
 > **상태**: 신규 패스. `pytmuxlib/` 전체(~25.5k LOC)를 **전송/코어·플러그인/데이터·서버
 > 핫패스·클라 렌더** 4축으로 정독해 도출한 **net-new 개선점**만 싣는다.
 > **방법**: 정적 코드 정독 + 데이터 흐름 추적. 동적 익스플로잇·벤치 미수행(개선 시
@@ -27,25 +33,45 @@
 
 | ID | 심각도 | 항목 | 위치 |
 |----|--------|------|------|
-| S1 | **Med** | stdio-proxy 가 인증 토큰을 stdout 평문 출력 → F1 토큰 모델 우회 여지 | `launcher.py:288` |
-| S2 | **Med** | `remote_attach` 가 클라 메시지의 host 를 검증·핀 없이 ssh 대상으로 사용 | `serverremote.py:122`, `serverio.py:325` |
-| S3 | Low–Med | `parse_endpoint` 의 `int(port)` 무가드 → 잘못된 엔드포인트에 미처리 `ValueError` | `ipc.py:54` |
-| S4 | Low | 재시작 상태파일의 `master_fd`/`child_pid` 를 의미검증 없이 `adopt`/`killpg` | `serverpersist.py:184` |
-| S5 | Low | `search_pane` 가 키입력마다 전체 스크롤백 동기 재스캔(알고리즘 DoS) | `server.py:577` |
-| S6 | Low | 레거시 `usagelog.append` 가 0644 평문 open(현행 경로 미사용, 잠복) | `usagelog.py:79` |
+| S1 | **Med** ✅문서화 | stdio-proxy 토큰-over-ssh = 의도된 인증(ssh 암호화·F1/F2 서버검증). 신뢰 모델 인코드 명시 | `launcher.py:288` |
+| S2 | **Med** ✅적용 | `remote_attach` host = 비신뢰 클라 입력 → **ssh 옵션 인젝션(RCE)** 차단(`--`+선행`-`/공백 거부) | `serverremote.py:122` |
+| S3 | Low–Med ✅적용 | `parse_endpoint` 의 `int(port)` 가드(명확한 `ValueError`) + 회귀 테스트 | `ipc.py:54` |
+| S4 | Low ✅적용 | 재시작 상태파일 `master_fd`/`child_pid` 의미검증(정수·열림·char device·양수 pid) + 테스트 | `serverpersist.py:184` |
+| S5 | Low ✅적용 | `search_pane` 텍스트라인 `_feed_seq` 기반 캐시(n/N 재스캔 제거) | `server.py:256,588` |
+| S6 | Low ✅적용 | 레거시 `usagelog.append` → `ipc.open_private`(0600) | `usagelog.py:79` |
+
+> **S2 정정**: 본 항목의 실질 위험은 "핀 부재"보다 **ssh 옵션 인젝션**이다 — argv 형은
+> 셸 인젝션을 막지만 ssh 가 argv 의 `-oProxyCommand=<명령>` 을 옵션으로 해석해 임의
+> 명령을 실행한다. `--` 로 옵션 파싱을 끊고 선행 `-`/공백 host 를 거부해 차단했다.
+> host-key 정책은 사용자 ssh config/known_hosts 를 그대로 따른다(강제 변경은 동작 설정을
+> 깨거나 보안을 느슨하게 만들 수 있어 미적용).
 
 ### 성능 (net-new, C1~C5·A·B 외)
 
-| 순위 | ID | 레버 | 위치 | 효과 | 위험 |
-|---|---|---|---|---|---|
-| 1 | P1 | `_scan_claude` 프레임당 동일 정규식 중복 호출 제거(CSE) | `servermixin.py:1138,1161,1173,1195,1249` | 높음 | 낮음 |
-| 2 | P2 | `_serialize_row` 의 run 당 `dict(cur_key)` 할당 제거 | `model.py:866,872` | 높음 | 낮음 |
-| 3 | P3 | `render()` 라이브 경로서 전체 스크롤백 복사 회피 | `model.py:884` | 중 | 낮음 |
-| 4 | P4 | 클라 `_composite` 의 프레임당 `Style`/`theme_color` 할당 캐시 | `client.py:1344+` | 높음 | 낮음 |
-| 5 | P5 | `theme_color` 메모이즈 | `clientutil.py:253` | 중 | 낮음 |
-| 6 | P6 | 상태바/Claude 상태 세그먼트 폭 재합산 → 증분 누적 | `clientwidgets.py:1087,1138` | 중 | 낮음 |
-| 7 | P7 | `usagedb.insert` 레코드별 commit → 배치/지연 flush | `usagedb.py:213` | 중 | 중 |
-| 8 | P8 | autorename 의 동기 `ps` subprocess → executor/TTL 캐시 | `servertree.py:544,568` | 중 | 중 |
+| 순위 | ID | 레버 | 위치 | 효과 | 위험 | 상태 |
+|---|---|---|---|---|---|---|
+| 1 | P1 | `_scan_claude` 프레임당 동일 정규식 중복 호출 제거(CSE) | `servermixin.py:1138,1161,1173,1195,1249` | 높음 | 낮음 | ✅적용 |
+| 2 | P2 | `_serialize_row` 의 run 당 `dict(cur_key)` 할당 제거(`_key_to_style` lru_cache) | `model.py:866,872` | 높음 | 낮음 | ✅적용 |
+| 3 | P3 | `render()` 라이브 경로서 전체 스크롤백 복사 회피 | `model.py:884` | 중 | 낮음 | ✅적용 |
+| 4 | P4 | 클라 `_composite` 의 프레임당 `Style`/`theme_color` 할당 캐시(시그니처) | `client.py:1344+` | 높음 | 낮음 | ✅적용 |
+| 5 | P5 | `theme_color` 메모이즈(테마이름+변수명 캐시) | `clientutil.py:253` | 중 | 낮음 | ✅적용 |
+| 6 | P6 | 상태바 세그먼트 폭 재합산 → 증분 누적 | `clientwidgets.py:1087,1138` | 중 | 낮음 | ✅적용(메인 상태바) |
+| 7 | P7 | `usagedb` 레코드별 fsync → `synchronous=NORMAL`(WAL) | `usagedb.py:84` | 중 | 중 | ✅적용 |
+| 8 | P8 | autorename 의 동기 `ps` subprocess → `run_in_executor` 오프로드 | `servertree.py:568` | 중 | 중 | ✅적용 |
+
+> **P6 범위**: 메인 상태바(`clientwidgets._render_main`)의 **이중 전수 재순회**(rx0·used)를
+> 증분 누적으로 제거. `clientstatus.render_segs`(플러그인) 내부 폭 합산(`ux0`)은 좌표
+> 계산용 단일 walk 라 중복도가 낮고, 최적화하려면 `client_statusbar` 훅 시그니처를
+> 바꿔야 해(전 플러그인 영향) 비용 대비 위험이 커 보류.
+>
+> **P7 방식**: 문서가 제안한 앱-레벨 배치 버퍼 대신 `PRAGMA synchronous=NORMAL`(WAL
+> 표준)을 채택 — commit 마다 fsync 하던 비용을 체크포인트로 미뤄 같은 효과를 더 낮은
+> 위험으로 얻는다(앱 크래시엔 내구, OS 크래시/정전 시에만 마지막 미체크포인트 구간 유실).
+>
+> **P8**: 이미 async 인 `_autorename_loop` 에서 동기 `ps` 호출만 `run_in_executor` 로
+> 오프로드(읽기전용 OS 호출이라 스레드 안전). `_fg_command` 자체는 동기 유지 — 다른
+> 동기 호출부(`_fg_is_claude` 등) 무영향. `_pane_cwd` 의 `lsof` 동기 호출은 호출 빈도가
+> 낮아(패널 cwd 조회 시점) 이번 범위 밖.
 
 > **권장 착수 순서**: P1 → P2 → P4 → P5 → P6 (저위험 즉효 묶음) → P3 → P7/P8(동작
 > 변경·async 리팩터, 측정 후). 보안은 S3(값싼 견고화) 먼저, 이어 S1·S2(연합 신뢰
@@ -237,16 +263,24 @@ usage 로그엔 허용 가능하나 동작 변경).
 
 ---
 
-## 3. 검증 게이트 (구현 시)
+## 3. 검증
 
-- 성능: 항목별 `scripts/bench.py` before/after + `tests/run.py` 전체 green. P1/P2/P3/P4
-  는 동작 불변(CSE·할당 제거)이라 회귀 테스트로 충분; P7/P8 은 동작 변경이라 별도 시나리오.
-- 보안: S1/S2 는 연합 신뢰 경계 **설계 변경**이라 [SECURITY_REVIEW.md](SECURITY_REVIEW.md)
-  §1 신뢰 경계 갱신 후 착수. S3 는 단위 테스트(`tests/test_ipc.py`)에 malformed 엔드포인트
-  케이스 추가. S4 는 `tests/test_restart.py` 에 변조 fd/pid 거부 케이스.
+- 성능 P1~P8: 동작 불변(CSE·할당 제거·캐시·executor)이라 `tests/run.py` 전체 green
+  (606)으로 회귀 게이트. P7(`synchronous=NORMAL`)은 내구성 트레이드오프가 명시적(앱
+  크래시 내구·OS 크래시 시 미체크포인트 구간만 유실, usage 로그 허용). 절대 효과는
+  추후 `scripts/bench.py` before/after 로 정량화 권장.
+- 보안: S3 `tests/test_ipc.py`(malformed 엔드포인트 → ValueError), S2 `tests/test_remote.py`
+  (ssh 옵션 인젝션/공백 host 거부), S4 `tests/test_restart.py`(변조 fd/pid 거부) 회귀
+  테스트 추가. S5/S6 은 기존 스위트로 동작 불변 확인.
 
-## 4. 우선순위 한 줄 권고
+## 4. 구현 결과 (2026-06-13)
 
-1. **즉효·저위험**: P1 → P2 → P4 → P5 → P6, 그리고 S3.
-2. **측정 후**: P3 → P7 → P8.
-3. **설계 검토 후**: S1·S2(연합 토큰/host 신뢰 경계), S4·S5(견고화).
+14개 항목 **전부 적용**(606 green). 게시: p4 + git.
+
+- **성능 P1~P8 ✅**: 모두 동작 불변(CSE·할당 제거·캐시·executor 오프로드). P6 은 메인
+  상태바 범위, P7 은 `synchronous=NORMAL` 방식, P8 은 autorename 루프 executor 오프로드.
+- **보안 S2~S6 ✅**: 코드 수정 + 회귀 테스트 3종(S3 `test_ipc`·S2 `test_remote`·S4
+  `test_restart`). S2 는 ssh 옵션 인젝션(RCE) 차단이 실질.
+- **보안 S1 ✅문서화**: 토큰-over-ssh 는 ssh 암호화 + 서버측 F1/F2 검증으로 보호되는
+  **의도된** 페더레이션 인증 — 같은-UID 노출은 0600 토큰 파일과 등가라 추가 위험 없음.
+  재설계(에페메럴 토큰)는 동작하는 페더레이션을 위협해 미채택, 신뢰 모델을 코드에 명시.

@@ -1092,6 +1092,10 @@ class ServerClaudeMixin:
                     self._acpt_disarm(p)   # idle 끊김 → 자동 /compact 무장 해제
                     self._perm_reset(p)
                 else:
+                    # P1 CSE: 권한모드 관측값(claude_perm_mode)은 txt 가 이 프레임 내내
+                    # 불변이라 idle 진입 시 1회만 구해 아래 모든 분기가 재사용한다
+                    # (예전엔 1138/1145/1161 에서 같은 txt 를 3번 재스캔).
+                    pm = claude_perm_mode(txt)
                     # 탭→세션 리네임 보류분(servertree.rename_window): 리네임 당시
                     # busy 라 즉시 주입 못 한 `/rename` 을 입력 준비된 첫 idle 에
                     # 발동한다. 1회성이라 발화 즉시 비운다.
@@ -1135,14 +1139,14 @@ class ServerClaudeMixin:
                         # 정적 화면에서도 스캔을 이어 가 _idle_frames 를 임계까지 올린다).
                     elif p._perm_auto_pending:
                         p._perm_auto_pending = False
-                        if claude_perm_mode(txt) not in ("auto", "bypass"):
+                        if pm not in ("auto", "bypass"):
                             # acceptEdits 도 auto 가 아니므로 여기서 auto 까지 마저 순환한다
                             # (예전엔 accept 를 auto 로 오인해 새 세션이 accept 에서 멈췄다).
                             p._perm_target = "auto"   # 아래 폐루프가 auto 까지 순환
                             self._perm_reset(p)
                     # idle: 현재 권한모드를 관측해 저장(팝업 '현재 모드' 표시용 — status
                     # 로 클라에 전달, §10 item 2). footer 가 안 보이면(None) 마지막 값 유지.
-                    pm = claude_perm_mode(txt)
+                    # (pm 은 위 else 진입부에서 1회 계산 — P1 CSE.)
                     if pm is not None and pm != p._perm_mode:
                         p._perm_mode = pm
                         changed = True
@@ -1158,7 +1162,7 @@ class ServerClaudeMixin:
                         self._drive_perm_mode(p, txt, p._perm_target)
                     elif (self.claude_budget_plan
                           and self._usage_gate_level(p) >= 80
-                          and claude_perm_mode(txt) not in ("plan", "bypass")):
+                          and pm not in ("plan", "bypass")):
                         # M13: 실측 한도 압박(게이트 임계의 80% 도달) → plan 유도.
                         # bypass(명시적 위험)는 불간섭, 이미 plan 이면 무동작.
                         # claude_auto_mode 보다 우선. (§7-4: 절대 예산 deprecate 로
@@ -1170,7 +1174,7 @@ class ServerClaudeMixin:
                     # 다음 저잔량 구간에 재발화할 수 있게 한다. 회복 전엔 재발화 금지
                     # (compact 가 효과 없어도 매 응답 무한 정리하지 않게 — §5.5).
                     if p._ctx_fired:
-                        rec = claude_context_pct(txt)
+                        rec = cp   # P1 CSE: 위 976 의 claude_context_pct(txt) 재사용
                         if rec is not None and rec >= self.claude_ctx_threshold + 5:
                             p._ctx_fired = False
                 # 프롬프트 단위 클리어 모드(#9) + 자동 doc→/clear(§10): busy→idle(응답
@@ -1192,7 +1196,7 @@ class ServerClaudeMixin:
                         # clear)보다 시급하므로 둘 다 켜져 있으면 잔량 정리를 먼저 한다.
                         # 완료 경계라 사용자가 타이핑 중이 아니고(응답이 막 끝남) 다음
                         # 비싼 턴 직전이라 정리에 가장 값싼 시점이다(§3 S1).
-                        pct = (claude_context_pct(txt)
+                        pct = (cp   # P1 CSE: 976 의 claude_context_pct(txt) 재사용
                                if self.claude_ctx_autoclear and not p._ctx_fired
                                else None)
                         # M15 우선순위 정리: 계정 실측 사용량이 게이트 임계 이상이고
@@ -1245,8 +1249,7 @@ class ServerClaudeMixin:
                 # 모델 "고려" 힌트만(알림 전용 — 자동 전환 없음). opt-in(기본 끔)이라
                 # 토글이 켜져 있고 idle 완료 경계일 때만 평가한다. 세션 종료(new_cl=None)면
                 # 위 _repeat_n 리셋과 함께 자연히 None(repeat_n<min)으로 떨어진다.
-                tip = (model_overselect_hint(p._claude_model, p._repeat_n,
-                                             claude_context_pct(txt))
+                tip = (model_overselect_hint(p._claude_model, p._repeat_n, cp)
                        if self.claude_model_hint and new_cl == "idle" else None)
                 if tip != p._model_tip:
                     p._model_tip = tip

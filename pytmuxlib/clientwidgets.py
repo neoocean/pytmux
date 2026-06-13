@@ -1068,40 +1068,58 @@ class StatusBar(Widget):
             return Strip([Segment(f" {self.message} ", ms)]).adjust_cell_length(
                 w, ms)
         active = Style(color="white", bgcolor=tc("primary"), bold=True)
-        segs = [Segment(self._expand(self.left_fmt), base)]
+        # P6: 세그먼트 누적 셀폭을 증분으로 추적한다(예전엔 rx0·used 에서 segs 전체를
+        # 문자 단위로 두 번 재순회). _char_cells 는 메모(C1)지만 전수 재순회 자체를 없앤다.
+        def _cw(t):
+            return sum(_char_cells(c) for c in t)
+        acc = 0
+        left_txt = self._expand(self.left_fmt)
+        segs = [Segment(left_txt, base)]
+        acc += _cw(left_txt)
         if self.cmd_mode:
-            segs.append(Segment("CMD(←↑↓→ 이동, : 명령) ",
-                                Style(color="black", bgcolor=tc("accent"),
-                                      bold=True)))
+            _t = "CMD(←↑↓→ 이동, : 명령) "
+            segs.append(Segment(_t, Style(color="black", bgcolor=tc("accent"),
+                                          bold=True)))
+            acc += _cw(_t)
         if self.zoomed:
             segs.append(Segment("Z ", Style(color="black", bgcolor=tc("warning"),
                                              bold=True)))
+            acc += 2
         if self.sync:
             segs.append(Segment("SYNC ", Style(color="white", bgcolor=tc("error"),
                                                 bold=True)))
+            acc += 5
         if self.autoresume:
             segs.append(Segment(" AR ", Style(color="black", bgcolor=tc("accent"),
                                               bold=True)))
+            acc += 4
         self._rec_zone = None
         if self.capture:        # 패널 출력 캡처 중
-            rx0 = sum(sum(_char_cells(c) for c in s.text) for s in segs)
+            rx0 = acc            # REC 앞까지의 누적 폭(전수 재합산 대신)
             self._rec_zone = (rx0, rx0 + 5)   # " REC "
             rec_st = (Style(color="black", bgcolor=tc("warning"), bold=True)
                       if self.focus_btn == "rec"
                       else Style(color="white", bgcolor=tc("error"), bold=True))
             segs.append(Segment(" REC ", rec_st))
+            acc += 5
         self._usage_zone = None
         self._model_zone = None   # 모델 배지 클릭존(모델·컨텍스트 변경 팝업, 요청)
         # Claude 좌하단 세그먼트(모델 배지·컨텍스트·토큰Σ·예산경고·카운트다운·폭주경고)는
         # claude-code 플러그인의 client_statusbar 훅이 그리고 위 두 클릭존을 채운다(Phase
         # 2c). 플러그인이 없으면 no-op → Claude 세그먼트 미표시·클릭존 None(클릭 no-op).
+        _pre = len(segs)
         self.app.plugins.client_statusbar(self.app, self, segs, w)
+        # 플러그인(claude-code client_statusbar)이 추가한 세그먼트는 폭이 불투명하므로
+        # 새로 붙은 것만(부분) 합산해 누적에 더한다 — 그래도 전수 재순회보다 싸다.
+        acc += sum(_cw(s.text) for s in segs[_pre:])
         if self.prefix_off:
             segs.append(Segment("NEST ", Style(color="white",
                                                bgcolor=tc("secondary"), bold=True)))
+            acc += 5
         for win in ([] if self.hide_tabs else self.windows):
             flag = "!" if win.get("bell") else ("#" if win.get("activity") else "")
             label = f"{win['index'] + 1}:{win['name']}{flag} "   # 표시 1-based(#21)
+            acc += _cw(label)
             if win["active"]:
                 # §1.7-a: 원격 탭은 활성도 분홍 배경(탭바와 동일 구분).
                 st = (Style(color="black", bgcolor=REMOTE_PINK, bold=True)
@@ -1135,7 +1153,7 @@ class StatusBar(Widget):
             cells = sum(_char_cells(c) for c in text)
             built.append((kind, text, st, cells))
             right_w += cells
-        used = sum(sum(_char_cells(c) for c in s.text) for s in segs)
+        used = acc   # P6: 증분 누적값(전수 재합산 제거)
         pad = max(0, w - used - right_w)
         if pad:
             segs.append(Segment(" " * pad, base))

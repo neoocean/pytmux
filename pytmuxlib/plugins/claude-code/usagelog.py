@@ -80,7 +80,10 @@ def append(path: str, record: dict) -> bool:
     """레코드 한 줄을 JSONL 로 append. 실패해도 조용히 False(로깅이 본 흐름을 막지 않음)."""
     try:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "a", encoding="utf-8") as f:
+        # S6: 0600 으로 append — 계정 alias 가 담긴 레거시 JSONL 이 공유 호스트에서
+        # umask(흔히 0644)로 잠깐/영구 group/other-readable 이 되지 않게(F5 동일 정책).
+        from pytmuxlib import ipc
+        with ipc.open_private(path, "a") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
         return True
     except OSError:

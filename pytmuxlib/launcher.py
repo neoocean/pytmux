@@ -285,6 +285,13 @@ def run_stdio_proxy(sock_path: str) -> int:
         return 1
     sock.settimeout(None)              # 스플라이스는 무기한 블로킹 read/recv
     out = sys.stdout.buffer            # 바이너리(Windows CRLF 변환 없음)
+    # S1 신뢰 모델(docs/CODE_AUDIT_2026-06-13): 여기서 내보내는 토큰은 서버 인증
+    # 토큰이다. 이 stdout 은 sshd↔이 프로세스 사이의 사설 파이프이고 ssh 채널은
+    # 암호화돼 있어 전송 중 노출은 없다. 같은-UID 프로세스만 stdio-proxy 를 띄우거나
+    # 이 파이프를 관찰할 수 있는데, 그런 프로세스는 어차피 0600 토큰 파일을 직접
+    # 읽을 수 있으므로 **추가 노출이 없다**(같은-UID 등가). 서버 측은 받은 연결에
+    # F2 peer-UID(Unix)와 F1 상수시간 토큰 검증을 모두 적용한다(serverio.handle_client).
+    # → 토큰을 ssh 채널로 넘기는 것은 페더레이션의 의도된 인증 방식이다.
     tok = ipc.read_token(sock_path) or ""
     out.write(f"TOKEN {tok}\n".encode())
     out.flush()

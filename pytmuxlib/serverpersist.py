@@ -188,9 +188,22 @@ class ServerPersistMixin:
             return Split(spec.get("orient", "lr"), a, b, spec.get("ratio", 0.5))
         ps = spec["pane"]
         cols, rows = max(MIN_W, ps["cols"]), max(MIN_H, ps["rows"])
+        # S4: 상태파일이 변조됐을 때 임의 fd/pid 로 ioctl·killpg 하는 confused-deputy 를
+        # 막는 의미검증(파일은 0600 이지만 심층방어). master_fd 는 실제 상속된 **열린
+        # PTY master(char device)** 여야 하고 child_pid 는 양의 정수여야 한다. 위배 시
+        # ValueError → 상위 except 가 이 노드를 건너뛴다(레거시 -1 sentinel 도 여기서 탈락).
+        mfd, cpid = ps.get("master_fd"), ps.get("child_pid")
+        if (isinstance(mfd, bool) or not isinstance(mfd, int) or mfd < 0
+                or isinstance(cpid, bool) or not isinstance(cpid, int) or cpid <= 0):
+            raise ValueError(f"resume 노드 fd/pid 형식 오류: fd={mfd!r} pid={cpid!r}")
+        try:
+            import stat as _stat
+            if not _stat.S_ISCHR(os.fstat(mfd).st_mode):
+                raise ValueError(f"resume master_fd={mfd} 가 PTY(char device) 아님")
+        except OSError:
+            raise ValueError(f"resume master_fd={mfd} 가 열린 fd 아님")
         # 상속된 master fd 를 fork 없이 다시 채택한다(PID 그대로 → reap/killpg 유효).
-        proc = pty_backend.adopt(ps["master_fd"], ps["child_pid"],
-                                 cols=cols, rows=rows)
+        proc = pty_backend.adopt(mfd, cpid, cols=cols, rows=rows)
         fd = proc.fileno() if hasattr(proc, "fileno") else ps["master_fd"]
         pane = Pane(ps["child_pid"], fd, cols, rows)
         pane.pty = proc
@@ -219,7 +232,7 @@ class ServerPersistMixin:
                 wspec = wt["window"]
                 try:
                     root = self._build_resume_node(wspec["root"])
-                except (KeyError, OSError):
+                except (KeyError, OSError, ValueError):   # S4: 변조 노드 스킵 포함
                     continue
                 w = Window(root)
                 w._fix_parents(root, None)

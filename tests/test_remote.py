@@ -799,3 +799,21 @@ async def test_nest_attach_request_guards():
             pA.pty = realA
     finally:
         await teardown(srvA, taskA, sockA)
+
+
+async def test_remote_transport_rejects_ssh_option_injection():
+    """S2: remote_attach 의 host 는 클라 cmd 에서 온 비신뢰 문자열이다. ssh 옵션
+    인젝션('-oProxyCommand=…' → 임의 명령)·공백 호스트는 ssh 를 띄우기 **전에**
+    ConnectionError 로 거부돼야 한다(argv 형이라 셸 인젝션은 없지만 ssh 가 '-…' 를
+    옵션으로 해석하는 벡터를 '--' + 선행'-' 거부로 막는다)."""
+    srv, task, sock = await server_only()
+    try:
+        for bad in ("-oProxyCommand=touch /tmp/pwned",
+                    "-l", "  ", "host with space"):
+            try:
+                await srv._remote_transport(host=bad, endpoint=None)
+                assert False, f"기대: ConnectionError for host={bad!r}"
+            except ConnectionError:
+                pass
+    finally:
+        await teardown(srv, task, sock)

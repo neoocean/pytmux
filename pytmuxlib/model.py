@@ -39,6 +39,15 @@ def _style_key(fg, bg, bold, italics, underscore, reverse, strike):
     return tuple(sorted(d.items()))
 
 
+@lru_cache(maxsize=8192)
+def _key_to_style(key):
+    """정렬 튜플 스타일 키 → 스타일 dict. _serialize_row 가 런마다 `dict(key)` 를 새로
+    할당(빈 스타일도 `dict(())` 빈 dict)하던 것을 메모(P2). 대부분 셀이 같은 스타일이라
+    적중률 높음. 반환 dict 는 **공유**되므로 호출측은 읽기전용으로만 다룬다 — match
+    하이라이트는 `{**st,'rv':1}` 로 복사하고, serverio 는 `==` 비교·JSON 인코딩만 한다."""
+    return dict(key)
+
+
 # restart-all 스냅샷(_export_screen)이 색/속성을 보존하도록 pyte 셀 속성 → SGR
 # 이스케이프로 환원한다. pyte fg/bg 는 "default"·기본색명·"bright<name>"·6자리 hex.
 _SGR_BASE = {"black": 30, "red": 31, "green": 32, "brown": 33, "yellow": 33,
@@ -863,13 +872,13 @@ class Pane:
                              getattr(ch, "strikethrough", False))
             if key != cur_key:
                 if cur_text:
-                    segs.append(["".join(cur_text), dict(cur_key)])
+                    segs.append(["".join(cur_text), _key_to_style(cur_key)])
                 cur_text = [data]
                 cur_key = key
             else:
                 cur_text.append(data)
         if cur_text:
-            segs.append(["".join(cur_text), dict(cur_key)])
+            segs.append(["".join(cur_text), _key_to_style(cur_key)])
         return segs
 
     def render(self, with_cursor: bool):
@@ -882,14 +891,21 @@ class Pane:
         screen = self.screen
         cols, lines = screen.columns, screen.lines
         h = getattr(screen, "history", None)
-        hist = list(h.top) if h is not None else []  # 대체 화면은 스크롤백 없음
-        full = hist + [screen.buffer[y] for y in range(lines)]
-        total = len(full)
-        end = total - self.scroll
-        start = end - lines
-        if start < 0:
-            start, end = 0, lines
-        window = full[start:end]
+        if self.scroll == 0:
+            # 라이브 뷰(P3): 스크롤백 deque 전체 복사+concat 을 하지 않는다 —
+            # 뷰포트 = 화면 버퍼 행 그대로. start(절대 인덱스 기준)는 스크롤백 길이로,
+            # len(h.top) 은 O(1) 이라 복사 없이 구한다(검색 매치 절대인덱스 보존).
+            window = [screen.buffer[y] for y in range(lines)]
+            start = len(h.top) if h is not None else 0
+        else:
+            hist = list(h.top) if h is not None else []  # 대체 화면은 스크롤백 없음
+            full = hist + [screen.buffer[y] for y in range(lines)]
+            total = len(full)
+            end = total - self.scroll
+            start = end - lines
+            if start < 0:
+                start, end = 0, lines
+            window = full[start:end]
 
         # 자동 줄바꿈(soft-wrap) 연속원 행을 프레임 상대 인덱스로 모은다(복사 시 한 줄
         # 잇기, serverio 가 screen 메시지 "wrap" 으로 클라에 그대로 전달). draw 가

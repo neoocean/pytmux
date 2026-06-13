@@ -50,7 +50,12 @@ def parse_endpoint(endpoint: str) -> Tuple:
         host, _, port = rest.rpartition(":")
         if not host:
             host, port = "127.0.0.1", rest
-        return ("tcp", host, int(port))
+        # S3: 잘못된 포트("tcp:", "tcp:host:abc")가 미처리 ValueError 로 호출부
+        # (start_server/open_connection/control_socket)를 크래시시키지 않게 가드.
+        try:
+            return ("tcp", host, int(port))
+        except (ValueError, TypeError):
+            raise ValueError(f"잘못된 tcp 엔드포인트: {endpoint!r}")
     return ("unix", endpoint)
 
 

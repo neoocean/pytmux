@@ -256,11 +256,23 @@ class Server(*_SERVER_BASES):
     def _pane_text_lines(pane: Pane):
         screen = pane.screen
         h = getattr(screen, "history", None)
+        # S5: 동일 화면·동일 출력버전이면 직전 결과를 재사용한다 — n/N 검색 내비게이션이
+        # 매 키마다 전체 스크롤백(최대 HISTORY×열)을 재구성·rstrip 하던 동기 비용을
+        # 없앤다. 토큰은 코어 _feed_seq(feed 마다 증가) + 기하(리사이즈) + 스크롤백
+        # 길이(clear_history). 어느 하나라도 바뀌면 재구성하므로 stale 결과가 없다.
+        hlen = len(h.top) if h is not None else 0
+        ver = (id(screen), getattr(screen, "_feed_seq", 0),
+               screen.columns, screen.lines, hlen)
+        cache = getattr(pane, "_txt_cache", None)
+        if cache is not None and cache[0] == ver:
+            return cache[1]
         hist = list(h.top) if h is not None else []
         full = hist + [screen.buffer[y] for y in range(screen.lines)]
-        return ["".join((line[x].data or " ")
-                        for x in range(screen.columns)).rstrip()
-                for line in full]
+        texts = ["".join((line[x].data or " ")
+                         for x in range(screen.columns)).rstrip()
+                 for line in full]
+        pane._txt_cache = (ver, texts)
+        return texts
 
     def set_buffer(self, text: str):
         if not text:

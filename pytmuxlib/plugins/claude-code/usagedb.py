@@ -82,6 +82,11 @@ def connect(path: str) -> sqlite3.Connection:
     # WAL: reader/writer 비차단. busy_timeout: 드문 락 흡수. 인메모리는 WAL 무의미.
     if path != ":memory:":
         conn.execute("PRAGMA journal_mode=WAL")
+        # P7: synchronous=NORMAL — WAL 에선 commit 마다 fsync 하지 않고 체크포인트
+        # 에서만 동기화한다. _log_tokens 가 응답 경계마다 insert+commit 하므로
+        # 레코드별 fsync 비용을 없앤다. 내구성: 애플리케이션 크래시엔 안전(WAL 잔존),
+        # OS 크래시/정전 시에만 마지막 미체크포인트 구간 유실 — usage 로그엔 허용.
+        conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA busy_timeout=3000")
     conn.executescript(_SCHEMA)
     cur_v = int(conn.execute("PRAGMA user_version").fetchone()[0])
