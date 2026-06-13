@@ -1560,6 +1560,45 @@ async def test_context_menu_new_pane_ops_wired():
     await _with_app(body)
 
 
+async def test_context_menu_plugin_items_join_and_mouse_help():
+    """§2.7+§2.2: ① 플러그인 메뉴 항목(clock/calendar — key=그 플러그인 명령 이름)이
+    컨텍스트 메뉴에 병합되고, 코어에 없는 key 는 _run_menu_action 이 _run_command 로
+    폴백 디스패치한다. ② 신규 코어 항목 join_pane(명령 프롬프트 프리필)·mouse_help
+    (list-keys "키 · 마우스" 팝업 재사용)와 :mouse-help 별칭 배선."""
+    async def body(app, pilot, srv):
+        from pytmuxlib.clientscreens import InfoScreen
+        # :mouse-help 별칭 → list-keys 와 같은 "키 · 마우스" InfoScreen.
+        app._run_command("mouse-help")
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert isinstance(scr, InfoScreen), "mouse-help → 키·마우스 팝업"
+        app.pop_screen()
+        # 메뉴에 플러그인 항목 + 신규 코어 항목이 보인다.
+        app.open_menu(app.layout.get("active"))
+        await pilot.pause(0.1)
+        menu = app.screen_stack[-1]
+        assert menu.__class__.__name__ == "MenuScreen"
+        keys = set(menu._labels)
+        assert {"clock-mode", "calendar-mode", "join_pane", "mouse_help"} <= keys, keys
+        await pilot.press("escape")
+        await pilot.pause(0.05)
+        # 폴백 디스패치: 미지 키(플러그인 명령 이름) → _run_command(key).
+        ran = []
+        app._run_command = lambda line: ran.append(line)
+        app._run_menu_action("clock-mode")
+        assert ran == ["clock-mode"], ran
+        # mouse_help 메뉴 → mouse-help 명령 경로.
+        ran.clear()
+        app._run_menu_action("mouse_help")
+        assert ran == ["mouse-help"], ran
+        # join_pane → 명령 프롬프트 "join-pane " 프리필(rename_pane 패턴).
+        opened = []
+        app.open_prompt = lambda purpose, ph="", **k: opened.append((purpose, k))
+        app._run_menu_action("join_pane")
+        assert ("command", {"initial": "join-pane "}) in opened, opened
+    await _with_app(body)
+
+
 async def test_context_menu_dims_other_panes():
     # 컨텍스트 메뉴가 열려 있는 동안 대상 패널 외 나머지 패널은 흐리게(dim) 그려
     # 어느 패널 대상인지 배경으로 구분한다(#18).

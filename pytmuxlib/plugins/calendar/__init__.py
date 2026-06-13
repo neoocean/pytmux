@@ -33,6 +33,8 @@ class _CalendarPlugin:
     commands = COMMANDS
     noarg = NOARG
     completions = []            # 추가 옵션 템플릿 없음(명령 이름은 레지스트리가 자동 추가)
+    # 우클릭 컨텍스트 메뉴 항목(§2.7) — key 는 명령 이름(코어가 _run_command 폴백).
+    menu_items = [("calendar-mode", "달력 오버레이 토글(현재 패널 이번 달)")]
     command_options = {}
     pane_scoped = PANE_SCOPED
 

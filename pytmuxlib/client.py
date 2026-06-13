@@ -1726,6 +1726,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.send_cmd("swap_pane", forward=True)
             elif key == "break_pane":
                 self.send_cmd("break_pane")
+            elif key == "join_pane":
+                # join-pane 은 대상 탭 인자가 필요 — 명령 프롬프트에 미리 채워 준다
+                # (rename-pane 메뉴와 동일 패턴, §2.7).
+                self.open_prompt("command", "", initial="join-pane ")
             elif key == "rename_pane":
                 self.open_prompt("command", "", initial="rename-pane ")
             elif key == "next_layout":
@@ -1769,10 +1773,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.request_layouts("new")
             elif key == "command":
                 self.open_prompt("command", "")
+            elif key == "mouse_help":
+                self._run_command("mouse-help")   # list-keys "키 · 마우스" 팝업(§2.2)
             elif key == "detach":
                 self.exit(message="detached")
             elif key == "kill_server":
                 self.send_cmd("kill_server")
+            else:
+                # 플러그인 메뉴 항목(§2.7): key = 그 플러그인의 명령 이름 —
+                # 명령 디스패치로 폴백(미지 키는 _run_command 가 조용히 무시).
+                self._run_command(key)
 
         # ---- 프롬프트 / 명령 ----
         def display_message(self, text, secs=2.0):
@@ -2394,7 +2404,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                             self.display_message(f"unbound {key}")
                         else:
                             self.display_message(f"no binding: {key}")
-            elif c in ("list-keys", "lsk", "list-binds"):
+            elif c in ("list-keys", "lsk", "list-binds", "mouse-help", "mouse"):
                 # §2.2 발견성: 구현된 마우스 제스처(헤더 드래그 pick-up→swap/탭이동,
                 # 탭 드래그 재정렬·분할, Shift+드래그 선택 등)는 명령이 아니라 ?목록·
                 # 메뉴 어디에도 안 떠 사장돼 있었다. list-keys 가 사용자 바인딩과 함께

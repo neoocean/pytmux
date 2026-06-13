@@ -449,6 +449,7 @@ MENU_ITEMS = [
     ("rotate", "패널 회전 ↻"),
     ("swap_pane", "패널 교환 (다음 패널과)"),
     ("break_pane", "패널 → 새 탭으로 분리"),
+    ("join_pane", "패널 → 다른 탭에 합치기 (join-pane <탭>)"),
     ("rename_pane", "패널 제목 변경"),
     ("select_layout", "레이아웃 프리셋…"),
     ("next_layout", "다음 레이아웃 프리셋"),
@@ -466,12 +467,17 @@ MENU_ITEMS = [
     ("layout_save", "레이아웃 저장(현재 탭)"),
     ("layout_load_over", "레이아웃 불러오기(현재 탭 덮어쓰기)"),
     ("layout_load_new", "레이아웃 불러오기(새 탭)"),
+    ("mouse_help", "마우스 제스처 도움말"),
     ("command", "명령 입력"),
     ("detach", "detach (앱 종료, 셸 유지)"),
     ("kill_server", "서버 종료 (모든 탭/셸 종료)"),
 ]
 # 토글 메뉴 항목(현재 on/off 표시·선택해도 메뉴 안 닫음). 상태는 status 에서 읽음.
 MENU_TOGGLES = {"zoom", "sync", "autoresume", "prompt_clear"}
+
+# 마우스 제스처 도움말은 list-keys 팝업("키 · 마우스" — §2.2 발견성, i18n keys.*)이
+# 권위 — `mouse-help`/`mouse` 명령과 컨텍스트 메뉴 "마우스 제스처 도움말"은 그
+# 별칭/진입점이다(제스처 목록을 두 벌 두지 않는다).
 
 # 토큰 절감 설정 팝업(`token-saver`)의 행/순환 프리셋(SAVER_ROWS/SAVER_CYCLES)과
 # 시작 규칙 편집(`claude-rules`)은 claude-code 플러그인(pytmuxlib/plugins/claude-code)
@@ -550,6 +556,8 @@ COMMANDS = [
     ("bind-key", "prefix 후 키에 명령 바인딩 (bind-key <key> <command>)", "설정/기타"),
     ("unbind-key", "키 바인딩 해제 (unbind-key <key> | -a)", "설정/기타"),
     ("list-keys", "현재 키 바인딩 목록 팝업", "설정/기타"),
+    ("mouse-help", "마우스 제스처 도움말 팝업(헤더 드래그 swap·탭 드래그·Shift+선택 등, "
+                   "별칭 mouse)", "설정/기타"),
     # help/commands/list-commands 도 자동완성 후보에 잡히게 등록(§10 #8). 입력하면
     # 전체 명령 목록(CommandListScreen)을 연다 — '?' 입력도 같은 목록을 즉시 연다.
     ("help", "전체 명령 목록 보기('?' 도 동일, 카테고리 탭)", "설정/기타"),
@@ -669,6 +677,7 @@ COMMAND_NOARG = {
     # cal/open-calendar/open-cal/close-calendar/close-cal 은 calendar 플러그인이
     # 무인자 명령으로 등록한다.
     "list-keys", "send-escape", "version",
+    "mouse-help", "mouse",
     "restart-check",
     # Claude Code 무인자 명령(token-log(별칭 token-usage)·claude-usage·usage·
     # usage-panel·usage-limits·limits·claude-rules·token-saver)은 claude-code 플러그인이 등록.
@@ -778,6 +787,8 @@ i18n.register({
         "cmd.bind-key": "Bind command to key after prefix (bind-key <key> <command>)",
         "cmd.unbind-key": "Unbind key (unbind-key <key> | -a)",
         "cmd.list-keys": "Popup current key bindings",
+        "cmd.mouse-help": "Mouse gesture help popup (header-drag swap·tab drag·"
+                          "Shift+select etc., alias mouse)",
         "cmd.help": "Show full command list ('?' too, category tabs)",
         "cmd.commands": "Show full command list (alias of help)",
         "cmd.list-commands": "Show full command list (alias of help)",
@@ -813,6 +824,8 @@ i18n.register({
         "menu.layout_save": "Save layout (current tab)",
         "menu.layout_load_over": "Load layout (overwrite current tab)",
         "menu.layout_load_new": "Load layout (new tab)",
+        "menu.join_pane": "Pane → join another tab (join-pane <tab>)",
+        "menu.mouse_help": "Mouse gesture help",
         "menu.command": "Enter command",
         "menu.detach": "detach (quit app, keep shell)",
         "menu.kill_server": "Kill server (all tabs/shells)",

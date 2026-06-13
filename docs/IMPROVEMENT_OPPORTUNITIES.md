@@ -363,7 +363,16 @@ prefix `%`→`lr`·`"`→`tb`(2584)는 tmux 와 일치하므로 **키와 명령/
 **개선**: `-h`→`lr`, `-v`→`tb` 로 정정 + 라벨/FEATURES 통일(한 릴리스 병기 가능).
 **위험**: 기존 동작 익숙 사용자 변화(문서 안내로 흡수).
 
-### [H] 2.2 강력한 마우스 기능(패널 swap·탭 드래그)이 구현됐으나 발견 불가 — `clientwidgets.py:180-356,636-704`, `FEATURES.md` 9절
+### [H] 2.2 강력한 마우스 기능(패널 swap·탭 드래그)이 구현됐으나 발견 불가 — `clientwidgets.py:180-356,636-704`, `FEATURES.md` 9절 ✅ **해결(2026-06-13)**
+> **해결**: ① `list-keys` 팝업("키 · 마우스")이 사용자 바인딩에 앞서 **1급 마우스
+> 제스처 목록**(헤더 드래그 pick-up→swap/탭이동/새탭, 탭 드래그 재정렬·join,
+> Shift+드래그 선택, 경계선 리사이즈)을 보여 준다(i18n keys.*). ② 진입점 보강:
+> `:mouse-help`(별칭 `mouse`) 명령 + 우클릭 메뉴 "마우스 제스처 도움말" 항목이 같은
+> 팝업을 연다. ③ 문서: FEATURES.md 는 이미 현행("향후" 표기 없음 — 진단의 그 부분은
+> stale 였음), MANUAL §8 마우스 표의 stale 행 정정(Shift+드래그=swap → **텍스트 선택**,
+> swap 은 2026-06-05부터 헤더 드래그 pick-up) + 헤더 드래그/join 행·`:mouse-help` 안내
+> 추가. 테스트 `test_context_menu_plugin_items_join_and_mouse_help`. (아래는 원 진단.)
+
 Shift+드래그 패널 swap, 탭 드래그 재정렬, 탭→패널 드래그 분할이 **이미 구현**됐는데
 FEATURES.md 는 "향후"로 적고 `?`도움말·메뉴·상태줄 어디에도 힌트가 없다. 마우스 1급
 지원이라는 차별화 기능이 사장. **개선**: 문서 갱신 + 메뉴/help/ESC 상태줄에 드래그 힌트.
@@ -411,7 +420,15 @@ rect 로 클램프 + 추출 시 그 열 범위만. **위험**: 낮음.
 위험(리사이즈 루프·배경 SIGWINCH 폭주)이 크다. 실 재현 픽스처가 확보되면 content-rect
 헬퍼를 먼저 추출해 displayed/hidden 양쪽에 적용하는 방식으로 진행 권장.
 
-### [L] 2.7 컨텍스트 메뉴가 명령 대비 빈약 — `clientutil.py:270-290`
+### [L] 2.7 컨텍스트 메뉴가 명령 대비 빈약 — `clientutil.py:270-290` ✅ **해결(2026-06-13)**
+> **해결**: 진단 목록 중 swap/rotate/break/layout-preset/검색은 이미 메뉴에 있었고
+> (stale), 실제 공백이던 **join**(`join_pane` → 명령 프롬프트 "join-pane " 프리필,
+> rename 패턴)·**clock/calendar** 를 채웠다. clock/calendar 는 플러그인이라 레지스트리에
+> `menu_items` 속성(key=플러그인 명령 이름)을 신설해 MenuScreen 이 병합하고,
+> `_run_menu_action` 의 else 폴백이 `_run_command(key)` 로 디스패치한다(디렉토리 삭제
+> 시 항목·디스패치 동반 소멸 — delete-to-disable). + "마우스 제스처 도움말"(§2.2).
+> 테스트 `test_context_menu_plugin_items_join_and_mouse_help`. (아래는 원 진단.)
+
 swap/rotate/break/join/layout-preset/clock·calendar/검색이 메뉴 부재("모든 동작 메뉴
 노출" 목표와 어긋남). **개선**: 계층 서브메뉴 또는 COMMANDS 테이블 자동생성.
 

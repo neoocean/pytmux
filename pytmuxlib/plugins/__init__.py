@@ -81,6 +81,17 @@ class Registry:
             out |= set(getattr(p, "pane_scoped", None) or ())
         return out
 
+    @property
+    def menu_items(self):
+        """우클릭 컨텍스트 메뉴에 합쳐질 플러그인 항목 [(key, 라벨)] (§2.7). key 는
+        **그 플러그인의 명령 이름** — 코어 _run_menu_action 이 자기 키가 아니면
+        `_run_command(key)` 로 폴백 디스패치하므로 별도 배선이 필요 없다. 디렉토리를
+        지우면 메뉴 항목과 명령 디스패치가 함께 사라진다(delete-to-disable)."""
+        out = []
+        for p in self.plugins:
+            out.extend(getattr(p, "menu_items", None) or [])
+        return out
+
     # ---- 클라이언트 훅 ----
     def attach_client(self, app):
         """앱 인스턴스마다 1회 — 플러그인이 인스턴스 글루(예: app.request_nc_list)를

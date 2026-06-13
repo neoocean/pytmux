@@ -344,7 +344,12 @@ class MenuScreen(ModalScreen):
         self._labels = {}     # key -> (Label 위젯, 원본 라벨)
         self._optim = {}      # 토글 낙관적 상태(status 회신 전 즉시 반영)
         items = []
-        for key, raw in MENU_ITEMS:
+        # §2.7: 플러그인 메뉴 항목(key=그 플러그인 명령 이름)을 코어 뒤에 병합 —
+        # 선택 시 _run_menu_action 의 else 폴백이 _run_command(key) 로 디스패치.
+        # 플러그인 디렉토리를 지우면 항목도 함께 사라진다(delete-to-disable).
+        plug = getattr(getattr(self, "app", None), "plugins", None)
+        merged = list(MENU_ITEMS) + list(plug.menu_items if plug else [])
+        for key, raw in merged:
             label = i18n.t(f"menu.{key}", default=raw)   # §6 ③ 로케일 번역
             lab = Label(self._fmt(key, label))
             self._labels[key] = (lab, label)
