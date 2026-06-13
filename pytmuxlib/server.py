@@ -93,7 +93,10 @@ class Server(*_SERVER_BASES):
         self.capture = bool(_opts.get("capture", True))   # 기본 ON
         # Claude 프롬프트 헤더 전역 표시(#6 ③ opts.json 영속). 클라가 status 로 받아
         # claude_header_on 에 반영하고, `claude-header on|off` 가 서버를 거쳐 갱신·영속.
-        self.claude_header = bool(_opts.get("claude_header", True))
+        # **기본 OFF**(2026-06-12): claude-prompt-history 플러그인의 transient 미리보기
+        # 패널이 기본 프롬프트 UI를 맡는다(사용자 결정). 헤더(드래그핸들·ESC포커스·행예약)
+        # 는 `claude-header on` 으로 옵트인. 구 opts.json 에 claude_header:true 면 유지.
+        self.claude_header = bool(_opts.get("claude_header", False))
         # 패널이 하나뿐일 때 테두리(아웃라인)를 그릴지(기본 ON=항상 테두리).
         # off 면 단일 패널은 테두리 없이 화면 전체를 내용으로 쓴다. opts.json 영속.
         self.single_border = bool(_opts.get("single_border", True))

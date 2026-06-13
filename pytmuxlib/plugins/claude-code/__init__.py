@@ -676,7 +676,8 @@ class _ClaudeCodePlugin:
         # 클릭 핸들러에서 getattr(app, ..., 기본값)으로만 읽는다 → 디렉토리 삭제 시
         # 속성이 없어 Claude 헤더/클릭존이 전혀 나타나지 않는다(delete-to-disable).
         app.pane_claude = {}            # id -> {"claude","prompt",…}
-        app.claude_header_on = True     # 프롬프트 헤더 표시(claude-header on|off)
+        app.claude_header_on = False    # 프롬프트 헤더 표시 기본 OFF(서버 status 가 권위;
+                                        # claude-prompt-history 플러그인이 기본 프롬프트 UI)
         app._perm_zone = {}             # id -> (x0,x1,y) 권한모드 footer 클릭존
         app._remote_zone = {}           # id -> (x0,x1,y) 원격제어 표시 클릭존
         app._last_usage_shown_seq = None  # /usage 자동 팝업 one-shot 시퀀스 베이스라인

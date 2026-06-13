@@ -1822,8 +1822,9 @@ async def test_claude_header_reserves_row():
         pm0 = srv._layout_msg(sess)["panes"][0]
         assert pm0["claude_hdr"] is False and p._hdr_reserved is False
         h0, y0 = pm0["h"], pm0["y"]
-        # Claude + 프롬프트 → 예약(claude_header 기본 on). 헤더 예약은 디바운스된
+        # Claude + 프롬프트 → 예약(claude-header 옵트인). 헤더 예약은 디바운스된
         # _hdr_claude 를 보므로(원격 깜빡임 방지) 그것도 세운다.
+        srv.claude_header = True         # 기본 OFF 라 명시적으로 켠다
         p._claude = "idle"
         p._hdr_claude = True
         p.last_prompt = "do x"
@@ -1858,6 +1859,7 @@ async def test_claude_header_debounce_no_thrash():
         sess = srv.ensure_default_session(80, 24)
         win = sess.active_window
         p = win.active_pane
+        srv.claude_header = True         # 기본 OFF 라 명시적으로 켠다
         p.last_prompt = "do x"
         # Claude idle footer → 예약 ON, 디바운스 플래그도 즉시 True
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
@@ -3023,7 +3025,9 @@ async def test_claude_header_opt_persists():
     # #6 ③: claude-header 전역 표시 상태가 opts.json 에 영속되고 재시작 후 유지.
     srv, task, sock = await server_only()
     try:
-        assert srv.claude_header is True, "기본 표시"
+        assert srv.claude_header is False, "기본 OFF(새 플러그인이 기본 프롬프트 UI)"
+        assert srv.set_claude_header(True) is True    # 켜서 영속 확인
+        assert json.load(open(srv.opts_path))["claude_header"] is True
         assert srv.set_claude_header(False) is False
         assert json.load(open(srv.opts_path))["claude_header"] is False
         # 같은 sock 로 새 Server → OFF 를 읽음
@@ -3463,7 +3467,7 @@ async def test_header_reservation_skipped_on_short_panel():
         p = sess.active_window.active_pane
         p._hdr_claude = True
         p.last_prompt = "구현해줘"
-        assert srv.claude_header is True                 # 기본 ON
+        srv.claude_header = True                          # 기본 OFF 라 명시적으로 켠다
         assert srv._should_reserve_header(p) is True      # 표시 조건 충족
         # 높은 패널(rows=40) → 예약(claude_hdr True)
         hi = srv._layout_msg(sess, cols=80, rows=40)
