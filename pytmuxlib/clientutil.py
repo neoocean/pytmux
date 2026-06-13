@@ -553,8 +553,9 @@ COMMANDS = [
     ("lang", "UI 언어 전환 (lang ko|en) — 한국어/영어", "설정/기타"),
     ("run-shell", "셸 명령 실행", "설정/기타"),
     ("if-shell", "조건부 셸 실행", "설정/기타"),
-    ("bind-key", "prefix 후 키에 명령 바인딩 (bind-key <key> <command>)", "설정/기타"),
-    ("unbind-key", "키 바인딩 해제 (unbind-key <key> | -a)", "설정/기타"),
+    ("bind-key", "prefix 후 키에 명령 바인딩 (bind-key <key> <command> · -n 은 "
+                 "prefix 없이 root)", "설정/기타"),
+    ("unbind-key", "키 바인딩 해제 (unbind-key <key> | -n <key> | -a)", "설정/기타"),
     ("list-keys", "현재 키 바인딩 목록 팝업", "설정/기타"),
     ("mouse-help", "마우스 제스처 도움말 팝업(헤더 드래그 swap·탭 드래그·Shift+선택 등, "
                    "별칭 mouse)", "설정/기타"),
@@ -784,8 +785,9 @@ i18n.register({
         "cmd.lang": "Switch UI language (lang ko|en) — Korean/English",
         "cmd.run-shell": "Run shell command",
         "cmd.if-shell": "Conditional shell run",
-        "cmd.bind-key": "Bind command to key after prefix (bind-key <key> <command>)",
-        "cmd.unbind-key": "Unbind key (unbind-key <key> | -a)",
+        "cmd.bind-key": "Bind command to key after prefix (bind-key <key> "
+                        "<command> · -n = root, no prefix)",
+        "cmd.unbind-key": "Unbind key (unbind-key <key> | -n <key> | -a)",
         "cmd.list-keys": "Popup current key bindings",
         "cmd.mouse-help": "Mouse gesture help popup (header-drag swap·tab drag·"
                           "Shift+select etc., alias mouse)",

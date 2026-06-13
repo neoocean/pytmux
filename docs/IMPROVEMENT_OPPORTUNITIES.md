@@ -397,11 +397,18 @@ display-panes 번호 기반. **위험**: 낮음.
 선택이 전역 좌표라 분할 패널을 가로질러 테두리·인접 패널까지 복사. **개선**: 시작 패널
 rect 로 클램프 + 추출 시 그 열 범위만. **위험**: 낮음.
 
-### [M] 2.5 설정 키 표현력 제한 — `keymap.py` ✅ **대부분 해결(검증 2026-06-12, stale 헤딩 정정)**
+### [M] 2.5 설정 키 표현력 제한 — `keymap.py` ✅ **해결(잔여분 2026-06-13 완료)**
 > `M-`/`A-`/`S-`/F1–F12·다중 수정자(알파벳순) 파싱 모두 구현(`_MOD_PREFIXES`·`_normalize_base`),
 > 오타/빈 키 경고도 `normalize_binding_key`→`cfg["warnings"]`. 테스트 `test_tmux_key_to_textual`·
-> `test_normalize_binding_key_warns`·`test_key_to_ctrl_bytes`. **잔여(후속)**: root table(`bind -n`)
-> 미지원·경고 UI 노출·prefix 폴백 시 비-ctrl 키 `\x02`(셸 stdin 제어코드 한계). (아래는 수정 전 진단.)
+> `test_normalize_binding_key_warns`·`test_key_to_ctrl_bytes`.
+> **잔여분 완료(2026-06-13)**: ① **root table `bind -n`** — config(`cfg["root_bindings"]`)·
+> 런타임(`bind-key -n`/`unbind-key -n`, `-a` 는 양 테이블) 지원. 노멀 모드에서 내장 크롬 키
+> (ESC/`/F12/prefix/Ctrl+V)·오버레이 키 다음, **패널 패스스루 직전**에 가로채 `_run_command`
+> 디스패치(매칭 키는 셸로 안 새고, 셸 키와 겹치지 않게 F1~F11/M- 권장 — conf.example).
+> `list-keys` 가 prefix/(root) 표기로 구분 표시. 테스트 `test_load_config`(bind -n 파싱)·
+> `test_root_bindings_dispatch_and_runtime`. ② 경고 UI 노출은 이미 구현돼 있었음(stale —
+> config 로드 경고는 startup display_message, bind-key 는 즉시 경고 표시). ③ prefix 폴백
+> 비-ctrl 키 `\x02` 는 셸 stdin 제어코드 한계로 **현행 유지**(의도). (아래는 수정 전 진단.)
 
 `_tmux_key_to_textual` 이 `C-<letter>` 만 변환(`M-`/`S-`/F1–F12 미지원), prefix 폴백이
 실패 시 무조건 `\x02`. config `bind` 는 prefix-후-단일키만(`-n` root table 없음).

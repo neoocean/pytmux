@@ -773,10 +773,17 @@ bind | split-window -h
 bind - split-window -v
 bind r rename-tab
 bind k kill-pane
+
+# prefix 없이 바로 발동하는 root 바인딩: bind -n <key> <command...>
+# (내장 키 ESC/`/F12/prefix/Ctrl+V 가 우선. 매칭된 키는 셸로 전달되지 않으니
+#  셸/앱 키와 안 겹치는 F1~F11·M- 계열을 권장)
+bind -n F2 new-window
+bind -n M-Right next-tab
 ```
 
 런타임에 설정 파일을 고치지 않고도 바인딩을 바꾸시려면 `bind-key`/`unbind-key`/`list-keys`
-명령을 사용합니다([§17](#17-명령-레퍼런스)).
+명령을 사용합니다([§17](#17-명령-레퍼런스)) — `bind-key -n`/`unbind-key -n` 이 root
+테이블입니다.
 
 ---
 

@@ -43,3 +43,10 @@ bind | split-window -h
 bind - split-window -v
 bind r rename-window
 bind k kill-pane
+
+# prefix 없이 바로 발동하는 root 바인딩: bind -n <key> <command...>
+# 내장 키(ESC/`/F12/prefix/Ctrl+V)와 오버레이 키가 우선이고, 매칭된 키는 셸로
+# 전달되지 않으니 셸/앱에서 쓰는 키와 겹치지 않게 고를 것(F1~F11, M- 권장).
+# bind -n F2 new-window
+# bind -n M-Left previous-tab
+# bind -n M-Right next-tab

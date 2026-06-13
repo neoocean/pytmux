@@ -2548,6 +2548,33 @@ async def test_bind_unbind_keys():
     await _with_app(body)
 
 
+async def test_root_bindings_dispatch_and_runtime():
+    """§2.5 root table: `bind -n` 키는 prefix 없이 노멀 모드에서 바로 명령을 실행하고
+    그 키는 패널로 전달되지 않는다. 런타임 bind-key -n / unbind-key -n / -a 정리."""
+    async def body(app, pilot, srv):
+        app.root_bindings = {}
+        app._run_command("bind-key -n f5 new-window")
+        assert app.root_bindings["f5"] == "new-window"
+        ran, sent = [], []
+        orig = app._run_command
+        app._run_command = lambda line: ran.append(line)
+        app.send_input = lambda data: sent.append(data)
+        await pilot.press("f5")                  # root 바인딩 → 명령 실행
+        assert ran == ["new-window"], ran
+        assert sent == [], "root 바인딩 키는 패널로 전달 안 함"
+        await pilot.press("q")                   # 비바인딩 키 → 평소대로 패스스루
+        assert ran == ["new-window"] and sent, (ran, sent)
+        app._run_command = orig
+        # unbind-key -n 으로 root 만 해제, -a 는 양 테이블 모두 비움.
+        app._run_command("unbind-key -n f5")
+        assert "f5" not in app.root_bindings
+        app._run_command("bind-key -n f6 next-tab")
+        app._run_command("bind-key z kill-pane")
+        app._run_command("unbind-key -a")
+        assert app.root_bindings == {} and app.bindings == {}
+    await _with_app(body)
+
+
 async def test_infoscreen_arrows_navigate_not_close():
     # #7: InfoScreen 에서 방향키는 팝업을 닫지 않고 항목을 내비게이션한다
     # (이전엔 아무 키나 닫혀 방향키도 즉시 닫혔다). 긴 줄은 잘리지 않고 여러

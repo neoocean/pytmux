@@ -133,8 +133,12 @@ def load_config(path: str | None = None) -> dict:
         set inactive-dim on|off   # 비활성 패널 흐리게(§2.9, 기본 on)
         set inactive-dim-ratio <0~0.8>   # 흐리게 세기(기본 0.30)
         bind <key> <command...>   # prefix 후 <key> 에 명령 바인딩
+        bind -n <key> <command...>  # prefix 없이 바로(root table, §2.5) — 내장
+                                  #   크롬 키(ESC/`/F12/prefix/Ctrl+V)가 우선이고
+                                  #   나머지 키를 패널 전달 전에 가로챈다
     """
-    cfg = {"prefix": "ctrl+b", "mouse": True, "bindings": {}, "aliases": {},
+    cfg = {"prefix": "ctrl+b", "mouse": True, "bindings": {},
+           "root_bindings": {}, "aliases": {},
            "hooks": {}, "status_bg": None, "status_fg": None,
            "mode_keys": "vi", "tab_bar_always": True, "default_path": "current"}
     candidates = []
@@ -213,11 +217,20 @@ def load_config(path: str | None = None) -> dict:
                 elif parts[0] == "bind" and len(parts) >= 3:
                     # 키를 Textual 표기로 정규화해 저장한다 — 런타임 매칭 토큰이
                     # event.key(ctrl+x 등)이므로 raw "C-x" 로 두면 절대 안 먹는다.
-                    bkey, warn = normalize_binding_key(parts[1])
-                    cfg["bindings"][bkey] = " ".join(parts[2:])
-                    if warn:
-                        cfg.setdefault("warnings", []).append(
-                            f"config bind: {warn}")
+                    # `bind -n` 은 root table(§2.5) — prefix 없이 바로 발동.
+                    if parts[1] == "-n":
+                        if len(parts) >= 4:
+                            bkey, warn = normalize_binding_key(parts[2])
+                            cfg["root_bindings"][bkey] = " ".join(parts[3:])
+                            if warn:
+                                cfg.setdefault("warnings", []).append(
+                                    f"config bind -n: {warn}")
+                    else:
+                        bkey, warn = normalize_binding_key(parts[1])
+                        cfg["bindings"][bkey] = " ".join(parts[2:])
+                        if warn:
+                            cfg.setdefault("warnings", []).append(
+                                f"config bind: {warn}")
                 elif parts[0] == "alias" and len(parts) >= 3:
                     cfg["aliases"][parts[1]] = " ".join(parts[2:])
                 elif parts[0] in ("hook", "set-hook") and len(parts) >= 3:

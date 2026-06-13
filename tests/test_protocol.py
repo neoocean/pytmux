@@ -117,6 +117,7 @@ async def test_load_config():
         f.write("# c\nset prefix C-a\nset mouse off\nset mode-keys emacs\n"
                 "set status-bg blue\nset status-left L#S\n"
                 "bind | split-window -h\nbind C-g new-window\nbind F5 next-window\n"
+                "bind -n F2 new-window\nbind -n M-Right next-tab\n"
                 "alias v split-window -h\n"
                 "hook after-new-window rename-window H\n")
     cfg = pytmux.load_config(cp)
@@ -129,5 +130,9 @@ async def test_load_config():
     # 과거엔 raw "C-g"/"F5" 로 저장돼 런타임 토큰(ctrl+g/f5)과 절대 안 맞았다.
     assert cfg["bindings"]["ctrl+g"] == "new-window"
     assert cfg["bindings"]["f5"] == "next-window"
+    # §2.5 root table: `bind -n` 은 prefix 테이블이 아니라 root_bindings 로.
+    assert cfg["root_bindings"]["f2"] == "new-window"
+    assert cfg["root_bindings"]["alt+right"] == "next-tab"
+    assert "f2" not in cfg["bindings"]
     assert cfg["aliases"]["v"] == "split-window -h"
     assert cfg["hooks"]["after-new-window"] == "rename-window H"

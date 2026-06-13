@@ -172,6 +172,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
             self.prefix_enabled = True  # 중첩 시 F12 로 outer prefix 일시 해제
             self.bindings = config.get("bindings", {})
+            # root table(`bind -n`, §2.5): prefix 없이 노멀 모드에서 바로 발동하는
+            # 바인딩. 내장 크롬 키(ESC/`/F12/prefix/Ctrl+V)·오버레이 키가 우선이고,
+            # 매칭되면 그 키는 패널로 전달하지 않는다.
+            self.root_bindings = config.get("root_bindings", {})
             # 설정 로드 중 모은 경고(잘못된 키 표기 등) — startup 에서 한 번 표시.
             self._config_warnings = list(config.get("warnings", []))
             self.mouse_enabled = config.get("mouse", True)
@@ -1892,6 +1896,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.prefix_key = cfg["prefix"]
             self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
             self.bindings = cfg["bindings"]
+            self.root_bindings = cfg.get("root_bindings", {})
             self.aliases = cfg.get("aliases", {})
             self.hooks = cfg.get("hooks", {})
             self.mouse_enabled = cfg["mouse"]
@@ -2384,23 +2389,33 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     [f"{k} → {v}" for k, v in self.hooks.items()], title="hooks"))
             elif c in ("bind-key", "bind", "bindkey"):
                 # bind-key <key> <command...> — prefix 후 <key> 에 명령 바인딩(런타임).
+                # bind-key -n <key> <command...> — root table(§2.5, prefix 없이 바로).
                 # 키는 tmux 표기(C-x)도 받아 textual(ctrl+x)로 정규화. 한 글자는 그대로.
                 # 첫 인자만 키, 나머지는 명령 원문(플래그 -h 등 보존)으로 그대로 쓴다.
-                if len(args) >= 2:
-                    key, warn = normalize_binding_key(args[0])
-                    self.bindings[key] = " ".join(args[1:])
-                    self.display_message(warn if warn else f"bound {key}")
+                root = bool(args) and args[0] == "-n"
+                rest = args[1:] if root else args
+                if len(rest) >= 2:
+                    key, warn = normalize_binding_key(rest[0])
+                    table = self.root_bindings if root else self.bindings
+                    table[key] = " ".join(rest[1:])
+                    self.display_message(
+                        warn if warn else
+                        (f"bound (root) {key}" if root else f"bound {key}"))
             elif c in ("unbind-key", "unbind", "unbindkey"):
-                # unbind-key <key> | -a (전체 해제). 없는 키는 조용히 무시.
+                # unbind-key <key> | -n <key>(root) | -a (양 테이블 전체 해제).
+                # 없는 키는 조용히 무시.
                 if "-a" in args:
-                    n = len(self.bindings)
+                    n = len(self.bindings) + len(self.root_bindings)
                     self.bindings.clear()
+                    self.root_bindings.clear()
                     self.display_message(f"unbound all ({n})")
                 else:
+                    root = args[:1] == ["-n"]
                     pos = [a for a in args if not a.startswith("-")]
                     if pos:
                         key = _tmux_key_to_textual(pos[0])
-                        if self.bindings.pop(key, None) is not None:
+                        table = self.root_bindings if root else self.bindings
+                        if table.pop(key, None) is not None:
                             self.display_message(f"unbound {key}")
                         else:
                             self.display_message(f"no binding: {key}")
@@ -2420,7 +2435,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     ("keys.g_shift", "Shift+드래그 — 텍스트 선택(클립보드 복사)"),
                     ("keys.g_tab", "탭 드래그 — 탭 재정렬 · 패널 위로 끌어 분할"),
                 )]
-                binds = [f"{k} → {v}" for k, v in sorted(self.bindings.items())]
+                binds = [f"prefix {k} → {v}"
+                         for k, v in sorted(self.bindings.items())]
+                binds += [f"(root) {k} → {v}"
+                          for k, v in sorted(self.root_bindings.items())]
                 lines += ["", tr("keys.user_header", default="사용자 키 바인딩")]
                 lines += binds or ["  " + tr("keys.none", default="(없음)")]
                 self.push_screen(InfoScreen(
@@ -2580,6 +2598,21 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 event.prevent_default()
                 event.stop()
                 return
+            # 사용자 root 바인딩(`bind -n`, §2.5): 내장 크롬 키·오버레이 키 다음,
+            # 패널 패스스루 직전에 가로챈다. 토큰 매칭은 prefix 테이블과 동일
+            # (IME 자모 → QWERTY 정규화, 글자는 character·그 외는 key).
+            if self.root_bindings:
+                rk = _normalize_key(event.key)
+                rch = event.character
+                rnch = _JAMO.get(rch, rch) if rch else rch
+                token = (rnch if (rnch and rnch.isprintable()
+                                  and not rk.startswith("ctrl+")) else rk)
+                rcmd = self.root_bindings.get(token)
+                if rcmd:
+                    self._run_command(rcmd)
+                    event.prevent_default()
+                    event.stop()
+                    return
             # 패널로 보낼 확정 입력을 플러그인이 관찰하게 한다(ime-indicator 가 한/영
             # 상태 추정). send_input 보다 먼저 호출해 패널 부재/전송 실패와 무관하게
             # 상태가 갱신되게 한다. 플러그인 없으면 no-op(delete-to-disable).
