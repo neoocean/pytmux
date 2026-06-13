@@ -3932,10 +3932,14 @@ async def test_status_session_ctx_and_5h():
         assert "ctx 42% alice" in txt_a and "@alice" not in txt_a, repr(txt_a)
         # 5h 리밋 **사용률**(실측 37% 사용 — 2026-06-12 사용자 결정: 팝업 막대
         # "N% 사용"·Claude /usage "N% used" 와 같은 방향·같은 숫자로 전 표면 통일).
+        # 5h% 옆 계정은 /usage 실측 계정(usage_limits.account = 토큰 팝업과 같은 문자열)
+        # 으로 라벨한다(2026-06-13 — 패널 스크랩 계정 stale 시 팝업과 어긋남 방지).
+        app.status.usage_limits = {"session": {"pct": 37}, "account": "alice"}
         app.status.tok5h_pct = 37
         txt_m = "".join(s.text for s in app.status.render_line(0))
         assert "37%/5h 사용 alice" in txt_m, repr(txt_m)
         assert txt_m.index("ctx 42%") < txt_m.index("37%/5h"), repr(txt_m)
+        app.status.usage_limits = None
         # claude_usage 가 토큰 폴백('Xk tok')이면 표시하지 않는다(토큰 수치 비표시 원칙)
         app.status.claude_usage = "12k tok"
         app.status.tok5h_pct = None
@@ -3948,10 +3952,12 @@ async def test_status_session_ctx_and_5h():
 async def test_status_account_full_when_wide_alias_when_narrow():
     # 계정 이메일: 좌우 폭이 충분하면 전체(claude_account_full)를, 우측(시각/날짜/창목록)을
     # 밀어낼 만큼 좁으면 별칭(claude_account)을 쓴다(요청 2026-06-12: 폭 충분 시 안 줄임).
+    # 전체/별칭 선택은 **컨텍스트%만** 보일 때(=활성 패널 계정 라벨)의 동작이다 —
+    # 5h% 가 보이면 계정은 /usage 실측 계정(별칭 1종, 팝업과 동일)으로 라벨된다.
     async def wide(app, pilot, srv):
         app.status.claude_active = True
         app.status.claude_usage = "ctx 42%"
-        app.status.tok5h_pct = 37
+        app.status.tok5h_pct = None
         app.status.claude_account = "al…@example.com"        # 별칭(축약)
         app.status.claude_account_full = "alice@example.com"  # 전체
         txt = "".join(s.text for s in app.status.render_line(0))
@@ -3961,12 +3967,37 @@ async def test_status_account_full_when_wide_alias_when_narrow():
     async def narrow(app, pilot, srv):
         app.status.claude_active = True
         app.status.claude_usage = "ctx 42%"
-        app.status.tok5h_pct = 37
+        app.status.tok5h_pct = None
         app.status.claude_account = "al…@example.com"
         app.status.claude_account_full = "alice@example.com"
         txt = "".join(s.text for s in app.status.render_line(0))
         assert "al…@example.com" in txt and "alice@example.com" not in txt, repr(txt)
     await _with_app(narrow, size=(58, 30))
+
+
+async def test_status_5h_account_mirrors_usage_popup():
+    """footer 의 5h% 계정은 /usage 실측 계정(usage_limits.account = 토큰 팝업의
+    'Account (/usage): …' 과 같은 문자열)을 따라야 한다. 패널 스크랩 계정
+    (claude_account)이 stale/미상이라 다른 계정을 가리켜도 5h% 옆엔 /usage 계정만
+    보여 팝업과 어긋나지 않는다(사용자 보고 2026-06-13: 2%/5h 가 폰 앱과 다른 계정
+    라벨로 표기). /usage 계정을 못 잡았으면(팝업도 '미확인') 라벨을 생략한다."""
+    async def body(app, pilot, srv):
+        app.status.claude_active = True
+        app.status.claude_usage = "ctx 42%"
+        app.status.tok5h_pct = 2
+        # 패널 스크랩 계정은 stale 한 다른 계정, /usage 실측은 진짜 현재 계정.
+        app.status.claude_account = "wo…@nexongames.co.kr"
+        app.status.claude_account_full = "woojinkim@nexongames.co.kr"
+        app.status.usage_limits = {"session": {"pct": 2}, "account": "me@woojinkim.org"}
+        txt = "".join(s.text for s in app.status.render_line(0))
+        # 5h% 옆엔 /usage 계정만, stale 패널 계정은 안 보인다.
+        assert "2%/5h 사용 me@woojinkim.org" in txt, repr(txt)
+        assert "nexongames" not in txt, repr(txt)
+        # /usage 계정 미상이면 라벨 생략(틀린 계정 안 닮).
+        app.status.usage_limits = {"session": {"pct": 2}, "account": None}
+        txt2 = "".join(s.text for s in app.status.render_line(0))
+        assert "2%/5h 사용" in txt2 and "nexongames" not in txt2, repr(txt2)
+    await _with_app(body)
 
 
 async def test_status_tokens_hidden_when_not_claude():

@@ -193,11 +193,28 @@ def render_segs(status, segs, w):
             usage_parts.append(
                 i18n.t("claude.limit_used",
                        pct=max(0, min(100, int(status.tok5h_pct)))))
-        # 표시 %들의 기준 계정(하이라이트 패널의 계정)을 마지막 항목에 곁들임. 계정은
-        # 보통 이메일(me@…)이라 앞에 @ 를 붙이지 않는다(@me@… 중복 방지, 요청).
-        # 폭이 충분하면 전체 계정명(claude_account_full)을, 우측(시각·날짜 등)을 밀어낼
-        # 만큼 좁으면 별칭(claude_account)을 쓴다(요청 2026-06-12: 폭 충분 시 안 줄임).
-        if usage_parts and status.claude_account:
+        # 표시 %들의 기준 계정을 마지막 항목에 곁들임. 계정은 보통 이메일(me@…)이라
+        # 앞에 @ 를 붙이지 않는다(@me@… 중복 방지, 요청).
+        #
+        # 마지막 항목이 **5h%**(=/usage 실측)면 그 계정은 반드시 토큰 팝업의
+        # 'Account (/usage): …' 과 같아야 한다 — 그 숫자가 바로 그 그림자 /usage
+        # 세션의 사용률이기 때문이다. 패널 스크랩 계정(claude_account)은 지금 패널
+        # 계정이 미상이면 마지막 비-빈 값(다른 계정)을 stale 로 유지해, footer 가
+        # 팝업과 다른 계정 라벨을 달았다(사용자 보고 2026-06-13: 2%/5h 가 폰 앱과
+        # 다른 계정으로 표기). 그래서 5h% 가 보일 땐 usage_limits 의 계정(팝업과
+        # **같은 문자열**)으로 라벨하고, /usage 계정을 못 잡았으면(팝업도 '미확인')
+        # 틀린 계정을 달지 않도록 라벨을 생략한다.
+        is_5h_last = status.tok5h_pct is not None
+        usage_acct = (status.usage_limits.get("account")
+                      if is_5h_last and isinstance(status.usage_limits, dict)
+                      else None)
+        if usage_parts and is_5h_last:
+            if usage_acct:        # 팝업과 동일한 별칭 1종(전체/별칭 구분 없음)
+                usage_parts[-1] += " " + usage_acct
+        elif usage_parts and status.claude_account:
+            # 5h% 가 없고 컨텍스트%만 보일 때 — 활성 패널 계정으로 라벨한다.
+            # 폭이 충분하면 전체 계정명(claude_account_full)을, 우측(시각·날짜 등)을
+            # 밀어낼 만큼 좁으면 별칭(claude_account)을 쓴다(요청 2026-06-12).
             acct = status.claude_account
             full = status.claude_account_full or acct
             chosen = acct
