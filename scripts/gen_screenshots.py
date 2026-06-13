@@ -280,6 +280,31 @@ async def p4_changes(app, pilot):
     await pilot.pause(0.5)
 
 
+async def remote_attach(app, pilot):
+    # 원격 pytmux 탭 어태치(remote-attach) — 보는 탭이 원격이면 탭바(활성=분홍 배경)
+    # 와 패널 외곽선(분홍)이 로컬과 구분된다(§1.7-a). 실 ssh 페더레이션 없이, 보는
+    # 탭이 원격(active+remote)임을 status.windows 에 박아 분홍 렌더를 합성한다 —
+    # 외형(분홍 탭/외곽선·노트북 연결부)은 실제와 동일. 실서버 status flush 가
+    # windows 를 로컬로 덮을 수 있어(레이스) 캡처 직전 재주입 후 재합성한다.
+    app.send_cmd("split", orient="lr")
+    await _settle(pilot, app, want_panes=2)
+    await _wait_painted(pilot, app)
+
+    def inject():
+        app.status.windows = [
+            {"index": 0, "name": "main", "active": False, "remote": False,
+             "bell": False, "activity": False, "claude_done": False},
+            {"index": 1, "name": "⇄office1:cmd", "active": True, "remote": True,
+             "bell": False, "activity": False, "claude_done": False},
+        ]
+        app._update_tabbar()
+        app._composite()
+    inject()
+    await pilot.pause(0.3)
+    inject()
+    await pilot.pause(0.2)
+
+
 async def ime_badge(app, pilot):
     # ime-indicator 플러그인 — 화면 우상단 IME(한/영) 상태 배지. OS 실측 폴링이
     # 캡처 머신의 현재 입력기(영문)로 덮어쓰지 않게 _ime_os=False(폴백 경로)로 두고
@@ -535,6 +560,7 @@ SCENES = [
     ("31-prompt-history", "프롬프트 히스토리 팝업(prompt-history) — 시간순·미리보기 행수", prompt_history),
     ("32-p4changes", "submitted CL 목록(p4changes) — 풀스크린·CL/시각/사용자/설명", p4_changes),
     ("33-ime", "IME 한/영 배지(ime-indicator) — 우상단 상태 배지", ime_badge),
+    ("34-remote-attach", "원격 pytmux 탭 어태치 — 분홍 탭바·분홍 패널 외곽선", remote_attach),
 ]
 # Claude 컷(11·12·13·20·22)은 결정적 장면이 아니라 진짜 `claude` 한 세션에서 캡처한다
 # (claude_suite). 실제 API 호출이라 무인자 전체 생성에선 제외하고, `claude-suite` 또는

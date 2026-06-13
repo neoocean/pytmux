@@ -65,7 +65,21 @@ copy-mode 로 따로 들어가지 않아도 패널 위에서 **휠을 올리면 
 
 ---
 
-## 5. 작업 보존 재시작
+## 5. 원격 pytmux 탭 어태치 — 분홍 탭·분홍 외곽선
+
+ssh 안에서 pytmux 를 또 띄우는 중첩 대신, 다른 머신의 pytmux 탭을 **이 pytmux 의 탭바로
+그대로** 가져옵니다(`remote-attach <host>`). 원격 탭은 `⇄host:이름` **분홍 탭**으로
+병합되고, 그 탭을 보는 동안 **패널 외곽선까지 분홍**이라 로컬과 한눈에 구분됩니다. 원격
+셸에서 그냥 `pytmux` 를 쳐도 바깥 pytmux 가 자동으로 어태치합니다(`nest-auto-attach`, 기본 ON).
+
+![원격 pytmux 탭 어태치 — 분홍 탭바(⇄office1:cmd)·분홍 패널 외곽선](image/34-remote-attach.svg)
+
+> 동작 원리·전제(키 인증/ControlMaster)는 [REMOTE_ATTACH_SCENARIO.md](REMOTE_ATTACH_SCENARIO.md),
+> 원격 실행 자동 승격은 [NESTED_ATTACH_SCENARIO.md](NESTED_ATTACH_SCENARIO.md).
+
+---
+
+## 6. 작업 보존 재시작
 
 `restart-server`/`restart-all` 은 열린 패널의 **셸·실행 중 프로그램·스크롤백을 살린 채
 코드만 새 이미지로 교체**합니다(제자리 re-exec). `restart-check` 드라이런으로 먼저
@@ -75,7 +89,7 @@ copy-mode 로 따로 들어가지 않아도 패널 위에서 **휠을 올리면 
 
 ---
 
-## 6. 플러그인
+## 7. 플러그인
 
 아래 기능은 모두 `pytmuxlib/plugins/<name>/` 디렉토리 하나로 응집된 **플러그인**입니다.
 디렉토리를 지우면 그 기능이 명령·자동완성·렌더 어디에도 안 나타나고 조용히 사라집니다
