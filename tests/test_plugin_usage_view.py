@@ -212,12 +212,15 @@ async def test_usage_view_popup_and_pane_live():
         async with app.run_test(size=(100, 30)) as pilot:
             await pilot.pause(0.4)
             # 스크랩 usage 데이터 주입 → claude-code client_statusbar_update 가 흡수.
+            # _dispatch→update_status→absorb 는 전부 동기라, 주입 직후 **즉시** 단언한다.
+            # pause 를 두면 그 사이 서버 정기 flush(빈 status — server._usage=None 도
+            # usage_limits 키로 실려 옴)가 흡수값을 None 으로 덮는 레이스가 있어(win/3.11
+            # 헤드리스에서 간헐 적색), pause 없이 동기 흡수만 확인한다.
             app._dispatch({"t": "status", "windows": [],
                            "usage_limits": {
                                "session": {"pct": 41, "reset": "2pm"},
                                "week_all": {"pct": 14, "reset": "Jun 13 at 3am"}},
                            "usage_age_sec": 5})
-            await pilot.pause(0.05)
             assert getattr(app.status, "usage_limits", None), "usage_limits 흡수 실패"
             # ① popup → UsageScreen 푸시 + 렌더.
             app._run_command("usage-view")
