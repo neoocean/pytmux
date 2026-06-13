@@ -432,8 +432,10 @@ class Registry:
 
     def client_status_tabs(self, app, tree):
         """통합 상태 팝업(_open_status_tabs)에 플러그인이 탭을 기여한다 — (제목, 줄들)
-        튜플 목록을 반환한다. claude-code 는 '토큰 사용량' 탭을 끼운다. 플러그인이 없으면
-        빈 목록 → 팝업에 REC·서버 탭만 남고 토큰 탭이 통째로 사라진다(delete-to-disable)."""
+        또는 (제목, 줄들, 동작리스트) 튜플 목록을 반환한다. 동작리스트는 InfoTabsScreen
+        에 그 탭 인덱스로 전달된다([(키,라벨,콜백),…]). rec 는 'REC' 탭(+[c]/[o] 동작)을,
+        claude-code 는 (구) '토큰 사용량' 탭을 기여한다. 플러그인이 없으면 빈 목록 →
+        팝업에 서버 탭만 남는다(delete-to-disable)."""
         tabs = []
         for p in self.plugins:
             fn = getattr(p, "client_status_tabs", None)

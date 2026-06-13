@@ -492,8 +492,9 @@ class _StatusFocusMixin:
                 fn = getattr(self, "open_token_log", None)  # 플러그인 설치
                 fn and fn()
             elif cur == "rec":
-                self.show_capture_info(self.status.capture_path,
-                                       self.status.capture_size)
+                fn = getattr(self, "show_capture_info", None)  # rec 플러그인 설치
+                fn and fn(getattr(self.status, "capture_path", None),
+                          getattr(self.status, "capture_size", 0))
             elif cur == "host":
                 self.show_status_tabs(initial=2)   # 서버 탭(#12, host 클릭과 동일)
             elif cur == "clock":
@@ -523,45 +524,22 @@ class _ChooseScreensMixin:
         self.send_cmd("request_tree")
 
     def _open_status_tabs(self, tree):
-        """REC(출력 캡처)·서버 정보를 **한 팝업의 탭**으로 연다(#10, §10-A #12).
-        플러그인이 client_status_tabs 훅으로 탭을 기여하면 그 사이에 끼는다(현재
-        기본 구성은 REC(0)·서버(1) — 구 '토큰 사용량' 탭은 2026-06-12 token-log
-        팝업으로 통합·제거). 어느 버튼으로 열었는지(_status_tab_initial)에 따라
-        초기 탭만 다르다(범위 밖이면 끝 탭으로 클램프 — host 클릭 initial=2 가
-        서버 탭에 안착). REC 탭에선 [c] 로 캡처를 켜고 끈다."""
-        cap = getattr(self, "_status_cap_lines", None) or self._capture_info_lines()
+        """플러그인 기여 탭(rec 의 'REC' 탭·claude-code 등) + 서버 정보를 **한 팝업의
+        탭**으로 연다(#10, §10-A #12). REC 탭과 그 [c]/[o] 동작은 rec 플러그인이
+        client_status_tabs 훅으로 기여한다(코어 하드코딩에서 이전, REC_SCENARIO §4.2).
+        어느 버튼으로 열었는지(_status_tab_initial)에 따라 초기 탭만 다르다 — 범위 밖이면
+        끝 탭으로 클램프(host 클릭 initial=2 가 서버 탭에 안착, rec 부재 시도 무탈)."""
         server = self._server_info_lines()
         initial = getattr(self, "_status_tab_initial", 0)
-
-        def _toggle_capture():
-            # capture-output 토글 명령 전송 + 낙관적 로컬 반영 → 갱신된 캡처 줄.
-            self._run_command("capture-output")
-            self.status.capture = not bool(getattr(self.status, "capture", False))
-            if not self.status.capture:
-                self.status.capture_path = None
-                self.status.capture_size = 0
-            self.status.refresh()
-            return self._capture_info_lines()
-
-        def _open_capture_dir():
-            # 기록 중인 캡처 파일이 있는 디렉터리를 OS 파일 관리자로 연다(요청).
-            # 캡처 경로는 클라이언트 머신 기준(서버=로컬일 때 유효). 없으면 안내.
-            path = getattr(self.status, "capture_path", None)
-            if path and proc.open_in_file_manager(os.path.dirname(path)):
-                self.display_message(i18n.t("msg.open_capture_dir"))
-            else:
-                self.display_message(i18n.t("msg.no_capture_dir"))
-            return None   # 줄 갱신 없음(팝업 유지)
-
-        actions = {0: [("c", "[c] 캡처 켜기/끄기", _toggle_capture),
-                       ("o", "[o] 기록 폴더 열기", _open_capture_dir)]}
-        # 탭 구성: REC + (플러그인 기여 탭, 예: claude-code 의 '토큰 사용량') + 서버.
-        # 플러그인 부재 시 가운데가 비어 REC·서버만 남는다(토큰 탭=claude-code 소유).
-        tabs = [("출력 캡처(REC)", cap)]
-        tabs += self.plugins.client_status_tabs(self, tree)
+        # 플러그인 탭은 (제목, 줄) 또는 (제목, 줄, 동작리스트). 동작은 탭 인덱스로
+        # InfoTabsScreen 에 전달한다. rec 디렉토리 삭제 시 REC 탭·동작이 통째로 빠진다.
+        tabs = []
+        actions = {}
+        for t in self.plugins.client_status_tabs(self, tree):
+            tabs.append((t[0], t[1]))
+            if len(t) > 2 and t[2]:
+                actions[len(tabs) - 1] = t[2]
         tabs.append(("서버", server))
-        # initial 은 (열기 버튼 기준) 인덱스 — 토큰 탭이 없으면 host 클릭(initial=2)이
-        # 마지막 탭=서버(2개면 1)로 자연 클램프된다. 범위 밖이면 끝 탭으로 맞춘다.
         initial = max(0, min(initial, len(tabs) - 1))
         self.push_screen(InfoTabsScreen(
             tabs, initial=initial, title=i18n.t("dialog.status_title"),
@@ -1217,33 +1195,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
         # Claude Code 상태 메서드(_update_claude)는 claude-code 플러그인
         # attach_client 가 인스턴스 클로저로 설치한다(Phase 2c). 코어는 client_status
         # 훅·getattr 로만 닿는다(delete-to-disable).
-        def _capture_info_lines(self, path=None, size=None):
-            # REC(출력 캡처) 정보 줄. 인자를 안 주면 상태줄에 마지막으로 온 값을 쓴다.
-            # 맨 앞에 현재 ON/OFF 를 보여 화면에서 [c] 로 토글한 결과가 바로 반영된다.
-            on = bool(getattr(self.status, "capture", False))
-            head = i18n.t("capture.status_on") if on \
-                else i18n.t("capture.status_off")
-            if path is None:
-                path = self.status.capture_path
-                size = self.status.capture_size or 0
-            if not on:
-                return [head, "(캡처 꺼짐 — REC 미표시)"]
-            if not path:
-                return [head, "(캡처 파일 준비 중…)"]
-            return [head,
-                    f"파일: {path}",
-                    f"크기: {size:,} bytes ({size / 1024:,.1f} KiB)",
-                    f"탭 매핑: {os.path.join(os.path.dirname(path), 'sessions.log')}"]
-
-        def show_capture_info(self, path, size):
-            # REC 클릭 → 통합 상태 팝업의 '출력 캡처' 탭으로 연다(#10 — 토큰 사용량과
-            # 한 팝업으로 합침). 캡처 줄은 즉시 만들고, 토큰 트리는 서버에서 받아온다.
-            self._status_cap_lines = self._capture_info_lines(path, size)
-            self._status_tab_initial = 0   # 0 = 캡처 탭(REC 가 왼쪽)
-            self.request_tree(purpose="status_tabs")
-
+        # REC(출력 캡처) 정보 줄·show_capture_info 는 rec 플러그인 clientside 로 이전
+        # (attach_client 가 app.show_capture_info 설치). REC 탭 자체도 client_status_tabs
+        # 훅이 기여한다. 코어는 getattr 로만 닿는다(delete-to-disable).
         def show_status_tabs(self, initial=0):
-            self._status_cap_lines = self._capture_info_lines()
+            # 통합 상태 팝업(서버 탭 등)을 연다. REC 탭은 플러그인이 기여한다(있으면).
             self._status_tab_initial = initial
             self.request_tree(purpose="status_tabs")
 

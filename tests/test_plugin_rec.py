@@ -114,3 +114,59 @@ async def test_rec_disabled_removes_all_touchpoints():
     class _S:
         pass
     assert "capture" not in reg.server_opts_serialize(_S())
+
+
+# ── 클라 표시(배지·팝업탭·흡수) ─────────────────────────────────────────────
+async def test_rec_client_badge_init_and_tab_present():
+    """rec present: client_statusbar_init 가 capture 필드를 설치하고, client_statusbar
+    가 ` REC ` 배지+클릭존을 그리며, client_status_tabs 가 REC 탭(+동작)을 기여한다."""
+    reg = _registry_only_rec()   # rec 만 → claude 훅이 fake status 로 안 깨짐
+
+    class _St:
+        pass
+    st = _St()
+    reg.client_statusbar_init(None, st)
+    assert st.capture is False and st._rec_zone is None
+    assert st.capture_path is None and st.capture_size == 0
+    # 흡수: capture* 필드 반영.
+    reg.client_statusbar_update(None, st, {"capture": True,
+                                           "capture_path": "/t/p.log",
+                                           "capture_size": 42})
+    assert st.capture is True and st.capture_path == "/t/p.log"
+    # 배지: capture ON → ` REC ` 세그먼트 + zone, 누적폭 +5.
+    segs = []
+    w = reg.client_statusbar(None, st, segs, 80, 10)
+    assert w == 15 and st._rec_zone == (10, 15)
+    assert any(getattr(s, "text", "") == " REC " for s in segs)
+    # capture OFF → 배지·zone 없음, 폭 불변.
+    st.capture = False
+    segs2 = []
+    w2 = reg.client_statusbar(None, st, segs2, 80, 10)
+    assert w2 == 10 and not segs2 and st._rec_zone is None
+    # 팝업 탭: (제목, 줄, 동작) 3-튜플.
+    class _App:
+        def __init__(self):
+            self.status = _St()
+            self.status.capture = True
+            self.status.capture_path = "/t/p.log"
+            self.status.capture_size = 42
+    t = reg.client_status_tabs(_App(), {"sessions": []})[0]
+    assert t[0] == "출력 캡처(REC)" and len(t) == 3 and len(t[2]) == 2
+
+
+async def test_rec_disabled_client_noop():
+    """rec absent: 클라 표시 훅이 capture 를 안 만든다(코어 무크래시). client_status_tabs
+    는 rec 만 구현하므로 REC 탭이 통째로 빠진다."""
+    reg = _registry_without_rec()
+
+    class _St:
+        pass
+    st = _St()
+    reg.client_statusbar_init(None, st)        # 예외 없음(claude 가 자기 필드만 설치)
+    assert not hasattr(st, "capture") and not hasattr(st, "_rec_zone"), \
+        "rec 부재인데 capture 필드 설치됨"
+    # client_status_tabs 는 이제 rec 만 구현 → rec 부재 시 REC 탭 없음(None 도 무탈).
+    tabs = reg.client_status_tabs(None, {"sessions": []})
+    assert not any(t[0] == "출력 캡처(REC)" for t in tabs)
+    # rec 가 plugins 목록에 없으니 client_statusbar 배지를 그릴 길이 없다.
+    assert not any(getattr(p, "name", "") == "rec" for p in reg.plugins)

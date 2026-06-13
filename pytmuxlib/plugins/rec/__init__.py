@@ -109,5 +109,38 @@ class _RecPlugin:
         if hasattr(server, "_close_all_capfiles"):
             server._close_all_capfiles()
 
+    # ---- 클라이언트 측(표시 전용) — clientside.py 지연 import ----
+    def client_statusbar_init(self, app, status):
+        """StatusBar 생성 직후 — REC 표시 상태(capture/_rec_zone/capture_path/size)를
+        설치한다(코어 clientwidgets.__init__ 에서 이전)."""
+        from .clientside import init_status_defaults
+        init_status_defaults(status)
+
+    def client_statusbar_update(self, app, status, msg):
+        """status 메시지의 capture* 필드를 위젯에 흡수(코어 update_status 에서 이전)."""
+        from .clientside import absorb
+        absorb(status, msg)
+
+    def client_statusbar(self, app, status, segs, w, w0=None):
+        """상태줄에 ` REC ` 배지를 그리고 클릭존을 채운다(코어 _render_main 에서 이전).
+        w0=들어오는 누적 셀폭, 새 누적 폭을 반환한다(P6)."""
+        from .clientside import render_badge
+        if w0 is None:
+            return None
+        return render_badge(status, segs, w0)
+
+    def client_status_tabs(self, app, tree):
+        """통합 상태 팝업에 '출력 캡처(REC)' 탭(+[c]/[o] 동작)을 기여(코어
+        _open_status_tabs 의 하드코딩 REC 탭에서 이전). (제목,줄,동작) 3-튜플."""
+        from .clientside import status_tab
+        return [status_tab(app, tree)]
+
+    def attach_client(self, app):
+        """클라 앱에 REC 글루(show_capture_info)를 설치한다 — 코어 클릭/ESC nav 가
+        getattr 로 호출한다(없으면 no-op). 코어 client.show_capture_info 에서 이전."""
+        from .clientside import show_capture_info
+        app.show_capture_info = lambda path=None, size=None: \
+            show_capture_info(app, path, size)
+
 
 PLUGIN = _RecPlugin()

@@ -909,7 +909,9 @@ class StatusBar(Widget):
         self.autoresume = False
         self.prompt_clear = False  # 프롬프트 단위 클리어 모드(활성 패널, #9)
         self.prompt_clear_queue = []  # 프롬프트 단위 클리어 큐(활성 패널, #4)
-        self.capture = False     # 패널 출력 캡처 중(서버 옵션, 기본 OFF)
+        # REC 표시 상태(capture/_rec_zone/capture_path/capture_size)는 rec 플러그인의
+        # client_statusbar_init 훅이 설치한다(코어 미소유 — delete-to-disable). 코어는
+        # 흡수/배지/클릭에서 getattr 로만 읽는다(없으면 미캡처로 동작).
         self.prefix_off = False  # 중첩: outer prefix 해제 표시
         self.cmd_mode = False  # ESC 명령 모드 표시
         self.message = None    # display-message 임시 메시지
@@ -933,12 +935,10 @@ class StatusBar(Widget):
         self._clock_zone = None  # (x0, x1) 시각(시계) 클릭 영역
         self._date_zone = None   # (x0, x1) 날짜(달력) 클릭 영역
         self._usage_zone = None  # (x0, x1) 토큰 사용량 클릭 영역(token-log 팝업)
-        self._rec_zone = None    # (x0, x1) REC 클릭 영역(캡처 정보 팝업)
+        # _rec_zone(REC 클릭 영역)은 rec 플러그인 client_statusbar 가 설치(코어 미소유).
         self._model_zone = None  # (x0, x1) 모델 배지 클릭 영역(모델·컨텍스트 팝업, 요청)
         self._host_zone = None   # (x0, x1) 서버이름(host) 클릭 영역(서버 탭, §10-A #12)
         self.focus_btn = None    # ESC 모드 하단 포커스 키 강조(model/usage/rec/host/clock/date)
-        self.capture_path = None  # 활성 패널 캡처 파일 경로
-        self.capture_size = 0     # 그 파일 크기(bytes)
         # 클라이언트가 SSH 원격 세션에서 도는지(attach 한 머신 기준, 시작 시 1회).
         self._is_remote = bool(os.environ.get("SSH_CONNECTION")
                                or os.environ.get("SSH_TTY"))
@@ -1032,15 +1032,11 @@ class StatusBar(Widget):
         self.autoresume = msg.get("autoresume", False)
         self.prompt_clear = msg.get("prompt_clear", False)
         self.prompt_clear_queue = msg.get("prompt_clear_queue", [])
-        self.capture = msg.get("capture", False)
-        # Claude 필드(claude_active/usage/tokens/model/warn/budget·토큰절감 설정 등)는
-        # claude-code 플러그인의 client_statusbar_update 훅이 이 위젯에 흡수한다(Phase
-        # 2c). 플러그인이 없으면 no-op → claude_* 속성은 __init__ 의 안전한 기본값
-        # (claude_active=False 등) 그대로라 아래 _render_main 의 Claude 세그먼트가 통째로
-        # 비활성(delete-to-disable). self.app 은 마운트 후라 항상 유효.
+        # Claude 필드(claude_active/usage/tokens/model/warn/budget 등)와 REC capture*
+        # 필드는 각 플러그인의 client_statusbar_update 훅이 이 위젯에 흡수한다(claude-code·
+        # rec). 플러그인이 없으면 no-op → 속성이 __init__ 기본값(또는 미설치) 그대로라
+        # _render_main 의 해당 세그먼트가 비활성(delete-to-disable). self.app 은 마운트 후.
         self.app.plugins.client_statusbar_update(self.app, self, msg)
-        self.capture_path = msg.get("capture_path")
-        self.capture_size = msg.get("capture_size", 0)
         self.refresh()
 
     def render_line(self, y: int) -> Strip:
@@ -1093,15 +1089,9 @@ class StatusBar(Widget):
             segs.append(Segment(" AR ", Style(color="black", bgcolor=tc("accent"),
                                               bold=True)))
             acc += 4
-        self._rec_zone = None
-        if self.capture:        # 패널 출력 캡처 중
-            rx0 = acc            # REC 앞까지의 누적 폭(전수 재합산 대신)
-            self._rec_zone = (rx0, rx0 + 5)   # " REC "
-            rec_st = (Style(color="black", bgcolor=tc("warning"), bold=True)
-                      if self.focus_btn == "rec"
-                      else Style(color="white", bgcolor=tc("error"), bold=True))
-            segs.append(Segment(" REC ", rec_st))
-            acc += 5
+        # REC ` REC ` 배지·_rec_zone 은 rec 플러그인의 client_statusbar 훅이 그린다
+        # (아래 plugins.client_statusbar 디스패치). 시스템 배지(SYNC/AR) 뒤 플러그인
+        # 배지 영역에 렌더된다. 플러그인 부재 시 배지·클릭존 없음(delete-to-disable).
         self._usage_zone = None
         self._model_zone = None   # 모델 배지 클릭존(모델·컨텍스트 변경 팝업, 요청)
         # Claude 좌하단 세그먼트(모델 배지·컨텍스트·토큰Σ·예산경고·카운트다운·폭주경고)는
@@ -1179,9 +1169,12 @@ class StatusBar(Widget):
         # 클릭 존(REC/시계/날짜/사용량)은 주 상태가 그려지는 맨 아래 줄에만 있다.
         if event.y != self.size.height - 1:
             return
-        rz = self._rec_zone
+        rz = getattr(self, "_rec_zone", None)   # rec 플러그인 부재 시 None(no-op)
         if rz and rz[0] <= event.x < rz[1]:
-            self.app.show_capture_info(self.capture_path, self.capture_size)
+            fn = getattr(self.app, "show_capture_info", None)
+            if fn:
+                fn(getattr(self, "capture_path", None),
+                   getattr(self, "capture_size", 0))
             event.stop()
             return
         z = self._clock_zone
