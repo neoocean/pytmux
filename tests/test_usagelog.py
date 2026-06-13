@@ -34,6 +34,35 @@ async def test_append_and_read_roundtrip():
             pass
 
 
+async def test_tzoff_recorded_and_bucket_stable_across_tz_change():
+    """§3.5①: make_record 는 쓰기 시점 로컬 오프셋(tzoff)을 싣고, bucket_key 는 그
+    오프셋의 **벽시계**로 버킷한다 → 이후 DST/여행으로 시스템 tz 가 바뀌어도 과거
+    기록의 시/일 버킷이 재분류되지 않는다(머신 tz 와 무관한 결정 검증)."""
+    # 2023-11-14 22:13:20 UTC
+    ts = 1_700_000_000.0
+    rec = usagelog.make_record(ts, 0, 1, 1, "me@x.org", 1000)
+    assert "tzoff" in rec and isinstance(rec["tzoff"], int), rec
+    # 저장 오프셋별 벽시계 버킷(머신 tz 와 무관 — 명시 offset).
+    assert usagelog.bucket_key(ts, "hour", 0) == "2023-11-14 22:00"
+    assert usagelog.bucket_key(ts, "hour", 9 * 3600) == "2023-11-15 07:00"
+    assert usagelog.bucket_key(ts, "hour", -5 * 3600) == "2023-11-14 17:00"
+    assert usagelog.bucket_key(ts, "day", 9 * 3600) == "2023-11-15"  # +9 → 다음날
+    assert usagelog.bucket_key(ts, "day", -5 * 3600) == "2023-11-14"
+    # tzoff=None(레거시)은 종전대로 시스템 로컬 폴백.
+    assert usagelog.bucket_key(ts, "hour", None) == \
+        usagelog.bucket_key(ts, "hour")
+    # 같은 ts·다른 저장 offset 의 두 레코드는 aggregate 에서 **다른 hour 버킷**.
+    r_kr = dict(usagelog.make_record(ts, 0, 1, 1, "me@x.org", 100), tzoff=9 * 3600)
+    r_us = dict(usagelog.make_record(ts, 0, 1, 1, "me@x.org", 200), tzoff=-5 * 3600)
+    agg = usagelog.aggregate([r_kr, r_us], "hour")
+    assert agg["buckets"]["2023-11-15 07:00"]["me@x.org"] == 100
+    assert agg["buckets"]["2023-11-14 17:00"]["me@x.org"] == 200
+    # 저장 offset 이 그 시점 시스템 로컬과 같으면 시스템-로컬 경로와 동일 결과(불변).
+    off = usagelog._tzoff_at(ts)
+    if off is not None:
+        assert usagelog.bucket_key(ts, "day", off) == usagelog.bucket_key(ts, "day")
+
+
 async def test_aggregate_buckets_and_accounts():
     recs = [
         usagelog.make_record(1_700_000_000.0, 0, 1, 1, "a@x.org", 1000),

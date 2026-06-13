@@ -25,6 +25,51 @@ async def test_connect_insert_query_roundtrip():
     conn.close()
 
 
+async def test_tzoff_roundtrip_and_v4_to_v5_migration():
+    """§3.5①: tzoff 컬럼이 insert/query 를 왕복하고, tzoff 없는 v4 DB 가 connect 시
+    v5 로 마이그레이트(컬럼 추가)되며 기존 행은 NULL(→레거시 폴백)로 보존된다."""
+    import sqlite3
+    # ① 신규 DB 왕복: make_record 의 tzoff 가 보존된다.
+    conn = usagedb.connect(":memory:")
+    assert usagedb.insert(conn, _rec(1_700_000_000.0, 0, 1, 1, "me@x.org", 100))
+    rec = usagedb.query_records(conn)[0]
+    assert "tzoff" in rec and isinstance(rec["tzoff"], int), rec
+    assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == \
+        usagedb.SCHEMA_VERSION
+    conn.close()
+    # ② v4 형태(tzoff 없는 usage + user_version=4) DB 를 만들고 connect 로 업그레이드.
+    path = tempfile.mktemp(suffix=".tokens.db")
+    try:
+        raw = sqlite3.connect(path)
+        raw.execute("CREATE TABLE usage (ts REAL NOT NULL, tab INTEGER, "
+                    "pane INTEGER NOT NULL, session INTEGER, account TEXT "
+                    "NOT NULL, tokens INTEGER NOT NULL)")
+        raw.execute("INSERT INTO usage (ts,tab,pane,session,account,tokens) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (1_700_000_000.0, 0, 1, 1, "old@x.org", 555))
+        raw.execute("PRAGMA user_version=4")
+        raw.commit()
+        raw.close()
+        conn = usagedb.connect(path)
+        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) >= 5
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(usage)")}
+        assert "tzoff" in cols, "v5 마이그레이션이 tzoff 컬럼 추가"
+        recs = usagedb.query_records(conn)
+        assert len(recs) == 1 and recs[0]["tokens"] == 555
+        assert "tzoff" not in recs[0], "레거시 행은 tzoff NULL → 키 생략(시스템 로컬 폴백)"
+        # 새 insert 는 tzoff 를 실어 hour 버킷이 안정.
+        assert usagedb.insert(conn, _rec(1_700_000_100.0, 0, 1, 1, "new@x.org", 7))
+        new = [r for r in usagedb.query_records(conn) if r["account"] == "new@x.org"][0]
+        assert "tzoff" in new
+        conn.close()
+    finally:
+        for ext in ("", "-wal", "-shm"):
+            try:
+                os.unlink(path + ext)
+            except OSError:
+                pass
+
+
 async def test_query_limit_returns_recent_in_order():
     conn = usagedb.connect(":memory:")
     for i in range(5):

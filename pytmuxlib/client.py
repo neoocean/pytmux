@@ -415,7 +415,195 @@ class _RestartVersionMixin:
         return lines
 
 
-_PytmuxAppMixins = (_ClipboardMixin, _NetReconnectMixin, _RestartVersionMixin)
+class _StatusFocusMixin:
+    """ESC 모드의 하단 상태바 버튼 포커스 동선(←→ 순환·Enter 실행·복귀). 상태바에
+    실제 그려진 버튼만 대상으로 편입한다(model/usage/rec/host/clock/date/perm)."""
+
+    def _status_buttons(self):
+        """ESC 모드 하단 포커스에서 ←→ 로 순환할 대상 키 목록(현재 화면에 있는
+        것만, 왼→오 시각 순서). 모델·토큰사용량은 Claude 활성 시, REC 는 캡처
+        중일 때만. host(ssh:서버명)·clock(시계)·date(달력)는 우측 상태에 그려질
+        때, perm("auto mode on" footer)은 활성 Claude 패널에 권한모드 footer 가
+        보일 때만 편입한다(요청)."""
+        sb = self.status
+        btns = []
+        if getattr(sb, "_model_zone", None):
+            btns.append("model")
+        if getattr(sb, "_usage_zone", None):
+            btns.append("usage")
+        if getattr(sb, "_rec_zone", None):
+            btns.append("rec")
+        if getattr(sb, "_host_zone", None):
+            btns.append("host")
+        if getattr(sb, "_clock_zone", None):
+            btns.append("clock")
+        if getattr(sb, "_date_zone", None):
+            btns.append("date")
+        # 활성 패널의 권한모드 footer("auto mode on")도 같은 동선에 편입(요청).
+        # _perm_zone 은 claude-code 플러그인이 채운다(없으면 빈 dict → perm 미편입).
+        act = self.layout.get("active")
+        if act is not None and act in getattr(self, "_perm_zone", {}):
+            btns.append("perm")
+        return btns
+
+    def _enter_status_focus(self):
+        """최하단 패널에서 ↓ → 상태바 버튼 포커스 진입(요청). 버튼이 없으면 무동작."""
+        btns = self._status_buttons()
+        if not btns:
+            return False
+        self._set_status_focus(btns[0])
+        return True
+
+    def _set_status_focus(self, key):
+        """하단 포커스 대상을 key 로 바꾸고 다시 그린다. 상태바 버튼은
+        focus_btn 으로 강조하고, perm("auto mode on" footer)은 패널 footer 줄에
+        그려지므로 _composite 로 강조한다(둘 다 갱신)."""
+        self._status_focus = key
+        self.status.focus_btn = key
+        self.status.refresh()
+        self._composite()   # perm footer 포커스 강조(요청)
+
+    def _exit_status_focus(self):
+        self._status_focus = None
+        self.status.focus_btn = None
+        self.status.refresh()
+        self._composite()
+
+    def _handle_status_focus(self, event):
+        """상태바 버튼 포커스 동선: ←→ 버튼 순환, Enter 실행, ↑/Esc/그 외 복귀."""
+        k = event.key
+        btns = self._status_buttons()
+        if not btns:               # 버튼이 사라짐 → 포커스 해제
+            self._exit_status_focus()
+            return
+        cur = self._status_focus if self._status_focus in btns else btns[0]
+        if k in ("left", "right"):
+            i = (btns.index(cur) + (1 if k == "right" else -1)) % len(btns)
+            self._set_status_focus(btns[i])
+        elif k == "enter":
+            act = self.layout.get("active")
+            self._exit_status_focus()
+            self._exit_esc()
+            if cur == "model":
+                # 모델 팝업은 claude-code 플러그인이 설치(없으면 no-op).
+                fn = getattr(self, "open_model_config", None)
+                fn and fn()
+            elif cur == "usage":
+                fn = getattr(self, "open_token_log", None)  # 플러그인 설치
+                fn and fn()
+            elif cur == "rec":
+                self.show_capture_info(self.status.capture_path,
+                                       self.status.capture_size)
+            elif cur == "host":
+                self.show_status_tabs(initial=2)   # 서버 탭(#12, host 클릭과 동일)
+            elif cur == "clock":
+                fn = getattr(self, "toggle_clock", None)  # clock 플러그인 설치
+                fn and fn(act)                     # 시계 오버레이 토글
+            elif cur == "date":
+                fn = getattr(self, "toggle_calendar", None)  # calendar 플러그인 설치
+                fn and fn(act)                     # 달력 오버레이 토글
+            elif cur == "perm":
+                fn = getattr(self, "open_perm_mode", None)  # 플러그인 설치
+                fn and fn(act)                     # 권한모드 선택 팝업
+        elif k in ("up", "escape"):
+            self._exit_status_focus()   # 패널로 복귀(esc 모드 유지)
+            if k == "escape":
+                self._exit_esc()
+        else:
+            self._exit_status_focus()
+
+
+class _ChooseScreensMixin:
+    """선택 팝업 열기 묶음 — 탭/패널 트리(전환·종료), 통합 상태 탭(REC·서버),
+    저장 레이아웃 목록. 서버에 목록을 요청하고 회신을 ChooseScreen 으로 띄운다."""
+
+    def request_tree(self, purpose="choose"):
+        self._want_tree = True
+        self._tree_purpose = purpose   # "choose"(전환/종료) | "status_tabs"
+        self.send_cmd("request_tree")
+
+    def _open_status_tabs(self, tree):
+        """REC(출력 캡처)·서버 정보를 **한 팝업의 탭**으로 연다(#10, §10-A #12).
+        플러그인이 client_status_tabs 훅으로 탭을 기여하면 그 사이에 끼는다(현재
+        기본 구성은 REC(0)·서버(1) — 구 '토큰 사용량' 탭은 2026-06-12 token-log
+        팝업으로 통합·제거). 어느 버튼으로 열었는지(_status_tab_initial)에 따라
+        초기 탭만 다르다(범위 밖이면 끝 탭으로 클램프 — host 클릭 initial=2 가
+        서버 탭에 안착). REC 탭에선 [c] 로 캡처를 켜고 끈다."""
+        cap = getattr(self, "_status_cap_lines", None) or self._capture_info_lines()
+        server = self._server_info_lines()
+        initial = getattr(self, "_status_tab_initial", 0)
+
+        def _toggle_capture():
+            # capture-output 토글 명령 전송 + 낙관적 로컬 반영 → 갱신된 캡처 줄.
+            self._run_command("capture-output")
+            self.status.capture = not bool(getattr(self.status, "capture", False))
+            if not self.status.capture:
+                self.status.capture_path = None
+                self.status.capture_size = 0
+            self.status.refresh()
+            return self._capture_info_lines()
+
+        def _open_capture_dir():
+            # 기록 중인 캡처 파일이 있는 디렉터리를 OS 파일 관리자로 연다(요청).
+            # 캡처 경로는 클라이언트 머신 기준(서버=로컬일 때 유효). 없으면 안내.
+            path = getattr(self.status, "capture_path", None)
+            if path and proc.open_in_file_manager(os.path.dirname(path)):
+                self.display_message(i18n.t("msg.open_capture_dir"))
+            else:
+                self.display_message(i18n.t("msg.no_capture_dir"))
+            return None   # 줄 갱신 없음(팝업 유지)
+
+        actions = {0: [("c", "[c] 캡처 켜기/끄기", _toggle_capture),
+                       ("o", "[o] 기록 폴더 열기", _open_capture_dir)]}
+        # 탭 구성: REC + (플러그인 기여 탭, 예: claude-code 의 '토큰 사용량') + 서버.
+        # 플러그인 부재 시 가운데가 비어 REC·서버만 남는다(토큰 탭=claude-code 소유).
+        tabs = [("출력 캡처(REC)", cap)]
+        tabs += self.plugins.client_status_tabs(self, tree)
+        tabs.append(("서버", server))
+        # initial 은 (열기 버튼 기준) 인덱스 — 토큰 탭이 없으면 host 클릭(initial=2)이
+        # 마지막 탭=서버(2개면 1)로 자연 클램프된다. 범위 밖이면 끝 탭으로 맞춘다.
+        initial = max(0, min(initial, len(tabs) - 1))
+        self.push_screen(InfoTabsScreen(
+            tabs, initial=initial, title=i18n.t("dialog.status_title"),
+            actions=actions))
+
+    def _open_choose_tree(self, tree):
+        def handle(res):
+            if not res:
+                return
+            act, e = res
+            self.send_cmd("select_window", index=e["index"])
+            if e["kind"] == "pane":
+                self.send_cmd("select_pane_id", id=e["pid"])
+            if act == "kill":
+                if e["kind"] == "win":
+                    self.confirm_kill_tab()
+                else:
+                    self.open_prompt("confirm", "kill-pane? (y/N)",
+                                     action=lambda: self.send_cmd("kill_pane"))
+        self.push_screen(ChooseTreeScreen(tree), handle)
+
+    # ---- 레이아웃 저장/불러오기 ----
+    def save_layout_prompt(self):
+        self.open_prompt("save_layout", "레이아웃 이름으로 저장")
+
+    def request_layouts(self, mode):
+        """저장된 레이아웃 목록을 요청(mode: 'over'=현재 탭 덮어쓰기, 'new'=새 탭)."""
+        self._want_layouts = mode
+        self.send_cmd("list_layouts")
+
+    def _open_choose_layout(self, names, mode):
+        title = "레이아웃 → 새 탭" if mode == "new" else "레이아웃 → 현재 탭 덮어쓰기"
+
+        def handle(name):
+            if name:
+                self.send_cmd("load_tab_layout", name=name,
+                              new=(mode == "new"))
+        self.push_screen(ChooseLayoutScreen(names, title), handle)
+
+
+_PytmuxAppMixins = (_ClipboardMixin, _NetReconnectMixin, _RestartVersionMixin,
+                    _StatusFocusMixin, _ChooseScreensMixin)
 
 
 def build_client_app(sock_path: str, config: dict | None = None,
@@ -860,98 +1048,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     return True
             return False
 
-        def _status_buttons(self):
-            """ESC 모드 하단 포커스에서 ←→ 로 순환할 대상 키 목록(현재 화면에 있는
-            것만, 왼→오 시각 순서). 모델·토큰사용량은 Claude 활성 시, REC 는 캡처
-            중일 때만. host(ssh:서버명)·clock(시계)·date(달력)는 우측 상태에 그려질
-            때, perm("auto mode on" footer)은 활성 Claude 패널에 권한모드 footer 가
-            보일 때만 편입한다(요청)."""
-            sb = self.status
-            btns = []
-            if getattr(sb, "_model_zone", None):
-                btns.append("model")
-            if getattr(sb, "_usage_zone", None):
-                btns.append("usage")
-            if getattr(sb, "_rec_zone", None):
-                btns.append("rec")
-            if getattr(sb, "_host_zone", None):
-                btns.append("host")
-            if getattr(sb, "_clock_zone", None):
-                btns.append("clock")
-            if getattr(sb, "_date_zone", None):
-                btns.append("date")
-            # 활성 패널의 권한모드 footer("auto mode on")도 같은 동선에 편입(요청).
-            # _perm_zone 은 claude-code 플러그인이 채운다(없으면 빈 dict → perm 미편입).
-            act = self.layout.get("active")
-            if act is not None and act in getattr(self, "_perm_zone", {}):
-                btns.append("perm")
-            return btns
-
-        def _enter_status_focus(self):
-            """최하단 패널에서 ↓ → 상태바 버튼 포커스 진입(요청). 버튼이 없으면 무동작."""
-            btns = self._status_buttons()
-            if not btns:
-                return False
-            self._set_status_focus(btns[0])
-            return True
-
-        def _set_status_focus(self, key):
-            """하단 포커스 대상을 key 로 바꾸고 다시 그린다. 상태바 버튼은
-            focus_btn 으로 강조하고, perm("auto mode on" footer)은 패널 footer 줄에
-            그려지므로 _composite 로 강조한다(둘 다 갱신)."""
-            self._status_focus = key
-            self.status.focus_btn = key
-            self.status.refresh()
-            self._composite()   # perm footer 포커스 강조(요청)
-
-        def _exit_status_focus(self):
-            self._status_focus = None
-            self.status.focus_btn = None
-            self.status.refresh()
-            self._composite()
-
-        def _handle_status_focus(self, event):
-            """상태바 버튼 포커스 동선: ←→ 버튼 순환, Enter 실행, ↑/Esc/그 외 복귀."""
-            k = event.key
-            btns = self._status_buttons()
-            if not btns:               # 버튼이 사라짐 → 포커스 해제
-                self._exit_status_focus()
-                return
-            cur = self._status_focus if self._status_focus in btns else btns[0]
-            if k in ("left", "right"):
-                i = (btns.index(cur) + (1 if k == "right" else -1)) % len(btns)
-                self._set_status_focus(btns[i])
-            elif k == "enter":
-                act = self.layout.get("active")
-                self._exit_status_focus()
-                self._exit_esc()
-                if cur == "model":
-                    # 모델 팝업은 claude-code 플러그인이 설치(없으면 no-op).
-                    fn = getattr(self, "open_model_config", None)
-                    fn and fn()
-                elif cur == "usage":
-                    fn = getattr(self, "open_token_log", None)  # 플러그인 설치
-                    fn and fn()
-                elif cur == "rec":
-                    self.show_capture_info(self.status.capture_path,
-                                           self.status.capture_size)
-                elif cur == "host":
-                    self.show_status_tabs(initial=2)   # 서버 탭(#12, host 클릭과 동일)
-                elif cur == "clock":
-                    fn = getattr(self, "toggle_clock", None)  # clock 플러그인 설치
-                    fn and fn(act)                     # 시계 오버레이 토글
-                elif cur == "date":
-                    fn = getattr(self, "toggle_calendar", None)  # calendar 플러그인 설치
-                    fn and fn(act)                     # 달력 오버레이 토글
-                elif cur == "perm":
-                    fn = getattr(self, "open_perm_mode", None)  # 플러그인 설치
-                    fn and fn(act)                     # 권한모드 선택 팝업
-            elif k in ("up", "escape"):
-                self._exit_status_focus()   # 패널로 복귀(esc 모드 유지)
-                if k == "escape":
-                    self._exit_esc()
-            else:
-                self._exit_status_focus()
+        # ---- ESC 모드 상태바 버튼 포커스(_status_buttons·_enter_status_focus·
+        # _set_status_focus·_exit_status_focus·_handle_status_focus)는
+        # _StatusFocusMixin(모듈 레벨, §5.4)으로 분리. ----
 
         # ---- IPC reader·재접속(_start_reader·_reader_task·_connect_and_hello·
         # _reconnect·_force_reconnect·reconnect_now)은 _NetReconnectMixin
@@ -1649,99 +1748,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
         # (모듈 레벨, §5.4)으로 분리. ----
 
         # ---- choose-tree ----
-        def request_tree(self, purpose="choose"):
-            self._want_tree = True
-            self._tree_purpose = purpose   # "choose"(전환/종료) | "status_tabs"
-            self.send_cmd("request_tree")
-
         # 코어 _open_status_tabs(통합 REC/서버 탭)는 client_status_tabs 훅으로 플러그인
         # 탭을 받아 끼운다(현재 기여 플러그인 없음 — 구 '토큰 사용량' 탭은 2026-06-12
         # token-log 팝업으로 통합·제거). 인패널 /usage 자동 팝업(_auto_open_usage)은
         # claude-code 플러그인의 client_status 훅으로 이전했다(Phase 2c —
         # usage_shown_seq 증가 시 open_usage_panel 호출).
-        # ---- 버전/재시작/서버정보(open_version·open_restart_check·begin_restart·
-        # do_restart·_gate_restart_on_check·_show_restart_check_popup·
-        # _show_version_popup·_server_info_lines)는 _RestartVersionMixin
-        # (모듈 레벨, §5.4)으로 분리. ----
-
-        def _open_status_tabs(self, tree):
-            """REC(출력 캡처)·서버 정보를 **한 팝업의 탭**으로 연다(#10, §10-A #12).
-            플러그인이 client_status_tabs 훅으로 탭을 기여하면 그 사이에 끼는다(현재
-            기본 구성은 REC(0)·서버(1) — 구 '토큰 사용량' 탭은 2026-06-12 token-log
-            팝업으로 통합·제거). 어느 버튼으로 열었는지(_status_tab_initial)에 따라
-            초기 탭만 다르다(범위 밖이면 끝 탭으로 클램프 — host 클릭 initial=2 가
-            서버 탭에 안착). REC 탭에선 [c] 로 캡처를 켜고 끈다."""
-            cap = getattr(self, "_status_cap_lines", None) or self._capture_info_lines()
-            server = self._server_info_lines()
-            initial = getattr(self, "_status_tab_initial", 0)
-
-            def _toggle_capture():
-                # capture-output 토글 명령 전송 + 낙관적 로컬 반영 → 갱신된 캡처 줄.
-                self._run_command("capture-output")
-                self.status.capture = not bool(getattr(self.status, "capture", False))
-                if not self.status.capture:
-                    self.status.capture_path = None
-                    self.status.capture_size = 0
-                self.status.refresh()
-                return self._capture_info_lines()
-
-            def _open_capture_dir():
-                # 기록 중인 캡처 파일이 있는 디렉터리를 OS 파일 관리자로 연다(요청).
-                # 캡처 경로는 클라이언트 머신 기준(서버=로컬일 때 유효). 없으면 안내.
-                path = getattr(self.status, "capture_path", None)
-                if path and proc.open_in_file_manager(os.path.dirname(path)):
-                    self.display_message(i18n.t("msg.open_capture_dir"))
-                else:
-                    self.display_message(i18n.t("msg.no_capture_dir"))
-                return None   # 줄 갱신 없음(팝업 유지)
-
-            actions = {0: [("c", "[c] 캡처 켜기/끄기", _toggle_capture),
-                           ("o", "[o] 기록 폴더 열기", _open_capture_dir)]}
-            # 탭 구성: REC + (플러그인 기여 탭, 예: claude-code 의 '토큰 사용량') + 서버.
-            # 플러그인 부재 시 가운데가 비어 REC·서버만 남는다(토큰 탭=claude-code 소유).
-            tabs = [("출력 캡처(REC)", cap)]
-            tabs += self.plugins.client_status_tabs(self, tree)
-            tabs.append(("서버", server))
-            # initial 은 (열기 버튼 기준) 인덱스 — 토큰 탭이 없으면 host 클릭(initial=2)이
-            # 마지막 탭=서버(2개면 1)로 자연 클램프된다. 범위 밖이면 끝 탭으로 맞춘다.
-            initial = max(0, min(initial, len(tabs) - 1))
-            self.push_screen(InfoTabsScreen(
-                tabs, initial=initial, title=i18n.t("dialog.status_title"),
-                actions=actions))
-
-        def _open_choose_tree(self, tree):
-            def handle(res):
-                if not res:
-                    return
-                act, e = res
-                self.send_cmd("select_window", index=e["index"])
-                if e["kind"] == "pane":
-                    self.send_cmd("select_pane_id", id=e["pid"])
-                if act == "kill":
-                    if e["kind"] == "win":
-                        self.confirm_kill_tab()
-                    else:
-                        self.open_prompt("confirm", "kill-pane? (y/N)",
-                                         action=lambda: self.send_cmd("kill_pane"))
-            self.push_screen(ChooseTreeScreen(tree), handle)
-
-        # ---- 레이아웃 저장/불러오기 ----
-        def save_layout_prompt(self):
-            self.open_prompt("save_layout", "레이아웃 이름으로 저장")
-
-        def request_layouts(self, mode):
-            """저장된 레이아웃 목록을 요청(mode: 'over'=현재 탭 덮어쓰기, 'new'=새 탭)."""
-            self._want_layouts = mode
-            self.send_cmd("list_layouts")
-
-        def _open_choose_layout(self, names, mode):
-            title = "레이아웃 → 새 탭" if mode == "new" else "레이아웃 → 현재 탭 덮어쓰기"
-
-            def handle(name):
-                if name:
-                    self.send_cmd("load_tab_layout", name=name,
-                                  new=(mode == "new"))
-            self.push_screen(ChooseLayoutScreen(names, title), handle)
+        # ---- 선택 팝업(request_tree·_open_status_tabs·_open_choose_tree·
+        # save_layout_prompt·request_layouts·_open_choose_layout)은
+        # _ChooseScreensMixin(모듈 레벨, §5.4)으로 분리. 버전/재시작/서버정보는
+        # _RestartVersionMixin 으로 분리(둘 다 §5.4). ----
 
         # ---- 메뉴 ----
         def open_menu(self, pane_id=None):

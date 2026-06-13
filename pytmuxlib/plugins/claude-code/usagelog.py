@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
+import time as _t
 
 UNKNOWN = "unknown"
 
@@ -51,12 +52,28 @@ def remap_account(account, keep_accounts, keep_domains) -> str:
     return account if is_trusted(account, keep_accounts, keep_domains) else UNKNOWN
 
 
+def _tzoff_at(ts: float):
+    """ts 시점의 로컬 UTC 오프셋(초). **그 시점 기준**이라 이후 DST/여행으로 시스템
+    tz 가 바뀌어도 불변 → §3.5① 의 과거기록 재분류 방지에 쓴다. 플랫폼이 오프셋을
+    못 주면(struct_time.tm_gmtoff None) None(레코드에 안 실어 시스템 로컬 폴백)."""
+    off = _t.localtime(ts).tm_gmtoff
+    return int(off) if off is not None else None
+
+
 def make_record(ts: float, tab, pane: int, session: int,
                 account: str | None, tokens: int) -> dict:
-    """로그 레코드 한 건을 만든다(append 직전 서버가 호출)."""
-    return {"ts": float(ts), "tab": tab, "pane": int(pane),
-            "session": int(session), "account": account or UNKNOWN,
-            "tokens": int(tokens)}
+    """로그 레코드 한 건을 만든다(append 직전 서버가 호출).
+
+    §3.5①: 쓰기 시점의 로컬 UTC 오프셋 `tzoff`(초)를 함께 적재한다 — hour 버킷이
+    이후 DST/여행 후에도 재분류되지 않게(bucket_key 가 이 offset 으로 벽시계 복원).
+    오프셋을 못 구하면 키를 생략(레거시처럼 시스템 로컬 폴백)."""
+    rec = {"ts": float(ts), "tab": tab, "pane": int(pane),
+           "session": int(session), "account": account or UNKNOWN,
+           "tokens": int(tokens)}
+    off = _tzoff_at(ts)
+    if off is not None:
+        rec["tzoff"] = off
+    return rec
 
 
 def append(path: str, record: dict) -> bool:
@@ -93,9 +110,19 @@ def read(path: str, limit: int | None = None) -> list:
     return out
 
 
-def bucket_key(ts: float, bucket: str) -> str:
-    """타임스탬프를 버킷 키 문자열로(로컬 시간 기준)."""
+def bucket_key(ts: float, bucket: str, tzoff=None) -> str:
+    """타임스탬프를 버킷 키 문자열로.
+
+    tzoff(초)가 주어지면 **쓰기 시점의 로컬 벽시계**(UTC epoch + 저장 offset)로 키를
+    만든다 → 이후 DST/여행으로 시스템 tz 가 바뀌어도 과거 기록이 다른 시/일 버킷으로
+    재분류되지 않는다(§3.5①). None(레거시 레코드·offset 미상)이면 종전대로 **시스템
+    로컬**(`fromtimestamp`)을 쓴다. day/week/month 합성 레코드(daily_to_records)는
+    tzoff 를 안 실으므로 '현재 tz 관점' 표시가 유지된다(설계 의도 — 그 경로는 정오
+    anchor 라 DST 흔들림도 없음)."""
     fmt = _BUCKET_FMT.get(bucket, _BUCKET_FMT["day"])
+    if tzoff is not None:
+        local = _dt.datetime.utcfromtimestamp(ts) + _dt.timedelta(seconds=tzoff)
+        return local.strftime(fmt)
     return _dt.datetime.fromtimestamp(ts).strftime(fmt)
 
 
@@ -202,7 +229,8 @@ def aggregate(records: list, bucket: str = "day",
             continue
         g = group_key(r, dim)
         tok = int(r.get("tokens", 0))
-        bk = bucket_key(r.get("ts", 0.0), bucket)
+        # §3.5①: 레코드가 쓰기 시점 tzoff 를 들고 있으면 그 벽시계로 버킷(재분류 방지).
+        bk = bucket_key(r.get("ts", 0.0), bucket, r.get("tzoff"))
         buckets.setdefault(bk, {})
         buckets[bk][g] = buckets[bk].get(g, 0) + tok
         groups[g] = groups.get(g, 0) + tok

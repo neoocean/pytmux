@@ -25,7 +25,10 @@ from . import usagelog
 # v4(2026-06-12): 데이터 정정 — 화면 스크랩 약신호(_ORG_RE/_PLAN_RE, 같은 날 제거)가
 # 적재한 **이메일 형태가 아닌** 가짜 계정(실측 사례 "Running 1 shell command")을
 # unknown 으로 일괄 정정. 원값은 usage_acct_fixlog(rowid·원 계정)에 보존(포렌식·복구).
-SCHEMA_VERSION = 4
+# v5(2026-06-13, §3.5①): usage.tzoff(쓰기 시점 로컬 UTC 오프셋 초) 컬럼 추가 — hour
+# 버킷이 이후 DST/여행으로 시스템 tz 가 바뀌어도 재분류되지 않게(레거시 NULL 은
+# bucket_key 가 시스템 로컬로 폴백 → 기존 거동 유지). ALTER ADD COLUMN(메타데이터만).
+SCHEMA_VERSION = 5
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS usage (
@@ -34,7 +37,8 @@ CREATE TABLE IF NOT EXISTS usage (
   pane    INTEGER NOT NULL,
   session INTEGER,
   account TEXT    NOT NULL,
-  tokens  INTEGER NOT NULL
+  tokens  INTEGER NOT NULL,
+  tzoff   INTEGER
 );
 CREATE INDEX IF NOT EXISTS ix_usage_ts      ON usage(ts);
 CREATE INDEX IF NOT EXISTS ix_usage_account ON usage(account);
@@ -92,6 +96,11 @@ def connect(path: str) -> sqlite3.Connection:
             _migrate_v4_nonemail_accounts(conn)
         except sqlite3.Error:
             new_v = min(new_v, 3)
+    if cur_v < 5 and new_v >= 4:    # v5: tzoff 컬럼 추가(§3.5①)
+        try:
+            _migrate_v5_add_tzoff(conn)
+        except sqlite3.Error:
+            new_v = min(new_v, 4)
     conn.execute(f"PRAGMA user_version={new_v}")
     conn.commit()
     if path != ":memory:" and not existed:
@@ -167,22 +176,40 @@ def _migrate_v4_nonemail_accounts(conn) -> int:
     return len(rows)
 
 
+def _migrate_v5_add_tzoff(conn) -> int:
+    """v5(§3.5①): usage.tzoff(쓰기 시점 로컬 UTC 오프셋 초) 컬럼을 추가한다(없을 때만).
+
+    기존 행은 NULL → usagelog.bucket_key 가 시스템 로컬로 폴백(기존 거동 유지). 새
+    레코드부터 make_record 가 tzoff 를 실어, hour 버킷이 이후 tz 변경에도 안정된다.
+    ALTER ADD COLUMN 은 메타데이터만 바꿔 데이터 재기록이 없다. 추가했으면 1, 이미
+    있으면 0(멱등)."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(usage)")}
+    if "tzoff" in cols:
+        return 0
+    conn.execute("ALTER TABLE usage ADD COLUMN tzoff INTEGER")
+    return 1
+
+
 def _row_to_rec(row) -> dict:
-    """sqlite Row → usagelog 호환 dict 레코드."""
-    return {"ts": row["ts"], "tab": row["tab"], "pane": row["pane"],
-            "session": row["session"], "account": row["account"],
-            "tokens": row["tokens"]}
+    """sqlite Row → usagelog 호환 dict 레코드. tzoff(v5)는 있을 때만 싣는다(레거시
+    행/구 SELECT 는 None → bucket_key 시스템 로컬 폴백)."""
+    rec = {"ts": row["ts"], "tab": row["tab"], "pane": row["pane"],
+           "session": row["session"], "account": row["account"],
+           "tokens": row["tokens"]}
+    if "tzoff" in row.keys() and row["tzoff"] is not None:
+        rec["tzoff"] = row["tzoff"]
+    return rec
 
 
 def insert(conn, rec: dict) -> bool:
     """레코드 한 건 삽입. 실패해도 조용히 False(로깅이 본 흐름을 막지 않음)."""
     try:
         conn.execute(
-            "INSERT INTO usage (ts,tab,pane,session,account,tokens) "
-            "VALUES (?,?,?,?,?,?)",
+            "INSERT INTO usage (ts,tab,pane,session,account,tokens,tzoff) "
+            "VALUES (?,?,?,?,?,?,?)",
             (float(rec.get("ts", 0.0)), rec.get("tab"), int(rec.get("pane", 0)),
              rec.get("session"), rec.get("account") or usagelog.UNKNOWN,
-             int(rec.get("tokens", 0))))
+             int(rec.get("tokens", 0)), rec.get("tzoff")))
         conn.commit()
         return True
     except sqlite3.Error:
@@ -190,15 +217,16 @@ def insert(conn, rec: dict) -> bool:
 
 
 def insert_many(conn, recs) -> int:
-    """레코드 여러 건 일괄 삽입(임포트용). 삽입 건수 반환."""
+    """레코드 여러 건 일괄 삽입(임포트용). 삽입 건수 반환. tzoff(v5)는 있으면 싣고
+    없으면 NULL(레거시 임포트 → bucket_key 시스템 로컬 폴백)."""
     rows = [(float(r.get("ts", 0.0)), r.get("tab"), int(r.get("pane", 0)),
              r.get("session"), r.get("account") or usagelog.UNKNOWN,
-             int(r.get("tokens", 0))) for r in recs]
+             int(r.get("tokens", 0)), r.get("tzoff")) for r in recs]
     if not rows:
         return 0
     conn.executemany(
-        "INSERT INTO usage (ts,tab,pane,session,account,tokens) "
-        "VALUES (?,?,?,?,?,?)", rows)
+        "INSERT INTO usage (ts,tab,pane,session,account,tokens,tzoff) "
+        "VALUES (?,?,?,?,?,?,?)", rows)
     conn.commit()
     return len(rows)
 
