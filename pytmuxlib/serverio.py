@@ -103,7 +103,6 @@ class ServerIOMixin:
             if rs is not None:
                 return rs
         win = sess.active_window
-        cap_path, cap_size = self._capture_info(win.active_pane if win else None)
         msg = {
             "t": "status",
             "session": sess.name,
@@ -116,11 +115,10 @@ class ServerIOMixin:
             "zoomed": bool(win.zoomed) if win else False,
             "sync": bool(win.sync) if win else False,
             "pane_title": win.active_pane.title if win and win.active_pane else "",
-            "capture": self.capture,
-            "capture_path": cap_path,
-            "capture_size": cap_size,
             "single_border": self.single_border,
         }
+        # REC capture/capture_path/capture_size 는 plugins/rec 의 server_status 훅이
+        # 채운다(아래 plugins.server_status). 플러그인 부재 시 키가 빠진다.
         # Claude 필드(패널별 상태·history·토큰·사용량·예산·팝업·full-only 옵션 12개와
         # windows[].claude 탭 집계)는 플러그인이 server_status 훅으로 in-place 로 채운다.
         # 플러그인이 없으면 status 에 Claude 키가 빠지고, 클라(역시 플러그인 부재)는
@@ -542,8 +540,6 @@ class ServerIOMixin:
             self.set_auto_rename(sess, msg.get("value"))
         elif action == "set_monitor":
             self.set_monitor(sess, msg.get("which", "activity"), msg.get("value"))
-        elif action == "set_capture":
-            self.set_capture(msg.get("value"))
         elif action == "set_single_border":
             self.set_single_border(msg.get("value"))
         elif action == "set_coalesce":
@@ -856,7 +852,7 @@ class ServerIOMixin:
     def shutdown(self):
         self.running = False
         self.remote_shutdown()   # §1.7: 링크/ssh/보류 재연결 동기 정리
-        self._close_all_capfiles()
+        self.plugins.server_shutdown(self)   # REC 캡처 파일 닫기 등(plugins/rec)
         for sess in self.sessions.values():
             for tab in sess.tabs:
                 for p in tab.window.panes():

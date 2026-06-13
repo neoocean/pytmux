@@ -258,8 +258,9 @@ class ServerPtyMixin:
     def _ingest_slice(self, pane: Pane, data: bytes):
         """수신 바이트 한 조각을 실제로 처리한다(feed + 활동/모드 스캔). _on_pane_data
         (소량 인라인)와 _feed_drain(버스트 슬라이스) 양쪽에서 호출된다."""
-        if self.capture:
-            self._capture_write(pane, data)
+        # REC 캡처: 코어가 self.capture/_capture_write 를 이름으로 직접 부르지 않고
+        # 훅으로만 닿는다(plugins/rec). 플러그인 부재 시 no-op → 바이트를 그냥 흘려보냄.
+        self.plugins.server_pty_output(self, pane, data)
         pane.feed(data)
         pane._activity = True
         if b"\x07" in data:

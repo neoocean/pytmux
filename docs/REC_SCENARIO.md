@@ -1,9 +1,26 @@
 # REC(패널 출력 캡처) 플러그인 추출 — 동작·설계 시나리오
 
-> **상태**: 🟡 **계획(미구현)**. 본 문서는 REC(패널 출력 무손실 캡처) 기능 전체를
-> `pytmuxlib/plugins/rec/` 하위로 옮기는 추출 설계 기준선이다. 구현 전 단계이며,
-> 코어 현행 접점(아래 §4 표)을 빠짐없이 나열해 delete-to-disable 계약을 만족하는
-> 이전 경로를 명세한다.
+> **상태**: 🟢 **서버측 추출 완료(2026-06-13)** / 🟡 클라 표시는 코어 잔류(데이터 구동).
+> REC **서버 본체**(`servercapture.py` 의 캡처 로직)가 `pytmuxlib/plugins/rec/` 로
+> 이전됐다 — `server_mixin()`(ServerRecMixin)·`server_init`(상태)·`server_opts_init/
+> serialize`(capture opt)·`server_status`(capture 필드)·`server_command`(set_capture)·
+> 신규 훅 **`server_pty_output`**(PTY 바이트)·**`server_shutdown`**(파일 닫기). 코어 잔류는
+> **토큰 DB 가 쓰는 `_capture_id`/`PROJECT_DIR`**(`servercapture.py` 의 `ServerCaptureIdMixin`,
+> §10 ①)뿐. 명령 메타(`capture-output`/`capture-toggle`)도 플러그인으로 이전. **기본
+> 캡처 = OFF**(깃헙 배포 F4 — `default_enabled=False`, opts 미설정 시 미캡처). 계약
+> 테스트 `tests/test_plugin_rec.py`(delete-to-disable 7항목) + 610 green.
+>
+> **남은 일(클라 표시, §4.2 — 후속)**: 상태줄 ` REC ` 배지·정보 팝업 탭·`_capture_info_lines`
+> 는 아직 **코어**(clientwidgets/client)에 있다. 단 전부 `msg.get("capture", False)`/
+> `getattr` 가드라 **데이터 구동**으로 동작한다 — rec 플러그인을 지우면 status 에 capture
+> 필드가 빠져 배지·팝업이 **자동 비활성**(코어 미크래시). 즉 delete-to-disable 은 이미
+> 성립하고, 클라 코드의 물리 이전(client_statusbar/client_status_tabs 훅화)은 정리(clean)
+> 차원의 후속이다.
+>
+> 아래 §4 표·§8 단계는 **작성 시점(미구현) 스냅샷**이라 본문은 보존한다. 실제 코어
+> 접점 라인은 위 추출로 드리프트했고, 다수 항목은 기존 훅(server_init/server_opts_*/
+> server_status/server_command)에 매핑돼 새 훅은 `server_pty_output`+`server_shutdown`
+> 2종만 추가됐다(§4.3 권고와 일치).
 > **관련**: [PLUGIN_SYSTEM.md](PLUGIN_SYSTEM.md)(플러그인 계약·통합 지점·무게 규칙) ·
 > [NC_SCENARIO.md](NC_SCENARIO.md)(선행 추출 시나리오의 형식) ·
 > [HANDOFF.md](HANDOFF.md) §11.6(claude-code 추출 진행 기록).

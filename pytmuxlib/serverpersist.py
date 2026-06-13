@@ -306,7 +306,7 @@ class ServerPersistMixin:
         for c in list(self.clients):
             asyncio.create_task(write_msg(c.writer, {"t": "restarting"}))
         # 비-PTY fd(캡처 파일 등) 정리 — 새 이미지가 다시 연다. master fd 는 보존.
-        self._close_all_capfiles()
+        self.plugins.server_shutdown(self)   # REC 캡처 파일 닫기 등(plugins/rec)
         argv = proc.server_argv(self.sock_path) + ["--resume",
                                                    self.resume_state_path]
         # write_msg 가 flush 될 짧은 틈을 준 뒤 execv(같은 이벤트 루프 틱이 아님).
@@ -399,8 +399,8 @@ class ServerPersistMixin:
     def _save_opts(self):
         try:
             with ipc.open_private(self.opts_path) as f:   # 0600(F5)
-                json.dump({"capture": self.capture,
-                           "single_border": self.single_border,
+                # capture 는 plugins/rec 가 server_opts_serialize 로 plugin_opts 에 넣는다.
+                json.dump({"single_border": self.single_border,
                            "coalesce_repaints": self.coalesce_repaints,
                            "nest_auto_attach": self.nest_auto_attach,
                            "prompt_clear_message": self.prompt_clear_message,

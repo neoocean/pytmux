@@ -15,7 +15,7 @@ from . import ipc, plugins, proc, pty_backend, sshwrap
 from .model import (ClientConn, Pane, Session, Split, Tab, Window,
                     coalesce_alt_repaints)
 from .protocol import (FEED_SLICE, FLUSH_HZ, MIN_H, MIN_W, read_msg, write_msg)
-from .servercapture import ServerCaptureMixin
+from .servercapture import ServerCaptureIdMixin
 from .serverpersist import ServerPersistMixin
 from .serverpty import ServerPtyMixin
 from .serverio import ServerIOMixin
@@ -35,7 +35,7 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # MRO 처럼 플러그인 믹스인을 코어 믹스인보다 앞에 둔다(추가 메서드라 충돌은 없다).
 _PLUGIN_SERVER_MIXINS = tuple(plugins.load().server_mixins())
 _SERVER_BASES = _PLUGIN_SERVER_MIXINS + (
-    ServerCaptureMixin, ServerPersistMixin, ServerPtyMixin,
+    ServerCaptureIdMixin, ServerPersistMixin, ServerPtyMixin,
     ServerIOMixin, ServerRemoteMixin, ServerTreeMixin)
 
 
@@ -82,15 +82,10 @@ class Server(*_SERVER_BASES):
         # Claude 세션 일련번호(#7 토큰 로깅): 패널의 claude None→비None 전이마다 +1.
         self._claude_session_seq = 0
         self.buffers: list[str] = []   # 페이스트 버퍼(최신이 앞)
-        # 패널 출력 캡처(Claude 화면 문구 분석용). **기본 ON** — 실 Claude Code
-        # 출력을 무손실 기록해 limit/busy/idle/ctx 화면 골든 픽스처·휴리스틱
-        # 보강의 객관 근거로 쓴다(IMPROVEMENT §3.2, TOKEN_SAVING M8). opts.json
-        # 에 영속하므로 사용자가 capture-output off 로 끄면 그 선택이 유지된다.
-        self._capfiles: dict[int, "object"] = {}   # pane.id -> 열린 바이너리 파일
-        self._cappaths: dict[int, str] = {}        # pane.id -> 그 핸들의 캡처 경로
-        #   (파일명에 생성 시각이 박혀 핸들에서 역산 불가 → 열 때 경로를 따로 보관)
+        # 패널 출력 캡처(REC)는 plugins/rec/ 로 추출됐다(docs/REC_SCENARIO.md). 상태
+        # (_capfiles/_cappaths)·capture 플래그·opts 로드는 rec 플러그인의 server_init/
+        # server_opts_init 훅이 설치한다(아래 plugins.server_*). 디렉토리 삭제 시 no-op.
         _opts = self._load_opts()
-        self.capture = bool(_opts.get("capture", True))   # 기본 ON
         # (Claude 프롬프트 헤더 claude_header 옵션은 완전 제거됨 — 2026-06-13.
         #  프롬프트 UI 는 claude-prompt-history 플러그인의 transient 미리보기가 맡는다.
         #  구 opts.json 의 claude_header 키는 무시되고 다음 _save_opts 에서 사라진다.)
@@ -418,7 +413,7 @@ class Server(*_SERVER_BASES):
     # bool(현재 상태)을 돌려준다. single-border 는 레이아웃(박스 유무)이 바뀌어
     # broadcast 가 필요하므로 이 표가 아니라 별도 분기로 둔다.
     _ONOFF_CONTROLS = {
-        "capture-output": "set_capture", "capture-toggle": "set_capture",
+        # capture-output/capture-toggle 는 plugins/rec 로 이전(server_command).
         "coalesce-repaints": "set_coalesce_repaints",
         "coalesce": "set_coalesce_repaints",
         "auto-doc-clear": "set_auto_doc_clear", "auto-doc": "set_auto_doc_clear",

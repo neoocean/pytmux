@@ -40,7 +40,7 @@ pytmux 의 보안 경계는 **전적으로 전송 계층(소켓 파일 권한 / 
 | F1 | **High**(Windows) ✅적용 | TCP 루프백 무인증 → 무인가 로컬 접근으로 입력주입·RCE·종료 | Windows |
 | F2 | Medium ✅적용 | 애플리케이션 인증/피어 UID 검증 부재(전 플랫폼) | — |
 | F3 | Medium ✅적용 | `/tmp` 폴백 상태 디렉터리 선점 → 가짜 서버/MITM | Unix, XDG 미설정(ssh) |
-| F4 | Medium ✅적용(권한) | 캡처(REC) 기본 ON·raw 민감출력·world-readable·depot 공유 | 로컬/팀 |
+| F4 | Medium ✅적용(권한+기본OFF) | 캡처(REC) raw 민감출력·world-readable·depot 공유 (2026-06-13: 플러그인화로 **기본 OFF**) | 로컬/팀 |
 | F5 | Low–Med ✅적용 | 영속 파일(resume/slots/opts) 권한 미설정(심층방어 부족) | — |
 | F6 | Low ✅적용 | 메시지 입력 검증 빈약 → 자원 고갈(DoS) | 무인가 접근 시 |
 | F7 | Info | popup/pipe/run-shell/claude-rules = 의도된 셸 실행(인가 권한 내) | — |
@@ -164,7 +164,14 @@ pytmux 의 보안 경계는 **전적으로 전송 계층(소켓 파일 권한 / 
 - **적용됨(①)**: `_capture_write` 가 캡처 디렉터리를 `0700`, `pane-*.log`/`sessions.log`
   를 `ipc.open_private`(생성 시점부터 `0600`)로 만든다 — 로컬 다른 사용자의 raw 캡처
   열람을 차단(F4 의 핵심 노출 경로). 회귀: `test_server.py::test_private_files_are_0600`.
-- **②는 의도적 미적용**: REC 기본 ON 은 실 Claude 데이터 수집을 위한 **의도된 설계**라
+- **②적용됨(2026-06-13, REC 플러그인화)**: REC 가 `plugins/rec/` 로 추출되며 **기본값이
+  OFF 로 바뀌었다**(`default_enabled=False`, opts 미설정 시 미캡처 — docs/REC_SCENARIO.md
+  §6, PLUGIN_MANAGER_SCENARIO.md). 새 설치(깃헙 클론)는 raw PTY 캡처를 자동으로 켜지
+  않는다. 기존 사용자의 `opts.json` 선택(ON)은 plugin_opts 마이그레이션 shim 으로 보존된다.
+  계약 테스트: `tests/test_plugin_rec.py::test_rec_capture_default_off_and_toggle`. 추가로
+  rec 디렉토리 삭제 시 캡처 자체가 사라진다(delete-to-disable). — 아래 원문(미적용 사유)은
+  시점 스냅샷이라 보존하나 ②는 이제 해소됨.
+- **(구)②는 의도적 미적용**: REC 기본 ON 은 실 Claude 데이터 수집을 위한 **의도된 설계**라
   (개발 워크플로 의존) 기본값을 바꾸지 않는다. 로컬 노출은 ①(0600/0700)로 해소되며,
   GitHub 유출은 `.gitignore` 로 이미 차단됨(검증). depot 공유 시 raw 노출은 팀 내부로
   한정되는 알려진 트레이드오프다.

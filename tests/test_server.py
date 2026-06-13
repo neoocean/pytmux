@@ -2704,13 +2704,14 @@ async def test_hello_and_multiclient_minsize():
 
 
 async def test_capture_output():
-    """패널 출력 캡처: 기본 ON(실 Claude 출력 골든 근거), 무손실 기록, 토글,
-    opts.json 영속/재시작 유지(끈 선택도 유지)."""
+    """패널 출력 캡처(plugins/rec): 기본 OFF(깃헙 배포 F4 — opts 미설정 시 미캡처),
+    토글로 ON 시 무손실 기록, opts.json plugin_opts 영속/재시작 유지(끈 선택도 유지)."""
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
         pane = sess.active_window.active_pane
-        assert srv.capture is True, "기본 ON(opts 미설정 시)"
+        assert srv.capture is False, "기본 OFF(opts 미설정 시, F4/깃헙 배포)"
+        assert srv.set_capture(True) is True, "토글 ON"
 
         # 켜진 상태에서 기록 → <날짜>_<시간>_<세션>_<탭>_p<패널>.log 에 raw 바이트 무손실
         srv._capture_write(pane, b"hello\x1b[31m world")
@@ -2725,7 +2726,7 @@ async def test_capture_output():
         # 끄면 파일 닫힘 + opts.json 영속(capture=False)
         assert srv.set_capture(False) is False
         assert pane.id not in srv._capfiles, "끄면 핸들 닫힘"
-        assert json.load(open(srv.opts_path))["capture"] is False
+        assert json.load(open(srv.opts_path))["plugin_opts"]["capture"] is False
         # 꺼진 동안 _on_pane_readable 경로는 기록하지 않음
         before = os.path.getsize(path)
         if srv.capture:
@@ -2737,7 +2738,7 @@ async def test_capture_output():
 
         # 토글로 다시 ON → opts 갱신, 재기록 가능. OFF→ON 은 새 시각 파일로 재오픈.
         assert srv.set_capture(None) is True
-        assert json.load(open(srv.opts_path))["capture"] is True
+        assert json.load(open(srv.opts_path))["plugin_opts"]["capture"] is True
         srv._capture_write(pane, b"again")
         path2 = srv._cappaths[pane.id]
         with open(path2, "rb") as f:

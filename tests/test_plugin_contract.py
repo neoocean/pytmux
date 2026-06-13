@@ -83,8 +83,10 @@ async def test_contract_server_hooks_noop_without_plugin():
     reg.server_paste(None, None, b"x")
     reg.server_pane_overview(None, None, {})
     await reg.server_usage_refresh(None)
-    # 서버측 믹스인도 사라진다(Server 가 합성할 Claude 베이스 없음).
-    assert reg.server_mixins() == [], "claude 서버 믹스인이 남음"
+    # 서버측 Claude 믹스인은 사라진다(Server 가 합성할 Claude 베이스 없음). 다른 플러그인
+    # 믹스인(rec ServerRecMixin)은 남는다.
+    assert "ServerClaudeMixin" not in {c.__name__ for c in reg.server_mixins()}, \
+        "claude 서버 믹스인이 남음"
 
 
 async def test_contract_client_hooks_noop_without_plugin():
@@ -184,9 +186,9 @@ async def test_plugin_opts_namespace_and_migration_shim():
     # ③ serialize 는 현재 server 값을 돌려준다(코어가 plugin_opts 밑에 불투명 저장).
     out = reg.server_opts_serialize(s2)
     assert out["usage_gate_session_pct"] == 90
-    # ph_max_lines 는 claude-prompt-history 플러그인 소유 opt(별개) — claude-code 계약을
-    # 엄격히 검증하기 위해 그 키만 빼고 비교한다.
-    assert set(out) - {"ph_max_lines"} == {"usage_gate_session_pct",
+    # ph_max_lines(claude-prompt-history)·capture(rec)는 다른 플러그인 소유 opt(별개) —
+    # claude-code 계약을 엄격히 검증하기 위해 그 키들만 빼고 비교한다.
+    assert set(out) - {"ph_max_lines", "capture"} == {"usage_gate_session_pct",
                                            "usage_gate_week_pct", "claude_auto_retry",
                                            "claude_model_hint"}
     assert out["claude_auto_retry"] is True   # 기본 ON(opts 부재 시)
@@ -205,8 +207,8 @@ async def test_plugin_opts_namespace_and_migration_shim():
     s3 = _S()
     reg2.server_opts_init(s3, {"usage_gate_session_pct": 5})
     assert not hasattr(s3, "usage_gate_session_pct"), "플러그인 부재인데 설정 설치됨"
-    # claude-code 의 opts 는 사라진다(잔존 키는 claude-prompt-history 의 ph_max_lines 뿐).
-    assert set(reg2.server_opts_serialize(s3)) - {"ph_max_lines"} == set()
+    # claude-code 의 opts 는 사라진다(잔존 키는 다른 플러그인 소유: ph_max_lines, capture).
+    assert set(reg2.server_opts_serialize(s3)) - {"ph_max_lines", "capture"} == set()
 
 
 async def test_pane_token_accumulator_owned_by_plugin():
@@ -307,8 +309,9 @@ async def test_token_subsystem_fully_disabled_without_plugin():
     s = _S()
     reg.server_opts_init(s, {"usage_gate_session_pct": 9,
                              "plugin_opts": {"usage_gate_session_pct": 9}})
-    # claude-code 의 opts 가 사라진다(잔존 키는 claude-prompt-history 의 ph_max_lines 뿐).
-    assert set(reg.server_opts_serialize(s)) - {"ph_max_lines"} == set()
+    # claude-code 의 opts 가 사라진다(잔존 키는 다른 플러그인 소유: claude-prompt-history
+    # 의 ph_max_lines, rec 의 capture).
+    assert set(reg.server_opts_serialize(s)) - {"ph_max_lines", "capture"} == set()
     # ④ DB 연결 런타임 상태(server_init) 미설치.
     s2 = _S()
     reg.server_init(s2)
@@ -330,8 +333,9 @@ async def test_token_subsystem_fully_disabled_without_plugin():
         "코어 server 가 토큰 DB 백엔드를 import 함"
     assert not hasattr(serverio, "usagedb"), "코어 serverio 가 usagedb 를 import 함"
     # ⑦ 서버측 Claude 믹스인도 사라진다(토큰 메서드 _log_tokens/_tokens_db_conn/예산이
-    #    Server 합성에서 통째로 빠진다).
-    assert reg.server_mixins() == [], "claude 서버 믹스인이 남음"
+    #    Server 합성에서 통째로 빠진다). 다른 플러그인 믹스인(rec ServerRecMixin)은 남는다.
+    mixin_names = {c.__name__ for c in reg.server_mixins()}
+    assert "ServerClaudeMixin" not in mixin_names, f"claude 서버 믹스인이 남음: {mixin_names}"
 
 
 async def test_contract_client_app_runs_without_claude_plugin(monkeypatch=None):

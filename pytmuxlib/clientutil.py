@@ -544,7 +544,7 @@ COMMANDS = [
     ("layout-load-new", "레이아웃 불러오기 → 새 탭 (이름)", "레이아웃"),
     ("monitor-activity", "활동 모니터링 [on|off]", "모니터"),
     ("monitor-bell", "벨 모니터링 [on|off]", "모니터"),
-    ("capture-output", "패널 출력 캡처 토글 [on|off] (기본 on, 영속)", "모니터"),
+    # capture-output 은 plugins/rec 로 이전(레지스트리 commands 로 병합).
     ("inactive-dim", "비활성 패널 흐리게 토글 [on|off]", "설정/기타"),
     ("set", "옵션 설정 (prefix/mouse/status-*/mode-keys 등)", "설정/기타"),
     ("show-options", "현재 옵션 보기", "설정/기타"),
@@ -631,7 +631,7 @@ COMMAND_OPTIONS = {
     "synchronize-panes": [{"key": "state", "label": "동기화", "choices": _ONOFF}],
     "monitor-activity": [{"key": "state", "label": "활동", "choices": _ONOFF}],
     "monitor-bell": [{"key": "state", "label": "벨", "choices": _ONOFF}],
-    "capture-output": [{"key": "state", "label": "캡처", "choices": _ONOFF}],
+    # capture-output 옵션 스키마는 plugins/rec 가 command_options 로 기여.
     "inactive-dim": [{"key": "state", "label": "비활성흐리게", "choices": _ONOFF}],
     "automatic-rename": [{"key": "state", "label": "자동이름", "choices": _ONOFF}],
     "single-border": [{"key": "state", "label": "단일테두리", "choices": _ONOFF}],
@@ -663,7 +663,7 @@ i18n.register({
         # 라벨
         "방향": "Direction", "이동": "Move", "동작": "Action", "프리셋": "Preset",
         "범위": "Scope", "동기화": "Sync", "활동": "Activity", "벨": "Bell",
-        "캡처": "Capture", "자동이름": "Auto-rename", "단일테두리": "Single border",
+        "자동이름": "Auto-rename", "단일테두리": "Single border",
         "비활성흐리게": "Inactive dim",
         "리페인트합치기": "Coalesce repaints", "언어": "Language",
         "중첩자동승격": "Nested auto-attach",
@@ -786,7 +786,6 @@ i18n.register({
         "cmd.layout-load-new": "Load layout → new tab (name)",
         "cmd.monitor-activity": "Activity monitoring [on|off]",
         "cmd.monitor-bell": "Bell monitoring [on|off]",
-        "cmd.capture-output": "Toggle pane output capture [on|off] (default on, persisted)",
         "cmd.inactive-dim": "Toggle dimming of inactive panes [on|off]",
         "cmd.set": "Set option (prefix/mouse/status-*/mode-keys etc.)",
         "cmd.show-options": "Show current options",

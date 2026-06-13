@@ -253,6 +253,26 @@ class Registry:
                     return r
         return None
 
+    def server_pty_output(self, server, pane, data):
+        """패널 PTY 출력 1조각(raw 바이트)을 플러그인에 넘긴다(REC 캡처 등). 코어
+        serverpty 드레인 루프가 `if self.capture: self._capture_write` 로 직접 가로채던
+        걸 대체한다 — 플러그인이 없으면 no-op 라 코어는 바이트를 그냥 흘려보낸다
+        (기록 안 함, delete-to-disable). **주의: 30Hz 드레인의 모든 바이트마다 불리는
+        핫패스다** — self.plugins 가 보통 0~1개라 순회 비용은 무시할 만하다."""
+        for p in self.plugins:
+            fn = getattr(p, "server_pty_output", None)
+            if fn is not None:
+                fn(server, pane, data)
+
+    def server_shutdown(self, server):
+        """서버 종료·재시작(re-exec) 경계의 플러그인 정리(REC 캡처 파일 닫기 등). 코어
+        serverio.shutdown·serverpersist 재시작 경로가 `_close_all_capfiles` 를 직접
+        부르던 걸 대체한다 — 플러그인이 없으면 no-op."""
+        for p in self.plugins:
+            fn = getattr(p, "server_shutdown", None)
+            if fn is not None:
+                fn(server)
+
     # ---- 클라이언트 런타임 훅(코어가 패널 오버레이 플러그인을 이름으로 직접 부르지
     # 않게) ----
     # 코어(client)는 패널 오버레이(시계/달력 등) 그리기·1초 틱·닫기에 **이 훅으로만**
