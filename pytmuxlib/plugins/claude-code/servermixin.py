@@ -1334,10 +1334,19 @@ class ServerClaudeMixin:
         if p is None or not p._claude:
             return None
         u = self._usage
-        if u and isinstance(u.get("session"), dict) \
-                and u["session"].get("pct") is not None:
-            return int(u["session"]["pct"])          # M19 실측 — 분자/분모 불필요
-        return None
+        if not (u and isinstance(u.get("session"), dict)
+                and u["session"].get("pct") is not None):
+            return None
+        # 계정 불일치 fail-open(_usage_gate_pcts 와 같은 원칙): 그림자 /usage 세션의
+        # 계정과 이 패널의 계정이 **둘 다 알려져 있고 다르면** 5h% 를 숨긴다. 안 그러면
+        # 다른 계정의 한도가 이 패널 계정 라벨로 그려져("N%/5h used <패널계정>")
+        # 팝업의 'Account (/usage): <측정계정>' 과 서로 다른 계정을 가리킨다(사용자
+        # 보고 2026-06-13). 한쪽이라도 미상이면 같은 로그인으로 보고 표시한다.
+        ua = u.get("account")
+        pa = getattr(p, "_claude_account", None)
+        if ua and pa and ua != pa:
+            return None
+        return int(u["session"]["pct"])              # M19 실측 — 분자/분모 불필요
 
     def _any_claude_pane(self) -> bool:
         """살아 있는 패널 중 Claude 세션이 하나라도 있으면 True(자동 /usage 게이트).

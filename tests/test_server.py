@@ -3388,6 +3388,33 @@ async def test_usage_limits_status_m19():
         await teardown(srv, task, sock)
 
 
+async def test_tok5h_pct_fail_open_on_account_mismatch():
+    """그림자 /usage 세션의 계정과 패널 계정이 둘 다 알려져 있고 다르면 _tok5h_pct 가
+    None(상태줄 5h% 숨김) — 다른 계정의 한도가 이 패널 계정 라벨로 그려지는 오표기
+    방지(사용자 보고 2026-06-13: 팝업 'Account (/usage)' ≠ 하단 토큰 표시 계정).
+    한쪽이라도 미상이면 같은 로그인으로 보고 표시한다(_usage_gate_pcts 와 같은 원칙)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        p._claude = "idle"
+        srv._usage = {"session": {"pct": 37},
+                      "account": "me@woojinkim.org"}
+        # ① 패널 계정 미상 → 같은 로그인 가정, 실측 표시
+        assert srv._tok5h_pct(p, 0) == 37
+        # ② 패널 계정 == 측정 계정 → 표시
+        p._claude_account = "me@woojinkim.org"
+        assert srv._tok5h_pct(p, 0) == 37
+        # ③ 계정 불일치 → fail-open(숨김)
+        p._claude_account = "wo@nexongames.co.kr"
+        assert srv._tok5h_pct(p, 0) is None
+        # ④ 측정 계정 미상 → 같은 로그인 가정, 표시
+        srv._usage = {"session": {"pct": 37}}
+        assert srv._tok5h_pct(p, 0) == 37
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_status_static_opts_only_on_full_c4():
     """C4: 토글로만 바뀌는 정적 옵션(claude_rules·컨텍스트/경고 임계)은 full status
     (attach·_broadcast_session)에만 싣고 주기(full=False) status 에선 뺀다. 낙관적
