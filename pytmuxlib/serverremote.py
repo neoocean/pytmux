@@ -26,8 +26,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 
-from . import ipc
+from . import ipc, sshwrap
 from .protocol import PROTO_VERSION, frame_msg, read_msg, write_frames, write_msg
 
 
@@ -73,6 +74,21 @@ _REMOTE_BLOCK_ACTIONS = {
     "break_pane", "join_pane", "move_pane_to_tab", "kill_window",
     "move_tab", "move_window", "swap_window", "move_current_tab",
 }
+
+
+def _nest_host_part(s: str) -> str:
+    """`user@host` → 호스트부(마지막 @ 뒤) 소문자. 대조 전용(접속 인자 아님)."""
+    return s.rsplit("@", 1)[-1].strip().lower()
+
+
+def _nest_host_match(dest: str, selfreport: str) -> bool:
+    """2단 ssh 오어태치 가드(NESTED_ATTACH §7 ㉣ — 보수적 시작): 래퍼가 기록한
+    목적지와 원격의 self-report(user@hostname)를 호스트부 소문자 정규화 후 **접두
+    일치**로 대조한다(별칭 `office1` vs 실호스트명 `OFFICE1.local` 허용). 불일치는
+    "그 패널의 ssh 1단 목적지 ≠ pytmux 를 친 머신"일 수 있다는 신호 — ack 하지 않아
+    자동화만 포기한다(원격은 현행 거부 폴백, 오어태치 위험 0)."""
+    h1, h2 = _nest_host_part(dest), _nest_host_part(selfreport)
+    return bool(h1) and bool(h2) and (h1.startswith(h2) or h2.startswith(h1))
 
 
 class ServerRemoteMixin:
@@ -453,3 +469,88 @@ class ServerRemoteMixin:
         await write_msg(link.writer,
                         {"t": "cmd", "action": "select_window", "index": ri})
         return True
+
+    # ---- 원격 중첩 자동 승격(docs/NESTED_ATTACH_SCENARIO.md) ----
+    # 패널당 승격 요청 처리 최소 간격(초) — 출력 재생(cat/replay)·루프가 만드는
+    # 중복/위조 REQ 의 연타를 완화한다(§7).
+    _NEST_REQ_DEBOUNCE = 5.0
+
+    def _nest_attach_request(self, pane, selfreport: str):
+        """패널 출력의 NEST_ATTACH_REQ(원격 pytmux 가 중첩을 감지하고 보낸 승격
+        요청) 처리 — serverpty._nest_dcs_handle 이 부른다(이벤트 루프 스레드).
+
+        보안 원칙(시나리오 §7): 패널 출력은 신뢰 경계 밖이다 — attach 인자는 절대
+        self-report 를 쓰지 않고 **ssh 래퍼가 기록한 pane._ssh_dest 만** 쓴다(위조
+        REQ 의 최대 피해 = 이미 신뢰·접속한 호스트로의 원치 않는 시점 attach).
+        ack 가 가면 원격 launcher 는 위임 안내 후 exit 0, 어떤 가드에서든 무 ack 면
+        원격은 타임아웃 후 현행 거부 메시지로 폴백한다(열화 없음)."""
+        if not getattr(self, "nest_auto_attach", True):
+            return                                   # 기능 OFF(㉢) → 무 ack
+        dest = getattr(pane, "_ssh_dest", "")
+        if not dest or not _nest_host_match(dest, selfreport):
+            return                                   # 목적지 미기록/2단 ssh 의심(㉣)
+        now = time.monotonic()
+        if now - getattr(pane, "_nest_req_ts", 0.0) < self._NEST_REQ_DEBOUNCE:
+            return
+        pane._nest_req_ts = now
+        sess = self._nest_pane_session(pane)
+        if sess is None:
+            return                                   # 트리 밖 패널(팝업 등)
+        if pane.pty is not None:
+            try:
+                pane.pty.write(sshwrap.NEST_ACK)     # "접수" — 결과는 notice
+            except OSError:
+                pass
+        self.loop.create_task(self._nest_do_attach(sess, dest))
+
+    def _nest_pane_session(self, pane):
+        for sess in self.sessions.values():
+            for tab in sess.tabs:
+                if pane in tab.window.panes():
+                    return sess
+        return None
+
+    async def _nest_do_attach(self, sess, dest: str):
+        """승격 attach 본체: 같은 이름 링크가 있으면 멱등(재연결 없이 전환만),
+        없으면 remote_attach 후 첫 업스트림 status(탭 병합)를 잠깐 기다려 이 세션의
+        클라들을 그 원격 active 탭으로 자동 전환한다(㉢ ON 확정, 2026-06-13).
+        dest 가 로컬 엔드포인트 형태("/"·"tcp:" 시작)면 직결(같은 머신/테스트)."""
+        remotes = self._remotes_dict()
+        fresh = dest not in remotes
+        if fresh:
+            endpoint = dest if dest.startswith(("/", "tcp:")) else None
+            ok = await self.remote_attach(sess, host=None if endpoint else dest,
+                                          endpoint=endpoint)
+            if not ok:
+                self._remote_notice(
+                    sess, f"remote-attach {dest} 실패(중첩 자동 승격) — "
+                          f"{getattr(self, '_remote_last_err', '') or '서버 error.log 참조'}")
+                return
+            self._remote_status_broadcast()
+        link = remotes.get(dest)
+        if link is None:
+            return
+        # 첫 업스트림 status 가 와야 병합 전역 index 가 생긴다(전환 가능 조건).
+        for _ in range(30):
+            if link.windows or not link.alive:
+                break
+            await asyncio.sleep(0.1)
+        if fresh:
+            self._remote_notice(
+                sess, f"remote-attach {dest}: 원격 탭 병합됨(중첩 자동 승격)")
+        if not link.windows:
+            return
+        # 병합 전역 index = 로컬 탭 수 + 앞선 링크들의 탭 수 + 업스트림 active 위치
+        # (_remote_tabs/_remote_tab_at 과 같은 dict 순회 순서라 일관).
+        gi = len(sess.tabs)
+        for l in remotes.values():
+            if l is link:
+                break
+            gi += len(l.windows)
+        act = next((i for i, w in enumerate(link.windows) if w.get("active")), 0)
+        for c in [c for c in self.clients if c.session is sess]:
+            try:
+                await self.remote_select_window(c, sess, gi + act)
+            except (OSError, ConnectionError):
+                pass
+        self._remote_status_broadcast()

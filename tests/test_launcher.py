@@ -45,8 +45,67 @@ async def test_sshwrap_marker_and_path():
         assert os.access(p, os.X_OK), f"{name} 래퍼 실행권한"
         body = open(p).read()
         assert f"SendEnv={sshwrap.NEST_MARKER}" in body, "SendEnv 표식 전파"
+        # NESTED_ATTACH §4 NEST_DEST: argv b64 를 DCS 로 발신(목적지 기록) —
+        # /dev/tty 한정(파이프/리다이렉트 오염 금지), 부재 시 조용히 생략.
+        assert "pytmux-ssh;" in body, "NEST_DEST DCS 발신"
+        assert "/dev/tty" in body, "DEST 는 /dev/tty 로만"
+        assert "base64" in body and "tr -d" in body, "argv b64(개행 제거) 인코딩"
     # 표식 이름은 launcher 와 일치해야 한다(로컬·원격 공통 판정).
     assert sshwrap.NEST_MARKER == NEST_MARKER
+
+
+async def test_parse_dest_extracts_ssh_destination():
+    """NESTED_ATTACH §4: parse_dest 가 ssh argv 에서 목적지(첫 비옵션 인자)를
+    사용자가 친 그대로 추출 — 값 옵션 분리/결합형 스킵, `--`, autossh -M, 도메인
+    계정 백슬래시 보존, 원격 명령 미포함. 실패는 ""(자동 승격만 비활성)."""
+    pd = sshwrap.parse_dest
+    assert pd(["ssh", "office1"]) == "office1"
+    assert pd(["ssh", "-p", "2222", "-o", "X=y", "user@host", "echo", "hi"]) \
+        == "user@host", "분리형 값 옵션 스킵 + 원격 명령 미포함"
+    assert pd(["ssh", "-p2222", "-oStrictHostKeyChecking=no", "host"]) == "host", \
+        "결합형 값 옵션 스킵"
+    assert pd(["ssh", "-J", "jump1,jump2", "-l", "user", "host"]) == "host"
+    assert pd(["ssh", "-4A", "host"]) == "host", "묶음 무값 플래그"
+    assert pd(["ssh", "-At", "-i", "/k", "h"]) == "h"
+    assert pd(["autossh", "-M", "20000", "host"]) == "host", "autossh -M 은 값 옵션"
+    assert pd(["ssh", "-M", "host"]) == "host", "ssh -M 은 무값(master 모드)"
+    assert pd(["ssh", "--", "-odd"]) == "-odd", "-- 뒤는 무조건 목적지"
+    assert pd(["ssh", "NATGAMES\\woojinkim@office1"]) \
+        == "NATGAMES\\woojinkim@office1", "도메인 백슬래시 보존"
+    assert pd(["ssh"]) == "" and pd([]) == "" and pd(["ssh", "-p", "22"]) == ""
+
+
+async def test_request_nest_promotion_inband():
+    """NESTED_ATTACH §4: 승격 요청이 NEST_ATTACH_REQ(user@host b64)를 단말에 쓰고
+    ① NEST_ACK 수신 → True ② 무관 출력만 → 타임아웃 False ③ 무응답 → False.
+    무응답 폴백 = 현행 거부 메시지(열화 없음)."""
+    if os.name == "nt":
+        return  # POSIX 전용(함수 자체가 nt 에서 False)
+    import asyncio
+    import base64
+    import pty
+    from pytmuxlib.launcher import request_nest_promotion
+
+    async def attempt(reply, timeout=1.0):
+        m, s = pty.openpty()
+        try:
+            fut = asyncio.create_task(asyncio.to_thread(
+                request_nest_promotion, timeout, s, s))
+            req = await asyncio.wait_for(asyncio.to_thread(os.read, m, 512), 5)
+            assert sshwrap.NEST_REQ_PRE in req, ("승격 요청 DCS", req)
+            payload = req.split(sshwrap.NEST_REQ_PRE, 1)[1].split(b"\x1b")[0]
+            assert b"@" in base64.b64decode(payload), "self-report=user@hostname"
+            if reply is not None:
+                os.write(m, reply)
+            return await asyncio.wait_for(fut, 5)
+        finally:
+            os.close(m)
+            os.close(s)
+
+    assert await attempt(sshwrap.NEST_ACK) is True, "ack → 위임 성공"
+    assert await attempt(b"plain noise\r\n", timeout=0.2) is False, \
+        "무관 출력 → 타임아웃 폴백"
+    assert await attempt(None, timeout=0.15) is False, "무응답 → 폴백"
 
 
 async def test_sshwrap_windows_cmd_wrapper():

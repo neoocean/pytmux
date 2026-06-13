@@ -9,6 +9,7 @@ ssh 없이 **in-process 서버 2대(이상)를 실 소켓으로 직결**해 전 
 import asyncio
 import base64
 import os
+import tempfile
 import time
 
 import harness
@@ -627,3 +628,120 @@ async def test_remote_link_death_recovers_viewer_to_local():
             writer.close()
         await teardown(srvA, taskA, sockA)
         await teardown(srvB, taskB, sockB)
+# ---- 원격 중첩 자동 승격(docs/NESTED_ATTACH_SCENARIO.md §4·§7) ----
+
+def _nest_req(selfreport: str) -> bytes:
+    from pytmuxlib import sshwrap
+    b64 = base64.b64encode(selfreport.encode()).decode().encode()
+    return sshwrap.NEST_REQ_PRE + b64 + sshwrap.DCS_ST
+
+
+def _nest_dest(argv_lines: str) -> bytes:
+    from pytmuxlib import sshwrap
+    b64 = base64.b64encode(argv_lines.encode()).decode().encode()
+    return sshwrap.NEST_DEST_PRE + b64 + sshwrap.DCS_ST
+
+
+class _AckSpy:
+    def __init__(self):
+        self.writes = []
+
+    def write(self, b):
+        self.writes.append(b)
+
+    def set_winsize(self, rows, cols):
+        pass
+
+    def acks(self):
+        from pytmuxlib import sshwrap
+        return sum(1 for w in self.writes if sshwrap.NEST_ACK in w)
+
+
+async def test_nest_attach_request_promotes_to_remote_attach():
+    """E2E 승격: 래퍼 NEST_DEST(목적지 기록) → 원격 launcher NEST_ATTACH_REQ →
+    ack + 자동 remote_attach(엔드포인트 직결) → ⇄ 탭 병합 + 보던 클라 자동 전환
+    (㉢ ON). 직후 재요청은 디바운스로 무 ack."""
+    if os.name == "nt":
+        return
+    from pytmuxlib import sshwrap
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    writer = None
+    try:
+        srvB.ensure_default_session(80, 24)
+        sessA = srvA.ensure_default_session(80, 24)
+        pA = sessA.active_window.active_pane
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        realA, spy = pA.pty, _AckSpy()
+        try:
+            pA.pty = spy
+            # ① 래퍼 DEST 기록 — 같은 머신 직결(endpoint 형태) 페더레이션.
+            srvA._on_pane_data(pA, b"$ " + _nest_dest("ssh\n" + sockB))
+            assert pA._ssh_dest == sockB, "목적지 기록(argv b64 → parse_dest)"
+            # ② 승격 요청(self-report 호스트부 == 목적지 → ㉣ 대조 통과) → ack.
+            srvA._on_pane_data(pA, _nest_req("tester@" + sockB))
+            assert spy.acks() == 1, ("접수 ack 1회", spy.writes)
+            # ③ 자동 attach·병합·자동 전환: 클라 status 에 ⇄ 탭이 active 로 온다.
+            await _read_until(
+                reader,
+                lambda m: m.get("t") == "status" and any(
+                    w.get("remote") and w.get("active")
+                    for w in m.get("windows", [])),
+                what="auto-switch status")
+            assert sockB in srvA._remotes_dict(), "링크 생성"
+            # ④ 디바운스: 직후 같은 요청은 무 ack(출력 재생/위조 연타 완화 §7).
+            srvA._on_pane_data(pA, _nest_req("tester@" + sockB))
+            assert spy.acks() == 1, "디바운스 — 추가 ack 없음"
+        finally:
+            pA.pty = realA
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
+async def test_nest_attach_request_guards():
+    """승격 가드(§7 보안 원칙): ① 목적지 미기록 → 무 ack(self-report 로 attach
+    하지 않음) ② 호스트 불일치(2단 ssh 의심 ㉣) → 무 ack ③ nest_auto_attach OFF
+    → 무 ack ④ 통과 시 ack(attach 실패는 notice 만 — 열화 없음). 대조 의미론은
+    _nest_host_match 직접 단언(소문자 정규화+접두 일치)."""
+    if os.name == "nt":
+        return
+    from pytmuxlib.serverremote import _nest_host_match
+    assert _nest_host_match("office1", "u@OFFICE1.local"), "별칭 vs 실호스트(접두)"
+    assert _nest_host_match("user@office1.example.com", "u@office1")
+    assert not _nest_host_match("office1", "u@office2")
+    assert not _nest_host_match("office1", "") and not _nest_host_match("", "u@h")
+
+    srvA, taskA, sockA = await server_only()
+    try:
+        sessA = srvA.ensure_default_session(80, 24)
+        pA = sessA.active_window.active_pane
+        missing = os.path.join(tempfile.mkdtemp(prefix="pytmux-nest-"), "no.sock")
+        realA, spy = pA.pty, _AckSpy()
+        try:
+            pA.pty = spy
+            srvA._on_pane_data(pA, _nest_req("tester@anyhost"))      # ① 미기록
+            assert spy.acks() == 0, "목적지 미기록 → 무 ack"
+            srvA._on_pane_data(pA, _nest_dest("ssh\n" + missing))   # 기록
+            srvA._on_pane_data(pA, _nest_req("tester@otherhost"))    # ② 불일치
+            assert spy.acks() == 0, "호스트 불일치 → 무 ack"
+            srvA.nest_auto_attach = False                            # ③ OFF
+            srvA._on_pane_data(pA, _nest_req("tester@" + missing))
+            assert spy.acks() == 0, "기능 OFF → 무 ack"
+            srvA.nest_auto_attach = True                             # ④ 통과
+            srvA._on_pane_data(pA, _nest_req("tester@" + missing))
+            assert spy.acks() == 1, "가드 통과 → ack"
+            # attach 본체는 없는 엔드포인트라 즉시 실패(notice 경로) — 태스크 소진.
+            for _ in range(20):
+                await asyncio.sleep(0.02)
+                if missing not in srvA._remotes_dict():
+                    break
+            assert missing not in srvA._remotes_dict(), "실패 attach 는 링크 없음"
+        finally:
+            pA.pty = realA
+    finally:
+        await teardown(srvA, taskA, sockA)

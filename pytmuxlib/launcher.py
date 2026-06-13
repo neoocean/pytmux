@@ -12,7 +12,7 @@ import os
 import sys
 import time
 
-from . import ipc, proc, protocol
+from . import ipc, proc, protocol, sshwrap
 # NOTE: client(=textual)·server(=model→pyte→wcwidth) 는 여기서 import 하지 않는다.
 # 가벼운 제어 명령(ls/cmd/kill)이 launcher 만 거쳐도 textual 전체나 pyte/wcwidth 를
 # 로드해 기동이 느려졌다(Windows 사용자 보고). attach 경로의 client, `server` 명령의
@@ -174,6 +174,88 @@ def host_terminal_is_pytmux(timeout: float = NEST_PROBE_TIMEOUT,
             pass
 
 
+# 승격 요청 ack 대기 상한(NESTED_ATTACH ㉤). 프로브(0.4s)보다 길게 — 바깥 서버의
+# 스캔→ack 는 즉답이지만 경로에 ssh 왕복이 2회(REQ 나감·ACK 들어옴) 낀다.
+NEST_ACK_TIMEOUT = 1.0
+
+
+def request_nest_promotion(timeout: float = NEST_ACK_TIMEOUT,
+                           rfd: int | None = None,
+                           wfd: int | None = None) -> bool:
+    """중첩 감지 후 거부 대신 **바깥 pytmux 에 승격을 요청**한다(NESTED_ATTACH §4).
+
+    NEST_ATTACH_REQ(DCS, self-report=`user@hostname` b64)를 단말(=바깥 패널 스트림)
+    에 쓰고 NEST_ACK 를 기다린다. ack = 바깥 서버가 접수(그 패널의 ssh 래퍼가
+    기록한 **실제 ssh 목적지**로 remote_attach 시작 — self-report 는 2단 ssh 대조용
+    일 뿐 attach 인자가 아니다, 시나리오 §7) → 호출부는 위임 안내 후 exit 0.
+    무응답(구버전 바깥/기능 OFF/목적지 미기록/호스트 불일치/mosh DCS 미통과) =
+    False → 호출부는 현행 거부 메시지로 폴백(열화 없음). 단말 처리(POSIX·tty·
+    cbreak)는 host_terminal_is_pytmux 와 동일 패턴. rfd/wfd 는 테스트 주입용."""
+    if os.name == "nt":
+        return False
+    if rfd is None or wfd is None:
+        try:
+            if not (sys.stdin.isatty() and sys.stdout.isatty()):
+                return False
+        except (ValueError, OSError):
+            return False
+        rfd, wfd = sys.stdin.fileno(), sys.stdout.fileno()
+    import base64
+    import select
+    import socket
+    import termios
+    import tty
+    user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+    try:
+        host = socket.gethostname()
+    except OSError:
+        host = ""
+    payload = base64.b64encode(f"{user}@{host}".encode("utf-8", "replace"))
+    try:
+        old = termios.tcgetattr(rfd)
+    except termios.error:
+        return False
+    buf = b""
+    try:
+        tty.setcbreak(rfd, termios.TCSANOW)
+        os.write(wfd, sshwrap.NEST_REQ_PRE + payload + sshwrap.DCS_ST)
+        deadline = time.monotonic() + timeout
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return False
+            r, _, _ = select.select([rfd], [], [], left)
+            if not r:
+                return False
+            try:
+                chunk = os.read(rfd, 256)
+            except OSError:
+                return False
+            if not chunk:
+                return False
+            buf += chunk
+            if b"pytmux-nest-ack" in buf:
+                return True
+    finally:
+        try:
+            termios.tcsetattr(rfd, termios.TCSADRAIN, old)
+        except termios.error:
+            pass
+
+
+def _try_nest_promotion() -> bool:
+    """원격 로그인의 중첩 거부 지점 공통 승격 시도 + 성공 안내 출력(NESTED_ATTACH).
+    로컬 중첩($PYTMUX, 비 ssh)은 대상이 아니다 — 자기 자신 attach 는 무의미하고
+    serverremote 도 자기 endpoint 를 거부한다."""
+    if not (os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY")):
+        return False
+    if not request_nest_promotion():
+        return False
+    print("pytmux: 바깥 pytmux 가 이 호스트를 원격 탭(⇄)으로 어태치합니다 — "
+          "결과는 바깥 상태줄 notice 로 표시됩니다.")
+    return True
+
+
 def run_stdio_proxy(sock_path: str) -> int:
     """원격 어태치 페더레이션의 원격 측 전송 프리미티브(§1.7 Stage 1·3).
 
@@ -325,6 +407,10 @@ def main(argv=None):
     # 중첩 실행 거부: pytmux 패널 안($PYTMUX 설정)에서 다시 attach 하면 막는다
     # (재귀 렌더·입력 꼬임 방지). `unset PYTMUX LC_PYTMUX` 로만 우회(강제 옵션 없음).
     if nesting_blocked():
+        # NESTED_ATTACH: 원격 중첩이면 거부 대신 바깥 pytmux 에 자동 승격을 먼저
+        # 요청한다(ack=위임 후 정상 종료). 무응답/로컬 중첩은 현행 거부 폴백.
+        if _try_nest_promotion():
+            sys.exit(0)
         print("pytmux: 이미 pytmux 안에서 실행 중입니다(로컬/원격 중첩). 원격 탭이 "
               "필요하면 로컬 pytmux 에서 ':remote-attach <이 호스트>' (§1.7 페더레이션). "
               "우회는 'unset PYTMUX LC_PYTMUX'.", file=sys.stderr)
@@ -336,6 +422,8 @@ def main(argv=None):
     # 응답해 조기 통과하므로 비중첩 원격 attach 의 지연은 RTT 수준.
     if (os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY")) \
             and host_terminal_is_pytmux():
+        if _try_nest_promotion():        # NESTED_ATTACH: 프로브 확정 중첩도 승격 우선
+            sys.exit(0)
         print("pytmux: 호스트 단말이 pytmux 입니다(원격 중첩 감지 — env 마커 없이 "
               "단말 질의로 확인). 이중 실행을 막습니다. 원격 탭이 필요하면 로컬 "
               "pytmux 에서 ':remote-attach <이 호스트>'.", file=sys.stderr)

@@ -30,11 +30,27 @@ PowerShell 패널에서도 .cmd 는 동일하게 해석된다.
 from __future__ import annotations
 
 import os
+import re
 import stat
 
 # 원격에 전파할 중첩 표식 환경변수. AcceptEnv LC_* 흔한 기본값을 타도록 LC_ 접두사.
 # launcher.NEST_MARKER 와 반드시 일치시킬 것.
 NEST_MARKER = "LC_PYTMUX"
+
+# ---- 원격 중첩 자동 승격 in-band DCS 와이어(docs/NESTED_ATTACH_SCENARIO.md §4) ----
+# launcher(REQ 발신/ACK 대기)·serverpty(스캔)·래퍼(DEST 발신)가 공유한다 — 이 모듈은
+# leaf(표준 lib 만 import)라 어느 쪽에서 import 해도 순환이 없다. 페이로드는 b64
+# (도메인 계정 백슬래시·공백·세미콜론 보존). 형식: DCS >|pytmux-<kind>;<b64> ST
+NEST_DEST_PRE = b"\x1bP>|pytmux-ssh;"     # 래퍼→서버: 패널 ssh 목적지(argv 줄단위 b64)
+NEST_REQ_PRE = b"\x1bP>|pytmux-nest;"     # 원격 launcher→서버: 승격 요청(user@host b64)
+NEST_ACK = b"\x1bP>|pytmux-nest-ack\x1b\\"  # 서버→원격 launcher: 접수 회신(성공보장 아님)
+DCS_ST = b"\x1b\\"
+# 공통 머리(빠른 부재 판정용)와 완결 NEST DCS 정규식(serverpty 스캔·model feed 제거가
+# 공유). 페이로드는 b64 클래스만 허용 — 임의 출력 오인 충돌 차단 + 선형 매칭 보장.
+# pyte 는 DCS 본문을 소비하지 않고 화면으로 흘리므로, model.Pane.feed 가 이 정규식으로
+# 완결분을 제거하고 미완 꼬리는 다음 feed 로 미룬다(NESTED_ATTACH §4 — 화면 오염 금지).
+NEST_PRE = b"\x1bP>|pytmux-"
+NEST_DCS_RE = re.compile(rb"\x1bP>\|pytmux-(ssh|nest);([A-Za-z0-9+/=]{0,8192})\x1b\\")
 
 # 래핑 대상(ssh 류). 모두 `-o SendEnv=…` 를 ssh 로 전달한다.
 _WRAPPED = ("ssh", "autossh")
@@ -53,6 +69,17 @@ real=$(command -v "$cmd" 2>/dev/null)
 if [ -z "$real" ]; then
   echo "pytmux: $cmd 을(를) PATH 에서 찾지 못했습니다" >&2
   exit 127
+fi
+# 패널 ssh 목적지 in-band 기록(NESTED_ATTACH §4 NEST_DEST): argv 전체를 줄단위 b64
+# 로 실어 DCS 로 바깥 서버에 알린다(목적지 파싱은 서버 파이썬 parse_dest — 래퍼는
+# ssh 옵션 문법을 모른다). stdout 파이프/리다이렉트를 오염하지 않게 /dev/tty 로만
+# 쓴다 — 실패/부재 시 조용히 생략(기록이 없으면 중첩 자동 승격만 비활성, 거부
+# 폴백은 그대로). 줄단위 인코딩이라 개행 포함 인자는 못 싣는다(병적 — 무시).
+if [ -w /dev/tty ]; then
+  _b64=$(printf '%%s\n' "$@" | base64 2>/dev/null | tr -d '\r\n')
+  if [ -n "$_b64" ]; then
+    printf '\033P>|pytmux-ssh;%%s\033\\' "$_b64" > /dev/tty 2>/dev/null || :
+  fi
 fi
 exec "$real" -o SendEnv=%(marker)s "$@"
 """
@@ -105,6 +132,44 @@ def ensure_wrapper_dir(state_dir: str) -> str | None:
         return wd
     except OSError:
         return None
+
+
+# ssh(1) 에서 "다음 토큰(또는 결합)을 값으로 갖는" 단일 글자 옵션들. autossh 는
+# -M <port> 가 추가로 값을 갖는다(ssh 의 -M 은 무인자 master 모드라 충돌 — basename
+# 으로 구분). 목적지 추출에만 쓰므로 미지 옵션이 늘어도 최악은 "추출 실패 → 자동
+# 승격 비활성"(안전한 열화)이다.
+_SSH_VALUE_OPTS = frozenset("BbcDEeFIiJLlmOopQRSWw")
+
+
+def parse_dest(argv: list) -> str:
+    """ssh/autossh argv 에서 목적지(destination) 토큰을 추출한다(NESTED_ATTACH §4).
+
+    규칙: 첫 **비옵션** 인자 = 목적지 — user@host·config 별칭·URI 를 **사용자가 친
+    문자열 그대로**(remote_attach 가 같은 별칭/ControlMaster 레시피를 타도록). 값을
+    갖는 옵션은 분리형(`-p 2222`)·결합형(`-p2222`, `-oKey=v`) 모두 건너뛰고, `--`
+    뒤 첫 토큰은 무조건 목적지. 목적지 뒤(원격 명령)는 보지 않는다. 없으면 ""."""
+    if not argv:
+        return ""
+    value_opts = set(_SSH_VALUE_OPTS)
+    if os.path.basename(str(argv[0] or "")).startswith("autossh"):
+        value_opts.add("M")
+    i = 1
+    while i < len(argv):
+        a = str(argv[i])
+        if a == "--":
+            return str(argv[i + 1]) if i + 1 < len(argv) else ""
+        if a.startswith("-") and len(a) > 1:
+            # 묶음 플래그(-4A 등) 안에서 값 옵션을 만나면: 뒤에 글자가 남아 있으면
+            # 결합값(-p2222 — 같은 토큰에서 소비), 마지막 글자면 다음 토큰이 값.
+            for j, ch in enumerate(a[1:]):
+                if ch in value_opts:
+                    if j == len(a) - 2:
+                        i += 1
+                    break
+            i += 1
+            continue
+        return a
+    return ""
 
 
 def _same_file(path: str, body: bytes) -> bool:

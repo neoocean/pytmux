@@ -4,8 +4,10 @@ self.* 상태와 Server 의 다른 메서드(_remove_pane_from_tree·_capture_wr
 from __future__ import annotations
 
 import asyncio
+import base64
 import gc
 import os
+import time
 
 from . import ipc, proc, pty_backend, sshwrap
 from .model import Pane, Session, coalesce_alt_repaints
@@ -19,6 +21,15 @@ from .protocol import FEED_SLICE, MIN_H, MIN_W
 # 부수효과로 패널 안 일반 프로그램(neovim 등)의 XTVERSION 질의에도 올바로 응답.
 NEST_QUERY = b"\x1b[>0q"            # XTVERSION 질의
 NEST_REPLY = b"\x1bP>|pytmux\x1b\\"  # DCS > | <name> ST
+
+# 원격 중첩 자동 승격(NESTED_ATTACH_SCENARIO §4)의 가변 길이 NEST DCS 스캔. 와이어
+# 상수/정규식은 sshwrap(leaf — 래퍼/launcher/model 과 공유): 공통 머리로 빠른 부재
+# 판정, 페이로드는 b64 클래스만 허용(임의 출력 오인 충돌 차단 + 선형 매칭 보장).
+_NEST_PRE = sshwrap.NEST_PRE
+_NEST_DCS_RE = sshwrap.NEST_DCS_RE
+# 미완(ST 미도착) NEST DCS 후보 보관 상한 — 우리 페이로드(argv b64)는 수 KB 면 충분,
+# 이를 넘는 후보는 위조/우연이므로 버린다(무한 누적 방지).
+NEST_CARRY_MAX = 8 * 1024
 
 
 class ServerPtyMixin:
@@ -106,6 +117,9 @@ class ServerPtyMixin:
         tail = len(NEST_QUERY) - 1
         pane._nestq_carry = (data[-tail:] if len(data) >= tail
                              else (pane._nestq_carry + data)[-tail:])
+        # NESTED_ATTACH §4: 같은 진입점에서 NEST DCS(ssh 목적지 기록·승격 요청)도
+        # 스캔한다 — 평시 비용은 공통 머리 부재 확인(in) 1회.
+        self._nest_dcs_scan(pane, data)
         #
         # 대량 출력 비차단 처리: pyte feed 는 순수 파이썬이라 64KB 한 읽기를 통째로
         # 먹이면 ~50ms 동안 이벤트 루프가 막혀 입력·flush 가 지연된다. 그래서 버스트는
@@ -126,6 +140,53 @@ class ServerPtyMixin:
         if pane.pty is not None:
             pane.pty.pause_reader()
         pane._feed_task = self.loop.create_task(self._feed_drain(pane))
+
+    # ---- 원격 중첩 자동 승격 NEST DCS 스캔(NESTED_ATTACH_SCENARIO §4) ----
+    def _nest_dcs_scan(self, pane: Pane, data: bytes) -> None:
+        """패널 출력에서 NEST_DEST(래퍼의 ssh 목적지 기록)·NEST_ATTACH_REQ(원격
+        pytmux 의 승격 요청) DCS 를 찾는다. read 경계 분할은 `pane._nestd_carry` 로
+        보전하되, 큰 carry 는 '미완 DCS 후보가 실제로 있을 때만' 유지한다 — 평시엔
+        공통 머리(`_NEST_PRE`) 부재 확인과 꼬리 ESC 검사(≤머리 길이)만 돈다."""
+        buf = pane._nestd_carry + data if pane._nestd_carry else data
+        if _NEST_PRE not in buf:
+            self._nest_tail_carry(pane, buf)
+            return
+        pos = 0
+        for m in _NEST_DCS_RE.finditer(buf):
+            self._nest_dcs_handle(pane, m.group(1), m.group(2))
+            pos = m.end()
+        rest = buf[pos:]
+        idx = rest.rfind(_NEST_PRE)
+        if (idx != -1 and sshwrap.DCS_ST not in rest[idx:]
+                and len(rest) - idx <= NEST_CARRY_MAX):
+            pane._nestd_carry = rest[idx:]   # ST 미도착 후보 — 다음 청크와 이어 스캔
+        else:
+            # 완결됐는데 미매치(비 b64 위조)거나 과대 후보 → 버리고 꼬리만 보전.
+            self._nest_tail_carry(pane, rest)
+
+    @staticmethod
+    def _nest_tail_carry(pane: Pane, rest: bytes) -> None:
+        """경계 분할 대비: 꼬리가 `_NEST_PRE` 의 접두(부분 머리)로 끝날 때만 보관."""
+        tail = rest[-(len(_NEST_PRE) - 1):]
+        i = tail.rfind(b"\x1b")
+        pane._nestd_carry = (tail[i:] if i != -1 and _NEST_PRE.startswith(tail[i:])
+                             else b"")
+
+    def _nest_dcs_handle(self, pane: Pane, kind: bytes, payload: bytes) -> None:
+        """완결 NEST DCS 1건 처리. b64 해독 실패는 조용히 무시(패널 출력은 신뢰
+        경계 밖 — 시나리오 §7). ssh=목적지 기록(소비자는 승격 요청), nest=승격
+        요청(serverremote._nest_attach_request 가 가드/ack/attach 담당)."""
+        try:
+            text = base64.b64decode(payload).decode("utf-8", "replace")
+        except ValueError:
+            return
+        if kind == b"ssh":
+            dest = sshwrap.parse_dest([s for s in text.split("\n") if s])
+            if dest:
+                pane._ssh_dest = dest
+                pane._ssh_dest_ts = time.monotonic()
+            return
+        self._nest_attach_request(pane, text.strip())
 
     def _coalesce_feed(self, pane: Pane) -> None:
         """대기 중인 feedbuf 에서 무효화된 alt-screen 리페인트 프레임을 합쳐 pyte feed

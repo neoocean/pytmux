@@ -102,6 +102,11 @@ class Server(*_SERVER_BASES):
         # 무효화된 중간 프레임을 버려 feed 부하/지연을 줄인다(안전 조건은
         # coalesce_alt_repaints 참조 — alt-screen 한정·무손실). 기본 ON, opts.json 영속.
         self.coalesce_repaints = bool(_opts.get("coalesce_repaints", True))
+        # 원격 중첩 자동 승격(docs/NESTED_ATTACH_SCENARIO.md ㉢): 패널 안 ssh 원격에서
+        # pytmux 를 치면 거부 대신 그 패널의 실제 ssh 목적지로 자동 remote-attach +
+        # 원격 탭 전환. off=무 ack(원격은 현행 거부 폴백). 기본 ON, opts.json 영속.
+        # 토글: 클라 명령/`pytmux cmd nest-auto-attach on|off`.
+        self.nest_auto_attach = bool(_opts.get("nest_auto_attach", True))
         # 프롬프트 단위 클리어 모드(#9)의 ① 문서화 지시문. 패널 안 Claude 에게 보내는
         # 슬래시/지시문이며(pytmux 명령 아님), 무엇을 어디에 기록할지는 Claude 쪽
         # 프로젝트 관례(CLAUDE.md/메모리)에 맡긴다. opts.json 영속.
@@ -342,6 +347,14 @@ class Server(*_SERVER_BASES):
         self._save_opts()
         return self.coalesce_repaints
 
+    def set_nest_auto_attach(self, value=None):
+        """원격 중첩 자동 승격 토글(NESTED_ATTACH). value 미지정 시 반전. opts.json
+        영속. 끄면 승격 요청에 무 ack — 원격 pytmux 는 현행 거부 메시지로 폴백."""
+        self.nest_auto_attach = (not self.nest_auto_attach) if value is None \
+            else bool(value)
+        self._save_opts()
+        return self.nest_auto_attach
+
     def list_tab_layouts(self) -> list[str]:
         return sorted(self._load_slots().keys())
 
@@ -404,6 +417,8 @@ class Server(*_SERVER_BASES):
         "auto-launch": "set_claude_auto_launch",
         # 토큰 절감 on/off 토글의 외부 cmd 파리티(설정 팝업과 같은 setter).
         "ctx-autoclear": "set_claude_ctx_autoclear",
+        "nest-auto-attach": "set_nest_auto_attach",
+        "nest-attach": "set_nest_auto_attach",
         "budget-plan": "set_claude_budget_plan",
     }
 

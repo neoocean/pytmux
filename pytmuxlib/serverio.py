@@ -534,6 +534,10 @@ class ServerIOMixin:
             self.set_single_border(msg.get("value"))
         elif action == "set_coalesce":
             self.set_coalesce_repaints(msg.get("value"))
+        elif action == "set_nest_auto_attach":
+            # 원격 중첩 자동 승격 토글(NESTED_ATTACH ㉢) — 서버 내부 동작이라 클라
+            # 렌더 변화 없음. value=None 이면 반전(클라 toggle).
+            self.set_nest_auto_attach(msg.get("value"))
         elif action == "kill_window":
             self.kill_window(sess)
             if sess.name not in self.sessions:

@@ -152,6 +152,39 @@ async def test_pane_xtversion_query_gets_pytmux_reply():
         await teardown(srv, task, sock)
 
 
+async def test_pane_nest_dest_dcs_records_ssh_dest():
+    """NESTED_ATTACH §4: 래퍼의 NEST_DEST DCS(argv 줄단위 b64)를 패널 출력에서
+    스캔해 pane._ssh_dest 에 목적지를 기록한다 — read 경계 분할 보전(carry),
+    비 b64 위조 무시, DCS 는 pyte 가 소비해 화면을 오염하지 않는다."""
+    import base64
+    from pytmuxlib import sshwrap
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        argv = ["ssh", "-p", "2222", "NATGAMES\\woojinkim@office1", "echo", "hi"]
+        b64 = base64.b64encode("\n".join(argv).encode()).decode().encode()
+        dcs = sshwrap.NEST_DEST_PRE + b64 + sshwrap.DCS_ST
+        # ① 경계 분할: 머리 일부 → 페이로드 나머지 두 청크로 나눠도 기록된다.
+        srv._on_pane_data(p, b"login banner " + dcs[:9])
+        assert p._ssh_dest == "", "미완 DCS 는 아직 미기록"
+        srv._on_pane_data(p, dcs[9:] + b" tail$ ")
+        assert p._ssh_dest == "NATGAMES\\woojinkim@office1", "목적지=사용자 입력 그대로"
+        # ② 화면 오염 없음: DCS 본문이 렌더에 안 보인다(pyte 가 소비).
+        text = "\n".join(p.screen.display)
+        assert "pytmux-ssh" not in text and "NATGAMES" not in text, text
+        # ③ 비 b64 위조(완결 DCS 형태) → 무시(기존 기록 유지).
+        srv._on_pane_data(
+            p, sshwrap.NEST_DEST_PRE + b"!!not-base64!!" + sshwrap.DCS_ST)
+        assert p._ssh_dest == "NATGAMES\\woojinkim@office1"
+        # ④ 새 DEST 가 기존 기록을 갱신한다(최신 1건).
+        b64b = base64.b64encode(b"ssh\noffice2").decode().encode()
+        srv._on_pane_data(p, sshwrap.NEST_DEST_PRE + b64b + sshwrap.DCS_ST)
+        assert p._ssh_dest == "office2"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_prompt_multiline_is_one_submission():
     # Shift+Enter(=LF \n)로 줄바꿈해 한 번에 제출(Enter=CR \r)한 멀티라인 프롬프트는
     # 한 개의 제출 단위가 된다. 헤더용 last_prompt 는 한 줄이라 개행을 공백으로

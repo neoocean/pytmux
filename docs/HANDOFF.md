@@ -280,6 +280,27 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- **원격 중첩 자동 승격 구현 N1~N3(2026-06-13, CL 58670)** — 58665 시나리오의 구현.
+  열린 결정 사용자 확정(㉠ argv b64→서버 parse_dest·㉡ Windows 래퍼 1차 제외·㉢ 기본
+  ON+자동 탭 전환·㉣ 접두 대조·㉤ 1.0s). ① **N1**: sh 래퍼가 exec 직전 NEST_DEST
+  DCS(argv 줄단위 b64)를 `/dev/tty` 로만 발신(파이프 오염 금지) → serverpty 스캔이
+  `pane._ssh_dest` 기록(가변 길이 carry — 미완 후보 있을 때만 보관, 상한 8KB),
+  `sshwrap.parse_dest`(값 옵션 분리/결합형·`--`·autossh -M·도메인 \\ 보존). ② **N2**:
+  launcher `request_nest_promotion()` — 두 거부 지점(env 마커·XTVERSION 프로브) 공통,
+  REQ(user@hostname b64) 발신 후 ACK 1.0s 대기, ack=위임 안내+exit 0, 무응답=현행
+  거부 폴백(원격 로그인만 — 로컬 중첩은 비대상). ③ **N3**: serverremote
+  `_nest_attach_request` — `nest_auto_attach`(기본 ON, opts.json·`:nest-auto-attach`
+  클라 명령·cmd 토글) → ssh_dest 기록·self-report 접두 대조(2단 ssh 오어태치 가드)·
+  5초 디바운스 통과 시 ACK + `_nest_do_attach`(기존 링크 멱등 전환/신규 attach →
+  첫 status 대기 → 세션 클라 전부 원격 active 탭 자동 전환 + notice). **attach 인자는
+  래퍼 기록만 — 패널 출력 self-report 비신뢰(§7).** ④ **발견·수정**: pyte 가 DCS
+  본문을 화면으로 흘림 → `model.Pane.feed` 가 NEST DCS 완결분 제거+미완 꼬리 이월
+  (_altcarry 재사용, CSI partial 과 순서 보존). ⑤ **부수 수정**: 58659 지연화로
+  claude.* i18n 카탈로그가 plugins.load() 에 등록 안 되는 순서 의존(test_i18n 단독
+  실패·전체선 test_client 가 가림) — claude-code __init__ 가 clientstatus(경량,
+  textual 미사용)를 로드 시점 import. 테스트 +5(parse_dest·promotion pty 3분기·
+  DEST 기록/경계분할/화면 비오염·승격 E2E(ack→병합→자동 전환→디바운스)·가드 4종).
+  **591 green.** 잔여 = N4 실 ssh 라이브 검증(서버+launcher — 데몬 재시작 필요).
 - **원격 중첩 자동 승격 시나리오(2026-06-13, CL 58665)** — 백로그 "원격 중첩 ssh
   attach — 거부만 구현, 중첩 지원은 후속"(56394)의 설계 문서
   [NESTED_ATTACH_SCENARIO.md](NESTED_ATTACH_SCENARIO.md). 원격 셸에서 `pytmux` 입력

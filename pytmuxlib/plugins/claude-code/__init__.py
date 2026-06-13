@@ -17,6 +17,12 @@ import time as _time
 
 from pytmuxlib import i18n
 
+# §6 ⑤ claude.* 카탈로그는 clientstatus 가 import 시점에 등록한다. 58659(헤더 제거)가
+# 사용처 import 를 전부 함수 안으로 지연화하면서 plugins.load() 만으로는 등록이 안 되는
+# 순서 의존이 생겼다(test_i18n 단독 실행 실패·전체 스위트에선 test_client 가 가림) —
+# 모듈은 가볍다(textual 미사용, 자기 docstring) → 로드 시점 명시 import 로 보장한다.
+from . import clientstatus  # noqa: F401  (i18n claude.* 등록 부수효과)
+
 # ---- 명령 메타데이터(코어 COMMANDS/COMPLETIONS/COMMAND_NOARG 에 합쳐짐) ----
 COMMANDS = [
     ("claude-rules", "Claude 시작 규칙 편집(저장 시 새 세션/clear 후 프롬프트에 "

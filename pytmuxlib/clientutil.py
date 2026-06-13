@@ -545,6 +545,7 @@ COMMANDS = [
     # calendar-mode/open-calendar/close-calendar 는 calendar 플러그인이 등록한다.
     ("single-border", "패널이 하나뿐일 때 테두리 표시 on/off (single-border on|off|toggle)", "설정/기타"),
     ("coalesce-repaints", "대량 출력 시 alt-screen 풀스크린 리페인트 합치기 on/off — ssh 반응성(coalesce-repaints on|off|toggle)", "설정/기타"),
+    ("nest-auto-attach", "원격에서 pytmux 실행 시 거부 대신 자동 remote-attach 승격 on/off (nest-auto-attach on|off|toggle)", "설정/기타"),
     # Claude Code 명령(auto-resume·token-log·
     # claude-usage·usage-panel·token-account·prompt-clear*·model·auto-doc-clear·
     # auto-compact·claude-auto-mode·auto-launch 등)은 claude-code 플러그인이 등록한다
@@ -622,6 +623,7 @@ COMMAND_OPTIONS = {
     "automatic-rename": [{"key": "state", "label": "자동이름", "choices": _ONOFF}],
     "single-border": [{"key": "state", "label": "단일테두리", "choices": _ONOFF}],
     "coalesce-repaints": [{"key": "state", "label": "리페인트합치기", "choices": _ONOFF}],
+    "nest-auto-attach": [{"key": "state", "label": "중첩자동승격", "choices": _ONOFF}],
     "lang": [{"key": "lang", "label": "언어",
               "choices": [("한국어", "ko"), ("English", "en")]}],
     # auto-resume·prompt-clear·auto-doc-clear·claude-auto-mode·auto-launch
@@ -651,6 +653,7 @@ i18n.register({
         "캡처": "Capture", "자동이름": "Auto-rename", "단일테두리": "Single border",
         "비활성흐리게": "Inactive dim",
         "리페인트합치기": "Coalesce repaints", "언어": "Language",
+        "중첩자동승격": "Nested auto-attach",
         # 선택지
         "좌우 분할 │ (-h)": "Split L/R │ (-h)", "상하 분할 ─ (-v)": "Split T/B ─ (-v)",
         "◀ 왼쪽": "◀ Left", "▶ 오른쪽": "▶ Right", "▲ 위": "▲ Up", "▼ 아래": "▼ Down",
@@ -781,6 +784,7 @@ i18n.register({
         "cmd.display-popup": "Show command output in a popup",
         "cmd.single-border": "Show border when only one pane on/off (single-border on|off|toggle)",
         "cmd.coalesce-repaints": "Coalesce alt-screen full repaints on heavy output on/off — ssh responsiveness (coalesce-repaints on|off|toggle)",
+        "cmd.nest-auto-attach": "Auto-promote remote pytmux run to remote-attach instead of rejecting on/off (nest-auto-attach on|off|toggle)",
         "cmd.version": "Client/server version (p4 CL)·uptime popup (alias about)",
         "cmd.lang": "Switch UI language (lang ko|en) — Korean/English",
         "cmd.run-shell": "Run shell command",

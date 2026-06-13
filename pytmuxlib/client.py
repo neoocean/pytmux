@@ -2327,6 +2327,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 arg = args[0].lower() if args else "toggle"
                 val = (arg == "on") if arg in ("on", "off") else None
                 self.send_cmd("set_coalesce", value=val)
+            elif c == "nest-auto-attach":
+                # nest-auto-attach [on|off|toggle] — 원격 중첩 자동 승격(NESTED_
+                # ATTACH ㉢). 서버 내부 동작이라 클라 렌더 변화 없음. 서버가
+                # opts.json 영속, 인자 없으면 toggle(서버가 반전).
+                arg = args[0].lower() if args else "toggle"
+                val = (arg == "on") if arg in ("on", "off") else None
+                self.send_cmd("set_nest_auto_attach", value=val)
             elif c in ("lang", "language"):
                 # lang ko|en — UI 로케일 전환(§6 i18n). 클라이언트-로컬: 즉시 set_locale
                 # +영속 후 전체 재합성으로 상태줄·헤더·메뉴를 새 언어로 다시 그린다(언어

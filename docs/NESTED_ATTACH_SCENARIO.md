@@ -1,9 +1,17 @@
 # 원격 중첩 자동 승격 — 원격 `pytmux` 실행을 거부 대신 바깥 remote-attach 로 (시나리오)
 
-> **상태**: 설계 초안(미구현, 2026-06-13). 백로그 "원격 중첩 ssh attach — 거부만 구현,
-> 중첩 지원은 후속"(HANDOFF §9 CL 56394 '원격 중첩은 후속')의 시나리오.
-> §1.7 페더레이션([REMOTE_ATTACH_SCENARIO.md](REMOTE_ATTACH_SCENARIO.md), 완결)의
-> 후속이며 그 인프라(remote_attach·stdio-proxy·in-band DCS 스캔)를 그대로 재사용한다.
+> **상태**: ✅ **Stage N1~N3 구현 완료(CL 58670, 2026-06-13)** — 시나리오 도입 CL 58665.
+> 열린 결정 확정(사용자, 2026-06-13): ㉠ argv 전체 b64→서버 `sshwrap.parse_dest` 파싱,
+> ㉡ Windows .cmd 래퍼 DEST 발신 1차 제외, ㉢ `nest_auto_attach` 기본 ON+자동 탭 전환
+> ON+확인 팝업 없음, ㉣ 호스트 대조=소문자 정규화+접두 일치(불일치=무 ack), ㉤ ack
+> 1.0초. 잔여 = **Stage N4(실 ssh office1 라이브 검증)** 후속 — 코드는 서버+launcher
+> 양쪽이라 라이브 반영엔 데몬 재시작 필요. 구현 중 발견: pyte 는 DCS 본문을 화면으로
+> 흘린다 → `model.Pane.feed` 가 NEST DCS 를 제거/이월한다(§4 의 "화면 오염 금지"가
+> 서버 스캔이 아니라 feed 전처리 소관이 됐다). 테스트 +5(launcher 2·server 1·remote 2).
+>
+> 백로그 "원격 중첩 ssh attach — 거부만 구현, 중첩 지원은 후속"(HANDOFF §9 CL 56394
+> '원격 중첩은 후속')의 시나리오. §1.7 페더레이션([REMOTE_ATTACH_SCENARIO.md](REMOTE_ATTACH_SCENARIO.md),
+> 완결)의 후속이며 그 인프라(remote_attach·stdio-proxy·in-band DCS 스캔)를 그대로 재사용한다.
 >
 > **한 줄 요약**: pytmux 패널에서 ssh 로 들어간 원격 셸에서 `pytmux` 를 치면, 지금은
 > "거부 + ':remote-attach <이 호스트>' 힌트"로 끝난다(사용자가 로컬로 돌아와 호스트명을

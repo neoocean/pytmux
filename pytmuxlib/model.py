@@ -10,7 +10,7 @@ from functools import lru_cache
 import pyte
 from pyte.screens import Margins
 
-from . import plugins
+from . import plugins, sshwrap
 from .protocol import HISTORY, MIN_H, MIN_W, conv_color, set_winsize
 
 
@@ -282,6 +282,12 @@ _ALT_RE = re.compile(rb"\x1b\[\?(1049|1047|47)(h|l)")
 # 이렇게 해야 _ALT_RE 라우팅과 아래 _sanitize_sgr 가 항상 완전한 시퀀스만 본다.
 _CSI_PARTIAL_RE = re.compile(rb"\x1b(?:\[[0-9:;?<>=!]*)?$")
 
+# NESTED_ATTACH §4: NEST DCS(ssh 목적지 기록·승격 요청)는 서버 제어 채널이라 화면에
+# 보이면 안 되는데, pyte 는 DCS 본문을 소비하지 않고 출력으로 흘린다 — feed 에서
+# 완결분을 제거하고 끝에 잘린 후보(상한 이내)는 다음 feed 로 미룬다. 상한 초과/비
+# b64(위조)는 그대로 통과시켜 위조 입력이 정상 출력을 인질로 잡지 못하게 한다.
+_NEST_FEED_MAX = 8 * 1024
+
 # 콜론(:) 서브파라미터를 쓰는 현대식 SGR(`m`)을 pyte 0.8.2 가 이해하는 세미콜론
 # 형태로 정규화한다. pyte 의 CSI 파서는 콜론을 미지 문자로 보고 시퀀스를 **중단**
 # 하므로, 밑줄 끄기(`CSI 4:0 m`)·곱슬밑줄(`4:3`)·24bit 색(`38:2::r:g:b`)·밑줄색
@@ -420,6 +426,15 @@ class Pane:
         # §1.7 중첩 능동 감지: XTVERSION 질의(ESC[>0q)가 read 경계에 걸쳐 쪼개져도
         # 놓치지 않게 직전 청크 꼬리(질의 길이-1 바이트)를 보관(serverpty 스캔용).
         self._nestq_carry = b""
+        # 원격 중첩 자동 승격(NESTED_ATTACH_SCENARIO): 가변 길이 NEST DCS(목적지
+        # 기록/승격 요청)의 read 경계 보전 carry + ssh 래퍼가 기록한 이 패널의
+        # 마지막 ssh 목적지(사용자가 친 문자열 그대로 — 자동 remote-attach 인자의
+        # 유일한 출처, 패널 출력 self-report 는 쓰지 않는다) + 승격 요청 디바운스.
+        # 전부 휘발성(재시작 비영속 — dest 는 다음 ssh 때 다시 기록된다).
+        self._nestd_carry = b""
+        self._ssh_dest = ""
+        self._ssh_dest_ts = 0.0
+        self._nest_req_ts = 0.0
         # 대량 출력 청크 드레인(server._feed_drain): PTY 에서 읽었으나 아직 pyte 에
         # 안 먹인 바이트와, 진행 중인 비동기 드레인 태스크(서버가 생성/취소 관리).
         self._feedbuf = b""
@@ -498,6 +513,11 @@ class Pane:
         self.alt_active = False
         self.screen = self._main
         self._altcarry = b""
+        # NESTED_ATTACH: 새 셸이므로 NEST carry/ssh 목적지 기록도 무효(이전 셸의
+        # 목적지로 자동 승격하지 않게 — 다음 ssh 가 다시 기록한다).
+        self._nestd_carry = b""
+        self._ssh_dest = ""
+        self._ssh_dest_ts = 0.0
         self._feedbuf = b""
         self._feed_task = None
         self.scroll = 0
@@ -702,9 +722,25 @@ class Pane:
             self.dirty = True
             self._feed_seq += 1
             return
+        # NESTED_ATTACH: NEST DCS 제거/이월(위 _NEST_FEED_MAX 주석 참조).
+        if sshwrap.NEST_PRE in buf:
+            buf = sshwrap.NEST_DCS_RE.sub(b"", buf)
+            i = buf.rfind(sshwrap.NEST_PRE)
+            if (i != -1 and sshwrap.DCS_ST not in buf[i:]
+                    and len(buf) - i <= _NEST_FEED_MAX):
+                self._altcarry = buf[i:]
+                buf = buf[:i]
+        else:
+            tail = buf[-(len(sshwrap.NEST_PRE) - 1):]
+            j = tail.rfind(b"\x1b")
+            if j != -1 and sshwrap.NEST_PRE.startswith(tail[j:]):
+                cut = len(buf) - (len(tail) - j)
+                self._altcarry = buf[cut:]
+                buf = buf[:cut]
         m = _CSI_PARTIAL_RE.search(buf)
         if m:  # 끝에 잘린 CSI 시퀀스는 다음 feed 로 미룸(완전한 시퀀스만 처리)
-            self._altcarry = buf[m.start():]
+            # (+ NEST 이월분이 있으면 그 앞에 둔다 — 원 스트림 순서 보존)
+            self._altcarry = buf[m.start():] + self._altcarry
             buf = buf[:m.start()]
         buf = _PRIVATE_SGR_RE.sub(b"", buf)   # XTMODKEYS 등 `CSI >..m` 제거(밑줄 오인 방지)
         buf = _KITTY_KBD_RE.sub(b"", buf)     # kitty 키보드 프로토콜 `CSI >..u` 등 제거(`u` 누수 방지)
