@@ -133,15 +133,15 @@ async def test_rec_client_badge_init_and_tab_present():
                                            "capture_path": "/t/p.log",
                                            "capture_size": 42})
     assert st.capture is True and st.capture_path == "/t/p.log"
-    # 배지: capture ON → ` REC ` 세그먼트 + zone, 누적폭 +5.
+    # 배지: capture ON → ` REC ` 세그먼트 + zone, 누적폭 +5(시스템 배지 영역 훅).
     segs = []
-    w = reg.client_statusbar(None, st, segs, 80, 10)
+    w = reg.client_statusbar_badges(None, st, segs, 80, 10)
     assert w == 15 and st._rec_zone == (10, 15)
     assert any(getattr(s, "text", "") == " REC " for s in segs)
     # capture OFF → 배지·zone 없음, 폭 불변.
     st.capture = False
     segs2 = []
-    w2 = reg.client_statusbar(None, st, segs2, 80, 10)
+    w2 = reg.client_statusbar_badges(None, st, segs2, 80, 10)
     assert w2 == 10 and not segs2 and st._rec_zone is None
     # 팝업 탭: (제목, 줄, 동작) 3-튜플.
     class _App:

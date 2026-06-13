@@ -1089,9 +1089,11 @@ class StatusBar(Widget):
             segs.append(Segment(" AR ", Style(color="black", bgcolor=tc("accent"),
                                               bold=True)))
             acc += 4
-        # REC ` REC ` 배지·_rec_zone 은 rec 플러그인의 client_statusbar 훅이 그린다
-        # (아래 plugins.client_statusbar 디스패치). 시스템 배지(SYNC/AR) 뒤 플러그인
-        # 배지 영역에 렌더된다. 플러그인 부재 시 배지·클릭존 없음(delete-to-disable).
+        # 시스템 배지 영역(SYNC/AR 직후) 플러그인 배지: REC ` REC ` 배지·_rec_zone 을
+        # rec 플러그인의 client_statusbar_badges 훅이 여기서 그린다 — 좌하단 정보 클러스터
+        # (client_statusbar, 아래)보다 **앞**이라 종전과 같은 위치(시스템 배지 옆)를
+        # 유지한다. 플러그인 부재면 acc 그대로(배지·클릭존 없음, delete-to-disable).
+        acc = self.app.plugins.client_statusbar_badges(self.app, self, segs, w, acc)
         self._usage_zone = None
         self._model_zone = None   # 모델 배지 클릭존(모델·컨텍스트 변경 팝업, 요청)
         # Claude 좌하단 세그먼트(모델 배지·컨텍스트·토큰Σ·예산경고·카운트다운·폭주경고)는

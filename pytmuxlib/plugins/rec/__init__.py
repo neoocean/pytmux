@@ -121,9 +121,9 @@ class _RecPlugin:
         from .clientside import absorb
         absorb(status, msg)
 
-    def client_statusbar(self, app, status, segs, w, w0=None):
-        """상태줄에 ` REC ` 배지를 그리고 클릭존을 채운다(코어 _render_main 에서 이전).
-        w0=들어오는 누적 셀폭, 새 누적 폭을 반환한다(P6)."""
+    def client_statusbar_badges(self, app, status, segs, w, w0=None):
+        """시스템 배지 영역(SYNC/AR 직후)에 ` REC ` 배지를 그리고 클릭존을 채운다(코어
+        _render_main 에서 이전 — 종전과 같은 위치). w0=들어오는 누적 셀폭, 새 누적 폭 반환(P6)."""
         from .clientside import render_badge
         if w0 is None:
             return None

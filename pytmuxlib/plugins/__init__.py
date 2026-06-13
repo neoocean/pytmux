@@ -368,6 +368,20 @@ class Registry:
             if fn is not None:
                 fn(app, status)
 
+    def client_statusbar_badges(self, app, status, segs, w, w0=0):
+        """하단 상태줄 **시스템 배지 영역**(SYNC/AR 직후, 좌하단 정보 클러스터보다 앞)에
+        플러그인이 컴팩트 배지를 append 한다 — rec 가 ` REC ` 배지+클릭존을 여기서 그린다.
+        client_statusbar(좌하단 정보 클러스터)와 같은 (제목 없는) 폭-체이닝 규약: w0=들어
+        오는 누적 셀폭, 각 플러그인이 새 누적 폭을 반환하면 체이닝, 최종 폭을 돌려준다.
+        플러그인이 없으면 w0 그대로(배지 없음, delete-to-disable)."""
+        for p in self.plugins:
+            fn = getattr(p, "client_statusbar_badges", None)
+            if fn is not None:
+                r = fn(app, status, segs, w, w0)
+                if r is not None:
+                    w0 = r
+        return w0
+
     def client_statusbar(self, app, status, segs, w, w0=0):
         """하단 상태줄 좌측에 Claude 세그먼트(모델 배지·컨텍스트·토큰Σ·예산경고·카운트
         다운·폭주경고)를 append 하고 클릭존(_usage_zone/_model_zone)을 status 에 채운다.
