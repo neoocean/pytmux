@@ -55,14 +55,16 @@
 | 3 | P3 | `render()` 라이브 경로서 전체 스크롤백 복사 회피 | `model.py:884` | 중 | 낮음 | ✅적용 |
 | 4 | P4 | 클라 `_composite` 의 프레임당 `Style`/`theme_color` 할당 캐시(시그니처) | `client.py:1344+` | 높음 | 낮음 | ✅적용 |
 | 5 | P5 | `theme_color` 메모이즈(테마이름+변수명 캐시) | `clientutil.py:253` | 중 | 낮음 | ✅적용 |
-| 6 | P6 | 상태바 세그먼트 폭 재합산 → 증분 누적 | `clientwidgets.py:1087,1138` | 중 | 낮음 | ✅적용(메인 상태바) |
+| 6 | P6 | 상태바 세그먼트 폭 재합산 → 증분 누적(메인+플러그인 훅) | `clientwidgets.py:1087,1138`, `clientstatus.py:224,236` | 중 | 낮음 | ✅적용(전체) |
 | 7 | P7 | `usagedb` 레코드별 fsync → `synchronous=NORMAL`(WAL) | `usagedb.py:84` | 중 | 중 | ✅적용 |
 | 8 | P8 | autorename 의 동기 `ps` subprocess → `run_in_executor` 오프로드 | `servertree.py:568` | 중 | 중 | ✅적용 |
 
 > **P6 범위**: 메인 상태바(`clientwidgets._render_main`)의 **이중 전수 재순회**(rx0·used)를
-> 증분 누적으로 제거. `clientstatus.render_segs`(플러그인) 내부 폭 합산(`ux0`)은 좌표
-> 계산용 단일 walk 라 중복도가 낮고, 최적화하려면 `client_statusbar` 훅 시그니처를
-> 바꿔야 해(전 플러그인 영향) 비용 대비 위험이 커 보류.
+> 증분 누적으로 제거. **+ 플러그인 훅까지 확장**: `client_statusbar` 훅 시그니처에 `w0`
+> (들어오는 누적 셀폭)을 추가하고 **새 누적 폭을 반환**하게 바꿔, `render_segs` 의
+> `ux0`/`left` 전수합산과 코어의 추가분 재순회를 모두 제거했다. 4계층(호출부→디스패처
+> →claude-code 래퍼→render_segs) 일괄 변경, 단일 구현부(claude-code)·직접 호출 테스트
+> 없음 확인 후 적용. 불변식: 훅 진입 시 `w0 == segs 전수합산`(좌측+배지+REC 까지만 들어옴).
 >
 > **P7 방식**: 문서가 제안한 앱-레벨 배치 버퍼 대신 `PRAGMA synchronous=NORMAL`(WAL
 > 표준)을 채택 — commit 마다 fsync 하던 비용을 체크포인트로 미뤄 같은 효과를 더 낮은

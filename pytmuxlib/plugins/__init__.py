@@ -348,15 +348,22 @@ class Registry:
             if fn is not None:
                 fn(app, status)
 
-    def client_statusbar(self, app, status, segs, w):
+    def client_statusbar(self, app, status, segs, w, w0=0):
         """하단 상태줄 좌측에 Claude 세그먼트(모델 배지·컨텍스트·토큰Σ·예산경고·카운트
         다운·폭주경고)를 append 하고 클릭존(_usage_zone/_model_zone)을 status 에 채운다.
         플러그인이 없으면 no-op → Claude 세그먼트가 전혀 안 그려지고 클릭존도 None(클릭
-        no-op) — delete-to-disable."""
+        no-op) — delete-to-disable.
+
+        w0 = 들어오는 segs 의 누적 셀폭(P6). 각 플러그인이 자기 append 후의 새 누적
+        폭을 반환하면 다음 플러그인·코어가 재순회 없이 이어 쓴다. 반환이 없으면(None)
+        직전 w0 를 유지한다. 최종 누적 폭을 돌려준다(플러그인 부재면 w0 그대로)."""
         for p in self.plugins:
             fn = getattr(p, "client_statusbar", None)
             if fn is not None:
-                fn(app, status, segs, w)
+                r = fn(app, status, segs, w, w0)
+                if r is not None:
+                    w0 = r
+        return w0
 
     # ---- Pane Claude 상태 소유 훅(S4) ----
     # 코어 model.py 의 Pane 은 Claude 거동 필드를 정의하지 않고, 생성·respawn·직렬화

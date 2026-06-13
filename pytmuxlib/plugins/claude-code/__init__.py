@@ -822,11 +822,12 @@ class _ClaudeCodePlugin:
         from .clientstatus import absorb
         absorb(status, msg)
 
-    def client_statusbar(self, app, status, segs, w):
+    def client_statusbar(self, app, status, segs, w, w0=None):
         """하단 상태줄 좌측에 Claude 세그먼트(모델·컨텍스트·토큰Σ·예산·카운트다운·경고)를
-        그리고 클릭존을 채운다(코어 StatusBar._render_main 의 Claude 블록 이전)."""
+        그리고 클릭존을 채운다(코어 StatusBar._render_main 의 Claude 블록 이전). w0=들어오는
+        누적 셀폭(P6) → render_segs 가 ux0/left 재합산을 생략하고 새 누적 폭을 반환한다."""
         from .clientstatus import render_segs
-        render_segs(status, segs, w)
+        return render_segs(status, segs, w, w0)
 
     # (client_status_tabs 훅 — 통합 상태 팝업의 '토큰 사용량' 탭 — 은 token-log 통합
     #  (2026-06-12)으로 제거. 통합 상태 팝업은 REC·서버 두 탭, 토큰은 token-log 팝업.)

@@ -1107,11 +1107,10 @@ class StatusBar(Widget):
         # Claude 좌하단 세그먼트(모델 배지·컨텍스트·토큰Σ·예산경고·카운트다운·폭주경고)는
         # claude-code 플러그인의 client_statusbar 훅이 그리고 위 두 클릭존을 채운다(Phase
         # 2c). 플러그인이 없으면 no-op → Claude 세그먼트 미표시·클릭존 None(클릭 no-op).
-        _pre = len(segs)
-        self.app.plugins.client_statusbar(self.app, self, segs, w)
-        # 플러그인(claude-code client_statusbar)이 추가한 세그먼트는 폭이 불투명하므로
-        # 새로 붙은 것만(부분) 합산해 누적에 더한다 — 그래도 전수 재순회보다 싸다.
-        acc += sum(_cw(s.text) for s in segs[_pre:])
+        # P6: 누적 폭 acc 를 훅에 w0 로 넘기고, 훅이 자기 세그먼트를 그린 뒤의 새 누적
+        # 폭을 돌려받는다 — 플러그인이 ux0/left 를 segs 전수합산으로 다시 구하지 않고,
+        # 코어도 추가분을 재순회하지 않는다. 플러그인 부재면 acc 가 그대로 돌아온다.
+        acc = self.app.plugins.client_statusbar(self.app, self, segs, w, acc)
         if self.prefix_off:
             segs.append(Segment("NEST ", Style(color="white",
                                                bgcolor=tc("secondary"), bold=True)))

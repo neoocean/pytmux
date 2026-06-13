@@ -160,14 +160,21 @@ def _trailing_cells(status, _char_cells) -> int:
     return n
 
 
-def render_segs(status, segs, w):
+def render_segs(status, segs, w, w0=None):
     """하단 상태줄 좌측에 Claude 세그먼트를 append 하고 클릭존을 status 에 채운다(코어
     _render_main 의 Claude 블록 이전). segs 는 REC 까지 누적된 상태로 들어오고, 여기서
-    이어 그린 뒤 코어가 NEST/윈도우 목록을 계속 붙인다. 클릭존은 누적 폭으로 계산한다."""
+    이어 그린 뒤 코어가 NEST/윈도우 목록을 계속 붙인다. 클릭존은 누적 폭으로 계산한다.
+
+    w0(P6) = 들어오는 segs 의 누적 셀폭. 코어가 넘겨주면 ux0/left 를 segs 전수합산으로
+    다시 구하지 않는다(없으면 None → 하위호환 전수합산). 자기 세그먼트를 그린 뒤의 **새
+    누적 셀폭**을 반환해 코어가 재순회 없이 이어 쓰게 한다."""
     from rich.segment import Segment
     from rich.style import Style
     from pytmuxlib.clientutil import _char_cells, theme_color
     tc = lambda n: theme_color(status, n)  # noqa: E731
+    _cw = lambda t: sum(_char_cells(c) for c in t)  # noqa: E731
+    # w0 미지정(직접 호출)이면 기존처럼 전수합산으로 폭을 구한다(하위호환).
+    acc = w0 if w0 is not None else sum(_cw(s.text) for s in segs)
     # 활성 Claude 패널: 모델(M14c) + 컨텍스트 사용량(best-effort) + 세션 누적(#3, Σ).
     uparts = []
     if status.claude_active:
@@ -220,8 +227,9 @@ def render_segs(status, segs, w):
             chosen = acct
             if full != acct:
                 # 좌측(REC 등 누적) + 사용량 클러스터(전체계정 포함, 앞뒤 공백 2) + 우측
-                # 추정 ≤ 전체폭이면 전체 계정명을 보인다.
-                left = sum(sum(_char_cells(c) for c in s.text) for s in segs)
+                # 추정 ≤ 전체폭이면 전체 계정명을 보인다. (P6: 들어오는 누적폭 acc 재사용 —
+                # 이 시점 segs 는 아직 uparts 미append 라 acc == segs 전수합산과 같다.)
+                left = acc
                 cluster_full = " · ".join(
                     uparts + usage_parts[:-1] + [usage_parts[-1] + " " + full])
                 cw_full = 2 + sum(_char_cells(c) for c in cluster_full)
@@ -233,7 +241,7 @@ def render_segs(status, segs, w):
         sec = Style(color="white", bgcolor=tc("secondary"), bold=True)
         hi = Style(color="black", bgcolor=tc("warning"), bold=True)
         fb = status.focus_btn
-        ux0 = sum(sum(_char_cells(c) for c in s.text) for s in segs)
+        ux0 = acc   # P6: 들어오는 누적폭(=이 시점 segs 전수합산) 재사용
         # 모델 배지(첫 upart)와 나머지(사용량·Σ)를 **분리 세그먼트**로 그려, 각각
         # 클릭존·esc 포커스 강조가 가능하게 한다(요청). 모델 클릭=모델 팝업,
         # 나머지 클릭=토큰 로그.
@@ -257,6 +265,7 @@ def render_segs(status, segs, w):
         segs.append(Segment(" ", sec))
         x += 1
         status._usage_zone = (ux0, x)
+        acc = x   # P6: uparts 블록이 append 한 폭만큼 누적 전진(x 가 정확히 추적)
     # 실측 한도 경고(알림만 — 동작 변경 없음, §7-4 이후 게이트 임계 기반).
     # 임계 도달=빨강 ⚠, 임계의 80% 도달=노랑 ⚠.
     if status.budget_level >= 80:
@@ -265,31 +274,40 @@ def render_segs(status, segs, w):
         # 1칸이라, 바로 뒤 글자가 둘째 칸에 겹쳐 그려졌다(요청) → 공백으로 흡수.
         # 텍스트 색은 배경 대비로: 노랑(근접) 배경엔 흰 글자가 묻혀 안 보이므로
         # 검은 글자(아래 ⏳ 카운트다운 배지와 동일 패턴), 빨강(도달) 배경엔 흰 글자.
-        segs.append(Segment(i18n.t("claude.limit_reached") if over
-                            else i18n.t("claude.limit_near"),
+        _bt = (i18n.t("claude.limit_reached") if over
+               else i18n.t("claude.limit_near"))
+        segs.append(Segment(_bt,
                             Style(color=("white" if over else "black"),
                                   bgcolor=("red" if over else "yellow"),
                                   bold=True)))
+        acc += _cw(_bt)
     # M14 카운트다운 배지: 무장된 자동 액션의 종류 + 남은 초(비가역 동작 발견성).
     if isinstance(status.claude_pending, dict):
         kind = status.claude_pending.get("kind")
         eta = status.claude_pending.get("eta", 0)
         label = (i18n.t("claude.auto_resume") if kind == "resume"
                  else i18n.t("claude.auto_cleanup"))
-        segs.append(Segment(i18n.t("claude.countdown", label=label, eta=eta),
+        _ct = i18n.t("claude.countdown", label=label, eta=eta)
+        segs.append(Segment(_ct,
                             Style(color="black", bgcolor=tc("warning"),
                                   bold=True)))
+        acc += _cw(_ct)
     # M17(T7): 장기턴/반복루프 경고 배지(grade0 — 알림만, 개입 없음). 아이콘은 warn
     # 문자열이 직접 포함한다(장기턴 ❗ 분:초 / 그 외 ⚠ …) — 이모지(2칸) 뒤 공백도 그
     # 문자열에 들어 있어 다음 글자 겹침이 없다(요청 2026-06-12).
     if status.claude_warn:
-        segs.append(Segment(f" {status.claude_warn} ",
+        _wt = f" {status.claude_warn} "
+        segs.append(Segment(_wt,
                             Style(color="white", bgcolor=tc("error"),
                                   bold=True)))
+        acc += _cw(_wt)
     # M14c 모델 과선택 힌트 배지(알림만 — 개입 없음). 경고(error 빨강)와 구분되게
     # secondary 배경의 소프트 톤으로 그린다. 힌트 문자열은 💡(2칸) 뒤 공백을 직접
     # 포함해 다음 글자 겹침이 없다(claude_warn 의 이모지 패턴과 동일).
     if status.claude_model_tip:
-        segs.append(Segment(f" {status.claude_model_tip} ",
+        _tt = f" {status.claude_model_tip} "
+        segs.append(Segment(_tt,
                             Style(color="white", bgcolor=tc("secondary"),
                                   bold=True)))
+        acc += _cw(_tt)
+    return acc   # P6: 새 누적 셀폭(코어가 NEST/윈도우 이어붙일 기준)
