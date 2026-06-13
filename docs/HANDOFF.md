@@ -280,6 +280,16 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- **원격 중첩 자동 승격 시나리오(2026-06-13, CL 58665)** — 백로그 "원격 중첩 ssh
+  attach — 거부만 구현, 중첩 지원은 후속"(56394)의 설계 문서
+  [NESTED_ATTACH_SCENARIO.md](NESTED_ATTACH_SCENARIO.md). 원격 셸에서 `pytmux` 입력
+  한 번으로 바깥 pytmux 가 그 패널의 **실제 ssh 목적지**(sshwrap 래퍼가 NEST_DEST
+  DCS 로 기록 — 별칭/ControlMaster/도메인 계정 보존)로 자동 `remote_attach`(§1.7
+  인프라 재사용) + 원격 탭 전환, 실패/구버전/OFF 는 현행 거부 메시지 폴백(열화 없음).
+  in-band DCS 3종(NEST_DEST/NEST_ATTACH_REQ/ACK — 기존 NEST_QUERY 스캔 지점 확장),
+  보안 원칙(패널 출력 비신뢰 — self-report 를 attach 인자로 쓰지 않음·디바운스·
+  notice 가시화·`nest_auto_attach` 토글), 2단 ssh 오어태치 대조, 단계 N1~N4·테스트
+  계획·열린 결정 ㉠~㉤. **문서만 — 코드 변경 없음.**
 - **IMPROVEMENT 백로그 7건 자율 진행(2026-06-13, CL 58642·58645·58647·58653·58657)** — 06-13
   사용자 "2.2, 2.7, 2.5, 3.4, 3.5, 1.1, 3.6 자율 진행". 코드 4건 + stale/분석 종결 3건.
   - **CL 58642 — §1.1 문서 정정(stale).** owned-ConPTY 58457 돌파+58503 기본 전환이 §1.1
