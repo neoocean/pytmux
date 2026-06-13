@@ -228,3 +228,91 @@ async def test_owned_conpty_reads_in_feed_slice_chunks():
     finally:
         p.stop_reader()
         reader.join(timeout=0.5)
+
+
+async def test_owned_conpty_watcher_fires_eof_on_child_exit():
+    """자식이 스스로 종료(셸 exit)하면 감시 스레드가 콘솔을 hangup 해 블로킹 read 를
+    EOF 로 깨워 _fire_eof 가 불린다.
+
+    버그 재현: 동기 ReadFile 은 conhost 가 살아있으면 자식이 죽어도 b"" 를 주지 않아
+    reader 가 영원히 블록 → EOF 미발생 → 패널 좀비(원격 페더레이션에선 원격 탭 유지).
+    가짜 _ConPty 로 그 상황을 모사한다: read 는 close 전까진 데이터 없이 블록하고,
+    wait 는 _alive 동안 None(WaitForSingleObject 타임아웃), 종료 후 종료코드를 준다.
+    감시자가 wait 로 종료를 보고 close() → read 가 EOF → reader 가 _fire_eof."""
+    import threading
+    import time
+
+    p = pty_backend._OwnedConPty.__new__(pty_backend._OwnedConPty)
+    p.pid = 4321
+    p._stop = threading.Event()
+    p._resume_evt = threading.Event(); p._resume_evt.set()
+    p._eof_fired = False
+    eof_called = threading.Event()
+
+    class _FakeCp:
+        def __init__(self):
+            self._closed = threading.Event()
+            self._alive = True
+            self.close_calls = 0
+
+        def read(self, maxlen):
+            # close 전까진 데이터 없이 블록(자식 죽어도 EOF 안 오는 버그 상황),
+            # close() 후엔 b"" (EOF).
+            while not self._closed.is_set():
+                time.sleep(0.005)
+            return b""
+
+        def wait(self, timeout_ms):
+            if self._alive:
+                time.sleep(0.005)        # WaitForSingleObject 타임아웃 모사
+                return None
+            return 0                     # 종료코드(≠None) → 자식 종료
+
+        def close(self):
+            self.close_calls += 1
+            self._closed.set()
+
+    fake = _FakeCp()
+    p._cp = fake
+    loop = asyncio.get_running_loop()
+    got = bytearray()
+    p.start_reader(loop, got.extend, eof_called.set)
+    try:
+        await asyncio.sleep(0.05)
+        assert not eof_called.is_set(), "자식 생존 중엔 EOF 가 불리면 안 됨"
+        assert fake.close_calls == 0, "생존 중엔 콘솔 hangup 금지"
+        fake._alive = False              # 셸 exit 모사
+        await asyncio.sleep(0.08)
+        assert fake.close_calls >= 1, "감시자가 종료 감지 후 콘솔 hangup 해야"
+        assert eof_called.is_set(), "hangup 으로 read EOF → _fire_eof 가 불려야"
+    finally:
+        p.stop_reader()
+        p._reader.join(timeout=0.5)
+        p._watcher.join(timeout=0.5)
+
+
+async def test_owned_conpty_watcher_quiet_on_teardown():
+    """정상 teardown(stop/close 가 _stop set)일 땐 감시자가 콘솔을 건드리지 않는다 —
+    그 경로는 backend close() 가 직접 read 를 깨우므로 이중 close 를 피한다."""
+    import threading
+
+    p = pty_backend._OwnedConPty.__new__(pty_backend._OwnedConPty)
+    p._stop = threading.Event()
+
+    class _FakeCp:
+        def __init__(self):
+            self.close_calls = 0
+
+        def wait(self, timeout_ms):
+            return None                  # 계속 생존
+
+        def close(self):
+            self.close_calls += 1
+
+    fake = p._cp = _FakeCp()
+    p._stop.set()                        # teardown 선반영
+    watcher = threading.Thread(target=p._watch_exit, daemon=True)
+    watcher.start()
+    watcher.join(timeout=0.5)
+    assert not watcher.is_alive(), "_stop 이면 즉시 종료해야"
+    assert fake.close_calls == 0, "teardown 경로에선 감시자가 close 하지 않아야"

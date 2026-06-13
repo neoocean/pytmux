@@ -49,6 +49,13 @@ DEFAULT_READ = 65536
 # 64KB 드레인 태스크 없이 곧장 ingest 된다.
 _OWNED_READ_CHUNK = FEED_SLICE
 
+# 자식 종료 감시 폴링 간격(ms). 동기 ReadFile 은 conhost(OpenConsole)가 살아있는 한
+# 자식이 죽어도 EOF 를 주지 않으므로(_WinPty 는 pywinpty 의 주기적 빈 read + isalive
+# 폴백으로 공짜로 감지하지만 owned 는 그게 없다), 전용 감시 스레드가 자식 프로세스
+# 핸들을 이 간격으로 기다렸다가 종료를 보면 콘솔을 hangup 해 블로킹 read 를 EOF 로
+# 깨운다. WaitForSingleObject 타임아웃이라 유휴 CPU 0(폴링이 아니라 대기).
+_OWNED_EXIT_POLL_MS = 200
+
 # Unix 시그널 상수(Windows 에는 SIGHUP 이 없어 자리표시자). 메서드 본문에서
 # 전역으로 참조하므로 호출 시점(=Unix 런타임)에만 의미를 가진다.
 try:
@@ -596,6 +603,7 @@ class _OwnedConPty(PtyProcess):
         self._on_data: Optional[OnData] = None
         self._on_eof: Optional[OnEof] = None
         self._reader: Optional[threading.Thread] = None
+        self._watcher: Optional[threading.Thread] = None
         self._stop = threading.Event()
         # 백프레셔 게이트(_WinPty 와 동일): set=읽기 허용(기본), clear=다음 read 전에 멈춤.
         self._resume_evt = threading.Event()
@@ -615,6 +623,42 @@ class _OwnedConPty(PtyProcess):
         self._reader = threading.Thread(
             target=self._read_loop, name=f"owned-conpty-{self.pid}", daemon=True)
         self._reader.start()
+        # 자식 종료 감시 스레드: 동기 ReadFile 은 자식이 스스로 죽어도(예: 셸의 exit)
+        # conhost 가 살아있으면 EOF 를 안 줘 reader 가 영원히 블록한다 → _fire_eof
+        # 미발생 → 패널이 좀비로 남는다(원격 페더레이션에선 닫혀야 할 원격 탭이 유지).
+        # 별도 스레드가 자식 종료를 기다렸다가 콘솔을 hangup 해 read 를 EOF 로 깨운다.
+        self._watcher = threading.Thread(
+            target=self._watch_exit, name=f"owned-conpty-wait-{self.pid}",
+            daemon=True)
+        self._watcher.start()
+
+    def _watch_exit(self) -> None:
+        """자식 프로세스 종료를 기다렸다가 ConPTY 를 hangup 해 블로킹 read 를 EOF 로
+        깨운다(_WinPty 가 pywinpty isalive 폴백으로 공짜로 얻는 자식-종료 감지를 owned
+        에도 부여). `cp.wait` 는 WaitForSingleObject 타임아웃이라 살아있는 동안 유휴
+        CPU 0 으로 대기하고, 종료되면 종료코드(≠None)를 돌려준다. 정상 teardown
+        (stop_reader/close 가 _stop set)일 땐 그쪽이 read 를 깨우므로 관여하지 않는다."""
+        cp = self._cp
+        if cp is None:
+            return
+        while not self._stop.is_set():
+            try:
+                ec = cp.wait(_OWNED_EXIT_POLL_MS)
+            except OSError:
+                ec = None
+            if ec is not None:
+                break                       # 자식 종료 감지
+        if self._stop.is_set():
+            return                          # teardown 경로가 이미 처리
+        c = self._cp
+        if c is not None:
+            # ClosePseudoConsole → conhost 쓰기단 닫힘 → reader 의 블로킹 read 가 b""
+            # 로 빠져나가 _read_loop 가 _fire_eof 를 친다(→ server._pane_eof). close()
+            # 는 _ConPty 내부 _closed 가드로 멱등 — backend close() 와 경쟁해도 안전.
+            try:
+                c.close()
+            except OSError:
+                pass
 
     def _read_loop(self) -> None:
         cp = self._cp
