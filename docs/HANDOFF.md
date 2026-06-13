@@ -139,7 +139,8 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
    (┬┴├┤┼). 패널이 하나여도 항상 그림.
 4. 패널 이름(리네임/border-status 시) 위 테두리 중앙.
 5. copy-mode 선택 하이라이트, display-panes 번호.
-6. **Claude 마지막 프롬프트 스티키 헤더**(`_draw_claude_headers`).
+6. 플러그인 콘텐츠-레이어(`client_render` 훅 — footer 클릭존 스캔·플러그인 오버레이.
+   스티키 프롬프트 헤더는 2026-06-13 제거).
 7. **clock-mode 오버레이**(`_draw_clock_overlay`, 패널 전체 덮고 뒤 dim).
 
 ## 5. 구현된 주요 기능 (요지)
@@ -177,7 +178,8 @@ Server → sessions(항상 1개) → Session.tabs[] → Tab.window(단일) → W
   클릭**으로 토글).
 - copy-mode 스크롤백/검색/선택복사/클립보드, 붙여넣기 패스스루.
 - **Claude Code 연동(고유)**: 토큰 리밋 자동재개(prefix R), 탭 상태 아이콘
-  (대기 ○/처리중 ◐/리밋 ⊘), 마지막 프롬프트 스티키 헤더, 토큰/컨텍스트 표시,
+  (대기 ○/처리중 ◐/리밋 ⊘), 프롬프트 히스토리(claude-prompt-history 플러그인 —
+  스티키 헤더는 2026-06-13 제거), 토큰/컨텍스트 표시,
   **컨텍스트 하드스톱 자동복구**(CL 57957 — "Context limit reached" 감지 시 즉시 `/compact`,
   토글 `auto_hardstop` 기본 ON).
 - **IME 한/영 배지**(CL 57983·위치 58166, 플러그인): **커서가 있는 줄의 오른쪽 끝**에
@@ -278,6 +280,49 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
+- **IMPROVEMENT 백로그 7건 자율 진행(2026-06-13, CL 58642·58645·58647·58653·58657)** — 06-13
+  사용자 "2.2, 2.7, 2.5, 3.4, 3.5, 1.1, 3.6 자율 진행". 코드 4건 + stale/분석 종결 3건.
+  - **CL 58642 — §1.1 문서 정정(stale).** owned-ConPTY 58457 돌파+58503 기본 전환이 §1.1
+    본문(06-11 "미해결 재확정")에 미반영이라 ✅ 해결로 정정(잔여=번들 OpenConsole 공통
+    일시 FFFD, 저우선).
+  - **CL 58645 — §2.2+§2.7 발견성.** `:mouse-help`(별칭 mouse) 명령·우클릭 메뉴 "마우스
+    제스처 도움말"(둘 다 list-keys "키 · 마우스" 팝업 재사용 — 제스처 목록 두 벌 금지),
+    메뉴 join_pane(명령 프롬프트 "join-pane " 프리필), **레지스트리 `menu_items` 훅 신설**
+    (key=플러그인 명령 이름, `_run_menu_action` else → `_run_command(key)` 폴백) +
+    clock/calendar 메뉴 합류. MANUAL §8 stale 행 정정(Shift+드래그=텍스트 선택; swap 은
+    06-05 부터 헤더 드래그 pick-up) + 헤더드래그/join 행 추가.
+  - **CL 58647 — §2.5 잔여: root table `bind -n`.** config `bind -n <key> <cmd>` →
+    `cfg["root_bindings"]`, 런타임 `bind-key -n`/`unbind-key -n`(`-a` 는 양 테이블),
+    노멀 모드에서 내장 크롬 키(ESC/\`/F12/prefix/Ctrl+V)·오버레이 키 다음 **패널
+    패스스루 직전** 가로채 `_run_command`. list-keys prefix/(root) 구분 표기.
+    경고 UI 노출은 기구현(stale), prefix 폴백 \x02 는 의도 유지.
+  - **CL 58653 — §3.4 busy/idle 오탐.** `_BUSY_SPINNER_RE` 에서 `↑/↓ N tokens` 단독
+    신호 제거(스피너 앵커 신호만 — transcript 토큰 잔재의 busy 오탐 종결) + busy→idle
+    **큐 프롬프트 승격 2프레임 확정 라치**(`_busy_exit_miss`+pending 강제 재스캔;
+    깜빡임 무승격, busy→limit/None 즉시). 테스트 픽스처 실 스피너화. (done 플래그·
+    auto-doc 은 기존 디바운스로 충분해 전역 상태 히스테리시스는 비채택.)
+  - **CL 58657 — §3.5①·§3.6 종결.** ①=표시 시점 버킷 재계산이라 토큰 이중/누락 자체가
+    불성립(분석 기각, daily 합성은 정오 anchor 기구현). 3.6=상태줄 Σ수치 제거(06-11)+
+    S6 `~Σ` 추정 라벨·[대사] 두 출처 대조·계정 first-seen/프로브 백필/단일계정 귀속으로
+    기해소(stale 정정).
+  - 각 CL 헤드리스 풀스위트 green 게이트(58653 시점 1실패는 병렬 세션 미커밋 WIP 의
+    i18n 대칭 — 그쪽 파일 소관). test_server.py 에 병렬 세션의 claude-header 테스트
+    삭제분 동승(과삭제된 `_OneShotReader` 는 복원).
+- **Claude 프롬프트 스티키 헤더 완전 제거(2026-06-13)** — 06-13
+  사용자 요청("클로드 헤더를 완전히 제거") — claude-prompt-history 플러그인(58648)이
+  프롬프트 UI 를 대체하는 Phase 2(플러그인 docstring 의 사용자 확정 설계). 제거:
+  표시(`_draw_headers`/`claude_header_panes`, clientrender)·서버 행 예약
+  (`_should_reserve_header`/`_reserve_header`/`_HDR_MIN_ROWS`/`claude_hdr` 와이어 필드/
+  Pane `_hdr_reserved`)·옵션(`claude_header` opt/`set_claude_header`/opts.json 키/
+  control 별칭)·명령(`claude-header`)·status `claude_header` 필드·ESC 헤더 포커스(#5
+  — `_hdr_panes`/`h` 진입/헤더간 ←→). **유지**: 닫기 [x] ESC 포커스 동선(#31 —
+  `_hdr_focus` 의 "close" 만 남겨 `_close_focus` bool 로 단순화, [x] 는 항상 콘텐츠 첫
+  행), `_hdr_claude` 디바운스 플래그(이름만 헤더 유래 — API 에러 게이트 등 안정 Claude
+  존재 신호 소비자가 그대로 사용, panestate 주석 갱신), `last_prompt`/`pending_prompts`
+  서버측 추적(상태 아이콘·자동화·플러그인 소비). 패널 DnD 픽업은 원래 패널 상단
+  테두리(`_header_pane_at` — Claude 헤더 아님)라 무영향. 테스트: 헤더 전용 5건 삭제·
+  3건 개작(`test_claude_icon_and_close_button`·`test_esc_nav_reaches_close_button`·
+  `test_claude_presence_debounce_no_flicker`), 계약 테스트 속성 목록 갱신.
 - **§1.7 Stage 4 — 원격 탭 분홍 구분·멀티탭 검증·원격↔로컬 섞임 금지(2026-06-13)** — 06-13
   사용자 요청(분홍 — §1.7-a 의 '연두'를 대체·58639 삭제분, §1.7-b, detach 왕복, 섞기 금지).
   ① **분홍 구분**: 원격 탭 엔트리 와이어 플래그 `remote: True`(serverremote `_remote_tabs`)
