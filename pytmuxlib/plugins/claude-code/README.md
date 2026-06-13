@@ -1,0 +1,44 @@
+# claude-code — Claude Code 통합 (토큰 모니터링·자동개입·표시)
+
+pytmux 안에서 돌아가는 [Claude Code](https://claude.com/claude-code) 세션을 **감시·보조**하는 종합 플러그인. 화면을 스크랩해 상태를 읽고, 상태줄에 토큰/모델/사용량을 표기하며, 토큰·컨텍스트 부족 같은 상황에 (옵트인) 자동 개입한다. 모든 자동 액션은 기본 OFF 또는 안전 기본값이며 `token-saver` 팝업에서 토글한다.
+
+![토큰 절감 설정 팝업](screenshot.svg)
+
+> 위 스크린샷은 `token-saver` 설정 팝업. 상태줄 좌하단에는 활성 Claude 패널의 **모델 배지·컨텍스트%·5h 사용률%·계정**이, 임계 도달 시 **⚠ 경고**·**⏳ 자동액션 카운트다운**·**💡 모델 힌트** 배지가 함께 표기된다.
+
+## 기능 범주
+
+- **모니터링** — 활성 Claude 패널의 상태(idle/busy/limit), 토큰 사용량, 5h 한도 근접도, 컨텍스트 여유, 에러를 실시간 추적. 숨은 `/usage` 스크랩(`usageprobe`)으로 실측 세션·주간 한도를 가져와 근사 분모를 대체한다.
+- **자동개입(옵트인)** — 토큰 리밋 자동재개, 컨텍스트 잔량 부족 시 자동 정리(/compact·문서화+/clear), 컨텍스트 하드스톱 시 즉시 /compact, 전송 에러 자동 재시도, idle 시 권한모드 자동 전환, 멀티세션 누적 시 가장 찬 세션부터 정리.
+- **표시·팝업** — 상태줄 배지(위), 토큰 로그(`token-log`), 사용 한도 막대(`usage-panel`), 모델 변경(`model`), 권한모드(footer 클릭), 시작 규칙 편집(`claude-rules`).
+- **알림만** — 장기 턴·반복 루프 경고(`⚠`), **모델 과선택 힌트**(Opus 로 반복 작업 + 컨텍스트 여유 시 "가벼운 모델 고려" — 자동 전환은 설계상 비채택).
+
+## 주요 명령
+
+| 명령 | 별칭 | 설명 |
+|---|---|---|
+| `token-saver` | `claude-settings`, `token-settings` | 토큰 절감 설정 팝업(아래 토글들) |
+| `token-log` | `token-usage` | 토큰 사용량 집계 팝업(시/일/주/월×계정/세션) |
+| `usage-panel` | `usage-limits`, `limits` | `/usage` 한도 막대(세션 5h·주 전체·주 Sonnet) |
+| `claude-usage` | `usage` | 그림자 `/usage` 질의(실측 한도 갱신) |
+| `model` | `model-config`, `claude-model` | 모델·컨텍스트 변경 팝업 |
+| `claude-rules` | | 시작 규칙 편집(새 세션/clear 후 자동 주입) |
+| `token-account <이름>` | | 활성 패널 계정 수동 지정(빈값=자동) |
+
+**토글 명령**(`on`/`off`/무=토글): `auto-resume` · `auto-doc-clear` · `auto-compact` · `auto-hardstop`(기본 on) · `auto-retry`(기본 on) · `claude-auto-mode` · `auto-launch`(기본 on) · `model-hint`(기본 off) · `prompt-clear`.
+
+## `token-saver` 설정 항목
+
+토큰리밋 자동재개 · 실측 세션/주간 한도 게이트(%) · 한도 압박 시 plan 유도 · 컨텍스트 잔량 자동 정리(방식/임계/빈도 상한) · idle 자동 문서화+/clear · idle 자동 /compact · 하드스톱 자동 /compact · 권한모드 자동 오토 · 프롬프트 단위 클리어 · 장기 턴 경고(초) · 반복 루프 경고(회) · 모델 과선택 힌트.
+
+**영속 옵션(`plugin_opts`):** `usage_gate_session_pct`(기본 95) · `usage_gate_week_pct`(기본 0=끔) · `claude_auto_retry`(기본 True) · `claude_model_hint`(기본 False).
+
+## 상태줄·마우스
+
+- **모델 배지 클릭** → 모델 변경 팝업. **사용량/계정 세그먼트 클릭** → 토큰 로그.
+- **footer 권한모드 클릭** → 권한모드 선택 팝업(`bypass` 는 명시 사용자 의도 — 자동으로 안 건드림).
+- 임계 80%/100% 도달 시 노랑/빨강 `⚠`, 무장된 자동 액션은 `⏳`+남은 초(입력하면 취소).
+
+## delete-to-disable
+
+이 디렉토리를 통째로 지우면 모든 Claude 명령·팝업·상태줄 배지·자동개입·토큰 추적이 사라지고, 서버엔 `ServerClaudeMixin` 이 합성되지 않는다. 코어는 플러그인 레지스트리로만 닿으므로 무에러로 계속 동작한다(delete-to-disable). 관련 설계는 [`docs/TOKEN_SAVING_SCENARIO.md`](../../../docs/TOKEN_SAVING_SCENARIO.md)·`TOKEN_ACCOUNTING_ACCURACY_SCENARIO.md` 참고.
