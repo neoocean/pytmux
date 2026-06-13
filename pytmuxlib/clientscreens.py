@@ -1050,9 +1050,15 @@ class PromptScreen(ModalScreen):
             if len(matches) == 1 and norm_sep(matches[0][0].lower()) == qs:
                 matches = []
             # 맥락 우선 정렬(요청): 접두사가 모호할 때 무조건 맨 위(선언 순서) 항목을
-            # 고르지 말고 현재 맥락에 맞는 명령을 먼저 하이라이트한다. 빈 입력(전체
-            # 목록)에는 적용하지 않는다 — 카탈로그 순서를 흔들지 않으려는 것.
+            # 고르지 말고 현재 맥락에 맞는 명령을 먼저 하이라이트한다(단일 패널서 pane-
+            # scoped 명령 강등).
             matches = self._context_rank(matches)
+            # 관련도 정렬(마지막=우선): 단어 접두 일치를 중간 부분일치보다 위에 둔다.
+            # 예: 'esc' → send-escape('escape' 단어가 esc 로 시작)가 coalesce-repaints
+            # (중간 'esc')보다 위에 온다(요청). send-escape 는 pane-scoped 라 _context_rank
+            # 가 강등했지만, 같은 질의에 더 적합하므로 관련도가 그 강등을 되돌린다. 같은
+            # 관련도 안에서는 _context_rank 순서(맥락)가 보존된다(rename-tab 우선 유지).
+            matches = self._relevance_rank(matches, qs)
         # 전체 목록을 보관(자르지 않음) — _render_cands 가 MAX_CAND 윈도우로 그린다.
         self._cand = matches
         self._sel = 0
@@ -1090,6 +1096,28 @@ class PromptScreen(ModalScreen):
         if reg and getattr(reg, "pane_scoped", None):
             pane_scoped |= set(reg.pane_scoped)
         return sorted(matches, key=lambda m: 1 if m[0] in pane_scoped else 0)
+
+    def _relevance_rank(self, matches, qs):
+        """후보를 질의 관련도로 안정 정렬한다(_context_rank **다음**, 즉 최종 우선
+        정렬). 같은 관련도 안에서는 직전(=_context_rank 적용 후) 순서를 보존하므로 맥락
+        정렬이 동률 안에서 살아 있다. qs 는 norm_sep 된 질의(구분자 제거). 관련도(작을수록 위):
+          0 정확 일치 · 1 이름 전체 접두 · 2 단어 접두(이름의 한 단어가 qs 로 시작) ·
+          3 중간 부분일치. 예: 'esc' → send-escape('escape' 단어가 esc 로 시작 = 2)가
+          coalesce-repaints(중간 'esc' = 3)보다 위에 온다(요청)."""
+        if len(matches) < 2:
+            return matches
+
+        def tier(name):
+            nl = name.lower()
+            nn = norm_sep(nl)
+            if nn == qs:
+                return 0
+            if nn.startswith(qs):
+                return 1
+            if any(w.startswith(qs) for w in re.split(r"[-_ ]+", nl) if w):
+                return 2
+            return 3
+        return sorted(matches, key=lambda m: tier(m[0]))
 
     def _render_cands(self):
         lbl = self.query_one("#pcand", Label)

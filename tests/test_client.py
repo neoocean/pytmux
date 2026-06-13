@@ -608,6 +608,22 @@ async def test_command_substring_candidates():
     await _with_app(body)
 
 
+async def test_command_candidate_word_prefix_ranks_first():
+    """관련도 정렬(요청): 'esc' 는 단어 접두 일치(send-escape 의 'escape')를 중간
+    부분일치(coalesce-repaints 의 'coalesce')보다 위에 둔다 — send-escape 가 맨 위."""
+    async def body(app, pilot, srv):
+        await pilot.press("escape")
+        await pilot.press("colon")
+        scr = app.screen_stack[-1]
+        for ch in "esc":
+            await pilot.press(ch)
+        await pilot.pause(0.1)
+        names = [n for n, _ in scr._cand]
+        assert "send-escape" in names and "coalesce-repaints" in names, names
+        assert names[0] == "send-escape", f"send-escape 가 맨 위여야: {names}"
+    await _with_app(body)
+
+
 async def test_command_completion_context_aware_highlight():
     """접두사가 모호하면(rename → rename-pane/rename-tab) 무조건 첫(선언 순서)
     항목을 고르지 않고 맥락에 맞는 명령을 하이라이트한다(요청). 단일 패널 탭이면
