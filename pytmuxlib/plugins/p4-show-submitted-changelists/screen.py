@@ -53,13 +53,23 @@ class _ChangesView(Widget):
         self.refresh()
 
     # ---- 렌더 ----
-    def _row_text(self, row: dict) -> str:
+    def _row_parts(self, row: dict):
+        """행을 (head, mid, desc) 3토막으로 — head=`  @<CL> `(노랑 강조 대상),
+        mid=`<날짜>  <user> `(ASCII 고정폭), desc=설명 첫 줄. **desc 를 따로 떼는 게
+        핵심**: render_line 이 desc 를 독립 세그먼트로 그려야 한다. 한 세그먼트에
+        ASCII(날짜·user)와 CJK(한글 설명)를 섞으면, save_screenshot 의 SVG export 가
+        CJK 를 1셀로 과소계산해(textLength) 그 <text> 전체를 압축 → ASCII 접두부까지
+        줄어들어 설명 좌측 시작점이 행마다 어긋난다(설명 한글량에 비례). desc 앞을
+        ASCII 전용 세그먼트로만 두면 그 폭이 정확히 계산돼 desc 좌측이 모든 행에서
+        같은 열에 선다(실 터미널은 본래 정렬됨 — 이건 SVG 정렬 교정)."""
         cl = row.get("change", "")
         when = row.get("when", "")
         user = row.get("user", "")
         desc = (row.get("desc", "") or "").splitlines()
         desc = desc[0] if desc else ""
-        return f"  @{cl:<7} {when:<16}  {user:<14} {desc}"
+        head = f"  @{cl:<7} "
+        mid = f"{when:<16}  {user:<14} "
+        return head, mid, desc
 
     def render_line(self, y: int) -> Strip:
         width = self.size.width
@@ -73,16 +83,15 @@ class _ChangesView(Widget):
         if not (0 <= i < len(self._rows)):
             return Strip.blank(width, _BG)
         row = self._rows[i]
+        head, mid, desc = self._row_parts(row)
         if i == self._sel:
+            # 선택 행도 동일 스타일 3세그먼트로(desc 분리 유지 — SVG 정렬).
             style = _SEL if self.has_focus else _SEL_BLUR
-            return Strip([Segment(self._row_text(row), style)]
-                        ).adjust_cell_length(width, style)
-        # 비선택 행: CL 번호만 노랑으로, 나머지는 기본색(두 세그먼트).
-        cl = row.get("change", "")
-        head = f"  @{cl:<7} "
-        rest = self._row_text(row)[len(head):]
-        return Strip([Segment(head, _CHANGE), Segment(rest, _BG)]
-                    ).adjust_cell_length(width, _BG)
+            return Strip([Segment(head, style), Segment(mid, style),
+                          Segment(desc, style)]).adjust_cell_length(width, style)
+        # 비선택 행: CL 번호만 노랑(_CHANGE), 날짜·user·desc 는 기본색.
+        return Strip([Segment(head, _CHANGE), Segment(mid, _BG),
+                      Segment(desc, _BG)]).adjust_cell_length(width, _BG)
 
     # ---- 커서·스크롤(빠른 부분 갱신, ncd 와 동일) ----
     def _cur(self) -> str | None:
