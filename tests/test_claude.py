@@ -177,13 +177,16 @@ async def test_claude_state():
         "⏵⏵ auto mode on (shift+tab to cycle)") == "busy"
     # 폰트/터미널에 따라 스피너 글리프가 `*`/`·` 로 렌더되는 변형
     assert claude_state("* Baking… (10s · ↑ 419 tokens · still thinking)") == "busy"
-    # 시간 표시 없이도 토큰 화살표 또는 "still thinking" 만으로 busy 판정
+    # 시간 표시 없이도 "still thinking" 으로 busy 판정
     assert claude_state(
         "⏵⏵ auto mode on (shift+tab to cycle)\n"
         "* Baking… still thinking") == "busy"
+    # §3.4: `↑/↓ N tokens` 단독은 더는 busy 신호가 아니다 — 응답 종료 후 transcript
+    # 의 토큰 델타 잔재가 idle 화면을 busy 로 오인시키던 오탐 제거(토큰 화살표는
+    # 토큰 누계 파싱 전용). idle footer 가 있으니 idle.
     assert claude_state(
         "⏵⏵ auto mode on (shift+tab to cycle)\n"
-        "↑ 419 tokens") == "busy"
+        "↑ 419 tokens") == "idle"
     # 오탐 방지: 도구 출력 말줄임표는 busy 아님
     assert claude_state("⎿  … +38 lines (ctrl+o to expand)") is None
     # 오탐 방지: 화살표 없는 토큰 언급은 busy 아님

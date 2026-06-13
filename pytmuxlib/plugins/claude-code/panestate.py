@@ -9,7 +9,7 @@
 
 코어에 **남는** Claude 인접 Pane 필드(코어가 직접 읽거나 쓰는 것들 — 계정·헤더행 예약·
 보류 리네임·자동재개 토글): `_claude_account`·`_claude_account_manual`·`_pending_rename`·
-`_hdr_reserved`·`_feed_seq`·`autoresume`·`prompt_clear_queue`. 이는 HANDOFF §11.6 의
+`_feed_seq`·`autoresume`·`prompt_clear_queue`. 이는 HANDOFF §11.6 의
 3a/3b 설계("코어가 읽는 Pane 속성은 코어에 안전한 기본값으로 남겨도 무해")와 일치한다.
 (토큰 누계 `_tok_state`·`_session_tokens` 는 S5 토큰 모듈화 T4 에서 이리로 이전 — 코어
 servertree 의 토큰 이관은 pane_closing 훅으로, 코어는 더는 토큰 누계를 모른다.)
@@ -61,6 +61,9 @@ def init_pane(pane) -> None:
     # 비활성 탭 완료 알림(#22) 플리커 방지: busy 후 연속 idle 안정 프레임 카운트.
     pane._was_busy = False
     pane._idle_frames = 0
+    # §3.4 busy 이탈 히스테리시스: busy→idle 전이를 연속 관측 후에만 확정하기 위한
+    # 미스 카운터(리페인트 한 프레임 깜빡임이 응답 경계로 오인되지 않게).
+    pane._busy_exit_miss = 0
     # M17(T7): busy 진입 시각·직전 완료 화면 꼬리 해시·연속 동일 횟수·표시용 경고.
     pane._busy_since = None
     pane._done_tail = None
@@ -92,8 +95,9 @@ def init_pane(pane) -> None:
     pane._resume_handle = None
     pane._ctx_fired = False
     pane._ctx_last_fire = None
-    # 헤더 예약(#1)용 디바운스 Claude 존재 플래그·연속 non-Claude 스캔 수. (예약 결과
-    # _hdr_reserved 와 토큰누계는 코어가 직접 쓰므로 코어 Pane 에 남는다.)
+    # 디바운스된 Claude 존재 플래그·연속 non-Claude 스캔 수 — raw _claude 가 한 프레임
+    # 깜빡여도 안 흔들리는 안정 신호. API 에러 게이트·스캔 보조 판정이 읽는다(이름의
+    # hdr 는 옛 헤더 예약 유래 — 헤더는 2026-06-13 제거, 신호 자체는 그대로 유효).
     pane._hdr_claude = False
     pane._hdr_claude_miss = 0
     # 토큰 리밋 자동 재개 메시지·예약 보류 플래그. (토글 autoresume 은 코어가 쓰므로
@@ -143,6 +147,7 @@ def reset_pane(pane) -> None:
     pane._perm_target = None
     pane._was_busy = False           # done 플리커 디바운스 리셋(§10 #18)
     pane._idle_frames = 0
+    pane._busy_exit_miss = 0         # busy 이탈 히스테리시스 리셋(§3.4)
     pane._hdr_claude = False         # 헤더 예약 디바운스 리셋
     pane._hdr_claude_miss = 0
 

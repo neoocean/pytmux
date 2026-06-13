@@ -738,7 +738,10 @@ class ServerClaudeMixin:
                            # 스킵해야 하므로 계속 스캔한다(첫 프레임 즉발 → 응답 대기
                            # 대화 멈춤 버그 수정).
                            or (p._rc_pending and p._claude == "idle"
-                               and p._idle_frames < _RC_CONFIRM_FRAMES))
+                               and p._idle_frames < _RC_CONFIRM_FRAMES)
+                           # §3.4 busy 이탈 확정 대기 중: 화면이 정적이어도 다음
+                           # 스캔이 이탈을 확정(또는 busy 복귀)할 수 있게 계속 스캔.
+                           or p._busy_exit_miss > 0)
                 if p._feed_seq == p._scan_seq and not pending:
                     continue
                 p._scan_seq = p._feed_seq
@@ -868,7 +871,7 @@ class ServerClaudeMixin:
                 # 헤더 예약(#1)용 디바운스: Claude 로 보이면 즉시 True, 아니면 연속
                 # _HDR_CLAUDE_MISS 프레임 뒤에야 False. raw `_claude` 깜빡임이 헤더
                 # 예약을 토글해 PTY 가 ±1 행 리사이즈를 반복(원격 화면 한 줄 떨림)
-                # 하는 것을 막는다(_should_reserve_header 가 _hdr_claude 를 읽음).
+                # 하는 것을 막는다(API 에러 게이트 등 안정 신호 소비자가 읽음).
                 if new_cl:
                     p._hdr_claude = True
                     p._hdr_claude_miss = 0
@@ -1000,6 +1003,7 @@ class ServerClaudeMixin:
                 if p._claude is None:
                     if p.pending_prompts:
                         p.pending_prompts.clear()
+                    p._busy_exit_miss = 0   # §3.4 라치 해제(세션 종료)
                     # Claude 세션 종료 → 권한모드 관측/목표 비움(§10 item 2)
                     if p._perm_mode is not None or p._perm_target is not None:
                         p._perm_mode = None
@@ -1007,7 +1011,22 @@ class ServerClaudeMixin:
                     # bypass 가용성도 리셋 — 다음 세션은 위험 플래그 없이 떴을 수 있다.
                     p._bypass_seen = False
                 else:
-                    boundary = (old_cl == "busy" and new_cl != "busy")
+                    # §3.4 busy 이탈 깜빡임 흡수: busy→idle 첫 프레임은 리페인트가
+                    # 스피너를 한 프레임 놓친 깜빡임일 수 있다 — 즉시 승격하지 않고
+                    # **다음 스캔도 idle** 이면(연속 2프레임) 경계로 확정한다. busy 로
+                    # 복귀하면 라치 해제(승격 없음 — 조기 승격 방지). busy→limit/None
+                    # 은 깜빡임이 아니므로 즉시. (done 플래그·auto-doc 타이머는 각자
+                    # _DONE_IDLE_FRAMES·busy 복귀 해제로 이미 깜빡임에 안전하다.)
+                    exit_now = (old_cl == "busy" and new_cl != "busy")
+                    if exit_now and new_cl == "idle":
+                        p._busy_exit_miss = 1     # 확정 대기(다음 스캔에 판정)
+                        boundary = False
+                    elif p._busy_exit_miss and new_cl == "idle":
+                        p._busy_exit_miss = 0
+                        boundary = True           # 연속 2프레임 idle → 경계 확정
+                    else:
+                        p._busy_exit_miss = 0
+                        boundary = exit_now       # busy→limit/None 등은 즉시
                     if not boundary and committed > 0 and new_cl == "busy":
                         boundary = True
                     if boundary and p.pending_prompts:

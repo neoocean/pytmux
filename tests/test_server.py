@@ -184,7 +184,7 @@ async def test_inactive_tab_claude_done_flag():
         p1 = t1.window.active_pane
         win = sess.active_window             # 탭0(활성)
         # 처리중(busy) 을 스캔으로 확정(_was_busy 세팅)
-        p1.feed("\x1b[2J\x1b[H↑ 1k tokens\r\n".encode("utf-8"))
+        p1.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
         assert p1._claude == "busy"
         # idle footer 로 전환 — 안정될 때까지(_DONE_IDLE_FRAMES) 완료 안 뜸
@@ -294,7 +294,7 @@ async def test_done_flag_debounced_against_flicker():
         t1 = sess.tabs[1]
         p1 = t1.window.active_pane
         win = sess.active_window
-        p1.feed("\x1b[2J\x1b[H↑ 1k tokens\r\n".encode("utf-8"))  # busy
+        p1.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode("utf-8"))  # busy
         srv._scan_claude(sess, win)
         p1.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")                  # idle 한 프레임
         srv._scan_claude(sess, win)
@@ -416,7 +416,7 @@ async def test_token_usage_logging():
         # 계정은 Claude UI 의 신뢰 신호("<email>'s Organization")에서만 잡는다 —
         # 화면에 흩어진 임의 이메일(git URL 등)은 안 잡힘(2026-06-07 오탐 수정).
         p.feed("\x1b[2J\x1b[H me@woojinkim.org's Organization\r\n"
-               "↑ 1.9k tokens\r\n".encode("utf-8"))
+               "✽ Crunching… (5s · ↑ 1.9k tokens)\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
         assert p._claude == "busy", p._claude
         sid1 = p._claude_session_id
@@ -434,7 +434,7 @@ async def test_token_usage_logging():
         # 세션 종료 후 새 Claude 세션 → session id 증가
         p.feed(b"\x1b[2J\x1b[Huser@host ~ % ls\r\n")     # 평범한 셸(claude None)
         srv._scan_claude(sess, win)
-        p.feed("\x1b[2J\x1b[H↑ 2k tokens\r\n".encode("utf-8"))
+        p.feed("\x1b[2J\x1b[H✽ Baking… (4s · ↑ 2k tokens)\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
         assert p._claude_session_id == sid1 + 1, "새 세션 id 증가"
 
@@ -470,7 +470,7 @@ async def test_account_backfill_from_usage_probe():
         # 프로브 계정 없음 → 패널 화면에 라벨 없는 Claude busy → 계정 미식별(None) 유지.
         # (_scan_claude 는 feed 로 _feed_seq 가 바뀐 패널만 재스캔하므로 매 스캔 전 feed.)
         srv._usage = None
-        p.feed("\x1b[2J\x1b[H? for shortcuts\r\n↑ 1.5k tokens\r\n".encode("utf-8"))
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (2s · ↑ 1.5k tokens)\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
         assert p._claude == "busy" and p._claude_account is None, p._claude_account
         # 프로브가 계정을 잡아 self._usage 에 실렸다 → 다음 프레임(feed→scan)에서 백필.
@@ -483,12 +483,12 @@ async def test_account_backfill_from_usage_probe():
         p.feed(b"\x1b[2J\x1b[Huser@host ~ % ls\r\n")
         srv._scan_claude(sess, win)
         srv._usage = {"account": "unknown"}
-        p.feed("\x1b[2J\x1b[H? for shortcuts\r\n↑ 2k tokens\r\n".encode("utf-8"))
+        p.feed("\x1b[2J\x1b[H✽ Flowing… (3s · ↑ 2k tokens)\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
         assert p._claude_account is None, p._claude_account
         # 화면 라벨이 직접 뜨면 그게 우선(프로브 폴백 위에서 실측 라벨 채택).
         p.feed("\x1b[2J\x1b[H me@woojinkim.org's Organization\r\n"
-               "↑ 2k tokens\r\n".encode("utf-8"))
+               "✽ Flowing… (6s · ↑ 2k tokens)\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
         assert p._claude_account.endswith("@woojinkim.org"), p._claude_account
         _ = usagedb  # noqa
@@ -688,7 +688,7 @@ async def test_auto_doc_clear_sequence_and_guards():
         go_idle()
         assert p._adc_timer is not None
         p._claude = "idle"
-        p.feed(b"\x1b[2J\x1b[H\x1b[2K\xe2\x86\x91 1k tokens\r\n")  # busy(↑ tokens)
+        p.feed("\x1b[2J\x1b[H✧ Crunching… (5s)\r\n".encode())  # busy(스피너)
         srv._scan_claude(sess, win)
         assert p._claude == "busy" and p._adc_timer is None
 
@@ -770,7 +770,7 @@ async def test_auto_compact_idle_injects_slash_compact():
         go_idle()
         assert p._acpt_timer is not None
         p._claude = "idle"
-        p.feed(b"\x1b[2J\x1b[H\x1b[2K\xe2\x86\x91 1k tokens\r\n")  # busy(↑ tokens)
+        p.feed("\x1b[2J\x1b[H✧ Crunching… (5s)\r\n".encode())  # busy(스피너)
         srv._scan_claude(sess, win)
         assert p._claude == "busy" and p._acpt_timer is None
 
@@ -1809,48 +1809,12 @@ async def test_inline_session_limit_reflected_in_5h_pct():
         await teardown(srv, task, sock)
 
 
-async def test_claude_header_reserves_row():
-    """#1: Claude 프롬프트 헤더가 그려질 패널은 내용 영역에서 한 행을 빼(헤더 양보)
-    PTY 도 그만큼 작게 리사이즈하고, layout 에 claude_hdr=True 를 실어 보낸다. 전역
-    헤더 옵션이 꺼져 있거나 프롬프트가 없으면 예약하지 않는다."""
-    srv, task, sock = await server_only()
-    try:
-        sess = srv.ensure_default_session(80, 24)
-        win = sess.active_window
-        p = win.active_pane
-        # Claude/프롬프트 없음 → 예약 안 함
-        pm0 = srv._layout_msg(sess)["panes"][0]
-        assert pm0["claude_hdr"] is False and p._hdr_reserved is False
-        h0, y0 = pm0["h"], pm0["y"]
-        # Claude + 프롬프트 → 예약(claude-header 옵트인). 헤더 예약은 디바운스된
-        # _hdr_claude 를 보므로(원격 깜빡임 방지) 그것도 세운다.
-        srv.claude_header = True         # 기본 OFF 라 명시적으로 켠다
-        p._claude = "idle"
-        p._hdr_claude = True
-        p.last_prompt = "do x"
-        pm1 = srv._layout_msg(sess)["panes"][0]
-        assert pm1["claude_hdr"] is True and p._hdr_reserved is True
-        assert pm1["h"] == h0 - 1, "내용 영역 한 행 축소"
-        assert pm1["y"] == y0 + 1, "내용 시작 한 행 내림"
-        assert p.rows == pm1["h"], "PTY 도 축소된 높이로 리사이즈"
-        # 전역 헤더 off 면 예약 안 함(내용 영역 원복)
-        srv.set_claude_header(False)
-        pm2 = srv._layout_msg(sess)["panes"][0]
-        assert pm2["claude_hdr"] is False and pm2["h"] == h0
-    finally:
-        try:
-            os.unlink(srv.opts_path)
-        except OSError:
-            pass
-        await teardown(srv, task, sock)
-
-
-async def test_claude_header_debounce_no_thrash():
-    """원격(ssh/ConPTY) Claude 의 footer 가 한두 프레임 안 잡혀 _claude 가 None 으로
-    깜빡여도 헤더 예약(=PTY 한 행 양보)이 토글되면 안 된다. raw `_claude` 깜빡임이
-    예약을 매 프레임 뒤집으면 PTY 가 ±1 행 리사이즈를 반복해 원격 Claude 화면이
-    한 줄씩 위아래로 스크롤되는 떨림이 난다(Windows→ssh→macOS 첫 실행 증상).
-    예약 해제는 _HDR_CLAUDE_MISS 프레임 연속 non-Claude 일 때만 일어난다."""
+async def test_claude_presence_debounce_no_flicker():
+    """디바운스된 Claude 존재 신호 `_hdr_claude`(API 에러 게이트 등 소비): 원격
+    (ssh/ConPTY) Claude 의 footer 가 한두 프레임 안 잡혀 raw `_claude` 가 None 으로
+    깜빡여도 안정 신호는 안 흔들리고, _HDR_CLAUDE_MISS 프레임 연속 non-Claude 일
+    때만 내려간다. (옛 헤더 행 예약의 떨림 방지 디바운스 — 헤더는 2026-06-13
+    제거됐지만 신호는 다른 소비자가 그대로 쓴다.)"""
     import importlib
     _HDR_CLAUDE_MISS = importlib.import_module(
         "pytmuxlib.plugins.claude-code.servermixin")._HDR_CLAUDE_MISS
@@ -1859,23 +1823,19 @@ async def test_claude_header_debounce_no_thrash():
         sess = srv.ensure_default_session(80, 24)
         win = sess.active_window
         p = win.active_pane
-        srv.claude_header = True         # 기본 OFF 라 명시적으로 켠다
-        p.last_prompt = "do x"
-        # Claude idle footer → 예약 ON, 디바운스 플래그도 즉시 True
+        # Claude idle footer → 디바운스 플래그 즉시 True
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
         srv._scan_claude(sess, win)
         assert p._claude == "idle" and p._hdr_claude is True
-        assert srv._should_reserve_header(p) is True
-        # footer 없는 중간 프레임이 한 번 와 raw 가 None 으로 깜빡여도 예약 유지
+        # footer 없는 중간 프레임이 한 번 와 raw 가 None 으로 깜빡여도 신호 유지
         p.feed(b"\x1b[2J\x1b[H(redrawing...)\r\n")
         srv._scan_claude(sess, win)
         assert p._claude is None, "raw 상태는 None 으로 깜빡"
-        assert p._hdr_claude is True and srv._should_reserve_header(p) is True, \
-            "한 프레임 깜빡임으로 예약이 풀리면 PTY 떨림이 난다"
-        # 연속 _HDR_CLAUDE_MISS 프레임 non-Claude → 그제서야 예약 해제
+        assert p._hdr_claude is True, "한 프레임 깜빡임에 신호가 흔들리면 안 됨"
+        # 연속 _HDR_CLAUDE_MISS 프레임 non-Claude → 그제서야 해제
         for _ in range(_HDR_CLAUDE_MISS):
             srv._scan_claude(sess, win)
-        assert p._hdr_claude is False and srv._should_reserve_header(p) is False
+        assert p._hdr_claude is False
     finally:
         try:
             os.unlink(srv.opts_path)
@@ -1967,16 +1927,27 @@ async def test_queued_prompt_header_defers():
         srv._track_prompt(p, b"prompt C\r")
         assert p.last_prompt == "prompt A", "busy 중 새 프롬프트는 헤더 안 바꿈"
         assert p.pending_prompts == ["prompt B", "prompt C"]
-        # 응답 종료(busy→idle) → 큐 다음(B) 승격
+        # 응답 종료(busy→idle): §3.4 깜빡임 흡수 — 첫 idle 프레임엔 승격하지 않고
+        # 연속 2프레임 idle 에 확정 승격(B). 사이에 busy 로 복귀하면 승격 없음.
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
         srv._scan_claude(sess, win)
+        assert p.last_prompt == "prompt A", "첫 idle 프레임은 미승격(깜빡임 흡수)"
+        srv._scan_claude(sess, win)        # 연속 2프레임 idle → 경계 확정
         assert p.last_prompt == "prompt B", p.last_prompt
         assert p.pending_prompts == ["prompt C"]
-        # B 처리(busy) → 종료(idle) → C 승격
+        # 깜빡임 시나리오: busy 중 한 프레임 idle 로 보였다가 busy 복귀 → 승격 없음
         p.feed("\x1b[2J\x1b[H✽ Baking… (3s · ↓ 0.3k tokens)\r\n".encode())
         srv._scan_claude(sess, win)
         assert p.last_prompt == "prompt B", "B 처리 중엔 B 유지"
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")   # 리페인트 한 프레임 idle
+        srv._scan_claude(sess, win)
+        p.feed("\x1b[2J\x1b[H✽ Baking… (5s · ↓ 0.4k tokens)\r\n".encode())
+        srv._scan_claude(sess, win)                   # busy 복귀 → 라치 해제
+        assert p.last_prompt == "prompt B", "깜빡임으로는 승격 안 함"
+        assert p.pending_prompts == ["prompt C"]
+        # 진짜 종료(연속 2프레임 idle) → C 승격
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
         srv._scan_claude(sess, win)
         assert p.last_prompt == "prompt C" and p.pending_prompts == []
     finally:
@@ -1998,12 +1969,14 @@ async def test_session_tokens_accumulate():
         srv._scan_claude(sess, win)
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
         srv._scan_claude(sess, win)
+        srv._scan_claude(sess, win)   # §3.4 busy 이탈 히스테리시스(2프레임) 확정
         assert p._session_tokens == 1900, p._session_tokens
         # 응답2: 2.5k 까지 → idle (누계 4400)
         p.feed("\x1b[2J\x1b[H✽ Baking… (4s · ↓ 2.5k tokens)\r\n".encode())
         srv._scan_claude(sess, win)
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
         srv._scan_claude(sess, win)
+        srv._scan_claude(sess, win)   # 히스테리시스 확정
         assert p._session_tokens == 4400, p._session_tokens
         # Claude 세션 종료 → 누계 리셋
         p.feed(b"\x1b[2J\x1b[Huser@host ~ % ls\r\n")
@@ -3021,27 +2994,6 @@ async def test_coalesce_repaints_collapses_feedbuf_and_persists():
         await teardown(srv, task, sock)
 
 
-async def test_claude_header_opt_persists():
-    # #6 ③: claude-header 전역 표시 상태가 opts.json 에 영속되고 재시작 후 유지.
-    srv, task, sock = await server_only()
-    try:
-        assert srv.claude_header is False, "기본 OFF(새 플러그인이 기본 프롬프트 UI)"
-        assert srv.set_claude_header(True) is True    # 켜서 영속 확인
-        assert json.load(open(srv.opts_path))["claude_header"] is True
-        assert srv.set_claude_header(False) is False
-        assert json.load(open(srv.opts_path))["claude_header"] is False
-        # 같은 sock 로 새 Server → OFF 를 읽음
-        assert pytmux.Server(sock).claude_header is False, "재시작 후 OFF 유지"
-        assert srv.set_claude_header(None) is True   # 토글 → ON
-        assert json.load(open(srv.opts_path))["claude_header"] is True
-    finally:
-        try:
-            os.unlink(srv.opts_path)
-        except OSError:
-            pass
-        await teardown(srv, task, sock)
-
-
 class _OneShotReader:
     """hello 프레임 하나를 준 뒤 EOF(IncompleteReadError)를 내는 가짜 reader.
     handle_client 의 attach 직후 종료 경로(초기 _send_full 만 도는)를 재현한다."""
@@ -3306,7 +3258,7 @@ async def test_repeat_loop_warn_m17():
         win = sess.active_window
         p = win.active_pane
         for _ in range(4):
-            p.feed("\x1b[2J\x1b[H↑ 1k tokens\r\n".encode("utf-8"))  # busy
+            p.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode("utf-8"))  # busy
             srv._scan_claude(sess, win)
             assert p._claude == "busy", p._claude
             p.feed(b"\x1b[2J\x1b[HError: same failure\r\n? for shortcuts\r\n")  # idle
@@ -3316,7 +3268,7 @@ async def test_repeat_loop_warn_m17():
         assert p._repeat_n >= 3, p._repeat_n
         assert p._claude_warn and "반복" in p._claude_warn, p._claude_warn
         # 출력이 달라지면 카운터 리셋 → 경고 해제
-        p.feed("\x1b[2J\x1b[H↑ 1k tokens\r\n".encode("utf-8"))
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
         p.feed(b"\x1b[2J\x1b[HDifferent now\r\n? for shortcuts\r\n")
         srv._scan_claude(sess, win)
@@ -3324,7 +3276,7 @@ async def test_repeat_loop_warn_m17():
         # repeat_alert=0 이면 반복이 쌓여도 경고 안 뜸(opt 끔)
         srv.set_claude_turn_warn(repeat=0)
         for _ in range(4):
-            p.feed("\x1b[2J\x1b[H↑ 1k tokens\r\n".encode("utf-8"))
+            p.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode("utf-8"))
             srv._scan_claude(sess, win)
             p.feed(b"\x1b[2J\x1b[HSame fail\r\n? for shortcuts\r\n")
             srv._scan_claude(sess, win)
@@ -3341,7 +3293,7 @@ async def test_claude_model_status_m14c():
         sess = srv.ensure_default_session(80, 24)
         win = sess.active_window
         p = win.active_pane
-        p.feed("\x1b[2J\x1b[H Opus 4.8 (1M context)\r\n↑ 1k tokens\r\n"
+        p.feed("\x1b[2J\x1b[H Opus 4.8 (1M context)\r\n✽ Crunching… (3s · ↑ 1k tokens)\r\n"
                .encode("utf-8"))
         srv._scan_claude(sess, win)
         assert p._claude == "busy"
@@ -3363,7 +3315,7 @@ async def test_account_priority_cleanup_m15():
         p = win.active_pane
         srv.claude_ctx_autoclear = True
         # busy(피크 200k) → 세션 누계 200k
-        p.feed("\x1b[2J\x1b[H↑ 200k tokens\r\n".encode("utf-8"))
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (9s · ↑ 200k tokens)\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
         assert p._claude == "busy"
         p._ctx_pct = 50                       # 잔량 50%(임계 15%보다 높음)
@@ -3420,7 +3372,7 @@ async def test_status_static_opts_only_on_full_c4():
         periodic = srv._status_msg(sess, full=False)
         for k in STATIC:
             assert k not in periodic, f"주기 status 가 정적 옵션 {k} 를 실음(C4 위반)"
-        for k in ("claude_header", "single_border", "auto_doc_clear",
+        for k in ("single_border", "auto_doc_clear",
                   "claude_auto_mode", "budget_level", "claude_pending"):
             assert k in periodic, f"주기 status 에 동적/낙관 필드 {k} 누락"
     finally:
@@ -3453,34 +3405,6 @@ async def test_manual_clear_resets_token_session():
         # 배너가 머무는 동안 재리셋 안 함(디바운스) — id 가 또 안 오른다
         srv._scan_claude(sess, win)
         assert p._claude_session_id == sid + 1, "배너 지속 중 재리셋 금지"
-    finally:
-        await teardown(srv, task, sock)
-
-
-async def test_header_reservation_skipped_on_short_panel():
-    """#1 Claude 프롬프트 헤더 예약은 짧은 패널(모바일 portrait)에선 생략한다 —
-    헤더가 가져가는 1행이 Claude 입력박스를 2줄로 reflow 시키던 문제(2026-06-07).
-    높은 패널에선 예약을 유지(스티키 프롬프트 헤더 표시)."""
-    srv, task, sock = await server_only()
-    try:
-        sess = srv.ensure_default_session(80, 40)
-        p = sess.active_window.active_pane
-        p._hdr_claude = True
-        p.last_prompt = "구현해줘"
-        srv.claude_header = True                          # 기본 OFF 라 명시적으로 켠다
-        assert srv._should_reserve_header(p) is True      # 표시 조건 충족
-        # 높은 패널(rows=40) → 예약(claude_hdr True)
-        hi = srv._layout_msg(sess, cols=80, rows=40)
-        pm = next(pp for pp in hi["panes"] if pp["id"] == p.id)
-        assert pm["claude_hdr"] is True, pm
-        # 짧은 패널(rows=10) → 예약 생략(claude_hdr False) → Claude 풀 높이
-        lo = srv._layout_msg(sess, cols=80, rows=10)
-        pm2 = next(pp for pp in lo["panes"] if pp["id"] == p.id)
-        assert pm2["claude_hdr"] is False, pm2
-        # 짧은 레이아웃 적용 후에도 재판정이 일관(오실레이션 없음): 같은 짧은 크기로
-        # 다시 그려도 예약 의도는 여전히 False 와 일치(_hdr_reserved 와 안 어긋남).
-        assert srv._reserve_header(
-            p, p.rows + (1 if p._hdr_reserved else 0)) == p._hdr_reserved
     finally:
         await teardown(srv, task, sock)
 

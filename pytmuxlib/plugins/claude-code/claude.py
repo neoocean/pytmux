@@ -22,11 +22,14 @@ _RESET_RE24 = re.compile(r'\b([01]?\d|2[0-3]):([0-5]\d)\b')
 # `*`/`·`로 렌더되기도 함)는 매 프레임 바뀌므로 안정적인 시그널만 잡는다.
 # 시간 숫자+s 를 요구해 "… +38 lines (ctrl+o)" 같은 도구 출력 오탐을 피한다.
 # idle footer("shift+tab to cycle")가 busy 중에도 같이 보이므로 — busy 시그널은
-# 가급적 여러 형태로 잡아두고 claude_state 에서 busy 를 먼저 판정한다.
+# claude_state 에서 busy 를 먼저 판정한다.
+# §3.4: `↑/↓ N tokens` 단독은 busy 신호에서 **제외** — 응답이 끝난 transcript 에
+# 토큰 델타 잔재("↓ 1.9k tokens")가 남아 idle 화면을 busy 로 오인했었다(완료알림·
+# auto-doc 지연). busy 는 스피너에 앵커된 신호("… (Ns"·글리프+동명사…·still
+# thinking)만 보고, 토큰 화살표는 토큰 누계(claude_usage/_TOK_RE) 전용으로 둔다.
 _BUSY_SPINNER_RE = re.compile(
     r"…\s*\((?:\d+\s*m\s*)?\d+\s*s"      # "… (20s" / "… (2m 17s"
     r"|[✽✢✳✶✷✻*·]\s+\w+…"                # 스피너 글리프 + "동명사…"(시간 표시 전)
-    r"|[↑↓]\s*[\d.,]+\s*[kKmM]?\s*tokens"  # "↑ 419 tokens" / "↓ 1.9k tokens"
     r"|still\s+thinking"                  # 명시적 진행 표기
 )
 
