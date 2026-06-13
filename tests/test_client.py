@@ -3500,12 +3500,14 @@ async def test_claude_icon_and_close_button():
         app.tabbar.tabs = [{"index": 0, "name": "win",
                             "active": True, "claude": "busy"}]
         assert "◐" in "".join(app.tabbar._labels())
-        # 닫기 [x] 는 활성 패널 콘텐츠 첫 행 우측 끝(프롬프트 스티키 헤더는
-        # 2026-06-13 완전 제거 — [x] 가 헤더 행으로 올라가던 #15 동작도 폐지).
+        # 닫기 [x] 는 활성 패널 **상단 테두리 행** 우측(2026-06-13 한 칸 위로 —
+        # 콘텐츠 비가림·IME 배지와 비중첩. 테두리 없으면 콘텐츠 첫 행 폴백).
         ap = next(p for p in app.layout["panes"] if p["id"] == active)
         app._composite()
         tcz = app._tab_close_zone
-        assert tcz == (ap["x"] + ap["w"] - 3, ap["x"] + ap["w"], ap["y"]), tcz
+        want_y = ap["box"][1] if ap.get("box") else ap["y"]
+        assert tcz == (ap["x"] + ap["w"] - 3, ap["x"] + ap["w"], want_y), tcz
+        assert ap.get("box") is None or want_y == ap["y"] - 1, (want_y, ap)
         xs = "".join(app.view._cells[tcz[2]][x][0] for x in range(tcz[0], tcz[1]))
         assert xs == "[x]", repr(xs)
     await _with_app(body)

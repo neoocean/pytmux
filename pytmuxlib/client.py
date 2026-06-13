@@ -1188,7 +1188,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # Claude Code 콘텐츠-레이어 장식(footer 클릭존 스캔)·플러그인 오버레이는
             # client_render 훅이 그린다(없으면 no-op — delete-to-disable).
             self.plugins.client_render(self, cells, W, H)
-            # 현재 탭 닫기 [x]: 콘텐츠 영역 오른쪽 위 모서리(상단 테두리 위)
+            # 현재 탭 닫기 [x]: 활성 패널 상단 테두리 행 우측(2026-06-13 한 칸 위로)
             self._draw_tab_close(cells, W, H)
             # 패널 오버레이(시계/달력 등, 패널 전체 덮기·뒤 화면 dim) — clock·calendar
             # 플러그인이 client_overlay 훅으로 그린다(플러그인 없으면 no-op).
@@ -1321,10 +1321,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
             return r
 
         def _draw_tab_close(self, cells, W, H):
-            """현재 탭(윈도우) 닫기 [x] 버튼을 **활성 패널의 외곽선 안쪽** 우상단(콘텐츠
-            영역 첫 행 오른쪽 끝)에 그린다(§10 #15 — 이전엔 화면 상단 테두리 행 0 에
-            얹혀 있었다). 활성 패널의 실제 x/y/w/h 를 써서 분할(split) 상태에서도 그
-            패널 테두리 안쪽에 붙는다."""
+            """현재 탭(윈도우) 닫기 [x] 버튼을 **활성 패널의 상단 테두리 행** 우측
+            (모서리 바로 안쪽)에 그린다(2026-06-13 요청 — 콘텐츠 첫 행에서 한 칸 위로:
+            콘텐츠를 안 가리고 IME 배지([한]/[EN], 첫 행 우상단)와도 안 겹친다).
+            테두리가 없으면(단일 패널 single-border off 등) 종전대로 콘텐츠 첫 행.
+            활성 패널의 실제 box/x/y/w/h 를 써서 분할(split) 상태에서도 그 패널에
+            붙는다. 클릭 우선순위: on_mouse_down 이 [x] 존을 헤더 드래그(pick-up)보다
+            먼저 검사하므로 테두리 행에 있어도 클릭이 드래그로 새지 않는다."""
             self._tab_close_zone = None
             active = self.layout.get("active")
             ap = next((p for p in self.layout.get("panes", [])
@@ -1341,7 +1344,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             else:
                 st = Style(color="white", bgcolor=theme_color(self, "error"),
                            bold=True)
-            by = py                 # 콘텐츠 첫 행
+            bbox = ap.get("box")    # 테두리 박스(있으면 상단 테두리 행이 한 칸 위)
+            by = bbox[1] if bbox else (py - 1 if py >= 1 else py)
             bx0 = px + pw - 3       # 콘텐츠 우측 끝 3칸("[x]") — 우측 테두리 안쪽
             if not (0 <= by < H):
                 return
