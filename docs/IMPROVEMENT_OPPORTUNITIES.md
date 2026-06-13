@@ -439,7 +439,13 @@ rect 로 클램프 + 추출 시 그 열 범위만. **위험**: 낮음.
 swap/rotate/break/join/layout-preset/clock·calendar/검색이 메뉴 부재("모든 동작 메뉴
 노출" 목표와 어긋남). **개선**: 계층 서브메뉴 또는 COMMANDS 테이블 자동생성.
 
-### [L] 2.8 인덱스 명령 음수 인자 침묵 실패 — `client.py:2017-2024`
+### [L] 2.8 인덱스 명령 음수 인자 침묵 실패 — `client.py` ✅ **해결(검증 2026-06-13, stale 헤딩 정정)**
+> **검증 정정(2026-06-13)**: 구현됨. 카운트형 인자는 `clientutil._first_int`(음수
+> 무의미), **인덱스형은 `_first_signed_int`/`_signed_int`** 로 분리돼 음수를 받는다.
+> `move-tab`/`move-window` 는 `_tab_target_index(args)`(양수 1-based·**음수=끝에서**)를
+> 써 `move-tab -2` 가 끝에서 둘째로 동작한다(client.py 의 move-tab 분기 주석 `§2.8`).
+> 아래는 원 진단. (그 외 L: choose-tree 검색·썸네일 부재 등은 발견성 개선 여지로 잔존.)
+
 `_first_int` 가 첫 `-N` 토큰에서 `None` 반환 → `move-tab -2` 무시. **개선**: 음수=끝에서
 N번째 또는 명시 거부. (그 외 L: choose-tree 검색·썸네일 부재, Ctrl+Click↔우클릭 구분
 불가, ESC 디바운스 트레이드오프 — 모두 발견성/접근성 개선 여지.)
@@ -709,21 +715,49 @@ SO_PEERCRED uid 일치 권장. **위험**: 프로토콜 변경(§5.3 과 함께)
   크리티컬 클래스를 위치만 바꾸려고 옮기는 것은 렌더 회귀(ptyshot 골든) 위험만 크고 기능/perf
   이득 0** → 의도적 보류(요청 시 mixin 분할로 진행 가능). **위험**: 좌표/렌더 회귀.
 
-### [M] 5.5 광역 `except Exception: pass` 다수 — 조용한 실패 — serverio 7·pty_backend 6·client 11·serverpty 3
+### [M] 5.5 광역 `except Exception: pass` 다수 — 조용한 실패 ✅ **해결(#28 과 동일 — 검증 2026-06-13, stale 헤딩 정정)**
+> **검증 정정(2026-06-13)**: 이 항목은 진행현황 **#28(광역 except 좁히기)** 과 같은
+> 건으로, 거기서 해결됐다. **단일행 `except Exception: pass` 0건**(serverio/pty_backend/
+> client/serverpty 전수). 핵심·정리 경로의 broad except 는 `_log_error` 로 좁혀졌고
+> (handle_client·send_full·scan_claude·code_version 등 — fd 누수 우려였던 PTY/소켓
+> 정리 포함), **잔여 broad except 는 전부 의도된 best-effort**: 로깅 자체의 실패
+> (`_log_error` 의 파일쓰기·시그널 핸들러 로그), PTY 깨우기(`cancel_io`)·Windows
+> `get_exitstatus` 등 — 삼켜야 정상인 자리다(주석/맥락 명시). 아래는 원 진단.
+
 PTY/소켓 정리 경로가 무로그 삼킴 → fd 누수·좀비 파이프(§6 CLOEXEC 류)가 흔적 없이 발생.
 **개선**: `OSError`/`ConnectionError` 로 좁히고 정리 경로에 디버그 로그(`_log_error` 재사용).
 
-### [M] 5.6 execv 실패 폴백의 소켓/fd 누수·좀비 — `serverpersist.py:256-264`
+### [M] 5.6 execv 실패 폴백의 소켓/fd 누수·좀비 — `serverpersist.py` ✅ **해결(검증 2026-06-13, stale 헤딩 정정)**
+> **검증 정정(2026-06-13)**: 구현됨. `_do_execv` 의 `os.execv` 실패(`OSError`) 폴백이
+> ① `_log_error("execv")` 로 진단 단서를 남기고 ② `_rearm_master_cloexec()` 로 풀었던
+> master fd CLOEXEC 를 즉시 되걸어(종료 직전 subprocess 가 fd 상속해 셸 고아화 방지)
+> ③ `_cleanup_endpoint_files()` 로 소켓·포트파일·토큰을 정리해(stale 소켓 좀비 차단)
+> ④ `_notify_no_sessions()` 로 깨끗이 종료한다(SIGHUP 으로 셸 정리). 본문/헬퍼에
+> `§5.6` 주석 명시. 아래는 원 진단.
+
 `_do_execv` 실패 시 CLOEXEC 푼 master fd·listen 소켓·포트파일 정리가 불명확 → stale
 소켓에 probe 성공해 새 기동 차단(좀비). 직렬화~execv 창의 입력 유실 레이스. **개선**:
 폴백에서 소켓/포트파일 명시 정리, 직렬화를 콜백 안으로 옮겨 창 최소화. test_restart 가드.
 
-### [M] 5.7 재접속 로직 2벌 중복 — `client.py:369-389,391-441`
+### [M] 5.7 재접속 로직 2벌 중복 — `client.py` ✅ **해결(검증 2026-06-13, stale 헤딩 정정)**
+> **검증 정정(2026-06-13)**: 통합됨. `_reconnect`(re-exec 재기동 대기)·`_force_reconnect`
+> (degraded 강제 재접속) 둘 다 공용 `_connect_and_hello(retries)` 로 연결+hello 를
+> 처리하고, 재시도 횟수는 모듈 상수 `_RECONNECT_RETRIES_RESTART`(300≈6s)·
+> `_RECONNECT_RETRIES_FORCE`(150≈3s)로 일원화됐다(복붙 매직 상수 제거). 아래는 원 진단.
+
 `_reconnect`/`_force_reconnect` 가 거의 동일(300/150회×0.02s) 복붙 + 매직 상수가
 launcher.wait_server 와 별개로 흩어짐. **개선**: `_resync_connect(retries,delay)` 통합 +
 재시도 상수 모듈 일원화.
 
-### [M] 5.8 테스트 커버리지 공백(추정)
+### [M] 5.8 테스트 커버리지 공백(추정) ✅ **해결(검증 2026-06-13, stale 헤딩 정정)**
+> **검증 정정(2026-06-13)**: 직접 단언 추가됨. **프로토콜 견고성**=`test_protocol.
+> test_read_msg_frame_length_bounded_and_robust`(거대 length·잘린 프레임·비-JSON·미지
+> 타입)+`test_write_msg_none_writer_guard`. **degraded 히스테리시스/재접속**=`test_client.
+> test_net_degraded_hysteresis`·`test_net_degraded_recover_triggers_reconnect`·
+> `test_net_responsiveness_hysteresis_and_border`·`test_force_reconnect_recovers_without_exit`·
+> `test_net_watchdog_triggers_auto_reconnect`. **손상 상태파일 복원/미지 cmd**=`test_robustness.
+> test_restore_resume_corrupt_returns_false`·`test_unknown_cmd_action_is_noop`. 아래는 원 진단.
+
 재접속/degraded 히스테리시스(net_bad/good/recover 경계), execv 실패 폴백·손상 상태파일
 복원, 프로토콜 견고성(거대 length·잘린 프레임·비-JSON·미지 타입)에 직접 단언이 얕음.
 **개선**: 가짜 reader 로 RTT 주입해 degraded 전이 테스트, save→restore 라운드트립+손상
