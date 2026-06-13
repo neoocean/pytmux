@@ -134,6 +134,60 @@ async def test_remote_attach_merge_select_input_detach():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_remote_new_tab_spawns_window_and_attaches():
+    """remote-new-tab <host>: 미어태치 호스트면 먼저 attach 한 뒤 원격에 **새 window**를
+    만들어 새 ⇄ 탭(active)으로 붙이고, 그 새 창 화면을 뷰어에 전달한다. remote-attach
+    가 기존 탭 병합·열람만 하는 것과 달리 원격에 새 셸을 띄우는 게 핵심."""
+    if os.name == "nt":
+        return  # in-process 페더레이션 코어는 POSIX 소켓 기준
+    srvA, taskA, sockA = await server_only()     # 로컬
+    srvB, taskB, sockB = await server_only()     # 원격(같은 프로세스, 실 소켓)
+    reader = writer = None
+    try:
+        sessB = srvB.ensure_default_session(80, 24)
+        assert len(sessB.tabs) == 1              # 원격 B 는 기본 창 1개
+
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        st0 = await _read_until(reader, lambda m: m.get("t") == "status",
+                                what="initial status")
+        assert not any(w["name"].startswith("⇄") for w in st0["windows"])
+
+        # remote-new-tab (B 미어태치, 엔드포인트 직결) → B attach + 새 창 생성
+        await write_msg(writer, {"t": "cmd", "action": "remote_new_window",
+                                 "endpoint": sockB})
+
+        # 원격 B 에 새 window 가 생겨 창이 2개(원격측 권위 확인)
+        for _ in range(160):
+            if len(sessB.tabs) == 2:
+                break
+            await asyncio.sleep(0.05)
+        assert len(sessB.tabs) == 2, "원격 B 에 새 window 생성"
+        newpane = sessB.active_window.active_pane.id   # new_window 가 활성화한 새 창
+
+        # 새 창 화면(layout)이 뷰어에 전달된다 — 활성 패널 = B 신규 창 패널.
+        # (특정 pane id 로 매칭해 attach 시 흘러온 기존 창 layout 과 무관하게 견고)
+        lay = await _read_until(
+            reader, lambda m: m.get("t") == "layout" and m.get("active") == newpane,
+            what="new remote window layout")
+        assert lay["active"] == newpane
+
+        # 병합 status 에 ⇄ 탭 2개(기존+신규), 모두 remote=True, 신규가 active.
+        stm = await _read_until(
+            reader,
+            lambda m: m.get("t") == "status"
+            and sum(w["name"].startswith("⇄") for w in m["windows"]) == 2,
+            what="merged 2 remote tabs")
+        rtabs = [w for w in stm["windows"] if w["name"].startswith("⇄")]
+        assert all(w.get("remote") for w in rtabs), rtabs
+        assert any(w.get("active") for w in rtabs), ("신규 원격 탭 active", rtabs)
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
 async def test_remote_attach_failure_sends_notice():
     """실패가 서버 로그에만 남아 '아무 일도 안 일어남'으로 보이던 갭(사용자 보고):
     remote_attach 가 실패하면 요청 클라에 notice(원인 포함)가 회신된다."""

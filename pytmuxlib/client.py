@@ -2244,6 +2244,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.send_cmd("remote_attach", host=host)
                 else:
                     self.display_message("사용법: remote-attach <host>")
+            elif c in ("remote-new-tab", "remote_new_tab", "remote-new-window"):
+                # §1.7 페더레이션: 원격 pytmux 에 **새 터미널**을 만들어 이 pytmux 의
+                # 새 탭으로 붙인다(remote-attach 가 기존 원격 탭을 병합·열람만 하는 것과
+                # 달리 원격에 새 셸을 띄운다). 아직 attach 안 됐으면 먼저 attach 한다.
+                # host 는 remote-attach 와 같이 원시 잔여 문자열(백슬래시 보존).
+                rest = line.split(None, 1)
+                host = rest[1].strip() if len(rest) > 1 else ""
+                if host:
+                    self.send_cmd("remote_new_window", host=host)
+                else:
+                    self.display_message("사용법: remote-new-tab <host>")
             elif c in ("remote-detach", "remote_detach"):
                 rest = line.split(None, 1)
                 host = rest[1].strip() if len(rest) > 1 else ""

@@ -338,6 +338,20 @@ class ServerIOMixin:
         if action == "remote_detach":
             self.remote_detach(msg.get("host"))
             return
+        if action == "remote_new_window":
+            # remote-new-tab <host>: 원격에 새 터미널을 만들어 새 탭으로 보여준다
+            # (필요하면 먼저 attach). 성공 시 화면·탭바는 업스트림 new_window→_send_full
+            # 전달분(reader)이 그린다 — select_window 진입과 동형이라 여기서 따로
+            # broadcast/_send_full 하지 않는다(로컬 화면이 끼어들면 깜빡임). 실패만 notice.
+            target = msg.get("host") or msg.get("endpoint") or "?"
+            ok = await self.remote_new_window(client, sess,
+                                              host=msg.get("host"),
+                                              endpoint=msg.get("endpoint"))
+            if not ok:
+                await write_msg(client.writer, {"t": "notice", "text":
+                    f"remote-new-tab {target} 실패 — "
+                    f"{getattr(self, '_remote_last_err', '') or '서버 error.log 참조'}"})
+            return
         if action == "select_window":
             idx = int(msg.get("index", 0))
             if idx >= len(sess.tabs):

@@ -470,6 +470,36 @@ class ServerRemoteMixin:
                         {"t": "cmd", "action": "select_window", "index": ri})
         return True
 
+    async def remote_new_window(self, client, sess, host: str | None = None,
+                                endpoint: str | None = None) -> bool:
+        """`remote-new-tab <host>`: 원격 pytmux 에 **새 터미널(window)을 만들어** 그
+        새 탭을 보여준다. remote-attach 가 원격의 기존 탭들을 병합·열람만 하는 것과
+        달리, 이건 원격에 새 셸을 띄운다. 아직 attach 안 된 호스트면 먼저 attach 한다
+        (그 호스트의 기존 원격 탭도 함께 병합됨 — 페더레이션 모델상 불가피).
+
+        흐름: 이 클라의 보기를 그 호스트로 돌린 뒤 업스트림에 new_window 를 릴레이한다.
+        업스트림은 새 창을 만들어 active 로 바꾸고 _send_full 로 layout/screen 을
+        우리(=업스트림의 한 클라) 연결로 스트리밍한다 → reader 가 보는 클라에 전달하고,
+        status 의 늘어난 windows 가 병합 탭바에 새 원격 탭으로(active) 나타난다. 실패
+        (호스트 미지정·attach 실패·링크 사망)면 False."""
+        name = host or endpoint
+        if not name:
+            return False
+        remotes = self._remotes_dict()
+        link = remotes.get(name)
+        if link is None:
+            if not await self.remote_attach(sess, host=host, endpoint=endpoint):
+                return False
+            link = remotes.get(name)
+        if link is None:
+            return False
+        client.remote_view = link.host
+        try:
+            await write_msg(link.writer, {"t": "cmd", "action": "new_window"})
+        except (OSError, ConnectionError):
+            return False
+        return True
+
     # ---- 원격 중첩 자동 승격(docs/NESTED_ATTACH_SCENARIO.md) ----
     # 패널당 승격 요청 처리 최소 간격(초) — 출력 재생(cat/replay)·루프가 만드는
     # 중복/위조 REQ 의 연타를 완화한다(§7).

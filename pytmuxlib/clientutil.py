@@ -572,6 +572,7 @@ COMMANDS = [
     ("restart-check", "독립 드라이런 — 실행 없이 안전성(re-exec·직렬화·fd·relaunch) 점검 팝업(별칭 restart-dry-run)", "설정/기타"),
     ("reconnect", "IPC 강제 재접속 — degraded(빨간 외곽선) 고착 회복(서버 보존)", "설정/기타"),
     ("remote-attach", "원격 pytmux 서버의 탭을 이 pytmux 에 어태치 (remote-attach <host>) — §1.7 페더레이션", "설정/기타"),
+    ("remote-new-tab", "원격 pytmux 에 새 터미널을 만들어 새 탭으로 붙이기 (remote-new-tab <host>; 미어태치면 먼저 어태치)", "설정/기타"),
     ("remote-detach", "원격 어태치 해제 (remote-detach [host], 생략=전부)", "설정/기타"),
 ]
 
@@ -801,6 +802,7 @@ i18n.register({
         "cmd.detach-client": "detach (quit app, keep shells)",
         "cmd.kill-server": "Kill server and all tabs/shells",
         "cmd.remote-attach": "Attach a remote pytmux server's tabs into this one (remote-attach <host>) — federation",
+        "cmd.remote-new-tab": "Spawn a new terminal on a remote pytmux and attach it as a new tab (remote-new-tab <host>; attaches first if needed)",
         "cmd.remote-detach": "Detach remote attach (remote-detach [host], omit=all)",
         "cmd.restart-server": "Work-preserving restart — swap server code keeping shells/PTY (reconnect). Auto dry-run first, re-confirm on FAIL",
         "cmd.restart-all": "Full restart — server session-preserving restart + client relaunch (alias full-restart). Updates both server·client code. Auto dry-run first, re-confirm on FAIL",
