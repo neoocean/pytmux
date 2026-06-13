@@ -2,11 +2,15 @@
 
 (docs/HANDOFF.md §11 분리로 test_protocol 에서 이리로 옮김.)"""
 import datetime as dt
+import re
+import time
 
 import harness  # noqa: F401  (경로 설정)
-from pytmuxlib.claude import (claude_awaiting_answer, claude_model,
-                              claude_perm_mode, claude_prompt,
-                              claude_state, claude_usage, parse_reset_delay,
+import pytmuxlib.claude as claude_mod
+from pytmuxlib.claude import (claude_awaiting_answer, claude_account,
+                              claude_context_pct, claude_model,
+                              claude_perm_mode, claude_prompt, claude_state,
+                              claude_usage, parse_reset_delay, parse_usage,
                               saver_hook_events)
 
 
@@ -432,3 +436,68 @@ async def test_saver_hook_events_env_payload():
     armed = evs["claude-auto-armed"]
     assert armed["PYTMUX_PENDING_KIND"] == "autoresume"
     assert armed["PYTMUX_PENDING_ETA"] == 30
+
+
+# ── §5.9: 정규식 ReDoS(파국적 백트래킹) 회귀 가드 ──────────────────────────────
+# claude.py 의 파서는 **신뢰할 수 없는 화면 텍스트**(Claude Code TUI 출력·붙여넣기)에
+# 정규식을 돌린다. 패턴에 중첩 수량자/모호 교대가 들어가면 적대적 입력이 지수/2차
+# 시간으로 폭주해(ReDoS) flush 루프를 멈출 수 있다. 아래는 ① 모듈의 모든 컴파일된
+# 패턴과 ② 주요 공개 파서를 큰 적대적 입력에 돌려 **선형 시간(상한 내 완료)** 을
+# 고정한다 — 향후 패턴 편집이 파국적 백트래킹을 들여오면 시간 초과로 잡힌다.
+
+# 적대적 입력 빌더(패턴들이 노리는 토큰을 반복/혼합해 백트래킹 유발 시도). 길이는
+# 선형이면 µs~ms, 파국적이면 수초+ 라 둘을 또렷이 가른다.
+def _redos_payloads(n):
+    return [
+        " " * n,                       # 공백 런(앵커 \s* 백트래킹)
+        "│ " * n,                      # 입력/턴 프리픽스 반복
+        "9" * n,                       # 숫자 런(%/토큰/시각 파서)
+        ("9" * (n // 2)) + "%",        # 숫자 런 뒤 % (context/usage)
+        ("9" * (n // 4)) + " tokens",  # 토큰 베이트
+        "a" * n,                       # 단일 문자 런(이메일/모델/단어)
+        ("a@" * (n // 2)) + "b",       # 이메일류 교대(계정 파서)
+        ("Opus " * (n // 5)),          # 모델 파서 베이트
+        ("1:" * (n // 2)) + "30pm",    # 리셋 시각 파서 베이트
+        ("x" * (n // 2) + "\n") * 2,   # 다행
+    ]
+
+
+async def test_regex_patterns_no_catastrophic_backtracking():
+    """claude.py 의 모든 모듈 레벨 컴파일 정규식이 ~40KB 적대적 입력에서도 상한
+    내 완료(파국적 백트래킹 부재)."""
+    patterns = [(name, v) for name, v in vars(claude_mod).items()
+                if isinstance(v, re.Pattern)]
+    assert len(patterns) >= 20, f"패턴 수집 누락? {len(patterns)}"
+    payloads = _redos_payloads(40000)
+    BUDGET = 0.5   # 선형이면 한참 못 미침; 파국적이면 수초+ 라 여유 큰 경계
+    for name, pat in patterns:
+        for s in payloads:
+            t0 = time.perf_counter()
+            pat.search(s)
+            pat.findall(s)
+            dt_s = time.perf_counter() - t0
+            assert dt_s < BUDGET, \
+                f"{name} 가 적대적 입력에서 {dt_s:.3f}s — ReDoS 의심"
+
+
+async def test_public_parsers_linear_on_hostile_screen():
+    """주요 공개 파서가 거대 적대적 화면(반복 프리픽스·숫자·이메일류)에서도 빠르게
+    반환(폭주 없음). 결과값이 아니라 **완료 시간**을 가드한다."""
+    hostile = "\n".join([
+        "│ " * 2000,
+        "9" * 8000 + "% context left",
+        ("a@" * 4000) + "b 's Organization",
+        "Opus " * 1600,
+        ("9" * 4000) + " tokens",
+        "Current session  " + "9" * 4000 + "% used",
+        "Resets " + "x" * 8000,
+        "> " + "y" * 8000,
+    ])
+    fns = [claude_state, claude_usage, parse_usage, claude_context_pct,
+           claude_model, claude_account, claude_prompt, claude_awaiting_answer,
+           claude_perm_mode]
+    t0 = time.perf_counter()
+    for fn in fns:
+        fn(hostile)
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 1.0, f"공개 파서 적대적 입력 처리 {elapsed:.3f}s — 폭주 의심"

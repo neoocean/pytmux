@@ -291,15 +291,22 @@ async def start_server(endpoint: str, on_connected: ClientCb, *,
         pf = portfile or portfile_for(endpoint)
         _write_portfile(pf, actual)
         return server, resolved
-    # unix
+    # unix — §5.9: stale 소켓 정리를 TOCTOU 없이 한다. 종전 `exists→unlink→bind` 는
+    # 검사~바인드 사이에 다른 주체가 끼어들 창이 있었다(또 unlink 가 그 새 소켓을 지움).
+    # 대신 **pid 고유 임시 경로에 bind 후 `os.replace` 로 원자 교체**한다: replace 는
+    # 대상이 stale 소켓이든 없든 원자적으로 갈아끼우고, 우리 바인드 소켓이 그 이름으로
+    # 도달 가능해진다. 바인드 자체는 임시 경로라 항상 성공(기존 stale path 와 무관) →
+    # 재시작(execv 후 stale path)·신규·stale 정리 모든 흐름에서 거동 동일, 창만 제거.
     path = kind[1]
-    if os.path.exists(path):
-        os.unlink(path)
-    server = await asyncio.start_unix_server(on_connected, path=path)
-    try:
-        os.chmod(path, 0o600)
+    tmp = f"{path}.{os.getpid()}.sock.tmp"
+    if os.path.exists(tmp):    # 직전 크래시 잔재(우리 pid 네임스페이스) 정리
+        os.unlink(tmp)
+    server = await asyncio.start_unix_server(on_connected, path=tmp)
+    try:    # 공개 이름으로 노출되기 전에 0600 으로 좁힌다(replace 가 모드 보존).
+        os.chmod(tmp, 0o600)
     except OSError:
         pass
+    os.replace(tmp, path)
     return server, path
 
 

@@ -165,8 +165,13 @@ _CTX_PCT_RES = [
 # 매 위치마다 백트래킹해 O(n²)로 폭주한다(200x50 빈화면서 ~420ms 관측). 매칭은 항상
 # 숫자에서 시작하게 두어(`\d+` 가 공백 위치에서 즉시 실패) 선형 스캔이 되게 한다.
 # "(1M context)" 의 여는 괄호는 search 가 알아서 건너뛰므로 굳이 패턴에 안 넣는다.
-_CTX_BADGE_RE = re.compile(r"(\d+\s*[kKmM])\s*context\b", re.I)
-_TOK_RE = re.compile(r"([\d][\d.,]*\s?[kKmM]?)\s*tokens?\b", re.I)
+# 추가(§5.9, 2026-06-13): 숫자 런 자체는 위 '공백서 즉시 실패' 가 안 통한다 — 거대
+# 숫자열("9"×4만)에선 `\d+`/`[\d.,]*` 가 끝까지 먹고 뒤 리터럴(context/tokens) 실패 시
+# 한 자씩 백트래킹하며 시작점마다 반복해 O(n²)로 폭주한다(_CTX_BADGE_RE 적대입력 ~22초
+# 실측). 실제 배지/토큰 수치는 길어야 십수 자리이므로 런 길이를 **상한**으로 묶어
+# (`{1,9}`/`{0,19}`) 선형으로 만든다(실 매칭 보존 — 1M·200k·"1,234,567 tokens" 등).
+_CTX_BADGE_RE = re.compile(r"(\d{1,9}\s*[kKmM])\s*context\b", re.I)
+_TOK_RE = re.compile(r"([\d][\d.,]{0,19}\s?[kKmM]?)\s*tokens?\b", re.I)
 
 
 def claude_usage(text: str):
@@ -368,7 +373,9 @@ def model_overselect_hint(model, repeat_n, ctx_pct=None,
     return "💡 Opus 로 반복 작업 — 가벼운 모델 고려(/model)"
 
 
-_WINDOW_RE = re.compile(r"(\d+)\s*([kKmM])")
+# §5.9 ReDoS: `\d+` 무제한은 거대 숫자열에서 뒤 `[kKmM]` 실패 시 O(n²) 백트래킹 →
+# 윈도우 수치는 십수 자리면 충분하므로 상한(`{1,9}`)으로 묶어 선형화(실 매칭 보존).
+_WINDOW_RE = re.compile(r"(\d{1,9})\s*([kKmM])")
 
 
 def ctx_window_tokens(s):
@@ -428,15 +435,20 @@ _RESERVED_EMAIL_TLDS = frozenset({"example", "invalid", "localhost", "test"})
 # (계정 패널·릴리스노트 푸터에 실측). 화면 본문(코드·diff·git URL·예시)에 흩어진
 # 임의 이메일이 아니라 Claude UI 가 직접 그린 계정이므로 이걸 최우선·사실상 유일
 # 출처로 본다. 아포스트로피는 곧은(') / 둥근(') 둘 다 허용.
+# §5.9 ReDoS: 무제한 `+` 로컬/도메인은 거대 문자열("a"×4만)에서 뒤 `@`/구조 실패 시
+# 시작점마다 한 자씩 백트래킹해 O(n²)로 폭주(_ACCT_ORG_RE 적대입력 ~14초 실측). 실
+# 이메일은 RFC 상 로컬≤64·도메인≤255·TLD 짧으므로 길이 상한으로 묶어 선형화한다
+# (실 매칭 보존). 상한은 위치당 비용을 상수로 제한 → 전체 O(n).
 _ACCT_ORG_RE = re.compile(
-    r"([A-Za-z0-9._%+\-]+)@([A-Za-z0-9.\-]+\.[A-Za-z]{2,})['’]s\s+Organization",
-    re.I)
+    r"([A-Za-z0-9._%+\-]{1,64})@([A-Za-z0-9.\-]{1,255}\.[A-Za-z]{2,24})"
+    r"['’]s\s+Organization", re.I)
 # ② 계정 라벨 **바로 뒤**의 이메일(Login:/Account:/Email: <addr> 류 /status 출력).
 # 키워드와 이메일이 인접해야만 매치 → transcript 산문("…email someone at x@y.com")이나
 # 본문 예시는 안 잡힌다. git SSH URL(git@host:path)은 매치 뒤 ':' 검사로 따로 배제.
 _ACCT_LABEL_EMAIL_RE = re.compile(
     r"(?:account|logged\s+in(?:\s+as)?|signed\s+in(?:\s+as)?|login|e-?mail)"
-    r"\s*[:·\-]?\s+([A-Za-z0-9._%+\-]+)@([A-Za-z0-9.\-]+\.[A-Za-z]{2,})", re.I)
+    r"\s*[:·\-]?\s+([A-Za-z0-9._%+\-]{1,64})@([A-Za-z0-9.\-]{1,255}\.[A-Za-z]{2,24})",
+    re.I)  # §5.9 ReDoS: 이메일 부분 길이 상한(위 _ACCT_ORG_RE 와 동일 사유)
 
 
 def _is_reserved_email_domain(domain: str) -> bool:

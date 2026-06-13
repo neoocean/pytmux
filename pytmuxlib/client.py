@@ -10,6 +10,20 @@ import subprocess
 import time
 import traceback
 
+# textual/rich 심볼(종전 build_client_app 안에서 지연 import 하던 것 — §5.4 de-nest).
+# client.py 는 이미 모듈 최상위에서 clientwidgets/clientscreens 를 import 하고 그들이
+# textual 을 끌어오므로, 이 import 를 최상위로 올려도 기동 비용은 동일하다(textual 은
+# 이미 로드됨). 최상위에 둬야 PytmuxApp/믹스인이 팩토리 클로저 밖(모듈 레벨)에서도
+# 이 심볼을 참조할 수 있다(CLI 경량 기동은 pytmux.py 의 _LAZY 가 client import 자체를
+# 미뤄 달성 — 이 심볼 위치와 무관).
+from rich.style import Style
+from textual import events
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.geometry import Offset
+from textual.suggester import SuggestFromList
+from textual.widgets import Input
+
 from . import clientclip, clientrender, i18n, ipc, plugins, proc, version
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS, DEFAULT_STYLE,
@@ -37,23 +51,381 @@ _RECONNECT_RETRIES_RESTART = 300  # 서버 re-exec 재기동 대기(~6s)
 _RECONNECT_RETRIES_FORCE = 150    # degraded 강제 재접속(~3s, 서버는 살아 있음)
 
 
+# ── §5.4: PytmuxApp 책임별 믹스인(모듈 레벨) ─────────────────────────────────────
+# 종전 build_client_app 팩토리 안 한 덩어리(거대 클래스)였던 PytmuxApp 의 응집된
+# 메서드 군을 모듈 레벨 믹스인으로 분리한다. 믹스인은 client.py 의 모듈 전역(textual/
+# rich 심볼·clientutil 헬퍼·ipc/i18n/plugins 등)을 그대로 공유하므로 이름 해석이
+# 깨지지 않는다(팩토리 지역인 config/session_name 은 __init__ 에서만 쓰여 분리 대상
+# 메서드와 무관). PytmuxApp 은 이 믹스인들을 상속하고, 렌더/입력 코어(_composite·
+# on_key·_run_command 등 강결합 메서드)는 클래스 본문에 남긴다. self 경유 호출은 MRO
+# 로 그대로 동작한다 — 거동 불변, 위치만 분리.
+class _ClipboardMixin:
+    """OS 클립보드/페이스트 버퍼 연동(copy/paste·이미지 경로 폴백·버퍼 선택)."""
+
+    def copy_text(self, text):
+        # 서버 페이스트 버퍼 + OS 클립보드 양쪽에 저장
+        self.send_cmd("set_buffer", text=text)
+        clip = clientclip.copy(text)
+        self.display_message(
+            i18n.t("msg.copied_chars", n=len(text))
+            + (i18n.t("msg.clipboard_suffix") if clip else ""))
+
+    def paste_os_clipboard(self):
+        """OS 클립보드 내용을 활성 패널에 붙여넣는다(명령 `paste-clipboard`, Ctrl+V).
+
+        - **텍스트**: 직접 읽어 bracketed 패스스루로 패널에 주입한다(우선).
+        - **이미지**(§10-A #11): 클라이언트는 PTY 너머로 비트맵을 옮길 수 없으므로,
+          클립보드 이미지를 **임시 PNG 파일로 저장**하고 그 **파일 경로 문자열**을
+          패널에 붙여넣는다(결정 ① — Claude Code CLI 등은 경로를 첨부 이미지로 인식).
+          파일은 클라이언트 머신에 생기므로 클라이언트=서버(로컬)일 때 유효하다.
+          저장에 실패하면(도구 부재/원격 등) 내부 앱이 **공유 OS 클립보드**에서 직접
+          읽도록 Alt+V(=ESC v) 키스트로크로 폴백한다."""
+        # 클립보드 읽기/이미지 저장은 PowerShell 등 외부 도구라 수백 ms~수초
+        # 걸린다. 이벤트 루프에서 동기로 돌리면 화면이 멈춘 듯 보이고, 그동안 친
+        # 키가 붙여넣기 끝난 뒤 패널로 새어 들어간다(요청). 그래서 ① 즉시 안내
+        # 메시지를 띄우고 ② 실제 IO 는 워커(thread)로 돌려 루프를 안 막으며 ③
+        # 끝날 때까지 ESC 외 키를 무시한다(on_key 의 _pasting 가드). 진행 중 재호출 무시.
+        if self._pasting:
+            return
+        self._pasting = True
+        self.display_message(i18n.t("msg.paste_in_progress"))
+        self.run_worker(self._do_paste_clipboard(), exclusive=False)
+
+    async def _do_paste_clipboard(self):
+        try:
+            txt = await asyncio.to_thread(clientclip.paste)
+            if txt:
+                self.send_cmd("paste", text=txt)
+                return
+            if await asyncio.to_thread(clientclip.has_image):
+                path = await asyncio.to_thread(clientclip.save_image)
+                if path:
+                    # 경로를 붙여넣어 앱이 첨부 이미지로 인식하게 한다(결정 ①).
+                    self.send_cmd("paste", text=path)
+                    self.display_message(
+                        i18n.t("msg.paste_image_path", path=path))
+                    return
+                # 폴백: 내부 앱이 공유 클립보드에서 직접 읽도록 Alt+V.
+                self.send_input(b"\x1bv")   # ESC v = Alt+V
+                self.display_message(i18n.t("msg.paste_image_app"))
+                return
+            self.display_message(i18n.t("msg.clipboard_empty"))
+        finally:
+            self._pasting = False
+
+    def choose_buffer(self):
+        self._want_buffers = True
+        self.send_cmd("request_buffers")
+
+    def _open_choose_buffer(self, items):
+        def handle(idx):
+            if idx is not None:
+                self.send_cmd("paste_buffer", index=idx)
+        self.push_screen(ChooseBufferScreen(items), handle)
+
+
+class _NetReconnectMixin:
+    """IPC 소켓 reader 태스크 + 재접속(재시작 재개·degraded 강제 회복) + RTT
+    히스테리시스. 서버 PTY/세션은 안 건드리고 클라↔서버 소켓만 다룬다(§10)."""
+
+    def _start_reader(self):
+        """현재 self.reader 에 묶인 새 reader 태스크를 띄운다. 연결 세대(_conn_gen)
+        를 올려 각 태스크가 자기 세대를 들고 돌게 한다 — 강제 재접속으로 소켓이
+        교체되면 옛 태스크는 EOF 시 세대 불일치를 보고 조용히 종료한다."""
+        self._conn_gen += 1
+        self.run_worker(self._reader_task(self.reader, self._conn_gen),
+                        exclusive=False)
+
+    async def _reader_task(self, reader, gen):
+        while True:
+            msg = await read_msg(reader)
+            if msg is None:
+                # 이 reader 가 이미 새 연결로 교체됐으면(강제 재접속) 옛 태스크는
+                # 조용히 종료 — self.exit() 로 앱을 닫지 않는다(§10 degraded 회복).
+                if gen != self._conn_gen:
+                    return
+                # 강제 재접속(§10 degraded 자동/수동 회복)이 막 옛 소켓을 close 해
+                # 이 reader 를 깨운 경우: _force_reconnect 가 새 연결+hello 후
+                # _start_reader 로 _conn_gen 을 올린다. 하지만 그 close 는 gen 증가
+                # **이전**에 reader 를 깨우므로 위 gen 가드를 빠져나간다 — 여기서
+                # _force_reconnecting 를 보고 조용히 종료해야 한다(앱을 닫지 않음).
+                # 누락 시: pong 미지원 옛 서버에 새 클라가 붙으면 degraded 자동회복이
+                # 떠 self.exit() 로 클라가 ~10초 만에 메시지 없이 종료됐다.
+                if self._force_reconnecting:
+                    return
+                # 작업 보존 재시작 중이면 종료 대신 재접속(ⓔ). 단 전체 재시작
+                # (restart-all)이면 in-place 재접속 대신 클라를 relaunch 한다 —
+                # run_client 가 app.run() 반환 후 os.execv 로 새 클라를 띄운다
+                # (terminal 은 textual 종료가 정상복구). 새 클라가 re-exec 된 서버에
+                # 재접속해 셸/세션은 보존되고 클라 코드까지 갱신된다.
+                if self._reconnecting:
+                    if self._relaunch_on_restart:
+                        self._relaunch = True
+                        self.exit()
+                    else:
+                        await self._reconnect()
+                    return
+                self.exit()
+                return
+            self._dispatch(msg)
+
+    async def _connect_and_hello(self, retries):
+        """소켓 재연결 + hello 송신 공통 경로(재시작 재개·degraded 강제 재접속 공용).
+        listen 이 열릴 때까지 retries 회(_RECONNECT_DELAY 간격) 재시도하고, 붙으면
+        현재 크기로 hello 를 보낸다. 성공 True / 시간초과 False(호출부가 메시지 처리)."""
+        for _ in range(retries):
+            try:
+                self.reader, self.writer = await ipc.open_connection(
+                    self.sock_path)
+                break
+            except (ConnectionError, FileNotFoundError, OSError):
+                await asyncio.sleep(_RECONNECT_DELAY)
+        else:
+            return False
+        cols, rows = self._content_size()
+        hello = {"t": "hello", "proto": PROTO_VERSION, "cols": cols, "rows": rows}
+        tok = ipc.read_token(self.sock_path)   # 연결 인증(F1)
+        if tok:
+            hello["token"] = tok
+        if self.session_name:
+            hello["session"] = self.session_name
+        await write_msg(self.writer, hello)
+        return True
+
+    async def _reconnect(self):
+        """서버가 re-exec 로 재기동되는 동안 같은 소켓으로 재접속한다(ⓔ).
+        새 서버가 listen 을 다시 열 때까지 잠깐 재시도한 뒤 hello 로 재개."""
+        self._reconnecting = False
+        if not await self._connect_and_hello(_RECONNECT_RETRIES_RESTART):
+            self.exit(message=i18n.t("msg.reconnect_failed"))
+            return
+        self.display_message(i18n.t("msg.restart_done"))
+        self._start_reader()
+
+    async def _force_reconnect(self, reason="manual"):
+        """정체/degraded 된 IPC 연결을 강제로 새로 세워 반응성을 회복한다(§10).
+
+        서버(데몬)의 셸·PTY·세션은 **건드리지 않고** 클라↔서버 소켓만 교체한다 —
+        ssh 전송이 정체돼 `read_msg` 가 무한 블록되고 degraded(빨간 외곽선)가
+        고착될 때, 옛 소켓을 강제로 닫아 블록을 깨우고 새 연결로 hello 를 보내면
+        서버가 `_send_full` 로 전체 화면/레이아웃을 재전송해 회복된다. 옛 reader
+        태스크는 세대 불일치로 조용히 종료한다(앱은 안 닫힘). Claude 등 실행 중인
+        앱은 PTY 안에서 계속 돌고 있었으므로 그대로 이어진다(tmux 모델).
+        reason: "manual"(reconnect 명령) | "auto"(degraded 워치독)."""
+        if self._force_reconnecting:
+            return
+        self._force_reconnecting = True
+        try:
+            self.display_message(
+                "pytmux: 재접속 중…" + (" (자동 회복)" if reason == "auto" else ""))
+            # 옛 소켓을 강제로 닫아 블록된 read_msg 를 깨운다(옛 태스크는 세대
+            # 불일치로 종료). writer/reader 가 같은 전송을 공유하므로 writer 만 닫음.
+            old_w = self.writer
+            self.writer = None
+            if old_w is not None:
+                try:
+                    old_w.close()
+                except OSError:
+                    pass
+            # 새 연결(서버는 살아 있으니 보통 즉시 — 잠깐 재시도) + hello.
+            if not await self._connect_and_hello(_RECONNECT_RETRIES_FORCE):
+                self.display_message(i18n.t("msg.reconnect_failed_net"))
+                return
+            # 네트워크 상태 리셋: 새 채널이니 degraded 해제하고 표본 카운터 비움.
+            self._net_ping_ts = None
+            self._net_bad = self._net_good = 0
+            if self._net_degraded:
+                self._net_degraded = False
+                self._composite()
+            self.display_message(i18n.t("msg.reconnected_resync"))
+            self._start_reader()   # 새 reader 태스크(새 세대) — 서버 _send_full 수신
+        finally:
+            self._force_reconnecting = False
+
+    def reconnect_now(self, reason="manual"):
+        """강제 재접속을 워커로 시작한다(명령/워치독에서 호출). 이미 진행 중이면
+        _force_reconnect 가 즉시 반환한다."""
+        self.run_worker(self._force_reconnect(reason), exclusive=False)
+
+    def _net_ping(self):
+        """주기적으로 서버에 ping 을 보내 RTT 를 잰다. 직전 ping 이 임계 안에
+        응답(pong)되지 않았으면 그 자체를 느림 표본으로 치고(채널 지연/정체) 새
+        ping 을 보낸다. 임계 안에 아직 대기 중이면 새 ping 을 보류(중복 방지)."""
+        if not self.writer:
+            return
+        now = time.monotonic()
+        if self._net_ping_ts is not None:
+            if now - self._net_ping_ts <= self.net_rtt_threshold:
+                return                       # 응답 대기 중(임계 내) — 보류
+            self._net_sample(now - self._net_ping_ts)   # 미응답 = 느림 표본
+        self._net_ping_ts = now
+        asyncio.create_task(write_msg(self.writer, {"t": "ping", "ts": now}))
+
+    def _on_pong(self):
+        """서버 pong 수신: 미응답 ping 의 왕복지연을 표본으로 기록."""
+        if self._net_ping_ts is not None:
+            rtt = time.monotonic() - self._net_ping_ts
+            self._net_ping_ts = None
+            self._net_sample(rtt)
+
+    def _net_sample(self, rtt):
+        """RTT 표본 하나로 히스테리시스를 갱신한다. 임계 초과가 net_bad_n 회
+        연속이면 degraded ON, 임계 이하가 net_good_n 회 연속이면 OFF(깜빡임 방지).
+        상태가 바뀌면 외곽선 색을 다시 그린다. 또 degraded 가 net_recover_n 회
+        연속(표시 임계보다 훨씬 길게) 지속되면 IPC 강제 재접속으로 회복을 시도한다
+        (§10 — 서버 PTY/세션 보존)."""
+        self._net_last_rtt = rtt
+        if rtt > self.net_rtt_threshold:
+            self._net_bad += 1
+            self._net_good = 0
+        else:
+            self._net_good += 1
+            self._net_bad = 0
+        new = self._net_degraded
+        if self._net_bad >= self.net_bad_n:
+            new = True
+        elif self._net_good >= self.net_good_n:
+            new = False
+        if new != self._net_degraded:
+            self._net_degraded = new
+            self._composite()
+        # 자동 회복(§10): 느림이 충분히 오래 지속되면 강제 재접속(중복 방지는
+        # _force_reconnect 가). 재시도 간격을 두려고 카운터를 비워 다음 회복까지
+        # 다시 net_recover_n 표본을 모은다.
+        if (self.net_auto_reconnect and not self._force_reconnecting
+                and self._net_bad >= self.net_recover_n):
+            self._net_bad = 0
+            self.reconnect_now("auto")
+
+
+class _RestartVersionMixin:
+    """버전/업타임 팝업 + 작업 보존 재시작(드라이런 게이트·서버/전체 재시작) +
+    서버 정보 탭. 모두 서버에 요청을 보내고 회신을 팝업으로 그리는 표시 경로다."""
+
+    def open_version(self):
+        # version 명령: 서버에 버전/업타임을 요청하고(t==version 회신), 클라 자신의
+        # 버전/업타임과 합쳐 팝업(InfoScreen)을 띄운다.
+        self._want_version = True
+        self.send_cmd("request_version")
+
+    def open_restart_check(self):
+        # restart-check: 작업 보존 전체 재시작이 안전한지 드라이런 점검(실행 안 함).
+        # 서버 점검(re-exec/직렬화/fd)을 요청하고, 회신에 클라 측 점검을 합쳐 팝업.
+        self._want_restart_check = True
+        self.send_cmd("request_restart_check")
+
+    def begin_restart(self, kind):
+        # restart-server/restart-all 공통 진입: 실행 전 드라이런을 먼저 돌린다.
+        # 회신(restart_check)에서 _pending_restart 를 보고 안전하면 곧장 실행,
+        # FAIL 이면 재확인 팝업으로 진행 여부를 다시 묻는다(do_restart).
+        self._pending_restart = kind
+        self.display_message(i18n.t("msg.restart_dryrun"))
+        self.send_cmd("request_restart_check")
+
+    def do_restart(self, kind):
+        # 실제 재시작 수행. restart-all 은 클라 자신도 relaunch 한다.
+        if kind == "all":
+            self._relaunch_on_restart = True
+            self.display_message(
+                "pytmux: 전체 재시작 — 서버 재시작 + 클라 재기동…")
+        else:
+            self.display_message(i18n.t("msg.server_restart"))
+        self.send_cmd("restart_server")
+
+    def _gate_restart_on_check(self, m):
+        """대기 중인 재시작(_pending_restart)을 드라이런 결과로 게이트한다.
+        안전하면 곧장 실행, FAIL 이면 재시작 여부를 재확인 팝업으로 묻는다."""
+        kind = self._pending_restart
+        self._pending_restart = None
+        safe, checks = _restart_check_eval(
+            m, _client_relaunch_ok(), kind)
+        if safe:
+            self.do_restart(kind)
+            return
+        label = "전체 재시작" if kind == "all" else "서버 재시작"
+        fails = [lbl for ok, lbl in checks if not ok]
+        msg = "\n".join(
+            [f"드라이런 FAIL — {label} 안전 점검에서 문제가 있습니다:", ""]
+            + [f"  [FAIL] {lbl}" for lbl in fails]
+            + ["", "그래도 재시작할까요?"])
+        self.confirm_popup(
+            msg, action=lambda: self.do_restart(kind),
+            title=i18n.t("dialog.restart_confirm_title"),
+            yes_label=i18n.t("dialog.restart_yes"), danger=True)
+
+    def _show_restart_check_popup(self, m):
+        """서버 restart_check 결과 + 클라 측 점검을 PASS/WARN/FAIL 로 팝업."""
+        cli_ok = _client_relaunch_ok()
+        safe, checks = _restart_check_eval(m, cli_ok)
+        lines = [
+            ("✅ 안전 — restart-all 수행 가능" if safe
+             else "⚠️ 주의 — 아래 FAIL 항목 확인 후 진행"),
+            "",
+        ]
+        for ok, label in checks:
+            lines.append(f"  [{'PASS' if ok else 'FAIL'}] {label}")
+        if m.get("serialize_err"):
+            lines.append(f"        직렬화 오류: {m['serialize_err']}")
+        run_v, disk_v = m.get("running_version"), m.get("disk_version")
+        lines += [
+            "",
+            f"  서버 버전: 실행={run_v}  디스크={disk_v}"
+            + ("  → 재시작 시 갱신됨" if run_v != disk_v else "  (동일)"),
+            f"  클라 버전: 실행={self._code_version}  디스크="
+            f"{version.code_version()}",
+            "",
+            "  (버전 차이는 위험이 아니라 '재시작이 새 코드를 로드'를 뜻함)",
+        ]
+        self.push_screen(InfoScreen(lines, title="restart-check (드라이런)"))
+
+    def _show_version_popup(self, msg):
+        """서버 version 회신(version·uptime·pid) + 클라 자신의 값으로 팝업 구성."""
+        cli_up = version.fmt_uptime(time.time() - self._boot_time)
+        srv_up = version.fmt_uptime(msg.get("uptime", 0))
+        lines = [
+            "pytmux 버전 / 업타임",
+            "",
+            f"  클라이언트  {self._code_version:<14}  업타임 {cli_up}",
+            f"  서버        {msg.get('version', '?'):<14}  업타임 {srv_up}",
+            "",
+            f"  (서버 pid {msg.get('pid', '?')} · 버전=동기화된 p4 CL,"
+            " 폴백 git)",
+        ]
+        self.push_screen(InfoScreen(lines, title="version"))
+
+    def _server_info_lines(self):
+        """서버 정보 탭(§10-A #12) 줄 — 호스트·로컬/원격·소켓 경로·RTT·응답성.
+        상태줄 서버이름(host) 클릭 시 통합 상태 팝업의 '서버' 탭으로 보인다."""
+        host = socket.gethostname()
+        remote = bool(getattr(self.status, "_is_remote", False))
+        lines = [
+            f"호스트: {host}",
+            f"연결: {'원격(ssh)' if remote else '로컬'}",
+            f"소켓: {self.sock_path}",
+        ]
+        rtt = getattr(self, "_net_last_rtt", None)
+        if rtt is not None:
+            thr = getattr(self, "net_rtt_threshold", 0.4)
+            lines.append(f"RTT: {rtt * 1000:.0f} ms (임계 {thr * 1000:.0f} ms)")
+        degraded = bool(getattr(self, "_net_degraded", False))
+        lines.append("응답성: " + ("저하(degraded) — 빨간 외곽선" if degraded
+                                    else "정상"))
+        lines.append("")
+        lines.append("degraded 고착 시 reconnect / resync 명령으로 재접속")
+        return lines
+
+
+_PytmuxAppMixins = (_ClipboardMixin, _NetReconnectMixin, _RestartVersionMixin)
+
+
 def build_client_app(sock_path: str, config: dict | None = None,
                      session_name: str | None = None):
     config = config or {}
-    # 빌드 시점에만 무거운 textual 을 끌어온다(모듈 import 는 가볍게). 아래는 실제로
-    # 이 함수/클로저에서 쓰는 심볼만 — 미사용 import(Segment/Strip/Widget/ModalScreen/
-    # Horizontal/Vertical/Label/ListItem/ListView)는 제거(A1 정리). 해당 textual 모듈은
-    # 어차피 clientwidgets/clientscreens 가 로드하므로 제거로 import 시간은 안 줄지만
-    # 죽은 의존을 없애 가독성을 높인다(textual 코어 ~57ms 는 TUI 상 불가피 — A1 §8.4).
-    from rich.style import Style
-    from textual import events
-    from textual.app import App, ComposeResult
-    from textual.binding import Binding
-    from textual.geometry import Offset
-    from textual.suggester import SuggestFromList
-    from textual.widgets import Input
+    # textual/rich 심볼은 모듈 최상위로 올렸다(§5.4 — 위 import 블록 주석 참조). 종전
+    # 여기 지연 import 는 clientwidgets/clientscreens 가 이미 textual 을 끌어와 기동
+    # 비용 절감 효과가 없었고, 모듈 레벨 믹스인이 이 심볼을 참조하려면 최상위라야 한다.
 
-    class PytmuxApp(App):
+    class PytmuxApp(*_PytmuxAppMixins, App):
         ENABLE_COMMAND_PALETTE = False
         # Textual 기본 App 은 ctrl+q 를 priority quit 으로 바인딩한다 — 이걸 덮어
         # 종료가 아니라 활성 패널로 전달한다(앱 종료는 detach 명령으로만). #25
@@ -581,124 +953,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             else:
                 self._exit_status_focus()
 
-        def _start_reader(self):
-            """현재 self.reader 에 묶인 새 reader 태스크를 띄운다. 연결 세대(_conn_gen)
-            를 올려 각 태스크가 자기 세대를 들고 돌게 한다 — 강제 재접속으로 소켓이
-            교체되면 옛 태스크는 EOF 시 세대 불일치를 보고 조용히 종료한다."""
-            self._conn_gen += 1
-            self.run_worker(self._reader_task(self.reader, self._conn_gen),
-                            exclusive=False)
-
-        async def _reader_task(self, reader, gen):
-            while True:
-                msg = await read_msg(reader)
-                if msg is None:
-                    # 이 reader 가 이미 새 연결로 교체됐으면(강제 재접속) 옛 태스크는
-                    # 조용히 종료 — self.exit() 로 앱을 닫지 않는다(§10 degraded 회복).
-                    if gen != self._conn_gen:
-                        return
-                    # 강제 재접속(§10 degraded 자동/수동 회복)이 막 옛 소켓을 close 해
-                    # 이 reader 를 깨운 경우: _force_reconnect 가 새 연결+hello 후
-                    # _start_reader 로 _conn_gen 을 올린다. 하지만 그 close 는 gen 증가
-                    # **이전**에 reader 를 깨우므로 위 gen 가드를 빠져나간다 — 여기서
-                    # _force_reconnecting 를 보고 조용히 종료해야 한다(앱을 닫지 않음).
-                    # 누락 시: pong 미지원 옛 서버에 새 클라가 붙으면 degraded 자동회복이
-                    # 떠 self.exit() 로 클라가 ~10초 만에 메시지 없이 종료됐다.
-                    if self._force_reconnecting:
-                        return
-                    # 작업 보존 재시작 중이면 종료 대신 재접속(ⓔ). 단 전체 재시작
-                    # (restart-all)이면 in-place 재접속 대신 클라를 relaunch 한다 —
-                    # run_client 가 app.run() 반환 후 os.execv 로 새 클라를 띄운다
-                    # (terminal 은 textual 종료가 정상복구). 새 클라가 re-exec 된 서버에
-                    # 재접속해 셸/세션은 보존되고 클라 코드까지 갱신된다.
-                    if self._reconnecting:
-                        if self._relaunch_on_restart:
-                            self._relaunch = True
-                            self.exit()
-                        else:
-                            await self._reconnect()
-                        return
-                    self.exit()
-                    return
-                self._dispatch(msg)
-
-        async def _connect_and_hello(self, retries):
-            """소켓 재연결 + hello 송신 공통 경로(재시작 재개·degraded 강제 재접속 공용).
-            listen 이 열릴 때까지 retries 회(_RECONNECT_DELAY 간격) 재시도하고, 붙으면
-            현재 크기로 hello 를 보낸다. 성공 True / 시간초과 False(호출부가 메시지 처리)."""
-            for _ in range(retries):
-                try:
-                    self.reader, self.writer = await ipc.open_connection(
-                        self.sock_path)
-                    break
-                except (ConnectionError, FileNotFoundError, OSError):
-                    await asyncio.sleep(_RECONNECT_DELAY)
-            else:
-                return False
-            cols, rows = self._content_size()
-            hello = {"t": "hello", "proto": PROTO_VERSION, "cols": cols, "rows": rows}
-            tok = ipc.read_token(self.sock_path)   # 연결 인증(F1)
-            if tok:
-                hello["token"] = tok
-            if self.session_name:
-                hello["session"] = self.session_name
-            await write_msg(self.writer, hello)
-            return True
-
-        async def _reconnect(self):
-            """서버가 re-exec 로 재기동되는 동안 같은 소켓으로 재접속한다(ⓔ).
-            새 서버가 listen 을 다시 열 때까지 잠깐 재시도한 뒤 hello 로 재개."""
-            self._reconnecting = False
-            if not await self._connect_and_hello(_RECONNECT_RETRIES_RESTART):
-                self.exit(message=i18n.t("msg.reconnect_failed"))
-                return
-            self.display_message(i18n.t("msg.restart_done"))
-            self._start_reader()
-
-        async def _force_reconnect(self, reason="manual"):
-            """정체/degraded 된 IPC 연결을 강제로 새로 세워 반응성을 회복한다(§10).
-
-            서버(데몬)의 셸·PTY·세션은 **건드리지 않고** 클라↔서버 소켓만 교체한다 —
-            ssh 전송이 정체돼 `read_msg` 가 무한 블록되고 degraded(빨간 외곽선)가
-            고착될 때, 옛 소켓을 강제로 닫아 블록을 깨우고 새 연결로 hello 를 보내면
-            서버가 `_send_full` 로 전체 화면/레이아웃을 재전송해 회복된다. 옛 reader
-            태스크는 세대 불일치로 조용히 종료한다(앱은 안 닫힘). Claude 등 실행 중인
-            앱은 PTY 안에서 계속 돌고 있었으므로 그대로 이어진다(tmux 모델).
-            reason: "manual"(reconnect 명령) | "auto"(degraded 워치독)."""
-            if self._force_reconnecting:
-                return
-            self._force_reconnecting = True
-            try:
-                self.display_message(
-                    "pytmux: 재접속 중…" + (" (자동 회복)" if reason == "auto" else ""))
-                # 옛 소켓을 강제로 닫아 블록된 read_msg 를 깨운다(옛 태스크는 세대
-                # 불일치로 종료). writer/reader 가 같은 전송을 공유하므로 writer 만 닫음.
-                old_w = self.writer
-                self.writer = None
-                if old_w is not None:
-                    try:
-                        old_w.close()
-                    except OSError:
-                        pass
-                # 새 연결(서버는 살아 있으니 보통 즉시 — 잠깐 재시도) + hello.
-                if not await self._connect_and_hello(_RECONNECT_RETRIES_FORCE):
-                    self.display_message(i18n.t("msg.reconnect_failed_net"))
-                    return
-                # 네트워크 상태 리셋: 새 채널이니 degraded 해제하고 표본 카운터 비움.
-                self._net_ping_ts = None
-                self._net_bad = self._net_good = 0
-                if self._net_degraded:
-                    self._net_degraded = False
-                    self._composite()
-                self.display_message(i18n.t("msg.reconnected_resync"))
-                self._start_reader()   # 새 reader 태스크(새 세대) — 서버 _send_full 수신
-            finally:
-                self._force_reconnecting = False
-
-        def reconnect_now(self, reason="manual"):
-            """강제 재접속을 워커로 시작한다(명령/워치독에서 호출). 이미 진행 중이면
-            _force_reconnect 가 즉시 반환한다."""
-            self.run_worker(self._force_reconnect(reason), exclusive=False)
+        # ---- IPC reader·재접속(_start_reader·_reader_task·_connect_and_hello·
+        # _reconnect·_force_reconnect·reconnect_now)은 _NetReconnectMixin
+        # (모듈 레벨, §5.4)으로 분리. ----
 
         def _fire_hook(self, event, env=None):
             cmd = self.hooks.get(event)
@@ -922,55 +1179,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self._composite()
 
         # ---- 네트워크 응답성 측정(§10): ping/pong RTT + 히스테리시스 ----
-        def _net_ping(self):
-            """주기적으로 서버에 ping 을 보내 RTT 를 잰다. 직전 ping 이 임계 안에
-            응답(pong)되지 않았으면 그 자체를 느림 표본으로 치고(채널 지연/정체) 새
-            ping 을 보낸다. 임계 안에 아직 대기 중이면 새 ping 을 보류(중복 방지)."""
-            if not self.writer:
-                return
-            now = time.monotonic()
-            if self._net_ping_ts is not None:
-                if now - self._net_ping_ts <= self.net_rtt_threshold:
-                    return                       # 응답 대기 중(임계 내) — 보류
-                self._net_sample(now - self._net_ping_ts)   # 미응답 = 느림 표본
-            self._net_ping_ts = now
-            asyncio.create_task(write_msg(self.writer, {"t": "ping", "ts": now}))
-
-        def _on_pong(self):
-            """서버 pong 수신: 미응답 ping 의 왕복지연을 표본으로 기록."""
-            if self._net_ping_ts is not None:
-                rtt = time.monotonic() - self._net_ping_ts
-                self._net_ping_ts = None
-                self._net_sample(rtt)
-
-        def _net_sample(self, rtt):
-            """RTT 표본 하나로 히스테리시스를 갱신한다. 임계 초과가 net_bad_n 회
-            연속이면 degraded ON, 임계 이하가 net_good_n 회 연속이면 OFF(깜빡임 방지).
-            상태가 바뀌면 외곽선 색을 다시 그린다. 또 degraded 가 net_recover_n 회
-            연속(표시 임계보다 훨씬 길게) 지속되면 IPC 강제 재접속으로 회복을 시도한다
-            (§10 — 서버 PTY/세션 보존)."""
-            self._net_last_rtt = rtt
-            if rtt > self.net_rtt_threshold:
-                self._net_bad += 1
-                self._net_good = 0
-            else:
-                self._net_good += 1
-                self._net_bad = 0
-            new = self._net_degraded
-            if self._net_bad >= self.net_bad_n:
-                new = True
-            elif self._net_good >= self.net_good_n:
-                new = False
-            if new != self._net_degraded:
-                self._net_degraded = new
-                self._composite()
-            # 자동 회복(§10): 느림이 충분히 오래 지속되면 강제 재접속(중복 방지는
-            # _force_reconnect 가). 재시도 간격을 두려고 카운터를 비워 다음 회복까지
-            # 다시 net_recover_n 표본을 모은다.
-            if (self.net_auto_reconnect and not self._force_reconnecting
-                    and self._net_bad >= self.net_recover_n):
-                self._net_bad = 0
-                self.reconnect_now("auto")
+        # ---- RTT 핑/히스테리시스(_net_ping·_on_pong·_net_sample)는
+        # _NetReconnectMixin(모듈 레벨, §5.4)으로 분리. ----
 
         # 셀 그리드 합성 헬퍼는 앱 비의존이라 clientrender.py 로 분리(#12). 호출은
         # clientrender.put_cell(...) 로 직접 한다(과거 self._put_cell). 시계/달력
@@ -1434,66 +1644,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
         # ---- 복사/버퍼 ----
         # OS 클립보드 입출력은 앱 상태 비의존이라 clientclip.py 모듈 자유함수로
         # 분리했다(#12). 클로저는 거기에 위임만 한다.
-        def copy_text(self, text):
-            # 서버 페이스트 버퍼 + OS 클립보드 양쪽에 저장
-            self.send_cmd("set_buffer", text=text)
-            clip = clientclip.copy(text)
-            self.display_message(
-                i18n.t("msg.copied_chars", n=len(text))
-                + (i18n.t("msg.clipboard_suffix") if clip else ""))
-
-        def paste_os_clipboard(self):
-            """OS 클립보드 내용을 활성 패널에 붙여넣는다(명령 `paste-clipboard`, Ctrl+V).
-
-            - **텍스트**: 직접 읽어 bracketed 패스스루로 패널에 주입한다(우선).
-            - **이미지**(§10-A #11): 클라이언트는 PTY 너머로 비트맵을 옮길 수 없으므로,
-              클립보드 이미지를 **임시 PNG 파일로 저장**하고 그 **파일 경로 문자열**을
-              패널에 붙여넣는다(결정 ① — Claude Code CLI 등은 경로를 첨부 이미지로 인식).
-              파일은 클라이언트 머신에 생기므로 클라이언트=서버(로컬)일 때 유효하다.
-              저장에 실패하면(도구 부재/원격 등) 내부 앱이 **공유 OS 클립보드**에서 직접
-              읽도록 Alt+V(=ESC v) 키스트로크로 폴백한다."""
-            # 클립보드 읽기/이미지 저장은 PowerShell 등 외부 도구라 수백 ms~수초
-            # 걸린다. 이벤트 루프에서 동기로 돌리면 화면이 멈춘 듯 보이고, 그동안 친
-            # 키가 붙여넣기 끝난 뒤 패널로 새어 들어간다(요청). 그래서 ① 즉시 안내
-            # 메시지를 띄우고 ② 실제 IO 는 워커(thread)로 돌려 루프를 안 막으며 ③
-            # 끝날 때까지 ESC 외 키를 무시한다(on_key 의 _pasting 가드). 진행 중 재호출 무시.
-            if self._pasting:
-                return
-            self._pasting = True
-            self.display_message(i18n.t("msg.paste_in_progress"))
-            self.run_worker(self._do_paste_clipboard(), exclusive=False)
-
-        async def _do_paste_clipboard(self):
-            try:
-                txt = await asyncio.to_thread(clientclip.paste)
-                if txt:
-                    self.send_cmd("paste", text=txt)
-                    return
-                if await asyncio.to_thread(clientclip.has_image):
-                    path = await asyncio.to_thread(clientclip.save_image)
-                    if path:
-                        # 경로를 붙여넣어 앱이 첨부 이미지로 인식하게 한다(결정 ①).
-                        self.send_cmd("paste", text=path)
-                        self.display_message(
-                            i18n.t("msg.paste_image_path", path=path))
-                        return
-                    # 폴백: 내부 앱이 공유 클립보드에서 직접 읽도록 Alt+V.
-                    self.send_input(b"\x1bv")   # ESC v = Alt+V
-                    self.display_message(i18n.t("msg.paste_image_app"))
-                    return
-                self.display_message(i18n.t("msg.clipboard_empty"))
-            finally:
-                self._pasting = False
-
-        def choose_buffer(self):
-            self._want_buffers = True
-            self.send_cmd("request_buffers")
-
-        def _open_choose_buffer(self, items):
-            def handle(idx):
-                if idx is not None:
-                    self.send_cmd("paste_buffer", index=idx)
-            self.push_screen(ChooseBufferScreen(items), handle)
+        # ---- 클립보드/페이스트 버퍼: copy_text·paste_os_clipboard·
+        # _do_paste_clipboard·choose_buffer·_open_choose_buffer 는 _ClipboardMixin
+        # (모듈 레벨, §5.4)으로 분리. ----
 
         # ---- choose-tree ----
         def request_tree(self, purpose="choose"):
@@ -1506,117 +1659,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
         # token-log 팝업으로 통합·제거). 인패널 /usage 자동 팝업(_auto_open_usage)은
         # claude-code 플러그인의 client_status 훅으로 이전했다(Phase 2c —
         # usage_shown_seq 증가 시 open_usage_panel 호출).
-        def open_version(self):
-            # version 명령: 서버에 버전/업타임을 요청하고(t==version 회신), 클라 자신의
-            # 버전/업타임과 합쳐 팝업(InfoScreen)을 띄운다.
-            self._want_version = True
-            self.send_cmd("request_version")
-
-        def open_restart_check(self):
-            # restart-check: 작업 보존 전체 재시작이 안전한지 드라이런 점검(실행 안 함).
-            # 서버 점검(re-exec/직렬화/fd)을 요청하고, 회신에 클라 측 점검을 합쳐 팝업.
-            self._want_restart_check = True
-            self.send_cmd("request_restart_check")
-
-        def begin_restart(self, kind):
-            # restart-server/restart-all 공통 진입: 실행 전 드라이런을 먼저 돌린다.
-            # 회신(restart_check)에서 _pending_restart 를 보고 안전하면 곧장 실행,
-            # FAIL 이면 재확인 팝업으로 진행 여부를 다시 묻는다(do_restart).
-            self._pending_restart = kind
-            self.display_message(i18n.t("msg.restart_dryrun"))
-            self.send_cmd("request_restart_check")
-
-        def do_restart(self, kind):
-            # 실제 재시작 수행. restart-all 은 클라 자신도 relaunch 한다.
-            if kind == "all":
-                self._relaunch_on_restart = True
-                self.display_message(
-                    "pytmux: 전체 재시작 — 서버 재시작 + 클라 재기동…")
-            else:
-                self.display_message(i18n.t("msg.server_restart"))
-            self.send_cmd("restart_server")
-
-        def _gate_restart_on_check(self, m):
-            """대기 중인 재시작(_pending_restart)을 드라이런 결과로 게이트한다.
-            안전하면 곧장 실행, FAIL 이면 재시작 여부를 재확인 팝업으로 묻는다."""
-            kind = self._pending_restart
-            self._pending_restart = None
-            safe, checks = _restart_check_eval(
-                m, _client_relaunch_ok(), kind)
-            if safe:
-                self.do_restart(kind)
-                return
-            label = "전체 재시작" if kind == "all" else "서버 재시작"
-            fails = [lbl for ok, lbl in checks if not ok]
-            msg = "\n".join(
-                [f"드라이런 FAIL — {label} 안전 점검에서 문제가 있습니다:", ""]
-                + [f"  [FAIL] {lbl}" for lbl in fails]
-                + ["", "그래도 재시작할까요?"])
-            self.confirm_popup(
-                msg, action=lambda: self.do_restart(kind),
-                title=i18n.t("dialog.restart_confirm_title"),
-                yes_label=i18n.t("dialog.restart_yes"), danger=True)
-
-        def _show_restart_check_popup(self, m):
-            """서버 restart_check 결과 + 클라 측 점검을 PASS/WARN/FAIL 로 팝업."""
-            cli_ok = _client_relaunch_ok()
-            safe, checks = _restart_check_eval(m, cli_ok)
-            lines = [
-                ("✅ 안전 — restart-all 수행 가능" if safe
-                 else "⚠️ 주의 — 아래 FAIL 항목 확인 후 진행"),
-                "",
-            ]
-            for ok, label in checks:
-                lines.append(f"  [{'PASS' if ok else 'FAIL'}] {label}")
-            if m.get("serialize_err"):
-                lines.append(f"        직렬화 오류: {m['serialize_err']}")
-            run_v, disk_v = m.get("running_version"), m.get("disk_version")
-            lines += [
-                "",
-                f"  서버 버전: 실행={run_v}  디스크={disk_v}"
-                + ("  → 재시작 시 갱신됨" if run_v != disk_v else "  (동일)"),
-                f"  클라 버전: 실행={self._code_version}  디스크="
-                f"{version.code_version()}",
-                "",
-                "  (버전 차이는 위험이 아니라 '재시작이 새 코드를 로드'를 뜻함)",
-            ]
-            self.push_screen(InfoScreen(lines, title="restart-check (드라이런)"))
-
-        def _show_version_popup(self, msg):
-            """서버 version 회신(version·uptime·pid) + 클라 자신의 값으로 팝업 구성."""
-            cli_up = version.fmt_uptime(time.time() - self._boot_time)
-            srv_up = version.fmt_uptime(msg.get("uptime", 0))
-            lines = [
-                "pytmux 버전 / 업타임",
-                "",
-                f"  클라이언트  {self._code_version:<14}  업타임 {cli_up}",
-                f"  서버        {msg.get('version', '?'):<14}  업타임 {srv_up}",
-                "",
-                f"  (서버 pid {msg.get('pid', '?')} · 버전=동기화된 p4 CL,"
-                " 폴백 git)",
-            ]
-            self.push_screen(InfoScreen(lines, title="version"))
-
-        def _server_info_lines(self):
-            """서버 정보 탭(§10-A #12) 줄 — 호스트·로컬/원격·소켓 경로·RTT·응답성.
-            상태줄 서버이름(host) 클릭 시 통합 상태 팝업의 '서버' 탭으로 보인다."""
-            host = socket.gethostname()
-            remote = bool(getattr(self.status, "_is_remote", False))
-            lines = [
-                f"호스트: {host}",
-                f"연결: {'원격(ssh)' if remote else '로컬'}",
-                f"소켓: {self.sock_path}",
-            ]
-            rtt = getattr(self, "_net_last_rtt", None)
-            if rtt is not None:
-                thr = getattr(self, "net_rtt_threshold", 0.4)
-                lines.append(f"RTT: {rtt * 1000:.0f} ms (임계 {thr * 1000:.0f} ms)")
-            degraded = bool(getattr(self, "_net_degraded", False))
-            lines.append("응답성: " + ("저하(degraded) — 빨간 외곽선" if degraded
-                                        else "정상"))
-            lines.append("")
-            lines.append("degraded 고착 시 reconnect / resync 명령으로 재접속")
-            return lines
+        # ---- 버전/재시작/서버정보(open_version·open_restart_check·begin_restart·
+        # do_restart·_gate_restart_on_check·_show_restart_check_popup·
+        # _show_version_popup·_server_info_lines)는 _RestartVersionMixin
+        # (모듈 레벨, §5.4)으로 분리. ----
 
         def _open_status_tabs(self, tree):
             """REC(출력 캡처)·서버 정보를 **한 팝업의 탭**으로 연다(#10, §10-A #12).

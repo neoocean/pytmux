@@ -696,7 +696,22 @@ SO_PEERCRED uid 일치 권장. **위험**: 프로토콜 변경(§5.3 과 함께)
 깨짐. **개선**: hello 에 `proto:N`, 불일치 시 명시적 거절 + 메시지 키 셋 모듈 상수화
 (HANDOFF §11.2 "명시적 계약"). **위험**: 낮음(hello 확장).
 
-### [L] 5.4 `build_client_app` 거대 팩토리(~2885줄) — `client.py:40-2925` ✅ **명명된 추출 완료 + suggester 추출(2026-06-12), PytmuxApp 이동만 의도적 보류**
+### [L] 5.4 `build_client_app` 거대 팩토리(~2885줄) — `client.py:40-2925` ✅ **믹스인 분할 착수(2026-06-13) — 클립보드·재접속·재시작/버전 3개 모듈 레벨 믹스인 분리**
+
+> **2026-06-13(사용자 요청 "mixin 분할로 진행"):** 아래 "의도적 보류"였던 PytmuxApp
+> 분해에 착수했다. ① 팩토리 안 지연 textual/rich import 를 **모듈 최상위로 이동**(위
+> 검증대로 기동 비용 동일 — clientwidgets/clientscreens 가 이미 textual 로드) → 모듈
+> 레벨 믹스인이 그 심볼을 참조 가능. ② 응집·저결합 메서드 군을 **모듈 레벨 믹스인**으로
+> 분리: `_ClipboardMixin`(copy/paste·이미지 폴백·버퍼선택), `_NetReconnectMixin`(reader
+> 태스크·재시작 재개·degraded 강제 재접속·RTT 히스테리시스), `_RestartVersionMixin`
+> (버전 팝업·드라이런 게이트·서버정보). PytmuxApp 은 `(*_PytmuxAppMixins, App)` 상속,
+> self 경유 호출은 MRO 로 그대로 — **거동 불변**(test_client/remote/restart/clientrender
+> 그린). 믹스인은 client.py 모듈 전역(textual·clientutil·ipc/i18n)을 공유하므로 이름
+> 해석이 안 깨진다(팩토리 지역 config/session_name 은 `__init__` 에만 쓰여 분리 대상과
+> 무관). **남은 잔여**: 렌더/입력 코어 메가 메서드(`_composite`·`on_key`·`_run_command`)는
+> 강결합이라 분리 위험 대비 이득이 없어 클래스 본문에 유지 — 추가 분할은 필요 시.
+
+(이하 2026-06-12 분석 — 기록 보존용.) ✅ **명명된 추출 완료 + suggester 추출(2026-06-12)**
 `build_client_app`(40-2925)가 `class PytmuxApp(App)`(108 중첩 메서드)를 통째 감싼다.
 **검증(2026-06-12)**: 문서가 지목했던 "클로저에 갇힌 app 상태 비의존 순수 함수" 3종은
 **전부 이미 추출**됐다 — ① 클립보드 → `clientclip.py`(copy/paste/has_image/save_image),
@@ -763,10 +778,25 @@ launcher.wait_server 와 별개로 흩어짐. **개선**: `_resync_connect(retri
 **개선**: 가짜 reader 로 RTT 주입해 degraded 전이 테스트, save→restore 라운드트립+손상
 입력, 위 §5.1 DoS 테스트.
 
-### [L] 5.9 기타
+### [L] 5.9 기타 ✅ **해결(2026-06-13)**
 `handle_control` 19-branch elif + on/off 파싱 6중복 → dict 테이블+헬퍼(`server.py:292-376`);
 ipc stale 소켓 TOCTOU(`ipc.py:184`); claude 정규식 ReDoS 회귀 테스트 명시; 흩어진 재시도
 상수 일원화.
+
+> **2026-06-13 처리:**
+> - **on/off 6중복 → dict 테이블**: 이미 완료(`_ONOFF_CONTROLS` 표 + `_arg_onoff` 헬퍼,
+>   `server.py`). 나머지 elif 는 시그니처가 제각각인 **고유 액션**이라 표화 가치 낮아 유지.
+> - **ipc stale 소켓 TOCTOU**: `start_server` 의 unix `exists→unlink→bind` 창을 **임시
+>   경로 bind + `os.replace` 원자 교체**로 제거(거동 불변 — 재시작 execv·신규·stale 모두
+>   동일). `test_ipc.test_unix_start_over_stale_socket_atomic` 가드.
+> - **ReDoS 회귀 테스트**: `test_claude` 에 모든 모듈 정규식 + 공개 파서를 ~40KB 적대
+>   입력에 돌려 선형 시간 단언 추가. **테스트가 실제 2차 백트래킹 4건을 적발** →
+>   `_CTX_BADGE_RE`(적대입력 22초)·`_TOK_RE`·`_WINDOW_RE`·`_ACCT_ORG_RE`/`_ACCT_LABEL_EMAIL_RE`
+>   의 무제한 `\d+`/`[...]+` 런을 길이 상한(`{1,9}`/`{0,19}`/이메일 RFC 한계)으로 묶어
+>   선형화(실 매칭 보존). 기존 ReDoS 주석은 '공백 화면'만 막고 '숫자/문자 런'은 못 막았다.
+> - **재시도 상수**: reconnect 쌍은 §5.7 에서 이미 일원화(`_RECONNECT_*`). 잔여는 모듈별
+>   단일 사용 기본값(launcher `wait_server`·serverremote 병합 대기)이라 진짜 산포 아님 —
+>   `wait_server` 백오프 bare 리터럴만 명명 상수화(`_WAIT_POLL_INITIAL`/`_WAIT_POLL_BACKOFF`).
 
 ---
 

@@ -72,6 +72,39 @@ async def test_tcp_roundtrip_ephemeral_portfile():
             os.unlink(pf)
 
 
+async def test_unix_start_over_stale_socket_atomic():
+    """§5.9: 기존(stale) 소켓 파일이 있어도 start_server 가 원자적으로 갈아끼우고
+    정상 listen 한다 — 종전 exists→unlink→bind 의 TOCTOU 창 없이. 임시 파일 잔재도
+    남기지 않는다."""
+    if ipc.IS_WINDOWS:
+        return  # Windows 는 TCP 경로(소켓 파일 stale 무관)
+    sock = tempfile.mktemp(suffix=".sock")
+    # 죽은 서버의 잔존 소켓 파일을 흉내 — bind 안 된 평범한 파일이라 probe=False(stale).
+    with open(sock, "w") as f:
+        f.write("")
+    assert ipc.probe(sock) is False, "stale 파일은 응답 없음"
+    try:
+        async def on_client(reader, writer):
+            await write_msg(writer, {"echo": await read_msg(reader)})
+            writer.close()
+        server, resolved = await ipc.start_server(sock, on_client)
+        try:
+            assert resolved == sock
+            assert ipc.probe(sock) is True, "stale 위에 새로 listen 됨"
+            reader, writer = await ipc.open_connection(sock)
+            await write_msg(writer, {"hello": 7})
+            assert (await read_msg(reader)) == {"echo": {"hello": 7}}
+            writer.close()
+            # 임시 바인드 파일(.tmp)이 남지 않는다(replace 로 소비됨).
+            assert not os.path.exists(f"{sock}.{os.getpid()}.sock.tmp")
+        finally:
+            server.close()
+            await server.wait_closed()
+    finally:
+        if os.path.exists(sock):
+            os.unlink(sock)
+
+
 async def test_probe_false_when_down():
     if ipc.IS_WINDOWS:
         # 떠 있지 않은 TCP 포트 probe = False

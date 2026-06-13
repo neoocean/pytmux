@@ -23,6 +23,12 @@ def can_connect(sock_path: str) -> bool:
     return ipc.probe(sock_path)
 
 
+# §5.9: wait_server 백오프 상수(종전 루프 본문 bare 리터럴 → 명명·튜닝 일원화). 초기
+# 폴 간격→상한까지 지수 증가. 총 예산 polls*interval(≈4s)은 종전과 동일.
+_WAIT_POLL_INITIAL = 0.002   # 첫 폴 간격(서버가 <20ms 에 뜨면 체감 지연 최소화)
+_WAIT_POLL_BACKOFF = 1.6     # 폴 간격 지수 증가율(interval 상한까지)
+
+
 def wait_server(sock_path: str, *, polls: int = 200, interval: float = 0.02) -> bool:
     """서버가 listen 떠 접속 가능해질 때까지 폴링. 성공이면 True, 시간 초과면 False.
 
@@ -30,14 +36,14 @@ def wait_server(sock_path: str, *, polls: int = 200, interval: float = 0.02) -> 
     빨리(<20ms) 뜬 경우의 체감 지연을 줄인다(고정 20ms 면 최대 20ms 허비). 총 예산은
     기존과 동일(polls*interval ≈ 4s)으로 유지."""
     deadline = time.monotonic() + polls * interval
-    delay = 0.002
+    delay = _WAIT_POLL_INITIAL
     while True:
         if ipc.probe(sock_path):
             return True
         if time.monotonic() >= deadline:
             return False
         time.sleep(min(delay, interval))
-        delay *= 1.6
+        delay *= _WAIT_POLL_BACKOFF
 
 
 def ensure_server(sock_path: str):
