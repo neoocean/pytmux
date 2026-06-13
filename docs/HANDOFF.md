@@ -280,7 +280,7 @@ git add -A && git commit -m "<설명>" && git push   # GitHub 미러
 > 플러그인 추출 Phase(3a/3b·2a/2b/2c) CL 들은 §11.6 에, 그 사이 IME/DnD/하드스톱 등
 > 주요 기능·수정은 아래에 둔다(§9 는 선별 changelog — 권위 이력은 `p4 changes`).
 
-- **원격 중첩 자동 승격 구현 N1~N3(2026-06-13, CL 58670)** — 58665 시나리오의 구현.
+- **원격 중첩 자동 승격 구현 N1~N3(2026-06-13, CL 58672)** — 58665 시나리오의 구현.
   열린 결정 사용자 확정(㉠ argv b64→서버 parse_dest·㉡ Windows 래퍼 1차 제외·㉢ 기본
   ON+자동 탭 전환·㉣ 접두 대조·㉤ 1.0s). ① **N1**: sh 래퍼가 exec 직전 NEST_DEST
   DCS(argv 줄단위 b64)를 `/dev/tty` 로만 발신(파이프 오염 금지) → serverpty 스캔이
