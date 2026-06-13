@@ -22,21 +22,7 @@ from .protocol import (FLUSH_HZ, MAX_H, MAX_W, MIN_H, MIN_W, PROTO_VERSION,
 from .serverremote import _REMOTE_BLOCK_ACTIONS, _REMOTE_RELAY_ACTIONS
 
 
-# Claude 프롬프트 헤더 예약(#1) 최소 패널 높이. 헤더는 내용 영역에서 1행을 가져가는데,
-# 짧은 패널(모바일 portrait 등)에선 그 1행 때문에 Claude 가 빈 입력박스를 2줄로 reflow
-# 해 입력이 두 줄로 보였다(사용자 보고 2026-06-07). 패널 전체 높이가 이 값 미만이면
-# 헤더 예약을 생략해 Claude 에 풀 높이를 주고 입력을 1줄로 유지한다. 데스크탑(높은 패널)
-# 은 그대로 헤더를 보인다. 판정은 항상 **예약 전 전체 높이**로 해 경계 오실레이션을 막는다.
-_HDR_MIN_ROWS = 20
-
-
 class ServerIOMixin:
-    def _reserve_header(self, p, full_h: int) -> bool:
-        """이 패널에 Claude 프롬프트 헤더 행을 예약할지(#1). 표시 조건(_should_reserve_
-        header)에 더해 패널이 충분히 높아야(full_h >= _HDR_MIN_ROWS) 한다 — 짧은 화면에선
-        1행 손실이 입력박스를 2줄로 만들기 때문. full_h 는 예약 전 전체 내용 높이."""
-        return self._should_reserve_header(p) and full_h >= _HDR_MIN_ROWS
-
     def _layout_msg(self, sess: Session, cols: int = None, rows: int = None):
         win = sess.active_window
         if not win:
@@ -63,20 +49,11 @@ class ServerIOMixin:
                                   "active": p is win.active_pane})
             else:
                 cx, cy, cw, ch = x, y, w, h
-            # Claude 헤더가 그려질 패널이면 내용 영역 맨 윗 한 행을 헤더에 양보한다
-            # (#1). 내용은 cy+1 부터, 높이 -1. 헤더는 클라가 예약된 행(cy)에 그린다.
-            # ch(예약 전 전체 높이)가 짧으면 예약 생략(_reserve_header — 모바일 입력 2줄 방지).
-            hdr = self._reserve_header(p, ch) and ch > 1
-            if hdr:
-                cy += 1
-                ch -= 1
-            p._hdr_reserved = hdr
             p.resize(cw, ch)
             p._mouse_sent = (p.mouse_track, p.mouse_sgr)
             pane_msgs.append({"id": p.id, "x": cx, "y": cy, "w": cw, "h": ch,
                               "title": p.title, "box": box,
                               "active": p is win.active_pane,
-                              "claude_hdr": hdr,
                               "mouse": p.mouse_track, "mouse_sgr": p.mouse_sgr})
         return {
             "t": "layout",
@@ -307,16 +284,6 @@ class ServerIOMixin:
                             if t.monitor_activity and not t.has_activity:
                                 t.has_activity = True
                                 status_changed = True
-                # Claude 헤더 행 예약(#1) 변동: 프롬프트가 처음 떠 헤더가 생기거나
-                # Claude 가 끝나 헤더가 사라지면 내용 영역을 ±1 행 해야 한다. 레이아웃을
-                # 다시 보내 PTY 리사이즈 + 새 geometry 를 반영(_send_full 이 status 포함).
-                # 예약 의도 변화 감지 — _layout_msg 와 **같은 기준**(예약 전 전체 높이
-                # = 현재 높이 + 예약 중이면 1)으로 판정해야 일관되고 경계서 안 떨린다.
-                if any(self._reserve_header(p, p.rows + (1 if p._hdr_reserved else 0))
-                       != p._hdr_reserved for p in win.panes()):
-                    for c in clients:
-                        await self._send_full(c)
-                    continue
                 if status_changed:
                     # 주기 status: history 는 변할 때만(§4.5, full=False). §1.7
                     # Stage 3: status 가 클라별(원격 보기 오버라이드)이라 프레임도
@@ -563,8 +530,6 @@ class ServerIOMixin:
             self.set_monitor(sess, msg.get("which", "activity"), msg.get("value"))
         elif action == "set_capture":
             self.set_capture(msg.get("value"))
-        elif action == "set_claude_header":
-            self.set_claude_header(msg.get("value"))
         elif action == "set_single_border":
             self.set_single_border(msg.get("value"))
         elif action == "set_coalesce":

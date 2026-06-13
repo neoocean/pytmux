@@ -91,12 +91,9 @@ class Server(*_SERVER_BASES):
         #   (파일명에 생성 시각이 박혀 핸들에서 역산 불가 → 열 때 경로를 따로 보관)
         _opts = self._load_opts()
         self.capture = bool(_opts.get("capture", True))   # 기본 ON
-        # Claude 프롬프트 헤더 전역 표시(#6 ③ opts.json 영속). 클라가 status 로 받아
-        # claude_header_on 에 반영하고, `claude-header on|off` 가 서버를 거쳐 갱신·영속.
-        # **기본 OFF**(2026-06-12): claude-prompt-history 플러그인의 transient 미리보기
-        # 패널이 기본 프롬프트 UI를 맡는다(사용자 결정). 헤더(드래그핸들·ESC포커스·행예약)
-        # 는 `claude-header on` 으로 옵트인. 구 opts.json 에 claude_header:true 면 유지.
-        self.claude_header = bool(_opts.get("claude_header", False))
+        # (Claude 프롬프트 헤더 claude_header 옵션은 완전 제거됨 — 2026-06-13.
+        #  프롬프트 UI 는 claude-prompt-history 플러그인의 transient 미리보기가 맡는다.
+        #  구 opts.json 의 claude_header 키는 무시되고 다음 _save_opts 에서 사라진다.)
         # 패널이 하나뿐일 때 테두리(아웃라인)를 그릴지(기본 ON=항상 테두리).
         # off 면 단일 패널은 테두리 없이 화면 전체를 내용으로 쓴다. opts.json 영속.
         self.single_border = bool(_opts.get("single_border", True))
@@ -330,13 +327,6 @@ class Server(*_SERVER_BASES):
             p._claude_account_full = None
 
 
-    def set_claude_header(self, value=None):
-        """Claude 프롬프트 헤더 전역 표시 토글. 상태를 opts.json 에 영속(#6 ③)."""
-        self.claude_header = (not self.claude_header) if value is None \
-            else bool(value)
-        self._save_opts()
-        return self.claude_header
-
     def set_single_border(self, value=None):
         """단일 패널 테두리 표시 토글. value 미지정 시 반전. opts.json 영속."""
         self.single_border = (not self.single_border) if value is None \
@@ -395,7 +385,7 @@ class Server(*_SERVER_BASES):
     @staticmethod
     def _arg_onoff(args):
         """control 토글 인자 파싱: 'on'→True, 'off'→False, 그 외→None(현재값 토글).
-        capture/claude-header/single-border/coalesce/auto-doc-clear/auto-mode 공용."""
+        capture/single-border/coalesce/auto-doc-clear/auto-mode 공용."""
         return True if "on" in args else (False if "off" in args else None)
 
     # `pytmux cmd <명령> [on|off]` 의 **즉시 "on"/"off" 반환** 토글 표(#5.9 — 종전
@@ -404,7 +394,6 @@ class Server(*_SERVER_BASES):
     # broadcast 가 필요하므로 이 표가 아니라 별도 분기로 둔다.
     _ONOFF_CONTROLS = {
         "capture-output": "set_capture", "capture-toggle": "set_capture",
-        "claude-header": "set_claude_header",
         "coalesce-repaints": "set_coalesce_repaints",
         "coalesce": "set_coalesce_repaints",
         "auto-doc-clear": "set_auto_doc_clear", "auto-doc": "set_auto_doc_clear",
@@ -657,21 +646,6 @@ class Server(*_SERVER_BASES):
             return 80, 24
         return (max(MIN_W, min(c.cols for c in cs)),
                 max(MIN_H, min(c.rows for c in cs)))
-
-    def _should_reserve_header(self, p) -> bool:
-        """클라이언트가 이 패널에 Claude 프롬프트 헤더를 그릴지 여부(#1). 그러면
-        내용 영역에서 한 행을 빼(헤더가 차지) 헤더가 1행짜리 패널 내용을 가리지
-        않게 한다. 전역 옵션 claude_header + 그 패널이 Claude 이고 표시할 프롬프트가
-        있을 때 참.
-
-        Claude 존재 판정은 raw `_claude` 가 아니라 **디바운스된 `_hdr_claude`**
-        를 쓴다. raw 값은 footer 가 한 프레임 안 잡히면 None 으로 깜빡여(특히
-        ssh/ConPTY) 예약이 매 프레임 토글→PTY ±1 행 리사이즈 반복→원격 화면이
-        한 줄씩 떨리는데, 디바운스가 그 떨림을 없앤다(_scan_claude 에서 갱신)."""
-        # _hdr_claude·last_prompt 는 claude-code 플러그인 pane_init 소유(S4) — 플러그인
-        # 부재 시 없으므로 getattr 기본값으로 안전하게 읽는다(헤더 미예약).
-        return bool(self.claude_header and getattr(p, "_hdr_claude", False)
-                    and getattr(p, "last_prompt", ""))
 
 def run_server(sock_path: str, resume_path: str | None = None):
     srv = Server(sock_path, resume_path)

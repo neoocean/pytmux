@@ -545,7 +545,7 @@ COMMANDS = [
     # calendar-mode/open-calendar/close-calendar 는 calendar 플러그인이 등록한다.
     ("single-border", "패널이 하나뿐일 때 테두리 표시 on/off (single-border on|off|toggle)", "설정/기타"),
     ("coalesce-repaints", "대량 출력 시 alt-screen 풀스크린 리페인트 합치기 on/off — ssh 반응성(coalesce-repaints on|off|toggle)", "설정/기타"),
-    # Claude Code 명령(auto-resume·claude-header·token-log·
+    # Claude Code 명령(auto-resume·token-log·
     # claude-usage·usage-panel·token-account·prompt-clear*·model·auto-doc-clear·
     # auto-compact·claude-auto-mode·auto-launch 등)은 claude-code 플러그인이 등록한다
     # (pytmuxlib/plugins/claude-code — 디렉토리 삭제 시 명령 검색·자동완성·디스패치에서 사라짐).
@@ -624,7 +624,7 @@ COMMAND_OPTIONS = {
     "coalesce-repaints": [{"key": "state", "label": "리페인트합치기", "choices": _ONOFF}],
     "lang": [{"key": "lang", "label": "언어",
               "choices": [("한국어", "ko"), ("English", "en")]}],
-    # auto-resume·prompt-clear·auto-doc-clear·claude-auto-mode·auto-launch·claude-header
+    # auto-resume·prompt-clear·auto-doc-clear·claude-auto-mode·auto-launch
     # 의 옵션 스키마는 claude-code 플러그인이 등록한다(command_options).
 }
 

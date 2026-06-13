@@ -119,18 +119,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._menu_pane = None  # 컨텍스트 메뉴가 열린 대상 패널 id(배경 강조용)
             self._menu_open = False  # 컨텍스트 메뉴 표시 중(배경 dim 합성용)
             self.single_border_on = True  # 단일 패널 테두리 표시(single-border on|off)
-            # Claude Code 헤더/클릭존 상태(pane_claude·claude_header_on·_perm_zone·
-            # _remote_zone·_last_usage_shown_seq)
-            # 는 claude-code 플러그인이 attach_client 로 이 인스턴스에 설치한다(Phase
-            # 2c). 코어는 이 상태를 직접 만들지 않고 헤더 렌더(client_render 훅)·ESC
-            # nav·클릭 핸들러에서 getattr 로만 읽으므로, 디렉토리를 지우면 Claude 헤더·
-            # 클릭존이 전혀 나타나지 않는다(delete-to-disable).
-            self._hdr_focus = None      # ESC 모드 Claude 헤더 포커스 대상 pane id(#5)
+            # Claude Code 클릭존 상태(pane_claude·_perm_zone·_remote_zone·
+            # _last_usage_shown_seq)는 claude-code 플러그인이 attach_client 로 이
+            # 인스턴스에 설치한다(Phase 2c). 코어는 클릭 핸들러에서 getattr 로만
+            # 읽으므로, 디렉토리를 지우면 클릭존이 전혀 나타나지 않는다
+            # (delete-to-disable). (프롬프트 스티키 헤더는 2026-06-13 완전 제거.)
+            self._close_focus = False   # ESC 모드 닫기 [x] 버튼 포커스(#31 동선)
             # ESC 모드에서 최하단 패널 ↓ → 하단 상태바 버튼 포커스(요청). 값은 현재
             # 포커스된 버튼 키(None=비활성). ←→ 로 버튼 순환, Enter 로 실행, ↑/Esc 복귀.
             self._status_focus = None
             self._tab_close_zone = None  # 현재 탭 닫기 [x] 영역 (x0, x1, y)
-            self._active_hdr_row = None  # 활성 패널 프롬프트 헤더 행(닫기 [x] 위치, #15)
             self._drag_split = None      # 탭→패널 드래그 미리보기 (pane_id, orient)(#19)
             self._undim_rows = set()     # 팝업 dim 에서 제외할 콘텐츠 행(클릭 원천, #29)
             self._last_esc_ts = 0.0      # ESC 오토리핏 디바운스용 직전 도착 시각(#32)
@@ -777,7 +775,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self._request_composite()
             elif t == "status":
                 self.status.update_status(msg)
-                # Claude 상태(claude_header/claude_rules 동기화, pane_claude 갱신,
+                # Claude 상태(claude_rules 동기화, pane_claude 갱신,
                 # /usage 자동 팝업)는 claude-code 플러그인이 client_status 훅으로 흡수
                 # 한다(없으면 no-op — delete-to-disable). 코어는 호출만 한다.
                 self.plugins.client_status(self, msg)
@@ -860,9 +858,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 코어가 모르는 메시지(t)는 플러그인에 위임한다(ncd 의 nc_list 등).
                 self.plugins.handle_message(self, msg)
 
-        # Claude Code 헤더/상태 메서드(_update_claude·set_claude_header·toggle_header_
-        # hidden)는 claude-code 플러그인 attach_client 가 인스턴스 클로저로 설치한다
-        # (Phase 2c). 코어는 client_status 훅·getattr 로만 닿는다(delete-to-disable).
+        # Claude Code 상태 메서드(_update_claude)는 claude-code 플러그인
+        # attach_client 가 인스턴스 클로저로 설치한다(Phase 2c). 코어는 client_status
+        # 훅·getattr 로만 닿는다(delete-to-disable).
         def _capture_info_lines(self, path=None, size=None):
             # REC(출력 캡처) 정보 줄. 인자를 안 주면 상태줄에 마지막으로 온 값을 쓴다.
             # 맨 앞에 현재 ON/OFF 를 보여 화면에서 [c] 로 토글한 결과가 바로 반영된다.
@@ -1187,11 +1185,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                                bgcolor="green" if p["id"] == active else "yellow")
                     for j, chh in enumerate(label):
                         clientrender.put_cell(cells, cx0 + j, cy0, chh, st, W, H)
-            # Claude Code 콘텐츠-레이어 장식(프롬프트 스티키 헤더 + footer 클릭존 스캔)은
-            # claude-code 플러그인의 client_render 훅이 그린다(없으면 no-op — 헤더·클릭존
-            # 미표시). 헤더가 활성 패널 행을 잡으면 _active_hdr_row 를 채워, 뒤이은
-            # _draw_tab_close 가 [x] 를 그 행에 올린다. 코어는 매 프레임 None 으로 초기화.
-            self._active_hdr_row = None
+            # Claude Code 콘텐츠-레이어 장식(footer 클릭존 스캔)·플러그인 오버레이는
+            # client_render 훅이 그린다(없으면 no-op — delete-to-disable).
             self.plugins.client_render(self, cells, W, H)
             # 현재 탭 닫기 [x]: 콘텐츠 영역 오른쪽 위 모서리(상단 테두리 위)
             self._draw_tab_close(cells, W, H)
@@ -1329,8 +1324,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             """현재 탭(윈도우) 닫기 [x] 버튼을 **활성 패널의 외곽선 안쪽** 우상단(콘텐츠
             영역 첫 행 오른쪽 끝)에 그린다(§10 #15 — 이전엔 화면 상단 테두리 행 0 에
             얹혀 있었다). 활성 패널의 실제 x/y/w/h 를 써서 분할(split) 상태에서도 그
-            패널 테두리 안쪽에 붙는다. _draw_claude_headers 뒤에 호출돼 헤더 위에 그려
-            진다(겹치면 [x] 가 보이도록)."""
+            패널 테두리 안쪽에 붙는다."""
             self._tab_close_zone = None
             active = self.layout.get("active")
             ap = next((p for p in self.layout.get("panes", [])
@@ -1341,16 +1335,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if pw < 4 or ph < 1:
                 return
             # ESC 모드에서 닫기 [x] 가 포커스되면 강조색(accent)으로(#31 방향키 동선).
-            if self._hdr_focus == "close":
+            if self._close_focus:
                 st = Style(color="black", bgcolor=theme_color(self, "accent"),
                            bold=True)
             else:
                 st = Style(color="white", bgcolor=theme_color(self, "error"),
                            bold=True)
-            # 활성 패널에 프롬프트 헤더가 있으면 그 행(한 줄 위)에, 없으면 콘텐츠 첫
-            # 행에 그린다(#15 — 닫기 [x] 를 프롬프트 행으로 이동). 헤더 본문은 위에서
-            # 이 [x] 직전까지만 늘어나도록 budget 을 줄여 둔다.
-            by = self._active_hdr_row if self._active_hdr_row is not None else py
+            by = py                 # 콘텐츠 첫 행
             bx0 = px + pw - 3       # 콘텐츠 우측 끝 3칸("[x]") — 우측 테두리 안쪽
             if not (0 <= by < H):
                 return
@@ -2780,77 +2771,36 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.tabbar.bar_focus:
                 self.tabbar.bar_focus = False
                 self.tabbar.refresh()
-            if self._hdr_focus is not None:    # 헤더 포커스 해제(#5)
-                self._hdr_focus = None
+            if self._close_focus:              # 닫기 [x] 포커스 해제
+                self._close_focus = False
                 self._composite()
             if self._status_focus is not None:   # 상태바 버튼 포커스 해제(요청)
                 self._status_focus = None
                 self.status.focus_btn = None
             self.status.refresh()
 
-        def _hdr_panes(self):
-            """헤더가 그려지는 Claude 패널 id 목록(#5 헤더 포커스 동선). 실제 계산은
-            claude-code 플러그인이 attach_client 로 설치한 _claude_header_panes 클로저가
-            한다 — 디렉토리를 지우면 클로저가 없어 빈 목록 → 헤더 포커스 동선이 자연히
-            사라지고 닫기 [x] 만 남는다(delete-to-disable). 코어 ESC nav 전용 게이트."""
-            fn = getattr(self, "_claude_header_panes", None)
-            return fn() if fn else []
-
         def _focus_tabbar(self):
-            self._hdr_focus = None
+            self._close_focus = False
             self.tabbar.sel = self._active_tab_index()
             self.tabbar.bar_focus = True
             self._composite()
             self.tabbar.refresh()
 
-        def _handle_hdr_focus(self, event: events.Key):
-            """ESC 모드 패널 첫 행(프롬프트 헤더)·닫기 [x] 포커스 동선(#5·#31).
-            헤더에서 ←→ 로 헤더 사이 이동, 마지막에서 → 면 닫기 [x] 로, ↑ 면 탭바,
-            ↓ 면 패널로 복귀, Enter=히스토리. 닫기 [x] 포커스에서 Enter=탭 닫기."""
+        def _handle_close_focus(self, event: events.Key):
+            """ESC 모드 닫기 [x] 버튼 포커스 동선(#31 — 최상단 패널에서 ↑ 로 진입).
+            Enter=탭 닫기, ↑=탭바, ↓/←=패널 복귀, Esc=모드 종료. (프롬프트 헤더
+            포커스 동선(#5)은 헤더와 함께 2026-06-13 제거 — [x] 동선만 남음.)"""
             k = event.key
-            # 닫기 [x] 포커스 상태
-            if self._hdr_focus == "close":
-                if k == "enter":
-                    self._hdr_focus = None
-                    self.confirm_kill_tab()
-                elif k == "left":          # 헤더로 복귀(없으면 패널로)
-                    panes = self._hdr_panes()
-                    active = self.layout.get("active")
-                    self._hdr_focus = (active if active in panes
-                                       else (panes[-1] if panes else None))
-                    self._composite()
-                elif k == "up":
-                    self._focus_tabbar()
-                elif k == "down":
-                    self._hdr_focus = None       # 패널로 복귀
-                    self._composite()
-                elif k == "escape":
-                    self._hdr_focus = None
-                    self._composite()
-                    self._exit_esc()
-                return
-            panes = self._hdr_panes()
-            if not panes or self._hdr_focus not in panes:
-                # 헤더가 없어도 닫기 [x] 는 접근 가능하게(현 상태가 close 가 아니면 해제)
-                self._hdr_focus = None
+            if k == "enter":
+                self._close_focus = False
+                self.confirm_kill_tab()
+            elif k == "up":
+                self._focus_tabbar()
+            elif k in ("down", "left"):
+                self._close_focus = False    # 패널로 복귀
                 self._composite()
-                return
-            cur = panes.index(self._hdr_focus)
-            if k == "up":
-                self._focus_tabbar()             # 헤더 위 → 탭바
-            elif k == "down":
-                self._hdr_focus = None           # 헤더 아래 → 패널 복귀
-                self._composite()
-            elif k == "left":
-                self._hdr_focus = panes[(cur - 1) % len(panes)]
-                self._composite()
-            elif k == "right":
-                # 마지막 헤더에서 오른쪽 → 닫기 [x], 그 외엔 다음 헤더
-                self._hdr_focus = ("close" if cur == len(panes) - 1
-                                   else panes[cur + 1])
-                self._composite()
-            elif k in ("enter", "escape"):
-                self._hdr_focus = None
+            elif k == "escape":
+                self._close_focus = False
                 self._composite()
                 self._exit_esc()
 
@@ -2873,8 +2823,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self._exit_esc()
                 return
             tb = self.tabbar
-            if self._hdr_focus is not None:       # Claude 헤더 포커스 동선(#5)
-                self._handle_hdr_focus(event)
+            if self._close_focus:                 # 닫기 [x] 포커스 동선(#31)
+                self._handle_close_focus(event)
                 return
             if self._status_focus is not None:    # 하단 상태바 버튼 포커스 동선(요청)
                 self._handle_status_focus(event)
@@ -2950,17 +2900,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         self._exit_esc()
                 return
             if k == "up" and not self._pane_above():
-                # 최상단 패널에서 ↑: 먼저 프롬프트 헤더(있으면)로, 다시 ↑ 면 탭바로
-                # (#31 헤더·닫기버튼을 방향키 동선에 편입). 헤더가 없어도 우상단 닫기
-                # [x] 는 항상 그려지므로 [x] 로 보낸다(#) — 거기서 다시 ↑ 면 탭바.
-                panes = self._hdr_panes()
-                active = self.layout.get("active")
-                if active in panes:
-                    self._hdr_focus = active
-                    self._composite()
-                else:
-                    self._hdr_focus = "close"   # 프롬프트 헤더 없어도 [x] 로 이동
-                    self._composite()
+                # 최상단 패널에서 ↑: 우상단 닫기 [x] 포커스로(#31 — 거기서 다시 ↑ 면
+                # 탭바). [x] 는 항상 그려진다.
+                self._close_focus = True
+                self._composite()
             elif k == "down" and not self._pane_below() \
                     and self._enter_status_focus():
                 # 최하단 패널에서 ↓ → 하단 상태바 버튼 포커스(요청). 버튼이 없으면
@@ -2977,14 +2920,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif ch == "?":                       # ':' 대신 '?' → 바로 help 팝업
                 self._exit_esc()
                 self._run_command("help")
-            elif ch == "h":                       # Claude 헤더 포커스 진입(#5)
-                panes = self._hdr_panes()
-                if panes:
-                    active = self.layout.get("active")
-                    self._hdr_focus = active if active in panes else panes[0]
-                    self._composite()
-                else:
-                    self.display_message(i18n.t("msg.no_claude_header"))
             elif k == "escape":
                 # ESC 모드에서 ESC 를 한 번 더 → **모드만 빠진다(패널로 ESC 전달 없음)**.
                 # 패널(앱)에 실제 ESC(\x1b)를 보내는 통로는 **항상 Shift+ESC 일 때만**

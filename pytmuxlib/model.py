@@ -463,9 +463,6 @@ class Pane:
         # 프롬프트 단위 클리어 큐(#4): 사용자가 미리 쌓아 둔 명령들. respawn 시 코어가
         # 직접 비우므로(reinit) 코어 Pane 에 남긴다(모드/상태기계는 플러그인 소유).
         self.prompt_clear_queue = []
-        # _layout_msg 가 이 패널에 Claude 헤더 한 행을 예약했는지(#1). 코어 레이아웃
-        # (serverio)이 직접 쓰고 읽는다 — 예약 유무가 바뀌면 flush 가 레이아웃 재전송.
-        self._hdr_reserved = False
         self.search_query = ""   # 스크롤백 검색어
         self._match_abs = None   # 현재 매치된 절대 라인 인덱스
         self.bracketed = False   # 내부 앱이 bracketed paste 모드를 켰는지
@@ -482,7 +479,7 @@ class Pane:
         # 플러그인 공용 패널 네임스페이스(S4). claude-code 가 pane_init 훅으로 Claude
         # 거동 필드(~40개: 상태/사용량/자동개입 타이머/권한모드/프롬프트 추적 등)를
         # 패널에 설치한다. 디렉토리 삭제 시 훅이 없어 그 필드가 안 생기고, 코어의 소수
-        # 읽기 지점(_should_reserve_header·serverpty 자동재개·servertree 리네임·
+        # 읽기 지점(serverpty 자동재개·servertree 리네임·
         # _log_tokens)은 getattr(…, 기본값)으로 안전하게 동작한다(delete-to-disable).
         self.plugin_state = {}
         plugins.get().pane_init(self)
@@ -513,7 +510,6 @@ class Pane:
         self._claude_account_full = None
         self._claude_account_manual = False
         self.prompt_clear_queue = []  # 새 셸이므로 쌓인 명령 큐도 버린다(#4)
-        self._hdr_reserved = False
         # Claude 거동 필드(스캔버퍼·자동재개·자동정리·세션id·권한모드·done 디바운스·
         # 헤더 디바운스 등)의 새 셸 리셋은 claude-code 플러그인이 pane_reset 으로 한다(S4).
         plugins.get().pane_reset(self)

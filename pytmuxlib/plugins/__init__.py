@@ -319,7 +319,7 @@ class Registry:
 
     def client_status(self, app, msg):
         """서버 status 메시지의 플러그인-소유 필드를 클라가 흡수한다(in-place 상태 갱신).
-        claude-code 는 이 훅으로 claude_header/claude_rules 동기화, 패널별 Claude 상태
+        claude-code 는 이 훅으로 claude_rules 동기화, 패널별 Claude 상태
         (pane_claude) 갱신, /usage 자동 팝업 시퀀스를 처리한다. 플러그인이 없으면
         no-op → Claude 상태가 클라에 전혀 반영되지 않는다(delete-to-disable)."""
         for p in self.plugins:

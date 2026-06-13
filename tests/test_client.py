@@ -556,7 +556,7 @@ async def test_command_list_and_autocomplete():
         assert "Claude" in catmap and "모니터" in catmap, list(catmap)
         claude_names = [n for n, _ in catmap["Claude"]]
         for nm in ("claude-auto-mode", "auto-doc-clear", "auto-resume",
-                   "token-log", "claude-header", "prompt-clear"):
+                   "token-log", "prompt-clear"):
             assert nm in claude_names, (nm, claude_names)
         mon_names = [n for n, _ in catmap["모니터"]]
         assert "monitor-activity" in mon_names, mon_names
@@ -2905,30 +2905,6 @@ async def test_esc_status_focus_includes_host_clock_date_perm():
     await _with_app(body)
 
 
-async def test_inactive_pane_prompt_header_darker():
-    # 비활성 패널의 첫 행 프롬프트 헤더 바는 활성(primary-darken-2)보다 한 단계
-    # 어둡게(primary-darken-3) 그려 활성/비활성을 더 또렷이 구분한다(요청).
-    async def body(app, pilot, srv):
-        app.claude_header_on = True
-        app.layout = {"active": 1, "cols": 40, "rows": 12, "dividers": [],
-                      "panes": [
-                          {"id": 1, "x": 0, "y": 1, "w": 40, "h": 5,
-                           "box": [0, 0, 40, 6], "claude_hdr": True},
-                          {"id": 2, "x": 0, "y": 7, "w": 40, "h": 5,
-                           "box": [0, 6, 40, 6], "claude_hdr": True}]}
-        app.pane_claude = {
-            1: {"id": 1, "claude": "idle", "prompt": "active prompt"},
-            2: {"id": 2, "claude": "idle", "prompt": "inactive prompt"}}
-        app._composite()
-        d2 = app.theme_variables.get("primary-darken-2", "#0053AA").lower()
-        d3 = app.theme_variables.get("primary-darken-3", "#004295").lower()
-        act_bg = str(app.view._cells[0][1][1].bgcolor).lower()   # 활성 헤더(행 0)
-        ina_bg = str(app.view._cells[6][1][1].bgcolor).lower()   # 비활성 헤더(행 6)
-        assert d2 in act_bg, ("활성=darken-2", act_bg)
-        assert d3 in ina_bg, ("비활성=darken-3(더 어두움)", ina_bg)
-    await _with_app(body)
-
-
 async def test_command_prompt_ignores_leading_colon():
     # 명령 프롬프트는 이미 ':' 프리픽스가 있으므로 첫 글자 ':' 입력은 무시한다(요청).
     async def body(app, pilot, srv):
@@ -3174,30 +3150,6 @@ async def test_esc_double_tap_toggles():
         app._last_esc_ts = _t.monotonic() - (app._ESC_DEBOUNCE + 0.05)
         app.on_key(Key(key="escape", character=None))
         assert app.mode == "normal", "더블탭 2번째 ESC 는 모드 해제"
-    await _with_app(body)
-
-
-async def test_esc_nav_reaches_header_and_close():
-    # #31: ESC 모드에서 ↑(최상단 패널)→프롬프트 헤더, →(마지막 헤더)→닫기 [x],
-    # Enter(닫기 포커스)→탭 닫기 확인. ↑(헤더)→탭바.
-    async def body(app, pilot, srv):
-        from textual.events import Key
-        active = app.layout["active"]
-        ap = next(p for p in app.layout["panes"] if p["id"] == active)
-        ap["claude_hdr"] = True
-        app.claude_header_on = True
-        app.pane_claude = {active: {"id": active, "claude": "idle", "prompt": "hi"}}
-        assert app._claude_header_panes() == [active]
-        await pilot.press("escape")
-        assert app.mode == "esc"
-        app.on_key(Key(key="up", character=None))      # 최상단 패널 ↑ → 헤더
-        assert app._hdr_focus == active, app._hdr_focus
-        app.on_key(Key(key="right", character=None))   # 마지막 헤더 → 닫기 [x]
-        assert app._hdr_focus == "close", app._hdr_focus
-        killed = []
-        app.confirm_kill_tab = lambda: killed.append(1)
-        app.on_key(Key(key="enter", character=None))   # 닫기 [x] Enter → 탭 닫기
-        assert killed == [1] and app._hdr_focus is None
     await _with_app(body)
 
 
@@ -3541,81 +3493,21 @@ async def test_tab_bar_default_always():
     await _with_app(body, cfg={"tab_bar_always": True})
 
 
-async def test_claude_icon_and_header():
+async def test_claude_icon_and_close_button():
     async def body(app, pilot, srv):
         active = app.layout["active"]
         # 탭 아이콘: busy → ◐
         app.tabbar.tabs = [{"index": 0, "name": "win",
                             "active": True, "claude": "busy"}]
         assert "◐" in "".join(app.tabbar._labels())
-        # 스티키 헤더: 마지막 프롬프트(좌측 [x] 닫기 버튼은 제거됨, #8). 서버가 헤더
-        # 행을 예약하면 pane["claude_hdr"]=True 로 알려오고, 헤더는 내용 위 한 줄
-        # (ap["y"]-1)에 그려진다(#1).
-        app.pane_claude = {active: {"id": active, "claude": "idle",
-                                    "prompt": "do the thing"}}
-        app.claude_header_on = True    # 기본 OFF 라 명시적으로 켠다(claude-header 옵트인)
+        # 닫기 [x] 는 활성 패널 콘텐츠 첫 행 우측 끝(프롬프트 스티키 헤더는
+        # 2026-06-13 완전 제거 — [x] 가 헤더 행으로 올라가던 #15 동작도 폐지).
         ap = next(p for p in app.layout["panes"] if p["id"] == active)
-        # 서버 예약을 모사: claude_hdr=True 면 내용 영역이 한 행 내려오고(y+1, h-1)
-        # 헤더는 그 위 한 줄(내부 행)에 그려진다. y 를 안 내리면 헤더가 박스 윗
-        # 테두리 행(탭 닫기 [x] 가 있는 줄)에 겹쳐 검증이 헷갈린다.
-        ap["claude_hdr"] = True
-        ap["y"] += 1
-        ap["h"] -= 1
-        hy = ap["y"] - 1
         app._composite()
-        row = "".join((c[0] or " ") for c in app.view._cells[hy])
-        assert "do the thing" in row, repr(row)
-        # #15: 닫기 [x] 가 프롬프트(헤더) 행으로 한 줄 올라왔다 → 헤더 행 우측 끝에 보인다.
-        assert "[x]" in row, "닫기 [x] 가 헤더(프롬프트) 행으로 이동"
-        # 헤더 배경은 진한 파랑(primary-darken-2) — 본문/테두리(primary)보다 어둡게
-        dark = app.theme_variables.get("primary-darken-2", "#0053AA").lower()
-        cellbg = app.view._cells[hy][ap["x"] + 1][1]
-        assert cellbg and cellbg.bgcolor and dark in str(cellbg.bgcolor).lower(), \
-            f"헤더 배경 진한 파랑 기대, got {cellbg.bgcolor if cellbg else None}"
-        # 탭 닫기 [x] 는 활성 패널 프롬프트(헤더) 행 우상단(#15) — 콘텐츠 첫 행이 아님
         tcz = app._tab_close_zone
-        assert tcz == (ap["x"] + ap["w"] - 3, ap["x"] + ap["w"], hy), tcz
-        xs = "".join(app.view._cells[hy][x][0] for x in range(tcz[0], tcz[1]))
+        assert tcz == (ap["x"] + ap["w"] - 3, ap["x"] + ap["w"], ap["y"]), tcz
+        xs = "".join(app.view._cells[tcz[2]][x][0] for x in range(tcz[0], tcz[1]))
         assert xs == "[x]", repr(xs)
-        # 프롬프트 본문은 [x] 직전 한 칸까지만 — [x] 바로 왼쪽 칸은 비어 있다(겹침 방지).
-        assert app.view._cells[hy][tcz[0] - 1][0] in (" ", ""), "프롬프트와 [x] 사이 간격"
-        # claude-header off → 헤더 숨김
-        app._run_command("claude-header off")
-        app._composite()
-        row2 = "".join((c[0] or " ") for c in app.view._cells[hy])
-        assert "do the thing" not in row2, "claude-header off → 숨김"
-        assert app.claude_header_on is False
-        # claude-header on → 다시 표시(전역 옵션, 프롬프트 단위 아님)
-        app._run_command("claude-header on")
-        app._composite()
-        row3 = "".join((c[0] or " ") for c in app.view._cells[hy])
-        assert "do the thing" in row3, "claude-header on → 표시"
-        assert app.claude_header_on is True
-    await _with_app(body)
-
-
-async def test_esc_header_focus_highlight_and_exit():
-    # #5: ESC 모드에서 h 로 Claude 헤더 포커스 진입(accent 강조), Enter 로 해제+모드 종료.
-    async def body(app, pilot, srv):
-        active = app.layout["active"]
-        app._update_claude([{"id": active, "claude": "idle", "prompt": "latest"}])
-        app.claude_header_on = True            # 기본 OFF 라 명시적으로 켠다
-        ap = next(p for p in app.layout["panes"] if p["id"] == active)
-        ap["claude_hdr"] = True                # 서버 헤더 행 예약(#1)
-        app._composite()
-        await pilot.press("escape")
-        assert app.mode == "esc"
-        await pilot.press("h")                 # 헤더 포커스 진입
-        assert app._hdr_focus == active, app._hdr_focus
-        # 포커스 헤더는 accent(강조)색 배경. 헤더는 내용 위 한 줄(ap["y"]-1)에 그려짐(#1)
-        accent = app.theme_variables.get("accent", "#FEA62B").lower()
-        cellbg = app.view._cells[ap["y"] - 1][ap["x"] + 1][1]
-        assert cellbg and cellbg.bgcolor and accent in str(cellbg.bgcolor).lower(), \
-            f"헤더 포커스 강조색 기대, got {cellbg.bgcolor if cellbg else None}"
-        await pilot.press("enter")             # 포커스 해제 + 모드 종료
-        await wait_until(pilot, lambda: app.mode == "normal")
-        assert app._hdr_focus is None and app.mode == "normal"
-        assert len(app.screen_stack) == 1, "팝업이 뜨지 않는다"
     await _with_app(body)
 
 
@@ -4153,16 +4045,6 @@ async def test_alt_scroll_toggle():
     await _with_app(body)
 
 
-async def test_claude_header_status_applies():
-    # #6 ③: 서버 status 의 claude_header 권위값이 claude_header_on 에 반영된다.
-    async def body(app, pilot, srv):
-        app._dispatch({"t": "status", "windows": [], "claude_header": False})
-        assert app.claude_header_on is False
-        app._dispatch({"t": "status", "windows": [], "claude_header": True})
-        assert app.claude_header_on is True
-    await _with_app(body)
-
-
 async def test_command_list_search_filters_and_tab_counts():
     # 검색창에 타이핑하면 즉시 필터링 + 각 탭에 일치 수 표시 + 결과 있는 탭으로
     # 자동 점프(현재 탭에 결과가 없을 때).
@@ -4375,16 +4257,17 @@ async def test_command_prompt_empty_lists_all_commands():
     await _with_app(body)
 
 
-async def test_esc_nav_reaches_close_without_header():
-    # 헤더(1행 프롬프트)가 없어도 ESC 모드 ↑ 로 우상단 닫기 [x] 에 닿는다(#).
+async def test_esc_nav_reaches_close_button():
+    # ESC 모드 ↑(최상단 패널) → 우상단 닫기 [x] 포커스, Enter → 탭 닫기 확인(#31).
     from textual.events import Key
     async def body(app, pilot, srv):
-        app.claude_header_on = True
-        app.pane_claude = {}                               # Claude 헤더 없음
-        assert app._claude_header_panes() == []
         await pilot.press("escape")
         app.on_key(Key(key="up", character=None))          # 최상단 패널 ↑ → [x]
-        assert app._hdr_focus == "close", app._hdr_focus
+        assert app._close_focus is True
+        killed = []
+        app.confirm_kill_tab = lambda: killed.append(1)
+        app.on_key(Key(key="enter", character=None))       # [x] Enter → 탭 닫기
+        assert killed == [1] and app._close_focus is False
     await _with_app(body)
 
 

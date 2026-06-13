@@ -20,7 +20,7 @@ import pytmuxlib.plugins as plugins
 
 # claude-code 가 코어에 노출하던 명령(이 플러그인 부재 시 전부 사라져야 함).
 _CLAUDE_CMDS = {
-    "claude-rules", "token-saver", "auto-resume", "claude-header",
+    "claude-rules", "token-saver", "auto-resume",
     "token-log", "claude-usage",
     "usage-panel", "token-account", "prompt-clear", "model",
     "auto-doc-clear", "auto-compact", "claude-auto-mode", "auto-launch",
@@ -350,20 +350,17 @@ async def test_contract_client_app_runs_without_claude_plugin(monkeypatch=None):
             for attr in ("open_model_config", "open_perm_mode", "open_token_log",
                          "open_usage_panel",
                          "open_remote_control", "_toggle_remote_control",
-                         "_update_claude", "set_claude_header",
+                         "_update_claude",
                          "_footer_zone_at",
-                         "_claude_header_panes",
-                         # Phase 2c 헤더/클릭존 상태도 코어가 만들지 않는다.
-                         "pane_claude", "claude_header_on",
+                         # Phase 2c 클릭존 상태도 코어가 만들지 않는다.
+                         "pane_claude",
                          "_perm_zone", "_remote_zone",
                          "_last_usage_shown_seq"):
                 assert getattr(app, attr, None) is None, \
                     f"{attr} 가 설치됨(플러그인 부재인데)"
-            # _hdr_panes 게이트는 코어에 남지만 플러그인 부재 시 빈 목록을 돌려준다.
-            assert app._hdr_panes() == [], "헤더 포커스 게이트가 비어 있어야"
             # status 메시지에 Claude 필드가 와도 흡수기(client_status 훅)가 없어 무시.
             app._dispatch({"t": "status", "windows": [],
-                           "claude_header": True, "panes_claude": [
+                           "panes_claude": [
                                {"id": 1, "claude": "idle", "prompt": "x"}],
                            "usage_shown_seq": 5})
             await pilot.pause(0.05)
@@ -380,7 +377,7 @@ async def test_contract_client_app_runs_without_claude_plugin(monkeypatch=None):
                 "client_statusbar_init 훅 부재인데 claude_active 속성이 설치됨"
             assert app.status._usage_zone is None and \
                 app.status._model_zone is None, "Claude 상태줄 클릭존이 등록됨"
-            # 2) 기본 렌더가 성공했다(프레임 합성 — _draw_claude_headers 등 코어 경로 포함).
+            # 2) 기본 렌더가 성공했다(프레임 합성 — client_render 훅 등 코어 경로 포함).
             assert app.view._cells, "프레임 합성 실패"
             # 3) ESC 모드 진입·이동·해제가 예외 없이 돈다(Claude ESC nav 가드 포함).
             await pilot.press("escape")

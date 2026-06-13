@@ -387,7 +387,6 @@ class ServerPersistMixin:
         try:
             with ipc.open_private(self.opts_path) as f:   # 0600(F5)
                 json.dump({"capture": self.capture,
-                           "claude_header": self.claude_header,
                            "single_border": self.single_border,
                            "coalesce_repaints": self.coalesce_repaints,
                            "prompt_clear_message": self.prompt_clear_message,

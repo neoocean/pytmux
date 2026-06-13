@@ -25,8 +25,6 @@ COMMANDS = [
                     "(별칭 claude-settings, token-settings)", "Claude"),
     ("auto-resume", "토큰 리밋 자동 재개 [on|off]", "Claude"),
     ("auto-resume-message", "자동 재개 메시지 설정", "Claude"),
-    ("claude-header", "Claude 프롬프트 헤더 표시 on/off (claude-header on|off|toggle)",
-                      "Claude"),
     ("token-log", "토큰 사용량 팝업 — 기간(시/일/주/월)·계정·세션 뷰 + 실측 한도·5h창"
                   "(별칭 token-usage, 상태줄 사용량 클릭)", "Claude"),
     ("claude-usage", "그림자 /usage 질의 — 숨은 세션으로 실 세션/주간 한도 갱신"
@@ -71,7 +69,6 @@ COMMAND_OPTIONS = {
     "auto-retry": [{"key": "state", "label": "자동재시도", "choices": _ONOFF}],
     "claude-auto-mode": [{"key": "state", "label": "오토모드", "choices": _ONOFF}],
     "auto-launch": [{"key": "state", "label": "자동셋업", "choices": _ONOFF}],
-    "claude-header": [{"key": "state", "label": "헤더", "choices": _ONOFF}],
 }
 
 # §6 ⑤ 플러그인 명령 i18n: '?' 목록·힌트는 코어 CommandListScreen/_cmd_desc 가
@@ -85,7 +82,6 @@ i18n.register({
         "cmd.token-saver": "Token-saving settings popup — toggle each auto-intervention·remaining threshold·measured gate (alias claude-settings, token-settings)",
         "cmd.auto-resume": "Auto-resume on token limit [on|off]",
         "cmd.auto-resume-message": "Set the auto-resume message",
-        "cmd.claude-header": "Show Claude prompt header on/off (claude-header on|off|toggle)",
         "cmd.token-log": "Token usage popup — period (h/d/w/m)·account·session views + measured limits·5h window (alias token-usage, click status usage)",
         "cmd.claude-usage": "Shadow /usage query — refresh real session/weekly limits via a hidden session (alias usage)",
         "cmd.usage-panel": "Claude token usage-limit popup — /usage (session 5h·week all·week Sonnet) bar graph (alias usage-limits·limits)",
@@ -111,7 +107,7 @@ i18n.register({
     "en": {
         "자동재개": "Auto-resume", "클리어모드": "Clear mode",
         "자동클리어": "Auto-clear", "하드스톱복구": "Hardstop recovery",
-        "오토모드": "Auto mode", "자동셋업": "Auto setup", "헤더": "Header",
+        "오토모드": "Auto mode", "자동셋업": "Auto setup",
         "자동재시도": "Auto-retry",
     },
 })
@@ -360,14 +356,6 @@ def _update_claude(app, panes_claude):
     app.pane_claude = {e["id"]: e for e in panes_claude}
 
 
-def _set_claude_header(app, on):
-    """claude-header on|off — 프롬프트 헤더 표시 토글(전역). 낙관적으로 즉시 반영하고
-    서버에 보내 opts.json 에 영속(#6 ③) — 서버가 status 로 회신."""
-    app.claude_header_on = on
-    app.send_cmd("set_claude_header", value=bool(on))
-    app._composite()
-
-
 def _toggle_remote_control(app, pane_id):
     """원격 제어 토글: 해당 Claude 패널에 `/rc` 슬래시 명령+Enter 를 주입한다. Claude
     Code CLI 가 `/rc` 로 원격 제어를 켜고 끈다 — 사용자가 직접 친 것과 동일한 입력
@@ -524,8 +512,6 @@ class _ClaudeCodePlugin:
         msg["prompt_clear"] = bool(ap.prompt_clear_mode) if ap else False
         # 프롬프트 단위 클리어 큐(#4): 활성 패널에 쌓인 명령들(표시·목록용).
         msg["prompt_clear_queue"] = (list(ap.prompt_clear_queue) if ap else [])
-        # 낙관적 토글(클라 즉시 반영) + 주기 status 권위값으로 화해 — 매 status 에 싣는다.
-        msg["claude_header"] = server.claude_header
         msg["auto_doc_clear"] = server.auto_doc_clear
         msg["auto_compact"] = server.auto_compact
         msg["auto_hardstop"] = server.auto_hardstop
@@ -676,19 +662,15 @@ class _ClaudeCodePlugin:
         # 클릭 핸들러에서 getattr(app, ..., 기본값)으로만 읽는다 → 디렉토리 삭제 시
         # 속성이 없어 Claude 헤더/클릭존이 전혀 나타나지 않는다(delete-to-disable).
         app.pane_claude = {}            # id -> {"claude","prompt",…}
-        app.claude_header_on = False    # 프롬프트 헤더 표시 기본 OFF(서버 status 가 권위;
-                                        # claude-prompt-history 플러그인이 기본 프롬프트 UI)
         app._perm_zone = {}             # id -> (x0,x1,y) 권한모드 footer 클릭존
         app._remote_zone = {}           # id -> (x0,x1,y) 원격제어 표시 클릭존
         app._last_usage_shown_seq = None  # /usage 자동 팝업 one-shot 시퀀스 베이스라인
         # 헤더 상태/클릭존 글루(코어/clientwidgets 가 getattr 로 호출 — 없으면 no-op).
         app._update_claude = lambda pc: _update_claude(app, pc)
-        app.set_claude_header = lambda on: _set_claude_header(app, on)
         app._toggle_remote_control = lambda pid: _toggle_remote_control(app, pid)
         app.open_remote_control = lambda pid: _open_remote_control(app, pid)
-        from .clientrender import claude_header_panes, footer_zone_at
+        from .clientrender import footer_zone_at
         app._footer_zone_at = lambda x, y: footer_zone_at(app, x, y)
-        app._claude_header_panes = lambda: claude_header_panes(app)
         # Claude 팝업(Phase 2a) — 코어에서 이리로 이전. 인스턴스 메서드로 설치한다
         # (PytmuxApp 은 build_client_app 팩토리 안 지역 클래스라 동적 베이스 믹스인을
         # 못 써 ncd/_saver_* 와 같은 클로저 설치 패턴을 쓴다). 코어 클릭/ESC/자동팝업
@@ -776,10 +758,8 @@ class _ClaudeCodePlugin:
 
     def client_status(self, app, msg):
         """서버 status 의 Claude 필드를 클라가 흡수한다(코어 _dispatch status 에서 위임).
-        claude_header/claude_rules 동기화, 패널별 Claude 상태(pane_claude) 갱신, 인패널
+        claude_rules 동기화, 패널별 Claude 상태(pane_claude) 갱신, 인패널
         /usage 자동 팝업 시퀀스를 처리한다."""
-        if "claude_header" in msg:
-            app.claude_header_on = bool(msg["claude_header"])
         if "claude_rules" in msg:
             app._claude_rules = msg.get("claude_rules", "")
         # /usage 자동 팝업(요청): 인패널 /usage 패널이 새로 떴다는 seq 가 늘면 깨끗한
@@ -841,11 +821,6 @@ class _ClaudeCodePlugin:
             app.open_usage_panel()
         elif c in ("model", "model-config", "claude-model"):
             app.open_model_config()
-        elif c == "claude-header":
-            # claude-header [on|off|toggle] — 프롬프트 헤더 표시 제어(기본 toggle).
-            arg = args[0].lower() if args else "toggle"
-            app.set_claude_header(arg == "on" if arg in ("on", "off")
-                                  else not app.claude_header_on)
         # 토글/주입 명령(서버로 전송, on/off 없으면 서버가 토글)
         elif c in ("auto-resume", "autoresume"):
             app.send_cmd("set_autoresume", value=_onoff(args))
