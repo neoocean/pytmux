@@ -1655,8 +1655,418 @@ class _InputMixin:
         elif k in ("q", "escape", "enter"):
             self.send_scroll(aid, bottom=True)
             self.mode = "normal"
+
+
+class _RenderMixin:
+    # §5.4 렌더/합성 클러스터(_composite 화면 합성·합성 디바운스·팝업 dim 오버라이드·탭닫기 존) — 모듈 레벨 분리, PytmuxApp 은 MRO 로 상속. push_screen/pop_screen 의 super() 는 MRO 상 App 으로 해석(마지막 믹스인)
+    def _request_composite(self):
+        """B9: 합성 코얼레싱 — 한 read 버스트(서버가 B4 로 배치 송신한 여러 screen/
+        delta)에서 메시지마다 합성하지 않고, 루프 틱당 _composite 를 1회만 돈다.
+        이미 예약돼 있으면 no-op. 버퍼된 메시지들은 reader 가 양보 없이 연속 처리
+        하므로 call_soon 콜백이 버스트 끝에 한 번 실행된다(시각 결과 동일·1프레임)."""
+        if self._composite_pending:
+            return
+        self._composite_pending = True
+        try:
+            asyncio.get_running_loop().call_soon(self._do_pending_composite)
+        except RuntimeError:        # 러닝 루프 밖(직접 호출/테스트) — 즉시 합성
+            self._composite_pending = False
+            self._composite()
+
+    def _do_pending_composite(self):
+        self._composite_pending = False
+        self._composite()
+
+    # 셀 그리드 합성 헬퍼는 앱 비의존이라 clientrender.py 로 분리(#12). 호출은
+    # clientrender.put_cell(...) 로 직접 한다(과거 self._put_cell). 시계/달력
+    # 오버레이 그리기는 clock·calendar 플러그인의 client_overlay 훅으로 옮겼고,
+    # 그리기 자유함수(draw_clock_overlay/draw_calendar_overlay)도 각 플러그인의
+    # render.py(plugins/clock·calendar)로 옮겨 디렉토리째 지우면 함께 사라진다.
+    def _composite(self):
+        W = self.layout.get("cols", self.size.width)
+        H = self.layout.get("rows", max(1, self.size.height - 1))
+        cells = [[(" ", DEFAULT_STYLE) for _ in range(W)] for _ in range(H)]
+        active = self.layout.get("active")
+        # 비활성 패널 dim(§2.9): 패널이 둘 이상일 때만 — 단일 패널은 구분할 대상이 없다.
+        _dim_on = self.inactive_dim and len(self.layout.get("panes", [])) > 1
+        _dim_ratio = self.inactive_dim_ratio
+        # 활성 패널 커서 셀의 전역 좌표(gx,gy) — 아래 반전커서 그리는 곳에서 채운다.
+        # 매 합성마다 None 으로 초기화해 stale 좌표가 남지 않게 한다(IME preedit 동기화용).
+        self._active_cursor_xy = None
+        # Claude footer 클릭존(§10 item 2/3) 재계산은 claude-code 플러그인의
+        # client_render 훅(아래)이 매 합성마다 비우고 다시 채운다.
+        for p in self.layout.get("panes", []):
+            content = self.pane_content.get(p["id"])
+            if not content:
+                continue
+            rows, cursor = content
+            # 비활성 패널이면 이 패널 셀 스타일을 한 톤 옅게(§2.9). 활성 패널은 원색.
+            p_dim = _dim_on and p["id"] != active
+            for ry, row in enumerate(rows):
+                if ry >= p["h"]:
+                    break
+                gy = p["y"] + ry
+                if not (0 <= gy < H):
+                    continue
+                cx = p["x"]
+                for text, style_d in row:
+                    st = make_style(style_d)
+                    if p_dim:
+                        st = _dim_inactive_style(st, _dim_ratio)
+                    for chh in text:
+                        if cx - p["x"] >= p["w"]:
+                            break
+                        if 0 <= cx < W:
+                            cells[gy][cx] = (chh, st)
+                        wch = _char_cells(chh)
+                        # 와이드 문자: 다음 칸은 연속 셀(렌더 시 건너뜀)
+                        if wch == 2 and 0 <= cx + 1 < W and \
+                                (cx + 1 - p["x"]) < p["w"]:
+                            cells[gy][cx + 1] = ("", st)
+                        cx += wch
+            # 활성 패널 커서
+            if cursor and p["id"] == active:
+                ccx, ccy = cursor
+                gx, gy = p["x"] + ccx, p["y"] + ccy
+                if 0 <= gx < W and 0 <= gy < H:
+                    ch, st = cells[gy][gx]
+                    cells[gy][gx] = (ch, _with_reverse(st))   # C3: 캐시된 반전
+                    # 하드웨어(터미널) 커서를 둘 좌표 — set_frame 직전에 적용한다.
+                    # 와이드 글자 위면 ccx 가 이미 시작 칸이므로 gx 가 맞다.
+                    self._active_cursor_xy = (gx, gy)
+        # 패널 테두리 박스: 비활성=회색, 활성=파란색. 경계 셀은 인접 패널이
+        # 공유하므로, 비활성 박스를 먼저 그리고 활성 박스를 마지막에 덮어
+        # 활성 패널의 경계 전체가 파란색이 되도록 한다.
+        # P4: 이 Style 들은 (테마, 원격뷰, degraded) 시그니처에만 의존하고 프레임
+        # 내내 불변이므로, 시그니처가 바뀔 때만 재생성해 self 에 캐시한다(예전엔
+        # 매 _composite 마다 ~5개 Style 신규 할당). 우선순위 degraded>원격>기본.
+        # §1.7-a 원격 탭(remote-attach 병합 탭)을 보면 분홍, §10 degraded 면 error(빨강).
+        _box_sig = (getattr(self.app, "theme", ""),
+                    self._viewing_remote(), self._net_degraded)
+        if getattr(self, "_box_style_sig", None) != _box_sig:
+            if self._net_degraded:
+                err = theme_color(self, "error")
+                ib = Style(color=err)
+                ab = Style(color=err, bold=True)
+            elif self._viewing_remote():
+                ib = Style(color=REMOTE_PINK_DIM)
+                ab = Style(color=REMOTE_PINK, bold=True)
+            else:
+                ib = Style(color="grey42")
+                ab = Style(color=theme_color(self, "primary"), bold=True)
+            # 패널 선택 깜빡임(ESC 모드 방향키): warning 색 테두리로 active 와 교차 점멸.
+            fb = Style(color=theme_color(self, "warning"), bold=True)
+            self._box_styles = (ib, ab, fb)
+            self._box_style_sig = _box_sig
+        inactive_box, active_box, flash_box = self._box_styles
+        show_title = self.layout.get("border_status")
+        # 박스 문자 ↔ 변 비트(U=8,D=4,L=2,R=1): 겹치는 경계를 합쳐 ┬┴├┤┼ 로 연결.
+        # C3: 상수 dict 를 매 _composite 마다 새로 만들지 않고 모듈 상수를 재사용.
+        bbits = _BOX_BITS
+        brev = _BOX_REV
+
+        def _draw_box(p):
+            box = p.get("box")
+            if not box:
+                return
+            bx, by, bw, bh = box
+            if self._pane_flash_on and p["id"] == self._pane_flash_id:
+                st = flash_box
+            elif self._cmd_target_pane is not None \
+                    and p["id"] == self._cmd_target_pane:
+                st = flash_box   # 명령 대상 패널 — 밝게(요청)
+            elif p["id"] == active:
+                st = active_box
+            else:
+                st = inactive_box
+            x2, y2 = bx + bw - 1, by + bh - 1
+
+            def put(gx, gy, chc):
+                if not (0 <= gx < W and 0 <= gy < H):
+                    return
+                cur = cells[gy][gx][0]
+                if cur in bbits and chc in bbits:   # 경계끼리 만나면 변을 합침
+                    chc = brev[bbits[cur] | bbits[chc]]
+                cells[gy][gx] = (chc, st)
+
+            for gx in range(bx + 1, x2):      # 모서리 제외(상/하)
+                put(gx, by, "─")
+                put(gx, y2, "─")
+            for gy in range(by + 1, y2):      # 모서리 제외(좌/우)
+                put(bx, gy, "│")
+                put(x2, gy, "│")
+            put(bx, by, "┌")                  # 모서리는 인접 박스와만 병합
+            put(x2, by, "┐")
+            put(bx, y2, "└")
+            put(x2, y2, "┘")
+
+        def _draw_title(p):
+            """패널 이름을 위쪽 테두리 중앙에 표기(리네임됐거나 border-status).
+
+            테두리를 모두 그린 뒤 별도 패스로 호출해, 인접 패널의 경계선이
+            이름을 덮어쓰지 않게 한다. 색은 박스 색(활성=파랑/비활성=회색)."""
+            box = p.get("box")
+            if not box:
+                return
+            bx, by, bw, _bh = box
+            title = (p.get("title") or "").strip()
+            renamed = title and title != "shell"
+            if not ((show_title or renamed) and title and bw >= 4):
+                return
+            st = active_box if p["id"] == active else inactive_box
+            label = f" {title} "[: bw - 2]
+            start = bx + max(1, (bw - len(label)) // 2)  # 중앙 정렬
+            for i, chc in enumerate(label):
+                gx = start + i
+                if bx < gx < bx + bw - 1 and 0 <= by < H:  # 모서리 침범 방지
+                    cells[by][gx] = (chc, st)
+
+        boxes = self.layout.get("panes", [])
+        for p in boxes:               # 1) 비활성 테두리 → 2) 활성 테두리(위에)
+            if p["id"] != active:
+                _draw_box(p)
+        for p in boxes:
+            if p["id"] == active:
+                _draw_box(p)
+        for p in boxes:               # 3) 이름은 테두리 위에(활성 이름 최상위)
+            if p["id"] != active:
+                _draw_title(p)
+        for p in boxes:
+            if p["id"] == active:
+                _draw_title(p)
+        # 활성 탭을 아래 콘텐츠와 연결(노트북 탭 모양, #23): 상단 탭바가 보이면
+        # 콘텐츠 최상단 테두리(row 0)의 활성 탭 x 범위를 탭의 파란색으로 이어
+        # 그린다. **셀 전체 배경(공백+bg)** 으로 칠하면 본문 상단 테두리(─, 셀
+        # 중앙선) 자리를 셀 높이 전체로 덮어 아웃라인을 침범한다(사용자 보고).
+        # 위 절반 블록 ▀(fg=primary, bg=터미널 기본)로 그려 **윗절반(탭 쪽)만**
+        # 파랗게 채우고 셀 중앙(=─ 테두리 높이)에서 정확히 멈춘다 → 아웃라인
+        # 침범 없이 탭→아웃라인까지만 연결된다. (일부 모바일 폰트가 ▀ 를 칸
+        # 사이 벌어지게 그릴 수 있으나 데스크탑 정확도를 우선 — 사용자 요청.)
+        if self._tabbar_visible() and H > 0:
+            xr = self.tabbar.active_tab_xrange()
+            if xr:
+                tx0, tx1 = xr
+                # §1.7-a: 원격 탭이 활성이면 연결부도 탭과 같은 분홍.
+                conn_color = (REMOTE_PINK if self._viewing_remote()
+                              else theme_color(self, "primary"))
+                conn = Style(color=conn_color, bgcolor=None)
+                for xx in range(max(0, tx0), min(tx1, W)):
+                    cells[0][xx] = ("▀", conn)
+        # 패널 제목 경계선(pane-border-status)
+        for tb in self.layout.get("titlebars", []):
+            is_active = tb.get("active")
+            st = _TB_ACTIVE_STYLE if is_active else _TB_INACTIVE_STYLE  # C3
+            label = f" {tb['title']} "
+            gy = tb["y"]
+            if not (0 <= gy < H):
+                continue
+            for i in range(tb["w"]):
+                gx = tb["x"] + i
+                chh = label[i] if i < len(label) else "─"
+                s = st if i < len(label) else _TB_BORDER_STYLE   # C3
+                if 0 <= gx < W:
+                    cells[gy][gx] = (chh, s)
+        # copy-mode 선택 영역 하이라이트(추출과 동일하게 시작 패널 가로 범위로
+        # 중간 줄을 한정 — 분할 경계 넘어 강조/복사되던 오염 방지, §2.4)
+        sel = self.view._sel
+        if sel:
+            sx0, sy0, sx1, sy1 = sel
+            if (sy0, sx0) > (sy1, sx1):
+                sx0, sy0, sx1, sy1 = sx1, sy1, sx0, sy0
+            srect = self.view._sel_rect
+            if srect:
+                left, right = srect[0], srect[0] + srect[2] - 1
+            else:
+                left, right = 0, W - 1
+            for yy in range(max(0, sy0), min(H, sy1 + 1)):
+                a = sx0 if yy == sy0 else left
+                b = sx1 if yy == sy1 else right
+                for xx in range(max(0, a), min(W, b + 1)):
+                    c, sstl = cells[yy][xx]
+                    cells[yy][xx] = (c, _with_reverse(sstl))   # C3: 캐시된 반전
+        # display-panes 오버레이: 각 패널 중앙에 번호 표시
+        if self.mode == "display":
+            for i, p in enumerate(self.layout.get("panes", [])):
+                label = str(i)
+                cx0 = p["x"] + max(0, (p["w"] - len(label)) // 2)
+                cy0 = p["y"] + p["h"] // 2
+                st = Style(color="black", bold=True,
+                           bgcolor="green" if p["id"] == active else "yellow")
+                for j, chh in enumerate(label):
+                    clientrender.put_cell(cells, cx0 + j, cy0, chh, st, W, H)
+        # Claude Code 콘텐츠-레이어 장식(footer 클릭존 스캔)·플러그인 오버레이는
+        # client_render 훅이 그린다(없으면 no-op — delete-to-disable).
+        self.plugins.client_render(self, cells, W, H)
+        # 현재 탭 닫기 [x]: 활성 패널 상단 테두리 행 우측(2026-06-13 한 칸 위로)
+        self._draw_tab_close(cells, W, H)
+        # 패널 오버레이(시계/달력 등, 패널 전체 덮기·뒤 화면 dim) — clock·calendar
+        # 플러그인이 client_overlay 훅으로 그린다(플러그인 없으면 no-op).
+        self.plugins.client_overlay(self, cells, W, H, active)
+        # 경계선(divider) 호버/드래그 강조: 그 칸의 글자는 두고 배경만 살짝
+        # 입혀 리사이즈 가능함을 알린다(#27).
+        hov = self.view._hover_divider
+        if hov is None and self.view._dragging:
+            d = self.view._dragging
+            hov = (d["x"], d["y"], d["w"], d["h"])
+        if hov:
+            hx, hy, hw, hh = hov
+            tint = Style(bgcolor=theme_color(self, "primary"))
+            for yy in range(hy, min(hy + hh, H)):
+                for xx in range(hx, min(hx + hw, W)):
+                    if 0 <= yy < H and 0 <= xx < W:
+                        c, st = cells[yy][xx]
+                        cells[yy][xx] = (c, st + tint)
+        # Claude footer(권한모드/원격제어) 클릭존 강조: ESC 모드에서 "auto mode
+        # on"(perm) 키보드 포커스 시에만 그 줄 배경을 한 톤 입힌다(글자색 유지).
+        # **마우스 호버로는 배경을 바꾸지 않는다**(요청 — 호버 강조 폐지). 클릭존은
+        # 위에서 막 재계산됐으므로 대상이 아직 유효할 때만 칠한다(떨림 없음).
+        _perm_zone = getattr(self, "_perm_zone", {})
+        _remote_zone = getattr(self, "_remote_zone", {})
+        _fh = None
+        if self._status_focus == "perm":
+            _act = self.layout.get("active")
+            if _act is not None and _act in _perm_zone:
+                _fh = (_act, "perm")
+        if _fh is not None:
+            _fpid, _fkind = _fh
+            _fzone = (_perm_zone if _fkind == "perm"
+                      else _remote_zone).get(_fpid)
+            if _fzone:
+                zx0, zx1, zy = _fzone
+                ftint = Style(bgcolor=theme_color(self, "secondary"))
+                if 0 <= zy < H:
+                    for xx in range(max(0, zx0), min(zx1, W)):
+                        c, st = cells[zy][xx]
+                        cells[zy][xx] = (c, st + ftint)
+        # 컨텍스트 메뉴가 열려 있으면 대상 패널 외 나머지를 흐리게(#18) — 중앙
+        # 모달이라 위치로 패널을 가리킬 수 없어 배경 dim 으로 대상을 구분한다.
+        if self._menu_open and self._menu_pane is not None:
+            for p in self.layout.get("panes", []):
+                if p["id"] == self._menu_pane:
+                    continue
+                for yy in range(p["y"], min(p["y"] + p["h"], H)):
+                    for xx in range(p["x"], min(p["x"] + p["w"], W)):
+                        c, st = cells[yy][xx]
+                        cells[yy][xx] = (c, _darken_style(st))
+        # 패널 pick-up(헤더 드래그) 중: 들고 있는 소스 패널은 흐리게(dim), 놓을
+        # 대상 패널은 배경 강조(놓으면 두 패널이 자리를 맞바꾼다). 탭바 위로 끌면
+        # _pickup_over 가 None 이라 소스만 dim — "들고 있음"을 표시(탭/[+] 드롭 후보).
+        if self.view._pickup is not None:
+            stint = Style(bgcolor=theme_color(self, "warning"))
+            for p in self.layout.get("panes", []):
+                if p["id"] == self.view._pickup:
+                    darken = True       # 들고 있는 소스 패널: 실색 블렌드로 흐리게
+                elif p["id"] == self.view._pickup_over:
+                    darken = False      # 놓을 대상 패널: 배경 강조(warning)
+                else:
+                    continue
+                for yy in range(p["y"], min(p["y"] + p["h"], H)):
+                    for xx in range(p["x"], min(p["x"] + p["w"], W)):
+                        if 0 <= yy < H and 0 <= xx < W:
+                            c, st = cells[yy][xx]
+                            cells[yy][xx] = (c, _darken_style(st) if darken
+                                             else st + stint)
+        # 탭→패널 드래그 미리보기(#19): 드롭 대상 패널에서 새 패널이 들어갈 절반
+        # (lr→오른쪽, tb→아래쪽)을 강조색으로 칠해 분할 결과를 미리 보여준다.
+        if self._drag_split is not None:
+            pane_id, orient = self._drag_split
+            tp = next((p for p in self.layout.get("panes", [])
+                       if p["id"] == pane_id), None)
+            if tp:
+                px, py, pw, ph = tp["x"], tp["y"], tp["w"], tp["h"]
+                if orient == "lr":
+                    hx0, hy0, hx1, hy1 = px + pw // 2, py, px + pw, py + ph
+                else:
+                    hx0, hy0, hx1, hy1 = px, py + ph // 2, px + pw, py + ph
+                hl = Style(bgcolor=theme_color(self, "accent"))
+                for yy in range(max(0, hy0), min(hy1, H)):
+                    for xx in range(max(0, hx0), min(hx1, W)):
+                        c, st = cells[yy][xx]
+                        cells[yy][xx] = (c, st + hl)
+        # 팝업(모달)이 떠 있으면 뒤 본문을 어둡게 칠하고, 스타일을 무시하고 컬러로
+        # 그려지는 이모지는 placeholder(·)로 치환한다(#25). 팝업을 닫으면 다음
+        # _composite 가 원본에서 다시 그려 자연히 복원된다(별도 저장 불필요).
+        if len(self.screen_stack) > 1:
+            for yy in range(H):
+                if yy in self._undim_rows:   # 클릭 원천 줄은 밝게 유지(#29)
+                    continue
+                row = cells[yy]
+                for xx in range(W):
+                    ch, st = row[xx]
+                    if ch and _is_emoji(ch):
+                        ch = "·"
+                    row[xx] = (ch, _darken_style(st))
+        # IME preedit 동기화(docs/IME_PREEDIT_CURSOR_SCENARIO.md): 하드웨어(터미널)
+        # 커서를 활성 패널 커서 셀로 옮긴다. 호스트 터미널은 IME 조합 문자열
+        # (preedit)을 하드웨어 커서 자리에 덧그리므로, 안 옮기면 stale 커서 자리
+        # (흔히 패널 테두리 행)에 조합 글자가 박제돼 잔상으로 보인다. Textual 의
+        # Input/TextArea 가 app.cursor_position = cursor_screen_offset 로 하는 것과
+        # 동일 패턴 — Textual 은 매 프레임 끝에 move_to(cursor_position) 를 출력한다
+        # (textual.app._display). 모달(Input/TextArea)이 떠 있으면(screen_stack>1)
+        # 그 위젯이 cursor_position 을 소유하므로 덮어쓰지 않는다(경합 방지).
+        if len(self.screen_stack) == 1 and self._active_cursor_xy is not None:
+            self.cursor_position = Offset(*self._active_cursor_xy)
+        self.view.set_frame(cells)
+
+    def push_screen(self, *args, **kwargs):
+        # 팝업이 열리면 곧장 뒤 본문을 어둡게(#25). §10-A #4: 예전엔 call_after_refresh
+        # 로만 재합성을 예약해, idle 상태에선 dim 이 다음 refresh(최악엔 1초 clock
+        # tick)까지 늦게 적용돼 "팝업 디밍이 ~1초 걸린다"는 보고가 있었다. 이제
+        # **같은 턴에 _composite() 를 즉시 호출**해 dim 을 바로 적용하고(set_frame 이
+        # view.refresh() 호출 → 다음 프레임에 표시), 마운트 후 레이아웃 안정화를 위해
+        # call_after_refresh 도 한 번 더 둔다(둘 다 캐시된 _darken_style 로 경량).
+        r = super().push_screen(*args, **kwargs)
+        if getattr(self, "view", None) is not None:
+            self._composite()
+            self.call_after_refresh(self._composite)
+        return r
+
+    def pop_screen(self, *args, **kwargs):
+        # 팝업을 닫으면 어둡게/치환을 풀고 원본으로 재합성(#25) — 즉시 + 마운트 후.
+        r = super().pop_screen(*args, **kwargs)
+        if getattr(self, "view", None) is not None:
+            self._composite()
+            self.call_after_refresh(self._composite)
+        return r
+
+    def _draw_tab_close(self, cells, W, H):
+        """현재 탭(윈도우) 닫기 [x] 버튼을 **활성 패널의 상단 테두리 행** 우측
+        (모서리 바로 안쪽)에 그린다(2026-06-13 요청 — 콘텐츠 첫 행에서 한 칸 위로:
+        콘텐츠를 안 가리고 IME 배지([한]/[EN], 첫 행 우상단)와도 안 겹친다).
+        테두리가 없으면(단일 패널 single-border off 등) 종전대로 콘텐츠 첫 행.
+        활성 패널의 실제 box/x/y/w/h 를 써서 분할(split) 상태에서도 그 패널에
+        붙는다. 클릭 우선순위: on_mouse_down 이 [x] 존을 헤더 드래그(pick-up)보다
+        먼저 검사하므로 테두리 행에 있어도 클릭이 드래그로 새지 않는다."""
+        self._tab_close_zone = None
+        active = self.layout.get("active")
+        ap = next((p for p in self.layout.get("panes", [])
+                   if p["id"] == active), None)
+        if ap is None:
+            return
+        px, py, pw, ph = ap["x"], ap["y"], ap["w"], ap["h"]
+        if pw < 4 or ph < 1:
+            return
+        # ESC 모드에서 닫기 [x] 가 포커스되면 강조색(accent)으로(#31 방향키 동선).
+        if self._close_focus:
+            st = Style(color="black", bgcolor=theme_color(self, "accent"),
+                       bold=True)
+        else:
+            st = Style(color="white", bgcolor=theme_color(self, "error"),
+                       bold=True)
+        bbox = ap.get("box")    # 테두리 박스(있으면 상단 테두리 행이 한 칸 위)
+        by = bbox[1] if bbox else (py - 1 if py >= 1 else py)
+        bx0 = px + pw - 3       # 콘텐츠 우측 끝 3칸("[x]") — 우측 테두리 안쪽
+        if not (0 <= by < H):
+            return
+        for j, chh in enumerate("[x]"):
+            gx = bx0 + j
+            if 0 <= gx < W:
+                cells[by][gx] = (chh, st)
+        self._tab_close_zone = (bx0, bx0 + 3, by)
+
+    # ---- 송신 헬퍼 ----
 _PytmuxAppMixins = (_ClipboardMixin, _NetReconnectMixin, _RestartVersionMixin,
-                    _StatusFocusMixin, _ChooseScreensMixin, _CommandMixin, _InputMixin)
+                    _StatusFocusMixin, _ChooseScreensMixin, _CommandMixin, _InputMixin, _RenderMixin)
 
 
 def build_client_app(sock_path: str, config: dict | None = None,
@@ -2130,24 +2540,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     else:
                         os.environ[k] = old
 
-        def _request_composite(self):
-            """B9: 합성 코얼레싱 — 한 read 버스트(서버가 B4 로 배치 송신한 여러 screen/
-            delta)에서 메시지마다 합성하지 않고, 루프 틱당 _composite 를 1회만 돈다.
-            이미 예약돼 있으면 no-op. 버퍼된 메시지들은 reader 가 양보 없이 연속 처리
-            하므로 call_soon 콜백이 버스트 끝에 한 번 실행된다(시각 결과 동일·1프레임)."""
-            if self._composite_pending:
-                return
-            self._composite_pending = True
-            try:
-                asyncio.get_running_loop().call_soon(self._do_pending_composite)
-            except RuntimeError:        # 러닝 루프 밖(직접 호출/테스트) — 즉시 합성
-                self._composite_pending = False
-                self._composite()
-
-        def _do_pending_composite(self):
-            self._composite_pending = False
-            self._composite()
-
         def _dispatch(self, msg):
             t = msg.get("t")
             if t == "layout":
@@ -2322,394 +2714,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
         # ---- RTT 핑/히스테리시스(_net_ping·_on_pong·_net_sample)는
         # _NetReconnectMixin(모듈 레벨, §5.4)으로 분리. ----
 
-        # 셀 그리드 합성 헬퍼는 앱 비의존이라 clientrender.py 로 분리(#12). 호출은
-        # clientrender.put_cell(...) 로 직접 한다(과거 self._put_cell). 시계/달력
-        # 오버레이 그리기는 clock·calendar 플러그인의 client_overlay 훅으로 옮겼고,
-        # 그리기 자유함수(draw_clock_overlay/draw_calendar_overlay)도 각 플러그인의
-        # render.py(plugins/clock·calendar)로 옮겨 디렉토리째 지우면 함께 사라진다.
-        def _composite(self):
-            W = self.layout.get("cols", self.size.width)
-            H = self.layout.get("rows", max(1, self.size.height - 1))
-            cells = [[(" ", DEFAULT_STYLE) for _ in range(W)] for _ in range(H)]
-            active = self.layout.get("active")
-            # 비활성 패널 dim(§2.9): 패널이 둘 이상일 때만 — 단일 패널은 구분할 대상이 없다.
-            _dim_on = self.inactive_dim and len(self.layout.get("panes", [])) > 1
-            _dim_ratio = self.inactive_dim_ratio
-            # 활성 패널 커서 셀의 전역 좌표(gx,gy) — 아래 반전커서 그리는 곳에서 채운다.
-            # 매 합성마다 None 으로 초기화해 stale 좌표가 남지 않게 한다(IME preedit 동기화용).
-            self._active_cursor_xy = None
-            # Claude footer 클릭존(§10 item 2/3) 재계산은 claude-code 플러그인의
-            # client_render 훅(아래)이 매 합성마다 비우고 다시 채운다.
-            for p in self.layout.get("panes", []):
-                content = self.pane_content.get(p["id"])
-                if not content:
-                    continue
-                rows, cursor = content
-                # 비활성 패널이면 이 패널 셀 스타일을 한 톤 옅게(§2.9). 활성 패널은 원색.
-                p_dim = _dim_on and p["id"] != active
-                for ry, row in enumerate(rows):
-                    if ry >= p["h"]:
-                        break
-                    gy = p["y"] + ry
-                    if not (0 <= gy < H):
-                        continue
-                    cx = p["x"]
-                    for text, style_d in row:
-                        st = make_style(style_d)
-                        if p_dim:
-                            st = _dim_inactive_style(st, _dim_ratio)
-                        for chh in text:
-                            if cx - p["x"] >= p["w"]:
-                                break
-                            if 0 <= cx < W:
-                                cells[gy][cx] = (chh, st)
-                            wch = _char_cells(chh)
-                            # 와이드 문자: 다음 칸은 연속 셀(렌더 시 건너뜀)
-                            if wch == 2 and 0 <= cx + 1 < W and \
-                                    (cx + 1 - p["x"]) < p["w"]:
-                                cells[gy][cx + 1] = ("", st)
-                            cx += wch
-                # 활성 패널 커서
-                if cursor and p["id"] == active:
-                    ccx, ccy = cursor
-                    gx, gy = p["x"] + ccx, p["y"] + ccy
-                    if 0 <= gx < W and 0 <= gy < H:
-                        ch, st = cells[gy][gx]
-                        cells[gy][gx] = (ch, _with_reverse(st))   # C3: 캐시된 반전
-                        # 하드웨어(터미널) 커서를 둘 좌표 — set_frame 직전에 적용한다.
-                        # 와이드 글자 위면 ccx 가 이미 시작 칸이므로 gx 가 맞다.
-                        self._active_cursor_xy = (gx, gy)
-            # 패널 테두리 박스: 비활성=회색, 활성=파란색. 경계 셀은 인접 패널이
-            # 공유하므로, 비활성 박스를 먼저 그리고 활성 박스를 마지막에 덮어
-            # 활성 패널의 경계 전체가 파란색이 되도록 한다.
-            # P4: 이 Style 들은 (테마, 원격뷰, degraded) 시그니처에만 의존하고 프레임
-            # 내내 불변이므로, 시그니처가 바뀔 때만 재생성해 self 에 캐시한다(예전엔
-            # 매 _composite 마다 ~5개 Style 신규 할당). 우선순위 degraded>원격>기본.
-            # §1.7-a 원격 탭(remote-attach 병합 탭)을 보면 분홍, §10 degraded 면 error(빨강).
-            _box_sig = (getattr(self.app, "theme", ""),
-                        self._viewing_remote(), self._net_degraded)
-            if getattr(self, "_box_style_sig", None) != _box_sig:
-                if self._net_degraded:
-                    err = theme_color(self, "error")
-                    ib = Style(color=err)
-                    ab = Style(color=err, bold=True)
-                elif self._viewing_remote():
-                    ib = Style(color=REMOTE_PINK_DIM)
-                    ab = Style(color=REMOTE_PINK, bold=True)
-                else:
-                    ib = Style(color="grey42")
-                    ab = Style(color=theme_color(self, "primary"), bold=True)
-                # 패널 선택 깜빡임(ESC 모드 방향키): warning 색 테두리로 active 와 교차 점멸.
-                fb = Style(color=theme_color(self, "warning"), bold=True)
-                self._box_styles = (ib, ab, fb)
-                self._box_style_sig = _box_sig
-            inactive_box, active_box, flash_box = self._box_styles
-            show_title = self.layout.get("border_status")
-            # 박스 문자 ↔ 변 비트(U=8,D=4,L=2,R=1): 겹치는 경계를 합쳐 ┬┴├┤┼ 로 연결.
-            # C3: 상수 dict 를 매 _composite 마다 새로 만들지 않고 모듈 상수를 재사용.
-            bbits = _BOX_BITS
-            brev = _BOX_REV
-
-            def _draw_box(p):
-                box = p.get("box")
-                if not box:
-                    return
-                bx, by, bw, bh = box
-                if self._pane_flash_on and p["id"] == self._pane_flash_id:
-                    st = flash_box
-                elif self._cmd_target_pane is not None \
-                        and p["id"] == self._cmd_target_pane:
-                    st = flash_box   # 명령 대상 패널 — 밝게(요청)
-                elif p["id"] == active:
-                    st = active_box
-                else:
-                    st = inactive_box
-                x2, y2 = bx + bw - 1, by + bh - 1
-
-                def put(gx, gy, chc):
-                    if not (0 <= gx < W and 0 <= gy < H):
-                        return
-                    cur = cells[gy][gx][0]
-                    if cur in bbits and chc in bbits:   # 경계끼리 만나면 변을 합침
-                        chc = brev[bbits[cur] | bbits[chc]]
-                    cells[gy][gx] = (chc, st)
-
-                for gx in range(bx + 1, x2):      # 모서리 제외(상/하)
-                    put(gx, by, "─")
-                    put(gx, y2, "─")
-                for gy in range(by + 1, y2):      # 모서리 제외(좌/우)
-                    put(bx, gy, "│")
-                    put(x2, gy, "│")
-                put(bx, by, "┌")                  # 모서리는 인접 박스와만 병합
-                put(x2, by, "┐")
-                put(bx, y2, "└")
-                put(x2, y2, "┘")
-
-            def _draw_title(p):
-                """패널 이름을 위쪽 테두리 중앙에 표기(리네임됐거나 border-status).
-
-                테두리를 모두 그린 뒤 별도 패스로 호출해, 인접 패널의 경계선이
-                이름을 덮어쓰지 않게 한다. 색은 박스 색(활성=파랑/비활성=회색)."""
-                box = p.get("box")
-                if not box:
-                    return
-                bx, by, bw, _bh = box
-                title = (p.get("title") or "").strip()
-                renamed = title and title != "shell"
-                if not ((show_title or renamed) and title and bw >= 4):
-                    return
-                st = active_box if p["id"] == active else inactive_box
-                label = f" {title} "[: bw - 2]
-                start = bx + max(1, (bw - len(label)) // 2)  # 중앙 정렬
-                for i, chc in enumerate(label):
-                    gx = start + i
-                    if bx < gx < bx + bw - 1 and 0 <= by < H:  # 모서리 침범 방지
-                        cells[by][gx] = (chc, st)
-
-            boxes = self.layout.get("panes", [])
-            for p in boxes:               # 1) 비활성 테두리 → 2) 활성 테두리(위에)
-                if p["id"] != active:
-                    _draw_box(p)
-            for p in boxes:
-                if p["id"] == active:
-                    _draw_box(p)
-            for p in boxes:               # 3) 이름은 테두리 위에(활성 이름 최상위)
-                if p["id"] != active:
-                    _draw_title(p)
-            for p in boxes:
-                if p["id"] == active:
-                    _draw_title(p)
-            # 활성 탭을 아래 콘텐츠와 연결(노트북 탭 모양, #23): 상단 탭바가 보이면
-            # 콘텐츠 최상단 테두리(row 0)의 활성 탭 x 범위를 탭의 파란색으로 이어
-            # 그린다. **셀 전체 배경(공백+bg)** 으로 칠하면 본문 상단 테두리(─, 셀
-            # 중앙선) 자리를 셀 높이 전체로 덮어 아웃라인을 침범한다(사용자 보고).
-            # 위 절반 블록 ▀(fg=primary, bg=터미널 기본)로 그려 **윗절반(탭 쪽)만**
-            # 파랗게 채우고 셀 중앙(=─ 테두리 높이)에서 정확히 멈춘다 → 아웃라인
-            # 침범 없이 탭→아웃라인까지만 연결된다. (일부 모바일 폰트가 ▀ 를 칸
-            # 사이 벌어지게 그릴 수 있으나 데스크탑 정확도를 우선 — 사용자 요청.)
-            if self._tabbar_visible() and H > 0:
-                xr = self.tabbar.active_tab_xrange()
-                if xr:
-                    tx0, tx1 = xr
-                    # §1.7-a: 원격 탭이 활성이면 연결부도 탭과 같은 분홍.
-                    conn_color = (REMOTE_PINK if self._viewing_remote()
-                                  else theme_color(self, "primary"))
-                    conn = Style(color=conn_color, bgcolor=None)
-                    for xx in range(max(0, tx0), min(tx1, W)):
-                        cells[0][xx] = ("▀", conn)
-            # 패널 제목 경계선(pane-border-status)
-            for tb in self.layout.get("titlebars", []):
-                is_active = tb.get("active")
-                st = _TB_ACTIVE_STYLE if is_active else _TB_INACTIVE_STYLE  # C3
-                label = f" {tb['title']} "
-                gy = tb["y"]
-                if not (0 <= gy < H):
-                    continue
-                for i in range(tb["w"]):
-                    gx = tb["x"] + i
-                    chh = label[i] if i < len(label) else "─"
-                    s = st if i < len(label) else _TB_BORDER_STYLE   # C3
-                    if 0 <= gx < W:
-                        cells[gy][gx] = (chh, s)
-            # copy-mode 선택 영역 하이라이트(추출과 동일하게 시작 패널 가로 범위로
-            # 중간 줄을 한정 — 분할 경계 넘어 강조/복사되던 오염 방지, §2.4)
-            sel = self.view._sel
-            if sel:
-                sx0, sy0, sx1, sy1 = sel
-                if (sy0, sx0) > (sy1, sx1):
-                    sx0, sy0, sx1, sy1 = sx1, sy1, sx0, sy0
-                srect = self.view._sel_rect
-                if srect:
-                    left, right = srect[0], srect[0] + srect[2] - 1
-                else:
-                    left, right = 0, W - 1
-                for yy in range(max(0, sy0), min(H, sy1 + 1)):
-                    a = sx0 if yy == sy0 else left
-                    b = sx1 if yy == sy1 else right
-                    for xx in range(max(0, a), min(W, b + 1)):
-                        c, sstl = cells[yy][xx]
-                        cells[yy][xx] = (c, _with_reverse(sstl))   # C3: 캐시된 반전
-            # display-panes 오버레이: 각 패널 중앙에 번호 표시
-            if self.mode == "display":
-                for i, p in enumerate(self.layout.get("panes", [])):
-                    label = str(i)
-                    cx0 = p["x"] + max(0, (p["w"] - len(label)) // 2)
-                    cy0 = p["y"] + p["h"] // 2
-                    st = Style(color="black", bold=True,
-                               bgcolor="green" if p["id"] == active else "yellow")
-                    for j, chh in enumerate(label):
-                        clientrender.put_cell(cells, cx0 + j, cy0, chh, st, W, H)
-            # Claude Code 콘텐츠-레이어 장식(footer 클릭존 스캔)·플러그인 오버레이는
-            # client_render 훅이 그린다(없으면 no-op — delete-to-disable).
-            self.plugins.client_render(self, cells, W, H)
-            # 현재 탭 닫기 [x]: 활성 패널 상단 테두리 행 우측(2026-06-13 한 칸 위로)
-            self._draw_tab_close(cells, W, H)
-            # 패널 오버레이(시계/달력 등, 패널 전체 덮기·뒤 화면 dim) — clock·calendar
-            # 플러그인이 client_overlay 훅으로 그린다(플러그인 없으면 no-op).
-            self.plugins.client_overlay(self, cells, W, H, active)
-            # 경계선(divider) 호버/드래그 강조: 그 칸의 글자는 두고 배경만 살짝
-            # 입혀 리사이즈 가능함을 알린다(#27).
-            hov = self.view._hover_divider
-            if hov is None and self.view._dragging:
-                d = self.view._dragging
-                hov = (d["x"], d["y"], d["w"], d["h"])
-            if hov:
-                hx, hy, hw, hh = hov
-                tint = Style(bgcolor=theme_color(self, "primary"))
-                for yy in range(hy, min(hy + hh, H)):
-                    for xx in range(hx, min(hx + hw, W)):
-                        if 0 <= yy < H and 0 <= xx < W:
-                            c, st = cells[yy][xx]
-                            cells[yy][xx] = (c, st + tint)
-            # Claude footer(권한모드/원격제어) 클릭존 강조: ESC 모드에서 "auto mode
-            # on"(perm) 키보드 포커스 시에만 그 줄 배경을 한 톤 입힌다(글자색 유지).
-            # **마우스 호버로는 배경을 바꾸지 않는다**(요청 — 호버 강조 폐지). 클릭존은
-            # 위에서 막 재계산됐으므로 대상이 아직 유효할 때만 칠한다(떨림 없음).
-            _perm_zone = getattr(self, "_perm_zone", {})
-            _remote_zone = getattr(self, "_remote_zone", {})
-            _fh = None
-            if self._status_focus == "perm":
-                _act = self.layout.get("active")
-                if _act is not None and _act in _perm_zone:
-                    _fh = (_act, "perm")
-            if _fh is not None:
-                _fpid, _fkind = _fh
-                _fzone = (_perm_zone if _fkind == "perm"
-                          else _remote_zone).get(_fpid)
-                if _fzone:
-                    zx0, zx1, zy = _fzone
-                    ftint = Style(bgcolor=theme_color(self, "secondary"))
-                    if 0 <= zy < H:
-                        for xx in range(max(0, zx0), min(zx1, W)):
-                            c, st = cells[zy][xx]
-                            cells[zy][xx] = (c, st + ftint)
-            # 컨텍스트 메뉴가 열려 있으면 대상 패널 외 나머지를 흐리게(#18) — 중앙
-            # 모달이라 위치로 패널을 가리킬 수 없어 배경 dim 으로 대상을 구분한다.
-            if self._menu_open and self._menu_pane is not None:
-                for p in self.layout.get("panes", []):
-                    if p["id"] == self._menu_pane:
-                        continue
-                    for yy in range(p["y"], min(p["y"] + p["h"], H)):
-                        for xx in range(p["x"], min(p["x"] + p["w"], W)):
-                            c, st = cells[yy][xx]
-                            cells[yy][xx] = (c, _darken_style(st))
-            # 패널 pick-up(헤더 드래그) 중: 들고 있는 소스 패널은 흐리게(dim), 놓을
-            # 대상 패널은 배경 강조(놓으면 두 패널이 자리를 맞바꾼다). 탭바 위로 끌면
-            # _pickup_over 가 None 이라 소스만 dim — "들고 있음"을 표시(탭/[+] 드롭 후보).
-            if self.view._pickup is not None:
-                stint = Style(bgcolor=theme_color(self, "warning"))
-                for p in self.layout.get("panes", []):
-                    if p["id"] == self.view._pickup:
-                        darken = True       # 들고 있는 소스 패널: 실색 블렌드로 흐리게
-                    elif p["id"] == self.view._pickup_over:
-                        darken = False      # 놓을 대상 패널: 배경 강조(warning)
-                    else:
-                        continue
-                    for yy in range(p["y"], min(p["y"] + p["h"], H)):
-                        for xx in range(p["x"], min(p["x"] + p["w"], W)):
-                            if 0 <= yy < H and 0 <= xx < W:
-                                c, st = cells[yy][xx]
-                                cells[yy][xx] = (c, _darken_style(st) if darken
-                                                 else st + stint)
-            # 탭→패널 드래그 미리보기(#19): 드롭 대상 패널에서 새 패널이 들어갈 절반
-            # (lr→오른쪽, tb→아래쪽)을 강조색으로 칠해 분할 결과를 미리 보여준다.
-            if self._drag_split is not None:
-                pane_id, orient = self._drag_split
-                tp = next((p for p in self.layout.get("panes", [])
-                           if p["id"] == pane_id), None)
-                if tp:
-                    px, py, pw, ph = tp["x"], tp["y"], tp["w"], tp["h"]
-                    if orient == "lr":
-                        hx0, hy0, hx1, hy1 = px + pw // 2, py, px + pw, py + ph
-                    else:
-                        hx0, hy0, hx1, hy1 = px, py + ph // 2, px + pw, py + ph
-                    hl = Style(bgcolor=theme_color(self, "accent"))
-                    for yy in range(max(0, hy0), min(hy1, H)):
-                        for xx in range(max(0, hx0), min(hx1, W)):
-                            c, st = cells[yy][xx]
-                            cells[yy][xx] = (c, st + hl)
-            # 팝업(모달)이 떠 있으면 뒤 본문을 어둡게 칠하고, 스타일을 무시하고 컬러로
-            # 그려지는 이모지는 placeholder(·)로 치환한다(#25). 팝업을 닫으면 다음
-            # _composite 가 원본에서 다시 그려 자연히 복원된다(별도 저장 불필요).
-            if len(self.screen_stack) > 1:
-                for yy in range(H):
-                    if yy in self._undim_rows:   # 클릭 원천 줄은 밝게 유지(#29)
-                        continue
-                    row = cells[yy]
-                    for xx in range(W):
-                        ch, st = row[xx]
-                        if ch and _is_emoji(ch):
-                            ch = "·"
-                        row[xx] = (ch, _darken_style(st))
-            # IME preedit 동기화(docs/IME_PREEDIT_CURSOR_SCENARIO.md): 하드웨어(터미널)
-            # 커서를 활성 패널 커서 셀로 옮긴다. 호스트 터미널은 IME 조합 문자열
-            # (preedit)을 하드웨어 커서 자리에 덧그리므로, 안 옮기면 stale 커서 자리
-            # (흔히 패널 테두리 행)에 조합 글자가 박제돼 잔상으로 보인다. Textual 의
-            # Input/TextArea 가 app.cursor_position = cursor_screen_offset 로 하는 것과
-            # 동일 패턴 — Textual 은 매 프레임 끝에 move_to(cursor_position) 를 출력한다
-            # (textual.app._display). 모달(Input/TextArea)이 떠 있으면(screen_stack>1)
-            # 그 위젯이 cursor_position 을 소유하므로 덮어쓰지 않는다(경합 방지).
-            if len(self.screen_stack) == 1 and self._active_cursor_xy is not None:
-                self.cursor_position = Offset(*self._active_cursor_xy)
-            self.view.set_frame(cells)
-
-        def push_screen(self, *args, **kwargs):
-            # 팝업이 열리면 곧장 뒤 본문을 어둡게(#25). §10-A #4: 예전엔 call_after_refresh
-            # 로만 재합성을 예약해, idle 상태에선 dim 이 다음 refresh(최악엔 1초 clock
-            # tick)까지 늦게 적용돼 "팝업 디밍이 ~1초 걸린다"는 보고가 있었다. 이제
-            # **같은 턴에 _composite() 를 즉시 호출**해 dim 을 바로 적용하고(set_frame 이
-            # view.refresh() 호출 → 다음 프레임에 표시), 마운트 후 레이아웃 안정화를 위해
-            # call_after_refresh 도 한 번 더 둔다(둘 다 캐시된 _darken_style 로 경량).
-            r = super().push_screen(*args, **kwargs)
-            if getattr(self, "view", None) is not None:
-                self._composite()
-                self.call_after_refresh(self._composite)
-            return r
-
-        def pop_screen(self, *args, **kwargs):
-            # 팝업을 닫으면 어둡게/치환을 풀고 원본으로 재합성(#25) — 즉시 + 마운트 후.
-            r = super().pop_screen(*args, **kwargs)
-            if getattr(self, "view", None) is not None:
-                self._composite()
-                self.call_after_refresh(self._composite)
-            return r
-
-        def _draw_tab_close(self, cells, W, H):
-            """현재 탭(윈도우) 닫기 [x] 버튼을 **활성 패널의 상단 테두리 행** 우측
-            (모서리 바로 안쪽)에 그린다(2026-06-13 요청 — 콘텐츠 첫 행에서 한 칸 위로:
-            콘텐츠를 안 가리고 IME 배지([한]/[EN], 첫 행 우상단)와도 안 겹친다).
-            테두리가 없으면(단일 패널 single-border off 등) 종전대로 콘텐츠 첫 행.
-            활성 패널의 실제 box/x/y/w/h 를 써서 분할(split) 상태에서도 그 패널에
-            붙는다. 클릭 우선순위: on_mouse_down 이 [x] 존을 헤더 드래그(pick-up)보다
-            먼저 검사하므로 테두리 행에 있어도 클릭이 드래그로 새지 않는다."""
-            self._tab_close_zone = None
-            active = self.layout.get("active")
-            ap = next((p for p in self.layout.get("panes", [])
-                       if p["id"] == active), None)
-            if ap is None:
-                return
-            px, py, pw, ph = ap["x"], ap["y"], ap["w"], ap["h"]
-            if pw < 4 or ph < 1:
-                return
-            # ESC 모드에서 닫기 [x] 가 포커스되면 강조색(accent)으로(#31 방향키 동선).
-            if self._close_focus:
-                st = Style(color="black", bgcolor=theme_color(self, "accent"),
-                           bold=True)
-            else:
-                st = Style(color="white", bgcolor=theme_color(self, "error"),
-                           bold=True)
-            bbox = ap.get("box")    # 테두리 박스(있으면 상단 테두리 행이 한 칸 위)
-            by = bbox[1] if bbox else (py - 1 if py >= 1 else py)
-            bx0 = px + pw - 3       # 콘텐츠 우측 끝 3칸("[x]") — 우측 테두리 안쪽
-            if not (0 <= by < H):
-                return
-            for j, chh in enumerate("[x]"):
-                gx = bx0 + j
-                if 0 <= gx < W:
-                    cells[by][gx] = (chh, st)
-            self._tab_close_zone = (bx0, bx0 + 3, by)
-
-        # ---- 송신 헬퍼 ----
+        # ---- 화면 합성(_composite·_request_composite·_do_pending_composite·
+        # push_screen·pop_screen·_draw_tab_close)은 _RenderMixin(모듈 레벨, §5.4)으로
+        # 분리. ----
         def send_cmd(self, action, **kw):
             if self.writer:
                 kw["t"] = "cmd"

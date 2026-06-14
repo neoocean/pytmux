@@ -727,7 +727,7 @@ SO_PEERCRED uid 일치 권장. **위험**: 프로토콜 변경(§5.3 과 함께)
 깨짐. **개선**: hello 에 `proto:N`, 불일치 시 명시적 거절 + 메시지 키 셋 모듈 상수화
 (HANDOFF §11.2 "명시적 계약"). **위험**: 낮음(hello 확장).
 
-### [L] 5.4 `build_client_app` 거대 팩토리(~2885줄) — `client.py:40-2925` ✅ **믹스인 분할 착수(2026-06-13) — 클립보드·재접속·재시작/버전 3개 모듈 레벨 믹스인 분리**
+### [L] 5.4 `build_client_app` 거대 팩토리(~2885줄) — `client.py:40-2925` ✅ **종결(2026-06-14) — 8개 모듈 레벨 믹스인으로 분할 완료(렌더/입력/명령 코어 메가 메서드 포함)**
 
 > **2026-06-13(사용자 요청 "mixin 분할로 진행"):** 아래 "의도적 보류"였던 PytmuxApp
 > 분해에 착수했다. ① 팩토리 안 지연 textual/rich import 를 **모듈 최상위로 이동**(위
@@ -741,8 +741,26 @@ SO_PEERCRED uid 일치 권장. **위험**: 프로토콜 변경(§5.3 과 함께)
 > **거동 불변**(test_client/remote/restart/clientrender 그린). 믹스인은 client.py 모듈
 > 전역(textual·clientutil·ipc/i18n)을 공유하므로 이름 해석이 안 깨진다(팩토리 지역
 > config/session_name 은 `__init__` 에만 쓰여 분리 대상과 무관). PytmuxApp 본문은
-> ~2900→~2430줄로 줄었다. **남은 잔여**: 렌더/입력 코어 메가 메서드(`_composite`·`on_key`·
-> `_run_command`)는 강결합이라 분리 위험 대비 이득이 없어 클래스 본문에 유지 — 추가 분할은 필요 시.
+> ~2900→~2430줄로 줄었다.
+>
+> **종결(2026-06-14, 사용자 요청 "5.4 자율 수행"):** 위에서 "강결합이라 보류"했던 렌더/
+> 입력/명령 **코어 메가 메서드 3종도 모듈 레벨 믹스인으로 분리**해 §5.4 를 종결했다. 위험도
+> 오름차순으로 3개 CL 에 나눠 각각 전체 스위트·드라이버 라이브 렌더·클래스 MRO 조립을
+> 검증하며 게시: **(1/3) `_CommandMixin`**(p4 58842 — `open_prompt`·`_prompt_done`·`_run_shell`·
+> `_if_shell`·`_send_keys`·`_run_command`, 프롬프트 수명·셸 우회·명령 디스패치), **(2/3)
+> `_InputMixin`**(p4 58843 — `on_paste`·`on_resize`·`on_key`+모드 핸들러 12종, 전역 키 디스패치),
+> **(3/3) `_RenderMixin`**(p4 58844 — `_composite`(~325줄 화면 합성)·`_request_composite`·
+> `_do_pending_composite`·`push_screen`·`pop_screen`·`_draw_tab_close`). 총 27개 메서드.
+> (3/3 은 제출 시 58844→**58847** 리네임.)
+> **분리 가능했던 근거(보류 노트 정정)**: 세 클러스터 모두 팩토리 클로저 지역변수(`config`/
+> `session_name`/`sock_path`)를 **코드에서 0건** 참조(주석만)라 모듈 전역만 쓰는 순수 이동이었다
+> — "강결합"은 *메서드끼리*의 결합이지 *팩토리 클로저*와의 결합이 아니었다. `push_screen`/
+> `pop_screen` 의 `super()` 는 `_RenderMixin` 이 MRO 상 `App` 바로 앞(마지막 믹스인)이라 그대로
+> `App` 으로 해석돼 이전 PytmuxApp 본문 정의와 동일 귀착. **거동 불변**: 추출 전후 621 passed
+> 0 failed(test_client 57개 run_test 렌더 경로 + test_ptyshot 골든이 `_composite`/`push_screen`
+> 실커버). MRO = `PytmuxApp → _Clipboard → _NetReconnect → _RestartVersion → _StatusFocus →
+> _ChooseScreens → _Command → _Input → _Render → App`. PytmuxApp 본문엔 생성/배선·모델 디스패치·
+> 위젯 콜백만 남았다.
 
 (이하 2026-06-12 분석 — 기록 보존용.) ✅ **명명된 추출 완료 + suggester 추출(2026-06-12)**
 `build_client_app`(40-2925)가 `class PytmuxApp(App)`(108 중첩 메서드)를 통째 감싼다.
