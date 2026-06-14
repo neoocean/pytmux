@@ -22,14 +22,13 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.geometry import Offset
 from textual.suggester import SuggestFromList
-from textual.widgets import Input
 
 from . import clientclip, clientrender, i18n, ipc, plugins, proc, version
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS, DEFAULT_STYLE,
-    MENU_ITEMS, MENU_TOGGLES, REMOTE_PINK, REMOTE_PINK_DIM, SPECIAL,
-    _BOX_BITS, _BOX_REV, _DATE_STRFTIME, _JAMO, _KEY_DIAG, _ONOFF,
-    _TB_ACTIVE_STYLE, _TB_BORDER_STYLE, _TB_INACTIVE_STYLE, _TIME_STRFTIME,
+    REMOTE_PINK, REMOTE_PINK_DIM,
+    _BOX_BITS, _BOX_REV, _JAMO, _KEY_DIAG,
+    _TB_ACTIVE_STYLE, _TB_BORDER_STYLE, _TB_INACTIVE_STYLE,
     _char_cells, _client_relaunch_ok, _darken_style, _dim_inactive_style,
     _first_int, _first_signed_int, _is_emoji, _opt_value, _restart_check_eval,
     _signed_int, _with_reverse,
