@@ -580,8 +580,554 @@ class _ChooseScreensMixin:
         self.push_screen(ChooseLayoutScreen(names, title), handle)
 
 
+
+
+class _CommandMixin:
+    # §5.4 명령 실행 클러스터(프롬프트 수명·셸 우회·명령 디스패치) — 모듈 레벨 분리, PytmuxApp 은 MRO 로 상속
+    def open_prompt(self, purpose, placeholder="", initial="", action=None,
+                    suggest=None):
+        # 한 줄 입력을 Input 을 담은 바닥 모달(PromptScreen)로 받는다.
+        # 모달은 별도 스크린이라 포커스가 안정적이다(메인 뷰/AUTO_FOCUS 와 무관).
+        # suggest: rename 등에서 현재 이름을 **ghost(제안)** 로 띄운다 — Tab/→ 로
+        #   채워 편집·덧붙이고, 그냥 타이핑하면 덮어쓴다(initial 로 미리 채우면
+        #   타이핑이 덧붙던 문제, 요청). 빈 입력일 땐 placeholder 로도 흐리게 보인다.
+        suggester = None
+        if purpose == "command":
+            suggester = SepInsensitiveSuggester(
+                COMPLETIONS + self.plugins.completions,
+                case_sensitive=False)
+        elif suggest:
+            suggester = SuggestFromList([suggest], case_sensitive=False)
+        self.push_screen(
+            PromptScreen(purpose, placeholder, initial, suggester),
+            lambda val: self._prompt_done(purpose, action, val))
+
+    def _prompt_done(self, purpose, action, val):
+        if purpose == "search":
+            self.mode = "scroll"  # 검색은 스크롤백 모드 유지/복귀
+        if val is None:  # 취소(Esc)
+            return
+        val = val.strip()
+        if purpose == "command":
+            self._run_command(val)
+        elif purpose == "rename_window":
+            if val:
+                self.send_cmd("rename_window", name=val)
+        elif purpose == "rename_pane":
+            self.send_cmd("set_pane_title", title=val)
+        elif purpose == "move_window":
+            if val.lstrip("-").isdigit() and int(val) - 1 >= 0:
+                self.send_cmd("move_window", index=int(val) - 1)  # 1-based→0(#21)
+        elif purpose == "save_layout":
+            if val.strip():
+                self.send_cmd("save_tab_layout", name=val.strip())
+        elif purpose == "search":
+            if val:
+                self.send_cmd("search", query=val, direction="up")
+        elif purpose == "confirm":
+            if val.lower().startswith("y") and action:
+                action()
+
+    def _run_shell(self, cmd):
+        try:
+            res = subprocess.run(_shell_argv(cmd), capture_output=True,
+                                 timeout=15, **proc.no_window_kwargs())
+            text = res.stdout.decode("utf-8", "ignore")
+            rc = res.returncode
+        except (OSError, subprocess.SubprocessError) as e:
+            text, rc = str(e), 1
+        if text.strip():
+            self.send_cmd("set_buffer", text=text)
+            self.push_screen(InfoScreen(text.splitlines()[:40], title="run-shell"))
+        return rc
+
+    def _if_shell(self, cond, then_cmd, else_cmd=None):
+        try:
+            rc = subprocess.run(_shell_argv(cond), capture_output=True,
+                                timeout=15,
+                                **proc.no_window_kwargs()).returncode
+        except (OSError, subprocess.SubprocessError):
+            rc = 1
+        if rc == 0:
+            self._run_command(then_cmd)
+        elif else_cmd:
+            self._run_command(else_cmd)
+
+    _SENDKEYS = {"Enter": b"\r", "Tab": b"\t", "Space": b" ",
+                 "Escape": b"\x1b", "BSpace": b"\x7f", "Up": b"\x1b[A",
+                 "Down": b"\x1b[B", "Right": b"\x1b[C", "Left": b"\x1b[D"}
+
+    def _send_keys(self, args):
+        literal = "-l" in args
+        toks = [a for a in args if not a.startswith("-")]
+        out = b""
+        for a in toks:
+            if not literal and a in self._SENDKEYS:
+                out += self._SENDKEYS[a]
+            elif (not literal and a.startswith("C-") and len(a) == 3
+                  and a[2].isalpha()):
+                out += bytes([ord(a[2].lower()) - 96])
+            else:
+                out += a.encode("utf-8")
+        if out:
+            self.send_input(out)
+
+    def _run_command(self, line, _depth=0):
+        """tmux 류 명령 문자열을 해석해 서버 명령으로 변환한다."""
+        if not line or _depth > 8:
+            return
+        try:
+            parts = shlex.split(line)
+        except ValueError:
+            parts = line.split()
+        if not parts:
+            return
+        # 한영 오타 복원: 명령 이름 토큰에 한글이 섞이면(IME 켠 채 입력) QWERTY 로
+        # 되돌린다. 이름은 항상 ASCII 이므로 안전하고, 인자(한글 이름 등)는 안 건드린다.
+        if has_hangul(parts[0]):
+            parts[0] = hangul_to_qwerty(parts[0])
+        c = parts[0].lower()
+        args = parts[1:]
+        # 사용자 별칭 확장
+        if c in self.aliases:
+            return self._run_command(
+                self.aliases[c] + (" " + " ".join(args) if args else ""),
+                _depth + 1)
+        if c in ("plugins", "plugin-manager"):
+            # 플러그인 관리 팝업(PLUGIN_MANAGER_SCENARIO) — 설치된 플러그인 on/off.
+            self.push_screen(PluginManagerScreen())
+            return
+        if c in ("help", "commands", "?", "list-commands"):
+            # 명령 목록 선택기(#3): 옵션 스키마가 있으면 옵션 모달에서 값을 정해
+            # 프롬프트 없이 바로 실행, 인자 없는 안전한 명령은 선택 즉시 실행,
+            # 그 외(자유 텍스트 인자)는 기존처럼 명령 프롬프트에 채워 Enter 로 실행.
+            all_commands = COMMANDS + self.plugins.commands
+            all_options = {**COMMAND_OPTIONS, **self.plugins.command_options}
+            all_noarg = COMMAND_NOARG | self.plugins.noarg
+
+            def _picked(name):
+                if not name:
+                    return
+                opts = all_options.get(name)
+                if opts:
+                    desc = next((d for n, d, *_ in all_commands
+                                 if n == name), "")
+
+                    def _run(line):
+                        if line:
+                            self._run_command(line)
+                    self.push_screen(
+                        CommandOptionsScreen(name, desc, opts), _run)
+                elif name in all_noarg:
+                    self._run_command(name)
+                else:
+                    self.open_prompt("command", "", initial=name + " ")
+            self.push_screen(CommandListScreen(all_commands), _picked)
+            return
+        # 코어 명령 디스패치 전에 플러그인에 기회를 준다(ncd 등). 플러그인 명령은
+        # 코어와 이름이 겹치지 않으므로 우선순위 충돌은 없다. 디렉토리를 지우면
+        # 여기서 아무도 처리하지 않아 명령은 조용히 무시된다.
+        if self.plugins.handle_command(self, c, args):
+            return
+        if c in ("run-shell", "run"):
+            if args:
+                self._run_shell(args[0])
+            return
+        if c in ("if-shell", "if"):
+            if len(args) >= 2:
+                self._if_shell(args[0], args[1], args[2] if len(args) > 2 else None)
+            return
+        if c in ("split-window", "splitw"):
+            # tmux 규약: -h = 좌우(side-by-side, lr), -v/기본 = 상하(tb).
+            # (과거엔 -h→상하로 반전돼 prefix %/" · join-pane -h 와 어긋났다.)
+            orient = "lr" if "-h" in args else "tb"
+            self.send_cmd("split", orient=orient)
+        elif c in ("kill-pane", "killp"):
+            self.send_cmd("kill_pane")
+        elif c in ("new-tab", "newt", "new-window", "neww"):
+            self.send_cmd("new_window")
+        elif c in ("kill-tab", "killt", "kill-window", "killw"):
+            self.send_cmd("kill_window")
+        elif c in ("next-tab", "next-window", "next"):
+            self.send_cmd("next_window")
+        elif c in ("previous-tab", "prev-tab", "previous-window", "prev"):
+            self.send_cmd("prev_window")
+        elif c in ("last-tab", "last-window", "last"):
+            self.send_cmd("last_window")
+        elif c == "automatic-rename" or (
+                c == "setw" and "automatic-rename" in args):
+            val = None
+            if "on" in args:
+                val = True
+            elif "off" in args:
+                val = False
+            self.send_cmd("set_auto_rename", value=val)
+        elif (c in ("monitor-activity", "monitor-bell")) or (
+                c == "setw" and any("monitor-" in a for a in args)):
+            which = "bell" if ("bell" in c or "monitor-bell" in args) else "activity"
+            val = None
+            if "on" in args:
+                val = True
+            elif "off" in args:
+                val = False
+            self.send_cmd("set_monitor", which=which, value=val)
+        elif c in ("move-tab-left", "move-tab-right",
+                   "move-tab-first", "move-tab-last"):
+            self.send_cmd("move_current_tab", where=c[len("move-tab-"):])
+        elif c in ("move-tab", "movet", "move-window", "movew"):
+            idx = self._tab_target_index(args)     # 양수 1-based·음수 끝에서(§2.8)
+            if idx is not None:
+                self.send_cmd("move_window", index=idx)
+        elif c in ("swap-tab", "swapt", "swap-window", "swapw"):
+            idx = self._tab_target_index(args)     # 양수 1-based·음수 끝에서(§2.8)
+            if idx is not None:
+                self.send_cmd("swap_window", index=idx)
+        elif c in ("choose-tree", "choose-tab", "choose-window",
+                   "overview", "tree"):
+            self.request_tree()
+        elif c in ("select-pane", "selectp"):
+            if "-T" in args:
+                title = " ".join(args[args.index("-T") + 1:])
+                self.send_cmd("set_pane_title", title=title)
+            else:
+                for flag, d in (("-L", "left"), ("-R", "right"),
+                                ("-U", "up"), ("-D", "down")):
+                    if flag in args:
+                        self.send_cmd("select_pane", dir=d)
+                        break
+        elif c == "rename-pane":
+            self.send_cmd("set_pane_title", title=" ".join(args))
+        elif c in ("select-tab", "selectt", "select-window", "selectw"):
+            idx = self._tab_target_index(args)     # 양수 1-based·음수 끝에서(§2.8)
+            if idx is not None:
+                self.send_cmd("select_window", index=idx)
+        elif c in ("rename-tab", "renamet", "rename-window", "renamew"):
+            # 인자(이름)가 있으면 즉시 변경. 인자 없이 입력하면 **아무 동작 없이
+            # 취소**한다(예전 rename 프롬프트 인터페이스를 열지 않음 — 사용자 요청).
+            # 이름 입력 ghost 프롬프트는 prefix+, 키로만 연다(_handle_prefix).
+            name = " ".join(a for a in args if not a.startswith("-"))
+            if name:
+                self.send_cmd("rename_window", name=name)
+        elif c in ("resize-pane", "resizep"):
+            if "-Z" in args:
+                self.send_cmd("zoom")
+            else:
+                # tmux resize-pane -L/-R/-U/-D [N]: 분할선을 N칸(기본 3) 이동.
+                # 마우스 divider 드래그·prefix HJKL 과 같은 resize_dir 경로로 보내
+                # 키·명령·마우스 리사이즈를 대칭화한다(#17 — 과거엔 -Z 만 처리해
+                # 명령/팔레트로는 분할선 정밀 이동이 불가했다).
+                _dmap = {"-L": "left", "-R": "right", "-U": "up", "-D": "down"}
+                d = next((_dmap[a] for a in args if a in _dmap), None)
+                if d is not None:
+                    self.send_cmd("resize_dir", dir=d,
+                                  cells=(_first_int(args) or 3))
+        elif c == "zoom":
+            self.send_cmd("zoom")
+        elif c in ("select-layout", "selectl"):
+            if args:
+                self.send_cmd("select_layout", preset=args[0])
+            else:
+                self.send_cmd("cycle_layout")
+        elif c in ("next-layout", "nextl"):
+            self.send_cmd("cycle_layout")
+        elif c in ("rotate-window", "rotatew"):
+            self.send_cmd("rotate", forward=("-D" not in args))
+        elif c in ("swap-pane", "swapp"):
+            # -s/-t <번호>: display-panes(prefix q) 오버레이의 0-based 패널
+            # 번호로 임의의 두 패널을 교환(마우스 헤더 드래그와 같은
+            # swap_pane_to 경로). -t 만 주면 활성 패널과, -s -t 둘 다면 그 두
+            # 패널을 맞바꾼다. -s/-t 가 없으면 기존 인접 순환 swap(-U=이전·기본
+            # 다음). §2.3: 마우스 전용이던 임의 swap 을 명령/키 경로로 대칭화.
+            if "-s" in args or "-t" in args:
+                a = self._pane_id_by_index(_opt_value(args, "-s"))
+                b = self._pane_id_by_index(_opt_value(args, "-t"))
+                act = self.layout.get("active")
+                a = a if a is not None else act
+                b = b if b is not None else act
+                if a is not None and b is not None and a != b:
+                    self.send_cmd("swap_pane_to", id=a, to_id=b)
+                # 유효하지 않은 번호(범위밖·비숫자)면 조용히 무시 — 인접
+                # swap 으로 떨어지지 않는다(엉뚱한 패널 교환 방지).
+            else:
+                self.send_cmd("swap_pane", forward=("-U" not in args))
+        elif c in ("break-pane", "breakp"):
+            self.send_cmd("break_pane")
+        elif c in ("join-pane", "joinp"):
+            self.send_cmd("join_pane", orient=("lr" if "-h" in args else "tb"))
+        elif c in ("respawn-pane", "respawnp"):
+            self.send_cmd("respawn_pane")
+        elif c in ("capture-output", "capture-toggle"):
+            val = None
+            if "on" in args:
+                val = True
+            elif "off" in args:
+                val = False
+            self.send_cmd("set_capture", value=val)
+            state = (i18n.t("word.toggle") if val is None
+                     else ("ON" if val else "OFF"))
+            self.display_message(i18n.t("msg.capture_toggle", state=state))
+        elif c in ("synchronize-panes", "syncp") or (
+                c == "setw" and "synchronize-panes" in args):
+            val = None
+            if "on" in args:
+                val = True
+            elif "off" in args:
+                val = False
+            self.send_cmd("set_sync", value=val)
+        elif c == "setw" and "pane-border-status" in args or \
+                c == "pane-border-status":
+            val = None
+            if "on" in args or "top" in args:
+                val = True
+            elif "off" in args:
+                val = False
+            self.send_cmd("set_border_status", value=val)
+        elif c in ("inactive-dim", "dim-inactive"):
+            # §2.9 비활성 패널 dim 세션 토글(클라-로컬 표현; 영속 기본값은 config
+            # inactive_dim). 인자 on/off, 없으면 반전. 즉시 재합성해 반영.
+            if "on" in args:
+                self.inactive_dim = True
+            elif "off" in args:
+                self.inactive_dim = False
+            else:
+                self.inactive_dim = not self.inactive_dim
+            self._composite()
+            self.display_message(i18n.t(
+                "msg.inactive_dim",
+                state=("ON" if self.inactive_dim else "OFF")))
+        elif c in ("detach-client", "detach"):
+            if "-a" in args:
+                self.send_cmd("detach_others")
+            else:
+                self.exit(message="detached")
+        elif c == "kill-server":
+            self.send_cmd("kill_server")
+        elif c in ("remote-attach", "remote_attach"):
+            # §1.7 페더레이션: 원격 pytmux 서버 탭을 이 pytmux 탭바에 병합.
+            # 성공하면 ⇄host:이름 탭이 나타난다(선택=진입). ssh -T 가 전송.
+            # host 는 shlex 토큰이 아니라 **원시 잔여 문자열** — 도메인 계정
+            # (NATGAMES\user@host)의 백슬래시를 shlex(posix)가 삼키지 않게.
+            rest = line.split(None, 1)
+            host = rest[1].strip() if len(rest) > 1 else ""
+            if host:
+                self.send_cmd("remote_attach", host=host)
+            else:
+                self.display_message("사용법: remote-attach <host>")
+        elif c in ("remote-new-tab", "remote_new_tab", "remote-new-window"):
+            # §1.7 페더레이션: 원격 pytmux 에 **새 터미널**을 만들어 이 pytmux 의
+            # 새 탭으로 붙인다(remote-attach 가 기존 원격 탭을 병합·열람만 하는 것과
+            # 달리 원격에 새 셸을 띄운다). 아직 attach 안 됐으면 먼저 attach 한다.
+            # host 는 remote-attach 와 같이 원시 잔여 문자열(백슬래시 보존).
+            rest = line.split(None, 1)
+            host = rest[1].strip() if len(rest) > 1 else ""
+            if host:
+                self.send_cmd("remote_new_window", host=host)
+            else:
+                self.display_message("사용법: remote-new-tab <host>")
+        elif c in ("remote-detach", "remote_detach"):
+            rest = line.split(None, 1)
+            host = rest[1].strip() if len(rest) > 1 else ""
+            self.send_cmd("remote_detach",
+                          **({"host": host} if host else {}))
+        elif c in ("restart-server", "restart"):
+            # 작업 보존 재시작: 셸/PTY 를 살린 채 서버 코드만 교체(re-exec).
+            # 화면이 잠깐 끊겼다 재접속된다(docs/RESTART_SCENARIO.md).
+            # 실행 전 드라이런으로 안전성을 먼저 점검한다.
+            self.begin_restart("server")
+        elif c in ("restart-check", "restart-dry-run", "restart-all-check"):
+            # restart-all 드라이런: 실제 재시작 없이 안전성만 점검해 팝업으로 보고.
+            self.open_restart_check()
+        elif c in ("restart-all", "full-restart", "restart-client-server"):
+            # 전체 재시작: 서버는 work-preserving re-exec(셸/세션 보존), 동시에
+            # 클라이언트도 자신을 relaunch(새 클라 코드로 재attach). 서버/클라
+            # 코드를 모두 갱신하면서 작업은 보존한다(docs/RESTART_SCENARIO.md).
+            # 실행 전 드라이런으로 안전성을 먼저 점검한다.
+            self.begin_restart("all")
+        elif c in ("reconnect", "resync"):
+            # IPC 강제 재접속(§10): degraded(빨간 외곽선) 고착 시 정체된 소켓을
+            # 버리고 새로 세워 회복한다. 서버 PTY/세션·실행 중 Claude 는 보존.
+            self.reconnect_now("manual")
+        elif c in ("paste-clipboard", "pasteb-clip"):
+            self.paste_os_clipboard()  # bracketed 패스스루
+        elif c in ("send-keys", "send"):
+            self._send_keys(args)
+        elif c in ("send-escape", "send-esc"):
+            # 활성 패널에 ESC 1회 전달(= send-keys Escape 의 한 토큰 단축).
+            # 한 키에 바인딩하기 쉽게 별도 명령으로 노출 — Shift+ESC 가 안 먹는
+            # 터미널에서 `bind-key <key> send-escape` 로 전용 키를 둘 수 있다.
+            self.send_input(b"\x1b")
+        elif c in ("paste-buffer", "pasteb"):
+            idx = _first_int(args)
+            self.send_cmd("paste_buffer", index=idx or 0)
+        elif c in ("capture-pane", "capturep"):
+            self.send_cmd("capture_pane", full=("-S" in args or "-a" in args))
+        elif c in ("pipe-pane", "pipep"):
+            self.send_cmd("pipe_pane",
+                          cmd=" ".join(a for a in args if not a.startswith("-")))
+        elif c == "save-layout":
+            self.send_cmd("save_layout")
+        elif c == "restore-layout":
+            self.send_cmd("restore_layout")
+        elif c in ("layout-save", "save-tab-layout"):
+            name = " ".join(a for a in args if not a.startswith("-"))
+            if name:
+                self.send_cmd("save_tab_layout", name=name)
+            else:
+                self.save_layout_prompt()
+        elif c in ("layout-load", "load-tab-layout"):
+            name = " ".join(a for a in args if not a.startswith("-"))
+            if name:
+                self.send_cmd("load_tab_layout", name=name,
+                              new=("-n" in args))
+            else:
+                self.request_layouts("new" if "-n" in args else "over")
+        elif c in ("layout-load-new",):
+            name = " ".join(a for a in args if not a.startswith("-"))
+            if name:
+                self.send_cmd("load_tab_layout", name=name, new=True)
+            else:
+                self.request_layouts("new")
+        elif c in ("layout-list", "list-layouts"):
+            self.request_layouts("over")
+        elif c in ("choose-buffer", "list-buffers", "lsb"):
+            self.choose_buffer()
+        elif c in ("clear-history", "clearhist"):
+            self.send_cmd("clear_history")
+        # clock-mode/calendar-mode/open-clock/close-clock/open-calendar/
+        # close-calendar(별칭 clock·calendar·cal·open-cal·close-cal)은 clock·
+        # calendar 플러그인이 handle_command(위 폴백)로 처리한다.
+        elif c in ("single-border", "pane-border"):
+            # single-border [on|off|toggle] — 단일 패널 테두리 표시(기본 toggle).
+            # 서버가 opts.json 에 영속하고 새 레이아웃을 다시 보낸다.
+            arg = args[0].lower() if args else "toggle"
+            val = (arg == "on") if arg in ("on", "off") \
+                else (not self.single_border_on)
+            self.single_border_on = val           # 낙관적 즉시 반영
+            self.send_cmd("set_single_border", value=bool(val))
+        elif c in ("coalesce-repaints", "coalesce"):
+            # coalesce-repaints [on|off|toggle] — alt-screen 리페인트 합치기(§10 대응
+            # ②). 서버 내부 동작이라 클라 상태/렌더 변화 없음 — on/off 는 그대로,
+            # 인자 없으면 toggle(서버가 반전). 서버가 opts.json 에 영속.
+            arg = args[0].lower() if args else "toggle"
+            val = (arg == "on") if arg in ("on", "off") else None
+            self.send_cmd("set_coalesce", value=val)
+        elif c == "nest-auto-attach":
+            # nest-auto-attach [on|off|toggle] — 원격 중첩 자동 승격(NESTED_
+            # ATTACH ㉢). 서버 내부 동작이라 클라 렌더 변화 없음. 서버가
+            # opts.json 영속, 인자 없으면 toggle(서버가 반전).
+            arg = args[0].lower() if args else "toggle"
+            val = (arg == "on") if arg in ("on", "off") else None
+            self.send_cmd("set_nest_auto_attach", value=val)
+        elif c in ("lang", "language"):
+            # lang ko|en — UI 로케일 전환(§6 i18n). 클라이언트-로컬: 즉시 set_locale
+            # +영속 후 전체 재합성으로 상태줄·헤더·메뉴를 새 언어로 다시 그린다(언어
+            # 전환 자체가 즉시 보이는 피드백). 인자가 없거나 미지원이면 사용법 팝업.
+            arg = args[0].lower() if args else ""
+            if arg in i18n.available():
+                self.lang = arg
+                i18n.set_locale(arg)
+                i18n.save_persisted(self.sock_path, arg)
+                self._composite()
+            else:
+                self.push_screen(InfoScreen([i18n.t("lang.usage")],
+                                            title="lang"))
+        elif c in ("version", "about"):
+            # 클라/서버 버전(p4 CL)·업타임 팝업.
+            self.open_version()
+        elif c in ("display-popup", "popup"):
+            cmd = " ".join(a for a in args if not a.startswith("-"))
+            if cmd:
+                try:
+                    res = subprocess.run(_shell_argv(cmd),
+                                         capture_output=True, timeout=30,
+                                         **proc.no_window_kwargs())
+                    text = (res.stdout + res.stderr).decode("utf-8", "ignore")
+                except (OSError, subprocess.SubprocessError) as e:
+                    text = str(e)
+                self.push_screen(InfoScreen(
+                    text.splitlines()[:60] or ["(출력 없음)"], title="popup"))
+            else:
+                self.push_screen(InfoScreen(["display-popup <command>"],
+                                            title="popup"))
+        elif c in ("source-file", "source"):
+            self.reload_config(args[0] if args else None)
+        elif c in ("set", "set-option"):
+            opts = [a for a in args if not a.startswith("-")]
+            if len(opts) >= 2:
+                self.apply_option(opts[0], " ".join(opts[1:]))
+        elif c in ("show-options", "show"):
+            self.show_options()
+        elif c == "set-hook":
+            if "-u" in args and len(args) >= 2:
+                self.hooks.pop(args[args.index("-u") + 1], None)
+            else:
+                opts = [a for a in args if not a.startswith("-")]
+                if len(opts) >= 2:
+                    self.hooks[opts[0]] = " ".join(opts[1:])
+        elif c in ("display-message", "display", "displaym"):
+            self.display_message(" ".join(args) if args else "")
+        elif c == "show-hooks":
+            self.push_screen(InfoScreen(
+                [f"{k} → {v}" for k, v in self.hooks.items()], title="hooks"))
+        elif c in ("bind-key", "bind", "bindkey"):
+            # bind-key <key> <command...> — prefix 후 <key> 에 명령 바인딩(런타임).
+            # bind-key -n <key> <command...> — root table(§2.5, prefix 없이 바로).
+            # 키는 tmux 표기(C-x)도 받아 textual(ctrl+x)로 정규화. 한 글자는 그대로.
+            # 첫 인자만 키, 나머지는 명령 원문(플래그 -h 등 보존)으로 그대로 쓴다.
+            root = bool(args) and args[0] == "-n"
+            rest = args[1:] if root else args
+            if len(rest) >= 2:
+                key, warn = normalize_binding_key(rest[0])
+                table = self.root_bindings if root else self.bindings
+                table[key] = " ".join(rest[1:])
+                self.display_message(
+                    warn if warn else
+                    (f"bound (root) {key}" if root else f"bound {key}"))
+        elif c in ("unbind-key", "unbind", "unbindkey"):
+            # unbind-key <key> | -n <key>(root) | -a (양 테이블 전체 해제).
+            # 없는 키는 조용히 무시.
+            if "-a" in args:
+                n = len(self.bindings) + len(self.root_bindings)
+                self.bindings.clear()
+                self.root_bindings.clear()
+                self.display_message(f"unbound all ({n})")
+            else:
+                root = args[:1] == ["-n"]
+                pos = [a for a in args if not a.startswith("-")]
+                if pos:
+                    key = _tmux_key_to_textual(pos[0])
+                    table = self.root_bindings if root else self.bindings
+                    if table.pop(key, None) is not None:
+                        self.display_message(f"unbound {key}")
+                    else:
+                        self.display_message(f"no binding: {key}")
+        elif c in ("list-keys", "lsk", "list-binds", "mouse-help", "mouse"):
+            # §2.2 발견성: 구현된 마우스 제스처(헤더 드래그 pick-up→swap/탭이동,
+            # 탭 드래그 재정렬·분할, Shift+드래그 선택 등)는 명령이 아니라 ?목록·
+            # 메뉴 어디에도 안 떠 사장돼 있었다. list-keys 가 사용자 바인딩과 함께
+            # 1급 마우스 제스처를 먼저 보여 노출한다(동작 변경 없음, 표시만 추가).
+            tr = i18n.t
+            lines = [tr("keys.mouse_header", default="마우스 제스처")]
+            lines += ["  " + tr(k, default=d) for k, d in (
+                ("keys.g_click", "휠 — 스크롤백 스크롤 · 클릭 — 패널 포커스"),
+                ("keys.g_rclick", "우클릭 — 패널 메뉴(분할·줌·회전·삭제…)"),
+                ("keys.g_divider", "경계선 드래그 — 패널 크기 조절"),
+                ("keys.g_header", "패널 헤더(위 테두리) 드래그 — 패널을 들어 "
+                 "다른 패널과 swap · 탭으로 이동 · [+]에 놓아 새 탭"),
+                ("keys.g_shift", "Shift+드래그 — 텍스트 선택(클립보드 복사)"),
+                ("keys.g_tab", "탭 드래그 — 탭 재정렬 · 패널 위로 끌어 분할"),
+            )]
+            binds = [f"prefix {k} → {v}"
+                     for k, v in sorted(self.bindings.items())]
+            binds += [f"(root) {k} → {v}"
+                      for k, v in sorted(self.root_bindings.items())]
+            lines += ["", tr("keys.user_header", default="사용자 키 바인딩")]
+            lines += binds or ["  " + tr("keys.none", default="(없음)")]
+            self.push_screen(InfoScreen(
+                lines, title=tr("keys.title", default="키 · 마우스")))
+        # 알 수 없는 명령은 조용히 무시
 _PytmuxAppMixins = (_ClipboardMixin, _NetReconnectMixin, _RestartVersionMixin,
-                    _StatusFocusMixin, _ChooseScreensMixin)
+                    _StatusFocusMixin, _ChooseScreensMixin, _CommandMixin)
 
 
 def build_client_app(sock_path: str, config: dict | None = None,
@@ -1949,549 +2495,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if p["id"] == act:
                     return (p.get("title") or "").strip()
             return ""
-
-        def open_prompt(self, purpose, placeholder="", initial="", action=None,
-                        suggest=None):
-            # 한 줄 입력을 Input 을 담은 바닥 모달(PromptScreen)로 받는다.
-            # 모달은 별도 스크린이라 포커스가 안정적이다(메인 뷰/AUTO_FOCUS 와 무관).
-            # suggest: rename 등에서 현재 이름을 **ghost(제안)** 로 띄운다 — Tab/→ 로
-            #   채워 편집·덧붙이고, 그냥 타이핑하면 덮어쓴다(initial 로 미리 채우면
-            #   타이핑이 덧붙던 문제, 요청). 빈 입력일 땐 placeholder 로도 흐리게 보인다.
-            suggester = None
-            if purpose == "command":
-                suggester = SepInsensitiveSuggester(
-                    COMPLETIONS + self.plugins.completions,
-                    case_sensitive=False)
-            elif suggest:
-                suggester = SuggestFromList([suggest], case_sensitive=False)
-            self.push_screen(
-                PromptScreen(purpose, placeholder, initial, suggester),
-                lambda val: self._prompt_done(purpose, action, val))
-
-        def _prompt_done(self, purpose, action, val):
-            if purpose == "search":
-                self.mode = "scroll"  # 검색은 스크롤백 모드 유지/복귀
-            if val is None:  # 취소(Esc)
-                return
-            val = val.strip()
-            if purpose == "command":
-                self._run_command(val)
-            elif purpose == "rename_window":
-                if val:
-                    self.send_cmd("rename_window", name=val)
-            elif purpose == "rename_pane":
-                self.send_cmd("set_pane_title", title=val)
-            elif purpose == "move_window":
-                if val.lstrip("-").isdigit() and int(val) - 1 >= 0:
-                    self.send_cmd("move_window", index=int(val) - 1)  # 1-based→0(#21)
-            elif purpose == "save_layout":
-                if val.strip():
-                    self.send_cmd("save_tab_layout", name=val.strip())
-            elif purpose == "search":
-                if val:
-                    self.send_cmd("search", query=val, direction="up")
-            elif purpose == "confirm":
-                if val.lower().startswith("y") and action:
-                    action()
-
-        def _run_shell(self, cmd):
-            try:
-                res = subprocess.run(_shell_argv(cmd), capture_output=True,
-                                     timeout=15, **proc.no_window_kwargs())
-                text = res.stdout.decode("utf-8", "ignore")
-                rc = res.returncode
-            except (OSError, subprocess.SubprocessError) as e:
-                text, rc = str(e), 1
-            if text.strip():
-                self.send_cmd("set_buffer", text=text)
-                self.push_screen(InfoScreen(text.splitlines()[:40], title="run-shell"))
-            return rc
-
-        def _if_shell(self, cond, then_cmd, else_cmd=None):
-            try:
-                rc = subprocess.run(_shell_argv(cond), capture_output=True,
-                                    timeout=15,
-                                    **proc.no_window_kwargs()).returncode
-            except (OSError, subprocess.SubprocessError):
-                rc = 1
-            if rc == 0:
-                self._run_command(then_cmd)
-            elif else_cmd:
-                self._run_command(else_cmd)
-
-        _SENDKEYS = {"Enter": b"\r", "Tab": b"\t", "Space": b" ",
-                     "Escape": b"\x1b", "BSpace": b"\x7f", "Up": b"\x1b[A",
-                     "Down": b"\x1b[B", "Right": b"\x1b[C", "Left": b"\x1b[D"}
-
-        def _send_keys(self, args):
-            literal = "-l" in args
-            toks = [a for a in args if not a.startswith("-")]
-            out = b""
-            for a in toks:
-                if not literal and a in self._SENDKEYS:
-                    out += self._SENDKEYS[a]
-                elif (not literal and a.startswith("C-") and len(a) == 3
-                      and a[2].isalpha()):
-                    out += bytes([ord(a[2].lower()) - 96])
-                else:
-                    out += a.encode("utf-8")
-            if out:
-                self.send_input(out)
-
-        def _run_command(self, line, _depth=0):
-            """tmux 류 명령 문자열을 해석해 서버 명령으로 변환한다."""
-            if not line or _depth > 8:
-                return
-            try:
-                parts = shlex.split(line)
-            except ValueError:
-                parts = line.split()
-            if not parts:
-                return
-            # 한영 오타 복원: 명령 이름 토큰에 한글이 섞이면(IME 켠 채 입력) QWERTY 로
-            # 되돌린다. 이름은 항상 ASCII 이므로 안전하고, 인자(한글 이름 등)는 안 건드린다.
-            if has_hangul(parts[0]):
-                parts[0] = hangul_to_qwerty(parts[0])
-            c = parts[0].lower()
-            args = parts[1:]
-            # 사용자 별칭 확장
-            if c in self.aliases:
-                return self._run_command(
-                    self.aliases[c] + (" " + " ".join(args) if args else ""),
-                    _depth + 1)
-            if c in ("plugins", "plugin-manager"):
-                # 플러그인 관리 팝업(PLUGIN_MANAGER_SCENARIO) — 설치된 플러그인 on/off.
-                self.push_screen(PluginManagerScreen())
-                return
-            if c in ("help", "commands", "?", "list-commands"):
-                # 명령 목록 선택기(#3): 옵션 스키마가 있으면 옵션 모달에서 값을 정해
-                # 프롬프트 없이 바로 실행, 인자 없는 안전한 명령은 선택 즉시 실행,
-                # 그 외(자유 텍스트 인자)는 기존처럼 명령 프롬프트에 채워 Enter 로 실행.
-                all_commands = COMMANDS + self.plugins.commands
-                all_options = {**COMMAND_OPTIONS, **self.plugins.command_options}
-                all_noarg = COMMAND_NOARG | self.plugins.noarg
-
-                def _picked(name):
-                    if not name:
-                        return
-                    opts = all_options.get(name)
-                    if opts:
-                        desc = next((d for n, d, *_ in all_commands
-                                     if n == name), "")
-
-                        def _run(line):
-                            if line:
-                                self._run_command(line)
-                        self.push_screen(
-                            CommandOptionsScreen(name, desc, opts), _run)
-                    elif name in all_noarg:
-                        self._run_command(name)
-                    else:
-                        self.open_prompt("command", "", initial=name + " ")
-                self.push_screen(CommandListScreen(all_commands), _picked)
-                return
-            # 코어 명령 디스패치 전에 플러그인에 기회를 준다(ncd 등). 플러그인 명령은
-            # 코어와 이름이 겹치지 않으므로 우선순위 충돌은 없다. 디렉토리를 지우면
-            # 여기서 아무도 처리하지 않아 명령은 조용히 무시된다.
-            if self.plugins.handle_command(self, c, args):
-                return
-            if c in ("run-shell", "run"):
-                if args:
-                    self._run_shell(args[0])
-                return
-            if c in ("if-shell", "if"):
-                if len(args) >= 2:
-                    self._if_shell(args[0], args[1], args[2] if len(args) > 2 else None)
-                return
-            if c in ("split-window", "splitw"):
-                # tmux 규약: -h = 좌우(side-by-side, lr), -v/기본 = 상하(tb).
-                # (과거엔 -h→상하로 반전돼 prefix %/" · join-pane -h 와 어긋났다.)
-                orient = "lr" if "-h" in args else "tb"
-                self.send_cmd("split", orient=orient)
-            elif c in ("kill-pane", "killp"):
-                self.send_cmd("kill_pane")
-            elif c in ("new-tab", "newt", "new-window", "neww"):
-                self.send_cmd("new_window")
-            elif c in ("kill-tab", "killt", "kill-window", "killw"):
-                self.send_cmd("kill_window")
-            elif c in ("next-tab", "next-window", "next"):
-                self.send_cmd("next_window")
-            elif c in ("previous-tab", "prev-tab", "previous-window", "prev"):
-                self.send_cmd("prev_window")
-            elif c in ("last-tab", "last-window", "last"):
-                self.send_cmd("last_window")
-            elif c == "automatic-rename" or (
-                    c == "setw" and "automatic-rename" in args):
-                val = None
-                if "on" in args:
-                    val = True
-                elif "off" in args:
-                    val = False
-                self.send_cmd("set_auto_rename", value=val)
-            elif (c in ("monitor-activity", "monitor-bell")) or (
-                    c == "setw" and any("monitor-" in a for a in args)):
-                which = "bell" if ("bell" in c or "monitor-bell" in args) else "activity"
-                val = None
-                if "on" in args:
-                    val = True
-                elif "off" in args:
-                    val = False
-                self.send_cmd("set_monitor", which=which, value=val)
-            elif c in ("move-tab-left", "move-tab-right",
-                       "move-tab-first", "move-tab-last"):
-                self.send_cmd("move_current_tab", where=c[len("move-tab-"):])
-            elif c in ("move-tab", "movet", "move-window", "movew"):
-                idx = self._tab_target_index(args)     # 양수 1-based·음수 끝에서(§2.8)
-                if idx is not None:
-                    self.send_cmd("move_window", index=idx)
-            elif c in ("swap-tab", "swapt", "swap-window", "swapw"):
-                idx = self._tab_target_index(args)     # 양수 1-based·음수 끝에서(§2.8)
-                if idx is not None:
-                    self.send_cmd("swap_window", index=idx)
-            elif c in ("choose-tree", "choose-tab", "choose-window",
-                       "overview", "tree"):
-                self.request_tree()
-            elif c in ("select-pane", "selectp"):
-                if "-T" in args:
-                    title = " ".join(args[args.index("-T") + 1:])
-                    self.send_cmd("set_pane_title", title=title)
-                else:
-                    for flag, d in (("-L", "left"), ("-R", "right"),
-                                    ("-U", "up"), ("-D", "down")):
-                        if flag in args:
-                            self.send_cmd("select_pane", dir=d)
-                            break
-            elif c == "rename-pane":
-                self.send_cmd("set_pane_title", title=" ".join(args))
-            elif c in ("select-tab", "selectt", "select-window", "selectw"):
-                idx = self._tab_target_index(args)     # 양수 1-based·음수 끝에서(§2.8)
-                if idx is not None:
-                    self.send_cmd("select_window", index=idx)
-            elif c in ("rename-tab", "renamet", "rename-window", "renamew"):
-                # 인자(이름)가 있으면 즉시 변경. 인자 없이 입력하면 **아무 동작 없이
-                # 취소**한다(예전 rename 프롬프트 인터페이스를 열지 않음 — 사용자 요청).
-                # 이름 입력 ghost 프롬프트는 prefix+, 키로만 연다(_handle_prefix).
-                name = " ".join(a for a in args if not a.startswith("-"))
-                if name:
-                    self.send_cmd("rename_window", name=name)
-            elif c in ("resize-pane", "resizep"):
-                if "-Z" in args:
-                    self.send_cmd("zoom")
-                else:
-                    # tmux resize-pane -L/-R/-U/-D [N]: 분할선을 N칸(기본 3) 이동.
-                    # 마우스 divider 드래그·prefix HJKL 과 같은 resize_dir 경로로 보내
-                    # 키·명령·마우스 리사이즈를 대칭화한다(#17 — 과거엔 -Z 만 처리해
-                    # 명령/팔레트로는 분할선 정밀 이동이 불가했다).
-                    _dmap = {"-L": "left", "-R": "right", "-U": "up", "-D": "down"}
-                    d = next((_dmap[a] for a in args if a in _dmap), None)
-                    if d is not None:
-                        self.send_cmd("resize_dir", dir=d,
-                                      cells=(_first_int(args) or 3))
-            elif c == "zoom":
-                self.send_cmd("zoom")
-            elif c in ("select-layout", "selectl"):
-                if args:
-                    self.send_cmd("select_layout", preset=args[0])
-                else:
-                    self.send_cmd("cycle_layout")
-            elif c in ("next-layout", "nextl"):
-                self.send_cmd("cycle_layout")
-            elif c in ("rotate-window", "rotatew"):
-                self.send_cmd("rotate", forward=("-D" not in args))
-            elif c in ("swap-pane", "swapp"):
-                # -s/-t <번호>: display-panes(prefix q) 오버레이의 0-based 패널
-                # 번호로 임의의 두 패널을 교환(마우스 헤더 드래그와 같은
-                # swap_pane_to 경로). -t 만 주면 활성 패널과, -s -t 둘 다면 그 두
-                # 패널을 맞바꾼다. -s/-t 가 없으면 기존 인접 순환 swap(-U=이전·기본
-                # 다음). §2.3: 마우스 전용이던 임의 swap 을 명령/키 경로로 대칭화.
-                if "-s" in args or "-t" in args:
-                    a = self._pane_id_by_index(_opt_value(args, "-s"))
-                    b = self._pane_id_by_index(_opt_value(args, "-t"))
-                    act = self.layout.get("active")
-                    a = a if a is not None else act
-                    b = b if b is not None else act
-                    if a is not None and b is not None and a != b:
-                        self.send_cmd("swap_pane_to", id=a, to_id=b)
-                    # 유효하지 않은 번호(범위밖·비숫자)면 조용히 무시 — 인접
-                    # swap 으로 떨어지지 않는다(엉뚱한 패널 교환 방지).
-                else:
-                    self.send_cmd("swap_pane", forward=("-U" not in args))
-            elif c in ("break-pane", "breakp"):
-                self.send_cmd("break_pane")
-            elif c in ("join-pane", "joinp"):
-                self.send_cmd("join_pane", orient=("lr" if "-h" in args else "tb"))
-            elif c in ("respawn-pane", "respawnp"):
-                self.send_cmd("respawn_pane")
-            elif c in ("capture-output", "capture-toggle"):
-                val = None
-                if "on" in args:
-                    val = True
-                elif "off" in args:
-                    val = False
-                self.send_cmd("set_capture", value=val)
-                state = (i18n.t("word.toggle") if val is None
-                         else ("ON" if val else "OFF"))
-                self.display_message(i18n.t("msg.capture_toggle", state=state))
-            elif c in ("synchronize-panes", "syncp") or (
-                    c == "setw" and "synchronize-panes" in args):
-                val = None
-                if "on" in args:
-                    val = True
-                elif "off" in args:
-                    val = False
-                self.send_cmd("set_sync", value=val)
-            elif c == "setw" and "pane-border-status" in args or \
-                    c == "pane-border-status":
-                val = None
-                if "on" in args or "top" in args:
-                    val = True
-                elif "off" in args:
-                    val = False
-                self.send_cmd("set_border_status", value=val)
-            elif c in ("inactive-dim", "dim-inactive"):
-                # §2.9 비활성 패널 dim 세션 토글(클라-로컬 표현; 영속 기본값은 config
-                # inactive_dim). 인자 on/off, 없으면 반전. 즉시 재합성해 반영.
-                if "on" in args:
-                    self.inactive_dim = True
-                elif "off" in args:
-                    self.inactive_dim = False
-                else:
-                    self.inactive_dim = not self.inactive_dim
-                self._composite()
-                self.display_message(i18n.t(
-                    "msg.inactive_dim",
-                    state=("ON" if self.inactive_dim else "OFF")))
-            elif c in ("detach-client", "detach"):
-                if "-a" in args:
-                    self.send_cmd("detach_others")
-                else:
-                    self.exit(message="detached")
-            elif c == "kill-server":
-                self.send_cmd("kill_server")
-            elif c in ("remote-attach", "remote_attach"):
-                # §1.7 페더레이션: 원격 pytmux 서버 탭을 이 pytmux 탭바에 병합.
-                # 성공하면 ⇄host:이름 탭이 나타난다(선택=진입). ssh -T 가 전송.
-                # host 는 shlex 토큰이 아니라 **원시 잔여 문자열** — 도메인 계정
-                # (NATGAMES\user@host)의 백슬래시를 shlex(posix)가 삼키지 않게.
-                rest = line.split(None, 1)
-                host = rest[1].strip() if len(rest) > 1 else ""
-                if host:
-                    self.send_cmd("remote_attach", host=host)
-                else:
-                    self.display_message("사용법: remote-attach <host>")
-            elif c in ("remote-new-tab", "remote_new_tab", "remote-new-window"):
-                # §1.7 페더레이션: 원격 pytmux 에 **새 터미널**을 만들어 이 pytmux 의
-                # 새 탭으로 붙인다(remote-attach 가 기존 원격 탭을 병합·열람만 하는 것과
-                # 달리 원격에 새 셸을 띄운다). 아직 attach 안 됐으면 먼저 attach 한다.
-                # host 는 remote-attach 와 같이 원시 잔여 문자열(백슬래시 보존).
-                rest = line.split(None, 1)
-                host = rest[1].strip() if len(rest) > 1 else ""
-                if host:
-                    self.send_cmd("remote_new_window", host=host)
-                else:
-                    self.display_message("사용법: remote-new-tab <host>")
-            elif c in ("remote-detach", "remote_detach"):
-                rest = line.split(None, 1)
-                host = rest[1].strip() if len(rest) > 1 else ""
-                self.send_cmd("remote_detach",
-                              **({"host": host} if host else {}))
-            elif c in ("restart-server", "restart"):
-                # 작업 보존 재시작: 셸/PTY 를 살린 채 서버 코드만 교체(re-exec).
-                # 화면이 잠깐 끊겼다 재접속된다(docs/RESTART_SCENARIO.md).
-                # 실행 전 드라이런으로 안전성을 먼저 점검한다.
-                self.begin_restart("server")
-            elif c in ("restart-check", "restart-dry-run", "restart-all-check"):
-                # restart-all 드라이런: 실제 재시작 없이 안전성만 점검해 팝업으로 보고.
-                self.open_restart_check()
-            elif c in ("restart-all", "full-restart", "restart-client-server"):
-                # 전체 재시작: 서버는 work-preserving re-exec(셸/세션 보존), 동시에
-                # 클라이언트도 자신을 relaunch(새 클라 코드로 재attach). 서버/클라
-                # 코드를 모두 갱신하면서 작업은 보존한다(docs/RESTART_SCENARIO.md).
-                # 실행 전 드라이런으로 안전성을 먼저 점검한다.
-                self.begin_restart("all")
-            elif c in ("reconnect", "resync"):
-                # IPC 강제 재접속(§10): degraded(빨간 외곽선) 고착 시 정체된 소켓을
-                # 버리고 새로 세워 회복한다. 서버 PTY/세션·실행 중 Claude 는 보존.
-                self.reconnect_now("manual")
-            elif c in ("paste-clipboard", "pasteb-clip"):
-                self.paste_os_clipboard()  # bracketed 패스스루
-            elif c in ("send-keys", "send"):
-                self._send_keys(args)
-            elif c in ("send-escape", "send-esc"):
-                # 활성 패널에 ESC 1회 전달(= send-keys Escape 의 한 토큰 단축).
-                # 한 키에 바인딩하기 쉽게 별도 명령으로 노출 — Shift+ESC 가 안 먹는
-                # 터미널에서 `bind-key <key> send-escape` 로 전용 키를 둘 수 있다.
-                self.send_input(b"\x1b")
-            elif c in ("paste-buffer", "pasteb"):
-                idx = _first_int(args)
-                self.send_cmd("paste_buffer", index=idx or 0)
-            elif c in ("capture-pane", "capturep"):
-                self.send_cmd("capture_pane", full=("-S" in args or "-a" in args))
-            elif c in ("pipe-pane", "pipep"):
-                self.send_cmd("pipe_pane",
-                              cmd=" ".join(a for a in args if not a.startswith("-")))
-            elif c == "save-layout":
-                self.send_cmd("save_layout")
-            elif c == "restore-layout":
-                self.send_cmd("restore_layout")
-            elif c in ("layout-save", "save-tab-layout"):
-                name = " ".join(a for a in args if not a.startswith("-"))
-                if name:
-                    self.send_cmd("save_tab_layout", name=name)
-                else:
-                    self.save_layout_prompt()
-            elif c in ("layout-load", "load-tab-layout"):
-                name = " ".join(a for a in args if not a.startswith("-"))
-                if name:
-                    self.send_cmd("load_tab_layout", name=name,
-                                  new=("-n" in args))
-                else:
-                    self.request_layouts("new" if "-n" in args else "over")
-            elif c in ("layout-load-new",):
-                name = " ".join(a for a in args if not a.startswith("-"))
-                if name:
-                    self.send_cmd("load_tab_layout", name=name, new=True)
-                else:
-                    self.request_layouts("new")
-            elif c in ("layout-list", "list-layouts"):
-                self.request_layouts("over")
-            elif c in ("choose-buffer", "list-buffers", "lsb"):
-                self.choose_buffer()
-            elif c in ("clear-history", "clearhist"):
-                self.send_cmd("clear_history")
-            # clock-mode/calendar-mode/open-clock/close-clock/open-calendar/
-            # close-calendar(별칭 clock·calendar·cal·open-cal·close-cal)은 clock·
-            # calendar 플러그인이 handle_command(위 폴백)로 처리한다.
-            elif c in ("single-border", "pane-border"):
-                # single-border [on|off|toggle] — 단일 패널 테두리 표시(기본 toggle).
-                # 서버가 opts.json 에 영속하고 새 레이아웃을 다시 보낸다.
-                arg = args[0].lower() if args else "toggle"
-                val = (arg == "on") if arg in ("on", "off") \
-                    else (not self.single_border_on)
-                self.single_border_on = val           # 낙관적 즉시 반영
-                self.send_cmd("set_single_border", value=bool(val))
-            elif c in ("coalesce-repaints", "coalesce"):
-                # coalesce-repaints [on|off|toggle] — alt-screen 리페인트 합치기(§10 대응
-                # ②). 서버 내부 동작이라 클라 상태/렌더 변화 없음 — on/off 는 그대로,
-                # 인자 없으면 toggle(서버가 반전). 서버가 opts.json 에 영속.
-                arg = args[0].lower() if args else "toggle"
-                val = (arg == "on") if arg in ("on", "off") else None
-                self.send_cmd("set_coalesce", value=val)
-            elif c == "nest-auto-attach":
-                # nest-auto-attach [on|off|toggle] — 원격 중첩 자동 승격(NESTED_
-                # ATTACH ㉢). 서버 내부 동작이라 클라 렌더 변화 없음. 서버가
-                # opts.json 영속, 인자 없으면 toggle(서버가 반전).
-                arg = args[0].lower() if args else "toggle"
-                val = (arg == "on") if arg in ("on", "off") else None
-                self.send_cmd("set_nest_auto_attach", value=val)
-            elif c in ("lang", "language"):
-                # lang ko|en — UI 로케일 전환(§6 i18n). 클라이언트-로컬: 즉시 set_locale
-                # +영속 후 전체 재합성으로 상태줄·헤더·메뉴를 새 언어로 다시 그린다(언어
-                # 전환 자체가 즉시 보이는 피드백). 인자가 없거나 미지원이면 사용법 팝업.
-                arg = args[0].lower() if args else ""
-                if arg in i18n.available():
-                    self.lang = arg
-                    i18n.set_locale(arg)
-                    i18n.save_persisted(self.sock_path, arg)
-                    self._composite()
-                else:
-                    self.push_screen(InfoScreen([i18n.t("lang.usage")],
-                                                title="lang"))
-            elif c in ("version", "about"):
-                # 클라/서버 버전(p4 CL)·업타임 팝업.
-                self.open_version()
-            elif c in ("display-popup", "popup"):
-                cmd = " ".join(a for a in args if not a.startswith("-"))
-                if cmd:
-                    try:
-                        res = subprocess.run(_shell_argv(cmd),
-                                             capture_output=True, timeout=30,
-                                             **proc.no_window_kwargs())
-                        text = (res.stdout + res.stderr).decode("utf-8", "ignore")
-                    except (OSError, subprocess.SubprocessError) as e:
-                        text = str(e)
-                    self.push_screen(InfoScreen(
-                        text.splitlines()[:60] or ["(출력 없음)"], title="popup"))
-                else:
-                    self.push_screen(InfoScreen(["display-popup <command>"],
-                                                title="popup"))
-            elif c in ("source-file", "source"):
-                self.reload_config(args[0] if args else None)
-            elif c in ("set", "set-option"):
-                opts = [a for a in args if not a.startswith("-")]
-                if len(opts) >= 2:
-                    self.apply_option(opts[0], " ".join(opts[1:]))
-            elif c in ("show-options", "show"):
-                self.show_options()
-            elif c == "set-hook":
-                if "-u" in args and len(args) >= 2:
-                    self.hooks.pop(args[args.index("-u") + 1], None)
-                else:
-                    opts = [a for a in args if not a.startswith("-")]
-                    if len(opts) >= 2:
-                        self.hooks[opts[0]] = " ".join(opts[1:])
-            elif c in ("display-message", "display", "displaym"):
-                self.display_message(" ".join(args) if args else "")
-            elif c == "show-hooks":
-                self.push_screen(InfoScreen(
-                    [f"{k} → {v}" for k, v in self.hooks.items()], title="hooks"))
-            elif c in ("bind-key", "bind", "bindkey"):
-                # bind-key <key> <command...> — prefix 후 <key> 에 명령 바인딩(런타임).
-                # bind-key -n <key> <command...> — root table(§2.5, prefix 없이 바로).
-                # 키는 tmux 표기(C-x)도 받아 textual(ctrl+x)로 정규화. 한 글자는 그대로.
-                # 첫 인자만 키, 나머지는 명령 원문(플래그 -h 등 보존)으로 그대로 쓴다.
-                root = bool(args) and args[0] == "-n"
-                rest = args[1:] if root else args
-                if len(rest) >= 2:
-                    key, warn = normalize_binding_key(rest[0])
-                    table = self.root_bindings if root else self.bindings
-                    table[key] = " ".join(rest[1:])
-                    self.display_message(
-                        warn if warn else
-                        (f"bound (root) {key}" if root else f"bound {key}"))
-            elif c in ("unbind-key", "unbind", "unbindkey"):
-                # unbind-key <key> | -n <key>(root) | -a (양 테이블 전체 해제).
-                # 없는 키는 조용히 무시.
-                if "-a" in args:
-                    n = len(self.bindings) + len(self.root_bindings)
-                    self.bindings.clear()
-                    self.root_bindings.clear()
-                    self.display_message(f"unbound all ({n})")
-                else:
-                    root = args[:1] == ["-n"]
-                    pos = [a for a in args if not a.startswith("-")]
-                    if pos:
-                        key = _tmux_key_to_textual(pos[0])
-                        table = self.root_bindings if root else self.bindings
-                        if table.pop(key, None) is not None:
-                            self.display_message(f"unbound {key}")
-                        else:
-                            self.display_message(f"no binding: {key}")
-            elif c in ("list-keys", "lsk", "list-binds", "mouse-help", "mouse"):
-                # §2.2 발견성: 구현된 마우스 제스처(헤더 드래그 pick-up→swap/탭이동,
-                # 탭 드래그 재정렬·분할, Shift+드래그 선택 등)는 명령이 아니라 ?목록·
-                # 메뉴 어디에도 안 떠 사장돼 있었다. list-keys 가 사용자 바인딩과 함께
-                # 1급 마우스 제스처를 먼저 보여 노출한다(동작 변경 없음, 표시만 추가).
-                tr = i18n.t
-                lines = [tr("keys.mouse_header", default="마우스 제스처")]
-                lines += ["  " + tr(k, default=d) for k, d in (
-                    ("keys.g_click", "휠 — 스크롤백 스크롤 · 클릭 — 패널 포커스"),
-                    ("keys.g_rclick", "우클릭 — 패널 메뉴(분할·줌·회전·삭제…)"),
-                    ("keys.g_divider", "경계선 드래그 — 패널 크기 조절"),
-                    ("keys.g_header", "패널 헤더(위 테두리) 드래그 — 패널을 들어 "
-                     "다른 패널과 swap · 탭으로 이동 · [+]에 놓아 새 탭"),
-                    ("keys.g_shift", "Shift+드래그 — 텍스트 선택(클립보드 복사)"),
-                    ("keys.g_tab", "탭 드래그 — 탭 재정렬 · 패널 위로 끌어 분할"),
-                )]
-                binds = [f"prefix {k} → {v}"
-                         for k, v in sorted(self.bindings.items())]
-                binds += [f"(root) {k} → {v}"
-                          for k, v in sorted(self.root_bindings.items())]
-                lines += ["", tr("keys.user_header", default="사용자 키 바인딩")]
-                lines += binds or ["  " + tr("keys.none", default="(없음)")]
-                self.push_screen(InfoScreen(
-                    lines, title=tr("keys.title", default="키 · 마우스")))
-            # 알 수 없는 명령은 조용히 무시
 
         def on_paste(self, event: events.Paste):
             # 외부 터미널의 붙여넣기(멀티라인 포함)를 활성 패널로 패스스루.
