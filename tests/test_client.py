@@ -3902,6 +3902,46 @@ async def test_perm_mode_click_outside_closes():
     await _with_app(body)
 
 
+async def test_token_log_click_outside_closes():
+    """토큰 사용량 팝업(TokenLogScreen) 박스(#tklogbox) 바깥(백드롭) 클릭/터치 시
+    dismiss(None) 로 닫힌다. 박스 안(표 셀 등) 클릭은 닫지 않는다(InfoScreen·권한모드
+    팝업과 동일한 inside-box 판정)."""
+    async def body(app, pilot, srv):
+        recs = [{"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
+                 "account": "me@x.org", "tokens": 1500}]
+        app._want_token_log = True
+        app._dispatch({"t": "token_log", "records": recs})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "TokenLogScreen", scr
+
+        class _W:
+            def __init__(self, wid, parent=None):
+                self.id = wid
+                self.parent = parent
+
+        class _Ev:
+            def __init__(self, widget):
+                self.widget = widget
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        # 박스 안 클릭(표 셀 → … → #tklogbox) → 닫히지 않음
+        ev_in = _Ev(_W("tktable", parent=_W("tklogbox", parent=_W("screen"))))
+        scr.on_click(ev_in)
+        await pilot.pause(0.05)
+        assert app.screen_stack[-1] is scr, "박스 안 클릭은 닫지 않는다"
+        # 박스 바깥(백드롭) 클릭 → 닫힘
+        ev_out = _Ev(_W("backdrop", parent=None))
+        scr.on_click(ev_out)
+        await pilot.pause(0.05)
+        assert app.screen_stack[-1] is not scr, "바깥 클릭은 팝업을 닫는다"
+        assert ev_out.stopped
+    await _with_app(body)
+
+
 async def test_perm_mode_popup_bypass_conditional():
     """권한모드 팝업의 'Bypass Permission Mode' 항목은 **가용할 때만** 노출한다(요청).
     서버 status 의 bypass_ok(=idle footer 에서 bypass 관측 → 시작 시 위험 플래그 활성)

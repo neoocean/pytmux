@@ -967,13 +967,19 @@ class TokenLogScreen(ModalScreen):
         return was
 
     def on_click(self, event: events.Click):
-        # 마우스 클릭: 닫기 [x]·서브탭(버킷)·동작 버튼을 위젯 id 로 분기한다.
+        # 마우스 클릭: 닫기 [x]·서브탭(버킷)·동작 버튼을 위젯 id 로 분기한다. 박스
+        # (#tklogbox) 바깥(백드롭)을 클릭/터치하면 팝업을 닫는다(InfoScreen·토큰
+        # 팝업 공통 동선 — §10 #13).
         w = getattr(event, "widget", None)
         wid = None
+        inside_box = False
         while w is not None:
-            wid = getattr(w, "id", None)
-            if wid:
-                break
+            this = getattr(w, "id", None)
+            if this:
+                if wid is None:
+                    wid = this          # 가장 안쪽의 의미 있는 id(분기용)
+                if this == "tklogbox":
+                    inside_box = True
             w = w.parent
         if wid == "tklogclose":
             event.stop()
@@ -1024,6 +1030,10 @@ class TokenLogScreen(ModalScreen):
             if self._recon_mode:
                 self._limit_mode = False
             self.run_worker(self._refresh())
+        elif not inside_box:
+            # 박스 바깥(백드롭) 클릭/터치 → 팝업 닫기.
+            event.stop()
+            self.dismiss(None)
 
     def on_data_table_row_selected(self, event):
         """계정 뷰에서 행 선택(Enter/클릭) → 그 계정을 필터로 걸고 일별 추이로
