@@ -378,19 +378,30 @@ class _RestartVersionMixin:
         self.push_screen(InfoScreen(lines, title="restart-check (드라이런)"))
 
     def _show_version_popup(self, msg):
-        """서버 version 회신(version·uptime·pid) + 클라 자신의 값으로 팝업 구성."""
-        cli_up = version.fmt_uptime(time.time() - self._boot_time)
-        srv_up = version.fmt_uptime(msg.get("uptime", 0))
-        lines = [
-            "pytmux 버전 / 업타임",
-            "",
-            f"  클라이언트  {self._code_version:<14}  업타임 {cli_up}",
-            f"  서버        {msg.get('version', '?'):<14}  업타임 {srv_up}",
-            "",
-            f"  (서버 pid {msg.get('pid', '?')} · 버전=동기화된 p4 CL,"
-            " 폴백 git)",
-        ]
-        self.push_screen(InfoScreen(lines, title="version"))
+        """서버 version 회신(version·uptime·pid) + 클라 자신의 값으로 팝업 구성.
+        버전은 `p4:` 접두사를 떼고 체인지리스트 번호만 보인다. 업타임은 이 팝업이 떠
+        있는 동안에도 매 초 증가하도록 tick_cb 로 줄을 재생성한다(InfoScreen)."""
+        def _cl(v):                       # "p4:58794" → "58794" (그 외 형식은 그대로)
+            v = str(v)
+            return v[3:] if v.startswith("p4:") else v
+        pid = msg.get("pid", "?")
+        srv_ver = _cl(msg.get("version", "?"))
+        srv_uptime0 = msg.get("uptime", 0)
+        srv_recv = time.time()            # 회신 수신 시각(서버 업타임 외삽 기준)
+
+        def make_lines():
+            cli_up = version.fmt_uptime(time.time() - self._boot_time)
+            srv_up = version.fmt_uptime(srv_uptime0 + (time.time() - srv_recv))
+            return [
+                "pytmux 버전 / 업타임",
+                "",
+                f"  클라이언트  {_cl(self._code_version):<14}  업타임 {cli_up}",
+                f"  서버        {srv_ver:<14}  업타임 {srv_up}",
+                "",
+                f"  (서버 pid {pid})",
+            ]
+        self.push_screen(InfoScreen(make_lines(), title="version",
+                                    center=True, tick_cb=make_lines))
 
     def _server_info_lines(self):
         """서버 정보 탭(§10-A #12) 줄 — 호스트·로컬/원격·소켓 경로·RTT·응답성.

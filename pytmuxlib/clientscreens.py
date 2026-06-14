@@ -622,7 +622,7 @@ class InfoScreen(ModalScreen):
     _NAV_KEYS = ("up", "down", "pageup", "pagedown", "home", "end")
 
     def __init__(self, lines, title="info", hide_key=None, hide_cb=None,
-                 max_width=None, wrap_hang=True):
+                 max_width=None, wrap_hang=True, center=False, tick_cb=None):
         super().__init__()
         self._lines = lines
         self._title = title
@@ -631,6 +631,11 @@ class InfoScreen(ModalScreen):
         self._hide_cb = hide_cb
         # 박스 가로 최대폭 오버라이드(없으면 CSS 기본 66).
         self._max_width = max_width
+        # center=True 면 헤더에서 여는 팝업의 기본 상단 정렬 대신 **화면 중앙**에 띄운다
+        # (version 팝업 등 헤더 앵커가 없는 호출). tick_cb 가 있으면 1초마다 그 콜러블이
+        # 돌려주는 새 줄로 표시를 갱신한다(업타임처럼 계속 증가하는 값).
+        self._center = center
+        self._tick_cb = tick_cb
         # §10-A #7: 긴 줄(URL 등)을 박스 폭에 맞춰 행잉-인덴트 하드 줄바꿈한다
         # (번호 정렬 보존). 폭은 마운트 후 측정하므로 call_after_refresh 로 재구성.
         self._wrap_hang = wrap_hang
@@ -661,6 +666,11 @@ class InfoScreen(ModalScreen):
     def on_mount(self):
         if self._max_width is not None:        # 가로 넓히기
             self.query_one("#infobox").styles.max_width = self._max_width
+        if self._center:                       # 상단 정렬 대신 화면 중앙
+            self.styles.align_vertical = "middle"
+            self.query_one("#infobox").styles.margin = 0
+        if self._tick_cb is not None:          # 업타임 등 매 초 갱신
+            self.set_interval(1.0, self._tick)
         lv = self.query_one(ListView)
         lv.focus()
         if self._wrap_hang:
@@ -668,6 +678,24 @@ class InfoScreen(ModalScreen):
             self.call_after_refresh(self._rewrap)
             return
         self._skip = self._compute_skip(self._lines)
+
+    def _tick(self):
+        """tick_cb 가 돌려주는 새 줄로 표시를 갱신한다(업타임 카운트업). 줄 수가
+        그대로면 라벨 텍스트만 in-place 로 바꿔 포커스/스크롤을 보존하고, 줄바꿈으로
+        표시 줄 수가 달라지면 전체를 재구성한다."""
+        if self._tick_cb is None:
+            return
+        self._lines = self._tick_cb()
+        lv = self.query_one(ListView)
+        items = list(lv.children)
+        if len(items) == len(self._lines):
+            for item, ln in zip(items, self._lines):
+                try:
+                    item.query_one(Label).update(ln)
+                except Exception:
+                    pass
+        elif self._wrap_hang:
+            self.run_worker(self._rewrap())
 
     async def _rewrap(self):
         """박스 실제 폭을 재서 각 줄을 행잉-인덴트로 하드 줄바꿈하고 목록을 재구성

@@ -77,8 +77,10 @@ async def test_restart_check_command_opens_popup():
 
 async def test_version_command_opens_popup():
     """version 명령이 서버에 요청을 보내고(_want_version), version 회신을 받으면
-    클라/서버 버전·업타임 팝업(InfoScreen)을 띄운다."""
+    클라/서버 버전·업타임 팝업(InfoScreen)을 띄운다. 버전은 `p4:` 접두사 없이 CL 번호만,
+    pid 줄엔 폴백 설명 텍스트가 없고, 팝업은 중앙 정렬·업타임은 매 초 증가한다."""
     from pytmuxlib.clientscreens import InfoScreen
+    from textual.widgets import Label, ListView
 
     async def body(app, pilot, srv):
         sent = []
@@ -89,7 +91,24 @@ async def test_version_command_opens_popup():
         # 서버 회신 모사 → 팝업
         app._show_version_popup({"version": "p4:99999", "uptime": 3661, "pid": 42})
         await pilot.pause(0.1)
-        assert isinstance(app.screen, InfoScreen)
+        scr = app.screen
+        assert isinstance(scr, InfoScreen)
+        joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        assert "99999" in joined, joined          # 서버 CL 번호
+        assert "p4:" not in joined, joined         # 접두사 제거
+        assert "폴백" not in joined and "동기화된" not in joined, joined
+        assert "서버 pid 42" in joined, joined
+        assert scr._center is True
+        # 업타임은 tick_cb 로 매 초 갱신된다 — 강제 tick 이 줄 수를 보존하며 라벨을
+        # in-place 갱신(에러 없이 동작)하는지 확인. tick_cb 는 호출마다 현재 시각으로
+        # 재계산하므로 줄 형식이 유지된다.
+        n0 = len(list(scr.query_one(ListView).children))
+        scr._tick()
+        await pilot.pause(0.05)
+        n1 = len(list(scr.query_one(ListView).children))
+        assert n0 == n1, (n0, n1)
+        joined2 = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        assert "서버 pid 42" in joined2 and "p4:" not in joined2, joined2
     await _with_app(body)
 
 
