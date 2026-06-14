@@ -25,3 +25,5 @@
 ## delete-to-disable
 
 이 디렉토리를 통째로 지우면 명령·상태줄 클릭·렌더 훅이 모두 사라지고, 코어는 `toggle_clock`/`set_clock` 을 `getattr` 로만 부르므로 무에러로 계속 동작한다(코어 잔여 코드 없음 — `put_cell`·`_CLOCK_FONT` 만 코어 공유 유틸로 남음).
+
+지우지 않고 끄기: `:plugins`(별칭 `plugin-manager`) 로 여는 **플러그인 관리 팝업**에서도 이 플러그인을 토글로 끌 수 있다. 가역적이며 `opts.json` 의 `disabled_plugins` 에 영속되고, 같은 팝업에서 다시 켜면 돌아온다(서버가 새 비활성 집합을 전 클라에 방송해 명령·훅이 즉시 빠짐). 파일을 지우는 delete-to-disable 과 달리 되돌릴 수 있다.
