@@ -364,7 +364,10 @@ async def token_saver(app, pilot):
 
 async def token_log(app, pilot):
     # 토큰 사용량 팝업 — 마우스 서브탭(시간/일/주/월) + M19 /usage 실측 한도.
-    from pytmuxlib.clientscreens import TokenLogScreen
+    # TokenLogScreen 은 claude-code 플러그인으로 이전됐다(패키지명 하이픈→import_module).
+    from importlib import import_module
+    screens = import_module("pytmuxlib.plugins.claude-code.screens")
+    TokenLogScreen = screens.TokenLogScreen
     recs = [
         {"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
          "account": "default", "tokens": 12300},
