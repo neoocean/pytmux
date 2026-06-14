@@ -23,3 +23,7 @@ memory/
 
 # MEMORY.md 는 Perforce 전용 관리(사용자 요청 2026-06-10). git 미러 제외.
 /MEMORY.md
+
+# docs/HISTORY.md — 프로젝트 개발사 종합 기록. 내부 진행·머신명·진단 서사가 담겨
+# Perforce 전용 관리(사용자 요청 2026-06-14). git 미러 제외(미러 부활해도 차단).
+docs/HISTORY.md
