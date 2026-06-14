@@ -167,6 +167,11 @@ Claude 패널에 입력한 프롬프트를 시간순으로 모아 팝업(`prompt
 
 ![submitted CL 목록 — 풀스크린, CL/시각/사용자/설명](image/32-p4changes.svg)
 
+목록에서 CL 하나에 **Enter** 를 누르면 그 위로 `p4 describe` 상세 팝업이 올라옵니다 —
+제목에 `@CL`, 본문에 변경 설명과 영향 파일 목록(↑↓·PgUp/PgDn 스크롤, Esc 로 목록 복귀).
+
+![p4changes 상세 — CL 에 Enter → p4 describe 팝업](image/35-p4-describe.svg)
+
 ---
 
 > 이 갤러리의 스크린샷을 다시 만들려면: `python3 scripts/gen_screenshots.py`(전체) 또는

@@ -280,6 +280,55 @@ async def p4_changes(app, pilot):
     await pilot.pause(0.5)
 
 
+async def p4_describe(app, pilot):
+    # p4changes 목록에서 한 CL 에 Enter → `p4 describe` 상세 팝업(DescribeScreen).
+    # 실 퍼포스 서버·계정·클라이언트 경로가 노출되지 않게 request_p4_describe(실서버
+    # 호출) 대신 DescribeScreen 을 직접 띄워 **합성 describe 텍스트**(//depot 일반
+    # 경로)로 채운다. 외형(목록 위 중앙 모달·이중 보더·@CL 제목·스크롤 본문)은 동일.
+    from importlib import import_module
+    screen = import_module(
+        "pytmuxlib.plugins.p4-show-submitted-changelists.screen")
+    rows = [
+        {"change": "58694", "when": "2026/06/13", "user": "dev",
+         "desc": "docs: IMPROVEMENT stale 헤딩 5건 정정"},
+        {"change": "58681", "when": "2026/06/13", "user": "dev",
+         "desc": "패널 닫기 [x] 버튼 한 칸 위로"},
+        {"change": "58672", "when": "2026/06/13", "user": "dev",
+         "desc": "원격 중첩 자동 승격 구현 N1~N3"},
+        {"change": "58660", "when": "2026/06/13", "user": "dev",
+         "desc": "p4-show-submitted-changelists 플러그인"},
+        {"change": "58648", "when": "2026/06/12", "user": "dev",
+         "desc": "claude-prompt-history 플러그인 재구현"},
+    ]
+    app.push_screen(screen.ChangesScreen(rows, info={"port": "perforce:1666"}))
+    await pilot.pause(0.3)
+    desc = screen.DescribeScreen("58660")
+    app.push_screen(desc)
+    await pilot.pause(0.3)
+    describe_text = (
+        "Change 58660 by dev@dev-ws on 2026/06/13 14:22:07\n"
+        "\n"
+        "\tp4-show-submitted-changelists 플러그인 — submitted CL 목록 풀스크린 뷰\n"
+        "\n"
+        "\t현재 패널 cwd 의 퍼포스 설정(P4PORT/P4CLIENT) 그대로 `p4 changes -s\n"
+        "\tsubmitted` 를 돌려 CL 목록을 풀스크린으로 띄운다. ↑↓ 스크롤, Enter 로\n"
+        "\t`p4 describe` 상세, Esc 로 닫기. 서버측은 cwd 환경에서 subprocess argv\n"
+        "\t로 실행(셸 미경유)하고 출력 길이를 상한해 과대 응답을 막는다.\n"
+        "\n"
+        "Affected files ...\n"
+        "\n"
+        "... //depot/scripts/pytmux/pytmuxlib/plugins/"
+        "p4-show-submitted-changelists/__init__.py#1 add\n"
+        "... //depot/scripts/pytmux/pytmuxlib/plugins/"
+        "p4-show-submitted-changelists/screen.py#1 add\n"
+        "... //depot/scripts/pytmux/pytmuxlib/plugins/"
+        "p4-show-submitted-changelists/server.py#1 add\n"
+        "... //depot/scripts/pytmux/tests/test_p4_changes.py#1 add\n"
+    )
+    desc.fill(describe_text, None)
+    await pilot.pause(0.5)
+
+
 async def remote_attach(app, pilot):
     # 원격 pytmux 탭 어태치(remote-attach) — 보는 탭이 원격이면 탭바(활성=분홍 배경)
     # 와 패널 외곽선(분홍)이 로컬과 구분된다(§1.7-a). 실 ssh 페더레이션 없이, 보는
@@ -562,6 +611,7 @@ SCENES = [
     ("30-usage-view", "usage-view 팝업 — 한도 막대(% 우측정렬)+다음 리셋 블록 카운트다운", usage_view),
     ("31-prompt-history", "프롬프트 히스토리 팝업(prompt-history) — 시간순·미리보기 행수", prompt_history),
     ("32-p4changes", "submitted CL 목록(p4changes) — 풀스크린·CL/시각/사용자/설명", p4_changes),
+    ("35-p4-describe", "p4changes 상세 — CL 에 Enter → p4 describe 팝업(이중 보더·@CL·변경파일)", p4_describe),
     ("33-ime", "IME 한/영 배지(ime-indicator) — 우상단 상태 배지", ime_badge),
     ("34-remote-attach", "원격 pytmux 탭 어태치 — 분홍 탭바·분홍 패널 외곽선", remote_attach),
 ]
