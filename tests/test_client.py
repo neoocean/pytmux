@@ -1113,11 +1113,21 @@ async def test_token_log_screen_aggregates_and_switches():
         await pilot.pause(0.1)
         assert scr._bucket == "hour", scr._bucket
         assert app.screen_stack[-1] is scr, "탭 클릭은 닫지 않음"
-        # M19: /usage 결과를 status 훅으로 밀어넣으면 한도 막대 그래프가 보인다
+        # M19: /usage 결과를 status 훅으로 밀어넣으면 상단 1줄 요약(5h 7%)이 보이고,
+        # [한도] 뷰로 들어가면 막대 상세가 표 자리에 보인다(2026-06-14 한도 전용 뷰).
         scr.update_usage({"session": {"pct": 7, "reset": "5am"}})
         await pilot.pause(0.1)
         joined3 = _tok_text(scr)
-        assert "세션 5h" in joined3 and "7%" in joined3, joined3  # /usage 막대
+        assert "5h 7%" in joined3, joined3            # 상단 1줄 한도 요약
+        assert "세션 5h" not in joined3, joined3        # 막대 상세는 기본 화면엔 없음
+        await pilot.press("l")                          # [한도] 뷰 진입
+        await pilot.pause(0.1)
+        assert scr._limit_mode and app.screen_stack[-1] is scr
+        joined3b = _tok_text(scr)
+        assert "세션 5h" in joined3b and "7%" in joined3b, joined3b  # /usage 막대
+        await pilot.press("l")                          # 집계로 복귀
+        await pilot.pause(0.1)
+        assert not scr._limit_mode
         # 그 외 키는 닫는다
         await pilot.press("escape")
         await pilot.pause(0.1)
@@ -1154,6 +1164,61 @@ async def test_token_log_recon_view_toggle():
         await pilot.pause(0.1)
         joined2 = _tok_text(scr)
         assert "Δ+4" not in joined2 and "Σ1.5k" in joined2, joined2
+    await _with_app(body)
+
+
+async def test_token_log_limit_view_toggle():
+    """2026-06-14(사용자 요청): 상단 빽빽한 한도 블록(막대·창Σ·계정·신선도 ~7줄)을
+    [한도] 전용 서브뷰로 옮겨 작은 화면을 정리. 기본 화면 상단엔 1줄 요약(5h%·주%)만,
+    [l]/[한도] 탭으로 상세를 표 자리에 펼치고 다시 [l] 로 집계 복귀. recon 과 배타하며
+    기간 키로 빠져나온다."""
+    async def body(app, pilot, srv):
+        recs = [{"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
+                 "account": "me@x.org", "tokens": 1500}]
+        app._want_token_log = True
+        app._dispatch({"t": "token_log", "records": recs})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "TokenLogScreen"
+        scr.update_usage({
+            "session": {"pct": 17, "reset": "5:39pm (Asia/Seoul)"},
+            "week_all": {"pct": 14, "reset": "Jun 20 (Asia/Seoul)"}})
+        await pilot.pause(0.1)
+        # 기본(집계) 화면: 상단 1줄 요약만 — 막대 라벨/리셋 상세는 숨김.
+        base = _tok_text(scr)
+        assert "5h 17%" in base and "주 14%" in base, base
+        assert "세션 5h" not in base, base       # 막대 상세 라벨은 기본 화면에 없음
+        assert "5:39pm" not in base, base          # 리셋 상세도 숨김
+        # [l] 한도 뷰: 막대 상세가 표 자리에 보인다.
+        await pilot.press("l")
+        await pilot.pause(0.1)
+        assert scr._limit_mode and app.screen_stack[-1] is scr
+        lim = _tok_text(scr)
+        assert "세션 5h" in lim and "17%" in lim, lim
+        assert "주 전체" in lim and "14%" in lim, lim
+        assert any(b in lim for b in "▏▎▍▌▋▊▉█"), lim    # 막대 글리프
+        assert "5:39pm" in lim, lim                       # 리셋 상세
+        # 마우스 탭 클릭으로도 토글 → 집계 복귀.
+        await pilot.click("#tab_limit")
+        await pilot.pause(0.1)
+        assert not scr._limit_mode
+        # recon 과 배타: 한도 켠 뒤 r → recon 으로 넘어가며 한도 꺼짐.
+        await pilot.press("l")
+        await pilot.pause(0.1)
+        await pilot.press("r")
+        await pilot.pause(0.1)
+        assert scr._recon_mode and not scr._limit_mode
+        # 다시 l → 한도 켜지고 recon 꺼짐(상호 배타).
+        await pilot.press("l")
+        await pilot.pause(0.1)
+        assert scr._limit_mode and not scr._recon_mode
+        # 한도 뷰에서 기간 키(d) → 기간 뷰로 빠져나온다(어느 모드에서도 먹게).
+        await pilot.press("d")
+        await pilot.pause(0.1)
+        assert not scr._limit_mode and scr._view == "time" \
+            and scr._bucket == "day"
+        await pilot.press("escape")
+        await pilot.pause(0.1)
     await _with_app(body)
 
 
@@ -1274,6 +1339,8 @@ async def test_token_log_window_estimate_line():
         app._dispatch({"t": "token_log", "records": recs})
         await pilot.pause(0.1)
         scr = app.screen_stack[-1]
+        await pilot.press("l")                       # 창 추정 Σ 는 [한도] 뷰로 이동
+        await pilot.pause(0.1)
         joined = _tok_text(scr)
         assert "이번 5h창 ~Σ1k" in joined, joined   # 창 밖 500 은 제외돼야
         assert "리셋" in joined and "후" in joined, joined
@@ -1434,6 +1501,8 @@ async def test_token_log_usage_graphs():
             "session": {"pct": 54, "reset": "1:39pm (Asia/Seoul)"},
             "week_all": {"pct": 41, "reset": "Jun 11, 12:59pm (Asia/Seoul)"},
             "week_sonnet": {"pct": 0, "reset": None}})
+        await pilot.pause(0.1)
+        await pilot.press("l")        # 한도 막대 상세는 [한도] 뷰(2026-06-14)
         await pilot.pause(0.1)
         joined = _tok_text(scr)
         # 세 한도 라벨 + 각 % 가 보인다 — % 는 '사용' 라벨로 방향을 명시한다

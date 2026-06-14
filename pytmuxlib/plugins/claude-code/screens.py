@@ -34,7 +34,7 @@ i18n.register({
         "bypass — 권한 우회, 확인 없음 ⚠️ (Bypass Permission Mode)",
         # token-log: 탭(넓은/좁은)·그룹·컬럼·차원·정렬
         "시간", "시", "일", "주", "월", "계정", "계", "패널", "패", "세", "정렬", "정",
-        "시나리오", "대사", "기간", "보기", "조회", "토큰 사용량",
+        "시나리오", "대사", "한도", "기간", "보기", "조회", "토큰 사용량",
         "구간", "실측(세션 5h)", "추정Σ", "항목", "토큰", "비율",
         "세션", "토큰순", "시간순",
         # token-log: 안내/대사
@@ -61,6 +61,7 @@ i18n.register({
         "시간": "Time", "시": "T", "일": "Day", "주": "Week", "월": "Month",
         "계정": "Account", "계": "A", "패널": "Panel", "패": "P", "세": "S",
         "정렬": "Sort", "정": "S", "시나리오": "Scenario", "대사": "Recon",
+        "한도": "Limit",
         "기간": "Period", "보기": "View", "조회": "Query", "토큰 사용량": "Token usage",
         "구간": "Span", "실측(세션 5h)": "Measured (session 5h)", "추정Σ": "Est Σ",
         "항목": "Item", "토큰": "Tokens", "비율": "Ratio",
@@ -106,7 +107,7 @@ i18n.register({
         "pscreen.tklog_title2": "토큰 사용량(추정) · {what}별",
         "pscreen.tklog_scope": "계정 {acct} · {order} · {sigma}",
         "pscreen.tklog_disp": " (표시 {n})",
-        "pscreen.tklog_hint": "h시 d일 w주 m월 · c계정 p세션 · a필터 o정렬 · u/usage s설정 r대사 · Esc닫기",
+        "pscreen.tklog_hint": "h시 d일 w주 m월 · c계정 p세션 · l한도 a필터 o정렬 · u/usage s설정 r대사 · Esc닫기",
         "pscreen.weekdays": "월,화,수,목,금,토,일",
         "pscreen.recon_top": "실측(/usage Δ%)과 추정(스크랩 ~Σ)은 의미가 다른 두 출처 — 절대 일치가 아니라 추세 상관을 봅니다",
         "pscreen.recon_empty": "(대사할 실측 스냅샷 구간이 없습니다 — /usage 실측이 2회 이상 쌓이면 생깁니다)",
@@ -114,6 +115,14 @@ i18n.register({
         "pscreen.fold_tag": "미식별 포함",
         "pscreen.win_session": "이번 5h창 ~Σ{tok}(리셋 {left} 후)",
         "pscreen.win_week": "이번 주 ~Σ{tok}(리셋 {left} 후)",
+        # 한도 전용 서브뷰(상단 7줄 블록을 표 자리로 이동 — 작은 화면 정리).
+        "pscreen.tklog_limit_title": "토큰 사용량 · 한도(/usage)",
+        "pscreen.tklog_limit_col": "한도(/usage)",
+        "pscreen.tklog_limit_hint": "l집계로 돌아가기 · u/usage 갱신 · Esc닫기",
+        "pscreen.tklog_limit_empty": "한도(/usage) 미조회 — [u] 눌러 조회",
+        # 상단 1줄 한도 요약(상세는 한도 탭).
+        "pscreen.lim_5h": "5h {p}%",
+        "pscreen.lim_wk": "주 {p}%",
         "pscreen.left_hm": "{h}시간{m}분",
         "pscreen.left_m": "{m}분",
         "pscreen.left_d": "{d}일{h}시간",
@@ -123,7 +132,7 @@ i18n.register({
         "pscreen.tklog_title2": "Token usage (est) · by {what}",
         "pscreen.tklog_scope": "Account {acct} · {order} · {sigma}",
         "pscreen.tklog_disp": " (shown {n})",
-        "pscreen.tklog_hint": "h hour d day w week m month · c account p session · a filter o sort · u /usage s settings r recon · Esc close",
+        "pscreen.tklog_hint": "h hour d day w week m month · c account p session · l limit a filter o sort · u /usage s settings r recon · Esc close",
         "pscreen.weekdays": "Mo,Tu,We,Th,Fr,Sa,Su",
         "pscreen.recon_top": "Measured (/usage Δ%) and est (scrape ~Σ) are two different sources — look at trend correlation, not exact match",
         "pscreen.recon_empty": "(no measured snapshot spans to reconcile — appears once /usage measurements accumulate 2+)",
@@ -131,6 +140,12 @@ i18n.register({
         "pscreen.fold_tag": "incl. unidentified",
         "pscreen.win_session": "this 5h window ~Σ{tok} (resets in {left})",
         "pscreen.win_week": "this week ~Σ{tok} (resets in {left})",
+        "pscreen.tklog_limit_title": "Token usage · Limit (/usage)",
+        "pscreen.tklog_limit_col": "Limit (/usage)",
+        "pscreen.tklog_limit_hint": "l back to totals · u refresh /usage · Esc close",
+        "pscreen.tklog_limit_empty": "Limit (/usage) not queried — press [u]",
+        "pscreen.lim_5h": "5h {p}%",
+        "pscreen.lim_wk": "wk {p}%",
         "pscreen.left_hm": "{h}h {m}m",
         "pscreen.left_m": "{m}m",
         "pscreen.left_d": "{d}d {h}h",
@@ -494,6 +509,7 @@ class TokenLogScreen(ModalScreen):
         "tab_acct": ("계정", "계"), "tab_panel": ("세션", "세"),
         "tab_order": ("정렬", "정"), "tab_usage": ("/usage", "U"),
         "tab_saver": ("시나리오", "S"), "tab_recon": ("대사", "R"),
+        "tab_limit": ("한도", "L"),
     }
     # [패널]/계정 그룹이 많을 때 상위 N + '기타'로 접어 길이 폭주를 막는다(설계 §4).
     _GROUP_TOP = 8
@@ -510,6 +526,10 @@ class TokenLogScreen(ModalScreen):
         # S6 T2: 대사 구간(서버 usagedb.reconcile 결과). [대사] 뷰 전용 진단 데이터.
         self._reconcile = reconcile or []
         self._recon_mode = False     # True 면 표가 대사 구간을 보여준다([r] 토글)
+        # True 면 표 자리에 /usage 한도 상세(막대·리셋·창Σ·신선도)를 보여준다([l]
+        # 토글). 상단 빽빽한 7줄 블록을 이 전용 뷰로 옮겨 작은 화면을 정리(사용자
+        # 요청 2026-06-14) — 기본 화면 상단은 1줄 한도 요약만 남긴다. recon 과 배타.
+        self._limit_mode = False
         # Phase B: 서버가 SQL 로 집계한 정확한 전체 이력 합(레코드 cap 무관). 받은
         # 레코드(_records)는 최근 N 건이라 그 Σ 는 과소표시될 수 있으므로, lifetime
         # 합은 이 값을 쓴다(None=구버전 서버 → 레코드 합으로 폴백).
@@ -587,6 +607,8 @@ class TokenLogScreen(ModalScreen):
                     yield Label("정렬", id="tab_order", classes="tkbtab",
                                 markup=False)
                 with Horizontal(id="tkgrp_query", classes="tkgroup"):
+                    yield Label("한도", id="tab_limit", classes="tkbtab",
+                                markup=False)
                     yield Label("/usage", id="tab_usage", classes="tkbbtn",
                                 markup=False)
                     yield Label("시나리오", id="tab_saver", classes="tkbbtn",
@@ -716,6 +738,8 @@ class TokenLogScreen(ModalScreen):
                 self._order == "tokens", "tkbtab-active")
             self.query_one("#tab_recon", Label).set_class(
                 self._recon_mode, "tkbtab-active")
+            self.query_one("#tab_limit", Label).set_class(
+                self._limit_mode, "tkbtab-active")
         except Exception:
             pass
 
@@ -790,6 +814,41 @@ class TokenLogScreen(ModalScreen):
         self.query_one("#tkhint", Static).update(
             i18n.t("r집계로 돌아가기 · u/usage 갱신 · Esc닫기"))
 
+    def _limit_summary(self):
+        """상단 1줄 한도 요약 접두('5h 17% · 주 14% · '). 상세(막대·리셋·계정·창Σ)는
+        [한도] 뷰로 옮겼고(작은 화면 정리, 2026-06-14), 기본 화면엔 이 요약만 둔다.
+        usage 실측이 없으면 빈 문자열(요약 생략 → scope 만 보인다)."""
+        u = self._usage
+        if not isinstance(u, dict):
+            return ""
+        parts = []
+        for key, fmt in (("session", "pscreen.lim_5h"),
+                         ("week_all", "pscreen.lim_wk")):
+            d = u.get(key)
+            if isinstance(d, dict) and d.get("pct") is not None:
+                parts.append(i18n.t(fmt, p=d["pct"]))
+        return (" · ".join(parts) + " · ") if parts else ""
+
+    def _refresh_limit(self, table):
+        """[한도] 뷰: /usage 한도 상세(세션/주 막대·% 사용·리셋·계정·신선도)와 현재
+        5h/주 창 추정 Σ를 표 자리에 한 열로 보여준다 — 예전엔 이 7줄이 표 위 #tktop 에
+        항상 깔려 작은 화면을 덮었다(사용자 요청 2026-06-14: 한도 전용 서브뷰로 분리).
+        막대/창 합은 기존 공유 포맷터(_usage_lines·_window_lines)를 그대로 재사용한다."""
+        table.add_column(i18n.t("pscreen.tklog_limit_col"), key="limit")
+        if not isinstance(self._usage, dict):
+            lines = [i18n.t("pscreen.tklog_limit_empty")]
+        else:
+            lines = self._usage_lines() + self._window_lines()
+            if self._fold_acct:
+                lines.append(i18n.t("pscreen.fold_tag"))
+        for ln in lines:
+            table.add_row(ln)
+        self.query_one("#tklogtitle", Label).update(
+            i18n.t("pscreen.tklog_limit_title"))
+        self.query_one("#tktop", Static).update("")
+        self.query_one("#tkhint", Static).update(
+            i18n.t("pscreen.tklog_limit_hint"))
+
     # 기간 뷰 제목/표 헤더용 버킷 단어(i18n 원문 키).
     _BUCKET_WORD = {"hour": "시간", "day": "일", "week": "주", "month": "월"}
 
@@ -837,6 +896,9 @@ class TokenLogScreen(ModalScreen):
         table.clear(columns=True)
         if self._recon_mode:
             self._refresh_recon(table)
+            return
+        if self._limit_mode:
+            self._refresh_limit(table)
             return
         label_w, bar_cells = self._metrics()
         rows, vmax, win, rowhdr = self._view_rows()
@@ -891,9 +953,18 @@ class TokenLogScreen(ModalScreen):
             # §5.5 귀속 표시: 미식별분이 단일 식별 계정에 접혀 있음을 명시(침묵 변형
             # 금지 — 합계가 DB 의 unknown 분해와 달라 보이는 이유를 화면이 설명).
             scope += " · " + i18n.t("pscreen.fold_tag")
-        top = self._usage_lines() + self._window_lines() + [scope]
-        self.query_one("#tktop", Static).update("\n".join(top))
+        # 상단은 1줄(한도 요약 접두 + 스코프)만 — /usage 막대·창Σ·계정·신선도 상세는
+        # [한도] 뷰로 옮겼다(작은 화면 정리, 2026-06-14). usage 없으면 접두는 빈 문자열.
+        self.query_one("#tktop", Static).update(self._limit_summary() + scope)
         self.query_one("#tkhint", Static).update(i18n.t("pscreen.tklog_hint"))
+
+    def _exit_body_modes(self):
+        """표를 대체하는 뷰(대사/한도)에서 빠져나온다 — 기간/계정/세션/정렬 동작이
+        어느 모드에서 눌려도 곧바로 먹게 한다. 둘 중 하나라도 켜져 있었으면 True."""
+        was = self._limit_mode or self._recon_mode
+        self._limit_mode = False
+        self._recon_mode = False
+        return was
 
     def on_click(self, event: events.Click):
         # 마우스 클릭: 닫기 [x]·서브탭(버킷)·동작 버튼을 위젯 id 로 분기한다.
@@ -909,24 +980,35 @@ class TokenLogScreen(ModalScreen):
             self.dismiss(None)
         elif wid in self._TAB_BUCKET:
             event.stop()
-            # 기간 탭: 기간 뷰로 전환하며 버킷 선택(계정/세션 뷰에서도 한 번에).
+            # 기간 탭: 기간 뷰로 전환하며 버킷 선택(계정/세션/대사/한도 뷰에서도 한 번에).
+            self._exit_body_modes()
             self._view = "time"
             self._bucket = self._TAB_BUCKET[wid]
             self.run_worker(self._refresh())
         elif wid == "tab_acct":
             event.stop()
             # 계정 뷰 토글(행=계정별 전체 합). 행 선택=그 계정 필터+일별 드릴다운.
-            self._view = "time" if self._view == "account" else "account"
+            was = self._exit_body_modes()
+            self._view = "account" if was or self._view != "account" else "time"
             self.run_worker(self._refresh())
         elif wid == "tab_panel":
             event.stop()
             # 세션 뷰 토글(행=세션별 합).
-            self._view = "time" if self._view == "session" else "session"
+            was = self._exit_body_modes()
+            self._view = "session" if was or self._view != "session" else "time"
             self.run_worker(self._refresh())
         elif wid == "tab_order":
             event.stop()
             # 버킷 정렬 토글: 시간순 ↔ 토큰순.
+            self._exit_body_modes()
             self._order = "tokens" if self._order == "time" else "time"
+            self.run_worker(self._refresh())
+        elif wid == "tab_limit":
+            event.stop()
+            # 한도 상세 뷰 토글(표 자리에 /usage 막대·창Σ). recon 과 배타.
+            self._limit_mode = not self._limit_mode
+            if self._limit_mode:
+                self._recon_mode = False
             self.run_worker(self._refresh())
         elif wid == "tab_usage":
             event.stop()
@@ -937,8 +1019,10 @@ class TokenLogScreen(ModalScreen):
             self.app.push_screen(ClaudeSaverScreen())
         elif wid == "tab_recon":
             event.stop()
-            # S6 T2: 집계 ↔ 대사(실측Δ% vs 추정Σ) 뷰 토글.
+            # S6 T2: 집계 ↔ 대사(실측Δ% vs 추정Σ) 뷰 토글. 한도 뷰와 배타.
             self._recon_mode = not self._recon_mode
+            if self._recon_mode:
+                self._limit_mode = False
             self.run_worker(self._refresh())
 
     def on_data_table_row_selected(self, event):
@@ -960,7 +1044,8 @@ class TokenLogScreen(ModalScreen):
         k = event.key
         if k in self._BUCKETS:
             event.stop()
-            # 기간 뷰로 전환하며 버킷 선택(계정/세션 뷰에서도 한 번에).
+            # 기간 뷰로 전환하며 버킷 선택(계정/세션/대사/한도 뷰에서도 한 번에).
+            self._exit_body_modes()
             self._view = "time"
             self._bucket = self._BUCKETS[k]
             await self._refresh()
@@ -972,23 +1057,35 @@ class TokenLogScreen(ModalScreen):
             return
         if k == "c":
             event.stop()
-            # 계정 뷰 토글(행=계정별 전체 합).
-            self._view = "time" if self._view == "account" else "account"
+            # 계정 뷰 토글(행=계정별 전체 합). 대사/한도 뷰에서 누르면 그리로 진입.
+            was = self._exit_body_modes()
+            self._view = "account" if was or self._view != "account" else "time"
             await self._refresh()
             return
         if k == "p":
             event.stop()
             # 세션 뷰 토글(행=세션별 합).
-            self._view = "time" if self._view == "session" else "session"
+            was = self._exit_body_modes()
+            self._view = "session" if was or self._view != "session" else "time"
             await self._refresh()
             return
-        if k == "enter" and self._view == "account":
+        if k == "l":
+            event.stop()
+            # 한도 상세 뷰 토글(표 자리에 /usage 막대·창Σ·계정·신선도). recon 과 배타.
+            self._limit_mode = not self._limit_mode
+            if self._limit_mode:
+                self._recon_mode = False
+            await self._refresh()
+            return
+        if k == "enter" and self._view == "account" \
+                and not self._limit_mode and not self._recon_mode:
             # 계정 뷰 행 선택(드릴다운)은 DataTable 의 RowSelected 가 처리 — 닫지
             # 않고 표에 넘긴다.
             return
         if k == "o":
             event.stop()
             # 버킷 정렬 토글: 시간순 ↔ 토큰순.
+            self._exit_body_modes()
             self._order = "tokens" if self._order == "time" else "time"
             await self._refresh()
             return
@@ -999,8 +1096,10 @@ class TokenLogScreen(ModalScreen):
             return
         if k == "r":
             event.stop()
-            # S6 T2: 집계 ↔ 대사(실측Δ% vs 추정Σ) 뷰 토글.
+            # S6 T2: 집계 ↔ 대사(실측Δ% vs 추정Σ) 뷰 토글. 한도 뷰와 배타.
             self._recon_mode = not self._recon_mode
+            if self._recon_mode:
+                self._limit_mode = False
             await self._refresh()
             return
         if k == "u":
