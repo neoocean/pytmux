@@ -61,6 +61,8 @@ i18n.register({
 
 class _P4ChangesPlugin:
     name = "p4-show-submitted-changelists"
+    description = "Perforce submitted CL 목록 + p4 describe 상세"
+    category = "Perforce"
     commands = COMMANDS
     noarg = NOARG
     completions = []

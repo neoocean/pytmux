@@ -35,6 +35,8 @@ NOARG = {"ime-indicator", "ime"}
 
 class _ImeIndicatorPlugin:
     name = "ime-indicator"
+    description = "IME 한/영 상태 배지(화면 우상단)"
+    category = "입력"
     commands = COMMANDS
     noarg = NOARG
     completions = []            # 추가 옵션 템플릿 없음(명령 이름은 레지스트리가 자동 추가)

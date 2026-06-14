@@ -30,6 +30,8 @@ PANE_SCOPED = {"calendar-mode", "calendar", "cal",
 
 class _CalendarPlugin:
     name = "calendar"
+    description = "달력 오버레이 — 패널을 이번 달 달력으로 덮음(calendar-mode)"
+    category = "오버레이"
     commands = COMMANDS
     noarg = NOARG
     completions = []            # 추가 옵션 템플릿 없음(명령 이름은 레지스트리가 자동 추가)

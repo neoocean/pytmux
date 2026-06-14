@@ -38,6 +38,8 @@ _MODES = ("popup", "tab", "pane")
 
 class _UsageViewPlugin:
     name = "claude-token-usage-view"
+    description = "Claude 사용 한도 화면 + 다음 리셋 카운트다운"
+    category = "Claude"
     commands = COMMANDS
     noarg = NOARG
     completions = []

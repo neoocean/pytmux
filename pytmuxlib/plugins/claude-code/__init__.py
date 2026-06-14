@@ -416,6 +416,8 @@ def _open_remote_control(app, pane_id):
 
 class _ClaudeCodePlugin:
     name = "claude-code"
+    description = "Claude Code 연동 — 헤더·상태줄 토큰·시작 규칙·자동개입"
+    category = "Claude"
     commands = COMMANDS
     noarg = NOARG
     completions = []

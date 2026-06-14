@@ -83,6 +83,8 @@ def _clamp_lines(n) -> int:
 
 class _PromptHistoryPlugin:
     name = "claude-prompt-history"
+    description = "Claude 프롬프트 히스토리 — 미리보기·팝업·스크롤백 점프"
+    category = "Claude"
     commands = COMMANDS
     noarg = NOARG
     completions = []
