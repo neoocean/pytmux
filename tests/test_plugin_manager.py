@@ -122,3 +122,42 @@ async def test_plugin_manager_popup_toggle_sends_cmd():
         await pilot.pause(0.05)
         assert app.screen_stack[-1] is not scr
     await _with_app(body)
+
+
+async def test_plugin_manager_click_outside_closes():
+    """플러그인 관리 팝업(PluginManagerScreen) 박스(#plgbox) 바깥(백드롭) 클릭/터치 시
+    dismiss(None) 로 닫힌다. 박스 안(목록 항목 등) 클릭은 닫지 않는다(InfoScreen·토큰
+    팝업과 동일한 inside-box 판정)."""
+    from pytmuxlib.clientscreens import PluginManagerScreen
+
+    async def body(app, pilot, srv):
+        app.push_screen(PluginManagerScreen())
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "PluginManagerScreen"
+
+        class _W:
+            def __init__(self, wid, parent=None):
+                self.id = wid
+                self.parent = parent
+
+        class _Ev:
+            def __init__(self, widget):
+                self.widget = widget
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        # 박스 안 클릭(목록 항목 → … → #plgbox) → 닫히지 않음
+        ev_in = _Ev(_W("plg_clock", parent=_W("plgbox", parent=_W("screen"))))
+        scr.on_click(ev_in)
+        await pilot.pause(0.05)
+        assert app.screen_stack[-1] is scr, "박스 안 클릭은 닫지 않는다"
+        # 박스 바깥(백드롭) 클릭 → 닫힘
+        ev_out = _Ev(_W("backdrop", parent=None))
+        scr.on_click(ev_out)
+        await pilot.pause(0.05)
+        assert app.screen_stack[-1] is not scr, "바깥 클릭은 팝업을 닫는다"
+        assert ev_out.stopped
+    await _with_app(body)

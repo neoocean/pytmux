@@ -469,6 +469,21 @@ class PluginManagerScreen(ModalScreen):
         if event.item is not None and event.item.id:
             self._toggle(event.item.id[len("plg_"):])
 
+    def on_click(self, event: events.Click):
+        # 박스(#plgbox) 바깥(백드롭)을 클릭/터치하면 팝업을 닫는다(InfoScreen·토큰
+        # 팝업과 동일한 inside-box 판정). 박스 안(목록 항목 등) 클릭은 그대로 두어
+        # on_list_view_selected 토글이 동작한다.
+        w = getattr(event, "widget", None)
+        inside_box = False
+        while w is not None:
+            if getattr(w, "id", None) == "plgbox":
+                inside_box = True
+                break
+            w = w.parent
+        if not inside_box:
+            event.stop()
+            self.dismiss(None)
+
     def on_key(self, event: events.Key):
         if event.key == "escape":
             event.stop()
