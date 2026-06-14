@@ -402,6 +402,85 @@ class MenuScreen(ModalScreen):
             event.stop()
             self.dismiss(None)
 
+
+class PluginManagerScreen(ModalScreen):
+    """플러그인 관리 팝업(docs/PLUGIN_MANAGER_SCENARIO.md) — 설치된(레지스트리 발견)
+    플러그인을 이름·설명·상태([x]켜짐/[ ]꺼짐)로 나열하고, Space/Enter 로 토글한다.
+    토글은 set_plugin_enabled cmd 를 서버에 보내 opts.json 에 영속하고, 서버가 전 클라에
+    새 disabled 집합을 방송해 명령/훅이 즉시 빠지거나 돌아온다. 발효 안내: 좌하단 정보
+    클러스터·서버 믹스인 기여 플러그인은 완전 정리에 서버 재시작이 필요(§5)."""
+    CSS = """
+    PluginManagerScreen { align: center middle; }
+    #plgbox { width: 76; max-width: 92%; height: auto; max-height: 90%;
+              border: round $accent; background: $panel; padding: 0 1; }
+    #plgtitle { width: 100%; height: 1; content-align: center middle;
+                text-style: bold; }
+    #plglist { height: auto; max-height: 20; }
+    #plghint { width: 100%; height: auto; padding: 1 0 0 0; color: $text-muted; }
+    """
+
+    def compose(self) -> ComposeResult:
+        self._rows = {}   # name -> (Label, description)
+        with Vertical(id="plgbox"):
+            yield Label(i18n.t("plugins.title"), id="plgtitle")
+            items = []
+            plug = getattr(self.app, "plugins", None)
+            overview = plug.plugin_overview() if plug else []
+            for name, desc, _cat, enabled in overview:
+                lab = Label(self._fmt(name, desc, enabled), markup=False)
+                self._rows[name] = (lab, desc)
+                items.append(ListItem(lab, id=f"plg_{name}"))
+            yield ListView(*items, id="plglist")
+            yield Label(i18n.t("plugins.hint"), id="plghint", markup=False)
+
+    def _enabled(self, name):
+        plug = getattr(self.app, "plugins", None)
+        return bool(plug) and name not in plug.disabled
+
+    def _fmt(self, name, desc, enabled=None):
+        if enabled is None:
+            enabled = self._enabled(name)
+        box = "[x]" if enabled else "[ ]"
+        return f"{box} {name:<24}{('— ' + desc) if desc else ''}"
+
+    def on_mount(self):
+        self.query_one(ListView).focus()
+        self.app._plugin_screen = self   # status 회신 시 라벨 확정용
+
+    def on_unmount(self):
+        if getattr(self.app, "_plugin_screen", None) is self:
+            self.app._plugin_screen = None
+
+    def refresh_labels(self):
+        """서버 status(새 disabled 집합) 도착 시 호출 — 라벨을 실제 상태로 확정."""
+        for name, (lab, desc) in getattr(self, "_rows", {}).items():
+            lab.update(self._fmt(name, desc))
+
+    def _toggle(self, name):
+        if name not in self._rows:
+            return
+        new_on = not self._enabled(name)
+        self.app.send_cmd("set_plugin_enabled", name=name, on=new_on)
+        # 낙관적 즉시 반영(서버 status 회신 시 refresh_labels 가 확정).
+        lab, desc = self._rows[name]
+        lab.update(self._fmt(name, desc, new_on))
+
+    def on_list_view_selected(self, event):
+        if event.item is not None and event.item.id:
+            self._toggle(event.item.id[len("plg_"):])
+
+    def on_key(self, event: events.Key):
+        if event.key == "escape":
+            event.stop()
+            self.dismiss(None)
+        elif event.key == "space":
+            lv = self.query_one(ListView)
+            item = lv.highlighted_child
+            if item is not None and item.id:
+                event.stop()
+                self._toggle(item.id[len("plg_"):])
+
+
 class ChooseTreeScreen(ModalScreen):
     CSS = """
     ChooseTreeScreen { align: center middle; }

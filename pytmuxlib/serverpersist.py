@@ -400,7 +400,10 @@ class ServerPersistMixin:
         try:
             with ipc.open_private(self.opts_path) as f:   # 0600(F5)
                 # capture 는 plugins/rec 가 server_opts_serialize 로 plugin_opts 에 넣는다.
-                json.dump({"single_border": self.single_border,
+                json.dump({# 플러그인 관리(PLUGIN_MANAGER_SCENARIO): 비활성 플러그인 집합.
+                           # 키가 한 번 생기면 default_enabled 시드 대신 이 값이 권위.
+                           "disabled_plugins": sorted(self.plugins.disabled),
+                           "single_border": self.single_border,
                            "coalesce_repaints": self.coalesce_repaints,
                            "nest_auto_attach": self.nest_auto_attach,
                            "prompt_clear_message": self.prompt_clear_message,

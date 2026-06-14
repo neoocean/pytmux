@@ -187,6 +187,8 @@ register({
         "dialog.restart_confirm_title": "재시작 확인",
         "dialog.restart_yes": "재시작",
         "dialog.status_title": "상태",
+        "plugins.title": "플러그인 관리",
+        "plugins.hint": "Space/Enter 토글 · Esc 닫기 · 서버 기여 플러그인은 재시작에 완전 반영",
     },
     "en": {
         "dialog.kill_pytmux_msg": "Closing this tab will quit pytmux (all shells end). Close?",
@@ -196,6 +198,8 @@ register({
         "dialog.restart_confirm_title": "Restart confirmation",
         "dialog.restart_yes": "Restart",
         "dialog.status_title": "Status",
+        "plugins.title": "Plugin manager",
+        "plugins.hint": "Space/Enter toggle · Esc close · server-contributed plugins fully apply on restart",
     },
 })
 

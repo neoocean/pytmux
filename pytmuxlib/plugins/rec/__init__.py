@@ -30,12 +30,13 @@ COMMAND_OPTIONS = {
 
 class _RecPlugin:
     name = "rec"
-    # 깃헙 배포 기본값(REC_SCENARIO §6, PLUGIN_MANAGER_SCENARIO §6): 새 설치(opts.json 에
-    # capture 키 부재)는 캡처를 **OFF** 로 시작한다 — raw PTY 출력(에코된 비밀번호·토큰
-    # 포함) 무손실 기록을 자동으로 켜지 않는다(SECURITY_REVIEW §F4 해소). 사용자가
-    # capture-output on 으로 켜면 그 선택은 opts.json 에 영속돼 존중된다. (플러그인 관리
-    # 팝업이 구현되면 이 속성이 토글 초기상태도 정한다.)
-    default_enabled = False
+    # REC 의 "깃헙 배포 기본 OFF"(SECURITY_REVIEW §F4)는 **플러그인 비활성**이 아니라
+    # **capture 옵션 기본 False**로 구현한다(server_opts_init, CL 58771) — 새 설치는
+    # 캡처를 안 하지만(=badge 없음, raw 기록 없음) `capture-output` 명령으로 켤 수 있게
+    # 플러그인 자체는 활성으로 둔다(발견성). 따라서 default_enabled 은 True(기본) —
+    # 플러그인 관리 팝업으로는 끌 수 있으나 시드 비활성 대상은 아니다. (서버 믹스인
+    # 플러그인을 시드 비활성하면 부팅 시 server_init 이 안 돌아 상태 미설치 → 런타임
+    # 재활성이 재시작 전까지 불완전해지는 문제도 피한다. PLUGIN_MANAGER_SCENARIO §5·§8.)
     description = "패널 출력 캡처(REC) — Claude 화면 문구 분석용 무손실 로그"
     category = "모니터"
     commands = COMMANDS

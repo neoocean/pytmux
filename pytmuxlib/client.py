@@ -38,7 +38,7 @@ from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
 from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 사용)
     ChooseBufferScreen, ChooseLayoutScreen, ChooseTreeScreen,
     CommandListScreen, CommandOptionsScreen, ConfirmScreen, InfoScreen,
-    InfoTabsScreen, MenuScreen, PromptScreen)
+    InfoTabsScreen, MenuScreen, PluginManagerScreen, PromptScreen)
 from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose·ghost suggester)
     MultiplexerView, SepInsensitiveSuggester, StatusBar, TabBar)
 from .keymap import (_key_to_ctrl_bytes, _tmux_key_to_textual,
@@ -1108,6 +1108,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.pane_wrap[pid] = set(msg.get("wrap") or ())
                 self._request_composite()
             elif t == "status":
+                # 플러그인 관리(PLUGIN_MANAGER_SCENARIO): 서버가 보낸 비활성 집합을 이
+                # 클라 레지스트리에 반영한다(바뀔 때만). set_disabled 가 self.plugins 를
+                # 활성 부분집합으로 다시 만들어 명령 자동완성·클라 훅(오버레이/배지/탭)이
+                # 비활성 플러그인을 즉시 거른다.
+                dp = msg.get("disabled_plugins")
+                if dp is not None and set(dp) != self.plugins.disabled:
+                    self.plugins.set_disabled(dp)
+                    scr = getattr(self, "_plugin_screen", None)
+                    if scr is not None:
+                        scr.refresh_labels()   # 관리 팝업 열려 있으면 라벨 확정
                 self.status.update_status(msg)
                 # Claude 상태(claude_rules 동기화, pane_claude 갱신,
                 # /usage 자동 팝업)는 claude-code 플러그인이 client_status 훅으로 흡수
@@ -2049,6 +2059,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return self._run_command(
                     self.aliases[c] + (" " + " ".join(args) if args else ""),
                     _depth + 1)
+            if c in ("plugins", "plugin-manager"):
+                # 플러그인 관리 팝업(PLUGIN_MANAGER_SCENARIO) — 설치된 플러그인 on/off.
+                self.push_screen(PluginManagerScreen())
+                return
             if c in ("help", "commands", "?", "list-commands"):
                 # 명령 목록 선택기(#3): 옵션 스키마가 있으면 옵션 모달에서 값을 정해
                 # 프롬프트 없이 바로 실행, 인자 없는 안전한 명령은 선택 즉시 실행,

@@ -196,6 +196,17 @@ class Server(*_SERVER_BASES):
         # 토큰 소모를 늦춘다(가역 — 사용자가 shift+tab 으로 되돌림). bypass(명시적
         # 위험)는 불간섭. claude_auto_mode(auto 유도)와 상충하면 plan 이 우선. 기본 OFF.
         self.claude_budget_plan = bool(_opts.get("claude_budget_plan", False))
+        # 플러그인 관리(docs/PLUGIN_MANAGER_SCENARIO.md): 비활성 플러그인 집합을 적용한다.
+        # opts.json 의 `disabled_plugins` 키가 있으면 그 값(사용자 선택)을, 없으면(새 설치)
+        # `default_enabled=False` 플러그인을 시드(깃헙 배포 기본 OFF, 예: rec). set_disabled
+        # 가 self.plugins 를 활성 부분집합으로 만들어 **아래 server_opts_init/server_init
+        # 훅과 이후 모든 훅·명령이 비활성 플러그인을 자동으로 건너뛴다**. 따라서 이 줄은
+        # 반드시 플러그인 훅 호출보다 **앞**에 둔다.
+        if "disabled_plugins" in _opts:
+            disabled = set(_opts.get("disabled_plugins") or ())
+        else:
+            disabled = self.plugins.default_disabled()
+        self.plugins.set_disabled(disabled)
         # 플러그인 소유 설정 로드 훅(S5 토큰 모듈화 T3). claude-code 가 자기 설정
         # (usage_gate_* 등)을 opts.json 의 plugin_opts 네임스페이스(+구 top-level
         # 키 하위호환 shim)에서 읽어 server 속성으로 설치한다 — 코어 __init__ 은 더는
@@ -361,6 +372,24 @@ class Server(*_SERVER_BASES):
             else bool(value)
         self._save_opts()
         return self.nest_auto_attach
+
+    def set_plugin_enabled(self, name, on=None):
+        """플러그인 관리 팝업 토글: 이름의 플러그인을 켜고/끈다(on=None 이면 반전).
+        disabled 집합을 갱신·영속(opts.json `disabled_plugins`)하고 self.plugins 를 활성
+        부분집합으로 다시 만든다 — 런타임 훅/명령은 즉시 빠지고, 이미 합성된 서버 믹스인·
+        attach 상태의 완전 정리는 재시작 경계에서 이뤄진다(PLUGIN_MANAGER_SCENARIO §5).
+        반환: 토글 후 활성 여부(True=켜짐). docs/PLUGIN_MANAGER_SCENARIO.md."""
+        if not name:
+            return None
+        disabled = set(self.plugins.disabled)
+        on = (name in disabled) if on is None else bool(on)
+        if on:
+            disabled.discard(name)
+        else:
+            disabled.add(name)
+        self.plugins.set_disabled(disabled)
+        self._save_opts()
+        return name not in self.plugins.disabled
 
     def list_tab_layouts(self) -> list[str]:
         return sorted(self._load_slots().keys())

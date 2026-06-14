@@ -547,6 +547,8 @@ COMMANDS = [
     # capture-output 은 plugins/rec 로 이전(레지스트리 commands 로 병합).
     ("inactive-dim", "비활성 패널 흐리게 토글 [on|off]", "설정/기타"),
     ("set", "옵션 설정 (prefix/mouse/status-*/mode-keys 등)", "설정/기타"),
+    ("plugins", "플러그인 관리 — 설치된 플러그인 켜고/끄기(별칭 plugin-manager)",
+                "설정/기타"),
     ("show-options", "현재 옵션 보기", "설정/기타"),
     ("set-hook", "이벤트 훅 설정 (<event> <cmd>)", "설정/기타"),
     ("show-hooks", "훅 목록 보기", "설정/기타"),
@@ -788,6 +790,8 @@ i18n.register({
         "cmd.monitor-bell": "Bell monitoring [on|off]",
         "cmd.inactive-dim": "Toggle dimming of inactive panes [on|off]",
         "cmd.set": "Set option (prefix/mouse/status-*/mode-keys etc.)",
+        "cmd.plugins": "Manage plugins — enable/disable installed plugins "
+                       "(alias plugin-manager)",
         "cmd.show-options": "Show current options",
         "cmd.set-hook": "Set event hook (<event> <cmd>)",
         "cmd.show-hooks": "Show hook list",

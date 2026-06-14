@@ -39,7 +39,36 @@ class Registry:
     멤버는 선택적(덕 타이핑) — 없으면 빈 값으로 취급한다."""
 
     def __init__(self, plugins):
-        self.plugins = list(plugins)
+        self._all = list(plugins)        # 발견된 전체(팝업 표시·재활성용)
+        self.disabled = set()            # 비활성 플러그인 이름(런타임 토글, opts 영속)
+        self.plugins = list(self._all)   # 활성 부분집합 — 모든 훅 디스패치/명령 프로퍼티가
+        #                                  이걸 순회하므로, 비활성은 자동으로 빠진다.
+
+    def set_disabled(self, names):
+        """비활성 플러그인 이름 집합을 적용한다(플러그인 관리 팝업·opts 영속). self.plugins
+        를 활성 부분집합으로 다시 만들어, **모든** 훅 디스패치·명령/자동완성/메뉴 프로퍼티가
+        비활성 플러그인을 건너뛴다(코어 변경 없이 일괄). 서버 믹스인 메서드는 import 시
+        이미 합성됐으면 Server 에 남지만, 그 동작을 구동하는 훅(server_scan/server_pty_output
+        등)이 안 불려 무동작이 된다(런타임 비활성). 디렉토리 삭제(delete-to-disable)와 달리
+        가역적이다. docs/PLUGIN_MANAGER_SCENARIO.md."""
+        self.disabled = set(names or ())
+        self.plugins = [p for p in self._all
+                        if getattr(p, "name", "") not in self.disabled]
+
+    def default_disabled(self):
+        """`default_enabled = False` 를 선언한 플러그인 이름 집합 — 사용자 설정(opts 의
+        disabled_plugins 키)이 **없을 때**의 초기 비활성 집합(깃헙 배포 기본 OFF, 예: rec)."""
+        return {getattr(p, "name", "") for p in self._all
+                if not getattr(p, "default_enabled", True)}
+
+    def plugin_overview(self):
+        """플러그인 관리 팝업·진단용: 발견된 전체 플러그인의 (name, description, category,
+        enabled) 목록. enabled = 이름이 disabled 집합에 없음."""
+        return [(getattr(p, "name", "?"),
+                 getattr(p, "description", "") or "",
+                 getattr(p, "category", "") or "",
+                 getattr(p, "name", "") not in self.disabled)
+                for p in self._all]
 
     # ---- 명령 메타데이터(코어 COMMANDS/COMPLETIONS/COMMAND_NOARG 에 합쳐짐) ----
     @property

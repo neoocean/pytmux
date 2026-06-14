@@ -116,6 +116,9 @@ class ServerIOMixin:
             "sync": bool(win.sync) if win else False,
             "pane_title": win.active_pane.title if win and win.active_pane else "",
             "single_border": self.single_border,
+            # 플러그인 관리(PLUGIN_MANAGER_SCENARIO): 비활성 플러그인 이름 목록. 클라가
+            # 자기 레지스트리에 set_disabled 로 반영해 명령/훅을 거른다.
+            "disabled_plugins": sorted(self.plugins.disabled),
         }
         # REC capture/capture_path/capture_size 는 plugins/rec 의 server_status 훅이
         # 채운다(아래 plugins.server_status). 플러그인 부재 시 키가 빠진다.
@@ -548,6 +551,14 @@ class ServerIOMixin:
             # 원격 중첩 자동 승격 토글(NESTED_ATTACH ㉢) — 서버 내부 동작이라 클라
             # 렌더 변화 없음. value=None 이면 반전(클라 toggle).
             self.set_nest_auto_attach(msg.get("value"))
+        elif action == "set_plugin_enabled":
+            # 플러그인 관리 팝업 토글(PLUGIN_MANAGER_SCENARIO). disabled 갱신·영속 후
+            # 전 클라에 새 status(disabled_plugins) 방송 — 각 클라가 자기 레지스트리에
+            # 반영해 명령/훅이 즉시 빠지거나 돌아온다.
+            self.set_plugin_enabled(str(msg.get("name", "")), msg.get("on"))
+            self._broadcast_session(sess)
+            await self._send_full(client)
+            return
         elif action == "kill_window":
             self.kill_window(sess)
             if sess.name not in self.sessions:

@@ -1,6 +1,20 @@
-# 플러그인 관리 팝업 — 동작·설계 시나리오 (TODO)
+# 플러그인 관리 팝업 — 동작·설계 시나리오
 
-> **상태**: 🟡 **계획(미구현)**. 본 문서는 "설치된 플러그인 목록을 표시하고 각각을
+> **✅ 구현 완료(2026-06-14)**: `:plugins`(별칭 `plugin-manager`) 팝업으로 설치된 플러그인을
+> 나열·on/off 토글한다. 인프라: `Registry.set_disabled`(self.plugins=활성 부분집합 → 모든
+> 훅/명령 자동 필터)·`plugin_overview`·`default_disabled`; 서버 `set_plugin_enabled`(opts.json
+> top-level `disabled_plugins` 영속)·status `disabled_plugins` 전파; 클라가 status 로 받아
+> `set_disabled` 반영; `PluginManagerScreen`(Space/Enter 토글, 낙관적+status 확정). **619 green**
+> (`tests/test_plugin_manager.py` 6종). 구현이 §4~§9 와 다른 점은 각 절 끝에 표기.
+>
+> **REC 기본 OFF는 plugin-disable 이 아니라 capture-opt(§6 정정)**: 서버 믹스인 플러그인을
+> 시드-비활성하면 부팅 때 server_init 이 안 돌아 상태가 미설치되고 런타임 재활성이 재시작
+> 전까지 불완전해진다. 그래서 rec 는 `default_enabled` 를 쓰지 않고(=기본 활성), "깃헙 배포
+> OFF"는 capture 옵션 기본 False(CL 58771, F4)로 둔다 — 새 설치는 캡처 안 함(badge 없음)·
+> `capture-output` 으로 켤 수 있음. `default_disabled()`/`default_enabled` 메커니즘은 **클라
+> 전용/순수 플러그인**용으로 일반화돼 남는다(현재 사용 플러그인 없음 → 시드 빈 집합).
+
+> **상태**: 🟡 ~~계획(미구현)~~ → 위 ✅ 참조. 본 문서는 "설치된 플러그인 목록을 표시하고 각각을
 > 켜고/끄는" 관리 팝업의 설계 기준선이다. 구현 전 단계이며, 현행 플러그인 로더의
 > **delete-to-disable** 계약(디렉토리 삭제=기능 제거)을 **깨지 않고** 그 위에 **소프트
 > 토글(설정 기반 비활성)** 을 얹는 경로를 명세한다.
