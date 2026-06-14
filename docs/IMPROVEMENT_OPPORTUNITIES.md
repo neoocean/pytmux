@@ -414,7 +414,14 @@ rect 로 클램프 + 추출 시 그 열 범위만. **위험**: 낮음.
 실패 시 무조건 `\x02`. config `bind` 는 prefix-후-단일키만(`-n` root table 없음).
 **개선**: `M-`/`S-`/펑션키 파싱 + 잘못된 키 경고. **위험**: 낮음(조용한 무시 → 경고화).
 
-### [M] 2.6 줌 중 비활성 패널 winsize 정지로 reflow 깨짐 가능 — `model.py:827-831`, `serverio.py:29-55` (추정) — **보류(분석 후)**
+### [M] 2.6 줌 중 비활성 패널 winsize 정지로 reflow 깨짐 가능 — `model.py:827-831`, `serverio.py:29-55` (추정) — ✅ **해결(2026-06-14)**
+> **해결**: 권장 경로(content-rect 헬퍼 추출 → displayed/hidden 양쪽 적용)대로 구현.
+> `serverio._content_rect` 정적 헬퍼로 테두리/상태줄 차감 규칙을 추출(표시 루프와 공유,
+> 핫패스 동작 불변), `_layout_msg` 가 `win.zoomed` 일 때 `win._layout` 로 비줌 레이아웃을
+> 1회 계산해 **숨은 패널도 정상 분할 크기로 미리 resize** 한다(활성 패널 줌 표시용 full
+> rect 만 복구). 줌 중 창 축소 → 숨은 패널이 새 크기로 즉시 reflow → 줌 해제 시점의
+> 일괄 reflow 깨짐 제거. 부수효과: 숨은 패널 rect 가 실좌표를 유지해 줌 중 `select-pane-dir`
+> 정확도도 개선. 테스트 `test_zoom_resizes_hidden_panes`. (아래는 원 분석.)
 `compute_layout` 이 줌 시 활성 패널만 리스트에 넣어(`model.py:827-831`) `_layout_msg`
 가 그 한 패널만 `p.resize()` 한다 → 비활성 패널은 줌 진입 직전 크기를 유지한다.
 **검증(2026-06-06)**: 메커니즘은 사실이나 영향은 **좁다** — ① 줌 해제 시 전 패널

@@ -125,6 +125,14 @@ class ServerRemoteMixin:
         #  동작하는 설정을 깨거나 보안을 느슨하게 만들 수 있어 건드리지 않는다.)
         if not host or host.startswith("-") or any(c.isspace() for c in host):
             raise ConnectionError(f"잘못된 원격 호스트: {host!r}")
+        # S2 후속: 연합 허용목록이 설정돼 있으면(opt-in, opts.json `remote_allowed_hosts`)
+        # 정확히 일치하는 목적지만 허용한다 — 비신뢰 클라 입력이 데몬의 ssh egress 를
+        # 임의 호스트로 조종하지 못하게. 빈 목록(기본)은 현행대로 임의 host 허용.
+        allow = getattr(self, "remote_allowed_hosts", None) or []
+        if allow and host not in allow:
+            raise ConnectionError(
+                f"허용되지 않은 원격 호스트: {host!r} "
+                f"(opts.json remote_allowed_hosts 에 없음)")
         # BatchMode: 서버가 띄우는 ssh 는 TTY 가 없어 비밀번호를 못 묻는다 — 키
         # 인증 미설정이면 즉시 명확한 stderr(Permission denied)로 실패하게 한다.
         proc = await asyncio.create_subprocess_exec(

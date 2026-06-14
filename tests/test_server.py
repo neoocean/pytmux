@@ -34,6 +34,32 @@ async def test_pane_tree_ops():
         await teardown(srv, task, sock)
 
 
+async def test_zoom_resizes_hidden_panes():
+    # §2.6: 줌 중에는 활성 패널만 표시되지만, 숨은 패널도 정상 분할 크기로 미리
+    # 리사이즈돼야 한다 — 안 그러면 (줌 중 창 축소 + 숨은 패널 출력) 뒤 줌 해제
+    # 시점에 옛 크기→새 크기 reflow 가 한꺼번에 일어나 출력이 깨진다. 줌 상태에서
+    # _layout_msg 가 작은 창으로 와도 숨은 패널이 새 분할 크기로 줄어드는지 검증.
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        srv.split_pane(sess, "lr")          # 패널 2개(좌우)
+        srv._layout_msg(sess, 80, 24)        # 둘 다 80폭 분할로 리사이즈
+        hidden = next(p for p in win.panes() if p is not win.active_pane)
+        wide = hidden.cols
+        assert wide > 25, f"넓은 분할 기대치 미달: {wide}"
+        # 줌 후 더 작은 창으로 레이아웃 — 활성만 표시되지만 숨은 패널도 줄어야 함
+        srv.toggle_zoom(sess)
+        assert win.zoomed
+        srv._layout_msg(sess, 40, 24)
+        assert hidden.cols < 25, (
+            f"숨은 패널이 옛 크기로 정지(stale): {hidden.cols} (기대: <25)")
+        # 활성 패널은 줌 전체화면(40폭, single_border 기본 ON 이라 테두리 2 차감)
+        assert win.active_pane.cols > 30, win.active_pane.cols
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_panes_cache_invalidates_on_tree_change():
     # §4.6: Window.panes() 는 결과를 캐시하되 트리 수술 때마다 무효화해야 한다.
     # 캐시가 stale 이면 split 후 새 패널 누락, swap/rotate 후 순서 오류(이웃 계산

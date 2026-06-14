@@ -102,6 +102,19 @@ class Server(*_SERVER_BASES):
         # 원격 탭 전환. off=무 ack(원격은 현행 거부 폴백). 기본 ON, opts.json 영속.
         # 토글: 클라 명령/`pytmux cmd nest-auto-attach on|off`.
         self.nest_auto_attach = bool(_opts.get("nest_auto_attach", True))
+        # 연합 ssh egress 허용목록(S2 후속, 특권 설정). remote_attach/remote_new_window
+        # 의 host 는 cmd 프레임을 보낼 수 있는 클라가 정하는 **비신뢰** 문자열이라(이미
+        # 옵션 인젝션은 _remote_transport 에서 차단) 데몬의 ssh 목적지를 임의로 조종할
+        # 수 있다. 이 목록이 **비어 있지 않으면**(opt-in) 정확히 일치하는 host 만
+        # `ssh` 로 띄운다 — 연합 대상을 per-message 클라 입력이 아니라 관리자 특권
+        # 설정으로 취급한다. 빈 목록(기본)은 현행대로 임의 host 허용(무변경). 클라
+        # cmd 로는 못 바꾸고 opts.json(0600, 서버측)에서만 설정한다. endpoint(로컬 소켓
+        # 직결)에는 적용 안 함 — ssh egress 가 아니다. 문자열/리스트 모두 수용.
+        _allow = _opts.get("remote_allowed_hosts", [])
+        if isinstance(_allow, str):
+            _allow = [_allow]
+        self.remote_allowed_hosts = [str(h) for h in _allow
+                                     if isinstance(_allow, (list, tuple))]
         # 프롬프트 단위 클리어 모드(#9)의 ① 문서화 지시문. 패널 안 Claude 에게 보내는
         # 슬래시/지시문이며(pytmux 명령 아님), 무엇을 어디에 기록할지는 Claude 쪽
         # 프로젝트 관례(CLAUDE.md/메모리)에 맡긴다. opts.json 영속.

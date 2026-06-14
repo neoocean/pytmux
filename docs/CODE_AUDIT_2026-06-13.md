@@ -45,6 +45,13 @@
 > 명령을 실행한다. `--` 로 옵션 파싱을 끊고 선행 `-`/공백 host 를 거부해 차단했다.
 > host-key 정책은 사용자 ssh config/known_hosts 를 그대로 따른다(강제 변경은 동작 설정을
 > 깨거나 보안을 느슨하게 만들 수 있어 미적용).
+>
+> **S2 후속(2026-06-14, "특권 설정으로 취급" 권장 반영)**: opt-in 연합 허용목록
+> `remote_allowed_hosts`(opts.json, 0600 서버측) 추가 — **비어 있으면(기본) 현행 무변경**,
+> 설정되면 `_remote_transport` 가 정확히 일치하는 host 만 ssh 로 띄운다. 비신뢰 클라 cmd
+> 입력이 데몬 ssh egress 를 임의 호스트로 조종하지 못하게 잠그되, 클라 cmd 로는 못 바꾸는
+> 관리자 특권 설정으로 둔다(endpoint 로컬 직결엔 미적용). 테스트
+> `test_remote_allowed_hosts_allowlist`. host-key 강제 핀은 여전히 미적용(동작 설정 보존).
 
 ### 성능 (net-new, C1~C5·A·B 외)
 

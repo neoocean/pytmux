@@ -817,3 +817,46 @@ async def test_remote_transport_rejects_ssh_option_injection():
                 pass
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_remote_allowed_hosts_allowlist():
+    """S2 후속: remote_allowed_hosts 가 비어 있으면(기본) 임의 host 를 허용하고(옵션
+    인젝션 가드만), 설정되면 정확히 일치하는 목적지만 ssh 로 띄운다. 허용목록은 비신뢰
+    클라 입력이 아니라 서버측 특권 설정(opts.json)으로 데몬 ssh egress 를 잠근다."""
+    srv, task, sock = await server_only()
+    try:
+        # 기본(빈 목록): 허용목록 미적용 — 임의 host 는 ssh 핸드셰이크 단계까지 진행
+        # (subprocess 생성을 피하려고 create_subprocess_exec 를 가로채 거부 신호만 확인).
+        import pytmuxlib.serverremote as sr
+        srv.remote_allowed_hosts = []
+        spawned = []
+
+        async def fake_exec(*argv, **kw):
+            spawned.append(argv)
+            raise ConnectionError("spawn-reached")  # 핸드셰이크 진입 신호
+        monkey = asyncio.create_subprocess_exec
+        sr.asyncio.create_subprocess_exec = fake_exec
+        try:
+            try:
+                await srv._remote_transport(host="office1", endpoint=None)
+            except ConnectionError as e:
+                assert "spawn-reached" in str(e), str(e)
+            assert spawned and spawned[0][:2] == ("ssh", "-T"), spawned
+            # 허용목록 설정: 미등재 host 는 spawn 전에 거부, 등재 host 는 spawn 도달
+            srv.remote_allowed_hosts = ["office1", "user@box2"]
+            spawned.clear()
+            try:
+                await srv._remote_transport(host="evil", endpoint=None)
+                assert False, "기대: 미등재 host 거부"
+            except ConnectionError as e:
+                assert "허용되지 않은" in str(e), str(e)
+            assert not spawned, "미등재 host 가 ssh 를 띄웠다"
+            try:
+                await srv._remote_transport(host="office1", endpoint=None)
+            except ConnectionError as e:
+                assert "spawn-reached" in str(e), str(e)
+            assert spawned, "등재 host 가 거부됐다"
+        finally:
+            sr.asyncio.create_subprocess_exec = monkey
+    finally:
+        await teardown(srv, task, sock)

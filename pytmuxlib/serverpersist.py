@@ -406,6 +406,8 @@ class ServerPersistMixin:
                            "single_border": self.single_border,
                            "coalesce_repaints": self.coalesce_repaints,
                            "nest_auto_attach": self.nest_auto_attach,
+                           "remote_allowed_hosts":
+                               list(getattr(self, "remote_allowed_hosts", [])),
                            "prompt_clear_message": self.prompt_clear_message,
                            "auto_doc_clear": self.auto_doc_clear,
                            "auto_doc_clear_delay": self.auto_doc_clear_delay,

@@ -16,13 +16,27 @@ import time
 import traceback
 
 from . import ipc, version
-from .model import ClientConn, Session
+from .model import ClientConn, Pane, Session
 from .protocol import (FLUSH_HZ, MAX_H, MAX_W, MIN_H, MIN_W, PROTO_VERSION,
                        clamp_dim, frame_msg, read_msg, write_frames, write_msg)
 from .serverremote import _REMOTE_BLOCK_ACTIONS, _REMOTE_RELAY_ACTIONS
 
 
 class ServerIOMixin:
+    @staticmethod
+    def _content_rect(rect, bordered, border_status):
+        """패널 박스 rect(x,y,w,h) → (cx,cy,cw,ch, box, titled). 테두리/상태줄을
+        차감한 내용 영역을 돌려준다. box=테두리 좌표 [x,y,w,h] 또는 None,
+        titled=상태줄 타이틀바를 그릴지. 표시 루프와 줌 중 숨은 패널 리사이즈
+        (§2.6)가 같은 차감 규칙을 공유하도록 추출했다."""
+        x, y, w, h = rect
+        if bordered and w >= 3 and h >= 3:
+            # 박스 테두리(상/하/좌/우) 안쪽이 내용 영역
+            return x + 1, y + 1, w - 2, h - 2, [x, y, w, h], False
+        if border_status and h > 1:
+            return x, y + 1, w, h - 1, None, True
+        return x, y, w, h, None, False
+
     def _layout_msg(self, sess: Session, cols: int = None, rows: int = None):
         win = sess.active_window
         if not win:
@@ -31,24 +45,35 @@ class ServerIOMixin:
             cols, rows = self._session_size(sess)
         # 모든 패널 PTY 크기를 레이아웃에 맞춰 갱신
         panes, divs = win.compute_layout(0, 0, cols, rows)
+        if win.zoomed and isinstance(win.active_pane, Pane):
+            # 줌 중에는 활성 패널만 표시되지만(compute_layout 이 [active] 만 반환),
+            # 숨은 패널도 정상 분할 크기로 **미리** 리사이즈해 둔다 — 안 그러면
+            # (줌 중 창 리사이즈 + 숨은 패널 출력) 뒤 줌 해제 시점에야 옛 크기→새
+            # 크기 reflow 가 한꺼번에 일어나 이미 출력된 줄이 깨진다(§2.6). win._layout
+            # 은 모든 노드 rect 를 분할 좌표로 덮으므로(숨은 패널 select-pane-dir
+            # 정확도엔 오히려 이로움) 활성 패널의 줌 표시용 full rect 만 복구한다.
+            bg_panes = []
+            win._layout(win.root, 0, 0, cols, rows, bg_panes, [])
+            win.active_pane.rect = (0, 0, cols, rows)
+            bg_bordered = len(bg_panes) >= 2 or self.single_border
+            for p in bg_panes:
+                if p is win.active_pane:
+                    continue
+                _, _, cw, ch, _, _ = self._content_rect(
+                    p.rect, bg_bordered, win.border_status)
+                p.resize(cw, ch)
         # 패널이 둘 이상이면 각 패널을 테두리 박스로 감싼다(활성=파랑, 비활성=회색).
         # 패널이 하나뿐이면 single_border 옵션이 켜져 있을 때만 아웃라인을 그린다
         # (off 면 단일 패널이 화면 전체를 내용으로 사용 — 사용자 요청).
         bordered = len(panes) >= 2 or self.single_border
         pane_msgs, titlebars = [], []
         for p in panes:
-            x, y, w, h = p.rect
-            box = None
-            if bordered and w >= 3 and h >= 3:
-                # 박스 테두리(상/하/좌/우) 안쪽이 내용 영역
-                cx, cy, cw, ch = x + 1, y + 1, w - 2, h - 2
-                box = [x, y, w, h]
-            elif win.border_status and h > 1:
-                cx, cy, cw, ch = x, y + 1, w, h - 1
+            cx, cy, cw, ch, box, titled = self._content_rect(
+                p.rect, bordered, win.border_status)
+            if titled:
+                x, y, w, _h = p.rect
                 titlebars.append({"x": x, "y": y, "w": w, "title": p.title,
                                   "active": p is win.active_pane})
-            else:
-                cx, cy, cw, ch = x, y, w, h
             p.resize(cw, ch)
             p._mouse_sent = (p.mouse_track, p.mouse_sgr)
             pane_msgs.append({"id": p.id, "x": cx, "y": cy, "w": cw, "h": ch,
