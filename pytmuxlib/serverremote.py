@@ -65,6 +65,13 @@ _REMOTE_RELAY_ACTIONS = {
     "split", "kill_pane", "cycle_pane", "last_pane", "rotate",
     "swap_pane", "swap_pane_to", "select_layout", "cycle_layout",
     "set_sync", "set_pane_title", "respawn_pane",
+    # rename-tab/rename-pane(rename_window·set_pane_title): 원격 탭을 보는 중엔 그
+    # **원격** 탭/패널 이름이 바뀌어야 한다(사용자 보고 2026-06-17). rename_window 가
+    # 화이트리스트에 없어 보이지 않는 **로컬** 탭만 바꾸고 원격엔 안 먹던 버그(split 등
+    # 비릴레이 액션이 로컬 트리에 조용히 실행되던 §1.7-c 와 동형). set_pane_title 은
+    # 이미 위에 있다. 업스트림이 자기 active 탭/패널을 리네임하고 status/layout 으로
+    # 되돌아와 병합 탭바·패널 테두리에 반영된다.
+    "rename_window",
     # 활성 패널 단위 Claude 토글 — 원격 탭을 보는 중엔 그 **원격 패널**에 적용돼야 한다.
     # 안 그러면 로컬 세션의 활성 패널(딴 탭)에 켜져 "엉뚱한 탭에 AR" 버그가 난다
     # (사용자 보고 2026-06-15). 업스트림이 자기 활성 패널에 토글하고 그 상태가 status

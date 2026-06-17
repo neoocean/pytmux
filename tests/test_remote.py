@@ -783,6 +783,64 @@ async def test_remote_autoresume_relays_to_remote_pane():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_remote_rename_relays_to_remote_tab_and_pane():
+    """원격 탭을 보는 중 rename-tab(rename_window)·rename-pane(set_pane_title)는
+    **원격** 활성 탭/패널에 적용된다(릴레이) — rename_window 가 릴레이 화이트리스트에
+    없어 보이지 않는 **로컬** 탭만 바꾸고 원격엔 안 먹던 버그 수정(사용자 보고
+    2026-06-17). set_pane_title 은 이미 릴레이되지만 같은 보고 범위라 함께 가드."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    reader = writer = None
+    try:
+        sessB = srvB.ensure_default_session(80, 24)
+        sessA = srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        stm = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="merged status")
+        gidx = next(w["index"] for w in stm["windows"]
+                    if w["name"].startswith("⇄"))
+        localtab = sessA.active_tab
+        remotetab = sessB.active_tab
+        localp = sessA.active_window.active_pane
+        remotep = sessB.active_window.active_pane
+        # 원격 탭 진입
+        await write_msg(writer, {"t": "cmd", "action": "select_window",
+                                 "index": gidx})
+        await _read_until(reader, lambda m: m.get("t") == "layout",
+                          what="remote layout")
+        # rename-tab → 원격 활성 탭만 바뀜(로컬 탭 불변)
+        await write_msg(writer, {"t": "cmd", "action": "rename_window",
+                                 "name": "REMOTE_TAB"})
+        for _ in range(80):
+            if remotetab.name == "REMOTE_TAB":
+                break
+            await asyncio.sleep(0.05)
+        assert remotetab.name == "REMOTE_TAB", "원격 활성 탭에 rename 적용(릴레이)"
+        assert localtab.name != "REMOTE_TAB", "로컬 탭은 불변(엉뚱한 탭 rename 금지)"
+        # rename-pane → 원격 활성 패널만 바뀜(로컬 패널 불변)
+        await write_msg(writer, {"t": "cmd", "action": "set_pane_title",
+                                 "title": "REMOTE_PANE"})
+        for _ in range(80):
+            if remotep.title == "REMOTE_PANE":
+                break
+            await asyncio.sleep(0.05)
+        assert remotep.title == "REMOTE_PANE", "원격 활성 패널에 rename 적용(릴레이)"
+        assert localp.title != "REMOTE_PANE", "로컬 패널은 불변"
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
 async def test_remote_ncd_relays_to_remote_cwd():
     """원격 탭을 보는 중 ncd(request_nc_list)는 **원격** 머신의 cwd/디렉토리 트리를
     회신한다(릴레이) — 로컬 서버가 자기 fs 의 cwd 를 회신하던 '원격 보는데 로컬
