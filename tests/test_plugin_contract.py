@@ -94,6 +94,7 @@ async def test_contract_client_hooks_noop_without_plugin():
     """클라 런타임 훅(오버레이/틱/명령/메시지)이 전부 안전한 기본값을 돌려준다."""
     reg = _registry_without_claude()
     reg.client_overlay(None, None, 0, 0, None)      # no-op
+    reg.client_unload(None)                          # no-op(자원 정리 훅 부재 안전)
     assert reg.client_tick(None) is False
     assert reg.client_close_overlay(None, None) is False
     assert reg.client_overlay_key(None, None) is False

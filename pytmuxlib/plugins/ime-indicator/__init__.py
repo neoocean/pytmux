@@ -7,11 +7,15 @@
 (오직 이 플러그인의 훅이 getattr 로 읽음).
 
 상태 원천 2계층(§10-B 2026-06-11, docs/internal/IME_INSTANT_STATE_SCENARIO.md):
-① **OS 실측(macOS·Windows)** — 현재 IME 모드를 직접 질의(oskbd.py): macOS 는
-   HIToolbox TIS(호출당 ~1µs), Windows 는 포그라운드 창의 IME 변환모드를
-   `WM_IME_CONTROL` 로 질의(IME_CMODE_NATIVE=한글). 가능하면 이것이 권위값: 한/영
-   키로 모드만 바꿔도 폴링(0.05초, 첫 client_tick 에서 지연 설치)으로 **입력 없이
-   즉시** 배지가 따라온다.
+① **OS 실측(macOS·Windows)** — 가능하면 이것이 권위값(_ime_os). 한/영 키로 모드만
+   바꿔도 **입력 없이 즉시** 배지가 따라온다.
+   - **Windows**: 포그라운드 창의 IME 변환모드를 `WM_IME_CONTROL` 로 인프로세스
+     질의(IME_CMODE_NATIVE=한글), 0.05초 폴링(첫 client_tick 에서 지연 설치).
+   - **macOS**: HIToolbox TIS 는 장수명 프로세스에서 freeze 되므로(asyncio 만 돌고
+     CFRunLoop 미가동 → 변경 알림 미수신, 2026-06-17 확정) 인프로세스 폴링이 안 된다.
+     대신 첫 client_tick 에서 **감시 헬퍼 자식 프로세스**(`oskbd.spawn_watcher`)를
+     띄워, 그 헬퍼가 진짜 CFRunLoop 으로 입력소스 변경 알림을 받아 흘리는 줄을
+     0.05초마다 비차단 드레인한다(client_unload 에서 거둠). 상세는 oskbd.py docstring.
 ② **확정 입력 휴리스틱(폴백)** — 조합(preedit) 문자열은 앱이 아니라 OS 가 하드웨어
    커서 위치에 오버레이한다(docs/internal/IME_PREEDIT_CURSOR_SCENARIO.md). 앱에는 확정된
    글자만 도착하므로, OS 질의가 불가한 환경(ssh 원격 클라·리눅스·질의 실패)에선
@@ -57,6 +61,12 @@ class _ImeIndicatorPlugin:
         sid = oskbd.current_source_id()
         app._ime_os = sid is not None
         app._ime_os_timer = None
+        # macOS 입력소스 변경 감시 헬퍼 자식 프로세스(첫 client_tick 에서 지연 기동)와
+        # 그 stdout 누적 버퍼. macOS 는 장수명 프로세스에서 TIS 가 freeze 되므로
+        # 인프로세스 폴링 대신 이 헬퍼가 흘리는 줄을 읽는다(oskbd 모듈 docstring).
+        # Windows·폴백 경로에선 헬퍼가 없어(None) 종전 인프로세스 질의를 쓴다.
+        app._ime_watch = None
+        app._ime_buf = b""
         app.ime_state = ("한" if oskbd.is_korean(sid) else "EN") \
             if app._ime_os else "EN"
         # 배지가 첫 행에 차지한 칸 범위 (x0, x_end, y=0) 또는 None(미표시). 활성 패널
@@ -86,6 +96,8 @@ class _ImeIndicatorPlugin:
         if not getattr(app, "_ime_os", False):
             return False
         if getattr(app, "_ime_os_timer", None) is None:
+            # macOS: 변경 감시 헬퍼 1회 기동(비 macOS·실패 시 None → 인프로세스 폴링).
+            app._ime_watch = oskbd.spawn_watcher()
             si = getattr(app, "set_interval", None)
             app._ime_os_timer = (si(0.05, lambda: self._poll(app))
                                  if si else False)
@@ -93,19 +105,42 @@ class _ImeIndicatorPlugin:
         return False
 
     def _poll(self, app):
-        """OS 입력소스 1회 질의 → 상태 변화 시 배지 갱신. 일시 실패(None)는 직전
-        상태 유지(깜빡임 방지 — 다음 폴링에서 회복). _ime_os 가드: 타이머 설치 후
-        실측을 끈 경우(테스트의 폴백 강제 등) 잔존 타이머가 상태를 덮지 않게."""
+        """입력소스 상태를 갱신한다. macOS(감시 헬퍼 가동 시)는 헬퍼 stdout 에서 최신
+        줄을 비차단 드레인하고, 그 외(Windows·폴백)는 인프로세스 TIS/IMM 을 1회
+        질의한다. 새 정보 없음/일시 실패는 직전 상태 유지(깜빡임 방지). _ime_os 가드:
+        타이머 설치 후 실측을 끈 경우(테스트의 폴백 강제 등) 잔존 타이머가 상태를
+        덮지 않게."""
         if not getattr(app, "_ime_os", False):
             return
-        sid = oskbd.current_source_id()
-        if sid is None:
-            return
+        watch = getattr(app, "_ime_watch", None)
+        if watch is not None:
+            if watch.poll() is not None:       # 헬퍼 종료 → 직전 상태 유지
+                return
+            sid, app._ime_buf = oskbd.read_latest(
+                watch, getattr(app, "_ime_buf", b""))
+            if sid is None:                    # 새 변경 줄 없음
+                return
+        else:
+            sid = oskbd.current_source_id()
+            if sid is None:
+                return
         new = "한" if oskbd.is_korean(sid) else "EN"
         if new != getattr(app, "ime_state", "EN"):
             app.ime_state = new
             if getattr(app, "ime_show", False):
                 app._composite()
+
+    def client_unload(self, app):
+        """클라이언트 종료 시 감시 헬퍼 자식 프로세스를 정리한다(attach_client 의 짝).
+        헬퍼는 stdin EOF 로도 자가 종료하지만, 정상 종료 경로에선 즉시 거둔다."""
+        watch = getattr(app, "_ime_watch", None)
+        if watch is None:
+            return
+        app._ime_watch = None
+        try:
+            watch.terminate()
+        except Exception:
+            pass
 
     def client_key(self, app, event):
         """normal 모드에서 패널로 보낼 확정 키 입력 1건을 관찰해 한/영 상태를 추정한다

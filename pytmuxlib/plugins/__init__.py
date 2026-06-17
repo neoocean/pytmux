@@ -130,6 +130,19 @@ class Registry:
             if fn is not None:
                 fn(app)
 
+    def client_unload(self, app):
+        """클라이언트 종료(on_unmount) 시 1회 — attach_client 의 짝. 플러그인이 띄운
+        자식 프로세스/타이머 등 인스턴스 자원을 정리하게 한다(ime-indicator 의 입력소스
+        감시 헬퍼 종료 등). 부재 시 no-op(delete-to-disable). 종료 경로라 어떤 플러그인의
+        실패도 다른 플러그인 정리를 막지 않게 개별 보호한다."""
+        for p in self.plugins:
+            fn = getattr(p, "client_unload", None)
+            if fn is not None:
+                try:
+                    fn(app)
+                except Exception:
+                    pass
+
     def handle_command(self, app, c, args):
         """명령 프롬프트의 명령 `c` 를 처리한 플러그인이 있으면 True."""
         for p in self.plugins:

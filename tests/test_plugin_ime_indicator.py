@@ -236,6 +236,11 @@ async def test_client_tick_lazily_installs_fast_timer_once():
     앱이 안 돌아 set_interval 불가). set_interval 이 없는 환경(테스트 더미)은 False
     마킹으로 재시도하지 않는다."""
     orig = _stub_source("com.apple.keylayout.ABC")
+    # 인프로세스 폴링(Windows·폴백) 경로 검증 — macOS 감시 헬퍼 spawn 은 막아
+    # 결정성 보장(darwin 에서 실제 자식 프로세스가 뜨지 않게). 헬퍼 드레인 경로는
+    # test_macos_watcher_drain_updates_state 가 별도로 가드한다.
+    orig_spawn = _oskbd.spawn_watcher
+    _oskbd.spawn_watcher = lambda: None
     try:
         calls = []
 
@@ -263,6 +268,104 @@ async def test_client_tick_lazily_installs_fast_timer_once():
         assert app2.ime_state == "한"
     finally:
         _oskbd.current_source_id = orig
+        _oskbd.spawn_watcher = orig_spawn
+
+
+# ---- 3.6) macOS 감시 헬퍼 경로(인프로세스 TIS freeze 우회) ----
+async def test_macos_watcher_drain_updates_state():
+    """감시 헬퍼가 살아있으면(_ime_watch) _poll 은 인프로세스 질의 대신 헬퍼 stdout
+    (read_latest)에서 최신 소스 ID 를 드레인해 배지를 갱신한다. 새 줄 없음(None)은
+    직전 상태 유지, 헬퍼 종료(poll()!=None)면 드레인하지 않고 유지한다."""
+    class _FakeProc:
+        def __init__(self):
+            self._rc = None
+
+        def poll(self):
+            return self._rc
+
+    app = _FakeApp()
+    app.ime_state = "EN"
+    app._ime_os = True
+    app._ime_buf = b""
+    app._ime_watch = _FakeProc()
+    queue = [("com.apple.inputmethod.Korean.2SetKorean", b""),
+             (None, b""),
+             ("com.apple.keylayout.ABC", b"")]
+    orig_rl = _oskbd.read_latest
+    orig_cur = _oskbd.current_source_id
+    _oskbd.read_latest = lambda proc, buf: queue.pop(0)
+    # 헬퍼 경로에선 인프로세스 질의를 절대 쓰면 안 된다(freeze 값 역류 방지).
+    def _boom():
+        raise AssertionError("watcher 경로는 current_source_id 를 쓰지 않아야 한다")
+    _oskbd.current_source_id = _boom
+    try:
+        PLUGIN._poll(app)                       # 한글 줄 → '한'
+        assert app.ime_state == "한" and app.composited == 1
+        PLUGIN._poll(app)                       # None → 유지(재합성 없음)
+        assert app.ime_state == "한" and app.composited == 1
+        PLUGIN._poll(app)                       # ABC → 'EN'
+        assert app.ime_state == "EN" and app.composited == 2
+        # 헬퍼 종료 → 드레인 안 함, 직전 상태 유지.
+        app._ime_watch._rc = 0
+        queue.append(("com.apple.inputmethod.Korean.2SetKorean", b""))
+        PLUGIN._poll(app)
+        assert app.ime_state == "EN" and app.composited == 2
+        assert len(queue) == 1, "헬퍼 종료 후엔 read_latest 를 부르지 않아야 한다"
+    finally:
+        _oskbd.read_latest = orig_rl
+        _oskbd.current_source_id = orig_cur
+
+
+async def test_read_latest_parses_latest_complete_line_and_carries_partial():
+    """read_latest: 가용 바이트를 비차단으로 모두 읽어 **마지막 완성 줄**의 소스 ID 와
+    미완성 잔여 버퍼를 돌린다(한 틱에 변경이 여러 줄 쌓여도 최신만, 중간 깜빡임 방지).
+    완성 줄이 없으면 (None, 잔여)."""
+    import os
+    import fcntl
+
+    r, w = os.pipe()
+    fl = fcntl.fcntl(r, fcntl.F_GETFL)
+    fcntl.fcntl(r, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
+    class _Proc:
+        stdout = type("S", (), {"fileno": staticmethod(lambda: r)})()
+
+    proc = _Proc()
+    try:
+        os.write(w, b"com.apple.keylayout.ABC\n"
+                    b"com.apple.inputmethod.Korean.2SetKorean\npart")
+        sid, buf = _oskbd.read_latest(proc, b"")
+        assert sid == "com.apple.inputmethod.Korean.2SetKorean", sid
+        assert buf == b"part", buf                      # 미완성 조각 carry
+        # 새 데이터 없으면 None + 잔여 유지(완성 줄 없음).
+        sid2, buf2 = _oskbd.read_latest(proc, buf)
+        assert sid2 is None and buf2 == b"part", (sid2, buf2)
+        # 잔여에 이어붙어 완성되면 그 줄을 돌린다.
+        os.write(w, b"ner\ncom.apple.keylayout.ABC\n")
+        sid3, buf3 = _oskbd.read_latest(proc, buf2)
+        assert sid3 == "com.apple.keylayout.ABC" and buf3 == b"", (sid3, buf3)
+    finally:
+        os.close(r)
+        os.close(w)
+
+
+async def test_client_unload_terminates_watcher():
+    """client_unload 가 감시 헬퍼 자식 프로세스를 종료(terminate)하고 핸들을 비운다."""
+    class _FakeProc:
+        def __init__(self):
+            self.terminated = False
+
+        def terminate(self):
+            self.terminated = True
+
+    app = _FakeApp()
+    proc = _FakeProc()
+    app._ime_watch = proc
+    PLUGIN.client_unload(app)
+    assert proc.terminated is True
+    assert app._ime_watch is None
+    # 헬퍼가 없으면 no-op(예외 없음).
+    PLUGIN.client_unload(app)
 
 
 # ---- 4) 계약(delete-to-disable) ----

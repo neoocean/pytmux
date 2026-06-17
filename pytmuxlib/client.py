@@ -2444,6 +2444,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 마운트 시 끈 대체 스크롤 모드(1007)를 복원해 터미널을 원상태로 둔다.
             if getattr(self, "disable_alt_scroll", False):
                 self._term_write("\x1b[?1007h")
+            # attach_client 의 짝 — 플러그인이 띄운 인스턴스 자원(예: ime-indicator
+            # 입력소스 감시 헬퍼 프로세스)을 종료 시 정리한다(없으면 no-op).
+            self.plugins.client_unload(self)
 
         def _tabdrop_at(self, cx, cy):
             """탭을 끌어 내린 콘텐츠 좌표(cx,cy)의 패널과, 커서가 그 패널의 어느 쪽에
