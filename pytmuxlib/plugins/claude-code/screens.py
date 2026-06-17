@@ -36,7 +36,7 @@ i18n.register({
         "시간", "시", "일", "주", "월", "계정", "계", "패널", "패", "세", "정렬", "정",
         "시나리오", "대사", "한도", "기간", "보기", "조회", "토큰 사용량",
         "구간", "실측(세션 5h)", "추정Σ", "항목", "토큰", "비율",
-        "세션", "토큰순", "시간순",
+        "세션", "토큰순", "시간순", "옵션",
         # token-log: 안내/대사
         "한도(/usage): [u] 눌러 조회", "(기록된 토큰 사용량이 없습니다)",
         "토큰 대사 · 실측Δ% vs 추정Σ", "/usage 조회 중… (~수초)",
@@ -66,6 +66,7 @@ i18n.register({
         "구간": "Span", "실측(세션 5h)": "Measured (session 5h)", "추정Σ": "Est Σ",
         "항목": "Item", "토큰": "Tokens", "비율": "Ratio",
         "세션": "Session", "토큰순": "by tokens", "시간순": "by time",
+        "옵션": "Options",
         "한도(/usage): [u] 눌러 조회": "Limit (/usage): press [u] to query",
         "(기록된 토큰 사용량이 없습니다)": "(no recorded token usage)",
         "토큰 대사 · 실측Δ% vs 추정Σ": "Token reconcile · measured Δ% vs est Σ",
@@ -472,6 +473,7 @@ class PermModeScreen(ModalScreen):
 from . import usagelog
 from .claude import parse_reset_ts
 from pytmuxlib.clientutil import (_char_cells, bar, bar_floating,
+                                  bar_floating_segments,
                                   format_option_row, _CLOCK_FONT)
 from pytmuxlib.clientscreens import usage_bar_lines
 
@@ -497,17 +499,20 @@ class TokenLogScreen(ModalScreen):
     #tklogtitle { width: 1fr; height: 1; color: $accent; text-style: bold; }
     #tklogclose { width: 5; height: 1; content-align: center middle;
                   background: $error; color: $text; text-style: bold; }
-    /* 버튼 행: 역할(위계)별 외곽선 그룹(기간/보기/조회)을 가로로 나란히. */
-    #tktabs { width: 100%; height: auto; align-horizontal: left; }
-    /* 같은 위계 버튼을 한 외곽선 안에 묶는 그룹 박스. 제목(기간/보기/조회)을
-       왼쪽 윗변에 옅게 달아 역할을 표시한다(높이=테두리2+버튼1=3행). */
-    .tkgroup { width: auto; height: 3; border: round $primary;
-               border-title-color: $text-muted; border-title-align: left;
-               padding: 0 1; margin: 0 1 0 0; }
+    /* 상단 2단 구조(§7.1·§7.2): ①뷰 탭 1줄(#tktabs) — 상호배타 뷰만 같은 모양의
+       가로 탭으로 ②활성 탭의 보조옵션 1줄(#tksub) — 그 탭에서만 작동하는 옵션을
+       아래로. 예전엔 기간/보기/조회 외곽선 그룹 3개에 탭과 필터가 섞여 위계가
+       구분되지 않았다(사용자 보고). */
+    #tktabs { width: 100%; height: 1; align-horizontal: left; }
     #tktabs Label { height: 1; padding: 0 1; margin: 0 1 0 0; }
-    .tkbtab { background: $surface; color: $text-muted; }
-    .tkbtab-active { background: $accent; color: $text; text-style: bold; }
-    .tkbbtn { background: $primary-darken-2; color: $text; }
+    /* 보조옵션 줄: 활성 탭(기간/세션)의 입도·정렬을 살짝 들여써 상위 탭과 구분. */
+    #tksub { width: 100%; height: 1; align-horizontal: left; padding: 0 0 0 2; }
+    #tksub Label { height: 1; padding: 0 1; margin: 0 1 0 0; }
+    #tksub_period { width: auto; height: 1; }
+    #tksublead { color: $text-muted; padding: 0 1 0 0; margin: 0; }
+    .tkbtab { background: $surface; color: $text-muted; }       /* 뷰 탭·옵션(비활성) */
+    .tkbtab-active { background: $accent; color: $text; text-style: bold; } /* 활성 */
+    .tkbbtn { background: $primary-darken-2; color: $text; }     /* 액션 버튼(뷰 아님) */
     /* 스코프/한도(위)·키 안내(아래)는 옅게 1~몇 줄, 표가 남는 높이를 채운다. */
     #tktop { width: 100%; height: auto; color: $text-muted; }
     #tkhint { width: 100%; height: 1; color: $text-muted; }
@@ -520,6 +525,7 @@ class TokenLogScreen(ModalScreen):
                    "tab_week": "week", "tab_month": "month"}
     # 탭 라벨(넓은 폭, 좁은 폭). 좁으면 한 글자로 줄여 모바일에서 탭 줄이 안 넘치게(P6).
     _TAB_LABELS = {
+        "tab_period": ("기간", "기"),
         "tab_hour": ("시간", "시"), "tab_day": ("일", "일"),
         "tab_week": ("주", "주"), "tab_month": ("월", "월"),
         "tab_acct": ("계정", "계"), "tab_panel": ("세션", "세"),
@@ -619,11 +625,32 @@ class TokenLogScreen(ModalScreen):
                 # markup=False: "[x]" 가 마크업 태그로 사라지지 않게(배경색만
                 # 남고 X 가 안 보이던 버그).
                 yield Label("[x]", id="tklogclose", markup=False)  # 닫기 버튼
-            # 마우스로 누르는 버튼 행. 역할(위계)별로 외곽선 그룹에 묶는다(사용자
-            # 요청): ①기간(라디오: 시간/일/주/월) ②보기(필터/토글: 계정/패널/정렬)
-            # ③조회(동작: /usage·시나리오). 같은 위계 버튼은 한 외곽선 안에 모인다.
+            # 상위 = 상호배타 **뷰 탭**(§7.1·§7.2): 같은 모양의 가로 탭 한 줄. 활성
+            # 탭만 하이라이트. 끝의 /usage·시나리오는 뷰가 아니라 **액션**이라 다른
+            # 색(.tkbbtn)으로 구분한다.
             with Horizontal(id="tktabs"):
-                with Horizontal(id="tkgrp_period", classes="tkgroup"):
+                yield Label("기간", id="tab_period", classes="tkbtab",
+                            markup=False)
+                yield Label("계정", id="tab_acct", classes="tkbtab",
+                            markup=False)
+                yield Label("세션", id="tab_panel", classes="tkbtab",
+                            markup=False)
+                yield Label("한도", id="tab_limit", classes="tkbtab",
+                            markup=False)
+                yield Label("대사", id="tab_recon", classes="tkbtab",
+                            markup=False)
+                yield Label("경고", id="tab_warn", classes="tkbtab",
+                            markup=False)
+                yield Label("/usage", id="tab_usage", classes="tkbbtn",
+                            markup=False)
+                yield Label("시나리오", id="tab_saver", classes="tkbbtn",
+                            markup=False)
+            # 보조옵션 줄: **활성 탭에서만 작동하는 옵션**을 탭 하위로(§7.2). 기간 뷰=
+            # 입도(시간/일/주/월)+정렬, 세션 뷰=정렬. 그 외(계정/한도/대사/경고)엔
+            # 숨긴다(_sync_tabs 가 display 제어). 계정 필터는 'a' 키로 순환(기간/세션).
+            with Horizontal(id="tksub"):
+                yield Label("", id="tksublead", markup=False)
+                with Horizontal(id="tksub_period"):
                     yield Label("시간", id="tab_hour", classes="tkbtab",
                                 markup=False)
                     yield Label("일", id="tab_day", classes="tkbtab",
@@ -632,24 +659,8 @@ class TokenLogScreen(ModalScreen):
                                 markup=False)
                     yield Label("월", id="tab_month", classes="tkbtab",
                                 markup=False)
-                with Horizontal(id="tkgrp_view", classes="tkgroup"):
-                    yield Label("계정", id="tab_acct", classes="tkbtab",
-                                markup=False)
-                    yield Label("패널", id="tab_panel", classes="tkbtab",
-                                markup=False)
-                    yield Label("정렬", id="tab_order", classes="tkbtab",
-                                markup=False)
-                with Horizontal(id="tkgrp_query", classes="tkgroup"):
-                    yield Label("한도", id="tab_limit", classes="tkbtab",
-                                markup=False)
-                    yield Label("/usage", id="tab_usage", classes="tkbbtn",
-                                markup=False)
-                    yield Label("시나리오", id="tab_saver", classes="tkbbtn",
-                                markup=False)
-                    yield Label("대사", id="tab_recon", classes="tkbtab",
-                                markup=False)
-                    yield Label("경고", id="tab_warn", classes="tkbtab",
-                                markup=False)
+                yield Label("정렬", id="tab_order", classes="tkbtab",
+                            markup=False)
             yield Static("", id="tktop", markup=False)
             table = DataTable(id="tktable", zebra_stripes=True,
                               cursor_type="row")
@@ -662,14 +673,6 @@ class TokenLogScreen(ModalScreen):
         # 한다(매번 열 때 숨은 claude 기동은 과함) — 마지막 결과를 보여주고, 갱신은
         # [/usage] 버튼/`claude-usage` 명령으로 명시 트리거한다.
         self.app._token_log_screen = self
-        # 역할별 외곽선 그룹 제목(위계 표시). compose 의 as-캡처 대신 관례대로
-        # 마운트 후 위젯 참조로 설정한다.
-        for gid, title in (("#tkgrp_period", "기간"), ("#tkgrp_view", "보기"),
-                           ("#tkgrp_query", "조회")):
-            try:
-                self.query_one(gid, Horizontal).border_title = i18n.t(title)
-            except Exception:
-                pass
         await self._refresh()
         self.query_one(DataTable).focus()
         # 한도 탭의 카운트다운 시계를 매 초 갱신한다(usage-view 통합, 2026-06-17).
@@ -759,8 +762,20 @@ class TokenLogScreen(ModalScreen):
                                 left=self._fmt_left(ts - now)))
         return [" · ".join(parts)] if parts else []
 
+    def _active_tab(self):
+        """현재 활성 **상위 뷰 탭** — limit/recon/warn 오버레이가 우선, 아니면 _view.
+        §7.1: 단일 '활성 탭' 개념으로 통합해 한도/경고/대사 진입 시 기간 라디오가
+        함께 강조되던 충돌을 없애고, 어느 탭이 활성인지 한 곳에서 판정한다."""
+        if self._limit_mode:
+            return "limit"
+        if self._recon_mode:
+            return "recon"
+        if self._warn_mode:
+            return "warn"
+        return self._view   # "time" | "account" | "session"
+
     def _sync_tabs(self):
-        """탭 라벨(폭 반응형)·활성 버킷·활성 그룹차원([패널])·정렬([정렬]) 강조."""
+        """상위 뷰 탭 라벨·활성 하이라이트(§7.1) + 활성 탭의 보조옵션 줄 표시(§7.2)."""
         try:
             narrow = self.app.size.width < 64
         except Exception:
@@ -771,30 +786,44 @@ class TokenLogScreen(ModalScreen):
                     i18n.t(short) if narrow else i18n.t(full))
             except Exception:
                 pass
-        for tid, bucket in self._TAB_BUCKET.items():
+        active = self._active_tab()
+        # 상위 뷰 탭 하이라이트(액션 /usage·시나리오는 상태가 없어 강조 안 함).
+        for tid, name in (("tab_period", "time"), ("tab_acct", "account"),
+                          ("tab_panel", "session"), ("tab_limit", "limit"),
+                          ("tab_recon", "recon"), ("tab_warn", "warn")):
             try:
-                lab = self.query_one("#" + tid, Label)
+                self.query_one("#" + tid, Label).set_class(active == name,
+                                                           "tkbtab-active")
             except Exception:
-                continue
-            # 기간 탭은 기간 뷰일 때만 라디오 강조(계정/세션 뷰에선 비활성 표시).
-            lab.set_class(self._view == "time" and bucket == self._bucket,
-                          "tkbtab-active")
-        # 보기 그룹: [계정]=계정 뷰, [세션]=세션 뷰, [정렬]=토큰순일 때 강조.
+                pass
+        # 보조옵션 줄: 기간/세션 뷰에서만 보인다(계정/한도/대사/경고엔 옵션 없음 →
+        # 줄 자체를 숨겨 빈 줄이 안 남게). 기간 뷰=입도+정렬, 세션 뷰=정렬.
+        show_sub = active in ("time", "session")
         try:
-            self.query_one("#tab_acct", Label).set_class(
-                self._view == "account", "tkbtab-active")
-            self.query_one("#tab_panel", Label).set_class(
-                self._view == "session", "tkbtab-active")
-            self.query_one("#tab_order", Label).set_class(
-                self._order == "tokens", "tkbtab-active")
-            self.query_one("#tab_recon", Label).set_class(
-                self._recon_mode, "tkbtab-active")
-            self.query_one("#tab_limit", Label).set_class(
-                self._limit_mode, "tkbtab-active")
-            self.query_one("#tab_warn", Label).set_class(
-                self._warn_mode, "tkbtab-active")
+            self.query_one("#tksub").display = show_sub
         except Exception:
             pass
+        if show_sub:
+            try:
+                self.query_one("#tksub_period").display = (active == "time")
+            except Exception:
+                pass
+            for tid, bucket in self._TAB_BUCKET.items():
+                try:
+                    self.query_one("#" + tid, Label).set_class(
+                        active == "time" and bucket == self._bucket,
+                        "tkbtab-active")
+                except Exception:
+                    pass
+            try:
+                self.query_one("#tab_order", Label).set_class(
+                    self._order == "tokens", "tkbtab-active")
+            except Exception:
+                pass
+            try:
+                self.query_one("#tksublead", Label).update(i18n.t("옵션"))
+            except Exception:
+                pass
 
     def _metrics(self):
         """현재 폭 티어로 (라벨 셀폭, 막대 칸수)를 정한다(반응형). 막대 칸수는
@@ -879,22 +908,28 @@ class TokenLogScreen(ModalScreen):
     def _lim5h_cell(self, hour_key, cells=0):
         """hour 버킷의 **세션 5h 한도 누적%**(권위 /usage)를 **계단식 가로 막대**로(요청
         2026-06-17). 막대는 직전 시각이 끝난 위치(start)에서 시작해 이번 누적%(end)까지
-        채우므로(`bar_floating(start, end, 100, cells)`), 5h 창에 흩어진 사용이 시각을
-        따라 오른쪽으로 쌓이는 계단이 되고 창이 리셋되면 다시 0 부터 시작한다(구간 계산은
-        `_hourly_spans`). 분모는 **항상 100%(5h 한도)** 라 시각 간 절대 점유를 바로 비교할
-        수 있다. % 숫자(누적값)는 막대 **앞에** 둬 좁아 막대가 잘려도 항상 보이게 한다.
-        cells<=0(아주 좁은 폭)이면 % 만. 데이터 없으면 '·'. ≥80=빨강·≥50=노랑·굵게로
-        무거운 시각을 눈에 띄게(상태줄 한도 배지와 같은 임계). 키는 hourly_pct 와 조인."""
+        채우고(`bar_floating_segments`), 그 **앞쪽 [0, start) 은 같은 색의 연한 톤(dim)**
+        으로 채워 이 시각의 누적이 어디서 이어졌는지 한눈에 보이게 한다(요청 2026-06-17).
+        5h 창에 흩어진 사용이 시각을 따라 오른쪽으로 쌓이는 계단이 되고 창이 리셋되면 다시
+        0 부터 시작한다(구간 계산은 `_hourly_spans`). 분모는 **항상 100%(5h 한도)** 라 시각
+        간 절대 점유를 바로 비교할 수 있다. % 숫자(누적값)는 막대 **앞에** 둬 좁아 막대가
+        잘려도 항상 보이게 한다. cells<=0(아주 좁은 폭)이면 % 만. 데이터 없으면 '·'.
+        ≥80=빨강·≥50=노랑·굵게로 무거운 시각을 눈에 띄게(상태줄 한도 배지와 같은 임계).
+        키는 hourly_pct 와 조인."""
         span = self._hourly_span.get(hour_key) if hour_key else None
         if span is None:
             return Text("·", justify="right", style="dim")
         start, pct = span
-        style = "bold red" if pct >= 80 else "bold yellow" if pct >= 50 \
-            else "green"
+        color = "red" if pct >= 80 else "yellow" if pct >= 50 else "green"
+        style = f"bold {color}" if pct >= 50 else color
         if cells <= 0:
             return Text(f"{pct:>3}%", justify="right", style=style)
-        return Text(f"{pct:>3}% {bar_floating(start, pct, 100, cells)}",
-                    style=style)
+        lead, fill = bar_floating_segments(start, pct, 100, cells)
+        t = Text(f"{pct:>3}% ", style=style)
+        if lead:                       # 선행 [0,start) — 같은 색 연한 톤으로 채움
+            t.append("█" * lead, style=f"{color} dim")
+        t.append(fill, style=style)
+        return t
 
     def _refresh_recon(self, table):
         """[대사] 뷰(S6 T2): 연속 실측 스냅샷 구간마다 실측 Δ%(세션 5h)와 그 구간의
@@ -1216,6 +1251,13 @@ class TokenLogScreen(ModalScreen):
         if wid == "tklogclose":
             event.stop()
             self.dismiss(None)
+        elif wid == "tab_period":
+            event.stop()
+            # 기간(시간 버킷) 뷰로 전환 — 입도/정렬은 하위 보조옵션 줄에서 고른다(§7.2).
+            # 한도/대사/경고 등 어느 탭에서든 클릭하면 기간 뷰로 복귀(§7.1).
+            self._exit_body_modes()
+            self._view = "time"
+            self.run_worker(self._refresh())
         elif wid in self._TAB_BUCKET:
             event.stop()
             # 기간 탭: 기간 뷰로 전환하며 버킷 선택(계정/세션/대사/한도 뷰에서도 한 번에).

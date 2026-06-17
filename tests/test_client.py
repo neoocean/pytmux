@@ -1330,6 +1330,53 @@ async def test_token_log_limit_view_toggle():
     await _with_app(body)
 
 
+async def test_token_log_tab_subrow_and_limit_return():
+    """§7.1·§7.2: 상위 뷰 탭 1줄 + 활성 탭 보조옵션 하위줄. 보조옵션 줄은 기간/세션
+    뷰에서만 보이고(입도 그룹은 기간 뷰만), 한도/계정/대사/경고 뷰에선 숨는다. 한도
+    뷰에서 기간 입도가 강조되지 않으며(§7.1), 기간 탭 클릭으로 한도에서 복귀된다."""
+    from textual.widgets import Label
+    async def body(app, pilot, srv):
+        recs = [{"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
+                 "account": "me@x.org", "tokens": 1500}]
+        app._want_token_log = True
+        app._dispatch({"t": "token_log", "records": recs})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "TokenLogScreen"
+        # 기간(time) 뷰: 보조옵션 줄·입도 그룹 보임, 기간 탭 활성.
+        assert scr._active_tab() == "time"
+        assert scr.query_one("#tksub").display is True
+        assert scr.query_one("#tksub_period").display is True
+        assert scr.query_one("#tab_period", Label).has_class("tkbtab-active")
+        # 계정 뷰: 보조옵션 줄 숨김(옵션 없음), 계정 탭 활성.
+        await pilot.press("c")
+        await pilot.pause(0.1)
+        assert scr._active_tab() == "account"
+        assert scr.query_one("#tksub").display is False
+        assert scr.query_one("#tab_acct", Label).has_class("tkbtab-active")
+        # 세션 뷰: 보조옵션 줄 보이되 입도 그룹은 숨김(정렬만 해당).
+        await pilot.press("p")
+        await pilot.pause(0.1)
+        assert scr.query_one("#tksub").display is True
+        assert scr.query_one("#tksub_period").display is False
+        # 한도 뷰: 보조옵션 줄 숨김 + 한도 탭만 활성, 기간 입도/탭은 강조 안 됨(§7.1).
+        await pilot.press("l")
+        await pilot.pause(0.1)
+        assert scr._active_tab() == "limit"
+        assert scr.query_one("#tab_limit", Label).has_class("tkbtab-active")
+        assert not scr.query_one("#tab_period", Label).has_class("tkbtab-active")
+        assert not scr.query_one("#tab_hour", Label).has_class("tkbtab-active")
+        assert scr.query_one("#tksub").display is False
+        # 한도에서 기간 탭 클릭 → 기간 뷰 복귀(§7.1 핵심: 복귀 동선 명확).
+        await pilot.click("#tab_period")
+        await pilot.pause(0.1)
+        assert not scr._limit_mode and scr._active_tab() == "time"
+        assert scr.query_one("#tksub").display is True
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+    await _with_app(body)
+
+
 async def test_token_log_lifetime_total_from_server_agg():
     """Phase B: 서버가 보낸 total_all(전체 이력 합, SQL 집계)이 받은 레코드 cap 합보다
     크면, Σ 는 전체 이력 합을 보이고 표시 레코드 합을 병기한다(과소표시 방지)."""
