@@ -307,12 +307,15 @@ def textual_key_to_tmux(key: str) -> str | None:
 
 
 def config_path_for_write(path: str | None = None) -> str:
-    """쓰기 대상 config 파일 경로를 정한다. load_config 와 같은 후보 순서로 기존
-    파일을 찾고, 없으면 $XDG_CONFIG_HOME/pytmux/config(또는 ~/.config/pytmux/config)
-    를 기본 생성 경로로 한다(부모 디렉토리는 호출부가 set_config_option 에서 생성)."""
-    candidates = []
+    """쓰기 대상 config 파일 경로를 정한다. 명시 `path` 가 주어지면 **무조건 그걸**
+    쓴다(권위 — 아직 없는 경로여도 set_config_option 이 만든다. 후보 스캔으로 덮으면
+    기존 기본 config 를 엉뚱하게 덮어쓰는 버그). path 가 None 일 때만 load_config 와
+    같은 후보 순서로 기존 파일을 찾고, 없으면 $XDG_CONFIG_HOME/pytmux/config(또는
+    ~/.config/pytmux/config)를 기본 생성 경로로 한다(부모 디렉토리는 호출부가
+    set_config_option 에서 생성)."""
     if path:
-        candidates.append(path)
+        return path
+    candidates = []
     if os.environ.get("PYTMUX_CONFIG"):
         candidates.append(os.environ["PYTMUX_CONFIG"])
     xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
@@ -320,7 +323,7 @@ def config_path_for_write(path: str | None = None) -> str:
     candidates.append(default_path)
     candidates.append(os.path.expanduser("~/.pytmux.conf"))
     existing = next((c for c in candidates if c and os.path.isfile(c)), None)
-    return existing or (path or default_path)
+    return existing or default_path
 
 
 def set_config_option(opt: str, value: str, path: str | None = None) -> str:
