@@ -963,7 +963,11 @@ class _CommandMixin:
             def _after_settings(line):
                 if line:
                     self._run_command(line)
-            self.push_screen(SettingsScreen(), _after_settings)
+            # '키' 탭에 현재 prefix·사용자 바인딩을 보여주려 컨텍스트를 넘긴다(읽기 전용).
+            self.push_screen(SettingsScreen(
+                prefix_key=self.prefix_key,
+                user_bindings=dict(self.bindings),
+                root_bindings=dict(self.root_bindings)), _after_settings)
         elif c in ("detach-client", "detach"):
             if "-a" in args:
                 self.send_cmd("detach_others")

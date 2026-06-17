@@ -956,6 +956,27 @@ async def test_esc_e_sends_escape_to_pane():
     await _with_app(body)
 
 
+async def test_settings_key_tab_lists_esc_prefix_and_user_bindings():
+    # §설정 팝업 '키' 탭(요청 2026-06-18): ESC 모드·prefix 모드 내장 키 + 사용자 바인딩을
+    # 읽기 전용으로 나열. prefix 서브헤더에 현재 prefix 키 표기. 모든 행 렌더 무오류.
+    from pytmuxlib.clientscreens import SettingsScreen
+    s = SettingsScreen(prefix_key="ctrl+a",
+                       user_bindings={"r": "redraw"},
+                       root_bindings={"f5": "refresh"})
+    assert "키" in s._cats, s._cats
+    kr = [d for d, _ in s._flat if d["type"] == "keyref"]
+    assert any(d.get("kid") == "e_e" for d in kr), "ESC 모드 e 행 없음"
+    assert any(d.get("kid") == "p_pct" for d in kr), "prefix % 행 없음"
+    assert any(d.get("k") == "r" and d.get("d") == "redraw" for d in kr), \
+        "사용자 prefix 바인딩 행 없음"
+    assert any(d.get("k") == "f5" and d.get("d") == "refresh" for d in kr), \
+        "사용자 root 바인딩 행 없음"
+    subs = [d.get("sub", "") for d in kr if "sub" in d]
+    assert any("Ctrl-a" in sx for sx in subs), subs
+    for i in range(len(s._flat)):
+        assert isinstance(s._row_text(i), str)
+
+
 async def test_esc_shortcuts_work_with_ime_jamo():
     # IME(두벌식)가 켜진 채 'n'(새 탭)·'p'(분할) 키를 누르면 자모 'ㅜ'·'ㅔ' 가
     # 들어온다 — 입력 문자를 물리 QWERTY 키로 되돌려 ESC 단축키가 IME 무관하게

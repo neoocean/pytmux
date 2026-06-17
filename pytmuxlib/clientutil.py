@@ -776,7 +776,75 @@ SETTINGS = [
 ]
 
 # 화면 탭 순서(등장 카테고리). setcat.<name> 로 번역.
-SETTINGS_CATS = ["표시", "입력", "동작", "상태줄", "Claude", "고급"]
+SETTINGS_CATS = ["표시", "입력", "동작", "상태줄", "Claude", "고급", "키"]
+
+# ── 키 바인딩 레퍼런스(설정 팝업 '키' 탭 — 읽기 전용 표시) ──────────────────────
+# ESC 모드(_handle_esc_mode)·prefix 모드(_handle_prefix)의 내장 키를 한 곳에 보여 준다.
+# **데이터-주도가 아니라 수동 미러**다(핸들러는 if/elif 체인) — client.py 의 두 핸들러를
+# 고치면 여기도 같이 갱신할 것. (id, 키 표기, ko, en). 키 표기는 언어중립(번역 안 함).
+ESC_MODE_KEYS = [
+    ("e_arrows", "↑ ↓ ← →", "패널 이동", "Move pane"),
+    ("e_num", "1–9", "번호로 탭 전환", "Switch to tab by number"),
+    ("e_n", "n", "새 탭", "New tab"),
+    ("e_p", "p", "상하 분할", "Split top/bottom"),
+    ("e_e", "e", "활성 패널에 ESC 전달", "Send ESC to active pane"),
+    ("e_sesc", "Shift+ESC", "활성 패널에 ESC 전달", "Send ESC to active pane"),
+    ("e_bt", "`", "리터럴 백틱 전달", "Send literal backtick"),
+    ("e_colon", ":", "명령 프롬프트", "Command prompt"),
+    ("e_help", "?", "도움말", "Help"),
+    ("e_esc", "ESC", "모드 종료(앱에 ESC 전달 없음)", "Exit mode (no ESC sent to app)"),
+    ("e_up", "↑ (최상단에서)", "닫기 [x] → 탭바 포커스", "Focus close [x] → tab bar"),
+    ("e_tb", "탭바 포커스 후", "←→ 선택·Enter 전환·+/a 새 탭·x/d 닫기·Shift+←→ 이동",
+     "←→ select · Enter switch · +/a new · x/d close · Shift+←→ move"),
+]
+PREFIX_KEYS = [
+    ("p_pct", "%", "좌우 분할", "Split left/right"),
+    ("p_dq", "\"", "상하 분할", "Split top/bottom"),
+    ("p_x", "x", "패널 닫기", "Close pane"),
+    ("p_z", "z", "줌 토글", "Toggle zoom"),
+    ("p_o", "o", "다음 패널", "Next pane"),
+    ("p_semi", ";", "직전 패널", "Last pane"),
+    ("p_q", "q", "패널 번호 표시", "Show pane numbers"),
+    ("p_space", "Space", "레이아웃 순환", "Cycle layout"),
+    ("p_co", "Ctrl+o", "패널 회전", "Rotate panes"),
+    ("p_swap", "{  }", "패널 swap(이전/다음)", "Swap pane (prev/next)"),
+    ("p_bang", "!", "패널을 새 탭으로", "Break pane to new tab"),
+    ("p_arrows", "← ↑ ↓ →", "패널 이동", "Move pane"),
+    ("p_hjkl", "H J K L", "패널 크기 조절", "Resize pane"),
+    ("p_c", "c", "새 탭", "New tab"),
+    ("p_comma", ",", "탭 이름변경", "Rename tab"),
+    ("p_amp", "&", "탭 닫기", "Close tab"),
+    ("p_T", "T", "패널 제목 변경", "Rename pane"),
+    ("p_t", "t", "시계 토글", "Toggle clock"),
+    ("p_R", "R", "자동재개 토글", "Toggle autoresume"),
+    ("p_r", "r", "화면 재그리기(redraw)", "Redraw screen"),
+    ("p_colon", ":", "명령 프롬프트", "Command prompt"),
+    ("p_np", "n / p", "다음 / 이전 탭", "Next / prev tab"),
+    ("p_l", "l", "직전 탭", "Last tab"),
+    ("p_w", "w", "트리(개요)", "Tree overview"),
+    ("p_dot", ".", "탭 이동", "Move tab"),
+    ("p_num", "0–9", "번호로 탭", "Tab by number"),
+    ("p_d", "d", "detach", "Detach"),
+    ("p_lb", "[", "스크롤 모드", "Scroll mode"),
+    ("p_rb", "]", "붙여넣기 버퍼", "Paste buffer"),
+    ("p_eq", "=", "버퍼 선택", "Choose buffer"),
+    ("p_enter", "Enter", "메뉴", "Menu"),
+]
+
+i18n.register({
+    "ko": dict([(f"klist.{i}", ko) for i, _k, ko, _en in ESC_MODE_KEYS + PREFIX_KEYS]
+               + [("klist.sub_esc", "ESC 모드 (ESC 한 번 후)"),
+                  ("klist.sub_prefix", "prefix 후 ({p})"),
+                  ("klist.sub_user", "사용자 바인딩 (config)"),
+                  ("klist.sub_user_root", "사용자 바인딩 (prefix 없이, bind -n)"),
+                  ("klist.none", "(없음)"), ("setcat.키", "키")]),
+    "en": dict([(f"klist.{i}", en) for i, _k, _ko, en in ESC_MODE_KEYS + PREFIX_KEYS]
+               + [("klist.sub_esc", "ESC mode (after one ESC)"),
+                  ("klist.sub_prefix", "After prefix ({p})"),
+                  ("klist.sub_user", "User bindings (config)"),
+                  ("klist.sub_user_root", "User bindings (no prefix, bind -n)"),
+                  ("klist.none", "(none)"), ("setcat.키", "Keys")]),
+})
 
 # §6 ⑤ 옵션 피커 i18n: COMMAND_OPTIONS 의 라벨·선택지 표시문(방향·줌 토글 ⛶·켜기 등)을
 # 로케일 전환 가능하게. 키=원문 한국어(gettext 식 — 피커 렌더는 t(원문) 로 단순 조회).

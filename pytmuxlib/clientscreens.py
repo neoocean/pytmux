@@ -20,8 +20,8 @@ from rich.highlighter import Highlighter
 
 from . import i18n
 from .clientutil import (COMMAND_FREETEXT, COMMAND_NOARG, COMMAND_OPTIONS,
-                         COMMANDS, MENU_ITEMS, MENU_TOGGLES, PANE_SCOPED_CMDS,
-                         SETTINGS, SETTINGS_CATS,
+                         COMMANDS, ESC_MODE_KEYS, MENU_ITEMS, MENU_TOGGLES,
+                         PANE_SCOPED_CMDS, PREFIX_KEYS, SETTINGS, SETTINGS_CATS,
                          _char_cells, bar, format_option_row, has_hangul,
                          hangul_to_qwerty, norm_sep, theme_color)
 
@@ -404,15 +404,21 @@ class SettingsScreen(ModalScreen):
             scrollbar-background: $panel-darken-2; }
     """
 
-    def __init__(self):
+    def __init__(self, prefix_key="ctrl+b", user_bindings=None,
+                 root_bindings=None):
         super().__init__()
         # SETTINGS_CATS 순서로 평탄화: 각 항목 = (desc, 카테고리 첫 항목 여부).
         # _cats = 항목이 있는 카테고리(좌측 세로 탭 순서), _cat_first = 카테고리→그
         # 카테고리 첫 행의 flat 인덱스(탭 클릭 시 그 위치로 스크롤).
+        self._prefix_key = prefix_key or "ctrl+b"
+        self._user_bindings = dict(user_bindings or {})
+        self._root_bindings = dict(root_bindings or {})
         self._flat = []
         self._cats = []
         self._cat_first = {}
         for cat in SETTINGS_CATS:
+            if cat == "키":
+                continue            # '키' 카테고리는 아래에서 따로(읽기 전용 레퍼런스)
             first = True
             for desc in SETTINGS:
                 if desc.get("cat") == cat:
@@ -421,8 +427,45 @@ class SettingsScreen(ModalScreen):
                         self._cat_first[cat] = len(self._flat)
                     self._flat.append((desc, first))
                     first = False
+        self._build_keys_category()
         self._labels = []     # 행별 Label 위젯(값 변경 시 그 행만 갱신)
         self._vals = {}       # key -> 현재 선택값(bool/enum=str, ratio=float, int=int)
+
+    def _build_keys_category(self):
+        """'키' 카테고리: ESC 모드·prefix 모드 내장 키 + 사용자 바인딩을 읽기 전용으로
+        나열한다(요청 2026-06-18). 행 desc type='keyref' — ←→/Enter 무동작, 표시만."""
+        self._cats.append("키")
+        self._cat_first["키"] = len(self._flat)
+        state = {"first": True}
+
+        def add(d):
+            self._flat.append((d, state["first"]))
+            state["first"] = False
+
+        def sub(text):
+            add({"type": "keyref", "cat": "키", "sub": text})
+
+        def keyrow(k, kid=None, d=None):
+            add({"type": "keyref", "cat": "키", "k": k, "kid": kid, "d": d})
+
+        sub(i18n.t("klist.sub_esc"))
+        for kid, k, _ko, _en in ESC_MODE_KEYS:
+            keyrow(k, kid=kid)
+        pk = (self._prefix_key.replace("ctrl+", "Ctrl-")
+              .replace("shift+", "Shift-").replace("alt+", "Alt-"))
+        sub(i18n.t("klist.sub_prefix", p=pk))
+        for kid, k, _ko, _en in PREFIX_KEYS:
+            keyrow(k, kid=kid)
+        sub(i18n.t("klist.sub_user"))
+        if self._user_bindings:
+            for key, cmd in sorted(self._user_bindings.items()):
+                keyrow(key, d=str(cmd))
+        else:
+            keyrow("", d=i18n.t("klist.none"))
+        if self._root_bindings:
+            sub(i18n.t("klist.sub_user_root"))
+            for key, cmd in sorted(self._root_bindings.items()):
+                keyrow(key, d=str(cmd))
 
     # ---- 값 표시 ----
     def _vlabel(self, v):
@@ -463,6 +506,16 @@ class SettingsScreen(ModalScreen):
         if first:
             cat = i18n.t(f"setcat.{desc['cat']}", default=desc["cat"])
             out += f"[dim]── {cat} ──[/]\n"
+        if desc["type"] == "keyref":      # 읽기 전용 키 레퍼런스('키' 탭)
+            if "sub" in desc:
+                return out + f"[dim]  {desc['sub']}[/]"
+            k = desc.get("k") or ""
+            d = desc.get("d")
+            if d is None and desc.get("kid"):
+                d = i18n.t(f"klist.{desc['kid']}", default=desc["kid"])
+            width = sum(_char_cells(ch) for ch in k)
+            pad = max(1, 16 - width)
+            return out + f"    [b]{k}[/]{' ' * pad}[dim]{d or ''}[/]"
         label = i18n.t(f"setting.{desc['key']}", default=desc["key"])
         width = sum(_char_cells(ch) for ch in label)
         pad = max(1, 26 - width)
@@ -490,7 +543,7 @@ class SettingsScreen(ModalScreen):
     def on_mount(self):
         # 현재 값을 앱 상태에서 읽어 초기화(미추적 서버 토글은 None).
         for desc, _f in self._flat:
-            if desc["type"] in ("link",):
+            if desc["type"] in ("link", "keyref"):
                 continue
             cur = self.app.setting_current(desc["key"])
             if desc["type"] == "ratio" and cur is not None:
