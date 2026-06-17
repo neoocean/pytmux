@@ -200,11 +200,8 @@ class Server(*_SERVER_BASES):
         # 숨은 claude 세션을 띄워 스크랩하므로 너무 짧지 않게(기본 600=10분). 폰 앱과
         # 어긋나던 stale 표시를 줄인다 — Claude 패널이 하나도 없으면 프로브를 건너뛴다.
         self.usage_refresh_sec = int(_opts.get("usage_refresh_sec", 600))
-        # 사용자가 패널에서 /usage 를 띄워 패널이 화면에 처음 나타나는 순간(상승에지)
-        # 마다 증가하는 one-shot 시퀀스. status 로 실어 보내, 클라가 값이 늘면 깨끗한
-        # 전용 사용량 화면을 자동 팝업한다(요청). 백그라운드 그림자 probe·잔류 갱신과
-        # 구분하려고 '인패널 패널의 hidden→visible 전이'에서만 올린다(serverclaude).
-        self._usage_shown_seq = 0
+        # (인패널 /usage 자동 팝업 신호 _usage_shown_seq 는 2026-06-17 제거 — §3.9.
+        #  사용자가 보고 있는 /usage 패널을 전용 모달로 덮는 게 불필요·방해라서.)
         # M17(T7) 표시 경고 임계(grade0 알림만). long_turn=한 턴 busy 지속 한계(초,
         # 0=끔), repeat=동일 완료 출력 반복 횟수(0=끔). 상태줄 ⚠배지로만 알린다.
         self.claude_long_turn_sec = int(_opts.get("claude_long_turn_sec", 600))

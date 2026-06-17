@@ -597,14 +597,14 @@ class _ClaudeCodePlugin:
         msg["claude_warn"] = ap._claude_warn if ap else None
         # M14c 모델 과선택 힌트 배지(알림만, 없으면 None — claude_warn 과 같은 송출 방식).
         msg["claude_model_tip"] = ap._model_tip if ap else None
-        # M19: 그림자 /usage 세션·주간 한도(없으면 None) + 자동 팝업 one-shot 시퀀스.
+        # M19: 그림자 /usage 세션·주간 한도(없으면 None).
         msg["usage_limits"] = server._usage
         # S6 T3: 실측 경과(초) — 클라가 stale 표기("N분 전 실측")에 쓴다. 시계 동기
         # 가정 없이 서버가 경과로 환산해 보낸다. 실측 없으면 None.
         uts = getattr(server, "_usage_ts", None)
         msg["usage_age_sec"] = (max(0, int(_time.time() - uts))
                                 if uts is not None else None)
-        msg["usage_shown_seq"] = server._usage_shown_seq
+        # (usage_shown_seq = 인패널 /usage 자동 팝업 신호는 2026-06-17 제거 — §3.9)
         # M14c: 활성 패널 모델 배지(없으면 None) + 계정 식별자.
         msg["claude_model"] = (ap._claude_model
                                if ap and ap._claude else None)
@@ -779,7 +779,6 @@ class _ClaudeCodePlugin:
         app.pane_claude = {}            # id -> {"claude","prompt",…}
         app._perm_zone = {}             # id -> (x0,x1,y) 권한모드 footer 클릭존
         app._remote_zone = {}           # id -> (x0,x1,y) 원격제어 표시 클릭존
-        app._last_usage_shown_seq = None  # /usage 자동 팝업 one-shot 시퀀스 베이스라인
         # 헤더 상태/클릭존 글루(코어/clientwidgets 가 getattr 로 호출 — 없으면 no-op).
         app._update_claude = lambda pc: _update_claude(app, pc)
         app._toggle_remote_control = lambda pid: _toggle_remote_control(app, pid)
@@ -881,22 +880,13 @@ class _ClaudeCodePlugin:
 
     def client_status(self, app, msg):
         """서버 status 의 Claude 필드를 클라가 흡수한다(코어 _dispatch status 에서 위임).
-        claude_rules 동기화, 패널별 Claude 상태(pane_claude) 갱신, 인패널
-        /usage 자동 팝업 시퀀스를 처리한다."""
+        claude_rules 동기화, 패널별 Claude 상태(pane_claude) 갱신.
+
+        (인패널 /usage 자동 팝업은 2026-06-17 제거 — §3.9. 사용자가 Claude 패널에서
+        /usage 를 직접 띄워 보고 있는데 같은 내용을 전용 모달로 덮는 게 불필요·방해라서.
+        수동 usage-panel/limits 명령과 그림자 /usage 질의·실측 캡처는 그대로 유지.)"""
         if "claude_rules" in msg:
             app._claude_rules = msg.get("claude_rules", "")
-        # /usage 자동 팝업(요청): 인패널 /usage 패널이 새로 떴다는 seq 가 늘면 깨끗한
-        # 전용 사용량 화면을 자동으로 띄운다. 접속 후 첫 status 는 베이스라인만 잡고
-        # 띄우지 않는다(과거 seq 로 엉뚱하게 안 뜨게).
-        seq = msg.get("usage_shown_seq", 0)
-        if app._last_usage_shown_seq is None:
-            app._last_usage_shown_seq = seq
-        elif seq > app._last_usage_shown_seq:
-            app._last_usage_shown_seq = seq
-            # 다른 모달이 떠 있으면 건너뛴다(가림·중복 방지). 팝업은 open_usage_panel.
-            if len(app.screen_stack) <= 1:
-                fn = getattr(app, "open_usage_panel", None)
-                fn and fn()
         _update_claude(app, msg.get("panes_claude", []))
         # M16: 절감 신호 전이 → PTY 밖 에스컬레이션 훅(자리 비움 대응, §8). 코어
         # client._dispatch 에서 이리로 이전(S5a) — saver_hook_events 는 플러그인 소유

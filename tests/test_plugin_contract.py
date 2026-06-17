@@ -374,8 +374,7 @@ async def test_contract_client_app_runs_without_claude_plugin(monkeypatch=None):
                          "_footer_zone_at",
                          # Phase 2c 클릭존 상태도 코어가 만들지 않는다.
                          "pane_claude",
-                         "_perm_zone", "_remote_zone",
-                         "_last_usage_shown_seq"):
+                         "_perm_zone", "_remote_zone"):
                 assert getattr(app, attr, None) is None, \
                     f"{attr} 가 설치됨(플러그인 부재인데)"
             # status 메시지에 Claude 필드가 와도 흡수기(client_status 훅)가 없어 무시.

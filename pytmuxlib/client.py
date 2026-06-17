@@ -2250,9 +2250,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # coalesce_repaints·nest_auto_attach·vt_parser(전역) + auto_rename·
             # border_status·monitor_activity·monitor_bell(활성 윈도우/탭).
             self.server_opts = {}
-            # Claude Code 클릭존 상태(pane_claude·_perm_zone·_remote_zone·
-            # _last_usage_shown_seq)는 claude-code 플러그인이 attach_client 로 이
-            # 인스턴스에 설치한다(Phase 2c). 코어는 클릭 핸들러에서 getattr 로만
+            # Claude Code 클릭존 상태(pane_claude·_perm_zone·_remote_zone)는
+            # claude-code 플러그인이 attach_client 로 이 인스턴스에 설치한다(Phase 2c).
+            # 코어는 클릭 핸들러에서 getattr 로만
             # 읽으므로, 디렉토리를 지우면 클릭존이 전혀 나타나지 않는다
             # (delete-to-disable). (프롬프트 스티키 헤더는 2026-06-13 완전 제거.)
             self._close_focus = False   # ESC 모드 닫기 [x] 버튼 포커스(#31 동선)
@@ -2950,9 +2950,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
         # ---- choose-tree ----
         # 코어 _open_status_tabs(통합 REC/서버 탭)는 client_status_tabs 훅으로 플러그인
         # 탭을 받아 끼운다(현재 기여 플러그인 없음 — 구 '토큰 사용량' 탭은 2026-06-12
-        # token-log 팝업으로 통합·제거). 인패널 /usage 자동 팝업(_auto_open_usage)은
-        # claude-code 플러그인의 client_status 훅으로 이전했다(Phase 2c —
-        # usage_shown_seq 증가 시 open_usage_panel 호출).
+        # token-log 팝업으로 통합·제거). (인패널 /usage 자동 팝업은 2026-06-17 제거 —
+        # §3.9. 수동 usage-panel 명령은 유지.)
         # ---- 선택 팝업(request_tree·_open_status_tabs·_open_choose_tree·
         # save_layout_prompt·request_layouts·_open_choose_layout)은
         # _ChooseScreensMixin(모듈 레벨, §5.4)으로 분리. 버전/재시작/서버정보는

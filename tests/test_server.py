@@ -1963,29 +1963,24 @@ async def test_rename_busy_claude_defers_until_idle():
         await teardown(srv, task, sock)
 
 
-async def test_inpane_usage_panel_bumps_shown_seq():
-    """인패널 /usage 패널이 처음 뜨는 순간(상승에지)에만 usage_shown_seq 가 증가해
-    클라가 전용 사용량 화면을 자동 팝업하게 한다(요청). 패널이 떠 있는 동안 재감지로는
-    안 늘고, 사라졌다 다시 뜨면 또 늘어난다(probe·잔류 갱신과 구분)."""
+async def test_inpane_usage_panel_no_autopopup_seq():
+    """§3.9(2026-06-17): 인패널 /usage 자동 팝업 신호(_usage_shown_seq)는 제거됐다.
+    패널을 봐도 그런 서버 필드/status 키가 생기지 않는다(실측 캡처는 별도로 유지 —
+    test_manual_usage_panel_captured_for_5h_pct 참조)."""
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
         win = sess.active_window
         p = win.active_pane
         p._claude = "idle"
-        assert srv._usage_shown_seq == 0
+        assert not hasattr(srv, "_usage_shown_seq"), \
+            "자동 팝업 시퀀스 필드가 남아있음(§3.9 제거 대상)"
         panel = ("Current session\n  blocks 10% used\n  Resets 5am (Asia/Seoul)\n"
                  "Current week (all models)\n  blocks 14% used\n? for shortcuts\n")
         p.feed(b"\x1b[2J\x1b[H" + panel.encode("utf-8"))
         srv._scan_claude(sess, win)
-        assert srv._usage_shown_seq == 1, "상승에지 1회"
-        srv._scan_claude(sess, win)          # 패널이 떠 있는 채 재스캔
-        assert srv._usage_shown_seq == 1, "재감지로는 안 늘어남"
-        p.feed(b"\x1b[2J\x1b[Hplain shell output\n")   # 패널이 사라짐
-        srv._scan_claude(sess, win)
-        p.feed(b"\x1b[2J\x1b[H" + panel.encode("utf-8"))  # 다시 뜸
-        srv._scan_claude(sess, win)
-        assert srv._usage_shown_seq == 2, "재등장 시 다시 증가"
+        # 패널을 봐도 자동 팝업 신호 필드는 생기지 않는다(스캔이 만들지 않음).
+        assert not hasattr(srv, "_usage_shown_seq")
     finally:
         await teardown(srv, task, sock)
 

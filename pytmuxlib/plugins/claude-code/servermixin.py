@@ -856,14 +856,12 @@ class ServerClaudeMixin:
                 new_usage = None
                 if "Current" in txt and "used" in txt:
                     new_usage = parse_usage(txt)
-                # 인패널 /usage 패널이 안 보이다 처음 보이는 순간(상승에지)에만 자동
-                # 팝업 신호(seq)를 올린다 — 패널이 떠 있는 동안 매 status 마다 감지되니
-                # 패널별 직전 가시성(_usage_panel_seen)과 비교해 중복 팝업을 막는다.
+                # panel_now: /usage 패널(전체)을 봤는가 — 아래 한도 스냅샷 출처 라벨
+                # ("panel" vs "inline")에 쓴다. (인패널 /usage 자동 팝업 신호 seq 는
+                # 2026-06-17 제거 — 사용자가 이미 Claude /usage 패널을 보고 있는데 같은
+                # 내용을 전용 모달로 덮는 게 불필요·방해라서. 수동 usage-panel 명령과
+                # 그림자 /usage 질의·실측 캡처는 그대로 유지. §3.9)
                 panel_now = new_usage is not None
-                if panel_now and not getattr(p, "_usage_panel_seen", False):
-                    self._usage_shown_seq += 1
-                    changed = True
-                p._usage_panel_seen = panel_now
                 if "limit" in txt and "used" in txt:
                     inline = parse_inline_limit(txt)
                     if inline:

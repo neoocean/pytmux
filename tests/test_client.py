@@ -3181,6 +3181,24 @@ async def test_bar_floating_staircase_segment():
     assert len(s) <= 8 and s.startswith(" ") and "█" in s
 
 
+async def test_bar_floating_segments_lead_and_fill():
+    """bar_floating_segments: 떠 있는 막대를 (선행칸수 lead, 채움문자열 fill) 로 분해 —
+    호출부가 선행 [0,start) 을 연한 색으로 칠하려고. bar_floating 과 같은 칸 규약."""
+    from pytmuxlib.clientutil import bar_floating, bar_floating_segments
+    assert bar_floating_segments(0, 50, 100, 0) == (0, "")     # cells<=0
+    assert bar_floating_segments(0, 50, 0, 8) == (0, "")       # vmax<=0
+    # start=0 → 선행 없음, 처음부터 채움
+    assert bar_floating_segments(0, 100, 100, 8) == (0, "█" * 8)
+    # 50→100: 선행 4칸 + 채움 4칸
+    assert bar_floating_segments(50, 100, 100, 8) == (4, "█" * 4)
+    # 증분 없음(end<=start): 선행칸만, 채움 없음
+    assert bar_floating_segments(50, 50, 100, 8) == (4, "")
+    # bar_floating 은 lead 를 공백으로 합쳐 종전 동작 유지(회귀 가드)
+    for start, end in ((0, 100), (50, 100), (25, 50), (50, 50), (60, 95)):
+        lead, fill = bar_floating_segments(start, end, 100, 8)
+        assert " " * lead + fill == bar_floating(start, end, 100, 8)
+
+
 async def test_hourly_spans_staircase_and_reset():
     """TokenLogScreen._hourly_spans: 시각별 누적 5h%({hour:max})를 계단식 구간
     {hour:(start,end)} 로. 같은 5h 창은 직전 누적%에서 이어 시작, 창 리셋(누적% 하락
@@ -3208,18 +3226,20 @@ async def test_hourly_spans_staircase_and_reset():
     assert f({}) == {}
 
 
-async def test_usage_panel_auto_popup_on_shown_seq():
-    # 인패널 /usage 가 새로 떴다는 usage_shown_seq 증가 → 전용 사용량 화면 자동 팝업.
-    # 접속 후 첫 status 는 베이스라인만(안 띄움), 그 다음 증가에서 띄운다.
+async def test_inpane_usage_no_auto_popup_but_manual_still_opens():
+    # §3.9(2026-06-17): 인패널 /usage 자동 팝업 제거. usage_shown_seq 가 증가하는
+    # status 가 와도 전용 화면이 **자동으로 뜨지 않는다**. 단, 수동 usage-panel
+    # 명령 경로(open_usage_panel)는 그대로 동작한다.
     async def body(app, pilot, srv):
         u = {"session": {"pct": 10, "reset": "5am (Asia/Seoul)"},
              "week_all": {"pct": 14, "reset": "Jun 13 at 3am (Asia/Seoul)"}}
-        # 접속 status 가 이미 베이스라인을 잡았을 수 있으니 명시적으로 5 로 둔다.
-        app._last_usage_shown_seq = 5
-        app._dispatch({"t": "status", "usage_limits": u, "usage_shown_seq": 5})
-        await pilot.pause(0.05)
-        assert len(app.screen_stack) == 1, "같은 seq 는 안 띄움"
+        # 자동 팝업 시퀀스 필드/경로는 제거됐다.
+        assert not hasattr(app, "_last_usage_shown_seq")
         app._dispatch({"t": "status", "usage_limits": u, "usage_shown_seq": 6})
+        await pilot.pause(0.1)
+        assert len(app.screen_stack) == 1, "자동 팝업이 뜨면 안 됨(§3.9 제거)"
+        # 수동 명령 경로는 유지 — open_usage_panel 이 InfoScreen 을 연다.
+        app.open_usage_panel()
         await pilot.pause(0.1)
         assert app.screen_stack[-1].__class__.__name__ == "InfoScreen", \
             [s.__class__.__name__ for s in app.screen_stack]
