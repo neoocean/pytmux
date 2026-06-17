@@ -84,6 +84,13 @@ _REMOTE_RELAY_ACTIONS = {
     # 전달한다(status·bye 외 메시지 패스스루) → ncd 모달이 원격 트리로 열린다. Enter
     # cd 는 입력 릴레이로, ⇧Enter 새 패널은 split 릴레이로 이미 원격에 적용된다.
     "request_nc_list", "request_nc_find",
+    # 붙여넣기(paste=OS 클립보드/이미지 경로 텍스트·paste_buffer=페이스트 버퍼 N) —
+    # 원격 탭을 보는 중엔 그 **원격** 활성 패널에 들어가야 한다(사용자 보고 2026-06-17).
+    # 평문 타이핑·터미널 bracketed paste 는 input 메시지라 이미 릴레이되는데, 붙여넣기
+    # 명령은 cmd 액션이라 화이트리스트에 없어 보이지 않는 로컬 패널에 주입되던 버그
+    # (rename_window·split 누락과 동형 §1.7-c). 업스트림이 자기 활성 패널에 paste_text/
+    # paste_buffer 로 주입한다. 대용량 텍스트는 input 릴레이와 같은 부담(프레임 한도 §5.1 내).
+    "paste", "paste_buffer",
 }
 
 # §1.7-c 원격 탭을 보는 동안 거부하는 경계 횡단 조작(notice 회신). 로컬 트리에
