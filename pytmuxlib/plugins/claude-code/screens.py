@@ -473,7 +473,7 @@ class PermModeScreen(ModalScreen):
 # TokenLogScreen 이 쓰는 심볼. usagelog 는 S5 T5 에서 플러그인 소속(상대 import).
 from . import usagelog
 from .claude import parse_reset_ts
-from pytmuxlib.clientutil import (_char_cells, bar, bar_floating,
+from pytmuxlib.clientutil import (_char_cells, bar_floating,
                                   bar_floating_segments,
                                   format_option_row, _CLOCK_FONT)
 from pytmuxlib.clientscreens import usage_bar_lines
@@ -539,7 +539,7 @@ class TokenLogScreen(ModalScreen):
 
     def __init__(self, records, usage=None, total_all=None, accounts_total=None,
                  daily=None, reconcile=None, daily_pct=None, hourly_pct=None,
-                 initial_mode=None):
+                 hourly_week_pct=None, initial_mode=None):
         super().__init__()
         self._records = records or []
         # §10-D: 세션 5h 한도 최대%(권위 /usage). 스크랩 Σ 가 5h 소비를 과소집계하므로
@@ -549,6 +549,9 @@ class TokenLogScreen(ModalScreen):
         # '5h%' 열은 이제 hour 버킷에서 hourly_pct 로 보인다(None/구버전 서버 → 열 생략).
         self._daily_pct = daily_pct or {}
         self._hourly_pct = hourly_pct or {}
+        # 1w%(주간 전체모델 한도) 시각별 — 5h% 옆 열(사용자 요청 2026-06-17). 5h% 와 같은
+        # hour 버킷에서만 보이고, None/구버전 서버면 열 생략.
+        self._hourly_week_pct = hourly_week_pct or {}
         # 시각별 5h% 를 '계단식 누적' 막대로 그리기 위한 구간 {hour: (start, end)} —
         # 각 시각의 막대가 직전 시각이 끝난 위치에서 시작하고, 5h 창이 리셋되면(누적%
         # 하락 또는 ≥5h 공백) 다시 0 부터 시작한다(요청 2026-06-17, _hourly_spans).
@@ -869,14 +872,6 @@ class TokenLogScreen(ModalScreen):
             used += cw
         return "".join(out)
 
-    def _barcell(self, tok, vmax, pct, cells):
-        """% + 막대 셀 문자열. % 를 **앞에** 둔다 — 스크롤바/패딩이 폭을 먹어 셀
-        오른쪽이 잘려도 핵심 숫자(%)는 항상 보이고 막대 꼬리만 잘린다. cells<=0 이면 % 만."""
-        p = f"{pct:>3}%"
-        if cells <= 0:
-            return p
-        return f"{p} {bar(tok, vmax, cells)}"
-
     @staticmethod
     def _hourly_spans(hourly_pct):
         """시각별 **누적** 세션 5h%({hour: max_pct})를 '계단식' 막대 구간
@@ -931,6 +926,17 @@ class TokenLogScreen(ModalScreen):
             t.append("█" * lead, style=f"{color} dim")
         t.append(fill, style=style)
         return t
+
+    def _lim_week_cell(self, hour_key):
+        """hour 버킷의 **주간(전체모델) 한도 누적%**(권위 /usage) — 숫자 셀(요청
+        2026-06-17, 5h% 옆 1w% 열). 5h% 와 같은 시각 키로 hourly_week_pct 를 조인한다.
+        데이터 없으면 '·'. ≥80 빨강·≥50 노랑·굵게(상태줄 한도 배지와 같은 임계)."""
+        pct = self._hourly_week_pct.get(hour_key) if hour_key else None
+        if pct is None:
+            return Text("·", justify="right", style="dim")
+        color = "red" if pct >= 80 else "yellow" if pct >= 50 else "green"
+        style = f"bold {color}" if pct >= 50 else color
+        return Text(f"{pct:>3}%", justify="right", style=style)
 
     def _refresh_recon(self, table):
         """[대사] 뷰(S6 T2): 연속 실측 스냅샷 구간마다 실측 Δ%(세션 5h)와 그 구간의
@@ -1155,8 +1161,10 @@ class TokenLogScreen(ModalScreen):
         show5h = (self._bucket == "hour" and self._view != "account"
                   and self._view != "session" and bool(self._hourly_pct)
                   and bkeys is not None)
-        # 5h% 막대 칸수: 토큰 비율 막대(bar_cells)와 같은 폭 티어를 쓰되 8칸으로 캡해
-        # (0~100% 표현엔 충분) 표 가로폭이 박스를 넘지 않게 한다. 0이면 % 만 표시.
+        # 1w%(주간 전체모델 한도) 열 — 5h% 옆(사용자 요청 2026-06-17). 5h% 와 같은 hour
+        # 버킷 조건 + 주간 데이터가 있을 때만.
+        show1w = show5h and bool(self._hourly_week_pct)
+        # 5h% 막대 칸수: 8칸으로 캡(0~100% 표현 충분)해 표 가로폭이 박스를 넘지 않게.
         lim_cells = min(bar_cells, 8)
         # 토큰 열: 약식(1.7M·5.2k)은 단위가 자릿수를 가려 우측정렬만으론 대소가
         # 헷갈린다. 표시되는 모든 값의 '전체 자릿수' 최댓값을 기준으로 작은 값을
@@ -1165,7 +1173,8 @@ class TokenLogScreen(ModalScreen):
         maxdig = max((len(str(int(t))) for t in toks if t), default=1)
         tok_w = min(11, max(6, max((len(self._tok_aligned(t, maxdig))
                                     for t in toks), default=6)))
-        # 컬럼: 행 차원(기간/계정/세션) | 토큰(자릿수 정렬, 좌측) | [5h%] | 비율(막대+%)
+        # 컬럼: 행 차원(기간/계정/세션) | 토큰(자릿수 정렬, 좌측) | [5h%] [1w%].
+        # (비율 막대 열은 사용자 요청으로 제거 — 2026-06-17.)
         table.add_column(rowhdr, key="label", width=label_w)
         table.add_column(Text(i18n.t("토큰"), justify="left"), key="tok",
                          width=tok_w)
@@ -1173,13 +1182,16 @@ class TokenLogScreen(ModalScreen):
             # 막대를 담을 폭(% 3칸 + '%' + 공백 + 막대 cells). 막대 없으면 % 만(5칸).
             table.add_column(Text("5h%", justify="left"), key="lim5h",
                              width=(lim_cells + 6) if lim_cells else 5)
-        table.add_column(i18n.t("비율"), key="bar", width=bar_cells + 5)
+            if show1w:                 # 주간 한도% — 숫자 열(3칸+% = 5)
+                table.add_column(Text("1w%", justify="left"), key="limw",
+                                 width=5)
 
         if win == 0:               # 선택 뷰/계정 집계 합이 0 (소스 무관)
             empty = [i18n.t("(기록된 토큰 사용량이 없습니다)"), ""]
             if show5h:
                 empty.append("")
-            empty.append("")
+                if show1w:
+                    empty.append("")
             table.add_row(*empty)
         else:
             for i, (label, tok, pct) in enumerate(rows):
@@ -1188,7 +1200,9 @@ class TokenLogScreen(ModalScreen):
                 if show5h:
                     cells.append(self._lim5h_cell(
                         bkeys[i] if i < len(bkeys) else None, lim_cells))
-                cells.append(self._barcell(tok, vmax, pct, bar_cells))
+                    if show1w:
+                        cells.append(self._lim_week_cell(
+                            bkeys[i] if i < len(bkeys) else None))
                 table.add_row(*cells)
 
         # 제목: 뷰 차원(시간/일/주/월/계정/세션)별. 스코프/한도(위)·키 안내(아래) 분리.

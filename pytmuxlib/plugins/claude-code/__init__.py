@@ -416,6 +416,7 @@ def _on_token_log_msg(app, msg):
         reconcile=msg.get("reconcile"),
         daily_pct=msg.get("daily_pct"),
         hourly_pct=msg.get("hourly_pct"),
+        hourly_week_pct=msg.get("hourly_week_pct"),
         initial_mode=initial_mode))
 
 
@@ -950,10 +951,13 @@ class _ClaudeCodePlugin:
             # 2026-06-17). day 뷰는 더는 5h% 열을 안 보이고 hour 뷰가 hourly_pct 로 보인다.
             daily_pct = usagedb.daily_limit_pct(conn) if conn is not None else {}
             hourly_pct = usagedb.hourly_limit_pct(conn) if conn is not None else {}
+            # 1w%(주간 전체모델 한도) 시각별 — 5h% 옆 열(사용자 요청 2026-06-17).
+            hourly_week = usagedb.hourly_week_pct(conn) if conn is not None else {}
             return {"t": "token_log", "records": recs,
                     "total_all": total_all, "accounts_total": accts,
                     "daily": daily, "reconcile": recon,
-                    "daily_pct": daily_pct, "hourly_pct": hourly_pct}
+                    "daily_pct": daily_pct, "hourly_pct": hourly_pct,
+                    "hourly_week_pct": hourly_week}
         if action == "request_account_list":
             # §10-E #2b 계정 별칭 관리 화면용 — 감지된 계정 목록(전이력 계정합 키)+
             # 현재 별칭 매핑·표시모드를 가볍게 회신(token_log 의 무거운 레코드 없이).

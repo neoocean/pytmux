@@ -1415,6 +1415,37 @@ async def test_account_alias_screen_lists_edits_and_cycles_mode():
     await _with_app(body)
 
 
+async def test_token_log_hour_view_has_5h_and_1w_columns_no_ratio():
+    """사용자 요청(2026-06-17): hour 뷰 표에 5h% 옆 1w%(주간 한도) 열을 추가하고 기존
+    비율(ratio/막대) 열은 제거. 5h%/1w% 는 hour 버킷에서만, 비율 열은 어느 뷰에도 없다."""
+    from textual.widgets import DataTable
+    async def body(app, pilot, srv):
+        recs = [{"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
+                 "account": "me@x.org", "tokens": 1000}]
+        app._want_token_log = True
+        app._dispatch({"t": "token_log", "records": recs,
+                       "hourly_pct": {"2023-11-14 22:00": 13},
+                       "hourly_week_pct": {"2023-11-14 22:00": 42}})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "TokenLogScreen"
+        await pilot.press("h")        # hour 버킷
+        await pilot.pause(0.1)
+        table = scr.query_one(DataTable)
+        labels = [str(c.label) for c in table.columns.values()]
+        assert any("5h%" in lb for lb in labels), labels
+        assert any("1w%" in lb for lb in labels), labels       # 신규 열
+        assert not any(("비율" in lb or "Ratio" in lb) for lb in labels), labels
+        # day 뷰로 가면 5h%/1w% 둘 다 없고 비율도 없다(Period|Tokens 만).
+        await pilot.press("d")
+        await pilot.pause(0.1)
+        labels2 = [str(c.label) for c in
+                   scr.query_one(DataTable).columns.values()]
+        assert not any(("5h%" in lb or "1w%" in lb or "비율" in lb or "Ratio" in lb)
+                       for lb in labels2), labels2
+    await _with_app(body)
+
+
 async def test_token_log_lifetime_total_from_server_agg():
     """Phase B: 서버가 보낸 total_all(전체 이력 합, SQL 집계)이 받은 레코드 cap 합보다
     크면, Σ 는 전체 이력 합을 보이고 표시 레코드 합을 병기한다(과소표시 방지)."""

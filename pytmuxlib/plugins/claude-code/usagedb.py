@@ -354,6 +354,25 @@ def hourly_limit_pct(conn) -> dict:
             if r["session_pct"] is not None}
 
 
+def hourly_week_pct(conn) -> dict:
+    """로컬 **시각별** 주간(전체 모델) 한도 **시각 끝(최신) 누적 %**(limits 스냅샷).
+    {hour('%Y-%m-%d %H:00'): last_week_all_pct}. hourly_limit_pct(5h 세션%)의 주간판 —
+    사용량 Time 뷰의 '1w%' 열이 그 시각에 주간 창이 얼마나 찼나를 보인다(사용자 요청
+    2026-06-17). 5h% 와 동일하게 그 시각의 마지막(ts 최신) 스냅샷을 쓴다(주간%도 창
+    안에서 단조 증가→리셋 0). NULL pct·빈 limits 는 제외."""
+    cur = conn.execute(
+        "SELECT hr, week_all_pct FROM ("
+        "  SELECT strftime('%Y-%m-%d %H:00', ts, 'unixepoch', 'localtime') AS hr, "
+        "         week_all_pct, "
+        "         ROW_NUMBER() OVER (PARTITION BY "
+        "             strftime('%Y-%m-%d %H:00', ts, 'unixepoch', 'localtime') "
+        "             ORDER BY ts DESC, rowid DESC) AS rn "
+        "  FROM limits WHERE week_all_pct IS NOT NULL"
+        ") WHERE rn = 1")
+    return {r["hr"]: int(r["week_all_pct"]) for r in cur.fetchall()
+            if r["week_all_pct"] is not None}
+
+
 def update_accounts(conn, keep_accounts, keep_domains) -> int:
     """비신뢰 계정을 UNKNOWN 으로 일괄 정정(파일 재작성 불필요 — UPDATE 한 방).
     usagelog 의 신뢰 규칙을 공유한다. 변경된 행 수 반환."""
