@@ -19,6 +19,7 @@ from textual.suggester import SuggestFromList
 from rich.segment import Segment
 from rich.style import Style
 
+from . import i18n
 from .clientutil import (_DATE_STRFTIME, _TIME_STRFTIME, REMOTE_PINK,
                          _char_cells, norm_sep, theme_color)
 
@@ -1089,7 +1090,7 @@ class StatusBar(Widget):
             # ⏎ 닫기 힌트를 붙인다 — Enter 로 닫을 수 있음을 알린다(요청).
             if self.focus_btn == "msg":
                 ms = Style(color="black", bgcolor=tc("accent"), bold=True)
-                txt = f" {self.message}  ⏎ 닫기 "
+                txt = i18n.t("ui.notice_close", message=self.message)
             else:
                 ms = Style(color="black", bgcolor=tc("warning"), bold=True)
                 txt = f" {self.message} "

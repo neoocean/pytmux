@@ -321,18 +321,19 @@ class _RestartVersionMixin:
         현재 상태를 보여 주고 [a] 로 토글한다(set_autoresume — 활성 패널 기준). 원격제어
         팝업과 같은 hide_key/hide_cb 패턴(토글 후 닫힘; 다시 열어 새 상태 확인)."""
         on = bool(getattr(self.status, "autoresume", False))
-        state = "켜짐(ON)" if on else "꺼짐(OFF)"
+        state = i18n.t("ar.state_on") if on else i18n.t("ar.state_off")
         lines = [
-            f"자동 재개(AR)이 현재 {state} 입니다.",
+            i18n.t("ar.line1", state=state),
             "",
-            "• Claude 가 5시간 사용 한도로 멈추면, 리셋 시각 직후 자동으로",
-            "  작업을 이어갑니다('continue' 입력을 그 패널에 주입).",
-            "• 활성 패널 기준으로 켜고 끕니다(단축키 prefix+R 과 동일).",
+            i18n.t("ar.line_b1"),
+            i18n.t("ar.line_b2"),
+            i18n.t("ar.line_b3"),
             "",
-            f"[a] AR {'끄기' if on else '켜기'}   ·   닫기: Esc 또는 바깥 클릭.",
+            i18n.t("ar.toggle_line",
+                   act=i18n.t("ar.off") if on else i18n.t("ar.on")),
         ]
         self.push_screen(InfoScreen(
-            lines, title="자동 재개 (AR · Autoresume)",
+            lines, title=i18n.t("ar.title"),
             hide_key="a", hide_cb=lambda: self.send_cmd("set_autoresume")))
 
     def begin_restart(self, kind):
@@ -363,12 +364,13 @@ class _RestartVersionMixin:
         if safe:
             self.do_restart(kind)
             return
-        label = "전체 재시작" if kind == "all" else "서버 재시작"
+        label = (i18n.t("restart.label_all") if kind == "all"
+                 else i18n.t("restart.label_server"))
         fails = [lbl for ok, lbl in checks if not ok]
         msg = "\n".join(
-            [f"드라이런 FAIL — {label} 안전 점검에서 문제가 있습니다:", ""]
-            + [f"  [FAIL] {lbl}" for lbl in fails]
-            + ["", "그래도 재시작할까요?"])
+            [i18n.t("restart.fail_header", label=label), ""]
+            + [i18n.t("restart.fail_item", lbl=lbl) for lbl in fails]
+            + ["", i18n.t("restart.confirm_q")])
         self.confirm_popup(
             msg, action=lambda: self.do_restart(kind),
             title=i18n.t("dialog.restart_confirm_title"),
@@ -379,25 +381,28 @@ class _RestartVersionMixin:
         cli_ok = _client_relaunch_ok()
         safe, checks = _restart_check_eval(m, cli_ok)
         lines = [
-            ("✅ 안전 — restart-all 수행 가능" if safe
-             else "⚠️ 주의 — 아래 FAIL 항목 확인 후 진행"),
+            (i18n.t("restartcheck.safe") if safe
+             else i18n.t("restartcheck.unsafe")),
             "",
         ]
         for ok, label in checks:
-            lines.append(f"  [{'PASS' if ok else 'FAIL'}] {label}")
+            lines.append(i18n.t("restartcheck.item",
+                                res=("PASS" if ok else "FAIL"), label=label))
         if m.get("serialize_err"):
-            lines.append(f"        직렬화 오류: {m['serialize_err']}")
+            lines.append(i18n.t("restartcheck.serialize_err",
+                                err=m["serialize_err"]))
         run_v, disk_v = m.get("running_version"), m.get("disk_version")
         lines += [
             "",
-            f"  서버 버전: 실행={run_v}  디스크={disk_v}"
-            + ("  → 재시작 시 갱신됨" if run_v != disk_v else "  (동일)"),
-            f"  클라 버전: 실행={self._code_version}  디스크="
-            f"{version.code_version()}",
+            i18n.t("restartcheck.srv_ver", run=run_v, disk=disk_v)
+            + (i18n.t("restartcheck.updated") if run_v != disk_v
+               else i18n.t("restartcheck.same")),
+            i18n.t("restartcheck.cli_ver", run=self._code_version,
+                   disk=version.code_version()),
             "",
-            "  (버전 차이는 위험이 아니라 '재시작이 새 코드를 로드'를 뜻함)",
+            i18n.t("restartcheck.note"),
         ]
-        self.push_screen(InfoScreen(lines, title="restart-check (드라이런)"))
+        self.push_screen(InfoScreen(lines, title=i18n.t("restartcheck.title")))
 
     def _show_version_popup(self, msg):
         """서버 version 회신(version·uptime·pid) + 클라 자신의 값으로 팝업 구성.
@@ -415,12 +420,12 @@ class _RestartVersionMixin:
             cli_up = version.fmt_uptime(time.time() - self._boot_time)
             srv_up = version.fmt_uptime(srv_uptime0 + (time.time() - srv_recv))
             return [
-                "pytmux 버전 / 업타임",
+                i18n.t("version.header"),
                 "",
-                f"  클라이언트  {_cl(self._code_version):<14}  업타임 {cli_up}",
-                f"  서버        {srv_ver:<14}  업타임 {srv_up}",
+                i18n.t("version.client", ver=_cl(self._code_version), up=cli_up),
+                i18n.t("version.server", ver=srv_ver, up=srv_up),
                 "",
-                f"  (서버 pid {pid})",
+                i18n.t("version.pid", pid=pid),
             ]
         self.push_screen(InfoScreen(make_lines(), title="version",
                                     center=True, tick_cb=make_lines))
@@ -431,19 +436,23 @@ class _RestartVersionMixin:
         host = socket.gethostname()
         remote = bool(getattr(self.status, "_is_remote", False))
         lines = [
-            f"호스트: {host}",
-            f"연결: {'원격(ssh)' if remote else '로컬'}",
-            f"소켓: {self.sock_path}",
+            i18n.t("hoststatus.host", host=host),
+            i18n.t("hoststatus.conn", kind=(i18n.t("hoststatus.conn_remote")
+                                            if remote
+                                            else i18n.t("hoststatus.conn_local"))),
+            i18n.t("hoststatus.sock", sock=self.sock_path),
         ]
         rtt = getattr(self, "_net_last_rtt", None)
         if rtt is not None:
             thr = getattr(self, "net_rtt_threshold", 0.4)
-            lines.append(f"RTT: {rtt * 1000:.0f} ms (임계 {thr * 1000:.0f} ms)")
+            lines.append(i18n.t("hoststatus.rtt", rtt=f"{rtt * 1000:.0f}",
+                                thr=f"{thr * 1000:.0f}"))
         degraded = bool(getattr(self, "_net_degraded", False))
-        lines.append("응답성: " + ("저하(degraded) — 빨간 외곽선" if degraded
-                                    else "정상"))
+        lines.append(i18n.t("hoststatus.resp",
+                            state=(i18n.t("hoststatus.resp_degraded") if degraded
+                                   else i18n.t("hoststatus.resp_ok"))))
         lines.append("")
-        lines.append("degraded 고착 시 reconnect / resync 명령으로 재접속")
+        lines.append(i18n.t("hoststatus.degraded_hint"))
         return lines
 
 
@@ -972,7 +981,7 @@ class _CommandMixin:
             if host:
                 self.send_cmd("remote_attach", host=host)
             else:
-                self.display_message("사용법: remote-attach <host>")
+                self.display_message(i18n.t("msg.remote_attach_usage"))
         elif c in ("remote-new-tab", "remote_new_tab", "remote-new-window"):
             # §1.7 페더레이션: 원격 pytmux 에 **새 터미널**을 만들어 이 pytmux 의
             # 새 탭으로 붙인다(remote-attach 가 기존 원격 탭을 병합·열람만 하는 것과
@@ -983,7 +992,7 @@ class _CommandMixin:
             if host:
                 self.send_cmd("remote_new_window", host=host)
             else:
-                self.display_message("사용법: remote-new-tab <host>")
+                self.display_message(i18n.t("msg.remote_newtab_usage"))
         elif c in ("remote-detach", "remote_detach"):
             rest = line.split(None, 1)
             host = rest[1].strip() if len(rest) > 1 else ""
@@ -1095,11 +1104,10 @@ class _CommandMixin:
             # (restart-server)·respawn 에서 새 백엔드를 채택한다. 서버가 opts.json 영속.
             val = (args[0].lower() if args else "")
             if val not in ("pyte", "native"):
-                self.display_message("vt-parser: pyte | native 중 하나를 지정하세요")
+                self.display_message(i18n.t("msg.vt_parser_usage"))
             else:
                 self.send_cmd("set_vt_parser", value=val)
-                self.display_message(
-                    f"vt-parser={val} 설정됨 — 재시작(restart-server) 시 발효")
+                self.display_message(i18n.t("msg.vt_parser_set", val=val))
         elif c in ("lang", "language"):
             # lang ko|en — UI 로케일 전환(§6 i18n). 클라이언트-로컬: 즉시 set_locale
             # +영속 후 전체 재합성으로 상태줄·헤더·메뉴를 새 언어로 다시 그린다(언어
@@ -1127,7 +1135,8 @@ class _CommandMixin:
                 except (OSError, subprocess.SubprocessError) as e:
                     text = str(e)
                 self.push_screen(InfoScreen(
-                    text.splitlines()[:60] or ["(출력 없음)"], title="popup"))
+                    text.splitlines()[:60] or [i18n.t("msg.display_no_output")],
+                    title="popup"))
             else:
                 self.push_screen(InfoScreen(["display-popup <command>"],
                                             title="popup"))

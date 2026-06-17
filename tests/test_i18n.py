@@ -153,6 +153,26 @@ async def test_plugin_catalog_registered_and_translated():
     _reset()
 
 
+async def test_client_screen_keys_translated():
+    """§6 추가(2026-06-17): 그동안 한국어로 새던 클라 팝업/안내(AR·restart·version·
+    host status·remote/vt-parser·notice 닫기)가 en 로 실제 번역된다(완전 ko/완전 en)."""
+    keys = ("ar.title", "ar.line1", "restart.confirm_q", "restartcheck.title",
+            "version.header", "hoststatus.host", "msg.remote_attach_usage",
+            "msg.vt_parser_usage", "msg.display_no_output", "ui.notice_close")
+    for k in keys:
+        assert k in i18n._CATALOG["ko"] and k in i18n._CATALOG["en"], k
+    i18n.set_locale("en")
+    assert i18n.t("ar.title") == "Autoresume (AR)"
+    assert i18n.t("restart.confirm_q") == "Restart anyway?"
+    assert i18n.t("msg.display_no_output") == "(no output)"
+    # 포맷 키도 en 으로 치환
+    assert i18n.t("hoststatus.host", host="h1") == "Host: h1"
+    i18n.set_locale("ko")
+    assert i18n.t("ar.title") == "자동 재개 (AR · Autoresume)"
+    assert i18n.t("restart.confirm_q") == "그래도 재시작할까요?"
+    _reset()
+
+
 async def test_seed_catalog_has_both_locales():
     """코어 시드 키는 ko·en 둘 다 존재해야 한다(누락 시 폴백이지만 시드는 완전성 유지)."""
     for key in ("lang.usage", "capture.status_on", "capture.status_off"):
