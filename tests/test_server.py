@@ -566,11 +566,12 @@ async def test_session_end_commits_surviving_peak():
         await teardown(srv, task, sock)
 
 
-async def test_token_debug_log_env_gated():
-    """10-D 진단: env `PYTMUX_TOKEN_DEBUG` 가 꺼져 있으면(기본) 토큰 step 마다
-    아무 파일도 안 남고, 켜면 `<sock>.tokendbg.jsonl` 에 한 줄=한 step 으로
-    running/peak/committed + 스캔 간격(dt)이 적힌다. 세션 종료로 진행 중 peak 가
-    미확정 채 버려지는 프레임은 reset 플래그로 표시된다(유실량 정량화용)."""
+async def test_token_debug_log_opt_gated():
+    """10-D 진단: 서버 옵션 `token_debug`(opts.json plugin_opts 영속, 런타임
+    `set token-debug` 토글)가 꺼져 있으면(기본) 토큰 step 마다 아무 파일도 안 남고,
+    켜면 `<sock>.tokendbg.jsonl` 에 한 줄=한 step 으로 running/peak/committed + 스캔
+    간격(dt)이 적힌다. 세션 종료(busy→None 직행)로 미확정이던 peak 는 10-D 하드닝으로
+    reset 직전 확정되어 종료 프레임 committed 에 반영된다."""
     srv, task, sock = await server_only()
     dbg_path = ipc.state_base(srv.sock_path) + ".tokendbg.jsonl"
     try:
@@ -578,7 +579,8 @@ async def test_token_debug_log_env_gated():
         win = sess.active_window
         p = win.active_pane
 
-        # 기본 OFF: 진단 비활성, 파일 미생성.
+        # 기본 OFF: 진단 비활성, 파일 미생성. (env 폴백 영향 배제 — 명시 OFF.)
+        srv.token_debug = False
         assert srv._token_debug_on() is False
         p.feed("\x1b[2J\x1b[H✽ Crunching… (5s · ↑ 1.9k tokens)\r\n"
                .encode("utf-8"))
@@ -586,8 +588,11 @@ async def test_token_debug_log_env_gated():
         assert p._claude == "busy"
         assert not os.path.exists(dbg_path), "OFF 인데 진단 파일이 생겼다"
 
-        # ON 으로 전환(데몬 env 캐시 직접 설정 — 환경 전역오염 회피).
-        srv._tok_dbg_on = True
+        # 런타임 토글 ON(setter — opts.json 영속 + 즉시 발효, 데몬 재시작 불필요).
+        assert srv.set_token_debug(True) is True
+        assert srv._token_debug_on() is True
+        # opts.json plugin_opts 에 영속됐는지 — 다시 로드해 확인.
+        assert srv._load_opts().get("plugin_opts", {}).get("token_debug") is True
         # busy 두 프레임(peak 1900→2500 상승, 미확정)
         p.feed("\x1b[2J\x1b[H✽ Crunching… (6s · ↑ 2.5k tokens)\r\n"
                .encode("utf-8"))
@@ -614,11 +619,45 @@ async def test_token_debug_log_env_gated():
         assert last["state"] is None and last["committed"] == 2500
         assert last["peak0"] == 2500, last
         assert isinstance(last["dt"], float)
+
+        # 런타임 토글 OFF(반전) — 즉시 비활성, opts.json 도 False 로 영속.
+        assert srv.set_token_debug() is False
+        assert srv._token_debug_on() is False
+        assert srv._load_opts().get("plugin_opts", {}).get("token_debug") is False
     finally:
         try:
             os.unlink(dbg_path)
         except OSError:
             pass
+        await teardown(srv, task, sock)
+
+
+async def test_token_debug_env_migration_and_status():
+    """§10-D env→opts 마이그레이션: opts.json 에 token_debug 키가 없을 때 구
+    env `PYTMUX_TOKEN_DEBUG` 를 기동 기본값으로 폴백한다(server_opts_init). 또 현재값을
+    status full 페이로드에 실어 :설정 화면이 표시할 수 있게 한다."""
+    srv, task, sock = await server_only()
+    try:
+        # env 켜짐 + opts.json 에 키 없음 → 폴백으로 token_debug True(server_opts_init).
+        old = os.environ.get("PYTMUX_TOKEN_DEBUG")
+        os.environ["PYTMUX_TOKEN_DEBUG"] = "1"
+        try:
+            srv.plugins.server_opts_init(srv, {})    # plugin_opts·top-level 모두 없음
+            assert srv.token_debug is True
+            # opts.json 이 권위: 키가 있으면 env 와 무관하게 그 값을 쓴다.
+            srv.plugins.server_opts_init(srv, {"plugin_opts": {"token_debug": False}})
+            assert srv.token_debug is False
+        finally:
+            if old is None:
+                os.environ.pop("PYTMUX_TOKEN_DEBUG", None)
+            else:
+                os.environ["PYTMUX_TOKEN_DEBUG"] = old
+
+        # status full 에 현재값 노출(:설정 표시용).
+        srv.token_debug = True
+        sess = srv.ensure_default_session(80, 24)
+        assert srv._status_msg(sess)["token_debug"] is True
+    finally:
         await teardown(srv, task, sock)
 
 

@@ -13,6 +13,7 @@
 화면(screens.py)은 실제로 열 때 지연 import 한다."""
 from __future__ import annotations
 
+import os
 import time as _time
 
 from pytmuxlib import i18n
@@ -62,6 +63,9 @@ COMMANDS = [
     ("model-hint", "Opus 로 반복 작업+컨텍스트 여유 시 가벼운 모델 '고려' 힌트 표시 "
                    "(알림만·자동 전환 없음) on/off (model-hint on|off|toggle, 기본 off)",
                    "Claude"),
+    ("token-debug", "토큰 회계 진단 로그(<sock>.tokendbg.jsonl) on/off — §10-D 과소집계 "
+                    "원인 판정용 진단(평시 OFF) (token-debug on|off|toggle, 기본 off)",
+                    "Claude"),
 ]
 NOARG = {
     "claude-rules", "token-saver",
@@ -79,6 +83,7 @@ COMMAND_OPTIONS = {
     "claude-auto-mode": [{"key": "state", "label": "오토모드", "choices": _ONOFF}],
     "auto-launch": [{"key": "state", "label": "자동셋업", "choices": _ONOFF}],
     "model-hint": [{"key": "state", "label": "모델힌트", "choices": _ONOFF}],
+    "token-debug": [{"key": "state", "label": "토큰진단로그", "choices": _ONOFF}],
 }
 
 # §6 ⑤ 플러그인 명령 i18n: '?' 목록·힌트는 코어 CommandListScreen/_cmd_desc 가
@@ -107,6 +112,7 @@ i18n.register({
         "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",
         "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
         "cmd.model-hint": "Show a 'consider a lighter model' hint when Opus repeats work with context headroom (alert only, never auto-switches) on/off (model-hint on|off|toggle, default off)",
+        "cmd.token-debug": "Token-accounting diagnostic log (<sock>.tokendbg.jsonl) on/off — §10-D undercount root-cause diagnostic (off normally) (token-debug on|off|toggle, default off)",
     },
 })
 
@@ -120,6 +126,7 @@ i18n.register({
         "자동클리어": "Auto-clear", "하드스톱복구": "Hardstop recovery",
         "오토모드": "Auto mode", "자동셋업": "Auto setup",
         "자동재시도": "Auto-retry", "모델힌트": "Model hint",
+        "토큰진단로그": "Token diag log",
     },
 })
 
@@ -280,6 +287,27 @@ def _pane_claude_entry(p, full):
             "perm_mode": p._perm_mode, "bypass_ok": p._bypass_seen}
 
 
+# Claude Code 시작 팁 "Tip: Use /feedback to help us improve!" 를 화면에서 숨긴다
+# (사용자 요청 2026-06-17). 문구 중 식별성이 높은 부분으로만 매칭해 사용자가 직접
+# "/feedback" 을 친 줄 등 오탐을 피한다.
+_FEEDBACK_TIP_MARK = "/feedback to help us improve"
+
+
+def _blank_feedback_tip(rows):
+    """render 된 행 목록에서 '/feedback 팁' 줄을 **폭을 유지한 채 공백으로** 바꾼다.
+    각 행은 [text, style] 런 목록 — 매칭 행만 같은 폭의 공백 런으로 교체하고 나머지는
+    원본 그대로 둔다. render 캐시의 행 객체를 공유하므로 in-place 변형 금지 → 매칭이
+    있을 때만 새 리스트를 만들어 그 행만 교체한다(없으면 원본 객체 그대로 반환)."""
+    out = None
+    for i, row in enumerate(rows):
+        text = "".join(t for t, _ in row)
+        if _FEEDBACK_TIP_MARK in text:
+            if out is None:
+                out = list(rows)
+            out[i] = [[" " * len(t), st] for t, st in row]
+    return out if out is not None else rows
+
+
 # ---- Claude 팝업(클라) — Phase 2a 에서 코어 client.py 에서 이리로 이전 ----
 # textual 화면은 실제로 열 때 지연 import(플러그인 __init__ 은 서버도 읽어 가벼워야 함).
 def _open_model_config(app):
@@ -326,11 +354,15 @@ def _open_perm_mode(app, pane_id):
                                    bypass_available=bypass_ok), _chosen)
 
 
-def _open_token_log(app):
+def _open_token_log(app, initial_mode=None):
     """토큰 사용량 영속 로그 집계 팝업(#7). 서버에 최근 로그를 요청하고, 응답
     (t==token_log)이 오면 handle_message 가 TokenLogScreen 으로 시간/일/주/월×계정
-    집계를 띄운다. 상태바 Σ 클릭의 진입점이기도 하다."""
+    집계를 띄운다. 상태바 Σ 클릭의 진입점이기도 하다.
+
+    initial_mode="limit" 이면 한도(/usage) 탭이 활성인 채로 연다 — usage-view 팝업이
+    별도 화면 대신 이 통합 팝업의 한도 탭을 열게 한다(통합, 사용자 결정 2026-06-17)."""
     app._want_token_log = True
+    app._token_log_initial = initial_mode
     app.send_cmd("request_token_log", limit=5000)
 
 
@@ -339,6 +371,8 @@ def _on_token_log_msg(app, msg):
     if not getattr(app, "_want_token_log", False):
         return
     app._want_token_log = False
+    initial_mode = getattr(app, "_token_log_initial", None)
+    app._token_log_initial = None
     from .screens import TokenLogScreen
     app.push_screen(TokenLogScreen(
         msg.get("records") or [],
@@ -347,7 +381,9 @@ def _on_token_log_msg(app, msg):
         accounts_total=msg.get("accounts_total"),
         daily=msg.get("daily"),
         reconcile=msg.get("reconcile"),
-        daily_pct=msg.get("daily_pct")))
+        daily_pct=msg.get("daily_pct"),
+        hourly_pct=msg.get("hourly_pct"),
+        initial_mode=initial_mode))
 
 
 def _open_usage_panel(app):
@@ -368,50 +404,19 @@ def _open_usage_panel(app):
 
 
 def _open_warn_info(app):
-    """하단 상태줄 Claude 경고 배지(⚠) 클릭 → 상황 설명 + 할일 팝업(요청). 경고
-    종류(포맷 미인식 / 장기 턴 / 반복 루프)를 문구로 판별해 맞는 안내를 InfoScreen
-    으로 띄운다. 경고가 이미 사라졌으면 가볍게 알린다."""
-    from pytmuxlib.clientscreens import InfoScreen
+    """하단 상태줄 Claude 경고 배지(⚠) 클릭 → 통합 토큰 팝업의 '경고' 탭을 연다
+    (2026-06-17 통합: 별도 InfoScreen 대신 token-log 의 경고 탭이 상황·할일 안내를
+    그린다 — 경고 종류 판별/문구는 TokenLogScreen._warn_info_text 가 소유). 경고가 이미
+    사라졌으면 팝업을 열지 않고 가볍게 알린다."""
     warn = getattr(app.status, "claude_warn", None)
     if not warn:
         app.display_message("표시할 Claude 경고가 없습니다(이미 해소됨).")
         return
-    lines = [warn, ""]
-    if "포맷 미인식" in warn:
-        title = "Claude 포맷 미인식"
-        lines += [
-            "[상황]",
-            "• pytmux 가 Claude Code 화면 형식을 인식하지 못합니다.",
-            "• 토큰/사용량 추적과 자동화(자동 재개·자동 압축·한도 게이트)가 멈춥니다.",
-            "• Claude Code 자체 동작(입력·출력)에는 영향이 없습니다.",
-            "• 보통 Claude Code 버전 업데이트로 화면 구조가 바뀌면 발생합니다.",
-            "",
-            "[할일]",
-            "• 화면이 다시 정상 인식되면 경고는 자동으로 사라집니다(잠시 대기).",
-            "• 계속되면 pytmux 의 Claude 파서(claude.py)를 새 포맷에 맞춰 갱신해야 합니다.",
-            "• REC 캡처가 켜져 있으면 captures/ 로그로 새 포맷을 분석할 수 있습니다.",
-        ]
-    elif "반복" in warn or "루프" in warn:
-        title = "Claude 반복 루프 의심"
-        lines += [
-            "[상황]",
-            "• 같은 출력이 여러 번 반복됐습니다 — 루프 의심(경고만, 자동 개입 없음).",
-            "",
-            "[할일]",
-            "• 진행이 없으면 다른 지시를 주거나 /clear 후 다시 시도하세요.",
-            "• 임계는 옵션 claude_repeat_alert 로 조정/끌 수 있습니다(0=끔).",
-        ]
-    else:   # 장기 턴(⚠ M:SS) 등
-        title = "Claude 장기 턴"
-        lines += [
-            "[상황]",
-            "• 현재 Claude 턴이 임계 시간을 넘겨 오래 진행 중입니다(경고만, 자동 개입 없음).",
-            "",
-            "[할일]",
-            "• 정상적인 긴 작업일 수 있습니다. 멈춘 듯하면 패널에서 Esc 로 중단하세요.",
-            "• 임계는 옵션 claude_long_turn_sec 로 조정/끌 수 있습니다(0=끔).",
-        ]
-    app.push_screen(InfoScreen(lines, title=title))
+    fn = getattr(app, "open_token_log", None)
+    if fn is not None:
+        fn("warn")
+    else:                       # claude-code 부재 폴백(개념상 항상 있음)
+        app.display_message(warn)
 
 
 # ---- Claude 헤더/상태 (클라) — Phase 2c 에서 코어 client.py 에서 이리로 이전 ----
@@ -505,7 +510,12 @@ class _ClaudeCodePlugin:
                   ("claude_auto_retry", True, bool),
                   # M14c 모델 과선택 힌트(T3/S4): Opus 반복+여유 시 가벼운 모델 "고려"
                   # 헤더 힌트(알림만, 자동 전환 없음). opt-in 이라 기본 OFF.
-                  ("claude_model_hint", False, bool))
+                  ("claude_model_hint", False, bool),
+                  # §10-D 토큰 회계 진단 로그(<sock>.tokendbg.jsonl). 기본 OFF — 켜면
+                  # 매 토큰 step 을 jsonl 로 남긴다(평시 성능/디스크 무영향). 종전 env
+                  # PYTMUX_TOKEN_DEBUG 를 대체(런타임 `token-debug on/off` 토글). opts.json
+                  # 미존재 시 그 env 를 기동 기본값으로 폴백 — 아래 server_opts_init.
+                  ("token_debug", False, bool))
 
     def server_opts_init(self, server, opts):
         """opts.json → server 속성 설치(코어 __init__ 의 _opts.get 들을 이전).
@@ -521,6 +531,12 @@ class _ClaudeCodePlugin:
                 setattr(server, key, cast(raw))
             except (TypeError, ValueError):
                 setattr(server, key, cast(default))
+        # §10-D 마이그레이션: token_debug 가 opts.json 에 아직 없으면(구 env 사용자·신규
+        # 설치) 종전 env PYTMUX_TOKEN_DEBUG 를 기동 기본값으로 폴백한다. 위 루프가 token_debug
+        # 를 default(False)로 깔아 두므로, 양쪽 키가 모두 없을 때만 env 로 덮어쓴다. 한 번
+        # 런타임 토글이 _save_opts 로 영속되면 그 값이 권위(다음 기동부터 env 무시).
+        if "token_debug" not in po and "token_debug" not in opts:
+            server.token_debug = bool(os.environ.get("PYTMUX_TOKEN_DEBUG"))
 
     def server_opts_serialize(self, server):
         """server 속성 → opts.json plugin_opts 네임스페이스(코어 _save_opts 의
@@ -535,6 +551,13 @@ class _ClaudeCodePlugin:
     def server_scan(self, server, sess, win):
         """30Hz flush 스캔 — 상태/사용량/자동개입 갱신. 변화 있으면 True."""
         return server._scan_claude(sess, win)
+
+    def server_filter_rows(self, server, pane, rows):
+        """Claude 패널의 'Tip: Use /feedback …' 줄을 공백으로 가려 화면에 안 보이게
+        한다(사용자 요청 2026-06-17). Claude 패널이 아니면 원본 그대로(핫패스 무영향)."""
+        if not getattr(pane, "_claude", None):
+            return rows
+        return _blank_feedback_tip(rows)
 
     def server_status(self, server, sess, win, msg, full):
         """status 메시지에 Claude 필드를 in-place 로 채운다(serverio._status_msg 에서
@@ -621,6 +644,8 @@ class _ClaudeCodePlugin:
                 # S6 T4 실측 한도 게이트 임계(설정 팝업 표시용)
                 "usage_gate_session_pct": server.usage_gate_session_pct,
                 "usage_gate_week_pct": server.usage_gate_week_pct,
+                # §10-D 토큰 회계 진단 로그 토글(현재값 표시용 — 정적 옵션, full 시만).
+                "token_debug": server.token_debug,
             })
 
     def server_pane_overview(self, server, pane, info):
@@ -718,6 +743,9 @@ class _ClaudeCodePlugin:
         if action == "set_claude_model_hint":         # M14c 모델 과선택 힌트(알림만)
             server.set_claude_model_hint(msg.get("value"))
             return "broadcast"
+        if action == "set_token_debug":               # §10-D 토큰 회계 진단 로그 토글
+            server.set_token_debug(msg.get("value"))
+            return "broadcast"                         # status 로 새 값 회신(:설정 표시)
         if action == "set_claude_rules":              # #27 시작 규칙 저장(영속)
             server.set_claude_rules(msg.get("text", ""))
             return "broadcast"                        # status 로 새 규칙 회신
@@ -766,7 +794,7 @@ class _ClaudeCodePlugin:
         app._apply_model_config = lambda res: _apply_model_config(app, res)
         app.open_perm_mode = lambda pane_id: _open_perm_mode(app, pane_id)
         app.open_usage_panel = lambda: _open_usage_panel(app)
-        app.open_token_log = lambda: _open_token_log(app)
+        app.open_token_log = lambda initial=None: _open_token_log(app, initial)
         app.open_claude_warn_info = lambda: _open_warn_info(app)
         # (open_claude_usage_tree/_open_usage_tree 설치는 token-usage→token-log 통합
         #  (2026-06-12)으로 제거 — 상태줄 사용량 클릭·esc 포커스 Enter 는 이미
@@ -831,12 +859,16 @@ class _ClaudeCodePlugin:
             # S6 T2: 대사(reconcile) 구간 — 실측 스냅샷 Δpct vs 스크랩 Σ. 진단
             # 전용 데이터라 표시는 TokenLogScreen [대사] 뷰만 소비한다.
             recon = usagedb.reconcile(conn) if conn is not None else []
-            # §10-D: 일자별 세션 5h 한도 최대%(권위 /usage). 스크랩 Σ 가 5h 소비를
-            # 과소반영하므로 day 뷰가 '그날 얼마나 썼나'를 이 값으로 보인다.
+            # §10-D: 세션 5h 한도 최대%(권위 /usage). 스크랩 Σ 가 5h 소비를 과소반영
+            # 하므로 사용량 뷰가 '얼마나 썼나'를 이 값으로 보인다. daily=일자별(레거시
+            # 조인용 유지), hourly=시각별(5h 비율은 시간 단위 뷰에 둔다 — 사용자 결정
+            # 2026-06-17). day 뷰는 더는 5h% 열을 안 보이고 hour 뷰가 hourly_pct 로 보인다.
             daily_pct = usagedb.daily_limit_pct(conn) if conn is not None else {}
+            hourly_pct = usagedb.hourly_limit_pct(conn) if conn is not None else {}
             return {"t": "token_log", "records": recs,
                     "total_all": total_all, "accounts_total": accts,
-                    "daily": daily, "reconcile": recon, "daily_pct": daily_pct}
+                    "daily": daily, "reconcile": recon,
+                    "daily_pct": daily_pct, "hourly_pct": hourly_pct}
         return None
 
     # ---- 클라이언트 콘텐츠-레이어 렌더/상태 훅(Phase 2c) ----
@@ -939,6 +971,16 @@ class _ClaudeCodePlugin:
             app.send_cmd("set_claude_auto_mode", value=_onoff(args))
         elif c in ("model-hint", "model-advice"):
             app.send_cmd("set_claude_model_hint", value=_onoff(args))
+        elif c in ("token-debug", "token-dbg"):
+            # §10-D 토큰 회계 진단 로그 토글(서버 opts.json 영속, 즉시 발효). 진단용이라
+            # 평시엔 거의 안 만지므로 결과를 짧게 알린다(다른 토글은 설정 팝업이 상태를
+            # 보여 주지만 이건 팝업이 없다). 무인자 토글은 결과값을 동기적으로 모르므로
+            # 의도(켜기/끄기/토글)만 알린다 — 권위 현재값은 status 로 따라온다.
+            _v = _onoff(args)
+            app.send_cmd("set_token_debug", value=_v)
+            app.display_message(
+                "토큰 진단 로그 켜짐" if _v is True else
+                "토큰 진단 로그 꺼짐" if _v is False else "토큰 진단 로그 토글")
         elif c == "prompt-clear-message":
             app.send_cmd("set_prompt_clear_message", msg=" ".join(args).strip())
         elif c in ("prompt-clear-queue", "pc-queue"):

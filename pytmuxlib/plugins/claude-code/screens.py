@@ -120,6 +120,14 @@ i18n.register({
         "pscreen.tklog_limit_col": "한도(/usage)",
         "pscreen.tklog_limit_hint": "l집계로 돌아가기 · u/usage 갱신 · Esc닫기",
         "pscreen.tklog_limit_empty": "한도(/usage) 미조회 — [u] 눌러 조회",
+        "pscreen.next_reset": "다음 리셋: {label}",
+        "pscreen.reset_session": "세션 5h",
+        "pscreen.reset_week": "주 전체",
+        # 경고(장기 턴/반복/포맷) 탭 — 상태줄 ⚠ 배지 클릭이 여는 통합 탭.
+        "pscreen.tklog_warn_col": "Claude 경고",
+        "pscreen.tklog_warn_title": "Claude 경고",
+        "pscreen.tklog_warn_empty": "현재 표시할 Claude 경고가 없습니다(이미 해소됨).",
+        "pscreen.tklog_warn_hint": "다른 탭으로 이동 · u/usage 갱신 · Esc닫기",
         # 상단 1줄 한도 요약(상세는 한도 탭).
         "pscreen.lim_5h": "5h {p}%",
         "pscreen.lim_wk": "주 {p}%",
@@ -144,6 +152,13 @@ i18n.register({
         "pscreen.tklog_limit_col": "Limit (/usage)",
         "pscreen.tklog_limit_hint": "l back to totals · u refresh /usage · Esc close",
         "pscreen.tklog_limit_empty": "Limit (/usage) not queried — press [u]",
+        "pscreen.next_reset": "Next reset: {label}",
+        "pscreen.reset_session": "Session 5h",
+        "pscreen.reset_week": "Week all",
+        "pscreen.tklog_warn_col": "Claude warning",
+        "pscreen.tklog_warn_title": "Claude warning",
+        "pscreen.tklog_warn_empty": "No active Claude warning (already cleared).",
+        "pscreen.tklog_warn_hint": "switch tab · u refresh /usage · Esc close",
         "pscreen.lim_5h": "5h {p}%",
         "pscreen.lim_wk": "wk {p}%",
         "pscreen.left_hm": "{h}h {m}m",
@@ -456,7 +471,7 @@ class PermModeScreen(ModalScreen):
 # TokenLogScreen 이 쓰는 심볼. usagelog 는 S5 T5 에서 플러그인 소속(상대 import).
 from . import usagelog
 from .claude import parse_reset_ts
-from pytmuxlib.clientutil import _char_cells, bar, format_option_row
+from pytmuxlib.clientutil import _char_cells, bar, format_option_row, _CLOCK_FONT
 from pytmuxlib.clientscreens import usage_bar_lines
 
 
@@ -509,19 +524,23 @@ class TokenLogScreen(ModalScreen):
         "tab_acct": ("계정", "계"), "tab_panel": ("세션", "세"),
         "tab_order": ("정렬", "정"), "tab_usage": ("/usage", "U"),
         "tab_saver": ("시나리오", "S"), "tab_recon": ("대사", "R"),
-        "tab_limit": ("한도", "L"),
+        "tab_limit": ("한도", "L"), "tab_warn": ("경고", "경"),
     }
     # [패널]/계정 그룹이 많을 때 상위 N + '기타'로 접어 길이 폭주를 막는다(설계 §4).
     _GROUP_TOP = 8
 
     def __init__(self, records, usage=None, total_all=None, accounts_total=None,
-                 daily=None, reconcile=None, daily_pct=None):
+                 daily=None, reconcile=None, daily_pct=None, hourly_pct=None,
+                 initial_mode=None):
         super().__init__()
         self._records = records or []
-        # §10-D: 일자(YYYY-MM-DD local)별 세션 5h 한도 최대%(권위 /usage). day 버킷
-        # 표에 '5h%' 열로 보여 '그날 얼마나 썼나'를 과소집계 스크랩 Σ 대신 권위값으로
-        # 표시한다(None/구버전 서버 → 열 생략).
+        # §10-D: 세션 5h 한도 최대%(권위 /usage). 스크랩 Σ 가 5h 소비를 과소집계하므로
+        # 사용량 뷰가 '얼마나 썼나'를 이 권위값으로 보인다. daily_pct=일자별(레거시
+        # 유지), hourly_pct=시각('YYYY-MM-DD HH:00')별 — 5h 비율은 일 단위가 아니라
+        # **시간 단위 뷰**에 두는 게 의미상 맞다는 사용자 결정(2026-06-17)으로, 표의
+        # '5h%' 열은 이제 hour 버킷에서 hourly_pct 로 보인다(None/구버전 서버 → 열 생략).
         self._daily_pct = daily_pct or {}
+        self._hourly_pct = hourly_pct or {}
         # 전체 이력 일자별 합성 레코드(서버 daily_breakdown). day/week/month 버킷은
         # 이걸로 집계해 옛 버킷이 cap 에 잘리지 않게 한다(None=구버전 서버 → 폴백으로
         # 최근 N 건 _records 사용). hour 버킷만 raw _records 를 쓴다(_refresh 참고).
@@ -533,7 +552,12 @@ class TokenLogScreen(ModalScreen):
         # True 면 표 자리에 /usage 한도 상세(막대·리셋·창Σ·신선도)를 보여준다([l]
         # 토글). 상단 빽빽한 7줄 블록을 이 전용 뷰로 옮겨 작은 화면을 정리(사용자
         # 요청 2026-06-14) — 기본 화면 상단은 1줄 한도 요약만 남긴다. recon 과 배타.
-        self._limit_mode = False
+        # initial_mode=="limit" 이면 처음부터 한도 탭으로 연다 — usage-view 팝업이
+        # 이 통합 팝업의 한도 탭을 열게 한다(통합, 사용자 결정 2026-06-17).
+        self._limit_mode = (initial_mode == "limit")
+        # initial_mode=="warn" 이면 경고 탭으로 연다 — 상태줄 ⚠ 경고 배지 클릭이 별도
+        # InfoScreen 대신 이 통합 팝업의 경고 탭을 열게 한다(통합, 사용자 결정 2026-06-17).
+        self._warn_mode = (initial_mode == "warn")
         # Phase B: 서버가 SQL 로 집계한 정확한 전체 이력 합(레코드 cap 무관). 받은
         # 레코드(_records)는 최근 N 건이라 그 Σ 는 과소표시될 수 있으므로, lifetime
         # 합은 이 값을 쓴다(None=구버전 서버 → 레코드 합으로 폴백).
@@ -619,6 +643,8 @@ class TokenLogScreen(ModalScreen):
                                 markup=False)
                     yield Label("대사", id="tab_recon", classes="tkbtab",
                                 markup=False)
+                    yield Label("경고", id="tab_warn", classes="tkbtab",
+                                markup=False)
             yield Static("", id="tktop", markup=False)
             table = DataTable(id="tktable", zebra_stripes=True,
                               cursor_type="row")
@@ -641,6 +667,22 @@ class TokenLogScreen(ModalScreen):
                 pass
         await self._refresh()
         self.query_one(DataTable).focus()
+        # 한도 탭의 카운트다운 시계를 매 초 갱신한다(usage-view 통합, 2026-06-17).
+        # 한도 뷰가 아닐 땐 _tick_limit 가 no-op 이라 기간/계정/세션 표는 안 건드린다.
+        self.set_interval(1.0, self._tick_limit)
+
+    def _tick_limit(self):
+        """한도 뷰가 켜져 있으면 표(막대+창Σ+시계)를 다시 그려 카운트다운을 1초마다
+        센다. 작은 정적 뷰라 통째 재구성이 가볍고, 행 커서/스크롤 개념이 없어 부작용이
+        없다. 다른 뷰(기간/계정/세션/대사)에선 아무것도 안 한다(표 흔들림 방지)."""
+        if not (self._limit_mode and not self._recon_mode):
+            return
+        try:
+            table = self.query_one(DataTable)
+        except Exception:
+            return
+        table.clear(columns=True)
+        self._refresh_limit(table)
 
     def on_unmount(self):
         if getattr(self.app, "_token_log_screen", None) is self:
@@ -744,6 +786,8 @@ class TokenLogScreen(ModalScreen):
                 self._recon_mode, "tkbtab-active")
             self.query_one("#tab_limit", Label).set_class(
                 self._limit_mode, "tkbtab-active")
+            self.query_one("#tab_warn", Label).set_class(
+                self._warn_mode, "tkbtab-active")
         except Exception:
             pass
 
@@ -798,15 +842,23 @@ class TokenLogScreen(ModalScreen):
             return p
         return f"{p} {bar(tok, vmax, cells)}"
 
-    def _lim5h_cell(self, day_key):
-        """day 버킷의 **세션 5h 한도 최대%**(권위 /usage) 셀(§10-D). 데이터 없으면 '·'.
-        ≥80=빨강·≥50=노랑·굵게로 무거운 날을 눈에 띄게(상태줄 한도 배지와 같은 임계).
-        스크랩 토큰 Σ 가 5h 소비를 과소반영하므로 이 열이 '그날 얼마나 썼나'의 권위 신호."""
-        pct = self._daily_pct.get(day_key) if day_key else None
+    def _lim5h_cell(self, hour_key, cells=0):
+        """hour 버킷의 **세션 5h 한도 최대%**(권위 /usage)를 **가로 막대 그래프**로(요청
+        2026-06-17 — 각 시각이 이번 5h 창을 얼마나 채웠는지를 숫자 대신 막대로). 0~100%
+        를 만점 100 기준 cells 칸 막대로 그린다(`bar(pct, 100, cells)`) — 토큰 비율
+        막대(`_barcell`, 표시 행 합 기준)와 달리 분모가 **항상 100%(5h 한도)** 라 시각
+        간 절대 점유를 바로 비교할 수 있다. % 숫자는 막대 **앞에** 둬 좁아 막대가 잘려도
+        항상 보이게 한다(_barcell 과 같은 규약). cells<=0(아주 좁은 폭)이면 % 만.
+        데이터 없으면 '·'. ≥80=빨강·≥50=노랑·굵게로 무거운 시각을 눈에 띄게(상태줄
+        한도 배지와 같은 임계). 키는 hourly_pct('YYYY-MM-DD HH:00')와 조인한다."""
+        pct = self._hourly_pct.get(hour_key) if hour_key else None
         if pct is None:
             return Text("·", justify="right", style="dim")
-        style = "bold red" if pct >= 80 else "bold yellow" if pct >= 50 else ""
-        return Text(f"{pct}%", justify="right", style=style)
+        style = "bold red" if pct >= 80 else "bold yellow" if pct >= 50 \
+            else "green"
+        if cells <= 0:
+            return Text(f"{pct:>3}%", justify="right", style=style)
+        return Text(f"{pct:>3}% {bar(pct, 100, cells)}", style=style)
 
     def _refresh_recon(self, table):
         """[대사] 뷰(S6 T2): 연속 실측 스냅샷 구간마다 실측 Δ%(세션 5h)와 그 구간의
@@ -843,11 +895,52 @@ class TokenLogScreen(ModalScreen):
                 parts.append(i18n.t(fmt, p=d["pct"]))
         return (" · ".join(parts) + " · ") if parts else ""
 
+    def _limit_clock_lines(self):
+        """가장 이른 /usage 리셋까지 남은 시간을 **큰 블록 글자(HH:MM:SS)** 줄 목록으로
+        만든다(<24h). 24h 이상이거나 리셋 파싱 불가면 한 줄 텍스트로 폴백, usage 없으면
+        []. 별도 usage-view 팝업(UsageScreen)의 카운트다운을 이 통합 한도 탭으로 옮긴
+        것(통합, 사용자 결정 2026-06-17) — 코어 _CLOCK_FONT 를 그대로 재사용한다."""
+        u = self._usage
+        if not isinstance(u, dict):
+            return []
+        import time as _t
+        now = _t.time()
+        best = None                       # (label, ts) — 가장 이른 리셋
+        for key, name_key in (("session", "pscreen.reset_session"),
+                              ("week_all", "pscreen.reset_week")):
+            d = u.get(key)
+            reset = d.get("reset") if isinstance(d, dict) else None
+            ts = parse_reset_ts(reset) if reset else None
+            if ts is None or ts <= now:
+                continue
+            if best is None or ts < best[1]:
+                best = (i18n.t(name_key), ts)
+        if best is None:
+            return []
+        left = int(best[1] - now)
+        label = i18n.t("pscreen.next_reset", label=best[0])
+        if left >= 86400:                 # 하루 이상이면 블록 시계 대신 텍스트
+            return ["", label + " · " + self._fmt_left(left)]
+        h, rem = divmod(left, 3600)
+        m, s = divmod(rem, 60)
+        text = f"{h:02d}:{m:02d}:{s:02d}"
+        rows = ["", "", "", "", ""]
+        for i, ch in enumerate(text):
+            glyph = _CLOCK_FONT.get(ch, ["   "] * 5)
+            for r in range(5):
+                if i:
+                    rows[r] += " "
+                rows[r] += glyph[r]
+        # 앞 빈 줄로 막대와 시계를 띄우고, 라벨 + 5줄 블록 글자.
+        return ["", label] + rows
+
     def _refresh_limit(self, table):
         """[한도] 뷰: /usage 한도 상세(세션/주 막대·% 사용·리셋·계정·신선도)와 현재
-        5h/주 창 추정 Σ를 표 자리에 한 열로 보여준다 — 예전엔 이 7줄이 표 위 #tktop 에
-        항상 깔려 작은 화면을 덮었다(사용자 요청 2026-06-14: 한도 전용 서브뷰로 분리).
-        막대/창 합은 기존 공유 포맷터(_usage_lines·_window_lines)를 그대로 재사용한다."""
+        5h/주 창 추정 Σ, 그리고 다음 리셋까지의 **카운트다운 시계**를 표 자리에 한 열로
+        보여준다 — 예전엔 이 7줄이 표 위 #tktop 에 항상 깔려 작은 화면을 덮었고(사용자
+        요청 2026-06-14: 한도 전용 서브뷰로 분리), 카운트다운은 별도 usage-view 팝업에만
+        있었다(통합, 사용자 결정 2026-06-17). 막대/창 합은 기존 공유 포맷터
+        (_usage_lines·_window_lines)를, 시계는 _limit_clock_lines 를 재사용한다."""
         table.add_column(i18n.t("pscreen.tklog_limit_col"), key="limit")
         if not isinstance(self._usage, dict):
             lines = [i18n.t("pscreen.tklog_limit_empty")]
@@ -855,6 +948,7 @@ class TokenLogScreen(ModalScreen):
             lines = self._usage_lines() + self._window_lines()
             if self._fold_acct:
                 lines.append(i18n.t("pscreen.fold_tag"))
+            lines += self._limit_clock_lines()
         for ln in lines:
             table.add_row(ln)
         self.query_one("#tklogtitle", Label).update(
@@ -862,6 +956,68 @@ class TokenLogScreen(ModalScreen):
         self.query_one("#tktop", Static).update("")
         self.query_one("#tkhint", Static).update(
             i18n.t("pscreen.tklog_limit_hint"))
+
+    @staticmethod
+    def _warn_info_text(warn):
+        """상태줄 Claude 경고 문자열 → (제목, 줄목록). 경고 종류(포맷 미인식/반복 루프/
+        장기 턴)를 문구로 판별해 상황·할일 안내를 만든다 — 옛 _open_warn_info 의
+        InfoScreen 내용을 이 통합 '경고' 탭이 그대로 재사용하도록 추출(2026-06-17)."""
+        lines = [warn, ""]
+        if "포맷 미인식" in warn:
+            title = "Claude 포맷 미인식"
+            lines += [
+                "[상황]",
+                "• pytmux 가 Claude Code 화면 형식을 인식하지 못합니다.",
+                "• 토큰/사용량 추적과 자동화(자동 재개·자동 압축·한도 게이트)가 멈춥니다.",
+                "• Claude Code 자체 동작(입력·출력)에는 영향이 없습니다.",
+                "• 보통 Claude Code 버전 업데이트로 화면 구조가 바뀌면 발생합니다.",
+                "",
+                "[할일]",
+                "• 화면이 다시 정상 인식되면 경고는 자동으로 사라집니다(잠시 대기).",
+                "• 계속되면 pytmux 의 Claude 파서(claude.py)를 새 포맷에 맞춰 갱신해야 합니다.",
+                "• REC 캡처가 켜져 있으면 captures/ 로그로 새 포맷을 분석할 수 있습니다.",
+            ]
+        elif "반복" in warn or "루프" in warn:
+            title = "Claude 반복 루프 의심"
+            lines += [
+                "[상황]",
+                "• 같은 출력이 여러 번 반복됐습니다 — 루프 의심(경고만, 자동 개입 없음).",
+                "",
+                "[할일]",
+                "• 진행이 없으면 다른 지시를 주거나 /clear 후 다시 시도하세요.",
+                "• 임계는 옵션 claude_repeat_alert 로 조정/끌 수 있습니다(0=끔).",
+            ]
+        else:   # 장기 턴(⚠ M:SS) 등
+            title = "Claude 장기 턴"
+            lines += [
+                "[상황]",
+                "• 현재 Claude 턴이 임계 시간을 넘겨 오래 진행 중입니다(경고만, 자동 개입 없음).",
+                "",
+                "[할일]",
+                "• 정상적인 긴 작업일 수 있습니다. 멈춘 듯하면 패널에서 Esc 로 중단하세요.",
+                "• 임계는 옵션 claude_long_turn_sec 로 조정/끌 수 있습니다(0=끔).",
+            ]
+        return title, lines
+
+    def _refresh_warn(self, table):
+        """[경고] 뷰: 상태줄 ⚠ Claude 경고(장기 턴/반복 루프/포맷 미인식)의 상황·할일
+        안내를 표 자리에 보여준다 — 예전엔 별도 InfoScreen 팝업이었던 것을 이 통합 팝업의
+        탭으로 옮겼다(사용자 결정 2026-06-17, 상태줄 ⚠ 배지 클릭 → 이 탭). 경고 내용은
+        클라 status(claude_warn)에서 라이브로 읽어, 경고가 해소되면 '경고 없음' 안내로
+        바뀐다(닫지 않고 탭에 머물러도 다음 합성에서 갱신)."""
+        table.add_column(i18n.t("pscreen.tklog_warn_col"), key="warn")
+        warn = getattr(getattr(self.app, "status", None), "claude_warn", None)
+        if not warn:
+            title = i18n.t("pscreen.tklog_warn_title")
+            lines = [i18n.t("pscreen.tklog_warn_empty")]
+        else:
+            title, lines = self._warn_info_text(warn)
+        for ln in lines:
+            table.add_row(ln)
+        self.query_one("#tklogtitle", Label).update(title)
+        self.query_one("#tktop", Static).update("")
+        self.query_one("#tkhint", Static).update(
+            i18n.t("pscreen.tklog_warn_hint"))
 
     # 기간 뷰 제목/표 헤더용 버킷 단어(i18n 원문 키).
     _BUCKET_WORD = {"hour": "시간", "day": "일", "week": "주", "month": "월"}
@@ -902,7 +1058,7 @@ class TokenLogScreen(ModalScreen):
         weekdays = i18n.t("pscreen.weekdays").split(",")
         v = usagelog.agg_view(src, self._bucket, self._account, "account",
                               self._order, weekdays=weekdays)
-        # 5번째: 원시 버킷 키(brows 와 동순) — day 버킷 5h% 열 조인용(§10-D).
+        # 5번째: 원시 버킷 키(brows 와 동순) — hour 버킷 5h% 열 조인용(§10-D).
         return v["buckets"], v["bmax"], v["total"], i18n.t("기간"), v.get("bkeys")
 
     async def _refresh(self):
@@ -915,13 +1071,21 @@ class TokenLogScreen(ModalScreen):
         if self._limit_mode:
             self._refresh_limit(table)
             return
+        if self._warn_mode:
+            self._refresh_warn(table)
+            return
         label_w, bar_cells = self._metrics()
         rows, vmax, win, rowhdr, bkeys = self._view_rows()
-        # §10-D: day 버킷이면 일자별 세션 5h 한도 최대%(권위 /usage)를 별도 열로 보인다.
-        # 스크랩 Σ(토큰 열)는 5h 소비를 과소반영하므로 '그날 얼마나 썼나'의 진짜 신호다.
-        show5h = (self._bucket == "day" and self._view != "account"
-                  and self._view != "session" and bool(self._daily_pct)
+        # §10-D: hour 버킷이면 시각별 세션 5h 한도 최대%(권위 /usage)를 별도 열로 보인다.
+        # 스크랩 Σ(토큰 열)는 5h 소비를 과소반영하므로 '그 시각 5h 창이 얼마나 찼나'의
+        # 진짜 신호다. 5h 비율은 일 단위가 아니라 시간 단위 뷰에 둔다(사용자 결정
+        # 2026-06-17) — day/week/month 뷰엔 이 열을 보이지 않는다.
+        show5h = (self._bucket == "hour" and self._view != "account"
+                  and self._view != "session" and bool(self._hourly_pct)
                   and bkeys is not None)
+        # 5h% 막대 칸수: 토큰 비율 막대(bar_cells)와 같은 폭 티어를 쓰되 8칸으로 캡해
+        # (0~100% 표현엔 충분) 표 가로폭이 박스를 넘지 않게 한다. 0이면 % 만 표시.
+        lim_cells = min(bar_cells, 8)
         # 토큰 열: 약식(1.7M·5.2k)은 단위가 자릿수를 가려 우측정렬만으론 대소가
         # 헷갈린다. 표시되는 모든 값의 '전체 자릿수' 최댓값을 기준으로 작은 값을
         # 더 들여써(큰 값일수록 왼쪽에서 시작) 한눈에 비교되게 한다(사용자 요청).
@@ -934,8 +1098,9 @@ class TokenLogScreen(ModalScreen):
         table.add_column(Text(i18n.t("토큰"), justify="left"), key="tok",
                          width=tok_w)
         if show5h:
-            table.add_column(Text("5h%", justify="right"), key="lim5h",
-                             width=5)
+            # 막대를 담을 폭(% 3칸 + '%' + 공백 + 막대 cells). 막대 없으면 % 만(5칸).
+            table.add_column(Text("5h%", justify="left"), key="lim5h",
+                             width=(lim_cells + 6) if lim_cells else 5)
         table.add_column(i18n.t("비율"), key="bar", width=bar_cells + 5)
 
         if win == 0:               # 선택 뷰/계정 집계 합이 0 (소스 무관)
@@ -949,8 +1114,8 @@ class TokenLogScreen(ModalScreen):
                 cells = [self._trunc(label, label_w),
                          Text(self._tok_aligned(tok, maxdig), justify="left")]
                 if show5h:
-                    cells.append(self._lim5h_cell(bkeys[i] if i < len(bkeys)
-                                                  else None))
+                    cells.append(self._lim5h_cell(
+                        bkeys[i] if i < len(bkeys) else None, lim_cells))
                 cells.append(self._barcell(tok, vmax, pct, bar_cells))
                 table.add_row(*cells)
 
@@ -989,11 +1154,12 @@ class TokenLogScreen(ModalScreen):
         self.query_one("#tkhint", Static).update(i18n.t("pscreen.tklog_hint"))
 
     def _exit_body_modes(self):
-        """표를 대체하는 뷰(대사/한도)에서 빠져나온다 — 기간/계정/세션/정렬 동작이
-        어느 모드에서 눌려도 곧바로 먹게 한다. 둘 중 하나라도 켜져 있었으면 True."""
-        was = self._limit_mode or self._recon_mode
+        """표를 대체하는 뷰(대사/한도/경고)에서 빠져나온다 — 기간/계정/세션/정렬 동작이
+        어느 모드에서 눌려도 곧바로 먹게 한다. 하나라도 켜져 있었으면 True."""
+        was = self._limit_mode or self._recon_mode or self._warn_mode
         self._limit_mode = False
         self._recon_mode = False
+        self._warn_mode = False
         return was
 
     def on_click(self, event: events.Click):
@@ -1041,10 +1207,10 @@ class TokenLogScreen(ModalScreen):
             self.run_worker(self._refresh())
         elif wid == "tab_limit":
             event.stop()
-            # 한도 상세 뷰 토글(표 자리에 /usage 막대·창Σ). recon 과 배타.
+            # 한도 상세 뷰 토글(표 자리에 /usage 막대·창Σ). recon/경고 와 배타.
             self._limit_mode = not self._limit_mode
             if self._limit_mode:
-                self._recon_mode = False
+                self._recon_mode = self._warn_mode = False
             self.run_worker(self._refresh())
         elif wid == "tab_usage":
             event.stop()
@@ -1055,10 +1221,18 @@ class TokenLogScreen(ModalScreen):
             self.app.push_screen(ClaudeSaverScreen())
         elif wid == "tab_recon":
             event.stop()
-            # S6 T2: 집계 ↔ 대사(실측Δ% vs 추정Σ) 뷰 토글. 한도 뷰와 배타.
+            # S6 T2: 집계 ↔ 대사(실측Δ% vs 추정Σ) 뷰 토글. 한도/경고 뷰와 배타.
             self._recon_mode = not self._recon_mode
             if self._recon_mode:
-                self._limit_mode = False
+                self._limit_mode = self._warn_mode = False
+            self.run_worker(self._refresh())
+        elif wid == "tab_warn":
+            event.stop()
+            # 경고(장기 턴/반복/포맷) 안내 뷰 토글. 한도/대사 뷰와 배타. 상태줄 ⚠
+            # 배지 클릭이 여는 통합 탭(2026-06-17) — 탭 버튼 클릭으로도 토글된다.
+            self._warn_mode = not self._warn_mode
+            if self._warn_mode:
+                self._limit_mode = self._recon_mode = False
             self.run_worker(self._refresh())
         elif not inside_box:
             # 박스 바깥(백드롭) 클릭/터치 → 팝업 닫기.

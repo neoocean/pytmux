@@ -164,7 +164,9 @@ async def test_usage_bar_lines_prefers_full_account():
 
 
 async def test_usage_screen_close_button_dismisses():
-    """팝업 우상단 닫기 버튼(#uclose) 클릭 시 dismiss. 박스 안 클릭은 닫지 않는다."""
+    """팝업 우상단 닫기 버튼(#uclose) 클릭 시 dismiss. 박스 안 클릭은 닫지 않는다.
+    (popup 명령은 2026-06-17 통합으로 token-log 한도 탭을 열므로, UsageScreen 위젯 자체
+    동작은 tab/pane/폴백 경로가 쓰는 화면을 직접 푸시해 검증한다.)"""
     from harness import make_app, server_only, teardown
 
     srv, task, sock = await server_only()
@@ -172,7 +174,9 @@ async def test_usage_screen_close_button_dismisses():
         app = make_app(sock, None, None)
         async with app.run_test(size=(100, 30)) as pilot:
             await pilot.pause(0.4)
-            app._run_command("usage-view")
+            screen = importlib.import_module(
+                "pytmuxlib.plugins.claude-token-usage-view.screen")
+            app.push_screen(screen.UsageScreen())
             await pilot.pause(0.25)
             scr = app.screen_stack[-1]
             assert scr.__class__.__name__ == "UsageScreen"
@@ -212,7 +216,9 @@ async def test_usage_screen_footer_buttons_tappable():
             await pilot.pause(0.4)
             sent = []
             app.send_cmd = lambda c, **kw: sent.append(c)
-            app._run_command("usage-view")
+            screen = importlib.import_module(
+                "pytmuxlib.plugins.claude-token-usage-view.screen")
+            app.push_screen(screen.UsageScreen())
             await pilot.pause(0.25)
             scr = app.screen_stack[-1]
             assert scr.__class__.__name__ == "UsageScreen"
@@ -339,9 +345,10 @@ async def test_contract_pane_scoped_present_then_gone():
 # --------------------------------------------------------------------------- #
 
 async def test_usage_view_popup_and_pane_live():
-    """실제 클라 앱에서 usage-view 명령이 ① popup 모달을 푸시하고 ② pane 오버레이를
-    토글하며, 두 경로 모두 프레임 합성이 안 깨진다. claude-code 가 status 로 싣는
-    usage_limits 를 주입해 데이터가 흐르는 경로를 탄다."""
+    """실제 클라 앱에서 usage-view 명령이 ① popup 은 통합된 token-log '한도' 탭을 열고
+    (open_token_log('limit') 라우팅, 2026-06-17), ② pane 오버레이를 토글하며, 두 경로
+    모두 프레임 합성이 안 깨진다. claude-code 가 status 로 싣는 usage_limits 를 주입해
+    데이터가 흐르는 경로를 탄다."""
     from harness import make_app, server_only, teardown
 
     srv, task, sock = await server_only()
@@ -360,15 +367,15 @@ async def test_usage_view_popup_and_pane_live():
                                "week_all": {"pct": 14, "reset": "Jun 13 at 3am"}},
                            "usage_age_sec": 5})
             assert getattr(app.status, "usage_limits", None), "usage_limits 흡수 실패"
-            # ① popup → UsageScreen 푸시 + 렌더.
+            # ① popup → token-log 한도 탭으로 라우팅(통합). open_token_log 가 서버
+            # 라운드트립으로 TokenLogScreen 을 띄우므로(헤드리스 서버 의존), 여기선
+            # 라우팅 결정(한도 탭 인자 'limit')만 가로채 확인한다 — 통합 의도의 핵심.
+            routed = []
+            app.open_token_log = lambda initial=None: routed.append(initial)
             app._run_command("usage-view")
-            await pilot.pause(0.25)
-            top = app.screen_stack[-1]
-            assert top.__class__.__name__ == "UsageScreen", top.__class__.__name__
-            assert app.view._cells, "팝업 후 프레임 합성 실패"
-            await pilot.press("escape")           # 닫기
-            await pilot.pause(0.1)
-            assert app.screen_stack[-1].__class__.__name__ != "UsageScreen"
+            await pilot.pause(0.15)
+            assert routed == ["limit"], routed
+            assert app.view._cells, "팝업 라우팅 후 프레임 합성 실패"
             # ② pane 오버레이 → 활성 패널 토글 + 합성 무crash.
             app._run_command("usage-view pane")
             await pilot.pause(0.15)
@@ -392,7 +399,9 @@ async def test_usage_view_click_outside_closes():
         app = make_app(sock, None, None)
         async with app.run_test(size=(100, 30)) as pilot:
             await pilot.pause(0.4)
-            app._run_command("usage-view")
+            screen = importlib.import_module(
+                "pytmuxlib.plugins.claude-token-usage-view.screen")
+            app.push_screen(screen.UsageScreen())
             await pilot.pause(0.25)
             scr = app.screen_stack[-1]
             assert scr.__class__.__name__ == "UsageScreen", scr.__class__.__name__

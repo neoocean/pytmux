@@ -44,6 +44,8 @@ def init_defaults(status):
     않아 안전하다(delete-to-disable)."""
     status.claude_active = False   # 활성 패널이 Claude 패널인가(좌하단 토큰 표기 게이트)
     status.claude_usage = None     # 활성 Claude 패널의 토큰/컨텍스트(best-effort)
+    status._last_active_pane = None  # 직전 status 의 활성 패널 id — 바뀌면 per-pane
+                                     # 지속표시(ctx)를 새 패널 값으로 교체한다(아래 absorb)
     status.claude_tokens = 0       # 활성 계정 누적 토큰(§10 계정별 합계, 지속표시)
     status.claude_account = None   # 누적 토큰의 귀속 계정 별칭(폭 좁을 때 표시)
     status.claude_account_full = None  # 비별칭 전체 계정(폭 충분 시 표시, 요청)
@@ -83,9 +85,19 @@ def absorb(status, msg):
     # 활성 패널이 Claude 패널인지(권위값, 매 status). 값은 아래처럼 지속표시하되, 렌더는
     # 이 플래그로 게이트해 Claude 가 아닌 탭/패널에선 좌하단 토큰 표기를 숨긴다.
     status.claude_active = msg.get("claude_active", False)
-    # §10 지속표시: usage/tokens/account 가 비어 와도 마지막 비-빈 값을 유지한다.
+    # 활성 패널 전환 감지: status 는 매번 활성 패널 id(active_pane)를 싣는다(serverio
+    # _status_msg). 바뀌었으면 **per-pane 지속표시(ctx)를 새 패널 값으로 교체**한다 —
+    # 빈 값이라도. 안 그러면 새로 포커스한 Claude 패널의 ctx 가 아직 안 잡힌 동안(스캔
+    # 전·컨텍스트 배지 미표시) 이전 패널의 'ctx:~N%/…' 가 그대로 남아, 서로 다른 Claude
+    # 세션 패널을 옮겨 다녀도 같은 컨텍스트가 붙어 보였다(사용자 보고 2026-06-17).
+    pane_changed = ("active_pane" in msg
+                    and msg.get("active_pane") != status._last_active_pane)
+    if "active_pane" in msg:
+        status._last_active_pane = msg.get("active_pane")
+    # §10 지속표시: usage 가 비어 와도 마지막 비-빈 값을 유지한다 — 단 **같은 패널일
+    # 때만**. 패널이 바뀌면 위 사유로 새 패널 값(None 이면 None)으로 교체해 stale 를 끊는다.
     cu = msg.get("claude_usage")
-    if cu:
+    if cu or pane_changed:
         status.claude_usage = cu
     ct = msg.get("claude_tokens", 0)
     if ct:

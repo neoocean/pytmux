@@ -221,6 +221,18 @@ class Registry:
                 changed = True
         return changed
 
+    def server_filter_rows(self, server, pane, rows):
+        """render 된 행 목록(행 = [text, style] 런 목록)을 클라 전송 직전에 플러그인이
+        변형할 기회. claude-code 가 Claude 패널의 '/feedback 팁' 줄을 공백으로 가린다
+        (요청 2026-06-17). 플러그인은 변형 시 **새 리스트**를 돌려야 한다(render 캐시를
+        공유하므로 in-place 금지). 아무도 변형 안 하면 원본을 그대로 돌려, 핫패스 비용은
+        Claude 패널의 짧은 행 스캔뿐이다(delete-to-disable)."""
+        for p in self.plugins:
+            fn = getattr(p, "server_filter_rows", None)
+            if fn is not None:
+                rows = fn(server, pane, rows)
+        return rows
+
     def server_status(self, server, sess, win, msg, full):
         """status 메시지에 Claude 필드를 in-place 로 채운다. 플러그인이 없으면 no-op
         → status 에 Claude 키가 빠지고, 클라(역시 플러그인 부재)는 그 키를 안 본다."""

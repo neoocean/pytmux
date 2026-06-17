@@ -325,6 +325,22 @@ def daily_limit_pct(conn) -> dict:
     return {r["day"]: int(r["mx"]) for r in cur.fetchall() if r["mx"] is not None}
 
 
+def hourly_limit_pct(conn) -> dict:
+    """로컬 **시각별** 세션 5h 한도 최대 %(limits 스냅샷 기준).
+    {hour('%Y-%m-%d %H:00'): max_pct}.
+
+    daily_limit_pct 의 시간 버킷판 — 사용량 뷰의 Time(시간) 뷰가 '그 시각에 5h 창이
+    얼마나 찼나'를 권위 /usage 세션%로 보이게 한다(5h 비율은 일 단위가 아니라 시간
+    단위 뷰에 두는 게 의미상 맞다는 사용자 결정 2026-06-17). 키 포맷은 usagelog.
+    bucket_key('hour')·_BUCKET_FMT['hour']('%Y-%m-%d %H:00')와 동일해 뷰가 그대로
+    조인한다. NULL pct·빈 limits 는 제외."""
+    cur = conn.execute(
+        "SELECT strftime('%Y-%m-%d %H:00', ts, 'unixepoch', 'localtime') AS hr, "
+        "       MAX(session_pct) AS mx FROM limits "
+        "WHERE session_pct IS NOT NULL GROUP BY hr")
+    return {r["hr"]: int(r["mx"]) for r in cur.fetchall() if r["mx"] is not None}
+
+
 def update_accounts(conn, keep_accounts, keep_domains) -> int:
     """비신뢰 계정을 UNKNOWN 으로 일괄 정정(파일 재작성 불필요 — UPDATE 한 방).
     usagelog 의 신뢰 규칙을 공유한다. 변경된 행 수 반환."""

@@ -11,6 +11,7 @@
 코어가 Claude 로직을 레지스트리 훅/`getattr` 가드로만 닿는다는 계약을 못박는다.
 """
 import asyncio
+import os
 
 import harness  # noqa: F401  (sys.path 주입)
 from harness import make_app, server_only, teardown
@@ -172,6 +173,17 @@ async def test_plugin_opts_namespace_and_migration_shim():
     class _S:
         pass
 
+    # §10-D token_debug 는 opts.json 부재 시 env PYTMUX_TOKEN_DEBUG 로 폴백하므로
+    # 본 계약(기본 OFF)을 env 와 무관하게 검증하려면 이 테스트 동안 env 를 비운다.
+    _old_td = os.environ.pop("PYTMUX_TOKEN_DEBUG", None)
+    try:
+        return await _opts_namespace_body(reg, _S)
+    finally:
+        if _old_td is not None:
+            os.environ["PYTMUX_TOKEN_DEBUG"] = _old_td
+
+
+async def _opts_namespace_body(reg, _S):
     # ① 구 포맷(top-level only, plugin_opts 없음) → 폴백으로 읽힘(타 머신 업그레이드).
     s1 = _S()
     reg.server_opts_init(s1, {"usage_gate_session_pct": 80})
@@ -190,9 +202,10 @@ async def test_plugin_opts_namespace_and_migration_shim():
     # claude-code 계약을 엄격히 검증하기 위해 그 키들만 빼고 비교한다.
     assert set(out) - {"ph_max_lines", "capture"} == {"usage_gate_session_pct",
                                            "usage_gate_week_pct", "claude_auto_retry",
-                                           "claude_model_hint"}
+                                           "claude_model_hint", "token_debug"}
     assert out["claude_auto_retry"] is True   # 기본 ON(opts 부재 시)
     assert out["claude_model_hint"] is False  # M14c 힌트 opt-in — 기본 OFF
+    assert out["token_debug"] is False        # §10-D 진단 로그 — 기본 OFF
     # §7-4 deprecate shim: 구 opts.json 에 남은 token_budget_* 는 무시(속성 미설치).
     s4 = _S()
     reg.server_opts_init(s4, {"token_budget_day": 111,

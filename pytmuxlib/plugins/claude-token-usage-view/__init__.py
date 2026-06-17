@@ -7,7 +7,8 @@
 viewer 의 웹 API 경로는 쓰지 않는다). 설계 근거: docs/internal/USAGE_VIEW_DESIGN.md.
 
 표시 3모드:
-  * popup(기본) — 중앙 모달(UsageScreen).
+  * popup(기본) — token-log 의 '한도'(/usage) 탭을 연다(통합 2026-06-17; claude-code
+                  없으면 중앙 모달 UsageScreen 폴백).
   * tab          — 풀스크린 화면(UsageScreen full). pytmux 서버 탭은 항상 fresh 셸이고
                    스크랩 데이터는 클라에 있어, '탭'은 서버 탭이 아니라 클라 풀스크린
                    화면이다(데이터 일관성·delete-to-disable; DESIGN §5.3).
@@ -66,6 +67,15 @@ class _UsageViewPlugin:
                     app.usage_view_panes.add(pid)
                 app._composite()
                 return
+            if mode == "popup":
+                # 통합(2026-06-17, 사용자 결정): popup 은 별도 모달 대신 token-log 의
+                # '한도'(/usage) 탭을 활성인 채로 연다 — 한도 막대·리셋 카운트다운을 그
+                # 통합 팝업이 보인다. claude-code 가 있으면 그리로, 없으면(델리트-투-
+                # 디세이블) 기존 UsageScreen 으로 폴백한다(하드 참조 금지·getattr 가드).
+                fn = getattr(app, "open_token_log", None)
+                if fn is not None:
+                    fn("limit")
+                    return
             from .screen import UsageScreen
             app.push_screen(UsageScreen(full=(mode == "tab")))
 

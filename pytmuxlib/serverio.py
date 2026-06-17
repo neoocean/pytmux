@@ -271,6 +271,9 @@ class ServerIOMixin:
                     if not p.dirty:
                         continue
                     rows, cursor = p.render(p is win.active_pane)
+                    # 전송 전 플러그인 행 필터(claude-code 가 '/feedback 팁' 줄을 가림).
+                    # 변형 시 새 리스트를 받으므로 render 캐시는 안 건드린다(plugins 계약).
+                    rows = self.plugins.server_filter_rows(self, p, rows)
                     p.dirty = False
                     for c in clients:
                         if c.remote_view:   # §1.7 원격 보기 중 — 로컬 화면 미전송
@@ -283,6 +286,7 @@ class ServerIOMixin:
                 if pu and pu.get("pane") is not None and pu["pane"].dirty:
                     pp = pu["pane"]
                     rows, cursor = pp.render(True)
+                    rows = self.plugins.server_filter_rows(self, pp, rows)
                     pp.dirty = False
                     for c in clients:
                         if c.remote_view:   # §1.7

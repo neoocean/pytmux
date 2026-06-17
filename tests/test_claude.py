@@ -2,6 +2,7 @@
 
 (docs/internal/HANDOFF.md §11 분리로 test_protocol 에서 이리로 옮김.)"""
 import datetime as dt
+import importlib
 import re
 import time
 
@@ -10,7 +11,8 @@ import pytmuxlib.claude as claude_mod
 from pytmuxlib.claude import (claude_awaiting_answer, claude_account,
                               claude_context_pct, claude_model,
                               claude_perm_mode, claude_prompt, claude_state,
-                              claude_usage, parse_reset_delay, parse_usage,
+                              claude_usage, fmt_long_turn_badge,
+                              parse_reset_delay, parse_usage,
                               saver_hook_events)
 
 
@@ -449,6 +451,121 @@ async def test_saver_hook_events_env_payload():
     armed = evs["claude-auto-armed"]
     assert armed["PYTMUX_PENDING_KIND"] == "autoresume"
     assert armed["PYTMUX_PENDING_ETA"] == 30
+
+
+async def test_blank_feedback_tip_hides_line():
+    """Claude 패널의 'Tip: Use /feedback …' 줄은 폭을 유지한 채 공백으로 가려진다
+    (사용자 요청 2026-06-17). 팁이 없으면 원본 객체를 그대로 돌려준다(render 캐시 보호·
+    핫패스 무복사). 사용자가 직접 친 '/feedback' 단독 줄은 안 가린다(오탐 방지)."""
+    cc = importlib.import_module("pytmuxlib.plugins.claude-code")
+    tip = "Tip: Use /feedback to help us improve!"
+    rows = [[["hello", {}]], [[tip, {"dim": 1}]], [["world", {}]]]
+    out = cc._blank_feedback_tip(rows)
+    assert "".join(t for t, _ in out[1]) == " " * len(tip)   # 같은 폭 공백
+    assert out[1][0][1] == {"dim": 1}                         # 스타일 보존
+    assert out[0] is rows[0] and out[2] is rows[2]            # 다른 행 그대로
+    assert rows[1][0][0] == tip                               # 원본 미변형(캐시 보호)
+    plain = [[["nothing here", {}]]]
+    assert cc._blank_feedback_tip(plain) is plain             # 팁 없음 → 동일 객체
+    typed = [[["please run /feedback", {}]]]
+    assert cc._blank_feedback_tip(typed) is typed             # 직접 친 /feedback 은 보존
+
+
+async def test_server_filter_rows_only_claude_panes():
+    """server_filter_rows 훅은 Claude 패널만 '/feedback 팁'을 가리고, 비-Claude 패널은
+    원본 그대로 둔다(핫패스 무영향)."""
+    cc = importlib.import_module("pytmuxlib.plugins.claude-code")
+    tip = "Tip: Use /feedback to help us improve!"
+    rows = [[[tip, {}]]]
+
+    class _P:
+        _claude = None
+
+    assert cc.PLUGIN.server_filter_rows(None, _P(), rows) is rows   # 비-Claude → 그대로
+    p = _P()
+    p._claude = "idle"
+    out = cc.PLUGIN.server_filter_rows(None, p, rows)
+    assert "".join(t for t, _ in out[0]) == " " * len(tip)
+
+
+async def test_fmt_long_turn_badge_switches_to_hours():
+    """장기 턴 경고 배지: 1시간 미만은 '⚠ 분:초', 1시간 이상은 '⚠ 시:분'으로 표시한다
+    (사용자 요청 2026-06-17 — 1시간 넘으면 분이 60+ 로 커져 읽기 어려움)."""
+    assert fmt_long_turn_badge(0) == "⚠ 0:00"
+    assert fmt_long_turn_badge(75) == "⚠ 1:15"        # 1분 15초
+    assert fmt_long_turn_badge(613) == "⚠ 10:13"      # 10분 13초
+    assert fmt_long_turn_badge(3599) == "⚠ 59:59"     # 경계 직전 → 분:초
+    assert fmt_long_turn_badge(3600) == "⚠ 1:00"      # 정확히 1시간 → 시:분
+    # 사용자 예시: 화면의 ⚠75:13(=75분 13초=4513초)은 시:분으로 ⚠1:15 가 된다.
+    assert fmt_long_turn_badge(4513) == "⚠ 1:15"
+    assert fmt_long_turn_badge(7505) == "⚠ 2:05"      # 2시간 5분 5초
+
+
+async def test_warn_info_text_classifies_warn_kinds():
+    """통합 '경고' 탭 본문(TokenLogScreen._warn_info_text): 상태줄 경고 문구로 종류를
+    판별해 제목·상황·할일을 만든다(옛 _open_warn_info InfoScreen 내용 이전, 2026-06-17)."""
+    screens = importlib.import_module("pytmuxlib.plugins.claude-code.screens")
+    wit = screens.TokenLogScreen._warn_info_text
+    t1, l1 = wit("⚠ 75:13")
+    assert t1 == "Claude 장기 턴" and l1[0] == "⚠ 75:13"   # 첫 줄 = 원문 경고
+    t2, _ = wit("같은 출력이 여러 번 반복 — 루프 의심")
+    assert t2 == "Claude 반복 루프 의심"
+    t3, _ = wit("Claude 포맷 미인식")
+    assert t3 == "Claude 포맷 미인식"
+
+
+async def test_warn_badge_click_routes_to_token_log_warn_tab():
+    """상태줄 ⚠ 경고 배지 클릭(_open_warn_info)은 통합 토큰 팝업의 '경고' 탭을 연다
+    (open_token_log('warn')). 경고가 없으면 팝업을 열지 않는다(2026-06-17 통합)."""
+    cc = importlib.import_module("pytmuxlib.plugins.claude-code")
+
+    routed = []
+
+    class _App:
+        def __init__(self, warn):
+            self.status = type("S", (), {"claude_warn": warn})()
+
+        def open_token_log(self, initial=None):
+            routed.append(initial)
+
+        def display_message(self, *a, **k):
+            pass
+
+    cc._open_warn_info(_App("⚠ 75:13"))
+    assert routed == ["warn"], routed
+    routed.clear()
+    cc._open_warn_info(_App(None))      # 경고 없음 → 팝업 안 염
+    assert routed == [], routed
+
+
+async def test_statusbar_ctx_follows_active_pane_switch():
+    """좌하단 ctx(claude_usage)는 **활성 패널 전환 시 새 패널 값으로 교체**된다 — 새
+    패널의 ctx 가 아직 안 잡혀(None) 와도 이전 패널 값을 유지하지 않는다(사용자 보고
+    2026-06-17: 서로 다른 Claude 세션 패널을 옮겨 다녀도 같은 ctx 가 붙어 보임). 단
+    **같은 패널** 내 일시적 None 엔 종전대로 마지막 값 유지(스크롤 등 깜빡임 방지)."""
+    cs = importlib.import_module("pytmuxlib.plugins.claude-code.clientstatus")
+
+    class _S:
+        pass
+
+    status = _S()
+    cs.init_defaults(status)
+    # 패널 5: ctx 잡힘 → 표시
+    cs.absorb(status, {"active_pane": 5, "claude_active": True,
+                       "claude_usage": "ctx:49%/150K"})
+    assert status.claude_usage == "ctx:49%/150K"
+    # 같은 패널 5, ctx 가 일시적으로 빈 값 → 마지막 값 유지(깜빡임 방지)
+    cs.absorb(status, {"active_pane": 5, "claude_active": True,
+                       "claude_usage": None})
+    assert status.claude_usage == "ctx:49%/150K"
+    # 패널 6 으로 전환, 새 패널 ctx 아직 None → 이전 패널 값을 끊고 교체(None)
+    cs.absorb(status, {"active_pane": 6, "claude_active": True,
+                       "claude_usage": None})
+    assert status.claude_usage is None, status.claude_usage
+    # 패널 6 의 ctx 가 잡히면 그 패널 값으로
+    cs.absorb(status, {"active_pane": 6, "claude_active": True,
+                       "claude_usage": "ctx:12%/150K"})
+    assert status.claude_usage == "ctx:12%/150K"
 
 
 # ── §5.9: 정규식 ReDoS(파국적 백트래킹) 회귀 가드 ──────────────────────────────

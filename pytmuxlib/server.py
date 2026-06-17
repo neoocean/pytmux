@@ -485,6 +485,11 @@ class Server(*_SERVER_BASES):
         "nest-auto-attach": "set_nest_auto_attach",
         "nest-attach": "set_nest_auto_attach",
         "budget-plan": "set_claude_budget_plan",
+        # §10-D 토큰 회계 진단 로그 토글의 외부 CLI 파리티(`pytmux cmd token-debug on`).
+        # 클라 in-app 명령(handle_command→set_token_debug)과 같은 setter. setter 는
+        # claude-code 믹스인 소유라 플러그인 부재 시 빠짐(형제 claude 엔트리와 동일).
+        "token-debug": "set_token_debug",
+        "token-dbg": "set_token_debug",
     }
 
     def handle_control(self, line: str):

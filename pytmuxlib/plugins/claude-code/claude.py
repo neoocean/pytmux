@@ -509,6 +509,17 @@ def claude_welcome(text: str) -> bool:
     return bool(_WELCOME_RE.search(text or ""))
 
 
+def fmt_long_turn_badge(elapsed_sec) -> str:
+    """장기 턴 경고 배지 문자열. 기본 '⚠ M:SS'(경과 분:초)지만 **1시간 이상이면
+    '⚠ H:MM'(시:분)** 으로 바꾼다 — 1시간을 넘으면 분이 60+ 로 커져 읽기 어렵다는
+    사용자 요청(2026-06-17). 경계(3600s)에서 60:00→1:00 으로 단위가 매끄럽게 넘어가
+    M:SS 의 분이 60 이상으로 가지 않는다(표기 중첩 없음)."""
+    el = max(0, int(elapsed_sec))
+    if el >= 3600:
+        return "⚠ %d:%02d" % (el // 3600, (el % 3600) // 60)
+    return "⚠ %d:%02d" % (el // 60, el % 60)
+
+
 def claude_remote_active(text: str) -> bool:
     """Claude Code 패널이 데스크탑 앱 '원격 제어'에 연결돼 있는지(화면의 'Remote
     Control active' 표시) 판정. 시작 시 자동 /rc 주입(auto-launch)이 **이미 켜진**

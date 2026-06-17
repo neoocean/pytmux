@@ -26,7 +26,8 @@ from . import tokens, usagedb, usagelog   # S5 T5: 토큰 DB 백엔드도 플러
 from .claude import (claude_account, claude_account_full, claude_api_error,
                      claude_awaiting_answer,
                      claude_context_hardstop, claude_context_pct,
-                     claude_feedback_prompt, fmt_unknown_update,
+                     claude_feedback_prompt, fmt_long_turn_badge,
+                     fmt_unknown_update,
                      claude_model, model_overselect_hint,
                      claude_prompt, claude_perm_mode,
                      claude_remote_active, claude_remote_blocked,
@@ -1282,10 +1283,10 @@ class ServerClaudeMixin:
                 if (lt > 0 and new_cl == "busy" and p._busy_since is not None):
                     el = time.monotonic() - p._busy_since
                     if el >= lt:
-                        # 장기 턴 경고: 경고 삼각형(⚠) 이모지 + 경과 분:초만 간단히
-                        # (요청 — ❗→⚠ 노란 세모로 통일). 초가 매초 바뀌므로 정수 초
-                        # 경계에서만 changed.
-                        warn = "⚠ %d:%02d" % (int(el // 60), int(el % 60))
+                        # 장기 턴 경고: 경고 삼각형(⚠) + 경과 시간. 기본 분:초, 1시간
+                        # 이상이면 시:분(사용자 요청 2026-06-17, fmt_long_turn_badge).
+                        # 초가 매초 바뀌므로 정수 초 경계에서만 changed.
+                        warn = fmt_long_turn_badge(el)
                 elif ra > 0 and new_cl == "idle" and p._repeat_n >= ra:
                     warn = f"⚠ 동일 결과 {p._repeat_n + 1}회 반복 — 루프 의심"
                 if not new_cl:
@@ -1796,14 +1797,22 @@ class ServerClaudeMixin:
         # S6 T5: 응답 종료 이벤트 → 실측이 묵었으면 디바운스 갱신 예약.
         self._on_token_commit_refresh()
 
+    def set_token_debug(self, value=None):
+        """토큰 회계 진단 로그(10-D) 토글. value 미지정 시 반전. opts.json plugin_opts
+        영속(server_opts_serialize) + **런타임 즉시 발효** — 다음 `_scan_claude` step 부터
+        `<sock>.tokendbg.jsonl` 기록을 켜거나 멈춘다(데몬 재시작 불필요). 이전엔 env
+        `PYTMUX_TOKEN_DEBUG` 1회 캐시라 토글에 재시작이 필요했다(§10-D)."""
+        self.token_debug = (not getattr(self, "token_debug", False)) \
+            if value is None else bool(value)
+        self._save_opts()
+        return self.token_debug
+
     def _token_debug_on(self) -> bool:
-        """토큰 회계 진단 로그 on/off(env `PYTMUX_TOKEN_DEBUG`, 빈/미설정=off).
-        데몬 env 는 기동 시 고정이라 1회 읽어 캐시한다(매 프레임 환경 조회 회피)."""
-        v = getattr(self, "_tok_dbg_on", None)
-        if v is None:
-            v = bool(os.environ.get("PYTMUX_TOKEN_DEBUG"))
-            self._tok_dbg_on = v
-        return v
+        """토큰 회계 진단 로그 on/off. 서버 옵션 `self.token_debug`(opts.json plugin_opts
+        영속, 런타임 `token-debug on/off` 명령으로 토글, 기동 시 구 env PYTMUX_TOKEN_DEBUG
+        폴백은 server_opts_init 이 처리). 이전엔 env 를 기동 1회 캐시했으나 **런타임 토글**을
+        위해 옵션 속성 직접 참조로 바꿨다(속성 조회라 별도 캐시 불필요)."""
+        return bool(getattr(self, "token_debug", False))
 
     def _log_token_debug(self, pane: Pane, tab: Tab, *, state, busy: bool,
                          running, peak_before: int, committed: int,
