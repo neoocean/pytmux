@@ -105,6 +105,30 @@ def bar(value: int, vmax: int, cells: int) -> str:
     return "█" * full + (_BAR_BLOCKS[rem] if rem and full < cells else "")
 
 
+def bar_floating(start: float, end: float, vmax: int, cells: int) -> str:
+    """[start, end] 구간만 채운 '떠 있는' 막대 — 계단식 누적 표현용(bar() 와 같은
+    스케일 규약, 0..vmax → cells 칸). 앞쪽 [0, start) 는 공백, [start, end] 는 채움,
+    (end, vmax] 는 잘림. 시각별 5h% 막대를 이전 시각이 끝난 위치에서 시작해 누적
+    계단으로 그릴 때 쓴다(요청 2026-06-17).
+
+    start 는 칸 경계로 **내림**한다 — 좌측을 부분만 채우는 블록 문자가 없어 시작 칸은
+    통째로 비우거나 통째로 시작한다. end 는 bar() 처럼 1/8 칸 정밀도로 채운다. 빈
+    구간(end<=start, 또는 둘 다 0)은 선행 공백만(막대 없음) — 숫자(%)가 값을 전한다."""
+    if cells <= 0 or vmax <= 0:
+        return ""
+    start = max(0.0, min(float(vmax), float(start)))
+    end = max(start, min(float(vmax), float(end)))
+    s_cell = int(start / vmax * cells)            # 시작 칸(내림)
+    fill_eighths = int(round(end / vmax * cells * 8)) - s_cell * 8
+    if fill_eighths <= 0:
+        return " " * s_cell
+    full, rem = divmod(fill_eighths, 8)
+    avail = cells - s_cell
+    full = min(full, avail)
+    seg = "█" * full + (_BAR_BLOCKS[rem] if rem and full < avail else "")
+    return " " * s_cell + seg
+
+
 def format_option_row(spec, sel_idx):
     """옵션 피커 한 행 표시문: '라벨:  ◀ ▶  현재선택지'. 라벨·선택지를 로케일 번역(t,
     미등록은 원문 폴백)하고 선택지가 2개 이상이면 ←→ 화살표를 붙인다. 코어

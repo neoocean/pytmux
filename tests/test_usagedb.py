@@ -477,6 +477,35 @@ async def test_limits_query_since_and_prune():
     conn.close()
 
 
+async def test_hourly_limit_pct_last_in_hour_shows_reset():
+    """hourly_limit_pct 는 시각별 **마지막(ts 최신)** session_pct 를 돌려준다(MAX 아님).
+    5h 창이 누적 상승하다 리셋된 시각은 직전 창 최고값이 아니라 **리셋 직후의 낮은
+    값**을 보여, 계단식 막대(_hourly_spans)가 그 시각에 바로 0 으로 되돌 수 있다."""
+    import time
+    conn = usagedb.connect(":memory:")
+    # ts 들을 로컬 정시 H, H+1 에 정렬(분/초 단위로 띄워 같은 시각에 묶이게).
+    now = 1_700_000_000.0
+    lt = time.localtime(now)
+    base = now - lt.tm_min * 60 - lt.tm_sec          # 로컬 시각 H 시작
+    nxt = base + 3600                                 # 시각 H+1
+
+    def hk(ts):
+        return time.strftime("%Y-%m-%d %H:00", time.localtime(ts))
+
+    # 시각 H: 누적 5 → 12 상승 → 끝값 12.
+    usagedb.insert_limits(conn, usagedb.snap_from_usage(_usage_dict(spct=5), base, "p"))
+    usagedb.insert_limits(conn, usagedb.snap_from_usage(_usage_dict(spct=12), base + 120, "p"))
+    # 시각 H+1: 18(창 최고) → 0(리셋) → 3(새 창 상승). 끝값 3(=MAX 18 아님).
+    usagedb.insert_limits(conn, usagedb.snap_from_usage(_usage_dict(spct=18), nxt, "p"))
+    usagedb.insert_limits(conn, usagedb.snap_from_usage(_usage_dict(spct=0), nxt + 120, "p"))
+    usagedb.insert_limits(conn, usagedb.snap_from_usage(_usage_dict(spct=3), nxt + 240, "p"))
+
+    hp = usagedb.hourly_limit_pct(conn)
+    assert hp[hk(base)] == 12, hp           # 비-리셋 시각: 끝값=최고값
+    assert hp[hk(nxt)] == 3, hp             # 리셋 시각: 끝값(3), 직전 최고(18) 아님
+    conn.close()
+
+
 async def test_limits_v1_db_upgrades_on_connect():
     """v1(usage 테이블만) DB 파일도 connect() 가 limits 테이블을 자동 추가한다
     (CREATE IF NOT EXISTS — 기존 usage 데이터 무접촉, 타 머신 업그레이드 무중단)."""

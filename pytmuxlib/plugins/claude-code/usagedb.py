@@ -326,19 +326,32 @@ def daily_limit_pct(conn) -> dict:
 
 
 def hourly_limit_pct(conn) -> dict:
-    """로컬 **시각별** 세션 5h 한도 최대 %(limits 스냅샷 기준).
-    {hour('%Y-%m-%d %H:00'): max_pct}.
+    """로컬 **시각별** 세션 5h 한도 **시각 끝(최신) 누적 %**(limits 스냅샷 기준).
+    {hour('%Y-%m-%d %H:00'): last_pct}.
 
     daily_limit_pct 의 시간 버킷판 — 사용량 뷰의 Time(시간) 뷰가 '그 시각에 5h 창이
     얼마나 찼나'를 권위 /usage 세션%로 보이게 한다(5h 비율은 일 단위가 아니라 시간
-    단위 뷰에 두는 게 의미상 맞다는 사용자 결정 2026-06-17). 키 포맷은 usagelog.
-    bucket_key('hour')·_BUCKET_FMT['hour']('%Y-%m-%d %H:00')와 동일해 뷰가 그대로
-    조인한다. NULL pct·빈 limits 는 제외."""
+    단위 뷰에 두는 게 의미상 맞다는 사용자 결정 2026-06-17).
+
+    값은 **MAX 가 아니라 그 시각의 마지막(ts 최신) 스냅샷**이다(2026-06-17): session_pct
+    는 5h 창 안에서 단조 증가하다 리셋 시 0 으로 떨어지는 누적값이라, 한 시각의 끝
+    상태(=최신)를 쓰면 비-리셋 시각엔 MAX 와 같고 **리셋이 일어난 시각만** 리셋 직후의
+    낮은 값을 보여 준다. 덕분에 계단식 막대(_hourly_spans)가 리셋을 한 시각 늦지 않게
+    바로 그 시각에 0 으로 되돌린다(MAX 면 리셋 시각이 직전 창 최고값에 가려 한 칸 밀렸다).
+
+    키 포맷은 usagelog.bucket_key('hour')·_BUCKET_FMT['hour']('%Y-%m-%d %H:00')와 동일해
+    뷰가 그대로 조인한다. NULL pct·빈 limits 는 제외."""
     cur = conn.execute(
-        "SELECT strftime('%Y-%m-%d %H:00', ts, 'unixepoch', 'localtime') AS hr, "
-        "       MAX(session_pct) AS mx FROM limits "
-        "WHERE session_pct IS NOT NULL GROUP BY hr")
-    return {r["hr"]: int(r["mx"]) for r in cur.fetchall() if r["mx"] is not None}
+        "SELECT hr, session_pct FROM ("
+        "  SELECT strftime('%Y-%m-%d %H:00', ts, 'unixepoch', 'localtime') AS hr, "
+        "         session_pct, "
+        "         ROW_NUMBER() OVER (PARTITION BY "
+        "             strftime('%Y-%m-%d %H:00', ts, 'unixepoch', 'localtime') "
+        "             ORDER BY ts DESC, rowid DESC) AS rn "
+        "  FROM limits WHERE session_pct IS NOT NULL"
+        ") WHERE rn = 1")
+    return {r["hr"]: int(r["session_pct"]) for r in cur.fetchall()
+            if r["session_pct"] is not None}
 
 
 def update_accounts(conn, keep_accounts, keep_domains) -> int:

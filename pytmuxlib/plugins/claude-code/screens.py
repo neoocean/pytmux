@@ -471,7 +471,8 @@ class PermModeScreen(ModalScreen):
 # TokenLogScreen 이 쓰는 심볼. usagelog 는 S5 T5 에서 플러그인 소속(상대 import).
 from . import usagelog
 from .claude import parse_reset_ts
-from pytmuxlib.clientutil import _char_cells, bar, format_option_row, _CLOCK_FONT
+from pytmuxlib.clientutil import (_char_cells, bar, bar_floating,
+                                  format_option_row, _CLOCK_FONT)
 from pytmuxlib.clientscreens import usage_bar_lines
 
 
@@ -541,6 +542,10 @@ class TokenLogScreen(ModalScreen):
         # '5h%' 열은 이제 hour 버킷에서 hourly_pct 로 보인다(None/구버전 서버 → 열 생략).
         self._daily_pct = daily_pct or {}
         self._hourly_pct = hourly_pct or {}
+        # 시각별 5h% 를 '계단식 누적' 막대로 그리기 위한 구간 {hour: (start, end)} —
+        # 각 시각의 막대가 직전 시각이 끝난 위치에서 시작하고, 5h 창이 리셋되면(누적%
+        # 하락 또는 ≥5h 공백) 다시 0 부터 시작한다(요청 2026-06-17, _hourly_spans).
+        self._hourly_span = self._hourly_spans(self._hourly_pct)
         # 전체 이력 일자별 합성 레코드(서버 daily_breakdown). day/week/month 버킷은
         # 이걸로 집계해 옛 버킷이 cap 에 잘리지 않게 한다(None=구버전 서버 → 폴백으로
         # 최근 N 건 _records 사용). hour 버킷만 raw _records 를 쓴다(_refresh 참고).
@@ -842,23 +847,54 @@ class TokenLogScreen(ModalScreen):
             return p
         return f"{p} {bar(tok, vmax, cells)}"
 
+    @staticmethod
+    def _hourly_spans(hourly_pct):
+        """시각별 **누적** 세션 5h%({hour: max_pct})를 '계단식' 막대 구간
+        {hour: (start, end)} 로 변환한다(요청 2026-06-17). session_pct 는 5h 창 안에서
+        단조 증가하는 누적 점유율이라, 각 시각의 막대를 직전 시각이 끝난 위치(start=직전
+        누적%)에서 시작해 이번 누적%(end)까지 그리면 여러 시각에 흩어진 사용이 오른쪽으로
+        쌓이는 계단이 된다. 5h 창이 리셋되면 누적%가 **하락**하거나 직전 표본과 **≥5h**
+        벌어지므로, 그 시각은 start=0 으로 되돌려 막대가 다시 처음부터 시작한다.
+
+        키는 'YYYY-MM-DD HH:00'(시간순=사전순). 입력 dict 와 무관하게 시간순으로 걷는다."""
+        from datetime import datetime
+        spans = {}
+        prev_pct = None
+        prev_dt = None
+        for hk in sorted(hourly_pct):
+            cur = hourly_pct[hk]
+            try:
+                cur_dt = datetime.strptime(hk, "%Y-%m-%d %H:00")
+            except (ValueError, TypeError):
+                cur_dt = None
+            reset = (prev_pct is None or cur < prev_pct
+                     or (prev_dt is not None and cur_dt is not None
+                         and (cur_dt - prev_dt).total_seconds() >= 5 * 3600))
+            start = 0 if reset else prev_pct
+            spans[hk] = (start, cur)
+            prev_pct = cur
+            prev_dt = cur_dt
+        return spans
+
     def _lim5h_cell(self, hour_key, cells=0):
-        """hour 버킷의 **세션 5h 한도 최대%**(권위 /usage)를 **가로 막대 그래프**로(요청
-        2026-06-17 — 각 시각이 이번 5h 창을 얼마나 채웠는지를 숫자 대신 막대로). 0~100%
-        를 만점 100 기준 cells 칸 막대로 그린다(`bar(pct, 100, cells)`) — 토큰 비율
-        막대(`_barcell`, 표시 행 합 기준)와 달리 분모가 **항상 100%(5h 한도)** 라 시각
-        간 절대 점유를 바로 비교할 수 있다. % 숫자는 막대 **앞에** 둬 좁아 막대가 잘려도
-        항상 보이게 한다(_barcell 과 같은 규약). cells<=0(아주 좁은 폭)이면 % 만.
-        데이터 없으면 '·'. ≥80=빨강·≥50=노랑·굵게로 무거운 시각을 눈에 띄게(상태줄
-        한도 배지와 같은 임계). 키는 hourly_pct('YYYY-MM-DD HH:00')와 조인한다."""
-        pct = self._hourly_pct.get(hour_key) if hour_key else None
-        if pct is None:
+        """hour 버킷의 **세션 5h 한도 누적%**(권위 /usage)를 **계단식 가로 막대**로(요청
+        2026-06-17). 막대는 직전 시각이 끝난 위치(start)에서 시작해 이번 누적%(end)까지
+        채우므로(`bar_floating(start, end, 100, cells)`), 5h 창에 흩어진 사용이 시각을
+        따라 오른쪽으로 쌓이는 계단이 되고 창이 리셋되면 다시 0 부터 시작한다(구간 계산은
+        `_hourly_spans`). 분모는 **항상 100%(5h 한도)** 라 시각 간 절대 점유를 바로 비교할
+        수 있다. % 숫자(누적값)는 막대 **앞에** 둬 좁아 막대가 잘려도 항상 보이게 한다.
+        cells<=0(아주 좁은 폭)이면 % 만. 데이터 없으면 '·'. ≥80=빨강·≥50=노랑·굵게로
+        무거운 시각을 눈에 띄게(상태줄 한도 배지와 같은 임계). 키는 hourly_pct 와 조인."""
+        span = self._hourly_span.get(hour_key) if hour_key else None
+        if span is None:
             return Text("·", justify="right", style="dim")
+        start, pct = span
         style = "bold red" if pct >= 80 else "bold yellow" if pct >= 50 \
             else "green"
         if cells <= 0:
             return Text(f"{pct:>3}%", justify="right", style=style)
-        return Text(f"{pct:>3}% {bar(pct, 100, cells)}", style=style)
+        return Text(f"{pct:>3}% {bar_floating(start, pct, 100, cells)}",
+                    style=style)
 
     def _refresh_recon(self, table):
         """[대사] 뷰(S6 T2): 연속 실측 스냅샷 구간마다 실측 Δ%(세션 5h)와 그 구간의

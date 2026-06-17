@@ -3162,6 +3162,52 @@ async def test_bar_gauge_partial_blocks():
     assert tiny == "" or tiny[0] in _BAR_BLOCKS
 
 
+async def test_bar_floating_staircase_segment():
+    """떠 있는 막대(clientutil.bar_floating): [start,end] 구간만 채워 계단식 누적을
+    표현. 앞쪽은 공백(시작 칸 내림), 끝은 1/8 칸 정밀도. 빈 폭/vmax 0 은 빈 문자열."""
+    from pytmuxlib.clientutil import bar_floating
+    assert bar_floating(0, 50, 100, 0) == ""        # cells<=0
+    assert bar_floating(0, 50, 0, 8) == ""          # vmax<=0
+    # start=0 이면 bar() 와 동치(처음부터 채움)
+    assert bar_floating(0, 100, 100, 8) == "█" * 8
+    # 50→100: 앞 4칸 공백 + 뒤 4칸 채움(떠 있는 막대)
+    assert bar_floating(50, 100, 100, 8) == "    " + "█" * 4
+    # 25→50: 시작칸 2(내림) 공백 + 2칸 채움
+    assert bar_floating(25, 50, 100, 8) == "  " + "██"
+    # 증분 없음(end<=start)은 선행 공백만(막대 없음 — 숫자가 값을 전함)
+    assert bar_floating(50, 50, 100, 8) == "    "
+    # 선행 공백 + 채움 칸수 합은 폭을 넘지 않는다
+    s = bar_floating(60, 95, 100, 8)
+    assert len(s) <= 8 and s.startswith(" ") and "█" in s
+
+
+async def test_hourly_spans_staircase_and_reset():
+    """TokenLogScreen._hourly_spans: 시각별 누적 5h%({hour:max})를 계단식 구간
+    {hour:(start,end)} 로. 같은 5h 창은 직전 누적%에서 이어 시작, 창 리셋(누적% 하락
+    또는 ≥5h 공백)이면 start=0 으로 되돌린다(요청 2026-06-17)."""
+    import importlib
+    TokenLogScreen = importlib.import_module(
+        "pytmuxlib.plugins.claude-code.screens").TokenLogScreen
+    f = TokenLogScreen._hourly_spans
+    data = {
+        "2026-06-17 09:00": 10,   # 첫 표본 → 0 부터
+        "2026-06-17 10:00": 25,   # 1h 뒤·증가 → 이어서
+        "2026-06-17 11:00": 40,   # 1h 뒤·증가 → 이어서
+        "2026-06-17 16:00": 15,   # 5h 공백 → 리셋(0 부터)
+        "2026-06-17 17:00": 30,   # 1h 뒤·증가 → 이어서
+    }
+    spans = f(data)
+    assert spans["2026-06-17 09:00"] == (0, 10)
+    assert spans["2026-06-17 10:00"] == (10, 25)
+    assert spans["2026-06-17 11:00"] == (25, 40)
+    assert spans["2026-06-17 16:00"] == (0, 15)    # ≥5h 공백 리셋
+    assert spans["2026-06-17 17:00"] == (15, 30)
+    # 공백 없이 누적%가 하락해도(=창 리셋) 0 부터 다시
+    drop = f({"2026-06-17 12:00": 40, "2026-06-17 13:00": 5})
+    assert drop["2026-06-17 13:00"] == (0, 5)
+    assert f({}) == {}
+
+
 async def test_usage_panel_auto_popup_on_shown_seq():
     # 인패널 /usage 가 새로 떴다는 usage_shown_seq 증가 → 전용 사용량 화면 자동 팝업.
     # 접속 후 첫 status 는 베이스라인만(안 띄움), 그 다음 증가에서 띄운다.
