@@ -9,7 +9,8 @@ from textual.screen import ModalScreen
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import DataTable, Label, ListItem, ListView, Static, TextArea
+from textual.widgets import (DataTable, Input, Label, ListItem, ListView,
+                             Static, TextArea)
 
 from rich.text import Text
 
@@ -1411,3 +1412,162 @@ class TokenLogScreen(ModalScreen):
         event.stop()
         self.dismiss(None)
 
+
+
+class AccountAliasScreen(ModalScreen):
+    """§10-E #2b 좌하단 Claude 계정 — 감지된 계정 목록 + 사용자 별칭 편집 + 표시모드
+    선택 화면. 서버 request_account_list 회신으로 채운다(open_account_aliases).
+      · 목록: 감지된 계정(이메일) → 현재 별칭
+      · Enter(또는 행 클릭): 그 계정의 별칭 편집(하단 입력칸; 빈값 제출=별칭 삭제)
+      · m: 표시모드 순환(별칭/메일 전체/표시 안 함) — footer 표기에 즉시 반영
+      · Esc: 편집 중이면 편집 취소, 아니면 닫기. [x]/바깥 클릭=닫기.
+    설정은 서버 opts.json(plugin_opts)에 영속(set_account_alias·set_account_display)."""
+    CSS = """
+    AccountAliasScreen { align: center middle; }
+    #aabox { width: 80%; max-width: 76; height: auto; max-height: 80%;
+             border: round $accent; background: $panel; padding: 0 1; }
+    #aahead { width: 100%; height: 1; }
+    #aatitle { width: 1fr; height: 1; color: $accent; text-style: bold; }
+    #aaclose { width: 5; height: 1; content-align: center middle;
+               background: $error; color: $text; text-style: bold; }
+    #aamode { width: 100%; height: 1; color: $text-muted; }
+    #aalist { width: 100%; height: auto; max-height: 16; margin: 0 0 0 0; }
+    #aainput { width: 100%; display: none; }
+    #aainput.editing { display: block; }
+    #aahint { width: 100%; height: 1; color: $text-muted; }
+    """
+    _MODES = ("alias", "full", "hidden")
+
+    def __init__(self, accounts, aliases, display):
+        super().__init__()
+        self._accounts = list(accounts or [])
+        self._aliases = dict(aliases or {})
+        self._display = display if display in self._MODES else "alias"
+        self._editing = None        # 편집 중인 계정 이메일(없으면 None)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="aabox"):
+            with Horizontal(id="aahead"):
+                yield Static(i18n.t("acct.title"), id="aatitle")
+                yield Label("[x]", id="aaclose", markup=False)
+            yield Static("", id="aamode", markup=False)
+            yield ListView(id="aalist")
+            yield Input(id="aainput", placeholder=i18n.t("acct.input_ph"))
+            yield Static(i18n.t("acct.edit_hint"), id="aahint", markup=False)
+
+    def on_mount(self):
+        # 리스트는 mount 때 한 번만 채우고 이후엔 행 라벨을 제자리 갱신한다(ListView.clear
+        # 가 비동기라 clear+append 재구성 시 id 충돌/중복이 났다 — §10-E #2b 함정).
+        self._labels = []           # 계정 행 Label(인덱스=self._accounts 정렬)
+        self._sync_mode_line()
+        lv = self.query_one("#aalist", ListView)
+        if not self._accounts:
+            lv.append(ListItem(Label(i18n.t("acct.none"), markup=False)))
+        else:
+            for email in self._accounts:
+                lab = Label(self._row_text(email), markup=False)
+                self._labels.append(lab)
+                lv.append(ListItem(lab))
+        lv.focus()
+
+    # ---- 데이터/표시 ----
+    def _mode_name(self):
+        return i18n.t("acct.mode_" + self._display)
+
+    def _row_text(self, email):
+        alias = self._aliases.get(email)
+        tail = alias if alias else i18n.t("acct.no_alias")
+        return f"{email}  →  {tail}"
+
+    def _sync_mode_line(self):
+        self.query_one("#aamode", Static).update(
+            i18n.t("acct.mode_line", mode=self._mode_name()))
+
+    def _refresh_row(self, email):
+        if email in self._accounts:
+            i = self._accounts.index(email)
+            if i < len(getattr(self, "_labels", [])):
+                self._labels[i].update(self._row_text(email))
+
+    def update_data(self, accounts, aliases, display):
+        """서버 account_list 재회신으로 데이터 갱신(편집 후 재요청 시). 계정 집합이
+        같으면 행 라벨만 제자리 갱신(ListView clear 의 비동기 함정 회피)."""
+        self._aliases = dict(aliases or {})
+        self._display = display if display in self._MODES else "alias"
+        self._sync_mode_line()
+        if list(accounts or []) == self._accounts:
+            for email in self._accounts:
+                self._refresh_row(email)
+
+    # ---- 표시모드 순환 ----
+    def _cycle_mode(self):
+        i = self._MODES.index(self._display)
+        self._display = self._MODES[(i + 1) % len(self._MODES)]
+        self.app.send_cmd("set_account_display", value=self._display)
+        self._sync_mode_line()
+
+    # ---- 별칭 편집 ----
+    def _begin_edit(self, idx):
+        if not (0 <= idx < len(self._accounts)):
+            return
+        self._editing = self._accounts[idx]
+        inp = self.query_one("#aainput", Input)
+        inp.value = self._aliases.get(self._editing, "")
+        inp.add_class("editing")
+        inp.focus()
+
+    def _end_edit(self):
+        self._editing = None
+        inp = self.query_one("#aainput", Input)
+        inp.remove_class("editing")
+        inp.value = ""
+        self.query_one("#aalist", ListView).focus()
+
+    def on_input_submitted(self, event):
+        if self._editing is None:
+            return
+        email = self._editing
+        alias = (event.value or "").strip()
+        self.app.send_cmd("set_account_alias", email=email, alias=alias)
+        if alias:                       # 낙관적 즉시 반영(서버 broadcast 와 동치)
+            self._aliases[email] = alias
+        else:
+            self._aliases.pop(email, None)
+        self._end_edit()
+        self._refresh_row(email)        # 해당 행만 제자리 갱신(전체 재구성 X)
+
+    def on_list_view_selected(self, event):
+        idx = getattr(self.query_one("#aalist", ListView), "index", None)
+        if idx is not None:
+            self._begin_edit(idx)
+
+    def on_click(self, event: events.Click):
+        w = getattr(event, "widget", None)
+        wid = inside = None
+        while w is not None:
+            this = getattr(w, "id", None)
+            if this and wid is None:
+                wid = this
+            if this == "aabox":
+                inside = True
+            w = w.parent
+        if wid == "aaclose":
+            event.stop()
+            self.dismiss(None)
+        elif not inside:
+            event.stop()
+            self.dismiss(None)
+
+    def on_key(self, event: events.Key):
+        k = event.key
+        if self._editing is not None:
+            if k == "escape":           # 편집 취소(입력은 on_input_submitted 가 처리)
+                event.stop()
+                self._end_edit()
+            return
+        if k == "escape":
+            event.stop()
+            self.dismiss(None)
+        elif k in ("m", "ㅡ"):           # 표시모드 순환(IME ㅡ 도 허용)
+            event.stop()
+            self._cycle_mode()

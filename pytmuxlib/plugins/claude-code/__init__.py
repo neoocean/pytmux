@@ -127,9 +127,25 @@ i18n.register({
 i18n.register({
     "ko": {
         "acct.alias_usage": "사용법: account-alias <이메일> [별칭]  (별칭 생략=삭제)",
+        "acct.title": "Claude 계정 별칭 / 표시",
+        "acct.mode_line": "표시: {mode}   (m: 전환)",
+        "acct.mode_alias": "별칭", "acct.mode_full": "메일 전체",
+        "acct.mode_hidden": "표시 안 함",
+        "acct.no_alias": "(별칭 없음)",
+        "acct.none": "감지된 Claude 계정이 없습니다",
+        "acct.edit_hint": "Enter: 별칭 편집 · m: 표시모드 · Esc: 닫기",
+        "acct.input_ph": "별칭 입력(빈값=삭제) · Enter 적용 · Esc 취소",
     },
     "en": {
         "acct.alias_usage": "usage: account-alias <email> [alias]  (omit alias to remove)",
+        "acct.title": "Claude account aliases / display",
+        "acct.mode_line": "Display: {mode}   (m: cycle)",
+        "acct.mode_alias": "alias", "acct.mode_full": "full email",
+        "acct.mode_hidden": "hidden",
+        "acct.no_alias": "(no alias)",
+        "acct.none": "No detected Claude accounts",
+        "acct.edit_hint": "Enter: edit alias · m: display mode · Esc: close",
+        "acct.input_ph": "Enter alias (empty=remove) · Enter apply · Esc cancel",
     },
 })
 
@@ -401,6 +417,31 @@ def _on_token_log_msg(app, msg):
         daily_pct=msg.get("daily_pct"),
         hourly_pct=msg.get("hourly_pct"),
         initial_mode=initial_mode))
+
+
+def _open_account_aliases(app):
+    """§10-E #2b 계정 별칭 관리 화면. 서버에 감지된 계정 목록을 요청하고, 회신
+    (t==account_list)이 오면 handle_message 가 AccountAliasScreen 을 띄운다(별칭 편집·
+    표시모드 선택). token-log 와 같은 요청→회신→팝업 패턴."""
+    app._want_account_list = True
+    app.send_cmd("request_account_list")
+
+
+def _on_account_list_msg(app, msg):
+    """서버 account_list 회신 → AccountAliasScreen 팝업(open_account_aliases 요청 시만).
+    이미 그 화면이 떠 있으면(편집 후 재요청) 데이터만 갱신한다."""
+    if not getattr(app, "_want_account_list", False):
+        return
+    app._want_account_list = False
+    from .screens import AccountAliasScreen
+    top = app.screen_stack[-1] if len(app.screen_stack) > 1 else None
+    if isinstance(top, AccountAliasScreen):
+        top.update_data(msg.get("accounts") or [], msg.get("aliases") or {},
+                        msg.get("display") or "alias")
+        return
+    app.push_screen(AccountAliasScreen(
+        msg.get("accounts") or [], msg.get("aliases") or {},
+        msg.get("display") or "alias"))
 
 
 def _open_usage_panel(app):
@@ -835,6 +876,7 @@ class _ClaudeCodePlugin:
         app.open_perm_mode = lambda pane_id: _open_perm_mode(app, pane_id)
         app.open_usage_panel = lambda: _open_usage_panel(app)
         app.open_token_log = lambda initial=None: _open_token_log(app, initial)
+        app.open_account_aliases = lambda: _open_account_aliases(app)  # §10-E #2b
         app.open_claude_warn_info = lambda: _open_warn_info(app)
         # (open_claude_usage_tree/_open_usage_tree 설치는 token-usage→token-log 통합
         #  (2026-06-12)으로 제거 — 상태줄 사용량 클릭·esc 포커스 Enter 는 이미
@@ -873,6 +915,9 @@ class _ClaudeCodePlugin:
         if msg.get("t") == "token_log":
             _on_token_log_msg(app, msg)
             return True
+        if msg.get("t") == "account_list":         # §10-E #2b 계정 별칭 관리 화면
+            _on_account_list_msg(app, msg)
+            return True
         return False
 
     def handle_server_request(self, server, sess, action, msg):
@@ -909,6 +954,23 @@ class _ClaudeCodePlugin:
                     "total_all": total_all, "accounts_total": accts,
                     "daily": daily, "reconcile": recon,
                     "daily_pct": daily_pct, "hourly_pct": hourly_pct}
+        if action == "request_account_list":
+            # §10-E #2b 계정 별칭 관리 화면용 — 감지된 계정 목록(전이력 계정합 키)+
+            # 현재 별칭 매핑·표시모드를 가볍게 회신(token_log 의 무거운 레코드 없이).
+            from . import usagedb
+            conn = server._tokens_db_conn()
+            accts = (usagedb.totals_by_account(conn) if conn is not None else {})
+            known = set(a for a in accts if a)
+            known.update(getattr(server, "claude_account_aliases", {}) or {})
+            # 현재 활성 패널들의 식별 계정도 포함(아직 DB 에 안 쌓였어도 보이게).
+            for q in server._all_panes():
+                full = getattr(q, "_claude_account_full", None)
+                if full:
+                    known.add(full)
+            return {"t": "account_list",
+                    "accounts": sorted(known),
+                    "aliases": dict(getattr(server, "claude_account_aliases", {}) or {}),
+                    "display": getattr(server, "claude_account_display", "alias")}
         return None
 
     # ---- 클라이언트 콘텐츠-레이어 렌더/상태 훅(Phase 2c) ----

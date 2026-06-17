@@ -1377,6 +1377,44 @@ async def test_token_log_tab_subrow_and_limit_return():
     await _with_app(body)
 
 
+async def test_account_alias_screen_lists_edits_and_cycles_mode():
+    """§10-E #2b: account_list 회신 → AccountAliasScreen 이 감지 계정+별칭을 나열하고,
+    'm' 으로 표시모드 순환(set_account_display)·행 선택+입력으로 별칭 설정(set_account_alias).
+    """
+    from textual import events
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda c, **kw: sent.append((c, kw))
+        app._want_account_list = True
+        app._dispatch({"t": "account_list",
+                       "accounts": ["me@x.org", "alt@y.org"],
+                       "aliases": {"me@x.org": "메인"}, "display": "alias"})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "AccountAliasScreen", scr
+        assert scr._accounts == ["me@x.org", "alt@y.org"]
+        assert scr._aliases == {"me@x.org": "메인"}
+        assert scr._display == "alias"
+        # 'm' → 표시모드 순환(alias→full) + 서버 전송
+        scr.on_key(events.Key("m", "m"))
+        assert ("set_account_display", {"value": "full"}) in sent
+        assert scr._display == "full"
+        # 둘째 계정 선택 → 별칭 편집 → 입력 제출 → set_account_alias
+        scr.query_one("#aalist").index = 1
+        scr.on_list_view_selected(None)
+        await pilot.pause(0.05)
+        assert scr._editing == "alt@y.org"
+
+        class _Ev:
+            value = "보조"
+        scr.on_input_submitted(_Ev())
+        assert ("set_account_alias",
+                {"email": "alt@y.org", "alias": "보조"}) in sent
+        assert scr._aliases["alt@y.org"] == "보조"
+        assert scr._editing is None
+    await _with_app(body)
+
+
 async def test_token_log_lifetime_total_from_server_agg():
     """Phase B: 서버가 보낸 total_all(전체 이력 합, SQL 집계)이 받은 레코드 cap 합보다
     크면, Σ 는 전체 이력 합을 보이고 표시 레코드 합을 병기한다(과소표시 방지)."""
