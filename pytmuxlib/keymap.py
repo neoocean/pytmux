@@ -3,6 +3,45 @@ from __future__ import annotations
 
 import os
 
+from . import ipc
+
+
+def _home_config_path() -> str | None:
+    """§10-E #1: PYTMUX_HOME 통합 시 클라 설정 파일 경로(`<home>/config`). 미설정 None."""
+    home = ipc.pytmux_home()
+    return os.path.join(home, "config") if home else None
+
+
+def _legacy_config_candidates() -> list[str]:
+    """PYTMUX_HOME 이전(흩어진) 클라 config 후보 — 마이그레이션 원본 탐색용."""
+    cands = []
+    if os.environ.get("PYTMUX_CONFIG"):
+        cands.append(os.environ["PYTMUX_CONFIG"])
+    xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    cands.append(os.path.join(xdg, "pytmux", "config"))
+    cands.append(os.path.expanduser("~/.pytmux.conf"))
+    return cands
+
+
+def _migrate_config_to_home() -> str | None:
+    """§10-E #1(마이그레이션 결정: 자동 복사 1회 + 원본 보존): PYTMUX_HOME 이 설정됐고
+    `<home>/config` 가 아직 없으면, 기존(흩어진) config 중 첫 번째를 그 위치로 **복사**
+    한다(원본은 그대로 둬 롤백 안전). 반환=home config 경로(미설정이면 None). 멱등 —
+    한 번 복사되면 이후엔 복사 안 함(home/config 존재)."""
+    target = _home_config_path()
+    if not target or os.path.isfile(target):
+        return target
+    src = next((c for c in _legacy_config_candidates()
+                if c and os.path.isfile(c)), None)
+    if src:
+        try:
+            import shutil
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            shutil.copy2(src, target)   # 원본 보존(복사)
+        except OSError:
+            pass
+    return target
+
 
 # tmux 수정자 접두사 → Textual 수정자 이름. C-=ctrl, M-=meta(=alt), A-=alt,
 # S-=shift. 풀네임(ctrl-/alt-/meta-/shift-)도 허용. 임의 순서로 쌓을 수 있다.
@@ -146,6 +185,11 @@ def load_config(path: str | None = None) -> dict:
         candidates.append(path)
     if os.environ.get("PYTMUX_CONFIG"):
         candidates.append(os.environ["PYTMUX_CONFIG"])
+    # §10-E #1: PYTMUX_HOME 통합 시 <home>/config 가 XDG/~보다 우선(없으면 기존 config 를
+    # 1회 복사해 옴 — 원본 보존). 명시 path·PYTMUX_CONFIG 는 더 구체적이라 그대로 우선.
+    home_cfg = _migrate_config_to_home()
+    if home_cfg:
+        candidates.append(home_cfg)
     xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
     candidates.append(os.path.join(xdg, "pytmux", "config"))
     candidates.append(os.path.expanduser("~/.pytmux.conf"))
@@ -315,12 +359,17 @@ def config_path_for_write(path: str | None = None) -> str:
     set_config_option 에서 생성)."""
     if path:
         return path
+    # §10-E #1: PYTMUX_HOME 통합 시 쓰기 대상은 <home>/config(통합 기본 생성 경로).
+    # 명시 PYTMUX_CONFIG 가 있으면 그게 더 구체적이라 우선한다.
+    home_cfg = _migrate_config_to_home()
     candidates = []
     if os.environ.get("PYTMUX_CONFIG"):
         candidates.append(os.environ["PYTMUX_CONFIG"])
     xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    default_path = os.path.join(xdg, "pytmux", "config")
-    candidates.append(default_path)
+    default_path = home_cfg or os.path.join(xdg, "pytmux", "config")
+    if home_cfg:
+        candidates.append(home_cfg)
+    candidates.append(os.path.join(xdg, "pytmux", "config"))
     candidates.append(os.path.expanduser("~/.pytmux.conf"))
     existing = next((c for c in candidates if c and os.path.isfile(c)), None)
     return existing or default_path

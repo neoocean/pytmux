@@ -50,6 +50,11 @@ class ServerRecMixin:
         override = os.environ.get("PYTMUX_CAPTURE_DIR")
         if override:
             return os.path.join(override, self._capture_subdir())
+        # §10-E #1: PYTMUX_HOME 통합 시 captures 도 <home>/captures/<머신> 아래로
+        # (Perforce 공유 PROJECT_DIR 기본 대신 사용자가 명시한 단일 디렉토리에 모은다).
+        home = ipc.pytmux_home()
+        if home:
+            return os.path.join(home, "captures", self._capture_subdir())
         if self.sock_path == ipc.default_endpoint():
             return os.path.join(PROJECT_DIR, "captures", self._capture_subdir())
         return ipc.state_base(self.sock_path) + ".capture"

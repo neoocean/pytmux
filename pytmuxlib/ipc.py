@@ -82,12 +82,37 @@ def _validate_state_dir(path: str) -> None:
             f"상태 디렉터리 소유자가 현재 사용자가 아님(보안상 거부): {path}")
 
 
+def pytmux_home() -> Optional[str]:
+    """§10-E #1 단일 디렉토리 통합(opt-in): `PYTMUX_HOME` 이 설정돼 있으면 그 한
+    디렉토리 아래에 **클라 설정(config) + 서버 상태(소켓·opts·usagedb·captures 등)**
+    를 모두 둔다. 미설정이면 None → 종전 거동(흩어진 위치) 그대로(무변경·무마이그레이션).
+
+    클라·서버가 같은 env 를 읽으므로 소켓 발견 경로가 일치한다(어긋나 새 서버가 뜨는
+    일 없음). '워킹디렉토리 하위'로 두려면 `PYTMUX_HOME=./.pytmux` 처럼 상대경로를 쓰면
+    되고, 여기서 abspath 로 고정해 cwd 가 달라도 같은 절대경로를 가리키게 한다."""
+    h = os.environ.get("PYTMUX_HOME")
+    if not h:
+        return None
+    return os.path.abspath(os.path.expanduser(h))
+
+
 def default_state_dir() -> str:
     """런타임 상태(소켓/포트파일/슬롯·옵션 캐시)의 기본 디렉터리.
 
+    `PYTMUX_HOME` 이 설정되면 그 디렉터리(§10-E #1 통합). 아니면 —
     Unix: $XDG_RUNTIME_DIR 또는 /tmp/pytmux-<uid>. Windows: %LOCALAPPDATA%\\pytmux.
     디렉터리를 만들고, Unix 는 소유권·심링크를 검증(F3)한 뒤 0o700 으로 좁힌다.
     """
+    home = pytmux_home()
+    if home:
+        os.makedirs(home, exist_ok=True)
+        if not IS_WINDOWS:
+            _validate_state_dir(home)
+            try:
+                os.chmod(home, 0o700)
+            except OSError:
+                pass
+        return home
     if IS_WINDOWS:
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
         runtime = os.path.join(base, "pytmux")
@@ -119,6 +144,9 @@ def default_endpoint_candidates() -> list:
     서버를 못 찾아 새 서버가 떠버린다. 두 위치를 모두 후보로 둬 어느 쪽에 떠 있든
     붙게 한다. Windows 는 LOCALAPPDATA 가 안정적이라 단일 후보."""
     if IS_WINDOWS:
+        return [default_endpoint()]
+    # §10-E #1: PYTMUX_HOME 통합 시엔 그 소켓 하나가 canonical(XDG/tmp 이중 후보 불요).
+    if pytmux_home():
         return [default_endpoint()]
     # POSIX 소켓 경로라 구분자는 항상 '/'(이 분기는 Unix 전용).
     cands = []

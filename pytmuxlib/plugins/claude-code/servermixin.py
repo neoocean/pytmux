@@ -1715,6 +1715,10 @@ class ServerClaudeMixin:
         override = os.environ.get("PYTMUX_TOKENS_DB")
         if override:
             return override
+        # §10-E #1: PYTMUX_HOME 통합 시 토큰 DB 도 <home>/db/ 아래로(설정·상태 한 곳).
+        home = ipc.pytmux_home()
+        if home:
+            return os.path.join(home, "db", self._tokens_db_filename())
         return os.path.join(os.path.dirname(__file__), "db",
                             self._tokens_db_filename())
 
