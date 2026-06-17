@@ -3867,6 +3867,19 @@ async def test_status_warn_badge_click_opens_info():
     await _with_app(body)
 
 
+async def test_status_warn_badge_emoji_gets_visible_space():
+    """§10-E #3(2026-06-17): ⚠(2칸 렌더·wcwidth 1)와 숫자가 붙어 "⚠️10:25" 로 보이던 것을,
+    상태줄 **표시에서만** ⚠ 뒤 공백을 한 칸 더 넣어 "⚠  10:25"(화면상 "⚠️ 10:25")로 띄운다.
+    저장값(claude_warn)은 원문("⚠ 10:25") 그대로(파서·info 팝업·테스트 불변)."""
+    async def body(app, pilot, srv):
+        app.status.claude_warn = "⚠ 10:25"
+        line = "".join(s.text for s in app.status.render_line(0))
+        assert "⚠  10:25" in line, repr(line)        # 표시엔 공백 2칸
+        assert app.status.claude_warn == "⚠ 10:25"   # 저장값은 원문(공백 1칸)
+        assert app.status._warn_zone is not None
+    await _with_app(body)
+
+
 async def test_open_warn_info_popup_content():
     """open_claude_warn_info: 상태줄 ⚠ 경고 배지 클릭 → 통합 토큰 팝업(TokenLogScreen)의
     '경고' 탭을 열어 경고 종류별 상황·할일을 보여준다(2026-06-17 통합 — 옛 별도 InfoScreen

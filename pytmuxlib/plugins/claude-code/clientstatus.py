@@ -326,10 +326,18 @@ def render_segs(status, segs, w, w0=None):
                                   bold=True)))
         acc += _cw(_ct)
     # M17(T7): 장기턴/반복루프 경고 배지(grade0 — 알림만, 개입 없음). 아이콘은 warn
-    # 문자열이 직접 포함한다(장기턴 ⚠ 분:초 / 그 외 ⚠ …) — 이모지(2칸) 뒤 공백도 그
-    # 문자열에 들어 있어 다음 글자 겹침이 없다(요청 2026-06-12).
+    # 문자열이 직접 포함한다(장기턴 ⚠ 분:초 / 그 외 ⚠ …).
+    # ⚠(U+26A0)는 wcwidth=1 이지만 터미널에선 컬러 이모지(2칸)로 그려진다 — 그래서 ⚠
+    # 바로 뒤 한 칸은 이모지의 둘째 칸에 흡수돼, "⚠ 10:25" 가 화면엔 "⚠️10:25" 처럼 붙어
+    # 보였다(사용자 보고 2026-06-17; 2026-06-12 의 단일 공백은 글자 겹침만 막고 가시
+    # 간격은 못 줬다). **표시용으로만** ⚠ 뒤에 공백을 한 칸 더 넣어 "⚠️ 10:25" 로 띄운다
+    # — 저장값(claude_warn)·경고 info 팝업·파서는 원문("⚠ ...")을 그대로 쓴다(테스트/
+    # 종류 판정 불변). 클릭존 폭은 표시 문자열 기준 _cw 로 맞춘다.
     if status.claude_warn:
-        _wt = f" {status.claude_warn} "
+        _disp = status.claude_warn
+        if _disp.startswith("⚠ "):
+            _disp = "⚠  " + _disp[2:]
+        _wt = f" {_disp} "
         segs.append(Segment(_wt,
                             Style(color="white", bgcolor=tc("error"),
                                   bold=True)))
