@@ -1727,26 +1727,64 @@ class ServerClaudeMixin:
         from pytmuxlib.servercapture import PROJECT_DIR
         return os.path.join(PROJECT_DIR, "db", self._tokens_db_filename())
 
+    def _plugin_tokens_db_path(self) -> str:
+        """플러그인 기본 위치(pytmuxlib/plugins/claude-code/db/) DB 경로 — 평소(PYTMUX_HOME
+        미설정) 기본 저장 위치이자, PYTMUX_HOME 통합 시 <home>/db 로의 마이그레이션 원본."""
+        return os.path.join(os.path.dirname(__file__), "db",
+                            self._tokens_db_filename())
+
+    @staticmethod
+    def _copy_db_tree(old: str, new_path: str) -> bool:
+        """old DB(+WAL 사이드카 -wal/-shm)를 new_path 로 **복사**(원본 보존). 성공 True."""
+        import shutil
+        try:
+            os.makedirs(os.path.dirname(new_path), exist_ok=True)
+            shutil.copy2(old, new_path)
+        except OSError:
+            return False
+        for suffix in ("-wal", "-shm"):
+            if os.path.exists(old + suffix) and not os.path.exists(new_path + suffix):
+                try:
+                    shutil.copy2(old + suffix, new_path + suffix)
+                except OSError:
+                    pass
+        return True
+
     def _migrate_legacy_db(self, new_path: str):
-        """S5 T5 업그레이드 마이그레이션(타 머신 포함): 토큰 DB 가 이전 위치(프로젝트 루트
-        db/)에 있고 새 위치(플러그인 db/)엔 아직 없으면 1회 이전한다 — 이력 유실 없이 무중단.
-        WAL 사이드카(-wal/-shm)도 함께 옮긴다. 크로스 디바이스(EXDEV) 등 실패 시 복사로
-        폴백하고, 그래도 실패하면 조용히 넘어가 이후 JSONL 일회 임포트가 누계를 복구한다.
-        PYTMUX_TOKENS_DB 강제 지정(테스트) 시엔 건너뛴다."""
+        """토큰 DB 를 새 위치(new_path)로 1회 마이그레이션한다 — 이력 유실 없이 무중단,
+        WAL 사이드카(-wal/-shm) 동반. PYTMUX_TOKENS_DB 강제 지정(테스트) 시엔 건너뛴다.
+        new_path 에 이미 DB 가 있으면 아무것도 안 한다(멱등).
+
+        원본 후보(우선순위):
+          ① **PYTMUX_HOME 통합**(new_path=<home>/db): 평소 위치인 **플러그인 db/** 를 원본
+             으로 **복사**(원본 보존 — PYTMUX_HOME 을 껐다 켜도 플러그인 db 가 그대로 유효).
+             다른 머신에서 코드 업데이트 후 PYTMUX_HOME 을 켜면 그 머신의 기존 토큰 이력이
+             <home>/db 로 따라온다(사용자 요청 2026-06-17).
+          ② **레거시 PROJECT_DIR/db**(S5 T5 이전 위치): **이동**(move)으로 정리 — 진짜 옛
+             위치라 남겨둘 이유가 없다. PYTMUX_HOME 미설정(new_path=플러그인 db/)일 때의
+             기존 거동도 이 경로다(루트 db/ → 플러그인 db/)."""
         if os.environ.get("PYTMUX_TOKENS_DB"):
             return
+        if os.path.exists(new_path):
+            return
+        # ① PYTMUX_HOME 통합 시에만: 플러그인 db → <home>/db 복사(원본 보존). home 미설정
+        # 이면 new_path 가 곧 플러그인 db 라 자기복사가 무의미 — ② 로 직행(기존 거동).
+        if ipc.pytmux_home():
+            plugin_db = self._plugin_tokens_db_path()
+            if plugin_db != new_path and os.path.exists(plugin_db):
+                if self._copy_db_tree(plugin_db, new_path):
+                    return
+        # ② 레거시 PROJECT_DIR/db → new_path 이동(기존 S5 T5 거동). EXDEV 면 복사 폴백.
         old = self._legacy_tokens_db_path()
-        if old == new_path or not os.path.exists(old) or os.path.exists(new_path):
+        if old == new_path or not os.path.exists(old):
             return
         try:
             os.makedirs(os.path.dirname(new_path), exist_ok=True)
             os.replace(old, new_path)
         except OSError:
-            try:
-                import shutil
-                shutil.copy2(old, new_path)   # 크로스 디바이스 폴백(원본은 남겨 둠)
-            except OSError:
+            if not self._copy_db_tree(old, new_path):   # 크로스 디바이스 폴백(원본 남음)
                 return
+            return
         for suffix in ("-wal", "-shm"):      # SQLite WAL 사이드카도 따라 옮긴다(있으면)
             if os.path.exists(old + suffix) and not os.path.exists(new_path + suffix):
                 try:

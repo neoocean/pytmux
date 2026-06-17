@@ -111,3 +111,40 @@ async def test_tokens_db_and_captures_under_home():
                     srv.capture_dir
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_token_db_migrates_plugin_to_home_preserving_original():
+    """PYTMUX_HOME 통합 시 토큰 DB 가 평소 위치(플러그인 db/)에서 <home>/db 로 1회 **복사**
+    되고 원본은 보존된다(WAL 사이드카 동반). 다른 머신에서 PYTMUX_HOME 을 켜면 기존 토큰
+    이력이 따라온다(사용자 요청 2026-06-17)."""
+    if os.name == "nt":
+        return
+    srv, task, sock = await server_only()
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            home = os.path.join(d, "home")
+            # 평소(플러그인) DB 원본을 임시 파일로 대체(실제 플러그인 dir 오염 방지).
+            src = os.path.join(d, "plugindb", "claude-tokens.db")
+            os.makedirs(os.path.dirname(src), exist_ok=True)
+            with open(src, "wb") as f:
+                f.write(b"FAKE_SQLITE_DB_CONTENT")
+            with open(src + "-wal", "wb") as f:   # WAL 사이드카도 따라와야
+                f.write(b"WAL")
+            srv._plugin_tokens_db_path = lambda: src
+            with _Env(PYTMUX_HOME=home, PYTMUX_TOKENS_DB=None):
+                new_path = srv.tokens_db_path           # <home>/db/<파일명>
+                assert new_path.startswith(
+                    os.path.join(os.path.abspath(home), "db")), new_path
+                assert not os.path.exists(new_path)
+                srv._migrate_legacy_db(new_path)
+                assert os.path.exists(new_path), "<home>/db 로 복사됐어야"
+                assert os.path.exists(src), "플러그인 db 원본은 보존(복사)"
+                assert open(new_path, "rb").read() == b"FAKE_SQLITE_DB_CONTENT"
+                assert os.path.exists(new_path + "-wal"), "WAL 사이드카도 복사"
+                # 멱등: 이미 있으면 재복사·덮어쓰기 안 함
+                with open(new_path, "wb") as f:
+                    f.write(b"USER_LOCAL")
+                srv._migrate_legacy_db(new_path)
+                assert open(new_path, "rb").read() == b"USER_LOCAL"
+    finally:
+        await teardown(srv, task, sock)
