@@ -1,0 +1,7 @@
+ ⏺ I'll continue working on that.
+
+ ✗ Claude usage limit reached. Your limit will reset at 5pm.
+   You can upgrade your plan or wait for the reset.
+
+ > try "fix the build"
+ ? for shortcuts

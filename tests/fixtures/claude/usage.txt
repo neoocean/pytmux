@@ -1,0 +1,14 @@
+   Settings  Status   Config   Usage   Stats
+   Session
+   Total cost:            $0.0000
+   Total duration (wall): 0s
+   Usage:                 0 input, 0 output, 0 cache read, 0 cache write
+   Current session
+   █                                                  2% used
+   Resets 2pm (Asia/Seoul)
+   Current week (all models)
+   ███████                                            14% used
+   Resets Jun 13 at 3am (Asia/Seoul)
+   Current week (Sonnet only)
+                                                      0% used
+   Resets Jun 13 at 3am (Asia/Seoul)

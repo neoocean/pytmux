@@ -1,0 +1,79 @@
+name: benchmark
+
+# OS별 성능/반응성 벤치마크(scripts/bench.py)를 ubuntu/macos/windows 에서 돌려
+# 결과(docs/benchmark/<os>/<ts>.md|json)를 미러에 커밋한다. 개발환경(Apple Silicon
+# macOS)에서 `git pull` 로 OS별·시각별 리포트를 비교해 볼 수 있다.
+# 배경/한계: docs/WINDOWS_TESTING.md, docs/benchmark/README.md.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["docs/benchmark/**"]   # bench 커밋이 자신을 재트리거하지 않게
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"                   # 매주 월 06:17 UTC(코드 변경 없이도 env 드리프트 추적)
+
+concurrency:
+  group: benchmark                          # 동시 실행 직렬화(publish 푸시 경합 방지)
+  cancel-in-progress: false
+
+permissions:
+  contents: write                           # publish 잡이 docs/benchmark 커밋·푸시
+
+jobs:
+  bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Run benchmark
+        run: python scripts/bench.py --mb 8 --reps 200
+      - name: Upload benchmark files
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ matrix.os }}
+          path: docs/benchmark/
+          if-no-files-found: error
+
+  publish:
+    needs: bench
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: _bench_artifacts
+      - name: Merge results into docs/benchmark/
+        run: |
+          # 각 아티팩트(bench-<os>) 안의 <slug>/<ts>.md|json 을 docs/benchmark/<slug>/ 로 복사.
+          # 아티팩트 prefix 처리가 버전에 따라 다를 수 있어 파일 기준으로 robust 하게 옮긴다.
+          find _bench_artifacts -type f \( -name '*.md' -o -name '*.json' \) | while read -r f; do
+            slug="$(basename "$(dirname "$f")")"
+            mkdir -p "docs/benchmark/$slug"
+            cp "$f" "docs/benchmark/$slug/$(basename "$f")"
+          done
+          rm -rf _bench_artifacts
+      - name: Commit & push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/benchmark
+          if git diff --cached --quiet; then
+            echo "새 벤치마크 파일 없음 — 커밋 생략"; exit 0
+          fi
+          git commit -m "bench: OS별 결과 동기화 (run ${{ github.run_id }}) [skip ci]"
+          for i in 1 2 3; do
+            git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
+            echo "재시도 $i…"; sleep 3
+          done
+          echo "push 실패"; exit 1

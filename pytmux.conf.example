@@ -1,0 +1,56 @@
+# pytmux 설정 예시
+# ~/.config/pytmux/config 또는 ~/.pytmux.conf 로 복사해 사용한다.
+# (또는 PYTMUX_CONFIG 환경변수로 경로 지정)
+#
+# 직접 편집 외에 런타임 `:settings` 화면에서도 바꿀 수 있고(←→ 값 변경), 거기서
+# 바꾼 config-scoped 설정은 이 파일에 자동 기록·영속된다(주석·바인딩은 보존).
+
+# prefix 키를 Ctrl-a 로 변경 (기본: Ctrl-b)
+set prefix C-a
+
+# 마우스 사용 (on/off)
+set mouse on
+
+# 비활성 패널 흐리게 (한 탭에 패널이 둘 이상일 때 비활성 패널을 활성 대비 한 톤
+# 옅게 그려 외곽선 없이도 활성 패널을 구분). 기본 on. 런타임 `:inactive-dim` 토글,
+# `:inactive-dim-ratio <값>` 으로 세기 조정.
+# set inactive-dim off
+# set inactive-dim-ratio 0.18   # 흐리게 세기 0~0.8 (클수록 더 어두움, 기본 0.18)
+
+# 상태줄 색상(미지정 시 p4v-tui 와 동일한 textual-dark 테마 색을 사용)
+# set status-bg green
+# set status-fg black
+
+# 스크롤백(copy) 모드 키 스타일: vi 또는 emacs
+set mode-keys vi
+
+# UI 언어(로케일): ko(한국어) 또는 en(English). 미지정 시 환경 LANG 으로 결정
+# (ko* → 한국어, 그 외 → 영어). 런타임 `:lang ko|en` 명령이 이보다 우선(영속).
+# set lang ko
+
+# 상단 탭바: always(기본) = 탭이 하나여도 항상 표시 / auto = 탭 2개 이상일 때만
+set tab-bar always
+
+# 새 탭/패널이 시작할 디렉토리
+#   current(기본) = 지금 활성 패널이 있는 디렉토리에서 시작
+#   home          = $HOME 에서 시작
+#   <경로>        = 지정한 절대/~ 경로에서 시작 (예: ~/projects)
+set default-path current
+
+# 상태줄 포맷(#S 세션, #h 짧은 호스트, #H 호스트, #{pane_title}, %H:%M 등 strftime)
+set status-left " [#S] "
+set status-right " #{pane_title}#h %H:%M %Y-%m-%d "
+
+# prefix 후 키 바인딩: bind <key> <command...>
+# (command 는 명령 프롬프트(:)에서 쓰는 것과 동일한 구문)
+bind | split-window -h
+bind - split-window -v
+bind r rename-window
+bind k kill-pane
+
+# prefix 없이 바로 발동하는 root 바인딩: bind -n <key> <command...>
+# 내장 키(ESC/`/F12/prefix/Ctrl+V)와 오버레이 키가 우선이고, 매칭된 키는 셸로
+# 전달되지 않으니 셸/앱에서 쓰는 키와 겹치지 않게 고를 것(F1~F11, M- 권장).
+# bind -n F2 new-window
+# bind -n M-Left previous-tab
+# bind -n M-Right next-tab

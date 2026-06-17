@@ -1,0 +1,326 @@
+"""ime-indicator 플러그인 회귀 — 한/영 추정 상태 전이, 배지 그리기, 명령 토글, 계약.
+
+설계 배경(docs/internal/IME_PREEDIT_CURSOR_SCENARIO.md): 앱은 OS IME 의 *조합 중* preedit 을
+관찰할 수 없고 **확정된 글자만** 키 이벤트로 받는다. 그래서 한/영은 패널로 보낼 확정
+입력 문자의 스크립트로 추정한다 — 한글→'한', ASCII 글자→'EN', 숫자/기호는 모드 중립.
+
+`draw_ime_indicator` 는 앱 비의존 순수 함수라 앱·소켓 없이 직접 호출해 셀 출력을 단언한다.
+client_key/handle_command 는 가짜 app 으로, 코어 on_key 배선은 라이브 앱으로 가드한다.
+계약(delete-to-disable): 플러그인을 Registry 에서 빼면 ime 명령/훅이 전부 사라진다.
+"""
+import harness  # noqa: F401  (sys.path 주입)
+from harness import make_app, server_only, teardown
+from rich.style import Style
+from textual.events import Key
+
+import pytmuxlib.plugins as plugins
+
+
+def _grid(w, h):
+    base = Style()
+    return [[(" ", base) for _ in range(w)] for _ in range(h)]
+
+
+def _text_rows(cells):
+    return ["".join(c[0] for c in row) for row in cells]
+
+
+# 하이픈 디렉토리(ime-indicator)라 일반 import 불가 — importlib 로 모듈을 가져온다.
+import importlib  # noqa: E402
+
+_render = importlib.import_module("pytmuxlib.plugins.ime-indicator.render")
+_pkg = importlib.import_module("pytmuxlib.plugins.ime-indicator")
+draw_ime_indicator = _render.draw_ime_indicator
+PLUGIN = _pkg.PLUGIN
+
+
+class _FakeApp:
+    """client_key/handle_command 가 닿는 최소 표면만 흉내낸 가짜 앱."""
+    def __init__(self):
+        self.ime_show = True
+        self.ime_state = "EN"
+        self.composited = 0
+        self.messages = []
+
+    def _composite(self):
+        self.composited += 1
+
+    def display_message(self, m):
+        self.messages.append(m)
+
+
+class _Ev:
+    def __init__(self, character):
+        self.character = character
+
+
+# ---- 1) 순수 렌더 함수 ----
+async def test_badge_drawn_top_right_and_widths():
+    # '한'(와이드 2칸) → "[한]" = 4칸, 우측 reserve=4 비우고 우측정렬.
+    cells = _grid(40, 5)
+    st = Style(color="black", bgcolor="green", bold=True)
+    draw_ime_indicator(cells, 40, 5, "한", st)
+    row0 = _text_rows(cells)[0]
+    assert "[한]" in row0, row0
+    # 우측 4칸은 비어 있어야([x] 자리). 마지막 4칸 공백 확인.
+    assert row0[-4:] == "    ", repr(row0[-4:])
+    # 배지는 row 0 에만(다른 행은 공백).
+    assert all(c[0] == " " for row in cells[1:] for c in row)
+    # 'EN' = "[EN]" 4칸, 모두 단일폭.
+    cells2 = _grid(40, 5)
+    draw_ime_indicator(cells2, 40, 5, "EN", st)
+    assert "[EN]" in _text_rows(cells2)[0]
+
+
+async def test_badge_skipped_when_too_narrow():
+    # 폭이 배지+reserve 를 못 담으면 아무것도 안 그린다.
+    cells = _grid(6, 3)
+    draw_ime_indicator(cells, 6, 3, "한", Style())
+    assert all(c[0] == " " for row in cells for c in row)
+
+
+async def test_badge_wide_continuation_cell():
+    # 한글 본체 다음 칸은 빈 연속 셀("")이어야 정렬이 안 깨진다.
+    cells = _grid(40, 2)
+    draw_ime_indicator(cells, 40, 2, "한", Style())
+    chars = [c[0] for c in cells[0]]
+    i = chars.index("한")
+    assert chars[i + 1] == "", chars[i:i + 3]
+
+
+async def test_badge_on_cursor_row_right_end():
+    """2026-06-11 요청: 배지는 커서가 있는 줄(y)의 오른쪽 끝 — y≠0 이면 reserve 0
+    으로 진짜 끝까지, 행 범위 밖 y 는 생략(None)."""
+    cells = _grid(40, 5)
+    span = draw_ime_indicator(cells, 40, 5, "한", Style(), y=3, reserve_right=0)
+    assert span == (36, 40), span
+    row3 = _text_rows(cells)[3]
+    assert row3.endswith("[한]" + ""), repr(row3[-6:])
+    assert "[한]" in row3 and all(
+        c[0] == " " for r, row in enumerate(cells) if r != 3 for c in row)
+    # y 가 화면 밖이면 생략
+    cells2 = _grid(40, 5)
+    assert draw_ime_indicator(cells2, 40, 5, "EN", Style(), y=7) is None
+    assert all(c[0] == " " for row in cells2 for c in row)
+
+
+async def test_badge_at_active_pane_right_edge():
+    """2026-06-16 요청: 좌우 분할에서 활성 패널이 화면 왼쪽 절반이면 배지는 화면
+    오른쪽 끝이 아니라 **활성 패널의 오른쪽 끝**(x_right)에 그려져야 한다."""
+    # 활성 패널 = 왼쪽 절반(우측 경계 x_right=40), 화면 폭 80.
+    cells = _grid(80, 5)
+    span = draw_ime_indicator(cells, 80, 5, "EN", Style(), y=2,
+                              reserve_right=0, x_right=40)
+    assert span == (36, 40), span
+    row2 = _text_rows(cells)[2]
+    assert row2[36:40] == "[EN]", repr(row2[34:42])
+    # 화면 오른쪽 절반(비활성 패널 위)은 건드리지 않는다.
+    assert row2[40:] == " " * 40, repr(row2[40:])
+    # x_right 미지정이면 종전대로 화면 폭 끝.
+    cells2 = _grid(80, 5)
+    assert draw_ime_indicator(cells2, 80, 5, "EN", Style(), y=2,
+                              reserve_right=0) == (76, 80)
+
+
+# ---- 2) client_key 한/영 추정 상태 전이 ----
+async def test_client_key_state_transitions():
+    app = _FakeApp()
+    app.ime_state = "EN"
+    # 한글 확정 입력 → '한' 전환 + 재합성.
+    PLUGIN.client_key(app, _Ev("가"))
+    assert app.ime_state == "한"
+    assert app.composited == 1
+    # 같은 상태 유지 입력은 재합성 안 함(중복 합성 방지).
+    PLUGIN.client_key(app, _Ev("나"))
+    assert app.ime_state == "한" and app.composited == 1
+    # 숫자/기호/공백은 모드 중립 — 상태 유지.
+    for ch in ("5", " ", ".", "@"):
+        PLUGIN.client_key(app, _Ev(ch))
+    assert app.ime_state == "한" and app.composited == 1
+    # ASCII 글자 → 'EN' 전환.
+    PLUGIN.client_key(app, _Ev("b"))
+    assert app.ime_state == "EN" and app.composited == 2
+    # 호환자모(조합 낱자)도 한글로 인식.
+    PLUGIN.client_key(app, _Ev("ㅁ"))
+    assert app.ime_state == "한"
+    # 비인쇄/문자 없음(방향키·Ctrl 등)은 무시.
+    PLUGIN.client_key(app, _Ev(None))
+    PLUGIN.client_key(app, _Ev("\x1b"))
+    assert app.ime_state == "한"
+
+
+async def test_client_key_no_composite_when_hidden():
+    # 배지가 꺼져 있으면 상태는 추적하되 재합성은 하지 않는다(불필요한 프레임 방지).
+    app = _FakeApp()
+    app.ime_show = False
+    app.ime_state = "EN"
+    PLUGIN.client_key(app, _Ev("가"))
+    assert app.ime_state == "한" and app.composited == 0
+
+
+# ---- 3) 명령 토글 ----
+async def test_toggle_command():
+    app = _FakeApp()
+    assert PLUGIN.handle_command(app, "ime-indicator", []) is True
+    assert app.ime_show is False and app.composited == 1
+    assert app.messages and "OFF" in app.messages[-1]
+    assert PLUGIN.handle_command(app, "ime", []) is True   # 별칭
+    assert app.ime_show is True
+    assert "ON" in app.messages[-1]
+    # 모르는 명령은 처리 안 함.
+    assert PLUGIN.handle_command(app, "clock-mode", []) is False
+
+
+# ---- 3.5) §10-B OS 실측(macOS TIS) 경로 — 전부 스텁(환경 비의존) ----
+_oskbd = importlib.import_module("pytmuxlib.plugins.ime-indicator.oskbd")
+
+
+def _stub_source(sid):
+    """oskbd.current_source_id 를 고정값 스텁으로 교체하고 원본을 돌려준다."""
+    orig = _oskbd.current_source_id
+    _oskbd.current_source_id = lambda: sid
+    return orig
+
+
+async def test_oskbd_is_korean_mapping():
+    assert _oskbd.is_korean("com.apple.inputmethod.Korean.2SetKorean") is True
+    assert _oskbd.is_korean("org.youknowone.inputmethod.Gureum.han2") is True
+    assert _oskbd.is_korean("com.apple.keylayout.ABC") is False
+    assert _oskbd.is_korean("com.apple.keylayout.US") is False
+    assert _oskbd.is_korean(None) is False
+    assert _oskbd.is_korean("") is False
+
+
+async def test_os_probe_sets_initial_state_and_suppresses_heuristic():
+    """OS 질의가 가능하면(스텁) attach_client 가 실측으로 초기 상태를 잡고,
+    client_key 휴리스틱은 침묵한다(한글 모드에서 영문을 쳐도 'EN' 오판 없음).
+    폴링(_poll)은 소스 변경을 즉시 반영하고, 일시 실패(None)는 직전 상태 유지."""
+    orig = _stub_source("com.apple.inputmethod.Korean.2SetKorean")
+    try:
+        app = _FakeApp()
+        PLUGIN.attach_client(app)
+        assert app._ime_os is True and app.ime_state == "한"
+        # 휴리스틱 침묵: 영문 확정 입력이 와도 실측('한') 그대로.
+        PLUGIN.client_key(app, _Ev("b"))
+        assert app.ime_state == "한" and app.composited == 0
+        # 폴링: 영어 소스로 바뀌면 즉시 'EN' + 재합성.
+        _oskbd.current_source_id = lambda: "com.apple.keylayout.ABC"
+        PLUGIN._poll(app)
+        assert app.ime_state == "EN" and app.composited == 1
+        # 일시 실패(None)는 상태 유지(깜빡임 방지).
+        _oskbd.current_source_id = lambda: None
+        PLUGIN._poll(app)
+        assert app.ime_state == "EN" and app.composited == 1
+    finally:
+        _oskbd.current_source_id = orig
+
+
+async def test_os_unavailable_falls_back_to_heuristic():
+    """OS 질의 불가(None — 비 macOS·ssh 원격 등 스텁)면 attach_client 는 폴백
+    모드(EN 시작), client_tick 은 타이머 없이 False, client_key 휴리스틱 동작."""
+    orig = _stub_source(None)
+    try:
+        app = _FakeApp()
+        PLUGIN.attach_client(app)
+        assert app._ime_os is False and app.ime_state == "EN"
+        assert PLUGIN.client_tick(app) is False
+        assert app._ime_os_timer is None, "OS 불가면 폴링 타이머도 안 깐다"
+        PLUGIN.client_key(app, _Ev("가"))
+        assert app.ime_state == "한"
+    finally:
+        _oskbd.current_source_id = orig
+
+
+async def test_client_tick_lazily_installs_fast_timer_once():
+    """첫 client_tick 이 0.05초 전용 폴링 타이머를 1회만 지연 설치한다(attach 시점엔
+    앱이 안 돌아 set_interval 불가). set_interval 이 없는 환경(테스트 더미)은 False
+    마킹으로 재시도하지 않는다."""
+    orig = _stub_source("com.apple.keylayout.ABC")
+    try:
+        calls = []
+
+        class _TimerApp(_FakeApp):
+            def set_interval(self, sec, fn):
+                calls.append((sec, fn))
+                return ("timer", len(calls))
+
+        app = _TimerApp()
+        PLUGIN.attach_client(app)
+        assert app._ime_os is True
+        assert PLUGIN.client_tick(app) is False
+        assert len(calls) == 1 and calls[0][0] == 0.05
+        PLUGIN.client_tick(app)
+        assert len(calls) == 1, "타이머는 1회만 설치"
+        # 타이머 콜백이 _poll 을 부른다 — 소스 전환 반영.
+        _oskbd.current_source_id = lambda: "com.apple.inputmethod.Korean.2SetKorean"
+        calls[0][1]()
+        assert app.ime_state == "한"
+        # set_interval 없는 앱은 False 마킹(재시도 안 함) + 틱 폴링은 그대로 동작.
+        app2 = _FakeApp()
+        PLUGIN.attach_client(app2)
+        PLUGIN.client_tick(app2)
+        assert app2._ime_os_timer is False
+        assert app2.ime_state == "한"
+    finally:
+        _oskbd.current_source_id = orig
+
+
+# ---- 4) 계약(delete-to-disable) ----
+async def test_plugin_discovered_when_loaded():
+    reg = plugins.load()
+    names = {n for (n, *_rest) in reg.commands}
+    assert "ime-indicator" in names, "ime-indicator 플러그인이 로드되지 않음(전제 실패)"
+
+
+async def test_registry_without_ime_has_no_commands_and_noop_hook():
+    found = [p for p in plugins._discover()
+             if getattr(p, "name", "") != "ime-indicator"]
+    reg = plugins.Registry(found)
+    names = {n for (n, *_rest) in reg.commands}
+    assert "ime-indicator" not in names
+    assert "ime" not in reg.noarg and "ime-indicator" not in reg.noarg
+    # client_key 훅이 부재 시 no-op(예외 없음, app=None 도 안전).
+    reg.client_key(None, _Ev("가"))
+
+
+# ---- 5) 코어 on_key 배선(라이브) ----
+async def test_core_on_key_updates_ime_state():
+    """코어 normal-mode 입력이 plugins.client_key 를 호출해 상태가 갱신되는지.
+    §10-B: 실행 환경(macOS 로컬)에선 attach_client 가 OS 실측(_ime_os)을 켜
+    휴리스틱이 침묵하므로, 여기선 **폴백 경로를 강제**(_ime_os=False)해 환경
+    무관하게 client_key 배선을 검증한다(OS 경로는 6) 절에서 스텁으로 검증)."""
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause(0.4)
+            assert app.ime_show is True  # 기본 ON(상태 초깃값은 환경 따라 실측/EN)
+            app._ime_os = False          # 폴백 경로 강제(환경 비의존 결정성)
+            app.ime_state = "EN"
+            app.mode = "normal"
+            # 코어 on_key(normal) 가 plugins.client_key 를 부르는지 — 핸들러 직접 호출
+            # (Textual 의 _on_key 디스패치는 프레임워크 영역이라 핸들러만 가드한다).
+            app.on_key(Key("가", "가"))
+            await pilot.pause(0.05)
+            assert app.ime_state == "한"
+            app.on_key(Key("b", "b"))
+            await pilot.pause(0.05)
+            assert app.ime_state == "EN"
+            # 숫자는 모드 중립 — 'EN' 유지(여기선 변화 없음).
+            app.on_key(Key("5", "5"))
+            assert app.ime_state == "EN"
+            # 배지가 콘텐츠 프레임에 그려졌는지 — **커서가 있는 줄**(2026-06-11 변경,
+            # _active_cursor_xy 원천)의 오른쪽 끝. 커서 미상이면 첫 행 폴백.
+            cxy = getattr(app, "_active_cursor_xy", None)
+            by = cxy[1] if cxy else 0
+            rowb = "".join(c[0] for c in app.view._cells[by])
+            assert "[EN]" in rowb, (by, rowb)
+            # _ime_zone 의 y 도 같은 행을 가리킨다(테두리 강조 예외 소비처 계약).
+            assert app._ime_zone and app._ime_zone[2] == by, app._ime_zone
+            # 코어 _composite 가 활성 패널 우측 경계를 채우고, 배지는 그 안에(≤경계)
+            # 그려진다(2026-06-16 — 활성 패널 우측 끝 배치 배선).
+            assert app._active_pane_right is not None
+            assert app._ime_zone[1] <= app._active_pane_right, (
+                app._ime_zone, app._active_pane_right)
+    finally:
+        await teardown(srv, task, sock)

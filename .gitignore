@@ -1,0 +1,32 @@
+# 패널 출력 캡처(REC). raw PTY 로그라 토큰·키 입력 잔재 등 민감 화면이 담길 수
+# 있어 GitHub 미러에는 절대 올라가면 안 된다(docs/internal/HANDOFF.md §10). Perforce
+# 로만 공유한다 — git 미러가 부활해도 여기서 차단한다.
+captures/
+
+# 토큰 사용량 SQLite DB(db/claude-tokens.db 등). 런타임 생성·호스트 로컬 데이터라
+# 버전관리 대상이 아니다 — 디렉터리 전체를 제외한다(captures/ 와 동일 정책).
+db/
+
+# 파이썬 바이트코드 캐시
+__pycache__/
+*.pyc
+
+# Windows 호환성·성능 리포트(scripts/win_report.py) 출력 — 생성 산출물
+reports/
+
+# 에이전트 학습 메모(내부 워크플로·머신명·진단 노트). 공개 GitHub 미러에는
+# 올리지 않고 Perforce 로만 공유한다(captures/ 와 동일 정책). 미러가 부활해도 차단.
+memory/
+
+# 에이전트 설정·스킬(.claude/). 내부 운영용이라 공개 미러 제외, Perforce 로만 공유.
+.claude/
+
+# MEMORY.md 는 Perforce 전용 관리(사용자 요청 2026-06-10). git 미러 제외.
+/MEMORY.md
+
+# docs/internal/ — 내부 검토·의사결정·교훈·시나리오·핸드오프·개발사 문서 전부.
+# 머신명·절대경로·이메일·내부 CL 번호·공격 표면 등이 담겨 GitHub 미러에는 올리지
+# 않고 Perforce 로만 공유한다(사용자 요청 2026-06-16). 파일 단위가 아니라 디렉토리
+# 통째로 차단하므로, 앞으로 새 내부 문서는 여기에 두면 자동으로 미러에서 제외된다
+# (기본-차단). 공개 문서는 docs/ 최상위에만 둔다. 미러가 부활해도 여기서 막는다.
+docs/internal/
