@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from pytmuxlib import i18n
 from pytmuxlib.clientrender import put_cell
 from pytmuxlib.clientscreens import usage_bar_lines
 from pytmuxlib.clientutil import _CLOCK_FONT, _darken_style
@@ -37,7 +38,7 @@ def draw_usage_overlay(cells, panes, view_panes, W, H, text_st, digit_st,
         # 2) 한도 막대 줄(없으면 안내).
         lines = usage_bar_lines(usage, max(8, min(pw - 4, 60)),
                                 age_sec=age_sec, right_align=True) or \
-            ["한도 데이터 없음 — Claude 패널에서 /usage 실행 후 갱신"]
+            [i18n.t("uview.overlay_no_data")]
         oy = py + 1
         last = oy
         for i, ln in enumerate(lines):
@@ -70,6 +71,6 @@ def draw_usage_overlay(cells, panes, view_panes, W, H, text_st, digit_st,
                         gx += 1
                     gx += 1            # 글자 사이 간격
         elif cy < py + ph:
-            label = "다음 리셋까지 " + fmt_countdown(td)
+            label = i18n.t("uview.overlay_next_reset") + fmt_countdown(td)
             for j, ch in enumerate(label):
                 put_cell(cells, px + 2 + j, cy, ch, digit_st, W, H)

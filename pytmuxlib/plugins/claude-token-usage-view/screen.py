@@ -18,6 +18,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Label, Static
 
+from pytmuxlib import i18n
 from pytmuxlib.clientscreens import usage_bar_lines
 from pytmuxlib.clientutil import _CLOCK_FONT
 
@@ -111,9 +112,9 @@ class UsageScreen(ModalScreen):
             # 하단 동작 버튼(클릭/터치 가능). 괄호 안은 키보드 단축키. markup=False:
             # 대괄호가 마크업으로 사라지지 않게.
             with Horizontal(id="uhint"):
-                yield Label("↻ 갱신 [u]", id="uref", markup=False)
-                yield Label("⤢ 팝업/탭 [t]", id="utgl", markup=False)
-                yield Label("▭ 패널 보기 [a]", id="upane", markup=False)
+                yield Label(i18n.t("uview.btn_refresh"), id="uref", markup=False)
+                yield Label(i18n.t("uview.btn_toggle"), id="utgl", markup=False)
+                yield Label(i18n.t("uview.btn_pane"), id="upane", markup=False)
 
     def on_mount(self):
         if self._full:
@@ -124,7 +125,7 @@ class UsageScreen(ModalScreen):
     def _redraw(self):
         usage = getattr(self.app.status, "usage_limits", None)
         now = datetime.now()
-        self.query_one("#utitle", Static).update("Claude 사용 한도 (/usage)")
+        self.query_one("#utitle", Static).update(i18n.t("uview.title"))
         bars = self.query_one("#ubars", Static)
         clock = self.query_one("#uclock", Static)
         w = self.app.size.width if self.app.size else 80
@@ -134,19 +135,19 @@ class UsageScreen(ModalScreen):
         lines = usage_bar_lines(usage, min(w - 6, 76), age_sec=age,
                                 right_align=True, track_char=_TRACK)
         if not lines:
-            bars.update(Text("한도 데이터 없음 — Claude 패널에서 /usage 실행 후 [u]로 갱신",
-                             style="yellow"))
+            bars.update(Text(i18n.t("uview.no_data"), style="yellow"))
             clock.update("")
             return
         bars.update(self._colorize_tracks(lines))
         label, dt = soonest_reset(usage, now)
         if dt is None:
-            clock.update(Text("(리셋 시각을 파싱할 수 없음)", style="dim"))
+            clock.update(Text(i18n.t("uview.reset_unparsable"), style="dim"))
             return
         td = dt - now
         style = _URGENCY_STYLE[urgency(td)]
         out = Text()
-        out.append(f"다음 리셋: {label}\n", style="bold cyan")
+        out.append(i18n.t("uview.next_reset", label=label) + "\n",
+                   style="bold cyan")
         big = big_clock_text(td, style)
         out.append(big if big is not None else Text(fmt_countdown(td), style=style))
         clock.update(out)
@@ -169,7 +170,7 @@ class UsageScreen(ModalScreen):
     # ---- 동작(키보드 단축키와 하단 버튼 탭이 공유) ----
     def _do_refresh(self):
         self.app.send_cmd("refresh_usage")
-        self.app.display_message("사용량 갱신 중… (숨은 /usage, ~수초)", 3.0)
+        self.app.display_message(i18n.t("uview.refreshing"), 3.0)
 
     def _do_toggle(self):
         self._full = not self._full

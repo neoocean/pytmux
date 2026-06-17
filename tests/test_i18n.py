@@ -150,6 +150,16 @@ async def test_plugin_catalog_registered_and_translated():
     i18n.set_locale("ko")
     assert i18n.t("claude.auto_resume") == "자동재개"
     assert i18n.t("usage.session_5h") == "세션 5h"
+    # claude-token-usage-view 플러그인(§6.1 후속): uview.* 화면/오버레이 + 명령 설명.
+    uv_ko = {k for k in i18n._CATALOG["ko"] if k.startswith("uview.")}
+    uv_en = {k for k in i18n._CATALOG["en"] if k.startswith("uview.")}
+    assert uv_ko and uv_ko == uv_en, {"ko_only": sorted(uv_ko - uv_en),
+                                      "en_only": sorted(uv_en - uv_ko)}
+    i18n.set_locale("en")
+    assert i18n.t("uview.title") == "Claude usage limit (/usage)"
+    assert i18n.t("cmd.usage-view").startswith("Claude usage limit")
+    i18n.set_locale("ko")
+    assert i18n.t("uview.title") == "Claude 사용 한도 (/usage)"
     _reset()
 
 
