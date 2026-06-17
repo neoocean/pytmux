@@ -70,6 +70,13 @@ _REMOTE_RELAY_ACTIONS = {
     # (사용자 보고 2026-06-15). 업스트림이 자기 활성 패널에 토글하고 그 상태가 status
     # 로 되돌아와 보는 클라의 AR/PC 배지에 반영된다.
     "set_autoresume", "set_prompt_clear",
+    # ncd(Norton Change Directory) 디렉토리 트리 요청 — 원격 탭을 보는 중엔 그 **원격**
+    # 머신의 cwd/디렉토리가 나와야 한다(사용자 보고 2026-06-17). 안 그러면 로컬 서버가
+    # 자기 fs 의 cwd 를 회신해 "원격 보는데 로컬 디렉토리 트리" 버그가 난다. 업스트림이
+    # nc_list/nc_found 로 회신하고 그 메시지는 _remote_reader 가 보는 클라에 그대로
+    # 전달한다(status·bye 외 메시지 패스스루) → ncd 모달이 원격 트리로 열린다. Enter
+    # cd 는 입력 릴레이로, ⇧Enter 새 패널은 split 릴레이로 이미 원격에 적용된다.
+    "request_nc_list", "request_nc_find",
 }
 
 # §1.7-c 원격 탭을 보는 동안 거부하는 경계 횡단 조작(notice 회신). 로컬 트리에

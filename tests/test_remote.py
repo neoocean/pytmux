@@ -783,6 +783,62 @@ async def test_remote_autoresume_relays_to_remote_pane():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_remote_ncd_relays_to_remote_cwd():
+    """원격 탭을 보는 중 ncd(request_nc_list)는 **원격** 머신의 cwd/디렉토리 트리를
+    회신한다(릴레이) — 로컬 서버가 자기 fs 의 cwd 를 회신하던 '원격 보는데 로컬
+    디렉토리' 버그 수정(사용자 보고 2026-06-17). 업스트림 nc_list 응답은
+    _remote_reader 패스스루로 보는 클라에 전달된다."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    reader = writer = None
+    dirA = tempfile.mkdtemp(prefix="ncdlocalA_")
+    dirB = tempfile.mkdtemp(prefix="ncdremoteB_")
+    try:
+        # 각 서버의 활성 패널 cwd 를 서로 다른 실 디렉토리로 고정(실 pty cwd 비의존).
+        srvA._resolve_start_cwd = lambda sess, path=None: dirA
+        srvB._resolve_start_cwd = lambda sess, path=None: dirB
+        srvB.ensure_default_session(80, 24)
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        stm = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="merged status")
+        gidx = next(w["index"] for w in stm["windows"]
+                    if w["name"].startswith("⇄"))
+        await write_msg(writer, {"t": "cmd", "action": "select_window",
+                                 "index": gidx})
+        await _read_until(reader, lambda m: m.get("t") == "layout",
+                          what="remote layout")
+        # 원격 보기 중 ncd → 릴레이 → 업스트림이 자기 cwd(dirB) 트리로 회신
+        await write_msg(writer, {"t": "cmd", "action": "request_nc_list",
+                                 "path": None})
+        nc = await _read_until(reader, lambda m: m.get("t") == "nc_list",
+                               what="relayed nc_list")
+        assert nc.get("cwd") == dirB, \
+            f"원격 cwd 여야(릴레이): {nc.get('cwd')!r} != {dirB!r}"
+        assert nc.get("cwd") != dirA, "로컬 cwd 가 나오면 안 됨"
+        # 사슬에 원격 cwd 가 포함(루트→dirB)
+        assert any(entry[0] == dirB for entry in (nc.get("chain") or [])), \
+            "원격 조상 사슬이어야"
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+        for d in (dirA, dirB):
+            try:
+                os.rmdir(d)
+            except OSError:
+                pass
+
+
 async def test_remote_link_death_recovers_viewer_to_local():
     """링크 사망(원격 서버 종료): 보던 클라는 로컬 화면으로 복귀(_send_full)하고
     탭바에서 ⇄ 탭이 제거된다 — '재접속 루프' 대신 명시적 끊김 처리."""
