@@ -105,28 +105,39 @@ def bar(value: int, vmax: int, cells: int) -> str:
     return "█" * full + (_BAR_BLOCKS[rem] if rem and full < cells else "")
 
 
-def bar_floating(start: float, end: float, vmax: int, cells: int) -> str:
-    """[start, end] 구간만 채운 '떠 있는' 막대 — 계단식 누적 표현용(bar() 와 같은
-    스케일 규약, 0..vmax → cells 칸). 앞쪽 [0, start) 는 공백, [start, end] 는 채움,
-    (end, vmax] 는 잘림. 시각별 5h% 막대를 이전 시각이 끝난 위치에서 시작해 누적
-    계단으로 그릴 때 쓴다(요청 2026-06-17).
-
-    start 는 칸 경계로 **내림**한다 — 좌측을 부분만 채우는 블록 문자가 없어 시작 칸은
-    통째로 비우거나 통째로 시작한다. end 는 bar() 처럼 1/8 칸 정밀도로 채운다. 빈
-    구간(end<=start, 또는 둘 다 0)은 선행 공백만(막대 없음) — 숫자(%)가 값을 전한다."""
+def bar_floating_segments(start: float, end: float, vmax: int, cells: int):
+    """bar_floating 의 떠 있는 막대를 (선행칸수 lead, 채움문자열 fill) 로 분해한다 —
+    호출부가 선행 [0, start) 을 본 막대보다 **연한 색**으로 칠할 수 있게(요청
+    2026-06-17). lead 는 통째로 칠하거나 비우는 시작 칸 수(start 를 칸 경계로 내림),
+    fill 은 [start, end] 를 bar() 처럼 1/8 칸 정밀도로 채운 블록 문자열. 빈 폭/vmax<=0
+    은 (0, "")."""
     if cells <= 0 or vmax <= 0:
-        return ""
+        return 0, ""
     start = max(0.0, min(float(vmax), float(start)))
     end = max(start, min(float(vmax), float(end)))
     s_cell = int(start / vmax * cells)            # 시작 칸(내림)
     fill_eighths = int(round(end / vmax * cells * 8)) - s_cell * 8
     if fill_eighths <= 0:
-        return " " * s_cell
+        return s_cell, ""
     full, rem = divmod(fill_eighths, 8)
     avail = cells - s_cell
     full = min(full, avail)
     seg = "█" * full + (_BAR_BLOCKS[rem] if rem and full < avail else "")
-    return " " * s_cell + seg
+    return s_cell, seg
+
+
+def bar_floating(start: float, end: float, vmax: int, cells: int) -> str:
+    """[start, end] 구간만 채운 '떠 있는' 막대 — 계단식 누적 표현용(bar() 와 같은
+    스케일 규약, 0..vmax → cells 칸). 앞쪽 [0, start) 는 공백, [start, end] 는 채움,
+    (end, vmax] 는 잘림. 시각별 5h% 막대를 이전 시각이 끝난 위치에서 시작해 누적
+    계단으로 그릴 때 쓴다(요청 2026-06-17). 선행을 연한 색으로 칠하려는 호출부는
+    bar_floating_segments 로 lead/fill 을 따로 받아 색을 입힌다.
+
+    start 는 칸 경계로 **내림**한다 — 좌측을 부분만 채우는 블록 문자가 없어 시작 칸은
+    통째로 비우거나 통째로 시작한다. end 는 bar() 처럼 1/8 칸 정밀도로 채운다. 빈
+    구간(end<=start, 또는 둘 다 0)은 선행 공백만(막대 없음) — 숫자(%)가 값을 전한다."""
+    lead, fill = bar_floating_segments(start, end, vmax, cells)
+    return " " * lead + fill
 
 
 def format_option_row(spec, sel_idx):
@@ -559,6 +570,7 @@ COMMANDS = [
     ("clear-history", "스크롤백 비우기", "복사/버퍼"),
     ("send-keys", "패널에 키 주입 (예: Enter, C-c)", "복사/버퍼"),
     ("send-escape", "활성 패널에 ESC 전달 (Shift+ESC 안 먹는 터미널용; ESC 모드서 ESC 한 번 더로도 가능)", "복사/버퍼"),
+    ("redraw", "화면 전체 강제 재그리기 (깨진/잔상 화면 회복; 별칭 refresh·refresh-client, prefix r)", "설정/기타"),
     # paste-clipboard 를 paste-buffer 앞에 둔다(2026-06-16 요청): 'paste' 접두는 둘 다
     # 전체 접두 일치(_relevance_rank tier 1)라 동률 → 안정 정렬이 선언 순서를 보존하므로
     # 여기 순서가 곧 기본 하이라이트다. OS 클립보드 붙여넣기가 더 흔한 의도라 먼저 선택.
@@ -903,6 +915,7 @@ i18n.register({
         "cmd.clear-history": "Clear scrollback",
         "cmd.send-keys": "Inject keys to pane (e.g. Enter, C-c)",
         "cmd.send-escape": "Send ESC to active pane (for terminals where Shift+ESC fails; also ESC again in ESC mode)",
+        "cmd.redraw": "Force full screen redraw (recover broken/stale screen; aliases refresh·refresh-client, prefix r)",
         "cmd.paste-buffer": "Paste from paste buffer (N)",
         "cmd.choose-buffer": "Paste buffer picker",
         "cmd.paste-clipboard": "Paste from OS clipboard",

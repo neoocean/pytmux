@@ -1985,6 +1985,45 @@ async def test_inpane_usage_panel_no_autopopup_seq():
         await teardown(srv, task, sock)
 
 
+async def test_request_redraw_induces_repaint_and_resends_full():
+    """§2.12 redraw/refresh 명령(prefix r): 서버가 ① 각 패널에 SIGWINCH 유발
+    (_induce_redraw_all)해 alt-screen 앱이 전체 repaint 하게 하고 ② 요청 클라에
+    전체 프레임(layout+screen)을 다시 보낸다(stale 스냅샷 교체)."""
+    from pytmuxlib.protocol import write_msg, read_msg, PROTO_VERSION
+    srv, task, sock = await server_only()
+    try:
+        srv.ensure_default_session(80, 24)
+        induced = []
+        _orig = srv._induce_redraw_all
+        srv._induce_redraw_all = lambda: (induced.append(1), _orig())[1]
+        reader, writer = await ipc.open_connection(sock)
+        await write_msg(writer, {"t": "hello", "proto": PROTO_VERSION,
+                                 "cols": 80, "rows": 24, "token": srv.auth_token})
+        # 초기 attach 프레임(layout/screen) 소비 — 새 프레임과 구분되게 잠시 비운다.
+        for _ in range(20):
+            m = await asyncio.wait_for(read_msg(reader), 2.0)
+            if m and m.get("t") == "screen":
+                break
+        await write_msg(writer, {"t": "cmd", "action": "request_redraw"})
+        got_layout = got_screen = False
+        for _ in range(50):
+            m = await asyncio.wait_for(read_msg(reader), 2.0)
+            if not m:
+                break
+            if m.get("t") == "layout":
+                got_layout = True
+            elif m.get("t") == "screen":
+                got_screen = True
+            if got_layout and got_screen:
+                break
+        assert induced, "_induce_redraw_all 이 호출됐어야(앱 repaint 유발)"
+        assert got_layout and got_screen, \
+            f"전체 프레임 재전송(layout+screen)이 와야: layout={got_layout} screen={got_screen}"
+        writer.close()
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_inline_session_limit_reflected_in_5h_pct():
     """요청: /usage 패널을 안 열어도 footer 인라인 한도("used 93% of your session
     limit")를 캡처해 상태줄 5h% 가 실측 93% 를 따른다. S6 T3: 실측 전엔 None."""

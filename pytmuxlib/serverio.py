@@ -514,6 +514,15 @@ class ServerIOMixin:
         elif action == "request_tree":
             await write_msg(client.writer, self._tree_msg())
             return
+        elif action == "request_redraw":
+            # 화면 전체 강제 재그리기(§2.12, redraw/refresh 명령·prefix r). ① 각 패널
+            # PTY 에 SIGWINCH 를 유발해 alt-screen 앱이 현재 화면을 전체 repaint 하게
+            # 하고(스냅샷 갱신) ② 요청 클라에 layout+screen 전체 프레임을 다시 보낸다
+            # (stale 스냅샷 교체). 원격 보기 중엔 위 _REMOTE_RELAY_ACTIONS 분기가 먼저
+            # 잡아 업스트림으로 릴레이하므로 여기 로컬 경로엔 오지 않는다.
+            self._induce_redraw_all()
+            await self._send_full(client)
+            return
         elif action == "request_version":
             # version 명령 팝업: 이 서버가 로드한 코드 버전(p4 CL)·업타임·pid 회신.
             # 클라가 자기 버전/업타임과 합쳐 팝업을 띄운다.

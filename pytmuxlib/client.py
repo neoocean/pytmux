@@ -1007,6 +1007,17 @@ class _CommandMixin:
             # IPC 강제 재접속(§10): degraded(빨간 외곽선) 고착 시 정체된 소켓을
             # 버리고 새로 세워 회복한다. 서버 PTY/세션·실행 중 Claude 는 보존.
             self.reconnect_now("manual")
+        elif c in ("redraw", "refresh", "refresh-client"):
+            # 화면 전체 강제 재그리기(§2.12, tmux refresh-client/Ctrl-L 해당): 여러
+            # 상황(alt-screen 앱이 repaint 안 함·합성 스냅샷 stale·터미널 깨짐·원격
+            # 잔상)에서 화면이 정상 재그리기 안 될 때 회복한다. 서버가 ① 각 패널 PTY 에
+            # SIGWINCH 를 유발해 alt-screen 앱(vim/claude/htop)이 전체 repaint 하게 하고
+            # ② 이 클라에 layout+screen 전체 프레임을 다시 보낸다(stale 스냅샷 교체).
+            # 클라도 자기 합성을 즉시 다시 돌려 순수 클라측 잔상도 지운다. 원격 탭을
+            # 보는 중이면 서버가 업스트림으로 릴레이해 원격 화면이 재그려진다.
+            self.send_cmd("request_redraw")
+            self._composite()
+            self.refresh()
         elif c in ("paste-clipboard", "pasteb-clip"):
             self.paste_os_clipboard()  # bracketed 패스스루
         elif c in ("send-keys", "send"):
@@ -1455,6 +1466,9 @@ class _InputMixin:
             fn and fn(self.layout.get("active"))
         elif k == "R":
             self.send_cmd("set_autoresume")
+        elif k == "r":
+            # prefix r: 화면 전체 강제 재그리기(§2.12) — 깨진/잔상 화면 회복.
+            self._run_command("redraw")
         elif k == "colon" or ch == ":":
             self.open_prompt("command", "")
         elif k == "n":

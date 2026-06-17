@@ -3312,6 +3312,23 @@ async def test_rename_tab_command_noarg_cancels():
     await _with_app(body)
 
 
+async def test_redraw_command_and_prefix_r_emit_request_redraw():
+    # §2.12: redraw/refresh/refresh-client 명령과 prefix r 가 모두 request_redraw 를
+    # 서버에 보낸다(화면 전체 강제 재그리기).
+    from textual.events import Key
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append(action)
+        for cmd in ("redraw", "refresh", "refresh-client"):
+            app._run_command(cmd)
+        assert sent == ["request_redraw", "request_redraw", "request_redraw"], sent
+        sent.clear()
+        app.mode = "prefix"
+        app._handle_prefix(Key("r", "r"))     # prefix r → redraw
+        assert sent == ["request_redraw"], sent
+    await _with_app(body)
+
+
 async def test_rename_prompt_ghost_not_prefilled():
     # 탭 이름 변경 ghost 프롬프트는 prefix+, 키로 연다 — 현재 이름을 미리 채우지
     # 않고(빈 입력) ghost(제안)로 띄운다. 타이핑하면 덮어쓰기, Tab/→ 로 제안 채움(요청).

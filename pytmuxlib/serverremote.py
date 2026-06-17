@@ -91,6 +91,12 @@ _REMOTE_RELAY_ACTIONS = {
     # (rename_window·split 누락과 동형 §1.7-c). 업스트림이 자기 활성 패널에 paste_text/
     # paste_buffer 로 주입한다. 대용량 텍스트는 input 릴레이와 같은 부담(프레임 한도 §5.1 내).
     "paste", "paste_buffer",
+    # 화면 전체 강제 재그리기(redraw/refresh, §2.12) — 원격 탭을 보는 중엔 그 **원격**
+    # 화면이 재그려져야 한다. 업스트림이 자기 패널들에 SIGWINCH 를 유발(_induce_redraw_all)
+    # 하고 _send_full 로 전체 프레임을 federation 연결로 보내, _remote_reader 가 보는
+    # 클라에 layout/screen 을 전달한다. 안 그러면 로컬 서버가 보이지 않는 로컬 화면만
+    # 재그려 원격 잔상이 안 지워진다(§1.7-c 동형).
+    "request_redraw",
 }
 
 # §1.7-c 원격 탭을 보는 동안 거부하는 경계 횡단 조작(notice 회신). 로컬 트리에
@@ -631,22 +637,28 @@ class ServerRemoteMixin:
         return None
 
     async def _nest_do_attach(self, sess, dest: str):
-        """승격 attach 본체: 같은 이름 링크가 있으면 멱등(재연결 없이 전환만),
-        없으면 remote_attach 후 첫 업스트림 status(탭 병합)를 잠깐 기다려 이 세션의
-        클라들을 그 원격 active 탭으로 자동 전환한다(㉢ ON 확정, 2026-06-13).
-        dest 가 로컬 엔드포인트 형태("/"·"tcp:" 시작)면 직결(같은 머신/테스트)."""
+        """승격 attach 본체: 처음 보는 호스트면 remote_attach 후 첫 업스트림 status
+        (탭 병합)를 잠깐 기다려 이 세션의 클라들을 그 원격 active 탭으로 **한 번** 자동
+        전환한다(㉢ ON 확정, 2026-06-13). dest 가 로컬 엔드포인트 형태("/"·"tcp:"
+        시작)면 직결(같은 머신/테스트).
+
+        **이미 병합된 호스트로의 재요청은 무시한다**(사용자 보고 2026-06-17): 출력
+        재생(cat/replay)·스크롤백·셸 루프가 만든 중복 NEST_ATTACH_REQ 가 디바운스
+        (_NEST_REQ_DEBOUNCE)를 넘겨 들어오면, 예전엔 '멱등(전환만)' 경로가 매번 모든
+        클라를 원격 탭으로 끌어가 사용자가 로컬↔원격을 오가게 만들었다. 첫 승격 때
+        이미 병합·전환했으므로 재요청은 사용자의 현재 활성 탭을 yank 하지 않는다."""
         remotes = self._remotes_dict()
-        fresh = dest not in remotes
-        if fresh:
-            endpoint = dest if dest.startswith(("/", "tcp:")) else None
-            ok = await self.remote_attach(sess, host=None if endpoint else dest,
-                                          endpoint=endpoint)
-            if not ok:
-                self._remote_notice(
-                    sess, f"remote-attach {dest} 실패(중첩 자동 승격) — "
-                          f"{getattr(self, '_remote_last_err', '') or '서버 error.log 참조'}")
-                return
-            self._remote_status_broadcast()
+        if dest in remotes:
+            return
+        endpoint = dest if dest.startswith(("/", "tcp:")) else None
+        ok = await self.remote_attach(sess, host=None if endpoint else dest,
+                                      endpoint=endpoint)
+        if not ok:
+            self._remote_notice(
+                sess, f"remote-attach {dest} 실패(중첩 자동 승격) — "
+                      f"{getattr(self, '_remote_last_err', '') or '서버 error.log 참조'}")
+            return
+        self._remote_status_broadcast()
         link = remotes.get(dest)
         if link is None:
             return
@@ -655,9 +667,8 @@ class ServerRemoteMixin:
             if link.windows or not link.alive:
                 break
             await asyncio.sleep(0.1)
-        if fresh:
-            self._remote_notice(
-                sess, f"remote-attach {dest}: 원격 탭 병합됨(중첩 자동 승격)")
+        self._remote_notice(
+            sess, f"remote-attach {dest}: 원격 탭 병합됨(중첩 자동 승격)")
         if not link.windows:
             return
         # 병합 전역 index = 로컬 탭 수 + 앞선 링크들의 탭 수 + 업스트림 active 위치

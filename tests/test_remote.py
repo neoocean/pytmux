@@ -906,6 +906,58 @@ async def test_remote_paste_relays_to_remote_pane():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_remote_redraw_relays_to_remote():
+    """원격 탭을 보는 중 redraw(request_redraw)는 업스트림으로 릴레이돼 **원격** 화면이
+    재그려진다(§2.12) — 로컬 서버가 보이지 않는 로컬 화면만 재그리던 §1.7-c 누락 방지.
+    업스트림이 _induce_redraw_all 후 _send_full 로 보낸 layout/screen 이 federation
+    연결을 통해 보는 클라에 전달된다."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    reader = writer = None
+    try:
+        srvB.ensure_default_session(80, 24)
+        srvA.ensure_default_session(80, 24)
+        inducedA, inducedB = [], []
+        _oa, _ob = srvA._induce_redraw_all, srvB._induce_redraw_all
+        srvA._induce_redraw_all = lambda: (inducedA.append(1), _oa())[1]
+        srvB._induce_redraw_all = lambda: (inducedB.append(1), _ob())[1]
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        stm = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="merged status")
+        gidx = next(w["index"] for w in stm["windows"]
+                    if w["name"].startswith("⇄"))
+        await write_msg(writer, {"t": "cmd", "action": "select_window",
+                                 "index": gidx})
+        await _read_until(reader, lambda m: m.get("t") == "layout",
+                          what="remote layout")
+        # attach/select 과정에서 든 SIGWINCH(serverio attach 직후 1회 등)는 무시 —
+        # redraw 명령 자체의 효과만 본다.
+        inducedA.clear()
+        inducedB.clear()
+        # 원격 보기 중 redraw → 업스트림 B 가 repaint 유발, 로컬 A 는 아님
+        await write_msg(writer, {"t": "cmd", "action": "request_redraw"})
+        for _ in range(80):
+            if inducedB:
+                break
+            await asyncio.sleep(0.05)
+        assert inducedB, "원격(업스트림 B) 화면이 재그려져야(릴레이)"
+        assert not inducedA, "로컬 A 화면은 재그리지 않음(섞임 금지)"
+        srvA._induce_redraw_all, srvB._induce_redraw_all = _oa, _ob
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
 async def test_remote_ncd_relays_to_remote_cwd():
     """원격 탭을 보는 중 ncd(request_nc_list)는 **원격** 머신의 cwd/디렉토리 트리를
     회신한다(릴레이) — 로컬 서버가 자기 fs 의 cwd 를 회신하던 '원격 보는데 로컬
@@ -1127,6 +1179,36 @@ async def test_nest_attach_request_guards():
             pA.pty = realA
     finally:
         await teardown(srvA, taskA, sockA)
+
+
+async def test_nest_do_attach_repeat_does_not_reswitch():
+    """사용자 보고 2026-06-17: 이미 병합된 원격 호스트로의 중복 NEST_ATTACH_REQ
+    (출력 재생·스크롤백·셸 루프가 만든 것, 디바운스를 넘긴 것)가 매번 클라를 원격
+    탭으로 끌어가 로컬↔원격을 저 혼자 오가게 만들었다. 이제 _nest_do_attach 는 이미
+    _remotes_dict 에 있는 호스트면 즉시 무시한다 — 재attach 도, 재전환도 없다(첫 승격
+    때 이미 했다). 첫 승격(fresh) 자동 전환 자체는 별도 E2E 테스트가 검증한다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        dest = "already-merged-host"
+        srv._remotes_dict()[dest] = object()   # 이미 병합돼 있다고 가정(더미 링크)
+        calls = {"attach": 0, "switch": 0}
+
+        async def _spy_attach(*a, **k):
+            calls["attach"] += 1
+            return True
+
+        async def _spy_switch(*a, **k):
+            calls["switch"] += 1
+            return True
+
+        srv.remote_attach = _spy_attach
+        srv.remote_select_window = _spy_switch
+        await srv._nest_do_attach(sess, dest)
+        assert calls["attach"] == 0, "이미 병합된 호스트 — 재attach 안 함"
+        assert calls["switch"] == 0, "이미 병합된 호스트 — 재전환(탭 yank) 안 함"
+    finally:
+        await teardown(srv, task, sock)
 
 
 async def test_remote_transport_rejects_ssh_option_injection():
