@@ -1664,6 +1664,15 @@ class _InputMixin:
             self.send_cmd("split", orient="tb")
             self._exit_esc()
             return
+        if ch == "e":
+            # esc e: 활성 패널에 ESC(\x1b) 전달 후 모드 종료 — Shift+ESC 로 ESC 를 못
+            # 보내는 터미널(WT 등 Shift 수정자 누락)에서 빠르게 ESC 를 보내는 동선
+            # (사용자 요청 2026-06-18). Shift+ESC·send-escape 와 같은 ESC-전달 통로의
+            # 키보드 단축(2단: ESC→e). 패널 ESC 는 의도된 통로(Shift+ESC/send-escape/
+            # 이제 esc e)에서만 — 단독 ESC 두 번은 여전히 전달 없음(56632 불변).
+            self.send_input(b"\x1b")
+            self._exit_esc()
+            return
         if tb.bar_focus:
             tabs = tb.tabs
             idxs = [t["index"] for t in tabs]

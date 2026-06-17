@@ -931,6 +931,31 @@ async def test_esc_n_new_tab_and_p_new_pane():
     await _with_app(body)
 
 
+async def test_esc_e_sends_escape_to_pane():
+    # ESC+e = 활성 패널에 ESC(\x1b) 전달 후 모드 종료 — Shift+ESC 로 ESC 를 못 보내는
+    # 터미널(WT 등)용 2단 키보드 동선(요청 2026-06-18). 대조: 단독 ESC 두 번은 여전히
+    # 패널로 ESC 를 보내지 않는다(모드만 종료, 56632 불변).
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_input = lambda d: sent.append(d)
+        app._last_esc_ts = 0.0
+        await pilot.press("escape")
+        assert app.mode == "esc"
+        await pilot.press("e")
+        assert sent == [b"\x1b"], sent
+        assert app.mode == "normal", "esc e 후 모드 종료"
+        # 대조: ESC 두 번은 패널로 ESC 안 보냄(모드만 진입→종료)
+        sent.clear()
+        app._last_esc_ts = 0.0
+        await pilot.press("escape")
+        assert app.mode == "esc"
+        app._last_esc_ts = 0.0
+        await pilot.press("escape")
+        assert app.mode == "normal" and sent == [], \
+            "단독 ESC 두 번은 전달 없음(Shift+ESC/esc e/send-escape 만 전달)"
+    await _with_app(body)
+
+
 async def test_esc_shortcuts_work_with_ime_jamo():
     # IME(두벌식)가 켜진 채 'n'(새 탭)·'p'(분할) 키를 누르면 자모 'ㅜ'·'ㅔ' 가
     # 들어온다 — 입력 문자를 물리 QWERTY 키로 되돌려 ESC 단축키가 IME 무관하게
