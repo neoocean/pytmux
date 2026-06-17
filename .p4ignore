@@ -16,3 +16,9 @@ db/
 # git-우선 히스토리지만, 이제 depot 에도 추적한다(설계 변경 — 사용자 요청). CI 는 depot
 # 에 직접 쓸 수 없으므로 git→p4 는 수동/에이전트 미러로 따라잡는다(따라서 depot 은 git
 # 보다 다소 지연될 수 있음 — docs/benchmark/README.md 의 동기화 모델 참조).
+# pytmux 워킹디렉토리 통합 홈(PYTMUX_HOME=./.pytmux, §10-E #1) — state/(소켓·token·opts)·
+# db/·captures/ 는 호스트 로컬·민감이라 depot 제외. <home>/config 는 예외(추적 가능).
+# (실제 강제는 중앙 playground/p4ignore.txt — 이 줄은 문서용 미러. P4IGNORE 단일파일 모델)
+.pytmux/state/
+.pytmux/db/
+.pytmux/captures/
