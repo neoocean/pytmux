@@ -99,20 +99,26 @@ def pytmux_home() -> Optional[str]:
 def default_state_dir() -> str:
     """런타임 상태(소켓/포트파일/슬롯·옵션 캐시)의 기본 디렉터리.
 
-    `PYTMUX_HOME` 이 설정되면 그 디렉터리(§10-E #1 통합). 아니면 —
+    `PYTMUX_HOME` 이 설정되면 **`<home>/state`**(§10-E #1 통합 — 런타임 일체: 소켓·opts·
+    resume·slots·token·port·layout). 클라 설정(`<home>/config`)·토큰 DB(`<home>/db`)·
+    captures(`<home>/captures`)는 형제 디렉터리로 분리해 역할별로 갈리게 한다(.gitignore/
+    .p4ignore 를 깔끔히: 런타임/데이터/캡처는 제외, config 만 추적 가능). 아니면 —
     Unix: $XDG_RUNTIME_DIR 또는 /tmp/pytmux-<uid>. Windows: %LOCALAPPDATA%\\pytmux.
     디렉터리를 만들고, Unix 는 소유권·심링크를 검증(F3)한 뒤 0o700 으로 좁힌다.
     """
     home = pytmux_home()
     if home:
-        os.makedirs(home, exist_ok=True)
+        # 런타임은 <home>/state 하위로. home 자체와 state 둘 다 만들고(POSIX) 좁힌다.
+        state = os.path.join(home, "state")
+        os.makedirs(state, exist_ok=True)
         if not IS_WINDOWS:
-            _validate_state_dir(home)
-            try:
-                os.chmod(home, 0o700)
-            except OSError:
-                pass
-        return home
+            _validate_state_dir(state)
+            for d in (home, state):
+                try:
+                    os.chmod(d, 0o700)
+                except OSError:
+                    pass
+        return state
     if IS_WINDOWS:
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
         runtime = os.path.join(base, "pytmux")

@@ -30,3 +30,13 @@ memory/
 # 통째로 차단하므로, 앞으로 새 내부 문서는 여기에 두면 자동으로 미러에서 제외된다
 # (기본-차단). 공개 문서는 docs/ 최상위에만 둔다. 미러가 부활해도 여기서 막는다.
 docs/internal/
+
+# pytmux 워킹디렉토리 통합 홈(PYTMUX_HOME=./.pytmux, §10-E #1). 역할별 하위:
+#   state/    런타임(소켓·token·opts·resume·slots·port·layout) — 휘발·민감
+#   db/       토큰 사용량 SQLite — 호스트 로컬 데이터
+#   captures/ REC 캡처 — 민감(키 입력 잔재 등, captures/ 정책과 동일)
+# 이 셋은 버전관리 제외. 사람이 편집하는 <home>/config 는 추적 가능(커밋하려면 명시 add).
+# 어느 깊이의 .pytmux/ 든 매칭(상대 패턴).
+.pytmux/state/
+.pytmux/db/
+.pytmux/captures/

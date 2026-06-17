@@ -46,17 +46,19 @@ async def test_pytmux_home_resolves_and_unset_default():
 
 
 async def test_state_dir_and_endpoint_under_home():
-    """PYTMUX_HOME 설정 시 default_state_dir==home, 소켓·후보가 그 아래 하나로 통일."""
+    """PYTMUX_HOME 설정 시 런타임은 <home>/state, 소켓·후보가 그 아래 하나로 통일."""
     if os.name == "nt":
         return
     with tempfile.TemporaryDirectory() as d:
         home = os.path.join(d, "pthome")
         with _Env(PYTMUX_HOME=home):
-            assert ipc.default_state_dir() == os.path.abspath(home)
+            state = os.path.join(os.path.abspath(home), "state")
+            assert ipc.default_state_dir() == state
             ep = ipc.default_endpoint()
-            assert ep == os.path.join(os.path.abspath(home), "default.sock")
+            assert ep == os.path.join(state, "default.sock")
             # 통합 시 XDG/tmp 이중 후보 없이 그 소켓 하나가 canonical
             assert ipc.default_endpoint_candidates() == [ep]
+            assert os.path.isdir(state), "state/ 디렉토리 생성됨"
 
 
 async def test_config_migrates_to_home_once_preserving_original():
