@@ -569,7 +569,7 @@ COMMANDS = [
     ("pipe-pane", "패널 출력을 외부 명령으로 파이프", "복사/버퍼"),
     ("clear-history", "스크롤백 비우기", "복사/버퍼"),
     ("send-keys", "패널에 키 주입 (예: Enter, C-c)", "복사/버퍼"),
-    ("send-escape", "활성 패널에 ESC 전달 (Shift+ESC 안 먹는 터미널용; ESC 모드서 ESC 한 번 더로도 가능)", "복사/버퍼"),
+    ("send-escape", "활성 패널에 ESC 전달 (Shift+ESC 안 먹는 터미널용 — bind-key 로 전용 키에 바인딩)", "복사/버퍼"),
     ("redraw", "화면 전체 강제 재그리기 (깨진/잔상 화면 회복; 별칭 refresh·refresh-client, prefix r)", "설정/기타"),
     # paste-clipboard 를 paste-buffer 앞에 둔다(2026-06-16 요청): 'paste' 접두는 둘 다
     # 전체 접두 일치(_relevance_rank tier 1)라 동률 → 안정 정렬이 선언 순서를 보존하므로
@@ -914,7 +914,7 @@ i18n.register({
         "cmd.pipe-pane": "Pipe pane output to external command",
         "cmd.clear-history": "Clear scrollback",
         "cmd.send-keys": "Inject keys to pane (e.g. Enter, C-c)",
-        "cmd.send-escape": "Send ESC to active pane (for terminals where Shift+ESC fails; also ESC again in ESC mode)",
+        "cmd.send-escape": "Send ESC to active pane (for terminals where Shift+ESC fails — bind to a key with bind-key)",
         "cmd.redraw": "Force full screen redraw (recover broken/stale screen; aliases refresh·refresh-client, prefix r)",
         "cmd.paste-buffer": "Paste from paste buffer (N)",
         "cmd.choose-buffer": "Paste buffer picker",
