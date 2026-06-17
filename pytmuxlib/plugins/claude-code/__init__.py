@@ -40,6 +40,10 @@ COMMANDS = [
                     "막대 그래프(별칭 usage-limits·limits)", "Claude"),
     ("token-account", "활성 패널 Claude 계정 수동 지정 (token-account <이름>, "
                       "빈값=자동)", "Claude"),
+    ("account-display", "좌하단 계정 표시모드 — 별칭/메일 전체/표시 안 함 "
+                        "(account-display [alias|full|hidden], 무인자=순환)", "Claude"),
+    ("account-alias", "감지된 Claude 계정에 별칭 부여 (account-alias <이메일> [별칭], "
+                      "별칭 생략=삭제, 무인자=관리 화면)", "Claude"),
     ("prompt-clear", "프롬프트 단위 클리어 모드 토글(완료마다 문서화+/clear) [on|off]",
                      "Claude"),
     ("prompt-clear-message", "프롬프트 단위 클리어의 문서화 지시문 변경", "Claude"),
@@ -71,6 +75,7 @@ NOARG = {
     "claude-rules", "token-saver",
     "token-usage", "token-log",
     "claude-usage", "usage", "usage-panel", "usage-limits", "limits",
+    "account-display", "account-alias",   # §10-E #2 (무인자=순환/관리 화면)
 }
 # 옵션(선택지) 스키마 — 팔레트에서 on/off/토글을 키보드로 고른다(코어 COMMAND_OPTIONS 병합).
 _ONOFF = [("토글", ""), ("켜기", "on"), ("끄기", "off")]
@@ -101,6 +106,8 @@ i18n.register({
         "cmd.claude-usage": "Shadow /usage query — refresh real session/weekly limits via a hidden session (alias usage)",
         "cmd.usage-panel": "Claude token usage-limit popup — /usage (session 5h·week all·week Sonnet) bar graph (alias usage-limits·limits)",
         "cmd.token-account": "Manually set the active pane's Claude account (token-account <name>, empty=auto)",
+        "cmd.account-display": "Bottom-left account display mode — alias / full email / hidden (account-display [alias|full|hidden], no-arg=cycle)",
+        "cmd.account-alias": "Give a detected Claude account an alias (account-alias <email> [alias], omit alias=remove, no-arg=manager)",
         "cmd.prompt-clear": "Toggle per-prompt clear mode (document + /clear each completion) [on|off]",
         "cmd.prompt-clear-message": "Change the per-prompt-clear documentation directive",
         "cmd.prompt-clear-queue": "Queue commands for per-prompt clear (empty=list, -c=clear)",
@@ -113,6 +120,16 @@ i18n.register({
         "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
         "cmd.model-hint": "Show a 'consider a lighter model' hint when Opus repeats work with context headroom (alert only, never auto-switches) on/off (model-hint on|off|toggle, default off)",
         "cmd.token-debug": "Token-accounting diagnostic log (<sock>.tokendbg.jsonl) on/off — §10-D undercount root-cause diagnostic (off normally) (token-debug on|off|toggle, default off)",
+    },
+})
+
+# §10-E #2 계정 별칭/표시모드 화면·안내 문자열(acct.*).
+i18n.register({
+    "ko": {
+        "acct.alias_usage": "사용법: account-alias <이메일> [별칭]  (별칭 생략=삭제)",
+    },
+    "en": {
+        "acct.alias_usage": "usage: account-alias <email> [alias]  (omit alias to remove)",
     },
 })
 
@@ -515,7 +532,10 @@ class _ClaudeCodePlugin:
                   # 매 토큰 step 을 jsonl 로 남긴다(평시 성능/디스크 무영향). 종전 env
                   # PYTMUX_TOKEN_DEBUG 를 대체(런타임 `token-debug on/off` 토글). opts.json
                   # 미존재 시 그 env 를 기동 기본값으로 폴백 — 아래 server_opts_init.
-                  ("token_debug", False, bool))
+                  ("token_debug", False, bool),
+                  # §10-E #2: 좌하단 계정 표시모드 — alias(별칭)·full(메일 전체)·
+                  # hidden(표시 안 함). 기본 alias(별칭 없으면 종전 거동=축약/전체 폴백).
+                  ("claude_account_display", "alias", str))
 
     def server_opts_init(self, server, opts):
         """opts.json → server 속성 설치(코어 __init__ 의 _opts.get 들을 이전).
@@ -537,12 +557,20 @@ class _ClaudeCodePlugin:
         # 런타임 토글이 _save_opts 로 영속되면 그 값이 권위(다음 기동부터 env 무시).
         if "token_debug" not in po and "token_debug" not in opts:
             server.token_debug = bool(os.environ.get("PYTMUX_TOKEN_DEBUG"))
+        # §10-E #2: 계정 별칭 매핑(dict email→alias)은 스칼라 _OPTS_KEYS 와 별도로 로드.
+        aliases = po.get("claude_account_aliases", opts.get("claude_account_aliases"))
+        server.claude_account_aliases = (dict(aliases)
+                                         if isinstance(aliases, dict) else {})
 
     def server_opts_serialize(self, server):
         """server 속성 → opts.json plugin_opts 네임스페이스(코어 _save_opts 의
         해당 블록을 이전). 코어는 이 dict 를 plugin_opts 밑에 불투명하게 저장한다."""
-        return {key: getattr(server, key, default)
-                for key, default, _cast in self._OPTS_KEYS}
+        out = {key: getattr(server, key, default)
+               for key, default, _cast in self._OPTS_KEYS}
+        # §10-E #2: 계정 별칭 dict 영속.
+        out["claude_account_aliases"] = dict(
+            getattr(server, "claude_account_aliases", {}) or {})
+        return out
 
     # ---- 서버 런타임 훅(코어 serverio/server 가 레지스트리로만 호출) ----
     # 코어는 Claude 서버 로직을 이름으로 부르지 않고 이 훅들로만 닿는다. 각 훅은 동적
@@ -613,6 +641,13 @@ class _ClaudeCodePlugin:
         # 로그·이벤트는 위 별칭(claude_account)만 쓴다 — 이 키는 클라 표시 전용.
         msg["claude_account_full"] = (
             getattr(ap, "_claude_account_full", None) if ap else None)
+        # §10-E #2: 계정 표시모드 + 별칭 매핑(클라 footer 렌더가 적용). 작은 값이라 status
+        # 로 보내 클라가 캐시한다(지속표시 패턴 — 부재여도 마지막 값 유지). known_accounts
+        # 는 설정 화면 열거용(전이력 계정합 키 ∪ 현재).
+        msg["claude_account_display"] = getattr(
+            server, "claude_account_display", "alias")
+        msg["claude_account_aliases"] = dict(
+            getattr(server, "claude_account_aliases", {}) or {})
         msg["autoresume"] = bool(ap.autoresume) if ap else False
         msg["prompt_clear"] = bool(ap.prompt_clear_mode) if ap else False
         # 프롬프트 단위 클리어 큐(#4): 활성 패널에 쌓인 명령들(표시·목록용).
@@ -746,6 +781,12 @@ class _ClaudeCodePlugin:
         if action == "set_token_debug":               # §10-D 토큰 회계 진단 로그 토글
             server.set_token_debug(msg.get("value"))
             return "broadcast"                         # status 로 새 값 회신(:설정 표시)
+        if action == "set_account_display":           # §10-E #2 계정 표시모드
+            server.set_account_display(msg.get("value"))
+            return "broadcast"
+        if action == "set_account_alias":             # §10-E #2 계정 별칭 매핑
+            server.set_account_alias(msg.get("email"), msg.get("alias"))
+            return "broadcast"
         if action == "set_claude_rules":              # #27 시작 규칙 저장(영속)
             server.set_claude_rules(msg.get("text", ""))
             return "broadcast"                        # status 로 새 규칙 회신
@@ -947,6 +988,23 @@ class _ClaudeCodePlugin:
             app.display_message("사용량 조회 중… (숨은 /usage, ~수초)", 4.0)
         elif c in ("token-account", "tokens-account"):
             app.send_cmd("set_claude_account", name=" ".join(args).strip())
+        elif c in ("account-display", "acct-display"):
+            # §10-E #2 좌하단 계정 표시모드: alias|full|hidden (무인자=순환 토글).
+            arg = args[0].lower() if args else ""
+            app.send_cmd("set_account_display",
+                         value=(arg if arg in ("alias", "full", "hidden") else None))
+        elif c in ("account-alias", "acct-alias"):
+            # §10-E #2 계정 별칭: `account-alias <이메일> [별칭]`(별칭 생략=삭제). 무인자면
+            # 감지된 계정 목록+별칭 관리 화면(client_unload 처럼 getattr 가드).
+            if args:
+                app.send_cmd("set_account_alias", email=args[0],
+                             alias=" ".join(args[1:]).strip())
+            else:
+                fn = getattr(app, "open_account_aliases", None)
+                if fn:
+                    fn()
+                else:
+                    app.display_message(i18n.t("acct.alias_usage"))
         elif c in ("prompt-clear", "prompt-clear-mode"):
             app.send_cmd("set_prompt_clear", value=_onoff(args))
         elif c in ("auto-doc-clear", "auto-doc"):

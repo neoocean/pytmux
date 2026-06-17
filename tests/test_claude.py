@@ -538,6 +538,61 @@ async def test_warn_badge_click_routes_to_token_log_warn_tab():
     assert routed == [], routed
 
 
+async def test_account_label_display_modes():
+    """§10-E #2: 좌하단 계정 표기 표시모드(alias/full/hidden)+별칭(_account_label).
+    alias=별칭 있으면 별칭·없으면 fallback, full=전체 이메일, hidden=None(표시 안 함).
+    표시모드/별칭은 status.absorb 가 서버 status 에서 흡수한다."""
+    cs = importlib.import_module("pytmuxlib.plugins.claude-code.clientstatus")
+
+    class _S:
+        pass
+
+    status = _S()
+    cs.init_defaults(status)
+    # 기본 alias, 별칭 매핑 없음 → fallback(폭-반응 기본 표기) 사용
+    assert cs._account_label(status, "me@x.org", "me…") == "me…"
+    # 별칭 흡수 후 alias 모드 → 별칭
+    cs.absorb(status, {"claude_account_display": "alias",
+                       "claude_account_aliases": {"me@x.org": "메인"}})
+    assert cs._account_label(status, "me@x.org", "me…") == "메인"
+    # 매핑 없는 계정은 여전히 fallback
+    assert cs._account_label(status, "other@x.org", "ot…") == "ot…"
+    # full 모드 → 전체 이메일(별칭 무시)
+    cs.absorb(status, {"claude_account_display": "full"})
+    assert cs._account_label(status, "me@x.org", "me…") == "me@x.org"
+    # hidden 모드 → None(표시 안 함)
+    cs.absorb(status, {"claude_account_display": "hidden"})
+    assert cs._account_label(status, "me@x.org", "me…") is None
+
+
+async def test_account_display_and_alias_setters_persist():
+    """§10-E #2 서버 setter: set_account_display(순환·명시)·set_account_alias(설정·삭제)
+    가 server 속성을 바꾸고 plugin_opts(server_opts_serialize)로 영속된다."""
+    import harness  # noqa: F401
+    from harness import server_only, teardown
+    srv, task, sock = await server_only()
+    try:
+        from pytmuxlib import plugins
+        reg = plugins.load()
+        # 기본 alias → 순환 토글(alias→full→hidden→alias)
+        assert srv.set_account_display() == "full"
+        assert srv.set_account_display() == "hidden"
+        assert srv.set_account_display() == "alias"
+        # 명시 지정
+        assert srv.set_account_display("full") == "full"
+        # 별칭 설정/삭제
+        srv.set_account_alias("me@x.org", "메인")
+        assert srv.claude_account_aliases["me@x.org"] == "메인"
+        srv.set_account_alias("me@x.org", "")        # 빈 별칭 = 삭제
+        assert "me@x.org" not in srv.claude_account_aliases
+        # 영속 직렬화에 포함
+        out = reg.server_opts_serialize(srv)
+        assert out["claude_account_display"] == "full"
+        assert out["claude_account_aliases"] == {}
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_statusbar_ctx_follows_active_pane_switch():
     """좌하단 ctx(claude_usage)는 **활성 패널 전환 시 새 패널 값으로 교체**된다 — 새
     패널의 ctx 가 아직 안 잡혀(None) 와도 이전 패널 값을 유지하지 않는다(사용자 보고

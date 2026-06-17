@@ -36,6 +36,22 @@ i18n.register({
 })
 
 
+def _account_label(status, full, fallback):
+    """§10-E #2 좌하단 계정 표기를 표시모드/별칭에 맞게 고른다.
+      · hidden → None(표시 안 함)
+      · full   → 전체 이메일(full)
+      · alias  → 사용자 별칭(claude_account_aliases[full]) 있으면 그것, 없으면 fallback
+                 (폭-반응 기본 표기: 축약/전체)
+    full=별칭 매핑 키(전체 이메일), fallback=모드 미적용 시 쓸 기본 표기."""
+    mode = getattr(status, "claude_account_display", "alias")
+    if mode == "hidden":
+        return None
+    if mode == "full":
+        return full or fallback
+    alias = (getattr(status, "claude_account_aliases", None) or {}).get(full)
+    return alias or fallback
+
+
 def init_defaults(status):
     """하단 상태줄 위젯에 Claude 상태 속성을 안전한 기본값으로 설치한다(코어
     StatusBar.__init__ 에서 빼낸 필드들). client_statusbar_init 훅이 위젯 생성 직후
@@ -49,6 +65,8 @@ def init_defaults(status):
     status.claude_tokens = 0       # 활성 계정 누적 토큰(§10 계정별 합계, 지속표시)
     status.claude_account = None   # 누적 토큰의 귀속 계정 별칭(폭 좁을 때 표시)
     status.claude_account_full = None  # 비별칭 전체 계정(폭 충분 시 표시, 요청)
+    status.claude_account_display = "alias"  # §10-E #2 표시모드 alias/full/hidden
+    status.claude_account_aliases = {}       # §10-E #2 email→사용자 별칭
     status.tok5h_pct = None        # M18-B: 5시간 한도 근접도 %(분모 미상이면 None)
     status.week_sonnet_pct = None  # 활성 모델=Sonnet 일 때 주간(Sonnet only) % — 5h
                                    # 통합값(모델별 측정 불가) 대신 표시(2026-06-16 요청)
@@ -109,6 +127,11 @@ def absorb(status, msg):
     caf = msg.get("claude_account_full")
     if caf:
         status.claude_account_full = caf
+    # §10-E #2: 계정 표시모드(alias/full/hidden) + 사용자 별칭 매핑(email→alias).
+    if "claude_account_display" in msg:
+        status.claude_account_display = msg.get("claude_account_display") or "alias"
+    if "claude_account_aliases" in msg:
+        status.claude_account_aliases = msg.get("claude_account_aliases") or {}
     # M18-B: 5시간 한도 근접도 %(분모 미상이면 None — 표시 생략). 100 으로 클램프해
     # 과거 "999%/5h" 버그를 막는다(실측 세션% 경로는 0~100 이라 영향 없음).
     t5 = msg.get("tok5h_pct")
@@ -245,8 +268,10 @@ def render_segs(status, segs, w, w0=None):
                       if is_usage_last and isinstance(status.usage_limits, dict)
                       else None)
         if usage_parts and is_usage_last:
-            if usage_acct:        # 팝업과 동일한 별칭 1종(전체/별칭 구분 없음)
-                usage_parts[-1] += " " + usage_acct
+            if usage_acct:        # /usage 실측 계정 — 표시모드/별칭 적용(§10-E #2)
+                lbl = _account_label(status, usage_acct, usage_acct)
+                if lbl:
+                    usage_parts[-1] += " " + lbl
         elif usage_parts and status.claude_account:
             # 5h% 가 없고 컨텍스트%만 보일 때 — 활성 패널 계정으로 라벨한다.
             # 폭이 충분하면 전체 계정명(claude_account_full)을, 우측(시각·날짜 등)을
@@ -264,7 +289,11 @@ def render_segs(status, segs, w, w0=None):
                 cw_full = 2 + sum(_char_cells(c) for c in cluster_full)
                 if left + cw_full + _trailing_cells(status, _char_cells) <= w:
                     chosen = full
-            usage_parts[-1] += " " + chosen
+            # §10-E #2 표시모드/별칭 적용: hidden→생략, full→전체메일, alias→별칭(있으면)
+            # 없으면 위 폭-반응 chosen. 별칭 키는 전체 이메일(full).
+            lbl = _account_label(status, full, chosen)
+            if lbl:
+                usage_parts[-1] += " " + lbl
         uparts.extend(usage_parts)
     if uparts:
         sec = Style(color="white", bgcolor=tc("secondary"), bold=True)

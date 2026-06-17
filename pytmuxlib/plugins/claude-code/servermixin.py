@@ -1805,6 +1805,41 @@ class ServerClaudeMixin:
         self._save_opts()
         return self.token_debug
 
+    # §10-E #2: 좌하단 Claude 계정 표시 — 사용자 별칭 + 표시모드(별칭/전체메일/숨김).
+    _ACCOUNT_DISPLAY_MODES = ("alias", "full", "hidden")
+
+    def set_account_display(self, mode=None):
+        """footer 계정 표시모드 설정: alias(별칭, 기본)·full(메일 전체)·hidden(표시 안 함).
+        mode 미지정/미지원이면 세 모드를 순환 토글. opts.json plugin_opts 영속 + 즉시 발효
+        (다음 status 로 클라에 전달돼 좌하단 렌더가 바뀐다)."""
+        cur = getattr(self, "claude_account_display", "alias")
+        if mode in self._ACCOUNT_DISPLAY_MODES:
+            self.claude_account_display = mode
+        else:                                   # 순환 토글(alias→full→hidden→alias)
+            i = self._ACCOUNT_DISPLAY_MODES.index(cur) \
+                if cur in self._ACCOUNT_DISPLAY_MODES else 0
+            self.claude_account_display = \
+                self._ACCOUNT_DISPLAY_MODES[(i + 1) % 3]
+        self._save_opts()
+        return self.claude_account_display
+
+    def set_account_alias(self, email, alias):
+        """감지된 계정 이메일(email)에 사용자 별칭(alias)을 매핑. alias 가 빈 문자열이면
+        매핑 삭제(원래 표시로 복귀). 키는 전체 이메일(claude_account_full). opts.json
+        plugin_opts 영속(claude_account_aliases dict) + 즉시 발효."""
+        email = (email or "").strip()
+        if not email:
+            return getattr(self, "claude_account_aliases", {})
+        d = dict(getattr(self, "claude_account_aliases", {}) or {})
+        alias = (alias or "").strip()
+        if alias:
+            d[email] = alias
+        else:
+            d.pop(email, None)
+        self.claude_account_aliases = d
+        self._save_opts()
+        return d
+
     def _token_debug_on(self) -> bool:
         """토큰 회계 진단 로그 on/off. 서버 옵션 `self.token_debug`(opts.json plugin_opts
         영속, 런타임 `token-debug on/off` 명령으로 토글, 기동 시 구 env PYTMUX_TOKEN_DEBUG
