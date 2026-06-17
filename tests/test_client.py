@@ -1863,6 +1863,36 @@ async def test_inactive_pane_dimmed_unless_toggled_or_single():
     await _with_app(body)
 
 
+async def test_inactive_pane_emoji_dimmed_to_placeholder():
+    """§2.10: 비활성(딤) 패널의 컬러 이모지는 터미널이 셀 전경색을 무시해 안 어두워지므로,
+    폭 보존 중간점(·)으로 치환한다(폭2 이모지→··). 활성 패널은 원본 이모지 유지, 토글
+    off 면 원복."""
+    async def body(app, pilot, srv):
+        app.inactive_dim = True
+        app.inactive_dim_ratio = 0.30
+        app.layout = {"panes": [{"id": 1, "x": 0, "y": 0, "w": 10, "h": 5,
+                                 "box": [0, 0, 10, 5]},
+                                {"id": 2, "x": 10, "y": 0, "w": 10, "h": 5,
+                                 "box": [10, 0, 10, 5]}],
+                      "active": 1, "cols": 20, "rows": 5, "dividers": []}
+        # 각 패널 내부 행에 폭2 이모지 🔥(앞 2글자는 테두리 칸에 묻히는 더미). 패널
+        # 테두리(좌단=x0/x10)가 콘텐츠 첫 칸을 덮으므로 이모지는 안쪽 칸에 둔다.
+        app.pane_content = {1: ([[("ab\U0001F525cd", {})] for _ in range(5)], None),
+                            2: ([[("ab\U0001F525cd", {})] for _ in range(5)], None)}
+        app._composite()
+        cells = app.view._cells
+        # 활성(패널1) 이모지(x=2) = 원본 유지(치환 안 함)
+        assert cells[2][2][0] == "\U0001F525", repr(cells[2][2][0])
+        # 비활성(패널2) 이모지(x=12,13) = · 치환, 폭2라 두 칸 모두 ··
+        assert cells[2][12][0] == "·" and cells[2][13][0] == "·", \
+            (cells[2][12][0], cells[2][13][0])
+        # 토글 off → 비활성도 원본 이모지 복귀(재합성)
+        app.inactive_dim = False
+        app._composite()
+        assert app.view._cells[2][12][0] == "\U0001F525"
+    await _with_app(body)
+
+
 async def test_settings_screen_applies_persists_and_links():
     """통합 설정 화면(:settings): config-scoped 설정을 ←→ 로 바꾸면 즉시 적용되고
     config 파일에 영속, 링크 행은 dismiss 로 전용 화면 명령을 돌려준다."""

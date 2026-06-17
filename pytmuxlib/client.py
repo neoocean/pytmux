@@ -1834,9 +1834,21 @@ class _RenderMixin:
                     for chh in text:
                         if cx - p["x"] >= p["w"]:
                             break
+                        wch = _char_cells(chh)
+                        # §2.10: 비활성(딤) 패널의 **컬러 이모지**는 터미널이 셀
+                        # 전경색을 무시하고 자체 색 글리프로 그려 안 어두워진다 →
+                        # dim 패널에 한해 **폭 보존 중간점(·)**으로 치환해 함께 어둡게
+                        # 한다(활성화되면 재합성이 원본에서 다시 그려 자동 원복 —
+                        # 별도 저장 불필요, 모달 배경 딤의 #25 치환과 같은 방식). 폭2
+                        # 이모지는 두 칸 모두 ·· 로 채워 폭을 보존한다.
+                        if p_dim and chh and _is_emoji(chh):
+                            for k in range(wch):
+                                if 0 <= cx + k < W and (cx + k - p["x"]) < p["w"]:
+                                    cells[gy][cx + k] = ("·", st)
+                            cx += wch
+                            continue
                         if 0 <= cx < W:
                             cells[gy][cx] = (chh, st)
-                        wch = _char_cells(chh)
                         # 와이드 문자: 다음 칸은 연속 셀(렌더 시 건너뜀)
                         if wch == 2 and 0 <= cx + 1 < W and \
                                 (cx + 1 - p["x"]) < p["w"]:
