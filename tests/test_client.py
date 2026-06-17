@@ -3708,15 +3708,20 @@ async def test_status_warn_badge_click_opens_info():
 
 
 async def test_open_warn_info_popup_content():
-    """open_claude_warn_info: 경고 종류별로 상황·할일을 담은 InfoScreen 을 띄운다.
-    포맷 미인식이면 '추적 중단'·'claude.py' 안내가, 경고 부재면 안내 메시지만."""
+    """open_claude_warn_info: 상태줄 ⚠ 경고 배지 클릭 → 통합 토큰 팝업(TokenLogScreen)의
+    '경고' 탭을 열어 경고 종류별 상황·할일을 보여준다(2026-06-17 통합 — 옛 별도 InfoScreen
+    대체). 포맷 미인식이면 '추적 중단'·'claude.py' 안내가, 경고 부재면 팝업 없이 안내만."""
     async def body(app, pilot, srv):
         app.status.claude_warn = "⚠ Claude 포맷 미인식 — 추적 중단(버전 업데이트?)"
+        # open_token_log("warn") 은 서버 라운드트립이므로 회신을 모사해 푸시를 끌어온다
+        # (다른 token-log 테스트와 동일 패턴 — _want_token_log 는 open_token_log 가 켠다).
         app.open_claude_warn_info()
+        app._dispatch({"t": "token_log", "records": []})
         await pilot.pause(0.1)
         scr = app.screen_stack[-1]
-        assert scr.__class__.__name__ == "InfoScreen", scr.__class__.__name__
-        blob = "\n".join(scr._lines)
+        assert scr.__class__.__name__ == "TokenLogScreen", scr.__class__.__name__
+        assert scr._warn_mode, "⚠ 배지 클릭은 경고 탭으로 열려야"
+        blob = _tok_text(scr)
         assert "상황" in blob and "할일" in blob, blob
         assert "claude.py" in blob, blob
         await pilot.press("escape")
