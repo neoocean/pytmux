@@ -1273,10 +1273,12 @@ class StatusBar(Widget):
             return
         uz = self._usage_zone
         if uz and uz[0] <= event.x < uz[1]:
-            # 토큰 사용량 클릭 → 영속 통계 팝업(계정=클라이언트별 · 시간/일/주/월,
-            # 모든 세션 합계 포함, pytmux 재시작 후에도 유지). claude-code 플러그인 설치.
+            # 토큰 사용량("N%/5h used") 클릭 → 영속 통계 팝업(계정=클라이언트별 · 시간/일/
+            # 주/월, 모든 세션 합계 포함, pytmux 재시작 후에도 유지). claude-code 플러그인
+            # 설치. 이 세그먼트는 5h% 가 핵심이므로 **시간(hour) 뷰**로 연다(5h% 막대가
+            # 시각별로 보이는 뷰 — 사용자 요청 2026-06-18). 일/주/월은 팝업 안에서 전환.
             fn = getattr(self.app, "open_token_log", None)
-            fn and fn()
+            fn and fn("hour")
             event.stop()
             return
         hz = self._host_zone

@@ -1423,6 +1423,41 @@ async def test_token_log_tab_subrow_and_limit_return():
     await _with_app(body)
 
 
+async def test_token_log_opens_hour_view_from_5h_segment():
+    """상태줄 "N%/5h used" 세그먼트 클릭 경로(open_token_log("hour"))는 팝업을 기간
+    뷰의 **시간(hour) 버킷**으로 연다 — 시각별 5h% 막대 뷰가 바로 보이게(사용자 요청
+    2026-06-18). 모드 없이 여는 일반 경로(token-log 명령)는 기존대로 일(day) 유지."""
+    from textual.widgets import Label
+    async def body(app, pilot, srv):
+        recs = [{"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
+                 "account": "me@x.org", "tokens": 1500}]
+        # 5h% 세그먼트 클릭 = open_token_log("hour") → _token_log_initial 세팅.
+        app._want_token_log = True
+        app._token_log_initial = "hour"
+        app._dispatch({"t": "token_log", "records": recs,
+                       "hourly_pct": {"2023-11-14 22:00": 8}})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "TokenLogScreen"
+        assert scr._active_tab() == "time" and scr._bucket == "hour", \
+            (scr._active_tab(), scr._bucket)
+        assert scr.query_one("#tab_hour", Label).has_class("tkbtab-active")
+        assert not scr.query_one("#tab_day", Label).has_class("tkbtab-active")
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+        # 대조: 모드 없이 여는 일반 경로는 기본 일(day) 버킷.
+        app._want_token_log = True
+        app._token_log_initial = None
+        app._dispatch({"t": "token_log", "records": recs})
+        await pilot.pause(0.1)
+        scr2 = app.screen_stack[-1]
+        assert scr2._active_tab() == "time" and scr2._bucket == "day", \
+            (scr2._active_tab(), scr2._bucket)
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+    await _with_app(body)
+
+
 async def test_account_alias_screen_lists_edits_and_cycles_mode():
     """§10-E #2b: account_list 회신 → AccountAliasScreen 이 감지 계정+별칭을 나열하고,
     'm' 으로 표시모드 순환(set_account_display)·행 선택+입력으로 별칭 설정(set_account_alias).
@@ -3302,9 +3337,10 @@ async def test_esc_down_focuses_status_bar_buttons():
         app._handle_esc_mode(Key(key="right", character=None))  # → 순환
         assert app._status_focus == "usage", app._status_focus
         opened = []
-        app.open_token_log = lambda: opened.append(1)
+        app.open_token_log = lambda initial=None: opened.append(initial)
         app._handle_esc_mode(Key(key="enter", character=None))  # 실행
-        assert opened == [1] and app._status_focus is None
+        # 마우스 클릭과 동일하게 시간(hour) 뷰로 연다(사용자 요청 2026-06-18).
+        assert opened == ["hour"] and app._status_focus is None
     await _with_app(body)
 
 
@@ -3932,11 +3968,12 @@ async def test_status_usage_click_opens_token_log():
         uz = app.status._usage_zone
         assert uz is not None, "사용량(ctx%/5h) 클릭존 등록"
         called = []
-        app.open_token_log = lambda: called.append(True)
+        app.open_token_log = lambda initial=None: called.append(initial)
         y = app.status.size.height - 1
         ev = events.MouseDown(app.status, uz[0], y, 0, 0, 1, False, False, False)
         app.status.on_mouse_down(ev)
-        assert called == [True], called
+        # "N%/5h used" 세그먼트라 시간(hour) 뷰로 연다(사용자 요청 2026-06-18).
+        assert called == ["hour"], called
     await _with_app(body)
 
 

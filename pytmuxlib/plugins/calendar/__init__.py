@@ -16,6 +16,15 @@ import 한다.
 clock 플러그인이 없어도 안전하다."""
 from __future__ import annotations
 
+# 로케일 카탈로그(§6 ③ delete-to-disable: 플러그인이 자기 메뉴 라벨 번역을 register).
+# i18n 은 os/ipc 만 의존하는 순수 모듈이라 서버에서 import 해도 안전(clock 플러그인과 동일).
+from pytmuxlib import i18n  # noqa: E402
+
+i18n.register({
+    "ko": {"menu.calendar-mode": "달력 오버레이 토글(현재 패널 이번 달)"},
+    "en": {"menu.calendar-mode": "Toggle calendar overlay (this month on current pane)"},
+})
+
 # 명령 메타데이터 — 코어가 COMMANDS/COMPLETIONS/COMMAND_NOARG/PANE_SCOPED_CMDS 에 합쳐 쓴다.
 COMMANDS = [
     ("calendar-mode", "현재 패널을 이번 달 달력으로 덮기(토글, ←/→ 이전·다음 달, ↑/↓ 연 이동, Home 오늘)", "설정/기타"),

@@ -257,13 +257,14 @@ def _fmt_tokens(total: int) -> str:
 # clientutil.bar 를 직접 쓴다.
 
 
-def _bucket_short(bk: str, bucket: str, weekdays=None) -> str:
+def _bucket_short(bk: str, bucket: str, weekdays=None, hour_suffix="시") -> str:
     """버킷 키를 짧은 표시 라벨로(연도 등 반복 정보 제거). day=MM-DD(+요일),
-    month=YYYY-MM, week=W##(연도는 헤더에 한 번), hour=MM-DD HH시.
+    month=YYYY-MM, week=W##(연도는 헤더에 한 번), hour=MM-DD HH<접미사>.
 
     weekdays: 7개 요일 라벨 시퀀스(월요일부터 — datetime.weekday() 인덱스).
     주어지면 day 라벨에 'MM-DD(목)' 처럼 곁들인다(달력일을 알기 쉽게 — ccusage
-    daily 뷰 참고). i18n 라벨은 표시층(screens)이 주입한다(이 모듈은 순수 유지)."""
+    daily 뷰 참고). hour_suffix: 시각 라벨 접미사(ko '시' / en 'h') — i18n 라벨은
+    표시층(screens)이 주입한다(이 모듈은 순수 유지 · weekdays 와 동일 원칙)."""
     if bucket == "day" and len(bk) == 10:          # YYYY-MM-DD → MM-DD(요일)
         lab = bk[5:]
         if weekdays:
@@ -275,8 +276,8 @@ def _bucket_short(bk: str, bucket: str, weekdays=None) -> str:
         return lab
     if bucket == "week" and "-W" in bk:            # YYYY-W## → W##
         return "W" + bk.split("-W", 1)[1]
-    if bucket == "hour" and len(bk) >= 13:         # YYYY-MM-DD HH:00 → MM-DD HH시
-        return bk[5:10] + " " + bk[11:13] + "시"
+    if bucket == "hour" and len(bk) >= 13:         # YYYY-MM-DD HH:00 → MM-DD HH<접미사>
+        return bk[5:10] + " " + bk[11:13] + hour_suffix
     return bk                                       # month(YYYY-MM) 등은 그대로
 
 
@@ -300,7 +301,7 @@ def _session_tabpane(records: list) -> dict:
 
 def agg_view(records: list, bucket: str = "day", account: str | None = None,
              dim: str = "account", order: str = "time",
-             top: int | None = None, weekdays=None) -> dict:
+             top: int | None = None, weekdays=None, hour_suffix="시") -> dict:
     """표시(DataTable) 전용 집계 — 정렬·라벨·비율까지 계산해 렌더가 바로 쓰게 한다.
 
     반환:
@@ -340,7 +341,7 @@ def agg_view(records: list, bucket: str = "day", account: str | None = None,
         bkeys = sorted(bucket_tot, key=lambda k: -bucket_tot[k])
     else:
         bkeys = sorted(bucket_tot, reverse=True)        # 시간 내림차순(최근 위)
-    brows = [(_bucket_short(bk, bucket, weekdays), bucket_tot[bk],
+    brows = [(_bucket_short(bk, bucket, weekdays, hour_suffix), bucket_tot[bk],
               pct(bucket_tot[bk]))
              for bk in bkeys]
     return {"total": total, "groups": grows, "buckets": brows,

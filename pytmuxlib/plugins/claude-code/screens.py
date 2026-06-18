@@ -35,7 +35,7 @@ i18n.register({
         "bypass — 권한 우회, 확인 없음 ⚠️ (Bypass Permission Mode)",
         # token-log: 탭(넓은/좁은)·그룹·컬럼·차원·정렬
         "시간", "시", "일", "주", "월", "계정", "계", "패널", "패", "세", "정렬", "정",
-        "시나리오", "대사", "한도", "기간", "보기", "조회", "토큰 사용량",
+        "시나리오", "대사", "한도", "경고", "경", "기간", "보기", "조회", "토큰 사용량",
         "구간", "실측(세션 5h)", "추정Σ", "항목", "토큰", "비율",
         "세션", "토큰순", "시간순", "옵션",
         # token-log: 안내/대사
@@ -62,7 +62,7 @@ i18n.register({
         "시간": "Time", "시": "T", "일": "Day", "주": "Week", "월": "Month",
         "계정": "Account", "계": "A", "패널": "Panel", "패": "P", "세": "S",
         "정렬": "Sort", "정": "S", "시나리오": "Scenario", "대사": "Recon",
-        "한도": "Limit",
+        "한도": "Limit", "경고": "Warn", "경": "W",
         "기간": "Period", "보기": "View", "조회": "Query", "토큰 사용량": "Token usage",
         "구간": "Span", "실측(세션 5h)": "Measured (session 5h)", "추정Σ": "Est Σ",
         "항목": "Item", "토큰": "Tokens", "비율": "Ratio",
@@ -111,6 +111,7 @@ i18n.register({
         "pscreen.tklog_disp": " (표시 {n})",
         "pscreen.tklog_hint": "h시 d일 w주 m월 · c계정 p세션 · l한도 a필터 o정렬 · u/usage s설정 r대사 · Esc닫기",
         "pscreen.weekdays": "월,화,수,목,금,토,일",
+        "pscreen.hour_suffix": "시",
         "pscreen.recon_top": "실측(/usage Δ%)과 추정(스크랩 ~Σ)은 의미가 다른 두 출처 — 절대 일치가 아니라 추세 상관을 봅니다",
         "pscreen.recon_empty": "(대사할 실측 스냅샷 구간이 없습니다 — /usage 실측이 2회 이상 쌓이면 생깁니다)",
         "pscreen.acct_all": "전체",
@@ -144,6 +145,7 @@ i18n.register({
         "pscreen.tklog_disp": " (shown {n})",
         "pscreen.tklog_hint": "h hour d day w week m month · c account p session · l limit a filter o sort · u /usage s settings r recon · Esc close",
         "pscreen.weekdays": "Mo,Tu,We,Th,Fr,Sa,Su",
+        "pscreen.hour_suffix": "h",
         "pscreen.recon_top": "Measured (/usage Δ%) and est (scrape ~Σ) are two different sources — look at trend correlation, not exact match",
         "pscreen.recon_empty": "(no measured snapshot spans to reconcile — appears once /usage measurements accumulate 2+)",
         "pscreen.acct_all": "All",
@@ -511,9 +513,12 @@ class TokenLogScreen(ModalScreen):
     #tksub Label { height: 1; padding: 0 1; margin: 0 1 0 0; }
     #tksub_period { width: auto; height: 1; }
     #tksublead { color: $text-muted; padding: 0 1 0 0; margin: 0; }
+    /* 메인 탭바(clientwidgets.TabBar)와 같은 색 언어로 통일(사용자 요청 2026-06-18):
+       활성 탭=primary(파랑)+흰 글자(탭바 active_st), 액션 버튼=success(초록)+검은 글자
+       (탭바 [+] add_st), 비활성=옅은 surface/muted. 두 표면의 탭 모양이 일치한다. */
     .tkbtab { background: $surface; color: $text-muted; }       /* 뷰 탭·옵션(비활성) */
-    .tkbtab-active { background: $accent; color: $text; text-style: bold; } /* 활성 */
-    .tkbbtn { background: $primary-darken-2; color: $text; }     /* 액션 버튼(뷰 아님) */
+    .tkbtab-active { background: $primary; color: white; text-style: bold; } /* 활성(파랑) */
+    .tkbbtn { background: $success; color: black; text-style: bold; }  /* 액션 버튼(초록, 뷰 아님) */
     /* 스코프/한도(위)·키 안내(아래)는 옅게 1~몇 줄, 표가 남는 높이를 채운다. */
     #tktop { width: 100%; height: auto; color: $text-muted; }
     #tkhint { width: 100%; height: 1; color: $text-muted; }
@@ -601,6 +606,11 @@ class TokenLogScreen(ModalScreen):
                                        + at.pop(usagelog.UNKNOWN))
                 self._accounts_total = at
         self._bucket = "day"
+        # initial_mode=="hour" 면 시간(hour) 버킷으로 연다 — 상태줄 "N%/5h used" 세그먼트
+        # 클릭이 시간별 5h% 막대 뷰를 바로 보이게 한다(5h%→hourly view, 사용자 요청
+        # 2026-06-18). _view 는 time 유지라 한도/경고 오버레이와 배타가 아니다(둘 다 False).
+        if initial_mode == "hour":
+            self._bucket = "hour"
         # 표 차원(2026-06-12 재설계 — 한 번에 한 차원만): "time"=시간 버킷(기본),
         # "account"=계정별 전체 합, "session"=세션별 합. 세션은 닫히고 재사용되는
         # 패널 id 대신 안정적 세션 id 로 묶는다(설계 §8, 사용자 결정).
@@ -1129,13 +1139,16 @@ class TokenLogScreen(ModalScreen):
             vmax = max((t for _, t, _ in rows), default=0)
             return rows, vmax, total, i18n.t("계정"), None
         self._acct_rows = []
+        hour_suffix = i18n.t("pscreen.hour_suffix")
         if self._view == "session":
             v = usagelog.agg_view(src, self._bucket, self._account, "session",
-                                  self._order, top=self._GROUP_TOP)
+                                  self._order, top=self._GROUP_TOP,
+                                  hour_suffix=hour_suffix)
             return v["groups"], v["gmax"], v["total"], i18n.t("세션"), None
         weekdays = i18n.t("pscreen.weekdays").split(",")
         v = usagelog.agg_view(src, self._bucket, self._account, "account",
-                              self._order, weekdays=weekdays)
+                              self._order, weekdays=weekdays,
+                              hour_suffix=hour_suffix)
         # 5번째: 원시 버킷 키(brows 와 동순) — hour 버킷 5h% 열 조인용(§10-D).
         return v["buckets"], v["bmax"], v["total"], i18n.t("기간"), v.get("bkeys")
 

@@ -76,7 +76,7 @@ def draw_calendar_overlay(cells, panes, calendar_panes, W, H, styles, now=None,
         # 안 붙는다. 두 자리 폭 3+1+3=7 이 DCW(8) 안에서 가운데 정렬된다).
         DCW, DGAP, RHB, DIG = 8, 3, 6, 1   # DGAP↑(날짜칸 사이 더 띄움), DIG↓(자리 사이 좁힘)
         gw_big = 7 * DCW + 6 * DGAP          # 칸 7개 + 사이 간격
-        nl_big = 3 + len(weeks) * RHB        # 제목+요일+빈줄 + 주×6 (요일↔날짜 한 줄 띄움)
+        nl_big = 4 + len(weeks) * RHB        # 제목+빈줄+요일+빈줄 + 주×6 (년월↔요일·요일↔날짜 각 한 줄)
         if pw >= gw_big + 2 and ph >= nl_big + 2:
             big_today = styles["big_today"]
             ox = px + (pw - gw_big) // 2
@@ -85,12 +85,12 @@ def draw_calendar_overlay(cells, panes, calendar_panes, W, H, styles, now=None,
             for j, c in enumerate(title):                 # 제목
                 put_cell(cells, tx + j, oy, c, title_st, W, H)
             _record_title_zones(p["id"], tx, oy)          # ‹/› 클릭존
-            for col, wd in enumerate(wds):                # 요일(칸 중앙)
+            for col, wd in enumerate(wds):                # 요일(칸 중앙, 년월 아래 한 줄 띄움)
                 hx = ox + col * (DCW + DGAP) + (DCW - len(wd)) // 2
                 for k, c in enumerate(wd):
-                    put_cell(cells, hx + k, oy + 1, c, day_st, W, H)
+                    put_cell(cells, hx + k, oy + 2, c, day_st, W, H)
             for wi, week in enumerate(weeks):             # 주별 날짜(큰 글자)
-                ry = oy + 3 + wi * RHB                     # +3: 요일 헤더 아래 한 줄 띄움
+                ry = oy + 4 + wi * RHB                     # +4: 년월↔요일·요일↔날짜 빈 줄 각 한 칸
                 for col, day in enumerate(week):
                     if not day:
                         continue
@@ -113,11 +113,11 @@ def draw_calendar_overlay(cells, panes, calendar_panes, W, H, styles, now=None,
         colw, rowh = 4, 1               # 시작 4 → 날짜 사이 최소 2칸 여백
         while colw < 8 and pw >= (6 * (colw + 1) + 2) + 2:
             colw += 1
-        while rowh < 3 and ph >= (2 + (len(weeks) - 1) * (rowh + 1) + 1) + 2:
+        while rowh < 3 and ph >= (3 + (len(weeks) - 1) * (rowh + 1) + 1) + 2:
             rowh += 1
         grid_w = 6 * colw + 2
-        # 제목 + 요일 + 빈줄 + 주(첫 주 1줄 + 이후 줄간격 rowh) — 요일↔날짜 한 줄 띄움
-        nlines = 3 + (len(weeks) - 1) * rowh + 1
+        # 제목 + 빈줄 + 요일 + 빈줄 + 주(첫 주 1줄 + 이후 rowh) — 년월↔요일·요일↔날짜 각 한 줄
+        nlines = 4 + (len(weeks) - 1) * rowh + 1
         # 3) 달력 그리드(공간 충분) 또는 단순 날짜
         if pw >= grid_w and ph >= nlines:
             ox = px + (pw - grid_w) // 2
@@ -126,12 +126,12 @@ def draw_calendar_overlay(cells, panes, calendar_panes, W, H, styles, now=None,
             for j, c in enumerate(title):       # 제목(YYYY-MM, 중앙)
                 put_cell(cells, tx + j, oy, c, title_st, W, H)
             _record_title_zones(p["id"], tx, oy)   # ‹/› 클릭존
-            for col, wd in enumerate(wds):       # 요일 헤더(칸 간격 colw)
+            for col, wd in enumerate(wds):       # 요일 헤더(칸 간격 colw, 년월 아래 한 줄 띄움)
                 for k, c in enumerate(wd):
-                    put_cell(cells, ox + col * colw + k, oy + 1,
+                    put_cell(cells, ox + col * colw + k, oy + 2,
                              c, day_st, W, H)
             for wi, week in enumerate(weeks):    # 주별 날짜(줄 간격 rowh)
-                ry = oy + 3 + wi * rowh           # +3: 요일 헤더 아래 한 줄 띄움
+                ry = oy + 4 + wi * rowh           # +4: 년월↔요일·요일↔날짜 빈 줄 각 한 칸
                 for col, day in enumerate(week):
                     if not day:
                         continue

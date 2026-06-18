@@ -536,8 +536,10 @@ class _StatusFocusMixin:
                 fn = getattr(self, "open_model_config", None)
                 fn and fn()
             elif cur == "usage":
+                # 마우스 클릭(clientwidgets _usage_zone)과 동일하게 시간(hour) 뷰로 연다
+                # — "N%/5h used" 세그먼트라 5h% 막대가 핵심(사용자 요청 2026-06-18).
                 fn = getattr(self, "open_token_log", None)  # 플러그인 설치
-                fn and fn()
+                fn and fn("hour")
             elif cur == "rec":
                 fn = getattr(self, "show_capture_info", None)  # rec 플러그인 설치
                 fn and fn(getattr(self.status, "capture_path", None),

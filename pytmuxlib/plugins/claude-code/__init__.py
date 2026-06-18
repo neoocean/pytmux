@@ -393,7 +393,9 @@ def _open_token_log(app, initial_mode=None):
     집계를 띄운다. 상태바 Σ 클릭의 진입점이기도 하다.
 
     initial_mode="limit" 이면 한도(/usage) 탭이 활성인 채로 연다 — usage-view 팝업이
-    별도 화면 대신 이 통합 팝업의 한도 탭을 열게 한다(통합, 사용자 결정 2026-06-17)."""
+    별도 화면 대신 이 통합 팝업의 한도 탭을 열게 한다(통합, 사용자 결정 2026-06-17).
+    initial_mode="hour" 면 기간 뷰의 시간(hour) 버킷으로 연다 — 상태줄 "N%/5h used"
+    세그먼트 클릭이 시각별 5h% 막대 뷰를 바로 보이게 한다(사용자 요청 2026-06-18)."""
     app._want_token_log = True
     app._token_log_initial = initial_mode
     app.send_cmd("request_token_log", limit=5000)
