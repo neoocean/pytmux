@@ -718,25 +718,66 @@ _WELCOME_RE = _re.compile(r">Welcome(?:&#160;|\s)back[^<]*</text>")
 
 # Rich 의 export_svg 는 <text> 의 textLength 를 cell_len 이 아닌 len(글자수) 로 계산하는
 # 버그가 있어(rich/console.py: `textLength=char_width * len(text)`), 한글 등 와이드(2칸)
-# 문자가 절반 폭으로 압축돼 자간이 좁아지고 글자가 겹쳐 보인다. x 좌표는 cell_len 기준이라
-# 정상이므로 textLength 만 cell_len 기준으로 다시 늘리면 그리드에 맞게 펼쳐진다.
-_TEXT_RE = _re.compile(
-    r'(<text\b[^>]*?textLength=")([0-9.]+)("[^>]*>)([^<]*)(</text>)'
-)
+# 문자가 절반 폭으로 압축돼 자간이 좁아지고 글자가 겹쳐 보인다. textLength 만 cell_len 기준
+# 으로 늘려도 폭은 맞지만, SVG 기본 lengthAdjust="spacing" 은 그 늘림량을 글리프 사이마다
+# 균등 분배한다 — 임베드 폰트의 CJK 글리프 advance 가 ASCII 의 정확히 2배가 아니라서, 한
+# <text> 가 좁은(ASCII)·넓은(CJK) 문자를 섞고 있으면 CJK 가 많은 줄일수록 앞쪽 ASCII 구간
+# 이 옆으로 밀려 열 정렬이 흐트러진다(명령목록 "이름  설명" 표의 설명 열이 행마다 어긋남).
+#
+# 해결: 폭이 같은 문자끼리의 최대 런(narrow|wide)으로 <text> 를 쪼개고, 각 런을 자신의 셀
+# x 위치에 textLength=런셀수×셀폭 으로 다시 배치한다. 런 내부는 글리프 폭이 균일해 spacing
+# 분배가 고르고, 각 런의 시작 x 가 셀 그리드에 고정돼 열이 정확히 맞는다.
+_TEXT_RE = _re.compile(r'<text\b([^>]*)>([^<]*)</text>')
+_X_RE = _re.compile(r'\bx="([0-9.]+)"')
+_TL_RE = _re.compile(r'\btextLength="([0-9.]+)"')
+
+
+def _svg_escape(s):
+    return (s.replace("&", "&amp;").replace("<", "&lt;")
+             .replace(">", "&gt;").replace("\xa0", "&#160;"))
 
 
 def _fix_cjk_textlength(svg):
-    """와이드 문자가 든 <text> 의 textLength 를 셀폭 기준으로 보정한다."""
+    """와이드 문자가 섞인 <text> 를 폭-동질 런으로 쪼개 셀 그리드에 다시 정렬한다."""
 
     def repl(m):
-        pre, length, mid, content, end = m.groups()
+        attrs, content = m.group(1), m.group(2)
+        xm = _X_RE.search(attrs)
+        tlm = _TL_RE.search(attrs)
+        if not xm or not tlm:
+            return m.group(0)            # x/textLength 없음 → 그대로
         text = _html.unescape(content)
         n = len(text)
         cells = _cell_len(text)
         if n == 0 or cells == 0 or cells == n:
             return m.group(0)            # 와이드 문자 없음 → 그대로
-        char_width = float(length) / n   # 셀당 px (모노스페이스)
-        return f"{pre}{char_width * cells:g}{mid}{content}{end}"
+        line_x = float(xm.group(1))
+        cell_w = float(tlm.group(1)) / n  # 셀당 px (Rich 의 모노스페이스 char_width)
+        # 폭(1|2)이 같은 문자끼리 최대 런으로 묶는다(0폭 결합문자는 narrow 로 흡수).
+        runs, cur, cur_wide = [], [], None
+        for ch in text:
+            wide = _cell_len(ch) >= 2
+            if cur and wide != cur_wide:
+                runs.append((cur_wide, "".join(cur)))
+                cur = []
+            cur.append(ch)
+            cur_wide = wide
+        if cur:
+            runs.append((cur_wide, "".join(cur)))
+        out, col = [], 0
+        for wide, seg in runs:
+            seg_cells = _cell_len(seg)
+            seg_x = line_x + col * cell_w
+            seg_attrs = _TL_RE.sub(f'textLength="{seg_cells * cell_w:g}"',
+                                   _X_RE.sub(f'x="{seg_x:g}"', attrs))
+            # 와이드 런은 글리프 advance 가 2셀보다 좁다 — spacing 으로 늘리면 글자
+            # 사이가 벌어지므로 spacingAndGlyphs 로 글리프 자체를 셀에 맞춰 늘인다
+            # (ASCII narrow 런은 이미 모노스페이스라 기본 spacing 으로 충분).
+            if wide:
+                seg_attrs += ' lengthAdjust="spacingAndGlyphs"'
+            out.append(f"<text{seg_attrs}>{_svg_escape(seg)}</text>")
+            col += seg_cells
+        return "".join(out)
 
     return _TEXT_RE.sub(repl, svg)
 
