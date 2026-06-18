@@ -419,22 +419,74 @@ async def token_saver(app, pilot):
     await pilot.pause(0.5)
 
 
+def _tklog_data():
+    """토큰 사용량 팝업용 합성 데이터(2026-06-12 재설계 반영). 공개 저장소에 실제
+    사용량이 노출되지 않게 가상의 며칠치 레코드·계정·실측 한도를 만든다. 일별 뷰가
+    여러 행으로 차고 요약줄(5h%·주%·~Σ)이 의미 있게 보이도록 구성한다."""
+    import datetime as _dt
+    # 결정적 기준일(스크린샷 라벨 고정): 2026-06-18 을 기준으로 최근 6일.
+    base = _dt.datetime(2026, 6, 18, 14, 0)
+    recs = []
+    daily_tokens = [42_100, 58_700, 31_400, 64_900, 27_800, 51_300]
+    for i, tok in enumerate(daily_tokens):
+        day = base - _dt.timedelta(days=i)
+        recs.append({"ts": day.timestamp(), "tab": i % 3, "pane": i + 1,
+                     "session": i + 1, "account": "default", "tokens": tok})
+    usage = {"session": {"pct": 38, "reset": "2pm (Asia/Seoul)"},
+             "week_all": {"pct": 61, "reset": "Jun 22 at 3am (Asia/Seoul)"},
+             "week_sonnet": {"pct": 12, "reset": "Jun 22 at 3am (Asia/Seoul)"},
+             "account": "default"}
+    return recs, usage
+
+
 async def token_log(app, pilot):
-    # 토큰 사용량 팝업 — 마우스 서브탭(시간/일/주/월) + M19 /usage 실측 한도.
+    # 토큰 사용량 팝업(일별 뷰) — 노트북 탭(기간/계정/세션/한도/대사/경고)+서브옵션
+    # (시간/일/주/월·정렬)+요약줄(5h%·주%·~Σ)+기간:토큰 표. 2026-06-12 재설계.
     # TokenLogScreen 은 claude-code 플러그인으로 이전됐다(패키지명 하이픈→import_module).
     from importlib import import_module
     screens = import_module("pytmuxlib.plugins.claude-code.screens")
-    TokenLogScreen = screens.TokenLogScreen
-    recs = [
-        {"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
-         "account": "default", "tokens": 12300},
-        {"ts": 1_700_400_000.0, "tab": 1, "pane": 2, "session": 2,
-         "account": "default", "tokens": 8200},
-    ]
-    usage = {"session": {"pct": 2, "reset": "2pm (Asia/Seoul)"},
-             "week_all": {"pct": 14, "reset": "Jun 13 at 3am (Asia/Seoul)"},
-             "week_sonnet": {"pct": 0, "reset": "Jun 13 at 3am (Asia/Seoul)"}}
-    app.push_screen(TokenLogScreen(recs, usage=usage))
+    recs, usage = _tklog_data()
+    app.push_screen(screens.TokenLogScreen(recs, usage=usage))
+    await pilot.pause(0.5)
+
+
+async def token_log_hour(app, pilot):
+    # 토큰 사용량 팝업(시간 뷰) — 재설계의 시그니처: 시각별 세션 5h 한도 누적%를
+    # **계단식 가로 막대**(초록/노랑/빨강 임계)로, 옆에 주간(1w%) 숫자 열을 둔다.
+    # 권위 /usage 실측을 시각 단위로 조인(hourly_pct/hourly_week_pct). initial_mode=hour.
+    from importlib import import_module
+    import datetime as _dt
+    screens = import_module("pytmuxlib.plugins.claude-code.screens")
+    base = _dt.datetime(2026, 6, 18, 9, 0)     # 09시부터 시각별
+    recs, hourly_pct, hourly_week_pct = [], {}, {}
+    # 5h 창이 한 번 차오르다 리셋되는 모습: 누적 5h% 가 오르다 14시에 0 으로 떨어진다.
+    series = [(9, 18, 9), (10, 41, 11), (11, 63, 12), (12, 86, 13),
+              (13, 97, 14), (14, 22, 15), (15, 49, 16)]
+    for hour, s5h, swk in series:
+        t = base.replace(hour=hour)
+        key = t.strftime("%Y-%m-%d %H:00")
+        recs.append({"ts": t.timestamp(), "tab": 0, "pane": 1, "session": 1,
+                     "account": "default", "tokens": 6000 + hour * 700})
+        hourly_pct[key] = s5h
+        hourly_week_pct[key] = swk
+    usage = {"session": {"pct": 49, "reset": "2pm (Asia/Seoul)"},
+             "week_all": {"pct": 16, "reset": "Jun 22 at 3am (Asia/Seoul)"},
+             "account": "default"}
+    app.push_screen(screens.TokenLogScreen(
+        recs, usage=usage, hourly_pct=hourly_pct,
+        hourly_week_pct=hourly_week_pct, initial_mode="hour"))
+    await pilot.pause(0.5)
+
+
+async def token_log_limit(app, pilot):
+    # 토큰 사용량 팝업(한도 뷰) — /usage 실측 한도 상세(세션 5h·주 전체·주 Sonnet
+    # 막대+% 사용+리셋), 현재 창 추정 Σ, 다음 리셋까지 블록-숫자 카운트다운을 한 탭으로
+    # 통합(2026-06-17, 옛 별도 usage-view 팝업을 흡수). initial_mode=limit.
+    from importlib import import_module
+    screens = import_module("pytmuxlib.plugins.claude-code.screens")
+    recs, usage = _tklog_data()
+    app.push_screen(screens.TokenLogScreen(
+        recs, usage=usage, initial_mode="limit"))
     await pilot.pause(0.5)
 
 
@@ -507,7 +559,12 @@ async def usage_view(app, pilot):
     }
     app.status.usage_limits = data
     app.status.usage_age_sec = 5
-    app.open_usage_view("popup")
+    # popup 모드는 이제 token-log '한도' 탭으로 통합돼(2026-06-17) UsageScreen 을 안
+    # 띄운다(그 화면은 38-token-log-limit 에서 다룬다). 이 컷은 플러그인 고유 화면인
+    # UsageScreen 자체를 보여주려는 것이므로 직접 띄운다(델리트-투-디세이블 폴백 경로).
+    from importlib import import_module
+    uvscreen = import_module("pytmuxlib.plugins.claude-token-usage-view.screen")
+    app.push_screen(uvscreen.UsageScreen(full=False))
     await pilot.pause(0.4)
     app.status.usage_limits = data
     app.screen_stack[-1]._redraw()
@@ -612,7 +669,9 @@ SCENES = [
     ("21-restart-check", "restart-check 드라이런 — 작업보존 재시작 안전점검", restart_check),
     ("26-restart-confirm", "재시작 확인 — 드라이런 FAIL 시 '그래도 재시작?'(기본 취소)", restart_confirm),
     ("23-token-saver", "토큰 절감 설정 팝업(token-saver) — 자동개입 토글·임계·예산·경고", token_saver),
-    ("24-token-log", "토큰 사용량 팝업 — 마우스 서브탭(시간/일/주/월) + /usage 실측 한도", token_log),
+    ("24-token-log", "토큰 사용량 팝업(일별) — 노트북 탭+서브옵션+요약줄+기간:토큰 표", token_log),
+    ("37-token-log-hour", "토큰 팝업(시간) — 시각별 5h 한도 계단식 막대 + 1w% 열", token_log_hour),
+    ("38-token-log-limit", "토큰 팝업(한도) — /usage 막대·창Σ·리셋 카운트다운 통합 탭", token_log_limit),
     ("25-remote-control", "원격 제어 팝업 — [r] 로 /rc 토글", remote_control),
     ("27-ncd", "디렉토리 트리(ncd) — 루트→cwd 펼침·시안 선택 막대·찾기 안내줄", ncd),
     ("28-claude-rules", "시작 규칙 편집(claude-rules) — 멀티라인 에디터·Ctrl+S 저장", claude_rules),
