@@ -56,7 +56,7 @@ COMMANDS = [
     ("auto-compact", "Claude idle 30초 지속 시 자동 /compact on/off "
                      "(auto-compact on|off|toggle)", "Claude"),
     ("auto-hardstop", "컨텍스트 하드스톱('Context limit reached') 시 즉시 자동 "
-                      "/compact on/off (auto-hardstop on|off|toggle, 기본 on)",
+                      "/compact on/off (auto-hardstop on|off|toggle, 기본 off)",
                       "Claude"),
     ("auto-retry", "전송 에러(API error·rate limit) 시 1분 뒤 '계속' 자동 주입 on/off "
                    "(auto-retry on|off|toggle, 기본 on)", "Claude"),
@@ -117,7 +117,7 @@ i18n.register({
         "cmd.model": "Model·context change popup (also opens via the status model badge, injects /model; alias model-config, claude-model)",
         "cmd.auto-doc-clear": "Auto document + /clear when Claude idle 30s on/off (auto-doc-clear on|off|toggle)",
         "cmd.auto-compact": "Auto /compact when Claude idle 30s on/off (auto-compact on|off|toggle)",
-        "cmd.auto-hardstop": "Auto /compact immediately on context hardstop ('Context limit reached') on/off (auto-hardstop on|off|toggle, default on)",
+        "cmd.auto-hardstop": "Auto /compact immediately on context hardstop ('Context limit reached') on/off (auto-hardstop on|off|toggle, default off)",
         "cmd.auto-retry": "Auto-inject '계속' 1 min after a transmission error (API error·rate limit) on/off (auto-retry on|off|toggle, default on)",
         "cmd.auto-token-on-exit": "Auto-open token usage screen (Limit/usage) when Claude session ends on/off (auto-token-on-exit on|off|toggle, default on)",
         "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",

@@ -149,9 +149,10 @@ class Server(*_SERVER_BASES):
         # 컨텍스트 하드스톱 자동복구(요청): "Context limit reached · /compact or /clear
         # to continue" 화면을 보면 idle 지연 없이 즉시 '/compact' 를 1회 주입해 막힌
         # 진행을 잇는다(claude_context_hardstop). idle-기반 auto_compact 와 다른 트리거.
-        # 기본 ON — 하드스톱은 정상 idle 이 아니라 완전 차단 상태이고 /compact 가 유일한
-        # 진행 수단이라 자동복구의 부작용이 없다(끄려면 auto-hardstop off). opts.json 영속.
-        self.auto_hardstop = bool(_opts.get("auto_hardstop", True))
+        # 기본 OFF(사용자 요청 2026-06-18) — auto_compact 와 마찬가지로 자동 /compact 주입은
+        # 사용자가 명시적으로 켜야 한다(켜려면 auto-hardstop on). 끈 상태에서 하드스톱에
+        # 닿으면 세션이 막힌 채 멈추므로 수동 /compact·/clear 로 진행을 잇는다. opts.json 영속.
+        self.auto_hardstop = bool(_opts.get("auto_hardstop", False))
         # 자동 compact·doc-clear 쿨다운(요청): 새 Claude 세션 시작 직후 또는 직전
         # compact·clear 직후 이 초만큼은 **시간기반** 자동 compact·doc-clear 를 무장하지
         # 않는다 — 세션을 막 시작했거나 방금 정리했는데 곧바로 또 압축/정리되던 문제 방지

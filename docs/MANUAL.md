@@ -913,7 +913,7 @@ tmux 의 윈도우 명령 이름과 별칭을 **둘 다** 받습니다.
 | `auto-launch on\|off` | 새 세션 시작 시 `/rc`(원격 제어)+권한 `auto` 1회 자동 적용(기본 ON) |
 | `auto-doc-clear on\|off` | 30초 idle 시 자동 문서화 + `/clear` |
 | `auto-compact on\|off` | 30초 idle 시 자동 `/compact` |
-| `auto-hardstop on\|off` | 컨텍스트 하드스톱 시 즉시 자동 `/compact`(기본 ON) |
+| `auto-hardstop on\|off` | 컨텍스트 하드스톱 시 즉시 자동 `/compact`(기본 OFF) |
 | `auto-retry on\|off` | 전송 에러 1분 뒤 `계속` 자동 주입(기본 ON) |
 | `auto-resume on\|off` | 토큰 리밋 자동 재개 |
 

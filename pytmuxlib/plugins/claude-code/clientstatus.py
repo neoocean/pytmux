@@ -81,7 +81,7 @@ def init_defaults(status):
     # 토큰 절감 설정(설정 팝업 토글 현재값 + 예산 경고).
     status.auto_doc_clear = False
     status.auto_compact = False
-    status.auto_hardstop = True    # 서버 기본 ON(하드스톱 자동복구) 과 일치
+    status.auto_hardstop = False   # 서버 기본 OFF(2026-06-18 사용자 요청) 과 일치
     status.auto_token_on_exit = True  # §10-F 세션 종료 시 토큰 화면 자동 표시(서버 기본 ON)
     status.claude_auto_mode = False
     status.claude_ctx_autoclear = False

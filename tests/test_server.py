@@ -1324,7 +1324,7 @@ async def test_auto_hardstop_context_limit_injects_compact():
     continue") 화면을 _scan_claude 가 보면 즉시(idle 지연 없이) '/compact' 를 1회
     자동 주입한다. idle-기반 auto_compact 와 다른 트리거. 같은 화면엔 디바운스
     (_hardstop_fired)로 반복 주입 안 함, 화면이 하드스톱을 벗어나면 재무장.
-    토글 off 면 발화 안 함. 기본 ON. 토글 opts.json 영속."""
+    토글 off 면 발화 안 함. 기본 OFF(2026-06-18 사용자 요청). 토글 opts.json 영속."""
     from pytmuxlib.claude import claude_context_hardstop
     # 파서: 슬래시 명령이 화면에 있을 때만 하드스톱으로 본다(오탐 방지).
     assert claude_context_hardstop(
@@ -1350,8 +1350,10 @@ async def test_auto_hardstop_context_limit_injects_compact():
         srv.claude_auto_mode = False
         srv.auto_compact = False
 
-        assert srv.auto_hardstop is True, "기본 ON"
+        assert srv.auto_hardstop is False, "기본 OFF"
         import json as _json
+        # 명시 on→off 토글이 opts.json 에 영속되는지 확인(기본이 off 이므로 먼저 on)
+        assert srv.set_auto_hardstop(True) is True
         assert srv.set_auto_hardstop(False) is False
         assert _json.load(open(srv.opts_path))["auto_hardstop"] is False
 
