@@ -19,6 +19,7 @@ import traceback
 from rich.style import Style
 from textual import events
 from textual.app import App, ComposeResult
+from textual.await_complete import AwaitComplete
 from textual.binding import Binding
 from textual.geometry import Offset
 from textual.suggester import SuggestFromList
@@ -2177,6 +2178,17 @@ class _RenderMixin:
 
     def pop_screen(self, *args, **kwargs):
         # 팝업을 닫으면 어둡게/치환을 풀고 원본으로 재합성(#25) — 즉시 + 마운트 후.
+        # stale/중복 dismiss 가드: 기본 화면만 남았는데 또 pop 하면 Textual 이
+        # ScreenStackError 로 클라 전체를 크래시시킨다. 예: 팝업(InfoScreen/Plugin/
+        # 토큰)이 이미 닫힌 뒤에도 큐에 남아 있던 백드롭/우클릭 Click 이 그 화면의
+        # on_click 을 늦게 발화 → dismiss(None) → pop. 모달 팝업이 공유하는 단일
+        # 길목이라 여기서 한 번만 no-op 으로 막는다(restart-check 우클릭 크래시 재현).
+        # ★반환값은 None 이 아니라 빈 AwaitComplete: Screen.dismiss 가 pop_screen()
+        # 반환값에 set_pre_await_callback 을 곧장 호출하므로 None 을 주면 그 자리에서
+        # AttributeError 로 다시 크래시한다(즉, 막으려던 stale-dismiss 경로). 빈
+        # AwaitComplete 는 즉시 완료되는 awaitable 이라 안전한 no-op 이다.
+        if len(self.screen_stack) <= 1:
+            return AwaitComplete()
         r = super().pop_screen(*args, **kwargs)
         if getattr(self, "view", None) is not None:
             self._composite()

@@ -40,7 +40,9 @@ pytmux 본체와 기본 제공 플러그인들의 주요 화면을 한눈에 모
 (`prefix :`)로 거의 모든 동작을 할 수 있습니다. 명령 프롬프트는 입력하는 동안
 **고스트 자동완성**으로 다음 글자를 제안합니다.
 
-![메뉴 (prefix Enter / 우클릭)](image/05-menu.svg)
+![메뉴 (prefix Enter / 우클릭) — 자주 쓰는 항목 + 패널/레이아웃/탭 그룹](image/05-menu.svg)
+
+![메뉴 서브메뉴 — 그룹을 펼친 모습](image/36-menu-submenu.svg)
 
 ![명령 프롬프트 — 고스트 자동완성](image/06-command-prompt.svg)
 

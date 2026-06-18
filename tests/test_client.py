@@ -75,6 +75,41 @@ async def test_restart_check_command_opens_popup():
     await _with_app(body)
 
 
+async def test_stale_dismiss_after_popup_closed_is_noop_not_crash():
+    """팝업(InfoScreen)이 이미 닫힌 뒤, 큐에 남아 있던 백드롭/우클릭 Click 이 그
+    화면의 on_click 을 늦게 발화해 dismiss(None)→pop_screen 을 한 번 더 부르면
+    종전엔 Textual ScreenStackError 로 클라 전체가 크래시했다(restart-check 팝업
+    우클릭 재현). pop_screen 가드가 기본 화면만 남은 상태의 pop 을 no-op 으로
+    삼켜 크래시 대신 안전하게 무시하는지 확인한다."""
+    from pytmuxlib.clientscreens import InfoScreen
+
+    async def body(app, pilot, srv):
+        app._show_restart_check_popup({
+            "reexec_supported": True, "has_sessions": True,
+            "serialize_ok": True, "panes": 1, "panes_with_fd": 1,
+            "running_version": "p4:1", "disk_version": "p4:1"})
+        await pilot.pause(0.1)
+        scr = app.screen
+        assert isinstance(scr, InfoScreen)
+        # 정상 닫기 → 기본 화면으로 복귀.
+        scr.dismiss(None)
+        await pilot.pause(0.1)
+        assert not isinstance(app.screen, InfoScreen)
+        assert len(app.screen_stack) == 1
+        # stale 중복 dismiss(이미 팝된 화면의 on_click 늦은 발화 모사) → 크래시 금지.
+        # 실제 크래시 경로는 on_click→Screen.dismiss→app.pop_screen 이었다. dismiss 는
+        # pop_screen() 반환값에 set_pre_await_callback 을 곧장 호출하므로, 이미 팝된
+        # 화면에서 다시 dismiss(None) 해도 ScreenStackError(스택 부족) 도, None 반환
+        # 으로 인한 AttributeError 도 없이 조용히 무시돼야 한다.
+        scr.dismiss(None)
+        await pilot.pause(0.05)
+        assert len(app.screen_stack) == 1
+        # 길목(pop_screen) 직접 호출도 ScreenStackError 없이 awaitable 을 돌려준다.
+        assert app.pop_screen() is not None
+        assert len(app.screen_stack) == 1
+    await _with_app(body)
+
+
 async def test_version_command_opens_popup():
     """version 명령이 서버에 요청을 보내고(_want_version), version 회신을 받으면
     클라/서버 버전·업타임 팝업(InfoScreen)을 띄운다. 버전은 `p4:` 접두사 없이 CL 번호만,
@@ -1914,8 +1949,8 @@ async def test_context_menu_toggle_shows_state_and_stays_open():
         assert app.screen_stack[-1] is menu, "토글 선택해도 메뉴 유지"
         assert menu._toggle_state("sync") is True, "낙관적 토글 반영"
         assert menu._fmt("sync", "동기화").endswith("●")
-        # 비토글 항목 선택 → 메뉴 닫힘
-        menu.on_list_view_selected(_Sel("m_new_window"))
+        # 비토글 항목 선택 → 메뉴 닫힘(§8.1: search 는 최상위 직접 항목)
+        menu.on_list_view_selected(_Sel("m_search"))
         await pilot.pause(0.1)
         assert app.screen_stack[-1] is not menu, "비토글 선택 → 닫힘"
     await _with_app(body)
@@ -1957,6 +1992,7 @@ async def test_context_menu_plugin_items_join_and_mouse_help():
     (list-keys "키 · 마우스" 팝업 재사용)와 :mouse-help 별칭 배선."""
     async def body(app, pilot, srv):
         from pytmuxlib.clientscreens import InfoScreen
+        from textual.widgets import ListItem
         # :mouse-help 별칭 → list-keys 와 같은 "키 · 마우스" InfoScreen.
         app._run_command("mouse-help")
         await pilot.pause(0.1)
@@ -1968,8 +2004,13 @@ async def test_context_menu_plugin_items_join_and_mouse_help():
         await pilot.pause(0.1)
         menu = app.screen_stack[-1]
         assert menu.__class__.__name__ == "MenuScreen"
-        keys = set(menu._labels)
-        assert {"clock-mode", "calendar-mode", "join_pane", "mouse_help"} <= keys, keys
+        # §8.1: 최상위엔 그룹 진입점 + 직접 항목(mouse_help)만. 평면 항목은 그룹 하위로.
+        top_ids = {it.id for it in menu.query(ListItem)}
+        assert "m_mouse_help" in top_ids
+        assert {"g_pane", "g_layout", "g_tab", "g_plugin"} <= top_ids, top_ids
+        # 플러그인 항목은 "플러그인" 그룹, join_pane 은 "패널" 그룹 하위에서 도달.
+        assert {"clock-mode", "calendar-mode"} <= set(menu._group_items("plugin"))
+        assert "join_pane" in menu._group_items("pane")
         await pilot.press("escape")
         await pilot.pause(0.05)
         # 폴백 디스패치: 미지 키(플러그인 명령 이름) → _run_command(key).
@@ -1986,6 +2027,74 @@ async def test_context_menu_plugin_items_join_and_mouse_help():
         app.open_prompt = lambda purpose, ph="", **k: opened.append((purpose, k))
         app._run_menu_action("join_pane")
         assert ("command", {"initial": "join-pane "}) in opened, opened
+    await _with_app(body)
+
+
+def _sel_event(iid):
+    """ListView.Selected 모사 — on_list_view_selected(event) 직접 호출용."""
+    return type("E", (), {"item": type("I", (), {"id": iid})()})()
+
+
+async def test_context_menu_grouped_submenu_and_reachability():
+    """§8.1: 컨텍스트 메뉴가 그룹(서브메뉴)+구분선 구조다. ① 최상위는 그룹 진입점·직접
+    항목·구분선만 ② 구분선은 비선택(disabled) ③ 모든 평면 액션이 그룹∪최상위 직접항목으로
+    빠짐없이·중복없이 도달 ④ 그룹 펼침 → 자식 MenuScreen, 자식 leaf 선택은 부모로 버블해
+    _run_menu_action 까지 디스패치되고 전체 메뉴가 닫힌다."""
+    async def body(app, pilot, srv):
+        from textual.widgets import ListItem
+        from pytmuxlib.clientutil import MENU_ITEMS, MENU_GROUPS, MENU_TOPLEVEL
+        app.open_menu(app.layout.get("active"))
+        await pilot.pause(0.1)
+        menu = app.screen_stack[-1]
+        assert menu.__class__.__name__ == "MenuScreen"
+        items = list(menu.query(ListItem))
+        ids = [it.id for it in items]
+        assert {"g_pane", "g_layout", "g_tab"} <= set(ids), ids
+        seps = [it for it in items if (it.id or "").startswith("sep_")]
+        assert seps and all(it.disabled for it in seps), "구분선은 비선택"
+        # 도달성: 그룹∪최상위 직접항목 == MENU_ITEMS 키 전체, 중복 없음.
+        grouped = set().union(*[set(v) for v in MENU_GROUPS.values()])
+        direct = {t for t in MENU_TOPLEVEL
+                  if not t.startswith("group:") and t != "--"}
+        assert grouped | direct == {k for k, _ in MENU_ITEMS}, "전 액션 도달"
+        assert not (grouped & direct), "그룹/직접 중복 없음"
+        # 그룹 펼침 → 자식 MenuScreen(헤더 있음), leaf 선택 → 부모로 버블 디스패치.
+        sent = []
+        app.send_cmd = lambda a, **k: sent.append((a, k))
+        menu._open_group("pane")
+        await pilot.pause(0.1)
+        child = app.screen_stack[-1]
+        assert child is not menu and child.__class__.__name__ == "MenuScreen"
+        assert child._title, "서브메뉴 헤더(그룹 라벨)"
+        child.on_list_view_selected(_sel_event("m_split_lr"))
+        await pilot.pause(0.1)
+        assert ("split", {"orient": "lr"}) in sent, sent
+        assert all(s.__class__.__name__ != "MenuScreen"
+                   for s in app.screen_stack), "leaf 디스패치 후 전체 닫힘"
+    await _with_app(body)
+
+
+async def test_context_menu_submenu_esc_returns_to_parent_and_toggle_stays():
+    """§8.1: 서브메뉴에서 토글(zoom)은 메뉴를 안 닫고, Esc 는 부모 메뉴로만 복귀한다
+    (전체 닫힘 아님)."""
+    async def body(app, pilot, srv):
+        app.open_menu(app.layout.get("active"))
+        await pilot.pause(0.1)
+        top = app.screen_stack[-1]
+        top._open_group("pane")
+        await pilot.pause(0.1)
+        child = app.screen_stack[-1]
+        assert child is not top
+        app.send_cmd = lambda *a, **k: None
+        # zoom 토글 → 자식 유지(안 닫힘).
+        child.on_list_view_selected(_sel_event("m_zoom"))
+        assert app.screen_stack[-1] is child, "토글은 서브메뉴 유지"
+        # Esc → 부모(top)로 복귀, top 은 아직 열림.
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1] is top, "Esc=부모 복귀(전체 닫힘 아님)"
+        # _menu_screen 은 부모로 복원돼 status 갱신이 최상위를 가리킨다.
+        assert app._menu_screen is top
     await _with_app(body)
 
 

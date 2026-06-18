@@ -20,7 +20,8 @@ from rich.highlighter import Highlighter
 
 from . import i18n
 from .clientutil import (COMMAND_FREETEXT, COMMAND_NOARG, COMMAND_OPTIONS,
-                         COMMANDS, ESC_MODE_KEYS, MENU_ITEMS, MENU_TOGGLES,
+                         COMMANDS, ESC_MODE_KEYS, MENU_GROUP_LABELS, MENU_GROUPS,
+                         MENU_ITEMS, MENU_TOGGLES, MENU_TOPLEVEL,
                          PANE_SCOPED_CMDS, PREFIX_KEYS, SETTINGS, SETTINGS_CATS,
                          _char_cells, bar, format_option_row, has_hangul,
                          hangul_to_qwerty, norm_sep, theme_color)
@@ -698,26 +699,79 @@ class SettingsScreen(ModalScreen):
 
 
 class MenuScreen(ModalScreen):
+    """우클릭 컨텍스트 메뉴(§8.1 그룹/서브메뉴화). 최상위는 그룹 진입점(`패널 ▸`
+    등)+자주/세션 직접 항목+구분선만 그려 짧게 두고, 그룹을 고르면 그 자식 항목으로
+    자식 MenuScreen 을 push 한다(Enter 진입·Esc 부모 복귀). leaf 항목 선택은
+    dismiss(key) 가 부모로 버블해 최상위 open_menu 핸들러(_run_menu_action)가 그대로
+    실행하므로 디스패치 키는 평면 시절과 동일하다 — 모든 액션 도달성 보존.
+
+    entries=None 이면 최상위(MENU_TOPLEVEL+플러그인 그룹), 아니면 그 entries 를 그린다.
+    title 은 서브메뉴 헤더(테두리 제목)."""
+
     CSS = """
     MenuScreen { align: center middle; }
     #menu { width: 40; height: auto; border: round $accent; background: $panel; }
+    #menu > .menu-sep { color: $text-muted; }
     """
 
+    def __init__(self, entries=None, title=None):
+        super().__init__()
+        self._entries = entries        # None=최상위
+        self._title = title            # 서브메뉴 헤더
+
+    def _label_map(self):
+        # leaf 키 → 원본 라벨. 코어 MENU_ITEMS + 플러그인 menu_items(delete-to-disable).
+        m = dict(MENU_ITEMS)
+        plug = getattr(self.app, "plugins", None)
+        if plug:
+            m.update(dict(plug.menu_items))
+        return m
+
+    def _plugin_keys(self):
+        plug = getattr(self.app, "plugins", None)
+        return [k for k, _ in plug.menu_items] if plug else []
+
+    def _toplevel_entries(self):
+        # 최상위 표시 토큰. 플러그인 항목이 있으면 "group:plugin" 을 group:tab 뒤에 끼운다.
+        entries = list(MENU_TOPLEVEL)
+        if self._plugin_keys():
+            entries.insert(entries.index("group:tab") + 1, "group:plugin")
+        return entries
+
+    def _group_items(self, g):
+        if g == "plugin":
+            return self._plugin_keys()
+        return MENU_GROUPS.get(g, [])
+
+    def _group_label(self, g):
+        return i18n.t(f"menu.group.{g}", default=MENU_GROUP_LABELS.get(g, g))
+
+    def _leaf_label(self, key):
+        return i18n.t(f"menu.{key}", default=self._label_map().get(key, key))
+
     def compose(self) -> ComposeResult:
-        self._labels = {}     # key -> (Label 위젯, 원본 라벨)
+        self._labels = {}     # leaf key -> (Label 위젯, 원본 라벨) — 표시된 항목만
         self._optim = {}      # 토글 낙관적 상태(status 회신 전 즉시 반영)
+        entries = self._entries if self._entries is not None \
+            else self._toplevel_entries()
         items = []
-        # §2.7: 플러그인 메뉴 항목(key=그 플러그인 명령 이름)을 코어 뒤에 병합 —
-        # 선택 시 _run_menu_action 의 else 폴백이 _run_command(key) 로 디스패치.
-        # 플러그인 디렉토리를 지우면 항목도 함께 사라진다(delete-to-disable).
-        plug = getattr(getattr(self, "app", None), "plugins", None)
-        merged = list(MENU_ITEMS) + list(plug.menu_items if plug else [])
-        for key, raw in merged:
-            label = i18n.t(f"menu.{key}", default=raw)   # §6 ③ 로케일 번역
-            lab = Label(self._fmt(key, label))
-            self._labels[key] = (lab, label)
-            items.append(ListItem(lab, id=f"m_{key}"))
-        yield ListView(*items, id="menu")
+        for i, tok in enumerate(entries):
+            if tok == "--":
+                # 비선택 구분선 — 키 탐색에서 건너뛰고(disabled) 디스패치 안 됨.
+                items.append(ListItem(Label("─" * 36, classes="menu-sep"),
+                                      id=f"sep_{i}", disabled=True))
+            elif tok.startswith("group:"):
+                g = tok.split(":", 1)[1]
+                items.append(ListItem(Label(f"{self._group_label(g)} ▸"),
+                                      id=f"g_{g}"))
+            else:
+                lab = Label(self._fmt(tok, self._leaf_label(tok)))
+                self._labels[tok] = (lab, self._leaf_label(tok))
+                items.append(ListItem(lab, id=f"m_{tok}"))
+        lv = ListView(*items, id="menu")
+        if self._title:
+            lv.border_title = self._title
+        yield lv
 
     def _toggle_state(self, key):
         if key in self._optim:
@@ -742,14 +796,34 @@ class MenuScreen(ModalScreen):
 
     def on_mount(self):
         self.query_one(ListView).focus()
-        self.app._menu_screen = self   # status 갱신 시 라벨 다시 그리기 위해
+        # 중첩(부모→자식) 메뉴에서 status 갱신은 최상위(현재) 메뉴를 가리켜야 하므로
+        # 직전 _menu_screen 을 보관했다 자식이 닫힐 때 부모로 복원한다.
+        self._prev_menu = getattr(self.app, "_menu_screen", None)
+        self.app._menu_screen = self
 
     def on_unmount(self):
         if getattr(self.app, "_menu_screen", None) is self:
-            self.app._menu_screen = None
+            self.app._menu_screen = getattr(self, "_prev_menu", None)
+
+    def _open_group(self, g):
+        # 그룹 선택 → 자식 MenuScreen push. 자식의 leaf 선택은 dismiss(key) 로 여기 back
+        # 콜백에 와, 부모도 같은 key 로 dismiss → open_menu 핸들러까지 버블한다.
+        # 자식 Esc(None)는 부모를 닫지 않아 부모 메뉴로 복귀한다.
+        def back(result):
+            if result:
+                self.dismiss(result)
+        self.app.push_screen(
+            MenuScreen(entries=self._group_items(g), title=self._group_label(g)),
+            back)
 
     def on_list_view_selected(self, event):
-        key = event.item.id[2:]
+        iid = event.item.id or ""
+        if iid.startswith("sep_"):
+            return                       # 구분선 — 안전 가드(disabled 라 보통 발화 안 됨)
+        if iid.startswith("g_"):
+            self._open_group(iid[2:])
+            return
+        key = iid[2:]                    # "m_<key>"
         if key in MENU_TOGGLES:
             # 토글: 메뉴를 닫지 않고 명령만 보낸 뒤 라벨을 낙관적으로 갱신.
             # ESC 로만 닫는다. 실제 상태는 status 회신 때 refresh_labels 로 확정.

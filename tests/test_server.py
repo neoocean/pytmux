@@ -294,6 +294,8 @@ async def test_auto_token_on_exit_emits_on_session_end():
         calls = []
         # 패널 인자로 호출되는지까지 확인(주입 대상 패널 전달).
         srv._emit_auto_token_log = lambda s, pane=None: calls.append((s, pane))
+        # 진짜 종료 = fg 가 셸(_claude_really_exited True) — 결정적 발화 보장.
+        srv._fg_command = lambda p: "zsh"
         # busy 로 Claude 세션 확정(_hdr_claude True)
         p.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
@@ -334,6 +336,46 @@ async def test_auto_token_on_exit_off_no_emit():
             srv._scan_claude(sess, win)
         assert p._hdr_claude is False
         assert calls == [], "토글 off → 무발화"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_auto_token_on_exit_skips_when_fg_still_claude():
+    """§10-F 화면깨짐 수정(요청 2026-06-18): _hdr_claude 거짓 종료(긴 출력이 Claude
+    footer 를 샘플 화면 밖으로 밀어 claude_state→None 이 30프레임 이어진 경우)에는
+    Claude 가 여전히 살아 있으므로(포그라운드=node) 토큰 그래프를 주입하지 않는다 —
+    살아있는 TUI 한가운데 주입으로 화면이 깨지던 버그를 막는다. 진짜 종료(fg=셸)는
+    test_auto_token_on_exit_emits_on_session_end 가 가드한다."""
+    import importlib
+    smod = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    MISS = smod._HDR_CLAUDE_MISS
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        calls = []
+        srv._emit_auto_token_log = lambda s, pane=None: calls.append((s, pane))
+        # 거짓 종료: fg 는 여전히 Claude(node) — 화면 스크레이프만 None.
+        srv._fg_command = lambda pane: "node"
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._hdr_claude is True
+        # footer 가 사라진 화면(긴 출력 모사) — 디바운스가 진행돼 _hdr_claude False 확정.
+        p.feed(b"\x1b[2J\x1b[H(long output, no claude footer)\r\n")
+        for _ in range(MISS + 2):
+            srv._scan_claude(sess, win)
+        assert p._hdr_claude is False, "디바운스로 _hdr_claude 는 내려가지만"
+        assert calls == [], "fg 가 Claude(node)면 주입 안 함(거짓 종료 화면 보호)"
+        # 대조: 같은 패널이 진짜 셸로 복귀(fg=셸)하면 다음 종료 전이에서 주입된다.
+        srv._fg_command = lambda pane: "zsh"
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)          # 다시 Claude(_hdr_claude True)
+        assert p._hdr_claude is True
+        p.feed(b"\x1b[2J\x1b[H$ \r\n")
+        for _ in range(MISS + 1):
+            srv._scan_claude(sess, win)
+        assert calls == [(sess, p)], ("fg=셸 진짜 종료 → 1회 주입", calls)
     finally:
         await teardown(srv, task, sock)
 
@@ -453,6 +495,64 @@ async def test_auto_dismiss_feedback_prompt():
             srv._scan_claude(sess, win)
         assert len(writes) == _FEEDBACK_MAX_TRIES, (writes, "최대 시도 상한")
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")  # 프롬프트 사라짐
+        srv._scan_claude(sess, win)
+        assert p._feedback_active is False and p._feedback_tries == 0, "사라지면 재무장"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_remote_menu_matcher_narrow():
+    # claude_remote_menu 는 'Disconnect this session' 과 QR/scan 안내가 **함께** 보일
+    # 때만 True — 산문에 'Disconnect' 한 단어만 섞인 경우의 오검출을 막는다.
+    from pytmuxlib.claude import claude_remote_menu
+    MENU = ("Remote Control\n"
+            "This session is available in the Claude mobile app and at "
+            "https://claude.ai/code/session_X.\n"
+            "  Disconnect this session\n"
+            "  Show QR code   Scan with your phone to open this session\n"
+            "  Continue\n"
+            "Enter to select · Esc to continue\n")
+    assert claude_remote_menu(MENU)
+    assert claude_remote_menu("... Show QR code ...\n Disconnect this session")
+    # 한쪽만 있으면 False(오검출 방지).
+    assert not claude_remote_menu("Disconnect this session when you are done.")
+    assert not claude_remote_menu("Show QR code below to share the link.")
+    assert not claude_remote_menu("just normal output")
+    assert not claude_remote_menu("")
+
+
+async def test_auto_dismiss_remote_control_menu():
+    # 사용자 보고(2026-06-18): auto-launch 가 새 세션마다 /rc 를 주입하는데 현재 Claude
+    # CLI 의 /rc 는 원격 제어 관리 메뉴(Continue/Disconnect/QR, "Esc to continue")를 띄워
+    # 진행을 가로막는다. 피드백 프롬프트(#26)와 같은 Esc 자동 Dismiss 경로로 치운다 —
+    # Esc=Continue 라 원격은 켜진 채 메뉴만 닫힌다. 같은 _feedback_* 디바운스를 공유한다.
+    import importlib
+    _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    _DISMISS = _sc._FEEDBACK_DISMISS_KEY
+    assert _DISMISS == b"\x1b"
+    _MENU = (b"\x1b[2J\x1b[HRemote Control\r\n"
+             b"This session is available in the Claude mobile app.\r\n"
+             b"  Disconnect this session\r\n"
+             b"  Show QR code   Scan with your phone to open this session\r\n"
+             b"  Continue\r\n"
+             b"Enter to select   Esc to continue\r\n")
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        writes = []
+        p.pty.write = lambda b: writes.append(b)
+        p.feed(_MENU)
+        srv._scan_claude(sess, win)
+        assert writes == [b"\x1b"], (writes, "메뉴 첫 감지 → 즉시 Esc 1회")
+        assert p._feedback_active is True and p._feedback_tries == 1
+        # redraw 없으면 재주입 없음(stale 이중-Esc 가드 — 피드백과 동일).
+        for _ in range(_sc._FEEDBACK_GAP * 3):
+            srv._scan_claude(sess, win)
+        assert writes == [b"\x1b"], (writes, "redraw 없으면 재주입 없음")
+        # 메뉴가 닫히면(다음 idle 화면) 재무장 — 다음 세션 메뉴에 다시 Esc.
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
         srv._scan_claude(sess, win)
         assert p._feedback_active is False and p._feedback_tries == 0, "사라지면 재무장"
     finally:

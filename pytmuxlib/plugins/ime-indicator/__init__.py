@@ -28,9 +28,22 @@ plugins.load() 로 같은 코드를 읽는다). 렌더 헬퍼/Style/테마는 cl
 그릴 때 지연 import 한다. has_hangul 은 textual 비의존이라 최상단 import 해도 안전하다."""
 from __future__ import annotations
 
+import os
+
 from pytmuxlib.clientutil import has_hangul
 
 from . import oskbd
+
+
+def _is_ssh_remote() -> bool:
+    """클라이언트(Textual 앱)가 plain ssh 원격 세션에서 도는지(SSH_CONNECTION/SSH_TTY,
+    clientwidgets._is_remote 와 동일 신호). 이 경우 로컬 OS IME 질의(oskbd)는 클라가 도는
+    **원격 박스**의 키보드를 보게 돼, 사용자가 실제 타이핑하는 **로컬 머신**의 한/영과
+    무관하다(원격 macOS 면 TIS 가 있어 EN 등으로 굳음). 그래서 OS 실측을 끄고 확정 입력
+    휴리스틱으로 폴백한다(§9.1). pytmux 네이티브 remote-attach(클라=로컬)는 클라 env 에
+    SSH_CONNECTION 이 없어 영향받지 않는다(로컬 OS 실측 그대로)."""
+    return bool(os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"))
+
 
 # 명령 메타데이터 — 코어가 COMMANDS/COMPLETIONS/COMMAND_NOARG 에 합쳐 쓴다.
 COMMANDS = [
@@ -58,7 +71,9 @@ class _ImeIndicatorPlugin:
         지연 설치 — 이 시점엔 앱이 아직 안 돌아 set_interval 불가). 불가하면 'EN'
         에서 시작해 확정 입력 휴리스틱으로 추정한다."""
         app.ime_show = True
-        sid = oskbd.current_source_id()
+        # §9.1: plain ssh 원격이면 로컬 OS 질의는 원격 박스 키보드를 봐 틀리므로 끄고
+        # 확정 입력 휴리스틱으로 폴백한다(_is_ssh_remote docstring 참조).
+        sid = None if _is_ssh_remote() else oskbd.current_source_id()
         app._ime_os = sid is not None
         app._ime_os_timer = None
         # macOS 입력소스 변경 감시 헬퍼 자식 프로세스(첫 client_tick 에서 지연 기동)와

@@ -528,6 +528,28 @@ def claude_remote_active(text: str) -> bool:
     return "remote control" in (text or "").lower()
 
 
+# Claude Code `/rc`(원격 제어) 실행 시 뜨는 **원격 제어 관리 메뉴**. 예전 CLI 의 /rc 는
+# 메뉴 없이 원격을 토글했지만, 현재 CLI 는 세션을 모바일 앱/claude.ai 에 노출한 뒤
+# "Disconnect this session · Show QR code(Scan with your phone) · Continue (Enter to
+# select · Esc to continue)" **비모달 메뉴**를 띄워 응답 대기로 진행을 막는다. auto-launch
+# (set_claude_auto_launch, 기본 ON)가 새 세션마다 /rc 를 1회 주입하므로 이 메뉴가 매번
+# 떠 자동화가 멈췄다(사용자 보고 2026-06-18: 폰에서 pytmux 로 접속 중 Continue 메뉴가
+# 진행을 가로막음). 메뉴 안내대로 **Esc=Continue**(원격은 켜진 채 메뉴만 닫힘)를 자동
+# 주입해 치우기 위한 감지 — 피드백 프롬프트 자동 Dismiss(#26)와 같은 Esc 경로를 탄다.
+# 'Disconnect this session' + QR/scan 안내가 **함께** 보일 때만 잡아, 산문에 'Disconnect'
+# 한 단어가 우연히 섞인 경우의 오검출을 막는다.
+_REMOTE_MENU_RE = re.compile(r"Disconnect this session", re.I)
+_REMOTE_MENU_QR_RE = re.compile(r"Show QR code|Scan with your phone", re.I)
+
+
+def claude_remote_menu(text: str) -> bool:
+    """Claude `/rc` 원격 제어 관리 메뉴(Continue/Disconnect/QR)가 떠 진행을 막고 있으면
+    True(자동 Esc Dismiss 대상). 'Disconnect this session' 과 QR/scan 안내가 함께 보일
+    때만 — 단어 하나가 산문에 우연히 섞인 경우의 오검출을 피한다."""
+    t = text or ""
+    return bool(_REMOTE_MENU_RE.search(t) and _REMOTE_MENU_QR_RE.search(t))
+
+
 def claude_remote_blocked(text: str) -> bool:
     """원격 제어가 조직 정책으로 비활성화됐다는 메시지("Remote Control is disabled by
     your organization's policy")가 화면에 보이면 True. 이게 한 번 뜨면 이 세션에서는

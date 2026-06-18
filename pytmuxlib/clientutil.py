@@ -523,6 +523,37 @@ MENU_ITEMS = [
 # 토글 메뉴 항목(현재 on/off 표시·선택해도 메뉴 안 닫음). 상태는 status 에서 읽음.
 MENU_TOGGLES = {"zoom", "sync", "autoresume", "prompt_clear"}
 
+# §8.1 컨텍스트 메뉴 그룹(서브메뉴)화(요청 2026-06-18): 평면 29항목이 세로로 너무 길어,
+# 묶을 수 있는 항목을 그룹으로 접고 자주/세션 항목만 최상위에 둔다. MENU_ITEMS(평면)는
+# 라벨·토글 멤버십·i18n 기본값의 권위로 그대로 두고, 표시 구조만 아래 트리로 정의한다.
+# 그룹 항목 키는 MENU_ITEMS 키의 부분집합 — 모든 액션은 여전히 서브메뉴 경유로 도달
+# 가능하고 디스패치(_run_menu_action)는 leaf 키 그대로다.
+MENU_GROUPS = {
+    "pane": ["split_lr", "split_tb", "zoom", "rotate", "swap_pane",
+             "break_pane", "join_pane", "rename_pane", "kill_pane"],
+    "layout": ["select_layout", "next_layout", "layout_save",
+               "layout_load_over", "layout_load_new"],
+    "tab": ["new_window", "rename_window", "kill_window", "choose_tree",
+            "next_window", "prev_window"],
+}
+# 최상위 표시 순서. "group:<g>"=서브메뉴 진입점, "--"=비선택 구분선, 그 외=직접 액션.
+# 자주 쓰는 단독 항목·토글·세션 동작만 최상위에 두어 짧게 — 파괴적 동작
+# (detach/kill_server)은 구분선 뒤로 격리한다. 플러그인 항목이 있으면 런타임에
+# "group:plugin" 을 group:tab 뒤에 끼운다(MenuScreen._toplevel_entries).
+MENU_TOPLEVEL = [
+    "group:pane", "group:layout", "group:tab",
+    "--",
+    "search", "command", "settings", "mouse_help",
+    "sync", "autoresume", "prompt_clear",
+    "--",
+    "detach", "kill_server",
+]
+# 그룹 라벨(서브메뉴 진입점·헤더)의 ko 기본값. en 은 아래 카탈로그(menu.group.*)에서
+# 등록하고, 코드는 i18n.t(f"menu.group.{g}", default=MENU_GROUP_LABELS[g]) 로 읽는다.
+MENU_GROUP_LABELS = {
+    "pane": "패널", "layout": "레이아웃", "tab": "탭", "plugin": "플러그인",
+}
+
 # 마우스 제스처 도움말은 list-keys 팝업("키 · 마우스" — §2.2 발견성, i18n keys.*)이
 # 권위 — `mouse-help`/`mouse` 명령과 컨텍스트 메뉴 "마우스 제스처 도움말"은 그
 # 별칭/진입점이다(제스처 목록을 두 벌 두지 않는다).
@@ -945,6 +976,7 @@ i18n.register({
         **{f"cat.{c}": c for *_rest, c in COMMANDS},
         "cat.전체": "전체", "cat.기타": "기타",
         **{f"menu.{k}": v for k, v in MENU_ITEMS},
+        **{f"menu.group.{g}": v for g, v in MENU_GROUP_LABELS.items()},  # §8.1 그룹 라벨
     },
     "en": {
         # 카테고리(?목록 탭)
@@ -1064,5 +1096,10 @@ i18n.register({
         "menu.settings": "⚙ Settings…",
         "menu.detach": "detach (quit app, keep shell)",
         "menu.kill_server": "Kill server (all tabs/shells)",
+        # §8.1 그룹(서브메뉴) 라벨
+        "menu.group.pane": "Pane",
+        "menu.group.layout": "Layout",
+        "menu.group.tab": "Tab",
+        "menu.group.plugin": "Plugins",
     },
 })

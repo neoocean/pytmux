@@ -32,6 +32,7 @@ from .claude import (claude_account, claude_account_full, claude_api_error,
                      claude_model, model_overselect_hint,
                      claude_prompt, claude_perm_mode,
                      claude_remote_active, claude_remote_blocked,
+                     claude_remote_menu,
                      claude_state, claude_usage,
                      claude_welcome, ctx_window_tokens, parse_inline_limit,
                      parse_reset_delay, parse_usage, screen_tail_key,
@@ -629,6 +630,23 @@ class ServerClaudeMixin:
         else:
             self._ingest_slice(pane, data)
 
+    # 종료 확정 시 토큰 로그를 주입해도 안전한 셸 포그라운드 이름들. _claude_really_exited
+    # 가 거짓 종료(긴 출력이 Claude footer 를 샘플 밖으로 밀어 claude_state→None 30프레임)와
+    # 진짜 종료를 교차검증하는 데 쓴다.
+    _SHELL_FG = frozenset({"zsh", "bash", "sh", "fish", "dash", "ksh", "tcsh",
+                           "csh", "ash", "pwsh"})
+
+    def _claude_really_exited(self, pane: Pane) -> bool:
+        """패널이 정말로 Claude→셸 로 복귀했는지 포그라운드 프로세스로 교차검증한다.
+        화면 스크레이프(_hdr_claude 디바운스)만으론 거짓 종료가 난다 — 긴 출력이 Claude
+        footer 를 샘플 화면 밖으로 밀면 살아있는 Claude 도 claude_state→None 이 30프레임
+        이어져 '종료'로 확정되고, 그 순간 토큰 그래프가 살아있는 TUI 한가운데 주입돼 화면이
+        깨진다(사용자 보고 2026-06-18). fg 가 알려진 셸이면 Claude 가 빠져 셸로 돌아온 것
+        → 주입 안전(그래프가 새 프롬프트 위 스크롤백에 흐른다). fg 가 여전히 Claude
+        (node/claude)거나 확인 불가(None)면 False → 주입 건너뜀(화면 보호 우선)."""
+        fg = self._fg_command(pane)
+        return bool(fg) and os.path.basename(fg).lower() in self._SHELL_FG
+
     def _emit_auto_token_log(self, sess: Session, pane: Pane = None) -> None:
         """Claude **세션 종료** 확정 시 그 패널에 /usage 한도 요약을 **출력으로 주입**한다
         — 팝업(모달)이 아니라 패널 스크롤백에 자연스럽게 흘러가도록(요청 2026-06-18).
@@ -842,10 +860,19 @@ class ServerClaudeMixin:
                 # fg 검사) '포맷 미인식' 경고를 세워 추적 중단을 가시화한다.
                 if self._update_fmt_unknown(p, new_cl is not None):
                     changed = True
-                # Claude 세션 피드백 프롬프트 자동 Dismiss(#26): "How is Claude doing
-                # this session?" 가 뜨면 Esc(_FEEDBACK_DISMISS_KEY)를 한 번 주입해
-                # 치운다. 같은 화면에 반복 주입하지 않도록 사라질 때까지 디바운스한다.
-                if claude_feedback_prompt(txt):
+                # Esc 로 닫는 Claude 비모달 오버레이 자동 Dismiss(#26): Esc
+                # (_FEEDBACK_DISMISS_KEY)를 한 번 주입해 치운다. 같은 화면에 반복
+                # 주입하지 않도록 사라질 때까지 디바운스한다(아래 stale 이중-Esc 가드).
+                # 대상은 둘 — 둘 다 Esc 한 키로 닫히고 동시 출현하지 않아 같은
+                # 디바운스 상태(_feedback_*)를 공유한다:
+                #  ① 세션 피드백 프롬프트 "How is Claude doing this session?".
+                #  ② `/rc` 원격 제어 관리 메뉴(Continue/Disconnect/QR). auto-launch 가
+                #     새 세션마다 /rc 를 1회 주입하는데, 현재 CLI 의 /rc 는 이 메뉴를
+                #     띄워 "Esc to continue" 응답 대기로 진행을 막는다(사용자 보고
+                #     2026-06-18). Esc=Continue 라 원격은 켜진 채 메뉴만 닫혀 자동화가
+                #     이어진다. 메뉴 출현은 claude_remote_active 분기가 _rc_done 도 세워
+                #     같은 세션에 /rc 가 재발하지 않는다.
+                if claude_feedback_prompt(txt) or claude_remote_menu(txt):
                     if p._feedback_tries == 0:
                         # 첫 감지 → **즉시** Esc 1회. 공통 경로는 여기서 닫힌다.
                         p._feedback_active = True   # 정적 화면에도 스캔 유지(재시도)
@@ -995,7 +1022,11 @@ class ServerClaudeMixin:
                         # 신호이고, _hdr_claude 가 다시 True 가 될 때까지 재진입하지 않아
                         # 한 종료당 1회만 발화한다. 팝업 대신 그 패널 출력 스트림에 한도
                         # 요약을 주입해 스크롤백에 자연스럽게 흘려보낸다(요청 2026-06-18).
-                        if self.auto_token_on_exit:
+                        # 단, _hdr_claude 거짓 종료(긴 출력이 footer 를 샘플 밖으로 밀어
+                        # claude_state→None 30프레임)면 살아있는 TUI 에 그래프가 주입돼
+                        # 화면이 깨진다 — 포그라운드 프로세스로 진짜 셸 복귀를 교차검증해
+                        # 그때만 주입한다(_claude_really_exited, 사용자 보고 2026-06-18).
+                        if self.auto_token_on_exit and self._claude_really_exited(p):
                             self._emit_auto_token_log(sess, p)
                 # 토큰 누계(#3): 새 Claude 세션 시작(None→Claude) 시 리셋, 매 프레임
                 # 현재 응답 running 토큰을 step 으로 접어 응답별 peak 를 누계에 확정.

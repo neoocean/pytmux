@@ -8,10 +8,25 @@
 client_key/handle_command 는 가짜 app 으로, 코어 on_key 배선은 라이브 앱으로 가드한다.
 계약(delete-to-disable): 플러그인을 Registry 에서 빼면 ime 명령/훅이 전부 사라진다.
 """
+import os
+
 import harness  # noqa: F401  (sys.path 주입)
 from harness import make_app, server_only, teardown
 from rich.style import Style
 from textual.events import Key
+
+
+def _without_ssh_env():
+    """SSH_CONNECTION/SSH_TTY 를 임시 제거하고 저장본을 돌려준다 — OS 실측(macOS TIS)
+    경로는 비-ssh 로컬 전제다. 이 테스트 세션 자체가 ssh 일 수 있어(§9.1) env 비의존
+    결정성을 위해 OS-경로 테스트는 ssh 신호를 걷어낸다. 복원=_restore_ssh_env."""
+    return {k: os.environ.pop(k, None) for k in ("SSH_CONNECTION", "SSH_TTY")}
+
+
+def _restore_ssh_env(saved):
+    for k, v in saved.items():
+        if v is not None:
+            os.environ[k] = v
 
 import pytmuxlib.plugins as plugins
 
@@ -196,6 +211,7 @@ async def test_os_probe_sets_initial_state_and_suppresses_heuristic():
     client_key 휴리스틱은 침묵한다(한글 모드에서 영문을 쳐도 'EN' 오판 없음).
     폴링(_poll)은 소스 변경을 즉시 반영하고, 일시 실패(None)는 직전 상태 유지."""
     orig = _stub_source("com.apple.inputmethod.Korean.2SetKorean")
+    _ssh = _without_ssh_env()        # OS 실측 경로 = 비-ssh 로컬 전제(§9.1)
     try:
         app = _FakeApp()
         PLUGIN.attach_client(app)
@@ -213,6 +229,7 @@ async def test_os_probe_sets_initial_state_and_suppresses_heuristic():
         assert app.ime_state == "EN" and app.composited == 1
     finally:
         _oskbd.current_source_id = orig
+        _restore_ssh_env(_ssh)
 
 
 async def test_os_unavailable_falls_back_to_heuristic():
@@ -231,11 +248,47 @@ async def test_os_unavailable_falls_back_to_heuristic():
         _oskbd.current_source_id = orig
 
 
+async def test_ssh_remote_suppresses_os_probe_uses_heuristic():
+    """§9.1: plain ssh 원격(SSH_CONNECTION 설정)에선 로컬 OS 질의가 **원격 박스**의
+    키보드를 보므로 끄고(_ime_os=False) 확정 입력 휴리스틱으로 폴백한다 — OS 질의가
+    한글 소스를 줘도(여기선 스텁) 무시하고, 실제 타이핑하는 글자 스크립트를 따른다.
+    네이티브 remote-attach(클라=로컬, SSH_CONNECTION 없음)와 구분되는 경로다."""
+    orig = _stub_source("com.apple.inputmethod.Korean.2SetKorean")  # 로컬이면 '한' 줬을 값
+    saved = {k: os.environ.get(k) for k in ("SSH_CONNECTION", "SSH_TTY")}
+    os.environ["SSH_CONNECTION"] = "1.2.3.4 5 6.7.8.9 22"
+    os.environ.pop("SSH_TTY", None)
+    try:
+        app = _FakeApp()
+        PLUGIN.attach_client(app)
+        # OS 질의가 한글을 주더라도 ssh 원격이라 실측을 끄고 EN(폴백)에서 시작.
+        assert app._ime_os is False, "ssh 원격은 OS 실측을 끈다"
+        assert app.ime_state == "EN"
+        # 휴리스틱 동작: 한글 확정 입력 → '한', ASCII → 'EN'.
+        PLUGIN.client_key(app, _Ev("가"))
+        assert app.ime_state == "한"
+        PLUGIN.client_key(app, _Ev("z"))
+        assert app.ime_state == "EN"
+        # SSH_TTY 만 있어도 동일(둘 중 하나면 원격으로 본다).
+        os.environ.pop("SSH_CONNECTION", None)
+        os.environ["SSH_TTY"] = "/dev/ttys001"
+        app2 = _FakeApp()
+        PLUGIN.attach_client(app2)
+        assert app2._ime_os is False
+    finally:
+        _oskbd.current_source_id = orig
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 async def test_client_tick_lazily_installs_fast_timer_once():
     """첫 client_tick 이 0.05초 전용 폴링 타이머를 1회만 지연 설치한다(attach 시점엔
     앱이 안 돌아 set_interval 불가). set_interval 이 없는 환경(테스트 더미)은 False
     마킹으로 재시도하지 않는다."""
     orig = _stub_source("com.apple.keylayout.ABC")
+    _ssh = _without_ssh_env()        # OS 실측 경로 = 비-ssh 로컬 전제(§9.1)
     # 인프로세스 폴링(Windows·폴백) 경로 검증 — macOS 감시 헬퍼 spawn 은 막아
     # 결정성 보장(darwin 에서 실제 자식 프로세스가 뜨지 않게). 헬퍼 드레인 경로는
     # test_macos_watcher_drain_updates_state 가 별도로 가드한다.
@@ -269,6 +322,7 @@ async def test_client_tick_lazily_installs_fast_timer_once():
     finally:
         _oskbd.current_source_id = orig
         _oskbd.spawn_watcher = orig_spawn
+        _restore_ssh_env(_ssh)
 
 
 # ---- 3.6) macOS 감시 헬퍼 경로(인프로세스 TIS freeze 우회) ----

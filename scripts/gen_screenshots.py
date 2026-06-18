@@ -150,6 +150,14 @@ async def menu(app, pilot):
     await pilot.pause(0.4)
 
 
+async def menu_submenu(app, pilot):
+    # §8.1: 그룹 메뉴에서 "패널 ▸" 서브메뉴를 펼친 모습(자식 MenuScreen).
+    app.open_menu()
+    await pilot.pause(0.3)
+    app.screen_stack[-1]._open_group("pane")
+    await pilot.pause(0.4)
+
+
 async def command_prompt(app, pilot):
     app.open_prompt("command", initial="split-window -h")
     await pilot.pause(0.4)
@@ -588,7 +596,8 @@ SCENES = [
     ("02-split-lr", "좌우 분할 — 활성 패널 파란 테두리", split_lr),
     ("03-split-nested", "중첩 분할 — ┬┴├┤ 경계", split_nested),
     ("04-zoom", "줌 — 상태줄 Z 표시", zoom),
-    ("05-menu", "메뉴(prefix Enter)", menu),
+    ("05-menu", "메뉴(prefix Enter) — 그룹(서브메뉴)+구분선", menu),
+    ("36-menu-submenu", "메뉴 서브메뉴 — '패널 ▸' 펼침(§8.1)", menu_submenu),
     ("06-command-prompt", "명령 프롬프트(prefix :) + 고스트 자동완성", command_prompt),
     ("07-kill-pane-prompt", "패널 닫기 — ESC : 명령 프롬프트에 kill-pane 입력", kill_pane_prompt),
     ("08-tabs-multi", "탭 여러 개 + 이름변경", tabs_multi),
