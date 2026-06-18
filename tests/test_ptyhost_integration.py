@@ -248,7 +248,10 @@ async def test_real_host_shutdown_terminates_process_and_child():
         await client.close()
         client = None
         # host 프로세스가 질서있게 내려가야 한다(자식 셸도 함께 = 고아 없음).
-        assert await _await(lambda: _host_dead(host_pid), timeout=6.0), \
+        # Windows 는 종료가 느릴 수 있다 — ConPTY reader 스레드가 ReadFile 에서 풀리고
+        # 자식 OpenConsole 이 정리될 때까지 프로세스가 안 빠진다(정정성 아닌 타이밍).
+        # 6s 면 CI 에서 가끔 모자라 flaky 했다 → 넉넉히(run.py TEST_TIMEOUT=90s 안).
+        assert await _await(lambda: _host_dead(host_pid), timeout=20.0), \
             "shutdown 후에도 host 프로세스가 살아 있다(고아)"
         host_pid = 0                         # 정상 종료 — 백스톱 불필요
     finally:

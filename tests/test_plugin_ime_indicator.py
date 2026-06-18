@@ -321,6 +321,8 @@ async def test_read_latest_parses_latest_complete_line_and_carries_partial():
     미완성 잔여 버퍼를 돌린다(한 틱에 변경이 여러 줄 쌓여도 최신만, 중간 깜빡임 방지).
     완성 줄이 없으면 (None, 잔여)."""
     import os
+    if os.name == "nt":
+        return                          # fcntl/비차단 파이프 = POSIX 전용(이 경로=macOS oskbd 감시)
     import fcntl
 
     r, w = os.pipe()
