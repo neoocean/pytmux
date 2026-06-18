@@ -292,7 +292,8 @@ async def test_auto_token_on_exit_emits_on_session_end():
         win = sess.active_window
         p = win.active_pane
         calls = []
-        srv._emit_auto_token_log = lambda s, mode="limit": calls.append((s, mode))
+        # 패널 인자로 호출되는지까지 확인(주입 대상 패널 전달).
+        srv._emit_auto_token_log = lambda s, pane=None: calls.append((s, pane))
         # busy 로 Claude 세션 확정(_hdr_claude True)
         p.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
@@ -302,10 +303,10 @@ async def test_auto_token_on_exit_emits_on_session_end():
         for _ in range(MISS - 1):
             srv._scan_claude(sess, win)
         assert calls == [], "디바운스 확정 전엔 발화 안 함"
-        # MISS 번째 → _hdr_claude False 확정 → 1회 발화(한도 뷰)
+        # MISS 번째 → _hdr_claude False 확정 → 1회 발화(그 패널에 주입)
         srv._scan_claude(sess, win)
         assert p._hdr_claude is False
-        assert calls == [(sess, "limit")], calls
+        assert calls == [(sess, p)], calls
         # 추가 스캔으로 중복 발화하지 않는다(전이는 1회뿐)
         srv._scan_claude(sess, win)
         assert len(calls) == 1, "한 종료당 1회만"
@@ -325,7 +326,7 @@ async def test_auto_token_on_exit_off_no_emit():
         p = win.active_pane
         srv.set_auto_token_on_exit(False)
         calls = []
-        srv._emit_auto_token_log = lambda s, mode="limit": calls.append(s)
+        srv._emit_auto_token_log = lambda s, pane=None: calls.append(s)
         p.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
         p.feed(b"\x1b[2J\x1b[H$ \r\n")
@@ -333,6 +334,37 @@ async def test_auto_token_on_exit_off_no_emit():
             srv._scan_claude(sess, win)
         assert p._hdr_claude is False
         assert calls == [], "토글 off → 무발화"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_auto_token_on_exit_injects_usage_into_pane():
+    """§10-F(2026-06-18 재설계): 세션 종료 시 토큰 사용량을 **팝업이 아니라 패널 출력
+    으로 주입**한다. _emit_auto_token_log 가 self._usage 한도 요약을 그 패널 화면 모델에
+    feed 해 스크롤백에 보이게 한다(클라 메시지/모달 없음). 한도 데이터 없으면 무동작."""
+    import importlib
+    screen_text = importlib.import_module(
+        "pytmuxlib.plugins.claude-code.servermixin").screen_text
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        # 한도 데이터 없으면 주입 안 함(빈 텍스트) — 화면 무변경.
+        srv._usage = None
+        assert srv._usage_exit_text() == b""
+        srv._emit_auto_token_log(sess, p)        # 무동작(예외 없이 통과)
+        # 그림자 /usage 스냅샷 주입.
+        srv._usage = {"session": {"pct": 69, "reset": "10:10pm"},
+                      "week_all": {"pct": 61, "reset": "Jun 20 at 9am (Asia/Seoul)"},
+                      "week_sonnet": {"pct": 0, "reset": "Jun 20"}}
+        text = srv._usage_exit_text()
+        assert b"69%" in text and b"61%" in text and b"0%" in text
+        assert b"\x1b[2J" not in text, "전체 화면 클리어 없이 흐르는 출력이어야"
+        srv._emit_auto_token_log(sess, p)
+        shown = screen_text(p.screen)
+        assert "69%" in shown and "61%" in shown, shown
+        # pane=None 이면 무동작(가드).
+        srv._emit_auto_token_log(sess, None)
     finally:
         await teardown(srv, task, sock)
 

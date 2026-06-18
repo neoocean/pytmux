@@ -634,32 +634,6 @@ async def test_statusbar_unknown_usage_badge_when_no_measurement():
         i18n.set_locale("ko")        # 모듈 기본(다른 테스트가 ko 출력에 의존)
 
 
-async def test_auto_token_log_msg_opens_limit_view_with_guard():
-    """§10-F: 서버 `auto_token_log` 신호를 받으면 클라가 토큰 로그를 한도(/usage)
-    뷰로 연다(기존 _open_token_log 흐름 재사용). 요청이 진행 중이면 중복으로 열지
-    않는다(같은 종료로 신호가 둘 이상 와도 1회만)."""
-    pkg = importlib.import_module("pytmuxlib.plugins.claude-code")
-
-    class _App:
-        screen = None
-
-        def __init__(self):
-            self.sent = []
-
-        def send_cmd(self, action, **kw):
-            self.sent.append((action, kw))
-
-    app = _App()
-    pkg._on_auto_token_log_msg(app, {"t": "auto_token_log", "mode": "limit"})
-    assert app._want_token_log is True
-    assert app._token_log_initial == "limit"
-    assert app.sent == [("request_token_log", {"limit": 5000})]
-    # 요청 진행 중(_want_token_log True)이면 중복 안 엶
-    app.sent.clear()
-    pkg._on_auto_token_log_msg(app, {"mode": "limit"})
-    assert app.sent == [], "요청 진행 중엔 중복 요청 안 보냄"
-
-
 async def test_statusbar_ctx_follows_active_pane_switch():
     """좌하단 ctx(claude_usage)는 **활성 패널 전환 시 새 패널 값으로 교체**된다 — 새
     패널의 ctx 가 아직 안 잡혀(None) 와도 이전 패널 값을 유지하지 않는다(사용자 보고

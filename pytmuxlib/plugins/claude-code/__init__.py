@@ -457,20 +457,6 @@ def _on_token_log_msg(app, msg):
         initial_mode=initial_mode))
 
 
-def _on_auto_token_log_msg(app, msg):
-    """§10-F: 서버가 Claude 세션 종료를 확정하면 보내는 `auto_token_log` 신호 →
-    토큰 사용량 팝업을 (기본) 한도(/usage) 뷰로 자동으로 연다(요청 2026-06-18).
-    기존 _open_token_log 흐름(요청→회신→팝업)을 그대로 재사용한다. 중복 팝업 가드:
-    이미 토큰 로그 팝업이 떠 있거나 요청이 진행 중이면(같은 종료로 여러 패널/프레임이
-    겹쳐 신호가 둘 이상 와도) 다시 열지 않는다."""
-    from .screens import TokenLogScreen
-    if isinstance(getattr(app, "screen", None), TokenLogScreen):
-        return
-    if getattr(app, "_want_token_log", False):
-        return
-    _open_token_log(app, initial_mode=msg.get("mode") or "limit")
-
-
 def _open_account_aliases(app):
     """§10-E #2b 계정 별칭 관리 화면. 서버에 감지된 계정 목록을 요청하고, 회신
     (t==account_list)이 오면 handle_message 가 AccountAliasScreen 을 띄운다(별칭 편집·
@@ -979,9 +965,6 @@ class _ClaudeCodePlugin:
             return True
         if msg.get("t") == "account_list":         # §10-E #2b 계정 별칭 관리 화면
             _on_account_list_msg(app, msg)
-            return True
-        if msg.get("t") == "auto_token_log":        # §10-F 세션 종료 자동 팝업
-            _on_auto_token_log_msg(app, msg)
             return True
         return False
 
