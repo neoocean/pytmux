@@ -508,6 +508,11 @@ class SettingsScreen(ModalScreen):
         out = ""
         if first:
             cat = i18n.t(f"setcat.{desc['cat']}", default=desc["cat"])
+            # 다음 카테고리 시작 전 빈 줄 1개로 묶음을 구분(사용자 요청 2026-06-18).
+            # 첫 카테고리(idx 0)는 위에 여백이 필요 없어 제외. 헤더와 같은 행 라벨에
+            # 붙여 그 카테고리 첫 항목 위에 빈 줄로 보인다.
+            if idx > 0:
+                out += "\n"
             out += f"[dim]── {cat} ──[/]\n"
         if desc["type"] == "keyref":      # 읽기 전용 키 레퍼런스('키' 탭)
             if "sub" in desc:
