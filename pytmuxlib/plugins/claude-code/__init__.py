@@ -341,6 +341,32 @@ def _blank_feedback_tip(rows):
     return out if out is not None else rows
 
 
+# Claude 세션 종료 피드백 배너("How is Claude doing this session? (optional)" +
+# "1: Bad  2: Fine  3: Good  0: Dismiss")를 화면에서 **완전히** 숨긴다(사용자 요청 —
+# 절대 안 보이게). 자동 Dismiss(#26, servermixin._scan_claude)가 Esc 로 실제로 닫지만
+# 적용 전 한두 프레임 깜빡여 보이므로, 렌더 행 단계에서도 배너 두 줄을 공백으로 가린다.
+# 자동 Dismiss 감지는 pyte 화면 텍스트(screen_text)를 보므로 이 행 가림과 무관 — 계속
+# 닫힌다. 평가옵션 줄은 오탐을 막으려 프롬프트 줄이 화면에 함께 있을 때만 가린다.
+_FEEDBACK_PROMPT_MARK = "How is Claude doing this session"
+_FEEDBACK_OPT_MARKS = ("Bad", "Fine", "Good", "Dismiss")
+
+
+def _blank_feedback_banner(rows):
+    """피드백 배너(프롬프트 줄 + 평가옵션 줄)를 폭 유지 공백으로 가린다(_blank_feedback_tip
+    과 같은 규약: in-place 금지, 매칭 있을 때만 새 리스트). 프롬프트 줄이 화면에 없으면
+    원본 그대로(핫패스 무영향 + 옵션 줄 오탐 방지)."""
+    texts = ["".join(t for t, _ in row) for row in rows]
+    if not any(_FEEDBACK_PROMPT_MARK in tx for tx in texts):
+        return rows
+    out = None
+    for i, tx in enumerate(texts):
+        if _FEEDBACK_PROMPT_MARK in tx or all(m in tx for m in _FEEDBACK_OPT_MARKS):
+            if out is None:
+                out = list(rows)
+            out[i] = [[" " * len(t), st] for t, st in rows[i]]
+    return out if out is not None else rows
+
+
 # ---- Claude 팝업(클라) — Phase 2a 에서 코어 client.py 에서 이리로 이전 ----
 # textual 화면은 실제로 열 때 지연 import(플러그인 __init__ 은 서버도 읽어 가벼워야 함).
 def _open_model_config(app):
@@ -625,11 +651,14 @@ class _ClaudeCodePlugin:
         return server._scan_claude(sess, win)
 
     def server_filter_rows(self, server, pane, rows):
-        """Claude 패널의 'Tip: Use /feedback …' 줄을 공백으로 가려 화면에 안 보이게
-        한다(사용자 요청 2026-06-17). Claude 패널이 아니면 원본 그대로(핫패스 무영향)."""
+        """Claude 패널의 'Tip: Use /feedback …' 줄과 세션 종료 피드백 배너('How is Claude
+        doing this session?' + 평가옵션)를 공백으로 가려 화면에 안 보이게 한다(사용자
+        요청 2026-06-17·2026-06-18). Claude 패널이 아니면 원본 그대로(핫패스 무영향)."""
         if not getattr(pane, "_claude", None):
             return rows
-        return _blank_feedback_tip(rows)
+        rows = _blank_feedback_tip(rows)
+        rows = _blank_feedback_banner(rows)
+        return rows
 
     def server_status(self, server, sess, win, msg, full):
         """status 메시지에 Claude 필드를 in-place 로 채운다(serverio._status_msg 에서
