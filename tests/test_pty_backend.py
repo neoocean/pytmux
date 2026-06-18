@@ -316,3 +316,42 @@ async def test_owned_conpty_watcher_quiet_on_teardown():
     watcher.join(timeout=0.5)
     assert not watcher.is_alive(), "_stop 이면 즉시 종료해야"
     assert fake.close_calls == 0, "teardown 경로에선 감시자가 close 하지 않아야"
+
+
+async def test_owned_conpty_real_child_exit_fires_eof_windows():
+    """실 Windows: owned-ConPTY 자식(cmd.exe)이 **스스로 종료**하면 감시 스레드가
+    실 conhost 를 hangup 해 블로킹 read 를 EOF 로 깨워 on_eof 가 불린다.
+
+    위 `test_owned_conpty_watcher_fires_eof_on_child_exit` 가 가짜 `_ConPty` 로
+    감시자 *로직* 만 보던 것을, 여기선 **실 ConPTY + 실 conhost** 로 끌어올린다 —
+    그동안 office1 박스에서 수동으로 보던 '원격 페더레이션 좀비 탭' 회귀(동기
+    ReadFile 은 conhost 생존 시 자식 종료에도 EOF 를 안 줘 reader 가 영원히
+    블록)를 GHA windows-latest 러너가 자동 검증한다. 출력 *왕복* 이 아니라
+    프로세스 *종료 감지* → 콘솔 hangup → EOF 경로라, 실 인터랙티브 콘솔이 필요한
+    바이트 왕복(scripts/validate_conpty.py)과 달리 헤드리스 CI 에서도 성립한다.
+
+    `cmd /c exit` 는 attach 직후 즉시 끝난다 → 감시자 `wait`(폴 200ms)가 종료를
+    보고 `close()` → reader 의 블로킹 read 가 b"" → `_fire_eof`. 좀비였다면 EOF 가
+    영영 안 와 wait_for 가 타임아웃(=실패)으로 회귀를 드러낸다."""
+    if not pty_backend.IS_WINDOWS:
+        return
+    pty = pty_backend._OwnedConPty(["cmd.exe", "/c", "exit"], cols=80, rows=24,
+                                   cwd=None, env=dict(os.environ))
+    loop = asyncio.get_running_loop()
+    eof = asyncio.Event()
+    got = bytearray()
+    # _fire_eof 는 _read_loop 가 call_soon_threadsafe 로 루프 스레드에 올리므로
+    # on_eof(=eof.set) 도 루프 스레드에서 실행된다 → asyncio.Event.set 안전.
+    pty.start_reader(loop, got.extend, eof.set)
+    try:
+        # 폴 200ms + 콘솔 hangup + 콜드스타트 cmd 핸드셰이크 여유로 넉넉히 8초.
+        await asyncio.wait_for(eof.wait(), 8.0)
+    finally:
+        pty.stop_reader()
+        pty.terminate()
+        pty.close()
+        if pty._reader:
+            pty._reader.join(timeout=1.0)
+        if pty._watcher:
+            pty._watcher.join(timeout=1.0)
+    assert eof.is_set(), "실 자식 종료 후 감시자가 EOF 를 깨워야(좀비 회귀 방지)"
