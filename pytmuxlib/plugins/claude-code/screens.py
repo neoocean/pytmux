@@ -1267,6 +1267,15 @@ class TokenLogScreen(ModalScreen):
         maxdig = max((len(str(int(t))) for t in toks if t), default=1)
         tok_w = min(11, max(6, max((len(self._tok_aligned(t, maxdig))
                                     for t in toks), default=6)))
+        # 라벨 열 폭: _metrics 의 티어 값은 **상한**일 뿐 — 실제 라벨 내용에 맞춰 줄여
+        # 라벨↔토큰 사이의 빈 간격을 없앤다(요청 2026-06-18, 'Period 06-18 21h' 처럼
+        # 짧은 기간 라벨에서 간격이 컸다). 헤더·가장 긴 라벨이 들어갈 만큼(+1 여백)만
+        # 쓰되 티어 폭을 넘지 않고(account 긴 이메일은 종전대로 티어 상한), 행이 있을
+        # 때만 적용한다(win==0 빈 안내문은 길어서 티어 폭을 유지해야 안 잘린다).
+        if rows:
+            need = max([sum(_char_cells(c) for c in str(rowhdr))]
+                       + [sum(_char_cells(c) for c in str(r[0])) for r in rows]) + 1
+            label_w = min(label_w, max(3, need))
         # 컬럼: 행 차원(기간/계정/세션) | 토큰(자릿수 정렬, 좌측) | [5h%] [1w%].
         # (비율 막대 열은 사용자 요청으로 제거 — 2026-06-17.)
         table.add_column(rowhdr, key="label", width=label_w)
