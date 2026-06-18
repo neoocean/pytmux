@@ -46,6 +46,15 @@ class ServerPtyMixin:
         """
         cols = max(MIN_W, cols)
         rows = max(MIN_H, rows)
+        argv, env = self._shell_argv_env(cmd)
+        return pty_backend.spawn(argv, cols=cols, rows=rows, cwd=cwd, env=env)
+
+    def _shell_argv_env(self, cmd: str | None = None):
+        """셸 실행 argv + 환경을 만든다(인프로세스 spawn 과 host 모드 spawn 공용).
+
+        cmd 가 주어지면 인터랙티브 셸 대신 `셸 -c <cmd>`(display-popup 라이브 PTY).
+        OS 별 셸/플래그 분기는 여기 한 곳. host 모드(옵션 C)는 이 argv/env 를 host 로
+        넘겨 host 가 같은 셸을 띄운다."""
         env = self._panel_env()
         if pty_backend.IS_WINDOWS:
             shell = env.get("PYTMUX_SHELL") or env.get("COMSPEC") or "cmd.exe"
@@ -53,7 +62,29 @@ class ServerPtyMixin:
         else:
             shell = env.get("SHELL", "/bin/sh")
             argv = [shell, "-c", cmd] if cmd else [shell]
-        return pty_backend.spawn(argv, cols=cols, rows=rows, cwd=cwd, env=env)
+        return argv, env
+
+    def _next_pane_id(self) -> int:
+        """host 모드 패널 id 할당(서버 전역 단조 증가). 재연결 후엔 list_panes 의
+        최대 id 위로 올려 충돌을 피한다(P5 reattach 에서 _pane_seq 보정)."""
+        self._pane_seq += 1
+        return self._pane_seq
+
+    def _spawn_pane_host(self, cols: int, rows: int, cwd, cmd) -> Pane:
+        """host 모드: 셸을 host 프로세스에 띄우고 _RemotePtyProcess 로 감싼 Pane 반환.
+        패널은 host_pane_id 로 식별한다(child_pid/master_fd 는 -1). 출력 누락이 없도록
+        reader 등록(start_reader)을 host spawn **이전**에 한다."""
+        cols, rows = max(MIN_W, cols), max(MIN_H, rows)
+        argv, env = self._shell_argv_env(cmd)
+        pane_id = self._next_pane_id()
+        proc = self._pty_host.make_pane(pane_id, cols, rows)
+        pane = Pane(-1, -1, cols, rows,
+                    vt_parser=getattr(self, "vt_parser", "native"))
+        pane.host_pane_id = pane_id
+        pane.pty = proc
+        self._attach_reader(pane)                  # client.register(pane_id, …) 선행
+        self._pty_host.spawn(pane_id, argv, cols, rows, cwd=cwd, env=env)
+        return pane
 
     def _panel_env(self) -> dict:
         """패널 셸에 줄 환경을 만든다(os.environ 기반 + pytmux 표식·색·중첩 거부 래퍼).
@@ -85,6 +116,8 @@ class ServerPtyMixin:
 
     def spawn_pane(self, cols: int, rows: int, cwd: str | None = None,
                    cmd: str | None = None) -> Pane:
+        if self._pty_host is not None:        # host 모드(옵션 C, Windows 세션유지)
+            return self._spawn_pane_host(cols, rows, cwd, cmd)
         proc = self._fork_shell(cols, rows, cwd, cmd)
         fd = proc.fileno() if hasattr(proc, "fileno") else -1
         pane = Pane(proc.pid, fd, max(MIN_W, cols), max(MIN_H, rows),
@@ -106,6 +139,17 @@ class ServerPtyMixin:
             pane.pty.kill()                 # SIGKILL 즉시 종료
             pane.pty.close()
             pane.pty.reap(block=True)       # SIGKILL 이므로 블로킹 회수 안전
+        if self._pty_host is not None:      # host 모드: 새 원격 PTY 로 교체
+            argv, env = self._shell_argv_env(None)
+            pane_id = self._next_pane_id()
+            proc = self._pty_host.make_pane(pane_id, pane.cols, pane.rows)
+            pane.reinit(-1, -1, pane.cols, pane.rows)
+            pane.host_pane_id = pane_id
+            pane.pty = proc
+            self._attach_reader(pane)
+            self._pty_host.spawn(pane_id, argv, pane.cols, pane.rows,
+                                 cwd=cwd, env=env)
+            return
         proc = self._fork_shell(pane.cols, pane.rows, cwd)
         fd = proc.fileno() if hasattr(proc, "fileno") else -1
         pane.reinit(proc.pid, fd, pane.cols, pane.rows)

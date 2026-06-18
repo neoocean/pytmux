@@ -509,6 +509,10 @@ class Pane:
         # PTY 백엔드 핸들(pty_backend.PtyProcess). 서버가 spawn 직후 주입한다.
         # 렌더 전용(replay/진단) 패널은 None — master_fd/child_pid 만 -1 로 둔다.
         self.pty = None
+        # Windows 세션유지 재시작 host 모드(옵션 C): host 프로세스가 소유한 원격 PTY 의
+        # 식별자(서버 할당). None 이면 인프로세스 PTY(POSIX/비host). child_pid/master_fd 가
+        # -1 이어도 이 id 로 재시작을 가로질러 패널을 재바인딩한다.
+        self.host_pane_id = None
         # 플러그인 공용 패널 네임스페이스(S4). claude-code 가 pane_init 훅으로 Claude
         # 거동 필드(~40개: 상태/사용량/자동개입 타이머/권한모드/프롬프트 추적 등)를
         # 패널에 설치한다. 디렉토리 삭제 시 훅이 없어 그 필드가 안 생기고, 코어의 소수
@@ -522,6 +526,7 @@ class Pane:
         self.master_fd = fd
         self.child_pid = pid
         self.pty = None          # 서버가 reinit 직후 새 PtyProcess 를 주입
+        self.host_pane_id = None  # respawn: host 모드면 서버가 새 id 를 다시 설정
         self.cols, self.rows = cols, rows
         self._main = _ScrollbackScreen(cols, rows, history=HISTORY, ratio=0.5)
         self._main.set_mode(pyte.modes.LNM)
@@ -642,6 +647,8 @@ class Pane:
         d = {
             "child_pid": self.child_pid,
             "master_fd": self.master_fd,
+            # host 모드(옵션 C): 새 서버가 재시작 후 host 에 이 id 로 재바인딩한다.
+            "host_pane_id": self.host_pane_id,
             "cols": self.cols,
             "rows": self.rows,
             "mouse_modes": sorted(self._mouse_modes),
@@ -668,6 +675,9 @@ class Pane:
         for f in self._RESUME_FIELDS:
             if f in d:
                 setattr(self, f, d[f])
+        # host 모드(옵션 C) 재바인딩 식별자 — 생성자에서 못 받았으면 여기서 복원.
+        if d.get("host_pane_id") is not None:
+            self.host_pane_id = d["host_pane_id"]
         self._mouse_modes = set(d.get("mouse_modes", []))
         self.mouse_sgr = bool(d.get("mouse_sgr", False))
         self.mouse_track = (3 if 1003 in self._mouse_modes

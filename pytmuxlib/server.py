@@ -79,6 +79,15 @@ class Server(*_SERVER_BASES):
         self._gc_drain_depth = 0
         self._gc_was_enabled = True
         self._session_seq = 0
+        # Windows 세션유지 재시작 host 모드(옵션 C). serve() 가 host_enabled 면
+        # PtyHostClient 를 연결해 채운다(실패 시 None → 인프로세스 백엔드 폴백).
+        # _pane_seq 는 host 패널 id 할당기(재연결 시 list_panes 의 max 위로 올린다).
+        self._pty_host = None
+        self._pane_seq = 0
+        # host 모드 재시작 reattach: serve() 가 host 에 list_panes 로 미리 조회한, 살아
+        # 있는 host_pane_id 집합. restore_resume_state(_build_resume_node)가 이 집합의
+        # 패널만 재바인딩하고 갭 중 죽은 패널은 건너뛴다.
+        self._host_resume_alive = set()
         # Claude 세션 일련번호(#7 토큰 로깅): 패널의 claude None→비None 전이마다 +1.
         self._claude_session_seq = 0
         self.buffers: list[str] = []   # 페이스트 버퍼(최신이 앞)

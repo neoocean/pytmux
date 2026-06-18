@@ -93,8 +93,12 @@ class ServerPersistMixin:
         return {"type": "pane", "pane": node.export_state()}
 
     def _serialize_resume_window(self, w: Window) -> dict:
+        # 활성 패널 식별: host 모드면 host_pane_id(child_pid 는 -1), 아니면 child_pid.
+        ap = w.active_pane
+        active_pid = (ap.host_pane_id if (ap and ap.host_pane_id is not None)
+                      else (ap.child_pid if ap else None))
         return {"root": self._serialize_resume_node(w.root),
-                "active_pid": w.active_pane.child_pid if w.active_pane else None,
+                "active_pid": active_pid,
                 "zoomed": w.zoomed, "border_status": w.border_status,
                 "sync": w.sync, "auto_rename": w.auto_rename,
                 "layout_idx": w.layout_idx}
@@ -188,6 +192,22 @@ class ServerPersistMixin:
             return Split(spec.get("orient", "lr"), a, b, spec.get("ratio", 0.5))
         ps = spec["pane"]
         cols, rows = max(MIN_W, ps["cols"]), max(MIN_H, ps["rows"])
+        # host 모드(옵션 C) reattach: execv/fd 채택 대신, host 가 재시작을 살아남겨 살려 둔
+        # 원격 PTY 에 host_pane_id 로 재바인딩한다. serve() 가 미리 조회한 생존 패널 집합
+        # (_host_resume_alive)에 있을 때만 — 갭 중 죽은 패널은 건너뛴다(상위 except 가 스킵).
+        hpid = ps.get("host_pane_id")
+        if self._pty_host is not None and hpid is not None:
+            if hpid not in getattr(self, "_host_resume_alive", set()):
+                raise ValueError(f"host pane {hpid} 미생존 — 복원 스킵")
+            proc = self._pty_host.make_pane(hpid, cols, rows)
+            pane = Pane(-1, -1, cols, rows,
+                        vt_parser=getattr(self, "vt_parser", "native"))
+            pane.host_pane_id = hpid
+            pane.pty = proc
+            pane.import_state(ps)
+            self._attach_reader(pane)              # client.register → host 라이브 재개
+            self._pane_seq = max(self._pane_seq, hpid)  # 이후 새 spawn id 충돌 방지
+            return pane
         # S4: 상태파일이 변조됐을 때 임의 fd/pid 로 ioctl·killpg 하는 confused-deputy 를
         # 막는 의미검증(파일은 0600 이지만 심층방어). master_fd 는 실제 상속된 **열린
         # PTY master(char device)** 여야 하고 child_pid 는 양의 정수여야 한다. 위배 시
@@ -240,7 +260,9 @@ class ServerPersistMixin:
                 w = Window(root)
                 w._fix_parents(root, None)
                 apid = wspec.get("active_pid")
-                ap = next((p for p in w.panes() if p.child_pid == apid), None)
+                ap = next((p for p in w.panes()
+                           if (p.host_pane_id if p.host_pane_id is not None
+                               else p.child_pid) == apid), None)
                 w._active = ap or (root if isinstance(root, Pane)
                                    else root.first_pane())
                 w.zoomed = wspec.get("zoomed", False)
@@ -293,7 +315,12 @@ class ServerPersistMixin:
         relaunch_clients=True 면 재접속 통지에 relaunch 플래그를 실어, 연결된
         클라가 in-place 재접속 대신 **자신을 relaunch**(새 클라 코드로 재attach)
         하게 한다 — 외부 CLI `restart-all` 이 클라-측 :restart-all 과 같은 효과를
-        내도록(클라가 로컬로 _relaunch_on_restart 를 세울 수 없는 외부 트리거 경로)."""
+        내도록(클라가 로컬로 _relaunch_on_restart 를 세울 수 없는 외부 트리거 경로).
+
+        host 모드(옵션 C·Windows 세션유지)면 execv 대신 _restart_server_host 로 분기한다
+        (HPCON 비이관이라 제자리 교체 불가 → 후속 서버 프로세스 + host 재연결)."""
+        if self._pty_host is not None and self.loop is not None:
+            return self._restart_server_host(relaunch_clients)
         if pty_backend.IS_WINDOWS or self.loop is None:
             return False
         if not self.sessions:
@@ -325,6 +352,63 @@ class ServerPersistMixin:
         self.loop.call_later(0.1, self._do_execv, argv)
         return True
 
+    def _restart_server_host(self, relaunch_clients: bool) -> bool:
+        """host 모드 작업보존 재시작(옵션 C·Windows). execv 불가하므로:
+        ⓑ resume 직렬화(host_pane_id 포함) → ⓔ 클라 재접속 통지 → 후속 서버 프로세스를
+        detached 로 띄움(--resume) → 이 서버는 패널을 **terminate 하지 않고**(셸은 host
+        소유·생존) 종료. 후속 서버가 같은 host 에 재연결해 host_pane_id 로 reattach 한다(P5a).
+
+        후속 서버는 ephemeral 포트로 새로 listen 하고 portfile 을 덮으며, host(세션)는 별도
+        프로세스라 이 서버의 종료에 영향받지 않는다. 끊긴 동안의 자식 출력은 host 가
+        버퍼링했다가 후속 서버 재연결 시 flush 한다(갭 무손실)."""
+        if not self.sessions:
+            return False
+        # 진행 중 드레인 마무리 — 직렬화 스냅샷 정합(POSIX 경로와 동일).
+        for p in self._all_panes():
+            buf = p._feedbuf
+            self._stop_pane_feed(p)
+            if buf:
+                self._ingest_slice(p, buf)
+        if not self.save_resume_state():
+            return False
+        self._save_opts()
+        note = {"t": "restarting"}
+        if relaunch_clients:
+            note["relaunch"] = True
+        for c in list(self.clients):
+            asyncio.create_task(write_msg(c.writer, dict(note)))
+        argv = proc.server_argv(self.sock_path) + ["--resume",
+                                                   self.resume_state_path]
+        proc.spawn_detached(argv)
+        # write_msg flush 틈을 준 뒤 '패널 보존' 종료(terminate 금지!).
+        self.loop.call_later(0.2, self._host_restart_exit)
+        return True
+
+    def _host_restart_exit(self) -> None:
+        """host 모드 재시작 종료: 패널을 terminate 하지 않고(=host 소유 셸 보존) listen 만
+        닫고 루프를 멈춘다. 일반 shutdown() 은 p.pty.terminate()로 자식을 죽여 host 세션을
+        잃으므로 이 경로에선 절대 쓰면 안 된다. 원격 프록시 reader 만 떼고 host 연결을
+        끊는다(host 는 미전송 출력을 버퍼링→후속 서버가 flush)."""
+        self.running = False
+        self.remote_shutdown()
+        self.plugins.server_shutdown(self)        # REC 캡처 파일 닫기 등(패널 보존)
+        for p in self._all_panes():
+            if p.pty is not None:
+                try:
+                    p.pty.stop_reader()           # 콜백만 해제(원격 = client.unregister)
+                except Exception:
+                    pass
+        if self._pty_host is not None:
+            # 연결만 닫는다(close_pane 아님!) — 패널은 host 가 계속 소유한다.
+            asyncio.create_task(self._pty_host.close())
+        try:
+            if not ipc.is_tcp(self.sock_path) and os.path.exists(self.sock_path):
+                os.unlink(self.sock_path)
+        except OSError:
+            pass
+        if self.loop:
+            self.loop.stop()
+
     def restart_check(self) -> dict:
         """restart-all **드라이런**: 실제 재시작 없이 작업 보존 재시작이 안전한지
         점검한 결과를 dict 로 돌려준다(restart-check 명령이 팝업으로 표시). 부작용
@@ -336,8 +420,11 @@ class ServerPersistMixin:
         로드할 코드 — 다르면 '갱신됨'이지 위험은 아님)."""
         panes = list(self._all_panes())
         n = len(panes)
+        host_mode = self._pty_host is not None
+        # 복원 가능한 패널: POSIX=살아있는 master fd, host 모드=host_pane_id 보유(원격 PTY).
         with_fd = sum(1 for p in panes
-                      if p.master_fd is not None and p.master_fd >= 0)
+                      if (p.master_fd is not None and p.master_fd >= 0)
+                      or (host_mode and p.host_pane_id is not None))
         serialize_ok, serialize_err = False, ""
         try:
             back = json.loads(json.dumps(self._resume_payload()))
@@ -347,8 +434,11 @@ class ServerPersistMixin:
         except (TypeError, ValueError) as e:
             serialize_err = str(e)
         return {
-            "reexec_supported": (not pty_backend.IS_WINDOWS
-                                 and self.loop is not None),
+            # host 모드면 execv 없이 후속 서버 + host 재연결로 재시작 가능(옵션 C).
+            "reexec_supported": (host_mode or
+                                 (not pty_backend.IS_WINDOWS
+                                  and self.loop is not None)),
+            "host_mode": host_mode,
             "has_sessions": bool(self.sessions),
             "panes": n, "panes_with_fd": with_fd,
             "serialize_ok": serialize_ok, "serialize_err": serialize_err,

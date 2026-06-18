@@ -59,6 +59,12 @@ async def server_only():
     # 실사용 DB 오염·테스트 간섭을 막는다(tokens_db_path 가 이 override 를 우선).
     os.environ["PYTMUX_TOKENS_DB"] = tempfile.mktemp(suffix=".tokens.db",
                                                      prefix="pytmux-db-")
+    # PTY host 모드(옵션 C)는 Windows 기본 ON이라, 그냥 두면 serve()가 매 테스트마다
+    # detached pty-host 서브프로세스를 띄우고 모든 패널을 그 경유로 라우팅한다(Windows
+    # 스위트가 인프로세스 PTY 가정과 어긋나 깨짐). 표준 server_only 는 host 모드를 강제
+    # OFF 해 결정론적 인프로세스 백엔드를 쓴다 — host 모드 자체는 전용 테스트(test_ptyhost*)
+    # 가 인프로세스 host 를 주입해 검증한다. 프로덕션 run_server 기본값(Windows ON)은 무변경.
+    os.environ["PYTMUX_PTY_HOST"] = "0"
     srv = pytmux.Server(endpoint)
     task = asyncio.create_task(srv.serve())
     # listen 준비 신호: Unix=소켓 파일 생성, TCP=resolved_endpoint 가 실제 포트로 확정.
@@ -108,6 +114,7 @@ async def teardown(srv, task, sock):
     # 등)에 새지 않게 한다.
     os.environ.pop("PYTMUX_CAPTURE_DIR", None)
     os.environ.pop("PYTMUX_TOKENS_DB", None)
+    os.environ.pop("PYTMUX_PTY_HOST", None)
 
 
 def pane_text(pane):

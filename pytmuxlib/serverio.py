@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import contextlib
 import hmac
 import os
 import secrets
@@ -15,7 +16,7 @@ import signal
 import time
 import traceback
 
-from . import ipc, version
+from . import ipc, ptyhostmgr, version
 from .model import ClientConn, Pane, Session
 from .protocol import (FLUSH_HZ, MAX_H, MAX_W, MIN_H, MIN_W, PROTO_VERSION,
                        clamp_dim, frame_msg, read_msg, write_frames, write_msg)
@@ -248,6 +249,26 @@ class ServerIOMixin:
         self.running = False
         if self.loop:
             self.loop.call_later(0.2, self.shutdown)
+
+    def _on_host_lost(self):
+        """host 연결이 예기치 않게 끊겼다(host 크래시 등). 재연결을 시도한다(P6).
+        로컬 host 라 '끊김 ≈ host 사망'이므로, 재연결은 보통 **새 host**가 떠 이후 새
+        패널 spawn 이 동작하게 한다(옛 패널은 옛 host 와 함께 죽어 복구 불가 — 아웃오브
+        프로세스 host 의 본질적 트레이드오프). 정상 재시작 종료(_host_restart_exit)는
+        self.running=False 라 여기서 재연결하지 않는다."""
+        if not self.running or self.loop is None:
+            return
+        self._pty_host = None
+        self.loop.create_task(self._reconnect_host())
+
+    async def _reconnect_host(self):
+        client = await ptyhostmgr.ensure_connected(self.loop, self.sock_path)
+        if client is not None and self.running:
+            client._on_lost = self._on_host_lost
+            self._pty_host = client
+        elif client is not None:
+            with contextlib.suppress(Exception):
+                await client.close()
 
     # ---- flush 루프 ----
     async def _flush_loop(self):
@@ -936,6 +957,12 @@ class ServerIOMixin:
                 for p in tab.window.panes():
                     if p.pty is not None:
                         p.pty.terminate()       # SIGHUP
+        # host 모드(옵션 C)의 '진짜' 종료: host 프로세스도 내려 고아(OpenConsole/셸)를
+        # 막는다. **재시작은 이 경로가 아니라 _host_restart_exit 를 거치므로** host 가
+        # 보존된다 — 여기서만 host 를 죽인다.
+        if self._pty_host is not None:
+            with contextlib.suppress(Exception):
+                self._pty_host.shutdown_host()
         try:
             # TCP 엔드포인트는 지울 파일이 없다(포트파일은 다음 기동이 덮어씀).
             if not ipc.is_tcp(self.sock_path) and os.path.exists(self.sock_path):
@@ -1023,6 +1050,26 @@ class ServerIOMixin:
             # 확정 엔드포인트(TCP 면 실제 포트)를 패널 셸 $PYTMUX 에 게시한다.
             server, self.resolved_endpoint = await ipc.start_server(
                 self.sock_path, self.handle_client)
+            # Windows 세션유지 재시작 host 모드(옵션 C): 장수명 pty-host 에 연결한다.
+            # 이미 떠 있으면(서버 재시작) 재연결, 없으면 detached 로 띄워 연결. 실패하면
+            # None → spawn_pane 이 인프로세스 백엔드로 폴백(host 버그가 기동을 막지 않게).
+            # restore/prewarm(아래)이 spawn_pane 을 부르므로 그 **이전**에 연결한다.
+            if ptyhostmgr.host_enabled():
+                self._pty_host = await ptyhostmgr.ensure_connected(
+                    self.loop, self.sock_path)
+                if self._pty_host is None:
+                    self._log_error("ptyhost_connect")
+                else:
+                    # host 연결 끊김(크래시 등) 감지 → 재연결 시도(P6).
+                    self._pty_host._on_lost = self._on_host_lost
+                    # 재시작 reattach 준비: host 가 살려 둔 패널 집합을 미리 조회한다
+                    # (restore_resume_state 가 이 집합으로 생존 패널만 재바인딩).
+                    try:
+                        panes = await self._pty_host.list_panes()
+                        self._host_resume_alive = {
+                            p["pane"] for p in panes if p.get("alive")}
+                    except Exception:
+                        self._host_resume_alive = set()
             # 작업 보존 재시작(re-exec) 후: 상속된 PTY 를 채택해 셸을 살린 채 복원.
             # 성공 시 상태 파일을 지워(다음 평범한 재시작이 stale 채택을 안 하게).
             resumed = False
