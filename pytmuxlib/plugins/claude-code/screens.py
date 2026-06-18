@@ -9,12 +9,17 @@ from textual.screen import ModalScreen
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.widget import Widget
+from textual.strip import Strip
 from textual.widgets import (DataTable, Input, Label, ListItem, ListView,
                              Static, TextArea)
 
 from rich.text import Text
+from rich.segment import Segment
+from rich.style import Style
 
 from pytmuxlib import i18n
+from pytmuxlib.clientutil import theme_color
 from . import SAVER_ROWS
 
 # §6 ⑤ 플러그인 설정/로그 모달 문자열(token-saver·rules·model·perm·token-log). 정적 문자열은
@@ -481,6 +486,51 @@ from pytmuxlib.clientutil import (_char_cells, bar_floating,
 from pytmuxlib.clientscreens import usage_bar_lines
 
 
+class _TkTabConnector(Widget):
+    """토큰 팝업 메인 뷰 탭 줄과 본문 사이의 '노트북 탭' 연결선(사용자 요청 2026-06-18 —
+    메인 탭바와 같은 탭 모양으로 통일). 한 줄짜리 가로 규칙(─, 박스 테두리색 accent)을
+    그리되 **활성 뷰 탭 아래 구간만** 오렌지 ▀(accent, 라인·활성 탭과 동색)로 덮어, 활성 탭이 아래 본문으로
+    열려 이어지는 노트북 탭처럼 보이게 한다 — 메인 클라이언트 TabBar 가 콘텐츠 상단에
+    ▀ 를 덧칠해 노트북 탭을 만드는 것(client.py `_composite`)과 같은 기법을 위젯 한 줄로
+    옮긴 것. 활성 탭 위치는 매 렌더에 그 Label 의 화면 region 으로 읽어, 폭 변화·탭 전환에
+    자동으로 따라온다(레이아웃 후 region 이 권위). 위에 탭 Label 들, 아래에 보조옵션/본문이
+    오므로 활성 탭은 그 탭에 속한 영역으로 정확히 열린다."""
+
+    def render_line(self, y: int) -> Strip:
+        w = self.size.width
+        rule_st = Style(color=theme_color(self, "accent"))
+        if w <= 0:
+            return Strip([], 0)
+        # 활성 메인 탭 Label 의 가로 구간(이 위젯 기준 상대 x)을 화면 region 으로 구한다.
+        bx0 = bx1 = -1
+        scr = self.screen
+        getter = getattr(scr, "_active_main_tab_widget", None)
+        lbl = getter() if getter else None
+        if lbl is not None and getattr(lbl, "display", True):
+            try:
+                bx0 = lbl.region.x - self.region.x
+                bx1 = bx0 + lbl.region.width
+            except Exception:
+                bx0 = bx1 = -1
+        bx0 = max(0, bx0)
+        bx1 = min(w, bx1)
+        if bx1 > bx0:
+            # 다리 ▀ 도 라인·활성 탭과 같은 오렌지(accent) — 활성 탭이 라인으로
+            # 이어지는 한 덩어리로 보이게(사용자 요청 2026-06-18). ─(얇은 중앙선)와
+            # ▀(상단 반블록)는 글자가 달라 같은 색이어도 '활성 탭 아래만 채워진' 노트북
+            # 모양으로 구분된다.
+            br_st = Style(color=theme_color(self, "accent"))
+            segs = []
+            if bx0 > 0:
+                segs.append(Segment("─" * bx0, rule_st))
+            segs.append(Segment("▀" * (bx1 - bx0), br_st))
+            if bx1 < w:
+                segs.append(Segment("─" * (w - bx1), rule_st))
+        else:
+            segs = [Segment("─" * w, rule_st)]
+        return Strip(segs).adjust_cell_length(w, rule_st)
+
+
 class TokenLogScreen(ModalScreen):
     """토큰 사용량 영속 로그 집계 팝업(#7, 2026-06-12 재설계).
 
@@ -508,16 +558,20 @@ class TokenLogScreen(ModalScreen):
        구분되지 않았다(사용자 보고). */
     #tktabs { width: 100%; height: 1; align-horizontal: left; }
     #tktabs Label { height: 1; padding: 0 1; margin: 0 1 0 0; }
+    /* 메인 탭 줄과 본문 사이 노트북 연결선(_TkTabConnector) — 활성 탭이 본문으로 열려
+       이어지게(메인 탭바와 같은 모양, 사용자 요청 2026-06-18). */
+    #tkconn { width: 100%; height: 1; }
     /* 보조옵션 줄: 활성 탭(기간/세션)의 입도·정렬을 살짝 들여써 상위 탭과 구분. */
     #tksub { width: 100%; height: 1; align-horizontal: left; padding: 0 0 0 2; }
     #tksub Label { height: 1; padding: 0 1; margin: 0 1 0 0; }
     #tksub_period { width: auto; height: 1; }
     #tksublead { color: $text-muted; padding: 0 1 0 0; margin: 0; }
-    /* 메인 탭바(clientwidgets.TabBar)와 같은 색 언어로 통일(사용자 요청 2026-06-18):
-       활성 탭=primary(파랑)+흰 글자(탭바 active_st), 액션 버튼=success(초록)+검은 글자
-       (탭바 [+] add_st), 비활성=옅은 surface/muted. 두 표면의 탭 모양이 일치한다. */
+    /* 탭 색 언어(사용자 요청 2026-06-18): 활성 탭=accent(오렌지)+흰 글자 — 노트북
+       연결선·박스 테두리(둘 다 $accent)와 같은 오렌지로 맞춰 활성 탭이 그 라인으로
+       열려 이어지게 한다(처음엔 primary 파랑이었으나 라인색과 어긋나 통일). 액션
+       버튼=success(초록)+검은 글자, 비활성=옅은 surface/muted. */
     .tkbtab { background: $surface; color: $text-muted; }       /* 뷰 탭·옵션(비활성) */
-    .tkbtab-active { background: $primary; color: white; text-style: bold; } /* 활성(파랑) */
+    .tkbtab-active { background: $accent; color: white; text-style: bold; } /* 활성(오렌지) */
     .tkbbtn { background: $success; color: black; text-style: bold; }  /* 액션 버튼(초록, 뷰 아님) */
     /* 스코프/한도(위)·키 안내(아래)는 옅게 1~몇 줄, 표가 남는 높이를 채운다. */
     #tktop { width: 100%; height: auto; color: $text-muted; }
@@ -659,6 +713,9 @@ class TokenLogScreen(ModalScreen):
                             markup=False)
                 yield Label("시나리오", id="tab_saver", classes="tkbbtn",
                             markup=False)
+            # 노트북 연결선: 활성 메인 탭이 아래 본문으로 열려 이어지게(메인 탭바와
+            # 같은 모양, 사용자 요청 2026-06-18). _sync_tabs 가 탭 전환 시 refresh.
+            yield _TkTabConnector(id="tkconn")
             # 보조옵션 줄: **활성 탭에서만 작동하는 옵션**을 탭 하위로(§7.2). 기간 뷰=
             # 입도(시간/일/주/월)+정렬, 세션 뷰=정렬. 그 외(계정/한도/대사/경고)엔
             # 숨긴다(_sync_tabs 가 display 제어). 계정 필터는 'a' 키로 순환(기간/세션).
@@ -788,6 +845,22 @@ class TokenLogScreen(ModalScreen):
             return "warn"
         return self._view   # "time" | "account" | "session"
 
+    # 활성 상위 뷰 → 그 탭 Label id. 노트북 연결선(_TkTabConnector)이 활성 탭의
+    # 화면 구간을 읽어 ▀ 다리를 그릴 때 쓴다. 액션(/usage·시나리오)은 활성 개념이
+    # 없어 매핑에 없다(연결선은 항상 뷰 탭 아래에 걸린다).
+    _ACTIVE_TAB_WIDGET = {
+        "time": "tab_period", "account": "tab_acct", "session": "tab_panel",
+        "limit": "tab_limit", "recon": "tab_recon", "warn": "tab_warn"}
+
+    def _active_main_tab_widget(self):
+        tid = self._ACTIVE_TAB_WIDGET.get(self._active_tab())
+        if not tid:
+            return None
+        try:
+            return self.query_one("#" + tid, Label)
+        except Exception:
+            return None
+
     def _sync_tabs(self):
         """상위 뷰 탭 라벨·활성 하이라이트(§7.1) + 활성 탭의 보조옵션 줄 표시(§7.2)."""
         try:
@@ -810,6 +883,11 @@ class TokenLogScreen(ModalScreen):
                                                            "tkbtab-active")
             except Exception:
                 pass
+        # 노트북 연결선 다시 그리기 — 활성 탭이 바뀌면 ▀ 다리도 새 탭 아래로 옮긴다.
+        try:
+            self.query_one("#tkconn").refresh()
+        except Exception:
+            pass
         # 보조옵션 줄: 기간/세션 뷰에서만 보인다(계정/한도/대사/경고엔 옵션 없음 →
         # 줄 자체를 숨겨 빈 줄이 안 남게). 기간 뷰=입도+정렬, 세션 뷰=정렬.
         show_sub = active in ("time", "session")
@@ -1428,8 +1506,32 @@ class TokenLogScreen(ModalScreen):
             self.app.send_cmd("refresh_usage")
             self.query_one("#tklogtitle", Label).update(i18n.t("/usage 조회 중… (~수초)"))
             return
+        if k in ("home", "end", "pageup", "pagedown"):
+            # 표의 **하이라이트 행 커서**를 직접 옮긴다(사용자 요청 2026-06-18). 기본
+            # DataTable 바인딩은 이 키들로 행 커서를 따라 움직여 주지 않아(스크롤만/무동작)
+            # 하이라이트가 안 따라온다는 보고 — 명시적으로 move_cursor 로 행을 옮긴다.
+            # up/down 은 DataTable 기본 동작이 정상이라 그대로 위임(아래 _NAV_KEYS).
+            event.stop()
+            try:
+                table = self.query_one(DataTable)
+            except Exception:
+                return
+            n = table.row_count
+            if n:
+                cur = table.cursor_coordinate.row
+                if k == "home":
+                    target = 0
+                elif k == "end":
+                    target = n - 1
+                else:
+                    # 한 페이지 = 보이는 데이터 행 수(헤더 1줄 제외). 최소 1.
+                    page = max(1, table.size.height - 1)
+                    target = cur + (page if k == "pagedown" else -page)
+                target = max(0, min(n - 1, target))
+                table.move_cursor(row=target)
+            return
         if k in self._NAV_KEYS:
-            # 스크롤/커서는 포커스된 DataTable 이 자체 처리 — 가로채지 않는다.
+            # 스크롤/커서(up/down)는 포커스된 DataTable 이 자체 처리 — 가로채지 않는다.
             return
         if k == "escape":
             event.stop()
