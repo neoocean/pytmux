@@ -1369,7 +1369,7 @@ _USAGE_EMPTY_TRACK = "░"
 
 
 def usage_bar_lines(usage, width=80, age_sec=None, right_align=False,
-                    track_char=" "):
+                    track_char=" ", row_gap=False):
     """Claude `/usage` 한도 dict(session·week_all·week_sonnet)를 보기 좋은 표시
     줄 목록으로 만든다. 각 줄: 라벨(10셀 패딩) + 막대 + % + 리셋(요약, 타임존 생략).
     데이터가 없으면 None. TokenLogScreen 의 한도 섹션과 자동 /usage 팝업이 공유한다.
@@ -1387,20 +1387,32 @@ def usage_bar_lines(usage, width=80, age_sec=None, right_align=False,
     배경과 동일, 종전 동작). 호출부가 회색 트랙을 그리려고 구분 글자(예 '░')를 주면
     빈 칸을 그 글자로 채워, 표시측이 그 글자만 회색으로 색칠할 수 있게 한다(요청:
     막대=흰색·빈 부분=회색으로 배경과 구분). right_align 일 때만 의미가 있다(빈 트랙이
-    그 분기에서만 채워진다)."""
+    그 분기에서만 채워진다).
+
+    row_gap: 켜면 막대 행들 **사이에 빈 줄 1개**를 넣어 시각적으로 분리한다(요청
+    2026-06-18, [한도] 뷰). 첫 막대 앞·계정/신선도 줄엔 안 넣는다. 기본 False."""
     if not isinstance(usage, dict):
         return None
     barw = 24 if width >= 80 else (16 if width >= 60 else 8)
-    rows = []
+    # 표시할 한도(데이터 있는 것)만 먼저 모아 **라벨 폭을 통일**한다 — 라벨 길이가
+    # 달라(예: 'Week Sonnet' 11셀 vs 'Week all' 8셀) 막대 시작 열이 행마다 어긋나던
+    # 것을, 가장 긴 라벨 + 1칸으로 모두 패딩해 **모든 막대의 왼쪽 시작을 같은 열**에
+    # 맞춘다(요청 2026-06-18 — 종전 고정 10셀은 11셀 라벨에서 막대가 한 칸 밀렸다).
+    entries = []
     for key, name in (("session", i18n.t("usage.session_5h")),
                       ("week_all", i18n.t("usage.week_all")),
                       ("week_sonnet", i18n.t("usage.week_sonnet"))):
         d = usage.get(key)
-        if not (isinstance(d, dict) and d.get("pct") is not None):
-            continue
+        if isinstance(d, dict) and d.get("pct") is not None:
+            entries.append((name, d))
+    label_w = max((sum(_char_cells(c) for c in nm) for nm, _ in entries),
+                  default=0)
+    rows = []
+    for name, d in entries:
         pct = d["pct"]
         gauge = bar(pct, 100, barw)
-        label = name + " " * max(0, 10 - sum(_char_cells(c) for c in name))
+        # 가장 긴 라벨 + 1칸 → 모든 라벨이 같은 폭(막대 시작 열 통일), 최소 1칸 간격.
+        label = name + " " * max(1, label_w + 1 - sum(_char_cells(c) for c in name))
         reset = d.get("reset")
         # 타임존 괄호는 자리 절약 위해 생략.
         reset_txt = ("↻" + reset.split(" (")[0].strip()) if reset else ""
@@ -1428,6 +1440,9 @@ def usage_bar_lines(usage, width=80, age_sec=None, right_align=False,
             line = f"{label}{full_gauge} {pct:>3}% {i18n.t('usage.used')}"
             if reset_txt:
                 line += "  " + reset_txt
+        # 막대 행 사이 빈 줄 1개(row_gap) — 첫 막대 앞엔 안 넣는다.
+        if row_gap and rows:
+            rows.append("")
         rows.append(line)
     # 그림자 /usage 세션의 계정(일치 확인용). 키가 있을 때만 — 폰 앱과 다른 계정이면
     # 한도가 실제로 달라지므로 눈으로 대조하라고 표시한다. 신호 못 잡으면 '미확인'.

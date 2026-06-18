@@ -163,6 +163,39 @@ async def test_usage_bar_lines_prefers_full_account():
     assert usage_bar_lines(u2, 80)[-1].endswith("wo…@nexongames.co.kr")
 
 
+async def test_usage_bar_lines_aligned_left_start_and_row_gap():
+    """막대 왼쪽 시작 열이 행마다 같고(라벨 폭 통일), row_gap 이면 막대 사이에 빈 줄
+    1개가 들어간다(요청 2026-06-18). 'Week Sonnet'(11셀)이 종전 고정 10셀에서 한 칸
+    밀리던 회귀를 en 로케일로 가장 잘 드러낸다."""
+    from pytmuxlib import i18n
+    from pytmuxlib.clientscreens import usage_bar_lines
+
+    def barstart(line):
+        for i, ch in enumerate(line):
+            if ch in ("█", "░"):
+                return i
+        return -1
+
+    i18n.set_locale("en")
+    try:
+        u = {"session": {"pct": 6, "reset": "5pm"},
+             "week_all": {"pct": 46, "reset": "Jun20"},
+             "week_sonnet": {"pct": 0, "reset": "Jun20"}}
+        base = usage_bar_lines(u, 80)
+        bars = [ln for ln in base if barstart(ln) >= 0]
+        assert len(bars) == 3
+        starts = {barstart(ln) for ln in bars}
+        assert len(starts) == 1, f"막대 시작 열이 모두 같아야: {starts}"
+        # row_gap: bar, "", bar, "", bar — 첫 막대 앞·끝엔 빈 줄 없음
+        g = usage_bar_lines(u, 80, row_gap=True)
+        assert [i for i, ln in enumerate(g) if ln == ""] == [1, 3], g
+        assert g[0] != "" and g[-1] != ""
+        # row_gap 기본 False 면 빈 줄 없음(기존 소비자 불변)
+        assert "" not in usage_bar_lines(u, 80)
+    finally:
+        i18n.set_locale("ko")        # 모듈 기본(다른 테스트가 ko 출력에 의존)
+
+
 async def test_usage_screen_close_button_dismisses():
     """팝업 우상단 닫기 버튼(#uclose) 클릭 시 dismiss. 박스 안 클릭은 닫지 않는다.
     (popup 명령은 2026-06-17 통합으로 token-log 한도 탭을 열므로, UsageScreen 위젯 자체
