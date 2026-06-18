@@ -4707,10 +4707,12 @@ async def test_status_session_ctx_and_5h():
         assert "ctx 42%" in txt, repr(txt)
         # 토큰 수치/누계 기호는 표시되지 않는다
         assert "Σ" not in txt and "45,200" not in txt, repr(txt)
-        # 계정은 표시 %들의 기준 — 마지막 항목에 계정 곁들임(@ 없이, 요청: 이메일 중복 방지)
+        # 계정은 표시 %들의 기준 — 마지막 항목에 계정 곁들임(@ 없이, 요청: 이메일 중복 방지).
+        # 5h 실측이 없으므로(tok5h_pct=None) §10-F 'Unknown' 배지가 5h 자리에 들어가고
+        # 계정 라벨은 그 마지막 항목(?%/5h)에 붙는다(ctx 42% · ?%/5h 사용 alice).
         app.status.claude_account = "alice"
         txt_a = "".join(s.text for s in app.status.render_line(0))
-        assert "ctx 42% alice" in txt_a and "@alice" not in txt_a, repr(txt_a)
+        assert "ctx 42% · ?%/5h 사용 alice" in txt_a and "@alice" not in txt_a, repr(txt_a)
         # 5h 리밋 **사용률**(실측 37% 사용 — 2026-06-12 사용자 결정: 팝업 막대
         # "N% 사용"·Claude /usage "N% used" 와 같은 방향·같은 숫자로 전 표면 통일).
         # 5h% 옆 계정은 /usage 실측 계정(usage_limits.account = 토큰 팝업과 같은 문자열)
@@ -4794,10 +4796,12 @@ async def test_status_tokens_hidden_when_not_claude():
         txt = "".join(s.text for s in app.status.render_line(0))
         assert "ctx 42%" not in txt and "Σ" not in txt, repr(txt)
         assert app.status._usage_zone is None, "클릭존 미등록"
-        # 다시 Claude 패널이 활성화되면 보존된 값이 그대로 표시된다.
+        # 다시 Claude 패널이 활성화되면 보존된 값이 그대로 표시된다. 5h 실측이
+        # 없으므로(tok5h_pct=None) §10-F 'Unknown' 배지가 끼어들어 계정 라벨은
+        # 그 뒤에 붙는다(ctx 42% · ?%/5h 사용 alice) — ctx%·계정이 함께 보이면 된다.
         app.status.claude_active = True
         txt2 = "".join(s.text for s in app.status.render_line(0))
-        assert "ctx 42% alice" in txt2, repr(txt2)
+        assert "ctx 42%" in txt2 and "?%/5h 사용 alice" in txt2, repr(txt2)
     await _with_app(body)
 
 

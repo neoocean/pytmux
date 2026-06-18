@@ -593,6 +593,73 @@ async def test_account_display_and_alias_setters_persist():
         await teardown(srv, task, sock)
 
 
+async def test_statusbar_unknown_usage_badge_when_no_measurement():
+    """§10-F: Claude 를 막 시작해 /usage 실측(tok5h_pct·week_sonnet_pct)이 아직
+    안 왔을 때, 활성 Claude 패널이면 좌하단에 'Unknown' 사용량 배지(`?%/5h used`)를
+    즉시 띄운다(요청 2026-06-18). 실측이 들어오면 그 자리에서 숫자로 갱신되고,
+    비-Claude 패널이면 사용량 배지가 아예 안 뜬다."""
+    from rich.segment import Segment  # noqa: F401
+    from pytmuxlib import i18n
+    cs = importlib.import_module("pytmuxlib.plugins.claude-code.clientstatus")
+
+    class _S:
+        pass
+
+    def segtext(status, w=100):
+        status.focus_btn = None     # 코어 StatusBar 필드(테스트는 직접 설치)
+        segs = []
+        cs.render_segs(status, segs, w, w0=0)
+        return "".join(s.text for s in segs)
+
+    i18n.set_locale("en")
+    try:
+        # 활성 Claude · 실측 미도착 → 'Unknown' 배지(`?%/5h used`)
+        status = _S()
+        cs.init_defaults(status)
+        status.claude_active = True
+        assert "?%/5h used" in segtext(status), segtext(status)
+        # 실측 도착(tok5h_pct=6) → 숫자로 갱신, '?%' 사라짐
+        status2 = _S()
+        cs.init_defaults(status2)
+        status2.claude_active = True
+        status2.tok5h_pct = 6
+        t2 = segtext(status2)
+        assert "6%/5h used" in t2 and "?%" not in t2, t2
+        # 비-Claude 패널 → 사용량 배지 자체가 없음
+        status3 = _S()
+        cs.init_defaults(status3)
+        status3.claude_active = False
+        assert "/5h" not in segtext(status3)
+    finally:
+        i18n.set_locale("ko")        # 모듈 기본(다른 테스트가 ko 출력에 의존)
+
+
+async def test_auto_token_log_msg_opens_limit_view_with_guard():
+    """§10-F: 서버 `auto_token_log` 신호를 받으면 클라가 토큰 로그를 한도(/usage)
+    뷰로 연다(기존 _open_token_log 흐름 재사용). 요청이 진행 중이면 중복으로 열지
+    않는다(같은 종료로 신호가 둘 이상 와도 1회만)."""
+    pkg = importlib.import_module("pytmuxlib.plugins.claude-code")
+
+    class _App:
+        screen = None
+
+        def __init__(self):
+            self.sent = []
+
+        def send_cmd(self, action, **kw):
+            self.sent.append((action, kw))
+
+    app = _App()
+    pkg._on_auto_token_log_msg(app, {"t": "auto_token_log", "mode": "limit"})
+    assert app._want_token_log is True
+    assert app._token_log_initial == "limit"
+    assert app.sent == [("request_token_log", {"limit": 5000})]
+    # 요청 진행 중(_want_token_log True)이면 중복 안 엶
+    app.sent.clear()
+    pkg._on_auto_token_log_msg(app, {"mode": "limit"})
+    assert app.sent == [], "요청 진행 중엔 중복 요청 안 보냄"
+
+
 async def test_statusbar_ctx_follows_active_pane_switch():
     """좌하단 ctx(claude_usage)는 **활성 패널 전환 시 새 패널 값으로 교체**된다 — 새
     패널의 ctx 가 아직 안 잡혀(None) 와도 이전 패널 값을 유지하지 않는다(사용자 보고

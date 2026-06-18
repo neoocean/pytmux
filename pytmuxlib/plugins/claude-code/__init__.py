@@ -60,6 +60,9 @@ COMMANDS = [
                       "Claude"),
     ("auto-retry", "전송 에러(API error·rate limit) 시 1분 뒤 '계속' 자동 주입 on/off "
                    "(auto-retry on|off|toggle, 기본 on)", "Claude"),
+    ("auto-token-on-exit", "Claude 세션 종료 시 토큰 사용량 화면(한도/usage) 자동 표시 "
+                           "on/off (auto-token-on-exit on|off|toggle, 기본 on)",
+                           "Claude"),
     ("claude-auto-mode", "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off "
                          "(claude-auto-mode on|off|toggle)", "Claude"),
     ("auto-launch", "새 Claude 세션 시작 시 /rc(원격 제어)+권한모드 auto 1회 자동 적용 "
@@ -116,6 +119,7 @@ i18n.register({
         "cmd.auto-compact": "Auto /compact when Claude idle 30s on/off (auto-compact on|off|toggle)",
         "cmd.auto-hardstop": "Auto /compact immediately on context hardstop ('Context limit reached') on/off (auto-hardstop on|off|toggle, default on)",
         "cmd.auto-retry": "Auto-inject '계속' 1 min after a transmission error (API error·rate limit) on/off (auto-retry on|off|toggle, default on)",
+        "cmd.auto-token-on-exit": "Auto-open token usage screen (Limit/usage) when Claude session ends on/off (auto-token-on-exit on|off|toggle, default on)",
         "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",
         "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
         "cmd.model-hint": "Show a 'consider a lighter model' hint when Opus repeats work with context headroom (alert only, never auto-switches) on/off (model-hint on|off|toggle, default off)",
@@ -185,6 +189,7 @@ SAVER_ROWS = [
     ("auto_doc_clear", "idle 지속 시 자동 문서화+/clear", "toggle"),
     ("auto_compact", "idle 지속 시 자동 /compact", "toggle"),
     ("auto_hardstop", "컨텍스트 하드스톱 시 즉시 자동 /compact", "toggle"),
+    ("auto_token_on_exit", "세션 종료 시 토큰 사용량 화면 자동 표시", "toggle"),
     ("claude_auto_mode", "권한모드 자동 오토", "toggle"),
     ("prompt_clear", "프롬프트 단위 클리어(완료마다 doc+/clear)", "toggle"),
     ("long_turn", "장기 턴 경고(초)", "cycle"),
@@ -223,6 +228,7 @@ def saver_display(app, key):
         "auto_doc_clear": st.auto_doc_clear,
         "auto_compact": st.auto_compact,
         "auto_hardstop": st.auto_hardstop,
+        "auto_token_on_exit": st.auto_token_on_exit,
         "claude_auto_mode": st.claude_auto_mode,
         "prompt_clear": st.prompt_clear,
         "model_hint": st.claude_model_hint,
@@ -274,6 +280,9 @@ def saver_action(app, key):
     elif key == "auto_hardstop":
         app.send_cmd("set_auto_hardstop", value=None)
         st.auto_hardstop = not st.auto_hardstop
+    elif key == "auto_token_on_exit":
+        app.send_cmd("set_auto_token_on_exit", value=None)
+        st.auto_token_on_exit = not st.auto_token_on_exit
     elif key == "claude_auto_mode":
         app.send_cmd("set_claude_auto_mode", value=None)
         st.claude_auto_mode = not st.claude_auto_mode
@@ -448,6 +457,20 @@ def _on_token_log_msg(app, msg):
         initial_mode=initial_mode))
 
 
+def _on_auto_token_log_msg(app, msg):
+    """§10-F: 서버가 Claude 세션 종료를 확정하면 보내는 `auto_token_log` 신호 →
+    토큰 사용량 팝업을 (기본) 한도(/usage) 뷰로 자동으로 연다(요청 2026-06-18).
+    기존 _open_token_log 흐름(요청→회신→팝업)을 그대로 재사용한다. 중복 팝업 가드:
+    이미 토큰 로그 팝업이 떠 있거나 요청이 진행 중이면(같은 종료로 여러 패널/프레임이
+    겹쳐 신호가 둘 이상 와도) 다시 열지 않는다."""
+    from .screens import TokenLogScreen
+    if isinstance(getattr(app, "screen", None), TokenLogScreen):
+        return
+    if getattr(app, "_want_token_log", False):
+        return
+    _open_token_log(app, initial_mode=msg.get("mode") or "limit")
+
+
 def _open_account_aliases(app):
     """§10-E #2b 계정 별칭 관리 화면. 서버에 감지된 계정 목록을 요청하고, 회신
     (t==account_list)이 오면 handle_message 가 AccountAliasScreen 을 띄운다(별칭 편집·
@@ -605,7 +628,10 @@ class _ClaudeCodePlugin:
                   ("token_debug", False, bool),
                   # §10-E #2: 좌하단 계정 표시모드 — alias(별칭)·full(메일 전체)·
                   # hidden(표시 안 함). 기본 alias(별칭 없으면 종전 거동=축약/전체 폴백).
-                  ("claude_account_display", "alias", str))
+                  ("claude_account_display", "alias", str),
+                  # §10-F: Claude 세션 종료 시 토큰 사용량 화면(한도/usage 탭) 자동
+                  # 표시(요청 2026-06-18). 기본 ON.
+                  ("auto_token_on_exit", True, bool))
 
     def server_opts_init(self, server, opts):
         """opts.json → server 속성 설치(코어 __init__ 의 _opts.get 들을 이전).
@@ -728,6 +754,7 @@ class _ClaudeCodePlugin:
         msg["auto_doc_clear"] = server.auto_doc_clear
         msg["auto_compact"] = server.auto_compact
         msg["auto_hardstop"] = server.auto_hardstop
+        msg["auto_token_on_exit"] = server.auto_token_on_exit
         msg["claude_auto_mode"] = server.claude_auto_mode
         # §7-4: 절대 예산 deprecate — 경고 레벨은 실측 게이트(0/80/100)만. 와이어
         # 키 이름(budget_level)은 유지(클라 ⚠ 배지·전이 팝업이 그대로 소비).
@@ -815,6 +842,9 @@ class _ClaudeCodePlugin:
             return "send_full"
         if action == "set_auto_hardstop":
             server.set_auto_hardstop(msg.get("value"))
+            return "send_full"
+        if action == "set_auto_token_on_exit":
+            server.set_auto_token_on_exit(msg.get("value"))
             return "send_full"
         if action == "set_claude_auto_retry":
             server.set_claude_auto_retry(msg.get("value"))
@@ -949,6 +979,9 @@ class _ClaudeCodePlugin:
             return True
         if msg.get("t") == "account_list":         # §10-E #2b 계정 별칭 관리 화면
             _on_account_list_msg(app, msg)
+            return True
+        if msg.get("t") == "auto_token_log":        # §10-F 세션 종료 자동 팝업
+            _on_auto_token_log_msg(app, msg)
             return True
         return False
 
@@ -1110,6 +1143,8 @@ class _ClaudeCodePlugin:
             app.send_cmd("set_auto_compact", value=_onoff(args))
         elif c in ("auto-hardstop", "auto-hard", "hardstop"):
             app.send_cmd("set_auto_hardstop", value=_onoff(args))
+        elif c in ("auto-token-on-exit", "auto-token", "token-on-exit"):
+            app.send_cmd("set_auto_token_on_exit", value=_onoff(args))
         elif c in ("auto-retry", "retry"):
             app.send_cmd("set_claude_auto_retry", value=_onoff(args))
         elif c in ("claude-auto-mode", "auto-mode"):

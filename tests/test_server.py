@@ -262,6 +262,81 @@ async def test_inactive_tab_claude_done_flag():
         await teardown(srv, task, sock)
 
 
+async def test_auto_token_on_exit_toggle_and_persist():
+    """§10-F set_auto_token_on_exit: 기본 ON, 토글 반전·명시 지정이 server 속성을
+    바꾸고 plugin_opts(server_opts_serialize)로 영속된다."""
+    from pytmuxlib import plugins
+    srv, task, sock = await server_only()
+    try:
+        reg = plugins.load()
+        assert srv.auto_token_on_exit is True, "기본 ON"
+        assert srv.set_auto_token_on_exit() is False        # 반전 → off
+        assert srv.set_auto_token_on_exit() is True          # 반전 → on
+        assert srv.set_auto_token_on_exit(False) is False    # 명시 off
+        out = reg.server_opts_serialize(srv)
+        assert out["auto_token_on_exit"] is False
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_auto_token_on_exit_emits_on_session_end():
+    """§10-F: Claude 세션이 _HDR_CLAUDE_MISS 프레임 디바운스 뒤 진짜로 사라지는 순간
+    (_hdr_claude True→False 확정) _emit_auto_token_log 가 **1회** 발화한다. 디바운스
+    동안엔 발화하지 않고, 토글이 off 면 발화하지 않는다."""
+    import importlib
+    smod = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    MISS = smod._HDR_CLAUDE_MISS
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        calls = []
+        srv._emit_auto_token_log = lambda s, mode="limit": calls.append((s, mode))
+        # busy 로 Claude 세션 확정(_hdr_claude True)
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._hdr_claude is True
+        # Claude 사라짐(셸 프롬프트) — 디바운스 동안엔 발화 안 함
+        p.feed(b"\x1b[2J\x1b[H$ \r\n")
+        for _ in range(MISS - 1):
+            srv._scan_claude(sess, win)
+        assert calls == [], "디바운스 확정 전엔 발화 안 함"
+        # MISS 번째 → _hdr_claude False 확정 → 1회 발화(한도 뷰)
+        srv._scan_claude(sess, win)
+        assert p._hdr_claude is False
+        assert calls == [(sess, "limit")], calls
+        # 추가 스캔으로 중복 발화하지 않는다(전이는 1회뿐)
+        srv._scan_claude(sess, win)
+        assert len(calls) == 1, "한 종료당 1회만"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_auto_token_on_exit_off_no_emit():
+    """§10-F: 토글 off 면 세션 종료 확정에도 _emit_auto_token_log 가 발화하지 않는다."""
+    import importlib
+    smod = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    MISS = smod._HDR_CLAUDE_MISS
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        srv.set_auto_token_on_exit(False)
+        calls = []
+        srv._emit_auto_token_log = lambda s, mode="limit": calls.append(s)
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        p.feed(b"\x1b[2J\x1b[H$ \r\n")
+        for _ in range(MISS + 2):
+            srv._scan_claude(sess, win)
+        assert p._hdr_claude is False
+        assert calls == [], "토글 off → 무발화"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_startup_rules_injection():
     # #27: 저장된 시작 규칙이 새 Claude 세션의 첫 idle 에 프롬프트로 주입되고 **엔터까지
     # 눌러 제출**된다(본문 줄바꿈은 \n, 맨 끝 \r 로 제출). 빈 규칙이면 주입하지 않는다.

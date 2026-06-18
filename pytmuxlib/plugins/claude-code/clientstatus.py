@@ -23,6 +23,7 @@ i18n.register({
         "claude.countdown": " ⏳ {label} {eta}s(입력=취소) ",
         "claude.limit_used": "{pct}%/5h 사용",
         "claude.limit_week_sonnet": "{pct}%/주(Sonnet)",
+        "claude.limit_unknown": "?%/5h 사용",
     },
     "en": {
         "claude.limit_reached": " ⚠ Limit reached ",
@@ -32,6 +33,7 @@ i18n.register({
         "claude.countdown": " ⏳ {label} {eta}s (input=cancel) ",
         "claude.limit_used": "{pct}%/5h used",
         "claude.limit_week_sonnet": "{pct}%/wk(Sonnet)",
+        "claude.limit_unknown": "?%/5h used",
     },
 })
 
@@ -80,6 +82,7 @@ def init_defaults(status):
     status.auto_doc_clear = False
     status.auto_compact = False
     status.auto_hardstop = True    # 서버 기본 ON(하드스톱 자동복구) 과 일치
+    status.auto_token_on_exit = True  # §10-F 세션 종료 시 토큰 화면 자동 표시(서버 기본 ON)
     status.claude_auto_mode = False
     status.claude_ctx_autoclear = False
     status.claude_ctx_threshold = 15
@@ -151,6 +154,8 @@ def absorb(status, msg):
     status.auto_doc_clear = msg.get("auto_doc_clear", status.auto_doc_clear)
     status.auto_compact = msg.get("auto_compact", status.auto_compact)
     status.auto_hardstop = msg.get("auto_hardstop", status.auto_hardstop)
+    status.auto_token_on_exit = msg.get("auto_token_on_exit",
+                                        status.auto_token_on_exit)
     status.claude_auto_mode = msg.get("claude_auto_mode", status.claude_auto_mode)
     status.claude_ctx_autoclear = msg.get(
         "claude_ctx_autoclear", status.claude_ctx_autoclear)
@@ -249,6 +254,15 @@ def render_segs(status, segs, w, w0=None):
             usage_parts.append(
                 i18n.t("claude.limit_week_sonnet",
                        pct=max(0, min(100, int(status.week_sonnet_pct)))))
+        else:
+            # 실측(/usage 5h·주간 Sonnet) 미도착 — Claude 를 막 시작해 아직 그림자
+            # /usage 가 없으면 위 두 분기가 비어 사용량 배지가 **아예 안 보였다**.
+            # 활성 Claude 패널이면 값 미상이라도 즉시 'Unknown' 배지(`?%/5h used`)를
+            # 띄우고, 실측이 도착하면 위 분기로 그 자리에서 숫자 갱신된다(요청
+            # 2026-06-18). 이 분기는 `if status.claude_active:` 안이라 비-Claude
+            # 패널엔 안 뜬다. 계정 라벨은 아래 claude_account 분기가 붙인다(미상이면
+            # 생략) — 실측 계정(usage_limits)은 아직 없으니 is_usage_last 는 False.
+            usage_parts.append(i18n.t("claude.limit_unknown"))
         # 표시 %들의 기준 계정을 마지막 항목에 곁들임. 계정은 보통 이메일(me@…)이라
         # 앞에 @ 를 붙이지 않는다(@me@… 중복 방지, 요청).
         #

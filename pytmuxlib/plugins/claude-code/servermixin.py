@@ -22,6 +22,7 @@ import time
 import subprocess
 
 from pytmuxlib import ipc, proc, pty_backend
+from pytmuxlib.protocol import write_msg   # 세션 종료 시 클라 auto_token_log 푸시
 from . import tokens, usagedb, usagelog   # S5 T5: 토큰 DB 백엔드도 플러그인 소속(물리 이전)
 from .claude import (claude_account, claude_account_full, claude_api_error,
                      claude_awaiting_answer,
@@ -567,6 +568,29 @@ class ServerClaudeMixin:
         self._save_opts()
         return self.auto_hardstop
 
+    def set_auto_token_on_exit(self, value=None):
+        """Claude **세션 종료** 시 토큰 사용량 화면(한도/usage 탭)을 자동으로 띄우는
+        토글. value 미지정 시 반전. opts.json(plugin_opts) 영속. 켜져 있으면
+        _scan_claude 가 패널의 Claude 가 _HDR_CLAUDE_MISS 프레임 디바운스 뒤 진짜로
+        사라졌다고 확정하는 순간(=진짜 세션 종료) 그 세션의 클라들에 `auto_token_log`
+        신호를 보내 클라가 token-log 팝업을 한도 뷰로 연다(요청 2026-06-18, 기본 ON)."""
+        self.auto_token_on_exit = (not self.auto_token_on_exit) if value is None \
+            else bool(value)
+        self._save_opts()
+        return self.auto_token_on_exit
+
+    def _emit_auto_token_log(self, sess: Session, mode: str = "limit"):
+        """세션 종료 확정 시 그 세션에 attach 한 모든 클라에 `auto_token_log` 신호를
+        보낸다 — 클라는 이를 받아 기존 _open_token_log(initial_mode=mode) 흐름(요청→
+        회신→팝업)을 그대로 탄다(클라가 중복 팝업을 가드). 실행 중 루프가 없으면
+        (테스트가 _scan_claude 를 동기 호출) 조용히 패스한다."""
+        if self.loop is None:
+            return
+        for c in self.clients:
+            if c.session is sess:
+                self.loop.create_task(
+                    write_msg(c.writer, {"t": "auto_token_log", "mode": mode}))
+
     def _acpt_disarm(self, pane: Pane):
         """무장된 자동 /compact 타이머를 해제한다(사용자 입력·재busy·세션 종료·토글
         off 시). 핸들이 없으면 무동작."""
@@ -914,6 +938,14 @@ class ServerClaudeMixin:
                         # 기동엔 정상 재무장. 재시작 transient 한 프레임은 miss 임계(30)에
                         # 못 미쳐 여기 안 오므로 _rc_done 이 살아남는다.
                         p._rc_done = False
+                        # §10-F: 세션 종료 확정 → 토큰 사용량 화면 자동 표시(요청
+                        # 2026-06-18, 기본 ON). 이 _hdr_claude True→False 전이는 30프레임
+                        # 디바운스로 깜빡임(ssh/ConPTY 조각 도착)을 흡수한 **진짜** 종료
+                        # 신호이고, _hdr_claude 가 다시 True 가 될 때까지 재진입하지 않아
+                        # 한 종료당 1회만 발화한다. 클라가 한도(/usage) 탭으로 token-log
+                        # 팝업을 연다(중복 팝업은 클라가 가드).
+                        if self.auto_token_on_exit:
+                            self._emit_auto_token_log(sess)
                 # 토큰 누계(#3): 새 Claude 세션 시작(None→Claude) 시 리셋, 매 프레임
                 # 현재 응답 running 토큰을 step 으로 접어 응답별 peak 를 누계에 확정.
                 # (확정 시점 committed>0 은 #7 의 영속 로깅 이벤트로도 쓰인다.)

@@ -205,10 +205,12 @@ async def _opts_namespace_body(reg, _S):
                                            "usage_gate_week_pct", "claude_auto_retry",
                                            "claude_model_hint", "token_debug",
                                            "claude_account_display",
-                                           "claude_account_aliases"}
+                                           "claude_account_aliases",
+                                           "auto_token_on_exit"}
     assert out["claude_auto_retry"] is True   # 기본 ON(opts 부재 시)
     assert out["claude_model_hint"] is False  # M14c 힌트 opt-in — 기본 OFF
     assert out["token_debug"] is False        # §10-D 진단 로그 — 기본 OFF
+    assert out["auto_token_on_exit"] is True  # §10-F 세션 종료 자동 팝업 — 기본 ON
     # §10-E #2 계정 표시모드(기본 alias)·별칭 dict(기본 빈) 기본값.
     assert out["claude_account_display"] == "alias"
     assert out["claude_account_aliases"] == {}

@@ -98,6 +98,8 @@ i18n.register({
         "idle 지속 시 자동 /compact": "Auto /compact when idle persists",
         "컨텍스트 하드스톱 시 즉시 자동 /compact":
             "Auto /compact immediately on context hardstop",
+        "세션 종료 시 토큰 사용량 화면 자동 표시":
+            "Auto-open token usage screen when session ends",
         "권한모드 자동 오토": "Auto-switch permission mode to auto",
         "프롬프트 단위 클리어(완료마다 doc+/clear)":
             "Per-prompt clear (doc+/clear each completion)",
@@ -788,7 +790,8 @@ class TokenLogScreen(ModalScreen):
         except Exception:
             w = 80
         age = getattr(getattr(self.app, "status", None), "usage_age_sec", None)
-        return usage_bar_lines(self._usage, w, age_sec=age) \
+        # row_gap: [한도] 뷰는 막대 3개를 빈 줄로 띄워 보기 좋게(요청 2026-06-18).
+        return usage_bar_lines(self._usage, w, age_sec=age, row_gap=True) \
             or [i18n.t("한도(/usage): [u] 눌러 조회")]
 
     @staticmethod
