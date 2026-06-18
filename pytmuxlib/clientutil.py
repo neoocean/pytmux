@@ -833,12 +833,14 @@ PREFIX_KEYS = [
 
 i18n.register({
     "ko": dict([(f"klist.{i}", ko) for i, _k, ko, _en in ESC_MODE_KEYS + PREFIX_KEYS]
+               + [("kkey.e_up", "↑ (최상단에서)"), ("kkey.e_tb", "탭바 포커스 후")]
                + [("klist.sub_esc", "ESC 모드 (ESC 한 번 후)"),
                   ("klist.sub_prefix", "prefix 후 ({p})"),
                   ("klist.sub_user", "사용자 바인딩 (config)"),
                   ("klist.sub_user_root", "사용자 바인딩 (prefix 없이, bind -n)"),
                   ("klist.none", "(없음)"), ("setcat.키", "키")]),
     "en": dict([(f"klist.{i}", en) for i, _k, _ko, en in ESC_MODE_KEYS + PREFIX_KEYS]
+               + [("kkey.e_up", "↑ (at top)"), ("kkey.e_tb", "After tab-bar focus")]
                + [("klist.sub_esc", "ESC mode (after one ESC)"),
                   ("klist.sub_prefix", "After prefix ({p})"),
                   ("klist.sub_user", "User bindings (config)"),

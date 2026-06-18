@@ -132,6 +132,25 @@ async def test_command_catalog_symmetric_and_translated():
     _reset()
 
 
+async def test_keylist_key_column_no_hangul_in_en():
+    """키 바인딩 레퍼런스(설정 '키' 탭)의 **키표기 열**은 EN 로케일에서 한글이 새면
+    안 된다 — 보통 기호(↑ ↓ % 등)라 번역 안 하지만, e_up/e_tb 처럼 그 자리에 한글
+    설명문이 든 항목은 kkey.<id> 로 번역돼야 한다(clientscreens 가 그렇게 렌더). 회귀:
+    en 에서 모든 항목의 키표기에 한글 음절이 없어야."""
+    from pytmuxlib import clientutil
+    i18n.set_locale("en")
+    bad = []
+    for kid, k, _ko, _en in clientutil.ESC_MODE_KEYS + clientutil.PREFIX_KEYS:
+        shown = i18n.t(f"kkey.{kid}", default=k)
+        if any("가" <= ch <= "힣" for ch in shown):
+            bad.append((kid, shown))
+    assert not bad, f"EN 키표기에 한글이 남음: {bad}"
+    # ko 에선 원래 한글 라벨이 보존된다(영문 전환만 고친 것이지 ko 를 깨지 않음).
+    i18n.set_locale("ko")
+    assert i18n.t("kkey.e_tb", default="X") == "탭바 포커스 후"
+    _reset()
+
+
 async def test_plugin_catalog_registered_and_translated():
     """플러그인(claude-code) 로드 시 claude.*/플러그인 cmd.* 카탈로그가 등록되고,
     core usage.* 와 함께 ko/en 대칭·번역돼야 한다(§6 ⑤)."""

@@ -448,14 +448,17 @@ class SettingsScreen(ModalScreen):
         def keyrow(k, kid=None, d=None):
             add({"type": "keyref", "cat": "키", "k": k, "kid": kid, "d": d})
 
+        # 키표기 열은 보통 언어중립(기호)이라 그대로 쓰지만, e_up/e_tb 처럼 그 자리에
+        # 한글 설명문이 든 항목은 EN 로케일에서 한글이 새 보인다 — kkey.<id> 가 있으면
+        # 그걸 쓰고, 없으면(대부분) 원문 표기를 그대로 둔다(default=k).
         sub(i18n.t("klist.sub_esc"))
         for kid, k, _ko, _en in ESC_MODE_KEYS:
-            keyrow(k, kid=kid)
+            keyrow(i18n.t(f"kkey.{kid}", default=k), kid=kid)
         pk = (self._prefix_key.replace("ctrl+", "Ctrl-")
               .replace("shift+", "Shift-").replace("alt+", "Alt-"))
         sub(i18n.t("klist.sub_prefix", p=pk))
         for kid, k, _ko, _en in PREFIX_KEYS:
-            keyrow(k, kid=kid)
+            keyrow(i18n.t(f"kkey.{kid}", default=k), kid=kid)
         sub(i18n.t("klist.sub_user"))
         if self._user_bindings:
             for key, cmd in sorted(self._user_bindings.items()):
