@@ -657,3 +657,65 @@ async def test_core_on_key_updates_ime_state():
                 app._ime_zone, app._active_pane_right)
     finally:
         await teardown(srv, task, sock)
+
+
+# ---- 4) ssh -R IME 채널 하드닝(M2/M3, SECURITY_REVIEW §8) ----
+import shutil          # noqa: E402
+import socket          # noqa: E402
+import tempfile        # noqa: E402
+
+_imeagent = importlib.import_module("pytmuxlib.plugins.ime-indicator.imeagent")
+
+
+async def test_imeagent_unlink_stale_guards_squat():
+    # M2: 우리 소유 소켓만 stale 로 제거. 일반 파일/타 소유/심링크는 거부(선점 방지).
+    if os.name == "nt":
+        return
+    d = tempfile.mkdtemp(prefix="pytmux-imesock-")
+    try:
+        assert _imeagent._unlink_stale(os.path.join(d, "nope.sock")) is True
+        reg = os.path.join(d, "reg")          # 소켓 아님 → 거부, 보존
+        open(reg, "w").close()
+        assert _imeagent._unlink_stale(reg) is False
+        assert os.path.exists(reg)
+        sp = os.path.join(d, "s.sock")        # 우리 소유 소켓 → 제거
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.bind(sp)
+        try:
+            assert _imeagent._unlink_stale(sp) is True
+            assert not os.path.exists(sp)
+        finally:
+            s.close()
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_oskbd_drain_caps_runaway_buffer():
+    # M3: 개행 없는 폭주 입력은 _LINE_MAX 로 잘려 소비측 메모리가 무한 증가하지 않는다.
+    cap = _oskbd._LINE_MAX
+    r, w = os.pipe()
+    os.set_blocking(r, False)
+    try:
+        os.write(w, b"a" * 60000)             # 파이프 용량 내(개행 없음)
+        sid, buf, _closed = _oskbd._drain(r, b"")
+        assert sid is None and len(buf) == 60000
+        os.write(w, b"b" * 60000)             # 누적 120000 → cap 으로 잘림
+        sid, buf, _closed = _oskbd._drain(r, buf)
+        assert sid is None
+        assert len(buf) <= cap, len(buf)
+    finally:
+        os.close(r)
+        os.close(w)
+
+
+async def test_oskbd_drain_parses_line_after_newline():
+    # 정상 한 줄(개행 종결)은 그대로 디코드된다(캡 도입이 정상 경로를 깨지 않음).
+    r, w = os.pipe()
+    os.set_blocking(r, False)
+    try:
+        os.write(w, b"com.apple.keylayout.ABC\n")
+        sid, buf, _closed = _oskbd._drain(r, b"")
+        assert sid == "com.apple.keylayout.ABC" and buf == b""
+    finally:
+        os.close(r)
+        os.close(w)

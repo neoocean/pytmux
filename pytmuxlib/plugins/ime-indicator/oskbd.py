@@ -183,6 +183,11 @@ def spawn_watcher():
         return None
 
 
+# 개행 없는 한 줄 최대 길이(M3). 정상 소스 ID 는 수백 B 라 넉넉하다 — 이 상한은
+# 악의적/고장 writer 가 개행 없이 무한히 흘려 소비측 메모리를 불리는 DoS 를 막는다.
+_LINE_MAX = 64 * 1024
+
+
 def _drain(fd, prev_buf=b""):
     """fd(감시 헬퍼 stdout 또는 에이전트 소켓)에서 가용 바이트를 비차단으로 모두 읽어
     `(마지막 완성 줄|None, 잔여버퍼, closed)` 를 돌린다. 한 틱에 변경이 여러 줄 쌓여도
@@ -198,6 +203,8 @@ def _drain(fd, prev_buf=b""):
                 closed = True
                 break
             buf += chunk
+            if len(buf) > _LINE_MAX:      # 개행 없는 폭주 입력 — 마지막 _LINE_MAX 만 유지
+                buf = buf[-_LINE_MAX:]
     except BlockingIOError:                # 더 읽을 게 없음(EAGAIN)
         pass
     except Exception:

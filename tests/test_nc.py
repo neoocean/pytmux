@@ -247,6 +247,21 @@ async def test_ncd_marks_current_dir():
     await _with_app(body)
 
 
+async def test_cd_command_windows_neutralizes_quote_break():
+    # M4(SECURITY_REVIEW §8): Windows `cd /d "..."` 가 임베드 따옴표·제어문자를 제거해
+    # 따옴표 탈출 후 명령 분리(`" & calc`)를 못 하게 한다. raw 보간 회귀 방지.
+    from pytmuxlib.plugins.ncd import _cd_command
+    out = _cd_command('a" & calc &"b', nt=True)
+    assert out == 'cd /d "a & calc &b"\n', out
+    assert '" ' not in out and "&\"" not in out
+    # 개행 주입도 차단(한 줄만).
+    assert _cd_command("a\nrm -rf x", nt=True) == 'cd /d "arm -rf x"\n'
+    # 정상 경로(따옴표 없음)는 불변.
+    assert _cd_command(r"C:\Users\me\proj", nt=True) == 'cd /d "C:\\Users\\me\\proj"\n'
+    # POSIX 분기는 shlex.quote 그대로.
+    assert _cd_command("/r/a b", nt=False) == "cd '/r/a b'\n"
+
+
 async def test_ncd_cd_quotes_spaces():
     async def body(app, pilot, srv):
         app.send_cmd = lambda *a, **k: None

@@ -38,6 +38,20 @@ def host_portfile(sock_path: str) -> str:
     return _state_base(sock_path) + ".ptyhost.port"
 
 
+def host_tokenfile(sock_path: str) -> str:
+    """host 가 게시하는 연결 인증 토큰 파일(0600). 메인 채널의 default.token 과 충돌하지
+    않도록 sock_path 파생 고유 경로를 쓴다(M1)."""
+    return _state_base(sock_path) + ".ptyhost.token"
+
+
+def _read_host_token(sock_path: str) -> str | None:
+    try:
+        with open(host_tokenfile(sock_path), encoding="ascii") as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
 def listen_endpoint(sock_path: str) -> str:
     """host 에게 --endpoint 로 넘길 리슨 주소."""
     if pty_backend.IS_WINDOWS:
@@ -66,7 +80,8 @@ def _spawn_host(sock_path: str) -> None:
     """pty-host 데몬을 detached 로 띄운다(서버보다 오래 산다)."""
     argv = [sys.executable, "-m", "pytmuxlib.ptyhost",
             "--endpoint", listen_endpoint(sock_path),
-            "--portfile", host_portfile(sock_path)]
+            "--portfile", host_portfile(sock_path),
+            "--tokenfile", host_tokenfile(sock_path)]
     with contextlib.suppress(Exception):
         proc.spawn_detached(argv)
 
@@ -78,7 +93,8 @@ async def _try_connect(loop, sock_path: str, timeout: float
         return None
     client = ptyhostclient.PtyHostClient(loop)
     try:
-        await asyncio.wait_for(client.connect(endpoint), timeout)
+        token = _read_host_token(sock_path)
+        await asyncio.wait_for(client.connect(endpoint, token=token), timeout)
         return client
     except Exception:
         with contextlib.suppress(Exception):

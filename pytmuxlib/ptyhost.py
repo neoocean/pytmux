@@ -18,7 +18,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import hmac
 import os
+import secrets
 import sys
 
 from . import ipc, pty_backend, ptyhostproto as proto
@@ -51,18 +53,47 @@ class PtyHost:
         self._writer: asyncio.StreamWriter | None = None   # 현재 연결된 서버
         self._server = None
         self._stop: asyncio.Event | None = None            # shutdown op → serve 종료
+        self._token: str | None = None                     # 연결 인증 토큰(M1)
 
     # ---- 연결 처리 ----
+    async def _authenticate(self, reader: asyncio.StreamReader,
+                            writer: asyncio.StreamWriter) -> bool:
+        """연결 피어를 인증한다(M1, docs/internal/SECURITY_REVIEW.md). 메인 채널과 동형:
+
+        ① Unix 소켓이면 peer-UID == host UID 검증(심층 방어; TCP·미지원이면 None→통과).
+        ② 토큰이 설정돼 있으면(프로덕션은 mgr 이 `--tokenfile` 로 항상 게시) 첫 프레임이
+           유효 토큰을 실은 `auth` 여야 한다 — `hmac.compare_digest` 로 상수시간 비교.
+        Windows 루프백 TCP 의 무인가 로컬 접속을 차단하는 핵심 게이트다(F1 회귀 봉쇄).
+        """
+        sock = writer.get_extra_info("socket")
+        puid = ipc.peer_uid(sock)
+        if puid is not None and puid != os.getuid():
+            return False
+        if self._token is not None:
+            f = await proto.read_frame(reader)
+            if not f or f[0] != "json" or f[1].get("op") != "auth":
+                return False
+            tok = f[1].get("token")
+            if not isinstance(tok, str) or not hmac.compare_digest(tok, self._token):
+                return False
+        return True
+
     async def _handle_conn(self, reader: asyncio.StreamReader,
                            writer: asyncio.StreamWriter):
+        await proto.write_frame(writer, proto.encode_json(
+            {"op": "hello", "version": proto.PROTO_VERSION, "pid": os.getpid()}))
+        # 인증을 **연결 채택 전에** 한다 — 무인가 접속이 현재 서버 연결을 대체하거나
+        # (DoS) pending 출력을 가로채지(정보 노출) 못하게.
+        if not await self._authenticate(reader, writer):
+            with contextlib.suppress(Exception):
+                writer.close()
+            return
         # 새 서버 연결이 들어오면 이전 연결을 대체한다(서버 재시작 모델 = 1 서버).
         old = self._writer
         self._writer = writer
         if old is not None and old is not writer:
             with contextlib.suppress(Exception):
                 old.close()
-        await proto.write_frame(writer, proto.encode_json(
-            {"op": "hello", "version": proto.PROTO_VERSION, "pid": os.getpid()}))
         # 재연결: 미전송 버퍼를 패널별로 flush 해 갭 출력을 잇는다.
         for pe in self.panes.values():
             if pe.pending:
@@ -201,14 +232,24 @@ class PtyHost:
                 pe.pty.reap(block=False)
 
     # ---- 데몬 본체 ----
-    async def serve(self, endpoint: str, portfile: str | None = None):
+    async def serve(self, endpoint: str, portfile: str | None = None,
+                    tokenfile: str | None = None):
         self._stop = asyncio.Event()
+        # 토큰을 **listen 전에** 0600 으로 게시한다(메인 서버와 동일 순서) — 서버가
+        # 소켓/포트파일을 보고 연결할 즈음엔 토큰이 이미 존재한다(M1).
+        if tokenfile:
+            self._token = secrets.token_hex(32)
+            with contextlib.suppress(Exception):
+                with ipc.open_private(tokenfile) as f:
+                    f.write(self._token)
         kind = ipc.parse_endpoint(endpoint)
         if kind[0] == "unix":
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(kind[1])
             self._server = await asyncio.start_unix_server(
                 self._handle_conn, path=kind[1])
+            with contextlib.suppress(OSError):   # 메인 서버와 동형: 소켓 0600 으로 좁힘
+                os.chmod(kind[1], 0o600)
         else:
             self._server = await asyncio.start_server(
                 self._handle_conn, host=kind[1], port=kind[2])
@@ -242,11 +283,14 @@ def main(argv=None) -> int:
                     help="리슨 엔드포인트(unix 경로 또는 tcp:host:port)")
     ap.add_argument("--portfile", default=None,
                     help="tcp 에페메럴 포트일 때 실제 포트를 적을 파일")
+    ap.add_argument("--tokenfile", default=None,
+                    help="연결 인증 토큰을 게시할 0600 파일(M1)")
     args = ap.parse_args(argv)
 
     async def _run():
         host = PtyHost()
-        await host.serve(args.endpoint, portfile=args.portfile)
+        await host.serve(args.endpoint, portfile=args.portfile,
+                         tokenfile=args.tokenfile)
 
     try:
         asyncio.run(_run())

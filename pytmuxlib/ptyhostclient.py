@@ -37,7 +37,7 @@ class PtyHostClient:
         self._read_task: asyncio.Task | None = None
         self._on_lost = None                     # 연결 끊김 콜백(P5/P6 재연결)
 
-    async def connect(self, endpoint: str):
+    async def connect(self, endpoint: str, token: str | None = None):
         kind = ipc.parse_endpoint(endpoint)
         if kind[0] == "unix":
             r, w = await asyncio.open_unix_connection(kind[1])
@@ -48,6 +48,12 @@ class PtyHostClient:
         if not f or f[0] != "json" or f[1].get("op") != "hello":
             raise PtyHostError(f"host hello 미수신: {f!r}")
         self.host_pid = f[1].get("pid", -1)
+        # 인증 토큰을 **첫 프레임**으로 보낸다(M1) — host 가 채택·구동 전에 검증한다.
+        if token is not None:
+            ok = await proto.write_frame(
+                w, proto.encode_json({"op": "auth", "token": token}))
+            if not ok:
+                raise PtyHostError("host 인증 프레임 전송 실패")
         self._read_task = self.loop.create_task(self._read_loop())
 
     async def _read_loop(self):

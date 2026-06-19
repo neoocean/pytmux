@@ -30,7 +30,11 @@ def _cd_command(path: str, nt: bool | None = None) -> str:
     if nt is None:
         nt = os.name == "nt"
     if nt:
-        return f'cd /d "{path}"\n'
+        # POSIX 분기의 shlex.quote 와 동일한 방어 규율(M4). raw 보간 대신 임베드
+        # 따옴표·제어문자(개행/CR)를 제거해 따옴표 탈출 후 명령 분리(`" & cmd`)를
+        # 원천 차단한다 — 이런 문자는 Win32 파일명에 못 들어가므로 정상 경로는 불변.
+        safe = path.replace('"', "").replace("\r", "").replace("\n", "")
+        return f'cd /d "{safe}"\n'
     return f"cd {shlex.quote(path)}\n"
 
 

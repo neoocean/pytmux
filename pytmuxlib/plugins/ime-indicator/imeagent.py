@@ -29,6 +29,7 @@ from __future__ import annotations
 import os
 import select
 import socket
+import stat
 import sys
 
 # 같은 디렉토리의 oskbd 를 가져온다. __main__ 으로 직접 실행되면 sys.path[0] 이 이
@@ -46,19 +47,48 @@ def _emit_line(sid: str | None) -> bytes:
     return ((sid or "") + "\n").encode("utf-8", "ignore")
 
 
+def _unlink_stale(sock_path: str) -> bool:
+    """기존 경로가 **우리 소유의 소켓**일 때만 stale 로 보고 제거한다(M2, F3 동형).
+
+    다른 사용자 소유·심링크·일반 파일이면 공격자 선점 가능성이 있으므로 건드리지 않고
+    False 를 돌려 호출부가 bind 를 포기하게 한다(world-writable /tmp 경로 squat 방지)."""
+    try:
+        st = os.lstat(sock_path)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    if stat.S_ISSOCK(st.st_mode) and st.st_uid == os.getuid():
+        try:
+            os.unlink(sock_path)
+            return True
+        except OSError:
+            return False
+    return False
+
+
 def serve(sock_path: str, poll_interval: float = 0.05) -> int:
     """unix 소켓에 바인드해 붙는 클라마다 현재 IME 소스 ID 를 흘린다(변경 시 + 접속 시).
     SIGINT/소켓 오류까지 영구 루프. 반환=종료 코드(베스트에포트, 거의 도달 안 함)."""
-    try:
-        os.unlink(sock_path)             # stale 소켓 제거(이전 에이전트 잔재)
-    except OSError:
-        pass
+    if not _unlink_stale(sock_path):
+        sys.stderr.write(
+            f"imeagent: 소켓 경로 사용 불가(선점/권한 의심): {sock_path}\n")
+        return 1
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    # bind 시점부터 0600 으로 만들어 다른 로컬 사용자가 붙을 창을 없앤다(M2). ssh -R 은
+    # 같은 사용자로 돌아 0600 소켓에 정상 접속한다.
+    old_umask = os.umask(0o077)
     try:
         srv.bind(sock_path)
     except OSError as e:
         sys.stderr.write(f"imeagent: bind 실패 {sock_path}: {e}\n")
         return 1
+    finally:
+        os.umask(old_umask)
+    try:
+        os.chmod(sock_path, 0o600)
+    except OSError:
+        pass
     srv.listen(16)
     srv.setblocking(False)
 
