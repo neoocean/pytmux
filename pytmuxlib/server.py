@@ -84,6 +84,11 @@ class Server(*_SERVER_BASES):
         # _pane_seq 는 host 패널 id 할당기(재연결 시 list_panes 의 max 위로 올린다).
         self._pty_host = None
         self._pane_seq = 0
+        # host 재연결 폭주 가드(serverio._reconnect_host). 두 서버가 같은 host 를 두고
+        # 다툴 때 백오프 없는 즉시 재연결의 무한 ping-pong 를 막는다. burst=연속 급속
+        # 끊김 횟수, last_connect_ts=마지막으로 host 에 붙은 loop 시각(안정 판정용).
+        self._host_reconnect_burst = 0
+        self._host_last_connect_ts = 0.0
         # host 모드 재시작 reattach: serve() 가 host 에 list_panes 로 미리 조회한, 살아
         # 있는 host_pane_id 집합. restore_resume_state(_build_resume_node)가 이 집합의
         # 패널만 재바인딩하고 갭 중 죽은 패널은 건너뛴다.

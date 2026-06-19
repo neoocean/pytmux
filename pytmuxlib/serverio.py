@@ -22,6 +22,15 @@ from .protocol import (FLUSH_HZ, MAX_H, MAX_W, MIN_H, MIN_W, PROTO_VERSION,
                        clamp_dim, frame_msg, read_msg, write_frames, write_msg)
 from .serverremote import _REMOTE_BLOCK_ACTIONS, _REMOTE_RELAY_ACTIONS
 
+# host 재연결 폭주 가드(옵션 C). host 가 '새 연결이 옛 연결을 대체'하므로 두 서버가 같은
+# host 를 두고 다투면 백오프 없는 즉시 재연결이 무한 ping-pong → PTY 출력이 안 흐른다(빈
+# 패널로 멈춤). 직전 연결이 STABLE 미만으로 끊기면 급속 churn 으로 보고 지수 백오프하며,
+# 연속 급속 끊김이 MAX_BURST 를 넘으면 = 경쟁으로 판단한다. 자세한 처리는 _reconnect_host.
+HOST_RECONNECT_STABLE_SEC = 5.0      # 이 시간 이상 붙어 있었으면 정상 → burst 리셋
+HOST_RECONNECT_BACKOFF_BASE = 0.25   # 첫 급속 끊김 백오프(초); 이후 2배씩
+HOST_RECONNECT_BACKOFF_CAP = 4.0     # 백오프 상한(초)
+HOST_RECONNECT_MAX_BURST = 6         # 연속 급속 끊김 한계 → 경쟁 판단
+
 
 class ServerIOMixin:
     @staticmethod
@@ -262,10 +271,41 @@ class ServerIOMixin:
         self.loop.create_task(self._reconnect_host())
 
     async def _reconnect_host(self):
+        # 폭주 가드: 직전 연결이 곧바로(STABLE 미만) 끊겼으면 급속 churn 으로 보고
+        # 지수 백오프한다. 연속 급속 끊김이 한계를 넘으면 = 다른 서버가 같은 host 를
+        # 소유하며 경쟁 중(host 가 새 연결로 옛 연결을 대체) → 이 서버가 클라 없는
+        # stale 중복이면 스스로 내려가(승자=클라를 가진 최신 서버), 클라가 붙어 있으면
+        # 포기하지 않되 CAP 속도로 느리게 재시도해(이벤트 루프 기아·무한 ping-pong 방지)
+        # 상대가 양보(stale 종료)하면 다음 시도에서 안정적으로 붙는다.
+        now = self.loop.time()
+        if now - self._host_last_connect_ts >= HOST_RECONNECT_STABLE_SEC:
+            self._host_reconnect_burst = 0       # 직전 연결이 충분히 안정적이었다
+        else:
+            self._host_reconnect_burst += 1
+        if self._host_reconnect_burst > HOST_RECONNECT_MAX_BURST:
+            if not self.clients:
+                # 클라 없는 stale 중복 서버 → 경쟁을 끝내려 스스로 종료. 이 시점
+                # _pty_host 는 None(_on_host_lost 가 비웠고 재연결 안 함)이라 shutdown()
+                # 이 공유 host 를 죽이지 않는다(승자가 계속 쓴다).
+                self._log_error("ptyhost_reconnect_storm_stepdown")
+                if self.loop:
+                    self.loop.call_soon(self.shutdown)
+                return
+            # 클라가 붙은 서버: 포기하지 않고 CAP 속도로 느리게 재시도한다.
+            self._log_error("ptyhost_reconnect_storm")
+            self._host_reconnect_burst = HOST_RECONNECT_MAX_BURST   # delay 를 CAP 고정
+        if self._host_reconnect_burst:
+            delay = min(HOST_RECONNECT_BACKOFF_CAP,
+                        HOST_RECONNECT_BACKOFF_BASE
+                        * (2 ** (self._host_reconnect_burst - 1)))
+            await asyncio.sleep(delay)
+            if not self.running:
+                return
         client = await ptyhostmgr.ensure_connected(self.loop, self.sock_path)
         if client is not None and self.running:
             client._on_lost = self._on_host_lost
             self._pty_host = client
+            self._host_last_connect_ts = self.loop.time()
         elif client is not None:
             with contextlib.suppress(Exception):
                 await client.close()
@@ -1062,6 +1102,7 @@ class ServerIOMixin:
                 else:
                     # host 연결 끊김(크래시 등) 감지 → 재연결 시도(P6).
                     self._pty_host._on_lost = self._on_host_lost
+                    self._host_last_connect_ts = self.loop.time()
                     # 재시작 reattach 준비: host 가 살려 둔 패널 집합을 미리 조회한다
                     # (restore_resume_state 가 이 집합으로 생존 패널만 재바인딩).
                     try:

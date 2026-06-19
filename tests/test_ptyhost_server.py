@@ -12,7 +12,7 @@ import tempfile
 
 import harness
 from harness import server_only, teardown
-from pytmuxlib import ptyhost, ptyhostmgr, pty_backend
+from pytmuxlib import ptyhost, ptyhostmgr, pty_backend, serverio
 from pytmuxlib.ptyhostclient import PtyHostClient
 
 
@@ -138,3 +138,67 @@ async def test_ptyhostmgr_reconnects_existing_host():
         await client.close()
     finally:
         await _stop_host(host, htask, d)
+
+
+async def test_reconnect_storm_guard():
+    """host 재연결 폭주 가드: 두 서버가 같은 host 를 다툴 때 생기는 무한 즉시 재연결을
+    막는다. 직전 연결이 곧바로 끊기는 급속 churn 이 누적되면(burst), MAX_BURST 초과 시
+    ① 클라 없는 stale 중복 서버는 스스로 종료(승자에게 host 양보), ② 클라 붙은 서버는
+    종료하지 않고 재시도를 이어간다(burst 는 CAP 에 고정).
+
+    (host/PTY 를 실제로 띄우지 않고 ensure_connected 를 모킹해 가드 로직만 검증하므로
+    OS 무관 — 다른 ptyhost 테스트와 달리 Windows 에서도 돈다.)"""
+    srv, task, sock = await server_only()
+    base = serverio.HOST_RECONNECT_BACKOFF_BASE
+    cap = serverio.HOST_RECONNECT_BACKOFF_CAP
+    real_ec = ptyhostmgr.ensure_connected
+    real_shutdown = srv.shutdown
+    shutdown_calls = []
+
+    async def fake_ec(loop, sock_path):
+        return None     # 재연결 실패(=즉시 끊김 등가): _host_last_connect_ts 갱신 안 됨
+
+    try:
+        serverio.HOST_RECONNECT_BACKOFF_BASE = 0.0   # 테스트가 즉시 끝나게 백오프 0
+        serverio.HOST_RECONNECT_BACKOFF_CAP = 0.0
+        ptyhostmgr.ensure_connected = fake_ec
+        srv.shutdown = lambda: shutdown_calls.append(True)
+        mb = serverio.HOST_RECONNECT_MAX_BURST
+
+        # ① 클라 없는 stale 서버: MAX_BURST 까지는 burst 누적·종료 없음.
+        srv.clients.clear()
+        srv._host_reconnect_burst = 0
+        srv._host_last_connect_ts = srv.loop.time()   # 방금 붙음 → 급속 churn 조건
+        for _ in range(mb):
+            await srv._reconnect_host()
+        assert srv._host_reconnect_burst == mb, srv._host_reconnect_burst
+        assert not shutdown_calls, "MAX_BURST 이내에 조기 종료"
+        # MAX_BURST 초과 → 클라 없으니 스스로 종료 예약(call_soon → 한 틱 양보).
+        await srv._reconnect_host()
+        await asyncio.sleep(0)
+        assert shutdown_calls, "stale 클라없는 서버가 폭주에도 종료 안 함"
+
+        # ② 클라 붙은 서버: 폭주에도 종료하지 않고 burst 를 CAP 에 고정한 채 재시도.
+        shutdown_calls.clear()
+        dummy_client = object()
+        srv.clients.append(dummy_client)
+        srv._host_reconnect_burst = mb + 5            # 이미 폭주 상태
+        srv._host_last_connect_ts = srv.loop.time()
+        await srv._reconnect_host()
+        await asyncio.sleep(0)
+        assert not shutdown_calls, "클라 붙은 서버가 폭주에 종료됨"
+        assert srv._host_reconnect_burst == mb, "burst 가 CAP 에 고정 안 됨"
+        srv.clients.remove(dummy_client)
+
+        # ③ 안정 연결(STABLE 경과)이면 burst 가 리셋된다.
+        srv._host_reconnect_burst = mb
+        srv._host_last_connect_ts = (
+            srv.loop.time() - serverio.HOST_RECONNECT_STABLE_SEC - 1.0)
+        await srv._reconnect_host()
+        assert srv._host_reconnect_burst == 0, "안정 연결 후 burst 미리셋"
+    finally:
+        serverio.HOST_RECONNECT_BACKOFF_BASE = base
+        serverio.HOST_RECONNECT_BACKOFF_CAP = cap
+        ptyhostmgr.ensure_connected = real_ec
+        srv.shutdown = real_shutdown
+        await teardown(srv, task, sock)
