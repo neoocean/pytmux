@@ -714,10 +714,13 @@ class MenuScreen(ModalScreen):
     #menu > .menu-sep { color: $text-muted; }
     """
 
-    def __init__(self, entries=None, title=None):
+    def __init__(self, entries=None, title=None, anchor=None):
         super().__init__()
         self._entries = entries        # None=최상위
         self._title = title            # 서브메뉴 헤더
+        # anchor=(부모_left, 부모_right, row_y) 면 그 부모 우측에 캐스케이드로 펼친다
+        # (없으면 중앙 — 최상위 메뉴). screen 좌표.
+        self._anchor = anchor
 
     def _label_map(self):
         # leaf 키 → 원본 라벨. 코어 MENU_ITEMS + 플러그인 menu_items(delete-to-disable).
@@ -800,20 +803,75 @@ class MenuScreen(ModalScreen):
         # 직전 _menu_screen 을 보관했다 자식이 닫힐 때 부모로 복원한다.
         self._prev_menu = getattr(self.app, "_menu_screen", None)
         self.app._menu_screen = self
+        if self._anchor is not None:
+            self._place_anchored()
+        elif self._entries is None:
+            self._bias_toplevel_left()
+
+    def _bias_toplevel_left(self):
+        # 최상위 메뉴: 그룹을 고르면 서브메뉴가 우측에 캐스케이드로 펼쳐지므로, 그 한 폭
+        # (메뉴 너비)을 우측에 비워두도록 필요한 만큼만 왼쪽으로 민다. 화면이 넉넉하면
+        # (≥메뉴×2) 중앙 그대로(dx=0). 세로 중앙은 CSS align 유지 — offset.x 만 보정한다.
+        try:
+            lv = self.query_one("#menu")
+        except Exception:
+            return
+        size = getattr(self.app, "size", None)
+        if not size:
+            return
+        w = 40                                   # #menu CSS width
+        centered_x = max(0, (size.width - w) // 2)
+        x = max(0, min(centered_x, size.width - 2 * w))
+        dx = x - centered_x
+        if dx:
+            lv.styles.offset = (dx, 0)
+
+    def _place_anchored(self):
+        # 서브메뉴를 부모 메뉴 우측에 붙여 캐스케이드로 펼친다(우측 넘침→왼쪽 폴백).
+        # 자식 모달은 배경 dim 을 끄고(부모 위 이중 dim 방지) 절대 위치로 옮긴다.
+        try:
+            lv = self.query_one("#menu")
+        except Exception:
+            return
+        self.styles.background = "transparent"
+        self.styles.align_horizontal = "left"
+        self.styles.align_vertical = "top"
+        left, right, row_y = self._anchor
+        w = 40                                   # #menu CSS width
+        size = getattr(self.app, "size", None)
+        sw = size.width if size else (right + w)
+        sh = size.height if size else (row_y + 99)
+        x = right                                # 부모 오른쪽에 인접
+        if x + w > sw:                           # 우측 넘침 → 부모 왼쪽으로
+            x = max(0, left - w)
+        h = (len(self._entries) if self._entries else 0) + 2   # 항목 + 테두리
+        y = row_y
+        if y + h > sh:                           # 하단 넘침 → 위로 끌어올림
+            y = max(0, sh - h)
+        lv.styles.offset = (x, y)
 
     def on_unmount(self):
         if getattr(self.app, "_menu_screen", None) is self:
             self.app._menu_screen = getattr(self, "_prev_menu", None)
 
-    def _open_group(self, g):
+    def _open_group(self, g, anchor_item=None):
         # 그룹 선택 → 자식 MenuScreen push. 자식의 leaf 선택은 dismiss(key) 로 여기 back
         # 콜백에 와, 부모도 같은 key 로 dismiss → open_menu 핸들러까지 버블한다.
         # 자식 Esc(None)는 부모를 닫지 않아 부모 메뉴로 복귀한다.
+        # 부모 메뉴 영역 + 고른 행 y 를 앵커로 넘겨 자식이 우측에 캐스케이드로 펼친다.
+        anchor = None
+        try:
+            reg = self.query_one("#menu").region
+            row_y = anchor_item.region.y if anchor_item is not None else reg.y
+            anchor = (reg.x, reg.right, row_y)
+        except Exception:
+            anchor = None                        # 영역 미정 → 자식은 중앙(폴백)
         def back(result):
             if result:
                 self.dismiss(result)
         self.app.push_screen(
-            MenuScreen(entries=self._group_items(g), title=self._group_label(g)),
+            MenuScreen(entries=self._group_items(g),
+                       title=self._group_label(g), anchor=anchor),
             back)
 
     def on_list_view_selected(self, event):
@@ -821,7 +879,7 @@ class MenuScreen(ModalScreen):
         if iid.startswith("sep_"):
             return                       # 구분선 — 안전 가드(disabled 라 보통 발화 안 됨)
         if iid.startswith("g_"):
-            self._open_group(iid[2:])
+            self._open_group(iid[2:], event.item)
             return
         key = iid[2:]                    # "m_<key>"
         if key in MENU_TOGGLES:
@@ -833,6 +891,22 @@ class MenuScreen(ModalScreen):
             lab.update(self._fmt(key, base))
         else:
             self.dismiss(key)
+
+    def on_click(self, event: events.Click):
+        # 박스(#menu) 바깥(백드롭)을 클릭하면 메뉴를 닫는다(PluginManagerScreen·
+        # InfoScreen 과 동일한 inside-box 판정). 박스 안(항목/그룹/구분선) 클릭은
+        # 그대로 두어 on_list_view_selected 가 동작한다. 캐스케이드 자식 메뉴는 각자
+        # 모달이라 자신의 #menu 밖 클릭 시 dismiss(None) → 부모 메뉴로 복귀(Esc 와 동일).
+        w = getattr(event, "widget", None)
+        inside_box = False
+        while w is not None:
+            if getattr(w, "id", None) == "menu":
+                inside_box = True
+                break
+            w = w.parent
+        if not inside_box:
+            event.stop()
+            self.dismiss(None)
 
     def on_key(self, event: events.Key):
         if event.key == "escape":

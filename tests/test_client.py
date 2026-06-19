@@ -1956,6 +1956,43 @@ async def test_context_menu_toggle_shows_state_and_stays_open():
     await _with_app(body)
 
 
+async def test_context_menu_click_outside_closes():
+    """우클릭 컨텍스트 메뉴(MenuScreen)는 박스(#menu) 바깥(백드롭) 클릭 시 dismiss(None)
+    로 닫힌다(PluginManagerScreen·InfoScreen 과 동일한 inside-box 판정). 박스 안(항목)
+    클릭은 닫지 않아 on_list_view_selected 토글/선택이 그대로 동작한다."""
+    async def body(app, pilot, srv):
+        app.open_menu(app.layout.get("active"))
+        await pilot.pause(0.1)
+        menu = app.screen_stack[-1]
+        assert menu.__class__.__name__ == "MenuScreen"
+
+        class _W:
+            def __init__(self, wid, parent=None):
+                self.id = wid
+                self.parent = parent
+
+        class _Ev:
+            def __init__(self, widget):
+                self.widget = widget
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        # 박스 안 클릭(항목 → ListView#menu → screen) → 닫히지 않음
+        ev_in = _Ev(_W("m_search", parent=_W("menu", parent=_W("screen"))))
+        menu.on_click(ev_in)
+        await pilot.pause(0.05)
+        assert app.screen_stack[-1] is menu, "박스 안 클릭은 닫지 않는다"
+        # 박스 바깥(백드롭) 클릭 → 닫힘
+        ev_out = _Ev(_W("backdrop", parent=None))
+        menu.on_click(ev_out)
+        await pilot.pause(0.05)
+        assert app.screen_stack[-1] is not menu, "바깥 클릭은 메뉴를 닫는다"
+        assert ev_out.stopped
+    await _with_app(body)
+
+
 async def test_context_menu_new_pane_ops_wired():
     # §2.7: 컨텍스트 메뉴에 추가된 패널 동작(회전/교환/분리/레이아웃/검색/제목)이
     # 알맞은 서버 명령·프롬프트로 배선됐는지 _run_menu_action 직접 호출로 검증.
@@ -2072,6 +2109,53 @@ async def test_context_menu_grouped_submenu_and_reachability():
         assert all(s.__class__.__name__ != "MenuScreen"
                    for s in app.screen_stack), "leaf 디스패치 후 전체 닫힘"
     await _with_app(body)
+
+
+async def test_context_menu_submenu_cascades_to_right_of_parent():
+    """§8.1: 그룹 선택 시 자식 서브메뉴는 중앙이 아니라 부모 메뉴 우측에 인접해
+    캐스케이드로 펼쳐진다. 최상위 메뉴는 우측에 서브메뉴 한 폭을 비워두도록 좌측
+    바이어스되어(화면 폭≥메뉴×2면) 자식이 **부모와 겹치지 않고** 우측에 들어간다."""
+    async def body(app, pilot, srv):
+        w = 40
+        app.open_menu(app.layout.get("active"))
+        await pilot.pause(0.1)
+        top = app.screen_stack[-1]
+        reg = top.query_one("#menu").region
+        # 좌측 바이어스: 100폭에선 부모 우측+메뉴폭 ≤ 화면폭 (우측에 자식 자리 확보).
+        assert reg.right + w <= app.size.width, (reg.right, app.size.width)
+        item = top.query_one("#g_pane")          # 실제 그룹 행(앵커 row y)
+        top._open_group("pane", item)
+        await pilot.pause(0.1)
+        child = app.screen_stack[-1]
+        assert child is not top and child._anchor is not None, "앵커 캐스케이드"
+        off = child.query_one("#menu").styles.offset
+        # 부모 우측 edge 에 인접, 부모와 안 겹침.
+        assert int(off.x.value) == reg.right, (off.x.value, reg.right)
+        assert int(off.x.value) >= reg.right, "자식이 부모 우측(무겹침)"
+        assert int(off.y.value) >= 0             # 화면 안에 배치
+    await _with_app(body)
+
+
+async def test_context_menu_toplevel_left_biased_keeps_center_when_wide():
+    """§8.1: 최상위 메뉴 좌측 바이어스는 '필요한 만큼만' — 화면이 넉넉하면(≥메뉴×2 보다
+    충분히 큼) 중앙 유지(offset.x dx==0), 좁으면 우측에 한 폭 비우게 왼쪽으로 민다."""
+    async def body_wide(app, pilot, srv):
+        app.open_menu(app.layout.get("active"))
+        await pilot.pause(0.1)
+        top = app.screen_stack[-1]
+        off = top.query_one("#menu").styles.offset
+        assert int(off.x.value) == 0, ("넓으면 중앙(dx=0)", off.x.value)
+    await _with_app(body_wide, size=(160, 40))
+
+    async def body_narrow(app, pilot, srv):
+        app.open_menu(app.layout.get("active"))
+        await pilot.pause(0.1)
+        top = app.screen_stack[-1]
+        off = top.query_one("#menu").styles.offset
+        assert int(off.x.value) < 0, ("좁으면 왼쪽으로", off.x.value)
+        reg = top.query_one("#menu").region
+        assert reg.right + 40 <= 100, (reg.right,)   # 우측 한 폭 확보
+    await _with_app(body_narrow, size=(100, 30))
 
 
 async def test_context_menu_submenu_esc_returns_to_parent_and_toggle_stays():
