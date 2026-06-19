@@ -42,3 +42,20 @@ async def test_clock_overlay_big_and_fallback():
     draw_clock_overlay(cells3, small, {1}, 10, 3, digit, now=now)
     joined = "".join(_text_rows(cells3))
     assert "12:34:56" in joined
+
+
+async def test_clock_overlay_dims_background_emoji_to_placeholder():
+    """배경 화면을 딤할 때 컬러 이모지(예 ✅)는 터미널이 스타일을 무시하고 밝게 남으므로
+    오버레이 딤이 placeholder(·)로 치환해야 한다(#25). 시계가 큰 폰트로 안 덮는 모서리에
+    둔 이모지가 ·로 바뀌고, 시계 영역 밖(다른 패널)의 이모지는 보존됨을 단언한다."""
+    now = datetime(2026, 6, 6, 12, 34, 56)
+    digit = Style(color="green", bold=True)
+    # 패널 1=시계 켜짐(딤 대상), 패널 2=시계 꺼짐(보존). ✅=U+2705.
+    panes = [{"id": 1, "x": 0, "y": 0, "w": 10, "h": 3},
+             {"id": 2, "x": 10, "y": 0, "w": 6, "h": 3}]
+    cells = _grid(16, 3)
+    cells[2][0] = ("✅", Style())     # 시계 패널 좌하단(폴백 시각이 안 닿는 칸)
+    cells[0][12] = ("✅", Style())    # 시계 안 켠 패널 — 보존돼야 함
+    draw_clock_overlay(cells, panes, {1}, 16, 3, digit, now=now)
+    assert cells[2][0][0] == "·", "딤된 시계 패널의 이모지는 ·로 치환"
+    assert cells[0][12][0] == "✅", "시계 안 켠 패널의 이모지는 보존"

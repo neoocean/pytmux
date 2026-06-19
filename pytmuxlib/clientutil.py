@@ -76,6 +76,19 @@ def _is_emoji(ch: str) -> bool:
     return any(a <= o <= b for a, b in _EMOJI_RANGES)
 
 
+def _dim_cell(ch, st):
+    """이미 합성된 그리드의 한 셀을 어둡게(딤). 컬러 이모지는 터미널이 셀 스타일을
+    무시하고 자체 색 글리프로 그려 안 어두워지므로 폭1 placeholder(·)로 치환한다(#25)
+    — 모달 배경 딤(client._composite)과 동일한 단일 · 치환 방식. clock/calendar
+    오버레이 딤이 이 헬퍼를 공유해, 시계/달력 모드 배경의 이모지(예 ✅)가 함께
+    어두워지지 않고 밝게 남던 버그를 막는다. (폭2 이모지는 첫 셀=글리프, 다음 셀은
+    연속칸이라 글리프 셀만 치환해도 폭이 보존된다.) 오버레이를 끄면 재합성이 원본에서
+    다시 그려 자동 원복된다."""
+    if ch and _is_emoji(ch):
+        ch = "·"
+    return (ch, _darken_style(st))
+
+
 def _fmt_tokens(total: int) -> str:
     """누적 토큰 수를 짧게 표기. 1234567→"1.2M", 45200→"45.2k", 800→"800".
     (서버측 tokens.fmt 과 동일 규칙 — 클라이언트 단독 표시용 경량 복제.)"""
