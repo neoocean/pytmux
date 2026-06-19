@@ -665,6 +665,18 @@ class Pane:
             "cursor": {"x": self._main.cursor.x, "y": self._main.cursor.y,
                        "hidden": bool(self._main.cursor.hidden)},
         }
+        # 대체 화면(alt-screen) 보존(2026-06-19): export 가 _main 만 담으면, **alt 에
+        # 그리는 풀스크린 TUI**(갓 띄운/idle Claude·vim·htop)는 재시작 후 _main(셸
+        # `% claude`)만 복원돼 **빈 패널**이 된다(restart-all idle Claude 탭 빔 = 시나리오
+        # B, RESTART_SCENARIO.md §주의①). 사용자가 실제로 보는 화면이 _alt 이므로 alt
+        # 활성 패널은 _alt 의 뷰포트·커서도 담아 import 가 alt 를 그대로 되살린다.
+        if self.alt_active and self._alt is not None:
+            d["alt_active"] = True
+            d["alt_viewport"] = [
+                self._serialize_line(self._alt.buffer[y], self._alt.columns)
+                for y in range(self._alt.lines)]
+            ac = self._alt.cursor
+            d["alt_cursor"] = {"x": ac.x, "y": ac.y, "hidden": bool(ac.hidden)}
         for f in self._RESUME_FIELDS:
             d[f] = getattr(self, f)
         return d
@@ -713,6 +725,24 @@ class Pane:
         elif d.get("screen"):
             # 하위호환(구 이미지가 쓴 스냅샷 — viewport/cursor 없음): 기존 평문 경로.
             self.feed(("\r\n".join(d["screen"]) + "\r\n").encode("utf-8", "ignore"))
+        # 대체 화면 복원(export 의 alt_active): 메인 복원 뒤 alt-screen 에 진입(?1049h →
+        # _enter_alt)해 alt 뷰포트·커서를 재생한다. 이렇게 하면 살아 있는 앱이 idle 라
+        # SIGWINCH 에 repaint 하지 않아도(2026-06-19 시나리오 B) 사용자가 보던 풀스크린
+        # 화면이 스냅샷에서 즉시 복원된다. 구 이미지(alt_* 키 없음)는 no-op(하위호환).
+        if d.get("alt_active"):
+            self.feed(b"\x1b[?1049h")
+            alt_vp = d.get("alt_viewport") or []
+            if alt_vp:
+                self.feed("\r\n".join(alt_vp).encode("utf-8", "ignore"))
+            ac = d.get("alt_cursor") or {}
+            try:
+                acy = int(ac.get("y", 0)) + 1
+                acx = int(ac.get("x", 0)) + 1
+            except (TypeError, ValueError):
+                acy = acx = 1
+            self.feed(f"\x1b[{acy};{acx}H".encode("ascii"))
+            if ac.get("hidden"):
+                self.feed(b"\x1b[?25l")
 
     def update_mouse_modes(self, data: bytes) -> bool:
         """피드 데이터에서 마우스 트래킹 DECSET(1000/1002/1003/1006)을 추적한다.

@@ -628,6 +628,38 @@ async def test_restore_writes_repaint_diag_manifest():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_export_import_preserves_alt_screen():
+    """restart-all alt-screen 보존(2026-06-19, 시나리오 B): 갓 띄운/idle Claude·vim 처럼
+    **대체 화면(alt-screen)에 그리는 풀스크린 TUI** 는 export 가 _main 만 담으면 재시작 후
+    _main(셸)만 복원돼 빈 패널이 됐다. 이제 alt 활성 패널은 _alt 뷰포트·커서·alt_active 를
+    담아 import 가 alt 화면을 그대로 되살린다(RESTART_SCENARIO.md §주의①)."""
+    from harness import pane_text
+    from pytmuxlib.model import Pane
+    p = Pane(1234, -1, 80, 24)
+    # 메인 화면엔 셸 줄(alt 뒤에 남는 내용), 그 뒤 alt 진입해 풀스크린 TUI 를 그린다.
+    p.feed(b"user@host % claude\r\n")
+    p.feed(b"\x1b[?1049h")                     # 대체 화면 진입
+    p.feed(b"\x1b[2J\x1b[H")                   # alt 화면 클리어 + 홈
+    p.feed(b"\x1b[3;5HCLAUDE_TUI_BODY")        # alt 본문(메인엔 없는 내용)
+    p.feed(b"\x1b[?25l")                       # 커서 숨김(풀스크린 TUI 전형)
+    assert p.alt_active is True
+    assert "CLAUDE_TUI_BODY" in pane_text(p)
+    assert "user@host % claude" not in pane_text(p)  # alt 화면이라 메인 셸은 안 보임
+
+    q = Pane(1234, -1, 80, 24)
+    q.import_state(p.export_state())
+    # alt 활성·alt 본문·커서 숨김이 복원되고, 메인엔 셸 줄이 남아 있다.
+    assert q.alt_active is True, "alt_active 미복원"
+    assert "CLAUDE_TUI_BODY" in pane_text(q), "alt 본문 소실(빈 패널 회귀): " + pane_text(q)[:200]
+    assert "user@host % claude" not in pane_text(q)
+    assert q._alt is not None and q._alt.cursor.hidden is True
+    assert "user@host % claude" in "\n".join(q._main.display)  # 메인엔 셸 보존
+    # alt 를 나가면 메인(셸)이 그대로 드러난다(스크롤백 연속성).
+    q.feed(b"\x1b[?1049l")
+    assert q.alt_active is False
+    assert "user@host % claude" in pane_text(q)
+
+
 async def test_export_import_preserves_color():
     """restart-all 색 보존(2026-06-07): _export_screen 이 평문만 내보내 재시작 후
     스크롤백 색이 사라지던 문제. 이제 SGR(색·굵기·밑줄 등)을 끼워 라운드트립한다."""
