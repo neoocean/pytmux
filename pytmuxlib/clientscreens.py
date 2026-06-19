@@ -14,7 +14,7 @@ from textual.screen import ModalScreen
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Input, Label, ListItem, ListView
+from textual.widgets import Input, Label, ListItem, ListView, TextArea
 
 from rich.highlighter import Highlighter
 
@@ -714,13 +714,16 @@ class MenuScreen(ModalScreen):
     #menu > .menu-sep { color: $text-muted; }
     """
 
-    def __init__(self, entries=None, title=None, anchor=None):
+    def __init__(self, entries=None, title=None, anchor=None, group=None):
         super().__init__()
         self._entries = entries        # None=최상위
         self._title = title            # 서브메뉴 헤더
         # anchor=(부모_left, 부모_right, row_y) 면 그 부모 우측에 캐스케이드로 펼친다
         # (없으면 중앙 — 최상위 메뉴). screen 좌표.
         self._anchor = anchor
+        self._group = group            # 이 서브메뉴를 연 그룹 키(호버 전환 자기식별)
+        self._pending_switch = None    # 호버 전환 요청 그룹(자식 닫힌 뒤 부모가 연다)
+        self._switching = False        # 전환 중 중복 dismiss 가드(자식 측)
 
     def _label_map(self):
         # leaf 키 → 원본 라벨. 코어 MENU_ITEMS + 플러그인 menu_items(delete-to-disable).
@@ -867,12 +870,64 @@ class MenuScreen(ModalScreen):
         except Exception:
             anchor = None                        # 영역 미정 → 자식은 중앙(폴백)
         def back(result):
+            # 호버 전환(_hover_switch_from_child)으로 닫힌 거라면 result 무시하고 새
+            # 그룹 서브메뉴를 연다 — 자식은 이미 unmount 됐고 _menu_screen 이 부모로
+            # 복원된 상태라 새 자식의 _prev_menu 가 다시 부모로 잡힌다.
+            pend = self._pending_switch
+            self._pending_switch = None
+            if pend is not None:
+                self._open_group(pend, self._group_item_widget(pend))
+                return
             if result:
                 self.dismiss(result)
         self.app.push_screen(
             MenuScreen(entries=self._group_items(g),
-                       title=self._group_label(g), anchor=anchor),
+                       title=self._group_label(g), anchor=anchor, group=g),
             back)
+
+    def _group_item_widget(self, g):
+        try:
+            return self.query_one(f"#g_{g}")
+        except Exception:
+            return None
+
+    def _group_item_at(self, x, y):
+        """화면좌표 (x,y) 위의 그룹 항목 → (index, group, item), 없으면 None."""
+        try:
+            lv = self.query_one("#menu", ListView)
+        except Exception:
+            return None
+        for idx, item in enumerate(lv.children):
+            iid = getattr(item, "id", "") or ""
+            if iid.startswith("g_") and item.region.contains(x, y):
+                return (idx, iid[2:], item)
+        return None
+
+    def _hover_switch_from_child(self, child, x, y):
+        """열린 서브메뉴(child)의 마우스가 부모의 **다른** 그룹 항목 위로 호버하면,
+        현재 서브메뉴를 닫고 그 그룹 서브메뉴를 연다(요청). 같은 그룹이면 유지."""
+        if getattr(child, "_switching", False):
+            return                           # 이미 전환 진행 중 — 중복 dismiss 방지
+        hit = self._group_item_at(x, y)
+        if hit is None:
+            return
+        idx, g, _item = hit
+        try:                                 # 부모 하이라이트도 호버 그룹으로 이동
+            self.query_one("#menu", ListView).index = idx
+        except Exception:
+            pass
+        if g == getattr(child, "_group", None):
+            return                           # 이미 열린 그 서브메뉴 — 유지
+        child._switching = True
+        self._pending_switch = g
+        child.dismiss(None)
+
+    def on_mouse_move(self, event: events.MouseMove):
+        # 서브메뉴(앵커 캐스케이드)일 때만: 부모의 다른 그룹 위로 호버 → 전환(요청).
+        parent = getattr(self, "_prev_menu", None)
+        if self._anchor is None or not isinstance(parent, MenuScreen):
+            return
+        parent._hover_switch_from_child(self, event.screen_x, event.screen_y)
 
     def on_list_view_selected(self, event):
         iid = event.item.id or ""
@@ -2022,6 +2077,159 @@ class PromptScreen(ModalScreen):
                 event.stop()
                 self._choice_sel = (self._choice_sel + 1) % len(self._choices)
                 self._render_hint()
+
+
+class _ComposeTextArea(TextArea):
+    """Claude Code 와 동일한 줄바꿈 규칙의 작성창 TextArea.
+
+    Claude Code 프롬프트는 **Enter=전송, Shift+Enter=줄바꿈**(사용자 요청). Textual
+    기본 TextArea 는 Enter 로 줄바꿈을 넣으므로, Enter 는 스크린의 전송(inject)으로
+    돌리고 줄바꿈은 Shift+Enter / Ctrl+J 로 받는다. 단말이 Shift+Enter 를 LF(\\n)로
+    보내면 Textual 은 `ctrl+j` 로 파싱하므로([[pytmux-shift-enter-newline]]) 둘 다
+    줄바꿈으로 처리한다(native CSI-u 단말은 `shift+enter` 그대로 도착)."""
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":                 # Enter = 전송(줄바꿈 아님)
+            event.stop()
+            event.prevent_default()
+            self.screen.action_inject()
+            return
+        if event.key in ("shift+enter", "ctrl+j"):   # Shift+Enter / Ctrl+J = 줄바꿈
+            event.stop()
+            event.prevent_default()
+            self.insert("\n")
+            return
+        await super()._on_key(event)
+
+
+class ComposePromptScreen(ModalScreen):
+    """블록 선택(Shift+방향키/Home/End/Shift+드래그)이 되는 멀티라인 작성창.
+
+    Claude Code 등 자식 프롬프트 입력기는 범위 선택 후 수정/삭제 편집을 지원하지
+    않는다. pytmux 는 자식의 논리 버퍼·커서 인덱스를 알 수 없어 그 위에 선택을
+    투명하게 얹을 수 없으므로(타당성 검토 문서 A 안 비권장), **버퍼를 pytmux 가
+    소유하는** 별도 작성창(Textual TextArea)을 띄워 네이티브 블록 선택 편집을
+    제공한다. 완료(Enter) 시 텍스트를 dismiss 로 돌려주면 client 가 활성 패널에
+    **bracketed paste 로 투입**한다(자동 제출 없음 — 끝에 Enter 를 붙이지 않는다).
+    Esc 는 취소(투입 안 함). Enter=전송·Shift+Enter=줄바꿈(Claude Code 동일,
+    _ComposeTextArea). 권고안 B — CLAUDE_PROMPT_BLOCK_SELECTION_FEASIBILITY.
+
+    선택 의미론은 TextArea 가 정확히 처리하므로 셀↔논리인덱스 추정·키 합성이
+    필요 없다(A 안이 깨지던 지점). 작성 중에는 Claude 인라인 기능(슬래시 메뉴·@
+    자동완성·↑히스토리)을 못 쓰므로 '필요할 때 여는' 옵트인이다(ESC 모드 Insert).
+
+    배치(사용자 요청): Claude 프롬프트는 **이전 출력을 보면서** 입력해야 하므로
+    배경을 **딤하지 않는다**. 딤은 모달 CSS 가 아니라 클라이언트 `_composite` 의
+    백드롭 딤(#25 — screen_stack>1 이면 패널 행을 어둡게+이모지 치환)에서 오므로,
+    이 스크린은 `_no_backdrop_dim = True` 로 그 딤을 면제받는다(스크린 배경도 투명).
+    박스 좌우는 **활성 패널 테두리 안쪽**에 맞추고(open_compose 가 패널 내부 x·폭을
+    넘김), 입력 줄은 활성 패널 프롬프트 줄(커서 행)보다 **한 칸 아래**에 오도록
+    하단에서 위로 띄워 배치한다(on_mount 의 margin). 여러 줄로 늘면 그 줄을 고정한
+    채 **위쪽으로** 자란다(dock:bottom + height:auto). 우상단에 IME(한/영) 배지를
+    띄워 작성 중에도 입력 모드를 보여준다(ime-indicator 의 app.ime_state 를 폴링)."""
+    # 클라이언트 _composite 의 #25 백드롭 딤/이모지치환 면제 플래그(이 스크린이
+    # 떠 있을 땐 뒤 패널을 어둡게 하지 않는다 — Claude 프롬프트를 보며 입력).
+    _no_backdrop_dim = True
+    CSS = """
+    /* 딤 없음: 스크린 배경 투명 + _no_backdrop_dim → 박스 밖 패널(이전 출력)이
+       원래 밝기로 그대로 보인다. */
+    ComposePromptScreen { align: center bottom; background: transparent; }
+    /* 바닥 도킹 + height:auto → 내용이 늘면 위쪽으로 자란다. on_mount 가 좌우(폭·
+       margin-left)와 상하(margin-bottom)를 줘서 활성 패널 안쪽·프롬프트 줄에 맞춘다.
+       박스 배경은 $panel — 안쪽 입력칸($surface)과 구분된다. */
+    #cwrap { dock: bottom; width: 100%; height: auto; max-height: 80%;
+             background: $panel; border: round $accent; padding: 0 1; }
+    /* 박스 상단 한 줄: 왼쪽에 힌트(우측정렬), 오른쪽 끝에 IME 배지. */
+    #ctop { width: 100%; height: 1; }
+    #chint { width: 1fr; height: 1; color: $text-muted;
+             content-align: right middle; }
+    #cime { width: auto; height: 1; padding: 0 0 0 1; }
+    /* 입력칸: 박스 배경($panel)과 다른 색($surface)으로 구분. TextArea 자체 테두리는
+       끄고 #cwrap 의 round 테두리로 감싼다. 한 줄로 시작(min-height:1)해 프롬프트처럼
+       보이고, 입력이 늘면 max-height 까지 위로 자란 뒤 그 이상은 TextArea 내부 스크롤. */
+    #carea { width: 100%; height: auto; min-height: 1; max-height: 20;
+             border: none; background: $surface; }
+    """
+    # Enter=전송은 _ComposeTextArea 가 처리. Ctrl+S 도 전송(대체), Esc 는 취소.
+    # TextArea 는 ctrl+s·escape 를 자체 처리하지 않으므로 스크린 바인딩으로 버블링.
+    BINDINGS = [
+        ("ctrl+s", "inject", "send"),
+        ("escape", "cancel", "cancel"),
+    ]
+
+    def __init__(self, initial: str = "", prompt_row: int | None = None,
+                 pane_x: int | None = None, pane_w: int | None = None):
+        super().__init__()
+        self._initial = initial
+        # 활성 패널 프롬프트(커서) 행(글로벌 화면 y). None 이면 그냥 바닥 도킹.
+        self._prompt_row = prompt_row
+        # 활성 패널 테두리 안쪽 좌측 x·폭(셀). None 이면 전체 폭.
+        self._pane_x = pane_x
+        self._pane_w = pane_w
+        self._ime_last = None      # 배지 중복 갱신 방지용 직전 (state, show)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="cwrap"):
+            with Horizontal(id="ctop"):
+                yield Label(i18n.t("compose.hint"), id="chint", markup=False)
+                yield Label("", id="cime", markup=False)
+            yield _ComposeTextArea(self._initial, id="carea", soft_wrap=True)
+
+    def on_mount(self):
+        ta = self.query_one(TextArea)
+        ta.focus()
+        # 초기 텍스트가 있으면(직전 프롬프트 불러오기 등) 커서를 문서 끝으로 둔다.
+        if self._initial:
+            lines = self._initial.split("\n")
+            ta.move_cursor((len(lines) - 1, len(lines[-1])))
+        wrap = self.query_one("#cwrap")
+        H = self.app.size.height
+        # 좌우: 활성 패널 테두리 안쪽에 맞춘다(폭 고정 + margin-left).
+        ml = 0
+        if self._pane_x is not None and self._pane_w is not None:
+            wrap.styles.width = self._pane_w
+            ml = self._pane_x
+        # 상하: 입력 줄을 프롬프트 줄보다 **한 칸 아래**(사용자 요청)에 둔다. 박스
+        # 하단 구조는 [입력 줄][하단 테두리 1행]이므로 입력 줄을 prompt_row+1 에
+        # 두려면 하단 테두리가 prompt_row+2 → 바닥에서 margin-bottom 만큼 띄운다.
+        mb = 0
+        if self._prompt_row is not None:
+            mb = H - self._prompt_row - 3
+            mb = max(0, min(mb, max(0, H - 3)))   # 화면 밖/음수 방지
+        wrap.styles.margin = (0, 0, mb, ml)       # (top, right, bottom, left)
+        # IME 배지: 즉시 1회 + 0.2초 폴링으로 작성 중 한/영 전환 추종(ime-indicator
+        # 가 app.ime_state 를 OS 실측/휴리스틱으로 갱신; 없으면 배지 비표시).
+        self._refresh_ime()
+        self.set_interval(0.2, self._refresh_ime)
+
+    def _refresh_ime(self):
+        """우상단 IME(한/영) 배지를 app.ime_state 에 맞춰 갱신한다(ime-indicator 의
+        화면 배지와 같은 원천·색). 플러그인이 없거나 OFF 면 빈 배지."""
+        try:
+            lbl = self.query_one("#cime", Label)
+        except Exception:
+            return
+        app = self.app
+        show = getattr(app, "ime_show", False) and hasattr(app, "ime_state")
+        state = getattr(app, "ime_state", "EN") if show else None
+        if (state, show) == self._ime_last:
+            return
+        self._ime_last = (state, show)
+        if not show:
+            lbl.update("")
+            return
+        lbl.update(f"[{state}]")
+        lbl.styles.background = theme_color(app, "success" if state == "한"
+                                            else "primary")
+        lbl.styles.color = "black"
+        lbl.styles.text_style = "bold"
+
+    def action_inject(self):
+        # 끝에 개행을 붙이지 않아 자식이 자동 제출하지 않는다(사용자가 직접 Enter).
+        self.dismiss(self.query_one(TextArea).text)
+
+    def action_cancel(self):
+        self.dismiss(None)
+
 
 class ConfirmScreen(ModalScreen):
     """예/아니오 확인 팝업(중앙). 두 버튼을 좌우로 배치하고, 선택된 쪽만

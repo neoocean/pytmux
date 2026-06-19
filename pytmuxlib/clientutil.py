@@ -832,6 +832,7 @@ ESC_MODE_KEYS = [
     ("e_n", "n", "새 탭", "New tab"),
     ("e_p", "p", "상하 분할", "Split top/bottom"),
     ("e_e", "e", "활성 패널에 ESC 전달", "Send ESC to active pane"),
+    ("e_ins", "Insert", "작성창(블록 선택 편집→투입)", "Compose box (block-select → inject)"),
     ("e_sesc", "Shift+ESC", "활성 패널에 ESC 전달", "Send ESC to active pane"),
     ("e_bt", "`", "리터럴 백틱 전달", "Send literal backtick"),
     ("e_colon", ":", "명령 프롬프트", "Command prompt"),

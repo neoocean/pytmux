@@ -38,8 +38,8 @@ from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     _normalize_key, _shell_argv, key_to_bytes, make_style, theme_color)
 from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 사용)
     ChooseBufferScreen, ChooseLayoutScreen, ChooseTreeScreen,
-    CommandListScreen, CommandOptionsScreen, ConfirmScreen, InfoScreen,
-    InfoTabsScreen, MenuScreen, PluginManagerScreen, PromptScreen,
+    CommandListScreen, CommandOptionsScreen, ComposePromptScreen, ConfirmScreen,
+    InfoScreen, InfoTabsScreen, MenuScreen, PluginManagerScreen, PromptScreen,
     SettingsScreen)
 from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose·ghost suggester)
     MultiplexerView, SepInsensitiveSuggester, StatusBar, TabBar)
@@ -677,6 +677,45 @@ class _CommandMixin:
         elif purpose == "confirm":
             if val.lower().startswith("y") and action:
                 action()
+
+    def open_compose(self, initial=""):
+        """블록 선택 편집이 되는 멀티라인 작성창(ComposePromptScreen)을 연다.
+
+        Claude Code 등 자식 프롬프트 입력기는 Shift+방향키 범위 선택 편집을
+        지원하지 않고, pytmux 는 자식의 논리 버퍼·커서 인덱스를 알 수 없어 그 위에
+        선택을 투명하게 얹을 수 없다(타당성 검토 A 안 비권장). 대신 pytmux 가 버퍼를
+        소유하는 별도 작성창에서 작성→완료 시 활성 패널에 **bracketed paste 로 투입**
+        한다(권고안 B). ESC 모드에서 Insert 로 호출(옵트인, 필요할 때 매번)."""
+        def done(text):
+            if not text:          # Esc 취소(None) 또는 빈 내용 → 투입 안 함
+                if text == "":
+                    self.display_message(i18n.t("compose.empty"))
+                return
+            # 활성 패널에 통째로 투입. 서버가 pane.bracketed 면 \x1b[200~…201~ 로
+            # 감싸 멀티라인이 줄마다 제출되지 않는다(_write_paste). 끝에 Enter 를
+            # 붙이지 않으므로 자동 제출되지 않고, 사용자가 직접 Enter 로 보낸다.
+            self.send_cmd("paste", text=text)
+        # 작성창 입력 줄을 활성 패널의 현재 프롬프트 줄(하드웨어 커서 행)에 맞춘다.
+        # _active_cursor_xy 는 직전 _composite 가 활성 패널 커서를 글로벌 화면
+        # 좌표로 잡아둔 값((x, y)) — Claude 프롬프트가 포커스면 그 입력 줄이다.
+        # 없으면(커서 없음) None → 작성창은 그냥 바닥에 도킹한다.
+        xy = getattr(self, "_active_cursor_xy", None)
+        prompt_row = xy[1] if xy else None
+        # 작성창 좌우를 활성 패널 **테두리 안쪽**에 맞춘다. 테두리 박스가 있으면
+        # 안쪽 = (bx+1 .. bx+bw-2), 없으면 콘텐츠 (x .. x+w-1). 미상이면 None(전체 폭).
+        active = self.layout.get("active")
+        pane_x = pane_w = None
+        for p in self.layout.get("panes", []):
+            if p["id"] == active:
+                box = p.get("box")
+                if box:
+                    bx, _by, bw, _bh = box
+                    pane_x, pane_w = bx + 1, max(1, bw - 2)
+                else:
+                    pane_x, pane_w = p["x"], p["w"]
+                break
+        self.push_screen(
+            ComposePromptScreen(initial, prompt_row, pane_x, pane_w), done)
 
     def _run_shell(self, cmd):
         try:
@@ -1680,6 +1719,14 @@ class _InputMixin:
             self.send_input(b"\x1b")
             self._exit_esc()
             return
+        if k == "insert":
+            # esc Insert: 블록 선택(Shift+방향키/Home/End)이 되는 멀티라인 작성창을
+            # 연다(옵트인, 필요할 때 매번). 자식 프롬프트 입력기가 범위 선택 편집을
+            # 지원하지 않을 때, pytmux 자체 편집기에서 작성→완료 시 활성 패널에
+            # bracketed paste 로 투입(권고안 B). 모드는 빠지고 모달이 포커스를 잡는다.
+            self._exit_esc()
+            self.open_compose()
+            return
         if tb.bar_focus:
             tabs = tb.tabs
             idxs = [t["index"] for t in tabs]
@@ -2141,7 +2188,10 @@ class _RenderMixin:
         # 팝업(모달)이 떠 있으면 뒤 본문을 어둡게 칠하고, 스타일을 무시하고 컬러로
         # 그려지는 이모지는 placeholder(·)로 치환한다(#25). 팝업을 닫으면 다음
         # _composite 가 원본에서 다시 그려 자연히 복원된다(별도 저장 불필요).
-        if len(self.screen_stack) > 1:
+        # 단, 최상위 모달이 `_no_backdrop_dim`(예: 컴포즈 작성창)이면 뒤 패널을
+        # 어둡게 하지 않는다 — 사용자가 이전 출력을 보면서 입력해야 하기 때문.
+        _top = self.screen_stack[-1] if len(self.screen_stack) > 1 else None
+        if _top is not None and not getattr(_top, "_no_backdrop_dim", False):
             for yy in range(H):
                 if yy in self._undim_rows:   # 클릭 원천 줄은 밝게 유지(#29)
                     continue
@@ -2941,6 +2991,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.writer and data:
                 asyncio.create_task(write_msg(self.writer, {
                     "t": "input", "pane": self.layout.get("active"),
+                    "data": base64.b64encode(data).decode("ascii")}))
+
+        def send_input_pane(self, pane_id, data: bytes):
+            """send_input 의 명시-패널 버전 — 활성 패널을 바꾸지 않고 특정 패널 PTY 로
+            입력 바이트를 보낸다(서버는 pane_by_id 로 라우팅). Claude footer 의
+            'esc to interrupt' 클릭 → 그 패널에 ESC 주입 등에 쓴다."""
+            if self.writer and data and pane_id is not None:
+                asyncio.create_task(write_msg(self.writer, {
+                    "t": "input", "pane": pane_id,
                     "data": base64.b64encode(data).decode("ascii")}))
 
         def action_ctrl_q(self):

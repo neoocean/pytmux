@@ -1,0 +1,227 @@
+"""ComposePromptScreen — 블록 선택(Shift+방향키) 멀티라인 작성창 → 활성 패널
+bracketed paste 투입(권고안 B, CLAUDE_PROMPT_BLOCK_SELECTION_FEASIBILITY).
+
+검증: ① ESC 모드 Insert 가 작성창을 연다 ② Ctrl+S 투입이 입력 텍스트 그대로(끝에
+자동 개행 없음) `paste` 명령으로 활성 패널에 간다 ③ Esc 취소는 아무것도 안 보낸다
+④ Textual TextArea 네이티브 블록 선택(shift+방향키)으로 범위 삭제가 동작한다(자식
+입력기엔 없는 기능을 pytmux 작성창이 제공)."""
+import harness  # noqa: F401  (sys.path 주입)
+
+from harness import make_app, server_only, teardown
+from textual.widgets import TextArea
+
+
+async def _with_app(coro, size=(100, 30)):
+    srv, task, sock = await server_only()
+    app = make_app(sock, None, None)
+    try:
+        async with app.run_test(size=size) as pilot:
+            await pilot.pause(0.3)
+            await coro(app, pilot, srv)
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_esc_insert_opens_compose():
+    """ESC → Insert → ComposePromptScreen 이 뜨고 TextArea 가 포커스를 잡는다."""
+    async def body(app, pilot, srv):
+        await pilot.press("escape")
+        assert app.mode == "esc"
+        await pilot.press("insert")
+        await pilot.pause(0.2)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "ComposePromptScreen"
+        assert app.mode == "normal"        # 모달 진입 시 esc 모드는 빠진다
+        ta = scr.query_one(TextArea)
+        assert ta.has_focus
+    await _with_app(body)
+
+
+async def test_ctrl_s_injects_text_without_trailing_newline():
+    """작성 후 Ctrl+S → 입력 텍스트 그대로 paste 로 투입(끝에 자동 개행 없음 →
+    자식이 자동 제출하지 않음)."""
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app.open_compose()
+        await pilot.pause(0.2)
+        scr = app.screen_stack[-1]
+        ta = scr.query_one(TextArea)
+        ta.text = "line one\nline two"
+        await pilot.pause(0.05)
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.2)
+        assert ("paste", {"text": "line one\nline two"}) in sent, sent
+        # 끝에 개행이 붙지 않았다(자동 제출 방지).
+        assert not sent[-1][1]["text"].endswith("\n")
+    await _with_app(body)
+
+
+async def test_escape_cancels_no_paste():
+    """Esc 는 취소 — paste 를 보내지 않는다."""
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append(action)
+        app.open_compose()
+        await pilot.pause(0.2)
+        ta = app.screen_stack[-1].query_one(TextArea)
+        ta.text = "discard me"
+        await pilot.pause(0.05)
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+        assert "paste" not in sent, sent
+    await _with_app(body)
+
+
+async def test_empty_compose_does_not_paste():
+    """빈 작성창에서 Ctrl+S → 투입할 게 없으니 paste 안 보냄."""
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append(action)
+        app.open_compose()
+        await pilot.pause(0.2)
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.2)
+        assert "paste" not in sent, sent
+    await _with_app(body)
+
+
+async def test_no_dim_and_bottom_docked():
+    """사용자 요청: Claude 프롬프트는 이전 출력을 보며 입력해야 하므로 배경을
+    딤하지 않고(스크린 배경 투명 + _no_backdrop_dim), 작성창은 하단에 도킹해 기존
+    프롬프트 위에 겹쳐 뜨고 내용이 늘면 위로 자란다(dock:bottom + height:auto)."""
+    async def body(app, pilot, srv):
+        app.open_compose()
+        await pilot.pause(0.2)
+        scr = app.screen_stack[-1]
+        # 딤 없음: 스크린 배경 알파 0(투명) → 박스 밖 패널이 그대로 보인다.
+        assert scr.styles.background.a == 0, \
+            f"배경 딤이 없어야(투명) — got {scr.styles.background!r}"
+        # 클라이언트 _composite 의 #25 백드롭 딤 면제 플래그.
+        assert getattr(scr, "_no_backdrop_dim", False) is True
+        # 박스는 하단 도킹(위로 자람) + height auto.
+        wrap = scr.query_one("#cwrap")
+        assert wrap.styles.dock == "bottom", wrap.styles.dock
+    await _with_app(body)
+
+
+async def test_composite_does_not_dim_behind_compose():
+    """_composite 가 컴포즈 작성창 뒤 패널을 어둡게 하지 않는다(#25 면제). 일반
+    모달(InfoScreen 등)은 어둡게 하던 것과 대조 — 같은 셀이 작성창 아래에선 원색."""
+    async def body(app, pilot, srv):
+        # 작성창을 띄우고 합성하면 뒷 패널 셀이 원색(딤 스타일이 안 입혀짐).
+        app.open_compose()
+        await pilot.pause(0.2)
+        app._composite()
+        # 첫 행 어딘가에 비공백 셀이 있고, 그 스타일이 _darken 으로 죽지 않았는지
+        # 확인하긴 어렵다 → 대신 모달이 _no_backdrop_dim 임을 신뢰하고, 딤 분기가
+        # 그 플래그를 본다는 계약을 위 단위테스트로 잠갔다. 여기선 합성이 예외 없이
+        # 통과(작성창 떠 있는 채 _composite 안전)함을 확인한다.
+        assert app.view._cells, "작성창 위에서도 합성 프레임이 생성된다"
+    await _with_app(body)
+
+
+async def test_input_aligned_one_below_prompt_row():
+    """작성창 입력 줄(TextArea)이 활성 패널 프롬프트 줄(prompt_row)보다 **한 칸
+    아래**에 온다(사용자 요청 2026-06-19). 박스 하단 구조는 [입력 줄][테두리 1행]이라
+    TextArea 영역 하단이 prompt_row+1 이어야 한다."""
+    from pytmuxlib.clientscreens import ComposePromptScreen
+    from textual.widgets import TextArea as _TA
+
+    async def body(app, pilot, srv):
+        H = app.size.height                    # 30 (테스트 size)
+        target = H - 6                          # footer 위로 몇 줄 띄운 프롬프트 행 가정
+        app.push_screen(ComposePromptScreen("", prompt_row=target))
+        await pilot.pause(0.3)
+        ta = app.screen_stack[-1].query_one(_TA)
+        last_line_y = ta.region.y + ta.region.height - 1
+        assert abs(last_line_y - (target + 1)) <= 1, \
+            f"입력 줄 y={last_line_y} 가 prompt_row+1={target + 1} 에 정렬돼야"
+    await _with_app(body)
+
+
+async def test_width_within_active_pane():
+    """작성창 좌우가 활성 패널 테두리 안쪽(pane_x..pane_x+pane_w)에 들어온다 —
+    패널 아웃라인 밖으로 안 삐져나가야(사용자 요청)."""
+    from pytmuxlib.clientscreens import ComposePromptScreen
+
+    async def body(app, pilot, srv):
+        app.push_screen(ComposePromptScreen("", pane_x=10, pane_w=30))
+        await pilot.pause(0.3)
+        wrap = app.screen_stack[-1].query_one("#cwrap")
+        assert wrap.region.x >= 10, wrap.region
+        assert wrap.region.right <= 10 + 30, wrap.region
+    await _with_app(body)
+
+
+async def test_enter_sends_and_shift_enter_newlines():
+    """Claude Code 동일: Enter=전송, Shift+Enter(=Ctrl+J/LF)=줄바꿈(사용자 요청).
+    Ctrl+J 로 줄바꿈을 넣고 Enter 로 전송하면 개행 보존된 멀티라인이 paste 된다."""
+    from textual.widgets import TextArea as _TA
+
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app.open_compose()
+        await pilot.pause(0.2)
+        ta = app.screen_stack[-1].query_one(_TA)
+        ta.text = "a"
+        ta.move_cursor((0, 1))
+        await pilot.press("ctrl+j")        # Shift+Enter 등가 → 줄바꿈
+        await pilot.pause(0.05)
+        ta.insert("b")
+        await pilot.pause(0.05)
+        assert "\n" in ta.text, repr(ta.text)   # Enter 아닌 Ctrl+J 가 줄바꿈
+        await pilot.press("enter")         # Enter → 전송
+        await pilot.pause(0.2)
+        pastes = [kw["text"] for a, kw in sent if a == "paste"]
+        assert pastes and "\n" in pastes[0], (sent, pastes)
+        assert not pastes[0].endswith("\n")     # 끝 개행 없음(자동 제출 방지)
+    await _with_app(body)
+
+
+async def test_distinct_textbox_and_box_backgrounds():
+    """입력칸(#carea)과 팝업 박스(#cwrap)의 배경색이 서로 다르다(사용자 요청)."""
+    async def body(app, pilot, srv):
+        app.open_compose()
+        await pilot.pause(0.2)
+        scr = app.screen_stack[-1]
+        wrap_bg = scr.query_one("#cwrap").styles.background
+        area_bg = scr.query_one("#carea").styles.background
+        assert wrap_bg != area_bg, (wrap_bg, area_bg)
+    await _with_app(body)
+
+
+async def test_ime_badge_inside_popup_follows_state():
+    """팝업 내부 우상단 IME 배지가 app.ime_state 를 따른다(작성 중 한/영 표시,
+    사용자 요청). 상태가 바뀌면 폴링으로 따라온다."""
+    from textual.widgets import Label as _Label
+
+    async def body(app, pilot, srv):
+        app.ime_show = True
+        app.ime_state = "한"
+        app.open_compose()
+        await pilot.pause(0.3)
+        lbl = app.screen_stack[-1].query_one("#cime", _Label)
+        assert "한" in str(lbl.content), str(lbl.content)
+        app.ime_state = "EN"               # 폴링(0.2s)이 따라온다
+        await pilot.pause(0.5)
+        assert "EN" in str(lbl.content), str(lbl.content)
+    await _with_app(body)
+
+
+async def test_block_select_delete_in_textarea():
+    """TextArea 네이티브 블록 선택: 커서를 끝에 두고 Shift+Left 로 범위 선택 후
+    삭제하면 선택분만 지워진다(자식 프롬프트엔 없는 편집을 작성창이 제공)."""
+    async def body(app, pilot, srv):
+        app.open_compose()
+        await pilot.pause(0.2)
+        ta = app.screen_stack[-1].query_one(TextArea)
+        ta.text = "hello"
+        ta.move_cursor((0, 5))             # 끝으로
+        await pilot.pause(0.05)
+        await pilot.press("shift+left", "shift+left", "shift+left")  # "llo" 선택
+        await pilot.press("backspace")     # 선택 범위 삭제
+        await pilot.pause(0.1)
+        assert ta.text == "he", repr(ta.text)
+    await _with_app(body)

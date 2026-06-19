@@ -381,6 +381,10 @@ register({
         "msg.clipboard_empty": "클립보드가 비어있거나 읽을 수 없음",
         "msg.copied_chars": "{n} chars 복사됨",
         "msg.clipboard_suffix": " (클립보드)",
+        # 컴포즈 오버레이(블록 선택 작성창 → 활성 패널 bracketed 투입)
+        "compose.title": "프롬프트 작성 (블록 선택 편집)",
+        "compose.hint": "Enter 전송 · Shift+Enter 줄바꿈 · Esc 취소 · Shift+방향키 선택",
+        "compose.empty": "(빈 내용 — 투입할 것이 없습니다)",
         # 캡처(REC)
         "msg.captured_chars": "{n} chars 버퍼에 캡처됨",
         "msg.capture_toggle": "출력 캡처 {state} (상태줄 REC)",
@@ -412,6 +416,9 @@ register({
         "msg.clipboard_empty": "Clipboard is empty or unreadable",
         "msg.copied_chars": "{n} chars copied",
         "msg.clipboard_suffix": " (clipboard)",
+        "compose.title": "Compose prompt (block-select editing)",
+        "compose.hint": "Enter send · Shift+Enter newline · Esc cancel · Shift+arrows select",
+        "compose.empty": "(empty — nothing to inject)",
         "msg.captured_chars": "{n} chars captured to buffer",
         "msg.capture_toggle": "Output capture {state} (status REC)",
         "msg.inactive_dim": "Inactive-pane dim {state}",
