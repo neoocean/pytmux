@@ -283,8 +283,60 @@ class ServerPersistMixin:
                 last_index=ss.get("last_index", 0))
             self.sessions[sess.name] = sess
         if self.sessions:
+            # 재시작 복원 진단(RESTART_SCENARIO.md §주의①): SIGWINCH **직전**(복원된
+            # 스냅샷) 프레임을 찍고, 0.6초 뒤(앱의 SIGWINCH repaint 가 가라앉은 뒤) 다시
+            # 찍는다. 둘의 차이 = 그 repaint 가 한 일 — idle 메인화면 패널이 "내용
+            # 있음→빔"이면 부분 repaint 가 복원 스냅샷을 지운 것(clobber, 시나리오 A),
+            # 복원 시점부터 비어 있으면 스냅샷 자체가 빈 것(시나리오 B). 무게 무시(재시작
+            # 시에만, 짧은 메타+스니펫 — resume.json 은 이미 전체 화면을 영속).
+            self._write_restore_manifest("restored")
             self._induce_redraw_all()
+            if self.loop is not None:
+                self.loop.call_later(
+                    0.6, lambda: self._write_restore_manifest("post_repaint"))
         return bool(self.sessions)
+
+    def _write_restore_manifest(self, phase: str) -> None:
+        """재시작 복원 진단 매니페스트 한 줄(phase=restored|post_repaint)을 패널별로
+        `<state>.restartdbg.jsonl` 에 append 한다(best-effort, 절대 복원을 깨지 않음).
+        각 패널: id·탭·alt·커서·치수·**비공백 행 수**·마지막 비공백 행 인덱스·상/하단
+        텍스트 스니펫. 두 phase 의 비공백 행 수가 줄면(예 restored 18→post 1) 그 패널이
+        repaint 에 지워진 것(재시작 후 빈 패널 증상). 파일은 마지막 ~80줄로 캡한다."""
+        try:
+            import json as _json
+            import time as _time
+            path = ipc.state_base(self.sock_path) + ".restartdbg.jsonl"
+            rows = []
+            for p in self._all_panes():
+                scr = getattr(p, "_main", None)
+                disp = list(getattr(scr, "display", []) or [])
+                nonblank = [i for i, r in enumerate(disp) if r.strip()]
+                cur = getattr(scr, "cursor", None)
+                rows.append({
+                    "pane": getattr(p, "id", None),
+                    "alt": bool(getattr(p, "alt_active", False)),
+                    "rows": getattr(p, "rows", None),
+                    "cols": getattr(p, "cols", None),
+                    "cursor": ({"x": cur.x, "y": cur.y,
+                                "hidden": bool(cur.hidden)} if cur else None),
+                    "nonblank_rows": len(nonblank),
+                    "last_nonblank": (nonblank[-1] if nonblank else -1),
+                    "top": (disp[0][:60] if disp else ""),
+                    "bottom": (disp[nonblank[-1]][:60] if nonblank else ""),
+                })
+            line = _json.dumps({"ts": _time.time(), "phase": phase,
+                                "panes": rows}, ensure_ascii=False)
+            # 마지막 ~80줄만 보존(여러 번 재시작해도 무한 성장 방지).
+            old = []
+            try:
+                with open(path, encoding="utf-8") as f:
+                    old = f.read().splitlines()[-79:]
+            except OSError:
+                pass
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(old + [line]) + "\n")
+        except Exception:
+            pass
 
     def _induce_redraw_all(self):
         """재시작 복원 후 alt-screen TUI(vim/claude/htop 등)가 다시 그리도록 각 패널

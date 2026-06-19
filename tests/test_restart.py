@@ -579,6 +579,55 @@ async def test_restore_preserves_scrollback():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_restore_writes_repaint_diag_manifest():
+    """재시작 복원 진단 매니페스트(<state>.restartdbg.jsonl): 복원이 SIGWINCH **직전**
+    (restored)·0.6초 후(post_repaint) 두 phase 를 패널별로 찍어, 복원 화면이 앱의 repaint
+    에 지워지는지(clobber)를 오프라인 분석하게 한다(RESTART_SCENARIO.md §주의①)."""
+    if ipc.IS_WINDOWS:
+        return
+    import json
+    import tempfile
+    from harness import pane_text
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    mpath = ipc.state_base(srvB.sock_path) + ".restartdbg.jsonl"
+    try:
+        if os.path.exists(mpath):
+            os.unlink(mpath)
+        sess = srvA.ensure_default_session(80, 24)
+        pane = sess.active_window.active_pane
+        pane.pty.write(b"echo RESTART_DIAG_MARK\n")
+        for _ in range(200):
+            await asyncio.sleep(0.02)
+            if "RESTART_DIAG_MARK" in pane_text(pane):
+                break
+        assert "RESTART_DIAG_MARK" in pane_text(pane)
+        path = tempfile.mktemp(suffix=".resume.json")
+        assert srvA.save_resume_state(path)
+        for p in srvA._all_panes():
+            p.pty.stop_reader()
+        assert srvB.restore_resume_state(path)
+        await asyncio.sleep(0.8)        # post_repaint(call_later 0.6) 까지 대기
+        assert os.path.exists(mpath), "복원 매니페스트 미생성"
+        with open(mpath, encoding="utf-8") as f:
+            recs = [json.loads(ln) for ln in f if ln.strip()]
+        phases = [r["phase"] for r in recs]
+        assert "restored" in phases and "post_repaint" in phases, phases
+        # restored phase 에 복원된 비공백 행이 잡혀야 한다(스냅샷이 비지 않음 = 진단 유효).
+        restored = [r for r in recs if r["phase"] == "restored"][-1]
+        assert restored["panes"] and any(
+            p["nonblank_rows"] > 0 for p in restored["panes"]), restored
+        os.unlink(path)
+        srvA.sessions.clear()
+    finally:
+        try:
+            os.unlink(mpath)
+        except OSError:
+            pass
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
 async def test_export_import_preserves_color():
     """restart-all 색 보존(2026-06-07): _export_screen 이 평문만 내보내 재시작 후
     스크롤백 색이 사라지던 문제. 이제 SGR(색·굵기·밑줄 등)을 끼워 라운드트립한다."""
