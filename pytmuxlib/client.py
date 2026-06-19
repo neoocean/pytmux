@@ -284,6 +284,12 @@ class _NetReconnectMixin:
         else:
             self._net_good += 1
             self._net_bad = 0
+        self._log_net_debug(rtt)
+        # 로컬 연결은 네트워크 개념이 없다(§10-F): RTT 스파이크 = 이벤트루프/
+        # 스케줄링 지터일 뿐이라 degraded(빨강)·강제 재접속을 띄우지 않는다.
+        # 표본 카운터·RTT 로그는 위에서 이미 갱신했으니 진단은 계속 가능.
+        if self._net_local:
+            return
         new = self._net_degraded
         if self._net_bad >= self.net_bad_n:
             new = True
@@ -299,6 +305,35 @@ class _NetReconnectMixin:
                 and self._net_bad >= self.net_recover_n):
             self._net_bad = 0
             self.reconnect_now("auto")
+
+    def _net_debug_on(self) -> bool:
+        """RTT 진단 로그 on/off. env PYTMUX_NET_DEBUG(기본 off) — 토큰 진단
+        (§10-D)과 같은 결의 라이브 판정용 스위치."""
+        return bool(os.environ.get("PYTMUX_NET_DEBUG"))
+
+    def _log_net_debug(self, rtt):
+        """env-gated(PYTMUX_NET_DEBUG) 네트워크 응답성 진단을 `<state>.netdbg.jsonl`
+        에 한 줄(한 RTT 표본)씩 append. §10-F(로컬인데 degraded 빨강 깜빡임) 라이브
+        판정용 — 매 표본의 rtt·임계·연속 카운터·degraded·local 여부를 남겨 로컬
+        루프백/이벤트루프 지터가 실제로 임계를 넘는지 며칠치 실측한다. 기본 OFF 라
+        평시 무영향, best-effort — 로깅이 핑/표시 흐름을 절대 막지 않는다(서버
+        _log_token_debug 와 동일 정책)."""
+        if not self._net_debug_on():
+            return
+        try:
+            import json
+            rec = {
+                "ts": round(time.time(), 3),
+                "rtt_ms": round(rtt * 1000, 1),
+                "thr_ms": round(self.net_rtt_threshold * 1000, 1),
+                "bad": self._net_bad, "good": self._net_good,
+                "degraded": self._net_degraded, "local": self._net_local,
+            }
+            path = ipc.state_base(self.sock_path) + ".netdbg.jsonl"
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
 
 
 class _RestartVersionMixin:
@@ -613,7 +648,7 @@ class _ChooseScreensMixin:
 
     # ---- 레이아웃 저장/불러오기 ----
     def save_layout_prompt(self):
-        self.open_prompt("save_layout", "레이아웃 이름으로 저장")
+        self.open_prompt("save_layout", i18n.t("screen.save_layout_prompt"))
 
     def request_layouts(self, mode):
         """저장된 레이아웃 목록을 요청(mode: 'over'=현재 탭 덮어쓰기, 'new'=새 탭)."""
@@ -621,7 +656,8 @@ class _ChooseScreensMixin:
         self.send_cmd("list_layouts")
 
     def _open_choose_layout(self, names, mode):
-        title = "레이아웃 → 새 탭" if mode == "new" else "레이아웃 → 현재 탭 덮어쓰기"
+        title = (i18n.t("screen.layout_to_new") if mode == "new"
+                 else i18n.t("screen.layout_to_over"))
 
         def handle(name):
             if name:
@@ -1896,7 +1932,7 @@ class _InputMixin:
         elif k in ("G", "end"):
             self.send_scroll(aid, bottom=True)
         elif ch == "/" or k == "slash":
-            self.open_prompt("search", "search ↑ (이전 방향)")
+            self.open_prompt("search", i18n.t("search.prompt_up"))
             return  # 프롬프트 모드로 전환
         elif k == "n":
             self.send_cmd("search", direction="up")
@@ -2482,6 +2518,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.net_auto_reconnect = config.get("net_auto_reconnect", True)
             self.net_recover_n = config.get("net_recover_n", 20)
             self._net_last_rtt = None   # 마지막 측정 RTT(초) — 서버정보 팝업·진단용
+            # 로컬(AF_UNIX·루프백 TCP) 연결이면 클라↔서버가 같은 머신이라
+            # 네트워크 열화 개념이 없다 → degraded(빨강 외곽선)·자동 재접속을
+            # 억제한다(§10-F Windows degraded 오탐). 진짜 원격 호스트 연결에서만
+            # 히스테리시스/자동회복 유지. RTT 측정/로깅 자체는 계속한다(진단용).
+            self._net_local = ipc.is_local_endpoint(self.sock_path)
             # ---- 설정(config) 적용 ----
             self.prefix_key = config.get("prefix", "ctrl+b")
             self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
@@ -2694,6 +2735,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             new_active = self._active_tab_index()
             prev_active = next((t["index"] for t in self.tabbar.tabs
                                 if t.get("active")), None)
+            if prev_active != new_active:
+                self._log_tab_debug(prev_active, new_active)
             # 활성 탭 이름 길이가 바뀌면 탭 폭(=연결부 x 범위)도 바뀌므로 재합성
             # 트리거에 포함한다(예전엔 활성 index 변화만 봐, 이름만 길어지면 탭은
             # 늘어나도 노트북 연결부는 옛 폭에 머물렀다 — 사용자 보고).
@@ -2715,6 +2758,36 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self.tabbar.display and (prev_active != new_active
                                         or prev_xr != new_xr):
                 self._composite()
+
+        def _log_tab_debug(self, prev_active, new_active):
+            """env-gated(PYTMUX_TAB_DEBUG) 탭바 active 전이 진단을 `<state>.tabdbg.jsonl`
+            에 한 줄씩 append. §10-F(원격 탭 보는 중 탭바가 로컬 탭으로 한 프레임 튐)
+            라이브 판정용 — 매 active 변경의 이전/새 index·새 탭이 원격(⇄)인지·지금
+            원격 탭을 보는 중인지를 남겨 'viewing_remote 인데 active 가 비원격(로컬)
+            탭으로 바뀐' 의심 프레임(suspect=True)을 바로 잡아낸다. 수정(CL #3:
+            auto-rename 방송 per-client 화) 후엔 suspect 줄이 안 나와야 한다. 기본
+            OFF·best-effort(로깅이 표시 흐름을 절대 막지 않음)."""
+            if not os.environ.get("PYTMUX_TAB_DEBUG"):
+                return
+            try:
+                import json
+                wins = self.status.windows
+                new_t = next((t for t in wins
+                              if t.get("index") == new_active), None)
+                new_remote = bool(new_t and new_t.get("remote"))
+                viewing_remote = self._viewing_remote()
+                rec = {
+                    "ts": round(time.time(), 3),
+                    "prev": prev_active, "new": new_active,
+                    "new_remote": new_remote,
+                    "viewing_remote": viewing_remote,
+                    "suspect": viewing_remote and not new_remote,
+                }
+                path = ipc.state_base(self.sock_path) + ".tabdbg.jsonl"
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
 
         def _send_resize(self):
             if self.writer:
@@ -3191,9 +3264,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         if line:
                             self._run_command(line)
                     self.push_screen(CommandOptionsScreen(
-                        "select-layout", "레이아웃 프리셋", opts), _run)
+                        "select-layout", i18n.t("screen.layout_preset"), opts),
+                        _run)
             elif key == "search":
-                self.open_prompt("search", "스크롤백 검색")
+                self.open_prompt("search", i18n.t("search.scrollback"))
             elif key == "sync":
                 self.send_cmd("set_sync")
             elif key == "autoresume":

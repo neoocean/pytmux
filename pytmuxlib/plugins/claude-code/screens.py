@@ -40,7 +40,7 @@ i18n.register({
         "bypass — 권한 우회, 확인 없음 ⚠️ (Bypass Permission Mode)",
         # token-log: 탭(넓은/좁은)·그룹·컬럼·차원·정렬
         "시간", "시", "일", "주", "월", "계정", "계", "패널", "패", "세", "정렬", "정",
-        "시나리오", "대사", "한도", "경고", "경", "기간", "보기", "조회", "토큰 사용량",
+        "시나리오", "대사", "한도", "경고", "경", "기간", "기", "보기", "조회", "토큰 사용량",
         "구간", "실측(세션 5h)", "추정Σ", "항목", "토큰", "비율",
         "세션", "토큰순", "시간순", "옵션",
         # token-log: 안내/대사
@@ -68,7 +68,8 @@ i18n.register({
         "계정": "Account", "계": "A", "패널": "Panel", "패": "P", "세": "S",
         "정렬": "Sort", "정": "S", "시나리오": "Scenario", "대사": "Recon",
         "한도": "Limit", "경고": "Warn", "경": "W",
-        "기간": "Period", "보기": "View", "조회": "Query", "토큰 사용량": "Token usage",
+        "기간": "Period", "기": "P",
+        "보기": "View", "조회": "Query", "토큰 사용량": "Token usage",
         "구간": "Span", "실측(세션 5h)": "Measured (session 5h)", "추정Σ": "Est Σ",
         "항목": "Item", "토큰": "Tokens", "비율": "Ratio",
         "세션": "Session", "토큰순": "by tokens", "시간순": "by time",
@@ -114,15 +115,13 @@ i18n.register({
     "ko": {
         "pscreen.perm_title": "권한모드 선택 (현재: {current})",
         "pscreen.tklog_title2": "토큰 사용량(추정) · {what}별",
-        "pscreen.tklog_scope": "계정 {acct} · {order} · {sigma}",
+        "pscreen.tklog_scope": "{order} · {sigma}",
         "pscreen.tklog_disp": " (표시 {n})",
-        "pscreen.tklog_hint": "h시 d일 w주 m월 · c계정 p세션 · l한도 a필터 o정렬 · u/usage s설정 r대사 · Esc닫기",
+        "pscreen.tklog_hint": "h시 d일 w주 m월 · p세션 · l한도 o정렬 · u/usage s설정 r대사 · Esc닫기",
         "pscreen.weekdays": "월,화,수,목,금,토,일",
         "pscreen.hour_suffix": "시",
         "pscreen.recon_top": "실측(/usage Δ%)과 추정(스크랩 ~Σ)은 의미가 다른 두 출처 — 절대 일치가 아니라 추세 상관을 봅니다",
         "pscreen.recon_empty": "(대사할 실측 스냅샷 구간이 없습니다 — /usage 실측이 2회 이상 쌓이면 생깁니다)",
-        "pscreen.acct_all": "전체",
-        "pscreen.fold_tag": "미식별 포함",
         "pscreen.win_session": "이번 5h창 ~Σ{tok}(리셋 {left} 후)",
         "pscreen.win_week": "이번 주 ~Σ{tok}(리셋 {left} 후)",
         # 한도 전용 서브뷰(상단 7줄 블록을 표 자리로 이동 — 작은 화면 정리).
@@ -144,19 +143,50 @@ i18n.register({
         "pscreen.left_hm": "{h}시간{m}분",
         "pscreen.left_m": "{m}분",
         "pscreen.left_d": "{d}일{h}시간",
+        # hour 뷰 footer: 5h/1주 경계까지 남은 시간(실측 리셋 표기 기준).
+        "pscreen.foot_5h": "5h 경계까지 {left}",
+        "pscreen.foot_week": "1주 경계까지 {left}",
+        # [경고] 탭 본문(종류별 상황·할일) — 옛 한글 하드코딩을 i18n 으로(전수조사
+        # 2026-06-19). 본문은 줄바꿈(\n)으로 묶고 _warn_info_text 가 split 한다.
+        "claude.warn_fmt_title": "Claude 포맷 미인식",
+        "claude.warn_fmt_body":
+            "[상황]\n"
+            "• pytmux 가 Claude Code 화면 형식을 인식하지 못합니다.\n"
+            "• 토큰/사용량 추적과 자동화(자동 재개·자동 압축·한도 게이트)가 멈춥니다.\n"
+            "• Claude Code 자체 동작(입력·출력)에는 영향이 없습니다.\n"
+            "• 보통 Claude Code 버전 업데이트로 화면 구조가 바뀌면 발생합니다.\n"
+            "\n"
+            "[할일]\n"
+            "• 화면이 다시 정상 인식되면 경고는 자동으로 사라집니다(잠시 대기).\n"
+            "• 계속되면 pytmux 의 Claude 파서(claude.py)를 새 포맷에 맞춰 갱신해야 합니다.\n"
+            "• REC 캡처가 켜져 있으면 captures/ 로그로 새 포맷을 분석할 수 있습니다.",
+        "claude.warn_repeat_title": "Claude 반복 루프 의심",
+        "claude.warn_repeat_body":
+            "[상황]\n"
+            "• 같은 출력이 여러 번 반복됐습니다 — 루프 의심(경고만, 자동 개입 없음).\n"
+            "\n"
+            "[할일]\n"
+            "• 진행이 없으면 다른 지시를 주거나 /clear 후 다시 시도하세요.\n"
+            "• 임계는 옵션 claude_repeat_alert 로 조정/끌 수 있습니다(0=끔).",
+        "claude.warn_long_title": "Claude 장기 턴",
+        "claude.warn_long_body":
+            "[상황]\n"
+            "• 현재 Claude 턴이 임계 시간을 넘겨 오래 진행 중입니다(경고만, 자동 개입 없음).\n"
+            "\n"
+            "[할일]\n"
+            "• 정상적인 긴 작업일 수 있습니다. 멈춘 듯하면 패널에서 Esc 로 중단하세요.\n"
+            "• 임계는 옵션 claude_long_turn_sec 로 조정/끌 수 있습니다(0=끔).",
     },
     "en": {
         "pscreen.perm_title": "Select permission mode (current: {current})",
         "pscreen.tklog_title2": "Token usage (est) · by {what}",
-        "pscreen.tklog_scope": "Account {acct} · {order} · {sigma}",
+        "pscreen.tklog_scope": "{order} · {sigma}",
         "pscreen.tklog_disp": " (shown {n})",
-        "pscreen.tklog_hint": "h hour d day w week m month · c account p session · l limit a filter o sort · u /usage s settings r recon · Esc close",
+        "pscreen.tklog_hint": "h hour d day w week m month · p session · l limit o sort · u /usage s settings r recon · Esc close",
         "pscreen.weekdays": "Mo,Tu,We,Th,Fr,Sa,Su",
         "pscreen.hour_suffix": "h",
         "pscreen.recon_top": "Measured (/usage Δ%) and est (scrape ~Σ) are two different sources — look at trend correlation, not exact match",
         "pscreen.recon_empty": "(no measured snapshot spans to reconcile — appears once /usage measurements accumulate 2+)",
-        "pscreen.acct_all": "All",
-        "pscreen.fold_tag": "incl. unidentified",
         "pscreen.win_session": "this 5h window ~Σ{tok} (resets in {left})",
         "pscreen.win_week": "this week ~Σ{tok} (resets in {left})",
         "pscreen.tklog_limit_title": "Token usage · Limit (/usage)",
@@ -175,6 +205,45 @@ i18n.register({
         "pscreen.left_hm": "{h}h {m}m",
         "pscreen.left_m": "{m}m",
         "pscreen.left_d": "{d}d {h}h",
+        "pscreen.foot_5h": "5h resets in {left}",
+        "pscreen.foot_week": "Week resets in {left}",
+        "claude.warn_fmt_title": "Claude format unrecognized",
+        "claude.warn_fmt_body":
+            "[Situation]\n"
+            "• pytmux cannot recognize the Claude Code screen format.\n"
+            "• Token/usage tracking and automation (auto-resume·auto-compact·"
+            "limit gate) stop.\n"
+            "• Claude Code itself (input·output) is unaffected.\n"
+            "• Usually happens when a Claude Code version update changes the layout.\n"
+            "\n"
+            "[To do]\n"
+            "• The warning clears automatically once the screen is recognized "
+            "again (wait a moment).\n"
+            "• If it persists, pytmux's Claude parser (claude.py) must be updated "
+            "for the new format.\n"
+            "• If REC capture is on, the captures/ log can be used to analyze it.",
+        "claude.warn_repeat_title": "Claude repeat-loop suspected",
+        "claude.warn_repeat_body":
+            "[Situation]\n"
+            "• The same output repeated several times — loop suspected "
+            "(warning only, no auto-intervention).\n"
+            "\n"
+            "[To do]\n"
+            "• If there's no progress, give different instructions or retry "
+            "after /clear.\n"
+            "• Threshold is adjustable/disable-able via option claude_repeat_alert "
+            "(0=off).",
+        "claude.warn_long_title": "Claude long turn",
+        "claude.warn_long_body":
+            "[Situation]\n"
+            "• The current Claude turn exceeded the threshold and is running long "
+            "(warning only, no auto-intervention).\n"
+            "\n"
+            "[To do]\n"
+            "• It may be a normal long task. If it seems stuck, press Esc in the "
+            "panel to interrupt.\n"
+            "• Threshold is adjustable/disable-able via option claude_long_turn_sec "
+            "(0=off).",
     },
 })
 
@@ -590,7 +659,7 @@ class TokenLogScreen(ModalScreen):
         "tab_period": ("기간", "기"),
         "tab_hour": ("시간", "시"), "tab_day": ("일", "일"),
         "tab_week": ("주", "주"), "tab_month": ("월", "월"),
-        "tab_acct": ("계정", "계"), "tab_panel": ("세션", "세"),
+        "tab_panel": ("세션", "세"),
         "tab_order": ("정렬", "정"), "tab_usage": ("/usage", "U"),
         "tab_saver": ("시나리오", "S"), "tab_recon": ("대사", "R"),
         "tab_limit": ("한도", "L"), "tab_warn": ("경고", "경"),
@@ -598,7 +667,7 @@ class TokenLogScreen(ModalScreen):
     # [패널]/계정 그룹이 많을 때 상위 N + '기타'로 접어 길이 폭주를 막는다(설계 §4).
     _GROUP_TOP = 8
 
-    def __init__(self, records, usage=None, total_all=None, accounts_total=None,
+    def __init__(self, records, usage=None, total_all=None,
                  daily=None, reconcile=None, daily_pct=None, hourly_pct=None,
                  hourly_week_pct=None, initial_mode=None):
         super().__init__()
@@ -638,29 +707,6 @@ class TokenLogScreen(ModalScreen):
         # 레코드(_records)는 최근 N 건이라 그 Σ 는 과소표시될 수 있으므로, lifetime
         # 합은 이 값을 쓴다(None=구버전 서버 → 레코드 합으로 폴백).
         self._total_all = total_all
-        self._accounts_total = accounts_total or {}
-        # §5.5 단일 식별 계정 귀속(표시층): 이력 전체에서 식별(이메일) 계정이 정확히
-        # 하나면 미식별(unknown) 레코드·합계를 그 계정에 귀속해 보여 준다 — 패널
-        # 화면엔 계정 라벨이 거의 안 떠 레코드 대부분이 unknown 으로 적재되는데,
-        # 'unknown 86%' 는 정보가 아니라 소음이었고 계정 필터를 걸면 데이터가 있는
-        # 날이 통째로 사라져 보였다(사용자 보고). reconcile·서버 단일계정 합산과
-        # 동일 가정. 식별 계정이 둘 이상이면 귀속이 모호하므로 접지 않는다.
-        cand = set(self._accounts_total)
-        for r in (self._full_recs if self._full_recs is not None
-                  else self._records):
-            cand.add(r.get("account") or usagelog.UNKNOWN)
-        self._fold_acct = usagelog.fold_target(cand)
-        if self._fold_acct:
-            self._records = usagelog.fold_unknown(self._records,
-                                                  self._fold_acct)
-            if self._full_recs is not None:
-                self._full_recs = usagelog.fold_unknown(self._full_recs,
-                                                        self._fold_acct)
-            if usagelog.UNKNOWN in self._accounts_total:
-                at = dict(self._accounts_total)
-                at[self._fold_acct] = (at.get(self._fold_acct, 0)
-                                       + at.pop(usagelog.UNKNOWN))
-                self._accounts_total = at
         self._bucket = "day"
         # initial_mode=="hour" 면 시간(hour) 버킷으로 연다 — 상태줄 "N%/5h used" 세그먼트
         # 클릭이 시간별 5h% 막대 뷰를 바로 보이게 한다(5h%→hourly view, 사용자 요청
@@ -668,25 +714,12 @@ class TokenLogScreen(ModalScreen):
         if initial_mode == "hour":
             self._bucket = "hour"
         # 표 차원(2026-06-12 재설계 — 한 번에 한 차원만): "time"=시간 버킷(기본),
-        # "account"=계정별 전체 합, "session"=세션별 합. 세션은 닫히고 재사용되는
-        # 패널 id 대신 안정적 세션 id 로 묶는다(설계 §8, 사용자 결정).
+        # "session"=세션별 합. 세션은 닫히고 재사용되는 패널 id 대신 안정적 세션
+        # id 로 묶는다(설계 §8). 계정 차원은 제거 — 토큰 사용량은 계정과 무관하게
+        # 현재 로컬 머신 기준으로만 본다(2026-06-19 결정).
         self._view = "time"
-        self._acct_rows = []   # 계정 뷰 행 인덱스 → 계정(행 선택 드릴다운용)
         # 버킷(시간축) 정렬: "time"=최근 위(기본), "tokens"=많이 쓴 순([o] 토글).
         self._order = "time"
-        # 계정 필터 순환 목록: None(전체) + 등장 계정들(정렬). 전체 이력 기준이라
-        # accounts_total(서버 전이력 계정합) 키 ∪ 받은 레코드 계정으로 모은다 —
-        # 옛 계정도 필터에서 고를 수 있게(과거엔 capped _records 에 든 계정만 보였다).
-        seen = set(self._accounts_total)
-        for r in (self._full_recs or self._records):
-            seen.add(r.get("account") or usagelog.UNKNOWN)
-        seen.discard(None)
-        self._accounts = [None] + sorted(seen)
-        self._ai = 0
-
-    @property
-    def _account(self):
-        return self._accounts[self._ai]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="tklogbox"):
@@ -700,8 +733,6 @@ class TokenLogScreen(ModalScreen):
             # 색(.tkbbtn)으로 구분한다.
             with Horizontal(id="tktabs"):
                 yield Label("기간", id="tab_period", classes="tkbtab",
-                            markup=False)
-                yield Label("계정", id="tab_acct", classes="tkbtab",
                             markup=False)
                 yield Label("세션", id="tab_panel", classes="tkbtab",
                             markup=False)
@@ -739,6 +770,10 @@ class TokenLogScreen(ModalScreen):
                               cursor_type="row")
             table.can_focus = True
             yield table
+            # footer 한 줄: 시(hour) 뷰에서만 '5h/1주 경계까지 남은 시간'(실측 /usage
+            # 리셋 표기 기준)을 보인다. 다른 뷰/모드에선 _sync_tabs 가 숨긴다(요청
+            # 2026-06-19, 표시 위치=footer/하단 한 줄).
+            yield Static("", id="tkfoot", markup=False)
             yield Static("", id="tkhint", markup=False)
 
     async def on_mount(self):
@@ -830,11 +865,31 @@ class TokenLogScreen(ModalScreen):
             ts = parse_reset_ts(reset) if reset else None
             if ts is None or ts <= now:
                 continue
-            acct = self._account          # 현재 계정 필터를 그대로 따른다
-            tok = usagelog.window_sum(self._records, ts - span, account=acct)
+            tok = usagelog.window_sum(self._records, ts - span)
             parts.append(i18n.t(name_key, tok=usagelog._fmt_tokens(tok),
                                 left=self._fmt_left(ts - now)))
         return [" · ".join(parts)] if parts else []
+
+    def _boundary_left_line(self):
+        """시(hour) 뷰 footer 한 줄: **5h/1주 경계까지 남은 시간**(실측 /usage 리셋
+        표기 기준, parse_reset_ts). 표기가 없거나 과거(stale 실측)면 그 축은 생략하고,
+        둘 다 없으면 빈 문자열(footer 숨김). _window_lines 와 같은 리셋 소스를 쓰되
+        토큰 Σ 없이 남은 시간만 컴팩트하게 보인다(요청 2026-06-19)."""
+        u = self._usage
+        if not isinstance(u, dict):
+            return ""
+        import time as _t
+        now = _t.time()
+        parts = []
+        for key, name_key in (("session", "pscreen.foot_5h"),
+                              ("week_all", "pscreen.foot_week")):
+            d = u.get(key)
+            reset = d.get("reset") if isinstance(d, dict) else None
+            ts = parse_reset_ts(reset) if reset else None
+            if ts is None or ts <= now:
+                continue
+            parts.append(i18n.t(name_key, left=self._fmt_left(ts - now)))
+        return " · ".join(parts)
 
     def _active_tab(self):
         """현재 활성 **상위 뷰 탭** — limit/recon/warn 오버레이가 우선, 아니면 _view.
@@ -846,13 +901,13 @@ class TokenLogScreen(ModalScreen):
             return "recon"
         if self._warn_mode:
             return "warn"
-        return self._view   # "time" | "account" | "session"
+        return self._view   # "time" | "session"
 
     # 활성 상위 뷰 → 그 탭 Label id. 노트북 연결선(_TkTabConnector)이 활성 탭의
     # 화면 구간을 읽어 ▀ 다리를 그릴 때 쓴다. 액션(/usage·시나리오)은 활성 개념이
     # 없어 매핑에 없다(연결선은 항상 뷰 탭 아래에 걸린다).
     _ACTIVE_TAB_WIDGET = {
-        "time": "tab_period", "account": "tab_acct", "session": "tab_panel",
+        "time": "tab_period", "session": "tab_panel",
         "limit": "tab_limit", "recon": "tab_recon", "warn": "tab_warn"}
 
     def _active_main_tab_widget(self):
@@ -866,6 +921,11 @@ class TokenLogScreen(ModalScreen):
 
     def _sync_tabs(self):
         """상위 뷰 탭 라벨·활성 하이라이트(§7.1) + 활성 탭의 보조옵션 줄 표시(§7.2)."""
+        # footer(경계 잔여시간)는 기본 숨김 — 시(hour) 뷰 본문 경로에서만 켠다.
+        try:
+            self.query_one("#tkfoot", Static).display = False
+        except Exception:
+            pass
         try:
             narrow = self.app.size.width < 64
         except Exception:
@@ -878,7 +938,7 @@ class TokenLogScreen(ModalScreen):
                 pass
         active = self._active_tab()
         # 상위 뷰 탭 하이라이트(액션 /usage·시나리오는 상태가 없어 강조 안 함).
-        for tid, name in (("tab_period", "time"), ("tab_acct", "account"),
+        for tid, name in (("tab_period", "time"),
                           ("tab_panel", "session"), ("tab_limit", "limit"),
                           ("tab_recon", "recon"), ("tab_warn", "warn")):
             try:
@@ -944,6 +1004,20 @@ class TokenLogScreen(ModalScreen):
         s = usagelog._fmt_tokens(tok)
         digits = len(str(int(tok))) if tok else 1
         return " " * max(0, maxdigits - digits) + s
+
+    @staticmethod
+    def _fmt_date_hdr(d):
+        """hour 뷰 날짜 그룹 헤더 라벨: 'YYYY-MM-DD' → 'MM-DD (요일)'. 같은 날짜의
+        시각 행들을 이 헤더 아래로 묶는다(요청 2026-06-19). 요일은 day 버킷과 같은
+        i18n weekdays(월=0..일=6, datetime.weekday() 와 동순)로 표기."""
+        from datetime import datetime
+        short = d[5:] if len(d) >= 10 else d        # 'MM-DD'
+        try:
+            wd = datetime.strptime(d, "%Y-%m-%d").weekday()
+            names = i18n.t("pscreen.weekdays").split(",")
+            return f"{short} ({names[wd]})"
+        except (ValueError, TypeError, IndexError):
+            return short
 
     @staticmethod
     def _trunc(s, cells):
@@ -1037,12 +1111,12 @@ class TokenLogScreen(ModalScreen):
         table.add_column(i18n.t("구간"), key="span", width=25)
         table.add_column(i18n.t("실측(세션 5h)"), key="meas", width=16)
         table.add_column(i18n.t("추정Σ"), key="est", width=8)
-        table.add_column(i18n.t("계정"), key="note", width=16)
         if not rows:
-            table.add_row(i18n.t("pscreen.recon_empty"), "", "", "")
+            table.add_row(i18n.t("pscreen.recon_empty"), "", "")
         else:
-            for span, meas, est, note in rows:
-                table.add_row(span, meas, est, self._trunc(note, 16))
+            # note(계정)는 더는 표시하지 않는다 — 머신-로컬 표시(2026-06-19).
+            for span, meas, est, _note in rows:
+                table.add_row(span, meas, est)
         self.query_one("#tklogtitle", Label).update(
             i18n.t("토큰 대사 · 실측Δ% vs 추정Σ"))
         self.query_one("#tktop", Static).update(i18n.t("pscreen.recon_top"))
@@ -1104,7 +1178,7 @@ class TokenLogScreen(ModalScreen):
         return ["", label] + rows
 
     def _refresh_limit(self, table):
-        """[한도] 뷰: /usage 한도 상세(세션/주 막대·% 사용·리셋·계정·신선도)와 현재
+        """[한도] 뷰: /usage 한도 상세(세션/주 막대·% 사용·리셋·신선도)와 현재
         5h/주 창 추정 Σ, 그리고 다음 리셋까지의 **카운트다운 시계**를 표 자리에 한 열로
         보여준다 — 예전엔 이 7줄이 표 위 #tktop 에 항상 깔려 작은 화면을 덮었고(사용자
         요청 2026-06-14: 한도 전용 서브뷰로 분리), 카운트다운은 별도 usage-view 팝업에만
@@ -1115,8 +1189,6 @@ class TokenLogScreen(ModalScreen):
             lines = [i18n.t("pscreen.tklog_limit_empty")]
         else:
             lines = self._usage_lines() + self._window_lines()
-            if self._fold_acct:
-                lines.append(i18n.t("pscreen.fold_tag"))
             lines += self._limit_clock_lines()
         for ln in lines:
             table.add_row(ln)
@@ -1127,46 +1199,34 @@ class TokenLogScreen(ModalScreen):
             i18n.t("pscreen.tklog_limit_hint"))
 
     @staticmethod
-    def _warn_info_text(warn):
-        """상태줄 Claude 경고 문자열 → (제목, 줄목록). 경고 종류(포맷 미인식/반복 루프/
-        장기 턴)를 문구로 판별해 상황·할일 안내를 만든다 — 옛 _open_warn_info 의
-        InfoScreen 내용을 이 통합 '경고' 탭이 그대로 재사용하도록 추출(2026-06-17)."""
-        lines = [warn, ""]
-        if "포맷 미인식" in warn:
-            title = "Claude 포맷 미인식"
-            lines += [
-                "[상황]",
-                "• pytmux 가 Claude Code 화면 형식을 인식하지 못합니다.",
-                "• 토큰/사용량 추적과 자동화(자동 재개·자동 압축·한도 게이트)가 멈춥니다.",
-                "• Claude Code 자체 동작(입력·출력)에는 영향이 없습니다.",
-                "• 보통 Claude Code 버전 업데이트로 화면 구조가 바뀌면 발생합니다.",
-                "",
-                "[할일]",
-                "• 화면이 다시 정상 인식되면 경고는 자동으로 사라집니다(잠시 대기).",
-                "• 계속되면 pytmux 의 Claude 파서(claude.py)를 새 포맷에 맞춰 갱신해야 합니다.",
-                "• REC 캡처가 켜져 있으면 captures/ 로그로 새 포맷을 분석할 수 있습니다.",
-            ]
-        elif "반복" in warn or "루프" in warn:
-            title = "Claude 반복 루프 의심"
-            lines += [
-                "[상황]",
-                "• 같은 출력이 여러 번 반복됐습니다 — 루프 의심(경고만, 자동 개입 없음).",
-                "",
-                "[할일]",
-                "• 진행이 없으면 다른 지시를 주거나 /clear 후 다시 시도하세요.",
-                "• 임계는 옵션 claude_repeat_alert 로 조정/끌 수 있습니다(0=끔).",
-            ]
-        else:   # 장기 턴(⚠ M:SS) 등
-            title = "Claude 장기 턴"
-            lines += [
-                "[상황]",
-                "• 현재 Claude 턴이 임계 시간을 넘겨 오래 진행 중입니다(경고만, 자동 개입 없음).",
-                "",
-                "[할일]",
-                "• 정상적인 긴 작업일 수 있습니다. 멈춘 듯하면 패널에서 Esc 로 중단하세요.",
-                "• 임계는 옵션 claude_long_turn_sec 로 조정/끌 수 있습니다(0=끔).",
-            ]
-        return title, lines
+    def _warn_info_text(kind, warn=""):
+        """경고 **종류(kind)** → (제목, 줄목록). kind 는 서버가 보낸 구조적 신호
+        (status.claude_warn_kind: "fmt_unknown"|"repeat"|"long_turn") — 옛 한글
+        부분문자열 판별을 대체해 en 로케일에서도 정확히 분류한다(i18n 전수조사
+        2026-06-19). 제목·상황·할일 본문은 i18n(ko/en)에서 가져온다. 첫 줄엔 현재
+        경고 배지 문자열(warn)을 그대로 둔다(있으면). kind 미상(구버전 서버)이면 남은
+        한글 문자열로 한 번 폴백 판별하고, 그래도 모르면 장기 턴 안내."""
+        if kind is None and warn:       # 구버전 서버 호환(한글 문자열만 옴) 폴백
+            if "포맷" in warn or "미인식" in warn:
+                kind = "fmt_unknown"
+            elif "반복" in warn or "루프" in warn:
+                kind = "repeat"
+        key = {"fmt_unknown": "fmt", "repeat": "repeat"}.get(kind, "long")
+        title = i18n.t(f"claude.warn_{key}_title")
+        body = i18n.t(f"claude.warn_{key}_body").split("\n")
+        return title, ([warn, ""] + body if warn else body)
+
+    @staticmethod
+    def _warn_badge(kind, warn, n=None):
+        """경고 탭 첫 줄에 보일 **로케일 배지 문자열**. 상태줄(clientstatus)과 같은
+        규칙: 반복/포맷-미인식은 i18n(ko/en), 장기 턴은 언어중립('⚠ M:SS') 서버 문자열
+        유지. kind 미상(구버전 서버)이면 서버 문자열 폴백. en 모드에서 첫 줄이 한글
+        서버 문자열로 새던 것 수정(i18n 전수조사 2026-06-19)."""
+        if kind == "repeat":
+            return i18n.t("claude.warn_repeat_badge", n=n or 0)
+        if kind == "fmt_unknown":
+            return i18n.t("claude.warn_fmt_badge")
+        return warn
 
     def _refresh_warn(self, table):
         """[경고] 뷰: 상태줄 ⚠ Claude 경고(장기 턴/반복 루프/포맷 미인식)의 상황·할일
@@ -1175,12 +1235,16 @@ class TokenLogScreen(ModalScreen):
         클라 status(claude_warn)에서 라이브로 읽어, 경고가 해소되면 '경고 없음' 안내로
         바뀐다(닫지 않고 탭에 머물러도 다음 합성에서 갱신)."""
         table.add_column(i18n.t("pscreen.tklog_warn_col"), key="warn")
-        warn = getattr(getattr(self.app, "status", None), "claude_warn", None)
+        status = getattr(self.app, "status", None)
+        warn = getattr(status, "claude_warn", None)
+        kind = getattr(status, "claude_warn_kind", None)
+        n = getattr(status, "claude_warn_n", None)
         if not warn:
             title = i18n.t("pscreen.tklog_warn_title")
             lines = [i18n.t("pscreen.tklog_warn_empty")]
         else:
-            title, lines = self._warn_info_text(warn)
+            # 첫 줄 배지도 로케일화(en 에서 한글 서버 문자열 누출 방지).
+            title, lines = self._warn_info_text(kind, self._warn_badge(kind, warn, n))
         for ln in lines:
             table.add_row(ln)
         self.query_one("#tklogtitle", Label).update(title)
@@ -1197,37 +1261,20 @@ class TokenLogScreen(ModalScreen):
 
         · time: 시간 버킷 행(일 버킷엔 요일). day/week/month 는 전체 이력 일자 합성
           레코드(_full_recs)로 집계해 옛 버킷이 cap 에 안 잘리고, hour 는 일자
-          합성으로 못 만들어 raw _records(최근 N 건이면 충분). 계정 필터·정렬 적용.
-        · account: 계정별 **전체 이력** 합(서버 SQL accounts_total — cap 무관·귀속
-          반영). 없으면(구버전 서버) 레코드 집계 폴백. 필터 무시(전 계정 비교 뷰).
-        · session: 세션별 합(대표 탭:패널 라벨, 상위 N+기타 접기). 계정 필터 적용."""
+          합성으로 못 만들어 raw _records(최근 N 건이면 충분). 정렬 적용.
+        · session: 세션별 합(대표 탭:패널 라벨, 상위 N+기타 접기).
+        계정 차원은 제거 — 토큰 사용량은 머신-로컬 기준(2026-06-19)."""
         src = (self._records if self._bucket == "hour"
                else (self._full_recs if self._full_recs is not None
                      else self._records))
-        if self._view == "account":
-            if self._accounts_total:
-                pairs = sorted(self._accounts_total.items(),
-                               key=lambda kv: -kv[1])
-            else:
-                agg = usagelog.aggregate(
-                    self._full_recs if self._full_recs is not None
-                    else self._records)
-                pairs = sorted(agg["groups"].items(), key=lambda kv: -kv[1])
-            total = sum(t for _, t in pairs)
-            rows = [(a, t, round(t / total * 100) if total else 0)
-                    for a, t in pairs]
-            self._acct_rows = [a for a, _ in pairs]
-            vmax = max((t for _, t, _ in rows), default=0)
-            return rows, vmax, total, i18n.t("계정"), None
-        self._acct_rows = []
         hour_suffix = i18n.t("pscreen.hour_suffix")
         if self._view == "session":
-            v = usagelog.agg_view(src, self._bucket, self._account, "session",
+            v = usagelog.agg_view(src, self._bucket, None, "session",
                                   self._order, top=self._GROUP_TOP,
                                   hour_suffix=hour_suffix)
             return v["groups"], v["gmax"], v["total"], i18n.t("세션"), None
         weekdays = i18n.t("pscreen.weekdays").split(",")
-        v = usagelog.agg_view(src, self._bucket, self._account, "account",
+        v = usagelog.agg_view(src, self._bucket, None, "account",
                               self._order, weekdays=weekdays,
                               hour_suffix=hour_suffix)
         # 5번째: 원시 버킷 키(brows 와 동순) — hour 버킷 5h% 열 조인용(§10-D).
@@ -1252,9 +1299,8 @@ class TokenLogScreen(ModalScreen):
         # 스크랩 Σ(토큰 열)는 5h 소비를 과소반영하므로 '그 시각 5h 창이 얼마나 찼나'의
         # 진짜 신호다. 5h 비율은 일 단위가 아니라 시간 단위 뷰에 둔다(사용자 결정
         # 2026-06-17) — day/week/month 뷰엔 이 열을 보이지 않는다.
-        show5h = (self._bucket == "hour" and self._view != "account"
-                  and self._view != "session" and bool(self._hourly_pct)
-                  and bkeys is not None)
+        show5h = (self._bucket == "hour" and self._view != "session"
+                  and bool(self._hourly_pct) and bkeys is not None)
         # 1w%(주간 전체모델 한도) 열 — 5h% 옆(사용자 요청 2026-06-17). 5h% 와 같은 hour
         # 버킷 조건 + 주간 데이터가 있을 때만.
         show1w = show5h and bool(self._hourly_week_pct)
@@ -1272,9 +1318,27 @@ class TokenLogScreen(ModalScreen):
         # 짧은 기간 라벨에서 간격이 컸다). 헤더·가장 긴 라벨이 들어갈 만큼(+1 여백)만
         # 쓰되 티어 폭을 넘지 않고(account 긴 이메일은 종전대로 티어 상한), 행이 있을
         # 때만 적용한다(win==0 빈 안내문은 길어서 티어 폭을 유지해야 안 잘린다).
+        # hour+시간순 뷰는 같은 날짜의 시각 행을 **날짜 헤더 아래로 묶는다**(요청
+        # 2026-06-19). 토큰순 정렬은 날짜가 섞여 묶음이 무의미하므로 평평한
+        # 'MM-DD HHh' 라벨을 그대로 둔다. 묶을 때 시각 행 라벨에서 날짜를 떼고
+        # 'HHh' 만 들여쓰며, 날짜는 헤더 행이 인다(5h%/1w% 열은 헤더 행에선 빈다).
+        group_dates = (self._bucket == "hour" and self._view != "session"
+                       and self._order == "time" and bkeys is not None
+                       and bool(rows))
+        disp = []   # ("hdr", date_label) | ("row", label, tok, bk)
+        prev_date = None
+        for i, (label, tok, pct) in enumerate(rows):
+            bk = bkeys[i] if (bkeys is not None and i < len(bkeys)) else None
+            if group_dates and bk:
+                d = bk[:10]            # 'YYYY-MM-DD'
+                if d != prev_date:
+                    prev_date = d
+                    disp.append(("hdr", self._fmt_date_hdr(d)))
+                label = ("  " + label.split(" ", 1)[1]) if " " in label else label
+            disp.append(("row", label, tok, bk))
         if rows:
-            need = max([sum(_char_cells(c) for c in str(rowhdr))]
-                       + [sum(_char_cells(c) for c in str(r[0])) for r in rows]) + 1
+            labels = [str(rowhdr)] + [str(it[1]) for it in disp]
+            need = max(sum(_char_cells(c) for c in s) for s in labels) + 1
             label_w = min(label_w, max(3, need))
         # 컬럼: 행 차원(기간/계정/세션) | 토큰(자릿수 정렬, 좌측) | [5h%] [1w%].
         # (비율 막대 열은 사용자 요청으로 제거 — 2026-06-17.)
@@ -1297,50 +1361,58 @@ class TokenLogScreen(ModalScreen):
                     empty.append("")
             table.add_row(*empty)
         else:
-            for i, (label, tok, pct) in enumerate(rows):
+            for it in disp:
+                if it[0] == "hdr":
+                    # 날짜 그룹 헤더 행(비-데이터): 날짜는 굵게, 나머지 열은 빈다.
+                    cells = [Text(str(it[1]), style="bold"), Text("")]
+                    if show5h:
+                        cells.append(Text(""))
+                        if show1w:
+                            cells.append(Text(""))
+                    table.add_row(*cells)
+                    continue
+                _, label, tok, bk = it
                 cells = [self._trunc(label, label_w),
                          Text(self._tok_aligned(tok, maxdig), justify="left")]
                 if show5h:
-                    cells.append(self._lim5h_cell(
-                        bkeys[i] if i < len(bkeys) else None, lim_cells))
+                    cells.append(self._lim5h_cell(bk, lim_cells))
                     if show1w:
-                        cells.append(self._lim_week_cell(
-                            bkeys[i] if i < len(bkeys) else None))
+                        cells.append(self._lim_week_cell(bk))
                 table.add_row(*cells)
 
-        # 제목: 뷰 차원(시간/일/주/월/계정/세션)별. 스코프/한도(위)·키 안내(아래) 분리.
+        # 제목: 뷰 차원(시간/일/주/월/세션)별. 스코프/한도(위)·키 안내(아래) 분리.
         order_l = i18n.t("토큰순") if self._order == "tokens" else i18n.t("시간순")
         # (추정): 집계 원천(스크랩 누계)은 활동량 추정 — 실측 한도는 상단 막대(S6 T3).
-        what = (i18n.t("계정") if self._view == "account"
-                else i18n.t("세션") if self._view == "session"
+        what = (i18n.t("세션") if self._view == "session"
                 else i18n.t(self._BUCKET_WORD[self._bucket]))
         self.query_one("#tklogtitle", Label).update(
             i18n.t("pscreen.tklog_title2", what=what))
-        acct = self._account if self._account is not None \
-            else i18n.t("pscreen.acct_all")
-        # Σ: 정확한 전체 이력 합(서버 SQL 집계, Phase B). 현재 계정 필터에 맞춰
-        # total_all(전체) / accounts_total[acct](계정별)을 쓰고, 없으면(구버전 서버)
-        # 표시 레코드 합으로 폴백. 레코드가 cap 돼 표시 합과 다르면 그 표시 합을 병기.
-        if self._account is None:
-            life = self._total_all
-        else:
-            life = self._accounts_total.get(self._account)
+        # Σ: 정확한 전체 이력 합(서버 SQL 집계, Phase B). 계정과 무관한 머신-로컬
+        # 전체합(total_all)을 쓰고, 없으면(구버전 서버) 표시 레코드 합으로 폴백.
+        # 레코드가 cap 돼 표시 합과 다르면 그 표시 합을 병기.
+        life = self._total_all
         if life is None:
             life = win
         sigma = f"~Σ{usagelog._fmt_tokens(life)}"   # ~ = 추정 라벨(S6 T3)
         if life != win:
             sigma += i18n.t("pscreen.tklog_disp", n=usagelog._fmt_tokens(win))
         # 스코프는 1줄로 컴팩트(묶음/버킷은 제목에 이미 있음). 표 높이를 아낀다.
-        scope = i18n.t("pscreen.tklog_scope", acct=acct, order=order_l,
-                       sigma=sigma)
-        if self._fold_acct:
-            # §5.5 귀속 표시: 미식별분이 단일 식별 계정에 접혀 있음을 명시(침묵 변형
-            # 금지 — 합계가 DB 의 unknown 분해와 달라 보이는 이유를 화면이 설명).
-            scope += " · " + i18n.t("pscreen.fold_tag")
-        # 상단은 1줄(한도 요약 접두 + 스코프)만 — /usage 막대·창Σ·계정·신선도 상세는
+        scope = i18n.t("pscreen.tklog_scope", order=order_l, sigma=sigma)
+        # 상단은 1줄(한도 요약 접두 + 스코프)만 — /usage 막대·창Σ·신선도 상세는
         # [한도] 뷰로 옮겼다(작은 화면 정리, 2026-06-14). usage 없으면 접두는 빈 문자열.
         self.query_one("#tktop", Static).update(self._limit_summary() + scope)
         self.query_one("#tkhint", Static).update(i18n.t("pscreen.tklog_hint"))
+        # footer: 시(hour) 뷰에서만 5h/1주 경계까지 남은 시간을 한 줄로(요청 2026-06-19).
+        # 다른 버킷/세션 뷰·내용 없음이면 줄을 숨겨 빈 줄이 안 남게 한다.
+        try:
+            foot = self.query_one("#tkfoot", Static)
+            fline = (self._boundary_left_line()
+                     if (self._bucket == "hour" and self._view != "session")
+                     else "")
+            foot.update(fline)
+            foot.display = bool(fline)
+        except Exception:
+            pass
 
     def _exit_body_modes(self):
         """표를 대체하는 뷰(대사/한도/경고)에서 빠져나온다 — 기간/계정/세션/정렬 동작이
@@ -1382,12 +1454,6 @@ class TokenLogScreen(ModalScreen):
             self._exit_body_modes()
             self._view = "time"
             self._bucket = self._TAB_BUCKET[wid]
-            self.run_worker(self._refresh())
-        elif wid == "tab_acct":
-            event.stop()
-            # 계정 뷰 토글(행=계정별 전체 합). 행 선택=그 계정 필터+일별 드릴다운.
-            was = self._exit_body_modes()
-            self._view = "account" if was or self._view != "account" else "time"
             self.run_worker(self._refresh())
         elif wid == "tab_panel":
             event.stop()
@@ -1435,21 +1501,6 @@ class TokenLogScreen(ModalScreen):
             event.stop()
             self.dismiss(None)
 
-    def on_data_table_row_selected(self, event):
-        """계정 뷰에서 행 선택(Enter/클릭) → 그 계정을 필터로 걸고 일별 추이로
-        드릴다운(기간 뷰 전환). 다른 뷰에선 무동작(표 커서만)."""
-        if self._view != "account":
-            return
-        idx = getattr(event, "cursor_row", None)
-        if idx is None or not (0 <= idx < len(self._acct_rows)):
-            return
-        acct = self._acct_rows[idx]
-        if acct in self._accounts:
-            self._ai = self._accounts.index(acct)
-            self._view = "time"
-            self._bucket = "day"
-            self.run_worker(self._refresh())
-
     async def on_key(self, event: events.Key):
         k = event.key
         if k in self._BUCKETS:
@@ -1458,18 +1509,6 @@ class TokenLogScreen(ModalScreen):
             self._exit_body_modes()
             self._view = "time"
             self._bucket = self._BUCKETS[k]
-            await self._refresh()
-            return
-        if k == "a" and len(self._accounts) > 1:
-            event.stop()
-            self._ai = (self._ai + 1) % len(self._accounts)
-            await self._refresh()
-            return
-        if k == "c":
-            event.stop()
-            # 계정 뷰 토글(행=계정별 전체 합). 대사/한도 뷰에서 누르면 그리로 진입.
-            was = self._exit_body_modes()
-            self._view = "account" if was or self._view != "account" else "time"
             await self._refresh()
             return
         if k == "p":
@@ -1486,11 +1525,6 @@ class TokenLogScreen(ModalScreen):
             if self._limit_mode:
                 self._recon_mode = False
             await self._refresh()
-            return
-        if k == "enter" and self._view == "account" \
-                and not self._limit_mode and not self._recon_mode:
-            # 계정 뷰 행 선택(드릴다운)은 DataTable 의 RowSelected 가 처리 — 닫지
-            # 않고 표에 넘긴다.
             return
         if k == "o":
             event.stop()
@@ -1552,163 +1586,3 @@ class TokenLogScreen(ModalScreen):
         # 그 외 키는 닫는다(기존 동작).
         event.stop()
         self.dismiss(None)
-
-
-
-class AccountAliasScreen(ModalScreen):
-    """§10-E #2b 좌하단 Claude 계정 — 감지된 계정 목록 + 사용자 별칭 편집 + 표시모드
-    선택 화면. 서버 request_account_list 회신으로 채운다(open_account_aliases).
-      · 목록: 감지된 계정(이메일) → 현재 별칭
-      · Enter(또는 행 클릭): 그 계정의 별칭 편집(하단 입력칸; 빈값 제출=별칭 삭제)
-      · m: 표시모드 순환(별칭/메일 전체/표시 안 함) — footer 표기에 즉시 반영
-      · Esc: 편집 중이면 편집 취소, 아니면 닫기. [x]/바깥 클릭=닫기.
-    설정은 서버 opts.json(plugin_opts)에 영속(set_account_alias·set_account_display)."""
-    CSS = """
-    AccountAliasScreen { align: center middle; }
-    #aabox { width: 80%; max-width: 76; height: auto; max-height: 80%;
-             border: round $accent; background: $panel; padding: 0 1; }
-    #aahead { width: 100%; height: 1; }
-    #aatitle { width: 1fr; height: 1; color: $accent; text-style: bold; }
-    #aaclose { width: 5; height: 1; content-align: center middle;
-               background: $error; color: $text; text-style: bold; }
-    #aamode { width: 100%; height: 1; color: $text-muted; }
-    #aalist { width: 100%; height: auto; max-height: 16; margin: 0 0 0 0; }
-    #aainput { width: 100%; display: none; }
-    #aainput.editing { display: block; }
-    #aahint { width: 100%; height: 1; color: $text-muted; }
-    """
-    _MODES = ("alias", "full", "hidden")
-
-    def __init__(self, accounts, aliases, display):
-        super().__init__()
-        self._accounts = list(accounts or [])
-        self._aliases = dict(aliases or {})
-        self._display = display if display in self._MODES else "alias"
-        self._editing = None        # 편집 중인 계정 이메일(없으면 None)
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="aabox"):
-            with Horizontal(id="aahead"):
-                yield Static(i18n.t("acct.title"), id="aatitle")
-                yield Label("[x]", id="aaclose", markup=False)
-            yield Static("", id="aamode", markup=False)
-            yield ListView(id="aalist")
-            yield Input(id="aainput", placeholder=i18n.t("acct.input_ph"))
-            yield Static(i18n.t("acct.edit_hint"), id="aahint", markup=False)
-
-    def on_mount(self):
-        # 리스트는 mount 때 한 번만 채우고 이후엔 행 라벨을 제자리 갱신한다(ListView.clear
-        # 가 비동기라 clear+append 재구성 시 id 충돌/중복이 났다 — §10-E #2b 함정).
-        self._labels = []           # 계정 행 Label(인덱스=self._accounts 정렬)
-        self._sync_mode_line()
-        lv = self.query_one("#aalist", ListView)
-        if not self._accounts:
-            lv.append(ListItem(Label(i18n.t("acct.none"), markup=False)))
-        else:
-            for email in self._accounts:
-                lab = Label(self._row_text(email), markup=False)
-                self._labels.append(lab)
-                lv.append(ListItem(lab))
-        lv.focus()
-
-    # ---- 데이터/표시 ----
-    def _mode_name(self):
-        return i18n.t("acct.mode_" + self._display)
-
-    def _row_text(self, email):
-        alias = self._aliases.get(email)
-        tail = alias if alias else i18n.t("acct.no_alias")
-        return f"{email}  →  {tail}"
-
-    def _sync_mode_line(self):
-        self.query_one("#aamode", Static).update(
-            i18n.t("acct.mode_line", mode=self._mode_name()))
-
-    def _refresh_row(self, email):
-        if email in self._accounts:
-            i = self._accounts.index(email)
-            if i < len(getattr(self, "_labels", [])):
-                self._labels[i].update(self._row_text(email))
-
-    def update_data(self, accounts, aliases, display):
-        """서버 account_list 재회신으로 데이터 갱신(편집 후 재요청 시). 계정 집합이
-        같으면 행 라벨만 제자리 갱신(ListView clear 의 비동기 함정 회피)."""
-        self._aliases = dict(aliases or {})
-        self._display = display if display in self._MODES else "alias"
-        self._sync_mode_line()
-        if list(accounts or []) == self._accounts:
-            for email in self._accounts:
-                self._refresh_row(email)
-
-    # ---- 표시모드 순환 ----
-    def _cycle_mode(self):
-        i = self._MODES.index(self._display)
-        self._display = self._MODES[(i + 1) % len(self._MODES)]
-        self.app.send_cmd("set_account_display", value=self._display)
-        self._sync_mode_line()
-
-    # ---- 별칭 편집 ----
-    def _begin_edit(self, idx):
-        if not (0 <= idx < len(self._accounts)):
-            return
-        self._editing = self._accounts[idx]
-        inp = self.query_one("#aainput", Input)
-        inp.value = self._aliases.get(self._editing, "")
-        inp.add_class("editing")
-        inp.focus()
-
-    def _end_edit(self):
-        self._editing = None
-        inp = self.query_one("#aainput", Input)
-        inp.remove_class("editing")
-        inp.value = ""
-        self.query_one("#aalist", ListView).focus()
-
-    def on_input_submitted(self, event):
-        if self._editing is None:
-            return
-        email = self._editing
-        alias = (event.value or "").strip()
-        self.app.send_cmd("set_account_alias", email=email, alias=alias)
-        if alias:                       # 낙관적 즉시 반영(서버 broadcast 와 동치)
-            self._aliases[email] = alias
-        else:
-            self._aliases.pop(email, None)
-        self._end_edit()
-        self._refresh_row(email)        # 해당 행만 제자리 갱신(전체 재구성 X)
-
-    def on_list_view_selected(self, event):
-        idx = getattr(self.query_one("#aalist", ListView), "index", None)
-        if idx is not None:
-            self._begin_edit(idx)
-
-    def on_click(self, event: events.Click):
-        w = getattr(event, "widget", None)
-        wid = inside = None
-        while w is not None:
-            this = getattr(w, "id", None)
-            if this and wid is None:
-                wid = this
-            if this == "aabox":
-                inside = True
-            w = w.parent
-        if wid == "aaclose":
-            event.stop()
-            self.dismiss(None)
-        elif not inside:
-            event.stop()
-            self.dismiss(None)
-
-    def on_key(self, event: events.Key):
-        k = event.key
-        if self._editing is not None:
-            if k == "escape":           # 편집 취소(입력은 on_input_submitted 가 처리)
-                event.stop()
-                self._end_edit()
-            return
-        if k == "escape":
-            event.stop()
-            self.dismiss(None)
-        elif k in ("m", "ㅡ"):           # 표시모드 순환(IME ㅡ 도 허용)
-            event.stop()
-            self._cycle_mode()

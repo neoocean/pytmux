@@ -575,8 +575,19 @@ class ServerTreeMixin:
                         tab.name = cmd
                         changed = True
                 if changed:
-                    for c in clients:
-                        await write_msg(c.writer, self._status_msg(sess))
+                    self._broadcast_status(sess)
+
+    def _broadcast_status(self, sess: Session):
+        """세션의 모든 클라에 현재 status 를 방송한다. **반드시 per-client**
+        (`_status_msg(sess, client=c)`)로 빌드해, 원격 탭을 보는 클라(remote_view)가
+        `_remote_status_override`(원격 탭 active 보존·로컬 탭 비활성)를 받게 한다.
+        client 없이 `_status_msg(sess)` 로 방송하면 로컬 active(=sess.active_index)가
+        그대로 새어, 원격 탭을 보는 클라의 탭바가 로컬 탭으로 한 프레임 튀었다
+        복귀한다(§10-F 원격 탭 활성 튐 — auto-rename 방송이 이 누락의 원인이었다)."""
+        for c in self.clients:
+            if c.session is sess:
+                asyncio.create_task(
+                    write_msg(c.writer, self._status_msg(sess, client=c)))
 
     def kill_window(self, sess: Session):
         win = sess.active_window

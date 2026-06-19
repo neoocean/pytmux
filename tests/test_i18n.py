@@ -213,3 +213,38 @@ async def test_seed_catalog_has_both_locales():
     i18n.set_locale("ko")
     assert i18n.t("capture.status_on") == "상태: ON (캡처 중)"
     _reset()
+
+
+async def test_en_catalog_has_no_hangul_leak():
+    """en 로케일 카탈로그 값에 한글이 새지 않는다(i18n 전수조사 회귀 2026-06-19).
+
+    UI 표면 문자열은 전부 i18n 을 거치고 en 값은 영문이어야 한다. 예외는 **언어 자체의
+    이름**(autonym) — 'Deutsch' 가 영어 UI 에서도 'Deutsch' 이듯 한국어는 '한국어'로
+    표기한다. 그 외 en 값에 한글이 있으면 누출이므로 실패시킨다. 카탈로그를 채우려면
+    주요 UI 모듈(코어 클라 + 플러그인)을 import 한다(register 는 import 시점 1회)."""
+    import importlib
+    import re
+    # 코어 클라 UI + 플러그인 모듈 import → register 누적.
+    for mod in ("pytmuxlib.client", "pytmuxlib.clientscreens",
+                "pytmuxlib.clientwidgets"):
+        try:
+            importlib.import_module(mod)
+        except Exception:
+            pass
+    for p in ("claude-code", "ncd", "calendar", "clock", "rec",
+              "ime-indicator", "claude-resume", "claude-prompt-history",
+              "claude-token-usage-view", "p4-show-submitted-changelists"):
+        for sub in ("", "clientstatus", "screens", "render", "__init__",
+                    "clientside", "overlay", "screen"):
+            name = f"pytmuxlib.plugins.{p}" + (f".{sub}" if sub else "")
+            try:
+                importlib.import_module(name)
+            except Exception:
+                pass
+    hangul = re.compile(r"[가-힣]")
+    # 언어 autonym(네이티브 표기 유지)만 허용.
+    allow = {"lang.name.ko", "한국어"}
+    leaks = {k: v for k, v in i18n._CATALOG.get("en", {}).items()
+             if k not in allow and isinstance(v, str) and hangul.search(v)}
+    assert not leaks, f"en 카탈로그 한글 누출: {leaks}"
+    _reset()

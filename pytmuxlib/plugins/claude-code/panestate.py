@@ -69,6 +69,11 @@ def init_pane(pane) -> None:
     pane._done_tail = None
     pane._repeat_n = 0
     pane._claude_warn = None
+    # M17 경고 종류(구조적 — 클라가 로케일별로 배지/안내를 렌더): None|"long_turn"|
+    # "repeat"|"fmt_unknown". _claude_warn_n=반복 종류일 때 반복 횟수(그 외 None).
+    # 한글 부분문자열 판별을 대체해 en 로케일에서도 정확히 분류된다(i18n 전수조사).
+    pane._claude_warn_kind = None
+    pane._claude_warn_n = None
     pane._model_tip = None   # M14c 힌트: 모델 과선택 알림 배지 문자열(없으면 None)
     # §3.7 포맷 미인식 가시화: _fmt_unknown=경고 활성, _fmt_first_mono=의심 시작 시각
     # (Claude fg + 파서 None), _fmt_logged=error.log 1회 기록 가드, _fmt_check_mono=

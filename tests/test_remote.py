@@ -270,6 +270,70 @@ async def test_remote_tab_active_highlight_and_status_passthrough():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_autorename_broadcast_keeps_remote_active_for_viewer():
+    """§10-F 원격 탭 활성 튐 회귀: status 방송은 _broadcast_status(per-client)로
+    빌드돼, 원격 탭을 보는 클라는 방송 후에도 ⇄ 원격 탭이 active·로컬 탭은 비활성으로
+    유지된다. 예전 auto-rename 루프는 clientless `_status_msg(sess)` 로 방송해 로컬
+    active(=sess.active_index)가 새어 탭바가 로컬 탭으로 한 프레임 튀었다(복귀). 안
+    보는 클라는 per-client 라 종전대로 로컬 active 를 받는다."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    reader = writer = reader2 = writer2 = None
+    try:
+        srvB.ensure_default_session(80, 24)
+        sessA = srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        stm = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="merged status")
+        gidx = next(w["index"] for w in stm["windows"]
+                    if w["name"].startswith("⇄"))
+        await write_msg(writer, {"t": "cmd", "action": "select_window",
+                                 "index": gidx})
+        await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") and w["active"]
+                    for w in m["windows"]),
+            what="viewer on remote tab")
+        # 안 보는 둘째 클라
+        reader2, writer2 = await _attach_client(sockA)
+        await _read_until(reader2, lambda m: m.get("t") == "status",
+                          what="2nd client status")
+        # auto-rename 방송 시뮬: 로컬 탭 이름 변경 + _broadcast_status
+        sessA.tabs[0].name = "renamed-local"
+        srvA._broadcast_status(sessA)
+        # 보는 클라: 방송 후에도 ⇄ 원격 탭 active 유지·로컬 탭 비활성(튐 없음)
+        stv = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="viewer status after broadcast")
+        rtabs = [w for w in stv["windows"] if w["name"].startswith("⇄")]
+        ltabs = [w for w in stv["windows"] if not w["name"].startswith("⇄")]
+        assert any(w["active"] for w in rtabs), ("방송 후에도 원격 탭 active", rtabs)
+        assert not any(w["active"] for w in ltabs), ("로컬 탭 비활성(튐 없음)", ltabs)
+        # 안 보는 클라: per-client 라 로컬 active(⇄ 비활성)
+        st2 = await _read_until(
+            reader2, lambda m: m.get("t") == "status"
+            and any(not w["name"].startswith("⇄") and w["active"]
+                    for w in m["windows"]),
+            what="non-viewer local active after broadcast")
+        assert not any(w["active"] for w in st2["windows"]
+                       if w["name"].startswith("⇄"))
+    finally:
+        for w in (writer, writer2):
+            if w is not None:
+                w.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
 async def test_remote_reconnect_backoff_remerges_tab():
     """Stage 3 자동 재연결: 링크가 비명시적으로 죽으면(EOF) 백오프 후 재연결을
     시도하고, 성공하면 notice + ⇄ 탭이 다시 병합된다."""

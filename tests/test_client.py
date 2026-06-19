@@ -171,6 +171,7 @@ async def test_net_degraded_hysteresis():
     """degraded 히스테리시스(#5.8): 임계 초과 RTT 가 net_bad_n 회 연속이면 degraded
     ON, 임계 이하가 net_good_n 회 연속이면 OFF. 한두 표본 깜빡임엔 안 뒤집힌다."""
     async def body(app, pilot, srv):
+        app._net_local = False                # 원격 경로(로컬은 degraded 억제)
         app.net_auto_reconnect = False        # 회복용 강제 재접속 경로 분리
         app._net_degraded = False
         app._net_bad = app._net_good = 0
@@ -196,6 +197,7 @@ async def test_net_degraded_recover_triggers_reconnect():
     async def body(app, pilot, srv):
         calls = []
         app.reconnect_now = lambda why="auto": calls.append(why)
+        app._net_local = False                # 원격 경로(로컬은 자동 재접속 억제)
         app.net_auto_reconnect = True
         app._force_reconnecting = False
         app._net_degraded = False
@@ -204,6 +206,70 @@ async def test_net_degraded_recover_triggers_reconnect():
             app._net_sample(app.net_rtt_threshold + 1.0)
         assert calls == ["auto"], calls
         assert app._net_bad == 0   # 다음 회복까지 카운터 리셋(간격 두기)
+    await _with_app(body)
+
+
+async def test_net_local_suppresses_degraded():
+    """§10-F: 로컬(AF_UNIX·루프백 TCP) 연결은 네트워크 개념이 없으므로 임계 초과
+    RTT 가 아무리 연속돼도 degraded(빨강 외곽선)로 가지 않고 자동 재접속도 안 한다.
+    RTT 표본·연속 카운터는 그대로 갱신돼 진단 로그는 살아 있다(_net_last_rtt)."""
+    async def body(app, pilot, srv):
+        calls = []
+        app.reconnect_now = lambda why="auto": calls.append(why)
+        app._net_local = True                 # 로컬 연결
+        app.net_auto_reconnect = True
+        app._force_reconnecting = False
+        app._net_degraded = False
+        app._net_bad = app._net_good = 0
+        thr = app.net_rtt_threshold
+        # 표시 임계·회복 임계를 한참 넘는 느린 표본을 길게 줘도…
+        for _ in range(app.net_recover_n + app.net_bad_n + 2):
+            app._net_sample(thr + 1.0)
+        assert app._net_degraded is False, "로컬은 degraded 로 안 감"
+        assert calls == [], "로컬은 자동 재접속 안 함"
+        assert app._net_last_rtt == thr + 1.0, "RTT 표본은 계속 기록(진단용)"
+        assert app._net_bad >= app.net_bad_n, "연속 카운터도 갱신(로그에 보임)"
+    await _with_app(body)
+
+
+async def test_net_debug_log_env_gated():
+    """§10-F 진단: PYTMUX_NET_DEBUG off 면 RTT 로그를 안 남기고, on 이면 표본마다
+    한 줄(rtt_ms/thr_ms/bad/good/degraded/local)을 `<state>.netdbg.jsonl` 에 append."""
+    import os
+    import json
+    from pytmuxlib import ipc
+
+    async def body(app, pilot, srv):
+        path = ipc.state_base(app.sock_path) + ".netdbg.jsonl"
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        old = os.environ.get("PYTMUX_NET_DEBUG")
+        try:
+            # off: 로그 파일 생성 안 됨
+            os.environ.pop("PYTMUX_NET_DEBUG", None)
+            app._net_sample(0.01)
+            assert not os.path.exists(path), "off 면 로그 없음"
+            # on: 표본마다 한 줄
+            os.environ["PYTMUX_NET_DEBUG"] = "1"
+            app._net_local = True
+            app._net_sample(app.net_rtt_threshold + 1.0)
+            with open(path, encoding="utf-8") as f:
+                lines = [l for l in f.read().splitlines() if l.strip()]
+            assert len(lines) == 1, lines
+            rec = json.loads(lines[0])
+            assert rec["local"] is True and rec["degraded"] is False
+            assert rec["rtt_ms"] > rec["thr_ms"]
+        finally:
+            if old is None:
+                os.environ.pop("PYTMUX_NET_DEBUG", None)
+            else:
+                os.environ["PYTMUX_NET_DEBUG"] = old
+            try:
+                os.remove(path)
+            except OSError:
+                pass
     await _with_app(body)
 
 
@@ -1240,8 +1306,8 @@ def _tok_text(scr):
 
 async def test_token_log_screen_aggregates_and_switches():
     # #7(2026-06-12 재설계): token_log 응답 → TokenLogScreen. 표는 한 번에 한
-    # 차원만 — 기간 뷰(기본)는 시간 버킷 행만, [c] 계정 뷰는 계정 행만. [m] 월
-    # 버킷 전환·[a] 계정 필터 순환이 라운드트립 없이 동작.
+    # 차원만 — 기간 뷰(기본)는 시간 버킷 행만. [m] 월 버킷 전환이 라운드트립 없이
+    # 동작. (계정 차원은 제거 — 토큰 사용량은 머신-로컬 기준, 2026-06-19.)
     async def body(app, pilot, srv):
         from textual.widgets import Label
         recs = [
@@ -1257,34 +1323,20 @@ async def test_token_log_screen_aggregates_and_switches():
         assert scr.__class__.__name__ == "TokenLogScreen"
         joined = _tok_text(scr)
         assert "Σ3.5k" in joined, joined
-        # 기간 뷰(기본)엔 계정 행이 없다(차원 혼합 제거 — 재설계).
+        # 기간 뷰(기본)엔 계정 행이 없다 — 계정 차원 자체가 제거됐다.
         assert scr._view == "time"
-        assert "team@y.org" not in joined, joined
+        assert "team@y.org" not in joined and "me@x.org" not in joined, joined
         # 일 버킷 라벨에 요일이 곁들여진다(MM-DD(요일)).
         import time as _t
         wd = "월화수목금토일"[_t.localtime(1_700_500_000.0).tm_wday]
         assert f"({wd})" in joined, joined
-        # [c] 계정 뷰: 계정별 합 행(둘 다 보임).
-        await pilot.press("c")
-        await pilot.pause(0.1)
-        assert scr._view == "account" and app.screen_stack[-1] is scr
-        joined_c = _tok_text(scr)
-        assert "me@x.org" in joined_c and "team@y.org" in joined_c, joined_c
-        assert "계정별" in joined_c, joined_c
-        await pilot.press("c")                    # 토글 복귀 → 기간 뷰
-        await pilot.pause(0.1)
-        assert scr._view == "time"
+        # 계정 탭은 없다(제거).
+        assert not scr.query("#tab_acct")
         # 닫기 버튼 [x] 가 글자까지 보여야 함(markup=False — 예전엔 마크업으로
         # 해석돼 배경색만 남고 X 가 사라졌다).
         close = scr.query_one("#tklogclose", Label)
         assert "[x]" in close.render().plain, \
             f"닫기 버튼에 [x] 글자가 보여야 함: {close.render().plain!r}"
-        # 계정 필터 순환([a]): 전체 → 첫 계정만(스코프 줄에 필터 계정 표시).
-        await pilot.press("a")
-        await pilot.pause(0.1)
-        joined2 = _tok_text(scr)
-        accts = {a for a in ("me@x.org", "team@y.org") if a in joined2}
-        assert len(accts) == 1, f"한 계정만 필터링돼야: {joined2}"
         # 월 버킷 전환([m]) — 닫히지 않고 갱신
         await pilot.press("m")
         await pilot.pause(0.1)
@@ -1348,7 +1400,8 @@ async def test_token_log_recon_view_toggle():
         assert "5%→9% (Δ+4)" in joined, joined
         assert "9%→2% (리셋)" in joined, joined
         assert "~1.5k" in joined and "~50" in joined, joined
-        assert "계정혼합/미상" in joined, joined
+        # 계정(비고) 열은 제거됐다 — 머신-로컬 표시(2026-06-19).
+        assert "계정혼합/미상" not in joined, joined
         await pilot.press("r")                     # 집계 뷰로 복귀
         await pilot.pause(0.1)
         joined2 = _tok_text(scr)
@@ -1413,7 +1466,7 @@ async def test_token_log_limit_view_toggle():
 
 async def test_token_log_tab_subrow_and_limit_return():
     """§7.1·§7.2: 상위 뷰 탭 1줄 + 활성 탭 보조옵션 하위줄. 보조옵션 줄은 기간/세션
-    뷰에서만 보이고(입도 그룹은 기간 뷰만), 한도/계정/대사/경고 뷰에선 숨는다. 한도
+    뷰에서만 보이고(입도 그룹은 기간 뷰만), 한도/대사/경고 뷰에선 숨는다. 한도
     뷰에서 기간 입도가 강조되지 않으며(§7.1), 기간 탭 클릭으로 한도에서 복귀된다."""
     from textual.widgets import Label
     async def body(app, pilot, srv):
@@ -1429,12 +1482,6 @@ async def test_token_log_tab_subrow_and_limit_return():
         assert scr.query_one("#tksub").display is True
         assert scr.query_one("#tksub_period").display is True
         assert scr.query_one("#tab_period", Label).has_class("tkbtab-active")
-        # 계정 뷰: 보조옵션 줄 숨김(옵션 없음), 계정 탭 활성.
-        await pilot.press("c")
-        await pilot.pause(0.1)
-        assert scr._active_tab() == "account"
-        assert scr.query_one("#tksub").display is False
-        assert scr.query_one("#tab_acct", Label).has_class("tkbtab-active")
         # 세션 뷰: 보조옵션 줄 보이되 입도 그룹은 숨김(정렬만 해당).
         await pilot.press("p")
         await pilot.pause(0.1)
@@ -1493,44 +1540,6 @@ async def test_token_log_opens_hour_view_from_5h_segment():
     await _with_app(body)
 
 
-async def test_account_alias_screen_lists_edits_and_cycles_mode():
-    """§10-E #2b: account_list 회신 → AccountAliasScreen 이 감지 계정+별칭을 나열하고,
-    'm' 으로 표시모드 순환(set_account_display)·행 선택+입력으로 별칭 설정(set_account_alias).
-    """
-    from textual import events
-    async def body(app, pilot, srv):
-        sent = []
-        app.send_cmd = lambda c, **kw: sent.append((c, kw))
-        app._want_account_list = True
-        app._dispatch({"t": "account_list",
-                       "accounts": ["me@x.org", "alt@y.org"],
-                       "aliases": {"me@x.org": "메인"}, "display": "alias"})
-        await pilot.pause(0.1)
-        scr = app.screen_stack[-1]
-        assert scr.__class__.__name__ == "AccountAliasScreen", scr
-        assert scr._accounts == ["me@x.org", "alt@y.org"]
-        assert scr._aliases == {"me@x.org": "메인"}
-        assert scr._display == "alias"
-        # 'm' → 표시모드 순환(alias→full) + 서버 전송
-        scr.on_key(events.Key("m", "m"))
-        assert ("set_account_display", {"value": "full"}) in sent
-        assert scr._display == "full"
-        # 둘째 계정 선택 → 별칭 편집 → 입력 제출 → set_account_alias
-        scr.query_one("#aalist").index = 1
-        scr.on_list_view_selected(None)
-        await pilot.pause(0.05)
-        assert scr._editing == "alt@y.org"
-
-        class _Ev:
-            value = "보조"
-        scr.on_input_submitted(_Ev())
-        assert ("set_account_alias",
-                {"email": "alt@y.org", "alias": "보조"}) in sent
-        assert scr._aliases["alt@y.org"] == "보조"
-        assert scr._editing is None
-    await _with_app(body)
-
-
 async def test_token_log_hour_view_has_5h_and_1w_columns_no_ratio():
     """사용자 요청(2026-06-17): hour 뷰 표에 5h% 옆 1w%(주간 한도) 열을 추가하고 기존
     비율(ratio/막대) 열은 제거. 5h%/1w% 는 hour 버킷에서만, 비율 열은 어느 뷰에도 없다."""
@@ -1574,85 +1583,12 @@ async def test_token_log_lifetime_total_from_server_agg():
         ]
         app._want_token_log = True
         # 전체 이력은 9.5k(레코드 cap 밖 6k 가 더 있음) — 서버가 SQL 로 집계해 전달.
-        app._dispatch({"t": "token_log", "records": recs, "total_all": 9500,
-                       "accounts_total": {"me@x.org": 7500, "team@y.org": 2000}})
+        app._dispatch({"t": "token_log", "records": recs, "total_all": 9500})
         await pilot.pause(0.1)
         scr = app.screen_stack[-1]
         joined = _tok_text(scr)
         assert "Σ9.5k" in joined, joined          # lifetime 합(전체 이력)
         assert "표시 3.5k" in joined, joined        # 표시 레코드 합 병기
-        # 계정 필터([a]) → me@x.org: lifetime 7.5k, 표시 1.5k
-        await pilot.press("a")
-        await pilot.pause(0.1)
-        joined2 = _tok_text(scr)
-        assert "Σ7.5k" in joined2 and "표시 1.5k" in joined2, joined2
-    await _with_app(body)
-
-
-async def test_token_log_folds_unknown_into_single_account():
-    """§5.5 단일 식별 계정 귀속(표시층): 식별(이메일) 계정이 하나뿐이면 미식별
-    (unknown) 레코드·계정합계를 그 계정에 귀속해 보인다 — 'unknown 86%' 행이
-    사라지고, 계정 필터를 걸어도 미식별만 있던 날짜가 함께 보인다. 스코프 줄에
-    '미식별 포함' 을 명시한다(침묵 변형 금지)."""
-    async def body(app, pilot, srv):
-        recs = [
-            {"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
-             "account": "unknown", "tokens": 3000},
-            {"ts": 1_700_500_000.0, "tab": 0, "pane": 1, "session": 1,
-             "account": "me@x.org", "tokens": 1000},
-        ]
-        app._want_token_log = True
-        app._dispatch({"t": "token_log", "records": recs, "total_all": 4000,
-                       "accounts_total": {"unknown": 3000, "me@x.org": 1000}})
-        await pilot.pause(0.1)
-        scr = app.screen_stack[-1]
-        joined = _tok_text(scr)
-        assert "unknown" not in joined, f"미식별이 귀속돼 안 보여야: {joined}"
-        assert "미식별 포함" in joined, joined   # 스코프 줄의 귀속 명시
-        # [c] 계정 뷰: 귀속된 단일 계정 행(4k)만 — unknown 행 없음.
-        await pilot.press("c")
-        await pilot.pause(0.1)
-        joined_c = _tok_text(scr)
-        assert "me@x.org" in joined_c and "unknown" not in joined_c, joined_c
-        await pilot.press("c")
-        await pilot.pause(0.1)
-        # 계정 필터([a]) → me@x.org: 귀속된 미식별분까지 lifetime 4k 가 그대로.
-        await pilot.press("a")
-        await pilot.pause(0.1)
-        joined2 = _tok_text(scr)
-        assert "me@x.org" in joined2 and "Σ4k" in joined2, joined2
-        # 미식별만 있던 날짜(1_700_000_000 일자)도 필터 후 사라지지 않는다.
-        import time as _t
-        day0 = _t.strftime("%m-%d", _t.localtime(1_700_000_000.0))
-        assert day0 in joined2, f"{day0} 가 계정 필터 후에도 보여야: {joined2}"
-        await pilot.press("escape")
-        await pilot.pause(0.1)
-    await _with_app(body)
-
-
-async def test_token_log_no_fold_with_multiple_accounts():
-    """식별 계정이 둘 이상이면 귀속이 모호 — unknown 을 접지 않고 그대로 보인다."""
-    async def body(app, pilot, srv):
-        recs = [
-            {"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
-             "account": "unknown", "tokens": 300},
-            {"ts": 1_700_000_100.0, "tab": 0, "pane": 1, "session": 1,
-             "account": "me@x.org", "tokens": 100},
-            {"ts": 1_700_000_200.0, "tab": 0, "pane": 2, "session": 2,
-             "account": "team@y.org", "tokens": 200},
-        ]
-        app._want_token_log = True
-        app._dispatch({"t": "token_log", "records": recs})
-        await pilot.pause(0.1)
-        scr = app.screen_stack[-1]
-        assert "미식별 포함" not in _tok_text(scr)
-        await pilot.press("c")                    # 계정 뷰에서 행 확인
-        await pilot.pause(0.1)
-        joined = _tok_text(scr)
-        assert "unknown" in joined, f"식별 2개면 unknown 유지: {joined}"
-        assert "미식별 포함" not in joined, joined
-        await pilot.press("escape")
-        await pilot.pause(0.1)
     await _with_app(body)
 
 
@@ -1705,7 +1641,7 @@ async def test_token_log_day_bucket_full_history_not_capped():
                  "account": ACCT, "tokens": 1000}]
         app._want_token_log = True
         app._dispatch({"t": "token_log", "records": recs, "total_all": 12000,
-                       "accounts_total": {ACCT: 12000}, "daily": daily})
+                       "daily": daily})
         await pilot.pause(0.1)
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "TokenLogScreen", scr
@@ -1762,33 +1698,6 @@ async def test_token_log_panel_subtab_groups_by_session():
         await pilot.click("#tab_panel")
         await pilot.pause(0.1)
         assert scr._view == "time" and app.screen_stack[-1] is scr
-    await _with_app(body)
-
-
-async def test_token_log_account_view_drilldown():
-    """계정 뷰에서 행 선택(Enter) → 그 계정을 필터로 걸고 일별 기간 뷰로 드릴다운."""
-    async def body(app, pilot, srv):
-        recs = [
-            {"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
-             "account": "me@x.org", "tokens": 1500},
-            {"ts": 1_700_500_000.0, "tab": 1, "pane": 2, "session": 2,
-             "account": "team@y.org", "tokens": 2000},
-        ]
-        app._want_token_log = True
-        app._dispatch({"t": "token_log", "records": recs})
-        await pilot.pause(0.1)
-        scr = app.screen_stack[-1]
-        await pilot.press("c")                    # 계정 뷰
-        await pilot.pause(0.1)
-        assert scr._view == "account"
-        # 첫 행 = 토큰 많은 계정(team@y.org 2000). Enter → 드릴다운.
-        await pilot.press("enter")
-        await pilot.pause(0.1)
-        assert app.screen_stack[-1] is scr, "Enter(계정 뷰)는 닫지 않음"
-        assert scr._view == "time" and scr._bucket == "day", \
-            (scr._view, scr._bucket)
-        assert scr._account == "team@y.org", scr._account
-        assert "team@y.org" in _tok_text(scr)     # 스코프 줄의 필터 계정
     await _with_app(body)
 
 
@@ -2133,6 +2042,41 @@ async def test_context_menu_submenu_cascades_to_right_of_parent():
         assert int(off.x.value) == reg.right, (off.x.value, reg.right)
         assert int(off.x.value) >= reg.right, "자식이 부모 우측(무겹침)"
         assert int(off.y.value) >= 0             # 화면 안에 배치
+    await _with_app(body)
+
+
+async def test_context_menu_submenu_hover_switches_group():
+    """§8.1: 한 서브메뉴가 열린 상태에서 마우스를 부모의 **다른** 그룹 항목 위로
+    호버하면 현재 서브메뉴를 닫고 그 그룹 서브메뉴를 연다(요청). 같은 그룹 위면 유지."""
+    async def body(app, pilot, srv):
+        app.open_menu(app.layout.get("active"))
+        await pilot.pause(0.1)
+        top = app.screen_stack[-1]
+        top._open_group("pane", top.query_one("#g_pane"))
+        await pilot.pause(0.1)
+        child = app.screen_stack[-1]
+        assert child is not top and child._group == "pane", child._group
+        # 'layout' 그룹 항목 영역 중심으로 호버 → on_mouse_move 가 부모로 위임 → 전환.
+        lr = top.query_one("#g_layout").region
+
+        class _MM:
+            screen_x = lr.x + lr.width // 2
+            screen_y = lr.y + lr.height // 2
+        child.on_mouse_move(_MM())
+        await pilot.pause(0.15)
+        new_child = app.screen_stack[-1]
+        assert new_child is not child, "다른 그룹 호버 → 서브메뉴 교체"
+        assert new_child._group == "layout", new_child._group
+        assert new_child._prev_menu is top, "새 서브메뉴의 부모는 최상위"
+        # 같은(layout) 그룹 위 재호버는 유지 — 전환/재오픈 안 함.
+        lr2 = top.query_one("#g_layout").region
+
+        class _MM2:
+            screen_x = lr2.x + lr2.width // 2
+            screen_y = lr2.y + lr2.height // 2
+        new_child.on_mouse_move(_MM2())
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1] is new_child, "같은 그룹 호버는 서브메뉴 유지"
     await _with_app(body)
 
 
@@ -4225,6 +4169,19 @@ async def test_status_warn_badge_emoji_gets_visible_space():
     await _with_app(body)
 
 
+async def test_status_limit_badge_emoji_gets_visible_space():
+    """한도 경고 배지(⚠ 한도 근접/도달)도 §10-E 와 동일하게 ⚠ 가 2칸 이모지라 다음
+    글자와 붙어 "⚠Limit near" 로 보이던 것을, 상태줄 **표시에서만** ⚠ 뒤 공백을 한
+    칸 더 넣어 띄운다(사용자 보고 2026-06-19). 클릭존(_limit_zone)은 그대로 등록."""
+    async def body(app, pilot, srv):
+        app.status.claude_active = True
+        app.status.budget_level = 80          # ⚠ 한도 근접(노랑) 배지
+        line = "".join(s.text for s in app.status.render_line(0))
+        assert "⚠  " in line, repr(line)       # ⚠ 뒤 공백 2칸(표시)
+        assert app.status._limit_zone is not None
+    await _with_app(body)
+
+
 async def test_open_warn_info_popup_content():
     """open_claude_warn_info: 상태줄 ⚠ 경고 배지 클릭 → 통합 토큰 팝업(TokenLogScreen)의
     '경고' 탭을 열어 경고 종류별 상황·할일을 보여준다(2026-06-17 통합 — 옛 별도 InfoScreen
@@ -4496,6 +4453,7 @@ async def test_net_responsiveness_hysteresis_and_border():
     error 색으로 바뀐다. 실제 ping/pong 왕복도 표본을 기록하고 _net_ping_ts 를
     클리어한다."""
     async def body(app, pilot, srv):
+        app._net_local = False                # 원격 경로(로컬은 degraded 억제)
         app.net_rtt_threshold = 0.4
         app.net_bad_n = 3
         app.net_good_n = 3
@@ -4565,6 +4523,7 @@ async def test_net_watchdog_triggers_auto_reconnect():
     """§10: degraded 가 net_recover_n 회 연속 지속되면 워치독이 강제 재접속을 트리거
     한다(net_auto_reconnect ON). reconnect_now 호출 여부로 검증."""
     async def body(app, pilot, srv):
+        app._net_local = False                # 원격 경로(로컬은 자동 재접속 억제)
         app.net_rtt_threshold = 0.4
         app.net_recover_n = 5
         app.net_auto_reconnect = True
@@ -4636,6 +4595,51 @@ async def test_claude_footer_zones_and_popups():
         await pilot.pause(0.05)
         assert toggled == [pid]
         assert app.screen.__class__.__name__ != "InfoScreen"
+    await _with_app(body)
+
+
+async def test_claude_interrupt_zone_sends_esc():
+    """busy footer 의 'esc to interrupt' 문구를 좁은 클릭존(_interrupt_zone)으로 잡고,
+    그 영역 클릭(interrupt_pane)이 해당 패널에 ESC(\\x1b) input 을 보낸다. 줄 전체를
+    덮는 perm 존 안의 부분영역이라, 클릭 핸들러는 interrupt 를 perm 보다 먼저 가로챈다."""
+    import base64
+    import pytmuxlib.client as clientmod
+
+    async def body(app, pilot, srv):
+        pid = app.layout["panes"][0]["id"]
+        py = app.layout["panes"][0]["y"]
+        app.pane_claude = {pid: {"id": pid, "claude": "busy",
+                                 "perm_mode": "default"}}
+        rows = [
+            [("일반 출력 줄", {})],
+            [("⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt", {})],
+        ]
+        app.pane_content[pid] = (rows, None)
+        app._composite()
+        # 같은 줄(py+1)에 perm 존과 interrupt 존이 둘 다 등록된다.
+        assert pid in app._perm_zone, app._perm_zone
+        assert pid in app._interrupt_zone, app._interrupt_zone
+        izx0, izx1, izy = app._interrupt_zone[pid]
+        pzx0, pzx1, pzy = app._perm_zone[pid]
+        assert izy == py + 1 == pzy
+        # interrupt 존은 perm 존(줄 전체) 안의 진부분집합 — 'esc to interrupt'만 덮는다.
+        assert pzx0 <= izx0 < izx1 <= pzx1
+        assert izx0 > pzx0, "interrupt 존은 줄 앞쪽 'auto mode on' 보다 오른쪽"
+        # 그 영역 클릭 → interrupt_pane → 해당 패널에 ESC input 전송.
+        sent = []
+        orig = clientmod.write_msg
+
+        async def cap(writer, msg):
+            sent.append(msg)
+        clientmod.write_msg = cap
+        try:
+            app.interrupt_pane(pid)
+            await pilot.pause(0.05)
+        finally:
+            clientmod.write_msg = orig
+        inp = [m for m in sent if m.get("t") == "input" and m.get("pane") == pid]
+        assert inp, sent
+        assert base64.b64decode(inp[0]["data"]) == b"\x1b"
     await _with_app(body)
 
 
@@ -4900,20 +4904,18 @@ async def test_status_session_ctx_and_5h():
         assert "ctx 42%" in txt, repr(txt)
         # 토큰 수치/누계 기호는 표시되지 않는다
         assert "Σ" not in txt and "45,200" not in txt, repr(txt)
-        # 계정은 표시 %들의 기준 — 마지막 항목에 계정 곁들임(@ 없이, 요청: 이메일 중복 방지).
-        # 5h 실측이 없으므로(tok5h_pct=None) §10-F 'Unknown' 배지가 5h 자리에 들어가고
-        # 계정 라벨은 그 마지막 항목(?%/5h)에 붙는다(ctx 42% · ?%/5h 사용 alice).
+        # 계정 라벨은 더는 붙지 않는다(머신-로컬 표시, 2026-06-19). 5h 실측이 없으므로
+        # (tok5h_pct=None) §10-F 'Unknown' 배지가 5h 자리에 들어간다(ctx 42% · ?%/5h 사용).
         app.status.claude_account = "alice"
         txt_a = "".join(s.text for s in app.status.render_line(0))
-        assert "ctx 42% · ?%/5h 사용 alice" in txt_a and "@alice" not in txt_a, repr(txt_a)
+        assert "ctx 42% · ?%/5h 사용" in txt_a and "alice" not in txt_a, repr(txt_a)
         # 5h 리밋 **사용률**(실측 37% 사용 — 2026-06-12 사용자 결정: 팝업 막대
         # "N% 사용"·Claude /usage "N% used" 와 같은 방향·같은 숫자로 전 표면 통일).
-        # 5h% 옆 계정은 /usage 실측 계정(usage_limits.account = 토큰 팝업과 같은 문자열)
-        # 으로 라벨한다(2026-06-13 — 패널 스크랩 계정 stale 시 팝업과 어긋남 방지).
+        # 계정 라벨은 붙지 않는다(머신-로컬).
         app.status.usage_limits = {"session": {"pct": 37}, "account": "alice"}
         app.status.tok5h_pct = 37
         txt_m = "".join(s.text for s in app.status.render_line(0))
-        assert "37%/5h 사용 alice" in txt_m, repr(txt_m)
+        assert "37%/5h 사용" in txt_m and "alice" not in txt_m, repr(txt_m)
         assert txt_m.index("ctx 42%") < txt_m.index("37%/5h"), repr(txt_m)
         app.status.usage_limits = None
         # claude_usage 가 토큰 폴백('Xk tok')이면 표시하지 않는다(토큰 수치 비표시 원칙)
@@ -4925,55 +4927,20 @@ async def test_status_session_ctx_and_5h():
     await _with_app(body)
 
 
-async def test_status_account_full_when_wide_alias_when_narrow():
-    # 계정 이메일: 좌우 폭이 충분하면 전체(claude_account_full)를, 우측(시각/날짜/창목록)을
-    # 밀어낼 만큼 좁으면 별칭(claude_account)을 쓴다(요청 2026-06-12: 폭 충분 시 안 줄임).
-    # 전체/별칭 선택은 **컨텍스트%만** 보일 때(=활성 패널 계정 라벨)의 동작이다 —
-    # 5h% 가 보이면 계정은 /usage 실측 계정(별칭 1종, 팝업과 동일)으로 라벨된다.
-    async def wide(app, pilot, srv):
-        app.status.claude_active = True
-        app.status.claude_usage = "ctx 42%"
-        app.status.tok5h_pct = None
-        app.status.claude_account = "al…@example.com"        # 별칭(축약)
-        app.status.claude_account_full = "alice@example.com"  # 전체
-        txt = "".join(s.text for s in app.status.render_line(0))
-        assert "alice@example.com" in txt, repr(txt)          # 폭 충분 → 전체
-    await _with_app(wide, size=(200, 30))
-
-    async def narrow(app, pilot, srv):
-        app.status.claude_active = True
-        app.status.claude_usage = "ctx 42%"
-        app.status.tok5h_pct = None
-        app.status.claude_account = "al…@example.com"
-        app.status.claude_account_full = "alice@example.com"
-        txt = "".join(s.text for s in app.status.render_line(0))
-        assert "al…@example.com" in txt and "alice@example.com" not in txt, repr(txt)
-    await _with_app(narrow, size=(58, 30))
-
-
-async def test_status_5h_account_mirrors_usage_popup():
-    """footer 의 5h% 계정은 /usage 실측 계정(usage_limits.account = 토큰 팝업의
-    'Account (/usage): …' 과 같은 문자열)을 따라야 한다. 패널 스크랩 계정
-    (claude_account)이 stale/미상이라 다른 계정을 가리켜도 5h% 옆엔 /usage 계정만
-    보여 팝업과 어긋나지 않는다(사용자 보고 2026-06-13: 2%/5h 가 폰 앱과 다른 계정
-    라벨로 표기). /usage 계정을 못 잡았으면(팝업도 '미확인') 라벨을 생략한다."""
+async def test_status_no_account_label_in_footer():
+    """머신-로컬 표시(2026-06-19): footer 에는 계정 이름을 더는 붙이지 않는다 —
+    패널 스크랩 계정·/usage 실측 계정이 채워져 있어도 % 옆에 계정 라벨이 없다."""
     async def body(app, pilot, srv):
         app.status.claude_active = True
         app.status.claude_usage = "ctx 42%"
         app.status.tok5h_pct = 2
-        # 패널 스크랩 계정은 stale 한 다른 계정, /usage 실측은 진짜 현재 계정.
         app.status.claude_account = "wo…@nexongames.co.kr"
         app.status.claude_account_full = "woojinkim@nexongames.co.kr"
         app.status.usage_limits = {"session": {"pct": 2}, "account": "me@woojinkim.org"}
         txt = "".join(s.text for s in app.status.render_line(0))
-        # 5h% 옆엔 /usage 계정만, stale 패널 계정은 안 보인다.
-        assert "2%/5h 사용 me@woojinkim.org" in txt, repr(txt)
-        assert "nexongames" not in txt, repr(txt)
-        # /usage 계정 미상이면 라벨 생략(틀린 계정 안 닮).
-        app.status.usage_limits = {"session": {"pct": 2}, "account": None}
-        txt2 = "".join(s.text for s in app.status.render_line(0))
-        assert "2%/5h 사용" in txt2 and "nexongames" not in txt2, repr(txt2)
-    await _with_app(body)
+        assert "2%/5h 사용" in txt, repr(txt)
+        assert "nexongames" not in txt and "woojinkim.org" not in txt, repr(txt)
+    await _with_app(body, size=(200, 30))
 
 
 async def test_status_tokens_hidden_when_not_claude():
@@ -4990,11 +4957,12 @@ async def test_status_tokens_hidden_when_not_claude():
         assert "ctx 42%" not in txt and "Σ" not in txt, repr(txt)
         assert app.status._usage_zone is None, "클릭존 미등록"
         # 다시 Claude 패널이 활성화되면 보존된 값이 그대로 표시된다. 5h 실측이
-        # 없으므로(tok5h_pct=None) §10-F 'Unknown' 배지가 끼어들어 계정 라벨은
-        # 그 뒤에 붙는다(ctx 42% · ?%/5h 사용 alice) — ctx%·계정이 함께 보이면 된다.
+        # 없으므로(tok5h_pct=None) §10-F 'Unknown' 배지가 끼어든다(ctx 42% · ?%/5h 사용).
+        # 계정 라벨은 더는 붙지 않는다(머신-로컬, 2026-06-19).
         app.status.claude_active = True
         txt2 = "".join(s.text for s in app.status.render_line(0))
-        assert "ctx 42%" in txt2 and "?%/5h 사용 alice" in txt2, repr(txt2)
+        assert "ctx 42%" in txt2 and "?%/5h 사용" in txt2 and "alice" not in txt2, \
+            repr(txt2)
     await _with_app(body)
 
 
@@ -5045,7 +5013,7 @@ async def test_tok5h_pct_clamped_to_100():
 async def test_status_week_sonnet_display():
     """모델=Sonnet 일 때 서버가 5h(통합) 대신 주간 Sonnet% 만 보내면(tok5h_pct=None,
     week_sonnet_pct=값) 상태줄에 'N%/주(Sonnet)' 가 보이고 '/5h' 는 안 보인다(요청
-    2026-06-16). %는 /usage 실측이라 계정 라벨도 /usage 계정(팝업과 동일)으로 단다."""
+    2026-06-16). 계정 라벨은 붙지 않는다(머신-로컬 표시, 2026-06-19)."""
     async def body(app, pilot, srv):
         app.status.claude_active = True
         app.status.claude_usage = "ctx 42%"
@@ -5055,7 +5023,7 @@ async def test_status_week_sonnet_display():
         txt = "".join(s.text for s in app.status.render_line(0))
         assert "12%/주(Sonnet)" in txt, repr(txt)
         assert "/5h" not in txt, repr(txt)
-        assert "alice" in txt, repr(txt)          # /usage 계정 라벨
+        assert "alice" not in txt, repr(txt)      # 계정 라벨 없음
     await _with_app(body, size=(120, 30))
 
 

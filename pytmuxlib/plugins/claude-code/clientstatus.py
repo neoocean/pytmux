@@ -24,6 +24,10 @@ i18n.register({
         "claude.limit_used": "{pct}%/5h 사용",
         "claude.limit_week_sonnet": "{pct}%/주(Sonnet)",
         "claude.limit_unknown": "?%/5h 사용",
+        # M17 경고 배지(상태줄 ⚠) — 서버가 보낸 kind 로 클라가 로케일별 렌더. 장기 턴은
+        # 언어중립('⚠ M:SS')이라 서버 문자열을 그대로 쓴다(배지 키 없음).
+        "claude.warn_repeat_badge": "⚠ 동일 결과 {n}회 반복 — 루프 의심",
+        "claude.warn_fmt_badge": "⚠ Claude 포맷 미인식 — 추적 중단(버전 업데이트?)",
     },
     "en": {
         "claude.limit_reached": " ⚠ Limit reached ",
@@ -34,24 +38,11 @@ i18n.register({
         "claude.limit_used": "{pct}%/5h used",
         "claude.limit_week_sonnet": "{pct}%/wk(Sonnet)",
         "claude.limit_unknown": "?%/5h used",
+        "claude.warn_repeat_badge": "⚠ Same output repeated {n}× — loop suspected",
+        "claude.warn_fmt_badge":
+            "⚠ Claude format unrecognized — tracking paused (version update?)",
     },
 })
-
-
-def _account_label(status, full, fallback):
-    """§10-E #2 좌하단 계정 표기를 표시모드/별칭에 맞게 고른다.
-      · hidden → None(표시 안 함)
-      · full   → 전체 이메일(full)
-      · alias  → 사용자 별칭(claude_account_aliases[full]) 있으면 그것, 없으면 fallback
-                 (폭-반응 기본 표기: 축약/전체)
-    full=별칭 매핑 키(전체 이메일), fallback=모드 미적용 시 쓸 기본 표기."""
-    mode = getattr(status, "claude_account_display", "alias")
-    if mode == "hidden":
-        return None
-    if mode == "full":
-        return full or fallback
-    alias = (getattr(status, "claude_account_aliases", None) or {}).get(full)
-    return alias or fallback
 
 
 def init_defaults(status):
@@ -65,14 +56,14 @@ def init_defaults(status):
     status._last_active_pane = None  # 직전 status 의 활성 패널 id — 바뀌면 per-pane
                                      # 지속표시(ctx)를 새 패널 값으로 교체한다(아래 absorb)
     status.claude_tokens = 0       # 활성 계정 누적 토큰(§10 계정별 합계, 지속표시)
-    status.claude_account = None   # 누적 토큰의 귀속 계정 별칭(폭 좁을 때 표시)
-    status.claude_account_full = None  # 비별칭 전체 계정(폭 충분 시 표시, 요청)
-    status.claude_account_display = "alias"  # §10-E #2 표시모드 alias/full/hidden
-    status.claude_account_aliases = {}       # §10-E #2 email→사용자 별칭
+    status.claude_account = None   # 패널 스크랩 계정(서버 호환 — 더는 표시 안 함)
+    status.claude_account_full = None  # 비별칭 전체 계정(서버 호환 — 더는 표시 안 함)
     status.tok5h_pct = None        # M18-B: 5시간 한도 근접도 %(분모 미상이면 None)
     status.week_sonnet_pct = None  # 활성 모델=Sonnet 일 때 주간(Sonnet only) % — 5h
                                    # 통합값(모델별 측정 불가) 대신 표시(2026-06-16 요청)
     status.claude_warn = None      # M17: 장기턴/반복루프 경고(grade0, 없으면 None)
+    status.claude_warn_kind = None # M17 경고 종류(None|long_turn|repeat|fmt_unknown)
+    status.claude_warn_n = None    # 반복 종류일 때 반복 횟수(로케일별 배지 렌더용)
     status.claude_model = None     # M14c: 활성 Claude 모델 배지(opus-4.8 등)
     status.claude_model_tip = None # M14c: 모델 과선택 힌트 배지(알림만, 없으면 None)
     status.claude_model_hint = False  # M14c 힌트 토글(설정 팝업 표시용·기본 OFF)
@@ -130,11 +121,6 @@ def absorb(status, msg):
     caf = msg.get("claude_account_full")
     if caf:
         status.claude_account_full = caf
-    # §10-E #2: 계정 표시모드(alias/full/hidden) + 사용자 별칭 매핑(email→alias).
-    if "claude_account_display" in msg:
-        status.claude_account_display = msg.get("claude_account_display") or "alias"
-    if "claude_account_aliases" in msg:
-        status.claude_account_aliases = msg.get("claude_account_aliases") or {}
     # M18-B: 5시간 한도 근접도 %(분모 미상이면 None — 표시 생략). 100 으로 클램프해
     # 과거 "999%/5h" 버그를 막는다(실측 세션% 경로는 0~100 이라 영향 없음).
     t5 = msg.get("tok5h_pct")
@@ -142,6 +128,8 @@ def absorb(status, msg):
     ws = msg.get("week_sonnet_pct")
     status.week_sonnet_pct = min(100, ws) if isinstance(ws, int) else ws
     status.claude_warn = msg.get("claude_warn")   # M17 grade0 경고(권위값)
+    status.claude_warn_kind = msg.get("claude_warn_kind")  # 종류(로케일별 렌더)
+    status.claude_warn_n = msg.get("claude_warn_n")        # 반복 횟수(반복 종류)
     status.claude_model_tip = msg.get("claude_model_tip")  # M14c 힌트(권위값, 매 status)
     cm = msg.get("claude_model")                  # M14c 모델 배지(지속표시)
     if cm:
@@ -263,51 +251,8 @@ def render_segs(status, segs, w, w0=None):
             # 패널엔 안 뜬다. 계정 라벨은 아래 claude_account 분기가 붙인다(미상이면
             # 생략) — 실측 계정(usage_limits)은 아직 없으니 is_usage_last 는 False.
             usage_parts.append(i18n.t("claude.limit_unknown"))
-        # 표시 %들의 기준 계정을 마지막 항목에 곁들임. 계정은 보통 이메일(me@…)이라
-        # 앞에 @ 를 붙이지 않는다(@me@… 중복 방지, 요청).
-        #
-        # 마지막 항목이 **5h%**(=/usage 실측)면 그 계정은 반드시 토큰 팝업의
-        # 'Account (/usage): …' 과 같아야 한다 — 그 숫자가 바로 그 그림자 /usage
-        # 세션의 사용률이기 때문이다. 패널 스크랩 계정(claude_account)은 지금 패널
-        # 계정이 미상이면 마지막 비-빈 값(다른 계정)을 stale 로 유지해, footer 가
-        # 팝업과 다른 계정 라벨을 달았다(사용자 보고 2026-06-13: 2%/5h 가 폰 앱과
-        # 다른 계정으로 표기). 그래서 5h% 가 보일 땐 usage_limits 의 계정(팝업과
-        # **같은 문자열**)으로 라벨하고, /usage 계정을 못 잡았으면(팝업도 '미확인')
-        # 틀린 계정을 달지 않도록 라벨을 생략한다.
-        # 마지막 항목이 /usage 실측(5h 세션% 또는 주간 Sonnet%)이면 그 계정으로
-        # 라벨한다 — 둘 다 그림자 /usage 에서 온 같은 계정값이다.
-        is_usage_last = (status.tok5h_pct is not None
-                         or status.week_sonnet_pct is not None)
-        usage_acct = (status.usage_limits.get("account")
-                      if is_usage_last and isinstance(status.usage_limits, dict)
-                      else None)
-        if usage_parts and is_usage_last:
-            if usage_acct:        # /usage 실측 계정 — 표시모드/별칭 적용(§10-E #2)
-                lbl = _account_label(status, usage_acct, usage_acct)
-                if lbl:
-                    usage_parts[-1] += " " + lbl
-        elif usage_parts and status.claude_account:
-            # 5h% 가 없고 컨텍스트%만 보일 때 — 활성 패널 계정으로 라벨한다.
-            # 폭이 충분하면 전체 계정명(claude_account_full)을, 우측(시각·날짜 등)을
-            # 밀어낼 만큼 좁으면 별칭(claude_account)을 쓴다(요청 2026-06-12).
-            acct = status.claude_account
-            full = status.claude_account_full or acct
-            chosen = acct
-            if full != acct:
-                # 좌측(REC 등 누적) + 사용량 클러스터(전체계정 포함, 앞뒤 공백 2) + 우측
-                # 추정 ≤ 전체폭이면 전체 계정명을 보인다. (P6: 들어오는 누적폭 acc 재사용 —
-                # 이 시점 segs 는 아직 uparts 미append 라 acc == segs 전수합산과 같다.)
-                left = acc
-                cluster_full = " · ".join(
-                    uparts + usage_parts[:-1] + [usage_parts[-1] + " " + full])
-                cw_full = 2 + sum(_char_cells(c) for c in cluster_full)
-                if left + cw_full + _trailing_cells(status, _char_cells) <= w:
-                    chosen = full
-            # §10-E #2 표시모드/별칭 적용: hidden→생략, full→전체메일, alias→별칭(있으면)
-            # 없으면 위 폭-반응 chosen. 별칭 키는 전체 이메일(full).
-            lbl = _account_label(status, full, chosen)
-            if lbl:
-                usage_parts[-1] += " " + lbl
+        # 계정 라벨은 더는 붙이지 않는다 — Claude 토큰 사용량은 계정과 무관하게
+        # **현재 로컬 머신** 기준으로 표시한다(계정별 집계/표기 제거, 2026-06-19 결정).
         uparts.extend(usage_parts)
     if uparts:
         sec = Style(color="white", bgcolor=tc("secondary"), bold=True)
@@ -342,12 +287,16 @@ def render_segs(status, segs, w, w0=None):
     # 임계 도달=빨강 ⚠, 임계의 80% 도달=노랑 ⚠.
     if status.budget_level >= 80:
         over = status.budget_level >= 100
-        # ⚠ 뒤에 공백: 이모지(⚠ U+26A0)가 터미널에선 2칸으로 그려지는데 wcwidth 는
-        # 1칸이라, 바로 뒤 글자가 둘째 칸에 겹쳐 그려졌다(요청) → 공백으로 흡수.
         # 텍스트 색은 배경 대비로: 노랑(근접) 배경엔 흰 글자가 묻혀 안 보이므로
         # 검은 글자(아래 ⏳ 카운트다운 배지와 동일 패턴), 빨강(도달) 배경엔 흰 글자.
         _bt = (i18n.t("claude.limit_reached") if over
                else i18n.t("claude.limit_near"))
+        # ⚠(U+26A0) 표시 보정(M17 경고 배지와 동일): 터미널선 ⚠ 가 2칸 컬러 이모지라
+        # wcwidth=1 인데도 바로 뒤 단일 공백이 둘째 칸에 흡수돼 "⚠Limit near" 처럼
+        # 붙어 보였다(사용자 보고 2026-06-19). **표시용으로만** ⚠ 뒤 공백을 한 칸 더
+        # 넣어 띄운다 — i18n 카탈로그는 자연스러운 한 칸 유지, 클릭존 폭은 표시 문자열
+        # 기준 _cw 로 일관(근접 노랑·도달 빨강 둘 다 적용).
+        _bt = _bt.replace("⚠ ", "⚠  ", 1)
         segs.append(Segment(_bt,
                             Style(color=("white" if over else "black"),
                                   bgcolor=("red" if over else "yellow"),
@@ -377,7 +326,16 @@ def render_segs(status, segs, w, w0=None):
     # — 저장값(claude_warn)·경고 info 팝업·파서는 원문("⚠ ...")을 그대로 쓴다(테스트/
     # 종류 판정 불변). 클릭존 폭은 표시 문자열 기준 _cw 로 맞춘다.
     if status.claude_warn:
-        _disp = status.claude_warn
+        # 종류(kind)별 로케일 배지: 반복/포맷-미인식은 i18n(ko/en), 장기 턴은 언어중립
+        # ('⚠ M:SS') 서버 문자열 그대로. kind 미상(구버전 서버)이면 서버 문자열 폴백
+        # (한글일 수 있으나 호환 유지) — i18n 전수조사 2026-06-19.
+        _wkind = status.claude_warn_kind
+        if _wkind == "repeat":
+            _disp = i18n.t("claude.warn_repeat_badge", n=status.claude_warn_n or 0)
+        elif _wkind == "fmt_unknown":
+            _disp = i18n.t("claude.warn_fmt_badge")
+        else:
+            _disp = status.claude_warn
         if _disp.startswith("⚠ "):
             _disp = "⚠  " + _disp[2:]
         _wt = f" {_disp} "

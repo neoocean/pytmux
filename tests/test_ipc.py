@@ -121,6 +121,25 @@ async def test_probe_false_when_down():
     assert ipc.probe(missing) is False
 
 
+def test_is_local_endpoint():  # 동기 단위(아래 test_run_sync_units 에서 호출)
+    # AF_UNIX 소켓은 항상 로컬
+    assert ipc.is_local_endpoint("/tmp/x.sock")
+    # 루프백 TCP = 로컬(127.0.0.0/8·::1·localhost·포트만 형태)
+    assert ipc.is_local_endpoint("tcp:127.0.0.1:54321")
+    assert ipc.is_local_endpoint("tcp:127.0.0.1:0")
+    assert ipc.is_local_endpoint("tcp:127.5.5.5:1234")
+    assert ipc.is_local_endpoint("tcp:::1:1234")
+    assert ipc.is_local_endpoint("tcp:localhost:1234")
+    assert ipc.is_local_endpoint("tcp:54321")          # host 생략 → 127.0.0.1
+    # 진짜 원격 호스트 = 원격(degraded 유지)
+    assert not ipc.is_local_endpoint("tcp:100.79.188.26:54321")
+    assert not ipc.is_local_endpoint("tcp:10.0.0.5:22")
+    assert not ipc.is_local_endpoint("tcp:example.com:1234")
+    # 잘못된 엔드포인트는 보수적으로 원격(억제 안 함)
+    assert not ipc.is_local_endpoint("tcp:127.0.0.1:abc")
+
+
 async def test_run_sync_units():
     """동기 단위 테스트(parse)를 async 러너에서 한 번 실행해 커버리지에 포함."""
     test_parse_endpoint()
+    test_is_local_endpoint()

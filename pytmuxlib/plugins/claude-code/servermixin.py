@@ -1392,6 +1392,8 @@ class ServerClaudeMixin:
                 # M17(T7) 표시 경고 갱신(grade0 — 알림만, 개입 없음). S9 장기 턴 우선,
                 # 아니면 S8 반복 루프. 임계는 opt(0=끔). 세션 종료 시 상태 리셋.
                 warn = None
+                warn_kind = None        # 구조적 종류(클라가 로케일별 렌더에 사용)
+                warn_n = None           # 반복 종류일 때 반복 횟수(그 외 None)
                 lt = self.claude_long_turn_sec
                 ra = self.claude_repeat_alert
                 if (lt > 0 and new_cl == "busy" and p._busy_since is not None):
@@ -1399,20 +1401,28 @@ class ServerClaudeMixin:
                     if el >= lt:
                         # 장기 턴 경고: 경고 삼각형(⚠) + 경과 시간. 기본 분:초, 1시간
                         # 이상이면 시:분(사용자 요청 2026-06-17, fmt_long_turn_badge).
-                        # 초가 매초 바뀌므로 정수 초 경계에서만 changed.
+                        # 초가 매초 바뀌므로 정수 초 경계에서만 changed. 배지 문자열은
+                        # 언어중립(숫자만)이라 클라가 그대로 쓴다.
                         warn = fmt_long_turn_badge(el)
+                        warn_kind = "long_turn"
                 elif ra > 0 and new_cl == "idle" and p._repeat_n >= ra:
-                    warn = f"⚠ 동일 결과 {p._repeat_n + 1}회 반복 — 루프 의심"
+                    warn_n = p._repeat_n + 1
+                    warn = f"⚠ 동일 결과 {warn_n}회 반복 — 루프 의심"
+                    warn_kind = "repeat"
                 if not new_cl:
                     p._busy_since = None
                     p._repeat_n = 0
                     p._done_tail = None
                 # §3.7: 포맷 미인식이면 ⚠ 경고로 가시화(다른 경고가 없을 때만 — 미인식은
                 # new_cl=None 이라 위 long-turn/repeat 와 상호배타지만 안전하게 or 사용).
-                if p._fmt_unknown:
-                    warn = warn or _FMT_UNKNOWN_MSG
-                if warn != p._claude_warn:
+                if p._fmt_unknown and warn is None:
+                    warn = _FMT_UNKNOWN_MSG
+                    warn_kind = "fmt_unknown"
+                if (warn != p._claude_warn
+                        or warn_kind != p._claude_warn_kind):
                     p._claude_warn = warn
+                    p._claude_warn_kind = warn_kind
+                    p._claude_warn_n = warn_n
                     changed = True
                 # M14c 힌트(T3/S4): Opus 로 반복 작업 + 컨텍스트 여유 충분이면 더 가벼운
                 # 모델 "고려" 힌트만(알림 전용 — 자동 전환 없음). opt-in(기본 끔)이라
@@ -1962,41 +1972,6 @@ class ServerClaudeMixin:
             if value is None else bool(value)
         self._save_opts()
         return self.token_debug
-
-    # §10-E #2: 좌하단 Claude 계정 표시 — 사용자 별칭 + 표시모드(별칭/전체메일/숨김).
-    _ACCOUNT_DISPLAY_MODES = ("alias", "full", "hidden")
-
-    def set_account_display(self, mode=None):
-        """footer 계정 표시모드 설정: alias(별칭, 기본)·full(메일 전체)·hidden(표시 안 함).
-        mode 미지정/미지원이면 세 모드를 순환 토글. opts.json plugin_opts 영속 + 즉시 발효
-        (다음 status 로 클라에 전달돼 좌하단 렌더가 바뀐다)."""
-        cur = getattr(self, "claude_account_display", "alias")
-        if mode in self._ACCOUNT_DISPLAY_MODES:
-            self.claude_account_display = mode
-        else:                                   # 순환 토글(alias→full→hidden→alias)
-            i = self._ACCOUNT_DISPLAY_MODES.index(cur) \
-                if cur in self._ACCOUNT_DISPLAY_MODES else 0
-            self.claude_account_display = \
-                self._ACCOUNT_DISPLAY_MODES[(i + 1) % 3]
-        self._save_opts()
-        return self.claude_account_display
-
-    def set_account_alias(self, email, alias):
-        """감지된 계정 이메일(email)에 사용자 별칭(alias)을 매핑. alias 가 빈 문자열이면
-        매핑 삭제(원래 표시로 복귀). 키는 전체 이메일(claude_account_full). opts.json
-        plugin_opts 영속(claude_account_aliases dict) + 즉시 발효."""
-        email = (email or "").strip()
-        if not email:
-            return getattr(self, "claude_account_aliases", {})
-        d = dict(getattr(self, "claude_account_aliases", {}) or {})
-        alias = (alias or "").strip()
-        if alias:
-            d[email] = alias
-        else:
-            d.pop(email, None)
-        self.claude_account_aliases = d
-        self._save_opts()
-        return d
 
     def _token_debug_on(self) -> bool:
         """토큰 회계 진단 로그 on/off. 서버 옵션 `self.token_debug`(opts.json plugin_opts

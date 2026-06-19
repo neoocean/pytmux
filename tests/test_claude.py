@@ -502,16 +502,52 @@ async def test_fmt_long_turn_badge_switches_to_hours():
 
 
 async def test_warn_info_text_classifies_warn_kinds():
-    """통합 '경고' 탭 본문(TokenLogScreen._warn_info_text): 상태줄 경고 문구로 종류를
-    판별해 제목·상황·할일을 만든다(옛 _open_warn_info InfoScreen 내용 이전, 2026-06-17)."""
+    """통합 '경고' 탭 본문(TokenLogScreen._warn_info_text): **구조적 kind**(서버
+    claude_warn_kind)로 종류를 판별해 제목·상황·할일을 만든다(2026-06-19 i18n 전수조사
+    — 옛 한글 부분문자열 판별 대체). 첫 줄엔 현재 배지 문자열을 그대로 둔다."""
     screens = importlib.import_module("pytmuxlib.plugins.claude-code.screens")
+    i18n = screens.i18n
     wit = screens.TokenLogScreen._warn_info_text
-    t1, l1 = wit("⚠ 75:13")
-    assert t1 == "Claude 장기 턴" and l1[0] == "⚠ 75:13"   # 첫 줄 = 원문 경고
-    t2, _ = wit("같은 출력이 여러 번 반복 — 루프 의심")
-    assert t2 == "Claude 반복 루프 의심"
-    t3, _ = wit("Claude 포맷 미인식")
-    assert t3 == "Claude 포맷 미인식"
+    # kind 별 제목은 i18n 키와 동치(로케일 무관 단언).
+    t1, l1 = wit("long_turn", "⚠ 75:13")
+    assert t1 == i18n.t("claude.warn_long_title") and l1[0] == "⚠ 75:13"
+    t2, _ = wit("repeat", "⚠ 동일 결과 3회 반복 — 루프 의심")
+    assert t2 == i18n.t("claude.warn_repeat_title")
+    t3, _ = wit("fmt_unknown", "⚠ Claude 포맷 미인식 — 추적 중단")
+    assert t3 == i18n.t("claude.warn_fmt_title")
+    # 구버전 서버 호환: kind=None 이면 한글 문자열로 폴백 판별.
+    assert wit(None, "Claude 포맷 미인식")[0] == i18n.t("claude.warn_fmt_title")
+    assert wit(None, "여러 번 반복 — 루프 의심")[0] == i18n.t("claude.warn_repeat_title")
+
+
+async def test_warn_info_text_localized_en_no_hangul():
+    """en 로케일에서 [경고] 탭 본문·제목에 한글이 새지 않는다(i18n 전수조사 회귀).
+    ko 로케일에선 한글 안내가 그대로 나온다."""
+    import re
+    screens = importlib.import_module("pytmuxlib.plugins.claude-code.screens")
+    i18n = screens.i18n
+    wit = screens.TokenLogScreen._warn_info_text
+    badge = screens.TokenLogScreen._warn_badge
+    prev = i18n.get_locale() if hasattr(i18n, "get_locale") else None
+    try:
+        i18n.set_locale("en")
+        for kind in ("long_turn", "repeat", "fmt_unknown"):
+            title, lines = wit(kind, "⚠ x")
+            blob = title + "\n" + "\n".join(lines[1:])  # 0=배지(아래 별도 검증)
+            assert not re.search(r"[가-힣]", blob), \
+                f"en 본문에 한글 누출({kind}): {blob!r}"
+        # 첫 줄 배지도 로케일화: 반복/포맷-미인식은 en 에서 한글이 없어야(장기 턴은
+        # 서버 문자열이라 호출부가 넘긴 그대로 — 언어중립 '⚠ M:SS').
+        assert not re.search(r"[가-힣]",
+                             badge("repeat", "⚠ 동일 결과 3회 반복 — 루프 의심", 3))
+        assert not re.search(r"[가-힣]", badge("fmt_unknown", "⚠ 한글 서버 문자열"))
+        i18n.set_locale("ko")
+        title, lines = wit("fmt_unknown", "⚠ x")
+        assert re.search(r"[가-힣]", title), "ko 제목은 한글이어야"
+        assert re.search(r"[가-힣]", badge("repeat", "⚠ x", 3)), \
+            "ko 배지는 한글이어야"
+    finally:
+        i18n.set_locale(prev or "en")
 
 
 async def test_warn_badge_click_routes_to_token_log_warn_tab():
@@ -536,61 +572,6 @@ async def test_warn_badge_click_routes_to_token_log_warn_tab():
     routed.clear()
     cc._open_warn_info(_App(None))      # 경고 없음 → 팝업 안 염
     assert routed == [], routed
-
-
-async def test_account_label_display_modes():
-    """§10-E #2: 좌하단 계정 표기 표시모드(alias/full/hidden)+별칭(_account_label).
-    alias=별칭 있으면 별칭·없으면 fallback, full=전체 이메일, hidden=None(표시 안 함).
-    표시모드/별칭은 status.absorb 가 서버 status 에서 흡수한다."""
-    cs = importlib.import_module("pytmuxlib.plugins.claude-code.clientstatus")
-
-    class _S:
-        pass
-
-    status = _S()
-    cs.init_defaults(status)
-    # 기본 alias, 별칭 매핑 없음 → fallback(폭-반응 기본 표기) 사용
-    assert cs._account_label(status, "me@x.org", "me…") == "me…"
-    # 별칭 흡수 후 alias 모드 → 별칭
-    cs.absorb(status, {"claude_account_display": "alias",
-                       "claude_account_aliases": {"me@x.org": "메인"}})
-    assert cs._account_label(status, "me@x.org", "me…") == "메인"
-    # 매핑 없는 계정은 여전히 fallback
-    assert cs._account_label(status, "other@x.org", "ot…") == "ot…"
-    # full 모드 → 전체 이메일(별칭 무시)
-    cs.absorb(status, {"claude_account_display": "full"})
-    assert cs._account_label(status, "me@x.org", "me…") == "me@x.org"
-    # hidden 모드 → None(표시 안 함)
-    cs.absorb(status, {"claude_account_display": "hidden"})
-    assert cs._account_label(status, "me@x.org", "me…") is None
-
-
-async def test_account_display_and_alias_setters_persist():
-    """§10-E #2 서버 setter: set_account_display(순환·명시)·set_account_alias(설정·삭제)
-    가 server 속성을 바꾸고 plugin_opts(server_opts_serialize)로 영속된다."""
-    import harness  # noqa: F401
-    from harness import server_only, teardown
-    srv, task, sock = await server_only()
-    try:
-        from pytmuxlib import plugins
-        reg = plugins.load()
-        # 기본 alias → 순환 토글(alias→full→hidden→alias)
-        assert srv.set_account_display() == "full"
-        assert srv.set_account_display() == "hidden"
-        assert srv.set_account_display() == "alias"
-        # 명시 지정
-        assert srv.set_account_display("full") == "full"
-        # 별칭 설정/삭제
-        srv.set_account_alias("me@x.org", "메인")
-        assert srv.claude_account_aliases["me@x.org"] == "메인"
-        srv.set_account_alias("me@x.org", "")        # 빈 별칭 = 삭제
-        assert "me@x.org" not in srv.claude_account_aliases
-        # 영속 직렬화에 포함
-        out = reg.server_opts_serialize(srv)
-        assert out["claude_account_display"] == "full"
-        assert out["claude_account_aliases"] == {}
-    finally:
-        await teardown(srv, task, sock)
 
 
 async def test_statusbar_unknown_usage_badge_when_no_measurement():

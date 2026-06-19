@@ -63,6 +63,23 @@ def is_tcp(endpoint: str) -> bool:
     return endpoint.startswith("tcp:")
 
 
+def is_local_endpoint(endpoint: str) -> bool:
+    """엔드포인트가 같은 머신(로컬)인가. AF_UNIX 소켓은 항상 로컬, TCP 는
+    루프백 호스트(127.0.0.0/8·::1·localhost)면 로컬, 그 외 호스트면 원격(진짜
+    네트워크)으로 본다. 클라↔서버 응답성(degraded) 표시가 로컬에선 의미 없음을
+    판정하는 데 쓴다 — 로컬 RTT 스파이크는 이벤트루프/스케줄링 지터일 뿐이라
+    네트워크 열화가 아니다(§10-F Windows degraded 오탐)."""
+    if not is_tcp(endpoint):
+        return True
+    try:
+        _, host, _ = parse_endpoint(endpoint)
+    except ValueError:
+        return False
+    host = host.strip().lower()
+    return (host in ("localhost", "", "::1", "::ffff:127.0.0.1")
+            or host.startswith("127."))
+
+
 def _validate_state_dir(path: str) -> None:
     """상태 디렉터리가 안전한지 검증한다(F3, docs/internal/SECURITY_REVIEW.md).
 

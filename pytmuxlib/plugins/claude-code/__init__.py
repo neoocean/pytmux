@@ -40,10 +40,6 @@ COMMANDS = [
                     "막대 그래프(별칭 usage-limits·limits)", "Claude"),
     ("token-account", "활성 패널 Claude 계정 수동 지정 (token-account <이름>, "
                       "빈값=자동)", "Claude"),
-    ("account-display", "좌하단 계정 표시모드 — 별칭/메일 전체/표시 안 함 "
-                        "(account-display [alias|full|hidden], 무인자=순환)", "Claude"),
-    ("account-alias", "감지된 Claude 계정에 별칭 부여 (account-alias <이메일> [별칭], "
-                      "별칭 생략=삭제, 무인자=관리 화면)", "Claude"),
     ("prompt-clear", "프롬프트 단위 클리어 모드 토글(완료마다 문서화+/clear) [on|off]",
                      "Claude"),
     ("prompt-clear-message", "프롬프트 단위 클리어의 문서화 지시문 변경", "Claude"),
@@ -78,7 +74,6 @@ NOARG = {
     "claude-rules", "token-saver",
     "token-usage", "token-log",
     "claude-usage", "usage", "usage-panel", "usage-limits", "limits",
-    "account-display", "account-alias",   # §10-E #2 (무인자=순환/관리 화면)
 }
 # 옵션(선택지) 스키마 — 팔레트에서 on/off/토글을 키보드로 고른다(코어 COMMAND_OPTIONS 병합).
 _ONOFF = [("토글", ""), ("켜기", "on"), ("끄기", "off")]
@@ -105,12 +100,10 @@ i18n.register({
         "cmd.token-saver": "Token-saving settings popup — toggle each auto-intervention·remaining threshold·measured gate (alias claude-settings, token-settings)",
         "cmd.auto-resume": "Auto-resume on token limit [on|off]",
         "cmd.auto-resume-message": "Set the auto-resume message",
-        "cmd.token-log": "Token usage popup — period (h/d/w/m)·account·session views + measured limits·5h window (alias token-usage, click status usage)",
+        "cmd.token-log": "Token usage popup — period (h/d/w/m)·session views + measured limits·5h window (alias token-usage, click status usage)",
         "cmd.claude-usage": "Shadow /usage query — refresh real session/weekly limits via a hidden session (alias usage)",
         "cmd.usage-panel": "Claude token usage-limit popup — /usage (session 5h·week all·week Sonnet) bar graph (alias usage-limits·limits)",
         "cmd.token-account": "Manually set the active pane's Claude account (token-account <name>, empty=auto)",
-        "cmd.account-display": "Bottom-left account display mode — alias / full email / hidden (account-display [alias|full|hidden], no-arg=cycle)",
-        "cmd.account-alias": "Give a detected Claude account an alias (account-alias <email> [alias], omit alias=remove, no-arg=manager)",
         "cmd.prompt-clear": "Toggle per-prompt clear mode (document + /clear each completion) [on|off]",
         "cmd.prompt-clear-message": "Change the per-prompt-clear documentation directive",
         "cmd.prompt-clear-queue": "Queue commands for per-prompt clear (empty=list, -c=clear)",
@@ -118,7 +111,7 @@ i18n.register({
         "cmd.auto-doc-clear": "Auto document + /clear when Claude idle 30s on/off (auto-doc-clear on|off|toggle)",
         "cmd.auto-compact": "Auto /compact when Claude idle 30s on/off (auto-compact on|off|toggle)",
         "cmd.auto-hardstop": "Auto /compact immediately on context hardstop ('Context limit reached') on/off (auto-hardstop on|off|toggle, default off)",
-        "cmd.auto-retry": "Auto-inject '계속' 1 min after a transmission error (API error·rate limit) on/off (auto-retry on|off|toggle, default on)",
+        "cmd.auto-retry": "Auto-inject a 'continue' message 1 min after a transmission error (API error·rate limit) on/off (auto-retry on|off|toggle, default on)",
         "cmd.auto-token-on-exit": "Auto-open token usage screen (Limit/usage) when Claude session ends on/off (auto-token-on-exit on|off|toggle, default on)",
         "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",
         "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
@@ -127,29 +120,58 @@ i18n.register({
     },
 })
 
-# §10-E #2 계정 별칭/표시모드 화면·안내 문자열(acct.*).
+# §6 ⑤ 플러그인 토스트/InfoScreen 표면 문자열(i18n 전수조사 2026-06-19 — en 로케일
+# 한글 누출 수정). 명령 핸들러의 display_message/InfoScreen 에 직접 박혀 있던 한글을
+# 이리로 모아 ko/en 대칭화한다. 키 네임스페이스 "ccmsg.*".
 i18n.register({
     "ko": {
-        "acct.alias_usage": "사용법: account-alias <이메일> [별칭]  (별칭 생략=삭제)",
-        "acct.title": "Claude 계정 별칭 / 표시",
-        "acct.mode_line": "표시: {mode}   (m: 전환)",
-        "acct.mode_alias": "별칭", "acct.mode_full": "메일 전체",
-        "acct.mode_hidden": "표시 안 함",
-        "acct.no_alias": "(별칭 없음)",
-        "acct.none": "감지된 Claude 계정이 없습니다",
-        "acct.edit_hint": "Enter: 별칭 편집 · m: 표시모드 · Esc: 닫기",
-        "acct.input_ph": "별칭 입력(빈값=삭제) · Enter 적용 · Esc 취소",
+        "ccmsg.model_apply": "/model {arg} 적용 요청",
+        "ccmsg.perm_switching": "권한모드 → {target} 전환 중…",
+        "ccmsg.usage_no_data": "/usage 한도 데이터 없음 — Claude 패널에서 /usage 를 먼저 실행",
+        "ccmsg.usage_title": "Claude 사용 한도 (/usage)",
+        "ccmsg.no_warn": "표시할 Claude 경고가 없습니다(이미 해소됨).",
+        "ccmsg.rc_title": "원격 제어(Remote Control)",
+        "ccmsg.rc_body":
+            "이 패널의 Claude Code 가 데스크탑 앱 '원격 제어'로 연결돼 있습니다.\n"
+            "(패널 화면의 'Remote Control active' 표시)\n"
+            "\n"
+            "• 원격 제어는 Claude Code CLI 의 '/rc' 명령으로 켜고 끕니다.\n"
+            "  → 이 화면에서 [r] 키로 바로 토글합니다(해당 패널에 /rc 주입).\n"
+            "• 원격 제어로 입력된 프롬프트도 상단 프롬프트 헤더에 반영됩니다.\n"
+            "\n"
+            "[r] 원격 제어 토글(/rc)   ·   닫기: Esc 또는 바깥 클릭.",
+        "ccmsg.usage_querying": "사용량 조회 중… (숨은 /usage, ~수초)",
+        "ccmsg.pc_queue_title": "프롬프트 클리어 큐",
+        "ccmsg.pc_queue_empty": "(큐 비어 있음)",
+        "ccmsg.pc_cleared": "큐 비움",
+        "ccmsg.rules_saved": "시작 규칙 저장됨",
+        "ccmsg.rules_cleared": "시작 규칙 비움",
     },
     "en": {
-        "acct.alias_usage": "usage: account-alias <email> [alias]  (omit alias to remove)",
-        "acct.title": "Claude account aliases / display",
-        "acct.mode_line": "Display: {mode}   (m: cycle)",
-        "acct.mode_alias": "alias", "acct.mode_full": "full email",
-        "acct.mode_hidden": "hidden",
-        "acct.no_alias": "(no alias)",
-        "acct.none": "No detected Claude accounts",
-        "acct.edit_hint": "Enter: edit alias · m: display mode · Esc: close",
-        "acct.input_ph": "Enter alias (empty=remove) · Enter apply · Esc cancel",
+        "ccmsg.model_apply": "Requested /model {arg}",
+        "ccmsg.perm_switching": "Switching permission mode → {target}…",
+        "ccmsg.usage_no_data":
+            "No /usage limit data — run /usage in a Claude panel first",
+        "ccmsg.usage_title": "Claude usage limit (/usage)",
+        "ccmsg.no_warn": "No Claude warning to show (already cleared).",
+        "ccmsg.rc_title": "Remote Control",
+        "ccmsg.rc_body":
+            "This panel's Claude Code is connected to the desktop app's "
+            "'Remote Control'.\n"
+            "(the panel shows 'Remote Control active')\n"
+            "\n"
+            "• Remote control is toggled with the Claude Code CLI '/rc' command.\n"
+            "  → Press [r] here to toggle it directly (injects /rc into the panel).\n"
+            "• Prompts entered via remote control also appear in the top prompt "
+            "header.\n"
+            "\n"
+            "[r] Toggle remote control (/rc)   ·   close: Esc or click outside.",
+        "ccmsg.usage_querying": "Querying usage… (hidden /usage, ~a few sec)",
+        "ccmsg.pc_queue_title": "Prompt-clear queue",
+        "ccmsg.pc_queue_empty": "(queue empty)",
+        "ccmsg.pc_cleared": "Queue cleared",
+        "ccmsg.rules_saved": "Start rules saved",
+        "ccmsg.rules_cleared": "Start rules cleared",
     },
 })
 
@@ -393,7 +415,14 @@ def _apply_model_config(app, res):
     arg = model if ctx in (None, "default") else f"{model} {ctx}"
     # '/model <이름>' + Enter 주입(사용자 확인). 짧은 슬래시 명령이라 한 번에.
     app.send_input(("/model " + arg + "\r").encode("utf-8"))
-    app.display_message(f"/model {arg} 적용 요청")
+    app.display_message(i18n.t("ccmsg.model_apply", arg=arg))
+
+
+def _interrupt_pane(app, pane_id):
+    """busy footer 의 'esc to interrupt' 클릭 → 그 패널에 ESC(\\x1b)를 주입한다.
+    실행 중인 Claude 작업을 중단(키보드 ESC 와 동일). 활성 패널을 바꾸지 않도록
+    send_input_pane 으로 클릭한 패널에 직접 보낸다(비활성 Claude 패널도 가능)."""
+    app.send_input_pane(pane_id, b"\x1b")
 
 
 def _open_perm_mode(app, pane_id):
@@ -416,7 +445,7 @@ def _open_perm_mode(app, pane_id):
         app._undim_rows = set()            # 닫히면 dim 제외 해제
         if target:
             app.send_cmd("set_claude_perm_mode", id=pane_id, target=target)
-            app.display_message(f"권한모드 → {target} 전환 중…")
+            app.display_message(i18n.t("ccmsg.perm_switching", target=target))
     app.push_screen(PermModeScreen(current, anchor_y=anchor_y,
                                    anchor_x=anchor_x,
                                    bypass_available=bypass_ok), _chosen)
@@ -448,38 +477,12 @@ def _on_token_log_msg(app, msg):
         msg.get("records") or [],
         usage=getattr(app.status, "usage_limits", None),
         total_all=msg.get("total_all"),
-        accounts_total=msg.get("accounts_total"),
         daily=msg.get("daily"),
         reconcile=msg.get("reconcile"),
         daily_pct=msg.get("daily_pct"),
         hourly_pct=msg.get("hourly_pct"),
         hourly_week_pct=msg.get("hourly_week_pct"),
         initial_mode=initial_mode))
-
-
-def _open_account_aliases(app):
-    """§10-E #2b 계정 별칭 관리 화면. 서버에 감지된 계정 목록을 요청하고, 회신
-    (t==account_list)이 오면 handle_message 가 AccountAliasScreen 을 띄운다(별칭 편집·
-    표시모드 선택). token-log 와 같은 요청→회신→팝업 패턴."""
-    app._want_account_list = True
-    app.send_cmd("request_account_list")
-
-
-def _on_account_list_msg(app, msg):
-    """서버 account_list 회신 → AccountAliasScreen 팝업(open_account_aliases 요청 시만).
-    이미 그 화면이 떠 있으면(편집 후 재요청) 데이터만 갱신한다."""
-    if not getattr(app, "_want_account_list", False):
-        return
-    app._want_account_list = False
-    from .screens import AccountAliasScreen
-    top = app.screen_stack[-1] if len(app.screen_stack) > 1 else None
-    if isinstance(top, AccountAliasScreen):
-        top.update_data(msg.get("accounts") or [], msg.get("aliases") or {},
-                        msg.get("display") or "alias")
-        return
-    app.push_screen(AccountAliasScreen(
-        msg.get("accounts") or [], msg.get("aliases") or {},
-        msg.get("display") or "alias"))
 
 
 def _open_usage_panel(app):
@@ -493,10 +496,9 @@ def _open_usage_panel(app):
     lines = usage_bar_lines(u, w,
                             age_sec=getattr(app.status, "usage_age_sec", None))
     if not lines:
-        app.display_message(
-            "/usage 한도 데이터 없음 — Claude 패널에서 /usage 를 먼저 실행")
+        app.display_message(i18n.t("ccmsg.usage_no_data"))
         return
-    app.push_screen(InfoScreen(lines, title="Claude 사용 한도 (/usage)"))
+    app.push_screen(InfoScreen(lines, title=i18n.t("ccmsg.usage_title")))
 
 
 def _open_warn_info(app):
@@ -506,7 +508,7 @@ def _open_warn_info(app):
     사라졌으면 팝업을 열지 않고 가볍게 알린다."""
     warn = getattr(app.status, "claude_warn", None)
     if not warn:
-        app.display_message("표시할 Claude 경고가 없습니다(이미 해소됨).")
+        app.display_message(i18n.t("ccmsg.no_warn"))
         return
     fn = getattr(app, "open_token_log", None)
     if fn is not None:
@@ -539,18 +541,9 @@ def _open_remote_control(app, pane_id):
     Claude Code CLI 의 `/rc` 슬래시 명령으로 켜고 끌 수 있으므로, 이 팝업에서 [r] 로
     바로 토글한다(해당 패널에 `/rc` 주입)."""
     from pytmuxlib.clientscreens import InfoScreen
-    lines = [
-        "이 패널의 Claude Code 가 데스크탑 앱 '원격 제어'로 연결돼 있습니다.",
-        "(패널 화면의 'Remote Control active' 표시)",
-        "",
-        "• 원격 제어는 Claude Code CLI 의 '/rc' 명령으로 켜고 끕니다.",
-        "  → 이 화면에서 [r] 키로 바로 토글합니다(해당 패널에 /rc 주입).",
-        "• 원격 제어로 입력된 프롬프트도 상단 프롬프트 헤더에 반영됩니다.",
-        "",
-        "[r] 원격 제어 토글(/rc)   ·   닫기: Esc 또는 바깥 클릭.",
-    ]
+    lines = i18n.t("ccmsg.rc_body").split("\n")
     app.push_screen(InfoScreen(
-        lines, title="원격 제어(Remote Control)",
+        lines, title=i18n.t("ccmsg.rc_title"),
         hide_key="r", max_width=92,   # 넓은 터미널에선 본문이 안 잘리게 확장(요청)
         # app._toggle_remote_control(attach_client 설치)을 거쳐 테스트 monkeypatch 도 존중.
         hide_cb=lambda: app._toggle_remote_control(pane_id)))
@@ -612,9 +605,6 @@ class _ClaudeCodePlugin:
                   # PYTMUX_TOKEN_DEBUG 를 대체(런타임 `token-debug on/off` 토글). opts.json
                   # 미존재 시 그 env 를 기동 기본값으로 폴백 — 아래 server_opts_init.
                   ("token_debug", False, bool),
-                  # §10-E #2: 좌하단 계정 표시모드 — alias(별칭)·full(메일 전체)·
-                  # hidden(표시 안 함). 기본 alias(별칭 없으면 종전 거동=축약/전체 폴백).
-                  ("claude_account_display", "alias", str),
                   # §10-F: Claude 세션 종료 시 토큰 사용량 화면(한도/usage 탭) 자동
                   # 표시(요청 2026-06-18). 기본 ON.
                   ("auto_token_on_exit", True, bool))
@@ -639,19 +629,12 @@ class _ClaudeCodePlugin:
         # 런타임 토글이 _save_opts 로 영속되면 그 값이 권위(다음 기동부터 env 무시).
         if "token_debug" not in po and "token_debug" not in opts:
             server.token_debug = bool(os.environ.get("PYTMUX_TOKEN_DEBUG"))
-        # §10-E #2: 계정 별칭 매핑(dict email→alias)은 스칼라 _OPTS_KEYS 와 별도로 로드.
-        aliases = po.get("claude_account_aliases", opts.get("claude_account_aliases"))
-        server.claude_account_aliases = (dict(aliases)
-                                         if isinstance(aliases, dict) else {})
 
     def server_opts_serialize(self, server):
         """server 속성 → opts.json plugin_opts 네임스페이스(코어 _save_opts 의
         해당 블록을 이전). 코어는 이 dict 를 plugin_opts 밑에 불투명하게 저장한다."""
         out = {key: getattr(server, key, default)
                for key, default, _cast in self._OPTS_KEYS}
-        # §10-E #2: 계정 별칭 dict 영속.
-        out["claude_account_aliases"] = dict(
-            getattr(server, "claude_account_aliases", {}) or {})
         return out
 
     # ---- 서버 런타임 훅(코어 serverio/server 가 레지스트리로만 호출) ----
@@ -706,8 +689,12 @@ class _ClaudeCodePlugin:
         else:
             msg["tok5h_pct"] = server._tok5h_pct(ap, tok_total)
             msg["week_sonnet_pct"] = None
-        # M17(T7): 장기턴/반복루프 경고(없으면 None).
+        # M17(T7): 장기턴/반복루프 경고(없으면 None). 종류(kind)·반복수(n)도 함께
+        # 보내 클라가 로케일별로 배지/안내를 렌더한다(i18n 전수조사 2026-06-19 — 한글
+        # 부분문자열 판별 대체). claude_warn 문자열은 호환/장기턴 배지(언어중립)용 유지.
         msg["claude_warn"] = ap._claude_warn if ap else None
+        msg["claude_warn_kind"] = getattr(ap, "_claude_warn_kind", None) if ap else None
+        msg["claude_warn_n"] = getattr(ap, "_claude_warn_n", None) if ap else None
         # M14c 모델 과선택 힌트 배지(알림만, 없으면 None — claude_warn 과 같은 송출 방식).
         msg["claude_model_tip"] = ap._model_tip if ap else None
         # M19: 그림자 /usage 세션·주간 한도(없으면 None).
@@ -726,13 +713,6 @@ class _ClaudeCodePlugin:
         # 로그·이벤트는 위 별칭(claude_account)만 쓴다 — 이 키는 클라 표시 전용.
         msg["claude_account_full"] = (
             getattr(ap, "_claude_account_full", None) if ap else None)
-        # §10-E #2: 계정 표시모드 + 별칭 매핑(클라 footer 렌더가 적용). 작은 값이라 status
-        # 로 보내 클라가 캐시한다(지속표시 패턴 — 부재여도 마지막 값 유지). known_accounts
-        # 는 설정 화면 열거용(전이력 계정합 키 ∪ 현재).
-        msg["claude_account_display"] = getattr(
-            server, "claude_account_display", "alias")
-        msg["claude_account_aliases"] = dict(
-            getattr(server, "claude_account_aliases", {}) or {})
         msg["autoresume"] = bool(ap.autoresume) if ap else False
         msg["prompt_clear"] = bool(ap.prompt_clear_mode) if ap else False
         # 프롬프트 단위 클리어 큐(#4): 활성 패널에 쌓인 명령들(표시·목록용).
@@ -870,12 +850,6 @@ class _ClaudeCodePlugin:
         if action == "set_token_debug":               # §10-D 토큰 회계 진단 로그 토글
             server.set_token_debug(msg.get("value"))
             return "broadcast"                         # status 로 새 값 회신(:설정 표시)
-        if action == "set_account_display":           # §10-E #2 계정 표시모드
-            server.set_account_display(msg.get("value"))
-            return "broadcast"
-        if action == "set_account_alias":             # §10-E #2 계정 별칭 매핑
-            server.set_account_alias(msg.get("email"), msg.get("alias"))
-            return "broadcast"
         if action == "set_claude_rules":              # #27 시작 규칙 저장(영속)
             server.set_claude_rules(msg.get("text", ""))
             return "broadcast"                        # status 로 새 규칙 회신
@@ -909,8 +883,10 @@ class _ClaudeCodePlugin:
         app.pane_claude = {}            # id -> {"claude","prompt",…}
         app._perm_zone = {}             # id -> (x0,x1,y) 권한모드 footer 클릭존
         app._remote_zone = {}           # id -> (x0,x1,y) 원격제어 표시 클릭존
+        app._interrupt_zone = {}        # id -> (x0,x1,y) busy footer 'esc to interrupt' 클릭존
         # 헤더 상태/클릭존 글루(코어/clientwidgets 가 getattr 로 호출 — 없으면 no-op).
         app._update_claude = lambda pc: _update_claude(app, pc)
+        app.interrupt_pane = lambda pid: _interrupt_pane(app, pid)
         app._toggle_remote_control = lambda pid: _toggle_remote_control(app, pid)
         app.open_remote_control = lambda pid: _open_remote_control(app, pid)
         from .clientrender import footer_zone_at
@@ -924,7 +900,6 @@ class _ClaudeCodePlugin:
         app.open_perm_mode = lambda pane_id: _open_perm_mode(app, pane_id)
         app.open_usage_panel = lambda: _open_usage_panel(app)
         app.open_token_log = lambda initial=None: _open_token_log(app, initial)
-        app.open_account_aliases = lambda: _open_account_aliases(app)  # §10-E #2b
         app.open_claude_warn_info = lambda: _open_warn_info(app)
         # (open_claude_usage_tree/_open_usage_tree 설치는 token-usage→token-log 통합
         #  (2026-06-12)으로 제거 — 상태줄 사용량 클릭·esc 포커스 Enter 는 이미
@@ -963,9 +938,6 @@ class _ClaudeCodePlugin:
         if msg.get("t") == "token_log":
             _on_token_log_msg(app, msg)
             return True
-        if msg.get("t") == "account_list":         # §10-E #2b 계정 별칭 관리 화면
-            _on_account_list_msg(app, msg)
-            return True
         return False
 
     def handle_server_request(self, server, sess, action, msg):
@@ -976,16 +948,15 @@ class _ClaudeCodePlugin:
         이 훅이 사라져 토큰 로그 요청이 무응답(클라는 빈 팝업) — 코어는 무에러."""
         if action == "request_token_log":
             # 영속 토큰 레코드(최근 N 건)를 SQLite 에서 읽어 클라이언트로. 클라가
-            # usagelog 로 시간/일/월 × 계정/세션 집계해 팝업에 표시(라운드트립 없이
-            # 버킷/차원 전환). Phase B: 버킷 전환용 N 건과 별개로, 정확한 **전체
-            # 이력 합**(total_all)·계정별 합(accounts_total)을 서버가 SQL GROUP BY 로
-            # 함께 보내, 이력이 N 을 넘어도 lifetime Σ 가 과소표시되지 않게 한다.
+            # usagelog 로 시간/일/월·세션 집계해 팝업에 표시(라운드트립 없이 버킷/차원
+            # 전환). Phase B: 버킷 전환용 N 건과 별개로, 정확한 **전체 이력 합**
+            # (total_all)을 서버가 SQL 로 함께 보내, 이력이 N 을 넘어도 lifetime Σ 가
+            # 과소표시되지 않게 한다. (계정별 합은 머신-로컬 표시로 전환돼 제거 — 2026-06-19.)
             from . import usagedb   # S5 T5: 플러그인 소속(물리 이전)
             conn = server._tokens_db_conn()
             recs = (usagedb.query_records(conn, limit=int(msg.get("limit", 5000)))
                     if conn is not None else [])
             total_all = usagedb.total_all(conn) if conn is not None else 0
-            accts = usagedb.totals_by_account(conn) if conn is not None else {}
             # 버킷(일/주/월) 전체 이력 집계용 일자별 합성 레코드(cap 무관). 클라가
             # usagelog.agg_view 에 먹여 옛 버킷이 안 잘리게 재구성한다(Phase B 완성).
             daily = usagedb.daily_breakdown(conn) if conn is not None else []
@@ -1001,27 +972,10 @@ class _ClaudeCodePlugin:
             # 1w%(주간 전체모델 한도) 시각별 — 5h% 옆 열(사용자 요청 2026-06-17).
             hourly_week = usagedb.hourly_week_pct(conn) if conn is not None else {}
             return {"t": "token_log", "records": recs,
-                    "total_all": total_all, "accounts_total": accts,
+                    "total_all": total_all,
                     "daily": daily, "reconcile": recon,
                     "daily_pct": daily_pct, "hourly_pct": hourly_pct,
                     "hourly_week_pct": hourly_week}
-        if action == "request_account_list":
-            # §10-E #2b 계정 별칭 관리 화면용 — 감지된 계정 목록(전이력 계정합 키)+
-            # 현재 별칭 매핑·표시모드를 가볍게 회신(token_log 의 무거운 레코드 없이).
-            from . import usagedb
-            conn = server._tokens_db_conn()
-            accts = (usagedb.totals_by_account(conn) if conn is not None else {})
-            known = set(a for a in accts if a)
-            known.update(getattr(server, "claude_account_aliases", {}) or {})
-            # 현재 활성 패널들의 식별 계정도 포함(아직 DB 에 안 쌓였어도 보이게).
-            for q in server._all_panes():
-                full = getattr(q, "_claude_account_full", None)
-                if full:
-                    known.add(full)
-            return {"t": "account_list",
-                    "accounts": sorted(known),
-                    "aliases": dict(getattr(server, "claude_account_aliases", {}) or {}),
-                    "display": getattr(server, "claude_account_display", "alias")}
         return None
 
     # ---- 클라이언트 콘텐츠-레이어 렌더/상태 훅(Phase 2c) ----
@@ -1098,26 +1052,9 @@ class _ClaudeCodePlugin:
             # M19 그림자 /usage 질의: 서버가 숨은 claude 를 띄워 실 세션/주간 한도를
             # 긁어온다(사용자 화면 무간섭, ~수초). 회신은 status 로 반영.
             app.send_cmd("refresh_usage")
-            app.display_message("사용량 조회 중… (숨은 /usage, ~수초)", 4.0)
+            app.display_message(i18n.t("ccmsg.usage_querying"), 4.0)
         elif c in ("token-account", "tokens-account"):
             app.send_cmd("set_claude_account", name=" ".join(args).strip())
-        elif c in ("account-display", "acct-display"):
-            # §10-E #2 좌하단 계정 표시모드: alias|full|hidden (무인자=순환 토글).
-            arg = args[0].lower() if args else ""
-            app.send_cmd("set_account_display",
-                         value=(arg if arg in ("alias", "full", "hidden") else None))
-        elif c in ("account-alias", "acct-alias"):
-            # §10-E #2 계정 별칭: `account-alias <이메일> [별칭]`(별칭 생략=삭제). 무인자면
-            # 감지된 계정 목록+별칭 관리 화면(client_unload 처럼 getattr 가드).
-            if args:
-                app.send_cmd("set_account_alias", email=args[0],
-                             alias=" ".join(args[1:]).strip())
-            else:
-                fn = getattr(app, "open_account_aliases", None)
-                if fn:
-                    fn()
-                else:
-                    app.display_message(i18n.t("acct.alias_usage"))
         elif c in ("prompt-clear", "prompt-clear-mode"):
             app.send_cmd("set_prompt_clear", value=_onoff(args))
         elif c in ("auto-doc-clear", "auto-doc"):
@@ -1159,11 +1096,11 @@ class _ClaudeCodePlugin:
             from pytmuxlib.clientscreens import InfoScreen
             q = app.status.prompt_clear_queue
             lines = [f"{i + 1}. {cmd}" for i, cmd in enumerate(q)] or \
-                ["(큐 비어 있음)"]
-            app.push_screen(InfoScreen(lines, title="프롬프트 클리어 큐"))
+                [i18n.t("ccmsg.pc_queue_empty")]
+            app.push_screen(InfoScreen(lines, title=i18n.t("ccmsg.pc_queue_title")))
         elif args[0].lower() in ("-c", "clear", "--clear"):
             app.send_cmd("pc_queue_clear")
-            app.display_message("큐 비움")
+            app.display_message(i18n.t("ccmsg.pc_cleared"))
         else:
             app.send_cmd("pc_queue_add", cmd=" ".join(args).strip())
 
@@ -1175,8 +1112,8 @@ class _ClaudeCodePlugin:
         def _saved(text):
             if text is not None:
                 app.send_cmd("set_claude_rules", text=text)
-                app.display_message("시작 규칙 저장됨" if text.strip()
-                                    else "시작 규칙 비움")
+                app.display_message(i18n.t("ccmsg.rules_saved") if text.strip()
+                                    else i18n.t("ccmsg.rules_cleared"))
         app.push_screen(RulesEditScreen(getattr(app, "_claude_rules", "")), _saved)
 
     def _open_saver(self, app):

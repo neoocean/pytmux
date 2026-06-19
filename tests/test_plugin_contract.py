@@ -135,7 +135,8 @@ async def test_token_log_request_handled_by_plugin_hook():
         assert resp and resp["t"] == "token_log", "토큰 로그 회신이 없음"
         assert resp["total_all"] == 1234, resp
         assert resp["records"] and resp["records"][0]["tokens"] == 1234
-        assert resp["accounts_total"].get("me@x") == 1234, resp["accounts_total"]
+        # 계정별 합(accounts_total)은 머신-로컬 표시로 전환돼 페이로드에서 제거됨(2026-06-19).
+        assert "accounts_total" not in resp, resp
         # 플러그인 부재(디렉토리 삭제 시뮬) → 토큰 로그 요청은 무응답(None).
         reg2 = _registry_without_claude()
         assert reg2.handle_server_request(
@@ -204,16 +205,12 @@ async def _opts_namespace_body(reg, _S):
     assert set(out) - {"ph_max_lines", "capture"} == {"usage_gate_session_pct",
                                            "usage_gate_week_pct", "claude_auto_retry",
                                            "claude_model_hint", "token_debug",
-                                           "claude_account_display",
-                                           "claude_account_aliases",
                                            "auto_token_on_exit"}
     assert out["claude_auto_retry"] is True   # 기본 ON(opts 부재 시)
     assert out["claude_model_hint"] is False  # M14c 힌트 opt-in — 기본 OFF
     assert out["token_debug"] is False        # §10-D 진단 로그 — 기본 OFF
     assert out["auto_token_on_exit"] is True  # §10-F 세션 종료 자동 팝업 — 기본 ON
-    # §10-E #2 계정 표시모드(기본 alias)·별칭 dict(기본 빈) 기본값.
-    assert out["claude_account_display"] == "alias"
-    assert out["claude_account_aliases"] == {}
+    # (계정 표시모드/별칭 opt 는 머신-로컬 표시 전환으로 제거됨 — 2026-06-19.)
     # §7-4 deprecate shim: 구 opts.json 에 남은 token_budget_* 는 무시(속성 미설치).
     s4 = _S()
     reg.server_opts_init(s4, {"token_budget_day": 111,
