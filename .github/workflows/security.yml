@@ -55,9 +55,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-      - name: Fuzz + runtime security tests
+      - name: Fuzz + runtime + red-team security tests
         timeout-minutes: 6
-        run: python -u tests/run.py test_fuzz_parsers test_security_runtime
+        run: python -u tests/run.py test_fuzz_parsers test_security_runtime test_redteam
 
   atheris-nightly:
     # 커버리지 가이드 퍼징(libFuzzer/atheris). 설치가 무겁고 간헐적이라 schedule·수동만,
