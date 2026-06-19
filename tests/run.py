@@ -88,6 +88,14 @@ _STARTUP_TIMEOUT = max(60.0, TEST_TIMEOUT) if TEST_TIMEOUT > 0 else 0
 if _STARTUP_TIMEOUT > 0:
     faulthandler.dump_traceback_later(_STARTUP_TIMEOUT, exit=True)
 
+# 스위트 위생(hermetic). 개발자 셸에 PYTMUX_HOME 이 export 돼 있으면(§10-E #1 opt-in 단일
+# 디렉토리) 경로/상태 기본값을 가정하는 테스트들이 임시 디렉토리 대신 그 실제 ~/.pytmux 의
+# 영속 opts.json·tokens DB·state 를 읽어 **머신마다 다른 거짓 실패**가 난다(예: 구 스키마
+# opts 의 auto_hardstop=true, 낡은 plugin_opts → 기본값/속성 단언 깨짐). CI 는 이 env 가
+# 없어 초록이라 더 헷갈린다. 여기서 미리 거둬 셸 상태와 무관하게 만든다 — PYTMUX_HOME 이
+# 필요한 test_pytmux_home 은 자체 _Env 로 매 테스트 설정/해제하므로 영향 없다.
+os.environ.pop("PYTMUX_HOME", None)
+
 # S5c/T5: claude/tokens/usageprobe/usagedb/usagelog 는 plugins/claude-code/ 로 물리
 # 이전됐다(코어는 더는 이들을 import 하지 않는다). 기존 테스트가 `from pytmuxlib.claude
 # import …`·`from pytmuxlib import tokens, usagedb, usagelog` 로 계속 import 할 수 있게,

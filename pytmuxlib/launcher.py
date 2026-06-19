@@ -373,7 +373,20 @@ def run_stdio_proxy(sock_path: str) -> int:
         sock.close()
     except OSError:
         pass
-    return 0
+    # 데몬 _sock_to_stdout 가 join 안에 못 끝났으면(서버가 소켓을 늦게 닫음) 아직
+    # out.write/flush 중이라 stdout BufferedWriter 락을 쥔 채로 남는다. 여기서 그대로
+    # return 하면 sys.exit→Py_FinalizeEx 가 데몬을 강제 종료하면서 그 락이 풀리지 않은
+    # 채 stdout TextIOWrapper 를 닫으려다 `_enter_buffered_busy` fatal abort() →
+    # macOS "Python quit unexpectedly" 팝업(원격-attach/stdio-proxy 자식에서 간헐).
+    # 이 프로세스는 stdin↔소켓↔stdout 만 잇는 잎(leaf) 릴레이라 인터프리터 finalize 가
+    # 할 일이 없다 → 우리 스트림만 flush 하고 os._exit 로 finalize 를 건너뛰어 레이스를
+    # 원천 차단한다. (정상 종료(서버가 소켓 닫음)도 동일 경로라 항상 깔끔히 끝난다.)
+    for s in (sys.stdout, sys.stderr):
+        try:
+            s.flush()
+        except (OSError, ValueError):
+            pass
+    os._exit(0)
 
 
 def _confirm_kill_server() -> bool:
