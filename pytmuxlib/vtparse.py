@@ -345,7 +345,27 @@ class VTTokenizer:
             return
 
         fn = self._csi.get(final, self._noop)
-        if priv == "?":
-            fn(*params, private=True)
-        else:
-            fn(*params)
+        self._call_csi(fn, params, private=(priv == "?"))
+
+    def _call_csi(self, fn, params, *, private: bool) -> None:
+        """CSI 핸들러를 호출하되 **과다 파라미터로 죽지 않는다**(보안: 신뢰불가 패널
+        출력의 DoS 차단 — docs/internal/SECURITY_REVIEW.md §9 R2).
+
+        pyte 의 Screen 핸들러는 고정 인자수라(예: `cursor_position(line, column)`)
+        `ESC[38;2;H` 처럼 종결자에 비해 파라미터가 많은 악의·고장 시퀀스는 `fn(*params)`
+        에서 TypeError 를 던져 Pane.feed → 서버 feed 태스크를 크래시시키고 그 버스트의
+        나머지 출력을 유실시킨다(위협모델 #4). 실단말처럼 **여분 파라미터를 뒤에서
+        하나씩 떼어** arity 가 맞을 때까지 재시도하고, 끝내 안 맞으면 시퀀스를 생략한다.
+        정상 시퀀스는 arity 가 맞아 첫 시도에 성공하므로 거동/성능 불변(pyte 동일)."""
+        p = list(params)
+        while True:
+            try:
+                if private:
+                    fn(*p, private=True)
+                else:
+                    fn(*p)
+                return
+            except TypeError:
+                if not p:
+                    return          # 인자 0개로도 불일치 → 핸들러 부적합, 생략
+                p.pop()             # 여분 파라미터 하나 제거 후 재시도(앞쪽 N개만 사용)

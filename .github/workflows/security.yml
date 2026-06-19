@@ -1,0 +1,100 @@
+name: security
+
+# 보안 CI 게이트(docs/internal/SECURITY_REVIEW.md §9 Tier 2 / D1). 세 갈래:
+#   ① pip-audit — 의존성 알려진 취약점(공급망). requirements.txt 기준.
+#   ② fuzz-smoke — 결정론적 시드 퍼징 + 런타임 적대 테스트(신규 의존성 0, 매 PR).
+#   ③ atheris-nightly — 커버리지 가이드 퍼징(설치 무거움 → 야간 schedule·non-blocking).
+# 개발 박스(macOS)는 헤드리스 wedge(windows.yml 주석 참조)라 ubuntu 에서 돈다.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "37 4 * * *"        # 매일 04:37 UTC — atheris-nightly 용
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pip-audit:
+    # 공급망: textual/pyte/wcwidth 등 알려진 CVE 점검(§6 D1 의 권위 결과 = pip-audit).
+    # 새 취약점 공개 시 빨강 → 의도된 알림. 무관 작업을 막으면 아래 continue-on-error 로
+    # 전환하거나 --ignore-vuln 로 특정 advisory 를 유예할 수 있다.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: pip-audit (requirements)
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          python -m pip_audit -r requirements.txt --strict --progress-spinner=off
+
+  fuzz-smoke:
+    # 결정론적 시드 퍼징(test_fuzz_parsers) + 런타임 적대 테스트(test_security_runtime).
+    # seed 고정이라 실패는 항상 재현 — 보고 입력을 tests/fuzz/crashes/ 로 회귀화.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONUTF8: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Fuzz + runtime security tests
+        timeout-minutes: 6
+        run: python -u tests/run.py test_fuzz_parsers test_security_runtime
+
+  atheris-nightly:
+    # 커버리지 가이드 퍼징(libFuzzer/atheris). 설치가 무겁고 간헐적이라 schedule·수동만,
+    # **non-blocking**(continue-on-error) — PR 게이트가 아니라 심층 탐색용. 크래시는
+    # 아티팩트로 올려 회귀(crashes/)로 흡수한다.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [protocol, ptyhost, clamp, vtparse]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install deps + atheris
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install atheris
+      - name: Seed corpus
+        run: python tests/fuzz/gen_corpus.py
+      - name: Fuzz ${{ matrix.target }} (90s)
+        env:
+          FUZZ_TARGET: ${{ matrix.target }}
+        run: |
+          python tests/fuzz/fuzzer.py -max_total_time=90 -timeout=20 \
+            tests/fuzz/corpus/${{ matrix.target }} || true
+      - name: Upload crashes (if any)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atheris-crashes-${{ matrix.target }}
+          path: |
+            crash-*
+            tests/fuzz/crashes/
+          if-no-files-found: ignore

@@ -40,3 +40,8 @@ docs/internal/
 .pytmux/state/
 .pytmux/db/
 .pytmux/captures/
+
+# 퍼징 생성물(Tier 2) — 시드 코퍼스/크래시는 생성물이라 .gitkeep 만 추적(tests/fuzz/README.md)
+tests/fuzz/corpus/*/
+crash-*
+*.fuzz.crash
