@@ -775,7 +775,11 @@ class ServerIOMixin:
     async def handle_client(self, reader: asyncio.StreamReader,
                             writer: asyncio.StreamWriter):
         first = await read_msg(reader)
-        if first is None:
+        # 첫 프레임은 dict 여야 한다. 비-dict JSON(리스트/정수/문자열 등 악의·비정상
+        # 클라)이면 이어지는 `first.get(...)` 가 AttributeError 로 핸들러 밖으로 새
+        # (트레이스백 노이즈·비정상 드롭). None 과 동일하게 조용히 끊는다(SECURITY_REVIEW
+        # F6 류 입력 가드 — 서버는 살아 있음). 회귀: test_security_runtime.py.
+        if not isinstance(first, dict):
             writer.close()
             return
         # 와이어 프로토콜 버전 협상: 클라가 보낸 proto 가 서버와 다르면 명확히 거절한다

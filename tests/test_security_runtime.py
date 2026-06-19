@@ -1,0 +1,217 @@
+"""런타임 보안 검사(Tier 1) — 살아있는 서버에 raw 소켓으로 공격을 던져 정적 검토의
+불변식을 *실측*한다(docs/internal/SECURITY_REVIEW.md).
+
+정적 검토는 "토큰 없으면 거절·MAX_FRAME 으로 OOM 차단·clamp_dim·비-dict 가드·악성
+연발에도 서버 생존"을 코드로 *추론*했다. 여기선 `server_only()` 로 진짜 서버를 띄우고
+프로토콜 클라이언트를 흉내 낸 적대 클라(인증 우회·프레임 퍼징·자원 연발)를 붙여,
+서버가 ① 무인가/손상 입력을 깨끗이 거절하고 ② 그래도 살아 있으며 ③ 라이브 상태파일
+권한이 0600 임을 단언한다. 전 경로 POSIX/TCP 공통(Windows 는 TCP 분기).
+
+씨앗: test_robustness.py(깨진 JSON·미지 액션). 인증 게이트 단위 검증은 F1/F2/M1 의
+test_server.py·test_ptyhost_auth.py 에 있고, 여기선 *공격자 시점의 와이어 왕복*을 본다.
+"""
+import asyncio
+import os
+import stat
+
+import harness
+from harness import server_only, teardown
+from pytmuxlib import ipc, protocol
+from pytmuxlib.protocol import MAX_FRAME, MAX_W, MAX_H
+
+
+# ---- raw 적대 클라 헬퍼 ----
+async def _open(endpoint):
+    kind = ipc.parse_endpoint(endpoint)
+    if kind[0] == "unix":
+        return await asyncio.open_unix_connection(kind[1])
+    return await asyncio.open_connection(kind[1], kind[2])
+
+
+async def _send(w, obj):
+    w.write(protocol.frame_msg(obj))
+    await w.drain()
+
+
+async def _recv(r, timeout=2.0):
+    """다음 프레임(dict) 또는 None(서버가 끊음). 타임아웃도 None 으로 환원."""
+    try:
+        return await asyncio.wait_for(protocol.read_msg(r), timeout)
+    except asyncio.TimeoutError:
+        return None
+
+
+async def _server_alive(srv, endpoint) -> bool:
+    """올바른 토큰으로 list 왕복이 성립하면 서버가 살아있다(악성 입력 뒤 생존 확인)."""
+    if not srv.running:
+        return False
+    tok = ipc.read_token(endpoint)
+    try:
+        r, w = await _open(endpoint)
+    except OSError:
+        return False
+    try:
+        await _send(w, {"t": "list", "token": tok})
+        reply = await _recv(r)
+        return isinstance(reply, dict) and reply.get("t") == "list"
+    finally:
+        w.close()
+
+
+# ---- A) 인증 우회 배터리 ----
+async def test_unauth_hello_rejected_server_alive():
+    srv, task, ep = await server_only()
+    try:
+        r, w = await _open(ep)
+        await _send(w, {"t": "hello", "cols": 80, "rows": 24})   # 토큰 없음
+        msg = await _recv(r)
+        assert msg == {"t": "error", "error": "auth_failed"}, msg
+        w.close()
+        assert await _server_alive(srv, ep)
+    finally:
+        await teardown(srv, task, ep)
+
+
+async def test_unauth_control_kill_rejected_no_exec():
+    # 무인가 control(kill-server)은 인증 게이트에서 막혀 서버가 안 죽는다(F1/F2 핵심).
+    srv, task, ep = await server_only()
+    try:
+        n_sess = len(srv.sessions)
+        r, w = await _open(ep)
+        await _send(w, {"t": "control", "line": "kill-server"})   # 토큰 없음
+        msg = await _recv(r)
+        assert msg == {"t": "error", "error": "auth_failed"}, msg
+        w.close()
+        assert srv.running and not task.done()
+        assert len(srv.sessions) == n_sess
+        assert await _server_alive(srv, ep)
+    finally:
+        await teardown(srv, task, ep)
+
+
+async def test_wrong_token_rejected():
+    srv, task, ep = await server_only()
+    try:
+        r, w = await _open(ep)
+        await _send(w, {"t": "hello", "token": "00" * 32, "cols": 80, "rows": 24})
+        msg = await _recv(r)
+        assert msg == {"t": "error", "error": "auth_failed"}, msg
+        w.close()
+        assert await _server_alive(srv, ep)
+    finally:
+        await teardown(srv, task, ep)
+
+
+async def test_valid_token_hello_accepted():
+    # 해피패스: 올바른 토큰 hello 는 받아들여진다(위 거절들이 유의미함을 보장).
+    srv, task, ep = await server_only()
+    try:
+        tok = ipc.read_token(ep)
+        r, w = await _open(ep)
+        await _send(w, {"t": "hello", "token": tok, "cols": 80, "rows": 24})
+        msg = await _recv(r)                 # 초기 layout/screen 류 — auth_failed 아님
+        assert isinstance(msg, dict) and msg.get("t") != "error", msg
+        w.close()
+    finally:
+        await teardown(srv, task, ep)
+
+
+# ---- B) 프로토콜 프레임 퍼징 ----
+async def test_oversized_length_prefix_no_oom_drop():
+    # MAX_FRAME 초과 길이프리픽스 → 서버가 수 GiB 할당 시도 없이 연결만 끊는다(F6).
+    srv, task, ep = await server_only()
+    try:
+        r, w = await _open(ep)
+        w.write((MAX_FRAME + 1).to_bytes(4, "big") + b"x")
+        await w.drain()
+        assert await _recv(r) is None          # 서버가 끊음(None)
+        w.close()
+        assert await _server_alive(srv, ep)
+    finally:
+        await teardown(srv, task, ep)
+
+
+async def test_non_json_frame_dropped():
+    srv, task, ep = await server_only()
+    try:
+        r, w = await _open(ep)
+        body = b"\xff\xfe not json {"
+        w.write(len(body).to_bytes(4, "big") + body)
+        await w.drain()
+        assert await _recv(r) is None
+        w.close()
+        assert await _server_alive(srv, ep)
+    finally:
+        await teardown(srv, task, ep)
+
+
+async def test_non_dict_first_frame_dropped_cleanly():
+    # 비-dict JSON 첫 프레임(리스트/정수)은 first.get(...) AttributeError 없이 깨끗이
+    # 끊겨야 한다(serverio 비-dict 가드 회귀). 서버 생존.
+    srv, task, ep = await server_only()
+    try:
+        for bad in ([1, 2, 3], 42, "hello", None):
+            r, w = await _open(ep)
+            await _send(w, bad)
+            assert await _recv(r) is None, bad
+            w.close()
+        assert await _server_alive(srv, ep)
+    finally:
+        await teardown(srv, task, ep)
+
+
+async def test_giant_dims_clamped_runtime():
+    # 거대 cols/rows hello → 서버가 clamp_dim 으로 [MIN,MAX] 안에 가둔다(레이아웃 메모리
+    # 폭증 차단). 살아있는 ClientConn 의 실제 치수를 관찰해 단언한다.
+    srv, task, ep = await server_only()
+    try:
+        tok = ipc.read_token(ep)
+        r, w = await _open(ep)
+        await _send(w, {"t": "hello", "token": tok,
+                        "cols": 999999, "rows": 999999})
+        await _recv(r)                          # 서버가 hello 처리(append)할 시간
+        for _ in range(50):
+            if srv.clients:
+                break
+            await asyncio.sleep(0.01)
+        assert srv.clients, "hello 가 ClientConn 으로 채택되지 않음"
+        c = srv.clients[-1]
+        assert c.cols <= MAX_W and c.rows <= MAX_H, (c.cols, c.rows)
+        w.close()
+    finally:
+        await teardown(srv, task, ep)
+
+
+async def test_malformed_flood_keeps_server_responsive():
+    # 손상 프레임 다연발(여러 연결) 후에도 서버가 wedge 되지 않고 응답한다.
+    srv, task, ep = await server_only()
+    try:
+        for i in range(24):
+            r, w = await _open(ep)
+            if i % 2:
+                w.write((MAX_FRAME + 7).to_bytes(4, "big"))      # 거대 길이
+            else:
+                w.write(b"\x00\x00\x00\x05bad!!")                # 비-JSON
+            await w.drain()
+            w.close()
+        assert await _server_alive(srv, ep)
+    finally:
+        await teardown(srv, task, ep)
+
+
+# ---- C) 라이브 상태파일 권한 ----
+async def test_live_token_and_socket_are_0600():
+    # 부팅된 서버가 게시한 토큰(과 Unix 소켓)이 0600 인지 런타임 stat 으로 확인(F1/F4/F5).
+    if not hasattr(os, "getuid"):
+        return                                  # POSIX 권한 모델 한정
+    srv, task, ep = await server_only()
+    try:
+        tpath = ipc.token_path(ep)
+        assert os.path.exists(tpath), tpath
+        assert stat.S_IMODE(os.lstat(tpath).st_mode) == 0o600, oct(
+            os.lstat(tpath).st_mode)
+        if not ipc.is_tcp(ep):                  # Unix 소켓도 0600
+            assert stat.S_IMODE(os.lstat(ep).st_mode) == 0o600, oct(
+                os.lstat(ep).st_mode)
+    finally:
+        await teardown(srv, task, ep)
