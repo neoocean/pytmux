@@ -678,32 +678,93 @@ class _CommandMixin:
             if val.lower().startswith("y") and action:
                 action()
 
-    def open_compose(self, initial=""):
+    def _compose_track_input(self, pid, data: bytes):
+        r"""normal 패스스루로 활성 패널에 보낸 키 입력을 패널별로 누적해 **현재
+        프롬프트에 남아 있는 텍스트**(`_prompt_buf[pid]`)를 추정한다(서버
+        prompt-history track_input 의 클라 판 — 그쪽은 서버라 클라가 못 읽음).
+        CSI/ESC 시퀀스(화살표 등)는 건너뛰고, backspace 는 한 글자 제거, Enter(\r)
+        는 제출 경계라 비우고, \n(Shift+Enter)은 줄바꿈 누적, 인쇄 가능 문자는 추가.
+        '프롬프트 인계' 컴포즈(open_compose)가 이 값을 시드로 쓰고 그만큼 백스페이스로
+        프롬프트를 비운다. Claude 안에서 커서를 옮겨 편집하면 어긋날 수 있는 근사치."""
+        if not data:
+            return
+        buf = getattr(self, "_prompt_buf", None)
+        if buf is None:
+            buf = self._prompt_buf = {}
+        s = buf.get(pid, "")
+        text = data.decode("utf-8", "ignore")
+        i, n = 0, len(text)
+        while i < n:
+            ch = text[i]
+            if ch == "\x1b":                 # ESC/CSI: 제어 시퀀스 건너뜀
+                i += 1
+                if i < n and text[i] == "[":
+                    i += 1
+                    while i < n and not (0x40 <= ord(text[i]) <= 0x7e):
+                        i += 1
+                    i += 1
+                else:
+                    i += 1
+                continue
+            if ch == "\r":                   # Enter: 제출 → 프롬프트 비워짐
+                s = ""
+            elif ch == "\n":                 # Shift+Enter/Ctrl+J: 줄바꿈 누적
+                s += "\n"
+            elif ord(ch) in (8, 127):        # backspace
+                s = s[:-1]
+            elif ord(ch) >= 32:
+                s += ch
+            i += 1
+        buf[pid] = s[-4000:]
+
+    def open_compose(self, initial=None):
         """블록 선택 편집이 되는 멀티라인 작성창(ComposePromptScreen)을 연다.
 
         Claude Code 등 자식 프롬프트 입력기는 Shift+방향키 범위 선택 편집을
         지원하지 않고, pytmux 는 자식의 논리 버퍼·커서 인덱스를 알 수 없어 그 위에
         선택을 투명하게 얹을 수 없다(타당성 검토 A 안 비권장). 대신 pytmux 가 버퍼를
         소유하는 별도 작성창에서 작성→완료 시 활성 패널에 **bracketed paste 로 투입**
-        한다(권고안 B). ESC 모드에서 Insert 로 호출(옵트인, 필요할 때 매번)."""
-        def done(text):
-            if not text:          # Esc 취소(None) 또는 빈 내용 → 투입 안 함
-                if text == "":
-                    self.display_message(i18n.t("compose.empty"))
+        한다(권고안 B). ESC 모드에서 Insert 로 호출(옵트인, 필요할 때 매번).
+
+        '프롬프트 인계'(사용자 선택 2026-06-19): 활성 패널 프롬프트에 입력 중이던
+        텍스트(`_prompt_buf` 추적치)가 있으면 **그 텍스트를 시드로 채우고 프롬프트는
+        백스페이스로 비운다**(중복 투입 방지 — 내용이 작성창으로 '이동'). 없으면
+        직전에 저장 안 하고 닫은 **초안**(`_compose_draft`)을 시드로 쓴다. 작성창을
+        Esc 로 닫아도 그 내용은 `_compose_draft` 에 남아 다음에 다시 시드된다."""
+        active = self.layout.get("active")
+        # 시드 우선순위: ① 이 패널에 방금 친(미제출) 프롬프트 텍스트 → 인계(비움)
+        #                ② 없으면 저장된 초안(취소해도 보존)
+        buf = getattr(self, "_prompt_buf", None) or {}
+        typed = buf.get(active, "")
+        seed = initial if initial is not None else (
+            typed if typed else getattr(self, "_compose_draft", ""))
+
+        def done(result):
+            if not result:        # 방어(정상 경로는 (text, injected) 튜플)
                 return
-            # 활성 패널에 통째로 투입. 서버가 pane.bracketed 면 \x1b[200~…201~ 로
-            # 감싸 멀티라인이 줄마다 제출되지 않는다(_write_paste). 끝에 Enter 를
-            # 붙이지 않으므로 자동 제출되지 않고, 사용자가 직접 Enter 로 보낸다.
-            self.send_cmd("paste", text=text)
-        # 작성창 입력 줄을 활성 패널의 현재 프롬프트 줄(하드웨어 커서 행)에 맞춘다.
-        # _active_cursor_xy 는 직전 _composite 가 활성 패널 커서를 글로벌 화면
-        # 좌표로 잡아둔 값((x, y)) — Claude 프롬프트가 포커스면 그 입력 줄이다.
-        # 없으면(커서 없음) None → 작성창은 그냥 바닥에 도킹한다.
+            text, injected = result
+            self._compose_draft = text        # 초안 보존(취소해도 다음 시드)
+            if injected and text:
+                # 빈(인계로 비워진) 프롬프트에 통째 투입. 서버가 pane.bracketed 면
+                # \x1b[200~…201~ 로 감싸 멀티라인이 줄마다 제출되지 않는다. 끝에
+                # Enter 를 붙이지 않아 자동 제출 없음(사용자가 직접 Enter).
+                self.send_cmd("paste", text=text)
+                buf2 = getattr(self, "_prompt_buf", None)
+                if isinstance(buf2, dict):
+                    buf2[active] = text   # 이제 프롬프트에 이 텍스트가 있음
+            elif injected and not text:
+                self.display_message(i18n.t("compose.empty"))
+        # 프롬프트 인계: 현재 프롬프트의 추적분(typed)을 백스페이스로 비운다(커서가
+        # 끝에 있을 때 정확 — 사용자 동의한 근사치). 비운 뒤 추적값도 초기화한다.
+        if initial is None and typed:
+            self.send_input(b"\x7f" * len(typed))
+            if isinstance(buf, dict):
+                buf[active] = ""
+        # 작성창 입력 줄을 활성 패널 프롬프트 줄(하드웨어 커서 행)보다 한 칸 아래에
+        # 맞춘다(_active_cursor_xy). 좌우는 활성 패널 테두리 안쪽(box 있으면 bx+1..
+        # bw-2, 없으면 x..w)에 맞춘다. 미상이면 각각 바닥 도킹/전체 폭.
         xy = getattr(self, "_active_cursor_xy", None)
         prompt_row = xy[1] if xy else None
-        # 작성창 좌우를 활성 패널 **테두리 안쪽**에 맞춘다. 테두리 박스가 있으면
-        # 안쪽 = (bx+1 .. bx+bw-2), 없으면 콘텐츠 (x .. x+w-1). 미상이면 None(전체 폭).
-        active = self.layout.get("active")
         pane_x = pane_w = None
         for p in self.layout.get("panes", []):
             if p["id"] == active:
@@ -715,7 +776,7 @@ class _CommandMixin:
                     pane_x, pane_w = p["x"], p["w"]
                 break
         self.push_screen(
-            ComposePromptScreen(initial, prompt_row, pane_x, pane_w), done)
+            ComposePromptScreen(seed, prompt_row, pane_x, pane_w), done)
 
     def _run_shell(self, cmd):
         try:
@@ -1275,6 +1336,11 @@ class _InputMixin:
             return  # 프롬프트/모달 입력은 그 스크린이 처리
         if self.writer and event.text:
             self.send_cmd("paste", text=event.text)
+            # IME 한글 확정 입력은 Textual 이 Paste 이벤트로 전달한다(개별 Key 가
+            # 아님) — 컴포즈 '프롬프트 인계' 시드가 비던 원인. 붙여넣기/IME 확정분도
+            # 현재 프롬프트 추정에 누적한다(on_key 패스스루와 같은 _prompt_buf).
+            self._compose_track_input(self.layout.get("active"),
+                                      event.text.encode("utf-8", "replace"))
         event.stop()
 
     # ---- 이벤트 ----
@@ -1442,6 +1508,9 @@ class _InputMixin:
         data = key_to_bytes(event)
         if data:
             self.send_input(data)
+            # 컴포즈 '프롬프트 인계' 시드용: 활성 패널에 보낸 입력을 패널별로 누적해
+            # 현재 프롬프트 텍스트를 추정한다(open_compose 가 시드+비우기에 사용).
+            self._compose_track_input(self.layout.get("active"), data)
         event.prevent_default()
         event.stop()
 

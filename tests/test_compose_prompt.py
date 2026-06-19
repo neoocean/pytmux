@@ -192,6 +192,81 @@ async def test_distinct_textbox_and_box_backgrounds():
     await _with_app(body)
 
 
+async def test_track_input_estimates_prompt_text():
+    """_compose_track_input 이 패널별 입력을 누적해 현재 프롬프트 텍스트를 추정한다
+    (CSI 건너뜀·backspace 제거·Enter 비움·\\n 누적)."""
+    async def body(app, pilot, srv):
+        pid = app.layout.get("active")
+        app._compose_track_input(pid, b"hel")
+        app._compose_track_input(pid, b"\x7flo")          # backspace 후 'lo'
+        app._compose_track_input(pid, b"\x1b[D")          # 화살표(CSI) 무시
+        assert app._prompt_buf[pid] == "helo", app._prompt_buf
+        app._compose_track_input(pid, b"\r")              # Enter 제출 → 비움
+        assert app._prompt_buf[pid] == ""
+    await _with_app(body)
+
+
+async def test_open_seeds_from_typed_prompt_and_clears_it():
+    """프롬프트 인계: 패널에 친 텍스트가 있으면 작성창이 그 텍스트로 시드되고,
+    프롬프트는 그 길이만큼 백스페이스로 비워진다(중복 투입 방지, 사용자 선택)."""
+    from textual.widgets import TextArea as _TA
+
+    async def body(app, pilot, srv):
+        sent_in = []
+        app.send_input = lambda d: sent_in.append(d)
+        pid = app.layout.get("active")
+        app._compose_track_input(pid, b"hello")
+        app.open_compose()
+        await pilot.pause(0.2)
+        ta = app.screen_stack[-1].query_one(_TA)
+        assert ta.text == "hello", repr(ta.text)          # 시드됨
+        assert b"\x7f" * 5 in sent_in, sent_in            # 5칸 백스페이스로 프롬프트 비움
+        assert app._prompt_buf[pid] == ""                 # 추적값도 비워짐
+    await _with_app(body)
+
+
+async def test_ime_paste_input_seeds_compose():
+    """IME 한글 확정 입력은 Textual 이 Paste 이벤트로 보낸다(개별 Key 아님). on_paste
+    도 _prompt_buf 에 누적해야 '프롬프트 인계' 시드가 한글에서도 채워진다(버그 수정)."""
+    from textual import events
+    from textual.widgets import TextArea as _TA
+
+    async def body(app, pilot, srv):
+        pid = app.layout.get("active")
+        app.on_paste(events.Paste("라이브로 확인"))
+        await pilot.pause(0.05)
+        assert app._prompt_buf.get(pid) == "라이브로 확인", app._prompt_buf
+        sent_in = []
+        app.send_input = lambda d: sent_in.append(d)
+        app.open_compose()
+        await pilot.pause(0.2)
+        ta = app.screen_stack[-1].query_one(_TA)
+        assert ta.text == "라이브로 확인", repr(ta.text)        # 한글 시드됨
+        assert b"\x7f" * len("라이브로 확인") in sent_in, sent_in  # 그만큼 비움
+    await _with_app(body)
+
+
+async def test_unsaved_draft_persists_across_cancel():
+    """저장(Enter/Ctrl+S) 없이 Esc 로 닫아도 작성 중 내용이 _compose_draft 에 남아
+    다음에 다시 열면 시드된다(사용자 요청). 프롬프트에 친 게 없을 때 초안이 우선."""
+    from textual.widgets import TextArea as _TA
+
+    async def body(app, pilot, srv):
+        app.open_compose()
+        await pilot.pause(0.2)
+        ta = app.screen_stack[-1].query_one(_TA)
+        ta.text = "half-written"
+        await pilot.pause(0.05)
+        await pilot.press("escape")                       # 저장 없이 닫기
+        await pilot.pause(0.2)
+        assert app._compose_draft == "half-written"
+        app.open_compose()                                # 다시 열기
+        await pilot.pause(0.2)
+        ta2 = app.screen_stack[-1].query_one(_TA)
+        assert ta2.text == "half-written", repr(ta2.text)  # 초안이 시드됨
+    await _with_app(body)
+
+
 async def test_ime_badge_inside_popup_follows_state():
     """팝업 내부 우상단 IME 배지가 app.ime_state 를 따른다(작성 중 한/영 표시,
     사용자 요청). 상태가 바뀌면 폴링으로 따라온다."""

@@ -2224,11 +2224,13 @@ class ComposePromptScreen(ModalScreen):
         lbl.styles.text_style = "bold"
 
     def action_inject(self):
+        # (text, injected) 로 돌려줘 open_compose 가 투입+초안 저장을 구분한다.
         # 끝에 개행을 붙이지 않아 자식이 자동 제출하지 않는다(사용자가 직접 Enter).
-        self.dismiss(self.query_one(TextArea).text)
+        self.dismiss((self.query_one(TextArea).text, True))
 
     def action_cancel(self):
-        self.dismiss(None)
+        # 투입은 안 하지만 작성 중이던 내용은 돌려줘 초안으로 보존한다(다음에 시드).
+        self.dismiss((self.query_one(TextArea).text, False))
 
 
 class ConfirmScreen(ModalScreen):
