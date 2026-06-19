@@ -4043,6 +4043,55 @@ async def test_status_tabs_has_server_tab():
     await _with_app(body)
 
 
+async def test_server_tab_rtt_graph_lines():
+    """서버 정보 탭이 최근 60분 RTT 표본이 있으면 세로 막대 그래프 줄을 포함한다.
+    표본이 없으면 그래프 줄이 안 뜨고(이전 거동 보존), 있으면 제목·축·통계줄이 나온다."""
+    async def body(app, pilot, srv):
+        import time as _t
+        # 표본이 없으면 그래프 줄 없음(회귀: 기존 서버 탭 거동 보존)
+        assert app._rtt_graph_lines() is None
+        # 60분 창에 걸친 합성 표본을 직접 주입(핑 대기 없이 결정적으로)
+        now = _t.monotonic()
+        app._net_rtt_hist = [(now - i * 30.0, 0.001 + (0.5 if i == 3 else 0))
+                             for i in range(120)]   # 매 30초, 1개 스파이크
+        g = app._rtt_graph_lines()
+        assert g and any("RTT" in ln for ln in g), g
+        assert any("┴" in ln for ln in g), "x축 줄"           # 축
+        assert any("peak" in ln for ln in g), "통계줄"
+        # 서버 정보 줄에 그래프가 합쳐진다
+        lines = app._server_info_lines()
+        assert any("┴" in ln for ln in lines), lines
+    await _with_app(body)
+
+
+async def test_info_tabs_notebook_shape_and_constant_height():
+    """노트북(파일철) 탭 모양 + 탭 전환 시 팝업 높이 불변(요청).
+    - 활성 탭 라벨은 둥근 윗변(╭╮)+세로 옆변(│)으로 그려진다(노트북 탭).
+    - 본문(ListView) 항목 수가 탭을 오가도 동일(짧은 탭은 빈 줄로 패딩)."""
+    async def body(app, pilot, srv):
+        from textual.widgets import Label, ListView
+        # 길이 차가 큰 두 탭(짧은 REC vs 긴 서버 + RTT 그래프)
+        import time as _t
+        now = _t.monotonic()
+        app._net_rtt_hist = [(now - i * 20.0, 0.002) for i in range(150)]
+        app._status_cap_lines = ["파일: /tmp/x/pane-1.log"]
+        app._status_tab_initial = 0
+        app._open_status_tabs({"sessions": []})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "InfoTabsScreen"
+        # 활성 탭(0)의 라벨이 노트북 탭 모양(둥근 윗변·옆변)인지
+        t0 = str(scr.query_one("#ittab_0", Label).render())
+        assert "╭" in t0 and "│" in t0, t0
+        lv = scr.query_one(ListView)
+        n_rec = len(lv.children)
+        await pilot.press("right")        # 서버 탭으로 전환
+        await pilot.pause(0.1)
+        n_srv = len(lv.children)
+        assert n_rec == n_srv, ("탭 전환 시 본문 행 수 불변", n_rec, n_srv)
+    await _with_app(body)
+
+
 async def test_shift_nav_keys_forwarded_to_panel():
     """§10-A #5 검증: pytmux 가 shift+Home/End/shift+방향키를 표준 xterm CSI 1;2
     시퀀스로 활성 패널(앱)에 그대로 전달한다(정상 모드, 가로채지 않음). 이 포워딩이

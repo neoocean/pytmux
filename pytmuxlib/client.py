@@ -131,6 +131,10 @@ class _NetReconnectMixin:
     """IPC 소켓 reader 태스크 + 재접속(재시작 재개·degraded 강제 회복) + RTT
     히스테리시스. 서버 PTY/세션은 안 건드리고 클라↔서버 소켓만 다룬다(§10)."""
 
+    _RTT_WINDOW = 3600.0   # RTT 이력 보존/그래프 창(초) — 최근 60분
+    _RTT_GRAPH_W = 48      # 그래프 가로 칸(시간 버킷 수)
+    _RTT_GRAPH_H = 5       # 그래프 세로 행(각 행 = 1/8 정밀 세로 막대)
+
     def _start_reader(self):
         """현재 self.reader 에 묶인 새 reader 태스크를 띄운다. 연결 세대(_conn_gen)
         를 올려 각 태스크가 자기 세대를 들고 돌게 한다 — 강제 재접속으로 소켓이
@@ -278,6 +282,16 @@ class _NetReconnectMixin:
         연속(표시 임계보다 훨씬 길게) 지속되면 IPC 강제 재접속으로 회복을 시도한다
         (§10 — 서버 PTY/세션 보존)."""
         self._net_last_rtt = rtt
+        # 60분 RTT 그래프용 이력에 표본을 남기고 창 밖(앞쪽)을 잘라낸다(서버 팝업).
+        now_h = time.monotonic()
+        self._net_rtt_hist.append((now_h, rtt))
+        cutoff = now_h - self._RTT_WINDOW
+        h = self._net_rtt_hist
+        drop = 0
+        while drop < len(h) and h[drop][0] < cutoff:
+            drop += 1
+        if drop:
+            del h[:drop]
         if rtt > self.net_rtt_threshold:
             self._net_bad += 1
             self._net_good = 0
@@ -483,6 +497,10 @@ class _RestartVersionMixin:
             thr = getattr(self, "net_rtt_threshold", 0.4)
             lines.append(i18n.t("hoststatus.rtt", rtt=f"{rtt * 1000:.0f}",
                                 thr=f"{thr * 1000:.0f}"))
+        graph = self._rtt_graph_lines()
+        if graph:
+            lines.append("")
+            lines.extend(graph)
         degraded = bool(getattr(self, "_net_degraded", False))
         lines.append(i18n.t("hoststatus.resp",
                             state=(i18n.t("hoststatus.resp_degraded") if degraded
@@ -490,6 +508,68 @@ class _RestartVersionMixin:
         lines.append("")
         lines.append(i18n.t("hoststatus.degraded_hint"))
         return lines
+
+    # 세로 막대 그래프용 블록(아래→위로 차오름). bar() 의 가로 _BAR_BLOCKS 와 별개.
+    _RTT_VBLOCKS = " ▁▂▃▄▅▆▇█"
+
+    def _rtt_graph_lines(self, width=None, height=None):
+        """최근 60분 RTT 표본을 세로 막대 그래프(width 칸 × height 행) 텍스트 줄로
+        그린다. 각 칸은 _RTT_WINDOW/width 초 버킷이고 버킷 안 **최대** RTT 를 써
+        스파이크가 묻히지 않게 한다(오른쪽 끝 = 지금, 왼쪽 = -60분). 스케일 최댓값은
+        관측 peak 와 임계(threshold) 중 큰 값이라 임계선이 항상 화면 안에 든다.
+        표본이 없으면 None — 호출부가 그래프 줄을 통째로 생략한다."""
+        hist = getattr(self, "_net_rtt_hist", None)
+        if not hist:
+            return None
+        width = width or self._RTT_GRAPH_W
+        height = height or self._RTT_GRAPH_H
+        now = time.monotonic()
+        span = self._RTT_WINDOW
+        buckets = [None] * width        # 칸별 최대 RTT(초) | None(표본 없음=공백)
+        raw = []                        # 창 안 원시 표본(통계용 — 버킷 최대는 평균을 부풀림)
+        for ts, rtt in hist:
+            age = now - ts
+            if age < 0 or age > span:
+                continue
+            raw.append(rtt)
+            col = width - 1 - int(age / span * width)   # age 0 → 오른쪽 끝
+            col = max(0, min(width - 1, col))
+            cur = buckets[col]
+            buckets[col] = rtt if cur is None else max(cur, rtt)
+        if not raw:
+            return None
+        thr = getattr(self, "net_rtt_threshold", 0.4)
+        peak = max(raw)
+        vmax = max(peak, thr)
+        VB = self._RTT_VBLOCKS
+        # 칸별 채움 높이(1/8 eighths). None 칸은 공백으로 남긴다.
+        eighths = [None if v is None else int(round(v / vmax * height * 8))
+                   for v in buckets]
+        out = [i18n.t("hoststatus.rtt_graph")]
+        vmax_ms = int(round(vmax * 1000))
+        for r in range(height):                 # r=0 = 맨 위 행
+            base = (height - 1 - r) * 8          # 이 행 아래에 깔린 eighths
+            cells = []
+            for e in eighths:
+                if e is None:
+                    cells.append(" ")
+                else:
+                    cells.append(VB[max(0, min(8, e - base))])
+            axis = (f"{vmax_ms:>4} ┤" if r == 0 else "     ┤")
+            out.append(axis + "".join(cells))
+        out.append("   0 ┴" + "─" * width)   # x축
+        # 시간축 라벨(왼쪽 -60분 · 오른쪽 지금)
+        left = i18n.t("hoststatus.rtt_axis_start")
+        right = i18n.t("hoststatus.rtt_axis_now")
+        lw = sum(_char_cells(c) for c in left)
+        rw = sum(_char_cells(c) for c in right)
+        pad = max(1, width - lw - rw)
+        out.append("      " + left + " " * pad + right)
+        peak_ms = int(round(peak * 1000))
+        avg_ms = int(round(sum(raw) / len(raw) * 1000))
+        out.append(i18n.t("hoststatus.rtt_stats",
+                          peak=peak_ms, avg=avg_ms, n=len(raw)))
+        return out
 
 
 class _StatusFocusMixin:
@@ -2518,6 +2598,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.net_auto_reconnect = config.get("net_auto_reconnect", True)
             self.net_recover_n = config.get("net_recover_n", 20)
             self._net_last_rtt = None   # 마지막 측정 RTT(초) — 서버정보 팝업·진단용
+            # 최근 60분 RTT 표본 이력(서버 정보 팝업의 그래프용). (monotonic_ts, rtt초)
+            # 튜플을 append, _net_sample 에서 창(_RTT_WINDOW) 밖 앞쪽을 잘라낸다.
+            self._net_rtt_hist = []
             # 로컬(AF_UNIX·루프백 TCP) 연결이면 클라↔서버가 같은 머신이라
             # 네트워크 열화 개념이 없다 → degraded(빨강 외곽선)·자동 재접속을
             # 억제한다(§10-F Windows degraded 오탐). 진짜 원격 호스트 연결에서만

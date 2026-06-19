@@ -1371,11 +1371,12 @@ class InfoTabsScreen(ModalScreen):
     #itbox { width: 92%; max-width: 100; height: auto;
              min-height: 14; max-height: 95%;
              border: round $accent; background: $panel; padding: 0 1; }
-    /* 탭 그룹을 별도 외곽선으로 감싼다(#32) → head 는 3행. [x] 는 우측 끝(1fr 스페이서). */
-    #ithead { width: 100%; height: 3; }
-    #ittabs { width: auto; height: 3; border: round $accent; }
-    #ittabs Label { width: auto; height: 1; }   /* 탭 하나(클릭 대상) */
-    #itgap { width: 1fr; height: 3; }
+    /* 노트북(파일철) 탭: 각 탭은 2행 라벨(윗변 + 이름줄)로 그려 활성 탭이 위로
+       솟은 듯 보인다(#32 외곽선 박스 폐기). head 는 2행, [x] 는 우측 끝(1fr 여백). */
+    #ithead { width: 100%; height: 2; }
+    #ittabs { width: auto; height: 2; }
+    #ittabs Label { width: auto; height: 2; }   /* 탭 하나(2행, 클릭 대상) */
+    #itgap { width: 1fr; height: 2; }
     /* 닫기 [x] 는 1행으로 우측 위 모서리에 붙인다(#30 — 3행 블록 아님). 가로 흐름의
        마지막(1fr 스페이서 뒤)이라 우측 끝, 높이 1이라 3행 head 의 첫 행에 놓인다. */
     #itclose { width: 5; height: 1; content-align: center middle;
@@ -1411,6 +1412,12 @@ class InfoTabsScreen(ModalScreen):
         # 정규화한다(단일 튜플도 허용 — 하위호환).
         self._actions = {ti: (a if isinstance(a, list) else [a])
                          for ti, a in (actions or {}).items()}
+        # 탭을 오가도 팝업 높이가 변하지 않게(요청), 본문 행 수를 전 탭 중 최대치로
+        # 고정한다. 행 수 = 액션버튼 수 + 내용 줄 수. _render_tab 이 짧은 탭을 빈 줄로
+        # 이 목표까지 채운다(긴 탭은 max-height 95% 안에서 스크롤).
+        self._body_rows = max(
+            (len(self._actions.get(i, [])) + max(1, len(lines))
+             for i, (_n, lines) in enumerate(self._tabs)), default=1)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="itbox"):
@@ -1430,16 +1437,31 @@ class InfoTabsScreen(ModalScreen):
 
     def _render_tabbar(self):
         # 각 탭 라벨 갱신(현재 탭 강조). 클릭 대상이라 탭마다 별도 위젯이다(#32).
-        # ←→ 포커스가 [x](=N)면 보고 있는 탭은 [b] 로, [x] 는 -focus 로 강조한다.
+        # 노트북(파일철) 탭: 2행 — 윗변(둥근 모서리)+이름줄. 활성 탭은 윗변이 그려져
+        # 위로 솟은 듯, 비활성 탭은 윗변이 비어(공백) 뒤로 물러난 듯 보인다. ←→ 포커스가
+        # [x](=N)면 활성 탭은 평소 강조([b]), [x] 는 -focus 로 강조한다.
         n = len(self._tabs)
         for i, (name, _l) in enumerate(self._tabs):
             lbl = self.query_one(f"#ittab_{i}", Label)
-            if i == self._ti:
-                lbl.update(f"[reverse b] {name} [/]" if self._sel == i
-                           else f"[b] {name} [/]")
-            else:
-                lbl.update(f"[dim] {name} [/]")
+            lbl.update(self._tab_markup(name, active=(i == self._ti),
+                                        focused=(self._sel == i)))
         self.query_one("#itclose", Label).set_class(self._sel == n, "-focus")
+
+    @staticmethod
+    def _tab_markup(name, active, focused):
+        """노트북 탭 한 칸(2행) 마크업. 이름 폭(CJK 2칸)에 맞춰 윗변·옆변을 그린다.
+        활성=둥근 모서리 윗변(╭─╮)+세로 옆변(│ │), 포커스 시 반전. 비활성=윗변 없이
+        이름만 흐리게(뒤로 물러난 탭)."""
+        inner = sum(_char_cells(c) for c in name) + 2   # 이름 양옆 공백 1칸씩
+        if active:
+            top = "╭" + "─" * inner + "╮"
+            mid = "│ " + name + " │"
+            style = "reverse b" if focused else "b"
+            return f"[{style}]{top}\n{mid}[/]"
+        # 비활성: 윗변은 공백(같은 폭으로 정렬 유지), 이름줄만 흐리게
+        top = " " * (inner + 2)
+        mid = "  " + name + "  "
+        return f"{top}\n[dim]{mid}[/]"
 
     async def _run_action(self, key):
         """현재 탭의 동작(키 일치)을 실행한다. 콜백이 줄 리스트를 돌려주면 그 탭
@@ -1463,8 +1485,12 @@ class InfoTabsScreen(ModalScreen):
         acts = self._actions.get(self._ti, [])
         items = [ListItem(Label(f"▸ {a[1]}", markup=False),
                           id=f"itact_{a[0]}", classes="itactbtn") for a in acts]
-        items += [ListItem(Label(ln, markup=False))
-                  for ln in (lines or [i18n.t("screen.empty")])]
+        body = list(lines or [i18n.t("screen.empty")])
+        # 탭 전환 시 팝업 높이가 변하지 않게 짧은 탭은 빈 줄로 목표 행 수까지 채운다
+        # (요청). 목표 = 전 탭 중 최대 행 수(액션 토글로 줄 수가 늘면 그만큼 갱신).
+        target = max(self._body_rows, len(acts) + len(body))
+        body += [""] * (target - len(acts) - len(body))
+        items += [ListItem(Label(ln, markup=False)) for ln in body]
         await lv.extend(items)
         # 커서 초깃값은 첫 내용 줄(액션 버튼 위가 아니라) — 정보가 먼저 보이게.
         if items:
