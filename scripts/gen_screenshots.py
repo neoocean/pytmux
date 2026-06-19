@@ -376,6 +376,11 @@ async def ime_badge(app, pilot):
 
 async def calendar_big(app, pilot):
     # 큰 달력(숫자가 블록 문자) — 패널이 충분히 크면 자동으로 블록-숫자 달력이 된다.
+    # 결정적 기준일을 2026-02-06 으로 고정한다(_calendar_now 훅). 2026-02 는 일요일
+    # 시작·28일이라 정확히 4주 → 블록 달력 높이가 4주치(다른 장면과 세로 길이 근접)이고,
+    # 6일(금)이 '오늘'로 강조된다. 훅이 없으면(production) 현재 달을 그린다.
+    import datetime as _dt
+    app._calendar_now = _dt.datetime(2026, 2, 6, 14, 0)
     app.set_calendar(_aid(app), True)
     app._composite()
     await pilot.pause(0.4)
@@ -647,7 +652,9 @@ async def claude_suite(retries=4):
 
 # 장면: (이름, 설명, 운전함수[, 크기]). 크기 생략 시 SIZE(90×26). 큰 달력은 블록-숫자
 # 모드가 뜨도록 더 큰(높은) 터미널이 필요하다.
-BIG = (96, 44)
+# 큰 달력 전용 크기. 2026-02(4주) 블록 달력이 들어가는 최소 높이(34행) — 5주 달이면
+# 한 줄 더 필요하니 달을 바꿀 땐 재확인. 폭은 다른 장면과 같은 90 으로 맞춰 갤러리 일관.
+BIG = (90, 34)
 SCENES = [
     ("01-first-run", "첫 실행 — 단일 패널 + 탭바 + 상태줄", first_run),
     ("02-split-lr", "좌우 분할 — 활성 패널 파란 테두리", split_lr),

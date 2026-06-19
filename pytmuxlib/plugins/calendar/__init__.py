@@ -142,6 +142,7 @@ class _CalendarPlugin:
         zones.clear()
         draw_calendar_overlay(cells, app.layout.get("panes", []),
                               app.calendar_panes, W, H, styles,
+                              now=getattr(app, "_calendar_now", None),
                               offsets=getattr(app, "calendar_offset", None),
                               nav_zones=zones)
 
