@@ -183,34 +183,66 @@ def spawn_watcher():
         return None
 
 
-def read_latest(proc, prev_buf=b""):
-    """감시 헬퍼 stdout 에서 가용 바이트를 비차단으로 모두 읽어, **마지막 완성 줄**의
-    소스 ID 와 잔여(미완성) 버퍼를 `(sid|None, buf)` 로 돌린다. 새 완성 줄이 없으면
-    `(None, prev_buf+잔여)`. 한 틱에 여러 변경이 쌓여도 최신 상태만 반영한다(중간
-    상태 깜빡임 방지). 읽기 실패는 `(None, buf)` — 직전 상태 유지."""
+def _drain(fd, prev_buf=b""):
+    """fd(감시 헬퍼 stdout 또는 에이전트 소켓)에서 가용 바이트를 비차단으로 모두 읽어
+    `(마지막 완성 줄|None, 잔여버퍼, closed)` 를 돌린다. 한 틱에 변경이 여러 줄 쌓여도
+    **최신 줄만** 반영한다(중간 상태 깜빡임 방지). `closed`=피어/헬퍼가 fd 를 닫음(EOF).
+    읽기 실패도 closed=True(폴백 신호). read_latest(헬퍼)·read_agent(소켓) 공용 코어."""
     import os
     buf = prev_buf
+    closed = False
     try:
         while True:
-            chunk = os.read(proc.stdout.fileno(), 4096)
-            if not chunk:                 # EOF(헬퍼 종료)
+            chunk = os.read(fd, 4096)
+            if not chunk:                 # EOF(헬퍼 종료/피어 close)
+                closed = True
                 break
             buf += chunk
     except BlockingIOError:                # 더 읽을 게 없음(EAGAIN)
         pass
     except Exception:
-        return (None, buf)
+        return (None, buf, True)
     if b"\n" not in buf:
-        return (None, buf)
+        return (None, buf, closed)
     *lines, buf = buf.split(b"\n")         # buf = 마지막 개행 뒤 미완성 조각
     for line in reversed(lines):
         line = line.strip()
         if line:
             try:
-                return (line.decode(), buf)
+                return (line.decode(), buf, closed)
             except Exception:
-                return (None, buf)
-    return (None, buf)
+                return (None, buf, closed)
+    return (None, buf, closed)
+
+
+def read_latest(proc, prev_buf=b""):
+    """감시 헬퍼 stdout 에서 최신 소스 ID 와 잔여 버퍼를 `(sid|None, buf)` 로 돌린다
+    (헬퍼 EOF 판정은 호출부가 proc.poll() 로 하므로 closed 는 버린다)."""
+    sid, buf, _closed = _drain(proc.stdout.fileno(), prev_buf)
+    return (sid, buf)
+
+
+def connect_agent(path):
+    """역포워드된(ssh -R) 로컬 IME 에이전트 unix 소켓에 연결한다(§9.1 전송로 ②).
+    성공 시 비차단 소켓, 경로 부재/연결 실패는 None → 호출부가 휴리스틱 폴백. 원격
+    클라가 `PYTMUX_IME_SOCK`(=ssh -R 원격 끝점)로 이 함수를 부른다."""
+    if not path:
+        return None
+    try:
+        import socket
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(0.5)
+        s.connect(path)
+        s.setblocking(False)
+        return s
+    except Exception:
+        return None
+
+
+def read_agent(sock, prev_buf=b""):
+    """IME 에이전트 소켓에서 최신 소스 ID·잔여·closed 를 `(sid|None, buf, closed)` 로
+    드레인한다(read_latest 의 소켓판 — EOF/오류를 closed 로 알려 호출부가 폴백·재연결)."""
+    return _drain(sock.fileno(), prev_buf)
 
 
 # 한글 입력소스 판별 토큰(소문자 대조) — 애플 기본(Korean.2SetKorean 등)과

@@ -424,6 +424,180 @@ async def test_client_unload_terminates_watcher():
     PLUGIN.client_unload(app)
 
 
+# ---- 3.7) §9.1 ssh -R 에이전트 소켓 전송로 ② (원격 정확도 상향) ----
+async def test_read_agent_parses_latest_carries_partial_and_eof():
+    """read_agent: 소켓에서 비차단 드레인해 (최신 완성 줄, 잔여, closed) 를 돌린다 —
+    한 틱에 여러 줄이면 최신만, 미완성은 carry, 피어 close 면 closed=True(폴백 신호)."""
+    if os.name == "nt":
+        return                          # AF_UNIX 소켓 os.read = POSIX 전용(ssh -R 경로)
+    import socket
+    s_read, s_write = socket.socketpair(socket.AF_UNIX)
+    s_read.setblocking(False)
+    try:
+        s_write.sendall(b"com.apple.keylayout.ABC\n"
+                        b"com.apple.inputmethod.Korean.2SetKorean\npart")
+        sid, buf, closed = _oskbd.read_agent(s_read, b"")
+        assert sid == "com.apple.inputmethod.Korean.2SetKorean", sid
+        assert buf == b"part" and closed is False, (buf, closed)
+        sid2, buf2, closed2 = _oskbd.read_agent(s_read, buf)
+        assert sid2 is None and buf2 == b"part" and closed2 is False
+        s_write.sendall(b"ner\ncom.apple.keylayout.ABC\n")
+        sid3, buf3, closed3 = _oskbd.read_agent(s_read, buf2)
+        assert sid3 == "com.apple.keylayout.ABC" and buf3 == b"" and closed3 is False
+        s_write.close()                 # 피어 종료 → EOF
+        _sid4, _buf4, closed4 = _oskbd.read_agent(s_read, buf3)
+        assert closed4 is True, "피어 close 면 closed=True 여야(폴백 신호)"
+    finally:
+        s_read.close()
+        try:
+            s_write.close()
+        except Exception:
+            pass
+
+
+async def test_agent_socket_poll_updates_state_then_falls_back_on_close():
+    """_poll 의 소켓 경로: 에이전트 소켓이 붙어 있으면 그 줄로 배지를 갱신하고, 소켓이
+    끊기면(_ime_sock=None) 휴리스틱이 재개된다. 소켓이 권위인 동안 client_key 는 무동작."""
+    if os.name == "nt":
+        return
+    import socket
+    cli, agent = socket.socketpair(socket.AF_UNIX)
+    cli.setblocking(False)
+    app = _FakeApp()
+    app.ime_state = "EN"
+    app._ime_os = False
+    app._ime_sock = cli
+    app._ime_sock_buf = b""
+    try:
+        agent.sendall(b"com.apple.inputmethod.Korean.2SetKorean\n")
+        PLUGIN._poll(app)
+        assert app.ime_state == "한" and app.composited == 1, app.ime_state
+        # 소켓이 권위인 동안 영문 입력에도 휴리스틱이 끼어들지 않는다.
+        PLUGIN.client_key(app, _Ev("a"))
+        assert app.ime_state == "한"
+        agent.sendall(b"com.apple.keylayout.ABC\n")
+        PLUGIN._poll(app)
+        assert app.ime_state == "EN" and app.composited == 2
+        # 새 줄 없음 → 유지(재합성 없음).
+        PLUGIN._poll(app)
+        assert app.ime_state == "EN" and app.composited == 2
+        # 에이전트 종료 → 소켓 비움(폴백), 이후 휴리스틱 재개.
+        agent.close()
+        PLUGIN._poll(app)
+        assert app._ime_sock is None, "피어 close 면 _ime_sock 을 비워 폴백해야"
+        PLUGIN.client_key(app, _Ev("가"))
+        assert app.ime_state == "한", "소켓 폴백 후 휴리스틱이 재개되어야"
+    finally:
+        try:
+            cli.close()
+        except Exception:
+            pass
+        try:
+            agent.close()
+        except Exception:
+            pass
+
+
+async def test_ssh_remote_attach_connects_agent_and_makes_it_authority():
+    """SSH 원격 + PYTMUX_IME_SOCK 가 살아있는 에이전트 소켓을 가리키면 attach_client 가
+    연결해 권위로 삼는다(_ime_os=False). 비-ssh 면 경로를 안 잡고 OS 실측을 쓴다."""
+    if os.name == "nt":
+        return
+    import socket
+    import tempfile
+    saved = {k: os.environ.get(k)
+             for k in ("SSH_CONNECTION", "SSH_TTY", "PYTMUX_IME_SOCK")}
+    d = tempfile.mkdtemp()
+    path = os.path.join(d, "ime.sock")
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(path)
+    srv.listen(1)
+    srv.setblocking(False)
+    os.environ["SSH_CONNECTION"] = "1.2.3.4 5 6.7.8.9 22"
+    os.environ.pop("SSH_TTY", None)
+    os.environ["PYTMUX_IME_SOCK"] = path
+    app = _FakeApp()
+    try:
+        PLUGIN.attach_client(app)
+        assert app._ime_sock is not None, "에이전트 소켓에 연결되어야"
+        assert app._ime_os is False, "소켓 권위면 OS 질의 경로는 꺼져야"
+        assert app._ime_agent_path == path
+        conn, _ = srv.accept()
+        conn.sendall(b"com.apple.inputmethod.Korean.2SetKorean\n")
+        PLUGIN._poll(app)
+        assert app.ime_state == "한", app.ime_state
+        # 비-ssh 면 PYTMUX_IME_SOCK 가 있어도 소켓을 안 잡는다(OS 실측 경로).
+        os.environ.pop("SSH_CONNECTION", None)
+        os.environ.pop("SSH_TTY", None)
+        orig = _stub_source("com.apple.keylayout.ABC")
+        app2 = _FakeApp()
+        try:
+            PLUGIN.attach_client(app2)
+            assert app2._ime_agent_path is None, "비-ssh 면 에이전트 경로를 안 잡아야"
+            assert app2._ime_sock is None
+            assert app2._ime_os is True, "비-ssh 로컬은 OS 실측 사용"
+        finally:
+            _oskbd.current_source_id = orig
+    finally:
+        try:
+            srv.close()
+        except Exception:
+            pass
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_agent_subprocess_binds_and_accepts_connection():
+    """imeagent.py 를 실제 서브프로세스로 띄워 unix 소켓에 바인드·accept 가 도는지 확인
+    (전송로 ② 의 서버측 스모크 — bind/listen/accept). 흘리는 한/영 값은 OS 의존이라
+    여기선 '연결 성립'만 단언한다(라이브 한/영 왕복은 실 박스 검증)."""
+    if os.name == "nt":
+        return
+    import asyncio
+    import socket
+    import subprocess
+    import sys as _sys
+    import tempfile
+    agent = importlib.import_module("pytmuxlib.plugins.ime-indicator.imeagent")
+    d = tempfile.mkdtemp()
+    path = os.path.join(d, "ime.sock")
+    proc = subprocess.Popen(
+        [_sys.executable, agent.__file__, "--sock", path],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    cli = None
+    try:
+        for _ in range(150):            # 바인드까지 최대 ~3s 대기
+            if os.path.exists(path):
+                try:
+                    cli = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    cli.settimeout(1.0)
+                    cli.connect(path)
+                    break
+                except OSError:
+                    cli = None
+            await asyncio.sleep(0.02)
+        assert cli is not None, "에이전트 소켓에 연결 실패(bind/accept 미동작)"
+        assert proc.poll() is None, "에이전트가 즉시 죽지 않아야"
+    finally:
+        if cli is not None:
+            try:
+                cli.close()
+            except Exception:
+                pass
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except Exception:
+            proc.kill()
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+
+
 # ---- 4) 계약(delete-to-disable) ----
 async def test_plugin_discovered_when_loaded():
     reg = plugins.load()

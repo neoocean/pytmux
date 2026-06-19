@@ -16,12 +16,17 @@
      대신 첫 client_tick 에서 **감시 헬퍼 자식 프로세스**(`oskbd.spawn_watcher`)를
      띄워, 그 헬퍼가 진짜 CFRunLoop 으로 입력소스 변경 알림을 받아 흘리는 줄을
      0.05초마다 비차단 드레인한다(client_unload 에서 거둠). 상세는 oskbd.py docstring.
-② **확정 입력 휴리스틱(폴백)** — 조합(preedit) 문자열은 앱이 아니라 OS 가 하드웨어
-   커서 위치에 오버레이한다(docs/internal/IME_PREEDIT_CURSOR_SCENARIO.md). 앱에는 확정된
-   글자만 도착하므로, OS 질의가 불가한 환경(ssh 원격 클라·리눅스·질의 실패)에선
-   확정 입력 문자의 스크립트로 추정한다: 한글이면 '한', ASCII 글자면 'EN',
-   숫자·기호·공백·제어키 등 모드 중립 입력은 직전 상태 유지. 이 경로엔 한글
-   모드에서 영문만 치면 'EN' 으로 보이는 휴리스틱 한계가 그대로 남는다.
+② **에이전트 소켓(§9.1 전송로 ②, plain ssh 원격 정확도 상향)** — ssh 원격에서 클라가
+   도는 원격 박스의 키보드는 사용자 로컬 한/영과 무관하다. 사용자 **로컬 머신**에서
+   `imeagent.py` 를 띄워 로컬 한/영을 unix 소켓으로 게시하고 `ssh -R` 로 역포워드하면,
+   원격 클라가 `PYTMUX_IME_SOCK`(=역포워드 끝점)에 붙어(_ime_sock) 그 상태를 권위값으로
+   따라간다. 끊기면 ③ 휴리스틱으로 우아하게 폴백하고 client_tick 이 재연결을 시도한다.
+③ **확정 입력 휴리스틱(보편 폴백, Layer A)** — 조합(preedit) 문자열은 앱이 아니라 OS 가
+   하드웨어 커서 위치에 오버레이한다(docs/internal/IME_PREEDIT_CURSOR_SCENARIO.md). 앱에는
+   확정된 글자만 도착하므로, OS 질의도 에이전트 소켓도 없는 환경(리눅스·질의 실패·
+   에이전트 미가동)에선 확정 입력 문자의 스크립트로 추정한다: 한글이면 '한', ASCII
+   글자면 'EN', 숫자·기호·공백·제어키 등 모드 중립 입력은 직전 상태 유지. 이 경로엔
+   한글 모드에서 영문만 치면 'EN' 으로 보이는 휴리스틱 한계가 그대로 남는다.
 
 무게: 이 __init__ 은 textual/rich 를 모듈 최상단에서 import 하지 않는다(서버 프로세스도
 plugins.load() 로 같은 코드를 읽는다). 렌더 헬퍼/Style/테마는 client_render 에서 실제로
@@ -71,9 +76,22 @@ class _ImeIndicatorPlugin:
         지연 설치 — 이 시점엔 앱이 아직 안 돌아 set_interval 불가). 불가하면 'EN'
         에서 시작해 확정 입력 휴리스틱으로 추정한다."""
         app.ime_show = True
-        # §9.1: plain ssh 원격이면 로컬 OS 질의는 원격 박스 키보드를 봐 틀리므로 끄고
-        # 확정 입력 휴리스틱으로 폴백한다(_is_ssh_remote docstring 참조).
-        sid = None if _is_ssh_remote() else oskbd.current_source_id()
+        # §9.1: plain ssh 원격이면 로컬 OS 질의는 원격 박스 키보드를 봐 틀리다. 전송로
+        # ②(ssh -R 역포워드 unix 소켓, imeagent.py)가 깔려 있으면(PYTMUX_IME_SOCK) 그
+        # 소켓으로 **로컬 머신**의 한/영을 받아 권위값으로 쓰고, 없으면 확정 입력
+        # 휴리스틱으로 폴백한다(Layer A). 네이티브 remote-attach(클라=로컬)는 ssh 신호가
+        # 없어 종전대로 로컬 OS 실측을 쓴다.
+        remote = _is_ssh_remote()
+        # 에이전트 소켓(연결 실패/미가동이면 None → 휴리스틱). 경로는 client_tick 이
+        # 늦게 뜬 에이전트를 위해 보관해 두고 재연결한다.
+        app._ime_agent_path = (os.environ.get("PYTMUX_IME_SOCK") or None) \
+            if remote else None
+        app._ime_sock = (oskbd.connect_agent(app._ime_agent_path)
+                         if app._ime_agent_path else None)
+        app._ime_sock_buf = b""
+        # 소켓이 권위면 OS 질의 경로는 끈다(소켓 끊기면 client_key 휴리스틱이 재개).
+        sid = (None if (remote or app._ime_sock is not None)
+               else oskbd.current_source_id())
         app._ime_os = sid is not None
         app._ime_os_timer = None
         # macOS 입력소스 변경 감시 헬퍼 자식 프로세스(첫 client_tick 에서 지연 기동)와
@@ -108,23 +126,58 @@ class _ImeIndicatorPlugin:
         배지에 반영되며, TIS 질의는 ~1µs/회(초당 ~27µs)라 비용은 사실상 무시 가능.
         상태 무변화 시 _poll 은 질의 1회만 하고 재합성하지 않는다. 재합성은 _poll 이
         상태 변화 시 직접 하므로 코어 일괄 재합성은 항상 불필요(False)."""
-        if not getattr(app, "_ime_os", False):
+        # §9.1: 늦게 뜬 에이전트(ssh -R 소켓) 재연결 — 원격 클라가 PYTMUX_IME_SOCK 를
+        # 가졌고 아직/다시 안 붙었으면 1초 틱마다 한 번 시도(연결되면 아래 타이머가
+        # 50ms 드레인을 맡는다). 소켓이 살아나면 _ime_os 휴리스틱 경로는 꺼진 채 둔다.
+        if (getattr(app, "_ime_agent_path", None)
+                and getattr(app, "_ime_sock", None) is None):
+            app._ime_sock = oskbd.connect_agent(app._ime_agent_path)
+            if app._ime_sock is not None:
+                app._ime_sock_buf = b""
+        if not (getattr(app, "_ime_os", False)
+                or getattr(app, "_ime_sock", None) is not None):
             return False
         if getattr(app, "_ime_os_timer", None) is None:
-            # macOS: 변경 감시 헬퍼 1회 기동(비 macOS·실패 시 None → 인프로세스 폴링).
-            app._ime_watch = oskbd.spawn_watcher()
+            # macOS: 변경 감시 헬퍼 1회 기동(비 macOS·실패·소켓 모드면 None → 소켓
+            # 드레인/인프로세스 폴링). 소켓 모드에선 OS 헬퍼가 불필요하다.
+            if getattr(app, "_ime_os", False):
+                app._ime_watch = oskbd.spawn_watcher()
             si = getattr(app, "set_interval", None)
             app._ime_os_timer = (si(0.05, lambda: self._poll(app))
                                  if si else False)
         self._poll(app)
         return False
 
+    def _apply_sid(self, app, sid):
+        """소스 ID 로 한/영 배지 상태를 갱신한다(변경 시에만 재합성)."""
+        new = "한" if oskbd.is_korean(sid) else "EN"
+        if new != getattr(app, "ime_state", "EN"):
+            app.ime_state = new
+            if getattr(app, "ime_show", False):
+                app._composite()
+
     def _poll(self, app):
-        """입력소스 상태를 갱신한다. macOS(감시 헬퍼 가동 시)는 헬퍼 stdout 에서 최신
-        줄을 비차단 드레인하고, 그 외(Windows·폴백)는 인프로세스 TIS/IMM 을 1회
-        질의한다. 새 정보 없음/일시 실패는 직전 상태 유지(깜빡임 방지). _ime_os 가드:
-        타이머 설치 후 실측을 끈 경우(테스트의 폴백 강제 등) 잔존 타이머가 상태를
-        덮지 않게."""
+        """입력소스 상태를 갱신한다. ① §9.1 에이전트 소켓(ssh -R)이 붙어 있으면 그
+        소켓에서 최신 줄을 드레인한다(끊기면 소켓을 비워 client_key 휴리스틱·재연결
+        재개). ② macOS 감시 헬퍼(_ime_watch) 가동 시 헬퍼 stdout 드레인. ③ 그 외
+        (Windows·폴백)는 인프로세스 TIS/IMM 1회 질의. 새 정보 없음/일시 실패는 직전
+        상태 유지(깜빡임 방지)."""
+        # ① ssh -R 에이전트 소켓이 권위(로컬 머신 한/영) — OS 질의보다 우선.
+        sock = getattr(app, "_ime_sock", None)
+        if sock is not None:
+            sid, app._ime_sock_buf, closed = oskbd.read_agent(
+                sock, getattr(app, "_ime_sock_buf", b""))
+            if closed:                         # 에이전트/포워드 끊김 → 폴백·재연결
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+                app._ime_sock = None           # client_key 휴리스틱 재개, tick 재연결
+                return
+            if sid is None:                    # 새 줄 없음 — 유지
+                return
+            self._apply_sid(app, sid)
+            return
         if not getattr(app, "_ime_os", False):
             return
         watch = getattr(app, "_ime_watch", None)
@@ -139,15 +192,19 @@ class _ImeIndicatorPlugin:
             sid = oskbd.current_source_id()
             if sid is None:
                 return
-        new = "한" if oskbd.is_korean(sid) else "EN"
-        if new != getattr(app, "ime_state", "EN"):
-            app.ime_state = new
-            if getattr(app, "ime_show", False):
-                app._composite()
+        self._apply_sid(app, sid)
 
     def client_unload(self, app):
-        """클라이언트 종료 시 감시 헬퍼 자식 프로세스를 정리한다(attach_client 의 짝).
-        헬퍼는 stdin EOF 로도 자가 종료하지만, 정상 종료 경로에선 즉시 거둔다."""
+        """클라이언트 종료 시 감시 헬퍼 자식 프로세스와 §9.1 에이전트 소켓을 정리한다
+        (attach_client 의 짝). 헬퍼는 stdin EOF 로도 자가 종료하지만 정상 종료 경로에선
+        즉시 거둔다."""
+        sock = getattr(app, "_ime_sock", None)
+        if sock is not None:
+            app._ime_sock = None
+            try:
+                sock.close()
+            except Exception:
+                pass
         watch = getattr(app, "_ime_watch", None)
         if watch is None:
             return
@@ -164,8 +221,12 @@ class _ImeIndicatorPlugin:
         한계가 실측에 역류하지 않게). 한글이면 '한', ASCII 글자(a-z/A-Z)면 'EN';
         숫자·기호·공백·제어키(문자 없음/비인쇄)는 한·영 공통이라 **모드 중립**으로
         두어 직전 상태를 유지한다(예: 한글 모드에서 숫자만 쳐도 '한' 이 깜빡여
-        'EN' 으로 바뀌지 않는다). 상태가 바뀌고 배지가 켜져 있으면 재합성한다."""
-        if getattr(app, "_ime_os", False):
+        'EN' 으로 바뀌지 않는다). 상태가 바뀌고 배지가 켜져 있으면 재합성한다.
+
+        OS 실측(_ime_os)이나 §9.1 에이전트 소켓(_ime_sock)이 권위를 쥐고 있으면 여긴
+        아무것도 안 한다(휴리스틱 한계가 실측/로컬-한영에 역류하지 않게). 소켓이
+        끊기면 _ime_sock 이 None 으로 비워져 휴리스틱이 자동 재개된다."""
+        if getattr(app, "_ime_os", False) or getattr(app, "_ime_sock", None) is not None:
             return
         ch = getattr(event, "character", None)
         if not ch or not ch.isprintable():
