@@ -684,13 +684,22 @@ class _OwnedConPty(PtyProcess):
                 break
             if not data:
                 break   # EOF: 자식 종료 / conhost 닫힘 / close()
-            loop = self._loop
-            if loop is not None:
-                # raw 바이트를 그대로 전달(디코드 안 함) — 손상 원점 회피.
-                loop.call_soon_threadsafe(self._deliver, data)
+            # raw 바이트를 그대로 전달(디코드 안 함) — 손상 원점 회피.
+            self._post(self._deliver, data)
+        self._post(self._fire_eof)
+
+    def _post(self, fn, *args) -> None:
+        """리더 스레드 → 이벤트 루프로 콜백 전달. teardown 중 루프가 이미 닫혔으면
+        (call_soon_threadsafe 가 RuntimeError) 조용히 버린다 — daemon 리더가 블로킹
+        read 에서 늦게 깨어 닫힌 루프에 post 하는 정상적 경쟁이라 스택트레이스가
+        무의미하다(테스트 teardown 노이즈 + 진짜 오류 가림)."""
         loop = self._loop
-        if loop is not None:
-            loop.call_soon_threadsafe(self._fire_eof)
+        if loop is None or loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(fn, *args)
+        except RuntimeError:
+            pass   # is_closed 체크와 호출 사이의 TOCTOU 경쟁
 
     def _deliver(self, b: bytes) -> None:
         if not self._stop.is_set() and self._on_data:
