@@ -265,6 +265,29 @@ async def prompt_history(app, pilot):
     await pilot.pause(0.5)
 
 
+async def claude_resume(app, pilot):
+    # claude-resume 플러그인 리줌 피커(claude-resume). 실 머신의 세션 경로·제목이
+    # 노출되지 않도록 **합성 세션 목록**을 직접 ClaudeResumeScreen 에 넣어 띄운다
+    # (실서버 claude_list_sessions 응답 대신). 외형(시각·프로젝트·AI 제목 3열·시안
+    # 라운드 보더·[x]·안내줄)은 실제와 동일. mtime 은 결정적 로컬시각으로 고정.
+    import time
+    from importlib import import_module
+    screen = import_module("pytmuxlib.plugins.claude-resume.screen")
+    base = time.mktime((2026, 6, 20, 15, 40, 0, 0, 0, -1))
+    sessions = [
+        {"id": "a1b2c3", "cwd": "/work/web-dashboard", "project": "web-dashboard",
+         "title": "리스트 가상 스크롤 성능 개선", "mtime": base - 300},
+        {"id": "d4e5f6", "cwd": "/work/api-gateway", "project": "api-gateway",
+         "title": "JWT 갱신 레이스 컨디션 수정", "mtime": base - 5400},
+        {"id": "071829", "cwd": "/work/pytmux", "project": "pytmux",
+         "title": "갤러리 스크린샷 자동 생성기 보강", "mtime": base - 23400},
+        {"id": "3a4b5c", "cwd": "/work/notes-cli", "project": "notes-cli",
+         "title": "마크다운 내보내기 옵션 추가", "mtime": base - 97200},
+    ]
+    app.push_screen(screen.ClaudeResumeScreen(sessions))
+    await pilot.pause(0.5)
+
+
 async def p4_changes(app, pilot):
     # p4-show-submitted-changelists 플러그인(p4changes). 실 퍼포스 서버·계정·경로가
     # 노출되지 않도록 **합성 CL 목록**을 직접 ChangesScreen 에 넣어 띄운다(실서버
@@ -685,6 +708,7 @@ SCENES = [
     ("29-usage-panel", "사용 한도(/usage) — 세션 5h·주 전체·주 Sonnet 막대 그래프", usage_panel),
     ("30-usage-view", "usage-view 팝업 — 한도 막대(% 우측정렬)+다음 리셋 블록 카운트다운", usage_view),
     ("31-prompt-history", "프롬프트 히스토리 팝업(prompt-history) — 시간순·미리보기 행수", prompt_history),
+    ("39-claude-resume", "Claude 세션 리줌 피커(claude-resume) — 시각·프로젝트·AI 제목 3열", claude_resume),
     ("32-p4changes", "submitted CL 목록(p4changes) — 풀스크린·CL/시각/사용자/설명", p4_changes),
     ("35-p4-describe", "p4changes 상세 — CL 에 Enter → p4 describe 팝업(이중 보더·@CL·변경파일)", p4_describe),
     ("33-ime", "IME 한/영 배지(ime-indicator) — 우상단 상태 배지", ime_badge),

@@ -183,12 +183,18 @@ Claude 패널에 입력한 프롬프트를 시간순으로 모아 팝업(`prompt
 
 ![p4changes 상세 — CL 에 Enter → p4 describe 팝업](image/35-p4-describe.svg)
 
+### 🔄 claude-resume — Claude 세션 리줌 피커
+
+`claude-resume`(별칭 `claude-sessions`·`cr`)로 이 머신의 Claude Code 세션 목록을 모달로
+띄워, 하나를 골라 **새 탭에서 `claude --resume` 으로 이어** 엽니다. 각 행은 수정시각 ·
+프로젝트 · AI 생성 제목 3열이고, ↑↓ 로 고른 뒤 Enter(또는 클릭)로 리줌합니다.
+
+![claude-resume 리줌 피커 — 시각·프로젝트·AI 제목 3열](image/39-claude-resume.svg)
+
 ### 그 밖의 플러그인 (전용 화면 없음)
 
 화면 없이 동작하거나 다른 화면을 거드는 플러그인입니다 — 그래서 별도 스크린샷은 없습니다.
 
-- **claude-resume** — `claude-resume`(별칭 `claude-sessions`·`cr`)로 이 머신의 Claude Code
-  세션 목록을 모달로 띄워, 하나를 골라 **새 탭에서 `claude --resume` 으로 이어** 엽니다.
 - **rec** — `capture-output`(별칭 `capture-toggle`)으로 패널의 raw PTY 출력을 **무손실로
   기록**합니다(Claude 화면 문구 분석용, 깃헙 배포 기본 off).
 - **claude-disable-feedback** — Claude 의 피드백 권유 문구(시작 팁·세션 종료 평가 배너)를
