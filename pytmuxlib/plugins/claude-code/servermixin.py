@@ -105,18 +105,18 @@ _RC_CONFIRM_FRAMES = 30
 # 컴포저에 공백을, Enter 는 컴포저 제출을 유발할 수 있어 인쇄 불가·부작용 최소인 Esc 만
 # 쓴다(닫지 못해도 컴포저를 오염시키지 않음).
 #
-# ★ 이중 Esc=되감기(rewind) 팝업 방지: 첫 키가 레이스(프롬프트 입력 핸들러가 아직
-# 안 떴을 때)로 누락될 수 있어 재시도가 필요하지만, **블라인드 프레임 타이머**로
-# 재주입하면 안 된다. Esc#1 이 배너를 이미 닫았어도 pyte feed 지연(피드 병목) 때문에
-# 화면 텍스트가 한동안 계속 배너 정규식에 매칭돼, 닫힌 뒤 Esc#2 가 나가고 Claude Code
-# 에서 **이중 Esc = 되감기 팝업**이 뜬다(사용자 보고 "엉뚱한 팝업"). 그래서 재주입은
-# 우리 Esc 이후 단말이 **실제로 다시 그려졌을 때만**(`_feed_seq` 진행) 허용한다 —
-# 그 시점의 화면이 post-Esc 상태이므로, 여전히 배너가 보이면 첫 키가 진짜 누락된 것이고
-# stale 화면 위 이중 Esc 가 아니다. 추가로 _FEEDBACK_GAP 최소 간격을 둬 같은 리드로
-# 버스트 안에서 Esc#1 이 처리되기도 전에 Esc#2 가 나가는 인-버스트 레이스도 막는다.
+# ★ 재주입(retry) 영구 제거 — 이중 Esc=되감기(Rewind) 모달의 직접 원인이었다.
+# 과거엔 첫 Esc 가 레이스로 누락될 수 있다고 보고 "단말이 다시 그려졌을 때만 재주입"
+# 가드로 Esc#2 를 허용했지만, 실전에선 배너 아래 컴포저의 스피너/경과시간 애니메이션
+# ("Cogitated for 7m 55s" 카운터)이 **매 프레임 feed 를 진행**시켜 그 가드를 무력화한다
+# — Esc#1 이 이미 배너를 닫았는데 feed 지연으로 화면 텍스트가 아직 배너에 매칭되는 동안
+# Esc#2 가 나가고, Claude Code 가 이중 Esc 를 Rewind 단축키로 해석해 모달 팝업("Restore
+# the code... Enter to continue · Esc to cancel")을 띄워 **진행을 완전히 막는다**
+# (사용자 보고 2026-06-20, 두 번째 스크린샷). 그래서 이제 **배너당 Esc 는 딱 한 번**만
+# 쏘고 절대 재시도하지 않는다. 한 번의 Esc 는 비모달 배너를 거의 항상 닫고, 드물게
+# 누락돼 배너가 남아도 비모달이라 작업을 막지 않으며 server_filter_rows 가 화면에서
+# 가린다 — 차단되는 Rewind 모달보다 훨씬 안전한 트레이드오프.
 _FEEDBACK_DISMISS_KEY = b"\x1b"
-_FEEDBACK_GAP = 6        # 재주입 최소 프레임 간격(30Hz 기준 ~0.2초) — feed 진행 게이트와 AND
-_FEEDBACK_MAX_TRIES = 3
 # M17(T7) 경고 임계는 opt(server.py: claude_long_turn_sec 기본 600 / claude_repeat_alert
 # 기본 3, 0=끔). 스캔의 warn 블록이 self.* 를 읽는다.
 
@@ -849,8 +849,9 @@ class ServerClaudeMixin:
                 pending = ((p._was_busy and p._claude == "idle"
                             and p._idle_frames < _DONE_IDLE_FRAMES)
                            or (p._hdr_claude and not p._claude)
-                           # 피드백 자동 Dismiss 재시도 중: 화면이 정적이어도
-                           # GAP 프레임마다 Esc 를 다시 쏘려면 계속 스캔해야 한다(#26).
+                           # 피드백/`/rc` 메뉴 배너가 떠 디바운스 중: 화면이 정적이어도
+                           # 배너가 사라지는 프레임을 관측해 _feedback_active 를 풀고
+                           # 다음 인스턴스에 재무장하려면 계속 스캔해야 한다(#26).
                            or p._feedback_active
                            # auto `/rc` 디바운스 중(_RC_CONFIRM_FRAMES): 정적 idle
                            # 화면이어도 _idle_frames 를 임계까지 진행시켜 발화하거나,
@@ -885,42 +886,18 @@ class ServerClaudeMixin:
                 #     이어진다. 메뉴 출현은 claude_remote_active 분기가 _rc_done 도 세워
                 #     같은 세션에 /rc 가 재발하지 않는다.
                 if claude_feedback_prompt(txt) or claude_remote_menu(txt):
-                    if p._feedback_tries == 0:
-                        # 첫 감지 → **즉시** Esc 1회. 공통 경로는 여기서 닫힌다.
-                        p._feedback_active = True   # 정적 화면에도 스캔 유지(재시도)
-                        p._feedback_tries = 1
-                        p._feedback_wait = _FEEDBACK_GAP
-                        p._feedback_seq = p._feed_seq
-                        if p.pty is not None:
-                            try:
-                                p.pty.write(_FEEDBACK_DISMISS_KEY)
-                            except OSError:
-                                pass
-                    elif p._feedback_tries >= _FEEDBACK_MAX_TRIES:
-                        # 충분히 시도함 → 포기(스캔 강제 해제, 스팸/무한 스캔 방지).
-                        p._feedback_active = False
-                    else:
-                        # 재주입은 **우리 Esc 이후 화면이 다시 그려졌고**(feed 진행)
-                        # 최소 간격도 지났는데 아직 배너가 있을 때만. 두 조건이
-                        # stale 화면 위 이중 Esc(=되감기 팝업)를 막는다.
+                    # 첫 감지 → **딱 한 번** Esc. 절대 재주입하지 않는다(이중 Esc=Rewind
+                    # 모달 차단, 위 상수 주석 참조). 배너가 화면에서 사라질 때까지
+                    # _feedback_active 로 디바운스해 같은 배너 인스턴스에 두 번 쏘지 않는다.
+                    if not p._feedback_active:
                         p._feedback_active = True
-                        if p._feedback_wait > 0:
-                            p._feedback_wait -= 1
-                        if (p._feedback_wait <= 0
-                                and p._feed_seq != p._feedback_seq
-                                and p.pty is not None):
-                            p._feedback_tries += 1
-                            p._feedback_wait = _FEEDBACK_GAP
-                            p._feedback_seq = p._feed_seq
+                        if p.pty is not None:
                             try:
                                 p.pty.write(_FEEDBACK_DISMISS_KEY)
                             except OSError:
                                 pass
                 else:
                     p._feedback_active = False
-                    p._feedback_tries = 0
-                    p._feedback_wait = 0
-                    p._feedback_seq = 0
                 # 컨텍스트 하드스톱 자동복구(요청): 화면이 "Context limit reached ·
                 # /compact or /clear to continue" 면 컨텍스트가 꽉 차 Claude 가 완전히
                 # 멈춘 것 — idle-기반 auto_compact(N초 지속 후 발화)와 **다른 트리거**로,

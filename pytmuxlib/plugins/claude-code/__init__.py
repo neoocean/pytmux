@@ -648,8 +648,13 @@ class _ClaudeCodePlugin:
     def server_filter_rows(self, server, pane, rows):
         """Claude 패널의 'Tip: Use /feedback …' 줄과 세션 종료 피드백 배너('How is Claude
         doing this session?' + 평가옵션)를 공백으로 가려 화면에 안 보이게 한다(사용자
-        요청 2026-06-17·2026-06-18). Claude 패널이 아니면 원본 그대로(핫패스 무영향)."""
-        if not getattr(pane, "_claude", None):
+        요청 2026-06-17·2026-06-18). Claude 패널이 아니면 원본 그대로(핫패스 무영향).
+
+        게이트는 `_claude`(현재 실행 중) **또는** `_hdr_claude`(디바운스 Claude 신호)
+        로 본다 — 피드백 배너는 세션이 **끝나는 순간** 떠 `_claude` 가 이미 None 으로
+        떨어질 수 있는데(사용자 보고 2026-06-20: 그래서 배너가 안 가려지고 보였다),
+        _hdr_claude 는 그 전이 창에서 한동안 True 로 남아 배너 출현을 덮는다."""
+        if not (getattr(pane, "_claude", None) or getattr(pane, "_hdr_claude", None)):
             return rows
         rows = _blank_feedback_tip(rows)
         rows = _blank_feedback_banner(rows)
