@@ -63,9 +63,9 @@ jobs:
       # 트레이스백으로 정확한 fork 지점을 잡아 spawn 경로를 fork-안전하게 고친다.
       OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
 
@@ -115,7 +115,7 @@ jobs:
 
       - name: Upload validate_conpty report (Windows only)
         if: always() && runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: validate-conpty-${{ matrix.os }}-py${{ matrix.python }}
           path: ${{ runner.temp }}/validate_conpty.out
@@ -131,7 +131,7 @@ jobs:
 
       - name: Upload report artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: report-${{ matrix.os }}-py${{ matrix.python }}
           path: reports/win-report-*.md
