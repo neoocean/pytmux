@@ -207,3 +207,51 @@ async def test_read_loop_isolates_callback_exception():
         proto.read_frame = orig
     assert seen == [b"A", b"B"], ("첫 콜백 예외 후에도 둘째 프레임 처리", seen)
     assert lost == [True], ("EOF(None)에서만 _handle_lost 1회", lost)
+
+
+async def test_on_eof_offloads_blocking_reap():
+    """M1: _on_eof 가 reap(block=True)를 이벤트 루프에서 직접 부르지 않고 executor 로
+    오프로드한다 — 자식이 EOF 후 늦게 끝나도 루프가 안 막힌다. 느린 reap 가짜 pty 로
+    _on_eof 가 즉시 반환(동기 블로킹 X)되고, 이후 비동기로 exit 처리(alive=False·
+    exit 프레임·패널 정리)가 완료됨을 확인."""
+    import threading
+    import types
+    host = ptyhost.PtyHost()
+    reap_started = threading.Event()
+    reap_release = threading.Event()
+    sink = []
+
+    class _SlowPty:
+        def reap(self, block=False):
+            reap_started.set()
+            reap_release.wait(2)
+            return 7
+
+        def stop_reader(self):
+            pass
+
+        def close(self):
+            pass
+
+    class _W:
+        def write(self, b):
+            sink.append(b)
+
+    host._writer = _W()
+    pe = types.SimpleNamespace(pty=_SlowPty(), alive=True, exit_status=None)
+    host.panes[1] = pe
+    host._on_eof(1)                            # 태스크만 생성 — 동기 블로킹 X
+    assert pe.alive is True, "reap 전 — _on_eof 가 동기로 막지 않음"
+    for _ in range(100):                      # executor reap 시작까지 양보(루프 비차단)
+        if reap_started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert reap_started.is_set(), "reap 이 executor 에서 시작(루프 비차단)"
+    reap_release.set()                        # 자식 종료
+    for _ in range(200):
+        if 1 not in host.panes:
+            break
+        await asyncio.sleep(0.01)
+    assert pe.alive is False and pe.exit_status == 7, "비동기 exit 처리 완료"
+    assert 1 not in host.panes, "패널 정리됨"
+    assert any(b"exit" in bytes(x) for x in sink), "exit 프레임 송신"

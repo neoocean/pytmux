@@ -196,13 +196,24 @@ class PtyHost:
             del pe.pending[:len(pe.pending) - _PENDING_MAX]
 
     def _on_eof(self, pane_id: int):
+        # M1: reap(block=True)를 이벤트 루프 스레드(여기 — backend 가
+        # call_soon_threadsafe 로 부른다)에서 직접 호출하면, 자식이 EOF 직후 즉시
+        # 안 끝날 때(conhost 정리 지연 등) 루프가 막혀 **전 패널 I/O 가 정지**한다.
+        # 블로킹 reap 을 별도 코루틴+executor 로 오프로드해 루프를 비운다.
+        if self.panes.get(pane_id) is not None:
+            self.loop.create_task(self._finish_eof(pane_id))
+
+    async def _finish_eof(self, pane_id: int):
         pe = self.panes.get(pane_id)
         if pe is None:
             return
         status = None
         if pe.pty is not None:
-            with contextlib.suppress(Exception):
-                status = pe.pty.reap(block=True)
+            try:
+                status = await self.loop.run_in_executor(
+                    None, lambda p=pe.pty: p.reap(block=True))
+            except Exception:
+                status = None
         pe.alive = False
         pe.exit_status = status
         w = self._writer
