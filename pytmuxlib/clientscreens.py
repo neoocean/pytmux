@@ -1528,7 +1528,8 @@ class InfoTabsScreen(ModalScreen):
         n = len(self._tabs)
         for i, (name, _l) in enumerate(self._tabs):
             lbl = self.query_one(f"#ittab_{i}", Label)
-            lbl.update(self._tab_markup(name, active=(i == self._ti),
+            lbl.update(self._tab_markup(theme_color(self, "accent"), name,
+                                        active=(i == self._ti),
                                         focused=(self._sel == i)))
         self.query_one("#itclose", Label).set_class(self._sel == n, "-focus")
         # 노트북 연결선 다시 그리기 — 활성 탭이 바뀌면 ▀ 다리도 새 탭 아래로 옮긴다.
@@ -1538,13 +1539,19 @@ class InfoTabsScreen(ModalScreen):
             pass
 
     @staticmethod
-    def _tab_markup(name, active, focused):
+    def _tab_markup(accent, name, active, focused):
         """플랫 탭 한 칸(2행) 마크업 — 외곽선 없는 납작한 모양(창 탭바와 동일, 요청).
-        활성=이름줄 배경 반전 강조, 포커스 시 굵게. 비활성=이름만 흐리게. 윗행은
-        비워 우측 [x](head 첫 행)와 2행 높이를 맞추고 이름은 아랫행에 둔다."""
+        활성=이름줄을 accent(박스 테두리·노트북 연결선과 **동색**) 배경+흰 글자로
+        강조, 포커스 시 굵게. 비활성=이름만 흐리게. 윗행은 비워 우측 [x](head 첫 행)와
+        2행 높이를 맞추고 이름은 아랫행에 둔다. 종전엔 reverse(텍스트색 반전)라 아래
+        연결선(accent)과 색이 어긋났다 → 토큰 팝업(_TkTabConnector)처럼 활성 탭도
+        accent 로 맞춰 탭이 그 라인으로 열려 이어지게 한다(사용자 요청 2026-06-20)."""
         label = " " + name + " "
         if active:
-            style = "reverse b" if focused else "reverse"
+            # 전경(white)을 배경(on accent)보다 **먼저** 써야 한다 — Textual Content
+            # 마크업은 `on <색> white` 처럼 색이 on 뒤에 또 오면 그 뒷색을 배경으로
+            # 잘못 묶어(white 가 배경이 돼 탭이 하얗게) 아래 연결선과 색이 어긋난다.
+            style = f"b white on {accent}" if focused else f"white on {accent}"
         else:
             style = "dim"
         return f"\n[{style}]{label}[/]"
