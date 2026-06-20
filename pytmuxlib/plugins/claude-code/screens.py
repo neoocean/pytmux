@@ -865,20 +865,22 @@ class TokenLogScreen(ModalScreen):
             # 상위 = 상호배타 **뷰 탭**(§7.1·§7.2): 같은 모양의 가로 탭 한 줄. 활성
             # 탭만 하이라이트. 끝의 /usage·시나리오는 뷰가 아니라 **액션**이라 다른
             # 색(.tkbbtn)으로 구분한다.
+            # 1-4: 초기 compose 라벨도 i18n.t 로(_sync_tabs 의 resize 갱신은 이미 i18n.t
+            # — 첫 페인트에서 en 사용자에게 한글이 보이던 누락 보완). 키는 등록돼 있다.
             with Horizontal(id="tktabs"):
-                yield Label("기간", id="tab_period", classes="tkbtab",
+                yield Label(i18n.t("기간"), id="tab_period", classes="tkbtab",
                             markup=False)
-                yield Label("세션", id="tab_panel", classes="tkbtab",
+                yield Label(i18n.t("세션"), id="tab_panel", classes="tkbtab",
                             markup=False)
-                yield Label("한도", id="tab_limit", classes="tkbtab",
+                yield Label(i18n.t("한도"), id="tab_limit", classes="tkbtab",
                             markup=False)
-                yield Label("비교", id="tab_recon", classes="tkbtab",
+                yield Label(i18n.t("비교"), id="tab_recon", classes="tkbtab",
                             markup=False)
-                yield Label("경고", id="tab_warn", classes="tkbtab",
+                yield Label(i18n.t("경고"), id="tab_warn", classes="tkbtab",
                             markup=False)
                 yield Label("/usage", id="tab_usage", classes="tkbbtn",
                             markup=False)
-                yield Label("시나리오", id="tab_saver", classes="tkbbtn",
+                yield Label(i18n.t("시나리오"), id="tab_saver", classes="tkbbtn",
                             markup=False)
             # 노트북 연결선: 활성 메인 탭이 아래 본문으로 열려 이어지게(메인 탭바와
             # 같은 모양, 사용자 요청 2026-06-18). _sync_tabs 가 탭 전환 시 refresh.
@@ -889,15 +891,15 @@ class TokenLogScreen(ModalScreen):
             with Horizontal(id="tksub"):
                 yield Label("", id="tksublead", markup=False)
                 with Horizontal(id="tksub_period"):
-                    yield Label("시간", id="tab_hour", classes="tkbtab",
+                    yield Label(i18n.t("시간"), id="tab_hour", classes="tkbtab",
                                 markup=False)
-                    yield Label("일", id="tab_day", classes="tkbtab",
+                    yield Label(i18n.t("일"), id="tab_day", classes="tkbtab",
                                 markup=False)
-                    yield Label("주", id="tab_week", classes="tkbtab",
+                    yield Label(i18n.t("주"), id="tab_week", classes="tkbtab",
                                 markup=False)
-                    yield Label("월", id="tab_month", classes="tkbtab",
+                    yield Label(i18n.t("월"), id="tab_month", classes="tkbtab",
                                 markup=False)
-                yield Label("정렬", id="tab_order", classes="tkbtab",
+                yield Label(i18n.t("정렬"), id="tab_order", classes="tkbtab",
                             markup=False)
             yield Static("", id="tktop", markup=False)
             table = DataTable(id="tktable", zebra_stripes=True,

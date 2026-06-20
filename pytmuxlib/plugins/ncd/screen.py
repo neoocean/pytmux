@@ -27,6 +27,8 @@ from textual.geometry import Region
 from textual.strip import Strip
 from textual.widget import Widget
 
+from pytmuxlib import i18n   # 1-4: 힌트/라벨 한글 리터럴을 en 사용자에게 노출 안 하게
+
 # 과거 NCD/Norton 팔레트: DOS 블루 패널, 시안 선택 막대(포커스), 비포커스는 청록.
 _BG = Style(color="#d6d6d6", bgcolor="#0000aa")
 _SEL = Style(color="#000000", bgcolor="#00aaaa", bold=True)
@@ -36,8 +38,18 @@ _SEL_BLUR = Style(color="#ffffff", bgcolor="#008b8b")
 _CWD = Style(color="#ffff55", bgcolor="#0000aa", bold=True)
 _CWD_MARK = " ◀"
 
+# 한글 원문을 i18n 키로 쓰고(코드베이스 관례) en 번역을 등록한다. 렌더 시점에
+# i18n.t(_HINT)/i18n.t(_FIND) 로 클라 로케일을 따른다(모듈 상수라 import 시점 번역
+# 금지 — 그러면 로케일 고정).
 _HINT = ("↑↓·PgUp/PgDn·Home/End 이동 · →펼치기 ←접기 · 타이핑 찾기 · "
          "Enter cd · ⇧Enter/^O 새 패널 · Esc")
+_FIND = "찾기"
+i18n.register({
+    "ko": {_HINT: _HINT, _FIND: _FIND},
+    "en": {_HINT: ("↑↓·PgUp/PgDn·Home/End move · → expand ← collapse · type to "
+                   "find · Enter cd · ⇧Enter/^O new pane · Esc"),
+           _FIND: "Find"},
+})
 
 
 class _NcdView(Widget):
@@ -184,8 +196,9 @@ class _NcdView(Widget):
             box = self.screen.query_one("#ncbox", Vertical)
         except Exception:
             return
-        box.border_subtitle = (f"{_HINT}    찾기: {self._find}"
-                               if self._find else _HINT)
+        box.border_subtitle = (
+            f"{i18n.t(_HINT)}    {i18n.t(_FIND)}: {self._find}"
+            if self._find else i18n.t(_HINT))
 
     def _reset_find(self):
         if self._find:
@@ -362,7 +375,7 @@ class NcdScreen(ModalScreen):
     def on_mount(self):
         box = self.query_one("#ncbox", Vertical)
         box.border_title = f"ncd → {self._cwd or self._root}"
-        box.border_subtitle = _HINT
+        box.border_subtitle = i18n.t(_HINT)
 
     def fill_children(self, path: str, dirs):
         self._view.fill_children(path, dirs)

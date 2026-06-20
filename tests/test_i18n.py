@@ -248,3 +248,16 @@ async def test_en_catalog_has_no_hangul_leak():
              if k not in allow and isinstance(v, str) and hangul.search(v)}
     assert not leaks, f"en 카탈로그 한글 누출: {leaks}"
     _reset()
+
+
+async def test_token_viewer_compose_labels_use_i18n():
+    """1-4: 토큰 뷰어 탭바 compose 라벨이 raw 한글 Label 이 아니라 i18n.t 를 거쳐야
+    한다(en 사용자 첫 페인트 한글 노출 방지 — _sync_tabs resize 갱신은 이미 i18n.t).
+    소스 정적 검사로 회귀 가드."""
+    import re
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent /
+           "pytmuxlib" / "plugins" / "claude-code" / "screens.py"
+           ).read_text(encoding="utf-8")
+    bad = re.findall(r'Label\("([가-힣][^"]*)"', src)
+    assert not bad, f"i18n.t 미경유 한글 탭 라벨(compose): {bad}"
