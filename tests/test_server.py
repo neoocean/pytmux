@@ -4165,3 +4165,20 @@ async def test_opts_load_save_symmetry():
     saved = set(re.findall(r'"([a-z_0-9]+)":', save_block))
     missing = loaded - saved
     assert not missing, f"_save_opts 에 누락된 영속 옵션(load↔save 드리프트): {missing}"
+
+
+async def test_running_server_cm_starts_and_cleans_up():
+    """1-6: running_server() 컨텍스트 매니저가 서버를 기동하고 블록 종료 시(예외
+    경로 포함) teardown 한다 — 214곳 보일러플레이트를 한 줄로 줄이는 헬퍼."""
+    from harness import running_server
+    async with running_server() as (srv, task, sock):
+        sess = srv.ensure_default_session(80, 24)
+        assert sess is not None and srv.sessions and sock
+    # 예외 경로에서도 teardown 이 돈다(finally) — 예외가 밖으로 전파되는지 확인.
+    raised = False
+    try:
+        async with running_server() as (srv, task, sock):
+            raise ValueError("boom")
+    except ValueError:
+        raised = True
+    assert raised, "CM 이 예외를 삼키지 않고 finally 정리 후 전파"

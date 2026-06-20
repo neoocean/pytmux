@@ -4,6 +4,7 @@
 에서 실행되며, 서버를 띄우고 PTY 패널을 만든 뒤 텍스트로 결과를 확인한다.
 """
 import asyncio
+import contextlib
 import os
 import signal
 import sys
@@ -115,6 +116,19 @@ async def teardown(srv, task, sock):
     os.environ.pop("PYTMUX_CAPTURE_DIR", None)
     os.environ.pop("PYTMUX_TOKENS_DB", None)
     os.environ.pop("PYTMUX_PTY_HOST", None)
+
+
+@contextlib.asynccontextmanager
+async def running_server():
+    """서버를 기동하고 블록 종료 시 정리하는 컨텍스트 매니저(1-6). 스위트 전반의
+    `srv, task, sock = await server_only()` + try/finally `await teardown(...)`
+    보일러플레이트(214곳)를 `async with running_server() as (srv, task, sock):`
+    한 줄로 줄인다 — 예외 경로에서도 teardown 누락이 없다. 신규/리팩터 테스트 권장."""
+    srv, task, sock = await server_only()
+    try:
+        yield srv, task, sock
+    finally:
+        await teardown(srv, task, sock)
 
 
 def pane_text(pane):
