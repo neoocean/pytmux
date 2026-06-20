@@ -79,10 +79,14 @@ class CommandListScreen(ModalScreen):
     /* 검색창(타이틀 탭줄과 목록 사이). 표시 전용이라 포커스를 받지 않는다. */
     #cmdsearch { width: 100%; height: 3; border: round $accent;
                  background: $panel-darken-1; }
-    /* §10: 높이를 "항목이 가장 많은 카테고리" 기준으로 고정(on_mount 에서
-       styles.height 설정) — ←→ 카테고리 전환·검색 필터 시 박스가 출렁이지
-       않게. 항목이 적으면 ListView 아래쪽이 빈 채로 남아 높이를 유지한다. */
-    #cmds { width: 100%;
+    /* §10: 박스 높이를 "항목이 가장 많은 카테고리" 기준으로 고정(_apply_layout 에서
+       #cmdbox.height 설정) — ←→ 카테고리 전환·검색 필터 시 박스가 출렁이지
+       않게. ListView 는 1fr 로 박스 안을 채운다 — 고정 행수를 강제하면 낮은
+       (모바일) 터미널에서 목록이 박스 밖으로 넘쳐(화면 밖) 커서가 보이지 않는
+       곳까지 스크롤된다(Textual scroll_to_widget 은 보이는 영역과 무관하게
+       내부 뷰포트 기준으로만 커서를 따라가기 때문). 1fr 이면 실제 가시 영역과
+       뷰포트가 일치해 커서가 항상 맨 아랫줄에 머문 채 목록만 스크롤된다. */
+    #cmds { width: 100%; height: 1fr;
             background: $panel;
             overflow-y: scroll;                 /* 항상 스크롤바 트랙 표시 */
             scrollbar-size-vertical: 2;
@@ -129,16 +133,34 @@ class CommandListScreen(ModalScreen):
             yield Input(placeholder=i18n.t("ui.search"), id="cmdsearch")
             yield ListView(id="cmds")
 
-    async def on_mount(self):
-        # §10: 모든 카테고리 중 최대 항목 수로 ListView 높이를 고정한다(전환·검색
-        # 시 높이 불변). 화면을 넘지 않게 _CMDS_MAX_ROWS 로 클램프(초과 시 스크롤).
+    # 박스 외 세로 오버헤드(외곽선 2 + 탭머리 3 + 검색창 3)와 화면 하단 여백.
+    _BOX_OVERHEAD = 8
+    _MARGIN_BOTTOM = 3
+
+    def _apply_layout(self):
+        # §10: 모든 카테고리 중 최대 항목 수로 박스 높이를 고정한다(전환·검색 시
+        # 높이 불변). 단, 낮은 (모바일) 터미널에서 박스가 화면 밖으로 넘치지 않게
+        # 화면 높이에 맞춰 클램프한다 — 넘치면 ListView(1fr)가 화면 밖까지 늘어나
+        # 커서가 보이지 않는 영역으로 스크롤된다. 목록 행 한도는 _CMDS_MAX_ROWS.
         maxn = max((len(items) for _, items in self._all_cats), default=1)
-        self.query_one("#cmds").styles.height = min(maxn, self._CMDS_MAX_ROWS)
+        want_rows = min(maxn, self._CMDS_MAX_ROWS)
+        # 화면에 들어가는 최대 박스 높이: 하단 여백 + 위쪽 1행 안전 여백을 남긴다.
+        fit = self.app.size.height - self._MARGIN_BOTTOM - 1
+        box_h = max(self._BOX_OVERHEAD + 3,
+                    min(want_rows + self._BOX_OVERHEAD, fit))
+        self.query_one("#cmdbox", Vertical).styles.height = box_h
+
+    async def on_mount(self):
+        self._apply_layout()
         si = self.query_one("#cmdsearch", Input)
         si.can_focus = False           # 표시 전용 — 클릭/탭 포커스가 키 모델을 깨지 않게
         si.value = self._query
         await self._rebuild()
         self.query_one(ListView).focus()
+
+    def on_resize(self, event: events.Resize):
+        # 화면 회전·크기 변경(모바일) 시 박스 높이를 다시 화면에 맞춘다.
+        self._apply_layout()
 
     def _matches(self, items):
         # 이름·설명 부분일치(대소문자 무시). 검색어가 비면 전체.
