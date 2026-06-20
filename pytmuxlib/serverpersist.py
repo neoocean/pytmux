@@ -609,6 +609,9 @@ class ServerPersistMixin:
                                self.claude_ctx_min_interval,
                            "claude_long_turn_sec": self.claude_long_turn_sec,
                            "claude_repeat_alert": self.claude_repeat_alert,
+                           # 1-3: 종전 누락 → 사용자가 바꿔도 저장 시 소실, 다음 기동에
+                           # 600 으로 리셋되던 드리프트 버그 수정(load↔save 대칭 테스트로 가드).
+                           "usage_refresh_sec": self.usage_refresh_sec,
                            "claude_budget_plan": self.claude_budget_plan,
                            "vt_parser": self.vt_parser,
                            # 플러그인 소유 설정(S5 토큰 모듈화 T3): claude-code 가 돌려준

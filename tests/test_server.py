@@ -4148,3 +4148,20 @@ async def test_autorename_apply_skips_stale_tab():
         assert tab.name == "vim"
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_opts_load_save_symmetry():
+    """1-3: server.py 가 _opts.get 으로 로드하는 모든 코어 옵션은 _save_opts 에도
+    있어야 한다 — usage_refresh_sec 가 저장 누락돼 매 기동 600 으로 리셋되던 드리프트
+    재발 방지(소스 정적 대조). 새 영속 옵션 추가 시 양쪽 모두 넣게 강제."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent / "pytmuxlib"
+    loaded = set(re.findall(r'_opts\.get\(\s*"([a-z_0-9]+)"',
+                            (root / "server.py").read_text(encoding="utf-8")))
+    persist = (root / "serverpersist.py").read_text(encoding="utf-8")
+    m = re.search(r"def _save_opts.*?\n    def ", persist, re.S)
+    save_block = m.group(0) if m else persist
+    saved = set(re.findall(r'"([a-z_0-9]+)":', save_block))
+    missing = loaded - saved
+    assert not missing, f"_save_opts 에 누락된 영속 옵션(load↔save 드리프트): {missing}"
