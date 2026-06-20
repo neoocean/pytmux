@@ -13,9 +13,17 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 import traceback
 
 from . import ipc, pty_backend, ptyhostproto as proto
+
+# M2 keepalive: host 가 half-open(데이터도 FIN 도 안 보내는 좀비/웨지) 상태면 read 가
+# 영원히 await 해 연결 회수·재연결 감지가 막힌다. 주기적으로 ping 을 보내고(host 는
+# pong 회신), 마지막 수신 후 _IDLE_TIMEOUT 동안 아무 프레임(데이터·pong 포함)도 없으면
+# 연결을 끊긴 것으로 간주해 reader 를 깨운다.
+_PING_INTERVAL = 10.0
+_IDLE_TIMEOUT = 30.0
 
 
 class PtyHostError(Exception):
@@ -36,6 +44,8 @@ class PtyHostClient:
         self._alive: set[int] = set()
         self._list_waiters: list[asyncio.Future] = []
         self._read_task: asyncio.Task | None = None
+        self._ka_task: asyncio.Task | None = None  # M2 keepalive 워치독
+        self._last_recv = 0.0                      # 마지막 프레임 수신 시각(monotonic)
         self._on_lost = None                     # 연결 끊김 콜백(P5/P6 재연결)
 
     async def connect(self, endpoint: str, token: str | None = None):
@@ -55,7 +65,30 @@ class PtyHostClient:
                 w, proto.encode_json({"op": "auth", "token": token}))
             if not ok:
                 raise PtyHostError("host 인증 프레임 전송 실패")
+        self._last_recv = time.monotonic()
         self._read_task = self.loop.create_task(self._read_loop())
+        self._ka_task = self.loop.create_task(self._keepalive_loop())
+
+    async def _keepalive_loop(self):
+        """M2: 주기적 ping + idle 워치독. host 가 half-open/웨지로 데이터도 FIN 도
+        안 보내면 read 가 영원히 await 한다 — 이를 끊어 재연결/회수가 진행되게 한다.
+        건강한 host 는 ping 에 pong 으로 답해 _last_recv 가 갱신되므로 끊기지 않는다."""
+        try:
+            while True:
+                await asyncio.sleep(_PING_INTERVAL)
+                if time.monotonic() - self._last_recv > _IDLE_TIMEOUT:
+                    # 응답 없는 좀비 연결 → reader 를 깨워 _handle_lost 로 보낸다.
+                    if self.reader is not None:
+                        self.reader.feed_eof()
+                    if self.writer is not None:
+                        with contextlib.suppress(Exception):
+                            self.writer.close()
+                    return
+                self._send(proto.encode_json({"op": "ping"}))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
 
     async def _read_loop(self):
         try:
@@ -63,6 +96,7 @@ class PtyHostClient:
                 f = await proto.read_frame(self.reader)
                 if f is None:
                     break
+                self._last_recv = time.monotonic()
                 # H2: 프레임 처리(패널 콜백/JSON 디스패치) 예외를 **프레임 단위로**
                 # 격리한다. 종전엔 한 패널의 콜백/렌더 버그가 이 루프를 끊어
                 # _handle_lost → host 는 멀쩡한데 전 패널 연결이 죽은 것으로 오인
@@ -104,6 +138,8 @@ class PtyHostClient:
             self._list_waiters.clear()
 
     def _handle_lost(self):
+        if self._ka_task is not None:        # keepalive 워치독도 멈춘다(M2)
+            self._ka_task.cancel()
         for fut in self._list_waiters:
             if not fut.done():
                 fut.set_exception(PtyHostError("host 연결 끊김"))
@@ -175,6 +211,11 @@ class PtyHostClient:
         return await asyncio.wait_for(fut, 3.0)
 
     async def close(self):
+        if self._ka_task is not None:
+            self._ka_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._ka_task
+            self._ka_task = None
         if self._read_task is not None:
             self._read_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):

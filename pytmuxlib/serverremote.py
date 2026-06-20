@@ -237,8 +237,12 @@ class ServerRemoteMixin:
                 f"(opts.json remote_allowed_hosts 에 없음)")
         # BatchMode: 서버가 띄우는 ssh 는 TTY 가 없어 비밀번호를 못 묻는다 — 키
         # 인증 미설정이면 즉시 명확한 stderr(Permission denied)로 실패하게 한다.
+        # ServerAlive*: M2 keepalive — half-open(상대가 데이터도 FIN 도 안 보내는 좀비
+        # /웨지) 연결을 ssh 가 15s×3=45s 내 감지해 끊어 준다. 그러면 stdio-proxy 파이프가
+        # EOF→_remote_reader 가 끊김으로 처리해 자동 재연결/회수가 진행된다(무프로토콜 변경).
         proc = await asyncio.create_subprocess_exec(
-            "ssh", "-T", "-o", "BatchMode=yes", "--",
+            "ssh", "-T", "-o", "BatchMode=yes",
+            "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "--",
             host, "pytmux", "stdio-proxy",
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE)

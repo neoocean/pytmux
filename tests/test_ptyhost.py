@@ -255,3 +255,29 @@ async def test_on_eof_offloads_blocking_reap():
     assert pe.alive is False and pe.exit_status == 7, "비동기 exit 처리 완료"
     assert 1 not in host.panes, "패널 정리됨"
     assert any(b"exit" in bytes(x) for x in sink), "exit 프레임 송신"
+
+
+async def test_keepalive_declares_idle_host_lost():
+    """M2: ptyhostclient keepalive 가 idle(프레임 무수신)이 _IDLE_TIMEOUT 을 넘으면
+    연결을 끊긴 것으로 간주해 reader 에 EOF 를 넣어 read 루프를 깨운다(half-open
+    좀비/웨지의 영구 hang 방지). 건강한 host 는 pong 으로 _last_recv 를 갱신해 안 끊김."""
+    import time
+    from pytmuxlib import ptyhostclient as P
+    cli = P.PtyHostClient()
+    cli.reader = asyncio.StreamReader()
+    closed = []
+
+    class _W:
+        def close(self):
+            closed.append(True)
+
+    cli.writer = _W()
+    cli._last_recv = time.monotonic() - 100.0      # 오래 전 = idle
+    orig = (P._PING_INTERVAL, P._IDLE_TIMEOUT)
+    P._PING_INTERVAL, P._IDLE_TIMEOUT = 0.02, 0.01
+    try:
+        await asyncio.wait_for(cli._keepalive_loop(), 2)
+    finally:
+        P._PING_INTERVAL, P._IDLE_TIMEOUT = orig
+    assert cli.reader.at_eof(), "idle → reader EOF(read 루프 깨움)"
+    assert closed == [True], "writer 닫힘"

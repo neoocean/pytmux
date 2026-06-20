@@ -1389,6 +1389,31 @@ async def test_kill_proc_reaps_subprocess():
     await _kill_proc(None)                     # None 안전
 
 
+async def test_remote_transport_ssh_keepalive_args():
+    """M2: federation ssh 에 ServerAliveInterval/CountMax 를 실어 half-open(좀비/웨지)
+    연결을 ssh 가 감지해 끊게 한다 — stdio-proxy 파이프 EOF→자동 재연결/회수 진행."""
+    srv, task, sock = await server_only()
+    captured = {}
+
+    async def _fake_exec(*args, **kw):
+        captured["argv"] = args
+        raise OSError("no spawn (test)")
+
+    orig = asyncio.create_subprocess_exec
+    asyncio.create_subprocess_exec = _fake_exec
+    try:
+        try:
+            await srv._remote_transport(host="goodhost", endpoint=None)
+        except OSError:
+            pass
+    finally:
+        asyncio.create_subprocess_exec = orig
+        await teardown(srv, task, sock)
+    argv = captured.get("argv", ())
+    assert "ServerAliveInterval=15" in argv, argv
+    assert "ServerAliveCountMax=3" in argv, argv
+
+
 async def test_remote_transport_rejects_ssh_option_injection():
     """S2: remote_attach 의 host 는 클라 cmd 에서 온 비신뢰 문자열이다. ssh 옵션
     인젝션('-oProxyCommand=…' → 임의 명령)·공백 호스트는 ssh 를 띄우기 **전에**
