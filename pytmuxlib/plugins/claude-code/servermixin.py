@@ -617,8 +617,13 @@ class ServerClaudeMixin:
             rows.append(f"  {label}{pad}{gauge} {pct:>3}%{reset_txt}")
         sep = "─" * 46
         lines = ["", f"\x1b[2m{sep}\x1b[0m", f"\x1b[1m{i18n.t('usage.exit_title')}\x1b[0m",
-                 *rows, f"\x1b[2m{sep}\x1b[0m", ""]
-        return ("\r\n".join(lines) + "\r\n").encode("utf-8")
+                 *rows, f"\x1b[2m{sep}\x1b[0m"]
+        # 셸이 이미 찍어 둔 프롬프트 줄을 **덮어쓰고** 그 자리에 블록을 흘린다(요청
+        # 2026-06-20): \r 로 줄 처음으로 간 뒤 \x1b[J(커서~화면끝 지우기)로 빈 프롬프트
+        # 줄을 치우고 블록을 그린다. 끝에 개행을 두지 않아, _emit_auto_token_log 가 뒤이어
+        # 셸에 보내는 Enter 의 \r\n 한 번이 블록 **바로 아래** 새 프롬프트를 그린다 →
+        # 토큰 표시가 먼저, 프롬프트·커서가 그다음 순서로 정렬된다.
+        return ("\r\x1b[J" + "\r\n".join(lines)).encode("utf-8")
 
     def _inject_pane_output(self, pane: Pane, data: bytes) -> None:
         """합성 바이트를 패널 **출력** 스트림에 주입한다(에뮬레이터 feed → 렌더·스크롤).
@@ -659,6 +664,13 @@ class ServerClaudeMixin:
         text = self._usage_exit_text()
         if text:
             self._inject_pane_output(pane, text)
+            # 블록은 셸 프롬프트 줄을 덮어쓰며 그려졌다(_usage_exit_text). 이제 셸이
+            # 블록 **아래**에 프롬프트를 새로 그리도록 Enter 1회를 PTY 로 보낸다. 출력만
+            # 주입하면 셸 라인에디터(ZLE)의 커서 모델이 화면과 블록 높이만큼 어긋나
+            # 다음 입력이 엉뚱한 위치에 찍힌다 — 빈 줄 Enter 는 셸이 현재 커서 자리에
+            # 프롬프트를 새로 그려 동기화를 회복한다(claude 종료 직후라 입력 버퍼는
+            # 비어 무해; pty=None 인 테스트 패널에선 _inject_keys 가 조용히 무동작).
+            self._inject_keys(pane, b"\r")
 
     def _acpt_disarm(self, pane: Pane):
         """무장된 자동 /compact 타이머를 해제한다(사용자 입력·재busy·세션 종료·토글
