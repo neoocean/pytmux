@@ -96,6 +96,73 @@ def _nice_ticks(lo, hi, n=5):
     return ticks
 
 
+# ---------- 텍스트 → 벡터 path (CJK 안전: 뷰어 폰트 의존 제거) ----------
+# SVG 의 <text> 는 렌더러가 한글 글리프 폰트를 못 찾으면 두부(□)로 깨진다.
+# 모든 라벨을 글리프 외곽선 path 로 굽는다 → 폰트 없는 환경에서도 동일 렌더.
+from fontTools.ttLib import TTCollection, TTFont
+from fontTools.pens.svgPathPen import SVGPathPen
+
+_FONT_CANDIDATES = [
+    "/System/Library/Fonts/AppleSDGothicNeo.ttc",        # macOS (Regular=0, Bold=6)
+    "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",  # Linux
+    "/Library/Fonts/NanumGothic.ttf",
+]
+
+
+def _load_faces(reg_idx=0, bold_idx=6):
+    for p in _FONT_CANDIDATES:
+        if not os.path.exists(p):
+            continue
+        if p.endswith(".ttc"):
+            col = TTCollection(p)
+            reg = col.fonts[min(reg_idx, len(col.fonts) - 1)]
+            bold = col.fonts[min(bold_idx, len(col.fonts) - 1)]
+        else:
+            reg = bold = TTFont(p)
+        return reg, bold
+    raise SystemExit("CJK 폰트를 찾을 수 없습니다(AppleSDGothicNeo 등). text→path 변환 불가.")
+
+
+def _face_data(face):
+    return {"upm": face["head"].unitsPerEm, "cmap": face.getBestCmap(),
+            "glyphs": face.getGlyphSet(), "hmtx": face["hmtx"]}
+
+
+_REG, _BOLD = _load_faces()
+_FD = {False: _face_data(_REG), True: _face_data(_BOLD)}
+
+
+def text_path(s, x, y, size, color, anchor="start", bold=False):
+    """문자열을 글리프 path 들로. (x,y)=베이스라인 기준점, anchor=start|middle|end."""
+    fd = _FD[bold]
+    upm, cmap, glyphs, hmtx = fd["upm"], fd["cmap"], fd["glyphs"], fd["hmtx"]
+    scale = size / upm
+    seq = []
+    total = 0
+    for ch in s:
+        g = cmap.get(ord(ch)) or ".notdef"
+        m = hmtx.metrics.get(g)
+        adv = m[0] if m else upm // 2
+        seq.append((g, adv))
+        total += adv
+    tw = total * scale
+    px = x - tw / 2 if anchor == "middle" else (x - tw if anchor == "end" else x)
+    out = []
+    for g, adv in seq:
+        pen = SVGPathPen(glyphs)
+        try:
+            glyphs[g].draw(pen)
+        except KeyError:
+            pass
+        d = pen.getCommands()
+        if d:
+            out.append(f'<path d="{d}" fill="{color}" '
+                       f'transform="translate({px:.2f} {y:.2f}) scale({scale:.5f} {-scale:.5f})"/>')
+        px += adv * scale
+    return "\n".join(out)
+
+
 def make_chart(series_by_os, title, ylabel, outpath, logy=False, unit=""):
     # 공통 x 축: day 라벨 합집합
     all_days = sorted({d for s in series_by_os.values() for d, _ in s})
@@ -132,12 +199,13 @@ def make_chart(series_by_os, title, ylabel, outpath, logy=False, unit=""):
         ticks = _nice_ticks(lo, hi)
 
     P = []
+    P.append('<?xml version="1.0" encoding="UTF-8"?>')
     P.append(f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
-             f'viewBox="0 0 {W} {H}" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif">')
+             f'viewBox="0 0 {W} {H}">')
     P.append(f'<rect width="{W}" height="{H}" fill="#ffffff"/>')
-    P.append(f'<text x="{ML}" y="26" font-size="16" font-weight="700" fill="#1a1a1a">{title}</text>')
-    P.append(f'<text x="{ML}" y="42" font-size="11" fill="#666">{ylabel}'
-             + (' · 로그 스케일' if logy else '') + ' · 일별 중앙값</text>')
+    P.append(text_path(title, ML, 26, 16, "#1a1a1a", bold=True))
+    sub = ylabel + (' · 로그 스케일' if logy else '') + ' · 일별 중앙값'
+    P.append(text_path(sub, ML, 42, 11, "#666"))
 
     # y 그리드 + 라벨 (플롯 영역 밖 눈금은 버림)
     for t in ticks:
@@ -146,15 +214,14 @@ def make_chart(series_by_os, title, ylabel, outpath, logy=False, unit=""):
             continue
         P.append(f'<line x1="{ML}" y1="{yy:.1f}" x2="{ML+PW}" y2="{yy:.1f}" stroke="#e8e8e8" stroke-width="1"/>')
         lbl = (f'{t:g}')
-        P.append(f'<text x="{ML-8}" y="{yy+4:.1f}" font-size="10" fill="#888" text-anchor="end">{lbl}</text>')
+        P.append(text_path(lbl, ML - 8, yy + 4, 10, "#888", anchor="end"))
 
     # x 축 라벨 (MM-DD, 격자 줄이려 짝수 인덱스만 텍스트)
     for d, i in day_idx.items():
         xx = _x(i, n)
         if i % 2 == 0 or i == n - 1:
             mmdd = f'{d[4:6]}-{d[6:8]}'
-            P.append(f'<text x="{xx:.1f}" y="{MT+PH+18}" font-size="9.5" fill="#888" '
-                     f'text-anchor="middle">{mmdd}</text>')
+            P.append(text_path(mmdd, xx, MT + PH + 18, 9.5, "#888", anchor="middle"))
     # 축선
     P.append(f'<line x1="{ML}" y1="{MT+PH}" x2="{ML+PW}" y2="{MT+PH}" stroke="#bbb" stroke-width="1.2"/>')
     P.append(f'<line x1="{ML}" y1="{MT}" x2="{ML}" y2="{MT+PH}" stroke="#bbb" stroke-width="1.2"/>')
@@ -181,8 +248,8 @@ def make_chart(series_by_os, title, ylabel, outpath, logy=False, unit=""):
         last = s[-1][1]
         lx = ML + PW + 16
         P.append(f'<rect x="{lx}" y="{ly-9}" width="14" height="3.2" rx="1.5" fill="{col}"/>')
-        P.append(f'<text x="{lx+20}" y="{ly-4}" font-size="11" font-weight="600" fill="#333">{OS_LABEL[slug]}</text>')
-        P.append(f'<text x="{lx+20}" y="{ly+9}" font-size="9.5" fill="#999">최신 {last:g}{unit}</text>')
+        P.append(text_path(OS_LABEL[slug], lx + 20, ly - 4, 11, "#333", bold=True))
+        P.append(text_path(f"최신 {last:g}{unit}", lx + 20, ly + 9, 9.5, "#999"))
         ly += 30
 
     P.append('</svg>')
