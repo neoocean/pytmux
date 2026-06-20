@@ -234,7 +234,7 @@ class Registry:
                 changed = True
         return changed
 
-    def server_filter_rows(self, server, pane, rows):
+    def server_filter_rows(self, server, pane, rows) -> list:
         """render 된 행 목록(행 = [text, style] 런 목록)을 클라 전송 직전에 플러그인이
         변형할 기회. claude-disable-feedback 가 Claude 패널의 '/feedback 팁'·세션 종료
         평가 배너를 공백으로 가린다(요청 2026-06-17·2026-06-18). 플러그인은 변형 시
@@ -276,7 +276,7 @@ class Registry:
             if fn is not None:
                 fn(server, pane, data)
 
-    def server_pending(self, server, pane):
+    def server_pending(self, server, pane) -> "dict | None":
         """무장된 자동 액션 카운트다운({kind, eta}) 또는 None(없음)."""
         for p in self.plugins:
             fn = getattr(p, "server_pending", None)
@@ -293,7 +293,7 @@ class Registry:
             if fn is not None:
                 await fn(server)
 
-    def server_command(self, server, client, sess, action, msg):
+    def server_command(self, server, client, sess, action, msg) -> "str | None":
         """Claude 명령 액션(set_claude_*/token/pc/refresh_usage 등)을 처리한다. 처리한
         플러그인이 있으면 코어가 따를 **후속 지시 문자열**을 반환한다:
           'handled'   — 플러그인이 다 처리, 코어는 추가 회신 없음(return).
@@ -341,7 +341,7 @@ class Registry:
             if fn is not None:
                 fn(app, cells, W, H, active)
 
-    def client_tick(self, app):
+    def client_tick(self, app) -> bool:
         """1초 틱: 시간 갱신이 필요한 오버레이를 띄운 플러그인이 하나라도 있으면 True
         (코어가 재합성). 없으면 False(idle)."""
         changed = False
@@ -351,7 +351,7 @@ class Registry:
                 changed = True
         return changed
 
-    def client_close_overlay(self, app, pane_id):
+    def client_close_overlay(self, app, pane_id) -> bool:
         """해당 패널의 플러그인 오버레이를 닫는다(패널 클릭/Shift+ESC). 닫은 플러그인이
         하나라도 있으면 True(코어가 입력 소비), 없으면 False(코어 기본 동작)."""
         closed = False
@@ -361,7 +361,7 @@ class Registry:
                 closed = True
         return closed
 
-    def client_overlay_key(self, app, event):
+    def client_overlay_key(self, app, event) -> bool:
         """활성 패널에 플러그인 오버레이가 떠 있을 때 키 1건을 가로채(소비) 오버레이를
         조작한다(달력 월 이동 등). 소비한 플러그인이 하나라도 있으면 True(코어가 키를
         패널로 보내지 않음), 없으면 False(코어 기본 입력 경로). 플러그인이 없으면
@@ -423,7 +423,7 @@ class Registry:
             if fn is not None:
                 fn(app, status)
 
-    def client_statusbar_badges(self, app, status, segs, w, w0=0):
+    def client_statusbar_badges(self, app, status, segs, w, w0=0) -> int:
         """하단 상태줄 **시스템 배지 영역**(SYNC/AR 직후, 좌하단 정보 클러스터보다 앞)에
         플러그인이 컴팩트 배지를 append 한다 — rec 가 ` REC ` 배지+클릭존을 여기서 그린다.
         client_statusbar(좌하단 정보 클러스터)와 같은 (제목 없는) 폭-체이닝 규약: w0=들어
@@ -437,7 +437,7 @@ class Registry:
                     w0 = r
         return w0
 
-    def client_statusbar(self, app, status, segs, w, w0=0):
+    def client_statusbar(self, app, status, segs, w, w0=0) -> int:
         """하단 상태줄 좌측에 Claude 세그먼트(모델 배지·컨텍스트·토큰Σ·예산경고·카운트
         다운·폭주경고)를 append 하고 클릭존(_usage_zone/_model_zone)을 status 에 채운다.
         플러그인이 없으면 no-op → Claude 세그먼트가 전혀 안 그려지고 클릭존도 None(클릭
@@ -499,7 +499,7 @@ class Registry:
             if fn is not None:
                 fn(pane, data)
 
-    def client_status_tabs(self, app, tree):
+    def client_status_tabs(self, app, tree) -> list:
         """통합 상태 팝업(_open_status_tabs)에 플러그인이 탭을 기여한다 — (제목, 줄들)
         또는 (제목, 줄들, 동작리스트) 튜플 목록을 반환한다. 동작리스트는 InfoTabsScreen
         에 그 탭 인덱스로 전달된다([(키,라벨,콜백),…]). rec 는 'REC' 탭(+[c]/[o] 동작)을,
