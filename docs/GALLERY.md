@@ -183,6 +183,17 @@ Claude 패널에 입력한 프롬프트를 시간순으로 모아 팝업(`prompt
 
 ![p4changes 상세 — CL 에 Enter → p4 describe 팝업](image/35-p4-describe.svg)
 
+### 그 밖의 플러그인 (전용 화면 없음)
+
+화면 없이 동작하거나 다른 화면을 거드는 플러그인입니다 — 그래서 별도 스크린샷은 없습니다.
+
+- **claude-resume** — `claude-resume`(별칭 `claude-sessions`·`cr`)로 이 머신의 Claude Code
+  세션 목록을 모달로 띄워, 하나를 골라 **새 탭에서 `claude --resume` 으로 이어** 엽니다.
+- **rec** — `capture-output`(별칭 `capture-toggle`)으로 패널의 raw PTY 출력을 **무손실로
+  기록**합니다(Claude 화면 문구 분석용, 깃헙 배포 기본 off).
+- **claude-disable-feedback** — Claude 의 피드백 권유 문구(시작 팁·세션 종료 평가 배너)를
+  화면에서 **조용히 숨깁니다**(서버 렌더 필터 단일 훅).
+
 ---
 
 > 이 갤러리의 스크린샷을 다시 만들려면: `python3 scripts/gen_screenshots.py`(전체) 또는

@@ -54,7 +54,7 @@ git push
 
 - UI(테두리색·상태줄·팝업·탭바 등)나 매뉴얼 장면을 바꿨으면 **커밋 전에 재생성**한다:
   ```bash
-  python3 scripts/gen_screenshots.py            # 결정적 장면 29개 전체 재생성 → docs/image/*.svg
+  python3 scripts/gen_screenshots.py            # 결정적 장면 33개 전체 재생성 → docs/image/*.svg
   python3 scripts/gen_screenshots.py 14-info    # 이름 매칭 장면만
   python3 scripts/gen_screenshots.py claude-suite  # 라이브 Claude 컷 4개(11/12/13/22, 실 API 호출)
   ```
