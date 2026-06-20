@@ -53,5 +53,7 @@ async def test_redteam_resource_samplers_return_ints():
     me = os.getpid()
     assert isinstance(redteam.pid_fds(me), int)
     assert isinstance(redteam.pid_rss_kb(me), int)
-    # 이 플랫폼(개발 박스 macOS=/dev/fd, Linux=/proc)에선 self fd 표본이 양수.
-    assert redteam.count_fds() > 0
+    # fd 열거 가능 플랫폼(macOS=/dev/fd, Linux=/proc)은 self fd 표본이 양수,
+    # 미지원(Windows 등)은 -1 을 돌려준다 — 둘 다 정상.
+    fds = redteam.count_fds()
+    assert fds > 0 or fds == -1

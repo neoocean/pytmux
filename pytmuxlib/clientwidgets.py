@@ -332,6 +332,14 @@ class MultiplexerView(Widget):
         # Claude 클릭존(권한모드 footer/원격제어)은 claude-code 플러그인이
         # client_render 훅으로 채운다(없으면 빈 dict → 아래 루프 no-op, 팝업도 getattr
         # 가드로 호출 안 됨 — delete-to-disable).
+        # Claude busy footer 의 'esc to interrupt' 클릭 → 그 패널에 ESC 주입. perm 존
+        # (줄 전체) 안의 진부분집합이라 **perm 보다 먼저** 가로챈다(없으면 빈 dict).
+        for pid, (zx0, zx1, zy) in getattr(self.app, "_interrupt_zone", {}).items():
+            if zy == event.y and zx0 <= event.x < zx1:
+                fn = getattr(self.app, "interrupt_pane", None)  # 플러그인 설치
+                fn and fn(pid)
+                event.stop()
+                return
         # Claude 권한모드 footer 클릭 → 권한모드 선택 팝업(§10 item 2). 패스스루
         # 보다 먼저 가로채 마우스 모드 앱 위에서도 동작한다.
         for pid, (zx0, zx1, zy) in getattr(self.app, "_perm_zone", {}).items():

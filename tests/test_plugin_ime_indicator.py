@@ -692,6 +692,10 @@ async def test_imeagent_unlink_stale_guards_squat():
 
 async def test_oskbd_drain_caps_runaway_buffer():
     # M3: 개행 없는 폭주 입력은 _LINE_MAX 로 잘려 소비측 메모리가 무한 증가하지 않는다.
+    # oskbd 드레인은 macOS(TIS) 워처 전용 Unix 파이프 경로 — Windows 는 IMM32 라 미사용,
+    # 게다가 os.set_blocking 이 Windows<3.12 엔 없다. nt 에선 스킵.
+    if os.name == "nt":
+        return
     cap = _oskbd._LINE_MAX
     r, w = os.pipe()
     os.set_blocking(r, False)
@@ -710,6 +714,8 @@ async def test_oskbd_drain_caps_runaway_buffer():
 
 async def test_oskbd_drain_parses_line_after_newline():
     # 정상 한 줄(개행 종결)은 그대로 디코드된다(캡 도입이 정상 경로를 깨지 않음).
+    if os.name == "nt":            # oskbd 드레인=macOS 전용·os.set_blocking Win<3.12 부재
+        return
     r, w = os.pipe()
     os.set_blocking(r, False)
     try:

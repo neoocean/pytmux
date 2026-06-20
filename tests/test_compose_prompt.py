@@ -273,6 +273,12 @@ async def test_ime_badge_inside_popup_follows_state():
     from textual.widgets import Label as _Label
 
     async def body(app, pilot, srv):
+        # OS 실측 폴링(Windows IMM32 의 50ms 틱)이 테스트가 수동 설정한 ime_state 를
+        # 덮어쓰지 않게 끈다 — 이 테스트는 배지가 app.ime_state 를 따르는지만 본다
+        # (한/영 OS 왕복은 test_plugin_ime_indicator 영역). 끄지 않으면 Windows 에선
+        # current_source_id() 가 권위값을 매 틱 재적용해 'EN' 설정이 되돌려진다.
+        app._ime_os = False
+        app._ime_sock = None
         app.ime_show = True
         app.ime_state = "한"
         app.open_compose()

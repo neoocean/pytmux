@@ -308,6 +308,11 @@ def peer_uid(sock: Optional[socket.socket]) -> Optional[int]:
     """
     if sock is None:
         return None
+    # peer-cred 는 AF_UNIX 에서만 의미가 있다. TCP(AF_INET/6) 소켓에 SO_PEERCRED 를
+    # 걸면 Linux 는 OSError 가 아니라 미설정 ucred(uid=0)를 돌려줘, 비-root 러너에서
+    # 유효 연결까지 오거부된다(루프백 TCP 경로 회귀). 가족이 UNIX 가 아니면 통과.
+    if getattr(sock, "family", None) != getattr(socket, "AF_UNIX", object()):
+        return None
     try:
         if hasattr(socket, "SO_PEERCRED"):          # Linux: struct ucred {pid,uid,gid}
             buf = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,

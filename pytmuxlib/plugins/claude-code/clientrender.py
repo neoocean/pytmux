@@ -19,7 +19,7 @@ def _scan_all_footer_zones(app, W, H):
     """모든 패널의 content 에서 footer 클릭존을 스캔해 app._perm_zone/_remote_zone 을
     매 프레임 새로 채운다(코어 _composite 가 하던 clear+scan 을 이리로 이전)."""
     from pytmuxlib.clientutil import _char_cells
-    perm, remote = {}, {}
+    perm, remote, interrupt = {}, {}, {}
     panes = app.layout.get("panes", [])
     pane_claude = getattr(app, "pane_claude", {})
     for p in panes:
@@ -52,13 +52,28 @@ def _scan_all_footer_zones(app, W, H):
                 perm[p["id"]] = (x0, x1, gy)
             if "remote control" in low:
                 remote[p["id"]] = (x0, x1, gy)
+            # busy footer 의 'esc to interrupt' 만 덮는 좁은 클릭존 — perm 존(줄 전체)
+            # 안의 진부분집합이라 클릭 핸들러가 perm 보다 먼저 가로채 ESC 를 주입한다.
+            # 문구 시작('esc')부터 끝('interrupt')까지를 와이드 인지해 x 범위로 잡는다.
+            imark = low.find("esc to interrupt")
+            if imark >= 0:
+                ix0 = p["x"] + sum(_char_cells(c) for c in text[:imark])
+                iend = imark + len("esc to interrupt")
+                ix1 = min(p["x"] + p["w"],
+                          ix0 + sum(_char_cells(c) for c in text[imark:iend]))
+                interrupt[p["id"]] = (ix0, ix1, gy)
     app._perm_zone = perm
     app._remote_zone = remote
+    app._interrupt_zone = interrupt
 
 
 def footer_zone_at(app, x, y):
-    """좌표 (x,y) 가 Claude footer 클릭존(권한모드/원격제어) 안이면
-    (pane_id, "perm"|"remote") 반환, 아니면 None(§10 호버 강조·클릭 공용)."""
+    """좌표 (x,y) 가 Claude footer 클릭존(인터럽트/권한모드/원격제어) 안이면
+    (pane_id, "interrupt"|"perm"|"remote") 반환, 아니면 None(§10 호버 강조·클릭 공용).
+    인터럽트 존은 perm 존의 진부분집합이라 **먼저** 검사해 우선권을 준다."""
+    for pid, (zx0, zx1, zy) in getattr(app, "_interrupt_zone", {}).items():
+        if zy == y and zx0 <= x < zx1:
+            return (pid, "interrupt")
     for pid, (zx0, zx1, zy) in getattr(app, "_perm_zone", {}).items():
         if zy == y and zx0 <= x < zx1:
             return (pid, "perm")
