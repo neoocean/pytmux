@@ -3193,7 +3193,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 서버발 일반 알림(§1.7 remote-attach 결과 등) — 상태줄 메시지로.
                 # secs/dismissable 를 실으면 유지 시간·수동 닫기 가능 여부를 따른다
                 # (실패 알림은 3초 유지 + 클릭/Enter 닫기, 아래 serverio).
-                self.display_message(str(msg.get("text", "")),
+                # 서버는 로케일을 모르므로(per-user 클라-로컬) key(rnotice.*)+kw 를
+                # 실어 보낸다 — 여기서 자기 로케일로 번역한다. text 는 한국어 폴백.
+                self.display_message(self._notice_text(msg),
                                      secs=float(msg.get("secs", 2.0)),
                                      dismissable=bool(msg.get("dismissable")))
             elif t == "captured":
@@ -3452,6 +3454,23 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self._run_command(key)
 
         # ---- 프롬프트 / 명령 ----
+        def _notice_text(self, msg):
+            """서버발 notice 를 현재 로케일 문자열로. 서버는 로케일을 모르므로(per-user
+            클라-로컬) key(rnotice.*)+kw 를 싣고, 실패 원인은 detail(키 포함)로 싣는다.
+            여기서 detail 을 먼저 자기 로케일로 합성해 {why} 에 채운 뒤 본문 키를 번역한다.
+            key 가 없으면(구서버/플러그인) text 를 그대로 — 한국어 폴백."""
+            kw = dict(msg.get("kw") or {})
+            detail = msg.get("detail")
+            if detail:
+                dkey = detail.get("key")
+                kw["why"] = (i18n.t(dkey, default=detail.get("text", ""),
+                                    **(detail.get("kw") or {})) if dkey
+                             else detail.get("text", ""))
+            key = msg.get("key")
+            if key:
+                return i18n.t(key, default=str(msg.get("text", "")), **kw)
+            return str(msg.get("text", ""))
+
         def display_message(self, text, secs=2.0, dismissable=False):
             self.status.message = text
             self._msg_dismissable = dismissable

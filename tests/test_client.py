@@ -3397,6 +3397,42 @@ async def test_remote_attach_preserves_backslash_host_and_notice():
     await _with_app(body)
 
 
+async def test_server_notice_translates_to_locale():
+    """서버발 원격 notice 는 로케일을 모르는 서버가 key(rnotice.*)+kw(+실패 원인
+    detail)만 싣고, 클라가 자기 로케일로 번역한다(사용자 보고 2026-06-20: lang en
+    인데 '원격 탭 병합됨'·'핸드셰이크 실패'가 한국어로 남던 누출). text 는 구서버/
+    플러그인용 한국어 폴백 — key 가 있으면 무시되고 번역이 우선한다."""
+    from pytmuxlib import i18n
+    async def body(app, pilot, srv):
+        shown = []
+        app.display_message = lambda m, *a, **k: shown.append(m)
+        # 서버가 만드는 것과 동형의 notice(병합 성공 + 핸드셰이크 실패 detail).
+        merged = {"t": "notice", "key": "rnotice.attach_merged",
+                  "kw": {"target": "office1"},
+                  "text": "remote-attach office1: 원격 탭 병합됨"}
+        fail = {"t": "notice", "key": "rnotice.attach_fail",
+                "kw": {"target": "office1", "why": "(ko)"},
+                "detail": {"key": "rerr.handshake_perm", "text": "(ko)",
+                           "kw": {"detail": "Permission denied (publickey)"}},
+                "text": "remote-attach office1 실패 — (ko)"}
+        try:
+            i18n.set_locale("en")
+            app._dispatch(dict(merged)); app._dispatch(dict(fail))
+            assert shown[-2] == "remote-attach office1: remote tab merged", shown
+            assert shown[-1].startswith(
+                "remote-attach office1 failed — stdio-proxy handshake failed: "
+                "Permission denied (publickey) — no key configured"), shown[-1]
+            i18n.set_locale("ko")
+            app._dispatch(dict(merged))
+            assert shown[-1] == "remote-attach office1: 원격 탭 병합됨", shown[-1]
+            # key 없는 옛 notice 는 text 그대로(하위호환).
+            app._dispatch({"t": "notice", "text": "plain"})
+            assert shown[-1] == "plain", shown[-1]
+        finally:
+            i18n.set_locale("ko")
+    await _with_app(body)
+
+
 async def test_dismissable_notice_click_and_enter_close():
     """핸드셰이크 실패처럼 secs/dismissable 를 실은 notice 는 ① 유지 시간을 따르고
     수동 닫기 가능 플래그가 서고, ② 상태줄 클릭/터치로 즉시 닫히며, ③ ESC 모드

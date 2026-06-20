@@ -430,19 +430,33 @@ class ServerIOMixin:
             target = msg.get("host") or msg.get("endpoint") or "?"
             ok = await self.remote_attach(sess, host=msg.get("host"),
                                           endpoint=msg.get("endpoint"))
-            if ok:
-                self._remote_status_broadcast()
             # 결과를 요청 클라에 알린다(notice) — 실패가 서버 로그에만 남아
             # "아무 일도 안 일어남"으로 보이던 갭(사용자 보고 2026-06-12) 해소.
-            text = (f"remote-attach {target}: 원격 탭 병합됨" if ok else
-                    f"remote-attach {target} 실패 — "
-                    f"{getattr(self, '_remote_last_err', '') or '서버 error.log 참조'}")
-            note = {"t": "notice", "text": text}
-            if not ok:
+            # key+ko 폴백으로 보내 클라가 자기 로케일로 번역(_notice_msg, i18n rnotice.*).
+            if ok:
+                # hello 는 받았지만 업스트림이 첫 status 를 안 보내는 웨지(원격 pty-host
+                # 고장 등, 사용자 보고 2026-06-20)면 탭이 안 생기는데도 종전엔 즉시
+                # "병합됨"으로 단정해 '성공인데 탭 없음'으로 보였다. 성공을 단정하기
+                # 전에 첫 status(실제 탭 도착)를 잠깐 기다려 '병합됨'과 '연결됐지만
+                # 무응답'을 가른다(링크는 유지 — 뒤늦은 status 면 그때 탭 출현).
+                link = self._remotes_dict().get(target)
+                got = (link is not None
+                       and await self._remote_wait_first_status(link))
+                if got:
+                    self._remote_status_broadcast()
+                    note = self._notice_msg("rnotice.attach_merged",
+                        "remote-attach {target}: 원격 탭 병합됨", target=target)
+                else:
+                    note = self._notice_msg("rnotice.attach_silent",
+                        "remote-attach {target}: 연결됐지만 원격이 응답 없음 — "
+                        "원격 서버 점검", sticky=True, target=target)
+            else:
                 # 핸드셰이크 실패는 놓치면 안 되는 알림 — 3초 유지 + 클릭/Enter 로
                 # 수동 닫기(사용자 보고 2026-06-16: 너무 빨리 사라짐).
-                note["secs"] = 3.0
-                note["dismissable"] = True
+                detail = self._err_detail("rerr.see_log", "서버 error.log 참조")
+                note = self._notice_msg("rnotice.attach_fail",
+                    "remote-attach {target} 실패 — {why}",
+                    sticky=True, detail=detail, target=target)
             await write_msg(client.writer, note)
             return
         if action == "remote_detach":
@@ -458,10 +472,11 @@ class ServerIOMixin:
                                               host=msg.get("host"),
                                               endpoint=msg.get("endpoint"))
             if not ok:
-                await write_msg(client.writer, {"t": "notice", "secs": 3.0,
-                    "dismissable": True, "text":
-                    f"remote-new-tab {target} 실패 — "
-                    f"{getattr(self, '_remote_last_err', '') or '서버 error.log 참조'}"})
+                detail = self._err_detail("rerr.see_log", "서버 error.log 참조")
+                await write_msg(client.writer, self._notice_msg(
+                    "rnotice.newtab_fail",
+                    "remote-new-tab {target} 실패 — {why}",
+                    sticky=True, detail=detail, target=target))
             return
         if action == "select_window":
             idx = int(msg.get("index", 0))
@@ -481,9 +496,10 @@ class ServerIOMixin:
                 return
             # §1.7-c 섞임 금지: 원격 보기 중 경계 횡단/로컬 트리 조작은 거부.
             # (조용한 로컬 실행도, index 공간이 안 맞는 릴레이도 모두 위험.)
-            await write_msg(client.writer, {"t": "notice", "text":
-                            "원격 탭에서는 사용할 수 없는 명령입니다 — "
-                            "원격↔로컬 패널/탭은 섞을 수 없습니다(§1.7)"})
+            await write_msg(client.writer, self._notice_msg(
+                "rnotice.mix_block_cmd",
+                "원격 탭에서는 사용할 수 없는 명령입니다 — "
+                "원격↔로컬 패널/탭은 섞을 수 없습니다(§1.7)"))
             return
         elif client.remote_view and action == "new_window":
             # 원격 보기 중 새 탭 = 로컬 새 탭 의도로 본다 — 보기를 해제하고 아래
@@ -500,9 +516,10 @@ class ServerIOMixin:
             refs = [msg.get(k) for k in ("src", "to", "index")
                     if msg.get(k) is not None]
             if any(isinstance(r, int) and r >= n for r in refs):
-                await write_msg(client.writer, {"t": "notice", "text":
-                                "원격 탭으로/원격 탭을 이동할 수 없습니다 — "
-                                "원격↔로컬 패널/탭은 섞을 수 없습니다(§1.7)"})
+                await write_msg(client.writer, self._notice_msg(
+                    "rnotice.mix_block_move",
+                    "원격 탭으로/원격 탭을 이동할 수 없습니다 — "
+                    "원격↔로컬 패널/탭은 섞을 수 없습니다(§1.7)"))
                 return
         if action == "split":
             self.split_pane(sess, msg.get("orient", "lr"), path=msg.get("path"))

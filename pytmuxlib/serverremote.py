@@ -32,6 +32,17 @@ from . import ipc, sshwrap
 from .protocol import PROTO_VERSION, frame_msg, read_msg, write_frames, write_msg
 
 
+class RemoteError(ConnectionError):
+    """원격 attach 실패를 구조화해 나른다: key=i18n 키, ko=한국어 폴백, kw=포맷 인자.
+    서버는 per-user 로케일을 모르므로(로케일은 클라-로컬) 실패 원인을 번역하지 않고
+    키로 보존했다가 _set_err 가 detail dict 로 저장한다 — 클라가 자기 로케일로 합성.
+    ConnectionError 를 상속해 기존 `except (OSError, ConnectionError, …)` 가 그대로 잡는다."""
+
+    def __init__(self, key: str, ko: str, **kw):
+        self.err_key, self.err_ko, self.err_kw = key, ko, kw
+        super().__init__(ko.format(**kw) if kw else ko)
+
+
 class RemoteLink:
     """업스트림(원격 서버) 연결 1개의 상태."""
 
@@ -145,6 +156,14 @@ class ServerRemoteMixin:
     # 재발을 막기 위해 유한 회수 후 포기(notice)하고 수동 재시도에 맡긴다.
     _RECONNECT_DELAYS = (1, 2, 4, 8, 16, 30, 30, 30)
 
+    # 첫 업스트림 status(탭 병합) 대기 한도 — hello 송신만으로 성공을 단정하지 않고
+    # 실제 탭 도착을 기다린다(_remote_wait_first_status). 30×0.1=3초. 업스트림이
+    # hello 는 받고도 _send_full 이 멈춰 status 를 안 보내는 웨지(원격 pty-host 고장
+    # 등)를 조용한 실패 대신 '연결됐지만 무응답' 신호로 바꾼다. 테스트가 줄일 수 있게
+    # 클래스 상수로 둔다(attach notice + 중첩 자동 승격이 공유).
+    _FIRST_STATUS_TRIES = 30
+    _FIRST_STATUS_DELAY = 0.1
+
     # Server.__init__ 가 부르지 않아도 동작하도록 지연 초기화 헬퍼.
     def _remotes_dict(self) -> dict:
         d = getattr(self, "_remotes", None)
@@ -208,14 +227,21 @@ class ServerRemoteMixin:
                 # 만 보이던 버그를 막는다.
                 pass
             detail = _decode_remote_stderr(err or line).strip()
-            detail = detail.splitlines()[-1] if detail else "응답 없음"
+            detail = detail.splitlines()[-1] if detail else ""
+            if not detail:
+                raise RemoteError("rerr.handshake_noresp",
+                                  "stdio-proxy 핸드셰이크 실패: 응답 없음")
             if "Permission denied" in detail:
                 # 비대화 ssh(BatchMode)는 비밀번호를 못 묻는다 — 패스워드 전용
-                # 호스트는 ControlMaster 로 인증된 연결을 공유하면 된다(§5).
-                detail += (" — 키 미설정. 패스워드 호스트는 ssh config 에 "
-                           "ControlMaster 설정 후 패널에서 한 번 로그인"
-                           "(REMOTE_ATTACH_SCENARIO §5)")
-            raise ConnectionError(f"stdio-proxy 핸드셰이크 실패: {detail}")
+                # 호스트는 ControlMaster 로 인증된 연결을 공유하면 된다(§5). 키에
+                # 힌트를 합쳐 둬 ko/en 모두 자연스럽게 번역된다(detail=원격 stderr).
+                raise RemoteError("rerr.handshake_perm",
+                                  "stdio-proxy 핸드셰이크 실패: {detail} — 키 미설정. "
+                                  "패스워드 호스트는 ssh config 에 ControlMaster 설정 후 "
+                                  "패널에서 한 번 로그인(REMOTE_ATTACH_SCENARIO §5)",
+                                  detail=detail)
+            raise RemoteError("rerr.handshake_fail",
+                              "stdio-proxy 핸드셰이크 실패: {detail}", detail=detail)
         tok = line.split(b" ", 1)[1].strip().decode()
         return proc.stdout, proc.stdin, tok, proc
 
@@ -231,7 +257,7 @@ class ServerRemoteMixin:
         # 왕복마다 한 단계씩 무한 증식하는 루프를 차단한다.
         if endpoint and endpoint in (self.sock_path,
                                      getattr(self, "resolved_endpoint", None)):
-            self._remote_last_err = "자기 자신에는 attach 할 수 없습니다"
+            self._set_err("rerr.self_attach", "자기 자신에는 attach 할 수 없습니다")
             return False
         remotes = self._remotes_dict()
         if name in remotes:
@@ -242,12 +268,18 @@ class ServerRemoteMixin:
         if pend is not None and pend is not asyncio.current_task():
             self._remote_reconn_dict().pop(name, None)
             pend.cancel()
-        self._remote_last_err = ""
+        self._set_err(None, "")
         try:
             reader, writer, tok, proc = await self._remote_transport(
                 host, endpoint)
+        except RemoteError as e:
+            # 구조화된 실패 원인(핸드셰이크 등) — 키 보존(클라가 자기 로케일로 번역).
+            self._set_err(e.err_key, e.err_ko, **e.err_kw)
+            self._log_error(f"remote_attach({name})")
+            return False
         except (OSError, ConnectionError, asyncio.TimeoutError) as e:
-            self._remote_last_err = str(e) or type(e).__name__
+            # OS/네트워크 예외 메시지는 키가 없다(대개 영어) — 원문 그대로 detail 로.
+            self._set_err(None, str(e) or type(e).__name__)
             self._log_error(f"remote_attach({name})")
             return False
         link = RemoteLink(name, reader, writer, proc)
@@ -261,12 +293,31 @@ class ServerRemoteMixin:
         try:
             await write_msg(writer, hello)
         except (OSError, ConnectionError) as e:
-            self._remote_last_err = f"hello 실패: {e}"
+            self._set_err("rerr.hello_fail", "hello 실패: {e}", e=str(e))
             self._log_error(f"remote_attach hello({name})")
             return False
         remotes[name] = link
         link.task = self.loop.create_task(self._remote_reader(link))
         return True
+
+    async def _remote_wait_first_status(self, link: RemoteLink,
+                                        tries: int | None = None,
+                                        delay: float | None = None) -> bool:
+        """첫 업스트림 status(탭 병합)를 잠깐 기다린다. windows 가 채워지면 True,
+        링크가 죽거나 시한 내 status 가 안 오면 False. remote_attach 의 '병합됨'
+        알림과 중첩 자동 승격(_nest_do_attach)이 공유 — hello 송신만으로 성공을
+        단정하지 않고 **실제 탭 도착**을 성공 기준으로 삼는다. 업스트림이 hello 는
+        받고도 _send_full(→_layout_msg→p.resize)이 멈춰 status 를 안 보내는 웨지를
+        조용한 실패 대신 명확한 신호로 만든다(원격 pty-host 고장 사례 2026-06-20)."""
+        tries = self._FIRST_STATUS_TRIES if tries is None else tries
+        delay = self._FIRST_STATUS_DELAY if delay is None else delay
+        for _ in range(tries):
+            if link.windows:
+                return True
+            if not link.alive:
+                return False
+            await asyncio.sleep(delay)
+        return bool(link.windows)
 
     async def remote_drop(self, link: RemoteLink, notify: bool = True,
                           reconnect: bool = False):
@@ -332,17 +383,19 @@ class ServerRemoteMixin:
                                             endpoint=link.spec.get("endpoint")):
                     self._remote_status_broadcast()
                     self._remote_notice(
-                        sess, f"remote-attach {name}: 끊김 후 자동 재연결됨"
-                              f"(시도 {i})")
+                        sess, "rnotice.reconnected",
+                        "remote-attach {target}: 끊김 후 자동 재연결됨(시도 {i})",
+                        target=name, i=i)
                     return
-            # 마지막 시도의 실패 원인(_remote_last_err — Permission denied/PATH 등)을
-            # 함께 실어 준다(요청): 핸드셰이크가 반복 실패해 포기하는 그 순간이 원인이
-            # 가장 필요한 지점인데 종전엔 "포기"만 알렸다. sticky=수동 닫기까지 유지.
-            why = getattr(self, "_remote_last_err", "") or "원인 미상(서버 error.log)"
+            # 마지막 시도의 실패 원인(_set_err — Permission denied/PATH 등)을 함께 실어
+            # 준다(요청): 핸드셰이크가 반복 실패해 포기하는 그 순간이 원인이 가장 필요한
+            # 지점인데 종전엔 "포기"만 알렸다. sticky=수동 닫기까지 유지.
+            detail = self._err_detail("rerr.unknown_log", "원인 미상(서버 error.log)")
             self._remote_notice(
-                sess, f"remote-attach {name}: 자동 재연결 포기"
-                      f"({len(self._RECONNECT_DELAYS)}회) — {why} · "
-                      f":remote-attach 로 수동 재시도", sticky=True)
+                sess, "rnotice.reconnect_giveup",
+                "remote-attach {target}: 자동 재연결 포기({n}회) — {why} · "
+                ":remote-attach 로 수동 재시도", sticky=True, detail=detail,
+                target=name, n=len(self._RECONNECT_DELAYS))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -368,14 +421,44 @@ class ServerRemoteMixin:
                     pass
         self._remotes_dict().clear()
 
-    def _remote_notice(self, sess, text: str, sticky: bool = False):
-        """세션의 모든 클라에 상태줄 notice(§1.7 attach 결과와 동일 표면).
-        sticky=True(핸드셰이크/재연결 실패 등 놓치면 안 되는 알림)면 3초 유지 +
-        클릭/Enter 수동 닫기(클라 display_message 가 secs/dismissable 를 따른다)."""
-        msg = {"t": "notice", "text": text}
+    # ─── 실패 원인(detail) 구조화 저장/조회 — 옛 _remote_last_err 문자열 대체 ───
+    # 로케일은 per-user(클라-로컬)라 서버는 번역하지 않는다: 키(rerr.*)+ko 폴백+kw 를
+    # detail dict 로 들고 있다가 notice 에 실어 클라가 자기 로케일로 합성하게 한다.
+    def _set_err(self, key, ko: str, **kw):
+        """마지막 원격 실패 원인을 구조화 저장. key=None 이면 ko(원문, 대개 OS 영어)만."""
+        self._remote_err = {"key": key, "text": ko.format(**kw) if kw else ko,
+                            "kw": kw}
+
+    def _err_detail(self, default_key: str, default_ko: str) -> dict:
+        """마지막 실패 원인을 notice detail dict 로. 비어 있으면 기본 키/문구로 폴백."""
+        e = getattr(self, "_remote_err", None)
+        if e and e.get("text"):
+            return e
+        return {"key": default_key, "text": default_ko, "kw": {}}
+
+    @staticmethod
+    def _notice_msg(key, ko_text: str, *, sticky: bool = False,
+                    detail: dict | None = None, **kw) -> dict:
+        """notice 메시지 dict 를 만든다. text=한국어 폴백(구클라/테스트), key+kw=클라
+        번역용. detail 이 있으면 {why} 자리에 실패 원인(키 포함)을 넘겨 클라가 합성.
+        sticky=놓치면 안 되는 알림(3초 유지 + 클릭/Enter 수동 닫기)."""
+        if detail is not None:
+            kw = dict(kw)
+            kw["why"] = detail.get("text", "")   # ko 폴백; 클라가 detail 로 덮어씀
+        text = ko_text.format(**kw) if kw else ko_text
+        msg = {"t": "notice", "text": text, "key": key, "kw": kw}
+        if detail is not None:
+            msg["detail"] = detail
         if sticky:
             msg["secs"] = 3.0
             msg["dismissable"] = True
+        return msg
+
+    def _remote_notice(self, sess, key, ko_text: str, *, sticky: bool = False,
+                       detail: dict | None = None, **kw):
+        """세션의 모든 클라에 상태줄 notice(§1.7 attach 결과와 동일 표면).
+        key+ko_text+kw 로 클라가 자기 로케일로 번역한다(_notice_msg 참조)."""
+        msg = self._notice_msg(key, ko_text, sticky=sticky, detail=detail, **kw)
         for c in list(self.clients):
             if c.session is sess:
                 asyncio.create_task(write_msg(c.writer, dict(msg)))
@@ -399,10 +482,11 @@ class ServerRemoteMixin:
                                                 endpoint=spec.get("endpoint")):
                         self._remote_status_broadcast()
                     else:
+                        detail = self._err_detail("rerr.unknown", "원인 미상")
                         self._remote_notice(
-                            sess, f"remote-attach {name}: 재시작 후 복원 실패 — "
-                                  f"{getattr(self, '_remote_last_err', '') or '원인 미상'}",
-                            sticky=True)
+                            sess, "rnotice.restore_fail",
+                            "remote-attach {target}: 재시작 후 복원 실패 — {why}",
+                            sticky=True, detail=detail, target=name)
                 except Exception:
                     self._log_error(f"remote_restore({name})")
 
@@ -669,21 +753,21 @@ class ServerRemoteMixin:
         ok = await self.remote_attach(sess, host=None if endpoint else dest,
                                       endpoint=endpoint)
         if not ok:
+            detail = self._err_detail("rerr.see_log", "서버 error.log 참조")
             self._remote_notice(
-                sess, f"remote-attach {dest} 실패(중첩 자동 승격) — "
-                      f"{getattr(self, '_remote_last_err', '') or '서버 error.log 참조'}")
+                sess, "rnotice.attach_fail_nest",
+                "remote-attach {target} 실패(중첩 자동 승격) — {why}",
+                detail=detail, target=dest)
             return
         self._remote_status_broadcast()
         link = remotes.get(dest)
         if link is None:
             return
         # 첫 업스트림 status 가 와야 병합 전역 index 가 생긴다(전환 가능 조건).
-        for _ in range(30):
-            if link.windows or not link.alive:
-                break
-            await asyncio.sleep(0.1)
+        await self._remote_wait_first_status(link)
         self._remote_notice(
-            sess, f"remote-attach {dest}: 원격 탭 병합됨(중첩 자동 승격)")
+            sess, "rnotice.attach_merged_nest",
+            "remote-attach {target}: 원격 탭 병합됨(중첩 자동 승격)", target=dest)
         if not link.windows:
             return
         # 병합 전역 index = 로컬 탭 수 + 앞선 링크들의 탭 수 + 업스트림 active 위치

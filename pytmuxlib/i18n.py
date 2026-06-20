@@ -584,3 +584,67 @@ register({
         "ui.notice_close": " {message}  ⏎ close ",
     },
 })
+
+# §6 +(2026-06-20): 서버발 원격 페더레이션 notice/실패 원인. 이 메시지들은 서버
+# (serverremote/serverio)가 만들지만 로케일은 per-user(클라-로컬)라 서버가 번역할 수
+# 없다 — 그래서 서버는 키(rnotice.*)+포맷 인자만 실어 보내고 클라가 t() 로 자기
+# 로케일로 번역한다. 실패 원인(detail)도 키(rerr.*)로 실려 클라에서 합성된다.
+# 한국어 사용자에게 en 로케일에서 한국어로 새던 원격 알림("원격 탭 병합됨"·"핸드셰이크
+# 실패" 등)을 ko/en 모두로 닫는다. {why}=실패 원인 detail, {target}=호스트명.
+register({
+    "ko": {
+        "rnotice.attach_merged": "remote-attach {target}: 원격 탭 병합됨",
+        "rnotice.attach_silent": "remote-attach {target}: 연결됐지만 원격이 응답 없음"
+                                 " — 원격 서버 점검",
+        "rnotice.attach_merged_nest": "remote-attach {target}: 원격 탭 병합됨(중첩 자동 승격)",
+        "rnotice.attach_fail": "remote-attach {target} 실패 — {why}",
+        "rnotice.attach_fail_nest": "remote-attach {target} 실패(중첩 자동 승격) — {why}",
+        "rnotice.newtab_fail": "remote-new-tab {target} 실패 — {why}",
+        "rnotice.reconnected": "remote-attach {target}: 끊김 후 자동 재연결됨(시도 {i})",
+        "rnotice.reconnect_giveup": "remote-attach {target}: 자동 재연결 포기({n}회) — "
+                                    "{why} · :remote-attach 로 수동 재시도",
+        "rnotice.restore_fail": "remote-attach {target}: 재시작 후 복원 실패 — {why}",
+        "rnotice.mix_block_cmd": "원격 탭에서는 사용할 수 없는 명령입니다 — "
+                                 "원격↔로컬 패널/탭은 섞을 수 없습니다(§1.7)",
+        "rnotice.mix_block_move": "원격 탭으로/원격 탭을 이동할 수 없습니다 — "
+                                  "원격↔로컬 패널/탭은 섞을 수 없습니다(§1.7)",
+        # 실패 원인(detail) — _remote_last_err 대체
+        "rerr.self_attach": "자기 자신에는 attach 할 수 없습니다",
+        "rerr.hello_fail": "hello 실패: {e}",
+        "rerr.handshake_fail": "stdio-proxy 핸드셰이크 실패: {detail}",
+        "rerr.handshake_noresp": "stdio-proxy 핸드셰이크 실패: 응답 없음",
+        "rerr.handshake_perm": "stdio-proxy 핸드셰이크 실패: {detail} — 키 미설정. "
+                               "패스워드 호스트는 ssh config 에 ControlMaster 설정 후 "
+                               "패널에서 한 번 로그인(REMOTE_ATTACH_SCENARIO §5)",
+        "rerr.see_log": "서버 error.log 참조",
+        "rerr.unknown": "원인 미상",
+        "rerr.unknown_log": "원인 미상(서버 error.log)",
+    },
+    "en": {
+        "rnotice.attach_merged": "remote-attach {target}: remote tab merged",
+        "rnotice.attach_silent": "remote-attach {target}: connected but remote is "
+                                 "unresponsive — check the remote server",
+        "rnotice.attach_merged_nest": "remote-attach {target}: remote tab merged (nested auto-promote)",
+        "rnotice.attach_fail": "remote-attach {target} failed — {why}",
+        "rnotice.attach_fail_nest": "remote-attach {target} failed (nested auto-promote) — {why}",
+        "rnotice.newtab_fail": "remote-new-tab {target} failed — {why}",
+        "rnotice.reconnected": "remote-attach {target}: auto-reconnected after drop (attempt {i})",
+        "rnotice.reconnect_giveup": "remote-attach {target}: gave up auto-reconnect ({n} tries) — "
+                                    "{why} · retry manually with :remote-attach",
+        "rnotice.restore_fail": "remote-attach {target}: restore after restart failed — {why}",
+        "rnotice.mix_block_cmd": "Command not available on a remote tab — "
+                                 "remote and local panes/tabs cannot be mixed (§1.7)",
+        "rnotice.mix_block_move": "Cannot move to/from a remote tab — "
+                                  "remote and local panes/tabs cannot be mixed (§1.7)",
+        "rerr.self_attach": "cannot attach to self",
+        "rerr.hello_fail": "hello failed: {e}",
+        "rerr.handshake_fail": "stdio-proxy handshake failed: {detail}",
+        "rerr.handshake_noresp": "stdio-proxy handshake failed: no response",
+        "rerr.handshake_perm": "stdio-proxy handshake failed: {detail} — no key configured. "
+                               "For password hosts, set ControlMaster in ssh config then "
+                               "log in once from a pane (REMOTE_ATTACH_SCENARIO §5)",
+        "rerr.see_log": "see server error.log",
+        "rerr.unknown": "unknown cause",
+        "rerr.unknown_log": "unknown cause (server error.log)",
+    },
+})
