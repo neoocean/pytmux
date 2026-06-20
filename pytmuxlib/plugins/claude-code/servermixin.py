@@ -572,13 +572,14 @@ class ServerClaudeMixin:
         self._save_opts()
         return self.auto_token_on_exit
 
-    def _usage_exit_text(self) -> bytes:
+    def _usage_exit_text(self, width: int = 80) -> bytes:
         """세션 종료 시 패널에 주입할 /usage 한도 요약을 plain-text(ANSI 최소)로 만든다.
         그림자 /usage 스냅샷(self._usage: session·week_all·week_sonnet, 각 {pct,reset})이
         없거나 표시할 항목이 없으면 b"". 팝업(usage_bar_lines)과 같은 정보(라벨·막대·%·
         리셋)지만 모달 크롬 없이 스크롤 출력용 단순 블록 막대로 만든다 — 클라 표시 헬퍼
         (clientscreens.usage_bar_lines)는 Textual 결합이라 서버에서 import 할 수 없어
-        자급 포매터를 둔다. 라벨은 코어 i18n(usage.*)을 공유해 팝업과 문구가 일치한다."""
+        자급 포매터를 둔다. 라벨은 코어 i18n(usage.*)을 공유해 팝업과 문구가 일치한다.
+        `width`(패널 폭)에 맞춰 막대 길이를 늘린다(요청 2026-06-20)."""
         u = self._usage
         if not isinstance(u, dict):
             return b""
@@ -594,20 +595,30 @@ class ServerClaudeMixin:
                            ("week_sonnet", i18n.t("usage.week_sonnet"))):
             d = u.get(key)
             if isinstance(d, dict) and d.get("pct") is not None:
-                entries.append((label, d))
+                reset = d.get("reset")
+                reset_txt = ("  ↻" + reset.split(" (")[0].strip()) if reset else ""
+                entries.append((key, label, max(0, min(100, int(d["pct"]))),
+                                reset_txt))
         if not entries:
             return b""
-        label_w = max(cells(lbl) for lbl, _ in entries)
+        label_w = max(cells(lbl) for _, lbl, _, _ in entries)
+        reset_w = max(cells(rt) for _, _, _, rt in entries)
+        # 막대 폭을 패널 폭에 맞춰 늘린다(요청 2026-06-20): 줄의 고정 폭(들여쓰기 2 +
+        # 라벨 + 간격 2 + " NNN%" 5 + 리셋칸 + 우측 여백 2)을 뺀 나머지를 막대에 준다.
+        # 좁은/넓은 단말 모두 자연스럽게 최소 10·최대 60 칸으로 클램프.
+        fixed = 2 + label_w + 2 + 5 + reset_w + 2
+        gauge_w = max(10, min(60, int(width) - fixed))
         rows = []
-        for label, d in entries:
-            pct = max(0, min(100, int(d["pct"])))
-            filled = (pct * 10 + 50) // 100             # 10칸 막대(반올림)
-            gauge = "█" * filled + "░" * (10 - filled)
-            reset = d.get("reset")
-            reset_txt = ("  ↻" + reset.split(" (")[0].strip()) if reset else ""
+        for key, label, pct, reset_txt in entries:
+            filled = (pct * gauge_w + 50) // 100         # 패널폭 막대(반올림)
+            gauge = "█" * filled + "░" * (gauge_w - filled)
+            # 세션 5h 행은 이번 세션이 가장 즉시 보는 값 → 노란색으로 강조(요청
+            # 2026-06-20). 주간 두 행은 기본색으로 두어 5h 가 시각적으로 도드라진다.
+            if key == "session":
+                gauge = f"\x1b[33m{gauge}\x1b[0m"
             pad = " " * (label_w - cells(label) + 2)
             rows.append(f"  {label}{pad}{gauge} {pct:>3}%{reset_txt}")
-        sep = "─" * 46
+        sep = "─" * max(10, min(2 + label_w + 2 + gauge_w + 5 + reset_w, int(width)))
         lines = ["", f"\x1b[2m{sep}\x1b[0m", f"\x1b[1m{i18n.t('usage.exit_title')}\x1b[0m",
                  *rows, f"\x1b[2m{sep}\x1b[0m"]
         # 셸이 이미 찍어 둔 프롬프트 줄을 **덮어쓰고** 그 자리에 블록을 흘린다(요청
@@ -653,7 +664,7 @@ class ServerClaudeMixin:
         1회 호출되므로 중복 주입이 없다(테스트 동기 호출에서도 그대로 동작)."""
         if pane is None:
             return
-        text = self._usage_exit_text()
+        text = self._usage_exit_text(getattr(pane, "cols", 80))
         if text:
             self._inject_pane_output(pane, text)
             # 블록은 셸 프롬프트 줄을 덮어쓰며 그려졌다(_usage_exit_text). 이제 셸이
