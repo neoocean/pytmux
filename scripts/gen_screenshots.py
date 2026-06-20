@@ -826,40 +826,59 @@ def _fix_cjk_textlength(svg):
     return _TEXT_RE.sub(repl, svg)
 
 
-# ---------- 한글 <text> → 벡터 path 굽기 (뷰어 폰트 무의존) ----------
-# font-family 폴백(Apple SD Gothic Neo)은 그 폰트가 설치된 macOS·iOS 뷰어에서만
-# 익숙하게 보이고, 다른 OS·폰트 없는 뷰어에선 또 제각각(최악엔 두부 □)이 된다. 견고한
-# 해법은 글리프 외곽선을 path 로 구워 폰트 의존을 0 으로 만드는 것이다([[svg-text-cjk-
-# breaks-bake-paths]]). CJK(2칸) 문자를 담은 <text>(이미 _fix_cjk_textlength 가 pure-wide
-# 런으로 분리·textLength 부여)를 Apple SD Gothic Neo 글리프 path 로 치환한다.
-#
-# - 폰트=AppleSDGothicNeo.ttc Regular(face 0)·Bold(face 6), upm 1000.
-# - lengthAdjust="spacingAndGlyphs" 와 동치가 되도록 런 전체 자연 advance 를 textLength
-#   에 맞춰 가로 스케일(k)한다. 세로는 font-size/upm 그대로(폰트 y-up→SVG y-down 이라 음수).
-# - 색은 원 <text> 의 class(fill) 를 path 에 그대로 물려 받는다.
-# - 폰트에 없는 글리프(이모지 ✅ 등)나 fontTools/폰트 부재(비 macOS) 시엔 굽지 않고
-#   <text> 로 남긴다 → font-family 폴백이 받친다. macOS 로컬 생성이 권위.
-_BAKE_TTC = "/System/Library/Fonts/AppleSDGothicNeo.ttc"
-_BAKE_FACE = {"regular": 0, "bold": 6}
+# ---------- <text> → 폰트 비의존 벡터/도형 굽기 ----------
+# README 스크린샷 SVG 는 GitHub 에서 <img> 로 삽입돼 "이미지 보안 모드"로 렌더된다. 이
+# 모드는 @font-face(CDN url() 이든 base64 임베드든)를 적용하지 않아, 무엇을 해도 글자가
+# 뷰어의 generic monospace 로 폴백한다 → 박스선 끊김·블록문자 행간 갭·자간 왜곡·한글 두부.
+# 폰트 임베드로는 못 고친다. 견고한 해법은 글자를 폰트 비의존 벡터로 굽는 것이다
+# ([[svg-text-cjk-breaks-bake-paths]] 의 한글 path 굽기를 전 글자로 확장):
+#   ① 박스드로잉·블록·음영(U+2500–259F) → 셀 격자에서 계산한 도형(line/rect). 폰트
+#      글리프는 em(=font-size 20px) 높이라 row pitch 24.4px 를 못 채워 세로 갭이 남는다
+#      → 도형만이 셀을 정확히 채우고(블록) 선을 셀 경계까지 이어붙인다(박스선).
+#   ② ASCII·숫자·기호 등 narrow 글자 → Fira Code 글리프 path. Fira advance(≈0.615em)가
+#      셀폭(12.2px)과 거의 같아 셀 원점 좌측정렬만으로 모노스페이스 격자가 보존된다.
+#   ③ CJK(2칸) → Apple SD Gothic Neo 글리프 path. 단 2 셀(24.4px)에 억지로 늘리지 않고
+#      (옛 가로 stretch ×1.41 제거) 자연 폭 그대로 2셀 박스 가운데 배치한다.
+# 폰트에 없는 글리프(이모지 ✅ 등)나 fontTools/폰트 부재(비 macOS) 시엔 굽지 않고 <text>
+# 로 남겨 font-family 폴백에 맡긴다. macOS 로컬 생성이 권위.
+_CJK_TTC = "/System/Library/Fonts/AppleSDGothicNeo.ttc"
+_CJK_FACE = {"regular": 0, "bold": 6}
+_CJK_FILL = 0.90        # CJK 글리프가 2셀 박스에서 채우는 폭 비율(균등 확대·뚱뚱X·갭X)
+_SYM_TTF = "/System/Library/Fonts/Apple Symbols.ttf"  # Fira 에 없는 기호(▸ ⚙ 등) 폴백
+_MENLO_TTC = "/System/Library/Fonts/Menlo.ttc"        # ❯ ✻ ✕ 등 추가 폴백
+_MENLO_FACE = {"regular": 0, "bold": 1}
+_FIRA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+_FIRA_TTF = {"regular": os.path.join(_FIRA_DIR, "FiraCode-Regular.ttf"),
+             "bold": os.path.join(_FIRA_DIR, "FiraCode-Bold.ttf")}
 _CLASS_CSS_RE = _re.compile(r"\.(terminal-\d+-r\d+)\s*\{([^}]*)\}")
 _MATRIX_FS_RE = _re.compile(r"-matrix\s*\{[^}]*?font-size:\s*([\d.]+)")
 _CSS_FILL_RE = _re.compile(r"fill:\s*([^;]+)")
 _CLASS_RE = _re.compile(r'\bclass="([^"]*)"')
 _Y_RE = _re.compile(r'\by="([0-9.]+)"')
 _CLIP_RE = _re.compile(r'\bclip-path="([^"]*)"')
+_CLIPDEF_RE = _re.compile(
+    r'<clipPath id="([^"]*-line-\d+)">\s*<rect x="0" y="([0-9.]+)"'
+    r' width="\d+" height="([0-9.]+)"')
 _bake_font_cache = {}
 
 
-def _bake_font(weight):
-    """weight('regular'|'bold') 의 폰트 정보 dict 또는 None(부재/미설치)."""
-    if weight in _bake_font_cache:
-        return _bake_font_cache[weight]
+def _bake_font(kind, weight):
+    """('fira'|'cjk', 'regular'|'bold') 의 폰트 정보 dict 또는 None(부재/미설치)."""
+    key = (kind, weight)
+    if key in _bake_font_cache:
+        return _bake_font_cache[key]
     info = None
     try:
-        from fontTools.ttLib import TTCollection
+        from fontTools.ttLib import TTFont, TTCollection
         from fontTools.pens.svgPathPen import SVGPathPen
-        tc = TTCollection(_BAKE_TTC)
-        f = tc.fonts[_BAKE_FACE[weight]]
+        if kind == "cjk":
+            f = TTCollection(_CJK_TTC).fonts[_CJK_FACE[weight]]
+        elif kind == "sym":
+            f = TTFont(_SYM_TTF)                       # Apple Symbols(weight 무관)
+        elif kind == "menlo":
+            f = TTCollection(_MENLO_TTC).fonts[_MENLO_FACE[weight]]
+        else:
+            f = TTFont(_FIRA_TTF[weight])
         info = {
             "cmap": f.getBestCmap(),
             "glyphset": f.getGlyphSet(),
@@ -867,14 +886,179 @@ def _bake_font(weight):
             "upm": f["head"].unitsPerEm,
             "pen": SVGPathPen,
         }
-    except (ImportError, OSError, KeyError):
+    except Exception:                                 # noqa: BLE001 (폰트/툴 부재)
         info = None
-    _bake_font_cache[weight] = info
+    _bake_font_cache[key] = info
     return info
 
 
-def _bake_cjk_paths(svg):
-    """CJK <text> 를 Apple SD Gothic Neo 글리프 path 로 굽는다(불가 시 <text> 유지)."""
+def _glyph_path(kind, ch, weight, x, y, fsize, fill, *,
+                center_in=None, cell_top=None, pitch=None):
+    """글리프 외곽선을 <path> 로. 폰트/글리프 부재 시 None, 빈 글리프(공백) 시 ''.
+
+    center_in 이 주어지면(=박스폭 px, CJK 2칸) 글리프를 가로 stretch(=뚱뚱) 없이 균등
+    확대해 박스 폭의 _CJK_FILL 만큼을 채우고(advance 기준 → 음절 간격 균일) 가로 가운데
+    배치한다. cell_top·pitch 도 주면 ink bbox(ymin..ymax)를 셀에 세로 가운데 정렬한다
+    (ASCII 베이스라인에 앵커하면 균등 확대된 한글 윗부분이 셀 top 을 넘어 잘림). 아니면
+    셀 원점 좌측정렬·ASCII 베이스라인(narrow)."""
+    info = _bake_font(kind, weight)
+    if info is None:
+        return None
+    gn = info["cmap"].get(ord(ch))
+    if gn is None:
+        return None
+    s = fsize / info["upm"]
+    pen = info["pen"](info["glyphset"])
+    info["glyphset"][gn].draw(pen)
+    d = pen.getCommands()
+    if not d:
+        return ""                                     # 공백 등 빈 path
+    adv0 = info["hmtx"][gn][0] * s
+    if center_in is not None and adv0 > 0:
+        s *= _CJK_FILL * center_in / adv0             # 균등 확대(가로·세로 동일)
+        x += max(0.0, (center_in - info["hmtx"][gn][0] * s) / 2.0)
+        if cell_top is not None and pitch is not None:
+            from fontTools.pens.boundsPen import BoundsPen
+            bp = BoundsPen(info["glyphset"])
+            info["glyphset"][gn].draw(bp)
+            if bp.bounds:
+                _, ymn, _, ymx = bp.bounds
+                y = cell_top + (pitch - (ymx - ymn) * s) / 2.0 + ymx * s
+    fa = f' fill="{fill}"' if fill else ""
+    return (f'<path{fa} transform="translate({x:g} {y:g}) '
+            f'scale({s:g} {-s:g})" d="{d}"/>')
+
+
+# 박스드로잉·블록·음영 도형. 셀=(x0,top)~(x0+w, top+h). 박스선은 셀 경계까지 그어 인접
+# 셀과 이어지게(butt cap), 블록은 인접 셀로 EPS 만큼 겹쳐 안티에일리어싱 실선 틈을 없앤다.
+_LT = 1.8       # light 선 두께
+_DOFF = 1.7     # double 선 중심 간 ±오프셋
+_BLK_EPS = 0.8  # 블록 채움 겹침(인접 셀로 번져 AA 이음선 제거)
+
+
+def _box_block(o, x0, top, w, h, fill):
+    """U+2500–259F 한 글자를 도형 SVG 로(미지원 시 None → 폰트 path 폴백)."""
+    c = fill or "#000000"
+    r, b = x0 + w, top + h                            # right, bottom
+    cx, cy = x0 + w / 2, top + h / 2
+    E = _BLK_EPS
+
+    def ln(d):                                        # 선(박스드로잉)
+        return f'<path d="{d}" stroke="{c}" stroke-width="{_LT:g}" fill="none"/>'
+
+    def rc(x, yy, ww, hh, op=None):                   # 채움(블록/음영)
+        o2 = f' fill-opacity="{op}"' if op is not None else ""
+        return f'<rect x="{x:g}" y="{yy:g}" width="{ww:g}" height="{hh:g}" fill="{c}"{o2}/>'
+
+    # ----- 박스드로잉(light) -----
+    if o == 0x2500:  # ─
+        return ln(f"M{x0:g},{cy:g} H{r:g}")
+    if o == 0x2502:  # │
+        return ln(f"M{cx:g},{top:g} V{b:g}")
+    if o == 0x250C:  # ┌
+        return ln(f"M{cx:g},{b:g} L{cx:g},{cy:g} L{r:g},{cy:g}")
+    if o == 0x2510:  # ┐
+        return ln(f"M{cx:g},{b:g} L{cx:g},{cy:g} L{x0:g},{cy:g}")
+    if o == 0x2514:  # └
+        return ln(f"M{cx:g},{top:g} L{cx:g},{cy:g} L{r:g},{cy:g}")
+    if o == 0x2518:  # ┘
+        return ln(f"M{cx:g},{top:g} L{cx:g},{cy:g} L{x0:g},{cy:g}")
+    if o == 0x251C:  # ├
+        return ln(f"M{cx:g},{top:g} V{b:g} M{cx:g},{cy:g} H{r:g}")
+    if o == 0x2524:  # ┤
+        return ln(f"M{cx:g},{top:g} V{b:g} M{x0:g},{cy:g} H{cx:g}")
+    if o == 0x252C:  # ┬
+        return ln(f"M{x0:g},{cy:g} H{r:g} M{cx:g},{cy:g} V{b:g}")
+    if o == 0x2534:  # ┴
+        return ln(f"M{x0:g},{cy:g} H{r:g} M{cx:g},{top:g} V{cy:g}")
+    if o == 0x253C:  # ┼
+        return ln(f"M{x0:g},{cy:g} H{r:g} M{cx:g},{top:g} V{b:g}")
+    # 둥근 모서리(arc). 반지름 rr.
+    rr = min(w, h) * 0.45
+    if o == 0x256D:  # ╭ down+right
+        return ln(f"M{cx:g},{b:g} L{cx:g},{cy + rr:g} Q{cx:g},{cy:g} "
+                  f"{cx + rr:g},{cy:g} L{r:g},{cy:g}")
+    if o == 0x256E:  # ╮ down+left
+        return ln(f"M{cx:g},{b:g} L{cx:g},{cy + rr:g} Q{cx:g},{cy:g} "
+                  f"{cx - rr:g},{cy:g} L{x0:g},{cy:g}")
+    if o == 0x2570:  # ╰ up+right
+        return ln(f"M{cx:g},{top:g} L{cx:g},{cy - rr:g} Q{cx:g},{cy:g} "
+                  f"{cx + rr:g},{cy:g} L{r:g},{cy:g}")
+    if o == 0x256F:  # ╯ up+left
+        return ln(f"M{cx:g},{top:g} L{cx:g},{cy - rr:g} Q{cx:g},{cy:g} "
+                  f"{cx - rr:g},{cy:g} L{x0:g},{cy:g}")
+    # ----- 박스드로잉(double) -----
+    d = _DOFF
+    if o == 0x2550:  # ═
+        return (ln(f"M{x0:g},{cy - d:g} H{r:g}") + ln(f"M{x0:g},{cy + d:g} H{r:g}"))
+    if o == 0x2551:  # ║
+        return (ln(f"M{cx - d:g},{top:g} V{b:g}") + ln(f"M{cx + d:g},{top:g} V{b:g}"))
+    if o == 0x2554:  # ╔ down+right
+        return (ln(f"M{cx - d:g},{b:g} L{cx - d:g},{cy - d:g} L{r:g},{cy - d:g}")
+                + ln(f"M{cx + d:g},{b:g} L{cx + d:g},{cy + d:g} L{r:g},{cy + d:g}"))
+    if o == 0x2557:  # ╗ down+left
+        return (ln(f"M{cx + d:g},{b:g} L{cx + d:g},{cy - d:g} L{x0:g},{cy - d:g}")
+                + ln(f"M{cx - d:g},{b:g} L{cx - d:g},{cy + d:g} L{x0:g},{cy + d:g}"))
+    if o == 0x255A:  # ╚ up+right
+        return (ln(f"M{cx - d:g},{top:g} L{cx - d:g},{cy + d:g} L{r:g},{cy + d:g}")
+                + ln(f"M{cx + d:g},{top:g} L{cx + d:g},{cy - d:g} L{r:g},{cy - d:g}"))
+    if o == 0x255D:  # ╝ up+left
+        return (ln(f"M{cx + d:g},{top:g} L{cx + d:g},{cy + d:g} L{x0:g},{cy + d:g}")
+                + ln(f"M{cx - d:g},{top:g} L{cx - d:g},{cy - d:g} L{x0:g},{cy - d:g}"))
+    # ----- 블록(채움) -----
+    if o == 0x2588:  # █ full
+        return rc(x0, top, w + E, h + E)
+    if o == 0x2580:  # ▀ upper half
+        return rc(x0, top, w + E, h / 2 + E)
+    if o == 0x2584:  # ▄ lower half
+        return rc(x0, cy, w + E, h / 2 + E)
+    if o == 0x2590:  # ▐ right half
+        return rc(cx, top, w / 2 + E, h + E)
+    # 좌측 8분할(▏▎▍▌▋▊▉ = 1/8..7/8)
+    _LEFT = {0x258F: 1, 0x258E: 2, 0x258D: 3, 0x258C: 4,
+             0x258B: 5, 0x258A: 6, 0x2589: 7}
+    if o in _LEFT:
+        return rc(x0, top, w * _LEFT[o] / 8 + E, h + E)
+    # 하단 8분할(▁▂▃▄▅▆▇ = 1/8..7/8, 셀 아래쪽 정렬)
+    _LOW = {0x2581: 1, 0x2582: 2, 0x2583: 3, 0x2584: 4,
+            0x2585: 5, 0x2586: 6, 0x2587: 7}
+    if o in _LOW:
+        fr = _LOW[o] / 8
+        return rc(x0, b - h * fr, w + E, h * fr + E)
+    # 상단 8분할(▔ = 1/8, 셀 위쪽 정렬)
+    if o == 0x2594:  # ▔ upper 1/8
+        return rc(x0, top, w + E, h / 8 + E)
+    if o == 0x2595:  # ▕ right 1/8
+        return rc(r - w / 8, top, w / 8 + E, h + E)
+    # 음영(░▒▓ = 25%/50%/75% 불투명 채움 근사)
+    _SHADE = {0x2591: 0.25, 0x2592: 0.5, 0x2593: 0.75}
+    if o in _SHADE:
+        return rc(x0, top, w + E, h + E, op=_SHADE[o])
+    # 사분면
+    if o == 0x2598:  # ▘ UL
+        return rc(x0, top, w / 2 + E, h / 2 + E)
+    if o == 0x259D:  # ▝ UR
+        return rc(cx, top, w / 2 + E, h / 2 + E)
+    if o == 0x2596:  # ▖ LL
+        return rc(x0, cy, w / 2 + E, h / 2 + E)
+    if o == 0x2597:  # ▗ LR
+        return rc(cx, cy, w / 2 + E, h / 2 + E)
+    if o == 0x259B:  # ▛ UL+UR+LL
+        return rc(x0, top, w + E, h / 2 + E) + rc(x0, cy, w / 2 + E, h / 2 + E)
+    if o == 0x259C:  # ▜ UL+UR+LR
+        return rc(x0, top, w + E, h / 2 + E) + rc(cx, cy, w / 2 + E, h / 2 + E)
+    if o == 0x2599:  # ▙ UL+LL+LR
+        return rc(x0, top, w / 2 + E, h + E) + rc(cx, cy, w / 2 + E, h / 2 + E)
+    if o == 0x259F:  # ▟ UR+LL+LR
+        return rc(cx, top, w / 2 + E, h + E) + rc(x0, cy, w / 2 + E, h / 2 + E)
+    return None
+
+
+def _bake_glyphs(svg):
+    """모든 <text> 를 폰트 비의존 벡터/도형으로 굽는다(불가 글자는 <text> 유지).
+
+    ① U+2500–259F → 도형  ② narrow → Fira Code path  ③ CJK(2칸) → ASDGN path(가운데).
+    멱등: 이미 <path>/<rect> 로 구워진 SVG 엔 남은 <text> 만 다시 처리된다."""
     fsm = _MATRIX_FS_RE.search(svg)
     if not fsm:
         return svg
@@ -886,59 +1070,79 @@ def _bake_cjk_paths(svg):
         fm = _CSS_FILL_RE.search(css)
         if fm:
             fill_of[cls] = fm.group(1).strip()
+    # clip id → (셀 top, 셀 높이). row pitch 는 연속 라인 top 차로 구한다.
+    clip_top = {}
+    rects = []
+    for cid, ry, rh in _CLIPDEF_RE.findall(svg):
+        clip_top[cid] = float(ry)
+        rects.append(float(ry))
+    rects.sort()
+    pitch = (rects[1] - rects[0]) if len(rects) >= 2 else fsize * 1.22
+    # 셀폭: textLength/cell_len 의 최빈값(보통 12.2 = 0.61em).
+    cw_votes = {}
+    for am, content in ((m.group(1), m.group(2)) for m in _TEXT_RE.finditer(svg)):
+        tlm = _TL_RE.search(am)
+        if not tlm:
+            continue
+        n = _cell_len(_html.unescape(content))
+        if n:
+            cw = round(float(tlm.group(1)) / n, 3)
+            cw_votes[cw] = cw_votes.get(cw, 0) + 1
+    cell_w = max(cw_votes, key=cw_votes.get) if cw_votes else fsize * 0.61
+    ascent = fsize * 0.925                             # baseline - 셀top(폰트20→18.5)
 
     def repl(m):
         attrs, content = m.group(1), m.group(2)
         text = _html.unescape(content)
-        if not any(_cell_len(ch) >= 2 for ch in text):
-            return m.group(0)                         # 와이드 문자 없음 → 그대로
         xm = _X_RE.search(attrs)
         ym = _Y_RE.search(attrs)
-        tlm = _TL_RE.search(attrs)
         clsm = _CLASS_RE.search(attrs)
-        if not (xm and ym and tlm and clsm):
+        if not (xm and ym and clsm) or not text:
             return m.group(0)
-        cls = clsm.group(1)
-        info = _bake_font(weight_of.get(cls, "regular"))
-        if info is None:
-            return m.group(0)                         # fontTools/폰트 부재 → 그대로
-        cmap, gset, hmtx, upm = (info["cmap"], info["glyphset"],
-                                 info["hmtx"], info["upm"])
-        gnames = []
-        for ch in text:
-            gn = cmap.get(ord(ch))
-            if gn is None:
-                return m.group(0)                     # 폰트에 없는 글리프(✅ 등) → 그대로
-            gnames.append(gn)
-        s = fsize / upm
-        natural = sum(hmtx[g][0] for g in gnames) * s
-        if natural <= 0:
-            return m.group(0)
-        k = float(tlm.group(1)) / natural             # spacingAndGlyphs 동치 가로 스케일
-        sx = s * k
-        x, y = float(xm.group(1)), float(ym.group(1))
-        # 색은 class CSS 의 fill 을 path 에 명시적으로 박는다(class 만 의존하면 일부
-        # 뷰어가 <path> 에 클래스 fill 을 안 먹여 검정으로 떨어진다).
-        fill_attr = f' fill="{fill_of[cls]}"' if cls in fill_of else ""
-        out, penx = [], x
-        for g in gnames:
-            pen = info["pen"](gset)
-            gset[g].draw(pen)
-            d = pen.getCommands()
-            if d:                                     # 공백 등 빈 path 는 건너뜀
-                out.append(
-                    f'<path{fill_attr} '
-                    f'transform="translate({penx:g} {y:g}) scale({sx:g} {-s:g})" '
-                    f'd="{d}"/>')
-            penx += hmtx[g][0] * sx
-        body = "".join(out)
-        # clip-path 는 그룹에 건다. path 의 transform 좌표계에서 clip rect 가 해석되면
-        # (SVG 규약) y=123.5 같은 rect 가 scale(-0.02)에 눌려 얇은 띠로 변해 글리프를
-        # 잘라먹는다 → 변환 없는 <g> 가 clip 을 받고 transform 은 안쪽 path 에 둔다.
-        clip = _CLIP_RE.search(attrs)
+        x, y, cls = float(xm.group(1)), float(ym.group(1)), clsm.group(1)
+        weight = weight_of.get(cls, "regular")
+        fill = fill_of.get(cls)
+        clipm = _CLIP_RE.search(attrs)
+        clip = clipm.group(1) if clipm else None
+        top = None
         if clip:
-            body = f'<g clip-path="{clip.group(1)}">{body}</g>'
-        return body
+            cid = clip[clip.find("#") + 1:].rstrip(")")
+            top = clip_top.get(cid)
+        if top is None:
+            top = y - ascent
+        out, col = [], 0
+        for ch in text:
+            cells = _cell_len(ch)
+            if cells <= 0:
+                continue                              # 0폭 결합문자 → 건너뜀
+            cx0 = x + col * cell_w
+            col += cells
+            o = ord(ch)
+            frag = None
+            if ch == " ":
+                frag = ""
+            elif cells >= 2:                          # ③ CJK
+                frag = _glyph_path("cjk", ch, weight, cx0, y, fsize, fill,
+                                   center_in=cells * cell_w,
+                                   cell_top=top, pitch=pitch)
+            elif 0x2500 <= o <= 0x259F:               # ① 도형
+                frag = _box_block(o, cx0, top, cell_w, pitch, fill)
+            if frag is None and cells < 2:            # ② narrow → Fira → 기호 폴백
+                for _k in ("fira", "sym", "menlo"):   # Fira 에 없는 기호(▸ ⚙ ❯ 등)
+                    frag = _glyph_path(_k, ch, weight, cx0, y, fsize, fill)
+                    if frag is not None:
+                        break
+            if frag is None:                          # 못 구움 → <text> 유지(폴백)
+                frag = (f'<text class="{cls}" x="{cx0:g}" y="{y:g}" '
+                        f'textLength="{cells * cell_w:g}" '
+                        f'lengthAdjust="spacingAndGlyphs">'
+                        f'{_svg_escape(ch)}</text>')
+            out.append(frag)
+        # per-line clip 은 붙이지 않는다: 굽힌 글리프·도형은 셀 크기로 그려져 행을 넘지
+        # 않고, 블록은 인접 셀로 EPS 만큼 일부러 번지게 해 AA 이음선을 없앤다(per-line
+        # clip 은 그 번짐을 0.25px 로 잘라 세로 이음선을 남긴다). 바깥 경계는 상위
+        # clip-terminal <g> 가 처리하므로 넘침 위험 없다.
+        return "".join(out)
 
     return _TEXT_RE.sub(repl, svg)
 
@@ -950,7 +1154,7 @@ def _postprocess_cjk(svg):
     적용 가능하다. 이미 처리된 SVG 에 다시 돌려도 결과가 같다."""
     svg = _FONT_FAMILY_RE.sub(_FONT_FAMILY_NEW, svg)
     svg = _fix_cjk_textlength(svg)
-    svg = _bake_cjk_paths(svg)
+    svg = _bake_glyphs(svg)
     return svg
 
 
