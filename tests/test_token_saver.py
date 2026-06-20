@@ -841,3 +841,19 @@ async def test_fmt_unknown_throttles_fg_check():
     finally:
         sm._FMT_CHECK_INTERVAL = orig_iv
         await teardown(srv, task, sock)
+
+
+async def test_model_families_externalized():
+    """4-B: 모델 패밀리 화이트리스트를 환경변수(PYTMUX_CLAUDE_MODEL_FAMILIES)로 코드
+    수정 없이 확장한다 — Anthropic 이 신규 계열을 내도 코드 변경 없이 대응. 기본값은
+    현행과 동일(Opus|Sonnet|Haiku)이라 거동 무변경."""
+    from pytmuxlib.claude import _build_model_re
+    assert _build_model_re().search("Opus 4.8").group(1).lower() == "opus"
+    assert _build_model_re().search("running Fable 5") is None   # 기본 미등록
+    os.environ["PYTMUX_CLAUDE_MODEL_FAMILIES"] = "Fable, Quill"
+    try:
+        m = _build_model_re().search("running Fable 5 now")
+        assert m and m.group(1).lower() == "fable", "env 로 신규 패밀리 인식"
+    finally:
+        del os.environ["PYTMUX_CLAUDE_MODEL_FAMILIES"]
+    assert _build_model_re().search("Opus 4.8").group(1).lower() == "opus"

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import os
 import re
 
 
@@ -350,7 +351,26 @@ def fmt_unknown_update(prev_first, recognized, fg_claude, now, unknown_after):
 
 # M14c: 모델 배지 파서. 실 캡처 'Opus 4.8 (1M context)' · 'claude-opus-4-8' 둘 다 잡는다.
 # 계열 뒤 버전은 점(4.8) 또는 하이픈(4-8) 표기 모두 허용하고 점으로 정규화한다.
-_MODEL_RE = re.compile(r"\b(Opus|Sonnet|Haiku)\b[\s-]*([0-9]+(?:[.\-][0-9]+)*)?", re.I)
+# 4-B: 모델 패밀리 화이트리스트를 외부화한다 — 신규 패밀리(Anthropic 이 새 계열을
+# 내면)를 **코드 수정 없이** 환경변수 PYTMUX_CLAUDE_MODEL_FAMILIES(쉼표구분)로 보탤
+# 수 있다. 기본값은 현행과 동일(Opus|Sonnet|Haiku)이라 거동 무변경.
+_DEFAULT_MODEL_FAMILIES = ("Opus", "Sonnet", "Haiku")
+
+
+def _model_families():
+    fams = list(_DEFAULT_MODEL_FAMILIES)
+    extra = (os.environ.get("PYTMUX_CLAUDE_MODEL_FAMILIES") or "").strip()
+    if extra:
+        fams += [f.strip() for f in extra.split(",") if f.strip()]
+    return fams
+
+
+def _build_model_re():
+    alt = "|".join(re.escape(f) for f in _model_families())
+    return re.compile(r"\b(" + alt + r")\b[\s-]*([0-9]+(?:[.\-][0-9]+)*)?", re.I)
+
+
+_MODEL_RE = _build_model_re()
 
 
 def claude_model(text):
