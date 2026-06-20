@@ -106,6 +106,30 @@ async def test_unix_write_no_silent_truncation():
     assert len(got) == len(payload), (len(got), len(payload))
 
 
+async def test_owned_close_joins_threads():
+    """M3: _OwnedConPty.close() 가 reader/watcher daemon 스레드를 join 해 teardown 을
+    결정적으로 만든다(in-flight ReadFile 의 use-after-close 경합·stale EOF 방지).
+    conpty 없이(_cp=None) join 로직만 검증 — 전 OS 에서 동작."""
+    import threading
+    obj = pty_backend._OwnedConPty.__new__(pty_backend._OwnedConPty)
+    obj._cp = None
+    obj._stop = threading.Event()
+    obj._resume_evt = threading.Event()
+    obj._exit = None
+    obj._watcher = None
+    done = threading.Event()
+
+    def _worker():
+        obj._stop.wait(2)          # close 의 _stop.set 으로 깨어 종료
+        done.set()
+
+    obj._reader = threading.Thread(target=_worker, daemon=True)
+    obj._reader.start()
+    obj.close()
+    assert done.is_set(), "reader 스레드가 close 의 _stop.set 후 join 됨"
+    assert obj._reader is None and obj._watcher is None, "스레드 참조 해제"
+
+
 async def test_close_idempotent():
     """close()/reap() 를 두 번 불러도 예외가 없어야 한다."""
     if pty_backend.IS_WINDOWS:

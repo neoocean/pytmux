@@ -833,3 +833,13 @@ class _OwnedConPty(PtyProcess):
                 cp.close()
             except OSError:
                 pass
+        # M3: daemon reader/watcher 스레드를 join 해 teardown 을 결정적으로 만든다.
+        # cp.close()(ClosePseudoConsole)가 블로킹 read 를 EOF 로 깨우고 watcher 는 _stop
+        # 을 보고 빠진다. join 없이는 in-flight ReadFile 이 닫힌(재할당될) 핸들을 읽는
+        # use-after-close 경합이 이론상 남고 teardown 완료 시점이 불확정이라(테스트
+        # 플레이크·드문 stale EOF) — 짧은 타임아웃으로 best-effort join 후 참조 해제.
+        cur = threading.current_thread()
+        for th in (self._reader, self._watcher):
+            if th is not None and th is not cur and th.is_alive():
+                th.join(2.0)
+        self._reader = self._watcher = None
