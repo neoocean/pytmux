@@ -14,14 +14,9 @@ import gzip
 import os
 import sys
 
-from wcwidth import wcwidth
-
+from .clientutil import _char_cells   # 1-9: 로컬 비메모이즈 복사본 대신 정식 lru_cache 판
 from .model import Pane
 from .protocol import set_winsize
-
-
-def _char_cells(ch: str) -> int:
-    return 2 if wcwidth(ch) == 2 else 1
 
 
 def render_pane_lines(pane: Pane) -> list[str]:

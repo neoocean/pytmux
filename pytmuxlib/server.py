@@ -355,11 +355,6 @@ class Server(*_SERVER_BASES):
         self._reset_view(win.active_pane)
         self._write_paste(win.active_pane, self.buffers[index])
 
-    def _tab_index_of(self, sess: Session, pane: Pane):
-        for i, tab in enumerate(sess.tabs):
-            if pane in tab.window.panes():
-                return i
-        return None
 
     def set_claude_account(self, sess: Session, name: str):
         """활성 패널의 Claude 계정을 수동 지정(화면 휴리스틱이 못 잡을 때 보정, #7 ②).
