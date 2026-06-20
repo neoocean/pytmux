@@ -1029,7 +1029,13 @@ class _CommandMixin:
         elif c in ("new-tab", "newt", "new-window", "neww"):
             self.send_cmd("new_window")
         elif c in ("kill-tab", "killt", "kill-window", "killw"):
-            self.send_cmd("kill_window")
+            # 원격 탭이면 kill_window(서버가 §1.7-c 거부) 대신 그 링크를 분리한다
+            # ([x]/esc x 와 동일 라우팅, confirm_kill_tab 참조).
+            rhost = self._active_remote_host()
+            if rhost is not None:
+                self.send_cmd("remote_detach", host=rhost)
+            else:
+                self.send_cmd("kill_window")
         elif c in ("next-tab", "next-window", "next"):
             self.send_cmd("next_window")
         elif c in ("previous-tab", "prev-tab", "previous-window", "prev"):
@@ -2827,6 +2833,19 @@ def build_client_app(sock_path: str, config: dict | None = None,
             return any(t.get("active") and t.get("remote")
                        for t in self.status.windows)
 
+        def _active_remote_host(self):
+            """활성 탭이 remote-attach 병합 원격 탭이면 그 호스트, 아니면 None.
+            탭 이름은 서버 _remote_tabs 가 만든 `⇄{host}:{name}` 형식 — ⇄ 와 첫
+            ':' 사이가 host(=link.host)다. 닫기[x]/esc x 를 kill_window 대신
+            remote_detach 로 라우팅하는 데 쓴다(원격 탭은 로컬 셸이 아니라 서버가
+            kill_window 를 §1.7-c 로 거부한다)."""
+            for t in self.status.windows:
+                if t.get("active") and t.get("remote"):
+                    name = t.get("name", "")
+                    if name.startswith("⇄"):
+                        return name[1:].split(":", 1)[0]
+            return None
+
         def _update_tabbar(self):
             """상태 갱신 시 탭바 데이터/표시 여부를 동기화. 표시가 바뀌면 뷰 크기가
             달라지므로 서버에 새 크기를 통지한다."""
@@ -2907,6 +2926,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
                               danger=danger), done)
 
         def confirm_kill_tab(self):
+            # 원격 탭(remote-attach 병합)은 로컬 셸이 아니다 — 닫기[x]/esc x 로
+            # kill_window 를 보내면 서버가 §1.7-c 로 거부해 "원격 탭에서는 사용할 수
+            # 없는 명령입니다" 만 떴다(사용자 보고 2026-06-20). 원격 탭을 닫는 정문은
+            # 그 링크를 분리(remote-detach)하는 것이므로 그렇게 라우팅한다.
+            rhost = self._active_remote_host()
+            if rhost is not None:
+                self.confirm_popup(
+                    i18n.t("dialog.detach_remote_msg", host=rhost),
+                    action=lambda: self.send_cmd("remote_detach", host=rhost),
+                    title=i18n.t("dialog.detach_remote_title"))
+                return
             # 이 탭을 닫으면 pytmux 가 끝나는가 = 탭이 하나뿐인가(#16).
             last = len(self.tabbar.tabs) <= 1
             if last:
