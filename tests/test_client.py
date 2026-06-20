@@ -4302,6 +4302,60 @@ async def test_server_tab_rtt_graph_lines():
     await _with_app(body)
 
 
+async def test_rtt_graph_autoscales_to_peak_low_rtt_visible():
+    """세로 스케일이 임계(400ms) 고정이 아니라 관측 peak 에 자동으로 맞춰져, ~1ms 같은
+    낮은 RTT 도 막대로 보인다(요청 ②). 임계가 peak 위(정상)면 기준선은 생략한다."""
+    async def body(app, pilot, srv):
+        import time as _t
+        now = _t.monotonic()
+        app.net_rtt_threshold = 0.4                  # 400ms 임계(정상상태 — peak 보다 큼)
+        # 모두 ~1ms, peak 14ms — 임계 고정이면 전부 0 높이로 뭉개졌을 데이터.
+        app._net_rtt_hist = [(now - i * 5.0, 0.001 + (0.013 if i == 2 else 0))
+                             for i in range(400)]
+        g = app._rtt_graph_lines()
+        # 세로 막대 글리프가 실제로 그려져야 한다(0 으로 뭉개지지 않음).
+        assert any(any(ch in ln for ch in "▁▂▃▄▅▆▇█") for ln in g), g
+        # 상단 축 라벨 = peak(≈14ms), 임계(400)가 아니다.
+        axis_top = [ln for ln in g if "┤" in ln][0]
+        assert "14" in axis_top and "400" not in axis_top, axis_top
+        # 임계가 스케일 위라 점선(┄) 기준선은 안 그려진다.
+        assert not any("┄" in ln for ln in g), g
+    await _with_app(body)
+
+
+async def test_rtt_graph_threshold_line_when_in_range():
+    """임계가 peak 이하(저하 영역)면 그 높이에 점선(┄) 기준선과 라벨을 따로 그린다(요청 ②)."""
+    async def body(app, pilot, srv):
+        import time as _t
+        now = _t.monotonic()
+        app.net_rtt_threshold = 0.2                  # 200ms 임계
+        app._net_rtt_hist = [(now - i * 5.0, 0.05 + (0.45 if i == 2 else 0))
+                             for i in range(400)]     # peak 500ms > 임계 → 기준선 안에 듦
+        g = app._rtt_graph_lines()
+        thr_lines = [ln for ln in g if "┄" in ln]
+        assert thr_lines, ("임계 기준선(점선)", g)
+        assert any("200" in ln for ln in thr_lines), ("임계 라벨", thr_lines)
+    await _with_app(body)
+
+
+async def test_rtt_graph_marks_no_data_gaps():
+    """측정이 없던 칸(클라 미가동/끊김)은 공백이 아니라 '·' 마커로 그려, '측정 없음' 을
+    '0 에 가까운 측정' 과 구분하고 범례를 덧붙인다(요청 ①)."""
+    async def body(app, pilot, srv):
+        import time as _t
+        now = _t.monotonic()
+        # 최근 ~10분만 표본, 그 앞 50분은 빈 구간(클라가 안 떠 있던 때).
+        app._net_rtt_hist = [(now - i * 2.0, 0.002) for i in range(300)]
+        g = app._rtt_graph_lines()
+        assert any("·" in ln for ln in g), ("측정 없음 마커", g)
+        assert any("측정 없음" in ln or "no data" in ln for ln in g), ("범례", g)
+        # 표본이 전 구간을 꽉 채우면 마커/범례는 안 뜬다(공백 칸 없음).
+        app._net_rtt_hist = [(now - i * 5.0, 0.002) for i in range(800)]
+        g2 = app._rtt_graph_lines()
+        assert not any("측정 없음" in ln or "no data" in ln for ln in g2), g2
+    await _with_app(body)
+
+
 async def test_rtt_hist_persists_across_restart():
     """60분 RTT 이력이 디스크에 영속돼 (서버/클라) 재시작 후 그래프로 복원된다(요청).
     창 밖(60분 초과) 표본은 버리고, 복원 표본은 현재 시각 기준 창 안에 들어온다.

@@ -603,9 +603,16 @@ class _RestartVersionMixin:
     def _rtt_graph_lines(self, width=None, height=None):
         """최근 60분 RTT 표본을 세로 막대 그래프(width 칸 × height 행) 텍스트 줄로
         그린다. 각 칸은 _RTT_WINDOW/width 초 버킷이고 버킷 안 **최대** RTT 를 써
-        스파이크가 묻히지 않게 한다(오른쪽 끝 = 지금, 왼쪽 = -60분). 스케일 최댓값은
-        관측 peak 와 임계(threshold) 중 큰 값이라 임계선이 항상 화면 안에 든다.
-        표본이 없으면 None — 호출부가 그래프 줄을 통째로 생략한다."""
+        스파이크가 묻히지 않게 한다(오른쪽 끝 = 지금, 왼쪽 = -60분).
+
+        세로 스케일(vmax)은 관측 peak 에 **자동**으로 맞춘다 — 임계(보통 400ms)에
+        고정하지 않으므로 ~1ms 같은 낮은 RTT 도 0 으로 뭉개지지 않고 변동이 보인다.
+        임계가 스케일 안(peak 이상으로 느림)이면 그 높이에 점선(┄) 기준선을 따로
+        긋고, 임계가 스케일 위(정상 — peak<임계)면 기준선은 화면 밖이라 생략한다.
+
+        표본이 **없는** 칸(클라가 안 떠 측정이 없던 구간)은 공백이 아니라 바닥에
+        '·' 마커로 그려, '측정 없음' 을 '측정값이 0 에 가까움' 과 구분한다(요청).
+        표본이 하나도 없으면 None — 호출부가 그래프 줄을 통째로 생략한다."""
         hist = getattr(self, "_net_rtt_hist", None)
         if not hist:
             return None
@@ -615,7 +622,7 @@ class _RestartVersionMixin:
         height = height or self._RTT_GRAPH_H
         now = time.monotonic()
         span = self._RTT_WINDOW
-        buckets = [None] * width        # 칸별 최대 RTT(초) | None(표본 없음=공백)
+        buckets = [None] * width        # 칸별 최대 RTT(초) | None(표본 없음)
         raw = []                        # 창 안 원시 표본(통계용 — 버킷 최대는 평균을 부풀림)
         for ts, rtt in hist:
             age = now - ts
@@ -630,22 +637,39 @@ class _RestartVersionMixin:
             return None
         thr = getattr(self, "net_rtt_threshold", 0.4)
         peak = max(raw)
-        vmax = max(peak, thr)
+        vmax = peak or thr or 1e-9      # peak 기준 자동 스케일(전부 0 일 때 가드)
         VB = self._RTT_VBLOCKS
-        # 칸별 채움 높이(1/8 eighths). None 칸은 공백으로 남긴다.
-        eighths = [None if v is None else int(round(v / vmax * height * 8))
-                   for v in buckets]
+        total8 = height * 8
+        # 칸별 채움 높이(1/8 eighths). None=측정 없음. 측정값은 최소 1/8 로 띄워
+        # '0 에 가까운 측정' 이 '측정 없음(공백)' 과 시각적으로 구분되게 한다.
+        eighths = [None if v is None else max(1, min(total8,
+                   int(round(v / vmax * total8)))) for v in buckets]
+        # 임계 기준선 행(스케일 안일 때만; r=0=맨 위). thr_e=임계의 1/8 높이.
+        thr_e = int(round(thr / vmax * total8))
+        thr_row = (height - 1 - (thr_e - 1) // 8) if 0 < thr_e <= total8 else None
         out = [i18n.t("hoststatus.rtt_graph")]
         vmax_ms = int(round(vmax * 1000))
+        thr_ms = int(round(thr * 1000))
         for r in range(height):                 # r=0 = 맨 위 행
             base = (height - 1 - r) * 8          # 이 행 아래에 깔린 eighths
+            on_thr = (r == thr_row)
             cells = []
             for e in eighths:
-                if e is None:
-                    cells.append(" ")
-                else:
-                    cells.append(VB[max(0, min(8, e - base))])
-            axis = (f"{vmax_ms:>4} ┤" if r == 0 else "     ┤")
+                if e is None:                    # 측정 없음
+                    cells.append("┄" if on_thr else
+                                 ("·" if r == height - 1 else " "))
+                    continue
+                blk = e - base
+                if blk > 0:
+                    cells.append(VB[min(8, blk)])
+                else:                            # 막대 미도달 — 임계선이면 점선
+                    cells.append("┄" if on_thr else " ")
+            if r == 0:
+                axis = f"{vmax_ms:>4} ┤"
+            elif on_thr:
+                axis = f"{thr_ms:>4} ┄"          # 임계 기준선 라벨
+            else:
+                axis = "     ┤"
             out.append(axis + "".join(cells))
         out.append("   0 ┴" + "─" * width)   # x축
         # 시간축 라벨(왼쪽 -60분 · 오른쪽 지금)
@@ -659,6 +683,9 @@ class _RestartVersionMixin:
         avg_ms = int(round(sum(raw) / len(raw) * 1000))
         out.append(i18n.t("hoststatus.rtt_stats",
                           peak=peak_ms, avg=avg_ms, n=len(raw)))
+        # 측정 없는 칸('·')이 하나라도 있으면 그 마커 범례를 덧붙인다(꽉 차면 생략).
+        if any(e is None for e in eighths):
+            out.append(i18n.t("hoststatus.rtt_legend"))
         return out
 
 
