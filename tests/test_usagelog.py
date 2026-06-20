@@ -244,3 +244,43 @@ async def test_recon_view_formats_rows():
     _, meas2, est2, note2 = rows[1]
     assert "리셋" in meas2 and "Δ" not in meas2, meas2
     assert est2 == "~50" and note2 == "계정혼합/미상"
+
+
+async def test_recon_chart_geometry_and_scroll():
+    """시간축 그래프(요청 2026-06-20): recon_chart 가 구간을 세로 막대 격자로 풀고,
+    높이=pct1(증가량 톱니), 좌우 스크롤(x_off)이 보이는 구간 창을 옮긴다."""
+    base = 1_700_000_000.0
+    ivs = [{"t0": base + i * 3600, "t1": base + (i + 1) * 3600,
+            "pct0": i, "pct1": i + 1, "dpct": 1, "tokens": 100,
+            "reset": False} for i in range(30)]
+
+    # 넓은 폭: 일부만 들어가고 최신이 오른쪽(x_off=0 → i1=n-1).
+    ch = usagelog.recon_chart(ivs, plot_w=10, plot_h=5, x_off=0, step=2)
+    assert ch["n"] == 30 and ch["i1"] == 29
+    cap = ch["i1"] - ch["i0"] + 1
+    assert ch["max_off"] == 30 - cap
+    # 격자 크기·열↔구간 매핑(막대는 step 간격, 사이는 None).
+    assert len(ch["grid"]) == 5 and all(len(r) == 10 for r in ch["grid"])
+    assert ch["col_iv"][0] is not None and ch["col_iv"][1] is None
+
+    # 더 높은 pct 막대가 더 많은 칸을 채운다(증가량 가시화). pct=100 vs pct=2 비교.
+    hi = usagelog.recon_chart(
+        [{"t0": base, "t1": base + 1, "pct0": 0, "pct1": 100, "dpct": 100,
+          "tokens": 1, "reset": False}], 4, 8, 0, 2)
+    filled = sum(1 for r in hi["grid"] if r[0] != " ")
+    assert filled == 8, "100%% 막대는 전 높이를 채워야"
+    lo = usagelog.recon_chart(
+        [{"t0": base, "t1": base + 1, "pct0": 0, "pct1": 5, "dpct": 5,
+          "tokens": 1, "reset": False}], 4, 8, 0, 2)
+    lo_filled = sum(1 for r in lo["grid"] if r[0] != " ")
+    assert 0 < lo_filled < 8, "5%% 막대는 바닥 일부만"
+
+    # 좌우 스크롤: x_off 증가 → 더 이전 구간 창. 과대 x_off 는 가장 옛으로 클램프.
+    sc = usagelog.recon_chart(ivs, plot_w=10, plot_h=5, x_off=5, step=2)
+    assert sc["i1"] == 29 - 5
+    end = usagelog.recon_chart(ivs, plot_w=10, plot_h=5, x_off=10 ** 6, step=2)
+    assert end["i0"] == 0 and end["x_off"] == end["max_off"]
+
+    # 빈 입력: 안전한 빈 격자.
+    empty = usagelog.recon_chart([], 10, 5, 0, 2)
+    assert empty["n"] == 0 and empty["i0"] == -1 and empty["labels"] == []

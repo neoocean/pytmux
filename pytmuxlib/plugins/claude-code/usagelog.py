@@ -404,3 +404,79 @@ def recon_view(intervals: list) -> list:
         note = iv.get("account") or "계정혼합/미상"
         rows.append((span, measured, est, note))
     return rows
+
+
+# 세로 막대의 부분 칸(1/8 단위) — 빈칸→꽉찬블록(아래에서 위로 채워짐).
+_VBLOCKS = " ▁▂▃▄▅▆▇█"
+
+
+def recon_chart(intervals: list, plot_w: int, plot_h: int,
+                x_off: int = 0, step: int = 2) -> dict:
+    """대사 구간을 **시간축 세로 막대 그래프**로 그리기 위한 순수 기하 계산(요청
+    2026-06-20 — 표 대신 시간에 따른 사용률 증가를 한눈에). 각 구간 = 막대 1개,
+    높이 = 그 구간 끝의 실측 세션 5h%(pct1, 0~100 고정 분모) — 5h 창 안에서 단조
+    증가하다 리셋 때 0 부근으로 떨어지는 톱니가 그대로 보인다. 좌우 스크롤(x_off)로
+    더 이전 구간을 본다.
+
+    좌표/색은 표시층(위젯) 몫이라 여기선 글리프 격자와 열↔구간 매핑만 돌려준다
+    (헤드리스 테스트 대상 — Strip/색 없이 모양만 검증).
+
+    intervals: 시간순(옛→새) 대사 dict 목록(usagedb.reconcile).
+    plot_w, plot_h: 막대 영역 칸수(좌측 눈금자·하단 축 제외).
+    x_off: **새 쪽에서 왼쪽으로 스크롤한 구간 수**(0=최신이 오른쪽 끝). [0,max_off] 로 클램프.
+    step: 구간당 칸수(막대 1칸 + 간격 step-1칸). ≥1.
+
+    반환 dict:
+      grid:    plot_h 줄(위→아래) 문자열, 각 plot_w 폭 — 막대는 ▁..█, 나머지 공백.
+      col_iv:  길이 plot_w 의 [구간index|None] — 각 열이 그리는 구간(위젯이 pct/리셋으로
+               색칠). 막대가 아닌 간격 열은 None.
+      labels:  [(col, text)] x축 시각 라벨(막대 아래, 겹치지 않게 솎음).
+      x_off:   실제 적용된(클램프된) 오프셋.
+      max_off: 최대 스크롤 오프셋(n-capacity, ≥0).
+      i0, i1:  보이는 첫/끝 구간 index(포함), 비면 (-1,-1).
+      n:       전체 구간 수."""
+    n = len(intervals)
+    step = max(1, int(step))
+    grid = [" " * plot_w for _ in range(plot_h)]
+    col_iv = [None] * plot_w
+    out = {"grid": grid, "col_iv": col_iv, "labels": [], "x_off": 0,
+           "max_off": 0, "i0": -1, "i1": -1, "n": n}
+    if n == 0 or plot_w <= 0 or plot_h <= 0:
+        return out
+    capacity = max(1, (plot_w + step - 1) // step)   # 화면에 들어가는 구간 수
+    max_off = max(0, n - capacity)
+    x_off = max(0, min(int(x_off), max_off))
+    last = n - 1 - x_off                 # 보이는 가장 새(오른쪽) 구간
+    first = max(0, last - capacity + 1)  # 보이는 가장 옛(왼쪽) 구간
+    out.update(x_off=x_off, max_off=max_off, i0=first, i1=last)
+
+    rows = [list(r) for r in grid]       # 가변 격자
+    last_label_end = -1
+    import time as _t
+    prev_day = None
+    for i in range(first, last + 1):
+        iv = intervals[i]
+        col = (i - first) * step         # 이 구간 막대의 x(왼쪽 정렬)
+        if col >= plot_w:
+            break
+        col_iv[col] = i
+        pct = iv.get("pct1", 0) or 0
+        level = max(0.0, min(1.0, pct / 100.0)) * plot_h   # 채울 칸(부분 포함)
+        for r in range(plot_h):
+            from_bottom = plot_h - 1 - r                   # 0=맨 아래 줄
+            if level >= from_bottom + 1:
+                rows[r][col] = "█"
+            elif level > from_bottom:
+                idx = max(1, min(8, round((level - from_bottom) * 8)))
+                rows[r][col] = _VBLOCKS[idx]
+        # x축 라벨: 날짜 바뀌면 'MM-DD', 아니면 'HH:MM'. 겹침 방지로 솎음.
+        lt = _t.localtime(iv.get("t1", 0))
+        day = lt[:3]
+        text = (_t.strftime("%m-%d", lt) if day != prev_day
+                else _t.strftime("%H:%M", lt))
+        prev_day = day
+        if col > last_label_end:
+            out["labels"].append((col, text))
+            last_label_end = col + len(text)   # 다음 라벨은 이 뒤부터
+    out["grid"] = ["".join(r) for r in rows]
+    return out

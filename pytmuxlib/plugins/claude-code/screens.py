@@ -47,6 +47,9 @@ i18n.register({
         "한도(/usage): [u] 눌러 조회", "(기록된 토큰 사용량이 없습니다)",
         "토큰 대사 · 실측Δ% vs 추정Σ", "/usage 조회 중… (~수초)",
         "r집계로 돌아가기 · u/usage 갱신 · Esc닫기",
+        # [대사] 시간축 그래프(2026-06-20)
+        "토큰 5h 사용률 추이 · 시간축",
+        "r집계 표 · ←→/PgUp·PgDn/Home·End 스크롤 · u/usage · Esc닫기",
     )},
     "en": {
         "Enter 토글/순환 · ESC 닫기": "Enter toggle/cycle · ESC close",
@@ -80,6 +83,10 @@ i18n.register({
         "/usage 조회 중… (~수초)": "querying /usage… (~a few s)",
         "r집계로 돌아가기 · u/usage 갱신 · Esc닫기":
             "r back to totals · u refresh /usage · Esc close",
+        "토큰 5h 사용률 추이 · 시간축":
+            "Token 5h usage trend · time axis",
+        "r집계 표 · ←→/PgUp·PgDn/Home·End 스크롤 · u/usage · Esc닫기":
+            "r table · ←→/PgUp·PgDn/Home·End scroll · u /usage · Esc close",
     },
 })
 # token-saver 행 라벨(SAVER_ROWS, __init__.py). ko 자동 시드, en 보강.
@@ -122,6 +129,7 @@ i18n.register({
         "pscreen.hour_suffix": "시",
         "pscreen.recon_top": "실측(/usage Δ%)과 추정(스크랩 ~Σ)은 의미가 다른 두 출처 — 절대 일치가 아니라 추세 상관을 봅니다",
         "pscreen.recon_empty": "(대사할 실측 스냅샷 구간이 없습니다 — /usage 실측이 2회 이상 쌓이면 생깁니다)",
+        "pscreen.recon_chart_top": "{rng} · 최신 {pct}% · 구간 {n}개 (막대=세션 5h% 실측, ←→ 스크롤)",
         "pscreen.win_session": "이번 5h창 ~Σ{tok}(리셋 {left} 후)",
         "pscreen.win_week": "이번 주 ~Σ{tok}(리셋 {left} 후)",
         # 한도 전용 서브뷰(상단 7줄 블록을 표 자리로 이동 — 작은 화면 정리).
@@ -187,6 +195,7 @@ i18n.register({
         "pscreen.hour_suffix": "h",
         "pscreen.recon_top": "Measured (/usage Δ%) and est (scrape ~Σ) are two different sources — look at trend correlation, not exact match",
         "pscreen.recon_empty": "(no measured snapshot spans to reconcile — appears once /usage measurements accumulate 2+)",
+        "pscreen.recon_chart_top": "{rng} · latest {pct}% · {n} spans (bars=session 5h% measured, ←→ scroll)",
         "pscreen.win_session": "this 5h window ~Σ{tok} (resets in {left})",
         "pscreen.win_week": "this week ~Σ{tok} (resets in {left})",
         "pscreen.tklog_limit_title": "Token usage · Limit (/usage)",
@@ -602,6 +611,125 @@ class _TkTabConnector(Widget):
         return Strip(segs).adjust_cell_length(w, rule_st)
 
 
+class _ReconChart(Widget):
+    """[대사] 뷰의 **시간축 세로 막대 그래프**(사용자 요청 2026-06-20 — 표 대신 시간에
+    따른 5h 사용률 증가를 한눈에). 각 막대=대사 구간 1개, 높이=그 구간 끝의 실측 세션
+    5h%(0~100 고정), 색=임계(≥80 빨강·≥50 노랑·그 외 초록), 5h 창 리셋 구간은 청록.
+    좌우(←→/PgUp·PgDn/Home·End)로 더 이전 구간을 스크롤한다. 폭에 들어가는 만큼만
+    그려 가로 스크롤=그릴 구간 창을 옮기는 것(_ReconChart.x_off, 순수 기하는
+    usagelog.recon_chart)."""
+
+    GUTTER = 4          # 좌측 y축 눈금자 폭(숫자 3 + 축선 1)
+    STEP = 2            # 구간당 칸수(막대 1 + 간격 1)
+    can_focus = True
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.intervals: list = []
+        self.x_off = 0
+        self._cap = 1        # 마지막 빌드의 capacity(페이지 스크롤 보폭)
+        self._max_off = 0    # 마지막 빌드의 최대 오프셋(스크롤 클램프)
+
+    def set_data(self, intervals):
+        self.intervals = intervals or []
+        self.refresh()
+
+    def _plot_dims(self):
+        w = self.size.width
+        h = self.size.height
+        plot_w = max(1, w - self.GUTTER)
+        plot_h = max(1, h - 2)      # 하단 2줄=축선+라벨
+        return plot_w, plot_h
+
+    def _build(self):
+        plot_w, plot_h = self._plot_dims()
+        ch = usagelog.recon_chart(self.intervals, plot_w, plot_h,
+                                  self.x_off, self.STEP)
+        self.x_off = ch["x_off"]
+        self._max_off = ch["max_off"]
+        self._cap = max(1, plot_w // self.STEP)
+        return ch
+
+    def scroll_intervals(self, delta):
+        """막대 창을 delta 구간만큼 옮긴다(음수=더 새, 양수=더 옛). Home/End 는
+        delta=±10**6 로 끝까지."""
+        self.x_off = max(0, min(self._max_off, self.x_off + delta))
+        self.refresh()
+
+    def on_mouse_scroll_down(self, event):   # 휠 아래=더 새 구간(오른쪽)
+        event.stop()
+        self.scroll_intervals(-1)
+
+    def on_mouse_scroll_up(self, event):     # 휠 위=더 옛 구간(왼쪽)
+        event.stop()
+        self.scroll_intervals(1)
+
+    @staticmethod
+    def _bar_style(pct, reset):
+        if reset:
+            return Style(color="cyan")
+        color = "red" if pct >= 80 else "yellow" if pct >= 50 else "green"
+        return Style(color=color, bold=pct >= 50)
+
+    def render_line(self, y: int) -> Strip:
+        w = self.size.width
+        if w <= 0:
+            return Strip([], 0)
+        ch = self._build()
+        plot_w, plot_h = self._plot_dims()
+        grid = ch["grid"]
+        col_iv = ch["col_iv"]
+        muted = Style(dim=True)
+        axis_st = Style(color=theme_color(self, "accent"))
+        segs = []
+        if y < plot_h:
+            # 좌측 눈금자: 위=100·중앙=50·바닥=0 에 숫자+축틱, 그 외 축선만.
+            mid = plot_h // 2
+            if y == 0:
+                lab = "100"
+            elif y == plot_h - 1:
+                lab = "  0"
+            elif y == mid:
+                lab = " 50"
+            else:
+                lab = "   "
+            segs.append(Segment(lab, muted))
+            segs.append(Segment("┤" if lab.strip() else "│", axis_st))
+            # 막대 영역: 열마다 글리프+구간 색.
+            row = grid[y] if y < len(grid) else " " * plot_w
+            x = 0
+            while x < plot_w:
+                iv_i = col_iv[x] if x < len(col_iv) else None
+                if iv_i is None:
+                    # 빈/간격 열은 한 칸씩(인접 막대와 색이 달라 묶지 않음).
+                    segs.append(Segment(row[x] if x < len(row) else " "))
+                    x += 1
+                    continue
+                iv = self.intervals[iv_i]
+                st = self._bar_style(iv.get("pct1", 0) or 0, iv.get("reset"))
+                segs.append(Segment(row[x] if x < len(row) else " ", st))
+                x += 1
+        elif y == plot_h:
+            # x축선: 눈금자 모서리 └ + 막대 영역 ─, 라벨 위치엔 ┬.
+            segs.append(Segment("   ", muted))
+            segs.append(Segment("└", axis_st))
+            line = ["─"] * plot_w
+            for col, _txt in ch["labels"]:
+                if 0 <= col < plot_w:
+                    line[col] = "┬"
+            segs.append(Segment("".join(line), axis_st))
+        elif y == plot_h + 1:
+            # 라벨줄: 막대 아래 시각(겹치지 않게 솎인 것).
+            segs.append(Segment(" " * self.GUTTER, muted))
+            buf = [" "] * plot_w
+            for col, txt in ch["labels"]:
+                for j, c in enumerate(txt):
+                    if 0 <= col + j < plot_w:
+                        buf[col + j] = c
+            segs.append(Segment("".join(buf), muted))
+        return Strip(segs).adjust_cell_length(w)
+
+
 class TokenLogScreen(ModalScreen):
     """토큰 사용량 영속 로그 집계 팝업(#7, 2026-06-12 재설계).
 
@@ -648,6 +776,8 @@ class TokenLogScreen(ModalScreen):
     #tktop { width: 100%; height: auto; color: $text-muted; }
     #tkhint { width: 100%; height: 1; color: $text-muted; }
     #tktable { width: 100%; height: 1fr; }
+    /* [대사] 시간축 그래프: 표와 같은 본문 자리(남는 높이). 평소 숨김. */
+    #tkchart { width: 100%; height: 1fr; }
     """
     _NAV_KEYS = ("up", "down", "pageup", "pagedown", "home", "end")
     _BUCKETS = {"h": "hour", "d": "day", "w": "week", "m": "month"}
@@ -770,6 +900,11 @@ class TokenLogScreen(ModalScreen):
                               cursor_type="row")
             table.can_focus = True
             yield table
+            # [대사] 뷰 전용 시간축 그래프(요청 2026-06-20) — 표와 같은 자리를 차지하되
+            # 평소엔 숨기고 대사 모드에서만 보인다(_refresh 가 display 토글).
+            chart = _ReconChart(id="tkchart")
+            chart.display = False
+            yield chart
             # footer 한 줄: 시(hour) 뷰에서만 '5h/1주 경계까지 남은 시간'(실측 /usage
             # 리셋 표기 기준)을 보인다. 다른 뷰/모드에선 _sync_tabs 가 숨긴다(요청
             # 2026-06-19, 표시 위치=footer/하단 한 줄).
@@ -1103,25 +1238,33 @@ class TokenLogScreen(ModalScreen):
         style = f"bold {color}" if pct >= 50 else color
         return Text(f"{pct:>3}%", justify="right", style=style)
 
-    def _refresh_recon(self, table):
-        """[대사] 뷰(S6 T2): 연속 실측 스냅샷 구간마다 실측 Δ%(세션 5h)와 그 구간의
-        스크랩 추정 Σ를 나란히 — 두 출처의 추세 상관을 눈으로 확인하는 진단 표.
-        절대 일치는 기대하지 않는다(의미가 다른 두 수치 — 시나리오 §0-1)."""
-        rows = usagelog.recon_view(self._reconcile)
-        table.add_column(i18n.t("구간"), key="span", width=25)
-        table.add_column(i18n.t("실측(세션 5h)"), key="meas", width=16)
-        table.add_column(i18n.t("추정Σ"), key="est", width=8)
-        if not rows:
-            table.add_row(i18n.t("pscreen.recon_empty"), "", "")
-        else:
-            # note(계정)는 더는 표시하지 않는다 — 머신-로컬 표시(2026-06-19).
-            for span, meas, est, _note in rows:
-                table.add_row(span, meas, est)
+    def _refresh_recon(self, chart):
+        """[대사] 뷰(S6 T2): 연속 실측 스냅샷 구간의 세션 5h%(실측)를 **시간축 세로
+        막대 그래프**로 — 시간에 따른 사용률 증가/리셋(톱니)을 한눈에(요청 2026-06-20,
+        예전 표 대신). 좌우 스크롤로 더 이전 구간을 본다. 그래프 위젯은 _ReconChart,
+        순수 기하는 usagelog.recon_chart."""
+        if chart is not None:
+            chart.set_data(self._reconcile)
+            chart.focus()
         self.query_one("#tklogtitle", Label).update(
-            i18n.t("토큰 대사 · 실측Δ% vs 추정Σ"))
-        self.query_one("#tktop", Static).update(i18n.t("pscreen.recon_top"))
+            i18n.t("토큰 5h 사용률 추이 · 시간축"))
+        self.query_one("#tktop", Static).update(self._recon_top_line())
         self.query_one("#tkhint", Static).update(
-            i18n.t("r집계로 돌아가기 · u/usage 갱신 · Esc닫기"))
+            i18n.t("r집계 표 · ←→/PgUp·PgDn/Home·End 스크롤 · u/usage · Esc닫기"))
+
+    def _recon_top_line(self):
+        """[대사] 그래프 상단 1줄: 보이는 구간 시간 범위 + 최신 5h% + 안내. 데이터가
+        없으면 안내문(빈 그래프)."""
+        ivs = self._reconcile
+        if not ivs:
+            return i18n.t("pscreen.recon_empty")
+        import time as _t
+        last = ivs[-1]
+        rng = "{}→{}".format(
+            _t.strftime("%m-%d %H:%M", _t.localtime(ivs[0].get("t0", 0))),
+            _t.strftime("%m-%d %H:%M", _t.localtime(last.get("t1", 0))))
+        return i18n.t("pscreen.recon_chart_top", rng=rng,
+                      pct=last.get("pct1", 0) or 0, n=len(ivs))
 
     def _limit_summary(self):
         """상단 1줄 한도 요약 접두('5h 17% · 주 14% · '). 상세(막대·리셋·계정·창Σ)는
@@ -1284,9 +1427,24 @@ class TokenLogScreen(ModalScreen):
         self._sync_tabs()
         table = self.query_one(DataTable)
         table.clear(columns=True)
+        # [대사] 모드는 표 대신 시간축 그래프(_ReconChart)를 보인다 — 본문 자리를
+        # 서로 토글한다(요청 2026-06-20). 다른 모드에선 그래프를 숨겨 표가 차지.
+        try:
+            chart = self.query_one("#tkchart", _ReconChart)
+            chart.display = self._recon_mode
+            table.display = not self._recon_mode
+        except Exception:
+            chart = None
         if self._recon_mode:
-            self._refresh_recon(table)
+            self._refresh_recon(chart)
             return
+        # 대사 그래프에서 빠져나오면 포커스를 다시 표로(숨은 그래프에 포커스가 남아
+        # 키가 화면까지 안 오던 문제 방지).
+        try:
+            if not table.has_focus:
+                table.focus()
+        except Exception:
+            pass
         if self._limit_mode:
             self._refresh_limit(table)
             return
@@ -1503,6 +1661,29 @@ class TokenLogScreen(ModalScreen):
 
     async def on_key(self, event: events.Key):
         k = event.key
+        # [대사] 그래프 모드: 방향키·Page·Home·End 로 시간축을 좌우 스크롤한다(요청
+        # 2026-06-20 — 더 이전 구간 보기). 왼쪽/위=더 옛, 오른쪽/아래=더 새.
+        if self._recon_mode and k in (
+                "left", "right", "up", "down", "pageup", "pagedown",
+                "home", "end"):
+            event.stop()
+            try:
+                chart = self.query_one("#tkchart", _ReconChart)
+            except Exception:
+                return
+            if k in ("left", "up"):
+                chart.scroll_intervals(1)
+            elif k in ("right", "down"):
+                chart.scroll_intervals(-1)
+            elif k == "pageup":
+                chart.scroll_intervals(chart._cap)
+            elif k == "pagedown":
+                chart.scroll_intervals(-chart._cap)
+            elif k == "home":
+                chart.scroll_intervals(10 ** 6)   # 가장 옛(클램프)
+            elif k == "end":
+                chart.scroll_intervals(-10 ** 6)  # 가장 새(클램프)
+            return
         if k in self._BUCKETS:
             event.stop()
             # 기간 뷰로 전환하며 버킷 선택(계정/세션/대사/한도 뷰에서도 한 번에).
