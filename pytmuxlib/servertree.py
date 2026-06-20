@@ -561,21 +561,32 @@ class ServerTreeMixin:
                 if not clients:
                     continue
                 changed = False
-                for tab in sess.tabs:
+                for tab in list(sess.tabs):       # M-2: await 중 tabs 변경 대비 스냅샷
                     win = tab.window
-                    if not getattr(win, "auto_rename", False) or not win.active_pane:
+                    ap = win.active_pane
+                    if not getattr(win, "auto_rename", False) or not ap:
                         continue
                     # P8: _fg_command 는 동기 `ps`/tcgetpgrp(POSIX) 호출이라 이벤트
                     # 루프를 막는다(2초마다 auto_rename 탭마다). 읽기전용 OS 호출이라
                     # 스레드 안전 → executor 로 오프로드해 루프 응답성을 지킨다(_fg_command
                     # 자체는 동기 유지 — 다른 동기 호출부 영향 없음).
                     cmd = await asyncio.get_event_loop().run_in_executor(
-                        None, self._fg_command, win.active_pane)
-                    if cmd and cmd != tab.name:
-                        tab.name = cmd
+                        None, self._fg_command, ap)
+                    if self._autorename_apply(sess, tab, ap, cmd):
                         changed = True
                 if changed:
                     self._broadcast_status(sess)
+
+    def _autorename_apply(self, sess, tab, ap, cmd) -> bool:
+        """executor 로 얻은 fg 명령으로 탭 이름을 갱신할지 결정·적용(M-2). _fg_command
+        executor await 가 read(active_pane)↔write(tab.name) 를 가르는 유일 지점이라,
+        그 사이 kill_window/kill_pane 가 끼어들어 tab 이 세션에서 제거되거나 active_pane
+        이 바뀌었으면 stale 이름을 쓰지 않는다. 변경했으면 True."""
+        if (cmd and cmd != tab.name and tab in sess.tabs
+                and tab.window.active_pane is ap):
+            tab.name = cmd
+            return True
+        return False
 
     def _broadcast_status(self, sess: Session):
         """세션의 모든 클라에 현재 status 를 방송한다. **반드시 per-client**

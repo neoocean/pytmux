@@ -54,6 +54,9 @@ class RemoteLink:
         self.windows: list = []   # 업스트림 status 의 windows(탭 목록) 최신본
         self.task: asyncio.Task | None = None
         self.alive = True
+        # M-1: 이 링크 writer 로의 송신을 직렬화(입력/리사이즈 릴레이가 다중-await
+        # 송신과 섞여 순서가 뒤집히지 않게). _link_write 가 이 락을 쓴다.
+        self.write_lock = asyncio.Lock()
         # Stage 3: 재연결/재시작 복원용 원 spec({"host":…,"endpoint":…})과 소속 세션.
         self.spec: dict = {}
         self.sess = None
@@ -669,6 +672,12 @@ class ServerRemoteMixin:
             return None
         return self._remotes_dict().get(client.remote_view)
 
+    async def _link_write(self, link, msg) -> None:
+        """업스트림 링크로의 송신을 link.write_lock 으로 직렬화한다(M-1) — 빠른 연속
+        입력/리사이즈 릴레이가 서로/다중-await 송신과 섞여 순서가 뒤집히지 않게."""
+        async with link.write_lock:
+            await write_msg(link.writer, msg)
+
     def remote_relay(self, client, msg) -> bool:
         """보는 중인 클라의 메시지를 업스트림으로 그대로 전달. 링크가 없으면(죽음
         직후 레이스) False — 호출부가 로컬 폴백."""
@@ -677,7 +686,7 @@ class ServerRemoteMixin:
             client.remote_view = None
             return False
         try:
-            asyncio.create_task(write_msg(link.writer, msg))
+            asyncio.create_task(self._link_write(link, msg))
         except (OSError, ConnectionError):
             return False
         return True
@@ -705,7 +714,7 @@ class ServerRemoteMixin:
         out = dict(msg)
         out["src"] = ri                       # 병합 전역 index → 원격 로컬 index
         try:
-            asyncio.create_task(write_msg(link.writer, out))
+            asyncio.create_task(self._link_write(link, out))
         except (OSError, ConnectionError):
             return False
         return True
@@ -719,8 +728,8 @@ class ServerRemoteMixin:
             return False
         link, ri = hit
         client.remote_view = link.host
-        await write_msg(link.writer,
-                        {"t": "cmd", "action": "select_window", "index": ri})
+        await self._link_write(
+            link, {"t": "cmd", "action": "select_window", "index": ri})
         return True
 
     async def remote_new_window(self, client, sess, host: str | None = None,
@@ -748,7 +757,7 @@ class ServerRemoteMixin:
             return False
         client.remote_view = link.host
         try:
-            await write_msg(link.writer, {"t": "cmd", "action": "new_window"})
+            await self._link_write(link, {"t": "cmd", "action": "new_window"})
         except (OSError, ConnectionError):
             return False
         return True

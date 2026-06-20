@@ -4125,3 +4125,26 @@ async def test_flush_to_client_drops_slow_consumer():
         assert c3 in srv.clients and not c3.writer.closed, "정상 클라 유지"
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_autorename_apply_skips_stale_tab():
+    """M-2: _fg_command executor await 동안 탭이 제거되거나(kill_window) active_pane 이
+    바뀌면 stale 자동이름을 쓰지 않는다(정상일 때만 적용)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        tab = sess.tabs[0]
+        ap = tab.window.active_pane
+        # 정상 → 적용
+        assert srv._autorename_apply(sess, tab, ap, "vim") is True
+        assert tab.name == "vim"
+        # 탭이 세션에서 제거됨 → stale 미적용
+        sess.tabs.remove(tab)
+        assert srv._autorename_apply(sess, tab, ap, "bash") is False
+        assert tab.name == "vim", "제거된 탭에 stale 이름 안 씀"
+        # active_pane 이 바뀜 → 미적용
+        sess.tabs.append(tab)
+        assert srv._autorename_apply(sess, tab, object(), "bash") is False
+        assert tab.name == "vim"
+    finally:
+        await teardown(srv, task, sock)
