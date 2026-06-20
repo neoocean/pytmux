@@ -96,26 +96,18 @@ _DONE_IDLE_FRAMES = 3
 # `/rc` 를 건너뛰게 된다. 원격이 정말 꺼진 새 세션이면 이만큼 지나도 안 떠 정상적으로
 # `/rc` 를 1회 쏜다. 30Hz flush 기준 ~1초 — 원격제어가 켜지는 지연은 무시할 만하다.
 _RC_CONFIRM_FRAMES = 30
-# 세션 피드백 프롬프트 자동 Dismiss(#26): 배너를 감지하면 **즉시** Esc 를 1회 쏜다
-# (공통 경로는 이 한 번으로 닫혀 곧바로 사라진다 — "최대한 빨리").
-# Dismiss 키는 Esc(\x1b). 이 피드백 배너는 입력 컴포저 **위**에 비모달로 떠 있어
-# 컴포저가 계속 포커스를 갖는다 — 예전처럼 '0'(0x30)을 쏘면 Dismiss 되지 않고 그대로
-# 컴포저에 찍혀, 지워지지 않는 "00"이 프롬프트에 박히고 다음 입력에 딸려 들어간다
-# (사용자 보고). Claude Code 의 오버레이는 Space/Enter/Esc 로만 닫히는데, Space 는
-# 컴포저에 공백을, Enter 는 컴포저 제출을 유발할 수 있어 인쇄 불가·부작용 최소인 Esc 만
-# 쓴다(닫지 못해도 컴포저를 오염시키지 않음).
+# 진행을 막는 Claude 오버레이 자동 Dismiss 키 = Esc(\x1b). 현재 유일한 대상은 `/rc`
+# 원격 제어 관리 메뉴(Continue/Disconnect/QR, "Esc to continue") — 응답 대기로 진행을
+# 막아 Esc=Continue 를 첫 감지에 **딱 한 번** 주입한다(_scan_claude). 절대 재주입하지
+# 않는다 — 이중 Esc=되감기(Rewind) 모달의 직접 원인이었다(첫 Esc 가 메뉴를 닫아도 feed
+# 지연으로 화면이 아직 메뉴에 매칭되는 동안 Esc#2 가 나가면 Claude Code 가 이중 Esc 를
+# Rewind 단축키로 해석해 모달로 진행을 막는다, 사용자 보고 2026-06-20). _rc_menu_active
+# 디바운스로 메뉴 인스턴스당 1회만 쏜다.
 #
-# ★ 재주입(retry) 영구 제거 — 이중 Esc=되감기(Rewind) 모달의 직접 원인이었다.
-# 과거엔 첫 Esc 가 레이스로 누락될 수 있다고 보고 "단말이 다시 그려졌을 때만 재주입"
-# 가드로 Esc#2 를 허용했지만, 실전에선 배너 아래 컴포저의 스피너/경과시간 애니메이션
-# ("Cogitated for 7m 55s" 카운터)이 **매 프레임 feed 를 진행**시켜 그 가드를 무력화한다
-# — Esc#1 이 이미 배너를 닫았는데 feed 지연으로 화면 텍스트가 아직 배너에 매칭되는 동안
-# Esc#2 가 나가고, Claude Code 가 이중 Esc 를 Rewind 단축키로 해석해 모달 팝업("Restore
-# the code... Enter to continue · Esc to cancel")을 띄워 **진행을 완전히 막는다**
-# (사용자 보고 2026-06-20, 두 번째 스크린샷). 그래서 이제 **배너당 Esc 는 딱 한 번**만
-# 쏘고 절대 재시도하지 않는다. 한 번의 Esc 는 비모달 배너를 거의 항상 닫고, 드물게
-# 누락돼 배너가 남아도 비모달이라 작업을 막지 않으며 server_filter_rows 가 화면에서
-# 가린다 — 차단되는 Rewind 모달보다 훨씬 안전한 트레이드오프.
+# ★ 세션 피드백 프롬프트("How is Claude doing this session?")는 이 Esc 경로를 더 이상
+# 타지 않는다(사용자 보고 2026-06-20): 단일 Esc 가 종종 Dismiss 대신 작동 중인 턴을
+# interrupt 했다. 이 배너는 컴포저 **위**에 비모달로 떠 있어 안 닫아도 작업을 막지 않고,
+# server_filter_rows(_blank_feedback_banner)가 화면에서 완전히 가려 키 주입이 불필요하다.
 _FEEDBACK_DISMISS_KEY = b"\x1b"
 # M17(T7) 경고 임계는 opt(server.py: claude_long_turn_sec 기본 600 / claude_repeat_alert
 # 기본 3, 0=끔). 스캔의 warn 블록이 self.* 를 읽는다.
@@ -849,10 +841,10 @@ class ServerClaudeMixin:
                 pending = ((p._was_busy and p._claude == "idle"
                             and p._idle_frames < _DONE_IDLE_FRAMES)
                            or (p._hdr_claude and not p._claude)
-                           # 피드백/`/rc` 메뉴 배너가 떠 디바운스 중: 화면이 정적이어도
-                           # 배너가 사라지는 프레임을 관측해 _feedback_active 를 풀고
-                           # 다음 인스턴스에 재무장하려면 계속 스캔해야 한다(#26).
-                           or p._feedback_active
+                           # `/rc` 메뉴 배너가 떠 Esc 디바운스 중: 화면이 정적이어도
+                           # 메뉴가 사라지는 프레임을 관측해 _rc_menu_active 를 풀고
+                           # 다음 인스턴스에 재무장하려면 계속 스캔해야 한다.
+                           or p._rc_menu_active
                            # auto `/rc` 디바운스 중(_RC_CONFIRM_FRAMES): 정적 idle
                            # 화면이어도 _idle_frames 를 임계까지 진행시켜 발화하거나,
                            # 그 사이 도착한 'Remote Control active' 오버레이를 관측해
@@ -873,31 +865,32 @@ class ServerClaudeMixin:
                 # fg 검사) '포맷 미인식' 경고를 세워 추적 중단을 가시화한다.
                 if self._update_fmt_unknown(p, new_cl is not None):
                     changed = True
-                # Esc 로 닫는 Claude 비모달 오버레이 자동 Dismiss(#26): Esc
-                # (_FEEDBACK_DISMISS_KEY)를 한 번 주입해 치운다. 같은 화면에 반복
-                # 주입하지 않도록 사라질 때까지 디바운스한다(아래 stale 이중-Esc 가드).
-                # 대상은 둘 — 둘 다 Esc 한 키로 닫히고 동시 출현하지 않아 같은
-                # 디바운스 상태(_feedback_*)를 공유한다:
-                #  ① 세션 피드백 프롬프트 "How is Claude doing this session?".
-                #  ② `/rc` 원격 제어 관리 메뉴(Continue/Disconnect/QR). auto-launch 가
-                #     새 세션마다 /rc 를 1회 주입하는데, 현재 CLI 의 /rc 는 이 메뉴를
-                #     띄워 "Esc to continue" 응답 대기로 진행을 막는다(사용자 보고
-                #     2026-06-18). Esc=Continue 라 원격은 켜진 채 메뉴만 닫혀 자동화가
-                #     이어진다. 메뉴 출현은 claude_remote_active 분기가 _rc_done 도 세워
-                #     같은 세션에 /rc 가 재발하지 않는다.
-                if claude_feedback_prompt(txt) or claude_remote_menu(txt):
-                    # 첫 감지 → **딱 한 번** Esc. 절대 재주입하지 않는다(이중 Esc=Rewind
-                    # 모달 차단, 위 상수 주석 참조). 배너가 화면에서 사라질 때까지
-                    # _feedback_active 로 디바운스해 같은 배너 인스턴스에 두 번 쏘지 않는다.
-                    if not p._feedback_active:
-                        p._feedback_active = True
+                # `/rc` 원격 제어 관리 메뉴(Continue/Disconnect/QR) 자동 Dismiss: 이
+                # 메뉴는 "Esc to continue" 응답 대기로 **진행을 막으므로**(auto-launch 가
+                # 새 세션마다 /rc 를 1회 주입, 사용자 보고 2026-06-18) Esc=Continue 를
+                # 첫 감지에 **딱 한 번** 주입해 치운다(원격은 켜진 채 메뉴만 닫혀 자동화가
+                # 이어진다). 절대 재주입하지 않는다(이중 Esc=Rewind 모달 차단, 위 상수
+                # 주석) — _rc_menu_active 로 메뉴가 사라질 때까지 디바운스한다. 메뉴 출현은
+                # claude_remote_active 분기가 _rc_done 도 세워 같은 세션에 /rc 가 재발하지
+                # 않는다.
+                #
+                # ★ 세션 피드백 프롬프트("How is Claude doing this session?")는 더 이상
+                # Esc 를 주입하지 않는다(사용자 보고 2026-06-20): 단일 Esc 가 종종 Dismiss
+                # 대신 작동 중인 턴을 interrupt 했다 — busy 중 배너 텍스트가 화면에 매칭
+                # 되거나 feed 지연으로 stale 매칭이 남으면 Esc 가 interrupt 키로 해석된다.
+                # 이 배너는 비모달이라 안 닫아도 컴포저를 막지 않고(사용자의 다음 Enter/
+                # Space 가 자연히 닫는다), server_filter_rows(_blank_feedback_banner)가
+                # 배너를 화면에서 완전히 가린다 — 키 주입 없는 표시 필터만으로 충분하다.
+                if claude_remote_menu(txt):
+                    if not p._rc_menu_active:
+                        p._rc_menu_active = True
                         if p.pty is not None:
                             try:
                                 p.pty.write(_FEEDBACK_DISMISS_KEY)
                             except OSError:
                                 pass
                 else:
-                    p._feedback_active = False
+                    p._rc_menu_active = False
                 # 컨텍스트 하드스톱 자동복구(요청): 화면이 "Context limit reached ·
                 # /compact or /clear to continue" 면 컨텍스트가 꽉 차 Claude 가 완전히
                 # 멈춘 것 — idle-기반 auto_compact(N초 지속 후 발화)와 **다른 트리거**로,

@@ -445,22 +445,17 @@ async def test_startup_rules_injection():
         await teardown(srv, task, sock)
 
 
-async def test_auto_dismiss_feedback_prompt():
-    # #26: Claude 세션 피드백 프롬프트가 뜨면 **즉시** Esc(Dismiss)을 **딱 한 번** 주입
-    # 하고 절대 재시도하지 않는다. 과거엔 "단말이 다시 그려지면 재주입"으로 누락된 첫
-    # Esc 를 보완하려 했지만, 배너 아래 컴포저의 스피너/경과시간 애니메이션이 매 프레임
-    # feed 를 진행시켜 그 가드를 무력화 → Esc#1 이 닫은 stale 배너 위로 Esc#2 가 나가고
-    # Claude Code 가 이중 Esc 를 Rewind 단축키로 해석해 모달 팝업으로 진행을 막았다
-    # (사용자 보고 2026-06-20, 두 번째 스크린샷). 그래서 재주입을 영구 제거했다 — 한 번의
-    # Esc 로 거의 항상 닫고, 드물게 남아도 비모달이라 작업을 막지 않으며 화면에선 가려진다.
-    # Dismiss 키는 Esc 다 — '0' 은 비모달 배너 아래 컴포저에 그대로 찍혀 지워지지
-    # 않는 "00" 을 남기던 버그(사용자 보고)라 인쇄 불가 키 Esc 로 바꿨다.
+async def test_feedback_prompt_no_key_injection():
+    # 사용자 보고(2026-06-20): 세션 피드백 프롬프트("How is Claude doing this session?")
+    # 에 대한 Esc 자동 주입이 종종 Dismiss 대신 작동 중인 턴을 **interrupt** 했다(busy 중
+    # 배너 텍스트 매칭/feed 지연 stale 매칭 → 단일 Esc 가 interrupt 키로 해석). 그래서
+    # 피드백 프롬프트는 더 이상 **어떤 키도 주입하지 않는다** — 비모달이라 안 닫아도 작업을
+    # 막지 않고, server_filter_rows(_blank_feedback_banner)가 화면에서 가린다(표시 필터만).
     import importlib
     from pytmuxlib.claude import claude_feedback_prompt
     # serverclaude 는 claude-code 플러그인으로 이전됨(하이픈 디렉토리 → importlib).
     _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
-    _FEEDBACK_DISMISS_KEY = _sc._FEEDBACK_DISMISS_KEY
-    assert _FEEDBACK_DISMISS_KEY == b"\x1b"   # Esc — 컴포저에 인쇄 문자를 남기지 않음
+    assert _sc._FEEDBACK_DISMISS_KEY == b"\x1b"
     assert claude_feedback_prompt("x How is Claude doing this session? (optional)")
     assert not claude_feedback_prompt("just normal output")
     _BANNER = (b"\x1b[2J\x1b[HHow is Claude doing this session? (optional)\r\n"
@@ -472,24 +467,13 @@ async def test_auto_dismiss_feedback_prompt():
         p = win.active_pane
         writes = []
         p.pty.write = lambda b: writes.append(b)   # 주입 캡처
-        p.feed(_BANNER)
-        srv._scan_claude(sess, win)
-        assert writes == [b"\x1b"], writes               # 첫 감지 → 즉시 1회
-        assert p._feedback_active is True
-        # ★ 이중 Esc=Rewind 회귀 가드: 배너가 화면에 머무는 동안(스피너 애니메이션으로
-        # 매 프레임 redraw 되든 정적이든) **절대** 두 번째 Esc 를 쏘지 않는다.
+        # 배너가 여러 프레임 머물러도(스피너처럼 redraw) **단 한 번도** 키를 쏘지 않는다.
         for _ in range(20):
-            p.feed(_BANNER)               # redraw(스피너처럼 feed 진행)되어도
+            p.feed(_BANNER)
             srv._scan_claude(sess, win)
-        assert writes == [b"\x1b"], (writes, "배너당 Esc 는 딱 한 번 — 이중 Esc=Rewind 차단")
-        # 프롬프트가 사라지면 디바운스가 풀려 다음 인스턴스에 다시 무장된다.
-        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")  # 프롬프트 사라짐
-        srv._scan_claude(sess, win)
-        assert p._feedback_active is False, "사라지면 재무장"
-        # 새 배너 인스턴스 → 다시 한 번 Esc.
-        p.feed(_BANNER)
-        srv._scan_claude(sess, win)
-        assert writes == [b"\x1b", b"\x1b"], (writes, "새 인스턴스엔 다시 한 번")
+        assert writes == [], (writes, "피드백 프롬프트엔 키 주입 없음 — interrupt 위험 제거")
+        # `/rc` 메뉴 디바운스 상태와도 무관(피드백은 그 상태를 건드리지 않는다).
+        assert p._rc_menu_active is False
     finally:
         await teardown(srv, task, sock)
 
@@ -517,8 +501,8 @@ async def test_remote_menu_matcher_narrow():
 async def test_auto_dismiss_remote_control_menu():
     # 사용자 보고(2026-06-18): auto-launch 가 새 세션마다 /rc 를 주입하는데 현재 Claude
     # CLI 의 /rc 는 원격 제어 관리 메뉴(Continue/Disconnect/QR, "Esc to continue")를 띄워
-    # 진행을 가로막는다. 피드백 프롬프트(#26)와 같은 Esc 자동 Dismiss 경로로 치운다 —
-    # Esc=Continue 라 원격은 켜진 채 메뉴만 닫힌다. 같은 _feedback_* 디바운스를 공유한다.
+    # 진행을 가로막는다. Esc 자동 Dismiss 로 치운다 — Esc=Continue 라 원격은 켜진 채
+    # 메뉴만 닫힌다. _rc_menu_active 로 메뉴 인스턴스당 Esc 1회만 쏜다(이중 Esc=Rewind 차단).
     import importlib
     _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
     _DISMISS = _sc._FEEDBACK_DISMISS_KEY
@@ -539,7 +523,7 @@ async def test_auto_dismiss_remote_control_menu():
         p.feed(_MENU)
         srv._scan_claude(sess, win)
         assert writes == [b"\x1b"], (writes, "메뉴 첫 감지 → 즉시 Esc 1회")
-        assert p._feedback_active is True
+        assert p._rc_menu_active is True
         # 메뉴가 화면에 머무는 동안 redraw 돼도 두 번째 Esc 없음(이중 Esc=Rewind 차단).
         for _ in range(10):
             p.feed(_MENU)
@@ -548,7 +532,7 @@ async def test_auto_dismiss_remote_control_menu():
         # 메뉴가 닫히면(다음 idle 화면) 재무장 — 다음 세션 메뉴에 다시 Esc.
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
         srv._scan_claude(sess, win)
-        assert p._feedback_active is False, "사라지면 재무장"
+        assert p._rc_menu_active is False, "사라지면 재무장"
     finally:
         await teardown(srv, task, sock)
 

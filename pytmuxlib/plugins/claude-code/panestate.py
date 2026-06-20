@@ -82,10 +82,11 @@ def init_pane(pane) -> None:
     pane._fmt_first_mono = None
     pane._fmt_logged = False
     pane._fmt_check_mono = 0.0
-    # 세션 피드백 프롬프트/`/rc` 메뉴 자동 Dismiss(#26): 배너가 떠 있는 동안 True
-    # 로 디바운스해 **배너당 Esc 를 딱 한 번**만 쏜다. 재주입(이중 Esc)은 Rewind 모달
-    # 을 띄워 진행을 막던 버그라 영구 제거했다(servermixin _FEEDBACK_DISMISS_KEY 주석).
-    pane._feedback_active = False
+    # `/rc` 원격 제어 메뉴 자동 Dismiss: 메뉴가 떠 있는 동안 True 로 디바운스해
+    # **메뉴당 Esc 를 딱 한 번**만 쏜다. 재주입(이중 Esc)은 Rewind 모달을 띄워 진행을
+    # 막던 버그라 영구 제거했다(servermixin _FEEDBACK_DISMISS_KEY 주석). 세션 피드백
+    # 프롬프트는 더 이상 Esc 를 안 쏜다(표시 필터로만 가림) — 이 상태와 무관하다.
+    pane._rc_menu_active = False
     # 수동 /clear 감지 디바운스(환영 배너가 머무는 동안 토큰세션 재리셋 방지).
     pane._welcome_seen = False
     pane._rules_pending = False     # 시작 규칙 주입 예약(다음 idle 1회, #27)
