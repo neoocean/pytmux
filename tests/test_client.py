@@ -1377,11 +1377,9 @@ async def test_token_log_screen_aggregates_and_switches():
 
 
 async def test_token_log_recon_view_toggle():
-    """[r]/[대사] 가 집계 ↔ 대사 **시간축 그래프** 뷰를 토글한다(요청 2026-06-20 —
-    표 대신 그래프). 대사 뷰는 그래프 위젯(_ReconChart)을 보이고 표를 숨기며, 상단엔
-    시간 범위·최신 5h%·구간 수를, 다시 [r] 로 집계 표로 돌아온다(닫히지 않음)."""
+    """S6 T2: [r]/[대사] 가 집계 ↔ 대사 뷰를 토글한다 — 대사 뷰는 실측 Δ%(리셋
+    구분)와 추정 ~Σ 를 나란히 보이고, 다시 [r] 로 집계로 돌아온다(닫히지 않음)."""
     async def body(app, pilot, srv):
-        from textual.widgets import DataTable
         base = 1_700_000_000.0
         recs = [{"ts": base + 200, "tab": 0, "pane": 1, "session": 1,
                  "account": "me@x.org", "tokens": 1500}]
@@ -1398,21 +1396,14 @@ async def test_token_log_recon_view_toggle():
         await pilot.press("r")
         await pilot.pause(0.1)
         assert app.screen_stack[-1] is scr, "[r] 는 닫지 않음"
-        assert scr._recon_mode
-        # 대사 모드: 그래프 보이고 표 숨김.
-        chart = scr.query_one("#tkchart")
-        assert chart.display and not scr.query_one(DataTable).display
         joined = _tok_text(scr)
-        assert "사용률 추이" in joined, joined          # 그래프 제목
-        assert "최신 2%" in joined and "구간 2개" in joined, joined
-        # 막대 글리프가 실제로 렌더된다.
-        rendered = "\n".join(chart.render_line(y).text
-                             for y in range(chart.size.height))
-        assert any(b in rendered for b in "▁▂▃▄▅▆▇█"), rendered
-        await pilot.press("r")                     # 집계 표로 복귀
+        assert "5%→9% (Δ+4)" in joined, joined
+        assert "9%→2% (리셋)" in joined, joined
+        assert "~1.5k" in joined and "~50" in joined, joined
+        # 계정(비고) 열은 제거됐다 — 머신-로컬 표시(2026-06-19).
+        assert "계정혼합/미상" not in joined, joined
+        await pilot.press("r")                     # 집계 뷰로 복귀
         await pilot.pause(0.1)
-        assert not scr._recon_mode
-        assert scr.query_one(DataTable).display and not chart.display
         joined2 = _tok_text(scr)
         assert "Δ+4" not in joined2 and "Σ1.5k" in joined2, joined2
     await _with_app(body)
