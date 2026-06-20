@@ -506,6 +506,12 @@ class Server(*_SERVER_BASES):
 
     def handle_control(self, line: str):
         """외부 CLI(`pytmux cmd ...`)에서 보낸 명령을 서버 측에서 처리한다."""
+        # 비-str line(악성·버그 인증 클라가 보낸 int/None/list 등)은 shlex.split 에서
+        # AttributeError 로 새 handle_client 밖으로 전파된다(트레이스백 노이즈 + 연결
+        # 비정상 드롭). R1(비-dict 첫 프레임) 가드와 같은 철학으로 깨끗이 거절한다.
+        # 런타임 발견: redteam post-auth 퍼징(SECURITY_REVIEW §11 R3).
+        if not isinstance(line, str):
+            return "bad-line"
         try:
             parts = shlex.split(line)
         except ValueError:

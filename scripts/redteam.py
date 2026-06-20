@@ -4,10 +4,11 @@
 이어, **실행 중인 서버**를 밖에서 두드리며 자원(메모리·fd)을 표본한다. 두 모드:
 
   --spawn (기본): 격리된 인프로세스 서버를 띄워 적대 배터리(인증 우회·프레임 퍼징)를
-      대량 **순차** 반복한 뒤 **동시 폭주**(웨이브당 width 연결을 진짜 동시에 열어 accept
-      루프·연결당 태스크·fd 천장 압박)까지 던지며 self 메모리(tracemalloc)·열린 fd 를
-      표본해 ① 서버 생존 ② 메모리 선형 상한 ③ fd 누수 없음 ④ 순차·동시 양쪽 무인가
-      수용 0 을 단언한다. 자기완결(회귀 test_redteam 와 코어 공유).
+      대량 **순차** 반복 → **동시 폭주**(width 연결 동시 열기) → **슬로로리스**(half-open
+      잡아두고 정상 클라 응답성 표본) → **post-auth 퍼징**(유효 토큰 통과 후 명령 핸들러
+      악성 입력)까지 던지며 self 메모리(tracemalloc)·열린 fd 를 표본해 ① 서버 생존
+      ② 메모리 선형 상한 ③ fd 누수 없음 ④ 무인가 수용 0 ⑤ 슬로로리스 중 정상 트래픽
+      안 굶김 ⑥ post-auth 생존을 단언한다. 자기완결(회귀 test_redteam 와 코어 공유).
 
   --attach ENDPOINT: 이미 도는 서버(office·default 데몬)에 붙어 **비파괴** 배터리만
       던진다 — 인증 우회 시도는 서버가 거절하므로 무영향, 유효 토큰으론 **read-only
@@ -34,6 +35,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import tracemalloc
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -312,6 +314,133 @@ async def run_concurrent_flood(endpoint: str, waves: int, width: int, *,
     return counts
 
 
+async def run_slowloris(endpoint: str, token: str | None, *, n_conns: int = 50,
+                        hold_sec: float = 1.0, probes: int = 8) -> dict:
+    """Half-open(slowloris) 내성 — n_conns 개 연결을 열어 **불완전 프레임**(유효 4바이트
+    길이프리픽스만 보내고 본문은 보류)을 보내 서버를 매단다(read_msg 의 readexactly(length)
+    가 본문을 기다리며 그 연결 태스크가 잡힌다 — 서버에 읽기 타임아웃이 없다). 잡아둔 채
+    유효 토큰 list 왕복(probes 회)으로 **정상 클라 응답성(RTT)** 을 표본해 head-of-line
+    독립(잡아둔 연결이 정상 트래픽을 굶기지 않음)을 확인하고, 전부 닫은 뒤 서버 생존을
+    단언한다. 각 연결은 hold_sec 뒤 닫혀 라이브에도 시한부.
+
+    반환 {held, probe_ok, probe_fail, max_rtt_ms, alive_after}.
+      probe_ok>0·max_rtt 유한 = 슬로로리스가 정상 트래픽을 못 굶김(내성).
+      probe 전멸(probe_ok=0) = 연결 고갈로 정상 클라까지 막힘(슬로로리스 DoS 신호).
+    """
+    writers = []
+    stall = (1024).to_bytes(4, "big")        # length=1024 약속, 본문 0바이트 → 서버 대기
+    held = 0
+    probe_ok = probe_fail = 0
+    max_rtt_ms = 0.0
+    try:
+        for _ in range(n_conns):
+            try:
+                _r, w = await _open(endpoint)
+            except OSError:
+                continue
+            try:
+                w.write(stall)
+                await w.drain()
+                writers.append(w)
+            except OSError:
+                with contextlib.suppress(Exception):
+                    w.close()
+        held = len(writers)
+        for _ in range(probes):
+            t0 = time.monotonic()
+            ok = await authed_list_alive(endpoint, token)
+            dt = (time.monotonic() - t0) * 1000.0
+            if ok:
+                probe_ok += 1
+                max_rtt_ms = max(max_rtt_ms, dt)
+            else:
+                probe_fail += 1
+            await asyncio.sleep(hold_sec / max(1, probes))
+    finally:
+        for w in writers:
+            with contextlib.suppress(Exception):
+                w.close()
+    await asyncio.sleep(0.05)                 # 서버가 매달린 readexactly 를 EOF 로 풀 시간
+    alive = await authed_list_alive(endpoint, token)
+    return {"held": held, "probe_ok": probe_ok, "probe_fail": probe_fail,
+            "max_rtt_ms": round(max_rtt_ms, 1), "alive_after": alive}
+
+
+def _authed_fuzz_top(token: str | None) -> list[dict]:
+    """유효 토큰을 실은 **악성 인증 프레임**(top-level: control/list/unknown). auth 게이트를
+    통과한 뒤 명령 핸들러의 런타임 내성을 친다. kill-server 류 정상-파괴 명령은 제외."""
+    tk = ({"token": token} if token else {})
+    huge = "A" * (1 << 20)                    # 1 MiB 제어 라인(자원·파싱 압박)
+    return [
+        {"t": "control", "line": "\x00\xff ;;; $(rm -rf /) `id`", **tk},
+        {"t": "control", "line": huge, **tk},
+        {"t": "control", "line": 1234, **tk},                 # 비-str line
+        {"t": "list", "junk": [1, {"a": huge[:2000]}], **tk}, # 과대 부속 필드
+        {"t": "no_such_action", "x": [1, 2, 3], **tk},
+    ]
+
+
+def _authed_fuzz_loop() -> list[dict]:
+    """hello 채택 후 **루프 메시지**(resize/input/scroll/cmd/unknown) 악성 변형. 디스패치
+    try/except 가드를 런타임으로 실증한다(정적으로는 '잡힐 것'만 추론)."""
+    huge = "A" * (1 << 20)
+    return [
+        {"t": "resize", "cols": "abc", "rows": None},
+        {"t": "resize", "cols": -5, "rows": 10 ** 9},         # 음수·거대(clamp 확인)
+        {"t": "input", "data": "!!!not-valid-base64!!!"},
+        {"t": "input", "data": 12345},                        # 비-str(디코드 가드)
+        {"t": "scroll", "delta": "x"},
+        {"t": "cmd", "name": None, "args": huge[:2000]},
+        {"t": "zzz_unknown_in_loop"},
+    ]
+
+
+async def run_authed_fuzz(endpoint: str, token: str | None) -> dict:
+    """인증 통과 후(post-auth) 명령 핸들러 내성 — 유효 토큰을 실은 악성 프레임으로
+    control/resize/input/scroll/cmd/unknown 디스패치를 친다. **격리 spawn 전용**(실 세션에
+    주입되므로 라이브 attach 엔 안 씀). 각 프레임 송신 후 서버 프로세스 생존을 단언.
+
+    반환 {sent, alive_after}. 정적 검토가 '디스패치 try/except 가 잡을 것'이라 한 가정을
+    런타임 실행으로 확증한다 — 어떤 인증된 악성 입력에도 서버는 살아 있어야 한다.
+    """
+    sent = 0
+    for frame in _authed_fuzz_top(token):
+        try:
+            _r, w = await _open(endpoint)
+        except OSError:
+            continue
+        try:
+            w.write(protocol.frame_msg(frame))
+            await w.drain()
+            await _recv(_r, timeout=1.0)
+            sent += 1
+        except OSError:
+            pass
+        finally:
+            with contextlib.suppress(Exception):
+                w.close()
+    # hello 채택 → 루프 메시지 퍼징(같은 연결).
+    hello = {"t": "hello", "cols": 80, "rows": 24}
+    if token:
+        hello["token"] = token
+    with contextlib.suppress(OSError):
+        _r, w = await _open(endpoint)
+        try:
+            w.write(protocol.frame_msg(hello))
+            await w.drain()
+            await _recv(_r, timeout=1.0)       # 초기 layout/screen
+            for frame in _authed_fuzz_loop():
+                w.write(protocol.frame_msg(frame))
+                await w.drain()
+                sent += 1
+            await asyncio.sleep(0.1)           # 디스패치 처리 시간
+        finally:
+            with contextlib.suppress(Exception):
+                w.close()
+    alive = await authed_list_alive(endpoint, token)
+    return {"sent": sent, "alive_after": alive}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 모드: spawn(자기완결) / attach(라이브 비파괴)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -414,6 +543,10 @@ async def redteam_spawn(rounds: int, *, conc_waves: int = 20,
         counts = await run_battery(resolved, rounds)
         # 순차 배터리 뒤 동시 폭주 — accept 루프·연결당 태스크·fd 천장을 압박한다.
         conc = await run_concurrent_flood(resolved, conc_waves, conc_width)
+        # half-open 잡아두기(슬로로리스) — 정상 클라 응답성을 굶기는지 본다.
+        slow = await run_slowloris(resolved, token, n_conns=50, hold_sec=0.8)
+        # 인증 통과 후(post-auth) 명령 핸들러 내성 — 격리 spawn 에서만(실 세션 미주입).
+        authed = await run_authed_fuzz(resolved, token)
 
         gc.collect()
         mem1, _ = tracemalloc.get_traced_memory()
@@ -423,7 +556,8 @@ async def redteam_spawn(rounds: int, *, conc_waves: int = 20,
 
         report = {
             "mode": "spawn", "rounds": rounds, "battery": counts,
-            "concurrent": conc, "server_alive": alive,
+            "concurrent": conc, "slowloris": slow, "authed_fuzz": authed,
+            "server_alive": alive,
             "fd_before": fd0, "fd_after": fd1, "fd_growth": fd1 - fd0,
             "mem_growth_bytes": mem1 - mem0,
             "verdict_ok": (
@@ -433,6 +567,8 @@ async def redteam_spawn(rounds: int, *, conc_waves: int = 20,
                 and counts["rejected"] + counts["dropped"] >= counts["sent"]
                 and conc["rejected"] + conc["dropped"] + conc["errors"]
                     >= conc["sent"]
+                and slow["alive_after"] and slow["probe_ok"] > 0   # 정상 클라 안 굶김
+                and authed["alive_after"]                          # post-auth 생존
                 and (fd0 < 0 or fd1 - fd0 <= _FD_SLACK)
                 and (mem1 - mem0) <= _MEM_GROWTH_MAX),
         }
@@ -449,27 +585,36 @@ async def redteam_spawn(rounds: int, *, conc_waves: int = 20,
 
 async def redteam_attach(endpoint: str, pid: int | None, rounds: int,
                          destructive: bool, *, conc_waves: int = 10,
-                         conc_width: int = 20) -> dict:
+                         conc_width: int = 20, slowloris: bool = False) -> dict:
     token = ipc.read_token(endpoint)
     res0 = ({"rss_kb": pid_rss_kb(pid), "fds": pid_fds(pid)} if pid else None)
     counts = await run_battery(endpoint, rounds, destructive=destructive)
     # 라이브 비파괴 동시 폭주(연결 즉시 닫힘): 외부 서버의 동시성 경로를 본다.
     conc = await run_concurrent_flood(endpoint, conc_waves, conc_width,
                                       destructive=destructive)
+    # 슬로로리스는 라이브 데몬의 연결을 잠깐 잡으므로 기본 OFF(--slowloris 옵트인).
+    # 켜도 hold 짧고 자동 해제 — 비파괴지만 보수적으로 둔다.
+    slow = (await run_slowloris(endpoint, token, n_conns=30, hold_sec=0.6)
+            if slowloris else None)
     res1 = ({"rss_kb": pid_rss_kb(pid), "fds": pid_fds(pid)} if pid else None)
     alive = await authed_list_alive(endpoint, token)
     res_ok, res_growth = _res_growth(res0, res1)
     report = {
         "mode": "attach", "endpoint": endpoint, "pid": pid, "rounds": rounds,
         "destructive": destructive, "battery": counts, "concurrent": conc,
-        "server_alive": alive,
+        "slowloris": slow, "server_alive": alive,
         "resources_before": res0, "resources_after": res1,
         "resource_growth": res_growth,
         "verdict_ok": (alive and counts["accepted_unexpected"] == 0
-                       and conc["accepted_unexpected"] == 0 and res_ok),
+                       and conc["accepted_unexpected"] == 0 and res_ok
+                       and (slow is None
+                            or (slow["alive_after"] and slow["probe_ok"] > 0))),
     }
     if counts["accepted_unexpected"] or conc["accepted_unexpected"]:
         report["warning"] = "무인가 hello 가 수용됨 — 서버가 인증 없이 동작(F1/M1 미적용?)"
+    if slow is not None and slow["probe_ok"] == 0:
+        report["warning"] = ("슬로로리스 중 정상 클라 list 가 전멸 — 연결 고갈/HOL "
+                             "차단 가능(읽기 타임아웃·연결 캡 검토)")
     return report
 
 
@@ -585,6 +730,9 @@ def main(argv=None) -> int:
                     help="동시 폭주 웨이브 수(기본 spawn 20·attach 10)")
     ap.add_argument("--destructive", action="store_true",
                     help="--attach 시 무인가 kill-server/control 도 시도(기본 차단)")
+    ap.add_argument("--slowloris", action="store_true",
+                    help="--attach/--discover 시 half-open 잡아두기로 정상 클라 응답성을 "
+                         "표본(연결을 잠깐 잡으므로 라이브엔 기본 OFF; spawn 은 항상 ON)")
     ap.add_argument("--json", action="store_true", help="리포트를 JSON 으로 출력")
     args = ap.parse_args(argv)
 
@@ -602,12 +750,14 @@ def main(argv=None) -> int:
                         "verdict_ok": False, "battery": {},
                         "warning": "도는 default 데몬을 못 찾음(서버 미기동?)"}
             rep = await redteam_attach(endpoint, pid, args.rounds,
-                                       args.destructive, **conc_kw)
+                                       args.destructive,
+                                       slowloris=args.slowloris, **conc_kw)
             rep["mode"] = "discover"
             return rep
         if args.attach:
             return await redteam_attach(args.attach, args.pid, args.rounds,
-                                        args.destructive, **conc_kw)
+                                        args.destructive,
+                                        slowloris=args.slowloris, **conc_kw)
         return await redteam_spawn(args.rounds, **conc_kw)
 
     report = asyncio.run(_run())
@@ -619,6 +769,10 @@ def main(argv=None) -> int:
         print(f"  battery(seq): {report['battery']}")
         if report.get("concurrent"):
             print(f"  concurrent:   {report['concurrent']}")
+        if report.get("slowloris"):
+            print(f"  slowloris:    {report['slowloris']}")
+        if report.get("authed_fuzz"):
+            print(f"  authed_fuzz:  {report['authed_fuzz']}")
         if report["mode"] == "spawn":
             print(f"  fd: {report['fd_before']}→{report['fd_after']} "
                   f"(Δ{report['fd_growth']})  mem Δ{report['mem_growth_bytes']}B")

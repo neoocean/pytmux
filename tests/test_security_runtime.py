@@ -116,6 +116,26 @@ async def test_valid_token_hello_accepted():
         await teardown(srv, task, ep)
 
 
+async def test_authed_control_nonstr_line_clean_no_traceback():
+    # R3(런타임 발견, SECURITY_REVIEW §11): 유효 토큰 control 의 line 이 비-str(int/None/
+    # list)이면 handle_control 의 shlex.split 이 AttributeError 로 새 handle_client 밖으로
+    # 전파됐다(트레이스백 노이즈 + 연결 비정상 드롭). 가드 후 깨끗한 ok 응답 + 서버 생존.
+    srv, task, ep = await server_only()
+    try:
+        tok = ipc.read_token(ep)
+        for bad_line in (1234, None, [1, 2], {"x": 1}):
+            r, w = await _open(ep)
+            await _send(w, {"t": "control", "line": bad_line, "token": tok})
+            reply = await _recv(r)
+            # auth_failed 가 아니라 정상 ok(result="bad-line")로 거절돼야 한다.
+            assert isinstance(reply, dict) and reply.get("t") == "ok", (bad_line, reply)
+            assert reply.get("result") == "bad-line", (bad_line, reply)
+            w.close()
+        assert await _server_alive(srv, ep)
+    finally:
+        await teardown(srv, task, ep)
+
+
 # ---- B) 프로토콜 프레임 퍼징 ----
 async def test_oversized_length_prefix_no_oom_drop():
     # MAX_FRAME 초과 길이프리픽스 → 서버가 수 GiB 할당 시도 없이 연결만 끊는다(F6).

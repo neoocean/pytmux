@@ -72,6 +72,41 @@ async def test_redteam_concurrent_flood_survives_no_unauth():
         await teardown(srv, task, ep)
 
 
+async def test_redteam_slowloris_keeps_server_responsive():
+    # half-open 연결을 잡아둔 채(불완전 프레임, 서버 read 매달림) 정상 클라 list 가
+    # 굶지 않아야 한다(연결당 독립 태스크 = HOL 차단 없음). 잡아둔 뒤 서버 생존.
+    srv, task, ep = await server_only()
+    try:
+        tok = ipc.read_token(ep)
+        gc.collect()
+        fd0 = redteam.count_fds()
+        rep = await redteam.run_slowloris(ep, tok, n_conns=20, hold_sec=0.3,
+                                          probes=5)
+        assert rep["held"] >= 15, rep                       # 대부분 잡힘
+        assert rep["probe_ok"] > 0, rep                     # 정상 클라 안 굶김
+        assert rep["probe_fail"] == 0, rep
+        assert rep["alive_after"] is True, rep              # 잡아둔 뒤 생존
+        gc.collect()
+        fd1 = redteam.count_fds()
+        if fd0 >= 0:                                         # half-open 닫힌 뒤 fd 회수
+            assert fd1 <= fd0 + 8, (fd0, fd1)
+    finally:
+        await teardown(srv, task, ep)
+
+
+async def test_redteam_authed_fuzz_survives():
+    # 인증 통과 후(post-auth) 악성 프레임(control/resize/input/scroll/cmd/unknown)에도
+    # 서버 프로세스가 살아 있어야 한다(디스패치 가드 + R3 handle_control 비-str 가드).
+    srv, task, ep = await server_only()
+    try:
+        tok = ipc.read_token(ep)
+        rep = await redteam.run_authed_fuzz(ep, tok)
+        assert rep["sent"] >= 10, rep                       # top 5 + loop 7
+        assert rep["alive_after"] is True, rep              # 어떤 인증 악성에도 생존
+    finally:
+        await teardown(srv, task, ep)
+
+
 async def test_redteam_resource_samplers_return_ints():
     assert isinstance(redteam.count_fds(), int)
     me = os.getpid()
