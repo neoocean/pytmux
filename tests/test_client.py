@@ -27,6 +27,39 @@ async def test_hello_paints_screen():
     await _with_app(body)
 
 
+async def test_remote_screen_delta_without_baseline_requests_redraw():
+    """§1.7 페더레이션 회복: baseline(직전 full) 없이 screen-delta 만 오면 바뀐 행을
+    둘 기준 캐시가 없어 행이 유실되던 것을, 드롭 대신 redraw 를 1회 요청해 full 을
+    끌어오게 한다(원격 패널이면 request_redraw 가 업스트림으로 릴레이됨). full 수신
+    시 디바운스 해제. baseline 이 있으면 종전대로 델타가 적용된다(옛 갈래 보존)."""
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append(action)
+        pid = 9999
+        app.pane_content.pop(pid, None)
+        # (1) 새 갈래: baseline 없는 델타 → redraw 요청, 캐시 미생성(유실 대신 회복)
+        app._dispatch({"t": "screen-delta", "pane": pid,
+                       "rows": [[2, [("hello", {})]]], "cursor": None})
+        assert sent == ["request_redraw"], "baseline 없으면 redraw 요청"
+        assert pid not in app.pane_content, "기준 없는 델타는 캐시에 안 남김"
+        assert pid in app._delta_no_base
+        # (2) 디바운스: full 오기 전 같은 패널 델타는 재요청 안 함
+        app._dispatch({"t": "screen-delta", "pane": pid,
+                       "rows": [[3, [("world", {})]]], "cursor": None})
+        assert sent == ["request_redraw"], "full 전 중복 요청 디바운스"
+        # (3) full(screen) 수신 → baseline 회복, 디바운스 해제
+        base = [[("", {})] for _ in range(5)]
+        app._dispatch({"t": "screen", "pane": pid, "rows": base, "cursor": None})
+        assert pid not in app._delta_no_base, "full 수신 시 디바운스 해제"
+        assert app.pane_content[pid][0] == base
+        # (4) 옛 갈래 보존: baseline 있으면 델타가 정상 적용·추가 요청 없음
+        app._dispatch({"t": "screen-delta", "pane": pid,
+                       "rows": [[1, [("X", {})]]], "cursor": None})
+        assert app.pane_content[pid][0][1] == [("X", {})], "기준 위 델타 적용"
+        assert sent == ["request_redraw"], "정상 적용 시 추가 요청 없음"
+    await _with_app(body)
+
+
 async def test_restart_all_arms_relaunch_and_restarts_server():
     """restart-all: 실행 전 드라이런(request_restart_check)을 먼저 보내고, 통과
     회신을 받으면 클라가 relaunch 를 무장(_relaunch_on_restart)하고 서버에

@@ -2550,6 +2550,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                            "cols": 80, "rows": 24}
             self.pane_content = {}   # id -> (rows, cursor)
             self.pane_wrap = {}      # id -> set(soft-wrap 연속원 행 인덱스, 프레임 상대)
+            # §1.7 페더레이션 회복: baseline(직전 full) 없이 screen-delta 만 온 패널.
+            # redraw 를 1회 요청해 full 을 끌어오고, full 수신 시 비운다(중복 요청 디바운스).
+            self._delta_no_base = set()
             #   copy-mode 선택 추출에서 자동 줄바꿈 줄을 한 줄로 잇는 데 쓴다(매 screen/
             #   screen-delta 메시지가 전체 리스트를 실어 보내므로 통째로 교체).
             self.mode = "normal"     # normal | prefix | scroll | prompt | display
@@ -3074,21 +3077,33 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif t == "screen":
                 self.pane_content[msg["pane"]] = (msg["rows"], msg.get("cursor"))
                 self.pane_wrap[msg["pane"]] = set(msg.get("wrap") or ())
+                self._delta_no_base.discard(msg["pane"])  # full 수신 → baseline 회복
                 self._request_composite()
             elif t == "screen-delta":
                 # B2: 바뀐 행만 받아 캐시된 rows 에 행 단위로 적용. base 가 없는
                 # per-client 모델이라 직전 full/델타가 만든 캐시에 그대로 덮어쓴다.
                 pid = msg["pane"]
                 prev = self.pane_content.get(pid)
-                rows = list(prev[0]) if prev else []
-                for y, segs in msg["rows"]:
-                    if 0 <= y < len(rows):
-                        rows[y] = segs
-                    elif y == len(rows):
-                        rows.append(segs)
-                self.pane_content[pid] = (rows, msg.get("cursor"))
-                self.pane_wrap[pid] = set(msg.get("wrap") or ())
-                self._request_composite()
+                if prev is None:
+                    # §1.7 회복: baseline(직전 full) 없이 델타만 오면 바뀐 행을 둘
+                    # 기준 캐시가 없어 행이 유실된다 — 원격 attach 시 업스트림의 초기
+                    # full 이 '보는 클라 없음'으로 드롭되면 발생(원격 패널 영구 공백).
+                    # 드롭 대신 redraw 를 1회 요청해 full 을 끌어온다(원격 패널이면
+                    # request_redraw 가 업스트림으로 릴레이돼 그 원격 서버의 _send_full
+                    # 을 받아온다). full 수신 전까지 중복 요청은 _delta_no_base 로 디바운스.
+                    if pid not in self._delta_no_base:
+                        self._delta_no_base.add(pid)
+                        self.send_cmd("request_redraw")
+                else:
+                    rows = list(prev[0])
+                    for y, segs in msg["rows"]:
+                        if 0 <= y < len(rows):
+                            rows[y] = segs
+                        elif y == len(rows):
+                            rows.append(segs)
+                    self.pane_content[pid] = (rows, msg.get("cursor"))
+                    self.pane_wrap[pid] = set(msg.get("wrap") or ())
+                    self._request_composite()
             elif t == "status":
                 # 플러그인 관리(PLUGIN_MANAGER_SCENARIO): 서버가 보낸 비활성 집합을 이
                 # 클라 레지스트리에 반영한다(바뀔 때만). set_disabled 가 self.plugins 를
