@@ -66,7 +66,7 @@ pip install -r requirements.txt
 - **macOS / Linux** (POSIX PTY) 에서 동작합니다. Python 3.11 이상을 권장합니다.
 - **Windows** 네이티브(WSL/Cygwin 불필요)는 **ConPTY** 백엔드로 지원합니다.
   추가로 `pip install pywinpty` 가 필요합니다(`requirements.txt` 에 `win32` 조건부 포함).
-  Windows 지원 범위는 실 Windows 11 기기 스모크 검증을 마쳤습니다.
+  Windows 지원 범위는 실 Windows 11 기기에서 매일 장시간씩 직접 사용하며 개선하고 있습니다.
 
 ### 2.2 `pytmux` 명령으로 등록 (선택)
 
