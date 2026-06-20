@@ -136,6 +136,23 @@ def _decode_remote_stderr(b: bytes) -> str:
     return b.decode("utf-8", "replace")
 
 
+async def _kill_proc(proc) -> None:
+    """ssh 서브프로세스를 확실히 종료·reap 한다(안정성 H4). 안 하면 핸드셰이크/타임아웃
+    실패 경로에서 <defunct> 좀비 + stdin/stdout/stderr 3 fd 가 누수돼 재연결 스톰과
+    결합한다. 이미 끝난 프로세스도 wait 로 회수한다(child watcher fd 정리)."""
+    if proc is None:
+        return
+    try:
+        if proc.returncode is None:
+            proc.kill()
+    except ProcessLookupError:
+        pass
+    try:
+        await asyncio.wait_for(proc.wait(), 2)
+    except asyncio.TimeoutError:
+        pass
+
+
 def _nest_host_part(s: str) -> str:
     """`user@host` → 호스트부(마지막 @ 뒤) 소문자. 대조 전용(접속 인자 아님)."""
     return s.rsplit("@", 1)[-1].strip().lower()
@@ -225,41 +242,42 @@ class ServerRemoteMixin:
             host, "pytmux", "stdio-proxy",
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE)
-        line = await asyncio.wait_for(proc.stdout.readline(), 15)
-        if not line.startswith(b"TOKEN "):
-            # 실패 원인(ssh/원격 stderr 의 마지막 줄)을 사용자 알림에 실어 준다 —
-            # 'Permission denied'(키 미설정)·'command not found'(원격 PATH/미설치)
-            # 등이 그대로 보이게.
-            err = b""
-            try:
-                err = await asyncio.wait_for(proc.stderr.read(2048), 2)
-            except asyncio.TimeoutError:
-                pass
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                # 핸드셰이크 실패 시 ssh 는 보통 이미 종료돼 있다(Permission denied 등).
-                # 이미 죽은 프로세스의 kill() 이 던지는 ProcessLookupError 가 아래 친절한
-                # ConnectionError 를 가려, 사용자에게 실제 원인 대신 'ProcessLookupError'
-                # 만 보이던 버그를 막는다.
-                pass
-            detail = _decode_remote_stderr(err or line).strip()
-            detail = detail.splitlines()[-1] if detail else ""
-            if not detail:
-                raise RemoteError("rerr.handshake_noresp",
-                                  "stdio-proxy 핸드셰이크 실패: 응답 없음")
-            if "Permission denied" in detail:
-                # 비대화 ssh(BatchMode)는 비밀번호를 못 묻는다 — 패스워드 전용
-                # 호스트는 ControlMaster 로 인증된 연결을 공유하면 된다(§5). 키에
-                # 힌트를 합쳐 둬 ko/en 모두 자연스럽게 번역된다(detail=원격 stderr).
-                raise RemoteError("rerr.handshake_perm",
-                                  "stdio-proxy 핸드셰이크 실패: {detail} — 키 미설정. "
-                                  "패스워드 호스트는 ssh config 에 ControlMaster 설정 후 "
-                                  "패널에서 한 번 로그인(REMOTE_ATTACH_SCENARIO §5)",
+        # 모든 실패 경로(readline 타임아웃·핸드셰이크 실패·readline 의 LimitOverrunError·
+        # 취소)에서 ssh 자식과 그 파이프 3 fd 를 회수한다(H4: 좀비/fd 누수가 재연결
+        # 스톰과 결합하던 것 차단). 성공 시에만 proc 를 호출자(RemoteLink)에 넘긴다.
+        try:
+            line = await asyncio.wait_for(proc.stdout.readline(), 15)
+            if not line.startswith(b"TOKEN "):
+                # 실패 원인(ssh/원격 stderr 의 마지막 줄)을 사용자 알림에 실어 준다 —
+                # 'Permission denied'(키 미설정)·'command not found'(원격 PATH/미설치)
+                # 등이 그대로 보이게.
+                err = b""
+                try:
+                    err = await asyncio.wait_for(proc.stderr.read(2048), 2)
+                except asyncio.TimeoutError:
+                    pass
+                detail = _decode_remote_stderr(err or line).strip()
+                detail = detail.splitlines()[-1] if detail else ""
+                if not detail:
+                    raise RemoteError("rerr.handshake_noresp",
+                                      "stdio-proxy 핸드셰이크 실패: 응답 없음")
+                if "Permission denied" in detail:
+                    # 비대화 ssh(BatchMode)는 비밀번호를 못 묻는다 — 패스워드 전용
+                    # 호스트는 ControlMaster 로 인증된 연결을 공유하면 된다(§5). 키에
+                    # 힌트를 합쳐 둬 ko/en 모두 자연스럽게 번역된다(detail=원격 stderr).
+                    raise RemoteError(
+                        "rerr.handshake_perm",
+                        "stdio-proxy 핸드셰이크 실패: {detail} — 키 미설정. "
+                        "패스워드 호스트는 ssh config 에 ControlMaster 설정 후 "
+                        "패널에서 한 번 로그인(REMOTE_ATTACH_SCENARIO §5)",
+                        detail=detail)
+                raise RemoteError("rerr.handshake_fail",
+                                  "stdio-proxy 핸드셰이크 실패: {detail}",
                                   detail=detail)
-            raise RemoteError("rerr.handshake_fail",
-                              "stdio-proxy 핸드셰이크 실패: {detail}", detail=detail)
-        tok = line.split(b" ", 1)[1].strip().decode()
+            tok = line.split(b" ", 1)[1].strip().decode()
+        except BaseException:
+            await _kill_proc(proc)
+            raise
         return proc.stdout, proc.stdin, tok, proc
 
     # ---- attach / detach ----
@@ -294,8 +312,11 @@ class ServerRemoteMixin:
             self._set_err(e.err_key, e.err_ko, **e.err_kw)
             self._log_error(f"remote_attach({name})")
             return False
-        except (OSError, ConnectionError, asyncio.TimeoutError) as e:
+        except (OSError, ConnectionError, asyncio.TimeoutError,
+                asyncio.LimitOverrunError) as e:
             # OS/네트워크 예외 메시지는 키가 없다(대개 영어) — 원문 그대로 detail 로.
+            # LimitOverrunError: stdio-proxy 첫 줄이 개행 없이 64KiB 를 넘으면(고장난
+            # 원격) readline 이 던진다 — _remote_transport 가 proc 정리 후 재전파(H4).
             self._set_err(None, str(e) or type(e).__name__)
             self._log_error(f"remote_attach({name})")
             return False
@@ -310,6 +331,13 @@ class ServerRemoteMixin:
         try:
             await write_msg(writer, hello)
         except (OSError, ConnectionError) as e:
+            # 전송은 열렸으나 hello 송신 실패 — 연 소켓/ssh proc 를 회수한다(H4: 안
+            # 그러면 transport 가 연 writer + proc 가 누수). remotes 에 아직 등록 전.
+            try:
+                writer.close()
+            except (OSError, ConnectionError):
+                pass
+            await _kill_proc(proc)
             self._set_err("rerr.hello_fail", "hello 실패: {e}", e=str(e))
             self._log_error(f"remote_attach hello({name})")
             return False

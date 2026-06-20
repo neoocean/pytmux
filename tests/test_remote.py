@@ -1332,6 +1332,25 @@ async def test_nest_do_attach_repeat_does_not_reswitch():
         await teardown(srv, task, sock)
 
 
+async def test_kill_proc_reaps_subprocess():
+    """H4: _kill_proc 가 ssh 서브프로세스를 확실히 종료·reap 한다(핸드셰이크/타임아웃
+    실패 경로의 <defunct> 좀비 + 파이프 fd 누수 방지). 살아있는 자식은 kill+wait,
+    이미 끝난 자식도 wait 로 회수, None 도 무해."""
+    if os.name == "nt":
+        return
+    from pytmuxlib.serverremote import _kill_proc
+    p = await asyncio.create_subprocess_exec(
+        "sleep", "30", stdout=asyncio.subprocess.DEVNULL)
+    await _kill_proc(p)
+    assert p.returncode is not None, "살아있는 자식 종료·reap"
+    p2 = await asyncio.create_subprocess_exec(
+        "true", stdout=asyncio.subprocess.DEVNULL)
+    await p2.wait()
+    await _kill_proc(p2)                       # 이미 끝남 → 예외 없이 회수
+    assert p2.returncode is not None
+    await _kill_proc(None)                     # None 안전
+
+
 async def test_remote_transport_rejects_ssh_option_injection():
     """S2: remote_attach 의 host 는 클라 cmd 에서 온 비신뢰 문자열이다. ssh 옵션
     인젝션('-oProxyCommand=…' → 임의 명령)·공백 호스트는 ssh 를 띄우기 **전에**
