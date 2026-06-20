@@ -39,6 +39,11 @@ _SERVER_BASES = _PLUGIN_SERVER_MIXINS + (
     ServerIOMixin, ServerRemoteMixin, ServerTreeMixin)
 
 
+# LLM/grep 도우미(4-2): Server 의 일부 메서드는 이 파일에 없다 — 런타임에 베이스로
+# 합성되는 플러그인 믹스인이 제공한다. jump-to-definition 이 안 닿으면 아래를 grep:
+#   set_autoresume/_scan_claude/토큰 핸들러 등 → plugins/claude-code/servermixin.py
+#                                                 (ServerClaudeMixin)
+#   server_scan/server_pending/server_filter_rows 등 레지스트리 훅 → plugins/__init__.py
 class Server(*_SERVER_BASES):
     def __init__(self, sock_path: str, resume_path: str | None = None):
         self.sock_path = sock_path
