@@ -512,6 +512,20 @@ class _RestartVersionMixin:
     # 세로 막대 그래프용 블록(아래→위로 차오름). bar() 의 가로 _BAR_BLOCKS 와 별개.
     _RTT_VBLOCKS = " ▁▂▃▄▅▆▇█"
 
+    def _rtt_graph_width(self):
+        """그래프 가로 칸 수를 팝업(InfoTabsScreen) 폭에 맞춘다. 박스는 화면 92%·
+        최대 100칸이고, 그 안쪽에서 테두리·패딩(4)·축 프리픽스(6)·스크롤바 여백(2)을
+        빼야 좁은 화면에서 그래프 줄이 접히지 않는다(요청). 화면 폭을 모르면 기본값."""
+        try:
+            screen_w = int(self.size.width)
+        except Exception:
+            screen_w = 0
+        if screen_w <= 0:
+            return self._RTT_GRAPH_W
+        box_w = min(100, int(screen_w * 0.92))
+        avail = box_w - 4 - 6 - 2
+        return max(12, min(self._RTT_GRAPH_W, avail))
+
     def _rtt_graph_lines(self, width=None, height=None):
         """최근 60분 RTT 표본을 세로 막대 그래프(width 칸 × height 행) 텍스트 줄로
         그린다. 각 칸은 _RTT_WINDOW/width 초 버킷이고 버킷 안 **최대** RTT 를 써
@@ -521,6 +535,8 @@ class _RestartVersionMixin:
         hist = getattr(self, "_net_rtt_hist", None)
         if not hist:
             return None
+        if width is None:
+            width = self._rtt_graph_width()
         width = width or self._RTT_GRAPH_W
         height = height or self._RTT_GRAPH_H
         now = time.monotonic()

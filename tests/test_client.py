@@ -1377,9 +1377,11 @@ async def test_token_log_screen_aggregates_and_switches():
 
 
 async def test_token_log_recon_view_toggle():
-    """S6 T2: [r]/[대사] 가 집계 ↔ 대사 뷰를 토글한다 — 대사 뷰는 실측 Δ%(리셋
-    구분)와 추정 ~Σ 를 나란히 보이고, 다시 [r] 로 집계로 돌아온다(닫히지 않음)."""
+    """[r]/[대사] 가 집계 ↔ 대사 **시간축 그래프** 뷰를 토글한다(요청 2026-06-20 —
+    표 대신 그래프). 대사 뷰는 그래프 위젯(_ReconChart)을 보이고 표를 숨기며, 상단엔
+    시간 범위·최신 5h%·구간 수를, 다시 [r] 로 집계 표로 돌아온다(닫히지 않음)."""
     async def body(app, pilot, srv):
+        from textual.widgets import DataTable
         base = 1_700_000_000.0
         recs = [{"ts": base + 200, "tab": 0, "pane": 1, "session": 1,
                  "account": "me@x.org", "tokens": 1500}]
@@ -1396,14 +1398,21 @@ async def test_token_log_recon_view_toggle():
         await pilot.press("r")
         await pilot.pause(0.1)
         assert app.screen_stack[-1] is scr, "[r] 는 닫지 않음"
+        assert scr._recon_mode
+        # 대사 모드: 그래프 보이고 표 숨김.
+        chart = scr.query_one("#tkchart")
+        assert chart.display and not scr.query_one(DataTable).display
         joined = _tok_text(scr)
-        assert "5%→9% (Δ+4)" in joined, joined
-        assert "9%→2% (리셋)" in joined, joined
-        assert "~1.5k" in joined and "~50" in joined, joined
-        # 계정(비고) 열은 제거됐다 — 머신-로컬 표시(2026-06-19).
-        assert "계정혼합/미상" not in joined, joined
-        await pilot.press("r")                     # 집계 뷰로 복귀
+        assert "사용률 추이" in joined, joined          # 그래프 제목
+        assert "최신 2%" in joined and "구간 2개" in joined, joined
+        # 막대 글리프가 실제로 렌더된다.
+        rendered = "\n".join(chart.render_line(y).text
+                             for y in range(chart.size.height))
+        assert any(b in rendered for b in "▁▂▃▄▅▆▇█"), rendered
+        await pilot.press("r")                     # 집계 표로 복귀
         await pilot.pause(0.1)
+        assert not scr._recon_mode
+        assert scr.query_one(DataTable).display and not chart.display
         joined2 = _tok_text(scr)
         assert "Δ+4" not in joined2 and "Σ1.5k" in joined2, joined2
     await _with_app(body)
@@ -4064,9 +4073,27 @@ async def test_server_tab_rtt_graph_lines():
     await _with_app(body)
 
 
+async def test_rtt_graph_width_fits_narrow_popup():
+    """좁은 팝업에서 RTT 그래프 줄이 박스 안쪽 폭을 넘지 않아 접히지 않는다(요청).
+    그래프 가로 칸은 화면(=박스 92%·최대 100) 폭에서 테두리·축 프리픽스를 빼 맞춘다."""
+    async def body(app, pilot, srv):
+        import time as _t
+        from pytmuxlib.clientutil import _char_cells   # 표시 폭(CJK 2칸)
+        now = _t.monotonic()
+        app._net_rtt_hist = [(now - i * 20.0, 0.002) for i in range(150)]
+        inner = min(100, int(app.size.width * 0.92)) - 4   # 박스 안쪽(테두리·패딩 제외)
+        # 막대/축 줄(┤┴ 포함)만 검사 — 통계 문장줄은 자연 텍스트라 접혀도 무방하다.
+        bars = [ln for ln in app._rtt_graph_lines() if "┤" in ln or "┴" in ln]
+        assert bars, "그래프 막대/축 줄"
+        for ln in bars:
+            w = sum(_char_cells(c) for c in ln)
+            assert w <= inner, (w, inner, ln)
+    await _with_app(body, size=(40, 30))
+
+
 async def test_info_tabs_notebook_shape_and_constant_height():
-    """노트북(파일철) 탭 모양 + 탭 전환 시 팝업 높이 불변(요청).
-    - 활성 탭 라벨은 둥근 윗변(╭╮)+세로 옆변(│)으로 그려진다(노트북 탭).
+    """플랫 탭(외곽선 없음) 모양 + 탭 전환 시 팝업 높이 불변(요청).
+    - 활성 탭 라벨은 외곽선(╭╮│) 없이 이름만 배경 반전으로 강조된다.
     - 본문(ListView) 항목 수가 탭을 오가도 동일(짧은 탭은 빈 줄로 패딩)."""
     async def body(app, pilot, srv):
         from textual.widgets import Label, ListView
@@ -4080,9 +4107,9 @@ async def test_info_tabs_notebook_shape_and_constant_height():
         await pilot.pause(0.1)
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoTabsScreen"
-        # 활성 탭(0)의 라벨이 노트북 탭 모양(둥근 윗변·옆변)인지
+        # 활성 탭(0)의 라벨에 외곽선 박스 문자(╭╮│─)가 없어야 한다(플랫 탭).
         t0 = str(scr.query_one("#ittab_0", Label).render())
-        assert "╭" in t0 and "│" in t0, t0
+        assert not any(ch in t0 for ch in "╭╮╯╰│─"), t0
         lv = scr.query_one(ListView)
         n_rec = len(lv.children)
         await pilot.press("right")        # 서버 탭으로 전환

@@ -1371,8 +1371,8 @@ class InfoTabsScreen(ModalScreen):
     #itbox { width: 92%; max-width: 100; height: auto;
              min-height: 14; max-height: 95%;
              border: round $accent; background: $panel; padding: 0 1; }
-    /* 노트북(파일철) 탭: 각 탭은 2행 라벨(윗변 + 이름줄)로 그려 활성 탭이 위로
-       솟은 듯 보인다(#32 외곽선 박스 폐기). head 는 2행, [x] 는 우측 끝(1fr 여백). */
+    /* 플랫 탭(외곽선 없음, 창 탭바와 동일): 각 탭은 2행 라벨(빈 윗행 + 이름줄)이고
+       활성 탭은 이름줄을 배경 반전으로 강조한다. head 는 2행, [x] 는 우측 끝(1fr 여백). */
     #ithead { width: 100%; height: 2; }
     #ittabs { width: auto; height: 2; }
     #ittabs Label { width: auto; height: 2; }   /* 탭 하나(2행, 클릭 대상) */
@@ -1422,7 +1422,7 @@ class InfoTabsScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="itbox"):
             with Horizontal(id="ithead"):
-                with Horizontal(id="ittabs"):     # 탭 그룹(외곽선, #32)
+                with Horizontal(id="ittabs"):     # 플랫 탭 그룹(외곽선 없음)
                     for i, (name, _l) in enumerate(self._tabs):
                         yield Label("", id=f"ittab_{i}", markup=True)
                 yield Label("", id="itgap")        # [x] 를 우측 끝으로 미는 여백
@@ -1436,10 +1436,10 @@ class InfoTabsScreen(ModalScreen):
         self.query_one(ListView).focus()
 
     def _render_tabbar(self):
-        # 각 탭 라벨 갱신(현재 탭 강조). 클릭 대상이라 탭마다 별도 위젯이다(#32).
-        # 노트북(파일철) 탭: 2행 — 윗변(둥근 모서리)+이름줄. 활성 탭은 윗변이 그려져
-        # 위로 솟은 듯, 비활성 탭은 윗변이 비어(공백) 뒤로 물러난 듯 보인다. ←→ 포커스가
-        # [x](=N)면 활성 탭은 평소 강조([b]), [x] 는 -focus 로 강조한다.
+        # 각 탭 라벨 갱신(현재 탭 강조). 클릭 대상이라 탭마다 별도 위젯이다.
+        # 플랫 탭(외곽선 없음): 2행 — 빈 윗행+이름줄. 활성 탭은 이름줄을 배경 반전으로
+        # 강조, 비활성 탭은 흐리게 둔다. ←→ 포커스가 [x](=N)면 활성 탭은 평소 강조,
+        # [x] 는 -focus 로 강조한다.
         n = len(self._tabs)
         for i, (name, _l) in enumerate(self._tabs):
             lbl = self.query_one(f"#ittab_{i}", Label)
@@ -1449,19 +1449,15 @@ class InfoTabsScreen(ModalScreen):
 
     @staticmethod
     def _tab_markup(name, active, focused):
-        """노트북 탭 한 칸(2행) 마크업. 이름 폭(CJK 2칸)에 맞춰 윗변·옆변을 그린다.
-        활성=둥근 모서리 윗변(╭─╮)+세로 옆변(│ │), 포커스 시 반전. 비활성=윗변 없이
-        이름만 흐리게(뒤로 물러난 탭)."""
-        inner = sum(_char_cells(c) for c in name) + 2   # 이름 양옆 공백 1칸씩
+        """플랫 탭 한 칸(2행) 마크업 — 외곽선 없는 납작한 모양(창 탭바와 동일, 요청).
+        활성=이름줄 배경 반전 강조, 포커스 시 굵게. 비활성=이름만 흐리게. 윗행은
+        비워 우측 [x](head 첫 행)와 2행 높이를 맞추고 이름은 아랫행에 둔다."""
+        label = " " + name + " "
         if active:
-            top = "╭" + "─" * inner + "╮"
-            mid = "│ " + name + " │"
-            style = "reverse b" if focused else "b"
-            return f"[{style}]{top}\n{mid}[/]"
-        # 비활성: 윗변은 공백(같은 폭으로 정렬 유지), 이름줄만 흐리게
-        top = " " * (inner + 2)
-        mid = "  " + name + "  "
-        return f"{top}\n[dim]{mid}[/]"
+            style = "reverse b" if focused else "reverse"
+        else:
+            style = "dim"
+        return f"\n[{style}]{label}[/]"
 
     async def _run_action(self, key):
         """현재 탭의 동작(키 일치)을 실행한다. 콜백이 줄 리스트를 돌려주면 그 탭
