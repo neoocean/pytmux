@@ -4176,6 +4176,47 @@ async def test_server_tab_rtt_graph_lines():
     await _with_app(body)
 
 
+async def test_rtt_hist_persists_across_restart():
+    """60분 RTT 이력이 디스크에 영속돼 (서버/클라) 재시작 후 그래프로 복원된다(요청).
+    창 밖(60분 초과) 표본은 버리고, 복원 표본은 현재 시각 기준 창 안에 들어온다.
+    데이터가 없던 구간(서버 꺼짐)은 표본이 없어 그래프에서 공백으로 남는다(건너뜀)."""
+    async def body(app, pilot, srv):
+        import time as _t
+        now = _t.monotonic()
+        # 창 안 2개(50분·10분 전) + 창 밖 1개(70분 전 — 복원 시 버려져야 함)
+        app._net_rtt_hist = [(now - 50 * 60, 0.01), (now - 10 * 60, 0.02),
+                             (now - 70 * 60, 0.5)]
+        app._save_rtt_hist()
+        # 같은 sock 으로 새 앱 생성 = 재시작 시뮬레이션 → __init__ 에서 _load_rtt_hist.
+        app2 = make_app(app.sock_path)
+        hist = app2._net_rtt_hist
+        assert len(hist) == 2, hist                    # 창 밖 표본 제외
+        assert sorted(r for _, r in hist) == [0.01, 0.02]
+        now2 = _t.monotonic()
+        for ts, _ in hist:                             # 복원 표본은 창 안(age≥0)
+            assert 0 <= now2 - ts <= app2._RTT_WINDOW
+        # 복원된 이력으로 그래프가 실제로 그려진다(재시작 후 유지).
+        assert app2._rtt_graph_lines() is not None
+    await _with_app(body)
+
+
+async def test_rtt_hist_persist_off_skips_file(tmp_path=None):
+    """net_rtt_persist=False 면 이력 파일을 쓰지도 읽지도 않는다(롤백 스위치)."""
+    async def body(app, pilot, srv):
+        import os as _os
+        import time as _t
+        now = _t.monotonic()
+        app._net_rtt_hist = [(now - 60, 0.01)]
+        app._save_rtt_hist()
+        path = app._rtt_hist_path()
+        assert path and _os.path.exists(path)
+        # off 로 만든 새 앱은 파일을 무시하고 빈 이력으로 시작한다.
+        app2 = make_app(app.sock_path, {"net_rtt_persist": False})
+        assert app2._rtt_hist_path() is None
+        assert app2._net_rtt_hist == []
+    await _with_app(body)
+
+
 async def test_rtt_graph_width_fits_narrow_popup():
     """좁은 팝업에서 RTT 그래프 줄이 박스 안쪽 폭을 넘지 않아 접히지 않는다(요청).
     그래프 가로 칸은 화면(=박스 92%·최대 100) 폭에서 테두리·축 프리픽스를 빼 맞춘다."""

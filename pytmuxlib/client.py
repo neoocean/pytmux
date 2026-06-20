@@ -134,6 +134,7 @@ class _NetReconnectMixin:
     _RTT_WINDOW = 3600.0   # RTT 이력 보존/그래프 창(초) — 최근 60분
     _RTT_GRAPH_W = 48      # 그래프 가로 칸(시간 버킷 수)
     _RTT_GRAPH_H = 5       # 그래프 세로 행(각 행 = 1/8 정밀 세로 막대)
+    _RTT_SAVE_EVERY = 60   # 이 표본 수마다 이력 파일 재기록(0.5초 핑 → ≈30초)
 
     def _start_reader(self):
         """현재 self.reader 에 묶인 새 reader 태스크를 띄운다. 연결 세대(_conn_gen)
@@ -292,6 +293,12 @@ class _NetReconnectMixin:
             drop += 1
         if drop:
             del h[:drop]
+        # 영속(서버/클라 재시작에도 60분 그래프 유지): 일정 개수마다 파일을 전체
+        # 재기록한다. crash 시 최대 _RTT_SAVE_EVERY 표본만 손실(허용). 종료 시점은
+        # on_unmount 에서 한 번 더 확정 저장한다.
+        self._rtt_save_n += 1
+        if self._rtt_save_n >= self._RTT_SAVE_EVERY:
+            self._save_rtt_hist()
         if rtt > self.net_rtt_threshold:
             self._net_bad += 1
             self._net_good = 0
@@ -319,6 +326,72 @@ class _NetReconnectMixin:
                 and self._net_bad >= self.net_recover_n):
             self._net_bad = 0
             self.reconnect_now("auto")
+
+    def _rtt_hist_path(self):
+        """60분 RTT 이력 영속 파일 경로(`<state>.rtthist.json`). 영속 off 거나
+        sock_path 가 없으면(테스트 등) None — 호출부가 조용히 건너뛴다."""
+        if not getattr(self, "net_rtt_persist", True):
+            return None
+        sock = getattr(self, "sock_path", None)
+        if not sock:
+            return None
+        return ipc.state_base(sock) + ".rtthist.json"
+
+    def _load_rtt_hist(self):
+        """영속된 최근 60분 RTT 표본을 메모리 이력(_net_rtt_hist)으로 복원한다.
+        파일은 벽시계(time.time) 타임스탬프로 저장돼 있어 재시작/리부트에도 의미가
+        있다 — 현재 monotonic 기준으로 환산해 그래프 코드가 그대로 쓰게 한다(이력
+        튜플은 monotonic_ts 규약). 창(_RTT_WINDOW) 밖 표본(서버 꺼져 있던 구간
+        포함)은 버려, 데이터가 있는 구간만 남는다(빈 버킷=그래프 공백→건너뜀)."""
+        path = self._rtt_hist_path()
+        if not path:
+            return
+        try:
+            import json
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return
+        samples = data.get("samples") if isinstance(data, dict) else None
+        if not samples:
+            return
+        wall_now = time.time()
+        cutoff = wall_now - self._RTT_WINDOW
+        offset = wall_now - time.monotonic()    # mono = wall - offset
+        restored = []
+        for item in samples:
+            try:
+                wts, rtt = float(item[0]), float(item[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if wts < cutoff or wts > wall_now:   # 창 밖/미래(시계 역행) 표본 제외
+                continue
+            restored.append((wts - offset, rtt))
+        restored.sort()
+        self._net_rtt_hist = restored
+
+    def _save_rtt_hist(self):
+        """현재 메모리 이력을 벽시계 타임스탬프로 파일에 저장(best-effort, 전체
+        재기록). monotonic→벽시계 환산해 저장하므로 재시작 후 _load_rtt_hist 가
+        창 안 표본만 복원한다. 임시파일+os.replace 로 부분기록을 피한다. 저장이
+        핑/표시 흐름을 막지 않게 예외는 삼킨다(netdbg 와 같은 정책)."""
+        path = self._rtt_hist_path()
+        if not path:
+            return
+        self._rtt_save_n = 0
+        hist = getattr(self, "_net_rtt_hist", None)
+        if hist is None:
+            return
+        offset = time.time() - time.monotonic()
+        try:
+            import json
+            samples = [[round(ts + offset, 3), round(rtt, 6)] for ts, rtt in hist]
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"samples": samples}, f)
+            os.replace(tmp, path)
+        except OSError:
+            pass
 
     def _net_debug_on(self) -> bool:
         """RTT 진단 로그 on/off. env PYTMUX_NET_DEBUG(기본 off) — 토큰 진단
@@ -2626,6 +2699,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 최근 60분 RTT 표본 이력(서버 정보 팝업의 그래프용). (monotonic_ts, rtt초)
             # 튜플을 append, _net_sample 에서 창(_RTT_WINDOW) 밖 앞쪽을 잘라낸다.
             self._net_rtt_hist = []
+            # 60분 RTT 그래프를 서버/클라 재시작에도 유지한다(요청): 표본을 벽시계
+            # 타임스탬프로 디스크에 영속하고 기동 때 창 안 표본만 복원한다. 서버가
+            # 꺼져 있던 구간은 표본이 없어 그래프에서 자연히 공백으로 남는다(건너뜀).
+            self.net_rtt_persist = config.get("net_rtt_persist", True)
+            self._rtt_save_n = 0   # 마지막 저장 이후 누적 표본 수(디바운스용)
+            self._load_rtt_hist()
             # 로컬(AF_UNIX·루프백 TCP) 연결이면 클라↔서버가 같은 머신이라
             # 네트워크 열화 개념이 없다 → degraded(빨강 외곽선)·자동 재접속을
             # 억제한다(§10-F Windows degraded 오탐). 진짜 원격 호스트 연결에서만
@@ -2774,6 +2853,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 마운트 시 끈 대체 스크롤 모드(1007)를 복원해 터미널을 원상태로 둔다.
             if getattr(self, "disable_alt_scroll", False):
                 self._term_write("\x1b[?1007h")
+            # 종료 시점의 60분 RTT 이력을 확정 저장(재시작 후 그래프 유지). 디바운스
+            # 미저장분(_RTT_SAVE_EVERY 미만)까지 마지막으로 디스크에 남긴다.
+            self._save_rtt_hist()
             # attach_client 의 짝 — 플러그인이 띄운 인스턴스 자원(예: ime-indicator
             # 입력소스 감시 헬퍼 프로세스)을 종료 시 정리한다(없으면 no-op).
             self.plugins.client_unload(self)
