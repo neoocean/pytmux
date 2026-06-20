@@ -44,7 +44,7 @@ class ServerPersistMixin:
                 for t in s.tabs]}
             for s in self.sessions.values()]}
         try:
-            with ipc.open_private(path) as f:   # 0600(F5): 화면 스냅샷 등 민감정보 보호
+            with ipc.private_atomic(path) as f:  # 0600(F5) + 원자적 교체(M5)
                 json.dump(data, f)
             return True
         except OSError:
@@ -129,7 +129,7 @@ class ServerPersistMixin:
         path = path or self.resume_state_path
         data = self._resume_payload()
         try:
-            with ipc.open_private(path) as f:   # 0600(F5): 화면 스냅샷 등 민감정보 보호
+            with ipc.private_atomic(path) as f:  # 0600(F5) + 원자적 교체(M5)
                 json.dump(data, f)
             return True
         except OSError:
@@ -562,7 +562,7 @@ class ServerPersistMixin:
 
     def _save_slots(self, slots: dict):
         try:
-            with ipc.open_private(self.slots_path) as f:   # 0600(F5)
+            with ipc.private_atomic(self.slots_path) as f:  # 0600(F5) + 원자교체(M5)
                 json.dump(slots, f)
         except OSError:
             pass
@@ -582,7 +582,7 @@ class ServerPersistMixin:
 
     def _save_opts(self):
         try:
-            with ipc.open_private(self.opts_path) as f:   # 0600(F5)
+            with ipc.private_atomic(self.opts_path) as f:   # 0600(F5) + 원자교체(M5)
                 # capture 는 plugins/rec 가 server_opts_serialize 로 plugin_opts 에 넣는다.
                 json.dump({# 플러그인 관리(PLUGIN_MANAGER_SCENARIO): 비활성 플러그인 집합.
                            # 키가 한 번 생기면 default_enabled 시드 대신 이 값이 권위.

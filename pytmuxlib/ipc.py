@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import socket
 import stat as _stat
@@ -296,6 +297,27 @@ def open_private(path: str, mode: str = "w", buffering: int = -1):
         return os.fdopen(fd, "a" if append else "w", buffering, encoding="utf-8")
     except Exception:
         os.close(fd)
+        raise
+
+
+@contextlib.contextmanager
+def private_atomic(path: str, mode: str = "w"):
+    """0600 + **원자적 교체**로 파일을 쓴다(M5). temp(`<path>.tmp`)에 쓰고 정상
+    종료 시 os.replace 로 한 번에 바꾼다 — 쓰는 도중 프로세스가 죽어도(특히 재시작
+    execv 직전 ~0.1s 창) 절반만 쓰인 파일이 원본을 덮지 않아, 다음 부트가 손상 파일을
+    읽고 복원 실패(세션 전손)하던 것을 막는다. 예외 시 temp 를 지운다. open_private 와
+    동형(쓰기 전용 w/wb)."""
+    tmp = path + ".tmp"
+    f = open_private(tmp, mode)
+    try:
+        yield f
+        f.close()
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(Exception):
+            f.close()
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
         raise
 
 

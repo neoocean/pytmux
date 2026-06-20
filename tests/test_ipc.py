@@ -143,3 +143,25 @@ async def test_run_sync_units():
     """동기 단위 테스트(parse)를 async 러너에서 한 번 실행해 커버리지에 포함."""
     test_parse_endpoint()
     test_is_local_endpoint()
+
+
+async def test_private_atomic_writes_and_cleans_up():
+    """M5: ipc.private_atomic 가 0600 + 원자적 교체로 쓴다 — 정상 시 temp 가 사라지고
+    원본만 남으며, 예외 시 원본을 건드리지 않고 temp 를 지운다(절반 쓰기 방지)."""
+    d = tempfile.mkdtemp(prefix="pytmux-atomic-")
+    path = os.path.join(d, "state.json")
+    with ipc.private_atomic(path) as f:
+        f.write("good")
+    assert open(path).read() == "good", "원자적 교체 후 내용"
+    assert not os.path.exists(path + ".tmp"), "temp 제거됨"
+    if os.name != "nt":
+        assert (os.stat(path).st_mode & 0o777) == 0o600, "0600 권한"
+    # 예외 시: 기존 원본 보존 + temp 정리(절반 쓰기가 원본 안 덮음).
+    try:
+        with ipc.private_atomic(path) as f:
+            f.write("half")
+            raise RuntimeError("boom")
+    except RuntimeError:
+        pass
+    assert open(path).read() == "good", "예외 시 원본 불변(절반 쓰기 배제)"
+    assert not os.path.exists(path + ".tmp"), "예외 시 temp 정리"
