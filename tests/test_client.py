@@ -4226,6 +4226,43 @@ async def test_info_tabs_bottom_close_button():
     await _with_app(body)
 
 
+async def test_info_tabs_notebook_connector():
+    """탭 줄과 본문 사이 노트북 연결선(_ItTabConnector): accent ─ 가로선을 긋되 활성
+    탭 아래만 ▀(상단 반블록)로 덮어 활성 탭이 본문으로 이어지게 한다(요청 2026-06-20).
+    탭을 바꾸면 ▀ 다리가 새 활성 탭 아래로 옮겨간다."""
+    async def body(app, pilot, srv):
+        app._status_cap_lines = ["파일: /tmp/x/pane-1.log"]
+        app._status_tab_initial = 0
+        app._open_status_tabs({"sessions": []})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "InfoTabsScreen"
+        conn = scr.query_one("#itconn")
+
+        def bridge_range():
+            # 연결선 한 줄을 그려 ▀(다리) 구간의 [시작, 끝) x 를 구한다.
+            strip = conn.render_line(0)
+            x = lo = hi = 0
+            for seg in strip:
+                for ch in seg.text:
+                    if ch == "▀":
+                        if lo == hi:
+                            lo = x
+                        hi = x + 1
+                    x += 1
+            return lo, hi
+
+        lo0, hi0 = bridge_range()
+        assert hi0 > lo0, "활성 탭(0) 아래 ▀ 다리가 그려져야"
+        # → 로 서버 탭(1)으로 이동 → 다리가 오른쪽으로 옮겨간다.
+        await pilot.press("right")
+        await pilot.pause(0.1)
+        lo1, hi1 = bridge_range()
+        assert hi1 > lo1, "활성 탭(1) 아래에도 ▀ 다리"
+        assert lo1 > lo0, f"다리가 두 번째 탭 아래(오른쪽)로 이동해야: {lo0}->{lo1}"
+    await _with_app(body)
+
+
 async def test_status_tabs_has_server_tab():
     """§10-A #12: 통합 상태 팝업에 '서버' 탭(3번째)이 생기고 호스트·소켓 정보를 보인다."""
     async def body(app, pilot, srv):

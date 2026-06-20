@@ -14,9 +14,13 @@ from textual.screen import ModalScreen
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.widget import Widget
+from textual.strip import Strip
 from textual.widgets import Input, Label, ListItem, ListView, Static, TextArea
 
 from rich.highlighter import Highlighter
+from rich.segment import Segment
+from rich.style import Style
 
 from . import i18n
 from .clientutil import (COMMAND_FREETEXT, COMMAND_NOARG, COMMAND_OPTIONS,
@@ -1381,6 +1385,52 @@ class InfoScreen(ModalScreen):
             self._hide_cb()
         self.dismiss(None)
 
+
+class _ItTabConnector(Widget):
+    """InfoTabsScreen 탭 줄과 본문 사이의 '노트북 탭' 연결선(사용자 요청 2026-06-20 —
+    토큰 사용량 팝업과 같은 탭 모양으로 통일). 한 줄짜리 가로 규칙(─, 박스 테두리색
+    accent)을 그리되 **활성 탭 아래 구간만** ▀(상단 반블록)로 덮어, 활성 탭이 아래
+    본문으로 열려 이어지는 노트북 탭처럼 보이게 한다 — 토큰 팝업 _TkTabConnector 와
+    같은 기법. 활성 탭 위치는 매 렌더에 그 Label(#ittab_{_ti})의 화면 region 으로
+    읽어, 폭 변화·탭 전환에 자동으로 따라온다(레이아웃 후 region 이 권위)."""
+
+    def render_line(self, y: int) -> Strip:
+        w = self.size.width
+        rule_st = Style(color=theme_color(self, "accent"))
+        if w <= 0:
+            return Strip([], 0)
+        # 활성 탭 Label 의 가로 구간(이 위젯 기준 상대 x)을 화면 region 으로 구한다.
+        bx0 = bx1 = -1
+        scr = self.screen
+        ti = getattr(scr, "_ti", None)
+        lbl = None
+        if ti is not None:
+            try:
+                lbl = scr.query_one(f"#ittab_{ti}", Label)
+            except Exception:
+                lbl = None
+        if lbl is not None and getattr(lbl, "display", True):
+            try:
+                bx0 = lbl.region.x - self.region.x
+                bx1 = bx0 + lbl.region.width
+            except Exception:
+                bx0 = bx1 = -1
+        bx0 = max(0, bx0)
+        bx1 = min(w, bx1)
+        if bx1 > bx0:
+            # ─(얇은 중앙선)와 ▀(상단 반블록)는 같은 accent 라도 글자가 달라 '활성
+            # 탭 아래만 위로 열린' 노트북 모양으로 구분된다.
+            segs = []
+            if bx0 > 0:
+                segs.append(Segment("─" * bx0, rule_st))
+            segs.append(Segment("▀" * (bx1 - bx0), rule_st))
+            if bx1 < w:
+                segs.append(Segment("─" * (w - bx1), rule_st))
+        else:
+            segs = [Segment("─" * w, rule_st)]
+        return Strip(segs).adjust_cell_length(w, rule_st)
+
+
 class InfoTabsScreen(ModalScreen):
     """탭으로 나뉜 읽기전용 정보 팝업(#10). 하단 상태줄의 두 버튼(REC 출력 캡처 ·
     토큰 사용량)이 **한 팝업**을 열되 서로 다른 탭을 펴도록 통합한 것. ←→ 로 탭
@@ -1399,6 +1449,10 @@ class InfoTabsScreen(ModalScreen):
     #ittabs { width: auto; height: 2; }
     #ittabs Label { width: auto; height: 2; }   /* 탭 하나(2행, 클릭 대상) */
     #itgap { width: 1fr; height: 2; }
+    /* 탭 줄과 본문 사이 노트북 연결선(_ItTabConnector) — 활성 탭이 본문으로 열려
+       이어지게(토큰 사용량 팝업과 같은 모양, 요청 2026-06-20). 박스 테두리(round
+       accent)와 같은 색 ─ 가로선이 좌우 테두리로 이어진다. */
+    #itconn { width: 100%; height: 1; }
     /* 닫기 [x] 는 1행으로 우측 위 모서리에 붙인다(#30 — 3행 블록 아님). 가로 흐름의
        마지막(1fr 스페이서 뒤)이라 우측 끝, 높이 1이라 3행 head 의 첫 행에 놓인다. */
     #itclose { width: 5; height: 1; content-align: center middle;
@@ -1454,6 +1508,8 @@ class InfoTabsScreen(ModalScreen):
                         yield Label("", id=f"ittab_{i}", markup=True)
                 yield Label("", id="itgap")        # [x] 를 우측 끝으로 미는 여백
                 yield Label("[x]", id="itclose", markup=False)
+            # 노트북 연결선: 활성 탭이 아래 본문으로 열려 이어지게(요청 2026-06-20).
+            yield _ItTabConnector(id="itconn")
             yield ListView(id="itbody")
             yield Label(i18n.t("screen.close"), id="itclosebtn",
                         markup=False)  # 하단 닫기(§10-A #6)
@@ -1475,6 +1531,11 @@ class InfoTabsScreen(ModalScreen):
             lbl.update(self._tab_markup(name, active=(i == self._ti),
                                         focused=(self._sel == i)))
         self.query_one("#itclose", Label).set_class(self._sel == n, "-focus")
+        # 노트북 연결선 다시 그리기 — 활성 탭이 바뀌면 ▀ 다리도 새 탭 아래로 옮긴다.
+        try:
+            self.query_one("#itconn").refresh()
+        except Exception:
+            pass
 
     @staticmethod
     def _tab_markup(name, active, focused):
