@@ -242,6 +242,7 @@ register({
         "search.scrollback": "스크롤백 검색",
         "screen.more_up": "  ↑ 더 …",
         "screen.more_down": "  ↓ 더 …",
+        "screen.arg_recent": "이전 입력",
         # 통합 설정 화면(:settings)
         "screen.settings_title": "설정",
         "screen.settings_sub": "↑↓ 이동 · ←→ 값 변경 · Tab/클릭 카테고리 · Enter 입력/열기 · Esc 닫기",
@@ -321,6 +322,7 @@ register({
         "search.scrollback": "Scrollback search",
         "screen.more_up": "  ↑ more …",
         "screen.more_down": "  ↓ more …",
+        "screen.arg_recent": "recent",
         # Unified settings screen (:settings)
         "screen.settings_title": "Settings",
         "screen.settings_sub": "↑↓ move · ←→ change · Tab/click category · Enter edit/open · Esc close",

@@ -964,6 +964,25 @@ COMMAND_FREETEXT = {
     "if-shell", "bind-key", "unbind-key", "token-account",
     "prompt-clear-message", "prompt-clear-queue", "select-tab", "move-tab",
     "swap-tab", "resize-pane", "swap-pane", "capture-pane", "join-pane",
+    # 원격 페더레이션: 호스트(NATGAMES\user@host 등)를 직접 친다 → 밑줄 힌트 + 이력.
+    "remote-attach", "remote-new-tab", "remote-new-window", "remote-detach",
+}
+
+# 인자를 직접 입력하는 명령 중, 이전에 입력한 인자를 기억해 두었다가 다음에 추천·
+# 자동완성하는 것들(사용자 요청). command → "이력 버킷" 매핑 — 같은 버킷을 공유하는
+# 명령끼리는 인자 이력을 공유한다(예: remote-attach 로 붙인 호스트를 remote-new-tab·
+# remote-detach 가 그대로 추천받는다). 이력은 클라이언트가 서버별 상태파일
+# (<state>.arghist.json)에 영속한다. 버킷 키는 임의 문자열(파일 키로만 쓰임).
+COMMAND_ARGHIST = {
+    "remote-attach": "remote-host",
+    "remote-new-tab": "remote-host",
+    "remote-new-window": "remote-host",
+    "remote-detach": "remote-host",
+    "layout-save": "layout-name",
+    "layout-load": "layout-name",
+    "layout-load-new": "layout-name",
+    "run-shell": "run-shell",
+    "send-keys": "send-keys",
 }
 
 # 활성 패널에 적용되는 명령들. 명령 프롬프트에서 이 명령을 작성 중이면 대상(활성)

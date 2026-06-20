@@ -631,6 +631,84 @@ async def test_command_prompt_hint_desc_arg_toggle():
     await _with_app(body)
 
 
+async def test_command_prompt_toggle_left_right_selects():
+    # 토글 인자(on/off)는 좌우 방향키로도 선택(요청). 화면 on_key 가 App 바인딩 검사보다
+    # 먼저 도므로 event.stop() 이 Input 의 cursor_left/right 를 막아, 커서가 안 움직이고
+    # 선택지만 순환한다. ↑↓ 와 함께 ←→ 가 토글 주 경로다.
+    async def body(app, pilot, srv):
+        await pilot.press("escape")
+        await pilot.press("colon")
+        scr = app.screen_stack[-1]
+        inp = scr.query_one(Input)
+        inp.value = "monitor-activity"
+        inp.cursor_position = len(inp.value)
+        scr._refresh_cands(); scr._refresh_hint()
+        assert scr._choices, "토글 선택지"
+        cur0 = inp.cursor_position
+        base = scr._choice_sel
+        await pilot.press("right")
+        assert scr._choice_sel == (base + 1) % len(scr._choices), "→ 다음 선택지"
+        assert inp.cursor_position == cur0, "→ 가 커서를 옮기지 않음(선택지 이동만)"
+        await pilot.press("left")
+        assert scr._choice_sel == base, "← 이전 선택지"
+        assert inp.cursor_position == cur0, "← 가 커서를 옮기지 않음"
+    await _with_app(body)
+
+
+async def test_command_prompt_arg_history_recommend_and_complete():
+    # remote-attach 등 자유 텍스트 인자 명령은 이전 입력 인자를 기억해 ① 추천(후보 목록)·
+    # ② 자동완성(ghost) 한다(요청). 같은 버킷(remote-*)은 이력을 공유한다.
+    async def body(app, pilot, srv):
+        app._arghist = {}
+        app._record_arg("remote-attach office1")
+        app._record_arg("remote-attach lab@host2")
+        # 버킷 공유: remote-new-tab 도 같은 호스트 이력을 본다.
+        assert app._arghist_list("remote-new-tab") == ["lab@host2", "office1"]
+        # 중복은 최근으로 끌어올림(앞으로).
+        app._record_arg("remote-attach office1")
+        assert app._arghist_list("remote-attach")[0] == "office1"
+
+        await pilot.press("escape")
+        await pilot.press("colon")
+        scr = app.screen_stack[-1]
+        inp = scr.query_one(Input)
+
+        # ① 인자 자리(명령 + 공백)에서 모든 최근 인자를 추천(arg 모드).
+        inp.value = "remote-attach "
+        inp.cursor_position = len(inp.value)
+        scr._refresh_cands(); scr._refresh_hint()
+        assert scr._arg_mode and scr._cand_shown
+        assert [n for n, _ in scr._cand] == ["office1", "lab@host2"]
+
+        # ② 부분 인자는 prefix 로 거른다.
+        inp.value = "remote-attach off"
+        inp.cursor_position = len(inp.value)
+        scr._refresh_cands()
+        assert [n for n, _ in scr._cand] == ["office1"]
+
+        # ③ Tab(=_accept_cand) 은 'cmd arg' 로 채운다(뒤 공백 없음).
+        scr._sel = 0
+        scr._accept_cand()
+        assert inp.value == "remote-attach office1"
+
+        # ④ 인자 미입력 + 추천 강조 → Enter 가 그 추천으로 실행.
+        inp.value = "remote-attach "
+        inp.cursor_position = len(inp.value)
+        scr._refresh_cands()
+        captured = []
+        scr.dismiss = lambda v=None: captured.append(v)
+        scr._sel = 1
+        scr.on_input_submitted(type("E", (), {"value": inp.value})())
+        assert captured == ["remote-attach lab@host2"], captured
+
+        # ⑤ ghost 자동완성: 이력 줄이 suggester 풀에 들어가 prefix 로 제안된다.
+        sugg = app._arghist_completions()
+        assert "remote-attach office1" in sugg
+        s = await scr._suggester.get_suggestion("remote-attach o")
+        assert s == "remote-attach office1", s
+    await _with_app(body)
+
+
 async def test_command_prompt_executes_exact_name_with_substring_sibling():
     # 회귀: 명령 이름이 다른 명령의 부분문자열이면(예: 'help' ⊂ 'mouse-help') 후보가
     # 영영 안 사라져(_refresh_cands 의 'len==1 동일' 가드 미발동), Enter 가 매번 후보만
@@ -722,12 +800,23 @@ async def test_command_list_and_autocomplete():
         # 힌트는 박스 subtitle 에 표시
         box = scr.query_one("#cmdbox")
         assert "탭" in str(box.border_subtitle), box.border_subtitle
-        # §10: #cmds 높이를 최대 카테고리 항목 수(≤_CMDS_MAX_ROWS)로 고정 → ←→
-        # 전환 시 박스 높이 불변(출렁임 방지)
-        maxn = max(len(items) for _, items in scr._all_cats)
-        exp = min(maxn, scr._CMDS_MAX_ROWS)
-        assert scr.query_one("#cmds").styles.height.value == exp, \
+        # §10: 박스 높이를 최대 카테고리 항목 수(≤_CMDS_MAX_ROWS) 기준으로 고정 →
+        # ←→ 전환 시 박스 높이 불변(출렁임 방지). ListView 는 1fr 로 박스를 채워
+        # 가시 영역과 스크롤 뷰포트를 일치시킨다(낮은 터미널서 커서가 화면 밖으로
+        # 빠지던 버그 수정 — 고정 행수 강제 폐기).
+        assert str(scr.query_one("#cmds").styles.height) == "1fr", \
             scr.query_one("#cmds").styles.height
+        box_h = box.region.height
+        # 박스는 화면 안에 들어맞아야 한다(아래쪽 여백 포함, 잘림 없음).
+        assert box.region.bottom <= app.size.height, (box.region, app.size)
+        # 박스 높이 상한 = _CMDS_MAX_ROWS 목록행 + 외곽선/머리/검색창 오버헤드
+        assert box_h <= scr._CMDS_MAX_ROWS + scr._BOX_OVERHEAD, box_h
+        # ←→ 카테고리 전환에도 박스 높이는 불변
+        await pilot.press("right")
+        await pilot.pause(0.1)
+        assert box.region.height == box_h, (box.region.height, box_h)
+        await pilot.press("left")
+        await pilot.pause(0.1)
         # §10 #1: Claude 관련 명령이 독립 "Claude" 카테고리 탭으로 분리됨(일반
         # 모니터링은 "모니터" 로 분리 — 이전엔 "모니터/Claude" 혼합 카테고리였다).
         catmap = dict(scr._all_cats)

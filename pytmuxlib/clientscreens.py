@@ -1738,6 +1738,10 @@ class PromptScreen(ModalScreen):
         self._cand = []        # 현재 부분일치 후보 [(name, desc), ...]
         self._sel = 0          # 후보 영역 내 선택 인덱스
         self._cand_shown = False
+        # 인자 추천 모드: 완성된 arghist 명령(remote-attach 등) 뒤 인자 자리에서
+        # 이전 입력 인자를 후보로 추천한다. _arg_cmd 는 그때 사용자가 친 첫 토큰(줄 재조립용).
+        self._arg_mode = False
+        self._arg_cmd = None
         # 입력 오른쪽 힌트(완성된 명령일 때): 토글/선택지 모드 상태.
         self._hint_cmd = None      # 완성된 명령 이름(아니면 None)
         self._choices = []         # 토글/선택지 [(보임, 값), ...] (없으면 빈 리스트)
@@ -1807,7 +1811,14 @@ class PromptScreen(ModalScreen):
         if self._purpose != "command":
             return
         lbl = self.query_one("#pcand", Label)
-        s = self.query_one(Input).value.strip()
+        raw = self.query_one(Input).value
+        # 인자 추천 상태를 매번 초기화(명령 이름 치는 중이면 명령-이름 후보로 동작).
+        self._arg_mode = False
+        self._arg_cmd = None
+        # 완성된 arghist 명령(remote-attach 등) 뒤 인자 자리면 이전 입력 인자를 추천한다.
+        if self._arg_candidates(raw, lbl):
+            return
+        s = raw.strip()
         pool = self._commands()
         matches = []
         if not s:
@@ -1848,6 +1859,46 @@ class PromptScreen(ModalScreen):
         self._cand_shown = True
         lbl.display = True
         self._render_cands()
+
+    def _arg_candidates(self, raw, lbl):
+        """완성된 arghist 명령(remote-attach 등) 뒤 **인자 자리**면 이전에 입력한 인자를
+        후보(#pcand)로 추천한다(사용자 요청). 인자 자리로 판단되면(명령 토큰 + 그 뒤
+        공백/부분인자) True 를 돌려 명령-이름 후보 매칭을 막는다. 추천이 비어도 True —
+        그땐 후보를 숨기고 _refresh_hint 가 인자 밑줄(____)을 그린다. 부분 인자가 있으면
+        prefix 로 거른다(대소문자 무시). 최근 입력이 앞에 온다(_arghist_list 순서)."""
+        stripped = raw.lstrip()
+        if not stripped:
+            return False
+        first = stripped.split(None, 1)[0]
+        # 명령 토큰 뒤에 공백(또는 인자)이 있어야 '인자 자리'. 아직 명령 이름 치는 중이면 패스.
+        if len(stripped) <= len(first):
+            return False
+        app = getattr(self, "app", None)
+        canon = app._arghist_canon(first) if app else None
+        if not canon:
+            return False
+        self._arg_mode = True
+        self._arg_cmd = first
+        ap = stripped[len(first):].strip()       # 지금까지 친 부분 인자(없으면 "")
+        apl = ap.lower()
+        hist = app._arghist_list(first)
+        if ap:
+            matches = [a for a in hist if a.lower().startswith(apl)]
+            # 정확히 하나이고 입력과 동일하면 더 제안할 게 없음(명령-이름 가드와 동일).
+            if len(matches) == 1 and matches[0].lower() == apl:
+                matches = []
+        else:
+            matches = list(hist)
+        self._cand = [(a, i18n.t("screen.arg_recent")) for a in matches]
+        self._sel = 0
+        if not self._cand:
+            self._cand_shown = False
+            lbl.display = False
+        else:
+            self._cand_shown = True
+            lbl.display = True
+            self._render_cands()
+        return True
 
     def _context_rank(self, matches):
         """후보를 현재 맥락에 맞게 안정 정렬한다(기본 하이라이트=정렬 후 첫 항목).
@@ -1923,7 +1974,9 @@ class PromptScreen(ModalScreen):
     def _accept_cand(self):
         inp = self.query_one(Input)
         name = self._cand[self._sel][0]
-        inp.value = name + " "
+        # 인자 추천이면 'cmd arg' 로 채운다(뒤 공백 없음 — 완성된 인자라 Enter 로 실행).
+        # 명령 이름 후보면 'name ' 으로 채워(공백) 인자 입력을 이어가게 한다.
+        inp.value = f"{self._arg_cmd} {name}" if self._arg_mode else name + " "
         inp.cursor_position = len(inp.value)
         inp.focus()
         self._refresh_cands()
@@ -1974,13 +2027,14 @@ class PromptScreen(ModalScreen):
         self._set_hint(f"[dim]{self._esc(desc)}[/dim]")
 
     def _render_hint(self):
-        # 토글/선택지를 한 줄에 나열하고 강조된 항목만 reverse 로 표시(↑↓ 로 이동).
+        # 토글/선택지를 한 줄에 나열하고 강조된 항목만 reverse 로 표시. 양옆 ‹ › 는
+        # ←→(또는 ↑↓)로 고르고 Enter 로 실행하는 토글 UI 임을 알리는 어포던스(요청).
         parts = []
         for i, (disp, _v) in enumerate(self._choices):
             d = self._esc(i18n.t(disp))   # §6 ⑤ 선택지 라벨 번역(키=원문)
             parts.append(f"[reverse] {d} [/reverse]" if i == self._choice_sel
                          else f"[dim] {d} [/dim]")
-        self._set_hint("  ".join(parts))
+        self._set_hint("[dim]‹[/dim] " + "  ".join(parts) + " [dim]›[/dim]")
 
     def _run_choice(self):
         """강조된 토글/선택지로 즉시 실행(Enter). 값이 비면(예: '토글') 인자 생략."""
@@ -1994,6 +2048,19 @@ class PromptScreen(ModalScreen):
         # 하면(다시 채워도 무변화) 바로 실행한다 — 그러지 않으면 명령 이름이 다른 명령의
         # 부분문자열일 때(예: 'help' ⊂ 'mouse-help') 후보가 영영 안 사라져(_refresh_cands
         # 의 'len==1 동일' 가드 미발동) Enter 가 실행으로 못 넘어가 영영 막힌다.
+        # 인자 추천 모드: Enter 는 **실행**(채우지 않음). 인자를 아직 안 쳤으면 강조된
+        # 추천으로 실행, 부분 인자를 쳤으면 친 그대로 실행(오선택 방지 — 추천은 Tab 으로만
+        # 채운다). 명령-이름 후보(아래)와 달리 인자는 자유 텍스트라 Enter 를 가로채지 않는다.
+        if self._purpose == "command" and self._arg_mode and self._cand_shown and self._cand:
+            inp = self.query_one(Input)
+            stripped = inp.value.lstrip()
+            first = stripped.split(None, 1)[0] if stripped else ""
+            ap = stripped[len(first):].strip()
+            if not ap:
+                self.dismiss(f"{self._arg_cmd} {self._cand[self._sel][0]}")
+            else:
+                self.dismiss(inp.value)
+            return
         if self._purpose == "command" and self._cand_shown and self._cand:
             name = self._cand[self._sel][0]
             cur = self.query_one(Input).value.strip().lower()
@@ -2097,8 +2164,9 @@ class PromptScreen(ModalScreen):
                 event.stop()
                 self._accept_cand()
             return
-        # 토글/선택지 모드: ↑↓(과 가능하면 ←→)로 강조 이동, Enter 는 submit 에서 실행.
-        # (←→ 는 Input 의 커서 이동 바인딩이 먼저 먹을 수 있어 ↑↓ 를 주 경로로 둔다.)
+        # 토글/선택지 모드: ←→·↑↓ 로 강조 이동, Enter 는 submit 에서 실행. 화면 on_key 는
+        # 버블 경로상 App 의 바인딩 검사(_check_bindings)보다 먼저 도므로 여기서 event.stop()
+        # 하면 Input 의 cursor_left/right 바인딩이 발동하지 않는다(좌우로 선택지 이동, 요청).
         if self._purpose == "command" and self._choices:
             if event.key in ("up", "left"):
                 event.stop()

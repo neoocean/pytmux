@@ -26,7 +26,8 @@ from textual.suggester import SuggestFromList
 
 from . import clientclip, clientrender, i18n, ipc, plugins, proc, version
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
-    COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS, DEFAULT_STYLE,
+    COMMAND_ARGHIST, COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS,
+    DEFAULT_STYLE, norm_sep,
     SETTINGS, SETTINGS_CATS,
     REMOTE_PINK, REMOTE_PINK_DIM,
     _BOX_BITS, _BOX_REV, _JAMO, _KEY_DIAG,
@@ -839,6 +840,103 @@ class _ChooseScreensMixin:
 
 class _CommandMixin:
     # §5.4 명령 실행 클러스터(프롬프트 수명·셸 우회·명령 디스패치) — 모듈 레벨 분리, PytmuxApp 은 MRO 로 상속
+
+    # ── 명령 인자 이력(arg history) ──────────────────────────────────────────
+    # remote-attach 등 자유 텍스트 인자를 직접 치는 명령의 **이전 입력 인자**를 기억해
+    # 다음에 추천(후보 목록)·자동완성(ghost)한다(사용자 요청). COMMAND_ARGHIST 의 버킷별
+    # 최근-우선 리스트를 서버별 상태파일(<state>.arghist.json)에 영속한다. 같은 버킷을
+    # 공유하는 명령끼리(remote-*) 이력을 공유한다.
+    _ARGHIST_MAX = 30        # 버킷당 보관할 최근 인자 수
+
+    def _arghist_path(self):
+        sock = getattr(self, "sock_path", None)
+        return ipc.state_base(sock) + ".arghist.json" if sock else None
+
+    def _load_arghist(self):
+        """영속된 명령 인자 이력을 self._arghist(버킷→최근-우선 리스트)로 복원(best-effort).
+        파일이 없거나 깨졌으면 빈 이력으로 시작한다 — 추천이 없을 뿐 동작은 정상."""
+        self._arghist = {}
+        path = self._arghist_path()
+        if not path:
+            return
+        try:
+            import json
+            with open(path, encoding="utf-8") as f:
+                d = json.load(f)
+            if isinstance(d, dict):
+                for k, v in d.items():
+                    if isinstance(v, list):
+                        self._arghist[k] = [x for x in v if isinstance(x, str)]
+        except (OSError, ValueError):
+            pass
+
+    def _save_arghist(self):
+        """현재 이력을 임시파일+os.replace 로 원자적 기록(best-effort). 저장 실패가
+        명령 실행을 막지 않게 예외는 삼킨다(rtt/netdbg 와 같은 정책)."""
+        path = self._arghist_path()
+        if not path:
+            return
+        try:
+            import json
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(getattr(self, "_arghist", {}), f, ensure_ascii=False)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _arghist_canon(first):
+        """입력 첫 토큰(명령어)을 arghist 정규 명령 이름으로 — 구분자(공백/_/-)·대소문자
+        무시(remote_attach·Remote-Attach 모두 remote-attach). arghist 대상 아니면 None."""
+        if not first:
+            return None
+        q = norm_sep(first.lower())
+        for name in COMMAND_ARGHIST:
+            if norm_sep(name) == q:
+                return name
+        return None
+
+    def _arghist_list(self, first):
+        """입력 첫 토큰에 해당하는 명령의 인자 이력(최근 우선). 대상 아니면 []."""
+        canon = self._arghist_canon(first)
+        if not canon:
+            return []
+        return list(getattr(self, "_arghist", {}).get(COMMAND_ARGHIST[canon], []))
+
+    def _arghist_completions(self):
+        """이력 기반 ghost 자동완성 줄("cmd arg", 최근 우선)을 만든다. 타이핑 중
+        'remote-attach o' → 'remote-attach office1' 처럼 인자까지 제안된다(→/Tab 수락).
+        최근이 앞이라 SepInsensitiveSuggester 의 prefix 매칭에서 최근 인자가 먼저 잡힌다."""
+        out = []
+        hist = getattr(self, "_arghist", {})
+        for cmd, bucket in COMMAND_ARGHIST.items():
+            for arg in hist.get(bucket, []):
+                out.append(f"{cmd} {arg}")
+        return out
+
+    def _record_arg(self, line):
+        """제출된 명령 줄에서 (정규 명령, 원시 인자)를 뽑아 이력 맨 앞에 기록·영속.
+        백슬래시 보존을 위해 shlex 가 아니라 split(None,1) 의 원시 잔여를 쓴다
+        (remote-attach NATGAMES\\user@host). 대상 명령·인자가 아니면 무시."""
+        parts = line.split(None, 1)
+        if len(parts) < 2:
+            return
+        canon = self._arghist_canon(parts[0])
+        if not canon:
+            return
+        arg = parts[1].strip()
+        if not arg:
+            return
+        bucket = COMMAND_ARGHIST[canon]
+        hist = getattr(self, "_arghist", None)
+        if hist is None:
+            hist = self._arghist = {}
+        cur = [a for a in hist.get(bucket, []) if a != arg]   # 중복 제거→최근으로
+        cur.insert(0, arg)
+        hist[bucket] = cur[:self._ARGHIST_MAX]
+        self._save_arghist()
+
     def open_prompt(self, purpose, placeholder="", initial="", action=None,
                     suggest=None):
         # 한 줄 입력을 Input 을 담은 바닥 모달(PromptScreen)로 받는다.
@@ -848,8 +946,9 @@ class _CommandMixin:
         #   타이핑이 덧붙던 문제, 요청). 빈 입력일 땐 placeholder 로도 흐리게 보인다.
         suggester = None
         if purpose == "command":
+            # 이력 줄(최근 우선)을 앞에 둬 'remote-attach o'→최근 호스트가 먼저 ghost.
             suggester = SepInsensitiveSuggester(
-                COMPLETIONS + self.plugins.completions,
+                self._arghist_completions() + COMPLETIONS + self.plugins.completions,
                 case_sensitive=False)
         elif suggest:
             suggester = SuggestFromList([suggest], case_sensitive=False)
@@ -864,6 +963,7 @@ class _CommandMixin:
             return
         val = val.strip()
         if purpose == "command":
+            self._record_arg(val)   # remote-attach 등 인자를 이력에 기록(추천용)
             self._run_command(val)
         elif purpose == "rename_window":
             if val:
@@ -2705,6 +2805,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.net_rtt_persist = config.get("net_rtt_persist", True)
             self._rtt_save_n = 0   # 마지막 저장 이후 누적 표본 수(디바운스용)
             self._load_rtt_hist()
+            # 명령 인자 이력(remote-attach 호스트 등) 복원 — 프롬프트 추천·자동완성용.
+            self._load_arghist()
             # 로컬(AF_UNIX·루프백 TCP) 연결이면 클라↔서버가 같은 머신이라
             # 네트워크 열화 개념이 없다 → degraded(빨강 외곽선)·자동 재접속을
             # 억제한다(§10-F Windows degraded 오탐). 진짜 원격 호스트 연결에서만
