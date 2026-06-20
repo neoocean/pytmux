@@ -174,3 +174,36 @@ async def test_ptyhost_exit_frame_on_child_exit():
         writer.close()
     finally:
         await _stop_host(host, task, endpoint, d)
+
+
+async def test_read_loop_isolates_callback_exception():
+    """H2: 한 패널 데이터 콜백이 던져도 PtyHostClient._read_loop 가 끊기지 않고 이후
+    프레임을 계속 처리한다. 종전엔 콜백 예외가 루프를 break → _handle_lost 로 host 는
+    멀쩡한데 전 패널이 끊긴 것으로 오인(+무로깅)하던 증폭. 진짜 단절(read_frame→None)
+    에서만 _handle_lost 가 1회 호출된다."""
+    from pytmuxlib import ptyhostclient
+    cli = ptyhostclient.PtyHostClient()
+    cli.reader = object()                    # read_frame 은 아래서 가로챔
+    seen = []
+
+    def _cb(data):
+        seen.append(data)
+        if len(seen) == 1:
+            raise RuntimeError("콜백 버그(첫 프레임)")
+
+    cli._cb[1] = (_cb, None)
+    lost = []
+    cli._on_lost = lambda: lost.append(True)
+    frames = [("data", 1, b"A"), ("data", 1, b"B"), None]
+
+    async def _fake_read_frame(_r):
+        return frames.pop(0)
+
+    orig = proto.read_frame
+    proto.read_frame = _fake_read_frame
+    try:
+        await cli._read_loop()
+    finally:
+        proto.read_frame = orig
+    assert seen == [b"A", b"B"], ("첫 콜백 예외 후에도 둘째 프레임 처리", seen)
+    assert lost == [True], ("EOF(None)에서만 _handle_lost 1회", lost)

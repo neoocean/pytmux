@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import traceback
 
 from . import ipc, pty_backend, ptyhostproto as proto
 
@@ -62,12 +63,20 @@ class PtyHostClient:
                 f = await proto.read_frame(self.reader)
                 if f is None:
                     break
-                if f[0] == "data":
-                    cb = self._cb.get(f[1])
-                    if cb and cb[0]:
-                        cb[0](f[2])
-                else:
-                    self._dispatch_json(f[1])
+                # H2: 프레임 처리(패널 콜백/JSON 디스패치) 예외를 **프레임 단위로**
+                # 격리한다. 종전엔 한 패널의 콜백/렌더 버그가 이 루프를 끊어
+                # _handle_lost → host 는 멀쩡한데 전 패널 연결이 죽은 것으로 오인
+                # (+ 무로깅 pass 라 추적 불가)하던 증폭을 막는다. 진짜 단절 신호는
+                # read_frame→None(아래 break) 와 read 자체의 예외(바깥 except)뿐이다.
+                try:
+                    if f[0] == "data":
+                        cb = self._cb.get(f[1])
+                        if cb and cb[0]:
+                            cb[0](f[2])
+                    else:
+                        self._dispatch_json(f[1])
+                except Exception:
+                    traceback.print_exc()      # 콜백 버그 가시화(무음 pass 금지)
         except asyncio.CancelledError:
             raise
         except Exception:
