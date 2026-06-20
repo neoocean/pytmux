@@ -14,7 +14,7 @@ from textual.screen import ModalScreen
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Input, Label, ListItem, ListView, TextArea
+from textual.widgets import Input, Label, ListItem, ListView, Static, TextArea
 
 from rich.highlighter import Highlighter
 
@@ -1395,6 +1395,11 @@ class InfoTabsScreen(ModalScreen):
                   content-align: center middle; text-style: bold;
                   background: $panel-darken-2; color: $text; }
     #itclosebtn:hover { background: $error; }
+    /* 키 안내 줄(요청 2026-06-20): 종전엔 border_subtitle 로 바닥 테두리선 위에
+       글자를 얹어 선이 끊겼다 → 토큰 사용량 팝업(#tkhint)처럼 **박스 안쪽 한 줄**
+       로 내려, 그 아래 테두리선이 끊김 없이 그어지게 한다. height:1 고정이라 탭마다
+       길이가 달라도 팝업 높이는 변하지 않는다. */
+    #ithint { width: 100%; height: 1; color: $text-muted; }
     """
     _NAV = ("up", "down", "pageup", "pagedown", "home", "end")
 
@@ -1430,6 +1435,8 @@ class InfoTabsScreen(ModalScreen):
             yield ListView(id="itbody")
             yield Label(i18n.t("screen.close"), id="itclosebtn",
                         markup=False)  # 하단 닫기(§10-A #6)
+            # 키 안내 줄 — 박스 안쪽 마지막 줄(바닥 테두리선은 그 아래로 끊김 없이).
+            yield Static("", id="ithint", markup=False)
 
     async def on_mount(self):
         await self._render_tab()
@@ -1491,12 +1498,14 @@ class InfoTabsScreen(ModalScreen):
         # 커서 초깃값은 첫 내용 줄(액션 버튼 위가 아니라) — 정보가 먼저 보이게.
         if items:
             lv.index = len(acts) if lines else 0
-        box = self.query_one("#itbox", Vertical)
+        # 키 안내를 박스 안쪽 마지막 줄(#ithint)에 둔다(요청 2026-06-20). 종전엔
+        # border_subtitle 로 바닥 테두리선 위에 얹어 선이 끊겼다 → 토큰 사용량 팝업
+        # (#tkhint)처럼 안쪽 한 줄로 내려 그 아래 테두리선이 끊김 없이 그어지게 한다.
         sub = i18n.t("screen.infotabs_sub")
         acts = self._actions.get(self._ti)
         if acts:                        # 이 탭의 동작들(예: [c] 캡처 토글 · [o] 폴더)
             sub = " · ".join(a[1] for a in acts) + " · " + sub
-        box.border_subtitle = sub
+        self.query_one("#ithint", Static).update(sub)
 
     async def _switch_to(self, i):
         if 0 <= i < len(self._tabs) and i != self._ti:
