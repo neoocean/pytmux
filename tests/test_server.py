@@ -4070,3 +4070,58 @@ async def test_panel_env_sets_truecolor_and_term():
         assert "LINES" not in env and "COLUMNS" not in env
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_flush_to_client_drops_slow_consumer():
+    """H-2: 한 클라의 송신버퍼가 high-water 를 넘으면(드레인을 못 따라옴) 즉시 떨궈
+    flush 루프가 전체를 끌고 막히지 않게 한다. write 가 무한 드레인이어도 타임아웃 후
+    떨군다(영구 hang 차단). 클라를 통째 제거하므로 _sent_rows 불일치 없음."""
+    from pytmuxlib import serverio as S
+    from pytmuxlib.model import ClientConn
+    srv, task, sock = await server_only()
+    try:
+        class _Tr:
+            def __init__(self, n):
+                self._n = n
+
+            def get_write_buffer_size(self):
+                return self._n
+
+        class _W:
+            def __init__(self, n, hang=False):
+                self.transport = _Tr(n)
+                self.closed = False
+                self._hang = hang
+
+            def write(self, b):
+                pass
+
+            def close(self):
+                self.closed = True
+
+            async def drain(self):
+                if self._hang:
+                    await asyncio.Event().wait()
+
+        # ① 송신버퍼 high-water 초과 → 즉시 드롭(write 안 함)
+        c1 = ClientConn(_W(99 * 1024 * 1024))
+        srv.clients.append(c1)
+        await srv._flush_to_client(c1, [b"frame"])
+        assert c1 not in srv.clients and c1.writer.closed, "high-water 즉시 드롭"
+        # ② 무한 드레인 → 타임아웃 드롭
+        c2 = ClientConn(_W(0, hang=True))
+        srv.clients.append(c2)
+        orig = S._CLIENT_WRITE_TIMEOUT
+        S._CLIENT_WRITE_TIMEOUT = 0.05
+        try:
+            await srv._flush_to_client(c2, [b"frame"])
+        finally:
+            S._CLIENT_WRITE_TIMEOUT = orig
+        assert c2 not in srv.clients and c2.writer.closed, "타임아웃 드롭"
+        # ③ 정상 클라는 안 떨군다
+        c3 = ClientConn(_W(0))
+        srv.clients.append(c3)
+        await srv._flush_to_client(c3, [b"frame"])
+        assert c3 in srv.clients and not c3.writer.closed, "정상 클라 유지"
+    finally:
+        await teardown(srv, task, sock)

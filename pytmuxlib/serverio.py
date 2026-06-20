@@ -31,6 +31,12 @@ HOST_RECONNECT_BACKOFF_BASE = 0.25   # 첫 급속 끊김 백오프(초); 이후 
 HOST_RECONNECT_BACKOFF_CAP = 4.0     # 백오프 상한(초)
 HOST_RECONNECT_MAX_BURST = 6         # 연속 급속 끊김 한계 → 경쟁 판단
 
+# H-2 느린 소비자 가드: 한 클라의 송신버퍼가 이만큼 쌓이면(드레인을 못 따라옴)
+# 그 클라를 떨궈 flush 루프가 전체를 끌고 멈추지 않게 한다. write 자체도 타임아웃으로
+# 감싸 영구 hang 을 끊는다(백스톱).
+_CLIENT_WRITE_HIGH_WATER = 8 * 1024 * 1024   # 8MiB 송신버퍼 백로그
+_CLIENT_WRITE_TIMEOUT = 5.0                   # 한 배치 write+drain 상한(초)
+
 
 class ServerIOMixin:
     @staticmethod
@@ -185,44 +191,49 @@ class ServerIOMixin:
         sess = client.session
         if not sess:
             return
-        # §1.7: 원격 탭을 보는 클라에겐 로컬 layout/screen 을 보내지 않는다(화면은
-        # 업스트림 전달분이 권위) — 병합 탭바용 status 만 갱신한다. 모든 브로드캐스트
-        # 경로(_broadcast_session·flush 헤더예약·resize 미러링)가 이 가드를 공유한다.
-        if getattr(client, "remote_view", None):
-            await write_msg(client.writer, self._status_msg(sess, client=client))
-            return
-        lay = self._layout_msg(sess)  # 세션 공유 크기(최소)로 계산
-        if not lay:
-            return
-        await write_msg(client.writer, lay)
-        win = sess.active_window
-        # B2: full 재동기 — 이 클라의 델타 기준(_sent_rows)을 비우고 아래에서 보낸
-        # full screen 으로 다시 채운다(이후 flush 가 이 기준 대비 델타를 보냄). 죽은
-        # 패널의 stale 스냅샷도 함께 정리된다.
-        client._sent_rows.clear()
-        # A3: 활성 패널을 가장 먼저 render·전송해 사용자가 보는 화면의 first-paint 를
-        # 앞당긴다(분할이 많아도 포커스 패널이 비활성 패널 직렬화 뒤로 안 밀림). 총량
-        # 동일, 순서만 활성 우선.
-        ap = win.active_pane
-        panes = sorted(win.panes(), key=lambda p: p is not ap)
-        for p in panes:
-            rows, cursor = p.render(p is ap)
-            p.dirty = False
-            client._sent_rows[p.id] = rows
-            await write_msg(client.writer, {"t": "screen", "pane": p.id,
-                                            "rows": rows, "cursor": cursor,
-                                            "wrap": p._last_wrap})
-        # 팝업 패널 화면도 함께(트리에 없으므로 별도로 보냄). 팝업은 항상 포커스라
-        # 커서를 그린다(render(True)).
-        if sess.popup and sess.popup.get("pane") is not None:
-            pp = sess.popup["pane"]
-            rows, cursor = pp.render(True)
-            pp.dirty = False
-            client._sent_rows[pp.id] = rows
-            await write_msg(client.writer, {"t": "screen", "pane": pp.id,
-                                            "rows": rows, "cursor": cursor,
-                                            "wrap": pp._last_wrap})
-        await write_msg(client.writer, self._status_msg(sess, client=client))
+        # H-1: 다중-프레임 송신이라 write_lock 으로 flush 루프·다른 _send_full 과
+        # 직렬화한다(await drain 사이로 프레임이 끼어드는 순서 역전 방지).
+        async with client.write_lock:
+            # §1.7: 원격 탭을 보는 클라에겐 로컬 layout/screen 을 보내지 않는다(화면은
+            # 업스트림 전달분이 권위) — 병합 탭바용 status 만 갱신한다. 모든 브로드캐스트
+            # 경로(_broadcast_session·flush 헤더예약·resize 미러링)가 이 가드를 공유.
+            if getattr(client, "remote_view", None):
+                await write_msg(client.writer,
+                                self._status_msg(sess, client=client))
+                return
+            lay = self._layout_msg(sess)  # 세션 공유 크기(최소)로 계산
+            if not lay:
+                return
+            await write_msg(client.writer, lay)
+            win = sess.active_window
+            # B2: full 재동기 — 이 클라의 델타 기준(_sent_rows)을 비우고 아래에서 보낸
+            # full screen 으로 다시 채운다(이후 flush 가 이 기준 대비 델타를 보냄). 죽은
+            # 패널의 stale 스냅샷도 함께 정리된다.
+            client._sent_rows.clear()
+            # A3: 활성 패널을 가장 먼저 render·전송해 사용자가 보는 화면의 first-paint
+            # 를 앞당긴다(분할이 많아도 포커스 패널이 비활성 패널 직렬화 뒤로 안 밀림).
+            # 총량 동일, 순서만 활성 우선.
+            ap = win.active_pane
+            panes = sorted(win.panes(), key=lambda p: p is not ap)
+            for p in panes:
+                rows, cursor = p.render(p is ap)
+                p.dirty = False
+                client._sent_rows[p.id] = rows
+                await write_msg(client.writer, {"t": "screen", "pane": p.id,
+                                                "rows": rows, "cursor": cursor,
+                                                "wrap": p._last_wrap})
+            # 팝업 패널 화면도 함께(트리에 없으므로 별도로 보냄). 팝업은 항상 포커스라
+            # 커서를 그린다(render(True)).
+            if sess.popup and sess.popup.get("pane") is not None:
+                pp = sess.popup["pane"]
+                rows, cursor = pp.render(True)
+                pp.dirty = False
+                client._sent_rows[pp.id] = rows
+                await write_msg(client.writer, {"t": "screen", "pane": pp.id,
+                                                "rows": rows, "cursor": cursor,
+                                                "wrap": pp._last_wrap})
+            await write_msg(client.writer,
+                            self._status_msg(sess, client=client))
 
     _DELTA_MAX_RATIO = 0.7   # 바뀐 행이 이 비율 초과면 full screen 으로 폴백
 
@@ -396,8 +407,41 @@ class ServerIOMixin:
                         frames_by_client[c].append(frame_msg(
                             self._status_msg(sess, full=False, client=c)))
                 # 클라마다 이 프레임의 모든 메시지를 한 번에 write+drain(B4).
+                # H-2: 느린/먹통 클라가 flush 루프 전체를 막지 않게 가드한다.
                 for c in clients:
-                    await write_frames(c.writer, frames_by_client[c])
+                    await self._flush_to_client(c, frames_by_client[c])
+
+    async def _flush_to_client(self, c: ClientConn, frames):
+        """한 클라에 프레임 배치를 보낸다(H-2). 느린/먹통 클라(드레인 무한 대기)가
+        flush 루프 전체(=모든 클라·세션 렌더)를 막지 않게: ① 송신버퍼가 이미
+        high-water 를 넘으면 그 클라를 즉시 떨궈(전체 차단 회피) 재연결 시 full 재동기로
+        복구시키고, ② 실제 write 는 write_lock(H-1, _send_full 과 직렬화) + 타임아웃으로
+        감싸 영구 hang 을 끊는다. 클라를 통째 떨구므로 _sent_rows 베이스라인 불일치 없음."""
+        if not frames:
+            return
+        tr = getattr(c.writer, "transport", None)
+        if tr is not None:
+            try:
+                if tr.get_write_buffer_size() > _CLIENT_WRITE_HIGH_WATER:
+                    self._drop_slow_client(c)
+                    return
+            except Exception:
+                pass
+        try:
+            async with c.write_lock:
+                await asyncio.wait_for(
+                    write_frames(c.writer, frames), _CLIENT_WRITE_TIMEOUT)
+        except (asyncio.TimeoutError, OSError, ConnectionError):
+            self._drop_slow_client(c)
+
+    def _drop_slow_client(self, c: ClientConn):
+        """느린 소비자를 브로드캐스트 대상에서 즉시 제거하고 연결을 닫는다(H-2).
+        handle_client 의 finally 가 곧 reader 정리를 마저 한다(close 는 멱등)."""
+        if c in self.clients:
+            self.clients.remove(c)
+            self._log_error("slow client dropped (write backpressure)")
+        with contextlib.suppress(OSError, ConnectionError):
+            c.writer.close()
 
     async def _usage_loop(self):
         """M19+ 그림자 /usage 자동 갱신: usage_refresh_sec 마다 refresh_usage 를 돌려

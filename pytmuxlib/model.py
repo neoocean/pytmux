@@ -1313,6 +1313,10 @@ class ClientConn:
         self.session: Session | None = None
         self.cols = 80
         self.rows = 24
+        # H-1: 이 클라 writer 로의 다중-프레임 송신(_send_full·flush write_frames)을
+        # 직렬화해, 두 송신의 await(drain) 사이로 다른 송신 프레임이 끼어들어 stale
+        # full 스냅샷이 newer delta 를 덮는 프레임 순서 역전을 막는다.
+        self.write_lock = asyncio.Lock()
         # §1.7 페더레이션: 이 클라가 보는 원격 링크 이름(None=로컬). 설정 중엔 화면/
         # 레이아웃이 업스트림에서 전달되고 입력/스크롤/리사이즈가 릴레이된다(serverremote).
         self.remote_view: str | None = None
