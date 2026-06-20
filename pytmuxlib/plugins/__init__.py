@@ -236,8 +236,9 @@ class Registry:
 
     def server_filter_rows(self, server, pane, rows):
         """render 된 행 목록(행 = [text, style] 런 목록)을 클라 전송 직전에 플러그인이
-        변형할 기회. claude-code 가 Claude 패널의 '/feedback 팁' 줄을 공백으로 가린다
-        (요청 2026-06-17). 플러그인은 변형 시 **새 리스트**를 돌려야 한다(render 캐시를
+        변형할 기회. claude-disable-feedback 가 Claude 패널의 '/feedback 팁'·세션 종료
+        평가 배너를 공백으로 가린다(요청 2026-06-17·2026-06-18). 플러그인은 변형 시
+        **새 리스트**를 돌려야 한다(render 캐시를
         공유하므로 in-place 금지). 아무도 변형 안 하면 원본을 그대로 돌려, 핫패스 비용은
         Claude 패널의 짧은 행 스캔뿐이다(delete-to-disable)."""
         for p in self.plugins:

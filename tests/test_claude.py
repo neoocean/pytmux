@@ -453,41 +453,6 @@ async def test_saver_hook_events_env_payload():
     assert armed["PYTMUX_PENDING_ETA"] == 30
 
 
-async def test_blank_feedback_tip_hides_line():
-    """Claude 패널의 'Tip: Use /feedback …' 줄은 폭을 유지한 채 공백으로 가려진다
-    (사용자 요청 2026-06-17). 팁이 없으면 원본 객체를 그대로 돌려준다(render 캐시 보호·
-    핫패스 무복사). 사용자가 직접 친 '/feedback' 단독 줄은 안 가린다(오탐 방지)."""
-    cc = importlib.import_module("pytmuxlib.plugins.claude-code")
-    tip = "Tip: Use /feedback to help us improve!"
-    rows = [[["hello", {}]], [[tip, {"dim": 1}]], [["world", {}]]]
-    out = cc._blank_feedback_tip(rows)
-    assert "".join(t for t, _ in out[1]) == " " * len(tip)   # 같은 폭 공백
-    assert out[1][0][1] == {"dim": 1}                         # 스타일 보존
-    assert out[0] is rows[0] and out[2] is rows[2]            # 다른 행 그대로
-    assert rows[1][0][0] == tip                               # 원본 미변형(캐시 보호)
-    plain = [[["nothing here", {}]]]
-    assert cc._blank_feedback_tip(plain) is plain             # 팁 없음 → 동일 객체
-    typed = [[["please run /feedback", {}]]]
-    assert cc._blank_feedback_tip(typed) is typed             # 직접 친 /feedback 은 보존
-
-
-async def test_server_filter_rows_only_claude_panes():
-    """server_filter_rows 훅은 Claude 패널만 '/feedback 팁'을 가리고, 비-Claude 패널은
-    원본 그대로 둔다(핫패스 무영향)."""
-    cc = importlib.import_module("pytmuxlib.plugins.claude-code")
-    tip = "Tip: Use /feedback to help us improve!"
-    rows = [[[tip, {}]]]
-
-    class _P:
-        _claude = None
-
-    assert cc.PLUGIN.server_filter_rows(None, _P(), rows) is rows   # 비-Claude → 그대로
-    p = _P()
-    p._claude = "idle"
-    out = cc.PLUGIN.server_filter_rows(None, p, rows)
-    assert "".join(t for t, _ in out[0]) == " " * len(tip)
-
-
 async def test_fmt_long_turn_badge_switches_to_hours():
     """장기 턴 경고 배지: 1시간 미만은 '⚠ 분:초', 1시간 이상은 '⚠ 시:분'으로 표시한다
     (사용자 요청 2026-06-17 — 1시간 넘으면 분이 60+ 로 커져 읽기 어려움)."""
