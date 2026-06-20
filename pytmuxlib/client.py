@@ -1791,6 +1791,15 @@ class _InputMixin:
             event.prevent_default()
             event.stop()
             return
+        # F10: 전체 메뉴(컨텍스트 메뉴 최상위) 직진 진입 — GUI/TUI 의 "메뉴바 활성"
+        # 관례(F10_MENU_SCENARIO.md). 종전엔 prefix Enter·우클릭만이 진입로였다.
+        # F12(명령 프롬프트)와 같은 normal-mode 단일키 진입이며, 메뉴가 떠 있을 땐
+        # MenuScreen.on_key 가 F10 을 Esc 처럼 받아 닫는다(메뉴바 토글).
+        if event.key == "f10":
+            self.open_menu()
+            event.prevent_default()
+            event.stop()
+            return
         # F12: 바로 명령 프롬프트 진입(ESC 모드가 아닐 때).
         # 중첩 prefix 가로채기 토글은 prefix F12 로 이동.
         if event.key == "f12":

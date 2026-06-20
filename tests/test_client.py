@@ -1964,6 +1964,36 @@ async def test_choose_tree_shows_panes_and_switches():
     await _with_app(body)
 
 
+async def test_f10_opens_full_menu():
+    # F10 = 전체 메뉴(컨텍스트 메뉴 최상위) 직진 진입(F10_MENU_SCENARIO.md).
+    # 종전 진입로(prefix Enter·우클릭)에 더해 normal-mode 단일키로 연다.
+    async def body(app, pilot, srv):
+        assert app.mode == "normal"
+        await pilot.press("f10")
+        await pilot.pause(0.1)
+        menu = app.screen_stack[-1]
+        assert menu.__class__.__name__ == "MenuScreen", "F10 → 전체 메뉴"
+        assert menu._entries is None, "최상위(MENU_TOPLEVEL) 메뉴"
+        # 모든 액션 그룹이 도달 가능한지: 최상위 토큰에 패널/레이아웃/탭 그룹 진입점
+        toks = menu._toplevel_entries()
+        assert {"group:pane", "group:layout", "group:tab"} <= set(toks)
+    await _with_app(body)
+
+
+async def test_f10_toggles_menu_closed():
+    # 메뉴가 떠 있을 때 F10 을 다시 누르면 닫힌다(메뉴바 토글: 연 키=닫는 키).
+    async def body(app, pilot, srv):
+        await pilot.press("f10")
+        await pilot.pause(0.1)
+        menu = app.screen_stack[-1]
+        assert menu.__class__.__name__ == "MenuScreen"
+        # 모달이 떠 있으므로 키는 MenuScreen.on_key 가 받아 닫는다.
+        menu.on_key(Key(key="f10", character=None))
+        await pilot.pause(0.1)
+        assert app.screen_stack[-1] is not menu, "F10 재입력 → 메뉴 닫힘"
+    await _with_app(body)
+
+
 async def test_context_menu_toggle_shows_state_and_stays_open():
     # 컨텍스트 메뉴의 토글 항목(줌/동기화/자동재개)은 현재 on/off 를 표시하고,
     # 선택해도 메뉴를 닫지 않으며(ESC 로만 닫음) 라벨이 갱신된다(#17).
