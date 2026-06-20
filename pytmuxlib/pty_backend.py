@@ -32,8 +32,10 @@
 from __future__ import annotations
 
 import os
+import select
 import struct
 import threading
+import time
 from typing import Callable, Optional
 
 from .protocol import FEED_SLICE  # PTY feed 슬라이스 크기(순환 import 없음)
@@ -288,8 +290,40 @@ class _UnixPty(PtyProcess):
             self._loop.add_reader(self._fd, self._readable)
             self._reading = True
 
+    # PTY 입력버퍼 포화(자식이 stdin 을 안 읽음) 시 잔여 write 가 쓰기 가능해질
+    # 때까지 기다리는 총 상한(초). 병적 상황의 이벤트 루프 stall 을 막는 안전망 —
+    # 초과하면 best-effort 로 남은 입력을 버린다(무한 블록보다 안전).
+    _WRITE_DEADLINE = 2.0
+
     def write(self, data: bytes) -> None:
-        os.write(self._fd, data)
+        """입력 fd 에 data **전체**를 쓴다. fd 가 논블로킹(set_blocking False)이라
+        os.write 가 일부만 쓰거나 BlockingIOError(EAGAIN)/InterruptedError(EINTR)를
+        낼 수 있다 — 큰 페이스트나 자식이 입력을 안 읽어 PTY 입력버퍼가 포화일 때
+        입력이 조용히 잘리던 것(안정성 H1)을 막는다. 부분 write 는 잔여를 이어 쓰고,
+        EAGAIN 은 select 로 쓰기 가능까지 짧게 기다려 재시도한다."""
+        if not data:
+            return
+        mv = memoryview(data)
+        off, total, deadline = 0, len(data), None
+        while off < total:
+            try:
+                off += os.write(self._fd, mv[off:])
+                continue
+            except InterruptedError:        # EINTR — 즉시 재시도
+                continue
+            except BlockingIOError:         # EAGAIN — 버퍼 포화, 아래서 대기
+                pass
+            except OSError:
+                return                      # fd 닫힘/끊김 — 조용히 중단(기존 거동)
+            if deadline is None:
+                deadline = time.monotonic() + self._WRITE_DEADLINE
+            timeout = deadline - time.monotonic()
+            if timeout <= 0:
+                return                      # 안전망: 병적 포화 — 잔여 버림
+            try:
+                select.select([], [self._fd], [], timeout)
+            except (OSError, ValueError):
+                return
 
     def set_winsize(self, rows: int, cols: int) -> None:
         import fcntl

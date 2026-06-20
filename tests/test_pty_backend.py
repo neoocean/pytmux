@@ -64,6 +64,48 @@ async def test_write_winsize_terminate():
     pty.close()
 
 
+async def test_unix_write_no_silent_truncation():
+    """H1: _UnixPty.write 가 부분 write/EAGAIN 에도 입력 **전체**를 쓴다 — 큰 페이스트가
+    PTY 입력버퍼 포화로 조용히 잘리던 것 차단. 슬레이브를 별도 스레드로 드레인하며
+    256KiB 를 써서 받은 총량 == 보낸 총량을 확인(논블로킹 master 라 EAGAIN 다발)."""
+    if pty_backend.IS_WINDOWS:
+        return
+    import pty as ptymod
+    import select
+    import threading
+    import tty
+    master, slave = ptymod.openpty()
+    tty.setraw(slave)                       # 라인 디시플린 변환 제거(바이트 그대로)
+    os.set_blocking(master, False)
+    obj = pty_backend._UnixPty.__new__(pty_backend._UnixPty)
+    obj._fd = master
+    payload = b"x" * (256 * 1024)
+    got = bytearray()
+
+    def _drain():
+        while len(got) < len(payload):
+            r, _, _ = select.select([slave], [], [], 2.0)
+            if not r:
+                break
+            try:
+                b = os.read(slave, 65536)
+            except OSError:
+                break
+            if not b:
+                break
+            got.extend(b)
+
+    t = threading.Thread(target=_drain)
+    t.start()
+    try:
+        obj.write(payload)
+    finally:
+        t.join(5)
+        os.close(master)
+        os.close(slave)
+    assert len(got) == len(payload), (len(got), len(payload))
+
+
 async def test_close_idempotent():
     """close()/reap() 를 두 번 불러도 예외가 없어야 한다."""
     if pty_backend.IS_WINDOWS:
