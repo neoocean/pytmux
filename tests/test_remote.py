@@ -420,6 +420,44 @@ async def test_remote_reconnect_giveup_reports_reason():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_reconnect_requires_first_status_not_just_hello():
+    """H5: 자동 재연결은 hello 성공만으로 '재연결됨'을 단정하지 않고 **실제 첫 status
+    (탭 병합) 도착**을 성공 기준으로 삼는다. remote_attach 가 True(hello 송신)이고
+    링크가 생겨도, 업스트림 웨지로 첫 status 가 안 오면(_remote_wait_first_status
+    False) 그 시도는 실패로 간주해 재시도 후 포기하며 거짓 '재연결됨' notice 를
+    띄우지 않는다(대화형 attach·중첩 승격의 first-status 게이트를 재연결까지 확장)."""
+    if os.name == "nt":
+        return
+    import types
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv._RECONNECT_DELAYS = (0.0, 0.0)
+        notices = []
+        srv._remote_notice = lambda s, key, text, **kw: notices.append(key)
+        srv._remote_status_broadcast = lambda: None
+        link = types.SimpleNamespace(host="wedged", sess=sess,
+                                     spec={"host": "wedged", "endpoint": None})
+        attaches = {"n": 0}
+
+        async def _fake_attach(*a, **k):
+            attaches["n"] += 1
+            srv._remotes_dict()["wedged"] = link    # hello 성공 → 링크는 생김
+            return True
+
+        async def _no_first_status(lk, **k):
+            return False                             # 첫 status 미도착(웨지)
+
+        srv.remote_attach = _fake_attach
+        srv._remote_wait_first_status = _no_first_status
+        await srv._remote_reconnect_loop(link)
+        assert "rnotice.reconnected" not in notices, ("웨지=거짓 재연결 금지", notices)
+        assert "rnotice.reconnect_giveup" in notices, ("첫 status 미도착→포기", notices)
+        assert attaches["n"] == 2, "각 백오프 시도마다 재attach"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_remote_detach_cancels_pending_reconnect():
     """Stage 3: 명시 remote-detach 는 보류 중인 자동 재연결을 취소한다(사용자
     의사 우선 — 백그라운드 ssh 재시도가 남지 않는다)."""

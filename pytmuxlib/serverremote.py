@@ -426,12 +426,21 @@ class ServerRemoteMixin:
                     return
                 if await self.remote_attach(sess, host=link.spec.get("host"),
                                             endpoint=link.spec.get("endpoint")):
-                    self._remote_status_broadcast()
-                    self._remote_notice(
-                        sess, "rnotice.reconnected",
-                        "remote-attach {target}: 끊김 후 자동 재연결됨(시도 {i})",
-                        target=name, i=i)
-                    return
+                    # H5: remote_attach 는 hello 송신 직후 True 라 '연결됨'을 단정하지
+                    # 못한다 — 업스트림이 hello 만 받고 _send_full(→resize)이 멈춘
+                    # pty-host 웨지면 탭이 안 온다. 대화형 attach·중첩 승격과 동일하게
+                    # **실제 첫 status(탭 병합) 도착**을 성공 기준으로 삼는다. 첫
+                    # status 가 안 오면 이 시도는 실패로 간주하고 다음 백오프로 재시도
+                    # (다음 remote_attach 가 같은 이름 링크를 교체하므로 누수 없음).
+                    newlink = self._remotes_dict().get(name)
+                    if newlink is not None and \
+                            await self._remote_wait_first_status(newlink):
+                        self._remote_status_broadcast()
+                        self._remote_notice(
+                            sess, "rnotice.reconnected",
+                            "remote-attach {target}: 끊김 후 자동 재연결됨(시도 {i})",
+                            target=name, i=i)
+                        return
             # 마지막 시도의 실패 원인(_set_err — Permission denied/PATH 등)을 함께 실어
             # 준다(요청): 핸드셰이크가 반복 실패해 포기하는 그 순간이 원인이 가장 필요한
             # 지점인데 종전엔 "포기"만 알렸다. sticky=수동 닫기까지 유지.
