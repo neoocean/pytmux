@@ -115,7 +115,7 @@ jobs:
 
       - name: Upload validate_conpty report (Windows only)
         if: always() && runner.os == 'Windows'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: validate-conpty-${{ matrix.os }}-py${{ matrix.python }}
           path: ${{ runner.temp }}/validate_conpty.out
@@ -131,7 +131,7 @@ jobs:
 
       - name: Upload report artifact
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: report-${{ matrix.os }}-py${{ matrix.python }}
           path: reports/win-report-*.md
