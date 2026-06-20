@@ -685,6 +685,11 @@ async def test_remote_no_mixing_guards():
             what="merged status")
         gidx = next(w["index"] for w in stm["windows"]
                     if w["name"].startswith("⇄"))
+        # 첫 status(=탭 도착) 뒤에 오는 '병합됨' 알림을 소비해 둔다 — 이후 단계가
+        # 읽는 notice 가 섞임-금지 알림임을 보장(merged notice 가 status 뒤로 이동).
+        await _read_until(
+            reader, lambda m: m.get("t") == "notice"
+            and m.get("key") == "rnotice.attach_merged", what="merged notice")
 
         # ① 로컬 보기: 원격 index 겨냥 이동/합치기 거부 + 로컬 불변
         nA_tabs = len(sessA.tabs)
@@ -1347,3 +1352,63 @@ async def test_remote_allowed_hosts_allowlist():
             sr.asyncio.create_subprocess_exec = monkey
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_remote_attach_silent_upstream_warns_not_merged():
+    """업스트림이 hello 는 받고도 첫 status 를 안 보내는 웨지(원격 pty-host 고장 등,
+    사용자 보고 2026-06-20)면, 종전엔 hello 송신 직후 '병합됨'으로 단정해 '성공인데
+    탭 없음'으로 보였다. 이제 첫 status(실제 탭 도착)를 잠깐 기다려 못 받으면
+    rnotice.attach_silent(연결됐지만 무응답)로 알리고 ⇄ 탭을 만들지 않는다."""
+    if os.name == "nt":
+        return  # in-process 페더레이션 코어는 POSIX 소켓 기준으로 검증
+    srvA, taskA, sockA = await server_only()
+    # 첫 status 대기를 짧게(3×0.02s) — mute 업스트림은 영영 안 보내므로 빠르게 판정.
+    srvA._FIRST_STATUS_TRIES = 3
+    srvA._FIRST_STATUS_DELAY = 0.02
+
+    # mute 업스트림: hello 만 읽고 status 를 영영 안 보낸다(연결은 유지).
+    mute_path = tempfile.mktemp(prefix="pytmux-mute-", suffix=".sock")
+    held = []
+
+    async def _mute(reader, writer):
+        held.append(writer)             # writer 를 살려둬 EOF 가 안 나게
+        try:
+            await read_msg(reader)      # hello 소비 후 침묵
+            while not reader.at_eof():
+                await asyncio.sleep(0.05)
+        except (OSError, ConnectionError):
+            pass
+
+    mute_srv = await asyncio.start_unix_server(_mute, path=mute_path)
+    reader = writer = None
+    try:
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": mute_path})
+        note = await _read_until(reader, lambda m: m.get("t") == "notice",
+                                 what="attach notice")
+        assert note.get("key") == "rnotice.attach_silent", note
+        assert note.get("secs"), ("무응답 알림은 sticky", note)
+
+        # ⇄ 탭이 생기지 않았다(웨지 업스트림은 병합 안 됨).
+        st = srvA._status_msg(list(srvA.sessions.values())[0])
+        assert not any(w["name"].startswith("⇄") for w in st["windows"]), st
+    finally:
+        if writer is not None:
+            writer.close()
+        for w in held:
+            try:
+                w.close()
+            except OSError:
+                pass
+        mute_srv.close()
+        await mute_srv.wait_closed()
+        try:
+            os.unlink(mute_path)
+        except OSError:
+            pass
+        await teardown(srvA, taskA, sockA)
