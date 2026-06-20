@@ -200,12 +200,13 @@ async def test_hour_view_token_order_stays_flat():
         await teardown(srv, task, sock)
 
 
-async def test_hour_view_footer_shows_boundary_remaining():
-    """시(hour) 뷰 footer 가 5h/1주 경계까지 남은 시간을 한 줄로 보이고(요청
-    2026-06-19), 다른 버킷(일)에선 footer 를 숨긴다. 시각 전용 리셋 표기는
-    parse_reset_ts 가 항상 미래로 롤오버하므로(오늘 지났으면 내일) 결정론적이다."""
+async def test_hour_view_reset_left_in_column_headers():
+    """시(hour) 뷰에서 5h%/1w% **칼럼 제목**에 리셋까지 남은 시간이 inline 으로
+    붙는다(요청 2026-06-20, 옛 footer 줄 대체). 예: '5h% (in 87m)'·'1w% (in 6d)'.
+    시각 전용 리셋 표기는 parse_reset_ts 가 항상 미래로 롤오버하므로 결정론적이다."""
     import datetime as _dt
-    from textual.widgets import Static, DataTable  # noqa: F401
+    from textual.widgets import DataTable
+    from textual.css.query import NoMatches
     from harness import make_app, server_only, teardown
 
     recs, hourly, _dates = _multiday_hour_records()
@@ -222,24 +223,32 @@ async def test_hour_view_footer_shows_boundary_remaining():
         async with app.run_test(size=(100, 36)) as pilot:
             await pilot.pause(0.3)
             app.push_screen(screens.TokenLogScreen(
-                recs, usage=usage, hourly_pct=hourly))
+                recs, usage=usage, hourly_pct=hourly, hourly_week_pct=hourly))
             await pilot.pause(0.3)
             scr = app.screen_stack[-1]
             await pilot.press("h")          # 시(hour) 버킷
             await pilot.pause(0.2)
-            foot = scr.query_one("#tkfoot", Static)
-            assert foot.display, "hour 뷰에선 footer 가 보여야"
-            line = scr._boundary_left_line()
-            assert "5h" in line, f"5h 경계 잔여시간이 있어야: {line!r}"
-            # 두 축(5h·주간)이 ' · ' 로 이어진다.
-            assert " · " in line, f"5h·주간 두 축이 이어져야: {line!r}"
+            table = scr.query_one(DataTable)
+            heads = [str(c.label) for c in table.columns.values()]
+            joined = " | ".join(heads)
+            # 5h%/1w% 제목에 리셋 잔여시간이 괄호로 inline 으로 붙는다.
+            assert any(h.startswith("5h%") and "(" in h for h in heads), joined
+            assert any(h.startswith("1w%") and "(" in h for h in heads), joined
+            # 옛 footer 위젯(#tkfoot)은 제거됐다.
+            try:
+                scr.query_one("#tkfoot")
+                assert False, "#tkfoot 위젯은 제거돼야"
+            except NoMatches:
+                pass
 
-            # 일(day) 버킷으로 바꾸면 footer 를 숨긴다.
+            # 일(day) 버킷엔 5h%/1w% 열 자체가 없다(시간 뷰 전용).
             await pilot.press("d")
             await pilot.pause(0.2)
             assert scr._bucket == "day"
-            assert not scr.query_one("#tkfoot", Static).display, \
-                "일 뷰에선 footer 가 숨겨져야"
+            heads_d = [str(c.label) for c in
+                       scr.query_one(DataTable).columns.values()]
+            assert not any(h.startswith(("5h%", "1w%")) for h in heads_d), \
+                f"일 뷰엔 5h%/1w% 열이 없어야: {heads_d}"
     finally:
         await teardown(srv, task, sock)
 
@@ -321,9 +330,10 @@ async def test_recon_tab_shows_time_axis_chart_and_scrolls():
         await teardown(srv, task, sock)
 
 
-async def test_hour_view_footer_hidden_without_usage():
-    """실측 /usage 가 없으면(리셋 표기 없음) hour 뷰라도 footer 를 숨긴다(지어내지 않음)."""
-    from textual.widgets import Static
+async def test_hour_view_header_plain_without_usage():
+    """실측 /usage 가 없으면(리셋 표기 없음) hour 뷰 5h% 칼럼 제목은 잔여시간 없이
+    맨 '5h%'(지어내지 않음). _reset_left 가 None 이라 inline 잔여시간을 안 붙인다."""
+    from textual.widgets import DataTable
     from harness import make_app, server_only, teardown
 
     recs, hourly, _dates = _multiday_hour_records()
@@ -337,7 +347,10 @@ async def test_hour_view_footer_hidden_without_usage():
             scr = app.screen_stack[-1]
             await pilot.press("h")
             await pilot.pause(0.2)
-            assert scr._boundary_left_line() == ""
-            assert not scr.query_one("#tkfoot", Static).display
+            assert scr._reset_left("session") is None
+            heads = [str(c.label) for c in
+                     scr.query_one(DataTable).columns.values()]
+            assert "5h%" in heads, f"맨 5h% 제목이어야(잔여시간 없이): {heads}"
+            assert not any("(" in h for h in heads if h.startswith("5h%")), heads
     finally:
         await teardown(srv, task, sock)

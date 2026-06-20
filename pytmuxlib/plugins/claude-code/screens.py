@@ -151,9 +151,10 @@ i18n.register({
         "pscreen.left_hm": "{h}시간{m}분",
         "pscreen.left_m": "{m}분",
         "pscreen.left_d": "{d}일{h}시간",
-        # hour 뷰 footer: 5h/1주 경계까지 남은 시간(실측 리셋 표기 기준).
-        "pscreen.foot_5h": "5h 경계까지 {left}",
-        "pscreen.foot_week": "1주 경계까지 {left}",
+        # 5h%/1w% 칼럼 제목에 inline 으로 붙는 리셋 잔여시간(요청 2026-06-20,
+        # 옛 footer 줄 대체). {left}=_fmt_left_short('87m'·'6d' 등 단일 단위).
+        "pscreen.hdr_5h": "5h% ({left} 후)",
+        "pscreen.hdr_1w": "1w% ({left} 후)",
         # [경고] 탭 본문(종류별 상황·할일) — 옛 한글 하드코딩을 i18n 으로(전수조사
         # 2026-06-19). 본문은 줄바꿈(\n)으로 묶고 _warn_info_text 가 split 한다.
         "claude.warn_fmt_title": "Claude 포맷 미인식",
@@ -214,8 +215,8 @@ i18n.register({
         "pscreen.left_hm": "{h}h {m}m",
         "pscreen.left_m": "{m}m",
         "pscreen.left_d": "{d}d {h}h",
-        "pscreen.foot_5h": "5h resets in {left}",
-        "pscreen.foot_week": "Week resets in {left}",
+        "pscreen.hdr_5h": "5h% (in {left})",
+        "pscreen.hdr_1w": "1w% (in {left})",
         "claude.warn_fmt_title": "Claude format unrecognized",
         "claude.warn_fmt_body":
             "[Situation]\n"
@@ -905,10 +906,6 @@ class TokenLogScreen(ModalScreen):
             chart = _ReconChart(id="tkchart")
             chart.display = False
             yield chart
-            # footer 한 줄: 시(hour) 뷰에서만 '5h/1주 경계까지 남은 시간'(실측 /usage
-            # 리셋 표기 기준)을 보인다. 다른 뷰/모드에선 _sync_tabs 가 숨긴다(요청
-            # 2026-06-19, 표시 위치=footer/하단 한 줄).
-            yield Static("", id="tkfoot", markup=False)
             yield Static("", id="tkhint", markup=False)
 
     async def on_mount(self):
@@ -1005,26 +1002,38 @@ class TokenLogScreen(ModalScreen):
                                 left=self._fmt_left(ts - now)))
         return [" · ".join(parts)] if parts else []
 
-    def _boundary_left_line(self):
-        """시(hour) 뷰 footer 한 줄: **5h/1주 경계까지 남은 시간**(실측 /usage 리셋
-        표기 기준, parse_reset_ts). 표기가 없거나 과거(stale 실측)면 그 축은 생략하고,
-        둘 다 없으면 빈 문자열(footer 숨김). _window_lines 와 같은 리셋 소스를 쓰되
-        토큰 Σ 없이 남은 시간만 컴팩트하게 보인다(요청 2026-06-19)."""
+    @staticmethod
+    def _fmt_left_short(sec: int) -> str:
+        """리셋까지 남은 시간을 **단일 단위** 초컴팩트 표기로(컬럼 제목용, 요청
+        2026-06-20): 90분 미만 'N m', 하루 미만 'N h', 그 이상 'N d'. 분/시/일을
+        섞지 않아 'in 87m'·'in 6d' 처럼 칼럼 제목에 짧게 붙는다. 단위 글자는 두
+        로케일 공통이라 i18n 불요."""
+        mins = max(0, int(sec) // 60)
+        if mins < 90:
+            return f"{mins}m"
+        h = mins // 60
+        if h < 24:
+            return f"{h}h"
+        return f"{h // 24}d"
+
+    def _reset_left(self, key: str):
+        """`self._usage[key]`(session|week_all)의 실측 리셋 표기까지 **남은 시간**을
+        _fmt_left_short 로 돌려준다. 표기가 없거나 과거(stale 실측)면 None — 호출부가
+        제목에 잔여시간을 안 붙이고 맨 '5h%'/'1w%' 만 쓴다. 옛 footer(_boundary_left_line)
+        대신 5h%/1w% 칼럼 제목에 inline 으로 보이는 데 쓴다(요청 2026-06-20)."""
         u = self._usage
         if not isinstance(u, dict):
-            return ""
+            return None
         import time as _t
-        now = _t.time()
-        parts = []
-        for key, name_key in (("session", "pscreen.foot_5h"),
-                              ("week_all", "pscreen.foot_week")):
-            d = u.get(key)
-            reset = d.get("reset") if isinstance(d, dict) else None
-            ts = parse_reset_ts(reset) if reset else None
-            if ts is None or ts <= now:
-                continue
-            parts.append(i18n.t(name_key, left=self._fmt_left(ts - now)))
-        return " · ".join(parts)
+        d = u.get(key)
+        reset = d.get("reset") if isinstance(d, dict) else None
+        ts = parse_reset_ts(reset) if reset else None
+        if ts is None:
+            return None
+        sec = ts - _t.time()
+        if sec <= 0:
+            return None
+        return self._fmt_left_short(sec)
 
     def _active_tab(self):
         """현재 활성 **상위 뷰 탭** — limit/recon/warn 오버레이가 우선, 아니면 _view.
@@ -1056,11 +1065,6 @@ class TokenLogScreen(ModalScreen):
 
     def _sync_tabs(self):
         """상위 뷰 탭 라벨·활성 하이라이트(§7.1) + 활성 탭의 보조옵션 줄 표시(§7.2)."""
-        # footer(경계 잔여시간)는 기본 숨김 — 시(hour) 뷰 본문 경로에서만 켠다.
-        try:
-            self.query_one("#tkfoot", Static).display = False
-        except Exception:
-            pass
         try:
             narrow = self.app.size.width < 64
         except Exception:
@@ -1504,12 +1508,21 @@ class TokenLogScreen(ModalScreen):
         table.add_column(Text(i18n.t("토큰"), justify="left"), key="tok",
                          width=tok_w)
         if show5h:
+            # 칼럼 제목에 리셋까지 남은 시간을 inline 으로 붙인다(요청 2026-06-20,
+            # 별도 footer 줄 제거). 예: '5h% (in 87m)'·'1w% (in 6d)'. 리셋 표기가
+            # 없으면(stale/없음) 맨 '5h%'/'1w%'. 폭은 막대/숫자 기본폭과 제목 길이 중
+            # 큰 쪽으로 늘려 제목이 안 잘리게 한다.
+            l5 = self._reset_left("session")
+            hdr5 = i18n.t("pscreen.hdr_5h", left=l5) if l5 else "5h%"
             # 막대를 담을 폭(% 3칸 + '%' + 공백 + 막대 cells). 막대 없으면 % 만(5칸).
-            table.add_column(Text("5h%", justify="left"), key="lim5h",
-                             width=(lim_cells + 6) if lim_cells else 5)
+            w5 = (lim_cells + 6) if lim_cells else 5
+            table.add_column(Text(hdr5, justify="left"), key="lim5h",
+                             width=max(w5, len(hdr5) + 1))
             if show1w:                 # 주간 한도% — 숫자 열(3칸+% = 5)
-                table.add_column(Text("1w%", justify="left"), key="limw",
-                                 width=5)
+                lw = self._reset_left("week_all")
+                hdrw = i18n.t("pscreen.hdr_1w", left=lw) if lw else "1w%"
+                table.add_column(Text(hdrw, justify="left"), key="limw",
+                                 width=max(5, len(hdrw) + 1))
 
         if win == 0:               # 선택 뷰/계정 집계 합이 0 (소스 무관)
             empty = [i18n.t("(기록된 토큰 사용량이 없습니다)"), ""]
@@ -1560,17 +1573,8 @@ class TokenLogScreen(ModalScreen):
         # [한도] 뷰로 옮겼다(작은 화면 정리, 2026-06-14). usage 없으면 접두는 빈 문자열.
         self.query_one("#tktop", Static).update(self._limit_summary() + scope)
         self.query_one("#tkhint", Static).update(i18n.t("pscreen.tklog_hint"))
-        # footer: 시(hour) 뷰에서만 5h/1주 경계까지 남은 시간을 한 줄로(요청 2026-06-19).
-        # 다른 버킷/세션 뷰·내용 없음이면 줄을 숨겨 빈 줄이 안 남게 한다.
-        try:
-            foot = self.query_one("#tkfoot", Static)
-            fline = (self._boundary_left_line()
-                     if (self._bucket == "hour" and self._view != "session")
-                     else "")
-            foot.update(fline)
-            foot.display = bool(fline)
-        except Exception:
-            pass
+        # (옛 footer '5h/1주 경계까지 남은 시간' 한 줄은 제거 — 잔여시간을 5h%/1w%
+        # 칼럼 제목에 inline 으로 옮겼다, 요청 2026-06-20.)
 
     def _exit_body_modes(self):
         """표를 대체하는 뷰(대사/한도/경고)에서 빠져나온다 — 기간/계정/세션/정렬 동작이
