@@ -40,6 +40,53 @@ async def test_restore_resume_corrupt_returns_false():
         await teardown(srv, task, sock)
 
 
+async def test_restore_resume_typeerror_node_skipped():
+    """M4: 상태 노드의 타입 오류(예: cols 가 문자열)가 복원 전체를 크래시→세션 전손
+    시키지 않고, 해당 탭만 스킵하고 예외 없이 False(유효 탭 없음)를 돌려준다."""
+    srv, task, sock = await server_only()
+    try:
+        bad = {"version": 1, "sessions": [{
+            "name": "s", "active_index": 0, "tabs": [{
+                "index": 0, "name": "t", "window": {"root": {
+                    "pane": {"cols": "x", "rows": 24,    # cols 문자열 → TypeError
+                             "child_pid": 5, "master_fd": 3}}}}]}]}
+        with open(srv.resume_state_path, "w") as f:
+            json.dump(bad, f)
+        assert srv.restore_resume_state(srv.resume_state_path) is False
+    finally:
+        try:
+            os.unlink(srv.resume_state_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
+async def test_close_resume_subtree_releases_panes():
+    """M4: 부분 복원 정리 — 서브트리의 모든 패널 pty 가 stop_reader+close 된다(형제
+    노드 빌드 실패 시 이미 채택된 master fd/리더 누수 방지)."""
+    from pytmuxlib.model import Pane, Split
+    srv, task, sock = await server_only()
+    try:
+        class _FakePty:
+            def __init__(self):
+                self.closed = self.stopped = False
+
+            def stop_reader(self):
+                self.stopped = True
+
+            def close(self):
+                self.closed = True
+
+        p1 = Pane(1, -1, 80, 24)
+        p2 = Pane(2, -1, 80, 24)
+        p1.pty, p2.pty = _FakePty(), _FakePty()
+        srv._close_resume_subtree(Split("lr", p1, Split("tb", p2, p1, 0.5), 0.5))
+        assert p1.pty.closed and p1.pty.stopped, "패널1 정리"
+        assert p2.pty.closed and p2.pty.stopped, "패널2 정리"
+    finally:
+        await teardown(srv, task, sock)
+
+
 class _FakeWriter:
     def write(self, *_a):
         pass

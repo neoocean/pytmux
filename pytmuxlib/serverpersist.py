@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 
@@ -185,10 +186,31 @@ class ServerPersistMixin:
             except OSError:
                 pass
 
+    def _close_resume_subtree(self, node) -> None:
+        """복원 중 부분 생성된 서브트리의 패널 pty/리더를 닫는다(M4: 형제 노드 빌드
+        실패로 이 노드가 통째 스킵될 때 이미 채택된 master fd/리더가 누수되는 것 방지)."""
+        stack = [node]
+        while stack:
+            n = stack.pop()
+            if isinstance(n, Split):
+                stack.append(n.a)
+                stack.append(n.b)
+            elif isinstance(n, Pane) and n.pty is not None:
+                with contextlib.suppress(Exception):
+                    n.pty.stop_reader()
+                with contextlib.suppress(Exception):
+                    n.pty.close()
+
     def _build_resume_node(self, spec):
         if spec.get("type") == "split":
             a = self._build_resume_node(spec["a"])
-            b = self._build_resume_node(spec["b"])
+            try:
+                b = self._build_resume_node(spec["b"])
+            except BaseException:
+                # M4: a 는 이미 master fd 채택/리더 부착 완료 — b 빌드 실패 시 상위
+                # except 가 이 노드를 통째 스킵하므로 여기서 a 의 자원을 회수하고 재전파.
+                self._close_resume_subtree(a)
+                raise
             return Split(spec.get("orient", "lr"), a, b, spec.get("ratio", 0.5))
         ps = spec["pane"]
         cols, rows = max(MIN_W, ps["cols"]), max(MIN_H, ps["rows"])
@@ -224,15 +246,21 @@ class ServerPersistMixin:
             raise ValueError(f"resume master_fd={mfd} 가 열린 fd 아님")
         # 상속된 master fd 를 fork 없이 다시 채택한다(PID 그대로 → reap/killpg 유효).
         proc = pty_backend.adopt(mfd, cpid, cols=cols, rows=rows)
-        fd = proc.fileno() if hasattr(proc, "fileno") else ps["master_fd"]
-        # 작업 보존 재시작으로 복원되는 패널도 현재 opts 의 VT 파서 백엔드를 따른다
-        # (spawn_pane 과 동일 — 그러지 않으면 재시작 후 기존 패널만 pyte 로 남는다).
-        pane = Pane(ps["child_pid"], fd, cols, rows,
-                    vt_parser=getattr(self, "vt_parser", "native"))
-        pane.pty = proc
-        pane.import_state(ps)
-        self._attach_reader(pane)
-        return pane
+        try:
+            fd = proc.fileno() if hasattr(proc, "fileno") else ps["master_fd"]
+            # 작업 보존 재시작으로 복원되는 패널도 현재 opts 의 VT 파서 백엔드를 따른다
+            # (spawn_pane 과 동일 — 그러지 않으면 재시작 후 기존 패널만 pyte 로 남는다).
+            pane = Pane(ps["child_pid"], fd, cols, rows,
+                        vt_parser=getattr(self, "vt_parser", "native"))
+            pane.pty = proc
+            pane.import_state(ps)
+            self._attach_reader(pane)
+            return pane
+        except BaseException:
+            # M4: 채택 후 패널 구성/리더 부착이 실패하면 채택한 master fd 를 닫는다.
+            with contextlib.suppress(Exception):
+                proc.close()
+            raise
 
     def restore_resume_state(self, path: str | None = None) -> bool:
         """save_resume_state 가 만든 상태 파일에서 세션·탭·트리를 복원하고, 상속된
@@ -255,7 +283,9 @@ class ServerPersistMixin:
                 wspec = wt["window"]
                 try:
                     root = self._build_resume_node(wspec["root"])
-                except (KeyError, OSError, ValueError):   # S4: 변조 노드 스킵 포함
+                except (KeyError, OSError, ValueError, TypeError):
+                    # S4: 변조/구버전 상태 노드 스킵. TypeError 추가(M4) — 타입 오류
+                    # (예: cols 가 문자열)가 복원 전체를 크래시→세션 전손시키던 것 차단.
                     continue
                 w = Window(root)
                 w._fix_parents(root, None)
