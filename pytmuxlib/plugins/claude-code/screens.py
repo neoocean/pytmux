@@ -1251,10 +1251,14 @@ class TokenLogScreen(ModalScreen):
         데이터 없으면 '·'. ≥80 빨강·≥50 노랑·굵게(상태줄 한도 배지와 같은 임계)."""
         pct = self._hourly_week_pct.get(hour_key) if hour_key else None
         if pct is None:
-            return Text("·", justify="right", style="dim")
+            return Text("·", justify="left", style="dim")
         color = "red" if pct >= 80 else "yellow" if pct >= 50 else "green"
         style = f"bold {color}" if pct >= 50 else color
-        return Text(f"{pct:>3}%", justify="right", style=style)
+        # 좌측 정렬: 헤더('1w% (in 6d)')가 좌측 정렬이라 데이터도 좌측에 둬 헤더
+        # '1w%' 아래에 정렬되게 한다. 우측 정렬이면 넓어진 헤더 폭만큼 데이터가
+        # 박스 우측 테두리로 밀려 작은 폭에서 잘렸다(사용자 요청 2026-06-20).
+        # 숫자 자체는 `>3` 으로 자릿수 우측 정렬돼 열 간 정렬은 유지된다.
+        return Text(f"{pct:>3}%", justify="left", style=style)
 
     def _refresh_recon(self, chart):
         """[대사] 뷰(S6 T2): 연속 실측 스냅샷 구간의 세션 5h%(실측)를 **시간축 세로
