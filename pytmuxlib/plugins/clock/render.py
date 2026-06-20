@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import datetime as _datetime
 
-from pytmuxlib.clientrender import put_cell
+from pytmuxlib.clientrender import dim_pane, put_cell
 from pytmuxlib.clientutil import _CLOCK_FONT, _dim_cell
 
 
@@ -36,10 +36,7 @@ def draw_clock_overlay(cells, panes, clock_panes, W, H, digit_st, now=None):
         px, py, pw, ph = p["x"], p["y"], p["w"], p["h"]
         # 1) 뒤 화면 흐리게(실색 블렌드 — §10, 터미널 무관 균일). 컬러 이모지는
         # 스타일을 무시하고 밝게 남으므로 _dim_cell 이 placeholder(·)로 치환한다(#25).
-        for yy in range(py, min(py + ph, H)):
-            for xx in range(px, min(px + pw, W)):
-                c, st = cells[yy][xx]
-                cells[yy][xx] = _dim_cell(c, st)
+        dim_pane(cells, px, py, pw, ph, W, H, _dim_cell)
         # 2) 큰 시계(공간 충분) 또는 단순 시각
         if pw >= cw and ph >= ch_h:
             ox = px + (pw - cw) // 2

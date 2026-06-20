@@ -31,3 +31,16 @@ def put_cell(cells, x, y, ch, st, W, H):
         # 이 자리가 와이드 문자의 본체 → 오른쪽 연속 칸을 공백으로.
         row[x + 1] = (" ", row[x + 1][1])
     row[x] = (ch, st)
+
+
+def dim_pane(cells, px, py, pw, ph, W, H, cell_fn):
+    """오버레이(clock/calendar/usage) 뒤 패널 영역을 흐리게 하는 공통 프리앰블(1-8).
+
+    세 오버레이가 글자 단위로 복제하던 이중 루프를 한 곳으로 모은다. cell_fn=(ch, st)
+    → (ch, st) 셀 변환을 받는다(clock/calendar 는 _dim_cell 로 컬러 이모지를 placeholder
+    치환, usage 는 _darken_style 로 균일 dim). 패널 rect 를 화면 경계(W,H)로 클램프."""
+    for yy in range(py, min(py + ph, H)):
+        row = cells[yy]
+        for xx in range(px, min(px + pw, W)):
+            c, st = row[xx]
+            row[xx] = cell_fn(c, st)

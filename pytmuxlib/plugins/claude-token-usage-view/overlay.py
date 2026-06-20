@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from pytmuxlib import i18n
-from pytmuxlib.clientrender import put_cell
+from pytmuxlib.clientrender import dim_pane, put_cell
 from pytmuxlib.clientscreens import usage_bar_lines
 from pytmuxlib.clientutil import _CLOCK_FONT, _darken_style
 
@@ -31,10 +31,7 @@ def draw_usage_overlay(cells, panes, view_panes, W, H, text_st, digit_st,
             continue
         px, py, pw, ph = p["x"], p["y"], p["w"], p["h"]
         # 1) 뒤 화면 흐리게(실색 블렌드 — 터미널 무관 균일, clock/calendar 와 동일).
-        for yy in range(py, min(py + ph, H)):
-            for xx in range(px, min(px + pw, W)):
-                c, st = cells[yy][xx]
-                cells[yy][xx] = (c, _darken_style(st))
+        dim_pane(cells, px, py, pw, ph, W, H, lambda c, st: (c, _darken_style(st)))
         # 2) 한도 막대 줄(없으면 안내).
         lines = usage_bar_lines(usage, max(8, min(pw - 4, 60)),
                                 age_sec=age_sec, right_align=True) or \
