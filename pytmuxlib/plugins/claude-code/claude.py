@@ -150,15 +150,28 @@ def claude_context_hardstop(text: str) -> bool:
 # rate limit") 같은 산문 'api error' 까지 떨군다(이건 busy 가드로도 무해했지만 정밀화).
 # 트레이드오프: 배너 없는 맨 "Rate limited"/"Overloaded" 단독 줄은 더는 안 잡지만, 실
 # Claude UI 는 항상 배너를 동반하므로 코퍼스 기준 false-negative 0. (test_claude 회귀 고정.)
+#
+# 추가(2026-06-21): 네트워크/전송 실패의 또 다른 실측 배너
+#   "No response from API   · Retrying in 2m 12s · check your network"
+# 도 잡는다(captures/playground.local 의 .claude 프레임 7건 — 위 `API Error:` 와 다른
+# 형식이라 기존 앵커로는 누락됐다). Claude Code 자체도 카운트다운으로 재시도하지만 종종
+# 그 상태로 멈춰 있어, 사용자 요청대로 1분 뒤 "계속" 을 주입해 이어가게 한다. 산문 오탐
+# 방지를 위해 **맨 "No response from API" 만으로는 안 잡고** 같은 줄의 동반 문구
+# (`Retrying …` / `check your network`)를 함께 요구한다 — 실 배너는 항상 한 줄에
+# "No response from API … · Retrying in <시간> · check your network" 형태(끝의 "network"
+# 만 줄바꿈되므로 `retry`/`check your network` 중 앞쪽 `retry` 가 동반 앵커로 신뢰적).
+# `[^\n]{0,60}` 는 음의 클래스 + 상한이라 선형(ReDoS 안전).
 _API_ERROR_RE = re.compile(
     r"\bapi\s+error\b[ \t]*[:(]"                # "API Error:" / "API Error ("(실 배너 형식)
     r"|\brate[\s_\-]*limit_error\b"             # rate_limit_error(JSON 에러타입 — 산문 불가)
-    r"|\boverloaded_error\b",                   # overloaded_error(529 JSON 타입)
+    r"|\boverloaded_error\b"                    # overloaded_error(529 JSON 타입)
+    r"|\bno\s+response\s+from\s+api\b[^\n]{0,60}"   # "No response from API … "
+    r"(?:retr(?:y|ies|ying)|check\s+your\s+network)",  # 동반 앵커(재시도/네트워크 점검)
     re.I)
 
 
 def claude_api_error(text: str) -> bool:
-    """화면이 **전송 에러(API error·rate limit·overloaded)** 로 멈춘 상태면 True.
+    """화면이 **전송 에러(API error·rate limit·overloaded·네트워크 무응답)** 로 멈춘 상태면 True.
 
     claude_limit(사용량 5h 리밋)·claude_context_hardstop(컨텍스트 꽉 참)과 다른 신호다.
     사용자 입력(>)·소스/diff 줄을 제외한 Claude 출력에서만 본다(claude_limit 과 동일

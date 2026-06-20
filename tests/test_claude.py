@@ -150,6 +150,14 @@ async def test_claude_api_error():
     # 산문에 못 나오는 JSON 에러 타입은 배너 없이도 잡는다
     assert claude_api_error("rate_limit_error: please retry")
     assert claude_api_error("Overloaded (overloaded_error)")
+    # 네트워크 무응답 배너(실측 — captures/playground.local .claude 프레임): "No response
+    # from API … · Retrying in <시간> · check your network". 동반 문구(Retrying/check your
+    # network)와 함께 잡고 1분 뒤 "계속" 재시도를 건다(요청 2026-06-21).
+    assert claude_api_error("No response from API   · Retrying in 2m 12s · check your\nnetwork")
+    assert claude_api_error("✻ No response from API · Retrying in 1s · check your network")
+    assert claude_api_error("No response from API · check your network")
+    # 맨 "No response from API"(동반 문구 없음)는 산문일 수 있어 안 잡는다(오탐 방지)
+    assert not claude_api_error("Claude returned no response from API documentation page.")
     # 5h 사용량 배너는 전송 에러가 아니다(autoresume 가 reset 시각으로 다룸)
     assert not claude_api_error("Claude usage limit reached. resets at 5pm")
     assert not claude_api_error("You've used 93% of your session limit")
