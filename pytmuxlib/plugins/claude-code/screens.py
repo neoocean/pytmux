@@ -40,12 +40,12 @@ i18n.register({
         "bypass — 권한 우회, 확인 없음 ⚠️ (Bypass Permission Mode)",
         # token-log: 탭(넓은/좁은)·그룹·컬럼·차원·정렬
         "시간", "시", "일", "주", "월", "계정", "계", "패널", "패", "세", "정렬", "정",
-        "시나리오", "대사", "한도", "경고", "경", "기간", "기", "보기", "조회", "토큰 사용량",
+        "시나리오", "비교", "한도", "경고", "경", "기간", "기", "보기", "조회", "토큰 사용량",
         "구간", "실측(세션 5h)", "추정Σ", "항목", "토큰", "비율",
         "세션", "타임스탬프", "토큰순", "시간순", "옵션",
         # token-log: 안내/대사
         "한도(/usage): [u] 눌러 조회", "(기록된 토큰 사용량이 없습니다)",
-        "토큰 대사 · 실측Δ% vs 추정Σ", "/usage 조회 중… (~수초)",
+        "토큰 비교 · 실측Δ% vs 추정Σ", "/usage 조회 중… (~수초)",
         "r집계로 돌아가기 · u/usage 갱신 · Esc닫기",
         # [대사] 시간축 그래프(2026-06-20)
         "토큰 5h 사용률 추이 · 시간축",
@@ -69,7 +69,7 @@ i18n.register({
             "bypass — skip permissions, no confirm ⚠️ (Bypass Permission Mode)",
         "시간": "Time", "시": "T", "일": "Day", "주": "Week", "월": "Month",
         "계정": "Account", "계": "A", "패널": "Panel", "패": "P", "세": "S",
-        "정렬": "Sort", "정": "S", "시나리오": "Scenario", "대사": "Recon",
+        "정렬": "Sort", "정": "S", "시나리오": "Scenario", "비교": "Recon",
         "한도": "Limit", "경고": "Warn", "경": "W",
         "기간": "Period", "기": "P",
         "보기": "View", "조회": "Query", "토큰 사용량": "Token usage",
@@ -80,7 +80,7 @@ i18n.register({
         "옵션": "Options",
         "한도(/usage): [u] 눌러 조회": "Limit (/usage): press [u] to query",
         "(기록된 토큰 사용량이 없습니다)": "(no recorded token usage)",
-        "토큰 대사 · 실측Δ% vs 추정Σ": "Token reconcile · measured Δ% vs est Σ",
+        "토큰 비교 · 실측Δ% vs 추정Σ": "Token reconcile · measured Δ% vs est Σ",
         "/usage 조회 중… (~수초)": "querying /usage… (~a few s)",
         "r집계로 돌아가기 · u/usage 갱신 · Esc닫기":
             "r back to totals · u refresh /usage · Esc close",
@@ -125,11 +125,11 @@ i18n.register({
         "pscreen.tklog_title2": "토큰 사용량(추정) · {what}별",
         "pscreen.tklog_scope": "{order} · {sigma}",
         "pscreen.tklog_disp": " (표시 {n})",
-        "pscreen.tklog_hint": "h시 d일 w주 m월 · p세션 · l한도 o정렬 · u/usage s설정 r대사 · Esc닫기",
+        "pscreen.tklog_hint": "h시 d일 w주 m월 · p세션 · l한도 o정렬 · u/usage s설정 r비교 · Esc닫기",
         "pscreen.weekdays": "월,화,수,목,금,토,일",
         "pscreen.hour_suffix": "시",
         "pscreen.recon_top": "실측(/usage Δ%)과 추정(스크랩 ~Σ)은 의미가 다른 두 출처 — 절대 일치가 아니라 추세 상관을 봅니다",
-        "pscreen.recon_empty": "(대사할 실측 스냅샷 구간이 없습니다 — /usage 실측이 2회 이상 쌓이면 생깁니다)",
+        "pscreen.recon_empty": "(비교할 실측 스냅샷 구간이 없습니다 — /usage 실측이 2회 이상 쌓이면 생깁니다)",
         "pscreen.recon_chart_top": "{rng} · 최신 {pct}% · 구간 {n}개 (막대=세션 5h% 실측, ←→ 스크롤)",
         "pscreen.win_session": "이번 5h창 ~Σ{tok}(리셋 {left} 후)",
         "pscreen.win_week": "이번 주 ~Σ{tok}(리셋 {left} 후)",
@@ -793,7 +793,7 @@ class TokenLogScreen(ModalScreen):
         "tab_week": ("주", "주"), "tab_month": ("월", "월"),
         "tab_panel": ("세션", "세"),
         "tab_order": ("정렬", "정"), "tab_usage": ("/usage", "U"),
-        "tab_saver": ("시나리오", "S"), "tab_recon": ("대사", "R"),
+        "tab_saver": ("시나리오", "S"), "tab_recon": ("비교", "R"),
         "tab_limit": ("한도", "L"), "tab_warn": ("경고", "경"),
     }
     # [패널]/계정 그룹이 많을 때 상위 N + '기타'로 접어 길이 폭주를 막는다(설계 §4).
@@ -872,7 +872,7 @@ class TokenLogScreen(ModalScreen):
                             markup=False)
                 yield Label("한도", id="tab_limit", classes="tkbtab",
                             markup=False)
-                yield Label("대사", id="tab_recon", classes="tkbtab",
+                yield Label("비교", id="tab_recon", classes="tkbtab",
                             markup=False)
                 yield Label("경고", id="tab_warn", classes="tkbtab",
                             markup=False)
