@@ -76,14 +76,22 @@ async def _connect_endpoint(sock_path: str) -> str | None:
     return path if os.path.exists(path) else None
 
 
-def _spawn_host(sock_path: str) -> None:
-    """pty-host 데몬을 detached 로 띄운다(서버보다 오래 산다)."""
+def _spawn_host(sock_path: str) -> bool:
+    """pty-host 데몬을 detached 로 띄운다(서버보다 오래 산다). 성공 여부를 돌려준다."""
     argv = [sys.executable, "-m", "pytmuxlib.ptyhost",
             "--endpoint", listen_endpoint(sock_path),
             "--portfile", host_portfile(sock_path),
             "--tokenfile", host_tokenfile(sock_path)]
-    with contextlib.suppress(Exception):
+    try:
         proc.spawn_detached(argv)
+        return True
+    except Exception:
+        # M7: 종전엔 무로깅 suppress 라 spawn 실패 시 6초 폴링 낭비 후 인프로세스
+        # 폴백하면서 원인이 0 로그였다. 실패를 stderr 에 남기고 False 를 돌려
+        # ensure_connected 가 헛된 폴링을 건너뛰게 한다(폴백 자체는 그대로).
+        import traceback
+        traceback.print_exc()
+        return False
 
 
 async def _try_connect(loop, sock_path: str, timeout: float
@@ -110,8 +118,10 @@ async def ensure_connected(loop, sock_path: str
     client = await _try_connect(loop, sock_path, 1.5)
     if client is not None:
         return client
-    # 2) 없으면 새로 띄우고, 리슨이 뜰 때까지 폴링 후 연결.
-    _spawn_host(sock_path)
+    # 2) 없으면 새로 띄우고, 리슨이 뜰 때까지 폴링 후 연결. spawn 자체가 실패하면
+    #    6초 폴링은 무의미하므로 즉시 폴백(M7).
+    if not _spawn_host(sock_path):
+        return None
     for _ in range(60):                    # 최대 ~6s
         await asyncio.sleep(0.1)
         client = await _try_connect(loop, sock_path, 1.0)

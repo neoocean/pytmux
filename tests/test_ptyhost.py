@@ -281,3 +281,29 @@ async def test_keepalive_declares_idle_host_lost():
         P._PING_INTERVAL, P._IDLE_TIMEOUT = orig
     assert cli.reader.at_eof(), "idle → reader EOF(read 루프 깨움)"
     assert closed == [True], "writer 닫힘"
+
+
+async def test_ensure_connected_spawn_failure_short_circuits():
+    """M7: host spawn 자체가 실패하면 _spawn_host 가 False 를 돌려, ensure_connected 가
+    6초 폴링 없이 즉시 None(인프로세스 폴백)으로 빠진다(실패가 묵살되지 않음)."""
+    import time as _t
+    from pytmuxlib import proc as _proc
+    from pytmuxlib import ptyhostmgr
+    loop = asyncio.get_running_loop()
+    d = tempfile.mkdtemp(prefix="pytmux-mgr-")
+    sock = os.path.join(d, "x.sock")
+
+    def _boom(_argv):
+        raise OSError("spawn fail (test)")
+
+    orig = _proc.spawn_detached
+    _proc.spawn_detached = _boom
+    try:
+        assert ptyhostmgr._spawn_host(sock) is False, "spawn 실패→False"
+        t0 = _t.monotonic()
+        client = await ptyhostmgr.ensure_connected(loop, sock)
+        dt = _t.monotonic() - t0
+    finally:
+        _proc.spawn_detached = orig
+    assert client is None
+    assert dt < 3.0, ("6초 폴링 회피(spawn 실패 즉시 폴백)", dt)
