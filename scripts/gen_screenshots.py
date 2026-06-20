@@ -758,6 +758,14 @@ _WELCOME_RE = _re.compile(r">Welcome(?:&#160;|\s)back[^<]*</text>")
 # 해결: 폭이 같은 문자끼리의 최대 런(narrow|wide)으로 <text> 를 쪼개고, 각 런을 자신의 셀
 # x 위치에 textLength=런셀수×셀폭 으로 다시 배치한다. 런 내부는 글리프 폭이 균일해 spacing
 # 분배가 고르고, 각 런의 시작 x 가 셀 그리드에 고정돼 열이 정확히 맞는다.
+# 한글 폴백 폰트: 임베드된 Fira Code 에는 한글 글리프가 없어, 뷰어가 generic
+# `monospace` 의 시스템 CJK 폴백(보통 좌우로 널찍한 fullwidth 고딕)으로 한글을 그린다.
+# 체인에 macOS·iOS 기본 한글 폰트(Apple SD Gothic Neo)를 끼워넣으면 그 기기에서
+# 익숙한 모양으로 렌더된다(타 OS 는 그대로 monospace 폴백). 폭은 textLength 가
+# 강제하므로 어떤 폰트로 떨어지든 셀 정렬은 유지된다.
+_FONT_FAMILY_RE = _re.compile(r'font-family:\s*Fira Code,\s*monospace')
+_FONT_FAMILY_NEW = 'font-family: Fira Code, "Apple SD Gothic Neo", monospace'
+
 _TEXT_RE = _re.compile(r'<text\b([^>]*)>([^<]*)</text>')
 _X_RE = _re.compile(r'\bx="([0-9.]+)"')
 _TL_RE = _re.compile(r'\btextLength="([0-9.]+)"')
@@ -769,10 +777,15 @@ def _svg_escape(s):
 
 
 def _fix_cjk_textlength(svg):
-    """와이드 문자가 섞인 <text> 를 폭-동질 런으로 쪼개 셀 그리드에 다시 정렬한다."""
+    """와이드 문자가 섞인 <text> 를 폭-동질 런으로 쪼개 셀 그리드에 다시 정렬한다.
+
+    멱등: 이미 처리된 와이드 런(lengthAdjust="spacingAndGlyphs" 보유)은 건너뛴다.
+    다시 돌리면 cell_w 를 textLength/n 으로 오산해 textLength 가 배로 부푼다."""
 
     def repl(m):
         attrs, content = m.group(1), m.group(2)
+        if "spacingAndGlyphs" in attrs:
+            return m.group(0)            # 이미 처리된 와이드 런 → 그대로(멱등)
         xm = _X_RE.search(attrs)
         tlm = _TL_RE.search(attrs)
         if not xm or not tlm:
@@ -813,6 +826,134 @@ def _fix_cjk_textlength(svg):
     return _TEXT_RE.sub(repl, svg)
 
 
+# ---------- 한글 <text> → 벡터 path 굽기 (뷰어 폰트 무의존) ----------
+# font-family 폴백(Apple SD Gothic Neo)은 그 폰트가 설치된 macOS·iOS 뷰어에서만
+# 익숙하게 보이고, 다른 OS·폰트 없는 뷰어에선 또 제각각(최악엔 두부 □)이 된다. 견고한
+# 해법은 글리프 외곽선을 path 로 구워 폰트 의존을 0 으로 만드는 것이다([[svg-text-cjk-
+# breaks-bake-paths]]). CJK(2칸) 문자를 담은 <text>(이미 _fix_cjk_textlength 가 pure-wide
+# 런으로 분리·textLength 부여)를 Apple SD Gothic Neo 글리프 path 로 치환한다.
+#
+# - 폰트=AppleSDGothicNeo.ttc Regular(face 0)·Bold(face 6), upm 1000.
+# - lengthAdjust="spacingAndGlyphs" 와 동치가 되도록 런 전체 자연 advance 를 textLength
+#   에 맞춰 가로 스케일(k)한다. 세로는 font-size/upm 그대로(폰트 y-up→SVG y-down 이라 음수).
+# - 색은 원 <text> 의 class(fill) 를 path 에 그대로 물려 받는다.
+# - 폰트에 없는 글리프(이모지 ✅ 등)나 fontTools/폰트 부재(비 macOS) 시엔 굽지 않고
+#   <text> 로 남긴다 → font-family 폴백이 받친다. macOS 로컬 생성이 권위.
+_BAKE_TTC = "/System/Library/Fonts/AppleSDGothicNeo.ttc"
+_BAKE_FACE = {"regular": 0, "bold": 6}
+_CLASS_CSS_RE = _re.compile(r"\.(terminal-\d+-r\d+)\s*\{([^}]*)\}")
+_MATRIX_FS_RE = _re.compile(r"-matrix\s*\{[^}]*?font-size:\s*([\d.]+)")
+_CSS_FILL_RE = _re.compile(r"fill:\s*([^;]+)")
+_CLASS_RE = _re.compile(r'\bclass="([^"]*)"')
+_Y_RE = _re.compile(r'\by="([0-9.]+)"')
+_CLIP_RE = _re.compile(r'\bclip-path="([^"]*)"')
+_bake_font_cache = {}
+
+
+def _bake_font(weight):
+    """weight('regular'|'bold') 의 폰트 정보 dict 또는 None(부재/미설치)."""
+    if weight in _bake_font_cache:
+        return _bake_font_cache[weight]
+    info = None
+    try:
+        from fontTools.ttLib import TTCollection
+        from fontTools.pens.svgPathPen import SVGPathPen
+        tc = TTCollection(_BAKE_TTC)
+        f = tc.fonts[_BAKE_FACE[weight]]
+        info = {
+            "cmap": f.getBestCmap(),
+            "glyphset": f.getGlyphSet(),
+            "hmtx": f["hmtx"].metrics,
+            "upm": f["head"].unitsPerEm,
+            "pen": SVGPathPen,
+        }
+    except (ImportError, OSError, KeyError):
+        info = None
+    _bake_font_cache[weight] = info
+    return info
+
+
+def _bake_cjk_paths(svg):
+    """CJK <text> 를 Apple SD Gothic Neo 글리프 path 로 굽는다(불가 시 <text> 유지)."""
+    fsm = _MATRIX_FS_RE.search(svg)
+    if not fsm:
+        return svg
+    fsize = float(fsm.group(1))
+    weight_of, fill_of = {}, {}
+    for cls, css in _CLASS_CSS_RE.findall(svg):
+        weight_of[cls] = ("bold" if ("bold" in css or "font-weight: 7" in css)
+                          else "regular")
+        fm = _CSS_FILL_RE.search(css)
+        if fm:
+            fill_of[cls] = fm.group(1).strip()
+
+    def repl(m):
+        attrs, content = m.group(1), m.group(2)
+        text = _html.unescape(content)
+        if not any(_cell_len(ch) >= 2 for ch in text):
+            return m.group(0)                         # 와이드 문자 없음 → 그대로
+        xm = _X_RE.search(attrs)
+        ym = _Y_RE.search(attrs)
+        tlm = _TL_RE.search(attrs)
+        clsm = _CLASS_RE.search(attrs)
+        if not (xm and ym and tlm and clsm):
+            return m.group(0)
+        cls = clsm.group(1)
+        info = _bake_font(weight_of.get(cls, "regular"))
+        if info is None:
+            return m.group(0)                         # fontTools/폰트 부재 → 그대로
+        cmap, gset, hmtx, upm = (info["cmap"], info["glyphset"],
+                                 info["hmtx"], info["upm"])
+        gnames = []
+        for ch in text:
+            gn = cmap.get(ord(ch))
+            if gn is None:
+                return m.group(0)                     # 폰트에 없는 글리프(✅ 등) → 그대로
+            gnames.append(gn)
+        s = fsize / upm
+        natural = sum(hmtx[g][0] for g in gnames) * s
+        if natural <= 0:
+            return m.group(0)
+        k = float(tlm.group(1)) / natural             # spacingAndGlyphs 동치 가로 스케일
+        sx = s * k
+        x, y = float(xm.group(1)), float(ym.group(1))
+        # 색은 class CSS 의 fill 을 path 에 명시적으로 박는다(class 만 의존하면 일부
+        # 뷰어가 <path> 에 클래스 fill 을 안 먹여 검정으로 떨어진다).
+        fill_attr = f' fill="{fill_of[cls]}"' if cls in fill_of else ""
+        out, penx = [], x
+        for g in gnames:
+            pen = info["pen"](gset)
+            gset[g].draw(pen)
+            d = pen.getCommands()
+            if d:                                     # 공백 등 빈 path 는 건너뜀
+                out.append(
+                    f'<path{fill_attr} '
+                    f'transform="translate({penx:g} {y:g}) scale({sx:g} {-s:g})" '
+                    f'd="{d}"/>')
+            penx += hmtx[g][0] * sx
+        body = "".join(out)
+        # clip-path 는 그룹에 건다. path 의 transform 좌표계에서 clip rect 가 해석되면
+        # (SVG 규약) y=123.5 같은 rect 가 scale(-0.02)에 눌려 얇은 띠로 변해 글리프를
+        # 잘라먹는다 → 변환 없는 <g> 가 clip 을 받고 transform 은 안쪽 path 에 둔다.
+        clip = _CLIP_RE.search(attrs)
+        if clip:
+            body = f'<g clip-path="{clip.group(1)}">{body}</g>'
+        return body
+
+    return _TEXT_RE.sub(repl, svg)
+
+
+def _postprocess_cjk(svg):
+    """한글 렌더 후처리(멱등): font-family 폴백 → 자간 보정 → path 굽기.
+
+    Rich/Textual SVG 면 어떤 생성 경로(매뉴얼 컷·플러그인 screenshot.svg)든 동일하게
+    적용 가능하다. 이미 처리된 SVG 에 다시 돌려도 결과가 같다."""
+    svg = _FONT_FAMILY_RE.sub(_FONT_FAMILY_NEW, svg)
+    svg = _fix_cjk_textlength(svg)
+    svg = _bake_cjk_paths(svg)
+    return svg
+
+
 def _redact_svg(path):
     """저장한 SVG 의 PII 마스킹 + 한글 자간(textLength) 보정.
 
@@ -821,7 +962,11 @@ def _redact_svg(path):
     user@example.com 으로, 환영 이름은 "Welcome back!" 으로 마스킹한다(다른 텍스트는
     그대로). textLength 속성이 있어 폭은 유지된다.
 
-    자간: Rich 의 와이드 문자 textLength 버그를 _fix_cjk_textlength 로 교정한다."""
+    자간: Rich 의 와이드 문자 textLength 버그를 _fix_cjk_textlength 로 교정한다.
+
+    한글 폰트: ① font-family 체인에 Apple SD Gothic Neo 를 끼우고(_FONT_FAMILY_RE),
+    ② CJK <text> 는 _bake_cjk_paths 가 글리프 외곽선 path 로 구워 뷰어 폰트 의존을
+    없앤다(폰트에 없는 ✅ 등·비 macOS 환경에선 굽지 않고 ①폴백에 맡긴다)."""
     try:
         with open(path, encoding="utf-8") as f:
             svg = f.read()
@@ -829,7 +974,7 @@ def _redact_svg(path):
         return
     new = _EMAIL_RE.sub("user@example.com", svg)
     new = _WELCOME_RE.sub(">Welcome&#160;back!</text>", new)
-    new = _fix_cjk_textlength(new)
+    new = _postprocess_cjk(new)
     if new != svg:
         with open(path, "w", encoding="utf-8") as f:
             f.write(new)
