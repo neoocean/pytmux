@@ -20,7 +20,9 @@ POSIX 전용(서버/PTY 가 stdlib pty 기반). 헤드리스라 디스플레이/
 from __future__ import annotations
 
 import asyncio
+import getpass as _getpass
 import os
+import socket as _socket
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -447,6 +449,18 @@ async def token_saver(app, pilot):
     await pilot.pause(0.5)
 
 
+async def settings(app, pilot):
+    # 통합 설정 화면(:settings / config / preferences / 옵션) — 흩어진 pytmux 설정을 한 곳에.
+    # 좌측 카테고리 세로 탭(표시·입력·동작·상태줄·Claude·고급·키) + 우측 전체 설정 목록.
+    # 행에서 ←→(또는 클릭) = bool 토글·enum 순환·숫자 증감을 즉시 적용+영속, 문자열은
+    # Enter 입력 모달, 링크 행(Claude·플러그인)은 Enter 로 전용 화면을 연다.
+    from pytmuxlib.clientscreens import SettingsScreen
+    app.push_screen(SettingsScreen(prefix_key="ctrl+b",
+                                   user_bindings={"ctrl+g": "split-h",
+                                                  "f5": "restart-check"}))
+    await pilot.pause(0.6)
+
+
 def _tklog_data():
     """토큰 사용량 팝업용 합성 데이터(2026-06-12 재설계 반영). 공개 저장소에 실제
     사용량이 노출되지 않게 가상의 며칠치 레코드·계정·실측 한도를 만든다. 일별 뷰가
@@ -713,6 +727,7 @@ SCENES = [
     ("35-p4-describe", "p4changes 상세 — CL 에 Enter → p4 describe 팝업(이중 보더·@CL·변경파일)", p4_describe),
     ("33-ime", "IME 한/영 배지(ime-indicator) — 우상단 상태 배지", ime_badge),
     ("34-remote-attach", "원격 pytmux 탭 어태치 — 분홍 탭바·분홍 패널 외곽선", remote_attach),
+    ("40-settings", "통합 설정 화면(:settings) — 좌측 카테고리 탭+우측 전체 설정 목록·←→ 값 변경·링크 행", settings),
 ]
 # Claude 컷(11·12·13·20·22)은 결정적 장면이 아니라 진짜 `claude` 한 세션에서 캡처한다
 # (claude_suite). 실제 API 호출이라 무인자 전체 생성에선 제외하고, `claude-suite` 또는
@@ -745,6 +760,14 @@ _EMAIL_RE = _re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
 
 _WELCOME_RE = _re.compile(r">Welcome(?:&#160;|\s)back[^<]*</text>")
+
+# 실제 로그인 사용자명·호스트명(셸 프롬프트 `user@host`·상태줄 `ssh:host`·`/Users/<user>`
+# 경로)이 공개 이미지에 베이킹돼 내부 환경이 노출되지 않도록 마스킹한다. 현재 실행 환경에서
+# 동적으로 읽어 스크립트에 PII 를 하드코딩하지 않는다(다른 머신에서 돌리면 그 머신 값으로
+# 자동 적용). textLength 가 폭을 유지하므로 길이 차이는 자간으로 흡수된다.
+_REAL_USER = _getpass.getuser()
+_REAL_HOST = _socket.gethostname()
+_REAL_HOST_SHORT = _REAL_HOST.split(".")[0]
 
 
 # Rich 의 export_svg 는 <text> 의 textLength 를 cell_len 이 아닌 len(글자수) 로 계산하는
@@ -1178,6 +1201,12 @@ def _redact_svg(path):
         return
     new = _EMAIL_RE.sub("user@example.com", svg)
     new = _WELCOME_RE.sub(">Welcome&#160;back!</text>", new)
+    # 실제 사용자명/호스트명 마스킹(셸 프롬프트·상태줄·홈경로). full 호스트→short 순서로
+    # 치환해 잔여 `.local` 이 남지 않게 한다.
+    for _real, _repl in ((_REAL_HOST, "host"), (_REAL_HOST_SHORT, "host"),
+                         (_REAL_USER, "user")):
+        if _real and _real not in ("host", "user"):
+            new = new.replace(_real, _repl)
     new = _postprocess_cjk(new)
     if new != svg:
         with open(path, "w", encoding="utf-8") as f:
