@@ -159,7 +159,7 @@ Claude Code 연동, 작업 보존 재시작까지 — 은 **[사용 매뉴얼(do
 통합·자동화)이 구현되어 있습니다. 구현은 `pytmuxlib/` 패키지로 모듈화되어 있고
 (`server`/`client`/`model`/`protocol`/`claude`/플랫폼 추상층 등), `pytmux.py` 가
 진입점입니다. macOS/Linux 에 더해 **Windows 네이티브(ConPTY)** 백엔드를 지원하며 실
-Windows 11 기기에서 스모크 검증을 마쳤습니다. 헤드리스 테스트는 `python tests/run.py` 로
+Windows 11 기기에서 매일 장시간씩 직접 사용하며 개선하고 있습니다. 헤드리스 테스트는 `python tests/run.py` 로
 전부 통과합니다(현재 845 passed). 매뉴얼·갤러리의 스크린샷은 실제 클라이언트를 헤드리스로
 운전해 자동 생성하며(`python3 scripts/gen_screenshots.py`), Claude 연동 컷은 진짜
 `claude` 를 패널에서 돌려 캡처합니다.
