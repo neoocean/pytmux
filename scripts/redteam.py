@@ -4,8 +4,10 @@
 이어, **실행 중인 서버**를 밖에서 두드리며 자원(메모리·fd)을 표본한다. 두 모드:
 
   --spawn (기본): 격리된 인프로세스 서버를 띄워 적대 배터리(인증 우회·프레임 퍼징)를
-      대량 반복하며 self 메모리(tracemalloc)·열린 fd 를 표본해 ① 서버 생존 ② 메모리
-      선형 상한 ③ fd 누수 없음을 단언한다. 자기완결(회귀 test_redteam 와 코어 공유).
+      대량 **순차** 반복한 뒤 **동시 폭주**(웨이브당 width 연결을 진짜 동시에 열어 accept
+      루프·연결당 태스크·fd 천장 압박)까지 던지며 self 메모리(tracemalloc)·열린 fd 를
+      표본해 ① 서버 생존 ② 메모리 선형 상한 ③ fd 누수 없음 ④ 순차·동시 양쪽 무인가
+      수용 0 을 단언한다. 자기완결(회귀 test_redteam 와 코어 공유).
 
   --attach ENDPOINT: 이미 도는 서버(office·default 데몬)에 붙어 **비파괴** 배터리만
       던진다 — 인증 우회 시도는 서버가 거절하므로 무영향, 유효 토큰으론 **read-only
@@ -43,22 +45,115 @@ from pytmuxlib.protocol import MAX_FRAME  # noqa: E402
 # ─────────────────────────────────────────────────────────────────────────────
 # 자원 표본(메모리·fd) — self / 외부 PID
 # ─────────────────────────────────────────────────────────────────────────────
+def _win_handle_count(pid: int | None = None) -> int:
+    """Windows 프로세스 핸들 수(fd 누수 등가 지표 — 소켓·파일이 핸들로 잡힌다).
+    pid=None 이면 자기 프로세스, 아니면 외부 PID(`OpenProcess`). 불가면 -1.
+
+    ctypes 함정(SECURITY_REVIEW §10 W3): `GetCurrentProcess`/`OpenProcess` 의 restype 과
+    `GetProcessHandleCount` 의 argtypes(HANDLE/POINTER(DWORD))를 명시하지 않으면 64-bit
+    핸들이 잘려 호출이 실패(-1)한다.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k = ctypes.windll.kernel32
+        k.GetProcessHandleCount.argtypes = [wintypes.HANDLE,
+                                            ctypes.POINTER(wintypes.DWORD)]
+        k.GetProcessHandleCount.restype = wintypes.BOOL
+        n = wintypes.DWORD(0)
+        if pid is None:
+            k.GetCurrentProcess.restype = wintypes.HANDLE
+            handle = k.GetCurrentProcess()
+            ok = k.GetProcessHandleCount(handle, ctypes.byref(n))
+            return int(n.value) if ok else -1
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        k.OpenProcess.restype = wintypes.HANDLE
+        k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        handle = k.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return -1
+        try:
+            ok = k.GetProcessHandleCount(handle, ctypes.byref(n))
+            return int(n.value) if ok else -1
+        finally:
+            k.CloseHandle(handle)
+    except Exception:    # noqa: BLE001 (best-effort 표본 — 못 재면 -1)
+        return -1
+
+
+def _win_rss_kb(pid: int) -> int:
+    """Windows 외부 PID 작업셋(KB) — `tasklist` CSV 의 메모리 열 파싱. 불가면 -1."""
+    try:
+        import csv
+        import io
+        out = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, timeout=10)
+        lines = [ln for ln in out.stdout.splitlines() if ln.strip()]
+        if not lines:
+            return -1
+        row = next(csv.reader(io.StringIO(lines[-1])))
+        # 마지막 열 = "73,248 K"(콤마 천단위 + 단위) → 정수 KB.
+        mem = row[-1].replace(",", "").replace("K", "").strip()
+        return int(mem)
+    except (OSError, ValueError, StopIteration, subprocess.SubprocessError):
+        return -1
+
+
+def _pid_listening_on(host: str, port: int) -> int:
+    """host:port 를 LISTENING 중인 PID(외부 서버 자원 표본·디스커버리용). 불가면 -1.
+
+    Windows=`netstat -ano`(행: `TCP  127.0.0.1:PORT  0.0.0.0:0  LISTENING  PID`),
+    POSIX=`lsof -ti`. best-effort — 못 찾으면 -1(자원 표본만 건너뛰고 배터리는 진행).
+    """
+    needle = f"{host}:{port}"
+    if ipc.IS_WINDOWS:
+        try:
+            out = subprocess.run(["netstat", "-ano", "-p", "TCP"],
+                                 capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return -1
+        for ln in out.stdout.splitlines():
+            parts = ln.split()
+            # TCP  <local>  <remote>  LISTENING  <pid>
+            if (len(parts) >= 5 and parts[0].upper() == "TCP"
+                    and parts[1] == needle and parts[3].upper() == "LISTENING"):
+                try:
+                    return int(parts[-1])
+                except ValueError:
+                    return -1
+        return -1
+    try:
+        out = subprocess.run(["lsof", "-ti", f"@{host}:{port}", "-sTCP:LISTEN"],
+                             capture_output=True, text=True, timeout=10)
+        first = out.stdout.split()
+        return int(first[0]) if first else -1
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return -1
+
+
 def count_fds() -> int:
-    """현재 프로세스의 열린 fd 수. Linux=/proc/self/fd, macOS/BSD=/dev/fd. 불가면 -1."""
+    """현재 프로세스의 열린 fd 수. Linux=/proc/self/fd, macOS/BSD=/dev/fd,
+    Windows=프로세스 핸들 수(fd 등가 누수 지표, §10 W3). 불가면 -1."""
     for d in ("/proc/self/fd", "/dev/fd"):
         try:
             return len(os.listdir(d))
         except OSError:
             continue
+    if ipc.IS_WINDOWS:
+        return _win_handle_count()
     return -1
 
 
 def pid_fds(pid: int) -> int:
-    """외부 PID 의 열린 fd 수(/proc/<pid>/fd 우선, 아니면 lsof). best-effort, 불가면 -1."""
+    """외부 PID 의 열린 fd 수(/proc/<pid>/fd 우선, 아니면 lsof; Windows=핸들 수).
+    best-effort, 불가면 -1."""
     try:
         return len(os.listdir(f"/proc/{pid}/fd"))
     except OSError:
         pass
+    if ipc.IS_WINDOWS:
+        return _win_handle_count(pid)
     try:
         out = subprocess.run(["lsof", "-p", str(pid)], capture_output=True,
                              text=True, timeout=10)
@@ -68,7 +163,8 @@ def pid_fds(pid: int) -> int:
 
 
 def pid_rss_kb(pid: int) -> int:
-    """외부 PID 의 RSS(KB). /proc/<pid>/status 우선, 아니면 ps. best-effort, 불가면 -1."""
+    """외부 PID 의 RSS(KB). /proc/<pid>/status 우선, 아니면 ps; Windows=tasklist 작업셋.
+    best-effort, 불가면 -1."""
     try:
         with open(f"/proc/{pid}/status", encoding="ascii") as f:
             for line in f:
@@ -76,6 +172,8 @@ def pid_rss_kb(pid: int) -> int:
                     return int(line.split()[1])
     except OSError:
         pass
+    if ipc.IS_WINDOWS:
+        return _win_rss_kb(pid)
     try:
         out = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)],
                              capture_output=True, text=True, timeout=10)
@@ -140,9 +238,40 @@ def _attacks(destructive: bool) -> list[tuple[str, bytes]]:
     return items
 
 
+async def _one_shot(endpoint: str, name: str, payload: bytes) -> str:
+    """단발 적대 연결: 프레임 송신→짧게 응답 대기→분류. 새 소켓 1개, 끝나면 닫는다.
+    반환 = 결과 버킷 키(rejected/dropped/accepted_unexpected/errors). 순차 배터리와
+    동시 폭주가 분류 로직을 공유한다."""
+    try:
+        r, w = await _open(endpoint)
+    except OSError:
+        return "errors"
+    try:
+        w.write(payload)
+        await w.drain()
+        # write_eof 로 즉시 EOF 를 보낸다 — 불완전 프레임(truncated 등)에서 서버가
+        # 나머지 바이트를 기다리며 클라가 응답을 기다리는 교착(틱당 수초 스톨)을 없앤다.
+        # 완전 프레임은 이미 응답/종료하므로 무해.
+        with contextlib.suppress(Exception):
+            w.write_eof()
+        reply = await _recv(r, timeout=1.0)
+        if reply is None:
+            return "dropped"
+        if isinstance(reply, dict) and reply.get("t") == "error":
+            return "rejected"
+        if name in ("unauth_hello", "wrong_token"):
+            return "accepted_unexpected"          # 무인가가 받아들여짐 = 결함
+        return "dropped"
+    except OSError:
+        return "dropped"
+    finally:
+        with contextlib.suppress(Exception):
+            w.close()
+
+
 async def run_battery(endpoint: str, rounds: int, *,
                       destructive: bool = False) -> dict:
-    """적대 프레임을 rounds 회 반복 송신하고 결과를 집계한다(연결마다 새 소켓).
+    """적대 프레임을 rounds 회 **순차** 송신하고 결과를 집계한다(연결마다 새 소켓).
 
     반환: {sent, rejected, dropped, accepted_unexpected, errors}.
       rejected            = auth_failed 응답(인증 게이트가 막음 — 정상)
@@ -155,33 +284,31 @@ async def run_battery(endpoint: str, rounds: int, *,
     for _ in range(rounds):
         for name, payload in attacks:
             counts["sent"] += 1
-            try:
-                r, w = await _open(endpoint)
-            except OSError:
-                counts["errors"] += 1
-                continue
-            try:
-                w.write(payload)
-                await w.drain()
-                # write_eof 로 즉시 EOF 를 보낸다 — 불완전 프레임(truncated 등)에서
-                # 서버가 나머지 바이트를 기다리며 클라가 응답을 기다리는 교착(틱당 수초
-                # 스톨)을 없앤다. 완전 프레임은 이미 응답/종료하므로 무해.
-                with contextlib.suppress(Exception):
-                    w.write_eof()
-                reply = await _recv(r, timeout=1.0)
-                if reply is None:
-                    counts["dropped"] += 1
-                elif isinstance(reply, dict) and reply.get("t") == "error":
-                    counts["rejected"] += 1
-                elif name in ("unauth_hello", "wrong_token"):
-                    counts["accepted_unexpected"] += 1   # 무인가가 받아들여짐 = 결함
-                else:
-                    counts["dropped"] += 1
-            except OSError:
-                counts["dropped"] += 1
-            finally:
-                with contextlib.suppress(Exception):
-                    w.close()
+            counts[await _one_shot(endpoint, name, payload)] += 1
+    return counts
+
+
+async def run_concurrent_flood(endpoint: str, waves: int, width: int, *,
+                               destructive: bool = False) -> dict:
+    """적대 프레임을 **동시에** width 개씩 waves 회 폭주시킨다 — 순차 배터리가 못 보는
+    동시 연결 처리(accept 루프·연결당 태스크 스폰·동시 fd 천장)를 친다. 각 연결은 응답
+    직후 닫혀 라이브에도 비파괴(연결을 잡아두지 않음). 한 웨이브의 width 연결이 진짜
+    동시에 열려 서버의 동시성 경로를 압박한다.
+
+    반환: run_battery 와 같은 버킷 + peak_inflight(한 번에 띄운 최대 동시 연결 수).
+    """
+    counts = {"sent": 0, "rejected": 0, "dropped": 0,
+              "accepted_unexpected": 0, "errors": 0, "peak_inflight": 0}
+    attacks = _attacks(destructive)
+    for _ in range(waves):
+        tasks = [asyncio.ensure_future(
+                     _one_shot(endpoint, attacks[i % len(attacks)][0],
+                               attacks[i % len(attacks)][1]))
+                 for i in range(width)]
+        counts["peak_inflight"] = max(counts["peak_inflight"], len(tasks))
+        for res in await asyncio.gather(*tasks, return_exceptions=True):
+            counts["sent"] += 1
+            counts[res if isinstance(res, str) else "errors"] += 1
     return counts
 
 
@@ -190,6 +317,11 @@ async def run_battery(endpoint: str, rounds: int, *,
 # ─────────────────────────────────────────────────────────────────────────────
 def _boot_isolated_server(endpoint: str):
     """격리 환경(실 상태 미오염)으로 인프로세스 서버를 띄운다. (srv, task) 반환."""
+    # PYTMUX_HOME 으로 상태(소켓·토큰·포트파일)까지 임시 격리한다. Windows 의 TCP
+    # 엔드포인트는 토큰/포트파일이 `default_state_dir()`(=%LOCALAPPDATA%\\pytmux) 고정
+    # 경로라, 격리 없이 띄우면 실 default 데몬의 토큰/포트를 덮어쓴다(§10 W2). unix
+    # 경로는 endpoint 기반이라 무관하지만 통일해 둔다.
+    os.environ["PYTMUX_HOME"] = tempfile.mkdtemp(prefix="redteam-home-")
     os.environ["PYTMUX_PTY_HOST"] = "0"          # detached host 안 띄움(결정론)
     os.environ["PYTMUX_CAPTURE_DIR"] = tempfile.mkdtemp(prefix="redteam-cap-")
     os.environ["PYTMUX_TOKENS_DB"] = tempfile.mktemp(suffix=".db",
@@ -198,6 +330,28 @@ def _boot_isolated_server(endpoint: str):
     srv = pytmux.Server(endpoint)
     task = asyncio.ensure_future(srv.serve())
     return srv, task
+
+
+async def _await_endpoint_ready(endpoint: str, tries: int = 300) -> str:
+    """서버가 listen 준비될 때까지 대기하고 **접속 가능한** 엔드포인트를 돌려준다.
+
+    TCP(에페메럴 PORT 0)면 포트파일이 게시될 때까지 기다려 실제 포트를 박은
+    "tcp:host:port" 를, unix 면 소켓 파일이 생길 때까지 기다려 그 경로를 돌려준다.
+    """
+    if ipc.is_tcp(endpoint):
+        pf = ipc.portfile_for(endpoint)
+        _, host, _ = ipc.parse_endpoint(endpoint)
+        for _ in range(tries):
+            port = ipc._read_portfile(pf)
+            if port:
+                return f"tcp:{host}:{port}"
+            await asyncio.sleep(0.01)
+        return endpoint
+    for _ in range(tries):
+        if os.path.exists(endpoint):
+            return endpoint
+        await asyncio.sleep(0.01)
+    return endpoint
 
 
 def _kill_server(srv) -> None:
@@ -217,40 +371,68 @@ _FD_SLACK = 16
 _MEM_GROWTH_MAX = 12 * 1024 * 1024       # 12 MiB
 
 
-async def redteam_spawn(rounds: int) -> dict:
-    endpoint = tempfile.mktemp(suffix=".sock", prefix="redteam-")
+def _res_growth(res0: dict | None, res1: dict | None) -> tuple[bool, dict | None]:
+    """attach 자원 표본의 누수 단언(전후 비교). 둘 다 유효 표본일 때만 단언한다.
+
+    반환 (ok, detail). 표본이 없거나(-1=측정 불가) 한쪽만 있으면 ok=True(보수: 측정
+    못 한 것을 결함으로 치지 않는다). fd/핸들 증가만 verdict 에 반영한다 — 비파괴
+    배터리는 연결을 열고 즉시 닫으므로 서버 핸들 수가 누적되면 누수다(연결당 미반환).
+    RSS 는 라이브 데몬이 타 클라·GC 로 출렁이므로 **보고만** 하고 게이트하지 않는다.
+    """
+    if not res0 or not res1:
+        return True, None
+    detail: dict = {}
+    ok = True
+    if res0.get("fds", -1) >= 0 and res1.get("fds", -1) >= 0:
+        g = res1["fds"] - res0["fds"]
+        detail["fd_growth"] = g
+        ok = ok and g <= _FD_SLACK
+    if res0.get("rss_kb", -1) >= 0 and res1.get("rss_kb", -1) >= 0:
+        detail["rss_growth_kb"] = res1["rss_kb"] - res0["rss_kb"]   # 보고만(미게이트)
+    return ok, (detail or None)
+
+
+async def redteam_spawn(rounds: int, *, conc_waves: int = 20,
+                        conc_width: int = 40) -> dict:
+    # Windows 는 asyncio AF_UNIX 미지원 → 프로덕션 전송인 TCP 루프백으로 띄운다(§10 W2).
+    # POSIX 는 종전대로 임시 unix 소켓(파일권한 격리). resolved 는 실제 포트가 박힌
+    # 접속 가능 엔드포인트(에페메럴 포트 0 은 그대로는 못 붙는다).
+    endpoint = ("tcp:127.0.0.1:0" if ipc.IS_WINDOWS
+                else tempfile.mktemp(suffix=".sock", prefix="redteam-"))
     srv, task = _boot_isolated_server(endpoint)
-    for _ in range(300):
-        if os.path.exists(endpoint):
-            break
-        await asyncio.sleep(0.01)
+    resolved = await _await_endpoint_ready(endpoint)
     token = ipc.read_token(endpoint)
     try:
         # 워밍업(레이지 할당 안정화) 후 베이스라인.
         for _ in range(3):
-            await authed_list_alive(endpoint, token)
+            await authed_list_alive(resolved, token)
         gc.collect()
         tracemalloc.start()
         mem0, _ = tracemalloc.get_traced_memory()
         fd0 = count_fds()
 
-        counts = await run_battery(endpoint, rounds)
+        counts = await run_battery(resolved, rounds)
+        # 순차 배터리 뒤 동시 폭주 — accept 루프·연결당 태스크·fd 천장을 압박한다.
+        conc = await run_concurrent_flood(resolved, conc_waves, conc_width)
 
         gc.collect()
         mem1, _ = tracemalloc.get_traced_memory()
-        fd1 = count_fds()
+        fd1 = count_fds()                # 동시 연결이 전부 닫힌 뒤 표본(누수 측정)
         tracemalloc.stop()
-        alive = await authed_list_alive(endpoint, token)
+        alive = await authed_list_alive(resolved, token)
 
         report = {
             "mode": "spawn", "rounds": rounds, "battery": counts,
-            "server_alive": alive,
+            "concurrent": conc, "server_alive": alive,
             "fd_before": fd0, "fd_after": fd1, "fd_growth": fd1 - fd0,
             "mem_growth_bytes": mem1 - mem0,
             "verdict_ok": (
                 alive
                 and counts["accepted_unexpected"] == 0
+                and conc["accepted_unexpected"] == 0
                 and counts["rejected"] + counts["dropped"] >= counts["sent"]
+                and conc["rejected"] + conc["dropped"] + conc["errors"]
+                    >= conc["sent"]
                 and (fd0 < 0 or fd1 - fd0 <= _FD_SLACK)
                 and (mem1 - mem0) <= _MEM_GROWTH_MAX),
         }
@@ -266,21 +448,119 @@ async def redteam_spawn(rounds: int) -> dict:
 
 
 async def redteam_attach(endpoint: str, pid: int | None, rounds: int,
-                         destructive: bool) -> dict:
+                         destructive: bool, *, conc_waves: int = 10,
+                         conc_width: int = 20) -> dict:
     token = ipc.read_token(endpoint)
     res0 = ({"rss_kb": pid_rss_kb(pid), "fds": pid_fds(pid)} if pid else None)
     counts = await run_battery(endpoint, rounds, destructive=destructive)
+    # 라이브 비파괴 동시 폭주(연결 즉시 닫힘): 외부 서버의 동시성 경로를 본다.
+    conc = await run_concurrent_flood(endpoint, conc_waves, conc_width,
+                                      destructive=destructive)
     res1 = ({"rss_kb": pid_rss_kb(pid), "fds": pid_fds(pid)} if pid else None)
     alive = await authed_list_alive(endpoint, token)
+    res_ok, res_growth = _res_growth(res0, res1)
     report = {
-        "mode": "attach", "endpoint": endpoint, "rounds": rounds,
-        "destructive": destructive, "battery": counts, "server_alive": alive,
+        "mode": "attach", "endpoint": endpoint, "pid": pid, "rounds": rounds,
+        "destructive": destructive, "battery": counts, "concurrent": conc,
+        "server_alive": alive,
         "resources_before": res0, "resources_after": res1,
-        "verdict_ok": alive and counts["accepted_unexpected"] == 0,
+        "resource_growth": res_growth,
+        "verdict_ok": (alive and counts["accepted_unexpected"] == 0
+                       and conc["accepted_unexpected"] == 0 and res_ok),
     }
-    if counts["accepted_unexpected"]:
+    if counts["accepted_unexpected"] or conc["accepted_unexpected"]:
         report["warning"] = "무인가 hello 가 수용됨 — 서버가 인증 없이 동작(F1/M1 미적용?)"
     return report
+
+
+def discover_target() -> tuple[str | None, int]:
+    """이미 도는 default 데몬의 (접속가능 엔드포인트, 소유 PID) 자동 탐지.
+
+    `ipc.resolve_default_endpoint()` 로 후보를 정하고 `probe` 로 살아있는지 확인한 뒤,
+    TCP 면 포트파일의 실제 포트로 정규화하고 그 포트를 LISTENING 중인 PID 를 찾는다
+    (외부 PID 자원 표본용). 도는 서버가 없으면 (None, -1). 이로써 attach 가 엔드포인트·
+    PID 수동 입력 없이 이 박스에서 바로 돈다(§10 W2 가 spawn 을, 본 함수가 attach 를 실용화).
+    """
+    ep = ipc.resolve_default_endpoint()
+    if not ipc.probe(ep):
+        return None, -1
+    if ipc.is_tcp(ep):
+        _, host, _ = ipc.parse_endpoint(ep)
+        port = ipc._read_portfile(ipc.portfile_for(ep))
+        if port:
+            return f"tcp:{host}:{port}", _pid_listening_on(host, port)
+        return ep, -1
+    return ep, -1            # unix 소켓: PID 미상(best-effort), 배터리는 그대로 진행
+
+
+# 자식 서버를 격리 부팅하는 부트스트랩(--attach-selftest). 별도 프로세스라 부모(redteam)
+# 의 외부-PID 자원 표본(§10 W3 OpenProcess 핸들·tasklist RSS)을 *다른 프로세스*에 대해
+# 실증한다(--spawn 은 self 프로세스만 표본). PYTMUX_HOME=자식 env 로 상태 격리, PTY_HOST
+# 미기동(결정론). TCP 루프백(Windows 프로덕션 전송)으로 띄우고 포트파일을 게시한다.
+_SELFTEST_BOOTSTRAP = (
+    "import asyncio, pytmux;"
+    "asyncio.run(pytmux.Server('tcp:127.0.0.1:0').serve())"
+)
+
+
+async def redteam_attach_selftest(rounds: int) -> dict:
+    """자기완결 외부-프로세스 attach 검증: 별도 자식 프로세스로 격리 서버를 띄우고
+    discover→attach 로 비파괴 배터리 + **외부 PID 자원 표본**을 단언한 뒤 종료한다.
+
+    `--spawn` 은 인프로세스(self 자원)라 §10 W3 의 외부-PID 핸들/RSS 표본 경로를 안 친다.
+    이 모드는 *다른 프로세스*를 대상으로 ① discover 가 그 서버를 찾고 ② netstat 가 그
+    포트의 소유 PID 를 정확히 집어내며(= Popen pid 와 일치) ③ 외부 PID 핸들/RSS 가
+    실측되고 ④ 비파괴 배터리 뒤에도 서버 생존·핸들 누수 없음을 코드 실행으로 못박는다.
+    """
+    home = tempfile.mkdtemp(prefix="redteam-selftest-")
+    env = dict(os.environ)
+    env["PYTMUX_HOME"] = home
+    env["PYTMUX_PTY_HOST"] = "0"
+    env["PYTMUX_CAPTURE_DIR"] = tempfile.mkdtemp(prefix="redteam-selftest-cap-")
+    env["PYTMUX_TOKENS_DB"] = tempfile.mktemp(suffix=".db",
+                                              prefix="redteam-selftest-db-")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    child = subprocess.Popen([sys.executable, "-c", _SELFTEST_BOOTSTRAP],
+                             env=env, cwd=root,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # 부모(이 프로세스)도 같은 PYTMUX_HOME 을 봐야 discover 가 자식 상태(포트파일/토큰)를
+    # 읽는다. 원복은 finally 에서.
+    prev_home = os.environ.get("PYTMUX_HOME")
+    os.environ["PYTMUX_HOME"] = home
+    try:
+        # 포트파일 게시(=서버 listen 준비) 대기.
+        endpoint, owner_pid = None, -1
+        for _ in range(500):
+            if child.poll() is not None:
+                raise RuntimeError(f"selftest 자식 서버 조기 종료(rc={child.returncode})")
+            endpoint, owner_pid = discover_target()
+            if endpoint:
+                break
+            await asyncio.sleep(0.02)
+        if not endpoint:
+            raise RuntimeError("selftest 자식 서버 디스커버리 실패(포트파일 미게시)")
+
+        report = await redteam_attach(endpoint, owner_pid, rounds, destructive=False)
+        report["mode"] = "attach-selftest"
+        report["child_pid"] = child.pid
+        report["discovered_pid"] = owner_pid
+        # discover 가 집은 PID 가 실제 자식 프로세스와 일치하는지(디스커버리 정확성).
+        # netstat 미가용 등으로 -1 이면 검증 불가로 두되(보수), 집었으면 일치 단언.
+        report["pid_match"] = (owner_pid == child.pid) if owner_pid > 0 else None
+        if report["pid_match"] is False:
+            report["verdict_ok"] = False
+            report["warning"] = (f"discover PID({owner_pid}) ≠ child PID({child.pid}) "
+                                 "— 디스커버리가 엉뚱한 프로세스를 집음")
+        return report
+    finally:
+        if prev_home is None:
+            os.environ.pop("PYTMUX_HOME", None)
+        else:
+            os.environ["PYTMUX_HOME"] = prev_home
+        with contextlib.suppress(Exception):
+            child.terminate()
+        with contextlib.suppress(Exception):
+            child.wait(timeout=10)
 
 
 def main(argv=None) -> int:
@@ -290,19 +570,45 @@ def main(argv=None) -> int:
     ap.add_argument("--attach", metavar="ENDPOINT", default=None,
                     help="이미 도는 서버 엔드포인트(unix 경로 또는 tcp:host:port). "
                          "생략 시 격리 서버를 spawn 한다.")
+    ap.add_argument("--discover", action="store_true",
+                    help="도는 default 데몬을 자동 탐지해 비파괴 attach(엔드포인트·PID "
+                         "수동 입력 불요). 도는 서버가 없으면 실패(verdict_ok=false).")
+    ap.add_argument("--attach-selftest", action="store_true",
+                    help="별도 자식 프로세스로 격리 서버를 띄워 discover→attach 로 "
+                         "외부-PID 자원 표본·비파괴 배터리를 자기완결 검증(§10 W5).")
     ap.add_argument("--pid", type=int, default=None,
                     help="--attach 시 자원 표본할 서버 PID(best-effort)")
-    ap.add_argument("--rounds", type=int, default=200, help="배터리 반복 횟수")
+    ap.add_argument("--rounds", type=int, default=200, help="순차 배터리 반복 횟수")
+    ap.add_argument("--conc-width", type=int, default=None,
+                    help="동시 폭주 웨이브당 동시 연결 수(기본 spawn 40·attach 20)")
+    ap.add_argument("--conc-waves", type=int, default=None,
+                    help="동시 폭주 웨이브 수(기본 spawn 20·attach 10)")
     ap.add_argument("--destructive", action="store_true",
                     help="--attach 시 무인가 kill-server/control 도 시도(기본 차단)")
     ap.add_argument("--json", action="store_true", help="리포트를 JSON 으로 출력")
     args = ap.parse_args(argv)
 
+    # 동시 폭주 오버라이드(미지정이면 spawn/attach 기본값 적용).
+    conc_kw = {k: v for k, v in (("conc_waves", args.conc_waves),
+                                 ("conc_width", args.conc_width)) if v}
+
     async def _run():
+        if args.attach_selftest:
+            return await redteam_attach_selftest(args.rounds)
+        if args.discover:
+            endpoint, pid = discover_target()
+            if not endpoint:
+                return {"mode": "discover", "server_alive": False,
+                        "verdict_ok": False, "battery": {},
+                        "warning": "도는 default 데몬을 못 찾음(서버 미기동?)"}
+            rep = await redteam_attach(endpoint, pid, args.rounds,
+                                       args.destructive, **conc_kw)
+            rep["mode"] = "discover"
+            return rep
         if args.attach:
             return await redteam_attach(args.attach, args.pid, args.rounds,
-                                        args.destructive)
-        return await redteam_spawn(args.rounds)
+                                        args.destructive, **conc_kw)
+        return await redteam_spawn(args.rounds, **conc_kw)
 
     report = asyncio.run(_run())
     if args.json:
@@ -310,10 +616,21 @@ def main(argv=None) -> int:
     else:
         print(f"[redteam] mode={report['mode']} alive={report['server_alive']} "
               f"verdict_ok={report['verdict_ok']}")
-        print(f"  battery: {report['battery']}")
+        print(f"  battery(seq): {report['battery']}")
+        if report.get("concurrent"):
+            print(f"  concurrent:   {report['concurrent']}")
         if report["mode"] == "spawn":
             print(f"  fd: {report['fd_before']}→{report['fd_after']} "
                   f"(Δ{report['fd_growth']})  mem Δ{report['mem_growth_bytes']}B")
+        else:
+            if report.get("endpoint"):
+                print(f"  endpoint={report['endpoint']} pid={report.get('pid')}")
+            if report.get("resource_growth"):
+                print(f"  resources: {report['resources_before']} → "
+                      f"{report['resources_after']}  Δ{report['resource_growth']}")
+            if report.get("pid_match") is not None:
+                print(f"  discover pid_match={report['pid_match']} "
+                      f"(child={report.get('child_pid')} discovered={report.get('discovered_pid')})")
         if report.get("warning"):
             print(f"  ⚠ {report['warning']}")
     return 0 if report.get("verdict_ok") else 1

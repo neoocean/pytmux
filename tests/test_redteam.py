@@ -48,12 +48,84 @@ async def test_redteam_no_fd_leak_under_flood():
         await teardown(srv, task, ep)
 
 
+async def test_redteam_concurrent_flood_survives_no_unauth():
+    # 동시 폭주(웨이브당 width 연결을 진짜 동시에) 뒤에도 서버 생존·무인가 수용 0·
+    # fd 회수. 순차 배터리가 못 보는 동시 연결 처리(accept 루프·연결당 태스크)를 친다.
+    srv, task, ep = await server_only()
+    try:
+        gc.collect()
+        fd0 = redteam.count_fds()
+        counts = await redteam.run_concurrent_flood(ep, waves=4, width=12)
+        assert counts["sent"] == 4 * 12, counts
+        assert counts["accepted_unexpected"] == 0, counts
+        assert counts["peak_inflight"] == 12, counts        # 진짜 동시 폭주
+        # 거절/드롭/연결오류로만 귀결(수용 없음). 동시성에서도 합이 보존돼야.
+        assert (counts["rejected"] + counts["dropped"]
+                + counts["errors"]) == counts["sent"], counts
+        gc.collect()
+        fd1 = redteam.count_fds()
+        if fd0 >= 0:                                         # /proc·/dev/fd 가용 플랫폼
+            assert fd1 <= fd0 + 8, (fd0, fd1)               # 동시 연결 후 fd 회수
+        tok = ipc.read_token(ep)
+        assert await redteam.authed_list_alive(ep, tok)     # 폭주 뒤 생존
+    finally:
+        await teardown(srv, task, ep)
+
+
 async def test_redteam_resource_samplers_return_ints():
     assert isinstance(redteam.count_fds(), int)
     me = os.getpid()
     assert isinstance(redteam.pid_fds(me), int)
     assert isinstance(redteam.pid_rss_kb(me), int)
-    # fd 열거 가능 플랫폼(macOS=/dev/fd, Linux=/proc)은 self fd 표본이 양수,
-    # 미지원(Windows 등)은 -1 을 돌려준다 — 둘 다 정상.
+    # 자원 표본은 모든 지원 플랫폼에서 양수다 — Linux=/proc, macOS/BSD=/dev/fd,
+    # Windows=프로세스 핸들 수(count_fds/pid_fds)·tasklist 작업셋(pid_rss_kb, §10 W3).
+    # 열거 불가 환경만 -1.
     fds = redteam.count_fds()
     assert fds > 0 or fds == -1
+    if ipc.IS_WINDOWS:                                  # §10 W3: -1 폴백이 아니라 실측
+        assert redteam.count_fds() > 0
+        assert redteam._win_handle_count(me) > 0
+        assert redteam.pid_rss_kb(me) > 0
+
+
+async def test_pid_listening_on_returns_int():
+    # §10 W5: 디스커버리 헬퍼는 항상 int 를 돌려준다(못 찾으면 -1, 예외 누출 없음).
+    p = redteam._pid_listening_on("127.0.0.1", 1)     # 1 번 포트는 거의 항상 비어있음
+    assert isinstance(p, int)
+    assert p == -1
+
+
+async def test_redteam_attach_resource_verdict():
+    # §10 W5: attach verdict 가 자원 표본(fd/핸들 증가)을 실제로 반영한다 — 종전엔
+    # 표본을 떠도 verdict 가 무시했다. 하네스 서버(=이 프로세스)를 self PID 로 표본해
+    # 비파괴 배터리 뒤 핸들 누수 0·무인가 수용 0·생존을 단언.
+    srv, task, ep = await server_only()
+    try:
+        rep = await redteam.redteam_attach(ep, os.getpid(), rounds=12,
+                                           destructive=False)
+        assert rep["server_alive"] is True, rep
+        assert rep["battery"]["accepted_unexpected"] == 0, rep
+        assert rep["verdict_ok"] is True, rep
+        if ipc.IS_WINDOWS:                             # 표본이 실측되는 플랫폼
+            assert rep["resource_growth"] is not None, rep
+            assert "fd_growth" in rep["resource_growth"], rep
+    finally:
+        await teardown(srv, task, ep)
+
+
+async def test_win_external_pid_handle_sample():
+    # §10 W5: 외부-PID 핸들/RSS 표본이 *다른 프로세스*에 대해 실측된다(--spawn 은 self).
+    # 짧은 자식(sleeper)을 띄워 OpenProcess 핸들 수·tasklist RSS 가 양수인지 본다.
+    if not ipc.IS_WINDOWS:
+        return
+    import subprocess
+    import sys
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        assert redteam._win_handle_count(child.pid) > 0, "외부 PID 핸들 표본 실패"
+        assert redteam._win_rss_kb(child.pid) > 0, "외부 PID RSS 표본 실패"
+        assert redteam.pid_fds(child.pid) > 0, "pid_fds(외부) 실패"
+    finally:
+        child.terminate()
+        child.wait(timeout=10)
