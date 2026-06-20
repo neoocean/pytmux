@@ -319,17 +319,20 @@ async def test_agg_view_buckets_groups_order_and_pct():
 
 
 async def test_agg_view_session_label_has_tabpane_and_start_time():
-    # 이름 없는 세션 식별을 위해 대표 탭:패널 + 시작 시각을 곁들인다(2026-06-20).
+    # 이름 없는 세션 식별을 위해 대표 탭:패널 라벨 + 시작 시각(별도 gtimes 열)을 낸다
+    # (2026-06-20: 라벨엔 탭:패널만, 시각은 'gtimes' 로 분리해 표시 측이 3열로 나눈다).
     # tzoff 를 고정해 머신 tz 와 무관하게 검증(ts=1_700_000_000 → 2023-11-14Z).
     recs = [
         dict(_rec(1_700_000_000.0, 1, 3, 4, "a@x.org", 100), tzoff=0),  # tab1→탭2
         dict(_rec(1_700_000_100.0, 1, 3, 4, "a@x.org", 200), tzoff=0),
     ]
     v = usagelog.agg_view(recs, "day", dim="session")
-    assert v["groups"][0][0] == "세션 4 (탭2:p3 · 11-14)", v["groups"][0][0]
-    # hour 버킷은 실 ts 라 시:분까지 보인다.
+    assert v["groups"][0][0] == "세션 4 (탭2:p3)", v["groups"][0][0]
+    assert v["gtimes"][0] == "11-14", v["gtimes"][0]
+    # hour 버킷은 실 ts 라 시각이 시:분까지 보인다(라벨은 그대로 탭:패널만).
     vh = usagelog.agg_view(recs, "hour", dim="session")
-    assert vh["groups"][0][0] == "세션 4 (탭2:p3 · 11-14 22:13)", vh["groups"][0][0]
+    assert vh["groups"][0][0] == "세션 4 (탭2:p3)", vh["groups"][0][0]
+    assert vh["gtimes"][0] == "11-14 22:13", vh["gtimes"][0]
 
 
 async def test_agg_view_top_folds_rest_into_others():

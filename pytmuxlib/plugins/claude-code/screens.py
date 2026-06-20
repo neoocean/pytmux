@@ -42,7 +42,7 @@ i18n.register({
         "시간", "시", "일", "주", "월", "계정", "계", "패널", "패", "세", "정렬", "정",
         "시나리오", "대사", "한도", "경고", "경", "기간", "기", "보기", "조회", "토큰 사용량",
         "구간", "실측(세션 5h)", "추정Σ", "항목", "토큰", "비율",
-        "세션", "토큰순", "시간순", "옵션",
+        "세션", "타임스탬프", "토큰순", "시간순", "옵션",
         # token-log: 안내/대사
         "한도(/usage): [u] 눌러 조회", "(기록된 토큰 사용량이 없습니다)",
         "토큰 대사 · 실측Δ% vs 추정Σ", "/usage 조회 중… (~수초)",
@@ -75,7 +75,8 @@ i18n.register({
         "보기": "View", "조회": "Query", "토큰 사용량": "Token usage",
         "구간": "Span", "실측(세션 5h)": "Measured (session 5h)", "추정Σ": "Est Σ",
         "항목": "Item", "토큰": "Tokens", "비율": "Ratio",
-        "세션": "Session", "토큰순": "by tokens", "시간순": "by time",
+        "세션": "Session", "타임스탬프": "Timestamp",
+        "토큰순": "by tokens", "시간순": "by time",
         "옵션": "Options",
         "한도(/usage): [u] 눌러 조회": "Limit (/usage): press [u] to query",
         "(기록된 토큰 사용량이 없습니다)": "(no recorded token usage)",
@@ -561,7 +562,7 @@ class PermModeScreen(ModalScreen):
 # TokenLogScreen 이 쓰는 심볼. usagelog 는 S5 T5 에서 플러그인 소속(상대 import).
 from . import usagelog
 from .claude import parse_reset_ts
-from pytmuxlib.clientutil import (_char_cells, bar_floating,
+from pytmuxlib.clientutil import (_char_cells, bar, bar_floating,
                                   bar_floating_segments,
                                   format_option_row, _CLOCK_FONT)
 from pytmuxlib.clientscreens import usage_bar_lines
@@ -849,6 +850,8 @@ class TokenLogScreen(ModalScreen):
         # id 로 묶는다(설계 §8). 계정 차원은 제거 — 토큰 사용량은 계정과 무관하게
         # 현재 로컬 머신 기준으로만 본다(2026-06-19 결정).
         self._view = "time"
+        # 세션 뷰 타임스탬프 열용 시작 시각(grows 와 동순) — _view_rows 가 채운다.
+        self._sess_times = None
         # 버킷(시간축) 정렬: "time"=최근 위(기본), "tokens"=많이 쓴 순([o] 토글).
         self._order = "time"
 
@@ -1145,6 +1148,17 @@ class TokenLogScreen(ModalScreen):
         return " " * max(0, maxdigits - digits) + s
 
     @staticmethod
+    def _tok_bar(tok, vmax, cells):
+        """행 토큰을 표시 최댓값(vmax) 기준 **가로 막대**로 그린다(요청 2026-06-20) —
+        토큰 숫자 옆에 둬 행 간 사용량을 한눈에 비교하게. 0/빈 값·폭 부족은 빈 셀.
+        색은 비교용 단일 톤(cyan)으로 — 이 막대는 한도 경고가 아니라 행 사이 **상대
+        크기** 표시라, 임계색(빨/노)을 쓰지 않아 가장 큰 행이 '위험'으로 오인되지
+        않게 한다(5h%/1w% 열의 임계색 막대와 구분)."""
+        if not tok or vmax <= 0 or cells <= 0:
+            return Text("")
+        return Text(bar(tok, vmax, cells), style="cyan", justify="left")
+
+    @staticmethod
     def _fmt_date_hdr(d):
         """hour 뷰 날짜 그룹 헤더 라벨: 'YYYY-MM-DD' → 'MM-DD (요일)'. 같은 날짜의
         시각 행들을 이 헤더 아래로 묶는다(요청 2026-06-19). 요일은 day 버킷과 같은
@@ -1419,7 +1433,10 @@ class TokenLogScreen(ModalScreen):
             v = usagelog.agg_view(src, self._bucket, None, "session",
                                   self._order, top=self._GROUP_TOP,
                                   hour_suffix=hour_suffix)
+            # 세션 시작 시각(별도 타임스탬프 열용) — _refresh 가 읽는다.
+            self._sess_times = v.get("gtimes")
             return v["groups"], v["gmax"], v["total"], i18n.t("세션"), None
+        self._sess_times = None
         weekdays = i18n.t("pscreen.weekdays").split(",")
         v = usagelog.agg_view(src, self._bucket, None, "account",
                               self._order, weekdays=weekdays,
@@ -1487,37 +1504,72 @@ class TokenLogScreen(ModalScreen):
         group_dates = (self._bucket == "hour" and self._view != "session"
                        and self._order == "time" and bkeys is not None
                        and bool(rows))
-        disp = []   # ("hdr", date_label) | ("row", label, tok, bk)
+        # 세션 뷰는 시작 시각을 별도 '타임스탬프' 열로 분리한다(세션 | 타임스탬프 |
+        # 토큰, 사용자 요청 2026-06-20). 그 외 뷰엔 이 열이 없다.
+        show_ts = self._view == "session"
+        disp = []   # ("hdr", date_label) | ("row", label, tok, bk, tstr)
         prev_date = None
         for i, (label, tok, pct) in enumerate(rows):
             bk = bkeys[i] if (bkeys is not None and i < len(bkeys)) else None
+            tstr = (self._sess_times[i] if (self._sess_times
+                    and i < len(self._sess_times)) else "")
             if group_dates and bk:
                 d = bk[:10]            # 'YYYY-MM-DD'
                 if d != prev_date:
                     prev_date = d
                     disp.append(("hdr", self._fmt_date_hdr(d)))
                 label = ("  " + label.split(" ", 1)[1]) if " " in label else label
-            disp.append(("row", label, tok, bk))
+            disp.append(("row", label, tok, bk, tstr))
+        # 타임스탬프 열 폭: 헤더('타임스탬프')와 값('06-20 16:03'·'06-20') 중 넓은 쪽.
+        ts_hdr = i18n.t("타임스탬프")
+        if show_ts:
+            tvals = [t for t in (self._sess_times or []) if t]
+            ts_w = max(sum(_char_cells(c) for c in ts_hdr),
+                       max((len(t) for t in tvals), default=0)) + 1
+        else:
+            ts_w = 0
         if rows:
             labels = [str(rowhdr)] + [str(it[1]) for it in disp]
             need = max(sum(_char_cells(c) for c in s) for s in labels) + 1
             if self._view == "session":
-                # 세션 뷰는 라벨+토큰 두 열뿐(5h%/1w% 없음)이라 가로 여유가 크다 →
-                # 라벨이 시작 시각(2026-06-20 추가)까지 안 잘리도록 티어 상한 대신
-                # 박스 가용 폭(앱폭·max-width 86 - 토큰열 - 패딩)까지 넓힌다.
+                # 세션 뷰는 라벨+타임스탬프+토큰 세 열(5h%/1w% 없음)이라 가로 여유가
+                # 크다 → 라벨('세션 N (탭T:pP)')이 안 잘리도록 티어 상한 대신 박스
+                # 가용 폭(앱폭·max-width 86 - 타임스탬프열 - 토큰열 - 패딩)까지 넓힌다.
                 try:
                     box = min(int(self.app.size.width * 0.96), 86) - 2
                 except Exception:
-                    box = label_w + tok_w
-                avail = max(label_w, box - tok_w - 2)   # -2: 셀 패딩 여유
+                    box = label_w + ts_w + tok_w
+                avail = max(label_w, box - ts_w - tok_w - 2)   # -2: 셀 패딩 여유
                 label_w = max(3, min(need, avail))
             else:
                 label_w = min(label_w, max(3, need))
-        # 컬럼: 행 차원(기간/계정/세션) | 토큰(자릿수 정렬, 좌측) | [5h%] [1w%].
-        # (비율 막대 열은 사용자 요청으로 제거 — 2026-06-17.)
+        # 토큰 막대 열(요청 2026-06-20): 각 행 토큰을 표시 최댓값(vmax) 기준 **가로
+        # 막대**로 그려 행 간 사용량을 즉시 비교한다. hour 뷰의 5h%/1w% 막대 열이 있을
+        # 땐(show5h) 가로 여유가 없고 그 열이 이미 시각 비교를 주므로 생략한다. 폭은
+        # 박스 본문 잔여 가로폭(테두리·패딩·라벨·타임스탬프·토큰·셀 패딩을 뺀 나머지)
+        # 에서 잡고 상한(14칸)을 둔다 — 너무 좁으면(<3칸) 의미가 없어 생략.
+        show_bar = (not show5h) and bool(rows) and (vmax or 0) > 0
+        bar_w = 0
+        if show_bar:
+            try:
+                box = min(int(self.app.size.width * 0.96), 86)
+            except Exception:
+                box = label_w + tok_w + 18
+            ncols = 3 if show_ts else 2          # 라벨[+ts]+토큰+막대
+            # 박스 본문 = box - 테두리(2) - 좌우 패딩(2); 각 열 셀 좌우 패딩 ~2칸.
+            avail = (box - 4) - label_w - tok_w - (ts_w if show_ts else 0)
+            bar_w = max(0, min(14, avail - (ncols + 1) * 2))
+            if bar_w < 3:
+                show_bar = False
+        # 컬럼: 행 차원(기간/계정/세션) | 토큰(자릿수 정렬, 좌측) | [막대] | [5h%] [1w%].
+        # (옛 비율 막대 열은 제거됐고 — 2026-06-17 — 이 가로 비교 막대로 대체.)
         table.add_column(rowhdr, key="label", width=label_w)
+        if show_ts:               # 세션 | 타임스탬프 | 토큰 (타임스탬프는 라벨과 토큰 사이)
+            table.add_column(Text(ts_hdr, justify="left"), key="ts", width=ts_w)
         table.add_column(Text(i18n.t("토큰"), justify="left"), key="tok",
                          width=tok_w)
+        if show_bar:              # 토큰 막대(헤더 없는 시각 비교 열)
+            table.add_column(Text("", justify="left"), key="bar", width=bar_w)
         if show5h:
             # 칼럼 제목에 리셋까지 남은 시간을 inline 으로 붙인다(요청 2026-06-20,
             # 별도 footer 줄 제거). 예: '5h% (in 87m)'·'1w% (in 6d)'. 리셋 표기가
@@ -1536,7 +1588,10 @@ class TokenLogScreen(ModalScreen):
                                  width=max(5, len(hdrw) + 1))
 
         if win == 0:               # 선택 뷰/계정 집계 합이 0 (소스 무관)
-            empty = [i18n.t("(기록된 토큰 사용량이 없습니다)"), ""]
+            empty = [i18n.t("(기록된 토큰 사용량이 없습니다)")]
+            if show_ts:
+                empty.append("")
+            empty.append("")
             if show5h:
                 empty.append("")
                 if show1w:
@@ -1546,16 +1601,23 @@ class TokenLogScreen(ModalScreen):
             for it in disp:
                 if it[0] == "hdr":
                     # 날짜 그룹 헤더 행(비-데이터): 날짜는 굵게, 나머지 열은 빈다.
+                    # (헤더 행은 hour+기간 뷰 전용 → show_ts 와 공존하지 않는다.)
                     cells = [Text(str(it[1]), style="bold"), Text("")]
+                    if show_bar:           # 헤더 행엔 막대 없음(빈 칸)
+                        cells.append(Text(""))
                     if show5h:
                         cells.append(Text(""))
                         if show1w:
                             cells.append(Text(""))
                     table.add_row(*cells)
                     continue
-                _, label, tok, bk = it
-                cells = [self._trunc(label, label_w),
-                         Text(self._tok_aligned(tok, maxdig), justify="left")]
+                _, label, tok, bk, tstr = it
+                cells = [self._trunc(label, label_w)]
+                if show_ts:
+                    cells.append(Text(tstr, justify="left"))
+                cells.append(Text(self._tok_aligned(tok, maxdig), justify="left"))
+                if show_bar:
+                    cells.append(self._tok_bar(tok, vmax, bar_w))
                 if show5h:
                     cells.append(self._lim5h_cell(bk, lim_cells))
                     if show1w:

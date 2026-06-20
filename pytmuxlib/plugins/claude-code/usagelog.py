@@ -347,28 +347,39 @@ def agg_view(records: list, bucket: str = "day", account: str | None = None,
     total = agg["total"]
     tp = _session_tabpane(records) if dim == "session" else {}
     # 세션엔 이름이 없어 번호만으론 식별이 어렵다 → 대표 탭:패널에 더해 시작 시각을
-    # 곁들인다(사용자 요청 2026-06-20). 예: '세션 12 (탭1:p1 · 06-20 16:03)'.
+    # 곁들인다(사용자 요청 2026-06-20). 시작 시각은 라벨에 섞지 않고 별도 'gtimes'
+    # 열로 내보내, 표시 측이 '세션 | 타임스탬프 | 토큰' 3열로 나눌 수 있게 한다
+    # (사용자 요청 2026-06-20). 라벨엔 대표 탭:패널만('세션 12 (탭1:p1)').
     ts_lbl = _session_time(records, bucket) if dim == "session" else {}
+
+    def _sid_of(g):
+        try:
+            return int(g.split(" ", 1)[1])
+        except (ValueError, IndexError):
+            return None
 
     def glabel(g):
         if dim == "session" and g.startswith("세션 "):
-            try:
-                sid = int(g.split(" ", 1)[1])
-            except (ValueError, IndexError):
-                sid = None
-            parts = [p for p in (tp.get(sid), ts_lbl.get(sid)) if p]
-            return f"{g} ({' · '.join(parts)})" if parts else g
+            tplab = tp.get(_sid_of(g))
+            return f"{g} ({tplab})" if tplab else g
         return g
+
+    def gtime(g):
+        if dim == "session" and g.startswith("세션 "):
+            return ts_lbl.get(_sid_of(g), "") or ""
+        return ""
 
     def pct(tok):
         return round(tok / total * 100) if total else 0
 
     groups = sorted(agg["groups"].items(), key=lambda kv: -kv[1])
     grows = [(glabel(g), t, pct(t)) for g, t in groups]
+    gtimes = [gtime(g) for g, _ in groups]
     if top is not None and len(grows) > top:
         rest = grows[top:]
         rest_tok = sum(t for _, t, _ in rest)
         grows = grows[:top] + [(f"기타 {len(rest)}개", rest_tok, pct(rest_tok))]
+        gtimes = gtimes[:top] + [""]   # '기타 N개' 접힘 행엔 시작 시각 없음
     bucket_tot = {bk: sum(per.values()) for bk, per in agg["buckets"].items()}
     if order == "tokens":
         bkeys = sorted(bucket_tot, key=lambda k: -bucket_tot[k])
@@ -378,6 +389,7 @@ def agg_view(records: list, bucket: str = "day", account: str | None = None,
               pct(bucket_tot[bk]))
              for bk in bkeys]
     return {"total": total, "groups": grows, "buckets": brows,
+            "gtimes": gtimes,          # grows 와 같은 순서의 세션 시작 시각(세션 뷰 전용, 그 외 "")
             "bkeys": bkeys,            # brows 와 같은 순서의 원시 버킷 키(일자 5h% 조인용)
             "multi": len(grows) > 1,
             "gmax": max((t for _, t, _ in grows), default=0),
