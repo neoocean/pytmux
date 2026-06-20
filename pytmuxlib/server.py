@@ -116,10 +116,11 @@ class Server(*_SERVER_BASES):
         # 무효화된 중간 프레임을 버려 feed 부하/지연을 줄인다(안전 조건은
         # coalesce_alt_repaints 참조 — alt-screen 한정·무손실). 기본 ON, opts.json 영속.
         self.coalesce_repaints = bool(_opts.get("coalesce_repaints", True))
-        # VT 파서 백엔드: "pyte"(기본·검증됨) | "native"(자작 증분 토크나이저
-        # vtparse.VTTokenizer — feed-전 우회 없이 화면에 직접 디스패치, 옵트인 실험).
-        # spawn_pane 이 새 패널에 전달한다. 기본 pyte 로 거동 무변경. 재시작 시 발효.
-        # 배경/검증: docs/internal/VT_PARSER_TRADEOFF_2026-06-15.md §7.
+        # VT 파서 백엔드: "native"(기본·라이브 — 자작 증분 토크나이저 vtparse.VTTokenizer
+        # 가 feed-전 우회 없이 pyte.Screen 에 직접 디스패치) | "pyte"(pyte.ByteStream 경로,
+        # 대조/롤백용). 2026-06-16 native 로 기본 전환됨(아래 _opts.get 기본값 참조 —
+        # 종전 주석의 '기본 pyte' 는 stale 였음, 1-7 정정). spawn_pane 이 새 패널에
+        # 전달하고 재시작 시 발효. 배경/검증: docs/internal/VT_PARSER_TRADEOFF_2026-06-15.md.
         self.vt_parser = str(_opts.get("vt_parser", "native"))
         # 원격 중첩 자동 승격(docs/internal/NESTED_ATTACH_SCENARIO.md ㉢): 패널 안 ssh 원격에서
         # pytmux 를 치면 거부 대신 그 패널의 실제 ssh 목적지로 자동 remote-attach +

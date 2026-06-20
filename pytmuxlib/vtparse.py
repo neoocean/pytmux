@@ -27,8 +27,10 @@ docs/internal/VT_PARSER_TRADEOFF_2026-06-15.md §6 옵션 B("토크나이저만 
 대체). DCS(`ESC P … ST`)는 pyte 가 본문을 출력으로 흘리는 것과 달리 **소비(드롭)**한다.
 
 PoC 범위 주의: 마우스 트래킹/bracketed-paste 추적은 model 에서 feed 와 별개로 raw
-데이터를 보므로 여기 대상이 아니다. 본 모듈은 라이브 feed 경로에 배선하지 않는다
-(격리 검증 — tests/test_vtparse.py 의 차분/등가 테스트로만 구동)."""
+데이터를 보므로 여기 대상이 아니다. **2026-06-16 이후 이 토크나이저가 라이브 feed
+경로의 기본**이다(Pane.feed→_feed_native, vt_parser 기본 native — 종전 docstring 의
+'배선하지 않는다'는 stale 였음, 1-7 정정). tests/test_vtparse.py 가 차분/등가를
+가드하고, test_vt_parser_equivalence.py 가 pyte 경로와의 동등성을 상시 회귀한다."""
 from __future__ import annotations
 
 import codecs
