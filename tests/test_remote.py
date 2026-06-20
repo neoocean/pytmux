@@ -1139,9 +1139,19 @@ def _nest_req(selfreport: str) -> bytes:
     return sshwrap.NEST_REQ_PRE + b64 + sshwrap.DCS_ST
 
 
-def _nest_dest(argv_lines: str) -> bytes:
+def _server_sshwrap_token() -> str:
+    from pytmuxlib import ipc, sshwrap
+    return sshwrap.load_or_create_token(ipc.default_state_dir())
+
+
+def _nest_dest(argv_lines: str, token: str | None = None) -> bytes:
+    """NEST_DEST DCS. provenance 머리줄(token)이 서버 것과 일치해야 _ssh_dest 가
+    기록된다(NEW-1). token=None 이면 실제 서버 토큰(정상 래퍼)을 쓴다."""
     from pytmuxlib import sshwrap
-    b64 = base64.b64encode(argv_lines.encode()).decode().encode()
+    if token is None:
+        token = _server_sshwrap_token()
+    payload = token + "\n" + argv_lines
+    b64 = base64.b64encode(payload.encode()).decode().encode()
     return sshwrap.NEST_DEST_PRE + b64 + sshwrap.DCS_ST
 
 
@@ -1180,7 +1190,11 @@ async def test_nest_attach_request_promotes_to_remote_attach():
         realA, spy = pA.pty, _AckSpy()
         try:
             pA.pty = spy
-            # ① 래퍼 DEST 기록 — 같은 머신 직결(endpoint 형태) 페더레이션.
+            # ①-a 위조 DEST(provenance 토큰 불일치 = cat/스크롤백/원격출력) → 무시.
+            srvA._on_pane_data(
+                pA, b"$ " + _nest_dest("ssh\n" + sockB, token="deadbeef"))
+            assert pA._ssh_dest == "", "위조 토큰 DEST 는 _ssh_dest 미기록(NEW-1)"
+            # ① 정상 래퍼 DEST 기록 — 같은 머신 직결(로컬 unix소켓 endpoint) 페더레이션.
             srvA._on_pane_data(pA, b"$ " + _nest_dest("ssh\n" + sockB))
             assert pA._ssh_dest == sockB, "목적지 기록(argv b64 → parse_dest)"
             # ② 승격 요청(self-report 호스트부 == 목적지 → ㉣ 대조 통과) → ack.
@@ -1204,6 +1218,31 @@ async def test_nest_attach_request_promotes_to_remote_attach():
             writer.close()
         await teardown(srvA, taskA, sockA)
         await teardown(srvB, taskB, sockB)
+
+
+async def test_nest_do_attach_blocks_nonlocal_endpoint():
+    """NEW-1: NEST 자동 승격은 비로컬 tcp: endpoint 직결을 거부한다(위조/조작된
+    _ssh_dest 의 tcp:원격호스트 직결 → 임의 아웃바운드+키 MITM 차단). 로컬 unix
+    소켓·loopback tcp 는 직결 허용(같은 머신). 판정 헬퍼도 직접 단언."""
+    if os.name == "nt":
+        return
+    from pytmuxlib.serverremote import _nest_local_endpoint
+    assert _nest_local_endpoint("/tmp/x.sock")
+    assert _nest_local_endpoint("tcp:127.0.0.1:7000")
+    assert _nest_local_endpoint("tcp:localhost:7000")
+    assert not _nest_local_endpoint("tcp:evil.com:9999")
+    assert not _nest_local_endpoint("tcp:10.0.0.5:22")
+    assert not _nest_local_endpoint("office1")           # ssh 호스트(미직결)
+
+    srvA, taskA, sockA = await server_only()
+    try:
+        sessA = srvA.ensure_default_session(80, 24)
+        # 비로컬 tcp endpoint → 거부(remote_attach 미호출, 링크 미생성).
+        await srvA._nest_do_attach(sessA, "tcp:evil.com:9999")
+        assert "tcp:evil.com:9999" not in srvA._remotes_dict(), \
+            "비로컬 endpoint 직결 차단 — 링크 없음"
+    finally:
+        await teardown(srvA, taskA, sockA)
 
 
 async def test_decode_remote_stderr_cp949_fallback():

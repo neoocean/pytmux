@@ -183,14 +183,20 @@ async def test_pane_nest_dest_dcs_records_ssh_dest():
     스캔해 pane._ssh_dest 에 목적지를 기록한다 — read 경계 분할 보전(carry),
     비 b64 위조 무시, DCS 는 pyte 가 소비해 화면을 오염하지 않는다."""
     import base64
-    from pytmuxlib import sshwrap
+    from pytmuxlib import ipc, sshwrap
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
         p = sess.active_window.active_pane
-        argv = ["ssh", "-p", "2222", "NATGAMES\\woojinkim@office1", "echo", "hi"]
-        b64 = base64.b64encode("\n".join(argv).encode()).decode().encode()
-        dcs = sshwrap.NEST_DEST_PRE + b64 + sshwrap.DCS_ST
+        tok = sshwrap.load_or_create_token(ipc.default_state_dir())
+
+        def _dest(argv_lines: str, token: str = tok) -> bytes:
+            # provenance 머리줄(token) + argv 줄단위 b64(NEW-1).
+            b64 = base64.b64encode(
+                (token + "\n" + argv_lines).encode()).decode().encode()
+            return sshwrap.NEST_DEST_PRE + b64 + sshwrap.DCS_ST
+
+        dcs = _dest("ssh\n-p\n2222\nNATGAMES\\woojinkim@office1\necho\nhi")
         # ① 경계 분할: 머리 일부 → 페이로드 나머지 두 청크로 나눠도 기록된다.
         srv._on_pane_data(p, b"login banner " + dcs[:9])
         assert p._ssh_dest == "", "미완 DCS 는 아직 미기록"
@@ -203,9 +209,11 @@ async def test_pane_nest_dest_dcs_records_ssh_dest():
         srv._on_pane_data(
             p, sshwrap.NEST_DEST_PRE + b"!!not-base64!!" + sshwrap.DCS_ST)
         assert p._ssh_dest == "NATGAMES\\woojinkim@office1"
-        # ④ 새 DEST 가 기존 기록을 갱신한다(최신 1건).
-        b64b = base64.b64encode(b"ssh\noffice2").decode().encode()
-        srv._on_pane_data(p, sshwrap.NEST_DEST_PRE + b64b + sshwrap.DCS_ST)
+        # ④ provenance 토큰 불일치(위조 cat/스크롤백/원격출력) → 무시(NEW-1).
+        srv._on_pane_data(p, _dest("ssh\nevil-host", token="deadbeef"))
+        assert p._ssh_dest == "NATGAMES\\woojinkim@office1", "위조 토큰 미기록"
+        # ⑤ 정상 토큰의 새 DEST 가 기존 기록을 갱신한다(최신 1건).
+        srv._on_pane_data(p, _dest("ssh\noffice2"))
         assert p._ssh_dest == "office2"
     finally:
         await teardown(srv, task, sock)

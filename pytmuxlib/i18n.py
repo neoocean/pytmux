@@ -601,6 +601,8 @@ register({
         "rnotice.attach_merged_nest": "remote-attach {target}: 원격 탭 병합됨(중첩 자동 승격)",
         "rnotice.attach_fail": "remote-attach {target} 실패 — {why}",
         "rnotice.attach_fail_nest": "remote-attach {target} 실패(중첩 자동 승격) — {why}",
+        "rnotice.attach_blocked_nest": "remote-attach {target} 거부(중첩 자동 승격) — "
+                                       "비로컬 endpoint 직결은 차단됩니다(보안)",
         "rnotice.newtab_fail": "remote-new-tab {target} 실패 — {why}",
         "rnotice.reconnected": "remote-attach {target}: 끊김 후 자동 재연결됨(시도 {i})",
         "rnotice.reconnect_giveup": "remote-attach {target}: 자동 재연결 포기({n}회) — "
@@ -629,6 +631,8 @@ register({
         "rnotice.attach_merged_nest": "remote-attach {target}: remote tab merged (nested auto-promote)",
         "rnotice.attach_fail": "remote-attach {target} failed — {why}",
         "rnotice.attach_fail_nest": "remote-attach {target} failed (nested auto-promote) — {why}",
+        "rnotice.attach_blocked_nest": "remote-attach {target} blocked (nested auto-promote) — "
+                                       "non-local endpoint direct-connect is refused (security)",
         "rnotice.newtab_fail": "remote-new-tab {target} failed — {why}",
         "rnotice.reconnected": "remote-attach {target}: auto-reconnected after drop (attempt {i})",
         "rnotice.reconnect_giveup": "remote-attach {target}: gave up auto-reconnect ({n} tries) — "

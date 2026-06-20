@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import gc
+import hmac
 import os
 import time
 
@@ -238,12 +239,30 @@ class ServerPtyMixin:
         except ValueError:
             return
         if kind == b"ssh":
-            dest = sshwrap.parse_dest([s for s in text.split("\n") if s])
+            # provenance 검증(NEW-1): 머리줄 토큰이 서버 것과 일치할 때만 목적지를
+            # 기록한다. 일치하지 않으면(빈 토큰 = 패널 env 를 못 읽은 `cat`/스크롤백/
+            # 원격 출력의 위조 DCS) 조용히 무시 — 위조된 _ssh_dest 로 임의 호스트에
+            # 자동 attach 하던 경로를 차단한다(NESTED_ATTACH_SCENARIO §7).
+            lines = text.split("\n")
+            tok = lines[0] if lines else ""
+            expected = self._sshwrap_token()
+            if not expected or not hmac.compare_digest(tok, expected):
+                return
+            dest = sshwrap.parse_dest([s for s in lines[1:] if s])
             if dest:
                 pane._ssh_dest = dest
                 pane._ssh_dest_ts = time.monotonic()
             return
         self._nest_attach_request(pane, text.strip())
+
+    def _sshwrap_token(self) -> str:
+        """이 서버의 ssh 래퍼 provenance 토큰(NEST_TOKEN_ENV). 디스크 읽기를 피하려
+        한 번 읽고 캐시한다 — panel_env 가 패널 셸에 심는 값과 같다."""
+        tok = getattr(self, "_sshwrap_tok", None)
+        if tok is None:
+            tok = self._sshwrap_tok = sshwrap.load_or_create_token(
+                ipc.default_state_dir())
+        return tok
 
     def _coalesce_feed(self, pane: Pane) -> None:
         """대기 중인 feedbuf 에서 무효화된 alt-screen 리페인트 프레임을 합쳐 pyte feed

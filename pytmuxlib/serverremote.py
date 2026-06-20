@@ -151,6 +151,23 @@ def _nest_host_match(dest: str, selfreport: str) -> bool:
     return bool(h1) and bool(h2) and (h1.startswith(h2) or h2.startswith(h1))
 
 
+# NEST 자동 승격에서 endpoint **직결**(ssh 미경유)을 허용할 로컬 목적지 판정.
+_NEST_LOOPBACK = frozenset(("127.0.0.1", "::1", "[::1]", "localhost"))
+
+
+def _nest_local_endpoint(dest: str) -> bool:
+    """NEST 자동 승격 dest 가 같은 머신 직결 endpoint 인가(unix 소켓 경로, 또는
+    loopback tcp). 임의 원격 `tcp:host:port` 는 False — 이런 dest 의 endpoint 직결은
+    금지하고(NEW-1: 위조/조작된 _ssh_dest 의 tcp:원격호스트 직결로 임의 아웃바운드 +
+    키 MITM 차단) ssh 호스트 경로(S2 가드)로만 해석한다."""
+    if dest.startswith("/"):
+        return True
+    if dest.startswith("tcp:"):
+        host = dest[4:].rsplit(":", 1)[0].strip().lower()
+        return host in _NEST_LOOPBACK
+    return False
+
+
 class ServerRemoteMixin:
     # 끊김(비명시) 시 자동 재연결 백오프(초). 무상한이 아니다 — §1 의 "재접속 루프"
     # 재발을 막기 위해 유한 회수 후 포기(notice)하고 수동 재시도에 맡긴다.
@@ -749,7 +766,18 @@ class ServerRemoteMixin:
         remotes = self._remotes_dict()
         if dest in remotes:
             return
-        endpoint = dest if dest.startswith(("/", "tcp:")) else None
+        # NEW-1: dest 가 endpoint 형태(/ · tcp:)인데 로컬(unix소켓·loopback)이 아니면
+        # 직결을 거부한다 — 위조/조작된 _ssh_dest 의 tcp:원격호스트 직결로 임의
+        # 아웃바운드 + 키입력 MITM 하던 경로 차단. (provenance 토큰이 _ssh_dest 위조를
+        # 1차로 막지만, 사용자가 `ssh tcp:evil:9999` 를 치게 유도되는 경우까지 막는
+        # 심층 방어. 정상 ssh 호스트는 endpoint 형태가 아니므로 영향 없다.)
+        if dest.startswith(("/", "tcp:")) and not _nest_local_endpoint(dest):
+            self._remote_notice(
+                sess, "rnotice.attach_blocked_nest",
+                "remote-attach {target} 거부(중첩 자동 승격) — 비로컬 endpoint "
+                "직결은 차단됩니다(보안)", target=dest)
+            return
+        endpoint = dest if _nest_local_endpoint(dest) else None
         ok = await self.remote_attach(sess, host=None if endpoint else dest,
                                       endpoint=endpoint)
         if not ok:

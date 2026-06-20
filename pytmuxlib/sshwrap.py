@@ -31,11 +31,20 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import stat
 
 # 원격에 전파할 중첩 표식 환경변수. AcceptEnv LC_* 흔한 기본값을 타도록 LC_ 접두사.
 # launcher.NEST_MARKER 와 반드시 일치시킬 것.
 NEST_MARKER = "LC_PYTMUX"
+
+# ssh 래퍼 provenance 토큰을 싣는 패널 셸 환경변수(NEW-1 보안). 서버가 패널 env 에
+# 심고 래퍼가 NEST_DEST DCS 머리줄에 실어 보낸다 — 서버는 이 토큰이 자기 것과
+# 일치할 때만 pane._ssh_dest 를 기록한다. `cat`·스크롤백·원격 셸 출력처럼 **패널
+# env 를 못 읽는** 위조 DCS 는 토큰이 없어 무시되므로, 위조된 _ssh_dest 로 임의
+# 호스트에 attach 하던 경로가 막힌다(NESTED_ATTACH_SCENARIO §7·SECURITY NEW-1). 표식
+# (LC_*)과 달리 이 토큰은 원격으로 SendEnv 하지 않는다 — 로컬 provenance 전용.
+NEST_TOKEN_ENV = "PYTMUX_SSHWRAP_TOK"
 
 # ---- 원격 중첩 자동 승격 in-band DCS 와이어(docs/internal/NESTED_ATTACH_SCENARIO.md §4) ----
 # launcher(REQ 발신/ACK 대기)·serverpty(스캔)·래퍼(DEST 발신)가 공유한다 — 이 모듈은
@@ -70,13 +79,15 @@ if [ -z "$real" ]; then
   echo "pytmux: $cmd 을(를) PATH 에서 찾지 못했습니다" >&2
   exit 127
 fi
-# 패널 ssh 목적지 in-band 기록(NESTED_ATTACH §4 NEST_DEST): argv 전체를 줄단위 b64
-# 로 실어 DCS 로 바깥 서버에 알린다(목적지 파싱은 서버 파이썬 parse_dest — 래퍼는
-# ssh 옵션 문법을 모른다). stdout 파이프/리다이렉트를 오염하지 않게 /dev/tty 로만
-# 쓴다 — 실패/부재 시 조용히 생략(기록이 없으면 중첩 자동 승격만 비활성, 거부
-# 폴백은 그대로). 줄단위 인코딩이라 개행 포함 인자는 못 싣는다(병적 — 무시).
+# 패널 ssh 목적지 in-band 기록(NESTED_ATTACH §4 NEST_DEST): provenance 토큰(머리줄,
+# 서버가 패널 env 로 심은 %(tokenv)s)에 이어 argv 전체를 줄단위 b64 로 실어 DCS 로
+# 바깥 서버에 알린다(목적지 파싱은 서버 파이썬 parse_dest — 래퍼는 ssh 옵션 문법을
+# 모른다). 토큰은 서버가 자기 것과 일치할 때만 기록을 받아들이므로(NEW-1) `cat`·
+# 스크롤백 등 패널 env 를 못 읽는 위조 출력은 무시된다. stdout 파이프/리다이렉트를
+# 오염하지 않게 /dev/tty 로만 쓴다 — 실패/부재 시 조용히 생략(기록이 없으면 중첩 자동
+# 승격만 비활성, 거부 폴백은 그대로). 줄단위라 개행 포함 인자는 못 싣는다(병적 — 무시).
 if [ -w /dev/tty ]; then
-  _b64=$(printf '%%s\n' "$@" | base64 2>/dev/null | tr -d '\r\n')
+  _b64=$(printf '%%s\n' "$%(tokenv)s" "$@" | base64 2>/dev/null | tr -d '\r\n')
   if [ -n "$_b64" ]; then
     printf '\033P>|pytmux-ssh;%%s\033\\' "$_b64" > /dev/tty 2>/dev/null || :
   fi
@@ -120,7 +131,8 @@ def ensure_wrapper_dir(state_dir: str) -> str | None:
                 with open(path, "wb") as f:
                     f.write(body)
             return wd
-        body = (_WRAPPER_SH % {"marker": NEST_MARKER}).encode("utf-8")
+        body = (_WRAPPER_SH % {"marker": NEST_MARKER,
+                               "tokenv": NEST_TOKEN_ENV}).encode("utf-8")
         for name in _WRAPPED:
             path = os.path.join(wd, name)
             if _same_file(path, body):
@@ -172,6 +184,41 @@ def parse_dest(argv: list) -> str:
     return ""
 
 
+def load_or_create_token(state_dir: str) -> str:
+    """ssh 래퍼 provenance 토큰(NEST_TOKEN_ENV)을 없으면 생성해 반환한다.
+
+    같은 머신의 여러 서버·세션유지 재시작에서 일관되도록 `<state_dir>/sshwrap.tok`
+    에 0600 으로 영속한다(재시작 후에도 기존 패널 셸의 토큰이 유효 → 자동 승격 유지).
+    파일 IO 실패 시 빈 문자열을 돌려 우아하게 열화한다(provenance 검증 불가 → 자동
+    승격만 비활성, 거부 폴백·로컬 가드는 그대로). 동시 생성 경쟁은 O_EXCL 로 한쪽만
+    쓰고 진 쪽은 그 값을 읽는다. leaf 모듈이라 ipc import 없이 stdlib 만 쓴다."""
+    path = os.path.join(state_dir, "sshwrap.tok")
+    try:
+        with open(path) as f:
+            tok = f.read().strip()
+        if tok:
+            return tok
+    except OSError:
+        pass
+    tok = secrets.token_hex(16)
+    try:
+        os.makedirs(state_dir, exist_ok=True)
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            os.write(fd, tok.encode())
+        finally:
+            os.close(fd)
+        return tok
+    except FileExistsError:
+        try:                                  # 경쟁 — 먼저 만든 값을 읽어 쓴다.
+            with open(path) as f:
+                return f.read().strip()
+        except OSError:
+            return ""
+    except OSError:
+        return ""
+
+
 def _same_file(path: str, body: bytes) -> bool:
     """파일 내용이 body 와 같으면 True(멱등 — 불필요한 재작성/chmod 방지)."""
     try:
@@ -188,6 +235,11 @@ def panel_env(env: dict, state_dir: str) -> dict:
     래퍼 생성이 안 되는 환경(Windows/IO 실패)에서는 표식만 심는다(로컬 PYTMUX 가드는
     여전히 동작; 원격 전파만 빠짐)."""
     env[NEST_MARKER] = "1"
+    # provenance 토큰(NEW-1): 패널에서 실행된 래퍼만 이 값을 읽어 NEST_DEST 에 실을 수
+    # 있다. 원격으로는 보내지 않는다(SendEnv 대상 = NEST_MARKER 만).
+    tok = load_or_create_token(state_dir)
+    if tok:
+        env[NEST_TOKEN_ENV] = tok
     wd = ensure_wrapper_dir(state_dir)
     if wd:
         old = env.get("PATH", os.environ.get("PATH", ""))
