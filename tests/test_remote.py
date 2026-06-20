@@ -1201,6 +1201,19 @@ async def test_nest_attach_request_promotes_to_remote_attach():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_decode_remote_stderr_cp949_fallback():
+    """원격(Windows) stderr 디코딩(serverremote): UTF-8 우선, 비-UTF-8(cp949 한국어
+    콘솔)은 cp949 폴백으로 사람이 읽게 — `pytmux: 실행 중인 서버 없음`(office1 서버
+    부재 메시지)이 `����` 로 깨지던 회귀 가드. 빈 입력/순수 UTF-8 도 보존."""
+    from pytmuxlib.serverremote import _decode_remote_stderr
+    msg = "pytmux: 실행 중인 서버 없음"
+    assert _decode_remote_stderr(msg.encode("cp949")) == msg, "cp949 폴백"
+    assert _decode_remote_stderr(msg.encode("utf-8")) == msg, "UTF-8 우선"
+    assert _decode_remote_stderr(b"Permission denied (publickey)") \
+        == "Permission denied (publickey)", "ASCII/UTF-8 무손상"
+    assert _decode_remote_stderr(b"") == "", "빈 입력"
+
+
 async def test_nest_attach_request_guards():
     """승격 가드(§7 보안 원칙): ① 목적지 미기록 → 무 ack(self-report 로 attach
     하지 않음) ② 호스트 불일치(2단 ssh 의심 ㉣) → 무 ack ③ nest_auto_attach OFF

@@ -110,6 +110,21 @@ _REMOTE_BLOCK_ACTIONS = {
 }
 
 
+def _decode_remote_stderr(b: bytes) -> str:
+    """원격 ssh/명령 stderr 바이트를 사람이 읽을 문자열로 디코드.
+
+    원격이 Windows(office Windows 박스)면 콘솔이 cp949(한국어) 등 비-UTF-8
+    코드페이지로 한국어 메시지("실행 중인 서버 없음")를 내보내, UTF-8 로만
+    디코드하면 `����` 가 된다 → UTF-8 strict 우선, 실패 시 cp949 폴백,
+    그래도 안 되면 UTF-8 replace 로 마지막 보루."""
+    for enc, errs in (("utf-8", "strict"), ("cp949", "strict")):
+        try:
+            return b.decode(enc, errs)
+        except UnicodeDecodeError:
+            continue
+    return b.decode("utf-8", "replace")
+
+
 def _nest_host_part(s: str) -> str:
     """`user@host` → 호스트부(마지막 @ 뒤) 소문자. 대조 전용(접속 인자 아님)."""
     return s.rsplit("@", 1)[-1].strip().lower()
@@ -192,7 +207,7 @@ class ServerRemoteMixin:
                 # ConnectionError 를 가려, 사용자에게 실제 원인 대신 'ProcessLookupError'
                 # 만 보이던 버그를 막는다.
                 pass
-            detail = (err or line).decode("utf-8", "replace").strip()
+            detail = _decode_remote_stderr(err or line).strip()
             detail = detail.splitlines()[-1] if detail else "응답 없음"
             if "Permission denied" in detail:
                 # 비대화 ssh(BatchMode)는 비밀번호를 못 묻는다 — 패스워드 전용
