@@ -1501,7 +1501,18 @@ class TokenLogScreen(ModalScreen):
         if rows:
             labels = [str(rowhdr)] + [str(it[1]) for it in disp]
             need = max(sum(_char_cells(c) for c in s) for s in labels) + 1
-            label_w = min(label_w, max(3, need))
+            if self._view == "session":
+                # 세션 뷰는 라벨+토큰 두 열뿐(5h%/1w% 없음)이라 가로 여유가 크다 →
+                # 라벨이 시작 시각(2026-06-20 추가)까지 안 잘리도록 티어 상한 대신
+                # 박스 가용 폭(앱폭·max-width 86 - 토큰열 - 패딩)까지 넓힌다.
+                try:
+                    box = min(int(self.app.size.width * 0.96), 86) - 2
+                except Exception:
+                    box = label_w + tok_w
+                avail = max(label_w, box - tok_w - 2)   # -2: 셀 패딩 여유
+                label_w = max(3, min(need, avail))
+            else:
+                label_w = min(label_w, max(3, need))
         # 컬럼: 행 차원(기간/계정/세션) | 토큰(자릿수 정렬, 좌측) | [5h%] [1w%].
         # (비율 막대 열은 사용자 요청으로 제거 — 2026-06-17.)
         table.add_column(rowhdr, key="label", width=label_w)

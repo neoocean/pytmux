@@ -299,6 +299,35 @@ def _session_tabpane(records: list) -> dict:
     return out
 
 
+def _session_time(records: list, bucket: str = "hour") -> dict:
+    """세션 id → 대표 시각 라벨. 세션의 **첫(최소 ts)** 레코드 시각으로, 이름 없는 세션을
+    시간으로 식별하게 한다(사용자 요청 2026-06-20 — 세션 번호만으로는 어느 세션이
+    언제·얼마나 썼는지 알기 어렵다). 저장된 tzoff(쓰기 시점 로컬 오프셋)가 있으면 그
+    벽시계로, 없으면 시스템 로컬로 포맷한다(bucket_key 와 동일 규약 → 과거기록 재분류
+    방지). hour 버킷은 실 ts 라 '월-일 시:분'까지, day/week/month 는 일자 합성 레코드
+    (ts=로컬 정오 고정)라 시:분이 무의미하므로 '월-일'만 보인다."""
+    fmt = "%m-%d %H:%M" if bucket == "hour" else "%m-%d"
+    first: dict = {}
+    for r in records:
+        sid = r.get("session")
+        if sid is None:
+            continue
+        ts = r.get("ts")
+        if ts is None:
+            continue
+        prev = first.get(sid)
+        if prev is None or ts < prev[0]:
+            first[sid] = (ts, r.get("tzoff"))
+    out = {}
+    for sid, (ts, tzoff) in first.items():
+        if tzoff is not None:
+            local = _dt.datetime.utcfromtimestamp(ts) + _dt.timedelta(seconds=tzoff)
+            out[sid] = local.strftime(fmt)
+        else:
+            out[sid] = _dt.datetime.fromtimestamp(ts).strftime(fmt)
+    return out
+
+
 def agg_view(records: list, bucket: str = "day", account: str | None = None,
              dim: str = "account", order: str = "time",
              top: int | None = None, weekdays=None, hour_suffix="시") -> dict:
@@ -310,12 +339,16 @@ def agg_view(records: list, bucket: str = "day", account: str | None = None,
        "buckets": [(label, tokens, share_pct)],   # 시간축, order("time"|"tokens")
        "multi": bool,                              # 그룹 2개 이상(=중복 분해 가치 있음)
        "gmax": int, "bmax": int}                   # 막대 기준(각 목록의 최대 토큰)
-    세션 차원은 라벨에 대표 탭:패널을 곁들인다('세션 4 (탭2:p3)'). top 이 주어지고
+    세션 차원은 라벨에 대표 탭:패널과 시작 시각을 곁들인다('세션 4 (탭2:p3 · 06-20
+    16:03)') — 이름 없는 세션을 시간으로 식별하게(2026-06-20). top 이 주어지고
     그룹이 그보다 많으면 상위 top 만 남기고 나머지는 '기타 N개' 한 줄로 접는다
     (침묵 절단이 아니라 접힘을 명시 — 설계 §4)."""
     agg = aggregate(records, bucket, account, dim)
     total = agg["total"]
     tp = _session_tabpane(records) if dim == "session" else {}
+    # 세션엔 이름이 없어 번호만으론 식별이 어렵다 → 대표 탭:패널에 더해 시작 시각을
+    # 곁들인다(사용자 요청 2026-06-20). 예: '세션 12 (탭1:p1 · 06-20 16:03)'.
+    ts_lbl = _session_time(records, bucket) if dim == "session" else {}
 
     def glabel(g):
         if dim == "session" and g.startswith("세션 "):
@@ -323,8 +356,8 @@ def agg_view(records: list, bucket: str = "day", account: str | None = None,
                 sid = int(g.split(" ", 1)[1])
             except (ValueError, IndexError):
                 sid = None
-            tpl = tp.get(sid)
-            return f"{g} ({tpl})" if tpl else g
+            parts = [p for p in (tp.get(sid), ts_lbl.get(sid)) if p]
+            return f"{g} ({' · '.join(parts)})" if parts else g
         return g
 
     def pct(tok):

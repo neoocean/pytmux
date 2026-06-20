@@ -63,6 +63,27 @@ async def test_tzoff_recorded_and_bucket_stable_across_tz_change():
         assert usagelog.bucket_key(ts, "day", off) == usagelog.bucket_key(ts, "day")
 
 
+async def test_session_view_label_has_tabpane_and_start_time():
+    """세션 뷰 행 라벨은 이름 없는 세션을 식별하도록 대표 탭:패널 + **시작 시각**을
+    곁들인다(사용자 요청 2026-06-20). tzoff 를 고정해 머신 tz 와 무관하게 검증한다."""
+    # tzoff=0(UTC). ts=1_700_000_000 → 2023-11-14 22:13:20Z.
+    s1a = dict(usagelog.make_record(1_700_000_000.0, 0, 1, 7, "a@x.org", 1000),
+               tzoff=0)
+    s1b = dict(usagelog.make_record(1_700_003_600.0, 0, 1, 7, "a@x.org", 500),
+               tzoff=0)  # 같은 세션의 더 늦은 레코드 → 시작 시각(min ts)은 s1a 것
+    s2 = dict(usagelog.make_record(1_700_100_000.0, 1, 2, 9, "b@y.org", 2000),
+              tzoff=0)
+    v = usagelog.agg_view([s1a, s1b, s2], "hour", dim="session")
+    labels = [lbl for lbl, _, _ in v["groups"]]
+    # 토큰 많은 순: 세션 9(2000) → 세션 7(1500)
+    assert labels[0] == "세션 9 (탭2:p2 · 11-16 02:00)", labels
+    assert labels[1] == "세션 7 (탭1:p1 · 11-14 22:13)", labels
+    # day/week/month 버킷(일자 합성 ts=정오 고정)은 시:분이 무의미 → 날짜만.
+    vd = usagelog.agg_view([s1a, s1b, s2], "day", dim="session")
+    dlabels = [lbl for lbl, _, _ in vd["groups"]]
+    assert dlabels[1] == "세션 7 (탭1:p1 · 11-14)", dlabels
+
+
 async def test_aggregate_buckets_and_accounts():
     recs = [
         usagelog.make_record(1_700_000_000.0, 0, 1, 1, "a@x.org", 1000),

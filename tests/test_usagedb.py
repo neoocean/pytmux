@@ -318,13 +318,18 @@ async def test_agg_view_buckets_groups_order_and_pct():
     assert v2["bmax"] == 10000
 
 
-async def test_agg_view_session_label_has_tabpane():
+async def test_agg_view_session_label_has_tabpane_and_start_time():
+    # 이름 없는 세션 식별을 위해 대표 탭:패널 + 시작 시각을 곁들인다(2026-06-20).
+    # tzoff 를 고정해 머신 tz 와 무관하게 검증(ts=1_700_000_000 → 2023-11-14Z).
     recs = [
-        _rec(1_700_000_000.0, 1, 3, 4, "a@x.org", 100),   # tab=1→탭2, pane=3
-        _rec(1_700_000_100.0, 1, 3, 4, "a@x.org", 200),
+        dict(_rec(1_700_000_000.0, 1, 3, 4, "a@x.org", 100), tzoff=0),  # tab1→탭2
+        dict(_rec(1_700_000_100.0, 1, 3, 4, "a@x.org", 200), tzoff=0),
     ]
     v = usagelog.agg_view(recs, "day", dim="session")
-    assert v["groups"][0][0] == "세션 4 (탭2:p3)", v["groups"][0][0]
+    assert v["groups"][0][0] == "세션 4 (탭2:p3 · 11-14)", v["groups"][0][0]
+    # hour 버킷은 실 ts 라 시:분까지 보인다.
+    vh = usagelog.agg_view(recs, "hour", dim="session")
+    assert vh["groups"][0][0] == "세션 4 (탭2:p3 · 11-14 22:13)", vh["groups"][0][0]
 
 
 async def test_agg_view_top_folds_rest_into_others():
