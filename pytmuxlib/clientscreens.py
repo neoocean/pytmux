@@ -990,7 +990,10 @@ class MenuScreen(ModalScreen):
             self.dismiss(None)
 
     def on_key(self, event: events.Key):
-        if event.key == "escape":
+        # Esc 또는 F10(메뉴를 연 키와 동일) → 닫기. F10 은 메뉴바 토글 관례
+        # (열기=닫기). 서브메뉴에선 Esc 와 동일하게 부모 레벨로 복귀하고,
+        # 최상위에선 메뉴 전체가 닫힌다(F10_MENU_SCENARIO.md §6).
+        if event.key in ("escape", "f10"):
             event.stop()
             self.dismiss(None)
 
