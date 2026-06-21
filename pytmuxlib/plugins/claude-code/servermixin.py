@@ -1949,7 +1949,8 @@ class ServerClaudeMixin:
         rec = usagelog.make_record(
             ts=time.time(), tab=tab.index, pane=pane.id,
             session=getattr(pane, "_claude_session_id", 0),
-            account=pane._claude_account, tokens=amount)
+            account=pane._claude_account, tokens=amount,
+            model=getattr(pane, "_claude_model", None))
         conn = self._tokens_db_conn()
         if conn is not None:
             usagedb.insert(conn, rec)

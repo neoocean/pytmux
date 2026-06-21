@@ -70,6 +70,65 @@ async def test_tzoff_roundtrip_and_v4_to_v5_migration():
                 pass
 
 
+async def test_model_roundtrip_and_v5_to_v6_migration():
+    """v6(과티어): model 컬럼이 insert/query 를 왕복하고 totals_by_model 로 집계되며,
+    model 없는 v5 DB 가 connect 시 v6 로 마이그레이트(컬럼 추가)되고 기존 행은 NULL
+    (→모델 미귀속, 키 생략)로 보존된다. make_record(model=None)은 기존과 동일 dict."""
+    import sqlite3
+    # ① 신규 DB 왕복: make_record 의 model 이 보존된다. model=None 이면 키 생략.
+    conn = usagedb.connect(":memory:")
+    assert usagedb.insert(conn, usagelog.make_record(
+        1_700_000_000.0, 0, 1, 1, "me@x.org", 900, model="opus-4.8"))
+    assert usagedb.insert(conn, usagelog.make_record(
+        1_700_000_001.0, 0, 1, 1, "me@x.org", 50, model="haiku-4.5"))
+    assert usagedb.insert(conn, _rec(1_700_000_002.0, 0, 1, 1, "me@x.org", 7))
+    recs = usagedb.query_records(conn)
+    assert recs[0]["model"] == "opus-4.8" and recs[1]["model"] == "haiku-4.5"
+    assert "model" not in recs[2], "model 미지정 → 키 생략(미귀속)"
+    assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == \
+        usagedb.SCHEMA_VERSION
+    # totals_by_model: 미귀속은 unknown 키로 묶인다.
+    tm = usagedb.totals_by_model(conn)
+    assert tm == {"opus-4.8": 900, "haiku-4.5": 50, usagelog.UNKNOWN: 7}, tm
+    conn.close()
+    # ② v5 형태(tzoff 있고 model 없는 usage + user_version=5) → connect 로 업그레이드.
+    path = tempfile.mktemp(suffix=".tokens.db")
+    try:
+        raw = sqlite3.connect(path)
+        raw.execute("CREATE TABLE usage (ts REAL NOT NULL, tab INTEGER, "
+                    "pane INTEGER NOT NULL, session INTEGER, account TEXT "
+                    "NOT NULL, tokens INTEGER NOT NULL, tzoff INTEGER)")
+        raw.execute("INSERT INTO usage (ts,tab,pane,session,account,tokens,tzoff) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (1_700_000_000.0, 0, 1, 1, "old@x.org", 555, 32400))
+        raw.execute("PRAGMA user_version=5")
+        raw.commit()
+        raw.close()
+        conn = usagedb.connect(path)
+        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) >= 6
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(usage)")}
+        assert "model" in cols, "v6 마이그레이션이 model 컬럼 추가"
+        recs = usagedb.query_records(conn)
+        assert len(recs) == 1 and recs[0]["tokens"] == 555
+        assert "model" not in recs[0], "레거시 행은 model NULL → 키 생략(미귀속)"
+        # 새 insert 는 model 을 실어 이때부터 티어별 지출이 정량화된다.
+        assert usagedb.insert(conn, usagelog.make_record(
+            1_700_000_100.0, 0, 1, 1, "new@x.org", 12, model="sonnet-4.6"))
+        new = [r for r in usagedb.query_records(conn)
+               if r["account"] == "new@x.org"][0]
+        assert new["model"] == "sonnet-4.6"
+        # 레거시(미귀속)는 unknown, 신규는 모델별로 집계된다.
+        assert usagedb.totals_by_model(conn) == \
+            {usagelog.UNKNOWN: 555, "sonnet-4.6": 12}
+        conn.close()
+    finally:
+        for ext in ("", "-wal", "-shm"):
+            try:
+                os.unlink(path + ext)
+            except OSError:
+                pass
+
+
 async def test_query_limit_returns_recent_in_order():
     conn = usagedb.connect(":memory:")
     for i in range(5):

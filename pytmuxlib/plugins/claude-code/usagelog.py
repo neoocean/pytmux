@@ -61,18 +61,25 @@ def _tzoff_at(ts: float):
 
 
 def make_record(ts: float, tab, pane: int, session: int,
-                account: str | None, tokens: int) -> dict:
+                account: str | None, tokens: int,
+                model: str | None = None) -> dict:
     """로그 레코드 한 건을 만든다(append 직전 서버가 호출).
 
     §3.5①: 쓰기 시점의 로컬 UTC 오프셋 `tzoff`(초)를 함께 적재한다 — hour 버킷이
     이후 DST/여행 후에도 재분류되지 않게(bucket_key 가 이 offset 으로 벽시계 복원).
-    오프셋을 못 구하면 키를 생략(레거시처럼 시스템 로컬 폴백)."""
+    오프셋을 못 구하면 키를 생략(레거시처럼 시스템 로컬 폴백).
+
+    v6(과티어): `model`(적재 시점 활성 모델 배지, claude_model 파싱값)을 주면 함께
+    싣는다 — 토큰 지출의 모델 귀속. None(미상)이면 키를 생략해 기존 레코드와 동일한
+    dict 를 만든다(하위호환: model 없이 부르던 호출·테스트의 결과 불변)."""
     rec = {"ts": float(ts), "tab": tab, "pane": int(pane),
            "session": int(session), "account": account or UNKNOWN,
            "tokens": int(tokens)}
     off = _tzoff_at(ts)
     if off is not None:
         rec["tzoff"] = off
+    if model:
+        rec["model"] = model
     return rec
 
 

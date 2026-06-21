@@ -28,7 +28,12 @@ from . import usagelog
 # v5(2026-06-13, §3.5①): usage.tzoff(쓰기 시점 로컬 UTC 오프셋 초) 컬럼 추가 — hour
 # 버킷이 이후 DST/여행으로 시스템 tz 가 바뀌어도 재분류되지 않게(레거시 NULL 은
 # bucket_key 가 시스템 로컬로 폴백 → 기존 거동 유지). ALTER ADD COLUMN(메타데이터만).
-SCHEMA_VERSION = 5
+# v6(2026-06-21, OVER_TIER_MEASUREMENT §6 권고): usage.model(적재 시점 활성 모델,
+# claude_model 파싱값 'opus-4.8'/'sonnet-4.6'… best-effort) 컬럼 추가 — 토큰 지출의
+# **모델 귀속**을 기록해 티어별 지출·과티어를 *정량* 측정 가능하게 한다(과티어 보고서가
+# "캡처도 DB도 모델 귀속 없음"으로 정량 불가였던 것을 이 시점부터 해소). 레거시 행은
+# NULL(미상). ALTER ADD COLUMN(메타데이터만) — 기존 집계 쿼리는 model 을 안 보므로 무영향.
+SCHEMA_VERSION = 6
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS usage (
@@ -38,7 +43,8 @@ CREATE TABLE IF NOT EXISTS usage (
   session INTEGER,
   account TEXT    NOT NULL,
   tokens  INTEGER NOT NULL,
-  tzoff   INTEGER
+  tzoff   INTEGER,
+  model   TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_usage_ts      ON usage(ts);
 CREATE INDEX IF NOT EXISTS ix_usage_account ON usage(account);
@@ -106,6 +112,11 @@ def connect(path: str) -> sqlite3.Connection:
             _migrate_v5_add_tzoff(conn)
         except sqlite3.Error:
             new_v = min(new_v, 4)
+    if cur_v < 6 and new_v >= 5:    # v6: model 컬럼 추가(과티어 모델 귀속)
+        try:
+            _migrate_v6_add_model(conn)
+        except sqlite3.Error:
+            new_v = min(new_v, 5)
     conn.execute(f"PRAGMA user_version={new_v}")
     conn.commit()
     if path != ":memory:" and not existed:
@@ -195,14 +206,30 @@ def _migrate_v5_add_tzoff(conn) -> int:
     return 1
 
 
+def _migrate_v6_add_model(conn) -> int:
+    """v6(OVER_TIER_MEASUREMENT §6): usage.model(적재 시점 활성 모델) 컬럼 추가(없을 때만).
+
+    기존 행은 NULL → 모델 미상(과티어 보고서 시점까지의 이력은 모델 귀속 불가, 그대로).
+    새 레코드부터 make_record 가 pane 의 활성 모델 배지(claude_model 파싱값)를 실어,
+    이때부터 티어별 지출·과티어가 정량 측정된다. ALTER ADD COLUMN 은 메타데이터만 바꿔
+    데이터 재기록이 없다. 추가했으면 1, 이미 있으면 0(멱등 — v5 tzoff 와 동일 패턴)."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(usage)")}
+    if "model" in cols:
+        return 0
+    conn.execute("ALTER TABLE usage ADD COLUMN model TEXT")
+    return 1
+
+
 def _row_to_rec(row) -> dict:
-    """sqlite Row → usagelog 호환 dict 레코드. tzoff(v5)는 있을 때만 싣는다(레거시
-    행/구 SELECT 는 None → bucket_key 시스템 로컬 폴백)."""
+    """sqlite Row → usagelog 호환 dict 레코드. tzoff(v5)·model(v6)은 있을 때만 싣는다
+    (레거시 행/구 SELECT 는 None → tzoff 미상=시스템 로컬 폴백, model 미상=모델 미귀속)."""
     rec = {"ts": row["ts"], "tab": row["tab"], "pane": row["pane"],
            "session": row["session"], "account": row["account"],
            "tokens": row["tokens"]}
     if "tzoff" in row.keys() and row["tzoff"] is not None:
         rec["tzoff"] = row["tzoff"]
+    if "model" in row.keys() and row["model"] is not None:
+        rec["model"] = row["model"]
     return rec
 
 
@@ -210,11 +237,11 @@ def insert(conn, rec: dict) -> bool:
     """레코드 한 건 삽입. 실패해도 조용히 False(로깅이 본 흐름을 막지 않음)."""
     try:
         conn.execute(
-            "INSERT INTO usage (ts,tab,pane,session,account,tokens,tzoff) "
-            "VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO usage (ts,tab,pane,session,account,tokens,tzoff,model) "
+            "VALUES (?,?,?,?,?,?,?,?)",
             (float(rec.get("ts", 0.0)), rec.get("tab"), int(rec.get("pane", 0)),
              rec.get("session"), rec.get("account") or usagelog.UNKNOWN,
-             int(rec.get("tokens", 0)), rec.get("tzoff")))
+             int(rec.get("tokens", 0)), rec.get("tzoff"), rec.get("model")))
         conn.commit()
         return True
     except sqlite3.Error:
@@ -226,12 +253,13 @@ def insert_many(conn, recs) -> int:
     없으면 NULL(레거시 임포트 → bucket_key 시스템 로컬 폴백)."""
     rows = [(float(r.get("ts", 0.0)), r.get("tab"), int(r.get("pane", 0)),
              r.get("session"), r.get("account") or usagelog.UNKNOWN,
-             int(r.get("tokens", 0)), r.get("tzoff")) for r in recs]
+             int(r.get("tokens", 0)), r.get("tzoff"), r.get("model"))
+            for r in recs]
     if not rows:
         return 0
     conn.executemany(
-        "INSERT INTO usage (ts,tab,pane,session,account,tokens,tzoff) "
-        "VALUES (?,?,?,?,?,?,?)", rows)
+        "INSERT INTO usage (ts,tab,pane,session,account,tokens,tzoff,model) "
+        "VALUES (?,?,?,?,?,?,?,?)", rows)
     conn.commit()
     return len(rows)
 
@@ -285,6 +313,18 @@ def totals_by_account(conn) -> dict:
     cur = conn.execute(
         "SELECT account, COALESCE(SUM(tokens),0) AS s FROM usage GROUP BY account")
     return {r["account"]: int(r["s"]) for r in cur.fetchall()}
+
+
+def totals_by_model(conn) -> dict:
+    """모델별 전체 이력 토큰 합. {model: tokens} (model NULL=미귀속은 'unknown' 키로).
+
+    v6 model 컬럼의 1차 소비처 — 티어별 지출 분해(과티어 측정)의 권위 집계. v6 이전
+    레코드는 model NULL 이라 'unknown' 으로 묶인다(그 시점까지 이력은 모델 미상)."""
+    cur = conn.execute(
+        "SELECT COALESCE(model, ?) AS m, COALESCE(SUM(tokens),0) AS s "
+        "FROM usage GROUP BY COALESCE(model, ?)",
+        (usagelog.UNKNOWN, usagelog.UNKNOWN))
+    return {r["m"]: int(r["s"]) for r in cur.fetchall()}
 
 
 def daily_breakdown(conn) -> list:
