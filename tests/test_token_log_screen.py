@@ -83,23 +83,45 @@ async def test_tab_connector_bridges_active_view_tab():
         await teardown(srv, task, sock)
 
 
+def _recent_tree_records():
+    """오늘(같은 날 5개 시각)·이전 달(40일 전)에 걸친 레코드 — 계층 타임라인 트리가
+    오늘 행을 시각까지 기본 펼치고, 이전 달은 월 행으로 접는다. ts 는 **오늘 정오 기준
+    상대값**이라 새벽/자정 경계로 시각이 어제로 새지 않아 결정론적이다."""
+    import time as _t
+    import datetime as _dt
+    noon = _dt.datetime.now().replace(hour=12, minute=0, second=0,
+                                      microsecond=0)
+    today_ts = noon.timestamp()
+    recs, hourly = [], {}
+    for h in range(0, 5):                       # 오늘 12·11·10·09·08시 (모두 같은 날)
+        ts = today_ts - h * 3600
+        recs.append({"ts": ts, "account": "me@x.org", "tokens": 5000})
+        hk = _t.strftime("%Y-%m-%d %H:00", _t.localtime(ts))
+        hourly[hk] = hourly.get(hk, 0) + 7
+    # 40일 전 = 반드시 이전 달·이전 ISO주 → 기본 접힌 월 행.
+    recs.append({"ts": today_ts - 40 * 86400, "account": "me@x.org",
+                 "tokens": 9000})
+    return recs, hourly
+
+
 async def test_table_row_highlight_home_end_pageup_pagedown():
     """표의 하이라이트 행 커서를 Home/End/PgUp/PgDn 으로 옮긴다(사용자 요청 —
     기본 DataTable 바인딩이 이 키들로 행을 안 옮겨준다는 보고)."""
     from textual.widgets import DataTable
     from harness import make_app, server_only, teardown
 
+    recs, hourly = _recent_tree_records()
     srv, task, sock = await server_only()
     try:
         app = make_app(sock, None, None)
         async with app.run_test(size=(100, 36)) as pilot:
             await pilot.pause(0.3)
-            app.push_screen(screens.TokenLogScreen(_hour_records()))
+            app.push_screen(screens.TokenLogScreen(recs, hourly_pct=hourly))
             await pilot.pause(0.3)
             scr = app.screen_stack[-1]
             table = scr.query_one(DataTable)
             n = table.row_count
-            assert n >= 3, f"여러 시간 버킷 행이 있어야(got {n})"
+            assert n >= 3, f"여러 트리 행이 있어야(got {n})"
             table.focus()
             await pilot.pause(0.05)
 
@@ -123,16 +145,14 @@ async def test_table_row_highlight_home_end_pageup_pagedown():
         await teardown(srv, task, sock)
 
 
-async def test_hour_view_groups_rows_under_date_headers():
-    """시(hour) 뷰(시간순)는 같은 날짜의 시각 행을 **날짜 헤더 아래로 묶는다**
-    (요청 2026-06-19): 달력일마다 헤더 행 1개 + 그 아래 시각 행들은 날짜를 떼고
-    'HHh' 만 들여쓴다."""
+async def test_tree_today_expands_to_hours():
+    """계층 타임라인(2026-06-21): 오늘 행은 기본 펼침(▼)으로 그 아래 시각 행들을
+    들여쓰기로 보이고, 이전 달은 접힌 월 행(▶)으로 보인다(§3 기본 펼침 깊이)."""
     import re
     from textual.widgets import DataTable
     from harness import make_app, server_only, teardown
 
-    recs, hourly, dates = _multiday_hour_records()
-    assert len(dates) >= 2, "픽스처가 ≥2 달력일에 걸쳐야"
+    recs, hourly = _recent_tree_records()
     srv, task, sock = await server_only()
     try:
         app = make_app(sock, None, None)
@@ -142,40 +162,35 @@ async def test_hour_view_groups_rows_under_date_headers():
                 recs, hourly_pct=hourly, hourly_week_pct=hourly))
             await pilot.pause(0.3)
             scr = app.screen_stack[-1]
-            await pilot.press("h")          # 시(hour) 버킷으로 전환
-            await pilot.pause(0.2)
-            assert scr._bucket == "hour"
+            assert scr._view == "time" and scr._order == "time"
             table = scr.query_one(DataTable)
-            n = table.row_count
-            labels = [str(table.get_row_at(i)[0]) for i in range(n)]
+            labels = [str(table.get_row_at(i)[0])
+                      for i in range(table.row_count)]
 
-            # 날짜 헤더 행: 'MM-DD (요일)' 패턴, 들여쓰기 없음. 달력일 수만큼 있어야.
-            hdr_rows = [s for s in labels if re.match(r"^\d\d-\d\d \(", s)]
-            assert len(hdr_rows) == len(dates), \
-                f"날짜 헤더 {len(dates)}개 기대, got {hdr_rows}"
-
-            # 시각 행: 두 칸 들여쓴 'HHh'(또는 ko 'HH시') — 날짜 접두 없음.
-            data_rows = [s for s in labels if s.startswith("  ")]
-            assert data_rows, "들여쓴 시각 행이 있어야"
-            for s in data_rows:
-                assert re.match(r"^  \d\d?.+$", s), f"시각 행 형식: {s!r}"
-                assert not re.search(r"\d\d-\d\d", s), \
-                    f"시각 행 라벨에 날짜가 남으면 안 됨: {s!r}"
-
-            # 헤더 + 시각 행 합 = 전체 행. 헤더는 데이터 행보다 적어야(묶음이므로).
-            assert len(hdr_rows) + len(data_rows) == n
-            assert len(hdr_rows) < len(data_rows)
+            # 오늘 행: ▼(펼침)로 시작하는 일 행이 있어야.
+            assert any(s.startswith("▼ ") for s in labels), \
+                f"오늘 행이 ▼로 펼쳐져야: {labels}"
+            # 이전 달: ▶(접힘)로 시작하는 'YYYY-MM' 월 행.
+            assert any(s.startswith("▶ ") and re.search(r"\d{4}-\d\d", s)
+                       for s in labels), f"이전 달이 ▶ 월 행이어야: {labels}"
+            # 시각 행: 들여쓰고 'HH시'/'HHh'만(날짜 없음). 트리 노드로 확인.
+            hour_nodes = [n for n in scr._tree_nodes if n["kind"] == "hour"]
+            assert len(hour_nodes) >= 2, "오늘 시각 행이 여럿 펼쳐져야"
+            for n in hour_nodes:
+                assert n["level"] >= 1 and re.match(r"^\d\d(시|h)$", n["label"]), \
+                    f"시각 라벨: {n['label']!r}"
+            # 시각 행은 leaf — 펼침 불가.
+            assert all(not n["expandable"] for n in hour_nodes)
     finally:
         await teardown(srv, task, sock)
 
 
-async def test_hour_view_token_order_stays_flat():
-    """토큰순 정렬에서는 날짜가 섞이므로 묶지 않고 평평한 'MM-DD HHh' 라벨을 유지한다."""
-    import re
+async def test_tree_collapse_and_expand_today_row():
+    """오늘 행에서 ← 접기 → 시각 행 사라지고 ▶ 로, → 펼치기 → 시각 행 복귀(SC-2/3)."""
     from textual.widgets import DataTable
     from harness import make_app, server_only, teardown
 
-    recs, hourly, _dates = _multiday_hour_records()
+    recs, hourly = _recent_tree_records()
     srv, task, sock = await server_only()
     try:
         app = make_app(sock, None, None)
@@ -184,33 +199,85 @@ async def test_hour_view_token_order_stays_flat():
             app.push_screen(screens.TokenLogScreen(recs, hourly_pct=hourly))
             await pilot.pause(0.3)
             scr = app.screen_stack[-1]
-            await pilot.press("h")          # 시 버킷
-            await pilot.press("o")          # 토큰순 정렬 토글
-            await pilot.pause(0.2)
-            assert scr._bucket == "hour" and scr._order == "tokens"
             table = scr.query_one(DataTable)
-            labels = [str(table.get_row_at(i)[0])
-                      for i in range(table.row_count)]
-            # 날짜 헤더 행이 없어야 하고, 각 행은 'MM-DD HHh' 평평한 라벨.
-            assert not [s for s in labels if re.match(r"^\d\d-\d\d \(", s)], \
-                "토큰순엔 날짜 헤더가 없어야"
-            assert any(re.search(r"\d\d-\d\d ", s) for s in labels), \
-                "평평한 라벨에 날짜 접두가 남아야"
+            table.focus()
+            await pilot.pause(0.05)
+
+            def hour_count():
+                return sum(1 for n in scr._tree_nodes if n["kind"] == "hour")
+
+            assert hour_count() >= 2, "처음엔 오늘 시각 행이 펼쳐져 있어야"
+            # 커서를 오늘(첫) 행에 두고 ← 로 접는다.
+            await pilot.press("home")
+            await pilot.pause(0.05)
+            await pilot.press("left")
+            await pilot.pause(0.1)
+            assert hour_count() == 0, "← 로 오늘 행 접으면 시각 행이 사라져야"
+            assert str(table.get_row_at(0)[0]).startswith("▶ "), "접힌 오늘 행=▶"
+            # → 로 다시 펼친다.
+            await pilot.press("right")
+            await pilot.pause(0.1)
+            assert hour_count() >= 2, "→ 로 다시 펼치면 시각 행 복귀"
+            assert str(table.get_row_at(0)[0]).startswith("▼ "), "펼친 오늘 행=▼"
+            # Enter 로도 토글(닫히지 않고). 두 번이면 접었다 펼침.
+            await pilot.press("home")
+            await pilot.pause(0.05)
+            await pilot.press("enter")
+            await pilot.pause(0.1)
+            assert app.screen_stack[-1] is scr, "Enter 는 팝업을 닫지 않음"
+            assert hour_count() == 0, "Enter 로 접힘"
+            await pilot.press("enter")
+            await pilot.pause(0.1)
+            assert hour_count() >= 2, "Enter 로 다시 펼침"
     finally:
         await teardown(srv, task, sock)
 
 
-async def test_hour_view_reset_left_in_column_headers():
-    """시(hour) 뷰에서 5h%/1w% **칼럼 제목**에 리셋까지 남은 시간이 inline 으로
-    붙는다(요청 2026-06-20, 옛 footer 줄 대체). 예: '5h% (in 87m)'·'1w% (in 6d)'.
-    시각 전용 리셋 표기는 parse_reset_ts 가 항상 미래로 롤오버하므로 결정론적이다."""
+async def test_tree_token_order_flattens_to_day():
+    """정렬 토큰순(o)은 계층을 평탄화해 인디케이터 없는 일(day) 단일 목록으로 보인다
+    (SC-8) — 시간순(o 재토글) 복귀 시 §3 기본 트리로 재진입."""
+    from textual.widgets import DataTable
+    from harness import make_app, server_only, teardown
+
+    recs, hourly = _recent_tree_records()
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 36)) as pilot:
+            await pilot.pause(0.3)
+            app.push_screen(screens.TokenLogScreen(recs, hourly_pct=hourly))
+            await pilot.pause(0.3)
+            scr = app.screen_stack[-1]
+            await pilot.press("o")          # 토큰순
+            await pilot.pause(0.2)
+            assert scr._order == "tokens"
+            table = scr.query_one(DataTable)
+            labels = [str(table.get_row_at(i)[0])
+                      for i in range(table.row_count)]
+            # 평탄: 트리 인디케이터(▼/▶)가 없어야.
+            assert not any("▼" in s or "▶" in s for s in labels), \
+                f"토큰순엔 트리 인디케이터가 없어야: {labels}"
+            # 시간순 복귀 → 트리 재진입(인디케이터 등장).
+            await pilot.press("o")
+            await pilot.pause(0.2)
+            assert scr._order == "time"
+            labels2 = [str(scr.query_one(DataTable).get_row_at(i)[0])
+                       for i in range(scr.query_one(DataTable).row_count)]
+            assert any(s.startswith(("▼ ", "▶ ")) for s in labels2), \
+                f"시간순 복귀 시 트리 인디케이터가 있어야: {labels2}"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_tree_hour_rows_have_5h_1w_columns_with_reset_left():
+    """시각 행이 있는 트리는 5h%/1w% 칼럼 제목에 리셋 잔여시간을 inline 으로 붙인다
+    (예 '5h% (in 87m)'·'1w% (in 6d)'). 토큰순(평탄 일 목록)엔 그 열이 없다."""
     import datetime as _dt
     from textual.widgets import DataTable
     from textual.css.query import NoMatches
     from harness import make_app, server_only, teardown
 
-    recs, hourly, _dates = _multiday_hour_records()
-    # 주간 경계는 now+2일로 명시 날짜를 만들어 '미래'를 보장(과거면 stale 로 생략됨).
+    recs, hourly = _recent_tree_records()
     wk = _dt.datetime.now() + _dt.timedelta(days=2)
     mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep",
            "Oct", "Nov", "Dec"][wk.month - 1]
@@ -226,12 +293,9 @@ async def test_hour_view_reset_left_in_column_headers():
                 recs, usage=usage, hourly_pct=hourly, hourly_week_pct=hourly))
             await pilot.pause(0.3)
             scr = app.screen_stack[-1]
-            await pilot.press("h")          # 시(hour) 버킷
-            await pilot.pause(0.2)
             table = scr.query_one(DataTable)
             heads = [str(c.label) for c in table.columns.values()]
             joined = " | ".join(heads)
-            # 5h%/1w% 제목에 리셋 잔여시간이 괄호로 inline 으로 붙는다.
             assert any(h.startswith("5h%") and "(" in h for h in heads), joined
             assert any(h.startswith("1w%") and "(" in h for h in heads), joined
             # 옛 footer 위젯(#tkfoot)은 제거됐다.
@@ -241,14 +305,14 @@ async def test_hour_view_reset_left_in_column_headers():
             except NoMatches:
                 pass
 
-            # 일(day) 버킷엔 5h%/1w% 열 자체가 없다(시간 뷰 전용).
-            await pilot.press("d")
+            # 토큰순(평탄 일 목록)엔 5h%/1w% 열이 없다.
+            await pilot.press("o")
             await pilot.pause(0.2)
-            assert scr._bucket == "day"
-            heads_d = [str(c.label) for c in
+            assert scr._order == "tokens"
+            heads_t = [str(c.label) for c in
                        scr.query_one(DataTable).columns.values()]
-            assert not any(h.startswith(("5h%", "1w%")) for h in heads_d), \
-                f"일 뷰엔 5h%/1w% 열이 없어야: {heads_d}"
+            assert not any(h.startswith(("5h%", "1w%")) for h in heads_t), \
+                f"토큰순엔 5h%/1w% 열이 없어야: {heads_t}"
     finally:
         await teardown(srv, task, sock)
 

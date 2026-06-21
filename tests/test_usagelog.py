@@ -118,6 +118,32 @@ async def test_aggregate_buckets_and_accounts():
     assert usagelog.summary_lines([], "day") == ["(기록된 토큰 사용량이 없습니다)"]
 
 
+async def test_agg_index_keyed_map_with_labels_and_models():
+    """agg_index: 버킷 키 → {tokens, label, models} 순수 맵(계층 트리 O(1) 조회용)."""
+    recs = [
+        dict(usagelog.make_record(1_700_000_000.0, 0, 1, 1, "a@x.org", 1000),
+             model="opus-4.8"),
+        dict(usagelog.make_record(1_700_000_100.0, 0, 1, 1, "a@x.org", 500),
+             model="sonnet-4.6"),
+        dict(usagelog.make_record(1_700_086_400.0, 1, 2, 2, "b@y.org", 2000),
+             model="opus-4.8"),
+    ]
+    day0 = usagelog.bucket_key(1_700_000_000.0, "day")
+    day1 = usagelog.bucket_key(1_700_086_400.0, "day")
+    idx = usagelog.agg_index(recs, "day", weekdays="월화수목금토일")
+    # 같은 날 두 레코드 합산 + 모델 티어 분해.
+    assert idx[day0]["tokens"] == 1500
+    assert idx[day0]["models"] == {"opus": 1000, "sonnet": 500}
+    assert idx[day1]["tokens"] == 2000 and idx[day1]["models"] == {"opus": 2000}
+    # 라벨은 _bucket_short 규칙(MM-DD(요일)).
+    assert idx[day0]["label"].startswith(day0[5:])
+    # 월 버킷은 한 키로 합산(키=YYYY-MM).
+    midx = usagelog.agg_index(recs, "month")
+    assert len(midx) == 1 and next(iter(midx.values()))["tokens"] == 3500
+    # 빈 입력 → 빈 맵.
+    assert usagelog.agg_index([], "day") == {}
+
+
 async def test_claude_account_heuristics():
     # ① 가장 신뢰: Claude UI 의 "<email>'s Organization" 표시 → 별칭화(원문 미노출)
     assert claude_account(

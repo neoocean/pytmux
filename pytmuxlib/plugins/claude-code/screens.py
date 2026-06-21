@@ -125,7 +125,10 @@ i18n.register({
         "pscreen.tklog_title2": "토큰 사용량(추정) · {what}별",
         "pscreen.tklog_scope": "{order} · {sigma}",
         "pscreen.tklog_disp": " (표시 {n})",
-        "pscreen.tklog_hint": "h시 d일 w주 m월 · p세션 · l한도 o정렬 · u/usage s설정 r비교 · Esc닫기",
+        "pscreen.tklog_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · p세션 o정렬 · l한도 r비교 u/usage · Esc닫기",
+        # 계층 타임라인 트리 구역 구분선(2026-06-21).
+        "pscreen.tree_earlier_weeks": "── 이번 달 이전 주 ──",
+        "pscreen.tree_earlier_months": "── 이전 달 ──",
         "pscreen.weekdays": "월,화,수,목,금,토,일",
         "pscreen.hour_suffix": "시",
         "pscreen.recon_top": "실측(/usage Δ%)과 추정(스크랩 ~Σ)은 의미가 다른 두 출처 — 절대 일치가 아니라 추세 상관을 봅니다",
@@ -192,7 +195,9 @@ i18n.register({
         "pscreen.tklog_title2": "Token usage (est) · by {what}",
         "pscreen.tklog_scope": "{order} · {sigma}",
         "pscreen.tklog_disp": " (shown {n})",
-        "pscreen.tklog_hint": "h hour d day w week m month · p session · l limit o sort · u /usage s settings r recon · Esc close",
+        "pscreen.tklog_hint": "↑↓ move · Enter/←→ expand·collapse · p session o sort · l limit r recon u /usage · Esc close",
+        "pscreen.tree_earlier_weeks": "── earlier weeks this month ──",
+        "pscreen.tree_earlier_months": "── earlier months ──",
         "pscreen.weekdays": "Mo,Tu,We,Th,Fr,Sa,Su",
         "pscreen.hour_suffix": "h",
         "pscreen.recon_top": "Measured (/usage Δ%) and est (scrape ~Σ) are two different sources — look at trend correlation, not exact match",
@@ -814,7 +819,6 @@ class TokenLogScreen(ModalScreen):
     /* 보조옵션 줄: 활성 탭(기간/세션)의 입도·정렬을 살짝 들여써 상위 탭과 구분. */
     #tksub { width: 100%; height: 1; align-horizontal: left; padding: 0 0 0 2; }
     #tksub Label { height: 1; padding: 0 1; margin: 0 1 0 0; }
-    #tksub_period { width: auto; height: 1; }
     #tksublead { color: $text-muted; padding: 0 1 0 0; margin: 0; }
     /* 탭 색 언어(사용자 요청 2026-06-18): 활성 탭=accent(오렌지)+흰 글자 — 노트북
        연결선·박스 테두리(둘 다 $accent)와 같은 오렌지로 맞춰 활성 탭이 그 라인으로
@@ -831,15 +835,11 @@ class TokenLogScreen(ModalScreen):
     #tkchart { width: 100%; height: 1fr; }
     """
     _NAV_KEYS = ("up", "down", "pageup", "pagedown", "home", "end")
-    _BUCKETS = {"h": "hour", "d": "day", "w": "week", "m": "month"}
-    # 서브탭 위젯 id → 버킷.
-    _TAB_BUCKET = {"tab_hour": "hour", "tab_day": "day",
-                   "tab_week": "week", "tab_month": "month"}
+    # 계층 타임라인 뷰(2026-06-21): 옛 시간/일/주/월 서브탭(_BUCKETS·_TAB_BUCKET)을
+    # 제거하고 단일 트리 뷰로 통합 — 입도는 행을 펼치고(▶→▼) 접어(▼→▶) 고른다.
     # 탭 라벨(넓은 폭, 좁은 폭). 좁으면 한 글자로 줄여 모바일에서 탭 줄이 안 넘치게(P6).
     _TAB_LABELS = {
         "tab_period": ("기간", "기"),
-        "tab_hour": ("시간", "시"), "tab_day": ("일", "일"),
-        "tab_week": ("주", "주"), "tab_month": ("월", "월"),
         "tab_panel": ("세션", "세"),
         "tab_order": ("정렬", "정"), "tab_usage": ("/usage", "U"),
         "tab_saver": ("시나리오", "S"), "tab_recon": ("비교", "R"),
@@ -891,12 +891,18 @@ class TokenLogScreen(ModalScreen):
         # 레코드(_records)는 최근 N 건이라 그 Σ 는 과소표시될 수 있으므로, lifetime
         # 합은 이 값을 쓴다(None=구버전 서버 → 레코드 합으로 폴백).
         self._total_all = total_all
+        # 계층 타임라인 뷰(2026-06-21)는 입도 개념(_bucket)이 없다 — 월→주→일→시각을
+        # 한 트리로 보인다. 단, 세션 뷰와 토큰순(평탄) 폴백은 day 입도로 집계하므로
+        # 내부 기본값만 "day" 로 둔다(사용자 전환 UI 없음). initial_mode=="hour"(상태줄
+        # "N%/5h used" 클릭)는 트리에서 오늘 행이 이미 시각까지 펼쳐져 있어 별도 분기
+        # 불요 — 기본 시간순 트리로 진입한다.
         self._bucket = "day"
-        # initial_mode=="hour" 면 시간(hour) 버킷으로 연다 — 상태줄 "N%/5h used" 세그먼트
-        # 클릭이 시간별 5h% 막대 뷰를 바로 보이게 한다(5h%→hourly view, 사용자 요청
-        # 2026-06-18). _view 는 time 유지라 한도/경고 오버레이와 배타가 아니다(둘 다 False).
-        if initial_mode == "hour":
-            self._bucket = "hour"
+        # 계층 뷰 펼침 상태: 기본 펼침(§3 — 오늘=시각)에서 사용자가 **토글한** 행 키
+        # 집합. effective_open = default ^ (key in _tree_toggled) — 한 집합으로 기본
+        # 열린 행 접기와 기본 닫힌 행 펼치기를 모두 표현한다. 정렬/뷰 전환 시 비운다.
+        self._tree_toggled: set = set()
+        # 마지막으로 그린 트리 노드 목록(표 행과 1:1, 커서 행→노드 매핑·토글용).
+        self._tree_nodes: list = []
         # 표 차원(2026-06-12 재설계 — 한 번에 한 차원만): "time"=시간 버킷(기본),
         # "session"=세션별 합. 세션은 닫히고 재사용되는 패널 id 대신 안정적 세션
         # id 로 묶는다(설계 §8). 계정 차원은 제거 — 토큰 사용량은 계정과 무관하게
@@ -937,20 +943,11 @@ class TokenLogScreen(ModalScreen):
             # 노트북 연결선: 활성 메인 탭이 아래 본문으로 열려 이어지게(메인 탭바와
             # 같은 모양, 사용자 요청 2026-06-18). _sync_tabs 가 탭 전환 시 refresh.
             yield _TkTabConnector(id="tkconn")
-            # 보조옵션 줄: **활성 탭에서만 작동하는 옵션**을 탭 하위로(§7.2). 기간 뷰=
-            # 입도(시간/일/주/월)+정렬, 세션 뷰=정렬. 그 외(계정/한도/대사/경고)엔
-            # 숨긴다(_sync_tabs 가 display 제어). 계정 필터는 'a' 키로 순환(기간/세션).
+            # 보조옵션 줄: **활성 탭에서만 작동하는 옵션**을 탭 하위로(§7.2). 기간/세션
+            # 뷰에서 정렬만 남는다(시간/일/주/월 서브탭은 계층 트리로 대체, 2026-06-21).
+            # 그 외(한도/대사/경고)엔 숨긴다(_sync_tabs 가 display 제어).
             with Horizontal(id="tksub"):
                 yield Label("", id="tksublead", markup=False)
-                with Horizontal(id="tksub_period"):
-                    yield Label(i18n.t("시간"), id="tab_hour", classes="tkbtab",
-                                markup=False)
-                    yield Label(i18n.t("일"), id="tab_day", classes="tkbtab",
-                                markup=False)
-                    yield Label(i18n.t("주"), id="tab_week", classes="tkbtab",
-                                markup=False)
-                    yield Label(i18n.t("월"), id="tab_month", classes="tkbtab",
-                                markup=False)
                 yield Label(i18n.t("정렬"), id="tab_order", classes="tkbtab",
                             markup=False)
             yield Static("", id="tktop", markup=False)
@@ -1147,25 +1144,14 @@ class TokenLogScreen(ModalScreen):
             self.query_one("#tkconn").refresh()
         except Exception:
             pass
-        # 보조옵션 줄: 기간/세션 뷰에서만 보인다(계정/한도/대사/경고엔 옵션 없음 →
-        # 줄 자체를 숨겨 빈 줄이 안 남게). 기간 뷰=입도+정렬, 세션 뷰=정렬.
+        # 보조옵션 줄: 기간/세션 뷰에서만 보인다(한도/대사/경고엔 옵션 없음 → 줄 자체를
+        # 숨겨 빈 줄이 안 남게). 입도(시간/일/주/월)는 계층 트리로 대체돼 정렬만 남는다.
         show_sub = active in ("time", "session")
         try:
             self.query_one("#tksub").display = show_sub
         except Exception:
             pass
         if show_sub:
-            try:
-                self.query_one("#tksub_period").display = (active == "time")
-            except Exception:
-                pass
-            for tid, bucket in self._TAB_BUCKET.items():
-                try:
-                    self.query_one("#" + tid, Label).set_class(
-                        active == "time" and bucket == self._bucket,
-                        "tkbtab-active")
-                except Exception:
-                    pass
             try:
                 self.query_one("#tab_order", Label).set_class(
                     self._order == "tokens", "tkbtab-active")
@@ -1576,6 +1562,12 @@ class TokenLogScreen(ModalScreen):
         if self._warn_mode:
             self._refresh_warn(table)
             return
+        # 기간(time) 뷰 + 시간순 = 계층 타임라인 트리(2026-06-21). 토큰순은 입도가 섞이면
+        # 의미가 없어 평탄한 일(day) 목록으로 폴백(아래 _view_rows 경로, SC-8). 세션 뷰도
+        # 종전 평탄 경로.
+        if self._view == "time" and self._order == "time":
+            self._refresh_tree(table)
+            return
         label_w, bar_cells = self._metrics()
         rows, vmax, win, rowhdr, bkeys, rmodels = self._view_rows()
         # §10-D: hour 버킷이면 시각별 세션 5h 한도 최대%(권위 /usage)를 별도 열로 보인다.
@@ -1780,6 +1772,305 @@ class TokenLogScreen(ModalScreen):
         # (옛 footer '5h/1주 경계까지 남은 시간' 한 줄은 제거 — 잔여시간을 5h%/1w%
         # 칼럼 제목에 inline 으로 옮겼다, 요청 2026-06-20.)
 
+    # ── 계층 타임라인 트리(2026-06-21) ──────────────────────────────────────
+    # 기간(time) 뷰 + 시간순일 때 표는 월→주→일→시각을 한 트리로 보인다(옛 시간/일/
+    # 주/월 서브탭 대체). 기본 펼침 깊이는 시간적 거리로 자동 결정(§3): 오늘=시각까지,
+    # 이번 주 지난 날=일, 이번 달 지난 주=주, 이전 달=월. 어떤 행이든 펼치고(▶→▼)
+    # 접어(▼→▶) 더 깊은 입도를 본다.
+
+    def _tree_open(self, key, default):
+        """행의 effective 펼침 여부 = 기본값 ^ (사용자 토글). 한 집합(_tree_toggled)
+        으로 기본 열린 행 접기·기본 닫힌 행 펼치기를 모두 표현한다."""
+        return default ^ (key in self._tree_toggled)
+
+    def _build_tree_rows(self):
+        """계층 트리 노드 목록을 만든다(표 행과 1:1). 각 노드 dict:
+          kind: 'month'|'week'|'day'|'hour'|'divider'
+          key: 토글 키(펼침 가능 행만, leaf/divider 는 None)
+          label·tokens·models·level(들여쓰기)·expandable·expanded·bk(시각 5h% 조인키)
+        반환: (nodes, total) — total=표시 합(중복 없는 일자 전체 합).
+
+        멤버십은 day 인덱스에서 각 날짜의 (월, ISO주)를 파생해 세 구역으로 가른다:
+          ① 이번 주의 날 → 최상위 일 행(오늘은 시각까지 기본 펼침),
+          ② 이번 달의 지난 주 → 최상위 주 행(펼치면 일·시각),
+          ③ 이전 달 → 최상위 월 행(펼치면 주·일·시각).
+        각 날짜는 정확히 한 구역에만 들어가 토큰이 중복 집계되지 않는다(가산성 유지).
+        시각 입도는 raw _records(최근 N)로만 만들 수 있어 옛 날을 펼치면 시각이 비어
+        있을 수 있다(일자 합성 레코드엔 시간 정보가 없다 — 설계 한계)."""
+        from datetime import date, datetime
+        src = self._full_recs if self._full_recs is not None else self._records
+        weekdays = i18n.t("pscreen.weekdays").split(",")
+        hour_suffix = i18n.t("pscreen.hour_suffix")
+        day_idx = usagelog.agg_index(src, "day", weekdays=weekdays,
+                                     hour_suffix=hour_suffix)
+        hour_idx = usagelog.agg_index(self._records, "hour",
+                                      hour_suffix=hour_suffix)
+        try:
+            today = date.today()
+        except Exception:
+            today = None
+        today_key = today.strftime("%Y-%m-%d") if today else ""
+        this_week = today.strftime("%G-W%V") if today else ""
+        this_month = today.strftime("%Y-%m") if today else ""
+
+        def wk_of(d):
+            try:
+                return datetime.strptime(d, "%Y-%m-%d").strftime("%G-W%V")
+            except ValueError:
+                return d
+
+        seg_week_days = []      # 이번 주: 일 키 목록
+        seg_month = {}          # 이번 달 지난 주: week_key -> [day keys]
+        seg_past = {}           # 이전 달: month_key -> {week_key -> [day keys]}
+        for d in day_idx:
+            wk, mk = wk_of(d), d[:7]
+            if wk == this_week:
+                seg_week_days.append(d)
+            elif mk == this_month:
+                seg_month.setdefault(wk, []).append(d)
+            else:
+                seg_past.setdefault(mk, {}).setdefault(wk, []).append(d)
+
+        nodes = []
+
+        def _hours_of(day_key):
+            return sorted((h for h in hour_idx if h[:10] == day_key),
+                          reverse=True)
+
+        def emit_hours(day_key, level):
+            for hk in _hours_of(day_key):
+                e = hour_idx[hk]
+                nodes.append({"kind": "hour", "key": None,
+                              "label": hk[11:13] + hour_suffix,
+                              "tokens": e["tokens"], "models": e["models"],
+                              "level": level, "expandable": False,
+                              "expanded": False, "bk": hk})
+
+        def emit_day(day_key, level, default_open):
+            e = day_idx[day_key]
+            key = "day:" + day_key
+            has_hours = bool(_hours_of(day_key))
+            opened = self._tree_open(key, default_open) if has_hours else False
+            nodes.append({"kind": "day", "key": key if has_hours else None,
+                          "label": e["label"], "tokens": e["tokens"],
+                          "models": e["models"], "level": level,
+                          "expandable": has_hours, "expanded": opened,
+                          "bk": None})
+            if opened:
+                emit_hours(day_key, level + 1)
+
+        def emit_week(week_key, days, level, parent_mk):
+            key = "week:%s:%s" % (parent_mk, week_key)
+            tok = sum(day_idx[d]["tokens"] for d in days)
+            models = usagelog._merge_tiers([day_idx[d]["models"] for d in days])
+            opened = self._tree_open(key, False)
+            nodes.append({"kind": "week", "key": key,
+                          "label": "W" + week_key.split("-W", 1)[-1],
+                          "tokens": tok, "models": models, "level": level,
+                          "expandable": True, "expanded": opened, "bk": None})
+            if opened:
+                for d in sorted(days, reverse=True):
+                    emit_day(d, level + 1, False)
+
+        def emit_month(month_key, weeks_map, level):
+            key = "month:" + month_key
+            all_days = [d for ds in weeks_map.values() for d in ds]
+            tok = sum(day_idx[d]["tokens"] for d in all_days)
+            models = usagelog._merge_tiers(
+                [day_idx[d]["models"] for d in all_days])
+            opened = self._tree_open(key, False)
+            nodes.append({"kind": "month", "key": key, "label": month_key,
+                          "tokens": tok, "models": models, "level": level,
+                          "expandable": True, "expanded": opened, "bk": None})
+            if opened:
+                for wk in sorted(weeks_map, reverse=True):
+                    emit_week(wk, weeks_map[wk], level + 1, month_key)
+
+        def divider(text):
+            nodes.append({"kind": "divider", "key": None, "label": text,
+                          "tokens": 0, "models": {}, "level": 0,
+                          "expandable": False, "expanded": False, "bk": None})
+
+        # ① 이번 주의 날들(최근 위, 오늘은 시각까지 기본 펼침).
+        for d in sorted(seg_week_days, reverse=True):
+            emit_day(d, 0, default_open=(d == today_key))
+        # ② 이번 달의 지난 주(주 행, 기본 접힘).
+        if seg_month:
+            if seg_week_days:
+                divider(i18n.t("pscreen.tree_earlier_weeks"))
+            for wk in sorted(seg_month, reverse=True):
+                emit_week(wk, seg_month[wk], 0, this_month)
+        # ③ 이전 달(월 행, 기본 접힘).
+        if seg_past:
+            if seg_week_days or seg_month:
+                divider(i18n.t("pscreen.tree_earlier_months"))
+            for mk in sorted(seg_past, reverse=True):
+                emit_month(mk, seg_past[mk], 0)
+
+        total = sum(e["tokens"] for e in day_idx.values())
+        return nodes, total
+
+    @staticmethod
+    def _tree_label(node):
+        """노드 표시 라벨: 들여쓰기(레벨×2칸) + 인디케이터(▼/▶/공백) + 라벨."""
+        ind = ("▼" if node["expanded"]
+               else ("▶" if node["expandable"] else " "))
+        return ("  " * node["level"]) + ind + " " + node["label"]
+
+    def _refresh_tree(self, table):
+        """계층 타임라인 트리를 표에 그린다(_refresh 의 time+시간순 경로)."""
+        nodes, win = self._build_tree_rows()
+        self._tree_nodes = nodes
+        label_w_cap, bar_cells = self._metrics()
+        data = [n for n in nodes if n["kind"] != "divider"]
+        # 시각 행 전용 5h%/1w% 열 — 데이터가 있을 때만(없으면 열 생략). 시각 외 행은 빈칸.
+        show5h = bool(self._hourly_pct)
+        show1w = show5h and bool(self._hourly_week_pct)
+        lim_cells = min(bar_cells, 8)
+        toks = [n["tokens"] for n in data]
+        vmax = max(toks, default=0)            # 입도 혼재 단일 vmax(§7.2 — 절대 비교)
+        maxdig = max((len(str(int(t))) for t in toks if t), default=1)
+        tok_w = min(11, max(6, max((len(self._tok_aligned(t, maxdig))
+                                    for t in toks), default=6)))
+        # 라벨 열 폭: 들여쓰기·인디케이터 포함 렌더 라벨 + 헤더 중 넓은 쪽(+1), 트리는
+        # 들여쓰기 여유가 필요해 티어 상한 대신 32셀까지 허용(박스 max-width 86 안).
+        rowhdr = i18n.t("기간")
+        if nodes:
+            labels = [rowhdr] + [self._tree_label(n) for n in nodes]
+            need = max(sum(_char_cells(c) for c in s) for s in labels) + 1
+            label_w = max(8, min(need, 32))
+        else:
+            label_w = label_w_cap
+        # 5h%/1w% 열 폭(헤더에 리셋 잔여시간 inline).
+        l5 = self._reset_left("session")
+        hdr5 = i18n.t("pscreen.hdr_5h", left=l5) if l5 else "5h%"
+        w5 = (lim_cells + 6) if lim_cells else 5
+        w5 = max(w5, len(hdr5) + 1)
+        lw = self._reset_left("week_all")
+        hdrw = i18n.t("pscreen.hdr_1w", left=lw) if lw else "1w%"
+        ww = max(5, len(hdrw) + 1)
+        # 토큰 막대 열: 모든 행(시각 비교). 박스 잔여 가로폭에서 잡고 14칸 상한.
+        show_bar = bool(data) and vmax > 0
+        bar_w = 0
+        if show_bar:
+            try:
+                box = min(int(self.app.size.width * 0.96), 86)
+            except Exception:
+                box = label_w + tok_w + 18
+            used = label_w + tok_w + (w5 if show5h else 0) + (ww if show1w else 0)
+            ncols = 2 + (1 if show5h else 0) + (1 if show1w else 0)
+            avail = (box - 4) - used
+            bar_w = max(0, min(14, avail - (ncols + 1) * 2))
+            if bar_w < 3:
+                show_bar = False
+        # 컬럼.
+        table.add_column(rowhdr, key="label", width=label_w)
+        table.add_column(Text(i18n.t("토큰"), justify="left"), key="tok",
+                         width=tok_w)
+        if show_bar:
+            table.add_column(Text("", justify="left"), key="bar", width=bar_w)
+        if show5h:
+            table.add_column(Text(hdr5, justify="left"), key="lim5h", width=w5)
+            if show1w:
+                table.add_column(Text(hdrw, justify="left"), key="limw",
+                                 width=ww)
+        if not data:
+            empty = [i18n.t("(기록된 토큰 사용량이 없습니다)"), ""]
+            if show_bar:
+                empty.append("")
+            if show5h:
+                empty.append("")
+                if show1w:
+                    empty.append("")
+            table.add_row(*empty)
+        else:
+            for n in nodes:
+                if n["kind"] == "divider":
+                    cells = [Text(self._trunc(n["label"], label_w),
+                                  style="dim"), Text("")]
+                    if show_bar:
+                        cells.append(Text(""))
+                    if show5h:
+                        cells.append(Text(""))
+                        if show1w:
+                            cells.append(Text(""))
+                    table.add_row(*cells)
+                    continue
+                is_hour = n["kind"] == "hour"
+                # 월·주 행은 굵게(계층 상위 강조), 일·시각은 기본.
+                lstyle = "bold" if n["kind"] in ("month", "week") else None
+                lbl = self._trunc(self._tree_label(n), label_w)
+                cells = [Text(lbl, style=lstyle) if lstyle else lbl,
+                         Text(self._tok_aligned(n["tokens"], maxdig),
+                              justify="left")]
+                if show_bar:
+                    cells.append(self._tok_bar(n["tokens"], vmax, bar_w,
+                                               n["models"]))
+                if show5h:
+                    cells.append(self._lim5h_cell(n["bk"], lim_cells)
+                                 if is_hour else Text(""))
+                    if show1w:
+                        cells.append(self._lim_week_cell(n["bk"])
+                                     if is_hour else Text(""))
+                table.add_row(*cells)
+
+        # 제목·스코프·범례·힌트(평탄 경로와 동형).
+        order_l = i18n.t("시간순")
+        self.query_one("#tklogtitle", Label).update(
+            i18n.t("pscreen.tklog_title2", what=i18n.t("기간")))
+        life = self._total_all
+        if life is None:
+            life = win
+        sigma = f"~Σ{usagelog._fmt_tokens(life)}"
+        if life != win:
+            sigma += i18n.t("pscreen.tklog_disp", n=usagelog._fmt_tokens(win))
+        scope = i18n.t("pscreen.tklog_scope", order=order_l, sigma=sigma)
+        top = Text(self._limit_summary() + scope)
+        present: dict = {}
+        if show_bar:
+            for n in data:
+                for t, v in (n["models"] or {}).items():
+                    present[t] = present.get(t, 0) + (v or 0)
+        leg = self._model_legend(present)
+        if leg is not None:
+            top.append("\n")
+            top.append_text(leg)
+        self.query_one("#tktop", Static).update(top)
+        self.query_one("#tkhint", Static).update(i18n.t("pscreen.tklog_hint"))
+
+    def _tree_toggle_at(self, row, mode="toggle"):
+        """표 커서 행(row)에 대응하는 트리 노드를 펼치/접는다(키·클릭 공통).
+        mode='toggle'|'expand'|'collapse'. 펼침 불가 행(leaf/divider)·범위 밖이면 무동작.
+        토글 후 _refresh 로 다시 그리고 커서를 같은 행에 유지한다. 동작했으면 True."""
+        nodes = self._tree_nodes
+        if not (0 <= row < len(nodes)):
+            return False
+        n = nodes[row]
+        if not n["expandable"] or not n["key"]:
+            return False
+        cur_open = n["expanded"]
+        if mode == "expand" and cur_open:
+            return False
+        if mode == "collapse" and not cur_open:
+            return False
+        # 기본값 대비 토글: key 가 토글집합에 있으면 빼고 없으면 넣어 effective 를 뒤집는다.
+        if n["key"] in self._tree_toggled:
+            self._tree_toggled.discard(n["key"])
+        else:
+            self._tree_toggled.add(n["key"])
+        return True
+
+    async def _tree_apply(self, row):
+        """토글 반영(다시 그리기) 후 커서를 row 에 복원."""
+        await self._refresh()
+        try:
+            table = self.query_one(DataTable)
+            n = table.row_count
+            if n:
+                table.move_cursor(row=max(0, min(n - 1, row)))
+        except Exception:
+            pass
+
     def _exit_body_modes(self):
         """표를 대체하는 뷰(대사/한도/경고)에서 빠져나온다 — 기간/계정/세션/정렬 동작이
         어느 모드에서 눌려도 곧바로 먹게 한다. 하나라도 켜져 있었으면 True."""
@@ -1809,29 +2100,25 @@ class TokenLogScreen(ModalScreen):
             self.dismiss(None)
         elif wid == "tab_period":
             event.stop()
-            # 기간(시간 버킷) 뷰로 전환 — 입도/정렬은 하위 보조옵션 줄에서 고른다(§7.2).
+            # 기간(계층 타임라인) 뷰로 전환 — 정렬은 하위 보조옵션 줄에서 고른다(§7.2).
             # 한도/대사/경고 등 어느 탭에서든 클릭하면 기간 뷰로 복귀(§7.1).
             self._exit_body_modes()
             self._view = "time"
             self.run_worker(self._refresh())
-        elif wid in self._TAB_BUCKET:
-            event.stop()
-            # 기간 탭: 기간 뷰로 전환하며 버킷 선택(계정/세션/대사/한도 뷰에서도 한 번에).
-            self._exit_body_modes()
-            self._view = "time"
-            self._bucket = self._TAB_BUCKET[wid]
-            self.run_worker(self._refresh())
         elif wid == "tab_panel":
             event.stop()
-            # 세션 뷰 토글(행=세션별 합).
+            # 세션 뷰 토글(행=세션별 합). 뷰 전환 시 트리 펼침 상태 초기화(§3 재진입).
             was = self._exit_body_modes()
             self._view = "session" if was or self._view != "session" else "time"
+            self._tree_toggled.clear()
             self.run_worker(self._refresh())
         elif wid == "tab_order":
             event.stop()
-            # 버킷 정렬 토글: 시간순 ↔ 토큰순.
+            # 정렬 토글: 시간순(계층 트리) ↔ 토큰순(평탄 일 목록). 전환 시 트리 펼침
+            # 상태 초기화 — 토큰순은 평탄이라 무의미하고, 시간순 복귀 시 §3 기본으로(T9).
             self._exit_body_modes()
             self._order = "tokens" if self._order == "time" else "time"
+            self._tree_toggled.clear()
             self.run_worker(self._refresh())
         elif wid == "tab_limit":
             event.stop()
@@ -1892,19 +2179,35 @@ class TokenLogScreen(ModalScreen):
             elif k == "end":
                 chart.scroll_intervals(-10 ** 6)  # 가장 새(클램프)
             return
-        if k in self._BUCKETS:
+        # 계층 트리(기간 뷰 + 시간순): Enter/space 로 펼침·접힘 토글, →/← 로 펼침/접힘.
+        # up/down 은 DataTable 행 커서에 위임. (마우스 클릭은 RowSelected →
+        # on_data_table_row_selected 도 토글한다.) Enter 를 여기서 가로채지 않으면 화면
+        # on_key 의 '그 외 키=닫기' 폴백에 걸려 팝업이 닫힌다.
+        tree_active = (self._view == "time" and self._order == "time"
+                       and not (self._limit_mode or self._recon_mode
+                                or self._warn_mode))
+        if tree_active and k in ("left", "right", "space", "enter"):
             event.stop()
-            # 기간 뷰로 전환하며 버킷 선택(계정/세션/대사/한도 뷰에서도 한 번에).
-            self._exit_body_modes()
-            self._view = "time"
-            self._bucket = self._BUCKETS[k]
-            await self._refresh()
+            try:
+                row = self.query_one(DataTable).cursor_coordinate.row
+            except Exception:
+                return
+            mode = ("expand" if k == "right"
+                    else "collapse" if k == "left" else "toggle")
+            if self._tree_toggle_at(row, mode):
+                await self._tree_apply(row)
+            return
+        # h/d/w/m: 옛 입도 서브탭 단축키 — 계층 트리로 대체돼 더는 입도를 바꾸지 않는다.
+        # 흔한 글자라 팝업이 닫히지 않게 소비만 하고 무동작으로 둔다(예약).
+        if k in ("h", "d", "w", "m"):
+            event.stop()
             return
         if k == "p":
             event.stop()
-            # 세션 뷰 토글(행=세션별 합).
+            # 세션 뷰 토글(행=세션별 합). 뷰 전환 시 트리 펼침 상태 초기화(§3 재진입).
             was = self._exit_body_modes()
             self._view = "session" if was or self._view != "session" else "time"
+            self._tree_toggled.clear()
             await self._refresh()
             return
         if k == "l":
@@ -1917,9 +2220,11 @@ class TokenLogScreen(ModalScreen):
             return
         if k == "o":
             event.stop()
-            # 버킷 정렬 토글: 시간순 ↔ 토큰순.
+            # 정렬 토글: 시간순(계층 트리) ↔ 토큰순(평탄 일 목록). 전환 시 트리 펼침
+            # 상태 초기화(토큰순 평탄·시간순 복귀 시 §3 기본, T9).
             self._exit_body_modes()
             self._order = "tokens" if self._order == "time" else "time"
+            self._tree_toggled.clear()
             await self._refresh()
             return
         if k == "s":
@@ -1975,3 +2280,16 @@ class TokenLogScreen(ModalScreen):
         # 그 외 키는 닫는다(기존 동작).
         event.stop()
         self.dismiss(None)
+
+    async def on_data_table_row_selected(self, event):
+        """행 선택(Enter·마우스 클릭) → 계층 트리에선 그 행을 펼치/접는다. 그 외
+        뷰(세션/토큰순/한도/대사/경고)에선 행 선택이 아무 동작도 하지 않는다(종전)."""
+        if not (self._view == "time" and self._order == "time"):
+            return
+        if self._limit_mode or self._recon_mode or self._warn_mode:
+            return
+        row = getattr(event, "cursor_row", None)
+        if row is None:
+            return
+        if self._tree_toggle_at(row, "toggle"):
+            await self._tree_apply(row)

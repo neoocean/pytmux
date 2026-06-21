@@ -444,6 +444,35 @@ def agg_view(records: list, bucket: str = "day", account: str | None = None,
             "bmax": max((t for _, t, _ in brows), default=0)}
 
 
+def agg_index(records: list, bucket: str = "day", account: str | None = None,
+              weekdays=None, hour_suffix="시") -> dict:
+    """버킷 키 → {"tokens", "label", "models"} 인덱스(정렬·접힘 없는 순수 맵).
+
+    계층 타임라인 뷰(요청 2026-06-21)가 월/주/일/시각 입도를 각각 인덱싱해 트리 행을
+    O(1) 로 조립할 때 쓴다 — agg_view 는 정렬된 *목록* 을 주지만 트리는 키로 직접
+    조회해야 한다(월→주→일→시각 멤버십). label 은 _bucket_short 와 동일 규칙,
+    models 는 막대 색 분할용 모델 티어 분해({tier: tok})."""
+    agg = aggregate(records, bucket, account, "account")
+    bmodels: dict = {}
+    for r in records:
+        acct = r.get("account") or UNKNOWN
+        if account is not None and acct != account:
+            continue
+        tok = int(r.get("tokens", 0))
+        if tok <= 0:
+            continue
+        bk = bucket_key(r.get("ts", 0.0), bucket, r.get("tzoff"))
+        bmodels.setdefault(bk, {})
+        tier = model_tier(r)
+        bmodels[bk][tier] = bmodels[bk].get(tier, 0) + tok
+    out: dict = {}
+    for bk, per in agg["buckets"].items():
+        out[bk] = {"tokens": sum(per.values()),
+                   "label": _bucket_short(bk, bucket, weekdays, hour_suffix),
+                   "models": bmodels.get(bk, {})}
+    return out
+
+
 def summary_lines(records: list, bucket: str = "day",
                   account: str | None = None, dim: str = "account") -> list:
     """조회 화면(InfoScreen)용 사람이 읽는 집계 줄 목록을 만든다.
