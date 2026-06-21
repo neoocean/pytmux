@@ -564,7 +564,7 @@ from . import usagelog
 from .claude import parse_reset_ts
 from pytmuxlib.clientutil import (_char_cells, bar, bar_floating,
                                   bar_floating_segments,
-                                  format_option_row, _CLOCK_FONT)
+                                  format_option_row, _CLOCK_FONT, _CLOCK_FONT_ROWS)
 from pytmuxlib.clientscreens import usage_bar_lines
 
 
@@ -1429,14 +1429,14 @@ class TokenLogScreen(ModalScreen):
         h, rem = divmod(left, 3600)
         m, s = divmod(rem, 60)
         text = f"{h:02d}:{m:02d}:{s:02d}"
-        rows = ["", "", "", "", ""]
+        rows = [""] * _CLOCK_FONT_ROWS
         for i, ch in enumerate(text):
-            glyph = _CLOCK_FONT.get(ch, ["   "] * 5)
-            for r in range(5):
+            glyph = _CLOCK_FONT.get(ch, ["   "] * _CLOCK_FONT_ROWS)
+            for r in range(_CLOCK_FONT_ROWS):
                 if i:
                     rows[r] += " "
                 rows[r] += glyph[r]
-        # 앞 빈 줄로 막대와 시계를 띄우고, 라벨 + 5줄 블록 글자.
+        # 앞 빈 줄로 막대와 시계를 띄우고, 라벨 + 3줄 블록 글자.
         return ["", label] + rows
 
     def _refresh_limit(self, table):

@@ -20,7 +20,7 @@ from textual.widgets import Label, Static
 
 from pytmuxlib import i18n
 from pytmuxlib.clientscreens import usage_bar_lines
-from pytmuxlib.clientutil import _CLOCK_FONT
+from pytmuxlib.clientutil import _CLOCK_FONT, _CLOCK_FONT_ROWS
 
 from .reset import fmt_countdown, parse_reset_to_dt, urgency
 
@@ -55,7 +55,7 @@ def soonest_reset(usage, now):
 
 
 def big_clock_text(td, style):
-    """timedelta(<24h) → 5행 블록 HH:MM:SS Text(_CLOCK_FONT). 24시간 이상이거나
+    """timedelta(<24h) → 3행 블록 HH:MM:SS Text(_CLOCK_FONT). 24시간 이상이거나
     음수면 None(호출부가 텍스트 카운트다운으로 폴백)."""
     total = int(td.total_seconds())
     if total < 0 or total >= 86400:
@@ -63,10 +63,10 @@ def big_clock_text(td, style):
     h, rem = divmod(total, 3600)
     m, s = divmod(rem, 60)
     text = f"{h:02d}:{m:02d}:{s:02d}"
-    rows = ["", "", "", "", ""]
+    rows = [""] * _CLOCK_FONT_ROWS
     for i, ch in enumerate(text):
-        glyph = _CLOCK_FONT.get(ch, ["   "] * 5)
-        for r in range(5):
+        glyph = _CLOCK_FONT.get(ch, ["   "] * _CLOCK_FONT_ROWS)
+        for r in range(_CLOCK_FONT_ROWS):
             if i:
                 rows[r] += " "
             rows[r] += glyph[r]

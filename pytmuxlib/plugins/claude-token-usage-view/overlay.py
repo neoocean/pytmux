@@ -12,7 +12,7 @@ from datetime import datetime
 from pytmuxlib import i18n
 from pytmuxlib.clientrender import dim_pane, put_cell
 from pytmuxlib.clientscreens import usage_bar_lines
-from pytmuxlib.clientutil import _CLOCK_FONT, _darken_style
+from pytmuxlib.clientutil import _CLOCK_FONT, _CLOCK_FONT_ROWS, _darken_style
 
 from .reset import fmt_countdown
 from .screen import soonest_reset
@@ -52,14 +52,14 @@ def draw_usage_overlay(cells, panes, view_panes, W, H, text_st, digit_st,
         td = dt - now
         total = int(td.total_seconds())
         cy = last + 2
-        if 0 <= total < 86400 and pw >= 30 and (py + ph - cy) >= 5:
+        if 0 <= total < 86400 and pw >= 30 and (py + ph - cy) >= _CLOCK_FONT_ROWS:
             h, rem = divmod(total, 3600)
             m, s = divmod(rem, 60)
             text = f"{h:02d}:{m:02d}:{s:02d}"
-            glyphs = [_CLOCK_FONT.get(c, ["   "] * 5) for c in text]
+            glyphs = [_CLOCK_FONT.get(c, ["   "] * _CLOCK_FONT_ROWS) for c in text]
             cw = sum(len(g[0]) for g in glyphs) + (len(glyphs) - 1)
             ox = px + max(0, (pw - cw) // 2)
-            for row in range(5):
+            for row in range(_CLOCK_FONT_ROWS):
                 gx = ox
                 for g in glyphs:
                     for c in g[row]:

@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import datetime as _datetime
 
 from pytmuxlib.clientrender import dim_pane, put_cell
-from pytmuxlib.clientutil import _CLOCK_FONT, _dim_cell
+from pytmuxlib.clientutil import _CLOCK_FONT, _CLOCK_FONT_ROWS, _dim_cell
 
 
 def draw_clock_overlay(cells, panes, clock_panes, W, H, digit_st, now=None):
@@ -27,9 +27,9 @@ def draw_clock_overlay(cells, panes, clock_panes, W, H, digit_st, now=None):
         return
     now = now or _datetime.now()
     text = now.strftime("%H:%M:%S")
-    glyphs = [_CLOCK_FONT.get(c, ["   "] * 5) for c in text]
+    glyphs = [_CLOCK_FONT.get(c, ["   "] * _CLOCK_FONT_ROWS) for c in text]
     cw = sum(len(g[0]) for g in glyphs) + (len(glyphs) - 1)
-    ch_h = 5
+    ch_h = _CLOCK_FONT_ROWS
     for p in panes:
         if p["id"] not in clock_panes:
             continue

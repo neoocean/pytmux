@@ -31,7 +31,7 @@ async def test_clock_overlay_big_and_fallback():
     cells = _grid(60, 10)
     draw_clock_overlay(cells, panes, {1}, 60, 10, digit, now=now)
     filled = sum(1 for row in cells for c in row if c[0] not in (" ", ""))
-    assert filled > 12, filled    # 8글자×5행 폰트의 획들
+    assert filled > 12, filled    # 8글자×3행 폰트의 획들
     # clock_panes 에 없으면 무동작
     cells2 = _grid(60, 10)
     draw_clock_overlay(cells2, panes, set(), 60, 10, digit, now=now)
