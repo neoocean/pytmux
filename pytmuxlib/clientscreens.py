@@ -1860,9 +1860,13 @@ class PromptScreen(ModalScreen):
                     # 입력 오른쪽 힌트(설명/인자 밑줄/토글 선택지). markup 으로 강조.
                     yield Label("", id="phint", markup=True)
         else:
-            inp.styles.dock = "bottom"
-            inp.styles.padding = (0, 1)
-            yield inp
+            # 검색·이름변경 등 한 줄 입력도 명령 프롬프트와 같은 둥근 테두리 박스
+            # (바닥 고정) 스타일로 통일한다(요청 2026-06-21). 바닥 끝에 붙는 맨몸
+            # Input 대신, 후보·힌트 없이 입력 한 칸만 #prow 테두리 안에 둔다 —
+            # 키보드 바로 위에 또렷한 박스로 떠 명령 프롬프트와 시각적으로 일관된다.
+            with Vertical(id="pwrap"):
+                with Horizontal(id="prow"):
+                    yield inp
 
     def on_mount(self):
         inp = self.query_one(Input)
