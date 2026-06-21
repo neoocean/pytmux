@@ -1,7 +1,7 @@
 # CLAUDE.md — pytmux 에이전트 온보딩
 
 > LLM/에이전트가 이 저장소에서 작업할 때 먼저 읽는 30초 안내(LLM 친화성 4-3).
-> 사람용 상세 문서는 `docs/`(MANUAL·CONTRIBUTING·PLUGIN_MANUAL)와 `docs/internal/`.
+> 사람용 상세 문서는 **GitHub 위키**(매뉴얼·갤러리·플러그인·기능비교·기여)와 `docs/internal/`(p4 전용).
 
 ## 무엇인가
 Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데몬)–다중 클라이언트
