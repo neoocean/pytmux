@@ -90,6 +90,26 @@ jobs:
         timeout-minutes: 5
         run: python -u tests/run.py test_security_runtime test_ptyhost_auth test_redteam test_fuzz_parsers
 
+      - name: Tier 3 red-team tool — live spawn battery (SECURITY_REVIEW §10 W2/W3)
+        # 모듈 회귀(test_redteam)만으론 redteam **도구 자체**가 안 돌았다 — 특히
+        # Windows 는 종전에 `--spawn` 이 unix 소켓 하드코딩으로 즉시 크래시했다(§10 W2).
+        # 이제 도구가 프로덕션 전송(TCP 루프백)으로 격리 서버를 띄워 1200 적대 프레임을
+        # 던지고, 서버 생존·무인가 수용 0·**핸들 누수 없음**(§10 W3 Windows 핸들 카운트)
+        # 을 verdict 로 못박는다. exit code 가 0 이 아니면(=결함) 잡이 빨강. ubuntu·
+        # windows-latest 양쪽에서 실 도구를 돌린다.
+        timeout-minutes: 3
+        run: python -u scripts/redteam.py --rounds 200
+
+      - name: Tier 3 red-team tool — attach self-test (SECURITY_REVIEW §10 W5)
+        # --spawn 은 **인프로세스**(self 자원)라 §10 W3 의 외부-PID 핸들/RSS 표본
+        # 경로(OpenProcess·tasklist)를 안 친다. --attach-selftest 는 별도 자식
+        # 프로세스로 격리 서버를 띄워 discover→attach 로 ① 디스커버리가 그 서버를
+        # 찾고 ② netstat 가 소유 PID 를 정확히 집으며(=child pid 일치) ③ **외부 PID**
+        # 핸들/RSS 가 실측되고 ④ 비파괴 배터리 뒤 서버 생존·핸들 누수 없음을 verdict
+        # 로 못박는다. self-test 라 백그라운드 서버 오케스트레이션 불요(단일 명령).
+        timeout-minutes: 3
+        run: python -u scripts/redteam.py --attach-selftest --rounds 100
+
       - name: Headless test suite
         timeout-minutes: 8        # 스위트는 보통 ~수분 — 매달리면 여기서 끊어 잡 전체를 안 먹게
         run: python -u tests/run.py   # -u: 버퍼링 없이 진행 즉시 출력(행 지점 식별)
