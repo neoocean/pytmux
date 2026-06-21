@@ -226,9 +226,9 @@ def render_segs(status, segs, w, w0=None):
     # 활성 Claude 패널: 모델(M14c) + 컨텍스트 사용량(best-effort) + 세션 누적(#3, Σ).
     uparts = []
     if status.claude_active:
-        # 모델 배지는 좁은 폭에선 생략(자리 절약). claude_usage 유무와 무관하게 표시
-        # — 세션 시작 직후 usage 가 아직 None 이어도 모델명은 항상 보여야 한다.
-        if status.claude_model and w >= 60:
+        # 모델 배지: 폭이 좁거나 모델 힌트(tip) 활성 시 생략 — tip 활성 시에는 tip 영역
+        # 왼쪽에 모델 확인 배지로 별도 표시하므로 compound 에서 중복 제거.
+        if status.claude_model and w >= 60 and not status.claude_model_tip:
             uparts.append(status.claude_model)
         # 좌하단 표기(사용자 요청 2026-06-11): 하이라이트 패널의 계정 기준으로 ①현재
         # 패널 세션의 컨텍스트 비율% ②5시간 리밋까지 남은 비율%만 보인다. **토큰 수치는
@@ -361,14 +361,21 @@ def render_segs(status, segs, w, w0=None):
         # (포맷 미인식 / 장기 턴 / 반복 루프 종류별 안내).
         status._warn_zone = (acc, acc + _cw(_wt))
         acc += _cw(_wt)
-    # M14c 모델 과선택 힌트 배지(알림만 — 개입 없음). 경고(error 빨강)와 구분되게
-    # secondary 배경의 소프트 톤으로 그린다. 힌트 문자열은 💡(2칸) 뒤 공백을 직접
-    # 포함해 다음 글자 겹침이 없다(claude_warn 의 이모지 패턴과 동일).
+    # M14c 모델 과선택/세션 힌트 배지. compound 와 구분되도록 accent(오렌지) 배경.
+    # 맨 왼쪽에 모델 확인 배지(secondary)를 붙여 어떤 모델의 힌트인지 고정한다 —
+    # tip 활성 시 compound 가 모델명을 빼므로 여기서 클릭 접근점(model_zone)을 제공.
     if status.claude_model_tip:
+        _tsec = Style(color="white", bgcolor=tc("secondary"), bold=True)
+        _thi = Style(color="black", bgcolor=tc("warning"), bold=True)
+        _tfb = getattr(status, "focus_btn", None)
+        if status.claude_model and w >= 60:
+            _mc = f" {status.claude_model} "
+            _mcw = _cw(_mc)
+            status._model_zone = (acc, acc + _mcw)
+            segs.append(Segment(_mc, _thi if _tfb == "model" else _tsec))
+            acc += _mcw
         _tt = f" {status.claude_model_tip} "
-        segs.append(Segment(_tt,
-                            Style(color="white", bgcolor=tc("secondary"),
-                                  bold=True)))
+        segs.append(Segment(_tt, Style(color="black", bgcolor=tc("accent"), bold=True)))
         acc += _cw(_tt)
     # §3.10 C ctx 압박 힌트 배지(warning 색조, model_tip 뒤에 표시).
     if status.claude_ctx_tip:

@@ -4136,7 +4136,7 @@ async def test_session_start_model_hint_opus_sonnet():
         srv._scan_claude(sess, win)
         assert p._claude == "idle"
         assert p._claude_model and p._claude_model.startswith("opus"), p._claude_model
-        assert p._model_tip is not None and "opus" in p._model_tip.lower(), p._model_tip
+        assert p._model_tip is not None and "세션" in p._model_tip, p._model_tip
         assert p._session_model_hinted is True
 
         # busy 진입 → 힌트 초기화(_model_tip=None). 재idle 시 _session_model_hinted=True라

@@ -1438,7 +1438,7 @@ class ServerClaudeMixin:
                     if tip is None and not p._session_model_hinted:
                         mdl = p._claude_model or ""
                         if mdl.startswith("opus") or mdl.startswith("sonnet"):
-                            tip = f"💡 {mdl} 세션 — /model로 티어를 의식적으로 선택하셨나요?"
+                            tip = "💡 세션 — /model로 티어를 의식적으로 선택하셨나요?"
                             p._session_model_hinted = True
                     elif tip is None and p._session_model_hinted and p._model_tip:
                         tip = p._model_tip   # idle 지속 중 힌트 유지
