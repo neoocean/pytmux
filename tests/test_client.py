@@ -4601,6 +4601,45 @@ async def test_status_limit_badge_emoji_gets_visible_space():
     await _with_app(body)
 
 
+async def test_mitigation_badge_shown_and_clickable():
+    """과사용 완화 배지: claude_ctx_autoclear 또는 claude_budget_plan ON 일 때 상태줄
+    맨 앞(나머지 배지보다 앞)에 success(녹색) 배지가 표시되고, 클릭하면 절감 설정 팝업
+    (open_token_saver)을 연다. 두 기능이 모두 OFF 이면 배지가 없어야 한다."""
+    async def body(app, pilot, srv):
+        from textual import events
+
+        # ctx_autoclear ON → 완화 배지 등록
+        app.status.claude_active = True
+        app.status.claude_ctx_autoclear = True
+        app.status.claude_budget_plan = False
+        line_segs = app.status.render_line(0)
+        line = "".join(s.text for s in line_segs)
+        assert app.status._mitigation_zone is not None, "ctx_autoclear ON → 완화 배지 등록"
+        mz = app.status._mitigation_zone
+        # budget_level 배지나 다른 배지보다 앞에 위치(x0이 더 작아야 함)
+        app.status.budget_level = 100
+        app.status.render_line(0)
+        lz = app.status._limit_zone
+        assert lz is not None
+        assert mz[0] < lz[0], "완화 배지가 한도 경고 배지보다 앞에 위치"
+
+        # 클릭 → open_token_saver 호출
+        called = []
+        app.open_token_saver = lambda: called.append(True)
+        y = app.status.size.height - 1
+        cx = (mz[0] + mz[1]) // 2
+        ev = events.MouseDown(app.status, cx, y, 0, 0, 1, False, False, False)
+        app.status.on_mouse_down(ev)
+        assert called == [True], called
+
+        # 두 기능 모두 OFF → 배지 없음
+        app.status.claude_ctx_autoclear = False
+        app.status.claude_budget_plan = False
+        app.status.render_line(0)
+        assert app.status._mitigation_zone is None, "완화 기능 모두 OFF → 배지 없음"
+    await _with_app(body)
+
+
 async def test_open_warn_info_popup_content():
     """open_claude_warn_info: 상태줄 ⚠ 경고 배지 클릭 → 통합 토큰 팝업(TokenLogScreen)의
     '경고' 탭을 열어 경고 종류별 상황·할일을 보여준다(2026-06-17 통합 — 옛 별도 InfoScreen

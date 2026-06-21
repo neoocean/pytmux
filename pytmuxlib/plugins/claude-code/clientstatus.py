@@ -28,6 +28,8 @@ i18n.register({
         # 언어중립('⚠ M:SS')이라 서버 문자열을 그대로 쓴다(배지 키 없음).
         "claude.warn_repeat_badge": "⚠ 동일 결과 {n}회 반복 — 루프 의심",
         "claude.warn_fmt_badge": "⚠ Claude 포맷 미인식 — 추적 중단(버전 업데이트?)",
+        # 과사용 완화 배지: ctx 자동정리·예산 plan 유도 중 하나라도 ON 일 때 표시.
+        "claude.mitigation_badge": " 완화 ",
     },
     "en": {
         "claude.limit_reached": " ⚠ Limit reached ",
@@ -41,6 +43,7 @@ i18n.register({
         "claude.warn_repeat_badge": "⚠ Same output repeated {n}× — loop suspected",
         "claude.warn_fmt_badge":
             "⚠ Claude format unrecognized — tracking paused (version update?)",
+        "claude.mitigation_badge": " saving ",
     },
 })
 
@@ -211,6 +214,15 @@ def render_segs(status, segs, w, w0=None):
     _cw = lambda t: sum(_char_cells(c) for c in t)  # noqa: E731
     # w0 미지정(직접 호출)이면 기존처럼 전수합산으로 폭을 구한다(하위호환).
     acc = w0 if w0 is not None else sum(_cw(s.text) for s in segs)
+    # 토큰 과사용 완화 배지: ctx 자동정리(claude_ctx_autoclear) 또는 예산 plan 유도
+    # (claude_budget_plan) 중 하나라도 ON 일 때 파란 secondary 와 다른 success(녹색)
+    # 배경으로 표시한다. 나머지 배지보다 앞(좌측)에 배치해 완화 상태를 우선 인식하게 한다.
+    status._mitigation_zone = None
+    if status.claude_active and (status.claude_ctx_autoclear or status.claude_budget_plan):
+        _mt = i18n.t("claude.mitigation_badge")
+        segs.append(Segment(_mt, Style(color="white", bgcolor=tc("success"), bold=True)))
+        status._mitigation_zone = (acc, acc + _cw(_mt))
+        acc += _cw(_mt)
     # 활성 Claude 패널: 모델(M14c) + 컨텍스트 사용량(best-effort) + 세션 누적(#3, Σ).
     uparts = []
     if status.claude_active:

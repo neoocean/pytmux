@@ -412,13 +412,14 @@ def _open_perm_mode(app, pane_id):
 
 def _open_token_log(app, initial_mode=None):
     """토큰 사용량 영속 로그 집계 팝업(#7). 서버에 최근 로그를 요청하고, 응답
-    (t==token_log)이 오면 handle_message 가 TokenLogScreen 으로 시간/일/주/월×계정
-    집계를 띄운다. 상태바 Σ 클릭의 진입점이기도 하다.
+    (t==token_log)이 오면 handle_message 가 TokenLogScreen 으로 계층 타임라인(월→주→
+    일→시각) 집계를 띄운다. 상태바 Σ 클릭의 진입점이기도 하다.
 
     initial_mode="limit" 이면 한도(/usage) 탭이 활성인 채로 연다 — usage-view 팝업이
     별도 화면 대신 이 통합 팝업의 한도 탭을 열게 한다(통합, 사용자 결정 2026-06-17).
-    initial_mode="hour" 면 기간 뷰의 시간(hour) 버킷으로 연다 — 상태줄 "N%/5h used"
-    세그먼트 클릭이 시각별 5h% 막대 뷰를 바로 보이게 한다(사용자 요청 2026-06-18)."""
+    initial_mode="hour" 는 상태줄 "N%/5h used" 세그먼트 클릭 경로 — 계층 트리에선
+    오늘 행이 시각까지 기본 펼쳐져 시각별 5h% 막대가 바로 보이므로 기본 기간 뷰로
+    연다(옛 hour 버킷 대체, 2026-06-21)."""
     app._want_token_log = True
     app._token_log_initial = initial_mode
     app.send_cmd("request_token_log", limit=5000)
@@ -853,6 +854,7 @@ class _ClaudeCodePlugin:
         app.open_usage_panel = lambda: _open_usage_panel(app)
         app.open_token_log = lambda initial=None: _open_token_log(app, initial)
         app.open_claude_warn_info = lambda: _open_warn_info(app)
+        app.open_token_saver = lambda: self._open_saver(app)  # 완화 배지 클릭 → 절감 설정 팝업
         # (open_claude_usage_tree/_open_usage_tree 설치는 token-usage→token-log 통합
         #  (2026-06-12)으로 제거 — 상태줄 사용량 클릭·esc 포커스 Enter 는 이미
         #  open_token_log 를 부른다.)

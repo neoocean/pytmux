@@ -970,6 +970,7 @@ class StatusBar(Widget):
         self._model_zone = None  # (x0, x1) 모델 배지 클릭 영역(모델·컨텍스트 팝업, 요청)
         self._limit_zone = None  # (x0, x1) 한도 경고 배지 클릭 영역(usage-view 팝업, 요청)
         self._warn_zone = None   # (x0, x1) Claude 경고 배지 클릭 영역(상황·할일 팝업, 요청)
+        self._mitigation_zone = None  # (x0, x1) 과사용 완화 배지 클릭 영역(절감 설정 팝업)
         self._ar_zone = None     # (x0, x1) AR(자동재개) 배지 클릭 영역(켜고끄기 팝업, 요청)
         self._host_zone = None   # (x0, x1) 서버이름(host) 클릭 영역(서버 탭, §10-A #12)
         self.focus_btn = None    # ESC 모드 하단 포커스 키 강조(model/usage/rec/host/clock/date)
@@ -1141,6 +1142,7 @@ class StatusBar(Widget):
         self._model_zone = None   # 모델 배지 클릭존(모델·컨텍스트 변경 팝업, 요청)
         self._limit_zone = None   # 한도 경고 배지 클릭존(usage-view 사용량+리셋 팝업, 요청)
         self._warn_zone = None    # Claude 경고 배지 클릭존(상황·할일 팝업, 요청)
+        self._mitigation_zone = None  # 과사용 완화 배지 클릭존(절감 설정 팝업)
         # Claude 좌하단 세그먼트(모델 배지·컨텍스트·토큰Σ·예산경고·카운트다운·폭주경고)는
         # claude-code 플러그인의 client_statusbar 훅이 그리고 위 두 클릭존을 채운다(Phase
         # 2c). 플러그인이 없으면 no-op → Claude 세그먼트 미표시·클릭존 None(클릭 no-op).
@@ -1244,6 +1246,13 @@ class StatusBar(Widget):
             fn and fn(self.app.layout.get("active"))
             event.stop()
             return
+        mitz = self._mitigation_zone
+        if mitz and mitz[0] <= event.x < mitz[1]:
+            # 과사용 완화 배지 클릭 → 토큰 절감 설정 팝업(claude-code 플러그인 설치).
+            fn = getattr(self.app, "open_token_saver", None)
+            fn and fn()
+            event.stop()
+            return
         mz = self._model_zone
         if mz and mz[0] <= event.x < mz[1]:
             # 모델 배지 클릭 → 모델·컨텍스트 변경 팝업(claude-code 플러그인 설치).
@@ -1281,10 +1290,10 @@ class StatusBar(Widget):
             return
         uz = self._usage_zone
         if uz and uz[0] <= event.x < uz[1]:
-            # 토큰 사용량("N%/5h used") 클릭 → 영속 통계 팝업(계정=클라이언트별 · 시간/일/
-            # 주/월, 모든 세션 합계 포함, pytmux 재시작 후에도 유지). claude-code 플러그인
-            # 설치. 이 세그먼트는 5h% 가 핵심이므로 **시간(hour) 뷰**로 연다(5h% 막대가
-            # 시각별로 보이는 뷰 — 사용자 요청 2026-06-18). 일/주/월은 팝업 안에서 전환.
+            # 토큰 사용량("N%/5h used") 클릭 → 영속 통계 팝업(모든 세션 합계 포함, pytmux
+            # 재시작 후에도 유지). claude-code 플러그인 설치. 이 세그먼트는 5h% 가 핵심이라
+            # 계층 타임라인 뷰로 연다 — 오늘 행이 시각까지 기본 펼쳐져 시각별 5h% 막대가
+            # 바로 보인다(2026-06-21 계층 트리; 옛 hour 버킷 대체).
             fn = getattr(self.app, "open_token_log", None)
             fn and fn("hour")
             event.stop()
