@@ -74,7 +74,10 @@ def init_pane(pane) -> None:
     # 한글 부분문자열 판별을 대체해 en 로케일에서도 정확히 분류된다(i18n 전수조사).
     pane._claude_warn_kind = None
     pane._claude_warn_n = None
-    pane._model_tip = None   # M14c 힌트: 모델 과선택 알림 배지 문자열(없으면 None)
+    pane._model_tip = None   # M14c/A 힌트: 모델 과선택·세션시작 알림 배지(없으면 None)
+    pane._session_model_hinted = False  # Scenario A: 이번 Claude 세션에 모델 힌트 1회 표시 여부
+    pane._ctx_tip = None        # §3.10 C: ctx 압박 힌트 배지(M11/M13 스캔 시마다 재계산)
+    pane._ctx_tip_sticky = None # §3.10 C: 타이머 발화 힌트(auto_doc_clear/auto_compact — busy 까지 유지)
     # §3.7 포맷 미인식 가시화: _fmt_unknown=경고 활성, _fmt_first_mono=의심 시작 시각
     # (Claude fg + 파서 None), _fmt_logged=error.log 1회 기록 가드, _fmt_check_mono=
     # 다음 fg(ps) 검사 허용 시각(throttle).
@@ -143,6 +146,9 @@ def reset_pane(pane) -> None:
     pane._retry_attempts = 0
     pane._ctx_fired = False          # 컨텍스트 잔량 자동정리 디바운스 리셋(M11)
     pane._ctx_last_fire = None       # 정리 빈도 상한 시각 리셋(M14)
+    pane._ctx_tip = None             # §3.10 ctx 압박 힌트 리셋
+    pane._ctx_tip_sticky = None      # §3.10 타이머 힌트 리셋
+    pane._session_model_hinted = False  # Scenario A 모델 힌트 리셋
     pane._claude_session_id = 0
     pane._tok_state = {"peak": 0, "total": 0}   # 새 셸 — 토큰 누계 0 에서 시작(S5 T4)
     pane._session_tokens = 0

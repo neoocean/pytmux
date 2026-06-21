@@ -412,7 +412,7 @@ def claude_model(text):
 # 낸다. 컨텍스트가 거의 찼으면(잔량 낮음) 모델 교체가 아니라 /compact 가 답이라 힌트를
 # 억제한다. 순수 함수 — 서버 _scan_claude 가 idle 완료 경계에서 부른다(단위 테스트 용이).
 def model_overselect_hint(model, repeat_n, ctx_pct=None,
-                          repeat_min=3, headroom_min=40):
+                          repeat_min=5, headroom_min=40):
     """모델 과선택 힌트 문자열(또는 None). 조건 셋이 모두 참일 때만 힌트를 낸다:
       · model 이 Opus 계열(claude_model() 결과의 'opus' 접두)일 것 — 프리미엄만 대상.
       · repeat_n >= repeat_min — 동일 결과 반복(M17 _repeat_n 재사용, S8 '단순 반복').

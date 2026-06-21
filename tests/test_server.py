@@ -1043,10 +1043,10 @@ async def test_prompt_clear_mode_sequence():
 
 
 async def test_auto_doc_clear_sequence_and_guards():
-    """§10 자동 doc→/clear: 토글이 켜진 상태에서 busy→idle 가 N초 지속되면(타이머
-    만료=_adc_fire) 문서화 지시→/clear 를 1회 자동 주입한다. idle 이탈 시 무장된
-    타이머를 해제하고, idle아님/진행중/수동모드/토글off 면 발화하지 않는다. 토글은
-    opts.json 영속."""
+    """§3.10 doc-clear 힌트: 토글이 켜진 상태에서 busy→idle 가 N초 지속되면(타이머
+    만료=_adc_fire) 자동 시퀀스 대신 ctx_tip_sticky 힌트 배지만 세운다. idle 이탈 시
+    무장 타이머 해제, 가드(idle아님/진행중/수동모드/토글off)는 기존과 동일.
+    토글 opts.json 영속."""
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
@@ -1071,16 +1071,11 @@ async def test_auto_doc_clear_sequence_and_guards():
         assert p._claude == "idle"
         assert p._adc_timer is not None and p._adc_active is False
         assert injected == []
-        # 타이머 만료(N초 지속 시뮬) → 문서화 지시 주입, 시퀀스 시작
+        # 타이머 만료(N초 지속 시뮬) → §3.10: 시퀀스 대신 힌트 배지 설정
         srv._adc_fire(p)
-        assert p._adc_active is True and p._pc_phase == "doc"
-        assert injected == [srv.prompt_clear_message], injected
-        # 문서화 응답 완료 → /clear → 다음 완료 → 시퀀스 종료(_adc_active 해제)
-        go_idle()
-        assert p._pc_phase == "clear" and injected[-1] == "/clear"
-        go_idle()
-        assert p._pc_phase is None and p._adc_active is False
-        assert len(injected) == 2, "doc + clear 두 번만"
+        assert p._ctx_tip_sticky == "📋 문서화+/clear 권장 (doc)"
+        assert p._adc_active is False, "§3.10: 시퀀스 미시작"
+        assert injected == [], "§3.10: 자동 주입 없음"
 
         # idle 이탈(재busy) 시 _scan_claude 가 무장 해제
         go_idle()
@@ -1125,9 +1120,10 @@ async def test_auto_doc_clear_sequence_and_guards():
 
 
 async def test_auto_compact_idle_injects_slash_compact():
-    """요청: 토글 on 상태에서 busy→idle 가 N초 지속되면(타이머 만료=_acpt_fire)
-    '/compact'+Enter 를 1회 자동 주입한다. idle 이탈 시 무장 해제, 가드
-    (idle아님/진행중/수동모드/토글off)에선 발화 안 함. 토글 opts.json 영속."""
+    """§3.10: 토글 on 상태에서 busy→idle 가 N초 지속되면(타이머 만료=_acpt_fire)
+    자동 주입 대신 ctx_tip_sticky 힌트 배지만 세운다(_acpt_fired 디바운스는 유지).
+    idle 이탈 시 무장 해제, 가드(idle아님/진행중/수동모드/토글off)는 동일.
+    토글 opts.json 영속."""
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
@@ -1152,9 +1148,10 @@ async def test_auto_compact_idle_injects_slash_compact():
         assert p._claude == "idle"
         assert p._acpt_timer is not None
         assert injected == []
-        # 타이머 만료(N초 지속 시뮬) → '/compact' 1회 주입
+        # 타이머 만료(N초 지속 시뮬) → §3.10: 주입 대신 힌트 배지
         srv._acpt_fire(p)
-        assert injected == ["/compact"], injected
+        assert injected == [], "§3.10: 자동 주입 없음"
+        assert p._ctx_tip_sticky == "🗜 /compact 권장 (compact-claude)"
         assert p._acpt_fired is True, "발화 후 디바운스 플래그 셋"
 
         # 연속 발화 방지(요청): 발화 직후 또 busy→idle 가 와도(/compact 주입이
@@ -1228,10 +1225,11 @@ async def test_auto_compact_skips_when_awaiting_answer():
         srv._acpt_fire(p)
         assert injected == [], "선택 박스 → /compact 주입 안 함"
 
-        # 질문이 아닌 일반 idle 화면이면 정상 발화
+        # 질문이 아닌 일반 idle 화면이면 힌트 배지 표시
         p.feed(b"\x1b[2J\x1b[HAll done. Saved 3 files.\r\n? for shortcuts\r\n")
         srv._acpt_fire(p)
-        assert injected == ["/compact"], injected
+        assert injected == [], "§3.10: 자동 주입 없음"
+        assert p._ctx_tip_sticky == "🗜 /compact 권장 (compact-claude)"
     finally:
         try:
             os.unlink(srv.opts_path)
@@ -1277,11 +1275,12 @@ async def test_auto_compact_cooldown_after_new_session_and_fire():
         srv._scan_claude(sess, win)
         assert p._acpt_timer is not None, "쿨다운 만료 → 정상 무장"
 
-        # compact 발화 시 쿨다운 재설정(직전 compact 직후 연속 정리 방지).
+        # §3.10: compact 발화 → 힌트 배지(주입 없음, 쿨다운 재설정도 없음).
         p._auto_cc_cooldown_until = 0.0
         srv._acpt_fire(p)
-        assert injected == ["/compact"], injected
-        assert p._auto_cc_cooldown_until > 0, "compact 발화 → 쿨다운 재시작"
+        assert injected == [], "§3.10: 자동 주입 없음"
+        assert p._ctx_tip_sticky == "🗜 /compact 권장 (compact-claude)"
+        assert p._auto_cc_cooldown_until == 0.0, "§3.10: 주입 없으므로 쿨다운 재설정 없음"
 
         # doc-clear 의 /clear 주입도 쿨다운을 건다.
         p._auto_cc_cooldown_until = 0.0
@@ -4005,6 +4004,185 @@ async def test_week_sonnet_pct_fail_open_on_account_mismatch():
         assert srv._week_sonnet_pct(p) is None         # 불일치 → 숨김
         srv._usage = {"session": {"pct": 5}}           # week_sonnet 부재 → None
         assert srv._week_sonnet_pct(p) is None
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_ctx_tip_plan_hint():
+    """§3.10 C (M13 경로): 실측 게이트 ≥80% + 권한모드 비plan → ctx_tip 에
+    plan 권장 힌트 배지가 선다. bypass 모드에선 힌트 없음."""
+    import time as _t
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        srv.claude_budget_plan = True
+        srv._usage = {"session": {"pct": 85, "reset": None}}
+        srv._usage_ts = _t.time()
+
+        # idle + 권한모드 default(not plan, not bypass) → plan 힌트
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        p._claude = "busy"
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle"
+        assert p._ctx_tip == "📋 plan 권장 (shift+tab)", p._ctx_tip
+        assert srv._status_msg(sess)["claude_ctx_tip"] == p._ctx_tip
+
+        # plan 모드이면 힌트 없음("plan mode on" 문구가 있어야 claude_perm_mode="plan")
+        p.feed(b"\x1b[2J\x1b[Hplan mode on\r\n? for shortcuts\r\n")
+        p._claude = "busy"
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle"
+        assert p._ctx_tip is None, p._ctx_tip
+
+        # bypass 모드이면 힌트 없음("bypass permissions" 문구)
+        p.feed(b"\x1b[2J\x1b[Hbypass permissions\r\n? for shortcuts\r\n")
+        p._claude = "busy"
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle"
+        assert p._ctx_tip is None, p._ctx_tip
+
+        # 게이트 <80% → 힌트 없음
+        srv._usage = {"session": {"pct": 70, "reset": None}}
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        p._claude = "busy"
+        srv._scan_claude(sess, win)
+        assert p._ctx_tip is None, p._ctx_tip
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_ctx_tip_compact_hint():
+    """§3.10 C (M11 경로): ctx_autoclear 켜고 ctx% < threshold 이면 ctx_tip 에
+    /compact 권장 힌트 배지가 선다. busy 진입 시 힌트 제거."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        srv.claude_ctx_autoclear = True
+        srv.claude_ctx_threshold = 15
+
+        # ctx% 잔량 10%(임계 미만) idle → /compact 힌트
+        # "context left N%" 형식은 claude_context_pct 가 인식하는 실제 화면 텍스트
+        p.feed(b"\x1b[2J\x1b[Hcontext left 10%\r\n? for shortcuts\r\n")
+        p._claude = "busy"
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle"
+        assert p._ctx_tip == "🗜 /compact 권장 (compact-claude)", p._ctx_tip
+
+        # busy 진입 시 ctx_tip 소거
+        p.feed(b"\x1b[2J\x1b[H\xe2\x9c\xbd Crunching\xe2\x80\xa6 (3s)\r\n")
+        srv._scan_claude(sess, win)
+        assert p._claude == "busy"
+        assert p._ctx_tip is None, "busy 진입 → ctx_tip 소거"
+
+        # ctx% 잔량 20%(임계 초과) idle → 힌트 없음
+        p.feed(b"\x1b[2J\x1b[Hcontext left 20%\r\n? for shortcuts\r\n")
+        p._claude = "busy"
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle"
+        assert p._ctx_tip is None, "ctx% > threshold → 힌트 없음"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_ctx_tip_sticky_from_timer():
+    """§3.10 C (타이머 경로): _adc_fire/_acpt_fire 가 세운 _ctx_tip_sticky 는
+    idle 스캔에서 ctx_tip 으로 올라오고, busy 진입 시 소거된다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        srv.claude_ctx_autoclear = False    # M11 스캔 힌트 끔(sticky 만 테스트)
+
+        # sticky 직접 주입 후 idle 스캔 → ctx_tip 에 반영
+        p._claude = "idle"
+        p._ctx_tip_sticky = "🗜 /compact 권장 (compact-claude)"
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        p._claude = "busy"
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle"
+        assert p._ctx_tip == "🗜 /compact 권장 (compact-claude)", p._ctx_tip
+
+        # busy 진입 → sticky + ctx_tip 모두 소거
+        p.feed(b"\x1b[2J\x1b[H\xe2\x9c\xbd Crunching\xe2\x80\xa6 (3s)\r\n")
+        srv._scan_claude(sess, win)
+        assert p._claude == "busy"
+        assert p._ctx_tip_sticky is None, "busy → sticky 소거"
+        assert p._ctx_tip is None, "busy → ctx_tip 소거"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_session_start_model_hint_opus_sonnet():
+    """Scenario A: 새 Claude 세션(None→idle) 에서 모델이 Opus/Sonnet 이면
+    _model_tip 에 세션시작 힌트가 1회 설정된다(_session_model_hinted 셋).
+    Haiku 는 힌트 없음. 세션 종료(idle→None)시 _model_tip 초기화·_session_model_hinted 는
+    다음 새 세션 시작(None→idle) 시 리셋(세션 끝이 아닌 시작 시점 리셋 설계)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        srv.claude_model_hint = False   # M14c 과선택 힌트 끔(A 힌트만 테스트)
+
+        # 새 세션(None→idle) + Opus → 세션시작 힌트 표시
+        p._claude = None
+        p._claude_model = None
+        p.feed(b"\x1b[2J\x1b[H Opus 4.8 (1M context)\r\n? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle"
+        assert p._claude_model and p._claude_model.startswith("opus"), p._claude_model
+        assert p._model_tip is not None and "opus" in p._model_tip.lower(), p._model_tip
+        assert p._session_model_hinted is True
+
+        # busy 진입 → 힌트 초기화(_model_tip=None). 재idle 시 _session_model_hinted=True라
+        # 재힌트 없음(1회만 표시 설계).
+        p.feed(b"\x1b[2J\x1b[H\xe2\x9c\xbd Crunching\xe2\x80\xa6 (3s)\r\n")
+        srv._scan_claude(sess, win)
+        assert p._claude == "busy" and p._model_tip is None, "busy → 모델 힌트 초기화"
+        p.feed(b"\x1b[2J\x1b[H Opus 4.8 (1M context)\r\n? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle"
+        assert p._model_tip is None, "재idle: _session_model_hinted=True → 재힌트 없음"
+        assert p._session_model_hinted is True, "세션 중 hinted 유지"
+
+        # 세션 종료 → _model_tip 초기화, _session_model_hinted 는 다음 세션 시작 시 리셋
+        p.feed(b"\x1b[2J\x1b[H")
+        p._claude = "idle"
+        p._claude_model = None
+        srv._scan_claude(sess, win)
+        assert p._model_tip is None, "세션 끝 → 모델 힌트 초기화"
+        # _session_model_hinted 는 아직 True(세션 종료 시 아닌 다음 세션 시작 시 리셋)
+        assert p._session_model_hinted is True, "세션 끝 단계: hinted 는 아직 True"
+
+        # 새 세션(None→idle) 시작 → _session_model_hinted 리셋 + Haiku 이면 힌트 없음
+        p._claude = None
+        p._claude_model = None
+        p.feed(b"\x1b[2J\x1b[H Haiku 3.5\r\n? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._session_model_hinted is False, "새 세션 시작 → hinted 리셋"
+        if p._claude == "idle" and p._claude_model and p._claude_model.startswith("haiku"):
+            assert p._model_tip is None, f"Haiku → 세션시작 힌트 없음, got: {p._model_tip}"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_ctx_tip_in_status_msg():
+    """§3.10 C: _status_msg 가 claude_ctx_tip 을 포함하고 None/string 모두 전달."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        p._claude = "idle"
+        p._ctx_tip = None
+        assert "claude_ctx_tip" in srv._status_msg(sess)
+        assert srv._status_msg(sess)["claude_ctx_tip"] is None
+        p._ctx_tip = "📋 plan 권장 (shift+tab)"
+        assert srv._status_msg(sess)["claude_ctx_tip"] == "📋 plan 권장 (shift+tab)"
     finally:
         await teardown(srv, task, sock)
 

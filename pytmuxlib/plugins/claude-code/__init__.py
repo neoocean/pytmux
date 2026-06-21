@@ -645,8 +645,10 @@ class _ClaudeCodePlugin:
         msg["claude_warn"] = ap._claude_warn if ap else None
         msg["claude_warn_kind"] = getattr(ap, "_claude_warn_kind", None) if ap else None
         msg["claude_warn_n"] = getattr(ap, "_claude_warn_n", None) if ap else None
-        # M14c 모델 과선택 힌트 배지(알림만, 없으면 None — claude_warn 과 같은 송출 방식).
+        # M14c/A 모델 힌트 배지(알림만, 없으면 None — claude_warn 과 같은 송출 방식).
         msg["claude_model_tip"] = ap._model_tip if ap else None
+        # §3.10 C ctx 압박 힌트 배지(M11/M13/타이머, 없으면 None).
+        msg["claude_ctx_tip"] = ap._ctx_tip if ap else None
         # M19: 그림자 /usage 세션·주간 한도(없으면 None).
         msg["usage_limits"] = server._usage
         # S6 T3: 실측 경과(초) — 클라가 stale 표기("N분 전 실측")에 쓴다. 시계 동기

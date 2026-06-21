@@ -67,19 +67,20 @@ async def test_golden_fixtures():
 
 
 async def test_model_overselect_hint():
-    """M14c 힌트(T3/S4) 순수 함수 — Opus 반복+컨텍스트 여유일 때만 힌트, 그 외 None.
-    자동 전환은 절대 없고(알림 전용), 컨텍스트가 꽉 차면(/compact 영역) 억제한다."""
-    # 셋 다 충족: Opus 계열 + 반복 임계 도달 + 잔량 충분 → 힌트.
-    tip = model_overselect_hint("opus-4.8", 3, 72)
+    """M14c 힌트(T3/S4) + Scenario B(repeat_min=5): Opus 반복(≥5)+잔량 여유일 때만
+    힌트. 자동 전환 없음(알림 전용), 컨텍스트 꽉 차면 억제."""
+    # 셋 다 충족: Opus 계열 + 반복 임계 도달(Scenario B: 5) + 잔량 충분 → 힌트.
+    tip = model_overselect_hint("opus-4.8", 5, 72)
     assert tip and "model" in tip.lower()
     # 잔량 미상(None, best-effort)이면 반복 신호만으로 통과.
     assert model_overselect_hint("opus", 5, None)
     # 비-Opus(가벼운 모델)는 대상 아님 — 이미 절감 모델.
     assert model_overselect_hint("sonnet-4.6", 9, 90) is None
     assert model_overselect_hint(None, 9, 90) is None
-    # 반복 부족(임계 미만)이면 단발 작업 — 힌트 없음.
+    # 반복 부족(임계 미만, Scenario B=5) — 힌트 없음.
+    assert model_overselect_hint("opus-4.8", 4, 90) is None
     assert model_overselect_hint("opus-4.8", 2, 90) is None
-    # 컨텍스트가 거의 참(잔량<headroom)이면 모델 교체가 아니라 /compact 가 답 → 억제.
+    # 컨텍스트가 거의 참(잔량<headroom)이면 모델 교체 아닌 /compact 가 답 → 억제.
     assert model_overselect_hint("opus-4.8", 5, 10) is None
 
 
@@ -92,8 +93,8 @@ async def _claude_pane(srv):
 
 
 async def test_ctx_autoclear_compact():
-    """잔량<임계 + 응답 완료(busy→idle)면 /compact 1회 주입(기본 방식). 한 번
-    발화하면 잔량이 회복할 때까지 재발화 안 함(디바운스)."""
+    """§3.10: 잔량<임계 + 응답 완료(busy→idle)면 /compact 주입 대신 ctx_tip 힌트
+    배지를 세운다(_ctx_fired 디바운스는 유지). 잔량 회복 전 재발화 없음."""
     srv, task, sock = await server_only()
     try:
         sess, win, p = await _claude_pane(srv)
@@ -108,11 +109,13 @@ async def test_ctx_autoclear_compact():
             p.feed(b"\x1b[2J\x1b[H" + text.encode())
             srv._scan_claude(sess, win)
 
-        complete("context left 8%\r\n? for shortcuts")     # 8 < 15 → 발화
-        assert injected == ["/compact"], injected
+        complete("context left 8%\r\n? for shortcuts")     # 8 < 15 → 힌트 배지
+        assert injected == [], "§3.10: 자동 주입 없음"
         assert p._ctx_fired is True
+        assert p._ctx_tip == "🗜 /compact 권장 (compact-claude)", p._ctx_tip
         complete("context left 8%\r\n? for shortcuts")     # 여전히 낮음 → 재발화 X
-        assert injected == ["/compact"], "디바운스: 회복 전 재발화 금지"
+        assert p._ctx_fired is True, "디바운스: 회복 전 재발화 금지"
+        assert injected == []
     finally:
         try:
             os.unlink(srv.opts_path)
@@ -122,7 +125,8 @@ async def test_ctx_autoclear_compact():
 
 
 async def test_ctx_autoclear_recovery_then_refire():
-    """정리 후 잔량이 임계+여유 위로 회복하면 디바운스가 풀려 다음 저잔량에 재발화."""
+    """§3.10: 힌트 배지 설정 후 잔량이 임계+여유 위로 회복하면 디바운스 해제.
+    다시 저잔량으로 떨어지면 힌트 재설정."""
     srv, task, sock = await server_only()
     try:
         sess, win, p = await _claude_pane(srv)
@@ -138,12 +142,17 @@ async def test_ctx_autoclear_recovery_then_refire():
             srv._scan_claude(sess, win)
 
         complete("context left 8%\r\n? for shortcuts")
-        assert injected == ["/compact"]
-        # 회복(72% ≥ 15+5) → 디바운스 해제
+        assert injected == [], "§3.10: 자동 주입 없음"
+        assert p._ctx_fired is True
+        assert p._ctx_tip == "🗜 /compact 권장 (compact-claude)"
+        # 회복(72% ≥ 15+5) → 디바운스 해제, 힌트 소거
         complete("context left 72%\r\n? for shortcuts")
         assert p._ctx_fired is False
-        complete("context left 9%\r\n? for shortcuts")     # 다시 낮음 → 재발화
-        assert injected == ["/compact", "/compact"], injected
+        assert p._ctx_tip is None, "회복 → 힌트 소거"
+        complete("context left 9%\r\n? for shortcuts")     # 다시 낮음 → 힌트 재설정
+        assert p._ctx_fired is True
+        assert p._ctx_tip == "🗜 /compact 권장 (compact-claude)", "재발화 → 힌트 재설정"
+        assert injected == []
     finally:
         try:
             os.unlink(srv.opts_path)
@@ -179,9 +188,9 @@ async def test_ctx_autoclear_threshold_gate():
         await teardown(srv, task, sock)
 
 
-async def test_ctx_autoclear_doc_clear_reuses_machinery():
-    """action=doc-clear 면 기존 doc→/clear 상태기계를 재사용한다(문서화 지시 →
-    다음 완료에 /clear). 잔량 정리가 auto-doc-clear(시간 기반)보다 우선."""
+async def test_ctx_autoclear_doc_clear_hint_only():
+    """§3.10: action=doc-clear 설정과 무관하게 M11 ctx_autoclear 는 이제 힌트 배지만
+    표시(주입·상태기계 없음). _ctx_fired 는 세우고 tip 배지를 표시."""
     srv, task, sock = await server_only()
     try:
         sess, win, p = await _claude_pane(srv)
@@ -196,13 +205,11 @@ async def test_ctx_autoclear_doc_clear_reuses_machinery():
             p.feed(b"\x1b[2J\x1b[H" + text.encode())
             srv._scan_claude(sess, win)
 
-        complete("context left 8%\r\n? for shortcuts")     # → 문서화 지시 주입
-        assert injected == [srv.prompt_clear_message], injected
-        assert p._adc_active and p._pc_phase == "doc"
-        complete("? for shortcuts")                        # 문서화 완료 → /clear
-        assert injected[-1] == "/clear"
-        complete("? for shortcuts")                        # /clear 완료 → 시퀀스 끝
-        assert p._adc_active is False and p._pc_phase is None
+        complete("context left 8%\r\n? for shortcuts")     # §3.10: 힌트 배지만
+        assert injected == [], "§3.10: 자동 주입 없음"
+        assert p._ctx_fired is True
+        assert p._ctx_tip == "🗜 /compact 권장 (compact-claude)", p._ctx_tip
+        assert p._adc_active is False, "§3.10: 상태기계 미시작"
     finally:
         try:
             os.unlink(srv.opts_path)
@@ -213,9 +220,9 @@ async def test_ctx_autoclear_doc_clear_reuses_machinery():
 
 # ---- M14: 정리 빈도 상한(time floor) ----
 async def test_ctx_min_interval_caps_refire():
-    """빈도 상한이 켜져 있으면 잔량이 회복→재하락해도 직전 정리로부터 min_interval
-    초가 안 지났으면 재발화하지 않는다(시간 바닥). _ctx_last_fire 를 과거로 당기면
-    상한이 풀려 다시 발화한다(monotonic 시계 진행을 시뮬레이트)."""
+    """§3.10: 빈도 상한(min_interval) 이 켜져 있으면 잔량 회복→재하락해도 직전
+    힌트로부터 min_interval 초가 안 지났으면 재힌트하지 않는다(시간 바닥).
+    _ctx_last_fire 를 과거로 당기면 상한이 풀려 힌트가 다시 세워진다."""
     import time as _t
     srv, task, sock = await server_only()
     try:
@@ -231,18 +238,24 @@ async def test_ctx_min_interval_caps_refire():
             p.feed(b"\x1b[2J\x1b[H" + text.encode())
             srv._scan_claude(sess, win)
 
-        complete("context left 8%\r\n? for shortcuts")     # 첫 발화(상한 미해당)
-        assert injected == ["/compact"]
+        complete("context left 8%\r\n? for shortcuts")     # 첫 힌트(상한 미해당)
+        assert injected == [], "§3.10: 자동 주입 없음"
+        assert p._ctx_fired is True
         assert p._ctx_last_fire is not None
-        # 회복으로 디바운스 해제됐지만 상한(5분)은 아직 — 재하락해도 발화 금지.
+        assert p._ctx_tip == "🗜 /compact 권장 (compact-claude)"
+        # 회복으로 디바운스 해제됐지만 상한(5분)은 아직 — 재하락해도 힌트 금지.
         complete("context left 72%\r\n? for shortcuts")
         assert p._ctx_fired is False
         complete("context left 9%\r\n? for shortcuts")
-        assert injected == ["/compact"], "빈도 상한: 시간 미경과 시 재발화 금지"
+        assert p._ctx_fired is False, "빈도 상한: 시간 미경과 시 _ctx_fired 미설정"
+        # ctx_tip 은 _ctx_cap_ok 와 독립(cp<threshold 이면 항상 표시)
+        assert p._ctx_tip == "🗜 /compact 권장 (compact-claude)", "상한 중에도 힌트는 표시"
         # 시간이 지난 것으로 시뮬레이트(_ctx_last_fire 를 과거로) → 상한 해제.
         p._ctx_last_fire = _t.monotonic() - 301
         complete("context left 9%\r\n? for shortcuts")
-        assert injected == ["/compact", "/compact"], "상한 경과 후 재발화"
+        assert p._ctx_fired is True, "상한 경과 후 재힌트"
+        assert p._ctx_tip == "🗜 /compact 권장 (compact-claude)"
+        assert injected == []
     finally:
         try:
             os.unlink(srv.opts_path)
@@ -275,9 +288,9 @@ async def test_ctx_min_interval_setter_clamp_persist():
 
 # ---- M13: 실측 한도 압박 시 plan 유도(§7-4: 절대 예산 deprecate 후 실측 게이트 기반) ----
 async def test_budget_plan_induction():
-    """claude_budget_plan + 실측 게이트 레벨≥80(기본 임계 95 의 80%=76% 도달) + idle
-    + 권한모드 非plan/非bypass 면 shift+tab(\\x1b[Z)으로 plan 유도. bypass 는 불간섭,
-    레벨<80 이면 무동작."""
+    """§3.10: claude_budget_plan + 실측 게이트 레벨≥80 + idle + 권한모드 非plan/非bypass
+    면 shift+tab 주입 대신 ctx_tip 힌트 배지("📋 plan 권장")를 세운다.
+    bypass 는 힌트 없음, 레벨<80 이면 무동작."""
     srv, task, sock = await server_only()
     try:
         sess, win, p = await _claude_pane(srv)
@@ -291,18 +304,18 @@ async def test_budget_plan_induction():
             p.feed(b"\x1b[2J\x1b[H" + text.encode())
             srv._scan_claude(sess, win)
 
-        # 실측 70% < 76(임계의 80%) → 레벨 0 → 유도 안 함
+        # 실측 70% < 76(임계의 80%) → 레벨 0 → 힌트 없음
         idle("? for shortcuts", 70)
         assert keys == []
-        # 실측 80% ≥ 76 → 레벨 80 + default footer → plan 유도(shift+tab)
+        assert p._ctx_tip is None, "레벨 미달 → 힌트 없음"
+        # 실측 80% ≥ 76 → 레벨 80 + default footer → plan 힌트 배지
         idle("? for shortcuts", 80)
-        assert keys == [b"\x1b[Z"], keys
-        # bypass 는 불간섭(명시적 위험 모드)
-        keys.clear()
-        p._cam_tries = 0
-        p._cam_last = None
+        assert keys == [], "§3.10: shift+tab 주입 없음"
+        assert p._ctx_tip == "📋 plan 권장 (shift+tab)", p._ctx_tip
+        # bypass 는 힌트 없음(명시적 위험 모드)
         idle("bypass permissions", 96)
-        assert keys == [], "bypass 는 안 건드림"
+        assert p._ctx_tip is None, "bypass → 힌트 없음"
+        assert keys == []
     finally:
         try:
             os.unlink(srv.opts_path)

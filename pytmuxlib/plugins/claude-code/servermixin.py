@@ -520,11 +520,10 @@ class ServerClaudeMixin:
             self.auto_doc_clear_delay, self._adc_fire, pane)
 
     def _adc_fire(self, pane: Pane):
-        """타이머 만료(idle 가 N초 지속됨): 발화 조건을 재확인한 뒤 문서화→/clear
-        시퀀스를 시작한다. idle 이 아니거나(그새 busy/limit/종료), 이미 진행 중이거나,
-        수동 prompt_clear_mode 거나, 토글이 꺼졌으면 발화하지 않는다.
-        시작 = _pc_phase 를 None 으로 두고 _pc_advance 로 문서화 지시문을 주입(→doc).
-        이후 busy→idle 경계마다 _scan_claude 가 doc→clear→종료로 시퀀스를 잇는다."""
+        """타이머 만료(idle 가 N초 지속됨): §3.10 힌트 배지로 교체.
+        이전엔 문서화→/clear 시퀀스를 자동 시작했으나 작업 흐름 방해 보고로
+        '힌트만 표시, 실행은 사용자 명시 요청' 으로 전환(수동 :doc 명령은 그대로).
+        가드(idle아님/진행중/수동모드/토글off)는 기존과 동일."""
         pane._adc_timer = None
         if not self.auto_doc_clear:
             return
@@ -532,9 +531,12 @@ class ServerClaudeMixin:
             return
         if pane._adc_active or pane.prompt_clear_mode:
             return
-        pane._adc_active = True
-        pane._pc_phase = None
-        self._pc_advance(pane)
+        # §3.10: 자동 시퀀스 대신 힌트 배지. _scan_claude 는 busy 진입 시 sticky 제거.
+        pane._ctx_tip_sticky = "📋 문서화+/clear 권장 (doc)"
+        sess = next((s for s in self.sessions.values()
+                     for t in s.tabs if pane in t.window.panes()), None)
+        if sess:
+            self._broadcast_session(sess)
 
     # ---- 자동 /compact(요청): idle 지속 N초 후 1회 '/compact'+Enter 주입 ----
     # auto-doc-clear(문서화→/clear)의 단순 자매: 문서화 없이 /compact 한 줄만 넣어
@@ -703,12 +705,11 @@ class ServerClaudeMixin:
             self.auto_compact_delay, self._acpt_fire, pane)
 
     def _acpt_fire(self, pane: Pane):
-        """타이머 만료(idle 가 N초 지속됨): 조건 재확인 후 '/compact'+Enter 1회 주입.
-        idle 가 아니거나(그새 busy/limit/종료), 자동 doc→clear/수동 prompt-clear 시퀀스가
-        진행 중이거나, 토글이 꺼졌으면 발화하지 않는다. 또 화면이 질문/선택으로 끝나
-        사용자 답을 기다리는 중이면(claude_awaiting_answer) 건너뛴다 — 답 직전 압축은
-        상호작용을 끊고 무의미하다(요청). 이 경우 _acpt_fired 를 세우지 않아 사용자가
-        답해 다음 idle 경계가 오면 다시 평가된다."""
+        """타이머 만료(idle 가 N초 지속됨): §3.10 힌트 배지로 교체.
+        이전엔 '/compact'+Enter 를 자동 주입했으나 작업 흐름 방해 보고로
+        '힌트만 표시, 실행은 사용자 명시 요청' 으로 전환(수동 compact-claude 명령은 그대로).
+        _acpt_fired 는 유지해 같은 idle 구간 내 재발화를 막는다.
+        질문 대기 가드(claude_awaiting_answer)도 유지 — 답 이전 힌트는 불필요."""
         pane._acpt_timer = None
         if not self.auto_compact:
             return
@@ -717,10 +718,14 @@ class ServerClaudeMixin:
         if pane._adc_active or pane.prompt_clear_mode:
             return
         if claude_awaiting_answer(screen_text(pane.screen)):
-            return   # 질문으로 끝남 — 사용자 답 대기 중이므로 발화하지 않음
-        pane._acpt_fired = True   # 디바운스: 다음 사용자 입력 전까지 재발화 금지
-        self._auto_cc_mark(pane)  # 직전 compact 직후 쿨다운 시작(연속 정리 방지)
-        self._pc_inject(pane, "/compact")   # 한 줄 입력 + Enter
+            return   # 질문으로 끝남 — 사용자 답 대기 중이므로 힌트도 보류
+        pane._acpt_fired = True   # 디바운스: 이 idle 구간에서 재발화 금지
+        # §3.10: 자동 /compact 주입 대신 힌트 배지. _scan_claude busy 진입 시 sticky 제거.
+        pane._ctx_tip_sticky = "🗜 /compact 권장 (compact-claude)"
+        sess = next((s for s in self.sessions.values()
+                     for t in s.tabs if pane in t.window.panes()), None)
+        if sess:
+            self._broadcast_session(sess)
 
     # ---- 권한모드 자동 오토모드 전환(§10) ----
     def set_claude_auto_mode(self, value=None):
@@ -1053,14 +1058,19 @@ class ServerClaudeMixin:
                     # _rc_done 가드로 막는다 — 무장은 perm-auto 유도도 겸하므로 둔다.)
                     if self.claude_auto_launch and not self._rc_policy_blocked:
                         p._rc_pending = True
-                    p._ctx_fired = False   # 새 세션 — 잔량 자동정리 디바운스 해제(M11)
-                    p._ctx_pct = None      # 새 세션 — 잔량% 추적 리셋(M15)
-                    self._auto_cc_mark(p)  # 새 세션 — 시간기반 자동 compact·clear 쿨다운
+                    p._ctx_fired = False          # 새 세션 — 잔량 자동정리 디바운스 해제(M11)
+                    p._ctx_pct = None             # 새 세션 — 잔량% 추적 리셋(M15)
+                    p._session_model_hinted = False  # Scenario A — 새 세션마다 모델 힌트 재무장
+                    p._ctx_tip_sticky = None      # 새 세션 — 타이머 힌트 리셋
+                    self._auto_cc_mark(p)         # 새 세션 — 시간기반 자동 compact·clear 쿨다운
                 if not new_cl:
                     p._rules_pending = False   # 세션 끝나면 예약 해제
                     p._rc_pending = False      # 세션 끝 — auto-launch 예약 해제
                     p._perm_auto_pending = False
                     p._ctx_pct = None          # 세션 끝 — 잔량% 비교 대상 제외(M15)
+                    p._ctx_tip = None          # 세션 끝 — ctx 힌트 초기화
+                    p._ctx_tip_sticky = None   # 세션 끝 — 타이머 힌트 초기화
+                    p._model_tip = None        # 세션 끝 — 모델 힌트 초기화
                 # 수동 /clear 감지: 이미 Claude 세션 중(old_cl)인데 환영 배너가 **새로**
                 # 뜨면(빈 컨텍스트) 토큰 누계를 새 세션으로 끊는다. pytmux 자동화(_pc_
                 # advance)를 안 타는 사용자 직접 /clear 가, 상태줄 ctx 근사%(누계/윈도우)를
@@ -1324,11 +1334,9 @@ class ServerClaudeMixin:
                     elif (self.claude_budget_plan
                           and self._usage_gate_level(p) >= 80
                           and pm not in ("plan", "bypass")):
-                        # M13: 실측 한도 압박(게이트 임계의 80% 도달) → plan 유도.
-                        # bypass(명시적 위험)는 불간섭, 이미 plan 이면 무동작.
-                        # claude_auto_mode 보다 우선. (§7-4: 절대 예산 deprecate 로
-                        # 스크랩 추정 축 제거 — 실측 게이트 레벨만 본다.)
-                        self._drive_perm_mode(p, txt, "plan")
+                        # M13 §3.10: 실측 한도 압박 → 자동 plan 유도 제거, 아래 ctx_tip
+                        # 통합 계산에서 배지 힌트로만 표시한다(개입 없음).
+                        pass
                     elif self.claude_auto_mode:
                         self._maybe_auto_mode(p, txt)
                     # M11 디바운스 해제: 정리 후 잔량이 임계+여유(5%p) 위로 회복하면
@@ -1377,7 +1385,8 @@ class ServerClaudeMixin:
                             if self._ctx_cap_ok(p):
                                 p._ctx_fired = True
                                 p._ctx_last_fire = time.monotonic()
-                                self._ctx_intervene(p)
+                                # §3.10: 자동 개입(_ctx_intervene) 제거 — 아래 ctx_tip
+                                # 통합 계산에서 배지 힌트로만 표시한다(개입 없음).
                         elif self.auto_doc_clear:
                             self._adc_arm(p)
                         elif self.auto_compact:
@@ -1417,14 +1426,48 @@ class ServerClaudeMixin:
                     p._claude_warn_kind = warn_kind
                     p._claude_warn_n = warn_n
                     changed = True
-                # M14c 힌트(T3/S4): Opus 로 반복 작업 + 컨텍스트 여유 충분이면 더 가벼운
-                # 모델 "고려" 힌트만(알림 전용 — 자동 전환 없음). opt-in(기본 끔)이라
-                # 토글이 켜져 있고 idle 완료 경계일 때만 평가한다. 세션 종료(new_cl=None)면
-                # 위 _repeat_n 리셋과 함께 자연히 None(repeat_n<min)으로 떨어진다.
-                tip = (model_overselect_hint(p._claude_model, p._repeat_n, cp)
-                       if self.claude_model_hint and new_cl == "idle" else None)
+                # M14c / Scenario A: 모델 힌트 배지
+                # M14c(기존): Opus 반복 작업+컨텍스트 여유 시 가벼운 모델 제안.
+                # Scenario A(신규): Opus/Sonnet 새 세션 첫 idle 에 모델 선택 확인 힌트
+                #   (세션당 1회, idle 지속 중에는 유지, busy 이탈 시 자연 소멸).
+                # 두 힌트는 같은 _model_tip 배지에 실린다(M14c 가 우선, A 는 fallback).
+                tip = None
+                if new_cl == "idle":
+                    if self.claude_model_hint:
+                        tip = model_overselect_hint(p._claude_model, p._repeat_n, cp)
+                    if tip is None and not p._session_model_hinted:
+                        mdl = p._claude_model or ""
+                        if mdl.startswith("opus") or mdl.startswith("sonnet"):
+                            tip = f"💡 {mdl} 세션 — /model로 티어를 의식적으로 선택하셨나요?"
+                            p._session_model_hinted = True
+                    elif tip is None and p._session_model_hinted and p._model_tip:
+                        tip = p._model_tip   # idle 지속 중 힌트 유지
                 if tip != p._model_tip:
                     p._model_tip = tip
+                    changed = True
+                # §3.10 Scenario C: 컨텍스트 압박 힌트 배지(M11/M13 → 개입 없이 배지만)
+                # idle 때마다 M13(예산 압박)·M11(잔량 부족)·타이머 힌트 순서로 재계산.
+                # busy/limit 진입 시 타이머 힌트(sticky)도 제거해 다음 idle 에 재평가.
+                if new_cl == "idle":
+                    ctx_tip = None
+                    if pm != "bypass":
+                        if (self.claude_budget_plan
+                                and self._usage_gate_level(p) >= 80
+                                and pm not in ("plan",)):
+                            ctx_tip = "📋 plan 권장 (shift+tab)"
+                        elif (self.claude_ctx_autoclear
+                              and cp is not None
+                              and cp < self.claude_ctx_threshold):
+                            ctx_tip = "🗜 /compact 권장 (compact-claude)"
+                        elif p._ctx_tip_sticky:
+                            ctx_tip = p._ctx_tip_sticky
+                else:
+                    # busy/limit: 타이머 힌트 해제(새 작업 시작 = 힌트 불필요)
+                    if p._ctx_tip_sticky:
+                        p._ctx_tip_sticky = None
+                    ctx_tip = None
+                if ctx_tip != p._ctx_tip:
+                    p._ctx_tip = ctx_tip
                     changed = True
         return changed
 
