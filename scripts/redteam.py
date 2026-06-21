@@ -641,10 +641,10 @@ def discover_target() -> tuple[str | None, int]:
 # 자식 서버를 격리 부팅하는 부트스트랩(--attach-selftest). 별도 프로세스라 부모(redteam)
 # 의 외부-PID 자원 표본(§10 W3 OpenProcess 핸들·tasklist RSS)을 *다른 프로세스*에 대해
 # 실증한다(--spawn 은 self 프로세스만 표본). PYTMUX_HOME=자식 env 로 상태 격리, PTY_HOST
-# 미기동(결정론). TCP 루프백(Windows 프로덕션 전송)으로 띄우고 포트파일을 게시한다.
+# 미기동(결정론). 플랫폼 기본 엔드포인트(Windows=TCP, Unix=소켓)를 discover 와 맞춘다.
 _SELFTEST_BOOTSTRAP = (
-    "import asyncio, pytmux;"
-    "asyncio.run(pytmux.Server('tcp:127.0.0.1:0').serve())"
+    "import asyncio, pytmux, pytmuxlib.ipc as _ipc;"
+    "asyncio.run(pytmux.Server(_ipc.default_endpoint()).serve())"
 )
 
 
