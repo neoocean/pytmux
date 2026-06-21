@@ -769,6 +769,16 @@ _REAL_USER = _getpass.getuser()
 _REAL_HOST = _socket.gethostname()
 _REAL_HOST_SHORT = _REAL_HOST.split(".")[0]
 
+# 상태줄 host 런(우측 `ssh:host`)은 host/clock/date 가 한 블록으로 **우측 정렬**되므로,
+# 실 호스트명이 짧으면 host 가 시계 바로 왼쪽에 붙는다. 그런데 _redact_svg 의 사후
+# 문자열치환(긴 실호스트명→"host")은 host 런만 줄이고 뒤따르는 시계/날짜 런의 절대 x 는
+# 그대로 둬서(host 와 clock 은 색이 달라 별개 <text>·별개 베이킹 런) 둘 사이에 가짜 간격이
+# 생긴다 — 실제 앱에선 없는 거리다. 해결: 렌더 시점부터 마스킹된 짧은 이름("host")을 쓰도록
+# socket.gethostname 을 패치해 레이아웃이 처음부터 짧은 host 를 시계 옆에 우측정렬하게 한다
+# (셸 프롬프트 `user@host`·홈경로 등 **패널 내용**은 실셸 출력이라 _REAL_* 사후치환 유지 —
+# 이쪽은 같은 색 연속 런이라 reflow 돼 간격이 안 생긴다). _REAL_* 캡처 이후에 패치한다.
+_socket.gethostname = lambda: "host"
+
 
 # Rich 의 export_svg 는 <text> 의 textLength 를 cell_len 이 아닌 len(글자수) 로 계산하는
 # 버그가 있어(rich/console.py: `textLength=char_width * len(text)`), 한글 등 와이드(2칸)
