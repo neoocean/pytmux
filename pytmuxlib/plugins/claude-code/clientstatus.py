@@ -65,7 +65,8 @@ def init_defaults(status):
     status.claude_warn_kind = None # M17 경고 종류(None|long_turn|repeat|fmt_unknown)
     status.claude_warn_n = None    # 반복 종류일 때 반복 횟수(로케일별 배지 렌더용)
     status.claude_model = None     # M14c: 활성 Claude 모델 배지(opus-4.8 등)
-    status.claude_model_tip = None # M14c: 모델 과선택 힌트 배지(알림만, 없으면 None)
+    status.claude_model_tip = None # M14c/A: 모델 힌트 배지(과선택·세션시작, 없으면 None)
+    status.claude_ctx_tip = None   # §3.10 C: ctx 압박 힌트 배지(없으면 None)
     status.claude_model_hint = False  # M14c 힌트 토글(설정 팝업 표시용·기본 OFF)
     status.usage_limits = None     # M19: 그림자 /usage 세션·주간 한도 dict
     status.usage_age_sec = None    # S6 T3: 실측 경과(초) — stale 표기용
@@ -130,9 +131,10 @@ def absorb(status, msg):
     status.claude_warn = msg.get("claude_warn")   # M17 grade0 경고(권위값)
     status.claude_warn_kind = msg.get("claude_warn_kind")  # 종류(로케일별 렌더)
     status.claude_warn_n = msg.get("claude_warn_n")        # 반복 횟수(반복 종류)
-    status.claude_model_tip = msg.get("claude_model_tip")  # M14c 힌트(권위값, 매 status)
+    status.claude_model_tip = msg.get("claude_model_tip")  # M14c/A 힌트(권위값, 매 status)
+    status.claude_ctx_tip = msg.get("claude_ctx_tip")      # §3.10 C ctx 힌트(권위값)
     cm = msg.get("claude_model")                  # M14c 모델 배지(지속표시)
-    if cm:
+    if cm or pane_changed:   # 패널 전환 시 None 으로 교체 — stale 모델 잔류 방지
         status.claude_model = cm
     if "usage_limits" in msg:                     # M19 그림자 /usage 결과(권위값)
         status.usage_limits = msg.get("usage_limits")
@@ -212,8 +214,9 @@ def render_segs(status, segs, w, w0=None):
     # 활성 Claude 패널: 모델(M14c) + 컨텍스트 사용량(best-effort) + 세션 누적(#3, Σ).
     uparts = []
     if status.claude_active:
-        # 모델 배지는 좁은 폭에선 생략(자리 절약). claude_usage 가 있을 때만.
-        if status.claude_model and status.claude_usage and w >= 60:
+        # 모델 배지는 좁은 폭에선 생략(자리 절약). claude_usage 유무와 무관하게 표시
+        # — 세션 시작 직후 usage 가 아직 None 이어도 모델명은 항상 보여야 한다.
+        if status.claude_model and w >= 60:
             uparts.append(status.claude_model)
         # 좌하단 표기(사용자 요청 2026-06-11): 하이라이트 패널의 계정 기준으로 ①현재
         # 패널 세션의 컨텍스트 비율% ②5시간 리밋까지 남은 비율%만 보인다. **토큰 수치는
@@ -355,4 +358,11 @@ def render_segs(status, segs, w, w0=None):
                             Style(color="white", bgcolor=tc("secondary"),
                                   bold=True)))
         acc += _cw(_tt)
+    # §3.10 C ctx 압박 힌트 배지(warning 색조, model_tip 뒤에 표시).
+    if status.claude_ctx_tip:
+        _ct = f" {status.claude_ctx_tip} "
+        segs.append(Segment(_ct,
+                            Style(color="white", bgcolor=tc("warning"),
+                                  bold=True)))
+        acc += _cw(_ct)
     return acc   # P6: 새 누적 셀폭(코어가 NEST/윈도우 이어붙일 기준)

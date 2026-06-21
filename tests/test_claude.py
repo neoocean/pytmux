@@ -626,6 +626,61 @@ async def test_statusbar_ctx_follows_active_pane_switch():
     assert status.claude_usage == "ctx:12%/150K"
 
 
+async def test_statusbar_model_always_shown_when_active():
+    """시나리오: 모델 배지는 claude_active 이면 claude_usage 없어도 항상 표시.
+
+    ① Claude 시작 직후 — claude_model 은 잡혔지만 claude_usage(ctx%)가 아직 None 이어도
+       모델명이 상태줄에 나타난다.
+    ② 패널 전환 시 — 이전 패널의 모델이 새 패널 스캔 전에 잔류하지 않는다(absorb 가
+       pane_changed 에서 claude_model 을 None 으로 초기화).
+    ③ 모델 변경 반영 — /model 명령으로 모델이 바뀌면 다음 status 에서 새 모델명이 표시된다.
+    """
+    from rich.segment import Segment  # noqa: F401
+    from pytmuxlib import i18n
+    cs = importlib.import_module("pytmuxlib.plugins.claude-code.clientstatus")
+
+    class _S:
+        pass
+
+    def segtext(status, w=100):
+        status.focus_btn = None
+        segs = []
+        cs.render_segs(status, segs, w, w0=0)
+        return "".join(s.text for s in segs)
+
+    i18n.set_locale("en")
+    try:
+        # ① claude_usage=None 이어도 모델명 표시
+        s = _S()
+        cs.init_defaults(s)
+        s.claude_active = True
+        s.claude_model = "opus-4.8"
+        # claude_usage 는 기본값(None) 그대로
+        t = segtext(s)
+        assert "opus-4.8" in t, f"모델 배지 누락(usage=None): {t!r}"
+
+        # ② 패널 전환 — 이전 모델이 잔류하지 않음
+        s2 = _S()
+        cs.init_defaults(s2)
+        # 패널 5 에서 opus 스캔
+        cs.absorb(s2, {"active_pane": 5, "claude_active": True,
+                        "claude_model": "opus-4.8"})
+        assert s2.claude_model == "opus-4.8"
+        # 패널 6 으로 전환, 새 패널 모델 미스캔(None)
+        cs.absorb(s2, {"active_pane": 6, "claude_active": True,
+                        "claude_model": None})
+        assert s2.claude_model is None, f"stale 모델 잔류: {s2.claude_model!r}"
+
+        # ③ 모델 변경 반영 — 새 모델이 도착하면 즉시 갱신
+        cs.absorb(s2, {"active_pane": 6, "claude_active": True,
+                        "claude_model": "sonnet-4.6"})
+        assert s2.claude_model == "sonnet-4.6"
+        t3 = segtext(s2)
+        assert "sonnet-4.6" in t3, f"변경 모델 배지 누락: {t3!r}"
+    finally:
+        i18n.set_locale("ko")
+
+
 # ── §5.9: 정규식 ReDoS(파국적 백트래킹) 회귀 가드 ──────────────────────────────
 # claude.py 의 파서는 **신뢰할 수 없는 화면 텍스트**(Claude Code TUI 출력·붙여넣기)에
 # 정규식을 돌린다. 패턴에 중첩 수량자/모호 교대가 들어가면 적대적 입력이 지수/2차
