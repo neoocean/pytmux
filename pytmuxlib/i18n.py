@@ -395,6 +395,8 @@ register({
         # 클립보드/복사
         "msg.paste_in_progress": "클립보드 붙여넣기 중… 잠시만요 (ESC 로 빠져나가기)",
         "msg.paste_image_path": "클립보드 이미지 → 경로 붙여넣기: {path}",
+        "msg.paste_image_remote": "클립보드 이미지 → 원격 전송 후 경로 붙여넣기: {path}",
+        "msg.paste_image_remote_fail": "이미지 원격 전송 실패(scp 오류) — 로컬 경로 붙여넣기: {path}",
         "msg.paste_image_app": "이미지 붙여넣기 → 내부 앱(Alt+V)",
         "msg.clipboard_empty": "클립보드가 비어있거나 읽을 수 없음",
         "msg.copied_chars": "{n} chars 복사됨",
@@ -430,6 +432,8 @@ register({
         "msg.config_warn_more": " +{n} more",
         "msg.paste_in_progress": "Pasting clipboard… please wait (ESC to abort)",
         "msg.paste_image_path": "Clipboard image → pasted path: {path}",
+        "msg.paste_image_remote": "Clipboard image → transferred to remote, pasted path: {path}",
+        "msg.paste_image_remote_fail": "Image remote transfer failed (scp error) — pasted local path: {path}",
         "msg.paste_image_app": "Image paste → inner app (Alt+V)",
         "msg.clipboard_empty": "Clipboard is empty or unreadable",
         "msg.copied_chars": "{n} chars copied",

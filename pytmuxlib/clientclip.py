@@ -159,3 +159,23 @@ def save_image() -> str | None:
     except OSError:
         pass
     return None
+
+
+def scp_to_remote(host: str, local_path: str, remote_path: str) -> bool:
+    """로컬 파일을 scp 로 원격 호스트에 복사한다. 성공 True.
+
+    remote-attach 가 이미 ssh 키 인증을 통과한 호스트이므로 BatchMode 로 동작한다.
+    host 가 SSH config alias 를 포함한 임의 문자열일 수 있어 셸 인젝션을 피하기 위해
+    argv 형으로 전달한다."""
+    if not host or host.startswith("-") or any(c.isspace() for c in host):
+        return False
+    try:
+        dest = f"{host}:{remote_path}"
+        r = subprocess.run(
+            ["scp", "-B", "-q", "-o", "BatchMode=yes",
+             "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
+             "--", local_path, dest],
+            capture_output=True, timeout=30)
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False

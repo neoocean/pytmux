@@ -5847,6 +5847,51 @@ async def test_paste_clipboard_text_image_and_fallback():
         clientclip.paste, clientclip.has_image, clientclip.save_image = _orig
 
 
+async def test_paste_clipboard_image_remote_tab_scp():
+    """원격 탭에서 이미지 붙여넣기 — scp_to_remote 로 원격 /tmp/ 에 복사 후 원격 경로 paste.
+    실패 시엔 로컬 경로로 폴백."""
+    from pytmuxlib import clientclip
+    _orig = (clientclip.paste, clientclip.has_image,
+             clientclip.save_image, clientclip.scp_to_remote)
+
+    async def body(app, pilot, srv):
+        sent = []
+        scp_calls = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        # 원격 탭 흉내: _active_remote_host() 가 "myhost" 를 반환하도록
+        app._active_remote_host = lambda: "myhost"
+        clientclip.paste = lambda: ""
+        clientclip.has_image = lambda: True
+        clientclip.save_image = lambda: "/tmp/pytmux-clip-x.png"
+
+        # ① scp 성공 → 원격 경로 paste
+        def fake_scp_ok(host, local, remote):
+            scp_calls.append((host, local, remote))
+            return True
+        clientclip.scp_to_remote = fake_scp_ok
+        app.paste_os_clipboard()
+        await wait_until(pilot, lambda: sent and sent[-1][0] == "paste")
+        assert sent[-1] == ("paste", {"text": "/tmp/pytmux-clip-x.png"}), sent
+        assert scp_calls[-1] == ("myhost", "/tmp/pytmux-clip-x.png",
+                                 "/tmp/pytmux-clip-x.png"), scp_calls
+
+        # ② scp 실패 → 로컬 경로로 폴백
+        sent.clear(); scp_calls.clear()
+        def fake_scp_fail(host, local, remote):
+            scp_calls.append((host, local, remote))
+            return False
+        clientclip.scp_to_remote = fake_scp_fail
+        app.paste_os_clipboard()
+        await wait_until(pilot, lambda: sent and sent[-1][0] == "paste")
+        assert sent[-1] == ("paste", {"text": "/tmp/pytmux-clip-x.png"}), sent
+
+    try:
+        await _with_app(body)
+    finally:
+        (clientclip.paste, clientclip.has_image,
+         clientclip.save_image, clientclip.scp_to_remote) = _orig
+
+
 async def test_clientclip_save_image_macos_osascript_without_pngpaste():
     """맥에서 이미지 붙여넣기가 무동작이던 버그 수정(요청 2026-06-12): pngpaste(서드파티,
     기본 미설치)가 없으면 osascript 로 클립보드 PNG(«class PNGf»)를 직접 파일로 저장한다.

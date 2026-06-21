@@ -103,10 +103,26 @@ class _ClipboardMixin:
             if await asyncio.to_thread(clientclip.has_image):
                 path = await asyncio.to_thread(clientclip.save_image)
                 if path:
-                    # 경로를 붙여넣어 앱이 첨부 이미지로 인식하게 한다(결정 ①).
-                    self.send_cmd("paste", text=path)
-                    self.display_message(
-                        i18n.t("msg.paste_image_path", path=path))
+                    rhost = self._active_remote_host()
+                    if rhost:
+                        # 원격 탭: scp 로 원격 /tmp/ 에 복사 후 원격 경로를 붙여넣는다.
+                        remote_path = "/tmp/" + os.path.basename(path)
+                        ok = await asyncio.to_thread(
+                            clientclip.scp_to_remote, rhost, path, remote_path)
+                        if ok:
+                            self.send_cmd("paste", text=remote_path)
+                            self.display_message(
+                                i18n.t("msg.paste_image_remote", path=remote_path))
+                        else:
+                            # SCP 실패 시 로컬 경로 폴백 + 경고
+                            self.send_cmd("paste", text=path)
+                            self.display_message(
+                                i18n.t("msg.paste_image_remote_fail", path=path))
+                    else:
+                        # 로컬 탭: 경로를 붙여넣어 앱이 첨부 이미지로 인식하게 한다(결정 ①).
+                        self.send_cmd("paste", text=path)
+                        self.display_message(
+                            i18n.t("msg.paste_image_path", path=path))
                     return
                 # 폴백: 내부 앱이 공유 클립보드에서 직접 읽도록 Alt+V.
                 self.send_input(b"\x1bv")   # ESC v = Alt+V
