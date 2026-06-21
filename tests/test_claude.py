@@ -371,6 +371,14 @@ async def test_claude_model():
     assert claude_model("Haiku 4.5") == "haiku-4.5"
     assert claude_model("Opus") == "opus"
     assert claude_model("no model here") is None
+    # 대화 내용에 모델명이 언급돼도 하단 배지(마지막 매치)를 반환해야 한다.
+    # Claude Code UI: 대화가 위, 배지가 아래.
+    screen = ("I use Haiku 4.5 for quick tasks\n"
+              "but Sonnet is better for this.\n"
+              "\n"
+              "Opus 4.8 (1M context) · /model to change\n"
+              "? for shortcuts")
+    assert claude_model(screen) == "opus-4.8"
 
 
 async def test_ctx_window_tokens():

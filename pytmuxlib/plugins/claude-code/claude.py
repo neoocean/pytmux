@@ -392,10 +392,14 @@ def claude_model(text):
 
     'Opus 4.8 (1M context)' → 'opus-4.8', 'claude-sonnet-4-6' → 'sonnet-4.6',
     계열만 보이면 'opus'. 못 찾으면 None. 모델 과선택 힌트(T3/S4)·표시용 — 현행
-    Claude UI 포맷 의존(§5.7)이라 실 골든 픽스처(badge_1m.txt)로 회귀 고정한다."""
-    m = _MODEL_RE.search(text)
-    if not m:
+    Claude UI 포맷 의존(§5.7)이라 실 골든 픽스처(badge_1m.txt)로 회귀 고정한다.
+
+    배지는 Claude Code UI 하단에 있다(fixture 참고). 대화 내용에 모델명이 언급되면
+    첫 번째 매치가 대화 텍스트를 잡을 수 있으므로 **마지막** 매치를 배지로 본다."""
+    matches = list(_MODEL_RE.finditer(text))
+    if not matches:
         return None
+    m = matches[-1]
     fam = m.group(1).lower()
     ver = m.group(2)
     return f"{fam}-{ver.replace('-', '.')}" if ver else fam
