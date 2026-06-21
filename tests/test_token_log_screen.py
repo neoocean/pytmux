@@ -330,6 +330,61 @@ async def test_recon_tab_shows_time_axis_chart_and_scrolls():
         await teardown(srv, task, sock)
 
 
+def _session_records():
+    """세션 3개(27·6·99)의 토큰 레코드 — [세션] 뷰가 세션별 합 행을 만든다."""
+    base = 1_700_000_000.0
+    recs = []
+    for sid, tok in [(27, 5000), (6, 3000), (99, 1000)]:
+        recs.append({"ts": base, "tab": 0, "pane": 1, "session": sid,
+                     "account": "me@x.org", "tokens": tok})
+    return recs
+
+
+async def test_session_view_highlights_active_session():
+    """요청 2026-06-21: [세션] 뷰에서 현재 활성 세션(active_session) 행은 라벨이
+    orange1 굵게로 강조되고, 막대도 단색 오렌지로 그려진다 — 비활성 행은 평문/모델색."""
+    from textual.widgets import DataTable
+    from textual.coordinate import Coordinate
+    from rich.text import Text
+    from harness import make_app, server_only, teardown
+
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(120, 36)) as pilot:
+            await pilot.pause(0.3)
+            app.push_screen(screens.TokenLogScreen(
+                _session_records(), active_session=27))
+            await pilot.pause(0.2)
+            scr = app.screen_stack[-1]
+            # 세션 뷰로 전환(클릭 핸들러와 같은 경로).
+            scr._exit_body_modes()
+            scr._view = "session"
+            await scr._refresh()
+            await pilot.pause(0.1)
+            table = scr.query_one(DataTable)
+            active_lbl = active_bar = None
+            other_lbl_plain = False
+            for r in range(table.row_count):
+                lbl = table.get_cell_at(Coordinate(r, 0))
+                plain = lbl.plain if isinstance(lbl, Text) else str(lbl)
+                if "세션 27" in plain:
+                    active_lbl = lbl
+                    # 막대 열(라벨0·타임스탬프1·토큰2·막대3) — 활성 세션은 최대라 꽉 참.
+                    active_bar = table.get_cell_at(Coordinate(r, 3))
+                elif "세션 6" in plain:
+                    other_lbl_plain = not isinstance(lbl, Text) or \
+                        "orange" not in str(lbl.style)
+            assert isinstance(active_lbl, Text) and "orange1" in str(active_lbl.style), \
+                f"활성 세션 라벨이 orange1 강조여야: {active_lbl!r}"
+            assert isinstance(active_bar, Text) and "orange1" in str(active_bar.style) \
+                and any(b in active_bar.plain for b in "▁▂▃▄▅▆▇█"), \
+                f"활성 세션 막대가 단색 오렌지여야: {active_bar!r}"
+            assert other_lbl_plain, "비활성 세션 라벨은 강조하지 않음"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_hour_view_header_plain_without_usage():
     """실측 /usage 가 없으면(리셋 표기 없음) hour 뷰 5h% 칼럼 제목은 잔여시간 없이
     맨 '5h%'(지어내지 않음). _reset_left 가 None 이라 inline 잔여시간을 안 붙인다."""

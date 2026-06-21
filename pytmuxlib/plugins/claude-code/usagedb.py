@@ -339,15 +339,29 @@ def daily_breakdown(conn) -> list:
     버킷별 전체 합을 정확히 돌려준다. tab/pane 은 [패널] 세션 뷰의 대표 '탭:p' 라벨
     산출(usagelog._session_tabpane)용으로 함께 묶는다(시간단위 hour 버킷은 일자 합성
     레코드로 못 만들어 클라가 raw 레코드를 쓴다 — 전체 이력 시간단위는 무의미)."""
+    # model(v6)도 GROUP BY 에 넣어 합성 레코드가 모델 티어를 들고 가게 한다(요청
+    # 2026-06-21 — day/week/month 막대 색 분할). model 미상(NULL)은 그대로 None →
+    # daily_to_records 가 미상으로 싣고 표시층이 'unknown' 티어로 묶는다. 컬럼이 없는
+    # 구 DB(마이그레이션 전)에선 OperationalError → model 없이 폴백.
+    has_model = any(c[1] == "model"
+                    for c in conn.execute("PRAGMA table_info(usage)"))
+    msel = ", model" if has_model else ""
+    mgrp = ", model" if has_model else ""
     cur = conn.execute(
         "SELECT strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') AS day, "
-        "       account, session, tab, pane, "
+        "       account, session, tab, pane" + msel + ", "
         "       COALESCE(SUM(tokens), 0) AS tokens "
-        "FROM usage GROUP BY day, account, session, tab, pane "
+        "FROM usage GROUP BY day, account, session, tab, pane" + mgrp + " "
         "HAVING SUM(tokens) <> 0")
-    return [{"day": r["day"], "account": r["account"], "session": r["session"],
-             "tab": r["tab"], "pane": r["pane"], "tokens": int(r["tokens"])}
-            for r in cur.fetchall()]
+    out = []
+    for r in cur.fetchall():
+        rec = {"day": r["day"], "account": r["account"],
+               "session": r["session"], "tab": r["tab"], "pane": r["pane"],
+               "tokens": int(r["tokens"])}
+        if has_model and r["model"] is not None:
+            rec["model"] = r["model"]
+        out.append(rec)
+    return out
 
 
 def daily_limit_pct(conn) -> dict:
@@ -590,19 +604,34 @@ def reconcile(conn, limit: int | None = 20) -> list:
         acct = (b["account"]
                 if b["account"] and a["account"] == b["account"] else None)
         if acct:
-            cur = conn.execute(
-                "SELECT COALESCE(SUM(tokens),0) AS s FROM usage "
-                "WHERE ts > ? AND ts <= ? AND (account = ? "
-                "OR account IS NULL OR account = 'unknown')",
-                (a["ts"], b["ts"], acct))
+            where = ("ts > ? AND ts <= ? AND (account = ? "
+                     "OR account IS NULL OR account = 'unknown')")
+            params = (a["ts"], b["ts"], acct)
         else:
-            cur = conn.execute(
-                "SELECT COALESCE(SUM(tokens),0) AS s FROM usage "
-                "WHERE ts > ? AND ts <= ?", (a["ts"], b["ts"]))
+            where = "ts > ? AND ts <= ?"
+            params = (a["ts"], b["ts"])
+        # v6: 구간 내 토큰을 모델 티어(opus/sonnet/haiku/fable…)별로 분해한다 —
+        # 막대 그래프가 한 막대를 모델 구성비로 색 분할하는 데이터 출처(요청 2026-06-21).
+        # model 컬럼은 'opus-4.8' 같은 계열-버전 문자열이라 '-' 앞(계열)으로 묶는다.
+        # 미상(NULL/'unknown')은 'unknown' 티어로. total 은 전 모델 합(기존 tokens 와 동일).
+        mcur = conn.execute(
+            "SELECT COALESCE(model, 'unknown') AS m, COALESCE(SUM(tokens),0) AS s "
+            "FROM usage WHERE " + where + " GROUP BY COALESCE(model, 'unknown')",
+            params)
+        models: dict = {}
+        total = 0
+        for r in mcur:
+            s = int(r["s"])
+            total += s
+            if s <= 0:
+                continue
+            m = r["m"]
+            tier = m.split("-", 1)[0] if m != "unknown" else "unknown"
+            models[tier] = models.get(tier, 0) + s
         out.append({"t0": a["ts"], "t1": b["ts"], "account": acct,
                     "pct0": int(a["session_pct"]), "pct1": int(b["session_pct"]),
                     "dpct": int(b["session_pct"]) - int(a["session_pct"]),
-                    "tokens": int(cur.fetchone()["s"]),
+                    "tokens": total, "models": models,
                     "reset": b["session_pct"] < a["session_pct"]})
     if limit is not None and limit >= 0:
         out = out[-limit:]

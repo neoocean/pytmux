@@ -219,6 +219,22 @@ def group_key(r: dict, dim: str = "account") -> str:
     return r.get("account") or UNKNOWN
 
 
+def model_tier(r: dict) -> str:
+    """레코드의 모델 티어(계열) — 'opus-4.8'→'opus'. model 미상(None)은 'unknown'.
+    토큰 사용량을 모델별로 색 분해(막대 그래프)할 때의 그룹 키(요청 2026-06-21)."""
+    m = r.get("model")
+    return m.split("-", 1)[0] if m else "unknown"
+
+
+def _merge_tiers(dicts) -> dict:
+    """{tier: tok} 여러 개를 하나로 합산(상위 N 접힘 '기타' 행의 모델 분해용)."""
+    out: dict = {}
+    for d in dicts:
+        for t, v in d.items():
+            out[t] = out.get(t, 0) + v
+    return out
+
+
 def aggregate(records: list, bucket: str = "day",
               account: str | None = None, dim: str = "account") -> dict:
     """레코드를 (버킷 × 그룹차원)으로 합산.
@@ -379,14 +395,36 @@ def agg_view(records: list, bucket: str = "day", account: str | None = None,
     def pct(tok):
         return round(tok / total * 100) if total else 0
 
+    # 모델 티어 분해(요청 2026-06-21): 막대를 모델 구성비로 색 분할하려 그룹/버킷마다
+    # {tier: tok} 를 곁들인다. aggregate 가 안 들고 오므로 여기서 한 번 더 훑는다
+    # (레코드 수는 최근 N 으로 제한적). 계정 필터는 aggregate 와 동일.
+    gmodels_map: dict = {}
+    bmodels_map: dict = {}
+    for r in records:
+        acct = r.get("account") or UNKNOWN
+        if account is not None and acct != account:
+            continue
+        tok = int(r.get("tokens", 0))
+        if tok <= 0:
+            continue
+        tier = model_tier(r)
+        g = group_key(r, dim)
+        gmodels_map.setdefault(g, {})
+        gmodels_map[g][tier] = gmodels_map[g].get(tier, 0) + tok
+        bk = bucket_key(r.get("ts", 0.0), bucket, r.get("tzoff"))
+        bmodels_map.setdefault(bk, {})
+        bmodels_map[bk][tier] = bmodels_map[bk].get(tier, 0) + tok
+
     groups = sorted(agg["groups"].items(), key=lambda kv: -kv[1])
     grows = [(glabel(g), t, pct(t)) for g, t in groups]
     gtimes = [gtime(g) for g, _ in groups]
+    gmodels = [gmodels_map.get(g, {}) for g, _ in groups]
     if top is not None and len(grows) > top:
         rest = grows[top:]
         rest_tok = sum(t for _, t, _ in rest)
         grows = grows[:top] + [(f"기타 {len(rest)}개", rest_tok, pct(rest_tok))]
         gtimes = gtimes[:top] + [""]   # '기타 N개' 접힘 행엔 시작 시각 없음
+        gmodels = gmodels[:top] + [_merge_tiers(gmodels[top:])]
     bucket_tot = {bk: sum(per.values()) for bk, per in agg["buckets"].items()}
     if order == "tokens":
         bkeys = sorted(bucket_tot, key=lambda k: -bucket_tot[k])
@@ -395,8 +433,11 @@ def agg_view(records: list, bucket: str = "day", account: str | None = None,
     brows = [(_bucket_short(bk, bucket, weekdays, hour_suffix), bucket_tot[bk],
               pct(bucket_tot[bk]))
              for bk in bkeys]
+    bmodels = [bmodels_map.get(bk, {}) for bk in bkeys]
     return {"total": total, "groups": grows, "buckets": brows,
             "gtimes": gtimes,          # grows 와 같은 순서의 세션 시작 시각(세션 뷰 전용, 그 외 "")
+            "gmodels": gmodels,        # grows 와 같은 순서의 모델 티어 분해 {tier: tok}
+            "bmodels": bmodels,        # brows 와 같은 순서의 모델 티어 분해 {tier: tok}
             "bkeys": bkeys,            # brows 와 같은 순서의 원시 버킷 키(일자 5h% 조인용)
             "multi": len(grows) > 1,
             "gmax": max((t for _, t, _ in grows), default=0),
@@ -461,14 +502,48 @@ def recon_view(intervals: list) -> list:
 # 세로 막대의 부분 칸(1/8 단위) — 빈칸→꽉찬블록(아래에서 위로 채워짐).
 _VBLOCKS = " ▁▂▃▄▅▆▇█"
 
+# 모델 티어 쌓는 순서(바닥→위). recon_chart 가 한 막대 높이를 모델 토큰 점유로
+# 세그먼트할 때 이 순서로 아래부터 채운다 — 어느 막대든 같은 모델이 같은 높이대에
+# 와서 색 띠가 가지런해진다(요청 2026-06-21). 표시 색은 위젯(screens) 몫.
+_MODEL_TIER_ORDER = ("haiku", "sonnet", "opus", "fable")
+
+
+def _model_cell_sequence(models: dict, n: int) -> list:
+    """막대의 채워진 칸 수 n 을 모델 토큰 점유비로 배분 — 바닥→위 순 모델명 리스트
+    (길이 n). _MODEL_TIER_ORDER 먼저, 그 밖의 티어(unknown 등)는 뒤(위쪽)에. 칸 배정은
+    최대잔여법(소수부 큰 티어부터 +1)으로 합이 정확히 n 이 되게 한다. 토큰이 없으면
+    전부 None(위젯이 폴백 색으로 칠함). 순수 함수 — 헤드리스 테스트 대상."""
+    if n <= 0:
+        return []
+    total = sum(v for v in models.values() if v > 0)
+    if total <= 0:
+        return [None] * n
+    tiers = [t for t in _MODEL_TIER_ORDER if models.get(t, 0) > 0]
+    tiers += [t for t in models
+              if t not in _MODEL_TIER_ORDER and models[t] > 0]
+    raw = [(t, models[t] / total * n) for t in tiers]
+    counts = {t: int(x) for t, x in raw}
+    rem = n - sum(counts.values())
+    for t, _x in sorted(raw, key=lambda p: -(p[1] - int(p[1])))[:max(0, rem)]:
+        counts[t] += 1
+    seq: list = []
+    for t in tiers:
+        seq += [t] * counts[t]
+    if len(seq) < n:                       # 라운딩 여파 보정
+        seq += [None] * (n - len(seq))
+    return seq[:n]
+
 
 def recon_chart(intervals: list, plot_w: int, plot_h: int,
                 x_off: int = 0, step: int = 2) -> dict:
     """대사 구간을 **시간축 세로 막대 그래프**로 그리기 위한 순수 기하 계산(요청
     2026-06-20 — 표 대신 시간에 따른 사용률 증가를 한눈에). 각 구간 = 막대 1개,
-    높이 = 그 구간 끝의 실측 세션 5h%(pct1, 0~100 고정 분모) — 5h 창 안에서 단조
-    증가하다 리셋 때 0 부근으로 떨어지는 톱니가 그대로 보인다. 좌우 스크롤(x_off)로
-    더 이전 구간을 본다.
+    높이 = 그 구간 끝의 실측 세션 5h%(pct1) — 5h 창 안에서 단조 증가하다 리셋 때
+    0 부근으로 떨어지는 톱니가 그대로 보인다. 좌우 스크롤(x_off)로 더 이전 구간을 본다.
+
+    세로축 최댓값(axis_max)은 **보이는 구간들의 최대 pct1 이 50 미만이면 50, 아니면
+    100**(요청 2026-06-21 — 값이 다 낮을 때 막대가 바닥에 깔려 추세가 안 보이던 것).
+    분모로 이 값을 써 작은 값도 위로 커진다. 위젯이 같은 axis_max 로 눈금 라벨을 그린다.
 
     좌표/색은 표시층(위젯) 몫이라 여기선 글리프 격자와 열↔구간 매핑만 돌려준다
     (헤드리스 테스트 대상 — Strip/색 없이 모양만 검증).
@@ -486,13 +561,18 @@ def recon_chart(intervals: list, plot_w: int, plot_h: int,
       x_off:   실제 적용된(클램프된) 오프셋.
       max_off: 최대 스크롤 오프셋(n-capacity, ≥0).
       i0, i1:  보이는 첫/끝 구간 index(포함), 비면 (-1,-1).
+      axis_max: 세로축 최댓값(50 또는 100) — 분모이자 위젯 눈금 기준.
       n:       전체 구간 수."""
     n = len(intervals)
     step = max(1, int(step))
     grid = [" " * plot_w for _ in range(plot_h)]
     col_iv = [None] * plot_w
-    out = {"grid": grid, "col_iv": col_iv, "labels": [], "x_off": 0,
-           "max_off": 0, "i0": -1, "i1": -1, "n": n}
+    # cell_model[r][col] = 그 칸을 차지한 모델 티어명(없으면 None) — 막대 색 분할용
+    # (요청 2026-06-21). grid 와 같은 모양. 위젯이 티어→색으로 칠한다.
+    cell_model = [[None] * plot_w for _ in range(plot_h)]
+    out = {"grid": grid, "col_iv": col_iv, "cell_model": cell_model,
+           "labels": [], "x_off": 0,
+           "max_off": 0, "i0": -1, "i1": -1, "axis_max": 100, "n": n}
     if n == 0 or plot_w <= 0 or plot_h <= 0:
         return out
     capacity = max(1, (plot_w + step - 1) // step)   # 화면에 들어가는 구간 수
@@ -500,7 +580,13 @@ def recon_chart(intervals: list, plot_w: int, plot_h: int,
     x_off = max(0, min(int(x_off), max_off))
     last = n - 1 - x_off                 # 보이는 가장 새(오른쪽) 구간
     first = max(0, last - capacity + 1)  # 보이는 가장 옛(왼쪽) 구간
-    out.update(x_off=x_off, max_off=max_off, i0=first, i1=last)
+    # 세로축 최댓값: 보이는 구간(화면에 실제로 그려질 capacity 개)의 최대 pct1 이
+    # 50 미만이면 50 으로 좁혀 작은 값도 위로 키운다(요청 2026-06-21).
+    vis_max = max((intervals[i].get("pct1", 0) or 0)
+                  for i in range(first, last + 1))
+    axis_max = 50 if vis_max < 50 else 100
+    out.update(x_off=x_off, max_off=max_off, i0=first, i1=last,
+               axis_max=axis_max)
 
     rows = [list(r) for r in grid]       # 가변 격자
     last_label_end = -1
@@ -513,14 +599,21 @@ def recon_chart(intervals: list, plot_w: int, plot_h: int,
             break
         col_iv[col] = i
         pct = iv.get("pct1", 0) or 0
-        level = max(0.0, min(1.0, pct / 100.0)) * plot_h   # 채울 칸(부분 포함)
+        level = max(0.0, min(1.0, pct / axis_max)) * plot_h   # 채울 칸(부분 포함)
+        filled_rows = []                                   # 채워진 줄(위→아래)
         for r in range(plot_h):
             from_bottom = plot_h - 1 - r                   # 0=맨 아래 줄
             if level >= from_bottom + 1:
                 rows[r][col] = "█"
+                filled_rows.append(r)
             elif level > from_bottom:
                 idx = max(1, min(8, round((level - from_bottom) * 8)))
                 rows[r][col] = _VBLOCKS[idx]
+                filled_rows.append(r)
+        # 막대 높이를 모델 토큰 점유로 세그먼트(바닥→위). 모델 분해가 없으면 None.
+        seq = _model_cell_sequence(iv.get("models") or {}, len(filled_rows))
+        for k, r in enumerate(reversed(filled_rows)):      # 바닥부터 채운다
+            cell_model[r][col] = seq[k]
         # x축 라벨: 날짜 바뀌면 'MM-DD', 아니면 'HH:MM'. 겹침 방지로 솎음.
         lt = _t.localtime(iv.get("t1", 0))
         day = lt[:3]

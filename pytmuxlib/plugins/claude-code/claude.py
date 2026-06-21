@@ -366,8 +366,9 @@ def fmt_unknown_update(prev_first, recognized, fg_claude, now, unknown_after):
 # 계열 뒤 버전은 점(4.8) 또는 하이픈(4-8) 표기 모두 허용하고 점으로 정규화한다.
 # 4-B: 모델 패밀리 화이트리스트를 외부화한다 — 신규 패밀리(Anthropic 이 새 계열을
 # 내면)를 **코드 수정 없이** 환경변수 PYTMUX_CLAUDE_MODEL_FAMILIES(쉼표구분)로 보탤
-# 수 있다. 기본값은 현행과 동일(Opus|Sonnet|Haiku)이라 거동 무변경.
-_DEFAULT_MODEL_FAMILIES = ("Opus", "Sonnet", "Haiku")
+# 수 있다. Fable 은 현행 계열(Fable 5 = claude-fable-5)이라 기본 화이트리스트에
+# 포함한다(요청 2026-06-21 — 토큰 모델별 색 분해가 Fable 도 기본 인식하도록).
+_DEFAULT_MODEL_FAMILIES = ("Opus", "Sonnet", "Haiku", "Fable")
 
 
 def _model_families():

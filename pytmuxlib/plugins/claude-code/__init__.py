@@ -441,6 +441,7 @@ def _on_token_log_msg(app, msg):
         daily_pct=msg.get("daily_pct"),
         hourly_pct=msg.get("hourly_pct"),
         hourly_week_pct=msg.get("hourly_week_pct"),
+        active_session=msg.get("active_session"),
         initial_mode=initial_mode))
 
 
@@ -920,11 +921,21 @@ class _ClaudeCodePlugin:
             hourly_pct = usagedb.hourly_limit_pct(conn) if conn is not None else {}
             # 1w%(주간 전체모델 한도) 시각별 — 5h% 옆 열(사용자 요청 2026-06-17).
             hourly_week = usagedb.hourly_week_pct(conn) if conn is not None else {}
+            # 요청 2026-06-21: 현재 활성 패널의 claude 세션 id 를 함께 보내, [세션] 뷰가
+            # 지금 보고 있는 세션 행을 하이라이트하게 한다. 0(=세션 없음)/예외는 None.
+            active_sid = None
+            try:
+                win = sess.active_window
+                ap = win.active_pane if win else None
+                active_sid = getattr(ap, "_claude_session_id", None) or None
+            except Exception:
+                active_sid = None
             return {"t": "token_log", "records": recs,
                     "total_all": total_all,
                     "daily": daily, "reconcile": recon,
                     "daily_pct": daily_pct, "hourly_pct": hourly_pct,
-                    "hourly_week_pct": hourly_week}
+                    "hourly_week_pct": hourly_week,
+                    "active_session": active_sid}
         return None
 
     # ---- 클라이언트 콘텐츠-레이어 렌더/상태 훅(Phase 2c) ----

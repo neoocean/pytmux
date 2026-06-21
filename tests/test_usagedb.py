@@ -408,6 +408,45 @@ async def test_agg_view_top_folds_rest_into_others():
     assert sum(g[1] for g in v["groups"]) == v["total"]
 
 
+async def test_agg_view_breaks_down_models_per_bucket_and_group():
+    """요청 2026-06-21: agg_view 가 버킷(bmodels)·그룹(gmodels)마다 모델 티어 분해
+    {tier: tok} 를 곁들인다 — 막대 색 분할용. 'opus-4.8'→'opus' 계열로 묶고 model
+    미상은 'unknown'. top 접힘 시 '기타' 행 분해는 나머지 합."""
+    mk = usagelog.make_record
+    recs = [
+        mk(1_700_000_000.0, 0, 1, 1, "a@x.org", 300, model="opus-4.8"),
+        mk(1_700_000_100.0, 0, 1, 1, "a@x.org", 100, model="sonnet-4.6"),
+        mk(1_700_000_200.0, 0, 1, 1, "a@x.org", 50),               # 미상
+    ]
+    v = usagelog.agg_view(recs, "day", dim="account")
+    # 한 날·한 계정 → 버킷/그룹 모두 같은 분해
+    assert v["bmodels"][0] == {"opus": 300, "sonnet": 100, "unknown": 50}
+    assert v["gmodels"][0] == {"opus": 300, "sonnet": 100, "unknown": 50}
+    # top 접힘: '기타' 그룹의 분해 = 나머지 합
+    recs2 = [mk(1_700_000_000.0 + i, 0, 1, i, f"a{i}@x.org", 10,
+                model=("opus-4.8" if i % 2 else "haiku-4.5"))
+             for i in range(4)]
+    v2 = usagelog.agg_view(recs2, "day", top=1)
+    assert v2["groups"][-1][0].startswith("기타")
+    # 나머지 3개(a1 opus, a2 haiku, a3 opus) → opus 20, haiku 10
+    assert v2["gmodels"][-1] == {"opus": 20, "haiku": 10}, v2["gmodels"]
+
+
+async def test_daily_breakdown_carries_model():
+    """daily_breakdown 합성 레코드가 model 을 들고 와 day/week/month 막대도 모델
+    색 분할이 되게(요청 2026-06-21). model 없는 행은 키 자체가 빠진다(미상)."""
+    conn = usagedb.connect(":memory:")
+    usagedb.insert(conn, usagelog.make_record(
+        1_700_000_000.0, 0, 1, 1, "a@x.org", 300, model="opus-4.8"))
+    usagedb.insert(conn, usagelog.make_record(
+        1_700_000_100.0, 0, 1, 1, "a@x.org", 100))            # 미상
+    rows = usagedb.daily_breakdown(conn)
+    bym = {r.get("model"): r["tokens"] for r in rows}
+    assert bym.get("opus-4.8") == 300
+    assert bym.get(None) == 100, rows
+    conn.close()
+
+
 async def test_agg_view_single_group_not_multi():
     recs = [_rec(1_700_000_000.0, 0, 1, 1, "a@x.org", 100),
             _rec(1_700_000_100.0, 0, 1, 1, "a@x.org", 200)]
@@ -742,4 +781,31 @@ async def test_reconcile_skips_snapshot_without_session_pct():
         {"session": {"pct": 4, "reset": None}}, 300.0, "probe"))
     ivs = usagedb.reconcile(conn)
     assert len(ivs) == 1 and (ivs[0]["t0"], ivs[0]["t1"]) == (100.0, 300.0)
+    conn.close()
+
+
+async def test_reconcile_breaks_down_models_per_interval():
+    """v6(요청 2026-06-21): 각 대사 구간의 토큰을 모델 티어별로 분해한다(막대 색
+    분할 데이터). 'opus-4.8'/'sonnet-4.6' 같은 계열-버전은 '-' 앞(계열)으로 묶고,
+    model 미상(NULL)은 'unknown' 티어로. total(tokens)은 분해 합과 같다."""
+    conn = usagedb.connect(":memory:")
+    A = "me@woojinkim.org"
+    for ts, pct in [(100.0, 5), (500.0, 9)]:
+        usagedb.insert_limits(conn, usagedb.snap_from_usage(
+            {"session": {"pct": pct, "reset": "2pm"}, "account": A},
+            ts, "probe"))
+    # 구간(100,500]: opus 두 버전(300+100=400) + sonnet 150 + 모델 미상 50.
+    usagedb.insert(conn, usagelog.make_record(
+        200.0, 0, 1, 1, A, 300, model="opus-4.8"))
+    usagedb.insert(conn, usagelog.make_record(
+        250.0, 0, 1, 1, A, 100, model="opus-4.7"))
+    usagedb.insert(conn, usagelog.make_record(
+        300.0, 0, 1, 1, A, 150, model="sonnet-4.6"))
+    usagedb.insert(conn, usagelog.make_record(
+        350.0, 0, 1, 1, A, 50))                       # model 미상 → unknown
+    ivs = usagedb.reconcile(conn)
+    assert len(ivs) == 1
+    mdl = ivs[0]["models"]
+    assert mdl == {"opus": 400, "sonnet": 150, "unknown": 50}, mdl
+    assert ivs[0]["tokens"] == 600 == sum(mdl.values())
     conn.close()

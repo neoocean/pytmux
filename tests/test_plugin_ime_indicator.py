@@ -659,6 +659,56 @@ async def test_core_on_key_updates_ime_state():
         await teardown(srv, task, sock)
 
 
+async def test_badge_stays_at_prompt_when_cursor_hidden_in_split():
+    """요청 2026-06-21: 좌우 분할에서 왼쪽(활성) 패널에 타이핑 중 Claude 가 '생각 중'
+    커서를 숨기면(_active_cursor_xy=None) 배지가 화면 맨 위(y=0)로 튀지 않고, 직전
+    커서 행(프롬프트)에 머문다. 직전 행도 없으면 활성 패널 하단으로 떨어진다. 어느
+    경우든 x 는 활성(왼쪽) 패널 우측 경계 안."""
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause(0.3)
+            app.ime_show = True
+            app.ime_state = "한"
+            app._ime_os = False
+            W = app.layout.get("cols", 80)
+            H = app.layout.get("rows", 23)
+            # 좌(active, 우측 경계 39) | 우 2패널, 콘텐츠는 테두리 안쪽.
+            app.layout = {"cols": W, "rows": H, "active": 1, "panes": [
+                {"id": 1, "x": 1, "y": 1, "w": 37, "h": H - 2, "box": [0, 0, 39, H]},
+                {"id": 2, "x": 40, "y": 1, "w": 38, "h": H - 2,
+                 "box": [39, 0, 41, H]}]}
+            rows_a = [[("x", {})] for _ in range(H - 2)]
+            ccy = H - 6
+            prompt_gy = 1 + ccy            # p["y"] + ccy
+            # 1) 커서 보임 → 배지가 그 행, 활성 패널 우측 경계 안.
+            app.pane_content = {1: (rows_a, (5, ccy)),
+                                2: ([[("y", {})] for _ in range(H - 2)], None)}
+            app._composite()
+            await pilot.pause(0.05)
+            assert app._ime_zone and app._ime_zone[2] == prompt_gy, app._ime_zone
+            assert app._ime_zone[1] <= app._active_pane_right
+            # 2) 커서 숨김(같은 활성 패널) → 직전 프롬프트 행 유지(맨 위 0 아님).
+            app.pane_content[1] = (rows_a, None)
+            app._composite()
+            await pilot.pause(0.05)
+            assert app._active_cursor_xy is None
+            assert app._ime_zone[2] == prompt_gy, ("프롬프트 행 유지", app._ime_zone)
+            assert app._ime_zone[2] != 0
+            assert app._ime_zone[1] <= app._active_pane_right
+            # 3) 직전 커서 이력이 없는 새 활성 패널 → 활성 패널 하단 행 폴백(여전히 0 아님).
+            app._ime_last_cursor = None
+            app.layout["active"] = 2
+            app._composite()
+            await pilot.pause(0.05)
+            box = app._active_pane_box
+            assert app._ime_zone[2] == box[1] + box[3] - 1, app._ime_zone
+            assert app._ime_zone[2] != 0
+    finally:
+        await teardown(srv, task, sock)
+
+
 # ---- 4) ssh -R IME 채널 하드닝(M2/M3, SECURITY_REVIEW §8) ----
 import shutil          # noqa: E402
 import socket          # noqa: E402

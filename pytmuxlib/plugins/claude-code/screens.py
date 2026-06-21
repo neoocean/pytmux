@@ -613,10 +613,45 @@ class _TkTabConnector(Widget):
         return Strip(segs).adjust_cell_length(w, rule_st)
 
 
+# 모델 티어 → 막대 색(요청 2026-06-21 — 막대를 모델 구성비로 색 분할). 한 막대가
+# 여러 모델로 쌓이므로 서로 잘 구분되는 색을 고른다. 미상(unknown)은 회색.
+_MODEL_BAR_COLORS = {
+    "haiku": "green",
+    "sonnet": "cyan",
+    "opus": "magenta",
+    "fable": "yellow",
+    "unknown": "#808080",
+}
+
+# 범례 표시 라벨(티어명 → 사람용). 미상은 '기타'.
+_MODEL_LABELS = {
+    "haiku": "Haiku", "sonnet": "Sonnet", "opus": "Opus",
+    "fable": "Fable", "unknown": "?",
+}
+
+# [세션] 뷰에서 **현재 활성 세션** 행을 알리는 색(요청 2026-06-21) — 모델 팔레트
+# (green/cyan/magenta/yellow)와 겹치지 않는 밝은 오렌지(테마 accent 와 같은 계열).
+_ACTIVE_SESSION_COLOR = "orange1"
+
+
+def _session_id_of_label(label):
+    """'세션 27 (탭1:p1)' → 27. group_key 가 만든 라벨은 로케일 무관하게 항상
+    '세션 N …' 로 시작한다(usagelog.group_key). '기타 N개' 등은 None."""
+    parts = (label or "").split()
+    if len(parts) >= 2 and parts[0] == "세션":
+        try:
+            return int(parts[1])
+        except ValueError:
+            return None
+    return None
+
+
 class _ReconChart(Widget):
     """[대사] 뷰의 **시간축 세로 막대 그래프**(사용자 요청 2026-06-20 — 표 대신 시간에
     따른 5h 사용률 증가를 한눈에). 각 막대=대사 구간 1개, 높이=그 구간 끝의 실측 세션
-    5h%(0~100 고정), 색=임계(≥80 빨강·≥50 노랑·그 외 초록), 5h 창 리셋 구간은 청록.
+    5h%(0~100 고정). **색=그 구간 토큰의 모델 구성비**(요청 2026-06-21) — 한 막대가
+    Haiku/Sonnet/Opus/Fable 색 띠로 바닥부터 쌓여 모델별 비중을 대략 가늠한다(모델
+    분해가 없는 구간은 임계색 폴백: ≥80 빨강·≥50 노랑·그 외 초록, 리셋은 청록).
     좌우(←→/PgUp·PgDn/Home·End)로 더 이전 구간을 스크롤한다. 폭에 들어가는 만큼만
     그려 가로 스크롤=그릴 구간 창을 옮기는 것(_ReconChart.x_off, 순수 기하는
     usagelog.recon_chart)."""
@@ -673,6 +708,15 @@ class _ReconChart(Widget):
         color = "red" if pct >= 80 else "yellow" if pct >= 50 else "green"
         return Style(color=color, bold=pct >= 50)
 
+    @staticmethod
+    def _cell_style(model, iv):
+        """막대 한 칸 색: 모델 티어가 있으면 그 색(요청 2026-06-21), 없으면(모델
+        미분해 구간) 기존 임계/리셋 색으로 폴백 — 하위호환."""
+        if model:
+            color = _MODEL_BAR_COLORS.get(model, _MODEL_BAR_COLORS["unknown"])
+            return Style(color=color, bold=model in ("opus", "fable"))
+        return _ReconChart._bar_style(iv.get("pct1", 0) or 0, iv.get("reset"))
+
     def render_line(self, y: int) -> Strip:
         w = self.size.width
         if w <= 0:
@@ -681,18 +725,21 @@ class _ReconChart(Widget):
         plot_w, plot_h = self._plot_dims()
         grid = ch["grid"]
         col_iv = ch["col_iv"]
+        cell_model = ch.get("cell_model") or []
         muted = Style(dim=True)
         axis_st = Style(color=theme_color(self, "accent"))
         segs = []
+        axis_max = ch.get("axis_max", 100)
         if y < plot_h:
-            # 좌측 눈금자: 위=100·중앙=50·바닥=0 에 숫자+축틱, 그 외 축선만.
+            # 좌측 눈금자: 위=axis_max·중앙=절반·바닥=0 에 숫자+축틱, 그 외 축선만.
+            # axis_max 는 보이는 구간 최대치에 따라 100 또는 50(usagelog.recon_chart).
             mid = plot_h // 2
             if y == 0:
-                lab = "100"
+                lab = f"{axis_max:>3}"
             elif y == plot_h - 1:
                 lab = "  0"
             elif y == mid:
-                lab = " 50"
+                lab = f"{axis_max // 2:>3}"
             else:
                 lab = "   "
             segs.append(Segment(lab, muted))
@@ -708,7 +755,9 @@ class _ReconChart(Widget):
                     x += 1
                     continue
                 iv = self.intervals[iv_i]
-                st = self._bar_style(iv.get("pct1", 0) or 0, iv.get("reset"))
+                m = (cell_model[y][x] if y < len(cell_model)
+                     and x < len(cell_model[y]) else None)
+                st = self._cell_style(m, iv)
                 segs.append(Segment(row[x] if x < len(row) else " ", st))
                 x += 1
         elif y == plot_h:
@@ -801,9 +850,12 @@ class TokenLogScreen(ModalScreen):
 
     def __init__(self, records, usage=None, total_all=None,
                  daily=None, reconcile=None, daily_pct=None, hourly_pct=None,
-                 hourly_week_pct=None, initial_mode=None):
+                 hourly_week_pct=None, active_session=None, initial_mode=None):
         super().__init__()
         self._records = records or []
+        # 요청 2026-06-21: 현재 활성 패널의 claude 세션 id(없으면 None) — [세션] 뷰가
+        # 이 세션 행을 하이라이트하고 막대를 다른 색으로 그린다.
+        self._active_session = active_session
         # §10-D: 세션 5h 한도 최대%(권위 /usage). 스크랩 Σ 가 5h 소비를 과소집계하므로
         # 사용량 뷰가 '얼마나 썼나'를 이 권위값으로 보인다. daily_pct=일자별(레거시
         # 유지), hourly_pct=시각('YYYY-MM-DD HH:00')별 — 5h 비율은 일 단위가 아니라
@@ -1150,15 +1202,27 @@ class TokenLogScreen(ModalScreen):
         return " " * max(0, maxdigits - digits) + s
 
     @staticmethod
-    def _tok_bar(tok, vmax, cells):
+    def _tok_bar(tok, vmax, cells, models=None):
         """행 토큰을 표시 최댓값(vmax) 기준 **가로 막대**로 그린다(요청 2026-06-20) —
         토큰 숫자 옆에 둬 행 간 사용량을 한눈에 비교하게. 0/빈 값·폭 부족은 빈 셀.
-        색은 비교용 단일 톤(cyan)으로 — 이 막대는 한도 경고가 아니라 행 사이 **상대
-        크기** 표시라, 임계색(빨/노)을 쓰지 않아 가장 큰 행이 '위험'으로 오인되지
-        않게 한다(5h%/1w% 열의 임계색 막대와 구분)."""
+
+        `models`({tier: tok})가 있으면 막대를 **모델 구성비로 색 분할**한다(요청
+        2026-06-21) — 왼→오 순으로 Haiku/Sonnet/Opus/Fable 색 띠가 토큰 점유만큼
+        이어져 한 기간의 모델 비중을 가늠한다. 분해가 없으면 종전대로 단일 톤(cyan)
+        — 이 막대는 한도 경고가 아니라 행 사이 **상대 크기** 표시라 임계색(빨/노)을
+        쓰지 않아 가장 큰 행이 '위험'으로 오인되지 않게 한다(5h%/1w% 열과 구분)."""
         if not tok or vmax <= 0 or cells <= 0:
             return Text("")
-        return Text(bar(tok, vmax, cells), style="cyan", justify="left")
+        s = bar(tok, vmax, cells)
+        if not models:
+            return Text(s, style="cyan", justify="left")
+        seq = usagelog._model_cell_sequence(models, len(s))
+        t = Text(justify="left")
+        for ch, m in zip(s, seq):
+            color = (_MODEL_BAR_COLORS.get(m, _MODEL_BAR_COLORS["unknown"])
+                     if m else "cyan")
+            t.append(ch, style=color)
+        return t
 
     @staticmethod
     def _fmt_date_hdr(d):
@@ -1277,8 +1341,10 @@ class TokenLogScreen(ModalScreen):
             i18n.t("r집계 표 · ←→/PgUp·PgDn/Home·End 스크롤 · u/usage · Esc닫기"))
 
     def _recon_top_line(self):
-        """[대사] 그래프 상단 1줄: 보이는 구간 시간 범위 + 최신 5h% + 안내. 데이터가
-        없으면 안내문(빈 그래프)."""
+        """[대사] 그래프 상단: 보이는 구간 시간 범위 + 최신 5h% + 안내, 그리고 둘째
+        줄에 **모델 색 범례**(요청 2026-06-21 — 막대가 모델 구성비로 색 분할되므로
+        어느 색이 어느 모델인지). 데이터에 실제로 나타난 티어만 색 견본과 함께 보인다.
+        데이터가 없으면 안내문(빈 그래프)."""
         ivs = self._reconcile
         if not ivs:
             return i18n.t("pscreen.recon_empty")
@@ -1287,8 +1353,37 @@ class TokenLogScreen(ModalScreen):
         rng = "{}→{}".format(
             _t.strftime("%m-%d %H:%M", _t.localtime(ivs[0].get("t0", 0))),
             _t.strftime("%m-%d %H:%M", _t.localtime(last.get("t1", 0))))
-        return i18n.t("pscreen.recon_chart_top", rng=rng,
-                      pct=last.get("pct1", 0) or 0, n=len(ivs))
+        # 기본 텍스트 색은 #tktop 의 CSS(color: $text-muted)에 맡긴다 — 여기서
+        # theme_color 를 style 로 주면 'auto 60%'(Textual CSS 식)라 rich 가 못 읽는다.
+        line = Text(i18n.t("pscreen.recon_chart_top", rng=rng,
+                           pct=last.get("pct1", 0) or 0, n=len(ivs)))
+        # 범례: 구간들에 실제로 등장한 모델 티어를 누적해 색 견본(█)과 라벨로.
+        present: dict = {}
+        for iv in ivs:
+            for t, v in (iv.get("models") or {}).items():
+                present[t] = present.get(t, 0) + (v or 0)
+        leg = self._model_legend(present)
+        if leg is not None:
+            line.append("\n")
+            line.append_text(leg)
+        return line
+
+    def _model_legend(self, present):
+        """모델 색 범례 Text — present({tier: tok})에서 실제로 등장한(>0) 티어만
+        색 견본(█)+라벨로(요청 2026-06-21, 막대 색↔모델 매핑 안내). 정의 순서 먼저,
+        그 밖(unknown 등)은 뒤. 등장한 티어가 없으면 None."""
+        present = {t: v for t, v in (present or {}).items() if v and v > 0}
+        if not present:
+            return None
+        order = [t for t in usagelog._MODEL_TIER_ORDER if t in present]
+        order += [t for t in present if t not in usagelog._MODEL_TIER_ORDER]
+        # 라벨 색은 컨테이너(#tktop) CSS 에 맡기고(=text-muted), 견본 칸만 모델 색.
+        leg = Text(justify="left")
+        for t in order:
+            color = _MODEL_BAR_COLORS.get(t, _MODEL_BAR_COLORS["unknown"])
+            leg.append("█ ", style=color)
+            leg.append(_MODEL_LABELS.get(t, t) + "  ")
+        return leg
 
     def _limit_summary(self):
         """상단 1줄 한도 요약 접두('5h 17% · 주 14% · '). 상세(막대·리셋·계정·창Σ)는
@@ -1441,14 +1536,17 @@ class TokenLogScreen(ModalScreen):
                                   hour_suffix=hour_suffix)
             # 세션 시작 시각(별도 타임스탬프 열용) — _refresh 가 읽는다.
             self._sess_times = v.get("gtimes")
-            return v["groups"], v["gmax"], v["total"], i18n.t("세션"), None
+            return (v["groups"], v["gmax"], v["total"], i18n.t("세션"), None,
+                    v.get("gmodels"))
         self._sess_times = None
         weekdays = i18n.t("pscreen.weekdays").split(",")
         v = usagelog.agg_view(src, self._bucket, None, "account",
                               self._order, weekdays=weekdays,
                               hour_suffix=hour_suffix)
         # 5번째: 원시 버킷 키(brows 와 동순) — hour 버킷 5h% 열 조인용(§10-D).
-        return v["buckets"], v["bmax"], v["total"], i18n.t("기간"), v.get("bkeys")
+        # 6번째: 행별 모델 티어 분해(막대 색 분할용, 요청 2026-06-21).
+        return (v["buckets"], v["bmax"], v["total"], i18n.t("기간"),
+                v.get("bkeys"), v.get("bmodels"))
 
     async def _refresh(self):
         self._sync_tabs()
@@ -1479,7 +1577,7 @@ class TokenLogScreen(ModalScreen):
             self._refresh_warn(table)
             return
         label_w, bar_cells = self._metrics()
-        rows, vmax, win, rowhdr, bkeys = self._view_rows()
+        rows, vmax, win, rowhdr, bkeys, rmodels = self._view_rows()
         # §10-D: hour 버킷이면 시각별 세션 5h 한도 최대%(권위 /usage)를 별도 열로 보인다.
         # 스크랩 Σ(토큰 열)는 5h 소비를 과소반영하므로 '그 시각 5h 창이 얼마나 찼나'의
         # 진짜 신호다. 5h 비율은 일 단위가 아니라 시간 단위 뷰에 둔다(사용자 결정
@@ -1519,13 +1617,18 @@ class TokenLogScreen(ModalScreen):
             bk = bkeys[i] if (bkeys is not None and i < len(bkeys)) else None
             tstr = (self._sess_times[i] if (self._sess_times
                     and i < len(self._sess_times)) else "")
+            mdl = (rmodels[i] if (rmodels and i < len(rmodels)) else None)
+            # 활성 세션 행(세션 뷰 한정): 라벨의 세션 id 가 현재 활성 세션과 같으면.
+            active = (self._view == "session"
+                      and self._active_session is not None
+                      and _session_id_of_label(label) == self._active_session)
             if group_dates and bk:
                 d = bk[:10]            # 'YYYY-MM-DD'
                 if d != prev_date:
                     prev_date = d
                     disp.append(("hdr", self._fmt_date_hdr(d)))
                 label = ("  " + label.split(" ", 1)[1]) if " " in label else label
-            disp.append(("row", label, tok, bk, tstr))
+            disp.append(("row", label, tok, bk, tstr, mdl, active))
         # 타임스탬프 열 폭: 헤더('타임스탬프')와 값('06-20 16:03'·'06-20') 중 넓은 쪽.
         ts_hdr = i18n.t("타임스탬프")
         if show_ts:
@@ -1617,13 +1720,23 @@ class TokenLogScreen(ModalScreen):
                             cells.append(Text(""))
                     table.add_row(*cells)
                     continue
-                _, label, tok, bk, tstr = it
-                cells = [self._trunc(label, label_w)]
+                _, label, tok, bk, tstr, mdl, active = it
+                # 활성 세션 행은 라벨·타임스탬프·토큰을 굵은 오렌지로 강조하고(위치
+                # 하이라이트), 막대는 모델색 대신 단색 오렌지로 그려 한눈에 구분(요청
+                # 2026-06-21). DataTable 의 커서/줄무늬와 충돌 없이 전경색만으로 강조.
+                act_st = (_ACTIVE_SESSION_COLOR + " bold") if active else None
+                lbl = self._trunc(label, label_w)
+                cells = [Text(lbl, style=act_st) if active else lbl]
                 if show_ts:
-                    cells.append(Text(tstr, justify="left"))
-                cells.append(Text(self._tok_aligned(tok, maxdig), justify="left"))
+                    cells.append(Text(tstr, justify="left", style=act_st or ""))
+                cells.append(Text(self._tok_aligned(tok, maxdig),
+                                  justify="left", style=act_st or ""))
                 if show_bar:
-                    cells.append(self._tok_bar(tok, vmax, bar_w))
+                    if active:
+                        cells.append(Text(bar(tok, vmax, bar_w),
+                                          style=act_st, justify="left"))
+                    else:
+                        cells.append(self._tok_bar(tok, vmax, bar_w, mdl))
                 if show5h:
                     cells.append(self._lim5h_cell(bk, lim_cells))
                     if show1w:
@@ -1650,7 +1763,19 @@ class TokenLogScreen(ModalScreen):
         scope = i18n.t("pscreen.tklog_scope", order=order_l, sigma=sigma)
         # 상단은 1줄(한도 요약 접두 + 스코프)만 — /usage 막대·창Σ·신선도 상세는
         # [한도] 뷰로 옮겼다(작은 화면 정리, 2026-06-14). usage 없으면 접두는 빈 문자열.
-        self.query_one("#tktop", Static).update(self._limit_summary() + scope)
+        # 막대 색 분할(요청 2026-06-21) 시 둘째 줄에 모델 색 범례를 곁들인다 — 어느
+        # 색이 어느 모델인지(표에 등장한 티어만).
+        top = Text(self._limit_summary() + scope)   # 색은 #tktop CSS(text-muted)
+        present: dict = {}
+        if show_bar and rmodels:
+            for d in rmodels:
+                for t, v in (d or {}).items():
+                    present[t] = present.get(t, 0) + (v or 0)
+        leg = self._model_legend(present)
+        if leg is not None:
+            top.append("\n")
+            top.append_text(leg)
+        self.query_one("#tktop", Static).update(top)
         self.query_one("#tkhint", Static).update(i18n.t("pscreen.tklog_hint"))
         # (옛 footer '5h/1주 경계까지 남은 시간' 한 줄은 제거 — 잔여시간을 5h%/1w%
         # 칼럼 제목에 inline 으로 옮겼다, 요청 2026-06-20.)

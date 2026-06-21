@@ -685,6 +685,10 @@ class _RenderMixin:
         # 테두리 박스가 있으면 그 오른쪽 테두리 칸(bx+bw-1)에 덮도록 bx+bw, 없으면
         # 콘텐츠 끝 x+w. 매 합성마다 None 으로 초기화(stale 방지).
         self._active_pane_right = None
+        # 활성 패널 콘텐츠 박스 (x, y, w, h) — 커서가 숨겨졌을 때(예: Claude '생각 중'
+        # DECTCEM off) IME 배지가 화면 맨 위가 아니라 활성 패널 안(하단 프롬프트 영역)
+        # 으로 떨어지게, client_render 훅이 폴백 앵커로 읽는다(요청 2026-06-21).
+        self._active_pane_box = None
         # Claude footer 클릭존(§10 item 2/3) 재계산은 claude-code 플러그인의
         # client_render 훅(아래)이 매 합성마다 비우고 다시 채운다.
         for p in self.layout.get("panes", []):
@@ -692,6 +696,7 @@ class _RenderMixin:
                 _abox = p.get("box")
                 self._active_pane_right = (_abox[0] + _abox[2]) if _abox \
                     else (p["x"] + p["w"])
+                self._active_pane_box = (p["x"], p["y"], p["w"], p["h"])
             content = self.pane_content.get(p["id"])
             if not content:
                 continue

@@ -309,3 +309,60 @@ async def test_recon_chart_geometry_and_scroll():
     # 빈 입력: 안전한 빈 격자.
     empty = usagelog.recon_chart([], 10, 5, 0, 2)
     assert empty["n"] == 0 and empty["i0"] == -1 and empty["labels"] == []
+
+
+async def test_recon_chart_axis_max_shrinks_to_50_when_all_low():
+    """요청 2026-06-21: 보이는 구간 최대 pct1 이 50 미만이면 세로축 최댓값을 50 으로
+    좁혀 작은 값도 위로 키운다(아니면 100). axis_max 가 분모라 같은 값이 더 높이 찬다."""
+    base = 1_700_000_000.0
+    low = [{"t0": base, "t1": base + 1, "pct0": 0, "pct1": 40, "dpct": 40,
+            "tokens": 1, "reset": False}]
+    ch = usagelog.recon_chart(low, plot_w=2, plot_h=8, x_off=0, step=2)
+    assert ch["axis_max"] == 50, "최대 40<50 → 축 50"
+    # 40/50=0.8 → 8칸 중 약 6~7칸(분모 100 이면 ~3칸이었을 것).
+    filled = sum(1 for r in ch["grid"] if r[0] != " ")
+    assert filled >= 6, (filled, "축 50 이면 40%% 막대가 6칸 이상")
+
+    # 50 이상이 하나라도 보이면 축 100.
+    hi = usagelog.recon_chart(
+        [{"t0": base, "t1": base + 1, "pct0": 0, "pct1": 55, "dpct": 55,
+          "tokens": 1, "reset": False}], 2, 8, 0, 2)
+    assert hi["axis_max"] == 100, "최대 55≥50 → 축 100"
+    # 경계: 정확히 50 은 100 축(50 미만일 때만 좁힌다).
+    edge = usagelog.recon_chart(
+        [{"t0": base, "t1": base + 1, "pct0": 0, "pct1": 50, "dpct": 50,
+          "tokens": 1, "reset": False}], 2, 8, 0, 2)
+    assert edge["axis_max"] == 100, "정확히 50 은 100 축"
+
+
+async def test_recon_chart_segments_bar_by_model():
+    """요청 2026-06-21: 한 막대 높이를 모델 토큰 점유비로 세그먼트한다(cell_model).
+    100% 막대(전 높이=8칸), models opus:75 sonnet:25 → 위 6칸 opus, 아래 2칸 sonnet
+    (정의 순 haiku<sonnet<opus<fable 으로 바닥부터 쌓아 sonnet 이 아래)."""
+    iv = {"t0": 0, "t1": 1, "pct0": 0, "pct1": 100, "dpct": 100,
+          "tokens": 100, "reset": False,
+          "models": {"opus": 75, "sonnet": 25}}
+    ch = usagelog.recon_chart([iv], plot_w=2, plot_h=8, x_off=0, step=2)
+    cm = ch["cell_model"]
+    col = [cm[r][0] for r in range(8)]          # 위→아래
+    assert col == ["opus"] * 6 + ["sonnet"] * 2, col
+
+    # 모델 분해가 없으면 cell_model 은 전부 None(위젯 폴백).
+    bare = {"t0": 0, "t1": 1, "pct0": 0, "pct1": 100, "dpct": 100,
+            "tokens": 0, "reset": False}
+    cb = usagelog.recon_chart([bare], 2, 8, 0, 2)["cell_model"]
+    assert all(cb[r][0] is None for r in range(8))
+
+
+async def test_model_cell_sequence_largest_remainder():
+    """_model_cell_sequence: 칸 수를 점유비로 배분(합 정확히 n, 최대잔여법),
+    바닥→위 순. 미정의 티어(unknown 등)는 정의 티어 뒤(위쪽)에."""
+    # 3:1 → 4칸 중 3 opus, 1 sonnet (바닥부터: sonnet, opus, opus, opus)
+    seq = usagelog._model_cell_sequence({"opus": 3, "sonnet": 1}, 4)
+    assert seq == ["sonnet", "opus", "opus", "opus"], seq
+    # unknown 은 뒤(위쪽)
+    seq2 = usagelog._model_cell_sequence({"opus": 1, "unknown": 1}, 2)
+    assert seq2 == ["opus", "unknown"], seq2
+    # 토큰 없음/0칸
+    assert usagelog._model_cell_sequence({}, 3) == [None, None, None]
+    assert usagelog._model_cell_sequence({"opus": 5}, 0) == []

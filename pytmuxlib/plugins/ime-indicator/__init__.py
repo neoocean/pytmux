@@ -263,7 +263,24 @@ class _ImeIndicatorPlugin:
         color = "success" if state == "한" else "primary"
         st = Style(color="black", bgcolor=theme_color(app, color), bold=True)
         cxy = getattr(app, "_active_cursor_xy", None)
-        y = cxy[1] if cxy else 0
+        # 활성 패널 id(직전 커서 행을 같은 패널에서만 재사용하기 위함).
+        lay = getattr(app, "layout", None)
+        active = lay.get("active") if isinstance(lay, dict) else None
+        # 커서 행 결정. Claude 가 '생각 중' 커서를 숨기면(_active_cursor_xy=None) 종전엔
+        # y=0(화면 맨 위)으로 떨어져 배지가 프롬프트에서 한참 위로 튀었다(요청 2026-06-21).
+        #  1) 커서가 보이면 그 행(+같은 패널의 '직전 커서 행'으로 기억).
+        #  2) 숨겨졌고 같은 활성 패널의 직전 커서 행이 있으면 그 행(타이핑하던 프롬프트
+        #     행 — 숨김 직전 위치라 프롬프트 오른쪽에 그대로 머문다).
+        #  3) 둘 다 없으면 활성 패널 **하단**(프롬프트가 있는 영역)으로, 그래도 없으면 0.
+        last = getattr(app, "_ime_last_cursor", None)   # (active_pane_id, (x, y))
+        if cxy is not None:
+            app._ime_last_cursor = (active, cxy)
+            y = cxy[1]
+        elif last is not None and last[0] == active and last[1] is not None:
+            y = last[1][1]
+        else:
+            box = getattr(app, "_active_pane_box", None)
+            y = (box[1] + box[3] - 1) if box else 0    # 활성 패널 마지막 내용 행
         # 활성 패널 오른쪽 경계(exclusive). 미상이면 화면 폭 W(=종전 전체폭 동작).
         x_right = getattr(app, "_active_pane_right", None)
         # 탭 닫기 [x] 와 같은 행이면 우측 4칸 회피(이 훅 뒤에 그려져 배지를 덮는다).
