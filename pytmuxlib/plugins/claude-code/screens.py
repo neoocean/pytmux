@@ -1936,7 +1936,9 @@ class TokenLogScreen(ModalScreen):
         # 들여쓰기 여유가 필요해 티어 상한 대신 32셀까지 허용(박스 max-width 86 안).
         rowhdr = i18n.t("기간")
         if nodes:
-            labels = [rowhdr] + [self._tree_label(n) for n in nodes]
+            # divider 행은 label_w 에 맞게 잘리므로 폭 계산에서 제외한다.
+            labels = [rowhdr] + [self._tree_label(n)
+                                 for n in nodes if n["kind"] != "divider"]
             need = max(sum(_char_cells(c) for c in s) for s in labels) + 1
             label_w = max(8, min(need, 32))
         else:
