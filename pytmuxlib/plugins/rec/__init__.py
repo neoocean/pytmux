@@ -119,17 +119,16 @@ class _RecPlugin:
         init_status_defaults(status)
 
     def client_statusbar_update(self, app, status, msg):
-        """status 메시지의 capture* 필드를 위젯에 흡수(코어 update_status 에서 이전)."""
+        """status 메시지의 capture* 필드를 위젯에 흡수(코어 update_status 에서 이전).
+        캡처 상태가 바뀌면 TabBar 도 갱신해 맨 왼쪽 REC 배지를 즉시 표시/제거한다."""
         from .clientside import absorb
+        old_cap = getattr(status, 'capture', None)
         absorb(status, msg)
-
-    def client_statusbar_badges(self, app, status, segs, w, w0=None):
-        """시스템 배지 영역(SYNC/AR 직후)에 ` REC ` 배지를 그리고 클릭존을 채운다(코어
-        _render_main 에서 이전 — 종전과 같은 위치). w0=들어오는 누적 셀폭, 새 누적 폭 반환(P6)."""
-        from .clientside import render_badge
-        if w0 is None:
-            return None
-        return render_badge(status, segs, w0)
+        new_cap = getattr(status, 'capture', None)
+        if old_cap != new_cap:
+            tb = getattr(app, 'tabbar', None)
+            if tb is not None:
+                tb.refresh()
 
     def client_status_tabs(self, app, tree):
         """통합 상태 팝업에 '출력 캡처(REC)' 탭(+[c]/[o] 동작)을 기여(코어

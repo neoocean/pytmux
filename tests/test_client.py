@@ -4184,15 +4184,19 @@ async def test_bars_use_terminal_default_background():
         tbgs = [s.style.bgcolor for s in tstrip if s.style]
         assert any(b is None for b in tbgs), "탭바 base 배경 = 터미널 기본(None)"
         assert any(b is not None for b in tbgs), "활성 탭 등 강조 배지는 bgcolor 유지"
-        # 상태줄: 명시 bg 미설정이면 base 배경 None + REC 배지는 bgcolor 지정
-        app.status.bg = None
+        # REC 배지는 탭바 맨 왼쪽에 표시된다 — capture ON 시 탭바에 bgcolor 지정 세그먼트로 나타남.
         app.status.capture = True
+        tstrip2 = app.tabbar.render_line(0)
+        rec = next((s for s in tstrip2 if s.text.strip() == "REC"), None)
+        assert rec is not None and rec.style.bgcolor is not None, \
+            "REC 배지는 탭바 맨 왼쪽에 자체 bgcolor 유지"
+        # 상태줄: 명시 bg 미설정이면 base 배경 None(REC 는 탭바로 이동)
+        app.status.bg = None
         sstrip = app.status.render_line(0)
         sbgs = [s.style.bgcolor for s in sstrip if s.style]
         assert any(b is None for b in sbgs), "상태줄 base 배경 = 터미널 기본(None)"
-        rec = next((s for s in sstrip if s.text.strip() == "REC"), None)
-        assert rec is not None and rec.style.bgcolor is not None, \
-            "REC 배지는 자체 bgcolor 유지"
+        assert all(s.text.strip() != "REC" for s in sstrip), \
+            "REC 배지는 상태줄에서 탭바로 이동됐으므로 상태줄에 없어야 함"
     await _with_app(body)
 
 
@@ -4203,7 +4207,8 @@ async def test_status_tabs_popup_merged():
         from textual.widgets import Label
         app.status.capture = True
         app.status.render_line(0)
-        assert app.status._rec_zone is not None, "REC 클릭존 등록"
+        # REC 배지는 탭바로 이동했으므로 상태줄 _rec_zone 은 None(클릭존 없음).
+        assert app.status._rec_zone is None, "REC 클릭존은 상태줄에서 제거됨(탭바 이동)"
         # REC 버튼 배선: status_tabs 트리 요청 + 캡처 탭(0=왼쪽) + 캡처 줄 준비
         app.show_capture_info("/tmp/x.sock.capture/pane-1.log", 2048)
         assert app._tree_purpose == "status_tabs" and app._status_tab_initial == 0
