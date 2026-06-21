@@ -679,9 +679,7 @@ class TabBar(Widget):
         labels/widths/스크롤 루프를 통째로 건너뛰고, 캐시 당시 안정화된 스크롤을
         복원해 후속 코드 일관성을 유지한다(스크롤 안정화는 멱등)."""
         w = self.size.width
-        rec_on = bool(getattr(getattr(getattr(self, 'app', None), 'status', None), 'capture', False))
-        rec_w = 5 if rec_on else 0   # " REC " = 5 cells
-        sig = (w, self.sel, self._scroll, rec_on,
+        sig = (w, self.sel, self._scroll,
                tuple((t["index"], t["name"], t.get("bell"),
                       t.get("activity"), t.get("claude")) for t in self.tabs))
         if sig == self._entries_sig:
@@ -693,9 +691,9 @@ class TabBar(Widget):
         idxs = [t["index"] for t in self.tabs]
         selpos = idxs.index(self.sel) if self.sel in idxs else 0
         # [+] 새 탭 버튼: 왼쪽 탭과 한 칸 더 띄운다(사용자 요청 — 앞 공백 2칸).
-        # 왼쪽 여백(LEAD)도 폭 예산에서 뺀다. REC 배지 폭(rec_w)도 뺀다.
+        # 왼쪽 여백(LEAD)도 폭 예산에서 뺀다.
         addtxt = "  [+]"
-        mid_w = max(1, w - len(addtxt) - self.LEAD - rec_w)
+        mid_w = max(1, w - len(addtxt) - self.LEAD)
         # 선택 탭이 보이도록 스크롤 보정
         self._scroll = max(0, min(self._scroll, max(0, n - 1)))
         if selpos < self._scroll:
@@ -704,8 +702,6 @@ class TabBar(Widget):
                sum(widths[self._scroll:selpos + 1]) > mid_w - 2):
             self._scroll += 1
         entries, mid_used = [], 0
-        if rec_on:                                 # REC 배지(캡처 ON 시 탭바 맨 왼쪽)
-            entries.append(("rec", None, " REC "))
         if self.LEAD:                              # 왼쪽 여백(첫 탭 한 칸 오른쪽)
             entries.append(("lead", None, " " * self.LEAD))
         if self._scroll > 0:                       # 왼쪽에 더 있음
@@ -766,9 +762,7 @@ class TabBar(Widget):
         segs, zones = [], []
         x = 0
         for kind, payload, text in self._entries():
-            if kind == "rec":                      # REC 배지 — 파란 secondary 색(토큰 배지와 동일)
-                st = Style(color="white", bgcolor=theme_color(self, "secondary"), bold=True)
-            elif kind in ("lead", "addgap"):       # 여백/[+] 간격칸(터미널 배경, 클릭 무시)
+            if kind in ("lead", "addgap"):         # 여백/[+] 간격칸(터미널 배경, 클릭 무시)
                 st = base
             elif kind in ("scroll_left", "scroll_right"):
                 st = arrow_st

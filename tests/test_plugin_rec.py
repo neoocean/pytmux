@@ -154,9 +154,8 @@ async def test_rec_disabled_removes_all_touchpoints():
 
 # ── 클라 표시(배지·팝업탭·흡수) ─────────────────────────────────────────────
 async def test_rec_client_badge_init_and_tab_present():
-    """rec present: client_statusbar_init 가 capture 필드를 설치하고, 흡수가 동작하며,
-    client_status_tabs 가 REC 탭(+동작)을 기여한다.
-    REC 배지는 탭바 맨 왼쪽으로 이동했으므로 client_statusbar_badges 훅은 없다."""
+    """rec present: client_statusbar_init 가 capture 필드를 설치하고, client_statusbar
+    가 ` REC ` 배지+클릭존을 그리며, client_status_tabs 가 REC 탭(+동작)을 기여한다."""
     reg = _registry_only_rec()   # rec 만 → claude 훅이 fake status 로 안 깨짐
 
     class _St:
@@ -166,28 +165,20 @@ async def test_rec_client_badge_init_and_tab_present():
     assert st.capture is False and st._rec_zone is None
     assert st.capture_path is None and st.capture_size == 0
     # 흡수: capture* 필드 반영.
-
-    class _FakeTabBar:
-        def __init__(self):
-            self.refreshed = False
-        def refresh(self):
-            self.refreshed = True
-
-    class _FakeApp:
-        def __init__(self):
-            self.tabbar = _FakeTabBar()
-
-    app = _FakeApp()
-    reg.client_statusbar_update(app, st, {"capture": True,
-                                          "capture_path": "/t/p.log",
-                                          "capture_size": 42})
+    reg.client_statusbar_update(None, st, {"capture": True,
+                                           "capture_path": "/t/p.log",
+                                           "capture_size": 42})
     assert st.capture is True and st.capture_path == "/t/p.log"
-    # 캡처 상태가 바뀌면 tabbar.refresh() 가 호출된다.
-    assert app.tabbar.refreshed, "capture 상태 변경 시 tabbar.refresh() 미호출"
-    # 상태줄 배지 훅은 제거됐다 — client_statusbar_badges 가 no-op(REC 탭바 이동).
+    # 배지: capture ON → ` REC ` 세그먼트 + zone, 누적폭 +5(시스템 배지 영역 훅).
     segs = []
     w = reg.client_statusbar_badges(None, st, segs, 80, 10)
-    assert not segs, "REC 배지가 상태줄에 남아 있음(탭바로 이동됐어야 함)"
+    assert w == 15 and st._rec_zone == (10, 15)
+    assert any(getattr(s, "text", "") == " REC " for s in segs)
+    # capture OFF → 배지·zone 없음, 폭 불변.
+    st.capture = False
+    segs2 = []
+    w2 = reg.client_statusbar_badges(None, st, segs2, 80, 10)
+    assert w2 == 10 and not segs2 and st._rec_zone is None
     # 팝업 탭: (제목, 줄, 동작) 3-튜플.
     class _App:
         def __init__(self):
