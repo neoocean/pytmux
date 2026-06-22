@@ -121,9 +121,9 @@ i18n.register({
         "pscreen.win_session": "이번 5h창 ~Σ{tok}(리셋 {left} 후)",
         "pscreen.win_week": "이번 주 ~Σ{tok}(리셋 {left} 후)",
         # 한도 전용 서브뷰(상단 7줄 블록을 표 자리로 이동 — 작은 화면 정리).
-        "pscreen.tklog_limit_title": "토큰 사용량 · 한도(/usage)",
+        "pscreen.tklog_limit_title": "토큰 사용량 · 모델·컨텍스트 / 한도(/usage)",
         "pscreen.tklog_limit_col": "한도(/usage)",
-        "pscreen.tklog_limit_hint": "l집계로 돌아가기 · u/usage 갱신 · Esc닫기",
+        "pscreen.tklog_limit_hint": "↑↓ 모델/컨텍스트 · ←→ 값 · Enter 적용 · l집계 · u/usage · Esc",
         "pscreen.tklog_limit_empty": "한도(/usage) 미조회 — [u] 눌러 조회",
         "pscreen.next_reset": "다음 리셋: {label}",
         "pscreen.reset_session": "세션 5h",
@@ -189,9 +189,9 @@ i18n.register({
         "pscreen.recon_chart_top": "{rng} · latest {pct}% · {n} spans",
         "pscreen.win_session": "this 5h window ~Σ{tok} (resets in {left})",
         "pscreen.win_week": "this week ~Σ{tok} (resets in {left})",
-        "pscreen.tklog_limit_title": "Token usage · Limit (/usage)",
+        "pscreen.tklog_limit_title": "Token usage · Model/Context · Limit (/usage)",
         "pscreen.tklog_limit_col": "Limit (/usage)",
-        "pscreen.tklog_limit_hint": "l back to totals · u refresh /usage · Esc close",
+        "pscreen.tklog_limit_hint": "↑↓ model/context · ←→ value · Enter apply · l totals · u /usage · Esc",
         "pscreen.tklog_limit_empty": "Limit (/usage) not queried — press [u]",
         "pscreen.next_reset": "Next reset: {label}",
         "pscreen.reset_session": "Session 5h",
@@ -371,9 +371,13 @@ class RulesEditScreen(ModalScreen):
 
 
 class ModelCtxScreen(ModalScreen):
-    """Claude 모델·컨텍스트 크기 변경 팝업(요청). 상태줄 모델 배지 클릭 / `model`
-    명령 / esc 모드 상태바 포커스로 연다. ←→ 로 값 변경, Enter 로 적용(=활성 패널에
-    '/model <이름> [컨텍스트]' 주입), Esc 취소. (clientscreens 에서 이리로 이전.)"""
+    """Claude 모델·컨텍스트 크기 변경 모달. ←→ 로 값 변경, Enter 로 적용(=활성 패널에
+    '/model <이름> [컨텍스트]' 주입), Esc 취소. (clientscreens 에서 이리로 이전.)
+
+    ⚠️ 2026-06-22: 상태줄 모델 배지 클릭 / `model` 명령의 **기본 진입점은 이제 토큰
+    사용량 팝업의 [한도] 탭**(TokenLogScreen 의 모델/컨텍스트 섹션)으로 옮겼다(사용자
+    요청 — 독립 모달 통합). 이 클래스는 모델/컨텍스트 **선택지 상수(_MODELS·_CTX)의
+    정본**이자(_TokenLogScreen 이 재사용) 직접 띄울 때를 위한 모달로 남는다."""
     CSS = """
     ModelCtxScreen { align: center middle; }
     #mcmenu { width: 56; height: auto; max-height: 80%;
@@ -829,7 +833,8 @@ class TokenLogScreen(ModalScreen):
 
     def __init__(self, records, usage=None, total_all=None,
                  daily=None, reconcile=None, daily_pct=None, hourly_pct=None,
-                 hourly_week_pct=None, active_session=None, initial_mode=None):
+                 hourly_week_pct=None, active_session=None, initial_mode=None,
+                 model=None):
         super().__init__()
         self._records = records or []
         # 요청 2026-06-21: 현재 활성 패널의 claude 세션 id(없으면 None) — [세션] 뷰가
@@ -890,6 +895,20 @@ class TokenLogScreen(ModalScreen):
         self._sess_times = None
         # 정렬은 항상 시간순(최근 위)이다 — 토큰순 토글은 제거(2026-06-22, 기간 뷰는
         # 계층 트리라 입도가 섞인 토큰순이 무의미해 Options 정렬 옵션을 없앴다).
+        # [한도] 탭에 통합한 **모델·컨텍스트 변경** 섹션(2026-06-22 — 독립 모달
+        # ModelCtxScreen 대신 토큰 팝업 한도 탭의 첫 두 행으로 이동, 사용자 요청).
+        # 상태줄 모델 배지 클릭 / `model` 명령이 이제 한도 탭을 연다. 행0=모델·행1=
+        # 컨텍스트, ←→ 로 값 변경·Enter 로 적용(/model 주입, _apply_model_config 재사용).
+        self._mc_models = [(m, m) for m in ModelCtxScreen._MODELS]
+        self._mc_ctx = list(ModelCtxScreen._CTX)
+        self._mc_msel = 0
+        if model:                       # 현재 활성 모델로 초기 선택 맞춤
+            cm = str(model).lower()
+            for i, (_d, v) in enumerate(self._mc_models):
+                if cm.startswith(v.lower()) and v != "default":
+                    self._mc_msel = i
+                    break
+        self._mc_csel = 0
 
     def compose(self) -> ComposeResult:
         with Vertical(id="tklogbox"):
@@ -945,17 +964,28 @@ class TokenLogScreen(ModalScreen):
         self.set_interval(1.0, self._tick_limit)
 
     def _tick_limit(self):
-        """한도 뷰가 켜져 있으면 표(막대+창Σ+시계)를 다시 그려 카운트다운을 1초마다
-        센다. 작은 정적 뷰라 통째 재구성이 가볍고, 행 커서/스크롤 개념이 없어 부작용이
-        없다. 다른 뷰(기간/계정/세션/대사)에선 아무것도 안 한다(표 흔들림 방지)."""
+        """한도 뷰가 켜져 있으면 표(모델/컨텍스트 + 막대+창Σ+시계)를 다시 그려
+        카운트다운을 1초마다 센다. 모델/컨텍스트 편집 행이 생겨(2026-06-22) 커서를
+        보존해야 매초 재그리기가 선택 행(모델/컨텍스트)을 0 으로 되돌리지 않는다.
+        다른 뷰(기간/세션/대사)에선 아무것도 안 한다(표 흔들림 방지)."""
         if not (self._limit_mode and not self._recon_mode):
             return
         try:
             table = self.query_one(DataTable)
         except Exception:
             return
+        try:
+            cur = table.cursor_coordinate.row
+        except Exception:
+            cur = 0
         table.clear(columns=True)
         self._refresh_limit(table)
+        try:
+            n = table.row_count
+            if n:
+                table.move_cursor(row=max(0, min(n - 1, cur)))
+        except Exception:
+            pass
 
     def on_unmount(self):
         if getattr(self.app, "_token_log_screen", None) is self:
@@ -1387,8 +1417,15 @@ class TokenLogScreen(ModalScreen):
         보여준다 — 예전엔 이 7줄이 표 위 #tktop 에 항상 깔려 작은 화면을 덮었고(사용자
         요청 2026-06-14: 한도 전용 서브뷰로 분리), 카운트다운은 별도 usage-view 팝업에만
         있었다(통합, 사용자 결정 2026-06-17). 막대/창 합은 기존 공유 포맷터
-        (_usage_lines·_window_lines)를, 시계는 _limit_clock_lines 를 재사용한다."""
+        (_usage_lines·_window_lines)를, 시계는 _limit_clock_lines 를 재사용한다.
+
+        맨 위 두 행은 **모델·컨텍스트 변경** 섹션(2026-06-22 통합, 독립 모달 대신) —
+        행0=모델·행1=컨텍스트, ←→ 로 값 변경·Enter 로 적용. 그 아래 빈 줄 뒤로 한도
+        상세를 잇는다. on_key 의 limit 분기가 커서 행(0/1)에 따라 값을 돌리고 적용한다."""
         table.add_column(i18n.t("pscreen.tklog_limit_col"), key="limit")
+        table.add_row(self._mc_row_text(0))   # 행 0 = 모델
+        table.add_row(self._mc_row_text(1))   # 행 1 = 컨텍스트
+        table.add_row("")                     # 모델 섹션과 한도 상세 구분 빈 줄
         if not isinstance(self._usage, dict):
             lines = [i18n.t("pscreen.tklog_limit_empty")]
         else:
@@ -1399,8 +1436,40 @@ class TokenLogScreen(ModalScreen):
         self.query_one("#tklogtitle", Label).update(
             i18n.t("pscreen.tklog_limit_title"))
         self.query_one("#tktop", Static).update("")
+        self._tktop_text = ""
         self.query_one("#tkhint", Static).update(
             i18n.t("pscreen.tklog_limit_hint"))
+
+    def _mc_row_text(self, i):
+        """[한도] 탭 모델(i=0)/컨텍스트(i=1) 행 표시문 — 공유 포맷터 format_option_row
+        로 '라벨:  ◀ ▶  현재값'. 현재 선택(_mc_msel/_mc_csel)을 반영한다."""
+        if i == 0:
+            spec = {"label": "모델", "choices": self._mc_models}
+            return format_option_row(spec, self._mc_msel)
+        spec = {"label": "컨텍스트", "choices": self._mc_ctx}
+        return format_option_row(spec, self._mc_csel)
+
+    def _mc_apply(self):
+        """현재 모델/컨텍스트 선택을 적용 — 활성 패널에 '/model <이름> [컨텍스트]' 를
+        주입한다(_apply_model_config 재사용, 독립 모달 Enter 와 동일 경로). 팝업은 닫지
+        않고 그대로 둬 연속 조정을 허용한다."""
+        model = self._mc_models[self._mc_msel][1]
+        ctx = self._mc_ctx[self._mc_csel][1]
+        fn = getattr(self.app, "_apply_model_config", None)
+        if fn:
+            fn((model, ctx))
+
+    async def _mc_redraw(self, row):
+        """모델/컨텍스트 값 변경 후 한도 표를 다시 그리고 커서를 그 행(0/1)에 유지한다."""
+        try:
+            table = self.query_one(DataTable)
+            table.clear(columns=True)
+            self._refresh_limit(table)
+            n = table.row_count
+            if n:
+                table.move_cursor(row=max(0, min(n - 1, row)))
+        except Exception:
+            pass
 
     @staticmethod
     def _warn_info_text(kind, warn=""):
@@ -2149,6 +2218,28 @@ class TokenLogScreen(ModalScreen):
                 chart.scroll_intervals(10 ** 6)   # 가장 옛(클램프)
             elif k == "end":
                 chart.scroll_intervals(-10 ** 6)  # 가장 새(클램프)
+            return
+        # [한도] 탭 모델·컨텍스트 섹션(2026-06-22 통합): 커서가 행0(모델)/행1(컨텍스트)에
+        # 있으면 ←→ 로 값을 돌리고 Enter 로 적용(/model 주입). 그 밖 행에서 ←→/Enter 는
+        # 소비만 하고 무동작(팝업이 닫히지 않게 — up/down 은 NAV_KEYS 로 행 이동).
+        if (self._limit_mode and not self._recon_mode
+                and k in ("left", "right", "enter")):
+            event.stop()
+            try:
+                row = self.query_one(DataTable).cursor_coordinate.row
+            except Exception:
+                return
+            if row not in (0, 1):
+                return
+            if k == "enter":
+                self._mc_apply()
+                return
+            d = 1 if k == "right" else -1
+            if row == 0:
+                self._mc_msel = (self._mc_msel + d) % len(self._mc_models)
+            else:
+                self._mc_csel = (self._mc_csel + d) % len(self._mc_ctx)
+            await self._mc_redraw(row)
             return
         # 계층 트리(기간 뷰 + 시간순): Enter/space 로 펼침·접힘 토글, →/← 로 펼침/접힘.
         # up/down 은 DataTable 행 커서에 위임. (마우스 클릭은 RowSelected →

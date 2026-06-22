@@ -3567,20 +3567,24 @@ async def test_alt_digit_switches_tab_in_normal_mode():
 
 
 async def test_model_config_popup_command_and_inject():
-    # `model` 명령(별칭 model-config/claude-model)으로 모델·컨텍스트 팝업을 열고,
-    # 적용 시 활성 패널에 '/model <이름> [컨텍스트]' + Enter 를 주입한다(요청).
+    # `model` 명령(별칭 model-config/claude-model)이 **토큰 사용량 팝업의 [한도] 탭**
+    # (모델/컨텍스트 섹션)을 연다(2026-06-22 — 독립 모달 ModelCtxScreen 대신 통합).
+    # 적용 시 활성 패널에 '/model <이름> [컨텍스트]' + Enter 를 주입한다.
     async def body(app, pilot, srv):
-        keys = []
+        keys, cmds = [], []
         app.send_input = lambda b: keys.append(b)
+        # send_cmd 를 스텁해 서버 왕복(token_log 회신→화면 push)을 막고, 라우팅
+        # 의도(limit 모드 토큰 로그 요청)만 확인한다(레이스 없이).
+        app.send_cmd = lambda c, **kw: cmds.append(c)
         app._run_command("model")
-        await pilot.pause(0.05)
-        scr = app.screen_stack[-1]
-        assert scr.__class__.__name__ == "ModelCtxScreen"
-        await pilot.press("enter")                  # 기본(opus·기본 컨텍스트) 적용
-        await pilot.pause(0.05)
+        assert getattr(app, "_token_log_initial", None) == "limit", \
+            "model 명령은 한도 탭(limit)으로 토큰 팝업을 연다"
+        assert getattr(app, "_want_token_log", False)
+        assert "request_token_log" in cmds, cmds
+        # 적용 경로(한도 탭 Enter → _mc_apply → _apply_model_config)는 그대로 주입.
+        app._apply_model_config(("opus", "default"))
         assert keys and keys[-1] == b"/model opus\r", keys
-        # 1M 컨텍스트 선택 시 토큰이 덧붙는다.
-        app._apply_model_config(("opus-4.8", "1m"))
+        app._apply_model_config(("opus-4.8", "1m"))     # 1M 컨텍스트는 토큰이 덧붙음
         assert keys[-1] == b"/model opus-4.8 1m\r", keys
     await _with_app(body)
 

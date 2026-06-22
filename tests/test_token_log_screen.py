@@ -588,3 +588,59 @@ async def test_recon_scroll_noop_when_all_intervals_visible():
             assert app.screen_stack[-1] is scr and chart.display, "무크래시·그래프 유지"
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_limit_tab_model_section_cycle_and_apply():
+    """요청 2026-06-22(항목7): 모델·컨텍스트 변경을 토큰 팝업 [한도] 탭의 첫 두 행으로
+    통합(독립 모달 ModelCtxScreen 대신). 행0=모델·행1=컨텍스트, ←→ 로 값 변경·Enter 로
+    적용(/model 주입=_apply_model_config). 적용 후에도 팝업은 닫히지 않는다."""
+    from textual.widgets import DataTable
+    from harness import make_app, server_only, teardown
+
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 36)) as pilot:
+            await pilot.pause(0.3)
+            app.push_screen(screens.TokenLogScreen(
+                _hour_records(), initial_mode="limit", model="opus"))
+            await pilot.pause(0.3)
+            scr = app.screen_stack[-1]
+            assert scr._limit_mode, "한도 탭으로 열려야"
+            table = scr.query_one(DataTable)
+            table.focus()
+            await pilot.pause(0.05)
+            # 행0=모델(현재 opus), 행1=컨텍스트(기본/Default).
+            assert "opus" in str(table.get_row_at(0)[0]), table.get_row_at(0)
+            r1 = str(table.get_row_at(1)[0])
+            assert ("기본" in r1 or "Default" in r1), r1
+            # 커서 행0에서 → 로 모델 값이 다음으로(opus→sonnet), 팝업은 안 닫힘.
+            table.move_cursor(row=0)
+            msel0 = scr._mc_msel
+            await pilot.press("right")
+            await pilot.pause(0.05)
+            assert scr._mc_msel == (msel0 + 1) % len(scr._mc_models), scr._mc_msel
+            assert app.screen_stack[-1] is scr, "→ 가 팝업을 닫지 않음"
+            # 행1(컨텍스트)에서 → 로 컨텍스트가 1m 으로.
+            table.move_cursor(row=1)
+            await pilot.press("right")
+            await pilot.pause(0.05)
+            assert scr._mc_csel == 1, scr._mc_csel
+            # Enter 로 현재 선택 적용 → _apply_model_config 호출(팝업 유지).
+            applied = []
+            app._apply_model_config = lambda res: applied.append(res)
+            table.move_cursor(row=0)
+            await pilot.press("enter")
+            await pilot.pause(0.05)
+            assert applied, "Enter 로 _apply_model_config 호출돼야"
+            model, ctx = applied[-1]
+            assert model == scr._mc_models[scr._mc_msel][1], applied
+            assert ctx == scr._mc_ctx[scr._mc_csel][1], applied
+            assert app.screen_stack[-1] is scr, "Enter 적용 후에도 팝업 유지"
+            # 비-모델/컨텍스트 행(빈 줄/한도 상세)에서 ←→ 는 무동작이고 팝업도 유지.
+            table.move_cursor(row=2)
+            await pilot.press("left")
+            await pilot.pause(0.05)
+            assert app.screen_stack[-1] is scr, "비-편집 행 ← 는 팝업을 닫지 않음"
+    finally:
+        await teardown(srv, task, sock)

@@ -269,11 +269,11 @@ def _pane_claude_entry(p, full):
 # ---- Claude 팝업(클라) — Phase 2a 에서 코어 client.py 에서 이리로 이전 ----
 # textual 화면은 실제로 열 때 지연 import(플러그인 __init__ 은 서버도 읽어 가벼워야 함).
 def _open_model_config(app):
-    """Claude 모델·컨텍스트 변경 팝업. 상태줄 모델 배지 클릭 / `model` 명령 / esc 모드
-    상태바 포커스로 연다. 고른 값은 활성 패널에 '/model <이름>'(+컨텍스트)으로 주입한다."""
-    from .screens import ModelCtxScreen
-    cur = getattr(app.status, "claude_model", None)
-    app.push_screen(ModelCtxScreen(cur), app._apply_model_config)
+    """모델·컨텍스트 변경 → **토큰 사용량 팝업의 [한도] 탭**(첫 두 행=모델/컨텍스트)을
+    연다(2026-06-22 — 독립 모달 ModelCtxScreen 대신 통합, 사용자 요청). 상태줄 모델 배지
+    클릭 / `model` 명령으로 연다. 값 적용(/model 주입)은 그 탭에서 ←→ 로 값 고른 뒤
+    Enter → TokenLogScreen._mc_apply → _apply_model_config 로 이뤄진다."""
+    _open_token_log(app, initial_mode="limit")
 
 
 def _apply_model_config(app, res):
@@ -352,7 +352,8 @@ def _on_token_log_msg(app, msg):
         hourly_pct=msg.get("hourly_pct"),
         hourly_week_pct=msg.get("hourly_week_pct"),
         active_session=msg.get("active_session"),
-        initial_mode=initial_mode))
+        initial_mode=initial_mode,
+        model=getattr(app.status, "claude_model", None)))
 
 
 def _open_usage_panel(app):
