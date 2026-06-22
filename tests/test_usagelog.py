@@ -88,6 +88,30 @@ async def test_session_view_label_has_tabpane_and_start_time():
     assert vd["gtimes"][1] == "11-14", vd["gtimes"]
 
 
+async def test_session_view_time_order_and_no_fold():
+    """요청 2026-06-22: 세션 뷰는 group_order="time"·top=None 이면 **시작 시각
+    내림차순(최신 위)** 으로 전 세션을 보인다('기타' 접힘 없음). 토큰을 시간과
+    반대로(늦은 세션일수록 적게) 주어 토큰순이 아니라 시간순임을 분리 검증한다."""
+    base = 1_700_000_000.0
+    recs = []
+    for i in range(10):                  # 세션 100..109, 늦을수록 ts 큼·토큰 적음
+        recs.append(dict(
+            usagelog.make_record(base + i * 86400, 0, 1, 100 + i, "a@x.org",
+                                 1000 - i * 10), tzoff=0))
+    v = usagelog.agg_view(recs, "day", dim="session", top=None,
+                          group_order="time")
+    labels = [lbl for lbl, _, _ in v["groups"]]
+    assert len(labels) == 10, f"전 세션 표시(기타 접힘 없음): {labels}"
+    assert not any("기타" in s for s in labels), labels
+    # 시작 시각 내림차순: 최신(ts 최대=세션 109, 토큰은 가장 적음)이 맨 위.
+    assert labels[0].startswith("세션 109"), labels
+    assert labels[-1].startswith("세션 100"), labels
+    # 기본(group_order 미지정=tokens)은 종전대로 토큰 많은 순(세션 100 이 맨 위).
+    vd = usagelog.agg_view(recs, "day", dim="session", top=None)
+    dl = [lbl for lbl, _, _ in vd["groups"]]
+    assert dl[0].startswith("세션 100"), dl
+
+
 async def test_aggregate_buckets_and_accounts():
     recs = [
         usagelog.make_record(1_700_000_000.0, 0, 1, 1, "a@x.org", 1000),

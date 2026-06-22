@@ -322,6 +322,22 @@ def _session_tabpane(records: list) -> dict:
     return out
 
 
+def _session_start_ts(records: list) -> dict:
+    """group_key('session') 라벨('세션 N') → 그 세션 **첫(최소 ts)** 레코드의 원시
+    epoch 시각. 세션 뷰 시간 내림차순 정렬용 — _session_time 의 포맷 라벨('06-20')은
+    월·연 경계에서 문자열 비교가 어긋나므로 정렬엔 원시 ts 를 쓴다(요청 2026-06-22)."""
+    out: dict = {}
+    for r in records:
+        sid = r.get("session")
+        ts = r.get("ts")
+        if sid is None or ts is None:
+            continue
+        g = group_key(r, "session")
+        if g not in out or ts < out[g]:
+            out[g] = ts
+    return out
+
+
 def _session_time(records: list, bucket: str = "hour") -> dict:
     """세션 id → 대표 시각 라벨. 세션의 **첫(최소 ts)** 레코드 시각으로, 이름 없는 세션을
     시간으로 식별하게 한다(사용자 요청 2026-06-20 — 세션 번호만으로는 어느 세션이
@@ -353,7 +369,8 @@ def _session_time(records: list, bucket: str = "hour") -> dict:
 
 def agg_view(records: list, bucket: str = "day", account: str | None = None,
              dim: str = "account", order: str = "time",
-             top: int | None = None, weekdays=None, hour_suffix="시") -> dict:
+             top: int | None = None, weekdays=None, hour_suffix="시",
+             group_order: str = "tokens") -> dict:
     """표시(DataTable) 전용 집계 — 정렬·라벨·비율까지 계산해 렌더가 바로 쓰게 한다.
 
     반환:
@@ -415,7 +432,15 @@ def agg_view(records: list, bucket: str = "day", account: str | None = None,
         bmodels_map.setdefault(bk, {})
         bmodels_map[bk][tier] = bmodels_map[bk].get(tier, 0) + tok
 
-    groups = sorted(agg["groups"].items(), key=lambda kv: -kv[1])
+    # 그룹 정렬: 기본은 토큰 많은 순. 세션 뷰에서 group_order=="time" 이면 **시작 시각
+    # 내림차순**(최신 세션이 맨 위, 요청 2026-06-22) — 정렬엔 원시 ts(_session_start_ts)를
+    # 쓰고, 없는 그룹은 맨 뒤(0)로 둔다.
+    if dim == "session" and group_order == "time":
+        gstart = _session_start_ts(records)
+        groups = sorted(agg["groups"].items(),
+                        key=lambda kv: -gstart.get(kv[0], 0.0))
+    else:
+        groups = sorted(agg["groups"].items(), key=lambda kv: -kv[1])
     grows = [(glabel(g), t, pct(t)) for g, t in groups]
     gtimes = [gtime(g) for g, _ in groups]
     gmodels = [gmodels_map.get(g, {}) for g, _ in groups]

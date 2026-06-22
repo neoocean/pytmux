@@ -428,3 +428,163 @@ async def test_hour_view_header_plain_without_usage():
             assert not any("(" in h for h in heads if h.startswith("5h%")), heads
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_tree_leaf_left_jumps_to_parent_and_collapses():
+    """요청 2026-06-22: 계층 트리의 leaf(시각) 행에 커서가 있을 때 ← 를 누르면 더
+    이상 접을 게 없으므로 **부모(오늘 일 행)로 올라가 그 부모를 접고** 커서를 부모로
+    옮긴다(표준 트리 동작 — leaf 막다른 끝에서 ← 로 상위 입도로 빠져나오기). 펼쳐진
+    노드에서 ← 는 종전대로 자기 자신을 접는다(기존 동작 보존)."""
+    from textual.widgets import DataTable
+    from harness import make_app, server_only, teardown
+
+    recs, hourly = _recent_tree_records()
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 36)) as pilot:
+            await pilot.pause(0.3)
+            app.push_screen(screens.TokenLogScreen(recs, hourly_pct=hourly))
+            await pilot.pause(0.3)
+            scr = app.screen_stack[-1]
+            table = scr.query_one(DataTable)
+            table.focus()
+            await pilot.pause(0.05)
+
+            def hour_count():
+                return sum(1 for n in scr._tree_nodes if n["kind"] == "hour")
+
+            assert hour_count() >= 2, "처음엔 오늘 시각 행이 펼쳐져 있어야"
+            # 오늘 행=row0(▼). 그 아래 시각(leaf) 행으로 커서를 옮긴다(row1).
+            assert str(table.get_row_at(0)[0]).startswith("▼ "), "오늘 행 펼침"
+            assert scr._tree_nodes[1]["kind"] == "hour", "row1=시각 leaf"
+            table.move_cursor(row=1)
+            await pilot.pause(0.05)
+            # leaf 에서 ← → 부모(오늘 행, row0)가 접히고 커서가 부모로.
+            await pilot.press("left")
+            await pilot.pause(0.1)
+            assert hour_count() == 0, "leaf ← 로 부모(오늘 행)가 접혀 시각 행이 사라져야"
+            assert str(table.get_row_at(0)[0]).startswith("▶ "), "접힌 오늘 행=▶"
+            assert table.cursor_coordinate.row == 0, "커서가 부모(오늘) 행으로 이동"
+            # 최상위 leaf(부모 없음)에서 ← 는 무동작·무크래시 — 접힌 오늘 행(이제 leaf
+            # 아님이지만 펼쳐지지 않은 상태)에서 ← 는 부모가 없으니 그대로.
+            await pilot.press("left")
+            await pilot.pause(0.05)
+            assert app.screen_stack[-1] is scr, "← 가 팝업을 닫지 않음(no-crash)"
+    finally:
+        await teardown(srv, task, sock)
+
+
+def _model_session_records():
+    """모델 티어(opus·haiku)가 섞인 다일·다세션 레코드. 모델 색 분할이 살아 있으면
+    막대 셀 span 에 magenta(opus)·green(haiku)이 나타난다(단색이면 안 나타남) — 범례·
+    막대색 제거(요청 2026-06-22) 검증용. sonnet(cyan)은 단색 cyan 과 겹쳐 제외한다."""
+    base = 1_700_000_000.0
+    models = ["opus-4.8", "haiku-4.5"]
+    recs = []
+    for i in range(4):
+        recs.append({"ts": base + i * 86400, "tab": 0, "pane": 1,
+                     "session": 10 + i, "account": "me@x.org",
+                     "tokens": 2000 * (i + 1), "model": models[i % 2]})
+    return recs
+
+
+async def test_period_and_session_drop_model_color_and_legend():
+    """요청 2026-06-22: 첫 탭(Period)과 Session 탭은 **모델별 색 구분을 없애고** 사용량만
+    단색 막대로 보인다 — 상단(#tktop)에 모델 색 범례(█)가 없고, 막대 셀에 모델색
+    (opus=magenta·haiku=green)이 섞이지 않는다. 모델별 비율은 Recon 탭에서 본다."""
+    from textual.widgets import DataTable
+    from harness import make_app, server_only, teardown
+
+    # 단색 막대는 cyan(스타일 통째) — 모델 분할이면 셀 span 에 아래 색이 박힌다.
+    model_span_colors = {"magenta", "green", "yellow", "#808080"}
+
+    def _assert_no_model(scr):
+        top = scr._tktop_text
+        text = top.plain if hasattr(top, "plain") else str(top)
+        assert "█" not in text, f"#tktop 에 모델 범례(█) 없어야: {text!r}"
+        table = scr.query_one(DataTable)
+        for i in range(table.row_count):
+            for cell in table.get_row_at(i):
+                for sp in getattr(cell, "spans", []) or []:
+                    assert str(sp.style) not in model_span_colors, \
+                        f"막대에 모델 색({sp.style}) 남으면 안 됨(row {i})"
+
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 36)) as pilot:
+            await pilot.pause(0.3)
+            app.push_screen(screens.TokenLogScreen(_model_session_records()))
+            await pilot.pause(0.3)
+            scr = app.screen_stack[-1]
+            assert scr._view == "time"
+            _assert_no_model(scr)                  # Period(계층 트리)
+            await pilot.press("p")                 # Session 뷰로 전환
+            await pilot.pause(0.2)
+            assert scr._view == "session"
+            _assert_no_model(scr)                  # Session
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_recon_top_fits_two_lines():
+    """요청 2026-06-22: [대사](Recon) 상단(#tktop)을 **2줄 이내**로 — 긴 막대 설명
+    괄호를 빼 한 줄로 줄였다. 범례가 있으면 둘째 줄(개행 1개)까지, 없으면 한 줄."""
+    from textual.widgets import Static
+    from harness import make_app, server_only, teardown
+
+    ivs = _recon_intervals(20)
+    for iv in ivs:                       # 모델 분해를 실어 범례(둘째 줄)도 그리게
+        iv["models"] = {"opus": 400, "sonnet": 200}
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 36)) as pilot:
+            await pilot.pause(0.3)
+            app.push_screen(screens.TokenLogScreen(_hour_records(),
+                                                   reconcile=ivs))
+            await pilot.pause(0.3)
+            scr = app.screen_stack[-1]
+            await pilot.press("r")
+            await pilot.pause(0.2)
+            assert scr._recon_mode
+            top = scr._tktop_text
+            text = top.plain if hasattr(top, "plain") else str(top)
+            assert text.count("\n") <= 1, f"대사 상단은 2줄 이내여야: {text!r}"
+            assert "→" in text, f"구간 시간 범위(→) 표기: {text!r}"
+            # 긴 막대 설명 괄호가 빠졌는지(ko/en 양쪽 — wrap 으로 3줄 되던 원인 제거).
+            assert all(s not in text for s in
+                       ("(막대=", "(bars=", "measured", "스크롤)")), \
+                f"긴 괄호 설명은 빠져야: {text!r}"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_recon_scroll_noop_when_all_intervals_visible():
+    """항목6 감사(요청 2026-06-22): 구간이 폭에 다 들어오면 _max_off==0 이라 ← 는
+    **정상적으로 무동작**(더 옛 구간이 없음 = 버그 아님). x_off 가 0 에 머물고 크래시
+    없이 그래프가 계속 보인다. (스크롤이 실제로 먹는 경우는
+    test_recon_tab_shows_time_axis_chart_and_scrolls 가 검증한다.)"""
+    from harness import make_app, server_only, teardown
+
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 36)) as pilot:
+            await pilot.pause(0.3)
+            app.push_screen(screens.TokenLogScreen(_hour_records(),
+                                                   reconcile=_recon_intervals(3)))
+            await pilot.pause(0.3)
+            scr = app.screen_stack[-1]
+            await pilot.press("r")
+            await pilot.pause(0.2)
+            chart = scr.query_one("#tkchart", screens._ReconChart)
+            chart._build()                       # _max_off 갱신
+            assert chart._max_off == 0, "구간이 다 보이면 더 옛 구간이 없어 max_off=0"
+            await pilot.press("left")
+            await pilot.pause(0.05)
+            assert chart.x_off == 0, "← 는 안전한 무동작(x_off 그대로)"
+            assert app.screen_stack[-1] is scr and chart.display, "무크래시·그래프 유지"
+    finally:
+        await teardown(srv, task, sock)

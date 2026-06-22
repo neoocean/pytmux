@@ -117,7 +117,7 @@ i18n.register({
         "pscreen.hour_suffix": "시",
         "pscreen.recon_top": "실측(/usage Δ%)과 추정(스크랩 ~Σ)은 의미가 다른 두 출처 — 절대 일치가 아니라 추세 상관을 봅니다",
         "pscreen.recon_empty": "(비교할 실측 스냅샷 구간이 없습니다 — /usage 실측이 2회 이상 쌓이면 생깁니다)",
-        "pscreen.recon_chart_top": "{rng} · 최신 {pct}% · 구간 {n}개 (막대=세션 5h% 실측, ←→ 스크롤)",
+        "pscreen.recon_chart_top": "{rng} · 최신 {pct}% · 구간 {n}개",
         "pscreen.win_session": "이번 5h창 ~Σ{tok}(리셋 {left} 후)",
         "pscreen.win_week": "이번 주 ~Σ{tok}(리셋 {left} 후)",
         # 한도 전용 서브뷰(상단 7줄 블록을 표 자리로 이동 — 작은 화면 정리).
@@ -186,7 +186,7 @@ i18n.register({
         "pscreen.hour_suffix": "h",
         "pscreen.recon_top": "Measured (/usage Δ%) and est (scrape ~Σ) are two different sources — look at trend correlation, not exact match",
         "pscreen.recon_empty": "(no measured snapshot spans to reconcile — appears once /usage measurements accumulate 2+)",
-        "pscreen.recon_chart_top": "{rng} · latest {pct}% · {n} spans (bars=session 5h% measured, ←→ scroll)",
+        "pscreen.recon_chart_top": "{rng} · latest {pct}% · {n} spans",
         "pscreen.win_session": "this 5h window ~Σ{tok} (resets in {left})",
         "pscreen.win_week": "this week ~Σ{tok} (resets in {left})",
         "pscreen.tklog_limit_title": "Token usage · Limit (/usage)",
@@ -1276,7 +1276,9 @@ class TokenLogScreen(ModalScreen):
             chart.focus()
         self.query_one("#tklogtitle", Label).update(
             i18n.t("토큰 5h 사용률 추이 · 시간축"))
-        self.query_one("#tktop", Static).update(self._recon_top_line())
+        top = self._recon_top_line()
+        self._tktop_text = top          # 회귀 검사용(상단 줄 수/내용)
+        self.query_one("#tktop", Static).update(top)
         self.query_one("#tkhint", Static).update(
             i18n.t("r집계 표 · ←→/PgUp·PgDn/Home·End 스크롤 · u/usage · Esc닫기"))
 
@@ -1471,8 +1473,11 @@ class TokenLogScreen(ModalScreen):
                      else self._records))
         hour_suffix = i18n.t("pscreen.hour_suffix")
         if self._view == "session":
+            # 세션 뷰(요청 2026-06-22): 토큰 많은 순+상위 N 접힘 대신 **시작 시각
+            # 내림차순(최신 위) + 전 세션 표시**(top=None 으로 '기타' 접힘 해제 — 사용자
+            # 결정: 항상 전체 펼침). 막대 vmax(gmax)·점유%는 정렬과 무관해 그대로 맞다.
             v = usagelog.agg_view(src, self._bucket, None, "session",
-                                  "time", top=self._GROUP_TOP,
+                                  "time", top=None, group_order="time",
                                   hour_suffix=hour_suffix)
             # 세션 시작 시각(별도 타임스탬프 열용) — _refresh 가 읽는다.
             self._sess_times = v.get("gtimes")
@@ -1680,7 +1685,8 @@ class TokenLogScreen(ModalScreen):
                         cells.append(Text(bar(tok, vmax, bar_w),
                                           style=act_st, justify="left"))
                     else:
-                        cells.append(self._tok_bar(tok, vmax, bar_w, mdl))
+                        # 비활성 행은 단색 막대(모델 색 구분 제거, 요청 2026-06-22).
+                        cells.append(self._tok_bar(tok, vmax, bar_w, None))
                 if show5h:
                     cells.append(self._lim5h_cell(bk, lim_cells))
                     if show1w:
@@ -1706,18 +1712,10 @@ class TokenLogScreen(ModalScreen):
         scope = i18n.t("pscreen.tklog_scope", sigma=sigma)
         # 상단은 1줄(한도 요약 접두 + 스코프)만 — /usage 막대·창Σ·신선도 상세는
         # [한도] 뷰로 옮겼다(작은 화면 정리, 2026-06-14). usage 없으면 접두는 빈 문자열.
-        # 막대 색 분할(요청 2026-06-21) 시 둘째 줄에 모델 색 범례를 곁들인다 — 어느
-        # 색이 어느 모델인지(표에 등장한 티어만).
+        # 상단은 한도 요약+스코프만 — 세션 뷰는 모델 색 범례를 제거했다(요청 2026-06-22,
+        # 막대도 단색). 모델별 비율은 [대사](Recon) 탭에서 본다(모델 구성의 정본 화면).
         top = Text(self._limit_summary() + scope)   # 색은 #tktop CSS(text-muted)
-        present: dict = {}
-        if show_bar and rmodels:
-            for d in rmodels:
-                for t, v in (d or {}).items():
-                    present[t] = present.get(t, 0) + (v or 0)
-        leg = self._model_legend(present)
-        if leg is not None:
-            top.append("\n")
-            top.append_text(leg)
+        self._tktop_text = top                      # 회귀 검사용(범례 없음 단언)
         self.query_one("#tktop", Static).update(top)
         self.query_one("#tkhint", Static).update(i18n.t("pscreen.tklog_hint"))
         # (옛 footer '5h/1주 경계까지 남은 시간' 한 줄은 제거 — 잔여시간을 5h%/1w%
@@ -1957,8 +1955,8 @@ class TokenLogScreen(ModalScreen):
                          Text(self._tok_aligned(n["tokens"], maxdig),
                               justify="left")]
                 if show_bar:
-                    cells.append(self._tok_bar(n["tokens"], vmax, bar_w,
-                                               n["models"]))
+                    # 단색 막대(모델 색 구분 제거, 요청 2026-06-22 — Period 탭).
+                    cells.append(self._tok_bar(n["tokens"], vmax, bar_w, None))
                 if show5h:
                     cells.append(self._lim5h_cell(n["bk"], lim_cells)
                                  if is_hour else Text(""))
@@ -1977,16 +1975,10 @@ class TokenLogScreen(ModalScreen):
         if life != win:
             sigma += i18n.t("pscreen.tklog_disp", n=usagelog._fmt_tokens(win))
         scope = i18n.t("pscreen.tklog_scope", sigma=sigma)
+        # Period 트리도 막대 단색·상단 모델 범례 제거(요청 2026-06-22, Session 과 동형).
+        # 모델별 비율은 [대사](Recon) 탭에서 본다.
         top = Text(self._limit_summary() + scope)
-        present: dict = {}
-        if show_bar:
-            for n in data:
-                for t, v in (n["models"] or {}).items():
-                    present[t] = present.get(t, 0) + (v or 0)
-        leg = self._model_legend(present)
-        if leg is not None:
-            top.append("\n")
-            top.append_text(leg)
+        self._tktop_text = top                      # 회귀 검사용(범례 없음 단언)
         self.query_one("#tktop", Static).update(top)
         self.query_one("#tkhint", Static).update(i18n.t("pscreen.tklog_hint"))
 
@@ -2022,6 +2014,41 @@ class TokenLogScreen(ModalScreen):
                 table.move_cursor(row=max(0, min(n - 1, row)))
         except Exception:
             pass
+
+    def _tree_parent_row(self, row):
+        """row 노드의 부모 행 인덱스 — DFS 순서(_build_tree_rows)에서 직전의 더 얕은
+        레벨 행. 최상위(부모 없음)면 None. divider 는 레벨 0 장식 행이라 부모 후보에서
+        건너뛴다(요청 2026-06-22, leaf ← → 부모 접기용)."""
+        nodes = self._tree_nodes
+        if not (0 <= row < len(nodes)):
+            return None
+        lvl = nodes[row]["level"]
+        for i in range(row - 1, -1, -1):
+            if nodes[i]["kind"] == "divider":
+                continue
+            if nodes[i]["level"] < lvl:
+                return i
+        return None
+
+    async def _tree_collapse_or_parent(self, row):
+        """← 처리(요청 2026-06-22): 펼쳐진 expandable 노드는 **자기 자신을 접는다**(종전
+        동작 보존). leaf 거나 이미 접힌 노드면 **부모 노드로 올라가 그 부모를 접고** 커서를
+        부모로 옮긴다 — leaf 막다른 끝에서 ← 로 더 이상 접을 게 없던 걸 표준 트리처럼
+        상위 입도로 빠져나오게 한다. 최상위 leaf(부모 없음)면 무동작(no-crash)."""
+        nodes = self._tree_nodes
+        if not (0 <= row < len(nodes)):
+            return
+        n = nodes[row]
+        if n["expandable"] and n["key"] and n["expanded"]:
+            if self._tree_toggle_at(row, "collapse"):
+                await self._tree_apply(row)
+            return
+        prow = self._tree_parent_row(row)
+        if prow is None:
+            return
+        # 자식이 보인다는 건 부모가 펼쳐져 있다는 뜻 → 부모를 접고 커서를 부모로.
+        self._tree_toggle_at(prow, "collapse")
+        await self._tree_apply(prow)
 
     def _exit_body_modes(self):
         """표를 대체하는 뷰(대사/한도/경고)에서 빠져나온다 — 기간/계정/세션/정렬 동작이
@@ -2136,8 +2163,13 @@ class TokenLogScreen(ModalScreen):
                 row = self.query_one(DataTable).cursor_coordinate.row
             except Exception:
                 return
-            mode = ("expand" if k == "right"
-                    else "collapse" if k == "left" else "toggle")
+            if k == "left":
+                # ← 는 펼쳐진 노드를 자기 자신을 접고, leaf(또는 이미 접힌 노드)에선
+                # 부모 노드로 올라가 그 부모를 접는다(표준 트리 위젯 동작 — leaf 막다른
+                # 끝에서 ← 로 상위 입도로 빠져나오기, 요청 2026-06-22).
+                await self._tree_collapse_or_parent(row)
+                return
+            mode = "expand" if k == "right" else "toggle"
             if self._tree_toggle_at(row, mode):
                 await self._tree_apply(row)
             return
