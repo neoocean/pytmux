@@ -158,6 +158,28 @@ async def test_preview_single_line_one_row():
     assert not row1_painted, "단일행 프롬프트가 2행을 침범"
 
 
+async def test_popup_multiline_expands_into_rows_capped():
+    """항목3(2026-06-22): 팝업 _HistView 가 멀티라인 프롬프트를 **여러 표시 행**으로
+    펼친다(프롬프트당 최대 max_lines 줄, 초과 시 마지막 줄 ellipsis). 선택 단위는
+    프롬프트라 _sel 은 프롬프트 idx 이고 _sel_rows 가 그 블록의 표시 행 범위를 준다.
+    (size 를 만지는 _clamp_view 는 호출하지 않고 행 모델만 검증.)"""
+    screen = importlib.import_module(_PKG + ".screen")
+    hist = ["one", "two\nliner\nthree", "tail"]
+    v = screen._HistView(hist, max_lines=2)
+    # 프롬프트0=1행, 프롬프트1=2행(3줄→capped), 프롬프트2=1행 → 총 4 표시행.
+    assert v._prow == {0: 0, 1: 1, 2: 3}, v._prow
+    assert len(v._rows) == 4, v._rows
+    assert v._rows[1] == (1, 0, False), v._rows
+    assert v._rows[2] == (1, 1, True), v._rows        # 둘째 표시행에 ellipsis 표식
+    # 선택은 최신 프롬프트(idx 2), 그 블록은 표시행 3 하나.
+    assert v._sel == 2 and v._sel_rows() == (3, 3)
+    # 상한을 늘린 새 뷰: 3줄 다 펼쳐지고 ellipsis 없음.
+    v3 = screen._HistView(hist, max_lines=3)
+    assert v3._prow == {0: 0, 1: 1, 2: 4}, v3._prow
+    assert v3._rows[3] == (1, 2, False), v3._rows
+    assert v3._sel_rows() == (4, 4)
+
+
 # --------------------------------------------------------------------------- #
 # delete-to-disable 계약
 # --------------------------------------------------------------------------- #

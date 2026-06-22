@@ -13,7 +13,6 @@ from rich.style import Style
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.geometry import Region
 from textual.strip import Strip
 from textual.widget import Widget
 from textual.screen import ModalScreen
@@ -29,15 +28,45 @@ _MARK = Style(color="#ffd866", bgcolor="#1c2230")    # ⏎ 멀티라인 표시
 
 
 class _HistView(Widget):
-    """프롬프트 히스토리를 한 줄 단위로 그리는 뷰. 행 = `{n}. {첫 줄}` (+⏎ 멀티라인)."""
+    """프롬프트 히스토리 뷰. 멀티라인 프롬프트는 **여러 표시 행**으로 펼쳐 보인다
+    (항목3 2026-06-22) — 첫 줄 `{n}. {줄}`, 이어지는 줄은 들여쓰기. 프롬프트당 최대
+    max_lines 줄까지 펼치고 넘으면 마지막 표시 줄에 `…`. 선택 단위는 **프롬프트**라
+    한 프롬프트의 모든 표시 행이 함께 하이라이트된다. 표시 행↔(프롬프트 idx, 줄 idx)
+    매핑(_rows)으로 스크롤·클릭을 환산한다."""
     can_focus = True
 
-    def __init__(self, hist, empty_msg=""):
+    _INDENT = "      "        # 이어지는 줄 들여쓰기(= "  " + "{n:>3}. " 폭 정렬)
+
+    def __init__(self, hist, empty_msg="", max_lines=1):
         super().__init__(id="phview")
         self._hist = list(hist)
         self._empty = empty_msg
-        self._sel = max(0, len(self._hist) - 1)        # 최신 선택
-        self._top = 0
+        self._max_lines = max(1, int(max_lines))
+        self._sel = max(0, len(self._hist) - 1)        # 최신 선택(프롬프트 idx)
+        self._top = 0                                  # 표시 행 오프셋
+        self._rebuild_rows()
+
+    def _rebuild_rows(self):
+        """표시 행 테이블 재구성: 각 프롬프트를 최대 _max_lines 줄로 펼친다. 행 =
+        (프롬프트 idx, 줄 idx, ellipsis?) — ellipsis 는 상한 초과로 잘렸다는 표식."""
+        rows = []
+        prow = {}                                      # 프롬프트 idx → 첫 표시 행
+        for pi, prompt in enumerate(self._hist):
+            plines = prompt.splitlines() or [""]
+            prow[pi] = len(rows)
+            show = plines[:self._max_lines]
+            trunc = len(plines) > self._max_lines
+            for li, _ln in enumerate(show):
+                ell = trunc and li == len(show) - 1     # 마지막 표시 줄에 … 표식
+                rows.append((pi, li, ell))
+        self._rows = rows
+        self._prow = prow
+
+    def set_max_lines(self, n):
+        self._max_lines = max(1, int(n))
+        self._rebuild_rows()
+        self._clamp_view()
+        self.refresh()
 
     def on_mount(self):
         self._clamp_view()
@@ -54,26 +83,39 @@ class _HistView(Widget):
                 return Strip([Segment("  " + self._empty, _DIM)]
                             ).adjust_cell_length(width, _BG)
             return Strip.blank(width, _BG)
-        i = self._top + y
-        if not (0 <= i < len(self._hist)):
+        r = self._top + y
+        if not (0 <= r < len(self._rows)):
             return Strip.blank(width, _BG)
-        prompt = self._hist[i]
-        plines = prompt.splitlines() or [""]
-        first = plines[0]
-        multi = len(plines) > 1
-        num = f"{i + 1:>3}. "
-        if i == self._sel:
+        pi, li, ell = self._rows[r]
+        line = (self._hist[pi].splitlines() or [""])[li]
+        mark = i18n.t("ph.truncated_mark") if ell else ""
+        if pi == self._sel:                            # 선택 = 프롬프트 블록 전체 강조
             style = _SEL if self.has_focus else _SEL_BLUR
-            mark = i18n.t("ph.multiline_mark") if multi else ""
-            return Strip([Segment("  " + num + first + mark, style)]
-                        ).adjust_cell_length(width, style)
-        segs = [Segment("  " + num, _NUM), Segment(first, _BG)]
-        if multi:
-            segs.append(Segment(i18n.t("ph.multiline_mark"), _MARK))
+            if li == 0:
+                body = "  " + f"{pi + 1:>3}. " + line + mark
+            else:
+                body = "  " + self._INDENT + line + mark
+            return Strip([Segment(body, style)]).adjust_cell_length(width, style)
+        if li == 0:
+            segs = [Segment("  " + f"{pi + 1:>3}. ", _NUM), Segment(line, _BG)]
+        else:
+            segs = [Segment("  " + self._INDENT, _BG), Segment(line, _BG)]
+        if mark:
+            segs.append(Segment(mark, _MARK))
         return Strip(segs).adjust_cell_length(width, _BG)
 
     def _cur(self):
         return self._sel if 0 <= self._sel < len(self._hist) else None
+
+    def _sel_rows(self):
+        """선택 프롬프트의 표시 행 범위 [first, last] (없으면 (0,0))."""
+        if self._sel not in self._prow:
+            return 0, 0
+        first = self._prow[self._sel]
+        last = first
+        while last + 1 < len(self._rows) and self._rows[last + 1][0] == self._sel:
+            last += 1
+        return first, last
 
     def _clamp_view(self):
         n = len(self._hist)
@@ -84,11 +126,15 @@ class _HistView(Widget):
         h = self.size.height
         if h <= 0:
             return
-        if self._sel < self._top:
-            self._top = self._sel
-        elif self._sel >= self._top + h:
-            self._top = self._sel - h + 1
-        self._top = max(0, min(self._top, max(0, n - h)))
+        first, last = self._sel_rows()
+        # 선택 블록이 보이도록 스크롤 — 블록 끝이 아래로 넘치면 끝을 맞추되, 블록이
+        # 뷰보다 크면 첫 줄을 맞춘다(첫 줄 = 번호 줄이 항상 보이게).
+        if first < self._top:
+            self._top = first
+        elif last >= self._top + h:
+            self._top = min(first, last - h + 1)
+        nrows = len(self._rows)
+        self._top = max(0, min(self._top, max(0, nrows - h)))
 
     def _move(self, new: int):
         n = len(self._hist)
@@ -97,20 +143,9 @@ class _HistView(Widget):
         new = max(0, min(n - 1, new))
         if new == self._sel:
             return
-        old = self._sel
         self._sel = new
-        h = self.size.height or 1
-        old_top = self._top
-        if new < self._top:
-            self._top = new
-        elif new >= self._top + h:
-            self._top = new - h + 1
-        if self._top != old_top:
-            self.refresh()
-        else:
-            w = self.size.width
-            self.refresh(Region(0, old - self._top, w, 1))
-            self.refresh(Region(0, new - self._top, w, 1))
+        self._clamp_view()
+        self.refresh()      # 멀티행 블록 강조 이동은 전체 갱신(부분 갱신 행 계산 복잡)
 
     def on_key(self, event: events.Key):
         k = event.key
@@ -147,10 +182,10 @@ class _HistView(Widget):
                 self._move(self._sel + page)
 
     def on_click(self, event: events.Click):
-        i = self._top + event.y
-        if 0 <= i < len(self._hist):
+        r = self._top + event.y                        # 표시 행 → 그 행의 프롬프트
+        if 0 <= r < len(self._rows):
             event.stop()
-            self._move(i)
+            self._move(self._rows[r][0])
 
 
 class PromptHistoryScreen(ModalScreen):
@@ -171,7 +206,8 @@ class PromptHistoryScreen(ModalScreen):
         self._pane_id = pane_id
         self._hist = list(hist)
         self._max_lines = int(max_lines)
-        self._view = _HistView(self._hist, empty_msg=i18n.t("ph.empty"))
+        self._view = _HistView(self._hist, empty_msg=i18n.t("ph.empty"),
+                               max_lines=self._max_lines)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="phbox"):
@@ -198,4 +234,5 @@ class PromptHistoryScreen(ModalScreen):
             self._max_lines = new
             self.app.ph_max_lines = new           # 낙관적(다음 status 가 권위 확인)
             self.app.send_cmd("set_ph_max_lines", n=new)
+            self._view.set_max_lines(new)         # 프롬프트당 펼침 줄 수도 함께 조정
             self._set_sub()
