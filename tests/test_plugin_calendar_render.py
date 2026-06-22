@@ -107,3 +107,49 @@ async def test_calendar_overlay_records_nav_click_zones():
     draw_calendar_overlay(_grid(12, 3), [{"id": 1, "x": 0, "y": 0, "w": 12, "h": 3}],
                           {1}, 12, 3, _cal_styles(), now=now, nav_zones=small)
     assert small == {}, "작은 폴백엔 클릭존 없음"
+
+
+async def test_calendar_overlay_key_home_returns_to_current_month():
+    """요청 2026-06-22(감사+회귀가드): 달력 오버레이가 활성 패널에 떠 있을 때 Home
+    (또는 '.')을 누르면 표시 월이 **이번 달(offset 0)** 로 복귀한다. ←/→ 는 이전/다음
+    달. 기능은 이미 `_CalendarPlugin.client_overlay_key` 에 구현돼 있어(clientio.on_key
+    가 ctrl+v·shift+esc 다음, 스크롤백/패스스루보다 **앞**에서 디스패치) 이를 고정하는
+    가드 — 라이브에서 안 되면 이 디스패치 순서/활성 패널 매칭을 점검."""
+    import importlib
+    cal = importlib.import_module("pytmuxlib.plugins.calendar")
+
+    class _Ev:
+        def __init__(self, key, character=None):
+            self.key = key
+            self.character = character
+
+    class _App:
+        def __init__(self):
+            self.calendar_panes = {1}
+            self.calendar_offset = {1: -3}     # 3달 전을 보던 중
+            self.layout = {"active": 1}
+            self.composited = 0
+
+        def _composite(self):
+            self.composited += 1
+
+    app = _App()
+    # Home → 이번 달(0)로 복귀, 소비(True), 재합성 호출.
+    assert cal.PLUGIN.client_overlay_key(app, _Ev("home")) is True
+    assert app.calendar_offset[1] == 0, "Home 으로 이번 달 복귀"
+    assert app.composited >= 1, "재합성(_composite) 호출"
+    # '.' 문자도 동일하게 이번 달로.
+    app.calendar_offset[1] = 5
+    assert cal.PLUGIN.client_overlay_key(app, _Ev("x", ".")) is True
+    assert app.calendar_offset[1] == 0
+    # ←/→ 는 이전/다음 달(기존 동작 보존).
+    cal.PLUGIN.client_overlay_key(app, _Ev("left"))
+    assert app.calendar_offset[1] == -1
+    cal.PLUGIN.client_overlay_key(app, _Ev("right"))
+    assert app.calendar_offset[1] == 0
+    # 활성 패널에 달력이 없으면 소비하지 않음(False) → 키가 셸로 흘러야.
+    app.layout = {"active": 99}
+    assert cal.PLUGIN.client_overlay_key(app, _Ev("home")) is False
+    app.layout = {"active": 1}
+    app.calendar_panes = set()
+    assert cal.PLUGIN.client_overlay_key(app, _Ev("home")) is False
