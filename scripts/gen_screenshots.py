@@ -402,8 +402,8 @@ async def ime_badge(app, pilot):
 async def calendar_big(app, pilot):
     # 큰 달력(숫자가 블록 문자) — 패널이 충분히 크면 자동으로 블록-숫자 달력이 된다.
     # 결정적 기준일을 2026-02-06 으로 고정한다(_calendar_now 훅). 2026-02 는 일요일
-    # 시작·28일이라 정확히 4주 → 블록 달력 높이가 4주치(다른 장면과 세로 길이 근접)이고,
-    # 6일(금)이 '오늘'로 강조된다. 훅이 없으면(production) 현재 달을 그린다.
+    # 시작·28일이라 정확히 4주 → 블록 달력이 표준 SIZE(90×26)에 그대로 들어가(다른 장면과
+    # 동일 세로 길이), 6일(금)이 '오늘'로 강조된다. 훅이 없으면(production) 현재 달을 그린다.
     import datetime as _dt
     app._calendar_now = _dt.datetime(2026, 2, 6, 14, 0)
     app.set_calendar(_aid(app), True)
@@ -687,11 +687,11 @@ async def claude_suite(retries=4):
     return 1
 
 
-# 장면: (이름, 설명, 운전함수[, 크기]). 크기 생략 시 SIZE(90×26). 큰 달력은 블록-숫자
-# 모드가 뜨도록 더 큰(높은) 터미널이 필요하다.
-# 큰 달력 전용 크기. 2026-02(4주) 블록 달력이 들어가는 최소 높이(34행) — 5주 달이면
-# 한 줄 더 필요하니 달을 바꿀 땐 재확인. 폭은 다른 장면과 같은 90 으로 맞춰 갤러리 일관.
-BIG = (90, 34)
+# 장면: (이름, 설명, 운전함수[, 크기]). 크기 생략 시 SIZE(90×26).
+# 큰 달력(블록-숫자)도 표준 SIZE(90×26)에서 그대로 렌더된다: 블록 달력은 패널 높이
+# ph≥22 면 뜨는데(render.py nl_big), 26행 터미널의 단일 패널이 이미 그 높이를 준다.
+# 따라서 다른 장면과 동일한 세로 길이로 갤러리에 들어간다. 단 2026-02 는 4주(28일)라
+# 4주치 높이 기준이며, 5주 달로 기준일을 바꾸면 한 줄 더 필요하니 재확인할 것.
 SCENES = [
     ("01-first-run", "첫 실행 — 단일 패널 + 탭바 + 상태줄", first_run),
     ("02-split-lr", "좌우 분할 — 활성 패널 파란 테두리", split_lr),
@@ -702,7 +702,7 @@ SCENES = [
     ("06-command-prompt", "명령 프롬프트(prefix :) + 고스트 자동완성", command_prompt),
     ("07-kill-pane-prompt", "패널 닫기 — ESC : 명령 프롬프트에 kill-pane 입력", kill_pane_prompt),
     ("08-tabs-multi", "탭 여러 개 + 이름변경", tabs_multi),
-    ("09-calendar", "큰 달력 오버레이(cal) — 블록-숫자", calendar_big, BIG),
+    ("09-calendar", "큰 달력 오버레이(cal) — 블록-숫자", calendar_big),
     ("10-confirm-tab", "탭 닫기 확인 박스(탭 2개 이상)", confirm_tab),
     ("14-info-popup", "통합 정보 팝업(캡처·토큰·서버)", info_popup),
     ("15-scrollback", "스크롤백(복사) 모드 — 지난 출력", scrollback),
