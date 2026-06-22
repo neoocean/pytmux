@@ -38,11 +38,11 @@ i18n.register({
         "default — 매번 확인 (일반 모드)",
         "plan — 플랜 모드 (계획만, 실행 안 함)",
         "bypass — 권한 우회, 확인 없음 ⚠️ (Bypass Permission Mode)",
-        # token-log: 탭(넓은/좁은)·그룹·컬럼·차원·정렬
-        "시간", "시", "일", "주", "월", "계정", "계", "패널", "패", "세", "정렬", "정",
+        # token-log: 탭(넓은/좁은)·그룹·컬럼·차원
+        "시간", "시", "일", "주", "월", "계정", "계", "패널", "패", "세",
         "시나리오", "비교", "한도", "경고", "경", "기간", "기", "보기", "조회", "토큰 사용량",
         "구간", "실측(세션 5h)", "추정Σ", "항목", "토큰", "비율",
-        "세션", "타임스탬프", "토큰순", "시간순", "옵션",
+        "세션", "타임스탬프",
         # token-log: 안내/대사
         "한도(/usage): [u] 눌러 조회", "(기록된 토큰 사용량이 없습니다)",
         "토큰 비교 · 실측Δ% vs 추정Σ", "/usage 조회 중… (~수초)",
@@ -69,15 +69,13 @@ i18n.register({
             "bypass — skip permissions, no confirm ⚠️ (Bypass Permission Mode)",
         "시간": "Time", "시": "T", "일": "Day", "주": "Week", "월": "Month",
         "계정": "Account", "계": "A", "패널": "Panel", "패": "P", "세": "S",
-        "정렬": "Sort", "정": "S", "시나리오": "Scenario", "비교": "Recon",
+        "시나리오": "Scenario", "비교": "Recon",
         "한도": "Limit", "경고": "Warn", "경": "W",
         "기간": "Period", "기": "P",
         "보기": "View", "조회": "Query", "토큰 사용량": "Token usage",
         "구간": "Span", "실측(세션 5h)": "Measured (session 5h)", "추정Σ": "Est Σ",
         "항목": "Item", "토큰": "Tokens", "비율": "Ratio",
         "세션": "Session", "타임스탬프": "Timestamp",
-        "토큰순": "by tokens", "시간순": "by time",
-        "옵션": "Options",
         "한도(/usage): [u] 눌러 조회": "Limit (/usage): press [u] to query",
         "(기록된 토큰 사용량이 없습니다)": "(no recorded token usage)",
         "토큰 비교 · 실측Δ% vs 추정Σ": "Token reconcile · measured Δ% vs est Σ",
@@ -123,9 +121,9 @@ i18n.register({
     "ko": {
         "pscreen.perm_title": "권한모드 선택 (현재: {current})",
         "pscreen.tklog_title2": "토큰 사용량(추정) · {what}별",
-        "pscreen.tklog_scope": "{order} · {sigma}",
+        "pscreen.tklog_scope": "{sigma}",
         "pscreen.tklog_disp": " (표시 {n})",
-        "pscreen.tklog_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · p세션 o정렬 · l한도 r비교 u/usage · Esc닫기",
+        "pscreen.tklog_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · p세션 · l한도 r비교 u/usage · Esc닫기",
         # 계층 타임라인 트리 구역 구분선(2026-06-21).
         "pscreen.tree_earlier_weeks": "── 이번 달 이전 주 ──",
         "pscreen.tree_earlier_months": "── 이전 달 ──",
@@ -193,9 +191,9 @@ i18n.register({
     "en": {
         "pscreen.perm_title": "Select permission mode (current: {current})",
         "pscreen.tklog_title2": "Token usage (est) · by {what}",
-        "pscreen.tklog_scope": "{order} · {sigma}",
+        "pscreen.tklog_scope": "{sigma}",
         "pscreen.tklog_disp": " (shown {n})",
-        "pscreen.tklog_hint": "↑↓ move · Enter/←→ expand·collapse · p session o sort · l limit r recon u /usage · Esc close",
+        "pscreen.tklog_hint": "↑↓ move · Enter/←→ expand·collapse · p session · l limit r recon u /usage · Esc close",
         "pscreen.tree_earlier_weeks": "── earlier weeks this month ──",
         "pscreen.tree_earlier_months": "── earlier months ──",
         "pscreen.weekdays": "Mo,Tu,We,Th,Fr,Sa,Su",
@@ -795,8 +793,8 @@ class TokenLogScreen(ModalScreen):
       · 기간 뷰(기본): [h]시간 [d]일 [w]주 [m]월 — 행=시간 버킷(일엔 요일 곁들임)
       · 계정 뷰: [c] — 행=계정별 전체 이력 합(행 선택=그 계정 필터+일별 드릴다운)
       · 세션 뷰: [p] — 행=Claude 세션별 합(대표 탭:패널 라벨)
-    [a] 계정 필터 순환(기간/세션 뷰에 적용), [o] 기간 정렬(시간순↔토큰순), 방향키
-    스크롤, 그 외/Esc 닫기. 전환은 전부 라운드트립 없음."""
+    [p] 세션 뷰 토글, 방향키 스크롤, 그 외/Esc 닫기. 기간 뷰는 항상 시간순 계층
+    트리(정렬 옵션 제거, 2026-06-22). 전환은 전부 라운드트립 없음."""
     CSS = """
     TokenLogScreen { align: center middle; }
     /* 높이 고정(2026-06-07 사용자 요청): 내용(레코드 수)에 따라 박스가 줄거나
@@ -807,19 +805,14 @@ class TokenLogScreen(ModalScreen):
     #tklogtitle { width: 1fr; height: 1; color: $accent; text-style: bold; }
     #tklogclose { width: 5; height: 1; content-align: center middle;
                   background: $error; color: $text; text-style: bold; }
-    /* 상단 2단 구조(§7.1·§7.2): ①뷰 탭 1줄(#tktabs) — 상호배타 뷰만 같은 모양의
-       가로 탭으로 ②활성 탭의 보조옵션 1줄(#tksub) — 그 탭에서만 작동하는 옵션을
-       아래로. 예전엔 기간/보기/조회 외곽선 그룹 3개에 탭과 필터가 섞여 위계가
-       구분되지 않았다(사용자 보고). */
+    /* 상단 뷰 탭 1줄(#tktabs §7.1) — 상호배타 뷰만 같은 모양의 가로 탭으로. 예전엔
+       기간/보기/조회 외곽선 그룹 3개에 탭과 필터가 섞여 위계가 구분되지 않았다(사용자
+       보고). 보조옵션 줄(#tksub)은 정렬 옵션 제거로 함께 없앴다(2026-06-22). */
     #tktabs { width: 100%; height: 1; align-horizontal: left; }
     #tktabs Label { height: 1; padding: 0 1; margin: 0 1 0 0; }
     /* 메인 탭 줄과 본문 사이 노트북 연결선(_TkTabConnector) — 활성 탭이 본문으로 열려
        이어지게(메인 탭바와 같은 모양, 사용자 요청 2026-06-18). */
     #tkconn { width: 100%; height: 1; }
-    /* 보조옵션 줄: 활성 탭(기간/세션)의 입도·정렬을 살짝 들여써 상위 탭과 구분. */
-    #tksub { width: 100%; height: 1; align-horizontal: left; padding: 0 0 0 2; }
-    #tksub Label { height: 1; padding: 0 1; margin: 0 1 0 0; }
-    #tksublead { color: $text-muted; padding: 0 1 0 0; margin: 0; }
     /* 탭 색 언어(사용자 요청 2026-06-18): 활성 탭=accent(오렌지)+흰 글자 — 노트북
        연결선·박스 테두리(둘 다 $accent)와 같은 오렌지로 맞춰 활성 탭이 그 라인으로
        열려 이어지게 한다(처음엔 primary 파랑이었으나 라인색과 어긋나 통일). 액션
@@ -841,7 +834,7 @@ class TokenLogScreen(ModalScreen):
     _TAB_LABELS = {
         "tab_period": ("기간", "기"),
         "tab_panel": ("세션", "세"),
-        "tab_order": ("정렬", "정"), "tab_usage": ("/usage", "U"),
+        "tab_usage": ("/usage", "U"),
         "tab_saver": ("시나리오", "S"), "tab_recon": ("비교", "R"),
         "tab_limit": ("한도", "L"), "tab_warn": ("경고", "경"),
     }
@@ -892,10 +885,9 @@ class TokenLogScreen(ModalScreen):
         # 합은 이 값을 쓴다(None=구버전 서버 → 레코드 합으로 폴백).
         self._total_all = total_all
         # 계층 타임라인 뷰(2026-06-21)는 입도 개념(_bucket)이 없다 — 월→주→일→시각을
-        # 한 트리로 보인다. 단, 세션 뷰와 토큰순(평탄) 폴백은 day 입도로 집계하므로
-        # 내부 기본값만 "day" 로 둔다(사용자 전환 UI 없음). initial_mode=="hour"(상태줄
-        # "N%/5h used" 클릭)는 트리에서 오늘 행이 이미 시각까지 펼쳐져 있어 별도 분기
-        # 불요 — 기본 시간순 트리로 진입한다.
+        # 한 트리로 보인다. 단, 세션 뷰(평탄)는 day 입도로 집계하므로 내부 기본값만
+        # "day" 로 둔다(사용자 전환 UI 없음). initial_mode=="hour"(상태줄 "N%/5h used"
+        # 클릭)는 트리에서 오늘 행이 이미 시각까지 펼쳐져 있어 별도 분기 불요.
         self._bucket = "day"
         # 계층 뷰 펼침 상태: 기본 펼침(§3 — 오늘=시각)에서 사용자가 **토글한** 행 키
         # 집합. effective_open = default ^ (key in _tree_toggled) — 한 집합으로 기본
@@ -910,8 +902,8 @@ class TokenLogScreen(ModalScreen):
         self._view = "time"
         # 세션 뷰 타임스탬프 열용 시작 시각(grows 와 동순) — _view_rows 가 채운다.
         self._sess_times = None
-        # 버킷(시간축) 정렬: "time"=최근 위(기본), "tokens"=많이 쓴 순([o] 토글).
-        self._order = "time"
+        # 정렬은 항상 시간순(최근 위)이다 — 토큰순 토글은 제거(2026-06-22, 기간 뷰는
+        # 계층 트리라 입도가 섞인 토큰순이 무의미해 Options 정렬 옵션을 없앴다).
 
     def compose(self) -> ComposeResult:
         with Vertical(id="tklogbox"):
@@ -943,13 +935,6 @@ class TokenLogScreen(ModalScreen):
             # 노트북 연결선: 활성 메인 탭이 아래 본문으로 열려 이어지게(메인 탭바와
             # 같은 모양, 사용자 요청 2026-06-18). _sync_tabs 가 탭 전환 시 refresh.
             yield _TkTabConnector(id="tkconn")
-            # 보조옵션 줄: **활성 탭에서만 작동하는 옵션**을 탭 하위로(§7.2). 기간/세션
-            # 뷰에서 정렬만 남는다(시간/일/주/월 서브탭은 계층 트리로 대체, 2026-06-21).
-            # 그 외(한도/대사/경고)엔 숨긴다(_sync_tabs 가 display 제어).
-            with Horizontal(id="tksub"):
-                yield Label("", id="tksublead", markup=False)
-                yield Label(i18n.t("정렬"), id="tab_order", classes="tkbtab",
-                            markup=False)
             yield Static("", id="tktop", markup=False)
             table = DataTable(id="tktable", zebra_stripes=True,
                               cursor_type="row")
@@ -1144,23 +1129,6 @@ class TokenLogScreen(ModalScreen):
             self.query_one("#tkconn").refresh()
         except Exception:
             pass
-        # 보조옵션 줄: 기간/세션 뷰에서만 보인다(한도/대사/경고엔 옵션 없음 → 줄 자체를
-        # 숨겨 빈 줄이 안 남게). 입도(시간/일/주/월)는 계층 트리로 대체돼 정렬만 남는다.
-        show_sub = active in ("time", "session")
-        try:
-            self.query_one("#tksub").display = show_sub
-        except Exception:
-            pass
-        if show_sub:
-            try:
-                self.query_one("#tab_order", Label).set_class(
-                    self._order == "tokens", "tkbtab-active")
-            except Exception:
-                pass
-            try:
-                self.query_one("#tksublead", Label).update(i18n.t("옵션"))
-            except Exception:
-                pass
 
     def _metrics(self):
         """현재 폭 티어로 (라벨 셀폭, 막대 칸수)를 정한다(반응형). 막대 칸수는
@@ -1518,7 +1486,7 @@ class TokenLogScreen(ModalScreen):
         hour_suffix = i18n.t("pscreen.hour_suffix")
         if self._view == "session":
             v = usagelog.agg_view(src, self._bucket, None, "session",
-                                  self._order, top=self._GROUP_TOP,
+                                  "time", top=self._GROUP_TOP,
                                   hour_suffix=hour_suffix)
             # 세션 시작 시각(별도 타임스탬프 열용) — _refresh 가 읽는다.
             self._sess_times = v.get("gtimes")
@@ -1527,7 +1495,7 @@ class TokenLogScreen(ModalScreen):
         self._sess_times = None
         weekdays = i18n.t("pscreen.weekdays").split(",")
         v = usagelog.agg_view(src, self._bucket, None, "account",
-                              self._order, weekdays=weekdays,
+                              "time", weekdays=weekdays,
                               hour_suffix=hour_suffix)
         # 5번째: 원시 버킷 키(brows 와 동순) — hour 버킷 5h% 열 조인용(§10-D).
         # 6번째: 행별 모델 티어 분해(막대 색 분할용, 요청 2026-06-21).
@@ -1562,10 +1530,9 @@ class TokenLogScreen(ModalScreen):
         if self._warn_mode:
             self._refresh_warn(table)
             return
-        # 기간(time) 뷰 + 시간순 = 계층 타임라인 트리(2026-06-21). 토큰순은 입도가 섞이면
-        # 의미가 없어 평탄한 일(day) 목록으로 폴백(아래 _view_rows 경로, SC-8). 세션 뷰도
-        # 종전 평탄 경로.
-        if self._view == "time" and self._order == "time":
+        # 기간(time) 뷰 = 계층 타임라인 트리(2026-06-21·정렬 항상 시간순). 세션 뷰는
+        # 종전 평탄 경로(_view_rows).
+        if self._view == "time":
             self._refresh_tree(table)
             return
         label_w, bar_cells = self._metrics()
@@ -1593,13 +1560,12 @@ class TokenLogScreen(ModalScreen):
         # 짧은 기간 라벨에서 간격이 컸다). 헤더·가장 긴 라벨이 들어갈 만큼(+1 여백)만
         # 쓰되 티어 폭을 넘지 않고(account 긴 이메일은 종전대로 티어 상한), 행이 있을
         # 때만 적용한다(win==0 빈 안내문은 길어서 티어 폭을 유지해야 안 잘린다).
-        # hour+시간순 뷰는 같은 날짜의 시각 행을 **날짜 헤더 아래로 묶는다**(요청
-        # 2026-06-19). 토큰순 정렬은 날짜가 섞여 묶음이 무의미하므로 평평한
-        # 'MM-DD HHh' 라벨을 그대로 둔다. 묶을 때 시각 행 라벨에서 날짜를 떼고
-        # 'HHh' 만 들여쓰며, 날짜는 헤더 행이 인다(5h%/1w% 열은 헤더 행에선 빈다).
+        # hour 뷰는 같은 날짜의 시각 행을 **날짜 헤더 아래로 묶는다**(요청 2026-06-19).
+        # 묶을 때 시각 행 라벨에서 날짜를 떼고 'HHh' 만 들여쓰며, 날짜는 헤더 행이 인다
+        # (5h%/1w% 열은 헤더 행에선 빈다). (현재 평탄 경로는 세션 뷰 전용이라 bucket 은
+        # day — 이 분기는 사실상 비활성이나 hour 폴백 대비 가드는 남긴다.)
         group_dates = (self._bucket == "hour" and self._view != "session"
-                       and self._order == "time" and bkeys is not None
-                       and bool(rows))
+                       and bkeys is not None and bool(rows))
         # 세션 뷰는 시작 시각을 별도 '타임스탬프' 열로 분리한다(세션 | 타임스탬프 |
         # 토큰, 사용자 요청 2026-06-20). 그 외 뷰엔 이 열이 없다.
         show_ts = self._view == "session"
@@ -1736,7 +1702,6 @@ class TokenLogScreen(ModalScreen):
                 table.add_row(*cells)
 
         # 제목: 뷰 차원(시간/일/주/월/세션)별. 스코프/한도(위)·키 안내(아래) 분리.
-        order_l = i18n.t("토큰순") if self._order == "tokens" else i18n.t("시간순")
         # (추정): 집계 원천(스크랩 누계)은 활동량 추정 — 실측 한도는 상단 막대(S6 T3).
         what = (i18n.t("세션") if self._view == "session"
                 else i18n.t(self._BUCKET_WORD[self._bucket]))
@@ -1752,7 +1717,7 @@ class TokenLogScreen(ModalScreen):
         if life != win:
             sigma += i18n.t("pscreen.tklog_disp", n=usagelog._fmt_tokens(win))
         # 스코프는 1줄로 컴팩트(묶음/버킷은 제목에 이미 있음). 표 높이를 아낀다.
-        scope = i18n.t("pscreen.tklog_scope", order=order_l, sigma=sigma)
+        scope = i18n.t("pscreen.tklog_scope", sigma=sigma)
         # 상단은 1줄(한도 요약 접두 + 스코프)만 — /usage 막대·창Σ·신선도 상세는
         # [한도] 뷰로 옮겼다(작은 화면 정리, 2026-06-14). usage 없으면 접두는 빈 문자열.
         # 막대 색 분할(요청 2026-06-21) 시 둘째 줄에 모델 색 범례를 곁들인다 — 어느
@@ -2017,7 +1982,6 @@ class TokenLogScreen(ModalScreen):
                 table.add_row(*cells)
 
         # 제목·스코프·범례·힌트(평탄 경로와 동형).
-        order_l = i18n.t("시간순")
         self.query_one("#tklogtitle", Label).update(
             i18n.t("pscreen.tklog_title2", what=i18n.t("기간")))
         life = self._total_all
@@ -2026,7 +1990,7 @@ class TokenLogScreen(ModalScreen):
         sigma = f"~Σ{usagelog._fmt_tokens(life)}"
         if life != win:
             sigma += i18n.t("pscreen.tklog_disp", n=usagelog._fmt_tokens(win))
-        scope = i18n.t("pscreen.tklog_scope", order=order_l, sigma=sigma)
+        scope = i18n.t("pscreen.tklog_scope", sigma=sigma)
         top = Text(self._limit_summary() + scope)
         present: dict = {}
         if show_bar:
@@ -2114,14 +2078,6 @@ class TokenLogScreen(ModalScreen):
             self._view = "session" if was or self._view != "session" else "time"
             self._tree_toggled.clear()
             self.run_worker(self._refresh())
-        elif wid == "tab_order":
-            event.stop()
-            # 정렬 토글: 시간순(계층 트리) ↔ 토큰순(평탄 일 목록). 전환 시 트리 펼침
-            # 상태 초기화 — 토큰순은 평탄이라 무의미하고, 시간순 복귀 시 §3 기본으로(T9).
-            self._exit_body_modes()
-            self._order = "tokens" if self._order == "time" else "time"
-            self._tree_toggled.clear()
-            self.run_worker(self._refresh())
         elif wid == "tab_limit":
             event.stop()
             # 한도 상세 뷰 토글(표 자리에 /usage 막대·창Σ). recon/경고 와 배타.
@@ -2185,7 +2141,7 @@ class TokenLogScreen(ModalScreen):
         # up/down 은 DataTable 행 커서에 위임. (마우스 클릭은 RowSelected →
         # on_data_table_row_selected 도 토글한다.) Enter 를 여기서 가로채지 않으면 화면
         # on_key 의 '그 외 키=닫기' 폴백에 걸려 팝업이 닫힌다.
-        tree_active = (self._view == "time" and self._order == "time"
+        tree_active = (self._view == "time"
                        and not (self._limit_mode or self._recon_mode
                                 or self._warn_mode))
         if tree_active and k in ("left", "right", "space", "enter"):
@@ -2199,9 +2155,10 @@ class TokenLogScreen(ModalScreen):
             if self._tree_toggle_at(row, mode):
                 await self._tree_apply(row)
             return
-        # h/d/w/m: 옛 입도 서브탭 단축키 — 계층 트리로 대체돼 더는 입도를 바꾸지 않는다.
-        # 흔한 글자라 팝업이 닫히지 않게 소비만 하고 무동작으로 둔다(예약).
-        if k in ("h", "d", "w", "m"):
+        # h/d/w/m: 옛 입도 서브탭 단축키, o: 옛 정렬 토글 — 둘 다 계층 트리/정렬 제거로
+        # 더는 동작하지 않는다. 흔한 글자라 팝업이 닫히지 않게 소비만 하고 무동작으로
+        # 둔다(예약 — 그 외 키는 아래에서 팝업을 닫으므로 머슬메모리 오타로 안 닫히게).
+        if k in ("h", "d", "w", "m", "o"):
             event.stop()
             return
         if k == "p":
@@ -2218,15 +2175,6 @@ class TokenLogScreen(ModalScreen):
             self._limit_mode = not self._limit_mode
             if self._limit_mode:
                 self._recon_mode = False
-            await self._refresh()
-            return
-        if k == "o":
-            event.stop()
-            # 정렬 토글: 시간순(계층 트리) ↔ 토큰순(평탄 일 목록). 전환 시 트리 펼침
-            # 상태 초기화(토큰순 평탄·시간순 복귀 시 §3 기본, T9).
-            self._exit_body_modes()
-            self._order = "tokens" if self._order == "time" else "time"
-            self._tree_toggled.clear()
             await self._refresh()
             return
         if k == "s":
@@ -2285,8 +2233,8 @@ class TokenLogScreen(ModalScreen):
 
     async def on_data_table_row_selected(self, event):
         """행 선택(Enter·마우스 클릭) → 계층 트리에선 그 행을 펼치/접는다. 그 외
-        뷰(세션/토큰순/한도/대사/경고)에선 행 선택이 아무 동작도 하지 않는다(종전)."""
-        if not (self._view == "time" and self._order == "time"):
+        뷰(세션/한도/대사/경고)에선 행 선택이 아무 동작도 하지 않는다(종전)."""
+        if not (self._view == "time"):
             return
         if self._limit_mode or self._recon_mode or self._warn_mode:
             return

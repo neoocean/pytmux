@@ -1455,19 +1455,9 @@ async def test_token_log_screen_aggregates_and_switches():
         close = scr.query_one("#tklogclose", Label)
         assert "[x]" in close.render().plain, \
             f"닫기 버튼에 [x] 글자가 보여야 함: {close.render().plain!r}"
-        # 정렬 토글([o]) — 토큰순/시간순(닫히지 않고 갱신). 옛 입도 서브탭은 계층 트리로
-        # 대체돼 h/d/w/m 는 예약 no-op(닫히지 않음).
-        await pilot.press("o")
-        await pilot.pause(0.1)
-        assert app.screen_stack[-1] is scr and scr._order == "tokens"
-        # 토큰순(평탄 일 목록): 일 라벨에 요일이 곁들여진다(MM-DD(요일)).
-        import time as _t
-        wd = "월화수목금토일"[_t.localtime(1_700_500_000.0).tm_wday]
-        assert f"({wd})" in _tok_text(scr), _tok_text(scr)
-        await pilot.press("o")
-        await pilot.pause(0.1)
-        assert scr._order == "time"
-        for k in ("h", "d", "w", "m"):           # 예약 no-op: 닫히지 않는다
+        # 정렬 토글([o])은 제거됐다(2026-06-22, 기간 뷰는 항상 시간순 계층 트리).
+        # 옛 입도 서브탭/정렬 단축키는 계층 트리로 대체돼 h/d/w/m/o 는 예약 no-op.
+        for k in ("h", "d", "w", "m", "o"):       # 예약 no-op: 닫히지 않는다
             await pilot.press(k)
             await pilot.pause(0.02)
             assert app.screen_stack[-1] is scr, f"{k} 키는 닫지 않음"
@@ -1602,27 +1592,25 @@ async def test_token_log_tab_subrow_and_limit_return():
         await pilot.pause(0.1)
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "TokenLogScreen"
-        # 기간(time) 뷰: 보조옵션 줄(정렬) 보임, 기간 탭 활성. 입도 서브탭은 계층
-        # 트리로 대체돼 정렬만 남는다.
+        # 기간(time) 뷰: 기간 탭 활성. 입도 서브탭/정렬 보조옵션 줄은 계층 트리·정렬
+        # 제거로 함께 없앴다(2026-06-22) — #tksub 위젯 자체가 없다.
         assert scr._active_tab() == "time"
-        assert scr.query_one("#tksub").display is True
+        assert not scr.query("#tksub"), "보조옵션 줄(#tksub)은 제거돼야"
         assert scr.query_one("#tab_period", Label).has_class("tkbtab-active")
-        # 세션 뷰: 보조옵션 줄(정렬) 보임.
+        # 세션 뷰 전환.
         await pilot.press("p")
         await pilot.pause(0.1)
-        assert scr.query_one("#tksub").display is True
-        # 한도 뷰: 보조옵션 줄 숨김 + 한도 탭만 활성, 기간 탭은 강조 안 됨(§7.1).
+        assert scr._active_tab() == "session"
+        # 한도 뷰: 한도 탭만 활성, 기간 탭은 강조 안 됨(§7.1).
         await pilot.press("l")
         await pilot.pause(0.1)
         assert scr._active_tab() == "limit"
         assert scr.query_one("#tab_limit", Label).has_class("tkbtab-active")
         assert not scr.query_one("#tab_period", Label).has_class("tkbtab-active")
-        assert scr.query_one("#tksub").display is False
         # 한도에서 기간 탭 클릭 → 기간 뷰 복귀(§7.1 핵심: 복귀 동선 명확).
         await pilot.click("#tab_period")
         await pilot.pause(0.1)
         assert not scr._limit_mode and scr._active_tab() == "time"
-        assert scr.query_one("#tksub").display is True
         await pilot.press("escape")
         await pilot.pause(0.1)
     await _with_app(body)
@@ -1643,8 +1631,7 @@ async def test_token_log_opens_time_view_from_5h_segment():
         await pilot.pause(0.1)
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "TokenLogScreen"
-        assert scr._active_tab() == "time" and scr._order == "time", \
-            (scr._active_tab(), scr._order)
+        assert scr._active_tab() == "time", scr._active_tab()
         await pilot.press("escape")
         await pilot.pause(0.1)
         # 대조: 모드 없이 여는 일반 경로도 같은 기간(시간순 트리) 뷰.
@@ -1653,8 +1640,7 @@ async def test_token_log_opens_time_view_from_5h_segment():
         app._dispatch({"t": "token_log", "records": recs})
         await pilot.pause(0.1)
         scr2 = app.screen_stack[-1]
-        assert scr2._active_tab() == "time" and scr2._order == "time", \
-            (scr2._active_tab(), scr2._order)
+        assert scr2._active_tab() == "time", scr2._active_tab()
         await pilot.press("escape")
         await pilot.pause(0.1)
     await _with_app(body)
@@ -1662,8 +1648,8 @@ async def test_token_log_opens_time_view_from_5h_segment():
 
 async def test_token_log_tree_has_5h_and_1w_columns_no_ratio():
     """사용자 요청(2026-06-17): 시각 행에 5h% 옆 1w%(주간 한도) 열을 두고 기존
-    비율(ratio/막대) 열은 없다. 계층 트리(시간순)는 hourly 데이터가 있으면 5h%/1w%
-    열을 두고, 토큰순(평탄 일 목록)엔 그 열이 없다."""
+    비율(ratio/막대) 열은 없다. 계층 트리(항상 시간순)는 hourly 데이터가 있으면
+    5h%/1w% 열을 둔다(정렬 토큰순 옵션은 제거됨, 2026-06-22)."""
     from textual.widgets import DataTable
     async def body(app, pilot, srv):
         recs = [{"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
@@ -1680,13 +1666,6 @@ async def test_token_log_tree_has_5h_and_1w_columns_no_ratio():
         assert any("5h%" in lb for lb in labels), labels
         assert any("1w%" in lb for lb in labels), labels       # 신규 열
         assert not any(("비율" in lb or "Ratio" in lb) for lb in labels), labels
-        # 토큰순(평탄 일 목록)엔 5h%/1w% 둘 다 없고 비율도 없다(Period|Tokens 만).
-        await pilot.press("o")
-        await pilot.pause(0.1)
-        labels2 = [str(c.label) for c in
-                   scr.query_one(DataTable).columns.values()]
-        assert not any(("5h%" in lb or "1w%" in lb or "비율" in lb or "Ratio" in lb)
-                       for lb in labels2), labels2
     await _with_app(body)
 
 
@@ -1745,17 +1724,17 @@ async def test_token_log_window_estimate_line():
 
 
 async def test_token_log_day_bucket_full_history_not_capped():
-    """버킷(일/주/월)은 서버 daily(전체 이력 일자 GROUP BY) 로 집계해 레코드 cap 에
-    옛 날짜가 잘리지 않는다. records(서버가 보내는 cap 된 최근 N 건)엔 최근 하루만,
-    daily 엔 12일치 전체 이력을 넣으면 day 뷰에 12일이 모두 나와야 한다(수정 전엔
-    records 만 써서 최근 하루만 보였다). hour 버킷은 일자 합성으론 시간 복원이 안 돼
-    raw records(최근치)만 쓴다 — 그 경계도 함께 확인한다."""
+    """계층 트리는 서버 daily(전체 이력 일자 GROUP BY) 로 집계해 레코드 cap 에 옛 날짜가
+    잘리지 않는다. records(서버가 보내는 cap 된 최근 N 건)엔 최근 하루만, daily 엔 12일치
+    전체 이력을 넣으면 트리 합산이 12일 전부(12k)를 반영해야 한다(수정 전엔 records 만
+    써서 최근 하루만 보였다). 트리 합은 날짜-무관이라 _build_tree_rows 의 total 로 검증
+    (렌더 텍스트는 오늘 날짜에 따라 펼침이 달라 fragile — 정렬 토큰순 평탄 목록 제거)."""
     async def body(app, pilot, srv):
         ACCT = "me@x.org"
         # daily: 2026-06-01..06-12 전체 이력(각 1000) — 합 12000.
         daily = [{"day": f"2026-06-{d:02d}", "account": ACCT, "session": 1,
                   "tab": 0, "pane": 1, "tokens": 1000} for d in range(1, 13)]
-        # records: 최근 하루(06-12)치 1건만 — cap 으로 옛 날짜가 안 온 상황 시뮬.
+        # records: 최근 하루치 1건만 — cap 으로 옛 날짜가 안 온 상황 시뮬.
         recs = [{"ts": 1_780_000_000.0, "tab": 0, "pane": 1, "session": 1,
                  "account": ACCT, "tokens": 1000}]
         app._want_token_log = True
@@ -1764,18 +1743,14 @@ async def test_token_log_day_bucket_full_history_not_capped():
         await pilot.pause(0.1)
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "TokenLogScreen", scr
-        # 토큰순(평탄 일 목록)은 서버 daily(전체 이력)로 집계 — 12일 전부(특히 records
-        # 에 없는 06-01)가 나와야 한다(레코드 cap 절단 없음).
-        await pilot.press("o")
-        await pilot.pause(0.1)
-        assert scr._order == "tokens"
-        joined = _tok_text(scr)
-        days = [f"06-{d:02d}" for d in range(1, 13)]
-        missing = [d for d in days if d not in joined]
-        assert not missing, f"일 목록에 빠진 날짜(cap 절단): {missing}\n{joined}"
+        # 트리 집계 합(중복 없는 일자 전체 합)이 daily 전체 이력 12k 여야 한다 — 단일
+        # cap 레코드(1k)가 아니라 daily 가 트리를 구동함을 날짜-무관하게 입증.
+        _nodes, total = scr._build_tree_rows()
+        assert total == 12000, f"트리 합이 전체 이력(12k)이어야: {total}"
         # Σ 는 전체 이력 합(12k); 표시 합도 12k 라 '(표시 …)' 병기 없음.
+        joined = _tok_text(scr)
         assert "Σ12k" in joined, joined
-        assert "표시" not in joined, f"전체 이력 일 목록엔 과소표시 병기가 없어야: {joined}"
+        assert "표시" not in joined, f"전체 이력엔 과소표시 병기가 없어야: {joined}"
     await _with_app(body)
 
 
@@ -1813,37 +1788,6 @@ async def test_token_log_panel_subtab_groups_by_session():
         await pilot.click("#tab_panel")
         await pilot.pause(0.1)
         assert scr._view == "time" and app.screen_stack[-1] is scr
-    await _with_app(body)
-
-
-async def test_token_log_sort_toggle_and_tab():
-    """버킷 정렬 토글: 기본 시간순(최근 위) ↔ [o]키/[정렬]탭 으로 토큰순. 토큰순이면
-    가장 큰 버킷이 맨 위로 온다."""
-    async def body(app, pilot, srv):
-        recs = [
-            {"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
-             "account": "me@x.org", "tokens": 100},      # 오래된·큼
-            {"ts": 1_700_500_000.0, "tab": 0, "pane": 1, "session": 1,
-             "account": "me@x.org", "tokens": 5},         # 최근·작음
-        ]
-        app._want_token_log = True
-        app._dispatch({"t": "token_log", "records": recs})
-        await pilot.pause(0.1)
-        scr = app.screen_stack[-1]
-        from textual.widgets import DataTable
-        assert scr._order == "time", "기본은 시간순"
-        first0 = str(scr.query_one(DataTable).get_row_at(0)[1])   # 토큰 셀
-        assert "5" in first0, f"시간순: 최근(작은) 버킷이 위 — {first0}"
-        # [o] 키로 토큰순 → 큰 버킷(100)이 위
-        await pilot.press("o")
-        await pilot.pause(0.1)
-        assert scr._order == "tokens" and app.screen_stack[-1] is scr
-        first1 = str(scr.query_one(DataTable).get_row_at(0)[1])
-        assert "100" in first1, f"토큰순: 큰 버킷이 위 — {first1}"
-        # [정렬] 탭 클릭 → 다시 시간순
-        await pilot.click("#tab_order")
-        await pilot.pause(0.1)
-        assert scr._order == "time"
     await _with_app(body)
 
 

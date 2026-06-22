@@ -713,7 +713,7 @@ SCENES = [
     ("21-restart-check", "restart-check 드라이런 — 작업보존 재시작 안전점검", restart_check),
     ("26-restart-confirm", "재시작 확인 — 드라이런 FAIL 시 '그래도 재시작?'(기본 취소)", restart_confirm),
     ("23-token-saver", "토큰 절감 설정 팝업(token-saver) — 자동개입 토글·임계·예산·경고", token_saver),
-    ("24-token-log", "토큰 사용량 팝업(일별) — 노트북 탭+서브옵션+요약줄+기간:토큰 표", token_log),
+    ("24-token-log", "토큰 사용량 팝업(일별) — 노트북 탭+요약줄+기간:토큰 표", token_log),
     ("37-token-log-hour", "토큰 팝업(시간) — 시각별 5h 한도 계단식 막대 + 1w% 열", token_log_hour),
     ("38-token-log-limit", "토큰 팝업(한도) — /usage 막대·창Σ·리셋 카운트다운 통합 탭", token_log_limit),
     ("25-remote-control", "원격 제어 팝업 — [r] 로 /rc 토글", remote_control),

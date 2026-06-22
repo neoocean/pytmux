@@ -162,7 +162,7 @@ async def test_tree_today_expands_to_hours():
                 recs, hourly_pct=hourly, hourly_week_pct=hourly))
             await pilot.pause(0.3)
             scr = app.screen_stack[-1]
-            assert scr._view == "time" and scr._order == "time"
+            assert scr._view == "time"
             table = scr.query_one(DataTable)
             labels = [str(table.get_row_at(i)[0])
                       for i in range(table.row_count)]
@@ -233,45 +233,9 @@ async def test_tree_collapse_and_expand_today_row():
         await teardown(srv, task, sock)
 
 
-async def test_tree_token_order_flattens_to_day():
-    """정렬 토큰순(o)은 계층을 평탄화해 인디케이터 없는 일(day) 단일 목록으로 보인다
-    (SC-8) — 시간순(o 재토글) 복귀 시 §3 기본 트리로 재진입."""
-    from textual.widgets import DataTable
-    from harness import make_app, server_only, teardown
-
-    recs, hourly = _recent_tree_records()
-    srv, task, sock = await server_only()
-    try:
-        app = make_app(sock, None, None)
-        async with app.run_test(size=(100, 36)) as pilot:
-            await pilot.pause(0.3)
-            app.push_screen(screens.TokenLogScreen(recs, hourly_pct=hourly))
-            await pilot.pause(0.3)
-            scr = app.screen_stack[-1]
-            await pilot.press("o")          # 토큰순
-            await pilot.pause(0.2)
-            assert scr._order == "tokens"
-            table = scr.query_one(DataTable)
-            labels = [str(table.get_row_at(i)[0])
-                      for i in range(table.row_count)]
-            # 평탄: 트리 인디케이터(▼/▶)가 없어야.
-            assert not any("▼" in s or "▶" in s for s in labels), \
-                f"토큰순엔 트리 인디케이터가 없어야: {labels}"
-            # 시간순 복귀 → 트리 재진입(인디케이터 등장).
-            await pilot.press("o")
-            await pilot.pause(0.2)
-            assert scr._order == "time"
-            labels2 = [str(scr.query_one(DataTable).get_row_at(i)[0])
-                       for i in range(scr.query_one(DataTable).row_count)]
-            assert any(s.startswith(("▼ ", "▶ ")) for s in labels2), \
-                f"시간순 복귀 시 트리 인디케이터가 있어야: {labels2}"
-    finally:
-        await teardown(srv, task, sock)
-
-
 async def test_tree_hour_rows_have_5h_1w_columns_with_reset_left():
     """시각 행이 있는 트리는 5h%/1w% 칼럼 제목에 리셋 잔여시간을 inline 으로 붙인다
-    (예 '5h% (in 87m)'·'1w% (in 6d)'). 토큰순(평탄 일 목록)엔 그 열이 없다."""
+    (예 '5h% (in 87m)'·'1w% (in 6d)')."""
     import datetime as _dt
     from textual.widgets import DataTable
     from textual.css.query import NoMatches
@@ -304,15 +268,6 @@ async def test_tree_hour_rows_have_5h_1w_columns_with_reset_left():
                 assert False, "#tkfoot 위젯은 제거돼야"
             except NoMatches:
                 pass
-
-            # 토큰순(평탄 일 목록)엔 5h%/1w% 열이 없다.
-            await pilot.press("o")
-            await pilot.pause(0.2)
-            assert scr._order == "tokens"
-            heads_t = [str(c.label) for c in
-                       scr.query_one(DataTable).columns.values()]
-            assert not any(h.startswith(("5h%", "1w%")) for h in heads_t), \
-                f"토큰순엔 5h%/1w% 열이 없어야: {heads_t}"
     finally:
         await teardown(srv, task, sock)
 
