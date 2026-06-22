@@ -361,28 +361,22 @@ async def test_recon_chart_geometry_and_scroll():
     assert empty["n"] == 0 and empty["i0"] == -1 and empty["labels"] == []
 
 
-async def test_recon_chart_axis_max_shrinks_to_50_when_all_low():
-    """요청 2026-06-21: 보이는 구간 최대 pct1 이 50 미만이면 세로축 최댓값을 50 으로
-    좁혀 작은 값도 위로 키운다(아니면 100). axis_max 가 분모라 같은 값이 더 높이 찬다."""
+async def test_recon_chart_axis_max_always_100():
+    """사용자 요청 2026-06-22: 세로축 최댓값은 **항상 100**(이전 2026-06-21 의 '값이
+    다 낮으면 50 으로 좁히기'를 되돌림 — 절대 5h 사용률을 한눈에 비교). 값이 낮아도
+    100 분모라 막대가 그만큼 낮게 그려진다."""
     base = 1_700_000_000.0
     low = [{"t0": base, "t1": base + 1, "pct0": 0, "pct1": 40, "dpct": 40,
             "tokens": 1, "reset": False}]
     ch = usagelog.recon_chart(low, plot_w=2, plot_h=8, x_off=0, step=2)
-    assert ch["axis_max"] == 50, "최대 40<50 → 축 50"
-    # 40/50=0.8 → 8칸 중 약 6~7칸(분모 100 이면 ~3칸이었을 것).
+    assert ch["axis_max"] == 100, "축 항상 100"
+    # 40/100=0.4 → 8칸 중 약 3칸(분모 50 이던 종전엔 ~6칸).
     filled = sum(1 for r in ch["grid"] if r[0] != " ")
-    assert filled >= 6, (filled, "축 50 이면 40%% 막대가 6칸 이상")
-
-    # 50 이상이 하나라도 보이면 축 100.
+    assert 2 <= filled <= 4, (filled, "축 100 이면 40%% 막대는 ~3칸")
     hi = usagelog.recon_chart(
         [{"t0": base, "t1": base + 1, "pct0": 0, "pct1": 55, "dpct": 55,
           "tokens": 1, "reset": False}], 2, 8, 0, 2)
-    assert hi["axis_max"] == 100, "최대 55≥50 → 축 100"
-    # 경계: 정확히 50 은 100 축(50 미만일 때만 좁힌다).
-    edge = usagelog.recon_chart(
-        [{"t0": base, "t1": base + 1, "pct0": 0, "pct1": 50, "dpct": 50,
-          "tokens": 1, "reset": False}], 2, 8, 0, 2)
-    assert edge["axis_max"] == 100, "정확히 50 은 100 축"
+    assert hi["axis_max"] == 100
 
 
 async def test_recon_chart_segments_bar_by_model():
@@ -397,11 +391,12 @@ async def test_recon_chart_segments_bar_by_model():
     col = [cm[r][0] for r in range(8)]          # 위→아래
     assert col == ["opus"] * 6 + ["sonnet"] * 2, col
 
-    # 모델 분해가 없으면 cell_model 은 전부 None(위젯 폴백).
+    # 모델 분해가 없으면 cell_model 은 전부 'unknown'(사용자 요청 2026-06-22 — 종전
+    # None→임계색 폴백이 다른 모델처럼 보이던 것을 회색 '?'로 통일, 범례에도 표시).
     bare = {"t0": 0, "t1": 1, "pct0": 0, "pct1": 100, "dpct": 100,
             "tokens": 0, "reset": False}
     cb = usagelog.recon_chart([bare], 2, 8, 0, 2)["cell_model"]
-    assert all(cb[r][0] is None for r in range(8))
+    assert all(cb[r][0] == "unknown" for r in range(8))
 
 
 async def test_model_cell_sequence_largest_remainder():
@@ -413,6 +408,6 @@ async def test_model_cell_sequence_largest_remainder():
     # unknown 은 뒤(위쪽)
     seq2 = usagelog._model_cell_sequence({"opus": 1, "unknown": 1}, 2)
     assert seq2 == ["opus", "unknown"], seq2
-    # 토큰 없음/0칸
-    assert usagelog._model_cell_sequence({}, 3) == [None, None, None]
+    # 토큰 없음 → 미귀속 칸은 'unknown'(종전 None), 0칸은 빈 리스트.
+    assert usagelog._model_cell_sequence({}, 3) == ["unknown"] * 3
     assert usagelog._model_cell_sequence({"opus": 5}, 0) == []

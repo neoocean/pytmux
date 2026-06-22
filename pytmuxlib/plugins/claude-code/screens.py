@@ -1375,10 +1375,16 @@ class TokenLogScreen(ModalScreen):
         line = Text(i18n.t("pscreen.recon_chart_top", rng=rng,
                            pct=last.get("pct1", 0) or 0, n=len(ivs)))
         # 범례: 구간들에 실제로 등장한 모델 티어를 누적해 색 견본(█)과 라벨로.
+        # 모델이 귀속 안 된 구간(스크랩 미귀속, 막대는 그려짐)은 '?'(unknown)로 범례에
+        # 함께 표시한다(사용자 요청 2026-06-22 — 종전엔 opus 만 떠 회색 막대 정체 불명).
         present: dict = {}
         for iv in ivs:
-            for t, v in (iv.get("models") or {}).items():
-                present[t] = present.get(t, 0) + (v or 0)
+            m = iv.get("models") or {}
+            if m:
+                for t, v in m.items():
+                    present[t] = present.get(t, 0) + (v or 0)
+            elif (iv.get("pct1", 0) or 0) > 0:   # 막대는 있으나 모델 미상 → '?'
+                present["unknown"] = present.get("unknown", 0) + 1
         leg = self._model_legend(present)
         if leg is not None:
             line.append("\n")

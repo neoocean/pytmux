@@ -1525,6 +1525,35 @@ async def test_token_log_recon_view_toggle():
     await _with_app(body)
 
 
+async def test_recon_legend_shows_all_models_including_unknown():
+    """사용자 요청 2026-06-22: [대사] 그래프 범례가 opus 뿐 아니라 **등장한 모든 모델**
+    (그리고 모델 미귀속 구간은 '?')을 함께 보인다 — 종전엔 모델 분해된 티어만 떠
+    미귀속(회색) 막대가 정체 불명이었다."""
+    async def body(app, pilot, srv):
+        base = 1_700_000_000.0
+        recs = [{"ts": base + 200, "tab": 0, "pane": 1, "session": 1,
+                 "account": "me@x.org", "tokens": 1500}]
+        recon = [
+            # opus 귀속 구간
+            {"t0": base, "t1": base + 3600, "account": "me@x.org",
+             "pct0": 5, "pct1": 9, "dpct": 4, "tokens": 1500,
+             "models": {"opus": 1500}, "reset": False},
+            # 모델 미귀속(막대는 그려짐, models 비어 있음) → 범례 '?'
+            {"t0": base + 3600, "t1": base + 7200, "account": "me@x.org",
+             "pct0": 9, "pct1": 12, "dpct": 3, "tokens": 0,
+             "models": {}, "reset": False},
+        ]
+        app._want_token_log = True
+        app._dispatch({"t": "token_log", "records": recs, "reconcile": recon})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        await pilot.press("r")
+        await pilot.pause(0.1)
+        top = str(scr._tktop_text)        # _recon_top_line 결과(범례 포함)
+        assert "Opus" in top and "?" in top, top
+    await _with_app(body)
+
+
 async def test_recon_scroll_hint_conditional_on_max_off():
     """항목5(2026-06-22): [대사] 그래프 footer 의 ←→ 스크롤 안내는 **스크롤 여지가
     있을 때만**(구간 수 > 한 화면 capacity → max_off>0) 보이고, 전 구간이 다 보이면

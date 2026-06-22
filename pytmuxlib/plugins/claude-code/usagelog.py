@@ -571,7 +571,11 @@ def _model_cell_sequence(models: dict, n: int) -> list:
         return []
     total = sum(v for v in models.values() if v > 0)
     if total <= 0:
-        return [None] * n
+        # 모델 토큰이 전혀 없는 구간(스크랩 미귀속) — '?'(unknown) 티어로 채운다.
+        # 종전엔 None 을 돌려 위젯이 임계색(초록/노랑/빨강) 폴백으로 칠해, 그 초록이
+        # 마치 다른 모델(haiku 색)인 듯 보이는데 범례엔 안 떠 혼란스러웠다(사용자 보고
+        # 2026-06-22). 이제 unknown 회색으로 칠하고 범례에 '?'로 함께 표시한다.
+        return ["unknown"] * n
     tiers = [t for t in _MODEL_TIER_ORDER if models.get(t, 0) > 0]
     tiers += [t for t in models
               if t not in _MODEL_TIER_ORDER and models[t] > 0]
@@ -584,7 +588,7 @@ def _model_cell_sequence(models: dict, n: int) -> list:
     for t in tiers:
         seq += [t] * counts[t]
     if len(seq) < n:                       # 라운딩 여파 보정
-        seq += [None] * (n - len(seq))
+        seq += ["unknown"] * (n - len(seq))   # 라운딩 여파도 '?'로(임계색 폴백 제거)
     return seq[:n]
 
 
@@ -595,9 +599,8 @@ def recon_chart(intervals: list, plot_w: int, plot_h: int,
     높이 = 그 구간 끝의 실측 세션 5h%(pct1) — 5h 창 안에서 단조 증가하다 리셋 때
     0 부근으로 떨어지는 톱니가 그대로 보인다. 좌우 스크롤(x_off)로 더 이전 구간을 본다.
 
-    세로축 최댓값(axis_max)은 **보이는 구간들의 최대 pct1 이 50 미만이면 50, 아니면
-    100**(요청 2026-06-21 — 값이 다 낮을 때 막대가 바닥에 깔려 추세가 안 보이던 것).
-    분모로 이 값을 써 작은 값도 위로 커진다. 위젯이 같은 axis_max 로 눈금 라벨을 그린다.
+    세로축 최댓값(axis_max)은 **항상 100**(사용자 요청 2026-06-22 — 절대 5h 사용률을
+    한눈에 비교). 위젯이 같은 axis_max 로 눈금 라벨을 그린다.
 
     좌표/색은 표시층(위젯) 몫이라 여기선 글리프 격자와 열↔구간 매핑만 돌려준다
     (헤드리스 테스트 대상 — Strip/색 없이 모양만 검증).
@@ -615,7 +618,7 @@ def recon_chart(intervals: list, plot_w: int, plot_h: int,
       x_off:   실제 적용된(클램프된) 오프셋.
       max_off: 최대 스크롤 오프셋(n-capacity, ≥0).
       i0, i1:  보이는 첫/끝 구간 index(포함), 비면 (-1,-1).
-      axis_max: 세로축 최댓값(50 또는 100) — 분모이자 위젯 눈금 기준.
+      axis_max: 세로축 최댓값(항상 100) — 분모이자 위젯 눈금 기준.
       n:       전체 구간 수."""
     n = len(intervals)
     step = max(1, int(step))
@@ -634,11 +637,10 @@ def recon_chart(intervals: list, plot_w: int, plot_h: int,
     x_off = max(0, min(int(x_off), max_off))
     last = n - 1 - x_off                 # 보이는 가장 새(오른쪽) 구간
     first = max(0, last - capacity + 1)  # 보이는 가장 옛(왼쪽) 구간
-    # 세로축 최댓값: 보이는 구간(화면에 실제로 그려질 capacity 개)의 최대 pct1 이
-    # 50 미만이면 50 으로 좁혀 작은 값도 위로 키운다(요청 2026-06-21).
-    vis_max = max((intervals[i].get("pct1", 0) or 0)
-                  for i in range(first, last + 1))
-    axis_max = 50 if vis_max < 50 else 100
+    # 세로축 최댓값은 **항상 100%**(사용자 요청 2026-06-22). 종전엔 보이는 값이 다
+    # 50 미만이면 50 으로 좁혀(2026-06-21) 작은 값도 위로 키웠으나, 절대 5h 사용률을
+    # 한눈에 비교하려면 축이 100 으로 고정돼야 한다는 요청에 따라 되돌린다.
+    axis_max = 100
     out.update(x_off=x_off, max_off=max_off, i0=first, i1=last,
                axis_max=axis_max)
 
