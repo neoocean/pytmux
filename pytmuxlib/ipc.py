@@ -230,10 +230,21 @@ def _read_portfile(path: str) -> Optional[int]:
 
 
 def _write_portfile(path: str, port: int) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(str(port))
-    os.replace(tmp, path)
+    # tmp 는 **pid 고유 경로**여야 한다. 좀비/경쟁 상황(같은 default 엔드포인트로 두
+    # 서버가 거의 동시에 기동)에서 공유 `<path>.tmp` 를 쓰면, 한 서버가 그 tmp 를 연
+    # 채로 다른 서버가 같은 이름에 open/os.replace 하다 Windows 에서 WinError 5(Access
+    # denied — 공유 위반)로 **기동 직후 크래시**한다(→ 빈 화면 멈춤). 같은 파일의 unix
+    # 소켓 경로가 같은 이유로 이미 pid 접미사를 쓴다(start_server 참조). 실패 시 tmp 누수
+    # 방지를 위해 정리한다.
+    tmp = f"{path}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(str(port))
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -256,13 +267,20 @@ def write_token(endpoint: str, token: str) -> str:
     O_CREAT 시점부터 0600 으로 만들어 다른 사용자가 토큰을 읽을 창을 두지 않는다.
     """
     path = token_path(endpoint)
-    tmp = path + ".tmp"
+    # _write_portfile 과 동일 이유로 pid 고유 tmp — 동시 기동 서버 간 `<path>.tmp`
+    # 충돌(WinError 5)을 막는다. 실패 시 tmp 를 정리한다.
+    tmp = f"{path}.{os.getpid()}.tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         os.write(fd, token.encode("ascii"))
     finally:
         os.close(fd)
-    os.replace(tmp, path)
+    try:
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
     try:    # 기존 파일이 넓은 권한으로 남아 있었을 가능성 대비(best-effort).
         os.chmod(path, 0o600)
     except OSError:
