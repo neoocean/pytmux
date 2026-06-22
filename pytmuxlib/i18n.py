@@ -544,7 +544,6 @@ register({
         # remote / vt-parser / display-popup 안내
         "msg.remote_attach_usage": "사용법: remote-attach <host>",
         "msg.remote_newtab_usage": "사용법: remote-new-tab <host>",
-        "msg.pin_remote_blocked": "원격 탭은 고정할 수 없습니다(로컬 탭만 고정 가능).",
         "msg.vt_parser_usage": "vt-parser: pyte | native 중 하나를 지정하세요",
         "msg.vt_parser_set": "vt-parser={val} 설정됨 — 재시작(restart-server) 시 발효",
         "msg.display_no_output": "(출력 없음)",
@@ -593,7 +592,6 @@ register({
         "hoststatus.degraded_hint": "If degraded sticks, reconnect with the reconnect / resync command",
         "msg.remote_attach_usage": "usage: remote-attach <host>",
         "msg.remote_newtab_usage": "usage: remote-new-tab <host>",
-        "msg.pin_remote_blocked": "Remote tabs can't be pinned (local tabs only).",
         "msg.vt_parser_usage": "vt-parser: specify one of pyte | native",
         "msg.vt_parser_set": "vt-parser={val} set — takes effect on restart-server",
         "msg.display_no_output": "(no output)",

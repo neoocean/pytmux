@@ -2988,6 +2988,28 @@ async def test_confirm_kill_pinned_prompts():
     await _with_app(body)
 
 
+async def test_pin_toggle_sends_active_merged_index():
+    """§12 ①: pin-toggle 은 활성 탭의 병합 index 를 명시해 보낸다(원격 탭도 더 이상
+    거부 안 함 — 서버가 index 로 로컬/원격 per-link 를 가른다)."""
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda a, **k: sent.append((a, k))
+        # 원격 탭이 활성 → 그 병합 index(1) 를 보낸다.
+        app.status.windows = [
+            {"index": 0, "name": "local", "active": False},
+            {"index": 1, "name": "⇄hostA:sh", "active": True, "remote": True}]
+        app._run_command("pin-toggle")
+        assert ("set_pinned", {"index": 1}) in sent, sent
+        # 로컬 탭이 활성 → 그 로컬 index(0).
+        sent.clear()
+        app.status.windows = [
+            {"index": 0, "name": "local", "active": True},
+            {"index": 1, "name": "⇄hostA:sh", "active": False, "remote": True}]
+        app._run_command("pin-toggle")
+        assert ("set_pinned", {"index": 0}) in sent, sent
+    await _with_app(body)
+
+
 async def test_choose_tree_marks_pinned():
     """§12 ⑤: 트리(개요) 뷰에서 고정 탭은 핀 글리프('*')로 표식된다."""
     async def body(app, pilot, srv):

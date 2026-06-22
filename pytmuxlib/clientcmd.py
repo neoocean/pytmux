@@ -472,16 +472,19 @@ class _CommandMixin:
                 val = False
             self.send_cmd("set_monitor", which=which, value=val)
         elif c in ("pin-tab", "pin", "unpin-tab", "unpin", "pin-toggle"):
-            # 항목7: 활성 탭 고정/해제/토글. 원격 탭은 고정 불가(§9 — 업스트림 릴레이
-            # 미지원). set_pinned: value 없음=토글.
-            if self._active_remote_host() is not None:
-                self.display_message(i18n.t("msg.pin_remote_blocked"))
-            elif c in ("pin-tab", "pin"):
-                self.send_cmd("set_pinned", value=True)
+            # 항목7/§12 ①: 활성 탭 고정/해제/토글. 원격 탭도 고정 가능 — 서버가
+            # 활성 탭의 병합 index 로 로컬 탭(sess.tabs) vs 원격 탭(per-link 집합)을
+            # 가른다. 활성 탭의 병합 index 를 명시해 보낸다(원격 active 는 sess.
+            # active_index 와 다르므로 index 생략 불가). set_pinned: value 없음=토글.
+            aidx = next((t["index"] for t in self.status.windows
+                         if t.get("active")), None)
+            kw = {} if aidx is None else {"index": aidx}
+            if c in ("pin-tab", "pin"):
+                self.send_cmd("set_pinned", value=True, **kw)
             elif c in ("unpin-tab", "unpin"):
-                self.send_cmd("set_pinned", value=False)
+                self.send_cmd("set_pinned", value=False, **kw)
             else:
-                self.send_cmd("set_pinned")        # 토글
+                self.send_cmd("set_pinned", **kw)        # 토글
         elif c in ("move-tab-left", "move-tab-right",
                    "move-tab-first", "move-tab-last"):
             self.send_cmd("move_current_tab", where=c[len("move-tab-"):])

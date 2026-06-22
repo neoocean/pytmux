@@ -718,7 +718,11 @@ class ServerIOMixin:
             # 항목7: 탭 고정/해제. index 없으면 활성 탭. value 미지정이면 토글.
             idx = msg.get("index")
             idx = sess.active_index if idx is None else int(idx)
-            if "value" in msg:
+            if idx >= len(sess.tabs):
+                # §12 ①: 원격(병합) 탭 핀 — per-link 다운스트림 로컬 집합(업스트림
+                # 비전파). 핀은 보는 쪽 탭바 레이아웃 문제라 로컬에서만 토글한다.
+                self.set_remote_pinned(sess, idx, msg.get("value"))
+            elif "value" in msg:
                 self.set_pinned(sess, idx, bool(msg.get("value")))
             else:
                 self.toggle_pin(sess, idx)

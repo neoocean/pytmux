@@ -52,6 +52,10 @@ class RemoteLink:
         self.writer = writer
         self.proc = proc          # ssh 서브프로세스(직결이면 None)
         self.windows: list = []   # 업스트림 status 의 windows(탭 목록) 최신본
+        # §12 ①: 이 링크 원격 탭의 **다운스트림 로컬** 고정(핀) 집합(원격 로컬 index
+        # ri). 핀은 보는 쪽 탭바 레이아웃 문제라 업스트림에 전파하지 않고 여기에만
+        # 둔다 — _remote_tabs 가 매 status 에 pinned 비트를 실어 준다.
+        self.pinned_windows: set = set()
         self.task: asyncio.Task | None = None
         self.alive = True
         # M-1: 이 링크 writer 로의 송신을 직렬화(입력/리사이즈 릴레이가 다중-await
@@ -610,10 +614,11 @@ class ServerRemoteMixin:
         for link in self._remotes_dict().values():
             viewing = (client is not None
                        and getattr(client, "remote_view", None) == link.host)
-            for rw in link.windows:
+            for ri, rw in enumerate(link.windows):
                 out.append({"index": gi, "name": f"⇄{link.host}:{rw.get('name', '')}",
                             "active": bool(viewing and rw.get("active")),
                             "remote": True,
+                            "pinned": ri in link.pinned_windows,  # §12 ① 로컬 핀
                             "bell": rw.get("bell", False),
                             "activity": rw.get("activity", False),
                             "claude_done": rw.get("claude_done", False)})
@@ -629,6 +634,23 @@ class ServerRemoteMixin:
                     return link, ri
                 gi += 1
         return None
+
+    def set_remote_pinned(self, sess, gi: int, value=None):
+        """§12 ①: 원격(병합) 탭 gi 의 **다운스트림 로컬** 고정(핀)을 토글/설정한다.
+        핀은 보는 쪽 탭바 레이아웃 문제라 업스트림에 전파하지 않고 per-link 집합
+        (원격 로컬 index ri)에 저장 → _remote_tabs 가 매 status 에 pinned 비트를
+        실어 준다. value=None 이면 토글. 변동을 전 클라 탭바에 즉시 방송."""
+        hit = self._remote_tab_at(sess, gi)
+        if hit is None:
+            return
+        link, ri = hit
+        if value is None:
+            value = ri not in link.pinned_windows
+        if value:
+            link.pinned_windows.add(ri)
+        else:
+            link.pinned_windows.discard(ri)
+        self._remote_status_broadcast()
 
     def _remote_status_broadcast(self):
         """원격 탭 목록 변동을 모든 세션 클라의 탭바에 반영. status 는 클라별
@@ -661,6 +683,7 @@ class ServerRemoteMixin:
         msg["single_border"] = self.single_border    # 보더 스타일은 로컬 취향
         msg["windows"] = [
             {"index": t.index, "name": t.name, "active": False,
+             "pinned": getattr(t, "pinned", False),   # §12 ① 로컬 핀 보존
              "bell": t.has_bell, "activity": t.has_activity,
              "claude_done": t.has_claude_done}
             for t in sess.tabs] + self._remote_tabs(len(sess.tabs), client)

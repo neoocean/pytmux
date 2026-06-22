@@ -789,6 +789,35 @@ async def test_remote_no_mixing_guards():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_remote_tab_pin_local_set_and_status():
+    """§12 ①: 원격(병합) 탭 핀은 다운스트림 per-link 집합(pinned_windows)에 저장돼
+    _remote_tabs 가 매 status 에 pinned 비트를 싣고, 업스트림엔 전파하지 않는다.
+    토글(value=None)·명시 set 둘 다. 로컬 탭(sess.tabs)과 분기."""
+    from pytmuxlib.serverremote import RemoteLink
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)     # 로컬 탭 0 (1개)
+        srv._remote_status_broadcast = lambda: None    # 소켓 없는 단위 테스트
+        link = RemoteLink("hostA", None, None)
+        link.sess = sess
+        link.windows = [{"name": "shellA", "active": True},
+                        {"name": "shellB", "active": False}]
+        srv._remotes_dict()["hostA"] = link
+        base = len(sess.tabs)                           # 원격 병합 index = base, base+1
+        # 둘째 원격 탭(원격 로컬 index 1) 명시 핀
+        srv.set_remote_pinned(sess, base + 1, True)
+        assert link.pinned_windows == {1}, link.pinned_windows
+        rt = srv._remote_tabs(base)
+        assert [t["pinned"] for t in rt] == [False, True], rt
+        # 토글로 해제(value 생략)
+        srv.set_remote_pinned(sess, base + 1)
+        assert link.pinned_windows == set()
+        # 로컬 탭은 별개 — 원격 핀이 로컬 pinned 를 안 건드린다.
+        assert all(not t.pinned for t in sess.tabs)
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_remote_same_host_tabs_drag_merge():
     """§1.7-c 예외: **같은 호스트의 두 원격 탭**은 드래그 머지(join_pane)된다 —
     거부 대신 remote_relay_join 이 전역 src index 를 원격 로컬 index 로 변환해
