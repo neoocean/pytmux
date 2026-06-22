@@ -307,7 +307,18 @@ def main(argv=None) -> int:
         asyncio.run(_run())
     except KeyboardInterrupt:
         pass
-    return 0
+    # serve() 는 shutdown op(_stop.set)에서만 반환한다 — 재시작 경로는 연결만 끊고
+    # host 를 살려 두므로 여기 안 온다. 즉 여기 도달 = 질서있는 종료 완료(패널 kill·
+    # 서버/writer close 끝, 자식은 이미 내려감). Windows 에서 daemon ConPTY 리더
+    # 스레드가 ctypes 동기 ReadFile 에 묶여 인터프리터 종료(Py_Finalize)가 지연돼
+    # host 프로세스가 20s+ 고아로 남던 CI flaky(test_real_host_shutdown_…)를 차단:
+    # 정리가 끝났으니 reader/OpenConsole 정리 타이밍을 기다리지 않고 즉시 강제 종료해
+    # 결정적으로 내린다. (main 은 오직 `python -m pytmuxlib.ptyhost` 분리 프로세스로만
+    # 실행돼 in-process 호출이 없으므로 os._exit 가 안전하다.)
+    with contextlib.suppress(Exception):
+        sys.stdout.flush()
+        sys.stderr.flush()
+    os._exit(0)
 
 
 if __name__ == "__main__":
