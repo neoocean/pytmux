@@ -57,7 +57,8 @@ class Registry:
 
     def default_disabled(self):
         """`default_enabled = False` 를 선언한 플러그인 이름 집합 — 사용자 설정(opts 의
-        disabled_plugins 키)이 **없을 때**의 초기 비활성 집합(깃헙 배포 기본 OFF, 예: rec)."""
+        disabled_plugins 키)이 **없을 때**의 초기 비활성 집합(깃헙 배포 기본 OFF). 현재
+        이를 선언한 플러그인은 없어 빈 집합이다(rec 도 발견성 위해 default_enabled=True)."""
         return {getattr(p, "name", "") for p in self._all
                 if not getattr(p, "default_enabled", True)}
 
