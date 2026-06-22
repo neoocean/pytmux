@@ -1685,6 +1685,48 @@ async def test_token_log_opens_time_view_from_5h_segment():
     await _with_app(body)
 
 
+async def test_warn_tab_tree_active_expanded_past_collapsed():
+    """항목2(2026-06-22): [경고] 탭이 트리 — 현재 활성 경고(라이브 status)는 맨 위
+    노드로 펼쳐져 상황·할일 본문이 바로 보이고, 과거 경고 이력(서버 warn_history)은
+    아래에 접혀 나열된다. 과거 노드를 Enter 로 펼치면 그 경고의 본문이 보인다."""
+    async def body(app, pilot, srv):
+        app.status.claude_warn = "⚠ 5:00"
+        app.status.claude_warn_kind = "long_turn"
+        app.status.claude_warn_n = None
+        recs = [{"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 1,
+                 "account": "a", "tokens": 1}]
+        wh = [{"ts": 1_700_000_500.0, "kind": "repeat", "n": 3, "badge": "x"},
+              {"ts": 1_700_000_400.0, "kind": "fmt_unknown", "n": None,
+               "badge": "y"}]
+        app._want_token_log = True
+        app._token_log_initial = "warn"
+        app._dispatch({"t": "token_log", "records": recs, "warn_history": wh})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        assert scr._active_tab() == "warn", scr._active_tab()
+        joined = _tok_text(scr)
+        # 활성(장기 턴) 경고는 기본 펼침 → 본문이 보인다.
+        assert "임계 시간을 넘겨" in joined, joined
+        # 과거 경고 섹션 라벨은 보이고, 과거 repeat 의 본문은 접혀 숨김.
+        assert "이전 경고" in joined, joined
+        assert "같은 출력이 여러 번 반복" not in joined, "과거 repeat 본문은 접힘이어야"
+        # repeat 헤더 행으로 커서 이동 후 Enter → 펼쳐져 본문이 보인다.
+        from textual.widgets import DataTable
+        table = scr.query_one(DataTable)
+        target = None
+        for r in range(table.row_count):
+            cell = " ".join(str(c) for c in table.get_row_at(r))
+            if "동일 결과 3회" in cell:
+                target = r
+                break
+        assert target is not None, "repeat 헤더 행을 찾지 못함"
+        table.move_cursor(row=target)
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert "같은 출력이 여러 번 반복" in _tok_text(scr), "Enter 로 과거 경고 펼침"
+    await _with_app(body)
+
+
 async def test_token_log_tree_has_5h_and_1w_columns_no_ratio():
     """사용자 요청(2026-06-17): 시각 행에 5h% 옆 1w%(주간 한도) 열을 두고 기존
     비율(ratio/막대) 열은 없다. 계층 트리(항상 시간순)는 hourly 데이터가 있으면

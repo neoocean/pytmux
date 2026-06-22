@@ -306,6 +306,67 @@ async def test_model_badge_debounce_absorbs_transient_haiku():
         await teardown(srv, task, sock)
 
 
+async def test_warn_history_record_read_cap_and_desc():
+    """항목2(2026-06-22): 경고 이력 JSONL 저장/조회 — 시간 내림차순(최신 먼저)으로
+    읽고, 상한(_WARN_HIST_CAP)을 넘으면 최근 것만 남긴다."""
+    import os
+    import tempfile
+    srv, task, sock = await server_only()
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "wh.jsonl")
+            srv._warnhist_path = lambda: path     # 실 DB 디렉터리 오염 방지
+            sess = srv.ensure_default_session(80, 24)
+            p = sess.active_window.active_pane
+            srv._record_warn_history(p, "⚠ 5:00", "long_turn", None, 100.0)
+            srv._record_warn_history(p, "⚠ 반복", "repeat", 3, 200.0)
+            srv._record_warn_history(p, "⚠ 포맷", "fmt_unknown", None, 300.0)
+            hist = srv._read_warn_history()
+            assert [h["kind"] for h in hist] == \
+                ["fmt_unknown", "repeat", "long_turn"], hist   # 최신 먼저
+            assert hist[1]["n"] == 3
+            # 상한 초과 → 최근 cap 건만, 가장 최신 ts 가 맨 위.
+            cap = srv._WARN_HIST_CAP
+            for i in range(cap + 5):
+                srv._record_warn_history(p, "x", "long_turn", None, 1000.0 + i)
+            allh = srv._read_warn_history(10 ** 6)
+            assert len(allh) == cap, len(allh)
+            assert allh[0]["ts"] == 1000.0 + cap + 5 - 1
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_warn_history_records_onset_once_via_scan():
+    """항목2: _scan_claude 가 경고 **종류 onset**(이전과 다른 non-None kind)에서만
+    이력을 1건 기록한다 — 같은 종류가 이어지는 동안엔 재기록하지 않는다(dedup)."""
+    import os
+    import tempfile
+    import time as _t
+    srv, task, sock = await server_only()
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "wh.jsonl")
+            srv._warnhist_path = lambda: path
+            srv.claude_long_turn_sec = 1          # 1초 넘으면 장기 턴 경고
+            sess = srv.ensure_default_session(80, 24)
+            win = sess.active_window
+            p = win.active_pane
+            # busy 진입(스피너) — 매 프레임 새 출력이 와야 dirty-게이팅(_feed_seq)을
+            # 통과해 스캔이 돈다(실제 busy 턴은 스피너/토큰이 계속 흐른다).
+            p.feed("\x1b[2J\x1b[H✽ Crunching… (99s)\r\n".encode("utf-8"))
+            srv._scan_claude(sess, win)
+            assert p._claude == "busy"
+            p._busy_since = _t.monotonic() - 9999  # 임계 초과로 만들기
+            p.feed("\x1b[2J\x1b[H✽ Crunching… (100s)\r\n".encode("utf-8"))
+            srv._scan_claude(sess, win)            # 장기 턴 onset → 1건 기록
+            p.feed("\x1b[2J\x1b[H✽ Crunching… (101s)\r\n".encode("utf-8"))
+            srv._scan_claude(sess, win)            # 같은 kind 지속 → 재기록 안 함
+            hist = srv._read_warn_history()
+            assert len(hist) == 1 and hist[0]["kind"] == "long_turn", hist
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_auto_token_on_exit_toggle_and_persist():
     """§10-F set_auto_token_on_exit: 기본 ON, 토글 반전·명시 지정이 server 속성을
     바꾸고 plugin_opts(server_opts_serialize)로 영속된다."""

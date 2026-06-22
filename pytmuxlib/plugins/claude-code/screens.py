@@ -137,7 +137,8 @@ i18n.register({
         "pscreen.tklog_warn_col": "Claude 경고",
         "pscreen.tklog_warn_title": "Claude 경고",
         "pscreen.tklog_warn_empty": "현재 표시할 Claude 경고가 없습니다(이미 해소됨).",
-        "pscreen.tklog_warn_hint": "다른 탭으로 이동 · u/usage 갱신 · Esc닫기",
+        "pscreen.warn_history_label": "── 이전 경고 (펼쳐서 보기) ──",
+        "pscreen.tklog_warn_hint": "Enter/←→ 펼침·접힘 · 다른 탭 이동 · u/usage · Esc닫기",
         # 상단 1줄 한도 요약(상세는 한도 탭).
         "pscreen.lim_5h": "5h {p}%",
         "pscreen.lim_wk": "주 {p}%",
@@ -204,7 +205,8 @@ i18n.register({
         "pscreen.tklog_warn_col": "Claude warning",
         "pscreen.tklog_warn_title": "Claude warning",
         "pscreen.tklog_warn_empty": "No active Claude warning (already cleared).",
-        "pscreen.tklog_warn_hint": "switch tab · u refresh /usage · Esc close",
+        "pscreen.warn_history_label": "── Past warnings (expand to view) ──",
+        "pscreen.tklog_warn_hint": "Enter/←→ expand·collapse · switch tab · u /usage · Esc close",
         "pscreen.lim_5h": "5h {p}%",
         "pscreen.lim_wk": "wk {p}%",
         "pscreen.left_hm": "{h}h {m}m",
@@ -848,7 +850,7 @@ class TokenLogScreen(ModalScreen):
     def __init__(self, records, usage=None, total_all=None,
                  daily=None, reconcile=None, daily_pct=None, hourly_pct=None,
                  hourly_week_pct=None, active_session=None, initial_mode=None,
-                 model=None):
+                 model=None, warn_history=None):
         super().__init__()
         self._records = records or []
         # 요청 2026-06-21: 현재 활성 패널의 claude 세션 id(없으면 None) — [세션] 뷰가
@@ -885,6 +887,13 @@ class TokenLogScreen(ModalScreen):
         # initial_mode=="warn" 이면 경고 탭으로 연다 — 상태줄 ⚠ 경고 배지 클릭이 별도
         # InfoScreen 대신 이 통합 팝업의 경고 탭을 열게 한다(통합, 사용자 결정 2026-06-17).
         self._warn_mode = (initial_mode == "warn")
+        # 경고 탭 트리화(항목2 2026-06-22): 서버가 보낸 과거 경고 이력(시간 내림차순,
+        # 각 {ts,kind,n,badge}). 현재 활성 경고(라이브 status)는 맨 위 노드로 펼치고,
+        # 과거 경고는 그 아래 접어 둔다. _warn_open=펼쳐진 경고 노드 키 집합(활성 노드
+        # 키 "active" 는 기본 펼침). _warn_rows=마지막으로 그린 행→노드 매핑(토글용).
+        self._warn_history = warn_history or []
+        self._warn_open: set = {"active"}
+        self._warn_rows: list = []
         # Phase B: 서버가 SQL 로 집계한 정확한 전체 이력 합(레코드 cap 무관). 받은
         # 레코드(_records)는 최근 N 건이라 그 Σ 는 과소표시될 수 있으므로, lifetime
         # 합은 이 값을 쓴다(None=구버전 서버 → 레코드 합으로 폴백).
@@ -1538,28 +1547,114 @@ class TokenLogScreen(ModalScreen):
         return warn
 
     def _refresh_warn(self, table):
-        """[경고] 뷰: 상태줄 ⚠ Claude 경고(장기 턴/반복 루프/포맷 미인식)의 상황·할일
-        안내를 표 자리에 보여준다 — 예전엔 별도 InfoScreen 팝업이었던 것을 이 통합 팝업의
-        탭으로 옮겼다(사용자 결정 2026-06-17, 상태줄 ⚠ 배지 클릭 → 이 탭). 경고 내용은
-        클라 status(claude_warn)에서 라이브로 읽어, 경고가 해소되면 '경고 없음' 안내로
-        바뀐다(닫지 않고 탭에 머물러도 다음 합성에서 갱신)."""
+        """[경고] 뷰(항목2 2026-06-22 트리화): 경고를 **펼침 트리**로 보인다 —
+        ⑴ 현재 활성 경고(라이브 status.claude_warn)는 맨 위 노드로 **기본 펼침**(상황·
+        할일 본문을 바로 보임). ⑵ 그 아래 **과거 경고 이력**(서버 warnhist, 시간
+        내림차순)을 **기본 접힘**으로 나열한다(노드를 펼치면 그 경고의 상황·할일).
+        예전엔 현재 경고 1개만 평탄 렌더였고 이력은 저장도 안 했다. 경고가 해소돼도
+        이력이 남아 무엇이 있었는지 돌아볼 수 있다. 노드 토글=Enter/Space/←/→·클릭."""
         table.add_column(i18n.t("pscreen.tklog_warn_col"), key="warn")
+        self._warn_rows = []
         status = getattr(self.app, "status", None)
         warn = getattr(status, "claude_warn", None)
         kind = getattr(status, "claude_warn_kind", None)
         n = getattr(status, "claude_warn_n", None)
-        if not warn:
-            title = i18n.t("pscreen.tklog_warn_title")
-            lines = [i18n.t("pscreen.tklog_warn_empty")]
-        else:
-            # 첫 줄 배지도 로케일화(en 에서 한글 서버 문자열 누출 방지).
-            title, lines = self._warn_info_text(kind, self._warn_badge(kind, warn, n))
-        for ln in lines:
-            table.add_row(ln)
+        hist = list(self._warn_history or [])
+        title = i18n.t("pscreen.tklog_warn_title")
+        # ⑴ 활성 경고 노드(맨 위, 기본 펼침). 헤더=로케일 배지, 자식=상황·할일 본문.
+        if warn:
+            # kind 미상(구버전 서버·직접 설정)이면 한글 배지 문자열로 종류를 폴백
+            # 판별한다(_warn_info_text 의 폴백과 동형) — body 를 빈 문자열로 부르면
+            # 그 폴백이 안 먹어 long_turn 으로 잘못 떨어지므로 여기서 미리 결정한다.
+            rk = kind
+            if rk is None and warn:
+                if "포맷" in warn or "미인식" in warn:
+                    rk = "fmt_unknown"
+                elif "반복" in warn or "루프" in warn:
+                    rk = "repeat"
+            atitle, abody = self._warn_info_text(rk, "")     # 본문만(배지는 헤더에)
+            badge = self._warn_badge(rk, warn, n)
+            self._emit_warn_node(table, "active", badge, abody)
+            title = atitle
+            # 활성 경고의 onset 은 이력 맨 위(최신)에도 기록돼 있어 중복이므로 건너뛴다.
+            if hist and hist[0].get("kind") == rk:
+                hist = hist[1:]
+        # ⑵ 과거 경고 이력(시간 내림차순, 기본 접힘).
+        if hist:
+            import time as _t
+            self._warn_rows.append({"type": "label", "key": None})
+            table.add_row(i18n.t("pscreen.warn_history_label"))
+            for rec in hist:
+                ts = rec.get("ts", 0) or 0
+                rk = rec.get("kind")
+                rbadge = self._warn_badge(rk, rec.get("badge", ""), rec.get("n"))
+                _, rbody = self._warn_info_text(rk, "")
+                tlabel = (_t.strftime("%m-%d %H:%M", _t.localtime(ts))
+                          if ts else "?")
+                self._emit_warn_node(table, "h%.3f" % ts,
+                                     tlabel + " · " + rbadge, rbody)
+        # 활성 경고도 이력도 없으면 '경고 없음' 안내.
+        if not warn and not hist:
+            self._warn_rows.append({"type": "label", "key": None})
+            table.add_row(i18n.t("pscreen.tklog_warn_empty"))
         self.query_one("#tklogtitle", Label).update(title)
         self.query_one("#tktop", Static).update("")
+        self._tktop_text = ""
         self.query_one("#tkhint", Static).update(
             i18n.t("pscreen.tklog_warn_hint"))
+
+    def _emit_warn_node(self, table, key, header, body):
+        """경고 트리 노드 1개 — 헤더 행(▼/▶ + header) + (펼침 시) 상황·할일 자식 행.
+        _warn_open 에 key 가 있으면 펼침. body 의 빈 줄(배지/본문 구분자)은 건너뛴다."""
+        expanded = key in self._warn_open
+        self._warn_rows.append({"type": "head", "key": key})
+        table.add_row(("▼ " if expanded else "▶ ") + header)
+        if expanded:
+            for ln in body:
+                if not ln:
+                    continue
+                self._warn_rows.append({"type": "body", "key": key})
+                table.add_row("    " + ln)
+
+    def _warn_toggle_at(self, row, mode="toggle"):
+        """경고 트리 토글(키·클릭 공통). row 가 head/body 면 그 노드 키를 펼치/접고,
+        label 행이면 무동작. mode='toggle'|'expand'|'collapse'. 동작했으면 그 노드
+        key 를 반환(커서 복원용), 아니면 None."""
+        rows = self._warn_rows
+        if not (0 <= row < len(rows)):
+            return None
+        key = rows[row].get("key")
+        if key is None:                       # label 행
+            return None
+        expanded = key in self._warn_open
+        if mode == "expand" and expanded:
+            return None
+        if mode == "collapse" and not expanded:
+            return None
+        if expanded:
+            self._warn_open.discard(key)
+        else:
+            self._warn_open.add(key)
+        return key
+
+    def _warn_head_row(self, key):
+        """그 경고 노드의 head 행 인덱스(접기를 body 행에서 했을 때 커서를 head 로
+        되돌리기 위함). 없으면 0."""
+        for i, r in enumerate(self._warn_rows):
+            if r.get("type") == "head" and r.get("key") == key:
+                return i
+        return 0
+
+    async def _warn_apply(self, key):
+        """경고 토글 반영(다시 그리기) 후 커서를 그 노드 head 로 복원."""
+        await self._refresh()
+        try:
+            table = self.query_one(DataTable)
+            n = table.row_count
+            if n:
+                table.move_cursor(row=max(0, min(n - 1, self._warn_head_row(key))))
+        except Exception:
+            pass
 
     # 기간 뷰 제목/표 헤더용 버킷 단어(i18n 원문 키).
     _BUCKET_WORD = {"hour": "시간", "day": "일", "week": "주", "month": "월"}
@@ -2277,6 +2372,21 @@ class TokenLogScreen(ModalScreen):
                 self._mc_csel = (self._mc_csel + d) % len(self._mc_ctx)
             await self._mc_redraw(row)
             return
+        # 경고 트리(항목2): Enter/space 토글·→펼침·←접힘. 커서가 자식(body) 행이면 그
+        # 부모 경고를 접고 커서를 head 로(표준 트리). Enter 를 가로채지 않으면 '그 외
+        # 키=닫기' 폴백에 걸려 팝업이 닫힌다.
+        if self._warn_mode and k in ("left", "right", "space", "enter"):
+            event.stop()
+            try:
+                row = self.query_one(DataTable).cursor_coordinate.row
+            except Exception:
+                return
+            mode = ("collapse" if k == "left"
+                    else "expand" if k == "right" else "toggle")
+            key = self._warn_toggle_at(row, mode)
+            if key is not None:
+                await self._warn_apply(key)
+            return
         # 계층 트리(기간 뷰 + 시간순): Enter/space 로 펼침·접힘 토글, →/← 로 펼침/접힘.
         # up/down 은 DataTable 행 커서에 위임. (마우스 클릭은 RowSelected →
         # on_data_table_row_selected 도 토글한다.) Enter 를 여기서 가로채지 않으면 화면
@@ -2377,14 +2487,20 @@ class TokenLogScreen(ModalScreen):
         self.dismiss(None)
 
     async def on_data_table_row_selected(self, event):
-        """행 선택(Enter·마우스 클릭) → 계층 트리에선 그 행을 펼치/접는다. 그 외
-        뷰(세션/한도/대사/경고)에선 행 선택이 아무 동작도 하지 않는다(종전)."""
-        if not (self._view == "time"):
-            return
-        if self._limit_mode or self._recon_mode or self._warn_mode:
-            return
+        """행 선택(Enter·마우스 클릭) → 계층 트리/경고 트리에선 그 행을 펼치/접는다.
+        그 외 뷰(세션/한도/대사)에선 행 선택이 아무 동작도 하지 않는다(종전)."""
         row = getattr(event, "cursor_row", None)
         if row is None:
+            return
+        # 경고 트리(항목2): 클릭으로도 노드 토글.
+        if self._warn_mode:
+            key = self._warn_toggle_at(row, "toggle")
+            if key is not None:
+                await self._warn_apply(key)
+            return
+        if not (self._view == "time"):
+            return
+        if self._limit_mode or self._recon_mode:
             return
         if self._tree_toggle_at(row, "toggle"):
             await self._tree_apply(row)

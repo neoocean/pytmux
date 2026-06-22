@@ -353,7 +353,8 @@ def _on_token_log_msg(app, msg):
         hourly_week_pct=msg.get("hourly_week_pct"),
         active_session=msg.get("active_session"),
         initial_mode=initial_mode,
-        model=getattr(app.status, "claude_model", None)))
+        model=getattr(app.status, "claude_model", None),
+        warn_history=msg.get("warn_history")))
 
 
 def _open_usage_panel(app):
@@ -787,12 +788,18 @@ class _ClaudeCodePlugin:
                 active_sid = getattr(ap, "_claude_session_id", None) or None
             except Exception:
                 active_sid = None
+            # 항목2: 경고 이력(시간 내림차순 최근 N건) — [경고] 탭이 과거 경고를
+            # 트리로 펼쳐 보이도록 함께 싣는다(없으면 빈 리스트). 믹스인 메서드라
+            # 항상 있지만, 최소 _FakeServer(계약 테스트) 대비 getattr 폴백.
+            _rwh = getattr(server, "_read_warn_history", None)
+            warn_hist = _rwh(50) if callable(_rwh) else []
             return {"t": "token_log", "records": recs,
                     "total_all": total_all,
                     "daily": daily, "reconcile": recon,
                     "daily_pct": daily_pct, "hourly_pct": hourly_pct,
                     "hourly_week_pct": hourly_week,
-                    "active_session": active_sid}
+                    "active_session": active_sid,
+                    "warn_history": warn_hist}
         return None
 
     def client_prompt_text(self, app, pane_id):

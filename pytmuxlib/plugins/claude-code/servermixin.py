@@ -1249,11 +1249,77 @@ class ServerClaudeMixin:
                     warn_kind = "fmt_unknown"
                 if (warn != p._claude_warn
                         or warn_kind != p._claude_warn_kind):
+                    prev_kind = p._claude_warn_kind
                     p._claude_warn = warn
                     p._claude_warn_kind = warn_kind
                     p._claude_warn_n = warn_n
                     changed = True
+                    # 항목2(2026-06-22): 새 경고 종류의 **onset**(이전과 다른 non-None
+                    # kind)을 이력에 1건 기록한다 — [경고] 탭이 과거 경고를 트리로
+                    # 펼쳐 보이게. 같은 kind 가 이어지는 동안(long_turn 배지 초가
+                    # 매초 바뀌어도 kind 는 그대로)엔 재기록하지 않아 dedup 된다.
+                    if warn_kind is not None and warn_kind != prev_kind:
+                        self._record_warn_history(p, warn, warn_kind, warn_n,
+                                                  time.time())
         return changed
+
+    # 경고 이력 보관 상한(파일 한 줄=경고 1건). onset 만 기록해 증가는 느리지만,
+    # 무한 성장을 막으려 기록 때 최근 이만큼만 남기고 잘라 다시 쓴다.
+    _WARN_HIST_CAP = 200
+
+    def _warnhist_path(self) -> str:
+        """경고 이력 JSONL 경로 — 토큰 DB 와 같은 디렉터리(claude-tokens*.db 옆)에 두어
+        claude-code 를 통째로 지우면 함께 사라진다(delete-to-disable). 소켓별로 격리
+        (DB 파일명 stem 을 따름)."""
+        db = self.tokens_db_path          # @property (str), 호출하지 않는다
+        return (db[:-3] if db.endswith(".db") else db) + ".warnhist.jsonl"
+
+    def _record_warn_history(self, p, warn, warn_kind, warn_n, ts) -> None:
+        """경고 onset 1건을 이력 JSONL 에 추가한다(append + 최근 _WARN_HIST_CAP 건으로
+        트림). 기록 실패(디스크/권한)는 표시 기능이라 조용히 무시한다(경고 표시 자체는
+        라이브 status 로 계속 동작)."""
+        import json
+        rec = {"ts": float(ts), "kind": warn_kind, "n": warn_n,
+               "badge": warn,
+               "session": getattr(p, "_claude_session_id", 0),
+               "pane": getattr(p, "id", None)}
+        path = self._warnhist_path()
+        try:
+            lines = []
+            try:
+                with open(path, encoding="utf-8") as f:
+                    lines = [ln for ln in f.read().splitlines() if ln.strip()]
+            except OSError:
+                pass
+            lines.append(json.dumps(rec, ensure_ascii=False))
+            if len(lines) > self._WARN_HIST_CAP:
+                lines = lines[-self._WARN_HIST_CAP:]
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+        except OSError:
+            pass
+
+    def _read_warn_history(self, limit: int = 50) -> list:
+        """경고 이력을 시간 **내림차순**(최신 먼저)으로 최근 limit 건 반환. 파일이 없거나
+        깨진 줄은 건너뛴다(없으면 빈 리스트). [경고] 탭이 token_log 응답으로 받아 트리로
+        그린다."""
+        import json
+        out = []
+        try:
+            with open(self._warnhist_path(), encoding="utf-8") as f:
+                for ln in f:
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    try:
+                        out.append(json.loads(ln))
+                    except ValueError:
+                        continue
+        except OSError:
+            return []
+        out.sort(key=lambda r: r.get("ts", 0) or 0, reverse=True)
+        return out[:limit]
 
     @staticmethod
     def _tab_claude(tab) -> str | None:
