@@ -809,3 +809,92 @@ async def test_reconcile_breaks_down_models_per_interval():
     assert mdl == {"opus": 400, "sonnet": 150, "unknown": 50}, mdl
     assert ivs[0]["tokens"] == 600 == sum(mdl.values())
     conn.close()
+
+
+# ---- v7 usage_xc 트랜스크립트 권위 회계 ----
+
+def _xrec(xkey, inp=10, out=5, cc=0, cr=0, model="opus-4.8",
+          ts="2026-06-22T10:00:00.000Z", sid="s1", sidechain=0):
+    return {"xkey": xkey, "ts": ts, "session_uuid": sid, "model": model,
+            "input": inp, "output": out, "cache_create": cc,
+            "cache_read": cr, "is_sidechain": sidechain}
+
+
+async def test_xc_insert_idempotent_and_totals():
+    conn = usagedb.connect(":memory:")
+    # 같은 xkey 두 번 → 한 번만(멱등). 다른 xkey 는 누적.
+    assert usagedb.insert_xc(conn, _xrec("m1:r1", inp=100, out=50, cr=900))
+    assert usagedb.insert_xc(conn, _xrec("m1:r1", inp=999)) is False  # 중복 무시
+    assert usagedb.insert_xc(conn, _xrec("m2:r2", inp=10, out=5, cc=0, cr=85))
+    assert usagedb.xc_count(conn) == 2
+    t = usagedb.xc_totals(conn)
+    assert t["input"] == 110 and t["output"] == 55
+    assert t["cache_read"] == 985 and t["cache_create"] == 0
+    assert t["footer"] == 165                 # in+out (스크랩 근사)
+    assert t["full"] == 1150                  # 4항목 합
+    assert round(t["ratio"], 2) == round(1150 / 165, 2)
+    conn.close()
+
+
+async def test_xc_insert_many_returns_new_rows_only():
+    conn = usagedb.connect(":memory:")
+    recs = [_xrec("a"), _xrec("b"), _xrec("a")]   # a 중복
+    n = usagedb.insert_xc_many(conn, recs)
+    assert n == 2 and usagedb.xc_count(conn) == 2
+    # 재적재 → 신규 0(멱등).
+    assert usagedb.insert_xc_many(conn, recs) == 0
+    conn.close()
+
+
+async def test_xc_totals_by_model_and_daily():
+    conn = usagedb.connect(":memory:")
+    usagedb.insert_xc(conn, _xrec("o1", inp=100, out=0, cr=0, model="opus-4.8"))
+    usagedb.insert_xc(conn, _xrec("s1", inp=10, out=0, cr=0, model="sonnet-4.6"))
+    usagedb.insert_xc(conn, _xrec("n1", inp=5, out=0, cr=0, model=None))
+    by = usagedb.xc_totals_by_model(conn)
+    assert by["opus-4.8"] == 100 and by["sonnet-4.6"] == 10
+    assert by[usagelog.UNKNOWN] == 5         # model NULL → unknown
+    daily = usagedb.xc_daily_full(conn)
+    assert sum(daily.values()) == 115
+    conn.close()
+
+
+async def test_xc_cursor_roundtrip():
+    conn = usagedb.connect(":memory:")
+    assert usagedb.get_xc_cursor(conn, "/p/s.jsonl") is None
+    usagedb.set_xc_cursor(conn, "/p/s.jsonl", 4096, 123.5)
+    assert usagedb.get_xc_cursor(conn, "/p/s.jsonl") == (4096, 123.5)
+    usagedb.set_xc_cursor(conn, "/p/s.jsonl", 8192, 124.0)   # upsert
+    assert usagedb.get_xc_cursor(conn, "/p/s.jsonl") == (8192, 124.0)
+    conn.close()
+
+
+async def test_xc_v6_db_upgrades_to_v7():
+    """v6(usage_xc 없는) DB 가 connect 시 v7 로 올라가 usage_xc 가 생긴다."""
+    import sqlite3
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "t.db")
+        raw = sqlite3.connect(path)
+        raw.executescript(
+            "CREATE TABLE usage (ts REAL, tab INTEGER, pane INTEGER, "
+            "session INTEGER, account TEXT, tokens INTEGER, tzoff INTEGER, "
+            "model TEXT); PRAGMA user_version=6;")
+        raw.commit()
+        raw.close()
+        conn = usagedb.connect(path)
+        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 7
+        assert usagedb.insert_xc(conn, _xrec("m1:r1"))   # 테이블 존재
+        assert usagedb.xc_count(conn) == 1
+        conn.close()
+
+
+async def test_xc_ts_iso_normalized_to_epoch():
+    """ISO-Z ts 가 epoch 초로 정규화돼 strftime 일자 버킷이 동작한다."""
+    conn = usagedb.connect(":memory:")
+    usagedb.insert_xc(conn, _xrec("m1", inp=100, out=0,
+                                  ts="2026-06-22T10:00:00.000Z"))
+    daily = usagedb.xc_daily_full(conn)
+    assert len(daily) == 1
+    (day, val), = daily.items()
+    assert val == 100 and day.startswith("2026-06-2")   # 로컬 tz 로 22 또는 인접일
+    conn.close()

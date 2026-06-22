@@ -33,7 +33,13 @@ from . import usagelog
 # **모델 귀속**을 기록해 티어별 지출·과티어를 *정량* 측정 가능하게 한다(과티어 보고서가
 # "캡처도 DB도 모델 귀속 없음"으로 정량 불가였던 것을 이 시점부터 해소). 레거시 행은
 # NULL(미상). ALTER ADD COLUMN(메타데이터만) — 기존 집계 쿼리는 model 을 안 보므로 무영향.
-SCHEMA_VERSION = 6
+# v7(2026-06-23, §10-D 트랜스크립트 회계): usage_xc(트랜스크립트 권위 토큰)·
+# usage_xc_cursor(증분 테일 offset) 테이블 추가. 기존 usage(스크랩 ↑/↓ 근사)는 라이브
+# 활동신호로 보존하고, cache_read/creation 까지 담은 정확 집계는 usage_xc 가 담당한다
+# (docs/internal/TOKEN_UNDERCOUNT_TRANSCRIPT_SOLUTION.md). PK=xkey(message.id:requestId
+# 또는 이벤트 uuid)로 멱등(INSERT OR IGNORE) — 재적재·중복 라인이 무해. CREATE IF NOT
+# EXISTS 라 v6 DB 도 connect 시 자동 생성(기존 usage/limits 무접촉).
+SCHEMA_VERSION = 7
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS usage (
@@ -63,6 +69,30 @@ CREATE TABLE IF NOT EXISTS limits (
   source           TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_limits_ts ON limits(ts);
+
+CREATE TABLE IF NOT EXISTS usage_xc (
+  xkey         TEXT    PRIMARY KEY,
+  ts           REAL    NOT NULL,
+  session_uuid TEXT,
+  tab          INTEGER,
+  pane         INTEGER,
+  pytmux_session INTEGER,
+  model        TEXT,
+  input        INTEGER NOT NULL DEFAULT 0,
+  output       INTEGER NOT NULL DEFAULT 0,
+  cache_create INTEGER NOT NULL DEFAULT 0,
+  cache_read   INTEGER NOT NULL DEFAULT 0,
+  is_sidechain INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ix_xc_ts      ON usage_xc(ts);
+CREATE INDEX IF NOT EXISTS ix_xc_session ON usage_xc(session_uuid);
+CREATE INDEX IF NOT EXISTS ix_xc_model   ON usage_xc(model);
+
+CREATE TABLE IF NOT EXISTS usage_xc_cursor (
+  path   TEXT PRIMARY KEY,
+  offset INTEGER NOT NULL,
+  mtime  REAL
+);
 """
 
 _COLS = ("ts", "tab", "pane", "session", "account", "tokens")
@@ -117,6 +147,11 @@ def connect(path: str) -> sqlite3.Connection:
             _migrate_v6_add_model(conn)
         except sqlite3.Error:
             new_v = min(new_v, 5)
+    if cur_v < 7 and new_v >= 6:    # v7: usage_xc 트랜스크립트 회계 테이블
+        try:
+            _migrate_v7_xc_tables(conn)
+        except sqlite3.Error:
+            new_v = min(new_v, 6)
     conn.execute(f"PRAGMA user_version={new_v}")
     conn.commit()
     if path != ":memory:" and not existed:
@@ -217,6 +252,18 @@ def _migrate_v6_add_model(conn) -> int:
     if "model" in cols:
         return 0
     conn.execute("ALTER TABLE usage ADD COLUMN model TEXT")
+    return 1
+
+
+def _migrate_v7_xc_tables(conn) -> int:
+    """v7(§10-D): usage_xc·usage_xc_cursor 테이블 보장(없을 때만). _SCHEMA 의
+    CREATE IF NOT EXISTS 가 connect 마다 이미 만들므로 여기선 멱등 확인만 — 기존
+    usage/limits 는 무접촉. 만들었으면 1, 이미 있으면 0."""
+    have = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "usage_xc" in have and "usage_xc_cursor" in have:
+        return 0
+    conn.executescript(_SCHEMA)
     return 1
 
 
@@ -462,6 +509,120 @@ def import_jsonl(conn, jsonl_path: str) -> int:
 def count(conn) -> int:
     """레코드 총수(임포트 가드·테스트용)."""
     return int(conn.execute("SELECT COUNT(*) AS n FROM usage").fetchone()["n"])
+
+
+# ---- 트랜스크립트 권위 회계(usage_xc, v7 §10-D) ----
+# 스크랩 usage 테이블과 분리된 정확 집계. transcript.parse_line 의 rec(xkey·ts(ISO)·
+# session_uuid·model·input/output/cache_create/cache_read·is_sidechain)을 받아
+# INSERT OR IGNORE 로 멱등 적재한다. ts 는 ISO-Z 문자열이라 epoch 초로 정규화해 저장
+# (기존 usage.ts 와 동일 단위 → 같은 strftime 일자 버킷 쿼리 재사용 가능).
+
+def _iso_to_epoch(ts) -> float:
+    """ISO-8601(…Z) → epoch 초. 이미 수면 float 이면 그대로. 실패 시 0.0."""
+    if isinstance(ts, (int, float)):
+        return float(ts)
+    if not isinstance(ts, str) or not ts:
+        return 0.0
+    import datetime as _dt
+    try:
+        s = ts.replace("Z", "+00:00")
+        return _dt.datetime.fromisoformat(s).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _xc_row(rec: dict, tab=None, pane=None, pytmux_session=None):
+    return (str(rec["xkey"]), _iso_to_epoch(rec.get("ts")),
+            rec.get("session_uuid"), tab, pane, pytmux_session,
+            rec.get("model"), int(rec.get("input", 0)),
+            int(rec.get("output", 0)), int(rec.get("cache_create", 0)),
+            int(rec.get("cache_read", 0)), int(rec.get("is_sidechain", 0)))
+
+
+_XC_INSERT = (
+    "INSERT OR IGNORE INTO usage_xc (xkey,ts,session_uuid,tab,pane,"
+    "pytmux_session,model,input,output,cache_create,cache_read,is_sidechain) "
+    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+
+
+def insert_xc(conn, rec: dict, tab=None, pane=None, pytmux_session=None) -> bool:
+    """rec 한 건 멱등 삽입. 이미 있는 xkey 면 무시(False). 실패도 조용히 False."""
+    try:
+        before = conn.total_changes
+        conn.execute(_XC_INSERT, _xc_row(rec, tab, pane, pytmux_session))
+        conn.commit()
+        return conn.total_changes > before
+    except sqlite3.Error:
+        return False
+
+
+def insert_xc_many(conn, recs, tab=None, pane=None, pytmux_session=None) -> int:
+    """rec 여러 건 멱등 일괄 삽입(백필·증분 테일). **새로 삽입된** 행 수 반환."""
+    rows = [_xc_row(r, tab, pane, pytmux_session) for r in recs]
+    if not rows:
+        return 0
+    before = conn.total_changes
+    conn.executemany(_XC_INSERT, rows)
+    conn.commit()
+    return conn.total_changes - before
+
+
+def xc_count(conn) -> int:
+    return int(conn.execute("SELECT COUNT(*) AS n FROM usage_xc").fetchone()["n"])
+
+
+def xc_totals(conn) -> dict:
+    """전체 이력 4항목 합 + 파생값(footer=in+out, full=4합). 정확 lifetime Σ."""
+    r = conn.execute(
+        "SELECT COALESCE(SUM(input),0) AS i, COALESCE(SUM(output),0) AS o, "
+        "COALESCE(SUM(cache_create),0) AS cc, COALESCE(SUM(cache_read),0) AS cr "
+        "FROM usage_xc").fetchone()
+    i, o, cc, cr = int(r["i"]), int(r["o"]), int(r["cc"]), int(r["cr"])
+    foot = i + o
+    full = foot + cc + cr
+    return {"input": i, "output": o, "cache_create": cc, "cache_read": cr,
+            "footer": foot, "full": full,
+            "ratio": (full / foot) if foot else 0.0}
+
+
+def xc_totals_by_model(conn) -> dict:
+    """모델별 full(4항목 합) 토큰. {model('unknown'=NULL): full_tokens}."""
+    cur = conn.execute(
+        "SELECT COALESCE(model, ?) AS m, "
+        "COALESCE(SUM(input+output+cache_create+cache_read),0) AS s "
+        "FROM usage_xc GROUP BY COALESCE(model, ?)",
+        (usagelog.UNKNOWN, usagelog.UNKNOWN))
+    return {r["m"]: int(r["s"]) for r in cur.fetchall()}
+
+
+def xc_daily_full(conn) -> dict:
+    """로컬 일자(YYYY-MM-DD)별 full 토큰 합. {day: full}. Recon/일자 뷰 권위 시드용."""
+    cur = conn.execute(
+        "SELECT strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') AS day, "
+        "COALESCE(SUM(input+output+cache_create+cache_read),0) AS s "
+        "FROM usage_xc GROUP BY day")
+    return {r["day"]: int(r["s"]) for r in cur.fetchall()}
+
+
+def get_xc_cursor(conn, path: str):
+    """경로의 (offset, mtime) 또는 None(미기록)."""
+    r = conn.execute("SELECT offset, mtime FROM usage_xc_cursor WHERE path=?",
+                     (path,)).fetchone()
+    return (int(r["offset"]), r["mtime"]) if r is not None else None
+
+
+def set_xc_cursor(conn, path: str, offset: int, mtime: float | None = None):
+    """경로의 테일 offset 을 upsert(증분 테일 영속)."""
+    try:
+        conn.execute(
+            "INSERT INTO usage_xc_cursor (path,offset,mtime) VALUES (?,?,?) "
+            "ON CONFLICT(path) DO UPDATE SET offset=excluded.offset, "
+            "mtime=excluded.mtime",
+            (path, int(offset), mtime))
+        conn.commit()
+        return True
+    except sqlite3.Error:
+        return False
 
 
 def max_session(conn) -> int:
