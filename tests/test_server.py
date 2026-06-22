@@ -270,6 +270,42 @@ async def test_inactive_tab_claude_done_flag():
         await teardown(srv, task, sock)
 
 
+async def test_model_badge_debounce_absorbs_transient_haiku():
+    """모델 배지 오탐 수정(2026-06-22): opus 세션 중 화면에 haiku 가 한두 프레임 떠도
+    (Haiku 서브에이전트/Task 출력·모델명 언급·/model 메뉴 잔상) 배지가 즉시 안 바뀐다.
+    첫 확정은 즉시, 그 뒤 *변경*은 같은 새 값이 _MODEL_DEBOUNCE 회 연속 관측될 때만."""
+    import importlib
+    sm = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    N = sm._MODEL_DEBOUNCE
+    assert N >= 2, "디바운스가 1이면 흡수가 안 됨"
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        # 첫 모델 확정은 즉시(초기 표시 지연 방지) — opus 배지가 뜬 busy Claude 패널
+        # (busy 스피너는 글리프+동명사+'…'(U+2026) 앵커가 필요 — claude._BUSY_SPINNER_RE)
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (3s)\nOpus 4.8 · /model\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._claude == "busy" and p._claude_model == "opus-4.8", \
+            (p._claude, p._claude_model)
+        # haiku 가 한 프레임만 등장(서브에이전트) → 디바운스로 흡수, 배지 유지
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (3s)\nHaiku 4.5 (subagent)\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._claude_model == "opus-4.8", "1프레임 haiku 는 흡수돼야"
+        # opus 로 복귀 → haiku 후보 카운트 리셋
+        p.feed("\x1b[2J\x1b[H✽ Crunching…\nOpus 4.8 · /model\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._claude_model == "opus-4.8" and p._claude_model_cand_n == 0
+        # haiku 가 N 회 연속 관측(실제 /model 전환) → 그제서야 확정
+        for _ in range(N):
+            p.feed("\x1b[2J\x1b[H✽ Crunching…\nHaiku 4.5\r\n".encode("utf-8"))
+            srv._scan_claude(sess, win)
+        assert p._claude_model == "haiku-4.5", f"{N}회 연속 관측 → 모델 전환 확정"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_auto_token_on_exit_toggle_and_persist():
     """§10-F set_auto_token_on_exit: 기본 ON, 토글 반전·명시 지정이 server 속성을
     바꾸고 plugin_opts(server_opts_serialize)로 영속된다."""

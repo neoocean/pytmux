@@ -66,6 +66,14 @@ def screen_text(screen) -> str:
 # 은 즉시). 30Hz flush 기준 ~1초 — 진짜 Claude 종료 시 행을 되찾는 지연은 미미하다.
 _HDR_CLAUDE_MISS = 30
 
+# 모델 배지 디바운스(2026-06-22): claude_model(txt) 는 화면 **아무 위치**의 모델명
+# 토큰(opus/sonnet/haiku…)을 잡으므로, opus 세션 중 화면에 haiku 가 일시 등장하면
+# (Haiku 서브에이전트/Task 실행 표시·출력 텍스트의 'haiku' 언급·/model 메뉴 잔상)
+# 배지가 잠깐 haiku 로 튀었다가 탭 전환 시 정정되던 오탐이 있었다. 첫 확정은 즉시,
+# 그 뒤 모델 *변경*은 같은 새 값이 이만큼 연속 관측될 때만 반영해 한두 프레임
+# 깜빡임(서브에이전트 전환)을 흡수한다(_HDR_CLAUDE_MISS 디바운스와 동형).
+_MODEL_DEBOUNCE = 3
+
 # §3.7 포맷 미인식 가시화: Claude 가 실행 중(fg 명령에 'claude')인데 화면 파서가
 # 상태를 못 읽는 상태가 _FMT_UNKNOWN_SEC 초 지속되면 "포맷 미인식" 경고를 세운다.
 # fg 검사(ps)는 비싸므로 인식 실패 패널에 한해 _FMT_CHECK_INTERVAL 초 간격으로만 한다.
@@ -942,6 +950,7 @@ class ServerClaudeMixin:
                             p._claude_account_full = acct_full
                     # M14c: 모델 배지(Opus 4.8 등) 갱신 — 마지막 본 값 유지.
                     mdl = claude_model(txt)
+                    mdl_from_probe = False
                     if not mdl and p._claude_model is None:
                         # 폴백(2026-06-22): 라이브 패널은 모델 배지를 상시 표시하지
                         # 않아(idle 푸터엔 'auto mode on …'뿐) 화면 스크랩만으론
@@ -954,9 +963,43 @@ class ServerClaudeMixin:
                               if isinstance(self._usage, dict) else None)
                         if pm:
                             mdl = pm
+                            mdl_from_probe = True
                     if mdl and mdl != p._claude_model:
-                        p._claude_model = mdl
-                        changed = True
+                        # 디바운스(2026-06-22, 모델 배지 haiku 튐 오탐 수정): opus 중
+                        # 화면에 haiku 가 한두 프레임 떠도(Haiku 서브에이전트/Task 출력·
+                        # 모델명 언급·/model 메뉴 잔상) 즉시 안 바꾼다.
+                        #  · 첫 확정(None) 또는 **약한**(프로브 폴백) 값 위 → 즉시 반영
+                        #    (라이브 배지가 /model 변경을 곧장 보이게 — 약한 프로브값을
+                        #    라이브 배지가 디바운스 없이 덮는다).
+                        #  · **강한**(라이브 배지) 값 위의 *변경*만 _MODEL_DEBOUNCE 회
+                        #    연속 관측될 때 반영(서브에이전트 깜빡임 흡수).
+                        if p._claude_model is None or p._claude_model_weak:
+                            p._claude_model = mdl
+                            # 라이브 스크랩이면 strong, 프로브 폴백이면 weak.
+                            p._claude_model_weak = mdl_from_probe
+                            changed = True
+                            p._claude_model_cand = None
+                            p._claude_model_cand_n = 0
+                        else:
+                            if mdl == p._claude_model_cand:
+                                p._claude_model_cand_n += 1
+                            else:
+                                p._claude_model_cand = mdl
+                                p._claude_model_cand_n = 1
+                            if p._claude_model_cand_n >= _MODEL_DEBOUNCE:
+                                p._claude_model = mdl
+                                p._claude_model_weak = False  # 디바운스 통과=라이브
+                                changed = True
+                                p._claude_model_cand = None
+                                p._claude_model_cand_n = 0
+                    elif mdl and mdl == p._claude_model:
+                        # 현재 확정값 재확인 → 후보 리셋(깜빡임이 끊기면 다시 처음부터
+                        # 세도록). opus→haiku(1프레임)→opus 면 haiku 후보가 1에서 리셋.
+                        # 라이브 스크랩으로 재확인되면 strong 승격(이후 변경은 디바운스).
+                        if not mdl_from_probe:
+                            p._claude_model_weak = False
+                        p._claude_model_cand = None
+                        p._claude_model_cand_n = 0
                     running = tokens.parse_running_tokens(txt)
                     busy = new_cl == "busy"
                     peak0 = p._tok_state.get("peak", 0)   # step 전 진행중 peak

@@ -24,6 +24,16 @@ def init_pane(pane) -> None:
     pane._claude = None
     pane._claude_usage = None       # "ctx 42%" / "12k tok" 등(best-effort)
     pane._claude_model = None       # M14c: 모델 배지(opus-4.8 등, best-effort)
+    # 모델 배지 디바운스(2026-06-22): opus 작업 중 화면에 haiku 가 한두 프레임 떠도
+    # (Haiku 서브에이전트/Task 출력·스크롤백 모델명 언급·/model 메뉴 잔상) 즉시 배지를
+    # 안 바꾸도록, 새 모델값이 _MODEL_DEBOUNCE 회 연속 관측될 때만 확정한다. _cand=현재
+    # 관측 중인 후보(현 확정값과 다름), _cand_n=그 후보의 연속 관측 횟수.
+    pane._claude_model_cand = None
+    pane._claude_model_cand_n = 0
+    # _weak=현재 _claude_model 이 그림자 /usage 프로브 폴백(약한 출처)으로 채워졌는지.
+    # 약한 값 위에는 라이브 배지가 **즉시** 덮어쓴다(디바운스 미적용 — /model 변경 반영).
+    # 강한(라이브 배지) 값 위의 *변경*만 디바운스로 서브에이전트 깜빡임을 흡수한다.
+    pane._claude_model_weak = False
     # 토큰 영속 로깅(#7): 현재 Claude 세션 id(None→Claude 전이마다 새로 부여)와 토큰
     # 누계 상태(S5 토큰 모듈화 T4 에서 코어 model.py 에서 이전). _tok_state=현재 응답
     # peak+세션 누계({"peak","total"}), _session_tokens=표시·전송용 캐시(= total+peak).
