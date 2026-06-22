@@ -106,7 +106,8 @@ os.environ.pop("PYTMUX_HOME", None)
 # 명시 등록으로 import 순서 무관하게 둘 다 별칭이 잡히게 한다.)
 try:
     import pytmuxlib as _pt
-    for _m in ("claude", "tokens", "usageprobe", "usagelog", "usagedb"):
+    for _m in ("claude", "tokens", "usageprobe", "usagelog", "usagedb",
+               "transcript"):
         # per-module 격리: usageprobe 는 POSIX 전용(pty/termios)이라 Windows 에서
         # import 가 실패한다. 한 try 로 묶으면 그 실패가 뒤따르는 usagelog/usagedb
         # (Windows 호환) alias 까지 막아 `from pytmuxlib import usagedb` 가 깨진다.
