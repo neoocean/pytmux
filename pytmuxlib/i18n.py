@@ -138,6 +138,7 @@ register({
         "capture.status_on": "상태: ON (캡처 중)",
         "capture.status_off": "상태: OFF",
         "ui.search": "검색…",
+        "ui.cmd_mode_badge": "CMD(←↑↓→ 이동, : 명령) ",
     },
     "en": {
         "lang.changed": "Language: {name}",
@@ -147,6 +148,7 @@ register({
         "capture.status_on": "Status: ON (capturing)",
         "capture.status_off": "Status: OFF",
         "ui.search": "Search…",
+        "ui.cmd_mode_badge": "CMD(←↑↓→ move, : cmd) ",
     },
 })
 

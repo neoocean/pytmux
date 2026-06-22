@@ -1525,6 +1525,45 @@ async def test_token_log_recon_view_toggle():
     await _with_app(body)
 
 
+async def test_recon_scroll_hint_conditional_on_max_off():
+    """항목5(2026-06-22): [대사] 그래프 footer 의 ←→ 스크롤 안내는 **스크롤 여지가
+    있을 때만**(구간 수 > 한 화면 capacity → max_off>0) 보이고, 전 구간이 다 보이면
+    'all spans shown'(전 구간 표시)로 바뀐다 — 종전엔 reconcile 캡(20)이 늘 capacity
+    보다 작아 max_off==0 인데도 동작 않는 스크롤을 약속하던 거짓 안내. max_off 는
+    위젯이 실제 폭으로 렌더(_build)될 때만 정해지므로(헤드리스 폭=0), 안내 결정
+    함수(_set_recon_hint)와 빌드 훅(_on_built) 배선을 직접 검증한다."""
+    async def body(app, pilot, srv):
+        base = 1_700_000_000.0
+        recs = [{"ts": base + 200, "tab": 0, "pane": 1, "session": 1,
+                 "account": "me@x.org", "tokens": 1500}]
+        ivs = [{"t0": base + i * 3600, "t1": base + (i + 1) * 3600,
+                "account": "me@x.org", "pct0": i % 50, "pct1": (i % 50) + 1,
+                "dpct": 1, "tokens": 100, "reset": False} for i in range(200)]
+        app._want_token_log = True
+        app._dispatch({"t": "token_log", "records": recs, "reconcile": ivs})
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        await pilot.press("r")
+        await pilot.pause(0.1)
+        assert scr._recon_mode
+        # ① 안내 결정: max_off>0 → ←→ 스크롤, ==0 → 전 구간 표시.
+        scr._set_recon_hint(7)
+        assert "스크롤" in str(scr.query_one("#tkhint").render())
+        scr._set_recon_hint(0)
+        h = str(scr.query_one("#tkhint").render())
+        assert "전 구간 표시" in h and "스크롤" not in h, h
+        # ② 차트가 실제 폭(여기선 강제 plot_dims)으로 빌드되면 _on_built 훅이 max_off
+        #    를 hint 로 민다 — 200 구간 > capacity(폭10→5) 라 스크롤 여지가 생긴다.
+        chart = scr.query_one("#tkchart")
+        got = []
+        chart._on_built = lambda mo: got.append(mo)
+        chart._last_built_off = None
+        chart._plot_dims = lambda: (10, 5)
+        chart._build()
+        assert got and got[-1] > 0, got
+    await _with_app(body)
+
+
 async def test_token_log_limit_view_toggle():
     """2026-06-14(사용자 요청): 상단 빽빽한 한도 블록(막대·창Σ·계정·신선도 ~7줄)을
     [한도] 전용 서브뷰로 옮겨 작은 화면을 정리. 기본 화면 상단엔 1줄 요약(5h%·주%)만,
@@ -2827,6 +2866,26 @@ async def test_tab_bar_force_always():
     async def body(app, pilot, srv):
         assert app.tabbar.display is True, "tab-bar always 면 1탭도 표시"
     await _with_app(body, cfg={"tab_bar_always": True})
+
+
+async def test_cmd_mode_badge_no_hangul_leak_in_en():
+    """en 로케일에서 명령 모드(esc :) 상태줄 CMD 배지가 한글로 새지 않는다.
+
+    과거 clientwidgets.StatusBar.render_line 의 cmd_mode 배지가 한글 리터럴
+    하드코딩이라 카탈로그만 보는 test_en_catalog_has_no_hangul_leak 가 못 잡았다.
+    렌더 출력(Segment 텍스트)에 한글 코드포인트가 없음을 직접 단언해 소스
+    하드코딩 누출까지 회귀로 잡는다(선례 _warn_badge 렌더 단언)."""
+    import re
+    hangul = re.compile(r"[가-힣]")
+
+    async def body(app, pilot, srv):
+        app.status.cmd_mode = True
+        app.status.refresh()
+        await pilot.pause(0.1)
+        stxt = "".join(s.text for s in app.status.render_line(0))
+        assert "CMD(" in stxt, f"CMD 배지가 렌더돼야: {stxt!r}"
+        assert not hangul.search(stxt), f"en 모드 상태줄 한글 누출: {stxt!r}"
+    await _with_app(body, cfg={"lang": "en"})
 
 
 async def test_layout_save_load_client():

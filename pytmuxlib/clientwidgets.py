@@ -1112,7 +1112,9 @@ class StatusBar(Widget):
         segs = [Segment(left_txt, base)]
         acc += _cw(left_txt)
         if self.cmd_mode:
-            _t = "CMD(←↑↓→ 이동, : 명령) "
+            # i18n 키 경유(과거 하드코딩 한글 리터럴이라 en 로케일에서도 한글 누출 —
+            # 카탈로그값만 검사하는 test_en_catalog_has_no_hangul_leak 가 못 잡았다).
+            _t = i18n.t("ui.cmd_mode_badge")
             segs.append(Segment(_t, Style(color="black", bgcolor=tc("accent"),
                                           bold=True)))
             acc += _cw(_t)

@@ -50,6 +50,9 @@ i18n.register({
         # [대사] 시간축 그래프(2026-06-20)
         "토큰 5h 사용률 추이 · 시간축",
         "r집계 표 · ←→/PgUp·PgDn/Home·End 스크롤 · u/usage · Esc닫기",
+        # 전 구간이 한 화면에 다 보여 스크롤 여지가 없을 때(항목5 2026-06-22):
+        # 거짓 스크롤 안내를 빼고 'all spans shown' 으로.
+        "r집계 표 · 전 구간 표시 · u/usage · Esc닫기",
     )},
     "en": {
         "Enter 토글/순환 · ESC 닫기": "Enter toggle/cycle · ESC close",
@@ -86,6 +89,8 @@ i18n.register({
             "Token 5h usage trend · time axis",
         "r집계 표 · ←→/PgUp·PgDn/Home·End 스크롤 · u/usage · Esc닫기":
             "r table · ←→/PgUp·PgDn/Home·End scroll · u /usage · Esc close",
+        "r집계 표 · 전 구간 표시 · u/usage · Esc닫기":
+            "r table · all spans shown · u /usage · Esc close",
     },
 })
 # token-saver 행 라벨(SAVER_ROWS, __init__.py). ko 자동 시드, en 보강.
@@ -659,6 +664,11 @@ class _ReconChart(Widget):
         self.x_off = 0
         self._cap = 1        # 마지막 빌드의 capacity(페이지 스크롤 보폭)
         self._max_off = 0    # 마지막 빌드의 최대 오프셋(스크롤 클램프)
+        # 빌드(=실제 폭으로 geometry 계산) 직후 호출되는 훅(max_off 전달). _max_off 는
+        # 위젯이 렌더될 때(_build, 유효 size)만 갱신되므로, footer 스크롤 안내(항목5)는
+        # 데이터 갱신 시점이 아니라 이 훅에서 max_off 가 정해진 뒤 정해야 정확하다.
+        self._on_built = None
+        self._last_built_off = None   # 같은 값으로 중복 hint 갱신 방지
 
     def set_data(self, intervals):
         self.intervals = intervals or []
@@ -678,6 +688,10 @@ class _ReconChart(Widget):
         self.x_off = ch["x_off"]
         self._max_off = ch["max_off"]
         self._cap = max(1, plot_w // self.STEP)
+        # 실제 폭으로 max_off 가 정해졌으니 footer 스크롤 안내를 갱신한다(항목5).
+        if self._on_built is not None and self._max_off != self._last_built_off:
+            self._last_built_off = self._max_off
+            self._on_built(self._max_off)
         return ch
 
     def scroll_intervals(self, delta):
@@ -1302,6 +1316,9 @@ class TokenLogScreen(ModalScreen):
         예전 표 대신). 좌우 스크롤로 더 이전 구간을 본다. 그래프 위젯은 _ReconChart,
         순수 기하는 usagelog.recon_chart."""
         if chart is not None:
+            # 빌드 직후(실제 폭으로 max_off 확정) footer 안내를 갱신하도록 훅 연결.
+            chart._on_built = self._set_recon_hint
+            chart._last_built_off = None     # 데이터 바뀜 → 다음 빌드에서 재평가
             chart.set_data(self._reconcile)
             chart.focus()
         self.query_one("#tklogtitle", Label).update(
@@ -1309,8 +1326,27 @@ class TokenLogScreen(ModalScreen):
         top = self._recon_top_line()
         self._tktop_text = top          # 회귀 검사용(상단 줄 수/내용)
         self.query_one("#tktop", Static).update(top)
-        self.query_one("#tkhint", Static).update(
-            i18n.t("r집계 표 · ←→/PgUp·PgDn/Home·End 스크롤 · u/usage · Esc닫기"))
+        # 스크롤 안내는 빌드 후 _set_recon_hint 가 정확히 정하지만, 빌드 전에도(첫
+        # 페인트 전) 일단 best-effort 로 현재 max_off 기준 한 번 깔아 둔다.
+        self._set_recon_hint(getattr(chart, "_max_off", 0) if chart is not None else 0)
+
+    def _set_recon_hint(self, max_off):
+        """[대사] footer 스크롤 안내(항목5 2026-06-22): 스크롤 여지가 있을 때만
+        (=구간 수 > 한 화면 capacity → max_off>0) ←→ 안내를, 전 구간이 다 보이면
+        'all spans shown'(전 구간 표시) 안내를 보인다. 종전엔 reconcile 캡(20)이 일반
+        폭 capacity(35~38)보다 작아 max_off 가 늘 0 → footer 가 동작하지 않는 스크롤을
+        약속하던 거짓 안내였다(서버 reconcile limit↑ + 이 조건부 안내로 마감). recon
+        모드가 아니면 다른 뷰가 자기 hint 를 깔므로 무시."""
+        if not self._recon_mode:
+            return
+        try:
+            hint = self.query_one("#tkhint", Static)
+        except Exception:
+            return
+        hint.update(i18n.t(
+            "r집계 표 · ←→/PgUp·PgDn/Home·End 스크롤 · u/usage · Esc닫기"
+            if max_off and max_off > 0
+            else "r집계 표 · 전 구간 표시 · u/usage · Esc닫기"))
 
     def _recon_top_line(self):
         """[대사] 그래프 상단: 보이는 구간 시간 범위 + 최신 5h% + 안내, 그리고 둘째
