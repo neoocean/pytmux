@@ -371,6 +371,12 @@ async def test_claude_model():
     assert claude_model("Haiku 4.5") == "haiku-4.5"
     assert claude_model("Opus") == "opus"
     assert claude_model("no model here") is None
+    # 회귀(2026-06-22): 스크롤백/대화에 섞인 무관한 수가 버전으로 오인돼 'sonnet-255'
+    # 처럼 완전히 잘못 표기되던 버그. 실 버전은 1~2자리 성분뿐이라 3자리+ 숫자나
+    # 날짜 접미는 버전으로 받지 않는다(계열만, 또는 None 으로 폴백).
+    assert claude_model("Sonnet 255") == "sonnet"
+    assert claude_model("Sonnet-255") == "sonnet"
+    assert claude_model("claude-sonnet-4-5-20250929") == "sonnet-4.5"
     # 대화 내용에 모델명이 언급돼도 하단 배지(마지막 매치)를 반환해야 한다.
     # Claude Code UI: 대화가 위, 배지가 아래.
     screen = ("I use Haiku 4.5 for quick tasks\n"
