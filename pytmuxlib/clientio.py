@@ -318,6 +318,11 @@ class _InputMixin:
                              suggest=cur)   # ghost(타이핑=덮어쓰기)
         elif k == "ampersand" or ch == "&":
             self.confirm_kill_tab()
+        elif k == "P":
+            # prefix P(§12 ③): 활성 탭 고정(핀) 토글. 소문자 p 는 직전 탭 이동에
+            # 선점됐고 ESC 모드의 p 도 분할이라 대문자 P 로 둔다(원격 탭 거부 가드
+            # 포함 — clientcmd pin-toggle 경유).
+            self._run_command("pin-toggle")
         elif k == "T":
             cur = self._active_pane_title()
             self.open_prompt("rename_pane", cur or "set pane title",
@@ -514,6 +519,12 @@ class _InputMixin:
             return
         if ch == "p":
             self.send_cmd("split", orient="tb")
+            self._exit_esc()
+            return
+        if ch == "P":
+            # esc P(§12 ③): 활성 탭 고정(핀) 토글 후 모드 종료. 소문자 p 는 분할에
+            # 선점됐으므로 대문자 P(원격 탭 거부 가드 포함 — pin-toggle 경유).
+            self._run_command("pin-toggle")
             self._exit_esc()
             return
         if ch == "e":

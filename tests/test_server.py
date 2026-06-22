@@ -327,6 +327,22 @@ async def test_pin_tab_moves_right_and_unpin_returns():
         await teardown(srv, task, sock)
 
 
+async def test_tree_msg_carries_pinned():
+    """§12 ⑤: 트리(개요) 메시지의 window 항목에 pinned 가 실려 트리 뷰가 고정 탭을
+    표식할 수 있다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv.new_window(sess)                  # 탭 0,1
+        srv.set_pinned(sess, 1, True)         # 탭1 고정
+        msg = srv._tree_msg()
+        wins = msg["sessions"][0]["windows"]
+        pins = [w["pinned"] for w in wins]
+        assert pins.count(True) == 1 and pins[-1] is True, pins
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_new_window_inserts_before_pinned():
     """항목7: 고정 탭이 있으면 새 탭은 첫 고정 탭 앞(비고정 구역 끝)에 삽입돼 고정
     구역을 침범하지 않는다."""

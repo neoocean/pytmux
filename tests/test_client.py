@@ -2988,6 +2988,74 @@ async def test_confirm_kill_pinned_prompts():
     await _with_app(body)
 
 
+async def test_choose_tree_marks_pinned():
+    """§12 ⑤: 트리(개요) 뷰에서 고정 탭은 핀 글리프('*')로 표식된다."""
+    async def body(app, pilot, srv):
+        from textual.widgets import Label
+        tree = {"sessions": [{"name": "s", "windows": [
+            {"index": 0, "name": "win", "active": True, "panes": []},
+            {"index": 1, "name": "p4v", "active": False, "pinned": True,
+             "panes": []}]}]}
+        app._open_choose_tree(tree)
+        await pilot.pause(0.1)
+        scr = app.screen_stack[-1]
+        joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        assert "* 1:p4v" in joined, joined      # 고정 탭에 핀 글리프
+        assert "* 0:win" not in joined, joined   # 비고정 탭엔 없음
+    await _with_app(body)
+
+
+async def test_pin_toggle_keybinding_prefix_and_esc():
+    """§12 ③: prefix P · ESC P 가 활성 탭 고정(핀) 토글 명령을 낸다(소문자 p 선점
+    회피 — 대문자 P)."""
+    from textual.events import Key
+
+    async def body(app, pilot, srv):
+        ran = []
+        app._run_command = lambda c, *a, **k: ran.append(c)
+        app.mode = "normal"
+        app._handle_prefix(Key("P", "P"))
+        assert "pin-toggle" in ran, ("prefix P", ran)
+        ran.clear()
+        app._last_esc_ts = 0.0
+        await pilot.press("escape")
+        assert app.mode == "esc"
+        app._handle_esc_mode(Key("P", "P"))
+        assert "pin-toggle" in ran and app.mode == "normal", ("esc P", ran)
+    await _with_app(body)
+
+
+async def test_drag_cross_zone_toggles_pin():
+    """§12 ②: 끌어온 탭을 반대 구역(고정↔비고정)의 탭 위에 놓으면 그 탭의 고정 상태가
+    토글된다(같은 구역 재정렬은 종전대로 move_tab)."""
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda a, **k: sent.append((a, k))
+        app._drag_split = None
+        app.tabbar.tabs = [
+            {"index": 0, "name": "build", "active": True},
+            {"index": 1, "name": "logs", "active": False},
+            {"index": 2, "name": "p4v", "active": False, "pinned": True}]
+        app.tabbar._entries_sig = None
+        app.tabbar.render_line(0)               # _zones 채우기
+
+        def tab_x(idx):
+            z = next(z for z in app.tabbar._zones
+                     if z[2] == "tab" and z[3] == idx)
+            return (z[0] + z[1]) // 2
+        # 비고정 탭0 을 고정 탭2 위로 드롭 → 탭0 고정 토글(=True)
+        app.tabbar._drag = 0
+        app.tabbar.on_mouse_up(_FakeMouse(tab_x(2), 0, button=1))
+        assert ("set_pinned", {"index": 0, "value": True}) in sent, sent
+        assert not any(a == "move_tab" for a, _ in sent), sent
+        # 같은(비고정) 구역 재정렬은 종전대로 move_tab.
+        sent.clear()
+        app.tabbar._drag = 0
+        app.tabbar.on_mouse_up(_FakeMouse(tab_x(1), 0, button=1))
+        assert ("move_tab", {"index": 0, "to": 1}) in sent, sent
+    await _with_app(body)
+
+
 async def test_cmd_mode_badge_no_hangul_leak_in_en():
     """en 로케일에서 명령 모드(esc :) 상태줄 CMD 배지가 한글로 새지 않는다.
 

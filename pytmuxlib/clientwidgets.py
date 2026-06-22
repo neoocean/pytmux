@@ -835,6 +835,10 @@ class TabBar(Widget):
                 return kind, payload
         return None, None
 
+    def _tab_pinned(self, idx) -> bool:
+        """§12 ②: 이 index 의 탭이 고정(핀) 구역인가."""
+        return any(t["index"] == idx and t.get("pinned") for t in self.tabs)
+
     def _is_remote(self, idx) -> bool:
         """§1.7-a/c: 이 index 의 탭이 원격(remote-attach 병합) 탭인가."""
         return any(t["index"] == idx and t.get("remote") for t in self.tabs)
@@ -951,6 +955,19 @@ class TabBar(Widget):
             event.stop()
             return
         kind, payload = self._hit(event.x)
+        # §12 ②: 경계 너머 드롭 = 핀 토글. 끌어온(로컬) 탭을 구분자(‖) 위나 반대
+        # 구역(고정↔비고정)의 탭 위에 놓으면, 같은 구역 재정렬은 서버가 클램프해
+        # no-op 이던 자리를 이용해 그 탭의 고정 상태를 토글한다(드롭 강조로 의도 확인).
+        if not self._is_remote(src):
+            cross = (kind == "pinsep"
+                     or (kind == "tab" and payload != src
+                         and not self._is_remote(payload)
+                         and self._tab_pinned(payload) != self._tab_pinned(src)))
+            if cross:
+                self.app.send_cmd("set_pinned", index=src,
+                                  value=not self._tab_pinned(src))
+                event.stop()
+                return
         if (kind == "tab" and payload != src
                 and not self._is_remote(src) and not self._is_remote(payload)):
             # index==위치(연속) 이므로 그대로 사용

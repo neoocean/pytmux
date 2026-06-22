@@ -1114,7 +1114,8 @@ class ChooseTreeScreen(ModalScreen):
                 panes = w.get("panes", [])
                 npanes = len(panes) if isinstance(panes, list) else panes
                 mark = "▾" if w.get("active") else "▸"
-                wlabel = f"{mark} {w['index']}:{w['name']}  ({npanes} panes)"
+                pin = "* " if w.get("pinned") else ""   # §12 ⑤ 고정 탭 표식
+                wlabel = f"{mark} {pin}{w['index']}:{w['name']}  ({npanes} panes)"
                 self.entries.append({"kind": "win", "index": w["index"]})
                 # markup=False — 라벨에 들어가는 [ssh]/제목의 대괄호가 Textual
                 # 마크업으로 해석돼 사라지지 않게 한다.

@@ -143,6 +143,7 @@ class ServerIOMixin:
             {"name": s.name, "active": False,
              "windows": [{"index": t.index, "name": t.name,
                           "active": (t is s.active_tab),
+                          "pinned": getattr(t, "pinned", False),
                           "panes": [self._pane_overview(p)
                                     for p in t.window.panes()]}
                          for t in s.tabs]}
