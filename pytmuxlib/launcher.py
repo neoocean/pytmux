@@ -321,10 +321,30 @@ def run_stdio_proxy(sock_path: str) -> int:
     **POSIX·Windows 공통**(Stage 3, 사용자 보고 — office Windows 박스): asyncio
     add_reader(POSIX 전용) 대신 **블로킹 스레드 2개 + 동기 소켓**(ipc.control_socket
     — Unix=AF_UNIX, Windows=TCP 루프백+포트파일)으로 스플라이스한다. 새 프로세스라
-    원격 서버 재시작 없이 코드 동기화만으로 동작. 서버 없으면 1."""
+    원격 서버 재시작 없이 코드 동기화만으로 동작.
+
+    **원격 서버 자동 기동(reliability)**: 원격에 서버가 없으면(원격 재부팅 후·최초
+    접속·서버 종료 뒤) 종전엔 즉시 1 로 실패했다 — 원격-attach 실패 신고의 가장 흔한
+    원인이었다(사용자는 attach 전에 원격에 손수 서버를 띄워야 했다). 이제 tmux 의
+    'attach 가 서버를 띄운다' 모델을 따라 **분리(detached) 서버를 자동 기동**하고
+    인증까지 기다린 뒤 스플라이스한다. 비대화식 ssh exec 라도 spawn_detached 는
+    setsid(Unix)/DETACHED_PROCESS(Windows)로 ssh 세션과 무관하게 살아남는다(메인
+    attach 경로 need_spawn 분기와 동형). 끄려면 원격 셸 환경에
+    `PYTMUX_NO_REMOTE_AUTOSTART=1`(그러면 종전대로 '실행 중인 서버 없음' 1)."""
     if not ipc.probe(sock_path):
-        print("pytmux: 실행 중인 서버 없음", file=sys.stderr)
-        return 1
+        if os.environ.get("PYTMUX_NO_REMOTE_AUTOSTART"):
+            print("pytmux: 실행 중인 서버 없음", file=sys.stderr)
+            return 1
+        try:
+            proc.spawn_detached(proc.server_argv(sock_path))
+        except Exception as e:                       # 기동 자체 실패(권한·실행파일 등)
+            print(f"pytmux: 서버 자동 기동 실패: {e}", file=sys.stderr)
+            return 1
+        # connectability 가 아니라 auth 까지 기다린다 — 좀비 소켓 교체 창에서 probe 가
+        # 옛 서버를 맞히는 레이스를 피한다(메인 attach need_spawn 분기와 동일 판정).
+        if not wait_server_authed(sock_path):
+            print("pytmux: 서버 자동 기동 실패(인증 대기 시한 초과)", file=sys.stderr)
+            return 1
     import socket as _socket
     sock = ipc.control_socket(sock_path)
     if sock is None:

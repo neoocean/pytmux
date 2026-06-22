@@ -223,6 +223,46 @@ async def test_stdio_proxy_token_and_frame_roundtrip():
         await teardown(srv, task, sock)
 
 
+async def test_stdio_proxy_autostarts_when_no_server():
+    """원격 서버 부재 시 stdio-proxy 가 분리 서버를 **자동 기동**한다(reliability):
+    원격 재부팅 후·최초 접속에 attach 가 즉시 실패하던 가장 흔한 케이스를 없앤다.
+    spawn_detached 호출만 확인하고 wait_server_authed 를 False 로 두어 splice 전에
+    return(실서버/실소켓 불필요한 단위 테스트)."""
+    import pytmuxlib.launcher as L
+    calls = []
+    real_probe, real_spawn = L.ipc.probe, L.proc.spawn_detached
+    real_argv, real_wait = L.proc.server_argv, L.wait_server_authed
+    old_env = os.environ.pop("PYTMUX_NO_REMOTE_AUTOSTART", None)
+    try:
+        L.ipc.probe = lambda *a, **k: False           # 원격에 서버 없음
+        L.proc.server_argv = lambda sp: ["argv", sp]
+        L.proc.spawn_detached = lambda argv: calls.append(argv)
+        L.wait_server_authed = lambda *a, **k: False  # 인증 대기 실패 → splice 전 return 1
+        assert L.run_stdio_proxy("/tmp/nope.sock") == 1
+        assert calls == [["argv", "/tmp/nope.sock"]], calls   # 자동 기동을 시도함
+    finally:
+        L.ipc.probe, L.proc.spawn_detached = real_probe, real_spawn
+        L.proc.server_argv, L.wait_server_authed = real_argv, real_wait
+        if old_env is not None:
+            os.environ["PYTMUX_NO_REMOTE_AUTOSTART"] = old_env
+
+
+async def test_stdio_proxy_autostart_optout_env():
+    """PYTMUX_NO_REMOTE_AUTOSTART=1 이면 종전대로 자동 기동 없이 1 로 실패(탈출구)."""
+    import pytmuxlib.launcher as L
+    calls = []
+    real_probe, real_spawn = L.ipc.probe, L.proc.spawn_detached
+    try:
+        L.ipc.probe = lambda *a, **k: False
+        L.proc.spawn_detached = lambda argv: calls.append(argv)
+        os.environ["PYTMUX_NO_REMOTE_AUTOSTART"] = "1"
+        assert L.run_stdio_proxy("/tmp/nope.sock") == 1
+        assert calls == [], "opt-out 시 자동 기동 안 함"
+    finally:
+        L.ipc.probe, L.proc.spawn_detached = real_probe, real_spawn
+        os.environ.pop("PYTMUX_NO_REMOTE_AUTOSTART", None)
+
+
 async def test_server_auth_ok_detects_tokenless_zombie():
     """server_auth_ok: 정상 서버(토큰 게시됨)는 True, 토큰 파일이 사라진 좀비는
     False. probe 는 둘 다 True 라 구분 못 한다 — 옛 서버가 default 소켓을 붙든 채
