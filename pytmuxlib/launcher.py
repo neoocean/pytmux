@@ -142,8 +142,22 @@ def nesting_blocked() -> bool:
       `$LC_PYTMUX` 를 SendEnv 로 원격에 전파한다(sshwrap). 원격 pytmux 는 `$PYTMUX`
       가 없어도 이 표식을 보고 중첩을 거부한다(docs/internal/HANDOFF.md §10).
 
+    **liveness 게이트**: env 마커는 떠난 세션의 잔재로 남는다 — 패널 안에서 띄운
+    터미널/claude 가 detach·서버 종료 뒤에도 `$PYTMUX`/`$LC_PYTMUX` 를 물려받은
+    채로 살아 있으면, 마커 *존재* 만으로 거부하던 옛 로직은 죽은 서버에도 영구
+    오탐(처음 실행인데 "이미 안에서 실행 중")을 냈다. 그래서 마커별로 권위 조건을 둔다:
+    - `$PYTMUX`(소켓 경로)는 **그 소켓이 실제 접속 가능할 때만** 로컬 중첩으로 본다
+      (`ipc.probe`). 죽은 소켓을 가리키면 잔재이므로 무시.
+    - `$LC_PYTMUX` 는 ssh 로 전파되는 *원격* 표식이라 **SSH 세션 안에서만** 권위가
+      있다. 비-ssh(로컬) 셸의 표식은 잔재이므로 무시(진짜 로컬 중첩은 위의 살아있는
+      `$PYTMUX` 가 이미 잡는다 — 패널 셸엔 둘 다 심긴다).
+
     우회 수단은 `unset PYTMUX LC_PYTMUX` 뿐(강제 옵션은 제공하지 않는다)."""
-    return bool(os.environ.get("PYTMUX") or os.environ.get(NEST_MARKER))
+    sock = os.environ.get("PYTMUX")
+    if sock and ipc.probe(sock):
+        return True
+    return bool(os.environ.get(NEST_MARKER)) and bool(
+        os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"))
 
 
 # §1.7 in-band 중첩 감지 프로브 대기 상한. 호스트가 pytmux 면 응답은 보통 수십 ms

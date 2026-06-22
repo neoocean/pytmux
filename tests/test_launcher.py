@@ -3,25 +3,43 @@ import os
 import tempfile
 
 import harness  # noqa: F401  (경로 설정)
-from pytmuxlib import sshwrap
+from pytmuxlib import launcher, sshwrap
 from pytmuxlib.launcher import NEST_MARKER, main, nesting_blocked
 
 
 async def test_nesting_blocked_helper():
+    # liveness 게이트: 마커 *존재* 만으로 거부하지 않는다. $PYTMUX 는 소켓이 실제로
+    # 살아 있을 때만, $LC_PYTMUX 는 SSH 세션일 때만 권위를 가진다(잔재 마커 오탐 방지).
     old = os.environ.get("PYTMUX")
     old_m = os.environ.get(NEST_MARKER)
+    old_sc = os.environ.get("SSH_CONNECTION")
+    old_st = os.environ.get("SSH_TTY")
+    real_probe = launcher.ipc.probe
     try:
-        os.environ.pop("PYTMUX", None)
-        os.environ.pop(NEST_MARKER, None)
-        os.environ["PYTMUX"] = "/tmp/some.sock"   # 로컬 패널 안인 상황
-        assert nesting_blocked() is True, "로컬 패널 안 → 중첩 거부"
+        for k in ("PYTMUX", NEST_MARKER, "SSH_CONNECTION", "SSH_TTY"):
+            os.environ.pop(k, None)
+
+        # $PYTMUX 가 살아있는 소켓을 가리키면 → 로컬 중첩 거부.
+        launcher.ipc.probe = lambda *a, **k: True
+        os.environ["PYTMUX"] = "/tmp/some.sock"
+        assert nesting_blocked() is True, "살아있는 로컬 패널 → 중첩 거부"
+
+        # 같은 $PYTMUX 라도 소켓이 죽었으면 → 잔재이므로 거부 안 함(오탐 수정).
+        launcher.ipc.probe = lambda *a, **k: False
+        assert nesting_blocked() is False, "죽은 소켓 잔재 → 정상 실행"
+
         os.environ.pop("PYTMUX", None)
         assert nesting_blocked() is False, "패널 밖 → 정상"
-        # 원격(ssh)에는 PYTMUX 가 없고 표식(LC_PYTMUX)만 전파된다 → 그래도 거부.
+
+        # $LC_PYTMUX 단독: 비-ssh 로컬 셸이면 잔재 → 무시, ssh 세션이면 원격 중첩 거부.
         os.environ[NEST_MARKER] = "1"
-        assert nesting_blocked() is True, "원격 표식만 있어도 거부"
+        assert nesting_blocked() is False, "비-ssh 로컬 잔재 표식 → 정상 실행"
+        os.environ["SSH_CONNECTION"] = "1.2.3.4 5 6.7.8.9 22"
+        assert nesting_blocked() is True, "ssh 세션의 원격 표식 → 중첩 거부"
     finally:
-        for k, v in ((("PYTMUX", old)), ((NEST_MARKER, old_m))):
+        launcher.ipc.probe = real_probe
+        for k, v in (("PYTMUX", old), (NEST_MARKER, old_m),
+                     ("SSH_CONNECTION", old_sc), ("SSH_TTY", old_st)):
             if v is None:
                 os.environ.pop(k, None)
             else:
@@ -230,9 +248,12 @@ async def test_server_auth_ok_detects_tokenless_zombie():
 
 
 async def test_main_refuses_nested_attach():
-    # PYTMUX 가 설정된 상태에서 attach → SystemExit(1)(ensure_server 도달 전 차단).
+    # 살아있는 $PYTMUX(=로컬 패널 안)에서 attach → SystemExit(1)(ensure_server 도달
+    # 전 차단). probe 를 살아있다고 고정해 마커를 권위화한다(liveness 게이트).
     old = os.environ.get("PYTMUX")
+    real_probe = launcher.ipc.probe
     try:
+        launcher.ipc.probe = lambda *a, **k: True
         os.environ["PYTMUX"] = "/tmp/some.sock"
         code = None
         try:
@@ -241,6 +262,7 @@ async def test_main_refuses_nested_attach():
             code = e.code
         assert code == 1, f"중첩 attach 는 거부(exit 1), got {code}"
     finally:
+        launcher.ipc.probe = real_probe
         if old is None:
             os.environ.pop("PYTMUX", None)
         else:
