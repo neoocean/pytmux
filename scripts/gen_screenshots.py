@@ -441,7 +441,8 @@ async def restart_confirm(app, pilot):
 
 
 async def token_saver(app, pilot):
-    # 토큰 절감 설정 팝업(token-saver) — 자동 개입 토글·잔량 임계·예산·경고 설정행.
+    # Claude 설정 팝업(token-saver) — 자동재개·세션종료 토큰화면·권한 오토모드·
+    # 프롬프트 단위 클리어·장기 턴/반복 루프 경고 설정행.
     # ClaudeSaverScreen 은 claude-code 플러그인으로 이전됐다(패키지명 하이픈→import_module).
     from importlib import import_module
     screens = import_module("pytmuxlib.plugins.claude-code.screens")
@@ -712,7 +713,7 @@ SCENES = [
     ("19-confirm-tab-last", "마지막 탭 닫기 — pytmux 종료 경고 팝업", confirm_tab_last),
     ("21-restart-check", "restart-check 드라이런 — 작업보존 재시작 안전점검", restart_check),
     ("26-restart-confirm", "재시작 확인 — 드라이런 FAIL 시 '그래도 재시작?'(기본 취소)", restart_confirm),
-    ("23-token-saver", "토큰 절감 설정 팝업(token-saver) — 자동개입 토글·임계·예산·경고", token_saver),
+    ("23-token-saver", "Claude 설정 팝업(token-saver) — 자동재개·세션종료 토큰화면·오토모드·클리어·경고", token_saver),
     ("24-token-log", "토큰 사용량 팝업(일별) — 노트북 탭+요약줄+기간:토큰 표", token_log),
     ("37-token-log-hour", "토큰 팝업(시간) — 시각별 5h 한도 계단식 막대 + 1w% 열", token_log_hour),
     ("38-token-log-limit", "토큰 팝업(한도) — /usage 막대·창Σ·리셋 카운트다운 통합 탭", token_log_limit),
