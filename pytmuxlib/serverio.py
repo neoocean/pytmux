@@ -16,7 +16,7 @@ import signal
 import time
 import traceback
 
-from . import ipc, ptyhostmgr, version
+from . import ipc, pty_backend, ptyhostmgr, version
 from .model import ClientConn, Pane, Session
 from .protocol import (FLUSH_HZ, MAX_H, MAX_W, MIN_H, MIN_W, PROTO_VERSION,
                        clamp_dim, frame_msg, read_msg, write_frames, write_msg)
@@ -52,6 +52,17 @@ class ServerIOMixin:
         if border_status and h > 1:
             return x, y + 1, w, h - 1, None, True
         return x, y, w, h, None, False
+
+    def _advertised_mouse_track(self, p: Pane) -> int:
+        """클라에 광고할 패널 마우스 트래킹 레벨. Windows 에서는 any-motion(3)을
+        drag(2)로 캡한다 — ConPTY 가 주입된 any-motion SGR 리포트를 소비 못 하고
+        프롬프트에 텍스트로 흘리기 때문(HANDOFF §10-H, win_mouse_motion 으로 복구).
+        클릭/드래그(1000/1002)는 누출 증거 없어 그대로 둔다."""
+        mt = p.mouse_track
+        if (mt >= 3 and pty_backend.IS_WINDOWS
+                and not getattr(self, "win_mouse_motion", False)):
+            return 2
+        return mt
 
     def _layout_msg(self, sess: Session, cols: int = None, rows: int = None):
         win = sess.active_window
@@ -91,11 +102,12 @@ class ServerIOMixin:
                 titlebars.append({"x": x, "y": y, "w": w, "title": p.title,
                                   "active": p is win.active_pane})
             p.resize(cw, ch)
-            p._mouse_sent = (p.mouse_track, p.mouse_sgr)
+            mt = self._advertised_mouse_track(p)
+            p._mouse_sent = (mt, p.mouse_sgr)
             pane_msgs.append({"id": p.id, "x": cx, "y": cy, "w": cw, "h": ch,
                               "title": p.title, "box": box,
                               "active": p is win.active_pane,
-                              "mouse": p.mouse_track, "mouse_sgr": p.mouse_sgr})
+                              "mouse": mt, "mouse_sgr": p.mouse_sgr})
         return {
             "t": "layout",
             "cols": cols, "rows": rows,
@@ -159,6 +171,7 @@ class ServerIOMixin:
             "sync": bool(win.sync) if win else False,
             "pane_title": win.active_pane.title if win and win.active_pane else "",
             "single_border": self.single_border,
+            "win_mouse_motion": self.win_mouse_motion,
             # 통합 설정 화면(:settings)이 서버 옵션 현재값을 표시할 수 있게 권위값을
             # 함께 보낸다(전엔 클라가 못 읽어 '미상' 표시). 전역 옵션 + 활성 윈도우/탭의
             # per-window 옵션(auto-rename·border-status·monitor). 클라가 self.server_opts
@@ -730,6 +743,11 @@ class ServerIOMixin:
             self.set_monitor(sess, msg.get("which", "activity"), msg.get("value"))
         elif action == "set_single_border":
             self.set_single_border(msg.get("value"))
+        elif action == "set_win_mouse_motion":
+            # Windows any-motion 패스스루 토글(HANDOFF §10-H). 광고 mouse 레벨이
+            # 바뀌므로 레이아웃을 다시 방송해 즉시 발효시킨다.
+            self.set_win_mouse_motion(msg.get("value"))
+            self._broadcast_session(sess)
         elif action == "set_coalesce":
             self.set_coalesce_repaints(msg.get("value"))
         elif action == "set_nest_auto_attach":

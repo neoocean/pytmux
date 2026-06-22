@@ -2539,6 +2539,41 @@ async def test_mouse_debug_logging():
     await _with_app(body)
 
 
+async def test_mouse_debug_logs_passthrough_with_believed_mode():
+    """진단(HANDOFF §10-H): send_mouse 가 마우스 시퀀스를 PTY 로 흘릴 때, 클라가
+    그 패널을 어떤 마우스 모드(mouse/sgr)로 **믿고** 보냈는지 + 실제 바이트를 함께
+    남긴다. restart-all 후 SGR 모션이 프롬프트에 텍스트로 박히는 버그에서, 여기 찍힌
+    'mouse=3 sgr=True' 는 '클라는 추적 ON 으로 믿었다'는 결정 신호다(앱은 실제 OFF)."""
+    import os
+    import tempfile
+
+    async def body(app, pilot, srv):
+        path = os.path.join(tempfile.gettempdir(), "pytmux_mousepass_test.log")
+        if os.path.exists(path):
+            os.remove(path)
+        app._mouse_log_path = path
+        pid = app.layout["panes"][0]["id"]
+        app.layout["panes"][0]["mouse"] = 3
+        app.layout["panes"][0]["mouse_sgr"] = True
+        seq = b"\x1b[<35;43;38M"   # any-motion(35) SGR 모션 — 버그의 그 바이트
+        # off 면 패스스루 자체는 되지만 진단 로그는 없음
+        app.mouse_debug = False
+        app.send_mouse(pid, seq)
+        await pilot.pause(0.05)
+        assert not os.path.exists(path), "mouse-debug off 면 패스스루 로그 없음"
+        # on 이면 믿은 모드 + 바이트가 남는다
+        app.mouse_debug = True
+        app.send_mouse(pid, seq)
+        await pilot.pause(0.05)
+        with open(path) as f:
+            log = f.read()
+        assert "pass" in log, log
+        assert "mouse=3" in log and "sgr=True" in log, log
+        assert "1b" in log.lower() or "\\x1b" in log, log  # 바이트 repr 포함
+        os.remove(path)
+    await _with_app(body)
+
+
 async def test_active_pane_border_highlight():
     async def body(app, pilot, srv):
         await pilot.press("ctrl+b")

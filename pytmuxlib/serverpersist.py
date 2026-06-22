@@ -351,6 +351,12 @@ class ServerPersistMixin:
                                 "hidden": bool(cur.hidden)} if cur else None),
                     "nonblank_rows": len(nonblank),
                     "last_nonblank": (nonblank[-1] if nonblank else -1),
+                    # 마우스 추적 모드 진단(restart-all 후 SGR 시퀀스가 프롬프트에
+                    # 새어 텍스트로 입력되는 Windows 버그, HANDOFF §10-H). restored
+                    # 와 post_repaint 의 mouse 값을 대조하면, 복원된 플래그가 앱의
+                    # 실제 모드(재그리기 후 DECSET 재협상 결과)와 어긋나는지 보인다.
+                    "mouse": getattr(p, "mouse_track", None),
+                    "mouse_sgr": bool(getattr(p, "mouse_sgr", False)),
                     "top": (disp[0][:60] if disp else ""),
                     "bottom": (disp[nonblank[-1]][:60] if nonblank else ""),
                 })
@@ -588,6 +594,7 @@ class ServerPersistMixin:
                            # 키가 한 번 생기면 default_enabled 시드 대신 이 값이 권위.
                            "disabled_plugins": sorted(self.plugins.disabled),
                            "single_border": self.single_border,
+                           "win_mouse_motion": self.win_mouse_motion,
                            "coalesce_repaints": self.coalesce_repaints,
                            "nest_auto_attach": self.nest_auto_attach,
                            "remote_allowed_hosts":

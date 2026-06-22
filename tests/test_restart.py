@@ -617,6 +617,10 @@ async def test_restore_writes_repaint_diag_manifest():
         restored = [r for r in recs if r["phase"] == "restored"][-1]
         assert restored["panes"] and any(
             p["nonblank_rows"] > 0 for p in restored["panes"]), restored
+        # 마우스 추적 모드도 패널별로 잡힌다(HANDOFF §10-H 진단 — restored vs
+        # post_repaint 의 mouse 값을 대조해 복원 플래그가 앱 실제 모드와 어긋나는지 본다).
+        assert all("mouse" in p and "mouse_sgr" in p
+                   for p in restored["panes"]), restored
         os.unlink(path)
         srvA.sessions.clear()
     finally:

@@ -111,6 +111,15 @@ class Server(*_SERVER_BASES):
         # 패널이 하나뿐일 때 테두리(아웃라인)를 그릴지(기본 ON=항상 테두리).
         # off 면 단일 패널은 테두리 없이 화면 전체를 내용으로 쓴다. opts.json 영속.
         self.single_border = bool(_opts.get("single_border", True))
+        # Windows 마우스 모션(any-motion, DECSET 1003) 패스스루 허용 여부(기본 OFF).
+        # 근거(HANDOFF §10-H, 캡처 20260622_093650_0_1.win_p3.log): Windows ConPTY 는
+        # 우리가 패널 입력으로 **주입**한 SGR any-motion 리포트(`ESC[<35;…M`)를 마우스
+        # 이벤트로 소비하지 못하고 앱(Claude) 프롬프트에 **텍스트로 박는다** — 앱이
+        # 1003h(모션 ON)를 계속 재emit 하는 동안에도 누출(= stale 플래그 가설 H2 반증,
+        # 지속성 버그). 클릭/드래그(1000/1002)는 누출 증거 없음. 그래서 Windows 에서는
+        # advertised mouse 를 drag(2)로 캡해 any-motion 만 안 흘린다(_layout_msg). 이
+        # 옵션을 켜면 종전대로 모션도 광고한다(ConPTY 개선/진단용). opts.json 영속.
+        self.win_mouse_motion = bool(_opts.get("win_mouse_motion", False))
         # alt-screen 풀스크린 리페인트 코얼레싱(#§10 대응 ②). 켜면 Claude busy 스피너
         # 등 매 프레임 화면을 통째로 다시 그리는 대량 출력이 feed 보다 빠르게 쌓일 때
         # 무효화된 중간 프레임을 버려 feed 부하/지연을 줄인다(안전 조건은
@@ -344,6 +353,16 @@ class Server(*_SERVER_BASES):
         self._save_opts()
         return self.single_border
 
+    def set_win_mouse_motion(self, value=None):
+        """Windows 마우스 모션(any-motion) 패스스루 허용 토글(HANDOFF §10-H). value
+        미지정 시 반전. 끄면(기본) Windows ConPTY 패널에 any-motion 을 광고하지 않아
+        주입 SGR 모션이 프롬프트에 누출되지 않는다. opts.json 영속. 즉시 발효(다음
+        레이아웃 브로드캐스트부터)."""
+        self.win_mouse_motion = (not self.win_mouse_motion) if value is None \
+            else bool(value)
+        self._save_opts()
+        return self.win_mouse_motion
+
     def set_coalesce_repaints(self, value=None):
         """alt-screen 리페인트 코얼레싱 토글(§10 대응 ②). value 미지정 시 반전.
         opts.json 영속. 클라 렌더에는 영향 없는 서버 내부 동작이라 status 불필요."""
@@ -541,6 +560,10 @@ class Server(*_SERVER_BASES):
             # 레이아웃(박스 유무)이 바뀌므로 _ONOFF_CONTROLS 표(즉시 반환)가 아니라
             # 여기서 처리해 아래 broadcast 로 떨어지게 한다.
             self.set_single_border(self._arg_onoff(args))
+        elif c == "win-mouse-motion":
+            # 광고 mouse 레벨(any-motion 캡)이 바뀌므로 single-border 와 같이
+            # broadcast 분기로 처리(HANDOFF §10-H). `pytmux cmd win-mouse-motion on`.
+            self.set_win_mouse_motion(self._arg_onoff(args))
         else:
             return f"unknown: {c}"
         for cl in list(self.clients):

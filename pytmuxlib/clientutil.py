@@ -647,6 +647,7 @@ COMMANDS = [
     ("single-border", "패널이 하나뿐일 때 테두리 표시 on/off (single-border on|off|toggle)", "설정/기타"),
     ("coalesce-repaints", "대량 출력 시 alt-screen 풀스크린 리페인트 합치기 on/off — ssh 반응성(coalesce-repaints on|off|toggle)", "설정/기타"),
     ("nest-auto-attach", "원격에서 pytmux 실행 시 거부 대신 자동 remote-attach 승격 on/off (nest-auto-attach on|off|toggle)", "설정/기타"),
+    ("win-mouse-motion", "Windows 마우스 모션(any-motion) 패스스루 on/off — 기본 off(ConPTY 누출 방지) (win-mouse-motion on|off|toggle)", "설정/기타"),
     ("vt-parser", "VT 파서 백엔드 선택 pyte|native (재시작 시 발효 · vt-parser pyte|native)", "설정/기타"),
     # Claude Code 명령(auto-resume·token-log·
     # claude-usage·usage-panel·token-account·prompt-clear*·model·auto-doc-clear·
@@ -730,6 +731,7 @@ COMMAND_OPTIONS = {
     "single-border": [{"key": "state", "label": "단일테두리", "choices": _ONOFF}],
     "coalesce-repaints": [{"key": "state", "label": "리페인트합치기", "choices": _ONOFF}],
     "nest-auto-attach": [{"key": "state", "label": "중첩자동승격", "choices": _ONOFF}],
+    "win-mouse-motion": [{"key": "state", "label": "윈도우모션", "choices": _ONOFF}],
     "vt-parser": [{"key": "backend", "label": "VT파서",
                    "choices": [("pyte", "pyte"), ("native", "native")]}],
     "lang": [{"key": "lang", "label": "언어",
@@ -798,6 +800,8 @@ SETTINGS = [
      "cmd": "coalesce-repaints", "backend": "server"},
     {"key": "nest-auto-attach", "cat": "동작", "type": "bool",
      "cmd": "nest-auto-attach", "backend": "server"},
+    {"key": "win-mouse-motion", "cat": "동작", "type": "bool",
+     "cmd": "win-mouse-motion", "backend": "server"},
     {"key": "vt-parser", "cat": "동작", "type": "enum",
      "choices": ["pyte", "native"], "cmd": "vt-parser", "backend": "server",
      "restart": True},
@@ -920,6 +924,7 @@ i18n.register({
         "보통 0.30": "Medium 0.30", "진하게 0.45": "Strong 0.45",
         "리페인트합치기": "Coalesce repaints", "언어": "Language",
         "중첩자동승격": "Nested auto-attach", "VT파서": "VT parser",
+        "윈도우모션": "Windows mouse motion",
         # 선택지
         # VT 파서 백엔드 이름은 로케일 무관(고유명사) — 양쪽 그대로.
         "pyte": "pyte", "native": "native",
@@ -1077,6 +1082,7 @@ i18n.register({
         "cmd.single-border": "Show border when only one pane on/off (single-border on|off|toggle)",
         "cmd.coalesce-repaints": "Coalesce alt-screen full repaints on heavy output on/off — ssh responsiveness (coalesce-repaints on|off|toggle)",
         "cmd.nest-auto-attach": "Auto-promote remote pytmux run to remote-attach instead of rejecting on/off (nest-auto-attach on|off|toggle)",
+        "cmd.win-mouse-motion": "Windows mouse motion (any-motion) passthrough on/off — default off (avoids ConPTY leak) (win-mouse-motion on|off|toggle)",
         "cmd.vt-parser": "Select VT parser backend pyte|native (takes effect on restart · vt-parser pyte|native)",
         "cmd.version": "Client/server version (p4 CL)·uptime popup (alias about)",
         "cmd.lang": "Switch UI language (lang ko|en) — Korean/English",

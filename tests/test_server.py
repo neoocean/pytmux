@@ -2328,6 +2328,67 @@ async def test_mouse_mode_tracking_and_passthrough():
         await teardown(srv, task, sock)
 
 
+async def test_win_mouse_motion_cap_in_layout_and_persist():
+    """HANDOFF §10-H — Windows ConPTY 마우스 모션 누출 수정.
+
+    근거(캡처 captures/.../20260622_093650_0_1.win_p3.log): office1 Windows 패널에서
+    앱(Claude)이 `ESC[?1003h`(any-motion ON)를 누출 구간 내내 계속 재emit 하는데도,
+    우리가 패널 입력으로 **주입**한 SGR 모션 리포트(`ESC[<35;…M`, 168건·전부 ESC
+    선행 0)가 프롬프트에 **텍스트로 박혔다** → 'stale 플래그(앱 OFF인데 우리만 ON)'
+    가설 H2 반증, ConPTY 가 주입 any-motion 을 소비 못 하는 지속성 버그. 그래서
+    Windows 에서는 광고 mouse 를 drag(2)로 캡해 any-motion 을 아예 안 흘린다. 클릭/
+    드래그(1000/1002)는 누출 증거 없어 유지. win_mouse_motion 옵션으로 복구 가능."""
+    from pytmuxlib import serverio
+    srv, task, sock = await server_only()
+    saved = serverio.pty_backend.IS_WINDOWS
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+
+        def adv():   # 현재 _layout_msg 가 이 패널에 광고하는 mouse 레벨
+            lay = srv._layout_msg(sess)
+            return next(m for m in lay["panes"] if m["id"] == p.id)
+
+        # 앱이 any-motion(1003) + SGR(1006) 을 켠다
+        p.update_mouse_modes(b"\x1b[?1003h\x1b[?1006h")
+        assert p.mouse_track == 3 and p.mouse_sgr is True
+
+        # 비-Windows: 캡 없음(커널 PTY 라 주입 모션이 정상 소비됨)
+        serverio.pty_backend.IS_WINDOWS = False
+        assert adv()["mouse"] == 3, "비-Windows 는 any-motion 그대로 광고"
+
+        # Windows + 기본(off): any-motion → drag(2) 로 캡, SGR 인코딩은 유지
+        serverio.pty_backend.IS_WINDOWS = True
+        srv.win_mouse_motion = False
+        m = adv()
+        assert m["mouse"] == 2 and m["mouse_sgr"] is True, \
+            "Windows any-motion 은 drag 로 캡(SGR 유지)"
+
+        # 클릭/드래그(1002)는 Windows 에서도 캡 안 됨(누출 증거 없음)
+        p.update_mouse_modes(b"\x1b[?1002h\x1b[?1003l")
+        assert p.mouse_track == 2
+        assert adv()["mouse"] == 2, "drag 는 Windows 도 그대로"
+
+        # 옵션 ON 이면 Windows 도 종전대로 any-motion 광고(복구 경로)
+        p.update_mouse_modes(b"\x1b[?1003h")
+        assert p.mouse_track == 3
+        assert srv.set_win_mouse_motion(True) is True
+        assert adv()["mouse"] == 3, "win_mouse_motion ON 이면 캡 해제"
+
+        # opts.json 영속 + 재시작 round-trip(_load_opts↔_save_opts 짝맞춤)
+        assert json.load(open(srv.opts_path))["win_mouse_motion"] is True
+        assert pytmux.Server(sock).win_mouse_motion is True
+        assert srv.set_win_mouse_motion(None) is False   # 토글 → 기본 OFF
+        assert json.load(open(srv.opts_path))["win_mouse_motion"] is False
+    finally:
+        serverio.pty_backend.IS_WINDOWS = saved
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
 async def test_search_buffer_capture_clear():
     srv, task, sock = await server_only()
     try:

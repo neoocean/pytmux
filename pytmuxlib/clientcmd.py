@@ -748,6 +748,14 @@ class _CommandMixin:
             arg = args[0].lower() if args else "toggle"
             val = (arg == "on") if arg in ("on", "off") else None
             self.send_cmd("set_coalesce", value=val)
+        elif c == "win-mouse-motion":
+            # win-mouse-motion [on|off|toggle] — Windows 마우스 모션(any-motion)
+            # 패스스루(HANDOFF §10-H). 기본 OFF: ConPTY 가 주입 SGR 모션을 소비 못 해
+            # 프롬프트에 누출되므로 Windows 패널엔 any-motion 을 광고하지 않는다.
+            # 서버 내부 동작이라 클라 상태 변화 없음. 서버가 opts.json 영속·재방송.
+            arg = args[0].lower() if args else "toggle"
+            val = (arg == "on") if arg in ("on", "off") else None
+            self.send_cmd("set_win_mouse_motion", value=val)
         elif c == "nest-auto-attach":
             # nest-auto-attach [on|off|toggle] — 원격 중첩 자동 승격(NESTED_
             # ATTACH ㉢). 서버 내부 동작이라 클라 렌더 변화 없음. 서버가

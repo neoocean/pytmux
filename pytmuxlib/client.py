@@ -1142,6 +1142,19 @@ def build_client_app(sock_path: str, config: dict | None = None,
             """마우스 패스스루: 특정 패널 PTY 로만 raw 마우스 시퀀스를 보낸다
             (입력 동기화/프롬프트 추적 제외 — 서버가 mouse 플래그로 구분)."""
             if self.writer and data:
+                # 진단(mouse-debug): 클라가 "이 패널은 마우스 추적 ON"이라 믿고
+                # 실제로 SGR/X10 바이트를 PTY 로 흘리는 순간을 그 믿음(mouse/sgr)과
+                # 함께 남긴다. restart-all 후 SGR 시퀀스가 프롬프트에 텍스트로 박히는
+                # Windows 버그(HANDOFF §10-H) 진단의 결정 신호 — 여기 찍히면 클라는
+                # mouse>=1 로 믿고 보냈는데 앱은 추적 OFF 라 텍스트로 받은 것이다.
+                if self.mouse_debug:
+                    pl = next((q for q in self.layout.get("panes", [])
+                               if q.get("id") == pane_id), None)
+                    mt = pl.get("mouse") if pl else "?"
+                    sgr = pl.get("mouse_sgr") if pl else "?"
+                    self._log_mouse("pass", 0, 0,
+                                    note=f"pane={pane_id} mouse={mt} sgr={sgr} "
+                                         f"bytes={data!r}")
                 asyncio.create_task(write_msg(self.writer, {
                     "t": "input", "pane": pane_id, "mouse": True,
                     "data": base64.b64encode(data).decode("ascii")}))
@@ -1484,6 +1497,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return "on" if getattr(st, "sync", False) else "off"
             # 서버 권위 옵션(status 가 self.server_opts 에 채움). 미수신이면 None.
             _srv = {"coalesce-repaints": "coalesce_repaints",
+                    "win-mouse-motion": "win_mouse_motion",
                     "nest-auto-attach": "nest_auto_attach",
                     "vt-parser": "vt_parser",
                     "automatic-rename": "auto_rename",
