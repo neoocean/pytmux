@@ -593,29 +593,17 @@ class ServerPersistMixin:
                            "remote_allowed_hosts":
                                list(getattr(self, "remote_allowed_hosts", [])),
                            "prompt_clear_message": self.prompt_clear_message,
-                           "auto_doc_clear": self.auto_doc_clear,
-                           "auto_doc_clear_delay": self.auto_doc_clear_delay,
-                           "auto_compact": self.auto_compact,
-                           "auto_compact_delay": self.auto_compact_delay,
-                           "auto_hardstop": self.auto_hardstop,
-                           "auto_cc_cooldown_sec": self.auto_cc_cooldown_sec,
                            "claude_auto_mode": self.claude_auto_mode,
                            "claude_auto_launch": self.claude_auto_launch,
                            "claude_rules": self.claude_rules,
-                           "claude_ctx_autoclear": self.claude_ctx_autoclear,
-                           "claude_ctx_threshold": self.claude_ctx_threshold,
-                           "claude_ctx_action": self.claude_ctx_action,
-                           "claude_ctx_min_interval":
-                               self.claude_ctx_min_interval,
-                           "claude_long_turn_sec": self.claude_long_turn_sec,
-                           "claude_repeat_alert": self.claude_repeat_alert,
                            # 1-3: 종전 누락 → 사용자가 바꿔도 저장 시 소실, 다음 기동에
                            # 600 으로 리셋되던 드리프트 버그 수정(load↔save 대칭 테스트로 가드).
+                           "claude_long_turn_sec": self.claude_long_turn_sec,
+                           "claude_repeat_alert": self.claude_repeat_alert,
                            "usage_refresh_sec": self.usage_refresh_sec,
-                           "claude_budget_plan": self.claude_budget_plan,
                            "vt_parser": self.vt_parser,
                            # 플러그인 소유 설정(S5 토큰 모듈화 T3): claude-code 가 돌려준
-                           # 설정(usage_gate_* 등)을 plugin_opts 네임스페이스에 불투명하게
+                           # 설정(claude_auto_retry 등)을 plugin_opts 네임스페이스에 불투명하게
                            # 저장한다(코어는 키 의미 모름). 디렉토리 삭제 시 {} → 설정이 사라진다.
                            "plugin_opts": self.plugins.server_opts_serialize(self)},
                           f)

@@ -382,6 +382,23 @@ class Registry:
             if fn is not None:
                 fn(app, event)
 
+    def client_prompt_text(self, app, pane_id):
+        """패널 프롬프트에 **현재 들어 있는 입력 텍스트**를 화면에서 긁어 돌려준다
+        (첫 비-None 채택). 작성창 open_compose 가 클라 키 추적(_prompt_buf)이 빈 경우
+        — 원격제어(/rc)·재접속처럼 클라 on_key 를 안 거친 입력 — 시드/비우기 길이로
+        쓰는 fallback. 구현 플러그인(claude-code)이 화면 입력박스를 긁는다. 플러그인이
+        없으면 None → 호출부가 추적치/초안으로 떨어진다(delete-to-disable)."""
+        for p in self.plugins:
+            fn = getattr(p, "client_prompt_text", None)
+            if fn is not None:
+                try:
+                    r = fn(app, pane_id)
+                except Exception:
+                    r = None
+                if r is not None:
+                    return r
+        return None
+
     def client_render(self, app, cells, W, H):
         """패널 내용(content) 위에 플러그인이 콘텐츠-레이어 장식을 그린다(in-place).
         claude-code 는 이 훅으로 ① 프롬프트 스티키 헤더를 그리고 ② footer 클릭존

@@ -164,7 +164,7 @@ async def test_core_no_longer_imports_token_db_backend():
 
 
 async def test_plugin_opts_namespace_and_migration_shim():
-    """T3(토큰 모듈화)+§7-4: 플러그인 소유 설정(usage_gate_*)이 코어가 아니라
+    """T3(토큰 모듈화)+§7-4: 플러그인 소유 설정(claude_auto_retry 등)이 코어가 아니라
     claude-code 플러그인 소유로 opts.json 의 plugin_opts 네임스페이스에 저장/로드된다.
     **마이그레이션 shim**: 구 top-level 키는 폴백으로 읽고, plugin_opts 가 있으면
     그쪽을 우선한다. §7-4 deprecate shim: 구 opts.json 의 token_budget_* 키는 로드
@@ -188,29 +188,23 @@ async def test_plugin_opts_namespace_and_migration_shim():
 async def _opts_namespace_body(reg, _S):
     # ① 구 포맷(top-level only, plugin_opts 없음) → 폴백으로 읽힘(타 머신 업그레이드).
     s1 = _S()
-    reg.server_opts_init(s1, {"usage_gate_session_pct": 80})
-    assert s1.usage_gate_session_pct == 80
-    assert s1.usage_gate_week_pct == 0           # 없는 키는 기본값
+    reg.server_opts_init(s1, {"claude_auto_retry": False})
+    assert s1.claude_auto_retry is False
+    assert s1.auto_token_on_exit is True         # 없는 키는 기본값
     # ② 신 포맷(plugin_opts) 우선 — 같은 키가 top-level 에도 있어도 nested 가 이긴다.
     s2 = _S()
-    reg.server_opts_init(s2, {"usage_gate_session_pct": 99,
-                              "plugin_opts": {"usage_gate_session_pct": 90,
-                                              "usage_gate_week_pct": 7}})
-    assert s2.usage_gate_session_pct == 90 and s2.usage_gate_week_pct == 7
+    reg.server_opts_init(s2, {"claude_auto_retry": True,
+                              "plugin_opts": {"claude_auto_retry": False,
+                                              "auto_token_on_exit": False}})
+    assert s2.claude_auto_retry is False and s2.auto_token_on_exit is False
     # ③ serialize 는 현재 server 값을 돌려준다(코어가 plugin_opts 밑에 불투명 저장).
     out = reg.server_opts_serialize(s2)
-    assert out["usage_gate_session_pct"] == 90
+    assert out["claude_auto_retry"] is False
     # ph_max_lines(claude-prompt-history)·capture(rec)는 다른 플러그인 소유 opt(별개) —
     # claude-code 계약을 엄격히 검증하기 위해 그 키들만 빼고 비교한다.
-    assert set(out) - {"ph_max_lines", "capture"} == {"usage_gate_session_pct",
-                                           "usage_gate_week_pct", "claude_auto_retry",
-                                           "claude_model_hint", "token_debug",
-                                           "auto_token_on_exit"}
-    assert out["claude_auto_retry"] is True   # 기본 ON(opts 부재 시)
-    assert out["claude_model_hint"] is False  # M14c 힌트 opt-in — 기본 OFF
-    assert out["token_debug"] is False        # §10-D 진단 로그 — 기본 OFF
-    assert out["auto_token_on_exit"] is True  # §10-F 세션 종료 자동 팝업 — 기본 ON
-    # (계정 표시모드/별칭 opt 는 머신-로컬 표시 전환으로 제거됨 — 2026-06-19.)
+    assert set(out) - {"ph_max_lines", "capture"} == {"claude_auto_retry",
+                                           "token_debug", "auto_token_on_exit"}
+    # (과사용 완화 설정 usage_gate_*·claude_model_hint 는 2026-06-22 제거됨.)
     # §7-4 deprecate shim: 구 opts.json 에 남은 token_budget_* 는 무시(속성 미설치).
     s4 = _S()
     reg.server_opts_init(s4, {"token_budget_day": 111,
@@ -218,13 +212,14 @@ async def _opts_namespace_body(reg, _S):
                                               "token_budget_resume_gate": True}})
     assert not hasattr(s4, "token_budget_day"), "deprecate 키가 설치됨"
     assert not hasattr(s4, "token_budget_resume_gate"), "deprecate 키가 설치됨"
-    # S6 T4 기본값: 세션 95(기본 ON)·주간 0(끔) — 구 opts.json(키 부재)에서도 적용.
-    assert s4.usage_gate_session_pct == 95 and s4.usage_gate_week_pct == 0
+    # 기본값: claude_auto_retry ON·token_debug OFF·auto_token_on_exit ON.
+    assert s4.claude_auto_retry is True and s4.auto_token_on_exit is True
+    assert s4.token_debug is False
     # ④ 플러그인 부재(디렉토리 삭제 시뮬) → init no-op(속성 안 생김), serialize {}.
     reg2 = _registry_without_claude()
     s3 = _S()
-    reg2.server_opts_init(s3, {"usage_gate_session_pct": 5})
-    assert not hasattr(s3, "usage_gate_session_pct"), "플러그인 부재인데 설정 설치됨"
+    reg2.server_opts_init(s3, {"claude_auto_retry": False})
+    assert not hasattr(s3, "claude_auto_retry"), "플러그인 부재인데 설정 설치됨"
     # claude-code 의 opts 는 사라진다(잔존 키는 다른 플러그인 소유: ph_max_lines, capture).
     assert set(reg2.server_opts_serialize(s3)) - {"ph_max_lines", "capture"} == set()
 
@@ -325,8 +320,8 @@ async def test_token_subsystem_fully_disabled_without_plugin():
         _S(), None, "request_token_log", {}) is None
     # ③ 플러그인 소유 설정: server_opts_init no-op(속성 미설치) + serialize {}.
     s = _S()
-    reg.server_opts_init(s, {"usage_gate_session_pct": 9,
-                             "plugin_opts": {"usage_gate_session_pct": 9}})
+    reg.server_opts_init(s, {"claude_auto_retry": False,
+                             "plugin_opts": {"claude_auto_retry": False}})
     # claude-code 의 opts 가 사라진다(잔존 키는 다른 플러그인 소유: claude-prompt-history
     # 의 ph_max_lines, rec 의 capture).
     assert set(reg.server_opts_serialize(s)) - {"ph_max_lines", "capture"} == set()
@@ -337,8 +332,8 @@ async def test_token_subsystem_fully_disabled_without_plugin():
     # ④-b(S6): 실측 신선도·이벤트 갱신 예약 상태(T3/T5)도 함께 사라진다.
     assert not hasattr(s2, "_usage_ts") \
         and not hasattr(s2, "_usage_probe_handle"), "S6 실측 런타임 상태가 설치됨"
-    # ④-c(S6 T4): 실측 게이트 임계 설정도 미설치(plugin_opts 소유 — ③과 동일 패턴).
-    assert not hasattr(s, "usage_gate_session_pct"), "실측 게이트 설정이 설치됨"
+    # ④-c: 플러그인 소유 설정도 미설치(plugin_opts 소유 — ③과 동일 패턴).
+    assert not hasattr(s, "claude_auto_retry"), "플러그인 설정이 설치됨"
     # ⑤ 패널 토큰 누계(pane_init) 미설치 + 종료 토큰 이관(pane_closing) no-op.
     p = _S()
     reg.pane_init(p)
@@ -394,7 +389,7 @@ async def test_contract_client_app_runs_without_claude_plugin(monkeypatch=None):
             # 부재라 claude_* 속성이 위젯에 아예 설치되지 않고(코어 __init__ 이 더 이상
             # 두지 않음), update_status 의 흡수 위임도 no-op → 속성이 끝내 안 생긴다.
             app.status.update_status({"claude_active": True, "claude_tokens": 9999,
-                                      "claude_model": "opus", "budget_level": 100})
+                                      "claude_model": "opus"})
             await pilot.pause(0.05)
             assert not hasattr(app.status, "claude_active"), \
                 "client_statusbar_init 훅 부재인데 claude_active 속성이 설치됨"

@@ -24,7 +24,6 @@ def init_pane(pane) -> None:
     pane._claude = None
     pane._claude_usage = None       # "ctx 42%" / "12k tok" 등(best-effort)
     pane._claude_model = None       # M14c: 모델 배지(opus-4.8 등, best-effort)
-    pane._ctx_pct = None            # M15: 마지막 컨텍스트 잔량%(우선순위 정리 비교용)
     # 토큰 영속 로깅(#7): 현재 Claude 세션 id(None→Claude 전이마다 새로 부여)와 토큰
     # 누계 상태(S5 토큰 모듈화 T4 에서 코어 model.py 에서 이전). _tok_state=현재 응답
     # peak+세션 누계({"peak","total"}), _session_tokens=표시·전송용 캐시(= total+peak).
@@ -39,16 +38,6 @@ def init_pane(pane) -> None:
     # respawn 시 직접 비우므로 코어 Pane 에 남고, 여기선 모드/상태기계만 둔다.
     pane.prompt_clear_mode = False
     pane._pc_phase = None           # None(대기) | "doc" | "clear"
-    # 자동 doc→/clear(§10): _adc_timer=무장 타이머 핸들, _adc_active=진행중.
-    pane._adc_timer = None
-    pane._adc_active = False
-    # 자동 /compact(요청): _acpt_timer=타이머 핸들, _acpt_fired=1회 발화 디바운스.
-    pane._acpt_timer = None
-    pane._acpt_fired = False
-    # 컨텍스트 하드스톱 자동복구: 같은 하드스톱 화면 반복 주입 방지 디바운스.
-    pane._hardstop_fired = False
-    # 시간기반 자동 compact·doc-clear 쿨다운 만료 시각(time.monotonic; 0=없음).
-    pane._auto_cc_cooldown_until = 0.0
     # 권한모드 자동 오토모드 전환(§10): 시도수·직전 모드·이번 드라이브에서 본 모드 집합.
     pane._cam_tries = 0
     pane._cam_last = None
@@ -74,10 +63,6 @@ def init_pane(pane) -> None:
     # 한글 부분문자열 판별을 대체해 en 로케일에서도 정확히 분류된다(i18n 전수조사).
     pane._claude_warn_kind = None
     pane._claude_warn_n = None
-    pane._model_tip = None   # M14c/A 힌트: 모델 과선택·세션시작 알림 배지(없으면 None)
-    pane._session_model_hinted = False  # Scenario A: 이번 Claude 세션에 모델 힌트 1회 표시 여부
-    pane._ctx_tip = None        # §3.10 C: ctx 압박 힌트 배지(M11/M13 스캔 시마다 재계산)
-    pane._ctx_tip_sticky = None # §3.10 C: 타이머 발화 힌트(auto_doc_clear/auto_compact — busy 까지 유지)
     # §3.7 포맷 미인식 가시화: _fmt_unknown=경고 활성, _fmt_first_mono=의심 시작 시각
     # (Claude fg + 파서 None), _fmt_logged=error.log 1회 기록 가드, _fmt_check_mono=
     # 다음 fg(ps) 검사 허용 시각(throttle).
@@ -99,12 +84,8 @@ def init_pane(pane) -> None:
     # _rc_done: 이 세션에 auto /rc 를 이미 적용했음 sticky(재시작 직렬화 — 거짓 새세션
     # 오인으로 /rc 재주입되는 버그 방지). 진짜 세션 종료에서만 해제.
     pane._rc_done = False
-    # 토큰 절감 자동화: _resume_handle=자동재개 예약 call_later 핸들(busy 복귀 시 cancel),
-    # _ctx_fired=컨텍스트 잔량 자동정리(M11) 이번 구간 발화 여부, _ctx_last_fire=마지막
-    # 정리 발화 시각(M14 빈도 상한).
+    # _resume_handle=자동재개 예약 call_later 핸들(busy 복귀 시 cancel).
     pane._resume_handle = None
-    pane._ctx_fired = False
-    pane._ctx_last_fire = None
     # 디바운스된 Claude 존재 플래그·연속 non-Claude 스캔 수 — raw _claude 가 한 프레임
     # 깜빡여도 안 흔들리는 안정 신호. API 에러 게이트·스캔 보조 판정이 읽는다(이름의
     # hdr 는 옛 헤더 예약 유래 — 헤더는 2026-06-13 제거, 신호 자체는 그대로 유효).
@@ -144,16 +125,10 @@ def reset_pane(pane) -> None:
     pane._retry_pending = False
     pane._retry_handle = None       # 전송 에러 재시도 예약 핸들 리셋(#9 H1)
     pane._retry_attempts = 0
-    pane._ctx_fired = False          # 컨텍스트 잔량 자동정리 디바운스 리셋(M11)
-    pane._ctx_last_fire = None       # 정리 빈도 상한 시각 리셋(M14)
-    pane._ctx_tip = None             # §3.10 ctx 압박 힌트 리셋
-    pane._ctx_tip_sticky = None      # §3.10 타이머 힌트 리셋
-    pane._session_model_hinted = False  # Scenario A 모델 힌트 리셋
     pane._claude_session_id = 0
     pane._tok_state = {"peak": 0, "total": 0}   # 새 셸 — 토큰 누계 0 에서 시작(S5 T4)
     pane._session_tokens = 0
     pane._pc_phase = None            # 프롬프트 단위 클리어 상태기계 리셋(모드 자체는 유지)
-    pane._adc_active = False         # 자동 doc→/clear 진행상태 리셋(§10)
     pane._cam_tries = 0              # 권한모드 자동전환 시도 카운터 리셋(§10)
     pane._cam_last = None
     pane._cam_seen = set()           # 이번 드라이브에서 본 모드 집합 리셋

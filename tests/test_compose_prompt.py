@@ -206,9 +206,36 @@ async def test_track_input_estimates_prompt_text():
     await _with_app(body)
 
 
-async def test_open_seeds_from_typed_prompt_and_clears_it():
-    """프롬프트 인계: 패널에 친 텍스트가 있으면 작성창이 그 텍스트로 시드되고,
-    프롬프트는 그 길이만큼 백스페이스로 비워진다(중복 투입 방지, 사용자 선택)."""
+async def test_open_seeds_from_typed_prompt_clears_on_apply():
+    """프롬프트 인계: 패널에 친 텍스트가 있으면 작성창이 그 텍스트로 시드된다. 비우기는
+    **여는 시점이 아니라 적용(Ctrl+S) 시점**에 — 적용 시 그 길이만큼 백스페이스로 비우고
+    작성창 텍스트를 paste 한다(Esc 취소 시 프롬프트 보존, 사용자 요청 2026-06-22)."""
+    from textual.widgets import TextArea as _TA
+
+    async def body(app, pilot, srv):
+        sent_in = []
+        sent_cmd = []
+        app.send_input = lambda d: sent_in.append(d)
+        app.send_cmd = lambda action, **kw: sent_cmd.append((action, kw))
+        pid = app.layout.get("active")
+        app._compose_track_input(pid, b"hello")
+        app.open_compose()
+        await pilot.pause(0.2)
+        ta = app.screen_stack[-1].query_one(_TA)
+        assert ta.text == "hello", repr(ta.text)          # 시드됨
+        assert sent_in == []                              # 여는 시점엔 안 비움
+        assert app._prompt_buf[pid] == "hello"            # 추적값도 그대로
+        await pilot.press("ctrl+s")                        # 적용
+        await pilot.pause(0.2)
+        assert b"\x7f" * 5 in sent_in, sent_in            # 적용 시 5칸 백스페이스로 비움
+        assert ("paste", {"text": "hello"}) in sent_cmd, sent_cmd
+        assert app._prompt_buf[pid] == "hello"            # 투입 후 프롬프트=작성 텍스트
+    await _with_app(body)
+
+
+async def test_cancel_keeps_prompt_unchanged():
+    """Esc 취소: 작성창을 닫아도 활성 패널 프롬프트는 건드리지 않는다(비우기 없음).
+    비우기를 적용 시점으로 옮긴 결과 — 취소 시 친 내용이 그대로 남는다(사용자 요청)."""
     from textual.widgets import TextArea as _TA
 
     async def body(app, pilot, srv):
@@ -219,15 +246,18 @@ async def test_open_seeds_from_typed_prompt_and_clears_it():
         app.open_compose()
         await pilot.pause(0.2)
         ta = app.screen_stack[-1].query_one(_TA)
-        assert ta.text == "hello", repr(ta.text)          # 시드됨
-        assert b"\x7f" * 5 in sent_in, sent_in            # 5칸 백스페이스로 프롬프트 비움
-        assert app._prompt_buf[pid] == ""                 # 추적값도 비워짐
+        assert ta.text == "hello"
+        await pilot.press("escape")                        # 취소
+        await pilot.pause(0.2)
+        assert sent_in == []                              # 백스페이스 안 보냄
+        assert app._prompt_buf[pid] == "hello"            # 프롬프트 그대로
     await _with_app(body)
 
 
 async def test_ime_paste_input_seeds_compose():
     """IME 한글 확정 입력은 Textual 이 Paste 이벤트로 보낸다(개별 Key 아님). on_paste
-    도 _prompt_buf 에 누적해야 '프롬프트 인계' 시드가 한글에서도 채워진다(버그 수정)."""
+    도 _prompt_buf 에 누적해야 '프롬프트 인계' 시드가 한글에서도 채워진다(버그 수정).
+    적용(Ctrl+S) 시 그만큼 백스페이스로 비운다."""
     from textual import events
     from textual.widgets import TextArea as _TA
 
@@ -237,11 +267,14 @@ async def test_ime_paste_input_seeds_compose():
         await pilot.pause(0.05)
         assert app._prompt_buf.get(pid) == "라이브로 확인", app._prompt_buf
         sent_in = []
+        app.send_cmd = lambda action, **kw: None
         app.send_input = lambda d: sent_in.append(d)
         app.open_compose()
         await pilot.pause(0.2)
         ta = app.screen_stack[-1].query_one(_TA)
         assert ta.text == "라이브로 확인", repr(ta.text)        # 한글 시드됨
+        await pilot.press("ctrl+s")                        # 적용
+        await pilot.pause(0.2)
         assert b"\x7f" * len("라이브로 확인") in sent_in, sent_in  # 그만큼 비움
     await _with_app(body)
 
@@ -305,4 +338,61 @@ async def test_block_select_delete_in_textarea():
         await pilot.press("backspace")     # 선택 범위 삭제
         await pilot.pause(0.1)
         assert ta.text == "he", repr(ta.text)
+    await _with_app(body)
+
+
+# ---- claude_input_box: 화면 입력박스 스크레이프(클라 키 추적 누락분 fallback) ----
+async def test_claude_input_box_parser():
+    """라이브 입력박스 추출(best-effort): 박스 없는 한 줄·박스 한 줄·박스 멀티라인
+    (하드 개행)·빈 박스·soft-wrap(개행 없이 잇기)·커서 없을 때 바닥 스캔·빈 입력 None."""
+    from pytmuxlib.claude import claude_input_box as f
+    # 박스 없는 "> 줄"(커서 행 앵커)
+    assert f(["일반", "행2", "> 타이핑 중인 줄",
+              "⏵⏵ auto mode on (shift+tab)"], cursor_y=2) == "타이핑 중인 줄"
+    # 테두리 박스 한 줄
+    assert f(["  ╭────────╮", "  │ > hello │", "  ╰────────╯",
+              "  ? for shortcuts"], cursor_y=1) == "hello"
+    # 박스 멀티라인(하드 개행) — 정렬 들여쓰기 제거 + 개행 보존
+    assert f(["╭───╮", "│ > line one │", "│   line two │", "╰───╯"],
+             cursor_y=2) == "line one\nline two"
+    # 빈 박스 → ""(못 찾음 아님)
+    assert f(["╭───╮", "│ > │", "╰───╯"], cursor_y=1) == ""
+    # soft-wrap(연속원 행은 wrap 집합) — 개행 없이 이어 붙임
+    assert f(["╭───╮", "│ > aaaa │", "│   bbbb │", "╰───╯"],
+             wrap={2}, cursor_y=1) == "aaaabbbb"
+    # 커서 미상 → 아래에서부터 박스/footer/빈 줄 건너뛴 첫 줄 앵커
+    assert f(["⏺ 출력", "", "╭───╮", "│ > hi there │", "╰───╯",
+              "? for shortcuts"]) == "hi there"
+    # 빈 입력(못 찾음) → None
+    assert f([]) is None
+
+
+async def test_scrape_fallback_seeds_when_tracker_empty():
+    """클라 키 추적(_prompt_buf)이 비어 있어도(원격제어/재접속처럼 on_key 미경유)
+    화면 입력박스를 긁어 작성창을 시드한다 — client_prompt_text 훅 fallback. Claude
+    패널 상태(pane_claude)일 때만 긁고(셸 오긁기 방지), 적용 시 그 길이만큼 비운다."""
+    from textual.widgets import TextArea as _TA
+
+    async def body(app, pilot, srv):
+        pid = app.layout.get("active")
+        app._prompt_buf = {}                      # 추적 비움(이 클라가 안 친 입력 가정)
+        # 화면에 라이브 입력박스가 그려져 있다고 두고, 클라 측 캐시를 심는다.
+        rows = [[("⏺ 이전 출력", {})],
+                [("╭──────────────╮", {})],
+                [("│ > remote text │", {})],
+                [("╰──────────────╯", {})]]
+        app.pane_content = {pid: (rows, (4, 2))}   # 커서는 입력박스(행2)
+        app.pane_wrap = {pid: set()}
+        app.pane_claude = {pid: {"id": pid, "claude": "idle"}}   # Claude 패널 게이트
+        # 직접 훅 경로 확인
+        assert app._current_prompt_text(pid) == "remote text"
+        # 셸 패널(claude 상태 없음)이면 긁지 않음(셸 프롬프트 오긁기 방지)
+        app.pane_claude = {pid: {"id": pid, "claude": None}}
+        assert app._current_prompt_text(pid) == ""
+        # 다시 Claude 패널 — open_compose 가 긁은 값으로 시드된다
+        app.pane_claude = {pid: {"id": pid, "claude": "idle"}}
+        app.open_compose()
+        await pilot.pause(0.2)
+        ta = app.screen_stack[-1].query_one(_TA)
+        assert ta.text == "remote text", repr(ta.text)
     await _with_app(body)

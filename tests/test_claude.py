@@ -196,6 +196,13 @@ async def test_claude_state():
     # 현행 idle footer: 권한 모드 줄(shift+tab 순환)
     assert claude_state("❯\n⏵⏵ auto mode on (shift+tab to cycle)") == "idle"
     assert claude_state("⏵⏵ accept edits on (shift+tab to cycle)") == "idle"
+    # 신형 idle footer(2026-06): "(shift+tab to cycle)" 접미가 빠지고 ⏵⏵ 프롬프트만
+    # 남는다 — 옛 "mode on (shift" 앵커로는 None(미인식)이 돼 '포맷 미인식' 경고가
+    # 멀쩡한 세션에 오발화했다(사용자 보고 2026-06-22). 접미 없는 footer 도 idle.
+    assert claude_state(
+        "❯\n⏵⏵ auto mode on · 2 shells · ↵ for agents · ↓ to manage") == "idle"
+    assert claude_state("⏵⏵ plan mode on · 1 shell") == "idle"
+    assert claude_state("⏵⏵ accept edits on · 4 shells · ↓ to manage") == "idle"
     # busy 와 idle footer 가 함께 있으면 busy 우선
     assert claude_state(
         "✽ Flowing… (8m 4s · ↑ 21.1k tokens)\n"
@@ -434,24 +441,9 @@ async def test_claude_state_usage_canonical_import():
 
 
 async def test_saver_hook_events_edges():
-    """M16: 절감 신호 전이 → 훅 이벤트. 상승 에지에서만 1회(§8)."""
-    prev = {"budget_level": 0, "pending_kind": None, "limit": False}
-
-    def names(msg):
-        return [e for e, _ in saver_hook_events(prev, msg)]
-
-    # 0→80: warn 1회(over 아님)
-    assert names({"budget_level": 80}) == ["claude-budget-warn"]
-    # 80 유지: 미발화(같은 화면 여러 프레임)
-    assert names({"budget_level": 80}) == []
-    # 80→100: over 1회(warn 재발 안 함)
-    assert names({"budget_level": 100}) == ["claude-budget-over"]
-    # 하강(100→0)은 미발화, 이후 0→100 직행은 warn+over 둘 다
-    assert names({"budget_level": 0}) == []
-    assert names({"budget_level": 100}) == ["claude-budget-warn",
-                                            "claude-budget-over"]
+    """에스컬레이션 신호 전이 → 훅 이벤트. 상승 에지에서만 1회(§8)."""
     # 비가역 자동액션 무장: None→{kind} 1회, 유지 미발화, 해제 후 재무장 1회
-    prev2 = {"budget_level": 0, "pending_kind": None, "limit": False}
+    prev2 = {"pending_kind": None, "limit": False}
     assert [e for e, _ in saver_hook_events(
         prev2, {"claude_pending": {"kind": "autoresume", "eta": 12}})] \
         == ["claude-auto-armed"]
@@ -461,7 +453,7 @@ async def test_saver_hook_events_edges():
     assert [e for e, _ in saver_hook_events(
         prev2, {"claude_pending": {"kind": "ctxclear"}})] == ["claude-auto-armed"]
     # 활성 패널 limit 진입 1회(상승 에지)
-    prev3 = {"budget_level": 0, "pending_kind": None, "limit": False}
+    prev3 = {"pending_kind": None, "limit": False}
     m = {"active_pane": 5, "panes_claude": [{"id": 5, "claude": "limit"},
                                             {"id": 6, "claude": "idle"}]}
     assert [e for e, _ in saver_hook_events(prev3, m)] == ["claude-limit"]
@@ -469,17 +461,15 @@ async def test_saver_hook_events_edges():
 
 
 async def test_saver_hook_events_env_payload():
-    """이벤트 env 가 PYTMUX_* 컨텍스트(별칭 계정·레벨·eta)를 담는다."""
-    prev = {"budget_level": 0, "pending_kind": None, "limit": False}
+    """이벤트 env 가 PYTMUX_* 컨텍스트(별칭 계정·eta)를 담는다."""
+    prev = {"pending_kind": None, "limit": False}
     evs = dict(saver_hook_events(
-        prev, {"budget_level": 100, "claude_account": "wo…@woojinkim.org",
+        prev, {"claude_account": "wo…@woojinkim.org",
                "claude_pending": {"kind": "autoresume", "eta": 30}}))
-    warn = evs["claude-budget-warn"]
-    assert warn["PYTMUX_BUDGET_LEVEL"] == 100
-    assert warn["PYTMUX_ACCOUNT"] == "wo…@woojinkim.org"
     armed = evs["claude-auto-armed"]
     assert armed["PYTMUX_PENDING_KIND"] == "autoresume"
     assert armed["PYTMUX_PENDING_ETA"] == 30
+    assert armed["PYTMUX_ACCOUNT"] == "wo…@woojinkim.org"
 
 
 async def test_fmt_long_turn_badge_switches_to_hours():

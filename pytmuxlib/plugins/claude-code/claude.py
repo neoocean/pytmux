@@ -104,8 +104,17 @@ def claude_state(text: str):
     if (_BUSY_SPINNER_RE.search(text)
             or "esc to interrupt" in low or "interrupt)" in low):
         return "busy"
-    # 입력 대기: 권한 모드 footer(shift+tab 순환) 또는 도움말/단축키 신호
-    if ("shift+tab to" in low or "mode on (shift" in low
+    # 입력 대기: 권한 모드 footer 또는 도움말/단축키 신호.
+    # 신형 Claude Code(2026-06) 는 idle footer 의 "(shift+tab to cycle)" 접미를 떼고
+    #   "⏵⏵ auto mode on · 2 shells · ↵ for agents · ↓ to manage"
+    # 로 바꿨다. 옛 앵커 "mode on (shift"·"? for shortcuts" 가 둘 다 사라져 파서가
+    # 멀쩡한 idle 화면을 None(미인식)으로 떨궜고, 그 결과 '포맷 미인식 — 추적 중단'
+    # 경고가 진행 중인 정상 세션에 오발화했다(사용자 보고 2026-06-22). 권한 모드
+    # footer 의 프롬프트 프리픽스 ⏵⏵(U+23F5×2 — auto/plan/accept/bypass 전 모드 공통,
+    # 신·구 포맷 불변)와 접미 없는 "mode on"/"accept edits on" 도 idle 로 인정한다.
+    if ("⏵⏵" in text
+            or "shift+tab to" in low or "mode on" in low
+            or "accept edits on" in low
             or "? for shortcuts" in low or "for shortcuts" in low
             or "/help for help" in low or "bypass permissions" in low):
         return "idle"
@@ -425,30 +434,6 @@ def claude_model(text):
     return f"{fam}-{ver.replace('-', '.')}" if ver else fam
 
 
-# M14c 힌트 UI(T3/S4): "모델 과선택" 알림 — **자동 전환은 하지 않는다**(모델 교체는
-# 작업 의미를 바꿀 위험이 커 설계상 비채택, docs/internal/TOKEN_SAVING_SCENARIO.md §4 T3). 프리
-# 미엄 모델(Opus)로 동일 결과가 반복(루프 의심)되는데 컨텍스트 여유까지 충분하면(잔량%
-# 높음 → 컨텍스트가 병목이 아니라 모델만 비쌈), 더 가벼운 모델을 "고려"하라는 헤더 힌트만
-# 낸다. 컨텍스트가 거의 찼으면(잔량 낮음) 모델 교체가 아니라 /compact 가 답이라 힌트를
-# 억제한다. 순수 함수 — 서버 _scan_claude 가 idle 완료 경계에서 부른다(단위 테스트 용이).
-def model_overselect_hint(model, repeat_n, ctx_pct=None,
-                          repeat_min=5, headroom_min=40):
-    """모델 과선택 힌트 문자열(또는 None). 조건 셋이 모두 참일 때만 힌트를 낸다:
-      · model 이 Opus 계열(claude_model() 결과의 'opus' 접두)일 것 — 프리미엄만 대상.
-      · repeat_n >= repeat_min — 동일 결과 반복(M17 _repeat_n 재사용, S8 '단순 반복').
-      · ctx_pct(잔량%)가 None 이 아니고 headroom_min 미만이면 **억제**(컨텍스트가 병목 →
-        /compact 가 답). None(미상, best-effort)이면 반복 신호를 1차로 보고 통과한다.
-    충족 시 헤더 배지로 그릴 힌트 문자열을 낸다(claude_warn 처럼 서버가 만든 한국어
-    리터럴 — 클라는 그대로 렌더). 자동 액션은 절대 발화하지 않는다(알림만)."""
-    if not model or not model.lower().startswith("opus"):
-        return None
-    if repeat_n < repeat_min:
-        return None
-    if ctx_pct is not None and ctx_pct < headroom_min:
-        return None
-    return "💡 Opus 로 반복 작업 — 가벼운 모델 고려(/model)"
-
-
 # §5.9 ReDoS: `\d+` 무제한은 거대 숫자열에서 뒤 `[kKmM]` 실패 시 O(n²) 백트래킹 →
 # 윈도우 수치는 십수 자리면 충분하므로 상한(`{1,9}`)으로 묶어 선형화(실 매칭 보존).
 _WINDOW_RE = re.compile(r"(\d{1,9})\s*([kKmM])")
@@ -705,6 +690,110 @@ def claude_prompt(text: str):
     return found
 
 
+# ---- 라이브 입력박스(지금 타이핑 중인 프롬프트) 추출 — claude_prompt 의 역(逆) ----
+# claude_prompt 은 **제출된** transcript 줄을 뽑고 하단 라이브 입력박스를 건너뛴다.
+# 여기서는 반대로 화면 맨 아래 **입력박스에 현재 들어 있는 텍스트**를 긁는다. 작성창
+# open_compose 의 '프롬프트 인계' 가 클라 키 추적(_prompt_buf)이 빈 경우 — 원격제어
+# (/rc)·재접속처럼 클라 on_key 를 안 거친 입력 — 시드/비우기 길이로 쓰는 fallback.
+# **Claude UI 포맷 의존 best-effort**: 박스 구조가 불분명하면 None 을 돌려 호출부가
+# 안전히 기존 동작(추적치/초안)으로 떨어지게 한다. 단일 줄은 견고, 멀티라인은 근사치.
+_BOX_TOP = "╭┌"          # 박스 위 모서리(좌)
+_BOX_BOTTOM = "╰└"       # 박스 아래 모서리(좌)
+_BOX_SIDE = "│|"         # 박스 세로 테두리(유니코드/ASCII 폴백)
+
+
+def _box_inner(line: str) -> str:
+    """박스 한 줄에서 좌우 세로 테두리(│)와 바깥 패딩 한 칸을 떼고 안쪽 내용을
+    돌려준다. 테두리가 없으면(박스 없는 입력 줄) 줄 전체를 우측 공백만 떼고 돌려준다."""
+    l = -1
+    for i, ch in enumerate(line):
+        if ch in _BOX_SIDE:
+            l = i
+            break
+    if l == -1:
+        return line.rstrip()
+    r = len(line)
+    for i in range(len(line) - 1, l, -1):
+        if line[i] in _BOX_SIDE:
+            r = i
+            break
+    inner = line[l + 1:r]
+    if inner[:1] == " ":      # 박스 안쪽 패딩 한 칸 제거
+        inner = inner[1:]
+    return inner.rstrip()
+
+
+def claude_input_box(lines, wrap=(), cursor_y=None):
+    """패널 화면 행 문자열 목록에서 라이브 입력박스의 현재 텍스트를 추출(best-effort).
+
+    lines: 패널 콘텐츠 행 문자열(위→아래). wrap: soft-wrap 연속원 행 인덱스 집합 —
+    그 행은 윗행과 **개행 없이** 이어 붙인다(자동 줄바꿈이라 한 논리 줄). cursor_y:
+    하드웨어 커서 행(있으면 그 행이 입력박스 안이므로 앵커로 쓴다). 반환: 입력 텍스트
+    (빈 박스면 ""), 입력박스를 못 찾으면 None."""
+    n = len(lines)
+    if not n:
+        return None
+    wrap = set(wrap or ())
+    # 앵커 행: 커서 행 우선. 없으면 아래에서부터 박스 테두리/footer/빈 줄을 건너뛴 첫 줄.
+    if cursor_y is None or not (0 <= cursor_y < n):
+        cursor_y = None
+        for i in range(n - 1, -1, -1):
+            s = lines[i].strip()
+            if not s:
+                continue
+            if s[0] in _BOX_TOP or s[0] in _BOX_BOTTOM:
+                continue
+            if _FOOTER_HINT_RE.search(s):
+                continue
+            cursor_y = i
+            break
+        if cursor_y is None:
+            return None
+    # 앵커를 감싸는 박스 테두리 탐색(위로 top·아래로 bottom). 다른 박스 경계를 먼저
+    # 만나면 앵커가 박스 밖(박스 없는 입력)인 것으로 본다.
+    top = bottom = None
+    for i in range(cursor_y, -1, -1):
+        c = lines[i].lstrip()[:1]
+        if c in _BOX_TOP:
+            top = i
+            break
+        if c in _BOX_BOTTOM and i != cursor_y:
+            break
+    for i in range(cursor_y, n):
+        c = lines[i].lstrip()[:1]
+        if c in _BOX_BOTTOM:
+            bottom = i
+            break
+        if c in _BOX_TOP and i != cursor_y:
+            break
+    if top is not None and bottom is not None and top < bottom:
+        rows = list(range(top + 1, bottom))
+    else:
+        rows = [cursor_y]            # 박스 없음 → 입력 한 줄만
+    if not rows:
+        return ""
+    parts = []
+    for k, ri in enumerate(rows):
+        inner = _box_inner(lines[ri])
+        if k == 0:
+            t = inner.lstrip()
+            if t[:1] == ">":          # 프롬프트 마커("> ") 제거
+                t = t[1:]
+                if t[:1] == " ":
+                    t = t[1:]
+            parts.append(t.rstrip())
+            continue
+        # 연속 줄: 첫 줄 "> " 아래 정렬용 들여쓰기(최대 2칸)를 떼고 잇는다. soft-wrap
+        # (wrap 집합)은 개행 없이, 하드 개행(Shift+Enter)은 "\n" 으로 잇는다.
+        b = inner
+        j = 0
+        while j < 2 and j < len(b) and b[j] == " ":
+            j += 1
+        b = b[j:].rstrip()
+        parts.append(b if ri in wrap else "\n" + b)
+    return "".join(parts)
+
+
 # ---- 자동 /compact 억제: Claude 가 사용자에게 질문/선택을 요청 중인지(요청) ----
 # 화면이 질문으로 끝나면(=사용자 답을 기다리는 중) 자동 /compact 를 넣지 않는다 —
 # 답하기 전에 압축하면 진행 중 상호작용을 끊거나(선택지 사라짐) 무의미하다. 두 신호:
@@ -888,30 +977,19 @@ def parse_reset_ts(reset, now: "_dt.datetime | None" = None):
 
 
 # ---- M16: PTY 밖 에스컬레이션 훅 — status 전이 → (event, env) (§8) ----
-# 클라(PytmuxApp)가 status 마다 호출한다. 이미 송신되는 신호(budget_level·
-# claude_pending·활성패널 limit)의 **상승 에지에서만** 1회 발화하도록 (event, env)
+# 클라(PytmuxApp)가 status 마다 호출한다. 이미 송신되는 신호(claude_pending·
+# 활성패널 limit)의 **상승 에지에서만** 1회 발화하도록 (event, env)
 # 목록을 계산하고 prev(가변 dict)를 갱신한다. PytmuxApp 은 import 불가(함수 내부
 # 정의)라 여기 모듈 함수로 빼서 단위 테스트가 가능하게 한다(alert-bell 전이 패턴과 동형).
 def saver_hook_events(prev: dict, msg: dict) -> list:
     """status 전이에서 발화할 [(event, env_dict), …] 을 계산하고 prev 를 갱신한다.
 
-    prev 키: budget_level(int)·pending_kind(str|None)·limit(bool). 상승 에지(미만→이상,
-    None→값, False→True)에서만 이벤트를 낸다 — 같은 화면을 여러 프레임 봐도 중복
-    발화하지 않는다(§5.6). env 는 사용자 훅 셸 명령이 참조할 PYTMUX_* 컨텍스트.
-    계정은 별칭(claude_account)만 — 원문 이메일은 싣지 않는다."""
+    prev 키: pending_kind(str|None)·limit(bool). 상승 에지(None→값, False→True)에서만
+    이벤트를 낸다 — 같은 화면을 여러 프레임 봐도 중복 발화하지 않는다(§5.6). env 는
+    사용자 훅 셸 명령이 참조할 PYTMUX_* 컨텍스트. 계정은 별칭(claude_account)만 —
+    원문 이메일은 싣지 않는다."""
     events = []
     acct = msg.get("claude_account") or ""
-    blvl = int(msg.get("budget_level") or 0)
-    pblvl = int(prev.get("budget_level", 0))
-    if blvl >= 80 > pblvl:
-        events.append(("claude-budget-warn", {
-            "PYTMUX_HOOK_EVENT": "claude-budget-warn",
-            "PYTMUX_BUDGET_LEVEL": blvl, "PYTMUX_ACCOUNT": acct}))
-    if blvl >= 100 > pblvl:
-        events.append(("claude-budget-over", {
-            "PYTMUX_HOOK_EVENT": "claude-budget-over",
-            "PYTMUX_BUDGET_LEVEL": blvl, "PYTMUX_ACCOUNT": acct}))
-    prev["budget_level"] = blvl
 
     pend = msg.get("claude_pending")
     kind = pend.get("kind") if isinstance(pend, dict) else None

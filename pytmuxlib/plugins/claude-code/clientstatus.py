@@ -16,10 +16,7 @@ from pytmuxlib import i18n
 # "claude.*" 네임스페이스. 모듈 import 시점(플러그인 활성)에 1회 병합한다.
 i18n.register({
     "ko": {
-        "claude.limit_reached": " ⚠ 한도 도달 ",
-        "claude.limit_near": " ⚠ 한도 근접 ",
         "claude.auto_resume": "자동재개",
-        "claude.auto_cleanup": "자동정리",
         "claude.countdown": " ⏳ {label} {eta}s(입력=취소) ",
         "claude.limit_used": "{pct}%/5h 사용",
         "claude.limit_week_sonnet": "{pct}%/주(Sonnet)",
@@ -28,14 +25,9 @@ i18n.register({
         # 언어중립('⚠ M:SS')이라 서버 문자열을 그대로 쓴다(배지 키 없음).
         "claude.warn_repeat_badge": "⚠ 동일 결과 {n}회 반복 — 루프 의심",
         "claude.warn_fmt_badge": "⚠ Claude 포맷 미인식 — 추적 중단(버전 업데이트?)",
-        # 과사용 완화 배지: ctx 자동정리·예산 plan 유도 중 하나라도 ON 일 때 표시.
-        "claude.mitigation_badge": " 완화 ",
     },
     "en": {
-        "claude.limit_reached": " ⚠ Limit reached ",
-        "claude.limit_near": " ⚠ Limit near ",
         "claude.auto_resume": "auto-resume",
-        "claude.auto_cleanup": "auto-cleanup",
         "claude.countdown": " ⏳ {label} {eta}s (input=cancel) ",
         "claude.limit_used": "{pct}%/5h used",
         "claude.limit_week_sonnet": "{pct}%/wk(Sonnet)",
@@ -43,7 +35,6 @@ i18n.register({
         "claude.warn_repeat_badge": "⚠ Same output repeated {n}× — loop suspected",
         "claude.warn_fmt_badge":
             "⚠ Claude format unrecognized — tracking paused (version update?)",
-        "claude.mitigation_badge": " saving ",
     },
 })
 
@@ -68,30 +59,14 @@ def init_defaults(status):
     status.claude_warn_kind = None # M17 경고 종류(None|long_turn|repeat|fmt_unknown)
     status.claude_warn_n = None    # 반복 종류일 때 반복 횟수(로케일별 배지 렌더용)
     status.claude_model = None     # M14c: 활성 Claude 모델 배지(opus-4.8 등)
-    status.claude_model_tip = None # M14c/A: 모델 힌트 배지(과선택·세션시작, 없으면 None)
-    status.claude_ctx_tip = None   # §3.10 C: ctx 압박 힌트 배지(없으면 None)
-    status.claude_model_hint = False  # M14c 힌트 토글(설정 팝업 표시용·기본 OFF)
     status.usage_limits = None     # M19: 그림자 /usage 세션·주간 한도 dict
     status.usage_age_sec = None    # S6 T3: 실측 경과(초) — stale 표기용
-    # 토큰 절감 설정(설정 팝업 토글 현재값 + 예산 경고).
-    status.auto_doc_clear = False
-    status.auto_compact = False
-    status.auto_hardstop = False   # 서버 기본 OFF(2026-06-18 사용자 요청) 과 일치
+    # Claude 설정(설정 팝업 토글 현재값).
     status.auto_token_on_exit = True  # §10-F 세션 종료 시 토큰 화면 자동 표시(서버 기본 ON)
     status.claude_auto_mode = False
-    status.claude_ctx_autoclear = False
-    status.claude_ctx_threshold = 15
-    status.claude_ctx_action = "compact"
-    status.claude_ctx_min_interval = 120
     status.claude_long_turn_sec = 600  # M17: 장기 턴 경고 임계(초, 0=끔)
     status.claude_repeat_alert = 3     # M17: 반복 루프 경고 임계(회, 0=끔)
-    status.claude_budget_plan = False
-    # S6 T4 실측 한도 게이트 임계(%) — 서버 기본(세션 95 ON·주간 끔)과 일치.
-    status.usage_gate_session_pct = 95
-    status.usage_gate_week_pct = 0
-    # 한도 경고 레벨(0/80/100) — §7-4 이후 실측 게이트 기반(키 이름은 유지).
-    status.budget_level = 0
-    status.claude_pending = None   # 무장된 자동 액션 {kind, eta초}(M14 카운트다운)
+    status.claude_pending = None   # 무장된 자동재개 {kind, eta초} 카운트다운
 
 
 def absorb(status, msg):
@@ -134,8 +109,6 @@ def absorb(status, msg):
     status.claude_warn = msg.get("claude_warn")   # M17 grade0 경고(권위값)
     status.claude_warn_kind = msg.get("claude_warn_kind")  # 종류(로케일별 렌더)
     status.claude_warn_n = msg.get("claude_warn_n")        # 반복 횟수(반복 종류)
-    status.claude_model_tip = msg.get("claude_model_tip")  # M14c/A 힌트(권위값, 매 status)
-    status.claude_ctx_tip = msg.get("claude_ctx_tip")      # §3.10 C ctx 힌트(권위값)
     cm = msg.get("claude_model")                  # M14c 모델 배지(지속표시)
     if cm or pane_changed:   # 패널 전환 시 None 으로 교체 — stale 모델 잔류 방지
         status.claude_model = cm
@@ -143,35 +116,15 @@ def absorb(status, msg):
         status.usage_limits = msg.get("usage_limits")
     if "usage_age_sec" in msg:                    # S6 T3: 실측 경과(stale 표기)
         status.usage_age_sec = msg.get("usage_age_sec")
-    # 토큰 절감 설정(설정 팝업이 현재값으로 토글을 그리는 데 씀). 항상 권위값 반영.
-    status.auto_doc_clear = msg.get("auto_doc_clear", status.auto_doc_clear)
-    status.auto_compact = msg.get("auto_compact", status.auto_compact)
-    status.auto_hardstop = msg.get("auto_hardstop", status.auto_hardstop)
+    # Claude 설정(설정 팝업이 현재값으로 토글을 그리는 데 씀). 항상 권위값 반영.
     status.auto_token_on_exit = msg.get("auto_token_on_exit",
                                         status.auto_token_on_exit)
     status.claude_auto_mode = msg.get("claude_auto_mode", status.claude_auto_mode)
-    status.claude_ctx_autoclear = msg.get(
-        "claude_ctx_autoclear", status.claude_ctx_autoclear)
-    status.claude_ctx_threshold = msg.get(
-        "claude_ctx_threshold", status.claude_ctx_threshold)
-    status.claude_ctx_action = msg.get(
-        "claude_ctx_action", status.claude_ctx_action)
-    status.claude_ctx_min_interval = msg.get(
-        "claude_ctx_min_interval", status.claude_ctx_min_interval)
     status.claude_long_turn_sec = msg.get(
         "claude_long_turn_sec", status.claude_long_turn_sec)
     status.claude_repeat_alert = msg.get(
         "claude_repeat_alert", status.claude_repeat_alert)
-    status.claude_budget_plan = msg.get(
-        "claude_budget_plan", status.claude_budget_plan)
-    status.claude_model_hint = msg.get(            # M14c 힌트 토글(full 시만 도달)
-        "claude_model_hint", status.claude_model_hint)
-    status.usage_gate_session_pct = msg.get(            # S6 T4 실측 게이트 임계
-        "usage_gate_session_pct", status.usage_gate_session_pct)
-    status.usage_gate_week_pct = msg.get(
-        "usage_gate_week_pct", status.usage_gate_week_pct)
-    status.budget_level = msg.get("budget_level", 0)
-    # M14 카운트다운: 서버가 매 status 에 항상 키를 실어 보낸다(없으면 None).
+    # 카운트다운: 서버가 매 status 에 항상 키를 실어 보낸다(없으면 None).
     status.claude_pending = msg.get("claude_pending")
 
 
@@ -214,21 +167,11 @@ def render_segs(status, segs, w, w0=None):
     _cw = lambda t: sum(_char_cells(c) for c in t)  # noqa: E731
     # w0 미지정(직접 호출)이면 기존처럼 전수합산으로 폭을 구한다(하위호환).
     acc = w0 if w0 is not None else sum(_cw(s.text) for s in segs)
-    # 토큰 과사용 완화 배지: ctx 자동정리(claude_ctx_autoclear) 또는 예산 plan 유도
-    # (claude_budget_plan) 중 하나라도 ON 일 때 파란 secondary 와 다른 success(녹색)
-    # 배경으로 표시한다. 나머지 배지보다 앞(좌측)에 배치해 완화 상태를 우선 인식하게 한다.
-    status._mitigation_zone = None
-    if status.claude_active and (status.claude_ctx_autoclear or status.claude_budget_plan):
-        _mt = i18n.t("claude.mitigation_badge")
-        segs.append(Segment(_mt, Style(color="white", bgcolor=tc("success"), bold=True)))
-        status._mitigation_zone = (acc, acc + _cw(_mt))
-        acc += _cw(_mt)
     # 활성 Claude 패널: 모델(M14c) + 컨텍스트 사용량(best-effort) + 세션 누적(#3, Σ).
     uparts = []
     if status.claude_active:
-        # 모델 배지: 폭이 좁거나 모델 힌트(tip) 활성 시 생략 — tip 활성 시에는 tip 영역
-        # 왼쪽에 모델 확인 배지로 별도 표시하므로 compound 에서 중복 제거.
-        if status.claude_model and w >= 60 and not status.claude_model_tip:
+        # 모델 배지: 폭이 좁으면 생략.
+        if status.claude_model and w >= 60:
             uparts.append(status.claude_model)
         # 좌하단 표기(사용자 요청 2026-06-11): 하이라이트 패널의 계정 기준으로 ①현재
         # 패널 세션의 컨텍스트 비율% ②5시간 리밋까지 남은 비율%만 보인다. **토큰 수치는
@@ -298,35 +241,10 @@ def render_segs(status, segs, w, w0=None):
         x += 1
         status._usage_zone = (ux0, x)
         acc = x   # P6: uparts 블록이 append 한 폭만큼 누적 전진(x 가 정확히 추적)
-    # 실측 한도 경고(알림만 — 동작 변경 없음, §7-4 이후 게이트 임계 기반).
-    # 임계 도달=빨강 ⚠, 임계의 80% 도달=노랑 ⚠.
-    if status.budget_level >= 80:
-        over = status.budget_level >= 100
-        # 텍스트 색은 배경 대비로: 노랑(근접) 배경엔 흰 글자가 묻혀 안 보이므로
-        # 검은 글자(아래 ⏳ 카운트다운 배지와 동일 패턴), 빨강(도달) 배경엔 흰 글자.
-        _bt = (i18n.t("claude.limit_reached") if over
-               else i18n.t("claude.limit_near"))
-        # ⚠(U+26A0) 표시 보정(M17 경고 배지와 동일): 터미널선 ⚠ 가 2칸 컬러 이모지라
-        # wcwidth=1 인데도 바로 뒤 단일 공백이 둘째 칸에 흡수돼 "⚠Limit near" 처럼
-        # 붙어 보였다(사용자 보고 2026-06-19). **표시용으로만** ⚠ 뒤 공백을 한 칸 더
-        # 넣어 띄운다 — i18n 카탈로그는 자연스러운 한 칸 유지, 클릭존 폭은 표시 문자열
-        # 기준 _cw 로 일관(근접 노랑·도달 빨강 둘 다 적용).
-        _bt = _bt.replace("⚠ ", "⚠  ", 1)
-        segs.append(Segment(_bt,
-                            Style(color=("white" if over else "black"),
-                                  bgcolor=("red" if over else "yellow"),
-                                  bold=True)))
-        # 한도 경고 배지 클릭존(요청): 클릭/터치 시 사용량+리셋 카운트다운 팝업
-        # (usage-view, claude-token-usage-view 플러그인)을 연다. 토큰Σ 클릭(_usage_zone)
-        # 이 여는 영속 통계 로그와 달리, 이쪽은 "지금 한도까지 얼마/리셋까지 몇 초" 뷰다.
-        status._limit_zone = (acc, acc + _cw(_bt))
-        acc += _cw(_bt)
-    # M14 카운트다운 배지: 무장된 자동 액션의 종류 + 남은 초(비가역 동작 발견성).
+    # 카운트다운 배지: 무장된 자동재개의 남은 초(비가역 동작 발견성).
     if isinstance(status.claude_pending, dict):
-        kind = status.claude_pending.get("kind")
         eta = status.claude_pending.get("eta", 0)
-        label = (i18n.t("claude.auto_resume") if kind == "resume"
-                 else i18n.t("claude.auto_cleanup"))
+        label = i18n.t("claude.auto_resume")
         _ct = i18n.t("claude.countdown", label=label, eta=eta)
         segs.append(Segment(_ct,
                             Style(color="black", bgcolor=tc("warning"),
@@ -361,27 +279,4 @@ def render_segs(status, segs, w, w0=None):
         # (포맷 미인식 / 장기 턴 / 반복 루프 종류별 안내).
         status._warn_zone = (acc, acc + _cw(_wt))
         acc += _cw(_wt)
-    # M14c 모델 과선택/세션 힌트 배지. compound 와 구분되도록 accent(오렌지) 배경.
-    # 맨 왼쪽에 모델 확인 배지(secondary)를 붙여 어떤 모델의 힌트인지 고정한다 —
-    # tip 활성 시 compound 가 모델명을 빼므로 여기서 클릭 접근점(model_zone)을 제공.
-    if status.claude_model_tip:
-        _tsec = Style(color="white", bgcolor=tc("secondary"), bold=True)
-        _thi = Style(color="black", bgcolor=tc("warning"), bold=True)
-        _tfb = getattr(status, "focus_btn", None)
-        if status.claude_model and w >= 60:
-            _mc = f" {status.claude_model} "
-            _mcw = _cw(_mc)
-            status._model_zone = (acc, acc + _mcw)
-            segs.append(Segment(_mc, _thi if _tfb == "model" else _tsec))
-            acc += _mcw
-        _tt = f" {status.claude_model_tip} "
-        segs.append(Segment(_tt, Style(color="black", bgcolor=tc("accent"), bold=True)))
-        acc += _cw(_tt)
-    # §3.10 C ctx 압박 힌트 배지(warning 색조, model_tip 뒤에 표시).
-    if status.claude_ctx_tip:
-        _ct = f" {status.claude_ctx_tip} "
-        segs.append(Segment(_ct,
-                            Style(color="white", bgcolor=tc("warning"),
-                                  bold=True)))
-        acc += _cw(_ct)
     return acc   # P6: 새 누적 셀폭(코어가 NEST/윈도우 이어붙일 기준)

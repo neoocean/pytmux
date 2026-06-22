@@ -822,7 +822,7 @@ async def test_command_list_and_autocomplete():
         catmap = dict(scr._all_cats)
         assert "Claude" in catmap and "모니터" in catmap, list(catmap)
         claude_names = [n for n, _ in catmap["Claude"]]
-        for nm in ("claude-auto-mode", "auto-doc-clear", "auto-resume",
+        for nm in ("claude-auto-mode", "auto-retry", "auto-resume",
                    "token-log", "prompt-clear"):
             assert nm in claude_names, (nm, claude_names)
         mon_names = [n for n, _ in catmap["모니터"]]
@@ -3603,27 +3603,6 @@ async def test_model_badge_click_opens_config():
     await _with_app(body)
 
 
-async def test_limit_badge_click_opens_usage_view():
-    # 상태줄 한도 경고 배지(⚠) 클릭 → 사용량+리셋 카운트다운 팝업(usage-view, 요청).
-    # 토큰Σ 클릭(_usage_zone, 영속 통계 로그)과는 다른 화면을 연다.
-    from types import SimpleNamespace
-    async def body(app, pilot, srv):
-        app.mouse_enabled = True
-        opened, refreshed = [], []
-        app.open_usage_view = lambda mode="popup": opened.append(mode)
-        app.send_cmd = lambda c, **kw: refreshed.append(c)
-        sb = app.status
-        for z in ("_rec_zone", "_clock_zone", "_date_zone",
-                  "_usage_zone", "_model_zone", "_host_zone"):
-            setattr(sb, z, None)
-        sb._limit_zone = (5, 25)
-        ev = SimpleNamespace(x=10, y=sb.size.height - 1, stop=lambda: None)
-        sb.on_mouse_down(ev)
-        assert opened == ["popup"], opened
-        assert "refresh_usage" in refreshed, refreshed
-    await _with_app(body)
-
-
 async def test_esc_down_focuses_status_bar_buttons():
     # ESC 모드 최하단 패널에서 ↓ → 하단 상태바 버튼 포커스(요청). ←→ 순환, Enter 실행.
     async def body(app, pilot, srv):
@@ -4477,29 +4456,6 @@ async def test_status_usage_click_opens_token_log():
     await _with_app(body)
 
 
-async def test_status_limit_badge_click_opens_usage_view():
-    """상태줄 한도 경고 배지(⚠)가 budget_level≥80 일 때 클릭존(_limit_zone)으로
-    등록되고, 클릭하면 사용량+리셋 카운트다운 팝업(open_usage_view 'popup')을 연다 —
-    토큰Σ 클릭(open_token_log, 영속 통계)과는 다른 화면(요청)."""
-    async def body(app, pilot, srv):
-        from textual import events
-        app.status.claude_active = True
-        app.status.budget_level = 100         # ⚠ 한도 도달 배지 그려짐
-        app.status.render_line(0)
-        lz = app.status._limit_zone
-        assert lz is not None, "한도 배지 클릭존 등록"
-        opened, refreshed = [], []
-        app.open_usage_view = lambda mode="popup": opened.append(mode)
-        app.send_cmd = lambda c, **kw: refreshed.append(c)
-        y = app.status.size.height - 1
-        cx = (lz[0] + lz[1]) // 2
-        ev = events.MouseDown(app.status, cx, y, 0, 0, 1, False, False, False)
-        app.status.on_mouse_down(ev)
-        assert opened == ["popup"], opened
-        assert "refresh_usage" in refreshed, refreshed
-    await _with_app(body)
-
-
 async def test_status_warn_badge_click_opens_info():
     """상태줄 Claude 경고 배지(claude_warn)가 클릭존(_warn_zone)으로 등록되고, 클릭하면
     상황·할일 팝업(open_claude_warn_info)을 연다(요청)."""
@@ -4529,58 +4485,6 @@ async def test_status_warn_badge_emoji_gets_visible_space():
         assert "⚠  10:25" in line, repr(line)        # 표시엔 공백 2칸
         assert app.status.claude_warn == "⚠ 10:25"   # 저장값은 원문(공백 1칸)
         assert app.status._warn_zone is not None
-    await _with_app(body)
-
-
-async def test_status_limit_badge_emoji_gets_visible_space():
-    """한도 경고 배지(⚠ 한도 근접/도달)도 §10-E 와 동일하게 ⚠ 가 2칸 이모지라 다음
-    글자와 붙어 "⚠Limit near" 로 보이던 것을, 상태줄 **표시에서만** ⚠ 뒤 공백을 한
-    칸 더 넣어 띄운다(사용자 보고 2026-06-19). 클릭존(_limit_zone)은 그대로 등록."""
-    async def body(app, pilot, srv):
-        app.status.claude_active = True
-        app.status.budget_level = 80          # ⚠ 한도 근접(노랑) 배지
-        line = "".join(s.text for s in app.status.render_line(0))
-        assert "⚠  " in line, repr(line)       # ⚠ 뒤 공백 2칸(표시)
-        assert app.status._limit_zone is not None
-    await _with_app(body)
-
-
-async def test_mitigation_badge_shown_and_clickable():
-    """과사용 완화 배지: claude_ctx_autoclear 또는 claude_budget_plan ON 일 때 상태줄
-    맨 앞(나머지 배지보다 앞)에 success(녹색) 배지가 표시되고, 클릭하면 절감 설정 팝업
-    (open_token_saver)을 연다. 두 기능이 모두 OFF 이면 배지가 없어야 한다."""
-    async def body(app, pilot, srv):
-        from textual import events
-
-        # ctx_autoclear ON → 완화 배지 등록
-        app.status.claude_active = True
-        app.status.claude_ctx_autoclear = True
-        app.status.claude_budget_plan = False
-        line_segs = app.status.render_line(0)
-        line = "".join(s.text for s in line_segs)
-        assert app.status._mitigation_zone is not None, "ctx_autoclear ON → 완화 배지 등록"
-        mz = app.status._mitigation_zone
-        # budget_level 배지나 다른 배지보다 앞에 위치(x0이 더 작아야 함)
-        app.status.budget_level = 100
-        app.status.render_line(0)
-        lz = app.status._limit_zone
-        assert lz is not None
-        assert mz[0] < lz[0], "완화 배지가 한도 경고 배지보다 앞에 위치"
-
-        # 클릭 → open_token_saver 호출
-        called = []
-        app.open_token_saver = lambda: called.append(True)
-        y = app.status.size.height - 1
-        cx = (mz[0] + mz[1]) // 2
-        ev = events.MouseDown(app.status, cx, y, 0, 0, 1, False, False, False)
-        app.status.on_mouse_down(ev)
-        assert called == [True], called
-
-        # 두 기능 모두 OFF → 배지 없음
-        app.status.claude_ctx_autoclear = False
-        app.status.claude_budget_plan = False
-        app.status.render_line(0)
-        assert app.status._mitigation_zone is None, "완화 기능 모두 OFF → 배지 없음"
     await _with_app(body)
 
 
@@ -6054,17 +5958,14 @@ async def test_status_retains_static_opts_when_omitted_c4():
     값을 그리지 않게 하는 핵심 불변식."""
     async def body(app, pilot, srv):
         st = app.status
-        st.update_status({"t": "status", "claude_ctx_threshold": 22,
-                          "claude_ctx_action": "doc-clear",
-                          "usage_gate_session_pct": 90})
-        assert st.claude_ctx_threshold == 22
-        assert st.claude_ctx_action == "doc-clear"
-        assert st.usage_gate_session_pct == 90
+        st.update_status({"t": "status", "claude_long_turn_sec": 900,
+                          "claude_repeat_alert": 5})
+        assert st.claude_long_turn_sec == 900
+        assert st.claude_repeat_alert == 5
         # 정적 옵션 키가 모두 빠진 주기 status → 직전 값 그대로 유지
         st.update_status({"t": "status"})
-        assert st.claude_ctx_threshold == 22, "컨텍스트 임계 유실"
-        assert st.claude_ctx_action == "doc-clear", "정리 방식 유실"
-        assert st.usage_gate_session_pct == 90, "실측 게이트 임계 유실"
+        assert st.claude_long_turn_sec == 900, "장기턴 임계 유실"
+        assert st.claude_repeat_alert == 5, "반복 임계 유실"
     await _with_app(body)
 
 

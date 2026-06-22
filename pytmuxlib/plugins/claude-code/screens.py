@@ -93,18 +93,6 @@ i18n.register({
     "ko": {r[1]: r[1] for r in SAVER_ROWS},
     "en": {
         "토큰리밋 자동재개": "Token-limit auto-resume",
-        "실측 세션한도 게이트(자동재개 보류 %)":
-            "Measured session-limit gate (auto-resume hold %)",
-        "실측 주간한도 게이트(%)": "Measured weekly-limit gate (%)",
-        "실측 한도 압박(게이트의 80%) 시 plan 모드 유도":
-            "Induce plan mode under limit pressure (80% of gate)",
-        "컨텍스트 잔량 부족 시 자동 정리": "Auto-clean when context runs low",
-        "  └ 정리 방식": "  └ clean method", "  └ 잔량 임계": "  └ remaining threshold",
-        "  └ 정리 빈도 상한": "  └ clean frequency cap",
-        "idle 지속 시 자동 문서화+/clear": "Auto document+/clear when idle persists",
-        "idle 지속 시 자동 /compact": "Auto /compact when idle persists",
-        "컨텍스트 하드스톱 시 즉시 자동 /compact":
-            "Auto /compact immediately on context hardstop",
         "세션 종료 시 토큰 사용량 화면 자동 표시":
             "Auto-open token usage screen when session ends",
         "권한모드 자동 오토": "Auto-switch permission mode to auto",
@@ -112,8 +100,6 @@ i18n.register({
             "Per-prompt clear (doc+/clear each completion)",
         "장기 턴 경고(초)": "Long-turn warning (sec)",
         "반복 루프 경고(회)": "Repeat-loop warning (count)",
-        "모델 과선택 힌트(Opus 반복+여유 시 가벼운 모델 제안)":
-            "Model over-selection hint (suggest a lighter model when Opus repeats with headroom)",
     },
 })
 # 포맷 문자열(동적 인자 포함)은 semantic 키.

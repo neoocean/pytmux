@@ -968,9 +968,7 @@ class StatusBar(Widget):
         self._usage_zone = None  # (x0, x1) 토큰 사용량 클릭 영역(token-log 팝업)
         # _rec_zone(REC 클릭 영역)은 rec 플러그인 client_statusbar 가 설치(코어 미소유).
         self._model_zone = None  # (x0, x1) 모델 배지 클릭 영역(모델·컨텍스트 팝업, 요청)
-        self._limit_zone = None  # (x0, x1) 한도 경고 배지 클릭 영역(usage-view 팝업, 요청)
         self._warn_zone = None   # (x0, x1) Claude 경고 배지 클릭 영역(상황·할일 팝업, 요청)
-        self._mitigation_zone = None  # (x0, x1) 과사용 완화 배지 클릭 영역(절감 설정 팝업)
         self._ar_zone = None     # (x0, x1) AR(자동재개) 배지 클릭 영역(켜고끄기 팝업, 요청)
         self._host_zone = None   # (x0, x1) 서버이름(host) 클릭 영역(서버 탭, §10-A #12)
         self.focus_btn = None    # ESC 모드 하단 포커스 키 강조(model/usage/rec/host/clock/date)
@@ -1140,9 +1138,7 @@ class StatusBar(Widget):
         acc = self.app.plugins.client_statusbar_badges(self.app, self, segs, w, acc)
         self._usage_zone = None
         self._model_zone = None   # 모델 배지 클릭존(모델·컨텍스트 변경 팝업, 요청)
-        self._limit_zone = None   # 한도 경고 배지 클릭존(usage-view 사용량+리셋 팝업, 요청)
         self._warn_zone = None    # Claude 경고 배지 클릭존(상황·할일 팝업, 요청)
-        self._mitigation_zone = None  # 과사용 완화 배지 클릭존(절감 설정 팝업)
         # Claude 좌하단 세그먼트(모델 배지·컨텍스트·토큰Σ·예산경고·카운트다운·폭주경고)는
         # claude-code 플러그인의 client_statusbar 훅이 그리고 위 두 클릭존을 채운다(Phase
         # 2c). 플러그인이 없으면 no-op → Claude 세그먼트 미표시·클릭존 None(클릭 no-op).
@@ -1246,13 +1242,6 @@ class StatusBar(Widget):
             fn and fn(self.app.layout.get("active"))
             event.stop()
             return
-        mitz = self._mitigation_zone
-        if mitz and mitz[0] <= event.x < mitz[1]:
-            # 과사용 완화 배지 클릭 → 토큰 절감 설정 팝업(claude-code 플러그인 설치).
-            fn = getattr(self.app, "open_token_saver", None)
-            fn and fn()
-            event.stop()
-            return
         mz = self._model_zone
         if mz and mz[0] <= event.x < mz[1]:
             # 모델 배지 클릭 → 모델·컨텍스트 변경 팝업(claude-code 플러그인 설치).
@@ -1260,18 +1249,6 @@ class StatusBar(Widget):
             fn and fn()
             event.stop()
             return
-        lz = self._limit_zone
-        if lz and lz[0] <= event.x < lz[1]:
-            # 한도 경고 배지(⚠) 클릭 → 사용량 + 리셋까지 남은 시간 팝업(usage-view,
-            # claude-token-usage-view 플러그인 설치). 토큰Σ 클릭(아래 _usage_zone)이
-            # 여는 영속 통계 로그와 다른, 실시간 한도/리셋 카운트다운 뷰다. 최신값을
-            # 위해 클릭 시 그림자 /usage 재조회를 먼저 요청한다(handle_command 미러).
-            fn = getattr(self.app, "open_usage_view", None)
-            if fn:
-                self.app.send_cmd("refresh_usage")
-                fn("popup")
-                event.stop()
-                return
         wz = self._warn_zone
         if wz and wz[0] <= event.x < wz[1]:
             # Claude 경고 배지(⚠) 클릭 → 상황 설명 + 할일 팝업(claude-code 플러그인

@@ -238,6 +238,24 @@ class _CommandMixin:
             i += 1
         buf[pid] = s[-4000:]
 
+    def _current_prompt_text(self, pane_id):
+        """패널 프롬프트에 **지금 들어 있는 텍스트**를 best-effort 로 돌려준다(없으면 "").
+
+        ① 클라가 추적한 키 입력(`_prompt_buf`) — 사용자가 이 클라에서 친 것은 정확
+           (멀티라인 개행·백스페이스 반영). 단 원격제어(/rc)·재접속처럼 클라 on_key 를
+           안 거친 입력은 추적에 없다.
+        ② 추적이 비어 있으면 플러그인(claude-code)이 **화면 입력박스에서 긁은 값**
+           (client_prompt_text 훅) — 추적 못 한 입력도 화면 기준으로 포착한다.
+        작성창 open_compose 가 시드(표시)와 비우기(백스페이스 개수)에 같은 값을 쓴다 —
+        둘이 일치해야 '인계 후 통째 투입' 이 중복/잔여 없이 맞아떨어진다."""
+        buf = getattr(self, "_prompt_buf", None) or {}
+        typed = buf.get(pane_id, "")
+        if typed:
+            return typed
+        plugins = getattr(self, "plugins", None)
+        scraped = plugins.client_prompt_text(self, pane_id) if plugins else None
+        return scraped or ""
+
     def open_compose(self, initial=None):
         """블록 선택 편집이 되는 멀티라인 작성창(ComposePromptScreen)을 연다.
 
@@ -247,40 +265,45 @@ class _CommandMixin:
         소유하는 별도 작성창에서 작성→완료 시 활성 패널에 **bracketed paste 로 투입**
         한다(권고안 B). ESC 모드에서 Insert 로 호출(옵트인, 필요할 때 매번).
 
-        '프롬프트 인계'(사용자 선택 2026-06-19): 활성 패널 프롬프트에 입력 중이던
-        텍스트(`_prompt_buf` 추적치)가 있으면 **그 텍스트를 시드로 채우고 프롬프트는
-        백스페이스로 비운다**(중복 투입 방지 — 내용이 작성창으로 '이동'). 없으면
-        직전에 저장 안 하고 닫은 **초안**(`_compose_draft`)을 시드로 쓴다. 작성창을
-        Esc 로 닫아도 그 내용은 `_compose_draft` 에 남아 다음에 다시 시드된다."""
+        '프롬프트 인계': 활성 패널 프롬프트에 **현재 들어 있는 텍스트 전체**를 시드로
+        채운다(_current_prompt_text — 클라 추적치, 없으면 화면 입력박스 긁기). 비우기는
+        **여는 시점이 아니라 적용(Ctrl+S) 시점**에 한다(사용자 요청 2026-06-22): 적용
+        직전 프롬프트를 다시 읽어 그 길이만큼 백스페이스로 통째 비운 뒤 작성창 텍스트를
+        bracketed paste 로 넣는다 — 이렇게 해야 추적 누락분(원격제어/재접속 입력)까지
+        화면 기준으로 깨끗이 지워지고, Esc 취소 시엔 프롬프트가 그대로 보존된다. 친 게
+        없으면 직전 **초안**(`_compose_draft`)을 시드로 쓰고, Esc 로 닫아도 초안에 남아
+        다음에 다시 시드된다."""
         active = self.layout.get("active")
-        # 시드 우선순위: ① 이 패널에 방금 친(미제출) 프롬프트 텍스트 → 인계(비움)
+        # 시드 우선순위: ① 프롬프트에 현재 들어 있는 텍스트(추적치→없으면 화면 긁기)
         #                ② 없으면 저장된 초안(취소해도 보존)
-        buf = getattr(self, "_prompt_buf", None) or {}
-        typed = buf.get(active, "")
+        current = self._current_prompt_text(active)
         seed = initial if initial is not None else (
-            typed if typed else getattr(self, "_compose_draft", ""))
+            current if current else getattr(self, "_compose_draft", ""))
 
         def done(result):
             if not result:        # 방어(정상 경로는 (text, injected) 튜플)
                 return
             text, injected = result
             self._compose_draft = text        # 초안 보존(취소해도 다음 시드)
-            if injected and text:
-                # 빈(인계로 비워진) 프롬프트에 통째 투입. 서버가 pane.bracketed 면
-                # \x1b[200~…201~ 로 감싸 멀티라인이 줄마다 제출되지 않는다. 끝에
-                # Enter 를 붙이지 않아 자동 제출 없음(사용자가 직접 Enter).
-                self.send_cmd("paste", text=text)
-                buf2 = getattr(self, "_prompt_buf", None)
-                if isinstance(buf2, dict):
-                    buf2[active] = text   # 이제 프롬프트에 이 텍스트가 있음
-            elif injected and not text:
-                self.display_message(i18n.t("compose.empty"))
-        # 프롬프트 인계: 현재 프롬프트의 추적분(typed)을 백스페이스로 비운다(커서가
-        # 끝에 있을 때 정확 — 사용자 동의한 근사치). 비운 뒤 추적값도 초기화한다.
-        if initial is None and typed:
-            self.send_input(b"\x7f" * len(typed))
+            if not injected:                  # Esc 취소 — 프롬프트 그대로 둔다
+                return
+            # 적용(Ctrl+S): 프롬프트를 다시 읽어 들어 있는 텍스트 전체를 백스페이스로
+            # 비운 뒤(추적 누락분도 화면 기준 포착·커서가 끝일 때 정확) 작성창 텍스트를
+            # 통째 투입한다. 빈 입력에서의 추가 백스페이스는 Claude 에서 무동작이라 안전.
+            cur = self._current_prompt_text(active)
+            if cur:
+                self.send_input(b"\x7f" * len(cur))
+            buf = getattr(self, "_prompt_buf", None)
             if isinstance(buf, dict):
                 buf[active] = ""
+            if text:
+                # 서버가 pane.bracketed 면 \x1b[200~…201~ 로 감싸 멀티라인이 줄마다
+                # 제출되지 않는다. 끝에 Enter 를 안 붙여 자동 제출 없음(사용자가 직접).
+                self.send_cmd("paste", text=text)
+                if isinstance(buf, dict):
+                    buf[active] = text   # 이제 프롬프트에 이 텍스트가 있음
+            else:
+                self.display_message(i18n.t("compose.empty"))
         # 작성창 입력 줄을 활성 패널 프롬프트 줄(하드웨어 커서 행)보다 한 칸 아래에
         # 맞춘다(_active_cursor_xy). 좌우는 활성 패널 테두리 안쪽(box 있으면 bx+1..
         # bw-2, 없으면 x..w)에 맞춘다. 미상이면 각각 바닥 도킹/전체 폭.

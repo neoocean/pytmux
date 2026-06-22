@@ -28,8 +28,9 @@ from . import clientstatus  # noqa: F401  (i18n claude.* 등록 부수효과)
 COMMANDS = [
     ("claude-rules", "Claude 시작 규칙 편집(저장 시 새 세션/clear 후 프롬프트에 "
                      "자동 주입)", "Claude"),
-    ("token-saver", "토큰 절감 설정 팝업 — 각 자동 개입 토글·잔량 임계·실측 게이트"
-                    "(별칭 claude-settings, token-settings)", "Claude"),
+    ("token-saver", "Claude 설정 팝업 — 자동재개·세션종료 토큰화면·권한 오토모드·"
+                    "프롬프트 단위 클리어·장기턴/반복 경고(별칭 claude-settings, "
+                    "token-settings)", "Claude"),
     ("auto-resume", "토큰 리밋 자동 재개 [on|off]", "Claude"),
     ("auto-resume-message", "자동 재개 메시지 설정", "Claude"),
     ("token-log", "토큰 사용량 팝업 — 기간(시/일/주/월)·계정·세션 뷰 + 실측 한도·5h창"
@@ -47,13 +48,6 @@ COMMANDS = [
                            "Claude"),
     ("model", "모델·컨텍스트 변경 팝업(상태줄 모델 배지 클릭으로도 열림, /model 주입; "
               "별칭 model-config, claude-model)", "Claude"),
-    ("auto-doc-clear", "Claude idle 30초 지속 시 자동 문서화+/clear on/off "
-                       "(auto-doc-clear on|off|toggle)", "Claude"),
-    ("auto-compact", "Claude idle 30초 지속 시 자동 /compact on/off "
-                     "(auto-compact on|off|toggle)", "Claude"),
-    ("auto-hardstop", "컨텍스트 하드스톱('Context limit reached') 시 즉시 자동 "
-                      "/compact on/off (auto-hardstop on|off|toggle, 기본 off)",
-                      "Claude"),
     ("auto-retry", "전송 에러(API error·rate limit) 시 1분 뒤 '계속' 자동 주입 on/off "
                    "(auto-retry on|off|toggle, 기본 on)", "Claude"),
     ("auto-token-on-exit", "Claude 세션 종료 시 토큰 사용량 화면(한도/usage) 자동 표시 "
@@ -63,9 +57,6 @@ COMMANDS = [
                          "(claude-auto-mode on|off|toggle)", "Claude"),
     ("auto-launch", "새 Claude 세션 시작 시 /rc(원격 제어)+권한모드 auto 1회 자동 적용 "
                     "on/off (auto-launch on|off|toggle, 기본 on)", "Claude"),
-    ("model-hint", "Opus 로 반복 작업+컨텍스트 여유 시 가벼운 모델 '고려' 힌트 표시 "
-                   "(알림만·자동 전환 없음) on/off (model-hint on|off|toggle, 기본 off)",
-                   "Claude"),
     ("token-debug", "토큰 회계 진단 로그(<sock>.tokendbg.jsonl) on/off — §10-D 과소집계 "
                     "원인 판정용 진단(평시 OFF) (token-debug on|off|toggle, 기본 off)",
                     "Claude"),
@@ -80,12 +71,9 @@ _ONOFF = [("토글", ""), ("켜기", "on"), ("끄기", "off")]
 COMMAND_OPTIONS = {
     "auto-resume": [{"key": "state", "label": "자동재개", "choices": _ONOFF}],
     "prompt-clear": [{"key": "state", "label": "클리어모드", "choices": _ONOFF}],
-    "auto-doc-clear": [{"key": "state", "label": "자동클리어", "choices": _ONOFF}],
-    "auto-hardstop": [{"key": "state", "label": "하드스톱복구", "choices": _ONOFF}],
     "auto-retry": [{"key": "state", "label": "자동재시도", "choices": _ONOFF}],
     "claude-auto-mode": [{"key": "state", "label": "오토모드", "choices": _ONOFF}],
     "auto-launch": [{"key": "state", "label": "자동셋업", "choices": _ONOFF}],
-    "model-hint": [{"key": "state", "label": "모델힌트", "choices": _ONOFF}],
     "token-debug": [{"key": "state", "label": "토큰진단로그", "choices": _ONOFF}],
 }
 
@@ -97,7 +85,7 @@ i18n.register({
     "ko": {f"cmd.{n}": d for n, d, *_ in COMMANDS},
     "en": {
         "cmd.claude-rules": "Edit Claude start rules (auto-injected into the prompt after a new session/clear)",
-        "cmd.token-saver": "Token-saving settings popup — toggle each auto-intervention·remaining threshold·measured gate (alias claude-settings, token-settings)",
+        "cmd.token-saver": "Claude settings popup — auto-resume·auto-token-on-exit·auto permission mode·per-prompt clear·long-turn/repeat warnings (alias claude-settings, token-settings)",
         "cmd.auto-resume": "Auto-resume on token limit [on|off]",
         "cmd.auto-resume-message": "Set the auto-resume message",
         "cmd.token-log": "Token usage popup — period (h/d/w/m)·session views + measured limits·5h window (alias token-usage, click status usage)",
@@ -108,14 +96,10 @@ i18n.register({
         "cmd.prompt-clear-message": "Change the per-prompt-clear documentation directive",
         "cmd.prompt-clear-queue": "Queue commands for per-prompt clear (empty=list, -c=clear)",
         "cmd.model": "Model·context change popup (also opens via the status model badge, injects /model; alias model-config, claude-model)",
-        "cmd.auto-doc-clear": "Auto document + /clear when Claude idle 30s on/off (auto-doc-clear on|off|toggle)",
-        "cmd.auto-compact": "Auto /compact when Claude idle 30s on/off (auto-compact on|off|toggle)",
-        "cmd.auto-hardstop": "Auto /compact immediately on context hardstop ('Context limit reached') on/off (auto-hardstop on|off|toggle, default off)",
         "cmd.auto-retry": "Auto-inject a 'continue' message 1 min after a transmission error (API error·rate limit) on/off (auto-retry on|off|toggle, default on)",
         "cmd.auto-token-on-exit": "Auto-open token usage screen (Limit/usage) when Claude session ends on/off (auto-token-on-exit on|off|toggle, default on)",
         "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",
         "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
-        "cmd.model-hint": "Show a 'consider a lighter model' hint when Opus repeats work with context headroom (alert only, never auto-switches) on/off (model-hint on|off|toggle, default off)",
         "cmd.token-debug": "Token-accounting diagnostic log (<sock>.tokendbg.jsonl) on/off — §10-D undercount root-cause diagnostic (off normally) (token-debug on|off|toggle, default off)",
     },
 })
@@ -182,9 +166,8 @@ i18n.register({
            (s["label"] for specs in COMMAND_OPTIONS.values() for s in specs)},
     "en": {
         "자동재개": "Auto-resume", "클리어모드": "Clear mode",
-        "자동클리어": "Auto-clear", "하드스톱복구": "Hardstop recovery",
         "오토모드": "Auto mode", "자동셋업": "Auto setup",
-        "자동재시도": "Auto-retry", "모델힌트": "Model hint",
+        "자동재시도": "Auto-retry",
         "토큰진단로그": "Token diag log",
     },
 })
@@ -201,31 +184,14 @@ def _onoff(args):
 # 토큰 절감 설정 팝업(ClaudeSaverScreen)의 행/순환 프리셋. clientutil 에서 이리로 이전.
 SAVER_ROWS = [
     ("autoresume", "토큰리밋 자동재개", "toggle"),
-    ("usage_gate_session", "실측 세션한도 게이트(자동재개 보류 %)", "cycle"),
-    ("usage_gate_week", "실측 주간한도 게이트(%)", "cycle"),
-    ("budget_plan", "실측 한도 압박(게이트의 80%) 시 plan 모드 유도", "toggle"),
-    ("ctx_autoclear", "컨텍스트 잔량 부족 시 자동 정리", "toggle"),
-    ("ctx_action", "  └ 정리 방식", "cycle"),
-    ("ctx_threshold", "  └ 잔량 임계", "cycle"),
-    ("ctx_min_interval", "  └ 정리 빈도 상한", "cycle"),
-    ("auto_doc_clear", "idle 지속 시 자동 문서화+/clear", "toggle"),
-    ("auto_compact", "idle 지속 시 자동 /compact", "toggle"),
-    ("auto_hardstop", "컨텍스트 하드스톱 시 즉시 자동 /compact", "toggle"),
     ("auto_token_on_exit", "세션 종료 시 토큰 사용량 화면 자동 표시", "toggle"),
     ("claude_auto_mode", "권한모드 자동 오토", "toggle"),
     ("prompt_clear", "프롬프트 단위 클리어(완료마다 doc+/clear)", "toggle"),
     ("long_turn", "장기 턴 경고(초)", "cycle"),
     ("repeat_alert", "반복 루프 경고(회)", "cycle"),
-    ("model_hint", "모델 과선택 힌트(Opus 반복+여유 시 가벼운 모델 제안)", "toggle"),
 ]
 # cycle 행의 프리셋 값(Enter 마다 다음으로 순환). 0=끔.
 SAVER_CYCLES = {
-    # S6 T4 실측 게이트 임계(%): 0=끔. 세션 기본 95 — Enter 마다 다음으로 순환.
-    "usage_gate_session": [0, 80, 90, 95, 98],
-    "usage_gate_week": [0, 90, 95, 98],
-    "ctx_action": ["compact", "doc-clear"],
-    "ctx_threshold": [10, 15, 20, 25, 30],
-    "ctx_min_interval": [0, 60, 120, 300, 600],
     "long_turn": [0, 300, 600, 900, 1800],
     "repeat_alert": [0, 2, 3, 5, 10],
 }
@@ -245,31 +211,12 @@ def saver_display(app, key):
     st = app.status
     bools = {
         "autoresume": st.autoresume,
-        "budget_plan": st.claude_budget_plan,
-        "ctx_autoclear": st.claude_ctx_autoclear,
-        "auto_doc_clear": st.auto_doc_clear,
-        "auto_compact": st.auto_compact,
-        "auto_hardstop": st.auto_hardstop,
         "auto_token_on_exit": st.auto_token_on_exit,
         "claude_auto_mode": st.claude_auto_mode,
         "prompt_clear": st.prompt_clear,
-        "model_hint": st.claude_model_hint,
     }
     if key in bools:
         return "●" if bools[key] else "○"
-    if key == "ctx_action":
-        return "/compact" if st.claude_ctx_action == "compact" else "doc+/clear"
-    if key == "ctx_threshold":
-        return f"잔량<{st.claude_ctx_threshold}%"
-    if key == "ctx_min_interval":
-        iv = int(st.claude_ctx_min_interval)
-        return "상한 없음" if iv <= 0 else f"{iv}초마다 최대 1회"
-    if key == "usage_gate_session":
-        v = int(st.usage_gate_session_pct)
-        return "끔" if v <= 0 else f"실측 ≥{v}%"
-    if key == "usage_gate_week":
-        v = int(st.usage_gate_week_pct)
-        return "끔" if v <= 0 else f"실측 ≥{v}%"
     if key == "long_turn":
         v = int(st.claude_long_turn_sec)
         return "끔" if v <= 0 else f"{v}초 이상"
@@ -287,21 +234,6 @@ def saver_action(app, key):
     if key == "autoresume":
         app.send_cmd("set_autoresume")
         st.autoresume = not st.autoresume
-    elif key == "budget_plan":
-        app.send_cmd("set_claude_budget_plan")
-        st.claude_budget_plan = not st.claude_budget_plan
-    elif key == "ctx_autoclear":
-        app.send_cmd("set_claude_ctx_autoclear")
-        st.claude_ctx_autoclear = not st.claude_ctx_autoclear
-    elif key == "auto_doc_clear":
-        app.send_cmd("set_auto_doc_clear", value=None)
-        st.auto_doc_clear = not st.auto_doc_clear
-    elif key == "auto_compact":
-        app.send_cmd("set_auto_compact", value=None)
-        st.auto_compact = not st.auto_compact
-    elif key == "auto_hardstop":
-        app.send_cmd("set_auto_hardstop", value=None)
-        st.auto_hardstop = not st.auto_hardstop
     elif key == "auto_token_on_exit":
         app.send_cmd("set_auto_token_on_exit", value=None)
         st.auto_token_on_exit = not st.auto_token_on_exit
@@ -311,29 +243,6 @@ def saver_action(app, key):
     elif key == "prompt_clear":
         app.send_cmd("set_prompt_clear", value=None)
         st.prompt_clear = not st.prompt_clear
-    elif key == "model_hint":
-        app.send_cmd("set_claude_model_hint", value=None)
-        st.claude_model_hint = not st.claude_model_hint
-    elif key == "ctx_action":
-        nxt = _cycle_next("ctx_action", st.claude_ctx_action)
-        app.send_cmd("set_claude_ctx_action", value=nxt)
-        st.claude_ctx_action = nxt
-    elif key == "ctx_threshold":
-        nxt = _cycle_next("ctx_threshold", st.claude_ctx_threshold)
-        app.send_cmd("set_claude_ctx_threshold", value=nxt)
-        st.claude_ctx_threshold = nxt
-    elif key == "ctx_min_interval":
-        nxt = _cycle_next("ctx_min_interval", int(st.claude_ctx_min_interval))
-        app.send_cmd("set_claude_ctx_min_interval", value=nxt)
-        st.claude_ctx_min_interval = nxt
-    elif key == "usage_gate_session":
-        nxt = _cycle_next("usage_gate_session", int(st.usage_gate_session_pct))
-        app.send_cmd("set_usage_gate", session=nxt)
-        st.usage_gate_session_pct = nxt
-    elif key == "usage_gate_week":
-        nxt = _cycle_next("usage_gate_week", int(st.usage_gate_week_pct))
-        app.send_cmd("set_usage_gate", week=nxt)
-        st.usage_gate_week_pct = nxt
     elif key == "long_turn":
         nxt = _cycle_next("long_turn", int(st.claude_long_turn_sec))
         app.send_cmd("set_claude_turn_warn", long_sec=nxt)
@@ -551,16 +460,9 @@ class _ClaudeCodePlugin:
     # deprecate — 목록에서 제거. 구 opts.json 에 남은 키는 로드 시 무시되고 다음
     # _save_opts 에서 자연 소멸한다(마이그레이션 shim — S5 T3 선례와 같은 방식).
     _OPTS_KEYS = (
-                  # S6 T4 실측 한도 게이트(%): 세션 기본 95(ON)·주간 기본 0(끔)
-                  # — 2026-06-10 사용자 결정. 0=그 축 끔.
-                  ("usage_gate_session_pct", 95, int),
-                  ("usage_gate_week_pct", 0, int),
                   # 전송 에러(API error/rate limit) 자동 재시도(요청 2026-06-12): 에러로
                   # 멈추면 1분 뒤 "계속" 주입. 기본 ON.
                   ("claude_auto_retry", True, bool),
-                  # M14c 모델 과선택 힌트(T3/S4): Opus 반복+여유 시 가벼운 모델 "고려"
-                  # 헤더 힌트(알림만, 자동 전환 없음). opt-in 이라 기본 OFF.
-                  ("claude_model_hint", False, bool),
                   # §10-D 토큰 회계 진단 로그(<sock>.tokendbg.jsonl). 기본 OFF — 켜면
                   # 매 토큰 step 을 jsonl 로 남긴다(평시 성능/디스크 무영향). 종전 env
                   # PYTMUX_TOKEN_DEBUG 를 대체(런타임 `token-debug on/off` 토글). opts.json
@@ -646,10 +548,6 @@ class _ClaudeCodePlugin:
         msg["claude_warn"] = ap._claude_warn if ap else None
         msg["claude_warn_kind"] = getattr(ap, "_claude_warn_kind", None) if ap else None
         msg["claude_warn_n"] = getattr(ap, "_claude_warn_n", None) if ap else None
-        # M14c/A 모델 힌트 배지(알림만, 없으면 None — claude_warn 과 같은 송출 방식).
-        msg["claude_model_tip"] = ap._model_tip if ap else None
-        # §3.10 C ctx 압박 힌트 배지(M11/M13/타이머, 없으면 None).
-        msg["claude_ctx_tip"] = ap._ctx_tip if ap else None
         # M19: 그림자 /usage 세션·주간 한도(없으면 None).
         msg["usage_limits"] = server._usage
         # S6 T3: 실측 경과(초) — 클라가 stale 표기("N분 전 실측")에 쓴다. 시계 동기
@@ -670,15 +568,9 @@ class _ClaudeCodePlugin:
         msg["prompt_clear"] = bool(ap.prompt_clear_mode) if ap else False
         # 프롬프트 단위 클리어 큐(#4): 활성 패널에 쌓인 명령들(표시·목록용).
         msg["prompt_clear_queue"] = (list(ap.prompt_clear_queue) if ap else [])
-        msg["auto_doc_clear"] = server.auto_doc_clear
-        msg["auto_compact"] = server.auto_compact
-        msg["auto_hardstop"] = server.auto_hardstop
         msg["auto_token_on_exit"] = server.auto_token_on_exit
         msg["claude_auto_mode"] = server.claude_auto_mode
-        # §7-4: 절대 예산 deprecate — 경고 레벨은 실측 게이트(0/80/100)만. 와이어
-        # 키 이름(budget_level)은 유지(클라 ⚠ 배지·전이 팝업이 그대로 소비).
-        msg["budget_level"] = server._usage_gate_level(ap)
-        # M14 무장된 자동 액션 카운트다운(없으면 None): {kind, eta(초)}.
+        # 무장된 자동재개 카운트다운(없으면 None): {kind, eta(초)}.
         msg["claude_pending"] = server._pending_action(ap)
         # C4: 토글로만 바뀌는 정적 옵션은 full(신규 attach·_broadcast_session)일 때만
         # 싣는다 — set_* 핸들러가 _broadcast_session(full=True)으로 회신하므로 변경·
@@ -686,18 +578,8 @@ class _ClaudeCodePlugin:
         if full:
             msg.update({
                 "claude_rules": server.claude_rules,   # #27 시작 규칙(에디터 초기값)
-                "claude_ctx_autoclear": server.claude_ctx_autoclear,
-                "claude_ctx_threshold": server.claude_ctx_threshold,
-                "claude_ctx_min_interval": server.claude_ctx_min_interval,
-                "claude_ctx_action": server.claude_ctx_action,
                 "claude_long_turn_sec": server.claude_long_turn_sec,
                 "claude_repeat_alert": server.claude_repeat_alert,
-                "claude_budget_plan": server.claude_budget_plan,
-                # M14c 모델 과선택 힌트 토글(설정 팝업 표시용 — 정적 옵션, full 시만).
-                "claude_model_hint": server.claude_model_hint,
-                # S6 T4 실측 한도 게이트 임계(설정 팝업 표시용)
-                "usage_gate_session_pct": server.usage_gate_session_pct,
-                "usage_gate_week_pct": server.usage_gate_week_pct,
                 # §10-D 토큰 회계 진단 로그 토글(현재값 표시용 — 정적 옵션, full 시만).
                 "token_debug": server.token_debug,
             })
@@ -709,13 +591,9 @@ class _ClaudeCodePlugin:
         info["tokens"] = pane._session_tokens
 
     def server_input(self, server, pane, data):
-        """사용자 입력 1건의 Claude 부수효과: 프롬프트 추적(헤더용) + 자동 doc→/clear·
-        자동 /compact·자동재개 예약 해제(사용자가 키를 쳤다 = 작업 이어받음)."""
+        """사용자 입력 1건의 Claude 부수효과: 프롬프트 추적(헤더용) + 자동재개 예약
+        해제(사용자가 키를 쳤다 = 작업 이어받음)."""
         server._track_prompt(pane, data)
-        server._adc_disarm(pane)
-        server._acpt_disarm(pane)
-        pane._acpt_fired = False  # 활동 재개 → 다음 idle 에 자동 /compact 재무장 허용
-        pane._hardstop_fired = False  # 사용자가 직접 대응 중 → 하드스톱 자동복구 재무장
         server._cancel_resume(pane)
         # 사용자가 직접 대응(예: 손수 "계속" 입력) 중이면 무장된 자동 재시도도 거둔다 —
         # 안 거두면 잔상 에러 줄 때문에 발화직전 재확인을 통과해 "계속" 이 중복 주입된다(#9 H2).
@@ -753,15 +631,6 @@ class _ClaudeCodePlugin:
             server.set_autoresume(sess, value=msg.get("value"),
                                   msg=msg.get("msg"))
             return "send_full"
-        if action == "set_auto_doc_clear":
-            server.set_auto_doc_clear(msg.get("value"))
-            return "send_full"
-        if action == "set_auto_compact":
-            server.set_auto_compact(msg.get("value"))
-            return "send_full"
-        if action == "set_auto_hardstop":
-            server.set_auto_hardstop(msg.get("value"))
-            return "send_full"
         if action == "set_auto_token_on_exit":
             server.set_auto_token_on_exit(msg.get("value"))
             return "send_full"
@@ -771,18 +640,6 @@ class _ClaudeCodePlugin:
         if action == "set_claude_auto_mode":
             server.set_claude_auto_mode(msg.get("value"))
             return "send_full"
-        if action == "set_claude_ctx_autoclear":      # M11 잔량 자동 정리 토글
-            server.set_claude_ctx_autoclear(msg.get("value"))
-            return "broadcast"
-        if action == "set_claude_ctx_action":         # M11 정리 방식(compact/doc-clear)
-            server.set_claude_ctx_action(str(msg.get("value", "")))
-            return "broadcast"
-        if action == "set_claude_ctx_threshold":      # M11 잔량 임계(%)
-            server.set_claude_ctx_threshold(msg.get("value"))
-            return "broadcast"
-        if action == "set_claude_ctx_min_interval":   # M14 정리 빈도 상한(초)
-            server.set_claude_ctx_min_interval(msg.get("value"))
-            return "broadcast"
         if action == "set_claude_turn_warn":          # M17 장기턴/반복 임계
             server.set_claude_turn_warn(long_sec=msg.get("long_sec"),
                                         repeat=msg.get("repeat"))
@@ -790,16 +647,6 @@ class _ClaudeCodePlugin:
         if action == "refresh_usage":                 # M19 그림자 /usage 질의
             asyncio.create_task(server.refresh_usage())
             return "send_full"
-        if action == "set_usage_gate":                # S6 T4 실측 한도 게이트 임계
-            server.set_usage_gate(session=msg.get("session"),
-                                  week=msg.get("week"))
-            return "broadcast"
-        if action == "set_claude_budget_plan":        # M13 예산 압박 plan 유도
-            server.set_claude_budget_plan(msg.get("value"))
-            return "broadcast"
-        if action == "set_claude_model_hint":         # M14c 모델 과선택 힌트(알림만)
-            server.set_claude_model_hint(msg.get("value"))
-            return "broadcast"
         if action == "set_token_debug":               # §10-D 토큰 회계 진단 로그 토글
             server.set_token_debug(msg.get("value"))
             return "broadcast"                         # status 로 새 값 회신(:설정 표시)
@@ -828,7 +675,7 @@ class _ClaudeCodePlugin:
         # 코어 client.__init__ 에서 이리로 이전(S5a). client_status 훅이 status 전이를
         # 보고 _fire_hook 을 발화하므로, 그 상태도 플러그인이 소유한다. 디렉토리 삭제 시
         # 이 속성이 없어 코어는 절감 훅을 전혀 발화하지 않는다(delete-to-disable).
-        app._saver_prev = {"budget_level": 0, "pending_kind": None, "limit": False}
+        app._saver_prev = {"pending_kind": None, "limit": False}
         # ---- Claude 헤더/상태 렌더 상태(Phase 2c) — 코어 __init__ 에서 이리로 이전 ----
         # 코어는 이 속성들을 직접 만들지 않고, 헤더 렌더(client_render 훅)·ESC nav·
         # 클릭 핸들러에서 getattr(app, ..., 기본값)으로만 읽는다 → 디렉토리 삭제 시
@@ -854,7 +701,7 @@ class _ClaudeCodePlugin:
         app.open_usage_panel = lambda: _open_usage_panel(app)
         app.open_token_log = lambda initial=None: _open_token_log(app, initial)
         app.open_claude_warn_info = lambda: _open_warn_info(app)
-        app.open_token_saver = lambda: self._open_saver(app)  # 완화 배지 클릭 → 절감 설정 팝업
+        app.open_token_saver = lambda: self._open_saver(app)  # token-saver 명령 → 설정 팝업
         # (open_claude_usage_tree/_open_usage_tree 설치는 token-usage→token-log 통합
         #  (2026-06-12)으로 제거 — 상태줄 사용량 클릭·esc 포커스 Enter 는 이미
         #  open_token_log 를 부른다.)
@@ -942,6 +789,25 @@ class _ClaudeCodePlugin:
                     "active_session": active_sid}
         return None
 
+    def client_prompt_text(self, app, pane_id):
+        """패널 화면에서 라이브 입력박스의 현재 텍스트를 긁어 돌려준다(작성창
+        open_compose 의 시드/비우기 fallback). **Claude 패널일 때만** — 셸 프롬프트
+        (`~/dir ❯ `)를 입력 텍스트로 오긁지 않게 pane_claude 의 claude 상태로 게이트.
+        클라가 이미 들고 있는 pane_content(렌더 셀)와 pane_wrap(soft-wrap 표식)에서
+        행 문자열을 만들어 claude_input_box 로 파싱한다. 입력박스를 못 찾으면 None."""
+        info = (getattr(app, "pane_claude", None) or {}).get(pane_id) or {}
+        if not info.get("claude"):
+            return None        # Claude 패널 아님 → 긁지 않음(셸 프롬프트 오긁기 방지)
+        content = (getattr(app, "pane_content", None) or {}).get(pane_id)
+        if not content:
+            return None
+        rows, cursor = content
+        lines = ["".join(seg[0] for seg in row) for row in rows]
+        wrap = (getattr(app, "pane_wrap", None) or {}).get(pane_id) or ()
+        cy = cursor[1] if cursor else None
+        from .claude import claude_input_box
+        return claude_input_box(lines, wrap, cy)
+
     # ---- 클라이언트 콘텐츠-레이어 렌더/상태 훅(Phase 2c) ----
     def client_render(self, app, cells, W, H):
         """코어 _composite 가 콘텐츠를 그린 뒤 호출 — Claude 프롬프트 헤더를 그리고
@@ -970,7 +836,7 @@ class _ClaudeCodePlugin:
 
     def client_statusbar_init(self, app, status):
         """하단 상태줄 위젯 생성 직후 — Claude 상태 속성을 안전한 기본값으로 설치한다
-        (코어 StatusBar.__init__ 에서 빼낸 claude_*/usage_gate_*/auto_* 필드).
+        (코어 StatusBar.__init__ 에서 빼낸 claude_* 필드).
         흡수(absorb)·렌더(render_segs)가 이 속성들을 읽고 쓴다."""
         from .clientstatus import init_defaults
         init_defaults(status)
@@ -1021,20 +887,12 @@ class _ClaudeCodePlugin:
             app.send_cmd("set_claude_account", name=" ".join(args).strip())
         elif c in ("prompt-clear", "prompt-clear-mode"):
             app.send_cmd("set_prompt_clear", value=_onoff(args))
-        elif c in ("auto-doc-clear", "auto-doc"):
-            app.send_cmd("set_auto_doc_clear", value=_onoff(args))
-        elif c in ("auto-compact", "auto-cmp"):
-            app.send_cmd("set_auto_compact", value=_onoff(args))
-        elif c in ("auto-hardstop", "auto-hard", "hardstop"):
-            app.send_cmd("set_auto_hardstop", value=_onoff(args))
         elif c in ("auto-token-on-exit", "auto-token", "token-on-exit"):
             app.send_cmd("set_auto_token_on_exit", value=_onoff(args))
         elif c in ("auto-retry", "retry"):
             app.send_cmd("set_claude_auto_retry", value=_onoff(args))
         elif c in ("claude-auto-mode", "auto-mode"):
             app.send_cmd("set_claude_auto_mode", value=_onoff(args))
-        elif c in ("model-hint", "model-advice"):
-            app.send_cmd("set_claude_model_hint", value=_onoff(args))
         elif c in ("token-debug", "token-dbg"):
             # §10-D 토큰 회계 진단 로그 토글(서버 opts.json 영속, 즉시 발효). 진단용이라
             # 평시엔 거의 안 만지므로 결과를 짧게 알린다(다른 토글은 설정 팝업이 상태를

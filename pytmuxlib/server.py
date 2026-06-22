@@ -146,31 +146,6 @@ class Server(*_SERVER_BASES):
         self.prompt_clear_message = str(_opts.get(
             "prompt_clear_message",
             "이번 세션에서 얻은 정보·결정을 프로젝트 문서(CLAUDE.md/메모리)에 기록해줘."))
-        # 자동 doc→/clear(§10): Claude 가 작업을 끝내고(busy→idle) 그 상태로
-        # auto_doc_clear_delay 초 지속되면(사용자 개입 없이) prompt_clear_message →
-        # /clear 를 1회 자동 주입한다. 기본 OFF(명시 토글 필요). limit 상태/사용자
-        # 입력/재busy 시엔 발화하지 않는다. opts.json 영속.
-        self.auto_doc_clear = bool(_opts.get("auto_doc_clear", False))
-        self.auto_doc_clear_delay = float(_opts.get("auto_doc_clear_delay", 30.0))
-        # 자동 /compact(요청): busy→idle 후 auto_compact_delay 초 지속되면 '/compact'
-        # +Enter 1회 주입(문서화 없이 컨텍스트 압축만). 기본 OFF(명시 토글). auto-doc-
-        # clear 와 같은 idle 경계에서 무장하므로 상호배타(doc-clear 우선). opts.json 영속.
-        self.auto_compact = bool(_opts.get("auto_compact", False))
-        self.auto_compact_delay = float(_opts.get("auto_compact_delay", 900.0))
-        # 컨텍스트 하드스톱 자동복구(요청): "Context limit reached · /compact or /clear
-        # to continue" 화면을 보면 idle 지연 없이 즉시 '/compact' 를 1회 주입해 막힌
-        # 진행을 잇는다(claude_context_hardstop). idle-기반 auto_compact 와 다른 트리거.
-        # 기본 OFF(사용자 요청 2026-06-18) — auto_compact 와 마찬가지로 자동 /compact 주입은
-        # 사용자가 명시적으로 켜야 한다(켜려면 auto-hardstop on). 끈 상태에서 하드스톱에
-        # 닿으면 세션이 막힌 채 멈추므로 수동 /compact·/clear 로 진행을 잇는다. opts.json 영속.
-        self.auto_hardstop = bool(_opts.get("auto_hardstop", False))
-        # 자동 compact·doc-clear 쿨다운(요청): 새 Claude 세션 시작 직후 또는 직전
-        # compact·clear 직후 이 초만큼은 **시간기반** 자동 compact·doc-clear 를 무장하지
-        # 않는다 — 세션을 막 시작했거나 방금 정리했는데 곧바로 또 압축/정리되던 문제 방지
-        # (사용자 보고: 새 세션에 작은 작업만 했는데 /compact 가 들어가 한참 대기). idle
-        # 경계마다 재평가하므로 쿨다운이 지나면 정상 동작으로 복귀한다. M11 잔량기반 정리는
-        # 별개(잔량이 낮을 때만 발화 — 새 세션·clear 직후엔 잔량이 높아 안 뜬다). 0=비활성.
-        self.auto_cc_cooldown_sec = float(_opts.get("auto_cc_cooldown_sec", 300.0))
         # 권한모드 자동 오토모드 전환(§10): Claude 패널이 idle 이고 권한모드 footer 가
         # auto(자동 수락)가 아니면 shift+tab 을 순환 주입해 auto 로 맞춘다. 기본 OFF.
         # bypass(권한 우회) 모드는 명시적·위험 설정이라 건드리지 않는다. opts.json 영속.
@@ -198,20 +173,6 @@ class Server(*_SERVER_BASES):
         # 규칙" 텍스트. 새 Claude 세션이 뜨면(또는 pytmux 가 /clear 한 뒤) 이 텍스트를
         # 프롬프트에 주입한다(빈 문자열이면 아무것도 안 함). opts.json 영속.
         self.claude_rules = str(_opts.get("claude_rules", ""))
-        # ---- 토큰 절감 자동화(docs/internal/TOKEN_SAVING_SCENARIO.md) — 모두 전역·영속 ----
-        # M11 컨텍스트 잔량 기반 자동 정리: idle 패널의 컨텍스트 잔량(claude_context_pct)
-        # 이 claude_ctx_threshold(%) 밑으로 떨어지면 1회 정리한다. action=정리 방식
-        # ("compact"=네이티브 /compact 요약, 연속성 유지 / "doc-clear"=문서화→/clear
-        # 완전 초기화). 기본 OFF·기본 /compact(비가역성 낮음). idle/발화직전 재확인/
-        # 최근입력 연기/busy 취소 게이트는 _scan_claude 가 적용(§5).
-        self.claude_ctx_autoclear = bool(_opts.get("claude_ctx_autoclear", False))
-        self.claude_ctx_threshold = int(_opts.get("claude_ctx_threshold", 15))
-        self.claude_ctx_action = str(_opts.get("claude_ctx_action", "compact"))
-        # M14 정리 빈도 상한(초): 직전 자동 정리로부터 이 시간이 지나야 다시 정리한다
-        # (0=상한 없음). _ctx_fired 디바운스(잔량 회복까지 1회)에 더해, 정리가 잔량을
-        # 못 늘리는 오검출·병적 진동에서 매 완료경계 무한 정리를 막는 시간 바닥(§5.6).
-        self.claude_ctx_min_interval = float(
-            _opts.get("claude_ctx_min_interval", 120.0))
         # M19 그림자 /usage 질의 결과(세션·주간 한도 %·리셋·계정). dict|None.
         # (M18-B 의 5h 분모 학습 _learned_5h_cap 은 S6 T3 분모 근사 폐기로 제거 —
         #  5h% 는 /usage 실측만 따른다.)
@@ -227,11 +188,6 @@ class Server(*_SERVER_BASES):
         # 0=끔), repeat=동일 완료 출력 반복 횟수(0=끔). 상태줄 ⚠배지로만 알린다.
         self.claude_long_turn_sec = int(_opts.get("claude_long_turn_sec", 600))
         self.claude_repeat_alert = int(_opts.get("claude_repeat_alert", 3))
-        # M13 실측 한도 압박 시 plan 유도: 켜면 실측 게이트 경고(레벨≥80) + idle 일
-        # 때 권한모드를 plan 으로 폐루프 유도해(편집 전 검토 → 맹목 도구 호출 감소)
-        # 토큰 소모를 늦춘다(가역 — 사용자가 shift+tab 으로 되돌림). bypass(명시적
-        # 위험)는 불간섭. claude_auto_mode(auto 유도)와 상충하면 plan 이 우선. 기본 OFF.
-        self.claude_budget_plan = bool(_opts.get("claude_budget_plan", False))
         # 플러그인 관리(docs/internal/PLUGIN_MANAGER_SCENARIO.md): 비활성 플러그인 집합을 적용한다.
         # opts.json 의 `disabled_plugins` 키가 있으면 그 값(사용자 선택)을, 없으면(새 설치)
         # `default_enabled=False` 플러그인을 시드(깃헙 배포 기본 OFF, 예: rec). set_disabled
@@ -244,7 +200,7 @@ class Server(*_SERVER_BASES):
             disabled = self.plugins.default_disabled()
         self.plugins.set_disabled(disabled)
         # 플러그인 소유 설정 로드 훅(S5 토큰 모듈화 T3). claude-code 가 자기 설정
-        # (usage_gate_* 등)을 opts.json 의 plugin_opts 네임스페이스(+구 top-level
+        # (claude_auto_retry 등)을 opts.json 의 plugin_opts 네임스페이스(+구 top-level
         # 키 하위호환 shim)에서 읽어 server 속성으로 설치한다 — 코어 __init__ 은 더는
         # 이 설정을 직접 읽지 않는다. 디렉토리 삭제 시 no-op(코어는 의미 모름).
         self.plugins.server_opts_init(self, _opts)
@@ -476,7 +432,7 @@ class Server(*_SERVER_BASES):
     @staticmethod
     def _arg_onoff(args):
         """control 토글 인자 파싱: 'on'→True, 'off'→False, 그 외→None(현재값 토글).
-        capture/single-border/coalesce/auto-doc-clear/auto-mode 공용."""
+        capture/single-border/coalesce/auto-mode 공용."""
         return True if "on" in args else (False if "off" in args else None)
 
     # `pytmux cmd <명령> [on|off]` 의 **즉시 "on"/"off" 반환** 토글 표(#5.9 — 종전
@@ -487,17 +443,12 @@ class Server(*_SERVER_BASES):
         # capture-output/capture-toggle 는 plugins/rec 로 이전(server_command).
         "coalesce-repaints": "set_coalesce_repaints",
         "coalesce": "set_coalesce_repaints",
-        "auto-doc-clear": "set_auto_doc_clear", "auto-doc": "set_auto_doc_clear",
-        "auto-compact": "set_auto_compact",
         "claude-auto-mode": "set_claude_auto_mode",
         "auto-mode": "set_claude_auto_mode",
         "claude-auto-launch": "set_claude_auto_launch",
         "auto-launch": "set_claude_auto_launch",
-        # 토큰 절감 on/off 토글의 외부 cmd 파리티(설정 팝업과 같은 setter).
-        "ctx-autoclear": "set_claude_ctx_autoclear",
         "nest-auto-attach": "set_nest_auto_attach",
         "nest-attach": "set_nest_auto_attach",
-        "budget-plan": "set_claude_budget_plan",
         # §10-D 토큰 회계 진단 로그 토글의 외부 CLI 파리티(`pytmux cmd token-debug on`).
         # 클라 in-app 명령(handle_command→set_token_debug)과 같은 setter. setter 는
         # claude-code 믹스인 소유라 플러그인 부재 시 빠짐(형제 claude 엔트리와 동일).
