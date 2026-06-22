@@ -114,6 +114,8 @@ i18n.register({
         "pscreen.tklog_title2": "토큰 사용량(추정) · {what}별",
         "pscreen.tklog_scope": "{sigma}",
         "pscreen.tklog_disp": " (표시 {n})",
+        # §10-D P6: 트랜스크립트 실측 Σ(캐시 분리) + 스크랩 활동 보조신호.
+        "pscreen.tklog_xc": "Σ{full} 실측(캐시 {cache}) · 활동~{scrape}",
         "pscreen.tklog_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · p세션 · l한도 r비교 u/usage · Esc닫기",
         # 계층 타임라인 트리 구역 구분선(2026-06-21).
         "pscreen.tree_earlier_weeks": "── 이번 달 이전 주 ──",
@@ -185,6 +187,7 @@ i18n.register({
         "pscreen.tklog_title2": "Token usage (est) · by {what}",
         "pscreen.tklog_scope": "{sigma}",
         "pscreen.tklog_disp": " (shown {n})",
+        "pscreen.tklog_xc": "Σ{full} real (cache {cache}) · activity~{scrape}",
         "pscreen.tklog_hint": "↑↓ move · Enter/←→ expand·collapse · p session · l limit r recon u /usage · Esc close",
         "pscreen.tree_earlier_weeks": "── earlier weeks this month ──",
         "pscreen.tree_earlier_months": "── earlier months ──",
@@ -850,9 +853,14 @@ class TokenLogScreen(ModalScreen):
     def __init__(self, records, usage=None, total_all=None,
                  daily=None, reconcile=None, daily_pct=None, hourly_pct=None,
                  hourly_week_pct=None, active_session=None, initial_mode=None,
-                 model=None, warn_history=None):
+                 model=None, xc_totals=None, warn_history=None):
         super().__init__()
         self._records = records or []
+        # §10-D P6: 트랜스크립트 권위 회계(usage_xc) 전체 합 — full(4항목)·footer(in+out
+        # 근사)·cache_read·cache_create·ratio. 스크랩 누계(_total_all)는 cache 를 못 봐
+        # 실제의 ~0.4%만 잡으므로, 상단 Σ 를 이 실측값으로 1차 표시하고 스크랩은 '활동'
+        # 보조신호로 강등한다(없으면=구버전 서버 → 종전 스크랩 Σ 폴백).
+        self._xc = xc_totals or {}
         # 요청 2026-06-21: 현재 활성 패널의 claude 세션 id(없으면 None) — [세션] 뷰가
         # 이 세션 행을 하이라이트하고 막대를 다른 색으로 그린다.
         self._active_session = active_session
@@ -1699,6 +1707,28 @@ class TokenLogScreen(ModalScreen):
         return (v["buckets"], v["bmax"], v["total"], i18n.t("기간"),
                 v.get("bkeys"), v.get("bmodels"))
 
+    def _sigma_text(self, win):
+        """상단 Σ 요약 문자열(평탄·트리 경로 공용). §10-D P6: 트랜스크립트 실측
+        (usage_xc full)이 있으면 그걸 1차 Σ 로 보이고 캐시(read+create)를 별도 표기,
+        스크랩 누계는 '활동~' 보조신호로 강등한다 — 스크랩은 cache 를 못 봐 실제의
+        ~0.4%만 잡아 그대로 Σ 로 쓰면 두 자릿수 배율 과소표시다. 실측이 없으면(구버전
+        서버/빈 usage_xc) 종전 스크랩 ~Σ(+표시창 n) 폴백."""
+        life = self._total_all
+        if life is None:
+            life = win
+        xc_full = self._xc.get("full", 0) if self._xc else 0
+        if xc_full > 0:
+            cache = (self._xc.get("cache_read", 0)
+                     + self._xc.get("cache_create", 0))
+            return i18n.t("pscreen.tklog_xc",
+                          full=usagelog._fmt_tokens(xc_full),
+                          cache=usagelog._fmt_tokens(cache),
+                          scrape=usagelog._fmt_tokens(life))
+        sigma = f"~Σ{usagelog._fmt_tokens(life)}"   # ~ = 추정 라벨(S6 T3)
+        if life != win:
+            sigma += i18n.t("pscreen.tklog_disp", n=usagelog._fmt_tokens(win))
+        return sigma
+
     async def _refresh(self):
         self._sync_tabs()
         table = self.query_one(DataTable)
@@ -1908,14 +1938,9 @@ class TokenLogScreen(ModalScreen):
         # Σ: 정확한 전체 이력 합(서버 SQL 집계, Phase B). 계정과 무관한 머신-로컬
         # 전체합(total_all)을 쓰고, 없으면(구버전 서버) 표시 레코드 합으로 폴백.
         # 레코드가 cap 돼 표시 합과 다르면 그 표시 합을 병기.
-        life = self._total_all
-        if life is None:
-            life = win
-        sigma = f"~Σ{usagelog._fmt_tokens(life)}"   # ~ = 추정 라벨(S6 T3)
-        if life != win:
-            sigma += i18n.t("pscreen.tklog_disp", n=usagelog._fmt_tokens(win))
         # 스코프는 1줄로 컴팩트(묶음/버킷은 제목에 이미 있음). 표 높이를 아낀다.
-        scope = i18n.t("pscreen.tklog_scope", sigma=sigma)
+        # Σ 요약은 _sigma_text(트랜스크립트 실측 1차·스크랩 활동~ 보조, §10-D P6).
+        scope = i18n.t("pscreen.tklog_scope", sigma=self._sigma_text(win))
         # 상단은 1줄(한도 요약 접두 + 스코프)만 — /usage 막대·창Σ·신선도 상세는
         # [한도] 뷰로 옮겼다(작은 화면 정리, 2026-06-14). usage 없으면 접두는 빈 문자열.
         # 상단은 한도 요약+스코프만 — 세션 뷰는 모델 색 범례를 제거했다(요청 2026-06-22,
@@ -2174,13 +2199,8 @@ class TokenLogScreen(ModalScreen):
         # 제목·스코프·범례·힌트(평탄 경로와 동형).
         self.query_one("#tklogtitle", Label).update(
             i18n.t("pscreen.tklog_title2", what=i18n.t("기간")))
-        life = self._total_all
-        if life is None:
-            life = win
-        sigma = f"~Σ{usagelog._fmt_tokens(life)}"
-        if life != win:
-            sigma += i18n.t("pscreen.tklog_disp", n=usagelog._fmt_tokens(win))
-        scope = i18n.t("pscreen.tklog_scope", sigma=sigma)
+        # §10-D P6: 평탄 경로와 동형 — 트랜스크립트 실측 1차 Σ(스크랩은 활동~ 보조).
+        scope = i18n.t("pscreen.tklog_scope", sigma=self._sigma_text(win))
         # Period 트리도 막대 단색·상단 모델 범례 제거(요청 2026-06-22, Session 과 동형).
         # 모델별 비율은 [대사](Recon) 탭에서 본다.
         top = Text(self._limit_summary() + scope)

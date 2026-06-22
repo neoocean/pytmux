@@ -354,6 +354,7 @@ def _on_token_log_msg(app, msg):
         active_session=msg.get("active_session"),
         initial_mode=initial_mode,
         model=getattr(app.status, "claude_model", None),
+        xc_totals=msg.get("xc_totals"),
         warn_history=msg.get("warn_history")))
 
 
@@ -793,12 +794,21 @@ class _ClaudeCodePlugin:
             # 항상 있지만, 최소 _FakeServer(계약 테스트) 대비 getattr 폴백.
             _rwh = getattr(server, "_read_warn_history", None)
             warn_hist = _rwh(50) if callable(_rwh) else []
+            # §10-D P6: 트랜스크립트 권위 회계(usage_xc) 전체 합 — footer 스크랩
+            # (records/total_all)은 cache_read/creation 을 못 봐 실제의 ~0.4%만 잡는
+            # 라이브 활동신호이고, cache 까지 담은 정확 4항목 누계는 이 xc_totals 가
+            # 담는다(full/footer/cache_read/cache_create/ratio). 팝업이 이걸 1차값으로
+            # 보인다. v7(usage_xc) 미보유 구버전/계약 _FakeServer → 빈 dict(폴백).
+            xc_totals = (usagedb.xc_totals(conn)
+                         if conn is not None and hasattr(usagedb, "xc_totals")
+                         else {})
             return {"t": "token_log", "records": recs,
                     "total_all": total_all,
                     "daily": daily, "reconcile": recon,
                     "daily_pct": daily_pct, "hourly_pct": hourly_pct,
                     "hourly_week_pct": hourly_week,
                     "active_session": active_sid,
+                    "xc_totals": xc_totals,
                     "warn_history": warn_hist}
         return None
 

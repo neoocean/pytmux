@@ -644,3 +644,57 @@ async def test_limit_tab_model_section_cycle_and_apply():
             assert app.screen_stack[-1] is scr, "비-편집 행 ← 는 팝업을 닫지 않음"
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_xc_totals_shown_as_primary_sigma_with_cache():
+    """§10-D P6: 트랜스크립트 실측(usage_xc full)이 오면 상단 Σ 를 그 실측값으로 1차
+    표시하고(캐시 별도 표기), 스크랩 누계는 '활동~' 보조신호로 강등한다. 스크랩은
+    cache 를 못 봐 실제의 ~0.4%만 잡으므로 그대로 Σ 로 쓰면 두 자릿수 배율 과소표시."""
+    import importlib
+    from harness import make_app, server_only, teardown
+    usagelog = importlib.import_module("pytmuxlib.plugins.claude-code.usagelog")
+
+    xc = {"full": 9_900_000_000, "footer": 21000, "cache_read": 6_000_000,
+          "cache_create": 0, "ratio": 471428.0}
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 36)) as pilot:
+            await pilot.pause(0.3)
+            app.push_screen(screens.TokenLogScreen(
+                _hour_records(), total_all=21000, xc_totals=xc))
+            await pilot.pause(0.3)
+            scr = app.screen_stack[-1]
+            top = scr._tktop_text
+            text = top.plain if hasattr(top, "plain") else str(top)
+            ffull = usagelog._fmt_tokens(9_900_000_000)     # '9900M'
+            fcache = usagelog._fmt_tokens(6_000_000)        # '6M'
+            fscrape = usagelog._fmt_tokens(21000)           # '21k'
+            assert f"Σ{ffull}" in text, f"실측 full 이 1차 Σ: {text!r}"
+            assert fcache in text, f"캐시 별도 표기: {text!r}"
+            assert f"~{fscrape}" in text, f"스크랩은 활동~ 보조신호: {text!r}"
+            # 스크랩 누계가 1차 Σ 자리를 차지하면 안 된다(과소표시 방지).
+            assert f"Σ{fscrape}" not in text, f"스크랩이 Σ 1차면 안 됨: {text!r}"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_no_xc_totals_falls_back_to_scrape_sigma():
+    """구버전 서버/빈 usage_xc(xc_totals 없음) → 종전 스크랩 ~Σ 폴백(회귀 안전)."""
+    import importlib
+    from harness import make_app, server_only, teardown
+    usagelog = importlib.import_module("pytmuxlib.plugins.claude-code.usagelog")
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 36)) as pilot:
+            await pilot.pause(0.3)
+            app.push_screen(screens.TokenLogScreen(
+                _hour_records(), total_all=21000))      # xc_totals 미지정
+            await pilot.pause(0.3)
+            scr = app.screen_stack[-1]
+            text = scr._tktop_text.plain
+            assert f"~Σ{usagelog._fmt_tokens(21000)}" in text, \
+                f"폴백은 스크랩 ~Σ: {text!r}"
+    finally:
+        await teardown(srv, task, sock)

@@ -3837,6 +3837,33 @@ async def test_token_log_reply_includes_reconcile():
         await teardown(srv, task, sock)
 
 
+async def test_token_log_reply_includes_xc_totals():
+    """§10-D P6: request_token_log 회신에 트랜스크립트 권위 합(xc_totals)이 실린다 —
+    팝업이 실측 4항목(cache 포함)을 1차값으로 보이게. footer 스크랩(records)과 별개로
+    usage_xc 의 full/footer/cache_read/cache_create/ratio 를 서버가 SQL 로 집계해 보낸다."""
+    from pytmuxlib import usagedb
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        conn = srv._tokens_db_conn()
+        # in=10,out=5,cc=0,cr=985 → footer=15, full=1000. 2건.
+        for i in range(2):
+            usagedb.insert_xc(conn, {
+                "xkey": f"m{i}:r{i}", "ts": "2026-06-22T10:00:00.000Z",
+                "session_uuid": "s1", "model": "claude-opus-4-8",
+                "input": 10, "output": 5, "cache_create": 0,
+                "cache_read": 985, "is_sidechain": 0})
+        resp = srv.plugins.handle_server_request(
+            srv, sess, "request_token_log", {"limit": 100})
+        assert resp and resp["t"] == "token_log"
+        xc = resp.get("xc_totals")
+        assert isinstance(xc, dict) and xc.get("full") == 2000, xc
+        assert xc["footer"] == 30 and xc["cache_read"] == 1970, xc
+        assert round(xc["ratio"], 1) == round(2000 / 30, 1), xc
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_usage_fixture_end_to_end_chain():
     """S6 T6 골든: 실 /usage 패널 캡처(fixtures/claude/usage.txt)를 패널에 흘리면
     파서(parse_usage)→_usage 캡처→limits 스냅샷(T1)→상태줄 5h% 실측(T3)→게이트
