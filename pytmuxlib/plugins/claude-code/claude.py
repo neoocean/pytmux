@@ -386,6 +386,13 @@ def _build_model_re():
 
 _MODEL_RE = _build_model_re()
 
+# /usage 한도 카테고리 라벨('Current week (Sonnet only)', '(Opus only)' 등)은
+# 활성 모델이 **아니다** — 계열명(+버전) 바로 뒤가 'only'면 사용량 분류로 보고 모델
+# 매치에서 제외한다(2026-06-22, 오귀속 방지). '(all models)'는 계열명이 없어 애초에
+# 안 잡힌다. `_MODEL_RE` 의 `[\s-]*` 가 버전 없는 경우 사이 공백을 이미 먹으므로
+# 선행 공백은 0개일 수도 있다 → `\s{0,4}`(상한 — `\s*` 는 §5.9 ReDoS 가드 위반).
+_MODEL_CATEGORY_AFTER_RE = re.compile(r"\s{0,4}only\b", re.I)
+
 
 def claude_model(text):
     """Claude Code 화면 배지에서 모델 계열(+버전)을 best-effort 추출.
@@ -395,8 +402,13 @@ def claude_model(text):
     Claude UI 포맷 의존(§5.7)이라 실 골든 픽스처(badge_1m.txt)로 회귀 고정한다.
 
     배지는 Claude Code UI 하단에 있다(fixture 참고). 대화 내용에 모델명이 언급되면
-    첫 번째 매치가 대화 텍스트를 잡을 수 있으므로 **마지막** 매치를 배지로 본다."""
-    matches = list(_MODEL_RE.finditer(text))
+    첫 번째 매치가 대화 텍스트를 잡을 수 있으므로 **마지막** 매치를 배지로 본다.
+
+    단, /usage 패널의 한도 카테고리('… (Sonnet only)')는 활성 모델이 아니므로
+    제외한다 — 사용자가 /usage 를 열고 있을 때 모델이 'sonnet'으로 오귀속되던 것을
+    막는다(2026-06-22). 카테고리뿐이면(다른 배지 없음) None(→ 프로브 폴백으로 위임)."""
+    matches = [m for m in _MODEL_RE.finditer(text)
+               if not _MODEL_CATEGORY_AFTER_RE.match(text, m.end())]
     if not matches:
         return None
     m = matches[-1]

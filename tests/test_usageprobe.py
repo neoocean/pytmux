@@ -101,7 +101,9 @@ async def test_query_usage_boot_sentinel_new_claude_footer():
 
 
 async def test_query_usage_captures_account_from_boot():
+    # 부팅 화면에 계정·모델 신호가 모두 있으면 둘 다 부팅서 잡고 /status 폴백은 생략.
     boot = (b"\x1b[2J\x1b[H me@acme.com's Organization\r\n"
+            b" Opus 4.8 (1M context)  /model to change\r\n"
             b" ? for shortcuts\r\n")
     sess = _FakeSession(boot, _panel_bytes())
     undo = []
@@ -114,18 +116,22 @@ async def test_query_usage_captures_account_from_boot():
     assert u is not None
     # 부팅 화면의 `<email>'s Organization` 신뢰 신호 → 계정이 잡혀야 한다(별칭).
     assert u.get("account"), u
-    # 이미 잡혔으면 /status 폴백은 주입하지 않는다(불필요 왕복 없음).
+    # 부팅 화면의 모델 배지도 잡힌다(model 폴백 출처).
+    assert u.get("model") == "opus-4.8", u
+    # 계정·모델이 모두 잡혔으면 /status 폴백은 주입하지 않는다(불필요 왕복 없음).
     assert b"/status" not in sess.written, sess.written
 
 
 def _status_bytes() -> bytes:
     """실 /status(Status 탭) 화면 모사 — 계정 라벨은 여기에만 있다(2026-06-11 실관찰:
-    Organization/Email 라벨, 부팅·Usage 탭엔 부재)."""
+    Organization/Email 라벨, 부팅·Usage 탭엔 부재). 활성 모델도 여기에 표시되므로
+    (2026-06-22) 배지가 라이브 화면에 안 떴을 때의 model 폴백 출처다."""
     body = ("   Settings  Status   Config   Usage   Stats\r\n"
             "   Version:          2.1.173\r\n"
             "   Login method:     Claude Max account\r\n"
             "   Organization:     alice@acme.com's Organization\r\n"
             "   Email:            alice@acme.com\r\n"
+            "   Model:            Opus 4.8\r\n"
             "   Esc to cancel\r\n")
     return b"\x1b[2J\x1b[H" + body.encode("utf-8")
 
@@ -148,6 +154,43 @@ async def test_query_usage_account_fallback_via_status():
     assert sess.written.count(b"/status\r") == 1, sess.written
     assert u.get("account"), u                    # Status 탭에서 계정 확보
     assert "acme.com" in u["account"], u["account"]
+    assert u.get("model") == "opus-4.8", u        # Status 탭에서 모델도 확보
+
+
+async def test_query_usage_model_fallback_via_status_when_account_known():
+    """계정은 부팅서 잡혔어도 모델 배지가 화면에 없으면(라이브 idle 푸터엔 'auto
+    mode on'뿐) /status 를 한 번 스크랩해 활성 모델을 채운다(2026-06-22). 토큰이
+    model NULL('?')로 적재되던 주된 원인 — 그림자 프로브로 model 폴백을 만든다."""
+    boot = (b"\x1b[2J\x1b[H me@acme.com's Organization\r\n"
+            b" ? for shortcuts\r\n")          # 계정 O, 모델 배지 X
+    sess = _FakeSession(boot, _panel_bytes(), status=_status_bytes())
+    undo = []
+    _patch(undo, sess)
+    try:
+        u = usageprobe.query_usage(boot_timeout=2.0, panel_timeout=2.0)
+    finally:
+        for f in undo:
+            f()
+    assert u is not None
+    assert u.get("account"), u                    # 계정은 부팅서 이미 확보
+    assert u.get("model") == "opus-4.8", u        # 모델은 /status 폴백으로 확보
+    assert sess.written.count(b"/status\r") == 1, sess.written
+
+
+async def test_query_usage_model_none_when_unavailable():
+    """부팅·/usage·/status 어디에도 모델 신호가 없으면 model=None — fail-open(미귀속
+    'unknown', 기존 동작 보존). usage 자체는 정상 반환."""
+    boot = b"\x1b[2J\x1b[H Welcome to Claude\r\n ? for shortcuts\r\n"
+    sess = _FakeSession(boot, _panel_bytes(), status=None)
+    undo = []
+    _patch(undo, sess)
+    try:
+        u = usageprobe.query_usage(boot_timeout=2.0, panel_timeout=1.0)
+    finally:
+        for f in undo:
+            f()
+    assert u is not None and u["session"]["pct"] == 2
+    assert u.get("model") is None
 
 
 async def test_query_usage_account_none_when_status_lacks_label():

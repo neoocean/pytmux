@@ -379,6 +379,13 @@ async def test_claude_model():
               "Opus 4.8 (1M context) · /model to change\n"
               "? for shortcuts")
     assert claude_model(screen) == "opus-4.8"
+    # /usage 한도 카테고리('(Sonnet only)')는 활성 모델이 아니므로 제외한다 —
+    # 사용자가 /usage 패널을 열고 있을 때 'sonnet'으로 오귀속되던 것 방지(2026-06-22).
+    assert claude_model("Current week (all models)\n  41% used\n"
+                        "Current week (Sonnet only)\n  6% used") is None
+    # 카테고리 라벨과 실제 배지가 함께 있으면 배지(마지막 비카테고리 매치)를 잡는다.
+    assert claude_model("Current week (Sonnet only)\n6% used\n"
+                        "Opus 4.8 (1M context) · /model to change") == "opus-4.8"
 
 
 async def test_ctx_window_tokens():

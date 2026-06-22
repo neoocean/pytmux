@@ -24,7 +24,8 @@ import subprocess
 import threading
 import time
 
-from .claude import claude_account, claude_account_full, parse_usage
+from .claude import (claude_account, claude_account_full, claude_model,
+                     parse_usage)
 
 IS_WINDOWS = os.name == "nt"
 
@@ -177,7 +178,15 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
     `account`: 이 숨은 세션이 로그인된 계정(claude_account 별칭). 폰/데스크탑 앱과
     **다른 계정**이면 한도 %·리셋이 실제로 달라지므로(요청), 사용자가 눈으로
     대조할 수 있게 함께 싣는다. 계정 라벨은 /status(Status 탭)에만 있어(부팅·
-    Usage 탭엔 부재 — 2026-06-11 실관찰) 거기까지 못 잡으면 None."""
+    Usage 탭엔 부재 — 2026-06-11 실관찰) 거기까지 못 잡으면 None.
+
+    `model`: 이 숨은 세션의 활성 모델(claude_model 파싱값, 예 'opus-4.8'). 라이브
+    Claude 패널은 모델 배지를 **상시 표시하지 않아**(idle 푸터엔 'auto mode on …'
+    뿐, 배지는 /model 변경 직후 등에만 잠깐 — 2026-06-22 실관찰) 화면 스크랩만으론
+    토큰이 model NULL('?')로 적재되는 일이 잦다. 그림자 프로브는 부팅 배지·/status
+    의 Model 라인에서 활성 모델을 잡아 model 폴백을 제공한다(서버 _scan_claude 가
+    라이브 배지 우선·없으면 이 값으로 채움). /usage 패널은 'Sonnet only' 같은 한도
+    카테고리 라벨이 모델로 오인돼 출처에서 제외한다. 못 잡으면 None."""
     try:
         import pyte
     except Exception:
@@ -233,6 +242,7 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
         # 전체=휘발성 표시). 팝업이 전체 이메일을 보이도록(요청).
         acct = claude_account(disp())
         acct_full = claude_account_full(disp())
+        model = claude_model(disp())   # 부팅/welcome 화면 배지(있으면)
         sess.write(b"/usage\r")
         wait_for("% used", panel_timeout)
         pump(0.4)
@@ -242,22 +252,28 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
             # /usage 화면에도 계정 신호가 있으면 보강(부팅서 못 잡았을 때).
             acct = acct or claude_account(screen)
             acct_full = acct_full or claude_account_full(screen)
-            if not acct:
+            # 주의: /usage 패널에서는 모델을 뽑지 않는다 — 'Current week (Sonnet
+            # only)' 같은 **한도 카테고리** 라벨이 활성 모델로 오인되기 때문(실측).
+            # 모델은 부팅 배지·/status(Model 라인)에서만 잡는다(아래).
+            if not acct or not model:
                 # 계정 식별 폴백(2026-06-11 §5.5 관찰): 부팅 화면·/usage(Usage 탭)
                 # 에는 계정 라벨이 **아예 없다**(실캡처 — limits 스냅샷 20/20 이
                 # account None 이던 원인). 같은 설정 패널의 Status 탭(/status)에만
                 # `Organization:`/`Email:` 라벨이 있으므로, 패널을 닫고 /status 를
                 # 한 번 더 스크랩한다(같은 숨은 세션 재사용·토큰 비용 0·계정이
-                # 이미 잡혔으면 생략).
+                # 이미 잡혔으면 생략). /status 탭은 활성 모델도 보여줘(2026-06-22)
+                # 배지가 화면에 안 떠 model 이 None 일 때 여기서 함께 채운다.
                 sess.write(b"\x1b")             # /usage 패널 닫기(Esc to cancel)
                 pump(0.2)
                 sess.write(b"/status\r")
                 if wait_for(("Organization:", "Email:", "Login method"),
                             panel_timeout):
                     pump(0.4)
-                    acct = claude_account(disp())
+                    acct = acct or claude_account(disp())
                     acct_full = acct_full or claude_account_full(disp())
+                    model = model or claude_model(disp())
             usage["account"] = acct
+            usage["model"] = model
             # 전체 이메일(없으면 별칭 폴백). DB 영속 컬럼엔 없으므로 디스크엔 안 남고,
             # 라이브 status 로만 흘러 팝업/오버레이가 전체를 표시한다.
             usage["account_full"] = acct_full or acct

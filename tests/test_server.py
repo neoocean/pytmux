@@ -626,6 +626,44 @@ async def test_usage_auto_refresh_and_account(tmp_path=None):
         await teardown(srv, task, sock)
 
 
+async def test_scan_model_fallback_and_preserve():
+    """모델 귀속 강화(2026-06-22): 라이브 Claude 화면은 모델 배지를 상시 표시하지
+    않아(idle 푸터엔 'auto mode on …'·'? for shortcuts'뿐) 토큰이 model NULL('?')로
+    적재되는 일이 잦았다.
+      ① 배지가 화면에 없으면 그림자 /usage 프로브가 /status 에서 잡은 모델
+         (self._usage['model'])로 pane._claude_model 을 채운다(계정 폴백과 동형).
+      ② 라이브 배지가 뜨면(/model 변경 직후 등) 그 값이 우선해 폴백을 덮는다.
+      ③ 인패널 /usage 갱신(parse_usage, model 없음)은 프로브 모델을 안 지운다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        # 프로브가 /status 에서 잡아 둔 모델(폴백 출처) — probe 자체는 외부 의존이라 주입
+        srv._usage = {"session": {"pct": 5, "reset": "2pm"}, "model": "haiku-4.5"}
+        # ① 배지 없는 idle 화면 → claude_model None → 프로브 모델 폴백
+        p.feed(b"\x1b[2J\x1b[H Done.\r\n? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle"
+        assert p._claude_model == "haiku-4.5", \
+            f"배지 부재 시 프로브 모델 폴백 기대, got {p._claude_model!r}"
+        # ② 라이브 배지가 뜨면 폴백을 덮는다(라이브 선택이 권위)
+        p.feed(b"\x1b[2J\x1b[H Opus 4.8 (1M context)  /model to change\r\n"
+               b"? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._claude_model == "opus-4.8", \
+            f"라이브 배지 우선 기대, got {p._claude_model!r}"
+        # ③ 인패널 /usage 갱신은 그림자 모델을 보존(parse_usage 엔 model 없음)
+        p.feed("\x1b[2J\x1b[HCurrent session\r\n2% used\r\n"
+               "Resets 3pm (Asia/Seoul)\r\n? for shortcuts\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert srv._usage["session"]["pct"] == 2, srv._usage
+        assert srv._usage.get("model") == "haiku-4.5", \
+            "인패널 갱신이 그림자 모델을 덮지 않음"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_usage_snapshot_persisted_on_scan():
     """S6 T1: 인패널 /usage·footer 인라인 한도가 _usage 를 갱신하는 순간 limits
     스냅샷이 SQLite 에 적힌다(source=panel/inline, 그림자 계정 보존 포함). 같은

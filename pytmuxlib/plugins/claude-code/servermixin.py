@@ -979,6 +979,12 @@ class ServerClaudeMixin:
                     if isinstance(self._usage, dict) and self._usage.get("account") \
                             and "account" not in new_usage:
                         new_usage["account"] = self._usage["account"]
+                    # 모델도 동일하게 보존(2026-06-22) — parse_usage/인라인엔 model 이
+                    # 없어, 보존 안 하면 인패널 갱신이 프로브 model 폴백을 지워
+                    # _scan_claude 의 model 폴백(self._usage['model'])이 끊긴다.
+                    if isinstance(self._usage, dict) and self._usage.get("model") \
+                            and "model" not in new_usage:
+                        new_usage["model"] = self._usage["model"]
                     self._usage = new_usage
                     self._usage_ts = time.time()   # S6 T3: 신선도(표시·게이트)
                     # S6 T1: 실측 한도 스냅샷 이력화 — 값이 바뀐 순간만 적힌다
@@ -1116,6 +1122,18 @@ class ServerClaudeMixin:
                             p._claude_account_full = acct_full
                     # M14c: 모델 배지(Opus 4.8 등) 갱신 — 마지막 본 값 유지.
                     mdl = claude_model(txt)
+                    if not mdl and p._claude_model is None:
+                        # 폴백(2026-06-22): 라이브 패널은 모델 배지를 상시 표시하지
+                        # 않아(idle 푸터엔 'auto mode on …'뿐) 화면 스크랩만으론
+                        # 토큰이 model NULL('?')로 적재되는 일이 잦다. 그림자 /usage
+                        # 프로브가 /status·부팅 화면에서 잡은 모델로 채운다(계정
+                        # 폴백과 동형). 라이브 배지가 한 번이라도 잡히면 위 mdl 이
+                        # 우선해 덮으므로(/model 변경 직후엔 배지가 떠 즉시 정정),
+                        # 프로브 기본 모델 ≠ 라이브 선택인 경우의 오귀속은 일시적.
+                        pm = (self._usage.get("model")
+                              if isinstance(self._usage, dict) else None)
+                        if pm:
+                            mdl = pm
                     if mdl and mdl != p._claude_model:
                         p._claude_model = mdl
                         changed = True
