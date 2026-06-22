@@ -1257,6 +1257,10 @@ class Tab:
         self.monitor_activity = False
         self.monitor_bell = True
         self.monitor_claude = True
+        # 탭 고정(핀, 항목7): True 면 탭바 오른쪽 구역(항상 보임)에 모이고 실수 닫기에
+        # 확인 한 단계가 붙는다. Session.tabs 불변식 "비고정 먼저, 고정 나중"을
+        # servertree._normalize_pins 가 강제한다. 영속(재시작·세션유지) 양 경로 직렬화.
+        self.pinned = False
 
 
 class Session:

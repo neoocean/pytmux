@@ -654,6 +654,10 @@ class TabBar(Widget):
     # 탭바 왼쪽 여백 — 첫 탭을 한 칸 오른쪽에서 시작(사용자 요청). lead 엔트리로
     # 넣어 render_line/active_tab_xrange 가 같은 오프셋을 공유한다.
     LEAD = 1
+    # 고정(핀) 탭 글리프(항목7) — 이모지 폭이 터미널마다 달라 ASCII 안전값. 고정
+    # 구역 좌측 구분자.
+    PIN_GLYPH = "*"
+    PIN_SEP = " ‖ "
 
     def _labels(self):
         out = []
@@ -661,9 +665,10 @@ class TabBar(Widget):
             flag = "!" if t.get("bell") else ("#" if t.get("activity") else "")
             ic = self.CLAUDE_ICON.get(t.get("claude"))
             ic = (ic + " ") if ic else ""
+            pin = (self.PIN_GLYPH + " ") if t.get("pinned") else ""  # 항목7 핀 글리프
             # 표시는 1부터(사용자 요청 #21). 내부 index 는 0-based 리스트 위치 그대로
             # 두고(select_window 등 좌표 계산 호환), **보여줄 때만** +1 한다.
-            out.append(f" {ic}{t['index'] + 1}:{t['name']}{flag} ")
+            out.append(f" {pin}{ic}{t['index'] + 1}:{t['name']}{flag} ")
         return out
 
     def _entries(self):
@@ -681,24 +686,36 @@ class TabBar(Widget):
         w = self.size.width
         sig = (w, self.sel, self._scroll,
                tuple((t["index"], t["name"], t.get("bell"),
-                      t.get("activity"), t.get("claude")) for t in self.tabs))
+                      t.get("activity"), t.get("claude"),
+                      t.get("pinned")) for t in self.tabs))
         if sig == self._entries_sig:
             self._scroll = self._entries_scroll
             return self._entries_cache
         labels = self._labels()
         widths = [sum(_char_cells(c) for c in s) for s in labels]
+        # 항목7: 고정(핀) 탭은 오른쪽 구역으로 분리한다. 서버가 tabs 를 *[비고정][고정]*
+        # 으로 정규화하므로 비고정이 앞, 고정이 뒤다. 비고정만 가운데(스크롤) 구역에,
+        # 고정은 우측 flush 로 항상 보이게 그린다. 핀이 없으면 종전과 픽셀 동일.
         n = len(self.tabs)
+        pin_pos = [k for k in range(n) if self.tabs[k].get("pinned")]
+        first_pin = pin_pos[0] if pin_pos else n   # 비고정 구역 끝(exclusive)
+        # 고정 구역 폭(구분자 + 고정 라벨들). 핀 없으면 0.
+        pin_block_w = 0
+        if pin_pos:
+            pin_block_w = (sum(_char_cells(c) for c in self.PIN_SEP)
+                           + sum(widths[k] for k in pin_pos))
         idxs = [t["index"] for t in self.tabs]
         selpos = idxs.index(self.sel) if self.sel in idxs else 0
         # [+] 새 탭 버튼: 왼쪽 탭과 한 칸 더 띄운다(사용자 요청 — 앞 공백 2칸).
-        # 왼쪽 여백(LEAD)도 폭 예산에서 뺀다.
+        # 왼쪽 여백(LEAD)·고정 구역 폭도 가운데 예산에서 뺀다.
         addtxt = "  [+]"
-        mid_w = max(1, w - len(addtxt) - self.LEAD)
-        # 선택 탭이 보이도록 스크롤 보정
-        self._scroll = max(0, min(self._scroll, max(0, n - 1)))
-        if selpos < self._scroll:
+        mid_w = max(1, w - len(addtxt) - self.LEAD - pin_block_w)
+        # 선택 탭이 보이도록 스크롤 보정(비고정 구역 한정 — 고정 탭은 늘 보임).
+        sel_unpinned = selpos < first_pin
+        self._scroll = max(0, min(self._scroll, max(0, first_pin - 1)))
+        if sel_unpinned and selpos < self._scroll:
             self._scroll = selpos
-        while (self._scroll < selpos and
+        while (sel_unpinned and self._scroll < selpos and
                sum(widths[self._scroll:selpos + 1]) > mid_w - 2):
             self._scroll += 1
         entries, mid_used = [], 0
@@ -708,20 +725,30 @@ class TabBar(Widget):
             entries.append(("scroll_left", None, "◀"))
             mid_used += 1
         i = self._scroll
-        while i < n:
+        while i < first_pin:                        # 비고정 구역만 가운데에
             tw = widths[i]
-            reserve = 1 if i < n - 1 else 0        # 오른쪽 화살표 자리
+            reserve = 1 if i < first_pin - 1 else 0  # 오른쪽 화살표 자리
             if mid_used + tw > mid_w - reserve and i > self._scroll:
                 break
             entries.append(("tab", self.tabs[i]["index"], labels[i]))
             mid_used += tw
             i += 1
-        if i < n:                                  # 오른쪽에 더 있음
+        if i < first_pin:                           # 비고정 오른쪽에 더 있음
             entries.append(("scroll_right", None, "▶"))
         # [+] 새 탭 버튼(§10 #16): 앞 간격칸은 터미널 배경(녹색 아님)으로 분리해
         # 그려, 간격까지 녹색으로 칠해지지 않게 한다. 간격칸은 클릭 무시(lead 처럼).
         entries.append(("addgap", None, addtxt[:2]))   # 간격(터미널 배경)
         entries.append(("add", None, addtxt[2:]))      # "[+] "(녹색 버튼)
+        # 고정 구역: 우측 flush 로 — 현재까지 폭 + 고정 블록폭을 w 에서 빼 그 만큼
+        # 오른쪽 간격(rgap)을 채운 뒤 구분자·고정 탭을 그린다(항목7).
+        if pin_pos:
+            used = sum(sum(_char_cells(c) for c in txt) for _, _, txt in entries)
+            rgap = w - used - pin_block_w
+            if rgap > 0:
+                entries.append(("rgap", None, " " * rgap))
+            entries.append(("pinsep", None, self.PIN_SEP))
+            for k in pin_pos:
+                entries.append(("tab", self.tabs[k]["index"], labels[k]))
         self._entries_sig = sig            # C2: 진입 시그니처로 캐시(스크롤은 진입값)
         self._entries_scroll = self._scroll  # 안정화된 스크롤 보존(히트 시 복원)
         self._entries_cache = entries
@@ -761,9 +788,13 @@ class TabBar(Widget):
         by_idx = {t["index"]: t for t in self.tabs}
         segs, zones = [], []
         x = 0
+        # 항목7: 고정 구역 구분자(흐린 muted 글자), 우측 정렬 간격(터미널 배경).
+        pinsep_st = Style(color=theme_color(self, "primary"), bold=True)
         for kind, payload, text in self._entries():
-            if kind in ("lead", "addgap"):         # 여백/[+] 간격칸(터미널 배경, 클릭 무시)
+            if kind in ("lead", "addgap", "rgap"):  # 여백/간격칸(터미널 배경, 클릭 무시)
                 st = base
+            elif kind == "pinsep":                  # 고정 구역 구분자
+                st = pinsep_st
             elif kind in ("scroll_left", "scroll_right"):
                 st = arrow_st
             elif kind == "add":

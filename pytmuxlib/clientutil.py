@@ -522,6 +522,7 @@ MENU_ITEMS = [
     ("new_window", "새 탭"),
     ("rename_window", "탭 이름 변경"),
     ("kill_window", "탭 삭제"),
+    ("toggle_pin", "탭 고정 토글 (오른쪽 구역으로)"),
     ("choose_tree", "탭 선택기(트리)"),
     ("next_window", "다음 탭"),
     ("prev_window", "이전 탭"),
@@ -535,7 +536,7 @@ MENU_ITEMS = [
     ("kill_server", "서버 종료 (모든 탭/셸 종료)"),
 ]
 # 토글 메뉴 항목(현재 on/off 표시·선택해도 메뉴 안 닫음). 상태는 status 에서 읽음.
-MENU_TOGGLES = {"zoom", "sync", "autoresume", "prompt_clear"}
+MENU_TOGGLES = {"zoom", "sync", "autoresume", "prompt_clear", "toggle_pin"}
 
 # §8.1 컨텍스트 메뉴 그룹(서브메뉴)화(요청 2026-06-18): 평면 29항목이 세로로 너무 길어,
 # 묶을 수 있는 항목을 그룹으로 접고 자주/세션 항목만 최상위에 둔다. MENU_ITEMS(평면)는
@@ -547,8 +548,8 @@ MENU_GROUPS = {
              "break_pane", "join_pane", "rename_pane", "kill_pane"],
     "layout": ["select_layout", "next_layout", "layout_save",
                "layout_load_over", "layout_load_new"],
-    "tab": ["new_window", "rename_window", "kill_window", "choose_tree",
-            "next_window", "prev_window"],
+    "tab": ["new_window", "rename_window", "kill_window", "toggle_pin",
+            "choose_tree", "next_window", "prev_window"],
 }
 # 최상위 표시 순서. "group:<g>"=서브메뉴 진입점, "--"=비선택 구분선, 그 외=직접 액션.
 # 자주 쓰는 단독 항목·토글·세션 동작만 최상위에 두어 짧게 — 파괴적 동작
@@ -604,6 +605,9 @@ COMMANDS = [
     ("move-tab-right", "현재 탭을 오른쪽으로", "탭"),
     ("move-tab-first", "현재 탭을 맨 앞으로", "탭"),
     ("move-tab-last", "현재 탭을 맨 뒤로", "탭"),
+    ("pin-tab", "탭 고정(오른쪽 구역으로·실수 닫기 방지)", "탭"),
+    ("unpin-tab", "탭 고정 해제", "탭"),
+    ("pin-toggle", "탭 고정 토글 (별칭 pin)", "탭"),
     ("swap-tab", "탭 교환 (-t N)", "탭"),
     ("rename-tab", "탭 이름 변경", "탭"),
     ("automatic-rename", "탭 자동 이름 [on|off]", "탭"),
@@ -1047,6 +1051,9 @@ i18n.register({
         "cmd.move-tab-right": "Move current tab right",
         "cmd.move-tab-first": "Move current tab to front",
         "cmd.move-tab-last": "Move current tab to end",
+        "cmd.pin-tab": "Pin tab (move to right zone · prevent accidental close)",
+        "cmd.unpin-tab": "Unpin tab",
+        "cmd.pin-toggle": "Toggle tab pin (alias pin)",
         "cmd.swap-tab": "Swap tabs (-t N)",
         "cmd.rename-tab": "Rename tab",
         "cmd.automatic-rename": "Auto-rename tab [on|off]",
@@ -1124,6 +1131,7 @@ i18n.register({
         "menu.new_window": "New tab",
         "menu.rename_window": "Rename tab",
         "menu.kill_window": "Delete tab",
+        "menu.toggle_pin": "Toggle tab pin (to right zone)",
         "menu.choose_tree": "Tab picker (tree)",
         "menu.next_window": "Next tab",
         "menu.prev_window": "Previous tab",

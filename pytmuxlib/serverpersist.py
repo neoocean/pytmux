@@ -40,7 +40,8 @@ class ServerPersistMixin:
         path = path or self.layout_path
         data = {"sessions": [
             {"name": s.name, "windows": [
-                {"name": t.name, "root": self._serialize_node(t.window.root)}
+                {"name": t.name, "root": self._serialize_node(t.window.root),
+                 "pinned": getattr(t, "pinned", False)}
                 for t in s.tabs]}
             for s in self.sessions.values()]}
         try:
@@ -64,12 +65,15 @@ class ServerPersistMixin:
                 w = Window(root)
                 w._active = root if isinstance(root, Pane) else root.first_pane()
                 w._fix_parents(root, None)
-                tabs.append(Tab(i, wspec.get("name", "win"), w))
+                tab = Tab(i, wspec.get("name", "win"), w)
+                tab.pinned = bool(wspec.get("pinned", False))   # 항목7
+                tabs.append(tab)
             if not tabs:
                 continue
             # Session.restored 가 popup 등 휘발성 속성을 빠짐없이 채운다(§10 — 과거
             # popup 누락으로 복원 세션 attach 가 전부 깨졌다).
             sess = Session.restored(self._unique_name(ss.get("name")), tabs)
+            self._normalize_pins(sess)        # 핀 불변식 강제(구버전=전부 비고정)
             self.sessions[sess.name] = sess
         return True
 
@@ -114,7 +118,8 @@ class ServerPersistMixin:
                        "window": self._serialize_resume_window(t.window),
                        "monitor_activity": t.monitor_activity,
                        "monitor_bell": t.monitor_bell,
-                       "monitor_claude": t.monitor_claude}
+                       "monitor_claude": t.monitor_claude,
+                       "pinned": getattr(t, "pinned", False)}
                       for t in s.tabs]}
             for s in self.sessions.values()],
             # §1.7 Stage 3: 원격 링크 spec — 새 이미지가 remote_restore_links 로
@@ -300,10 +305,17 @@ class ServerPersistMixin:
                 w.sync = wspec.get("sync", False)
                 w.auto_rename = wspec.get("auto_rename", True)
                 w.layout_idx = wspec.get("layout_idx", 0)
-                t = Tab(wt.get("index", len(tabs)), wt.get("name", "win"), w)
+                # index 는 안정 ID 가 아니라 위치값(클라/명령은 "index==연속 위치"를
+                # 전제). 저장된 wt["index"] 를 그대로 쓰면, 위 build 실패로 일부 탭이
+                # skip 됐을 때 불연속/구멍이 남고(예: [0,1] 중 0 실패→[1]만 복원),
+                # 이후 new_window 의 idx=len(tabs) 가 기존 index 와 충돌해 중복 탭
+                # ("2:win" 둘, 1번 접근 불가)이 생긴다. restore_snapshot 처럼 위치값
+                # (len(tabs))으로 재부여해 항상 0,1,2… 연속을 보장한다.
+                t = Tab(len(tabs), wt.get("name", "win"), w)
                 t.monitor_activity = wt.get("monitor_activity", False)
                 t.monitor_bell = wt.get("monitor_bell", True)
                 t.monitor_claude = wt.get("monitor_claude", True)
+                t.pinned = bool(wt.get("pinned", False))        # 항목7
                 tabs.append(t)
             if not tabs:
                 continue
@@ -311,6 +323,7 @@ class ServerPersistMixin:
                 self._unique_name(ss.get("name")), tabs,
                 active_index=max(0, min(ss.get("active_index", 0), len(tabs) - 1)),
                 last_index=ss.get("last_index", 0))
+            self._normalize_pins(sess)        # 핀 불변식 강제(구버전=전부 비고정)
             self.sessions[sess.name] = sess
         if self.sessions:
             # 재시작 복원 진단(RESTART_SCENARIO.md §주의①): SIGWINCH **직전**(복원된

@@ -164,7 +164,8 @@ class ServerIOMixin:
             "windows": [{"index": t.index, "name": t.name,
                          "active": (i == sess.active_index),
                          "bell": t.has_bell, "activity": t.has_activity,
-                         "claude_done": t.has_claude_done}
+                         "claude_done": t.has_claude_done,
+                         "pinned": getattr(t, "pinned", False)}
                         for i, t in enumerate(sess.tabs)],
             "active_pane": win.active_pane.id if win else None,
             "zoomed": bool(win.zoomed) if win else False,
@@ -712,6 +713,14 @@ class ServerIOMixin:
                           int(msg.get("to", 0)))
         elif action == "move_current_tab":
             self.move_current_tab(sess, str(msg.get("where", "")))
+        elif action == "set_pinned":
+            # 항목7: 탭 고정/해제. index 없으면 활성 탭. value 미지정이면 토글.
+            idx = msg.get("index")
+            idx = sess.active_index if idx is None else int(idx)
+            if "value" in msg:
+                self.set_pinned(sess, idx, bool(msg.get("value")))
+            else:
+                self.toggle_pin(sess, idx)
         elif action == "zoom":
             self.toggle_zoom(sess)
         elif action == "select_layout":

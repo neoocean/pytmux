@@ -217,10 +217,15 @@ class ServerTreeMixin:
         rows = c.rows if c else 24
         cwd = self._resolve_start_cwd(sess, path)
         root = self.spawn_pane(cols, rows, cwd=cwd)
-        idx = len(sess.tabs)
-        sess.tabs.append(Tab(idx, "win", Window(root)))
-        sess.last_index = sess.active_index
-        sess.active_index = idx
+        # 새 탭은 비고정 구역의 끝(첫 고정 탭 앞)에 삽입한다 — 고정 구역을 침범하지
+        # 않게(항목7). 고정 탭이 없으면 종전대로 맨 뒤(= append 와 동일).
+        prev_active = sess.active_tab
+        pos = self._first_pinned_pos(sess)
+        sess.tabs.insert(pos, Tab(pos, "win", Window(root)))
+        self._reindex(sess)
+        sess.last_index = (sess.tabs.index(prev_active)
+                           if prev_active in sess.tabs else pos)
+        sess.active_index = pos
 
     # 탭 용어 별칭
     new_tab = new_window
@@ -251,7 +256,9 @@ class ServerTreeMixin:
         n = len(sess.tabs)
         if n < 2:
             return
-        new_index = max(0, min(new_index, n - 1))
+        # 활성 탭의 구역 안으로만 이동(핀 경계 안 넘김, 항목7).
+        lo, hi = self._zone_bounds(sess, sess.active_index)
+        new_index = max(lo, min(new_index, hi))
         tab = sess.tabs.pop(sess.active_index)
         sess.tabs.insert(new_index, tab)
         self._reindex(sess)
@@ -260,6 +267,10 @@ class ServerTreeMixin:
     def swap_window(self, sess: Session, target_index: int):
         n = len(sess.tabs)
         if not (0 <= target_index < n) or target_index == sess.active_index:
+            return
+        # 다른 구역(비고정↔고정)과는 스왑 금지 — 불변식 보존(항목7).
+        lo, hi = self._zone_bounds(sess, sess.active_index)
+        if not (lo <= target_index <= hi):
             return
         i = sess.active_index
         sess.tabs[i], sess.tabs[target_index] = (
@@ -272,7 +283,9 @@ class ServerTreeMixin:
         n = len(sess.tabs)
         if n < 2 or not (0 <= index < n):
             return
-        to_index = max(0, min(to_index, n - 1))
+        # 같은 구역 안으로만 재배치(핀 경계 안 넘김, 항목7) — 드래그 포함.
+        lo, hi = self._zone_bounds(sess, index)
+        to_index = max(lo, min(to_index, hi))
         if to_index == index:
             return
         active_tab = sess.active_tab
@@ -283,12 +296,62 @@ class ServerTreeMixin:
             sess.active_index = sess.tabs.index(active_tab)
 
     def move_current_tab(self, sess: Session, where: str):
-        """현재(활성) 탭을 좌/우/맨앞/맨뒤로 이동."""
+        """현재(활성) 탭을 좌/우/맨앞/맨뒤로 이동(같은 구역 안으로 클램프 — move_tab)."""
         i, n = sess.active_index, len(sess.tabs)
         to = {"left": i - 1, "right": i + 1,
               "first": 0, "last": n - 1}.get(where)
         if to is not None:
             self.move_tab(sess, i, to)
+
+    # ---- 탭 고정(핀, 항목7) ----
+    # 불변식: Session.tabs 는 항상 *[비고정…][고정…]*. _normalize_pins 가 모든 변형
+    # 끝에서 안정 분할로 강제한다(상대순서 보존). 탭 번호(index)·prefix-숫자·select_window
+    # 가 물리 위치를 그대로 따르므로 "보이는 순서 = 번호 순서" 가 유지된다(설계 §4-A).
+
+    def _first_pinned_pos(self, sess: Session) -> int:
+        """첫 고정 탭의 인덱스 = 비고정 구역의 끝(다음 위치). 고정 탭이 없으면 len."""
+        for i, t in enumerate(sess.tabs):
+            if getattr(t, "pinned", False):
+                return i
+        return len(sess.tabs)
+
+    def _zone_bounds(self, sess: Session, index: int):
+        """index 가 속한 구역(비고정/고정)의 [lo, hi] 인덱스 범위(포함). 드래그/이동을
+        이 범위로 클램프해 구역 경계를 넘지 못하게 한다."""
+        fp = self._first_pinned_pos(sess)
+        if index < fp:
+            return 0, fp - 1                 # 비고정 구역
+        return fp, len(sess.tabs) - 1        # 고정 구역
+
+    def _normalize_pins(self, sess: Session):
+        """tabs 를 안정 분할(비고정 먼저, 고정 나중)하고 _reindex. 활성·last 탭은
+        객체 신원으로 추적해 위치만 갱신한다(번호가 바뀌어도 같은 탭을 가리킴)."""
+        active = sess.active_tab
+        last = (sess.tabs[sess.last_index]
+                if 0 <= getattr(sess, "last_index", 0) < len(sess.tabs) else None)
+        # Python list.sort 는 안정 정렬 → 같은 pinned 값끼리 상대순서 보존.
+        sess.tabs.sort(key=lambda t: 1 if getattr(t, "pinned", False) else 0)
+        self._reindex(sess)
+        if active in sess.tabs:
+            sess.active_index = sess.tabs.index(active)
+        if last in sess.tabs:
+            sess.last_index = sess.tabs.index(last)
+
+    def set_pinned(self, sess: Session, index: int, value):
+        """index 탭의 고정 여부를 설정하고 불변식을 정규화(핀=고정 구역 맨 앞으로,
+        언핀=비고정 구역 맨 뒤로 이동하는 효과). 활성 탭 신원 유지."""
+        if not (0 <= index < len(sess.tabs)):
+            return
+        sess.tabs[index].pinned = bool(value)
+        self._normalize_pins(sess)
+
+    def toggle_pin(self, sess: Session, index: int | None = None):
+        """index(기본 활성) 탭의 고정 토글."""
+        if index is None:
+            index = sess.active_index
+        if 0 <= index < len(sess.tabs):
+            self.set_pinned(sess, index,
+                            not getattr(sess.tabs[index], "pinned", False))
 
     LAYOUTS = ["even-horizontal", "even-vertical", "main-horizontal",
                "main-vertical", "tiled"]

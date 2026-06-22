@@ -306,6 +306,77 @@ async def test_model_badge_debounce_absorbs_transient_haiku():
         await teardown(srv, task, sock)
 
 
+async def test_pin_tab_moves_right_and_unpin_returns():
+    """항목7: 탭 고정 → tabs 맨 뒤(고정 구역)로 이동·index 재부여·신원 유지. 언핀 →
+    비고정 구역으로 복귀. 불변식 '비고정 전부 < 고정 전부' 유지."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        for _ in range(3):
+            srv.new_window(sess)              # 탭 0..3 (4개)
+        t1 = sess.tabs[1]
+        srv.set_pinned(sess, 1, True)
+        assert sess.tabs[-1] is t1, "고정 탭은 맨 뒤로"
+        assert t1.pinned and t1.index == len(sess.tabs) - 1
+        assert [i for i, t in enumerate(sess.tabs) if t.pinned] == \
+            [len(sess.tabs) - 1], "고정은 끝에 모임"
+        # 언핀 → 비고정 구역으로(전부 비고정)
+        srv.set_pinned(sess, sess.tabs.index(t1), False)
+        assert not t1.pinned and all(not t.pinned for t in sess.tabs)
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_new_window_inserts_before_pinned():
+    """항목7: 고정 탭이 있으면 새 탭은 첫 고정 탭 앞(비고정 구역 끝)에 삽입돼 고정
+    구역을 침범하지 않는다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv.new_window(sess)                  # 탭 0,1
+        pinned = sess.tabs[1]
+        srv.set_pinned(sess, 1, True)         # 탭1 고정(맨 뒤)
+        assert sess.tabs[-1] is pinned
+        srv.new_window(sess)                  # 새 탭 → 고정 앞
+        assert sess.tabs[-1] is pinned, "고정 탭은 계속 맨 뒤"
+        assert not sess.tabs[-2].pinned, "새 탭은 비고정 구역 끝(고정 앞)"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_move_tab_clamped_within_zone():
+    """항목7: 비고정 탭을 고정 구역 좌표로 move_tab 해도 경계까지만(불변식 보존)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        for _ in range(3):
+            srv.new_window(sess)              # 탭 0..3
+        srv.set_pinned(sess, 3, True)         # 탭3 고정 → 비고정 [0,2], 고정 [3]
+        moved = sess.tabs[0]
+        srv.move_tab(sess, 0, 3)              # 고정 구역(3)으로 이동 시도
+        # 비고정 구역 끝(index 2)까지만 클램프 — 고정 탭은 여전히 맨 뒤.
+        assert sess.tabs[-1].pinned and sess.tabs.index(moved) <= 2
+        assert all(not t.pinned for t in sess.tabs[:-1]), "불변식 유지"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_pin_in_resume_payload():
+    """항목7: 재시작 resume 페이로드 tabs 직렬화에 pinned 가 실린다(복원 후 좌/우 보존)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv.new_window(sess)
+        srv.set_pinned(sess, 1, True)
+        payload = srv._resume_payload()
+        tabs = payload["sessions"][0]["tabs"]
+        assert any(t.get("pinned") for t in tabs), "고정 비트 직렬화됨"
+        # 정규화로 고정 탭이 마지막에 직렬화.
+        assert tabs[-1]["pinned"] is True
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_warn_history_record_read_cap_and_desc():
     """항목2(2026-06-22): 경고 이력 JSONL 저장/조회 — 시간 내림차순(최신 먼저)으로
     읽고, 상한(_WARN_HIST_CAP)을 넘으면 최근 것만 남긴다."""

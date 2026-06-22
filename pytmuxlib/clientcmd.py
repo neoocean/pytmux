@@ -471,6 +471,17 @@ class _CommandMixin:
             elif "off" in args:
                 val = False
             self.send_cmd("set_monitor", which=which, value=val)
+        elif c in ("pin-tab", "pin", "unpin-tab", "unpin", "pin-toggle"):
+            # 항목7: 활성 탭 고정/해제/토글. 원격 탭은 고정 불가(§9 — 업스트림 릴레이
+            # 미지원). set_pinned: value 없음=토글.
+            if self._active_remote_host() is not None:
+                self.display_message(i18n.t("msg.pin_remote_blocked"))
+            elif c in ("pin-tab", "pin"):
+                self.send_cmd("set_pinned", value=True)
+            elif c in ("unpin-tab", "unpin"):
+                self.send_cmd("set_pinned", value=False)
+            else:
+                self.send_cmd("set_pinned")        # 토글
         elif c in ("move-tab-left", "move-tab-right",
                    "move-tab-first", "move-tab-last"):
             self.send_cmd("move_current_tab", where=c[len("move-tab-"):])

@@ -2939,6 +2939,55 @@ async def test_tab_bar_force_always():
     await _with_app(body, cfg={"tab_bar_always": True})
 
 
+async def test_tabbar_pinned_render_right_with_separator():
+    """항목7: 고정(pinned) 탭은 구분자 '‖' 오른쪽 구역에 핀 글리프('*') 프리픽스로
+    그려진다. 고정 탭이 없으면 구분자·핀 글리프 없이 종전과 동일."""
+    async def body(app, pilot, srv):
+        app.tabbar.tabs = [
+            {"index": 0, "name": "build", "active": True},
+            {"index": 1, "name": "logs", "active": False},
+            {"index": 2, "name": "p4v", "active": False, "pinned": True}]
+        app.tabbar._entries_sig = None
+        line = "".join(s.text for s in app.tabbar.render_line(0))
+        assert "‖" in line, line                      # 구분자
+        assert "*" in line, line                       # 핀 글리프
+        assert line.index("‖") < line.index("p4v"), line   # 고정은 구분자 오른쪽
+        assert line.index("logs") < line.index("p4v"), line  # 비고정 왼쪽
+        # 무핀: 구분자·핀 글리프 없음.
+        app.tabbar.tabs = [
+            {"index": 0, "name": "build", "active": True},
+            {"index": 1, "name": "logs", "active": False}]
+        app.tabbar._entries_sig = None
+        line2 = "".join(s.text for s in app.tabbar.render_line(0))
+        assert "‖" not in line2 and "*" not in line2, line2
+    await _with_app(body)
+
+
+async def test_confirm_kill_pinned_prompts():
+    """항목7: 활성 탭이 고정이면 닫기 확인 문구가 '고정 탭 닫기'로 바뀐다(실수 닫기
+    방지). 일반 탭은 종전 흐름."""
+    async def body(app, pilot, srv):
+        cap = {}
+        app.confirm_popup = (lambda msg, action=None, title=None, **kw:
+                             cap.update(msg=msg, title=title))
+        app._active_window_name = lambda: "p4v"
+        # 활성 고정 탭(2개 — last 아님, 원격 아님).
+        app.tabbar.tabs = [
+            {"index": 0, "name": "a", "active": False},
+            {"index": 1, "name": "p4v", "active": True, "pinned": True}]
+        app.confirm_kill_tab()
+        assert "p4v" in cap.get("msg", ""), cap
+        assert "고정" in cap.get("title", ""), cap
+        # 일반(비고정) 활성 탭은 종전 '탭 닫기' 문구.
+        cap.clear()
+        app.tabbar.tabs = [
+            {"index": 0, "name": "a", "active": True},
+            {"index": 1, "name": "b", "active": False}]
+        app.confirm_kill_tab()
+        assert "고정" not in cap.get("title", ""), cap
+    await _with_app(body)
+
+
 async def test_cmd_mode_badge_no_hangul_leak_in_en():
     """en 로케일에서 명령 모드(esc :) 상태줄 CMD 배지가 한글로 새지 않는다.
 

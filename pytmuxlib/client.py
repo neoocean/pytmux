@@ -782,15 +782,22 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return
             # 이 탭을 닫으면 pytmux 가 끝나는가 = 탭이 하나뿐인가(#16).
             last = len(self.tabbar.tabs) <= 1
+            pinned = (not last and any(t.get("active") and t.get("pinned")
+                                       for t in self.tabbar.tabs))
             if last:
                 msg = i18n.t("dialog.kill_pytmux_msg")
                 title = i18n.t("dialog.kill_pytmux_title")
+            elif pinned:
+                # 항목7: 고정 탭은 "상시 유지" 의도라 실수 닫기를 한 단계 더 막는다.
+                name = self._active_window_name() or ""
+                msg = i18n.t("dialog.kill_pinned_msg", name=name)
+                title = i18n.t("dialog.kill_pinned_title")
             else:
                 msg = i18n.t("dialog.kill_tab_msg")
                 title = i18n.t("dialog.kill_tab_title")
             self.confirm_popup(
                 msg, action=lambda: self.send_cmd("kill_window"),
-                title=title, yes_label=None, danger=last)
+                title=title, yes_label=None, danger=(last or pinned))
 
         def confirm_kill_server(self):
             # kill-server 는 서버와 **모든** 탭·셸을 내려 이 pytmux 세션 전체를
@@ -1283,6 +1290,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                                  suggest=cur)   # 현재 이름=ghost(타이핑=덮어쓰기)
             elif key == "kill_window":
                 self.confirm_kill_tab()
+            elif key == "toggle_pin":
+                # 항목7: 활성 탭 고정 토글(원격 탭 거부 가드 포함 — clientcmd 경유).
+                self._run_command("pin-toggle")
             elif key == "next_window":
                 self.send_cmd("next_window")
             elif key == "prev_window":
