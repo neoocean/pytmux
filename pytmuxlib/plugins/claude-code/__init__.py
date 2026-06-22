@@ -865,7 +865,10 @@ class _ClaudeCodePlugin:
         그리고 클릭존을 채운다(코어 StatusBar._render_main 의 Claude 블록 이전). w0=들어오는
         누적 셀폭(P6) → render_segs 가 ux0/left 재합산을 생략하고 새 누적 폭을 반환한다."""
         from .clientstatus import render_segs
-        return render_segs(status, segs, w, w0)
+        # 항목6: 활성 탭이 원격 병합 탭이면 배지를 분홍으로(원격 컨텍스트 신호).
+        vr = getattr(app, "_viewing_remote", None)
+        viewing_remote = bool(vr()) if callable(vr) else False
+        return render_segs(status, segs, w, w0, viewing_remote=viewing_remote)
 
     # (client_status_tabs 훅 — 통합 상태 팝업의 '토큰 사용량' 탭 — 은 token-log 통합
     #  (2026-06-12)으로 제거. 통합 상태 팝업은 REC·서버 두 탭, 토큰은 token-log 팝업.)

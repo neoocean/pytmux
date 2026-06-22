@@ -152,17 +152,22 @@ def _trailing_cells(status, _char_cells) -> int:
     return n
 
 
-def render_segs(status, segs, w, w0=None):
+def render_segs(status, segs, w, w0=None, viewing_remote=False):
     """하단 상태줄 좌측에 Claude 세그먼트를 append 하고 클릭존을 status 에 채운다(코어
     _render_main 의 Claude 블록 이전). segs 는 REC 까지 누적된 상태로 들어오고, 여기서
     이어 그린 뒤 코어가 NEST/윈도우 목록을 계속 붙인다. 클릭존은 누적 폭으로 계산한다.
 
     w0(P6) = 들어오는 segs 의 누적 셀폭. 코어가 넘겨주면 ux0/left 를 segs 전수합산으로
     다시 구하지 않는다(없으면 None → 하위호환 전수합산). 자기 세그먼트를 그린 뒤의 **새
-    누적 셀폭**을 반환해 코어가 재순회 없이 이어 쓰게 한다."""
+    누적 셀폭**을 반환해 코어가 재순회 없이 이어 쓰게 한다.
+
+    viewing_remote(항목6 2026-06-22) = 활성 탭이 원격 병합 탭이면 True. 모델·사용량
+    배지(모델은 원격 패널 화면 스크랩값, /model 클릭도 원격 패널로 주입돼 활성 패널을
+    따라간다)를 **탁한 분홍**(REMOTE_PINK_DIM)으로 칠해 원격 컨텍스트임을 패널 분홍
+    외곽선과 의미를 맞춘다(로컬=현행 청색 secondary)."""
     from rich.segment import Segment
     from rich.style import Style
-    from pytmuxlib.clientutil import _char_cells, theme_color
+    from pytmuxlib.clientutil import _char_cells, theme_color, REMOTE_PINK_DIM
     tc = lambda n: theme_color(status, n)  # noqa: E731
     _cw = lambda t: sum(_char_cells(c) for c in t)  # noqa: E731
     # w0 미지정(직접 호출)이면 기존처럼 전수합산으로 폭을 구한다(하위호환).
@@ -213,7 +218,10 @@ def render_segs(status, segs, w, w0=None):
         # **현재 로컬 머신** 기준으로 표시한다(계정별 집계/표기 제거, 2026-06-19 결정).
         uparts.extend(usage_parts)
     if uparts:
-        sec = Style(color="white", bgcolor=tc("secondary"), bold=True)
+        # 원격 탭 보는 중이면 배지 배경을 탁한 분홍으로(항목6) — 로컬은 청색 secondary.
+        sec = Style(color="white",
+                    bgcolor=(REMOTE_PINK_DIM if viewing_remote else tc("secondary")),
+                    bold=True)
         hi = Style(color="black", bgcolor=tc("warning"), bold=True)
         fb = status.focus_btn
         ux0 = acc   # P6: 들어오는 누적폭(=이 시점 segs 전수합산) 재사용

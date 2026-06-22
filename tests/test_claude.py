@@ -684,6 +684,36 @@ async def test_statusbar_model_always_shown_when_active():
         i18n.set_locale("ko")
 
 
+async def test_statusbar_badge_pink_when_viewing_remote():
+    """항목6(2026-06-22): 활성 탭이 원격 병합 탭이면(viewing_remote=True) 모델·사용량
+    배지 배경이 탁한 분홍(REMOTE_PINK_DIM)으로 — 로컬일 땐 청색(secondary). 원격 탭의
+    분홍 외곽선과 의미를 맞춰 클릭 컨텍스트를 예측 가능하게 한다."""
+    cs = importlib.import_module("pytmuxlib.plugins.claude-code.clientstatus")
+    from pytmuxlib.clientutil import REMOTE_PINK_DIM
+
+    class _S:
+        pass
+
+    def model_seg(viewing_remote):
+        s = _S()
+        cs.init_defaults(s)
+        s.claude_active = True
+        s.claude_model = "opus-4.8"
+        s.tok5h_pct = 20
+        s.focus_btn = None
+        segs = []
+        cs.render_segs(s, segs, 100, w0=0, viewing_remote=viewing_remote)
+        return next(sg for sg in segs if "opus-4.8" in sg.text)
+
+    def bg_hex(seg):
+        return seg.style.bgcolor.get_truecolor().hex.lower()
+
+    # 로컬: 분홍 아님(청색 secondary).
+    assert bg_hex(model_seg(False)) != REMOTE_PINK_DIM.lower()
+    # 원격: REMOTE_PINK_DIM.
+    assert bg_hex(model_seg(True)) == REMOTE_PINK_DIM.lower()
+
+
 # ── §5.9: 정규식 ReDoS(파국적 백트래킹) 회귀 가드 ──────────────────────────────
 # claude.py 의 파서는 **신뢰할 수 없는 화면 텍스트**(Claude Code TUI 출력·붙여넣기)에
 # 정규식을 돌린다. 패턴에 중첩 수량자/모호 교대가 들어가면 적대적 입력이 지수/2차
