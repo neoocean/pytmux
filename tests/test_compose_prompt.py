@@ -341,6 +341,25 @@ async def test_block_select_delete_in_textarea():
     await _with_app(body)
 
 
+async def test_ctrl_a_selects_all_in_textarea():
+    """Ctrl+A 가 작성창 전체 텍스트를 선택한다(자식 프롬프트엔 없는 편집). 선택 후
+    한 글자 입력하면 전체가 교체된다."""
+    async def body(app, pilot, srv):
+        app.open_compose()
+        await pilot.pause(0.2)
+        ta = app.screen_stack[-1].query_one(TextArea)
+        ta.text = "line one\nline two"
+        ta.move_cursor((0, 0))
+        await pilot.pause(0.05)
+        await pilot.press("ctrl+a")
+        await pilot.pause(0.05)
+        assert ta.selected_text == "line one\nline two", repr(ta.selected_text)
+        await pilot.press("x")             # 선택 전체 교체
+        await pilot.pause(0.1)
+        assert ta.text == "x", repr(ta.text)
+    await _with_app(body)
+
+
 # ---- claude_input_box: 화면 입력박스 스크레이프(클라 키 추적 누락분 fallback) ----
 async def test_claude_input_box_parser():
     """라이브 입력박스 추출(best-effort): 박스 없는 한 줄·박스 한 줄·박스 멀티라인

@@ -2298,6 +2298,11 @@ class _ComposeTextArea(TextArea):
             event.prevent_default()
             self.insert("\n")
             return
+        if event.key == "ctrl+a":                # Ctrl+A = 전체 선택
+            event.stop()
+            event.prevent_default()
+            self.select_all()
+            return
         await super()._on_key(event)
 
 
