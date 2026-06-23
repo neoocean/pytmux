@@ -1756,6 +1756,39 @@ async def test_warn_tab_tree_active_expanded_past_collapsed():
     await _with_app(body)
 
 
+async def test_statusbar_emoji_deemojied_under_modal_backdrop():
+    """반투명 모달(팝업)이 떠 본문을 어둡게 깔면 상태표시줄의 컬러 이모지(경고 ⚠)도
+    함께 딤돼 보여야 한다 — Textual backdrop 은 셀 스타일색만 블렌딩하고 컬러 이모지
+    글리프는 안 어두워지므로, 상태표시줄이 스스로 ⚠ 를 폭1 placeholder(·)로 바꾼다
+    (#25). 팝업을 닫으면 원본 ⚠ 로 복원되고, 폭(셀 길이)은 두 경우 모두 같다."""
+    from pytmuxlib.clientscreens import InfoScreen
+
+    async def body(app, pilot, srv):
+        app.status.claude_warn = "⚠ 5:00"
+        app.status.claude_warn_kind = "long_turn"
+        app.status.claude_warn_n = None
+        app.status.refresh()
+        await pilot.pause(0.05)
+        # 모달 없음: ⚠ 가 상태표시줄에 그대로 그려진다.
+        bottom = app.status.size.height - 1
+        plain = app.status.render_line(bottom)
+        assert "⚠" in plain.text, plain.text
+        # 반투명 backdrop 팝업(InfoScreen)을 띄우면 ⚠ → · 로 치환(딤 일관).
+        app.push_screen(InfoScreen(["body line"], title="t"))
+        await pilot.pause(0.05)
+        dimmed = app.status.render_line(bottom)
+        assert "⚠" not in dimmed.text, dimmed.text
+        assert "·" in dimmed.text, dimmed.text
+        # 폭(셀 길이) 보존 — 클릭존·우측정렬이 흔들리지 않는다.
+        assert dimmed.cell_length == plain.cell_length
+        # 팝업 닫으면 원본 ⚠ 복원.
+        await pilot.press("escape")
+        await pilot.pause(0.05)
+        restored = app.status.render_line(bottom)
+        assert "⚠" in restored.text, restored.text
+    await _with_app(body)
+
+
 async def test_token_log_tree_has_5h_and_1w_columns_no_ratio():
     """사용자 요청(2026-06-17): 시각 행에 5h% 옆 1w%(주간 한도) 열을 두고 기존
     비율(ratio/막대) 열은 없다. 계층 트리(항상 시간순)는 hourly 데이터가 있으면

@@ -89,6 +89,19 @@ def _dim_cell(ch, st):
     return (ch, _darken_style(st))
 
 
+def _deemoji_text(s: str) -> str:
+    """문자열 안 컬러 이모지 글리프를 같은 폭의 placeholder(·)로 치환한다(#25).
+
+    _composite 그리드 밖의 위젯(상태표시줄·탭바)은 반투명 모달 backdrop 으로 딤될
+    때 Textual 이 셀 스타일색만 블렌딩하는데, 컬러 이모지(⚠ 등)는 터미널이 셀
+    스타일을 무시하고 자체 색 글리프로 그려 어두워지지 않고 밝게 남는다. 본문 grid
+    의 _dim_cell 과 동일하게 글리프를 ·(폭 보존: _char_cells 칸)로 바꿔 surrounding
+    딤 텍스트와 일관되게 만든다. 모달을 닫으면 위젯이 원본 문자열로 다시 렌더된다."""
+    if not s or not any(_is_emoji(c) for c in s):
+        return s
+    return "".join("·" * _char_cells(c) if _is_emoji(c) else c for c in s)
+
+
 def _fmt_tokens(total: int) -> str:
     """누적 토큰 수를 짧게 표기. 1234567→"1.2M", 45200→"45.2k", 800→"800".
     (서버측 tokens.fmt 과 동일 규칙 — 클라이언트 단독 표시용 경량 복제.)"""

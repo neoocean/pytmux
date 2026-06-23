@@ -1046,6 +1046,12 @@ class _RenderMixin:
         if getattr(self, "view", None) is not None:
             self._composite()
             self.call_after_refresh(self._composite)
+            # 상태표시줄은 _composite 그리드 밖의 별도 위젯이라 backdrop 딤 중 자기
+            # 이모지(⚠)를 placeholder 로 바꾼다(#25). 모달이 떠도 캐시 strip 을
+            # 재사용하지 않게 명시 refresh — 안 하면 이모지가 딤 안 된 채 남는다.
+            _sb = getattr(self, "status", None)
+            if _sb is not None:
+                _sb.refresh()
         return r
 
     def pop_screen(self, *args, **kwargs):
@@ -1065,6 +1071,10 @@ class _RenderMixin:
         if getattr(self, "view", None) is not None:
             self._composite()
             self.call_after_refresh(self._composite)
+            # 팝업이 닫히면 상태표시줄도 원본 이모지로 되돌리도록 재렌더(#25, push 대칭).
+            _sb = getattr(self, "status", None)
+            if _sb is not None:
+                _sb.refresh()
         return r
 
     def _draw_tab_close(self, cells, W, H):

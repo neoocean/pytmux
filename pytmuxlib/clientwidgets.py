@@ -21,7 +21,7 @@ from rich.style import Style
 
 from . import i18n
 from .clientutil import (_DATE_STRFTIME, _TIME_STRFTIME, REMOTE_PINK,
-                         _char_cells, norm_sep, theme_color)
+                         _char_cells, _deemoji_text, norm_sep, theme_color)
 
 
 class SepInsensitiveSuggester(SuggestFromList):
@@ -1120,6 +1120,26 @@ class StatusBar(Widget):
         self.app.plugins.client_statusbar_update(self.app, self, msg)
         self.refresh()
 
+    def _backdrop_dim_active(self) -> bool:
+        """반투명 모달(팝업)이 떠 본문을 어둡게 깔고 있는지. 상태표시줄은 _composite
+        그리드 밖의 별도 위젯이라, backdrop 딤 중에는 컬러 이모지(⚠ 등)를 스스로
+        placeholder 로 바꿔야 한다(#25, _deemoji_text 참조)."""
+        app = getattr(self, "app", None)
+        stack = getattr(app, "screen_stack", None) if app is not None else None
+        if not stack or len(stack) <= 1:
+            return False
+        return not getattr(stack[-1], "_no_backdrop_dim", False)
+
+    def _deemoji_strip(self, strip: Strip) -> Strip:
+        """backdrop 딤 중이면 strip 의 컬러 이모지 글리프를 placeholder 로 치환한 새
+        Strip 을, 아니면 원본 그대로 돌려준다. _deemoji_text 가 폭을 보존하므로
+        클릭존·우측정렬 회계는 변하지 않는다."""
+        if not self._backdrop_dim_active():
+            return strip
+        segs = [Segment(_deemoji_text(seg.text), seg.style, seg.control)
+                for seg in strip]
+        return Strip(segs, strip.cell_length)
+
     def render_line(self, y: int) -> Strip:
         # 다중 줄: 맨 아래 줄이 주 상태(아래 _render_main), 그 위는 extra 포맷.
         h = max(1, self.lines)
@@ -1130,9 +1150,9 @@ class StatusBar(Widget):
             idx = (h - 1) - y
             fmt = self.extra.get(idx, "")
             txt = self._expand(fmt) if fmt else ""
-            return Strip([Segment(txt, base)]).adjust_cell_length(
-                self.size.width, base)
-        return self._render_main(base)
+            return self._deemoji_strip(Strip([Segment(txt, base)])
+                                       .adjust_cell_length(self.size.width, base))
+        return self._deemoji_strip(self._render_main(base))
 
     def _render_main(self, base) -> Strip:
         w = self.size.width
