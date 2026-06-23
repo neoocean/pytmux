@@ -1808,6 +1808,34 @@ async def test_statusbar_emoji_deemojied_under_modal_backdrop():
     await _with_app(body)
 
 
+async def test_tabbar_emoji_deemojied_under_modal_backdrop():
+    """상태표시줄과 동일(#25): 탭 이름에 컬러 이모지가 있으면, 반투명 모달 backdrop
+    딤 중에는 탭바도 _composite 그리드 밖 위젯이라 그 이모지가 안 어두워진다 → 탭바가
+    스스로 폭 보존 placeholder(·)로 치환한다. 팝업을 닫으면 원본으로 복원된다."""
+    from pytmuxlib.clientscreens import InfoScreen
+
+    async def body(app, pilot, srv):
+        app.tabbar.set_tabs([
+            {"index": 0, "name": "⚠hot", "active": True},
+            {"index": 1, "name": "calm", "active": False}], 0)
+        await pilot.pause(0.05)
+        plain = app.tabbar.render_line(0)
+        assert "⚠hot" in plain.text, plain.text
+        # 반투명 backdrop 팝업 → 탭명 이모지 ⚠ → · (폭 보존).
+        app.push_screen(InfoScreen(["body line"], title="t"))
+        await pilot.pause(0.05)
+        dimmed = app.tabbar.render_line(0)
+        assert "⚠" not in dimmed.text, dimmed.text
+        assert "·hot" in dimmed.text, dimmed.text
+        assert dimmed.cell_length == plain.cell_length
+        # 팝업 닫으면 원본 탭명 복원.
+        await pilot.press("escape")
+        await pilot.pause(0.05)
+        restored = app.tabbar.render_line(0)
+        assert "⚠hot" in restored.text, restored.text
+    await _with_app(body, cfg={"tab_bar_always": True})
+
+
 async def test_token_log_tree_has_5h_and_1w_columns_no_ratio():
     """사용자 요청(2026-06-17): 시각 행에 5h% 옆 1w%(주간 한도) 열을 두고 기존
     비율(ratio/막대) 열은 없다. 계층 트리(항상 시간순)는 hourly 데이터가 있으면

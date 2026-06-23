@@ -24,6 +24,28 @@ from .clientutil import (_DATE_STRFTIME, _TIME_STRFTIME, REMOTE_PINK,
                          _char_cells, _deemoji_text, norm_sep, theme_color)
 
 
+def _backdrop_dim_active(app) -> bool:
+    """반투명 모달(팝업)이 떠 본문을 어둡게 깔고 있는지. 상태표시줄·탭바처럼 _composite
+    그리드 밖의 별도 위젯이 backdrop 딤 중 컬러 이모지를 placeholder 로 바꿔야 하는지
+    판단한다 — Textual backdrop 은 셀 스타일색만 블렌딩해 컬러 이모지 글리프(⚠ 등)는
+    안 어두워지기 때문(#25)."""
+    stack = getattr(app, "screen_stack", None) if app is not None else None
+    if not stack or len(stack) <= 1:
+        return False
+    return not getattr(stack[-1], "_no_backdrop_dim", False)
+
+
+def _deemoji_strip_if_dim(app, strip: Strip) -> Strip:
+    """backdrop 딤 중이면 strip 의 컬러 이모지 글리프를 폭 보존 placeholder(·)로 치환한
+    새 Strip 을, 아니면 원본 그대로 돌려준다(#25). _deemoji_text 가 폭을 보존하므로
+    클릭존·우측정렬 회계는 변하지 않는다. 상태표시줄·탭바가 공유한다."""
+    if not _backdrop_dim_active(app):
+        return strip
+    segs = [Segment(_deemoji_text(seg.text), seg.style, seg.control)
+            for seg in strip]
+    return Strip(segs, strip.cell_length)
+
+
 class SepInsensitiveSuggester(SuggestFromList):
     """ghost 자동완성에서 공백·언더바·하이픈을 동일 취급한다(norm_sep). §5.4 에서 client.py
     의 build_client_app 팩토리(거대 PytmuxApp 옆) 안 지역 클래스를 모듈로 빼낸 것.
@@ -838,7 +860,11 @@ class TabBar(Widget):
             segs.append(Segment(" " * pad, base))
             x += pad
         self._zones = zones
-        return Strip(segs).adjust_cell_length(w, base)
+        # backdrop 딤 중이면 탭 이름의 컬러 이모지도 placeholder 로 치환(#25, 상태표시줄과
+        # 동일 — 탭바도 _composite 그리드 밖 위젯이라 Textual backdrop 이 이모지 글리프를
+        # 못 어둡게 한다). 폭 보존이라 클릭존(_zones)은 그대로 유효.
+        return _deemoji_strip_if_dim(self.app,
+                                     Strip(segs).adjust_cell_length(w, base))
 
     def _hit(self, x):
         for x0, x1, kind, payload in self._zones:
@@ -1131,28 +1157,10 @@ class StatusBar(Widget):
         self.app.plugins.client_statusbar_update(self.app, self, msg)
         self.refresh()
 
-    def _backdrop_dim_active(self) -> bool:
-        """반투명 모달(팝업)이 떠 본문을 어둡게 깔고 있는지. 상태표시줄은 _composite
-        그리드 밖의 별도 위젯이라, backdrop 딤 중에는 컬러 이모지(⚠ 등)를 스스로
-        placeholder 로 바꿔야 한다(#25, _deemoji_text 참조)."""
-        app = getattr(self, "app", None)
-        stack = getattr(app, "screen_stack", None) if app is not None else None
-        if not stack or len(stack) <= 1:
-            return False
-        return not getattr(stack[-1], "_no_backdrop_dim", False)
-
-    def _deemoji_strip(self, strip: Strip) -> Strip:
-        """backdrop 딤 중이면 strip 의 컬러 이모지 글리프를 placeholder 로 치환한 새
-        Strip 을, 아니면 원본 그대로 돌려준다. _deemoji_text 가 폭을 보존하므로
-        클릭존·우측정렬 회계는 변하지 않는다."""
-        if not self._backdrop_dim_active():
-            return strip
-        segs = [Segment(_deemoji_text(seg.text), seg.style, seg.control)
-                for seg in strip]
-        return Strip(segs, strip.cell_length)
-
     def render_line(self, y: int) -> Strip:
         # 다중 줄: 맨 아래 줄이 주 상태(아래 _render_main), 그 위는 extra 포맷.
+        # backdrop 딤 중이면 컬러 이모지(⚠)를 placeholder 로 치환(#25, 모듈
+        # _deemoji_strip_if_dim — 탭바와 공유).
         h = max(1, self.lines)
         base = Style(color=self.fg or theme_color(self, "foreground"),
                      bgcolor=self.bg)
@@ -1161,9 +1169,9 @@ class StatusBar(Widget):
             idx = (h - 1) - y
             fmt = self.extra.get(idx, "")
             txt = self._expand(fmt) if fmt else ""
-            return self._deemoji_strip(Strip([Segment(txt, base)])
-                                       .adjust_cell_length(self.size.width, base))
-        return self._deemoji_strip(self._render_main(base))
+            return _deemoji_strip_if_dim(self.app, Strip([Segment(txt, base)])
+                                         .adjust_cell_length(self.size.width, base))
+        return _deemoji_strip_if_dim(self.app, self._render_main(base))
 
     def _render_main(self, base) -> Strip:
         w = self.size.width
