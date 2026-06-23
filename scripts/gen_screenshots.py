@@ -24,6 +24,7 @@ import getpass as _getpass
 import os
 import socket as _socket
 import sys
+import tempfile
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _UNIT = os.path.dirname(_HERE)
@@ -32,6 +33,23 @@ sys.path.insert(0, _UNIT)
 
 import harness  # noqa: E402
 from harness import make_app, server_only, teardown  # noqa: E402
+
+# ── 공개 안전: 패널 셸 프롬프트를 합성값으로 고정 ──────────────────────────────
+# gen_screenshots SVG 는 모든 글리프를 벡터 path 로 굽는다(폰트 비의존). 그래서 셸
+# 프롬프트에 박힌 실제 사용자명/호스트명은 `<text>` 가 아니라 path 라 grep 게이트가
+# 못 잡는다. _redact_svg 는 `<text>` 단계의 문자열 치환(실제 사용자명→user)이라 프롬프트가
+# **온전히** 보일 때만 유효하고, 팝업이 프롬프트를 잘라 'neooce…' 처럼 부분만 남으면
+# 그 부분 사용자명이 그대로 구워져 공개 이미지에 노출됐다(팝업/모달 컷 전반).
+# 근본 차단: 스크린샷 전용 ZDOTDIR 에 합성 프롬프트 .zshrc 를 깔아, 실제 사용자명이
+# 애초에 SVG 에 들어가지 않게 한다(잘려도 'user@host' 일 뿐). 테스트와 분리된 전용
+# 디렉토리라 harness 의 히스토리 격리(별도 ZDOTDIR)와 무관하다.
+_SHOT_ZDOTDIR = tempfile.mkdtemp(prefix="pytmux-shot-zdot-")
+with open(os.path.join(_SHOT_ZDOTDIR, ".zshrc"), "w", encoding="utf-8") as _f:
+    # %1~ = cwd 의 마지막 성분(기존 컷의 'pytmux' 와 동일). 사용자명/호스트명은 리터럴.
+    _f.write("PROMPT='user@host %1~ %# '\nRPROMPT=''\n")
+os.environ["ZDOTDIR"] = _SHOT_ZDOTDIR
+# bash 폴백(SHELL=bash 환경)도 동일 프롬프트로.
+os.environ["PS1"] = r"user@host \W \$ "
 
 OUT_DIR = os.path.join(_UNIT, "docs", "image")
 SIZE = (90, 26)
@@ -376,7 +394,7 @@ async def remote_attach(app, pilot):
         app.status.windows = [
             {"index": 0, "name": "main", "active": False, "remote": False,
              "bell": False, "activity": False, "claude_done": False},
-            {"index": 1, "name": "⇄office1:cmd", "active": True, "remote": True,
+            {"index": 1, "name": "⇄remote:cmd", "active": True, "remote": True,
              "bell": False, "activity": False, "claude_done": False},
         ]
         app._update_tabbar()
