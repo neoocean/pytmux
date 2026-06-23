@@ -331,6 +331,10 @@ def _open_token_log(app, initial_mode=None):
     연다(옛 hour 버킷 대체, 2026-06-21)."""
     app._want_token_log = True
     app._token_log_initial = initial_mode
+    # 배지를 누른 시점의 보기(로컬/원격)를 기억해 팝업 색을 정한다(사용자 요청
+    # 2026-06-23) — 원격 탭을 보는 중(분홍 배지)에 연 팝업은 분홍 테두리로 구분.
+    _vr = getattr(app, "_viewing_remote", None)
+    app._token_log_remote = bool(_vr()) if callable(_vr) else False
     app.send_cmd("request_token_log", limit=5000)
 
 
@@ -355,7 +359,8 @@ def _on_token_log_msg(app, msg):
         initial_mode=initial_mode,
         model=getattr(app.status, "claude_model", None),
         xc_totals=msg.get("xc_totals"),
-        warn_history=msg.get("warn_history")))
+        warn_history=msg.get("warn_history"),
+        remote=getattr(app, "_token_log_remote", False)))
 
 
 def _open_usage_panel(app):

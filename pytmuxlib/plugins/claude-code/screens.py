@@ -19,7 +19,7 @@ from rich.segment import Segment
 from rich.style import Style
 
 from pytmuxlib import i18n
-from pytmuxlib.clientutil import theme_color
+from pytmuxlib.clientutil import REMOTE_PINK, theme_color
 from . import SAVER_ROWS
 
 # §6 ⑤ 플러그인 설정/로그 모달 문자열(token-saver·rules·model·perm·token-log). 정적 문자열은
@@ -853,8 +853,12 @@ class TokenLogScreen(ModalScreen):
     def __init__(self, records, usage=None, total_all=None,
                  daily=None, reconcile=None, daily_pct=None, hourly_pct=None,
                  hourly_week_pct=None, active_session=None, initial_mode=None,
-                 model=None, xc_totals=None, warn_history=None):
+                 model=None, xc_totals=None, warn_history=None, remote=False):
         super().__init__()
+        # 원격(remote-attach) 탭을 보는 중에 토큰 배지(분홍)를 눌러 연 팝업인지 표시
+        # (사용자 요청 2026-06-23). 로컬 팝업(accent 오렌지 테두리)과 한눈에 구분되게
+        # on_mount 에서 박스 테두리·제목을 분홍 배지와 같은 REMOTE_PINK 로 칠한다.
+        self._remote = bool(remote)
         self._records = records or []
         # §10-D P6: 트랜스크립트 권위 회계(usage_xc) 전체 합 — full(4항목)·footer(in+out
         # 근사)·cache_read·cache_create·ratio. 스크랩 누계(_total_all)는 cache 를 못 봐
@@ -988,6 +992,12 @@ class TokenLogScreen(ModalScreen):
         # 한다(매번 열 때 숨은 claude 기동은 과함) — 마지막 결과를 보여주고, 갱신은
         # [/usage] 버튼/`claude-usage` 명령으로 명시 트리거한다.
         self.app._token_log_screen = self
+        # 원격 보기 중 열린 팝업이면 박스 테두리·제목을 분홍(REMOTE_PINK)으로 — 로컬
+        # 팝업(accent)과 구분(사용자 요청). _refresh 가 매 뷰마다 제목 텍스트를 갈아도
+        # 색(styles.color)은 유지되므로 여기서 한 번만 칠하면 된다.
+        if self._remote:
+            self.query_one("#tklogbox").styles.border = ("round", REMOTE_PINK)
+            self.query_one("#tklogtitle", Label).styles.color = REMOTE_PINK
         await self._refresh()
         self.query_one(DataTable).focus()
         # 한도 탭의 카운트다운 시계를 매 초 갱신한다(usage-view 통합, 2026-06-17).

@@ -83,6 +83,40 @@ async def test_tab_connector_bridges_active_view_tab():
         await teardown(srv, task, sock)
 
 
+async def test_remote_popup_pink_border_local_popup_accent():
+    """사용자 요청(2026-06-23): 원격(remote-attach) 보기 중 분홍 토큰 배지를 눌러 연
+    팝업은 박스 테두리·제목이 분홍(REMOTE_PINK)이라 로컬 팝업(accent)과 한눈에
+    구분된다. remote=True 면 분홍, 기본(로컬)이면 분홍이 아니어야 한다."""
+    from harness import make_app, server_only, teardown
+    from textual.color import Color
+    from pytmuxlib.clientutil import REMOTE_PINK
+
+    pink = Color.parse(REMOTE_PINK)
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 36)) as pilot:
+            await pilot.pause(0.3)
+            # 원격 팝업 → 분홍 테두리·제목
+            app.push_screen(screens.TokenLogScreen(_hour_records(), remote=True))
+            await pilot.pause(0.3)
+            scr = app.screen_stack[-1]
+            assert scr.query_one("#tklogtitle").styles.color == pink, "원격 제목=분홍"
+            top = scr.query_one("#tklogbox").styles.border_top
+            assert top is not None and top[1] == pink, f"원격 테두리=분홍, got {top}"
+            await pilot.press("escape")
+            await pilot.pause(0.2)
+            # 로컬 팝업(기본) → 분홍 아님
+            app.push_screen(screens.TokenLogScreen(_hour_records()))
+            await pilot.pause(0.3)
+            scr2 = app.screen_stack[-1]
+            assert scr2.query_one("#tklogtitle").styles.color != pink, "로컬 제목≠분홍"
+            top2 = scr2.query_one("#tklogbox").styles.border_top
+            assert top2 is None or top2[1] != pink, f"로컬 테두리≠분홍, got {top2}"
+    finally:
+        await teardown(srv, task, sock)
+
+
 def _recent_tree_records():
     """오늘(같은 날 5개 시각)·이전 달(40일 전)에 걸친 레코드 — 계층 타임라인 트리가
     오늘 행을 시각까지 기본 펼치고, 이전 달은 월 행으로 접는다. ts 는 **오늘 정오 기준
