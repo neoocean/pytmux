@@ -353,6 +353,27 @@ async def test_remote_tab_visible_after_pinned_local_tab():
     await _with_app(body, cfg={"tab_bar_always": True})
 
 
+async def test_remote_unpinned_tab_after_pinned_remote_tab_visible():
+    """회귀(사용자 2026-06-23): 로컬 비고정 2개 + **원격 고정** 1개 + 그 뒤 **원격 비고정**
+    1개 일 때, 고정 원격 탭 뒤의 비고정 원격 탭이 탭바에서 누락되면 안 된다(esc+숫자로만
+    접근되고 마우스로 못 가던 문제). 비고정/고정을 위치 목록으로 분리하는 가운데 루프가
+    고정 탭을 건너뛰고 비고정 전부(여기선 index 3 포함)를 그려야 한다."""
+    async def body(app, pilot, srv):
+        # [로컬-비고정, 로컬-비고정, 원격-고정, 원격-비고정] — 사용자 보고 그대로의 순서
+        app.tabbar.set_tabs([
+            {"index": 0, "name": "win", "active": False},
+            {"index": 1, "name": "win", "active": False},
+            {"index": 2, "name": "⇄host:pytmux", "active": True,
+             "remote": True, "pinned": True},
+            {"index": 3, "name": "⇄host:cmd", "active": False, "remote": True}], 2)
+        await pilot.pause(0.05)
+        rendered = {p for kind, p, _ in app.tabbar._entries() if kind == "tab"}
+        assert rendered == {0, 1, 2, 3}, f"비고정 원격 탭(index 3) 누락: {rendered}"
+        segs = list(app.tabbar.render_line(0))
+        assert any("⇄host:cmd" in s.text for s in segs), "비고정 원격 탭 미렌더"
+    await _with_app(body, cfg={"tab_bar_always": True})
+
+
 async def test_remote_view_outline_pink():
     """§1.7-a: 활성 탭이 원격(remote=True)이면 패널 외곽선이 분홍(활성=REMOTE_PINK·
     비활성=REMOTE_PINK_DIM)으로, 로컬 탭으로 돌아오면 종전 색(활성=primary)으로
