@@ -3864,6 +3864,36 @@ async def test_token_log_reply_includes_xc_totals():
         await teardown(srv, task, sock)
 
 
+async def test_status_includes_xc_totals_cached_dirty_gated():
+    """§10-D P7: status 가 트랜스크립트 권위 누계(xc_totals)를 싣는다 — federation
+    다운스트림이 원격 서버의 정확 Σ(cache 포함)를 보도록 usage_limits 와 동형. 매
+    status 풀스캔을 피하는 dirty 게이트 캐시: _xc_totals_dirty 가 설 때만 재계산하고
+    그 외엔 직전 캐시값을 그대로 싣는다(핫패스 비용 회피)."""
+    from pytmuxlib import usagedb
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        conn = srv._tokens_db_conn()
+        usagedb.insert_xc(conn, {
+            "xkey": "m1:r1", "ts": "2026-06-22T10:00:00.000Z",
+            "session_uuid": "s1", "model": "claude-opus-4-8", "input": 10,
+            "output": 5, "cache_create": 0, "cache_read": 985, "is_sidechain": 0})
+        srv._xc_totals_dirty = True                 # 적재 → 캐시 무효
+        m = srv._status_msg(sess)
+        assert m["xc_totals"]["full"] == 1000, m["xc_totals"]
+        assert m["xc_totals"]["cache_read"] == 985, m["xc_totals"]
+        # 추가 적재했지만 dirty 를 안 세우면 status 는 옛 캐시값(풀스캔 회피 확인).
+        usagedb.insert_xc(conn, {
+            "xkey": "m2:r2", "ts": "2026-06-22T10:01:00.000Z",
+            "session_uuid": "s1", "model": "claude-opus-4-8", "input": 10,
+            "output": 5, "cache_create": 0, "cache_read": 985, "is_sidechain": 0})
+        assert srv._status_msg(sess)["xc_totals"]["full"] == 1000  # 캐시 유지
+        srv._xc_totals_dirty = True                 # 무효화 → 재계산
+        assert srv._status_msg(sess)["xc_totals"]["full"] == 2000
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_usage_fixture_end_to_end_chain():
     """S6 T6 골든: 실 /usage 패널 캡처(fixtures/claude/usage.txt)를 패널에 흘리면
     파서(parse_usage)→_usage 캡처→limits 스냅샷(T1)→상태줄 5h% 실측(T3)→게이트

@@ -789,10 +789,42 @@ def reconcile(conn, limit: int | None = 20) -> list:
             m = r["m"]
             tier = m.split("-", 1)[0] if m != "unknown" else "unknown"
             models[tier] = models.get(tier, 0) + s
+        # §10-D P6b: 같은 구간을 트랜스크립트 권위(usage_xc, full=4항목 cache 포함)로도
+        # 분해한다 — 스크랩 models 는 cache_read/creation 을 못 봐 모델 구성비가
+        # 실제와 다르다(막대 색=구성비). usage_xc 가 그 구간 데이터를 가지면 그걸
+        # **1차**로 막대 색에 쓰고(models 에 덮음), 없으면 스크랩으로 폴백한다. 계정
+        # 컬럼이 usage_xc 엔 없어(트랜스크립트=이메일 부재) 계정 필터 없이 합산 —
+        # reconcile 의 단일-계정 가정(§5.5 미식별 포함)과 동형. v7 미보유 conn 은 조용히
+        # 폴백. 스크랩 분해는 scrape_models/scrape_tokens 로 비교용 보존.
+        xc_models: dict = {}
+        xc_total = 0
+        try:
+            xcur = conn.execute(
+                "SELECT COALESCE(model, 'unknown') AS m, "
+                "COALESCE(SUM(input+output+cache_create+cache_read),0) AS s "
+                "FROM usage_xc WHERE ts > ? AND ts <= ? "
+                "GROUP BY COALESCE(model, 'unknown')",
+                (a["ts"], b["ts"]))
+            for r in xcur:
+                s = int(r["s"])
+                xc_total += s
+                if s <= 0:
+                    continue
+                m = r["m"]
+                tier = m.split("-", 1)[0] if m != "unknown" else "unknown"
+                xc_models[tier] = xc_models.get(tier, 0) + s
+        except sqlite3.Error:
+            pass
+        if xc_total > 0:                       # 트랜스크립트 1차(cache 포함 구성비)
+            use_models, src = xc_models, "xc"
+        else:                                  # 폴백: 스크랩 분해
+            use_models, src = models, "scrape"
         out.append({"t0": a["ts"], "t1": b["ts"], "account": acct,
                     "pct0": int(a["session_pct"]), "pct1": int(b["session_pct"]),
                     "dpct": int(b["session_pct"]) - int(a["session_pct"]),
-                    "tokens": total, "models": models,
+                    "tokens": total, "models": use_models, "models_src": src,
+                    "scrape_tokens": total, "scrape_models": models,
+                    "xc_tokens": xc_total,
                     "reset": b["session_pct"] < a["session_pct"]})
     if limit is not None and limit >= 0:
         out = out[-limit:]

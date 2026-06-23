@@ -114,8 +114,8 @@ i18n.register({
         "pscreen.tklog_title2": "토큰 사용량(추정) · {what}별",
         "pscreen.tklog_scope": "{sigma}",
         "pscreen.tklog_disp": " (표시 {n})",
-        # §10-D P6: 트랜스크립트 실측 Σ(캐시 분리) + 스크랩 활동 보조신호.
-        "pscreen.tklog_xc": "Σ{full} 실측(캐시 {cache}) · 활동~{scrape}",
+        # §10-D P6: 트랜스크립트 실측 Σ(캐시 읽기/쓰기 분리) + 스크랩 활동 보조신호.
+        "pscreen.tklog_xc": "Σ{full} 실측(캐시 읽기{cr}+쓰기{cc}) · 활동~{scrape}",
         "pscreen.tklog_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · p세션 · l한도 r비교 u/usage · Esc닫기",
         # 계층 타임라인 트리 구역 구분선(2026-06-21).
         "pscreen.tree_earlier_weeks": "── 이번 달 이전 주 ──",
@@ -187,7 +187,7 @@ i18n.register({
         "pscreen.tklog_title2": "Token usage (est) · by {what}",
         "pscreen.tklog_scope": "{sigma}",
         "pscreen.tklog_disp": " (shown {n})",
-        "pscreen.tklog_xc": "Σ{full} real (cache {cache}) · activity~{scrape}",
+        "pscreen.tklog_xc": "Σ{full} real (cache r{cr}+w{cc}) · activity~{scrape}",
         "pscreen.tklog_hint": "↑↓ move · Enter/←→ expand·collapse · p session · l limit r recon u /usage · Esc close",
         "pscreen.tree_earlier_weeks": "── earlier weeks this month ──",
         "pscreen.tree_earlier_months": "── earlier months ──",
@@ -1709,20 +1709,23 @@ class TokenLogScreen(ModalScreen):
 
     def _sigma_text(self, win):
         """상단 Σ 요약 문자열(평탄·트리 경로 공용). §10-D P6: 트랜스크립트 실측
-        (usage_xc full)이 있으면 그걸 1차 Σ 로 보이고 캐시(read+create)를 별도 표기,
-        스크랩 누계는 '활동~' 보조신호로 강등한다 — 스크랩은 cache 를 못 봐 실제의
-        ~0.4%만 잡아 그대로 Σ 로 쓰면 두 자릿수 배율 과소표시다. 실측이 없으면(구버전
-        서버/빈 usage_xc) 종전 스크랩 ~Σ(+표시창 n) 폴백."""
+        (usage_xc full)이 있으면 그걸 1차 Σ 로 보이고 캐시를 별도 표기, 스크랩 누계는
+        '활동~' 보조신호로 강등한다 — 스크랩은 cache 를 못 봐 실제의 ~0.4%만 잡아 그대로
+        Σ 로 쓰면 두 자릿수 배율 과소표시다. P6b: 캐시는 **읽기(read)/쓰기(creation)를
+        분리** 표기한다 — 둘은 단가·의미가 달라(읽기=재사용, 쓰기=새 캐시 적재) 합치면
+        cache 구조를 못 본다. 실측이 없으면(구버전 서버/빈 usage_xc) 종전 스크랩 ~Σ
+        (+표시창 n) 폴백."""
         life = self._total_all
         if life is None:
             life = win
         xc_full = self._xc.get("full", 0) if self._xc else 0
         if xc_full > 0:
-            cache = (self._xc.get("cache_read", 0)
-                     + self._xc.get("cache_create", 0))
+            cr = self._xc.get("cache_read", 0)
+            cc = self._xc.get("cache_create", 0)
             return i18n.t("pscreen.tklog_xc",
                           full=usagelog._fmt_tokens(xc_full),
-                          cache=usagelog._fmt_tokens(cache),
+                          cr=usagelog._fmt_tokens(cr),
+                          cc=usagelog._fmt_tokens(cc),
                           scrape=usagelog._fmt_tokens(life))
         sigma = f"~Σ{usagelog._fmt_tokens(life)}"   # ~ = 추정 라벨(S6 T3)
         if life != win:

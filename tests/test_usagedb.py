@@ -811,6 +811,55 @@ async def test_reconcile_breaks_down_models_per_interval():
     conn.close()
 
 
+async def test_reconcile_models_prefer_transcript_when_present():
+    """§10-D P6b: 구간에 트랜스크립트(usage_xc) 데이터가 있으면 막대 색용 models 를
+    **그 권위(full=cache 포함)** 로 1차 채운다 — 스크랩 models 는 cache_read/creation
+    을 못 봐 모델 구성비가 실제와 다르다. 스크랩 분해는 scrape_models 로 보존하고
+    models_src='xc' 로 출처를 단다. usage_xc 가 없는 구간은 스크랩 폴백(기존 거동)."""
+    conn = usagedb.connect(":memory:")
+    A = "me@woojinkim.org"
+    for ts, pct in [(100.0, 5), (500.0, 9)]:
+        usagedb.insert_limits(conn, usagedb.snap_from_usage(
+            {"session": {"pct": pct, "reset": "2pm"}, "account": A},
+            ts, "probe"))
+    # 스크랩(usage)은 opus 200 만 봤다(cache 무지).
+    usagedb.insert(conn, usagelog.make_record(
+        200.0, 0, 1, 1, A, 200, model="opus-4.8"))
+    # 트랜스크립트(usage_xc)는 같은 구간에 cache 포함 full 을 본다:
+    #   opus  in10+out5+cc0+cr985 = 1000, sonnet in20+out0 = 20.
+    usagedb.insert_xc(conn, _xrec("o:1", inp=10, out=5, cr=985,
+                                  model="opus-4.8", ts=250.0))
+    usagedb.insert_xc(conn, _xrec("s:1", inp=20, out=0,
+                                  model="sonnet-4.6", ts=300.0))
+    ivs = usagedb.reconcile(conn)
+    assert len(ivs) == 1
+    iv = ivs[0]
+    assert iv["models_src"] == "xc", iv
+    assert iv["models"] == {"opus": 1000, "sonnet": 20}, iv["models"]
+    assert iv["xc_tokens"] == 1020, iv
+    # 스크랩 분해/합은 비교용으로 보존(cache 무지라 opus 200 만).
+    assert iv["scrape_models"] == {"opus": 200}, iv["scrape_models"]
+    assert iv["scrape_tokens"] == 200 and iv["tokens"] == 200, iv
+    conn.close()
+
+
+async def test_reconcile_models_fall_back_to_scrape_without_transcript():
+    """usage_xc 가 비면(구간 데이터 없음) models 는 스크랩 폴백·models_src='scrape'
+    — P6b 가 기존 거동을 회귀시키지 않음을 고정."""
+    conn = usagedb.connect(":memory:")
+    A = "me@woojinkim.org"
+    for ts, pct in [(100.0, 5), (500.0, 9)]:
+        usagedb.insert_limits(conn, usagedb.snap_from_usage(
+            {"session": {"pct": pct, "reset": "2pm"}, "account": A},
+            ts, "probe"))
+    usagedb.insert(conn, usagelog.make_record(
+        200.0, 0, 1, 1, A, 300, model="opus-4.8"))
+    iv = usagedb.reconcile(conn)[0]
+    assert iv["models_src"] == "scrape" and iv["models"] == {"opus": 300}, iv
+    assert iv["xc_tokens"] == 0, iv
+    conn.close()
+
+
 # ---- v7 usage_xc 트랜스크립트 권위 회계 ----
 
 def _xrec(xkey, inp=10, out=5, cc=0, cr=0, model="opus-4.8",

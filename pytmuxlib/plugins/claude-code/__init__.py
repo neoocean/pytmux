@@ -553,6 +553,12 @@ class _ClaudeCodePlugin:
         msg["claude_warn_n"] = getattr(ap, "_claude_warn_n", None) if ap else None
         # M19: 그림자 /usage 세션·주간 한도(없으면 None).
         msg["usage_limits"] = server._usage
+        # §10-D P7: 트랜스크립트 권위 누계(usage_xc full+cache, 없으면 빈 dict).
+        # federation 다운스트림이 원격 서버의 정확 Σ(cache 포함)를 보도록 usage_limits
+        # 와 동형으로 status 에 싣는다 — 서버측은 dirty 게이트 캐시라 매-status 풀스캔
+        # 없음(_xc_totals_for_status). 로컬 팝업은 request_token_log 로 항상 fresh.
+        _xct = getattr(server, "_xc_totals_for_status", None)
+        msg["xc_totals"] = _xct() if callable(_xct) else {}
         # S6 T3: 실측 경과(초) — 클라가 stale 표기("N분 전 실측")에 쓴다. 시계 동기
         # 가정 없이 서버가 경과로 환산해 보낸다. 실측 없으면 None.
         uts = getattr(server, "_usage_ts", None)

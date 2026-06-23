@@ -1841,9 +1841,13 @@ class ServerClaudeMixin:
                 off = cur[0] if cur else 0
             recs, new_off = transcript.tail_file(path, off)
             if recs:
-                usagedb.insert_xc_many(
+                n = usagedb.insert_xc_many(
                     conn, recs, tab=tab.index, pane=pane.id,
                     pytmux_session=getattr(pane, "_claude_session_id", 0))
+                if n:
+                    # §10-D P7: 새 권위 레코드 적재 → status 용 누계 캐시 무효화
+                    # (federation 다운스트림이 다음 status 에 최신 Σ 를 받는다).
+                    self._xc_totals_dirty = True
             if new_off != off:
                 mt = None
                 try:
@@ -1854,6 +1858,28 @@ class ServerClaudeMixin:
             pane._xc_offset = new_off
         except Exception:
             pass
+
+    def _xc_totals_for_status(self) -> dict:
+        """§10-D P7: status 에 실을 트랜스크립트 권위 누계(usage_xc 전체 Σ — full/
+        footer/cache_read/cache_create/ratio). federation 다운스트림이 **원격 서버의**
+        정확 Σ(cache 포함)를 보도록 usage_limits 와 동형으로 status 에 싣는다(serverremote
+        가 last_status 로 누적·패스스루). 매 status 마다 풀테이블 SUM 을 돌리지 않게
+        dirty 게이트로 캐시한다 — 새 레코드 적재(_xc_tail_pane insert>0)에서만
+        _xc_totals_dirty 를 세우고 그때만 1회 재계산(SUM 은 ms 미만이나 핫패스라 가산).
+        v7(usage_xc) 미보유/실패는 빈 dict(graceful degrade)."""
+        if not getattr(self, "_xc_totals_dirty", True):
+            return getattr(self, "_xc_totals_cache", {})
+        out: dict = {}
+        try:
+            if hasattr(usagedb, "xc_totals"):
+                conn = self._tokens_db_conn()
+                if conn is not None:
+                    out = usagedb.xc_totals(conn)
+        except Exception:
+            out = getattr(self, "_xc_totals_cache", {})
+        self._xc_totals_cache = out
+        self._xc_totals_dirty = False
+        return out
 
     def set_token_debug(self, value=None):
         """토큰 회계 진단 로그(10-D) 토글. value 미지정 시 반전. opts.json plugin_opts

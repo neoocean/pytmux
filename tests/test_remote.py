@@ -134,6 +134,60 @@ async def test_remote_attach_merge_select_input_detach():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_remote_status_relays_upstream_xc_totals():
+    """§10-D P7: 원격(업스트림 B)의 트랜스크립트 권위 누계(xc_totals)가 와이어로
+    다운스트림(A)에 전달된다 — A 가 B 의 원격 탭을 볼 때 status 가 B 의 정확 Σ(cache
+    포함)를 싣는다. usage_limits 와 동형 패스스루(_remote_status_override 가 업스트림
+    last_status 를 그대로 전달).
+
+    주의: 한 테스트 안 두 server_only() 는 PYTMUX_TOKENS_DB(전역 env, 마지막-기록
+    우선)를 공유해 A·B 가 같은 토큰 DB 를 본다 — 그래서 값으로 B↔A 출처를 가르지
+    못한다(서버측 회신·dirty 게이트 검증은 test_server 의
+    test_status_includes_xc_totals_cached_dirty_gated 가 권위). 여기선 **xc_totals
+    필드가 원격 탭 뷰 status 에 실려 와이어를 건넌다**는 패스스루만 고정한다."""
+    if os.name == "nt":
+        return
+    from pytmuxlib import usagedb
+    srvA, taskA, sockA = await server_only()     # 로컬(다운스트림)
+    srvB, taskB, sockB = await server_only()     # 원격(업스트림)
+    reader = writer = None
+    try:
+        srvB.ensure_default_session(80, 24)
+        # 공유 DB(위 주의)지만 적재로 full>0 을 만들어 필드가 dict 로 실리는지 본다.
+        usagedb.insert_xc(srvB._tokens_db_conn(), {
+            "xkey": "b1:r1", "ts": "2026-06-22T10:00:00.000Z",
+            "session_uuid": "s1", "model": "claude-opus-4-8", "input": 10,
+            "output": 5, "cache_create": 0, "cache_read": 985, "is_sidechain": 0})
+        srvA._xc_totals_dirty = srvB._xc_totals_dirty = True
+
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        st0 = await _read_until(reader, lambda m: m.get("t") == "status",
+                                what="initial status")
+        n_local = len(st0["windows"])
+
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="merged status")
+        # 원격 탭 진입 → 업스트림 status 패스스루에 xc_totals 가 dict 로 실린다.
+        await write_msg(writer, {"t": "cmd", "action": "select_window",
+                                 "index": n_local})
+        stm = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and isinstance(m.get("xc_totals"), dict)
+            and m["xc_totals"].get("full") == 1000,
+            what="remote xc_totals relayed")
+        assert stm["xc_totals"]["cache_read"] == 985, stm["xc_totals"]
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
 async def test_remote_new_tab_spawns_window_and_attaches():
     """remote-new-tab <host>: 미어태치 호스트면 먼저 attach 한 뒤 원격에 **새 window**를
     만들어 새 ⇄ 탭(active)으로 붙이고, 그 새 창 화면을 뷰어에 전달한다. remote-attach

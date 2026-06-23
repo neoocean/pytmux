@@ -649,13 +649,14 @@ async def test_limit_tab_model_section_cycle_and_apply():
 async def test_xc_totals_shown_as_primary_sigma_with_cache():
     """§10-D P6: 트랜스크립트 실측(usage_xc full)이 오면 상단 Σ 를 그 실측값으로 1차
     표시하고(캐시 별도 표기), 스크랩 누계는 '활동~' 보조신호로 강등한다. 스크랩은
-    cache 를 못 봐 실제의 ~0.4%만 잡으므로 그대로 Σ 로 쓰면 두 자릿수 배율 과소표시."""
+    cache 를 못 봐 실제의 ~0.4%만 잡으므로 그대로 Σ 로 쓰면 두 자릿수 배율 과소표시.
+    P6b: 캐시는 읽기(read)/쓰기(creation)를 **분리** 표기한다(의미·단가 상이)."""
     import importlib
     from harness import make_app, server_only, teardown
     usagelog = importlib.import_module("pytmuxlib.plugins.claude-code.usagelog")
 
     xc = {"full": 9_900_000_000, "footer": 21000, "cache_read": 6_000_000,
-          "cache_create": 0, "ratio": 471428.0}
+          "cache_create": 2_000_000, "ratio": 471428.0}
     srv, task, sock = await server_only()
     try:
         app = make_app(sock, None, None)
@@ -668,10 +669,12 @@ async def test_xc_totals_shown_as_primary_sigma_with_cache():
             top = scr._tktop_text
             text = top.plain if hasattr(top, "plain") else str(top)
             ffull = usagelog._fmt_tokens(9_900_000_000)     # '9900M'
-            fcache = usagelog._fmt_tokens(6_000_000)        # '6M'
+            fread = usagelog._fmt_tokens(6_000_000)         # '6M'  (읽기)
+            fcreate = usagelog._fmt_tokens(2_000_000)       # '2M'  (쓰기)
             fscrape = usagelog._fmt_tokens(21000)           # '21k'
             assert f"Σ{ffull}" in text, f"실측 full 이 1차 Σ: {text!r}"
-            assert fcache in text, f"캐시 별도 표기: {text!r}"
+            assert fread in text, f"캐시 읽기 별도 표기: {text!r}"
+            assert fcreate in text, f"캐시 쓰기 별도 표기: {text!r}"
             assert f"~{fscrape}" in text, f"스크랩은 활동~ 보조신호: {text!r}"
             # 스크랩 누계가 1차 Σ 자리를 차지하면 안 된다(과소표시 방지).
             assert f"Σ{fscrape}" not in text, f"스크랩이 Σ 1차면 안 됨: {text!r}"

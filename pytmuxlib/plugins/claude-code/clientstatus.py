@@ -61,6 +61,9 @@ def init_defaults(status):
     status.claude_model = None     # M14c: 활성 Claude 모델 배지(opus-4.8 등)
     status.usage_limits = None     # M19: 그림자 /usage 세션·주간 한도 dict
     status.usage_age_sec = None    # S6 T3: 실측 경과(초) — stale 표기용
+    status.xc_totals = None        # §10-D P7: 트랜스크립트 권위 누계(usage_xc full+
+                                   # cache) — federation 다운스트림이 원격 서버의 정확
+                                   # Σ 를 보유(remote 뷰 표시·진단용, 로컬은 팝업이 권위)
     # Claude 설정(설정 팝업 토글 현재값).
     status.auto_token_on_exit = True  # §10-F 세션 종료 시 토큰 화면 자동 표시(서버 기본 ON)
     status.claude_auto_mode = False
@@ -116,6 +119,8 @@ def absorb(status, msg):
         status.usage_limits = msg.get("usage_limits")
     if "usage_age_sec" in msg:                    # S6 T3: 실측 경과(stale 표기)
         status.usage_age_sec = msg.get("usage_age_sec")
+    if "xc_totals" in msg:                        # §10-D P7 트랜스크립트 권위 누계
+        status.xc_totals = msg.get("xc_totals")   # (federation 다운스트림이 원격 Σ 보유)
     # Claude 설정(설정 팝업이 현재값으로 토글을 그리는 데 씀). 항상 권위값 반영.
     status.auto_token_on_exit = msg.get("auto_token_on_exit",
                                         status.auto_token_on_exit)
