@@ -443,6 +443,29 @@ class _ClaudeCodePlugin:
     completions = []
     command_options = COMMAND_OPTIONS
 
+    # 선택지 팝업이 현재값에 커서를 올릴 때, 명령 이름 → status 토글 속성 매핑.
+    _OPTION_STATE_ATTR = {
+        "auto-resume": "autoresume",
+        "prompt-clear": "prompt_clear",
+        "claude-auto-mode": "claude_auto_mode",
+        "auto-retry": "claude_auto_retry",
+        "auto-launch": "auto_launch",
+        "token-debug": "token_debug",
+    }
+
+    def command_option_current(self, app, name):
+        """토글 선택지 명령(auto-retry 등)의 현재 설정값을 'on'/'off' 로 돌려준다 —
+        선택지 팝업이 첫 항목 대신 **현재 상태**에 커서를 올리도록(요청). 값을 모르면
+        None(클라가 첫 선택지 유지). status 는 서버 full 브로드캐스트로 채워진다."""
+        attr = self._OPTION_STATE_ATTR.get(name)
+        if attr is None:
+            return None
+        st = getattr(app, "status", None)
+        val = getattr(st, attr, None) if st is not None else None
+        if val is None:
+            return None
+        return "on" if val else "off"
+
     def server_mixin(self):
         """서버측 Claude 로직 믹스인 클래스(server.Server 의 동적 베이스로 합성된다).
         지연 import — 클라이언트도 plugins.load() 를 부르지만 servermixin 은 서버측
@@ -522,8 +545,11 @@ class _ClaudeCodePlugin:
         토큰·사용량·예산·팝업 시퀀스와 full-only 정적 옵션 12개를 추가한다. 키/값은
         이전 코어 _status_msg 와 동일 — 서버 테스트가 그대로 검증한다."""
         ap = win.active_pane if win else None
-        # C5: 계정 합계는 한 번만 계산해 claude_tokens·tok5h_pct 에 재사용.
-        tok_total = server._account_token_total(ap)
+        # §10-D 표시층 캐시포함: 상태줄 계정 Σ 를 usage_xc(트랜스크립트, cache 포함)
+        # 권위값으로 보낸다 — 스크랩 라이브 누계(_session_tokens)는 cache 를 못 봐
+        # ~0.4%만 잡는다. usage_xc 가 비면 스크랩으로 폴백(_account_token_total_xc).
+        # tok5h_pct 는 total 인자를 무시(실측 1차화)하므로 값 변경 영향 없음.
+        tok_total = server._account_token_total_xc(ap)
         # 코어 windows[] 항목에 탭별 Claude 집계를 덧붙인다(순서=sess.tabs 와 일치).
         for wd, t in zip(msg.get("windows", ()), sess.tabs):
             wd["claude"] = server._tab_claude(t)
@@ -596,6 +622,10 @@ class _ClaudeCodePlugin:
                 "claude_repeat_alert": server.claude_repeat_alert,
                 # §10-D 토큰 회계 진단 로그 토글(현재값 표시용 — 정적 옵션, full 시만).
                 "token_debug": server.token_debug,
+                # 선택지 팝업(`: auto-retry`·`: auto-launch`)이 현재값에 커서를 올리도록
+                # 싣는다(정적 옵션, full 시만 — 클라가 직전값 유지). 기본은 서버 기본값.
+                "claude_auto_retry": getattr(server, "claude_auto_retry", True),
+                "auto_launch": getattr(server, "claude_auto_launch", True),
             })
 
     def server_pane_overview(self, server, pane, info):
@@ -769,12 +799,25 @@ class _ClaudeCodePlugin:
             # 과소표시되지 않게 한다. (계정별 합은 머신-로컬 표시로 전환돼 제거 — 2026-06-19.)
             from . import usagedb   # S5 T5: 플러그인 소속(물리 이전)
             conn = server._tokens_db_conn()
-            recs = (usagedb.query_records(conn, limit=int(msg.get("limit", 5000)))
-                    if conn is not None else [])
+            lim = int(msg.get("limit", 5000))
+            # §10-D 표시층 캐시포함: usage_xc(트랜스크립트, cache_read/creation 포함)가
+            # 차 있으면 팝업 상세표(기간/세션/계정/모델 버킷)의 1차 데이터로 쓴다 —
+            # 스크랩 usage(↑/↓ footer, 실제의 ~0.4%)는 cache 를 못 봐 구조적 과소집계라
+            # 'activity~' 보조신호(total_all)로만 남긴다. usage_xc 가 비었으면(구버전
+            # 서버/백필 전) 종전 스크랩 집계로 폴백(graceful degrade).
+            xc_n = (usagedb.xc_count(conn)
+                    if conn is not None and hasattr(usagedb, "xc_count") else 0)
+            xc_breakdown = (conn is not None and xc_n > 0
+                            and hasattr(usagedb, "xc_daily_breakdown"))
+            if xc_breakdown:
+                recs = usagedb.xc_query_records(conn, limit=lim)
+                daily = usagedb.xc_daily_breakdown(conn)
+            else:
+                recs = (usagedb.query_records(conn, limit=lim)
+                        if conn is not None else [])
+                daily = usagedb.daily_breakdown(conn) if conn is not None else []
+            # 활동신호 lifetime Σ(스크랩) — 팝업 'activity~' 줄·대사 뷰가 소비.
             total_all = usagedb.total_all(conn) if conn is not None else 0
-            # 버킷(일/주/월) 전체 이력 집계용 일자별 합성 레코드(cap 무관). 클라가
-            # usagelog.agg_view 에 먹여 옛 버킷이 안 잘리게 재구성한다(Phase B 완성).
-            daily = usagedb.daily_breakdown(conn) if conn is not None else []
             # S6 T2: 대사(reconcile) 구간 — 실측 스냅샷 Δpct vs 스크랩 Σ. 진단
             # 전용 데이터라 표시는 TokenLogScreen [대사] 뷰만 소비한다.
             # 항목5(2026-06-22): 캡을 20→200 으로 올린다. 종전 20 은 일반 폭의 차트

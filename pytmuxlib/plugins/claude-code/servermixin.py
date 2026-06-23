@@ -1375,6 +1375,45 @@ class ServerClaudeMixin:
                        if p._claude_account == acct)
         return 0
 
+    def _account_token_total_xc(self, ap) -> int:
+        """상태줄 계정 Σ 의 **cache-포함 권위값**(usage_xc full). `_account_token_total`
+        과 같은 단일/다중 계정 의미론을 따르되 스크랩 라이브 누계 대신 트랜스크립트
+        회계를 쓴다. usage_xc 미보유(v8 전)·빈 테이블·예외는 스크랩 누계로 폴백한다.
+
+        주의: v8 전 백필된 레거시 xc 행은 account=NULL(미상)이라 계정 분해가 불완전
+        하다. 그래서 **단일 계정**(known≤1, _account_token_total 과 동형)일 때만 전체
+        full(unknown 포함)을 합쳐 안전하게 권위값으로 쓰고, 다중 계정에서만 계정별
+        분해를 신뢰한다(분해 불완전분은 그 계정에 덜 잡힐 수 있으나 다중계정은 드묾).
+
+        핫패스(매 status) 비용: 단일 계정이면 이미 dirty-게이트로 캐시된
+        `_xc_totals_for_status()` 의 full 을 재사용해 **추가 쿼리가 없다**(같은 status 가
+        xc_totals 필드용으로 이미 1회 호출). 다중 계정일 때만 계정별 GROUP BY 를 돈다."""
+        if not ap or not (ap._claude or ap._claude_account):
+            return 0
+        try:
+            panes = [p for p in self._all_panes()
+                     if p._claude or p._claude_account]
+            known = {p._claude_account for p in panes if p._claude_account}
+            if len(known) <= 1:
+                # 단일 계정 → 캐시된 전체 full(unknown 포함). 캐시 비면(구버전/빈
+                # usage_xc) 스크랩 누계로 폴백.
+                full = self._xc_totals_for_status().get("full")
+                return int(full) if full else self._account_token_total(ap)
+            if not hasattr(usagedb, "xc_totals_by_account"):
+                return self._account_token_total(ap)
+            conn = self._tokens_db_conn()
+            if conn is None:
+                return self._account_token_total(ap)
+            by = usagedb.xc_totals_by_account(conn)
+            if not by:
+                return self._account_token_total(ap)
+            acct = ap._claude_account
+            if acct:
+                return int(by.get(acct, 0))
+            return 0
+        except Exception:
+            return self._account_token_total(ap)
+
     def _usage_text(self, p):
         """M18-A: 상태줄 컨텍스트 표시. Claude 가 점유%를 그리면 그대로(`ctx N% / 1M`),
         배지만 있으면(점유% 미상) 세션 누계/윈도우로 **근사 사용%**를 `~` 로 곁들인다.
@@ -1841,9 +1880,19 @@ class ServerClaudeMixin:
                 off = cur[0] if cur else 0
             recs, new_off = transcript.tail_file(path, off)
             if recs:
-                n = usagedb.insert_xc_many(
-                    conn, recs, tab=tab.index, pane=pane.id,
-                    pytmux_session=getattr(pane, "_claude_session_id", 0))
+                # v8: 적재 시점 패널 Claude 계정을 함께 실어 계정별 cache-포함 집계를
+                # 가능하게 한다(미식별이면 None → 표시층 unknown). insert_xc_many 가
+                # account 인자를 모르는 구버전(v7)이면 TypeError → 계정 없이 폴백.
+                acct = getattr(pane, "_claude_account", None) or None
+                try:
+                    n = usagedb.insert_xc_many(
+                        conn, recs, tab=tab.index, pane=pane.id,
+                        pytmux_session=getattr(pane, "_claude_session_id", 0),
+                        account=acct)
+                except TypeError:
+                    n = usagedb.insert_xc_many(
+                        conn, recs, tab=tab.index, pane=pane.id,
+                        pytmux_session=getattr(pane, "_claude_session_id", 0))
                 if n:
                     # §10-D P7: 새 권위 레코드 적재 → status 용 누계 캐시 무효화
                     # (federation 다운스트림이 다음 status 에 최신 Σ 를 받는다).

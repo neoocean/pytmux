@@ -93,6 +93,22 @@ class Registry:
             out.update(getattr(p, "command_options", None) or {})
         return out
 
+    def command_option_current(self, app, name):
+        """토글/선택지 명령의 현재 설정값(예: 'on'/'off')을 플러그인에서 조회한다 —
+        선택지 팝업이 첫 항목 대신 현재 상태에 커서를 올리는 데 쓴다. 각 플러그인의
+        command_option_current(app, name) 를 순회해 첫 비-None 을 채택, 없으면 None."""
+        for p in self.plugins:
+            fn = getattr(p, "command_option_current", None)
+            if fn is None:
+                continue
+            try:
+                v = fn(app, name)
+            except Exception:
+                v = None
+            if v is not None:
+                return v
+        return None
+
     @property
     def completions(self):
         out = []

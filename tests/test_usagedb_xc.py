@@ -141,3 +141,74 @@ async def test_parse_line_rec_inserts_directly():
             row["cache_read"]) == (7694, 821, 38625, 120000)
     assert row["is_sidechain"] == 1 and row["session_uuid"] == "s1"
     conn.close()
+
+
+# ---- v8: usage_xc.account 컬럼 + cache-포함 계정/일자/레코드 집계(표시층) ----
+
+async def test_v8_account_column_present_and_versioned():
+    conn = usagedb.connect(":memory:")
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(usage_xc)")}
+    assert "account" in cols
+    assert int(conn.execute("PRAGMA user_version").fetchone()[0]) >= 8
+    conn.close()
+
+
+async def test_v7_to_v8_migration_adds_account_legacy_null():
+    # v7 DB(account 컬럼 없음)에 connect → v8 ALTER 로 account 추가, 레거시 행은 NULL
+    # → 계정 집계서 unknown 으로 묶인다(백필 행은 적재 시점 계정 맥락 부재).
+    import sqlite3
+    import tempfile
+    import os
+    p = tempfile.mktemp(suffix=".db")
+    c = sqlite3.connect(p)
+    c.execute("CREATE TABLE usage_xc (xkey TEXT PRIMARY KEY, ts REAL NOT NULL, "
+              "session_uuid TEXT, tab INTEGER, pane INTEGER, pytmux_session "
+              "INTEGER, model TEXT, input INTEGER, output INTEGER, cache_create "
+              "INTEGER, cache_read INTEGER, is_sidechain INTEGER)")
+    c.execute("INSERT INTO usage_xc (xkey,ts,input,output,cache_create,"
+              "cache_read,is_sidechain) VALUES ('old',1.0,1,2,3,4,0)")
+    c.execute("PRAGMA user_version=7"); c.commit(); c.close()
+    conn = usagedb.connect(p)
+    assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 8
+    assert "account" in {r["name"] for r in conn.execute(
+        "PRAGMA table_info(usage_xc)")}
+    assert usagedb.xc_totals_by_account(conn) == {usagelog.UNKNOWN: 10}
+    conn.close()
+    os.remove(p)
+
+
+async def test_xc_totals_by_account_groups_full_with_cache():
+    conn = usagedb.connect(":memory:")
+    # 두 계정 + NULL 계정. full = input+output+cache_create+cache_read 가 계정별로 합산.
+    usagedb.insert_xc(conn, _rec("m1:r1", inp=10, out=5, cr=985), account="a@x")
+    usagedb.insert_xc(conn, _rec("m2:r2", inp=10, out=0, cc=90), account="a@x")
+    usagedb.insert_xc(conn, _rec("m3:r3", inp=1, out=1, cr=8), account="b@y")
+    usagedb.insert_xc(conn, _rec("m4:r4", inp=5, out=0, cr=0), account=None)
+    by = usagedb.xc_totals_by_account(conn)
+    assert by["a@x"] == 1000 + 100        # 1000(footer40+cache) + 100
+    assert by["b@y"] == 10
+    assert by[usagelog.UNKNOWN] == 5
+    conn.close()
+
+
+async def test_xc_daily_breakdown_and_records_are_cache_inclusive():
+    conn = usagedb.connect(":memory:")
+    usagedb.insert_xc(conn, _rec("m1:r1", inp=10, out=5, cr=985,
+                                 ts="2026-06-22T10:00:00.000Z"),
+                      tab=0, pane=3, pytmux_session=7, account="a@x")
+    usagedb.insert_xc(conn, _rec("m2:r2", inp=20, out=0, cc=80,
+                                 ts="2026-06-22T11:00:00.000Z"),
+                      tab=0, pane=3, pytmux_session=7, account="a@x")
+    # daily_breakdown: full(=1000+100) 한 day/account/session 버킷, 스크랩과 동일 구조.
+    daily = usagedb.xc_daily_breakdown(conn)
+    assert len(daily) == 1
+    d = daily[0]
+    assert d["tokens"] == 1100 and d["account"] == "a@x" and d["session"] == 7
+    assert d["tab"] == 0 and d["pane"] == 3
+    # records: full 토큰·pytmux_session→session·account 보존, ts 오름차순.
+    recs = usagedb.xc_query_records(conn, limit=10)
+    assert [r["tokens"] for r in recs] == [1000, 100]
+    assert all(r["account"] == "a@x" and r["session"] == 7 for r in recs)
+    # 합이 xc_totals full 과 일치.
+    assert sum(r["tokens"] for r in recs) == usagedb.xc_totals(conn)["full"]
+    conn.close()

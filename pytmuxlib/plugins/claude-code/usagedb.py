@@ -39,7 +39,12 @@ from . import usagelog
 # (docs/internal/TOKEN_UNDERCOUNT_TRANSCRIPT_SOLUTION.md). PK=xkey(message.id:requestId
 # 또는 이벤트 uuid)로 멱등(INSERT OR IGNORE) — 재적재·중복 라인이 무해. CREATE IF NOT
 # EXISTS 라 v6 DB 도 connect 시 자동 생성(기존 usage/limits 무접촉).
-SCHEMA_VERSION = 7
+# v8(2026-06-23, §10-D 표시층 캐시포함): usage_xc.account(적재 시점 패널 Claude 계정)
+# 컬럼 추가 — 트랜스크립트 권위 회계(cache 포함)를 **계정별**로도 집계 가능하게 한다
+# (팝업 계정 뷰·상태줄 계정 Σ 를 스크랩 usage 대신 usage_xc 로 전환). 트랜스크립트
+# jsonl 엔 계정 라벨이 없어 ingest 시 pane._claude_account 로 채운다 — 백필된 레거시
+# 행은 NULL(미상→집계서 unknown). ALTER ADD COLUMN(메타데이터만) — 기존 xc 쿼리 무영향.
+SCHEMA_VERSION = 8
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS usage (
@@ -78,6 +83,7 @@ CREATE TABLE IF NOT EXISTS usage_xc (
   pane         INTEGER,
   pytmux_session INTEGER,
   model        TEXT,
+  account      TEXT,
   input        INTEGER NOT NULL DEFAULT 0,
   output       INTEGER NOT NULL DEFAULT 0,
   cache_create INTEGER NOT NULL DEFAULT 0,
@@ -152,6 +158,11 @@ def connect(path: str) -> sqlite3.Connection:
             _migrate_v7_xc_tables(conn)
         except sqlite3.Error:
             new_v = min(new_v, 6)
+    if cur_v < 8 and new_v >= 7:    # v8: usage_xc.account 컬럼(계정별 cache 포함 집계)
+        try:
+            _migrate_v8_xc_account(conn)
+        except sqlite3.Error:
+            new_v = min(new_v, 7)
     conn.execute(f"PRAGMA user_version={new_v}")
     conn.commit()
     if path != ":memory:" and not existed:
@@ -264,6 +275,19 @@ def _migrate_v7_xc_tables(conn) -> int:
     if "usage_xc" in have and "usage_xc_cursor" in have:
         return 0
     conn.executescript(_SCHEMA)
+    return 1
+
+
+def _migrate_v8_xc_account(conn) -> int:
+    """v8(§10-D 표시층 캐시포함): usage_xc.account 컬럼 추가(없을 때만). 기존 행은
+    NULL(미상 — 백필 시점엔 패널 계정 맥락이 없었다 → 계정 뷰서 unknown 으로 묶임).
+    새 레코드부터 _xc_tail_pane 이 pane._claude_account 를 실어 계정별 cache-포함 집계가
+    된다. ALTER ADD COLUMN(메타데이터만) — 기존 xc 쿼리는 account 를 안 보므로 무영향.
+    추가했으면 1, 이미 있으면 0(멱등 — v5/v6 ALTER 와 동일 패턴)."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(usage_xc)")}
+    if "account" in cols:
+        return 0
+    conn.execute("ALTER TABLE usage_xc ADD COLUMN account TEXT")
     return 1
 
 
@@ -531,34 +555,36 @@ def _iso_to_epoch(ts) -> float:
         return 0.0
 
 
-def _xc_row(rec: dict, tab=None, pane=None, pytmux_session=None):
+def _xc_row(rec: dict, tab=None, pane=None, pytmux_session=None, account=None):
     return (str(rec["xkey"]), _iso_to_epoch(rec.get("ts")),
             rec.get("session_uuid"), tab, pane, pytmux_session,
-            rec.get("model"), int(rec.get("input", 0)),
+            rec.get("model"), account, int(rec.get("input", 0)),
             int(rec.get("output", 0)), int(rec.get("cache_create", 0)),
             int(rec.get("cache_read", 0)), int(rec.get("is_sidechain", 0)))
 
 
 _XC_INSERT = (
     "INSERT OR IGNORE INTO usage_xc (xkey,ts,session_uuid,tab,pane,"
-    "pytmux_session,model,input,output,cache_create,cache_read,is_sidechain) "
-    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+    "pytmux_session,model,account,input,output,cache_create,cache_read,"
+    "is_sidechain) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
 
 
-def insert_xc(conn, rec: dict, tab=None, pane=None, pytmux_session=None) -> bool:
+def insert_xc(conn, rec: dict, tab=None, pane=None, pytmux_session=None,
+              account=None) -> bool:
     """rec 한 건 멱등 삽입. 이미 있는 xkey 면 무시(False). 실패도 조용히 False."""
     try:
         before = conn.total_changes
-        conn.execute(_XC_INSERT, _xc_row(rec, tab, pane, pytmux_session))
+        conn.execute(_XC_INSERT, _xc_row(rec, tab, pane, pytmux_session, account))
         conn.commit()
         return conn.total_changes > before
     except sqlite3.Error:
         return False
 
 
-def insert_xc_many(conn, recs, tab=None, pane=None, pytmux_session=None) -> int:
+def insert_xc_many(conn, recs, tab=None, pane=None, pytmux_session=None,
+                   account=None) -> int:
     """rec 여러 건 멱등 일괄 삽입(백필·증분 테일). **새로 삽입된** 행 수 반환."""
-    rows = [_xc_row(r, tab, pane, pytmux_session) for r in recs]
+    rows = [_xc_row(r, tab, pane, pytmux_session, account) for r in recs]
     if not rows:
         return 0
     before = conn.total_changes
@@ -602,6 +628,67 @@ def xc_daily_full(conn) -> dict:
         "COALESCE(SUM(input+output+cache_create+cache_read),0) AS s "
         "FROM usage_xc GROUP BY day")
     return {r["day"]: int(r["s"]) for r in cur.fetchall()}
+
+
+def xc_daily_breakdown(conn) -> list:
+    """usage_xc(트랜스크립트 권위, cache 포함) 일자별 합성 레코드 — 스크랩
+    daily_breakdown 과 **같은 행 구조**(day/account/session/tab/pane/model/tokens)라
+    클라 usagelog.agg_view/daily_to_records 가 그대로 먹는다(표시 코드 무변경). 차이는
+    tokens 가 4항목 full(input+output+cache_create+cache_read)이고 session 은
+    pytmux_session(스크랩 usage.session 과 같은 정수 의미)인 점. account/session/model
+    이 NULL 인 레거시 백필 행은 그대로 NULL → 표시층이 unknown 으로 묶는다."""
+    cur = conn.execute(
+        "SELECT strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') AS day, "
+        "       account, pytmux_session AS session, tab, pane, model, "
+        "       COALESCE(SUM(input+output+cache_create+cache_read), 0) AS tokens "
+        "FROM usage_xc "
+        "GROUP BY day, account, pytmux_session, tab, pane, model "
+        "HAVING SUM(input+output+cache_create+cache_read) <> 0")
+    out = []
+    for r in cur.fetchall():
+        rec = {"day": r["day"], "account": r["account"],
+               "session": r["session"], "tab": r["tab"], "pane": r["pane"],
+               "tokens": int(r["tokens"])}
+        if r["model"] is not None:
+            rec["model"] = r["model"]
+        out.append(rec)
+    return out
+
+
+def xc_query_records(conn, limit: int | None = None) -> list:
+    """usage_xc 레코드를 usagelog.read 호환 dict(ts/tab/pane/session/account/tokens/
+    model)로, ts 오름차순 반환(limit=N 이면 최근 N 건). hour 버킷이 raw 레코드를
+    쓰므로(시각 단위 합성 불가) 스크랩 query_records 의 cache 포함 대응물이다. tokens
+    는 full, session 은 pytmux_session."""
+    sel = ("SELECT ts, tab, pane, pytmux_session AS session, account, model, "
+           "(input+output+cache_create+cache_read) AS tokens FROM usage_xc ")
+    if limit is not None and limit >= 0:
+        cur = conn.execute(
+            "SELECT * FROM (" + sel + "ORDER BY ts DESC LIMIT ?) ORDER BY ts ASC",
+            (limit,))
+    else:
+        cur = conn.execute(sel + "ORDER BY ts ASC")
+    out = []
+    for r in cur.fetchall():
+        rec = {"ts": r["ts"], "tab": r["tab"], "pane": r["pane"],
+               "session": r["session"],
+               "account": r["account"] or usagelog.UNKNOWN,
+               "tokens": int(r["tokens"])}
+        if r["model"] is not None:
+            rec["model"] = r["model"]
+        out.append(rec)
+    return out
+
+
+def xc_totals_by_account(conn) -> dict:
+    """계정별 full(4항목 합) 토큰. {account('unknown'=NULL): full}. 상태줄 계정 Σ·
+    팝업 계정 뷰의 cache 포함 권위값(스크랩 totals_by_account 대응물)."""
+    cur = conn.execute(
+        "SELECT COALESCE(account, ?) AS a, "
+        "COALESCE(SUM(input+output+cache_create+cache_read),0) AS s "
+        "FROM usage_xc GROUP BY COALESCE(account, ?)",
+        (usagelog.UNKNOWN, usagelog.UNKNOWN))
+    return {r["a"]: int(r["s"]) for r in cur.fetchall()}
 
 
 def get_xc_cursor(conn, path: str):

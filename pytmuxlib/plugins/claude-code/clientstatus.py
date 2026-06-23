@@ -67,6 +67,11 @@ def init_defaults(status):
     # Claude 설정(설정 팝업 토글 현재값).
     status.auto_token_on_exit = True  # §10-F 세션 종료 시 토큰 화면 자동 표시(서버 기본 ON)
     status.claude_auto_mode = False
+    # 선택지 팝업(`: auto-retry` 등)이 현재값에 커서를 올리는 데 쓰는 정적 토글들
+    # (서버 full status 에서만 도착 → 키 부재 시 직전값 유지). 서버 기본값과 같은 기본.
+    status.claude_auto_retry = True    # 전송 에러 시 자동 '계속'(서버 기본 ON)
+    status.auto_launch = True          # 새 세션 자동 셋업(서버 기본 ON)
+    status.token_debug = False         # §10-D 토큰 회계 진단 로그(서버 기본 OFF)
     status.claude_long_turn_sec = 600  # M17: 장기 턴 경고 임계(초, 0=끔)
     status.claude_repeat_alert = 3     # M17: 반복 루프 경고 임계(회, 0=끔)
     status.claude_pending = None   # 무장된 자동재개 {kind, eta초} 카운트다운
@@ -129,6 +134,11 @@ def absorb(status, msg):
         "claude_long_turn_sec", status.claude_long_turn_sec)
     status.claude_repeat_alert = msg.get(
         "claude_repeat_alert", status.claude_repeat_alert)
+    # 정적 토글(full status 시만 도착 → 키 부재 시 직전값 유지). 선택지 팝업이 현재값에
+    # 커서를 올리는 데 쓴다(command_option_current).
+    status.claude_auto_retry = msg.get("claude_auto_retry", status.claude_auto_retry)
+    status.auto_launch = msg.get("auto_launch", status.auto_launch)
+    status.token_debug = msg.get("token_debug", status.token_debug)
     # 카운트다운: 서버가 매 status 에 항상 키를 실어 보낸다(없으면 None).
     status.claude_pending = msg.get("claude_pending")
 

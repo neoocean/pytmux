@@ -2117,15 +2117,49 @@ class PromptScreen(ModalScreen):
         self._hint_cmd = name
         opts = self._command_options().get(name)
         if opts and not rest:
-            # 선택지/토글: 방향키 강조 + Enter 즉시 실행(단일 spec 지원).
+            # 선택지/토글: 방향키 강조 + Enter 즉시 실행(단일 spec 지원). 초기 커서는
+            # **현재 설정값과 같은 선택지**에 올린다(요청 — 모르면 첫 항목).
             self._choices = list(opts[0]["choices"])
-            self._choice_sel = 0
+            self._choice_sel = self._current_choice_idx(name, self._choices)
             self._render_hint()
             return
         if name in COMMAND_FREETEXT and not rest:
             self._set_hint(f"[bold]____[/bold]  [dim]{self._esc(desc)}[/dim]")
             return
         self._set_hint(f"[dim]{self._esc(desc)}[/dim]")
+
+    def _current_choice_idx(self, name, choices):
+        """선택지 팝업의 초기 커서 위치: **현재 설정값과 같은 선택지**에 올린다(요청).
+        현재값을 확실히 알 때만 옮기고, 모르면 0(첫 선택지)을 유지해 기존 거동을 보존한다
+        (무회귀). 값 출처: 플러그인 command_option_current(예: auto-retry 의 status 토글)
+        → 코어 setting_current(이름이 on/off 설정과 같은 토글) 순."""
+        cur = self._option_current_value(name)
+        if cur is not None:
+            cur = str(cur).lower()
+            for i, (_disp, val) in enumerate(choices):
+                if val and val.lower() == cur:
+                    return i
+        return 0
+
+    def _option_current_value(self, name):
+        """토글/선택지 명령의 현재값 문자열(없으면 None). 플러그인 우선, 코어 설정 폴백."""
+        app = self.app
+        reg = getattr(app, "plugins", None)
+        fn = getattr(reg, "command_option_current", None) if reg else None
+        if fn is not None:
+            try:
+                v = fn(app, name)
+            except Exception:
+                v = None
+            if v is not None:
+                return v
+        sc = getattr(app, "setting_current", None)
+        if sc is not None:
+            try:
+                return sc(name)
+            except Exception:
+                return None
+        return None
 
     def _render_hint(self):
         # 토글/선택지를 한 줄에 나열하고 강조된 항목만 reverse 로 표시. 양옆 ‹ › 는

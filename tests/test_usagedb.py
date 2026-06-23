@@ -918,8 +918,8 @@ async def test_xc_cursor_roundtrip():
     conn.close()
 
 
-async def test_xc_v6_db_upgrades_to_v7():
-    """v6(usage_xc 없는) DB 가 connect 시 v7 로 올라가 usage_xc 가 생긴다."""
+async def test_xc_v6_db_upgrades_to_current():
+    """v6(usage_xc 없는) DB 가 connect 시 현재 스키마(≥v7)로 올라가 usage_xc 가 생긴다."""
     import sqlite3
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "t.db")
@@ -931,7 +931,8 @@ async def test_xc_v6_db_upgrades_to_v7():
         raw.commit()
         raw.close()
         conn = usagedb.connect(path)
-        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 7
+        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == \
+            usagedb.SCHEMA_VERSION
         assert usagedb.insert_xc(conn, _xrec("m1:r1"))   # 테이블 존재
         assert usagedb.xc_count(conn) == 1
         conn.close()

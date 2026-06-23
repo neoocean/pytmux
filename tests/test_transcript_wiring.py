@@ -165,3 +165,30 @@ async def test_cursor_persisted_resumes_across_reconnect():
     finally:
         transcript.find_transcript = _ORIG_FIND
         await teardown(srv, task, sock)
+
+
+async def test_account_carried_into_xc_and_status_total_cache_inclusive():
+    # v8 표시층 캐시포함: 적재 시점 패널 계정이 usage_xc 에 실리고, 상태줄 계정 Σ
+    # (_account_token_total_xc)가 스크랩 footer 근사(~15)가 아니라 cache 포함 full
+    # (1000)을 돌려준다.
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        # 계정을 고정(manual)해 None→Claude 전환 시 재감지로 지워지지 않게 한다.
+        p._claude_account = "wo@x.org"
+        p._claude_account_manual = True
+        with tempfile.TemporaryDirectory() as d:
+            jp = os.path.join(d, "sess-1.jsonl")
+            open(jp, "w").close()
+            transcript.find_transcript = lambda pid, cwd: jp
+            srv._pane_cwd = lambda pane: d
+            _append(jp, _evt("m1", "r1", inp=10, out=5, cr=985))   # full 1000
+            await _turn(srv, sess, win, p)
+            conn = srv._tokens_db_conn()
+            assert usagedb.xc_totals_by_account(conn) == {"wo@x.org": 1000}
+            assert srv._account_token_total_xc(p) == 1000
+    finally:
+        transcript.find_transcript = _ORIG_FIND
+        await teardown(srv, task, sock)

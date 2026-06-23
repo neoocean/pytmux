@@ -695,6 +695,35 @@ async def test_command_prompt_toggle_left_right_selects():
     await _with_app(body)
 
 
+async def test_command_prompt_toggle_cursor_on_current_state():
+    # 토글 선택지 팝업은 첫 항목이 아니라 **현재 설정값**에 커서를 올린다(요청). auto-retry
+    # 의 현재 상태(status.claude_auto_retry)에 따라 초기 _choice_sel 이 '켜기'(on)/'끄기'
+    # (off)를 가리킨다 — command_option_current(claude-code) 경로.
+    async def body(app, pilot, srv):
+        await pilot.press("escape")
+        await pilot.press("colon")
+        scr = app.screen_stack[-1]
+        inp = scr.query_one(Input)
+
+        def idx_for_value(v):
+            return next(i for i, (_d, val) in enumerate(scr._choices) if val == v)
+
+        # 현재 ON → 커서가 'on' 선택지(첫 항목 '토글'이 아님)
+        app.status.claude_auto_retry = True
+        inp.value = "auto-retry"
+        scr._refresh_cands(); scr._refresh_hint()
+        assert scr._choices, "토글 선택지"
+        assert scr._choice_sel == idx_for_value("on"), (scr._choice_sel, scr._choices)
+        assert scr._choice_sel != 0, "첫 항목(토글)이 아니라 현재값에 커서"
+
+        # 현재 OFF → 커서가 'off' 선택지
+        app.status.claude_auto_retry = False
+        inp.value = "auto-retry"
+        scr._refresh_cands(); scr._refresh_hint()
+        assert scr._choice_sel == idx_for_value("off"), (scr._choice_sel, scr._choices)
+    await _with_app(body)
+
+
 async def test_command_prompt_arg_history_recommend_and_complete():
     # remote-attach 등 자유 텍스트 인자 명령은 이전 입력 인자를 기억해 ① 추천(후보 목록)·
     # ② 자동완성(ghost) 한다(요청). 같은 버킷(remote-*)은 이력을 공유한다.
