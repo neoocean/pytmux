@@ -285,6 +285,22 @@ async def prompt_history(app, pilot):
     await pilot.pause(0.5)
 
 
+async def compose_prompt(app, pilot):
+    # 프롬프트 작성창(ComposePromptScreen) — ESC→Insert 로 여는 블록 선택 멀티라인
+    # 편집기(코어). 활성 패널 프롬프트 위에 떠 상단 힌트로 Enter 전송·Shift+Enter
+    # 줄바꿈·Ctrl+A 전체 선택을 안내하고, 우상단에 IME(한/영) 배지를 띄운다. OS 실측
+    # 폴링이 캡처 머신 입력기로 덮어쓰지 않게 _ime_os=False(폴백)로 두고 'EN' 을 박는다.
+    # 실 작업 내용 노출 방지로 합성 프롬프트를 시드로 넣는다(외형은 실제와 동일).
+    from pytmuxlib.clientscreens import ComposePromptScreen
+    app._ime_os = False
+    app.ime_show = True
+    app.ime_state = "EN"
+    seed = ("이 모듈의 공개 API 를 정리해서 사용 예시와\n"
+            "함께 README 의 '빠른 시작' 절에 추가해줘")
+    app.push_screen(ComposePromptScreen(seed))
+    await pilot.pause(0.5)
+
+
 async def claude_resume(app, pilot):
     # claude-resume 플러그인 리줌 피커(claude-resume). 실 머신의 세션 경로·제목이
     # 노출되지 않도록 **합성 세션 목록**을 직접 ClaudeResumeScreen 에 넣어 띄운다
@@ -747,6 +763,7 @@ SCENES = [
     ("33-ime", "IME 한/영 배지(ime-indicator) — 우상단 상태 배지", ime_badge),
     ("34-remote-attach", "원격 pytmux 탭 어태치 — 분홍 탭바·분홍 패널 외곽선", remote_attach),
     ("40-settings", "통합 설정 화면(:settings) — 좌측 카테고리 탭+우측 전체 설정 목록·←→ 값 변경·링크 행", settings),
+    ("41-compose-prompt", "프롬프트 작성창(ESC→Insert) — 블록 선택 멀티라인·Enter 전송·Ctrl+A 전체선택", compose_prompt),
 ]
 # Claude 컷(11·12·13·20·22)은 결정적 장면이 아니라 진짜 `claude` 한 세션에서 캡처한다
 # (claude_suite). 실제 API 호출이라 무인자 전체 생성에선 제외하고, `claude-suite` 또는
