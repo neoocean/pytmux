@@ -609,6 +609,18 @@ class _CommandMixin:
             self.display_message(i18n.t(
                 "msg.inactive_dim",
                 state=("ON" if self.inactive_dim else "OFF")))
+        elif c in ("strip-box-drawing",):
+            # §2.13 붙여넣기(paste-clipboard/Ctrl+V) 시 패널 테두리(박스드로잉) 제거
+            # 세션 토글(영속 기본값은 config strip_box_drawing). 인자 on/off, 없으면 반전.
+            if "on" in args:
+                self.strip_box_drawing = True
+            elif "off" in args:
+                self.strip_box_drawing = False
+            else:
+                self.strip_box_drawing = not self.strip_box_drawing
+            self.display_message(i18n.t(
+                "msg.strip_box_drawing",
+                state=("ON" if self.strip_box_drawing else "OFF")))
         elif c in ("inactive-dim-ratio", "dim-inactive-ratio"):
             # §2.9 비활성 패널 dim 세기(0~0.8) 런타임 조정. 인자 숫자 = 그 값으로
             # 설정(범위 클램프), 인자 없으면 현재 값 표시. 영속 기본값은 config

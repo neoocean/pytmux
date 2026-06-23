@@ -54,6 +54,26 @@ async def test_set_config_option_creates_missing_file_and_dirs():
     assert keymap.load_config(p)["mode_keys"] == "emacs"
 
 
+async def test_set_config_option_strip_box_drawing_roundtrips():
+    """§2.13: strip-box-drawing 옵션이 config 에 set 줄로 영속되고 load_config 가
+    strip_box_drawing(언더바)으로 되읽는다. 기본값은 코드에서 on 이므로 off 영속을 검증."""
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "config")
+    keymap.set_config_option("strip-box-drawing", "off", p)   # 없던 옵션 추가
+    assert keymap.load_config(p).get("strip_box_drawing") is False
+    keymap.set_config_option("strip-box-drawing", "on", p)    # 기존 줄 치환
+    txt = open(p, encoding="utf-8").read()
+    assert txt.count("set strip-box-drawing ") == 1, txt      # 중복 추가 안 함
+    assert keymap.load_config(p).get("strip_box_drawing") is True
+    # 언더바 표기 기존 줄도 정규형으로 치환(별칭 매칭)
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("set strip_box_drawing on\n")
+    keymap.set_config_option("strip-box-drawing", "off", p)
+    txt = open(p, encoding="utf-8").read()
+    assert txt.count("strip") == 1, txt
+    assert keymap.load_config(p).get("strip_box_drawing") is False
+
+
 async def test_textual_key_to_tmux_roundtrips_with_parser():
     for tmux in ("C-a", "M-x", "S-Tab", "F5", "C-Left"):
         textual = keymap._tmux_key_to_textual(tmux)

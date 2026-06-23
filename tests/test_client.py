@@ -334,6 +334,25 @@ async def test_remote_tab_pink_styles_in_tabbar():
     await _with_app(body)
 
 
+async def test_remote_tab_visible_after_pinned_local_tab():
+    """회귀: 고정(핀) 로컬 탭 뒤에 덧붙은 비고정 원격 탭이 탭바에서 누락되면 안 된다.
+    서버는 로컬 탭을 [비고정][고정]으로 정규화하지만 원격 탭은 그 뒤에 append 되어,
+    옛 'first_pin 이후는 전부 고정' 가정 하에선 비고정 원격 탭이 가운데/우측 두 루프
+    사이 사각지대에 빠져 그려지지 않았다(번호 키 이동은 index 기반이라 됐음)."""
+    async def body(app, pilot, srv):
+        # [로컬-비고정, 로컬-고정, 원격-비고정] — 스크린샷 그대로의 순서
+        app.tabbar.set_tabs([
+            {"index": 0, "name": "win", "active": False},
+            {"index": 1, "name": "pytmux", "active": True, "pinned": True},
+            {"index": 2, "name": "⇄h:win", "active": False, "remote": True}], 1)
+        await pilot.pause(0.05)
+        rendered = {p for kind, p, _ in app.tabbar._entries() if kind == "tab"}
+        assert rendered == {0, 1, 2}, f"원격 탭(index 2) 누락: {rendered}"
+        segs = list(app.tabbar.render_line(0))
+        assert any("⇄h:win" in s.text for s in segs), "원격 탭이 렌더링 안 됨"
+    await _with_app(body, cfg={"tab_bar_always": True})
+
+
 async def test_remote_view_outline_pink():
     """§1.7-a: 활성 탭이 원격(remote=True)이면 패널 외곽선이 분홍(활성=REMOTE_PINK·
     비활성=REMOTE_PINK_DIM)으로, 로컬 탭으로 돌아오면 종전 색(활성=primary)으로

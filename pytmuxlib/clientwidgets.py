@@ -697,8 +697,16 @@ class TabBar(Widget):
         # 으로 정규화하므로 비고정이 앞, 고정이 뒤다. 비고정만 가운데(스크롤) 구역에,
         # 고정은 우측 flush 로 항상 보이게 그린다. 핀이 없으면 종전과 픽셀 동일.
         n = len(self.tabs)
+        # 항목7+§1.7-a: 고정 탭은 우측 구역, 비고정 탭은 가운데(스크롤) 구역.
+        # 서버는 *로컬* 탭을 [비고정][고정]으로 정규화하지만, 원격(remote-attach)
+        # 탭은 그 뒤에 그대로 덧붙어(serverremote._remote_tabs) 비고정 원격 탭이
+        # 고정 로컬 탭보다 뒤 위치에 올 수 있다. 따라서 "첫 고정 위치 이후는 전부
+        # 고정"이라는 가정(옛 first_pin 컷)은 깨져, 그 사각지대의 비고정 원격 탭이
+        # 탭바에서 통째로 누락됐다(번호 이동은 index 기반이라 됐음). → 비고정/고정을
+        # **위치 목록**으로 분리해 가운데 루프가 비고정 탭 전부를 그린다.
         pin_pos = [k for k in range(n) if self.tabs[k].get("pinned")]
-        first_pin = pin_pos[0] if pin_pos else n   # 비고정 구역 끝(exclusive)
+        unpinned_pos = [k for k in range(n) if not self.tabs[k].get("pinned")]
+        nu = len(unpinned_pos)
         # 고정 구역 폭(구분자 + 고정 라벨들). 핀 없으면 0.
         pin_block_w = 0
         if pin_pos:
@@ -711,12 +719,14 @@ class TabBar(Widget):
         addtxt = "  [+]"
         mid_w = max(1, w - len(addtxt) - self.LEAD - pin_block_w)
         # 선택 탭이 보이도록 스크롤 보정(비고정 구역 한정 — 고정 탭은 늘 보임).
-        sel_unpinned = selpos < first_pin
-        self._scroll = max(0, min(self._scroll, max(0, first_pin - 1)))
-        if sel_unpinned and selpos < self._scroll:
-            self._scroll = selpos
-        while (sel_unpinned and self._scroll < selpos and
-               sum(widths[self._scroll:selpos + 1]) > mid_w - 2):
+        # _scroll 은 왼쪽으로 밀려난 비고정 탭 개수(비고정 시퀀스 내 오프셋).
+        sel_uidx = unpinned_pos.index(selpos) if selpos in unpinned_pos else None
+        self._scroll = max(0, min(self._scroll, max(0, nu - 1)))
+        if sel_uidx is not None and sel_uidx < self._scroll:
+            self._scroll = sel_uidx
+        while (sel_uidx is not None and self._scroll < sel_uidx and
+               sum(widths[unpinned_pos[j]]
+                   for j in range(self._scroll, sel_uidx + 1)) > mid_w - 2):
             self._scroll += 1
         entries, mid_used = [], 0
         if self.LEAD:                              # 왼쪽 여백(첫 탭 한 칸 오른쪽)
@@ -725,15 +735,16 @@ class TabBar(Widget):
             entries.append(("scroll_left", None, "◀"))
             mid_used += 1
         i = self._scroll
-        while i < first_pin:                        # 비고정 구역만 가운데에
-            tw = widths[i]
-            reserve = 1 if i < first_pin - 1 else 0  # 오른쪽 화살표 자리
+        while i < nu:                               # 비고정 구역만 가운데에
+            k = unpinned_pos[i]
+            tw = widths[k]
+            reserve = 1 if i < nu - 1 else 0         # 오른쪽 화살표 자리
             if mid_used + tw > mid_w - reserve and i > self._scroll:
                 break
-            entries.append(("tab", self.tabs[i]["index"], labels[i]))
+            entries.append(("tab", self.tabs[k]["index"], labels[k]))
             mid_used += tw
             i += 1
-        if i < first_pin:                           # 비고정 오른쪽에 더 있음
+        if i < nu:                                  # 비고정 오른쪽에 더 있음
             entries.append(("scroll_right", None, "▶"))
         # [+] 새 탭 버튼(§10 #16): 앞 간격칸은 터미널 배경(녹색 아님)으로 분리해
         # 그려, 간격까지 녹색으로 칠해지지 않게 한다. 간격칸은 클릭 무시(lead 처럼).

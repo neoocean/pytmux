@@ -36,7 +36,8 @@ from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     _first_int, _first_signed_int, _is_emoji, _opt_value, _restart_check_eval,
     _signed_int, _with_reverse,
     has_hangul, hangul_to_qwerty,
-    _normalize_key, _shell_argv, key_to_bytes, make_style, theme_color)
+    _normalize_key, _shell_argv, key_to_bytes, make_style, strip_box_drawing,
+    theme_color)
 from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 사용)
     ChooseBufferScreen, ChooseLayoutScreen, ChooseTreeScreen,
     CommandListScreen, CommandOptionsScreen, ComposePromptScreen, ConfirmScreen,
@@ -98,6 +99,11 @@ class _ClipboardMixin:
         try:
             txt = await asyncio.to_thread(clientclip.paste)
             if txt:
+                # §2.13: OS 네이티브 선택은 복사 시점에 못 막으므로, 다시 들어오는
+                # 이 명시적 클립보드 경로에서 패널 테두리(박스드로잉) 오염을 제거한다.
+                # 터미널 bracketed paste(on_paste)는 의도적 표 붙여넣기 보존 위해 제외.
+                if getattr(self, "strip_box_drawing", True):
+                    txt = strip_box_drawing(txt)
                 self.send_cmd("paste", text=txt)
                 return
             if await asyncio.to_thread(clientclip.has_image):
@@ -508,6 +514,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     float(config.get("inactive_dim_ratio", 0.18))))
             except (TypeError, ValueError):
                 self.inactive_dim_ratio = 0.18
+            # §2.13 OS 네이티브 선택으로 복사된 텍스트를 paste-clipboard(Ctrl+V)로 다시
+            # 넣을 때 패널 테두리(박스드로잉) 오염을 제거(기본 on). 런타임 토글(영속=config).
+            self.strip_box_drawing = bool(config.get("strip_box_drawing", True))
             self.aliases = config.get("aliases", {})
             self.hooks = config.get("hooks", {})
             # 새 탭/패널 시작 디렉토리(current/home/<경로>). :settings 에서 변경 가능.
@@ -1473,6 +1482,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return "on" if self.inactive_dim else "off"
             if key == "inactive-dim-ratio":
                 return f"{self.inactive_dim_ratio:.2f}"
+            if key == "strip-box-drawing":
+                return "on" if self.strip_box_drawing else "off"
             if key in ("tab-bar", "tabbar"):
                 return "always" if self.tab_bar_always else "auto"
             if key == "status-position":

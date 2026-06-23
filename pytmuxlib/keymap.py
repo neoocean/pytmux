@@ -258,6 +258,11 @@ def load_config(path: str | None = None) -> dict:
                             cfg["inactive_dim_ratio"] = float(val)
                         except ValueError:
                             pass
+                    elif opt in ("strip-box-drawing", "strip_box_drawing"):
+                        # §2.13 OS 네이티브 선택 붙여넣기 시 패널 테두리(박스드로잉)
+                        # 제거(기본 on). 런타임 `strip-box-drawing` 명령이 세션 우선.
+                        cfg["strip_box_drawing"] = val.lower() in (
+                            "on", "true", "1", "yes")
                 elif parts[0] == "bind" and len(parts) >= 3:
                     # 키를 Textual 표기로 정규화해 저장한다 — 런타임 매칭 토큰이
                     # event.key(ctrl+x 등)이므로 raw "C-x" 로 두면 절대 안 먹는다.
@@ -298,6 +303,7 @@ _OPT_ALIASES = {
     "default-path": ("default_path",),
     "inactive-dim": ("inactive_dim",),
     "inactive-dim-ratio": ("inactive_dim_ratio",),
+    "strip-box-drawing": ("strip_box_drawing",),
     "lang": ("language",),
 }
 
