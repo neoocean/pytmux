@@ -843,6 +843,12 @@ class ServerIOMixin:
             # 반환하면 그대로 클라로 보낸다(ncd 의 request_nc_list 등). 없으면 무시.
             resp = self.plugins.handle_server_request(self, sess, action, msg)
             if resp is not None:
+                # 원격 페더레이션 §4.1: 릴레이된 요청이 요청 클라 식별자(_req_token)를
+                # 실어 왔으면 회신에 그대로 echo 한다 — 다운스트림 _remote_reader 가
+                # 요청한 그 클라에만 응답을 전달해 다른 뷰어에 새지 않게 한다. 로컬
+                # (비릴레이) 요청엔 _req_token 이 없어 무영향.
+                if isinstance(resp, dict) and msg.get("_req_token") is not None:
+                    resp["_req_token"] = msg["_req_token"]
                 await write_msg(client.writer, resp)
             return
         await self._send_full(client)

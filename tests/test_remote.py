@@ -43,6 +43,21 @@ async def _read_until(reader, pred, timeout=8.0, what="msg"):
     raise AssertionError(f"timeout waiting {what}: {seen}")
 
 
+async def _assert_no(reader, pred, window=1.0, what="msg"):
+    """window 초 동안 pred 에 맞는 메시지가 **오지 않음**을 단언(음성 검사). 그 사이
+    온 다른 메시지(status 등)는 무시한다. 메시지 고갈(TimeoutError)/연결 종료=통과."""
+    end = time.monotonic() + window
+    while time.monotonic() < end:
+        try:
+            msg = await asyncio.wait_for(read_msg(reader),
+                                         max(0.05, end - time.monotonic()))
+        except asyncio.TimeoutError:
+            return
+        if msg is None:
+            return
+        assert not pred(msg), f"예상치 못한 {what}: {msg.get('t')}"
+
+
 def _rows_text(rows):
     return "\n".join("".join(seg[0] for seg in row) for row in rows)
 
@@ -1208,6 +1223,61 @@ async def test_remote_token_log_relays_to_upstream():
     finally:
         if writer is not None:
             writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
+async def test_remote_token_log_only_to_requester_not_other_viewers():
+    """§4.1 브로드캐스트 누출 필터: 같은 원격 호스트를 보는 다운스트림 클라가 둘일 때,
+    한 클라가 연 토큰 팝업(request_token_log) 회신은 **요청한 그 클라에게만** 가고
+    다른 뷰어에는 안 뜬다 — _remote_reader 패스스루가 종전엔 link.host 를 보는 **모든**
+    클라에 응답을 뿌려, 클릭 안 한 클라에 토큰 팝업이 새던 것을 _req_token(요청 클라
+    식별자 echo)로 라우팅해 막는다. nc_list/redraw 등 미태깅 메시지는 종전대로 뷰어
+    전체 브로드캐스트(무영향)."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()     # 로컬(다운스트림)
+    srvB, taskB, sockB = await server_only()     # 원격(업스트림)
+    r1 = w1 = r2 = w2 = None
+    try:
+        srvB.ensure_default_session(80, 24)
+        srvA.ensure_default_session(80, 24)
+        # 클라1: attach → remote_attach → 원격 탭 진입
+        r1, w1 = await _attach_client(sockA)
+        await _read_until(r1, lambda m: m.get("t") == "status", what="c1 status")
+        await write_msg(w1, {"t": "cmd", "action": "remote_attach",
+                             "endpoint": sockB})
+        stm = await _read_until(
+            r1, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="c1 merged status")
+        gidx = next(w["index"] for w in stm["windows"]
+                    if w["name"].startswith("⇄"))
+        await write_msg(w1, {"t": "cmd", "action": "select_window",
+                             "index": gidx})
+        await _read_until(r1, lambda m: m.get("t") == "layout", what="c1 layout")
+        # 클라2: 같은 세션에 attach → 같은 원격 탭 진입(둘 다 같은 링크 뷰어)
+        r2, w2 = await _attach_client(sockA)
+        await _read_until(
+            r2, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="c2 merged status")
+        await write_msg(w2, {"t": "cmd", "action": "select_window",
+                             "index": gidx})
+        await _read_until(r2, lambda m: m.get("t") == "layout", what="c2 layout")
+        # 클라1만 토큰 로그 요청 → 클라1은 받고, 클라2는 안 받는다.
+        await write_msg(w1, {"t": "cmd", "action": "request_token_log",
+                             "limit": 5000})
+        tl = await _read_until(r1, lambda m: m.get("t") == "token_log",
+                               what="c1 token_log")
+        # 라우팅 전용 필드는 클라에 노출되지 않는다(_remote_reader 가 제거).
+        assert "_req_token" not in tl, tl
+        await _assert_no(r2, lambda m: m.get("t") == "token_log",
+                         window=1.5, what="c2 token_log 누출")
+    finally:
+        for w in (w1, w2):
+            if w is not None:
+                w.close()
         await teardown(srvA, taskA, sockA)
         await teardown(srvB, taskB, sockB)
 

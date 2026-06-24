@@ -595,13 +595,22 @@ class ServerRemoteMixin:
                     continue
                 if t in ("bye", "restarting"):
                     break
+                # §4.1: 요청 클라 식별자가 echo 돼 왔으면(request_token_log 회신) 그
+                # 클라에게만 전달한다 — 같은 호스트를 보는 다른 다운스트림 클라에
+                # 응답(토큰 팝업)이 새지 않게. 라우팅 전용 필드라 클라에 보내기 전 제거.
+                # 없으면(layout/screen/nc_list 등) 종전대로 이 링크를 보는 전 클라에
+                # 브로드캐스트. 요청 클라가 사라졌으면 매칭 0 → 조용히 드롭(정상).
+                req_token = msg.pop("_req_token", None)
                 frame = frame_msg(msg)
                 for c in list(self.clients):
-                    if c.remote_view == link.host:
-                        try:
-                            await write_frames(c.writer, [frame])
-                        except (OSError, ConnectionError):
-                            pass
+                    if c.remote_view != link.host:
+                        continue
+                    if req_token is not None and id(c) != req_token:
+                        continue
+                    try:
+                        await write_frames(c.writer, [frame])
+                    except (OSError, ConnectionError):
+                        pass
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -716,6 +725,14 @@ class ServerRemoteMixin:
         if link is None:
             client.remote_view = None
             return False
+        # §4.1 브로드캐스트 누출 필터: 응답을 회신하는 요청(request_token_log)은 요청
+        # 클라 식별자(_req_token)를 실어 보낸다. 업스트림이 회신에 그대로 echo 하고
+        # (serverio handle_server_request 분기) _remote_reader 가 그 클라에만 응답을
+        # 전달해, 같은 원격 호스트를 보는 **다른** 다운스트림 클라에 토큰 팝업이 새지
+        # 않게 한다. id(client)=이 다운스트림 프로세스 내 안정 키(원격은 불투명 echo).
+        # 미태깅 메시지(입력/리사이즈/nc_list 등)는 종전대로 뷰어 전체 브로드캐스트.
+        if msg.get("action") == "request_token_log":
+            msg = dict(msg, _req_token=id(client))
         try:
             asyncio.create_task(self._link_write(link, msg))
         except (OSError, ConnectionError):
