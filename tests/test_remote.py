@@ -1148,6 +1148,70 @@ async def test_remote_redraw_relays_to_remote():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_remote_token_log_relays_to_upstream():
+    """§10-D 잔여: 원격 탭을 보는 중 토큰 사용량 팝업 조회(request_token_log)는
+    업스트림으로 릴레이돼 그 **원격** 머신의 토큰 누계를 회신한다 — 종전엔 릴레이
+    화이트리스트에 없어 보이지 않는 **로컬** DB 를 회신해, 분홍 팝업 테두리(원격 보기
+    표식)와 실제 데이터 출처가 어긋났다. 업스트림 B 가 token_log 를 회신하면
+    _remote_reader 가 보는 클라에 그대로 전달한다(섞임 금지 §1.7-c 동형).
+
+    공유 DB(harness 한계) 탓에 값으로 B↔A 를 못 가르므로, redraw/paste 테스트처럼
+    **어느 서버가 request_token_log 를 처리했는지**(handle_server_request 호출)로
+    릴레이를 판정하고, 응답 token_log 가 보는 클라까지 전달됨도 함께 고정한다."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()     # 로컬(다운스트림)
+    srvB, taskB, sockB = await server_only()     # 원격(업스트림)
+    reader = writer = None
+    try:
+        srvB.ensure_default_session(80, 24)
+        srvA.ensure_default_session(80, 24)
+        # 양 서버의 토큰 로그 처리 진입점(레지스트리 훅)을 기록기로 감싼다 — 어느
+        # 서버가 request_token_log 를 처리했는지로 릴레이를 판정(실 DB 값 비의존).
+        recA, recB = [], []
+        _hA = srvA.plugins.handle_server_request
+        _hB = srvB.plugins.handle_server_request
+        srvA.plugins.handle_server_request = (
+            lambda srv, s, a, m, _o=_hA, _r=recA: (_r.append(a), _o(srv, s, a, m))[1])
+        srvB.plugins.handle_server_request = (
+            lambda srv, s, a, m, _o=_hB, _r=recB: (_r.append(a), _o(srv, s, a, m))[1])
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        stm = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="merged status")
+        gidx = next(w["index"] for w in stm["windows"]
+                    if w["name"].startswith("⇄"))
+        await write_msg(writer, {"t": "cmd", "action": "select_window",
+                                 "index": gidx})
+        await _read_until(reader, lambda m: m.get("t") == "layout",
+                          what="remote layout")
+        recA.clear()
+        recB.clear()
+        # 원격 보기 중 토큰 로그 조회 → 업스트림 B 가 처리, 로컬 A 는 미처리
+        await write_msg(writer, {"t": "cmd", "action": "request_token_log",
+                                 "limit": 5000})
+        tl = await _read_until(reader, lambda m: m.get("t") == "token_log",
+                               what="upstream token_log relayed back")
+        assert "request_token_log" in recB, \
+            f"원격(업스트림 B)이 토큰 로그를 처리(릴레이): {recB!r}"
+        assert "request_token_log" not in recA, \
+            f"로컬 A 는 토큰 로그를 처리하지 않음(섞임 금지): {recA!r}"
+        # 응답 token_log 가 보는 클라까지 전달되어 팝업이 채워진다(필드 구조 보존).
+        assert "records" in tl and "xc_totals" in tl, tl
+        srvA.plugins.handle_server_request = _hA
+        srvB.plugins.handle_server_request = _hB
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
 async def test_remote_ncd_relays_to_remote_cwd():
     """원격 탭을 보는 중 ncd(request_nc_list)는 **원격** 머신의 cwd/디렉토리 트리를
     회신한다(릴레이) — 로컬 서버가 자기 fs 의 cwd 를 회신하던 '원격 보는데 로컬
