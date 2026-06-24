@@ -335,6 +335,13 @@ def _open_token_log(app, initial_mode=None):
     # 2026-06-23) — 원격 탭을 보는 중(분홍 배지)에 연 팝업은 분홍 테두리로 구분.
     _vr = getattr(app, "_viewing_remote", None)
     app._token_log_remote = bool(_vr()) if callable(_vr) else False
+    # 원격 보기면 그 호스트명도 기억해 팝업 제목에 `⇄host` 로 표기한다(데이터 출처
+    # 혼동 방지, REMOTE_TOKEN_POPUP_FEDERATION_SCENARIO §3.3) — request_token_log
+    # 릴레이로 팝업 데이터가 그 원격 머신 것이 됐으므로(p4 60519) 어느 머신 토큰인지
+    # 명시한다. 클라가 이미 아는 _active_remote_host(보는 호스트)라 신규 와이어 불요.
+    _rh = getattr(app, "_active_remote_host", None)
+    app._token_log_remote_host = (_rh() if callable(_rh) else None) \
+        if app._token_log_remote else None
     app.send_cmd("request_token_log", limit=5000)
 
 
@@ -360,7 +367,8 @@ def _on_token_log_msg(app, msg):
         model=getattr(app.status, "claude_model", None),
         xc_totals=msg.get("xc_totals"),
         warn_history=msg.get("warn_history"),
-        remote=getattr(app, "_token_log_remote", False)))
+        remote=getattr(app, "_token_log_remote", False),
+        remote_host=getattr(app, "_token_log_remote_host", None)))
 
 
 def _open_usage_panel(app):

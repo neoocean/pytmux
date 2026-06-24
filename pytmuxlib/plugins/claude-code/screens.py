@@ -812,6 +812,9 @@ class TokenLogScreen(ModalScreen):
                 border: round $accent; background: $panel; padding: 0 1; }
     #tkloghead { width: 100%; height: 1; }
     #tklogtitle { width: 1fr; height: 1; color: $accent; text-style: bold; }
+    /* 원격 출처 호스트(§3.3) — 내용폭만 차지(로컬=빈칸이라 0폭), 제목(1fr)이 나머지
+       를 흡수. 색은 on_mount 가 REMOTE_PINK 로 칠한다. */
+    #tkloghost { width: auto; height: 1; text-style: bold; margin: 0 1; }
     #tklogclose { width: 5; height: 1; content-align: center middle;
                   background: $error; color: $text; text-style: bold; }
     /* 상단 뷰 탭 1줄(#tktabs §7.1) — 상호배타 뷰만 같은 모양의 가로 탭으로. 예전엔
@@ -853,12 +856,17 @@ class TokenLogScreen(ModalScreen):
     def __init__(self, records, usage=None, total_all=None,
                  daily=None, reconcile=None, daily_pct=None, hourly_pct=None,
                  hourly_week_pct=None, active_session=None, initial_mode=None,
-                 model=None, xc_totals=None, warn_history=None, remote=False):
+                 model=None, xc_totals=None, warn_history=None, remote=False,
+                 remote_host=None):
         super().__init__()
         # 원격(remote-attach) 탭을 보는 중에 토큰 배지(분홍)를 눌러 연 팝업인지 표시
         # (사용자 요청 2026-06-23). 로컬 팝업(accent 오렌지 테두리)과 한눈에 구분되게
         # on_mount 에서 박스 테두리·제목을 분홍 배지와 같은 REMOTE_PINK 로 칠한다.
         self._remote = bool(remote)
+        # 원격이면 보는 호스트명(없으면 None) — 제목 옆에 `⇄host` 고정 라벨로 표기해
+        # 데이터 출처(그 원격 머신 토큰)를 명시한다(§3.3). _refresh 가 매 뷰마다 갈아
+        # 끼우는 #tklogtitle 과 별개의 #tkloghost 라벨이라 뷰 전환에도 안 지워진다.
+        self._remote_host = remote_host if self._remote else None
         self._records = records or []
         # §10-D P6: 트랜스크립트 권위 회계(usage_xc) 전체 합 — full(4항목)·footer(in+out
         # 근사)·cache_read·cache_create·ratio. 스크랩 누계(_total_all)는 cache 를 못 봐
@@ -949,6 +957,9 @@ class TokenLogScreen(ModalScreen):
         with Vertical(id="tklogbox"):
             with Horizontal(id="tkloghead"):
                 yield Label(i18n.t("토큰 사용량"), id="tklogtitle")
+                # 원격 보기 팝업의 데이터 출처 호스트(`⇄host`) — _refresh 가 갈아끼우는
+                # #tklogtitle 과 별개라 뷰 전환에도 유지. on_mount 가 채운다(로컬=빈칸).
+                yield Label("", id="tkloghost", markup=False)
                 # markup=False: "[x]" 가 마크업 태그로 사라지지 않게(배경색만
                 # 남고 X 가 안 보이던 버그).
                 yield Label("[x]", id="tklogclose", markup=False)  # 닫기 버튼
@@ -998,6 +1009,12 @@ class TokenLogScreen(ModalScreen):
         if self._remote:
             self.query_one("#tklogbox").styles.border = ("round", REMOTE_PINK)
             self.query_one("#tklogtitle", Label).styles.color = REMOTE_PINK
+            # 데이터 출처 호스트 표기(§3.3) — 호스트명을 알 때만(병합 탭 이름 파싱
+            # 실패 시 None → 색 구분만 유지). 제목과 별개 라벨이라 뷰 전환에도 유지.
+            if self._remote_host:
+                host = self.query_one("#tkloghost", Label)
+                host.update(f"⇄{self._remote_host}")
+                host.styles.color = REMOTE_PINK
         await self._refresh()
         self.query_one(DataTable).focus()
         # 한도 탭의 카운트다운 시계를 매 초 갱신한다(usage-view 통합, 2026-06-17).

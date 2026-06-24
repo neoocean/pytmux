@@ -97,22 +97,36 @@ async def test_remote_popup_pink_border_local_popup_accent():
         app = make_app(sock, None, None)
         async with app.run_test(size=(100, 36)) as pilot:
             await pilot.pause(0.3)
-            # 원격 팝업 → 분홍 테두리·제목
-            app.push_screen(screens.TokenLogScreen(_hour_records(), remote=True))
+            # 원격 팝업 → 분홍 테두리·제목 + 출처 호스트 라벨(§3.3)
+            app.push_screen(screens.TokenLogScreen(
+                _hour_records(), remote=True, remote_host="playground"))
             await pilot.pause(0.3)
             scr = app.screen_stack[-1]
             assert scr.query_one("#tklogtitle").styles.color == pink, "원격 제목=분홍"
             top = scr.query_one("#tklogbox").styles.border_top
             assert top is not None and top[1] == pink, f"원격 테두리=분홍, got {top}"
+            # 출처 호스트가 `⇄host` 로 제목 옆에 분홍으로 표기(데이터 출처 명시)
+            host = scr.query_one("#tkloghost")
+            assert "⇄playground" in str(host.render()), \
+                f"원격 출처 호스트 표기, got {host.render()!r}"
+            assert host.styles.color == pink, "출처 호스트=분홍"
+            # 뷰 전환(p=세션 뷰, _refresh 가 #tklogtitle 텍스트를 갈아끼움)에도 출처
+            # 호스트 라벨은 별개 라벨이라 유지된다.
+            await pilot.press("p")
+            await pilot.pause(0.2)
+            assert "⇄playground" in str(
+                scr.query_one("#tkloghost").render()), "뷰 전환에도 출처 유지"
             await pilot.press("escape")
             await pilot.pause(0.2)
-            # 로컬 팝업(기본) → 분홍 아님
+            # 로컬 팝업(기본) → 분홍 아님 + 호스트 라벨 빈칸
             app.push_screen(screens.TokenLogScreen(_hour_records()))
             await pilot.pause(0.3)
             scr2 = app.screen_stack[-1]
             assert scr2.query_one("#tklogtitle").styles.color != pink, "로컬 제목≠분홍"
             top2 = scr2.query_one("#tklogbox").styles.border_top
             assert top2 is None or top2[1] != pink, f"로컬 테두리≠분홍, got {top2}"
+            assert str(scr2.query_one("#tkloghost").render()).strip() == "", \
+                "로컬 팝업은 출처 호스트 라벨 빈칸"
     finally:
         await teardown(srv, task, sock)
 
