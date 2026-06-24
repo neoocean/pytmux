@@ -749,3 +749,35 @@ async def test_no_xc_totals_falls_back_to_scrape_sigma():
                 f"폴백은 스크랩 ~Σ: {text!r}"
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_remote_token_log_timeout_notice_only_when_pending():
+    """§4.2 업스트림 웨지 타임아웃: 원격 토큰 로그 요청이 타임아웃까지 회신되지 않으면
+    (_want_token_log 그대로 True) notice 를 띄우고 대기를 푼다. 응답이 이미 왔거나
+    (want False) 더 새 요청이 떠 seq 가 어긋나면 무동작(옛 타이머가 새 요청/정상 응답을
+    오염시키지 않음). _open_token_log 가 원격일 때만 set_timer 로 이 콜백을 건다."""
+    from types import SimpleNamespace
+    cc = importlib.import_module("pytmuxlib.plugins.claude-code")
+    msgs = []
+
+    def app(seq=5, want=True):
+        return SimpleNamespace(
+            _token_log_seq=seq, _want_token_log=want,
+            display_message=lambda text, secs=2.0: msgs.append((text, secs)))
+
+    # 정상 타임아웃: seq 일치 + 응답 미수신 → notice + 대기 해제(호스트명 포함)
+    a = app(seq=5, want=True)
+    cc._token_log_timeout(a, 5, "playground")
+    assert a._want_token_log is False, "타임아웃이 대기를 풀어야"
+    assert len(msgs) == 1 and "playground" in msgs[0][0], msgs
+
+    # 응답 이미 도착(want False) → 무동작(_on_token_log_msg 가 want 를 내렸음)
+    msgs.clear()
+    cc._token_log_timeout(app(seq=5, want=False), 5, "playground")
+    assert msgs == [], f"응답 후엔 notice 없음: {msgs!r}"
+
+    # 더 새 요청이 떠 seq 불일치 → 무동작(옛 타이머 무력화), 새 대기 보존
+    msgs.clear()
+    a3 = app(seq=7, want=True)
+    cc._token_log_timeout(a3, 5, "playground")
+    assert msgs == [] and a3._want_token_log is True, "옛 타이머가 새 요청 오염 금지"

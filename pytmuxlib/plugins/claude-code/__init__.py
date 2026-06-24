@@ -130,6 +130,8 @@ i18n.register({
         "ccmsg.pc_cleared": "큐 비움",
         "ccmsg.rules_saved": "시작 규칙 저장됨",
         "ccmsg.rules_cleared": "시작 규칙 비움",
+        "ccmsg.token_remote_timeout":
+            "원격({host}) 토큰 응답 없음 — 원격 서버 응답 지연/웨지일 수 있습니다.",
     },
     "en": {
         "ccmsg.model_apply": "Requested /model {arg}",
@@ -156,6 +158,9 @@ i18n.register({
         "ccmsg.pc_cleared": "Queue cleared",
         "ccmsg.rules_saved": "Start rules saved",
         "ccmsg.rules_cleared": "Start rules cleared",
+        "ccmsg.token_remote_timeout":
+            "No token response from remote ({host}) — the remote server may be "
+            "slow or wedged.",
     },
 })
 
@@ -343,6 +348,27 @@ def _open_token_log(app, initial_mode=None):
     app._token_log_remote_host = (_rh() if callable(_rh) else None) \
         if app._token_log_remote else None
     app.send_cmd("request_token_log", limit=5000)
+    # §4.2 업스트림 웨지 타임아웃: 원격 보기 중 요청은 업스트림으로 릴레이되는데
+    # (p4 60519), 링크는 살아 있어도(write 성공) 업스트림 핸들러가 멈추면 회신이 안
+    # 와 빈 팝업으로 무한 대기한다. 짧은 타임아웃 후에도 _want_token_log 가 그대로면
+    # (응답 미수신) notice 를 띄운다. seq 로 이 요청만 겨냥(이후 새 요청/응답이
+    # 만료 콜백을 무력화). 로컬 요청은 in-process 즉답이라 타임아웃을 걸지 않는다.
+    if app._token_log_remote:
+        seq = getattr(app, "_token_log_seq", 0) + 1
+        app._token_log_seq = seq
+        host = app._token_log_remote_host or "?"
+        app.set_timer(4.0, lambda: _token_log_timeout(app, seq, host))
+
+
+def _token_log_timeout(app, seq, host):
+    """원격 토큰 로그 요청이 타임아웃 내 회신되지 않았으면 notice(§4.2). 응답이
+    왔거나(_want_token_log False) 더 새 요청이 떴으면(seq 불일치) 무동작."""
+    if getattr(app, "_token_log_seq", 0) != seq:
+        return
+    if not getattr(app, "_want_token_log", False):
+        return
+    app._want_token_log = False
+    app.display_message(i18n.t("ccmsg.token_remote_timeout", host=host), 5.0)
 
 
 def _on_token_log_msg(app, msg):
