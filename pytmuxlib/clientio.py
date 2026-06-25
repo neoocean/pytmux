@@ -683,6 +683,20 @@ class _RenderMixin:
     def _composite(self):
         W = self.layout.get("cols", self.size.width)
         H = self.layout.get("rows", max(1, self.size.height - 1))
+        # 레터박싱(§1.7-a): 공유(원격) 세션이 내 뷰보다 작으면 — 업스트림에 더 작은
+        # 코-클라가 붙어 미러링 최소크기로 핀돼 레이아웃 격자가 내 콘텐츠 영역보다
+        # 짧/좁다 — 아래·오른쪽에 빈 띠가 남아 "렌더 깨짐"처럼 보인다(사용자 보고).
+        # 격자를 내 콘텐츠 영역 전체로 넓히고 남는 L자 여백을 아래에서 무광(matte)
+        # 배경으로 채워 **의도된 레터박스**로 보이게 한다. 원격 탭을 볼 때만, 그리고
+        # 실제로 내 뷰가 더 클 때만 발동 — 로컬(단일/멀티클라) 경로와 ptyshot 골든은
+        # 격자 크기가 종전과 동일해 불변이다. lb_w/lb_h = 라이브 영역의 우/하 경계
+        # (이 좌표 이상이 여백 띠), 0 이면 레터박스 없음.
+        lb_w = lb_h = 0
+        if self._viewing_remote():
+            vw, vh = self._content_size()
+            if vw > W or vh > H:
+                lb_w, lb_h = W, H
+                W, H = max(W, vw), max(H, vh)
         cells = [[(" ", DEFAULT_STYLE) for _ in range(W)] for _ in range(H)]
         active = self.layout.get("active")
         # 비활성 패널 dim(§2.9): 패널이 둘 이상일 때만 — 단일 패널은 구분할 대상이 없다.
@@ -1007,6 +1021,19 @@ class _RenderMixin:
                     for xx in range(max(0, hx0), min(hx1, W)):
                         c, st = cells[yy][xx]
                         cells[yy][xx] = (c, st + hl)
+        # 레터박스 여백 띠를 무광(matte) 배경으로 채운다(원격 뷰가 내 화면보다
+        # 클 때만 lb_* 설정됨). 라이브 영역(0..lb_w × 0..lb_h)의 패널·테두리·내용은
+        # 그대로 두고 그 바깥 L자(하단 띠 + 우측 띠)만 칠해, 비는 칸이 터미널 기본
+        # 배경으로 남아 "깨진 렌더"처럼 보이던 것을 의도된 레터박스로 바꾼다. 테마
+        # panel 색(textual-dark #242F38)이라 기본 배경과 한 톤 구분된다. 팝업 dim
+        # 직전에 칠해, 모달이 뜨면 여백 띠도 함께 어두워진다(배경 일관).
+        if lb_w or lb_h:
+            matte = Style(bgcolor=theme_color(self, "panel"))
+            for yy in range(H):
+                row = cells[yy]
+                x_from = 0 if yy >= lb_h else lb_w   # 하단 띠=전폭, 그 위=우측 띠만
+                for xx in range(x_from, W):
+                    row[xx] = (" ", matte)
         # 팝업(모달)이 떠 있으면 뒤 본문을 어둡게 칠하고, 스타일을 무시하고 컬러로
         # 그려지는 이모지는 placeholder(·)로 치환한다(#25). 팝업을 닫으면 다음
         # _composite 가 원본에서 다시 그려 자연히 복원된다(별도 저장 불필요).

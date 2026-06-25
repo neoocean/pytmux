@@ -416,6 +416,46 @@ async def test_remote_view_outline_pink():
     await _with_app(body)
 
 
+async def test_remote_view_letterbox_fills_smaller_session():
+    """§1.7-a 레터박싱: 원격 탭을 보는데 공유(업스트림) 세션이 내 뷰보다 작으면
+    (업스트림 코-클라가 미러링 최소크기로 핀) 레이아웃 격자를 내 콘텐츠 영역 전체로
+    넓히고 남는 L자 여백을 무광(panel 색) 배경으로 채운다 — 아래·우측 빈 띠가
+    터미널 기본 배경으로 남아 "렌더 깨짐"처럼 보이던 것을 의도된 레터박스로 바꾼다.
+    로컬 탭으로 돌아오면 발동하지 않아(격자=레이아웃 크기) 종전 동작 불변."""
+    async def body(app, pilot, srv):
+        from rich.style import Style
+        from pytmuxlib.clientutil import theme_color
+        panel = Style(bgcolor=theme_color(app, "panel")).bgcolor
+        # 업스트림 세션 20×5(테두리 박스 포함), 내 뷰 100×28(=30-탭바1-상태1).
+        app.layout = {"panes": [{"id": 1, "x": 1, "y": 1, "w": 18, "h": 3,
+                                 "box": [0, 0, 20, 5]}],
+                      "active": 1, "cols": 20, "rows": 5, "dividers": []}
+        app.pane_content = {1: ([[("x" * 18, {})] for _ in range(3)], None)}
+        # 원격 탭 활성 → 레터박스 발동
+        app.status.windows = [{"index": 0, "name": "local", "active": False},
+                              {"index": 1, "name": "⇄h:w", "active": True,
+                               "remote": True}]
+        app._composite()
+        cells = app.view._cells
+        vw, vh = app._content_size()
+        # ① 격자가 내 콘텐츠 영역 전체로 확장(아래 빈 띠 제거)
+        assert len(cells) == vh, (len(cells), vh)
+        assert len(cells[0]) == vw, (len(cells[0]), vw)
+        # ② 하단 띠(y>=5)와 우측 띠(x>=20, y<5)가 무광 panel 배경
+        assert cells[vh - 1][0][1].bgcolor == panel, cells[vh - 1][0][1]
+        assert cells[2][vw - 1][1].bgcolor == panel, cells[2][vw - 1][1]
+        # ③ 라이브 영역(업스트림 내용)은 보존 — 무광 아님
+        assert cells[2][2][0] == "x", cells[2][2]
+        assert cells[2][2][1].bgcolor != panel, cells[2][2][1]
+        # ④ 로컬 탭 복귀 → 레터박스 미발동(격자=레이아웃 5행)
+        app.status.windows = [{"index": 0, "name": "local", "active": True},
+                              {"index": 1, "name": "⇄h:w", "active": False,
+                               "remote": True}]
+        app._composite()
+        assert len(app.view._cells) == 5, len(app.view._cells)
+    await _with_app(body)
+
+
 async def test_resize_pane_directional_command():
     """resize-pane -L/-R/-U/-D [N] 이 resize_dir 로 매핑된다(#17 — 키·명령·마우스
     리사이즈 대칭). 과거엔 -Z(줌)만 처리해 명령/팔레트로 분할선 이동이 불가했다."""

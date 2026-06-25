@@ -345,6 +345,15 @@ class ServerRemoteMixin:
         cols, rows = self._session_size(sess)
         hello = {"t": "hello", "proto": PROTO_VERSION,
                  "cols": cols, "rows": rows}
+        # 모호폭 모드(cellwidth) 전파: 이 다운스트림 단말이 East Asian Ambiguous 를
+        # 2칸으로 그리면(로컬 클라 hello 의 ambig 로 이 서버 전역이 wide), 업스트림
+        # pyte 격자도 같은 폭으로 맞춰야 원격 Claude TUI 가 정확히 격자에 앉는다.
+        # 안 그러면 업스트림은 narrow 로 레이아웃하고 이 단말은 wide 로 그려 한 줄이
+        # 1칸씩 밀려 좌우 겹침·패널 아웃라인 침범이 난다(원격 탭만의 회귀). 로컬
+        # 클라→서버 hello(clientconn) 와 동형. narrow 단말이면 키를 안 실어 무영향.
+        from . import cellwidth
+        if cellwidth.ambiguous_wide():
+            hello["ambig"] = "wide"
         if tok:
             hello["token"] = tok
         try:

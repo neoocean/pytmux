@@ -1750,3 +1750,48 @@ async def test_remote_attach_silent_upstream_warns_not_merged():
         except OSError:
             pass
         await teardown(srvA, taskA, sockA)
+
+
+async def test_remote_attach_propagates_ambiguous_wide():
+    """모호폭(East Asian Ambiguous) wide 단말의 다운스트림이 원격 attach 하면 그 wide
+    모드가 업스트림 hello 에 ambig=wide 로 실려 전파된다 — 업스트림 pyte 격자도
+    모호폭=2 로 맞춰 원격 Claude TUI 가 격자에 정확히 앉게 한다. 안 그러면 업스트림은
+    narrow 로 레이아웃하고 다운스트림 단말은 wide 로 그려 한 줄이 1칸씩 밀려 좌우
+    겹침·패널 아웃라인 침범이 난다(원격 탭만의 회귀, p4 60827 후속). narrow 단말이면
+    키를 안 실어 업스트림 narrow 유지. cellwidth 전역은 인프로세스 2서버가 공유하므로
+    값이 아니라 **전송된 hello** 로 A/B 를 가른다(federation 테스트 함정)."""
+    if os.name == "nt":
+        return
+    from pytmuxlib import cellwidth, serverremote
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    captured = []
+    orig_write = serverremote.write_msg
+
+    async def _spy(writer, msg):
+        if isinstance(msg, dict) and msg.get("t") == "hello":
+            captured.append(dict(msg))
+        return await orig_write(writer, msg)
+
+    try:
+        srvB.ensure_default_session(80, 24)
+        sessA = srvA.ensure_default_session(80, 24)
+        serverremote.write_msg = _spy
+
+        # ① wide 단말: hello.ambig == "wide"
+        cellwidth.set_ambiguous_wide(True)
+        try:
+            assert await srvA.remote_attach(sessA, endpoint=sockB)
+        finally:
+            cellwidth.set_ambiguous_wide(False)
+        assert captured and captured[-1].get("ambig") == "wide", captured
+        await srvA.remote_drop(srvA._remotes_dict()[sockB], notify=False)
+
+        # ② narrow 단말: ambig 키 부재(현행 동작·무영향)
+        captured.clear()
+        assert await srvA.remote_attach(sessA, endpoint=sockB)
+        assert captured and "ambig" not in captured[-1], captured
+    finally:
+        serverremote.write_msg = orig_write
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
