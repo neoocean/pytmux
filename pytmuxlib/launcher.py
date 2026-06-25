@@ -227,6 +227,85 @@ def host_terminal_is_pytmux(timeout: float = NEST_PROBE_TIMEOUT,
             pass
 
 
+# 모호폭(East Asian Ambiguous) 자동감지 CPR 대기 상한. 단말 응답은 보통 즉답(<10ms)
+# 이라 짧게 — 무응답(파이프·미지원 단말)이면 narrow 로 폴백한다.
+AMBIG_PROBE_TIMEOUT = 0.3
+# 자동감지 테스트 문자: EAW='A'(Ambiguous)·wcwidth=1 이라 좁은 단말은 1칸, CJK
+# 로케일 단말은 2칸으로 그린다. 사용자의 깨진 출력에도 나타난 대표 문자(·).
+_AMBIG_PROBE_CH = "·"
+
+
+def _read_cpr(rfd, deadline) -> tuple[int, int] | None:
+    """CPR 응답 ``ESC [ row ; col R`` 을 읽어 (row, col) 반환(타임아웃/형식오류=None)."""
+    import re
+    import select
+    buf = b""
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return None
+        r, _, _ = select.select([rfd], [], [], left)
+        if not r:
+            return None
+        try:
+            chunk = os.read(rfd, 64)
+        except OSError:
+            return None
+        if not chunk:
+            return None
+        buf += chunk
+        m = re.search(rb"\x1b\[(\d+);(\d+)R", buf)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+
+
+def detect_ambiguous_width(opt: str = "auto",
+                           rfd: int | None = None,
+                           wfd: int | None = None) -> str:
+    """단말이 East Asian Ambiguous 문자를 몇 칸으로 그리는지 결정 → "wide"|"narrow".
+
+    opt 가 "narrow"/"wide" 면 그대로(감지 생략). "auto" 면 단말에 질의: 현재 커서
+    위치를 CPR 로 받고(c0), 모호폭 문자 1개를 출력한 뒤 다시 CPR(c1)로 전진 칸수를
+    측정해 ≥2 면 wide. 측정 후 그 문자를 지운다(원위치로 가 EOL 삭제). POSIX+양쪽
+    tty 가 아니거나 무응답/미지원이면 narrow(현행). rfd/wfd 는 테스트 주입용."""
+    if opt in ("narrow", "wide"):
+        return opt
+    if os.name == "nt":
+        return "narrow"     # Windows ConPTY 는 별도(현행 narrow 가 안전)
+    if rfd is None or wfd is None:
+        try:
+            if not (sys.stdin.isatty() and sys.stdout.isatty()):
+                return "narrow"
+        except (ValueError, OSError):
+            return "narrow"
+        rfd, wfd = sys.stdin.fileno(), sys.stdout.fileno()
+    import termios
+    import tty
+    try:
+        old = termios.tcgetattr(rfd)
+    except termios.error:
+        return "narrow"
+    try:
+        tty.setcbreak(rfd, termios.TCSANOW)
+        deadline = time.monotonic() + AMBIG_PROBE_TIMEOUT
+        os.write(wfd, b"\x1b[6n")
+        p0 = _read_cpr(rfd, deadline)
+        if p0 is None:
+            return "narrow"
+        os.write(wfd, _AMBIG_PROBE_CH.encode("utf-8") + b"\x1b[6n")
+        p1 = _read_cpr(rfd, deadline + AMBIG_PROBE_TIMEOUT)
+        # 잔상 제거: 원래 커서 위치로 가 그 줄을 우측까지 지운다(왼쪽 프롬프트 보존).
+        os.write(wfd, f"\x1b[{p0[0]};{p0[1]}H\x1b[K".encode("ascii"))
+        if p1 is None or p1[0] != p0[0]:
+            return "narrow"     # 무응답·줄바꿈(가장자리)면 안전하게 narrow
+        return "wide" if (p1[1] - p0[1]) >= 2 else "narrow"
+    finally:
+        try:
+            termios.tcsetattr(rfd, termios.TCSADRAIN, old)
+        except termios.error:
+            pass
+
+
 # 승격 요청 ack 대기 상한(NESTED_ATTACH ㉤). 프로브(0.4s)보다 길게 — 바깥 서버의
 # 스캔→ack 는 즉답이지만 경로에 ssh 왕복이 2회(REQ 나감·ACK 들어옴) 낀다.
 NEST_ACK_TIMEOUT = 1.0

@@ -171,6 +171,9 @@ def load_config(path: str | None = None) -> dict:
                                   #   current(기본)=현재 패널, home=$HOME, 또는 경로
         set inactive-dim on|off   # 비활성 패널 흐리게(§2.9, 기본 on)
         set inactive-dim-ratio <0~0.8>   # 흐리게 세기(기본 0.18)
+        set ambiguous-width auto|narrow|wide  # East Asian Ambiguous 폭(→·— 등)
+                                  #   auto(기본)=기동 시 단말 자동감지, wide=강제 2칸
+                                  #   (CJK 로케일 단말), narrow=1칸
         bind <key> <command...>   # prefix 후 <key> 에 명령 바인딩
         bind -n <key> <command...>  # prefix 없이 바로(root table, §2.5) — 내장
                                   #   크롬 키(ESC/`/F12/prefix/Ctrl+V)가 우선이고
@@ -179,7 +182,8 @@ def load_config(path: str | None = None) -> dict:
     cfg = {"prefix": "ctrl+b", "mouse": True, "bindings": {},
            "root_bindings": {}, "aliases": {},
            "hooks": {}, "status_bg": None, "status_fg": None,
-           "mode_keys": "vi", "tab_bar_always": True, "default_path": "current"}
+           "mode_keys": "vi", "tab_bar_always": True, "default_path": "current",
+           "ambiguous_width": "auto"}
     candidates = []
     if path:
         candidates.append(path)
@@ -241,6 +245,14 @@ def load_config(path: str | None = None) -> dict:
                         #   home    = $HOME
                         #   <경로>  = 해당 절대/~ 경로
                         cfg["default_path"] = val.strip()
+                    elif opt in ("ambiguous-width", "ambiguous_width"):
+                        # East Asian Ambiguous 폭(→ · — 등) 처리(cellwidth):
+                        #   auto(기본) = 기동 시 단말에 CPR 질의로 자동 감지
+                        #   narrow     = 1칸(현행·서구권 단말)
+                        #   wide       = 2칸(CJK 로케일 단말 — 자동감지 우회·강제)
+                        v = val.strip().lower()
+                        if v in ("auto", "narrow", "wide"):
+                            cfg["ambiguous_width"] = v
                     elif opt in ("lang", "language"):
                         # UI 로케일(§6 i18n): ko|en. 미지원 값은 무시(런타임 resolve 가
                         # 환경 LANG 으로 폴백). 런타임 `lang` 명령 선택이 이보다 우선.

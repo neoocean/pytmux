@@ -11,9 +11,9 @@ import sys
 from functools import lru_cache
 
 from rich.style import Style
-from wcwidth import wcwidth
 
 from . import i18n, proc
+from .cellwidth import char_cells
 
 def _shell_argv(cmd: str) -> list:
     """run-shell/if-shell/display-popup 의 셸 명령 argv. OS 별 셸로 분기.
@@ -57,15 +57,11 @@ def strip_box_drawing(text: str) -> str:
     return "\n".join(out)
 
 
-@lru_cache(maxsize=256)
-def _char_cells(ch: str) -> int:
-    """터미널에서 문자가 차지하는 칸 수(와이드=2, 그 외=1).
-
-    C1(PERFORMANCE_REVIEW 2026-06-07): 클라 합성 셀 루프·TabBar 폭·상태줄 폭에서
-    **문자 1개당** 불린다. wcwidth 는 코드포인트 테이블 이분탐색이라 문자당 비용이
-    0이 아닌데, 실 화면은 ASCII(공백·영숫자)가 절대다수라 lru_cache 적중률이 거의
-    100% 다. 순수함수라 메모이즈가 안전하다(입력 도메인 사실상 유한)."""
-    return 2 if wcwidth(ch) == 2 else 1
+# 셀 폭은 cellwidth.char_cells 한 곳이 권위다(모호폭 wide 모드를 일관 반영). 종전
+# 로컬 `_char_cells` 는 그 별칭 — 임포트 경로(`from .clientutil import _char_cells`)와
+# lru 메모이즈(C1 PERFORMANCE_REVIEW 2026-06-07: 합성 셀 루프·TabBar·상태줄에서 문자
+# 1개당 호출, ASCII 절대다수라 적중률≈100%)를 그대로 유지한다.
+_char_cells = char_cells
 
 
 # 이모지(컬러 픽토그래프) 코드포인트 대략 범위. 팝업이 떠 본문을 어둡게 칠할 때,

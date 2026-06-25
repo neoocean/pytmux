@@ -28,7 +28,7 @@ from textual.binding import Binding
 from textual.geometry import Offset
 from textual.suggester import SuggestFromList
 
-from . import clientclip, clientrender, i18n, ipc, plugins, proc, version
+from . import cellwidth, clientclip, clientrender, i18n, ipc, plugins, proc, version
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_ARGHIST, COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS,
     DEFAULT_STYLE, norm_sep,
@@ -124,6 +124,8 @@ class _NetReconnectMixin:
             return False
         cols, rows = self._content_size()
         hello = {"t": "hello", "proto": PROTO_VERSION, "cols": cols, "rows": rows}
+        if cellwidth.ambiguous_wide():    # 재접속 시에도 서버에 모호폭 모드 재통지
+            hello["ambig"] = "wide"
         tok = ipc.read_token(self.sock_path)   # 연결 인증(F1)
         if tok:
             hello["token"] = tok

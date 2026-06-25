@@ -24,7 +24,7 @@ from textual.binding import Binding
 from textual.geometry import Offset
 from textual.suggester import SuggestFromList
 
-from . import clientclip, clientrender, i18n, ipc, plugins, proc, version
+from . import cellwidth, clientclip, clientrender, i18n, ipc, plugins, proc, version
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_ARGHIST, COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS,
     DEFAULT_STYLE, norm_sep,
@@ -600,6 +600,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return
             cols, rows = self._content_size()
             hello = {"t": "hello", "proto": PROTO_VERSION, "cols": cols, "rows": rows}
+            if cellwidth.ambiguous_wide():    # 서버 pyte 격자도 모호폭=2 로 맞추도록
+                hello["ambig"] = "wide"
             tok = ipc.read_token(self.sock_path)   # 연결 인증(F1)
             if tok:
                 hello["token"] = tok
@@ -1640,6 +1642,16 @@ def _crash_relaunch_count() -> int:
 def run_client(sock_path: str, session: str | None = None):
     import sys
     config = load_config()
+    # East Asian Ambiguous 폭 자동감지(cellwidth): Textual 이 단말을 점유하기 전,
+    # 여기서 CPR 로 단말이 모호폭을 2칸으로 그리는지 측정해 폭 모델(클라 합성·Rich/
+    # Textual 측정·서버 pyte)을 일관 전환한다. 기본 narrow 면 패치 미설치라 무영향.
+    try:
+        from . import cellwidth
+        from .launcher import detect_ambiguous_width
+        mode = detect_ambiguous_width(config.get("ambiguous_width", "auto"))
+        cellwidth.set_ambiguous_wide(mode == "wide")
+    except Exception:
+        pass
     app = build_client_app(sock_path, config, session)
     crashed = None
     start = time.monotonic()

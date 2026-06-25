@@ -944,6 +944,12 @@ class ServerIOMixin:
         client = ClientConn(writer)
         client.cols = clamp_dim(first.get("cols", 80), MIN_W, MAX_W, 80)
         client.rows = clamp_dim(first.get("rows", 24), MIN_H, MAX_H, 24)
+        # 모호폭 모드(cellwidth): 클라가 단말 자동감지로 wide 를 통지하면 서버 pyte
+        # 격자 폭 계산도 모호폭=2 로 맞춘다(앱 레이아웃이 실 단말과 동일하게 격자에
+        # 앉도록). 전역이라 마지막 통지가 이긴다(다중 클라·다중 단말은 한계 — 보통
+        # 로컬 단일 클라). 통지 부재(narrow 단말)면 호출 자체가 안 와 현행 유지.
+        from . import cellwidth
+        cellwidth.set_ambiguous_wide(first.get("ambig") == "wide")
         # 주의: append + 초기 _send_full 을 try 안에 둔다. 예전엔 try 밖이라
         # _send_full 이 한 번 터지면 ① 클라가 self.clients 에 남아 누수되고
         # ② 화면이 일부만 그려진 채 연결이 끊겨 클라가 즉시 종료, ③ 트레이스백도
