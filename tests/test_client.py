@@ -5365,6 +5365,32 @@ async def test_net_responsiveness_hysteresis_and_border():
     await _with_app(body)
 
 
+async def test_client_reconnects_after_backpressure_drop():
+    """slow-client backpressure 드롭(서버가 bye 없이 writer.close)에도 클라가 통째
+    종료하지 않고 재접속해 화면을 복구한다 — 모바일 ssh 빈발(사용자 보고 2026-06-25).
+    종전엔 평상 EOF 가 무조건 self.exit 라 멀쩡한 서버를 두고 클라가 죽었다. 무한
+    재접속 루프(지속 폭주)는 _drop_reconnect_ok 카운터가 막는다."""
+    from pytmuxlib.clientconn import _DROP_RECONNECT_MAX
+
+    async def body(app, pilot, srv):
+        # ① backpressure 드롭(bye 없이 close) → 클라 EOF → 재접속 복구(종료 아님)
+        assert len(srv.clients) == 1
+        srv._drop_slow_client(srv.clients[0])
+        assert not srv.clients, "드롭으로 서버 목록서 제거"
+        for _ in range(80):
+            if srv.clients:
+                break
+            await pilot.pause(0.05)
+        assert srv.clients, "backpressure 드롭 후 재접속 복구(클라 생존)"
+        assert app.is_running, "클라가 종료하지 않음"
+        # ② 무한 루프 가드: 짧은 창 내 한도 초과면 재접속 포기(False→호출부 self.exit)
+        app._drop_ts = []
+        for i in range(_DROP_RECONNECT_MAX):
+            assert app._drop_reconnect_ok() is True, i
+        assert app._drop_reconnect_ok() is False, "한도 초과 시 재접속 포기"
+    await _with_app(body)
+
+
 async def test_force_reconnect_recovers_without_exit():
     """§10 degraded 회복: 강제 재접속(_force_reconnect)이 ① IPC 소켓을 교체(연결
     세대 _conn_gen 증가)하고 ② degraded 를 해제하며 ③ 앱을 종료하지 않고 ④ 서버

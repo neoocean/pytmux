@@ -57,6 +57,15 @@ from .protocol import MIN_H, MIN_W, PROTO_VERSION, read_msg, write_msg
 _RECONNECT_DELAY = 0.02            # 재시도 간격(초)
 _RECONNECT_RETRIES_RESTART = 300  # 서버 re-exec 재기동 대기(~6s)
 _RECONNECT_RETRIES_FORCE = 150    # degraded 강제 재접속(~3s, 서버는 살아 있음)
+# 평상 EOF(slow-client backpressure 드롭/네트워크 끊김) 자동 재접속의 무한 루프
+# 가드 — 이 창(초) 안에서 이 횟수를 넘게 드롭되면(지속 대량 출력) 재접속을 포기하고
+# 종료한다(매번 드롭→재접속을 영원히 반복하지 않게).
+_DROP_RECONNECT_WINDOW = 20.0
+_DROP_RECONNECT_MAX = 6
+# 평상 EOF 재접속 재시도 횟수 — backpressure 드롭이면 서버가 살아 있어 보통 첫
+# 시도에 붙고, 정말 죽었으면(kill-server) 소켓이 사라져 곧 실패해 종료로 떨어진다.
+# 짧게(~0.5s) 둬서 서버 종료 시 클라 종료가 지연되지 않게 한다.
+_RECONNECT_RETRIES_DROP = 25
 
 
 class _NetReconnectMixin:
@@ -105,6 +114,16 @@ class _NetReconnectMixin:
                     else:
                         await self._reconnect()
                     return
+                # 평상(플래그 없는) EOF: 서버가 우리를 떨궜거나(slow-client backpressure
+                # 드롭 — serverio._drop_slow_client 가 bye 없이 writer 를 close; **서버는
+                # 살아 있다**) 서버가 종료됐다. 종전엔 무조건 self.exit() 라, 모바일 ssh
+                # 대량 출력으로 backpressure 드롭이 날 때마다 멀쩡한 서버를 두고 클라가
+                # 통째로 종료됐다(사용자 보고 2026-06-25). net_auto_reconnect 면 재접속을
+                # 시도해 — 서버 생존이면(드롭) 화면을 복구하고, 정말 죽었으면(소켓 부재→
+                # 재접속 실패) 종료한다. 무한 재접속 루프(지속 폭주)는 카운터로 막는다.
+                if self.net_auto_reconnect and self._drop_reconnect_ok() \
+                        and await self._reconnect_after_drop():
+                    return
                 self.exit()
                 return
             self._dispatch(msg)
@@ -143,6 +162,34 @@ class _NetReconnectMixin:
             return
         self.display_message(i18n.t("msg.restart_done"))
         self._start_reader()
+
+    def _drop_reconnect_ok(self) -> bool:
+        """평상 EOF(backpressure 드롭) 자동 재접속을 짧은 창 내 _DROP_RECONNECT_MAX
+        회로 제한한다 — 지속 대량 출력으로 매번 드롭→재접속하는 무한 루프를 막아
+        그 한도를 넘으면 종료(호출부 self.exit)로 떨어지게 한다."""
+        now = time.monotonic()
+        ts = [t for t in getattr(self, "_drop_ts", ())
+              if now - t < _DROP_RECONNECT_WINDOW]
+        ts.append(now)
+        self._drop_ts = ts
+        return len(ts) <= _DROP_RECONNECT_MAX
+
+    async def _reconnect_after_drop(self) -> bool:
+        """평상 EOF(slow-client backpressure 드롭/네트워크 끊김)에서 재접속을 시도한다.
+        서버가 살아 있으면(드롭) 새 연결+hello 후 _start_reader 로 화면을 복구하고 True,
+        실패(서버 종료·소켓 부재)면 False(호출부가 self.exit). _force_reconnect 와 같은
+        경로지만 **실패 시 앱을 닫지 않고** 성공/실패를 돌려준다(드롭은 종료 가능성 포함)."""
+        if not await self._connect_and_hello(_RECONNECT_RETRIES_DROP):
+            return False
+        # 새 채널이니 degraded/네트워크 표본 리셋(_force_reconnect 와 동일).
+        self._net_ping_ts = None
+        self._net_bad = self._net_good = 0
+        if self._net_degraded:
+            self._net_degraded = False
+            self._composite()
+        self.display_message(i18n.t("msg.reconnected_resync"))
+        self._start_reader()       # 새 reader 태스크(새 세대) — 서버 _send_full 수신
+        return True
 
     async def _force_reconnect(self, reason="manual"):
         """정체/degraded 된 IPC 연결을 강제로 새로 세워 반응성을 회복한다(§10).
