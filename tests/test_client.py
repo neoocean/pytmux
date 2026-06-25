@@ -478,7 +478,18 @@ async def test_set_ambiguous_width_runtime_toggle():
             # 같은 모드 재적용은 no-op(크래시·중복 통지 없음)
             app._apply_ambiguous_wide(False)
             assert cellwidth.ambiguous_wide() is False
+            # **명령 경로(apply_option)** 도 크래시 없이 동작해야 한다 — `set
+            # ambiguous-width narrow` 가 부재 속성 self.config 참조로 죽던 회귀 가드.
+            app.apply_option("ambiguous-width", "wide")
+            assert cellwidth.ambiguous_wide() is True
+            app.apply_option("ambiguous-width", "narrow")
+            assert cellwidth.ambiguous_wide() is False
+            app.apply_option("ambiguous-width", "auto")   # _ambig_auto_wide 캐시 사용
         finally:
+            # 보낸 set_ambig 통지(create_task)를 모두 배수한 **뒤** 복원한다 — 안
+            # 그러면 finally 의 복원 후 늦게 처리된 통지가 서버 cellwidth 를 다시 켜
+            # 전역이 wide 로 새 다음 테스트(test_remote 등)를 오염시킨다(레이스).
+            await pilot.pause(0.3)
             cellwidth.set_ambiguous_wide(False)
     await _with_app(body)
 

@@ -499,6 +499,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 휠을 화살표 키로 바꿔 보내 pytmux 스크롤백이 안 열린다 → 기본으로 끈다.
             # `set alt-scroll on` 으로 다시 켜면(=1007 비활성화 해제) 터미널 기본 동작.
             self.disable_alt_scroll = config.get("disable_alt_scroll", True)
+            # 시작 시 CPR 모호폭 감지값(run 진입부가 config 에 캐시) — `:set
+            # ambiguous-width auto` 가 Textual 점유 중 CPR 재프로브 없이 이 값으로 복귀.
+            self._ambig_auto_wide = config.get("_ambig_auto_wide", False)
             self.mode_keys = config.get("mode_keys", "vi")
             self.status_position = config.get("status_position", "bottom")
             self.status_interval = config.get("status_interval", 15)
@@ -1421,12 +1424,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 새 폭으로 다시 그린다(set_ambiguous_wide).
                 v = val.strip().lower()
                 if v == "auto":
-                    wide = bool(self.config.get("_ambig_auto_wide", False))
+                    wide = bool(getattr(self, "_ambig_auto_wide", False))
                 elif v in ("wide", "2", "double", "full"):
                     wide = True
                 else:                              # narrow|1|single|half|off
                     wide = False
-                self.config["ambiguous_width"] = v
                 self._apply_ambiguous_wide(wide)
                 self.display_message(
                     "모호폭: " + ("wide(2칸)" if wide else "narrow(1칸)")
