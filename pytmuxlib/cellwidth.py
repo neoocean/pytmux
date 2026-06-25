@@ -37,8 +37,19 @@ _orig_pyte_w = None
 
 @lru_cache(maxsize=4096)
 def is_ambiguous(ch: str) -> bool:
-    """East Asian Ambiguous(EAW='A') 문자인가. 표 이분탐색이라 메모이즈가 싸고 안전."""
-    return unicodedata.east_asian_width(ch) == "A"
+    """East Asian Ambiguous(EAW='A') 문자인가. 단, **박스 드로잉(U+2500–257F)·블록
+    요소(U+2580–259F)는 제외**해 1칸으로 둔다 — 표준상 EAW='A' 지만 CJK 로케일
+    단말도 격자 정렬을 위해 이들을 1칸으로 그린다(테이블·테두리가 2칸이면 끊긴다).
+    pytmux 는 테두리/탭연결(─│┌┐└┘├┤┬┴┼ ▀)을 **1칸 격자 셀**에 배치하므로,
+    모호폭=2 로 올리면 Textual 셀 측정이 격자와 어긋나 가로 테두리 줄(─ 가득)이
+    위젯 폭의 2배가 돼 넘치고 좌우 │가 콘텐츠를 민다(사용자 보고: ssh+CJK 단말에서
+    스크롤 시 패널 첫/마지막 줄 텍스트 겹침). →·—↔…× 같은 일반 모호폭 기호는
+    단말이 실제 2칸으로 그리므로 그대로 wide 로 둔다(p4 60827 원 버그의 대상).
+    표 이분탐색+범위 비교라 메모이즈가 싸고 안전."""
+    if unicodedata.east_asian_width(ch) != "A":
+        return False
+    # Box Drawing(2500–257F) + Block Elements(2580–259F): 격자 1칸 유지.
+    return not (0x2500 <= ord(ch) <= 0x259F)
 
 
 @lru_cache(maxsize=8192)
