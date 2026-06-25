@@ -483,6 +483,23 @@ async def test_set_ambiguous_width_runtime_toggle():
     await _with_app(body)
 
 
+async def test_set_option_name_completion():
+    """`set <옵션>` ghost 자동완성(사용자 요청) — `set ` 까지 친 뒤 옵션 이름
+    (ambiguous-width·status-bg 등)이 norm_sep prefix 매칭으로 제안된다. apply_option
+    의 모든 set 옵션이 COMPLETIONS(=자동완성 풀)에 "set <name>" 으로 병합돼야 한다."""
+    from pytmuxlib.clientwidgets import SepInsensitiveSuggester
+    from pytmuxlib.clientutil import COMPLETIONS, _SET_OPTION_NAMES
+    sug = SepInsensitiveSuggester(COMPLETIONS)
+    assert await sug.get_suggestion("set amb") == "set ambiguous-width"
+    assert await sug.get_suggestion("set status-b") == "set status-bg"
+    assert await sug.get_suggestion("set alt") == "set alt-scroll"
+    # 구분자 무시(공백·언더바·하이픈 동일): set_ambiguous_width 도 같은 제안.
+    assert await sug.get_suggestion("set ambiguous_width") == "set ambiguous-width"
+    # apply_option 의 모든 옵션이 자동완성 풀에 있다(누락 방지).
+    for o in _SET_OPTION_NAMES:
+        assert ("set " + o) in COMPLETIONS, o
+
+
 async def test_resize_pane_directional_command():
     """resize-pane -L/-R/-U/-D [N] 이 resize_dir 로 매핑된다(#17 — 키·명령·마우스
     리사이즈 대칭). 과거엔 -Z(줌)만 처리해 명령/팔레트로 분할선 이동이 불가했다."""

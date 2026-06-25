@@ -731,6 +731,16 @@ COMMANDS = [
 # 명령 프롬프트 자동완성 후보. 자주 쓰는 옵션 템플릿을 앞에 두어, 명령을 다 치면
 # ghost 로 옵션(-h 등)까지 함께 제안된다(→ 로 수락). 뒤에 전체 명령 이름을 붙여
 # 옵션이 없는 명령도 보완.
+# `set <옵션>` ghost 자동완성용 옵션 이름 — client.apply_option 의 케이스와 일치시킨다
+# (새 set 옵션 추가 시 여기도 한 줄). `set ` 까지 친 뒤 옵션 이름이 자동완성되게
+# COMPLETIONS 에 "set <name>" 으로 병합한다(사용자 요청 2026-06-25).
+_SET_OPTION_NAMES = (
+    "prefix", "mouse", "mouse-debug", "alt-scroll", "ambiguous-width",
+    "status", "status-bg", "status-fg", "status-left", "status-right",
+    "status-format", "status-position", "status-interval", "mode-keys",
+    "set-titles", "set-titles-string", "tab-bar", "default-path",
+)
+
 COMPLETIONS = [
     "split-window -h", "split-window -v",
     "resize-pane -Z",
@@ -744,7 +754,7 @@ COMPLETIONS = [
     "capture-pane -S",
     "monitor-activity on", "monitor-bell on", "automatic-rename on",
     "detach-client", "kill-server",
-] + [c[0] for c in COMMANDS]
+] + ["set " + o for o in _SET_OPTION_NAMES] + [c[0] for c in COMMANDS]
 
 # 커맨드 팔레트(#3)에서 명령을 고르면 옵션(선택지)을 모달에서 정한 뒤 프롬프트를
 # 거치지 않고 바로 실행한다. 각 항목은 {"key","label","choices":[(보임,값),...]}
