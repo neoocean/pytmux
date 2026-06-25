@@ -456,6 +456,33 @@ async def test_remote_view_letterbox_fills_smaller_session():
     await _with_app(body)
 
 
+async def test_set_ambiguous_width_runtime_toggle():
+    """:set ambiguous-width narrow|wide|auto 런타임 전환(모바일에서 단말·앱 모호폭
+    셈법이 다를 때 사용자가 직접 맞춘다). _apply_ambiguous_wide 가 클라 폭 모델
+    (cellwidth)을 바꾸고 서버에 set_ambig 를 통지해 서버 pyte 격자도 맞춘 뒤 화면을
+    다시 그린다. 같은 프로세스라 cellwidth 전역을 공유하므로 모드값·멱등·크래시
+    부재로 검증한다(set_ambig 왕복+_send_full 재수신이 예외 없이 처리)."""
+    async def body(app, pilot, srv):
+        from pytmuxlib import cellwidth
+        try:
+            cellwidth.set_ambiguous_wide(False)
+            # narrow→wide 전환
+            app._apply_ambiguous_wide(True)
+            assert cellwidth.ambiguous_wide() is True
+            await pilot.pause(0.2)              # 서버 set_ambig 처리 + _send_full 왕복
+            assert app.view._cells, "전환 후에도 화면 합성 유지"
+            # wide→narrow 복귀(겹침 완화 경로)
+            app._apply_ambiguous_wide(False)
+            assert cellwidth.ambiguous_wide() is False
+            await pilot.pause(0.2)
+            # 같은 모드 재적용은 no-op(크래시·중복 통지 없음)
+            app._apply_ambiguous_wide(False)
+            assert cellwidth.ambiguous_wide() is False
+        finally:
+            cellwidth.set_ambiguous_wide(False)
+    await _with_app(body)
+
+
 async def test_resize_pane_directional_command():
     """resize-pane -L/-R/-U/-D [N] 이 resize_dir 로 매핑된다(#17 — 키·명령·마우스
     리사이즈 대칭). 과거엔 -Z(줌)만 처리해 명령/팔레트로 분할선 이동이 불가했다."""

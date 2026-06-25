@@ -1011,6 +1011,20 @@ class ServerIOMixin:
                         if client.remote_view and self.remote_relay(client, msg):
                             continue
                         self._handle_scroll(client, msg)
+                    elif mt == "set_ambig":
+                        # 클라가 런타임 모호폭 모드를 바꿨다(:set ambiguous-width).
+                        # 서버 pyte 격자 폭도 맞추고(hello 의 ambig 와 동형) 앱들을
+                        # SIGWINCH repaint 시켜 새 폭으로 다시 그리게 한 뒤 전체 프레임을
+                        # 다시 보낸다(같은 세션 클라 모두). 전역이라 마지막 통지가 이긴다.
+                        from . import cellwidth
+                        cellwidth.set_ambiguous_wide(bool(msg.get("wide")))
+                        self._induce_redraw_all()
+                        for c in [x for x in self.clients
+                                  if x.session is client.session]:
+                            try:
+                                await self._send_full(c)
+                            except Exception:
+                                self._log_error("send_full(set_ambig)")
                     elif mt == "cmd":
                         await self._handle_cmd(client, msg)
                 except Exception:

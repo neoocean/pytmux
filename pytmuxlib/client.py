@@ -1220,6 +1220,21 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     m["delta"] = delta
                 asyncio.create_task(write_msg(self.writer, m))
 
+        def _apply_ambiguous_wide(self, wide: bool):
+            """모호폭 wide 모드를 런타임 전환한다(:set ambiguous-width). 클라 폭 모델
+            (char_cells·Rich/Textual 측정)을 바꾸고, 서버에 통지(set_ambig)해 서버 pyte
+            격자도 같은 폭으로 맞춘 뒤 앱을 SIGWINCH repaint 시킨다. 같은 모드면 no-op."""
+            from . import cellwidth
+            if cellwidth.ambiguous_wide() == wide:
+                return
+            cellwidth.set_ambiguous_wide(wide)        # 클라측 Textual/char_cells 폭
+            if self.writer:                            # 서버 pyte 격자 + 앱 repaint
+                asyncio.create_task(write_msg(
+                    self.writer, {"t": "set_ambig", "wide": wide}))
+            self._update_tabbar()                      # 탭바 라벨 폭 재계산
+            self.status.refresh()
+            self._composite()                          # 패널 합성 새 폭으로
+
         # ---- 복사/버퍼 ----
         # OS 클립보드 입출력은 앱 상태 비의존이라 clientclip.py 모듈 자유함수로
         # 분리했다(#12). 클로저는 거기에 위임만 한다.
@@ -1398,6 +1413,24 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.display_message(
                     "휠 스크롤백: " + ("pytmux 처리(1007 끔)"
                                        if self.disable_alt_scroll else "터미널 기본"))
+            elif name in ("ambiguous-width", "ambiguous_width"):
+                # 모호폭(East Asian Ambiguous: → · — 등) 폭 모드 런타임 전환:
+                # narrow(1칸)|wide(2칸)|auto. 단말과 앱(Claude Code 등)의 모호폭 셈법이
+                # 다를 때(예: 단말 2칸 + Claude 1칸 → 스크롤 부분갱신 글자 겹침) 사용자가
+                # 직접 맞춘다. 클라 폭 모델 + 서버 pyte 격자를 함께 전환하고 화면을
+                # 새 폭으로 다시 그린다(set_ambiguous_wide).
+                v = val.strip().lower()
+                if v == "auto":
+                    wide = bool(self.config.get("_ambig_auto_wide", False))
+                elif v in ("wide", "2", "double", "full"):
+                    wide = True
+                else:                              # narrow|1|single|half|off
+                    wide = False
+                self.config["ambiguous_width"] = v
+                self._apply_ambiguous_wide(wide)
+                self.display_message(
+                    "모호폭: " + ("wide(2칸)" if wide else "narrow(1칸)")
+                    + (" · auto" if v == "auto" else ""))
             elif name == "status-bg":
                 self.status.bg = val
                 self.status.refresh()
@@ -1500,6 +1533,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return self.mode_keys
             if key == "alt-scroll":
                 return "on" if self.disable_alt_scroll else "off"
+            if key in ("ambiguous-width", "ambiguous_width"):
+                from . import cellwidth
+                return "wide" if cellwidth.ambiguous_wide() else "narrow"
             if key == "prefix":
                 return textual_key_to_tmux(self.prefix_key) or self.prefix_key
             if key == "default-path":
@@ -1650,6 +1686,9 @@ def run_client(sock_path: str, session: str | None = None):
         from .launcher import detect_ambiguous_width
         mode = detect_ambiguous_width(config.get("ambiguous_width", "auto"))
         cellwidth.set_ambiguous_wide(mode == "wide")
+        # 런타임 `:set ambiguous-width auto` 전환이 CPR 을 재프로브하지 않도록(Textual
+        # 이 단말을 점유한 뒤라 위험) 시작 시 감지값을 캐시한다.
+        config["_ambig_auto_wide"] = (mode == "wide")
     except Exception:
         pass
     app = build_client_app(sock_path, config, session)
