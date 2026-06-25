@@ -68,14 +68,16 @@ async def test_tail_file_incremental_and_holds_partial_line():
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "s.jsonl")
         line1 = json.dumps(_evt(msg_id="m1", req="r1", inp=100)) + "\n"
-        with open(p, "w") as fh:
+        # newline="" — Windows 텍스트 모드의 \n→\r\n 변환을 막는다(jsonl 은 LF 가정;
+        # 안 그러면 파일 byte offset 이 len(...encode())[LF]와 어긋나 off assert 실패).
+        with open(p, "w", newline="") as fh:
             fh.write(line1)
         recs, off = transcript.tail_file(p, 0)
         assert len(recs) == 1 and off == len(line1.encode())
         # append 완성줄 + 미완성줄(개행 없음) → 완성분만, offset 은 완성 끝까지.
         line2 = json.dumps(_evt(msg_id="m2", req="r2")) + "\n"
         partial = '{"type":"assistant","message"'  # 개행 없음
-        with open(p, "a") as fh:
+        with open(p, "a", newline="") as fh:
             fh.write(line2 + partial)
         recs2, off2 = transcript.tail_file(p, off)
         assert [r["xkey"] for r in recs2] == ["m2:r2"]

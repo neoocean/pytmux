@@ -186,11 +186,15 @@ async def _detect_over_pty(advance):
 
 async def test_detect_wide_terminal_via_pty():
     """모호폭을 2칸 전진으로 그리는 가짜 단말 → 'wide' 로 감지."""
+    if os.name == "nt":      # pty/termios 는 Unix 전용 — Windows 는 실 PTY 검증 불가
+        return
     assert await _detect_over_pty(advance=2) == "wide"
 
 
 async def test_detect_narrow_terminal_via_pty():
     """모호폭을 1칸 전진으로 그리는 가짜 단말 → 'narrow' 로 감지."""
+    if os.name == "nt":      # pty/termios 는 Unix 전용 — Windows 는 실 PTY 검증 불가
+        return
     assert await _detect_over_pty(advance=1) == "narrow"
 
 
