@@ -511,6 +511,39 @@ async def test_set_option_name_completion():
         assert ("set " + o) in COMPLETIONS, o
 
 
+async def test_set_option_value_completion_and_candidates():
+    """`set <옵션> <값>` 자동완성·후보 추천(사용자 요청) — 옵션 이름이 완성되면
+    그 옵션의 선택지(narrow|wide|auto·on|off)가 ① ghost(COMPLETIONS 조합)로 인라인
+    제안되고 ② #pcand 후보(↑↓ 순환)로 뜬다. 부분 값은 prefix 필터·구분자 무시.
+    자유텍스트 옵션(status-bg)·옵션 치는 중·set 아닌 명령은 미발동."""
+    # ① ghost 자동완성
+    from pytmuxlib.clientwidgets import SepInsensitiveSuggester
+    from pytmuxlib.clientutil import COMPLETIONS
+    sug = SepInsensitiveSuggester(COMPLETIONS)
+    assert await sug.get_suggestion("set ambiguous-width n") == "set ambiguous-width narrow"
+    assert await sug.get_suggestion("set mouse o") == "set mouse on"
+    # ② 후보 추천(_set_value_candidates)
+    from pytmuxlib.clientscreens import PromptScreen
+    ps = PromptScreen.__new__(PromptScreen)
+    ps._render_cands = lambda: None
+
+    class _L:
+        display = True
+
+    def cands(inp):
+        ps._cand = []
+        ps._cand_shown = False
+        return ps._set_value_candidates(inp, _L()), [c[0] for c in ps._cand]
+
+    assert cands("set ambiguous-width ") == (True, ["auto", "narrow", "wide"])
+    assert cands("set ambiguous-width n") == (True, ["narrow"])
+    assert cands("set ambiguous_width w") == (True, ["wide"])   # 구분자 무시
+    assert cands("set mouse ") == (True, ["on", "off"])
+    assert cands("set ambig")[0] is False        # 옵션 치는 중 → 이름 ghost 에 맡김
+    assert cands("set status-bg ")[0] is False    # 자유텍스트 옵션(선택지 없음)
+    assert cands("split-window ")[0] is False     # set 아님
+
+
 async def test_resize_pane_directional_command():
     """resize-pane -L/-R/-U/-D [N] 이 resize_dir 로 매핑된다(#17 — 키·명령·마우스
     리사이즈 대칭). 과거엔 -Z(줌)만 처리해 명령/팔레트로 분할선 이동이 불가했다."""

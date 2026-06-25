@@ -26,7 +26,8 @@ from . import i18n
 from .clientutil import (COMMAND_FREETEXT, COMMAND_NOARG, COMMAND_OPTIONS,
                          COMMANDS, ESC_MODE_KEYS, MENU_GROUP_LABELS, MENU_GROUPS,
                          MENU_ITEMS, MENU_TOGGLES, MENU_TOPLEVEL,
-                         PANE_SCOPED_CMDS, PREFIX_KEYS, SETTINGS, SETTINGS_CATS,
+                         PANE_SCOPED_CMDS, PREFIX_KEYS, SET_OPTION_CHOICES,
+                         SETTINGS, SETTINGS_CATS,
                          _char_cells, bar, format_option_row, has_hangul,
                          hangul_to_qwerty, norm_sep, theme_color)
 
@@ -1974,6 +1975,11 @@ class PromptScreen(ModalScreen):
         # 명령 토큰 뒤에 공백(또는 인자)이 있어야 '인자 자리'. 아직 명령 이름 치는 중이면 패스.
         if len(stripped) <= len(first):
             return False
+        # set <옵션> 값 자리면 그 옵션의 선택지(narrow|wide|auto·on|off)를 추천한다 —
+        # arghist(이전 입력)보다 먼저 가로챈다(set 은 자유텍스트 옵션도 많아 arghist
+        # 대상이 아니라 canon 이 None 이 되기도 한다).
+        if self._set_value_candidates(stripped, lbl):
+            return True
         app = getattr(self, "app", None)
         canon = app._arghist_canon(first) if app else None
         if not canon:
@@ -1991,6 +1997,41 @@ class PromptScreen(ModalScreen):
         else:
             matches = list(hist)
         self._cand = [(a, i18n.t("screen.arg_recent")) for a in matches]
+        self._sel = 0
+        if not self._cand:
+            self._cand_shown = False
+            lbl.display = False
+        else:
+            self._cand_shown = True
+            lbl.display = True
+            self._render_cands()
+        return True
+
+    def _set_value_candidates(self, stripped, lbl):
+        """`set <옵션>` 뒤 **값 자리**면 그 옵션의 선택지(SET_OPTION_CHOICES:
+        narrow|wide|auto·on|off 등)를 후보(#pcand)로 띄운다(↑↓ 순환·Enter 선택).
+        부분 값은 prefix 로 거른다. 값 자리(옵션 이름 뒤 공백 or 부분 값)이고 선택지가
+        있는 옵션이면 True — 그러면 arghist/명령-이름 매칭을 막는다. 옵션 이름 치는
+        중(뒤 공백 없음)이거나 자유텍스트 옵션이면 False(이름 ghost·이력에 맡긴다)."""
+        parts = stripped.split()
+        if len(parts) < 2 or parts[0].lower() not in ("set", "set-option"):
+            return False
+        key_norm = norm_sep(parts[1].lower())
+        choices = next((cs for k, cs in SET_OPTION_CHOICES.items()
+                        if norm_sep(k) == key_norm), None)
+        if choices is None:
+            return False
+        # 값 자리 판정: 옵션 이름 뒤에 공백(값 시작)이 있거나 부분 값이 있어야 한다.
+        # "set ambiguous-width"(옵션 치는 중, 뒤 공백 없음)면 아직 옵션 자리 → False.
+        if len(parts) == 2 and not stripped.endswith((" ", "\t")):
+            return False
+        partial = parts[2].lower() if len(parts) >= 3 else ""
+        matches = [c for c in choices if c.startswith(partial)]
+        if len(matches) == 1 and matches[0] == partial:
+            matches = []                       # 정확히 입력과 같으면 더 제안 없음
+        self._arg_mode = True
+        self._arg_cmd = parts[0] + " " + parts[1]
+        self._cand = [(c, i18n.t("screen.arg_choice")) for c in matches]
         self._sel = 0
         if not self._cand:
             self._cand_shown = False

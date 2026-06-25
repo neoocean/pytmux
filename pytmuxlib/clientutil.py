@@ -741,6 +741,20 @@ _SET_OPTION_NAMES = (
     "set-titles", "set-titles-string", "tab-bar", "default-path",
 )
 
+# `set <옵션> <값>` 의 선택지(enum/bool) — 값 자동완성(ghost)·후보 추천(↑↓)용.
+# 자유 텍스트 옵션(status-bg/-fg/-left/prefix 등)은 정해진 값이 없어 제외(이력 추천만).
+SET_OPTION_CHOICES = {
+    "ambiguous-width": ("auto", "narrow", "wide"),
+    "alt-scroll": ("on", "off"),
+    "mouse": ("on", "off"),
+    "mouse-debug": ("on", "off"),
+    "mode-keys": ("vi", "emacs"),
+    "tab-bar": ("always", "auto"),
+    "status-position": ("bottom", "top"),
+    "status": ("on", "off"),
+    "set-titles": ("on", "off"),
+}
+
 COMPLETIONS = [
     "split-window -h", "split-window -v",
     "resize-pane -Z",
@@ -754,7 +768,9 @@ COMPLETIONS = [
     "capture-pane -S",
     "monitor-activity on", "monitor-bell on", "automatic-rename on",
     "detach-client", "kill-server",
-] + ["set " + o for o in _SET_OPTION_NAMES] + [c[0] for c in COMMANDS]
+] + ["set " + o for o in _SET_OPTION_NAMES] \
+  + ["set %s %s" % (k, c) for k, cs in SET_OPTION_CHOICES.items() for c in cs] \
+  + [c[0] for c in COMMANDS]
 
 # 커맨드 팔레트(#3)에서 명령을 고르면 옵션(선택지)을 모달에서 정한 뒤 프롬프트를
 # 거치지 않고 바로 실행한다. 각 항목은 {"key","label","choices":[(보임,값),...]}
