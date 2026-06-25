@@ -853,8 +853,12 @@ class ServerIOMixin:
             return
         await self._send_full(client)
 
-    def _log_error(self, where: str):
+    def _log_error(self, where: str, detail: str = ""):
         """방금 처리 중인 예외의 트레이스백을 `<sock>.error.log` 에 append 한다.
+
+        detail 이 주어지면(예외 아닌 진단 로그 — claude_format_unrecognized 가 미인식
+        화면의 footer tail 을 남길 때) 트레이스백 앞에 그 본문을 함께 적는다. 예외
+        컨텍스트가 없으면 트레이스백은 "NoneType: None" 으로 무해하게 남는다.
 
         데몬은 stderr 가 /dev/null 이라, 클라이언트 처리(attach/_send_full/dispatch)
         나 flush 루프에서 난 예외가 **조용히 삼켜지면** 진단 단서가 없다. 한 클라
@@ -867,6 +871,8 @@ class ServerIOMixin:
             stamp = time.strftime("%Y-%m-%d %H:%M:%S")
             with open(path, "a", encoding="utf-8") as f:
                 f.write(f"\n==== {stamp} [{where}] ====\n")
+                if detail:
+                    f.write(detail + "\n")
                 f.write(traceback.format_exc())
         except Exception:
             pass

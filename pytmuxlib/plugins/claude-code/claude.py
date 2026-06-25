@@ -86,6 +86,23 @@ def claude_limit(text: str) -> bool:
     return bool(_LIMIT_BLOCKED_RE.search(_claude_body(text)))
 
 
+# Claude Code idle footer/입력 힌트 앵커 — claude_state 가 "idle"(입력 대기)로
+# 인정하는 신호 모음. footer 문구는 버전마다 바뀐다(실측 변천: "(shift+tab to
+# cycle)" 접미 제거 → "auto mode on · 2 shells · ↵ for agents · ↓ to manage",
+# "accept edits on" → "accept edits is on" 등). 그래서 접미·구두점에 휘둘리는 정확
+# 문구 대신 **변동 적은 핵심 어구**로 잡아 footer 가 바뀌어도 살아남게 한다:
+#   · 권한모드 이름(공식 4모드 auto/plan mode·accept edits·bypass): on/is on/toggled
+#     등 **접미 무관** 부분일치 — footer 가 어떻게 조립되든 모드 이름은 그대로다.
+#   · 입력 힌트("for shortcuts/help", "shift+tab"): 모드 표시 없는 입력 박스도 idle.
+# 새 footer 변형이 나오면 **여기 한 줄만** 추가하면 되고 claude_state 로직은 불변이다
+# (요청: 추후 유사 변화에 최소 변경 대응). 프롬프트 프리픽스 ⏵⏵(전 모드 공통)는
+# 원문 대소문자를 보존하므로 claude_state 에서 따로 본다.
+_IDLE_ANCHORS = (
+    "auto mode", "plan mode", "accept edits", "bypass permissions",
+    "shift+tab", "for shortcuts", "for help",
+)
+
+
 def claude_state(text: str):
     """패널의 최근 화면 텍스트로 Claude Code CLI 상태를 추정한다.
 
@@ -104,19 +121,13 @@ def claude_state(text: str):
     if (_BUSY_SPINNER_RE.search(text)
             or "esc to interrupt" in low or "interrupt)" in low):
         return "busy"
-    # 입력 대기: 권한 모드 footer 또는 도움말/단축키 신호.
-    # 신형 Claude Code(2026-06) 는 idle footer 의 "(shift+tab to cycle)" 접미를 떼고
-    #   "⏵⏵ auto mode on · 2 shells · ↵ for agents · ↓ to manage"
-    # 로 바꿨다. 옛 앵커 "mode on (shift"·"? for shortcuts" 가 둘 다 사라져 파서가
-    # 멀쩡한 idle 화면을 None(미인식)으로 떨궜고, 그 결과 '포맷 미인식 — 추적 중단'
-    # 경고가 진행 중인 정상 세션에 오발화했다(사용자 보고 2026-06-22). 권한 모드
-    # footer 의 프롬프트 프리픽스 ⏵⏵(U+23F5×2 — auto/plan/accept/bypass 전 모드 공통,
-    # 신·구 포맷 불변)와 접미 없는 "mode on"/"accept edits on" 도 idle 로 인정한다.
-    if ("⏵⏵" in text
-            or "shift+tab to" in low or "mode on" in low
-            or "accept edits on" in low
-            or "? for shortcuts" in low or "for shortcuts" in low
-            or "/help for help" in low or "bypass permissions" in low):
+    # 입력 대기: 권한 모드 footer(_IDLE_ANCHORS) 또는 프롬프트 프리픽스 ⏵⏵.
+    # footer 문구는 버전마다 바뀌므로(예전 사례: "(shift+tab to cycle)" 접미 제거로
+    # idle 화면이 None 처리돼 '포맷 미인식 — 추적 중단'이 정상 세션에 오발화, 사용자
+    # 보고 2026-06-22; 후속: "accept edits on"→"accept edits is on") 접미·구두점에
+    # 둔감한 모드 이름·힌트 앵커(_IDLE_ANCHORS)로 잡는다. ⏵⏵(U+23F5×2 — auto/plan/
+    # accept/bypass 전 모드 공통, 신·구 포맷 불변)는 대소문자 보존이라 따로 본다.
+    if "⏵⏵" in text or any(a in low for a in _IDLE_ANCHORS):
         return "idle"
     return None
 

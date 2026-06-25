@@ -4038,6 +4038,36 @@ async def test_panel_env_sets_truecolor_and_term():
         await teardown(srv, task, sock)
 
 
+async def test_fmt_unrecognized_logs_footer_tail():
+    """포맷 미인식 진단 로그 보강(요청 2026-06-25): claude_state 가 busy/limit/idle
+    어느 것도 못 잡은 화면의 footer tail 을 _fmt_unrecognized_detail 이 추출하고,
+    _log_error(detail) 이 error.log 에 남긴다 — 다음에 Claude footer 형식이 또 바뀌어도
+    이 로그만 보고 새 형식을 파악해 claude.py _IDLE_ANCHORS 를 갱신할 수 있다."""
+    import pyte
+    from pytmuxlib import ipc
+    srv, task, sock = await server_only()
+    try:
+        screen = pyte.Screen(40, 6)
+        st = pyte.Stream(screen)
+        st.feed("prompt box\r\n@@ brand-new footer 2099 @@\r\n")
+
+        class _P:
+            pass
+        p = _P()
+        p.screen = screen
+        detail = srv._fmt_unrecognized_detail(p)
+        assert "screen tail" in detail, detail
+        assert "brand-new footer 2099" in detail, detail   # 마지막 비어있지 않은 줄
+        # _log_error(detail) 가 detail 을 error.log 에 남기는지(기존 호출은 detail="" 라 무영향)
+        srv._log_error("claude_format_unrecognized", detail)
+        with open(ipc.state_base(sock) + ".error.log", encoding="utf-8") as f:
+            log = f.read()
+        assert "claude_format_unrecognized" in log
+        assert "brand-new footer 2099" in log, "footer tail 이 로그에 남아야"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_flush_to_client_drops_slow_consumer():
     """H-2: 한 클라의 송신버퍼가 high-water 를 넘으면(드레인을 못 따라옴) 즉시 떨궈
     flush 루프가 전체를 끌고 막히지 않게 한다. write 가 무한 드레인이어도 타임아웃 후

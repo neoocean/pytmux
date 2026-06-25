@@ -84,6 +84,11 @@ _FMT_UNKNOWN_SEC = 60.0
 # 경고 문구(상태줄 경고 세그먼트로 표시 — _claude_warn 재사용). 아이콘은 각 warn 문자열이
 # 직접 갖는다(렌더는 비부가) — 장기턴·반복·미인식 모두 ⚠(노란 세모로 통일).
 _FMT_UNKNOWN_MSG = "⚠ Claude 포맷 미인식 — 추적 중단(버전 업데이트?)"
+# 포맷 미인식 1회 진단 로그에 남길 화면 footer tail(최하단 비어있지 않은 줄) 범위.
+# 다음에 Claude footer 형식이 또 바뀌면 error.log 만으로 새 형식을 보고 claude.py
+# _IDLE_ANCHORS 를 갱신하기 위함. 화면 전체가 아닌 tail 만(노출/스팸 가드).
+_FMT_LOG_TAIL_LINES = 6
+_FMT_LOG_TAIL_COLS = 160
 
 
 # 비활성 탭 Claude 완료 알림(#22) 플리커 방지(§10 #18): busy→idle 후 idle 이 연속
@@ -441,13 +446,33 @@ class ServerClaudeMixin:
         pane._fmt_first_mono = first
         if unknown and not pane._fmt_logged:
             pane._fmt_logged = True
-            self._log_error("claude_format_unrecognized")   # 1회만(스팸 가드)
+            # 미인식 화면의 footer tail 도 함께 남긴다 — 다음에 Claude footer 형식이
+            # 또 바뀌었을 때 error.log 만으로 새 형식을 파악해 claude.py _IDLE_ANCHORS
+            # 를 갱신하기 위함(요청 2026-06-25). 1회만(_fmt_logged 스팸 가드).
+            self._log_error("claude_format_unrecognized",
+                            self._fmt_unrecognized_detail(pane))
         elif not unknown:
             pane._fmt_logged = False
         if unknown != pane._fmt_unknown:
             pane._fmt_unknown = unknown
             return True
         return False
+
+    def _fmt_unrecognized_detail(self, pane) -> str:
+        """포맷 미인식(claude_state 가 busy/limit/idle 어느 것도 못 잡음) 화면의 footer
+        영역을 진단 문자열로 — 최하단 비어있지 않은 줄을 repr 로(특수·비출력 글자 보존)
+        남긴다. 다음에 Claude footer 형식이 또 바뀌면 이 로그만 보고 새 형식을 파악해
+        claude.py `_IDLE_ANCHORS` 에 한 줄 추가로 대응할 수 있다(요청 2026-06-25).
+        화면 전체가 아닌 tail 만(노출/스팸 가드), best-effort(로그가 본동작을 막지 않음)."""
+        try:
+            lines = [ln for ln in screen_text(pane.screen).splitlines()
+                     if ln.strip()]
+            tail = lines[-_FMT_LOG_TAIL_LINES:]
+            body = "\n".join("  " + repr(ln[:_FMT_LOG_TAIL_COLS]) for ln in tail)
+            return ("screen tail (footer 형식 진단 — claude.py _IDLE_ANCHORS 갱신용):\n"
+                    + body)
+        except Exception:
+            return ""
 
     def _pc_advance(self, pane: Pane):
         """프롬프트 단위 클리어 상태기계를 busy→idle 경계에서 한 단계 전진한다.

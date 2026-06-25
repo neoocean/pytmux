@@ -203,6 +203,17 @@ async def test_claude_state():
         "❯\n⏵⏵ auto mode on · 2 shells · ↵ for agents · ↓ to manage") == "idle"
     assert claude_state("⏵⏵ plan mode on · 1 shell") == "idle"
     assert claude_state("⏵⏵ accept edits on · 4 shells · ↓ to manage") == "idle"
+    # 후속 변형(2026-06-25): acceptEdits 가 "accept edits on"→"accept edits is on" 으로
+    # 바뀌어 옛 "accept edits on" 앵커를 빗나갔다. 모드 이름(접미 무관) 앵커로 흡수한다.
+    assert claude_state("⏵⏵ accept edits is on · 2 shells · ↵ for agents") == "idle"
+    # ⏵⏵ 없이 모드 이름만 남은 변형(샘플이 잘려 프리픽스가 사라져도 살아남는다).
+    assert claude_state("accept edits is on") == "idle"
+    assert claude_state("plan mode on") == "idle"
+    assert claude_state("bypass permissions") == "idle"
+    # 모드 표시 없는 입력 박스(힌트만) 도 idle.
+    assert claude_state("│ > │\n? for shortcuts") == "idle"
+    # 일반 셸 출력은 여전히 None(모드 이름/힌트 부재) — 오인식 안 함.
+    assert claude_state("total 8\ndrwxr-xr-x  2 user staff") is None
     # busy 와 idle footer 가 함께 있으면 busy 우선
     assert claude_state(
         "✽ Flowing… (8m 4s · ↑ 21.1k tokens)\n"
