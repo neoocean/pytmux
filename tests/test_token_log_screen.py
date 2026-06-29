@@ -320,83 +320,6 @@ async def test_tree_hour_rows_have_5h_1w_columns_with_reset_left():
         await teardown(srv, task, sock)
 
 
-def _recon_intervals(n=30):
-    """대사 구간 n개(시간순) — 5h% 가 톱니로 오르며 중간에 리셋 1회."""
-    base = 1_700_000_000.0
-    ivs = []
-    for i in range(n):
-        p0 = (i * 7) % 100
-        p1 = min(100, p0 + 6)
-        ivs.append({"t0": base + i * 3600, "t1": base + (i + 1) * 3600,
-                    "account": "me@x.org", "pct0": p0, "pct1": p1,
-                    "dpct": p1 - p0, "tokens": 1000 + i,
-                    "reset": (i == 10)})
-    return ivs
-
-
-async def test_recon_tab_shows_time_axis_chart_and_scrolls():
-    """[대사] 탭(r)이 표 대신 시간축 세로 막대 그래프를 보이고(요청 2026-06-20),
-    좌우 키로 더 이전 구간을 스크롤한다. 진입 시 표는 숨고 그래프가 본문을 차지."""
-    from textual.widgets import DataTable
-    from harness import make_app, server_only, teardown
-
-    srv, task, sock = await server_only()
-    try:
-        app = make_app(sock, None, None)
-        async with app.run_test(size=(100, 36)) as pilot:
-            await pilot.pause(0.3)
-            # 폭에 다 안 들어갈 만큼(>capacity) 구간을 줘 스크롤을 실제로 검증.
-            app.push_screen(screens.TokenLogScreen(
-                _hour_records(), reconcile=_recon_intervals(120)))
-            await pilot.pause(0.3)
-            scr = app.screen_stack[-1]
-
-            # 대사 모드 진입(r) → 그래프 보이고 표 숨김.
-            await pilot.press("r")
-            await pilot.pause(0.2)
-            assert scr._recon_mode
-            chart = scr.query_one("#tkchart", screens._ReconChart)
-            table = scr.query_one(DataTable)
-            assert chart.display and not table.display, \
-                "대사 모드는 그래프를 보이고 표를 숨겨야"
-
-            # 막대 글리프가 실제로 렌더된다(세로 블록 문자 중 하나라도).
-            rendered = "\n".join(chart.render_line(y).text
-                                 for y in range(chart.size.height))
-            assert any(b in rendered for b in "▁▂▃▄▅▆▇█"), \
-                f"세로 막대 글리프가 있어야:\n{rendered}"
-            # x축선·시각 라벨도(└ 모서리, ':' 또는 '-' 가 포함된 시각 라벨).
-            assert "└" in rendered and "─" in rendered, "x축선이 있어야"
-
-            # 좌우 스크롤: 처음엔 최신이 보이고(왼쪽 키=더 옛 구간으로).
-            chart.x_off = 0
-            chart.refresh()
-            await pilot.pause(0.05)
-            scr._build_off0 = chart._build()["i0"]
-            await pilot.press("left")       # 더 이전(옛) 구간으로
-            await pilot.pause(0.05)
-            assert chart.x_off >= 1, "왼쪽 키로 옛 구간 스크롤"
-            after = chart._build()["i0"]
-            assert after < scr._build_off0, "보이는 첫 구간이 더 옛으로 이동"
-
-            # Home=가장 옛(첫 구간 0 포함), End=최신으로 복귀.
-            await pilot.press("home")
-            await pilot.pause(0.05)
-            assert chart._build()["i0"] == 0, "Home=가장 옛 구간"
-            await pilot.press("end")
-            await pilot.pause(0.05)
-            assert chart.x_off == 0, "End=최신(오른쪽 끝)"
-
-            # r 다시 누르면 표로 복귀(그래프 숨김).
-            await pilot.press("r")
-            await pilot.pause(0.2)
-            assert not scr._recon_mode
-            assert not scr.query_one("#tkchart", screens._ReconChart).display
-            assert scr.query_one(DataTable).display
-    finally:
-        await teardown(srv, task, sock)
-
-
 def _session_records():
     """세션 3개(27·6·99)의 토큰 레코드 — [세션] 뷰가 세션별 합 행을 만든다."""
     base = 1_700_000_000.0
@@ -540,7 +463,7 @@ def _model_session_records():
 async def test_period_and_session_drop_model_color_and_legend():
     """요청 2026-06-22: 첫 탭(Period)과 Session 탭은 **모델별 색 구분을 없애고** 사용량만
     단색 막대로 보인다 — 상단(#tktop)에 모델 색 범례(█)가 없고, 막대 셀에 모델색
-    (opus=magenta·haiku=green)이 섞이지 않는다. 모델별 비율은 Recon 탭에서 본다."""
+    (opus=magenta·haiku=green)이 섞이지 않는다."""
     from textual.widgets import DataTable
     from harness import make_app, server_only, teardown
 
@@ -572,68 +495,6 @@ async def test_period_and_session_drop_model_color_and_legend():
             await pilot.pause(0.2)
             assert scr._view == "session"
             _assert_no_model(scr)                  # Session
-    finally:
-        await teardown(srv, task, sock)
-
-
-async def test_recon_top_fits_two_lines():
-    """요청 2026-06-22: [대사](Recon) 상단(#tktop)을 **2줄 이내**로 — 긴 막대 설명
-    괄호를 빼 한 줄로 줄였다. 범례가 있으면 둘째 줄(개행 1개)까지, 없으면 한 줄."""
-    from textual.widgets import Static
-    from harness import make_app, server_only, teardown
-
-    ivs = _recon_intervals(20)
-    for iv in ivs:                       # 모델 분해를 실어 범례(둘째 줄)도 그리게
-        iv["models"] = {"opus": 400, "sonnet": 200}
-    srv, task, sock = await server_only()
-    try:
-        app = make_app(sock, None, None)
-        async with app.run_test(size=(100, 36)) as pilot:
-            await pilot.pause(0.3)
-            app.push_screen(screens.TokenLogScreen(_hour_records(),
-                                                   reconcile=ivs))
-            await pilot.pause(0.3)
-            scr = app.screen_stack[-1]
-            await pilot.press("r")
-            await pilot.pause(0.2)
-            assert scr._recon_mode
-            top = scr._tktop_text
-            text = top.plain if hasattr(top, "plain") else str(top)
-            assert text.count("\n") <= 1, f"대사 상단은 2줄 이내여야: {text!r}"
-            assert "→" in text, f"구간 시간 범위(→) 표기: {text!r}"
-            # 긴 막대 설명 괄호가 빠졌는지(ko/en 양쪽 — wrap 으로 3줄 되던 원인 제거).
-            assert all(s not in text for s in
-                       ("(막대=", "(bars=", "measured", "스크롤)")), \
-                f"긴 괄호 설명은 빠져야: {text!r}"
-    finally:
-        await teardown(srv, task, sock)
-
-
-async def test_recon_scroll_noop_when_all_intervals_visible():
-    """항목6 감사(요청 2026-06-22): 구간이 폭에 다 들어오면 _max_off==0 이라 ← 는
-    **정상적으로 무동작**(더 옛 구간이 없음 = 버그 아님). x_off 가 0 에 머물고 크래시
-    없이 그래프가 계속 보인다. (스크롤이 실제로 먹는 경우는
-    test_recon_tab_shows_time_axis_chart_and_scrolls 가 검증한다.)"""
-    from harness import make_app, server_only, teardown
-
-    srv, task, sock = await server_only()
-    try:
-        app = make_app(sock, None, None)
-        async with app.run_test(size=(100, 36)) as pilot:
-            await pilot.pause(0.3)
-            app.push_screen(screens.TokenLogScreen(_hour_records(),
-                                                   reconcile=_recon_intervals(3)))
-            await pilot.pause(0.3)
-            scr = app.screen_stack[-1]
-            await pilot.press("r")
-            await pilot.pause(0.2)
-            chart = scr.query_one("#tkchart", screens._ReconChart)
-            chart._build()                       # _max_off 갱신
-            assert chart._max_off == 0, "구간이 다 보이면 더 옛 구간이 없어 max_off=0"
-            await pilot.press("left")
-            await pilot.pause(0.05)
-            assert chart.x_off == 0, "← 는 안전한 무동작(x_off 그대로)"
-            assert app.screen_stack[-1] is scr and chart.display, "무크래시·그래프 유지"
     finally:
         await teardown(srv, task, sock)
 

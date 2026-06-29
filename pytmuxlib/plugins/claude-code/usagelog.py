@@ -164,7 +164,7 @@ def daily_to_records(daily) -> list:
 def window_sum(records: list, since_ts: float, until_ts: float | None = None,
                account: str | None = None) -> int:
     """창 구간 (since_ts, until_ts] 의 토큰 합(추정 Σ). until_ts=None 이면 끝 무제한.
-    account 가 주어지면 그 계정만. 경계 규약은 usagedb.reconcile 과 동일(ts > since,
+    account 가 주어지면 그 계정만. 경계 규약은 (ts > since,
     ts <= until) — 토큰 팝업이 실측 리셋 시각으로 역산한 현재 5h/주간 창의 스크랩
     추정 합을 보일 때 쓴다(claude.parse_reset_ts 와 짝)."""
     total = 0
@@ -184,7 +184,7 @@ def fold_target(accounts):
 
     §5.5 단일 계정 귀속(2026-06-12 표시층 확장): 패널 화면엔 계정 라벨이 거의 안 떠
     (라벨은 /status 에만) 레코드 대부분이 미식별(unknown)로 적재되는데, 식별 계정이
-    사실상 하나인 환경에선 미식별=그 계정 활동이다 — reconcile 의 같은-계정 합산,
+    사실상 하나인 환경에선 미식별=그 계정 활동이다 —
     서버 _account_token_total 의 단일계정 전합산과 동일한 가정. 식별 계정이 둘
     이상이면 귀속이 모호하므로 접지 않는다(unknown 유지). v4 정정 이후 식별 계정은
     항상 이메일 형태('@' 포함)라 '@' 가 식별/미식별 판별식이다."""
@@ -527,38 +527,9 @@ def summary_lines(records: list, bucket: str = "day",
     return lines
 
 
-def recon_view(intervals: list) -> list:
-    """대사(reconcile) 구간 → 표시용 행 (구간, 실측, 추정Σ, 비고) 튜플 목록 — S6 T2.
-
-    usagedb.reconcile 의 dict 목록을 받아 TokenLogScreen [대사] 표가 그대로 꽂을
-    수 있는 문자열 4튜플로 푼다(순수 함수 — 헤드리스 테스트 대상). 실측과 추정은
-    의미가 다른 두 출처라 같은 행에서도 라벨/형식을 구분한다: 실측은 'p0%→p1%
-    (Δ±n)', 추정은 '~Σ'. 리셋 구간(pct 감소)은 Δ 대신 '리셋' — 5h 창이 새로
-    시작돼 Δpct 비교가 무의미하다. 계정 미상/혼합(account None)은 비고에 표시."""
-    import time as _t
-    rows = []
-    for iv in intervals:
-        span = "{}→{}".format(
-            _t.strftime("%m-%d %H:%M", _t.localtime(iv["t0"])),
-            _t.strftime("%H:%M" if _t.localtime(iv["t0"])[:3]
-                        == _t.localtime(iv["t1"])[:3] else "%m-%d %H:%M",
-                        _t.localtime(iv["t1"])))
-        if iv.get("reset"):
-            measured = f"{iv['pct0']}%→{iv['pct1']}% (리셋)"
-        else:
-            measured = f"{iv['pct0']}%→{iv['pct1']}% (Δ{iv['dpct']:+d})"
-        est = "~" + _fmt_tokens(iv.get("tokens", 0))
-        note = iv.get("account") or "계정혼합/미상"
-        rows.append((span, measured, est, note))
-    return rows
-
-
-# 세로 막대의 부분 칸(1/8 단위) — 빈칸→꽉찬블록(아래에서 위로 채워짐).
-_VBLOCKS = " ▁▂▃▄▅▆▇█"
-
-# 모델 티어 쌓는 순서(바닥→위). recon_chart 가 한 막대 높이를 모델 토큰 점유로
-# 세그먼트할 때 이 순서로 아래부터 채운다 — 어느 막대든 같은 모델이 같은 높이대에
-# 와서 색 띠가 가지런해진다(요청 2026-06-21). 표시 색은 위젯(screens) 몫.
+# 모델 티어 쌓는 순서(바닥→위). _model_cell_sequence 가 막대 칸을 모델 토큰 점유로
+# 배분할 때 이 순서로 채운다 — 어느 막대든 같은 모델이 같은 자리에 와서 색 띠가
+# 가지런해진다(요청 2026-06-21). 표시 색은 위젯(screens) 몫.
 _MODEL_TIER_ORDER = ("haiku", "sonnet", "opus", "fable")
 
 
@@ -590,94 +561,3 @@ def _model_cell_sequence(models: dict, n: int) -> list:
     if len(seq) < n:                       # 라운딩 여파 보정
         seq += ["unknown"] * (n - len(seq))   # 라운딩 여파도 '?'로(임계색 폴백 제거)
     return seq[:n]
-
-
-def recon_chart(intervals: list, plot_w: int, plot_h: int,
-                x_off: int = 0, step: int = 2) -> dict:
-    """대사 구간을 **시간축 세로 막대 그래프**로 그리기 위한 순수 기하 계산(요청
-    2026-06-20 — 표 대신 시간에 따른 사용률 증가를 한눈에). 각 구간 = 막대 1개,
-    높이 = 그 구간 끝의 실측 세션 5h%(pct1) — 5h 창 안에서 단조 증가하다 리셋 때
-    0 부근으로 떨어지는 톱니가 그대로 보인다. 좌우 스크롤(x_off)로 더 이전 구간을 본다.
-
-    세로축 최댓값(axis_max)은 **항상 100**(사용자 요청 2026-06-22 — 절대 5h 사용률을
-    한눈에 비교). 위젯이 같은 axis_max 로 눈금 라벨을 그린다.
-
-    좌표/색은 표시층(위젯) 몫이라 여기선 글리프 격자와 열↔구간 매핑만 돌려준다
-    (헤드리스 테스트 대상 — Strip/색 없이 모양만 검증).
-
-    intervals: 시간순(옛→새) 대사 dict 목록(usagedb.reconcile).
-    plot_w, plot_h: 막대 영역 칸수(좌측 눈금자·하단 축 제외).
-    x_off: **새 쪽에서 왼쪽으로 스크롤한 구간 수**(0=최신이 오른쪽 끝). [0,max_off] 로 클램프.
-    step: 구간당 칸수(막대 1칸 + 간격 step-1칸). ≥1.
-
-    반환 dict:
-      grid:    plot_h 줄(위→아래) 문자열, 각 plot_w 폭 — 막대는 ▁..█, 나머지 공백.
-      col_iv:  길이 plot_w 의 [구간index|None] — 각 열이 그리는 구간(위젯이 pct/리셋으로
-               색칠). 막대가 아닌 간격 열은 None.
-      labels:  [(col, text)] x축 시각 라벨(막대 아래, 겹치지 않게 솎음).
-      x_off:   실제 적용된(클램프된) 오프셋.
-      max_off: 최대 스크롤 오프셋(n-capacity, ≥0).
-      i0, i1:  보이는 첫/끝 구간 index(포함), 비면 (-1,-1).
-      axis_max: 세로축 최댓값(항상 100) — 분모이자 위젯 눈금 기준.
-      n:       전체 구간 수."""
-    n = len(intervals)
-    step = max(1, int(step))
-    grid = [" " * plot_w for _ in range(plot_h)]
-    col_iv = [None] * plot_w
-    # cell_model[r][col] = 그 칸을 차지한 모델 티어명(없으면 None) — 막대 색 분할용
-    # (요청 2026-06-21). grid 와 같은 모양. 위젯이 티어→색으로 칠한다.
-    cell_model = [[None] * plot_w for _ in range(plot_h)]
-    out = {"grid": grid, "col_iv": col_iv, "cell_model": cell_model,
-           "labels": [], "x_off": 0,
-           "max_off": 0, "i0": -1, "i1": -1, "axis_max": 100, "n": n}
-    if n == 0 or plot_w <= 0 or plot_h <= 0:
-        return out
-    capacity = max(1, (plot_w + step - 1) // step)   # 화면에 들어가는 구간 수
-    max_off = max(0, n - capacity)
-    x_off = max(0, min(int(x_off), max_off))
-    last = n - 1 - x_off                 # 보이는 가장 새(오른쪽) 구간
-    first = max(0, last - capacity + 1)  # 보이는 가장 옛(왼쪽) 구간
-    # 세로축 최댓값은 **항상 100%**(사용자 요청 2026-06-22). 종전엔 보이는 값이 다
-    # 50 미만이면 50 으로 좁혀(2026-06-21) 작은 값도 위로 키웠으나, 절대 5h 사용률을
-    # 한눈에 비교하려면 축이 100 으로 고정돼야 한다는 요청에 따라 되돌린다.
-    axis_max = 100
-    out.update(x_off=x_off, max_off=max_off, i0=first, i1=last,
-               axis_max=axis_max)
-
-    rows = [list(r) for r in grid]       # 가변 격자
-    last_label_end = -1
-    import time as _t
-    prev_day = None
-    for i in range(first, last + 1):
-        iv = intervals[i]
-        col = (i - first) * step         # 이 구간 막대의 x(왼쪽 정렬)
-        if col >= plot_w:
-            break
-        col_iv[col] = i
-        pct = iv.get("pct1", 0) or 0
-        level = max(0.0, min(1.0, pct / axis_max)) * plot_h   # 채울 칸(부분 포함)
-        filled_rows = []                                   # 채워진 줄(위→아래)
-        for r in range(plot_h):
-            from_bottom = plot_h - 1 - r                   # 0=맨 아래 줄
-            if level >= from_bottom + 1:
-                rows[r][col] = "█"
-                filled_rows.append(r)
-            elif level > from_bottom:
-                idx = max(1, min(8, round((level - from_bottom) * 8)))
-                rows[r][col] = _VBLOCKS[idx]
-                filled_rows.append(r)
-        # 막대 높이를 모델 토큰 점유로 세그먼트(바닥→위). 모델 분해가 없으면 None.
-        seq = _model_cell_sequence(iv.get("models") or {}, len(filled_rows))
-        for k, r in enumerate(reversed(filled_rows)):      # 바닥부터 채운다
-            cell_model[r][col] = seq[k]
-        # x축 라벨: 날짜 바뀌면 'MM-DD', 아니면 'HH:MM'. 겹침 방지로 솎음.
-        lt = _t.localtime(iv.get("t1", 0))
-        day = lt[:3]
-        text = (_t.strftime("%m-%d", lt) if day != prev_day
-                else _t.strftime("%H:%M", lt))
-        prev_day = day
-        if col > last_label_end:
-            out["labels"].append((col, text))
-            last_label_end = col + len(text)   # 다음 라벨은 이 뒤부터
-    out["grid"] = ["".join(r) for r in rows]
-    return out

@@ -622,7 +622,7 @@ def xc_totals_by_model(conn) -> dict:
 
 
 def xc_daily_full(conn) -> dict:
-    """로컬 일자(YYYY-MM-DD)별 full 토큰 합. {day: full}. Recon/일자 뷰 권위 시드용."""
+    """로컬 일자(YYYY-MM-DD)별 full 토큰 합. {day: full}. 일자 뷰 권위 시드용."""
     cur = conn.execute(
         "SELECT strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') AS day, "
         "COALESCE(SUM(input+output+cache_create+cache_read),0) AS s "
@@ -728,8 +728,8 @@ def max_session(conn) -> int:
 
 # ---- 실측 한도 스냅샷(limits, S6 T1) ----
 # `/usage` 권위값(세션 5h·주간 한도 %·리셋)을 시계열로 영속한다. 기존엔 서버 메모리
-# 최신값(self._usage) 하나뿐이라 재시작 시 유실·추이 조회 불가·스크랩 누계와의 대사
-# (reconcile) 검증이 불가능했다(docs/internal/TOKEN_ACCOUNTING_ACCURACY_SCENARIO.md §0-5).
+# 최신값(self._usage) 하나뿐이라 재시작 시 유실·추이 조회가 불가능했다
+# (docs/internal/TOKEN_ACCOUNTING_ACCURACY_SCENARIO.md §0-5).
 # source: probe(그림자 질의)|panel(인패널 /usage)|inline(footer 한도 문구) — 출처 추적.
 # 보존: 무제한(2026-06-10 사용자 결정 — 행이 작고 값 변화 시에만 쌓여 부담 적음).
 # prune_limits 는 수동/후속 정책용으로만 둔다.
@@ -826,93 +826,3 @@ def prune_limits(conn, before_ts: float) -> int:
 def limits_count(conn) -> int:
     """스냅샷 총수(테스트용)."""
     return int(conn.execute("SELECT COUNT(*) AS n FROM limits").fetchone()["n"])
-
-
-def reconcile(conn, limit: int | None = 20) -> list:
-    """대사(reconcile) 구간 목록 — S6 T2(docs/internal/TOKEN_ACCOUNTING_ACCURACY_SCENARIO.md §4).
-
-    연속한 실측 스냅샷 쌍(세션 pct 가 있는 것만) 사이 구간마다, **실측 Δpct(세션
-    5h)** 와 그 구간에 적힌 **스크랩 committed Σ** 를 나란히 돌려준다. 두 값은 의미가
-    달라(점유 % vs streaming 추정) 절대 일치를 기대하지 않는다 — 목적은 스크랩 추정이
-    상대 지표(활동량)로 쓸 만한지(상관)를 데이터로 판단하는 것(§0-3 강등의 근거).
-
-    계정: 양 끝 스냅샷 계정이 같고 비어있지 않으면 그 계정의 스크랩만 합산(같은 계정
-    한정 — 다른 계정 패널의 토큰이 섞여 비교가 무의미해지는 것 방지). 다르거나 미상
-    이면 전체 합 + account=None(혼합 표시는 표시층 몫).
-    미식별('unknown'/NULL) 레코드는 같은-계정 합산에 **포함**한다(2026-06-11 §5.5):
-    패널 화면엔 계정 라벨이 거의 안 떠(라벨은 /status 에만) 레코드 대부분이
-    미식별인데, 이를 빼면 같은 계정 활동이 Σ=0 으로 보인다 — 식별 계정이 사실상
-    하나인 환경(§10-B 단일 계정 귀속과 같은 가정)에서 미식별=그 계정 활동으로 본다.
-
-    reset: 실측 pct 가 감소한 구간(5h 창 리셋이 낀 것) — Δpct 비교가 무의미하므로
-    표시층이 구분하도록 플래그만 단다. limit=N 이면 최근 N 구간."""
-    snaps = [s for s in query_limits(conn) if s["session_pct"] is not None]
-    out = []
-    for a, b in zip(snaps, snaps[1:]):
-        acct = (b["account"]
-                if b["account"] and a["account"] == b["account"] else None)
-        if acct:
-            where = ("ts > ? AND ts <= ? AND (account = ? "
-                     "OR account IS NULL OR account = 'unknown')")
-            params = (a["ts"], b["ts"], acct)
-        else:
-            where = "ts > ? AND ts <= ?"
-            params = (a["ts"], b["ts"])
-        # v6: 구간 내 토큰을 모델 티어(opus/sonnet/haiku/fable…)별로 분해한다 —
-        # 막대 그래프가 한 막대를 모델 구성비로 색 분할하는 데이터 출처(요청 2026-06-21).
-        # model 컬럼은 'opus-4.8' 같은 계열-버전 문자열이라 '-' 앞(계열)으로 묶는다.
-        # 미상(NULL/'unknown')은 'unknown' 티어로. total 은 전 모델 합(기존 tokens 와 동일).
-        mcur = conn.execute(
-            "SELECT COALESCE(model, 'unknown') AS m, COALESCE(SUM(tokens),0) AS s "
-            "FROM usage WHERE " + where + " GROUP BY COALESCE(model, 'unknown')",
-            params)
-        models: dict = {}
-        total = 0
-        for r in mcur:
-            s = int(r["s"])
-            total += s
-            if s <= 0:
-                continue
-            m = r["m"]
-            tier = m.split("-", 1)[0] if m != "unknown" else "unknown"
-            models[tier] = models.get(tier, 0) + s
-        # §10-D P6b: 같은 구간을 트랜스크립트 권위(usage_xc, full=4항목 cache 포함)로도
-        # 분해한다 — 스크랩 models 는 cache_read/creation 을 못 봐 모델 구성비가
-        # 실제와 다르다(막대 색=구성비). usage_xc 가 그 구간 데이터를 가지면 그걸
-        # **1차**로 막대 색에 쓰고(models 에 덮음), 없으면 스크랩으로 폴백한다. 계정
-        # 컬럼이 usage_xc 엔 없어(트랜스크립트=이메일 부재) 계정 필터 없이 합산 —
-        # reconcile 의 단일-계정 가정(§5.5 미식별 포함)과 동형. v7 미보유 conn 은 조용히
-        # 폴백. 스크랩 분해는 scrape_models/scrape_tokens 로 비교용 보존.
-        xc_models: dict = {}
-        xc_total = 0
-        try:
-            xcur = conn.execute(
-                "SELECT COALESCE(model, 'unknown') AS m, "
-                "COALESCE(SUM(input+output+cache_create+cache_read),0) AS s "
-                "FROM usage_xc WHERE ts > ? AND ts <= ? "
-                "GROUP BY COALESCE(model, 'unknown')",
-                (a["ts"], b["ts"]))
-            for r in xcur:
-                s = int(r["s"])
-                xc_total += s
-                if s <= 0:
-                    continue
-                m = r["m"]
-                tier = m.split("-", 1)[0] if m != "unknown" else "unknown"
-                xc_models[tier] = xc_models.get(tier, 0) + s
-        except sqlite3.Error:
-            pass
-        if xc_total > 0:                       # 트랜스크립트 1차(cache 포함 구성비)
-            use_models, src = xc_models, "xc"
-        else:                                  # 폴백: 스크랩 분해
-            use_models, src = models, "scrape"
-        out.append({"t0": a["ts"], "t1": b["ts"], "account": acct,
-                    "pct0": int(a["session_pct"]), "pct1": int(b["session_pct"]),
-                    "dpct": int(b["session_pct"]) - int(a["session_pct"]),
-                    "tokens": total, "models": use_models, "models_src": src,
-                    "scrape_tokens": total, "scrape_models": models,
-                    "xc_tokens": xc_total,
-                    "reset": b["session_pct"] < a["session_pct"]})
-    if limit is not None and limit >= 0:
-        out = out[-limit:]
-    return out

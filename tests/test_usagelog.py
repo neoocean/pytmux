@@ -213,8 +213,8 @@ async def test_claude_account_rejects_screen_emails():
 
 
 async def test_window_sum_boundaries_and_account():
-    """창 구간 (since, until] 토큰 합 — 경계 규약은 usagedb.reconcile 과 동일
-    (ts > since, ts <= until). 계정 필터 옵션 포함."""
+    """창 구간 (since, until] 토큰 합 — 경계 규약은 (ts > since, ts <= until).
+    계정 필터 옵션 포함."""
     recs = [
         {"ts": 100.0, "account": "me@x.org", "tokens": 10},
         {"ts": 200.0, "account": "me@x.org", "tokens": 20},
@@ -299,104 +299,6 @@ async def test_migrate_token_accounts():
     assert st["after"].get("me@woojinkim.org") == 1
     assert st["after"].get("unknown") == 4
     assert "{corrupt json\n" in out and "  \n" in out   # 비레코드 줄 원형 보존
-
-
-async def test_recon_view_formats_rows():
-    """S6 T2: recon_view 가 대사 구간 dict → (구간, 실측, 추정Σ, 비고) 4튜플로
-    푼다 — 실측은 Δ 표기·리셋 구간은 '리셋', 추정은 ~ 접두사(출처 구분), 계정
-    None 은 혼합/미상 표기."""
-    base = 1_700_000_000.0
-    rows = usagelog.recon_view([
-        {"t0": base, "t1": base + 3600, "account": "me@x.org",
-         "pct0": 5, "pct1": 9, "dpct": 4, "tokens": 1500, "reset": False},
-        {"t0": base + 3600, "t1": base + 7200, "account": None,
-         "pct0": 9, "pct1": 2, "dpct": -7, "tokens": 50, "reset": True},
-    ])
-    assert len(rows) == 2
-    span, meas, est, note = rows[0]
-    assert "→" in span and meas == "5%→9% (Δ+4)"
-    assert est == "~1.5k" and note == "me@x.org"
-    _, meas2, est2, note2 = rows[1]
-    assert "리셋" in meas2 and "Δ" not in meas2, meas2
-    assert est2 == "~50" and note2 == "계정혼합/미상"
-
-
-async def test_recon_chart_geometry_and_scroll():
-    """시간축 그래프(요청 2026-06-20): recon_chart 가 구간을 세로 막대 격자로 풀고,
-    높이=pct1(증가량 톱니), 좌우 스크롤(x_off)이 보이는 구간 창을 옮긴다."""
-    base = 1_700_000_000.0
-    ivs = [{"t0": base + i * 3600, "t1": base + (i + 1) * 3600,
-            "pct0": i, "pct1": i + 1, "dpct": 1, "tokens": 100,
-            "reset": False} for i in range(30)]
-
-    # 넓은 폭: 일부만 들어가고 최신이 오른쪽(x_off=0 → i1=n-1).
-    ch = usagelog.recon_chart(ivs, plot_w=10, plot_h=5, x_off=0, step=2)
-    assert ch["n"] == 30 and ch["i1"] == 29
-    cap = ch["i1"] - ch["i0"] + 1
-    assert ch["max_off"] == 30 - cap
-    # 격자 크기·열↔구간 매핑(막대는 step 간격, 사이는 None).
-    assert len(ch["grid"]) == 5 and all(len(r) == 10 for r in ch["grid"])
-    assert ch["col_iv"][0] is not None and ch["col_iv"][1] is None
-
-    # 더 높은 pct 막대가 더 많은 칸을 채운다(증가량 가시화). pct=100 vs pct=2 비교.
-    hi = usagelog.recon_chart(
-        [{"t0": base, "t1": base + 1, "pct0": 0, "pct1": 100, "dpct": 100,
-          "tokens": 1, "reset": False}], 4, 8, 0, 2)
-    filled = sum(1 for r in hi["grid"] if r[0] != " ")
-    assert filled == 8, "100%% 막대는 전 높이를 채워야"
-    lo = usagelog.recon_chart(
-        [{"t0": base, "t1": base + 1, "pct0": 0, "pct1": 5, "dpct": 5,
-          "tokens": 1, "reset": False}], 4, 8, 0, 2)
-    lo_filled = sum(1 for r in lo["grid"] if r[0] != " ")
-    assert 0 < lo_filled < 8, "5%% 막대는 바닥 일부만"
-
-    # 좌우 스크롤: x_off 증가 → 더 이전 구간 창. 과대 x_off 는 가장 옛으로 클램프.
-    sc = usagelog.recon_chart(ivs, plot_w=10, plot_h=5, x_off=5, step=2)
-    assert sc["i1"] == 29 - 5
-    end = usagelog.recon_chart(ivs, plot_w=10, plot_h=5, x_off=10 ** 6, step=2)
-    assert end["i0"] == 0 and end["x_off"] == end["max_off"]
-
-    # 빈 입력: 안전한 빈 격자.
-    empty = usagelog.recon_chart([], 10, 5, 0, 2)
-    assert empty["n"] == 0 and empty["i0"] == -1 and empty["labels"] == []
-
-
-async def test_recon_chart_axis_max_always_100():
-    """사용자 요청 2026-06-22: 세로축 최댓값은 **항상 100**(이전 2026-06-21 의 '값이
-    다 낮으면 50 으로 좁히기'를 되돌림 — 절대 5h 사용률을 한눈에 비교). 값이 낮아도
-    100 분모라 막대가 그만큼 낮게 그려진다."""
-    base = 1_700_000_000.0
-    low = [{"t0": base, "t1": base + 1, "pct0": 0, "pct1": 40, "dpct": 40,
-            "tokens": 1, "reset": False}]
-    ch = usagelog.recon_chart(low, plot_w=2, plot_h=8, x_off=0, step=2)
-    assert ch["axis_max"] == 100, "축 항상 100"
-    # 40/100=0.4 → 8칸 중 약 3칸(분모 50 이던 종전엔 ~6칸).
-    filled = sum(1 for r in ch["grid"] if r[0] != " ")
-    assert 2 <= filled <= 4, (filled, "축 100 이면 40%% 막대는 ~3칸")
-    hi = usagelog.recon_chart(
-        [{"t0": base, "t1": base + 1, "pct0": 0, "pct1": 55, "dpct": 55,
-          "tokens": 1, "reset": False}], 2, 8, 0, 2)
-    assert hi["axis_max"] == 100
-
-
-async def test_recon_chart_segments_bar_by_model():
-    """요청 2026-06-21: 한 막대 높이를 모델 토큰 점유비로 세그먼트한다(cell_model).
-    100% 막대(전 높이=8칸), models opus:75 sonnet:25 → 위 6칸 opus, 아래 2칸 sonnet
-    (정의 순 haiku<sonnet<opus<fable 으로 바닥부터 쌓아 sonnet 이 아래)."""
-    iv = {"t0": 0, "t1": 1, "pct0": 0, "pct1": 100, "dpct": 100,
-          "tokens": 100, "reset": False,
-          "models": {"opus": 75, "sonnet": 25}}
-    ch = usagelog.recon_chart([iv], plot_w=2, plot_h=8, x_off=0, step=2)
-    cm = ch["cell_model"]
-    col = [cm[r][0] for r in range(8)]          # 위→아래
-    assert col == ["opus"] * 6 + ["sonnet"] * 2, col
-
-    # 모델 분해가 없으면 cell_model 은 전부 'unknown'(사용자 요청 2026-06-22 — 종전
-    # None→임계색 폴백이 다른 모델처럼 보이던 것을 회색 '?'로 통일, 범례에도 표시).
-    bare = {"t0": 0, "t1": 1, "pct0": 0, "pct1": 100, "dpct": 100,
-            "tokens": 0, "reset": False}
-    cb = usagelog.recon_chart([bare], 2, 8, 0, 2)["cell_model"]
-    assert all(cb[r][0] == "unknown" for r in range(8))
 
 
 async def test_model_cell_sequence_largest_remainder():

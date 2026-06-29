@@ -384,7 +384,6 @@ def _on_token_log_msg(app, msg):
         usage=getattr(app.status, "usage_limits", None),
         total_all=msg.get("total_all"),
         daily=msg.get("daily"),
-        reconcile=msg.get("reconcile"),
         daily_pct=msg.get("daily_pct"),
         hourly_pct=msg.get("hourly_pct"),
         hourly_week_pct=msg.get("hourly_week_pct"),
@@ -850,16 +849,8 @@ class _ClaudeCodePlugin:
                 recs = (usagedb.query_records(conn, limit=lim)
                         if conn is not None else [])
                 daily = usagedb.daily_breakdown(conn) if conn is not None else []
-            # 활동신호 lifetime Σ(스크랩) — 팝업 'activity~' 줄·대사 뷰가 소비.
+            # 활동신호 lifetime Σ(스크랩) — 팝업 'activity~' 줄이 소비.
             total_all = usagedb.total_all(conn) if conn is not None else 0
-            # S6 T2: 대사(reconcile) 구간 — 실측 스냅샷 Δpct vs 스크랩 Σ. 진단
-            # 전용 데이터라 표시는 TokenLogScreen [대사] 뷰만 소비한다.
-            # 항목5(2026-06-22): 캡을 20→200 으로 올린다. 종전 20 은 일반 폭의 차트
-            # capacity(35~38)보다 작아 [대사] 그래프가 늘 전 구간을 담아 ←→ 스크롤이
-            # 영구 무력(_max_off==0)했다 — footer 의 스크롤 안내가 거짓 약속. 200 이면
-            # 구간이 화면을 넘겨 ←→ 가 실제로 더 옛 구간을 보여준다(스냅샷 쌍에서
-            # 생겨 보통 수십~수백 — 페이로드 영향 미미).
-            recon = usagedb.reconcile(conn, limit=200) if conn is not None else []
             # §10-D: 세션 5h 한도 최대%(권위 /usage). 스크랩 Σ 가 5h 소비를 과소반영
             # 하므로 사용량 뷰가 '얼마나 썼나'를 이 값으로 보인다. daily=일자별(레거시
             # 조인용 유지), hourly=시각별(5h 비율은 시간 단위 뷰에 둔다 — 사용자 결정
@@ -892,7 +883,7 @@ class _ClaudeCodePlugin:
                          else {})
             return {"t": "token_log", "records": recs,
                     "total_all": total_all,
-                    "daily": daily, "reconcile": recon,
+                    "daily": daily,
                     "daily_pct": daily_pct, "hourly_pct": hourly_pct,
                     "hourly_week_pct": hourly_week,
                     "active_session": active_sid,
