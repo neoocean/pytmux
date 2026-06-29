@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pytmux — 마우스로 쓰는 tmux, Claude Code 통합 터미널 멀티플렉서</title>
+<meta name="description" content="Python/Textual 로 만든 tmux 유사 터미널 멀티플렉서. 마우스·메뉴 1급 지원, 셸 영속, Claude Code 토큰 추적·자동 재개, 원격 페더레이션. macOS/Linux/Windows.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <span class="brand"><span class="prompt">❯</span> pytmux</span>
+    <div class="nav-links">
+      <a href="#features">기능</a>
+      <a href="#claude">Claude 연동</a>
+      <a href="#gallery">화면</a>
+      <a href="#install">설치</a>
+      <a href="guide.html">상세 가이드</a>
+      <a href="#download">다운로드</a>
+      <a class="gh" href="https://github.com/neoocean/pytmux" target="_blank" rel="noopener">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ───────── 히어로 ───────── -->
+<header class="hero">
+  <div class="wrap">
+    <span class="eyebrow">Python · Textual · 단일 서버 / 다중 클라이언트</span>
+    <h1>외우지 않아도 되는 <span class="grad">터미널 멀티플렉서</span></h1>
+    <p class="lede">
+      tmux 처럼 하나의 터미널을 여러 패널·탭으로 나눠 쓰되, <strong>마우스·메뉴를 1급으로</strong>
+      지원합니다. 앱을 닫아도 셸은 살아 있고, <strong>Claude Code</strong> 토큰까지 자동으로
+      추적·절감합니다. macOS · Linux · Windows 네이티브.
+    </p>
+    <div class="cta">
+      <a class="btn btn-primary" href="#install">설치하고 시작하기</a>
+      <a class="btn btn-ghost" href="https://github.com/neoocean/pytmux" target="_blank" rel="noopener">GitHub 에서 보기 ↗</a>
+      <a class="btn btn-ghost" href="guide.html">상세 가이드 →</a>
+    </div>
+    <div class="hero-shot">
+      <img src="../image/02-split-lr.svg" alt="pytmux — 하나의 터미널을 좌우 패널로 분할한 화면. 활성 패널은 파란 테두리.">
+    </div>
+  </div>
+</header>
+
+<!-- ───────── 핵심 가치 3열 ───────── -->
+<section>
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Why pytmux</span>
+      <h2>tmux 의 힘, 더 낮은 진입장벽</h2>
+      <p>명령어를 다 외우지 못해도, 마우스를 더 쓰고 싶어도 괜찮습니다. 세 가지 방식 모두로 제어합니다.</p>
+    </div>
+    <div class="pillars">
+      <div class="pillar">
+        <div class="ic">🖱️</div>
+        <h3>마우스 1급 지원</h3>
+        <p>경계선 드래그로 패널 크기 조절, 클릭으로 포커스, 우클릭으로 메뉴, 휠로 스크롤백.
+           Shift+드래그로 두 패널을 맞바꿉니다.</p>
+      </div>
+      <div class="pillar">
+        <div class="ic">🧭</div>
+        <h3>메뉴 · 명령 프롬프트</h3>
+        <p>단축키를 외우지 않아도 메뉴(<span class="inline-code">prefix Enter</span>)와 명령
+           프롬프트(<span class="inline-code">prefix :</span>)로 거의 모든 동작을 합니다.</p>
+      </div>
+      <div class="pillar">
+        <div class="ic">♻️</div>
+        <h3>셸 영속</h3>
+        <p>셸 PTY 를 백그라운드 데몬이 보유합니다. 앱을 닫거나 터미널 창을 닫아도 셸은
+           계속 돌고, 다시 실행하면 그대로 이어 붙습니다.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── 기능 + 스크린샷 교차 ───────── -->
+<section id="features">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Core features</span>
+      <h2>패널 · 탭 · 스크롤백, 익숙하게</h2>
+      <p>탭 → 윈도우 → 패널 계층. 최상위는 탭이고, 각 탭을 패널 집합으로 분할합니다.</p>
+    </div>
+
+    <div class="feature">
+      <div class="ftext">
+        <h3>패널 분할과 활성 테두리</h3>
+        <p>한 화면을 좌우·상하로 자유롭게 분할하고 중첩합니다. 패널이 둘 이상이면 각 패널을
+           테두리로 감싸고, <strong>활성 패널은 파란색</strong>으로 강조합니다.</p>
+        <ul>
+          <li><span class="inline-code">prefix %</span> 좌우 분할 · <span class="inline-code">prefix "</span> 상하 분할</li>
+          <li><span class="inline-code">prefix z</span> 로 패널 줌(전체화면) 토글</li>
+          <li>경계선을 마우스로 끌어 크기 조절, Shift+드래그로 swap</li>
+        </ul>
+      </div>
+      <div class="shot">
+        <img src="../image/03-split-nested.svg" alt="중첩 분할된 여러 패널">
+        <div class="cap">03 · 중첩 분할 레이아웃</div>
+      </div>
+    </div>
+
+    <div class="feature rev">
+      <div class="ftext">
+        <h3>상단 탭바와 여러 윈도우</h3>
+        <p>탭이 하나여도 상단에 탭 인터페이스가 나타나고, 마지막 탭 오른쪽의
+           <span class="inline-code">[+]</span> 로 새 탭을 엽니다. 탭은 1번부터 번호가 매겨지고
+           드래그로 재정렬합니다.</p>
+        <ul>
+          <li>활성 탭은 아래 콘텐츠와 연결된 노트북 탭 모양</li>
+          <li>탭 고정(pin), 이름 변경, 닫기 확인</li>
+          <li>하단 상태표시줄에 탭 목록 · 줌 상태 · 시계</li>
+        </ul>
+      </div>
+      <div class="shot">
+        <img src="../image/08-tabs-multi.svg" alt="여러 탭이 열린 상단 탭바">
+        <div class="cap">08 · 다중 탭 + 상단 탭바</div>
+      </div>
+    </div>
+
+    <div class="feature">
+      <div class="ftext">
+        <h3>메뉴와 명령 프롬프트</h3>
+        <p>우클릭 또는 <span class="inline-code">prefix Enter</span> 로 패널·레이아웃·탭
+           그룹으로 정리된 메뉴를 엽니다. <span class="inline-code">prefix :</span> 명령
+           프롬프트는 공백 검색·자동완성·인자 이력을 지원합니다.</p>
+        <ul>
+          <li>서브메뉴로 정리된 계층형 메뉴</li>
+          <li>명령 팝업에서 전체 명령 목록 탐색</li>
+          <li><span class="inline-code">bind-key</span> 로 런타임 키 재바인딩</li>
+        </ul>
+      </div>
+      <div class="shot">
+        <img src="../image/36-menu-submenu.svg" alt="서브메뉴가 펼쳐진 컨텍스트 메뉴">
+        <div class="cap">36 · 서브메뉴 · 06 명령 프롬프트</div>
+      </div>
+    </div>
+
+    <div class="feature rev">
+      <div class="ftext">
+        <h3>패널별 스크롤백</h3>
+        <p>copy-mode 로 따로 들어가지 않아도, 패널 위에서 휠을 올리면 바로 지난 출력을
+           봅니다. 패널마다 독립적입니다.</p>
+        <ul>
+          <li>마우스 휠로 즉시 스크롤백 진입</li>
+          <li>스크롤백 텍스트 검색 · 점프</li>
+          <li>붙여넣기는 bracketed paste 로 한 번에(줄마다 실행 안 됨)</li>
+        </ul>
+      </div>
+      <div class="shot">
+        <img src="../image/15-scrollback.svg" alt="패널 스크롤백 화면">
+        <div class="cap">15 · 패널별 스크롤백</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── Claude Code 통합 ───────── -->
+<section id="claude" style="background:var(--bg-soft);">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Claude Code 통합</span>
+      <h2>토큰을 보고, 아끼고, 자동으로 잇습니다</h2>
+      <p>패널에서 돌리는 Claude Code 의 상태·토큰·한도를 상태줄과 팝업으로 한눈에.</p>
+    </div>
+
+    <div class="feature">
+      <div class="ftext">
+        <h3>상태 표시 + 토큰 리밋 자동 재개</h3>
+        <p>실행 중인 탭에 상태 아이콘(<strong>대기 ○ / 처리중 ◐ / 리밋 멈춤 ⊘</strong>)을
+           표시하고, 비활성 탭 작업이 끝나면 탭 배경색으로 알립니다. 사용량 리밋에 걸려
+           멈추면 해제 시각을 읽어 <strong>그때 자동으로 재개</strong>합니다.</p>
+        <ul>
+          <li><span class="inline-code">prefix R</span> 자동 재개 토글(상태줄 <span class="inline-code">AR</span>)</li>
+          <li>권한모드 footer 클릭 → auto / default / plan 선택</li>
+          <li><span class="inline-code">claude-rules</span> 로 시작 규칙 자동 주입</li>
+        </ul>
+      </div>
+      <div class="shot">
+        <img src="../image/12-claude-autoresume.svg" alt="Claude 자동 재개 상태줄">
+        <div class="cap">12 · 토큰 리밋 자동 재개</div>
+      </div>
+    </div>
+
+    <div class="feature rev">
+      <div class="ftext">
+        <h3>토큰 사용량 팝업</h3>
+        <p>상태줄의 토큰 배지를 클릭하면 <strong>기간 / 계정 / 세션 / 한도 / 대사 / 경고</strong>
+           노트북 탭으로 보는 사용량 팝업이 열립니다. 화면 스크랩이 아닌
+           <span class="inline-code">~/.claude/*.jsonl</span> 트랜스크립트 회계로
+           cache_read 까지 정확히 집계합니다.</p>
+        <ul>
+          <li>시간 뷰 — 시각별 5h 한도를 계단식 막대로</li>
+          <li>한도 뷰 — <span class="inline-code">/usage</span> 실측 막대 + 리셋 카운트다운</li>
+          <li>계층형 시간 트리(월 → 주 → 일 → 시각)</li>
+        </ul>
+      </div>
+      <div class="shot">
+        <img src="../image/30-usage-view.svg" alt="토큰 사용량 팝업 뷰">
+        <div class="cap">30 · 토큰 사용량 뷰 · 38 한도 뷰</div>
+      </div>
+    </div>
+
+    <div class="feature">
+      <div class="ftext">
+        <h3>실제 Claude 패널에서</h3>
+        <p>진짜 <span class="inline-code">claude</span> CLI 를 패널에서 돌리며 모델 배지,
+           프롬프트 이력 미리보기·점프, 컨텍스트 하드스톱 자동 복구까지 그대로 동작합니다.</p>
+        <ul>
+          <li>멀티라인 프롬프트 붙여넣기 · 이미지 붙여넣기 패스스루</li>
+          <li>프롬프트 히스토리 플러그인으로 보낸 프롬프트 점프</li>
+          <li>피드백 문구 자동 숨김 옵션</li>
+        </ul>
+      </div>
+      <div class="shot">
+        <img src="../image/22-claude-real.svg" alt="실제 Claude Code 가 실행 중인 패널">
+        <div class="cap">22 · 실 Claude 패널</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── 운영/원격 ───────── -->
+<section>
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Operations</span>
+      <h2>죽이지 않고 고치고, 멀리까지 잇습니다</h2>
+      <p>실행 중인 셸을 살린 채 코드를 교체하고, ssh 너머의 다른 pytmux 서버에 붙습니다.</p>
+    </div>
+
+    <div class="feature">
+      <div class="ftext">
+        <h3>작업 보존 서버 재시작</h3>
+        <p><span class="inline-code">restart-server</span> · <span class="inline-code">restart-all</span> ·
+           <span class="inline-code">restart-check</span>(드라이런)로, 열린 패널의 <strong>셸 ·
+           실행 중 프로그램 · 스크롤백을 살린 채</strong> 코드만 새 이미지로 교체합니다(제자리 re-exec).
+           Windows 는 아웃오브프로세스 pty-host 로 세션을 유지합니다.</p>
+      </div>
+      <div class="shot">
+        <img src="../image/21-restart-check.svg" alt="재시작 드라이런 화면">
+        <div class="cap">21 · restart-check 드라이런</div>
+      </div>
+    </div>
+
+    <div class="feature rev">
+      <div class="ftext">
+        <h3>원격 페더레이션 (ssh)</h3>
+        <p><span class="inline-code">remote-attach</span> 로 ssh 너머 다른 머신의 pytmux 서버에
+           붙습니다. 원격 탭은 탭바·외곽선을 <strong>분홍색</strong>으로 구분하고, 원격 서버가
+           없으면 분리 서버를 자동 기동합니다.</p>
+      </div>
+      <div class="shot">
+        <img src="../image/34-remote-attach.svg" alt="원격 attach 화면">
+        <div class="cap">34 · 원격 attach</div>
+      </div>
+    </div>
+
+    <div class="feature">
+      <div class="ftext">
+        <h3>네트워크 응답성 표시 + 회복</h3>
+        <p>클라↔서버 IPC 지연이 커지면 패널 외곽선을 <strong>빨간색</strong>으로 표시하고,
+           고착되면 <span class="inline-code">reconnect</span>(또는 워치독 자동)으로
+           <strong>실행 중 셸 / Claude 를 죽이지 않고</strong> IPC 만 다시 세워 반응성을 회복합니다.</p>
+      </div>
+      <div class="shot">
+        <img src="../image/16-degraded.svg" alt="응답성 저하 표시">
+        <div class="cap">16 · 응답성 저하 표시</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── 플러그인 ───────── -->
+<section style="background:var(--bg-soft);">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Plugins · delete-to-disable</span>
+      <h2>디렉토리를 지우면 기능이 사라집니다</h2>
+      <p>시계·달력·디렉토리 트리·IME 배지·Claude 통합·토큰 화면이 모두 한 디렉토리로 응집된 플러그인입니다.</p>
+    </div>
+    <div class="gallery">
+      <div class="gcard"><img src="../image/18-clock.svg" alt="시계 모드"><div class="meta"><b>시계 · 달력</b><span>시계 클릭 → 시계 모드, 날짜 클릭 → 달력 오버레이</span></div></div>
+      <div class="gcard"><img src="../image/27-ncd.svg" alt="디렉토리 트리 ncd"><div class="meta"><b>ncd 디렉토리 트리</b><span>루트→cwd 펼침, speed search, Enter 로 cd</span></div></div>
+      <div class="gcard"><img src="../image/33-ime.svg" alt="IME 한영 배지"><div class="meta"><b>IME 한/영 배지</b><span>OS 입력기 상태를 커서줄에 표시</span></div></div>
+      <div class="gcard"><img src="../image/31-prompt-history.svg" alt="프롬프트 히스토리"><div class="meta"><b>프롬프트 히스토리</b><span>보낸 프롬프트 미리보기·검색·점프</span></div></div>
+      <div class="gcard"><img src="../image/32-p4changes.svg" alt="Perforce CL 목록"><div class="meta"><b>Perforce CL 목록</b><span>변경 목록 조회 · describe</span></div></div>
+      <div class="gcard"><img src="../image/40-settings.svg" alt="통합 설정 팝업"><div class="meta"><b>통합 설정 팝업</b><span><span class="inline-code">:settings</span> 카테고리별 설정 화면</span></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── 플랫폼/통계 ───────── -->
+<section>
+  <div class="wrap">
+    <div class="stats">
+      <div class="stat"><div class="n">3</div><div class="l">macOS · Linux · Windows</div></div>
+      <div class="stat"><div class="n">950+</div><div class="l">헤드리스 테스트 통과</div></div>
+      <div class="stat"><div class="n">1</div><div class="l">파이썬 스크립트로 실행</div></div>
+      <div class="stat"><div class="n">∞</div><div class="l">셸 영속 (detach 후 재접속)</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── 설치 ───────── -->
+<section id="install">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Get started</span>
+      <h2>설치는 한 줄, 실행도 한 줄</h2>
+      <p>파이썬만 있으면 됩니다. Python 3.11 이상 권장.</p>
+    </div>
+    <div class="code">
+<span class="c"># 의존성 설치 (Textual · pyte · wcwidth)</span>
+pip install -r requirements.txt
+<span class="c"># Windows 는 추가로: pip install pywinpty</span>
+
+<span class="c"># 실행 — 서버가 없으면 자동 기동 후 attach</span>
+python3 pytmux.py
+
+<span class="c"># 'pytmux' 명령으로 등록(선택)</span>
+./install.sh
+
+<span class="c"># 어디서든:</span>
+<span class="p">pytmux</span>              <span class="c"># attach (없으면 기동)</span>
+<span class="p">pytmux</span> ls           <span class="c"># 탭/패널 요약</span>
+<span class="p">pytmux</span> cmd new-tab   <span class="c"># 외부에서 서버 제어</span>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── 다운로드 / GitHub ───────── -->
+<section id="download" style="background:var(--bg-soft);">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Download · GitHub</span>
+      <h2>내려받기</h2>
+      <p>소스는 GitHub 에 공개되어 있습니다. 클론하거나 zip 으로 받아 바로 실행하세요.</p>
+    </div>
+    <div class="dl-grid">
+      <a class="dl-card" href="https://github.com/neoocean/pytmux" target="_blank" rel="noopener">
+        <div class="dl-ic">📦</div>
+        <b>GitHub 저장소</b>
+        <span>소스 · 이슈 · 위키(매뉴얼·갤러리·플러그인 가이드)</span>
+        <span class="dl-link">github.com/neoocean/pytmux ↗</span>
+      </a>
+      <a class="dl-card" href="https://github.com/neoocean/pytmux/archive/refs/heads/main.zip" target="_blank" rel="noopener">
+        <div class="dl-ic">⬇️</div>
+        <b>zip 다운로드</b>
+        <span>최신 <code class="inline-code">main</code> 브랜치 스냅샷</span>
+        <span class="dl-link">main.zip ↗</span>
+      </a>
+      <a class="dl-card" href="https://github.com/neoocean/pytmux/wiki" target="_blank" rel="noopener">
+        <div class="dl-ic">📖</div>
+        <b>위키 · 매뉴얼</b>
+        <span>설치 · 사용 매뉴얼 · 화면 갤러리 · 플러그인 작성</span>
+        <span class="dl-link">/wiki ↗</span>
+      </a>
+    </div>
+    <div class="code" style="margin-top:24px;">
+<span class="c"># git 으로 클론</span>
+git clone https://github.com/neoocean/pytmux.git
+cd pytmux
+pip install -r requirements.txt
+python3 pytmux.py
+    </div>
+  </div>
+</section>
+
+<!-- ───────── 만든 사람 / 연락 ───────── -->
+<section id="contact">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Contact</span>
+      <h2>만든 사람에게</h2>
+      <p>버그 제보·제안·문의는 GitHub 이슈 또는 메일로 보내 주세요.</p>
+    </div>
+    <div class="contact-card">
+      <div class="contact-row">
+        <span class="contact-ic">✉️</span>
+        <a class="contact-mail" href="mailto:me@woojinkim.org?subject=pytmux">me@woojinkim.org</a>
+      </div>
+      <div class="contact-sub">
+        이슈/기능 요청은 <a href="https://github.com/neoocean/pytmux/issues" target="_blank" rel="noopener">GitHub Issues</a> 가 가장 빠릅니다.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── CTA 배너 ───────── -->
+<section>
+  <div class="wrap">
+    <div class="banner">
+      <h2>더 깊이 들어가 볼까요?</h2>
+      <p>설치부터 패널·탭·마우스·메뉴·명령·Claude 연동·운영까지, 실제 화면과 함께.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="guide.html">상세 가이드 열기 →</a>
+        <a class="btn btn-ghost" href="#gallery">화면 갤러리</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── 갤러리 ───────── -->
+<section id="gallery" style="background:var(--bg-soft);">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Gallery</span>
+      <h2>주요 화면 한눈에</h2>
+    </div>
+    <div class="gallery">
+      <div class="gcard"><img src="../image/01-first-run.svg" alt="첫 실행"><div class="meta"><b>첫 실행</b><span>평소 쓰던 셸이 전체 화면으로</span></div></div>
+      <div class="gcard"><img src="../image/04-zoom.svg" alt="패널 줌"><div class="meta"><b>패널 줌</b><span>한 패널을 전체화면으로</span></div></div>
+      <div class="gcard"><img src="../image/05-menu.svg" alt="컨텍스트 메뉴"><div class="meta"><b>컨텍스트 메뉴</b><span>우클릭 / prefix Enter</span></div></div>
+      <div class="gcard"><img src="../image/09-calendar.svg" alt="달력 오버레이"><div class="meta"><b>달력 오버레이</b><span>날짜 클릭으로 토글</span></div></div>
+      <div class="gcard"><img src="../image/13-perm-mode.svg" alt="권한 모드 선택"><div class="meta"><b>권한 모드</b><span>auto / default / plan</span></div></div>
+      <div class="gcard"><img src="../image/24-token-log.svg" alt="토큰 로그"><div class="meta"><b>토큰 로그</b><span>기간별 사용량 추이</span></div></div>
+    </div>
+  </div>
+</section>
+
+<footer class="foot">
+  <div class="wrap">
+    <div>
+      <span class="brand"><span class="prompt">❯</span> pytmux</span>
+      &nbsp; — Python/Textual 터미널 멀티플렉서
+    </div>
+    <div class="foot-links">
+      <a href="guide.html">상세 가이드</a> ·
+      <a href="#install">설치</a> ·
+      <a href="#download">다운로드</a> ·
+      <a href="https://github.com/neoocean/pytmux" target="_blank" rel="noopener">GitHub</a> ·
+      <a href="mailto:me@woojinkim.org?subject=pytmux">me@woojinkim.org</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
