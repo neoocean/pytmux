@@ -55,6 +55,11 @@ class _Pty:
     def set_winsize(self, rows, cols):
         pass
 
+    # 버스트 감지 시 _on_pane_data 가 드레인 경로로 돌리며 pause/resume 를 부른다
+    # (PtyProcess 기본 no-op 과 동치 — 스텁도 갖춘다).
+    def pause_reader(self): pass
+    def resume_reader(self): pass
+
 
 class _EgressMonitor:
     """서버의 아웃바운드 1차 함수를 가로채 **시도된 모든 외부 연결 목표**를 기록하고

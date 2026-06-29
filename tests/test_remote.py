@@ -1420,6 +1420,11 @@ class _AckSpy:
     def set_winsize(self, rows, cols):
         pass
 
+    # 버스트 감지 시 _on_pane_data 가 드레인 경로로 돌리며 pause/resume 를 부른다
+    # (PtyProcess 기본 no-op 과 동치 — 스파이도 갖춘다).
+    def pause_reader(self): pass
+    def resume_reader(self): pass
+
     def acks(self):
         from pytmuxlib import sshwrap
         return sum(1 for w in self.writes if sshwrap.NEST_ACK in w)
