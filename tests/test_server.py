@@ -158,6 +158,10 @@ async def test_pane_xtversion_query_gets_pytmux_reply():
         class _Spy:
             def write(self, b):
                 writes.append(b)
+            # 연속 청크가 버스트로 감지되면 _on_pane_data 가 드레인 경로로 돌리며
+            # pause/resume 를 부른다(PtyProcess 기본 no-op 과 동치 — 스파이도 갖춘다).
+            def pause_reader(self): pass
+            def resume_reader(self): pass
         try:
             p.pty = _Spy()
             # ① 한 청크 안의 질의 → 응답
@@ -3374,6 +3378,48 @@ async def test_coalesce_repaints_collapses_feedbuf_and_persists():
         await teardown(srv, task, sock)
 
 
+async def test_small_chunk_burst_engages_drain_backpressure():
+    # 회귀: 짧은 간격으로 연달아 오는 소형 청크(≤FEED_SLICE)도 버스트로 감지해 드레인
+    # 경로(pause 백프레셔·슬라이스 양보)로 돌린다. Windows owned-ConPTY 는 read 를
+    # FEED_SLICE 로 캡해 모든 청크가 인라인 한계 이하 → 과거엔 대량 출력도 드레인을 못
+    # 타고 인라인으로 연속 처리돼 이벤트 루프가 포화·입력이 굶었다(Claude Code 패널).
+    from pytmuxlib.model import Pane
+    from pytmuxlib.protocol import FEED_SLICE
+    from pytmuxlib.serverpty import BURST_RUN
+    srv, task, sock = await server_only()
+    try:
+        pauses = []
+
+        class _Spy:
+            def write(self, b): pass
+            def pause_reader(self): pauses.append(True)
+            def resume_reader(self): pass
+
+        pane = Pane(0, -1, 80, 24)
+        pane.pty = _Spy()
+        chunk = b"x" * 64          # 인라인 한계보다 훨씬 작음
+        assert len(chunk) <= FEED_SLICE
+
+        # 첫 청크는 유휴 후 단발 → 인라인(드레인 태스크 없음).
+        srv._on_pane_data(pane, chunk)
+        assert pane._feed_task is None, "단발 소형 청크는 인라인 즉시 처리"
+        assert pauses == [], "단발은 reader 를 멈추지 않음"
+
+        # 동기 연속 호출 → monotonic 간격이 BURST_GAP 이하 → 버스트 누적 → 드레인 진입.
+        total = chunk
+        for _ in range(BURST_RUN + 2):
+            srv._on_pane_data(pane, chunk)
+            total += chunk
+        assert pane._feed_task is not None, "버스트 감지 시 드레인 경로로 전환"
+        assert pauses, "버스트 드레인은 reader 를 멈춰 백프레셔를 건다"
+
+        await _drain_pane_feed(pane)
+        # 모든 바이트가 손실 없이 pyte 에 먹였는지(렌더된 한 줄에 64*N 개의 x).
+        assert pane_text(pane).count("x") == len(total), "버스트 드레인도 무손실"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_set_vt_parser_validates_and_persists():
     """set_vt_parser 명령 계약: 기본 native(2026-06-16 전환) → pyte 로 명시 변경 시
     검증·opts.json 영속·재시작 round-trip. 잘못된 값은 무시(현행 유지). (패널이
@@ -3806,22 +3852,29 @@ async def test_manual_clear_resets_token_session():
         await teardown(srv, task, sock)
 
 
-async def test_token_log_reply_includes_daily():
-    """request_token_log 회신에 버킷 전체 이력 집계용 일자별 합성 레코드(daily)가
-    실린다(cap 무관 일/주/월). 플러그인 handle_server_request 훅 경유(코어 serverio
-    는 내용을 모름)."""
+async def test_token_log_reply_includes_reconcile():
+    """S6 T2: request_token_log 회신에 대사 구간(reconcile)이 실린다 — 실측 스냅샷
+    Δpct 와 그 구간 스크랩 Σ(같은 계정 한정). 플러그인 handle_server_request 훅 경유
+    (코어 serverio 는 내용을 모름)."""
     from pytmuxlib import usagedb
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
         conn = srv._tokens_db_conn()
         A = "me@woojinkim.org"
+        for ts, pct in [(100.0, 5), (500.0, 9)]:
+            usagedb.insert_limits(conn, usagedb.snap_from_usage(
+                {"session": {"pct": pct, "reset": "2pm"}, "account": A},
+                ts, "probe"))
         usagedb.insert(conn, {"ts": 200.0, "tab": 0, "pane": 1, "session": 1,
                               "account": A, "tokens": 300})
         resp = srv.plugins.handle_server_request(
             srv, sess, "request_token_log", {"limit": 100})
         assert resp and resp["t"] == "token_log"
-        # 버킷 전체 이력 집계용 일자별 합성 레코드가 실린다(cap 무관 일/주/월).
+        recon = resp.get("reconcile")
+        assert isinstance(recon, list) and len(recon) == 1, recon
+        assert recon[0]["dpct"] == 4 and recon[0]["tokens"] == 300, recon[0]
+        # 버킷 전체 이력 집계용 일자별 합성 레코드도 함께 실린다(cap 무관 일/주/월).
         daily = resp.get("daily")
         assert isinstance(daily, list) and len(daily) == 1, daily
         assert daily[0]["tokens"] == 300 and daily[0]["account"] == A, daily[0]

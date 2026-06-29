@@ -32,6 +32,16 @@ _NEST_DCS_RE = sshwrap.NEST_DCS_RE
 # 이를 넘는 후보는 위조/우연이므로 버린다(무한 누적 방지).
 NEST_CARRY_MAX = 8 * 1024
 
+# 버스트 감지(_on_pane_data) 임계. Windows owned-ConPTY 는 read 를 FEED_SLICE 로 캡해
+# 모든 청크가 인라인 한계 이하 → 대량 출력도 버스트 드레인을 못 타고 인라인으로 연속
+# 처리돼 이벤트 루프가 포화·입력이 굶었다(Claude Code 등 끊임없는 alt-screen 리페인트).
+# 짧은 간격(BURST_GAP)으로 BURST_RUN 회 연달아 오면 버스트로 보고 드레인 경로로 돌린다.
+# 분명한 유휴(BURST_IDLE)가 오면 해제 — 그 사이(드레인 직후 resume 등)는 상태를 유지해
+# 드레인↔인라인 flap 을 막는다. 단발 대화형 에코는 간격이 커 인라인 즉시 처리로 남는다.
+BURST_GAP = 0.02     # 이 간격(초) 이하로 연속 도착하면 버스트 누적
+BURST_IDLE = 0.10    # 이 간격 이상 비면 버스트 상태 해제
+BURST_RUN = 3        # 연속 누적이 이 횟수 이상이면 버스트로 판정
+
 
 class ServerPtyMixin:
     # ---- PTY/패널 생성 ----
@@ -184,13 +194,26 @@ class ServerPtyMixin:
         # reader 를 잠깐 떼고(커널 PTY 백프레셔 유지 → 데이터 손실/메모리 폭증 없음)
         # FEED_SLICE 단위로 쪼개 먹이며 슬라이스마다 루프에 양보한다(_feed_drain).
         # 소량(대화형 에코 등)은 인라인 즉시 처리해 기존 경로와 동일하게 둔다.
+        # 버스트 감지: 짧은 간격으로 연달아 오는 청크의 연속 횟수를 센다. owned-ConPTY
+        # 처럼 read 가 FEED_SLICE 로 캡돼 청크가 항상 인라인 한계 이하인 백엔드에서도,
+        # 고빈도 버스트를 드레인 경로(pause 백프레셔·repaint coalesce·슬라이스 양보)로
+        # 돌려 이벤트 루프 포화·입력 굶주림을 막기 위함이다(§10 / Windows Claude 패널).
+        now = time.monotonic()
+        gap = now - pane._burst_ts
+        pane._burst_ts = now
+        if gap <= BURST_GAP:
+            pane._burst_run = min(pane._burst_run + 1, BURST_RUN)
+        elif gap >= BURST_IDLE:
+            pane._burst_run = 0      # 분명한 유휴 → 해제(단발 에코는 여기서 리셋)
+        # 그 사이 간격(BURST_GAP~BURST_IDLE)은 상태 유지 → 드레인 직후 resume 의 flap 방지.
+        bursting = pane._burst_run >= BURST_RUN
         if pane._feed_task is not None:
             # 이미 드레인 중 → 큐에 이어 붙이면 실행 중 태스크가 소비한다(POSIX 는
             # reader 가 멈춰 여기 거의 안 옴; pause 가 no-op 인 백엔드의 버스트 대비).
             pane._feedbuf += data
             self._coalesce_feed(pane)
             return
-        if len(data) <= FEED_SLICE:
+        if len(data) <= FEED_SLICE and not bursting:
             self._ingest_slice(pane, data)
             return
         pane._feedbuf += data
