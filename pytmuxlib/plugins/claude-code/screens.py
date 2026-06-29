@@ -83,6 +83,8 @@ i18n.register({
         "토큰리밋 자동재개": "Token-limit auto-resume",
         "세션 종료 시 토큰 사용량 화면 자동 표시":
             "Auto-open token usage screen when session ends",
+        "화면 깨짐 자동 완화(완료마다 재출력)":
+            "Auto-mitigate corruption (repaint each completion)",
         "권한모드 자동 오토": "Auto-switch permission mode to auto",
         "프롬프트 단위 클리어(완료마다 doc+/clear)":
             "Per-prompt clear (doc+/clear each completion)",

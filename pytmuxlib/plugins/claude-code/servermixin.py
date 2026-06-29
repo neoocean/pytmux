@@ -96,6 +96,12 @@ _FMT_LOG_TAIL_COLS = 160
 # 한 프레임 안 잡혀 idle 로 보였다 다시 busy)에 done 이 잘못 서서 탭이 잠깐 녹색이
 # 되는 것을 막는다. 30Hz flush 기준 ~0.1초 — 진짜 완료 알림 지연은 미미하다.
 _DONE_IDLE_FRAMES = 3
+# §10-I Claude 화면 깨짐 자동 완화의 디바운스 간격(초). busy→idle 완료 경계마다 무조건
+# redraw(SIGWINCH→전체 repaint) 하면 멀쩡한 정상 턴까지 한 프레임 번쩍여 깨짐보다 더
+# 거슬리므로, 마지막 자동 redraw 후 최소 이만큼 지나야 다시 유발한다(flicker·_send_full
+# 비용 억제). 근본원인(pyte SU/SD 미구현)은 p4 61614 로 별도 해결됐고, 이 완화는 그 외
+# 미구현 시퀀스로 인한 발산의 바닥 안전망이라 보수적으로(드물게) 둔다.
+_AUTO_REDRAW_DEBOUNCE_SEC = 10.0
 # §10-D P3/P4 트랜스크립트 증분 적재 디바운스. _XC_TAIL_FRAMES = 주기적 테일 간격
 # (30Hz 기준 ~1초) — 응답 종료(committed>0)엔 강제 테일하므로 정확 캡처는 이 주기와
 # 무관하고, 이 값은 장기 세션·서브에이전트/compaction usage 의 stragglers 만 위한
@@ -511,6 +517,37 @@ class ServerClaudeMixin:
             else bool(value)
         self._save_opts()
         return self.auto_token_on_exit
+
+    def set_claude_auto_redraw(self, value=None):
+        """§10-I Claude 화면 깨짐(부분갱신 발산) 자동 완화 토글. value 미지정 시 반전.
+        opts.json(plugin_opts) 영속, 기본 OFF. 켜면 _scan_claude 가 claude 패널의
+        busy→idle **완료 경계**(idle 이 _DONE_IDLE_FRAMES 안정)에서, 마지막 자동
+        redraw 후 디바운스가 지났을 때 그 패널에 1회 SIGWINCH(winsize 토글)를 유발해
+        alt-screen 앱이 화면을 전체 repaint 하게 한다(_auto_redraw_pane). 깨진 부분갱신
+        스냅샷을 깨끗한 전체 출력으로 덮는 **완화**다 — 근본은 외부(앱≠단말). busy 중엔
+        절대 유발하지 않고(진행 출력과 SIGWINCH 레이스 방지) claude 패널에만 적용한다.
+        값은 bool 로 단순화(on = idle-debounce 동작); 미래의 깨짐-감지 게이트(on-corruption)
+        는 이 토글을 확장해 덧댄다."""
+        self.claude_auto_redraw = (not self.claude_auto_redraw) if value is None \
+            else bool(value)
+        self._save_opts()
+        return self.claude_auto_redraw
+
+    def _auto_redraw_pane(self, p):
+        """§10-I: 한 claude 패널 PTY 에만 SIGWINCH(winsize 1줄 토글)를 유발해 alt-screen
+        앱이 현재 화면을 전체 repaint 하게 한다. serverpersist._induce_redraw_all 의
+        단일-패널판 — 비-claude 패널의 불필요한 flicker 를 피한다. 치수(rows/cols)는
+        불변이라 레이아웃(탭바·분할·커서)은 안 흔들리고, 앱의 repaint 출력은 평소
+        feed→flush 경로로 클라에 전달된다(별도 _send_full 불필요). pty 부재/OSError 는
+        조용히 무시(종료 중 패널)."""
+        pty = getattr(p, "pty", None)
+        if pty is None:
+            return
+        try:
+            pty.set_winsize(max(1, p.rows - 1), p.cols)
+            pty.set_winsize(p.rows, p.cols)
+        except OSError:
+            pass
 
     def _usage_exit_text(self, width: int = 80) -> bytes:
         """세션 종료 시 패널에 주입할 /usage 한도 요약을 plain-text(ANSI 최소)로 만든다.
@@ -1143,6 +1180,24 @@ class ServerClaudeMixin:
                         p._was_busy = True   # 작업 중이었음 → 다음 안정 idle 이 '완료'
                         if old_cl != "busy":
                             p._busy_since = time.monotonic()   # M17 S9: 턴 시작 시각
+                # §10-I Claude 화면 깨짐 자동 완화(opt-in, 기본 OFF). busy→idle 완료가
+                # 막 _DONE_IDLE_FRAMES 로 안정된 경계에서, claude 패널에 1회 SIGWINCH
+                # (winsize 토글)를 유발해 부분갱신 발산을 전체 repaint 로 덮는다. 가드:
+                # busy 중 금지(idle 확정에서만 — 진행 출력과 레이스 방지)·디바운스
+                # (flicker/_send_full 비용 억제)·claude 패널 한정(new_cl=='idle')·
+                # 활성/비활성 무관(둘 다 깨질 수 있어 아래 done 블록보다 먼저, _was_busy
+                # 가 살아 있을 때 본다). `== _DONE_IDLE_FRAMES` 로 완료 경계 한 프레임에만
+                # 걸려 idle 이 정적으로 머무는 동안 반복 유발하지 않는다(다음 busy→idle
+                # 마다 다시 1회). 근본원인(pyte SU/SD)은 p4 61614 로 해결됐고 바닥 안전망.
+                if (self.claude_auto_redraw
+                        and p._was_busy and new_cl == "idle"
+                        and p._idle_frames == _DONE_IDLE_FRAMES):
+                    nowm = time.monotonic()
+                    if nowm - p._auto_redraw_ts >= _AUTO_REDRAW_DEBOUNCE_SEC:
+                        p._auto_redraw_ts = nowm
+                        self._auto_redraw_pane(p)
+                # 비활성 탭 완료 알림(#22, 위 주석): busy 를 본 적 있고 idle 이
+                # _DONE_IDLE_FRAMES 안정되면 done 으로 확정(탭 녹색).
                 if (w is not win and t.monitor_claude and not t.has_claude_done
                         and p._was_busy and new_cl == "idle"
                         and p._idle_frames >= _DONE_IDLE_FRAMES):

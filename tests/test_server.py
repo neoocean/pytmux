@@ -475,6 +475,68 @@ async def test_auto_token_on_exit_toggle_and_persist():
         await teardown(srv, task, sock)
 
 
+async def test_claude_auto_redraw_toggle_and_persist():
+    """§10-I set_claude_auto_redraw: 기본 OFF, 토글 반전·명시 지정이 server 속성을
+    바꾸고 plugin_opts(server_opts_serialize)로 영속된다."""
+    from pytmuxlib import plugins
+    srv, task, sock = await server_only()
+    try:
+        reg = plugins.load()
+        assert srv.claude_auto_redraw is False, "기본 OFF"
+        assert srv.set_claude_auto_redraw() is True          # 반전 → on
+        assert srv.set_claude_auto_redraw() is False         # 반전 → off
+        assert srv.set_claude_auto_redraw(True) is True      # 명시 on
+        out = reg.server_opts_serialize(srv)
+        assert out["claude_auto_redraw"] is True
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_claude_auto_redraw_triggers_at_done_boundary():
+    """§10-I: claude_auto_redraw 가 켜졌을 때만, claude 패널의 busy→(안정)idle 완료
+    경계(_DONE_IDLE_FRAMES)에서 _auto_redraw_pane 이 **1회** 불린다. 기본 OFF 면
+    무동작, idle 이 정적으로 머물러도 반복 안 함, 디바운스 내 재완료도 재유발 안 함."""
+    import importlib
+    sm = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    _DONE = sm._DONE_IDLE_FRAMES
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        calls = []
+        srv._auto_redraw_pane = lambda pane: calls.append(pane)   # 트리거 스파이
+
+        def run_busy_then_idle():
+            p.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode())
+            srv._scan_claude(sess, win)
+            assert p._claude == "busy"
+            p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+            for _ in range(_DONE):              # _DONE 프레임째 idle 안정=완료 경계
+                srv._scan_claude(sess, win)
+
+        # ① 기본 OFF → busy→안정 idle 이어도 무동작
+        assert srv.claude_auto_redraw is False
+        run_busy_then_idle()
+        assert calls == [], "기본 OFF 면 redraw 안 함"
+
+        # ② 켜고 완료 경계 → 정확히 1회, 그 패널을 대상으로
+        assert srv.set_claude_auto_redraw() is True
+        run_busy_then_idle()
+        assert calls == [p], ("완료 경계에서 1회 redraw", calls)
+
+        # ③ idle 이 정적으로 더 머물러도 반복 유발 안 함(경계 1프레임만)
+        for _ in range(_DONE + 2):
+            srv._scan_claude(sess, win)
+        assert calls == [p], "idle 머무는 동안 반복 안 함"
+
+        # ④ 디바운스: 즉시 다음 busy→idle 은 _AUTO_REDRAW_DEBOUNCE_SEC 내라 재유발 안 함
+        run_busy_then_idle()
+        assert calls == [p], "디바운스 내 재완료는 재유발 안 함"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_auto_token_on_exit_emits_on_session_end():
     """§10-F: Claude 세션이 _HDR_CLAUDE_MISS 프레임 디바운스 뒤 진짜로 사라지는 순간
     (_hdr_claude True→False 확정) _emit_auto_token_log 가 **1회** 발화한다. 디바운스

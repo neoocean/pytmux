@@ -66,6 +66,7 @@ def init_defaults(status):
                                    # Σ 를 보유(remote 뷰 표시·진단용, 로컬은 팝업이 권위)
     # Claude 설정(설정 팝업 토글 현재값).
     status.auto_token_on_exit = True  # §10-F 세션 종료 시 토큰 화면 자동 표시(서버 기본 ON)
+    status.claude_auto_redraw = False  # §10-I 화면 깨짐 자동 완화(서버 기본 OFF)
     status.claude_auto_mode = False
     # 선택지 팝업(`: auto-retry` 등)이 현재값에 커서를 올리는 데 쓰는 정적 토글들
     # (서버 full status 에서만 도착 → 키 부재 시 직전값 유지). 서버 기본값과 같은 기본.
@@ -129,6 +130,8 @@ def absorb(status, msg):
     # Claude 설정(설정 팝업이 현재값으로 토글을 그리는 데 씀). 항상 권위값 반영.
     status.auto_token_on_exit = msg.get("auto_token_on_exit",
                                         status.auto_token_on_exit)
+    status.claude_auto_redraw = msg.get("claude_auto_redraw",
+                                         status.claude_auto_redraw)
     status.claude_auto_mode = msg.get("claude_auto_mode", status.claude_auto_mode)
     status.claude_long_turn_sec = msg.get(
         "claude_long_turn_sec", status.claude_long_turn_sec)

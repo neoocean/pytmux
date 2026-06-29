@@ -203,7 +203,8 @@ async def _opts_namespace_body(reg, _S):
     # ph_max_lines(claude-prompt-history)·capture(rec)는 다른 플러그인 소유 opt(별개) —
     # claude-code 계약을 엄격히 검증하기 위해 그 키들만 빼고 비교한다.
     assert set(out) - {"ph_max_lines", "capture"} == {"claude_auto_retry",
-                                           "token_debug", "auto_token_on_exit"}
+                                           "token_debug", "auto_token_on_exit",
+                                           "claude_auto_redraw"}
     # (과사용 완화 설정 usage_gate_*·claude_model_hint 는 2026-06-22 제거됨.)
     # §7-4 deprecate shim: 구 opts.json 에 남은 token_budget_* 는 무시(속성 미설치).
     s4 = _S()

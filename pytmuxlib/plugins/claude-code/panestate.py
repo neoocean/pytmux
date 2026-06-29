@@ -60,6 +60,10 @@ def init_pane(pane) -> None:
     # 비활성 탭 완료 알림(#22) 플리커 방지: busy 후 연속 idle 안정 프레임 카운트.
     pane._was_busy = False
     pane._idle_frames = 0
+    # §10-I 자동 redraw(화면 깨짐 완화) 디바운스용: 마지막 자동 redraw 의 monotonic
+    # 시각(0=아직 없음). busy→idle 완료 경계마다 무조건 redraw 하면 정상 턴도 번쩍이므로
+    # 이 시각 기준 디바운스로 빈도를 억제한다(_scan_claude / claude_auto_redraw).
+    pane._auto_redraw_ts = 0.0
     # §3.4 busy 이탈 히스테리시스: busy→idle 전이를 연속 관측 후에만 확정하기 위한
     # 미스 카운터(리페인트 한 프레임 깜빡임이 응답 경계로 오인되지 않게).
     pane._busy_exit_miss = 0

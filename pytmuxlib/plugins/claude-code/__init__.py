@@ -53,6 +53,9 @@ COMMANDS = [
     ("auto-token-on-exit", "Claude 세션 종료 시 토큰 사용량 화면(한도/usage) 자동 표시 "
                            "on/off (auto-token-on-exit on|off|toggle, 기본 on)",
                            "Claude"),
+    ("claude-auto-redraw", "Claude 화면 깨짐 자동 완화 — 완료(busy→idle)마다 패널 전체 "
+                           "재출력 1회 on/off (claude-auto-redraw on|off|toggle, 기본 off)",
+                           "Claude"),
     ("claude-auto-mode", "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off "
                          "(claude-auto-mode on|off|toggle)", "Claude"),
     ("auto-launch", "새 Claude 세션 시작 시 /rc(원격 제어)+권한모드 auto 1회 자동 적용 "
@@ -72,6 +75,7 @@ COMMAND_OPTIONS = {
     "auto-resume": [{"key": "state", "label": "자동재개", "choices": _ONOFF}],
     "prompt-clear": [{"key": "state", "label": "클리어모드", "choices": _ONOFF}],
     "auto-retry": [{"key": "state", "label": "자동재시도", "choices": _ONOFF}],
+    "claude-auto-redraw": [{"key": "state", "label": "깨짐완화", "choices": _ONOFF}],
     "claude-auto-mode": [{"key": "state", "label": "오토모드", "choices": _ONOFF}],
     "auto-launch": [{"key": "state", "label": "자동셋업", "choices": _ONOFF}],
     "token-debug": [{"key": "state", "label": "토큰진단로그", "choices": _ONOFF}],
@@ -98,6 +102,7 @@ i18n.register({
         "cmd.model": "Model·context change popup (also opens via the status model badge, injects /model; alias model-config, claude-model)",
         "cmd.auto-retry": "Auto-inject a 'continue' message 1 min after a transmission error (API error·rate limit) on/off (auto-retry on|off|toggle, default on)",
         "cmd.auto-token-on-exit": "Auto-open token usage screen (Limit/usage) when Claude session ends on/off (auto-token-on-exit on|off|toggle, default on)",
+        "cmd.claude-auto-redraw": "Auto-mitigate screen corruption — repaint the whole pane on each completion (busy→idle) on/off (claude-auto-redraw on|off|toggle, default off)",
         "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",
         "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
         "cmd.token-debug": "Token-accounting diagnostic log (<sock>.tokendbg.jsonl) on/off — §10-D undercount root-cause diagnostic (off normally) (token-debug on|off|toggle, default off)",
@@ -173,6 +178,7 @@ i18n.register({
         "자동재개": "Auto-resume", "클리어모드": "Clear mode",
         "오토모드": "Auto mode", "자동셋업": "Auto setup",
         "자동재시도": "Auto-retry",
+        "깨짐완화": "Anti-corruption",
         "토큰진단로그": "Token diag log",
     },
 })
@@ -190,6 +196,7 @@ def _onoff(args):
 SAVER_ROWS = [
     ("autoresume", "토큰리밋 자동재개", "toggle"),
     ("auto_token_on_exit", "세션 종료 시 토큰 사용량 화면 자동 표시", "toggle"),
+    ("claude_auto_redraw", "화면 깨짐 자동 완화(완료마다 재출력)", "toggle"),
     ("claude_auto_mode", "권한모드 자동 오토", "toggle"),
     ("prompt_clear", "프롬프트 단위 클리어(완료마다 doc+/clear)", "toggle"),
     ("long_turn", "장기 턴 경고(초)", "cycle"),
@@ -217,6 +224,7 @@ def saver_display(app, key):
     bools = {
         "autoresume": st.autoresume,
         "auto_token_on_exit": st.auto_token_on_exit,
+        "claude_auto_redraw": st.claude_auto_redraw,
         "claude_auto_mode": st.claude_auto_mode,
         "prompt_clear": st.prompt_clear,
     }
@@ -242,6 +250,9 @@ def saver_action(app, key):
     elif key == "auto_token_on_exit":
         app.send_cmd("set_auto_token_on_exit", value=None)
         st.auto_token_on_exit = not st.auto_token_on_exit
+    elif key == "claude_auto_redraw":
+        app.send_cmd("set_claude_auto_redraw", value=None)
+        st.claude_auto_redraw = not st.claude_auto_redraw
     elif key == "claude_auto_mode":
         app.send_cmd("set_claude_auto_mode", value=None)
         st.claude_auto_mode = not st.claude_auto_mode
@@ -480,6 +491,7 @@ class _ClaudeCodePlugin:
     _OPTION_STATE_ATTR = {
         "auto-resume": "autoresume",
         "prompt-clear": "prompt_clear",
+        "claude-auto-redraw": "claude_auto_redraw",
         "claude-auto-mode": "claude_auto_mode",
         "auto-retry": "claude_auto_retry",
         "auto-launch": "auto_launch",
@@ -534,7 +546,12 @@ class _ClaudeCodePlugin:
                   ("token_debug", False, bool),
                   # §10-F: Claude 세션 종료 시 토큰 사용량 화면(한도/usage 탭) 자동
                   # 표시(요청 2026-06-18). 기본 ON.
-                  ("auto_token_on_exit", True, bool))
+                  ("auto_token_on_exit", True, bool),
+                  # §10-I: Claude 화면 깨짐(부분갱신 발산) 자동 완화. 켜면 claude 패널의
+                  # busy→idle 완료 경계에서 SIGWINCH(전체 repaint)를 1회 유발(디바운스).
+                  # 기본 OFF — 근본원인(pyte SU/SD)은 p4 61614 로 해결됐고, 이건 그 외
+                  # 미구현 시퀀스 발산의 바닥 안전망이라 과도 완화를 피해 옵트인으로 둔다.
+                  ("claude_auto_redraw", False, bool))
 
     def server_opts_init(self, server, opts):
         """opts.json → server 속성 설치(코어 __init__ 의 _opts.get 들을 이전).
@@ -642,6 +659,7 @@ class _ClaudeCodePlugin:
         # 프롬프트 단위 클리어 큐(#4): 활성 패널에 쌓인 명령들(표시·목록용).
         msg["prompt_clear_queue"] = (list(ap.prompt_clear_queue) if ap else [])
         msg["auto_token_on_exit"] = server.auto_token_on_exit
+        msg["claude_auto_redraw"] = server.claude_auto_redraw
         msg["claude_auto_mode"] = server.claude_auto_mode
         # 무장된 자동재개 카운트다운(없으면 None): {kind, eta(초)}.
         msg["claude_pending"] = server._pending_action(ap)
@@ -710,6 +728,9 @@ class _ClaudeCodePlugin:
             return "send_full"
         if action == "set_auto_token_on_exit":
             server.set_auto_token_on_exit(msg.get("value"))
+            return "send_full"
+        if action == "set_claude_auto_redraw":
+            server.set_claude_auto_redraw(msg.get("value"))
             return "send_full"
         if action == "set_claude_auto_retry":
             server.set_claude_auto_retry(msg.get("value"))
@@ -994,6 +1015,8 @@ class _ClaudeCodePlugin:
             app.send_cmd("set_prompt_clear", value=_onoff(args))
         elif c in ("auto-token-on-exit", "auto-token", "token-on-exit"):
             app.send_cmd("set_auto_token_on_exit", value=_onoff(args))
+        elif c in ("claude-auto-redraw", "auto-redraw"):
+            app.send_cmd("set_claude_auto_redraw", value=_onoff(args))
         elif c in ("auto-retry", "retry"):
             app.send_cmd("set_claude_auto_retry", value=_onoff(args))
         elif c in ("claude-auto-mode", "auto-mode"):
