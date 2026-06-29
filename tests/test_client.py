@@ -4677,7 +4677,10 @@ async def test_server_tab_rtt_graph_lines():
     표본이 없으면 그래프 줄이 안 뜨고(이전 거동 보존), 있으면 제목·축·통계줄이 나온다."""
     async def body(app, pilot, srv):
         import time as _t
-        # 표본이 없으면 그래프 줄 없음(회귀: 기존 서버 탭 거동 보존)
+        # 표본이 없으면 그래프 줄 없음(회귀: 기존 서버 탭 거동 보존). 클라가 셋업 중
+        # ping/pong 으로 RTT 표본을 1개라도 기록하면(느린 Windows 러너에서 관측) 이
+        # "빈 이력=None" 단언이 흔들리므로, 이력을 **명시적으로 비워** 결정적으로 만든다.
+        app._net_rtt_hist = []
         assert app._rtt_graph_lines() is None
         # 60분 창에 걸친 합성 표본을 직접 주입(핑 대기 없이 결정적으로)
         now = _t.monotonic()
