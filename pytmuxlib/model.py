@@ -220,6 +220,38 @@ class _BCEMixin:
         # 8-칸 탭스톱을 다시 세워 실제 터미널과 동일하게 만든다.
         self.tabstops = set(range(8, self.columns, 8))
 
+    # --- SU/SD(스크롤 영역 스크롤) ---
+    # pyte 의 CSI 디스패치 테이블엔 SU(`CSI Ps S`)·SD(`CSI Ps T`)가 **없어**(Stream.csi
+    # 미수록·Screen 미구현) 이 시퀀스가 **조용히 드롭**된다. Claude Code 는 자기 콘텐츠
+    # 영역(DECSTBM 스크롤 영역, 예: `CSI 2;16r`)을 `CSI Ps S` 로 직접 스크롤하는데, 그게
+    # 무시되면 Claude 가 "스크롤됐다"고 가정하고 그린 다음 줄들이 **안 밀린 옛 줄 위에
+    # 겹쳐** 글자가 섞인다(증분 redraw 발산 — tmux 는 SU/SD 구현해 정상). index()/
+    # reverse_index() 의 스크롤 메커니즘을 영역 안에서 count 회 재현한다. CSI 'S'/'T'
+    # 매핑은 vtparse.set_screen 이 **화면이 이 메서드를 가질 때만** self._csi 에 바인딩한다
+    # (전역 pyte.Stream.csi 는 안 건드림 — plain pyte.Screen 회귀 방지). native 파서 전용.
+    def scroll_up(self, count=None):
+        """SU(CSI Ps S): 스크롤 영역을 위로 count 줄 스크롤(커서 이동 없음)."""
+        count = count or 1
+        top, bottom = self.margins or Margins(0, self.lines - 1)
+        self.dirty.update(range(self.lines))
+        for _ in range(min(count, bottom - top + 1)):
+            self._scroll_region_up(top, bottom)
+
+    def _scroll_region_up(self, top, bottom):
+        for y in range(top, bottom):
+            self.buffer[y] = self.buffer[y + 1]
+        self.buffer.pop(bottom, None)   # 빠진 바닥 줄 = 새 빈 줄(StaticDefaultDict)
+
+    def scroll_down(self, count=None):
+        """SD(CSI Ps T): 스크롤 영역을 아래로 count 줄 스크롤(커서 이동 없음)."""
+        count = count or 1
+        top, bottom = self.margins or Margins(0, self.lines - 1)
+        self.dirty.update(range(self.lines))
+        for _ in range(min(count, bottom - top + 1)):
+            for y in range(bottom, top, -1):
+                self.buffer[y] = self.buffer[y - 1]
+            self.buffer.pop(top, None)
+
 
 class _BCEScreen(_BCEMixin, pyte.Screen):
     pass
@@ -265,6 +297,14 @@ class _ScrollbackScreen(_BCEMixin, pyte.Screen):
         if self.cursor.y == bottom:
             self.history.top.append(self.buffer[top])
         super().index()
+
+    def _scroll_region_up(self, top, bottom):
+        """SU 로 영역이 위로 스크롤될 때, 영역 상단이 화면 맨 위(top==0)면 밀려난 줄을
+        스크롤백에 모은다(index() 의 history 수집과 동형). 부분 스크롤 영역(top>0,
+        예: Claude 의 2;16)은 실단말처럼 스크롤백에 안 넣고 버린다."""
+        if top == 0:
+            self.history.top.append(self.buffer[0])
+        super()._scroll_region_up(top, bottom)
 
     def reverse_index(self) -> None:
         """아래로 스크롤될 때 빠지는 맨 아랫줄을 bottom 히스토리에 모은다
@@ -457,6 +497,12 @@ class Pane:
         # 안 먹인 바이트와, 진행 중인 비동기 드레인 태스크(서버가 생성/취소 관리).
         self._feedbuf = b""
         self._feed_task = None
+        # 버스트 감지(server._on_pane_data): 짧은 간격으로 연달아 도착하는 소형 청크의
+        # 연속 횟수와 마지막 도착 시각(monotonic). Windows owned-ConPTY 처럼 read 가
+        # FEED_SLICE 로 캡돼 모든 청크가 인라인 한계 이하여도, 고빈도 버스트를 감지해
+        # 드레인 경로(pause 백프레셔·repaint coalesce·슬라이스 양보)로 돌리는 데 쓴다.
+        self._burst_run = 0
+        self._burst_ts = 0.0
         self.scroll = 0          # 0 = live(맨 아래), 양수 = 위로 N 행
         self.dirty = True
         # 행 단위 재직렬화 캐시(#8): 직전 render 의 행 직렬화 결과(라이브 뷰 한정).
@@ -1328,4 +1374,10 @@ class ClientConn:
         # {pane_id -> rows}. 다음 프레임에 바뀐 행만 screen-delta 로 보낸다(클라마다
         # 자기 상태 기준이라 다중 클라·신규 attach 도 정합 — seq/resync 불필요).
         self._sent_rows: dict[int, list] = {}
+        # 死-클라 회수(_liveness_loop)용. last_seen = 이 클라에서 마지막 메시지를
+        # 받은 monotonic 시각(매 수신마다 갱신; 0=아직 없음). ever_pinged = ping 을
+        # 한 번이라도 보낸 적 있나(=ping 켜진 클라) — ping 끈 클라는 무응답이어도
+        # 회수 대상에서 제외해 오탐을 막는다.
+        self.last_seen: float = 0.0
+        self.ever_pinged: bool = False
 

@@ -174,6 +174,47 @@ async def test_feed_and_scrollback():
         await teardown(srv, task, sock)
 
 
+async def test_su_sd_scroll_region():
+    """SU(`CSI Ps S`)/SD(`CSI Ps T`)가 스크롤 영역(DECSTBM) 안에서 줄을 스크롤한다.
+
+    회귀: pyte 의 CSI 디스패치 테이블엔 SU/SD 가 없어 조용히 드롭됐고, Claude Code 가
+    콘텐츠 영역을 SU 로 스크롤하면 무시돼 다음 줄들이 안 밀린 옛 줄에 겹쳐 격자가
+    발산했다(사용자 보고: pytmux 안 Claude 화면 글자 겹침; tmux 는 SU/SD 구현해 정상).
+    model._BCEMixin.scroll_up/down + vtparse 의 S/T 매핑으로 해결. SU/SD 는 **native
+    파서 전용**(전역 pyte.Stream.csi 를 안 건드려 plain pyte.Screen 회귀를 피함); pyte
+    파서는 legacy opt-in 이라 종전대로 S/T 무시(아래에서 무탈만 확인). native 가 기본."""
+    from pytmuxlib.model import Pane
+
+    p = Pane(-1, -1, 10, 6, vt_parser="native")
+    p.feed(b"\x1b[2;5r")                      # 스크롤 영역 = 2~5행(1-based)
+    for i, ch in enumerate((b"A", b"B", b"C", b"D")):
+        p.feed(b"\x1b[%d;1H" % (i + 2) + ch)  # row2=A row3=B row4=C row5=D
+    rows, _ = _full_render(p)
+    t = lambda y: "".join(s for s, _ in rows[y]).rstrip()
+    assert (t(1), t(2), t(3), t(4)) == ("A", "B", "C", "D"), "setup"
+
+    p.feed(b"\x1b[S")                         # SU 1: 영역 위로
+    rows, _ = _full_render(p)
+    t = lambda y: "".join(s for s, _ in rows[y]).rstrip()
+    assert (t(1), t(2), t(3), t(4)) == ("B", "C", "D", ""), "SU"
+    assert t(0) == "" and t(5) == "", "영역 밖 불변"
+
+    p.feed(b"\x1b[T")                         # SD 1: 영역 아래로
+    rows, _ = _full_render(p)
+    t = lambda y: "".join(s for s, _ in rows[y]).rstrip()
+    assert (t(1), t(2), t(3), t(4)) == ("", "B", "C", "D"), "SD"
+
+    p.feed(b"\x1b[2S")                        # SU 2: 두 줄
+    rows, _ = _full_render(p)
+    t = lambda y: "".join(s for s, _ in rows[y]).rstrip()
+    assert (t(1), t(2), t(3), t(4)) == ("C", "D", "", ""), "SU2"
+
+    # pyte 파서(legacy)는 S/T 를 무시하되 크래시는 없어야 한다(plain pyte.Screen 보호).
+    pp = Pane(-1, -1, 10, 6, vt_parser="pyte")
+    pp.feed(b"\x1b[2;5r\x1b[2;1HX\x1b[S\x1b[T")
+    pp.render(True)   # 예외 없이 통과하면 OK
+
+
 async def test_resized_pane_restores_tabstops():
     """분할 새 패널(spawn MIN_W → 실제 폭 resize)에서 탭 정렬 출력이 줄바꿈에서
     쪼개지지 않아야 한다(사용자 보고: 좁은 우측 패널의 ls 이름 첫 글자가 이전 줄
