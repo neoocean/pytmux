@@ -263,6 +263,41 @@ async def test_filter_rows_disabled_passthrough():
             PLUGIN.enabled = True
 
 
+async def test_wide_cursor_x_maps_ambiguous():
+    """narrow 커서 col → wide 합성 col 매핑(클라 reflow 보정). → 는 wide=2."""
+    with _wide():
+        row = [["→→→→→X", {}]]
+        # narrow col6(=화살표5+X 뒤) → wide: 2*5 + 1 = 11
+        assert shadow.wide_cursor_x(row, 6) == 11
+        # narrow col3(화살표3 뒤) → wide 6
+        assert shadow.wide_cursor_x(row, 3) == 6
+        # 행 끝 너머(트레일링)는 1:1 가산
+        assert shadow.wide_cursor_x(row, 8) == 11 + 2
+
+
+async def test_filter_cursor_overrides_when_swapped():
+    """행을 shadow 로 교체한 프레임에선 커서도 shadow narrow→wide 매핑으로 덮는다."""
+    with _wide():
+        p = _Pane(cols=40, rows=6, claude=True)
+        PLUGIN.pane_init(p)
+        PLUGIN.server_pty_output(_Server(), p, DIVERGE)
+        PLUGIN.server_filter_rows(_Server(), p, _orig_rows(40))
+        # 실 패널 커서([99,99] 가정)를 무시하고 매핑 커서를 돌려준다.
+        out = PLUGIN.server_filter_cursor(_Server(), p, [99, 99])
+        assert out == [11, 0]      # narrow [6,0] → wide [11,0]
+
+
+async def test_filter_cursor_passthrough_when_not_swapped():
+    """행을 안 바꾼 프레임(비-claude 등)에선 원본 커서 그대로."""
+    with _wide():
+        p = _Pane(claude=False)
+        PLUGIN.pane_init(p)
+        PLUGIN.server_filter_rows(_Server(), p, _orig_rows(40))
+        assert PLUGIN.server_filter_cursor(_Server(), p, [7, 3]) == [7, 3]
+        # None pane 도 무탈(원본 그대로)
+        assert PLUGIN.server_filter_cursor(_Server(), None, [1, 2]) == [1, 2]
+
+
 async def test_filter_rows_sets_wrap_consistently():
     """행 교체 시 pane._last_wrap 을 shadow 격자 기준으로 맞춘다."""
     with _wide():

@@ -264,6 +264,17 @@ class Registry:
                 rows = fn(server, pane, rows)
         return rows
 
+    def server_filter_cursor(self, server, pane, cursor):
+        """render 된 커서([x,y] 또는 None)를 클라 전송 직전에 플러그인이 바꿀 기회.
+        server_filter_rows 와 짝 — 행을 통째 교체하는 플러그인(claude-reconstruct)이
+        교체된 격자에 맞는 커서를 돌려준다. 아무도 안 바꾸면 원본 그대로(no-op,
+        delete-to-disable). server_filter_rows 직후 같은 패널에 대해 호출된다."""
+        for p in self.plugins:
+            fn = getattr(p, "server_filter_cursor", None)
+            if fn is not None:
+                cursor = fn(server, pane, cursor)
+        return cursor
+
     def server_status(self, server, sess, win, msg, full):
         """status 메시지에 Claude 필드를 in-place 로 채운다. 플러그인이 없으면 no-op
         → status 에 Claude 키가 빠지고, 클라(역시 플러그인 부재)는 그 키를 안 본다."""

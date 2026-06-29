@@ -22,8 +22,28 @@
 textual/rich 를 import 하지 않는다(서버 프로세스에서 돈다)."""
 from __future__ import annotations
 
+from wcwidth import wcwidth
+
 from pytmuxlib import cellwidth
 from pytmuxlib.model import Pane
+
+
+def wide_cursor_x(row, narrow_x: int) -> int:
+    """shadow(narrow 격자) 커서 col → wide 합성 col 로 매핑.
+
+    클라 `_composite` 는 서버 격자 좌표를 안 믿고 행 텍스트를 좌→우로 **재배치**한다
+    (clientio.py: `cx += _char_cells(ch)`, wide 모드면 모호폭=2). shadow 는 narrow 로
+    커서 col 을 보고하므로, 캐럿이 올바른 글자 위에 앉으려면 그 행의 narrow_x 칸까지를
+    **wide 누적폭**으로 변환해야 한다. row=[[text,style],…]. 행 끝 너머(트레일링 공백)는
+    1:1 로 친다. 활성 시 전역은 wide 라 char_cells 가 모호폭=2 를 돌려준다."""
+    nx = wx = 0
+    for text, _st in row:
+        for ch in text:
+            if nx >= narrow_x:
+                return wx
+            nx += 2 if (wcwidth(ch) or 0) == 2 else 1   # narrow 폭(모호폭=1)
+            wx += cellwidth.char_cells(ch)               # wide 폭(모호폭=2)
+    return wx + max(0, narrow_x - nx)
 
 # shadow 패널 생성 중임을 알리는 모듈 플래그 — 다른 플러그인의 pane_init 가 shadow 에
 # 대해서는 가벼운 경로를 타도록(우리 플러그인은 이 플래그를 보고 shadow 에 자기 필드를

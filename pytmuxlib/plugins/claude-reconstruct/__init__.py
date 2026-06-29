@@ -56,6 +56,10 @@ i18n.register({
 # 자기완결 detection(claude-code 부재 시) 디바운스 — ps 왕복을 이 주기로만.
 _SELF_DETECT_SEC = 2.0
 
+# server_filter_cursor 패스스루 센티넬: 이 프레임에 커서를 안 건드린다(원본 유지).
+# None 은 "커서 숨김"이라는 유효값이라 별도 객체를 쓴다.
+_PASS = object()
+
 
 def _is_claude_pane(pane) -> bool:
     """이 패널이 Claude Code 패널인가. 평상은 claude-code 가 심은 `_hdr_claude`(디바운스)·
@@ -108,6 +112,7 @@ class _ClaudeReconstructPlugin:
         pane._rc_shadow = None
         pane._rc_self = False        # 자기완결 detection 결과(claude-code 부재 시만)
         pane._rc_detect_ts = 0.0
+        pane._rc_cursor = _PASS      # server_filter_cursor 이번 프레임 커서 오버라이드
 
     def pane_reset(self, pane):
         # respawn(새 셸) → shadow 폐기(새 세션일 수 있음).
@@ -171,7 +176,12 @@ class _ClaudeReconstructPlugin:
         """Claude 패널의 render 행을 shadow 의 깨끗한 narrow 행으로 통째 교체한다.
         교체 조건: 켜짐 + shadow 존재 + Claude 패널 + shadow 가 alt-screen(=Claude
         풀스크린 TUI 가동 중). 셸 프롬프트(비-alt)나 워밍업(싱크 전) 등에서는 원본 그대로
-        둬 회귀를 막는다. 새 리스트를 돌린다(render 캐시 공유 — in-place 금지 계약)."""
+        둬 회귀를 막는다. 새 리스트를 돌린다(render 캐시 공유 — in-place 금지 계약).
+        커서는 별 채널(server_filter_cursor)이라 여기서 shadow 커서를 pane._rc_cursor 에
+        스태시해 둔다(같은 flush 에서 곧바로 server_filter_cursor 가 읽음). 스왑 안 하면
+        _PASS(원본 커서 유지)로 둔다."""
+        if pane is not None and hasattr(pane, "_rc_cursor"):
+            pane._rc_cursor = _PASS          # 이 프레임 기본: 커서 안 건드림
         if not self._active():
             return rows
         sh = getattr(pane, "_rc_shadow", None)
@@ -180,7 +190,7 @@ class _ClaudeReconstructPlugin:
         try:
             if sh.cols != pane.cols or sh.rows != pane.rows:
                 sh.resize(pane.cols, pane.rows)
-            srows, _cursor = sh.render()
+            srows, scur = sh.render()
         except Exception:
             return rows
         # 워밍업 폴백: shadow 가 라이브 중간부터 시작하면 Claude 의 다음 풀리페인트
@@ -196,7 +206,23 @@ class _ClaudeReconstructPlugin:
             pane._last_wrap = list(sh.pane._last_wrap)
         except Exception:
             pass
+        # 커서 스태시: shadow 의 narrow 커서를 wide 합성 col 로 매핑해 둔다(숨김이면 None).
+        if hasattr(pane, "_rc_cursor"):
+            if scur is None:
+                pane._rc_cursor = None
+            else:
+                cx, cy = scur
+                if 0 <= cy < len(srows):
+                    cx = shadow.wide_cursor_x(srows[cy], cx)
+                pane._rc_cursor = [cx, cy]
         return srows
+
+    def server_filter_cursor(self, server, pane, cursor):
+        """전송 직전 커서 오버라이드. server_filter_rows 가 행을 shadow 로 교체했으면 같은
+        프레임에 스태시한 매핑 커서(pane._rc_cursor)를 돌려, 실 패널(wide·발산)의 커서 대신
+        shadow narrow→wide 매핑 커서를 쓴다. 스왑 안 했으면 _PASS → 원본 커서 그대로."""
+        ov = getattr(pane, "_rc_cursor", _PASS) if pane is not None else _PASS
+        return cursor if ov is _PASS else ov
 
     # ---- 클라이언트: 명령 → 서버 토글 ----
     def handle_command(self, app, c, args):
