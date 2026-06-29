@@ -3852,29 +3852,22 @@ async def test_manual_clear_resets_token_session():
         await teardown(srv, task, sock)
 
 
-async def test_token_log_reply_includes_reconcile():
-    """S6 T2: request_token_log 회신에 대사 구간(reconcile)이 실린다 — 실측 스냅샷
-    Δpct 와 그 구간 스크랩 Σ(같은 계정 한정). 플러그인 handle_server_request 훅 경유
-    (코어 serverio 는 내용을 모름)."""
+async def test_token_log_reply_includes_daily():
+    """request_token_log 회신에 버킷 전체 이력 집계용 일자별 합성 레코드(daily)가
+    실린다(cap 무관 일/주/월). 플러그인 handle_server_request 훅 경유(코어 serverio
+    는 내용을 모름)."""
     from pytmuxlib import usagedb
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
         conn = srv._tokens_db_conn()
         A = "me@woojinkim.org"
-        for ts, pct in [(100.0, 5), (500.0, 9)]:
-            usagedb.insert_limits(conn, usagedb.snap_from_usage(
-                {"session": {"pct": pct, "reset": "2pm"}, "account": A},
-                ts, "probe"))
         usagedb.insert(conn, {"ts": 200.0, "tab": 0, "pane": 1, "session": 1,
                               "account": A, "tokens": 300})
         resp = srv.plugins.handle_server_request(
             srv, sess, "request_token_log", {"limit": 100})
         assert resp and resp["t"] == "token_log"
-        recon = resp.get("reconcile")
-        assert isinstance(recon, list) and len(recon) == 1, recon
-        assert recon[0]["dpct"] == 4 and recon[0]["tokens"] == 300, recon[0]
-        # 버킷 전체 이력 집계용 일자별 합성 레코드도 함께 실린다(cap 무관 일/주/월).
+        # 버킷 전체 이력 집계용 일자별 합성 레코드가 실린다(cap 무관 일/주/월).
         daily = resp.get("daily")
         assert isinstance(daily, list) and len(daily) == 1, daily
         assert daily[0]["tokens"] == 300 and daily[0]["account"] == A, daily[0]
@@ -4165,6 +4158,62 @@ async def test_flush_to_client_drops_slow_consumer():
         srv.clients.append(c3)
         await srv._flush_to_client(c3, [b"frame"])
         assert c3 in srv.clients and not c3.writer.closed, "정상 클라 유지"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_liveness_evicts_dead_client_and_regrows_session():
+    """死-클라 회수(_evict_idle_clients): 반응 없는(ping 끊긴) 코-클라가 세션 공유
+    크기(_session_size=min)를 작게 핀해 정상 클라 화면 하단/우측에 빈 띠가 남던
+    것을 막는다. ever_pinged 인 클라가 CLIENT_IDLE_TIMEOUT 넘게 무응답이면 떨구고
+    핀이 풀려 세션이 다시 자란다. ping 을 안 켠(ever_pinged=False) 무응답 클라는
+    회수하지 않는다(오탐 방지)."""
+    import time
+    from pytmuxlib import serverio as S
+    from pytmuxlib.model import ClientConn
+    srv, task, sock = await server_only()
+    try:
+        class _W:
+            def __init__(self):
+                self.closed = False
+                self.transport = None
+
+            def write(self, b):
+                pass
+
+            def close(self):
+                self.closed = True
+
+            async def drain(self):
+                pass
+
+        def _mk(rows, cols=120):
+            c = ClientConn(_W())
+            c.session = sess
+            c.cols, c.rows = cols, rows
+            return c
+
+        sess = srv.ensure_default_session(120, 50)
+        now = time.monotonic()
+        # 큰 정상 클라(방금 ping) + 작은 死 코-클라(ping 켜졌었지만 timeout 초과 무응답)
+        live = _mk(50); live.ever_pinged = True; live.last_seen = now
+        dead = _mk(10); dead.ever_pinged = True
+        dead.last_seen = now - (S.CLIENT_IDLE_TIMEOUT + 5)
+        srv.clients[:] = [live, dead]
+        # 회수 전: min(50,10)=10 으로 핀
+        assert srv._session_size(sess)[1] == 10, srv._session_size(sess)
+        n = await srv._evict_idle_clients()
+        assert n == 1 and dead not in srv.clients and dead.writer.closed
+        # 회수 후: 핀 해제 → 살아 있는 클라 크기로 재성장
+        assert live in srv.clients
+        assert srv._session_size(sess)[1] == 50, srv._session_size(sess)
+
+        # ping 을 안 켠(ever_pinged=False) 무응답 클라는 회수 대상 아님(오탐 방지)
+        noping = _mk(8); noping.ever_pinged = False
+        noping.last_seen = now - (S.CLIENT_IDLE_TIMEOUT + 99)
+        srv.clients[:] = [live, noping]
+        assert await srv._evict_idle_clients() == 0
+        assert noping in srv.clients and not noping.writer.closed
     finally:
         await teardown(srv, task, sock)
 

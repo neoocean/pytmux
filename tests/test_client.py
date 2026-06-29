@@ -417,11 +417,12 @@ async def test_remote_view_outline_pink():
 
 
 async def test_remote_view_letterbox_fills_smaller_session():
-    """§1.7-a 레터박싱: 원격 탭을 보는데 공유(업스트림) 세션이 내 뷰보다 작으면
-    (업스트림 코-클라가 미러링 최소크기로 핀) 레이아웃 격자를 내 콘텐츠 영역 전체로
-    넓히고 남는 L자 여백을 무광(panel 색) 배경으로 채운다 — 아래·우측 빈 띠가
-    터미널 기본 배경으로 남아 "렌더 깨짐"처럼 보이던 것을 의도된 레터박스로 바꾼다.
-    로컬 탭으로 돌아오면 발동하지 않아(격자=레이아웃 크기) 종전 동작 불변."""
+    """§1.7-a 레터박싱: 공유 세션이 내 뷰보다 작으면(코-클라가 미러링 최소크기로
+    핀) 레이아웃 격자를 내 콘텐츠 영역 전체로 넓히고 남는 L자 여백을 무광(panel 색)
+    배경으로 채운다 — 아래·우측 빈 띠가 터미널 기본 배경으로 남아 "렌더 깨짐"처럼
+    보이던 것을 의도된 레터박스로 바꾼다. **원격 탭뿐 아니라 로컬 탭(작은/死 코-클라
+    핀)에서도** 발동한다 — 예전엔 원격일 때만 칠해 로컬에선 하단이 생 검정으로 남아
+    "공간이 안 사라진다"는 보고가 났다(死-클라 회수와 짝)."""
     async def body(app, pilot, srv):
         from rich.style import Style
         from pytmuxlib.clientutil import theme_color
@@ -447,12 +448,19 @@ async def test_remote_view_letterbox_fills_smaller_session():
         # ③ 라이브 영역(업스트림 내용)은 보존 — 무광 아님
         assert cells[2][2][0] == "x", cells[2][2]
         assert cells[2][2][1].bgcolor != panel, cells[2][2][1]
-        # ④ 로컬 탭 복귀 → 레터박스 미발동(격자=레이아웃 5행)
+        # ④ 로컬 탭 복귀 → 작은 코-클라(또는 死 코-클라)가 핀한 동안엔 로컬에서도
+        #    레터박스 발동(격자=내 뷰, 하단 띠 무광). 死-클라 회수 전 빈 띠가 생
+        #    검정으로 남지 않게 한다.
         app.status.windows = [{"index": 0, "name": "local", "active": True},
                               {"index": 1, "name": "⇄h:w", "active": False,
                                "remote": True}]
         app._composite()
-        assert len(app.view._cells) == 5, len(app.view._cells)
+        cells = app.view._cells
+        assert len(cells) == vh, (len(cells), vh)
+        assert len(cells[0]) == vw, (len(cells[0]), vw)
+        assert cells[vh - 1][0][1].bgcolor == panel, cells[vh - 1][0][1]
+        # 라이브 영역(업스트림 내용)은 여전히 보존
+        assert cells[2][2][0] == "x", cells[2][2]
     await _with_app(body)
 
 

@@ -683,20 +683,23 @@ class _RenderMixin:
     def _composite(self):
         W = self.layout.get("cols", self.size.width)
         H = self.layout.get("rows", max(1, self.size.height - 1))
-        # 레터박싱(§1.7-a): 공유(원격) 세션이 내 뷰보다 작으면 — 업스트림에 더 작은
-        # 코-클라가 붙어 미러링 최소크기로 핀돼 레이아웃 격자가 내 콘텐츠 영역보다
-        # 짧/좁다 — 아래·오른쪽에 빈 띠가 남아 "렌더 깨짐"처럼 보인다(사용자 보고).
-        # 격자를 내 콘텐츠 영역 전체로 넓히고 남는 L자 여백을 아래에서 무광(matte)
-        # 배경으로 채워 **의도된 레터박스**로 보이게 한다. 원격 탭을 볼 때만, 그리고
-        # 실제로 내 뷰가 더 클 때만 발동 — 로컬(단일/멀티클라) 경로와 ptyshot 골든은
-        # 격자 크기가 종전과 동일해 불변이다. lb_w/lb_h = 라이브 영역의 우/하 경계
-        # (이 좌표 이상이 여백 띠), 0 이면 레터박스 없음.
+        # 레터박싱(§1.7-a): 세션 공유 크기(_session_size=min)가 내 뷰보다 작으면 —
+        # 더 작은 코-클라가 미러링 최소크기로 핀했다 — 레이아웃 격자가 내 콘텐츠
+        # 영역보다 짧/좁아 아래·오른쪽에 빈 띠가 남아 "렌더 깨짐"처럼 보인다(사용자
+        # 보고). 격자를 내 콘텐츠 영역 전체로 넓히고 남는 L자 여백을 아래에서 무광
+        # (matte) 배경으로 채워 **의도된 레터박스**로 보이게 한다.
+        # 원격 탭뿐 아니라 **로컬 세션의 멀티클라 핀(또는 죽은 코-클라가 작은 크기로
+        # 핀한 경우)** 에도 발동한다 — 예전엔 _viewing_remote() 일 때만 칠해, 로컬
+        # 탭에서 작은(혹은 死) 코-클라가 핀하면 하단이 무광이 아니라 **생 검정**으로
+        # 남아 "공간이 생겨 안 사라진다"는 보고가 났다(서버측 死-클라 회수 _liveness_loop
+        # 와 짝 — 회수되면 핀이 풀려 이 띠도 사라진다). 단일 클라 정상 경로는
+        # vw/vh == W/H 라 발동 안 함 → ptyshot 골든·로컬 단일 경로 불변. lb_w/lb_h =
+        # 라이브 영역의 우/하 경계(이 좌표 이상이 여백 띠), 0 이면 레터박스 없음.
         lb_w = lb_h = 0
-        if self._viewing_remote():
-            vw, vh = self._content_size()
-            if vw > W or vh > H:
-                lb_w, lb_h = W, H
-                W, H = max(W, vw), max(H, vh)
+        vw, vh = self._content_size()
+        if vw > W or vh > H:
+            lb_w, lb_h = W, H
+            W, H = max(W, vw), max(H, vh)
         cells = [[(" ", DEFAULT_STYLE) for _ in range(W)] for _ in range(H)]
         active = self.layout.get("active")
         # 비활성 패널 dim(§2.9): 패널이 둘 이상일 때만 — 단일 패널은 구분할 대상이 없다.
