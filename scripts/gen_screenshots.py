@@ -779,7 +779,8 @@ SCENES = [
     ("24-token-log", "토큰 사용량 팝업(일별) — 노트북 탭+요약줄+기간:토큰 표", token_log),
     ("42-token-log-session", "토큰 팝업(세션) — Claude 세션별 합·탭:패널·타임스탬프", token_log_session),
     ("37-token-log-hour", "토큰 팝업(시간) — 시각별 5h 한도 계단식 막대 + 1w% 열", token_log_hour),
-    ("38-token-log-limit", "토큰 팝업(한도) — /usage 막대·창Σ·리셋 카운트다운 통합 탭", token_log_limit),
+    ("38-token-log-limit", "토큰 팝업(한도) — /usage 막대·창Σ·리셋 카운트다운 통합 탭",
+     token_log_limit, (90, 34)),    # 모델/컨텍스트+막대+창Σ 아래 블록 카운트다운 시계까지 다 보이게 높게
     ("25-remote-control", "원격 제어 팝업 — [r] 로 /rc 토글", remote_control),
     ("27-ncd", "디렉토리 트리(ncd) — 루트→cwd 펼침·시안 선택 막대·찾기 안내줄", ncd),
     ("28-claude-rules", "시작 규칙 편집(claude-rules) — 멀티라인 에디터·Ctrl+S 저장", claude_rules),
