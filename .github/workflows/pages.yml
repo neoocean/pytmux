@@ -1,0 +1,36 @@
+name: Deploy landing to GitHub Pages
+
+# docs/landing/ (자기완결 정적 사이트)만 GitHub Pages 사이트 루트로 배포한다.
+# 커스텀 도메인 pytmux.woojinkim.org (docs/landing/CNAME).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/landing/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 동시 배포 1건만(진행 중이면 취소).
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/landing       # 이 디렉토리만 사이트 루트로
+      - id: deployment
+        uses: actions/deploy-pages@v4
