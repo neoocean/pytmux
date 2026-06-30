@@ -9,27 +9,42 @@
 | `index.html` | 랜딩(소개·핵심가치·기능·Claude 연동·운영·플러그인·갤러리·설치·**다운로드·연락**) |
 | `guide.html` | 스크린샷 포함 상세 사용 가이드(설치~플러그인 12장) |
 | `styles.css` | 공용 다크 테마 스타일 |
-| `build.sh` | R2 배포용 자급 번들(`_dist/`) 생성 스크립트 |
+| `image/` | HTML 이 참조하는 스크린샷 SVG (자기완결용 동봉본) |
+| `build.sh` | 배포용 깨끗한 번들(`_dist/`) 추출 스크립트 |
 
-스크린샷은 저장소의 `docs/image/*.svg` 를 재사용합니다(로컬 미리보기는 `../image/`).
+> **자기완결:** 이미지를 `image/` 하위에 동봉했고 HTML 도 `image/…` 상대 경로만
+> 씁니다. 따라서 **`docs/landing/` 디렉토리 그대로** 정적 호스팅 루트에 올리면 됩니다
+> (상위 `../image/` 참조 없음). `image/*.svg` 는 저장소의 `docs/image/` 원본을 동봉한
+> 사본이며, 원본 스크린샷이 갱신되면 `build.sh` 위쪽 안내대로 다시 복사해 맞춥니다.
 
 ## 로컬 미리보기
 
 ```bash
-# 저장소 루트에서
+# 이 디렉토리에서 바로
+cd docs/landing
 python3 -m http.server 8000
-# → http://localhost:8000/docs/landing/index.html
+# → http://localhost:8000/index.html
 ```
 
-## 배포용 번들 만들기
+## 배포용 번들 만들기 (선택)
 
-`../image/` 상대 경로 때문에 `docs/landing/` 디렉토리만으로는 R2 루트에 올릴 수 없습니다.
-`build.sh` 가 참조된 스크린샷을 안에 품고 경로를 고쳐 **자급 디렉토리** `_dist/` 를 만듭니다.
+디렉토리가 이미 자급이라 통째로 올려도 되지만, README·build.sh 를 뺀 깨끗한 번들이
+필요하면 `build.sh` 가 `_dist/` 로 추려 줍니다.
 
 ```bash
 cd docs/landing
-./build.sh                # → docs/landing/_dist/ (index.html 이 루트)
-python3 -m http.server -d _dist 8000   # 번들 미리보기
+./build.sh                              # → docs/landing/_dist/ (index.html 이 루트)
+python3 -m http.server -d _dist 8000    # 번들 미리보기
+```
+
+## 스크린샷 동기화
+
+`image/*.svg` 는 `docs/image/` 의 사본입니다. 원본 스크린샷이 바뀌면 참조 중인 것만
+다시 복사합니다.
+
+```bash
+cd docs/landing
+for f in image/*.svg; do cp "../image/$(basename "$f")" "$f"; done
 ```
 
 ## Cloudflare R2 배포 (참고 — 실행하지 않음)
@@ -37,19 +52,9 @@ python3 -m http.server -d _dist 8000   # 번들 미리보기
 R2 버킷에 정적 사이트로 올리는 예시입니다. 실제 배포는 별도로 진행하세요.
 
 ```bash
-# 1) 번들 생성
-./build.sh
-
-# 2-A) wrangler 로 업로드 (버킷명/계정은 환경에 맞게)
-#   wrangler r2 object put pytmux-site/index.html  --file _dist/index.html  --content-type text/html
-#   wrangler r2 object put pytmux-site/guide.html  --file _dist/guide.html  --content-type text/html
-#   wrangler r2 object put pytmux-site/styles.css  --file _dist/styles.css  --content-type text/css
-#   for f in _dist/image/*.svg; do
-#     wrangler r2 object put "pytmux-site/image/$(basename "$f")" --file "$f" --content-type image/svg+xml
-#   done
-
-# 2-B) 또는 S3 호환 API(aws-cli)로 동기화
-#   aws s3 sync _dist/ s3://pytmux-site/ \
+# S3 호환 API(aws-cli)로 디렉토리째 동기화
+#   aws s3 sync docs/landing/ s3://pytmux-site/ \
+#     --exclude 'README.md' --exclude 'build.sh' --exclude '_dist/*' \
 #     --endpoint-url https://<ACCOUNT_ID>.r2.cloudflarestorage.com \
 #     --content-type-by-extension
 ```
