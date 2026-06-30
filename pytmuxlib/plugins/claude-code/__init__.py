@@ -53,8 +53,9 @@ COMMANDS = [
     ("auto-token-on-exit", "Claude 세션 종료 시 토큰 사용량 화면(한도/usage) 자동 표시 "
                            "on/off (auto-token-on-exit on|off|toggle, 기본 on)",
                            "Claude"),
-    ("claude-auto-redraw", "Claude 화면 깨짐 자동 완화 — 완료(busy→idle)마다 패널 전체 "
-                           "재출력 1회 on/off (claude-auto-redraw on|off|toggle, 기본 off)",
+    ("claude-auto-redraw", "Claude 화면 깨짐 자동 완화 — off|idle(완료마다 재출력)|"
+                           "corruption(깨짐 감지 시만) (claude-auto-redraw "
+                           "off|idle|corruption|toggle, 기본 off)",
                            "Claude"),
     ("claude-auto-mode", "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off "
                          "(claude-auto-mode on|off|toggle)", "Claude"),
@@ -71,11 +72,29 @@ NOARG = {
 }
 # 옵션(선택지) 스키마 — 팔레트에서 on/off/토글을 키보드로 고른다(코어 COMMAND_OPTIONS 병합).
 _ONOFF = [("토글", ""), ("켜기", "on"), ("끄기", "off")]
+# §10-I claude_auto_redraw 3-state: off | idle(완료마다 무조건) | corruption(깨짐 신호
+# 감지 시에만). 구 bool(True/False) opts·명령과 호환: True→idle, 그 외→off.
+REDRAW_MODES = ("off", "idle", "corruption")
+
+
+def norm_redraw_mode(v):
+    """opts/명령에서 온 값을 3-state 모드 문자열로 정규화(구 bool 마이그레이션 포함)."""
+    if isinstance(v, str) and v.lower() in REDRAW_MODES:
+        return v.lower()
+    if v is True:
+        return "idle"
+    return "off"
+
+
+# `: claude-auto-redraw` 선택지 팝업 항목(빈 값="" = 서버가 다음 모드로 순환).
+_REDRAW_CHOICES = [("순환", ""), ("끔", "off"), ("완료마다", "idle"),
+                   ("깨짐감지", "corruption")]
 COMMAND_OPTIONS = {
     "auto-resume": [{"key": "state", "label": "자동재개", "choices": _ONOFF}],
     "prompt-clear": [{"key": "state", "label": "클리어모드", "choices": _ONOFF}],
     "auto-retry": [{"key": "state", "label": "자동재시도", "choices": _ONOFF}],
-    "claude-auto-redraw": [{"key": "state", "label": "깨짐완화", "choices": _ONOFF}],
+    "claude-auto-redraw": [{"key": "state", "label": "깨짐완화",
+                            "choices": _REDRAW_CHOICES}],
     "claude-auto-mode": [{"key": "state", "label": "오토모드", "choices": _ONOFF}],
     "auto-launch": [{"key": "state", "label": "자동셋업", "choices": _ONOFF}],
     "token-debug": [{"key": "state", "label": "토큰진단로그", "choices": _ONOFF}],
@@ -102,7 +121,7 @@ i18n.register({
         "cmd.model": "Model·context change popup (also opens via the status model badge, injects /model; alias model-config, claude-model)",
         "cmd.auto-retry": "Auto-inject a 'continue' message 1 min after a transmission error (API error·rate limit) on/off (auto-retry on|off|toggle, default on)",
         "cmd.auto-token-on-exit": "Auto-open token usage screen (Limit/usage) when Claude session ends on/off (auto-token-on-exit on|off|toggle, default on)",
-        "cmd.claude-auto-redraw": "Auto-mitigate screen corruption — repaint the whole pane on each completion (busy→idle) on/off (claude-auto-redraw on|off|toggle, default off)",
+        "cmd.claude-auto-redraw": "Auto-mitigate screen corruption — off | idle (repaint each completion) | corruption (repaint only when corruption is detected) (claude-auto-redraw off|idle|corruption|toggle, default off)",
         "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",
         "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
         "cmd.token-debug": "Token-accounting diagnostic log (<sock>.tokendbg.jsonl) on/off — §10-D undercount root-cause diagnostic (off normally) (token-debug on|off|toggle, default off)",
@@ -192,11 +211,23 @@ def _onoff(args):
         return False
     return None
 
+
+def _redraw_arg(args):
+    """claude-auto-redraw 3-state 인자 파싱. corruption/idle/off 명시면 그 모드 문자열,
+    on→idle, off→off, 무인자/toggle→None(서버가 순환). 빈 선택지("")도 None."""
+    s = " ".join(a for a in args if a).lower()
+    if any(k in s for k in ("corrupt", "감지", "깨짐")):
+        return "corruption"
+    if "idle" in s or "완료" in s:
+        return "idle"
+    v = _onoff(args)
+    return "idle" if v is True else "off" if v is False else None
+
 # 토큰 절감 설정 팝업(ClaudeSaverScreen)의 행/순환 프리셋. clientutil 에서 이리로 이전.
 SAVER_ROWS = [
     ("autoresume", "토큰리밋 자동재개", "toggle"),
     ("auto_token_on_exit", "세션 종료 시 토큰 사용량 화면 자동 표시", "toggle"),
-    ("claude_auto_redraw", "화면 깨짐 자동 완화(완료마다 재출력)", "toggle"),
+    ("claude_auto_redraw", "화면 깨짐 자동 완화(끔/완료마다/깨짐감지)", "cycle"),
     ("claude_auto_mode", "권한모드 자동 오토", "toggle"),
     ("prompt_clear", "프롬프트 단위 클리어(완료마다 doc+/clear)", "toggle"),
     ("long_turn", "장기 턴 경고(초)", "cycle"),
@@ -204,6 +235,7 @@ SAVER_ROWS = [
 ]
 # cycle 행의 프리셋 값(Enter 마다 다음으로 순환). 0=끔.
 SAVER_CYCLES = {
+    "claude_auto_redraw": list(REDRAW_MODES),   # off → idle → corruption → off
     "long_turn": [0, 300, 600, 900, 1800],
     "repeat_alert": [0, 2, 3, 5, 10],
 }
@@ -224,12 +256,14 @@ def saver_display(app, key):
     bools = {
         "autoresume": st.autoresume,
         "auto_token_on_exit": st.auto_token_on_exit,
-        "claude_auto_redraw": st.claude_auto_redraw,
         "claude_auto_mode": st.claude_auto_mode,
         "prompt_clear": st.prompt_clear,
     }
     if key in bools:
         return "●" if bools[key] else "○"
+    if key == "claude_auto_redraw":
+        return {"off": "끔", "idle": "완료마다", "corruption": "깨짐감지"}.get(
+            norm_redraw_mode(st.claude_auto_redraw), "끔")
     if key == "long_turn":
         v = int(st.claude_long_turn_sec)
         return "끔" if v <= 0 else f"{v}초 이상"
@@ -251,8 +285,9 @@ def saver_action(app, key):
         app.send_cmd("set_auto_token_on_exit", value=None)
         st.auto_token_on_exit = not st.auto_token_on_exit
     elif key == "claude_auto_redraw":
-        app.send_cmd("set_claude_auto_redraw", value=None)
-        st.claude_auto_redraw = not st.claude_auto_redraw
+        nxt = _cycle_next("claude_auto_redraw", norm_redraw_mode(st.claude_auto_redraw))
+        app.send_cmd("set_claude_auto_redraw", value=nxt)
+        st.claude_auto_redraw = nxt
     elif key == "claude_auto_mode":
         app.send_cmd("set_claude_auto_mode", value=None)
         st.claude_auto_mode = not st.claude_auto_mode
@@ -547,11 +582,13 @@ class _ClaudeCodePlugin:
                   # §10-F: Claude 세션 종료 시 토큰 사용량 화면(한도/usage 탭) 자동
                   # 표시(요청 2026-06-18). 기본 ON.
                   ("auto_token_on_exit", True, bool),
-                  # §10-I: Claude 화면 깨짐(부분갱신 발산) 자동 완화. 켜면 claude 패널의
-                  # busy→idle 완료 경계에서 SIGWINCH(전체 repaint)를 1회 유발(디바운스).
+                  # §10-I: Claude 화면 깨짐(부분갱신 발산) 자동 완화. 3-state —
+                  # off|idle(busy→idle 완료마다 SIGWINCH 전체 repaint, 디바운스)|
+                  # corruption(완료 경계에서 깨짐 신호가 보일 때만 repaint, flicker 억제).
                   # 기본 OFF — 근본원인(pyte SU/SD)은 p4 61614 로 해결됐고, 이건 그 외
                   # 미구현 시퀀스 발산의 바닥 안전망이라 과도 완화를 피해 옵트인으로 둔다.
-                  ("claude_auto_redraw", False, bool))
+                  # cast=norm_redraw_mode 가 구 bool opts(True→idle/False→off)를 마이그레이션.
+                  ("claude_auto_redraw", "off", norm_redraw_mode))
 
     def server_opts_init(self, server, opts):
         """opts.json → server 속성 설치(코어 __init__ 의 _opts.get 들을 이전).
@@ -1016,7 +1053,7 @@ class _ClaudeCodePlugin:
         elif c in ("auto-token-on-exit", "auto-token", "token-on-exit"):
             app.send_cmd("set_auto_token_on_exit", value=_onoff(args))
         elif c in ("claude-auto-redraw", "auto-redraw"):
-            app.send_cmd("set_claude_auto_redraw", value=_onoff(args))
+            app.send_cmd("set_claude_auto_redraw", value=_redraw_arg(args))
         elif c in ("auto-retry", "retry"):
             app.send_cmd("set_claude_auto_retry", value=_onoff(args))
         elif c in ("claude-auto-mode", "auto-mode"):

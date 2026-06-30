@@ -519,19 +519,45 @@ class ServerClaudeMixin:
         return self.auto_token_on_exit
 
     def set_claude_auto_redraw(self, value=None):
-        """§10-I Claude 화면 깨짐(부분갱신 발산) 자동 완화 토글. value 미지정 시 반전.
-        opts.json(plugin_opts) 영속, 기본 OFF. 켜면 _scan_claude 가 claude 패널의
-        busy→idle **완료 경계**(idle 이 _DONE_IDLE_FRAMES 안정)에서, 마지막 자동
-        redraw 후 디바운스가 지났을 때 그 패널에 1회 SIGWINCH(winsize 토글)를 유발해
-        alt-screen 앱이 화면을 전체 repaint 하게 한다(_auto_redraw_pane). 깨진 부분갱신
-        스냅샷을 깨끗한 전체 출력으로 덮는 **완화**다 — 근본은 외부(앱≠단말). busy 중엔
-        절대 유발하지 않고(진행 출력과 SIGWINCH 레이스 방지) claude 패널에만 적용한다.
-        값은 bool 로 단순화(on = idle-debounce 동작); 미래의 깨짐-감지 게이트(on-corruption)
-        는 이 토글을 확장해 덧댄다."""
-        self.claude_auto_redraw = (not self.claude_auto_redraw) if value is None \
-            else bool(value)
+        """§10-I Claude 화면 깨짐(부분갱신 발산) 자동 완화 3-state. opts.json(plugin_opts)
+        영속, 기본 "off". 모드:
+          - off        : 비활성.
+          - idle       : claude 패널 busy→idle **완료 경계**(idle 이 _DONE_IDLE_FRAMES
+                         안정)마다 무조건 1회 SIGWINCH(winsize 토글)로 전체 repaint 유발
+                         (_auto_redraw_pane, 디바운스).
+          - corruption : 같은 완료 경계에서 **깨짐 신호가 보일 때만** repaint
+                         (_claude_corruption_signal — flicker/비용을 더 줄인 보수 모드).
+        busy 중엔 절대 유발하지 않고(진행 출력과 SIGWINCH 레이스 방지) claude 패널에만
+        적용한다. 깨진 부분갱신 스냅샷을 깨끗한 전체 출력으로 덮는 **완화**다 — 근본은
+        외부(앱≠단말)·이미 SU/SD 로 해결(p4 61614), 이건 바닥 안전망. value 미지정/""=
+        다음 모드로 순환(off→idle→corruption→off), 명시 시 정규화(구 bool 호환)."""
+        from . import REDRAW_MODES, norm_redraw_mode
+        cur = norm_redraw_mode(getattr(self, "claude_auto_redraw", "off"))
+        if value is None or value == "":
+            self.claude_auto_redraw = REDRAW_MODES[
+                (REDRAW_MODES.index(cur) + 1) % len(REDRAW_MODES)]
+        else:
+            self.claude_auto_redraw = norm_redraw_mode(value)
         self._save_opts()
         return self.claude_auto_redraw
+
+    # 박스(프롬프트 테두리) 모서리 글리프 — 깨짐 감지(_claude_corruption_signal)용.
+    _BOX_TOP = ("╭", "┌", "┏")      # 둥근/각/굵은 좌상단(우상단도 함께 옴)
+    _BOX_BOTTOM = ("╰", "└", "┗")   # 좌하단
+
+    def _claude_corruption_signal(self, txt: str) -> bool:
+        """corruption 모드 깨짐 감지(보수적, **완료 idle 경계에서만** 호출). 두 신호:
+        ① U+FFFD(�) — 디코드/렌더 손상의 명백한 마커.
+        ② 박스 테두리 찢김 — 위(╭┌┏)·아래(╰└┗) 모서리 글리프 중 한쪽만 존재. 정상
+           프레임은 프롬프트 박스가 온전(둘 다)하거나 아예 없어(둘 다 없음) 둘이 같이
+           존재/부재한다. idle 로 안정된 화면에서 한쪽만 남은 건 부분갱신 발산(테두리
+           소실)의 징후다 — 스트리밍 중간이 아닌 완료 경계에서만 보므로 오탐이 낮다.
+        근본 해결(SU/SD) 이후엔 거의 발화하지 않는 게 정상(바닥 안전망)."""
+        if "�" in txt:   # U+FFFD replacement char(디코드/렌더 손상)
+            return True
+        has_top = any(c in txt for c in self._BOX_TOP)
+        has_bottom = any(c in txt for c in self._BOX_BOTTOM)
+        return has_top != has_bottom
 
     def _auto_redraw_pane(self, p):
         """§10-I: 한 claude 패널 PTY 에만 SIGWINCH(winsize 1줄 토글)를 유발해 alt-screen
@@ -1180,7 +1206,7 @@ class ServerClaudeMixin:
                         p._was_busy = True   # 작업 중이었음 → 다음 안정 idle 이 '완료'
                         if old_cl != "busy":
                             p._busy_since = time.monotonic()   # M17 S9: 턴 시작 시각
-                # §10-I Claude 화면 깨짐 자동 완화(opt-in, 기본 OFF). busy→idle 완료가
+                # §10-I Claude 화면 깨짐 자동 완화(opt-in, 기본 off). busy→idle 완료가
                 # 막 _DONE_IDLE_FRAMES 로 안정된 경계에서, claude 패널에 1회 SIGWINCH
                 # (winsize 토글)를 유발해 부분갱신 발산을 전체 repaint 로 덮는다. 가드:
                 # busy 중 금지(idle 확정에서만 — 진행 출력과 레이스 방지)·디바운스
@@ -1189,11 +1215,16 @@ class ServerClaudeMixin:
                 # 가 살아 있을 때 본다). `== _DONE_IDLE_FRAMES` 로 완료 경계 한 프레임에만
                 # 걸려 idle 이 정적으로 머무는 동안 반복 유발하지 않는다(다음 busy→idle
                 # 마다 다시 1회). 근본원인(pyte SU/SD)은 p4 61614 로 해결됐고 바닥 안전망.
-                if (self.claude_auto_redraw
+                # 모드: idle=완료마다 무조건 / corruption=깨짐 신호 보일 때만(flicker 억제).
+                # 디바운스 타임스탬프는 **실제 유발할 때만** 갱신 — corruption 모드에서
+                # 안 깨진 경계가 디바운스 창을 소진해 다음 깨짐을 지연시키지 않게.
+                if (self.claude_auto_redraw != "off"
                         and p._was_busy and new_cl == "idle"
                         and p._idle_frames == _DONE_IDLE_FRAMES):
                     nowm = time.monotonic()
-                    if nowm - p._auto_redraw_ts >= _AUTO_REDRAW_DEBOUNCE_SEC:
+                    if (nowm - p._auto_redraw_ts >= _AUTO_REDRAW_DEBOUNCE_SEC
+                            and (self.claude_auto_redraw == "idle"
+                                 or self._claude_corruption_signal(txt))):
                         p._auto_redraw_ts = nowm
                         self._auto_redraw_pane(p)
                 # 비활성 탭 완료 알림(#22, 위 주석): busy 를 본 적 있고 idle 이

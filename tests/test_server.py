@@ -476,26 +476,31 @@ async def test_auto_token_on_exit_toggle_and_persist():
 
 
 async def test_claude_auto_redraw_toggle_and_persist():
-    """§10-I set_claude_auto_redraw: 기본 OFF, 토글 반전·명시 지정이 server 속성을
-    바꾸고 plugin_opts(server_opts_serialize)로 영속된다."""
+    """§10-I set_claude_auto_redraw: 기본 off, 무인자 순환(off→idle→corruption→off)·
+    명시 지정·구 bool 마이그레이션이 server 속성을 바꾸고 plugin_opts(server_opts_
+    serialize)로 영속된다."""
     from pytmuxlib import plugins
     srv, task, sock = await server_only()
     try:
         reg = plugins.load()
-        assert srv.claude_auto_redraw is False, "기본 OFF"
-        assert srv.set_claude_auto_redraw() is True          # 반전 → on
-        assert srv.set_claude_auto_redraw() is False         # 반전 → off
-        assert srv.set_claude_auto_redraw(True) is True      # 명시 on
+        assert srv.claude_auto_redraw == "off", "기본 off"
+        assert srv.set_claude_auto_redraw() == "idle"          # 순환 off→idle
+        assert srv.set_claude_auto_redraw() == "corruption"    # idle→corruption
+        assert srv.set_claude_auto_redraw() == "off"           # corruption→off(순환)
+        assert srv.set_claude_auto_redraw("corruption") == "corruption"  # 명시
+        assert srv.set_claude_auto_redraw(True) == "idle"      # 구 bool True→idle
+        assert srv.set_claude_auto_redraw(False) == "off"      # 구 bool False→off
+        srv.set_claude_auto_redraw("idle")
         out = reg.server_opts_serialize(srv)
-        assert out["claude_auto_redraw"] is True
+        assert out["claude_auto_redraw"] == "idle"
     finally:
         await teardown(srv, task, sock)
 
 
 async def test_claude_auto_redraw_triggers_at_done_boundary():
-    """§10-I: claude_auto_redraw 가 켜졌을 때만, claude 패널의 busy→(안정)idle 완료
-    경계(_DONE_IDLE_FRAMES)에서 _auto_redraw_pane 이 **1회** 불린다. 기본 OFF 면
-    무동작, idle 이 정적으로 머물러도 반복 안 함, 디바운스 내 재완료도 재유발 안 함."""
+    """§10-I idle 모드: claude 패널의 busy→(안정)idle 완료 경계(_DONE_IDLE_FRAMES)에서
+    _auto_redraw_pane 이 **1회** 불린다. 기본 off 면 무동작, idle 이 정적으로 머물러도
+    반복 안 함, 디바운스 내 재완료도 재유발 안 함."""
     import importlib
     sm = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
     _DONE = sm._DONE_IDLE_FRAMES
@@ -515,13 +520,13 @@ async def test_claude_auto_redraw_triggers_at_done_boundary():
             for _ in range(_DONE):              # _DONE 프레임째 idle 안정=완료 경계
                 srv._scan_claude(sess, win)
 
-        # ① 기본 OFF → busy→안정 idle 이어도 무동작
-        assert srv.claude_auto_redraw is False
+        # ① 기본 off → busy→안정 idle 이어도 무동작
+        assert srv.claude_auto_redraw == "off"
         run_busy_then_idle()
-        assert calls == [], "기본 OFF 면 redraw 안 함"
+        assert calls == [], "기본 off 면 redraw 안 함"
 
-        # ② 켜고 완료 경계 → 정확히 1회, 그 패널을 대상으로
-        assert srv.set_claude_auto_redraw() is True
+        # ② idle 모드 + 완료 경계 → 정확히 1회, 그 패널을 대상으로
+        assert srv.set_claude_auto_redraw("idle") == "idle"
         run_busy_then_idle()
         assert calls == [p], ("완료 경계에서 1회 redraw", calls)
 
@@ -533,6 +538,58 @@ async def test_claude_auto_redraw_triggers_at_done_boundary():
         # ④ 디바운스: 즉시 다음 busy→idle 은 _AUTO_REDRAW_DEBOUNCE_SEC 내라 재유발 안 함
         run_busy_then_idle()
         assert calls == [p], "디바운스 내 재완료는 재유발 안 함"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_claude_auto_redraw_corruption_signal_unit():
+    """§10-I corruption 모드 깨짐 감지(_claude_corruption_signal): U+FFFD 와 박스
+    테두리 찢김(위/아래 모서리 한쪽만)은 True, 온전한 박스·박스 없음·평범한 텍스트는
+    False(보수적=오탐 낮음)."""
+    srv, task, sock = await server_only()
+    try:
+        sig = srv._claude_corruption_signal
+        assert sig("hello\nworld") is False            # 박스·FFFD 없음
+        assert sig("� corrupted") is True          # U+FFFD
+        assert sig("╭─────╮\n│ ok  │\n╰─────╯") is False  # 온전한 박스
+        assert sig("╭─────╮\n│ torn") is True           # 위만(아래 모서리 소실)
+        assert sig("│ torn\n╰─────╯") is True           # 아래만(위 모서리 소실)
+        assert sig("┌──┐\n└──┘") is False               # 각진 온전 박스
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_claude_auto_redraw_corruption_mode_gates_on_signal():
+    """§10-I corruption 모드: 완료 경계라도 **깨짐 신호가 보일 때만** redraw. 깨끗한
+    idle 완료는 무동작(idle 모드와 다름), 테두리 찢긴 idle 완료는 1회 유발."""
+    import importlib
+    sm = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    _DONE = sm._DONE_IDLE_FRAMES
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        calls = []
+        srv._auto_redraw_pane = lambda pane: calls.append(pane)
+        assert srv.set_claude_auto_redraw("corruption") == "corruption"
+
+        def busy_then_idle(idle_bytes):
+            p.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode())
+            srv._scan_claude(sess, win)
+            assert p._claude == "busy"
+            p.feed(idle_bytes)
+            for _ in range(_DONE):
+                srv._scan_claude(sess, win)
+
+        # ① 깨끗한 idle 완료(박스·FFFD 없음) → corruption 모드라 무동작
+        busy_then_idle(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        assert calls == [], "깨끗하면 corruption 모드는 redraw 안 함"
+
+        # ② 테두리 찢긴 idle 완료(위 모서리만) → 깨짐 신호 → 1회 유발
+        busy_then_idle("\x1b[2J\x1b[H╭ broken top edge\r\n? for shortcuts\r\n"
+                       .encode())
+        assert calls == [p], ("깨짐 신호 시 1회 redraw", calls)
     finally:
         await teardown(srv, task, sock)
 
