@@ -501,14 +501,29 @@ def _tklog_data():
     사용량이 노출되지 않게 가상의 며칠치 레코드·계정·실측 한도를 만든다. 일별 뷰가
     여러 행으로 차고 요약줄(5h%·주%·~Σ)이 의미 있게 보이도록 구성한다."""
     import datetime as _dt
-    # 결정적 기준일(스크린샷 라벨 고정): 2026-06-18 을 기준으로 최근 6일.
+    # 결정적 기준일(스크린샷 라벨 고정): 2026-06-18 기준. 여러 날 × 여러 세션을 깔아
+    # 기간 트리(주→일)와 세션 목록(탭:패널)이 둘 다 의미있게 차도록 한다.
     base = _dt.datetime(2026, 6, 18, 14, 0)
     recs = []
-    daily_tokens = [42_100, 58_700, 31_400, 64_900, 27_800, 51_300]
-    for i, tok in enumerate(daily_tokens):
-        day = base - _dt.timedelta(days=i)
-        recs.append({"ts": day.timestamp(), "tab": i % 3, "pane": i + 1,
-                     "session": i + 1, "account": "default", "tokens": tok})
+    sid = 2100
+    # (며칠 전, [(탭, 패널, 토큰), ...]) — 최근일수록 세션이 많다.
+    plan = [
+        (0,  [(1, 1, 36_100), (3, 4, 16_700), (2, 2, 13_200)]),
+        (1,  [(1, 12, 31_900), (1, 12, 22_900), (3, 19, 9_600), (2, 22, 5_900)]),
+        (2,  [(1, 12, 6_000), (2, 22, 3_500)]),
+        (3,  [(1, 1, 7_200), (3, 4, 4_500)]),
+        (6,  [(1, 1, 51_300), (2, 3, 27_800)]),
+        (9,  [(1, 1, 64_900), (3, 2, 31_400)]),
+        (12, [(1, 1, 58_700), (2, 1, 42_100)]),
+        (15, [(1, 1, 33_200)]),
+    ]
+    for days_ago, sessions in plan:
+        day = base - _dt.timedelta(days=days_ago)
+        for j, (tab, pane, tok) in enumerate(sessions):
+            sid += 1
+            t = day - _dt.timedelta(hours=j)
+            recs.append({"ts": t.timestamp(), "tab": tab, "pane": pane,
+                         "session": sid, "account": "default", "tokens": tok})
     usage = {"session": {"pct": 38, "reset": "2pm (Asia/Seoul)"},
              "week_all": {"pct": 61, "reset": "Jun 22 at 3am (Asia/Seoul)"},
              "week_sonnet": {"pct": 12, "reset": "Jun 22 at 3am (Asia/Seoul)"},
@@ -564,6 +579,19 @@ async def token_log_limit(app, pilot):
     recs, usage = _tklog_data()
     app.push_screen(screens.TokenLogScreen(
         recs, usage=usage, initial_mode="limit"))
+    await pilot.pause(0.5)
+
+
+async def token_log_session(app, pilot):
+    # 토큰 사용량 팝업(세션 뷰) — [p] 로 기간→세션 전환. 행=Claude 세션별 합(대표
+    # 탭:패널 라벨)+타임스탬프+토큰. 닫히고 재사용되는 패널 id 대신 안정적 세션 id 로
+    # 묶는다(설계 §8). 활성 세션 행은 모델 팔레트 색으로 강조.
+    from importlib import import_module
+    screens = import_module("pytmuxlib.plugins.claude-code.screens")
+    recs, usage = _tklog_data()
+    app.push_screen(screens.TokenLogScreen(recs, usage=usage))
+    await pilot.pause(0.3)
+    await pilot.press("p")          # 기간 → 세션 뷰
     await pilot.pause(0.5)
 
 
@@ -749,6 +777,7 @@ SCENES = [
     ("26-restart-confirm", "재시작 확인 — 드라이런 FAIL 시 '그래도 재시작?'(기본 취소)", restart_confirm),
     ("23-token-saver", "Claude 설정 팝업(token-saver) — 자동재개·세션종료 토큰화면·오토모드·클리어·경고", token_saver),
     ("24-token-log", "토큰 사용량 팝업(일별) — 노트북 탭+요약줄+기간:토큰 표", token_log),
+    ("42-token-log-session", "토큰 팝업(세션) — Claude 세션별 합·탭:패널·타임스탬프", token_log_session),
     ("37-token-log-hour", "토큰 팝업(시간) — 시각별 5h 한도 계단식 막대 + 1w% 열", token_log_hour),
     ("38-token-log-limit", "토큰 팝업(한도) — /usage 막대·창Σ·리셋 카운트다운 통합 탭", token_log_limit),
     ("25-remote-control", "원격 제어 팝업 — [r] 로 /rc 토글", remote_control),

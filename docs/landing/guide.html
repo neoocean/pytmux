@@ -269,22 +269,46 @@ fi</div>
       <section id="tokens">
         <h2>8. 토큰 사용량</h2>
         <p>
-          상태줄의 토큰 배지를 클릭하면 <strong>기간 / 계정 / 세션 / 한도 / 대사 / 경고</strong>
+          상태줄의 토큰 배지를 클릭하면 <strong>기간 / 세션 / 한도 / 경고 / /usage / 시나리오</strong>
           노트북 탭으로 보는 사용량 팝업이 열립니다. 화면 스크랩이 아니라
           <code>~/.claude/*.jsonl</code> 트랜스크립트 회계를 권위 출처로 삼아 cache_read 까지
-          정확히 집계합니다(스크랩 누계는 실제의 약 0.4% 에 불과합니다).
+          정확히 집계합니다(스크랩 누계는 실제의 약 0.4% 에 불과합니다). 탭 사이는
+          <kbd>p</kbd>(세션) · <kbd>l</kbd>(한도) · <kbd>u</kbd>(/usage) 키로도 오갑니다.
+          상단 요약줄(<code>5h% · 주% · ~Σ</code>)은 모든 탭에 공통으로 붙습니다.
         </p>
-        <ul>
-          <li><strong>시간 뷰</strong> — 시각별 5h 한도를 계단식 막대로, 월→주→일→시각 계층형 트리.</li>
-          <li><strong>한도 뷰</strong> — <code>/usage</code> 실측 막대와 리셋 카운트다운.</li>
-        </ul>
+
+        <h3>8.1 기간 뷰 — 시간 흐름으로</h3>
+        <p>
+          토큰을 <strong>월 → 주 → 일 → 시각</strong> 계층 트리로 봅니다. 각 행에 토큰 합과
+          가로 막대가 붙고, <kbd>Enter</kbd> / <kbd>←</kbd><kbd>→</kbd> 로 주를 일·시각까지
+          펼치고 접습니다. 언제 토큰이 몰렸는지 시간 축으로 짚을 때 씁니다.
+        </p>
         <figure>
-          <img src="image/30-usage-view.svg" alt="토큰 사용량 뷰">
-          <figcaption>30 · 토큰 사용량 뷰.</figcaption>
+          <img src="image/24-token-log.svg" alt="토큰 사용량 — 기간 뷰">
+          <figcaption>기간 뷰 — 주/일/시각 계층 트리(요약줄: 5h%·주%·~Σ).</figcaption>
         </figure>
+
+        <h3>8.2 세션 뷰 — Claude 세션별로</h3>
+        <p>
+          <kbd>p</kbd> 로 전환합니다. 행이 <strong>Claude 세션별 합</strong>(대표 <code>탭:패널</code>
+          라벨 · 타임스탬프 · 토큰)입니다. 닫히고 재사용되는 패널 id 대신 안정적인 세션 id 로
+          묶어, 어느 세션이 토큰을 많이 썼는지 비교할 때 씁니다.
+        </p>
         <figure>
-          <img src="image/38-token-log-limit.svg" alt="한도 뷰">
-          <figcaption>38 · 한도 뷰 — 실측 막대 + 리셋 카운트다운.</figcaption>
+          <img src="image/42-token-log-session.svg" alt="토큰 사용량 — 세션 뷰">
+          <figcaption>세션 뷰 — 세션별 합 · 탭:패널 · 타임스탬프 · 토큰 막대.</figcaption>
+        </figure>
+
+        <h3>8.3 한도 뷰 — /usage 실측과 리셋</h3>
+        <p>
+          <kbd>l</kbd> 로 전환합니다. <code>/usage</code> 실측 한도(<strong>세션 5h · 주 전체 ·
+          주 Sonnet</strong>)를 % 사용 막대와 리셋 시각으로 보여주고, 현재 5h 창 추정 Σ 와
+          다음 리셋까지 남은 시간을 함께 둡니다. 첫 두 행에서 <kbd>←</kbd><kbd>→</kbd> 로
+          모델·컨텍스트를 바꿔 적용할 수도 있어, 한도를 보며 모델을 고를 때 씁니다.
+        </p>
+        <figure>
+          <img src="image/38-token-log-limit.svg" alt="토큰 사용량 — 한도 뷰">
+          <figcaption>한도 뷰 — /usage 실측 막대 · 리셋 · 모델/컨텍스트 변경.</figcaption>
         </figure>
       </section>
 

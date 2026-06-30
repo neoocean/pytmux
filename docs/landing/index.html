@@ -187,19 +187,21 @@
     <div class="feature rev">
       <div class="ftext">
         <h3>토큰 사용량 팝업</h3>
-        <p>상태줄의 토큰 배지를 클릭하면 <strong>기간 / 계정 / 세션 / 한도 / 대사 / 경고</strong>
+        <p>상태줄의 토큰 배지를 클릭하면 <strong>기간 / 세션 / 한도 / 경고 / /usage / 시나리오</strong>
            노트북 탭으로 보는 사용량 팝업이 열립니다. 화면 스크랩이 아닌
            <span class="inline-code">~/.claude/*.jsonl</span> 트랜스크립트 회계로
            cache_read 까지 정확히 집계합니다.</p>
         <ul>
-          <li>시간 뷰 — 시각별 5h 한도를 계단식 막대로</li>
-          <li>한도 뷰 — <span class="inline-code">/usage</span> 실측 막대 + 리셋 카운트다운</li>
-          <li>계층형 시간 트리(월 → 주 → 일 → 시각)</li>
+          <li><strong>기간 뷰</strong> — 월 → 주 → 일 → 시각 계층 트리로 시간 흐름을</li>
+          <li><strong>세션 뷰</strong> — Claude 세션별 합(<span class="inline-code">탭:패널</span>·타임스탬프)</li>
+          <li><strong>한도 뷰</strong> — <span class="inline-code">/usage</span> 실측 막대 + 리셋 + 모델/컨텍스트 변경</li>
         </ul>
       </div>
-      <div class="shot">
-        <img src="image/30-usage-view.svg" alt="토큰 사용량 팝업 뷰">
-        <div class="cap">30 · 토큰 사용량 뷰 · 38 한도 뷰</div>
+      <div class="shot shot-stack">
+        <img src="image/24-token-log.svg" alt="토큰 사용량 — 기간 뷰">
+        <img src="image/42-token-log-session.svg" alt="토큰 사용량 — 세션 뷰">
+        <img src="image/38-token-log-limit.svg" alt="토큰 사용량 — 한도 뷰">
+        <div class="cap">기간 · 세션 · 한도 탭</div>
       </div>
     </div>
 
