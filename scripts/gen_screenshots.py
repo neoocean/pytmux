@@ -532,14 +532,21 @@ def _tklog_data():
 
 
 async def token_log(app, pilot):
-    # 토큰 사용량 팝업(일별 뷰) — 노트북 탭(기간/계정/세션/한도/대사/경고)+서브옵션
-    # (시간/일/주/월·정렬)+요약줄(5h%·주%·~Σ)+기간:토큰 표. 2026-06-12 재설계.
+    # 토큰 사용량 팝업(기간 뷰) — 노트북 탭(기간/세션/한도/경고/usage/시나리오)+요약줄
+    # (5h%·주%·~Σ)+월/주 → 일 → 시각 계층 트리. 2026-06-12 재설계.
     # TokenLogScreen 은 claude-code 플러그인으로 이전됐다(패키지명 하이픈→import_module).
+    # 가이드 §8.1 그림은 "트리를 펼친" 모습이라야 시간 흐름 계층이 보이므로, 최상위
+    # 주 행을 펼치고(→) 그 첫 일 행으로 내려가 시각까지 펼친다(주→일→시각 한 갈래).
     from importlib import import_module
     screens = import_module("pytmuxlib.plugins.claude-code.screens")
     recs, usage = _tklog_data()
     app.push_screen(screens.TokenLogScreen(recs, usage=usage))
-    await pilot.pause(0.5)
+    await pilot.pause(0.4)
+    await pilot.press("right")   # 최상위(주) 펼침 → 일 행 노출
+    await pilot.pause(0.2)
+    await pilot.press("down")    # 첫 일 행으로 이동
+    await pilot.press("right")   # 일 → 시각 펼침
+    await pilot.pause(0.4)
 
 
 async def token_log_hour(app, pilot):
