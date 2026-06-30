@@ -6,7 +6,7 @@
 ## 무엇인가
 Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데몬)–다중 클라이언트
 구조(서버는 단일 스레드 asyncio 루프), Windows/macOS/Linux 지원, Claude Code 토큰
-추적/절감 자동화 + 원격 페더레이션(ssh) 포함.
+추적·리밋 자동 재개 + 원격 페더레이션(ssh) 포함.
 
 ## 빌드/실행/테스트
 - 의존성: `pip install -r requirements.txt` (Textual·pyte·wcwidth 등).
