@@ -2170,6 +2170,174 @@ async def test_request_redraw_induces_repaint_and_resends_full():
         await teardown(srv, task, sock)
 
 
+async def test_sync_output_defers_flush():
+    """DEC 2026 동기화 출력(BSU/ESU): 프레임(?2026h…?2026l) 도중엔 _flush_loop 가 그
+    패널 screen 을 클라에 안 보내(반쪽 프레임=무작위 글자 겹침 방지), ?2026l 후에
+    완성 프레임을 보낸다. pytmux 가 2026 을 무시해 프레임 중간을 흘리던 게 'Claude
+    화면 무작위 깨짐'의 근본원인이었다(tmux 는 2026 구현해 안 깨짐)."""
+    import time as _time
+    from pytmuxlib.protocol import write_msg, read_msg, PROTO_VERSION
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        reader, writer = await ipc.open_connection(sock)
+        await write_msg(writer, {"t": "hello", "proto": PROTO_VERSION,
+                                 "cols": 80, "rows": 24, "token": srv.auth_token})
+
+        async def _collect(window):
+            got = []
+            end = _time.monotonic() + window
+            while _time.monotonic() < end:
+                try:
+                    m = await asyncio.wait_for(
+                        read_msg(reader), max(0.01, end - _time.monotonic()))
+                except asyncio.TimeoutError:
+                    break
+                if m is None:
+                    break
+                got.append(m)
+            return got
+
+        # 초기 attach + 셸 프롬프트 프레임이 잦아들 때까지 비운다(정적 상태 확보).
+        while await _collect(0.2):
+            pass
+
+        def _pane_screen(m):
+            return (m.get("t") in ("screen", "screen-delta")
+                    and m.get("pane") == p.id)
+
+        # 프레임 시작(아직 ?2026l 없음) — 동기화 중. dirty 지만 송신은 미뤄져야 한다.
+        srv._ingest_slice(p, b"\x1b[?2026h\x1b[Hhello-sync")
+        assert p.sync_output is True
+        assert p.dirty is True
+        during = await _collect(0.12)   # 디퍼 창(0.15s) 안
+        assert not any(_pane_screen(m) for m in during), \
+            f"동기화 프레임 도중엔 screen 송신 금지: {[m.get('t') for m in during]}"
+
+        # 프레임 끝 → 다음 flush 에 완성 프레임이 한 번에 온다.
+        srv._ingest_slice(p, b" world\x1b[?2026l")
+        assert p.sync_output is False
+        after = await _collect(0.4)
+        assert any(_pane_screen(m) for m in after), \
+            "?2026l 후엔 완성 screen 프레임이 와야 한다"
+        writer.close()
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_sync_output_defer_times_out():
+    """안전망: ?2026l 이 안 와도(먹통 앱) SYNC_OUTPUT_MAX_DEFER 후엔 강제로 보낸다 —
+    패널이 영구히 묶이지 않는다."""
+    import time as _time
+    from pytmuxlib.protocol import write_msg, read_msg, PROTO_VERSION, \
+        SYNC_OUTPUT_MAX_DEFER
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        reader, writer = await ipc.open_connection(sock)
+        await write_msg(writer, {"t": "hello", "proto": PROTO_VERSION,
+                                 "cols": 80, "rows": 24, "token": srv.auth_token})
+
+        async def _collect(window):
+            got = []
+            end = _time.monotonic() + window
+            while _time.monotonic() < end:
+                try:
+                    m = await asyncio.wait_for(
+                        read_msg(reader), max(0.01, end - _time.monotonic()))
+                except asyncio.TimeoutError:
+                    break
+                if m is None:
+                    break
+                got.append(m)
+            return got
+
+        while await _collect(0.2):
+            pass
+
+        def _pane_screen(m):
+            return (m.get("t") in ("screen", "screen-delta")
+                    and m.get("pane") == p.id)
+
+        # ?2026l 을 절대 안 보냄(먹통 앱 모사). 타임아웃 뒤엔 강제 송신돼야 한다.
+        srv._ingest_slice(p, b"\x1b[?2026h\x1b[Hstuck-frame")
+        assert p.sync_output is True
+        late = await _collect(SYNC_OUTPUT_MAX_DEFER + 0.3)
+        assert any(_pane_screen(m) for m in late), \
+            "ESU 가 없어도 타임아웃 후엔 강제 송신(패널 영구 묶임 방지)"
+        writer.close()
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_sync_output_active_feed_does_not_time_out():
+    """무거운 스크롤 회귀: 한 동기화 프레임이 FEED_SLICE(8KB) 여러 조각으로
+    SYNC_OUTPUT_MAX_DEFER 보다 오래 걸쳐 들어와도, 바이트가 계속 흐르는 한 _flush_loop
+    는 반쪽 프레임을 보내면 안 된다. 디퍼 타임아웃은 '프레임 총 소요'가 아니라 '마지막
+    바이트 이후 침묵'을 재야 한다(안 그러면 대형 프레임이 타임아웃을 넘겨 글자 겹침 송신
+    — 로컬 패널만 깨지고 원격은 완성 프레임이 릴레이돼 멀쩡한 비대칭의 원인이었다).
+    times_out 테스트와의 차이: 저긴 BSU 후 바이트가 끊겨(먹통 앱) 강제 송신이 정답."""
+    import time as _time
+    from pytmuxlib.protocol import write_msg, read_msg, PROTO_VERSION, \
+        SYNC_OUTPUT_MAX_DEFER
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        reader, writer = await ipc.open_connection(sock)
+        await write_msg(writer, {"t": "hello", "proto": PROTO_VERSION,
+                                 "cols": 80, "rows": 24, "token": srv.auth_token})
+
+        async def _collect(window):
+            got = []
+            end = _time.monotonic() + window
+            while _time.monotonic() < end:
+                try:
+                    m = await asyncio.wait_for(
+                        read_msg(reader), max(0.01, end - _time.monotonic()))
+                except asyncio.TimeoutError:
+                    break
+                if m is None:
+                    break
+                got.append(m)
+            return got
+
+        while await _collect(0.2):
+            pass
+
+        def _pane_screen(m):
+            return (m.get("t") in ("screen", "screen-delta")
+                    and m.get("pane") == p.id)
+
+        # 프레임 시작(BSU). 이후 ?2026 토글 없는 '중간' 슬라이스를 SYNC_OUTPUT_MAX_DEFER
+        # 를 넘는 시간 동안 계속 먹인다(대형 프레임이 청크로 들어오는 상황 모사).
+        srv._ingest_slice(p, b"\x1b[?2026h\x1b[Hheavy-scroll")
+        assert p.sync_output is True
+        sent_during = []
+        step = SYNC_OUTPUT_MAX_DEFER / 3
+        elapsed = 0.0
+        while elapsed < SYNC_OUTPUT_MAX_DEFER * 2 + 0.1:
+            srv._ingest_slice(p, b"row\r\n" * 50)   # 2026 토글 없음 = 프레임 도중
+            assert p.sync_output is True
+            sent_during += [m for m in await _collect(step) if _pane_screen(m)]
+            elapsed += step
+        assert not sent_during, \
+            ("활성 피드 중엔 반쪽 프레임 송신 금지(디퍼 타임아웃 리셋): "
+             f"{[m.get('t') for m in sent_during]}")
+
+        # ESU → 다음 flush 에 완성 프레임이 와야 한다.
+        srv._ingest_slice(p, b"done\x1b[?2026l")
+        assert p.sync_output is False
+        after = await _collect(0.4)
+        assert any(_pane_screen(m) for m in after), \
+            "?2026l 후엔 완성 screen 프레임이 와야 한다"
+        writer.close()
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_inline_session_limit_reflected_in_5h_pct():
     """요청: /usage 패널을 안 열어도 footer 인라인 한도("used 93% of your session
     limit")를 캡처해 상태줄 5h% 가 실측 93% 를 따른다. S6 T3: 실측 전엔 None."""

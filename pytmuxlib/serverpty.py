@@ -369,6 +369,9 @@ class ServerPtyMixin:
             pane.bracketed = True
         if b"\x1b[?2004l" in data:
             pane.bracketed = False
+        # 동기화 출력(DEC 2026, BSU/ESU) 추적: 프레임 도중 flush 가 반쪽 화면을
+        # 보내 무작위 깨짐이 나지 않게 _flush_loop 가 이 플래그로 송신을 미룬다.
+        pane.update_sync_output(data)
         # 마우스 트래킹 모드 추적(DECSET 1000/1002/1003/1006). 바뀌면 클라이언트가
         # 패스스루 여부를 알도록 레이아웃(패널별 mouse 플래그 포함)을 다시 보낸다.
         if pane.update_mouse_modes(data):

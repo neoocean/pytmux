@@ -22,6 +22,10 @@ MIN_H = 3       # 패널 최소 높이(행) — 테두리(상/하) + 내용 1칸
 MAX_W = 2000
 MAX_H = 2000
 FLUSH_HZ = 30   # 서버 화면 push 주기
+# 동기화 출력(DEC private 2026, BSU/ESU) 중인 패널의 flush 를 미루는 최대 시간(초).
+# 한 프레임(?2026h…?2026l)을 원자적으로 보내려 그 사이엔 송신을 미루되, 먹통 앱이
+# ESU 를 안 보내 패널이 영구히 묶이지 않게 이 시간이 지나면 강제로 보낸다(≈5 flush).
+SYNC_OUTPUT_MAX_DEFER = 0.15
 HISTORY = 10000 # 패널당 스크롤백 보관 행 수
 # 대량 출력(빌드 로그·cat 등) 시 PTY 한 읽기(최대 64KB)를 이 크기 슬라이스로 쪼개
 # pyte 에 먹이고 슬라이스마다 이벤트 루프에 양보한다(server._feed_drain). pyte feed 는

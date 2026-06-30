@@ -531,3 +531,30 @@ async def test_feed_plain_text_fast_path():
     assert p3._altcarry
     p3.feed(b";31mRED")               # 캐리+이어붙여 완성 → RED 정상 렌더
     assert "RED" in pane_text(p3)
+
+
+def test_sync_output_tracking():
+    """동기화 출력(DEC 2026, BSU/ESU) 상태 추적: ?2026h 켜짐 / ?2026l 꺼짐, 한
+    슬라이스에 둘 다 오면 마지막 토글이 최종 상태(rfind), 무관한 데이터엔 무변동.
+    _flush_loop 이 프레임 도중 송신을 미루는 근거(무작위 글자 겹침 근본 해결)."""
+    from pytmuxlib.model import Pane
+    p = Pane(-1, -1, 40, 6, vt_parser="native")
+    assert p.sync_output is False
+    # 프레임 시작
+    assert p.update_sync_output(b"\x1b[?2026h") is True
+    assert p.sync_output is True
+    assert p._sync_since > 0.0
+    # 같은 상태 재진입은 '변동 없음'
+    assert p.update_sync_output(b"\x1b[?2026h some text") is False
+    # 프레임 끝
+    assert p.update_sync_output(b"more\x1b[?2026l") is True
+    assert p.sync_output is False
+    # 2026 이 전혀 없는 데이터는 무영향
+    assert p.update_sync_output(b"plain output\r\n") is False
+    assert p.sync_output is False
+    # 한 슬라이스에 l 다음 h(프레임 N 끝 + N+1 시작) → 최종 켜짐
+    assert p.update_sync_output(b"\x1b[?2026lTAIL\x1b[?2026hHEAD") is True
+    assert p.sync_output is True
+    # 한 슬라이스에 h 다음 l(완결 프레임) → 최종 꺼짐
+    assert p.update_sync_output(b"\x1b[?2026hBODY\x1b[?2026l") is True
+    assert p.sync_output is False

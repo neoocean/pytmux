@@ -19,7 +19,8 @@ import traceback
 from . import ipc, pty_backend, ptyhostmgr, version
 from .model import ClientConn, Pane, Session
 from .protocol import (FLUSH_HZ, MAX_H, MAX_W, MIN_H, MIN_W, PROTO_VERSION,
-                       clamp_dim, frame_msg, read_msg, write_frames, write_msg)
+                       SYNC_OUTPUT_MAX_DEFER, clamp_dim, frame_msg, read_msg,
+                       write_frames, write_msg)
 from .serverremote import _REMOTE_BLOCK_ACTIONS, _REMOTE_RELAY_ACTIONS
 
 # host 재연결 폭주 가드(옵션 C). host 가 '새 연결이 옛 연결을 대체'하므로 두 서버가 같은
@@ -361,8 +362,16 @@ class ServerIOMixin:
                 # 모아 한 번에 write+drain 한다(B4 배치). 클라별 _sent_rows 기준이라
                 # 다중 클라·신규 attach 도 정합.
                 frames_by_client = {c: [] for c in clients}
+                now = time.monotonic()
                 for p in win.panes():
                     if not p.dirty:
+                        continue
+                    # 동기화 출력(DEC 2026): 프레임(?2026h…?2026l) 도중이면 송신을
+                    # 미뤄(dirty 유지) 반쪽 화면을 클라에 안 보낸다 — 무작위 글자
+                    # 겹침의 근본 해결. 단 ESU 안 오는 먹통 앱이 패널을 영구히 묶지
+                    # 않게 SYNC_OUTPUT_MAX_DEFER 지나면 강제로 보낸다.
+                    if (p.sync_output
+                            and now - p._sync_since < SYNC_OUTPUT_MAX_DEFER):
                         continue
                     rows, cursor = p.render(p is win.active_pane)
                     # 전송 전 플러그인 행 필터(claude-code 가 '/feedback 팁' 줄을 가림).
@@ -375,9 +384,13 @@ class ServerIOMixin:
                         frames_by_client[c].append(
                             self._screen_frame(c, p.id, rows, cursor,
                                                p._last_wrap))
-                # 라이브 PTY 팝업 패널(트리 밖)도 dirty 면 스트리밍한다.
+                # 라이브 PTY 팝업 패널(트리 밖)도 dirty 면 스트리밍한다(동기화 출력
+                # 프레임 도중이면 일반 패널과 동일하게 송신을 미룬다).
                 pu = sess.popup
-                if pu and pu.get("pane") is not None and pu["pane"].dirty:
+                if (pu and pu.get("pane") is not None and pu["pane"].dirty
+                        and not (pu["pane"].sync_output
+                                 and now - pu["pane"]._sync_since
+                                 < SYNC_OUTPUT_MAX_DEFER)):
                     pp = pu["pane"]
                     rows, cursor = pp.render(True)
                     rows = self.plugins.server_filter_rows(self, pp, rows)

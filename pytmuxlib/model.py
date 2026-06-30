@@ -545,6 +545,11 @@ class Pane:
         self.search_query = ""   # 스크롤백 검색어
         self._match_abs = None   # 현재 매치된 절대 라인 인덱스
         self.bracketed = False   # 내부 앱이 bracketed paste 모드를 켰는지
+        # 동기화 출력(DEC private 2026, BSU/ESU): 내부 앱이 한 프레임을 ?2026h…?2026l
+        # 로 감싸 '원자적으로' 그려지길 기대하는 동안 True. 서버 flush 가 그 중간을
+        # 보내지 않게 하는 게이트(update_sync_output 참조).
+        self.sync_output = False
+        self._sync_since = 0.0   # sync_output 가 켜진 시각(time.monotonic) — 타임아웃용
         # 내부 앱의 마우스 트래킹 모드(DECSET). 클라이언트가 이 패널로 마우스를
         # 패스스루할지/어떻게 인코딩할지 판단하는 데 쓴다(서버가 추적해 전달).
         self._mouse_modes = set()   # 켜진 {1000,1002,1003}
@@ -607,6 +612,8 @@ class Pane:
         self.search_query = ""
         self._match_abs = None
         self.bracketed = False
+        self.sync_output = False
+        self._sync_since = 0.0
         self._mouse_modes = set()
         self.mouse_track = 0
         self.mouse_sgr = False
@@ -810,6 +817,37 @@ class Pane:
                             else 2 if 1002 in self._mouse_modes
                             else 1 if 1000 in self._mouse_modes else 0)
         return (self.mouse_track, self.mouse_sgr) != before
+
+    def update_sync_output(self, data: bytes) -> bool:
+        """피드 데이터에서 동기화 출력 모드(DEC private 2026, BSU/ESU)를 추적한다.
+        ?2026h=프레임 시작, ?2026l=프레임 끝. Claude Code 등 현대 TUI 는 한 프레임을
+        이 안에 감싸 원자적으로 그려지길 기대하는데, 서버 flush 가 그 중간 상태를
+        클라에 보내면 글자 겹침/반쪽 프레임이 보였다 다음 프레임에 낫는 '무작위
+        깨짐'이 난다(tmux 는 2026 을 구현해 안 깨짐). _flush_loop 가 이 플래그를 보고
+        프레임 도중엔 송신을 미룬다(SYNC_OUTPUT_MAX_DEFER 타임아웃 안전망 포함).
+        bracketed/mouse 추적과 같은 자리(_ingest_slice)에서 원시 바이트로 호출한다.
+        한 슬라이스에 h·l 이 함께 오면 **마지막 토글**(rfind)이 최종 상태다. 상태가
+        바뀌면 True 반환(켜짐 전이 때 _sync_since 에 시각 기록)."""
+        if b"\x1b[?2026" not in data:
+            # 토글 없는 '프레임 중간' 슬라이스. 큰 프레임은 FEED_SLICE(8KB) 여러 조각에
+            # 걸쳐 들어오는데(serverpty._feed_drain), 동기화 중이면 이건 아직 그 프레임을
+            # 그리는 중이란 뜻이다. _sync_since 를 갱신해 디퍼 타임아웃이 '프레임 총
+            # 소요'가 아니라 '마지막 바이트 이후 침묵'을 재게 한다 — 안 그러면 무거운
+            # 스크롤(대형 프레임)이 SYNC_OUTPUT_MAX_DEFER 를 넘겨 _flush_loop 가 반쪽
+            # 프레임을 송신(글자 겹침)한다. 먹통 앱은 바이트가 끊겨 갱신이 멈추므로
+            # 타임아웃 안전망은 그대로 동작한다.
+            if self.sync_output:
+                self._sync_since = time.monotonic()
+            return False
+        on = data.rfind(b"\x1b[?2026h") > data.rfind(b"\x1b[?2026l")
+        if on == self.sync_output:
+            if on:   # 동기화 유지 슬라이스(추가 BSU/바이트) — 위와 같은 이유로 리셋
+                self._sync_since = time.monotonic()
+            return False
+        self.sync_output = on
+        if on:
+            self._sync_since = time.monotonic()
+        return True
 
     # 레이아웃 계산용
     def first_pane(self) -> "Pane":
