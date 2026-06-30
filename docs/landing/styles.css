@@ -101,8 +101,8 @@ a:hover { text-decoration: underline; }
 /* ── 섹션 공통 ── */
 section { padding: 64px 0; }
 .section-head { text-align: center; max-width: 680px; margin: 0 auto 48px; }
-.section-head h2 { font-size: clamp(27px, 4vw, 38px); margin: 0 0 14px; letter-spacing: -0.8px; font-weight: 800; }
-.section-head p { color: var(--text-dim); font-size: 17px; margin: 0; }
+.section-head h2 { font-size: clamp(27px, 4vw, 38px); margin: 0 0 14px; letter-spacing: -0.8px; font-weight: 800; word-break: keep-all; }
+.section-head p { color: var(--text-dim); font-size: 17px; margin: 0; word-break: keep-all; }
 .kicker { font-family: var(--mono); color: var(--accent); font-size: 13px; letter-spacing: 1px; text-transform: uppercase; display: block; margin-bottom: 10px; }
 
 /* ── 핵심 가치 ── */
