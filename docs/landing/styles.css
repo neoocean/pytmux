@@ -250,3 +250,24 @@ section { padding: 64px 0; }
   .toc { position: static; display: none; }
   .nav-links { display: none; }
 }
+
+/* ───────── 스크린샷 라이트박스(클릭 확대) ───────── */
+.hero-shot img, .shot img, .gcard img, figure img { cursor: zoom-in; }
+.lightbox {
+  position: fixed; inset: 0; z-index: 1000;
+  display: none; align-items: center; justify-content: center;
+  background: rgba(5, 6, 12, .92); padding: 4vmin; cursor: zoom-out;
+  opacity: 0; transition: opacity .12s ease;
+}
+.lightbox.open { display: flex; opacity: 1; }
+.lightbox img {
+  max-width: 96vw; max-height: 92vh; width: auto; height: auto;
+  border-radius: 10px; border: 1px solid var(--border);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .6);
+}
+.lightbox .lb-close {
+  position: absolute; top: 18px; right: 22px;
+  font-size: 30px; line-height: 1; color: #c9c9d6;
+  background: none; border: none; cursor: pointer; padding: 6px;
+}
+.lightbox .lb-close:hover { color: #fff; }
