@@ -155,6 +155,7 @@ section { padding: 64px 0; }
   background: #0d0d16; border: 1px solid var(--border); border-radius: 12px;
   font-family: var(--mono); font-size: 14px; line-height: 1.7;
   padding: 20px 22px; overflow-x: auto; color: #d4d4e4;
+  white-space: pre-wrap; word-break: break-word;
 }
 .code .c { color: var(--text-faint); }
 .code .p { color: var(--accent); }
