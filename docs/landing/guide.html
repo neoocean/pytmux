@@ -73,27 +73,29 @@
 
       <section id="install">
         <h2>1. 설치</h2>
-        <p>파이썬만 있으면 됩니다. Python 3.11 이상을 권장합니다.</p>
+        <p>파이썬만 있으면 됩니다. Python 3.11 이상을 권장합니다. 의존성을 설치합니다(직접
+           설치는 <span class="inline-code">pip install textual pyte wcwidth</span>, Windows 는
+           <span class="inline-code">pip install pywinpty</span> 도 추가).</p>
         <div class="code">
-<span class="c"># 의존성</span>
 pip install -r requirements.txt
-<span class="c"># 또는 직접: pip install textual pyte wcwidth</span>
-<span class="c"># Windows 는 추가로: pip install pywinpty</span>
-
-<span class="c"># 실행 (서버 없으면 자동 기동 후 attach)</span>
+        </div>
+        <p>실행 — 서버가 없으면 자동 기동 후 attach 합니다.</p>
+        <div class="code">
 python3 pytmux.py
         </div>
         <h3>1.1 <code>pytmux</code> 명령으로 등록 (선택)</h3>
+        <p>래퍼를 <code>~/.local/bin</code> 에 설치합니다. 인자로 다른 디렉터리를,
+           <span class="inline-code">BIN=pt</span> 로 다른 이름(pt)을 지정할 수 있습니다.</p>
         <div class="code">
-./install.sh                  <span class="c"># ~/.local/bin 에 'pytmux' 래퍼 설치</span>
-./install.sh /usr/local/bin   <span class="c"># 다른 디렉터리</span>
-BIN=pt ./install.sh           <span class="c"># 다른 이름(pt)으로</span>
+./install.sh
+./install.sh /usr/local/bin
+BIN=pt ./install.sh
         </div>
         <p>Windows(PowerShell)에서는 <code>install.ps1</code> / <code>uninstall.ps1</code> 을 사용합니다.</p>
         <h3>1.2 SSH/mosh 접속 시 자동 attach (선택)</h3>
-        <p>원격 로그인하면 곧바로 pytmux 세션으로 들어가도록 <code>~/.zshrc</code> 등에 추가합니다.</p>
+        <p>원격 로그인하면 곧바로 pytmux 세션으로 들어가도록 <code>~/.zshrc</code> 등에 추가합니다.
+           인터랙티브 SSH/mosh 로그인일 때만 attach 하도록 중첩 방지 가드를 둡니다.</p>
         <div class="code">
-<span class="c"># 인터랙티브 SSH/mosh 로그인일 때만 attach (중첩 방지 가드 포함)</span>
 if command -v pytmux >/dev/null && [[ -o interactive ]] && [[ -t 1 ]] \
    && [[ -z "$PYTMUX" ]] && [[ -z "$LC_PYTMUX" ]] \
    && [[ -n "$SSH_CONNECTION$SSH_TTY" ]]; then
