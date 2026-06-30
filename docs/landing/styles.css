@@ -105,8 +105,8 @@ section { padding: 64px 0; }
 .section-head p { color: var(--text-dim); font-size: 17px; margin: 0; }
 .kicker { font-family: var(--mono); color: var(--accent); font-size: 13px; letter-spacing: 1px; text-transform: uppercase; display: block; margin-bottom: 10px; }
 
-/* ── 핵심 가치(3열) ── */
-.pillars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+/* ── 핵심 가치 ── */
+.pillars { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 20px; }
 .pillar {
   background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 28px 24px;
