@@ -794,11 +794,23 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     action=lambda: self.send_cmd("remote_detach", host=rhost),
                     title=i18n.t("dialog.detach_remote_title"))
                 return
-            # 이 탭을 닫으면 pytmux 가 끝나는가 = 탭이 하나뿐인가(#16).
-            last = len(self.tabbar.tabs) <= 1
+            # 이 탭을 닫으면 pytmux 가 끝나는가 = 로컬 탭이 이것 하나뿐인가.
+            # 원격(remote-attach ⇄) 탭은 서버 세션의 로컬 창이 아니라 페더레이션
+            # 뷰다 — 마지막 로컬 창을 죽이면 서버 세션이 비어 앱 전체가 분리(종료)
+            # 된다. 그래서 전체 탭 수가 아니라 **로컬 탭 수**로 판정한다(원격 탭이
+            # 함께 열려 있으면 total>1 이라 예전엔 last=False 로 경고가 빠져,
+            # 마지막 로컬 탭을 실수로 닫으면 확인 없이 앱이 통째로 디태치됐다).
+            local_tabs = sum(1 for t in self.tabbar.tabs if not t.get("remote"))
+            has_remote = any(t.get("remote") for t in self.tabbar.tabs)
+            last = local_tabs <= 1
             pinned = (not last and any(t.get("active") and t.get("pinned")
                                        for t in self.tabbar.tabs))
-            if last:
+            if last and has_remote:
+                # 원격 탭이 함께 열려 있는데 마지막 로컬 탭을 닫는 경우 — 앱 전체가
+                # 종료되며 원격 탭 보기도 함께 끊긴다는 점을 명시해 실수를 막는다.
+                msg = i18n.t("dialog.kill_pytmux_remote_msg")
+                title = i18n.t("dialog.kill_pytmux_title")
+            elif last:
                 msg = i18n.t("dialog.kill_pytmux_msg")
                 title = i18n.t("dialog.kill_pytmux_title")
             elif pinned:

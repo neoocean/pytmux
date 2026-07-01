@@ -3056,6 +3056,32 @@ async def test_close_remote_tab_routes_to_detach():
     await _with_app(body)
 
 
+async def test_close_last_local_tab_with_remote_open_warns_app_exit():
+    """로컬 탭 1개 + 원격 탭이 함께 열려 있을 때 마지막 로컬 탭을 닫으면 서버
+    세션이 비어 앱 전체가 분리(종료)된다 — total>1 이라 예전엔 경고 없이 통째로
+    디태치됐다. 이제 '마지막 로컬 탭 → 앱 종료' 를 danger 메시지로 확인받는다."""
+    async def body(app, pilot, srv):
+        from textual.widgets import Label
+        # 로컬 탭(활성) 1개 + 원격 탭 1개 → total=2 지만 로컬은 1개.
+        wins = [
+            {"index": 0, "name": "local", "active": True},
+            {"index": 1, "name": "⇄office1:win", "active": False,
+             "remote": True}]
+        app.status.windows = wins
+        app.tabbar.tabs = wins
+        assert app._active_remote_host() is None, "활성 탭은 로컬"
+        app.confirm_kill_tab()
+        await pilot.pause(0.2)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "ConfirmScreen"
+        assert scr._danger is True, "마지막 로컬 탭 → 앱 종료(danger)"
+        assert "원격" in scr._message, scr._message   # 원격 탭 언급
+        assert scr.query_one("#cn", Label).has_class("danger"), "붉은색 강조"
+        assert scr._sel == 1, "기본 선택은 '취소'(안전)"
+        await pilot.press("escape")
+    await _with_app(body)
+
+
 async def test_tab_bar_scroll_and_hide_bottom():
     async def body(app, pilot, srv):
         for _ in range(6):                 # 총 7개 탭(좁은 폭에서 오버플로)

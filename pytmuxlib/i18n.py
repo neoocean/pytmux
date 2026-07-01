@@ -185,6 +185,7 @@ register({
 register({
     "ko": {
         "dialog.kill_pytmux_msg": "이 탭을 닫으면 pytmux 가 종료됩니다(모든 셸 종료). 닫을까요?",
+        "dialog.kill_pytmux_remote_msg": "이것이 마지막 로컬 탭입니다. 닫으면 pytmux 가 종료되고(모든 셸 종료) 열려 있는 원격 탭 보기도 함께 끊깁니다. 닫을까요?",
         "dialog.kill_pytmux_title": "pytmux 종료",
         "dialog.kill_tab_msg": "이 탭을 닫을까요? 탭의 셸이 종료됩니다.",
         "dialog.kill_tab_title": "탭 닫기",
@@ -203,6 +204,7 @@ register({
     },
     "en": {
         "dialog.kill_pytmux_msg": "Closing this tab will quit pytmux (all shells end). Close?",
+        "dialog.kill_pytmux_remote_msg": "This is the last local tab. Closing it quits pytmux (all shells end) and also disconnects your open remote tab views. Close?",
         "dialog.kill_pytmux_title": "Quit pytmux",
         "dialog.kill_tab_msg": "Close this tab? The tab's shells will end.",
         "dialog.kill_tab_title": "Close tab",
