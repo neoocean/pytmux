@@ -367,6 +367,16 @@ def _session_time(records: list, bucket: str = "hour") -> dict:
     return out
 
 
+def session_time_labels(records: list) -> dict:
+    """세션 id → '월-일 시:분' 라벨(원시 레코드 실 ts 기준). 세션 뷰 타임스탬프 열이
+    일/주/월 버킷에서도 실제 세션 시작 '시:분'을 보이게 한다(사용자 요청 2026-07-01):
+    그 버킷들의 집계 src 는 일자 합성 레코드(ts=로컬 정오 고정)라 시각을 잃으므로,
+    타임스탬프 열만은 항상 raw _records 의 실 ts 에서 '월-일 시:분'까지 뽑는다.
+    raw 창(최근 N)에 없는 옛 세션은 여기에 안 담기고, 표시 측이 집계 gtimes(날짜만)로
+    폴백한다. hour 버킷 규약(_session_time)과 동일 포맷."""
+    return _session_time(records, "hour")
+
+
 def agg_view(records: list, bucket: str = "day", account: str | None = None,
              dim: str = "account", order: str = "time",
              top: int | None = None, weekdays=None, hour_suffix="시",

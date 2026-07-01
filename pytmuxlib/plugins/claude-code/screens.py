@@ -1452,8 +1452,17 @@ class TokenLogScreen(ModalScreen):
             v = usagelog.agg_view(src, self._bucket, None, "session",
                                   "time", top=None, group_order="time",
                                   hour_suffix=hour_suffix)
-            # 세션 시작 시각(별도 타임스탬프 열용) — _refresh 가 읽는다.
-            self._sess_times = v.get("gtimes")
+            # 세션 시작 시각(별도 타임스탬프 열용) — _refresh 가 읽는다. 일/주/월 버킷의
+            # 집계 src(일자 합성 ts=정오 고정)는 시각을 잃어 gtimes 가 '날짜만'이 된다.
+            # 사용자 요청(2026-07-01): 타임스탬프에 날짜+시각을 함께 보이도록, 실제
+            # 세션 시작 '월-일 시:분'을 raw _records(실 ts)에서 뽑아 덮는다. raw 창에
+            # 없는 옛 세션은 집계 gtimes(날짜만)로 폴백한다.
+            real_ts = usagelog.session_time_labels(self._records)
+            gt = v.get("gtimes") or []
+            self._sess_times = [
+                real_ts.get(_session_id_of_label(lbl))
+                or (gt[i] if i < len(gt) else "")
+                for i, (lbl, _, _) in enumerate(v["groups"])]
             return (v["groups"], v["gmax"], v["total"], i18n.t("세션"), None,
                     v.get("gmodels"))
         self._sess_times = None

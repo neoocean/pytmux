@@ -375,6 +375,48 @@ async def test_session_view_highlights_active_session():
         await teardown(srv, task, sock)
 
 
+async def test_session_view_timestamp_shows_date_and_time_in_day_bucket():
+    """요청 2026-07-01: 세션 뷰 타임스탬프 열은 일/주/월 버킷에서도 날짜뿐 아니라
+    시각(시:분)까지 보인다. 집계 src(일자 합성 ts=정오)는 시각을 잃지만, 타임스탬프는
+    raw _records 의 실 ts 에서 '월-일 시:분'까지 뽑아 덮기 때문. tzoff=0 고정으로
+    머신 tz 와 무관하게 검증한다."""
+    from textual.widgets import DataTable
+    from textual.coordinate import Coordinate
+    from rich.text import Text
+    from harness import make_app, server_only, teardown
+
+    # ts=1_700_000_000 → 2023-11-14 22:13:20Z(tzoff=0). day 버킷.
+    recs = [{"ts": 1_700_000_000.0, "tab": 0, "pane": 1, "session": 42,
+             "account": "a@x.org", "tokens": 5000, "tzoff": 0},
+            {"ts": 1_700_100_000.0, "tab": 1, "pane": 2, "session": 7,
+             "account": "a@x.org", "tokens": 2000, "tzoff": 0}]
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(120, 36)) as pilot:
+            await pilot.pause(0.3)
+            app.push_screen(screens.TokenLogScreen(recs))
+            await pilot.pause(0.2)
+            scr = app.screen_stack[-1]
+            scr._exit_body_modes()
+            scr._view = "session"
+            scr._bucket = "day"          # 시각을 잃던 버킷
+            await scr._refresh()
+            await pilot.pause(0.1)
+            # 세션 42 시작 시각 = 11-14 22:13, 세션 7 = 11-16 02:00 (날짜+시각).
+            assert "11-14 22:13" in (scr._sess_times or []), scr._sess_times
+            assert "11-16 02:00" in (scr._sess_times or []), scr._sess_times
+            # 타임스탬프 열(라벨0·타임스탬프1)에 시:분 구분자가 실제로 렌더된다.
+            table = scr.query_one(DataTable)
+            ts_cells = []
+            for r in range(table.row_count):
+                c = table.get_cell_at(Coordinate(r, 1))
+                ts_cells.append(c.plain if isinstance(c, Text) else str(c))
+            assert any(":" in c for c in ts_cells), ts_cells
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_hour_view_header_plain_without_usage():
     """실측 /usage 가 없으면(리셋 표기 없음) hour 뷰 5h% 칼럼 제목은 잔여시간 없이
     맨 '5h%'(지어내지 않음). _reset_left 가 None 이라 inline 잔여시간을 안 붙인다."""
