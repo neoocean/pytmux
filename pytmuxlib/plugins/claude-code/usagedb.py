@@ -116,19 +116,29 @@ def connect(path: str) -> sqlite3.Connection:
             os.chmod(d, 0o700)
         except OSError:
             pass
-        existed = os.path.exists(path)
-    else:
-        existed = True
     conn = sqlite3.connect(path, timeout=5.0)
     conn.row_factory = sqlite3.Row
     # WAL: reader/writer 비차단. busy_timeout: 드문 락 흡수. 인메모리는 WAL 무의미.
     if path != ":memory:":
+        # 파일 생성 직후·WAL 활성화 **이전에** 0600 으로 조인다(무조건 — 복원/레거시
+        # DB 재조임 포함). SQLite 는 -wal/-shm 사이드카를 메인 DB 파일 모드로 만드므로
+        # 이 순서라야 사이드카(최근 커밋행: 계정 이메일·토큰수 포함)도 0600 이 된다(L5).
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
         conn.execute("PRAGMA journal_mode=WAL")
         # P7: synchronous=NORMAL — WAL 에선 commit 마다 fsync 하지 않고 체크포인트
         # 에서만 동기화한다. _log_tokens 가 응답 경계마다 insert+commit 하므로
         # 레코드별 fsync 비용을 없앤다. 내구성: 애플리케이션 크래시엔 안전(WAL 잔존),
         # OS 크래시/정전 시에만 마지막 미체크포인트 구간 유실 — usage 로그엔 허용.
         conn.execute("PRAGMA synchronous=NORMAL")
+        # 벨트앤서스펜더: WAL 활성으로 막 생성된 사이드카도 직접 0600 으로 조인다.
+        for suf in ("-wal", "-shm"):
+            try:
+                os.chmod(path + suf, 0o600)
+            except OSError:
+                pass
     conn.execute("PRAGMA busy_timeout=3000")
     conn.executescript(_SCHEMA)
     cur_v = int(conn.execute("PRAGMA user_version").fetchone()[0])
@@ -165,11 +175,6 @@ def connect(path: str) -> sqlite3.Connection:
             new_v = min(new_v, 7)
     conn.execute(f"PRAGMA user_version={new_v}")
     conn.commit()
-    if path != ":memory:" and not existed:
-        try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
     return conn
 
 

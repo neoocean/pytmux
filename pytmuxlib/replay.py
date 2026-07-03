@@ -14,6 +14,7 @@ import gzip
 import os
 import sys
 
+from . import ipc                     # open_private(0600) — raw 캡처 파일 소유자 전용
 from .clientutil import _char_cells   # 1-9: 로컬 비메모이즈 복사본 대신 정식 lru_cache 판
 from .model import Pane
 from .protocol import set_winsize
@@ -122,7 +123,7 @@ def run_record(path: str, cols: int, rows: int, argv: list[str],
         sys.stderr.write(f"record: 명령을 찾을 수 없음: {cmd[0]}\n")
         return 127
 
-    out = open(path, "wb")
+    out = ipc.open_private(path, "wb")  # 0600 — raw PTY 캡처(에코된 비밀번호 포함 가능)
     stdin_fd = sys.stdin.fileno()
     isatty = os.isatty(stdin_fd)
     old = None

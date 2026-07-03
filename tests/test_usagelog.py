@@ -349,3 +349,32 @@ async def test_model_cell_sequence_largest_remainder():
     # 토큰 없음 → 미귀속 칸은 'unknown'(종전 None), 0칸은 빈 리스트.
     assert usagelog._model_cell_sequence({}, 3) == ["unknown"] * 3
     assert usagelog._model_cell_sequence({"opus": 5}, 0) == []
+
+
+async def test_usagedb_files_owner_only_incl_wal_shm():
+    """L5(보안 검수 2026-07-03): 토큰 DB 파일과 WAL/SHM 사이드카가 0600 인지.
+    사이드카는 최근 커밋행(계정 이메일·토큰수)을 담으므로, 메인 DB 를 WAL 활성화
+    **이전에** 0600 으로 조여 SQLite 가 사이드카에 그 모드를 상속하게 한다."""
+    if os.name == "nt":
+        return  # POSIX 모드비트만 의미(Windows 는 per-user 영역)
+    import importlib
+    import stat
+    usagedb = importlib.import_module("pytmuxlib.plugins.claude-code.usagedb")
+    d = tempfile.mkdtemp()
+    path = os.path.join(d, "tokens.db")
+    conn = usagedb.connect(path)
+    try:
+        # 쓰기를 유발해 -wal/-shm 이 실제로 생기게 한다.
+        conn.execute("CREATE TABLE IF NOT EXISTS _t(x)")
+        conn.execute("INSERT INTO _t VALUES (1)")
+        conn.commit()
+        for suf in ("", "-wal", "-shm"):
+            fp = path + suf
+            if os.path.exists(fp):
+                mode = stat.S_IMODE(os.stat(fp).st_mode)
+                assert mode == 0o600, (suf or "db", oct(mode))
+        # 디렉토리도 0700
+        assert stat.S_IMODE(os.stat(d).st_mode) == 0o700, oct(
+            stat.S_IMODE(os.stat(d).st_mode))
+    finally:
+        conn.close()

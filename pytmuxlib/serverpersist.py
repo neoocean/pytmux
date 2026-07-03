@@ -382,8 +382,8 @@ class ServerPersistMixin:
                     old = f.read().splitlines()[-79:]
             except OSError:
                 pass
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("\n".join(old + [line]) + "\n")
+            with ipc.private_atomic(path) as f:  # 0600(F5) + 원자교체 — 종전 open()
+                f.write("\n".join(old + [line]) + "\n")   # 은 0644·비원자였다(L4)
         except Exception:
             pass
 

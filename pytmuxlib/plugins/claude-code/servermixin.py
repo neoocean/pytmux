@@ -1419,7 +1419,7 @@ class ServerClaudeMixin:
             if len(lines) > self._WARN_HIST_CAP:
                 lines = lines[-self._WARN_HIST_CAP:]
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
+            with ipc.open_private(path, "w") as f:  # 0600 — usagelog 와 동일 규약(L6)
                 f.write("\n".join(lines) + "\n")
         except OSError:
             pass
@@ -2089,7 +2089,7 @@ class ServerClaudeMixin:
             if reset:
                 rec["reset"] = True
             path = ipc.state_base(self.sock_path) + ".tokendbg.jsonl"
-            with open(path, "a", encoding="utf-8") as f:
+            with ipc.open_private(path, "a") as f:  # 0600 — 토큰 회계 진단(L6 동류)
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         except Exception:
             pass
