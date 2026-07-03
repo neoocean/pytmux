@@ -272,3 +272,33 @@ async def test_preauth_handshake_timeout_drops_stalled_conn():
     finally:
         serverio.HANDSHAKE_TIMEOUT = orig
         await teardown(srv, task, ep)
+
+
+async def test_harden_win_acl_runs_once_per_path():
+    """L7 후속(2026-07-03 os-compat fd 회귀): _harden_win_acl 은 경로별 **1회만** icacls 를
+    스폰한다. default_state_dir 이 소켓/포트/토큰/state_base·에러로그 경로 해석에서 반복
+    호출되므로, 여기에 무조건 서브프로세스를 걸면 연결마다 Windows 핸들 churn 이 나
+    red-team 배터리 fd 증가가 임계(16)를 넘었다(Δ17~22). 메모이즈로 방지한다."""
+    import subprocess
+    calls = []
+    orig_run, orig_win = subprocess.run, ipc.IS_WINDOWS
+    orig_set = set(ipc._win_acl_hardened)
+
+    def fake_run(*a, **k):
+        calls.append(a[0] if a else k.get("args"))
+        class _R:
+            returncode = 0
+        return _R()
+    try:
+        ipc.IS_WINDOWS = True
+        subprocess.run = fake_run
+        ipc._win_acl_hardened.clear()
+        for _ in range(5):                       # 같은 경로 반복 호출(핫패스 모사)
+            ipc._harden_win_acl(r"C:\fake\statedir", is_dir=True)
+        assert len(calls) == 1, calls            # 경로당 1회만 스폰
+        ipc._harden_win_acl(r"C:\fake\default.token")   # 다른 경로 → +1
+        assert len(calls) == 2, calls
+    finally:
+        subprocess.run, ipc.IS_WINDOWS = orig_run, orig_win
+        ipc._win_acl_hardened.clear()
+        ipc._win_acl_hardened.update(orig_set)

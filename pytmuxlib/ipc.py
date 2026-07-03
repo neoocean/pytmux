@@ -265,14 +265,23 @@ def token_path(endpoint: str) -> str:
     return endpoint + ".token"
 
 
+_win_acl_hardened: set = set()
+
+
 def _harden_win_acl(path: str, is_dir: bool = False) -> None:
     """Windows: 경로의 상속 ACL 을 끊고 현재 사용자 전용(F)으로 조인다(보안검수 2026-07-03
     L7). POSIX 0600/0700 에 대응하는 심층방어 — 토큰파일·상태디렉토리의 기밀성이
     %LOCALAPPDATA% 기본 ACL '상속'에만 의존하지 않게 하고, PYTMUX_HOME 을 느슨한 ACL
     위치로 옮겨도 타 로컬 사용자가 토큰을 읽어 인증을 통과하지 못하게 한다. POSIX 는 no-op.
-    실패는 무시(기존 상속 ACL 유지 → 무회귀). headless 검증 불가(office/CI Windows 라이브)."""
-    if not IS_WINDOWS:
+    실패는 무시(기존 상속 ACL 유지 → 무회귀). headless 검증 불가(office/CI Windows 라이브).
+
+    **경로별 1회만** 실행한다: `default_state_dir` 이 소켓/포트/토큰/state_base 경로 해석에서
+    반복 호출되고(에러 로그 경로 포함) 여기에 icacls 스폰을 걸면 연결마다 서브프로세스 →
+    Windows 핸들 churn 으로 red-team 배터리 fd 증가가 임계를 넘었다(2026-07-03 os-compat).
+    디렉토리를 (OI)(CI)F 로 조이면 그 안에 만들어지는 토큰 파일도 상속으로 소유자 전용이 된다."""
+    if not IS_WINDOWS or path in _win_acl_hardened:
         return
+    _win_acl_hardened.add(path)   # 실패해도 재시도 안 함(스팸 방지) — best-effort
     try:
         import getpass
         import subprocess
