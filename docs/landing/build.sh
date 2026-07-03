@@ -15,7 +15,7 @@ out="${1:-$here/_dist}"
 rm -rf "$out"
 mkdir -p "$out/image"
 
-cp "$here/index.html" "$here/guide.html" "$here/styles.css" "$out/"
+cp "$here/index.html" "$here/guide.html" "$here/changelog.html" "$here/styles.css" "$out/"
 cp "$here"/image/*.svg "$out/image/"
 
 echo "built → $out"

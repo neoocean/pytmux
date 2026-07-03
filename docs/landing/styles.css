@@ -271,3 +271,18 @@ section { padding: 64px 0; }
   background: none; border: none; cursor: pointer; padding: 6px;
 }
 .lightbox .lb-close:hover { color: #fff; }
+
+/* ── 최근 수정사항(changelog) ── */
+.cl-intro { margin-bottom: 8px; }
+.cl-intro p, .cl-intro .callout, .cl-day li { word-break: keep-all; }
+.pill {
+  display: inline-block; font-family: var(--mono); font-size: 12px; font-weight: 600;
+  color: var(--text-dim); background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 999px; padding: 2px 10px; vertical-align: middle; margin-left: 8px;
+  letter-spacing: 0.3px;
+}
+.pill.ship { color: var(--green); border-color: rgba(63,209,122,0.4); background: rgba(63,209,122,0.1); }
+.pill.stable { color: var(--accent); border-color: rgba(78,163,255,0.4); background: var(--accent-soft); }
+.doc .cl-day h2 { font-size: 24px; }
+.doc .cl-day ul { margin: 12px 0 0; }
+.doc .cl-day li { margin-bottom: 12px; line-height: 1.6; }

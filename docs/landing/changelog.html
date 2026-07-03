@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pytmux 최근 수정사항 — 날짜별 변경 내역</title>
+<meta name="description" content="pytmux 소개 사이트 공개 이후의 변경 내역. 화면 안정화, 토큰 사용량 뷰, 원격 탭·Windows 개선 등 실제로 보이고 체감되는 변화를 날짜별로 정리합니다.">
+<link rel="stylesheet" href="styles.css">
+<!-- Matomo -->
+<script>
+  var _paq = window._paq = window._paq || [];
+  /* tracker methods like "setCustomDimension" should be called before "trackPageView" */
+  _paq.push(['trackPageView']);
+  _paq.push(['enableLinkTracking']);
+  (function() {
+    var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']);
+    _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s);
+  })();
+</script>
+<!-- End Matomo Code -->
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="index.html" style="text-decoration:none"><span class="prompt">❯</span> pytmux</a>
+    <div class="nav-links">
+      <a href="index.html">홈</a>
+      <a href="guide.html">상세 가이드</a>
+      <a href="changelog.html">최근 수정사항</a>
+      <a href="index.html#download">다운로드</a>
+      <a class="gh" href="https://github.com/neoocean/pytmux" target="_blank" rel="noopener">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap">
+  <main class="doc" style="max-width:820px;margin:48px auto 0;">
+
+    <header class="cl-intro">
+      <span class="kicker">Changelog</span>
+      <h1 style="font-size:40px;letter-spacing:-1px;margin:6px 0 10px;">최근 수정사항</h1>
+      <p style="font-size:18px;">
+        pytmux 는 활발히 개선되고 있습니다. 이 페이지는 <strong>2026년 6월 30일 소개 사이트 공개</strong>
+        이후 더해지거나 바뀐 내용을 모아 둔 곳입니다. 대부분은 그날 바로 반영됩니다.
+      </p>
+      <div class="callout">
+        <strong>읽는 법.</strong> 지금은 변화가 잦아 <strong>하루 단위</strong>로 묶어
+        <strong>최신 날짜가 맨 위</strong>에 오도록 정리합니다. 여기 적힌 것은 실제로 화면에서
+        <strong>보이고 체감되는 변화</strong> 위주이며, 내부 성능·안정화 작업은 요약만 적었습니다.
+        전체 변경 이력은 <a href="https://github.com/neoocean/pytmux/commits/main" target="_blank" rel="noopener">GitHub 커밋 로그</a>에 있습니다.
+      </div>
+    </header>
+
+    <section class="cl-day" id="d-2026-07-03">
+      <h2>2026-07-03 <span class="pill">금요일</span></h2>
+      <ul>
+        <li><strong>부하가 걸려도 화면이 흔들리지 않습니다.</strong> 옆 패널에서 무거운 작업(벤치마크 등)이
+          CPU 를 가득 채우면 Claude Code 화면이 잠깐 <strong>반쪽으로 겹쳐 보이던</strong> 문제를 고쳤습니다.
+          프레임 도중 출력이 잠시 멈춰도 반쪽 화면을 강제로 내보내지 않고 <strong>직전 완성 화면을 그대로
+          유지</strong>하도록 대기 창을 넉넉히(0.15초 → 1초) 늘렸습니다 — 잘 짠 앱일수록 오히려 더 안전하고,
+          진짜로 멈춘 앱은 1초 안에 자동으로 풀립니다.</li>
+        <li><strong>Windows 에서 <span class="inline-code">:ncd</span> 디렉토리 트리가
+          현재 폴더를 제대로 짚습니다.</strong> Windows 기본(host) 모드에서 <span class="inline-code">:ncd</span>(디렉토리 트리로
+          이동)를 열면 항상 최상위 드라이브만 강조되고 <strong>지금 있는 폴더</strong>를 못 찾던 문제를
+          고쳤습니다. 서버를 재시작해 다시 붙은 뒤에도 현재 위치가 유지됩니다.</li>
+      </ul>
+    </section>
+
+    <section class="cl-day" id="d-2026-07-01">
+      <h2>2026-07-01 <span class="pill">수요일</span></h2>
+      <ul>
+        <li><strong>실수로 앱이 통째로 닫히지 않습니다.</strong> 원격 탭이 열려 있는 채로 마지막 로컬 탭을
+          닫으면 앱 전체가 종료되는데, 이제 <strong>정말 끝낼지 확인</strong>을 먼저 받습니다.</li>
+        <li><strong>토큰 사용량 세션 뷰가 더 정확해졌습니다.</strong> 세션 목록이 날짜뿐 아니라
+          <strong>날짜 + 시각</strong>을 함께 보여주고, 같은 날 안에서도 <strong>실제 시:분 기준 최신순</strong>으로
+          정렬됩니다(전에는 하루 단위로만 정렬돼 순서가 뒤섞였습니다).</li>
+        <li><span class="pill stable">안정성</span> Windows 에서 재시작 후 마우스 이동·클릭이 프롬프트에
+          <strong>좌표 문자로 새던 문제</strong>를 고쳤습니다 — 재시작을 제자리 재접속으로 바꿔 콘솔·마우스
+          상태를 건드리지 않도록 했습니다.</li>
+      </ul>
+    </section>
+
+    <section class="cl-day" id="d-2026-06-30">
+      <h2>2026-06-30 <span class="pill ship">화요일 · 소개 사이트 공개 🚀</span></h2>
+      <ul>
+        <li><strong>소개 사이트를 공개했습니다.</strong> <a href="index.html">pytmux.woojinkim.org</a> 에서
+          기능·화면·설치·<a href="guide.html">상세 가이드</a>를 한곳에서 볼 수 있습니다. 스크린샷은
+          클릭하면 크게 확대됩니다.</li>
+        <li><strong>Claude 화면 깨짐 자동 완화.</strong> 화면이 깨졌을 때만(깨짐 신호가 보일 때만)
+          자동으로 다시 그리는 <strong>on-corruption 모드</strong>를 더했습니다 — 스크롤·동기화 출력 근본
+          수정 위에 얹은 바닥 안전망입니다.</li>
+      </ul>
+    </section>
+
+  </main>
+</div>
+
+<footer class="foot">
+  <div class="wrap">
+    <div>
+      <span class="brand"><span class="prompt">❯</span> pytmux</span>
+      &nbsp; — Python/Textual 터미널 멀티플렉서
+    </div>
+    <div class="foot-links">
+      <a href="guide.html">상세 가이드</a> ·
+      <a href="changelog.html">최근 수정사항</a> ·
+      <a href="index.html#install">설치</a> ·
+      <a href="https://github.com/neoocean/pytmux" target="_blank" rel="noopener">GitHub</a> ·
+      <a href="mailto:me@woojinkim.org?subject=pytmux">me@woojinkim.org</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
