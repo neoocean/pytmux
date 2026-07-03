@@ -27,10 +27,13 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      # 액션을 커밋 SHA 로 고정한다(보안검수 2026-07-03 L8): mutable 태그(@v4)는
+      # 재지정으로 악성 커밋이 주입될 수 있고, 이 잡은 id-token:write + pages:write 권한을
+      # 쥐므로 공급망 위험이 크다. 주석의 버전은 사람 참고용(업데이트 시 SHA·주석 동시 갱신).
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b  # v5
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa  # v3
         with:
           path: docs/landing       # 이 디렉토리만 사이트 루트로
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e  # v4
