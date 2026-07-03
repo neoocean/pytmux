@@ -18,9 +18,9 @@ import traceback
 
 from . import ipc, pty_backend, ptyhostmgr, version
 from .model import ClientConn, Pane, Session
-from .protocol import (FLUSH_HZ, MAX_H, MAX_W, MIN_H, MIN_W, PROTO_VERSION,
-                       SYNC_OUTPUT_MAX_DEFER, clamp_dim, frame_msg, read_msg,
-                       write_frames, write_msg)
+from .protocol import (FLUSH_HZ, HANDSHAKE_MAX_FRAME, HANDSHAKE_TIMEOUT, MAX_H,
+                       MAX_W, MIN_H, MIN_W, PROTO_VERSION, SYNC_OUTPUT_MAX_DEFER,
+                       clamp_dim, frame_msg, read_msg, write_frames, write_msg)
 from .serverremote import _REMOTE_BLOCK_ACTIONS, _REMOTE_RELAY_ACTIONS
 
 # host 재연결 폭주 가드(옵션 C). host 가 '새 연결이 옛 연결을 대체'하므로 두 서버가 같은
@@ -945,7 +945,17 @@ class ServerIOMixin:
 
     async def handle_client(self, reader: asyncio.StreamReader,
                             writer: asyncio.StreamWriter):
-        first = await read_msg(reader)
+        # 인증 전(핸드셰이크) 읽기는 작은 상한(HANDSHAKE_MAX_FRAME) + 타임아웃으로
+        # 감싼다: Windows 루프백 TCP 는 비인가 로컬 사용자가 connect() 가능하므로,
+        # 큰 길이만 광고하거나(slowloris) 무한 대기시켜 단일스레드 데몬을 고갈시키는
+        # 걸 막는다(보안검수 2026-07-03 M2). 인증 후 본 루프는 MAX_FRAME 을 쓴다.
+        try:
+            first = await asyncio.wait_for(
+                read_msg(reader, max_frame=HANDSHAKE_MAX_FRAME),
+                HANDSHAKE_TIMEOUT)
+        except (asyncio.TimeoutError, OSError, ConnectionError):
+            writer.close()
+            return
         # 첫 프레임은 dict 여야 한다. 비-dict JSON(리스트/정수/문자열 등 악의·비정상
         # 클라)이면 이어지는 `first.get(...)` 가 AttributeError 로 핸들러 밖으로 새
         # (트레이스백 노이즈·비정상 드롭). None 과 동일하게 조용히 끊는다(SECURITY_REVIEW

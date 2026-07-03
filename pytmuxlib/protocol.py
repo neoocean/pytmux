@@ -49,6 +49,15 @@ FEED_SLICE = 8192
 # 델타·status)는 이보다 훨씬 작으므로 상한 초과 프레임은 연결 종료로 처리한다.
 MAX_FRAME = 64 * 1024 * 1024
 
+# 인증 **이전**(핸드셰이크) 프레임 상한 + 타임아웃. Windows 제어채널은 루프백 TCP 라
+# 같은 머신 임의 로컬 사용자가 토큰 없이 connect() 할 수 있다. 인증 전 read_msg 가
+# MAX_FRAME(64MiB)까지·타임아웃 없이 버퍼링하면, 비인가 사용자가 큰 길이만 광고하고
+# 천천히 흘리거나(slowloris) 연결을 늘려 단일스레드 데몬 메모리/루프를 고갈시킬 수 있다.
+# hello/list/control 첫 프레임은 수백 B 라 64KiB 로 충분하고, 타임아웃으로 지연 연결을
+# 끊는다(보안검수 2026-07-03 M2). 인증 후 본 루프는 MAX_FRAME 을 그대로 쓴다.
+HANDSHAKE_MAX_FRAME = 64 * 1024
+HANDSHAKE_TIMEOUT = 10.0
+
 # 클라↔서버 와이어 프로토콜 버전. 프레이밍·메시지 스키마가 비호환으로 바뀔 때 올린다.
 # 첫 프레임(hello/list/control 등)에 클라가 실어 보내고, 서버가 불일치를 명확히 거절해
 # 구·신 버전 혼용 시 조용한 오작동/JSON 깨짐 대신 명시적 실패가 되게 한다. 필드가 아예
@@ -56,16 +65,17 @@ MAX_FRAME = 64 * 1024 * 1024
 PROTO_VERSION = 1
 
 
-async def read_msg(reader: asyncio.StreamReader):
+async def read_msg(reader: asyncio.StreamReader, max_frame: int = MAX_FRAME):
     """길이-프리픽스(4바이트 빅엔디언) + JSON 한 프레임을 읽는다. EOF·비정상 프레임이면
-    None(호출부가 연결 종료로 처리). 길이는 MAX_FRAME 으로 상한, 페이로드가 깨졌거나
-    비-JSON 이어도 예외 대신 None 을 돌려 리더 루프가 죽지 않게 한다."""
+    None(호출부가 연결 종료로 처리). 길이는 max_frame 으로 상한(기본 MAX_FRAME; 인증 전
+    핸드셰이크는 HANDSHAKE_MAX_FRAME 을 넘겨 더 작게), 페이로드가 깨졌거나 비-JSON 이어도
+    예외 대신 None 을 돌려 리더 루프가 죽지 않게 한다."""
     try:
         header = await reader.readexactly(4)
     except (asyncio.IncompleteReadError, ConnectionError):
         return None
     length = int.from_bytes(header, "big")
-    if length > MAX_FRAME:
+    if length > max_frame:
         return None                     # 무제한 길이 → OOM 방지(연결 종료 신호)
     try:
         payload = await reader.readexactly(length)

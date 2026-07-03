@@ -235,3 +235,40 @@ async def test_live_token_and_socket_are_0600():
                 os.lstat(ep).st_mode)
     finally:
         await teardown(srv, task, ep)
+
+
+async def test_preauth_frame_capped_below_max_frame():
+    """M2(보안검수 2026-07-03): 인증 전 프레임은 HANDSHAKE_MAX_FRAME(64KiB)로 상한.
+    MAX_FRAME(64MiB)보다 작지만 핸드셰이크 상한을 넘는 길이(예: 1MiB)를 광고하면 서버가
+    버퍼링 없이 끊는다 — Windows 루프백 비인가 로컬 사용자의 대용량-할당 pre-auth DoS 차단."""
+    from pytmuxlib.protocol import HANDSHAKE_MAX_FRAME
+    assert HANDSHAKE_MAX_FRAME < MAX_FRAME
+    srv, task, ep = await server_only()
+    try:
+        r, w = await _open(ep)
+        w.write((HANDSHAKE_MAX_FRAME + 1).to_bytes(4, "big") + b"x")
+        await w.drain()
+        assert await _recv(r) is None          # 서버가 끊음(버퍼링 안 함)
+        w.close()
+        assert await _server_alive(srv, ep)
+    finally:
+        await teardown(srv, task, ep)
+
+
+async def test_preauth_handshake_timeout_drops_stalled_conn():
+    """M2: 인증 전 연결이 첫 프레임을 안 보내고 매달려 있으면(slowloris) 핸드셰이크
+    타임아웃으로 끊는다 — 무한 대기 코루틴 누적 방지. 서버 생존."""
+    import pytmuxlib.serverio as serverio
+    orig = serverio.HANDSHAKE_TIMEOUT
+    serverio.HANDSHAKE_TIMEOUT = 0.3
+    srv, task, ep = await server_only()
+    try:
+        r, w = await _open(ep)
+        w.write(b"\x00\x00")    # 4바이트 길이헤더 미완성 → 서버는 타임아웃 후 끊어야
+        await w.drain()
+        assert await _recv(r, timeout=2.0) is None
+        w.close()
+        assert await _server_alive(srv, ep)
+    finally:
+        serverio.HANDSHAKE_TIMEOUT = orig
+        await teardown(srv, task, ep)
