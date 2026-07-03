@@ -841,6 +841,8 @@ _WELCOME_RE = _re.compile(r">Welcome(?:&#160;|\s)back[^<]*</text>")
 _REAL_USER = _getpass.getuser()
 _REAL_HOST = _socket.gethostname()
 _REAL_HOST_SHORT = _REAL_HOST.split(".")[0]
+# Perforce depot 클라이언트 루트(공개 SVG 안전망 M3). 사용자명으로 구성되므로 동적 산출.
+_DEPOT_ROOT = f"//{_REAL_USER}/"
 
 # 상태줄 host 런(우측 `ssh:host`)은 host/clock/date 가 한 블록으로 **우측 정렬**되므로,
 # 실 호스트명이 짧으면 host 가 시계 바로 왼쪽에 붙는다. 그런데 _redact_svg 의 사후
@@ -1290,6 +1292,15 @@ def _redact_svg(path):
                          (_REAL_USER, "user")):
         if _real and _real not in ("host", "user"):
             new = new.replace(_real, _repl)
+    # 안전망(보안검수 2026-07-03 M3): 고정 PII 외 내부 인프라 문자열도 마스킹한다.
+    # 리댁션은 _bake_glyphs 로 벡터 path(=grep 불가)로 굳기 **이전**의 <text> 단계이므로,
+    # 실데이터 장면이 이 토큰들을 실으면 여기서만 잡을 수 있다. 현 장면은 합성 픽스처라
+    # 실효과 0(토큰 부재→파일 무변경) 이지만 미래 재생성·실데이터 유입 대비 심층방어다.
+    # ⚠️ 그래도 근본 방어는 아니다: baked SVG 는 텍스트 검색이 무력하므로, p4/원격/경로가
+    # 보이는 공개 장면은 **배포 전 실제 렌더 육안 확인**이 필수다(합성 데이터 전용 권장).
+    for _real, _repl in ((_DEPOT_ROOT, "//depot/"), ("office1", "host"),
+                         ("surface-office", "host"), ("playground", "workspace")):
+        new = new.replace(_real, _repl)
     new = _postprocess_cjk(new)
     if new != svg:
         with open(path, "w", encoding="utf-8") as f:
