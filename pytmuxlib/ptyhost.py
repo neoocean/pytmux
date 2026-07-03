@@ -108,7 +108,13 @@ class PtyHost:
                 if frame[0] == "data":
                     self._on_input(frame[1], frame[2])
                 else:
-                    await self._on_control(frame[1], writer)
+                    try:
+                        await self._on_control(frame[1], writer)
+                    except (KeyError, ValueError, TypeError):
+                        # 손상 control 프레임(누락 pane/cols·비정수)이 이 연결 루프를
+                        # 끊지 않게 드롭한다 — 피어는 인증된 로컬 서버라 공격 미도달,
+                        # 견고성 차원(보안검수 2026-07-03 INFO).
+                        pass
         finally:
             if self._writer is writer:
                 self._writer = None

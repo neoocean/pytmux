@@ -1668,7 +1668,10 @@ class TokenLogScreen(ModalScreen):
                 # 2026-06-21). DataTable 의 커서/줄무늬와 충돌 없이 전경색만으로 강조.
                 act_st = (_ACTIVE_SESSION_COLOR + " bold") if active else None
                 lbl = self._trunc(label, label_w)
-                cells = [Text(lbl, style=act_st) if active else lbl]
+                # 비활성 라벨도 Text 로 감싼다(bare str 은 DataTable 이 Rich 마크업으로
+                # 해석할 수 있어, 계정/세션 라벨의 '[' 가 스타일 주입될 여지 — 실제 라벨은
+                # '@' 강제라 미도달이나 심층방어, 보안검수 2026-07-03 INFO).
+                cells = [Text(lbl, style=act_st) if active else Text(lbl)]
                 if show_ts:
                     cells.append(Text(tstr, justify="left", style=act_st or ""))
                 cells.append(Text(self._tok_aligned(tok, maxdig),
