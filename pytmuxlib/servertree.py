@@ -164,6 +164,15 @@ class ServerTreeMixin:
     def _pane_cwd(self, pane: Pane) -> str | None:
         # 자식(셸) 프로세스의 cwd 를 추정한다. 실패 시 None.
         pid = pane.child_pid
+        # host 모드(Windows 기본·POSIX 옵션 C)에선 셸이 pty-host 프로세스 안에서
+        # 돌아 pane.child_pid 는 -1 이다. 실제 셸 pid 는 원격 pty 프록시가 host 의
+        # 'spawned' 회신으로 안다(_RemotePtyProcess.pid). 그걸 써야 ncd·default-path
+        # =current 가 host 모드에서도 현재 디렉토리를 찾는다(안 그러면 cwd=None →
+        # ncd 가 루트/드라이브만 열고 현재 위치를 강조 못 한다).
+        if (pid is None or pid < 0) and getattr(pane, "pty", None) is not None:
+            pid = getattr(pane.pty, "pid", -1)
+        if pid is None or pid < 0:
+            return None
         # Windows: /proc·lsof 가 없으므로 PEB 를 읽어 cwd 를 구한다(proc 헬퍼).
         # 이게 None 이면 ncd 가 현재 디렉토리를 강조하지 못한다.
         if proc.IS_WINDOWS:

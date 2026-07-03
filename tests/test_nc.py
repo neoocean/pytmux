@@ -76,6 +76,47 @@ async def test_nc_ancestor_chain_root_to_cwd():
         await teardown(srv, task, sock)
 
 
+async def test_pane_cwd_host_mode_uses_pty_pid():
+    """host 모드(Windows 기본·POSIX 옵션 C)에선 셸이 pty-host 안에서 돌아
+    pane.child_pid 가 -1 이다 — _pane_cwd 가 원격 pty 프록시의 실제 셸 pid 를
+    써야 cwd 를 구한다(안 그러면 ncd 가 현재 디렉토리를 못 찾아 루트만 강조).
+    pid 선택 로직을 Windows·POSIX 공통으로 검증하려고 proc.process_cwd 를 스텁한다."""
+    from pytmuxlib import proc
+    from pytmuxlib.model import Pane
+    srv, task, sock = await server_only()
+    seen = {}
+    orig_cwd, orig_win = proc.process_cwd, proc.IS_WINDOWS
+
+    def fake_cwd(pid):
+        seen["pid"] = pid
+        return f"/cwd/{pid}"
+
+    class _Pty:
+        pid = 4321
+
+    try:
+        proc.IS_WINDOWS = True
+        proc.process_cwd = fake_cwd
+        # host 모드: child_pid=-1, 실제 셸 pid 는 pty 프록시에 있다
+        host_pane = Pane(-1, -1, 80, 24)
+        host_pane.pty = _Pty()
+        assert srv._pane_cwd(host_pane) == "/cwd/4321"
+        assert seen["pid"] == 4321
+        # in-process 패널: child_pid 를 그대로 쓴다(회귀 방지)
+        seen.clear()
+        inproc = Pane(9999, -1, 80, 24)
+        inproc.pty = _Pty()
+        assert srv._pane_cwd(inproc) == "/cwd/9999"
+        assert seen["pid"] == 9999
+        # pid 를 어디서도 못 구하면(host spawned 회신 전 등) None graceful
+        blank = Pane(-1, -1, 80, 24)
+        blank.pty = None
+        assert srv._pane_cwd(blank) is None
+    finally:
+        proc.process_cwd, proc.IS_WINDOWS = orig_cwd, orig_win
+        await teardown(srv, task, sock)
+
+
 async def test_nc_list_msg_chain_root_to_cwd():
     srv, task, sock = await server_only()
     try:
