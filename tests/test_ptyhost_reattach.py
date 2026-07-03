@@ -82,12 +82,21 @@ async def test_host_resume_reattach_keeps_session():
         panes = await clientB.list_panes()
         srvB._host_resume_alive = {p["pane"] for p in panes if p["alive"]}
         assert hpid in srvB._host_resume_alive, "host 가 패널을 못 살림"
+        # reattach 후엔 'spawned' 프레임이 다시 오지 않으므로 list_reply 가 실제 셸
+        # pid 를 재구성해야 한다 — 안 그러면 pane.pty.pid=-1 이라 _pane_cwd(ncd·
+        # default-path=current)가 재시작 후 기존 패널에서 cwd 를 못 찾는다.
+        shell_pid = clientB.pid(hpid)
+        assert shell_pid > 0, f"reattach 후 셸 pid 미복구: {shell_pid}"
         ok = srvB.restore_resume_state(state_path)
         assert ok, "resume 복원 실패"
         # 복원된 패널이 같은 host_pane_id 로 재바인딩됐는지.
         paneB = next(iter(srvB.sessions.values())).active_window.active_pane
         assert paneB.host_pane_id == hpid, (paneB.host_pane_id, hpid)
         assert type(paneB.pty).__name__ == "_RemotePtyProcess"
+        # 재바인딩된 프록시가 재구성된 실제 셸 pid 를 돌려주고, host 모드(child_pid=-1)
+        # 에서도 그 pid 로 셸 cwd 를 구할 수 있다(POSIX /proc).
+        assert paneB.pty.pid == shell_pid
+        assert srvB._pane_cwd(paneB) is not None
         # ★살아 있는 같은 셸이 계속 동작 — 재시작 후 새 입력이 먹는다.
         paneB.pty.write(b"echo AFTER_RESTART_66\n")
         assert await _pane_has(paneB, "AFTER_RESTART_66"), harness.pane_text(paneB)

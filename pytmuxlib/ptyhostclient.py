@@ -132,9 +132,20 @@ class PtyHostClient:
             if cb and cb[1]:
                 cb[1]()
         elif op == "list_reply":
+            panes = msg.get("panes", [])
+            # reattach(서버 재시작) 후엔 기존 패널의 'spawned' 프레임이 다시 오지
+            # 않으므로 list_reply 로 pid/alive 매핑을 재구성한다 — 안 그러면
+            # pane.pty.pid=-1 이라 ncd·default-path=current 가 재시작 후 기존
+            # 패널에서 현재 디렉토리(cwd)를 못 찾는다(_pane_cwd 가 셸 pid 를 못 얻음).
+            for p in panes:
+                pane = int(p.get("pane", -1))
+                if pane >= 0:
+                    self._pid[pane] = int(p.get("pid", -1))
+                    if p.get("alive"):
+                        self._alive.add(pane)
             for fut in self._list_waiters:
                 if not fut.done():
-                    fut.set_result(msg.get("panes", []))
+                    fut.set_result(panes)
             self._list_waiters.clear()
 
     def _handle_lost(self):
