@@ -286,3 +286,17 @@ section { padding: 64px 0; }
 .doc .cl-day h2 { font-size: 24px; }
 .doc .cl-day ul { margin: 12px 0 0; }
 .doc .cl-day li { margin-bottom: 12px; line-height: 1.6; }
+
+/* ── 최근 수정사항 프리뷰(랜딩·가이드) ── */
+.cl-preview { display: grid; gap: 12px; margin-top: 26px; }
+.cl-item {
+  display: grid; grid-template-columns: 140px 1fr; gap: 18px; align-items: start;
+  padding: 15px 20px; background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 12px; text-decoration: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.cl-item:hover { border-color: var(--accent); background: var(--bg-elev); }
+.cl-date { font-family: var(--mono); font-size: 13px; color: var(--text-faint); white-space: nowrap; padding-top: 2px; }
+.cl-body { color: var(--text-dim); font-size: 15.5px; line-height: 1.55; word-break: keep-all; }
+.cl-body strong { color: var(--text); }
+@media (max-width: 640px) { .cl-item { grid-template-columns: 1fr; gap: 5px; } }
