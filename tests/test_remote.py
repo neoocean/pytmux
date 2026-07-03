@@ -1848,3 +1848,19 @@ async def test_client_dispatch_guarded_survives_malformed_remote_frame():
             assert raised, "malformed screen frame should raise in raw _dispatch"
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_ssh_self_attach_rejected_by_token():
+    """L2(보안검수 2026-07-03): ssh host 경로로 자기 자신에 되붙으면(원격=자기 데몬이
+    자기 TOKEN 회신) _is_self_ssh_token 이 True → attach 거부. endpoint 경로의 self-attach
+    가드(sock_path 비교)가 host 경로를 못 잡던 갭을 토큰 비교로 메운다."""
+    srv, task, sock = await server_only()
+    try:
+        srv.auth_token = "deadbeefcafe"
+        assert srv._is_self_ssh_token("deadbeefcafe") is True
+        assert srv._is_self_ssh_token("some-other-token") is False
+        # auth_token 미설정이면 False(구경로/테스트 안전)
+        srv.auth_token = None
+        assert srv._is_self_ssh_token("deadbeefcafe") is False
+    finally:
+        await teardown(srv, task, sock)
