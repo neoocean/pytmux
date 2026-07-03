@@ -380,7 +380,7 @@ def session_time_labels(records: list) -> dict:
 def agg_view(records: list, bucket: str = "day", account: str | None = None,
              dim: str = "account", order: str = "time",
              top: int | None = None, weekdays=None, hour_suffix="시",
-             group_order: str = "tokens") -> dict:
+             group_order: str = "tokens", time_records=None) -> dict:
     """표시(DataTable) 전용 집계 — 정렬·라벨·비율까지 계산해 렌더가 바로 쓰게 한다.
 
     반환:
@@ -445,8 +445,14 @@ def agg_view(records: list, bucket: str = "day", account: str | None = None,
     # 그룹 정렬: 기본은 토큰 많은 순. 세션 뷰에서 group_order=="time" 이면 **시작 시각
     # 내림차순**(최신 세션이 맨 위, 요청 2026-06-22) — 정렬엔 원시 ts(_session_start_ts)를
     # 쓰고, 없는 그룹은 맨 뒤(0)로 둔다.
+    # day/week/month 버킷의 집계 src(`records`)는 일자 합성 레코드(ts=로컬 정오 고정)라
+    # 시각을 잃어 하루 안의 세션이 전부 같은 ts→'날짜 단위'로만 정렬됐다(버그, 2026-07-01).
+    # time_records(raw _records, 실 ts)가 주어지면 그걸로 시작 시각을 덮어 하루 안에서도
+    # 실제 '시:분' 내림차순 정렬한다. raw 창에 없는 옛 세션은 합성 ts(정오)로 폴백(날짜순 유지).
     if dim == "session" and group_order == "time":
         gstart = _session_start_ts(records)
+        if time_records is not None:
+            gstart = {**gstart, **_session_start_ts(time_records)}
         groups = sorted(agg["groups"].items(),
                         key=lambda kv: -gstart.get(kv[0], 0.0))
     else:

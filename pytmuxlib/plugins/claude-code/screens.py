@@ -1449,9 +1449,13 @@ class TokenLogScreen(ModalScreen):
             # 세션 뷰(요청 2026-06-22): 토큰 많은 순+상위 N 접힘 대신 **시작 시각
             # 내림차순(최신 위) + 전 세션 표시**(top=None 으로 '기타' 접힘 해제 — 사용자
             # 결정: 항상 전체 펼침). 막대 vmax(gmax)·점유%는 정렬과 무관해 그대로 맞다.
+            # time_records=self._records(raw, 실 ts): day/week/month 버킷의 src 는
+            # 일자 합성(ts=정오)이라 정렬이 날짜 단위로만 됐다 → raw 실 ts 로 하루 안까지
+            # 시각 내림차순 정렬(사용자 요청 2026-07-01). 타임스탬프 열(real_ts)과 동일 소스.
             v = usagelog.agg_view(src, self._bucket, None, "session",
                                   "time", top=None, group_order="time",
-                                  hour_suffix=hour_suffix)
+                                  hour_suffix=hour_suffix,
+                                  time_records=self._records)
             # 세션 시작 시각(별도 타임스탬프 열용) — _refresh 가 읽는다. 일/주/월 버킷의
             # 집계 src(일자 합성 ts=정오 고정)는 시각을 잃어 gtimes 가 '날짜만'이 된다.
             # 사용자 요청(2026-07-01): 타임스탬프에 날짜+시각을 함께 보이도록, 실제

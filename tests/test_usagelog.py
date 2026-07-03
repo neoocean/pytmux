@@ -112,6 +112,42 @@ async def test_session_view_time_order_and_no_fold():
     assert dl[0].startswith("세션 100"), dl
 
 
+async def test_session_view_time_order_intraday_uses_real_ts():
+    """회귀(버그 2026-07-01): day/week/month 버킷의 집계 src 는 일자 합성 레코드
+    (ts=로컬 정오 고정)라 같은 날 세션이 전부 같은 ts → 정렬이 '날짜 단위'로만 되고
+    하루 안에선 세션 번호(안정 정렬)순으로 남았다. time_records(raw 실 ts)를 주면
+    하루 안에서도 실제 시작 '시:분' 내림차순으로 정렬해야 한다.
+
+    src 는 두 세션 모두 같은 정오 ts(합성)로 세션 100 을 먼저 넣어 — 수정 전이면
+    안정 정렬로 100 이 위에 남는다. 실제 시작은 세션 200 이 더 늦으므로(11h > 9h)
+    time_records 를 반영하면 200 이 맨 위여야 한다."""
+    base = 1_700_000_000.0
+    noon = base + 12 * 3600
+    # 집계 src: 같은 날 정오로 합성(시각 소실) — 삽입 순서 100 → 200.
+    src = [
+        dict(usagelog.make_record(noon, 0, 1, 100, "a@x.org", 500), tzoff=0),
+        dict(usagelog.make_record(noon, 0, 1, 200, "a@x.org", 500), tzoff=0),
+    ]
+    # raw 실 ts: 세션 100=09h, 세션 200=11h(더 늦음).
+    raw = [
+        dict(usagelog.make_record(base + 9 * 3600, 0, 1, 100, "a@x.org", 500),
+             tzoff=0),
+        dict(usagelog.make_record(base + 11 * 3600, 0, 1, 200, "a@x.org", 500),
+             tzoff=0),
+    ]
+    # 수정 전 동작(time_records 미지정): 합성 ts 동률 → 안정 정렬로 100 이 위.
+    vbug = usagelog.agg_view(src, "day", dim="session", top=None,
+                             group_order="time")
+    assert [l for l, _, _ in vbug["groups"]][0].startswith("세션 100"), \
+        "합성 ts 만으론 하루 안 정렬이 세션 번호순(버그 재현)"
+    # 수정 후: raw 실 ts 로 하루 안까지 시각 내림차순 → 세션 200(11h)이 맨 위.
+    v = usagelog.agg_view(src, "day", dim="session", top=None,
+                          group_order="time", time_records=raw)
+    labels = [l for l, _, _ in v["groups"]]
+    assert labels[0].startswith("세션 200"), labels
+    assert labels[1].startswith("세션 100"), labels
+
+
 async def test_aggregate_buckets_and_accounts():
     recs = [
         usagelog.make_record(1_700_000_000.0, 0, 1, 1, "a@x.org", 1000),
