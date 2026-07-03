@@ -136,11 +136,15 @@ def default_state_dir() -> str:
                     os.chmod(d, 0o700)
                 except OSError:
                     pass
+        else:   # L7: PYTMUX_HOME 재배치 위치에서도 소유자 전용 ACL 강제
+            for d in (home, state):
+                _harden_win_acl(d, is_dir=True)
         return state
     if IS_WINDOWS:
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
         runtime = os.path.join(base, "pytmux")
         os.makedirs(runtime, exist_ok=True)
+        _harden_win_acl(runtime, is_dir=True)   # L7: 상속 ACL 의존 제거
         return runtime
     runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/pytmux-{os.getuid()}"
     os.makedirs(runtime, exist_ok=True)
@@ -261,6 +265,27 @@ def token_path(endpoint: str) -> str:
     return endpoint + ".token"
 
 
+def _harden_win_acl(path: str, is_dir: bool = False) -> None:
+    """Windows: 경로의 상속 ACL 을 끊고 현재 사용자 전용(F)으로 조인다(보안검수 2026-07-03
+    L7). POSIX 0600/0700 에 대응하는 심층방어 — 토큰파일·상태디렉토리의 기밀성이
+    %LOCALAPPDATA% 기본 ACL '상속'에만 의존하지 않게 하고, PYTMUX_HOME 을 느슨한 ACL
+    위치로 옮겨도 타 로컬 사용자가 토큰을 읽어 인증을 통과하지 못하게 한다. POSIX 는 no-op.
+    실패는 무시(기존 상속 ACL 유지 → 무회귀). headless 검증 불가(office/CI Windows 라이브)."""
+    if not IS_WINDOWS:
+        return
+    try:
+        import getpass
+        import subprocess
+        user = getpass.getuser()
+        grant = f"{user}:(OI)(CI)F" if is_dir else f"{user}:F"
+        subprocess.run(
+            ["icacls", path, "/inheritance:r", "/grant:r", grant],
+            capture_output=True, timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        pass
+
+
 def write_token(endpoint: str, token: str) -> str:
     """토큰을 0600 으로 원자적 게시(서버). 게시한 경로를 반환한다.
 
@@ -285,6 +310,7 @@ def write_token(endpoint: str, token: str) -> str:
         os.chmod(path, 0o600)
     except OSError:
         pass
+    _harden_win_acl(path)   # L7: Windows 는 모드비트 무시 → 명시적 owner-only ACL
     return path
 
 
