@@ -139,7 +139,19 @@ class _NetReconnectMixin:
                     return
                 self.exit()
                 return
+            self._dispatch_guarded(msg)
+
+    def _dispatch_guarded(self, msg):
+        """개별 프레임 처리 예외를 여기서 삼킨다(심층방어, M1). 원격(untrusted) 서버가
+        relay 한 손상 프레임이 서버측 shape 검증(serverremote._relay_frame_ok)을 통과했더라도
+        (깊은 구조 손상) _dispatch 예외가 reader 워커를 죽여(Textual exit_on_error) 클라를
+        통째로 종료시키던 경로를 막는다 — 로그 후 그 프레임만 드롭하고 루프는 계속한다."""
+        try:
             self._dispatch(msg)
+        except Exception:
+            self._dispatch_errors = getattr(self, "_dispatch_errors", 0) + 1
+            self.log(f"dispatch dropped malformed frame "
+                     f"(#{self._dispatch_errors}): {traceback.format_exc()}")
 
     async def _connect_and_hello(self, retries):
         """소켓 재연결 + hello 송신 공통 경로(재시작 재개·degraded 강제 재접속 공용).

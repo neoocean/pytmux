@@ -1800,3 +1800,51 @@ async def test_remote_attach_propagates_ambiguous_wide():
         serverremote.write_msg = orig_write
         await teardown(srvA, taskA, sockA)
         await teardown(srvB, taskB, sockB)
+
+
+async def test_relay_frame_shape_and_ctrl_strip():
+    """M1/L3 페더레이션 신뢰경계 헬퍼: 업스트림(untrusted) 프레임을 다운스트림 클라에
+    재브로드캐스트하기 전 필수 shape 검증 + 원격 유래 문자열 C0/C1 제거."""
+    from pytmuxlib.serverremote import _relay_frame_ok, _strip_ctrl
+    # screen/screen-delta 는 pane + rows(list) 필수 — 누락/오타입은 드롭
+    assert _relay_frame_ok("screen", {"pane": 1, "rows": []})
+    assert not _relay_frame_ok("screen", {"pane": 1})                 # rows 누락
+    assert not _relay_frame_ok("screen", {"rows": []})                # pane 누락
+    assert not _relay_frame_ok("screen-delta", {"pane": 1, "rows": "x"})  # 비-list
+    assert not _relay_frame_ok("screen-delta", {"pane": 1})           # rows 누락
+    # 기타 t 는 통과(클라가 get 기반 처리)
+    assert _relay_frame_ok("layout", {"active": 3})
+    assert _relay_frame_ok("nc_list", {})
+    # C0/C1 제어문자 제거(상태줄 스푸핑·커서 이동 방지)
+    s = _strip_ctrl("a\x1bb\x07c\x9bd")
+    assert "\x1b" not in s and "\x07" not in s and "\x9b" not in s
+    assert s == "a b c d", repr(s)
+
+
+async def test_client_dispatch_guarded_survives_malformed_remote_frame():
+    """M1 심층방어: 원격이 relay 한 손상 screen 프레임(rows 누락)이 _dispatch 까지
+    닿아도 reader 워커가 죽지 않는다 — _dispatch_guarded 가 예외를 삼키고 카운터만
+    올리며 앱은 생존한다. 서버측 _relay_frame_ok 가 1차 방어, 이건 심층방어."""
+    srv, task, sock = await server_only()
+    try:
+        srv.ensure_default_session(80, 24)
+        app = harness.make_app(sock)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            # 정상 프레임: 카운터 불변
+            app._dispatch_guarded({"t": "screen", "pane": 0,
+                                   "rows": [[0, []]], "cursor": None})
+            assert getattr(app, "_dispatch_errors", 0) == 0
+            # 손상 프레임(rows 누락): 예외를 삼키고 카운터 1 + 앱 생존
+            app._dispatch_guarded({"t": "screen", "pane": 0})
+            assert app._dispatch_errors == 1
+            assert app.is_running
+            # 가드 없는 직접 _dispatch 는 여전히 raise(취약점 문서화)
+            raised = False
+            try:
+                app._dispatch({"t": "screen", "pane": 0})
+            except KeyError:
+                raised = True
+            assert raised, "malformed screen frame should raise in raw _dispatch"
+    finally:
+        await teardown(srv, task, sock)

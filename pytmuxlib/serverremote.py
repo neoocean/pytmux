@@ -151,6 +151,26 @@ def _decode_remote_stderr(b: bytes) -> str:
     return b.decode("utf-8", "replace")
 
 
+# 페더레이션 신뢰경계: 업스트림 원격 서버는 **untrusted**(악성/침해 가능)다. 로컬 IPC
+# (serverio.handle_client)는 첫 프레임에 isinstance(dict)+shape 가드가 있으나, 원격 리더는
+# 프레임을 그대로 다운스트림 클라에 재브로드캐스트한다 — 아래 두 헬퍼로 경계에서 검증한다.
+def _relay_frame_ok(t, msg: dict) -> bool:
+    """업스트림 프레임을 다운스트림 클라에 재브로드캐스트하기 전, 클라가 **무가드로**
+    소비하는 필수 키를 검증한다(M1). 누락 시 클라 _dispatch 가 KeyError→reader 워커
+    종료(exit_on_error)→앱 크래시였다. 알 수 없는 t 는 통과(클라는 get 기반 처리)."""
+    if t in ("screen", "screen-delta"):
+        return "pane" in msg and isinstance(msg.get("rows"), list)
+    return True
+
+
+def _strip_ctrl(s: str) -> str:
+    """원격 유래 표시 문자열(핸드셰이크 실패 stderr 등)에서 C0/C1 제어문자를 제거한다
+    (L3). 상태줄 스푸핑·커서 이동(\\r)·표시 손상 방지. 개행/탭은 애초에 splitlines/
+    strip 으로 처리되므로 여기선 전 제어문자를 공백으로 접는다."""
+    return "".join(" " if (ord(c) < 0x20 or 0x7f <= ord(c) <= 0x9f) else c
+                   for c in s)
+
+
 async def _kill_proc(proc) -> None:
     """ssh 서브프로세스를 확실히 종료·reap 한다(안정성 H4). 안 하면 핸드셰이크/타임아웃
     실패 경로에서 <defunct> 좀비 + stdin/stdout/stderr 3 fd 가 누수돼 재연결 스톰과
@@ -275,7 +295,7 @@ class ServerRemoteMixin:
                     err = await asyncio.wait_for(proc.stderr.read(2048), 2)
                 except asyncio.TimeoutError:
                     pass
-                detail = _decode_remote_stderr(err or line).strip()
+                detail = _strip_ctrl(_decode_remote_stderr(err or line)).strip()
                 detail = detail.splitlines()[-1] if detail else ""
                 if not detail:
                     raise RemoteError("rerr.handshake_noresp",
@@ -587,6 +607,11 @@ class ServerRemoteMixin:
                     msg = None
                 if msg is None:
                     break
+                if not isinstance(msg, dict):
+                    # 손상/악성 원격: 비-dict JSON 프레임(`[]`·`42`·`"x"`)은 무시하고
+                    # 계속 — 종전엔 msg.get() 이 AttributeError→광역 except→링크 드롭→
+                    # 무한 재연결 churn(L1)이었다. 링크는 유지한다.
+                    continue
                 t = msg.get("t")
                 if t == "status":
                     # 누적(update): 업스트림 full status 가 채운 옵션 키를 이후
@@ -610,6 +635,11 @@ class ServerRemoteMixin:
                 # 없으면(layout/screen/nc_list 등) 종전대로 이 링크를 보는 전 클라에
                 # 브로드캐스트. 요청 클라가 사라졌으면 매칭 0 → 조용히 드롭(정상).
                 req_token = msg.pop("_req_token", None)
+                if not _relay_frame_ok(t, msg):
+                    # 악성/침해 원격이 relay 하는 손상 프레임(누락 pane/rows 등)을
+                    # 다운스트림 클라가 무가드로 소비하면 KeyError→reader 워커 종료→
+                    # 클라 앱 크래시(M1). 신뢰경계에서 필수 shape 를 검증해 드롭한다.
+                    continue
                 frame = frame_msg(msg)
                 for c in list(self.clients):
                     if c.remote_view != link.host:
