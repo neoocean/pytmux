@@ -419,6 +419,51 @@ async def test_client_reconnects_on_restarting():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_windows_restart_all_reconnects_in_place_not_execv():
+    """Windows 에서는 restart-all(relaunch 통지)이 클라 os.execv relaunch 대신
+    **제자리 재접속(ⓔ)** 으로 처리된다 — execv 가 살아 있는 콘솔을 상속하면 Textual
+    입력 경로가 외부 터미널 SGR 마우스를 키로 오파싱해 활성 패널에 좌표가 텍스트로
+    새는 문제(2026-07-01 보고) 회귀 가드. 서버 host 모드가 세션을 보존하므로
+    제자리 재접속으로 충분하다. POSIX 는 종전대로 execv relaunch(_relaunch=True).
+    OS 분기는 _use_execv_relaunch 를 패치해 결정론적으로 검증(전역 os.name 미변경)."""
+    from harness import make_app
+    # 이 loop 하네스는 Windows CI 에서 초기 attach 왕복이 느려 불안정하다(위
+    # test_restart_client_reconnects_on_disconnect 와 동일 한계) → POSIX 에서만.
+    if ipc.IS_WINDOWS:
+        return
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    app = make_app(sockA)
+    app._use_execv_relaunch = lambda: False   # Windows 분기 강제(전역 오염 없이)
+    try:
+        async with app.run_test(size=(100, 30)) as pilot:
+            for _ in range(200):
+                await pilot.pause(0.05)
+                if app.layout.get("panes"):
+                    break
+            assert app.layout.get("panes"), "초기 접속 레이아웃"
+            # 외부 CLI restart-all 동치: relaunch 통지 → relaunch 모드 무장
+            for c in list(srvA.clients):
+                await write_msg(c.writer, {"t": "restarting", "relaunch": True})
+            await pilot.pause(0.3)
+            assert app._reconnecting is True
+            assert app._relaunch_on_restart is True, "relaunch 통지로 relaunch 모드"
+            # 새 서버로 재접속(실제론 같은 소켓; 테스트는 별 소켓으로 대체)
+            app.sock_path = sockB
+            for c in list(srvA.clients):
+                c.writer.close()      # execv 로 리슨이 닫히는 것과 동치
+            await pilot.pause(1.0)
+            # Windows 분기: execv 안 함(_relaunch False) → 제자리 재접속 성공
+            assert app._relaunch is False, "Windows 는 execv relaunch 안 함"
+            assert app.writer is not None, "제자리 재접속 성공"
+            assert app._relaunch_on_restart is False, "relaunch 소비(제자리로 폴백)"
+            assert app._win_restart_note is False, "재접속 완료 안내 후 플래그 해제"
+            assert srvB.clients, "새 서버에 클라이언트 연결됨"
+    finally:
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
 # ── 7. 클라이언트 명령 매핑: "restart-server" → 드라이런 → restart_server 액션 ─────
 _PASS_CHECK = {
     "t": "restart_check", "reexec_supported": True, "has_sessions": True,

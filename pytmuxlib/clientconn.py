@@ -107,11 +107,24 @@ class _NetReconnectMixin:
                 # run_client 가 app.run() 반환 후 os.execv 로 새 클라를 띄운다
                 # (terminal 은 textual 종료가 정상복구). 새 클라가 re-exec 된 서버에
                 # 재접속해 셸/세션은 보존되고 클라 코드까지 갱신된다.
+                #
+                # Windows 예외: execv 가 진짜 exec 이 아니라 CreateProcess+종료라, 새
+                # 클라가 **살아 있는 콘솔을 상속**한다. 이 핸드오프 뒤 Textual 입력
+                # 경로(win32.EventMonitor→XTermParser)가 외부 터미널의 SGR 마우스
+                # 리포트(\x1b[<..M)를 마우스로 못 알아보고 키 입력으로 재발행 → 활성
+                # 패널에 마우스 좌표가 텍스트로 새고(사용자 보고 2026-07-01), 콘솔이
+                # VT-마우스 상태로 고착돼 터미널 창을 새로 열어야 풀렸다. 서버는 host
+                # 모드로 세션을 보존하므로 Windows 에서는 execv 대신 **제자리 재접속(ⓔ)**
+                # 으로 처리한다 — 콘솔/마우스 상태를 안 건드려 누출이 없다. 트레이드오프:
+                # 클라 코드(client*.py) 변경은 이 경로로 반영 안 됨(전체 재시작 필요).
                 if self._reconnecting:
-                    if self._relaunch_on_restart:
+                    if self._relaunch_on_restart and self._use_execv_relaunch():
                         self._relaunch = True
                         self.exit()
                     else:
+                        if self._relaunch_on_restart:  # Windows: relaunch→제자리 재접속
+                            self._relaunch_on_restart = False
+                            self._win_restart_note = True
                         await self._reconnect()
                     return
                 # 평상(플래그 없는) EOF: 서버가 우리를 떨궜거나(slow-client backpressure
@@ -153,6 +166,16 @@ class _NetReconnectMixin:
         await write_msg(self.writer, hello)
         return True
 
+    def _use_execv_relaunch(self) -> bool:
+        """restart-all 시 클라를 os.execv 로 relaunch 할지 여부. Windows 에서는
+        execv 가 진짜 exec 이 아니라 CreateProcess+종료라 새 클라가 **살아 있는
+        콘솔을 상속**하고, 그 핸드오프 뒤 Textual 입력 경로가 외부 터미널의 SGR
+        마우스 리포트를 키 입력으로 오파싱해 활성 패널에 좌표가 텍스트로 새는
+        문제가 있다(2026-07-01 보고, 위 _read 핸들러 주석 참조). 그래서 Windows 는
+        execv 를 쓰지 않고 제자리 재접속(ⓔ)으로 폴백한다(서버 host 모드가 세션 보존).
+        테스트는 이 메서드를 패치해 OS 분기를 결정론적으로 검증한다."""
+        return os.name != "nt"
+
     async def _reconnect(self):
         """서버가 re-exec 로 재기동되는 동안 같은 소켓으로 재접속한다(ⓔ).
         새 서버가 listen 을 다시 열 때까지 잠깐 재시도한 뒤 hello 로 재개."""
@@ -160,7 +183,13 @@ class _NetReconnectMixin:
         if not await self._connect_and_hello(_RECONNECT_RETRIES_RESTART):
             self.exit(message=i18n.t("msg.reconnect_failed"))
             return
-        self.display_message(i18n.t("msg.restart_done"))
+        # Windows 전체 재시작(restart-all)을 execv 대신 제자리 재접속으로 처리한
+        # 경우, 클라 코드가 갱신되지 않았음을 한 줄로 안내한다(위 끊김 핸들러 참조).
+        if getattr(self, "_win_restart_note", False):
+            self._win_restart_note = False
+            self.display_message(i18n.t("msg.restart_done_win_noclient"))
+        else:
+            self.display_message(i18n.t("msg.restart_done"))
         self._start_reader()
 
     def _drop_reconnect_ok(self) -> bool:

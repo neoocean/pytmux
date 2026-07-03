@@ -370,6 +370,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # _relaunch 를 세우고 종료하면 run_client 가 os.execv 로 새 클라를 띄운다.
             self._relaunch_on_restart = False
             self._relaunch = False
+            # Windows: restart-all 을 execv 대신 제자리 재접속으로 처리했음을 재접속
+            # 완료 메시지에서 한 번 안내하기 위한 1회성 플래그(clientconn 참조).
+            self._win_restart_note = False
             # restart-server/restart-all 은 실행 전 드라이런(request_restart_check)을
             # 먼저 돌린다. 회신(restart_check)이 올 때 어떤 재시작을 대기 중인지
             # ("server"|"all") 기억해 두고, 안전하면 곧장 실행, FAIL 이면 재확인 팝업.
