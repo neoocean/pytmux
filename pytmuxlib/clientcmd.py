@@ -816,21 +816,45 @@ class _CommandMixin:
             # 클라/서버 버전(p4 CL)·업타임 팝업.
             self.open_version()
         elif c in ("display-popup", "popup"):
-            cmd = " ".join(a for a in args if not a.startswith("-"))
-            if cmd:
-                try:
-                    res = subprocess.run(_shell_argv(cmd),
-                                         capture_output=True, timeout=30,
-                                         **proc.no_window_kwargs())
-                    text = (res.stdout + res.stderr).decode("utf-8", "ignore")
-                except (OSError, subprocess.SubprocessError) as e:
-                    text = str(e)
-                self.push_screen(InfoScreen(
-                    text.splitlines()[:60] or [i18n.t("msg.display_no_output")],
-                    title="popup"))
+            # 라이브 PTY 팝업(#10-1): tmux display-popup 처럼 화면 중앙에 떠 있는 PTY
+            # 패널 1개에서 **대화형** 명령/셸을 실행한다(서버 servertree.popup_open —
+            # 셸 -c <cmd>). 과거엔 subprocess.run 으로 출력만 캡처해 비대화형 InfoScreen
+            # (최대 60줄)으로 보였다. 이제 서버 라이브 PTY 팝업 인프라(sess.popup)에
+            # 연결해 대화형 셸/TUI 를 띄운다 — 입력은 팝업이 포커스인 동안 팝업 패널로
+            # 라우팅되고(send_input), 명령이 끝나면 PTY EOF 로 자동 닫힌다. `-C`(또는
+            # popup-close 명령)로 강제로 닫는다. tmux 호환 `-w N`/`-h N`(칸 수) 옵션은
+            # 있으면 서버에 want 크기로 전달(없으면 기본 중앙 rect).
+            if "-C" in args:
+                self.send_cmd("popup_close")
             else:
-                self.push_screen(InfoScreen(["display-popup <command>"],
-                                            title="popup"))
+                want_w = want_h = None
+                skip = set()
+                cmd_parts = []
+                for i, a in enumerate(args):
+                    if i in skip:
+                        continue
+                    if a in ("-w", "-h") and i + 1 < len(args):
+                        skip.add(i + 1)
+                        val = args[i + 1]
+                        if val.isdigit():
+                            if a == "-w":
+                                want_w = int(val)
+                            else:
+                                want_h = int(val)
+                        continue
+                    if a.startswith("-"):
+                        continue
+                    cmd_parts.append(a)
+                cmd = " ".join(cmd_parts)
+                if cmd:
+                    self.send_cmd("popup_open", cmd=cmd, title=cmd[:40],
+                                  w=want_w, h=want_h)
+                else:
+                    self.push_screen(InfoScreen(
+                        ["display-popup [-w N] [-h N] <command>",
+                         "display-popup -C   (close)"], title="popup"))
+        elif c == "popup-close":
+            self.send_cmd("popup_close")
         elif c in ("source-file", "source"):
             self.reload_config(args[0] if args else None)
         elif c in ("set", "set-option"):

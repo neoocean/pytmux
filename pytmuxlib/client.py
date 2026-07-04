@@ -1153,8 +1153,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def send_input(self, data: bytes):
             if self.writer and data:
+                # 라이브 PTY 팝업(#10-1)이 열려 있으면 입력을 **팝업 패널**로 보낸다
+                # (팝업은 항상 포커스 — 트리 활성 패널 대신). 팝업 패널은 트리 밖이라
+                # 서버는 pane_by_id 로 못 찾고 popup 직송 분기(serverio)로 그 PTY 에
+                # 쓴다. 팝업이 없으면 평소대로 활성 패널로.
+                pu = self.layout.get("popup")
+                target = pu["id"] if pu else self.layout.get("active")
                 asyncio.create_task(write_msg(self.writer, {
-                    "t": "input", "pane": self.layout.get("active"),
+                    "t": "input", "pane": target,
                     "data": base64.b64encode(data).decode("ascii")}))
 
         def send_input_pane(self, pane_id, data: bytes):

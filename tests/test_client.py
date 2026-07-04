@@ -6504,3 +6504,104 @@ async def test_token_log_box_height_stable_regardless_of_content():
         await pilot.pause(0.1)
         assert box.size.height == h_day, ("month", box.size.height, h_day)
     await _with_app(body, size=(80, 28))
+
+
+async def test_display_popup_command_opens_live_pty():
+    """#10-1: display-popup/popup 명령이 (과거 subprocess.run 캡처→InfoScreen 대신)
+    서버 라이브 PTY 팝업(popup_open)에 연결한다. `-w N`/`-h N`(tmux 호환)은 want 크기로,
+    `-C`(또는 popup-close)는 강제 닫기(popup_close)로 보낸다."""
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app._run_command("display-popup echo hello")
+        assert sent[-1][0] == "popup_open", sent
+        assert sent[-1][1].get("cmd") == "echo hello", sent[-1]
+        assert sent[-1][1].get("title") == "echo hello", sent[-1]
+        # 크기 옵션(플래그 값이 cmd 로 새지 않아야 함)
+        sent.clear()
+        app._run_command("display-popup -w 30 -h 8 top")
+        assert sent[-1] == ("popup_open",
+                            {"cmd": "top", "title": "top", "w": 30, "h": 8}), \
+            sent[-1]
+        # 강제 닫기 두 경로
+        for close_cmd in ("display-popup -C", "popup-close"):
+            sent.clear()
+            app._run_command(close_cmd)
+            assert sent[-1][0] == "popup_close", (close_cmd, sent)
+        # 인자 없으면 열지 않고 사용법 안내(popup_open 미발화). 실제 InfoScreen 을
+        # 마운트하면 헤드리스에서 on_mount 타이밍으로 깨질 수 있어 push_screen 을
+        # 스텁해 호출만 포착한다(popup_open/close 경로는 화면을 안 띄우므로 무해).
+        sent.clear()
+        pushed = []
+        app.push_screen = lambda scr, *a, **k: pushed.append(scr)
+        app._run_command("display-popup")
+        assert not any(a == "popup_open" for a, _ in sent), sent
+        assert pushed, "인자 없으면 사용법 안내 InfoScreen"
+    await _with_app(body)
+
+
+async def test_display_popup_renders_live_box_and_content():
+    """#10-1: 라이브 PTY 팝업이 열려 있으면(layout['popup']) _composite 가 트리 위에
+    중앙 테두리 박스 + 제목 + 팝업 PTY 내용(pane_content)을 그리고, 커서를 팝업에 둔다."""
+    async def body(app, pilot, srv):
+        app.layout = {
+            "panes": [{"id": 1, "x": 0, "y": 0, "w": 40, "h": 10,
+                       "box": [0, 0, 40, 10]}],
+            "active": 1, "cols": 40, "rows": 10, "dividers": [],
+            "popup": {"id": 900, "x": 10, "y": 2, "w": 20, "h": 6,
+                      "cx": 11, "cy": 3, "cw": 18, "ch": 4, "title": "htop"},
+        }
+        app.pane_content = {
+            1: ([[("b" * 40, {})] for _ in range(10)], None),
+            900: ([[("POPUP-BODY", {})] for _ in range(4)], (0, 0)),
+        }
+        app._composite()
+        cells = app.view._cells
+
+        def rowtext(y):
+            return "".join(c[0] for c in cells[y])
+        # 테두리 모서리
+        assert cells[2][10][0] == "┌", cells[2][10]
+        assert cells[2][29][0] == "┐", cells[2][29]
+        assert cells[7][10][0] == "└", cells[7][10]
+        assert cells[7][29][0] == "┘", cells[7][29]
+        # 제목이 상단 테두리 중앙
+        assert "htop" in rowtext(2), rowtext(2)
+        # 내용이 팝업 내부에 blit(뒤 트리 'b' 를 가림)
+        assert "POPUP-BODY" in rowtext(3), rowtext(3)
+        # 하드웨어 커서가 팝업 커서 셀로(11,3)
+        assert app._active_cursor_xy == (11, 3), app._active_cursor_xy
+        # 팝업 닫힘(layout 에 popup 없음) → 트리 원본만
+        app.layout["popup"] = None
+        app._composite()
+        cells = app.view._cells
+        assert "POPUP-BODY" not in "".join(c[0] for c in cells[3]), cells[3]
+    await _with_app(body, size=(40, 12))
+
+
+async def test_send_input_routes_to_open_popup():
+    """#10-1: 라이브 PTY 팝업이 열려 있는 동안 키 입력은 활성 트리 패널이 아니라
+    팝업 패널 PTY 로 라우팅된다(팝업이 포커스). 닫히면 다시 활성 패널로."""
+    import pytmuxlib.client as C
+
+    async def body(app, pilot, srv):
+        captured = []
+
+        async def fake_write_msg(w, m):
+            captured.append(m)
+        orig = C.write_msg
+        C.write_msg = fake_write_msg
+        try:
+            app.layout = {"panes": [{"id": 1}], "active": 1}
+            app.send_input(b"a")
+            await pilot.pause(0.02)
+            assert captured and captured[-1]["pane"] == 1, captured
+            # 팝업 열림 → 입력이 팝업(555)으로
+            app.layout = {"panes": [{"id": 1}], "active": 1,
+                          "popup": {"id": 555}}
+            app.send_input(b"b")
+            await pilot.pause(0.02)
+            assert captured[-1]["pane"] == 555, captured[-1]
+        finally:
+            C.write_msg = orig
+    await _with_app(body)

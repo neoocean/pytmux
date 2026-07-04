@@ -1037,6 +1037,80 @@ class _RenderMixin:
                 x_from = 0 if yy >= lb_h else lb_w   # 하단 띠=전폭, 그 위=우측 띠만
                 for xx in range(x_from, W):
                     row[xx] = (" ", matte)
+        # 라이브 PTY display-popup(#10-1): 트리 밖 떠 있는 PTY 패널 1개를 테두리 박스와
+        # 함께 **최상위 콘텐츠**로 그린다(트리·Claude 장식·tint 위). geometry 는 서버
+        # _popup_layout(x/y/w/h + 내용 rect cx/cy/cw/ch/title), 셀은 pane_content
+        # (서버가 트리 밖 팝업 패널도 별도 스트리밍). 팝업은 항상 포커스라 커서를
+        # 반전으로 그리고 하드웨어 커서도 팝업으로 옮긴다(아래 IME 동기화가 사용).
+        # Textual 모달(screen_stack>1)이 위에 뜨면 이 아래 backdrop-dim 이 팝업까지
+        # 함께 어둡게 해 레이어가 정합.
+        pu_layout = self.layout.get("popup")
+        if pu_layout:
+            px, py = pu_layout["x"], pu_layout["y"]
+            pw, ph = pu_layout["w"], pu_layout["h"]
+            pcx, pcy = pu_layout["cx"], pu_layout["cy"]
+            pcw, pch = pu_layout["cw"], pu_layout["ch"]
+            box_st = Style(color=theme_color(self, "primary"), bold=True)
+            # ① 박스 내부를 불투명 공백으로 덮어 뒤 화면을 가린다.
+            for gy in range(py, min(py + ph, H)):
+                if gy < 0:
+                    continue
+                for gx in range(px, min(px + pw, W)):
+                    if gx >= 0:
+                        cells[gy][gx] = (" ", DEFAULT_STYLE)
+            # ② 테두리 박스.
+            x2, y2 = px + pw - 1, py + ph - 1
+            for gx in range(px + 1, x2):
+                clientrender.put_cell(cells, gx, py, "─", box_st, W, H)
+                clientrender.put_cell(cells, gx, y2, "─", box_st, W, H)
+            for gy in range(py + 1, y2):
+                clientrender.put_cell(cells, px, gy, "│", box_st, W, H)
+                clientrender.put_cell(cells, x2, gy, "│", box_st, W, H)
+            clientrender.put_cell(cells, px, py, "┌", box_st, W, H)
+            clientrender.put_cell(cells, x2, py, "┐", box_st, W, H)
+            clientrender.put_cell(cells, px, y2, "└", box_st, W, H)
+            clientrender.put_cell(cells, x2, y2, "┘", box_st, W, H)
+            # ③ 제목(상단 테두리 중앙, 모서리 침범 방지).
+            ptitle = (pu_layout.get("title") or "").strip()
+            if ptitle and pw >= 4:
+                label = f" {ptitle} "[: pw - 2]
+                start = px + max(1, (pw - len(label)) // 2)
+                for i, chc in enumerate(label):
+                    gx = start + i
+                    if px < gx < x2 and 0 <= py < H:
+                        cells[py][gx] = (chc, box_st)
+            # ④ 내용(팝업 PTY 셀)을 (cx,cy)에 blit — 일반 패널 blit 과 동일 규칙
+            #    (와이드 문자 연속셀 "" 보존, 내용 rect cw/ch 로 클립).
+            content = self.pane_content.get(pu_layout["id"])
+            if content:
+                rows, cursor = content
+                for ry, row in enumerate(rows):
+                    if ry >= pch:
+                        break
+                    gy = pcy + ry
+                    if not (0 <= gy < H):
+                        continue
+                    gx = pcx
+                    for text, style_d in row:
+                        s = make_style(style_d)
+                        for chh in text:
+                            if gx - pcx >= pcw:
+                                break
+                            wch = _char_cells(chh)
+                            if 0 <= gx < W:
+                                cells[gy][gx] = (chh, s)
+                            if wch == 2 and 0 <= gx + 1 < W and \
+                                    (gx + 1 - pcx) < pcw:
+                                cells[gy][gx + 1] = ("", s)
+                            gx += wch
+                # ⑤ 커서(팝업은 항상 포커스): 반전 + 하드웨어 커서 이동.
+                if cursor:
+                    ccx, ccy = cursor
+                    gx, gy = pcx + ccx, pcy + ccy
+                    if 0 <= gx < W and 0 <= gy < H:
+                        chh, s = cells[gy][gx]
+                        cells[gy][gx] = (chh, _with_reverse(s))
+                        self._active_cursor_xy = (gx, gy)
         # 팝업(모달)이 떠 있으면 뒤 본문을 어둡게 칠하고, 스타일을 무시하고 컬러로
         # 그려지는 이모지는 placeholder(·)로 치환한다(#25). 팝업을 닫으면 다음
         # _composite 가 원본에서 다시 그려 자연히 복원된다(별도 저장 불필요).
