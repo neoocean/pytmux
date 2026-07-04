@@ -10,6 +10,7 @@ import harness  # noqa: F401  (경로 설정)
 import pytmuxlib.claude as claude_mod
 from pytmuxlib.claude import (claude_awaiting_answer, claude_account,
                               claude_context_pct, claude_model,
+                              claude_model_badge,
                               claude_perm_mode, claude_prompt, claude_state,
                               claude_usage, fmt_long_turn_badge,
                               parse_reset_delay, parse_usage,
@@ -410,6 +411,33 @@ async def test_claude_model():
     # 카테고리 라벨과 실제 배지가 함께 있으면 배지(마지막 비카테고리 매치)를 잡는다.
     assert claude_model("Current week (Sonnet only)\n6% used\n"
                         "Opus 4.8 (1M context) · /model to change") == "opus-4.8"
+
+
+async def test_claude_model_badge_ignores_prose():
+    """claude_model_badge 는 실 푸터 배지 서명('(… context)'·'/model')이 붙은 매치만
+    인정한다 — 라이브 화면 스크랩이 대화/온보딩 본문의 모델명 언급을 활성 모델로
+    오인해 상태줄이 엉뚱한 모델로 튀던 버그(2026-07-04: 팝업/프로브는 opus 인데
+    상태줄은 'fable-5')를 막는다."""
+    # 실 배지(서명 있음) → 인식.
+    assert claude_model_badge(
+        "Opus 4.8 (1M context) · /model to change") == "opus-4.8"
+    assert claude_model_badge("Sonnet 4.6 (200K context)") == "sonnet-4.6"
+    # 버그 재현: 온보딩/환경 본문의 모델 ID 설명. 서명이 없으므로 배지로 안 잡힌다
+    # → None → 호출부가 /usage 프로브 실 모델로 폴백(팝업과 일치).
+    assert claude_model_badge(
+        "Model IDs — Fable 5: 'claude-fable-5', Opus 4.8: 'claude-opus-4-8'.\n"
+        "This session uses fable-5 as an example id.") is None
+    assert claude_model_badge("I switched to Haiku 4.5 earlier") is None
+    assert claude_model_badge("no model here") is None
+    # 'large context window' 처럼 닫는 괄호 없는 context 언급은 서명 아님 → 배제.
+    assert claude_model_badge("Fable 5 has a large context window") is None
+    # 본문 언급 + 실 배지 공존 → 배지(서명 있는 마지막 매치)를 잡는다. 본문의
+    # 'fable-5' 는 무시.
+    assert claude_model_badge(
+        "earlier I used claude-fable-5 for a demo\n"
+        "Opus 4.8 (1M context) · /model to change") == "opus-4.8"
+    # 카테고리 서명 제외는 유지(서명이 'context)'여도 'only' 카테고리면 계열이 아님).
+    assert claude_model_badge("Current week (Sonnet only)\n41% used") is None
 
 
 async def test_ctx_window_tokens():

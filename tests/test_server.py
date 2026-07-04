@@ -293,17 +293,25 @@ async def test_model_badge_debounce_absorbs_transient_haiku():
         srv._scan_claude(sess, win)
         assert p._claude == "busy" and p._claude_model == "opus-4.8", \
             (p._claude, p._claude_model)
-        # haiku 가 한 프레임만 등장(서브에이전트) → 디바운스로 흡수, 배지 유지
-        p.feed("\x1b[2J\x1b[H✽ Crunching… (3s)\nHaiku 4.5 (subagent)\r\n".encode("utf-8"))
+        # 본문 언급 haiku(배지 서명 '(… context)'/'· /model' 없음)는 후보조차 안 된다 —
+        # 대화/온보딩 텍스트의 모델명이 상태줄로 새던 버그(2026-07-04) 차단. 배지 부재라
+        # 프로브 폴백만 작동, 프로브 미상이면 마지막 값(opus) 유지 + 후보 0.
+        p.feed("\x1b[2J\x1b[H✽ Crunching…\n"
+               "I used claude-haiku-4-5 earlier\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
-        assert p._claude_model == "opus-4.8", "1프레임 haiku 는 흡수돼야"
-        # opus 로 복귀 → haiku 후보 카운트 리셋
+        assert p._claude_model == "opus-4.8" and p._claude_model_cand_n == 0, \
+            "서명 없는 본문 haiku 언급은 무시(후보 아님)"
+        # haiku **배지**(서명 있음)가 한 프레임만 등장 → 디바운스로 흡수, 유지.
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (3s)\nHaiku 4.5 · /model\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._claude_model == "opus-4.8", "1프레임 haiku 배지는 흡수돼야"
+        # opus 배지로 복귀 → haiku 후보 카운트 리셋
         p.feed("\x1b[2J\x1b[H✽ Crunching…\nOpus 4.8 · /model\r\n".encode("utf-8"))
         srv._scan_claude(sess, win)
         assert p._claude_model == "opus-4.8" and p._claude_model_cand_n == 0
-        # haiku 가 N 회 연속 관측(실제 /model 전환) → 그제서야 확정
+        # haiku **배지**가 N 회 연속 관측(실제 /model 전환) → 그제서야 확정
         for _ in range(N):
-            p.feed("\x1b[2J\x1b[H✽ Crunching…\nHaiku 4.5\r\n".encode("utf-8"))
+            p.feed("\x1b[2J\x1b[H✽ Crunching…\nHaiku 4.5 · /model\r\n".encode("utf-8"))
             srv._scan_claude(sess, win)
         assert p._claude_model == "haiku-4.5", f"{N}회 연속 관측 → 모델 전환 확정"
     finally:
@@ -1379,6 +1387,66 @@ async def test_prompt_clear_mode_sequence():
         import json as _json
         saved = _json.load(open(srv.opts_path))["prompt_clear_message"]
         assert saved == "새 지시문", saved
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
+async def test_no_auto_token_saving_intervention_at_high_usage():
+    """§3.10 락인: 예산 임계 기반 자동 토큰절감 개입(≥임계 plan 강제·auto-doc-clear·
+    auto-compact 자동 발화)은 §7-4(절대예산 deprecate, 2026-06-11)에서 제거됐다. 남은
+    토큰절감 자동화는 **전부 사용자 명시 토글**(prompt_clear·auto_mode·perm 팝업)로만
+    발화한다. 이 테스트는 기본 opts(모두 off) 상태에서 컨텍스트가 거의 찬(auto-compact
+    임박, 잔량 3%) idle Claude 패널의 busy→idle 완료 경계를 반복해도 doc/clear/compact/
+    plan 이 **한 건도** 주입·구동·예약되지 않음을 가드해 자동 개입 재도입 회귀를 막는다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+
+        injected = []                       # _pc_inject(doc/clear/rename/rc)
+        srv._pc_inject = lambda pane, text: injected.append(text)
+        drove = []                          # _drive_perm_mode(plan/auto/…)
+        srv._drive_perm_mode = lambda pane, txt, target: drove.append(target)
+        scheduled = []                      # call_later 로 건 타이머 이름
+        class _FakeLoop:
+            def call_later(self, delay, fn, *a):
+                scheduled.append(getattr(fn, "__name__", str(fn)))
+                class _H:
+                    def cancel(self_inner):
+                        pass
+                return _H()
+        srv.loop = _FakeLoop()
+
+        # 기본 opts 는 모두 off — 자동 개입 조건 없음
+        assert srv.claude_auto_mode is False
+        assert p.prompt_clear_mode is False
+        assert not p._perm_target
+
+        # 컨텍스트가 거의 찬 idle Claude 완료 화면(과거라면 자동 plan/compact/doc-clear
+        # 개입을 유발했을 조건). busy→idle 완료 경계를 여러 번 반복한다.
+        def complete_high_usage():
+            p._claude = "busy"
+            p.feed("\x1b[2J\x1b[H답변 출력 완료\r\n"
+                   "Context left until auto-compact: 3%\r\n"
+                   "? for shortcuts\r\n".encode("utf-8"))
+            srv._scan_claude(sess, win)
+
+        for _ in range(6):
+            complete_high_usage()
+
+        assert p._claude == "idle", p._claude
+        assert injected == [], f"자동 doc/clear/compact 주입 0 이어야 함: {injected}"
+        assert drove == [], f"자동 plan/perm 구동 0 이어야 함: {drove}"
+        # 예약 타이머 중 토큰절감 개입(compact/plan/doc/clear)이 없어야 함
+        # (usage 프로브 갱신 등 표시성 타이머는 무관 — 이름으로만 판별).
+        bad = [n for n in scheduled
+               if any(k in n.lower() for k in ("compact", "plan", "doc", "clear"))]
+        assert bad == [], f"토큰절감 자동 타이머 0 이어야 함: {bad}"
     finally:
         try:
             os.unlink(srv.opts_path)

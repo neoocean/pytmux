@@ -445,6 +445,39 @@ def claude_model(text):
     return f"{fam}-{ver.replace('-', '.')}" if ver else fam
 
 
+# 실 Claude Code 푸터 배지의 서명: 모델명 **직후**에 '(… context)' 또는 '/model' 힌트가
+# 붙는다(fixture badge_1m.txt: 'Opus 4.8 (1M context) · /model to change'). 이 서명 뒤
+# 24자 이내 상한(§5.9 ReDoS: 무제한 `[\s\S]*` 금지)으로 배지를 식별한다. context 뒤의
+# 닫는 괄호 `)` 를 요구해 'large context window' 같은 본문 언급은 배제한다.
+_MODEL_BADGE_ANCHOR_RE = re.compile(r"[\s\S]{0,24}?(?:context\)|/model)", re.I)
+
+
+def claude_model_badge(text):
+    """`claude_model` 과 같되, **실 푸터 배지 서명**('(… context)' 또는 '/model' 힌트가
+    모델명 직후)이 붙은 매치만 인정한다 — **라이브 화면 스크랩 전용**.
+
+    화면 스크랩은 전체 화면(screen_text)을 먹으므로, 대화/문서 본문이 모델명을 언급하면
+    (예: 이 저장소 온보딩·환경 텍스트의 "Fable 5: 'claude-fable-5'" 같은 모델 ID 설명)
+    `claude_model` 의 '마지막 매치=배지' 가정이 깨져 상태줄 모델 배지가 **실행 중 모델과
+    다른 모델로 튄다**(사용자 보고 2026-07-04: 팝업/프로브는 opus 인데 상태줄은 'fable-5').
+    실 배지에만 있는 서명을 요구해 본문 언급(서명 없음)을 배제한다. 배지가 화면에 없으면
+    None → 호출부(servermixin)는 /usage 프로브가 잡은 실 모델로 폴백한다(팝업과 동일 출처).
+
+    카테고리('… (Sonnet only)') 제외는 `claude_model` 과 동일. 서명 있는 매치 중
+    **마지막**(하단 배지)을 쓴다."""
+    hit = None
+    for m in _MODEL_RE.finditer(text):
+        if _MODEL_CATEGORY_AFTER_RE.match(text, m.end()):
+            continue
+        if _MODEL_BADGE_ANCHOR_RE.match(text, m.end()):
+            hit = m
+    if hit is None:
+        return None
+    fam = hit.group(1).lower()
+    ver = hit.group(2)
+    return f"{fam}-{ver.replace('-', '.')}" if ver else fam
+
+
 # §5.9 ReDoS: `\d+` 무제한은 거대 숫자열에서 뒤 `[kKmM]` 실패 시 O(n²) 백트래킹 →
 # 윈도우 수치는 십수 자리면 충분하므로 상한(`{1,9}`)으로 묶어 선형화(실 매칭 보존).
 _WINDOW_RE = re.compile(r"(\d{1,9})\s*([kKmM])")
