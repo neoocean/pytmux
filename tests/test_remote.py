@@ -1386,6 +1386,55 @@ async def test_remote_link_death_recovers_viewer_to_local():
             writer.close()
         await teardown(srvA, taskA, sockA)
         await teardown(srvB, taskB, sockB)
+
+
+async def test_remote_link_keepalive_lets_upstream_reap_dead_client():
+    """다운스트림 federation 링크(A→B)가 업스트림 B 에 keepalive ping 을 보낸다.
+    이 ping 이 없으면 B 의 死-클라 회수(_liveness_loop, ever_pinged 게이트)가 이
+    federation 클라를 대상으로 인지하지 못해, 다운스트림 비정상 종료(랩탑 슬립·반열림
+    TCP) 시 좀비 클라가 세션 공유 크기(_session_size=min)를 죽은 단말의 작은 크기로
+    영구히 핀한다 — '다른 기계에서 접속했던 작은 크기로 표시' 버그. keepalive 로
+    ever_pinged 가 서고, keepalive 가 끊긴(=유휴 초과) 좀비를 B 가 회수함을 검증한다."""
+    if os.name == "nt":
+        return
+    from pytmuxlib import serverio
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    try:
+        srvA._LINK_PING_INTERVAL = 0.05        # 빠른 keepalive(실 5s 대기 회피)
+        srvA._RECONNECT_DELAYS = (3600,)       # 좀비 절단 후 재연결 미발화
+        sessB = srvB.ensure_default_session(80, 24)
+        sessA = srvA.ensure_default_session(80, 24)
+
+        # A→B attach: B 에 A 의 federation 클라가 등록되고 keepalive ping 이 흐른다.
+        assert await srvA.remote_attach(sessA, endpoint=sockB)
+
+        async def _wait(pred, what, timeout=4.0):
+            end = time.monotonic() + timeout
+            while time.monotonic() < end:
+                if pred():
+                    return
+                await asyncio.sleep(0.02)
+            raise AssertionError(f"timeout: {what}")
+
+        # 업스트림 B 가 keepalive ping 을 받아 이 클라를 회수 후보로 인지(ever_pinged).
+        await _wait(lambda: bool(srvB.clients)
+                    and all(getattr(c, "ever_pinged", False) for c in srvB.clients),
+                    "upstream sees keepalive ping (ever_pinged)")
+        assert srvB.clients, "업스트림에 federation 클라가 등록돼 있어야 함"
+
+        # 좀비화 흉내: last_seen 을 유휴 임계 이전으로 밀어 keepalive 끊김을 재현.
+        for c in srvB.clients:
+            c.last_seen = time.monotonic() - serverio.CLIENT_IDLE_TIMEOUT - 1
+
+        dropped = await srvB._evict_idle_clients()
+        assert dropped >= 1, ("keepalive 끊긴 좀비 federation 클라를 업스트림이 "
+                              "회수해야 세션 크기 핀이 풀린다", dropped)
+        assert not srvB.clients, "회수 후 좀비 클라가 남지 않아야 함"
+    finally:
+        srvA.remote_shutdown()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
 # ---- 원격 중첩 자동 승격(docs/internal/NESTED_ATTACH_SCENARIO.md §4·§7) ----
 
 def _nest_req(selfreport: str) -> bytes:

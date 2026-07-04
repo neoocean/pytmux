@@ -58,6 +58,13 @@ class RemoteLink:
         # 둔다 — _remote_tabs 가 매 status 에 pinned 비트를 실어 준다.
         self.pinned_windows: set = set()
         self.task: asyncio.Task | None = None
+        # keepalive ping 태스크(_remote_ping_loop): 다운스트림이 업스트림에 주기적으로
+        # ping 을 보내 업스트림의 死-클라 회수(_liveness_loop, ever_pinged 게이트)가
+        # 이 federation 클라를 회수 대상으로 인지하게 한다. 안 그러면 다운스트림이
+        # 비정상 종료(랩탑 슬립·반열림 TCP)해도 업스트림엔 좀비 클라가 남아 세션 공유
+        # 크기(_session_size=min)를 그 죽은 단말의 작은 크기로 영구히 핀한다 —
+        # "다른 기계에서 접속했던 작은 크기로 표시" 버그.
+        self.ping_task: asyncio.Task | None = None
         self.alive = True
         # M-1: 이 링크 writer 로의 송신을 직렬화(입력/리사이즈 릴레이가 다중-await
         # 송신과 섞여 순서가 뒤집히지 않게). _link_write 가 이 락을 쓴다.
@@ -234,6 +241,12 @@ class ServerRemoteMixin:
     _FIRST_STATUS_TRIES = 30
     _FIRST_STATUS_DELAY = 0.1
 
+    # keepalive ping 주기(초): 다운스트림→업스트림 federation 링크가 이 간격마다
+    # ping 을 보낸다. 업스트림 死-클라 회수 임계(CLIENT_IDLE_TIMEOUT=30s)보다 훨씬
+    # 짧아(6배) 정상 링크는 여유롭게 살아 있음이 갱신되고, 다운스트림이 죽으면 ping
+    # 이 끊겨 업스트림이 임계 초과로 좀비 클라를 회수한다. 테스트가 줄일 수 있게 상수.
+    _LINK_PING_INTERVAL = 5.0
+
     # Server.__init__ 가 부르지 않아도 동작하도록 지연 초기화 헬퍼.
     def _remotes_dict(self) -> dict:
         d = getattr(self, "_remotes", None)
@@ -405,7 +418,35 @@ class ServerRemoteMixin:
             return False
         remotes[name] = link
         link.task = self.loop.create_task(self._remote_reader(link))
+        # keepalive ping 가동: 업스트림 死-클라 회수가 이 링크(federation 클라)를
+        # 인지하게 해, 다운스트림 비정상 종료 시 좀비 클라가 세션 크기를 작게 핀한 채
+        # 남지 않게 한다(RemoteLink.ping_task 주석 참조).
+        link.ping_task = self.loop.create_task(self._remote_ping_loop(link))
         return True
+
+    async def _remote_ping_loop(self, link: RemoteLink):
+        """다운스트림→업스트림 keepalive: _LINK_PING_INTERVAL 마다 ping 을 보낸다.
+        업스트림 handle_client 가 이 ping 으로 client.ever_pinged=True + last_seen
+        갱신 → 死-클라 회수(_liveness_loop)가 이 링크를 회수 대상으로 인지하고, 링크가
+        살아 있는 한 last_seen 이 계속 갱신돼 오탐 회수도 없다. 회신 pong 은
+        _remote_reader 가 소비(릴레이 안 함). 송신 실패는 링크 사망 신호 —
+        _remote_reader 의 EOF 처리(remote_drop+재연결)에 맡기고 조용히 종료한다."""
+        try:
+            while link.alive:
+                await asyncio.sleep(self._LINK_PING_INTERVAL)
+                if not link.alive:
+                    return
+                try:
+                    await self._link_write(link, {"t": "ping",
+                                                  "ts": time.monotonic()})
+                except (OSError, ConnectionError):
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # keepalive 는 보조 기능 — 예기치 못한 오류로 죽어도 링크 자체(reader)는
+            # 살리고 조용히 로그만 남긴다(reader 의 EOF 경로가 사망을 정식 처리).
+            self._log_error(f"remote_ping({link.host})")
 
     async def _remote_wait_first_status(self, link: RemoteLink,
                                         tries: int | None = None,
@@ -434,6 +475,8 @@ class ServerRemoteMixin:
         self._remotes_dict().pop(link.host, None)
         if link.task is not None and not link.task.done():
             link.task.cancel()
+        if link.ping_task is not None and not link.ping_task.done():
+            link.ping_task.cancel()
         for closer in (lambda: link.writer.close(),
                        lambda: link.proc and link.proc.kill()):
             try:
@@ -529,6 +572,8 @@ class ServerRemoteMixin:
             link.alive = False
             if link.task is not None and not link.task.done():
                 link.task.cancel()
+            if link.ping_task is not None and not link.ping_task.done():
+                link.ping_task.cancel()
             for closer in (lambda l=link: l.writer.close(),
                            lambda l=link: l.proc and l.proc.kill()):
                 try:
@@ -627,6 +672,12 @@ class ServerRemoteMixin:
                     # 무한 재연결 churn(L1)이었다. 링크는 유지한다.
                     continue
                 t = msg.get("t")
+                if t == "pong":
+                    # keepalive ping(_remote_ping_loop)의 회신 — RTT 관심 없음.
+                    # 소비만 하고 보는 클라에 릴레이하지 않는다(_relay_frame_ok 는
+                    # 미지 t 를 통과시키므로 여기서 명시 차단; 안 그러면 다운스트림
+                    # 클라가 자기가 안 보낸 pong 을 받아 RTT 표본이 오염된다).
+                    continue
                 if t == "status":
                     # 누적(update): 업스트림 full status 가 채운 옵션 키를 이후
                     # light status 가 지우지 않게 합친다 — 보는 클라 오버라이드의
