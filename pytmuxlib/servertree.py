@@ -670,7 +670,7 @@ class ServerTreeMixin:
         for c in self.clients:
             if c.session is sess:
                 asyncio.create_task(
-                    write_msg(c.writer, self._status_msg(sess, client=c)))
+                    self._send_to(c, self._status_msg(sess, client=c)))
 
     def kill_window(self, sess: Session):
         win = sess.active_window

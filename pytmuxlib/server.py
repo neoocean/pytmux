@@ -60,6 +60,9 @@ class Server(*_SERVER_BASES):
         self.clients: list[ClientConn] = []
         self.loop: asyncio.AbstractEventLoop | None = None
         self.running = True
+        # 인증 전(핸드셰이크 중) 동시 연결수. handle_client 가 핸드셰이크 읽기 구간만
+        # 증감해 slowloris(연결 개수 고갈)를 _MAX_PREAUTH_CONNS 로 캡한다(serverio S1).
+        self._preauth_conns = 0
         # version 명령 팝업용: 이 프로세스가 **로드한 코드**의 버전(p4 CL)과 부팅
         # 시각. re-exec 후엔 새 프로세스라 둘 다 다시 캡처된다(= 데몬 업타임은 마지막
         # (re-)exec 기준). 버전 캡처는 `p4 changes` 네트워크 왕복이라 수백 ms~timeout

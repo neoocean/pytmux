@@ -444,7 +444,7 @@ class ServerPersistMixin:
         if relaunch_clients:
             note["relaunch"] = True
         for c in list(self.clients):
-            asyncio.create_task(write_msg(c.writer, dict(note)))
+            asyncio.create_task(self._send_to(c, dict(note)))
         # 비-PTY fd(캡처 파일 등) 정리 — 새 이미지가 다시 연다. master fd 는 보존.
         self.plugins.server_shutdown(self)   # REC 캡처 파일 닫기 등(plugins/rec)
         argv = proc.server_argv(self.sock_path) + ["--resume",
@@ -477,7 +477,7 @@ class ServerPersistMixin:
         if relaunch_clients:
             note["relaunch"] = True
         for c in list(self.clients):
-            asyncio.create_task(write_msg(c.writer, dict(note)))
+            asyncio.create_task(self._send_to(c, dict(note)))
         argv = proc.server_argv(self.sock_path) + ["--resume",
                                                    self.resume_state_path]
         proc.spawn_detached(argv)
@@ -599,33 +599,34 @@ class ServerPersistMixin:
         except (OSError, ValueError):
             return {}
 
+    # 영속되는 코어 옵션 속성 이름의 **단일 소스**(1-4). 종전엔 _save_opts 가 이 키들을
+    # 손으로 다시 나열해 __init__ 로드와 이중관리였고, 한쪽만 빠뜨리면 사용자가 바꾼 값이
+    # 저장 안 돼 다음 기동에 기본값으로 리셋되는 드리프트 버그가 났다(1-3 usage_refresh_sec).
+    # 이제 save 는 이 튜플만 순회한다 — 여기에 추가하는 것이 곧 영속이다(load↔save 대칭은
+    # test_server 의 라운드트립 테스트가 전 키에 대해 강제). 특수 처리가 필요한 키
+    # (disabled_plugins·remote_allowed_hosts·plugin_opts)는 아래에서 명시적으로 다룬다.
+    _PERSISTED_OPT_KEYS = (
+        "single_border", "win_mouse_motion", "coalesce_repaints",
+        "nest_auto_attach", "prompt_clear_message", "claude_auto_mode",
+        "claude_auto_launch", "claude_rules", "claude_long_turn_sec",
+        "claude_repeat_alert", "usage_refresh_sec", "vt_parser",
+    )
+
     def _save_opts(self):
         try:
             with ipc.private_atomic(self.opts_path) as f:   # 0600(F5) + 원자교체(M5)
-                # capture 는 plugins/rec 가 server_opts_serialize 로 plugin_opts 에 넣는다.
-                json.dump({# 플러그인 관리(PLUGIN_MANAGER_SCENARIO): 비활성 플러그인 집합.
-                           # 키가 한 번 생기면 default_enabled 시드 대신 이 값이 권위.
-                           "disabled_plugins": sorted(self.plugins.disabled),
-                           "single_border": self.single_border,
-                           "win_mouse_motion": self.win_mouse_motion,
-                           "coalesce_repaints": self.coalesce_repaints,
-                           "nest_auto_attach": self.nest_auto_attach,
-                           "remote_allowed_hosts":
-                               list(getattr(self, "remote_allowed_hosts", [])),
-                           "prompt_clear_message": self.prompt_clear_message,
-                           "claude_auto_mode": self.claude_auto_mode,
-                           "claude_auto_launch": self.claude_auto_launch,
-                           "claude_rules": self.claude_rules,
-                           # 1-3: 종전 누락 → 사용자가 바꿔도 저장 시 소실, 다음 기동에
-                           # 600 으로 리셋되던 드리프트 버그 수정(load↔save 대칭 테스트로 가드).
-                           "claude_long_turn_sec": self.claude_long_turn_sec,
-                           "claude_repeat_alert": self.claude_repeat_alert,
-                           "usage_refresh_sec": self.usage_refresh_sec,
-                           "vt_parser": self.vt_parser,
-                           # 플러그인 소유 설정(S5 토큰 모듈화 T3): claude-code 가 돌려준
-                           # 설정(claude_auto_retry 등)을 plugin_opts 네임스페이스에 불투명하게
-                           # 저장한다(코어는 키 의미 모름). 디렉토리 삭제 시 {} → 설정이 사라진다.
-                           "plugin_opts": self.plugins.server_opts_serialize(self)},
-                          f)
+                # 플러그인 관리(PLUGIN_MANAGER_SCENARIO): 비활성 플러그인 집합. 키가 한 번
+                # 생기면 default_enabled 시드 대신 이 값이 권위.
+                data = {"disabled_plugins": sorted(self.plugins.disabled)}
+                for k in self._PERSISTED_OPT_KEYS:      # 단일 소스에서 자동 미러
+                    data[k] = getattr(self, k)
+                # 리스트 값은 방어적 복사(외부에서 opts dict 를 재사용해도 안전).
+                data["remote_allowed_hosts"] = list(
+                    getattr(self, "remote_allowed_hosts", []))
+                # 플러그인 소유 설정(S5 토큰 모듈화 T3): claude-code 가 돌려준 설정
+                # (claude_auto_retry 등)을 plugin_opts 네임스페이스에 불투명하게 저장한다
+                # (코어는 키 의미 모름). 디렉토리 삭제 시 {} → 설정이 사라진다.
+                data["plugin_opts"] = self.plugins.server_opts_serialize(self)
+                json.dump(data, f)
         except OSError:
             pass

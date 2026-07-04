@@ -622,7 +622,7 @@ class ServerRemoteMixin:
         msg = self._notice_msg(key, ko_text, sticky=sticky, detail=detail, **kw)
         for c in list(self.clients):
             if c.session is sess:
-                asyncio.create_task(write_msg(c.writer, dict(msg)))
+                asyncio.create_task(self._send_to(c, dict(msg)))
 
     # ---- 재시작(re-exec) 후 링크 복원(Stage 3) ----
     def remote_restore_links(self):
@@ -712,7 +712,7 @@ class ServerRemoteMixin:
                     if req_token is not None and id(c) != req_token:
                         continue
                     try:
-                        await write_frames(c.writer, [frame])
+                        await self._send_frames_to(c, [frame])
                     except (OSError, ConnectionError):
                         pass
         except asyncio.CancelledError:
@@ -779,7 +779,7 @@ class ServerRemoteMixin:
         for sess in self.sessions.values():
             for c in [c for c in self.clients if c.session is sess]:
                 frame = frame_msg(self._status_msg(sess, full=False, client=c))
-                asyncio.create_task(write_frames(c.writer, [frame]))
+                asyncio.create_task(self._send_frames_to(c, [frame]))
 
     def _remote_viewer_status(self, link: RemoteLink):
         """이 링크를 보는 클라에게만 status 재전송(업스트림 부가필드 갱신 반영)."""
@@ -787,7 +787,7 @@ class ServerRemoteMixin:
             if c.remote_view == link.host and c.session is not None:
                 frame = frame_msg(
                     self._status_msg(c.session, full=False, client=c))
-                asyncio.create_task(write_frames(c.writer, [frame]))
+                asyncio.create_task(self._send_frames_to(c, [frame]))
 
     def _remote_status_override(self, sess, client):
         """보는 클라용 status(Stage 3): 업스트림 status 누적본을 기반으로 —

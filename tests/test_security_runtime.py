@@ -274,6 +274,47 @@ async def test_preauth_handshake_timeout_drops_stalled_conn():
         await teardown(srv, task, ep)
 
 
+async def test_preauth_conn_cap_rejects_over_limit():
+    """S1(2026-07-04, 레드팀 M2-c): 인증 전 동시 연결수가 _MAX_PREAUTH_CONNS 를 넘으면
+    새 핸드셰이크를 즉시 끊는다(연결 개수 고갈 slowloris 방어). 카운트는 핸드셰이크 읽기
+    구간만 감싸 인증된 클라 수명은 세지 않고, 종료 후 원복돼 누수가 없다."""
+    import asyncio
+    import pytmuxlib.serverio as serverio
+
+    class _W:
+        def __init__(self):
+            self.closed = False
+
+        def write(self, *_a):
+            pass
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    srv, task, sock = await server_only()
+    try:
+        # ① 캡 도달 → 새 연결 즉시 close(읽기 시도조차 안 함), 카운트 불변
+        srv._preauth_conns = serverio._MAX_PREAUTH_CONNS
+        r, w = asyncio.StreamReader(), _W()   # r 에 아무것도 안 먹임(읽으면 매달림)
+        await srv.handle_client(r, w)
+        assert w.closed, "캡 초과 연결은 즉시 끊어야"
+        assert srv._preauth_conns == serverio._MAX_PREAUTH_CONNS, "거부는 카운트 증감 없음"
+
+        # ② 캡 미만 + 첫 프레임 EOF → 정상 경로로 끊고 카운트 원복(finally 누수 없음)
+        srv._preauth_conns = 0
+        r2 = asyncio.StreamReader()
+        r2.feed_eof()
+        w2 = _W()
+        await srv.handle_client(r2, w2)
+        assert w2.closed
+        assert srv._preauth_conns == 0, "핸드셰이크 종료 후 카운트 원복(누수 없음)"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_harden_win_acl_runs_once_per_path():
     """L7 후속(2026-07-03 os-compat fd 회귀): _harden_win_acl 은 경로별 **1회만** icacls 를
     스폰한다. default_state_dir 이 소켓/포트/토큰/state_base·에러로그 경로 해석에서 반복

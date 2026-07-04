@@ -941,6 +941,41 @@ async def test_usage_auto_refresh_and_account(tmp_path=None):
         await teardown(srv, task, sock)
 
 
+async def test_persisted_opt_keys_roundtrip_symmetry():
+    """1-4: _PERSISTED_OPT_KEYS 의 **모든** 코어 옵션이 _save_opts 로 파일에 실린다(한 키만
+    save 목록에서 빠져도 사용자 변경이 다음 기동에 리셋되던 1-3 드리프트 버그 클래스를 전
+    키에 대해 가드). save 가 단일소스 튜플에서 자동 미러되는지 라운드트립으로 확인."""
+    import json as _json
+    srv, task, sock = await server_only()
+    try:
+        overrides = {}
+        for k in srv._PERSISTED_OPT_KEYS:
+            cur = getattr(srv, k)               # __init__ 가 전 키를 로드했음을 전제(strict)
+            if isinstance(cur, bool):
+                nv = not cur
+            elif isinstance(cur, int):
+                nv = cur + 7
+            else:                               # str
+                nv = (cur or "") + "_rt"
+            overrides[k] = nv
+            setattr(srv, k, nv)
+        srv._save_opts()
+        saved = _json.load(open(srv.opts_path))
+        for k, nv in overrides.items():
+            assert k in saved, f"save 단일소스 누락(드리프트): {k}"
+            assert saved[k] == nv, f"{k}: {saved.get(k)!r} != {nv!r}"
+        # 파일 재로드도 같은 값(_load_opts 로 well-formed 확인)
+        reloaded = srv._load_opts()
+        for k, nv in overrides.items():
+            assert reloaded.get(k) == nv, f"reload 불일치: {k}"
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
 async def test_scan_model_fallback_and_preserve():
     """모델 귀속 강화(2026-06-22): 라이브 Claude 화면은 모델 배지를 상시 표시하지
     않아(idle 푸터엔 'auto mode on …'·'? for shortcuts'뿐) 토큰이 model NULL('?')로
@@ -4597,20 +4632,27 @@ async def test_autorename_apply_skips_stale_tab():
 
 
 async def test_opts_load_save_symmetry():
-    """1-3: server.py 가 _opts.get 으로 로드하는 모든 코어 옵션은 _save_opts 에도
-    있어야 한다 — usage_refresh_sec 가 저장 누락돼 매 기동 600 으로 리셋되던 드리프트
-    재발 방지(소스 정적 대조). 새 영속 옵션 추가 시 양쪽 모두 넣게 강제."""
+    """1-3/1-4: server.py 가 _opts.get 으로 로드하는 모든 코어 옵션은 저장돼야 한다 —
+    usage_refresh_sec 가 저장 누락돼 매 기동 600 으로 리셋되던 드리프트 재발 방지.
+
+    1-4 로 save 가 단일소스 `_PERSISTED_OPT_KEYS` 튜플에서 자동 미러되므로(_save_opts 가
+    literal `"key": self.key` 를 손으로 안 나열), 이 테스트는 **로드하는 모든 키가 그
+    튜플(또는 명시 특수처리 키)에 있는지**를 대조한다 — 새 영속 옵션 추가 시 튜플에도
+    넣게 강제(안 넣으면 저장 안 됨). 라운드트립 보존은 test_persisted_opt_keys_roundtrip_symmetry."""
     import re
     from pathlib import Path
+    from pytmuxlib.serverpersist import ServerPersistMixin
     root = Path(__file__).resolve().parent.parent / "pytmuxlib"
     loaded = set(re.findall(r'_opts\.get\(\s*"([a-z_0-9]+)"',
                             (root / "server.py").read_text(encoding="utf-8")))
-    persist = (root / "serverpersist.py").read_text(encoding="utf-8")
-    m = re.search(r"def _save_opts.*?\n    def ", persist, re.S)
-    save_block = m.group(0) if m else persist
-    saved = set(re.findall(r'"([a-z_0-9]+)":', save_block))
-    missing = loaded - saved
-    assert not missing, f"_save_opts 에 누락된 영속 옵션(load↔save 드리프트): {missing}"
+    persisted = set(ServerPersistMixin._PERSISTED_OPT_KEYS)
+    # _save_opts 가 명시적으로 다루는 특수 키(단일소스 튜플 밖): disabled_plugins(플러그인
+    # 매니저 소유)·remote_allowed_hosts(리스트 방어복사).
+    specials = {"disabled_plugins", "remote_allowed_hosts"}
+    missing = loaded - persisted - specials
+    assert not missing, (
+        f"_opts.get 로 로드하나 저장 안 되는 옵션(드리프트): {missing} — "
+        f"serverpersist._PERSISTED_OPT_KEYS 에 추가할 것")
 
 
 async def test_running_server_cm_starts_and_cleans_up():

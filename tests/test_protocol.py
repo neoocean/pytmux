@@ -7,6 +7,33 @@ import harness  # noqa: F401  (경로 설정)
 import pytmux
 
 
+async def test_write_swallows_concurrent_drain_assert():
+    """write_msg/write_frames 는 같은 writer 동시 drain 이 내는 AssertionError 를 흡수해
+    False 를 돌려줘야 한다(§5 [H] 백스톱). 예외가 새면 무감시 flush(렌더) 태스크가 죽어
+    전 클라 화면이 영구 정지한다. ConnectionError/RuntimeError 도 종전대로 False."""
+    from pytmuxlib.protocol import write_msg, write_frames, frame_msg
+
+    class _DrainWriter:
+        def __init__(self, exc):
+            self._exc = exc
+
+        def write(self, *_a):
+            pass
+
+        async def drain(self):
+            raise self._exc
+
+    # 동시 drain assert(CPython FlowControlMixin._drain_helper) 흡수
+    assert (await write_msg(_DrainWriter(AssertionError("concurrent drain")),
+                            {"t": "x"})) is False
+    assert (await write_frames(_DrainWriter(AssertionError()),
+                               [frame_msg({"t": "y"})])) is False
+    # 기존 흡수 대상도 회귀 없음
+    assert (await write_msg(_DrainWriter(ConnectionResetError()), {"t": "x"})) is False
+    assert (await write_frames(_DrainWriter(RuntimeError()),
+                               [frame_msg({"t": "y"})])) is False
+
+
 async def test_read_msg_frame_length_bounded_and_robust():
     """read_msg 가 ① 정상 프레임 왕복 ② 상한 초과 길이 → None(OOM 방지)
     ③ 비-JSON/손상 페이로드 → None(예외 아님) 을 보장한다(견고성·DoS 가드)."""

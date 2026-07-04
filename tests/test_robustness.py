@@ -98,6 +98,121 @@ class _FakeWriter:
         pass
 
 
+async def test_send_to_serializes_drain_on_write_lock():
+    """_send_to 는 c.write_lock 을 잡아, 같은 writer 에 두 코루틴의 drain 이 **겹치지 않게**
+    직렬화한다(§5 [H] — 동시 drain 은 CPython 에서 AssertionError/-O 영구 hang). lock 이
+    없으면 두 drain 이 동시에 진입한다."""
+    import asyncio
+    srv, task, sock = await server_only()
+    try:
+        order = []
+        ev = asyncio.Event()
+
+        class _BlockWriter:
+            def write(self, *_a):
+                pass
+
+            async def drain(self):
+                order.append("enter")
+                if len(order) == 1:      # 첫 drain 은 멈춰 겹칠 기회를 준다
+                    await ev.wait()
+                order.append("exit")
+
+            def close(self):
+                pass
+
+        c = ClientConn(_BlockWriter())
+        t1 = asyncio.create_task(srv._send_to(c, {"t": "a"}))
+        await asyncio.sleep(0)           # t1 이 lock 잡고 첫 drain 진입
+        t2 = asyncio.create_task(srv._send_to(c, {"t": "b"}))
+        await asyncio.sleep(0)
+        # 직렬화면 t2 는 lock 대기 → 아직 drain 진입 못 함(enter 1개)
+        assert order == ["enter"], order
+        ev.set()
+        await asyncio.gather(t1, t2)
+        assert order == ["enter", "exit", "enter", "exit"], order
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_flush_acquire_timeout_drops_wedged_client():
+    """flush 가 write_lock 을 오래 쥔 먹통 클라(무제한 drain 중인 _send_full 등)에서
+    acquire 자체를 타임아웃해 그 클라를 떨군다 — flush 루프 전체가 프리즈(최대
+    CLIENT_IDLE_TIMEOUT)하지 않게(§5 [M])."""
+    import asyncio
+    from pytmuxlib import serverio
+    srv, task, sock = await server_only()
+    saved = serverio._CLIENT_WRITE_TIMEOUT
+    serverio._CLIENT_WRITE_TIMEOUT = 0.05
+    try:
+        c = ClientConn(_FakeWriter())
+        srv.clients.append(c)
+        await c.write_lock.acquire()     # 다른 코루틴이 lock 을 쥔 상태 모사
+        try:
+            await srv._flush_to_client(c, [b"\x00\x00\x00\x02{}"])
+        finally:
+            c.write_lock.release()
+        assert c not in srv.clients, "acquire 타임아웃 시 먹통 클라를 떨궈야 함"
+    finally:
+        serverio._CLIENT_WRITE_TIMEOUT = saved
+        await teardown(srv, task, sock)
+
+
+async def test_flush_loop_restarts_after_unexpected_exception():
+    """_on_flush_done 는 flush(렌더) 루프 태스크가 예외로 죽으면 재기동한다 — 무감시
+    태스크가 조용히 멈춰 화면이 영구 정지하는 최악의 안전망(§5 [H]). 취소/정상종료는
+    재기동하지 않는다."""
+    import asyncio
+    srv, task, sock = await server_only()
+    try:
+        srv.running = True
+        srv.loop = asyncio.get_running_loop()
+        calls = []
+
+        async def _fake_flush():        # 재기동 감지용(즉시 종료)
+            calls.append(1)
+
+        srv._flush_loop = _fake_flush
+
+        # ① 예외로 죽은 태스크 → 재기동(_fake_flush 1회)
+        async def _boom():
+            raise RuntimeError("flush boom")
+        dead = asyncio.ensure_future(_boom())
+        try:
+            await dead
+        except RuntimeError:
+            pass
+        srv._on_flush_done(dead)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert len(calls) == 1, "예외 사망 시 재기동"
+
+        # ② 취소된 태스크 → 재기동 안 함
+        cancelled = asyncio.ensure_future(asyncio.sleep(3600))
+        await asyncio.sleep(0)
+        cancelled.cancel()
+        try:
+            await cancelled
+        except asyncio.CancelledError:
+            pass
+        srv._on_flush_done(cancelled)
+        await asyncio.sleep(0)
+        assert len(calls) == 1, "취소는 재기동 안 함"
+
+        # ③ running=False(셧다운) → 재기동 안 함
+        srv.running = False
+        another = asyncio.ensure_future(_boom())
+        try:
+            await another
+        except RuntimeError:
+            pass
+        srv._on_flush_done(another)
+        await asyncio.sleep(0)
+        assert len(calls) == 1, "셧다운 중엔 재기동 안 함"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_unknown_cmd_action_is_noop():
     """미지 cmd 액션은 _handle_cmd 의 else 로 떨어져 무해 no-op(세션 보존, 예외 없음).
     한 클라의 엉뚱한 메시지가 서버/세션을 깨지 않는다."""

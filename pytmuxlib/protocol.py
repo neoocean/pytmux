@@ -105,7 +105,11 @@ async def write_msg(writer: asyncio.StreamWriter, obj) -> bool:
         writer.write(frame_msg(obj))
         await writer.drain()
         return True
-    except (ConnectionError, RuntimeError):
+    except (ConnectionError, RuntimeError, AssertionError):
+        # AssertionError: 같은 writer 에 두 코루틴이 동시 drain 하면 CPython
+        # FlowControlMixin._drain_helper 가 assert 로 터진다(-O 에선 영구 hang).
+        # 서버측은 _send_to/_flush_to_client 가 write_lock 으로 직렬화해 원천봉쇄하지만,
+        # 여기서도 흡수해 무감시 태스크(flush 루프 등)가 죽지 않게 백스톱을 둔다.
         return False
 
 
@@ -120,8 +124,8 @@ async def write_frames(writer: asyncio.StreamWriter, frames) -> bool:
         writer.write(b"".join(frames))
         await writer.drain()
         return True
-    except (ConnectionError, RuntimeError):
-        return False
+    except (ConnectionError, RuntimeError, AssertionError):
+        return False               # write_msg 와 동일 백스톱(동시 drain assert 흡수)
 
 
 def clamp_dim(val, lo: int, hi: int, default: int) -> int:
