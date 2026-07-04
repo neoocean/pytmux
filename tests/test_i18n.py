@@ -250,6 +250,35 @@ async def test_en_catalog_has_no_hangul_leak():
     _reset()
 
 
+async def test_every_ko_key_has_en_entry():
+    """모든 ko 카탈로그 키는 en 엔트리를 가져야 한다(LLM 10a 게이트). en 로케일에서 en
+    엔트리가 없으면 t() 가 _FALLBACK(ko) 로 떨어져 **영어 UI 에 한국어가 새기 때문**
+    (i18n.t 폴백 참조). test_en_catalog_has_no_hangul_leak 은 en 에 **있는** 값만 검사하므로
+    ko-only 키(en 미등록)를 놓친다 — 이 테스트가 그 구멍을 막는다."""
+    import importlib
+    for mod in ("pytmuxlib.client", "pytmuxlib.clientscreens",
+                "pytmuxlib.clientwidgets"):
+        try:
+            importlib.import_module(mod)
+        except Exception:
+            pass
+    for p in ("claude-code", "ncd", "calendar", "clock", "rec",
+              "ime-indicator", "claude-resume", "claude-prompt-history",
+              "claude-token-usage-view", "p4-show-submitted-changelists"):
+        for sub in ("", "clientstatus", "screens", "render", "__init__",
+                    "clientside", "overlay", "screen"):
+            name = f"pytmuxlib.plugins.{p}" + (f".{sub}" if sub else "")
+            try:
+                importlib.import_module(name)
+            except Exception:
+                pass
+    ko_keys = set(i18n._CATALOG.get("ko", {}))
+    en_keys = set(i18n._CATALOG.get("en", {}))
+    missing = sorted(ko_keys - en_keys)
+    assert not missing, f"en 카탈로그 미등록 키(ko-only → 영어 UI 한글 폴백): {missing}"
+    _reset()
+
+
 async def test_token_viewer_compose_labels_use_i18n():
     """1-4: 토큰 뷰어 탭바 compose 라벨이 raw 한글 Label 이 아니라 i18n.t 를 거쳐야
     한다(en 사용자 첫 페인트 한글 노출 방지 — _sync_tabs resize 갱신은 이미 i18n.t).
