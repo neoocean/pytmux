@@ -56,6 +56,26 @@
       </div>
     </header>
 
+    <section class="cl-day" id="d-2026-07-04">
+      <h2>2026-07-04 <span class="pill">토요일</span></h2>
+      <ul>
+        <li><strong>원격 탭에 붙으면 화면 크기가 제대로 맞습니다.</strong> ssh 로 원격 세션에
+          다시 연결할 때 화면이 <strong>예전에 접속했던 다른(작은) 기계의 크기로 고착</strong>되던
+          문제를 고쳤습니다 — 끊긴 연결을 제때 회수하도록 해, 지금 보고 있는 화면 크기에 맞춰
+          펼쳐집니다.</li>
+        <li><strong>상태줄의 현재 모델 배지가 정확해졌습니다.</strong> 화면 아래 상태줄의
+          <strong>현재 Claude 모델 배지</strong>가, 대화나 문서 본문에 적힌 <em>다른</em> 모델 이름을
+          현재 모델로 잘못 읽어 엉뚱하게 표시되던 문제를 고쳤습니다. 이제 진짜 모델 배지에만
+          반응하고, 배지가 화면에 없으면 <span class="inline-code">/usage</span> 로 정확히 확인합니다.</li>
+        <li><strong><span class="inline-code">display-popup</span> 으로 대화형 팝업을 띄웁니다.</strong>
+          <span class="inline-code">display-popup</span>(별칭 <span class="inline-code">popup</span>) 명령이
+          이제 tmux 처럼 <strong>대화형 셸·TUI 를 화면 중앙에 떠 있는 팝업</strong>으로 실행합니다
+          (전에는 명령 출력만 보여 주는 비대화형이었습니다). 크기·명령을
+          <span class="inline-code">-w</span>/<span class="inline-code">-h</span>/<span class="inline-code">-C</span>
+          로 지정하고, 명령이 끝나면 팝업이 자동으로 닫힙니다.</li>
+      </ul>
+    </section>
+
     <section class="cl-day" id="d-2026-07-03">
       <h2>2026-07-03 <span class="pill">금요일</span></h2>
       <ul>

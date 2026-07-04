@@ -283,9 +283,10 @@ section { padding: 64px 0; }
 }
 .pill.ship { color: var(--green); border-color: rgba(63,209,122,0.4); background: rgba(63,209,122,0.1); }
 .pill.stable { color: var(--accent); border-color: rgba(78,163,255,0.4); background: var(--accent-soft); }
-.doc .cl-day h2 { font-size: 24px; }
-.doc .cl-day ul { margin: 12px 0 0; }
-.doc .cl-day li { margin-bottom: 12px; line-height: 1.6; }
+.doc .cl-day { padding: 0; }
+.doc .cl-day h2 { font-size: 24px; margin: 30px 0 4px; padding-top: 14px; }
+.doc .cl-day ul { margin: 8px 0 0; }
+.doc .cl-day li { margin-bottom: 6px; line-height: 1.5; }
 
 /* ── 최근 수정사항 프리뷰(랜딩·가이드) ── */
 .cl-preview { display: grid; gap: 12px; margin-top: 26px; }
