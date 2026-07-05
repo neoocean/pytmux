@@ -22,6 +22,7 @@ import hmac
 import os
 import secrets
 import sys
+import traceback
 
 from . import ipc, pty_backend, ptyhostproto as proto
 
@@ -309,22 +310,32 @@ def main(argv=None) -> int:
         await host.serve(args.endpoint, portfile=args.portfile,
                          tokenfile=args.tokenfile)
 
+    # `asyncio.run` 대신 **수동 루프**를 돌린다. asyncio.run 은 코루틴 완료 후 graceful
+    # cleanup(_cancel_all_tasks + shutdown_asyncgens + **shutdown_default_executor**)을
+    # 하는데, 그중 shutdown_default_executor 가 기본 ThreadPoolExecutor 스레드를 **join**
+    # 한다. host 는 `_on_eof` 에서 `reap(block=True)` 를 기본 executor 로 오프로드하므로
+    # (§ _reap_offload), 종료 시점에 그 블로킹 reap 이 in-flight 면 Windows 에서 느리게
+    # 죽는 ConPTY 자식을 기다리는 스레드 join 이 20s+ 걸려, 아래 os._exit 도달이 지연되고
+    # host 가 고아로 관측됐다(CI flaky test_real_host_shutdown_…, windows-3.12 단일셀).
+    # serve() 코루틴이 반환하면 질서있는 정리(패널 stop_reader/close·서버/writer close)는
+    # **이미 끝났으므로**, 그 graceful cleanup(executor join)을 건너뛰고 즉시 강제 종료해
+    # 결정적으로 내린다. (main 은 오직 `python -m pytmuxlib.ptyhost` 분리 프로세스로만
+    # 실행돼 in-process 호출이 없으므로 os._exit 가 안전하다 — 인프로세스 host 는 serve()
+    # 를 직접 await 하고 이 main 을 안 탄다.)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    code = 0
     try:
-        asyncio.run(_run())
+        loop.run_until_complete(_run())
     except KeyboardInterrupt:
         pass
-    # serve() 는 shutdown op(_stop.set)에서만 반환한다 — 재시작 경로는 연결만 끊고
-    # host 를 살려 두므로 여기 안 온다. 즉 여기 도달 = 질서있는 종료 완료(패널 kill·
-    # 서버/writer close 끝, 자식은 이미 내려감). Windows 에서 daemon ConPTY 리더
-    # 스레드가 ctypes 동기 ReadFile 에 묶여 인터프리터 종료(Py_Finalize)가 지연돼
-    # host 프로세스가 20s+ 고아로 남던 CI flaky(test_real_host_shutdown_…)를 차단:
-    # 정리가 끝났으니 reader/OpenConsole 정리 타이밍을 기다리지 않고 즉시 강제 종료해
-    # 결정적으로 내린다. (main 은 오직 `python -m pytmuxlib.ptyhost` 분리 프로세스로만
-    # 실행돼 in-process 호출이 없으므로 os._exit 가 안전하다.)
+    except Exception:
+        traceback.print_exc()            # serve 중 오류는 남기되 종료는 아래에서 강제
+        code = 1
     with contextlib.suppress(Exception):
         sys.stdout.flush()
         sys.stderr.flush()
-    os._exit(0)
+    os._exit(code)
 
 
 if __name__ == "__main__":
