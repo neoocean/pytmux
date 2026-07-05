@@ -56,6 +56,22 @@
       </div>
     </header>
 
+    <section class="cl-day" id="d-2026-07-05">
+      <h2>2026-07-05 <span class="pill">일요일</span></h2>
+      <ul>
+        <li><strong>Claude 를 끝내면 토큰 사용량이 <em>항상</em> 보입니다.</strong> Claude Code 세션을
+          <span class="inline-code">exit</span> 로 끝냈을 때 이번 세션에 쓴 <strong>토큰 사용량 요약</strong>이
+          <strong>보일 때도 안 보일 때도</strong> 하던 문제를 고쳤습니다. 사용량 한도(<span class="inline-code">/usage</span>)
+          정보가 마침 없을 때 요약이 통째로 비던 것이 원인으로, 이제 <strong>이번 세션 토큰 총량을 항상 함께</strong>
+          보여 비지 않으며(한도 막대는 있을 때 곁들입니다), 셸로 돌아온 순간을 놓치지 않도록 종료 감지도
+          더 끈질기게 재시도합니다.</li>
+        <li><span class="pill stable">안정성·보안</span> 여러 클라이언트가 붙거나 느린·원격 연결이 섞여도
+          <strong>화면 갱신이 멈추지 않도록</strong> 서버의 화면 송신 경로를 한 갈래로 정리하고, 만일 렌더 루프가
+          예기치 못하게 멈춰도 <strong>스스로 되살아나도록</strong> 했습니다. 아울러 Windows 로컬 연결의
+          <strong>인증 전 동시 연결 수를 제한</strong>해 자원 고갈(DoS)을 막았습니다.</li>
+      </ul>
+    </section>
+
     <section class="cl-day" id="d-2026-07-04">
       <h2>2026-07-04 <span class="pill">토요일</span></h2>
       <ul>
