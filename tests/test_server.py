@@ -1072,6 +1072,104 @@ async def test_persisted_opt_keys_roundtrip_symmetry():
         await teardown(srv, task, sock)
 
 
+async def test_command_matrix_remote_view_routing():
+    """§10-3① 명령×상태 매트릭스 — §1.7 원격 보기 라우팅 계약을 화이트리스트 집합 **전수**로
+    검증한다. `_handle_cmd` 의 fall-through↔return↔relay 혼재는 리팩터(God-함수 분할)에서 한
+    verb 만 오분류돼도 명령이 **조용히** 깨진다(로컬 트리 오염·중복/누락 broadcast) — 이 매트릭스가
+    그 선결 안전망이다. space `feature_matrix` 패턴: '수락(relay)'과 '의도된 거부(block)'를 한
+    어휘로 통합해 조용한 실패를 잡는다. 스텁: remote_relay→True(관측)·remote_relay_join→False
+    (로컬 타깃=거부 폴백)로 실제 원격 링크 없이 라우팅만 검증한다."""
+    from pytmuxlib.model import ClientConn
+    from pytmuxlib import serverio as SIO
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv.new_window(sess)
+        srv.new_window(sess)                 # 여러 탭(select_window 등 자연스럽게)
+
+        class _W:
+            def write(self, *_a):
+                pass
+
+            async def drain(self):
+                pass
+
+            def close(self):
+                pass
+
+        client = ClientConn(_W())
+        client.session = sess
+        client.cols, client.rows = 80, 24
+        srv.clients.append(client)
+
+        relayed, sent = [], []
+        srv.remote_relay = lambda c, m: (relayed.append(m.get("action")) or True)
+        srv.remote_relay_join = lambda c, s, m: False
+
+        async def _cap_send_to(c, obj):
+            sent.append(obj)
+            return True
+        srv._send_to = _cap_send_to
+
+        def sig():                           # 로컬 트리 지문(변화 감지)
+            return (len(sess.tabs),
+                    tuple(len(t.window.panes()) for t in sess.tabs))
+
+        def is_notice(key):
+            return any(isinstance(m, dict) and m.get("key") == key for m in sent)
+
+        async def run(action, view, **extra):
+            client.remote_view = view
+            relayed.clear()
+            sent.clear()
+            await srv._handle_cmd(client, {"t": "cmd", "action": action, **extra})
+
+        # ── 집합 무결성(라우팅 모순 가드) ──
+        assert not (SIO._REMOTE_RELAY_ACTIONS & SIO._REMOTE_BLOCK_ACTIONS), \
+            "relay∩block 겹치면 라우팅 모순"
+        both = SIO._REMOTE_RELAY_ACTIONS | SIO._REMOTE_BLOCK_ACTIONS
+        assert "select_window" not in both and "new_window" not in both, \
+            "select_window·new_window 는 별도 분기(집합 밖)"
+
+        # ── ① RELAY: 원격 보기 중 relay + 로컬 트리 불변 + 거부 notice 없음 ──
+        for action in sorted(SIO._REMOTE_RELAY_ACTIONS):
+            before = sig()
+            await run(action, "host")
+            assert action in relayed, f"[relay] {action}: 원격 보기 중 릴레이돼야(로컬 미적용)"
+            assert sig() == before, f"[relay] {action}: 로컬 트리 불변(조용한 로컬 실행 금지)"
+            assert not is_notice("rnotice.mix_block_cmd"), \
+                f"[relay] {action}: 거부 notice 없어야"
+
+        # ── ② BLOCK: 원격 보기 중 거부(mix_block) + 릴레이 안 됨 + 트리 불변 ──
+        for action in sorted(SIO._REMOTE_BLOCK_ACTIONS):
+            before = sig()
+            await run(action, "host")
+            assert is_notice("rnotice.mix_block_cmd"), \
+                f"[block] {action}: 경계 거부 notice 있어야"
+            assert action not in relayed, f"[block] {action}: BLOCK 은 릴레이 안 됨"
+            assert sig() == before, f"[block] {action}: 로컬 트리 불변(조용한 실행 금지)"
+
+        # ── ③ clear-and-proceed: new_window·select_window(local idx) 는 보기 해제 후 진행 ──
+        tabs0 = len(sess.tabs)
+        await run("new_window", "host")
+        assert client.remote_view is None, "new_window: 원격 보기 해제"
+        assert len(sess.tabs) == tabs0 + 1, "new_window: 로컬 새 탭 진행"
+        await run("select_window", "host", index=0)
+        assert client.remote_view is None, "select_window(local idx): 원격 보기 해제"
+
+        # ── ④ 로컬측 경계 거부(remote_view=None, 병합 원격 index 겨냥) ──
+        n = len(sess.tabs)
+        for action in ("join_pane", "move_pane_to_tab", "move_tab",
+                       "move_window", "swap_window"):
+            before = sig()
+            await run(action, None, src=n + 5, to=n + 5, index=n + 5)
+            assert is_notice("rnotice.mix_block_move"), \
+                f"[local-mix] {action}: 병합 원격 index 겨냥은 거부돼야"
+            assert sig() == before, f"[local-mix] {action}: 로컬 트리 불변"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_scan_model_fallback_and_preserve():
     """모델 귀속 강화(2026-06-22): 라이브 Claude 화면은 모델 배지를 상시 표시하지
     않아(idle 푸터엔 'auto mode on …'·'? for shortcuts'뿐) 토큰이 model NULL('?')로
