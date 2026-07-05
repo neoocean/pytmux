@@ -41,6 +41,9 @@ def init_pane(pane) -> None:
     pane._claude_session_id = 0
     pane._tok_state = {"peak": 0, "total": 0}
     pane._session_tokens = 0
+    # §10-F 종료 요약용: claude None 전이에서 _session_tokens 가 0 으로 리셋되기 직전
+    # 보존한 세션 총량(종료 확정 시점엔 _session_tokens=0 이라 이 값을 표시에 쓴다).
+    pane._exit_tokens = 0
     pane._inbuf = ""                # 현재 입력 줄 누적(프롬프트 추적용)
     pane.last_prompt = ""           # 마지막으로 제출한 프롬프트(한 줄)
     pane.pending_prompts = []       # busy 중 입력해 큐된 프롬프트(#4)
@@ -105,6 +108,10 @@ def init_pane(pane) -> None:
     # hdr 는 옛 헤더 예약 유래 — 헤더는 2026-06-13 제거, 신호 자체는 그대로 유효).
     pane._hdr_claude = False
     pane._hdr_claude_miss = 0
+    # §10-F 세션 종료 토큰 요약 주입 예약 카운트(안정 표시). 종료 확정 프레임에
+    # _EXIT_TOKEN_RETRY 로 세팅되고, fg 가 셸로 잡히면 1회 주입 후 0. 한 프레임짜리
+    # 일회성 발화가 fg 미확정으로 유실되지 않게 짧은 창 동안 재시도한다(0=예약 없음).
+    pane._exit_token_pending = 0
     # 토큰 리밋 자동 재개 메시지·예약 보류 플래그. (토글 autoresume 은 코어가 쓰므로
     # 코어 Pane 에 남고, 여기선 메시지/보류만 둔다.)
     pane.resume_msg = "continue"

@@ -734,6 +734,102 @@ async def test_auto_token_on_exit_injects_usage_into_pane():
         await teardown(srv, task, sock)
 
 
+async def test_auto_token_on_exit_falls_back_to_session_tokens():
+    """§10-F(2026-07-05 안정화): 그림자 /usage 스냅샷이 없어도(self._usage=None) 종료
+    요약이 비지 않는다 — 세션 토큰 총량(pane._session_tokens, 로컬 회계라 프로브 없이 항상
+    가용)을 대신 보여 '표시될 때도 안 될 때도' 하던 불안정을 없앤다. 스냅샷이 있으면 토큰
+    라인 + 한도 막대 둘 다. 토큰도 0·스냅샷도 없으면(무활동) 무동작."""
+    import importlib
+    screen_text = importlib.import_module(
+        "pytmuxlib.plugins.claude-code.servermixin").screen_text
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        srv._usage = None                    # 한도 스냅샷 없음
+        p._session_tokens = 12345
+        text = srv._usage_exit_text(80, p)
+        assert text != b"", "스냅샷 없어도 토큰 총량으로 비지 않아야"
+        assert b"12,345" in text, text
+        srv._emit_auto_token_log(sess, p)
+        assert "12,345" in screen_text(p.screen)
+        # 한도 스냅샷이 있으면 토큰 라인 + 막대 둘 다.
+        srv._usage = {"session": {"pct": 42, "reset": "3pm"}}
+        both = srv._usage_exit_text(80, p)
+        assert b"12,345" in both and b"42%" in both, both
+        # 토큰도 0·스냅샷도 없으면 무동작(무활동 세션).
+        p._session_tokens = 0
+        srv._usage = None
+        assert srv._usage_exit_text(80, p) == b""
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_auto_token_on_exit_preserves_tokens_across_reset():
+    """§10-F(2026-07-05 안정화·통합): 세션 토큰 총량은 claude None 전이 시 _scan_claude 가
+    0 으로 리셋한다(리셋은 종료 확정 _HDR_CLAUDE_MISS 프레임 **전**). 종료 요약은 리셋
+    직전 값(_exit_tokens)을 보존해 표시하므로, 실제 스캔 경로에서도 요약이 비지 않는다
+    (직접 호출 테스트가 못 잡는 리셋 타이밍 상호작용 가드)."""
+    import importlib
+    smod = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    screen_text = smod.screen_text
+    MISS = smod._HDR_CLAUDE_MISS
+    srv, task, sock = await server_only()
+    try:
+        srv._usage = None                    # 한도 스냅샷 없이 토큰 폴백만 검증
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        srv._fg_command = lambda pane: "zsh"
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)          # busy → claude 확정
+        p._tok_state = {"total": 4200, "peak": 0}
+        p._session_tokens = 4200             # 세션 토큰 적재(모사)
+        p.feed(b"\x1b[2J\x1b[H$ \r\n")       # claude 사라짐(셸 프롬프트)
+        for _ in range(MISS):
+            srv._scan_claude(sess, win)
+        assert p._session_tokens == 0, "None 전이에 _session_tokens 리셋"
+        assert getattr(p, "_exit_tokens", 0) == 4200, "리셋 직전 보존"
+        assert "4,200" in screen_text(p.screen), "종료 요약에 세션 토큰 표시(비지 않음)"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_auto_token_on_exit_retries_until_shell_confirmed():
+    """§10-F(2026-07-05 안정화): 종료 확정 프레임에 fg 가 아직 셸로 안 잡혀도
+    (_fg_command→None, tcgetpgrp/ps 일시 실패) _EXIT_TOKEN_RETRY 창 동안 재시도해 셸
+    복귀가 잡히는 순간 1회 주입한다 — 일회성 발화가 fg 일시 실패로 영영 유실되던 것을 방지."""
+    import importlib
+    smod = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    MISS = smod._HDR_CLAUDE_MISS
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        calls = []
+        srv._emit_auto_token_log = lambda s, pane=None: calls.append((s, pane))
+        srv._fg_command = lambda pane: None      # 종료 확정 시점 fg 미확정
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._hdr_claude is True
+        p.feed(b"\x1b[2J\x1b[H$ \r\n")
+        for _ in range(MISS):                    # 종료 확정 → 예약(fg None → 미발화)
+            srv._scan_claude(sess, win)
+        assert p._hdr_claude is False
+        assert calls == [], "fg 미확정 동안엔 발화 보류"
+        assert p._exit_token_pending > 0, "예약이 살아 있어야(재시도 창)"
+        # 셸 복귀가 잡히는 순간 → 다음 스캔에 1회 주입.
+        srv._fg_command = lambda pane: "zsh"
+        srv._scan_claude(sess, win)
+        assert calls == [(sess, p)], ("셸 확정 순간 주입", calls)
+        assert p._exit_token_pending == 0
+        srv._scan_claude(sess, win)              # 창 소진 후 재발화 없음
+        assert len(calls) == 1
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_startup_rules_injection():
     # #27: 저장된 시작 규칙이 새 Claude 세션의 첫 idle 에 프롬프트로 주입되고 **엔터까지
     # 눌러 제출**된다(본문 줄바꿈은 \n, 맨 끝 \r 로 제출). 빈 규칙이면 주입하지 않는다.

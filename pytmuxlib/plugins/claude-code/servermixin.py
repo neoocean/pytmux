@@ -66,6 +66,12 @@ def screen_text(screen) -> str:
 # 은 즉시). 30Hz flush 기준 ~1초 — 진짜 Claude 종료 시 행을 되찾는 지연은 미미하다.
 _HDR_CLAUDE_MISS = 30
 
+# §10-F 세션 종료 토큰 요약 주입 재시도 창(프레임 수, 요청 2026-07-05). 종료 확정
+# 프레임에 fg 가 아직 셸로 안 잡히면(tcgetpgrp/ps 일시 실패·한두 프레임 지연) 일회성
+# 발화가 영영 유실됐다. 이 창 동안 매 스캔 fg 를 재확인해 셸 복귀가 잡히는 즉시 1회
+# 주입한다. 거짓 종료(fg=claude/node)면 창이 소진되도록 확정 안 됨 → 화면 보호 유지.
+_EXIT_TOKEN_RETRY = 20
+
 # 모델 배지 디바운스(2026-06-22): claude_model(txt) 는 화면 **아무 위치**의 모델명
 # 토큰(opus/sonnet/haiku…)을 잡으므로, opus 세션 중 화면에 haiku 가 일시 등장하면
 # (Haiku 서브에이전트/Task 실행 표시·출력 텍스트의 'haiku' 언급·/model 메뉴 잔상)
@@ -587,55 +593,77 @@ class ServerClaudeMixin:
         except OSError:
             pass
 
-    def _usage_exit_text(self, width: int = 80) -> bytes:
-        """세션 종료 시 패널에 주입할 /usage 한도 요약을 plain-text(ANSI 최소)로 만든다.
-        그림자 /usage 스냅샷(self._usage: session·week_all·week_sonnet, 각 {pct,reset})이
-        없거나 표시할 항목이 없으면 b"". 팝업(usage_bar_lines)과 같은 정보(라벨·막대·%·
-        리셋)지만 모달 크롬 없이 스크롤 출력용 단순 블록 막대로 만든다 — 클라 표시 헬퍼
-        (clientscreens.usage_bar_lines)는 Textual 결합이라 서버에서 import 할 수 없어
-        자급 포매터를 둔다. 라벨은 코어 i18n(usage.*)을 공유해 팝업과 문구가 일치한다.
-        `width`(패널 폭)에 맞춰 막대 길이를 늘린다(요청 2026-06-20)."""
-        u = self._usage
-        if not isinstance(u, dict):
-            return b""
+    def _usage_exit_text(self, width: int = 80, pane: Pane = None) -> bytes:
+        """세션 종료 시 패널에 주입할 토큰 사용량 요약을 plain-text(ANSI 최소)로 만든다.
+
+        **항상 안정적으로 표시**되게 두 정보를 조합한다(요청 2026-07-05 — 종전엔 그림자
+        /usage 스냅샷이 없으면 통째로 b"" 라 '표시될 때도 안 될 때도' 있었다):
+        - **세션 토큰 총량**(pane._session_tokens): 로컬 회계라 그림자 /usage 프로브 없이
+          **항상 가용** → 종료 요약이 절대 비지 않게 하는 바닥값.
+        - **/usage 한도 막대**(self._usage: session·week_all·week_sonnet 각 {pct,reset}):
+          스냅샷이 있을 때만 곁들인다(없으면 토큰 총량만).
+        둘 다 없으면(claude 무활동·pane=None) b"". 팝업(usage_bar_lines)과 같은 정보지만
+        모달 크롬 없이 스크롤 출력용 블록 막대로 만든다. 라벨은 코어 i18n(usage.*) 공유.
+        `width`(패널 폭)에 맞춰 막대 길이를 늘린다."""
         from pytmuxlib import i18n
 
         def cells(s: str) -> int:   # 동아시아 와이드(한글/CJK)만 2폭으로 세는 최소 폭 계산
             return sum(2 if "가" <= c <= "힣" or "一" <= c <= "鿿"
                        or "　" <= c <= "〿" else 1 for c in s)
 
+        # /usage 한도 막대 항목(그림자 스냅샷이 있을 때만)
         entries = []
-        for key, label in (("session", i18n.t("usage.session_5h")),
-                           ("week_all", i18n.t("usage.week_all")),
-                           ("week_sonnet", i18n.t("usage.week_sonnet"))):
-            d = u.get(key)
-            if isinstance(d, dict) and d.get("pct") is not None:
-                reset = d.get("reset")
-                reset_txt = ("  ↻" + reset.split(" (")[0].strip()) if reset else ""
-                entries.append((key, label, max(0, min(100, int(d["pct"]))),
-                                reset_txt))
-        if not entries:
-            return b""
-        label_w = max(cells(lbl) for _, lbl, _, _ in entries)
-        reset_w = max(cells(rt) for _, _, _, rt in entries)
-        # 막대 폭을 패널 폭에 맞춰 늘린다(요청 2026-06-20): 줄의 고정 폭(들여쓰기 2 +
-        # 라벨 + 간격 2 + " NNN%" 5 + 리셋칸 + 우측 여백 2)을 뺀 나머지를 막대에 준다.
-        # 좁은/넓은 단말 모두 자연스럽게 최소 10·최대 60 칸으로 클램프.
-        fixed = 2 + label_w + 2 + 5 + reset_w + 2
-        gauge_w = max(10, min(60, int(width) - fixed))
+        u = self._usage
+        if isinstance(u, dict):
+            for key, label in (("session", i18n.t("usage.session_5h")),
+                               ("week_all", i18n.t("usage.week_all")),
+                               ("week_sonnet", i18n.t("usage.week_sonnet"))):
+                d = u.get(key)
+                if isinstance(d, dict) and d.get("pct") is not None:
+                    reset = d.get("reset")
+                    reset_txt = ("  ↻" + reset.split(" (")[0].strip()) if reset else ""
+                    entries.append((key, label, max(0, min(100, int(d["pct"]))),
+                                    reset_txt))
+        # 세션 토큰 총량(항상 가용한 바닥값 — 프로브 무관). _exit_tokens 는 claude None
+        # 전이에서 _session_tokens 가 0 으로 리셋되기 **직전** 보존한 값이라, 종료 확정
+        # (리셋 30프레임 뒤) 시점에도 총량이 살아 있다. 미보존 경로(직접 호출 등)는 라이브
+        # _session_tokens 로 폴백.
+        tok = 0
+        if pane is not None:
+            try:
+                tok = int(getattr(pane, "_exit_tokens", 0)
+                          or getattr(pane, "_session_tokens", 0) or 0)
+            except (TypeError, ValueError):
+                tok = 0
+        if not entries and tok <= 0:
+            return b""                       # 표시할 게 전혀 없음(무활동) → 무동작
+
+        # 한도 막대 렌더(있을 때). 막대 폭은 패널 폭에 맞춰 늘린다(고정폭 제외분, 10~60).
         rows = []
-        for key, label, pct, reset_txt in entries:
-            filled = (pct * gauge_w + 50) // 100         # 패널폭 막대(반올림)
-            gauge = "█" * filled + "░" * (gauge_w - filled)
-            # 세션 5h 행은 이번 세션이 가장 즉시 보는 값 → 노란색으로 강조(요청
-            # 2026-06-20). 주간 두 행은 기본색으로 두어 5h 가 시각적으로 도드라진다.
-            if key == "session":
-                gauge = f"\x1b[33m{gauge}\x1b[0m"
-            pad = " " * (label_w - cells(label) + 2)
-            rows.append(f"  {label}{pad}{gauge} {pct:>3}%{reset_txt}")
-        sep = "─" * max(10, min(2 + label_w + 2 + gauge_w + 5 + reset_w, int(width)))
-        lines = ["", f"\x1b[2m{sep}\x1b[0m", f"\x1b[1m{i18n.t('usage.exit_title')}\x1b[0m",
-                 *rows, f"\x1b[2m{sep}\x1b[0m"]
+        if entries:
+            label_w = max(cells(lbl) for _, lbl, _, _ in entries)
+            reset_w = max(cells(rt) for _, _, _, rt in entries)
+            fixed = 2 + label_w + 2 + 5 + reset_w + 2
+            gauge_w = max(10, min(60, int(width) - fixed))
+            for key, label, pct, reset_txt in entries:
+                filled = (pct * gauge_w + 50) // 100         # 패널폭 막대(반올림)
+                gauge = "█" * filled + "░" * (gauge_w - filled)
+                # 세션 5h 행은 이번 세션이 가장 즉시 보는 값 → 노란색 강조.
+                if key == "session":
+                    gauge = f"\x1b[33m{gauge}\x1b[0m"
+                pad = " " * (label_w - cells(label) + 2)
+                rows.append(f"  {label}{pad}{gauge} {pct:>3}%{reset_txt}")
+            sep_w = max(10, min(2 + label_w + 2 + gauge_w + 5 + reset_w, int(width)))
+        else:
+            sep_w = max(10, min(48, int(width)))
+        sep = "─" * sep_w
+        lines = ["", f"\x1b[2m{sep}\x1b[0m",
+                 f"\x1b[1m{i18n.t('usage.exit_title')}\x1b[0m"]
+        if tok > 0:              # 세션 토큰 라인(항상 곁들임 — 한도 스냅샷 유무 무관)
+            lines.append(f"  {i18n.t('usage.exit_session_tokens')} "
+                         f"\x1b[1m{tok:,}\x1b[0m")
+        lines.extend(rows)
+        lines.append(f"\x1b[2m{sep}\x1b[0m")
         # 셸이 이미 찍어 둔 프롬프트 줄을 **덮어쓰고** 그 자리에 블록을 흘린다(요청
         # 2026-06-20): \r 로 줄 처음으로 간 뒤 \x1b[J(커서~화면끝 지우기)로 빈 프롬프트
         # 줄을 치우고 블록을 그린다. 끝에 개행을 두지 않아, _emit_auto_token_log 가 뒤이어
@@ -657,7 +685,8 @@ class ServerClaudeMixin:
     # 가 거짓 종료(긴 출력이 Claude footer 를 샘플 밖으로 밀어 claude_state→None 30프레임)와
     # 진짜 종료를 교차검증하는 데 쓴다.
     _SHELL_FG = frozenset({"zsh", "bash", "sh", "fish", "dash", "ksh", "tcsh",
-                           "csh", "ash", "pwsh"})
+                           "csh", "ash", "pwsh", "nu", "nushell", "xonsh",
+                           "elvish", "oil", "osh", "powershell"})
 
     def _claude_really_exited(self, pane: Pane) -> bool:
         """패널이 정말로 Claude→셸 로 복귀했는지 포그라운드 프로세스로 교차검증한다.
@@ -671,15 +700,16 @@ class ServerClaudeMixin:
         return bool(fg) and os.path.basename(fg).lower() in self._SHELL_FG
 
     def _emit_auto_token_log(self, sess: Session, pane: Pane = None) -> None:
-        """Claude **세션 종료** 확정 시 그 패널에 /usage 한도 요약을 **출력으로 주입**한다
+        """Claude **세션 종료** 확정 시 그 패널에 토큰 사용량 요약을 **출력으로 주입**한다
         — 팝업(모달)이 아니라 패널 스크롤백에 자연스럽게 흘러가도록(요청 2026-06-18).
         Claude 가 막 빠져 패널은 셸 프롬프트 상태이므로 합성 텍스트를 _ingest_slice 로
-        먹이면 정상 출력처럼 렌더·스크롤된다. 한도 데이터(self._usage)·패널이 없으면
-        무동작. _scan_claude 가 _HDR_CLAUDE_MISS 디바운스로 확정한 진짜 종료에서 종료당
-        1회 호출되므로 중복 주입이 없다(테스트 동기 호출에서도 그대로 동작)."""
+        먹이면 정상 출력처럼 렌더·스크롤된다. 요약은 세션 토큰 총량(항상 가용) + 한도 막대
+        (스냅샷 있을 때)로, 그림자 /usage 가 없어도 비지 않는다(_usage_exit_text, 요청
+        2026-07-05). 세션 토큰도 0·pane 도 없으면 무동작. _scan_claude 종료 예약
+        (_exit_token_pending)이 fg=셸 확정 시 종료당 1회 호출한다(중복 주입 없음)."""
         if pane is None:
             return
-        text = self._usage_exit_text(getattr(pane, "cols", 80))
+        text = self._usage_exit_text(getattr(pane, "cols", 80), pane)
         if text:
             self._inject_pane_output(pane, text)
             # 블록은 셸 프롬프트 줄을 덮어쓰며 그려졌다(_usage_exit_text). 이제 셸이
@@ -833,7 +863,10 @@ class ServerClaudeMixin:
                                and p._idle_frames < _RC_CONFIRM_FRAMES)
                            # §3.4 busy 이탈 확정 대기 중: 화면이 정적이어도 다음
                            # 스캔이 이탈을 확정(또는 busy 복귀)할 수 있게 계속 스캔.
-                           or p._busy_exit_miss > 0)
+                           or p._busy_exit_miss > 0
+                           # §10-F 종료 토큰 주입 예약 중: 셸 프롬프트가 정적이어도 fg 가
+                           # 셸로 잡히는 프레임을 관측해 주입하려면 창 동안 계속 스캔한다.
+                           or getattr(p, "_exit_token_pending", 0) > 0)
                 if p._feed_seq == p._scan_seq and not pending:
                     continue
                 p._scan_seq = p._feed_seq
@@ -959,6 +992,8 @@ class ServerClaudeMixin:
                 if new_cl:
                     p._hdr_claude = True
                     p._hdr_claude_miss = 0
+                    # claude 재등장 = 거짓 종료 → 종료 토큰 주입 예약 취소(화면 보호).
+                    p._exit_token_pending = 0
                 elif p._hdr_claude:
                     p._hdr_claude_miss += 1
                     if p._hdr_claude_miss >= _HDR_CLAUDE_MISS:
@@ -977,14 +1012,29 @@ class ServerClaudeMixin:
                         # claude_state→None 30프레임)면 살아있는 TUI 에 그래프가 주입돼
                         # 화면이 깨진다 — 포그라운드 프로세스로 진짜 셸 복귀를 교차검증해
                         # 그때만 주입한다(_claude_really_exited, 사용자 보고 2026-06-18).
-                        if self.auto_token_on_exit and self._claude_really_exited(p):
-                            self._emit_auto_token_log(sess, p)
+                        # 한 프레임짜리 일회성 발화가 fg 미확정으로 유실되지 않게 주입을
+                        # **예약**하고, 아래에서 셸이 잡히는 순간 재시도한다(안정 표시,
+                        # 요청 2026-07-05). 종료 프레임에 fg 가 이미 셸이면 같은 패스에서
+                        # 즉시 발화(기존 동작 동치).
+                        if self.auto_token_on_exit:
+                            p._exit_token_pending = _EXIT_TOKEN_RETRY
+                # §10-F 종료 토큰 주입 예약 처리(안정 표시): 예약이 살아 있고 헤더신호가
+                # 내려간 상태에서, fg 가 셸로 확정되면 그 즉시 1회 주입 후 해제한다. 확정
+                # 안 되면(fg=claude/node·미상) 창을 줄여 거짓 종료는 소진돼 사라지고 진짜
+                # 종료는 셸 복귀가 잡히는 순간 발화한다(claude 재등장은 위에서 예약 취소).
+                if p._exit_token_pending > 0 and not p._hdr_claude:
+                    if self._claude_really_exited(p):
+                        self._emit_auto_token_log(sess, p)
+                        p._exit_token_pending = 0
+                    else:
+                        p._exit_token_pending -= 1
                 # 토큰 누계(#3): 새 Claude 세션 시작(None→Claude) 시 리셋, 매 프레임
                 # 현재 응답 running 토큰을 step 으로 접어 응답별 peak 를 누계에 확정.
                 # (확정 시점 committed>0 은 #7 의 영속 로깅 이벤트로도 쓰인다.)
                 committed = 0
                 if new_cl and not old_cl:
                     tokens.reset(p._tok_state)
+                    p._exit_tokens = 0       # 새 세션 → 이전 종료 총량 보존값 폐기
                     # 새 Claude 세션 경계: 세션 id 부여, 계정 재감지(수동 지정은 유지).
                     self._next_claude_session_id(p)
                     if not p._claude_account_manual:
@@ -1160,6 +1210,10 @@ class ServerClaudeMixin:
                             p, t, state=new_cl, busy=False, running=None,
                             peak_before=surviving,
                             committed=surviving, reset=True)
+                    # §10-F: 리셋으로 사라질 세션 총량을 종료 요약용으로 1회 보존한다
+                    # (종료 확정은 여기서 _HDR_CLAUDE_MISS 프레임 뒤라, 그때 _session_tokens
+                    # 는 이미 0). _usage_exit_text 가 이 값을 우선 읽어 요약이 비지 않는다.
+                    p._exit_tokens = p._session_tokens
                     p._session_tokens = 0
                     p._tok_state["peak"] = 0
                     p._tok_state["total"] = 0
