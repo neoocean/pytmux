@@ -56,6 +56,18 @@
       </div>
     </header>
 
+    <section class="cl-day" id="d-2026-07-06">
+      <h2>2026-07-06 <span class="pill">월요일</span></h2>
+      <ul>
+        <li><span class="pill stable">성능 · Windows</span> <strong>Windows 에서 앱이 처음 뜨는 속도가 빨라졌습니다.</strong>
+          Windows 는 (macOS 와 달리) 터미널을 담당하는 <strong>백그라운드 호스트 프로세스</strong>를 따로 띄워야 하는데,
+          그 준비를 <strong>서버가 켜지는 동안 미리·겹쳐서</strong> 시작하도록 바꿨습니다. 또 호스트 연결을 기다릴 때
+          쓰던 <strong>고정 대기 시간(0.1초)을 없애</strong> 준비되는 즉시 붙도록 해, 콜드 스타트에서 체감되는 지연을
+          줄였습니다. (새 탭 열기·종료 속도는 Windows 콘솔이 터미널마다 별도 프로세스를 요구하는 구조상 한계가 있어
+          그대로입니다 — 이 부분은 원인을 분석해 문서로 남겼습니다.)</li>
+      </ul>
+    </section>
+
     <section class="cl-day" id="d-2026-07-05">
       <h2>2026-07-05 <span class="pill">일요일</span></h2>
       <ul>
