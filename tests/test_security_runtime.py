@@ -343,3 +343,68 @@ async def test_harden_win_acl_runs_once_per_path():
         subprocess.run, ipc.IS_WINDOWS = orig_run, orig_win
         ipc._win_acl_hardened.clear()
         ipc._win_acl_hardened.update(orig_set)
+
+
+async def test_harden_win_acl_uses_unambiguous_grantee():
+    """회귀(2026-07-06): 호스트명이 사용자명과 같은 도메인 박스(컴퓨터=`WOOJINKIM`,
+    사용자=`NATGAMES\\woojinkim`)에서 짧은 이름 `getpass.getuser()`(=`woojinkim`)를 그대로
+    `icacls /grant:r` 에 넘기면, icacls 가 로컬 컴퓨터 권한(`WOOJINKIM\\`)으로 오해석해
+    **실사용자를 자기 state 디렉터리에서 잠가버린다** → default_state_dir 의
+    `os.makedirs(exist_ok=True)` 가 (isdir 이 access-denied 로 False) WinError 183 로 죽음.
+    그래서 grant 는 반드시 `_win_current_user_grantee()`(SID 우선)로 지어야 한다."""
+    import subprocess
+    calls = []
+    orig_run, orig_win = subprocess.run, ipc.IS_WINDOWS
+    orig_set = set(ipc._win_acl_hardened)
+    orig_cache = list(ipc._win_grantee_cache)
+
+    def fake_run(*a, **k):
+        calls.append(a[0] if a else k.get("args"))
+        class _R:
+            returncode = 0
+        return _R()
+    try:
+        ipc.IS_WINDOWS = True
+        subprocess.run = fake_run
+        ipc._win_acl_hardened.clear()
+        ipc._win_grantee_cache.clear()
+        ipc._win_grantee_cache.append("*S-1-5-21-9-9-9-500")   # 명확한 SID 강제
+        ipc._harden_win_acl(r"C:\fake\statedir", is_dir=True)
+        assert calls, "icacls 미호출"
+        argv = calls[0]
+        assert "*S-1-5-21-9-9-9-500:(OI)(CI)F" in argv, argv
+        # 짧은(모호한) 이름이 grant 로 새어들어가면 안 된다.
+        import getpass
+        try:
+            bare = getpass.getuser()
+        except Exception:
+            bare = ""
+        if bare:
+            assert f"{bare}:(OI)(CI)F" not in argv, argv
+    finally:
+        subprocess.run, ipc.IS_WINDOWS = orig_run, orig_win
+        ipc._win_acl_hardened.clear()
+        ipc._win_acl_hardened.update(orig_set)
+        ipc._win_grantee_cache.clear()
+        ipc._win_grantee_cache.extend(orig_cache)
+
+
+async def test_win_grantee_is_unambiguous():
+    """`_win_current_user_grantee()` 는 모호성 없는 식별자를 돌려준다: Windows 에선 토큰
+    SID(`*S-…`), 아니면 도메인 한정(`DOMAIN\\user`) — 절대 호스트명과 충돌 가능한 짧은
+    이름 하나만 반환하지 않는다. (SID 우선 → 실패 시 DOMAIN\\user → 마지막에 짧은 이름.)"""
+    orig_cache = list(ipc._win_grantee_cache)
+    orig_win = ipc.IS_WINDOWS
+    try:
+        ipc._win_grantee_cache.clear()
+        g = ipc._win_current_user_grantee()
+        assert g, "빈 grantee"
+        if ipc.IS_WINDOWS:
+            # 실제 토큰 SID 가 잡혀야 한다.
+            assert g.startswith("*S-"), g
+        # 두 번째 호출은 캐시에서 동일값.
+        assert ipc._win_current_user_grantee() == g
+    finally:
+        ipc.IS_WINDOWS = orig_win
+        ipc._win_grantee_cache.clear()
+        ipc._win_grantee_cache.extend(orig_cache)

@@ -266,6 +266,81 @@ def token_path(endpoint: str) -> str:
 
 
 _win_acl_hardened: set = set()
+_win_grantee_cache: list = []   # [str] 한 번만 계산해 재사용(캐시 미스=빈 리스트)
+
+
+def _win_current_user_grantee() -> str:
+    """`icacls /grant` 에 넘길 **현재 프로세스 사용자**의 모호성 없는 식별자.
+
+    바로 `getpass.getuser()`(=`USERNAME`, 도메인 없는 짧은 이름)를 쓰면 위험하다:
+    **호스트명이 사용자명과 같으면**(예: 컴퓨터명 `WOOJINKIM`, 사용자 `NATGAMES\\woojinkim`)
+    icacls 가 짧은 `woojinkim` 을 도메인 사용자가 아니라 로컬 컴퓨터 권한(`WOOJINKIM\\`)으로
+    해석해, `/inheritance:r /grant:r woojinkim:F` 가 **실사용자를 자기 state 디렉터리에서
+    잠가버린다**(default_state_dir 의 makedirs 가 WinError 183 로 죽음). 그래서 가능하면
+    **SID**(`*S-1-5-…`, 오프라인·모호성 무관)로, 안 되면 `DOMAIN\\user`(도메인 한정)로,
+    그것도 안 되면 짧은 이름으로 폴백한다. 결과는 한 번만 계산해 캐시한다."""
+    if _win_grantee_cache:
+        return _win_grantee_cache[0]
+    grantee = None
+    # 1순위: 현재 토큰의 SID → icacls 는 `*<SID>` 를 그대로 받는다(항상 명확).
+    try:
+        import ctypes
+        from ctypes import wintypes
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        TOKEN_QUERY = 0x0008
+        TokenUser = 1
+        advapi32.OpenProcessToken.argtypes = (
+            wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE))
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        advapi32.GetTokenInformation.argtypes = (
+            wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+            wintypes.DWORD, ctypes.POINTER(wintypes.DWORD))
+        advapi32.GetTokenInformation.restype = wintypes.BOOL
+        advapi32.ConvertSidToStringSidW.argtypes = (
+            ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR))
+        advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        tok = wintypes.HANDLE()
+        if advapi32.OpenProcessToken(
+                kernel32.GetCurrentProcess(), TOKEN_QUERY, ctypes.byref(tok)):
+            try:
+                size = wintypes.DWORD(0)
+                advapi32.GetTokenInformation(
+                    tok, TokenUser, None, 0, ctypes.byref(size))
+                buf = ctypes.create_string_buffer(size.value)
+                if advapi32.GetTokenInformation(
+                        tok, TokenUser, buf, size, ctypes.byref(size)):
+                    # TOKEN_USER 의 첫 필드 = SID_AND_ATTRIBUTES.Sid (PSID)
+                    psid = ctypes.cast(
+                        buf, ctypes.POINTER(ctypes.c_void_p)).contents
+                    sid_str = wintypes.LPWSTR()
+                    if advapi32.ConvertSidToStringSidW(
+                            psid, ctypes.byref(sid_str)):
+                        try:
+                            if sid_str.value:
+                                grantee = "*" + sid_str.value
+                        finally:
+                            kernel32.LocalFree(sid_str)
+            finally:
+                kernel32.CloseHandle(tok)
+    except Exception:
+        grantee = None
+    # 2순위: DOMAIN\user (호스트명 충돌을 도메인 한정으로 제거).
+    if not grantee:
+        dom = os.environ.get("USERDOMAIN")
+        usr = os.environ.get("USERNAME")
+        if dom and usr:
+            grantee = f"{dom}\\{usr}"
+    # 3순위: 짧은 이름(마지막 수단).
+    if not grantee:
+        try:
+            import getpass
+            grantee = getpass.getuser()
+        except Exception:
+            grantee = os.environ.get("USERNAME") or ""
+    _win_grantee_cache.append(grantee)
+    return grantee
 
 
 def _harden_win_acl(path: str, is_dir: bool = False) -> None:
@@ -283,9 +358,10 @@ def _harden_win_acl(path: str, is_dir: bool = False) -> None:
         return
     _win_acl_hardened.add(path)   # 실패해도 재시도 안 함(스팸 방지) — best-effort
     try:
-        import getpass
         import subprocess
-        user = getpass.getuser()
+        user = _win_current_user_grantee()
+        if not user:
+            return   # 식별자를 못 구하면 상속 ACL 을 그대로 둔다(무회귀 우선).
         grant = f"{user}:(OI)(CI)F" if is_dir else f"{user}:F"
         subprocess.run(
             ["icacls", path, "/inheritance:r", "/grant:r", grant],
