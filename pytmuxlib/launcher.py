@@ -569,6 +569,15 @@ def main(argv=None):
     if args.command == "stdio-proxy":
         sys.exit(run_stdio_proxy(sock_path))
     if args.command == "server":
+        # 레버 H(콜드 스타트 겹치기): host 인터프리터 startup(~400ms)을 아래 무거운
+        # `from .server import run_server`(pyte/model ~140ms)+서버 부팅과 겹치도록, host 를
+        # **먼저** detached 로 띄운다. host 모드 OFF·이미 떠 있는 host(재시작)면 no-op.
+        # best-effort — 실패해도 serve()→ensure_connected 가 정상 경로로 띄운다.
+        try:
+            from . import ptyhostmgr
+            ptyhostmgr.prespawn_host(sock_path)
+        except Exception:
+            pass
         from .server import run_server   # 지연 import: 서버 데몬 경로에서만 model/pyte 로드
         run_server(sock_path, resume_path=getattr(args, "resume", None))
         return

@@ -307,3 +307,147 @@ async def test_ensure_connected_spawn_failure_short_circuits():
         _proc.spawn_detached = orig
     assert client is None
     assert dt < 3.0, ("6초 폴링 회피(spawn 실패 즉시 폴백)", dt)
+
+
+async def test_prespawn_dedup_and_gating():
+    """레버 H: prespawn_host 가 (1) host 모드 OFF 면 no-op, (2) 이미 떠 있는 host(소켓/
+    portfile 존재)면 skip, (3) 처음이면 딱 한 번 spawn 하고, 뒤이은 _spawn_host 는
+    **중복 spawn 하지 않는다**(host 하나만 뜨게 보장)."""
+    from pytmuxlib import proc as _proc
+    from pytmuxlib import ptyhostmgr
+    d = tempfile.mkdtemp(prefix="pytmux-prespawn-")
+    sock = os.path.join(d, "x.sock")
+
+    calls = []
+    orig_spawn = _proc.spawn_detached
+    _proc.spawn_detached = lambda argv, **kw: calls.append(argv) or 4242
+    orig_env = os.environ.get("PYTMUX_PTY_HOST")
+    saved_spawned = set(ptyhostmgr._spawned_hosts)
+    ptyhostmgr._spawned_hosts.discard(sock)
+    try:
+        # (1) host 모드 OFF → no-op.
+        os.environ["PYTMUX_PTY_HOST"] = "0"
+        ptyhostmgr.prespawn_host(sock)
+        assert calls == [], "host OFF 면 prespawn no-op"
+
+        # (2) 이미 리스닝 중인 host(소켓 존재) → skip.
+        os.environ["PYTMUX_PTY_HOST"] = "1"
+        endpoint = ptyhostmgr.listen_endpoint(sock)   # POSIX = <base>.ptyhost.sock
+        open(endpoint, "w").close()
+        ptyhostmgr.prespawn_host(sock)
+        assert calls == [], "기존 host 존재 시 prespawn skip(재시작 host 보존·무중복)"
+        os.unlink(endpoint)
+
+        # (3) 처음 → 딱 한 번 spawn.
+        ptyhostmgr.prespawn_host(sock)
+        assert len(calls) == 1, ("첫 prespawn 은 1회 spawn", calls)
+        assert sock in ptyhostmgr._spawned_hosts
+
+        # 뒤이은 _spawn_host(ensure_connected 경로)는 중복 spawn 안 함.
+        assert ptyhostmgr._spawn_host(sock) is True
+        assert len(calls) == 1, ("prespawn 뒤 _spawn_host 는 no-op(무중복)", calls)
+    finally:
+        _proc.spawn_detached = orig_spawn
+        ptyhostmgr._spawned_hosts.clear()
+        ptyhostmgr._spawned_hosts.update(saved_spawned)
+        if orig_env is None:
+            os.environ.pop("PYTMUX_PTY_HOST", None)
+        else:
+            os.environ["PYTMUX_PTY_HOST"] = orig_env
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_ensure_connected_no_upfront_poll_delay():
+    """레버 G: host 가 곧바로 접속 가능해지면 ensure_connected 가 **고정 100ms 선(先)sleep
+    없이** 즉시 연결한다(종전 `await asyncio.sleep(0.1)` 이 첫 시도 앞에 있어 최소 100ms
+    허비하던 것 제거). _try_connect 를 재연결 1회 실패→spawn 직후 성공으로 흉내내 계측."""
+    import time as _t
+    from pytmuxlib import proc as _proc
+    from pytmuxlib import ptyhostmgr
+    loop = asyncio.get_running_loop()
+    d = tempfile.mkdtemp(prefix="pytmux-mgr-g-")
+    sock = os.path.join(d, "x.sock")
+
+    n = {"c": 0}
+    sentinel = object()
+
+    async def _fake_try_connect(_loop, _sock, _timeout):
+        n["c"] += 1
+        # 1회차 = 재연결(기존 host 없음)→None, 2회차 = spawn 직후 첫 폴→성공.
+        return None if n["c"] == 1 else sentinel
+
+    orig_try = ptyhostmgr._try_connect
+    orig_spawn = _proc.spawn_detached
+    ptyhostmgr._try_connect = _fake_try_connect
+    _proc.spawn_detached = lambda argv, **kw: 4242
+    saved_spawned = set(ptyhostmgr._spawned_hosts)
+    ptyhostmgr._spawned_hosts.discard(sock)
+    try:
+        t0 = _t.monotonic()
+        client = await ptyhostmgr.ensure_connected(loop, sock)
+        dt = _t.monotonic() - t0
+    finally:
+        ptyhostmgr._try_connect = orig_try
+        _proc.spawn_detached = orig_spawn
+        ptyhostmgr._spawned_hosts.clear()
+        ptyhostmgr._spawned_hosts.update(saved_spawned)
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+    assert client is sentinel, "spawn 직후 첫 폴에서 연결"
+    assert n["c"] == 2, ("재연결 1 + 폴 1 = 2회 시도", n["c"])
+    assert dt < 0.05, ("첫 폴 앞 고정 100ms sleep 제거(즉시 시도)", dt)
+
+
+async def test_prespawn_guard_cleared_allows_respawn_after_host_loss():
+    """레버 H 회귀 가드: prespawn 뒤 ensure_connected 가 연결에 성공하면 `_spawned_hosts`
+    가드를 **해제**해, 뒤이어 host 가 죽어 _on_host_lost→ensure_connected 가 다시 불릴 때
+    죽은 host 를 **새로 띄운다**(가드가 남으면 _spawn_host 가 no-op → 죽은 host 재기동
+    불가 회귀). ①콜드스타트=1회 spawn(dedup) ②host-loss=재-spawn 을 함께 검증."""
+    from pytmuxlib import proc as _proc
+    from pytmuxlib import ptyhostmgr
+    loop = asyncio.get_running_loop()
+    d = tempfile.mkdtemp(prefix="pytmux-mgr-h2-")
+    sock = os.path.join(d, "x.sock")
+
+    spawns = []
+    calls = {"c": 0}
+    sentinel = object()
+
+    async def _fake_try_connect(_loop, _sock, _timeout):
+        # 매 ensure_connected 는 (재연결 None → 폴 성공) 2회를 소비한다.
+        calls["c"] += 1
+        return None if calls["c"] % 2 == 1 else sentinel
+
+    orig_try = ptyhostmgr._try_connect
+    orig_spawn = _proc.spawn_detached
+    orig_env = os.environ.get("PYTMUX_PTY_HOST")
+    saved = set(ptyhostmgr._spawned_hosts)
+    ptyhostmgr._spawned_hosts.discard(sock)
+    ptyhostmgr._try_connect = _fake_try_connect
+    _proc.spawn_detached = lambda argv, **kw: spawns.append(argv) or 1
+    os.environ["PYTMUX_PTY_HOST"] = "1"
+    try:
+        # 콜드 스타트: prespawn(1회 spawn) → ensure_connected(재연결 실패→dedup→폴 성공).
+        ptyhostmgr.prespawn_host(sock)
+        assert len(spawns) == 1, ("prespawn 1회", spawns)
+        c1 = await ptyhostmgr.ensure_connected(loop, sock)
+        assert c1 is sentinel
+        assert len(spawns) == 1, ("prespawn 뒤 중복 spawn 없음(dedup)", spawns)
+        assert sock not in ptyhostmgr._spawned_hosts, "연결 성공 시 가드 해제"
+
+        # host 죽음 → 재연결: 이번엔 가드가 없어 새 host 를 띄워야 한다.
+        c2 = await ptyhostmgr.ensure_connected(loop, sock)
+        assert c2 is sentinel
+        assert len(spawns) == 2, ("host-loss 후 재-spawn(죽은 host 재기동)", spawns)
+    finally:
+        ptyhostmgr._try_connect = orig_try
+        _proc.spawn_detached = orig_spawn
+        ptyhostmgr._spawned_hosts.clear()
+        ptyhostmgr._spawned_hosts.update(saved)
+        if orig_env is None:
+            os.environ.pop("PYTMUX_PTY_HOST", None)
+        else:
+            os.environ["PYTMUX_PTY_HOST"] = orig_env
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
