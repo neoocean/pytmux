@@ -744,6 +744,7 @@ def claude_prompt(text: str):
 _BOX_TOP = "╭┌"          # 박스 위 모서리(좌)
 _BOX_BOTTOM = "╰└"       # 박스 아래 모서리(좌)
 _BOX_SIDE = "│|"         # 박스 세로 테두리(유니코드/ASCII 폴백)
+_PROMPT_MARK = ("❯", ">")   # 입력 프롬프트 마커: 최신 Claude=❯(U+276F), 구=">"
 
 
 def _box_inner(line: str) -> str:
@@ -820,10 +821,12 @@ def claude_input_box(lines, wrap=(), cursor_y=None):
     for k, ri in enumerate(rows):
         inner = _box_inner(lines[ri])
         if k == 0:
-            t = inner.lstrip()
-            if t[:1] == ">":          # 프롬프트 마커("> ") 제거
+            t = inner.lstrip("\xa0 ")   # 앞 공백/비분리공백 제거(마커 앞 패딩)
+            if t[:1] in _PROMPT_MARK:   # 프롬프트 마커("> "/"❯ ") 제거
+                # 최신 Claude 는 U+276F(❯)+비분리공백(\xa0), 구버전은 ">"+공백.
+                # 마커를 안 떼면 ESC→Insert 작성창 시드에 마커가 딸려 온다(사용자 보고).
                 t = t[1:]
-                if t[:1] == " ":
+                if t[:1] in ("\xa0", " "):
                     t = t[1:]
             parts.append(t.rstrip())
             continue

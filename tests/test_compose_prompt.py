@@ -384,6 +384,12 @@ async def test_claude_input_box_parser():
               "? for shortcuts"]) == "hi there"
     # 빈 입력(못 찾음) → None
     assert f([]) is None
+    # 최신 Claude: 박스 없는 ❯(U+276F)+비분리공백(\xa0) 프롬프트 — 마커가 시드에
+    # 딸려 오면 안 된다(ESC→Insert 작성창에 '❯' 누출 버그, 사용자 보고 2026-07-06).
+    assert f(["⏺ 출력", "─────────", "❯\xa0"], cursor_y=2) == ""     # 빈 입력
+    assert f(["─────────", "❯\xa0안녕 세계"], cursor_y=1) == "안녕 세계"
+    # 박스 안 ❯ 마커도 제거
+    assert f(["  ╭────╮", "  │ ❯ hi │", "  ╰────╯"], cursor_y=1) == "hi"
 
 
 async def test_scrape_fallback_seeds_when_tracker_empty():

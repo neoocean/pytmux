@@ -59,6 +59,13 @@
     <section class="cl-day" id="d-2026-07-06">
       <h2>2026-07-06 <span class="pill">월요일</span></h2>
       <ul>
+        <li><strong>여러 줄 작성창에 프롬프트 기호가 딸려오지 않습니다.</strong> Claude 패널에서
+          <span class="inline-code">ESC</span> 뒤 <span class="inline-code">Insert</span> 로 여는
+          <strong>여러 줄 작성창</strong>(블록 선택 편집이 되는 별도 입력창)이 지금 입력하던 내용을
+          미리 채울 때, 프롬프트 앞의 기호(<span class="inline-code">❯</span>)까지 함께 들어가던
+          문제를 고쳤습니다. 최신 Claude Code 가 프롬프트 기호를
+          <span class="inline-code">&gt;</span> 에서 <span class="inline-code">❯</span> 로 바꾼 것을
+          반영해, 이제 <strong>실제 입력한 글자만</strong> 깔끔하게 옮겨옵니다.</li>
         <li><span class="pill stable">성능 · Windows</span> <strong>Windows 에서 앱이 처음 뜨는 속도가 빨라졌습니다.</strong>
           Windows 는 (macOS 와 달리) 터미널을 담당하는 <strong>백그라운드 호스트 프로세스</strong>를 따로 띄워야 하는데,
           그 준비를 <strong>서버가 켜지는 동안 미리·겹쳐서</strong> 시작하도록 바꿨습니다. 또 호스트 연결을 기다릴 때
