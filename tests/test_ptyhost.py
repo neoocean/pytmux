@@ -330,13 +330,21 @@ async def test_prespawn_dedup_and_gating():
         ptyhostmgr.prespawn_host(sock)
         assert calls == [], "host OFF 면 prespawn no-op"
 
-        # (2) 이미 리스닝 중인 host(소켓 존재) → skip.
+        # (2) 이미 리스닝 중인 host → skip. 리스닝 여부 가늠은 OS 마다 다르다
+        # (prespawn_host: Windows=portfile 존재·POSIX=소켓 경로 존재)이므로 그에 맞게
+        # 마커를 만든다 — Windows 의 listen_endpoint 는 파일 경로가 아닌 `tcp:...` 라
+        # open() 할 수 없다.
         os.environ["PYTMUX_PTY_HOST"] = "1"
-        endpoint = ptyhostmgr.listen_endpoint(sock)   # POSIX = <base>.ptyhost.sock
-        open(endpoint, "w").close()
+        if pty_backend.IS_WINDOWS:
+            marker = ptyhostmgr.host_portfile(sock)
+            with open(marker, "w", encoding="utf-8") as f:
+                f.write("4242")
+        else:
+            marker = ptyhostmgr.listen_endpoint(sock)   # <base>.ptyhost.sock
+            open(marker, "w").close()
         ptyhostmgr.prespawn_host(sock)
         assert calls == [], "기존 host 존재 시 prespawn skip(재시작 host 보존·무중복)"
-        os.unlink(endpoint)
+        os.unlink(marker)
 
         # (3) 처음 → 딱 한 번 spawn.
         ptyhostmgr.prespawn_host(sock)
