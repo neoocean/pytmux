@@ -606,6 +606,51 @@ async def test_remote_resume_payload_and_restore_links():
         await teardown(srvC, taskC, sockC)
 
 
+async def test_remote_pin_survives_restart():
+    """§12 ①: 원격(⇄) 탭에 걸어 둔 다운스트림 로컬 핀(pinned_windows)이 작업보존
+    재시작을 살아남는다 — _resume_payload 가 spec 에 실어 두고 remote_restore_links
+    가 새 링크에 되살린다. (재시작 후 핀 유실 회귀 방지.)"""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    srvC, taskC, sockC = await server_only()
+    reader = writer = None
+    try:
+        srvB.ensure_default_session(80, 24)
+        sessA = srvA.ensure_default_session(80, 24)
+        ok = await srvA.remote_attach(sessA, endpoint=sockB)
+        assert ok
+        link = next(iter(srvA._remotes_dict().values()))
+        # 원격 첫 창을 핀(다운스트림 로컬 index=0). set_remote_pinned 은 업스트림
+        # status 병합으로 link.windows 가 찬 뒤라야 매핑되므로, 여기선 persistence
+        # 검증에 집중해 집합에 직접 넣는다(핀 매핑 자체는 별도 테스트가 다룸).
+        link.pinned_windows.add(0)
+        assert link.pinned_windows == {0}, link.pinned_windows
+        specs = srvA._resume_payload().get("remotes")
+        assert specs and specs[0].get("pinned_windows") == [0], specs
+
+        # 새 서버(re-exec 후 이미지 역)가 spec 으로 복원 → 핀도 되살아난다.
+        srvC.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockC)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        srvC._remote_resume = specs
+        srvC.remote_restore_links()
+        await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and any(w.get("remote") and w.get("pinned") for w in m["windows"]),
+            what="restored pinned remote tab")
+        linkC = next(iter(srvC._remotes_dict().values()))
+        assert linkC.pinned_windows == {0}, linkC.pinned_windows
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+        await teardown(srvC, taskC, sockC)
+
+
 async def test_remote_attach_self_rejected():
     """Stage 3: 자기 자신 endpoint attach 는 거부된다(자기 ⇄ 탭 재흡수로 탭
     목록이 status 왕복마다 무한 증식하는 루프 차단)."""

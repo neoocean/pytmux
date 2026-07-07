@@ -641,6 +641,14 @@ class ServerRemoteMixin:
                 try:
                     if await self.remote_attach(sess, host=spec.get("host"),
                                                 endpoint=spec.get("endpoint")):
+                        # §12 ① 원격 탭 핀 복원: 재시작 전 다운스트림 로컬 핀 집합을
+                        # 새 링크에 되살린다(_resume_payload 가 spec 에 실어 둠). 원격
+                        # 창 index(ri) 기준이라 업스트림 창 구성이 그대로면 정합.
+                        pins = spec.get("pinned_windows")
+                        if pins:
+                            link = self._remotes_dict().get(name)
+                            if link is not None:
+                                link.pinned_windows = set(pins)
                         self._remote_status_broadcast()
                     else:
                         detail = self._err_detail("rerr.unknown", "원인 미상")

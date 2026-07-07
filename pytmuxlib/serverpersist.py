@@ -123,8 +123,13 @@ class ServerPersistMixin:
                       for t in s.tabs]}
             for s in self.sessions.values()],
             # §1.7 Stage 3: 원격 링크 spec — 새 이미지가 remote_restore_links 로
-            # 재연결한다(ssh 파이프는 CLOEXEC 라 execv 를 살아남지 못함).
-            "remotes": [dict(link.spec)
+            # 재연결한다(ssh 파이프는 CLOEXEC 라 execv 를 살아남지 못함). §12 ① 원격
+            # 탭 핀(pinned_windows)은 런타임 set 이라 재연결만으론 유실 → spec 에 실어
+            # remote_restore_links 가 새 링크에 복원한다(핀 있을 때만 키 추가).
+            "remotes": [({**link.spec, "pinned_windows":
+                          sorted(link.pinned_windows)}
+                         if getattr(link, "pinned_windows", None)
+                         else dict(link.spec))
                         for link in getattr(self, "_remotes", {}).values()
                         if getattr(link, "spec", None)]}
 
