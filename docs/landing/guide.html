@@ -74,9 +74,20 @@
         </p>
       </header>
 
-      <div class="callout" style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;">
-        <span><strong>새 소식.</strong> 최근 원격 견고성·보안 하드닝·화면 안정성 등이 개선됐습니다.</span>
-        <a class="btn btn-ghost" href="changelog" style="white-space:nowrap;">최근 수정사항 →</a>
+      <!-- 최근 수정사항 — 랜딩(/)과 동일한 한 덩어리 박스. 정적 마크업이 폴백이고, 아래 스크립트가
+           changelog 의 최신 날짜 섹션을 same-origin fetch 로 미러해 새로 그린다(이중 관리 없음). -->
+      <div class="cl-news">
+        <div class="cl-news-head">
+          <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-07 <span class="pill">화요일</span></span>
+          <a class="cl-news-more" href="changelog">전체 변경 내역 →</a>
+        </div>
+        <ul id="cl-news-list">
+          <li><span class="pill stable">마우스</span> <strong>마우스를 움직였을 때 명령줄에 이상한 글자가 쏟아지던 문제를 고쳤습니다.</strong>
+            일부 마우스를 쓰는 터미널 프로그램을 끝낸 뒤 마우스를 움직이면 뜻 모를 문자가 명령줄에 마구 입력되던 현상으로,
+            특히 원격 탭(<span class="inline-code">⇄</span>)에서 눈에 띄었습니다. 이제 종료 시 묶여 오는 마우스 추적 해제 신호도 제대로 알아채 더는 새어 나오지 않습니다.</li>
+          <li><span class="pill stable">원격</span> <strong>원격 탭에 걸어 둔 고정(핀)이 재시작 후에도 유지됩니다.</strong>
+            다른 컴퓨터에 붙어 만든 원격 탭(<span class="inline-code">⇄</span>)을 고정해 두었다가 전체 재시작을 하면 그 고정이 풀리던 문제를 고쳐, 이제 원격 탭 고정도 재시작 뒤 그대로 살아납니다.</li>
+        </ul>
       </div>
 
       <section id="intro">
@@ -459,5 +470,22 @@ set ambiguous-width auto</div>
 </footer>
 
 <script src="lightbox.js" defer></script>
+<script>
+  // 최근 수정사항 — changelog 페이지의 최신 날짜 섹션(맨 위 .cl-day)을 same-origin fetch 로 미러한다.
+  // 위 정적 마크업이 폴백이고, 성공하면 최신 날짜 제목과 앞 4개 항목으로 다시 그린다. 랜딩(/)과 동일.
+  (function () {
+    fetch('changelog').then(function (r) { return r.text(); }).then(function (t) {
+      var doc = new DOMParser().parseFromString(t, 'text/html');
+      var sec = doc.querySelector('main section.cl-day');
+      var h2 = sec && sec.querySelector('h2');
+      var items = sec ? [].slice.call(sec.querySelectorAll('li')).slice(0, 4) : [];
+      if (!h2 || !items.length) return;
+      document.getElementById('cl-news-date').innerHTML = '🛠 최근 수정사항 · ' + h2.innerHTML;
+      var ul = document.getElementById('cl-news-list');
+      ul.innerHTML = '';
+      items.forEach(function (li) { var el = document.createElement('li'); el.innerHTML = li.innerHTML; ul.appendChild(el); });
+    }).catch(function () {});
+  })();
+</script>
 </body>
 </html>

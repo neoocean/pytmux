@@ -181,9 +181,9 @@ section { padding: 64px 0; }
 .toc h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-faint); margin: 0 0 12px; }
 .toc a { display: block; color: var(--text-dim); padding: 5px 0; border-left: 2px solid transparent; padding-left: 12px; margin-left: -12px; }
 .toc a:hover { color: var(--text); text-decoration: none; border-left-color: var(--accent); }
-.doc h2 { font-size: 28px; margin: 56px 0 6px; padding-top: 12px; letter-spacing: -0.6px; border-top: 1px solid var(--border); }
+.doc h2 { font-size: 28px; margin: 30px 0 6px; padding-top: 14px; letter-spacing: -0.6px; border-top: 1px solid var(--border); }
 .doc h2:first-child { border-top: none; margin-top: 0; }
-.doc h3 { font-size: 20px; margin: 34px 0 10px; }
+.doc h3 { font-size: 20px; margin: 20px 0 8px; }
 .doc p { color: var(--text-dim); font-size: 16px; }
 .doc ul, .doc ol { color: var(--text-dim); font-size: 16px; }
 .doc li { margin-bottom: 6px; }
