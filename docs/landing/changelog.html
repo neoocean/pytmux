@@ -59,6 +59,14 @@
     <section class="cl-day" id="d-2026-07-07">
       <h2>2026-07-07 <span class="pill">화요일</span></h2>
       <ul>
+        <li><span class="pill stable">마우스</span> <strong>마우스를 움직였을 때 명령줄에 이상한 글자가 쏟아지던 문제를 고쳤습니다.</strong>
+          일부 터미널 프로그램(마우스를 쓰는 TUI)을 끝낸 뒤 <strong>마우스를 움직이면</strong>
+          <span class="inline-code">35;34;55M</span> 같은 뜻 모를 문자가 명령줄에 마구 입력되던 현상으로,
+          특히 <strong>원격 탭(<span class="inline-code">⇄</span>)</strong>에서 눈에 띄었습니다.
+          프로그램이 종료되면서 마우스 추적을 끄는 신호를 <strong>여러 개 한꺼번에 묶어</strong> 보내면
+          pytmux 가 그 신호를 놓쳐 마우스 상태가 켜진 채로 남았던 것으로, 이제 묶음 신호도 제대로 알아채
+          <strong>마우스 움직임이 더는 글자로 새어 나오지 않습니다</strong>.
+          (움직임을 멈추면 잠잠해지지만 다시 움직이면 재발하던 것도 함께 해소됩니다.)</li>
         <li><span class="pill stable">원격</span> <strong>원격 탭에 걸어 둔 고정(핀)이 재시작 후에도 유지됩니다.</strong>
           다른 컴퓨터에 붙어 만든 <strong>원격 탭(<span class="inline-code">⇄</span>)</strong>을
           <span class="inline-code">Shift+P</span> 로 <strong>고정</strong>해 두었다가
