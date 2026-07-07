@@ -68,21 +68,23 @@
     <div class="section-head">
       <span class="kicker">Changelog</span>
       <h2>최근 수정사항</h2>
-      <p>소개 사이트 공개 이후의 변경을 날짜별로 정리합니다. 아래는 가장 최신 몇 가지입니다.</p>
+      <p>소개 사이트 공개 이후의 변경을 날짜별로 정리합니다. 아래는 가장 최신 날짜의 변경입니다.</p>
     </div>
-    <div class="cl-preview">
-      <a class="cl-item" href="changelog#d-2026-07-06">
-        <span class="cl-date">2026-07-06 <span class="pill">월</span></span>
-        <span class="cl-body"><strong>작성창에 프롬프트 기호가 딸려오지 않습니다.</strong> ESC → Insert 로 여는 여러 줄 작성창이 입력 내용을 미리 채울 때 프롬프트 앞의 <span class="inline-code">❯</span> 기호까지 들어가던 문제를 고쳤습니다.</span>
-      </a>
-      <a class="cl-item" href="changelog#d-2026-07-06">
-        <span class="cl-date">2026-07-06 <span class="pill">월</span></span>
-        <span class="cl-body"><strong>Windows 에서 처음 시작이 빨라졌습니다.</strong> 터미널 백그라운드 호스트 준비를 서버 부팅과 겹쳐 미리 시작하고, 연결 대기의 고정 지연을 없앴습니다.</span>
-      </a>
-      <a class="cl-item" href="changelog#d-2026-07-05">
-        <span class="cl-date">2026-07-05 <span class="pill">일</span></span>
-        <span class="cl-body"><strong>Claude 를 끝내면 토큰 사용량이 <em>항상</em> 보입니다.</strong> 세션 종료 시 토큰 사용량 요약이 보일 때도 안 보일 때도 하던 문제를 고쳐, 이제 항상 표시됩니다.</span>
-      </a>
+    <!-- 최신 날짜 하나를 한 덩어리로 묶어 보여준다. 정적 마크업이 폴백이고, 아래 스크립트가
+         changelog 페이지의 최신 날짜 섹션을 same-origin fetch 로 미러해 새로 그린다 → changelog 만
+         갱신하면 랜딩도 자동 최신(이중 관리 없음). fetch 실패 시 이 폴백이 그대로 남는다. -->
+    <div class="cl-news">
+      <div class="cl-news-head">
+        <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-07 <span class="pill">화요일</span></span>
+        <a class="cl-news-more" href="changelog">전체 변경 내역 →</a>
+      </div>
+      <ul id="cl-news-list">
+        <li><span class="pill stable">마우스</span> <strong>마우스를 움직였을 때 명령줄에 이상한 글자가 쏟아지던 문제를 고쳤습니다.</strong>
+          일부 마우스를 쓰는 터미널 프로그램을 끝낸 뒤 마우스를 움직이면 뜻 모를 문자가 명령줄에 마구 입력되던 현상으로,
+          특히 원격 탭(<span class="inline-code">⇄</span>)에서 눈에 띄었습니다. 이제 종료 시 묶여 오는 마우스 추적 해제 신호도 제대로 알아채 더는 새어 나오지 않습니다.</li>
+        <li><span class="pill stable">원격</span> <strong>원격 탭에 걸어 둔 고정(핀)이 재시작 후에도 유지됩니다.</strong>
+          다른 컴퓨터에 붙어 만든 원격 탭(<span class="inline-code">⇄</span>)을 고정해 두었다가 전체 재시작을 하면 그 고정이 풀리던 문제를 고쳐, 이제 원격 탭 고정도 재시작 뒤 그대로 살아납니다.</li>
+      </ul>
     </div>
     <div class="cta" style="margin-top:24px;">
       <a class="btn btn-primary" href="changelog">전체 변경 내역 →</a>
@@ -489,5 +491,23 @@ python3 pytmux.py</div>
 </footer>
 
 <script src="lightbox.js" defer></script>
+<script>
+  // 최근 수정사항 프리뷰 — changelog 페이지의 최신 날짜 섹션(맨 위 .cl-day)을 same-origin fetch 로
+  // 미러한다. 위 정적 마크업이 폴백이고, 성공하면 최신 날짜 제목과 앞 4개 항목으로 다시 그린다.
+  // changelog.html 만 갱신하면 랜딩 프리뷰도 자동으로 최신이 된다(이중 관리 없음). 실패 시 폴백 유지.
+  (function () {
+    fetch('changelog').then(function (r) { return r.text(); }).then(function (t) {
+      var doc = new DOMParser().parseFromString(t, 'text/html');
+      var sec = doc.querySelector('main section.cl-day');
+      var h2 = sec && sec.querySelector('h2');
+      var items = sec ? [].slice.call(sec.querySelectorAll('li')).slice(0, 4) : [];
+      if (!h2 || !items.length) return;
+      document.getElementById('cl-news-date').innerHTML = '🛠 최근 수정사항 · ' + h2.innerHTML;
+      var ul = document.getElementById('cl-news-list');
+      ul.innerHTML = '';
+      items.forEach(function (li) { var el = document.createElement('li'); el.innerHTML = li.innerHTML; ul.appendChild(el); });
+    }).catch(function () {});
+  })();
+</script>
 </body>
 </html>
