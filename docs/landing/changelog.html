@@ -59,6 +59,16 @@
     <section class="cl-day" id="d-2026-07-07">
       <h2>2026-07-07 <span class="pill">화요일</span></h2>
       <ul>
+        <li><span class="pill stable">작성창</span> <strong>여러 줄 작성창에 붙여넣은 이미지·여러 줄 내용이 그대로 딸려오고, 작성창 안에서도 붙여넣기·명령을 쓸 수 있습니다.</strong>
+          Claude 패널에서 <span class="inline-code">ESC</span> 뒤 <span class="inline-code">Insert</span> 로 여는
+          <strong>여러 줄 작성창</strong>이, 프롬프트에 이미 붙여넣어 둔 <strong>이미지나 여러 줄 텍스트</strong>까지
+          이제 함께 불러옵니다(전에는 이미지가 빠졌습니다 — Claude 가 붙여넣은 이미지를
+          <span class="inline-code">[Image&nbsp;#N]</span> 첨부로 바꿔 화면에서 원래 경로를 되돌릴 수 없던 탓).
+          작성창 안에서 <strong>텍스트·이미지를 새로 붙여넣어도</strong> 그대로 유지되고, 작성창을 닫고
+          프롬프트로 돌아가도 남습니다. 또 작성창이 열린 채로 <span class="inline-code">ESC</span> →
+          <span class="inline-code">:</span> 로 <strong>명령(예: 이미지 붙여넣기)</strong>을 실행할 수 있습니다.
+          (이 때문에 작성창에서 <span class="inline-code">ESC</span> 는 이제 ‘메뉴’로 바뀌어,
+          <strong>취소는 <span class="inline-code">ESC</span> 를 두 번</strong> 누릅니다.)</li>
         <li><span class="pill stable">마우스</span> <strong>마우스를 움직였을 때 명령줄에 이상한 글자가 쏟아지던 문제를 고쳤습니다.</strong>
           일부 터미널 프로그램(마우스를 쓰는 TUI)을 끝낸 뒤 <strong>마우스를 움직이면</strong>
           <span class="inline-code">35;34;55M</span> 같은 뜻 모를 문자가 명령줄에 마구 입력되던 현상으로,
