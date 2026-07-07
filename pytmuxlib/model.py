@@ -365,7 +365,13 @@ _KITTY_KBD_RE = re.compile(rb"\x1b\[[<>=?][0-9;:]*u")
 
 # 내부 앱의 마우스 트래킹 DECSET. 1000=press/release, 1002=+drag, 1003=any-motion,
 # 1006=SGR 확장 좌표 인코딩. 클라이언트의 마우스 패스스루 판단에 쓰인다.
-_MOUSE_RE = re.compile(rb"\x1b\[\?(1000|1002|1003|1006)(h|l)")
+# DECSET private 모드는 파라미터를 ';' 로 묶어 한 시퀀스로 보낼 수 있다(예: 결합형
+# 해제 `\x1b[?1000;1002;1003;1006l` — tcell/tview 등이 teardown 에 쓴다). 파라미터
+# 하나만 매칭하던 옛 정규식은 이런 결합 해제를 놓쳐 마우스 트래킹이 켜진 채로 남았고,
+# 앱 종료 후에도 클라가 any-motion 리포트를 셸로 흘려 프롬프트에 텍스트로 박혔다.
+# → 전체 파라미터 목록을 잡은 뒤 관심 모드만 추린다.
+_MOUSE_DECSET_RE = re.compile(rb"\x1b\[\?([0-9;]+)(h|l)")
+_MOUSE_TRACK_MODES = frozenset((1000, 1002, 1003))
 
 # 풀스크린 클리어(erase-in-display all): CSI 2J / CSI 3J. alt-screen 에서 이 시퀀스
 # 이전에 그려진 내용은 전부 지워지므로(스크롤백 없음) 그 앞 바이트는 화면에 안 보인다.
@@ -801,18 +807,22 @@ class Pane:
         """피드 데이터에서 마우스 트래킹 DECSET(1000/1002/1003/1006)을 추적한다.
         bracketed paste(2004) 추적과 같은 위치에서 호출. 상태가 바뀌면 True 를
         반환해 서버가 클라이언트에 레이아웃을 다시 보내게 한다."""
-        if b"\x1b[?100" not in data:   # 1000/1002/1003/1006 모두 이 접두사
+        if b"\x1b[?" not in data:   # 어떤 DECSET private 모드도 없음 — 빠른 탈출
             return False
         before = (self.mouse_track, self.mouse_sgr)
-        for mo in _MOUSE_RE.finditer(data):
-            mode = int(mo.group(1))
+        for mo in _MOUSE_DECSET_RE.finditer(data):
             on = mo.group(2) == b"h"
-            if mode == 1006:
-                self.mouse_sgr = on
-            elif on:
-                self._mouse_modes.add(mode)
-            else:
-                self._mouse_modes.discard(mode)
+            for tok in mo.group(1).split(b";"):
+                if not tok.isdigit():
+                    continue
+                mode = int(tok)
+                if mode == 1006:
+                    self.mouse_sgr = on
+                elif mode in _MOUSE_TRACK_MODES:
+                    if on:
+                        self._mouse_modes.add(mode)
+                    else:
+                        self._mouse_modes.discard(mode)
         self.mouse_track = (3 if 1003 in self._mouse_modes
                             else 2 if 1002 in self._mouse_modes
                             else 1 if 1000 in self._mouse_modes else 0)

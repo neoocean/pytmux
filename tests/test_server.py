@@ -3100,6 +3100,43 @@ async def test_mouse_mode_tracking_and_passthrough():
         await teardown(srv, task, sock)
 
 
+async def test_mouse_mode_combined_decset_teardown():
+    """결합 파라미터 DECSET 해제도 추적돼야 한다(원격 탭 마우스 SGR 누출 수정).
+
+    tcell/tview 등 일부 TUI 는 마우스 teardown 에 `\\x1b[?1000;1002;1003;1006l`
+    처럼 여러 모드를 한 시퀀스로 묶어 보낸다. 파라미터 하나만 매칭하던 옛 정규식은
+    이걸 놓쳐 mouse_track 이 켜진 채(3) 남았고, 앱 종료 후에도 클라가 any-motion
+    리포트를 셸로 흘려 프롬프트에 `35;34;55M…` 텍스트로 박혔다(원격 federation 탭은
+    업스트림 mouse_track 을 그대로 광고하므로 stale ON 이 링크로 전파). 결합형을
+    파싱하면 정상적으로 0 으로 복귀한다."""
+    from pytmuxlib.model import Pane
+    p = Pane.__new__(Pane)
+    p._mouse_modes = set()
+    p.mouse_track = 0
+    p.mouse_sgr = False
+
+    # 결합형 enable → 개별과 동일하게 추적
+    assert p.update_mouse_modes(b"\x1b[?1000;1002;1003;1006h")
+    assert p.mouse_track == 3 and p.mouse_sgr is True
+
+    # 결합형 disable → 완전히 0 으로 복귀(예전엔 3 에 갇혀 누출)
+    assert p.update_mouse_modes(b"\x1b[?1000;1002;1003;1006l")
+    assert p.mouse_track == 0 and p.mouse_sgr is False
+
+    # 부분 결합 해제: 1003 만 끄고 1002 는 유지 → drag(2)
+    p.update_mouse_modes(b"\x1b[?1002;1003h")
+    assert p.mouse_track == 3
+    assert p.update_mouse_modes(b"\x1b[?1003;1006l")
+    assert p.mouse_track == 2 and p.mouse_sgr is False
+
+    # 커서 모드와 섞인 결합 DECSET 도 마우스 파라미터만 추린다
+    p._mouse_modes.clear(); p.mouse_track = 0; p.mouse_sgr = False
+    assert p.update_mouse_modes(b"\x1b[?25;1000;1003h")
+    assert p.mouse_track == 3
+    # 마우스와 무관한 DECSET 만 있으면 변화 없음(빠른 탈출 경로 포함)
+    assert p.update_mouse_modes(b"\x1b[?25l\x1b[?2004h") is False
+
+
 async def test_win_mouse_motion_cap_in_layout_and_persist():
     """HANDOFF §10-H — Windows ConPTY 마우스 모션 누출 수정.
 
