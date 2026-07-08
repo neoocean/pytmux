@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
 <title>pytmux 최근 수정사항 — 날짜별 변경 내역</title>
-<meta name="description" content="pytmux 소개 사이트 공개 이후의 변경 내역. 화면 안정화, 토큰 사용량 뷰, 원격 탭·Windows 개선 등 실제로 보이고 체감되는 변화를 날짜별로 정리합니다.">
+<meta name="description" content="pytmux 의 날짜별 변경 내역. 화면 안정화, 토큰 사용량 뷰, 원격 탭·Windows 개선 등 실제로 보이고 체감되는 변화를 소개 사이트 공개 전후로 정리합니다.">
 <link rel="stylesheet" href="styles.css">
 <!-- Matomo -->
 <script>
@@ -45,8 +45,9 @@
       <span class="kicker">Changelog</span>
       <h1 style="font-size:40px;letter-spacing:-1px;margin:6px 0 10px;">최근 수정사항</h1>
       <p style="font-size:18px;">
-        pytmux 는 활발히 개선되고 있습니다. 이 페이지는 <strong>2026년 6월 30일 소개 사이트 공개</strong>
-        이후 더해지거나 바뀐 내용을 모아 둔 곳입니다. 대부분은 그날 바로 반영됩니다.
+        pytmux 는 활발히 개선되고 있습니다. 이 페이지는 날짜별 변경 내역으로,
+        <strong>2026년 6월 30일 소개 사이트 공개</strong>를 기준으로 그 전후에 더해지거나 바뀐 내용을
+        모아 둔 곳입니다. 대부분은 그날 바로 반영됩니다.
       </p>
       <div class="callout">
         <strong>읽는 법.</strong> 지금은 변화가 잦아 <strong>하루 단위</strong>로 묶어
@@ -207,6 +208,145 @@
           자동으로 다시 그리는 <strong>on-corruption 모드</strong>를 더했습니다 — 스크롤·동기화 출력 근본
           수정 위에 얹은 바닥 안전망입니다.</li>
       </ul>
+    </section>
+
+    <section class="cl-day" id="d-2026-06-29">
+      <h2>2026-06-29 <span class="pill">월요일</span></h2>
+      <ul>
+        <li><span class="pill stable">Claude 화면</span> <strong>Claude 화면에서 글자가 겹쳐 보이던 근본 원인을 고쳤습니다.</strong>
+          화면의 <strong>일부 영역만 위·아래로 밀어 올리는 터미널 신호(<span class="inline-code">SU</span>·<span class="inline-code">SD</span>,
+          스크롤 영역 스크롤)</strong>를 pytmux 가 처리하지 못해 Claude 출력이 서로 겹쳐 그려지던 것을
+          제대로 구현해 근본 수정했습니다. 그동안 임시로 얹어 두었던 재구성 레이어 플러그인은 역할을 다해 제거했습니다.</li>
+        <li><span class="pill stable">Windows</span> <strong>Windows 에서 Claude Code 를 실행하면 키 입력이 멈추던 문제를 고쳤습니다.</strong></li>
+        <li><span class="pill stable">공유 세션</span> <strong>여러 사람이 같은 세션을 함께 볼 때 생기던 화면 속 빈 띠를 없앴습니다.</strong>
+          응답 없이 끊긴(죽은) 클라이언트를 제때 회수하지 못해 그 자리가 빈 줄로 남던 것을 고쳤습니다.</li>
+      </ul>
+    </section>
+
+    <section class="cl-day" id="d-2026-06-25">
+      <h2>2026-06-25 <span class="pill">목요일</span></h2>
+      <ul>
+        <li><span class="pill stable">표시</span> <strong>ssh 로 한글·중문·일문 단말에 접속했을 때 패널 테두리와 글자가 한 칸씩 밀려 겹쳐 보이던 문제를 고쳤습니다.</strong>
+          단말마다 폭이 애매한 문자('모호폭')를 1칸으로 그리는지 2칸으로 그리는지 <strong>스스로 알아내</strong>
+          일관되게 처리하고, 그 설정을 <strong>원격 탭에도 전파</strong>합니다. 박스 그리기·블록 문자는 1칸으로 예외 처리해
+          테두리가 어긋나지 않습니다.</li>
+        <li><span class="pill stable">설정</span> <strong>모호폭 처리를 실행 중에 바꿀 수 있고, <span class="inline-code">set</span> 명령이 옵션을 미리 제안합니다.</strong>
+          <span class="inline-code">:set ambiguous-width narrow|wide|auto</span> 로 즉시 전환하고,
+          <span class="inline-code">set</span> 명령에서 <strong>옵션 이름과 값을 흐릿한 미리보기(ghost)와 후보 목록(<span class="inline-code">↑↓</span>)</strong>으로
+          자동완성합니다.</li>
+        <li><span class="pill stable">안정성</span> <strong>화면 갱신이 밀려도 앱이 통째로 종료되지 않습니다.</strong>
+          갱신이 쌓여 일부를 버려야 할 때(backpressure) 클라이언트가 끝나 버리던 것을 고쳐, 이제 조용히 끊고
+          <strong>자동으로 다시 연결</strong>합니다.</li>
+      </ul>
+    </section>
+
+    <section class="cl-day" id="d-2026-06-24">
+      <h2>2026-06-24 <span class="pill">수요일</span></h2>
+      <ul>
+        <li><span class="pill stable">원격 · 토큰</span> <strong>원격 탭을 보는 중에는 토큰 사용량 팝업이 그 상대 컴퓨터의 토큰을 보여줍니다.</strong>
+          어느 기계의 값인지 <span class="inline-code">⇄host</span> 라벨로 출처를 표시하고, 요청한 화면에만 회신하며,
+          상대가 응답하지 않으면 안내를 띄우고 넘어갑니다.</li>
+        <li><strong>토큰 집계가 더 정확해졌습니다.</strong> 표시 값에 <strong>캐시(cache) 사용분까지 포함</strong>해
+          실제 사용량에 더 가깝게 맞췄습니다.</li>
+      </ul>
+    </section>
+
+    <section class="cl-day" id="d-2026-06-23">
+      <h2>2026-06-23 <span class="pill">화요일</span></h2>
+      <ul>
+        <li><span class="pill stable">토큰</span> <strong>토큰 사용량을 화면 스크랩이 아니라 실제 대화 기록에서 실측합니다.</strong>
+          Claude Code 의 대화 기록(트랜스크립트)을 직접 읽어 회계하도록 바꿔, 화면만 긁을 때 놓치던 양을 되살렸습니다.
+          팝업 수치가 실제와 맞도록 <strong>지난 기간까지 소급해 복원</strong>했습니다.</li>
+        <li><span class="pill stable">원격</span> <strong>원격 탭에 붙을 때 상대 서버가 꺼져 있으면 알아서 띄웁니다.</strong>
+          ssh 로 원격 세션에 연결할 때 상대 pytmux 서버를 자동으로 기동해 연결 신뢰성을 높였습니다.</li>
+        <li><strong>프롬프트 작성 팝업에서 <span class="inline-code">Ctrl+A</span> 로 전체 선택</strong>할 수 있습니다.</li>
+      </ul>
+    </section>
+
+    <section class="cl-day" id="d-2026-06-22">
+      <h2>2026-06-22 <span class="pill">월요일</span></h2>
+      <ul>
+        <li><span class="pill stable">탭 고정</span> <strong>자주 쓰는 탭을 고정(핀)해 실수로 닫히지 않게 할 수 있습니다.</strong>
+          <span class="inline-code">Shift+P</span> 로 탭을 고정하면 <strong>탭바 오른쪽 구역에 따로 모여</strong> 눈에 잘 띄고
+          실수로 닫는 것을 막아 줍니다. 원격 탭도 고정할 수 있습니다.</li>
+        <li><span class="pill stable">마우스 · Windows</span> <strong>Windows 에서 마우스를 움직이면 좌표 문자가 새던 문제를 고쳤습니다.</strong>
+          ConPTY 가 마우스 추적을 과하게 광고하던 것을 눌러, 마우스 움직임이 명령줄로 새어 나오지 않도록 했습니다.</li>
+        <li><span class="pill stable">모델 배지</span> <strong>상태줄의 현재 Claude 모델 배지가 정확해졌습니다.</strong>
+          <span class="inline-code">sonnet-255</span> 같은 오표기를 바로잡고, 작업 도중 모델이 잠깐 다른 모델로 튀어 보이던 것도 안정화했습니다.</li>
+        <li><strong>여러 줄 프롬프트를 이력 팝업에서 여러 행으로 펼쳐</strong> 볼 수 있습니다.</li>
+      </ul>
+    </section>
+
+    <section class="cl-day" id="d-2026-06-21">
+      <h2>2026-06-21 <span class="pill">일요일</span></h2>
+      <ul>
+        <li><span class="pill stable">토큰</span> <strong>토큰 사용량 뷰를 모델별 색으로 나눠 보여줍니다.</strong>
+          Haiku·Sonnet·Opus·Fable 를 <strong>서로 다른 색</strong>으로 분해하고 범례를 붙였으며, 막대도 모델 구성비대로
+          색을 나눕니다. 기간 뷰는 <strong>월→주→일→시각</strong> 하나의 계층 시간 트리로 통합했습니다.</li>
+        <li><span class="pill stable">상태줄</span> <strong>현재 Claude 모델 배지를 상태줄에 항상 표시</strong>하고,
+          세션을 시작할 때 어떤 모델인지 힌트 배지를 곁들입니다.</li>
+        <li><strong>네트워크가 끊겨 응답이 없을 때 스스로 다시 시도합니다.</strong> Claude 가
+          <span class="inline-code">No response from API</span> 상태에 빠지면 이를 감지해 <strong>1분 뒤 자동 재시도</strong>합니다.</li>
+      </ul>
+    </section>
+
+    <section class="cl-day" id="d-2026-06-20">
+      <h2>2026-06-20 <span class="pill">토요일</span></h2>
+      <ul>
+        <li><span class="pill stable">서버 정보</span> <strong>서버 정보 팝업에 최근 60분 응답 지연(RTT) 그래프가 생겼습니다.</strong>
+          연결이 얼마나 빠릿한지 한눈에 볼 수 있고, 그래프는 <strong>디스크에 남아 재시작해도 유지</strong>됩니다.
+          <span class="inline-code">F10</span> 으로 전체 메뉴에 바로 들어갈 수 있습니다.</li>
+        <li><span class="pill stable">안정성 · 보안</span> <strong>끊긴 연결 회수·백그라운드 호스트 멈춤·자원 누수 등 여러 안정성 문제를 손봤습니다.</strong>
+          아울러 적대적인 입력을 견디는지 <strong>보안 레드팀(퍼징·자원 감시)</strong>을 강화했습니다.</li>
+        <li><span class="pill stable">원격</span> <strong>원격 탭의 닫기(<span class="inline-code">[x]</span>)가 앱 종료 대신 연결 해제(detach)로 이어집니다.</strong>
+          또 세션 끝의 피드백 문구 숨김을 별도 플러그인으로 분리했고, 명령 프롬프트가 <strong>인자 이력(<span class="inline-code">remote-attach</span> 등)을 추천·자동완성</strong>합니다.</li>
+      </ul>
+    </section>
+
+    <section class="cl-day" id="d-2026-06-19">
+      <h2>2026-06-19 <span class="pill">금요일</span></h2>
+      <ul>
+        <li><span class="pill stable">작성창</span> <strong>Claude 프롬프트를 여러 줄로 골라 편집하는 작성창이 생겼습니다.</strong>
+          <span class="inline-code">ESC</span> 뒤 <span class="inline-code">Insert</span> 로 여는 <strong>여러 줄 작성창(컴포즈 오버레이)</strong>이
+          지금 입력하던 내용을 이어받고, <strong>저장하지 않은 초안을 보존</strong>하며 한글 입력도 지원합니다.
+          (이후 이미지·붙여넣기까지 더해집니다.)</li>
+        <li><span class="pill stable">컨텍스트 메뉴</span> <strong>서브메뉴가 오른쪽으로 펼쳐지고, 박스 바깥을 누르면 닫힙니다.</strong></li>
+        <li><span class="pill stable">보안 · 안정성</span> 백그라운드 터미널 호스트 연결에 <strong>인증을 더하는 등 보안을 손봤고</strong>,
+          전체 재시작(<span class="inline-code">restart-all</span>) 뒤 유휴 Claude 패널이 비던 문제를 고쳤습니다.</li>
+      </ul>
+    </section>
+
+    <section class="cl-day" id="d-2026-06-18">
+      <h2>2026-06-18 <span class="pill">목요일</span></h2>
+      <ul>
+        <li><span class="pill stable">Windows</span> <strong>Windows 에서 서버를 재시작해도 실행 중이던 프로그램이 살아남습니다.</strong>
+          터미널을 <strong>별도 프로세스(아웃오브프로세스 pty-host)</strong>로 옮겨, 서버가 껐다 켜져도 그 안에서 돌던
+          작업이 이어지도록 했습니다.</li>
+        <li><span class="pill stable">Claude</span> <strong>이 컴퓨터의 Claude 세션 목록을 골라 새 탭에서 이어갈 수 있습니다.</strong>
+          <span class="inline-code">claude-resume</span> 플러그인으로 지난 세션을 피커에서 골라 재개하고,
+          세션을 끝내면 <strong>토큰 사용량 화면이 자동으로</strong> 뜹니다.</li>
+        <li><span class="pill stable">설정 · 키</span> 설정 팝업에 <strong>'키' 탭</strong>을 새로 두어 <span class="inline-code">ESC</span> 모드·prefix 모드
+          바인딩을 한눈에 볼 수 있게 했습니다. <span class="inline-code">Shift+ESC</span> 가 안 되는 단말을 위해
+          <span class="inline-code">ESC</span> 모드에서 <span class="inline-code">e</span> 로 활성 패널에 <span class="inline-code">ESC</span> 를 보낼 수 있습니다.</li>
+      </ul>
+    </section>
+
+    <section class="cl-day" id="d-2026-06-17">
+      <h2>2026-06-17 <span class="pill">수요일</span></h2>
+      <ul>
+        <li><span class="pill stable">Claude 계정</span> <strong>Claude 계정에 별칭을 붙여 왼쪽 아래에 표시할 수 있습니다.</strong>
+          감지된 계정을 나열하고 <strong>별칭을 편집·표시 방식을 고르는 관리 화면</strong>을 더했습니다.</li>
+        <li><span class="pill stable">토큰</span> <strong>토큰 사용량 시간(hour) 뷰에 주간 한도(<span class="inline-code">1w%</span>) 열이 생겼고</strong>,
+          팝업의 탭·필터를 2단으로 다시 짰습니다.</li>
+        <li><span class="pill stable">원격</span> <strong>원격 탭을 보는 중 동작이 엉뚱한 로컬 패널로 가던 버그들을 고쳤습니다.</strong>
+          붙여넣기·이름 변경(<span class="inline-code">rename</span>)·디렉토리 트리(<span class="inline-code">:ncd</span>)가 이제 원격 쪽에 제대로 전달됩니다.
+          화면을 통째로 다시 그리는 <strong><span class="inline-code">redraw</span> 명령</strong>도 새로 넣었습니다.</li>
+        <li><span class="pill stable">구성</span> 설정·상태·기록을 <strong><span class="inline-code">PYTMUX_HOME</span> 한 디렉토리로 통합</strong>(선택)해 관리가 쉬워졌습니다.</li>
+      </ul>
+      <p style="color:var(--text-dim);font-size:14px;margin-top:14px;">
+        여기까지가 공개 저장소에 기록이 남아 있는 가장 이른 지점입니다. pytmux 는 이 이전부터 만들어져 왔으며,
+        초기 개발 이력은 공개 커밋 로그에 포함되지 않습니다.
+      </p>
     </section>
 
   </main>
