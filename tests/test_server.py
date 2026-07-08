@@ -1170,6 +1170,116 @@ async def test_command_matrix_remote_view_routing():
         await teardown(srv, task, sock)
 
 
+async def test_command_matrix_local_structural_sweep():
+    """§10-3① 매트릭스(로컬 스윕) — 로컬 보기(remote_view=None)에서 **구조 명령**
+    (split/zoom/레이아웃/kill/break/new_window)이 ① 로컬 트리를 문서대로 변형하고
+    ② 요청 클라에 올바른 **응답 disposition**(요청 클라 full 프레임 재동기 ↔ 트리 콜백
+    broadcast ↔ 특정 타입 회신)을 내는지 전수 검증한다.
+
+    `_handle_cmd`(379줄) God-함수 분할(§10-4⑨)에서 한 verb 만 `return`/`_send_full`/
+    broadcast 를 오분류해도 명령이 **조용히** 깨진다(트리는 바뀌는데 화면 미갱신, 또는
+    중복/누락 broadcast). space `feature_matrix` 처럼 disposition 을 한 어휘로 통합해
+    그 조용한 실패를 잡는다. 특히 **kill_pane 이 유일하게** 핸들러 `_send_full` 이 아니라
+    `_remove_pane_from_tree` 의 **트리 콜백 broadcast** 에 의존하는 계약을 함께 고정한다
+    (핸들러가 그 뒤 `return` 하므로 full 프레임을 안 보냄 — 리팩터가 여기에 _send_full 을
+    덧붙이면 이중 방송). 원격 보기 라우팅은 test_command_matrix_remote_view_routing 이 담당."""
+    from pytmuxlib.model import ClientConn
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+
+        class _W:
+            def write(self, *_a):
+                pass
+
+            async def drain(self):
+                pass
+
+            def close(self):
+                pass
+
+        client = ClientConn(_W())
+        client.session = sess
+        client.cols, client.rows = 80, 24
+        client.remote_view = None
+        srv.clients.append(client)
+
+        # disposition 캡처: _send_full(요청 클라 재동기)·_broadcast_session(세션 전파)·
+        # _send_to(특정 타입 회신)를 각각 스텁해 명령별 응답 경로만 관측한다(실 프레임
+        # 송신은 이 테스트 범위 밖 — 라우팅만).
+        disp = []
+
+        async def _cap_full(c):
+            disp.append(("full", c))
+        srv._send_full = _cap_full
+        srv._broadcast_session = lambda s: disp.append(("bcast", s))
+
+        async def _cap_send_to(c, obj):
+            disp.append(("typed", obj.get("t") if isinstance(obj, dict) else None))
+            return True
+        srv._send_to = _cap_send_to
+
+        def sig():                           # 로컬 트리 지문(변화 감지)
+            return (len(sess.tabs),
+                    tuple(len(t.window.panes()) for t in sess.tabs))
+
+        async def run(action, **extra):
+            client.remote_view = None
+            disp.clear()
+            await srv._handle_cmd(client, {"t": "cmd", "action": action, **extra})
+            return list(disp)
+
+        FULL = [("full", client)]            # 요청 클라 1회 재동기
+
+        # ── ① 트리 성장: split → 2 패널, disposition=full ──
+        assert sig() == (1, (1,))
+        assert await run("split", orient="lr") == FULL, "split: 요청 클라 full 재동기"
+        assert sig() == (1, (2,)), "split: 활성 탭 패널 1→2"
+
+        # ── ② arrange 계열(패널 수 불변, 항상 full 재동기) ──
+        for action, extra in (("zoom", {}), ("select_layout", {"preset": "tiled"}),
+                              ("cycle_layout", {}), ("rotate", {}),
+                              ("swap_pane", {}), ("resize", {}),
+                              ("resize_dir", {"dir": "L"})):
+            before = sig()
+            assert await run(action, **extra) == FULL, \
+                f"[arrange] {action}: full 재동기여야"
+            assert sig() == before, f"[arrange] {action}: 패널 수 불변"
+        assert sess.active_window.zoomed or not sess.active_window.zoomed  # zoom 은 토글만
+
+        # ── ③ kill_pane: **트리 콜백 broadcast** 에 의존(핸들러 _send_full 아님) ──
+        # 2 패널 탭에서 죽이면 형제 승격 → 1 패널. 응답은 broadcast 뿐(full 없음).
+        assert sig() == (1, (2,))
+        killed = await run("kill_pane")
+        assert killed == [("bcast", sess)], \
+            f"kill_pane: 트리 콜백 broadcast 유일(핸들러 full 금지), got {killed}"
+        assert sig() == (1, (1,)), "kill_pane: 형제 승격 2→1"
+
+        # ── ④ break_pane: 단일 패널 탭은 분리 불가(no-op 이지만 full 재동기) ──
+        assert await run("break_pane") == FULL, "break_pane(단일): full(no-op)"
+        assert sig() == (1, (1,)), "break_pane: 단일 패널은 분리 불가"
+
+        # 패널을 다시 늘려 break 성공 경로 검증
+        await run("split", orient="lr")
+        assert sig() == (1, (2,))
+        assert await run("break_pane") == FULL, "break_pane: full 재동기"
+        assert sig() == (2, (1, 1)), "break_pane: 활성 패널 새 탭으로 분리"
+
+        # ── ⑤ new_window: 새 탭 추가, full 재동기 ──
+        assert await run("new_window") == FULL, "new_window: full 재동기"
+        assert sig() == (3, (1, 1, 1)), "new_window: 로컬 새 탭"
+
+        # ── ⑥ 응답 verb 타입 전수(특정 타입 회신 명령) — 트리 불변 + t 계약 고정 ──
+        before = sig()
+        assert await run("request_tree") == [("typed", "tree")]
+        assert await run("request_version") == [("typed", "version")]
+        assert await run("request_buffers") == [("typed", "buffers")]
+        assert await run("capture_pane") == [("typed", "captured")]
+        assert sig() == before, "회신 계열: 로컬 트리 불변"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_scan_model_fallback_and_preserve():
     """모델 귀속 강화(2026-06-22): 라이브 Claude 화면은 모델 배지를 상시 표시하지
     않아(idle 푸터엔 'auto mode on …'·'? for shortcuts'뿐) 토큰이 model NULL('?')로
