@@ -60,6 +60,16 @@
     <section class="cl-day" id="d-2026-07-08">
       <h2>2026-07-08 <span class="pill">수요일</span></h2>
       <ul>
+        <li><span class="pill stable">이름 동기화</span> <strong>자동 이름 맞추기가 입력 중에는 끼어들지 않습니다.</strong>
+          이름 동기화(또는 탭→세션 이름 맞추기)가 Claude 세션에 <span class="inline-code">/rename</span> 을
+          자동으로 넣을 때, 마침 <strong>Claude 입력창에 무언가 타이핑하던 중</strong>이면 그 글자를 덮어써
+          엉키던 문제를 고쳤습니다. 이제 입력창에 쓴 내용이 있으면 이름 맞추기를 <strong>잠시 미뤘다가</strong>,
+          그 줄을 보내거나 지워 <strong>입력창이 빈 다음</strong>에 조용히 적용합니다.</li>
+        <li><span class="pill stable">Windows</span> <strong>Windows 에서도 Claude 를 끝내면 토큰 사용량 요약이 항상 보입니다.</strong>
+          지난 7월 5일 고친 ‘Claude 종료 시 토큰 요약 표시’가 <strong>Windows 에서는 안 뜰 때</strong>가
+          있던 것을 마저 고쳤습니다. Windows 의 기본 셸(<span class="inline-code">cmd</span>)로 돌아온 것을
+          pytmux 가 <strong>셸로 알아보지 못해</strong> 종료를 놓치던 탓으로, 이제
+          <span class="inline-code">cmd</span>·PowerShell 로 돌아와도 <strong>토큰 요약을 놓치지 않습니다</strong>.</li>
         <li><span class="pill stable">작성창</span> <strong>여러 줄 작성창에서 <span class="inline-code">Ctrl+Home</span>·<span class="inline-code">Ctrl+End</span> 로 글 전체의 맨 처음·맨 끝으로 한 번에 이동할 수 있습니다.</strong>
           Claude 패널의 <span class="inline-code">ESC</span> → <span class="inline-code">Insert</span> 작성창에서, 줄 단위로 움직이는
           <span class="inline-code">Home</span>·<span class="inline-code">End</span> 와 달리 <strong><span class="inline-code">Ctrl+Home</span> 은 글 전체의 맨 앞</strong>으로,
