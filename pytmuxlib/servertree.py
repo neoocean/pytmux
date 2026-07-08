@@ -161,17 +161,26 @@ class ServerTreeMixin:
                 "cx": x + 1, "cy": y + 1, "cw": cw, "ch": ch,
                 "title": pu.get("title") or ""}
 
-    def _pane_cwd(self, pane: Pane) -> str | None:
-        # 자식(셸) 프로세스의 cwd 를 추정한다. 실패 시 None.
-        pid = pane.child_pid
-        # host 모드(Windows 기본·POSIX 옵션 C)에선 셸이 pty-host 프로세스 안에서
-        # 돌아 pane.child_pid 는 -1 이다. 실제 셸 pid 는 원격 pty 프록시가 host 의
-        # 'spawned' 회신으로 안다(_RemotePtyProcess.pid). 그걸 써야 ncd·default-path
-        # =current 가 host 모드에서도 현재 디렉토리를 찾는다(안 그러면 cwd=None →
-        # ncd 가 루트/드라이브만 열고 현재 위치를 강조 못 한다).
+    def _pane_shell_pid(self, pane: Pane) -> int:
+        """패널 셸 프로세스의 실제 pid(없으면 -1). 인프로세스 PTY 면 pane.child_pid,
+        host 모드(Windows 기본·POSIX 옵션 C)면 셸이 pty-host 프로세스 안에서 돌아
+        pane.child_pid 는 -1 이므로 원격 pty 프록시가 host 의 'spawned' 회신으로 아는
+        실제 셸 pid(_RemotePtyProcess.pid)로 폴백한다. cwd 조회·fg 명령 추정(자동
+        탭이름·ssh 감지·세션종료 토큰요약)이 host 모드에서도 올바른 pid 를 쓰게 하는
+        공용 헬퍼 — 안 그러면 foreground_command(-1)=None 으로 그 기능들이 조용히 죽는다."""
+        if pane is None:
+            return -1
+        pid = getattr(pane, "child_pid", -1)
         if (pid is None or pid < 0) and getattr(pane, "pty", None) is not None:
             pid = getattr(pane.pty, "pid", -1)
-        if pid is None or pid < 0:
+        return pid if isinstance(pid, int) and pid >= 0 else -1
+
+    def _pane_cwd(self, pane: Pane) -> str | None:
+        # 자식(셸) 프로세스의 cwd 를 추정한다. 실패 시 None. host 모드(child_pid=-1)
+        # 에선 pty 프록시의 실제 셸 pid 로 폴백한다(_pane_shell_pid) — 안 그러면 ncd·
+        # default-path=current 가 host 모드에서 현재 디렉토리를 못 찾는다.
+        pid = self._pane_shell_pid(pane)
+        if pid < 0:
             return None
         # Windows: /proc·lsof 가 없으므로 PEB 를 읽어 cwd 를 구한다(proc 헬퍼).
         # 이게 None 이면 ncd 가 현재 디렉토리를 강조하지 못한다.
@@ -606,7 +615,10 @@ class ServerTreeMixin:
         if pane is None:
             return None
         if pty_backend.IS_WINDOWS:
-            return proc.foreground_command(getattr(pane, "child_pid", -1))
+            # host 모드(Windows 기본)에선 child_pid=-1 이라 pty 프록시의 실제 셸 pid 로
+            # 폴백한다(_pane_shell_pid) — 안 그러면 fg 명령을 못 구해 자동 탭이름·ssh
+            # 감지·세션종료 토큰요약(_claude_really_exited)이 Windows host 에서 죽는다.
+            return proc.foreground_command(self._pane_shell_pid(pane))
         fd = getattr(pane, "master_fd", -1)
         try:
             pgid = os.tcgetpgrp(fd)

@@ -830,6 +830,35 @@ async def test_auto_token_on_exit_retries_until_shell_confirmed():
         await teardown(srv, task, sock)
 
 
+async def test_pane_shell_pid_host_fallback_and_cmd_shell_recognized():
+    """Windows host 모드(pty-host = Windows 기본) 회귀(실박스 보고 2026-07-08): pytmux
+    에서 claude 를 실행했다 종료해도 세션종료 토큰요약이 안 떴다. 원인 둘 —
+    ① 패널 child_pid=-1(host 모드)이라 fg 명령 pid 가 없어 _claude_really_exited 가 항상
+       False → _pane_shell_pid 가 pty 프록시의 실제 셸 pid 로 폴백해야 한다.
+    ② Windows 기본 셸 cmd.exe(fg="cmd")가 _SHELL_FG 에 없어 셸 복귀로 인식 못 했다."""
+    from types import SimpleNamespace
+    srv, task, sock = await server_only()
+    try:
+        # ① host 모드: child_pid=-1 → pty.pid 폴백. 인프로세스: child_pid 우선.
+        assert srv._pane_shell_pid(
+            SimpleNamespace(child_pid=-1, pty=SimpleNamespace(pid=4321))) == 4321
+        assert srv._pane_shell_pid(
+            SimpleNamespace(child_pid=999, pty=None)) == 999
+        assert srv._pane_shell_pid(
+            SimpleNamespace(child_pid=-1, pty=None)) == -1
+        assert srv._pane_shell_pid(None) == -1
+        # ② cmd.exe(fg="cmd")·powershell 을 세션 종료 판정이 셸로 인식(_SHELL_FG).
+        sess = srv.ensure_default_session(80, 24)
+        pane = sess.active_window.active_pane
+        for shell in ("cmd", "powershell", "pwsh", "zsh"):
+            srv._fg_command = lambda p, _s=shell: _s
+            assert srv._claude_really_exited(pane) is True, shell
+        srv._fg_command = lambda p: "node"          # Claude 살아있음 → 셸 아님
+        assert srv._claude_really_exited(pane) is False
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_startup_rules_injection():
     # #27: 저장된 시작 규칙이 새 Claude 세션의 첫 idle 에 프롬프트로 주입되고 **엔터까지
     # 눌러 제출**된다(본문 줄바꿈은 \n, 맨 끝 \r 로 제출). 빈 규칙이면 주입하지 않는다.
@@ -2570,6 +2599,45 @@ async def test_rename_busy_claude_defers_until_idle():
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
         srv._scan_claude(sess, win)
         assert p._claude == "idle"
+        assert injected == [(p, "/rename myproj")], injected
+        assert p._pending_rename is None
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_rename_waits_while_composer_has_text():
+    """보류된 세션 /rename(_pending_rename)은 idle 이라도 입력박스(컴포저)에 사용자가
+    타이핑한 텍스트가 있으면 주입을 **미루고**, 컴포저가 빈 다음 idle(제출/클리어 후)에
+    발동한다(요청). 빈 박스는 기존대로 즉시 주입 — 사용자의 입력 줄에 `/rename` 이
+    끼어들어 덮는 것을 막는다."""
+    srv, task, sock = await server_only()
+    try:
+        srv.claude_auto_launch = False   # 첫 idle /rc 자동주입 격리
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        injected = []
+        srv._pc_inject = lambda pane, text: injected.append((pane, text))
+
+        def _box(inner):
+            # idle Claude 입력박스 한 줄(마커 "> " + inner) + footer, 커서는 내용 행.
+            top = "╭" + "─" * 30 + "╮"
+            body = ("│ > " + inner).ljust(31) + "│"
+            bot = "╰" + "─" * 30 + "╯"
+            return ("\x1b[2J\x1b[H" + top + "\r\n" + body + "\r\n" + bot
+                    + "\r\n  ? for shortcuts\r\n\x1b[2;3H").encode("utf-8")
+
+        p._pending_rename = "myproj"
+        # ① 컴포저에 타이핑된 텍스트("hello") → 주입 보류.
+        p.feed(_box("hello"))
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle"
+        assert injected == [], injected
+        assert p._pending_rename == "myproj"
+
+        # ② 컴포저를 비우고 다시 idle → 이제 발동 후 비움.
+        p.feed(_box(""))
+        srv._scan_claude(sess, win)
         assert injected == [(p, "/rename myproj")], injected
         assert p._pending_rename is None
     finally:

@@ -183,15 +183,66 @@ async def test_scan_no_refire_while_running_then_rearm_on_exit():
     pane._claude = "idle"
     P.server_scan(srv, sess, win)
     await asyncio.sleep(0.1)
+    assert pane._ns_last_kw == "projX"       # 리네임 이력 기록
     # 이미 동기화됨 — 재스캔은 재발동 안 함.
     pane._pending_rename = None
     P.server_scan(srv, sess, win)
     await asyncio.sleep(0.05)
     assert pane._pending_rename is None
-    # Claude 종료 → 재무장(다음 실행에 다시 동기화).
+    # raw `_claude` 한 프레임 깜빡임(None)은 재무장하지 않는다(디바운스).
     pane._claude = None
     assert P.server_scan(srv, sess, win) is False
+    assert pane._ns_synced is True
+    pane._claude = "idle"
+    P.server_scan(srv, sess, win)
+    assert pane._ns_absent == 0              # 재등장에 부재 카운터 리셋
+    # 세션 종료 확정 = _NS_ABSENT_FRAMES 연속 부재 → per-appearance 가드 해제.
+    pane._claude = None
+    for _ in range(ns._NS_ABSENT_FRAMES):
+        assert P.server_scan(srv, sess, win) is False
     assert pane._ns_synced is False
+    # 단, 세션 리네임 이력(_ns_last_kw)은 유지 — 거짓 종료 후 재등장에 /rename 재주입 방지.
+    assert pane._ns_last_kw == "projX"
+
+
+async def test_reappear_without_respawn_does_not_reinject_rename():
+    import asyncio
+    srv, sess, win, tab, pane = _fixture()
+    # 첫 등장 → 탭/패널·세션 리네임.
+    pane._claude = "idle"
+    P.server_scan(srv, sess, win)
+    await asyncio.sleep(0.1)
+    assert pane._pending_rename == "projX"
+    # 세션 종료 확정(디바운스 소진) 후 같은 셸에서 Claude 재등장(respawn 아님).
+    pane._claude = None
+    for _ in range(ns._NS_ABSENT_FRAMES):
+        P.server_scan(srv, sess, win)
+    assert pane._ns_synced is False
+    pane._pending_rename = None
+    srv.bcast = 0
+    pane._claude = "idle"
+    P.server_scan(srv, sess, win)
+    await asyncio.sleep(0.1)
+    # 탭·패널·세션 이름이 모두 이미 kw 라 /rename 재주입도 방송도 없다.
+    assert pane._pending_rename is None
+    assert srv.bcast == 0
+
+
+async def test_pane_reset_rearms_full_sync():
+    import asyncio
+    srv, sess, win, tab, pane = _fixture()
+    pane._claude = "idle"
+    P.server_scan(srv, sess, win)
+    await asyncio.sleep(0.1)
+    assert pane._ns_last_kw == "projX"
+    # 새 셸(respawn) → per-pane 상태 리셋 → 다음 등장에 세션 리네임까지 다시 무장.
+    P.pane_reset(pane)
+    assert pane._ns_synced is False and pane._ns_last_kw is None
+    pane._pending_rename = None
+    pane._claude = "idle"
+    P.server_scan(srv, sess, win)
+    await asyncio.sleep(0.1)
+    assert pane._pending_rename == "projX"
 
 
 async def test_scan_no_match_marks_synced_no_change():

@@ -144,18 +144,26 @@ async def test_replay_record_guarded_on_windows():
 
 
 async def test_fg_command_windows_uses_process_tree():
-    """Windows(#7): _fg_command 는 os.tcgetpgrp 대신 proc.foreground_command(child_pid).
+    """Windows(#7): _fg_command 는 os.tcgetpgrp 대신 proc.foreground_command(shell_pid).
 
     ConPTY 엔 포그라운드 pgrp 가 없어 셸 자손 트리로 추정한다 — Windows 분기가
-    tcgetpgrp 를 절대 호출하지 않고(없어서 AttributeError) child_pid 를 넘기는지 확인.
-    None 패널은 None 으로 폴백."""
+    tcgetpgrp 를 절대 호출하지 않고(없어서 AttributeError) 셸 pid 를 넘기는지 확인.
+    host 모드(Windows 기본, child_pid=-1)에선 pty 프록시의 실제 셸 pid 로 폴백해야
+    한다(_pane_shell_pid) — 안 그러면 fg=None 으로 세션종료 토큰요약이 죽는다
+    (실박스 보고 2026-07-08). None 패널은 None 으로 폴백."""
+    from types import SimpleNamespace
     from unittest import mock
     from pytmuxlib import proc, pty_backend
     from pytmuxlib.server import Server
 
-    class _FakePane:
-        child_pid = 4321
-        master_fd = -1
+    class _Srv:                          # 실제 두 메서드만 섞은 최소 self
+        _pane_shell_pid = Server._pane_shell_pid
+        _fg_command = Server._fg_command
+    srv = _Srv()
+
+    inproc = SimpleNamespace(child_pid=4321, master_fd=-1, pty=None)
+    host = SimpleNamespace(child_pid=-1, master_fd=-1,
+                           pty=SimpleNamespace(pid=777))   # host 모드
 
     with mock.patch.object(pty_backend, "IS_WINDOWS", True), \
             mock.patch.object(proc, "foreground_command",
@@ -163,9 +171,12 @@ async def test_fg_command_windows_uses_process_tree():
             mock.patch("os.tcgetpgrp",
                        side_effect=AssertionError("Windows 는 tcgetpgrp 미호출"),
                        create=True):
-        assert Server._fg_command(None, _FakePane()) == "ssh"
+        assert srv._fg_command(inproc) == "ssh"
         fg.assert_called_once_with(4321)
-    assert Server._fg_command(None, None) is None
+        fg.reset_mock()
+        assert srv._fg_command(host) == "ssh"    # child_pid=-1 → pty.pid 폴백
+        fg.assert_called_once_with(777)
+    assert srv._fg_command(None) is None
 
 
 async def test_render_only_resize_without_fcntl():
