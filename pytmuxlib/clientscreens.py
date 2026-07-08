@@ -2406,6 +2406,17 @@ class _ComposeTextArea(TextArea):
             event.prevent_default()
             self.select_all()
             return
+        if event.key == "ctrl+home":             # Ctrl+Home = 문서 맨 앞으로(요청)
+            event.stop()
+            event.prevent_default()
+            self.move_cursor((0, 0))
+            return
+        if event.key == "ctrl+end":              # Ctrl+End = 문서 맨 끝으로(요청)
+            event.stop()
+            event.prevent_default()
+            lines = self.text.split("\n")
+            self.move_cursor((len(lines) - 1, len(lines[-1])))
+            return
         await super()._on_key(event)
 
 

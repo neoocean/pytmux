@@ -92,6 +92,28 @@ async def test_empty_compose_does_not_paste():
     await _with_app(body)
 
 
+async def test_ctrl_home_end_move_to_document_start_and_end():
+    """Ctrl+Home = 문서 맨 앞(0,0), Ctrl+End = 문서 맨 끝(마지막 줄·마지막 칸)으로
+    커서 이동(사용자 요청). 여러 줄에서 줄 단위 Home/End 가 아니라 문서 전체 끝으로."""
+    async def body(app, pilot, srv):
+        app.open_compose()
+        await pilot.pause(0.2)
+        scr = app.screen_stack[-1]
+        ta = scr.query_one(TextArea)
+        ta.text = "line one\nsecond line\nthird"
+        await pilot.pause(0.05)
+        ta.move_cursor((1, 3))                 # 중간 줄로 커서 이동
+        await pilot.pause(0.05)
+        await pilot.press("ctrl+home")
+        await pilot.pause(0.05)
+        assert ta.cursor_location == (0, 0), ta.cursor_location
+        await pilot.press("ctrl+end")
+        await pilot.pause(0.05)
+        # 마지막 줄 인덱스 2, 마지막 칸 = len("third") = 5.
+        assert ta.cursor_location == (2, 5), ta.cursor_location
+    await _with_app(body)
+
+
 async def test_no_dim_and_bottom_docked():
     """사용자 요청: Claude 프롬프트는 이전 출력을 보며 입력해야 하므로 배경을
     딤하지 않고(스크린 배경 투명 + _no_backdrop_dim), 작성창은 하단에 도킹해 기존
