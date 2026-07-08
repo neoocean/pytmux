@@ -653,7 +653,10 @@ class ServerIOMixin:
                     return     # 화면은 업스트림 _send_full 전달분이 그린다
             elif client.remote_view:
                 client.remote_view = None   # 로컬 탭 복귀(아래 평소 경로)
-        elif client.remote_view and action in _REMOTE_RELAY_ACTIONS:
+        elif client.remote_view and (action in _REMOTE_RELAY_ACTIONS
+                                     or action in self.plugins.relay_actions()):
+            # 코어 릴레이 화이트리스트 ∪ 플러그인 기여(claude-code: set_autoresume·
+            # set_prompt_clear·request_token_log). 플러그인 부재 시 후자는 빈 집합.
             if self.remote_relay(client, msg):
                 return
         elif client.remote_view and action in _REMOTE_BLOCK_ACTIONS:

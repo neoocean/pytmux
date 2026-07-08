@@ -153,8 +153,11 @@ async def test_setters_persist_to_opts():
         sess, win, p = await _claude_pane(srv)
         assert srv.set_claude_turn_warn(long_sec=900, repeat=0) == (900, 0)
         saved = json.load(open(srv.opts_path))
-        assert saved["claude_long_turn_sec"] == 900
-        assert saved["claude_repeat_alert"] == 0
+        # claude_long_turn_sec·claude_repeat_alert 도 plugin_opts 로 이전됨(완전분리,
+        # 2026-07-07) — 코어 top-level 이 아니라 claude-code plugin_opts 에 저장된다.
+        assert saved["plugin_opts"]["claude_long_turn_sec"] == 900
+        assert saved["plugin_opts"]["claude_repeat_alert"] == 0
+        assert "claude_long_turn_sec" not in saved   # 코어 top-level 엔 없다
         # S5 토큰 모듈화 T3: 플러그인 소유 설정은 plugin_opts 네임스페이스에 저장된다
         # (claude-code server_opts_serialize). §7-4: deprecate 된 절대 예산
         # token_budget_* 는 더 이상 저장되지 않는다(구 키는 다음 저장에서 자연 소멸).

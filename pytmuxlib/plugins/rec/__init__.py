@@ -137,6 +137,12 @@ class _RecPlugin:
         from .clientside import status_tab
         return [status_tab(app, tree)]
 
+    def handle_command(self, app, c, args):
+        """클라 명령 프롬프트의 capture-output/capture-toggle 를 처리(코어 clientcmd
+        하드코딩 elif 에서 이전). 코어 _run_command 가 자기 디스패치 전에 부른다."""
+        from .clientside import handle_command
+        return handle_command(app, c, args)
+
     def attach_client(self, app):
         """클라 앱에 REC 글루(show_capture_info)를 설치한다 — 코어 클릭/ESC nav 가
         getattr 로 호출한다(없으면 no-op). 코어 client.show_capture_info 에서 이전."""

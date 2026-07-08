@@ -1614,7 +1614,8 @@ async def test_prompt_clear_mode_sequence():
         srv.set_prompt_clear_message("새 지시문")
         assert srv.prompt_clear_message == "새 지시문"
         import json as _json
-        saved = _json.load(open(srv.opts_path))["prompt_clear_message"]
+        # prompt_clear_message 는 plugin_opts 로 이전됨(완전분리, 2026-07-07).
+        saved = _json.load(open(srv.opts_path))["plugin_opts"]["prompt_clear_message"]
         assert saved == "새 지시문", saved
     finally:
         try:
@@ -2054,7 +2055,8 @@ async def test_claude_auto_mode_cycles_to_auto():
         assert srv.claude_auto_mode is False, "기본 off"
         assert srv.set_claude_auto_mode(True) is True
         import json as _json
-        assert _json.load(open(srv.opts_path))["claude_auto_mode"] is True
+        # claude_auto_mode 는 plugin_opts 로 이전됨(완전분리, 2026-07-07).
+        assert _json.load(open(srv.opts_path))["plugin_opts"]["claude_auto_mode"] is True
 
         def scan(s):
             p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
@@ -2165,7 +2167,8 @@ async def test_claude_auto_launch_rc_and_perm_auto():
         # 토글 OFF → 영속 + 새 세션에 아무 자동 셋업 안 함
         import json as _json
         assert srv.set_claude_auto_launch(False) is False
-        assert _json.load(open(srv.opts_path))["claude_auto_launch"] is False
+        # claude_auto_launch 는 plugin_opts 로 이전됨(완전분리, 2026-07-07).
+        assert _json.load(open(srv.opts_path))["plugin_opts"]["claude_auto_launch"] is False
         scan("$ ")                          # 세션 종료
         rc.clear(); bt.clear()
         scan("? for shortcuts")             # 새 세션이지만 OFF

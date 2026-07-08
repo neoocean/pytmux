@@ -98,11 +98,10 @@ _REMOTE_RELAY_ACTIONS = {
     # 이미 위에 있다. 업스트림이 자기 active 탭/패널을 리네임하고 status/layout 으로
     # 되돌아와 병합 탭바·패널 테두리에 반영된다.
     "rename_window",
-    # 활성 패널 단위 Claude 토글 — 원격 탭을 보는 중엔 그 **원격 패널**에 적용돼야 한다.
-    # 안 그러면 로컬 세션의 활성 패널(딴 탭)에 켜져 "엉뚱한 탭에 AR" 버그가 난다
-    # (사용자 보고 2026-06-15). 업스트림이 자기 활성 패널에 토글하고 그 상태가 status
-    # 로 되돌아와 보는 클라의 AR/PC 배지에 반영된다.
-    "set_autoresume", "set_prompt_clear",
+    # (Claude 토글 set_autoresume·set_prompt_clear 과 토큰 조회 request_token_log 는
+    #  claude-code 플러그인 소유로 이전 — plugins.relay_actions() 로 기여한다. 코어는
+    #  아래 _remote_relay_actions() 에서 이 집합과 합집합한다. delete-to-disable:
+    #  플러그인 부재 시 그 액션들은 릴레이 목록에서 자동으로 빠진다.)
     # ncd(Norton Change Directory) 디렉토리 트리 요청 — 원격 탭을 보는 중엔 그 **원격**
     # 머신의 cwd/디렉토리가 나와야 한다(사용자 보고 2026-06-17). 안 그러면 로컬 서버가
     # 자기 fs 의 cwd 를 회신해 "원격 보는데 로컬 디렉토리 트리" 버그가 난다. 업스트림이
@@ -123,14 +122,6 @@ _REMOTE_RELAY_ACTIONS = {
     # 클라에 layout/screen 을 전달한다. 안 그러면 로컬 서버가 보이지 않는 로컬 화면만
     # 재그려 원격 잔상이 안 지워진다(§1.7-c 동형).
     "request_redraw",
-    # 토큰 사용량 팝업 데이터 조회(§10-D 잔여) — 원격 탭을 보는 중 분홍 토큰 배지를
-    # 눌러 연 팝업은 그 **원격(업스트림)** 머신의 토큰 누계를 보여줘야 한다. 종전엔
-    # request_token_log 가 릴레이 화이트리스트에 없어 보이지 않는 **로컬** DB 를 회신해,
-    # 분홍 테두리(원격 보기 표식, CL 60396)와 실제 데이터 출처가 어긋났다(섞임 §1.7-c
-    # 동형). 업스트림이 자기 usage_xc/스크랩 누계로 token_log 를 회신하면 _remote_reader
-    # 가 보는 클라에 그대로 전달 → 분홍 팝업이 업스트림 토큰을 보인다(색 의미=데이터
-    # 출처 일치). 로컬 보기에선 화이트리스트 분기가 안 잡혀 종전대로 로컬 DB 회신.
-    "request_token_log",
 }
 
 # §1.7-c 원격 탭을 보는 동안 거부하는 경계 횡단 조작(notice 회신). 로컬 트리에

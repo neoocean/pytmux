@@ -570,16 +570,6 @@ class _CommandMixin:
             self.send_cmd("join_pane", orient=("lr" if "-h" in args else "tb"))
         elif c in ("respawn-pane", "respawnp"):
             self.send_cmd("respawn_pane")
-        elif c in ("capture-output", "capture-toggle"):
-            val = None
-            if "on" in args:
-                val = True
-            elif "off" in args:
-                val = False
-            self.send_cmd("set_capture", value=val)
-            state = (i18n.t("word.toggle") if val is None
-                     else ("ON" if val else "OFF"))
-            self.display_message(i18n.t("msg.capture_toggle", state=state))
         elif c in ("synchronize-panes", "syncp") or (
                 c == "setw" and "synchronize-panes" in args):
             val = None
@@ -646,7 +636,8 @@ class _CommandMixin:
             self.push_screen(SettingsScreen(
                 prefix_key=self.prefix_key,
                 user_bindings=dict(self.bindings),
-                root_bindings=dict(self.root_bindings)), _after_settings)
+                root_bindings=dict(self.root_bindings),
+                plugin_settings=self.plugins.settings()), _after_settings)
         elif c in ("detach-client", "detach"):
             if "-a" in args:
                 self.send_cmd("detach_others")

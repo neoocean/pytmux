@@ -95,8 +95,42 @@ class _ClipboardMixin:
         self.display_message(i18n.t("msg.paste_in_progress"))
         self.run_worker(self._do_paste_clipboard(), exclusive=False)
 
+    def _active_compose_screen(self):
+        """열려 있는 작성창(ComposePromptScreen)을 돌려준다(스택 어디든, 위에서부터).
+        없으면 None. 붙여넣기(텍스트/이미지 경로)를 활성 패널이 아니라 **작성창으로**
+        넣을지 판단하는 데 쓴다 — 작성창이 떠 있을 땐(esc→Insert) 프롬프트가 아니라
+        작성 버퍼에 넣어야 붙여넣은 요소가 작성창에 그대로 유지된다(사용자 요청)."""
+        from .clientscreens import ComposePromptScreen
+        for scr in reversed(self.screen_stack):
+            if isinstance(scr, ComposePromptScreen):
+                return scr
+        return None
+
+    def _paste_image_path(self, path, compose, active):
+        """이미지 파일 경로를 붙여넣는다.
+
+        작성창이 열려 있으면 커서 위치에 **경로 텍스트**로 넣는다(pytmux 는 작성창
+        TextArea 에 썸네일을 못 그리므로 이미지=경로 텍스트로 표현 — 사용자 확인).
+        적용(Ctrl+S) 시 그 경로가 통째 붙여넣어져 Claude 가 다시 첨부 이미지로 인식한다.
+
+        작성창이 없으면 활성 패널에 붙여넣고, **현재 프롬프트 추정(_prompt_buf)에도
+        경로를 기록**한다. Claude 는 경로를 `[Image #N]` 첨부로 바꿔 화면에서 원본
+        경로를 되돌릴 수 없으므로(사용자 확인), 클라가 붙여넣은 경로를 스스로 추적해야
+        이후 esc→Insert 작성창 시드에 이미지가 '딸려온다'(붙여넣기는 on_paste/on_key
+        패스스루를 안 거쳐 추적에서 누락되던 지점)."""
+        if compose is not None:
+            compose.paste_text(path)
+            return
+        self.send_cmd("paste", text=path)
+        self._compose_track_input(active, path.encode("utf-8", "replace"))
+
     async def _do_paste_clipboard(self):
         try:
+            # 작성창(esc→Insert)이 떠 있으면 프롬프트가 아니라 작성 버퍼로 라우팅한다
+            # (요청: 팝업이 열린 상태에서 esc→:→paste-clipboard 로 이미지/텍스트를
+            #  팝업에 넣고, 팝업으로 돌아가도 그대로 유지). active 는 작성창이 없을 때만 쓴다.
+            compose = self._active_compose_screen()
+            active = self.layout.get("active")
             txt = await asyncio.to_thread(clientclip.paste)
             if txt:
                 # §2.13: OS 네이티브 선택은 복사 시점에 못 막으므로, 다시 들어오는
@@ -104,7 +138,10 @@ class _ClipboardMixin:
                 # 터미널 bracketed paste(on_paste)는 의도적 표 붙여넣기 보존 위해 제외.
                 if getattr(self, "strip_box_drawing", True):
                     txt = strip_box_drawing(txt)
-                self.send_cmd("paste", text=txt)
+                if compose is not None:
+                    compose.paste_text(txt)   # 작성창 커서에 삽입(요청)
+                else:
+                    self.send_cmd("paste", text=txt)
                 return
             if await asyncio.to_thread(clientclip.has_image):
                 path = await asyncio.to_thread(clientclip.save_image)
@@ -116,23 +153,27 @@ class _ClipboardMixin:
                         ok = await asyncio.to_thread(
                             clientclip.scp_to_remote, rhost, path, remote_path)
                         if ok:
-                            self.send_cmd("paste", text=remote_path)
+                            self._paste_image_path(remote_path, compose, active)
                             self.display_message(
                                 i18n.t("msg.paste_image_remote", path=remote_path))
                         else:
                             # SCP 실패 시 로컬 경로 폴백 + 경고
-                            self.send_cmd("paste", text=path)
+                            self._paste_image_path(path, compose, active)
                             self.display_message(
                                 i18n.t("msg.paste_image_remote_fail", path=path))
                     else:
                         # 로컬 탭: 경로를 붙여넣어 앱이 첨부 이미지로 인식하게 한다(결정 ①).
-                        self.send_cmd("paste", text=path)
+                        self._paste_image_path(path, compose, active)
                         self.display_message(
                             i18n.t("msg.paste_image_path", path=path))
                     return
-                # 폴백: 내부 앱이 공유 클립보드에서 직접 읽도록 Alt+V.
-                self.send_input(b"\x1bv")   # ESC v = Alt+V
-                self.display_message(i18n.t("msg.paste_image_app"))
+                # 폴백: 내부 앱이 공유 클립보드에서 직접 읽도록 Alt+V. 단 작성창엔
+                # 경로 없인 이미지를 넣을 수 없으니(Alt+V 는 앱 전용) 안내만 한다.
+                if compose is not None:
+                    self.display_message(i18n.t("msg.paste_image_compose_fail"))
+                else:
+                    self.send_input(b"\x1bv")   # ESC v = Alt+V
+                    self.display_message(i18n.t("msg.paste_image_app"))
                 return
             self.display_message(i18n.t("msg.clipboard_empty"))
         finally:

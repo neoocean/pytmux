@@ -610,11 +610,13 @@ class ServerPersistMixin:
     # 이제 save 는 이 튜플만 순회한다 — 여기에 추가하는 것이 곧 영속이다(load↔save 대칭은
     # test_server 의 라운드트립 테스트가 전 키에 대해 강제). 특수 처리가 필요한 키
     # (disabled_plugins·remote_allowed_hosts·plugin_opts)는 아래에서 명시적으로 다룬다.
+    # Claude 전용 옵션(prompt_clear_message·claude_auto_mode·claude_auto_launch·
+    # claude_rules·claude_long_turn_sec·claude_repeat_alert)은 코어에서 제거됐다 —
+    # claude-code 플러그인이 server_opts_serialize 로 plugin_opts 밑에 영속한다(아래
+    # data["plugin_opts"]). 코어는 그 키들의 의미를 모른다(delete-to-disable).
     _PERSISTED_OPT_KEYS = (
         "single_border", "win_mouse_motion", "coalesce_repaints",
-        "nest_auto_attach", "prompt_clear_message", "claude_auto_mode",
-        "claude_auto_launch", "claude_rules", "claude_long_turn_sec",
-        "claude_repeat_alert", "usage_refresh_sec", "vt_parser",
+        "nest_auto_attach", "usage_refresh_sec", "vt_parser",
     )
 
     def _save_opts(self):

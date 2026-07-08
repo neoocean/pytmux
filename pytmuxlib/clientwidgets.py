@@ -670,8 +670,8 @@ class TabBar(Widget):
             self._blink_on = not self._blink_on
         self.refresh()
 
-    # Claude Code 상태 아이콘(탭): 대기 ○ / 처리중 ◐ / 리밋 멈춤 ⊘
-    CLAUDE_ICON = {"idle": "○", "busy": "◐", "limit": "⊘"}
+    # (탭 상태 글리프는 plugins.client_tab_glyph 훅이 기여한다 — 종전 CLAUDE_ICON/
+    #  t.get("claude") 렌더는 claude-code 플러그인으로 이전. delete-to-disable.)
 
     # 탭바 왼쪽 여백 — 첫 탭을 한 칸 오른쪽에서 시작(사용자 요청). lead 엔트리로
     # 넣어 render_line/active_tab_xrange 가 같은 오프셋을 공유한다.
@@ -685,7 +685,7 @@ class TabBar(Widget):
         out = []
         for t in self.tabs:
             flag = "!" if t.get("bell") else ("#" if t.get("activity") else "")
-            ic = self.CLAUDE_ICON.get(t.get("claude"))
+            ic = self.app.plugins.client_tab_glyph(self.app, t)
             ic = (ic + " ") if ic else ""
             pin = (self.PIN_GLYPH + " ") if t.get("pinned") else ""  # 항목7 핀 글리프
             # 표시는 1부터(사용자 요청 #21). 내부 index 는 0-based 리스트 위치 그대로
@@ -708,7 +708,8 @@ class TabBar(Widget):
         w = self.size.width
         sig = (w, self.sel, self._scroll,
                tuple((t["index"], t["name"], t.get("bell"),
-                      t.get("activity"), t.get("claude"),
+                      t.get("activity"),
+                      self.app.plugins.client_tab_glyph(self.app, t),
                       t.get("pinned")) for t in self.tabs))
         if sig == self._entries_sig:
             self._scroll = self._entries_scroll

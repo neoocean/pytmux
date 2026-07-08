@@ -7,7 +7,7 @@ bracketed paste 투입(권고안 B, CLAUDE_PROMPT_BLOCK_SELECTION_FEASIBILITY).
 입력기엔 없는 기능을 pytmux 작성창이 제공)."""
 import harness  # noqa: F401  (sys.path 주입)
 
-from harness import make_app, server_only, teardown
+from harness import make_app, server_only, teardown, wait_until
 from textual.widgets import TextArea
 
 
@@ -58,16 +58,22 @@ async def test_ctrl_s_injects_text_without_trailing_newline():
 
 
 async def test_escape_cancels_no_paste():
-    """Esc 는 취소 — paste 를 보내지 않는다."""
+    """Esc-Esc 는 취소 — paste 를 보내지 않는다(esc 한 번은 '메뉴 모드' 진입, 두 번째
+    esc 가 취소)."""
     async def body(app, pilot, srv):
         sent = []
         app.send_cmd = lambda action, **kw: sent.append(action)
         app.open_compose()
         await pilot.pause(0.2)
-        ta = app.screen_stack[-1].query_one(TextArea)
+        scr = app.screen_stack[-1]
+        ta = scr.query_one(TextArea)
         ta.text = "discard me"
         await pilot.pause(0.05)
-        await pilot.press("escape")
+        await pilot.press("escape")                       # 메뉴 모드(취소 아님)
+        await pilot.pause(0.05)
+        assert scr._esc_mode is True                      # 모드 진입
+        assert app.screen_stack[-1] is scr, "esc 한 번은 안 닫힘"
+        await pilot.press("escape")                       # 두 번째 esc = 취소
         await pilot.pause(0.2)
         assert "paste" not in sent, sent
     await _with_app(body)
@@ -247,7 +253,7 @@ async def test_cancel_keeps_prompt_unchanged():
         await pilot.pause(0.2)
         ta = app.screen_stack[-1].query_one(_TA)
         assert ta.text == "hello"
-        await pilot.press("escape")                        # 취소
+        await pilot.press("escape", "escape")              # 취소(esc-esc)
         await pilot.pause(0.2)
         assert sent_in == []                              # 백스페이스 안 보냄
         assert app._prompt_buf[pid] == "hello"            # 프롬프트 그대로
@@ -290,7 +296,7 @@ async def test_unsaved_draft_persists_across_cancel():
         ta = app.screen_stack[-1].query_one(_TA)
         ta.text = "half-written"
         await pilot.pause(0.05)
-        await pilot.press("escape")                       # 저장 없이 닫기
+        await pilot.press("escape", "escape")             # 저장 없이 닫기(esc-esc)
         await pilot.pause(0.2)
         assert app._compose_draft == "half-written"
         app.open_compose()                                # 다시 열기
@@ -420,4 +426,96 @@ async def test_scrape_fallback_seeds_when_tracker_empty():
         await pilot.pause(0.2)
         ta = app.screen_stack[-1].query_one(_TA)
         assert ta.text == "remote text", repr(ta.text)
+    await _with_app(body)
+
+
+# ---- 이미지/붙여넣기 라우팅(작성창이 열린 상태·프롬프트 인계) ----
+async def test_image_paste_to_pane_seeds_compose_later():
+    """활성 패널에 이미지를 붙여넣으면(작성창 없음) pytmux 가 붙인 **경로를 _prompt_buf
+    에 기록**해, 이후 esc→Insert 작성창에 이미지(=경로)가 '딸려온다'(요청). Claude 는
+    경로를 [Image #N] 첨부로 바꿔 화면에서 못 되돌리므로 클라가 스스로 추적한다."""
+    from pytmuxlib import clientclip
+    from textual.widgets import TextArea as _TA
+    _orig = (clientclip.paste, clientclip.has_image, clientclip.save_image)
+
+    async def body(app, pilot, srv):
+        pid = app.layout.get("active")
+        app.send_cmd = lambda action, **kw: None
+        clientclip.paste = lambda: ""
+        clientclip.has_image = lambda: True
+        clientclip.save_image = lambda: "/tmp/pytmux-clip-x.png"
+        # 사용자가 먼저 텍스트를 쳤다고 두고(추적) 이미지를 붙여넣는다.
+        app._compose_track_input(pid, b"look at ")
+        app.paste_os_clipboard()
+        await wait_until(pilot, lambda: "/tmp/pytmux-clip-x.png"
+                         in app._prompt_buf.get(pid, ""))
+        assert app._prompt_buf[pid] == "look at /tmp/pytmux-clip-x.png"
+        # 이제 작성창을 열면 경로가 시드로 딸려온다.
+        app.open_compose()
+        await pilot.pause(0.2)
+        ta = app.screen_stack[-1].query_one(_TA)
+        assert ta.text == "look at /tmp/pytmux-clip-x.png", repr(ta.text)
+    try:
+        await _with_app(body)
+    finally:
+        clientclip.paste, clientclip.has_image, clientclip.save_image = _orig
+
+
+async def test_paste_into_open_compose_text_and_image():
+    """작성창이 열린 상태에서 paste-clipboard 를 하면 활성 패널이 아니라 **작성 버퍼**에
+    들어간다(요청: 팝업에서 붙여넣은 텍스트·이미지가 팝업에 유지). ① 텍스트는 커서에
+    삽입 ② 이미지는 경로 텍스트로 삽입 ③ 패널로 paste 명령을 보내지 않는다."""
+    from pytmuxlib import clientclip
+    from textual.widgets import TextArea as _TA
+    _orig = (clientclip.paste, clientclip.has_image, clientclip.save_image)
+
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app.open_compose()
+        await pilot.pause(0.2)
+        scr = app.screen_stack[-1]
+        ta = scr.query_one(_TA)
+        ta.text = "before "
+        ta.move_cursor((0, 7))
+        await pilot.pause(0.05)
+        # ① 텍스트 붙여넣기 → 작성창에 삽입
+        clientclip.paste = lambda: "typed"
+        app.paste_os_clipboard()
+        await wait_until(pilot, lambda: "typed" in ta.text)
+        assert ta.text == "before typed", repr(ta.text)
+        # ② 이미지 붙여넣기 → 경로 텍스트로 작성창에 삽입
+        clientclip.paste = lambda: ""
+        clientclip.has_image = lambda: True
+        clientclip.save_image = lambda: "/tmp/pytmux-clip-y.png"
+        app.paste_os_clipboard()
+        await wait_until(pilot, lambda: "/tmp/pytmux-clip-y.png" in ta.text)
+        assert ta.text == "before typed/tmp/pytmux-clip-y.png", repr(ta.text)
+        # ③ 패널로는 paste 를 보내지 않았다(작성창으로 라우팅됨)
+        assert all(a != "paste" for a, _ in sent), sent
+    try:
+        await _with_app(body)
+    finally:
+        clientclip.paste, clientclip.has_image, clientclip.save_image = _orig
+
+
+async def test_esc_colon_opens_command_over_open_compose():
+    """작성창이 열린 상태에서 esc→: 로 명령 프롬프트를 띄운다(요청). 작성창은 스택에
+    남아 있어(그 위에 명령 프롬프트), 명령 실행 후 작성창으로 돌아간다."""
+    from pytmuxlib.clientscreens import ComposePromptScreen
+
+    async def body(app, pilot, srv):
+        app.open_compose()
+        await pilot.pause(0.2)
+        scr = app.screen_stack[-1]
+        assert isinstance(scr, ComposePromptScreen)
+        await pilot.press("escape")                       # 메뉴 모드
+        await pilot.pause(0.05)
+        assert scr._esc_mode is True
+        await pilot.press("colon")                        # : → 명령 프롬프트
+        await pilot.pause(0.2)
+        # 명령 프롬프트가 작성창 위에 떴고, 작성창은 스택에 그대로 남아 있다.
+        assert app.screen_stack[-1].__class__.__name__ == "PromptScreen"
+        assert scr in app.screen_stack, "작성창이 스택에 남아 있어야(돌아갈 수 있게)"
+        assert scr._esc_mode is False                     # : 처리하며 모드 해제
     await _with_app(body)

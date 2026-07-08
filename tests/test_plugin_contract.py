@@ -53,6 +53,44 @@ async def test_contract_sanity_claude_present_when_loaded():
         "claude-code 플러그인이 로드되지 않음 — 계약 테스트 전제 실패"
 
 
+async def test_new_hooks_present_when_loaded():
+    """전제(헛검증 방지): 플러그인이 있을 때 새 훅들이 Claude 값을 기여한다 —
+    relay_actions(3종)·client_tab_glyph(상태 아이콘)·settings('Claude' 카테고리+4항목)."""
+    reg = plugins.load()
+    assert {"set_autoresume", "set_prompt_clear",
+            "request_token_log"} <= reg.relay_actions()
+    assert reg.client_tab_glyph(None, {"claude": "busy"}) == "◐"
+    assert reg.client_tab_glyph(None, {"claude": "idle"}) == "○"
+    assert reg.client_tab_glyph(None, {}) is None      # Claude 아님 → 글리프 없음
+    descs, cats = reg.settings()
+    assert "Claude" in cats
+    assert {d["key"] for d in descs} == {"token-saver", "model",
+                                         "claude-rules", "token-log"}
+
+
+async def test_cli_toggle_routes_through_plugin_and_survives_deletion():
+    """① server_control: 외부 CLI(`pytmux cmd claude-auto-mode …`)가 코어 표가 아니라
+    claude-code 플러그인 훅으로 처리된다. 플러그인 있을 때 'on'/'off' 왕복이 되고,
+    부재 시엔 크래시가 아니라 'unknown'(코어 handle_control 폴백)이 나온다."""
+    srv, task, sock = await server_only()
+    try:
+        srv.new_session(80, 24)         # handle_control 은 세션이 있어야 진행(동기)
+        # 플러그인 존재 — on/off 왕복(코어 _ONOFF_CONTROLS 가 아니라 server_control 훅).
+        assert srv.handle_control("claude-auto-mode on") == "on"
+        assert srv.claude_auto_mode is True
+        assert srv.handle_control("claude-auto-mode off") == "off"
+        assert srv.claude_auto_mode is False
+        assert srv.handle_control("token-debug on") == "on"
+        # 코어 _ONOFF_CONTROLS 에는 더는 claude/token 엔트리가 없다(플러그인 소유).
+        assert "claude-auto-mode" not in srv._ONOFF_CONTROLS
+        assert "token-debug" not in srv._ONOFF_CONTROLS
+    finally:
+        await teardown(srv, task, sock)
+    # 부재 시뮬: Registry 훅이 None → 코어 handle_control 은 'unknown' 회신(크래시 아님).
+    assert _registry_without_claude().server_control(
+        None, None, "claude-auto-mode", ["on"]) is None
+
+
 async def test_contract_no_claude_commands_without_plugin():
     """플러그인 부재 시 Claude 명령/무인자/옵션 메타데이터가 전부 사라진다."""
     reg = _registry_without_claude()
@@ -78,6 +116,15 @@ async def test_contract_server_hooks_noop_without_plugin():
     assert reg.server_scan(None, None, None) is False
     assert reg.server_pending(None, None) is None
     assert reg.server_command(None, None, None, "set_autoresume", {}) is None
+    # server_control: 외부 CLI claude/token 토글이 플러그인 부재 시 None(코어가
+    # 'unknown' 회신) — 종전엔 코어 _ONOFF_CONTROLS setter 미존재로 크래시(delete-
+    # to-disable 위반). 이 훅으로 소유가 이전돼 안전해졌다.
+    for cmd in ("claude-auto-mode", "auto-mode", "auto-launch",
+                "token-debug", "token-dbg"):
+        assert reg.server_control(None, None, cmd, ["on"]) is None, cmd
+    # relay_actions: Claude/토큰 릴레이 액션이 플러그인 부재 시 빈 집합(원격 릴레이
+    # 화이트리스트에서 자동 제외).
+    assert reg.relay_actions() == set()
     reg.server_init(None)                 # 토큰 상태 설치 안 함(no-op, server=None 무탈)
     reg.pane_closing(None, None)          # 패널 종료 토큰 이관 안 함(no-op)
     reg.server_input(None, None, b"x")    # 부수효과 없음(no-op)
@@ -101,6 +148,11 @@ async def test_contract_client_hooks_noop_without_plugin():
     assert reg.handle_command(None, "model", []) is False
     assert reg.handle_command(None, "token-saver", []) is False
     assert reg.handle_message(None, {"t": "token_log"}) is False
+    # client_tab_glyph: 플러그인 부재 시 탭 상태 글리프 None(코어 탭바가 접두 없이 그림).
+    assert reg.client_tab_glyph(None, {"claude": "busy"}) is None
+    # settings: 플러그인 부재 시 :settings 팝업에 'Claude' 카테고리/항목 기여 없음.
+    descs, cats = reg.settings()
+    assert descs == [] and "Claude" not in cats, (descs, cats)
 
 
 async def test_token_log_request_handled_by_plugin_hook():
@@ -201,10 +253,14 @@ async def _opts_namespace_body(reg, _S):
     out = reg.server_opts_serialize(s2)
     assert out["claude_auto_retry"] is False
     # ph_max_lines(claude-prompt-history)·capture(rec)는 다른 플러그인 소유 opt(별개) —
-    # claude-code 계약을 엄격히 검증하기 위해 그 키들만 빼고 비교한다.
-    assert set(out) - {"ph_max_lines", "capture"} == {"claude_auto_retry",
-                                           "token_debug", "auto_token_on_exit",
-                                           "claude_auto_redraw"}
+    # claude-code 계약을 엄격히 검증하기 위해 그 키들만 빼고 비교한다. 2026-07-07:
+    # prompt_clear_message·claude_auto_mode·claude_auto_launch·claude_rules·
+    # claude_long_turn_sec·claude_repeat_alert 6종을 코어에서 plugin_opts 로 이전(완전분리).
+    assert set(out) - {"ph_max_lines", "capture"} == {
+        "claude_auto_retry", "token_debug", "auto_token_on_exit",
+        "claude_auto_redraw", "prompt_clear_message", "claude_auto_mode",
+        "claude_auto_launch", "claude_rules", "claude_long_turn_sec",
+        "claude_repeat_alert"}
     # (과사용 완화 설정 usage_gate_*·claude_model_hint 는 2026-06-22 제거됨.)
     # §7-4 deprecate shim: 구 opts.json 에 남은 token_budget_* 는 무시(속성 미설치).
     s4 = _S()

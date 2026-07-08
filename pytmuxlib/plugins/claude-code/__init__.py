@@ -128,6 +128,27 @@ i18n.register({
     },
 })
 
+# :settings 팝업 라벨 i18n — 'Claude' 카테고리와 링크 항목(token-saver/model/
+# claude-rules/token-log)이 코어 clientutil.SETTINGS/i18n 에서 플러그인으로 이전
+# (완전분리, 2026-07-07). 코어 SettingsScreen 이 t("setcat.Claude")·t(f"setting.{key}")
+# 로 조회한다 — 디렉토리 삭제 시 이 등록·항목·카테고리가 함께 사라진다.
+i18n.register({
+    "ko": {
+        "setcat.Claude": "Claude",
+        "setting.token-saver": "Claude 토큰 세이버…",
+        "setting.model": "Claude 모델/컨텍스트…",
+        "setting.claude-rules": "Claude 시작 규칙…",
+        "setting.token-log": "토큰 사용량…",
+    },
+    "en": {
+        "setcat.Claude": "Claude",
+        "setting.token-saver": "Claude token saver…",
+        "setting.model": "Claude model/context…",
+        "setting.claude-rules": "Claude start rules…",
+        "setting.token-log": "Token usage…",
+    },
+})
+
 # §6 ⑤ 플러그인 토스트/InfoScreen 표면 문자열(i18n 전수조사 2026-06-19 — en 로케일
 # 한글 누출 수정). 명령 핸들러의 display_message/InfoScreen 에 직접 박혀 있던 한글을
 # 이리로 모아 ko/en 대칭화한다. 키 네임스페이스 "ccmsg.*".
@@ -588,7 +609,22 @@ class _ClaudeCodePlugin:
                   # 기본 OFF — 근본원인(pyte SU/SD)은 p4 61614 로 해결됐고, 이건 그 외
                   # 미구현 시퀀스 발산의 바닥 안전망이라 과도 완화를 피해 옵트인으로 둔다.
                   # cast=norm_redraw_mode 가 구 bool opts(True→idle/False→off)를 마이그레이션.
-                  ("claude_auto_redraw", "off", norm_redraw_mode))
+                  ("claude_auto_redraw", "off", norm_redraw_mode),
+                  # ↓ 코어 server.py __init__ 에서 이전(delete-to-disable 완전분리, 2026-07-07).
+                  # 프롬프트 단위 클리어 모드(#9)의 문서화 지시문(패널 Claude 에게 보낼 슬래시).
+                  ("prompt_clear_message",
+                   "이번 세션에서 얻은 정보·결정을 프로젝트 문서(CLAUDE.md/메모리)에 기록해줘.",
+                   str),
+                  # 권한모드 자동 오토모드 전환(§10): idle+비-auto 면 shift+tab 순환 주입. 기본 OFF.
+                  ("claude_auto_mode", False, bool),
+                  # 새 Claude 세션 자동 셋업(요청): None→Claude 첫 idle 에 /rc 1회+auto 유도. 기본 ON.
+                  ("claude_auto_launch", True, bool),
+                  # Claude Code 시작 규칙(#27): 새 세션/‑clear 후 프롬프트에 주입할 규칙 텍스트.
+                  ("claude_rules", "", str),
+                  # M17(T7) 경고 임계: long_turn=한 턴 busy 지속 한계(초, 0=끔).
+                  ("claude_long_turn_sec", 600, int),
+                  # M17(T7) 경고 임계: repeat=동일 완료 출력 반복 횟수(0=끔).
+                  ("claude_repeat_alert", 3, int))
 
     def server_opts_init(self, server, opts):
         """opts.json → server 속성 설치(코어 __init__ 의 _opts.get 들을 이전).
@@ -802,6 +838,35 @@ class _ClaudeCodePlugin:
             return "send_full"
         return None
 
+    # 외부 CLI(`pytmux cmd <c> [on|off]`) 토글 → set_* 셋터 이름. 종전엔 코어
+    # server._ONOFF_CONTROLS 에 있어 플러그인 부재 시 setter 미존재로 크래시가 났다
+    # (delete-to-disable 위반). 이제 이 플러그인이 소유한다 — 부재 시 server_control
+    # 훅 자체가 사라져 코어가 'unknown' 을 깨끗이 회신한다.
+    _CLI_TOGGLES = {
+        "claude-auto-mode": "set_claude_auto_mode",
+        "auto-mode": "set_claude_auto_mode",
+        "claude-auto-launch": "set_claude_auto_launch",
+        "auto-launch": "set_claude_auto_launch",
+        "token-debug": "set_token_debug",
+        "token-dbg": "set_token_debug",
+    }
+
+    # 원격 보기(federation) 릴레이 액션(Registry.relay_actions 가 코어 화이트리스트와
+    # 합집합). 코어 serverremote._REMOTE_RELAY_ACTIONS 에서 이전(delete-to-disable):
+    # 활성 패널 단위 Claude 토글 + 원격 토큰 팝업 조회. 각 액션의 상세 사유는 종전
+    # serverremote 주석 참조(엉뚱한 탭 AR 방지·원격 토큰 출처 일치 등).
+    relay_actions = {"set_autoresume", "set_prompt_clear", "request_token_log"}
+
+    def server_control(self, server, sess, c, args):
+        """외부 CLI 의 claude/token 토글 명령을 처리한다(코어 handle_control 이 자기
+        표에 없을 때 위임). on/off 인자를 파싱해 플러그인 소유 셋터를 호출하고 결과
+        상태 문자열('on'/'off')을 돌려준다. 아는 명령이 아니면 None(코어가 unknown)."""
+        setter_name = self._CLI_TOGGLES.get(c)
+        if setter_name is None:
+            return None
+        val = True if "on" in args else (False if "off" in args else None)
+        return "on" if getattr(server, setter_name)(val) else "off"
+
     def attach_client(self, app):
         # ClaudeSaverScreen 이 self.app._saver_display/_saver_action 를 부르므로 설치.
         app._saver_display = lambda key: saver_display(app, key)
@@ -969,6 +1034,31 @@ class _ClaudeCodePlugin:
         return claude_input_box(lines, wrap, cy)
 
     # ---- 클라이언트 콘텐츠-레이어 렌더/상태 훅(Phase 2c) ----
+    # :settings 팝업 기여 — 'Claude' 카테고리와 전용 화면 링크(코어 clientutil.SETTINGS
+    # 에서 이전, delete-to-disable). 링크 행을 고르면 코어가 그 명령(token-saver 등)을
+    # 돌려받아 디스패치한다(플러그인 handle_command 가 처리).
+    _SETTINGS_DESCS = [
+        {"key": "token-saver", "cat": "Claude", "type": "link", "link": "token-saver"},
+        {"key": "model", "cat": "Claude", "type": "link", "link": "model"},
+        {"key": "claude-rules", "cat": "Claude", "type": "link", "link": "claude-rules"},
+        {"key": "token-log", "cat": "Claude", "type": "link", "link": "token-log"},
+    ]
+
+    def settings(self):
+        """:settings 팝업에 'Claude' 카테고리와 링크 항목을 기여한다(코어 SETTINGS/
+        SETTINGS_CATS 와 병합). (descriptors, extra_cats) 튜플."""
+        return (self._SETTINGS_DESCS, ["Claude"])
+
+    # Claude Code 상태 아이콘(탭): 대기 ○ / 처리중 ◐ / 리밋 멈춤 ⊘.
+    # 코어 clientwidgets.TabBar.CLAUDE_ICON 에서 이전(delete-to-disable, 2026-07-07).
+    _TAB_GLYPH = {"idle": "○", "busy": "◐", "limit": "⊘"}
+
+    def client_tab_glyph(self, app, tab):
+        """탭바 한 탭 앞에 붙일 Claude 상태 글리프(코어 TabBar 가 접두로 그린다).
+        서버 status 가 실은 탭별 집계 tab['claude'](idle/busy/limit)를 이 아이콘으로
+        매핑한다. 플러그인 부재 시 이 훅이 사라져 접두 글리프가 안 나온다."""
+        return self._TAB_GLYPH.get(tab.get("claude"))
+
     def client_render(self, app, cells, W, H):
         """코어 _composite 가 콘텐츠를 그린 뒤 호출 — Claude 프롬프트 헤더를 그리고
         footer 클릭존(권한모드/원격제어)을 스캔해 app zone dict 를 채운다. 디렉토리를

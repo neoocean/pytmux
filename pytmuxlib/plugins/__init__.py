@@ -325,6 +325,31 @@ class Registry:
                     return r
         return None
 
+    def server_control(self, server, sess, c, args) -> "str | None":
+        """외부 CLI(`pytmux cmd <c> [args]`)의 알 수 없는 명령을 플러그인에 넘긴다.
+        코어 handle_control 이 자기 표(_ONOFF_CONTROLS 등)에 없으면 마지막으로 이걸
+        부른다 — 처리한 플러그인이 반환한 결과 문자열(예: 'on'/'off')을 그대로 CLI 에
+        돌려준다. 처리 없으면 None(코어가 'unknown: c' 회신). 종전엔 claude/token
+        토글이 코어 _ONOFF_CONTROLS 에 있어 플러그인 부재 시 setter 미존재로
+        AttributeError 가 났다(delete-to-disable 위반) — 이 훅으로 소유를 이전한다."""
+        for p in self.plugins:
+            fn = getattr(p, "server_control", None)
+            if fn is not None:
+                r = fn(server, sess, c, args)
+                if r is not None:
+                    return r
+        return None
+
+    def relay_actions(self) -> set:
+        """원격 보기(federation) 중 업스트림으로 릴레이해야 하는 cmd 액션 이름 집합을
+        플러그인이 기여한다. 코어 serverio 가 코어 화이트리스트(_REMOTE_RELAY_ACTIONS)와
+        **합집합**해 판정한다 — Claude/토큰 액션(set_autoresume·set_prompt_clear·
+        request_token_log)은 claude-code 플러그인 소유라 부재 시 자동으로 빠진다."""
+        out = set()
+        for p in self.plugins:
+            out |= set(getattr(p, "relay_actions", None) or ())
+        return out
+
     def server_pty_output(self, server, pane, data):
         """패널 PTY 출력 1조각(raw 바이트)을 플러그인에 넘긴다(REC 캡처 등). 코어
         serverpty 드레인 루프가 `if self.capture: self._capture_write` 로 직접 가로채던
@@ -545,6 +570,37 @@ class Registry:
             if fn is not None:
                 tabs.extend(fn(app, tree) or [])
         return tabs
+
+    def client_tab_glyph(self, app, tab) -> "str | None":
+        """탭바 한 탭 앞에 붙일 **상태 글리프**(예: Claude idle/busy/limit 아이콘)를
+        플러그인이 기여한다. 코어 TabBar 는 첫 비-None 글리프 하나를 접두로 그린다 —
+        종전엔 CLAUDE_ICON/`t.get("claude")` 렌더가 코어 위젯에 하드코딩돼 있었다.
+        플러그인 부재 시 None 만 반환돼 접두 글리프가 사라진다(delete-to-disable)."""
+        for p in self.plugins:
+            fn = getattr(p, "client_tab_glyph", None)
+            if fn is not None:
+                g = fn(app, tab)
+                if g:
+                    return g
+        return None
+
+    def settings(self):
+        """`:settings` 팝업에 플러그인이 설정 항목을 기여한다 — (descriptors, extra_cats)
+        튜플을 반환한다. descriptors 는 코어 clientutil.SETTINGS 와 같은 스키마의 dict
+        목록(key/cat/type/link/…), extra_cats 는 코어 SETTINGS_CATS 에 없던 카테고리
+        이름 목록(좌측 세로탭 순서에 추가). 종전엔 'Claude' 카테고리와 token-saver/
+        claude-rules/token-log 항목이 코어 SETTINGS 에 하드코딩돼 있었다 — 이 훅으로
+        이전해 플러그인 부재 시 그 카테고리/항목이 통째로 사라진다(delete-to-disable)."""
+        descs, cats = [], []
+        for p in self.plugins:
+            fn = getattr(p, "settings", None)
+            if fn is not None:
+                d, c = fn()
+                descs.extend(d or [])
+                for cat in (c or []):
+                    if cat not in cats:
+                        cats.append(cat)
+        return descs, cats
 
 
 def load():

@@ -85,6 +85,22 @@ def show_capture_info(app, path=None, size=None):
     app.request_tree(purpose="status_tabs")
 
 
+# ---- 클라 명령 디스패치(capture-output/capture-toggle) ----
+def handle_command(app, c, args):
+    """rec 클라 명령을 처리한다(코어 clientcmd 의 capture-output/capture-toggle elif
+    에서 이전 — delete-to-disable: 디렉토리 삭제 시 이 훅이 사라져 명령이 디스패치
+    어디에도 안 나타난다). on/off/무인자(토글) 파싱 후 서버에 set_capture 전송.
+    처리하면 True."""
+    if c in ("capture-output", "capture-toggle"):
+        val = True if "on" in args else (False if "off" in args else None)
+        app.send_cmd("set_capture", value=val)
+        state = (i18n.t("word.toggle") if val is None
+                 else ("ON" if val else "OFF"))
+        app.display_message(i18n.t("msg.capture_toggle", state=state))
+        return True
+    return False
+
+
 # ---- 통합 상태 팝업의 'REC' 탭(client_status_tabs) ----
 def status_tab(app, tree):
     """(제목, 줄, 동작) 3-튜플로 REC 탭을 기여한다(코어 client._open_status_tabs 의

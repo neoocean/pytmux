@@ -152,22 +152,10 @@ class Server(*_SERVER_BASES):
             _allow = [_allow]
         self.remote_allowed_hosts = [str(h) for h in _allow
                                      if isinstance(_allow, (list, tuple))]
-        # 프롬프트 단위 클리어 모드(#9)의 ① 문서화 지시문. 패널 안 Claude 에게 보내는
-        # 슬래시/지시문이며(pytmux 명령 아님), 무엇을 어디에 기록할지는 Claude 쪽
-        # 프로젝트 관례(CLAUDE.md/메모리)에 맡긴다. opts.json 영속.
-        self.prompt_clear_message = str(_opts.get(
-            "prompt_clear_message",
-            "이번 세션에서 얻은 정보·결정을 프로젝트 문서(CLAUDE.md/메모리)에 기록해줘."))
-        # 권한모드 자동 오토모드 전환(§10): Claude 패널이 idle 이고 권한모드 footer 가
-        # auto(자동 수락)가 아니면 shift+tab 을 순환 주입해 auto 로 맞춘다. 기본 OFF.
-        # bypass(권한 우회) 모드는 명시적·위험 설정이라 건드리지 않는다. opts.json 영속.
-        self.claude_auto_mode = bool(_opts.get("claude_auto_mode", False))
-        # 새 Claude 세션 자동 셋업(요청): Claude Code 가 패널에서 새로 뜨면(None→Claude)
-        # 첫 idle 에 ① `/rc` 를 1회 주입해 원격 제어(리모트 커넥션)를 켜고 ② 권한모드를
-        # auto 로 1회 유도한다. claude_auto_mode(상시 강제)와 달리 **세션 시작 1회**만
-        # 작용한다(이후 사용자가 바꾸면 안 건드림). `/rc` 는 이미 원격제어가 켜진 화면
-        # (claude_remote_active)에선 건너뛰어 도로 끄지 않는다. 기본 ON. opts.json 영속.
-        self.claude_auto_launch = bool(_opts.get("claude_auto_launch", True))
+        # Claude 전용 옵션(prompt_clear_message·claude_auto_mode·claude_auto_launch·
+        # claude_rules·claude_long_turn_sec·claude_repeat_alert)은 claude-code 플러그인이
+        # 소유한다 — 아래 plugins.server_opts_init 이 plugin_opts 네임스페이스로 설치·영속
+        # 한다(코어는 키 의미를 모름). 디렉토리 삭제 시 이 속성들이 안 생긴다(delete-to-disable).
         # 원격 제어가 조직 정책으로 막혔다는 메시지("disabled by your organization")를
         # 보면 세션(프로세스) 동안 자동 /rc 를 영구 중단하는 sticky 플래그(요청). 정책은
         # 조직 단위라 서버 전역. 비영속(프로세스 한정) — 재시작 후 다시 시도해도 정책이
@@ -181,10 +169,6 @@ class Server(*_SERVER_BASES):
         # (_rc_policy_blocked)과 같은 서버 전역·비영속(재시작 후 재감지). 수동 토글
         # (footer 클릭→팝업 [r])은 그대로 동작한다(사용자 의도).
         self._rc_seen_active = False
-        # Claude Code 시작 규칙(#27): 사용자가 에디터 팝업으로 저장해 둔 "항상 지킬
-        # 규칙" 텍스트. 새 Claude 세션이 뜨면(또는 pytmux 가 /clear 한 뒤) 이 텍스트를
-        # 프롬프트에 주입한다(빈 문자열이면 아무것도 안 함). opts.json 영속.
-        self.claude_rules = str(_opts.get("claude_rules", ""))
         # M19 그림자 /usage 질의 결과(세션·주간 한도 %·리셋·계정). dict|None.
         # (M18-B 의 5h 분모 학습 _learned_5h_cap 은 S6 T3 분모 근사 폐기로 제거 —
         #  5h% 는 /usage 실측만 따른다.)
@@ -196,10 +180,6 @@ class Server(*_SERVER_BASES):
         self.usage_refresh_sec = int(_opts.get("usage_refresh_sec", 600))
         # (인패널 /usage 자동 팝업 신호 _usage_shown_seq 는 2026-06-17 제거 — §3.9.
         #  사용자가 보고 있는 /usage 패널을 전용 모달로 덮는 게 불필요·방해라서.)
-        # M17(T7) 표시 경고 임계(grade0 알림만). long_turn=한 턴 busy 지속 한계(초,
-        # 0=끔), repeat=동일 완료 출력 반복 횟수(0=끔). 상태줄 ⚠배지로만 알린다.
-        self.claude_long_turn_sec = int(_opts.get("claude_long_turn_sec", 600))
-        self.claude_repeat_alert = int(_opts.get("claude_repeat_alert", 3))
         # 플러그인 관리(docs/internal/PLUGIN_MANAGER_SCENARIO.md): 비활성 플러그인 집합을 적용한다.
         # opts.json 의 `disabled_plugins` 키가 있으면 그 값(사용자 선택)을, 없으면(새 설치)
         # `default_enabled=False` 플러그인을 시드(깃헙 배포 기본 OFF, 예: rec). set_disabled
@@ -463,19 +443,15 @@ class Server(*_SERVER_BASES):
     # broadcast 가 필요하므로 이 표가 아니라 별도 분기로 둔다.
     _ONOFF_CONTROLS = {
         # capture-output/capture-toggle 는 plugins/rec 로 이전(server_command).
+        # claude-auto-mode/auto-mode/claude-auto-launch/auto-launch/token-debug 등
+        # Claude·토큰 토글도 claude-code 플러그인 소유로 이전됐다 — 이제 코어 표엔
+        # 없고, handle_control 이 아래 else 에서 plugins.server_control 훅으로 넘긴다.
+        # (종전엔 여기 엔트리가 플러그인 소유 setter 를 가리켜, 플러그인 부재 시
+        #  getattr 무가드로 AttributeError 가 났다 — delete-to-disable 위반 수정.)
         "coalesce-repaints": "set_coalesce_repaints",
         "coalesce": "set_coalesce_repaints",
-        "claude-auto-mode": "set_claude_auto_mode",
-        "auto-mode": "set_claude_auto_mode",
-        "claude-auto-launch": "set_claude_auto_launch",
-        "auto-launch": "set_claude_auto_launch",
         "nest-auto-attach": "set_nest_auto_attach",
         "nest-attach": "set_nest_auto_attach",
-        # §10-D 토큰 회계 진단 로그 토글의 외부 CLI 파리티(`pytmux cmd token-debug on`).
-        # 클라 in-app 명령(handle_command→set_token_debug)과 같은 setter. setter 는
-        # claude-code 믹스인 소유라 플러그인 부재 시 빠짐(형제 claude 엔트리와 동일).
-        "token-debug": "set_token_debug",
-        "token-dbg": "set_token_debug",
     }
 
     def handle_control(self, line: str):
@@ -568,7 +544,12 @@ class Server(*_SERVER_BASES):
             # broadcast 분기로 처리(HANDOFF §10-H). `pytmux cmd win-mouse-motion on`.
             self.set_win_mouse_motion(self._arg_onoff(args))
         else:
-            return f"unknown: {c}"
+            # 코어 표에 없는 명령 → 플러그인(claude-code 등)에 마지막 기회를 준다.
+            # 처리한 플러그인이 결과 문자열(예: 'on'/'off')을 주면 그대로 회신하고,
+            # 아무도 처리 안 하면 'unknown'. 플러그인 부재 시 훅이 None → unknown
+            # (종전 AttributeError 대신 깨끗한 무처리, delete-to-disable).
+            r = self.plugins.server_control(self, sess, c, args)
+            return r if r is not None else f"unknown: {c}"
         for cl in list(self.clients):
             asyncio.create_task(self._send_full(cl))
         return "ok"

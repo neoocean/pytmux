@@ -433,7 +433,7 @@ class SettingsScreen(ModalScreen):
     """
 
     def __init__(self, prefix_key="ctrl+b", user_bindings=None,
-                 root_bindings=None):
+                 root_bindings=None, plugin_settings=None):
         super().__init__()
         # SETTINGS_CATS 순서로 평탄화: 각 항목 = (desc, 카테고리 첫 항목 여부).
         # _cats = 항목이 있는 카테고리(좌측 세로 탭 순서), _cat_first = 카테고리→그
@@ -444,11 +444,18 @@ class SettingsScreen(ModalScreen):
         self._flat = []
         self._cats = []
         self._cat_first = {}
-        for cat in SETTINGS_CATS:
+        # 플러그인 기여 설정(delete-to-disable): claude-code 가 'Claude' 카테고리와
+        # token-saver/model/claude-rules/token-log 링크를 settings() 훅으로 준다. 코어
+        # SETTINGS 뒤에 항목을, SETTINGS_CATS 의 '키' 앞에 카테고리를 병합한다.
+        p_descs, p_cats = plugin_settings or ([], [])
+        all_settings = list(SETTINGS) + list(p_descs)
+        cat_order = ([c for c in SETTINGS_CATS if c != "키"]
+                     + [c for c in p_cats if c not in SETTINGS_CATS] + ["키"])
+        for cat in cat_order:
             if cat == "키":
                 continue            # '키' 카테고리는 아래에서 따로(읽기 전용 레퍼런스)
             first = True
-            for desc in SETTINGS:
+            for desc in all_settings:
                 if desc.get("cat") == cat:
                     if first:
                         self._cats.append(cat)
@@ -2363,6 +2370,27 @@ class _ComposeTextArea(TextArea):
     보내면 Textual 은 `ctrl+j` 로 파싱하므로([[pytmux-shift-enter-newline]]) 둘 다
     줄바꿈으로 처리한다(native CSI-u 단말은 `shift+enter` 그대로 도착)."""
     async def _on_key(self, event: events.Key) -> None:
+        scr = self.screen
+        # ESC 모드(작성창 안에서도 esc→: 명령을 쓰기 위함 — 사용자 요청): 앱 전역
+        # esc-mode 와 같은 동선을 작성창에도 둔다. esc 한 번 → 모드 진입(취소 아님),
+        # 다음 키가 결정한다: `:` 명령 프롬프트(작성창은 스택에 남는다) · esc 취소 ·
+        # 그 외 키는 모드만 빠지고 편집 복귀(키는 소비). TextArea 가 키를 먼저 받으므로
+        # ':' 가 버퍼에 삽입되기 전에 여기서 가로챈다.
+        if getattr(scr, "_esc_mode", False):
+            event.stop()
+            event.prevent_default()
+            scr.set_esc_mode(False)
+            if event.key == "escape":
+                scr.action_cancel()
+            elif event.character == ":":
+                scr.open_command()
+            # 그 외 키: 모드만 빠지고 편집 복귀(키 소비 — 앱 esc-mode 와 동일)
+            return
+        if event.key == "escape":
+            event.stop()
+            event.prevent_default()
+            scr.set_esc_mode(True)
+            return
         if event.key == "enter":                 # Enter = 전송(줄바꿈 아님)
             event.stop()
             event.prevent_default()
@@ -2429,11 +2457,11 @@ class ComposePromptScreen(ModalScreen):
     #carea { width: 100%; height: auto; min-height: 1; max-height: 20;
              border: none; background: $surface; }
     """
-    # Enter=전송은 _ComposeTextArea 가 처리. Ctrl+S 도 전송(대체), Esc 는 취소.
-    # TextArea 는 ctrl+s·escape 를 자체 처리하지 않으므로 스크린 바인딩으로 버블링.
+    # Enter=전송·Esc(모드)는 _ComposeTextArea 가 처리(esc-mode). Ctrl+S 도 전송(대체).
+    # escape 바인딩은 두지 않는다 — esc 는 취소가 아니라 '메뉴 모드' 진입이고, 그
+    # 분기(: 명령 / esc 취소 / 편집 복귀)는 _ComposeTextArea._on_key 가 소유한다.
     BINDINGS = [
         ("ctrl+s", "inject", "send"),
-        ("escape", "cancel", "cancel"),
     ]
 
     def __init__(self, initial: str = "", prompt_row: int | None = None,
@@ -2446,6 +2474,7 @@ class ComposePromptScreen(ModalScreen):
         self._pane_x = pane_x
         self._pane_w = pane_w
         self._ime_last = None      # 배지 중복 갱신 방지용 직전 (state, show)
+        self._esc_mode = False     # esc 한 번 눌린 '메뉴 모드'(다음 키가 :/취소 결정)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="cwrap"):
@@ -2511,6 +2540,34 @@ class ComposePromptScreen(ModalScreen):
     def action_cancel(self):
         # 투입은 안 하지만 작성 중이던 내용은 돌려줘 초안으로 보존한다(다음에 시드).
         self.dismiss((self.query_one(TextArea).text, False))
+
+    def set_esc_mode(self, on: bool):
+        """esc '메뉴 모드' 진입/해제 + 상단 힌트 갱신. 모드 중엔 힌트를 esc-메뉴
+        안내(: 명령 · Esc 취소 · 그 외 키 편집)로 바꿔 발견 가능하게 한다."""
+        self._esc_mode = on
+        try:
+            self.query_one("#chint", Label).update(
+                i18n.t("compose.hint_esc" if on else "compose.hint"))
+        except Exception:
+            pass
+
+    def paste_text(self, text: str):
+        """외부 붙여넣기(paste-clipboard/Ctrl+V·이미지 경로)를 작성창 커서 위치에
+        삽입한다. 활성 패널이 아니라 작성창으로 라우팅될 때 클라가 호출한다(요청:
+        팝업이 열린 상태에서 붙여넣은 텍스트·이미지가 팝업에 그대로 유지)."""
+        if not text:
+            return
+        try:
+            self.query_one(TextArea).insert(text)
+        except Exception:
+            pass
+
+    def open_command(self):
+        """작성창을 스택에 남긴 채 앱 명령 프롬프트(`:`)를 그 위에 띄운다. 거기서
+        paste-image(paste-clipboard) 등을 실행하면 명령 프롬프트가 닫힌 뒤 작성창이
+        다시 최상단이 되고, paste 라우팅(_active_compose_screen)이 붙여넣기를 작성창에
+        넣는다(요청: 팝업 열린 상태에서 esc→:→paste-image)."""
+        self.app.open_prompt("command", "")
 
 
 class ConfirmScreen(ModalScreen):

@@ -895,18 +895,17 @@ SETTINGS = [
      "cmd": "set status-bg", "backend": "config"},
     {"key": "status-fg", "cat": "상태줄", "type": "str",
      "cmd": "set status-fg", "backend": "config"},
-    # Claude(전용 화면 링크)
-    {"key": "token-saver", "cat": "Claude", "type": "link", "link": "token-saver"},
-    {"key": "model", "cat": "Claude", "type": "link", "link": "model"},
-    {"key": "claude-rules", "cat": "Claude", "type": "link", "link": "claude-rules"},
-    {"key": "token-log", "cat": "Claude", "type": "link", "link": "token-log"},
+    # (Claude 전용 화면 링크 token-saver/model/claude-rules/token-log 와 'Claude'
+    #  카테고리는 claude-code 플러그인이 settings() 훅으로 기여한다 — SettingsScreen 이
+    #  코어 SETTINGS/SETTINGS_CATS 와 병합. delete-to-disable: 부재 시 통째로 사라진다.)
     # 고급/플러그인(링크)
     {"key": "plugins", "cat": "고급", "type": "link", "link": "plugins"},
     {"key": "list-keys", "cat": "고급", "type": "link", "link": "list-keys"},
 ]
 
-# 화면 탭 순서(등장 카테고리). setcat.<name> 로 번역.
-SETTINGS_CATS = ["표시", "입력", "동작", "상태줄", "Claude", "고급", "키"]
+# 화면 탭 순서(등장 카테고리). setcat.<name> 로 번역. 플러그인 기여 카테고리(예:
+# 'Claude')는 SettingsScreen 이 이 뒤(‘키’ 앞)에 덧붙인다.
+SETTINGS_CATS = ["표시", "입력", "동작", "상태줄", "고급", "키"]
 
 # ── 키 바인딩 레퍼런스(설정 팝업 '키' 탭 — 읽기 전용 표시) ──────────────────────
 # ESC 모드(_handle_esc_mode)·prefix 모드(_handle_prefix)의 내장 키를 한 곳에 보여 준다.
