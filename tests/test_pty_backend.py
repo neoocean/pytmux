@@ -182,6 +182,44 @@ async def test_conpty_posix_raises():
     assert False, "POSIX 에서 _ConPty 는 NotImplementedError 여야 함"
 
 
+async def test_force_utf8_codepage_env_optout():
+    """PYTMUX_KEEP_CODEPAGE 가 설정되면 콘솔 코드페이지 UTF-8 강제를 건너뛴다(레거시
+    cp949 출력 앱 전용 탈출구) — helper spawn 없이 False. env 게이트가 첫 검사라
+    POSIX 에서도 안전하게 호출된다(그 아래는 Windows API)."""
+    orig = os.environ.get("PYTMUX_KEEP_CODEPAGE")
+    os.environ["PYTMUX_KEEP_CODEPAGE"] = "1"
+    try:
+        assert conpty.force_utf8_codepage(None) is False
+    finally:
+        if orig is None:
+            os.environ.pop("PYTMUX_KEEP_CODEPAGE", None)
+        else:
+            os.environ["PYTMUX_KEEP_CODEPAGE"] = orig
+
+
+async def test_owned_conpty_spawn_forces_utf8_codepage():
+    """Windows: _ConPty.spawn 이 셸 attach **후** force_utf8_codepage 를 같은 의사콘솔로
+    1회 부른다 — 비-UTF-8 OEM 코드페이지(cp949 등) 시스템에서 UTF-8 byte-write 앱
+    (Claude Code 등)의 한글 mojibake+ESC 소실을 막는 배선(실박스 보고 2026-07-09).
+    실제 CP 변경 효과는 라이브 검증(WINDOWS_TESTING.md) — 여기선 호출 배선만."""
+    if not pty_backend.IS_WINDOWS:
+        return
+    calls = []
+    orig = conpty.force_utf8_codepage
+    conpty.force_utf8_codepage = lambda hpc, timeout_ms=1500: (
+        calls.append(hpc), True)[1]
+    try:
+        pty = pty_backend._OwnedConPty(["cmd.exe"], cols=80, rows=24,
+                                       cwd=None, env=dict(os.environ))
+        try:
+            assert len(calls) == 1, "spawn 당 1회 코드페이지 강제"
+        finally:
+            pty.terminate()
+            pty.close()
+    finally:
+        conpty.force_utf8_codepage = orig
+
+
 async def test_spawn_selects_backend(monkeypatch=None):
     """PYTMUX_PTY_BACKEND 선택 분기 — 실제 spawn 없이 스텁으로 검증(Windows 전용)."""
     if not pty_backend.IS_WINDOWS:

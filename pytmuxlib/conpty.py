@@ -297,6 +297,9 @@ if IS_WINDOWS:
     _k32.WaitForSingleObject.restype = wintypes.DWORD
     _k32.GetExitCodeProcess.argtypes = [_HANDLE, ctypes.POINTER(wintypes.DWORD)]
     _k32.GetExitCodeProcess.restype = wintypes.BOOL
+    # 시스템 기본 코드페이지 조회(force_utf8_codepage 의 생략 판정용).
+    _k32.GetOEMCP.argtypes = []
+    _k32.GetOEMCP.restype = wintypes.UINT
     _k32.TerminateProcess.argtypes = [_HANDLE, wintypes.UINT]
     _k32.TerminateProcess.restype = wintypes.BOOL
 
@@ -356,6 +359,82 @@ def _ensure_hidden_console() -> None:
         except OSError:
             pass
         _console_ready = True
+
+
+# ── 의사콘솔 코드페이지 UTF-8 강제(한글 Windows 패널 mojibake 수정, 2026-07-09) ──
+_CP_UTF8 = 65001
+
+
+def _pc_attach_spawn(hpc, cmdline: str):
+    """cmdline 을 주어진 의사콘솔(hpc)에 attach 해 띄운다(코드페이지 helper 등 저수준
+    공용 — _ConPty.spawn 의 attribute-list 레시피 축약판: cwd/env 상속, 스레드 핸들
+    즉시 닫음). 성공 시 (hProcess, pid), 실패 시 OSError."""
+    sz = _SIZE_T(0)
+    _k32.InitializeProcThreadAttributeList(None, 1, 0, ctypes.byref(sz))
+    attrbuf = (ctypes.c_byte * sz.value)()
+    if not _k32.InitializeProcThreadAttributeList(attrbuf, 1, 0, ctypes.byref(sz)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        if not _k32.UpdateProcThreadAttribute(
+                attrbuf, 0, _PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+                hpc, ctypes.sizeof(_HPCON), None, None):
+            raise ctypes.WinError(ctypes.get_last_error())
+        si = _STARTUPINFOEXW()
+        si.StartupInfo.cb = ctypes.sizeof(_STARTUPINFOEXW)
+        si.lpAttributeList = ctypes.cast(attrbuf, _LPVOID)
+        pi = _PROCESS_INFORMATION()
+        cmdbuf = ctypes.create_unicode_buffer(cmdline)
+        ok = _k32.CreateProcessW(
+            None, cmdbuf, None, None, False,
+            _EXTENDED_STARTUPINFO_PRESENT | _CREATE_UNICODE_ENVIRONMENT,
+            None, None, ctypes.byref(si), ctypes.byref(pi))
+        if not ok:
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        _k32.DeleteProcThreadAttributeList(attrbuf)
+    if pi.hThread:
+        _k32.CloseHandle(pi.hThread)
+    return pi.hProcess, int(pi.dwProcessId)
+
+
+def force_utf8_codepage(hpc, timeout_ms: int = 1500) -> bool:
+    """의사콘솔 콘솔 객체의 입·출력 코드페이지를 UTF-8(65001)로 맞춘다(best-effort).
+
+    한국어 등 비-UTF-8 OEM 코드페이지(cp949·932…) 시스템에서 새 conhost 콘솔은 OEM CP
+    로 시작하고, byte-API(WriteFile/WriteConsoleA)로 UTF-8 을 쓰는 현대 CLI(Claude Code
+    등)의 출력을 그 CP 로 오해석한다 — 한글이 한자 섞인 mojibake 가 되고, 멀티바이트
+    lead 바이트가 뒤따르는 ESC 를 trail 로 삼켜 CSI 가 문자 그대로 노출돼 화면 전체가
+    깨진다(docs/internal/LESSONS_2026-06-12.md §2 실측 메커니즘, 실박스 보고 2026-07-09).
+    ConPTY 파이프단(콘솔버퍼→VT)은 무조건 UTF-8 이지만 앱→콘솔버퍼 단이 콘솔 CP 를
+    따르므로, 콘솔 CP 를 65001 로 맞추면 양단이 일치한다(수동 `chcp 65001` 자동화).
+
+    콘솔 CP 는 attach 된 프로세스만 바꿀 수 있어 같은 의사콘솔에
+    `cmd /d /c chcp 65001>nul` 을 잠깐 attach 해 설정한다(chcp 는 입력·출력 CP 를 함께
+    바꾼다; /d=AutoRun 생략, >nul 은 cmd 내부 리다이렉트라 패널에 아무것도 안 찍힌다).
+    반드시 셸 spawn **후**에 부른다 — helper 가 첫/유일 클라이언트면 그 종료로 콘솔
+    클라이언트가 0 이 되는 순간이 생겨 conhost 가 내려갈 수 있다. 시스템 기본이 이미
+    UTF-8(GetOEMCP==65001, 'Beta: UTF-8' 설정)이면 새 콘솔도 UTF-8 이라 생략하고,
+    PYTMUX_KEEP_CODEPAGE(비어있지 않은 값)로 강제를 끌 수 있다(레거시 cp949 출력 앱
+    전용 탈출구). helper 정상 종료 여부 반환 — 실패해도 호출부는 계속(표시 품질 문제일
+    뿐 spawn 자체와 무관)."""
+    if (os.environ.get("PYTMUX_KEEP_CODEPAGE") or "").strip():
+        return False
+    try:
+        if int(_k32.GetOEMCP()) == _CP_UTF8:
+            return True
+    except OSError:
+        pass
+    comspec = os.environ.get("COMSPEC") or "cmd.exe"
+    try:
+        hproc, _pid = _pc_attach_spawn(
+            hpc, subprocess.list2cmdline([comspec, "/d", "/c"])
+            + f" chcp {_CP_UTF8}>nul")
+        try:
+            return _k32.WaitForSingleObject(hproc, timeout_ms) == 0
+        finally:
+            _k32.CloseHandle(hproc)
+    except OSError:
+        return False
 
 
 def _make_sync_pipe(inbound: bool):
@@ -585,6 +664,9 @@ class _ConPty:
             _resize_pc(self._hpc, _COORD(self._cols, self._rows))
         except OSError:
             pass
+        # 콘솔 코드페이지 UTF-8 강제(비-UTF-8 OEM 시스템의 한글 mojibake 수정) —
+        # 자식이 붙어 콘솔 클라이언트가 살아있는 지금 1회(best-effort, 실패 무해).
+        force_utf8_codepage(self._hpc)
         return self.pid
 
     def read(self, maxlen: int = 65536) -> bytes:
