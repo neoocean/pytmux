@@ -371,6 +371,10 @@ async def test_session_view_highlights_active_session():
                 and any(b in active_bar.plain for b in "▁▂▃▄▅▆▇█"), \
                 f"활성 세션 막대가 단색 오렌지여야: {active_bar!r}"
             assert other_lbl_plain, "비활성 세션 라벨은 강조하지 않음"
+            # 요청 2026-07-09: 행 커서(선택 배경)가 올라가도 오렌지 강조가 남게
+            # 셀 전경색이 커서 CSS 색을 이긴다(renderable 우선).
+            assert table.cursor_foreground_priority == "renderable", \
+                "커서가 활성 세션 전경색을 덮어쓰면 안 됨"
     finally:
         await teardown(srv, task, sock)
 

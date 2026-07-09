@@ -815,8 +815,12 @@ class TokenLogScreen(ModalScreen):
             # 같은 모양, 사용자 요청 2026-06-18). _sync_tabs 가 탭 전환 시 refresh.
             yield _TkTabConnector(id="tkconn")
             yield Static("", id="tktop", markup=False)
+            # cursor_foreground_priority="renderable": 커서(행 선택 배경)가 셀
+            # 전경색을 덮어쓰지 않게 — [세션] 뷰의 현재 활성 세션 오렌지 강조가
+            # 커서가 올라간 상태에서도 보이도록(요청 2026-07-09).
             table = DataTable(id="tktable", zebra_stripes=True,
-                              cursor_type="row")
+                              cursor_type="row",
+                              cursor_foreground_priority="renderable")
             table.can_focus = True
             yield table
             yield Static("", id="tkhint", markup=False)
