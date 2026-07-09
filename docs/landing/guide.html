@@ -30,7 +30,7 @@
     <a class="brand" href="/" style="text-decoration:none"><span class="prompt">❯</span> pytmux</a>
     <div class="nav-links">
       <a href="/">홈</a>
-      <a href="changelog">최근 수정사항</a>
+      <a href="changes">최근 수정사항</a>
       <a href="#concepts">개념</a>
       <a href="#panes">패널</a>
       <a href="#claude">Claude</a>
@@ -79,7 +79,7 @@
       <div class="cl-news">
         <div class="cl-news-head">
           <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-09 <span class="pill">목요일</span></span>
-          <a class="cl-news-more" href="changelog">전체 변경 내역 →</a>
+          <a class="cl-news-more" href="changes">전체 변경 내역 →</a>
         </div>
         <ul id="cl-news-list">
           <li><span class="pill stable">원격</span> <strong>다른 서버의 원격 탭을 이제 하나씩 닫을 수 있습니다.</strong>
@@ -464,7 +464,7 @@ set ambiguous-width auto</div>
     <div><a class="brand" href="/" style="text-decoration:none"><span class="prompt">❯</span> pytmux</a> &nbsp; — 상세 가이드</div>
     <div class="foot-links">
       <a href="/">홈</a> ·
-      <a href="changelog">최근 수정사항</a> ·
+      <a href="changes">최근 수정사항</a> ·
       <a href="/#download">다운로드</a> ·
       <a href="https://github.com/neoocean/pytmux" target="_blank" rel="noopener">GitHub</a> ·
       <a href="mailto:me@woojinkim.org?subject=pytmux">me@woojinkim.org</a>
@@ -477,7 +477,7 @@ set ambiguous-width auto</div>
   // 최근 수정사항 — changelog 페이지의 최신 날짜 섹션(맨 위 .cl-day)을 same-origin fetch 로 미러한다.
   // 위 정적 마크업이 폴백이고, 성공하면 최신 날짜 제목과 앞 4개 항목으로 다시 그린다. 랜딩(/)과 동일.
   (function () {
-    fetch('changelog').then(function (r) { return r.text(); }).then(function (t) {
+    fetch('changes').then(function (r) { return r.text(); }).then(function (t) {
       var doc = new DOMParser().parseFromString(t, 'text/html');
       var sec = doc.querySelector('main section.cl-day');
       var h2 = sec && sec.querySelector('h2');
