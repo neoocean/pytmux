@@ -812,6 +812,56 @@ async def test_remote_detach_closes_all_tabs_reattach_restores():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_remote_detach_single_tab():
+    """단일-탭 분리: remote_detach 에 병합 전역 index 를 실으면 그 **탭 하나만**
+    병합 뷰에서 사라지고, 같은 호스트의 다른 원격 탭·원격 셸은 그대로 살아 있다.
+    마지막 남은 원격 탭까지 분리하면 링크(호스트) 전체가 사라진다(⇄ 전멸)."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    reader = writer = None
+    try:
+        sessB = srvB.ensure_default_session(80, 24)
+        srvB.new_window(sessB)
+        assert len(sessB.tabs) == 2
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        stm = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and sum(w["name"].startswith("⇄") for w in m["windows"]) == 2,
+            what="2 merged remote tabs")
+        # 첫 원격 탭의 병합 전역 index 하나만 분리
+        gidx = next(w["index"] for w in stm["windows"]
+                    if w["name"].startswith("⇄"))
+        await write_msg(writer, {"t": "cmd", "action": "remote_detach",
+                                 "index": gidx})
+        # ⇄ 탭이 2 → 1 로 줄고(호스트 전멸 아님), 원격 셸은 둘 다 살아 있다
+        await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and sum(w["name"].startswith("⇄") for w in m["windows"]) == 1,
+            what="one remote tab detached, one remains")
+        assert len(sessB.tabs) == 2, "단일-탭 분리 후에도 원격 탭 전부 생존"
+        assert all(t.window.active_pane.pty is not None for t in sessB.tabs)
+        # 남은 원격 탭(이제 index=gidx)까지 분리 → ⇄ 전멸(링크 해제)
+        await write_msg(writer, {"t": "cmd", "action": "remote_detach",
+                                 "index": gidx})
+        await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and not any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="last remote tab detached, link gone")
+        assert len(sessB.tabs) == 2, "링크 해제 후에도 원격 셸 생존"
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
 async def test_remote_no_mixing_guards():
     """§1.7-c 섞임 금지: ① 로컬 보기에서 원격 전역 index 를 겨냥한 join/move 는
     거부(notice)되고 로컬 트리는 불변. ② 원격 보기 중 split/kill_pane 은 업스트림

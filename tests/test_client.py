@@ -3024,9 +3024,10 @@ async def test_tab_close_confirm_popup():
 
 async def test_close_remote_tab_routes_to_detach():
     """원격 탭(remote-attach 병합)을 닫기[x]/esc x 로 닫으면 kill_window(서버가
-    §1.7-c 로 거부 → '원격 탭에서는 사용할 수 없는 명령입니다' notice) 대신 그
-    링크를 분리하는 remote_detach 로 라우팅한다(사용자 보고 2026-06-20). 확인
-    팝업도 '탭 닫기'가 아니라 '원격 탭 분리'."""
+    §1.7-c 로 거부 → '원격 탭에서는 사용할 수 없는 명령입니다' notice) 대신
+    remote_detach 로 라우팅한다(사용자 보고 2026-06-20). 활성 원격 탭의 병합 전역
+    index 를 실어 그 **탭 하나만** 분리한다(같은 호스트 다른 탭 유지). 확인 팝업도
+    '탭 닫기'가 아니라 '원격 탭 분리'."""
     async def body(app, pilot, srv):
         sent = []
         app.send_cmd = lambda action, **kw: sent.append((action, kw))
@@ -3044,7 +3045,7 @@ async def test_close_remote_tab_routes_to_detach():
         await wait_until(pilot, lambda: app.screen_stack[-1].query_one("#cy"))
         await pilot.click("#cy")
         await pilot.pause(0.3)
-        assert ("remote_detach", {"host": "office1"}) in sent, sent
+        assert ("remote_detach", {"host": "office1", "index": 1}) in sent, sent
         assert not any(a == "kill_window" for a, _ in sent), sent
         # 로컬 탭이 활성이면 종전대로 kill_window 경로(원격 분리 아님)
         sent.clear()

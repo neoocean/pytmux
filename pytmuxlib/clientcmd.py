@@ -441,11 +441,13 @@ class _CommandMixin:
         elif c in ("new-tab", "newt", "new-window", "neww"):
             self.send_cmd("new_window")
         elif c in ("kill-tab", "killt", "kill-window", "killw"):
-            # 원격 탭이면 kill_window(서버가 §1.7-c 거부) 대신 그 링크를 분리한다
-            # ([x]/esc x 와 동일 라우팅, confirm_kill_tab 참조).
+            # 원격 탭이면 kill_window(서버가 §1.7-c 거부) 대신 그 탭 하나만 분리한다
+            # ([x]/esc x 와 동일 라우팅, confirm_kill_tab 참조). 활성 원격 탭의 병합
+            # 전역 index 를 실어 같은 호스트의 다른 원격 탭은 유지한다.
             rhost = self._active_remote_host()
             if rhost is not None:
-                self.send_cmd("remote_detach", host=rhost)
+                self.send_cmd("remote_detach", host=rhost,
+                              index=self._active_tab_index())
             else:
                 self.send_cmd("kill_window")
         elif c in ("next-tab", "next-window", "next"):

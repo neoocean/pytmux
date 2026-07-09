@@ -628,7 +628,13 @@ class ServerIOMixin:
             await self._send_to(client, note)
             return
         if action == "remote_detach":
-            self.remote_detach(msg.get("host"))
+            # index 가 실렸으면(탭 닫기[x]/esc x) 그 병합 전역 탭 **하나만** 분리한다.
+            # 없으면(:remote-detach [host] 명령) 종전대로 호스트 전체를 끊는다.
+            idx = msg.get("index")
+            if idx is not None:
+                self.remote_detach_tab(sess, idx)
+            else:
+                self.remote_detach(msg.get("host"))
             return
         if action == "remote_new_window":
             # remote-new-tab <host>: 원격에 새 터미널을 만들어 새 탭으로 보여준다

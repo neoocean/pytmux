@@ -833,9 +833,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 그 링크를 분리(remote-detach)하는 것이므로 그렇게 라우팅한다.
             rhost = self._active_remote_host()
             if rhost is not None:
+                # 지금 보는(활성) 원격 탭의 병합 전역 index 를 함께 보내 그 **탭
+                # 하나만** 분리한다(서버 remote_detach_tab) — 같은 호스트의 다른
+                # 원격 탭은 유지된다. index 를 안 실으면 호스트 전체가 끊긴다.
+                gi = self._active_tab_index()
                 self.confirm_popup(
                     i18n.t("dialog.detach_remote_msg", host=rhost),
-                    action=lambda: self.send_cmd("remote_detach", host=rhost),
+                    action=lambda: self.send_cmd("remote_detach", host=rhost,
+                                                 index=gi),
                     title=i18n.t("dialog.detach_remote_title"))
                 return
             # 이 탭을 닫으면 pytmux 가 끝나는가 = 로컬 탭이 이것 하나뿐인가.
