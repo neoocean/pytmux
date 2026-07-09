@@ -706,10 +706,13 @@ async def test_auto_token_on_exit_skips_when_fg_still_claude():
 async def test_auto_token_on_exit_injects_usage_into_pane():
     """§10-F(2026-06-18 재설계): 세션 종료 시 토큰 사용량을 **팝업이 아니라 패널 출력
     으로 주입**한다. _emit_auto_token_log 가 self._usage 한도 요약을 그 패널 화면 모델에
-    feed 해 스크롤백에 보이게 한다(클라 메시지/모달 없음). 한도 데이터 없으면 무동작."""
+    feed 해 스크롤백에 보이게 한다(클라 메시지/모달 없음). 한도 데이터 없으면 무동작.
+    (Unix 스트림 경로 검증 — Windows CI 에서도 같은 경로를 보도록 _IS_WINDOWS 고정.)"""
     import importlib
-    screen_text = importlib.import_module(
-        "pytmuxlib.plugins.claude-code.servermixin").screen_text
+    smod = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    screen_text = smod.screen_text
+    saved_win = smod._IS_WINDOWS
+    smod._IS_WINDOWS = False
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
@@ -731,6 +734,7 @@ async def test_auto_token_on_exit_injects_usage_into_pane():
         # pane=None 이면 무동작(가드).
         srv._emit_auto_token_log(sess, None)
     finally:
+        smod._IS_WINDOWS = saved_win
         await teardown(srv, task, sock)
 
 
@@ -740,8 +744,10 @@ async def test_auto_token_on_exit_falls_back_to_session_tokens():
     가용)을 대신 보여 '표시될 때도 안 될 때도' 하던 불안정을 없앤다. 스냅샷이 있으면 토큰
     라인 + 한도 막대 둘 다. 토큰도 0·스냅샷도 없으면(무활동) 무동작."""
     import importlib
-    screen_text = importlib.import_module(
-        "pytmuxlib.plugins.claude-code.servermixin").screen_text
+    smod = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    screen_text = smod.screen_text
+    saved_win = smod._IS_WINDOWS
+    smod._IS_WINDOWS = False                 # Unix 스트림 경로 고정(Windows CI 포함)
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
@@ -762,6 +768,7 @@ async def test_auto_token_on_exit_falls_back_to_session_tokens():
         srv._usage = None
         assert srv._usage_exit_text(80, p) == b""
     finally:
+        smod._IS_WINDOWS = saved_win
         await teardown(srv, task, sock)
 
 
@@ -774,6 +781,8 @@ async def test_auto_token_on_exit_preserves_tokens_across_reset():
     smod = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
     screen_text = smod.screen_text
     MISS = smod._HDR_CLAUDE_MISS
+    saved_win = smod._IS_WINDOWS
+    smod._IS_WINDOWS = False                 # Unix 스트림 경로 고정(Windows CI 포함)
     srv, task, sock = await server_only()
     try:
         srv._usage = None                    # 한도 스냅샷 없이 토큰 폴백만 검증
@@ -792,6 +801,50 @@ async def test_auto_token_on_exit_preserves_tokens_across_reset():
         assert getattr(p, "_exit_tokens", 0) == 4200, "리셋 직전 보존"
         assert "4,200" in screen_text(p.screen), "종료 요약에 세션 토큰 표시(비지 않음)"
     finally:
+        smod._IS_WINDOWS = saved_win
+        await teardown(srv, task, sock)
+
+
+async def test_auto_token_on_exit_windows_places_block_above_prompt():
+    """Windows(ConPTY) 종료요약 배치(실박스 보고 2026-07-09): conhost 는 셸 프롬프트를
+    절대좌표로 다시 그려 Unix 식 '주입 후 Enter'가 블록을 덮는다. Windows 경로는
+    ① Enter 를 블록 높이+1 만큼 펌프하고 ② 정착 뒤 커서 **위** 행들에 CUP 로 블록을
+    그린다(커서 보존) — 프롬프트·커서가 블록 아래라 이후 Enter 가 요약을 안 덮는다."""
+    import asyncio
+    import importlib
+    smod = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    screen_text = smod.screen_text
+    saved_win = smod._IS_WINDOWS
+    smod._IS_WINDOWS = True                  # Windows 경로 강제(POSIX 헤드리스에서 검증)
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        srv._usage = {"session": {"pct": 69, "reset": "10:10pm"},
+                      "week_all": {"pct": 61, "reset": "Jun 20 at 9am"}}
+        p.feed(b"\r\n" * 10 + b"D:\\>")      # 프롬프트를 화면 중간으로 내림
+        keys = []
+        srv._inject_keys = lambda pane, data: keys.append(data)
+        srv._EXIT_LOG_WIN_SETTLE = 0.01      # 테스트 단축(인스턴스 오버라이드)
+        srv._emit_auto_token_log(sess, p)
+        lines = srv._usage_exit_lines(80, p)
+        while lines and not lines[0]:
+            lines.pop(0)
+        assert keys == [b"\r" * (len(lines) + 1)], ("블록높이+1 Enter 펌프", keys)
+        assert "69%" not in screen_text(p.screen), "정착 전엔 아직 미배치"
+        await asyncio.sleep(0.1)             # call_later(_place) 발화 대기
+        # 실 PTY(셸 프롬프트 echo)가 배치 전 커서를 더 내릴 수 있으므로 절대 행이
+        # 아니라 상대 불변식으로 검증: 블록 전체가 커서(프롬프트) **위**, 커서 행은
+        # 안 건드림(DECSC/DECRC 복원).
+        cy = p.screen.cursor.y
+        shown = screen_text(p.screen).split("\n")
+        assert any("69%" in ln for ln in shown[:cy]) \
+            and any("61%" in ln for ln in shown[:cy]), \
+            ("블록은 프롬프트(커서) 위 행들에 배치", cy, shown)
+        assert "69%" not in shown[cy] and "61%" not in shown[cy], \
+            "커서 행(프롬프트)은 안 건드림"
+    finally:
+        smod._IS_WINDOWS = saved_win
         await teardown(srv, task, sock)
 
 

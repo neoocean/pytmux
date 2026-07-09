@@ -38,6 +38,11 @@ from .claude import (claude_account, claude_account_full, claude_api_error,
                      track_repeat)
 from pytmuxlib.model import Pane, Session, Tab
 
+# 종료 토큰요약 배치의 OS 분기(_emit_auto_token_log): Windows(ConPTY)는 conhost
+# 화면버퍼가 권위라 Unix 식 스트림 주입이 프롬프트 재그리기에 덮인다 — 전용 경로
+# (_emit_auto_token_log_windows)로 분기. 테스트가 monkeypatch 할 수 있게 모듈 상수.
+_IS_WINDOWS = os.name == "nt"
+
 # 권한모드 자동 오토모드 전환(§10): 한 번 idle 진입 후 auto 에 도달하지 못해도 이
 # 횟수까지만 shift+tab 을 보낸다(footer 순환 순서가 고정이 아닐 수 있어 폐루프지만,
 # 오검출 시 무한 순환을 막는 가드). cycle default→accept→plan→auto(4모드)를 다 돌아
@@ -597,8 +602,8 @@ class ServerClaudeMixin:
         except OSError:
             pass
 
-    def _usage_exit_text(self, width: int = 80, pane: Pane = None) -> bytes:
-        """세션 종료 시 패널에 주입할 토큰 사용량 요약을 plain-text(ANSI 최소)로 만든다.
+    def _usage_exit_lines(self, width: int = 80, pane: Pane = None) -> list:
+        """세션 종료 시 패널에 주입할 토큰 사용량 요약 **줄 목록**(ANSI 최소)을 만든다.
 
         **항상 안정적으로 표시**되게 두 정보를 조합한다(요청 2026-07-05 — 종전엔 그림자
         /usage 스냅샷이 없으면 통째로 b"" 라 '표시될 때도 안 될 때도' 있었다):
@@ -606,9 +611,10 @@ class ServerClaudeMixin:
           **항상 가용** → 종료 요약이 절대 비지 않게 하는 바닥값.
         - **/usage 한도 막대**(self._usage: session·week_all·week_sonnet 각 {pct,reset}):
           스냅샷이 있을 때만 곁들인다(없으면 토큰 총량만).
-        둘 다 없으면(claude 무활동·pane=None) b"". 팝업(usage_bar_lines)과 같은 정보지만
+        둘 다 없으면(claude 무활동·pane=None) []. 팝업(usage_bar_lines)과 같은 정보지만
         모달 크롬 없이 스크롤 출력용 블록 막대로 만든다. 라벨은 코어 i18n(usage.*) 공유.
-        `width`(패널 폭)에 맞춰 막대 길이를 늘린다."""
+        `width`(패널 폭)에 맞춰 막대 길이를 늘린다. 줄바꿈/배치 래핑은 호출부가 OS 별로
+        입힌다(_usage_exit_text=Unix 스트림, _emit_auto_token_log_windows=CUP 배치)."""
         from pytmuxlib import i18n
 
         def cells(s: str) -> int:   # 동아시아 와이드(한글/CJK)만 2폭으로 세는 최소 폭 계산
@@ -640,7 +646,7 @@ class ServerClaudeMixin:
             except (TypeError, ValueError):
                 tok = 0
         if not entries and tok <= 0:
-            return b""                       # 표시할 게 전혀 없음(무활동) → 무동작
+            return []                        # 표시할 게 전혀 없음(무활동) → 무동작
 
         # 한도 막대 렌더(있을 때). 막대 폭은 패널 폭에 맞춰 늘린다(고정폭 제외분, 10~60).
         rows = []
@@ -668,11 +674,18 @@ class ServerClaudeMixin:
                          f"\x1b[1m{tok:,}\x1b[0m")
         lines.extend(rows)
         lines.append(f"\x1b[2m{sep}\x1b[0m")
-        # 셸이 이미 찍어 둔 프롬프트 줄을 **덮어쓰고** 그 자리에 블록을 흘린다(요청
-        # 2026-06-20): \r 로 줄 처음으로 간 뒤 \x1b[J(커서~화면끝 지우기)로 빈 프롬프트
-        # 줄을 치우고 블록을 그린다. 끝에 개행을 두지 않아, _emit_auto_token_log 가 뒤이어
-        # 셸에 보내는 Enter 의 \r\n 한 번이 블록 **바로 아래** 새 프롬프트를 그린다 →
-        # 토큰 표시가 먼저, 프롬프트·커서가 그다음 순서로 정렬된다.
+        return lines
+
+    def _usage_exit_text(self, width: int = 80, pane: Pane = None) -> bytes:
+        """_usage_exit_lines 의 **Unix 스트림 판** 래핑(표시할 게 없으면 b"").
+        셸이 이미 찍어 둔 프롬프트 줄을 **덮어쓰고** 그 자리에 블록을 흘린다(요청
+        2026-06-20): \\r 로 줄 처음으로 간 뒤 \\x1b[J(커서~화면끝 지우기)로 빈 프롬프트
+        줄을 치우고 블록을 그린다. 끝에 개행을 두지 않아, _emit_auto_token_log 가 뒤이어
+        셸에 보내는 Enter 의 \\r\\n 한 번이 블록 **바로 아래** 새 프롬프트를 그린다 →
+        토큰 표시가 먼저, 프롬프트·커서가 그다음 순서로 정렬된다."""
+        lines = self._usage_exit_lines(width, pane)
+        if not lines:
+            return b""
         return ("\r\x1b[J" + "\r\n".join(lines)).encode("utf-8")
 
     def _inject_pane_output(self, pane: Pane, data: bytes) -> None:
@@ -717,6 +730,11 @@ class ServerClaudeMixin:
         (_exit_token_pending)이 fg=셸 확정 시 종료당 1회 호출한다(중복 주입 없음)."""
         if pane is None:
             return
+        if _IS_WINDOWS:
+            # Windows(ConPTY)는 conhost 화면버퍼가 권위라 아래 Unix 방식(주입 후
+            # Enter 1회)이 성립하지 않는다 — 전용 배치 경로로 분기.
+            self._emit_auto_token_log_windows(pane)
+            return
         text = self._usage_exit_text(getattr(pane, "cols", 80), pane)
         if text:
             self._inject_pane_output(pane, text)
@@ -727,6 +745,51 @@ class ServerClaudeMixin:
             # 프롬프트를 새로 그려 동기화를 회복한다(claude 종료 직후라 입력 버퍼는
             # 비어 무해; pty=None 인 테스트 패널에선 _inject_keys 가 조용히 무동작).
             self._inject_keys(pane, b"\r")
+
+    # Windows 종료요약 배치: Enter 펌프 후 셸 프롬프트 echo 가 정착하길 기다리는 지연(초).
+    # 로컬 셸의 빈-Enter 프롬프트 재출력은 수십 ms — 0.4s 면 여유(테스트에서 단축 가능).
+    _EXIT_LOG_WIN_SETTLE = 0.4
+
+    def _emit_auto_token_log_windows(self, pane: Pane) -> None:
+        """Windows(ConPTY) 판 종료 토큰요약 배치(실박스 보고 2026-07-09).
+
+        Unix 처럼 '블록을 출력 주입 후 Enter 1회'를 쓰면 안 된다 — ConPTY 의 conhost 는
+        자기 화면버퍼가 권위라 우리가 에뮬레이터에만 주입한 블록을 모르고, 셸 프롬프트를
+        **자기 커서 기준 절대좌표**로 다시 그려 블록 윗줄부터 잠식한다(Enter 칠 때마다
+        한 줄씩 덮임). 대신:
+          ① 블록 높이+1 만큼 Enter 를 펌프해 conhost 커서(=셸 프롬프트)를 블록 높이만큼
+             아래로 내린다. 빈 Enter 라 셸은 프롬프트만 다시 그린다(claude 종료 직후라
+             입력 버퍼는 비어 무해; pty=None 테스트 패널은 _inject_keys 가 무동작).
+          ② 프롬프트 echo 정착 뒤(_EXIT_LOG_WIN_SETTLE) 에뮬레이터 커서 **위** 의
+             비워진 행들(펌프가 남긴 빈 프롬프트 줄)에 CUP+\\x1b[2K 로 블록을 그린다
+             (DECSC/DECRC 로 커서 보존) — 화면 행 이동이 없어 conhost 좌표계와 안
+             어긋나고, 새 프롬프트·커서가 블록 **아래**라 이후 타이핑/Enter 가 블록을
+             덮지 않는다. 이후 출력으로 스크롤되면 블록도 함께 스크롤백으로 흘러간다.
+        한계(용인): conhost 가 그 영역을 자기 버퍼로 전체 repaint 하면(리사이즈 등)
+        블록 자리엔 펌프가 남긴 빈 프롬프트 줄들이 되살아난다 — ConPTY 화면버퍼 권위
+        구조상 합성 출력은 최종적으로 transient 다."""
+        lines = self._usage_exit_lines(getattr(pane, "cols", 80), pane)
+        while lines and not lines[0]:      # 선두 공백줄은 Enter 펌프가 이미 여백을 준다
+            lines.pop(0)
+        if not lines:
+            return
+        self._inject_keys(pane, b"\r" * (len(lines) + 1))
+
+        def _place():
+            try:
+                cy = pane.screen.cursor.y          # 0-based 현재(새) 프롬프트 행
+            except AttributeError:                 # 패널 정리 중(스크린 해제)
+                return
+            if cy <= 0:                            # 최상단 — 위에 그릴 공간 없음
+                return
+            use = lines[-cy:] if cy < len(lines) else lines
+            top = cy - len(use)
+            seq = "\x1b7" + "".join(
+                f"\x1b[{top + i + 1};1H\x1b[2K{ln}" for i, ln in enumerate(use)
+            ) + "\x1b8"
+            self._inject_pane_output(pane, seq.encode("utf-8"))
+
+        self.loop.call_later(self._EXIT_LOG_WIN_SETTLE, _place)
 
     # ---- 권한모드 자동 오토모드 전환(§10) ----
     def set_claude_auto_mode(self, value=None):
