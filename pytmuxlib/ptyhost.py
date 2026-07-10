@@ -329,6 +329,17 @@ def main(argv=None) -> int:
                     help="연결 인증 토큰을 게시할 0600 파일(M1)")
     args = ap.parse_args(argv)
 
+    # Windows(host 모드 기본)에선 패널 spawn 이 이 프로세스에서 일어난다. ConPTY 워밍
+    # 풀을 host 에서도 켜, 비-UTF-8 OEM(cp949/932) 시스템의 콘솔 CP UTF-8 강제(chcp
+    # helper, force_utf8_codepage)를 **풀 채움 시점(백그라운드)**에 미리 치른다 —
+    # 안 켜면 _spawn 이 매 패널마다 그 동기 helper(수십 ms~1.5s)를 host 이벤트 루프에서
+    # 기다려 전 패널 출력이 멈춘다(코드검수 2026-07-10 M-2: run_server 만 enable_pool 을
+    # 불러 host 프로세스엔 미적용이던 갭). 비-Win/미지원/pywinpty 강제 시 enable_pool 은
+    # 스스로 no-op.
+    with contextlib.suppress(Exception):
+        from . import conpty
+        conpty.enable_pool()
+
     async def _run():
         host = PtyHost()
         await host.serve(args.endpoint, portfile=args.portfile,
@@ -356,6 +367,10 @@ def main(argv=None) -> int:
     except Exception:
         traceback.print_exc()            # serve 중 오류는 남기되 종료는 아래에서 강제
         code = 1
+    # 풀에 남은 미사용 의사콘솔(OpenConsole 호스트)을 닫아 고아를 막는다(run_server 대칭).
+    with contextlib.suppress(Exception):
+        from . import conpty
+        conpty._pool_drain()
     with contextlib.suppress(Exception):
         sys.stdout.flush()
         sys.stderr.flush()

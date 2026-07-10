@@ -74,6 +74,23 @@ async def test_sanitize_drops_incomplete_and_stringifies():
     assert ns._sanitize_rules("nope") == []
 
 
+async def test_sanitize_strips_control_chars_from_keyword():
+    """keyword 는 최종적으로 `/rename <keyword>` 로 Claude 패널 입력에 주입될 수 있어,
+    내장 CR/LF·ESC·NUL 이 다중 줄 제출(프롬프트 주입)이 되지 않게 제거한다(코드검수
+    2026-07-10 Low 심층방어). 세정 후 빈 keyword 는 규칙 자체가 버려진다."""
+    out = ns._sanitize_rules([
+        {"path": "/a", "keyword": "proj\rmalicious"},     # CR 제거 → "projmalicious"
+        {"path": "/b", "keyword": "x\ny\x1b[31mz"},       # LF/ESC 제거
+        {"path": "/c", "keyword": "\r\n\x00"},            # 세정 후 빈 → 버림
+        {"path": "/d", "keyword": "  ok  "},              # 공백만 다듬음
+    ])
+    kws = [r["keyword"] for r in out]
+    assert kws == ["projmalicious", "xy[31mz", "ok"], kws
+    assert all("\r" not in k and "\n" not in k and "\x1b" not in k
+               and "\x00" not in k for k in kws)
+    assert ns._clean_name("a\r\nb\x7f") == "ab"
+
+
 async def test_identity_os_code():
     assert ns._this_os() in ("darwin", "linux", "windows")
     assert isinstance(ns._this_host(), str)

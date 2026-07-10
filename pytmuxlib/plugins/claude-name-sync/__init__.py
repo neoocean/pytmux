@@ -24,6 +24,7 @@ TUI 편집기로 설정한다.
 from __future__ import annotations
 
 import os
+import re
 import socket
 import sys
 
@@ -110,9 +111,23 @@ def _match_keyword(rules, cwd, host: str, osname: str):
     return None
 
 
+# 규칙 keyword 는 최종적으로 `/rename <keyword>` 로 Claude 패널 입력에 주입될 수 있다
+# (claude-code servermixin `_pc_inject` 가 text+"\r" 를 PTY 에 쓴다). keyword 에 내장된
+# CR/LF·제어문자는 그 주입을 다중 줄 제출(임의 프롬프트 주입)로 만든다 — 소스가
+# 자기-작성 opts.json 이라 신뢰경계를 넘지는 않지만(같은 UID), 심층방어로 세정한다
+# (코드검수 2026-07-10 Low). 표시 이름에 제어문자가 낄 이유도 없다.
+_CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _clean_name(s: str) -> str:
+    """이름/키워드에서 제어문자(CR/LF/ESC/NUL 등)를 제거하고 양끝 공백을 다듬는다."""
+    return _CTRL_RE.sub("", str(s or "")).strip()
+
+
 def _sanitize_rules(rules) -> list:
     """외부(클라 편집기/opts.json)에서 온 규칙 목록을 신뢰 가능한 형태로 정제한다.
-    path·keyword 가 빈 항목은 버리고, 각 필드를 문자열로 고정한다."""
+    path·keyword 가 빈 항목은 버리고, 각 필드를 문자열로 고정한다. keyword 는 주입
+    경로에 실리므로 제어문자를 제거한다(_clean_name)."""
     out = []
     if not isinstance(rules, list):
         return out
@@ -120,7 +135,7 @@ def _sanitize_rules(rules) -> list:
         if not isinstance(r, dict):
             continue
         path = str(r.get("path") or "").strip()
-        kw = str(r.get("keyword") or "").strip()
+        kw = _clean_name(r.get("keyword"))
         if not path or not kw:
             continue
         out.append({

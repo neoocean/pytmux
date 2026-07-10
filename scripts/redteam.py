@@ -678,11 +678,17 @@ async def redteam_attach_selftest(rounds: int) -> dict:
     포트의 소유 PID 를 정확히 집어내며(= Popen pid 와 일치) ③ 외부 PID 핸들/RSS 가
     실측되고 ④ 비파괴 배터리 뒤에도 서버 생존·핸들 누수 없음을 코드 실행으로 못박는다.
     """
-    home = tempfile.mkdtemp(prefix="redteam-selftest-")
+    # PYTMUX_HOME 아래에 AF_UNIX 소켓 경로가 만들어진다(POSIX). macOS sun_path 한계는
+    # ~104바이트라, 긴 TMPDIR(/var/folders/…/T/, 51자)+긴 prefix 면 `default.sock` 경로가
+    # 넘쳐 자식 서버가 bind 실패(rc=1)로 조기 종료 → selftest 가 pytmux 결함이 아닌
+    # harness 경로버그로 죽었다(코드검수 2026-07-10 레드팀). 짧은 base(/tmp)+짧은 prefix 로
+    # 경로 예산을 확보한다(Windows 는 TCP 라 경로길이 무관 — /tmp 부재 시 기본 TMPDIR 폴백).
+    short_base = "/tmp" if os.path.isdir("/tmp") and os.access("/tmp", os.W_OK) else None
+    home = tempfile.mkdtemp(prefix="rt-st-", dir=short_base)
     env = dict(os.environ)
     env["PYTMUX_HOME"] = home
     env["PYTMUX_PTY_HOST"] = "0"
-    env["PYTMUX_CAPTURE_DIR"] = tempfile.mkdtemp(prefix="redteam-selftest-cap-")
+    env["PYTMUX_CAPTURE_DIR"] = tempfile.mkdtemp(prefix="rt-st-cap-", dir=short_base)
     env["PYTMUX_TOKENS_DB"] = tempfile.mktemp(suffix=".db",
                                               prefix="redteam-selftest-db-")
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

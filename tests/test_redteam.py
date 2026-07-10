@@ -164,3 +164,24 @@ async def test_win_external_pid_handle_sample():
     finally:
         child.terminate()
         child.wait(timeout=10)
+
+
+async def test_attach_selftest_socket_path_within_af_unix_limit():
+    """redteam --attach-selftest 는 격리 자식 서버를 PYTMUX_HOME 아래 AF_UNIX 소켓으로
+    띄운다. macOS sun_path 한계(~104바이트)를 넘으면 자식이 bind 실패(rc=1)로 조기
+    종료해 selftest 가 pytmux 결함이 아닌 harness 경로버그로 죽었다(코드검수 2026-07-10).
+    수정: 짧은 base(/tmp)+짧은 prefix. 실제 소켓 경로가 한계 안인지 회귀로 못박는다.
+    (POSIX 전용 — Windows 는 TCP 라 경로길이 무관.)"""
+    if os.name == "nt":
+        return
+    import tempfile
+    short_base = "/tmp" if os.path.isdir("/tmp") and os.access("/tmp", os.W_OK) else None
+    home = tempfile.mkdtemp(prefix="rt-st-", dir=short_base)
+    try:
+        # ipc.state_dir/state_base 가 PYTMUX_HOME 아래 소켓 경로를 어떻게 만드는지 그대로
+        # 재현: <home>/state/default.sock (server_only 과 동일 레이아웃).
+        sock = os.path.join(home, "state", "default.sock")
+        assert len(sock) < 104, f"AF_UNIX 경로 초과({len(sock)}): {sock}"
+    finally:
+        import shutil
+        shutil.rmtree(home, ignore_errors=True)
