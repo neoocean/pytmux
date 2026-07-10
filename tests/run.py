@@ -26,6 +26,16 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
+# Windows 패널 spawn 의 콘솔 CP UTF-8 강제(chcp helper — conpty.force_utf8_codepage)를
+# 스위트에서는 끈다. 테스트는 콘솔 코드페이지와 무관하고(한글 왕복 검증은
+# scripts/validate_conpty.py 라이브 하네스가 자체 env 로 수행), helper 는 실제 셸
+# spawn 마다 cmd.exe 생성+대기(수백 ms, 콜드 1.5s)를 얹어 ① Windows CI 스위트가
+# 8분 스텝 타임아웃을 넘기고 ② 실제 패널 출력(cmd 배너)의 도착 시점이 테스트 본문
+# 안으로 밀려 프레임 push 가 주입 콘텐츠를 덮는 타이밍 실패 4건을 만들었다
+# (2026-07-10, 07-09 chcp 도입 직후부터 windows 3잡 전멸 — 상세는 p4 CL 참조).
+# setdefault 라 외부에서 명시 설정(예: 코드페이지 자체를 검증하는 수동 실행)이 우선.
+os.environ.setdefault("PYTMUX_KEEP_CODEPAGE", "1")
+
 # 한 테스트가 매달리면(예: CI macOS 러너에서 PTY/서브프로세스 데드락) 스위트 전체가
 # 멈추지 않게 테스트별 타임아웃을 건다 → 행(hang)을 그 테스트의 TIMEOUT 실패로 바꿔
 # 빠르게·이름과 함께 드러낸다. 로컬은 테스트당 수초 이내라 90초면 오검출 없고, 47분씩
@@ -197,6 +207,12 @@ def main(argv):
                 failures.append((label, last_exc, last_tb))
                 tag = "TIMEOUT" if hung else "FAIL"
                 print(f"  {tag}  {label}: {last_exc}")
+                # 트레이스백을 실패 **즉시**도 찍는다 — 종전엔 말미 일괄 덤프뿐이라,
+                # CI step 타임아웃이 스위트를 중간에 끊으면(Windows 8분) 실패의
+                # 원인 트레이스백이 통째로 유실돼 진단 불능이었다(2026-07-10).
+                if last_tb:
+                    for ln in str(last_tb).rstrip().splitlines():
+                        print(f"        {ln}")
     flaky_note = f" ({flaky} flaky — 재시도 후 통과)" if flaky else ""
     print(f"\n{'='*50}\n{passed} passed, {failed} failed{flaky_note}")
     for label, e, tb in failures:

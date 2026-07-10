@@ -4231,8 +4231,14 @@ async def test_inpane_usage_no_auto_popup_but_manual_still_opens():
         await pilot.pause(0.1)
         assert len(app.screen_stack) == 1, "자동 팝업이 뜨면 안 됨(§3.9 제거)"
         # 수동 명령 경로는 유지 — open_usage_panel 이 InfoScreen 을 연다.
+        # 고정 pause 1회 대신 짧게 폴링한다 — 느린 CI(Windows)에서 push_screen
+        # 반영이 0.1s 를 넘겨 screen_stack 이 아직 ['Screen'] 인 거짓 실패가 났다
+        # (2026-07-10 diag 런 실측). 부재 단언(위 자동 팝업 금지)은 고정 pause 유지.
         app.open_usage_panel()
-        await pilot.pause(0.1)
+        for _ in range(20):
+            await pilot.pause(0.1)
+            if app.screen_stack[-1].__class__.__name__ == "InfoScreen":
+                break
         assert app.screen_stack[-1].__class__.__name__ == "InfoScreen", \
             [s.__class__.__name__ for s in app.screen_stack]
     await _with_app(body)
@@ -5383,7 +5389,12 @@ async def test_claude_footer_zones_and_popups():
         assert app._remote_zone[pid][2] == py + 2
         # x 범위는 패널 시작 이상
         assert app._perm_zone[pid][0] >= px
-        # 권한모드 팝업: 현재 모드 표시 + 선택 시 set_claude_perm_mode 전송
+        # 권한모드 팝업: 현재 모드 표시 + 선택 시 set_claude_perm_mode 전송.
+        # anchor x 는 **await 전에** 캡처한다 — pause 중 실제 패널(cmd/셸)의 첫
+        # 출력 프레임이 서버에서 push 되면 주입한 pane_content 를 덮어 _composite
+        # 가 클릭존을 지우므로(_perm_zone[pid] KeyError — 느린 Windows CI 에서
+        # spawn 지연으로 배너 도착이 테스트 본문까지 밀리면 실제로 발생, 2026-07-10).
+        ax = app._perm_zone[pid][0]
         sent = []
         app.send_cmd = lambda action, **kw: sent.append((action, kw))
         app.open_perm_mode(pid)
@@ -5394,7 +5405,6 @@ async def test_claude_footer_zones_and_popups():
         # §10-A #2: 좌측 정렬 — 박스 offset.x 가 footer 시작 x(anchor)에 맞는다
         # (화면 오른쪽을 넘지 않게 클램프). 세로는 클릭 줄 바로 위.
         off = scr.query_one("#perm").styles.offset
-        ax = app._perm_zone[pid][0]
         ax_clamped = max(0, min(ax, scr.size.width - scr._BOX_W))
         assert int(off.x.value) == ax_clamped, (off.x.value, ax_clamped)
         assert int(off.y.value) >= 0                      # 화면 안에 배치

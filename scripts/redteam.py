@@ -500,6 +500,27 @@ _FD_SLACK = 16
 _MEM_GROWTH_MAX = 12 * 1024 * 1024       # 12 MiB
 
 
+async def _settled_fd_count(fd0: int) -> int:
+    """배터리 직후 fd/핸들 표본이 임계를 넘으면 잠깐 이벤트 루프를 돌리고 GC 후
+    재표본한다(최대 ~3s) — '지속 누수'만 판정하기 위함.
+
+    막 닫힌 소켓/transport 의 OS 핸들 회수는 이벤트 루프 후속 틱·GC 에 걸쳐 완료되고,
+    특히 Windows 의 GetProcessHandleCount 는 소켓 외 전체 핸들(스레드·이벤트 등)이라
+    직후 표본이 일시적으로 부푼다 — GHA windows-3.11 이 fd Δ18(>16)로 **단발 flaky**
+    하던 원인(재실행은 통과 = 지속 누수 아님, 2026-07-09/10 두 차례 관측). 진짜
+    연결당 누수(1200 연결이면 수백)는 기다려도 안 줄어 그대로 잡힌다."""
+    fd1 = count_fds()
+    if fd0 < 0:
+        return fd1
+    for _ in range(6):
+        if fd1 - fd0 <= _FD_SLACK:
+            break
+        await asyncio.sleep(0.5)
+        gc.collect()
+        fd1 = count_fds()
+    return fd1
+
+
 def _res_growth(res0: dict | None, res1: dict | None) -> tuple[bool, dict | None]:
     """attach 자원 표본의 누수 단언(전후 비교). 둘 다 유효 표본일 때만 단언한다.
 
@@ -550,7 +571,7 @@ async def redteam_spawn(rounds: int, *, conc_waves: int = 20,
 
         gc.collect()
         mem1, _ = tracemalloc.get_traced_memory()
-        fd1 = count_fds()                # 동시 연결이 전부 닫힌 뒤 표본(누수 측정)
+        fd1 = await _settled_fd_count(fd0)   # 임계 초과 시 settle 후 재표본(누수만 판정)
         tracemalloc.stop()
         alive = await authed_list_alive(resolved, token)
 

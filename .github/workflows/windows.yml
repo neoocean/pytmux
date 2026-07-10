@@ -44,11 +44,12 @@ jobs:
         os: [ubuntu-latest, windows-latest]   # Linux x86-64 / Win Server (macOS=위 주석 — 인프라 wedge로 제외)
         python: ["3.11", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
-    # 어떤 잡이든 매달리면 12분에 끊어 러너 분 낭비를 막는다(정상 ~5분). tests/run.py
+    # 어떤 잡이든 매달리면 여기서 끊어 러너 분 낭비를 막는다(정상 ~5분). tests/run.py
     # 의 테스트별 SIGALRM·faulthandler 타임아웃이 1차 방어(행을 트레이스백과 함께 빠른
     # 실패로 전환), 이건 2차 안전망. (GitHub 의 timeout 강제는 wedged 러너에서 지연될 수
-    # 있어, 자체 종료하는 run.py 쪽 백스톱이 더 신뢰성 있다.)
-    timeout-minutes: 12
+    # 있어, 자체 종료하는 run.py 쪽 백스톱이 더 신뢰성 있다.) 12→15(2026-07-10):
+    # 아래 스위트 스텝 8→10 상향에 맞춰 후속 스텝(validate/perf) 몫을 보존.
+    timeout-minutes: 15
     env:
       # Windows 콘솔에서 한글 출력이 cp1252 로 깨져 러너가 UnicodeEncodeError 로 죽던
       # 것 방지(러너의 stdout reconfigure 와 함께 이중 방어). 파이썬 전 출력 UTF-8.
@@ -111,7 +112,12 @@ jobs:
         run: python -u scripts/redteam.py --attach-selftest --rounds 100
 
       - name: Headless test suite
-        timeout-minutes: 8        # 스위트는 보통 ~수분 — 매달리면 여기서 끊어 잡 전체를 안 먹게
+        # 8→10(2026-07-10): windows 스위트 정상 소요가 이미 6~7분이라(3.13 실측 6:56)
+        # 여유가 1분 미만이었고, 07-09 회귀(패널 spawn 당 chcp helper 지연)로 8분을
+        # 넘겨 스위트가 **중간에 잘리며** run.py 말미 실패 트레이스백까지 유실됐다.
+        # 지연 자체는 run.py 의 PYTMUX_KEEP_CODEPAGE=1 로 제거했지만, 성장 여유를 둔다.
+        # (테스트별 행은 run.py 의 90s SIGALRM/faulthandler 가 1차로 끊는다.)
+        timeout-minutes: 10
         run: python -u tests/run.py   # -u: 버퍼링 없이 진행 즉시 출력(행 지점 식별)
 
       - name: owned-ConPTY byte round-trip + CJK flood — §1.1② (Windows only)

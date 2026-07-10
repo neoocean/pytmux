@@ -110,9 +110,14 @@ async def test_remote_attach_merge_select_input_detach():
                                 what="remote layout")
         rid = lay["active"]
         assert rid == pB.id, ("원격 레이아웃의 활성 패널 = B 패널", rid, pB.id)
+        # 마커가 실릴 때까지 screen 메시지를 **계속** 읽는다 — 원격 탭 진입 직후의
+        # 첫 screen 이 업스트림 릴레이 타이밍에 따라 마커 이전의 초기 페인트일 수
+        # 있어(전체 스위트 부하에서 간헐 재현, 격리 실행은 통과 — 2026-07-10),
+        # 첫 프레임 고정 단언은 거짓 실패한다. 후속 프레임이 마커를 싣고 온다.
         scr = await _read_until(
-            reader, lambda m: m.get("t") == "screen" and m.get("pane") == rid,
-            what="remote screen")
+            reader, lambda m: (m.get("t") == "screen" and m.get("pane") == rid
+                               and "REMOTE-MARKER-XYZ" in _rows_text(m["rows"])),
+            what="remote screen with marker")
         assert "REMOTE-MARKER-XYZ" in _rows_text(scr["rows"])
 
         # ③ 입력 릴레이: 보는 중 input → B 패널 PTY 로 도달
