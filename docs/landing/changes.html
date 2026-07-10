@@ -65,6 +65,15 @@
           닫거나 순서를 바꾸면</strong> 내가 숨겨 둔 탭이 <strong>엉뚱한 탭으로 옮겨가거나 다시 나타나던</strong> 문제를
           고쳤습니다. 원격 탭을 위치가 아니라 <strong>고유한 안정 표식</strong>으로 추적하게 바꿔, 원격 쪽 탭 구성이
           어떻게 바뀌어도 <strong>내가 분리한 바로 그 탭</strong>만 정확히 숨겨진 채 유지됩니다.</li>
+        <li><span class="pill stable">원격</span> <strong>고정(핀)해 둔 원격 탭도 원격 쪽 탭 변화에 안 어긋납니다.</strong>
+          위의 분리 수정과 같은 원리로, 원격 탭을 <strong>고정</strong>해 둔 경우에도 원격 서버 쪽에서 다른 탭을 닫거나
+          순서를 바꾸면 고정 표시가 <strong>엉뚱한 탭으로 옮겨가던</strong> 문제를 함께 고쳤습니다. 고정도 위치가 아니라
+          <strong>고유한 안정 표식</strong>으로 추적해, 원격 쪽 탭 구성이 바뀌어도 <strong>내가 고정한 그 탭</strong>이 그대로 고정됩니다.</li>
+        <li><span class="pill stable">Windows</span> <strong>Claude 종료 요약이 마침 치던 명령을 실수로 실행하던 문제를 고쳤습니다.</strong>
+          Claude 를 끝내면 나오는 토큰 사용량 요약은 셸 프롬프트를 정리하려고 <strong>Enter 를 몇 번 보냅니다.</strong>
+          그런데 Claude 가 막 끝난 직후 <strong>다음 명령을 치고 있던 중</strong>이면, 그 Enter 가 <strong>치던 명령을 그대로
+          제출</strong>해 버릴 수 있었습니다. 이제 <strong>입력 중이면 요약을 잠시 미뤘다가</strong> 입력을 끝낸 뒤에 표시해,
+          치던 명령이 의도치 않게 실행되지 않습니다.</li>
         <li><span class="pill stable">Windows</span> <strong>새 탭·새 패널이 Enter 를 누르기 전까지 빈 화면으로 나오던 문제를 고쳤습니다.</strong>
           어제(07-09) 넣은 <strong>콘솔 UTF-8 자동 전환</strong>의 부작용이었습니다. 한국어 Windows(cp949)에서
           <span class="inline-code">chcp 65001</span> 전환은 콘솔이 글자 폭을 다시 계산하며 <strong>화면을 통째로
