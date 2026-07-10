@@ -1,0 +1,17 @@
+{
+  "corpus_24x8": "9562f208bbac7f334448f066a00190c95b5dd03473a43d5fce39486a145dd186",
+  "corpus_40x12": "ced80ebc9a2b3c73dc00a2c36057dd761304dec851a26f753c224ff22e10c046",
+  "corpus_80x24": "a065dda4dad1a65a43372394c0d05a2781505d29facaf344dbc42cc3fd840eec",
+  "fixture_badge_1m.txt": "5ba7d0d000629d4aae1523849b40b083540f6906f722deeae4a5cc59639f83ef",
+  "fixture_busy.txt": "9819c6492a165064f6b4ff9fc268736b3979237d423effda48c54f4011e09f36",
+  "fixture_ctx_compact.txt": "50cd41c1aea9955f98b5de9dd5b23580119c68a2b07bb324f34f9c8b4d9fb804",
+  "fixture_ctx_high.txt": "17b91b83b7e1e89afb0ebcc1cc3916eaa88fe0d0d537e6280b13b096fea5a2b8",
+  "fixture_ctx_low.txt": "8c3aac7456aad5e336bf9cdb88be0e34b0abd0815d6858cb90e2820dd5d2dad9",
+  "fixture_feedback.txt": "630055ea7919604264d9e7d69b6f3b42b62bb14bf870b068fdbacb59aa0b05ac",
+  "fixture_idle.txt": "8ea5c93bd3c5fc3a4854948df62932edfeba785c44875fa054799231760da5b8",
+  "fixture_inline_limit.txt": "7465a0d45c5220fca019c61264543c14e6ab234e71778b0ca4bc6aad66550971",
+  "fixture_limit.txt": "f71e569a8038d7c3abb98b60426f0b0c086ef308584f697ab44f739083c66afb",
+  "fixture_limit_warn.txt": "3cbdffc2b4ec3a4143405354dd1dbdf979b4b99b9b13ddb8695ff6881b8b7017",
+  "fixture_usage.txt": "5283b96966a97530e62501e4d9ffc982c91d1490be56d3dbd6e46c12dbf5d1f6",
+  "scrollback_up20_40x8": "6e6739c41a4ec6628f5e5fd0f23b522c1d754284c4a82d14e67130191c9ec497"
+}

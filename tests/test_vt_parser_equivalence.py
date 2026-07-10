@@ -125,3 +125,75 @@ async def test_scrollback_view_equivalence():
     pa.scroll_to("bottom")
     pb.scroll_to("bottom")
     _assert_panes_equal(pa, pb, "scrollback live")
+
+
+# ── 골든 해시 오라클(로드맵 #4·#6 안전망) ─────────────────────────────────────
+# 위 테스트들은 pyte≡native **상대** 비교라, 두 경로를 동일하게 바꾸는 변경(예: #6
+# pyte.Screen→자작 native Screen 교체, 또는 공용 SGR/렌더 로직 변경)은 못 잡는다.
+# 골든 해시는 **절대 기준**: 현재 기본 파이프라인의 코퍼스·픽스처 렌더를 SHA-256 으로
+# 동결해, 렌더 결과가 바뀌면(의도치 않은 회귀) 잡는다. #6 에서 pyte 를 걷어내도 native
+# Screen 이 이 골든을 재현해야 한다. **의도적 변경 시**: PYTMUX_REGEN_GOLDEN=1 로 재생성.
+import hashlib   # noqa: E402
+import json      # noqa: E402
+
+_GOLDEN_PATH = os.path.join(FIXTURES, "..", "vt_render_golden.json")
+
+
+def _pane_signature(pane) -> str:
+    """패널의 관측 가능한 렌더 상태(클라 출력 rows+cursor·alt·화면 셀)를 결정적
+    JSON 문자열로 직렬화 — 골든 해시 입력. 순서 안정(sort_keys)."""
+    rows, cursor = pane.render(True)
+    payload = {
+        "rows": rows, "cursor": cursor,
+        "alt": pane.alt_active, "cells": _cells(pane.screen),
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _golden_signatures() -> dict:
+    """골든 대상 {label: sha256}. 기본 파이프라인(native default)로 렌더한다 —
+    #6 교체 후 새 Screen 도 이 해시를 재현해야 한다."""
+    def sig(pane):
+        return hashlib.sha256(_pane_signature(pane).encode("utf-8")).hexdigest()
+    out = {}
+    # 코퍼스 누적(대표 3폭).
+    for cols, rows in [(40, 12), (80, 24), (24, 8)]:
+        p = Pane(-1, -1, cols, rows)             # 기본(native)
+        for chunk in _CORPUS:
+            p.feed(chunk)
+        out[f"corpus_{cols}x{rows}"] = sig(p)
+    # 실 캡처 픽스처(80x24).
+    for path in sorted(glob.glob(os.path.join(FIXTURES, "*.txt"))):
+        with open(path, "rb") as f:
+            data = f.read()
+        p = Pane(-1, -1, 80, 24)
+        p.feed(data)
+        out[f"fixture_{os.path.basename(path)}"] = sig(p)
+    # 스크롤백 뷰(위로 스크롤 상태).
+    p = Pane(-1, -1, 40, 8)
+    p.feed(b"".join(f"scrollback line {i:03d}\r\n".encode() for i in range(60)))
+    p.scroll_by(20)
+    out["scrollback_up20_40x8"] = sig(p)
+    return out
+
+
+async def test_render_golden_hash_frozen():
+    """현재 기본 렌더 파이프라인이 동결된 골든 해시를 재현한다(절대 회귀 게이트).
+    PYTMUX_REGEN_GOLDEN=1 이면 골든을 재생성(의도적 렌더 변경 시). 불일치는 어느
+    입력이 드리프트했는지 라벨로 보고한다."""
+    cur = _golden_signatures()
+    if os.environ.get("PYTMUX_REGEN_GOLDEN"):
+        with open(_GOLDEN_PATH, "w", encoding="utf-8") as f:
+            json.dump(cur, f, ensure_ascii=False, indent=2, sort_keys=True)
+            f.write("\n")
+        return
+    assert os.path.exists(_GOLDEN_PATH), (
+        "골든 파일 없음 — PYTMUX_REGEN_GOLDEN=1 로 최초 생성")
+    with open(_GOLDEN_PATH, encoding="utf-8") as f:
+        golden = json.load(f)
+    # 라벨 집합 동일 + 각 해시 일치.
+    assert set(cur) == set(golden), (
+        f"골든 라벨 불일치: 신규={set(cur)-set(golden)} 누락={set(golden)-set(cur)}")
+    drift = [k for k in cur if cur[k] != golden[k]]
+    assert not drift, (
+        f"렌더 골든 드리프트(의도적이면 PYTMUX_REGEN_GOLDEN=1 재생성): {drift}")
