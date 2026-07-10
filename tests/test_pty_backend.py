@@ -198,10 +198,45 @@ async def test_force_utf8_codepage_env_optout():
 
 
 async def test_owned_conpty_spawn_forces_utf8_codepage():
-    """Windows: _ConPty.spawn 이 셸 attach **후** force_utf8_codepage 를 같은 의사콘솔로
+    """Windows: _ConPty.spawn 이 셸 attach **전** force_utf8_codepage 를 같은 의사콘솔로
     1회 부른다 — 비-UTF-8 OEM 코드페이지(cp949 등) 시스템에서 UTF-8 byte-write 앱
     (Claude Code 등)의 한글 mojibake+ESC 소실을 막는 배선(실박스 보고 2026-07-09).
+    순서가 '전'인 이유: DBCS(cp949)→65001 chcp 는 conhost 화면 클리어를 동반해, 셸
+    프롬프트가 그려진 뒤 실행되면 새 탭이 Enter 전까지 빈 화면이 된다(실박스 보고
+    2026-07-10 회귀). 호출 시점의 pid==-1(아직 CreateProcessW 전)로 순서를 못박는다.
     실제 CP 변경 효과는 라이브 검증(WINDOWS_TESTING.md) — 여기선 호출 배선만."""
+    if not pty_backend.IS_WINDOWS:
+        return
+    calls = []
+    orig = conpty.force_utf8_codepage
+    holder = {}
+    conpty.force_utf8_codepage = lambda hpc, timeout_ms=1500: (
+        calls.append(holder["cp"].pid if "cp" in holder else None), True)[1]
+
+    real_init = conpty._ConPty.__init__
+
+    def init_wrap(self, *a, **k):
+        real_init(self, *a, **k)
+        holder["cp"] = self          # spawn 전에 인스턴스를 잡아 pid 관찰
+
+    conpty._ConPty.__init__ = init_wrap
+    try:
+        pty = pty_backend._OwnedConPty(["cmd.exe"], cols=80, rows=24,
+                                       cwd=None, env=dict(os.environ))
+        try:
+            assert len(calls) == 1, "spawn 당 1회 코드페이지 강제"
+            assert calls[0] == -1, "셸 CreateProcessW 이전(pid 미할당) 호출이어야 함"
+        finally:
+            pty.terminate()
+            pty.close()
+    finally:
+        conpty.force_utf8_codepage = orig
+        conpty._ConPty.__init__ = real_init
+
+
+async def test_conpty_ensure_utf8_codepage_once():
+    """Windows: ensure_utf8_codepage 는 의사콘솔당 1회 게이트 — 풀 채움 시점에 이미
+    강제된 콘솔은 spawn 이 중복 호출하지 않는다(지각 chcp 재실행 차단 겸 비용 절약)."""
     if not pty_backend.IS_WINDOWS:
         return
     calls = []
@@ -209,13 +244,13 @@ async def test_owned_conpty_spawn_forces_utf8_codepage():
     conpty.force_utf8_codepage = lambda hpc, timeout_ms=1500: (
         calls.append(hpc), True)[1]
     try:
-        pty = pty_backend._OwnedConPty(["cmd.exe"], cols=80, rows=24,
-                                       cwd=None, env=dict(os.environ))
+        cp = conpty._ConPty(20, 6)
         try:
-            assert len(calls) == 1, "spawn 당 1회 코드페이지 강제"
+            cp.ensure_utf8_codepage()
+            cp.ensure_utf8_codepage()      # 풀 선강제 후 spawn 경로 재호출 시뮬레이션
+            assert len(calls) == 1, "의사콘솔당 1회만 강제"
         finally:
-            pty.terminate()
-            pty.close()
+            cp.close()
     finally:
         conpty.force_utf8_codepage = orig
 

@@ -411,12 +411,22 @@ def force_utf8_codepage(hpc, timeout_ms: int = 1500) -> bool:
     콘솔 CP 는 attach 된 프로세스만 바꿀 수 있어 같은 의사콘솔에
     `cmd /d /c chcp 65001>nul` 을 잠깐 attach 해 설정한다(chcp 는 입력·출력 CP 를 함께
     바꾼다; /d=AutoRun 생략, >nul 은 cmd 내부 리다이렉트라 패널에 아무것도 안 찍힌다).
-    반드시 셸 spawn **후**에 부른다 — helper 가 첫/유일 클라이언트면 그 종료로 콘솔
-    클라이언트가 0 이 되는 순간이 생겨 conhost 가 내려갈 수 있다. 시스템 기본이 이미
-    UTF-8(GetOEMCP==65001, 'Beta: UTF-8' 설정)이면 새 콘솔도 UTF-8 이라 생략하고,
-    PYTMUX_KEEP_CODEPAGE(비어있지 않은 값)로 강제를 끌 수 있다(레거시 cp949 출력 앱
-    전용 탈출구). helper 정상 종료 여부 반환 — 실패해도 호출부는 계속(표시 품질 문제일
-    뿐 spawn 자체와 무관)."""
+
+    ⚠️ 반드시 셸 spawn **전**(패널에 어떤 출력도 생기기 전)에 부른다 — DBCS OEM CP
+    (cp949·932)에서 65001 로의 전환은 conhost 가 셀 폭을 재계산하며 **화면을 통째로
+    지운다**(CJK Windows 에서 `chcp` 가 화면을 클리어하는 그 동작). 셸이 배너/프롬프트를
+    먼저 그린 뒤 chcp 가 실행되면 그 클리어가 프롬프트를 지워 "새 탭이 Enter 전까지
+    빈 화면"이 된다(실박스 보고 2026-07-10; GHA=437 SBCS 라 클리어 없음 → CI 재현 불가).
+    helper 가 첫/유일 클라이언트로 종료돼 콘솔 클라이언트가 0 이 되어도 번들
+    OpenConsole 은 내려가지 않음을 GHA 라이브 프로브로 확인(2026-07-10 — 애초에
+    _watch_exit 가 존재하는 이유와 동일 메커니즘: 자식이 죽어도 conhost 는 산다).
+    타임아웃(콜드스타트 등)이면 helper 를 **강제 종료**한다 — 살려 두면 셸 출력 이후
+    지각 chcp 가 실행돼 위 클리어 버그가 재발한다(순서 불변식 유지가 CP 설정 실패보다
+    우선; 실패해도 표시 품질 문제일 뿐 spawn 자체와 무관).
+
+    시스템 기본이 이미 UTF-8(GetOEMCP==65001, 'Beta: UTF-8' 설정)이면 새 콘솔도
+    UTF-8 이라 생략하고, PYTMUX_KEEP_CODEPAGE(비어있지 않은 값)로 강제를 끌 수 있다
+    (레거시 cp949 출력 앱 전용 탈출구). helper 정상 종료 여부 반환."""
     if (os.environ.get("PYTMUX_KEEP_CODEPAGE") or "").strip():
         return False
     try:
@@ -430,7 +440,14 @@ def force_utf8_codepage(hpc, timeout_ms: int = 1500) -> bool:
             hpc, subprocess.list2cmdline([comspec, "/d", "/c"])
             + f" chcp {_CP_UTF8}>nul")
         try:
-            return _k32.WaitForSingleObject(hproc, timeout_ms) == 0
+            ok = _k32.WaitForSingleObject(hproc, timeout_ms) == 0
+            if not ok:
+                # 지각 chcp 차단(위 순서 불변식) — helper 를 강제 종료한다.
+                try:
+                    _k32.TerminateProcess(hproc, 1)
+                except OSError:
+                    pass
+            return ok
         finally:
             _k32.CloseHandle(hproc)
     except OSError:
@@ -514,6 +531,13 @@ def _pool_fill():
                 cp = _ConPty(*_pool_dims)
             except Exception:
                 return
+            try:
+                # 콘솔 CP UTF-8 강제를 풀 채움 시점(백그라운드)에 미리 끝낸다 —
+                # 셸 attach 전이라 chcp 의 DBCS 화면 클리어가 무해하고, spawn
+                # 임계경로에서 helper 대기(~수십 ms, 콜드 수백 ms)가 사라진다.
+                cp.ensure_utf8_codepage()
+            except Exception:
+                pass   # best-effort — 실패해도 풀 객체는 유효(spawn 이 재시도 안 함)
             with _pool_lock:
                 if len(_pool) >= _POOL_TARGET:
                     spare = cp           # 레이스로 초과 → 락 밖에서 닫는다
@@ -576,6 +600,7 @@ class _ConPty:
         self._write = _HANDLE()     # 우리가 쓰는 쪽(conhost 입력) — 동기 블로킹
         self._closed = False
         self._exit: Optional[int] = None
+        self._utf8_forced = False   # 콘솔 CP UTF-8 강제 1회 게이트(ensure_utf8_codepage)
         self._attrbuf = None        # 자식 spawn 후까지 유지(GC 방지)
         self._cmdbuf = None
         self._envbuf = None
@@ -605,8 +630,24 @@ class _ConPty:
         self._cols = max(1, cols)
         self._rows = max(1, rows)
 
+    def ensure_utf8_codepage(self) -> None:
+        """콘솔 코드페이지 UTF-8 강제를 이 의사콘솔에 **1회만** 시도한다(성패 무관
+        재시도 없음). 반드시 셸 attach **전**에 완료돼야 한다 — DBCS(cp949 등) 콘솔의
+        chcp 65001 은 화면 클리어를 동반해, 셸 프롬프트가 그려진 뒤 실행되면 새 탭이
+        Enter 전까지 빈 화면이 된다(force_utf8_codepage 참조). 워밍 풀은 채움 시점에
+        미리 불러 spawn 임계경로에서 helper 비용을 치우고, 풀 미적중/풀 꺼짐(pty-host
+        등)은 spawn 첫 단계에서 부른다."""
+        if self._utf8_forced:
+            return
+        self._utf8_forced = True
+        force_utf8_codepage(self._hpc)
+
     def spawn(self, argv, cwd: Optional[str] = None, env: Optional[dict] = None) -> int:
         """argv 를 의사 콘솔에 attach 해 띄운다. 자식 pid 반환."""
+        # 콘솔 CP UTF-8 강제(비-UTF-8 OEM 시스템의 한글 mojibake 수정)는 반드시 셸
+        # attach **전** — DBCS→65001 chcp 의 화면 클리어가 셸 프롬프트를 지우지 않게
+        # (2026-07-10 새 탭 빈 화면 회귀 수정; 순서 근거는 force_utf8_codepage docstring).
+        self.ensure_utf8_codepage()
         appname = shutil.which(argv[0]) or argv[0]
         # 실행 파일 경로를 따옴표로 감싸고 나머지 인자를 표준 규칙으로 직렬화.
         if len(argv) > 1:
@@ -664,9 +705,6 @@ class _ConPty:
             _resize_pc(self._hpc, _COORD(self._cols, self._rows))
         except OSError:
             pass
-        # 콘솔 코드페이지 UTF-8 강제(비-UTF-8 OEM 시스템의 한글 mojibake 수정) —
-        # 자식이 붙어 콘솔 클라이언트가 살아있는 지금 1회(best-effort, 실패 무해).
-        force_utf8_codepage(self._hpc)
         return self.pid
 
     def read(self, maxlen: int = 65536) -> bytes:
