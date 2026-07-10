@@ -779,8 +779,10 @@ class ServerRemoteMixin:
     def _visible_windows(self, link: RemoteLink) -> list:
         """이 링크에서 병합 탭바에 보일 (ri, rw) 목록 — 단일-탭 분리
         (detached_windows)로 숨긴 window 는 제외한다. ri 는 full link.windows
-        기준(핀 집합 pinned_windows 가 ri 로 키잉하므로 위치를 보존).
-        detached 판정은 안정 키(_win_key: 상류 wid, 없으면 index 폴백)로 한다."""
+        위치 index 로, **라이브 relay**(select_window·_remote_tab_at 가 현재 status 의
+        그 위치 창을 업스트림에 지목)용이다 — 현재 status 스냅샷 기준이라 위치가 정합.
+        반면 **영속·sticky 상태**(detached_windows·pinned_windows)는 상류 재정렬을
+        넘어야 하므로 안정 키(_win_key: 상류 wid, 없으면 index 폴백)로 키잉한다."""
         return [(ri, rw) for ri, rw in enumerate(link.windows)
                 if self._win_key(rw) not in link.detached_windows]
 
@@ -799,7 +801,9 @@ class ServerRemoteMixin:
                 out.append({"index": gi, "name": f"⇄{link.host}:{rw.get('name', '')}",
                             "active": bool(viewing and rw.get("active")),
                             "remote": True,
-                            "pinned": ri in link.pinned_windows,  # §12 ① 로컬 핀
+                            # §12 ① 로컬 핀 — detached 와 동일하게 안정 wid(_win_key)로
+                            # 키잉(상류 탭 close/reorder 로도 핀이 안 어긋남, 로드맵 #3).
+                            "pinned": self._win_key(rw) in link.pinned_windows,
                             "bell": rw.get("bell", False),
                             "activity": rw.get("activity", False),
                             "claude_done": rw.get("claude_done", False)})
@@ -818,19 +822,24 @@ class ServerRemoteMixin:
 
     def set_remote_pinned(self, sess, gi: int, value=None):
         """§12 ①: 원격(병합) 탭 gi 의 **다운스트림 로컬** 고정(핀)을 토글/설정한다.
-        핀은 보는 쪽 탭바 레이아웃 문제라 업스트림에 전파하지 않고 per-link 집합
-        (원격 로컬 index ri)에 저장 → _remote_tabs 가 매 status 에 pinned 비트를
-        실어 준다. value=None 이면 토글. 변동을 전 클라 탭바에 즉시 방송."""
+        핀은 보는 쪽 탭바 레이아웃 문제라 업스트림에 전파하지 않고 per-link 집합에
+        저장 → _remote_tabs 가 매 status 에 pinned 비트를 실어 준다. 위치 ri 가 아니라
+        상류 안정 wid(_win_key, 구상류는 index 폴백)로 키잉해 상류 탭 close/reorder 로도
+        핀이 엉뚱한 탭으로 옮겨가지 않는다(로드맵 #3 — detached_windows M-1 과 동일 수정).
+        value=None 이면 토글. 변동을 전 클라 탭바에 즉시 방송."""
         hit = self._remote_tab_at(sess, gi)
         if hit is None:
             return
         link, ri = hit
+        if not (0 <= ri < len(link.windows)):
+            return
+        key = self._win_key(link.windows[ri])
         if value is None:
-            value = ri not in link.pinned_windows
+            value = key not in link.pinned_windows
         if value:
-            link.pinned_windows.add(ri)
+            link.pinned_windows.add(key)
         else:
-            link.pinned_windows.discard(ri)
+            link.pinned_windows.discard(key)
         self._remote_status_broadcast()
 
     def _remote_status_broadcast(self):

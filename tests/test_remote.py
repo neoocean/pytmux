@@ -627,15 +627,22 @@ async def test_remote_pin_survives_restart():
         ok = await srvA.remote_attach(sessA, endpoint=sockB)
         assert ok
         link = next(iter(srvA._remotes_dict().values()))
-        # 원격 첫 창을 핀(다운스트림 로컬 index=0). set_remote_pinned 은 업스트림
-        # status 병합으로 link.windows 가 찬 뒤라야 매핑되므로, 여기선 persistence
-        # 검증에 집중해 집합에 직접 넣는다(핀 매핑 자체는 별도 테스트가 다룸).
-        link.pinned_windows.add(0)
-        assert link.pinned_windows == {0}, link.pinned_windows
+        # 업스트림 status 병합으로 link.windows(안정 wid 포함)가 찰 때까지 대기 —
+        # 핀은 위치가 아니라 wid 로 키잉하므로 실제 창의 wid 가 필요하다(로드맵 #3).
+        for _ in range(200):
+            if link.windows:
+                break
+            await asyncio.sleep(0.02)
+        assert link.windows, "업스트림 status 병합 대기 실패"
+        base = len(sessA.tabs)
+        srvA.set_remote_pinned(sessA, base, True)       # 첫 원격 탭 핀(wid 로 키잉)
+        key = srvA._win_key(link.windows[0])
+        assert link.pinned_windows == {key}, link.pinned_windows
         specs = srvA._resume_payload().get("remotes")
-        assert specs and specs[0].get("pinned_windows") == [0], specs
+        assert specs and specs[0].get("pinned_windows") == [key], specs
 
-        # 새 서버(re-exec 후 이미지 역)가 spec 으로 복원 → 핀도 되살아난다.
+        # 새 서버(re-exec 후 이미지 역)가 spec 으로 복원 → 같은 업스트림(srvB 불변)에
+        # 재연결하면 같은 wid 를 받아 핀이 그 탭에 되살아난다.
         srvC.ensure_default_session(80, 24)
         reader, writer = await _attach_client(sockC)
         await _read_until(reader, lambda m: m.get("t") == "status",
@@ -647,7 +654,7 @@ async def test_remote_pin_survives_restart():
             and any(w.get("remote") and w.get("pinned") for w in m["windows"]),
             what="restored pinned remote tab")
         linkC = next(iter(srvC._remotes_dict().values()))
-        assert linkC.pinned_windows == {0}, linkC.pinned_windows
+        assert linkC.pinned_windows == {key}, linkC.pinned_windows
     finally:
         if writer is not None:
             writer.close()
@@ -1029,13 +1036,14 @@ async def test_remote_tab_pin_local_set_and_status():
         srv._remote_status_broadcast = lambda: None    # 소켓 없는 단위 테스트
         link = RemoteLink("hostA", None, None)
         link.sess = sess
-        link.windows = [{"name": "shellA", "active": True},
-                        {"name": "shellB", "active": False}]
+        # 실제 status windows 는 안정 wid + 위치 index 를 싣는다(핀은 wid 로 키잉).
+        link.windows = [{"name": "shellA", "index": 0, "wid": 501, "active": True},
+                        {"name": "shellB", "index": 1, "wid": 502, "active": False}]
         srv._remotes_dict()["hostA"] = link
         base = len(sess.tabs)                           # 원격 병합 index = base, base+1
-        # 둘째 원격 탭(원격 로컬 index 1) 명시 핀
+        # 둘째 원격 탭(원격 로컬 index 1, wid 502) 명시 핀 → 집합엔 위치가 아니라 wid.
         srv.set_remote_pinned(sess, base + 1, True)
-        assert link.pinned_windows == {1}, link.pinned_windows
+        assert link.pinned_windows == {502}, link.pinned_windows
         rt = srv._remote_tabs(base)
         assert [t["pinned"] for t in rt] == [False, True], rt
         # 토글로 해제(value 생략)
@@ -1043,6 +1051,35 @@ async def test_remote_tab_pin_local_set_and_status():
         assert link.pinned_windows == set()
         # 로컬 탭은 별개 — 원격 핀이 로컬 pinned 를 안 건드린다.
         assert all(not t.pinned for t in sess.tabs)
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_remote_pin_survives_upstream_tab_close_reindex():
+    """로드맵 #3(M-1 과 동일 클래스): 원격 탭을 핀한 뒤 상류가 **더 앞의** 탭을 닫아
+    _reindex 로 위치 index 가 재할당돼도, 핀은 **그 탭 그대로** 따라간다(위치가 아니라
+    안정 wid 로 키잉). 종전 위치-index 키잉은 상류 close 로 핀이 엉뚱한 탭으로 옮겨갔다."""
+    from pytmuxlib.serverremote import RemoteLink
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv._remote_status_broadcast = lambda: None
+        link = RemoteLink("hostA", None, None)
+        link.sess = sess
+        # 상류 탭 3개(wid 501/502/503, 위치 0/1/2).
+        link.windows = [{"name": "T0", "index": 0, "wid": 501, "active": False},
+                        {"name": "T1", "index": 1, "wid": 502, "active": False},
+                        {"name": "T2", "index": 2, "wid": 503, "active": False}]
+        srv._remotes_dict()["hostA"] = link
+        base = len(sess.tabs)
+        srv.set_remote_pinned(sess, base + 2, True)      # T2(wid 503) 핀
+        assert link.pinned_windows == {503}
+        # 상류가 앞 탭 T1 을 닫음 → _reindex: T0(0), T2(1). link.windows 재송신.
+        link.windows = [{"name": "T0", "index": 0, "wid": 501, "active": False},
+                        {"name": "T2", "index": 1, "wid": 503, "active": False}]
+        rt = srv._remote_tabs(base)
+        pinned_names = [t["name"].split(":", 1)[1] for t in rt if t["pinned"]]
+        assert pinned_names == ["T2"], f"핀이 엉뚱한 탭으로 이동(로드맵 #3): {rt}"
     finally:
         await teardown(srv, task, sock)
 
