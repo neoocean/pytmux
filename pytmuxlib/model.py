@@ -48,6 +48,39 @@ def _key_to_style(key):
     return dict(key)
 
 
+# 배경 갭 메꿈(_fill_flanked_gaps) 대상 공백 런의 최대 길이. Claude Code 등이 탭
+# 전개로 남기는 구멍은 탭스톱 간격(≤8)이라 넉넉하되, 패널 배치용 큰 기본-배경
+# 여백(정당한 '빈 영역')까지 물들이지 않게 상한을 둔다.
+_GAP_FILL_MAX = 16
+
+
+def _fill_flanked_gaps(segs):
+    """같은 **명시 배경**의 런 사이에 낀 짧은 기본-배경 공백 런을 그 배경으로 메꾼다.
+
+    Claude Code 는 트랜스크립트 블록을 명시 배경(48;2;…)으로 칠하면서 **탭 전개
+    공백만 기본 배경(SGR 49)** 으로 내보낸다(캡처 실측 2026-07-10:
+    `…3.13)\\x1b[49m     \\x1b[48;2;70;70;70mHeadless…`). 기본-배경 셀은 클라이언트
+    에서 터미널 기본색으로 패스스루되므로, 회색 블록 한가운데 검은(터미널 배경)
+    직사각형 구멍들이 뚫려 보인다(실박스 스크린샷 보고). 실제 터미널에 native 로
+    띄워도 같은 구멍이 생기는 앱 쪽 특성이지만, 표시 품질을 위해 양쪽이 **동일한**
+    명시 배경으로 감싼 ≤ _GAP_FILL_MAX 칸의 순수 공백 런만 그 배경으로 채운다.
+
+    보수 조건(오탐 시 native 와 달라지므로 좁게): ① 런 전체가 공백 ② 자체 배경·
+    반전(rv) 없음(반전은 배경이 전경이 됨) ③ 좌우 이웃 런의 'b' 가 서로 같고 명시적.
+    스타일 dict 는 _key_to_style 공유 객체라 복사해 덮는다."""
+    for i in range(1, len(segs) - 1):
+        text, st = segs[i]
+        if len(text) > _GAP_FILL_MAX or "b" in st or "rv" in st:
+            continue
+        if text.strip(" "):
+            continue                      # 순수 스페이스 런만 대상
+        left_b = segs[i - 1][1].get("b")
+        if left_b is None or segs[i + 1][1].get("b") != left_b:
+            continue
+        segs[i][1] = {**st, "b": left_b}
+    return segs
+
+
 # restart-all 스냅샷(_export_screen)이 색/속성을 보존하도록 pyte 셀 속성 → SGR
 # 이스케이프로 환원한다. pyte fg/bg 는 "default"·기본색명·"bright<name>"·6자리 hex.
 _SGR_BASE = {"black": 30, "red": 31, "green": 32, "brown": 33, "yellow": 33,
@@ -1066,7 +1099,7 @@ class Pane:
                 cur_text.append(data)
         if cur_text:
             segs.append(["".join(cur_text), _key_to_style(cur_key)])
-        return segs
+        return _fill_flanked_gaps(segs)
 
     def render(self, with_cursor: bool):
         """현재 뷰포트를 [rows, cursor] 로 직렬화. rows = 행마다 [text, style] 런 목록.

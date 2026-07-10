@@ -60,6 +60,20 @@
     <section class="cl-day" id="d-2026-07-10">
       <h2>2026-07-10 <span class="pill">금요일</span></h2>
       <ul>
+        <li><span class="pill stable">Windows</span> <strong>새 탭·새 패널이 Enter 를 누르기 전까지 빈 화면으로 나오던 문제를 고쳤습니다.</strong>
+          어제(07-09) 넣은 <strong>콘솔 UTF-8 자동 전환</strong>의 부작용이었습니다. 한국어 Windows(cp949)에서
+          <span class="inline-code">chcp 65001</span> 전환은 콘솔이 글자 폭을 다시 계산하며 <strong>화면을 통째로
+          지우는</strong> 동작을 동반하는데, 셸이 프롬프트를 먼저 그린 뒤에 전환이 실행되면 그 클리어가
+          프롬프트를 지워 버려 새 탭이 <strong>빈 화면</strong>으로 보였습니다(Enter 를 치면 새 프롬프트가 나와
+          그때부터 정상). 이제 UTF-8 전환을 <strong>셸이 뜨기 전에 먼저 완료</strong>하고(늦어지면 전환을 포기해
+          화면을 지키는 쪽을 우선), 미리 준비해 두는 콘솔 풀에는 <strong>채워 넣는 시점에</strong> 전환을 끝내 새 탭
+          속도도 그대로입니다.</li>
+        <li><span class="pill stable">표시</span> <strong>Claude Code 화면의 회색 블록 속 검은 직사각형 구멍을 메꿨습니다.</strong>
+          Claude Code 는 대화 블록을 <strong>회색 배경</strong>으로 칠하면서, 표(탭 문자) 간격의 공백만
+          <strong>기본 배경</strong>으로 내보냅니다. 그 공백 칸에는 터미널의 기본 배경(대개 검정)이 그대로 비쳐,
+          회색 블록 한가운데 <strong>검은 사각형들</strong>이 뚫린 것처럼 보였습니다. 이제 같은 배경색 사이에 낀
+          짧은 공백 구간은 <strong>주변과 같은 배경</strong>으로 채워 표시합니다(다른 프로그램 화면에 영향이 없도록
+          양쪽 배경이 같은 짧은 구간만).</li>
         <li><span class="pill stable">Windows</span> <strong>완전 재시작 후 첫 실행이 "서버 기동 실패"로 끝나던 문제를 고쳤습니다.</strong>
           Windows 에서 <span class="inline-code">kill-server</span> 로 pytmux 를 완전히 끝낸 뒤 다시 실행하면
           <strong>첫 번째 시도가 늘 실패</strong>하고 두 번째에야 열렸습니다. 원인은 이전 서버가 남긴

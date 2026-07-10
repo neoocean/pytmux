@@ -558,3 +558,45 @@ def test_sync_output_tracking():
     # 한 슬라이스에 h 다음 l(완결 프레임) → 최종 꺼짐
     assert p.update_sync_output(b"\x1b[?2026hBODY\x1b[?2026l") is True
     assert p.sync_output is False
+
+
+async def test_bg_gap_fill_between_same_bg_runs():
+    """배경 갭 메꿈(_fill_flanked_gaps): 같은 명시 배경 런 사이의 짧은 기본-배경
+    공백 런은 그 배경으로 채워 내보낸다 — Claude Code 가 트랜스크립트 블록을
+    48;2;… 로 칠하면서 탭 전개 공백만 SGR 49 로 남겨, 회색 블록에 검은(터미널
+    기본 배경) 구멍이 뚫려 보이던 표시 문제 수정(실박스 캡처 2026-07-10)."""
+    from pytmuxlib.model import Pane
+    p = Pane(-1, -1, 60, 4)
+    # 캡처 실측 패턴: 명시 bg 텍스트 → 49m 공백 5칸 → 같은 bg 텍스트
+    p.feed(b"\x1b[48;2;70;70;70mAAA\x1b[49m     \x1b[48;2;70;70;70mBBB\x1b[0m")
+    rows, _ = p.render(with_cursor=False)
+    segs = rows[0]
+    joined = "".join(t for t, _ in segs)
+    assert joined.startswith("AAA     BBB")
+    gap = next(s for t, s in segs if t.strip(" ") == "" and "AAA" not in t and len(t) == 5)
+    assert gap.get("b") == "#464646", f"갭이 이웃 배경으로 채워져야 함: {segs[:4]}"
+
+
+async def test_bg_gap_fill_conservative_conditions():
+    """갭 메꿈 보수 조건: ① 좌우 배경이 다르면 안 채움 ② 상한(16칸) 초과 런 안 채움
+    ③ 줄 끝(한쪽만 명시 배경) 안 채움 — native 터미널과의 차이를 최소화."""
+    from pytmuxlib.model import Pane, _GAP_FILL_MAX
+    # ① 좌우 배경 불일치
+    p = Pane(-1, -1, 60, 4)
+    p.feed(b"\x1b[48;2;70;70;70mAAA\x1b[49m   \x1b[48;2;10;10;10mBBB\x1b[0m")
+    rows, _ = p.render(with_cursor=False)
+    gap = next(s for t, s in rows[0] if t == "   ")
+    assert "b" not in gap
+    # ② 상한 초과(17칸)
+    p2 = Pane(-1, -1, 80, 4)
+    p2.feed(b"\x1b[48;2;70;70;70mAAA\x1b[49m" + b" " * (_GAP_FILL_MAX + 1)
+            + b"\x1b[48;2;70;70;70mBBB\x1b[0m")
+    rows2, _ = p2.render(with_cursor=False)
+    gap2 = next(s for t, s in rows2[0] if t.strip(" ") == "" and len(t) == _GAP_FILL_MAX + 1)
+    assert "b" not in gap2
+    # ③ 줄 끝 여백(오른쪽 이웃이 없는 기본-배경 나머지)은 그대로
+    p3 = Pane(-1, -1, 30, 4)
+    p3.feed(b"\x1b[48;2;70;70;70mAAA\x1b[0m")
+    rows3, _ = p3.render(with_cursor=False)
+    tail = rows3[0][-1]
+    assert "b" not in tail[1] and tail[0].strip(" ") == ""
