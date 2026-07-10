@@ -65,3 +65,42 @@ async def test_paste_clipboard_strips_box_drawing_per_toggle():
         await _with_app(body)
     finally:
         clientclip.paste = _orig
+
+
+async def test_wait_until_settled_stall_vs_progress_vs_met():
+    """스톨 워치독(로드맵 #3) wait_until_settled 3거동 검증: ① 조건 즉시 충족
+    →(True,None) ② 상태가 수렴(불변)인데 조건 미충족 → **타임아웃 전에** (False,진단)
+    ③ 상태가 계속 변하며 진행 → timeout 까지 인내 후 (False,_). fake pilot 로 격리."""
+    import asyncio
+    from harness import wait_until_settled
+
+    class _FakePilot:
+        async def pause(self, step):
+            await asyncio.sleep(0)
+
+    pilot = _FakePilot()
+    # ① 조건 충족.
+    ok, diag = await wait_until_settled(pilot, lambda: True, lambda: 0)
+    assert ok is True and diag is None
+
+    # ② 스톨(수렴-오답): 상태 불변 + 조건 거짓 → settle 회 후 조기 실패.
+    calls = {"n": 0}
+    def snap_const():
+        calls["n"] += 1
+        return "frozen"
+    ok, diag = await wait_until_settled(pilot, lambda: False, snap_const,
+                                        timeout=100.0, step=0.0, settle=5)
+    assert ok is False and diag == repr("frozen")
+    assert calls["n"] < 30, ("타임아웃(=매우 큼) 전에 스톨로 조기 반환해야", calls["n"])
+
+    # ③ 진행 중(상태 계속 변함): settle 에 안 걸리고 timeout 까지 인내.
+    counter = {"n": 0}
+    def snap_changing():
+        counter["n"] += 1
+        return counter["n"]
+    loop = asyncio.get_event_loop()
+    t0 = loop.time()
+    ok, diag = await wait_until_settled(pilot, lambda: False, snap_changing,
+                                        timeout=0.2, step=0.0, settle=5)
+    assert ok is False
+    assert loop.time() - t0 >= 0.2 - 0.05, "진행 중이면 timeout 까지 인내"

@@ -157,6 +157,46 @@ async def wait_until(pilot, cond, timeout=4.0, step=0.05):
         await pilot.pause(step)
 
 
+async def wait_until_settled(pilot, cond, snapshot, timeout=4.0, step=0.05,
+                             settle=8):
+    """`wait_until` 의 **스톨 감지** 변형(로드맵 #3 test-infra 스톨 워치독).
+
+    cond() 참까지 폴링하되, 관측 상태 `snapshot()` 이 `settle` 회 **연속 불변**인데도
+    cond 가 아직 거짓이면 = 화면/상태가 **수렴했는데 조건이 안 맞음**(정착-오답 스톨)
+    으로 보고, timeout 까지 안 기다리고 즉시 `(False, repr(snapshot))` 을 돌려준다 —
+    바 타임아웃과 달리 **무엇에 수렴했는지** 진단을 준다. 상태가 계속 변하면(진행 중)
+    timeout 까지 인내(느린 CI 흡수). cond 참이면 `(True, None)`. 호출부는 반환 후에도
+    동일 조건을 단언해 실패 메시지를 보존한다.
+
+    '수렴-오답'과 '느려서 아직'을 가르는 게 핵심: 렌더가 멈췄는데 조건 미충족이면
+    더 기다려도 소용없으니 빠르게 진단 실패시키고, 아직 프레임이 흐르면 인내한다."""
+    import asyncio as _asyncio
+    loop = _asyncio.get_event_loop()
+    end = loop.time() + timeout
+    prev = object()          # 첫 비교가 반드시 '변함'이 되게(스냅샷과 절대 안 같은 센티넬)
+    stable = 0
+    while True:
+        try:
+            if cond():
+                return True, None
+        except Exception:
+            pass
+        try:
+            snap = snapshot()
+        except Exception:
+            snap = None
+        if snap == prev:
+            stable += 1
+            if stable >= settle:
+                return False, repr(snap)   # 수렴했는데 조건 미충족 = 스톨
+        else:
+            stable = 0
+            prev = snap
+        if loop.time() >= end:
+            return False, repr(snap)       # 타임아웃(계속 변하다 시간 초과)
+        await pilot.pause(step)
+
+
 async def drain(reader, store, timeout=0.8, until=None):
     """소켓에서 timeout 동안 들어오는 메시지를 store(list)에 모은다.
 
