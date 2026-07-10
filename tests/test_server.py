@@ -2697,6 +2697,45 @@ async def test_rename_waits_while_composer_has_text():
         await teardown(srv, task, sock)
 
 
+async def test_rename_waits_while_inbuf_has_text_even_if_screen_lags():
+    """화면 스크랩(컴포저 파싱)이 아직 사용자의 첫 키 입력을 못 따라온 프레임에도
+    주입을 미룬다(Windows ConPTY 리페인트 지연 레이스 버그 리포트). 사용자가 막 친
+    글자는 `server_input`→`_track_prompt` 가 화면 재렌더를 기다리지 않고 `pane._inbuf`
+    에 즉시 동기 반영하므로, 화면상 컴포저가 아직 빈 것으로 보여도(_claude_composer_text
+    가 "") `_inbuf` 가 비지 않았으면 `/rename` 을 주입하지 않아야 한다 — 그렇지 않으면
+    사용자가 치던 프롬프트에 `/rename` 이 끼어들어 섞인 텍스트가 그대로 제출된다."""
+    srv, task, sock = await server_only()
+    try:
+        srv.claude_auto_launch = False   # 첫 idle /rc 자동주입 격리
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        injected = []
+        srv._pc_inject = lambda pane, text: injected.append((pane, text))
+
+        p._pending_rename = "myproj"
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")   # idle, 컴포저 화면상 빈 상태
+
+        # ① 화면은 아직 빈 컴포저를 보이지만(리페인트 지연), 사용자가 막 친 글자가
+        # _inbuf 에 이미 반영됨 → 주입 보류.
+        p._inbuf = "h"
+        srv._scan_claude(sess, win)
+        assert p._claude == "idle"
+        assert injected == [], injected
+        assert p._pending_rename == "myproj"
+
+        # ② 제출(Enter)로 _inbuf 가 비워지고 화면도 계속 빈 컴포저 → 이제 발동.
+        # (동일 화면을 다시 feed 해 B1 dirty 게이팅으로 스캔이 통째로 스킵되지
+        # 않게 한다 — feed 는 내용과 무관하게 _feed_seq 를 올린다.)
+        p._inbuf = ""
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert injected == [(p, "/rename myproj")], injected
+        assert p._pending_rename is None
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_inpane_usage_panel_no_autopopup_seq():
     """§3.9(2026-06-17): 인패널 /usage 자동 팝업 신호(_usage_shown_seq)는 제거됐다.
     패널을 봐도 그런 서버 필드/status 키가 생기지 않는다(실측 캡처는 별도로 유지 —

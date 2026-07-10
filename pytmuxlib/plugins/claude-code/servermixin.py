@@ -1431,7 +1431,19 @@ class ServerClaudeMixin:
                     # 입력 줄에 `/rename` 이 끼어들어 덮지 않도록 _pending_rename 을 유지해,
                     # 컴포저가 빈 다음 idle(제출/클리어 후)에 재시도한다. 빈 박스("")·
                     # 파싱 불가(None)면 기존대로 즉시 주입한다(추적 불가 시 보수적 진행).
-                    if p._pending_rename and not self._claude_composer_text(p):
+                    #
+                    # 화면 스크랩(_claude_composer_text)만으로는 레이스가 있다: 사용자가
+                    # 키를 쳐도 Claude 가 그걸 받아 **화면에 되그려야** 컴포저가 non-empty
+                    # 로 보인다 — PTY 왕복(서버→자식→재렌더) 지연 동안은 막 친 첫 글자가
+                    # 아직 반영 안 돼 "빈 박스"로 오판된다. Windows ConPTY 는 이 왕복이
+                    # 유독 느려(conhost 리페인트) 창이 넓어져, 그 틈에 주입되면 `/rename`
+                    # 이 사용자가 치던 글자와 섞여 그대로 제출된다(버그 리포트: 첫 글자를
+                    # 치는 순간 끼어들어 프롬프트가 섞임). `pane._inbuf`(_track_prompt 가
+                    # server_input 에서 키 입력을 화면 재렌더 없이 즉시 동기 누적)를 함께
+                    # 봐 이 레이스를 없앤다 — 키 입력 이벤트 자체가 이미 스캔 이전에
+                    # _inbuf 를 채워, 화면이 아직 못 따라온 프레임에도 정확히 걸린다.
+                    if (p._pending_rename and not self._claude_composer_text(p)
+                            and not p._inbuf):
                         nm = p._pending_rename
                         p._pending_rename = None
                         self._pc_inject(p, "/rename " + nm)
