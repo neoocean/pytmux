@@ -150,18 +150,20 @@ _FEEDBACK_DISMISS_KEY = b"\x1b"
 
 
 class ServerClaudeMixin:
-    # ── 메서드 인덱스(LLM 부분 Read 용 — 이 단일 클래스는 ~2천 줄이라 `grep '^    def '`
-    #    의 class 축이 무력하다. 섹션→대략 행범위, 정확한 위치는 method grep 으로 확정):
-    #    · 토큰 리밋 자동 재개/재시도      _maybe_schedule_resume … _fire_retry      (~142)
-    #    · 프롬프트 클리어/규칙 주입(#9/#27) set_prompt_clear … _pc_advance          (~262)
-    #    · 세션 상태·모델·auto 모드         _reset_token_session … set_claude_perm_mode(~365)
-    #    · ★ 화면 스캔 상태기계 _scan_claude(단일 최대 메서드, ~612줄)                (~791)
-    #    · 경고 이력(M17)                   _warnhist_path … _read_warn_history       (~1403)
-    #    · 토큰 회계 표시(§10-D)            _tab_claude … _week_sonnet_pct            (~1458)
-    #    · /usage 그림자 프로브·갱신        _probe_cwd … _after_usage_probe          (~1601)
-    #    · 프롬프트 추적·토큰 DB(usagedb)   _track_prompt … _log_tokens              (~1711)
-    #    · 트랜스크립트 회계(usage_xc)      _xc_resolve_path … _xc_totals_for_status (~1949)
-    #    · 토큰 디버그·스냅샷·종료 이월      set_token_debug … set_claude_turn_warn   (~2053)
+    # ── 메서드 인덱스(LLM 부분 Read 용 — 이 단일 클래스는 큰 단일 클래스라 `grep '^    def '`
+    #    의 class 축이 무력하다. 섹션→**앵커 메서드명**(정확한 위치는 그 이름을 `grep -n`
+    #    으로 확정 — 행수/행범위는 드리프트가 잦아 일부러 안 적는다, 코드검수 2026-07-10):
+    #    · 토큰 리밋 자동 재개/재시도      _maybe_schedule_resume … _fire_retry
+    #    · 프롬프트 클리어/규칙 주입(#9/#27) set_prompt_clear … _pc_advance
+    #    · 세션 상태·모델·auto 모드         _reset_token_session … set_claude_perm_mode
+    #    · ★ 화면 스캔 상태기계             _scan_claude(단일 최대 메서드)
+    #    · 종료 토큰요약 배치               _usage_exit_lines … _emit_auto_token_log_windows
+    #    · 경고 이력(M17)                   _warnhist_path … _read_warn_history
+    #    · 토큰 회계 표시(§10-D)            _tab_claude … _week_sonnet_pct
+    #    · /usage 그림자 프로브·갱신        _probe_cwd … _after_usage_probe
+    #    · 프롬프트 추적·토큰 DB(usagedb)   _track_prompt … _log_tokens
+    #    · 트랜스크립트 회계(usage_xc)      _xc_resolve_path … _xc_totals_for_status
+    #    · 토큰 디버그·스냅샷·종료 이월      set_token_debug … set_claude_turn_warn
     # ---- 토큰 리밋 자동 재개 ----
     def _maybe_schedule_resume(self, pane: Pane, newtext: str):
         pane._scanbuf = (pane._scanbuf + newtext)[-4000:]
