@@ -1107,11 +1107,22 @@ class ServerClaudeMixin:
                 # 안 되면(fg=claude/node·미상) 창을 줄여 거짓 종료는 소진돼 사라지고 진짜
                 # 종료는 셸 복귀가 잡히는 순간 발화한다(claude 재등장은 위에서 예약 취소).
                 if p._exit_token_pending > 0 and not p._hdr_claude:
-                    if self._claude_really_exited(p):
+                    if not self._claude_really_exited(p):
+                        p._exit_token_pending -= 1
+                    elif getattr(p, "_inbuf", ""):
+                        # 셸 복귀는 확정됐으나 사용자가 이미 다음 명령을 치는 중
+                        # (_inbuf 비지 않음) — 종료요약 주입을 **보류**한다. 지금 주입하면
+                        # Unix 는 Enter 1회, Windows 는 블록높이+1 만큼 Enter 를 펌프하는데
+                        # (_emit_auto_token_log), 그 Enter 가 사용자가 치던 부분 명령을
+                        # 그대로 제출해 버린다("종료 직후 입력버퍼는 비어 무해" 가정이
+                        # 종료감지 지연 창에서 깨진다 — 코드검수 2026-07-10 S-2). 재시도
+                        # 카운터를 소진시켜, 창 안에 사용자가 제출/클리어(빈 _inbuf)하면
+                        # 그 프레임에 발동하고, 계속 치면 만료돼 조용히 유실한다(요약은
+                        # 부가정보라 사용자 입력 보호가 우선).
+                        p._exit_token_pending -= 1
+                    else:
                         self._emit_auto_token_log(sess, p)
                         p._exit_token_pending = 0
-                    else:
-                        p._exit_token_pending -= 1
                 # 토큰 누계(#3): 새 Claude 세션 시작(None→Claude) 시 리셋, 매 프레임
                 # 현재 응답 running 토큰을 step 으로 접어 응답별 peak 를 누계에 확정.
                 # (확정 시점 committed>0 은 #7 의 영속 로깅 이벤트로도 쓰인다.)

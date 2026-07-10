@@ -703,6 +703,67 @@ async def test_auto_token_on_exit_skips_when_fg_still_claude():
         await teardown(srv, task, sock)
 
 
+async def test_auto_token_on_exit_defers_while_user_typing():
+    """S-2(코드검수 2026-07-10): 세션 종료가 fg=셸로 확정돼도, 사용자가 이미 다음 명령을
+    치는 중(pane._inbuf 비지 않음)이면 종료요약 주입을 보류한다. 지금 주입하면 Enter 펌프
+    (_emit_auto_token_log)가 사용자가 치던 부분 명령을 그대로 제출하기 때문. 사용자가
+    제출/클리어해 _inbuf 가 비면 재시도 창 안에서 발동한다."""
+    import importlib
+    smod = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    MISS = smod._HDR_CLAUDE_MISS
+    srv, task, sock = await server_only()
+    try:
+        srv.auto_token_on_exit = True
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        calls = []
+        srv._emit_auto_token_log = lambda s, pane=None: calls.append((s, pane))
+        srv._fg_command = lambda pane: "zsh"          # 진짜 셸 복귀
+        # Claude 진입.
+        p.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._hdr_claude is True
+        # 종료 확정 전이 동안 사용자가 셸에서 다음 명령을 치는 중.
+        p._inbuf = "gi"
+        p.feed(b"\x1b[2J\x1b[H$ \r\n")
+        for _ in range(MISS + 2):
+            srv._scan_claude(sess, win)
+        assert p._hdr_claude is False
+        assert calls == [], "사용자 입력 중이면 종료요약 주입 보류(S-2)"
+        assert p._exit_token_pending > 0, "재시도 예약은 아직 살아 있어야(만료 전)"
+        # 사용자가 제출/클리어(빈 _inbuf) → 다음 스캔에 발동.
+        p._inbuf = ""
+        p.feed(b"\x1b[2J\x1b[H$ \r\n")
+        srv._scan_claude(sess, win)
+        assert calls == [(sess, p)], ("입력 비면 발동", calls)
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_rename_window_strips_control_chars_from_claude_inject():
+    """S-2 심층방어(코드검수 2026-07-10): 탭 리네임 이름의 제어문자(CR/LF/ESC 등)는
+    tab.name(탭바 렌더)과 단일 Claude 패널의 `/rename <name>` 주입 양쪽에서 제거된다 —
+    내장 CR/LF 가 탭바를 손상시키거나 다중 줄 제출(프롬프트 주입)이 되지 않게."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        p._claude = "idle"                 # 단일 Claude idle 패널 → 즉시 /rename 주입
+        injected = []
+        srv._pc_inject = lambda pane, text: injected.append(text)
+        srv.rename_window(sess, "proj\rX\x1b[31mY\nZ")
+        # 주입된 /rename 인자에 제어문자가 없어야 한다.
+        assert injected == ["/rename projX[31mYZ"], injected
+        assert "\r" not in injected[0] and "\n" not in injected[0] \
+            and "\x1b" not in injected[0]
+        # 탭 이름도 세정된다.
+        assert sess.active_tab.name == "projX[31mYZ", sess.active_tab.name
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_auto_token_on_exit_injects_usage_into_pane():
     """§10-F(2026-06-18 재설계): 세션 종료 시 토큰 사용량을 **팝업이 아니라 패널 출력
     으로 주입**한다. _emit_auto_token_log 가 self._usage 한도 요약을 그 패널 화면 모델에

@@ -576,6 +576,14 @@ class ServerTreeMixin:
 
     def rename_window(self, sess: Session, name: str):
         tab = sess.active_tab
+        # 이름에서 제어문자(C0/DEL/C1 — 특히 CR/LF/ESC)를 제거한다. tab.name 은 탭바에
+        # 렌더되고, 단일 Claude 패널이면 `/rename <name>` 으로 패널 입력에 주입되므로,
+        # 내장 CR/LF 가 탭바 손상이나 다중 줄 제출(프롬프트 주입)이 되지 않게 한다
+        # (코드검수 2026-07-10 S-2 심층방어; name-sync keyword 는 별도로 이미 세정).
+        # 전부 제어문자였으면 빈 문자열 → 아래 `and name` 가드로 리네임 무시(안전).
+        if name:
+            name = "".join(c for c in name
+                           if ord(c) >= 0x20 and not (0x7f <= ord(c) <= 0x9f))
         if tab and name:
             tab.name = name
             tab.window.auto_rename = False  # 수동 이름 지정 시 자동 갱신 끔
