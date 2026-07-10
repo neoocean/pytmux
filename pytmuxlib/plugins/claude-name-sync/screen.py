@@ -51,11 +51,11 @@ i18n.register({
         _ERR_REQ: "Path and keyword are required.",
         _SAVE: "Save",
         _CANCEL: "Cancel",
-        # 저장 완료 알림(플러그인 __init__ handle_message 가 t 로 조회).
-        "nsmsg.saved": "namesync: {n} rule(s) saved",
     },
 })
-i18n.register({"ko": {"nsmsg.saved": "namesync: 규칙 {n}개 저장됨"}})
+# 주의: 저장 완료 알림 키(nsmsg.saved)는 소비처가 상시 로드 모듈(__init__.py
+# handle_message)이라 **__init__.py 에서 등록**한다(팝업 미개방 시 미등록 방지 —
+# 코드검수 2026-07-10). 여기(지연 import 모듈)엔 두지 않는다.
 
 
 class NameSyncScreen(ModalScreen):

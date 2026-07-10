@@ -35,6 +35,16 @@ COMMANDS = [
 ]
 NOARG = {"namesync", "nsync"}
 
+# 저장 완료 알림 i18n 키(nsmsg.saved)는 **여기 상시 로드 모듈**에서 등록한다 —
+# 소비처(handle_message)가 상시 모듈인데 등록이 지연 import 모듈(screen.py)에 있으면
+# 팝업을 한 번도 안 연 채 저장 회신이 오면 미등록 키가 된다(코드검수 2026-07-10 §1-1
+# latent 트랩 해소). UI 라벨 키는 screen.py 에서만 쓰이므로 거기 남긴다.
+from pytmuxlib import i18n as _i18n  # noqa: E402
+_i18n.register({
+    "en": {"nsmsg.saved": "namesync: {n} rule(s) saved"},
+    "ko": {"nsmsg.saved": "namesync: 규칙 {n}개 저장됨"},
+})
+
 # opts.json plugin_opts 네임스페이스에 규칙 목록을 저장하는 키.
 _OPT_KEY = "namesync_rules"
 

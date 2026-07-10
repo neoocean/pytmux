@@ -388,3 +388,28 @@ async def test_form_rejects_empty_path_or_keyword():
         await pilot.pause(0.1)
         assert isinstance(app.screen, scr_mod.RuleFormScreen), "빈 경로인데 저장됨"
     await _with_app(body)
+
+
+async def test_nsmsg_saved_key_registered_by_init_alone():
+    """§1-1(코드검수 2026-07-10): 저장 완료 알림 키 nsmsg.saved 는 소비처가 상시
+    로드 모듈(__init__.handle_message)이므로 등록도 __init__ 에서 해야 한다 — 종전엔
+    지연 import 모듈(screen.py)에서 등록해, 팝업을 한 번도 안 연 채 저장 회신이 오면
+    미등록 키였다. **서브프로세스**에서 __init__ 만 import 하고 screen.py 는 import
+    되지 않았음을 확인해, 키가 __init__ 단독으로 등록됨을 결정적으로 못박는다."""
+    import os
+    import subprocess
+    import sys
+    R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    code = (
+        "import importlib, sys;"
+        "m=importlib.import_module('pytmuxlib.plugins.claude-name-sync');"
+        "from pytmuxlib import i18n;"
+        "scr='pytmuxlib.plugins.claude-name-sync.screen';"
+        "assert scr not in sys.modules, 'screen.py 가 import 됨(격리 실패)';"
+        "v=i18n.t('nsmsg.saved');"
+        "assert v!='nsmsg.saved' and '{n}' in v, ('미등록/원시키: '+repr(v));"
+        "print('OK')"
+    )
+    r = subprocess.run([sys.executable, "-c", code], cwd=R,
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, (r.stdout, r.stderr)
