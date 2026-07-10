@@ -9,6 +9,7 @@ import asyncio
 import os
 
 import harness  # noqa: F401 (sys.path 설정)
+from run import skip  # 명시 SKIP 회계
 from pytmuxlib import conpty, pty_backend
 
 
@@ -206,7 +207,7 @@ async def test_owned_conpty_spawn_forces_utf8_codepage():
     2026-07-10 회귀). 호출 시점의 pid==-1(아직 CreateProcessW 전)로 순서를 못박는다.
     실제 CP 변경 효과는 라이브 검증(WINDOWS_TESTING.md) — 여기선 호출 배선만."""
     if not pty_backend.IS_WINDOWS:
-        return
+        skip("Windows 전용(ConPTY)")
     calls = []
     orig = conpty.force_utf8_codepage
     holder = {}
@@ -238,7 +239,7 @@ async def test_conpty_ensure_utf8_codepage_once():
     """Windows: ensure_utf8_codepage 는 의사콘솔당 1회 게이트 — 풀 채움 시점에 이미
     강제된 콘솔은 spawn 이 중복 호출하지 않는다(지각 chcp 재실행 차단 겸 비용 절약)."""
     if not pty_backend.IS_WINDOWS:
-        return
+        skip("Windows 전용(ConPTY)")
     calls = []
     orig = conpty.force_utf8_codepage
     conpty.force_utf8_codepage = lambda hpc, timeout_ms=1500: (
@@ -258,7 +259,7 @@ async def test_conpty_ensure_utf8_codepage_once():
 async def test_spawn_selects_backend(monkeypatch=None):
     """PYTMUX_PTY_BACKEND 선택 분기 — 실제 spawn 없이 스텁으로 검증(Windows 전용)."""
     if not pty_backend.IS_WINDOWS:
-        return
+        skip("Windows 전용(ConPTY)")
     calls = {"owned": 0, "winpty": 0}
 
     class _StubOwned:
@@ -304,7 +305,7 @@ async def test_owned_conpty_lifecycle_windows():
     의사콘솔 생성·자식 attach·리사이즈·종료·핸들 정리의 무예외 수명만 본다. 멀티바이트
     왕복은 docs/internal/WINDOWS_TESTING.md 의 라이브 검증(validate_backend.py)·실 제품으로 확인."""
     if not pty_backend.IS_WINDOWS:
-        return
+        skip("Windows 전용(ConPTY)")
     pty = pty_backend._OwnedConPty(["cmd.exe"], cols=80, rows=24,
                                    cwd=None, env=dict(os.environ))
     try:
@@ -473,7 +474,7 @@ async def test_owned_conpty_real_child_exit_fires_eof_windows():
     보고 `close()` → reader 의 블로킹 read 가 b"" → `_fire_eof`. 좀비였다면 EOF 가
     영영 안 와 wait_for 가 타임아웃(=실패)으로 회귀를 드러낸다."""
     if not pty_backend.IS_WINDOWS:
-        return
+        skip("Windows 전용(ConPTY)")
     pty = pty_backend._OwnedConPty(["cmd.exe", "/c", "exit"], cols=80, rows=24,
                                    cwd=None, env=dict(os.environ))
     loop = asyncio.get_running_loop()

@@ -95,6 +95,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 
+# run.py 는 `__main__` 으로 실행되지만 테스트는 `from run import skip` 로 SkipTest 를
+# 참조한다 — 자기 자신을 'run' 으로도 등록해 **같은 클래스 객체**가 되게 한다. 안 하면
+# __main__.SkipTest ≠ run.SkipTest(이중 import 정체성)라 except 가 스킵을 못 잡아
+# 스킵이 실패로 집계된다(로드맵 SKIP 회계).
+sys.modules.setdefault("run", sys.modules[__name__])
+
 # 모듈 로드(아래 플러그인 별칭 import)도 백스톱으로 감싼다. 과거 macOS CI 에서 스위트가
 # **첫 출력(`:: import …`)도 없이** 17분 매달리던 지점이 바로 이 top-level import 단계였다
 # — _arm 은 main() 의 테스트 루프 안에서만 걸려 여기는 무방비였다(faulthandler 타이머
@@ -155,6 +161,21 @@ def discover(names):
     return mods
 
 
+# ── 명시 SKIP 회계(로드맵 test-infra) ────────────────────────────────────────
+# 종전엔 플랫폼 부적합 테스트가 `if os.name=="nt": return` 로 **조용히** 빠져나가
+# PASS 로 집계돼, 이 박스에서 실제로 몇 개가 안 도는지 안 보였다(커버리지 갭 은폐).
+# `skip("사유")` 를 raise 하면 run.py 가 passed/failed 와 **별개**로 세고 사유를
+# 요약에 리포트한다. 점진 채택(wait_until 규약과 동일 — 신규/수정 테스트부터):
+#   from run import skip
+#   if os.name == "nt": skip("POSIX 전용(pty/termios)")
+class SkipTest(Exception):
+    """테스트를 건너뛴다는 신호 — passed/failed 아닌 skipped 로 회계·리포트."""
+
+
+def skip(reason: str = ""):
+    raise SkipTest(reason)
+
+
 def main(argv):
     # 모듈 로드 단계의 startup 백스톱(위)을 거둔다 — 이제부터 per-test _arm 이 관리한다
     # (modname 별 import·테스트마다 재무장). discover 가 빈 경우에도 stray 타이머가
@@ -162,8 +183,9 @@ def main(argv):
     if TEST_TIMEOUT > 0:
         faulthandler.cancel_dump_traceback_later()
     names = [a[:-3] if a.endswith(".py") else a for a in argv]
-    passed = failed = flaky = 0
+    passed = failed = flaky = skipped = 0
     failures = []
+    skips = []
     for modname in discover(names):
         # import 도 SIGALRM 으로 감싼다 — 모듈 import 가 매달리면(과거 macOS CI 에서
         # 스위트가 첫 출력도 없이 17분 매달리던 정확한 지점) 여기서 TIMEOUT 실패로
@@ -184,6 +206,7 @@ def main(argv):
         for name, fn in sorted(tests):
             label = f"{modname}.{name}"
             ok, hung, last_exc, last_tb = False, False, None, ""
+            was_skipped = False
             n_hung = 0
             for attempt in range(max(1, TEST_RETRIES + 1)):
                 _arm()
@@ -191,6 +214,12 @@ def main(argv):
                 try:
                     asyncio.run(_run_with_timeout(fn))
                     ok = True
+                except SkipTest as e:
+                    was_skipped = True
+                    skips.append((label, str(e)))
+                    print(f"  SKIP  {label}: {e}" if str(e)
+                          else f"  SKIP  {label}")
+                    break                  # 스킵은 재시도 안 함(finally 가 _disarm)
                 except asyncio.TimeoutError:
                     hung = True
                     n_hung += 1
@@ -212,6 +241,9 @@ def main(argv):
                 if attempt == TEST_RETRIES or (hung and n_hung > TEST_TIMEOUT_RETRIES):
                     break
                 print(f"  retry {label} (시도 {attempt + 1} 실패: {last_exc})")
+            if was_skipped:
+                skipped += 1
+                continue                   # passed/failed 어디에도 안 셈
             if ok:
                 passed += 1
             else:
@@ -226,7 +258,15 @@ def main(argv):
                     for ln in str(last_tb).rstrip().splitlines():
                         print(f"        {ln}")
     flaky_note = f" ({flaky} flaky — 재시도 후 통과)" if flaky else ""
-    print(f"\n{'='*50}\n{passed} passed, {failed} failed{flaky_note}")
+    skip_note = f", {skipped} skipped" if skipped else ""
+    print(f"\n{'='*50}\n{passed} passed, {failed} failed{skip_note}{flaky_note}")
+    if skips:
+        # 커버리지 갭 가시화: 무엇이 왜 안 돌았는지 사유별로 묶어 리포트.
+        from collections import Counter
+        by_reason = Counter(reason or "(사유 없음)" for _, reason in skips)
+        print("skipped:")
+        for reason, cnt in by_reason.most_common():
+            print(f"  {cnt:3d}  {reason}")
     for label, e, tb in failures:
         print(f"\n--- {label} ---\n{tb}")
     return 1 if failed else 0
