@@ -545,6 +545,26 @@ async def open_connection(endpoint: str, *, portfile: Optional[str] = None
     return await asyncio.open_unix_connection(path=kind[1])
 
 
+# 루프백 TCP connect 타임아웃 캡. Windows 는 리스너 없는 루프백 포트로의 connect 가
+# POSIX 처럼 즉시 ECONNREFUSED 로 끝나지 않는다 — 방화벽 stealth 가 SYN 을 조용히
+# 드롭해 **클라이언트 타임아웃까지 통째로 매달린다**(GHA windows-latest 실측: 정확히
+# settimeout 값만큼). 그래서 죽은 서버의 stale 포트파일이 남아 있으면 probe/제어 폴이
+# 폴마다 기본 2s 를 태워, kill-server 후 첫 attach 가 wait_server_authed 의 4s 예산을
+# 죽은-포트 connect 두 번으로 소진하고 "서버 기동 실패"로 오판했다(완전 재시작 후
+# 한 번은 실패, 2026-07-10). 루프백은 산 서버라면 앱 상태와 무관하게 커널 backlog 가
+# handshake 를 즉시(<ms) 끝내므로 짧게 잡아도 오탐이 없다. 원격(비루프백) TCP 와
+# 호출자가 더 짧게 준 timeout 은 그대로 둔다.
+_LOOPBACK_CONNECT_TIMEOUT = 0.5
+
+
+def _control_connect_timeout(endpoint: str, timeout: float) -> float:
+    """control_socket 의 connect 타임아웃 결정(위 상수 주석 참조). 루프백 TCP 만
+    캡하고, 원격 TCP·unix·호출자가 더 짧게 준 값은 그대로 둔다."""
+    if is_tcp(endpoint) and is_local_endpoint(endpoint):
+        return min(timeout, _LOOPBACK_CONNECT_TIMEOUT)
+    return timeout
+
+
 def control_socket(endpoint: str, *, portfile: Optional[str] = None,
                    timeout: float = 2.0) -> Optional[socket.socket]:
     """동기 제어 요청용(launcher) 연결된 소켓. 실패 시 None.
@@ -559,6 +579,7 @@ def control_socket(endpoint: str, *, portfile: Optional[str] = None,
             return None
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         target: object = (host, rport)
+        timeout = _control_connect_timeout(endpoint, timeout)
     else:
         if not os.path.exists(kind[1]):
             return None

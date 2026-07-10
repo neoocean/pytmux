@@ -139,10 +139,42 @@ def test_is_local_endpoint():  # 동기 단위(아래 test_run_sync_units 에서
     assert not ipc.is_local_endpoint("tcp:127.0.0.1:abc")
 
 
+def test_control_connect_timeout_loopback_capped():  # 동기 단위(아래서 호출)
+    """완전 재시작 후 첫 기동 실패 회귀(2026-07-10): Windows 는 리스너 없는 루프백
+    포트로의 connect 가 즉답 거절(RST) 없이 **클라이언트 타임아웃까지** 매달린다
+    (방화벽 stealth SYN 드롭 — GHA windows-latest 실측 정확히 settimeout 값). stale
+    포트파일(kill-server 잔재)을 가리키는 probe/제어 폴이 폴마다 기본 2s 를 태워
+    wait_server_authed 4s 예산을 소진했다. 루프백 TCP 는 캡, 나머지는 그대로."""
+    cap = ipc._LOOPBACK_CONNECT_TIMEOUT
+    assert ipc._control_connect_timeout("tcp:127.0.0.1:54321", 2.0) == cap
+    assert ipc._control_connect_timeout("tcp:127.0.0.1:0", 2.0) == cap
+    assert ipc._control_connect_timeout("tcp:localhost:1234", 2.0) == cap
+    # 호출자가 더 짧게 준 timeout 은 존중한다(캡은 상한일 뿐).
+    assert ipc._control_connect_timeout("tcp:127.0.0.1:1", 0.1) == 0.1
+    # 원격 TCP·unix 소켓은 캡하지 않는다(진짜 네트워크 RTT/기존 의미 보존).
+    assert ipc._control_connect_timeout("tcp:10.0.0.5:22", 2.0) == 2.0
+    assert ipc._control_connect_timeout("/tmp/x.sock", 2.0) == 2.0
+
+
+async def test_probe_dead_loopback_port_returns_fast():
+    """죽은 루프백 포트 probe 가 캡(+여유) 안에 False 로 끝난다 — POSIX 는 원래
+    즉시 거절이고, Windows 러너에서는 위 캡이 실제로 2s→0.5s 를 보장한다."""
+    import socket as _socket
+    import time as _time
+    s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()                       # bind 만 하고 닫아 '방금 죽은 포트'를 만든다
+    t0 = _time.monotonic()
+    assert ipc.probe(f"tcp:127.0.0.1:{port}") is False
+    assert _time.monotonic() - t0 < 1.5, "죽은 루프백 포트 probe 가 느리다"
+
+
 async def test_run_sync_units():
     """동기 단위 테스트(parse)를 async 러너에서 한 번 실행해 커버리지에 포함."""
     test_parse_endpoint()
     test_is_local_endpoint()
+    test_control_connect_timeout_loopback_capped()
 
 
 async def test_private_atomic_writes_and_cleans_up():

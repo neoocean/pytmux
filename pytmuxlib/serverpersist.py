@@ -184,12 +184,58 @@ class ServerPersistMixin:
                 except OSError:
                     pass
 
-    def _cleanup_endpoint_files(self):
-        """execv 실패 폴백: listen 엔드포인트의 영속 파일(unix 소켓·포트파일·토큰)을
-        즉시 정리한다. _notify_no_sessions 가 거는 0.2s 지연 shutdown 만 믿으면, 그
-        창에 새 서버 기동이 아직 살아 있는(=곧 죽을) 소켓에 probe 성공해 좀비로
-        붙는다(§5.6 stale-소켓 차단). best-effort — 새 서버가 어차피 다시 게시한다."""
-        paths = [ipc.portfile_for(self.sock_path), ipc.token_path(self.sock_path)]
+    def _cleanup_endpoint_files(self, *, owned_only: bool = False):
+        """listen 엔드포인트의 영속 파일(unix 소켓·포트파일·토큰)을 정리한다.
+
+        호출처 ①(execv 실패 폴백, owned_only=False): _notify_no_sessions 가 거는
+        0.2s 지연 shutdown 만 믿으면, 그 창에 새 서버 기동이 아직 살아 있는(=곧
+        죽을) 소켓에 probe 성공해 좀비로 붙는다(§5.6 stale-소켓 차단). ②(진짜 종료
+        shutdown, owned_only=True): TCP(Windows) stale 포트파일이 남으면 다음 기동의
+        probe/인증 폴이 **죽은 루프백 포트 connect 로 폴마다 타임아웃**을 태워(RST
+        즉답 없음 — ipc._LOOPBACK_CONNECT_TIMEOUT 주석) 첫 attach 가 "서버 기동
+        실패"로 오판된다(완전 재시작 후 한 번 실패, 2026-07-10). best-effort — 새
+        서버가 어차피 다시 게시한다.
+
+        owned_only=True 는 포트파일/토큰이 **내 것일 때만**(내 확정 포트·내 토큰과
+        내용 일치, 또는 파싱 불가 쓰레기) 지운다 — 좀비 교체 후 낡은 서버의 지연
+        shutdown 이 새 서버가 방금 게시한 파일을 지워 다음 attach 를 중복 spawn 으로
+        내몰지 않게(reconnect-storm stepdown 등)."""
+        my_port = None
+        try:
+            kind = ipc.parse_endpoint(self.resolved_endpoint)
+            if kind[0] == "tcp":
+                my_port = kind[2]
+        except ValueError:
+            pass
+
+        def _readable(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return f.read().strip()
+            except OSError:
+                return None
+
+        paths = []
+        pf = ipc.portfile_for(self.sock_path)
+        if not owned_only or not ipc.is_tcp(self.sock_path):
+            paths.append(pf)               # unix 모드 포트파일은 흔적일 뿐 — 무조건
+        else:
+            body = _readable(pf)
+            if body is not None:
+                try:
+                    owned = (int(body) == my_port)
+                except ValueError:
+                    owned = True           # 쓰레기 내용 = 어차피 유해한 stale
+                if owned:
+                    paths.append(pf)
+        tp = ipc.token_path(self.sock_path)
+        if not owned_only:
+            paths.append(tp)
+        else:
+            body = _readable(tp)
+            if body is not None and self.auth_token is not None \
+                    and body == self.auth_token:
+                paths.append(tp)
         if not ipc.is_tcp(self.sock_path):
             paths.append(self.sock_path)   # AF_UNIX 소켓 파일
         for path in paths:

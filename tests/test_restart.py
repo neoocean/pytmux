@@ -375,6 +375,59 @@ async def test_cleanup_endpoint_files_unlinks_socket_portfile_token():
         await teardown(srv, task, sock)
 
 
+async def test_cleanup_endpoint_files_owned_only_tcp():
+    """완전 재시작 첫 기동 실패 회귀(2026-07-10): 진짜 종료(shutdown)가 TCP 포트파일/
+    토큰을 지우되(stale 포트파일이 다음 기동의 probe/인증 폴을 죽은 루프백 포트
+    connect 타임아웃으로 태우지 않게 — Windows 는 즉답 거절이 없다), owned_only 는
+    **내 것일 때만** 지운다(좀비 교체 후 낡은 서버의 지연 shutdown 이 새 서버가 방금
+    게시한 파일을 지우지 않게). TCP 상태파일 경로는 default_state_dir 로 가므로
+    PYTMUX_HOME 으로 임시 디렉토리에 격리한다."""
+    import tempfile
+    srv, task, sock = await server_only()
+    home = tempfile.mkdtemp(prefix="pytmux-owned-")
+    saved_env = os.environ.get("PYTMUX_HOME")
+    saved_sock = srv.sock_path
+    saved_resolved = srv.resolved_endpoint
+    saved_token = srv.auth_token
+    try:
+        os.environ["PYTMUX_HOME"] = home
+        srv.sock_path = "tcp:127.0.0.1:0"
+        srv.resolved_endpoint = "tcp:127.0.0.1:55555"
+        srv.auth_token = "tok-mine"
+        pf = ipc.portfile_for(srv.sock_path)
+        tp = ipc.token_path(srv.sock_path)
+
+        def _write(port_body, tok_body):
+            for p, body in ((pf, port_body), (tp, tok_body)):
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(body)
+
+        # ① 내 포트·내 토큰 → 삭제된다(kill-server 후 stale 잔재 방지).
+        _write("55555", "tok-mine")
+        srv._cleanup_endpoint_files(owned_only=True)
+        assert not os.path.exists(pf), "내 포트파일 미삭제"
+        assert not os.path.exists(tp), "내 토큰파일 미삭제"
+        # ② 남의 포트·남의 토큰(새 서버가 이미 다시 게시) → 보존된다.
+        _write("44444", "tok-other")
+        srv._cleanup_endpoint_files(owned_only=True)
+        assert os.path.exists(pf), "남의 포트파일을 지웠다"
+        assert os.path.exists(tp), "남의 토큰파일을 지웠다"
+        # ③ 파싱 불가 쓰레기 포트파일 → 어차피 유해한 stale 이므로 삭제된다.
+        _write("garbage", "tok-other")
+        srv._cleanup_endpoint_files(owned_only=True)
+        assert not os.path.exists(pf), "쓰레기 포트파일 미삭제"
+        assert os.path.exists(tp), "남의 토큰파일을 지웠다(쓰레기 케이스)"
+    finally:
+        if saved_env is None:
+            os.environ.pop("PYTMUX_HOME", None)
+        else:
+            os.environ["PYTMUX_HOME"] = saved_env
+        srv.sock_path = saved_sock
+        srv.resolved_endpoint = saved_resolved
+        srv.auth_token = saved_token
+        await teardown(srv, task, sock)
+
+
 # ── 6. 클라이언트 재접속(ⓔ): restarting 통지 → 끊김 → 새 서버에 재접속 ──────────
 async def test_client_reconnects_on_restarting():
     """서버가 {"t":"restarting"} 을 보낸 뒤 연결이 끊기면, 클라이언트가 종료하지

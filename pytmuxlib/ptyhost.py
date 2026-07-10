@@ -55,6 +55,7 @@ class PtyHost:
         self._server = None
         self._stop: asyncio.Event | None = None            # shutdown op → serve 종료
         self._token: str | None = None                     # 연결 인증 토큰(M1)
+        self._published_port: int | None = None            # portfile 에 게시한 포트
 
     # ---- 연결 처리 ----
     async def _authenticate(self, reader: asyncio.StreamReader,
@@ -277,6 +278,7 @@ class PtyHost:
                     port = self._server.sockets[0].getsockname()[1]
                     with ipc.open_private(portfile) as f:
                         f.write(str(port))
+                    self._published_port = port
         # serve_forever 대신 stop 이벤트 대기 — shutdown op 로 질서있게 내려간다.
         # `async with server` 는 쓰지 않는다(__aexit__ 의 wait_closed 가 열린 연결을
         # 기다려 hang). stop 시 서버와 현재 연결을 명시적으로 닫는다.
@@ -291,8 +293,30 @@ class PtyHost:
             if self._writer is not None:    # 연결된 서버에 EOF(크래시/종료 알림)
                 with contextlib.suppress(Exception):
                     self._writer.close()
+            # 질서 종료 시 내가 게시한 portfile/tokenfile 을 지운다(내용이 내 것일
+            # 때만 — 이미 새 host 가 다시 게시했으면 건드리지 않는다). stale 포트
+            # 파일이 남으면 다음 서버 기동의 prespawn_host 가 host 가 있는 줄 알고
+            # 건너뛰고, ensure_connected 의 첫 재연결 시도가 죽은 루프백 포트
+            # connect 타임아웃(Windows 는 즉답 거절이 없다 — ipc 주석)을 태워
+            # 콜드 스타트를 늦춘다. best-effort(os._exit 크래시 종료는 못 지움 —
+            # 그 경우는 ensure_connected 폴링이 흡수).
+            self._cleanup_published(portfile, tokenfile)
         for pid in list(self.panes):        # 종료 시 남은 패널 정리(고아 방지)
             self._close_pane(pid)
+
+    def _cleanup_published(self, portfile: str | None,
+                           tokenfile: str | None) -> None:
+        for path, mine in ((portfile, self._published_port),
+                           (tokenfile, self._token)):
+            if not path or mine is None:
+                continue
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    if f.read().strip() != str(mine):
+                        continue           # 새 host 의 게시물 — 보존
+                os.unlink(path)
+            except OSError:
+                pass
 
 
 def main(argv=None) -> int:

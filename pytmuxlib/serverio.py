@@ -1273,12 +1273,14 @@ class ServerIOMixin:
         if self._pty_host is not None:
             with contextlib.suppress(Exception):
                 self._pty_host.shutdown_host()
-        try:
-            # TCP 엔드포인트는 지울 파일이 없다(포트파일은 다음 기동이 덮어씀).
-            if not ipc.is_tcp(self.sock_path) and os.path.exists(self.sock_path):
-                os.unlink(self.sock_path)
-        except OSError:
-            pass
+        # 엔드포인트 영속 파일 정리(unix 소켓 + TCP 포트파일/토큰). 종전엔 unix
+        # 소켓만 지우고 TCP 는 "다음 기동이 덮어쓴다"고 남겨뒀는데, Windows 는 죽은
+        # 루프백 포트 connect 가 즉답 거절이 아니라 타임아웃이라 stale 포트파일이
+        # 다음 기동의 probe/인증 폴을 폴마다 타임아웃시켜 첫 attach 가 "서버 기동
+        # 실패"로 오판됐다(완전 재시작 후 한 번 실패, 2026-07-10). owned_only:
+        # 내 포트/토큰일 때만 지워 좀비의 지연 shutdown 이 새 서버의 파일을 지우지
+        # 않게 한다(_cleanup_endpoint_files 주석).
+        self._cleanup_endpoint_files(owned_only=True)
         if self.loop:
             self.loop.stop()
 

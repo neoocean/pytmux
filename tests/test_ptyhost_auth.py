@@ -175,3 +175,50 @@ async def test_host_tcp_loopback_token_enforced():
     finally:
         await _stop(host, htask, d, good, bad)
         shutil.rmtree(d0, ignore_errors=True)
+
+
+async def _drain_stopped(host, htask):
+    """질서 종료(_stop set) 후 serve() 의 정리(finally)까지 완료를 기다린다."""
+    host._stop.set()
+    try:
+        await asyncio.wait_for(htask, 5.0)
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
+async def test_host_orderly_stop_cleans_portfile_and_tokenfile():
+    """완전 재시작 첫 기동 실패 회귀(2026-07-10): host 가 질서 종료 시 자기가 게시한
+    portfile/tokenfile 을 지운다 — stale 포트파일이 남으면 다음 서버 기동의
+    prespawn_host 가 host 가 있는 줄 알고 건너뛰고, ensure_connected 첫 재연결이
+    죽은 루프백 포트 connect 타임아웃(Windows 는 즉답 거절 없음)을 태운다."""
+    d0 = tempfile.mkdtemp(prefix="pytmux-hostclean-")
+    tokenfile = os.path.join(d0, "host.token")
+    host, htask, ep, d = await _serve_tcp(tokenfile)
+    portfile = os.path.join(d, "host.port")
+    try:
+        assert os.path.exists(portfile) and os.path.exists(tokenfile)
+        await _drain_stopped(host, htask)
+        assert not os.path.exists(portfile), "질서 종료 후 portfile 잔존"
+        assert not os.path.exists(tokenfile), "질서 종료 후 tokenfile 잔존"
+    finally:
+        await _stop(host, htask, d)
+        shutil.rmtree(d0, ignore_errors=True)
+
+
+async def test_host_orderly_stop_preserves_other_hosts_files():
+    """위 정리는 **내 게시물일 때만**: 이미 새 host 가 같은 경로에 다시 게시했다면
+    (내용 불일치) 낡은 host 의 종료가 새 host 의 파일을 지우지 않는다."""
+    d0 = tempfile.mkdtemp(prefix="pytmux-hostclean2-")
+    tokenfile = os.path.join(d0, "host.token")
+    host, htask, ep, d = await _serve_tcp(tokenfile)
+    portfile = os.path.join(d, "host.port")
+    try:
+        for p, body in ((portfile, "1"), (tokenfile, "other-host-token")):
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(body)
+        await _drain_stopped(host, htask)
+        assert os.path.exists(portfile), "남의 portfile 을 지웠다"
+        assert os.path.exists(tokenfile), "남의 tokenfile 을 지웠다"
+    finally:
+        await _stop(host, htask, d)
+        shutil.rmtree(d0, ignore_errors=True)

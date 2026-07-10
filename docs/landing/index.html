@@ -75,18 +75,13 @@
          갱신하면 랜딩도 자동 최신(이중 관리 없음). fetch 실패 시 이 폴백이 그대로 남는다. -->
     <div class="cl-news">
       <div class="cl-news-head">
-        <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-09 <span class="pill">목요일</span></span>
+        <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-10 <span class="pill">금요일</span></span>
         <a class="cl-news-more" href="changes">전체 변경 내역 →</a>
       </div>
       <ul id="cl-news-list">
-        <li><span class="pill stable">원격</span> <strong>다른 서버의 원격 탭을 이제 하나씩 닫을 수 있습니다.</strong>
-          지금까지는 원격 탭 하나를 닫으면 그 서버의 원격 탭이 전부 사라졌지만, 이제 [x]로 그 탭 하나만 분리되고 나머지는 그대로 남습니다.</li>
-        <li><span class="pill stable">Windows</span> <strong>한국어 Windows 에서 패널 속 한글이 깨지고 화면이 무너지던 문제를 고쳤습니다.</strong>
-          콘솔 기본 인코딩(cp949)이 UTF-8 출력(Claude Code 등)을 오해석하던 것 — 패널 콘솔을 UTF-8 로 자동 전환합니다.</li>
-        <li><span class="pill stable">Windows</span> <strong>Claude 종료 시 나오는 토큰 사용량 요약이 더는 프롬프트에 덮이지 않습니다.</strong>
-          요약 블록을 프롬프트 위에 두고 새 프롬프트·커서가 아래에 오도록 바꿔, Enter 를 눌러도 요약이 온전합니다.</li>
-        <li><span class="pill stable">토큰</span> <strong>토큰 사용량 [세션] 뷰에서 행을 선택해도 현재 세션 표시가 유지됩니다.</strong>
-          현재 탭 세션을 알리는 주황색 글자가 선택(파란 막대) 상태에서도 그대로 보입니다.</li>
+        <li><span class="pill stable">Windows</span> <strong>완전 재시작 후 첫 실행이 "서버 기동 실패"로 끝나던 문제를 고쳤습니다.</strong>
+          이전 서버가 남긴 옛 포트 기록 때문에 기동 확인이 죽은 포트만 두드리다 시간을 넘기던 것 —
+          종료 시 포트 기록을 정리하고 죽은 포트 확인을 짧게 끊어 첫 실행부터 바로 열립니다.</li>
       </ul>
     </div>
     <div class="cta" style="margin-top:24px;">

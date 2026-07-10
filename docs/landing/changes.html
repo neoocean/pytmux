@@ -57,6 +57,20 @@
       </div>
     </header>
 
+    <section class="cl-day" id="d-2026-07-10">
+      <h2>2026-07-10 <span class="pill">금요일</span></h2>
+      <ul>
+        <li><span class="pill stable">Windows</span> <strong>완전 재시작 후 첫 실행이 "서버 기동 실패"로 끝나던 문제를 고쳤습니다.</strong>
+          Windows 에서 <span class="inline-code">kill-server</span> 로 pytmux 를 완전히 끝낸 뒤 다시 실행하면
+          <strong>첫 번째 시도가 늘 실패</strong>하고 두 번째에야 열렸습니다. 원인은 이전 서버가 남긴
+          <strong>옛 포트 기록 파일</strong>: Windows 는 아무도 듣지 않는 포트로의 접속 시도를 곧바로
+          거절하지 않고 <strong>제한시간을 다 채우게</strong> 만들기 때문에, 새 서버가 이미 떠 있는데도
+          기동 확인이 옛 포트만 두드리다 4초 예산을 넘겨 실패로 오판했습니다. 이제 서버(와 세션유지
+          도우미)가 종료할 때 포트 기록을 <strong>스스로 정리</strong>하고, 혹시 남아 있어도(강제 종료 등)
+          죽은 포트 확인을 <strong>짧게 끊어</strong> 첫 실행부터 바로 열립니다.</li>
+      </ul>
+    </section>
+
     <section class="cl-day" id="d-2026-07-09">
       <h2>2026-07-09 <span class="pill">목요일</span></h2>
       <ul>
