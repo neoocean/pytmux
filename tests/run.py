@@ -45,8 +45,15 @@ TEST_TIMEOUT = float(os.environ.get("PYTMUX_TEST_TIMEOUT", "90"))
 # 간헐 실패(주로 느린 CI 러너에서 Textual run_test 클라 테스트의 타이밍 — fixed
 # pilot.pause 가 짧아 렌더가 아직 안 됨) 재시도. 일시적 플레이크는 재시도로 통과하고,
 # 진짜 실패는 모든 시도에서 실패해 그대로 잡힌다. 재시도로 통과한 건 FLAKY 로 표시해
-# 가시성 유지. **타임아웃(행)은 재시도 안 함**(행을 또 기다리는 건 낭비). 0=재시도 끔.
+# 가시성 유지. 0=재시도 끔.
 TEST_RETRIES = int(os.environ.get("PYTMUX_TEST_RETRIES", "2"))
+
+# 타임아웃(행)도 **1회는** 재시도한다(2026-07-10, 로드맵 test-infra). 종전엔 "행을 또
+# 기다리는 건 낭비"로 아예 안 했으나, 무거운 2-서버 E2E(federation)가 전체 스위트 부하
+# 에서 간헐 90s 스톨(격리 실행·CI 는 green)하던 것이 run.py 를 항상 빨갛게 만들었다 —
+# 부하 스톨은 대개 transient 라 1회 재시도로 복구되고, 진짜 데드락은 재시도에서도 다시
+# hang 해 +1회(유한 90s) 비용 뒤 실패로 확정된다(무한 재시도 아님). 0=타임아웃 재시도 끔.
+TEST_TIMEOUT_RETRIES = int(os.environ.get("PYTMUX_TEST_TIMEOUT_RETRIES", "1"))
 
 # SIGALRM 하드 백스톱(POSIX). asyncio.wait_for 는 await 지점에서만 취소할 수 있어,
 # 테스트가 **동기 블로킹 콜**(PTY os.read·서브프로세스 wait·소켓 recv)에서 매달리면
@@ -177,13 +184,16 @@ def main(argv):
         for name, fn in sorted(tests):
             label = f"{modname}.{name}"
             ok, hung, last_exc, last_tb = False, False, None, ""
+            n_hung = 0
             for attempt in range(max(1, TEST_RETRIES + 1)):
                 _arm()
+                hung = False               # 이번 시도의 성격(마지막 시도가 tag 결정)
                 try:
                     asyncio.run(_run_with_timeout(fn))
                     ok = True
                 except asyncio.TimeoutError:
-                    hung = True            # 행은 재시도 안 함(아래에서 break)
+                    hung = True
+                    n_hung += 1
                     last_exc = TimeoutError(f"{TEST_TIMEOUT}s 초과 — hang(데드락 의심)")
                     last_tb = f"TIMEOUT after {TEST_TIMEOUT}s\n"
                 except Exception as e:
@@ -197,8 +207,10 @@ def main(argv):
                         flaky += 1
                         print(f"  PASS  {label} (FLAKY — {attempt}회 재시도 후 통과)")
                     break
-                if hung or attempt == TEST_RETRIES:
-                    break                  # 행이거나 마지막 시도 → 실패 확정
+                # 재시도 판정: 일반 실패는 TEST_RETRIES 까지, 타임아웃(행)은 부하 스톨
+                # 복구용으로 TEST_TIMEOUT_RETRIES 까지만(진짜 데드락은 +유한 비용 후 확정).
+                if attempt == TEST_RETRIES or (hung and n_hung > TEST_TIMEOUT_RETRIES):
+                    break
                 print(f"  retry {label} (시도 {attempt + 1} 실패: {last_exc})")
             if ok:
                 passed += 1
