@@ -937,6 +937,69 @@ class ServerClaudeMixin:
             self._emit_auto_token_log(sess, p)
             p._exit_token_pending = 0
 
+    def _update_claude_model(self, p, txt) -> bool:
+        """모델 배지/프로브 감지 + 디바운스(_scan_claude 에서 추출 — 로드맵
+        God-함수 분할, 동작 불변). 화면 배지(claude_model_badge)를 우선하고 없으면
+        그림자 /usage 프로브 모델로 폴백, 강한(배지)/약한(프로브) 값 구분과
+        _MODEL_DEBOUNCE 로 서브에이전트 깜빡임을 흡수한다. 모델이 바뀌면 True."""
+        ch = False
+        mdl = claude_model_badge(txt)
+        mdl_from_probe = False
+        if not mdl:
+            # 폴백/정정(2026-06-22·2026-07-04): 현행 Claude 푸터는 모델
+            # 배지를 상시 표시하지 않아(idle 푸터엔 'auto mode on …'뿐)
+            # 라이브 배지가 화면에 없는 게 정상이다. 그럴 땐 그림자 /usage
+            # 프로브가 /status 로 잡은 실 모델(팝업 모델 행과 동일 권위 출처)
+            # 로 채운다. **배지가 화면에 있을 때만** 위 mdl(strong)이 이를
+            # 즉시 덮으므로 /model 변경은 배지로 곧장 반영되고, 배지가 없는
+            # 동안은 프로브가 권위다. 종전엔 `_claude_model is None`(첫 확정)
+            # 에서만 폴백해, 본문 언급 오검출로 한번 굳은 값(예 'fable-5')이
+            # 프로브가 opus 를 알아도 세션 경계까지 안 풀렸다 — 조건을 풀어
+            # 배지 부재 시 프로브가 강한 값도 디바운스 경유로 정정하게 한다
+            # (사용자 보고 2026-07-04). 프로브 미상이면 마지막 값 유지.
+            pm = (self._usage.get("model")
+                  if isinstance(self._usage, dict) else None)
+            if pm:
+                mdl = pm
+                mdl_from_probe = True
+        if mdl and mdl != p._claude_model:
+            # 디바운스(2026-06-22, 모델 배지 haiku 튐 오탐 수정): opus 중
+            # 화면에 haiku 가 한두 프레임 떠도(Haiku 서브에이전트/Task 출력·
+            # 모델명 언급·/model 메뉴 잔상) 즉시 안 바꾼다.
+            #  · 첫 확정(None) 또는 **약한**(프로브 폴백) 값 위 → 즉시 반영
+            #    (라이브 배지가 /model 변경을 곧장 보이게 — 약한 프로브값을
+            #    라이브 배지가 디바운스 없이 덮는다).
+            #  · **강한**(라이브 배지) 값 위의 *변경*만 _MODEL_DEBOUNCE 회
+            #    연속 관측될 때 반영(서브에이전트 깜빡임 흡수).
+            if p._claude_model is None or p._claude_model_weak:
+                p._claude_model = mdl
+                # 라이브 스크랩이면 strong, 프로브 폴백이면 weak.
+                p._claude_model_weak = mdl_from_probe
+                ch = True
+                p._claude_model_cand = None
+                p._claude_model_cand_n = 0
+            else:
+                if mdl == p._claude_model_cand:
+                    p._claude_model_cand_n += 1
+                else:
+                    p._claude_model_cand = mdl
+                    p._claude_model_cand_n = 1
+                if p._claude_model_cand_n >= _MODEL_DEBOUNCE:
+                    p._claude_model = mdl
+                    p._claude_model_weak = False  # 디바운스 통과=라이브
+                    ch = True
+                    p._claude_model_cand = None
+                    p._claude_model_cand_n = 0
+        elif mdl and mdl == p._claude_model:
+            # 현재 확정값 재확인 → 후보 리셋(깜빡임이 끊기면 다시 처음부터
+            # 세도록). opus→haiku(1프레임)→opus 면 haiku 후보가 1에서 리셋.
+            # 라이브 스크랩으로 재확인되면 strong 승격(이후 변경은 디바운스).
+            if not mdl_from_probe:
+                p._claude_model_weak = False
+            p._claude_model_cand = None
+            p._claude_model_cand_n = 0
+        return ch
+
     def _scan_claude(self, sess, win) -> bool:
         """모든 탭 패널의 Claude 상태/사용량을 화면 텍스트(screen.display)로 갱신
         하고, **비활성 탭**의 busy→idle(작업 완료) 전이를 감지해 `has_claude_done`
@@ -1211,61 +1274,10 @@ class ServerClaudeMixin:
                     # 모델명 언급(예 "claude-fable-5")을 활성 모델로 오인해 상태줄이
                     # 엉뚱한 모델로 튀던 것 방지(2026-07-04). 배지 없으면 None → 아래
                     # 프로브 폴백(/usage 실 모델, 팝업과 동일 출처)이 채운다.
-                    mdl = claude_model_badge(txt)
-                    mdl_from_probe = False
-                    if not mdl:
-                        # 폴백/정정(2026-06-22·2026-07-04): 현행 Claude 푸터는 모델
-                        # 배지를 상시 표시하지 않아(idle 푸터엔 'auto mode on …'뿐)
-                        # 라이브 배지가 화면에 없는 게 정상이다. 그럴 땐 그림자 /usage
-                        # 프로브가 /status 로 잡은 실 모델(팝업 모델 행과 동일 권위 출처)
-                        # 로 채운다. **배지가 화면에 있을 때만** 위 mdl(strong)이 이를
-                        # 즉시 덮으므로 /model 변경은 배지로 곧장 반영되고, 배지가 없는
-                        # 동안은 프로브가 권위다. 종전엔 `_claude_model is None`(첫 확정)
-                        # 에서만 폴백해, 본문 언급 오검출로 한번 굳은 값(예 'fable-5')이
-                        # 프로브가 opus 를 알아도 세션 경계까지 안 풀렸다 — 조건을 풀어
-                        # 배지 부재 시 프로브가 강한 값도 디바운스 경유로 정정하게 한다
-                        # (사용자 보고 2026-07-04). 프로브 미상이면 마지막 값 유지.
-                        pm = (self._usage.get("model")
-                              if isinstance(self._usage, dict) else None)
-                        if pm:
-                            mdl = pm
-                            mdl_from_probe = True
-                    if mdl and mdl != p._claude_model:
-                        # 디바운스(2026-06-22, 모델 배지 haiku 튐 오탐 수정): opus 중
-                        # 화면에 haiku 가 한두 프레임 떠도(Haiku 서브에이전트/Task 출력·
-                        # 모델명 언급·/model 메뉴 잔상) 즉시 안 바꾼다.
-                        #  · 첫 확정(None) 또는 **약한**(프로브 폴백) 값 위 → 즉시 반영
-                        #    (라이브 배지가 /model 변경을 곧장 보이게 — 약한 프로브값을
-                        #    라이브 배지가 디바운스 없이 덮는다).
-                        #  · **강한**(라이브 배지) 값 위의 *변경*만 _MODEL_DEBOUNCE 회
-                        #    연속 관측될 때 반영(서브에이전트 깜빡임 흡수).
-                        if p._claude_model is None or p._claude_model_weak:
-                            p._claude_model = mdl
-                            # 라이브 스크랩이면 strong, 프로브 폴백이면 weak.
-                            p._claude_model_weak = mdl_from_probe
-                            changed = True
-                            p._claude_model_cand = None
-                            p._claude_model_cand_n = 0
-                        else:
-                            if mdl == p._claude_model_cand:
-                                p._claude_model_cand_n += 1
-                            else:
-                                p._claude_model_cand = mdl
-                                p._claude_model_cand_n = 1
-                            if p._claude_model_cand_n >= _MODEL_DEBOUNCE:
-                                p._claude_model = mdl
-                                p._claude_model_weak = False  # 디바운스 통과=라이브
-                                changed = True
-                                p._claude_model_cand = None
-                                p._claude_model_cand_n = 0
-                    elif mdl and mdl == p._claude_model:
-                        # 현재 확정값 재확인 → 후보 리셋(깜빡임이 끊기면 다시 처음부터
-                        # 세도록). opus→haiku(1프레임)→opus 면 haiku 후보가 1에서 리셋.
-                        # 라이브 스크랩으로 재확인되면 strong 승격(이후 변경은 디바운스).
-                        if not mdl_from_probe:
-                            p._claude_model_weak = False
-                        p._claude_model_cand = None
-                        p._claude_model_cand_n = 0
+                    # M14c: 모델 배지/프로브 감지+디바운스(로드맵 God-분할 —
+                    # _update_claude_model 로 추출, 동작 불변).
+                    if self._update_claude_model(p, txt):
+                        changed = True
                     running = tokens.parse_running_tokens(txt)
                     busy = new_cl == "busy"
                     peak0 = p._tok_state.get("peak", 0)   # step 전 진행중 peak
