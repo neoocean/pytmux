@@ -233,6 +233,12 @@ class _NameSyncPlugin:
                 cwd = await loop.run_in_executor(None, server._pane_cwd, pane)
             except Exception:
                 return
+            # 이 조회는 executor(비블로킹)라 결과를 패널에 캐시해 둔다 — 동기 요청
+            # 핸들러 namesync_get 이 블로킹 _pane_cwd(macOS lsof, ≤2s)를 이벤트 루프
+            # 에서 다시 부르지 않고 이 캐시를 읽어 `:namesync` 열기가 전 클라를 얼리지
+            # 않게 한다(코드검수 2026-07-10 S-3).
+            if cwd is not None:
+                pane._ns_cwd = cwd
             kw = _match_keyword(getattr(server, "_namesync_rules", None) or [],
                                 cwd, host, osname)
             if not kw:
@@ -278,14 +284,13 @@ class _NameSyncPlugin:
         """`:namesync` 편집기 열기(namesync_get)·저장(namesync_set) 요청 처리."""
         if action == "namesync_get":
             rules = getattr(server, "_namesync_rules", None) or []
-            cwd = ""
+            # cwd 는 **캐시된 best-effort** 값만 쓴다(_schedule_sync 가 executor 로
+            # 채운다). 여기서 server._pane_cwd 를 직접 부르면 macOS lsof(≤2s)가 동기
+            # 요청 핸들러에서 이벤트 루프를 막아 전 클라가 프리즈한다(S-3). 스캔 이력이
+            # 없는 패널이면 빈 문자열(편집기에서 사용자가 경로 입력) — 안전한 저하.
             win = sess.active_window if sess else None
             ap = win.active_pane if win else None
-            if ap is not None:
-                try:
-                    cwd = server._pane_cwd(ap) or ""
-                except Exception:
-                    cwd = ""
+            cwd = str(getattr(ap, "_ns_cwd", "") or "") if ap is not None else ""
             return {"t": "namesync_config",
                     "rules": [dict(r) for r in rules],
                     "host": _this_host(), "os": _this_os(), "cwd": cwd}

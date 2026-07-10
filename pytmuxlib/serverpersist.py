@@ -126,8 +126,10 @@ class ServerPersistMixin:
             # 재연결한다(ssh 파이프는 CLOEXEC 라 execv 를 살아남지 못함). §12 ① 원격
             # 탭 핀(pinned_windows)·단일-탭 분리(detached_windows)는 런타임 set 이라
             # 재연결만으론 유실 → spec 에 실어 remote_restore_links 가 새 링크에
-            # 복원한다(값이 있을 때만 키 추가). detached_windows 는 업스트림 window
-            # index 로 키잉해 우리 서버 재시작(업스트림 불변)을 그대로 살아남는다.
+            # 복원한다(값이 있을 때만 키 추가). detached_windows 는 상류 안정 window
+            # id(wid, 구버전 상류는 index 폴백)로 키잉해 우리 서버 재시작(업스트림 불변)을
+            # 그대로 살아남는다 — 상류도 재시작해 wid 가 새로 부여되면 그 detach 는
+            # (엉뚱한 탭을 숨기는 대신) 잊혀 다시 나타난다(안전한 저하).
             "remotes": [({**link.spec,
                           **({"pinned_windows": sorted(link.pinned_windows)}
                              if getattr(link, "pinned_windows", None) else {}),

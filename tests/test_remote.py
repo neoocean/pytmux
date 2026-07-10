@@ -867,6 +867,66 @@ async def test_remote_detach_single_tab():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_remote_detach_survives_upstream_tab_close_reindex():
+    """M-1(코드검수 2026-07-10): 원격 단일-탭 분리 후 상류가 **더 앞의** 탭을 닫아
+    _reindex 로 index 가 재할당돼도, 숨긴 탭은 **그 탭 그대로** 유지된다(엉뚱한 탭이
+    다시 나타나거나 다른 탭이 숨지 않음). 종전 위치 index 키잉은 상류 close 로
+    index 가 밀리면 숨김 대상이 어긋났다 — 안정 wid 키잉으로 수정."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    reader = writer = None
+    try:
+        sessB = srvB.ensure_default_session(80, 24)
+        srvB.new_window(sessB)
+        srvB.new_window(sessB)
+        assert len(sessB.tabs) == 3
+        for i, t in enumerate(sessB.tabs):
+            t.name = f"T{i}"                      # 구분용 고유 이름
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        stm = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and sum(w["name"].startswith("⇄") for w in m["windows"]) == 3,
+            what="3 merged remote tabs")
+        # 상류 index 2(T2)에 해당하는 병합 전역 index 를 분리한다.
+        gidx_t2 = next(w["index"] for w in stm["windows"]
+                       if w["name"].endswith(":T2"))
+        await write_msg(writer, {"t": "cmd", "action": "remote_detach",
+                                 "index": gidx_t2})
+        st1 = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and sum(w["name"].startswith("⇄") for w in m["windows"]) == 2,
+            what="T2 detached, 2 remote tabs")
+        vis1 = {w["name"].split(":", 1)[1] for w in st1["windows"]
+                if w["name"].startswith("⇄")}
+        assert vis1 == {"T0", "T1"}, vis1        # T2 만 숨김
+
+        # 상류가 **더 앞 탭 T1**(index 1)을 닫는다 → _reindex: T0(0), T2(1).
+        t1_pane = sessB.tabs[1].window.active_pane
+        srvB.kill_pane(sessB, t1_pane)
+        assert [t.name for t in sessB.tabs] == ["T0", "T2"]
+
+        # 다운스트림 병합 뷰: 여전히 T2 만 숨고 T0 만 보여야 한다(T2 재출현 금지).
+        st2 = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and sum(w["name"].startswith("⇄") for w in m["windows"]) == 1,
+            what="after upstream close: one remote tab remains")
+        vis2 = {w["name"].split(":", 1)[1] for w in st2["windows"]
+                if w["name"].startswith("⇄")}
+        assert vis2 == {"T0"}, f"상류 close 후 숨김 대상이 어긋남(M-1): {vis2}"
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
 async def test_remote_no_mixing_guards():
     """§1.7-c 섞임 금지: ① 로컬 보기에서 원격 전역 index 를 겨냥한 join/move 는
     거부(notice)되고 로컬 트리는 불변. ② 원격 보기 중 split/kill_pane 은 업스트림

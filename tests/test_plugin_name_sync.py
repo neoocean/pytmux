@@ -278,6 +278,16 @@ async def test_scan_no_match_marks_synced_no_change():
 # ---- 서버: 요청 처리(get/set) ----
 async def test_request_get_and_set():
     srv, sess, win, tab, pane = _fixture()
+    # S-3(코드검수 2026-07-10): namesync_get 은 이제 blocking _pane_cwd(macOS lsof)를
+    # 동기 핸들러에서 부르지 않고 **캐시된** pane._ns_cwd 만 읽는다(이벤트 루프 프리즈
+    # 방지). _pane_cwd 를 부르면 실패로 표시해 그 회귀를 못박는다.
+    srv._pane_cwd = lambda pane: (_ for _ in ()).throw(
+        AssertionError("namesync_get 이 blocking _pane_cwd 를 부르면 안 됨(S-3)"))
+    # 스캔 이력 없음 → 캐시 없음 → cwd 는 빈 문자열(안전한 저하).
+    resp0 = P.handle_server_request(srv, sess, "namesync_get", {})
+    assert resp0["cwd"] == "", resp0["cwd"]
+    # 스캔이 채운 캐시가 있으면 그 값을 그대로 돌려준다.
+    pane._ns_cwd = "/tmp/projX"
     resp = P.handle_server_request(srv, sess, "namesync_get", {})
     assert resp["t"] == "namesync_config"
     assert resp["host"] == ns._this_host() and resp["os"] == ns._this_os()

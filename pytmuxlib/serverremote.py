@@ -58,10 +58,12 @@ class RemoteLink:
         # 둔다 — _remote_tabs 가 매 status 에 pinned 비트를 실어 준다.
         self.pinned_windows: set = set()
         # 탭 하나만 이 뷰에서 분리(remote-detach 단일 탭)한 **다운스트림 로컬** 집합.
-        # 링크(ssh)와 다른 탭은 그대로 두고 병합 탭바에서만 이 탭을 숨긴다. 위치가
-        # 흔들리는 ri 대신 **업스트림 window index**(rw["index"])로 키잉해 업스트림
-        # 탭 추가/삭제로 순서가 바뀌어도 숨긴 탭이 어긋나지 않게 한다. 마지막 남은
-        # 탭까지 분리하면 호출부가 링크 전체를 해제한다(remote_detach_tab).
+        # 링크(ssh)와 다른 탭은 그대로 두고 병합 탭바에서만 이 탭을 숨긴다. 상류가
+        # 보내는 **안정 window id**(rw["wid"], 구버전 상류는 위치값 index 폴백 —
+        # _win_key)로 키잉해, 상류 탭 close/reorder 로 index 가 재할당돼도 숨긴 탭이
+        # 엉뚱한 탭으로 옮겨가지 않는다(코드검수 2026-07-10 M-1 — 종전 위치 index
+        # 키잉의 드리프트 수정). 마지막 남은 탭까지 분리하면 호출부가 링크 전체를
+        # 해제한다(remote_detach_tab).
         self.detached_windows: set = set()
         self.task: asyncio.Task | None = None
         # keepalive ping 태스크(_remote_ping_loop): 다운스트림이 업스트림에 주기적으로
@@ -507,8 +509,8 @@ class ServerRemoteMixin:
 
     def remote_detach_tab(self, sess, gi: int) -> bool:
         """원격(병합) 탭 **하나만** 이 뷰에서 분리한다 — ssh 링크와 같은 호스트의
-        다른 탭은 그대로 둔다(remote_detach 는 호스트 전체를 끊는다). 업스트림
-        window index 를 per-link detached_windows 에 넣어 병합 탭바에서만 숨긴다.
+        다른 탭은 그대로 둔다(remote_detach 는 호스트 전체를 끊는다). 상류 안정 window
+        id(_win_key)를 per-link detached_windows 에 넣어 병합 탭바에서만 숨긴다.
         그 링크의 마지막 남은 탭까지 분리하면 링크 전체를 해제한다(빈 링크를 유지할
         이유가 없고, 자동 재연결도 취소해야 하므로 remote_detach 로 위임).
         gi=병합 전역 탭 index. 원격 탭이 아니면 False."""
@@ -516,9 +518,10 @@ class ServerRemoteMixin:
         if hit is None:
             return False
         link, ri = hit
-        idx = link.windows[ri].get("index") if ri < len(link.windows) else None
-        if idx is not None:
-            link.detached_windows.add(idx)
+        key = (self._win_key(link.windows[ri])
+               if ri < len(link.windows) else None)
+        if key is not None:
+            link.detached_windows.add(key)
         # 남은(안 숨긴) 탭이 없으면 링크(ssh) 전체를 해제한다.
         if not self._visible_windows(link):
             self.remote_detach(link.host)
@@ -763,12 +766,23 @@ class ServerRemoteMixin:
                 await self.remote_drop(link, reconnect=True)
 
     # ---- 탭바 병합 ----
+    @staticmethod
+    def _win_key(rw: dict):
+        """원격 window 를 가리키는 **안정 키**. 상류가 안정 wid 를 실어 보내면 그것을,
+        (구버전 상류라) 없으면 위치값 index 로 폴백한다(M-1). 한 링크의 상류는 단일
+        버전이라 집합 내 키가 동형이다(wid 만 or index 만 — 정수끼리 충돌 없음).
+        위치 index 로 키잉하던 종전엔 상류 탭 close/reorder 로 _reindex 가 index 를
+        재할당해 숨긴 탭이 엉뚱한 탭으로 옮겨갔다(코드검수 2026-07-10)."""
+        wid = rw.get("wid")
+        return wid if wid is not None else rw.get("index")
+
     def _visible_windows(self, link: RemoteLink) -> list:
         """이 링크에서 병합 탭바에 보일 (ri, rw) 목록 — 단일-탭 분리
         (detached_windows)로 숨긴 window 는 제외한다. ri 는 full link.windows
-        기준(핀 집합 pinned_windows 가 ri 로 키잉하므로 위치를 보존)."""
+        기준(핀 집합 pinned_windows 가 ri 로 키잉하므로 위치를 보존).
+        detached 판정은 안정 키(_win_key: 상류 wid, 없으면 index 폴백)로 한다."""
         return [(ri, rw) for ri, rw in enumerate(link.windows)
-                if rw.get("index") not in link.detached_windows]
+                if self._win_key(rw) not in link.detached_windows]
 
     def _remote_tabs(self, base: int, client=None) -> list:
         """병합 탭 목록에 덧붙일 원격 탭 엔트리(전역 index 는 base 부터 연속).

@@ -1195,6 +1195,7 @@ class Split:
 
 _pid_seq = [0]
 _split_seq = [0]
+_win_seq = [0]
 
 
 def pid_counter() -> int:
@@ -1205,6 +1206,13 @@ def pid_counter() -> int:
 def split_counter() -> int:
     _split_seq[0] += 1
     return _split_seq[0]
+
+
+def window_counter() -> int:
+    """탭(Tab)에 부여할 안정 window id(단조 증가). 위치값 index 와 달리 재할당되지
+    않아 원격 detached_windows 키잉 등 '이 탭'을 계속 가리켜야 할 때 쓴다(M-1)."""
+    _win_seq[0] += 1
+    return _win_seq[0]
 
 
 class Window:
@@ -1376,6 +1384,12 @@ class Tab:
 
     def __init__(self, index: int, name: str, window: "Window"):
         self.index = index
+        # 안정 window id(단조 증가, 생성 시 1회 부여·이후 불변). `index` 는 _reindex 가
+        # 탭 kill/move 마다 위치로 재할당하는 **위치값**이라 안정 식별자로 못 쓴다
+        # (serverpersist 복원 주석도 명시). 원격 페더레이션의 단일-탭 분리
+        # (serverremote.detached_windows)가 상류 탭 close/reorder 로도 안 어긋나게
+        # 이 wid 로 키잉한다(코드검수 2026-07-10 M-1). 프로세스 수명 내 재사용 없음.
+        self.wid = window_counter()
         self.name = name
         self.window = window
         self.has_activity = False

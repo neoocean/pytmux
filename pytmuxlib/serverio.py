@@ -177,6 +177,10 @@ class ServerIOMixin:
             "t": "status",
             "session": sess.name,
             "windows": [{"index": t.index, "name": t.name,
+                         # wid: 안정 window id(위치값 index 와 별개). 다운스트림이 원격
+                         # 단일-탭 분리를 상류 탭 close/reorder 로도 안 어긋나게 이걸로
+                         # 키잉한다(M-1). 구버전 상류는 미전송 → 다운스트림이 index 폴백.
+                         "wid": getattr(t, "wid", None),
                          "active": (i == sess.active_index),
                          "bell": t.has_bell, "activity": t.has_activity,
                          "claude_done": t.has_claude_done,
