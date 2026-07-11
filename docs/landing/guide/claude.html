@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>Claude Code 연동 — pytmux 가이드 8</title>
+<meta name="description" content="pytmux 의 Claude Code 통합: 상태 아이콘, 모델 배지, 토큰 리밋 자동 재개, 권한 모드, 시작 규칙, 프롬프트 히스토리, 화면 안정성(모호폭·auto-redraw), 세션 이름 통일, 세션 재개.">
+<link rel="stylesheet" href="../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-topic="claude">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">상세 가이드 · 8 / 14</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">Claude Code 연동</h1>
+        <p style="font-size:18px;">
+          패널에서 <code>claude</code> CLI 를 돌리면 pytmux 가 상태·토큰·한도를 추적하고, 리밋에 걸리면
+          자동으로 잇습니다. 이 모든 기능은 <code>claude-code</code> 플러그인이며, 디렉토리를 지우면 조용히
+          사라집니다.
+        </p>
+      </header>
+
+      <section>
+        <h2 style="border-top:none;">상태 아이콘과 알림</h2>
+        <p>
+          실행 중인 탭에 상태 아이콘을 표시합니다 — <strong>대기 ○ · 처리중 ◐ · 리밋 멈춤 ⊘</strong>.
+          비활성 탭의 작업이 끝나면 탭 배경색으로 알립니다. 상태줄에는 모델 배지·토큰 배지 등 클릭 가능한
+          배지가 붙습니다.
+        </p>
+        <figure>
+          <img src="../image/22-claude-real.svg" alt="실제 Claude Code 가 실행 중인 패널">
+          <figcaption>실제 <code>claude</code> 가 실행 중인 패널.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>토큰 리밋 자동 재개</h2>
+        <p>
+          사용량 리밋에 걸려 멈추면 출력의 해제 시각을 읽어 <strong>그때 자동으로 재개</strong>합니다.
+          <kbd>prefix</kbd> <kbd>R</kbd>(또는 <code>auto-resume on</code>)로 토글하며 상태줄에 <code>AR</code>
+          로 표시됩니다. 재개 시 보낼 메시지는 <code>auto-resume-message</code> 로 바꿀 수 있습니다.
+          전송 오류(API 오류·레이트 리밋)에는 <code>auto-retry</code>(기본 on)가 1분 뒤 "continue" 를 넣어
+          이어 갑니다.
+        </p>
+        <figure>
+          <img src="../image/12-claude-autoresume.svg" alt="토큰 리밋 자동 재개 상태줄">
+          <figcaption>토큰 리밋 자동 재개 — 해제 시각에 스스로 이어 갑니다.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>권한 모드 · 모델 · 시작 규칙</h2>
+        <p>
+          패널의 <strong>권한모드 footer</strong> 를 클릭하면 auto / default / plan 선택 팝업이 열립니다.
+          <strong>모델 배지</strong> 를 클릭하면 모델·컨텍스트를 바꾸는 팝업이 열립니다(내부적으로 <code>/model</code>
+          주입). <code>claude-auto-mode</code> 로 Claude 가 idle 일 때 자동으로 auto 모드로 바꾸게 할 수도 있습니다.
+        </p>
+        <p>
+          <code>claude-rules</code> 로 <strong>시작 규칙</strong>을 정의해 두면 새 세션이 시작되거나
+          <code>/clear</code> 뒤에 자동으로 주입됩니다. 새 세션에서 <code>/rc</code>(원격 제어)와 권한 auto 를
+          한 번 자동 적용하는 <code>auto-launch</code>(기본 on)도 있습니다.
+        </p>
+        <figure>
+          <img src="../image/13-perm-mode.svg" alt="권한 모드 선택 팝업">
+          <figcaption>권한 모드 선택 · 시작 규칙 자동 주입.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>프롬프트 히스토리</h2>
+        <p>
+          보낸 프롬프트 이력을 미리보기·검색·점프합니다(<code>claude-prompt-history</code> 플러그인,
+          <code>prompt-history</code>·별칭 <code>ph</code>). 명령 프롬프트에서 입력하는 동안 직전 프롬프트를
+          미리 보여 주고, 미리보기 줄 수는 <code>prompt-history-lines</code>(1–3)로 조정합니다.
+        </p>
+        <figure>
+          <img src="../image/31-prompt-history.svg" alt="프롬프트 히스토리 팝업">
+          <figcaption>프롬프트 히스토리 — 보낸 프롬프트를 되짚어 점프.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>화면 안정성 (CJK 모호폭 · 깨짐 완화)</h2>
+        <p>
+          Claude Code 처럼 부분 갱신이 많은 TUI 는 단말마다 다른 <strong>모호폭(ambiguous-width)</strong>
+          처리 때문에 한글·기호가 겹쳐 보일 수 있습니다. pytmux 는 시작 시 폭을 자동 감지하고, 런타임에
+          <code>:set ambiguous-width narrow|wide|auto</code> 로 폭 모델을 일관되게 전환합니다.
+        </p>
+        <p>
+          드물게 출력이 어긋나면 <code>claude-auto-redraw</code>(<code>off|idle|corruption</code>, 기본 off)로
+          완료(busy→idle)마다 또는 깨짐 감지 시 패널을 한 번 전체 재출력해 자동 복원하게 켤 수 있습니다.
+          수동으로는 <kbd>prefix</kbd> <kbd>r</kbd>(<code>redraw</code>)로 언제든 다시 그립니다. 컨텍스트가
+          하드스톱에 닿으면 자동으로 <code>/compact</code> 를 부르는 자동 복구도 있습니다.
+        </p>
+      </section>
+
+      <section>
+        <h2>세션 이름 통일 · 세션 재개 · 피드백 숨김</h2>
+        <ul>
+          <li><strong>이름 통일</strong> — <code>namesync</code>(<code>claude-name-sync</code> 플러그인)로
+            특정 디렉토리에서 Claude 를 돌리면 탭·패널·Claude 세션 이름을 키워드로 자동 통일합니다.</li>
+          <li><strong>세션 재개</strong> — <code>claude-resume</code>(별칭 <code>cr</code>)로 이 머신의 Claude
+            세션 목록을 보고 <kbd>Enter</kbd> 로 새 탭에서 재개합니다.</li>
+          <li><strong>피드백 숨김</strong> — <code>claude-disable-feedback</code> 플러그인이 Claude 의 피드백
+            유도 문구를 숨깁니다(별도 명령 없음).</li>
+          <li><strong>세션당 클리어</strong> — <code>prompt-clear</code> 로 매 완료마다 문서화 후 <code>/clear</code>
+            하는 모드를 켤 수 있습니다.</li>
+        </ul>
+        <div class="callout">
+          토큰 사용량을 <strong>정확히</strong> 집계하는 팝업은 분량이 많아 다음 챕터
+          <a href="/guide/tokens">9. 토큰 사용량</a>에서 따로 다룹니다.
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../guide-nav.js" defer></script>
+<script src="../lightbox.js" defer></script>
+</body>
+</html>

@@ -7,10 +7,19 @@
 | 파일 | 내용 |
 |------|------|
 | `index.html` | 랜딩(소개·핵심가치·기능·Claude 연동·운영·플러그인·갤러리·설치·**다운로드·연락**) |
-| `guide.html` | 스크린샷 포함 상세 사용 가이드(설치~플러그인 12장) |
+| `guide.html` | 상세 가이드 **개요**(14개 챕터로 가는 목차·카드) |
+| `guide/*.html` | 챕터별 상세 가이드 14장(`start`·`install`·`panes`·`tabs`·`scrollback`·`mouse`·`command`·`claude`·`tokens`·`remote`·`restart`·`tools`·`config`·`plugins`). 각 페이지 하단에 이전·다음 페이저 |
+| `guide-nav.js` | 챕터 페이지 공용 크롬(상단 내비·목차 사이드바·이전/다음 페이저·푸터)을 `data-topic` 으로 주입. space 프로젝트 `guide-nav.js` 패턴 |
 | `styles.css` | 공용 다크 테마 스타일 |
+| `lightbox.js` | 스크린샷 클릭 확대(라이트박스) |
 | `image/` | HTML 이 참조하는 스크린샷 SVG (자기완결용 동봉본) |
 | `build.sh` | 배포용 깨끗한 번들(`_dist/`) 추출 스크립트 |
+
+> **가이드 구조:** `guide.html` 은 개요(목차)이고, 실제 내용은 `guide/<topic>.html` 챕터
+> 페이지에 있습니다. 챕터 순서·이전/다음·목차는 `guide-nav.js` 상단의 `CH` 배열 한 곳에서
+> 관리합니다. 챕터를 추가하려면 (1) `guide/<topic>.html` 을 다른 챕터 복사로 만들고
+> `data-topic` 을 바꾼 뒤, (2) `guide-nav.js` 의 `CH` 와 `guide.html` 의 목차·카드에 한 줄씩
+> 추가합니다. 챕터 페이지는 `../styles.css`·`../guide-nav.js`·`../lightbox.js`·`../image/` 를 참조합니다.
 
 > **자기완결:** 이미지를 `image/` 하위에 동봉했고 HTML 도 `image/…` 상대 경로만
 > 씁니다. 따라서 **`docs/landing/` 디렉토리 그대로** 정적 호스팅 루트에 올리면 됩니다

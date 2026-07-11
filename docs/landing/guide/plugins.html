@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>플러그인 — pytmux 가이드 14</title>
+<meta name="description" content="pytmux 플러그인: delete-to-disable 구조, 플러그인 관리 팝업 :plugins, Claude·시계·달력·ncd·IME·REC·Perforce·프롬프트 히스토리·세션 재개·이름 통일 등 전체 목록.">
+<link rel="stylesheet" href="../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-topic="plugins">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">상세 가이드 · 14 / 14</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">플러그인 (delete-to-disable)</h1>
+        <p style="font-size:18px;">
+          pytmux 의 많은 기능은 <code>pytmuxlib/plugins/&lt;name&gt;/</code> 디렉토리 하나로 응집된
+          플러그인입니다. <strong>디렉토리를 지우면</strong> 그 기능이 명령·자동완성·메뉴 어디에도 안
+          나타나고 조용히 사라집니다.
+        </p>
+      </header>
+
+      <section>
+        <h2 style="border-top:none;">delete-to-disable 구조</h2>
+        <p>
+          코어는 플러그인을 직접 import 하지 않고 <strong>레지스트리 훅 + <code>getattr</code> 가드</strong>로만
+          닿습니다. 그래서 플러그인 디렉토리를 지워도 코어는 멀쩡히 돌고, 그 기능만 사라집니다. 반대로
+          디렉토리를 되돌리면 기능이 다시 나타납니다. 켜고 끄는 것은 <code>:plugins</code>(별칭
+          <code>plugin-manager</code>) 관리 팝업에서도 할 수 있습니다.
+        </p>
+      </section>
+
+      <section>
+        <h2>기본 포함 플러그인</h2>
+        <table>
+          <thead><tr><th>플러그인</th><th>기능</th><th>대표 명령</th></tr></thead>
+          <tbody>
+            <tr><td>claude-code</td><td>Claude Code 통합(토큰·상태·자동 재개·권한모드·규칙·모델)</td><td><code>token-log</code> · <code>auto-resume</code> · <code>claude-rules</code></td></tr>
+            <tr><td>claude-resume</td><td>이 머신의 Claude 세션 목록·재개</td><td><code>claude-resume</code> (<code>cr</code>)</td></tr>
+            <tr><td>claude-name-sync</td><td>디렉토리별 탭/패널·세션 이름 자동 통일</td><td><code>namesync</code></td></tr>
+            <tr><td>claude-prompt-history</td><td>보낸 프롬프트 미리보기·검색·점프</td><td><code>prompt-history</code> (<code>ph</code>)</td></tr>
+            <tr><td>claude-token-usage-view</td><td>사용 한도·다음 리셋 카운트다운 화면</td><td><code>usage-view</code></td></tr>
+            <tr><td>claude-disable-feedback</td><td>Claude 피드백 유도 문구 숨김</td><td>—</td></tr>
+            <tr><td>clock</td><td>패널 위 큰 시계 오버레이</td><td><code>clock-mode</code> (prefix <kbd>t</kbd>)</td></tr>
+            <tr><td>calendar</td><td>월 달력 오버레이</td><td><code>calendar-mode</code></td></tr>
+            <tr><td>ncd</td><td>디렉토리 트리(Norton Change Directory 스타일)</td><td><code>ncd</code> (<code>nc</code>)</td></tr>
+            <tr><td>rec</td><td>패널 원시 출력 무손실 캡처(REC)</td><td><code>capture-output</code></td></tr>
+            <tr><td>ime-indicator</td><td>한/영 IME 배지</td><td><code>ime-indicator</code></td></tr>
+            <tr><td>p4-show-submitted-changelists</td><td>Perforce 서브밋 CL 목록</td><td><code>p4changes</code></td></tr>
+          </tbody>
+        </table>
+        <figure>
+          <img src="../image/40-settings.svg" alt="통합 설정/플러그인 관리 팝업">
+          <figcaption>설정·플러그인 관리 팝업에서 켜고 끄기.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>더 알아보기</h2>
+        <div class="callout">
+          훅 계약·플러그인 제작법 등 더 깊은 내용은 저장소 위키의 <strong>Plugin Authoring Guide</strong> 와
+          <strong>User Manual</strong> 을 참고하세요. 훅 계약은 <code>pytmuxlib/plugins/__init__.py</code> 의
+          <code>Registry</code> 한 곳에 모여 있습니다.
+        </div>
+        <div class="banner" style="margin-top:40px;">
+          <h2>여기까지 왔습니다 🎉</h2>
+          <p>이제 pytmux 의 모든 기능을 둘러봤습니다. 설치는 한 줄, 실행도 한 줄입니다.</p>
+          <div class="cta">
+            <a class="btn btn-primary" href="/#download">내려받아 시작하기</a>
+            <a class="btn btn-ghost" href="/guide">가이드 개요로</a>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../guide-nav.js" defer></script>
+<script src="../lightbox.js" defer></script>
+</body>
+</html>

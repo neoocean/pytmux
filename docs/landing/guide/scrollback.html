@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>스크롤백 · 복사 — pytmux 가이드 5</title>
+<meta name="description" content="pytmux 스크롤백/복사 모드: 휠로 즉시 스크롤백, vi/emacs 키, 검색, capture-pane, 붙여넣기 버퍼, 마우스 드래그 복사, 붙여넣기 시 박스드로잉 제거.">
+<link rel="stylesheet" href="../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-topic="scrollback">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">상세 가이드 · 5 / 14</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">스크롤백 · 복사</h1>
+        <p style="font-size:18px;">
+          지난 출력을 되짚어 보고, 필요한 부분만 복사하고, 안전하게 붙여넣습니다. 패널마다 독립적입니다.
+        </p>
+      </header>
+
+      <section>
+        <h2 style="border-top:none;">스크롤백 보기</h2>
+        <p>
+          copy-mode 로 따로 들어가지 않아도, <strong>패널 위에서 휠을 올리면</strong> 바로 지난 출력을
+          봅니다(<code>alt-scroll on</code>, 기본값). 더 정식으로는 <kbd>prefix</kbd> <kbd>[</kbd> 로 스크롤
+          (복사) 모드에 들어갑니다. 복사 모드 키 스타일은 <code>set mode-keys vi</code>(기본) 또는
+          <code>emacs</code> 로 고릅니다.
+        </p>
+        <ul>
+          <li>스크롤백 안에서 텍스트를 <strong>검색</strong>하고 일치 지점으로 점프</li>
+          <li><code>capture-pane</code>(<code>-S</code> 로 전체 스크롤백) 로 버퍼에 담기</li>
+          <li><code>clear-history</code> 로 스크롤백 비우기</li>
+          <li><code>pipe-pane</code> 으로 패널 출력을 외부 명령에 흘려보내기</li>
+        </ul>
+        <figure>
+          <img src="../image/15-scrollback.svg" alt="패널 스크롤백 화면">
+          <figcaption>패널별 스크롤백 — 휠만 올리면 바로 지난 출력을 봅니다.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>마우스로 복사</h2>
+        <p>
+          그냥 <strong>왼쪽 버튼으로 드래그</strong>하면 pytmux 가 드래그를 시작한 <strong>패널 안으로만</strong>
+          선택을 가둬, 손을 떼는 순간 OS 클립보드로 <strong>자동 복사</strong>합니다(<code>mouse-drag-copy</code>,
+          기본 on). Shift 도 Ctrl+C 도 필요 없고, pytmux 가 그린 패널 외곽선(<code>│</code>)이나 옆 패널
+          내용은 딸려오지 않습니다. Claude 처럼 마우스를 쓰는 화면 위에서도 드래그가 복사로 갑니다(클릭은
+          종전대로 버튼/포커스). 자세한 동작과 예외는 <a href="/guide/mouse">6. 마우스로 제어</a>에서 다룹니다.
+        </p>
+        <div class="callout">
+          앱에 마우스 드래그를 넘기고 싶으면 <code>set mouse-drag-copy off</code> — 그때 선택은
+          <strong>Shift+드래그</strong>나 위 스크롤백(copy-mode)에서 드래그로 합니다.
+        </div>
+      </section>
+
+      <section>
+        <h2>붙여넣기</h2>
+        <p>
+          붙여넣기는 <strong>bracketed paste</strong> 로 한 번에 전달됩니다 — 여러 줄을 붙여도 줄마다
+          바로 실행되지 않습니다. 붙여넣기 버퍼를 직접 다룰 수도 있습니다.
+        </p>
+        <ul>
+          <li><code>paste-clipboard</code> — OS 클립보드 붙여넣기</li>
+          <li><code>paste-buffer</code> (<kbd>prefix</kbd> <kbd>]</kbd>) — pytmux 붙여넣기 버퍼에서</li>
+          <li><code>choose-buffer</code> (<kbd>prefix</kbd> <kbd>=</kbd>, 별칭 <code>list-buffers</code>) — 버퍼 목록에서 골라 붙여넣기</li>
+        </ul>
+        <div class="callout">
+          <strong>박스드로잉 제거:</strong> 분할된 화면을 복사해 붙여넣으면 패널 테두리(<code>│─┼</code>)가
+          섞여 들어올 수 있습니다. <code>set strip-box-drawing on</code>(기본 ON)이면 붙여넣을 때 이런
+          박스드로잉 문자를 자동으로 걸러냅니다.
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../guide-nav.js" defer></script>
+<script src="../lightbox.js" defer></script>
+</body>
+</html>

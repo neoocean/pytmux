@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>패널 다루기 — pytmux 가이드 3</title>
+<meta name="description" content="pytmux 패널: 좌우·상하 분할, 포커스 이동, 크기 조절, 줌, swap·rotate, 레이아웃, 삭제. 키·명령·마우스로 모두 가능.">
+<link rel="stylesheet" href="../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-topic="panes">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">상세 가이드 · 3 / 14</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">패널 다루기</h1>
+        <p style="font-size:18px;">
+          한 윈도우를 여러 셸로 쪼개는 패널은 pytmux 의 심장입니다. 분할·이동·크기·줌·교환·삭제를
+          키·명령·마우스 어느 것으로도 할 수 있습니다.
+        </p>
+      </header>
+
+      <section>
+        <h2 style="border-top:none;">분할과 이동</h2>
+        <p>기본 prefix 는 <kbd>Ctrl-b</kbd> 입니다(설정으로 변경 가능).</p>
+        <table>
+          <thead><tr><th>동작</th><th>키 / 명령 / 마우스</th></tr></thead>
+          <tbody>
+            <tr><td>좌우 분할</td><td><kbd>prefix</kbd> <kbd>%</kbd> · <code>split-window -h</code></td></tr>
+            <tr><td>상하 분할</td><td><kbd>prefix</kbd> <kbd>"</kbd> · <code>split-window -v</code></td></tr>
+            <tr><td>포커스 이동</td><td><kbd>prefix</kbd> <kbd>←↑↓→</kbd> · <kbd>prefix</kbd> <kbd>o</kbd>(다음) · 패널 클릭</td></tr>
+            <tr><td>크기 조절</td><td>경계선 마우스 드래그 · <code>resize-pane</code></td></tr>
+            <tr><td>줌 토글</td><td><kbd>prefix</kbd> <kbd>z</kbd> · <code>resize-pane -Z</code></td></tr>
+            <tr><td>교환(swap)</td><td>Shift+왼쪽 드래그 · <code>swap-pane</code></td></tr>
+            <tr><td>회전(rotate)</td><td><code>rotate-window</code></td></tr>
+            <tr><td>삭제</td><td><kbd>prefix</kbd> <kbd>x</kbd>(확인) · 패널 <code>[x]</code> 클릭</td></tr>
+          </tbody>
+        </table>
+        <figure>
+          <img src="../image/03-split-nested.svg" alt="중첩 분할 레이아웃">
+          <figcaption>중첩 분할 — 경계는 인접 패널과 <code>┬┴├┤</code> 로 연결됩니다.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>활성 패널과 테두리</h2>
+        <p>
+          패널이 둘 이상이면 각 패널을 테두리로 감싸고, <strong>활성 패널은 파란색</strong>, 비활성은
+          회색으로 표시합니다. 클릭하거나 <kbd>prefix</kbd> 방향키로 포커스를 옮기면 테두리 색이
+          따라옵니다. 네트워크 응답성이 떨어지면 테두리가 <strong>빨간색</strong>으로 바뀝니다(자세한
+          내용은 <a href="/guide/restart">11. 재시작 · 회복</a>).
+        </p>
+      </section>
+
+      <section>
+        <h2>줌 — 한 패널을 전체화면으로</h2>
+        <p>
+          <kbd>prefix</kbd> <kbd>z</kbd> 로 현재 패널을 잠깐 전체화면으로 키웠다가, 다시 누르면 원래
+          레이아웃으로 돌아옵니다. 좁은 패널에서 로그를 크게 볼 때 유용합니다. 줌 상태는 하단
+          상태표시줄에 표시됩니다.
+        </p>
+        <figure>
+          <img src="../image/04-zoom.svg" alt="패널 줌 — 한 패널이 전체화면으로 확대된 화면">
+          <figcaption>줌 — 한 패널을 전체화면으로 토글합니다.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>교환 · 회전 · 레이아웃</h2>
+        <p>
+          <code>swap-pane</code> 으로 두 패널의 위치를 맞바꾸고(마우스로는 <strong>Shift+드래그</strong>),
+          <code>rotate-window</code> 로 패널들을 한 칸씩 돌립니다. 미리 정의된 레이아웃으로
+          <strong>고르게(even) 정렬</strong>하거나, 만든 배치를 저장/복원할 수 있습니다.
+        </p>
+      </section>
+
+      <section>
+        <h2>삭제와 확인</h2>
+        <p>
+          패널을 닫으려면 <kbd>prefix</kbd> <kbd>x</kbd> 또는 패널 모서리의 <code>[x]</code> 를 누릅니다.
+          실행 중인 프로그램이 있으면 실수로 지우지 않도록 확인 대화상자가 뜹니다. 마지막 패널을 닫으면
+          그 윈도우(탭)가 닫힙니다.
+        </p>
+        <figure>
+          <img src="../image/07-kill-pane-prompt.svg" alt="패널 닫기 확인 대화상자">
+          <figcaption>패널 닫기 확인 — 실행 중 프로그램을 실수로 잃지 않게 합니다.</figcaption>
+        </figure>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../guide-nav.js" defer></script>
+<script src="../lightbox.js" defer></script>
+</body>
+</html>

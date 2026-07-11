@@ -13,9 +13,11 @@ here="$(cd "$(dirname "$0")" && pwd)"
 out="${1:-$here/_dist}"
 
 rm -rf "$out"
-mkdir -p "$out/image"
+mkdir -p "$out/image" "$out/guide"
 
 cp "$here/index.html" "$here/guide.html" "$here/changes.html" "$here/changelog.html" "$here/styles.css" "$out/"
+cp "$here/lightbox.js" "$here/guide-nav.js" "$out/"
+cp "$here"/guide/*.html "$out/guide/"
 cp "$here"/image/*.svg "$out/image/"
 
 echo "built → $out"

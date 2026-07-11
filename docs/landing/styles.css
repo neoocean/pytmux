@@ -206,6 +206,44 @@ section { padding: 64px 0; }
 }
 .callout.warn { background: rgba(255,204,102,0.1); border-color: rgba(255,204,102,0.35); }
 
+/* ── 가이드 목차: 현재 페이지 강조 + 챕터 번호 ── */
+.toc a.active { color: var(--text); border-left-color: var(--accent); font-weight: 600; }
+.toc a .num { color: var(--text-faint); font-family: var(--mono); font-size: 12px; margin-right: 7px; }
+.toc a.active .num { color: var(--accent); }
+
+/* ── 다음/이전 페이지 페이저(각 챕터 하단) ── */
+.pager {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  margin: 56px 0 8px; padding-top: 28px; border-top: 1px solid var(--border);
+}
+.pager a {
+  display: flex; flex-direction: column; gap: 4px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px 20px; color: var(--text); min-width: 0;
+}
+.pager a:hover { text-decoration: none; border-color: var(--accent); background: var(--bg-elev); }
+.pager .pager-next { text-align: right; grid-column: 2; }
+.pager .pager-prev { grid-column: 1; }
+.pager .pager-dir { font-size: 13px; color: var(--text-faint); font-family: var(--mono); }
+.pager .pager-title { font-size: 16px; font-weight: 600; color: var(--text); }
+.pager a:hover .pager-title { color: var(--accent); }
+@media (max-width: 880px) {
+  .pager { grid-template-columns: 1fr; }
+  .pager .pager-next, .pager .pager-prev { grid-column: 1; text-align: left; }
+}
+
+/* ── 가이드 개요(챕터 카드 그리드) ── */
+.ch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 28px 0; }
+.ch-card {
+  display: flex; flex-direction: column; gap: 6px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 20px 22px; color: var(--text);
+}
+.ch-card:hover { text-decoration: none; border-color: var(--accent); transform: translateY(-2px); transition: transform .12s ease, border-color .12s ease; }
+.ch-card .ch-num { font-family: var(--mono); font-size: 13px; color: var(--accent); }
+.ch-card b { font-size: 17px; }
+.ch-card span { font-size: 14px; color: var(--text-dim); }
+
 /* ── 내비 GitHub 강조 ── */
 .nav-links a.gh {
   color: var(--text); border: 1px solid var(--border);

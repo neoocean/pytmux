@@ -4,13 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
-<title>pytmux 상세 가이드 — 설치부터 패널·탭·Claude 연동·운영까지</title>
-<meta name="description" content="pytmux 사용 상세 가이드. 핵심 개념, 패널·탭·스크롤백, 마우스·메뉴·명령 프롬프트, Claude Code 연동, 원격 페더레이션, 작업 보존 재시작, 설정, 플러그인.">
+<title>pytmux 상세 가이드 — 챕터별 전체 기능 안내</title>
+<meta name="description" content="pytmux 사용 상세 가이드 개요. 설치·패널·탭·스크롤백·마우스·메뉴/명령·Claude Code 연동·토큰 사용량·원격 페더레이션·재시작·도구·설정·플러그인까지 챕터별로 모든 기능을 스크린샷과 함께 설명합니다.">
 <link rel="stylesheet" href="styles.css">
 <!-- Matomo -->
 <script>
   var _paq = window._paq = window._paq || [];
-  /* tracker methods like "setCustomDimension" should be called before "trackPageView" */
   _paq.push(['trackPageView']);
   _paq.push(['enableLinkTracking']);
   (function() {
@@ -30,12 +29,8 @@
     <a class="brand" href="/" style="text-decoration:none"><span class="prompt">❯</span> pytmux</a>
     <div class="nav-links">
       <a href="/">홈</a>
-      <a href="changes">최근 수정사항</a>
-      <a href="#concepts">개념</a>
-      <a href="#panes">패널</a>
-      <a href="#claude">Claude</a>
-      <a href="#ops">운영</a>
-      <a href="#config">설정</a>
+      <a href="/guide">가이드 개요</a>
+      <a href="/changes">최근 수정사항</a>
       <a class="gh" href="https://github.com/neoocean/pytmux" target="_blank" rel="noopener">GitHub ↗</a>
     </div>
   </div>
@@ -44,451 +39,79 @@
 <div class="wrap">
   <div class="guide-layout">
 
-    <!-- ── 목차 ── -->
     <aside class="toc">
-      <h4>목차</h4>
-      <a href="#intro">시작하기 전에</a>
-      <a href="#install">1. 설치</a>
-      <a href="#concepts">2. 핵심 개념</a>
-      <a href="#panes">3. 패널 다루기</a>
-      <a href="#tabs">4. 탭 다루기</a>
-      <a href="#scroll">5. 스크롤백</a>
-      <a href="#mouse">6. 마우스·메뉴·명령</a>
-      <a href="#claude">7. Claude Code 연동</a>
-      <a href="#tokens">8. 토큰 사용량</a>
-      <a href="#ops">9. 운영·재시작</a>
-      <a href="#remote">10. 원격 페더레이션</a>
-      <a href="#config">11. 설정 파일</a>
-      <a href="#plugins">12. 플러그인</a>
+      <h4>가이드 목차</h4>
+      <a class="active" href="/guide"><span class="num">☰</span>가이드 개요</a>
+      <a href="/guide/start"><span class="num">1</span>시작 · 핵심 개념</a>
+      <a href="/guide/install"><span class="num">2</span>설치</a>
+      <a href="/guide/panes"><span class="num">3</span>패널 다루기</a>
+      <a href="/guide/tabs"><span class="num">4</span>탭 · 윈도우</a>
+      <a href="/guide/scrollback"><span class="num">5</span>스크롤백 · 복사</a>
+      <a href="/guide/mouse"><span class="num">6</span>마우스로 제어</a>
+      <a href="/guide/command"><span class="num">7</span>메뉴 · 명령 프롬프트</a>
+      <a href="/guide/claude"><span class="num">8</span>Claude Code 연동</a>
+      <a href="/guide/tokens"><span class="num">9</span>토큰 사용량</a>
+      <a href="/guide/remote"><span class="num">10</span>원격 페더레이션</a>
+      <a href="/guide/restart"><span class="num">11</span>재시작 · 회복</a>
+      <a href="/guide/tools"><span class="num">12</span>도구 · 위젯</a>
+      <a href="/guide/config"><span class="num">13</span>설정 파일</a>
+      <a href="/guide/plugins"><span class="num">14</span>플러그인</a>
     </aside>
 
-    <!-- ── 본문 ── -->
     <main class="doc">
 
       <header style="margin-bottom:8px;">
         <span class="kicker">상세 가이드</span>
         <h1 style="font-size:40px;letter-spacing:-1px;margin:6px 0 10px;">pytmux 사용 가이드</h1>
         <p style="font-size:18px;">
-          설치부터 패널·탭·마우스·메뉴·명령·Claude 연동·운영까지, 실제 화면 스크린샷과 함께
-          안내합니다. 빠르게 둘러보려면 <a href="/">랜딩 페이지</a>를 먼저 보세요.
+          설치부터 패널·탭·마우스·메뉴·명령·Claude 연동·토큰·원격·운영·설정·플러그인까지, pytmux 의
+          <strong>모든 기능</strong>을 실제 화면 스크린샷과 함께 챕터별로 안내합니다. 각 페이지 아래에는
+          이전·다음 챕터로 이어지는 링크가 있습니다. 처음이라면 <a href="/guide/start">1. 시작 · 핵심 개념</a>부터
+          차례로 읽으세요. 빠르게 둘러보려면 <a href="/">랜딩 페이지</a>를 먼저 보세요.
         </p>
       </header>
 
-      <!-- 최근 수정사항 — 랜딩(/)과 동일한 한 덩어리 박스. 정적 마크업이 폴백이고, 아래 스크립트가
-           changelog 의 최신 날짜 섹션을 same-origin fetch 로 미러해 새로 그린다(이중 관리 없음). -->
+      <!-- 최근 수정사항 — 랜딩(/)과 동일한 한 덩어리 박스(정적 폴백 + changes 최신 미러). -->
       <div class="cl-news">
         <div class="cl-news-head">
           <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-12 <span class="pill">일요일</span></span>
-          <a class="cl-news-more" href="changes">전체 변경 내역 →</a>
+          <a class="cl-news-more" href="/changes">전체 변경 내역 →</a>
         </div>
         <ul id="cl-news-list">
           <li><span class="pill stable">복사</span> <strong>이제 그냥 마우스로 드래그하면 그 패널 내용만 자동으로 복사됩니다 — 외곽선·옆 패널 없이.</strong>
-            Shift·Ctrl+C 없이 왼쪽 버튼으로 끌면 시작한 패널 안으로만 선택돼 손을 떼는 순간 OS 클립보드로 자동 복사됩니다(터미널 네이티브 선택이 pane 외곽선│까지 긁던 불편 해소). 클릭은 종전대로 버튼/포커스. 끄기: set mouse-drag-copy off.</li>
+            Shift·Ctrl+C 없이 왼쪽 버튼으로 끌면 시작한 패널 안으로만 선택돼 손을 떼는 순간 OS 클립보드로 자동 복사됩니다. 끄기: set mouse-drag-copy off.</li>
           <li><span class="pill stable">설치</span> <strong>필요한 구성요소가 빠졌을 때, 알 수 없는 오류 대신 설치 방법을 안내합니다.</strong>
-            textual·pyte 같은 추가 구성요소가 설치되지 않은 채 실행하면 알아보기 어려운 오류만 쏟아지던 것 —
-            이제 빠진 구성요소 이름과 함께 지금 쓰는 파이썬에 맞춘 설치 명령을 바로 알려 주고 종료합니다.</li>
+            빠진 구성요소 이름과 함께 지금 쓰는 파이썬에 맞춘 설치 명령을 바로 알려 주고 종료합니다.</li>
         </ul>
       </div>
 
-      <section id="intro">
-        <h2 style="border-top:none;">시작하기 전에</h2>
-        <p>
-          <strong>pytmux</strong> 는 Python/Textual 로 만든 tmux 유사 터미널 멀티플렉서입니다.
-          하나의 터미널 안에서 여러 셸을 패널로 나눠 쓰고, 앱이나 터미널 창을 닫아도 셸 세션이
-          계속 살아 있게 해 줍니다. 단일 서버(데몬)–다중 클라이언트 구조이며 macOS · Linux ·
-          Windows(ConPTY) 를 지원합니다.
-        </p>
-        <div class="callout">
-          tmux 명령어를 다 외우지 못해도 됩니다. <strong>마우스·메뉴·명령 프롬프트</strong> 세
-          가지 방식으로 거의 모든 동작을 할 수 있습니다.
+      <section>
+        <h2 style="border-top:none;">챕터 한눈에</h2>
+        <p>아래 카드에서 원하는 주제로 바로 갈 수 있습니다. 각 챕터는 해당 기능을 빠짐없이 다룹니다.</p>
+        <div class="ch-grid">
+          <a class="ch-card" href="/guide/start"><span class="ch-num">01</span><b>시작 · 핵심 개념</b><span>탭 → 윈도우 → 패널 계층, 셸 영속, 제어하는 세 가지 방법.</span></a>
+          <a class="ch-card" href="/guide/install"><span class="ch-num">02</span><b>설치</b><span>의존성 설치, 실행, <code>pytmux</code> 명령 등록, SSH 자동 attach.</span></a>
+          <a class="ch-card" href="/guide/panes"><span class="ch-num">03</span><b>패널 다루기</b><span>분할·포커스 이동·크기 조절·줌·swap·rotate·레이아웃·삭제.</span></a>
+          <a class="ch-card" href="/guide/tabs"><span class="ch-num">04</span><b>탭 · 윈도우</b><span>생성·전환·이름·재정렬·고정(핀)·닫기, 상태표시줄.</span></a>
+          <a class="ch-card" href="/guide/scrollback"><span class="ch-num">05</span><b>스크롤백 · 복사</b><span>휠 스크롤백, 검색, vi/emacs 키, 복사·붙여넣기.</span></a>
+          <a class="ch-card" href="/guide/mouse"><span class="ch-num">06</span><b>마우스로 제어</b><span>드래그 복사, 클릭·우클릭·휠·경계선·배지 클릭 총정리.</span></a>
+          <a class="ch-card" href="/guide/command"><span class="ch-num">07</span><b>메뉴 · 명령 프롬프트</b><span>계층형 메뉴, 명령 프롬프트, 전체 명령 목록, 키 재바인딩.</span></a>
+          <a class="ch-card" href="/guide/claude"><span class="ch-num">08</span><b>Claude Code 연동</b><span>상태 아이콘·자동 재개·권한모드·규칙·프롬프트 이력·화면 안정성.</span></a>
+          <a class="ch-card" href="/guide/tokens"><span class="ch-num">09</span><b>토큰 사용량</b><span>기간·세션·한도·경고·/usage·시나리오 사용량 팝업.</span></a>
+          <a class="ch-card" href="/guide/remote"><span class="ch-num">10</span><b>원격 페더레이션</b><span>ssh 너머 서버 attach, 분홍 탭, 머지·detach·핀, keepalive.</span></a>
+          <a class="ch-card" href="/guide/restart"><span class="ch-num">11</span><b>재시작 · 회복</b><span>작업 보존 재시작, 네트워크 응답성 표시와 재접속.</span></a>
+          <a class="ch-card" href="/guide/tools"><span class="ch-num">12</span><b>도구 · 위젯</b><span>시계·달력·ncd 트리·IME 배지·RTT 그래프·캡처·Perforce·작성창.</span></a>
+          <a class="ch-card" href="/guide/config"><span class="ch-num">13</span><b>설정 파일</b><span><code>pytmux.conf</code> 옵션 전체, <code>:settings</code> 팝업, 한/영 전환.</span></a>
+          <a class="ch-card" href="/guide/plugins"><span class="ch-num">14</span><b>플러그인</b><span>delete-to-disable 구조, 플러그인 관리 팝업 <code>:plugins</code>.</span></a>
         </div>
       </section>
 
-      <section id="install">
-        <h2>1. 설치</h2>
-        <p>파이썬만 있으면 됩니다. Python 3.11 이상을 권장합니다. 의존성을 설치합니다(직접
-           설치는 <span class="inline-code">pip install textual pyte wcwidth</span>, Windows 는
-           <span class="inline-code">pip install pywinpty</span> 도 추가).</p>
-        <div class="code">pip install -r requirements.txt</div>
-        <p>실행 — 서버가 없으면 자동 기동 후 attach 합니다.</p>
-        <div class="code">python3 pytmux.py</div>
-        <h3>1.1 <code>pytmux</code> 명령으로 등록 (선택)</h3>
-        <p>래퍼를 <code>~/.local/bin</code> 에 설치합니다. 인자로 다른 디렉터리를,
-           <span class="inline-code">BIN=pt</span> 로 다른 이름(pt)을 지정할 수 있습니다.</p>
-        <div class="code">./install.sh
-./install.sh /usr/local/bin
-BIN=pt ./install.sh</div>
-        <p>Windows(PowerShell)에서는 <code>install.ps1</code> / <code>uninstall.ps1</code> 을 사용합니다.</p>
-        <h3>1.2 SSH/mosh 접속 시 자동 attach (선택)</h3>
-        <p>원격 로그인하면 곧바로 pytmux 세션으로 들어가도록 <code>~/.zshrc</code> 등에 추가합니다.
-           인터랙티브 SSH/mosh 로그인일 때만 attach 하도록 중첩 방지 가드를 둡니다.</p>
-        <div class="code">if command -v pytmux >/dev/null && [[ -o interactive ]] && [[ -t 1 ]] \
-   && [[ -z "$PYTMUX" ]] && [[ -z "$LC_PYTMUX" ]] \
-   && [[ -n "$SSH_CONNECTION$SSH_TTY" ]]; then
-  pytmux
-fi</div>
-        <div class="callout warn">
-          <strong>주의:</strong> <code>exec pytmux</code> 는 권하지 않습니다. pytmux 가 즉시
-          종료하면 로그인 셸이 함께 죽고, autossh 등과 만나면 재접속 루프가 됩니다.
-        </div>
-        <figure>
-          <img src="image/01-first-run.svg" alt="pytmux 첫 실행 화면">
-          <figcaption>01 · 첫 실행 — 평소 쓰던 셸이 전체 화면으로 뜹니다.</figcaption>
-        </figure>
-      </section>
-
-      <section id="concepts">
-        <h2>2. 핵심 개념: 탭 → 윈도우 → 패널</h2>
-        <p>
-          pytmux 는 <strong>단일 세션 모델</strong>입니다. 멀티 세션 개념은 없습니다. 항상 하나의
-          세션으로 시작하고, <strong>탭</strong>으로 여러 윈도우를 열며, 각 윈도우를
-          <strong>패널</strong>로 나눕니다.
-        </p>
-        <ul>
-          <li><strong>탭</strong> — 최상위. 1번부터 번호가 매겨지고 상단 탭바에 나타납니다.</li>
-          <li><strong>윈도우</strong> — 각 탭에 종속된 단일 윈도우.</li>
-          <li><strong>패널</strong> — 윈도우를 분할한 셸 집합. 활성 패널은 파란 테두리.</li>
-        </ul>
-        <p>
-          <strong>셸 영속성:</strong> 셸 PTY 를 백그라운드 데몬(서버)이 보유합니다.
-          앱을 닫거나(<code>detach</code>) 상위 터미널 창을 닫아도 셸은 계속 돌아가고, 다시
-          실행하면 이어서 붙습니다.
-        </p>
-      </section>
-
-      <section id="panes">
-        <h2>3. 패널 다루기</h2>
-        <p>기본 prefix 는 <kbd>Ctrl-b</kbd> 입니다(설정으로 변경 가능).</p>
-        <table>
-          <thead><tr><th>동작</th><th>키 / 명령</th></tr></thead>
-          <tbody>
-            <tr><td>좌우 분할</td><td><kbd>prefix</kbd> <kbd>%</kbd> · <code>split-window -h</code></td></tr>
-            <tr><td>상하 분할</td><td><kbd>prefix</kbd> <kbd>"</kbd> · <code>split-window -v</code></td></tr>
-            <tr><td>포커스 이동</td><td><kbd>prefix</kbd> <kbd>←↑↓→</kbd> · 패널 클릭</td></tr>
-            <tr><td>크기 조절</td><td>경계선 드래그 · <code>resize-pane</code></td></tr>
-            <tr><td>줌 토글</td><td><kbd>prefix</kbd> <kbd>z</kbd></td></tr>
-            <tr><td>교환(swap)</td><td>Shift+왼쪽 드래그 · <code>swap-pane</code></td></tr>
-            <tr><td>삭제</td><td><kbd>prefix</kbd> <kbd>x</kbd>(확인) · 패널 <code>[x]</code></td></tr>
-          </tbody>
-        </table>
-        <figure>
-          <img src="image/03-split-nested.svg" alt="중첩 분할 레이아웃">
-          <figcaption>03 · 중첩 분할 — 경계는 인접 패널과 <code>┬┴├┤</code> 로 연결됩니다.</figcaption>
-        </figure>
-        <p>
-          패널이 둘 이상이면 각 패널을 테두리로 감싸고, <strong>활성 패널은 파란색</strong>,
-          비활성은 회색으로 표시합니다. <code>swap-pane</code> / <code>rotate-window</code> 로
-          위치를 바꾸거나 돌릴 수 있고, 레이아웃을 저장/복원할 수 있습니다.
-        </p>
-        <figure>
-          <img src="image/04-zoom.svg" alt="패널 줌">
-          <figcaption>04 · 줌 — 한 패널을 전체화면으로 토글.</figcaption>
-        </figure>
-      </section>
-
-      <section id="tabs">
-        <h2>4. 탭 다루기</h2>
-        <p>
-          탭이 하나여도 상단에 탭 인터페이스(탭 목록 + 마지막 탭 오른쪽의 <code>[+]</code>)가
-          나타납니다. 활성 탭은 아래 콘텐츠 영역과 연결된 노트북 탭 모양으로 이어집니다.
-        </p>
-        <ul>
-          <li><strong>생성·전환</strong> — <code>[+]</code> 클릭 · <code>new-tab</code> · <kbd>prefix</kbd> <kbd>숫자</kbd></li>
-          <li><strong>이름변경</strong> — <code>rename-tab</code> · 탭 더블클릭</li>
-          <li><strong>재정렬</strong> — 탭 드래그 · <code>swap-window</code></li>
-          <li><strong>고정(핀)</strong> — <kbd>prefix</kbd> <kbd>P</kbd> 로 탭을 왼쪽에 고정</li>
-          <li><strong>삭제</strong> — 탭 <code>[x]</code> · <code>kill-window</code>(확인)</li>
-        </ul>
-        <figure>
-          <img src="image/08-tabs-multi.svg" alt="여러 탭과 상단 탭바">
-          <figcaption>08 · 다중 탭 — 1번부터 번호가 매겨지고 드래그로 재정렬.</figcaption>
-        </figure>
-        <figure>
-          <img src="image/10-confirm-tab.svg" alt="탭 닫기 확인">
-          <figcaption>10 · 탭 닫기 확인 대화상자.</figcaption>
-        </figure>
-      </section>
-
-      <section id="scroll">
-        <h2>5. 스크롤백 (복사 모드)</h2>
-        <p>
-          copy-mode 로 따로 들어가지 않아도, <strong>패널 위에서 휠을 올리면</strong> 바로 지난
-          출력을 봅니다. 패널마다 독립적입니다. 스크롤백 안에서 텍스트를 검색하고 점프할 수 있고,
-          복사 모드 키 스타일은 vi(기본) 또는 emacs 로 설정합니다.
-        </p>
-        <p>
-          <strong>마우스로 복사</strong>: 그냥 <strong>왼쪽 버튼으로 드래그</strong>하면 pytmux 가
-          드래그를 시작한 <strong>패널 안으로만</strong> 선택을 가둬, 손을 떼는 순간 OS 클립보드로
-          <strong>자동 복사</strong>합니다(<code>mouse-drag-copy</code>, 기본 on). Shift 도 Ctrl+C 도
-          필요 없고, pytmux 가 그린 패널 외곽선(<code>│</code>)이나 옆 패널 내용은 딸려오지 않습니다 —
-          터미널의 네이티브 선택은 화면 전체를 긁어 외곽선까지 복사되던 것을 없앤다. Claude 처럼 마우스를
-          쓰는 화면 위에서도 드래그가 복사로 갑니다(클릭은 종전대로 버튼/포커스). 앱에 마우스 드래그를
-          넘기고 싶으면 <code>set mouse-drag-copy off</code> — 그때는 선택을 <strong>Shift+드래그</strong>나
-          위 스크롤백(copy-mode)에서 드래그로 합니다.
-        </p>
-        <figure>
-          <img src="image/15-scrollback.svg" alt="패널 스크롤백">
-          <figcaption>15 · 패널별 스크롤백.</figcaption>
-        </figure>
-      </section>
-
-      <section id="mouse">
-        <h2>6. 마우스 · 메뉴 · 명령 프롬프트</h2>
-        <p>거의 모든 동작을 마우스로 할 수 있습니다.</p>
-        <ul>
-          <li>경계선 드래그 → 패널 크기 조절</li>
-          <li>패널 클릭 → 포커스, 우클릭 → 메뉴</li>
-          <li>휠 → 스크롤백, Shift+드래그 → 패널 swap</li>
-          <li>시계 클릭 → 시계 모드, 날짜 클릭 → 달력 오버레이</li>
-        </ul>
-        <h3>6.1 메뉴 (<code>prefix Enter</code> 또는 우클릭)</h3>
-        <p>패널·레이아웃·탭 그룹(서브메뉴)으로 정리된 메뉴로 거의 모든 동작을 합니다.</p>
-        <figure>
-          <img src="image/36-menu-submenu.svg" alt="서브메뉴가 펼쳐진 메뉴">
-          <figcaption>36 · 서브메뉴로 정리된 계층형 메뉴.</figcaption>
-        </figure>
-        <h3>6.2 명령 프롬프트 (<code>prefix :</code> 또는 <kbd>F12</kbd>)</h3>
-        <p>
-          공백 검색(<code>clock m</code> → <code>clock-mode</code>), ghost 자동완성, 인자 이력
-          (<kbd>↑</kbd><kbd>↓</kbd>·<kbd>Tab</kbd>)을 지원합니다.
-        </p>
-        <figure>
-          <img src="image/06-command-prompt.svg" alt="명령 프롬프트">
-          <figcaption>06 · 명령 프롬프트 · 17 명령 팝업(전체 명령 목록).</figcaption>
-        </figure>
-        <h3>6.3 디렉토리 트리 (<code>ncd</code>)</h3>
-        <p>루트→cwd 펼침, speed search, <kbd>Enter</kbd> 로 cd, <kbd>⇧Enter</kbd>/<kbd>^O</kbd> 로 새 패널에서 엽니다.</p>
-        <figure>
-          <img src="image/27-ncd.svg" alt="ncd 디렉토리 트리">
-          <figcaption>27 · ncd 디렉토리 트리.</figcaption>
-        </figure>
-      </section>
-
-      <section id="claude">
-        <h2>7. Claude Code 연동</h2>
-        <p>
-          패널에서 <code>claude</code> CLI 를 돌리면 pytmux 가 상태·토큰·한도를 추적합니다.
-          실행 중인 탭에 상태 아이콘을 표시합니다 — <strong>대기 ○ · 처리중 ◐ · 리밋 멈춤 ⊘</strong>.
-          비활성 탭의 작업이 끝나면 탭 배경색으로 알립니다.
-        </p>
-        <figure>
-          <img src="image/22-claude-real.svg" alt="실제 Claude 패널">
-          <figcaption>22 · 실제 <code>claude</code> 가 실행 중인 패널.</figcaption>
-        </figure>
-        <h3>7.1 프롬프트 히스토리</h3>
-        <p>보낸 프롬프트 이력을 미리보기·검색·점프합니다(claude-prompt-history 플러그인).</p>
-        <figure>
-          <img src="image/31-prompt-history.svg" alt="프롬프트 히스토리">
-          <figcaption>31 · 프롬프트 히스토리.</figcaption>
-        </figure>
-        <h3>7.2 토큰 리밋 자동 재개</h3>
-        <p>
-          사용량 리밋에 걸려 멈추면 출력의 해제 시각을 읽어 <strong>그때 자동으로 재개</strong>합니다.
-          <kbd>prefix</kbd> <kbd>R</kbd> 로 토글하며 상태줄에 <code>AR</code> 로 표시됩니다.
-        </p>
-        <figure>
-          <img src="image/12-claude-autoresume.svg" alt="자동 재개 상태줄">
-          <figcaption>12 · 토큰 리밋 자동 재개.</figcaption>
-        </figure>
-        <h3>7.3 권한모드 · 시작 규칙</h3>
-        <p>
-          권한모드 footer 를 클릭하면 auto / default / plan 선택 팝업이 열립니다.
-          <code>claude-rules</code> 로 시작 규칙을 자동 주입할 수 있습니다.
-        </p>
-        <figure>
-          <img src="image/13-perm-mode.svg" alt="권한모드 선택">
-          <figcaption>13 · 권한 모드 선택 팝업 · 28 시작 규칙.</figcaption>
-        </figure>
-        <h3>7.4 화면 안정성 (CJK 모호폭 · 깨짐 완화)</h3>
-        <p>
-          Claude Code 처럼 부분 갱신이 많은 TUI 는 단말마다 다른 <strong>모호폭(ambiguous-width)</strong>
-          처리 때문에 한글·기호가 겹쳐 보일 수 있습니다. pytmux 는 시작 시 폭을 자동 감지하고,
-          런타임에 <code>:set ambiguous-width narrow|wide|auto</code> 로 폭 모델을 일관되게 전환합니다.
-          드물게 출력이 어긋나면 <code>claude-auto-redraw on</code>(기본 off) 으로 완료(busy→idle)마다
-          패널을 한 번 전체 재출력해 자동 복원하도록 켤 수 있습니다.
-        </p>
-      </section>
-
-      <section id="tokens">
-        <h2>8. 토큰 사용량</h2>
-        <p>
-          상태줄의 토큰 배지를 클릭하면 <strong>기간 / 세션 / 한도 / 경고 / /usage / 시나리오</strong>
-          노트북 탭으로 보는 사용량 팝업이 열립니다. 화면 스크랩이 아니라
-          <code>~/.claude/*.jsonl</code> 트랜스크립트 회계를 권위 출처로 삼아 cache_read 까지
-          정확히 집계합니다(스크랩 누계는 실제의 약 0.4% 에 불과합니다). 탭 사이는
-          <kbd>p</kbd>(세션) · <kbd>l</kbd>(한도) · <kbd>u</kbd>(/usage) 키로도 오갑니다.
-          상단 요약줄(<code>5h% · 주% · ~Σ</code>)은 모든 탭에 공통으로 붙습니다.
-        </p>
-
-        <h3>8.1 기간 뷰 — 시간 흐름으로</h3>
-        <p>
-          토큰을 <strong>월 → 주 → 일 → 시각</strong> 계층 트리로 봅니다. 각 행에 토큰 합과
-          가로 막대가 붙고, <kbd>Enter</kbd> / <kbd>←</kbd><kbd>→</kbd> 로 주를 일·시각까지
-          펼치고 접습니다. 언제 토큰이 몰렸는지 시간 축으로 짚을 때 씁니다.
-        </p>
-        <figure>
-          <img src="image/24-token-log.svg" alt="토큰 사용량 — 기간 뷰">
-          <figcaption>기간 뷰 — 주/일/시각 계층 트리(요약줄: 5h%·주%·~Σ).</figcaption>
-        </figure>
-
-        <h3>8.2 세션 뷰 — Claude 세션별로</h3>
-        <p>
-          <kbd>p</kbd> 로 전환합니다. 행이 <strong>Claude 세션별 합</strong>(대표 <code>탭:패널</code>
-          라벨 · 타임스탬프 · 토큰)입니다. 닫히고 재사용되는 패널 id 대신 안정적인 세션 id 로
-          묶어, 어느 세션이 토큰을 많이 썼는지 비교할 때 씁니다.
-        </p>
-        <figure>
-          <img src="image/42-token-log-session.svg" alt="토큰 사용량 — 세션 뷰">
-          <figcaption>세션 뷰 — 세션별 합 · 탭:패널 · 타임스탬프 · 토큰 막대.</figcaption>
-        </figure>
-
-        <h3>8.3 한도 뷰 — /usage 실측과 리셋</h3>
-        <p>
-          <kbd>l</kbd> 로 전환합니다. <code>/usage</code> 실측 한도(<strong>세션 5h · 주 전체 ·
-          주 Sonnet</strong>)를 % 사용 막대와 리셋 시각으로 보여주고, 현재 5h 창 추정 Σ 와
-          다음 리셋까지를 <strong>블록 숫자 카운트다운 시계</strong>로 보여줍니다(매 초 갱신).
-          첫 두 행에서 <kbd>←</kbd><kbd>→</kbd> 로 모델·컨텍스트를 바꿔 적용할 수도 있어,
-          한도를 보며 모델을 고를 때 씁니다.
-        </p>
-        <figure>
-          <img src="image/38-token-log-limit.svg" alt="토큰 사용량 — 한도 뷰">
-          <figcaption>한도 뷰 — /usage 실측 막대 · 리셋 카운트다운 시계 · 모델/컨텍스트 변경.</figcaption>
-        </figure>
-      </section>
-
-      <section id="ops">
-        <h2>9. 운영 · 작업 보존 서버 재시작</h2>
-        <p>실행 중인 셸을 죽이지 않고 코드만 새 이미지로 교체합니다(제자리 re-exec).</p>
-        <table>
-          <thead><tr><th>명령</th><th>설명</th></tr></thead>
-          <tbody>
-            <tr><td><code>restart-server</code></td><td>서버만 재시작</td></tr>
-            <tr><td><code>restart-all</code></td><td>서버 + 클라 동시 재시작</td></tr>
-            <tr><td><code>restart-check</code></td><td>드라이런(실제 재시작 전 점검)</td></tr>
-          </tbody>
-        </table>
-        <p>
-          열린 패널의 <strong>셸 · 실행 중 프로그램 · 스크롤백을 살린 채</strong> 코드만 교체합니다.
-          Windows 는 아웃오브프로세스 pty-host 가 ConPTY 를 영구 소유해 재시작이 HPCON 을
-          건드리지 않습니다.
-        </p>
-        <figure>
-          <img src="image/21-restart-check.svg" alt="재시작 드라이런">
-          <figcaption>21 · restart-check 드라이런.</figcaption>
-        </figure>
-        <h3>9.1 네트워크 응답성과 재접속</h3>
-        <p>
-          클라↔서버 IPC 지연이 커지면 패널 외곽선을 <strong>빨간색</strong>으로 표시하고,
-          고착되면 <code>reconnect</code>(또는 워치독 자동)으로 <strong>실행 중 셸/Claude 를
-          죽이지 않고</strong> IPC 만 다시 세워 반응성을 회복합니다.
-        </p>
-        <figure>
-          <img src="image/16-degraded.svg" alt="응답성 저하 표시">
-          <figcaption>16 · 응답성 저하 표시.</figcaption>
-        </figure>
-      </section>
-
-      <section id="remote">
-        <h2>10. 원격 페더레이션 (ssh)</h2>
-        <p>
-          <code>remote-attach</code> 로 ssh 너머 다른 머신의 pytmux 서버에 붙습니다. 원격 탭은
-          탭바·외곽선을 <strong>분홍색</strong>으로 구분하며, 로컬 탭과 섞이지 않습니다. 원격
-          서버가 없으면 분리 서버를 자동 기동합니다(<code>PYTMUX_NO_REMOTE_AUTOSTART=1</code> 로 opt-out).
-        </p>
-        <figure>
-          <img src="image/34-remote-attach.svg" alt="원격 attach">
-          <figcaption>34 · 원격 attach — 분홍 탭으로 구분.</figcaption>
-        </figure>
-
-        <h3>10.1 여러 기기에서 볼 때 화면 크기 (호스트 SSH keepalive 권장)</h3>
-        <p>
-          한 원격 서버를 <strong>여러 기기가 동시에</strong> 보면, 화면은 tmux 처럼 <strong>가장 작은 화면에
-          맞춰집니다</strong>(남는 영역은 빈 여백 띠로 채워집니다). 어떤 기기가 <strong>정상 종료 없이 끊기면</strong>
-          (노트북 절전·네트워크 단절 등) 그 <strong>유령 접속</strong>이 남아 화면을 계속 작게 붙잡을 수 있습니다.
-          지금 화면에서 <code>detach -a</code>(다른 접속 내보내기)로, 또는 그 <strong>접속을 가진 기기에서</strong>
-          <code>remote-detach</code> 로 정리되지만, 유령을 <strong>근본적으로 정리</strong>하려면 원격 서버를 여는
-          <strong>호스트</strong>의 SSH 데몬이 죽은 접속을 스스로 끊게 해 두는 것이 좋습니다.
-        </p>
-        <p><strong>macOS · Linux</strong> — 호스트에서 드롭인 한 파일(관리자 권한):</p>
-        <div class="code"><span class="c"># /etc/ssh/sshd_config.d/50-pytmux-keepalive.conf</span>
-ClientAliveInterval 15
-ClientAliveCountMax 3</div>
-        <p>
-          약 <strong>45초(15초 × 3회)</strong> 무응답이면 죽은 접속으로 보고 끊습니다. macOS 는 접속마다 sshd 를 새로
-          띄우므로 <strong>재시작 없이 다음 접속부터 적용</strong>됩니다(기존 세션엔 영향 없음). Linux 는
-          <code>sudo systemctl reload ssh</code>(배포판에 따라 <code>sshd</code>)로 반영합니다. 드롭인 디렉토리가 없으면
-          <code>/etc/ssh/sshd_config</code> 에 위 두 줄을 직접 추가해도 됩니다.
-        </p>
-        <p><strong>Windows(OpenSSH 서버 호스트)</strong> — <code>C:\ProgramData\ssh\sshd_config</code> 에 같은 두 줄
-          (<code>ClientAliveInterval 15</code> / <code>ClientAliveCountMax 3</code>)을 추가하고, 관리자 PowerShell 에서
-          <code>Restart-Service sshd</code> 로 재시작합니다.</p>
-        <div class="callout">
-          <strong>방향 참고.</strong> pytmux 가 <em>내는</em> 접속에는 이미 반대 방향 keepalive(내가 죽은 원격 서버를 감지)가
-          켜져 있습니다. 위 설정은 <strong>호스트가 죽은 접속자를 감지</strong>하는 쪽으로, 원격 서버를 <strong>여는(받는)
-          호스트</strong>에만 필요합니다.
-        </div>
-      </section>
-
-      <section id="config">
-        <h2>11. 설정 파일</h2>
-        <p><code>pytmux.conf</code> 로 동작을 바꿉니다(<code>pytmux.conf.example</code> 참고). 통합 설정 팝업 <code>:settings</code> 로도 카테고리별로 조정합니다.</p>
-        <table>
-          <thead><tr><th>설정</th><th>설명</th></tr></thead>
-          <tbody>
-            <tr><td><code>set prefix C-a</code></td><td>prefix 키 변경 (기본: Ctrl-b)</td></tr>
-            <tr><td><code>set mouse on</code></td><td>마우스 on/off</td></tr>
-            <tr><td><code>set strip-box-drawing on</code></td><td>붙여넣기 시 패널 테두리(박스드로잉) 제거 (기본 ON)</td></tr>
-            <tr><td><code>set tab-bar always</code></td><td>상단 탭바: always(기본) / auto(2개 이상일 때만)</td></tr>
-            <tr><td><code>set mode-keys vi</code></td><td>복사 모드 키 스타일: vi(기본) / emacs</td></tr>
-            <tr><td><code>set default-path current</code></td><td>새 탭/패널 시작 디렉토리: current / home / &lt;경로&gt;</td></tr>
-            <tr><td><code>set ambiguous-width auto</code></td><td>CJK 모호폭 처리: narrow(기본) / wide / auto(단말 자동 감지)</td></tr>
-          </tbody>
-        </table>
-        <p><code>pytmux.conf</code> 예시 — 아래 줄을 그대로 복사해 붙여넣으면 됩니다.</p>
-        <div class="code">set prefix C-a
-set mouse on
-set strip-box-drawing on
-set tab-bar always
-set mode-keys vi
-set default-path current
-set ambiguous-width auto</div>
-        <figure>
-          <img src="image/40-settings.svg" alt="통합 설정 팝업">
-          <figcaption>40 · 통합 설정 팝업(<code>:settings</code>).</figcaption>
-        </figure>
-      </section>
-
-      <section id="plugins">
-        <h2>12. 플러그인 (delete-to-disable)</h2>
-        <p>
-          시계·달력·디렉토리 트리(ncd)·IME 한/영 배지·Claude Code 통합·프롬프트 히스토리·세션
-          리줌·사용 한도 화면·퍼포스 CL 목록·출력 캡처(REC)·피드백 문구 숨김이 모두
-          <code>pytmuxlib/plugins/&lt;name&gt;/</code> 디렉토리 하나로 응집된 플러그인입니다.
-          <strong>디렉토리를 지우면</strong> 그 기능이 명령·자동완성·렌더 어디에도 안 나타나고
-          조용히 사라집니다(코어는 레지스트리 훅 + <code>getattr</code> 가드로만 닿음).
-        </p>
-        <figure>
-          <img src="image/18-clock.svg" alt="시계 모드">
-          <figcaption>18 · 시계 모드 · 09 달력 오버레이.</figcaption>
-        </figure>
-        <figure>
-          <img src="image/33-ime.svg" alt="IME 한영 배지">
-          <figcaption>33 · IME 한/영 배지.</figcaption>
-        </figure>
-        <div class="callout">
-          더 깊은 내용(훅 계약·플러그인 제작법)은 저장소 위키의 <strong>Plugin Authoring Guide</strong> 와
-          <strong>User Manual</strong> 을 참고하세요.
-        </div>
-      </section>
-
-      <div class="banner" style="margin-top:64px;">
-        <h2>준비됐나요?</h2>
-        <p>설치는 한 줄, 실행도 한 줄입니다.</p>
-        <div class="cta">
-          <a class="btn btn-primary" href="/#install">설치 안내로</a>
-          <a class="btn btn-ghost" href="/">랜딩 페이지</a>
-        </div>
-      </div>
+      <nav class="pager" aria-label="가이드 페이지 이동">
+        <a class="pager-next" href="/guide/start" style="grid-column:2">
+          <span class="pager-dir">다음 →</span>
+          <span class="pager-title">1. 시작 · 핵심 개념</span>
+        </a>
+      </nav>
 
     </main>
   </div>
@@ -499,7 +122,7 @@ set ambiguous-width auto</div>
     <div><a class="brand" href="/" style="text-decoration:none"><span class="prompt">❯</span> pytmux</a> &nbsp; — 상세 가이드</div>
     <div class="foot-links">
       <a href="/">홈</a> ·
-      <a href="changes">최근 수정사항</a> ·
+      <a href="/changes">최근 수정사항</a> ·
       <a href="/#download">다운로드</a> ·
       <a href="https://github.com/neoocean/pytmux" target="_blank" rel="noopener">GitHub</a> ·
       <a href="mailto:me@woojinkim.org?subject=pytmux">me@woojinkim.org</a>
@@ -509,10 +132,9 @@ set ambiguous-width auto</div>
 
 <script src="lightbox.js" defer></script>
 <script>
-  // 최근 수정사항 — changelog 페이지의 최신 날짜 섹션(맨 위 .cl-day)을 same-origin fetch 로 미러한다.
-  // 위 정적 마크업이 폴백이고, 성공하면 최신 날짜 제목과 앞 4개 항목으로 다시 그린다. 랜딩(/)과 동일.
+  // 최근 수정사항 — changes 페이지의 최신 날짜 섹션(맨 위 .cl-day)을 same-origin fetch 로 미러한다.
   (function () {
-    fetch('changes').then(function (r) { return r.text(); }).then(function (t) {
+    fetch('/changes').then(function (r) { return r.text(); }).then(function (t) {
       var doc = new DOMParser().parseFromString(t, 'text/html');
       var sec = doc.querySelector('main section.cl-day');
       var h2 = sec && sec.querySelector('h2');

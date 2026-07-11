@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>토큰 사용량 — pytmux 가이드 9</title>
+<meta name="description" content="pytmux 토큰 사용량 팝업: 기간·세션·계정·한도 뷰, /usage 실측 막대와 리셋 카운트다운, 트랜스크립트 회계로 cache_read 까지 정확 집계, 경고 배지.">
+<link rel="stylesheet" href="../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-topic="tokens">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">상세 가이드 · 9 / 14</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">토큰 사용량</h1>
+        <p style="font-size:18px;">
+          상태줄의 토큰 배지를 클릭하면 사용량 팝업이 열립니다. 화면 스크랩이 아니라
+          <code>~/.claude/*.jsonl</code> 트랜스크립트 회계를 권위 출처로 삼아 <strong>cache_read 까지 정확히</strong>
+          집계합니다(스크랩 누계는 실제의 약 0.4% 에 불과합니다).
+        </p>
+      </header>
+
+      <section>
+        <h2 style="border-top:none;">여는 법과 탭 이동</h2>
+        <p>
+          상태줄 <strong>토큰 배지 클릭</strong> 또는 <code>token-log</code>(별칭 <code>token-usage</code>)로 엽니다.
+          <strong>기간 / 세션 / 계정 / 한도</strong> 노트북 탭으로 구성되고, 상단 요약줄(<code>5h% · 주% · ~Σ</code>)은
+          모든 탭에 공통으로 붙습니다. 탭 사이는 키로도 오갑니다 — <kbd>p</kbd>(세션) · <kbd>l</kbd>(한도) ·
+          <kbd>u</kbd>(/usage).
+        </p>
+      </section>
+
+      <section>
+        <h2>기간 뷰 — 시간 흐름으로</h2>
+        <p>
+          토큰을 <strong>월 → 주 → 일 → 시각</strong> 계층 트리로 봅니다. 각 행에 토큰 합과 가로 막대가 붙고,
+          <kbd>Enter</kbd> / <kbd>←</kbd><kbd>→</kbd> 로 주를 일·시각까지 펼치고 접습니다. 언제 토큰이
+          몰렸는지 시간 축으로 짚을 때 씁니다.
+        </p>
+        <figure>
+          <img src="../image/24-token-log.svg" alt="토큰 사용량 — 기간 뷰">
+          <figcaption>기간 뷰 — 월/주/일/시각 계층 트리(요약줄: 5h%·주%·~Σ).</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>세션 뷰 — Claude 세션별로</h2>
+        <p>
+          <kbd>p</kbd> 로 전환합니다. 행이 <strong>Claude 세션별 합</strong>(대표 <code>탭:패널</code> 라벨 ·
+          타임스탬프 · 토큰)입니다. 닫히고 재사용되는 패널 id 대신 안정적인 세션 id 로 묶어, 어느 세션이
+          토큰을 많이 썼는지 비교할 때 씁니다. <strong>계정 뷰</strong>로는 여러 계정을 나눠 볼 수 있고,
+          필요하면 <code>token-account</code> 로 현재 패널의 계정을 직접 지정합니다.
+        </p>
+        <figure>
+          <img src="../image/42-token-log-session.svg" alt="토큰 사용량 — 세션 뷰">
+          <figcaption>세션 뷰 — 세션별 합 · 탭:패널 · 타임스탬프 · 토큰 막대.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>한도 뷰 — /usage 실측과 리셋</h2>
+        <p>
+          <kbd>l</kbd> 로 전환합니다. <code>/usage</code> 실측 한도(<strong>세션 5h · 주 전체 · 주 Sonnet</strong>)를
+          % 사용 막대와 리셋 시각으로 보여주고, 현재 5h 창 추정 Σ 와 다음 리셋까지를 <strong>블록 숫자
+          카운트다운 시계</strong>로 보여줍니다(매 초 갱신). 첫 두 행에서 <kbd>←</kbd><kbd>→</kbd> 로
+          모델·컨텍스트를 바꿔 적용할 수도 있어, 한도를 보며 모델을 고를 때 씁니다.
+        </p>
+        <p>
+          실측 한도는 숨은 세션으로 <code>/usage</code> 를 조회하는 <code>claude-usage</code>(별칭 <code>usage</code>)로
+          갱신되고, 막대만 따로 보려면 <code>usage-panel</code>(별칭 <code>limits</code>)을 씁니다. 다음 리셋까지의
+          카운트다운만 크게 보려면 <code>usage-view</code>(<code>[popup|tab|pane]</code>)를 씁니다.
+        </p>
+        <figure>
+          <img src="../image/38-token-log-limit.svg" alt="토큰 사용량 — 한도 뷰">
+          <figcaption>한도 뷰 — /usage 실측 막대 · 리셋 카운트다운 시계 · 모델/컨텍스트 변경.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>경고 배지</h2>
+        <p>
+          Claude 가 이상하게 돌 때 상태줄에 경고 배지가 뜹니다 — <strong>"같은 출력 N회 반복 — 루프 의심"</strong>,
+          <strong>"Claude 포맷 미인식 — 추적 중단"</strong> 등. 팝업에는 이런 경고 이력도 함께 남습니다.
+          토큰 회계 자체를 진단하려면 <code>token-debug</code>(기본 off) 로그를 켤 수 있습니다.
+        </p>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../guide-nav.js" defer></script>
+<script src="../lightbox.js" defer></script>
+</body>
+</html>

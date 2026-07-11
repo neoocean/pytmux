@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>설정 파일 — pytmux 가이드 13</title>
+<meta name="description" content="pytmux 설정: pytmux.conf 옵션 전체(prefix·mouse·tab-bar·mode-keys·ambiguous-width·상태줄 등), :settings 통합 팝업, bind 키 설정, 한/영 전환.">
+<link rel="stylesheet" href="../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-topic="config">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">상세 가이드 · 13 / 14</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">설정 파일</h1>
+        <p style="font-size:18px;">
+          <code>pytmux.conf</code> 로 동작을 바꾸거나, 통합 설정 팝업 <code>:settings</code> 로 카테고리별로
+          조정합니다. <code>:settings</code> 에서 바꾼 값은 설정 파일에 자동으로 되쓰기 됩니다(주석·바인딩 보존).
+        </p>
+      </header>
+
+      <section>
+        <h2 style="border-top:none;">설정 파일 위치와 형식</h2>
+        <p>
+          설정 파일은 <code>~/.config/pytmux/config</code>, <code>~/.pytmux.conf</code>, 또는 환경변수
+          <code>PYTMUX_CONFIG</code> 로 지정한 경로에서 읽습니다(<code>pytmux.conf.example</code> 참고).
+          각 줄은 <code>set &lt;이름&gt; &lt;값&gt;</code> 형식이고, 실행 중에는 <code>:set …</code> 으로 즉시 바꾸며
+          <code>source-file</code> 로 다시 읽습니다. 현재 값은 <code>show-options</code> 로 확인합니다.
+        </p>
+      </section>
+
+      <section>
+        <h2>자주 쓰는 옵션</h2>
+        <table>
+          <thead><tr><th>설정</th><th>값 (기본)</th><th>설명</th></tr></thead>
+          <tbody>
+            <tr><td><code>prefix</code></td><td><code>C-a</code> 등 (<code>C-b</code>)</td><td>prefix 키</td></tr>
+            <tr><td><code>mouse</code></td><td><code>on|off</code> (on)</td><td>마우스 on/off</td></tr>
+            <tr><td><code>mouse-drag-copy</code></td><td><code>on|off</code> (on)</td><td>좌드래그로 선택→클립보드 자동 복사(off=앱에 전달)</td></tr>
+            <tr><td><code>alt-scroll</code></td><td><code>on|off</code> (on)</td><td>on=pytmux 가 휠 스크롤백 처리 / off=터미널 기본</td></tr>
+            <tr><td><code>mode-keys</code></td><td><code>vi|emacs</code> (vi)</td><td>복사/스크롤 모드 키 스타일</td></tr>
+            <tr><td><code>ambiguous-width</code></td><td><code>auto|narrow|wide</code> (auto)</td><td>CJK 모호폭 셀 크기(단말 자동 감지)</td></tr>
+            <tr><td><code>tab-bar</code></td><td><code>always|auto</code> (always)</td><td>상단 탭바: 항상 / 2개 이상일 때만</td></tr>
+            <tr><td><code>default-path</code></td><td><code>current|home|&lt;경로&gt;</code> (current)</td><td>새 탭/패널 시작 디렉토리</td></tr>
+            <tr><td><code>strip-box-drawing</code></td><td><code>on|off</code> (on)</td><td>붙여넣기 시 패널 테두리(박스드로잉) 제거</td></tr>
+            <tr><td><code>inactive-dim</code></td><td><code>on|off</code> (on)</td><td>비활성 패널 흐리게</td></tr>
+            <tr><td><code>inactive-dim-ratio</code></td><td><code>0.0–0.8</code> (0.18)</td><td>흐림 강도</td></tr>
+            <tr><td><code>language</code></td><td><code>ko|en</code> (LANG)</td><td>UI 언어</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>상태줄 · 화면</h2>
+        <table>
+          <thead><tr><th>설정</th><th>값</th><th>설명</th></tr></thead>
+          <tbody>
+            <tr><td><code>status</code></td><td><code>on|off|0–5</code></td><td>상태줄 줄 수</td></tr>
+            <tr><td><code>status-position</code></td><td><code>bottom|top</code></td><td>상태줄 위치</td></tr>
+            <tr><td><code>status-left</code> / <code>status-right</code></td><td>포맷 문자열</td><td><code>#S</code>·<code>#h</code>·<code>#{pane_title}</code>·strftime 등</td></tr>
+            <tr><td><code>status-interval</code></td><td><code>1–60</code></td><td>상태줄 갱신 주기(초)</td></tr>
+            <tr><td><code>status-bg</code> / <code>status-fg</code></td><td>색</td><td>상태줄 배경/전경색</td></tr>
+            <tr><td><code>set-titles</code> / <code>set-titles-string</code></td><td><code>on|off</code> / 포맷</td><td>터미널 창 제목 설정</td></tr>
+            <tr><td><code>single-border</code></td><td><code>on|off|toggle</code></td><td>패널이 하나일 때도 테두리</td></tr>
+            <tr><td><code>pane-border-status</code></td><td><code>on|top|off</code></td><td>패널 테두리 제목줄</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>동작 · 고급</h2>
+        <table>
+          <thead><tr><th>설정</th><th>값</th><th>설명</th></tr></thead>
+          <tbody>
+            <tr><td><code>automatic-rename</code></td><td><code>on|off</code></td><td>실행 앱으로 탭 자동 명명</td></tr>
+            <tr><td><code>monitor-activity</code> / <code>monitor-bell</code></td><td><code>on|off</code></td><td>비활성 탭 활동/벨 감지</td></tr>
+            <tr><td><code>synchronize-panes</code></td><td><code>on|off</code></td><td>패널 입력 동기화</td></tr>
+            <tr><td><code>coalesce-repaints</code></td><td><code>on|off|toggle</code></td><td>ssh 반응성: 전체 리페인트 병합</td></tr>
+            <tr><td><code>nest-auto-attach</code></td><td><code>on|off|toggle</code></td><td>중첩 pytmux 시 자동 remote-attach</td></tr>
+            <tr><td><code>win-mouse-motion</code></td><td><code>on|off|toggle</code> (off)</td><td><strong>Windows</strong> 마우스 이동 전달</td></tr>
+            <tr><td><code>vt-parser</code></td><td><code>pyte|native</code></td><td>VT 파서 백엔드(재시작 후 적용)</td></tr>
+            <tr><td><code>net_rtt_threshold</code></td><td>초 (0.4)</td><td>응답성 저하 판정 문턱(파일 전용)</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2><code>pytmux.conf</code> 예시</h2>
+        <p>아래 줄을 그대로 복사해 붙여넣으면 됩니다. 키 바인딩도 함께 둘 수 있습니다.</p>
+        <div class="code">set prefix C-a
+set mouse on
+set mouse-drag-copy on
+set strip-box-drawing on
+set tab-bar always
+set mode-keys vi
+set default-path current
+set ambiguous-width auto
+
+<span class="c"># 키 바인딩 (prefix 뒤 / -n 은 prefix 없이)</span>
+bind | split-window -h
+bind - split-window -v
+bind r rename-window
+bind k kill-pane</div>
+      </section>
+
+      <section>
+        <h2>통합 설정 팝업 · 언어</h2>
+        <p>
+          <code>:settings</code>(별칭 <code>config</code>·<code>preferences</code>)는 옵션을
+          <strong>표시 · 입력 · 동작 · 상태줄 · 고급 · 키</strong> 카테고리(+ 플러그인의 Claude 카테고리)로
+          묶어 보여 줍니다. 여기서 바꾼 값은 설정 파일에 자동 반영됩니다. UI 언어는 <code>lang ko|en</code>
+          (별칭 <code>language</code>)으로 즉시 바꾸며, 선택은 클라이언트에 저장됩니다.
+        </p>
+        <figure>
+          <img src="../image/40-settings.svg" alt="통합 설정 팝업(:settings)">
+          <figcaption>통합 설정 팝업(<code>:settings</code>) — 카테고리별 조정.</figcaption>
+        </figure>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../guide-nav.js" defer></script>
+<script src="../lightbox.js" defer></script>
+</body>
+</html>

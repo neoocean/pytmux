@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>설치 — pytmux 가이드 2</title>
+<meta name="description" content="pytmux 설치: 의존성 설치, 실행, pytmux 명령 등록(install.sh / install.ps1), SSH·mosh 로그인 시 자동 attach 설정.">
+<link rel="stylesheet" href="../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-topic="install">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">상세 가이드 · 2 / 14</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">설치</h1>
+        <p style="font-size:18px;">파이썬만 있으면 됩니다. 설치는 한 줄, 실행도 한 줄입니다.</p>
+      </header>
+
+      <section>
+        <h2 style="border-top:none;">의존성 설치</h2>
+        <p>
+          Python 3.11 이상을 권장합니다. 저장소의 <code>requirements.txt</code> 로 한 번에 설치합니다
+          (직접 설치는 <span class="inline-code">pip install textual pyte wcwidth</span>,
+          Windows 는 <span class="inline-code">pip install pywinpty</span> 도 추가).
+        </p>
+        <div class="code">pip install -r requirements.txt</div>
+        <div class="callout">
+          필요한 구성요소가 빠진 채 실행하면, pytmux 는 알 수 없는 오류 대신 <strong>빠진 구성요소
+          이름과 지금 쓰는 파이썬에 맞춘 설치 명령</strong>을 알려 주고 종료합니다.
+        </div>
+      </section>
+
+      <section>
+        <h2>실행</h2>
+        <p>서버가 없으면 자동으로 기동한 뒤 attach 합니다. 이미 서버가 떠 있으면 바로 붙습니다.</p>
+        <div class="code">python3 pytmux.py</div>
+        <figure>
+          <img src="../image/01-first-run.svg" alt="pytmux 첫 실행 화면 — 평소 쓰던 셸이 전체 화면으로 표시됨">
+          <figcaption>첫 실행 — 평소 쓰던 셸이 그대로 전체 화면으로 뜹니다.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2><code>pytmux</code> 명령으로 등록 (선택)</h2>
+        <p>
+          래퍼를 <code>~/.local/bin</code> 에 설치하면 어디서든 <code>pytmux</code> 로 호출할 수 있습니다.
+          인자로 다른 디렉터리를, <span class="inline-code">BIN=pt</span> 로 다른 이름(pt)을 지정할 수 있습니다.
+        </p>
+        <p style="margin:0 0 6px;">macOS · Linux</p>
+        <div class="code">./install.sh
+./install.sh /usr/local/bin
+BIN=pt ./install.sh</div>
+        <p style="margin:0 0 6px;">Windows (PowerShell) — 설치 / 제거</p>
+        <div class="code">.\install.ps1
+.\uninstall.ps1</div>
+        <p>등록 후에는 외부 셸에서 서버를 조작할 수도 있습니다.</p>
+        <div class="code"><span class="p">pytmux</span>
+<span class="p">pytmux</span> ls
+<span class="p">pytmux</span> cmd new-tab</div>
+        <p>
+          <span class="inline-code">pytmux</span> 는 attach(없으면 기동),
+          <span class="inline-code">pytmux ls</span> 는 탭/패널 요약,
+          <span class="inline-code">pytmux cmd &lt;명령&gt;</span> 은 외부에서 서버에 명령을 보냅니다.
+        </p>
+      </section>
+
+      <section>
+        <h2>SSH · mosh 접속 시 자동 attach (선택)</h2>
+        <p>
+          원격 로그인하면 곧바로 pytmux 세션으로 들어가도록 <code>~/.zshrc</code> 등 로그인 셸 설정에
+          추가합니다. 인터랙티브 SSH/mosh 로그인일 때만 attach 하도록 중첩 방지 가드를 둡니다.
+        </p>
+        <div class="code">if command -v pytmux >/dev/null && [[ -o interactive ]] && [[ -t 1 ]] \
+   && [[ -z "$PYTMUX" ]] && [[ -z "$LC_PYTMUX" ]] \
+   && [[ -n "$SSH_CONNECTION$SSH_TTY" ]]; then
+  pytmux
+fi</div>
+        <div class="callout warn">
+          <strong>주의:</strong> <code>exec pytmux</code> 는 권하지 않습니다. pytmux 가 즉시 종료하면
+          로그인 셸이 함께 죽고, autossh 등과 만나면 재접속 루프가 됩니다.
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../guide-nav.js" defer></script>
+<script src="../lightbox.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>탭 · 윈도우 — pytmux 가이드 4</title>
+<meta name="description" content="pytmux 탭: 생성·전환·이름·재정렬·고정(핀)·닫기, break-pane / join-pane, choose-tree 개요, 활동/벨 모니터링, 상단 탭바.">
+<link rel="stylesheet" href="../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-topic="tabs">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">상세 가이드 · 4 / 14</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">탭 · 윈도우</h1>
+        <p style="font-size:18px;">
+          pytmux 의 <strong>탭</strong>은 tmux 의 윈도우에 해당합니다. 상단 탭바로 여러 작업 공간을
+          오가고, 드래그·핀·트리 개요로 정리합니다.
+        </p>
+      </header>
+
+      <section>
+        <h2 style="border-top:none;">기본 조작</h2>
+        <p>
+          탭이 하나여도 상단에 탭 인터페이스(탭 목록 + 마지막 탭 오른쪽의 <code>[+]</code>)가 나타납니다
+          (<code>set tab-bar auto</code> 로 2개 이상일 때만 표시하도록 바꿀 수 있습니다). 활성 탭은 아래
+          콘텐츠 영역과 연결된 노트북 탭 모양으로 이어집니다.
+        </p>
+        <table>
+          <thead><tr><th>동작</th><th>키 / 명령 / 마우스</th></tr></thead>
+          <tbody>
+            <tr><td>새 탭</td><td><code>[+]</code> 클릭 · <code>new-tab</code> · <kbd>prefix</kbd> <kbd>c</kbd> · ESC 모드 <kbd>n</kbd></td></tr>
+            <tr><td>번호로 전환</td><td><kbd>prefix</kbd> <kbd>0–9</kbd> · ESC 모드 <kbd>1–9</kbd></td></tr>
+            <tr><td>다음 / 이전</td><td><kbd>prefix</kbd> <kbd>n</kbd> / <kbd>p</kbd> · <code>next-tab</code> / <code>previous-tab</code></td></tr>
+            <tr><td>최근 탭</td><td><kbd>prefix</kbd> <kbd>l</kbd> · <code>last-tab</code></td></tr>
+            <tr><td>이름 변경</td><td><code>rename-tab</code> · <kbd>prefix</kbd> <kbd>,</kbd> · 탭 더블클릭</td></tr>
+            <tr><td>자동 이름</td><td><code>automatic-rename on</code> — 실행 중 프로그램으로 자동 명명</td></tr>
+            <tr><td>닫기</td><td>탭 <code>[x]</code> · <kbd>prefix</kbd> <kbd>&amp;</kbd> · <code>kill-tab</code>(확인)</td></tr>
+          </tbody>
+        </table>
+        <figure>
+          <img src="../image/08-tabs-multi.svg" alt="여러 탭과 상단 탭바">
+          <figcaption>다중 탭 — 1번부터 번호가 매겨지고 드래그로 재정렬합니다.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>재정렬 · 고정(핀)</h2>
+        <p>
+          탭을 <strong>드래그</strong>해 순서를 바꾸거나, <code>move-tab-left</code> /
+          <code>move-tab-right</code> / <code>move-tab-first</code> / <code>move-tab-last</code> /
+          <code>swap-tab</code> 명령으로 옮깁니다. 자주 쓰는 탭은 <strong>고정(핀)</strong>해 왼쪽
+          보호 영역에 두면 실수로 닫히지 않습니다.
+        </p>
+        <ul>
+          <li>핀 토글 — <kbd>prefix</kbd> <kbd>P</kbd> · ESC 모드 <kbd>P</kbd> · <code>pin-tab</code> / <code>unpin-tab</code> / <code>pin-toggle</code></li>
+          <li>고정된 탭은 대문자 <strong>P</strong> 표시로 구분됩니다.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>패널 ↔ 탭 이동</h2>
+        <p>
+          패널을 별도 탭으로 <strong>떼어내거나</strong>, 다른 탭의 패널을 현재 탭으로 <strong>끌어와</strong>
+          합칠 수 있습니다.
+        </p>
+        <ul>
+          <li><code>break-pane</code> (<kbd>prefix</kbd> <kbd>!</kbd>) — 현재 패널을 새 탭으로 분리</li>
+          <li><code>join-pane</code> — 다른 탭의 패널을 현재 탭에 패널로 합치기</li>
+          <li>마우스로는 <strong>패널 헤더(상단 테두리) 드래그</strong> → 다른 탭 위에 놓으면 그 탭으로 이동, <code>[+]</code> 위에 놓으면 새 탭</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>트리 개요 · 모니터링</h2>
+        <p>
+          <code>choose-tree</code>(<kbd>prefix</kbd> <kbd>w</kbd>, 별칭 <code>overview</code>·<code>tree</code>)로
+          모든 탭·패널을 트리로 훑어보며 전환하거나 닫습니다(<kbd>d</kbd>/<kbd>x</kbd> 로 kill). 각 항목에
+          실행 중 앱과 로컬/원격 여부가 표시됩니다.
+        </p>
+        <p>
+          <code>monitor-activity on</code> / <code>monitor-bell on</code> 으로 비활성 탭의 출력 변화나
+          벨을 감지해 탭에 표시할 수 있습니다.
+        </p>
+        <figure>
+          <img src="../image/10-confirm-tab.svg" alt="탭 닫기 확인 대화상자">
+          <figcaption>탭 닫기 확인 — 실행 중 작업을 실수로 잃지 않게 합니다.</figcaption>
+        </figure>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../guide-nav.js" defer></script>
+<script src="../lightbox.js" defer></script>
+</body>
+</html>

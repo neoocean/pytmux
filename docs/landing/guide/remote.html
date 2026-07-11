@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>원격 페더레이션 — pytmux 가이드 10</title>
+<meta name="description" content="pytmux 원격 페더레이션(ssh): remote-attach 로 다른 머신 서버 붙이기, 분홍 탭 구분, remote-new-tab, merge-remote-tab, remote-detach, 여러 기기 화면 크기와 SSH keepalive.">
+<link rel="stylesheet" href="../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-topic="remote">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">상세 가이드 · 10 / 14</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">원격 페더레이션 (ssh)</h1>
+        <p style="font-size:18px;">
+          ssh 너머 다른 머신의 pytmux 서버 탭을 지금 화면에 끌어와, 로컬 탭과 원격 탭을 한 창에서
+          섞이지 않게 함께 씁니다.
+        </p>
+      </header>
+
+      <section>
+        <h2 style="border-top:none;">붙이기 · 분홍 탭</h2>
+        <p>
+          <code>remote-attach &lt;host&gt;</code> 로 ssh 너머 다른 머신의 pytmux 서버에 붙습니다. 원격 탭은
+          탭바·외곽선을 <strong>분홍색</strong>으로 구분하며, 로컬 탭과 섞이지 않습니다. 원격 서버가 없으면
+          분리 서버를 자동 기동합니다(<code>PYTMUX_NO_REMOTE_AUTOSTART=1</code> 로 opt-out). ssh 외에
+          mosh · autossh · sshpass · telnet · eternal-terminal(et) · kitten 등 여러 전송을 지원합니다.
+        </p>
+        <figure>
+          <img src="../image/34-remote-attach.svg" alt="원격 attach 화면 — 분홍 탭으로 구분">
+          <figcaption>원격 attach — 원격 탭을 분홍색으로 구분합니다.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>원격 탭 다루기</h2>
+        <table>
+          <thead><tr><th>명령</th><th>동작</th></tr></thead>
+          <tbody>
+            <tr><td><code>remote-attach &lt;host&gt;</code></td><td>원격 서버의 탭들을 붙이기</td></tr>
+            <tr><td><code>remote-new-tab</code></td><td>원격에 새 터미널을 만들어 새 탭으로 붙이기</td></tr>
+            <tr><td><code>merge-remote-tab</code></td><td>같은 원격 서버의 다른 탭을 현재 탭에 <strong>패널</strong>로 합치기(피커)</td></tr>
+            <tr><td><code>remote-detach [host]</code></td><td>원격 떼어내기(비우면 전체). 원격 탭 <code>[x]</code> 도 detach 로 라우팅</td></tr>
+          </tbody>
+        </table>
+        <p>
+          원격 탭도 <strong>고정(핀)</strong>할 수 있고(다운스트림 로컬 뷰 기준), 원격에서 pytmux 를 다시
+          돌리는 중첩 상황은 <code>nest-auto-attach on</code> 으로 자동 승격시킬 수 있습니다.
+        </p>
+      </section>
+
+      <section>
+        <h2>여러 기기에서 볼 때 화면 크기 (호스트 SSH keepalive 권장)</h2>
+        <p>
+          한 원격 서버를 <strong>여러 기기가 동시에</strong> 보면, 화면은 tmux 처럼 <strong>가장 작은 화면에
+          맞춰집니다</strong>(남는 영역은 빈 여백 띠로 채워집니다). 어떤 기기가 <strong>정상 종료 없이
+          끊기면</strong>(노트북 절전·네트워크 단절 등) 그 <strong>유령 접속</strong>이 남아 화면을 계속 작게
+          붙잡을 수 있습니다. 지금 화면에서 <code>detach -a</code>(다른 접속 내보내기)로, 또는 그
+          <strong>접속을 가진 기기에서</strong> <code>remote-detach</code> 로 정리되지만, 유령을 <strong>근본적으로</strong>
+          막으려면 원격 서버를 여는 <strong>호스트</strong>의 SSH 데몬이 죽은 접속을 스스로 끊게 해 두는 것이 좋습니다.
+        </p>
+        <p><strong>macOS · Linux</strong> — 호스트에서 드롭인 한 파일(관리자 권한):</p>
+        <div class="code"><span class="c"># /etc/ssh/sshd_config.d/50-pytmux-keepalive.conf</span>
+ClientAliveInterval 15
+ClientAliveCountMax 3</div>
+        <p>
+          약 <strong>45초(15초 × 3회)</strong> 무응답이면 죽은 접속으로 보고 끊습니다. macOS 는 접속마다 sshd 를
+          새로 띄우므로 <strong>재시작 없이 다음 접속부터 적용</strong>됩니다. Linux 는
+          <code>sudo systemctl reload ssh</code>(배포판에 따라 <code>sshd</code>)로 반영합니다. 드롭인 디렉토리가
+          없으면 <code>/etc/ssh/sshd_config</code> 에 위 두 줄을 직접 추가해도 됩니다.
+        </p>
+        <p><strong>Windows(OpenSSH 서버 호스트)</strong> — <code>C:\ProgramData\ssh\sshd_config</code> 에 같은 두 줄을
+          추가하고, 관리자 PowerShell 에서 <code>Restart-Service sshd</code> 로 재시작합니다.</p>
+        <div class="callout">
+          <strong>방향 참고.</strong> pytmux 가 <em>내는</em> 접속에는 이미 반대 방향 keepalive(내가 죽은 원격
+          서버를 감지)가 켜져 있습니다. 위 설정은 <strong>호스트가 죽은 접속자를 감지</strong>하는 쪽으로,
+          원격 서버를 <strong>여는(받는) 호스트</strong>에만 필요합니다.
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../guide-nav.js" defer></script>
+<script src="../lightbox.js" defer></script>
+</body>
+</html>

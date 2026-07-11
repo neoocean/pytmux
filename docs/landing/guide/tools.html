@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>도구 · 위젯 — pytmux 가이드 12</title>
+<meta name="description" content="pytmux 부가 도구: 시계·달력 오버레이, ncd 디렉토리 트리, IME 한/영 배지, 작성창(compose), 출력 캡처(REC), Perforce CL 목록, RTT 그래프.">
+<link rel="stylesheet" href="../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-topic="tools">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">상세 가이드 · 12 / 14</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">도구 · 위젯</h1>
+        <p style="font-size:18px;">
+          pytmux 에 곁들여진 작은 도구들입니다. 모두 <strong>플러그인</strong>이라, 디렉토리를 지우면 그
+          기능만 조용히 사라집니다(<a href="/guide/plugins">14. 플러그인</a>).
+        </p>
+      </header>
+
+      <section>
+        <h2 style="border-top:none;">시계 · 달력</h2>
+        <p>
+          <strong>시계</strong>를 클릭하거나 <kbd>prefix</kbd> <kbd>t</kbd>(<code>clock-mode</code>)로 큰 시계를
+          패널 위에 띄웁니다. <strong>날짜</strong>를 클릭하면(<code>calendar-mode</code>) 월 달력 오버레이가
+          열립니다 — <kbd>←</kbd><kbd>→</kbd> 월, <kbd>↑</kbd><kbd>↓</kbd> 년, <kbd>Home</kbd> 오늘. 오버레이를
+          클릭하거나 <kbd>Shift+ESC</kbd> 로 닫습니다.
+        </p>
+        <figure>
+          <img src="../image/18-clock.svg" alt="시계 모드">
+          <figcaption>시계 모드 · 날짜 클릭으로 달력 오버레이.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>ncd — 디렉토리 트리</h2>
+        <p>
+          <code>ncd</code>(별칭 <code>nc</code>)는 Norton Change Directory 스타일의 디렉토리 트리입니다. 루트→cwd
+          로 펼쳐지고, <kbd>↑</kbd><kbd>↓</kbd> 로 이동, 글자를 입력하면 speed search, <kbd>Enter</kbd> 로 cd,
+          <kbd>⇧Enter</kbd>/<kbd>^O</kbd> 로 새 패널에서 엽니다.
+        </p>
+        <figure>
+          <img src="../image/27-ncd.svg" alt="ncd 디렉토리 트리">
+          <figcaption>ncd — 디렉토리를 트리로 훑고 바로 이동.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>IME 한/영 배지</h2>
+        <p>
+          OS 입력기 상태를 커서 근처에 <code>[한]</code>/<code>[EN]</code> 배지로 표시합니다
+          (<code>ime-indicator</code>). macOS 는 HIToolbox TIS, Windows 는 IMM, ssh 원격은 <code>-R</code> 에이전트
+          소켓을 통해 감지하는 3단계 방식입니다.
+        </p>
+        <figure>
+          <img src="../image/33-ime.svg" alt="IME 한영 배지">
+          <figcaption>IME 한/영 배지 — 지금 어떤 입력기인지 커서 옆에.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>작성창(compose) · 출력 캡처(REC)</h2>
+        <ul>
+          <li><strong>작성창</strong> — ESC 모드 <kbd>Insert</kbd> 로 블록 선택 편집이 가능한 작성 버퍼를 엽니다.
+            여기서 다듬은 뒤 패널에 주입합니다. 붙여넣은 텍스트나 이미지 경로도 작성창이 열려 있으면 이 버퍼로 갑니다.</li>
+          <li><strong>출력 캡처(REC)</strong> — <code>capture-output</code>(<code>capture-toggle [on|off]</code>, 기본 off)로
+            패널의 원시 PTY 출력을 무손실로 파일에 남겨, 나중에 replay 로 복원할 수 있습니다.</li>
+        </ul>
+        <figure>
+          <img src="../image/41-compose-prompt.svg" alt="작성창(compose) 팝업">
+          <figcaption>작성창 — 길게 다듬어 한 번에 주입.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>Perforce CL 목록</h2>
+        <p>
+          <code>p4changes</code>(별칭 <code>submitted</code>, 인자 <code>N</code> 기본 50)로 서브밋된 Perforce
+          변경 목록을 훑고(<kbd>↑</kbd><kbd>↓</kbd> 스크롤), <kbd>Enter</kbd> 로 describe 상세를 봅니다
+          (p4 서버 컨텍스트 필요).
+        </p>
+        <figure>
+          <img src="../image/32-p4changes.svg" alt="Perforce CL 목록">
+          <figcaption>Perforce 서브밋 CL 목록 · Enter 로 describe.</figcaption>
+        </figure>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../guide-nav.js" defer></script>
+<script src="../lightbox.js" defer></script>
+</body>
+</html>
