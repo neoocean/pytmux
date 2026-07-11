@@ -85,6 +85,8 @@ class MultiplexerView(Widget):
         #   정보(app.pane_wrap)를 찾아 자동 줄바꿈 줄을 한 줄로 잇는다
         self._mouse_fwd = None     # 패스스루 중인 패널 id(버튼 다운~업)
         self._mouse_fwd_btn = 0    # 그 시퀀스의 버튼(드래그/릴리스 인코딩용)
+        self._sel_pending = None   # mouse-drag-copy: down 후 move 전 (x,y) — 클릭↔드래그
+        #   미결. move 오면 드래그=pytmux 선택, move 없이 up 이면 클릭=앱 전달.
         # 패널 pick-up(헤더 드래그, #1): 패널의 위쪽 테두리/제목 행을 잡아 끌면 그 패널을
         # 든다. 다른 패널에 놓으면 swap, 탭바의 탭에 놓으면 그 탭으로 이동, [+]에 놓으면
         # 새 탭으로 분리(break). (구 Shift+드래그 swap 을 헤더 드래그로 이전 — Shift+드래그는
@@ -402,7 +404,21 @@ class MultiplexerView(Widget):
             self.capture_mouse()
             event.stop()
             return
-        # 내부 앱 마우스 패스스루(content 영역, 마우스 모드 on). 포커스도 옮긴다.
+        # 콘텐츠 좌클릭: mouse-drag-copy(기본 on)면 여기서 앱에 바로 넘기지 않고
+        # **미결(pending)** 로 둔다 — 이후 move 가 오면 드래그로 보고 pytmux 패널-클램프
+        # 선택(→OS 클립보드 자동복사, Shift·copy-mode 없이도), move 없이 up 이 오면
+        # 클릭으로 보고 앱에 전달(마우스 앱 버튼/포커스 보존). 마우스 앱 위 드래그도
+        # pytmux 선택에 양보한다 — 호스트 터미널이 Shift 선택을 가로채 pane 외곽선까지
+        # 긁히던 불편 해소(사용자 요청 2026-07-11). `set mouse-drag-copy off` 로 아래
+        # 앱 패스스루를 복원한다. Shift+드래그·copy-mode 는 위에서 이미 처리했다.
+        if (getattr(self.app, "mouse_drag_copy", True) and event.button == 1
+                and self.app.mode == "normal"
+                and self._pane_at(event.x, event.y) is not None):
+            self._sel_pending = (event.x, event.y)
+            self.capture_mouse()
+            event.stop()
+            return
+        # (mouse-drag-copy off) 내부 앱 마우스 패스스루(content 영역, 마우스 모드 on).
         tp = self._mouse_target(event.x, event.y)
         if tp is not None:
             if not tp.get("active"):     # 비활성 패널 클릭 시에만 포커스 이동
@@ -437,6 +453,22 @@ class MultiplexerView(Widget):
                     self._pickup_moved = True
             if over != self._pickup_over:
                 self._pickup_over = over
+                self.app._composite()
+            event.stop()
+            return
+        # mouse-drag-copy 미결 상태에서 이동이 오면 = 드래그로 확정 → 선택 시작(§2.4).
+        # 시작 좌표는 down 시점의 (psx,psy)를 쓴다(첫 셀을 놓치지 않게).
+        if self._sel_pending is not None:
+            psx, psy = self._sel_pending
+            if (event.x, event.y) != (psx, psy):
+                p = self._pane_at(psx, psy)
+                self._sel_rect = (p["x"], p["y"], p["w"], p["h"]) if p else None
+                self._sel_pane_id = p["id"] if p else None
+                sx, sy = self._clamp_sel(psx, psy)
+                ex0, ey0 = self._clamp_sel(event.x, event.y)
+                self._sel_start = (sx, sy)
+                self._sel = (sx, sy, ex0, ey0)
+                self._sel_pending = None
                 self.app._composite()
             event.stop()
             return
@@ -531,6 +563,29 @@ class MultiplexerView(Widget):
                 # 안 움직였으면(클릭) 그 패널로 포커스만 — 헤더 클릭=선택 보존.
                 self.app.send_cmd("select_pane_id", id=src)
                 self.app._composite()
+            event.stop()
+            return
+        # mouse-drag-copy: move 없이 up = 클릭. 마우스 앱 패널이면 press+release 를
+        # 전달(버튼/링크 클릭·포커스 보존), 아니면 그 패널로 포커스만 옮긴다.
+        if self._sel_pending is not None:
+            psx, psy = self._sel_pending
+            self._sel_pending = None
+            try:
+                self.release_mouse()
+            except Exception:
+                pass
+            tp = self._mouse_target(psx, psy)
+            if tp is not None:
+                if not tp.get("active"):
+                    self.app.send_cmd("select_pane_id", id=tp["id"])
+                for kind in ("press", "release"):
+                    data = self._encode_mouse(tp, psx, psy, kind, 1)
+                    if data:
+                        self.app.send_mouse(tp["id"], data)
+            else:
+                p = self._pane_at(psx, psy)
+                if p and p["id"] != self.app.layout.get("active"):
+                    self.app.send_cmd("select_pane_id", id=p["id"])
             event.stop()
             return
         if self._sel_start is not None:

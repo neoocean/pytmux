@@ -2744,6 +2744,9 @@ async def test_mouse_passthrough_encoding_and_routing():
         assert v._encode_mouse(p2, 5, 3, "release", 1) == b"\x1b[M" + bytes([35, 36, 35])
 
         # 라우팅: down→press 가 대상 패널 id 로, up→release 로, _mouse_fwd 정리
+        # (mouse-drag-copy off 경로 — on 이면 좌드래그가 pytmux 선택이 되므로 여기선
+        #  종전 앱 패스스루를 검증한다. on 동작은 별도 테스트.)
+        app.mouse_drag_copy = False
         sent = []
         app.send_mouse = lambda pid, data: sent.append((pid, data))
         app.send_cmd = lambda action, **kw: None
@@ -2761,6 +2764,55 @@ async def test_mouse_passthrough_encoding_and_routing():
         sent.clear()
         v.on_mouse_down(_FakeMouse(5, 3, 1))
         assert sent == [], "마우스 모드 off 면 패스스루 안 함"
+    await _with_app(body)
+
+
+async def test_mouse_drag_copy_selects_and_click_passes_through():
+    """mouse-drag-copy(기본 on): normal 모드 좌드래그는 pytmux 패널-클램프 선택→OS
+    클립보드 자동복사(앱 패스스루 아님)이고, 이동 없는 좌클릭은 앱에 press+release 를
+    전달(마우스 앱 버튼/포커스 보존)한다. 호스트 터미널이 Shift 선택을 가로채 pane
+    외곽선까지 긁히던 불편을 없애려 마우스 앱 위 드래그도 선택에 양보한다(2026-07-11
+    사용자 요청). off 면 종전 앱 패스스루로 복원."""
+    async def body(app, pilot, srv):
+        v = app.view
+        app.layout = {"panes": [{"id": 7, "x": 2, "y": 1, "w": 10, "h": 5,
+                                 "box": [1, 0, 12, 7], "mouse": 2,
+                                 "mouse_sgr": True, "active": True}],
+                      "dividers": [], "active": 7, "cols": 100, "rows": 30}
+        app.mode = "normal"
+        app.mouse_drag_copy = True
+        sent = []
+        copied = []
+        app.send_mouse = lambda pid, data: sent.append((pid, data))
+        app.send_cmd = lambda action, **kw: None
+        app.copy_text = lambda t: copied.append(t)
+        v._extract_selection = lambda: "SELTEXT"
+        # (1) 드래그 = 선택→복사. 마우스 앱 패널이어도 앱에 패스스루 안 함.
+        v.on_mouse_down(_FakeMouse(5, 3, 1))
+        assert sent == [], "down 은 미결(pending) — 앱에 press 보내지 않음"
+        assert v._sel_pending is not None and v._sel_start is None
+        v.on_mouse_move(_FakeMouse(7, 3, 1))
+        assert v._sel_start is not None and v._sel is not None, "이동=드래그로 선택 시작"
+        assert v._sel_pending is None
+        assert sent == [], "선택 중 앱 패스스루 없음"
+        v.on_mouse_up(_FakeMouse(7, 3, 1))
+        assert copied == ["SELTEXT"], copied
+        assert sent == [], "선택 복사 경로는 앱에 마우스 안 보냄"
+        assert v._sel_pending is None and v._sel_start is None
+        # (2) 이동 없는 클릭 = 앱에 press+release 전달(마우스 앱 버튼 클릭 보존).
+        sent.clear()
+        copied.clear()
+        v.on_mouse_down(_FakeMouse(5, 3, 1))
+        v.on_mouse_up(_FakeMouse(5, 3, 1))
+        assert sent == [(7, b"\x1b[<0;4;3M"), (7, b"\x1b[<0;4;3m")], sent
+        assert copied == [], "클릭은 복사 아님"
+        # (3) off 면 종전 패스스루(down 즉시 press) — 회귀 가드.
+        app.mouse_drag_copy = False
+        sent.clear()
+        v.on_mouse_down(_FakeMouse(5, 3, 1))
+        assert sent == [(7, b"\x1b[<0;4;3M")], "off=down 즉시 press 패스스루"
+        assert v._mouse_fwd == 7
+        v.on_mouse_up(_FakeMouse(5, 3, 1))
     await _with_app(body)
 
 

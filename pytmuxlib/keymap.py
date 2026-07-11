@@ -213,6 +213,10 @@ def load_config(path: str | None = None) -> dict:
                         cfg["prefix"] = _tmux_key_to_textual(val)
                     elif opt == "mouse":
                         cfg["mouse"] = val.lower() in ("on", "true", "1", "yes")
+                    elif opt in ("mouse-drag-copy", "mouse_drag_copy"):
+                        # §2.4 좌드래그=pytmux 패널선택→자동복사(기본 on). off 면 앱 패스스루.
+                        cfg["mouse_drag_copy"] = val.lower() in (
+                            "on", "true", "1", "yes")
                     elif opt == "status-bg":
                         cfg["status_bg"] = val
                     elif opt == "status-fg":

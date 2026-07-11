@@ -739,7 +739,7 @@ COMMANDS = [
 # (새 set 옵션 추가 시 여기도 한 줄). `set ` 까지 친 뒤 옵션 이름이 자동완성되게
 # COMPLETIONS 에 "set <name>" 으로 병합한다(사용자 요청 2026-06-25).
 _SET_OPTION_NAMES = (
-    "prefix", "mouse", "mouse-debug", "alt-scroll", "ambiguous-width",
+    "prefix", "mouse", "mouse-drag-copy", "mouse-debug", "alt-scroll", "ambiguous-width",
     "status", "status-bg", "status-fg", "status-left", "status-right",
     "status-format", "status-position", "status-interval", "mode-keys",
     "set-titles", "set-titles-string", "tab-bar", "default-path",
@@ -751,6 +751,7 @@ SET_OPTION_CHOICES = {
     "ambiguous-width": ("auto", "narrow", "wide"),
     "alt-scroll": ("on", "off"),
     "mouse": ("on", "off"),
+    "mouse-drag-copy": ("on", "off"),
     "mouse-debug": ("on", "off"),
     "mode-keys": ("vi", "emacs"),
     "tab-bar": ("always", "auto"),
@@ -854,6 +855,8 @@ SETTINGS = [
     # 입력/키
     {"key": "mouse", "cat": "입력", "type": "bool",
      "cmd": "set mouse", "backend": "config"},
+    {"key": "mouse-drag-copy", "cat": "입력", "type": "bool",
+     "cmd": "set mouse-drag-copy", "backend": "config"},
     {"key": "mode-keys", "cat": "입력", "type": "enum",
      "choices": ["vi", "emacs"], "cmd": "set mode-keys", "backend": "config"},
     {"key": "alt-scroll", "cat": "입력", "type": "bool",

@@ -563,6 +563,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 설정 로드 중 모은 경고(잘못된 키 표기 등) — startup 에서 한 번 표시.
             self._config_warnings = list(config.get("warnings", []))
             self.mouse_enabled = config.get("mouse", True)
+            # §2.4 마우스 드래그 복사(기본 on): normal 모드 좌드래그를 pytmux 패널-클램프
+            # 선택→OS 클립보드 자동복사로 잡는다(클릭은 앱에 전달). 호스트 터미널이 Shift
+            # 선택을 가로채 pane 외곽선까지 긁히던 불편을 없앤다(사용자 요청 2026-07-11).
+            # off 면 종전대로 좌드래그를 마우스 앱에 패스스루한다(선택은 Shift·copy-mode).
+            self.mouse_drag_copy = config.get("mouse_drag_copy", True)
             # 마우스 이벤트 진단 로그(원격 SSH 휠 스크롤 미동작 등 환경 의존 문제용).
             # `set mouse-debug on` 으로 켜면 클라이언트가 받은 마우스/휠 이벤트와
             # **내비게이션 키**(↑/↓/페이지/홈/엔드 — `_KEY_DIAG` 화이트리스트)를
@@ -1504,6 +1509,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.prefix_bytes = _key_to_ctrl_bytes(self.prefix_key)
             elif name == "mouse":
                 self.mouse_enabled = val.lower() in ("on", "true", "1", "yes")
+            elif name in ("mouse-drag-copy", "mouse_drag_copy"):
+                self.mouse_drag_copy = val.lower() in ("on", "true", "1", "yes")
             elif name in ("mouse-debug", "mouse-log"):
                 self.mouse_debug = val.lower() in ("on", "true", "1", "yes")
                 if self.mouse_debug:
@@ -1633,6 +1640,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return self.lang
             if key == "mouse":
                 return "on" if self.mouse_enabled else "off"
+            if key in ("mouse-drag-copy", "mouse_drag_copy"):
+                return "on" if self.mouse_drag_copy else "off"
             if key == "mode-keys":
                 return self.mode_keys
             if key == "alt-scroll":
@@ -1681,6 +1690,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             lines = [
                 f"prefix      {self.prefix_key}",
                 f"mouse       {'on' if self.mouse_enabled else 'off'}",
+                f"mouse-drag-copy {'on' if self.mouse_drag_copy else 'off'}",
                 f"mouse-debug {'on' if self.mouse_debug else 'off'}",
                 f"alt-scroll  {'on' if self.disable_alt_scroll else 'off'}",
                 f"status-bg   {self.status.bg}",
