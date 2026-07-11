@@ -548,7 +548,19 @@ class ServerIOMixin:
         ping 을 한 번이라도 보낸(ever_pinged) 클라가 CLIENT_IDLE_TIMEOUT 넘게 완전
         무응답이면 반-열린 TCP/콘솔 닫힘/웨지로 死한 것으로 보고 떨군다. ping 을 끈
         (net_ping_interval=0) 클라는 ever_pinged 가 False 라 회수 대상이 아니다
-        (오탐 방지) — 그 경우는 write 백프레셔 드롭(_flush_to_client)에 맡긴다."""
+        (오탐 방지) — 그 경우는 write 백프레셔 드롭(_flush_to_client)에 맡긴다.
+
+        **앱 계층 한계(고칠 수 없는 잔여 경로)**: federation ingress(다운스트림 원격
+        링크)가 **구버전/ping-off** 라 ever_pinged 가 안 서면, 그 링크가 반-열림으로 死해도
+        이 회수기가 못 잡아 min 을 영구 핀한다. unix-소켓 ingress 는 중간 stdio-proxy 가
+        다운스트림의 죽음을 가려(proxy 는 sshd 파이프가 EOF 나야 죽는다) 서버 소켓엔
+        dead/alive 신호가 없고, hello 에 federation 표식도 없어(로컬 클라와 동일 프레임)
+        ingress 만 특별 회수할 수도 없다 — 게다가 표식을 보낼 신버전은 이미 _remote_ping_loop
+        로 ping 하므로(ever_pinged=True) 여기서 이미 잡힌다. 따라서 이 잔여는 **트랜스포트
+        계층**에서만 닫힌다: remote-attach 를 받는 **호스트 sshd 의 ClientAliveInterval**
+        이 반-열림 다운스트림 ssh 를 끊으면 → proxy EOF → 정상 teardown(ever_pinged 무관)
+        으로 회수 + 고아 proxy/sshd 정리. 설정법은 docs/internal/REMOTE_ATTACH_TROUBLESHOOTING
+        §8. (신버전 다운스트림은 p4 62568 keepalive 로 이 앱 경로가 이미 커버.)"""
         while self.running:
             await asyncio.sleep(CLIENT_LIVENESS_SWEEP_SEC)
             try:
