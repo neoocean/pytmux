@@ -2741,3 +2741,52 @@ class ChooseLayoutScreen(ModalScreen):
         if event.key == "escape":
             event.stop()
             self.dismiss(None)
+
+
+class MergeRemoteTabScreen(ModalScreen):
+    """같은 원격 호스트의 **다른 원격 탭**을 지금 보는 원격 탭에 pane 으로 머지(§1.7-c
+    예외)할 대상을 고르는 피커 — 드래그 머지(TabBar.on_mouse_up)의 키보드/명령 대체
+    경로. ↑↓ 이동·Enter 선택·Esc 취소, h/v 로 분할 방향 토글(가로 │ / 세로 ─).
+    dismiss((src_index, orient)) 또는 dismiss(None). src_index 는 병합 탭바의 전역
+    index — 서버 remote_relay_join 이 그것을 원격 로컬 index 로 변환해 업스트림에
+    join_pane 을 릴레이한다(원격끼리라 로컬 트리 불변). items = [{'i': 전역index,
+    'name': '⇄host:name'}, ...]."""
+    CSS = """
+    MergeRemoteTabScreen { align: center middle; }
+    #mrt { width: 64; height: auto; max-height: 80%;
+           border: round $accent; background: $panel; }
+    """
+
+    def __init__(self, items, orient="tb"):
+        super().__init__()
+        self._items = items
+        self._orient = orient
+
+    def _title(self):
+        d = i18n.t("screen.merge_remote_lr" if self._orient == "lr"
+                   else "screen.merge_remote_tb")
+        return i18n.t("screen.merge_remote_title", dir=d)
+
+    def compose(self) -> ComposeResult:
+        rows = [ListItem(Label(f"{it['i'] + 1}: {it['name']}"), id=f"m{it['i']}")
+                for it in self._items]
+        lv = ListView(*rows, id="mrt")
+        lv.border_title = self._title()
+        yield lv
+
+    def on_mount(self):
+        self.query_one(ListView).focus()
+
+    def on_list_view_selected(self, event):
+        self.dismiss((int(event.item.id[1:]), self._orient))
+
+    def on_key(self, event: events.Key):
+        if event.key == "escape":
+            event.stop()
+            self.dismiss(None)
+        elif event.key in ("h", "v"):
+            # 분할 방향 토글(h=가로 좌우 lr · v=세로 상하 tb) — 선택 전 미리보기로
+            # 테두리 제목을 갱신한다(드래그의 드롭 위치 방향 선택 대체).
+            event.stop()
+            self._orient = "lr" if event.key == "h" else "tb"
+            self.query_one(ListView).border_title = self._title()

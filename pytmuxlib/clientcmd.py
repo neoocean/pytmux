@@ -674,6 +674,10 @@ class _CommandMixin:
             host = rest[1].strip() if len(rest) > 1 else ""
             self.send_cmd("remote_detach",
                           **({"host": host} if host else {}))
+        elif c in ("merge-remote-tab", "merge-remote", "merge_remote_tab"):
+            # 같은 원격 서버의 다른 원격 탭을 현재 원격 탭에 pane 으로 머지(피커).
+            # 드래그 머지의 키보드/명령 대체 경로(§1.7-c 예외, remote_relay_join).
+            self.merge_remote_tab_picker()
         elif c in ("restart-server", "restart"):
             # 작업 보존 재시작: 셸/PTY 를 살린 채 서버 코드만 교체(re-exec).
             # 화면이 잠깐 끊겼다 재접속된다(docs/internal/RESTART_SCENARIO.md).

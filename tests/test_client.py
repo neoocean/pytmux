@@ -4572,6 +4572,66 @@ async def test_tab_drag_to_pane_split():
     await _with_app(body)
 
 
+async def test_merge_remote_tab_picker():
+    # 원격 탭 머지 피커(드래그 머지의 키보드/명령 대체): 지금 보는 원격 탭이 host h1
+    # 이면, **같은 host 의 비활성 원격 탭만** 후보로 뜨고(로컬·다른 host·활성 탭 제외),
+    # 선택 시 select_pane_id(현재 활성 패널) + join_pane(src=전역 index, orient) 을
+    # 보낸다 — 서버 remote_relay_join 이 전역 src 를 원격 로컬 index 로 변환·릴레이한다.
+    async def body(app, pilot, srv):
+        from pytmuxlib.clientscreens import MergeRemoteTabScreen
+        wins = [
+            {"index": 0, "name": "local", "active": False, "remote": False},
+            {"index": 1, "name": "⇄h1:a", "active": True, "remote": True},
+            {"index": 2, "name": "⇄h1:b", "active": False, "remote": True},
+            {"index": 3, "name": "⇄h2:c", "active": False, "remote": True},
+        ]
+        app.status.windows = wins
+        app.tabbar.set_tabs(wins, 1)
+        app.layout = {"active": 77}
+        cap = {}
+        app.push_screen = lambda screen, cb=None: cap.update(screen=screen, cb=cb)
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+
+        app.merge_remote_tab_picker()
+        scr = cap.get("screen")
+        assert isinstance(scr, MergeRemoteTabScreen), cap
+        # 같은 host(h1)의 비활성 원격 탭만 — index 2 하나. 활성(1)·로컬(0)·타host(3) 제외.
+        assert [it["i"] for it in scr._items] == [2], scr._items
+        # 피커에서 index 2 를 lr 로 선택 → 대상 패널(77) 활성화 + 전역 src=2 머지.
+        cap["cb"]((2, "lr"))
+        assert ("select_pane_id", {"id": 77}) in sent, sent
+        assert ("join_pane", {"src": 2, "orient": "lr"}) in sent, sent
+    await _with_app(body)
+
+
+async def test_merge_remote_tab_picker_guards():
+    # 가드: ① 로컬 탭을 보는 중이면 피커를 안 열고 안내만. ② 원격을 보지만 같은
+    # host 의 다른 탭이 없으면(유일 원격 탭) 안내만.
+    async def body(app, pilot, srv):
+        opened = []
+        app.push_screen = lambda screen, cb=None: opened.append(screen)
+        msgs = []
+        app.display_message = lambda text, *a, **k: msgs.append(text)
+        # ① 로컬만(활성=로컬) → not remote
+        local_only = [{"index": 0, "name": "local", "active": True, "remote": False}]
+        app.status.windows = local_only
+        app.tabbar.set_tabs(local_only, 0)
+        app.merge_remote_tab_picker()
+        assert not opened and msgs, "로컬 뷰: 피커 안 열림 + 안내"
+        msgs.clear()
+        # ② 원격 활성이지만 같은 host 다른 탭 없음
+        one_remote = [
+            {"index": 0, "name": "local", "active": False, "remote": False},
+            {"index": 1, "name": "⇄h1:a", "active": True, "remote": True},
+        ]
+        app.status.windows = one_remote
+        app.tabbar.set_tabs(one_remote, 1)
+        app.merge_remote_tab_picker()
+        assert not opened and msgs, "유일 원격 탭: 피커 안 열림 + 안내"
+    await _with_app(body)
+
+
 async def test_tabbar_claude_done_name_color():
     # 비활성 탭에 claude_done 플래그가 오면 **배경은 일반 탭과 같게 두고 탭 이름
     # 글자색만** 호박색(warning)으로 바꿔 완료를 알린다(#31 — 배경 강조는 안 함).

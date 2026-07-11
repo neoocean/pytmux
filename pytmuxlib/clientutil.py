@@ -554,6 +554,7 @@ MENU_ITEMS = [
     ("swap_pane", "패널 교환 (다음 패널과)"),
     ("break_pane", "패널 → 새 탭으로 분리"),
     ("join_pane", "패널 → 다른 탭에 합치기 (join-pane <탭>)"),
+    ("merge_remote_tab", "원격 탭 → 현재 탭에 pane 으로 머지 (같은 서버)"),
     ("rename_pane", "패널 제목 변경"),
     ("select_layout", "레이아웃 프리셋…"),
     ("next_layout", "다음 레이아웃 프리셋"),
@@ -588,7 +589,8 @@ MENU_TOGGLES = {"zoom", "sync", "autoresume", "prompt_clear", "toggle_pin"}
 # 가능하고 디스패치(_run_menu_action)는 leaf 키 그대로다.
 MENU_GROUPS = {
     "pane": ["split_lr", "split_tb", "zoom", "rotate", "swap_pane",
-             "break_pane", "join_pane", "rename_pane", "kill_pane"],
+             "break_pane", "join_pane", "merge_remote_tab", "rename_pane",
+             "kill_pane"],
     "layout": ["select_layout", "next_layout", "layout_save",
                "layout_load_over", "layout_load_new"],
     "tab": ["new_window", "rename_window", "kill_window", "toggle_pin",
@@ -726,6 +728,8 @@ COMMANDS = [
     ("remote-attach", "원격 pytmux 서버의 탭을 이 pytmux 에 어태치 (remote-attach <host>) — §1.7 페더레이션", "설정/기타"),
     ("remote-new-tab", "원격 pytmux 에 새 터미널을 만들어 새 탭으로 붙이기 (remote-new-tab <host>; 미어태치면 먼저 어태치)", "설정/기타"),
     ("remote-detach", "원격 어태치 해제 (remote-detach [host], 생략=전부)", "설정/기타"),
+    ("merge-remote-tab", "같은 원격 서버의 다른 원격 탭을 현재 탭에 pane 으로 머지 "
+                         "(피커, 별칭 merge-remote) — §1.7 페더레이션", "설정/기타"),
 ]
 
 # 명령 프롬프트 자동완성 후보. 자주 쓰는 옵션 템플릿을 앞에 두어, 명령을 다 치면
@@ -1038,6 +1042,7 @@ COMMAND_NOARG = {
     # 무인자 명령으로 등록한다.
     "list-keys", "send-escape", "version",
     "mouse-help", "mouse",
+    "merge-remote-tab", "merge-remote",
     "restart-check",
     # Claude Code 무인자 명령(token-log(별칭 token-usage)·claude-usage·usage·
     # usage-panel·usage-limits·limits·claude-rules·token-saver)은 claude-code 플러그인이 등록.
@@ -1190,6 +1195,9 @@ i18n.register({
         "cmd.remote-attach": "Attach a remote pytmux server's tabs into this one (remote-attach <host>) — federation",
         "cmd.remote-new-tab": "Spawn a new terminal on a remote pytmux and attach it as a new tab (remote-new-tab <host>; attaches first if needed)",
         "cmd.remote-detach": "Detach remote attach (remote-detach [host], omit=all)",
+        "cmd.merge-remote-tab": "Merge another remote tab from the same server into "
+                                "the current tab as a pane (picker, alias merge-remote) "
+                                "— federation",
         "cmd.restart-server": "Work-preserving restart — swap server code keeping shells/PTY (reconnect). Auto dry-run first, re-confirm on FAIL",
         "cmd.restart-all": "Full restart — server session-preserving restart + client relaunch (alias full-restart). Updates both server·client code. Auto dry-run first, re-confirm on FAIL",
         "cmd.restart-check": "Standalone dry-run — check safety (re-exec·serialize·fd·relaunch) without running, popup (alias restart-dry-run)",
@@ -1220,6 +1228,8 @@ i18n.register({
         "menu.layout_load_over": "Load layout (overwrite current tab)",
         "menu.layout_load_new": "Load layout (new tab)",
         "menu.join_pane": "Pane → join another tab (join-pane <tab>)",
+        "menu.merge_remote_tab": "Remote tab → merge into current tab as a pane "
+                                 "(same server)",
         "menu.mouse_help": "Mouse gesture help",
         "menu.command": "Enter command",
         "menu.settings": "⚙ Settings…",

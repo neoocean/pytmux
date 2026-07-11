@@ -41,8 +41,8 @@ from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
 from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 사용)
     ChooseBufferScreen, ChooseLayoutScreen, ChooseTreeScreen,
     CommandListScreen, CommandOptionsScreen, ComposePromptScreen, ConfirmScreen,
-    InfoScreen, InfoTabsScreen, MenuScreen, PluginManagerScreen, PromptScreen,
-    SettingsScreen)
+    InfoScreen, InfoTabsScreen, MenuScreen, MergeRemoteTabScreen,
+    PluginManagerScreen, PromptScreen, SettingsScreen)
 from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose·ghost suggester)
     MultiplexerView, SepInsensitiveSuggester, StatusBar, TabBar)
 from .keymap import (_key_to_ctrl_bytes, _tmux_key_to_textual,
@@ -362,6 +362,39 @@ class _ChooseScreensMixin:
                 self.send_cmd("load_tab_layout", name=name,
                               new=(mode == "new"))
         self.push_screen(ChooseLayoutScreen(names, title), handle)
+
+    # ---- 원격 탭 → 현재 원격 탭에 pane 으로 머지(피커) ----
+    def merge_remote_tab_picker(self):
+        """같은 원격 서버(호스트)의 **다른 원격 탭**을 지금 보는 원격 탭에 pane 으로
+        머지한다 — 드래그 머지(TabBar.on_mouse_up)의 키보드/명령 대체 경로(§1.7-c
+        예외). 지금 보는 탭이 원격이 아니면 안내만. 같은 호스트의 다른 원격 탭을
+        피커로 띄우고, 고르면 그 탭의 활성 패널을 현재 활성 패널 옆에 분할로 붙인다:
+        `select_pane_id`(대상=현재 활성 패널) + `join_pane(src=전역 index, orient)`.
+        서버 remote_relay_join 이 전역 src→원격 로컬 index 변환·업스트림 릴레이하고
+        원격 서버가 실제 트리를 합친다(원격끼리라 로컬 트리 불변)."""
+        host = self._active_remote_host()
+        if host is None:
+            self.display_message(i18n.t("msg.merge_remote_not_remote"))
+            return
+        # 같은 호스트의 다른(=활성 아닌) 원격 탭만 후보. _tab_host 로 병합 탭바 이름
+        # '⇄host:name' 에서 host 를 파싱(드래그 머지 _drag_merge_ok 와 동일 기준).
+        items = [{"i": t["index"], "name": t.get("name", "")}
+                 for t in self.tabbar.tabs
+                 if t.get("remote") and not t.get("active")
+                 and self.tabbar._tab_host(t["index"]) == host]
+        if not items:
+            self.display_message(i18n.t("msg.merge_remote_no_peers"))
+            return
+        dst = self.layout.get("active")   # 현재 활성 패널 = 머지 대상 패널
+
+        def handle(res):
+            if res is None:
+                return
+            src, orient = res
+            if dst is not None:
+                self.send_cmd("select_pane_id", id=dst)
+            self.send_cmd("join_pane", src=src, orient=orient)
+        self.push_screen(MergeRemoteTabScreen(items), handle)
 
 
 _PytmuxAppMixins = (_ClipboardMixin, _NetReconnectMixin, _RestartVersionMixin,
@@ -1354,6 +1387,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # join-pane 은 대상 탭 인자가 필요 — 명령 프롬프트에 미리 채워 준다
                 # (rename-pane 메뉴와 동일 패턴, §2.7).
                 self.open_prompt("command", "", initial="join-pane ")
+            elif key == "merge_remote_tab":
+                self.merge_remote_tab_picker()
             elif key == "rename_pane":
                 self.open_prompt("command", "", initial="rename-pane ")
             elif key == "next_layout":
