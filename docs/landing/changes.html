@@ -60,6 +60,15 @@
     <section class="cl-day" id="d-2026-07-11">
       <h2>2026-07-11 <span class="pill">토요일</span></h2>
       <ul>
+        <li><span class="pill stable">원격</span> <strong>원격 화면이 작게(빈 여백 띠) 남고, 다른 접속을 끊어도 다시 작아지던 문제를 고쳤습니다.</strong>
+          한 원격 서버를 <strong>여러 기기가 함께</strong> 보거나 <strong>예전에 끊긴 접속 흔적이 남아</strong> 있으면, 화면 크기가
+          tmux 처럼 <strong>가장 작은 접속에 맞춰져</strong> 지금 보는 큰 화면의 아래·오른쪽에 <strong>빈 띠</strong>가 남았습니다.
+          게다가 그 접속을 <strong>끊거나 "다른 접속 내보내기"(<span class="inline-code">detach -a</span>)를 해도 곧바로 자동
+          재접속</strong>해 다시 작아졌습니다. 이제 <strong>의도적으로 내보낸 접속은 다시 붙지 않아</strong>
+          (<span class="inline-code">detach -a</span> · 접속을 가진 기기에서 <span class="inline-code">remote-detach</span>) 화면이
+          바로 가득 찹니다. 절전·네트워크 단절로 생긴 <strong>유령 접속</strong>까지 자동으로 정리하려면, 원격 서버를 여는
+          <strong>호스트에 SSH keepalive</strong> 를 설정하세요 — <a href="guide#remote">가이드 10.1</a>에 macOS·Linux·Windows
+          방법을 정리했습니다.</li>
         <li><span class="pill stable">원격</span> <strong>같은 원격 서버에서 열어 둔 다른 탭을, 지금 보는 탭에 패널로 합칠 수 있습니다.</strong>
           지금까지는 <strong>마우스로 탭을 끌어다 놓아야만</strong> 같은 원격 서버의 두 탭을 한 화면(패널 분할)으로 합칠 수 있었습니다.
           이제 <span class="inline-code">:merge-remote-tab</span> 명령이나 <strong>우클릭 메뉴 → 패널</strong>에서, 같은 원격 서버에서
