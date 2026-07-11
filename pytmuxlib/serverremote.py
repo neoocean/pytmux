@@ -700,6 +700,7 @@ class ServerRemoteMixin:
         """업스트림 메시지 루프: status 는 흡수(탭바 병합), bye/EOF 는 링크 해제,
         그 외(layout/screen/screen-delta 등)는 이 링크를 **보는** 클라에 그대로
         전달한다."""
+        deliberate_bye = False    # 업스트림 발 "bye"=고의 해제 → 자동 재연결 금지
         try:
             while link.alive:
                 try:
@@ -734,7 +735,17 @@ class ServerRemoteMixin:
                         # 등)는 변했을 수 있다 — 보는 클라만 갱신.
                         self._remote_viewer_status(link)
                     continue
-                if t in ("bye", "restarting"):
+                if t == "bye":
+                    # 업스트림이 우리를 **고의로** 내보냄 — detach_others(다른 뷰어가
+                    # `detach -a`)·kill-server·마지막 세션 소멸(_notify_no_sessions).
+                    # 사고 EOF/오류와 달리 **자동 재연결하지 않는다**: 안 그러면
+                    # detach_others 로 원격 클라를 떨궈도 즉시 되붙어(_session_size=min
+                    # 재-핀) eviction 이 무효화되고, 원격 뷰가 계속 레터박스로 작게
+                    # 남는다(kill/detach/대기 다 무효 보고 2026-07-11). "restarting"
+                    # (세션유지 재시작)은 종전대로 재연결 대상이다.
+                    deliberate_bye = True
+                    break
+                if t == "restarting":
                     break
                 # §4.1: 요청 클라 식별자가 echo 돼 왔으면(request_token_log 회신) 그
                 # 클라에게만 전달한다 — 같은 호스트를 보는 다른 다운스트림 클라에
@@ -762,8 +773,9 @@ class ServerRemoteMixin:
         except Exception:
             self._log_error(f"remote_reader({link.host})")
         finally:
-            if link.alive:                 # EOF/오류로 끝났으면 정리+복귀+자동재연결
-                await self.remote_drop(link, reconnect=True)
+            if link.alive:                 # EOF/오류/restarting=정리+복귀+자동재연결,
+                # 업스트림 발 "bye"(고의 해제)만 재연결 억제.
+                await self.remote_drop(link, reconnect=not deliberate_bye)
 
     # ---- 탭바 병합 ----
     @staticmethod
