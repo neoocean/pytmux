@@ -1140,6 +1140,69 @@ async def test_remote_same_host_tabs_drag_merge():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_remote_same_host_tabs_command_merge():
+    """드래그 머지(test_remote_same_host_tabs_drag_merge)의 **명령/키보드 대체 경로**
+    E2E: 같은 원격 호스트의 두 원격 탭을 `:merge-remote-tab` **명령**(피커)으로 현재
+    원격 탭에 pane 으로 합친다. 실 2서버 페더레이션 + 실 Textual 클라(make_app)로,
+    명령 디스패치→피커 오픈→후보 필터(같은 host 비활성 원격탭만)→Enter 선택→
+    select_pane_id+join_pane 릴레이→**업스트림이 실제로 병합**(탭 2→1·패널 1→2)까지
+    전 구간을 구동한다. 로컬 트리는 불변(원격끼리, §1.7-c 예외)."""
+    if os.name == "nt":
+        from run import skip
+        skip("Windows: 실 PTY 원격 탭 머지 E2E 는 macOS/Linux 권위(헤드리스 ConPTY 제외)")
+    from pytmuxlib.clientscreens import MergeRemoteTabScreen
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    app = harness.make_app(sockA)
+    try:
+        sessB = srvB.ensure_default_session(80, 24)
+        srvB.new_window(sessB)                        # B 에 원격 탭 2개
+        assert len(sessB.tabs) == 2
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause(0.3)
+            nA = len([w for w in app.status.windows if not w.get("remote")])
+            # ① 원격 attach(엔드포인트 직결 — 관심은 머지 '명령'이라 attach 는 직결)
+            app.send_cmd("remote_attach", endpoint=sockB)
+            await harness.wait_until(
+                pilot,
+                lambda: sum(1 for w in app.status.windows
+                            if w.get("remote")) == 2,
+                timeout=8.0)
+            rtabs = sorted(w["index"] for w in app.status.windows
+                           if w.get("remote"))
+            # ② 첫 원격 탭으로 진입(view) = 머지 대상 탭
+            app.send_cmd("select_window", index=rtabs[0])
+            await harness.wait_until(
+                pilot, lambda: app._active_remote_host() is not None,
+                timeout=8.0)
+            # ③ **명령**으로 머지 피커 실행(드래그 아님) → 실제로 열려야
+            app._run_command("merge-remote-tab")
+            await harness.wait_until(
+                pilot, lambda: isinstance(app.screen, MergeRemoteTabScreen),
+                timeout=4.0)
+            # ④ 후보는 같은 host 의 **비활성** 원격 탭(둘째)만
+            assert [it["i"] for it in app.screen._items] == [rtabs[1]], \
+                app.screen._items
+            # ⑤ 피커에서 실제 Enter 선택 → 콜백이 select_pane_id+join_pane 발사·릴레이
+            await pilot.press("enter")
+            # ⑥ 업스트림 B 가 실제로 합쳤는지: 탭 2→1, 그 창 패널 1→2
+            await harness.wait_until(
+                pilot,
+                lambda: len(sessB.tabs) == 1
+                and len(sessB.tabs[0].window.panes()) == 2,
+                timeout=8.0)
+            assert len(sessB.tabs) == 1, "원격 탭이 1개로 합쳐져야"
+            assert len(sessB.tabs[0].window.panes()) == 2, \
+                "목적지 원격 탭에 패널이 2개여야"
+            # ⑦ 다운스트림 A 로컬 탭은 불변(원격끼리 머지)
+            nA_after = len([w for w in app.status.windows
+                            if not w.get("remote")])
+            assert nA_after == nA, f"A 로컬 탭 변함: {nA}->{nA_after}"
+    finally:
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
 async def test_remote_autoresume_relays_to_remote_pane():
     """원격 탭을 보는 중 set_autoresume 는 **원격** 활성 패널에 적용된다(릴레이) —
     로컬 활성 패널(딴 탭)에 켜지던 '엉뚱한 탭에 AR' 버그 수정(사용자 보고 2026-06-15)."""
@@ -1632,6 +1695,52 @@ async def test_remote_link_keepalive_lets_upstream_reap_dead_client():
         srvA.remote_shutdown()
         await teardown(srvA, taskA, sockA)
         await teardown(srvB, taskB, sockB)
+
+
+async def test_remote_reader_bye_suppresses_reconnect():
+    """수정(2026-07-11): _remote_reader 의 **루프 종료 사유별** 재연결 분기.
+    업스트림 발 "bye"(detach_others=다른 뷰어 `detach -a`·kill-server·마지막 세션
+    소멸 _notify_no_sessions = 고의 해제)는 **자동 재연결하지 않는다**. 종전엔
+    bye·restarting·EOF 를 모두 reconnect=True 로 처리해, detach_others 로 원격 클라를
+    떨궈도 즉시 되붙어(_session_size=min 재-핀) eviction 이 무효화되고 원격 뷰가 계속
+    레터박스로 작게 남았다(kill/detach/30s대기 다 무효 보고 2026-07-11).
+    "restarting"(세션유지 재시작)·EOF/오류는 종전대로 reconnect=True."""
+    if os.name == "nt":
+        return
+    from pytmuxlib import serverremote
+    from pytmuxlib.serverremote import RemoteLink
+    srv, task, sock = await server_only()
+    orig_read_msg = serverremote.read_msg
+    try:
+        captured = []
+
+        async def _fake_drop(link, notify=True, reconnect=False):
+            captured.append(reconnect)   # 재연결 인자만 포착(실 정리/재연결 미발화)
+            link.alive = False
+        srv.remote_drop = _fake_drop     # 인스턴스 한정 스텁
+
+        async def _reconnect_arg_for(msgs):
+            """주어진 프레임 시퀀스(소진 후 EOF)를 내보내는 reader 로 _remote_reader 를
+            1회 돌리고, remote_drop 에 전달된 reconnect 인자를 돌려준다."""
+            q = list(msgs)
+
+            async def _fake_read(_reader):
+                return q.pop(0) if q else None   # 소진되면 EOF(None)
+            serverremote.read_msg = _fake_read
+            captured.clear()
+            link = RemoteLink("hostX", object(), object())
+            await srv._remote_reader(link)
+            return captured[-1] if captured else None
+
+        assert await _reconnect_arg_for([{"t": "bye"}]) is False, \
+            "업스트림 발 bye(고의 해제)는 자동 재연결하지 않아야 한다"
+        assert await _reconnect_arg_for([{"t": "restarting"}]) is True, \
+            "restarting(세션유지 재시작)은 자동 재연결 대상"
+        assert await _reconnect_arg_for([]) is True, \
+            "EOF(사고 끊김)는 자동 재연결 대상"
+    finally:
+        serverremote.read_msg = orig_read_msg
+        await teardown(srv, task, sock)
 # ---- 원격 중첩 자동 승격(docs/internal/NESTED_ATTACH_SCENARIO.md §4·§7) ----
 
 def _nest_req(selfreport: str) -> bytes:
