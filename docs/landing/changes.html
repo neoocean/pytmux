@@ -57,6 +57,21 @@
       </div>
     </header>
 
+    <section class="cl-day" id="d-2026-07-12">
+      <h2>2026-07-12 <span class="pill">일요일</span></h2>
+      <ul>
+        <li><span class="pill stable">복사</span> <strong>이제 그냥 마우스로 드래그하면 그 패널 내용만 자동으로 복사됩니다 — 외곽선·옆 패널 없이.</strong>
+          지금까지는 화면을 드래그해도 복사가 안 되거나(Ctrl+C 무반응), Shift+드래그로 복사하면 터미널이 화면 전체를
+          긁어 <strong>pytmux 패널 외곽선(│)과 옆 패널 내용까지 함께 복사</strong>되어 불편했습니다(사용자 보고).
+          이제 <strong>왼쪽 버튼으로 드래그</strong>하면 pytmux 가 <strong>드래그를 시작한 패널 안으로만</strong> 선택을 가둬,
+          손을 떼는 순간 OS 클립보드로 <strong>자동 복사</strong>합니다 — Shift 도 Ctrl+C 도 필요 없고 외곽선·옆 패널은
+          안 딸려옵니다. Claude 처럼 마우스를 쓰는 화면 위에서도 됩니다(그 화면의 마우스 드래그는 복사에 양보).
+          드래그가 아닌 <strong>클릭</strong>은 종전대로 버튼/포커스로 갑니다. 끄려면 <span class="inline-code">set
+          mouse-drag-copy off</span> — 그러면 드래그는 앱으로 가고, 선택은 Shift·copy-mode(<span class="inline-code">prefix
+          [</span>)로 합니다.</li>
+      </ul>
+    </section>
+
     <section class="cl-day" id="d-2026-07-11">
       <h2>2026-07-11 <span class="pill">토요일</span></h2>
       <ul>
