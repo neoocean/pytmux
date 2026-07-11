@@ -75,25 +75,13 @@
          갱신하면 랜딩도 자동 최신(이중 관리 없음). fetch 실패 시 이 폴백이 그대로 남는다. -->
     <div class="cl-news">
       <div class="cl-news-head">
-        <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-10 <span class="pill">금요일</span></span>
+        <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-11 <span class="pill">토요일</span></span>
         <a class="cl-news-more" href="changes">전체 변경 내역 →</a>
       </div>
       <ul id="cl-news-list">
-        <li><span class="pill stable">원격</span> <strong>분리해 둔 원격 탭이 원격 쪽 탭 변화에도 계속 숨겨진 채 유지됩니다.</strong>
-          원격 탭을 위치가 아니라 고유 안정 표식으로 추적하게 바꿔, 원격 쪽에서 다른 탭을 닫거나
-          순서를 바꿔도 내가 분리한 바로 그 탭만 정확히 숨겨집니다(고정한 탭도 동일).</li>
-        <li><span class="pill stable">Windows</span> <strong>Claude 종료 요약이 마침 치던 명령을 실수로 실행하던 문제를 고쳤습니다.</strong>
-          종료 요약이 프롬프트 정리로 보내는 Enter 가, 막 다음 명령을 치던 중이면 그 명령을 제출하던 것 —
-          입력 중이면 요약을 잠시 미뤘다가 표시합니다.</li>
-        <li><span class="pill stable">Windows</span> <strong>새 탭·새 패널이 Enter 전까지 빈 화면으로 나오던 문제를 고쳤습니다.</strong>
-          한국어 Windows 콘솔 UTF-8 자동 전환(07-09)의 화면 클리어가 셸 프롬프트를 지우던 부작용 —
-          전환을 셸이 뜨기 전에 끝내 새 탭부터 바로 프롬프트가 보입니다.</li>
-        <li><span class="pill stable">표시</span> <strong>Claude Code 화면의 회색 블록 속 검은 사각형 구멍을 메꿨습니다.</strong>
-          탭 간격 공백이 터미널 기본 배경(검정)으로 비치던 것 — 같은 배경 사이의 짧은 공백은
-          주변과 같은 배경으로 채워 표시합니다.</li>
-        <li><span class="pill stable">Windows</span> <strong>완전 재시작 후 첫 실행이 "서버 기동 실패"로 끝나던 문제를 고쳤습니다.</strong>
-          이전 서버가 남긴 옛 포트 기록 때문에 기동 확인이 죽은 포트만 두드리다 시간을 넘기던 것 —
-          종료 시 포트 기록을 정리하고 죽은 포트 확인을 짧게 끊어 첫 실행부터 바로 열립니다.</li>
+        <li><span class="pill stable">설치</span> <strong>필요한 구성요소가 빠졌을 때, 알 수 없는 오류 대신 설치 방법을 안내합니다.</strong>
+          textual·pyte 같은 추가 구성요소가 설치되지 않은 채 실행하면 알아보기 어려운 오류만 쏟아지던 것 —
+          이제 빠진 구성요소 이름과 함께 지금 쓰는 파이썬에 맞춘 설치 명령을 바로 알려 주고 종료합니다.</li>
       </ul>
     </div>
     <div class="cta" style="margin-top:24px;">

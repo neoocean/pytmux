@@ -664,7 +664,16 @@ def main(argv=None):
             need_spawn = True
     if need_spawn:
         proc.spawn_detached(proc.server_argv(sock_path))
-    from .client import run_client   # 지연 import: 서버 부팅과 병렬로 textual 로드
+    try:
+        from .client import run_client   # 지연 import: 서버 부팅과 병렬로 textual 로드
+    except ModuleNotFoundError as e:
+        # client 는 textual/pyte/wcwidth 등 requirements.txt 의 서드파티에 의존한다.
+        # 미설치면 raw traceback 대신 설치 방법을 안내한다(Windows 사용자가 자주 겪음).
+        print(f"pytmux: 필수 의존성 '{e.name}' 이(가) 설치돼 있지 않습니다.\n"
+              "        다음으로 의존성을 설치한 뒤 다시 실행하세요:\n"
+              f"          {os.path.basename(sys.executable)} -m pip install -r requirements.txt",
+              file=sys.stderr)
+        sys.exit(1)
     # 새로 띄웠다면 connectability(probe)가 아니라 auth 까지 기다린다 — 좀비를
     # 교체하는 경우 경로가 새 서버로 바뀌기 전 probe 가 좀비를 맞힐 수 있어서다.
     if need_spawn and not wait_server_authed(sock_path):
