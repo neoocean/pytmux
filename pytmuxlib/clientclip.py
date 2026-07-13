@@ -7,6 +7,7 @@ client.py 의 거대 클로저(build_client_app)에 갇혀 있던 클립보드 s
 원격(ssh) 환경에서 이미지 파일 경로는 클라이언트 머신 기준이라는 주의는 호출부 참조."""
 from __future__ import annotations
 
+import base64
 import os
 import shutil
 import subprocess
@@ -15,8 +16,72 @@ import tempfile
 from . import proc
 
 
+# Windows 유니코드-안전 클립보드 왕복(코드페이지 무관):
+# clip.exe 는 stdin 을, Get-Clipboard 는 stdout 을 **콘솔 코드페이지**(한국어
+# Windows=cp949)로 해석한다. 그래서 UTF-8 바이트를 넘기면 한글이 mojibake 가 됐다
+# (사용자 보고 2026-07-13: 마우스 드래그 복사한 '그림자 샤미' → '洹몃┝???ㅻ?').
+# 텍스트를 UTF-16LE→base64(ASCII)로 감싸 PowerShell 과 주고받는다 — base64 는 순수
+# ASCII 라 cp949·cp437·cp1252 등 어떤 콘솔 코드페이지로 (역)해석돼도 <128 바이트가
+# 동형이라 무손실이다. PowerShell 이 되돌려 Set-Clipboard/Get-Clipboard 한다.
+def _win_copy_stdin(text: str) -> bytes:
+    """_win_copy 가 PowerShell stdin 으로 보낼 payload(UTF-16LE→base64, ASCII)."""
+    return base64.b64encode(text.encode("utf-16le"))
+
+
+def _win_paste_from_stdout(out: bytes) -> str:
+    """_win_paste 가 PowerShell stdout(base64 ASCII)을 원문으로 복원. 비면 ""."""
+    s = out.decode("ascii", "ignore").strip()
+    if not s:
+        return ""
+    try:
+        return base64.b64decode(s).decode("utf-16le", "ignore")
+    except (ValueError, UnicodeError):
+        return ""
+
+
+def _win_copy(text: str) -> bool:
+    """Windows: PowerShell Set-Clipboard 로 유니코드-안전 복사. 성공 True.
+    PowerShell 이 없거나 실패하면 False → 호출부가 clip.exe 폴백(ASCII 만 정확)."""
+    if not shutil.which("powershell"):
+        return False
+    # $b(base64) 를 UTF-16LE 원문으로 되돌려 Set-Clipboard. Set-Clipboard 는 자체적으로
+    # STA 로 마샬링하므로 -STA 불요. [Console]::In 은 ASCII base64 만 읽어 코드페이지 무관.
+    ps = ("$b=[Console]::In.ReadToEnd();"
+          "Set-Clipboard -Value ([Text.Encoding]::Unicode.GetString("
+          "[Convert]::FromBase64String($b)))")
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            input=_win_copy_stdin(text), timeout=5, **proc.no_window_kwargs())
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _win_paste():
+    """Windows: PowerShell Get-Clipboard 로 유니코드-안전 붙여넣기(_win_copy 의 역).
+    문자열|"" 반환, PowerShell 이 없으면 None(호출부가 폴백 루프로)."""
+    if not shutil.which("powershell"):
+        return None
+    # -Raw: 여러 줄을 배열로 쪼개지 않고 원문 그대로. base64(ASCII)로 stdout 해 코드페이지
+    # 무관. 클립보드가 비었거나 텍스트가 아니면 $t=$null → 빈 출력 → "".
+    ps = ("$t=Get-Clipboard -Raw;"
+          "if($null -ne $t){[Convert]::ToBase64String("
+          "[Text.Encoding]::Unicode.GetBytes($t))}")
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, timeout=5, **proc.no_window_kwargs()).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return _win_paste_from_stdout(out)
+
+
 def copy(text: str) -> bool:
-    """OS 클립보드로 복사(pbcopy/xclip/wl-copy/clip.exe). 성공 True."""
+    """OS 클립보드로 복사(pbcopy/xclip/wl-copy/clip.exe). 성공 True.
+    Windows 는 코드페이지 무관 유니코드 복사(_win_copy)를 먼저 시도한다."""
+    if proc.IS_WINDOWS and _win_copy(text):
+        return True
     for cmd in (["pbcopy"], ["xclip", "-selection", "clipboard"],
                 ["wl-copy"], ["clip"]):   # clip = Windows clip.exe(표준입력 복사)
         if shutil.which(cmd[0]):
@@ -31,7 +96,12 @@ def copy(text: str) -> bool:
 
 
 def paste() -> str:
-    """OS 클립보드 텍스트를 읽어 반환(없으면 "")."""
+    """OS 클립보드 텍스트를 읽어 반환(없으면 "").
+    Windows 는 코드페이지 무관 유니코드 붙여넣기(_win_paste)를 먼저 시도한다."""
+    if proc.IS_WINDOWS:
+        w = _win_paste()
+        if w is not None:
+            return w
     for cmd in (["pbpaste"], ["xclip", "-selection", "clipboard", "-o"],
                 ["wl-paste", "-n"],
                 # Windows: PowerShell Get-Clipboard(끝에 CRLF 가 붙을 수 있음)

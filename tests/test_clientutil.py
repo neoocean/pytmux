@@ -38,6 +38,29 @@ async def test_strip_box_drawing_filter():
     assert s("a─b─c") == "a─b─c"
 
 
+async def test_win_clipboard_utf16_roundtrip_preserves_korean():
+    """Windows 클립보드 코드페이지 mojibake 수정(사용자 보고 2026-07-13): clip.exe/
+    Get-Clipboard 가 stdin/stdout 을 콘솔 코드페이지(cp949)로 해석해 UTF-8 한글이
+    '洹몃┝…' 로 깨지던 것을, UTF-16LE→base64(ASCII) 왕복으로 코드페이지 무관하게 한다.
+
+    실 PowerShell/OS 클립보드는 driver 로 못 몰지만, PowerShell 변환은 순수
+    인코딩 왕복이라 모델링해 검증한다: 복사 stdin(base64(utf16le)) 을 PowerShell 이
+    Set-Clipboard→Get-Clipboard→base64(utf16le) 로 되보내면 붙여넣기 stdout 과 동형이다.
+    _win_paste_from_stdout(_win_copy_stdin(t)+CRLF) == t 이면 왕복 무손실이다.
+    base64 payload 가 순수 ASCII(코드페이지 무관 증거)인 것도 함께 고정한다."""
+    from pytmuxlib.clientclip import _win_copy_stdin, _win_paste_from_stdout
+    for t in ("그림자 샤미", "그림자 미니에 = KumquatShadow",
+              "1001900111 (그림자 오하나 = MandarinShadow)",
+              "한글\n여러 줄\ttab 混在 emoji😀", "plain ascii", ""):
+        stdin = _win_copy_stdin(t)
+        assert stdin == stdin.decode("ascii").encode("ascii")  # 순수 ASCII
+        # PowerShell 왕복 모델(+CRLF: Write-Output 이 붙이는 개행) → 원문 복원
+        assert _win_paste_from_stdout(stdin + b"\r\n") == t
+    # 빈 stdout(클립보드 비었거나 비-텍스트) → ""
+    assert _win_paste_from_stdout(b"") == ""
+    assert _win_paste_from_stdout(b"   \r\n") == ""
+
+
 async def test_paste_clipboard_strips_box_drawing_per_toggle():
     """§2.13: paste-clipboard(텍스트 경로)가 strip_box_drawing 토글에 따라 테두리를
     제거(on, 기본)/보존(off)한다. on_paste(터미널 bracketed)는 대상 아님(이 경로만)."""
