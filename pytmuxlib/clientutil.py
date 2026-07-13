@@ -700,6 +700,7 @@ COMMANDS = [
     ("nest-auto-attach", "원격에서 pytmux 실행 시 거부 대신 자동 remote-attach 승격 on/off (nest-auto-attach on|off|toggle)", "설정/기타"),
     ("win-mouse-motion", "Windows 마우스 모션(any-motion) 패스스루 on/off — 기본 off(ConPTY 누출 방지) (win-mouse-motion on|off|toggle)", "설정/기타"),
     ("vt-parser", "VT 파서 백엔드 선택 pyte|native (재시작 시 발효 · vt-parser pyte|native)", "설정/기타"),
+    ("window-size", "다중 클라 미러링 시 공유 크기 규칙 smallest|latest|largest — latest=마지막 조작 창 크기(window-size smallest|latest|largest)", "설정/기타"),
     # Claude Code 명령(auto-resume·token-log·
     # claude-usage·usage-panel·token-account·prompt-clear*·model·auto-doc-clear·
     # auto-compact·claude-auto-mode·auto-launch 등)은 claude-code 플러그인이 등록한다
@@ -815,6 +816,9 @@ COMMAND_OPTIONS = {
     "win-mouse-motion": [{"key": "state", "label": "윈도우모션", "choices": _ONOFF}],
     "vt-parser": [{"key": "backend", "label": "VT파서",
                    "choices": [("pyte", "pyte"), ("native", "native")]}],
+    "window-size": [{"key": "mode", "label": "공유크기",
+                     "choices": [("smallest", "smallest"), ("latest", "latest"),
+                                 ("largest", "largest")]}],
     "lang": [{"key": "lang", "label": "언어",
               "choices": [("한국어", "ko"), ("English", "en")]}],
     # auto-resume·prompt-clear·auto-doc-clear·claude-auto-mode·auto-launch
@@ -893,6 +897,9 @@ SETTINGS = [
     {"key": "vt-parser", "cat": "동작", "type": "enum",
      "choices": ["pyte", "native"], "cmd": "vt-parser", "backend": "server",
      "restart": True},
+    {"key": "window-size", "cat": "동작", "type": "enum",
+     "choices": ["smallest", "latest", "largest"], "cmd": "window-size",
+     "backend": "server"},
     # 상태줄
     {"key": "status-left", "cat": "상태줄", "type": "str",
      "cmd": "set status-left", "backend": "config"},
@@ -1014,10 +1021,11 @@ i18n.register({
         "보통 0.30": "Medium 0.30", "진하게 0.45": "Strong 0.45",
         "리페인트합치기": "Coalesce repaints", "언어": "Language",
         "중첩자동승격": "Nested auto-attach", "VT파서": "VT parser",
-        "윈도우모션": "Windows mouse motion",
+        "윈도우모션": "Windows mouse motion", "공유크기": "Shared size",
         # 선택지
-        # VT 파서 백엔드 이름은 로케일 무관(고유명사) — 양쪽 그대로.
+        # VT 파서 백엔드·window-size 모드 이름은 로케일 무관(고유명사) — 양쪽 그대로.
         "pyte": "pyte", "native": "native",
+        "smallest": "smallest", "latest": "latest", "largest": "largest",
         "좌우 분할 │ (-h)": "Split L/R │ (-h)", "상하 분할 ─ (-v)": "Split T/B ─ (-v)",
         "◀ 왼쪽": "◀ Left", "▶ 오른쪽": "▶ Right", "▲ 위": "▲ Up", "▼ 아래": "▼ Down",
         "줌 토글 ⛶": "Zoom toggle ⛶",
@@ -1180,6 +1188,7 @@ i18n.register({
         "cmd.nest-auto-attach": "Auto-promote remote pytmux run to remote-attach instead of rejecting on/off (nest-auto-attach on|off|toggle)",
         "cmd.win-mouse-motion": "Windows mouse motion (any-motion) passthrough on/off — default off (avoids ConPTY leak) (win-mouse-motion on|off|toggle)",
         "cmd.vt-parser": "Select VT parser backend pyte|native (takes effect on restart · vt-parser pyte|native)",
+        "cmd.window-size": "Shared grid sizing rule for multi-client mirroring smallest|latest|largest — latest=size of last-operated client (window-size smallest|latest|largest)",
         "cmd.version": "Client/server version (p4 CL)·uptime popup (alias about)",
         "cmd.lang": "Switch UI language (lang ko|en) — Korean/English",
         "cmd.run-shell": "Run shell command",

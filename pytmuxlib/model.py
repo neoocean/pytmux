@@ -1475,4 +1475,10 @@ class ClientConn:
         # 회수 대상에서 제외해 오탐을 막는다.
         self.last_seen: float = 0.0
         self.ever_pinged: bool = False
+        # window-size=latest 용: 이 클라에서 마지막 **사용자 조작**(키 입력·붙여넣기·
+        # 마우스·스크롤·리사이즈)이 온 monotonic 시각(0=아직 없음). _session_size 가
+        # latest 모드에서 이 값이 가장 큰(가장 최근 조작된) 클라의 크기를 세션 공유
+        # 크기로 쓴다. last_seen(ping 포함 아무 메시지나) 과 달리 사용자 조작만 센다 —
+        # keepalive ping 만 오는 유휴 클라가 '최근 조작'으로 오인돼 크기를 뺏지 않게.
+        self.last_active: float = 0.0
 

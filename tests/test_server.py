@@ -5173,6 +5173,65 @@ async def test_liveness_evicts_dead_client_and_regrows_session():
         await teardown(srv, task, sock)
 
 
+async def test_session_size_window_size_modes():
+    """window_size 규칙(smallest|latest|largest, tmux 동형): 두 클라(작은/큰)가 한
+    세션을 미러링할 때 _session_size 가 규칙대로 공유 크기를 고른다.
+      smallest(기본) = min → 아무도 안 잘림(현행 동작 불변).
+      largest        = max.
+      latest         = last_active 가 가장 큰(마지막 조작) 클라 크기, 없으면 smallest.
+    사용자 보고(2026-07-13): 작은 코-클라가 min 을 핀해 큰 원격 뷰가 레터박스로 남던
+    문제의 opt-in 해법. 설정 라운드트립·순환 토글도 함께 검증."""
+    from pytmuxlib.model import ClientConn
+    srv, task, sock = await server_only()
+    try:
+        class _W:
+            def write(self, b): pass
+            def close(self): pass
+            async def drain(self): pass
+
+        def _mk(cols, rows):
+            c = ClientConn(_W())
+            c.session = sess
+            c.cols, c.rows = cols, rows
+            return c
+
+        sess = srv.ensure_default_session(120, 50)
+        small = _mk(88, 30)      # 맥 로컬 작은 창(보고 사례)
+        big = _mk(200, 60)       # 큰 원격 뷰
+        srv.clients[:] = [small, big]
+
+        # 기본은 smallest → min(작은 쪽)
+        assert srv.window_size == "smallest"
+        assert srv._session_size(sess) == (88, 30), srv._session_size(sess)
+
+        # largest → max(큰 쪽)
+        srv.set_window_size("largest")
+        assert srv._session_size(sess) == (200, 60), srv._session_size(sess)
+
+        # latest, 아직 아무도 조작 전(last_active 0) → smallest 폴백
+        srv.set_window_size("latest")
+        assert srv._session_size(sess) == (88, 30), srv._session_size(sess)
+
+        # 큰 클라가 마지막 조작 → 큰 크기로
+        big.last_active = 100.0
+        assert srv._session_size(sess) == (200, 60), srv._session_size(sess)
+        # 그 뒤 작은 클라가 조작 → 작은 크기로 뺏어옴("마지막 조작 창")
+        small.last_active = 200.0
+        assert srv._session_size(sess) == (88, 30), srv._session_size(sess)
+
+        # 잘못된 값은 무시(현행 유지), 순환 토글, opts.json 영속 라운드트립
+        srv.set_window_size("bogus")
+        assert srv.window_size == "latest"
+        srv.set_window_size()                       # latest→largest
+        assert srv.window_size == "largest"
+        srv.set_window_size()                       # largest→smallest
+        assert srv.window_size == "smallest"
+        srv.set_window_size("latest")
+        assert srv._load_opts().get("window_size") == "latest"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_autorename_apply_skips_stale_tab():
     """M-2: _fg_command executor await 동안 탭이 제거되거나(kill_window) active_pane 이
     바뀌면 stale 자동이름을 쓰지 않는다(정상일 때만 적용)."""

@@ -2606,6 +2606,20 @@ async def test_settings_screen_applies_persists_and_links():
         assert "native" in seg or "pyte" in seg
         assert i18n.t("setting.unknown") not in seg, seg
 
+        # window-size(공유 격자 규칙) 행: 서버 권위값이 채워져 '미상' 아님 + ←→ 순환이
+        # 서버 window_size 를 실제로 바꾼다(smallest→latest→largest 라운드트립).
+        assert app.setting_current("window-size") in \
+            ("smallest", "latest", "largest"), app.server_opts
+        widx = next(i for i, (d, _f) in enumerate(scr._flat)
+                    if d["key"] == "window-size")
+        wseg = scr._val_display(scr._flat[widx][0])
+        assert i18n.t("setting.unknown") not in wseg, wseg
+        before_ws = srv.window_size
+        scr._cycle(widx, 1)
+        await pilot.pause(0.1)
+        assert srv.window_size != before_ws, srv.window_size
+        assert srv.window_size in ("smallest", "latest", "largest")
+
         # ratio 행: ←→ 로 +0.02 → app 상태 갱신 + config 기록.
         ridx = next(i for i, (d, _f) in enumerate(scr._flat)
                     if d["key"] == "inactive-dim-ratio")

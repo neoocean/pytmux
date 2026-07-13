@@ -26,6 +26,9 @@ from .servertree import ServerTreeMixin
 # Perforce 로 공유할" 산출물의 기준 경로다. proc.server_argv 의 entry 추정과 동일 규칙.
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# 다중 클라 미러링 시 세션 공유 격자 크기 규칙(tmux window-size 와 동형, _session_size).
+_WINDOW_SIZE_MODES = ("smallest", "latest", "largest")
+
 
 
 # 선택적 플러그인이 기여하는 서버측 믹스인(plugins/claude-code 의 ServerClaudeMixin 등)
@@ -128,6 +131,15 @@ class Server(*_SERVER_BASES):
         # 무효화된 중간 프레임을 버려 feed 부하/지연을 줄인다(안전 조건은
         # coalesce_alt_repaints 참조 — alt-screen 한정·무손실). 기본 ON, opts.json 영속.
         self.coalesce_repaints = bool(_opts.get("coalesce_repaints", True))
+        # 다중 클라이언트가 한 세션을 미러링할 때 공유 격자 크기를 정하는 규칙
+        # (tmux window-size 와 동형, _session_size). opts.json 영속.
+        #   smallest(기본) = min(모든 클라) — 가장 작은 뷰어에 맞춰 아무도 안 잘림(현행).
+        #   latest         = 마지막으로 조작된(입력·마우스·스크롤·리사이즈) 클라 크기.
+        #   largest        = max(모든 클라).
+        # latest/largest 는 작은 코-뷰어가 공유 격자를 다 못 담아 우/하단이 **잘린다**
+        # (레터박스 아님) — 단일 공유 pyte 격자의 물리적 한계, tmux 와 동일 트레이드오프.
+        _ws = str(_opts.get("window_size", "smallest")).strip().lower()
+        self.window_size = _ws if _ws in _WINDOW_SIZE_MODES else "smallest"
         # VT 파서 백엔드: "native"(기본·라이브 — 자작 증분 토크나이저 vtparse.VTTokenizer
         # 가 feed-전 우회 없이 pyte.Screen 에 직접 디스패치) | "pyte"(pyte.ByteStream 경로,
         # 대조/롤백용). 2026-06-16 native 로 기본 전환됨(아래 _opts.get 기본값 참조 —
@@ -336,6 +348,22 @@ class Server(*_SERVER_BASES):
         self._save_opts()
         return self.single_border
 
+    def set_window_size(self, value=None):
+        """세션 공유 격자 크기 규칙 설정(smallest|latest|largest). value 미지정 시
+        smallest→latest→largest→smallest 순환. 유효하지 않은 값은 무시(현행 유지).
+        opts.json 영속. 즉시 발효 — 반환값을 받은 명령 핸들러가 세션 재-미러링을
+        트리거해 새 규칙으로 다시 레이아웃한다(serverio _handle_cmd)."""
+        modes = _WINDOW_SIZE_MODES
+        if value is None:
+            i = modes.index(self.window_size) if self.window_size in modes else 0
+            self.window_size = modes[(i + 1) % len(modes)]
+        else:
+            v = str(value).strip().lower()
+            if v in modes:
+                self.window_size = v
+        self._save_opts()
+        return self.window_size
+
     def set_win_mouse_motion(self, value=None):
         """Windows 마우스 모션(any-motion) 패스스루 허용 토글(HANDOFF §10-H). value
         미지정 시 반전. 끄면(기본) Windows ConPTY 패널에 any-motion 을 광고하지 않아
@@ -543,6 +571,11 @@ class Server(*_SERVER_BASES):
             # 광고 mouse 레벨(any-motion 캡)이 바뀌므로 single-border 와 같이
             # broadcast 분기로 처리(HANDOFF §10-H). `pytmux cmd win-mouse-motion on`.
             self.set_win_mouse_motion(self._arg_onoff(args))
+        elif c in ("window-size", "winsize"):
+            # 세션 공유 격자 크기 규칙(smallest|latest|largest). 인자 없으면 순환 토글.
+            # 공유 크기가 바뀌므로 아래 broadcast(_send_full)로 전 클라 재-미러링.
+            # `pytmux cmd window-size latest`.
+            self.set_window_size(args[0] if args else None)
         else:
             # 코어 표에 없는 명령 → 플러그인(claude-code 등)에 마지막 기회를 준다.
             # 처리한 플러그인이 결과 문자열(예: 'on'/'off')을 주면 그대로 회신하고,
@@ -714,12 +747,31 @@ class Server(*_SERVER_BASES):
         return None
 
     def _session_size(self, sess: Session):
-        """세션에 attach 한 모든 클라이언트를 수용하도록 최소 크기를 쓴다(미러링)."""
+        """세션 공유 격자 크기(미러링). window_size 규칙에 따라 결정한다(tmux 동형):
+          smallest(기본) = min(모든 클라) — 가장 작은 뷰어에 맞춰 아무도 안 잘림.
+          largest        = max(모든 클라).
+          latest         = 마지막으로 조작된(last_active 최대) 클라 크기. 아직 아무
+                           조작도 없으면(모두 0) smallest 로 폴백.
+        latest/largest 에선 작은 코-뷰어가 공유 격자를 다 못 담아 우/하단이 잘린다
+        (클라측 _composite 은 vw<W 라 레터박스 없이 crop). MIN 클램프는 공통."""
         cs = [c for c in self.clients if c.session is sess]
         if not cs:
             return 80, 24
-        return (max(MIN_W, min(c.cols for c in cs)),
-                max(MIN_H, min(c.rows for c in cs)))
+        mode = getattr(self, "window_size", "smallest")
+        if mode == "largest":
+            cols = max(c.cols for c in cs)
+            rows = max(c.rows for c in cs)
+        elif mode == "latest":
+            act = max(cs, key=lambda c: c.last_active)
+            if act.last_active <= 0:              # 아무도 조작 전 → smallest 폴백
+                cols = min(c.cols for c in cs)
+                rows = min(c.rows for c in cs)
+            else:
+                cols, rows = act.cols, act.rows
+        else:                                     # smallest(기본)
+            cols = min(c.cols for c in cs)
+            rows = min(c.rows for c in cs)
+        return (max(MIN_W, cols), max(MIN_H, rows))
 
 def run_server(sock_path: str, resume_path: str | None = None):
     srv = Server(sock_path, resume_path)

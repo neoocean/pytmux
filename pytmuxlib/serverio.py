@@ -84,6 +84,9 @@ class ServerIOMixin:
             return None
         if cols is None or rows is None:
             cols, rows = self._session_size(sess)
+            # window_size=latest 재-미러 판정용: 지금 세션에 실제로 적용한 공유 크기를
+            # 기록한다(_remirror_if_size_changed 가 이 값과 비교해 불필요한 방송을 건너뜀).
+            sess._applied_size = (cols, rows)
         # 모든 패널 PTY 크기를 레이아웃에 맞춰 갱신
         panes, divs = win.compute_layout(0, 0, cols, rows)
         if win.zoomed and isinstance(win.active_pane, Pane):
@@ -199,6 +202,7 @@ class ServerIOMixin:
             "coalesce_repaints": self.coalesce_repaints,
             "nest_auto_attach": self.nest_auto_attach,
             "vt_parser": self.vt_parser,
+            "window_size": self.window_size,
             "auto_rename": bool(win.auto_rename) if win else True,
             "border_status": bool(win.border_status) if win else False,
             "monitor_activity": bool(atab.monitor_activity) if atab else False,
@@ -267,6 +271,24 @@ class ServerIOMixin:
                                                 "wrap": pp._last_wrap})
             await write_msg(client.writer,
                             self._status_msg(sess, client=client))
+
+    async def _remirror_if_size_changed(self, sess):
+        """window_size=latest 전용 재-미러링: 사용자 조작(입력·스크롤)으로 '마지막
+        조작 클라'가 바뀌면 세션 공유 크기가 달라질 수 있다. 새 _session_size 가 직전
+        적용값(_applied_size)과 다를 때만 같은 세션 전 클라에 _send_full 을 다시 보내
+        새 크기로 레이아웃한다(같으면 no-op — 매 키 입력마다 방송하지 않음). smallest/
+        largest 는 입력으로 크기가 안 변하므로 사실상 항상 no-op(안전)."""
+        if not sess:
+            return
+        new = self._session_size(sess)
+        if getattr(sess, "_applied_size", None) == new:
+            return
+        sess._applied_size = new
+        for c in [x for x in self.clients if x.session is sess]:
+            try:
+                await self._send_full(c)
+            except Exception:
+                self._log_error("send_full(remirror)")
 
     async def _send_to(self, c: ClientConn, obj) -> bool:
         """단일 클라에 메시지 1건을 c.write_lock 하에 송신한다(H-1 확장). flush 루프의
@@ -891,6 +913,16 @@ class ServerIOMixin:
             self.set_monitor(sess, msg.get("which", "activity"), msg.get("value"))
         elif action == "set_single_border":
             self.set_single_border(msg.get("value"))
+        elif action == "set_window_size":
+            # 세션 공유 격자 크기 규칙(smallest|latest|largest, tmux window-size 동형).
+            # value=None 이면 순환 토글. 공유 크기가 바뀌므로 같은 세션 전 클라를 새
+            # 규칙으로 다시 미러링해 즉시 발효(작은 코-뷰어는 latest/largest 에서 crop).
+            self.set_window_size(msg.get("value"))
+            for c in [x for x in self.clients if x.session is sess]:
+                try:
+                    await self._send_full(c)
+                except Exception:
+                    self._log_error("send_full(set_window_size)")
         elif action == "set_win_mouse_motion":
             # Windows any-motion 패스스루 토글(HANDOFF §10-H). 광고 mouse 레벨이
             # 바뀌므로 레이아웃을 다시 방송해 즉시 발효시킨다.
@@ -1154,7 +1186,12 @@ class ServerIOMixin:
                         # 직후 레이스 → 보기 해제돼 로컬 처리로 폴백).
                         if client.remote_view and self.remote_relay(client, msg):
                             continue
+                        # window_size=latest: 키·붙여넣기·마우스(모두 input 프레임)는
+                        # '마지막 조작'이므로 이 클라를 최신으로 표시하고, 그 결과 세션
+                        # 공유 크기가 바뀌면 재-미러링한다(smallest/largest 는 no-op).
+                        client.last_active = time.monotonic()
                         self._handle_input(client, msg)
+                        await self._remirror_if_size_changed(client.session)
                     elif mt == "resize":
                         # §1.7: 보는 중이면 업스트림에도 리사이즈를 알려 원격이 이
                         # 크기로 다시 렌더하게 한다(로컬 갱신도 그대로 — 돌아올 때
@@ -1162,6 +1199,7 @@ class ServerIOMixin:
                         # 클라에겐 status 만 보낸다).
                         if client.remote_view:
                             self.remote_relay(client, msg)
+                        client.last_active = time.monotonic()  # 리사이즈=조작(latest)
                         client.cols = clamp_dim(msg.get("cols", 80),
                                                 MIN_W, MAX_W, 80)
                         client.rows = clamp_dim(msg.get("rows", 24),
@@ -1173,7 +1211,9 @@ class ServerIOMixin:
                     elif mt == "scroll":
                         if client.remote_view and self.remote_relay(client, msg):
                             continue
+                        client.last_active = time.monotonic()  # 스크롤=조작(latest)
                         self._handle_scroll(client, msg)
+                        await self._remirror_if_size_changed(client.session)
                     elif mt == "set_ambig":
                         # 클라가 런타임 모호폭 모드를 바꿨다(:set ambiguous-width).
                         # 서버 pyte 격자 폭도 맞추고(hello 의 ambig 와 동형) 앱들을

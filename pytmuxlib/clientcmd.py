@@ -786,6 +786,19 @@ class _CommandMixin:
             arg = args[0].lower() if args else "toggle"
             val = (arg == "on") if arg in ("on", "off") else None
             self.send_cmd("set_nest_auto_attach", value=val)
+        elif c in ("window-size", "winsize"):
+            # window-size [smallest|latest|largest] — 다중 클라 미러링 시 세션 공유
+            # 격자 크기 규칙(tmux window-size 동형). 인자 없으면 순환 토글(서버가 반전).
+            #   smallest(기본)=가장 작은 뷰어에 맞춤(아무도 안 잘림).
+            #   latest=마지막 조작 클라 크기. largest=가장 큰 클라.
+            # latest/largest 는 작은 코-뷰어가 crop 됨. 서버가 opts.json 영속·재미러링.
+            val = (args[0].lower() if args else "")
+            if val and val not in ("smallest", "latest", "largest"):
+                self.display_message(i18n.t(
+                    "msg.window_size_usage",
+                    default="사용법: window-size [smallest|latest|largest]"))
+            else:
+                self.send_cmd("set_window_size", value=(val or None))
         elif c == "vt-parser":
             # vt-parser [pyte|native] — VT 파서 백엔드 선택(docs/VT_PARSER_TRADEOFF §8).
             # **재시작 시 발효**: 기존 패널은 즉시 안 바뀌고, 다음 작업 보존 재시작

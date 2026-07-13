@@ -1085,7 +1085,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.single_border_on = bool(msg["single_border"])
                 # 나머지 서버 옵션 현재값(:settings 표시용)도 권위값으로 갱신.
                 for _k in ("coalesce_repaints", "nest_auto_attach", "vt_parser",
-                           "auto_rename", "border_status",
+                           "window_size", "auto_rename", "border_status",
                            "monitor_activity", "monitor_bell"):
                     if _k in msg:
                         self.server_opts[_k] = msg[_k]
@@ -1672,6 +1672,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     "win-mouse-motion": "win_mouse_motion",
                     "nest-auto-attach": "nest_auto_attach",
                     "vt-parser": "vt_parser",
+                    "window-size": "window_size",
                     "automatic-rename": "auto_rename",
                     "pane-border-status": "border_status",
                     "monitor-activity": "monitor_activity",
@@ -1680,7 +1681,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 v = self.server_opts.get(_srv[key])
                 if v is None:
                     return None
-                if key == "vt-parser":
+                if key in ("vt-parser", "window-size"):  # enum: 값 그대로
                     return v
                 return "on" if v else "off"
             return None   # 링크 등
