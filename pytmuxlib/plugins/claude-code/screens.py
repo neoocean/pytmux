@@ -1871,8 +1871,12 @@ class TokenLogScreen(ModalScreen):
         show5h = bool(self._hourly_pct)
         show1w = show5h and bool(self._hourly_week_pct)
         lim_cells = min(bar_cells, 8)
+        # 월·연 합계는 막대를 그리지 않는다 — 그 값은 하위(주·일·시각)의 총합이라
+        # 항상 최장이 되어 vmax 를 지배하면 주·일·시각 막대가 무의미하게 짧아진다.
+        NO_BAR_KINDS = ("month", "year")
         toks = [n["tokens"] for n in data]
-        vmax = max(toks, default=0)            # 입도 혼재 단일 vmax(§7.2 — 절대 비교)
+        bar_toks = [n["tokens"] for n in data if n["kind"] not in NO_BAR_KINDS]
+        vmax = max(bar_toks, default=0)        # 막대 기준 최대(월·연 제외 → 주·일·시각 스케일)
         maxdig = max((len(str(int(t))) for t in toks if t), default=1)
         tok_w = min(11, max(6, max((len(self._tok_aligned(t, maxdig))
                                     for t in toks), default=6)))
@@ -1951,7 +1955,11 @@ class TokenLogScreen(ModalScreen):
                               justify="left")]
                 if show_bar:
                     # 단색 막대(모델 색 구분 제거, 요청 2026-06-22 — Period 탭).
-                    cells.append(self._tok_bar(n["tokens"], vmax, bar_w, None))
+                    # 월·연 합계 행은 막대 생략(빈 칸) — 스케일 지배 방지.
+                    if n["kind"] in NO_BAR_KINDS:
+                        cells.append(Text(""))
+                    else:
+                        cells.append(self._tok_bar(n["tokens"], vmax, bar_w, None))
                 if show5h:
                     cells.append(self._lim5h_cell(n["bk"], lim_cells)
                                  if is_hour else Text(""))

@@ -320,6 +320,54 @@ async def test_tree_hour_rows_have_5h_1w_columns_with_reset_left():
         await teardown(srv, task, sock)
 
 
+async def test_tree_month_row_has_no_bar_and_weeks_scale_without_it():
+    """월·연 합계 행은 막대를 그리지 않는다(요청 2026-07-13) — 그 값은 하위 총합이라
+    항상 최장이 되어 스케일을 지배하면 주·일·시각 막대가 무의미하게 짧아진다. 이전 달
+    합계가 커도 월 행 막대 칸은 비어 있고, 오늘(일) 행은 채워진 막대를 갖는다."""
+    import datetime as _dt
+    from textual.widgets import DataTable
+    from textual.coordinate import Coordinate
+    from rich.text import Text
+    from harness import make_app, server_only, teardown
+
+    noon = _dt.datetime.now().replace(hour=12, minute=0, second=0,
+                                      microsecond=0)
+    today_ts = noon.timestamp()
+    recs = [{"ts": today_ts - h * 3600, "account": "me@x.org",
+             "tokens": 1000} for h in range(5)]        # 오늘 = 일 합 5000
+    # 이전 달 대형 합계(50000) — 월 행이 스케일을 지배하면 안 됨.
+    recs.append({"ts": today_ts - 40 * 86400, "account": "me@x.org",
+                 "tokens": 50000})
+
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 36)) as pilot:
+            await pilot.pause(0.3)
+            app.push_screen(screens.TokenLogScreen(recs))
+            await pilot.pause(0.3)
+            scr = app.screen_stack[-1]
+            table = scr.query_one(DataTable)
+            cols = list(table.columns.values())
+            bar_col = next(i for i, c in enumerate(cols)
+                           if getattr(c.key, "value", None) == "bar")
+            nodes = scr._tree_nodes
+            month_rows = [i for i, n in enumerate(nodes)
+                          if n["kind"] == "month"]
+            day_rows = [i for i, n in enumerate(nodes) if n["kind"] == "day"]
+            assert month_rows and day_rows, \
+                f"월·일 행이 모두 있어야: {[n['kind'] for n in nodes]}"
+            mbar = table.get_cell_at(Coordinate(month_rows[0], bar_col))
+            dbar = table.get_cell_at(Coordinate(day_rows[0], bar_col))
+            mplain = mbar.plain if isinstance(mbar, Text) else str(mbar)
+            dplain = dbar.plain if isinstance(dbar, Text) else str(dbar)
+            assert mplain.strip() == "", f"월 행 막대는 비어야: {mbar!r}"
+            assert any(b in dplain for b in "▁▂▃▄▅▆▇█"), \
+                f"일 행 막대는 채워져야(월 제외 스케일): {dbar!r}"
+    finally:
+        await teardown(srv, task, sock)
+
+
 def _session_records():
     """세션 3개(27·6·99)의 토큰 레코드 — [세션] 뷰가 세션별 합 행을 만든다."""
     base = 1_700_000_000.0
