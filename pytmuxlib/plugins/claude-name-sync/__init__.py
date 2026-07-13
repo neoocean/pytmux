@@ -48,11 +48,11 @@ _i18n.register({
 # opts.json plugin_opts 네임스페이스에 규칙 목록을 저장하는 키.
 _OPT_KEY = "namesync_rules"
 
-# 코어 `_claude` 는 busy 출력 중 한두 프레임 None 으로 깜빡이므로(claude-code 의
-# _hdr_claude 디바운스 유래), Claude 부재를 이만큼 **연속** 관측해야 세션 종료로 보고
-# per-appearance 가드(_ns_synced)를 푼다. 즉발 재무장은 같은 세션에 cwd 재조회(lsof)·
-# `/rename` 재시도를 유발한다(claude-code _HDR_CLAUDE_MISS 와 동일 임계, 30Hz ~1초).
-_NS_ABSENT_FRAMES = 30
+# 재시작(세션유지 re-exec) 보존 필드 — 이미 동기화한 패널의 가드/리네임 이력을 넘긴다.
+# 이게 없으면 재시작마다 _ns_synced 가 기본 False 로 되살아나 이미 이름 맞춘 패널을 다시
+# 동기화해 사용자의 수동 이름을 되돌리고 `/rename` 을 재주입한다(사용자 보고 2026-07-13).
+# JSON 스칼라(bool/str/None)만.
+_SER_FIELDS = ("_ns_synced", "_ns_last_kw")
 
 
 # ---- 머신/OS 신원 + 규칙 매칭(서버 측, textual 무관) ----
@@ -183,9 +183,17 @@ class _NameSyncPlugin:
 
     # ---- 서버 런타임 훅 ----
     def server_scan(self, server, sess, win) -> bool:
-        """30Hz flush 스캔(활성 윈도우). 규칙에 걸린 디렉토리에서 Claude 가 새로
-        떠오르면(패널 `_claude` None→비None 전이) 이름 동기화를 1회 발동한다. 변화가
-        즉시 반영됐으면 True(코어가 status 재전송).
+        """30Hz flush 스캔(활성 윈도우). 규칙에 걸린 디렉토리에서 Claude 가 처음
+        떠오르면(패널 `_claude` None→비None) 이름 동기화를 **패널 수명당 딱 1회**
+        발동한다. 변화가 즉시 반영됐으면 True(코어가 status 재전송).
+
+        한 번 동기화한 패널(`_ns_synced`)은 이후 Claude 가 사라졌다 다시 떠도, 또
+        사용자가 탭/패널·Claude 세션 이름을 수동으로 바꿔도 **다시 건드리지 않는다**
+        (사용자 요청 2026-07-13: 한 번 일치시킨 뒤엔 수동 이름을 영구 존중). 예전엔
+        `_claude` 가 연속 None 으로 관측되면 세션 종료로 보고 가드를 재무장했으나, 그게
+        busy 출력 중 깜빡임·세션유지 재시작과 겹쳐 수동 이름을 되돌리는 원인이었다.
+        가드는 이제 **새 셸(respawn=pane_reset)에서만** 풀리고, 재시작 경계는
+        pane_serialize/pane_restore 로 넘겨 보존한다.
 
         cwd 조회(_pane_cwd)는 macOS 에서 lsof 서브프로세스라 느리므로, 전이 감지 시엔
         executor 로 오프로드하는 지연 태스크(_schedule_sync)에 넘겨 flush 루프를 막지
@@ -198,36 +206,43 @@ class _NameSyncPlugin:
             return False
         tab = sess.active_tab if sess else None
         for pane in win.panes():
-            cl = getattr(pane, "_claude", None)
-            if cl is None:
-                # Claude 부재(또는 비-Claude 패널). raw `_claude` 는 busy 출력 중 한두
-                # 프레임 None 으로 깜빡이므로, 즉발 재무장하면 같은 세션에 cwd 재조회·
-                # `/rename` 이 반복된다 — _NS_ABSENT_FRAMES 연속 부재일 때만 세션 종료로
-                # 보고 per-appearance 가드를 푼다(다음 실행에 다시 동기화). 세션 리네임
-                # 이력(_ns_last_kw)은 여기서 지우지 않는다 — 거짓 종료 후 재등장에
-                # `/rename` 을 재주입하지 않기 위해. 진짜 새 셸(respawn)에서만 pane_reset
-                # 이 지워, 그때 새 세션이 다시 리네임된다.
-                miss = getattr(pane, "_ns_absent", 0) + 1
-                pane._ns_absent = miss
-                if miss >= _NS_ABSENT_FRAMES and getattr(pane, "_ns_synced", False):
-                    pane._ns_synced = False
-                continue
-            pane._ns_absent = 0
             if getattr(pane, "_ns_synced", False):
-                continue
-            # Claude 가 이 패널에 (재)등장 — 1회만 처리(매칭 실패해도 재-probe 방지).
+                continue                       # 이미 이 패널을 1회 동기화 — 영구 존중
+            if getattr(pane, "_claude", None) is None:
+                continue                       # Claude 부재(또는 비-Claude) — 등장 대기
+            # Claude 가 이 패널에 등장 — 1회만 처리(매칭 실패해도 재-probe 방지).
             pane._ns_synced = True
             self._schedule_sync(server, sess, win, tab, pane)
         return False
 
     def pane_reset(self, pane):
         """respawn(새 셸) 시 이 플러그인의 per-pane 상태를 리셋한다 — 새 셸에서 Claude
-        가 다시 뜨면 처음부터 탭/패널 이름 동기화·세션 리네임을 하도록. (claude-code 의
-        panestate.reset_pane 과 독립 — Registry.pane_reset 이 두 훅을 모두 부른다.
-        훅 부재 시 no-op, delete-to-disable.)"""
+        가 다시 뜨면 처음부터 탭/패널 이름 동기화·세션 리네임을 하도록. 이게 가드를
+        푸는 **유일한** 경로다(같은 셸에서 Claude 종료→재등장은 재동기화하지 않는다).
+        (claude-code 의 panestate.reset_pane 과 독립 — Registry.pane_reset 이 두 훅을
+        모두 부른다. 훅 부재 시 no-op, delete-to-disable.)"""
         pane._ns_synced = False
         pane._ns_last_kw = None
-        pane._ns_absent = 0
+
+    def pane_serialize(self, pane) -> dict:
+        """재시작(세션유지 re-exec) 직렬화 — 동기화 가드/리네임 이력을 보존한다(코어
+        export_state 가 plugin_state 로 불투명 저장). 이게 없으면 재시작마다 _ns_synced
+        가 기본 False 로 되살아나 이미 이름 맞춘 패널을 다시 동기화해 사용자의 수동
+        이름을 되돌리고 `/rename` 을 재주입한다(2026-07-13 보고 근본 원인)."""
+        out = {}
+        for f in _SER_FIELDS:
+            if hasattr(pane, f):
+                out[f] = getattr(pane, f)
+        return out
+
+    def pane_restore(self, pane, data):
+        """재시작 복원 — 직렬화된 동기화 가드/리네임 이력을 흡수한다(코어 import_state
+        가 위임). 빈 데이터는 no-op(방어)."""
+        if not data:
+            return
+        for f in _SER_FIELDS:
+            if f in data:
+                setattr(pane, f, data[f])
 
     def _schedule_sync(self, server, sess, win, tab, pane):
         """전이 감지 패널의 cwd 를 executor 로 조회해(블로킹 없이) 규칙에 걸리면 탭/패널
@@ -273,8 +288,10 @@ class _NameSyncPlugin:
             # (_ns_last_kw == kw) 재주입하지 않는다 — 탭·패널·세션 이름이 모두 kw 로
             # 일치한 상태다(사용자 요청: 이미 일치하면 더는 /rename 시도 안 함). 세션
             # 이름은 화면에서 관측 불가하므로, 우리가 마지막으로 건 리네임 키워드를
-            # 기록(_ns_last_kw)해 판단한다. 이 기록은 새 셸(respawn=pane_reset)에서만
-            # 지워져, 그때 새 세션이 다시 리네임된다.
+            # 기록(_ns_last_kw)해 판단한다. server_scan 의 _ns_synced 가 이미 패널당 1회를
+            # 보장하므로 평시엔 이 가드가 항상 통과하지만, 재시작 복원(pane_restore)으로
+            # 가드가 넘어온 경우의 심층방어로 남긴다. 기록은 새 셸(respawn=pane_reset)
+            # 에서만 지워져, 그때 새 세션이 다시 리네임된다.
             if getattr(pane, "_ns_last_kw", None) != kw:
                 pane._pending_rename = kw
                 pane._ns_last_kw = kw

@@ -60,6 +60,11 @@
     <section class="cl-day" id="d-2026-07-13">
       <h2>2026-07-13 <span class="pill">월요일</span></h2>
       <ul>
+        <li><span class="pill stable">이름동기화</span> <strong>이름 동기화가 탭·패널·Claude 세션 이름을 한 번 맞춘 뒤에는, 그 뒤에 손수 바꾼 이름을 더 이상 되돌리지 않습니다.</strong>
+          <span class="inline-code">:namesync</span> 규칙에 걸린 폴더에서 Claude 를 켜면 그 탭·패널·Claude 세션 이름이 지정 키워드로 <strong>한 번 통일</strong>됩니다.
+          그런데 그 뒤 <strong>Claude 세션 이름을 수동으로 바꿔도</strong>(<span class="inline-code">/rename</span>), 시간이 지나면 <strong>다시 원래 키워드로 되돌아가는</strong> 문제가 있었습니다
+          — Claude 가 잠깐 사라졌다 뜨거나 서버가 세션을 유지한 채 재시작될 때마다 동기화가 다시 발동했기 때문입니다. 이제 <strong>한 번 맞춘 패널은
+          같은 탭·같은 패널·같은 Claude 세션인 한 다시 건드리지 않아</strong>, 손수 지은 이름이 그대로 유지됩니다(새 셸을 띄우면 그때 다시 한 번 동기화).</li>
         <li><span class="pill stable">원격</span> <strong>여러 기기가 한 화면을 함께 볼 때, 화면 크기를 "지금 쓰는 창"에 맞추도록 고를 수 있습니다.</strong>
           한 세션을 <strong>여러 접속이 함께</strong> 보면, 화면 크기는 tmux 처럼 <strong>가장 작은 접속에 맞춰집니다</strong>(<span class="inline-code">smallest</span>, 기본).
           그래서 <strong>다른 기기에 작은 창</strong>이 하나라도 붙어 있으면, 지금 크게 보고 있는 창의 아래·오른쪽에 <strong>빈 띠</strong>가 남았습니다

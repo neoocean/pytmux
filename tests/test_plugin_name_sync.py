@@ -194,55 +194,95 @@ async def test_scan_fires_on_claude_appear_and_syncs_names():
     assert srv.bcast == 1
 
 
-async def test_scan_no_refire_while_running_then_rearm_on_exit():
+async def test_scan_syncs_once_no_rearm_on_claude_exit():
+    """패널당 딱 1회 동기화 — Claude 가 사라졌다 다시 떠도(같은 셸) 재동기화하지
+    않는다(사용자 요청 2026-07-13: 한 번 맞춘 뒤엔 수동 이름 영구 존중). 예전엔
+    _NS_ABSENT_FRAMES 연속 부재에 가드를 재무장했으나 그게 수동 이름 되돌림의 원인."""
     import asyncio
     srv, sess, win, tab, pane = _fixture()
     pane._claude = "idle"
     P.server_scan(srv, sess, win)
     await asyncio.sleep(0.1)
+    assert pane._ns_synced is True
     assert pane._ns_last_kw == "projX"       # 리네임 이력 기록
     # 이미 동기화됨 — 재스캔은 재발동 안 함.
     pane._pending_rename = None
     P.server_scan(srv, sess, win)
     await asyncio.sleep(0.05)
     assert pane._pending_rename is None
-    # raw `_claude` 한 프레임 깜빡임(None)은 재무장하지 않는다(디바운스).
+    # Claude 가 오래 사라져도(세션 종료) 가드를 풀지 않는다 — 부재 재무장 폐지.
     pane._claude = None
-    assert P.server_scan(srv, sess, win) is False
-    assert pane._ns_synced is True
+    for _ in range(50):
+        assert P.server_scan(srv, sess, win) is False
+    assert pane._ns_synced is True           # 영구 유지(수동 이름 존중)
+    # 같은 셸에서 Claude 재등장 → 이름 변경/`/rename` 재주입/방송 전혀 없음.
+    srv.bcast = 0
     pane._claude = "idle"
     P.server_scan(srv, sess, win)
-    assert pane._ns_absent == 0              # 재등장에 부재 카운터 리셋
-    # 세션 종료 확정 = _NS_ABSENT_FRAMES 연속 부재 → per-appearance 가드 해제.
-    pane._claude = None
-    for _ in range(ns._NS_ABSENT_FRAMES):
-        assert P.server_scan(srv, sess, win) is False
-    assert pane._ns_synced is False
-    # 단, 세션 리네임 이력(_ns_last_kw)은 유지 — 거짓 종료 후 재등장에 /rename 재주입 방지.
+    await asyncio.sleep(0.1)
+    assert pane._pending_rename is None
+    assert srv.bcast == 0
     assert pane._ns_last_kw == "projX"
 
 
-async def test_reappear_without_respawn_does_not_reinject_rename():
+async def test_reappear_without_respawn_respects_manual_rename():
+    """한 번 동기화한 뒤 사용자가 탭/패널 이름을 수동 변경하면, Claude 가 사라졌다
+    같은 셸에서 다시 떠도 그 수동 이름을 되돌리지 않는다."""
     import asyncio
     srv, sess, win, tab, pane = _fixture()
-    # 첫 등장 → 탭/패널·세션 리네임.
     pane._claude = "idle"
     P.server_scan(srv, sess, win)
     await asyncio.sleep(0.1)
     assert pane._pending_rename == "projX"
-    # 세션 종료 확정(디바운스 소진) 후 같은 셸에서 Claude 재등장(respawn 아님).
+    # 사용자가 수동으로 탭/패널 이름 변경.
+    tab.name = "custom"
+    pane.title = "custom"
+    # 같은 셸에서 Claude 종료→재등장(respawn 아님).
     pane._claude = None
-    for _ in range(ns._NS_ABSENT_FRAMES):
+    for _ in range(50):
         P.server_scan(srv, sess, win)
-    assert pane._ns_synced is False
     pane._pending_rename = None
     srv.bcast = 0
     pane._claude = "idle"
     P.server_scan(srv, sess, win)
     await asyncio.sleep(0.1)
-    # 탭·패널·세션 이름이 모두 이미 kw 라 /rename 재주입도 방송도 없다.
+    # 수동 이름 불변 — /rename 재주입도 방송도 없다.
+    assert tab.name == "custom"
+    assert pane.title == "custom"
     assert pane._pending_rename is None
     assert srv.bcast == 0
+
+
+async def test_serialize_restore_preserves_guard_across_restart():
+    """세션유지 재시작(re-exec) 후에도 이미 동기화한 패널을 다시 동기화하지 않는다 —
+    _ns_synced/_ns_last_kw 를 plugin_state 로 보존해 수동 이름 되돌림·/rename 재주입을
+    막는다(2026-07-13 보고 근본 원인: 직렬화 부재 → 재시작마다 재동기화)."""
+    import asyncio
+    srv, sess, win, tab, pane = _fixture()
+    pane._claude = "idle"
+    P.server_scan(srv, sess, win)
+    await asyncio.sleep(0.1)
+    assert pane._ns_synced is True and pane._ns_last_kw == "projX"
+    # 직렬화 → 재시작 후 새 패널에 복원.
+    data = P.pane_serialize(pane)
+    assert data == {"_ns_synced": True, "_ns_last_kw": "projX"}
+    pane2 = _Pane()
+    pane2._claude = "idle"                    # 재시작 후에도 Claude 는 여전히 떠 있음
+    P.pane_restore(pane2, data)
+    assert pane2._ns_synced is True and pane2._ns_last_kw == "projX"
+    win2 = _Win(pane2)
+    tab2 = _Tab(win2)
+    sess2 = _Sess(tab2, win2)
+    srv.bcast = 0
+    P.server_scan(srv, sess2, win2)
+    await asyncio.sleep(0.1)
+    # 복원된 가드 덕에 재동기화 안 함 — 리네임/방송 없음.
+    assert pane2._pending_rename is None
+    assert srv.bcast == 0
+    # 빈 데이터 복원은 no-op(방어).
+    pane3 = _Pane()
+    P.pane_restore(pane3, {})
+    assert getattr(pane3, "_ns_synced", "unset") == "unset"
 
 
 async def test_pane_reset_rearms_full_sync():
