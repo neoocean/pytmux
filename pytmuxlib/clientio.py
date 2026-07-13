@@ -536,11 +536,14 @@ class _InputMixin:
             self.send_input(b"\x1b")
             self._exit_esc()
             return
-        if k == "insert":
+        if k in ("insert", "shift+delete"):
             # esc Insert: 블록 선택(Shift+방향키/Home/End)이 되는 멀티라인 작성창을
             # 연다(옵트인, 필요할 때 매번). 자식 프롬프트 입력기가 범위 선택 편집을
             # 지원하지 않을 때, pytmux 자체 편집기에서 작성→완료 시 활성 패널에
             # bracketed paste 로 투입(권고안 B). 모드는 빠지고 모달이 포커스를 잡는다.
+            # Shift+Delete: Insert 키가 없는 맥 키보드용 동형 별칭(요청 2026-07-13) —
+            # 윈도우의 esc→Insert 를 맥에선 esc→Shift+Delete 로 같게. (모든 플랫폼에서
+            # 별칭으로 받되 esc 모드 shift+delete 는 달리 쓰이지 않아 무해하다.)
             self._exit_esc()
             self.open_compose()
             return

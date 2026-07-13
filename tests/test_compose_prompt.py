@@ -37,6 +37,22 @@ async def test_esc_insert_opens_compose():
     await _with_app(body)
 
 
+async def test_esc_shift_delete_opens_compose():
+    """ESC → Shift+Delete → ComposePromptScreen (맥 키보드엔 Insert 키가 없어
+    esc→Insert 의 동형 별칭; 요청 2026-07-13)."""
+    async def body(app, pilot, srv):
+        await pilot.press("escape")
+        assert app.mode == "esc"
+        await pilot.press("shift+delete")
+        await pilot.pause(0.2)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "ComposePromptScreen"
+        assert app.mode == "normal"
+        ta = scr.query_one(TextArea)
+        assert ta.has_focus
+    await _with_app(body)
+
+
 async def test_ctrl_s_injects_text_without_trailing_newline():
     """작성 후 Ctrl+S → 입력 텍스트 그대로 paste 로 투입(끝에 자동 개행 없음 →
     자식이 자동 제출하지 않음)."""
