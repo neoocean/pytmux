@@ -777,8 +777,10 @@ class _ClaudeCodePlugin:
         return server._pending_action(pane)
 
     async def server_usage_refresh(self, server):
-        """그림자 /usage 자동 갱신 1회 — Claude 패널이 있고 질의 중이 아닐 때만."""
-        if not server._usage_busy and server._any_claude_pane():
+        """그림자 /usage 자동 갱신 1회 — 질의 중이 아니고, 살아 있는 Claude 패널이 있거나
+        최근 트랜스크립트 활동(패널 밖 별도 터미널 사용)이 있을 때만(_usage_probe_allowed).
+        후자 덕분에 패널 밖에서 Claude 를 써도 시각별 한도%(5h/주간)가 계속 기록된다."""
+        if not server._usage_busy and server._usage_probe_allowed():
             try:
                 await server.refresh_usage()
             except Exception:

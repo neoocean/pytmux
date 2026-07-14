@@ -122,3 +122,58 @@ async def test_find_transcript_pid_path_then_cwd_fallback():
         open_jsonl=lambda pid: [],
         list_dir=lambda d: ["/proj/a.jsonl", "/proj/b.jsonl"])
     assert got2 in ("/proj/a.jsonl", "/proj/b.jsonl")
+
+
+# --------------------------------------------------------------------------- #
+# 활동 기반 /usage 프로브 지원(패널 밖 Claude): newest_transcript·read_cwd·
+# recent_activity_cwd — 살아있는 패널 없이도 '최근 활동 + 신뢰 cwd' 를 트랜스크립트로.
+import io  # noqa: E402
+
+
+async def test_newest_transcript_picks_latest_across_projects():
+    paths = ["/r/pa/x.jsonl", "/r/pb/y.jsonl", "/r/pb/z.jsonl"]
+    mt = {"/r/pa/x.jsonl": 100.0, "/r/pb/y.jsonl": 300.0, "/r/pb/z.jsonl": 200.0}
+    got = transcript.newest_transcript(
+        root="/r", list_dir=lambda d: paths, stat_fn=lambda p: mt[p])
+    assert got == "/r/pb/y.jsonl"
+    # 없으면 None.
+    assert transcript.newest_transcript(root="/r", list_dir=lambda d: []) is None
+
+
+async def test_read_cwd_returns_first_value_and_none_paths():
+    body = "\n".join([
+        '{"type":"user","uuid":"u0"}',                        # cwd 없음(건너뜀)
+        '{"type":"assistant","cwd":"/home/me/proj","uuid":"u1"}',
+        '{"type":"assistant","cwd":"/other","uuid":"u2"}',    # 첫값 우선 → 무시
+    ]) + "\n"
+    assert transcript.read_cwd(
+        "p", open_fn=lambda p: io.StringIO(body)) == "/home/me/proj"
+    # cwd 전무 → None.
+    assert transcript.read_cwd(
+        "p", open_fn=lambda p: io.StringIO('{"type":"user"}\n')) is None
+
+    # 열기 실패(OSError) → 무예외 None.
+    def _boom(p):
+        raise OSError("nope")
+    assert transcript.read_cwd("p", open_fn=_boom) is None
+
+
+async def test_recent_activity_cwd_window_gate():
+    body = '{"cwd":"/trusted/dir","type":"assistant"}\n'
+    ld = lambda d: ["/r/p/a.jsonl"]                            # noqa: E731
+    of = lambda p: io.StringIO(body)                          # noqa: E731
+    # 창 안(최근) → cwd 반환.
+    assert transcript.recent_activity_cwd(
+        600, now=1000.0, root="/r", list_dir=ld,
+        stat_fn=lambda p: 900.0, open_fn=of) == "/trusted/dir"
+    # 창 밖(오래됨) → None.
+    assert transcript.recent_activity_cwd(
+        600, now=2000.0, root="/r", list_dir=ld,
+        stat_fn=lambda p: 900.0, open_fn=of) is None
+    # 트랜스크립트 없음 → None.
+    assert transcript.recent_activity_cwd(
+        600, now=1000.0, root="/r", list_dir=lambda d: [], open_fn=of) is None
+    # 활동은 최근이나 cwd 미기록 → None(무의미한 숨은세션 spawn 방지).
+    assert transcript.recent_activity_cwd(
+        600, now=1000.0, root="/r", list_dir=ld, stat_fn=lambda p: 900.0,
+        open_fn=lambda p: io.StringIO('{"type":"user"}\n')) is None

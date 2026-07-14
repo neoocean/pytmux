@@ -270,3 +270,61 @@ def newest_in_dir(d: str, list_dir=None, stat_fn=None):
         except OSError:
             return None
     return _newest(paths, stat_fn)
+
+
+# ---- 활동 기반 /usage 프로브 지원(패널 밖 Claude) ----
+# 살아있는 pytmux Claude 패널이 없어도 '방금 Claude 를 썼나'(활동)와 '어느 신뢰된
+# 폴더에서'(cwd)를 트랜스크립트만으로 알아내, 별도 터미널에서 Claude 를 쓸 때도 그림자
+# /usage 프로브가 시각별 한도%(5h/주간)를 기록하게 한다(패널 구동 프로브의 폴백).
+
+def newest_transcript(root=None, list_dir=None, stat_fn=None):
+    """projects 루트 전체(`*/*.jsonl`)에서 최신 mtime 트랜스크립트 경로(없으면 None).
+    newest_in_dir 의 전-프로젝트판. list_dir(root→[paths])·stat_fn 주입 가능(테스트)."""
+    root = root or projects_dir()
+    if list_dir is not None:
+        paths = list_dir(root)
+    else:
+        try:
+            paths = glob.glob(os.path.join(root, "*", "*.jsonl"))
+        except OSError:
+            return None
+    return _newest(paths, stat_fn)
+
+
+def read_cwd(path, open_fn=None):
+    """트랜스크립트 파일에 기록된 작업 디렉터리(top-level `cwd`)를 읽는다(없으면 None).
+    Claude Code 는 각 이벤트에 `cwd` 를 실으므로, 살아있는 패널 없이도 **Claude 가 실제로
+    돈 신뢰 폴더**(트러스트 대화상자 없음)를 얻어 그림자 /usage 프로브의 cwd 로 쓸 수
+    있다. 첫 발견값(=런치 디렉터리=트러스트 폴더)만 읽고 즉시 반환해 큰 파일도 저렴하다.
+    open_fn(path→파일객체) 주입 가능(테스트)."""
+    opener = open_fn or (lambda p: open(p, "r", encoding="utf-8", errors="replace"))
+    try:
+        with opener(path) as fh:
+            for line in fh:
+                if '"cwd"' not in line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                c = obj.get("cwd") if isinstance(obj, dict) else None
+                if isinstance(c, str) and c:
+                    return c
+    except OSError:
+        return None
+    return None
+
+
+def recent_activity_cwd(window_sec, now, root=None, list_dir=None,
+                        stat_fn=None, open_fn=None):
+    """최근 window_sec 초 안에 갱신된 트랜스크립트가 있으면 그 cwd 를 반환(없으면 None).
+    '패널 밖 Claude 활동 + 신뢰 cwd' 를 한 번에 주는 프로브 게이트. cwd 를 못 읽으면
+    프로브해도 트러스트 화면에 막히므로 None(무의미한 숨은세션 spawn 방지). now 는
+    호출부가 주입(테스트 결정성)."""
+    path = newest_transcript(root, list_dir, stat_fn)
+    if not path:
+        return None
+    mt = _mtime(path, stat_fn)
+    if mt < 0 or (now - mt) > window_sec:
+        return None
+    return read_cwd(path, open_fn)

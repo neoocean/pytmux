@@ -224,10 +224,14 @@ async def test_commit_schedules_debounced_usage_refresh():
 
 
 async def test_fire_usage_refresh_gates_and_calls_probe():
-    """발화 시 Claude 패널이 없으면 프로브 생략, 있으면 refresh_usage 호출.
-    (실 프로브는 숨은 claude spawn — 스텁으로 배선만 검증.)"""
+    """발화 시 살아 있는 Claude 패널이 없고 최근 트랜스크립트 활동도 없으면 프로브 생략,
+    둘 중 하나라도 있으면 refresh_usage 호출(_usage_probe_allowed). (실 프로브는 숨은
+    claude spawn — 스텁으로 배선만 검증. recent_activity_cwd 는 실 ~/.claude 격리 위해 스텁.)"""
     import asyncio
+    from pytmuxlib import transcript
     srv, task, sock = await server_only()
+    _rac = transcript.recent_activity_cwd
+    transcript.recent_activity_cwd = lambda *a, **k: None   # 기본: 패널밖 활동 없음
     try:
         sess, win, p = await _claude_pane(srv)
         calls = []
@@ -235,16 +239,23 @@ async def test_fire_usage_refresh_gates_and_calls_probe():
         async def fake_refresh():
             calls.append(1)
         srv.refresh_usage = fake_refresh
-        # Claude 패널 없음 → 생략
+        # Claude 패널 없음 + 최근 활동 없음 → 생략
         srv._fire_usage_refresh()
         await asyncio.sleep(0)
-        assert calls == [], "Claude 패널 없으면 spawn 낭비 안 함"
-        # Claude 패널 있음 → refresh_usage 1회
+        assert calls == [], "패널·최근활동 모두 없으면 spawn 낭비 안 함"
+        # 패널 밖 사용: 패널 없어도 최근 트랜스크립트 활동 있으면 발화
+        transcript.recent_activity_cwd = lambda *a, **k: "/outside/proj"
+        srv._fire_usage_refresh()
+        await asyncio.sleep(0)
+        assert calls == [1], ("패널밖 활동 → 프로브", calls)
+        transcript.recent_activity_cwd = lambda *a, **k: None
+        # Claude 패널 있음 → refresh_usage 1회(활동 없어도)
         p._claude = "idle"
         srv._fire_usage_refresh()
         await asyncio.sleep(0)
-        assert calls == [1], calls
+        assert calls == [1, 1], calls
     finally:
+        transcript.recent_activity_cwd = _rac
         await teardown(srv, task, sock)
 
 
@@ -287,12 +298,16 @@ async def test_near_limit_shortens_refresh_interval():
 async def test_usage_probe_uses_claude_pane_cwd():
     """그림자 /usage 프로브 cwd = 실행 중인 Claude 패널의 셸 cwd(신뢰된 폴더).
     데몬 cwd(홈)로 띄우면 신뢰 대화상자에 막혀 프로브가 조용히 None 이 되는 라이브
-    버그의 회귀 가드(2026-06-11). Claude 패널 없으면 데몬 cwd 폴백."""
+    버그의 회귀 가드(2026-06-11). Claude 패널 없으면 (최근 트랜스크립트 cwd →) 데몬
+    cwd 폴백. (여기선 실 파일시스템 격리 위해 newest_transcript 를 None 으로 스텁.)"""
     import importlib
+    from pytmuxlib import transcript
     srv, task, sock = await server_only()
+    _nt = transcript.newest_transcript
+    transcript.newest_transcript = lambda *a, **k: None   # 실 ~/.claude 격리
     try:
         sess, win, p = await _claude_pane(srv)
-        # Claude 패널 없음 → 데몬 cwd 폴백
+        # Claude 패널·최근 트랜스크립트 모두 없음 → 데몬 cwd 폴백
         srv.cwd = "/daemon/cwd"
         assert srv._probe_cwd() == "/daemon/cwd"
         # Claude 패널 있음 → 그 패널 셸 cwd
@@ -313,10 +328,21 @@ async def test_usage_probe_uses_claude_pane_cwd():
         finally:
             up.query_usage = orig
         assert u and seen["cwd"] == "/trusted/proj", seen
-        # 패널 cwd 미상이면 폴백 체인 유지
+        # 패널 cwd 미상 → (트랜스크립트 없음이므로) 데몬 cwd 폴백
         srv._pane_cwd = lambda pane: None
         assert srv._probe_cwd() == "/daemon/cwd"
+        # 패널 밖 사용: 살아 있는 Claude 패널 없이도 최근 트랜스크립트 cwd 로 폴백
+        # (데몬 cwd 로 새지 않아 트러스트 화면에 안 막힘).
+        p._claude = None
+        transcript.newest_transcript = lambda *a, **k: "/x/sess.jsonl"
+        _rc = transcript.read_cwd
+        transcript.read_cwd = lambda path, **k: "/outside/proj"
+        try:
+            assert srv._probe_cwd() == "/outside/proj"
+        finally:
+            transcript.read_cwd = _rc
     finally:
+        transcript.newest_transcript = _nt
         await teardown(srv, task, sock)
 
 

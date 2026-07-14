@@ -60,6 +60,41 @@ async def test_zoom_resizes_hidden_panes():
         await teardown(srv, task, sock)
 
 
+async def test_usage_probe_gate_and_cwd_fallback_for_out_of_pane_claude():
+    # 패널 밖(별도 터미널)에서 Claude 를 쓸 때도 시각별 한도%(5h/주간)가 기록되게:
+    # 살아 있는 Claude 패널이 없어도 '최근 트랜스크립트 활동'이 있으면 그림자 /usage
+    # 프로브를 허용하고(_usage_probe_allowed), cwd 는 트랜스크립트가 기록한 신뢰 폴더로
+    # 폴백한다(_probe_cwd → 데몬 cwd 로 안 새 트러스트 화면에 안 막힘).
+    from pytmuxlib import transcript
+    srv, task, sock = await server_only()
+    orig = (transcript.recent_activity_cwd, transcript.newest_transcript,
+            transcript.read_cwd)                 # 다른 테스트 오염 방지(복원)
+    try:
+        srv.ensure_default_session(80, 24)
+        assert not srv._any_claude_pane(), "기본 세션엔 Claude 패널 없음"
+
+        # 최근 활동 없음 → 프로브 불허(유휴 시 숨은세션 spawn 낭비 방지).
+        transcript.recent_activity_cwd = lambda *a, **k: None
+        assert srv._usage_probe_allowed() is False
+
+        # 최근 활동 + 신뢰 cwd → 프로브 허용.
+        transcript.recent_activity_cwd = lambda *a, **k: "/trusted/proj"
+        assert srv._usage_probe_allowed() is True
+
+        # _probe_cwd: 살아 있는 패널 없음 → 최근 트랜스크립트 cwd 폴백(데몬 cwd 아님).
+        transcript.newest_transcript = lambda *a, **k: "/x/sess.jsonl"
+        transcript.read_cwd = lambda p, **k: "/trusted/proj"
+        assert srv._probe_cwd() == "/trusted/proj"
+
+        # 트랜스크립트도 없으면 데몬 cwd 폴백(무크래시).
+        transcript.newest_transcript = lambda *a, **k: None
+        assert srv._probe_cwd() == (getattr(srv, "cwd", None) or None)
+    finally:
+        (transcript.recent_activity_cwd, transcript.newest_transcript,
+         transcript.read_cwd) = orig
+        await teardown(srv, task, sock)
+
+
 async def test_panes_cache_invalidates_on_tree_change():
     # §4.6: Window.panes() 는 결과를 캐시하되 트리 수술 때마다 무효화해야 한다.
     # 캐시가 stale 이면 split 후 새 패널 누락, swap/rotate 후 순서 오류(이웃 계산

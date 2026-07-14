@@ -1792,18 +1792,40 @@ class ServerClaudeMixin:
         Claude 를 안 쓰는데 숨은 세션을 띄워 스크랩하는 낭비를 막는다."""
         return any(getattr(p, "_claude", None) for p in self._all_panes())
 
+    def _usage_probe_allowed(self) -> bool:
+        """그림자 /usage 프로브를 띄워도 되는가. 살아 있는 로컬 Claude 패널이 있거나,
+        최근(usage_refresh_sec 창) 트랜스크립트 활동이 있으면 True. 후자는 **패널 밖
+        (별도 터미널)에서 Claude 를 쓰는 경우**를 커버해 그때도 시각별 한도%(5h/주간)가
+        기록되게 한다 — 패널이 없어도 _probe_cwd 가 트랜스크립트 cwd(신뢰 폴더)로
+        폴백하므로 트러스트 화면에 안 막힌다. cwd 를 못 읽으면 recent_activity_cwd 가
+        None → 무의미한 숨은세션 spawn 을 막는다(계정은 머신-로그인 하나라 섞이지 않음)."""
+        if self._any_claude_pane():
+            return True
+        window = max(60.0, float(getattr(self, "usage_refresh_sec", 600) or 600))
+        try:
+            return transcript.recent_activity_cwd(window, time.time()) is not None
+        except Exception:
+            return False
+
     def _probe_cwd(self):
         """그림자 /usage 프로브의 cwd — **실행 중인 Claude 패널의 셸 cwd**(사용자가
         이미 신뢰한 폴더). 데몬 cwd(보통 홈 ~)로 띄우면 숨은 claude 가 Claude Code
         신뢰 대화상자("Is this a project you trust?")에 막혀 /usage 패널이 영영 안
         뜨고 프로브가 조용히 None 이었다(2026-06-11 라이브 진단 — 재시작 후 limits
         0건·실측 미표시의 원인. 직접 같은 조건으로 재현해 트러스트 화면 확인).
-        Claude 패널이 없으면(프로브 게이트상 드묾) 기존 데몬 cwd 폴백."""
+        살아 있는 Claude 패널이 없으면(패널 밖 별도 터미널 사용) **최근 활동한
+        트랜스크립트가 기록한 cwd**(Claude 가 실제로 돈 신뢰 폴더)로 폴백 — 이것도
+        없을 때만 마지막으로 데몬 cwd."""
         for p in self._all_panes():
             if getattr(p, "_claude", None):
                 d = self._pane_cwd(p)
                 if d:
                     return d
+        np = transcript.newest_transcript()
+        if np:
+            d = transcript.read_cwd(np)
+            if d:
+                return d
         return getattr(self, "cwd", None) or None
 
     async def refresh_usage(self):
@@ -1863,10 +1885,11 @@ class ServerClaudeMixin:
         return True
 
     def _fire_usage_refresh(self):
-        """예약된 이벤트 트리거 갱신 발화 — Claude 패널이 남아 있을 때만(게이트는
-        refresh_usage 의 _usage_busy 중복 방지에 더해 빈 서버 spawn 낭비 방지)."""
+        """예약된 이벤트 트리거 갱신 발화 — Claude 패널이 남아 있거나 최근 트랜스크립트
+        활동(패널 밖 사용)이 있을 때만(_usage_probe_allowed). 게이트는 refresh_usage 의
+        _usage_busy 중복 방지에 더해 빈 서버 spawn 낭비 방지."""
         self._usage_probe_handle = None
-        if not self._any_claude_pane() or not self.running:
+        if not self._usage_probe_allowed() or not self.running:
             return
         asyncio.create_task(self.refresh_usage())
 
