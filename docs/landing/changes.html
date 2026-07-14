@@ -71,6 +71,13 @@
           그래서 <strong>Windows 에서 macOS·Linux 패널</strong>을 원격으로 조종하면 윈도우 전용 형식(<span class="inline-code">cd /d "…"</span>)이 그대로 나가
           <span class="inline-code">cd: string not in pwd: /d</span> 로 실패했습니다. 이제 <strong>명령을 실행할 셸의 OS</strong>에 맞춰 형식을 정해,
           어느 기기에서 조종하든 올바르게 이동합니다.</li>
+        <li><span class="pill stable">토큰</span> <strong>pytmux 패널이 아닌 별도 터미널에서 Claude 를 써도, 그 시간대의 사용 한도(5시간·주간 %)가 이제 기록됩니다.</strong>
+          토큰 사용량 <strong>[기간]</strong> 화면의 <strong>5h%·1w% 칸</strong>은 pytmux 가 숨은 <span class="inline-code">/usage</span> 조회로 채웁니다.
+          그런데 이 조회는 지금까지 <strong>pytmux 패널 안에서 Claude 가 돌고 있을 때만</strong> 떠서, Claude 를 <strong>별도 터미널</strong>에서 쓰면
+          토큰 양(왼쪽 숫자)은 잡혀도 <strong>그 시간대의 한도 %가 빈칸(<span class="inline-code">·</span>)</strong>으로 남았습니다
+          — 수동으로 <span class="inline-code">/usage</span> 를 친 순간만 채워졌습니다. 이제 pytmux 가 <strong>최근 Claude 사용 기록</strong>을
+          신호로 삼아, 패널이 없어도 한도 조회를 주기적으로 띄웁니다 — 별도 터미널로 써도 시간대별 한도 %가 이어집니다.
+          (Claude 를 아예 안 쓰는 동안에는 조회하지 않으며, 이미 지나간 빈 시간대는 소급해 채울 수 없습니다.)</li>
       </ul>
     </section>
 

@@ -82,6 +82,11 @@
           갱신되고, 막대만 따로 보려면 <code>usage-panel</code>(별칭 <code>limits</code>)을 씁니다. 다음 리셋까지의
           카운트다운만 크게 보려면 <code>usage-view</code>(<code>[popup|tab|pane]</code>)를 씁니다.
         </p>
+        <p>
+          이 자동 조회는 <strong>살아 있는 Claude 패널</strong>이 있을 때뿐 아니라, Claude 를 <strong>pytmux 패널 밖(별도 터미널)</strong>에서
+          쓸 때도 <strong>최근 사용 기록을 신호</strong>로 주기적으로 떠, 그 시간대의 한도 %가 <strong>[기간] 뷰의 5h%·1w% 칸</strong>에
+          이어 기록됩니다(Claude 를 안 쓰는 동안엔 조회하지 않고, 이미 지나간 빈 시간대는 소급 기록되지 않습니다).
+        </p>
         <figure>
           <img src="../image/38-token-log-limit.svg" alt="토큰 사용량 — 한도 뷰">
           <figcaption>한도 뷰 — /usage 실측 막대 · 리셋 카운트다운 시계 · 모델/컨텍스트 변경.</figcaption>
