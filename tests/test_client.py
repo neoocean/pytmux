@@ -4112,6 +4112,34 @@ async def test_alt_digit_switches_tab_in_normal_mode():
     await _with_app(body)
 
 
+async def test_tab_number_follows_visual_order_when_pinned_reordered():
+    # 07-14: 고정/원격 탭이 오른쪽 구역으로 밀려 그려지면 표시 번호와 esc+숫자 이동이
+    # **시각 순서**(비고정→고정)를 따라야 "보이는 순서 = 번호" 가 맞는다. 원격
+    # (federation) 탭이 고정 탭보다 뒤 index 로 와도(비고정인데 index 큼) 클라가
+    # 시각 순서로 재번호를 매긴다. 로컬 정규화 상태(비고정이 앞)면 index+1 과 동일.
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda a, **k: sent.append((a, k))
+        # A(0,비고정) B(1,고정) R(2,비고정). 시각순 = A,R,B → 표시번호 A=1,R=2,B=3.
+        app.tabbar.set_tabs([
+            {"index": 0, "name": "A", "pinned": False},
+            {"index": 1, "name": "B", "pinned": True},
+            {"index": 2, "name": "R", "pinned": False},
+        ], 0)
+        labels = app.tabbar._labels()
+        assert "1:A" in labels[0], labels
+        assert "3:B" in labels[1], labels      # 고정 B 는 시각상 맨 오른쪽 → 3
+        assert "2:R" in labels[2], labels       # 비고정 R 은 A 다음 → 2
+        # esc(alt)+2 → 시각 2번 = R(index 2)
+        app.on_key(Key(key="alt+2", character=None))
+        assert ("select_window", {"index": 2}) in sent, sent
+        sent.clear()
+        # esc(alt)+3 → 시각 3번 = 고정 B(index 1)
+        app.on_key(Key(key="alt+3", character=None))
+        assert ("select_window", {"index": 1}) in sent, sent
+    await _with_app(body)
+
+
 async def test_model_config_popup_command_and_inject():
     # `model` 명령(별칭 model-config/claude-model)이 **토큰 사용량 팝업의 [한도] 탭**
     # (모델/컨텍스트 섹션)을 연다(2026-06-22 — 독립 모달 ModelCtxScreen 대신 통합).

@@ -173,8 +173,10 @@ class _InputMixin:
         # 그 번호(1-based) 탭으로 전환해 'esc 다음 숫자' 가 빠르게도 동작하게 한다.
         if (len(event.key) == 5 and event.key.startswith("alt+")
                 and event.key[4].isdigit()):
-            idx = int(event.key[4]) - 1
-            if any(t["index"] == idx for t in self.tabbar.tabs):
+            # 표시 번호(시각 순서) → 탭 index 역매핑 — 고정/원격 탭이 재배치돼도
+            # 사용자가 보는 번호로 정확히 이동한다(07-14).
+            idx = self.tabbar.index_for_number(int(event.key[4]))
+            if idx is not None:
                 self.send_cmd("select_window", index=idx)
             else:
                 self.tabbar.blink_active()   # 없는 번호 → 활성 탭 깜빡임 안내
@@ -498,11 +500,12 @@ class _InputMixin:
                 self.send_input(b"\x1b")
             self._exit_esc()
             return
-        # 숫자키: 그 번호의 탭으로 즉시 전환(ESC 모드 어디서든). 표시는 1-based 라
-        # 입력 숫자도 1-based → 내부 0-based 로 -1(#21). 해당 탭이 없으면 모드만 빠짐.
+        # 숫자키: 그 번호의 탭으로 즉시 전환(ESC 모드 어디서든). 표시 번호(시각
+        # 순서)를 탭 index 로 역매핑해, 고정/원격 탭이 오른쪽으로 재배치돼도 사용자가
+        # 보는 번호와 정확히 일치시킨다(07-14). 해당 번호 없으면 모드만 빠짐.
         if ch and ch.isdigit():
-            idx = int(ch) - 1
-            if any(t["index"] == idx for t in tb.tabs):
+            idx = tb.index_for_number(int(ch))
+            if idx is not None:
                 self.send_cmd("select_window", index=idx)
                 self._exit_esc()
             else:

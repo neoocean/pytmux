@@ -658,6 +658,23 @@ class MultiplexerView(Widget):
                 return p
         return None
 
+def _visual_tab_order(tabs):
+    """탭 리스트를 **화면 표시 순서**(비고정 먼저, 고정 나중 — 탭바 _entries 및
+    상태줄이 그리는 순서)로 본 탭 index 목록. 고정 탭은 오른쪽 구역으로 밀려 그려지므로
+    표시 번호도 그 순서를 따라야 "보이는 순서 = 번호" 가 맞는다. 서버가 로컬 탭을
+    [비고정][고정]으로 정규화하면 이미 index 순=표시 순이지만, 원격(federation) 탭이
+    고정 뒤에 덧붙거나(비고정인데 index 가 큼) 정규화 안 된 상태에선 어긋난다 — 그럴 때
+    클라가 시각 순서로 재번호를 매겨 사용자가 보는 위치와 esc+숫자 이동을 일치시킨다."""
+    return ([t["index"] for t in tabs if not t.get("pinned")]
+            + [t["index"] for t in tabs if t.get("pinned")])
+
+
+def _visual_tab_numbers(tabs):
+    """탭 index → 1-based 표시 번호(시각 순서) dict. 로컬 정규화 상태에선 index+1 과
+    동일하다(픽셀 불변). [[_visual_tab_order]] 참고."""
+    return {idx: i + 1 for i, idx in enumerate(_visual_tab_order(tabs))}
+
+
 class TabBar(Widget):
     """상단 탭 인터페이스. 각 탭과, 마지막 탭 바로 오른쪽의 [+] 새 탭 버튼을
     표시한다. (탭 닫기 [x] 는 콘텐츠 영역 오른쪽 위 모서리로 이동했다.)
@@ -738,15 +755,26 @@ class TabBar(Widget):
 
     def _labels(self):
         out = []
+        # 표시 번호는 **시각 순서**(비고정→고정)로 매긴다 — 고정 탭이 오른쪽으로 밀려도
+        # "보이는 순서 = 번호" 가 맞게(사용자 요청 07-14). 로컬 정규화 상태에선 index+1
+        # 과 같다. 이동(esc+숫자)은 index_for_number 가 같은 순서로 역매핑한다.
+        vis = _visual_tab_numbers(self.tabs)
         for t in self.tabs:
             flag = "!" if t.get("bell") else ("#" if t.get("activity") else "")
             ic = self.app.plugins.client_tab_glyph(self.app, t)
             ic = (ic + " ") if ic else ""
             pin = (self.PIN_GLYPH + " ") if t.get("pinned") else ""  # 항목7 핀 글리프
             # 표시는 1부터(사용자 요청 #21). 내부 index 는 0-based 리스트 위치 그대로
-            # 두고(select_window 등 좌표 계산 호환), **보여줄 때만** +1 한다.
-            out.append(f" {pin}{ic}{t['index'] + 1}:{t['name']}{flag} ")
+            # 두고(select_window 등 좌표 계산 호환), **보여줄 때만** 시각 번호로 바꾼다.
+            num = vis.get(t["index"], t["index"] + 1)
+            out.append(f" {pin}{ic}{num}:{t['name']}{flag} ")
         return out
+
+    def index_for_number(self, n):
+        """표시 번호(1-based, 시각 순서) → 탭 index. 없으면 None. esc+숫자·alt+숫자
+        이동이 _labels 의 표시 번호와 같은 순서를 따르게 한다(고정/원격 탭 재배치 대응)."""
+        order = _visual_tab_order(self.tabs)
+        return order[n - 1] if 1 <= n <= len(order) else None
 
     def _entries(self):
         """현재 상태(탭·스크롤·폭)에서 탭바에 그릴 항목을 (kind, payload, text)
@@ -1295,9 +1323,11 @@ class StatusBar(Widget):
             segs.append(Segment("NEST ", Style(color="white",
                                                bgcolor=tc("secondary"), bold=True)))
             acc += 5
+        win_vis = _visual_tab_numbers(self.windows)   # 탭바와 동일 시각 번호(07-14)
         for win in ([] if self.hide_tabs else self.windows):
             flag = "!" if win.get("bell") else ("#" if win.get("activity") else "")
-            label = f"{win['index'] + 1}:{win['name']}{flag} "   # 표시 1-based(#21)
+            num = win_vis.get(win["index"], win["index"] + 1)
+            label = f"{num}:{win['name']}{flag} "   # 표시 1-based(#21), 시각 순서
             acc += _cw(label)
             if win["active"]:
                 # §1.7-a: 원격 탭은 활성도 분홍 배경(탭바와 동일 구분).

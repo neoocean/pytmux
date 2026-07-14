@@ -486,6 +486,44 @@ async def test_ncd_cd_command_windows_uses_slash_d():
     assert _ncd_cd_command("/r/a b", nt=False) == "cd '/r/a b'\n"
 
 
+async def test_nc_list_msg_carries_shell_nt():
+    # cd 방언은 **명령을 실행할 셸**(서버)의 OS 로 정해야 하므로 nc_list 가 nt 를 실어야
+    # 한다. 없으면 클라 os.name 로 폴백 → 페더레이션에서 오방언(예: zsh 에 `cd /d`).
+    srv, task, sock = await server_only()
+    try:
+        with tempfile.TemporaryDirectory() as root:
+            _make_tree(root)
+            sess = srv.ensure_default_session(80, 24)
+            srv._pane_cwd = lambda pane, _c=os.path.join(root, "alpha"): _c
+            msg = ncds.nc_list_msg(srv, sess, None)
+            assert msg["nt"] == (os.name == "nt"), msg
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_ncd_enter_uses_server_shell_dialect_not_client():
+    # 회귀(사용자 07-14): Windows 클라가 macOS 패널을 조종하면 클라 os.name(nt)로
+    # `cd /d` 를 만들어 zsh 에 새어 `cd: string not in pwd: /d` 실패. 서버가 nc_list 로
+    # 알려준 nt 를 써야 셸 방언이 맞는다. posix 러너에서 서버발 nt 를 주입해 방언이
+    # 클라 os.name 이 아니라 서버발 nt 를 따르는지 확인.
+    async def body(app, pilot, srv):
+        from pytmuxlib.plugins.ncd.screen import NcdScreen
+        app.send_cmd = lambda *a, **k: None
+        for nt_flag, want in ((True, b'cd /d "/r/sub"\n'), (False, b"cd /r/sub\n")):
+            inp = []
+            app.send_input = lambda data: inp.append(data)
+            app._run_command("ncd")
+            m = dict(_CHAIN_MSG)
+            m["nt"] = nt_flag
+            app._dispatch(m)
+            await pilot.pause(0.1)
+            assert isinstance(app.screen, NcdScreen)
+            await pilot.press("enter")
+            await pilot.pause(0.1)
+            assert inp == [want], (nt_flag, inp)
+    await _with_app(body)
+
+
 async def test_ncd_esc_closes():
     async def body(app, pilot, srv):
         from pytmuxlib.plugins.ncd.screen import NcdScreen

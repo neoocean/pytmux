@@ -178,5 +178,8 @@ def nc_list_msg(server, sess, path: str | None = None) -> dict:
     drives = _drive_roots()
     chain = _build_chain(chain_paths, drives)
     root = "" if drives else chain_paths[0]
+    # Enter=cd 명령의 셸 방언(cmd.exe `cd /d` vs POSIX `cd`)은 **명령을 실행할 셸**의
+    # OS 로 정해야 한다 — 그 셸을 소유한 건 이 서버다. 클라의 os.name 을 쓰면 Windows
+    # 클라가 macOS 패널을 조종할 때(페더레이션) zsh 에 `cd /d` 가 새어 실패한다.
     return {"t": "nc_list", "root": root, "path": None,
-            "cwd": cwd, "chain": chain}
+            "cwd": cwd, "nt": os.name == "nt", "chain": chain}

@@ -24,7 +24,9 @@ NOARG = {"ncd", "nc"}
 def _cd_command(path: str, nt: bool | None = None) -> str:
     r"""ncd 의 Enter(현재 패널 cd)로 보낼 명령 문자열. Windows(cmd.exe)에선
     `cd /d "<경로>"` 로 **드라이브까지 전환**하고, 그 외엔 `cd <shlex.quote(경로)>`.
-    nt 인자는 테스트용 오버라이드(기본=os.name)."""
+    nt 은 **명령을 실행할 셸의 OS**(서버가 nc_list 로 알려줌). None 이면 클라 os.name
+    으로 폴백(구버전 서버·테스트) — 단, 페더레이션에서 클라≠셸 OS 면 오방언이 될 수
+    있어 서버발 nt 를 우선한다."""
     import os
     import shlex
     if nt is None:
@@ -91,6 +93,9 @@ class _NcdPlugin:
             if not getattr(app, "_want_nc", False):
                 return            # 요청 안 했는데 온 응답은 무시(방어)
             app._want_nc = False
+            # 서버(패널 셸의 소유자)가 알려준 셸 방언. 부재(구버전 서버)면 None →
+            # _cd_command 가 클라 os.name 로 폴백(하위호환).
+            app._nc_nt = msg.get("nt")
             app.push_screen(
                 NcdScreen(msg.get("root"), chain=msg.get("chain"),
                           cwd=msg.get("cwd"), dirs=msg.get("dirs")),
@@ -106,7 +111,7 @@ class _NcdPlugin:
             return            # Esc/취소
         action, path = res
         if action == "cd":
-            app.send_input(_cd_command(path).encode())
+            app.send_input(_cd_command(path, nt=getattr(app, "_nc_nt", None)).encode())
         elif action == "newpane":
             app.send_cmd("split", orient="lr", path=path)
 
