@@ -260,6 +260,37 @@ class ServerRemoteMixin:
             d = self._remote_reconn = {}
         return d
 
+    # ---- 링크보다 오래 사는 sticky 상태(핀·단일-탭 분리) ----
+    def _remote_sticky_dict(self) -> dict:
+        """{호스트 이름: {"pinned": set, "detached": set}} — 그 호스트 원격 탭의
+        **다운스트림 로컬** sticky 상태. RemoteLink 보다 **오래 산다**: 같은 호스트에
+        다시 attach 하면(사용자 재-attach·백오프 자동 재연결) 링크 객체는 새로 만들어
+        지는데, 핀/분리는 링크가 아니라 **보는 쪽 탭바 취향**이라 링크 수명에 묶이면
+        안 된다(사용자 보고 2026-07-15: 원격 탭이 열린 채 같은 서버에 다시 remote-attach
+        하면 핀이 전부 풀림 — 새 RemoteLink 의 빈 집합이 옛 집합을 덮어썼다).
+        명시 detach(사용자 의사)는 _remote_sticky_forget 이 지운다."""
+        d = getattr(self, "_remote_sticky", None)
+        if d is None:
+            d = self._remote_sticky = {}
+        return d
+
+    def _remote_sticky_bind(self, link: RemoteLink):
+        """링크의 핀/분리 집합을 호스트별 sticky 저장소 set 에 **공유 참조**로 바인딩
+        (복사 아님 — link.pinned_windows.add() 가 저장소에 그대로 반영된다). 집합이
+        상류 안정 wid(_win_key)로 키잉돼 재-attach 사이 상류 탭이 바뀌어도 자동 정합
+        이다: 새로 생긴 탭은 키가 집합에 없어 비고정, 사라진 탭의 키는 어느 탭과도 안
+        맞아 조용히 무시된다(추가·삭제분만 갱신). 그래서 여기서 따로 가지치기하지
+        않는다 — 상류가 탭을 잠깐 닫았다 되살려도(같은 wid) 핀이 살아남는다."""
+        st = self._remote_sticky_dict().setdefault(
+            link.host, {"pinned": set(), "detached": set()})
+        link.pinned_windows = st["pinned"]
+        link.detached_windows = st["detached"]
+
+    def _remote_sticky_forget(self, name: str):
+        """명시 detach 로 이 호스트의 sticky 상태를 버린다 — 나중에 다시 attach 하면
+        (자동 재연결/재-attach 와 달리) 새 뷰라 전 탭이 비고정·전부 보이는 게 맞다."""
+        self._remote_sticky_dict().pop(name, None)
+
     # ---- 전송 열기 ----
     async def _remote_transport(self, host: str | None, endpoint: str | None):
         """(reader, writer, token, proc) 를 연다. endpoint=같은 머신 직결(테스트/로컬
@@ -388,6 +419,9 @@ class ServerRemoteMixin:
         link = RemoteLink(name, reader, writer, proc)
         link.spec = {"host": host, "endpoint": endpoint}
         link.sess = sess
+        # 같은 호스트의 옛 링크가 있었으면(바로 위 remote_drop 이 교체) 그 핀·단일-탭
+        # 분리를 새 링크가 이어받는다 — 링크 수명이 아니라 호스트 수명 상태다.
+        self._remote_sticky_bind(link)
         cols, rows = self._session_size(sess)
         hello = {"t": "hello", "proto": PROTO_VERSION,
                  "cols": cols, "rows": rows}
@@ -500,10 +534,14 @@ class ServerRemoteMixin:
             t = reconn.pop(n, None)
             if t is not None:
                 t.cancel()
+            # 재연결 대기 중(링크 객체 없음)이라 아래 targets 에 안 잡혀도 명시 detach
+            # 는 sticky(핀·분리)를 버린다 — 아래 루프는 살아 있는 링크만 훑는다.
+            self._remote_sticky_forget(n)
         remotes = self._remotes_dict()
         targets = ([remotes[name]] if name and name in remotes
                    else list(remotes.values()) if not name else [])
         for link in targets:
+            self._remote_sticky_forget(link.host)
             asyncio.create_task(self.remote_drop(link))
         return bool(targets)
 
@@ -677,12 +715,16 @@ class ServerRemoteMixin:
                         if pins or det:
                             link = self._remotes_dict().get(name)
                             if link is not None:
+                                # update(재대입 아님): 집합은 호스트별 sticky 저장소와
+                                # 공유하는 객체다(_remote_sticky_bind) — 갈아끼우면
+                                # 이후 재-attach 가 핀을 잃는다. 부팅 직후라 비어 있어
+                                # update==대입.
                                 if pins:
-                                    link.pinned_windows = set(pins)
+                                    link.pinned_windows.update(pins)
                                 # 단일-탭 분리 복원: 업스트림 window index 기준이라
                                 # 우리 서버 재시작(업스트림 불변)을 그대로 살아남는다.
                                 if det:
-                                    link.detached_windows = set(det)
+                                    link.detached_windows.update(det)
                         self._remote_status_broadcast()
                     else:
                         detail = self._err_detail("rerr.unknown", "원인 미상")

@@ -60,6 +60,15 @@
     <section class="cl-day" id="d-2026-07-15">
       <h2>2026-07-15 <span class="pill">수요일</span></h2>
       <ul>
+        <li><span class="pill stable">원격</span> <strong>같은 원격 서버에 다시 붙어도, 고정(핀)해 둔 원격 탭이 이제 풀리지 않습니다.</strong>
+          원격 탭이 열려 있는 상태에서 <strong>같은 서버에 다시</strong> <span class="inline-code">remote-attach</span> 하면
+          (예: 탭이 새로 늘어 목록을 갱신하려고) 걸어 두었던 <strong>핀이 전부 풀렸습니다</strong> — 다시 붙을 때 연결을 새로 여는데,
+          핀을 <strong>연결에 딸린 것</strong>으로 두어 옛 연결과 함께 사라졌기 때문입니다. 핀은 연결이 아니라
+          <strong>내 화면의 탭바 취향</strong>이라, 이제 <strong>호스트 기준</strong>으로 기억해 다시 붙어도 그대로 유지됩니다.
+          그 사이 원격에 <strong>새로 생긴 탭은 비고정으로</strong> 붙고, <strong>없어진 탭</strong>의 핀은 조용히 사라집니다 —
+          <strong>달라진 탭만</strong> 갱신됩니다. 끊겼다 <strong>자동 재연결</strong>될 때도 마찬가지로 유지됩니다.
+          다만 <span class="inline-code">remote-detach</span> 로 <strong>직접 떼어내면</strong> 그 호스트의 핀은 잊습니다 —
+          다시 붙이는 것은 <strong>새로 보는 것</strong>이므로 전부 비고정으로 시작합니다.</li>
         <li><span class="pill stable">작성창</span> <strong>여러 줄로 쓰던 프롬프트를 작성창으로 가져올 때, 이제 윗줄까지 <span class="inline-code">전부</span> 따라옵니다.</strong>
           Claude 프롬프트에 <strong>여러 줄</strong>을 입력한 상태에서 <span class="inline-code">Esc</span> → <span class="inline-code">Insert</span>(맥은 <span class="inline-code">Shift+Delete</span>)로 작성창을 열면,
           <strong>마지막 한 줄만</strong> 넘어오고 <strong>윗줄들이 사라졌습니다</strong>. pytmux 는 지금까지 사용자가 <strong>친 키를 세어</strong> 프롬프트 내용을 짐작했는데,

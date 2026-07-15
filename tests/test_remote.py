@@ -1084,6 +1084,58 @@ async def test_remote_pin_survives_upstream_tab_close_reindex():
         await teardown(srv, task, sock)
 
 
+async def test_remote_pin_survives_reattach_same_host():
+    """사용자 보고 2026-07-15: 원격 탭이 열린 채 **같은 서버에 다시 remote-attach**
+    하면 걸어 둔 핀이 전부 풀렸다 — 같은 이름 링크 교체가 새 RemoteLink 의 빈
+    pinned_windows 로 옛 집합을 덮어썼기 때문. 핀은 링크가 아니라 **호스트 수명**
+    상태(_remote_sticky)라 재-attach 를 살아남고, 그 사이 상류에 **추가된 탭만**
+    비고정으로 붙는다(핀은 안정 wid 키잉이라 위치와 무관)."""
+    if os.name == "nt":
+        return
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    try:
+        sessB = srvB.ensure_default_session(80, 24)
+        sessA = srvA.ensure_default_session(80, 24)
+        assert await srvA.remote_attach(sessA, endpoint=sockB)
+        link = srvA._remotes_dict()[sockB]
+        for _ in range(200):
+            if link.windows:
+                break
+            await asyncio.sleep(0.02)
+        assert link.windows, "업스트림 status 병합 대기 실패"
+        base = len(sessA.tabs)
+        srvA.set_remote_pinned(sessA, base, True)        # 첫 원격 탭 핀
+        key = srvA._win_key(link.windows[0])
+        assert link.pinned_windows == {key}
+
+        # 상류에 탭 하나 추가(재-attach 시 '추가분'이 될 탭).
+        srvB.new_window(sessB)
+        # ★ 같은 엔드포인트로 재-attach → 링크 교체.
+        assert await srvA.remote_attach(sessA, endpoint=sockB)
+        link2 = srvA._remotes_dict()[sockB]
+        assert link2 is not link, "재-attach 는 새 링크로 교체된다(전제)"
+        for _ in range(200):
+            if len(link2.windows) == 2:
+                break
+            await asyncio.sleep(0.02)
+        assert len(link2.windows) == 2, link2.windows
+        assert link2.pinned_windows == {key}, \
+            f"재-attach 로 핀 유실(사용자 보고 2026-07-15): {link2.pinned_windows}"
+        rt = srvA._remote_tabs(len(sessA.tabs))
+        assert [t["pinned"] for t in rt] == [True, False], rt  # 추가분만 비고정
+
+        # 명시 detach(사용자 의사)는 sticky 를 버린다 → 다시 붙으면 새 뷰(전부 비고정).
+        srvA.remote_detach(sockB)
+        await asyncio.sleep(0)
+        assert sockB not in srvA._remote_sticky_dict()
+        assert await srvA.remote_attach(sessA, endpoint=sockB)
+        assert srvA._remotes_dict()[sockB].pinned_windows == set()
+    finally:
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
 async def test_remote_same_host_tabs_drag_merge():
     """§1.7-c 예외: **같은 호스트의 두 원격 탭**은 드래그 머지(join_pane)된다 —
     거부 대신 remote_relay_join 이 전역 src index 를 원격 로컬 index 로 변환해
