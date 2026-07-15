@@ -100,6 +100,36 @@ async def test_query_usage_boot_sentinel_new_claude_footer():
     assert u["session"]["pct"] == 2, u
 
 
+async def test_query_usage_dismisses_managed_settings_screen():
+    """조직 관리 설정 승인 화면("Managed settings require approval")이 뜨면 기본
+    선택("1. Yes, I trust these settings")을 확정하는 Enter 를 1회 보내고 정상
+    부팅 신호 대기를 이어가야 한다(2026-07-15 요청) — 이전엔 boot_timeout 으로
+    조용히 실패(None)했다."""
+    managed = (b"\x1b[2J\x1b[H Managed settings require approval\r\n"
+               b" \xe2\x9d\xaf 1. Yes, I trust these settings\r\n"
+               b"   2. No, exit Claude Code\r\n"
+               b" Enter to confirm \xc2\xb7 Esc to exit\r\n")
+    ready = b"\x1b[2J\x1b[H Welcome to Claude\r\n ? for shortcuts\r\n"
+
+    class _ManagedSettingsSession(_FakeSession):
+        def write(self, data: bytes) -> None:
+            if data == b"\r" and not self.written:
+                self._queue.append(ready)   # 승인 후에야 정상 부팅 화면이 뜬다
+            super().write(data)
+
+    sess = _ManagedSettingsSession(managed, _panel_bytes())
+    undo = []
+    _patch(undo, sess)
+    try:
+        u = usageprobe.query_usage(boot_timeout=2.0, panel_timeout=2.0)
+    finally:
+        for f in undo:
+            f()
+    assert u is not None, "관리 설정 승인 화면을 자동 통과해 정상 스크랩해야 한다"
+    assert u["session"]["pct"] == 2, u
+    assert sess.written.startswith(b"\r"), "기본 선택 확정 Enter 를 먼저 보내야 한다"
+
+
 async def test_query_usage_captures_account_from_boot():
     # 부팅 화면에 계정·모델 신호가 모두 있으면 둘 다 부팅서 잡고 /status 폴백은 생략.
     boot = (b"\x1b[2J\x1b[H me@acme.com's Organization\r\n"

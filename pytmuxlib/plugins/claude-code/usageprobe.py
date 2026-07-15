@@ -31,6 +31,15 @@ IS_WINDOWS = os.name == "nt"
 
 _READ = 65536
 
+# 조직 관리 설정(managed settings) 최초 1회 승인 게이트(2026-07-15 요청): OTEL/텔레
+# 메트리 관련 관리 설정이 걸린 조직 계정은 claude 부팅 직후 이 화면으로 멈춰 서서,
+# 위 "shortcuts"/"shift+tab"/"for agents" 부팅 신호가 영영 안 뜨고 boot_timeout 으로
+# 조용히 실패한다(그림자 프로브는 무인 실행이라 사람이 답할 수 없음). 화면의 기본
+# 선택(❯ 1. Yes, I trust these settings)을 그대로 확정하는 Enter 1회만 주입해 통과
+# 시킨다 — 이후 실제 부팅 신호 대기로 이어간다.
+_MANAGED_SETTINGS_MARK = "Managed settings require approval"
+_MANAGED_SETTINGS_ACCEPT = b"\r"
+
 
 class _PosixSession:
     """POSIX: pty.openpty + subprocess, select 기반 타임아웃 read."""
@@ -218,8 +227,14 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
     def disp() -> str:
         return "\n".join(sc.display)
 
+    managed_settings_seen = False
+
     def wait_for(subs, maxs: float) -> bool:
-        """subs(문자열 또는 후보 튜플) 중 하나라도 화면에 뜰 때까지 대기."""
+        """subs(문자열 또는 후보 튜플) 중 하나라도 화면에 뜰 때까지 대기. 그 사이
+        조직 관리 설정 승인 화면(_MANAGED_SETTINGS_MARK)이 뜨면 기본 선택("1. Yes,
+        I trust these settings")을 1회 확정해 넘기고 대기를 이어간다 — 그림자
+        프로브는 무인 실행이라 사람이 답할 수 없다(2026-07-15 요청)."""
+        nonlocal managed_settings_seen
         cands = (subs,) if isinstance(subs, str) else tuple(subs)
         end = time.monotonic() + maxs
         while time.monotonic() < end:
@@ -227,6 +242,10 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
             scr = disp()
             if any(c in scr for c in cands):
                 return True
+            if not managed_settings_seen and _MANAGED_SETTINGS_MARK in scr:
+                managed_settings_seen = True
+                sess.write(_MANAGED_SETTINGS_ACCEPT)
+                end = time.monotonic() + maxs   # 승인 후 실제 부팅 대기시간 재확보
         return False
 
     try:

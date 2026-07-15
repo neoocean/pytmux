@@ -105,6 +105,12 @@
           프롬프트는 <strong>한 턴의 시작</strong>이라 화면 맨 위에 놓아, 거기서부터 <strong>주고받은 내용을 그대로 읽어 내려갈</strong> 수 있습니다.
           점프하면 <strong>스크롤 모드</strong>가 되어 <span class="inline-code">↑↓</span>·<span class="inline-code">PgUp</span> 으로 주변을 살펴보다가 <span class="inline-code">Esc</span> 나 <span class="inline-code">q</span> 로 <strong>원래 자리(맨 아래)</strong>로 돌아옵니다.
           (Claude 가 돌고 있는 패널에서만 동작합니다 — 일반 셸에서는 인용문·diff 의 <span class="inline-code">&gt;</span> 를 프롬프트로 잘못 짚지 않도록 켜지 않습니다.)</li>
+        <li><span class="pill stable">토큰</span> <strong>회사(조직) 관리 설정 승인 화면이 뜨는 계정은, 숨은 <span class="inline-code">/usage</span> 조회가 거기서 멈춰 사용 한도(5h·주간 %)가 통째로 안 잡히던 문제를 고쳤습니다.</strong>
+          텔레메트리 등 <strong>조직 차원의 관리 설정</strong>이 걸린 계정은 Claude Code 를 새로 띄울 때 "Managed settings require approval" 승인 화면이 한 번 뜹니다.
+          그런데 pytmux 가 시간대별 한도 %를 채우려고 <strong>사람 없이</strong> 띄우는 숨은 <span class="inline-code">/usage</span> 조회 세션도 이 화면을 그대로 만나는데,
+          누구도 답해 줄 수 없어 부팅 대기시간이 다 되도록 기다리다 <strong>조용히 포기</strong>했습니다 — 그래서 이 화면이 뜨는 조직 계정은 한도 %가
+          <a href="#d-2026-07-14">어제 고친 별도 터미널 기록</a>을 포함해 전혀 쌓이지 않았습니다. 이제 이 화면을 보면 기본 선택지
+          (<span class="inline-code">1. Yes, I trust these settings</span>)를 그대로 확정해 자동으로 통과시키고 원래 조회를 이어갑니다.</li>
         <li><span class="pill stable">Claude</span> <strong>권한 모드 팝업이 이제 하단의 모드 표시(<span class="inline-code">⏵⏵ auto mode on</span>)를 클릭할 때만 열립니다.</strong>
           지금까지는 그 <strong>줄 전체</strong>가 클릭 영역이라, 옆의 <span class="inline-code">(shift+tab to cycle)</span> 같은 <strong>힌트 문구</strong>를 누르거나
           그 줄의 빈 곳을 짚어도 모드 선택 팝업이 떠서 성가셨습니다. 이제 <strong>모드 이름이 적힌 부분만</strong> 반응하고,
