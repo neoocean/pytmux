@@ -12,6 +12,7 @@ from datetime import datetime
 
 from textual.screen import ModalScreen
 from textual import events
+from textual.binding import Binding
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
@@ -1160,6 +1161,77 @@ class ChooseTreeScreen(ModalScreen):
             if idx is not None and 0 <= idx < len(self.entries):
                 event.stop()
                 self.dismiss(("kill", self.entries[idx]))
+
+class TabSwitcherScreen(ModalScreen):
+    """탭 스위처(esc → Tab): 열려 있는 탭 목록을 띄우고 Tab 으로 다음, Shift+Tab 으로
+    이전 탭을 **선택만** 하다가 Enter 로 그 탭에 전환한다(Esc=취소, 원래 탭 유지).
+    Windows 의 Alt+Tab 동선을 터미널에서 가능한 만큼 옮긴 것 — **키 뗌(release)으로
+    확정하는 것은 불가능**하다: 터미널은 키 뗌을 보고하지 않고(Textual 드라이버는
+    kitty 프로토콜을 `>1u`=disambiguate 로만 협상, 키 뗌 보고는 flag 2), Textual 에는
+    KeyUp 이벤트 타입 자체가 없다. 그래서 'Shift 를 놓으면 전환' 대신 **Enter 확정**
+    이다(사용자 선택 2026-07-15).
+
+    entries = [{"index": 탭 index, "label": 표시 문자열}] — **시각 순서**(비고정→고정)로
+    호출부(client.open_tab_switcher)가 이미 정렬해 넘긴다. 이 화면은 표시/선택만 하고
+    탭 모델을 모른다. dismiss 값은 전환할 탭 index(취소면 None).
+
+    Tab/Shift+Tab 은 **BINDINGS 로** 잡는다 — Screen 기본 바인딩이 그 두 키를
+    focus_next/focus_previous 로 쓰고 있어(포커스가 ListView 를 벗어남) 서브클래스
+    바인딩으로 덮어써야 한다. ↑↓ 는 ListView 기본 이동이 그대로 산다.
+    """
+    BINDINGS = [
+        Binding("tab", "cycle(1)", "다음 탭", show=False),
+        Binding("shift+tab", "cycle(-1)", "이전 탭", show=False),
+    ]
+    CSS = """
+    TabSwitcherScreen { align: center middle; }
+    /* 60 칸: 부제(키 안내)가 한국어 2셀 글자로도 안 잘리는 최소 폭. */
+    #tabsw { width: 60; height: auto; max-height: 80%;
+             border: round $accent; background: $panel; }
+    """
+
+    def __init__(self, entries, initial=0, title=None):
+        super().__init__()
+        self._entries = entries
+        self._initial = initial
+        self._title = title if title is not None else i18n.t("screen.tab_switcher")
+
+    def compose(self) -> ComposeResult:
+        # markup=False — 탭 이름의 대괄호([ssh] 등)가 Textual 마크업으로 먹히지 않게.
+        rows = [ListItem(Label(e["label"], markup=False), id=f"T{i}")
+                for i, e in enumerate(self._entries)]
+        lv = ListView(*rows, id="tabsw")
+        lv.border_title = self._title
+        # 키 안내는 부제(테두리 아래)로 — 제목에 붙이면 56 칸 상자에서 잘린다
+        # (다른 팝업의 *_sub 관례와 동일: cmdlist_sub·confirm_sub·settings_sub).
+        lv.border_subtitle = i18n.t("screen.tab_switcher_sub")
+        yield lv
+
+    def on_mount(self):
+        lv = self.query_one(ListView)
+        lv.focus()
+        # 첫 Tab 이 이미 '다음 탭'을 가리키게 호출부가 initial 을 넘긴다(Alt+Tab 동형).
+        if self._entries:
+            lv.index = self._initial
+
+    def action_cycle(self, step: int):
+        """Tab/Shift+Tab: 선택을 다음/이전으로(끝에서 순환). 전환은 Enter 에서만 —
+        여기선 **선택만** 옮긴다."""
+        lv = self.query_one(ListView)
+        n = len(self._entries)
+        if not n:
+            return
+        cur = lv.index if lv.index is not None else 0
+        lv.index = (cur + step) % n
+
+    def on_list_view_selected(self, event):
+        self.dismiss(self._entries[int(event.item.id[1:])]["index"])
+
+    def on_key(self, event: events.Key):
+        if event.key == "escape":
+            event.stop()
+            self.dismiss(None)
+
 
 _DIVIDER_CHARS = {"─", "—", "-", "·", " "}
 

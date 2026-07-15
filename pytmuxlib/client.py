@@ -42,9 +42,10 @@ from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 
     ChooseBufferScreen, ChooseLayoutScreen, ChooseTreeScreen,
     CommandListScreen, CommandOptionsScreen, ComposePromptScreen, ConfirmScreen,
     InfoScreen, InfoTabsScreen, MenuScreen, MergeRemoteTabScreen,
-    PluginManagerScreen, PromptScreen, SettingsScreen)
+    PluginManagerScreen, PromptScreen, SettingsScreen, TabSwitcherScreen)
 from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose·ghost suggester)
-    MultiplexerView, SepInsensitiveSuggester, StatusBar, TabBar)
+    MultiplexerView, SepInsensitiveSuggester, StatusBar, TabBar,
+    _visual_tab_order)
 from .keymap import (_key_to_ctrl_bytes, _tmux_key_to_textual,
                      config_path_for_write, load_config, normalize_binding_key,
                      set_config_option, textual_key_to_tmux)
@@ -343,6 +344,37 @@ class _ChooseScreensMixin:
                     self.open_prompt("confirm", "kill-pane? (y/N)",
                                      action=lambda: self.send_cmd("kill_pane"))
         self.push_screen(ChooseTreeScreen(tree), handle)
+
+    # ---- 탭 스위처(esc → Tab) ----
+    def open_tab_switcher(self):
+        """열려 있는 탭 목록을 띄워 Tab/Shift+Tab 으로 고르고 Enter 로 전환한다
+        (사용자 요청 2026-07-15 — Alt+Tab 동선). 첫 화면부터 **다음 탭**이 선택돼
+        있어 'esc Tab Enter' 가 곧 '다음 탭으로 전환'이다.
+
+        표시 순서·번호는 탭바와 같은 **시각 순서**(비고정→고정, _visual_tab_order)를
+        쓴다 — 목록의 3번이 탭바의 3번, esc+3 과도 같은 탭이다(07-14 규약).
+        탭이 하나뿐이면 고를 게 없어 열지 않는다(활성 탭 깜빡임으로 안내).
+        """
+        tabs = list(self.tabbar.tabs)
+        if len(tabs) < 2:
+            self.tabbar.blink_active()
+            return
+        by_index = {t["index"]: t for t in tabs}
+        order = [i for i in _visual_tab_order(tabs) if i in by_index]
+        entries, initial = [], 0
+        for pos, idx in enumerate(order):
+            t = by_index[idx]
+            mark = "▸" if t.get("active") else " "
+            pin = "* " if t.get("pinned") else ""     # 탭바와 같은 핀 글리프
+            # 원격(⇄) 탭은 이름에 이미 ⇄host: 접두사가 있어 따로 표식하지 않는다.
+            entries.append({"index": idx,
+                            "label": f"{mark} {pin}{pos + 1}:{t.get('name', '')}"})
+            if t.get("active"):
+                initial = (pos + 1) % len(order)     # 시작 선택 = '다음 탭'
+        def handle(index):
+            if index is not None:
+                self.send_cmd("select_window", index=index)
+        self.push_screen(TabSwitcherScreen(entries, initial=initial), handle)
 
     # ---- 레이아웃 저장/불러오기 ----
     def save_layout_prompt(self):

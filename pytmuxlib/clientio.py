@@ -555,6 +555,17 @@ class _InputMixin:
             self.send_cmd("jump_prompt",
                           direction="up" if k == "ctrl+up" else "down")
             return
+        if k == "tab":
+            # esc Tab: 탭 스위처(Alt+Tab 동선 — 사용자 요청 2026-07-15). 목록에서
+            # Tab=다음·Shift+Tab=이전으로 **선택만** 하다 Enter 로 전환, Esc 로 취소.
+            # 왜 esc 모드 키인가: normal 모드의 shift+tab 은 패널로 \x1b[Z(backtab)를
+            # 보내야 한다 — Claude 권한 모드 순환(`shift+tab to cycle`)이 그 키를 쓰고
+            # 서버 자동재개도 같은 바이트를 주입한다. 전역으로 가로채면 그게 깨지므로
+            # 충돌 없는 esc 모드에 뒀다(사용자 선택 2026-07-15). esc 모드는 키를 전량
+            # 가로채므로 터미널이 Tab 수정자 조합을 못 보내도(대부분 그렇다) 동작한다.
+            self._exit_esc()
+            self.open_tab_switcher()
+            return
         if k in ("insert", "shift+delete"):
             # esc Insert: 블록 선택(Shift+방향키/Home/End)이 되는 멀티라인 작성창을
             # 연다(옵트인, 필요할 때 매번). 자식 프롬프트 입력기가 범위 선택 편집을

@@ -1516,6 +1516,122 @@ async def test_shift_tab_forwarded_as_backtab():
     await _with_app(body)
 
 
+async def test_shift_tab_still_reaches_pane_with_switcher():
+    """탭 스위처(esc Tab)를 넣은 뒤에도 **normal 모드 shift+tab 은 패널로** 가야 한다
+    (사용자 선택 2026-07-15: 스위처는 esc 모드 키로, shift+tab 은 패스스루 유지).
+    Claude 권한 모드 순환(`shift+tab to cycle`)이 이 바이트에 걸려 있어 전역 하이재킹
+    하면 깨진다. 위 test_shift_tab_forwarded_as_backtab 과 달리 **실 디스패치**
+    (pilot.press)로 눌러 Textual 포커스 바인딩/스위처가 가로채지 않음을 함께 잠근다."""
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_input = lambda data: sent.append(data)
+        await pilot.press("shift+tab")
+        await pilot.pause(0.05)
+        assert sent == [b"\x1b[Z"], f"패널로 backtab 미전달: {sent}"
+        assert len(app.screen_stack) == 1, "normal 의 shift+tab 은 스위처를 열지 않는다"
+    await _with_app(body)
+
+
+async def test_esc_tab_switcher_selects_next_and_enter_switches():
+    """사용자 요청 2026-07-15(Alt+Tab 동선): esc → Tab 이 탭 스위처를 열고 **다음 탭**이
+    선택된 채 시작한다. Tab=다음·Shift+Tab=이전으로 순환하며 **선택만** 하다가 Enter 로
+    그 탭에 전환한다. (Shift 뗌으로 확정하는 것은 터미널이 키 뗌을 보고하지 않아 불가 —
+    Enter 확정으로 대신한다.) Tab/Shift+Tab 이 Textual 기본 focus_next/focus_previous 에
+    먹히지 않는지까지 실 디스패치로 검증한다."""
+    from textual.widgets import ListView
+
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app.tabbar.tabs = [{"index": 0, "name": "A", "active": True},
+                           {"index": 1, "name": "B", "active": False},
+                           {"index": 2, "name": "C", "active": False}]
+        await pilot.press("escape")
+        await pilot.press("tab")
+        await pilot.pause(0.1)
+        lv = app.screen.query_one(ListView)
+        assert lv.index == 1, f"시작 선택이 '다음 탭'이 아님: {lv.index}"
+        await pilot.press("tab")            # → C
+        await pilot.pause(0.05)
+        assert lv.index == 2, lv.index
+        await pilot.press("tab")            # → A(순환)
+        await pilot.pause(0.05)
+        assert lv.index == 0, f"끝에서 순환 안 함: {lv.index}"
+        await pilot.press("shift+tab")      # → C(역순환)
+        await pilot.pause(0.05)
+        assert lv.index == 2, lv.index
+        assert sent == [], f"Enter 전엔 전환하지 않는다: {sent}"
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert sent == [("select_window", {"index": 2})], sent
+        assert len(app.screen_stack) == 1, "Enter 후 모달이 닫힌다"
+    await _with_app(body)
+
+
+async def test_esc_tab_switcher_escape_cancels():
+    """스위처에서 Esc = 취소 — 선택을 옮겨 뒀어도 전환하지 않고 원래 탭에 남는다."""
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app.tabbar.tabs = [{"index": 0, "name": "A", "active": True},
+                           {"index": 1, "name": "B", "active": False}]
+        await pilot.press("escape")
+        await pilot.press("tab")
+        await pilot.pause(0.1)
+        await pilot.press("tab")            # 선택 이동
+        await pilot.press("escape")         # 취소
+        await pilot.pause(0.1)
+        assert sent == [], f"취소인데 전환됨: {sent}"
+        assert len(app.screen_stack) == 1
+    await _with_app(body)
+
+
+async def test_esc_tab_switcher_visual_order_and_pin():
+    """스위처 목록은 탭바와 **같은 시각 순서**(비고정→고정)·같은 번호를 쓴다(07-14
+    규약) — 목록의 3번이 탭바의 3번이자 esc+3 과 같은 탭. 고정 탭은 핀 글리프('*'),
+    활성 탭은 '▸' 로 표시한다."""
+    from textual.widgets import Label, ListView
+
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        # index 1 이 고정 → 탭바 시각 순서는 shell(0), remote(2), p4v(1)
+        app.tabbar.tabs = [
+            {"index": 0, "name": "shell", "active": False},
+            {"index": 1, "name": "p4v", "active": False, "pinned": True},
+            {"index": 2, "name": "⇄office1:build", "active": True,
+             "remote": True}]
+        await pilot.press("escape")
+        await pilot.press("tab")
+        await pilot.pause(0.1)
+        lv = app.screen.query_one(ListView)
+        labels = [it.query_one(Label).render().plain for it in lv.children]
+        assert labels[0].endswith("1:shell"), labels
+        assert labels[1] == "▸ 2:⇄office1:build", labels   # 활성 표식
+        assert labels[2] == "  * 3:p4v", labels            # 고정=핀 글리프+맨 뒤
+        # 활성(시각 2번)의 다음 = 시각 3번 p4v(탭 index 1) → Enter 로 그 탭 전환.
+        assert lv.index == 2, lv.index
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert sent == [("select_window", {"index": 1})], sent
+    await _with_app(body)
+
+
+async def test_esc_tab_switcher_not_opened_for_single_tab():
+    """탭이 하나뿐이면 고를 게 없어 스위처를 열지 않는다(활성 탭 깜빡임으로 안내)."""
+    async def body(app, pilot, srv):
+        app.tabbar.tabs = [{"index": 0, "name": "only", "active": True}]
+        blinked = []
+        app.tabbar.blink_active = lambda: blinked.append(True)
+        await pilot.press("escape")
+        await pilot.press("tab")
+        await pilot.pause(0.1)
+        assert len(app.screen_stack) == 1, "탭 1개인데 스위처가 열림"
+        assert blinked == [True], "안내 깜빡임 없음"
+        assert app.mode == "normal", app.mode
+    await _with_app(body)
+
+
 async def test_shift_enter_forwarded_as_lf():
     async def body(app, pilot, srv):
         sent = []

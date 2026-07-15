@@ -928,6 +928,8 @@ SETTINGS_CATS = ["표시", "입력", "동작", "상태줄", "고급", "키"]
 ESC_MODE_KEYS = [
     ("e_arrows", "↑ ↓ ← →", "패널 이동", "Move pane"),
     ("e_num", "1–9", "번호로 탭 전환", "Switch to tab by number"),
+    ("e_tab", "Tab", "탭 스위처(Tab 다음 · Shift+Tab 이전 · Enter 전환)",
+     "Tab switcher (Tab next · Shift+Tab prev · Enter switch)"),
     ("e_n", "n", "새 탭", "New tab"),
     ("e_p", "p", "상하 분할", "Split top/bottom"),
     ("e_P", "P", "탭 고정(핀) 토글", "Toggle tab pin"),

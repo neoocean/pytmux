@@ -60,6 +60,18 @@
     <section class="cl-day" id="d-2026-07-15">
       <h2>2026-07-15 <span class="pill">수요일</span></h2>
       <ul>
+        <li><span class="pill stable">탭</span> <strong>탭이 많을 때 <span class="inline-code">Esc</span> → <span class="inline-code">Tab</span> 으로 목록을 띄워 골라 전환합니다(탭 스위처).</strong>
+          지금까지 탭 전환은 <strong>번호를 알아야</strong>(<span class="inline-code">Esc</span> → <span class="inline-code">1–9</span>) 하거나 <strong>한 칸씩</strong>(<span class="inline-code">prefix</span> → <span class="inline-code">n</span>/<span class="inline-code">p</span>) 옮겨야 했습니다.
+          이제 <span class="inline-code">Esc</span> → <span class="inline-code">Tab</span> 을 누르면 <strong>열린 탭 목록</strong>이 뜨고, <span class="inline-code">Tab</span> 을 누를 때마다 <strong>다음</strong>(<span class="inline-code">Shift+Tab</span> 은 이전) 탭이 <strong>선택만</strong> 됩니다 —
+          마음에 드는 탭에서 <span class="inline-code">Enter</span> 를 누르면 그 탭으로 전환하고, <span class="inline-code">Esc</span> 면 <strong>원래 탭 그대로</strong> 취소됩니다.
+          열자마자 <strong>다음 탭</strong>이 선택돼 있어 <span class="inline-code">Esc</span> <span class="inline-code">Tab</span> <span class="inline-code">Enter</span> 만 치면 바로 다음 탭입니다.
+          목록의 번호·순서는 <strong>탭바에 보이는 그대로</strong>라(고정 탭은 <span class="inline-code">*</span> 표시로 뒤쪽) 목록의 3번이 곧 <span class="inline-code">Esc</span> → <span class="inline-code">3</span> 과 같은 탭입니다.
+          <br>
+          <strong>왜 Windows 의 Alt+Tab 처럼 "Shift 를 놓으면 전환" 이 아닌가:</strong> 터미널은 키를 <strong>뗐다는 사실을 알려주지 않습니다</strong>
+          — 눌린 것만 전달되고 <strong>뗌(release) 이벤트가 아예 없습니다</strong>. 그래서 "누르고 있는 동안 목록" · "놓으면 확정" 은 터미널 앱이 원리적으로 만들 수 없어,
+          가장 가까운 동선인 <strong><span class="inline-code">Enter</span> 확정</strong>으로 넣었습니다.
+          또 <span class="inline-code">Shift+Tab</span> 자체를 스위처에 쓰지 않은 이유는, 그 키가 <strong>Claude 의 권한 모드 순환</strong>(<span class="inline-code">shift+tab to cycle</span>)에 이미 쓰이고 있어서입니다 —
+          패널 안에서 <span class="inline-code">Shift+Tab</span> 은 <strong>종전대로 Claude 에 그대로 전달</strong>됩니다.</li>
         <li><span class="pill stable">원격</span> <strong>같은 원격 서버에 다시 붙어도, 고정(핀)해 둔 원격 탭이 이제 풀리지 않습니다.</strong>
           원격 탭이 열려 있는 상태에서 <strong>같은 서버에 다시</strong> <span class="inline-code">remote-attach</span> 하면
           (예: 탭이 새로 늘어 목록을 갱신하려고) 걸어 두었던 <strong>핀이 전부 풀렸습니다</strong> — 다시 붙을 때 연결을 새로 여는데,
