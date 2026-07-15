@@ -122,9 +122,12 @@ async def test_contract_server_hooks_noop_without_plugin():
     for cmd in ("claude-auto-mode", "auto-mode", "auto-launch",
                 "token-debug", "token-dbg"):
         assert reg.server_control(None, None, cmd, ["on"]) is None, cmd
-    # relay_actions: Claude/토큰 릴레이 액션이 플러그인 부재 시 빈 집합(원격 릴레이
-    # 화이트리스트에서 자동 제외).
-    assert reg.relay_actions() == set()
+    # relay_actions: Claude/토큰 릴레이 액션이 플러그인 부재 시 화이트리스트에서
+    # 자동 제외된다. 다른 플러그인(mdir 등)의 기여는 남는 게 정상이라 '빈 집합'이
+    # 아니라 **Claude 액션 부재**가 계약이다.
+    assert not (reg.relay_actions() & {"set_autoresume", "set_prompt_clear",
+                                       "request_token_log", "jump_prompt"}), \
+        reg.relay_actions()
     reg.server_init(None)                 # 토큰 상태 설치 안 함(no-op, server=None 무탈)
     reg.pane_closing(None, None)          # 패널 종료 토큰 이관 안 함(no-op)
     reg.server_input(None, None, b"x")    # 부수효과 없음(no-op)
