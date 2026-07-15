@@ -38,20 +38,25 @@ from textual.widgets import Input, Static
 
 from pytmuxlib import i18n
 
-# ---- Mdir III 기본 배색(BLACK.COL 실측) ----
+# ---- Mdir III 기본 배색 ----
+# 색은 원본 배포판 실물 스크린샷(m3v310, archive.org)의 픽셀을 직접 추출해 맞췄다.
+# 표준 VGA 16색. 핵심: 크롬(상·하단 바·구분선·테두리)은 파랑이 아니라 **시안
+# #00aaaa**, 커서 선택막대는 **밝은 초록 #55ff55**(어두운 초록 아님). 확장자색은
+# 매뉴얼·BLACK.COL 과 동일(EXE 밝은초록·COM 밝은하늘·BAT 노랑·압축 밝은자홍).
+_CYAN = "#00aaaa"                                            # Mdir 시그니처 크롬색
 _TXT = Style(color="#aaaaaa", bgcolor="#000000")            # 일반 파일(회백)
 _DIR = Style(color="#ff5555", bgcolor="#000000", bold=True)  # 디렉토리(붉은색)
 _UP = Style(color="#ffffff", bgcolor="#000000", bold=True)   # [ Up-Dir ]
 _HID = Style(color="#aa00aa", bgcolor="#000000")             # 숨은파일(보라)
 _DRIVE = Style(color="#ffaa00", bgcolor="#000000", bold=True)  # [-C-] 드라이브 항목
-_CUR = Style(color="#000000", bgcolor="#00aa00", bold=True)  # 선택막대(초록, 실물)
-_CUR_BLUR = Style(color="#000000", bgcolor="#007700")
+_CUR = Style(color="#000000", bgcolor="#55ff55", bold=True)  # 선택막대(밝은초록, 실측)
+_CUR_BLUR = Style(color="#000000", bgcolor="#00aa00")        # 비포커스는 한 톤 어둡게
 _TAG = Style(color="#ffff55", bgcolor="#000000", bold=True)  # 태그(선택)된 항목
-_CUR_TAG = Style(color="#ffff00", bgcolor="#00aa00", bold=True)  # 태그+커서
-_BAR = Style(color="#ffffff", bgcolor="#0000aa")             # 상/하단 청색 바
-_BAR_HI = Style(color="#ffff55", bgcolor="#0000aa", bold=True)
-_SEP = Style(color="#555555", bgcolor="#000000")             # 구분선·열 구분 │
-_PATH = Style(color="#ffff55", bgcolor="#000000", bold=True)  # Path 줄 강조
+_CUR_TAG = Style(color="#000000", bgcolor="#55ff55", bold=True)  # 태그+커서
+_BAR = Style(color="#ffffff", bgcolor=_CYAN)                 # 상/하단 시안 바(실측)
+_BAR_HI = Style(color="#ffff55", bgcolor=_CYAN, bold=True)   # 바 위 강조(시계·키)
+_SEP = Style(color=_CYAN, bgcolor="#000000")                 # 구분선·열 구분 │(시안)
+_PATH = Style(color="#ffffff", bgcolor="#000000", bold=True)  # Path 줄(흰색, 실측)
 _ERR = Style(color="#ff5555", bgcolor="#000000", bold=True)
 
 # 확장자별 색(원조: EXE=밝은초록 COM=밝은하늘 BAT/BTM=노랑 압축=밝은자홍).
@@ -1020,7 +1025,7 @@ class MdirScreen(ModalScreen):
     MdirScreen { align: center middle; }
     #mdirbox { width: 94%; height: 92%; padding: 0;
                background: #000000; color: #aaaaaa;
-               border: double #555555;
+               border: double #00aaaa;
                border-title-color: #ffffff; border-title-background: #000000; }
     #mdirview { height: 1fr; width: 1fr; }
     """
@@ -1054,12 +1059,12 @@ class MdirViewer(ModalScreen):
     MdirViewer { align: center middle; }
     #mdvbox { width: 94%; height: 92%; padding: 0;
               background: #000000; color: #aaaaaa;
-              border: double #555555;
+              border: double #00aaaa;
               border-title-color: #ffffff; border-title-background: #000000;
               border-subtitle-color: #ffff55;
               border-subtitle-background: #000000; }
     #mdvscroll { height: 1fr; width: 1fr;
-                 scrollbar-background: #000000; scrollbar-color: #555555; }
+                 scrollbar-background: #000000; scrollbar-color: #00aaaa; }
     #mdvtext { width: 1fr; }
     """
 
@@ -1098,14 +1103,14 @@ class MdirViewer(ModalScreen):
 
 
 class MdirPrompt(ModalScreen):
-    """한 줄 입력 팝업(대상 경로/새 이름/마스크) — DOS 청색 대화상자 풍.
-    Enter=dismiss(입력값), Esc=dismiss(None)."""
+    """한 줄 입력 팝업(대상 경로/새 이름/마스크) — Mdir 시안 대화상자 풍(원본
+    풀다운 메뉴 배색: 시안 배경·검정 글자·노랑 제목). Enter=값, Esc=None."""
     CSS = """
     MdirPrompt { align: center middle; }
     #mdp { width: 64; max-width: 90%; height: auto; padding: 0 1;
-           background: #0000aa; color: #ffffff; border: double #00aaaa;
-           border-title-color: #ffff55; border-title-background: #0000aa; }
-    #mdp Input { background: #000055; color: #ffffff; border: none; }
+           background: #00aaaa; color: #000000; border: double #55ffff;
+           border-title-color: #ffff55; border-title-background: #00aaaa; }
+    #mdp Input { background: #000000; color: #ffffff; border: none; }
     #mdp Input:focus { border: none; }
     """
 
@@ -1141,8 +1146,8 @@ class MdirConfirm(ModalScreen):
     CSS = """
     MdirConfirm { align: center middle; }
     #mdc { width: 64; max-width: 90%; height: auto; padding: 0 1;
-           background: #0000aa; color: #ffffff; border: double #00aaaa;
-           border-title-color: #ffff55; border-title-background: #0000aa; }
+           background: #00aaaa; color: #000000; border: double #55ffff;
+           border-title-color: #ffff55; border-title-background: #00aaaa; }
     #mdcbody { width: 100%; }
     #mdcopts { width: 100%; padding: 1 0 0 0; text-align: center; }
     """
@@ -1168,8 +1173,10 @@ class MdirConfirm(ModalScreen):
         for i, (_key, label) in enumerate(self._options):
             if i:
                 t.append("   ")
-            style = ("black on #00aaaa bold" if i == self._sel
-                     else "white on #0000aa")
+            # 선택 버튼은 노랑 강조 막대(원본 메뉴 선택색 감각), 비선택은 어두운
+            # 시안 알약으로 시안 배경과 분리해 읽히게 한다.
+            style = ("black on #ffff55 bold" if i == self._sel
+                     else "white on #007777")
             t.append(f" {label} ", style)
         return t
 
