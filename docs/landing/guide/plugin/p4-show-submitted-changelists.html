@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>p4-show-submitted-changelists — pytmux 플러그인</title>
+<meta name="description" content="pytmux p4 플러그인 — Perforce submitted CL 목록과 p4 describe 상세 팝업.">
+<link rel="stylesheet" href="../../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-plugin="p4-show-submitted-changelists">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">플러그인 · Perforce</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">p4-show-submitted-changelists</h1>
+        <p style="font-size:18px;">현재 Perforce 서버의 <strong>submitted changelist 목록</strong>을 풀스크린으로 띄우고, 항목에서 <kbd>Enter</kbd> 를 치면 <code>p4 describe</code> 상세(설명·변경 파일)를 보여줍니다.</p>
+      </header>
+      <section>
+        <h2 style="border-top:none;">여는 법</h2>
+        <table>
+          <thead><tr><th>명령</th><th>설명</th></tr></thead>
+          <tbody>
+            <tr><td><code>p4changes</code></td><td>submitted CL 목록 (<code>p4changes [N]</code>, 기본 50; 별칭 <code>submitted</code>)</td></tr>
+          </tbody>
+        </table>
+        <p><kbd>↑</kbd><kbd>↓</kbd> 스크롤 · <kbd>Enter</kbd> 상세 · <kbd>Esc</kbd> 닫기.</p>
+        <figure>
+          <img src="../../image/32-p4changes.svg" alt="submitted CL 목록">
+          <figcaption>CL/시각/사용자/설명 표.</figcaption>
+        </figure>
+        <figure>
+          <img src="../../image/35-p4-describe.svg" alt="p4 describe 상세">
+          <figcaption>CL 에 Enter — 설명 전문과 변경 파일 목록.</figcaption>
+        </figure>
+      </section>
+      <section>
+        <h2>메모</h2>
+        <p>활성 패널의 작업 디렉토리 기준으로 <code>p4</code> 를 호출하므로, 그 디렉토리의 P4 설정(P4CONFIG 등)을 그대로 따릅니다.</p>
+      </section>
+
+      <section>
+        <h2>끄기 · 제거</h2>
+        <p>
+          <code>:plugins</code> 관리 팝업에서 끄거나(가역), <code>pytmuxlib/plugins/p4-show-submitted-changelists/</code>
+          디렉토리를 지우면(delete-to-disable) 명령·자동완성·메뉴 어디에도 나타나지 않고 조용히
+          사라집니다. 코어는 영향받지 않습니다. <a href="/guide/plugins">← 플러그인 개요</a>
+        </p>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../../plugin-nav.js" defer></script>
+<script src="../../lightbox.js" defer></script>
+</body>
+</html>

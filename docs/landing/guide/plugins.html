@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
 <title>플러그인 — pytmux 가이드 14</title>
-<meta name="description" content="pytmux 플러그인: delete-to-disable 구조, 플러그인 관리 팝업 :plugins, Claude·시계·달력·ncd·IME·REC·Perforce·프롬프트 히스토리·세션 재개·이름 통일 등 전체 목록.">
+<meta name="description" content="pytmux 플러그인: delete-to-disable 구조, 플러그인 관리 팝업 :plugins, Claude·시계·달력·ncd·mdir·IME·REC·Perforce·프롬프트 히스토리·세션 재개·이름 통일 전체 목록과 플러그인별 상세 페이지.">
 <link rel="stylesheet" href="../styles.css">
 <script>
   var _paq = window._paq = window._paq || [];
@@ -44,21 +44,25 @@
 
       <section>
         <h2>기본 포함 플러그인</h2>
+        <p>
+          플러그인 이름을 클릭하면 <strong>스크린샷과 키까지 담은 개별 상세 페이지</strong>로 갑니다.
+        </p>
         <table>
           <thead><tr><th>플러그인</th><th>기능</th><th>대표 명령</th></tr></thead>
           <tbody>
-            <tr><td>claude-code</td><td>Claude Code 통합(토큰·상태·자동 재개·권한모드·규칙·모델)</td><td><code>token-log</code> · <code>auto-resume</code> · <code>claude-rules</code></td></tr>
-            <tr><td>claude-resume</td><td>이 머신의 Claude 세션 목록·재개</td><td><code>claude-resume</code> (<code>cr</code>)</td></tr>
-            <tr><td>claude-name-sync</td><td>디렉토리별 탭/패널·세션 이름 자동 통일</td><td><code>namesync</code></td></tr>
-            <tr><td>claude-prompt-history</td><td>보낸 프롬프트 미리보기·검색·점프</td><td><code>prompt-history</code> (<code>ph</code>)</td></tr>
-            <tr><td>claude-token-usage-view</td><td>사용 한도·다음 리셋 카운트다운 화면</td><td><code>usage-view</code></td></tr>
-            <tr><td>claude-disable-feedback</td><td>Claude 피드백 유도 문구 숨김</td><td>—</td></tr>
-            <tr><td>clock</td><td>패널 위 큰 시계 오버레이</td><td><code>clock-mode</code> (prefix <kbd>t</kbd>)</td></tr>
-            <tr><td>calendar</td><td>월 달력 오버레이</td><td><code>calendar-mode</code></td></tr>
-            <tr><td>ncd</td><td>디렉토리 트리(Norton Change Directory 스타일)</td><td><code>ncd</code> (<code>nc</code>)</td></tr>
-            <tr><td>rec</td><td>패널 원시 출력 무손실 캡처(REC)</td><td><code>capture-output</code></td></tr>
-            <tr><td>ime-indicator</td><td>한/영 IME 배지</td><td><code>ime-indicator</code></td></tr>
-            <tr><td>p4-show-submitted-changelists</td><td>Perforce 서브밋 CL 목록</td><td><code>p4changes</code></td></tr>
+            <tr><td><a href="/guide/plugin/claude-code">claude-code</a></td><td>Claude Code 통합(토큰·상태·자동 재개·권한모드·규칙·모델)</td><td><code>token-log</code> · <code>auto-resume</code> · <code>claude-rules</code></td></tr>
+            <tr><td><a href="/guide/plugin/claude-resume">claude-resume</a></td><td>이 머신의 Claude 세션 목록·재개</td><td><code>claude-resume</code> (<code>cr</code>)</td></tr>
+            <tr><td><a href="/guide/plugin/claude-name-sync">claude-name-sync</a></td><td>디렉토리별 탭/패널·세션 이름 자동 통일</td><td><code>namesync</code></td></tr>
+            <tr><td><a href="/guide/plugin/claude-prompt-history">claude-prompt-history</a></td><td>보낸 프롬프트 미리보기·검색·점프</td><td><code>prompt-history</code> (<code>ph</code>)</td></tr>
+            <tr><td><a href="/guide/plugin/claude-token-usage-view">claude-token-usage-view</a></td><td>사용 한도·다음 리셋 카운트다운 화면</td><td><code>usage-view</code></td></tr>
+            <tr><td><a href="/guide/plugin/claude-disable-feedback">claude-disable-feedback</a></td><td>Claude 피드백 유도 문구 숨김</td><td>—</td></tr>
+            <tr><td><a href="/guide/plugin/clock">clock</a></td><td>패널 위 큰 시계 오버레이</td><td><code>clock-mode</code> (prefix <kbd>t</kbd>)</td></tr>
+            <tr><td><a href="/guide/plugin/calendar">calendar</a></td><td>월 달력 오버레이</td><td><code>calendar-mode</code></td></tr>
+            <tr><td><a href="/guide/plugin/ncd">ncd</a></td><td>디렉토리 트리(Norton Change Directory 스타일)</td><td><code>ncd</code> (<code>nc</code>)</td></tr>
+            <tr><td><a href="/guide/plugin/mdir">mdir</a></td><td>Mdir III 풍 파일 관리자(태그·복사/이동/삭제·정렬/필터·뷰어·압축 보기)</td><td><code>mdir</code> (<code>m</code>)</td></tr>
+            <tr><td><a href="/guide/plugin/rec">rec</a></td><td>패널 원시 출력 무손실 캡처(REC)</td><td><code>capture-output</code></td></tr>
+            <tr><td><a href="/guide/plugin/ime-indicator">ime-indicator</a></td><td>한/영 IME 배지</td><td><code>ime-indicator</code></td></tr>
+            <tr><td><a href="/guide/plugin/p4-show-submitted-changelists">p4-show-submitted-changelists</a></td><td>Perforce 서브밋 CL 목록</td><td><code>p4changes</code></td></tr>
           </tbody>
         </table>
         <figure>

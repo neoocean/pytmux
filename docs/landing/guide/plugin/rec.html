@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>rec — pytmux 플러그인</title>
+<meta name="description" content="pytmux rec 플러그인 — 패널 원시 출력(PTY 바이트)을 무손실 캡처(REC).">
+<link rel="stylesheet" href="../../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-plugin="rec">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">플러그인 · 모니터</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">rec</h1>
+        <p style="font-size:18px;">패널의 <strong>원시 PTY 출력 바이트를 무손실로 기록</strong>합니다. 화면 깨짐 분석, 터미널 앱 동작 재현(리플레이), 버그 리포트 첨부에 씁니다.</p>
+      </header>
+      <section>
+        <h2 style="border-top:none;">여는 법</h2>
+        <table>
+          <thead><tr><th>명령</th><th>설명</th></tr></thead>
+          <tbody>
+            <tr><td><code>capture-output</code></td><td>패널 출력 캡처 토글 [on|off] (기본 off, 설정 영속; 별칭 <code>capture-toggle</code>)</td></tr>
+          </tbody>
+        </table>
+        <p>캡처 중에는 상태 표시가 붙고, 로그는 <code>captures/&lt;세션&gt;/pane-N.log</code> 에 쌓입니다. 통합 정보 팝업에서 캡처 상태를 확인할 수 있습니다.</p>
+        <figure>
+          <img src="../../image/14-info-popup.svg" alt="통합 정보 팝업">
+          <figcaption>캡처·토큰·서버 상태를 한 화면에서.</figcaption>
+        </figure>
+      </section>
+      <section>
+        <h2>메모</h2>
+        <p>기록은 렌더 결과가 아니라 <strong>PTY 원시 바이트</strong>라 이스케이프 시퀀스까지 그대로 남습니다. 오래 켜 두면 파일이 커지니 필요한 구간만 켜는 것을 권합니다.</p>
+      </section>
+
+      <section>
+        <h2>끄기 · 제거</h2>
+        <p>
+          <code>:plugins</code> 관리 팝업에서 끄거나(가역), <code>pytmuxlib/plugins/rec/</code>
+          디렉토리를 지우면(delete-to-disable) 명령·자동완성·메뉴 어디에도 나타나지 않고 조용히
+          사라집니다. 코어는 영향받지 않습니다. <a href="/guide/plugins">← 플러그인 개요</a>
+        </p>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../../plugin-nav.js" defer></script>
+<script src="../../lightbox.js" defer></script>
+</body>
+</html>

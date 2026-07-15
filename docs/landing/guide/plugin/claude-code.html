@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>claude-code — pytmux 플러그인</title>
+<meta name="description" content="pytmux claude-code 플러그인 — 토큰 회계·상태줄 배지·자동 재개·시작 규칙·모델 팝업·권한 오토모드 등 Claude Code 통합의 중심.">
+<link rel="stylesheet" href="../../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-plugin="claude-code">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">플러그인 · Claude</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">claude-code</h1>
+        <p style="font-size:18px;">Claude Code 통합의 중심 플러그인입니다. 패널 속 Claude 세션을 감지해 상태줄 배지·토큰 회계·자동 개입(리밋 자동 재개, 전송 에러 재시도)·시작 규칙 주입까지 담당합니다.</p>
+      </header>
+      <section>
+        <h2 style="border-top:none;">무엇을 하나</h2>
+        <p>Claude 가 도는 패널을 자동 감지해 <strong>상태(◐ 작업중/○ 대기) 탭 글리프</strong>와 상태줄 토큰 배지를 붙입니다. 토큰 사용량은 화면 스크랩이 아니라 <code>~/.claude/*.jsonl</code> 트랜스크립트 회계가 권위 출처라 cache_read 까지 정확합니다. 토큰 리밋에 걸리면 리셋 시각에 맞춰 <strong>자동 재개</strong>하고, 일시 전송 에러(API error·rate limit)는 1분 뒤 '계속'을 자동 주입합니다(auto-retry).</p>
+        <figure>
+          <img src="../../image/22-claude-real.svg" alt="Claude 패널 실동작">
+          <figcaption>Claude 패널 — 상태줄 토큰 배지·모델 배지·상태 글리프.</figcaption>
+        </figure>
+        <figure>
+          <img src="../../image/12-claude-autoresume.svg" alt="토큰 리밋 자동 재개">
+          <figcaption>리밋 도달 시 리셋 시각 카운트다운과 자동 재개.</figcaption>
+        </figure>
+      </section>
+      <section>
+        <h2>주요 명령</h2>
+        <table>
+          <thead><tr><th>명령</th><th>설명</th></tr></thead>
+          <tbody>
+            <tr><td><code>token-saver</code></td><td>Claude 설정 팝업 — 자동재개·세션종료 토큰화면·권한 오토모드·프롬프트 단위 클리어·장기턴/반복 경고 (별칭 <code>claude-settings</code>)</td></tr>
+            <tr><td><code>token-log</code></td><td>토큰 사용량 팝업 — 기간(시/일/주/월)·계정·세션 뷰 + 실측 한도·5h창 (상태줄 토큰 배지 클릭)</td></tr>
+            <tr><td><code>usage-panel</code></td><td>/usage 한도 막대 그래프 팝업 (별칭 <code>limits</code>)</td></tr>
+            <tr><td><code>auto-resume</code></td><td>토큰 리밋 자동 재개 on/off</td></tr>
+            <tr><td><code>claude-rules</code></td><td>시작 규칙 편집 — 새 세션/<code>/clear</code> 후 첫 프롬프트에 자동 주입</td></tr>
+            <tr><td><code>model</code></td><td>모델·컨텍스트 변경 팝업 (상태줄 모델 배지 클릭)</td></tr>
+            <tr><td><code>prompt-clear</code></td><td>프롬프트 단위 클리어 모드 — 완료마다 문서화+/clear</td></tr>
+            <tr><td><code>auto-retry</code></td><td>전송 에러 시 1분 뒤 '계속' 자동 주입 on/off</td></tr>
+            <tr><td><code>claude-auto-mode</code></td><td>idle 시 권한모드 자동 오토모드 전환 on/off</td></tr>
+            <tr><td><code>auto-launch</code></td><td>새 Claude 세션에 /rc+권한모드 1회 자동 적용 on/off</td></tr>
+          </tbody>
+        </table>
+        <p>명령은 <kbd>ESC</kbd> → <kbd>:</kbd> 프롬프트에서 실행합니다. 토글류는 인자 없이 실행하면 선택 팝업이 뜹니다.</p>
+      </section>
+      <section>
+        <h2>화면</h2>
+        <figure>
+          <img src="../../image/23-token-saver.svg" alt="Claude 설정 팝업">
+          <figcaption>token-saver — 자동 개입 스위치들을 한 곳에서.</figcaption>
+        </figure>
+        <figure>
+          <img src="../../image/24-token-log.svg" alt="토큰 사용량 팝업(기간)">
+          <figcaption>token-log — 기간/세션/한도/경고 노트북 탭.</figcaption>
+        </figure>
+        <figure>
+          <img src="../../image/38-token-log-limit.svg" alt="토큰 팝업 한도 탭">
+          <figcaption>한도 탭 — /usage 막대·5h 창 합계·리셋 카운트다운.</figcaption>
+        </figure>
+        <figure>
+          <img src="../../image/28-claude-rules.svg" alt="시작 규칙 편집">
+          <figcaption>claude-rules — 저장하면 새 세션마다 자동 주입.</figcaption>
+        </figure>
+        <figure>
+          <img src="../../image/13-perm-mode.svg" alt="권한 오토모드">
+          <figcaption>권한 프롬프트 자동 전환(claude-auto-mode).</figcaption>
+        </figure>
+      </section>
+      <section>
+        <h2>메모</h2>
+        <p>원격 페더레이션 패널에서도 동작합니다(자동재개 토글·토큰 팝업은 원격 서버로 릴레이). 토큰 DB 는 <code>.tokens.db</code>(SQLite), 실측 한도는 그림자 <code>/usage</code> 질의로 갱신합니다. 세부 항목은 <a href='/guide/claude'>Claude Code 연동</a>·<a href='/guide/tokens'>토큰 사용량</a> 챕터 참고.</p>
+      </section>
+
+      <section>
+        <h2>끄기 · 제거</h2>
+        <p>
+          <code>:plugins</code> 관리 팝업에서 끄거나(가역), <code>pytmuxlib/plugins/claude-code/</code>
+          디렉토리를 지우면(delete-to-disable) 명령·자동완성·메뉴 어디에도 나타나지 않고 조용히
+          사라집니다. 코어는 영향받지 않습니다. <a href="/guide/plugins">← 플러그인 개요</a>
+        </p>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../../plugin-nav.js" defer></script>
+<script src="../../lightbox.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>claude-resume — pytmux 플러그인</title>
+<meta name="description" content="pytmux claude-resume 플러그인 — 이 머신의 Claude Code 세션 목록에서 골라 새 탭에서 리줌.">
+<link rel="stylesheet" href="../../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-plugin="claude-resume">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">플러그인 · Claude</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">claude-resume</h1>
+        <p style="font-size:18px;">이 머신에 남아 있는 Claude Code 세션들을 시각·프로젝트·AI 제목 3열 목록으로 보여주고, 고르면 <strong>새 탭에서 <code>claude --resume</code></strong> 으로 이어서 시작합니다.</p>
+      </header>
+      <section>
+        <h2 style="border-top:none;">여는 법</h2>
+        <table>
+          <thead><tr><th>명령</th><th>설명</th></tr></thead>
+          <tbody>
+            <tr><td><code>claude-resume</code></td><td>세션 목록 팝업 열기 (별칭 <code>claude-sessions</code>·<code>cr</code>)</td></tr>
+          </tbody>
+        </table>
+        <p><kbd>↑</kbd><kbd>↓</kbd> 로 고르고 <kbd>Enter</kbd> 로 새 탭에서 리줌, <kbd>Esc</kbd> 닫기.</p>
+        <figure>
+          <img src="../../image/39-claude-resume.svg" alt="Claude 세션 리줌 피커">
+          <figcaption>시각·프로젝트·AI 제목 3열 — 최근 세션이 위.</figcaption>
+        </figure>
+      </section>
+      <section>
+        <h2>메모</h2>
+        <p>세션 목록은 <code>~/.claude</code> 트랜스크립트에서 읽습니다. 프로젝트 디렉토리가 같은 세션이 여럿이면 시각으로 구분하세요.</p>
+      </section>
+
+      <section>
+        <h2>끄기 · 제거</h2>
+        <p>
+          <code>:plugins</code> 관리 팝업에서 끄거나(가역), <code>pytmuxlib/plugins/claude-resume/</code>
+          디렉토리를 지우면(delete-to-disable) 명령·자동완성·메뉴 어디에도 나타나지 않고 조용히
+          사라집니다. 코어는 영향받지 않습니다. <a href="/guide/plugins">← 플러그인 개요</a>
+        </p>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../../plugin-nav.js" defer></script>
+<script src="../../lightbox.js" defer></script>
+</body>
+</html>

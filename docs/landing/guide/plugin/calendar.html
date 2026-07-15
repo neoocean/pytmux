@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>calendar — pytmux 플러그인</title>
+<meta name="description" content="pytmux calendar 플러그인 — 패널을 이번 달 달력으로 덮는 오버레이. ←→ 월, ↑↓ 연 이동.">
+<link rel="stylesheet" href="../../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-plugin="calendar">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">플러그인 · 오버레이</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">calendar</h1>
+        <p style="font-size:18px;">현재 패널을 <strong>이번 달 달력</strong>으로 덮습니다. 오늘 날짜가 강조되고, 키로 달·연도를 오갈 수 있습니다.</p>
+      </header>
+      <section>
+        <h2 style="border-top:none;">여는 법 · 키</h2>
+        <table>
+          <thead><tr><th>명령</th><th>설명</th></tr></thead>
+          <tbody>
+            <tr><td><code>calendar-mode</code></td><td>토글 — <kbd>←</kbd>/<kbd>→</kbd> 이전·다음 달, <kbd>↑</kbd>/<kbd>↓</kbd> 연 이동, <kbd>Home</kbd> 오늘</td></tr>
+            <tr><td><code>open-calendar / close-calendar</code></td><td>명시적으로 켜기 / 끄기</td></tr>
+          </tbody>
+        </table>
+        <figure>
+          <img src="../../image/09-calendar.svg" alt="달력 오버레이">
+          <figcaption>블록 숫자 달력 — 오늘 강조.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>끄기 · 제거</h2>
+        <p>
+          <code>:plugins</code> 관리 팝업에서 끄거나(가역), <code>pytmuxlib/plugins/calendar/</code>
+          디렉토리를 지우면(delete-to-disable) 명령·자동완성·메뉴 어디에도 나타나지 않고 조용히
+          사라집니다. 코어는 영향받지 않습니다. <a href="/guide/plugins">← 플러그인 개요</a>
+        </p>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../../plugin-nav.js" defer></script>
+<script src="../../lightbox.js" defer></script>
+</body>
+</html>

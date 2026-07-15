@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>claude-disable-feedback — pytmux 플러그인</title>
+<meta name="description" content="pytmux claude-disable-feedback 플러그인 — Claude 시작 팁·세션 종료 평가 배너를 화면에서 가림.">
+<link rel="stylesheet" href="../../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-plugin="claude-disable-feedback">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">플러그인 · Claude</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">claude-disable-feedback</h1>
+        <p style="font-size:18px;">Claude Code 가 띄우는 <strong>시작 팁(/feedback 안내)과 세션 종료 평가 배너</strong>를 화면에서 가려 줍니다. 명령이 없는 순수 표시 필터 플러그인입니다.</p>
+      </header>
+      <section>
+        <h2 style="border-top:none;">동작 방식</h2>
+        <p>서버가 패널 행을 클라이언트로 보내기 직전에 해당 문구 행만 공백으로 바꿉니다(<code>server_filter_rows</code> 훅). Claude 에 키를 주입하지 않으므로 세션 상태에 영향이 없고, 플러그인을 끄면 문구가 다시 보입니다.</p>
+      </section>
+      <section>
+        <h2>켜고 끄기</h2>
+        <p>별도 명령이 없습니다. <code>:plugins</code> 관리 팝업에서 켜고 끕니다.</p>
+        <figure>
+          <img src="../../image/40-settings.svg" alt="설정/플러그인 관리">
+          <figcaption>통합 설정 팝업 — 플러그인 on/off 도 여기서.</figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>끄기 · 제거</h2>
+        <p>
+          <code>:plugins</code> 관리 팝업에서 끄거나(가역), <code>pytmuxlib/plugins/claude-disable-feedback/</code>
+          디렉토리를 지우면(delete-to-disable) 명령·자동완성·메뉴 어디에도 나타나지 않고 조용히
+          사라집니다. 코어는 영향받지 않습니다. <a href="/guide/plugins">← 플러그인 개요</a>
+        </p>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../../plugin-nav.js" defer></script>
+<script src="../../lightbox.js" defer></script>
+</body>
+</html>

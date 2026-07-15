@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>ncd — pytmux 플러그인</title>
+<meta name="description" content="pytmux ncd 플러그인 — Norton Change Directory 풍 디렉토리 트리로 빠른 cd.">
+<link rel="stylesheet" href="../../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-plugin="ncd">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">플러그인 · 탐색</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">ncd</h1>
+        <p style="font-size:18px;">1980년대 Norton Change Directory 를 재현한 <strong>디렉토리 전용 트리</strong>입니다. 루트부터 현재 디렉토리까지 펼쳐 열리고, 타이핑으로 점프해 <kbd>Enter</kbd> 한 번으로 패널을 cd 시킵니다.</p>
+      </header>
+      <section>
+        <h2 style="border-top:none;">여는 법</h2>
+        <table>
+          <thead><tr><th>명령</th><th>설명</th></tr></thead>
+          <tbody>
+            <tr><td><code>ncd</code></td><td>디렉토리 트리 팝업 (별칭 <code>nc</code>)</td></tr>
+          </tbody>
+        </table>
+        <figure>
+          <img src="../../image/27-ncd.svg" alt="ncd 디렉토리 트리">
+          <figcaption>DOS 블루 패널·시안 선택 막대 — 루트→cwd 펼침.</figcaption>
+        </figure>
+      </section>
+      <section>
+        <h2>키</h2>
+        <table>
+          <thead><tr><th>키</th><th>동작</th></tr></thead>
+          <tbody>
+            <tr><td><kbd>↑</kbd><kbd>↓</kbd> · <kbd>PgUp</kbd>/<kbd>PgDn</kbd> · <kbd>Home</kbd>/<kbd>End</kbd></td><td>이동</td></tr>
+            <tr><td><kbd>→</kbd> / <kbd>←</kbd></td><td>펼치기(지연 로드) / 접기·부모로</td></tr>
+            <tr><td>아무 글자</td><td>빨리찾기 — 보이는 트리에 없으면 서버가 하위까지 재귀 검색해 점프</td></tr>
+            <tr><td><kbd>Enter</kbd></td><td>현재 패널에서 그 디렉토리로 cd 후 닫기</td></tr>
+            <tr><td><kbd>⇧Enter</kbd> / <kbd>^O</kbd></td><td>그 디렉토리를 연 새 패널 분할</td></tr>
+            <tr><td><kbd>Esc</kbd></td><td>닫기</td></tr>
+          </tbody>
+        </table>
+      </section>
+      <section>
+        <h2>메모</h2>
+        <p>Windows 에선 드라이브들이 트리 최상위에 묶여 드라이브 전환도 됩니다. cd 명령의 방언(cmd <code>cd /d</code> vs POSIX)은 <strong>셸을 소유한 서버</strong> 기준이라 원격 페더레이션에서도 안전합니다. mdir 플러그인의 <kbd>F10</kbd> 트리도 이 화면을 재사용합니다.</p>
+      </section>
+
+      <section>
+        <h2>끄기 · 제거</h2>
+        <p>
+          <code>:plugins</code> 관리 팝업에서 끄거나(가역), <code>pytmuxlib/plugins/ncd/</code>
+          디렉토리를 지우면(delete-to-disable) 명령·자동완성·메뉴 어디에도 나타나지 않고 조용히
+          사라집니다. 코어는 영향받지 않습니다. <a href="/guide/plugins">← 플러그인 개요</a>
+        </p>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../../plugin-nav.js" defer></script>
+<script src="../../lightbox.js" defer></script>
+</body>
+</html>

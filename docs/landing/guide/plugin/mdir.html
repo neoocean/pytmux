@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>mdir — pytmux 플러그인</title>
+<meta name="description" content="pytmux mdir 플러그인 — 1990년대 한국의 국민 파일 관리자 Mdir III 를 재현한 팝업 파일 관리자. 태그·복사/이동/삭제·정렬/필터·뷰어·압축 보기.">
+<link rel="stylesheet" href="../../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-plugin="mdir">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">플러그인 · 탐색</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">mdir</h1>
+        <p style="font-size:18px;">1990년대 한국에서 NCD 보다 널리 쓰인 도스 파일 관리자 <strong>Mdir III(1998)</strong> 를 재현했습니다. 검정 바탕 1-패널 다열 리스트, 확장자별 색, 하단 집계/정보줄까지 — 원본 배포판과 실물 스크린샷을 조사해 실측 기준으로 맞췄고, 파일 조작은 pytmux 서버가 직접 수행해 원격 패널이면 원격 파일시스템에 적용됩니다.</p>
+      </header>
+      <section>
+        <h2 style="border-top:none;">여는 법</h2>
+        <table>
+          <thead><tr><th>명령</th><th>설명</th></tr></thead>
+          <tbody>
+            <tr><td><code>mdir</code></td><td>Mdir III 풍 파일 관리자 팝업 (별칭 <code>m</code>)</td></tr>
+          </tbody>
+        </table>
+        <figure>
+          <img src="../../image/43-mdir.svg" alt="mdir 파일 관리자">
+          <figcaption>다열 리스트 — 디렉토리 붉은색·EXE 초록·BAT 노랑·압축 자홍, 커서는 초록 선택막대. 하단에 집계줄과 커서파일 정보·시계.</figcaption>
+        </figure>
+      </section>
+      <section>
+        <h2>탐색 · 빨리찾기</h2>
+        <table>
+          <thead><tr><th>키</th><th>동작</th></tr></thead>
+          <tbody>
+            <tr><td><kbd>↑↓←→</kbd> · <kbd>PgUp</kbd>/<kbd>PgDn</kbd> · <kbd>Home</kbd>/<kbd>End</kbd></td><td>선택막대 이동(페이지 단위 다열 격자)</td></tr>
+            <tr><td><kbd>Enter</kbd></td><td>디렉토리 진입 · 드라이브 전환 · 압축파일 내부 보기 · 파일은 뷰어</td></tr>
+            <tr><td><kbd>.</kbd> / <kbd>Backspace</kbd></td><td>상위 디렉토리(커서는 방금 나온 디렉토리 위에)</td></tr>
+            <tr><td><kbd>\</kbd></td><td>루트로</td></tr>
+            <tr><td>아무 글자</td><td>빨리찾기 — 이름 접두→부분 일치 점프 (<kbd>Esc</kbd> 1회=해제)</td></tr>
+            <tr><td><kbd>F4</kbd></td><td>현재 탐색 디렉토리로 <strong>패널 cd</strong> 후 닫기(원조의 '종료 시 잔류')</td></tr>
+            <tr><td><kbd>⇧Enter</kbd> / <kbd>^O</kbd></td><td>커서 디렉토리를 연 새 패널 분할</td></tr>
+            <tr><td><kbd>F10</kbd></td><td>ncd 디렉토리 트리 — 트리에서 고른 곳으로 mdir 이동</td></tr>
+          </tbody>
+        </table>
+      </section>
+      <section>
+        <h2>태그와 파일 조작</h2>
+        <p><kbd>Space</kbd> 로 태그(선택)하고 — 원조처럼 커서가 한 칸 내려갑니다 — <kbd>⎇U</kbd> 전체, <kbd>+</kbd>/<kbd>-</kbd> 와일드카드 마스크, <kbd>*</kbd> 반전. 태그가 있으면 태그 전체, 없으면 커서 항목이 조작 대상입니다.</p>
+        <table>
+          <thead><tr><th>키</th><th>동작</th></tr></thead>
+          <tbody>
+            <tr><td><kbd>⎇C</kbd> / <kbd>F5</kbd> / <kbd>Ins</kbd></td><td>복사 — 대상 디렉토리 입력</td></tr>
+            <tr><td><kbd>⎇M</kbd> / <kbd>F6</kbd></td><td>이동</td></tr>
+            <tr><td><kbd>⎇D</kbd> / <kbd>Del</kbd> / <kbd>F8</kbd></td><td>삭제 — 확인 팝업 필수, 기본 선택은 '취소'</td></tr>
+            <tr><td><kbd>⎇R</kbd> / <kbd>F2</kbd></td><td>이름변경(현재 이름 프리필)</td></tr>
+            <tr><td><kbd>⎇K</kbd> / <kbd>F7</kbd></td><td>새 디렉토리</td></tr>
+          </tbody>
+        </table>
+        <p>덮어쓰기는 <strong>2단계</strong>입니다: 충돌이 있으면 아무것도 수행하지 않고 [모두 덮어쓰기/건너뛰기/취소]를 먼저 묻습니다. 루트 삭제·디렉토리를 자기 하위로 복사 같은 위험 요청은 서버가 거부합니다.</p>
+        <figure>
+          <img src="../../image/44-mdir-delete.svg" alt="삭제 확인 팝업">
+          <figcaption>태그 2개(노랑) 삭제 — 대상 목록을 보여주고 기본 선택은 취소.</figcaption>
+        </figure>
+      </section>
+      <section>
+        <h2>정렬 · 필터 · 뷰어 · 압축</h2>
+        <table>
+          <thead><tr><th>키</th><th>동작</th></tr></thead>
+          <tbody>
+            <tr><td><kbd>⎇N</kbd>/<kbd>⎇E</kbd>/<kbd>⎇S</kbd>/<kbd>⎇T</kbd></td><td>이름/확장자/크기/시간 정렬 — 같은 키 재입력=내림차순, <kbd>⎇O</kbd> 무정렬</td></tr>
+            <tr><td><kbd>⎇Z</kbd> / <kbd>⎇F</kbd></td><td>숨김 파일 토글 / 파일 마스크 필터(<code>*.py;*.md</code>)</td></tr>
+            <tr><td><kbd>⎇1</kbd>~<kbd>⎇6</kbd> / <kbd>⎇0</kbd></td><td>열수 강제 / 자동</td></tr>
+            <tr><td><kbd>⎇V</kbd> / <kbd>F3</kbd></td><td>내장 텍스트 뷰어(앞 256KB, 이진 파일 감지) — 원조 '보라(VV)' 대응</td></tr>
+          </tbody>
+        </table>
+        <p>zip/jar/tar(.gz·.bz2·.xz) 는 <kbd>Enter</kbd> 로 내부를 가상 디렉토리처럼 계층 탐색합니다(읽기전용 — 원조의 '디렉토리 재현').</p>
+        <figure>
+          <img src="../../image/45-mdir-archive.svg" alt="압축 내부 보기">
+          <figcaption>경로줄이 Archive 로 바뀌고 내부 계층을 탐색.</figcaption>
+        </figure>
+        <figure>
+          <img src="../../image/46-mdir-tree.svg" alt="F10 = ncd 트리 연동">
+          <figcaption>트리에서 고른 디렉토리로 mdir 이 이동.</figcaption>
+        </figure>
+      </section>
+      <section>
+        <h2>메모</h2>
+        <p>원조 기능 중 실행(Enter)은 멀티플렉서 안에서 위험해 뷰어/압축 보기로 대응했고, 디스크 포맷·화면보호기류는 제외했습니다. 맥 터미널은 <kbd>⌥</kbd> 이 메타가 아닐 수 있어 모든 조작에 F키 별칭을 두었습니다. 원격 패널에서 열면 <strong>원격 머신의 파일시스템</strong>을 보고 조작합니다.</p>
+      </section>
+
+      <section>
+        <h2>끄기 · 제거</h2>
+        <p>
+          <code>:plugins</code> 관리 팝업에서 끄거나(가역), <code>pytmuxlib/plugins/mdir/</code>
+          디렉토리를 지우면(delete-to-disable) 명령·자동완성·메뉴 어디에도 나타나지 않고 조용히
+          사라집니다. 코어는 영향받지 않습니다. <a href="/guide/plugins">← 플러그인 개요</a>
+        </p>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../../plugin-nav.js" defer></script>
+<script src="../../lightbox.js" defer></script>
+</body>
+</html>

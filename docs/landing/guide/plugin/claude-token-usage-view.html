@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>claude-token-usage-view — pytmux 플러그인</title>
+<meta name="description" content="pytmux claude-token-usage-view 플러그인 — 사용 한도 막대와 다음 리셋 블록 카운트다운 화면.">
+<link rel="stylesheet" href="../../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-plugin="claude-token-usage-view">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">플러그인 · Claude</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">claude-token-usage-view</h1>
+        <p style="font-size:18px;">Claude 사용 한도(세션 5h·주간)를 막대로, <strong>다음 리셋까지 남은 시간을 큰 블록 숫자</strong>로 보여주는 전용 화면입니다. 팝업 말고 탭/패널로도 띄울 수 있어 상시 모니터에 적합합니다.</p>
+      </header>
+      <section>
+        <h2 style="border-top:none;">여는 법</h2>
+        <table>
+          <thead><tr><th>명령</th><th>설명</th></tr></thead>
+          <tbody>
+            <tr><td><code>usage-view</code></td><td>한도+카운트다운 화면 (<code>usage-view [popup|tab|pane]</code>, 기본 popup; 별칭 <code>token-viewer</code>)</td></tr>
+          </tbody>
+        </table>
+        <figure>
+          <img src="../../image/30-usage-view.svg" alt="usage-view 팝업">
+          <figcaption>한도 막대(% 우측정렬) + 다음 리셋 블록 카운트다운.</figcaption>
+        </figure>
+      </section>
+      <section>
+        <h2>메모</h2>
+        <p>한도 값은 claude-code 플러그인의 실측(/usage) 데이터를 같이 씁니다. <code>tab</code>/<code>pane</code> 모드로 열면 자리 하나를 차지하는 대시보드가 됩니다.</p>
+      </section>
+
+      <section>
+        <h2>끄기 · 제거</h2>
+        <p>
+          <code>:plugins</code> 관리 팝업에서 끄거나(가역), <code>pytmuxlib/plugins/claude-token-usage-view/</code>
+          디렉토리를 지우면(delete-to-disable) 명령·자동완성·메뉴 어디에도 나타나지 않고 조용히
+          사라집니다. 코어는 영향받지 않습니다. <a href="/guide/plugins">← 플러그인 개요</a>
+        </p>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../../plugin-nav.js" defer></script>
+<script src="../../lightbox.js" defer></script>
+</body>
+</html>
