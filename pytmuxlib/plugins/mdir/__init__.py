@@ -51,8 +51,8 @@ class _MdirPlugin:
     completions = []
     command_options = {}
     # 원격 보기(federation) 중 업스트림으로 릴레이할 액션 — 원격 패널이면 원격
-    # 머신의 파일시스템을 보여야 한다(코어 화이트리스트와 합집합, 훅 relay_actions).
-    relay_actions = {"request_mdir_list"}
+    # 머신의 파일시스템을 보고 조작해야 한다(코어 화이트리스트와 합집합).
+    relay_actions = {"request_mdir_list", "request_mdir_op"}
 
     # ---- 클라이언트 측 ----
     def attach_client(self, app):
@@ -66,6 +66,12 @@ class _MdirPlugin:
             app.send_cmd("request_mdir_list", path=path)
         app.request_mdir_list = request_mdir_list
 
+        # 파일 조작(copy/move/delete/rename/mkdir). 응답 t==mdir_result — 충돌이면
+        # 화면이 [덮어쓰기/건너뛰기/취소]를 물어 overwrite=all|skip 으로 재요청한다.
+        def request_mdir_op(**kw):
+            app.send_cmd("request_mdir_op", **kw)
+        app.request_mdir_op = request_mdir_op
+
     def handle_command(self, app, c, args):
         if c in ("mdir", "m"):
             app.request_mdir_list()
@@ -73,10 +79,26 @@ class _MdirPlugin:
         return False
 
     def handle_message(self, app, msg):
-        if msg.get("t") == "mdir_list":
+        t = msg.get("t")
+        if t == "mdir_list":
             self._on_list(app, msg)
             return True
+        if t == "mdir_result":
+            # 조작 결과는 떠 있는 mdir 화면으로(확인 팝업이 위에 겹쳐 있어도 —
+            # app.screen 이 아니라 스택 전체에서 찾는다).
+            scr = self._find_screen(app)
+            if scr is not None:
+                scr.apply_result(msg)
+            return True
         return False
+
+    @staticmethod
+    def _find_screen(app):
+        from .screen import MdirScreen
+        for s in reversed(app.screen_stack):
+            if isinstance(s, MdirScreen):
+                return s
+        return None
 
     def _on_list(self, app, msg):
         """mdir_list 수신. MdirScreen 이 떠 있으면 그 화면의 목록 갱신(탐색),
@@ -109,6 +131,9 @@ class _MdirPlugin:
         if action == "request_mdir_list":
             from .server import mdir_list_msg
             return mdir_list_msg(server, sess, msg.get("path"))
+        if action == "request_mdir_op":
+            from .server import mdir_op_msg
+            return mdir_op_msg(server, sess, msg)
         return None
 
 

@@ -86,6 +86,134 @@ async def test_mdir_list_msg_explicit_path_and_err():
         assert bad["entries"] == [] and bad["err"]
 
 
+# ---- 서버: 파일 조작(request_mdir_op) ----
+def _w(path, content="x"):
+    with open(path, "w") as f:
+        f.write(content)
+
+
+async def test_mdir_op_copy_conflict_two_phase():
+    with tempfile.TemporaryDirectory() as root:
+        src, dst = os.path.join(root, "s"), os.path.join(root, "d")
+        os.makedirs(src)
+        os.makedirs(dst)
+        _w(os.path.join(src, "a.txt"), "AAA")
+        _w(os.path.join(src, "b.txt"), "B")
+        _w(os.path.join(dst, "a.txt"), "BBB")
+        srcs = [os.path.join(src, "a.txt"), os.path.join(src, "b.txt")]
+        # 1차(ask): 충돌 회신, **아무것도 수행 안 함**(b.txt 도 안 복사).
+        r1 = mds.mdir_op_msg(None, None, {"op": "copy", "src": srcs,
+                                          "dst": dst, "overwrite": "ask"})
+        assert r1["conflicts"] == ["a.txt"] and r1["done"] == 0
+        assert open(os.path.join(dst, "a.txt")).read() == "BBB"
+        assert not os.path.exists(os.path.join(dst, "b.txt"))
+        # 2차(all): 덮어쓰고 전부 수행.
+        r2 = mds.mdir_op_msg(None, None, {"op": "copy", "src": srcs,
+                                          "dst": dst, "overwrite": "all"})
+        assert r2["done"] == 2 and r2["failed"] == [], r2
+        assert open(os.path.join(dst, "a.txt")).read() == "AAA"
+        # 3차(skip): 충돌 항목만 건너뛰고 나머지 수행.
+        dst2 = os.path.join(root, "d2")
+        os.makedirs(dst2)
+        _w(os.path.join(dst2, "a.txt"), "KEEP")
+        r3 = mds.mdir_op_msg(None, None, {"op": "copy", "src": srcs,
+                                          "dst": dst2, "overwrite": "skip"})
+        assert r3["done"] == 1, r3
+        assert open(os.path.join(dst2, "a.txt")).read() == "KEEP"
+        assert os.path.exists(os.path.join(dst2, "b.txt"))
+
+
+async def test_mdir_op_copy_dir_tree_and_into_self_guard():
+    with tempfile.TemporaryDirectory() as root:
+        sub = os.path.join(root, "sub")
+        os.makedirs(os.path.join(sub, "inner"))
+        _w(os.path.join(sub, "inner", "f.txt"), "F")
+        dst = os.path.join(root, "d")
+        os.makedirs(dst)
+        r = mds.mdir_op_msg(None, None, {"op": "copy", "src": [sub],
+                                         "dst": dst, "overwrite": "ask"})
+        assert r["done"] == 1 and r["failed"] == []
+        assert open(os.path.join(dst, "sub", "inner", "f.txt")).read() == "F"
+        # 자기 하위로 복사 거부.
+        r2 = mds.mdir_op_msg(None, None, {"op": "copy", "src": [sub],
+                                          "dst": os.path.join(sub, "inner"),
+                                          "overwrite": "ask"})
+        assert r2["done"] == 0 and r2["failed"][0][1] == "into_self", r2
+
+
+async def test_mdir_op_move_and_dir_overwrite_guard():
+    with tempfile.TemporaryDirectory() as root:
+        dst = os.path.join(root, "d")
+        os.makedirs(dst)
+        _w(os.path.join(root, "f.txt"), "F")
+        r = mds.mdir_op_msg(None, None, {"op": "move",
+                                         "src": [os.path.join(root, "f.txt")],
+                                         "dst": dst, "overwrite": "ask"})
+        assert r["done"] == 1
+        assert not os.path.exists(os.path.join(root, "f.txt"))
+        assert open(os.path.join(dst, "f.txt")).read() == "F"
+        # 파일→파일 덮어쓰기 이동(all)은 원자 교체.
+        _w(os.path.join(root, "f.txt"), "NEW")
+        r2 = mds.mdir_op_msg(None, None, {"op": "move",
+                                          "src": [os.path.join(root, "f.txt")],
+                                          "dst": dst, "overwrite": "all"})
+        assert r2["done"] == 1
+        assert open(os.path.join(dst, "f.txt")).read() == "NEW"
+        # 동명 디렉토리가 끼는 덮어쓰기 이동은 거부(병합 의미 모호).
+        os.makedirs(os.path.join(root, "sub"))
+        os.makedirs(os.path.join(dst, "sub"))
+        r3 = mds.mdir_op_msg(None, None, {"op": "move",
+                                          "src": [os.path.join(root, "sub")],
+                                          "dst": dst, "overwrite": "all"})
+        assert r3["done"] == 0 and r3["failed"][0][1] == "dir_overwrite", r3
+
+
+async def test_mdir_op_delete_recursive_and_root_guard():
+    with tempfile.TemporaryDirectory() as root:
+        sub = os.path.join(root, "sub")
+        os.makedirs(os.path.join(sub, "deep"))
+        _w(os.path.join(sub, "deep", "f.txt"))
+        _w(os.path.join(root, "g.txt"))
+        r = mds.mdir_op_msg(None, None, {
+            "op": "delete", "src": [sub, os.path.join(root, "g.txt")]})
+        assert r["done"] == 2 and r["failed"] == []
+        assert not os.path.exists(sub) and not os.path.exists(
+            os.path.join(root, "g.txt"))
+        # 루트/드라이브 루트는 서버가 거부(클라 확인과 별개의 최소 방어).
+        r2 = mds.mdir_op_msg(None, None, {"op": "delete", "src": ["/"]})
+        assert r2["done"] == 0 and r2["failed"][0][1] == "root"
+        assert mds._is_fs_root("C:\\") and mds._is_fs_root("/") \
+            and not mds._is_fs_root("/tmp")
+
+
+async def test_mdir_op_rename_and_mkdir():
+    with tempfile.TemporaryDirectory() as root:
+        _w(os.path.join(root, "a.txt"), "A")
+        r = mds.mdir_op_msg(None, None, {"op": "rename",
+                                         "src": [os.path.join(root, "a.txt")],
+                                         "dst": "b.txt"})
+        assert r["done"] == 1
+        assert open(os.path.join(root, "b.txt")).read() == "A"
+        # 기존 이름과 충돌 → exists.
+        _w(os.path.join(root, "c.txt"))
+        r2 = mds.mdir_op_msg(None, None, {"op": "rename",
+                                          "src": [os.path.join(root, "c.txt")],
+                                          "dst": "b.txt"})
+        assert r2["done"] == 0 and r2["failed"][0][1] == "exists"
+        # 경로 구분자 든 이름 거부.
+        r3 = mds.mdir_op_msg(None, None, {"op": "rename",
+                                          "src": [os.path.join(root, "c.txt")],
+                                          "dst": "x/y"})
+        assert r3["failed"][0][1] == "bad_name"
+        # mkdir 정상 + 중복 exists.
+        r4 = mds.mdir_op_msg(None, None, {"op": "mkdir", "base": root,
+                                          "dst": "newdir"})
+        assert r4["done"] == 1 and os.path.isdir(os.path.join(root, "newdir"))
+        r5 = mds.mdir_op_msg(None, None, {"op": "mkdir", "base": root,
+                                          "dst": "newdir"})
+        assert r5["done"] == 0 and r5["failed"][0][1] == "exists"
+
+
 async def test_mdir_cd_command_dialects_and_quote_defense():
     # ncd 와 동일 규율의 사본 — Windows 임베드 따옴표·개행 무력화, POSIX shlex.
     assert _cd_command("/r/a b", nt=False) == "cd '/r/a b'\n"
@@ -275,6 +403,152 @@ async def test_mdir_speed_search_and_esc_clears_find_first():
         await pilot.press("escape")                # 2차 Esc = 닫기
         assert await wait_until(
             pilot, lambda: not isinstance(app.screen, MdirScreen))
+    await _with_app(body)
+
+
+async def test_mdir_space_tags_and_all_toggle():
+    async def body(app, pilot, srv):
+        from pytmuxlib.plugins.mdir.screen import MdirScreen
+        app.send_cmd = lambda *a, **k: None
+        app._run_command("mdir")
+        app._dispatch(_msg())
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirScreen))
+        v = app.screen._view
+        await pilot.press("down")                  # → sub
+        await pilot.press("space")                 # 태그 + 커서 아래로
+        assert v._tags == {"sub"}
+        assert v._item_name(v._items[v._idx]) == "zeta"
+        await pilot.press("space")
+        assert v._tags == {"sub", "zeta"}
+        await pilot.press("asterisk")              # 반전 → 파일 2개만
+        assert v._tags == {"a.txt", "b.txt"}, v._tags
+        v._tag_all_toggle()                        # 일부 태그 → 전체? (비어있지 않으면 해제)
+        assert v._tags == set()
+        v._tag_all_toggle()
+        assert v._tags == {"sub", "zeta", "a.txt", "b.txt"}
+    await _with_app(body)
+
+
+async def test_mdir_copy_flow_prompt_sends_op():
+    async def body(app, pilot, srv):
+        from pytmuxlib.plugins.mdir.screen import MdirScreen, MdirPrompt
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app._run_command("mdir")
+        app._dispatch(_msg())
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirScreen))
+        v = app.screen._view
+        await pilot.press("down", "space")         # sub 태그
+        sent.clear()
+        await pilot.press("f5")                    # 복사(F5=⎇C 별칭)
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirPrompt))
+        await pilot.press("enter")                 # 프리필(현재 경로) 그대로 확정
+        assert await wait_until(pilot, lambda: sent != []), "op 미전송"
+        assert sent == [("request_mdir_op",
+                         {"op": "copy", "src": ["/r/sub"], "dst": "/r",
+                          "overwrite": "ask"})], sent
+        assert v._pending_op == {"op": "copy", "src": ["/r/sub"], "dst": "/r",
+                                 "overwrite": "ask"}
+    await _with_app(body)
+
+
+async def test_mdir_delete_confirm_defaults_to_cancel():
+    async def body(app, pilot, srv):
+        from pytmuxlib.plugins.mdir.screen import MdirScreen, MdirConfirm
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app._run_command("mdir")
+        app._dispatch(_msg())
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirScreen))
+        await pilot.press("end")                   # 마지막 파일(b.txt)
+        sent.clear()
+        await pilot.press("f8")                    # 삭제 확인 팝업
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirConfirm))
+        await pilot.press("enter")                 # 기본 선택=취소 → 아무 일 없음
+        assert await wait_until(
+            pilot, lambda: isinstance(app.screen, MdirScreen))
+        assert sent == [], "기본이 취소가 아님(Enter 연타 위험)"
+        await pilot.press("f8")
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirConfirm))
+        await pilot.press("left", "enter")         # ← 로 '삭제' 선택 후 확정
+        assert await wait_until(pilot, lambda: sent != [])
+        assert sent == [("request_mdir_op",
+                         {"op": "delete", "src": ["/r/b.txt"]})], sent
+    await _with_app(body)
+
+
+async def test_mdir_conflict_confirm_resends_with_policy():
+    async def body(app, pilot, srv):
+        from pytmuxlib.plugins.mdir.screen import MdirScreen, MdirConfirm
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app._run_command("mdir")
+        app._dispatch(_msg())
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirScreen))
+        v = app.screen._view
+        v._send_op(op="copy", src=["/r/a.txt"], dst="/x", overwrite="ask")
+        sent.clear()
+        # 서버가 충돌 회신 → [모두 덮어쓰기/건너뛰기/취소] 확인 팝업.
+        app._dispatch({"t": "mdir_result", "op": "copy", "done": 0,
+                       "failed": [], "conflicts": ["a.txt"]})
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirConfirm))
+        await pilot.press("left", "left", "enter")   # 기본 취소 → ←← = 모두 덮어쓰기
+        assert await wait_until(pilot, lambda: sent != [])
+        assert sent == [("request_mdir_op",
+                         {"op": "copy", "src": ["/r/a.txt"], "dst": "/x",
+                          "overwrite": "all"})], sent
+    await _with_app(body)
+
+
+async def test_mdir_result_notice_and_refresh():
+    async def body(app, pilot, srv):
+        from pytmuxlib.plugins.mdir.screen import MdirScreen
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app._run_command("mdir")
+        app._dispatch(_msg())
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirScreen))
+        v = app.screen._view
+        sent.clear()
+        app._dispatch({"t": "mdir_result", "op": "delete", "done": 2,
+                       "failed": [], "conflicts": []})
+        # 완료 공지 + 목록 재조회.
+        assert v._notice and v._notice[0].startswith("삭제 2"), v._notice
+        assert sent == [("request_mdir_list", {"path": "/r"})], sent
+        # 실패 사유 코드는 클라가 번역해 공지에 싣는다(서버발 표면 규율).
+        app._dispatch({"t": "mdir_result", "op": "rename", "done": 0,
+                       "failed": [["b.txt", "exists"]], "conflicts": []})
+        assert v._notice[1] is True and "같은 이름이 이미 있음" in v._notice[0], \
+            v._notice
+    await _with_app(body)
+
+
+async def test_mdir_rename_prompt_prefill_and_mkdir():
+    async def body(app, pilot, srv):
+        from pytmuxlib.plugins.mdir.screen import MdirScreen, MdirPrompt
+        from textual.widgets import Input
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app._run_command("mdir")
+        app._dispatch(_msg())
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirScreen))
+        await pilot.press("end", "up")             # a.txt (파일 첫째)
+        v = app.screen._view
+        assert v._item_name(v._items[v._idx]) == "a.txt"
+        sent.clear()
+        await pilot.press("f2")                    # 이름변경 — 현재 이름 프리필
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirPrompt))
+        assert app.screen.query_one(Input).value == "a.txt"
+        await pilot.press("escape")                # 취소 → op 없음
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirScreen))
+        assert sent == []
+        await pilot.press("f7")                    # 새 디렉토리
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirPrompt))
+        await pilot.press("n", "e", "w", "enter")
+        assert await wait_until(pilot, lambda: sent != [])
+        assert sent == [("request_mdir_op",
+                         {"op": "mkdir", "base": "/r", "dst": "new"})], sent
+        assert v._pending_sel == "new"             # 생성 후 커서를 새 디렉토리로
     await _with_app(body)
 
 

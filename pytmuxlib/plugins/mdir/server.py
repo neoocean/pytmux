@@ -84,6 +84,156 @@ def _drive_roots() -> list[str]:
     return out
 
 
+def _is_fs_root(p: str) -> bool:
+    r"""파일시스템 루트('/')·드라이브 루트('C:\\') 여부 — 삭제/이동 대상으로 거부."""
+    q = p.rstrip("/\\")
+    return q == "" or (len(q) == 2 and q[1] == ":")
+
+
+def _inside(child: str, parent: str) -> bool:
+    """child 가 parent 자신이거나 그 하위인지(디렉토리를 자기 안으로 복사/이동 방지)."""
+    c = os.path.normcase(os.path.normpath(child))
+    p = os.path.normcase(os.path.normpath(parent))
+    return c == p or c.startswith(p + os.sep)
+
+
+def mdir_op_msg(server, sess, msg: dict) -> dict:
+    """mdir 파일 조작 요청(request_mdir_op) — 서버가 shutil/os 로 **직접** 수행한다
+    (패널 셸 상태와 무관, 페더레이션이면 릴레이돼 원격 파일시스템에 적용).
+
+    op: copy|move|delete|rename|mkdir. src=절대경로 목록, dst=대상(copy/move=디렉토리,
+    rename=새 이름, mkdir=새 디렉토리 이름), base=현재 디렉토리(rename/mkdir 기준),
+    overwrite=ask|all|skip.
+
+    덮어쓰기 2단계 프로토콜: overwrite=ask 에서 충돌(대상에 같은 이름 존재)이 하나라도
+    있으면 **아무것도 수행하지 않고** conflicts 를 회신한다 — 클라가 사용자에게
+    [모두 덮어쓰기/건너뛰기/취소]를 물어 all|skip 으로 재요청한다. 절반만 수행하고
+    묻는 것보다 결정론적이고, move 의 '이미 옮겨진 src 재요청' 문제가 없다.
+
+    안전 규율: 파괴적 확인(삭제 확인 팝업)은 클라 몫이지만, 서버도 최소 방어를
+    한다 — 루트/드라이브 루트 삭제·이동 거부, 디렉토리를 자기 하위로 복사/이동
+    거부, rename/mkdir 이름의 경로 구분자 거부. 개별 실패는 failed 로 모아
+    나머지를 계속 진행한다(일괄 작업 중 한 항목 때문에 전체 중단하지 않음)."""
+    import shutil
+    op = msg.get("op")
+    srcs = [str(s) for s in (msg.get("src") or [])]
+    dst = msg.get("dst")
+    base = msg.get("base")
+    overwrite = msg.get("overwrite") or "ask"
+    done = 0
+    failed: list[list[str]] = []
+
+    def _name(p):
+        return os.path.basename(p.rstrip("/\\")) or p
+
+    if op in ("copy", "move"):
+        if not dst:
+            return {"t": "mdir_result", "op": op, "done": 0,
+                    "failed": [["", "no_dst"]], "conflicts": []}
+        dstdir = os.path.abspath(os.path.expanduser(str(dst)))
+        if not os.path.isdir(dstdir):
+            return {"t": "mdir_result", "op": op, "done": 0,
+                    "failed": [[dstdir, "dst_not_dir"]], "conflicts": []}
+        pairs = []
+        conflicts = []
+        for s in srcs:
+            tgt = os.path.join(dstdir, _name(s))
+            if not os.path.exists(s) and not os.path.islink(s):
+                failed.append([_name(s), "no_src"])
+                continue
+            if op == "move" and _is_fs_root(s):
+                failed.append([_name(s), "root"])
+                continue
+            if os.path.isdir(s) and _inside(dstdir, s):
+                failed.append([_name(s), "into_self"])
+                continue
+            if os.path.normcase(os.path.normpath(tgt)) == \
+                    os.path.normcase(os.path.normpath(s)):
+                failed.append([_name(s), "same"])
+                continue
+            if os.path.exists(tgt):
+                conflicts.append(_name(s))
+            pairs.append((s, tgt))
+        if conflicts and overwrite == "ask":
+            # 수행 없이 되묻기(위 도크스트링의 2단계 프로토콜).
+            return {"t": "mdir_result", "op": op, "done": 0, "failed": failed,
+                    "conflicts": conflicts}
+        for s, tgt in pairs:
+            exists = os.path.exists(tgt)
+            if exists and overwrite == "skip":
+                continue
+            try:
+                if op == "copy":
+                    if os.path.isdir(s) and not os.path.islink(s):
+                        shutil.copytree(s, tgt, symlinks=True,
+                                        dirs_exist_ok=exists)
+                    else:
+                        shutil.copy2(s, tgt, follow_symlinks=False)
+                else:                     # move
+                    if exists:
+                        # 디렉토리가 끼면(어느 쪽이든) 덮어쓰기 이동은 병합 의미가
+                        # 모호해 거부 — 원조도 물어보고 실패시키는 영역.
+                        if os.path.isdir(s) or os.path.isdir(tgt):
+                            failed.append([_name(s), "dir_overwrite"])
+                            continue
+                        os.replace(s, tgt)      # 파일→파일 원자 교체
+                    else:
+                        shutil.move(s, tgt)
+                done += 1
+            except OSError as ex:
+                failed.append([_name(s), f"{type(ex).__name__}: {ex}"])
+        return {"t": "mdir_result", "op": op, "done": done, "failed": failed,
+                "conflicts": []}
+
+    if op == "delete":
+        for s in srcs:
+            if _is_fs_root(s):
+                failed.append([_name(s), "root"])
+                continue
+            try:
+                if os.path.isdir(s) and not os.path.islink(s):
+                    shutil.rmtree(s)
+                else:
+                    os.remove(s)
+                done += 1
+            except OSError as ex:
+                failed.append([_name(s), f"{type(ex).__name__}: {ex}"])
+        return {"t": "mdir_result", "op": op, "done": done, "failed": failed,
+                "conflicts": []}
+
+    if op in ("rename", "mkdir"):
+        name = str(dst or "").strip()
+        bad = (not name or name in (".", "..")
+               or "/" in name or "\\" in name or "\x00" in name)
+        if bad:
+            return {"t": "mdir_result", "op": op, "done": 0,
+                    "failed": [[name, "bad_name"]], "conflicts": []}
+        try:
+            if op == "mkdir":
+                root = os.path.abspath(os.path.expanduser(str(base or "")))
+                if not os.path.isdir(root):
+                    return {"t": "mdir_result", "op": op, "done": 0,
+                            "failed": [[name, "dst_not_dir"]], "conflicts": []}
+                os.makedirs(os.path.join(root, name), exist_ok=False)
+            else:
+                src = srcs[0] if srcs else ""
+                tgt = os.path.join(os.path.dirname(src.rstrip("/\\")), name)
+                if os.path.exists(tgt):
+                    return {"t": "mdir_result", "op": op, "done": 0,
+                            "failed": [[name, "exists"]], "conflicts": []}
+                os.rename(src, tgt)
+            done = 1
+        except FileExistsError:
+            failed.append([name, "exists"])
+        except OSError as ex:
+            failed.append([name, f"{type(ex).__name__}: {ex}"])
+        return {"t": "mdir_result", "op": op, "done": done, "failed": failed,
+                "conflicts": []}
+
+    return {"t": "mdir_result", "op": op or "?", "done": 0,
+            "failed": [["", "bad_op"]], "conflicts": []}
+
+
 def mdir_list_msg(server, sess, path: str | None = None) -> dict:
     """mdir 목록 요청 응답.
 
