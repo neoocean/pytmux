@@ -75,7 +75,10 @@
         <h2>작성창(compose) · 출력 캡처(REC)</h2>
         <ul>
           <li><strong>작성창</strong> — ESC 모드 <kbd>Insert</kbd>(Insert 키가 없는 맥 키보드는 <kbd>Shift+Delete</kbd>)로 블록 선택 편집이 가능한 작성 버퍼를 엽니다.
-            여기서 다듬은 뒤 패널에 주입합니다. 붙여넣은 텍스트나 이미지 경로도 작성창이 열려 있으면 이 버퍼로 갑니다.</li>
+            여기서 다듬은 뒤 패널에 주입합니다. 붙여넣은 텍스트나 이미지 경로도 작성창이 열려 있으면 이 버퍼로 갑니다.
+            열 때 <strong>프롬프트에 이미 쳐 둔 내용</strong>이 있으면 <strong>여러 줄이든 그대로</strong> 따라옵니다(화면의 입력창을 그대로 읽어 옵니다 —
+            <kbd>↑</kbd> 로 불러온 예전 프롬프트처럼 이 창에서 치지 않은 내용도 포함). 적용(<kbd>Ctrl+S</kbd>) 시 원래 프롬프트는 비우고 작성한 내용을 통째로 넣으며,
+            <kbd>Esc</kbd> 로 취소하면 프롬프트는 <strong>그대로</strong> 남습니다.</li>
           <li><strong>출력 캡처(REC)</strong> — <code>capture-output</code>(<code>capture-toggle [on|off]</code>, 기본 off)로
             패널의 원시 PTY 출력을 무손실로 파일에 남겨, 나중에 replay 로 복원할 수 있습니다.</li>
         </ul>

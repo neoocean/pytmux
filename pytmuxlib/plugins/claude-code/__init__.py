@@ -826,6 +826,11 @@ class _ClaudeCodePlugin:
         if action == "set_claude_rules":              # #27 시작 규칙 저장(영속)
             server.set_claude_rules(msg.get("text", ""))
             return "broadcast"                        # status 로 새 규칙 회신
+        if action == "jump_prompt":
+            # esc ctrl+↑/↓: 활성 Claude 패널을 이전/다음 프롬프트 위치로 스크롤.
+            # 스크롤만 바뀌므로 그 패널 프레임만 다시 보내면 된다(send_full).
+            server.claude_jump_prompt(sess, str(msg.get("direction", "up")))
+            return "send_full"
         if action == "set_prompt_clear":
             server.set_prompt_clear(sess, msg.get("value"))
             return "send_full"
@@ -857,7 +862,10 @@ class _ClaudeCodePlugin:
     # 합집합). 코어 serverremote._REMOTE_RELAY_ACTIONS 에서 이전(delete-to-disable):
     # 활성 패널 단위 Claude 토글 + 원격 토큰 팝업 조회. 각 액션의 상세 사유는 종전
     # serverremote 주석 참조(엉뚱한 탭 AR 방지·원격 토큰 출처 일치 등).
-    relay_actions = {"set_autoresume", "set_prompt_clear", "request_token_log"}
+    # jump_prompt: 원격 탭을 보는 중엔 **그 원격** 패널의 스크롤백을 점프해야 한다 —
+    # 릴레이하지 않으면 보이지도 않는 로컬 패널이 조용히 스크롤된다(§1.7-c 동형 버그).
+    relay_actions = {"set_autoresume", "set_prompt_clear", "request_token_log",
+                     "jump_prompt"}
 
     def server_control(self, server, sess, c, args):
         """외부 CLI 의 claude/token 토글 명령을 처리한다(코어 handle_control 이 자기

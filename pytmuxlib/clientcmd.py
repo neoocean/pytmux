@@ -241,20 +241,26 @@ class _CommandMixin:
     def _current_prompt_text(self, pane_id):
         """패널 프롬프트에 **지금 들어 있는 텍스트**를 best-effort 로 돌려준다(없으면 "").
 
-        ① 클라가 추적한 키 입력(`_prompt_buf`) — 사용자가 이 클라에서 친 것은 정확
-           (멀티라인 개행·백스페이스 반영). 단 원격제어(/rc)·재접속처럼 클라 on_key 를
-           안 거친 입력은 추적에 없다.
-        ② 추적이 비어 있으면 플러그인(claude-code)이 **화면 입력박스에서 긁은 값**
-           (client_prompt_text 훅) — 추적 못 한 입력도 화면 기준으로 포착한다.
+        ① 플러그인(claude-code)이 **화면 입력박스에서 긁은 값**(client_prompt_text 훅)
+           — 화면은 자식이 실제로 들고 있는 것 그대로라 가장 정확하다. 이 클라를 안 거친
+           입력(원격제어/재접속/↑히스토리 불러오기)도 그대로 잡힌다. Claude 패널이
+           아니거나 입력박스를 못 찾으면 None(=긁기 불가) → ②.
+        ② 클라가 추적한 키 입력(`_prompt_buf`) — 화면 긁기가 안 되는 패널의 폴백.
+
+        긁기를 ① 로 두는 이유(사용자 보고 2026-07-15): 추적치는 키 스트림 근사라
+        **줄바꿈이 CR 로 도착하면 '제출' 로 오인해 버퍼를 비운다**. Claude 의 멀티라인
+        입력(meta/option+Enter → ESC 와 CR 이 따로 도착, `\` +Enter 등)이 바로 그 꼴이라
+        마지막 개행 뒤에 친 **한 줄만** 남아 작성창에 그 줄만 인계됐다. 화면 긁기는
+        박스 안 모든 행을 읽어 그 오인이 없다(빈 문자열=박스가 실제로 빔 → 그대로 존중).
+
         작성창 open_compose 가 시드(표시)와 비우기(백스페이스 개수)에 같은 값을 쓴다 —
         둘이 일치해야 '인계 후 통째 투입' 이 중복/잔여 없이 맞아떨어진다."""
-        buf = getattr(self, "_prompt_buf", None) or {}
-        typed = buf.get(pane_id, "")
-        if typed:
-            return typed
         plugins = getattr(self, "plugins", None)
         scraped = plugins.client_prompt_text(self, pane_id) if plugins else None
-        return scraped or ""
+        if scraped is not None:      # "" 도 유효(=입력박스가 비어 있음)
+            return scraped
+        buf = getattr(self, "_prompt_buf", None) or {}
+        return buf.get(pane_id, "")
 
     def open_compose(self, initial=None):
         """블록 선택 편집이 되는 멀티라인 작성창(ComposePromptScreen)을 연다.

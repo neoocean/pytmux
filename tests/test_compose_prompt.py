@@ -53,6 +53,33 @@ async def test_esc_shift_delete_opens_compose():
     await _with_app(body)
 
 
+async def test_esc_ctrl_updown_jumps_prompts_and_enters_scroll():
+    """ESC → Ctrl+↑/↓ = 이전/다음에 입력한 프롬프트 위치로 점프(요청 2026-07-15).
+
+    점프하면 뷰가 라이브 하단을 벗어나므로 **스크롤 모드**로 들어가고, 그 안에서
+    같은 키로 계속 오간다(Esc/q 로 라이브 복귀 — 기존 스크롤 모드 규약). 실제 스크롤
+    계산은 서버(claude-code 플러그인 claude_jump_prompt)가 하고, 여기선 배선만 본다."""
+    async def body(app, pilot, srv):
+        sent = []
+        orig = app.send_cmd
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        try:
+            await pilot.press("escape")
+            assert app.mode == "esc"
+            await pilot.press("ctrl+up")
+            assert sent == [("jump_prompt", {"direction": "up"})], sent
+            assert app.mode == "scroll", "점프 후 스크롤 모드"
+            # esc 모드 표시(상태바)는 정리돼야 한다 — mode 만 덮으면 남는다.
+            assert app.status.cmd_mode is False
+            # 스크롤 모드 안에서도 같은 키로 계속 프롬프트를 오간다.
+            await pilot.press("ctrl+down")
+            assert sent[-1] == ("jump_prompt", {"direction": "down"}), sent
+            assert app.mode == "scroll"
+        finally:
+            app.send_cmd = orig
+    await _with_app(body)
+
+
 async def test_ctrl_s_injects_text_without_trailing_newline():
     """작성 후 Ctrl+S → 입력 텍스트 그대로 paste 로 투입(끝에 자동 개행 없음 →
     자식이 자동 제출하지 않음)."""
@@ -464,6 +491,41 @@ async def test_scrape_fallback_seeds_when_tracker_empty():
         await pilot.pause(0.2)
         ta = app.screen_stack[-1].query_one(_TA)
         assert ta.text == "remote text", repr(ta.text)
+    await _with_app(body)
+
+
+async def test_multiline_prompt_seeds_whole_text_not_last_line():
+    """멀티라인 프롬프트를 ESC→Insert 로 인계하면 **박스 안 전체**가 작성창에 온다
+    (사용자 보고 2026-07-15: 윗줄들이 빠지고 마지막 한 줄만 왔다).
+
+    원인은 키 추적치(_prompt_buf)를 화면 긁기보다 **먼저** 썼던 것 — 추적기는 CR 을
+    '제출' 로 보고 버퍼를 비우는데, Claude 의 멀티라인 개행(meta/option+Enter → ESC 와
+    CR 이 따로 도착)이 그 꼴이라 마지막 개행 뒤 한 줄만 남았다. 화면 긁기가 1차가 되어
+    (`_current_prompt_text`) 그 오인과 무관하게 박스 전체를 인계한다."""
+    from textual.widgets import TextArea as _TA
+
+    async def body(app, pilot, srv):
+        pid = app.layout.get("active")
+        # 화면: 2줄 프롬프트(URL 줄 + 빈 줄 + 한글 줄) — 사용자 스크린샷 재현.
+        rows = [[("⏺ 이전 출력", {})],
+                [("╭─ History 100/100 ────────────────╮", {})],
+                [("│ > https://example.org/browse/X-1 │", {})],
+                [("│                                  │", {})],
+                [("│   진행상황을 코멘트에 등록하세요. │", {})],
+                [("╰──────────────────────────────────╯", {})]]
+        app.pane_content = {pid: (rows, (4, 4))}   # 커서=마지막 입력 행
+        app.pane_wrap = {pid: set()}
+        app.pane_claude = {pid: {"id": pid, "claude": "idle"}}
+        # 추적기는 마지막 개행 뒤에 친 한 줄만 들고 있다(CR 을 제출로 오인해 비워진 뒤).
+        app._prompt_buf = {pid: "진행상황을 코멘트에 등록하세요."}
+        whole = ("https://example.org/browse/X-1\n\n"
+                 "진행상황을 코멘트에 등록하세요.")
+        assert app._current_prompt_text(pid) == whole, \
+            repr(app._current_prompt_text(pid))
+        app.open_compose()
+        await pilot.pause(0.2)
+        ta = app.screen_stack[-1].query_one(_TA)
+        assert ta.text == whole, repr(ta.text)
     await _with_app(body)
 
 

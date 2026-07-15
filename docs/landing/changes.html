@@ -57,6 +57,25 @@
       </div>
     </header>
 
+    <section class="cl-day" id="d-2026-07-15">
+      <h2>2026-07-15 <span class="pill">수요일</span></h2>
+      <ul>
+        <li><span class="pill stable">작성창</span> <strong>여러 줄로 쓰던 프롬프트를 작성창으로 가져올 때, 이제 윗줄까지 <span class="inline-code">전부</span> 따라옵니다.</strong>
+          Claude 프롬프트에 <strong>여러 줄</strong>을 입력한 상태에서 <span class="inline-code">Esc</span> → <span class="inline-code">Insert</span>(맥은 <span class="inline-code">Shift+Delete</span>)로 작성창을 열면,
+          <strong>마지막 한 줄만</strong> 넘어오고 <strong>윗줄들이 사라졌습니다</strong>. pytmux 는 지금까지 사용자가 <strong>친 키를 세어</strong> 프롬프트 내용을 짐작했는데,
+          Claude 에서 <strong>줄바꿈</strong>(<span class="inline-code">Option+Enter</span> 등)을 넣으면 그 신호가 <strong>Enter(제출)와 똑같이 도착</strong>해
+          — pytmux 는 "보냈구나" 하고 그때까지 센 내용을 <strong>버렸습니다</strong>. 그래서 마지막 줄바꿈 뒤에 친 것만 남았습니다.
+          이제 키를 세는 대신 <strong>화면에 실제로 보이는 입력창을 그대로 읽어</strong> 가져옵니다 — 줄바꿈이 어떻게 들어왔든 <strong>보이는 그대로</strong> 전부 옵니다.
+          덤으로 <strong>↑ 로 불러온 예전 프롬프트</strong>나 <strong>다른 곳에서 들어온 입력</strong>처럼 이 창에서 치지 않은 내용도 이제 함께 따라옵니다.</li>
+        <li><span class="pill stable">스크롤백</span> <strong>긴 대화에서 <span class="inline-code">Esc</span> → <span class="inline-code">Ctrl+↑/↓</span> 로 내가 이전에 입력한 프롬프트 위치로 건너뜁니다.</strong>
+          Claude 와 길게 대화하다 보면 <strong>"아까 뭘 시켰더라"</strong> 를 찾으러 한참 스크롤해야 했습니다. 이제 <span class="inline-code">Esc</span> → <span class="inline-code">Ctrl+↑</span> 를 누르면
+          <strong>바로 앞에 보낸 프롬프트</strong>가 화면 맨 위로 올라오고, 계속 누르면 <strong>한 턴씩 거슬러</strong> 올라갑니다 — <span class="inline-code">Ctrl+↓</span> 는 반대로 되짚어 내려옵니다.
+          프롬프트는 <strong>한 턴의 시작</strong>이라 화면 맨 위에 놓아, 거기서부터 <strong>주고받은 내용을 그대로 읽어 내려갈</strong> 수 있습니다.
+          점프하면 <strong>스크롤 모드</strong>가 되어 <span class="inline-code">↑↓</span>·<span class="inline-code">PgUp</span> 으로 주변을 살펴보다가 <span class="inline-code">Esc</span> 나 <span class="inline-code">q</span> 로 <strong>원래 자리(맨 아래)</strong>로 돌아옵니다.
+          (Claude 가 돌고 있는 패널에서만 동작합니다 — 일반 셸에서는 인용문·diff 의 <span class="inline-code">&gt;</span> 를 프롬프트로 잘못 짚지 않도록 켜지 않습니다.)</li>
+      </ul>
+    </section>
+
     <section class="cl-day" id="d-2026-07-14">
       <h2>2026-07-14 <span class="pill">화요일</span></h2>
       <ul>

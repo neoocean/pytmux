@@ -29,7 +29,7 @@ from .claude import (claude_account, claude_account_full, claude_api_error,
                      fmt_unknown_update,
                      claude_input_box,
                      claude_model_badge,
-                     claude_prompt, claude_perm_mode,
+                     claude_prompt, claude_prompt_marks, claude_perm_mode,
                      claude_remote_active, claude_remote_blocked,
                      claude_remote_menu,
                      claude_state, claude_usage,
@@ -283,6 +283,53 @@ class ServerClaudeMixin:
             rows, _ = p.render(False)
             text = "\n".join("".join(s[0] for s in r) for r in rows)
             self._maybe_schedule_resume(p, text)
+
+    # ---- 프롬프트 점프(esc ctrl+↑/↓) ----
+    def claude_jump_prompt(self, sess: Session, direction="up") -> bool:
+        """활성 Claude 패널의 스크롤백에서 **이전/다음에 입력한 프롬프트** 위치로
+        점프한다(사용자 요청 2026-07-15). 찾아서 스크롤했으면 True.
+
+        찾은 프롬프트 줄은 뷰 **상단**에 놓는다 — 프롬프트는 한 턴의 시작이라 거기서
+        아래로 읽어 내려가는 게 자연스럽다(검색이 히트를 가운데 두는 것과 다른 이유).
+
+        앵커는 뷰에서 매번 다시 구하고 상태를 들지 않는다 — 검색(search_pane 의
+        `_match_abs`)처럼 마지막 히트를 기억하면 사용자가 중간에 손으로 스크롤했을 때
+        어긋난다. 규칙: 뷰 상단에 프롬프트가 **놓여 있으면**(=점프로 거기 서 있음)
+        그 줄이 앵커고, 아니면(라이브 하단·손스크롤 중) 화면 **안**의 프롬프트도
+        후보가 되도록 맨 아래를 앵커로 본다 — 안 그러면 하단에서 첫 ctrl+↑ 가 화면에
+        보이는 **최신** 프롬프트를 건너뛰고 그 앞으로 가버린다.
+
+        셸 패널은 대상이 아니다(`> ` 로 시작하는 인용·diff 를 프롬프트로 오인) —
+        Claude 패널일 때만 동작한다."""
+        win = sess.active_window
+        if not win or not win.active_pane:
+            return False
+        p = win.active_pane
+        if not getattr(p, "_claude", None):
+            return False          # Claude 패널 아님 → 오점프 방지(셸 인용/diff)
+        texts = self._pane_text_lines(p)
+        marks = claude_prompt_marks(texts)
+        if not marks:
+            return False
+        hist = p._history_len()
+        view_top = max(0, hist - p.scroll)
+        if direction == "up":
+            # 뷰 상단에 서 있는 프롬프트가 있으면 그 앞, 아니면 화면 안 것부터.
+            anchor = view_top if view_top in set(marks) else len(texts)
+            cands = [i for i in reversed(marks) if i < anchor]
+        else:
+            cands = [i for i in marks if i > view_top]
+        # 뷰가 실제로 움직이는 첫 후보로 간다. 맨 끝(라이브 화면) 근처 프롬프트는 그
+        # 아래 줄이 한 화면보다 적어 상단까지 끌어올릴 수 없다(스크롤 클램프) — 그걸
+        # '점프함' 으로 치면 ctrl+↑ 가 먹통처럼 보이므로 건너뛰고 다음 프롬프트로
+        # 간다(어차피 그 프롬프트는 화면에 이미 보인다).
+        for found in cands:
+            scroll = max(0, min(hist, hist - found))
+            if scroll != p.scroll:
+                p.scroll = scroll
+                p.dirty = True
+                return True
+        return False              # 그 방향에 갈 곳 없음(뷰 유지)
 
     # ---- 프롬프트 단위 클리어 모드(#9) ----
     def set_prompt_clear(self, sess: Session, value=None):

@@ -289,6 +289,23 @@ async def test_claude_prompt():
     assert claude_prompt("일반\n행2\n> 타이핑 중인 줄\n행4") is None
 
 
+async def test_claude_prompt_marks():
+    """제출된 프롬프트 줄 인덱스(esc ctrl+↑/↓ 점프 목표). 열 0 의 `> `/`❯ `+내용만 —
+    들여쓴 인용·라이브 입력박스(테두리 `│` 선행)·마커만 있는 줄은 제외한다."""
+    from pytmuxlib.claude import claude_prompt_marks as f
+    texts = ["> 첫 프롬프트", "", "⏺ 답변 1",
+             "  > 들여쓴 인용(프롬프트 아님)",
+             "> 둘째 프롬프트", "  이어지는 줄(마커 없음)", "⏺ 답변 2",
+             "╭──────────╮", "│ > 라이브 입력 │", "╰──────────╯"]
+    assert f(texts) == [0, 4], f(texts)
+    # 신형 마커(❯ + 비분리공백)도 인식
+    assert f(["❯\xa0신형 마커 프롬프트"]) == [0]
+    # 마커만/내용 없음/구분 공백 없음 → 프롬프트 아님
+    assert f([">", "> ", ">x", "❯"]) == []
+    # 빈 입력/None 방어
+    assert f([]) == [] and f(None) == []
+
+
 async def test_claude_usage():
     # 표시는 사용량%(=100-잔량). "left/remaining N%" 는 잔량이라 100-N 으로 뒤집어 보인다
     # (2026-06-16 요청: 잔여 7% → 사용 93%). claude_context_pct 는 여전히 잔량을 낸다.

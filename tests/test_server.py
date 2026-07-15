@@ -3587,6 +3587,78 @@ async def test_search_buffer_capture_clear():
         await teardown(srv, task, sock)
 
 
+async def test_claude_jump_prompt_walks_turn_boundaries():
+    """esc ctrl+↑/↓ 프롬프트 점프(사용자 요청 2026-07-15): 활성 Claude 패널의
+    스크롤백에서 제출 프롬프트(`> …`) 위치를 하나씩 거슬러/되짚어 오간다.
+
+    claude_jump_prompt 은 claude-code 플러그인이 Server 에 합성하는 메서드다
+    (servermixin — 플러그인을 지우면 이 액션째 사라진다). 앵커는 뷰 상단이고 상태를
+    안 들어서, 손스크롤과 섞어도 어긋나지 않는다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        # 프롬프트 3개 + 사이사이 출력으로 스크롤백을 만든다(24행 화면 위로 넘김).
+        marks = []
+        for t in range(3):
+            marks.append(len(p.screen.history.top) + p.screen.cursor.y)
+            p.feed(f"> 프롬프트 {t}\r\n".encode())
+            for i in range(20):
+                p.feed(f"  출력 {t}-{i}\r\n".encode())
+        # 마지막 프롬프트 **아래로도** 한 화면 넘게 출력을 흘려, 세 마크 모두 뷰
+        # 상단까지 끌어올릴 수 있게 한다(그 아래 줄이 화면보다 적으면 스크롤이
+        # 클램프돼 상단에 못 온다 — 그 경계는 아래에서 따로 본다).
+        for i in range(30):
+            p.feed(f"  꼬리 {i}\r\n".encode())
+        p._claude = "idle"          # Claude 패널 게이트(셸이면 점프 안 함)
+        hist = p._history_len()
+        assert p.scroll == 0, "라이브 하단에서 시작"
+        # ctrl+↑ 세 번 → 마지막 → 둘째 → 첫 프롬프트가 차례로 뷰 상단에.
+        for expect in reversed(marks):
+            assert srv.claude_jump_prompt(sess, "up") is True
+            assert hist - p.scroll == expect, (hist - p.scroll, expect)
+        # 더 위에 프롬프트가 없으면 False + 뷰 유지(맨 위에서 멈춤).
+        at_top = p.scroll
+        assert srv.claude_jump_prompt(sess, "up") is False
+        assert p.scroll == at_top, "못 찾으면 뷰 그대로"
+        # ctrl+↓ 는 반대로 되짚어 내려온다.
+        assert srv.claude_jump_prompt(sess, "down") is True
+        assert hist - p.scroll == marks[1], hist - p.scroll
+        # 라이브 하단으로 돌아오면 ctrl+↓ 는 갈 곳이 없다(뷰 유지).
+        p.scroll = 0
+        assert srv.claude_jump_prompt(sess, "down") is False
+        assert p.scroll == 0
+        # 셸 패널(Claude 아님)은 대상이 아니다 — `> ` 인용/diff 오점프 방지.
+        p._claude = None
+        assert srv.claude_jump_prompt(sess, "up") is False
+        assert p.scroll == 0
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_claude_jump_prompt_skips_unreachable_last_prompt():
+    """뷰 상단에 못 오는(=아래 줄이 한 화면보다 적은) 최신 프롬프트는 건너뛰고 그
+    앞 프롬프트로 간다 — 라이브 하단에서 ctrl+↑ 가 '아무 반응 없음' 으로 보이지
+    않게(스크롤 클램프 경계). 어차피 그 최신 프롬프트는 화면에 이미 보인다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        first = len(p.screen.history.top) + p.screen.cursor.y
+        p.feed(b"> old prompt\r\n")
+        for i in range(40):
+            p.feed(f"  out {i}\r\n".encode())
+        p.feed(b"> newest prompt\r\n")   # 아래 출력이 화면보다 적다 → 상단 도달 불가
+        for i in range(3):
+            p.feed(f"  tail {i}\r\n".encode())
+        p._claude = "idle"
+        hist = p._history_len()
+        assert srv.claude_jump_prompt(sess, "up") is True
+        assert hist - p.scroll == first, (hist - p.scroll, first)
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_layout_persistence():
     srv, task, sock = await server_only()
     srv2, task2, sock2 = await server_only()

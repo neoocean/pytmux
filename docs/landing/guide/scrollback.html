@@ -44,6 +44,23 @@
           <li><code>clear-history</code> 로 스크롤백 비우기</li>
           <li><code>pipe-pane</code> 으로 패널 출력을 외부 명령에 흘려보내기</li>
         </ul>
+      </section>
+
+      <section>
+        <h2>프롬프트로 건너뛰기 (Claude 패널)</h2>
+        <p>
+          Claude 와 길게 대화하면 <strong>"아까 뭘 시켰더라"</strong> 를 찾으러 한참 스크롤하게 됩니다.
+          <kbd>Esc</kbd> → <kbd>Ctrl+↑</kbd> 를 누르면 <strong>바로 앞에 보낸 프롬프트</strong>가 화면 맨 위로 올라오고,
+          계속 누르면 <strong>한 턴씩 거슬러</strong> 올라갑니다. <kbd>Ctrl+↓</kbd> 는 반대로 되짚어 내려옵니다.
+          검색(<kbd>/</kbd>)이 <strong>글자</strong>를 찾는다면, 이쪽은 <strong>턴 경계</strong>로만 뜁니다.
+        </p>
+        <ul>
+          <li>프롬프트는 <strong>한 턴의 시작</strong>이라 화면 <strong>맨 위</strong>에 놓입니다 — 거기서부터 주고받은 내용을 그대로 읽어 내려갈 수 있습니다.</li>
+          <li>점프하면 <strong>스크롤 모드</strong>가 되어, <kbd>↑↓</kbd>·<kbd>PgUp</kbd> 으로 주변을 살펴보다가
+            <kbd>Esc</kbd>·<kbd>q</kbd> 로 <strong>원래 자리(맨 아래)</strong>로 돌아옵니다.</li>
+          <li><strong>Claude 가 돌고 있는 패널</strong>에서만 동작합니다 — 일반 셸에서는 인용문·diff 의 <code>&gt;</code> 를
+            프롬프트로 잘못 짚지 않도록 켜지 않습니다.</li>
+        </ul>
         <figure>
           <img src="../image/15-scrollback.svg" alt="패널 스크롤백 화면">
           <figcaption>패널별 스크롤백 — 휠만 올리면 바로 지난 출력을 봅니다.</figcaption>

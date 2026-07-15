@@ -768,6 +768,21 @@ def _box_inner(line: str) -> str:
     return inner.rstrip()
 
 
+# 트랜스크립트에 **제출된** 사용자 프롬프트 줄: 열 0 의 마커(`> `/`❯ `)+내용. 라이브
+# 입력박스 안의 `> ` 는 박스 테두리(`│`)가 앞서므로 열 0 앵커가 그것을 자연히 배제한다
+# (박스 없는 구버전 입력줄은 맨 아래 하나만 걸리는데, 그건 '지금 프롬프트'라 무해).
+# 멀티라인 프롬프트는 첫 줄에만 마커가 있고 이어지는 줄은 들여쓰기라 프롬프트당 1개.
+_PROMPT_MARK_LINE_RE = re.compile(r"^[>❯][ \xa0]+\S")
+
+
+def claude_prompt_marks(texts) -> list:
+    """스크롤백+화면 행 텍스트에서 **제출된 사용자 프롬프트** 줄의 인덱스를 위→아래
+    순서로 돌려준다(없으면 []). `esc ctrl+↑/↓` 프롬프트 점프의 목표 지점 — 한 프롬프트
+    (=한 턴의 시작)당 하나다. 순수 함수(패널/서버 비의존)라 단위 테스트가 쉽다."""
+    return [i for i, ln in enumerate(texts or ())
+            if _PROMPT_MARK_LINE_RE.match(ln or "")]
+
+
 def claude_input_box(lines, wrap=(), cursor_y=None):
     """패널 화면 행 문자열 목록에서 라이브 입력박스의 현재 텍스트를 추출(best-effort).
 

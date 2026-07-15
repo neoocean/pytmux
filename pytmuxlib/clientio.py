@@ -539,6 +539,22 @@ class _InputMixin:
             self.send_input(b"\x1b")
             self._exit_esc()
             return
+        if k in ("ctrl+up", "ctrl+down"):
+            # esc ctrl+↑/↓: 활성 Claude 패널에서 **이전/다음에 입력한 프롬프트**
+            # 위치로 점프한다(사용자 요청 2026-07-15). 긴 대화에서 "그때 뭘 시켰지"를
+            # 되짚는 동선 — 스크롤 모드의 자유 스크롤(↑↓/PgUp)·검색(/)과 달리 턴
+            # 경계로만 뛴다. 점프하면 뷰가 라이브 하단을 벗어나므로 **스크롤 모드로
+            # 들어간다** — 거기서 ctrl+↑/↓ 연타로 계속 오가고, ↑↓/PgUp 로 주변을
+            # 읽고, Esc/q/Enter 로 라이브(하단)에 복귀한다(기존 스크롤 모드 규약 그대로).
+            # jump_prompt 는 claude-code 플러그인 소유 액션이라 플러그인이 없으면
+            # 서버가 무시한다(delete-to-disable — 키는 무동작이 되고 모드만 바뀐다).
+            # _exit_esc 로 esc 모드 표시(상태바 cmd_mode·탭바 포커스)를 먼저 정리한
+            # 뒤 스크롤 모드로 — mode 만 덮으면 상태바에 esc 표시가 남는다.
+            self._exit_esc()
+            self.mode = "scroll"
+            self.send_cmd("jump_prompt",
+                          direction="up" if k == "ctrl+up" else "down")
+            return
         if k in ("insert", "shift+delete"):
             # esc Insert: 블록 선택(Shift+방향키/Home/End)이 되는 멀티라인 작성창을
             # 연다(옵트인, 필요할 때 매번). 자식 프롬프트 입력기가 범위 선택 편집을
@@ -637,7 +653,13 @@ class _InputMixin:
         half = max(1, self.layout.get("rows", 24) // 2)
         vi = self.mode_keys == "vi"
         emacs = self.mode_keys == "emacs"
-        if k == "up" or (vi and k == "k") or (emacs and k == "ctrl+p"):
+        if k in ("ctrl+up", "ctrl+down"):
+            # 프롬프트 점프(esc ctrl+↑/↓의 연속) — 스크롤 모드 안에서도 같은 키로
+            # 턴 경계를 계속 오간다. vi/emacs 의 k/j·ctrl+p/n 보다 먼저 본다
+            # (emacs 모드의 ctrl+p/n 과 겹치지 않는 별개 키).
+            self.send_cmd("jump_prompt",
+                          direction="up" if k == "ctrl+up" else "down")
+        elif k == "up" or (vi and k == "k") or (emacs and k == "ctrl+p"):
             self.send_scroll(aid, delta=1)
         elif k == "down" or (vi and k == "j") or (emacs and k == "ctrl+n"):
             self.send_scroll(aid, delta=-1)
