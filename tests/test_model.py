@@ -237,6 +237,44 @@ async def test_resized_pane_restores_tabstops():
     assert not getattr(scr.buffer[0], "wrapped", False), "줄이 wrap 되지 않음"
 
 
+async def test_conpty_prewrap_heuristic_wrap_tags():
+    """ConPTY(Windows)는 conhost 가 줄을 미리 접어 하드 개행으로 재방출하므로
+    DECAWM 오토랩 태그가 영원히 비어(실캡처: 꽉 찬 줄 36, 태그 0) 멀티라인 명령
+    복사가 줄마다 개행됐다(사용자 07-15). _prewrap_heuristic 패널은 render 가
+    '마지막 칸까지 꽉 찬 줄 + 접힌 경계 양쪽이 공백/박스문자 아님'을 연속원으로
+    보강 태깅한다. 구분선(─)·테두리(│…│) 꽉 찬 줄은 제외, Unix 기본(off)은 불변."""
+    from pytmuxlib.model import Pane
+
+    W = 40
+    cmd = "python3 tests/run.py test_client_and_more_stuff --flag=value"
+    box = "│" + " boxed full-width line".ljust(W - 2) + "│"
+    feed = (cmd[:W] + "\r\n" + cmd[W:] + "\r\n"   # row0 꽉 참+연속 → 태깅 기대
+            + "─" * W + "\r\n"                     # row2 전폭 구분선 → 제외
+            + "next text line\r\n"                 # row3
+            + box + "\r\n"                         # row4 │…│ 테두리 → 제외
+            + "short\r\n").encode()                # row5
+
+    p = Pane(1, -1, W, 12)
+    p._prewrap_heuristic = True                    # ConPTY 시뮬(플랫폼 무관 검증)
+    p.feed(feed)
+    p.render(True)
+    assert p._last_wrap == [0], p._last_wrap
+
+    # Unix 기본(os.name != "nt" → off): 하드 개행뿐이라 태그 없음(종전 동작 불변).
+    p2 = Pane(2, -1, W, 12)
+    p2._prewrap_heuristic = False
+    p2.feed(feed)
+    p2.render(True)
+    assert p2._last_wrap == [], p2._last_wrap
+
+    # 진짜 오토랩(정확 신호)은 휴리스틱과 무관하게 계속 잡힌다 — 합집합.
+    p3 = Pane(3, -1, W, 12)
+    p3._prewrap_heuristic = True
+    p3.feed(("x" * (W + 10) + "\r\n").encode())    # 폭 초과 → DECAWM 오토랩
+    p3.render(True)
+    assert 0 in p3._last_wrap, p3._last_wrap
+
+
 async def test_alt_screen_isolation():
     srv, task, sock = await server_only()
     try:

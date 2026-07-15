@@ -98,6 +98,12 @@
           지금까지는 그 <strong>줄 전체</strong>가 클릭 영역이라, 옆의 <span class="inline-code">(shift+tab to cycle)</span> 같은 <strong>힌트 문구</strong>를 누르거나
           그 줄의 빈 곳을 짚어도 모드 선택 팝업이 떠서 성가셨습니다. 이제 <strong>모드 이름이 적힌 부분만</strong> 반응하고,
           줄의 나머지는 여느 화면처럼 클릭이 <strong>패널로 그대로</strong> 전달됩니다. (실행 중 <span class="inline-code">esc to interrupt</span> 클릭 = 중단은 종전대로입니다.)</li>
+        <li><span class="pill stable">복사</span> <strong>Windows 패널에서도, 화면 폭 때문에 여러 줄로 접힌 긴 명령이 이제 <span class="inline-code">한 줄로</span> 복사됩니다.</strong>
+          마우스로 긁어 복사할 때 pytmux 는 원래 <strong>자동 줄바꿈(접힘)과 실제 줄바꿈을 구분</strong>해 접힌 줄을 한 줄로 이어 왔는데,
+          Windows 는 콘솔(ConPTY)이 <strong>줄을 미리 접어서 전달</strong>하는 바람에 이 구분 신호가 아예 오지 않아 —
+          로컬이든 원격 탭이든 Windows 패널만 <strong>보이는 줄마다 줄바꿈</strong>이 들어가, 여러 줄에 걸친 명령을 붙여넣으면 조각조각 실행됐습니다.
+          이제 Windows 패널은 <strong>마지막 칸까지 꽉 찬 줄</strong>이 다음 줄로 이어지는 모양이면(구분선 <span class="inline-code">─</span>·상자 테두리
+          <span class="inline-code">│</span> 는 제외) 접힌 줄로 보고 한 줄로 잇습니다. 결과 — 여러 줄로 보이는 긴 명령을 긁어 붙여넣으면 <strong>한 줄 그대로 실행</strong>됩니다.</li>
       </ul>
     </section>
 

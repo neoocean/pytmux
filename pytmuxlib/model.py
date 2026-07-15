@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio  # noqa: F401  (타입 주석용)
+import os
 import re
 import time
 from collections import deque
@@ -551,6 +552,12 @@ class Pane:
         self._row_cache = None
         self._row_cache_key = None
         self._last_wrap = []     # 직전 render 의 soft-wrap 연속원 행(프레임 상대 인덱스)
+        # ConPTY(Windows)는 conhost 가 자기 버퍼에서 줄을 미리 접어 하드 개행으로
+        # 재방출하므로 DECAWM 오토랩이 발생하지 않아 wrapped 태그가 영원히 비었다
+        # (실캡처 검증: 꽉 찬 줄 36개, 태그 0 — 멀티라인 명령 복사가 줄마다 개행,
+        # 사용자 07-15). 이 플래그가 켜진 패널은 render 가 보수적 휴리스틱으로
+        # wrap 을 보강한다(꽉 찬 줄 + 경계 양쪽이 박스문자 아님 → 연속원).
+        self._prewrap_heuristic = os.name == "nt"
         self.rect = (0, 0, cols, rows)
         self.parent: Split | None = None
         self.title = "shell"
@@ -1135,6 +1142,27 @@ class Pane:
         cl = cols - 1
         self._last_wrap = [i for i, ln in enumerate(window)
                            if getattr(ln, "wrapped", False) and ln[cl].data != " "]
+        # ConPTY 보강(휴리스틱): conhost 가 미리 접은 줄엔 wrapped 태그가 없다(위
+        # _prewrap_heuristic 주석). 마지막 칸까지 꽉 찬 줄이고, 접힌 경계 양쪽 글자가
+        # 둘 다 공백/박스문자(U+2500–259F: Claude 구분선 ─·테두리 │ 등)가 아니면
+        # 연속원으로 추가한다 — 정확 신호가 원천 불가한 환경의 근사라 '정확히 폭에
+        # 맞는 하드 줄 + 다음 줄이 글자로 시작'이면 드물게 오결합할 수 있다(수용).
+        if self._prewrap_heuristic:
+            exact = set(self._last_wrap)
+            for i in range(len(window) - 1):
+                if i in exact:
+                    continue
+                ln = window[i]
+                last = ln[cl].data
+                if last == "":               # 와이드 글자 stub — 실 글자는 앞 칸
+                    last = ln[cl - 1].data
+                nxt = window[i + 1][0].data
+                if (last and last != " " and nxt and nxt != " "
+                        and not (0x2500 <= ord(last[0]) < 0x25A0)
+                        and not (0x2500 <= ord(nxt[0]) < 0x25A0)):
+                    self._last_wrap.append(i)
+            if len(self._last_wrap) > len(exact):
+                self._last_wrap.sort()
 
         cursor = None
         if with_cursor and self.scroll == 0 and not screen.cursor.hidden:
