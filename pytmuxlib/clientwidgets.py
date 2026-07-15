@@ -357,7 +357,8 @@ class MultiplexerView(Widget):
         # client_render 훅으로 채운다(없으면 빈 dict → 아래 루프 no-op, 팝업도 getattr
         # 가드로 호출 안 됨 — delete-to-disable).
         # Claude busy footer 의 'esc to interrupt' 클릭 → 그 패널에 ESC 주입. perm 존
-        # (줄 전체) 안의 진부분집합이라 **perm 보다 먼저** 가로챈다(없으면 빈 dict).
+        # 과 겹칠 수 있어(폭 잘림 fallback 시 perm=줄 전체) **perm 보다 먼저** 가로챈다
+        # (없으면 빈 dict).
         for pid, (zx0, zx1, zy) in getattr(self.app, "_interrupt_zone", {}).items():
             if zy == event.y and zx0 <= event.x < zx1:
                 fn = getattr(self.app, "interrupt_pane", None)  # 플러그인 설치

@@ -5659,6 +5659,13 @@ async def test_claude_footer_zones_and_popups():
         assert app._remote_zone[pid][2] == py + 2
         # x 범위는 패널 시작 이상
         assert app._perm_zone[pid][0] >= px
+        # 존은 모드 표시("⏵⏵ auto-accept edits on")만 — 뒤의 "(shift+tab to
+        # cycle)" 힌트는 클릭존 밖(사용자 07-15: 힌트 오클릭으로 팝업이 떠서 좁힘).
+        from pytmuxlib.clientutil import _char_cells
+        zx0, zx1, zy = app._perm_zone[pid]
+        assert zx1 - zx0 == sum(
+            _char_cells(c) for c in "⏵⏵ auto-accept edits on"), (zx0, zx1)
+        assert app._footer_zone_at(zx1 + 1, zy) is None   # 힌트 영역은 미히트
         # 권한모드 팝업: 현재 모드 표시 + 선택 시 set_claude_perm_mode 전송.
         # anchor x 는 **await 전에** 캡처한다 — pause 중 실제 패널(cmd/셸)의 첫
         # 출력 프레임이 서버에서 push 되면 주입한 pane_content 를 덮어 _composite
@@ -5699,8 +5706,9 @@ async def test_claude_footer_zones_and_popups():
 
 async def test_claude_interrupt_zone_sends_esc():
     """busy footer 의 'esc to interrupt' 문구를 좁은 클릭존(_interrupt_zone)으로 잡고,
-    그 영역 클릭(interrupt_pane)이 해당 패널에 ESC(\\x1b) input 을 보낸다. 줄 전체를
-    덮는 perm 존 안의 부분영역이라, 클릭 핸들러는 interrupt 를 perm 보다 먼저 가로챈다."""
+    그 영역 클릭(interrupt_pane)이 해당 패널에 ESC(\\x1b) input 을 보낸다. perm 존은
+    모드 표시 문구만 덮으므로 둘은 같은 줄의 서로 다른 구간이다(클릭 핸들러는
+    여전히 interrupt 를 perm 보다 먼저 검사한다)."""
     import base64
     import pytmuxlib.client as clientmod
 
@@ -5721,9 +5729,9 @@ async def test_claude_interrupt_zone_sends_esc():
         izx0, izx1, izy = app._interrupt_zone[pid]
         pzx0, pzx1, pzy = app._perm_zone[pid]
         assert izy == py + 1 == pzy
-        # interrupt 존은 perm 존(줄 전체) 안의 진부분집합 — 'esc to interrupt'만 덮는다.
-        assert pzx0 <= izx0 < izx1 <= pzx1
-        assert izx0 > pzx0, "interrupt 존은 줄 앞쪽 'auto mode on' 보다 오른쪽"
+        # perm 존은 모드 표시("⏵⏵ auto mode on")만, interrupt 존은 그 오른쪽
+        # 'esc to interrupt'만 — 서로 겹치지 않는다(예전엔 perm=줄 전체·부분집합).
+        assert pzx0 < pzx1 <= izx0 < izx1
         # 그 영역 클릭 → interrupt_pane → 해당 패널에 ESC input 전송.
         sent = []
         orig = clientmod.write_msg
