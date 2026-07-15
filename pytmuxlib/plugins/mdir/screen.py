@@ -67,7 +67,7 @@ _ARC_COLOR = "#ff55ff"
 _STRIP = ("Space태그 · ⎇C/F5복사 ⎇M/F6이동 ⎇D/F8삭제 ⎇R/F2이름 ⎇K/F7새디렉 "
           "⎇V/F3보기 · ⎇NEST정렬 ⎇Z숨김 ⎇F필터 ⎇0-6열 · F4=cd ⇧↵분할 Esc")
 _FIND = "찾기"
-_BARKEYS = "F4=cd│⇧↵=분할│Esc"
+_BARKEYS = "F10=트리│F4=cd│⇧↵=분할│Esc"
 _TRUNC = "(항목 일부만 표시)"
 _COPY_TO = "복사 → 대상 디렉토리"
 _MOVE_TO = "이동 → 대상 디렉토리"
@@ -91,17 +91,18 @@ _BINARY = "(이진 파일 — 미리보기 없음)"
 _VIEW_TRUNC = "앞 {kb}KB 만 표시"
 _FILTER_MASK = "필터 마스크 (예: *.py;*.md — 빈 값=해제)"
 _ARC_UNSUP = "지원하지 않는 압축 형식"
+_NO_NCD = "ncd 플러그인이 없어 트리를 열 수 없습니다"
 i18n.register({
     "ko": {k: k for k in (
         _STRIP, _FIND, _BARKEYS, _TRUNC, _COPY_TO, _MOVE_TO, _RENAME_TO,
         _MKDIR_NAME, _MASK_SEL, _MASK_UNSEL, _DEL_TITLE, _DEL_WARN, _ETC,
         _OW_TITLE, _OW_ALL, _OW_SKIP, _DELETE, _CANCEL, _NO_TARGET,
         _ONE_ONLY, _FAILN, _READONLY, _BINARY, _VIEW_TRUNC, _FILTER_MASK,
-        _ARC_UNSUP)},
+        _ARC_UNSUP, _NO_NCD)},
     "en": {_STRIP: ("Space tag · ⎇C/F5 copy ⎇M/F6 move ⎇D/F8 del ⎇R/F2 ren "
                     "⎇K/F7 mkdir ⎇V/F3 view · ⎇NEST sort ⎇Z hidden ⎇F filter "
                     "⎇0-6 cols · F4=cd ⇧↵ split Esc"),
-           _FIND: "Find", _BARKEYS: "F4=cd│⇧↵=split│Esc",
+           _FIND: "Find", _BARKEYS: "F10=Tree│F4=cd│⇧↵=split│Esc",
            _TRUNC: "(list truncated)",
            _COPY_TO: "Copy → destination directory",
            _MOVE_TO: "Move → destination directory",
@@ -118,7 +119,8 @@ i18n.register({
            _BINARY: "(binary file — no preview)",
            _VIEW_TRUNC: "showing first {kb}KB",
            _FILTER_MASK: "Filter mask (e.g. *.py;*.md — empty=clear)",
-           _ARC_UNSUP: "Unsupported archive format"},
+           _ARC_UNSUP: "Unsupported archive format",
+           _NO_NCD: "ncd plugin missing — tree unavailable"},
 })
 
 # 조작 이름(결과 표시)·서버발 실패 사유 코드 번역 — 서버는 키(코드)만 운반하고
@@ -718,6 +720,29 @@ class _MdirView(Widget):
         self._cols_override = n or None
         self._rebuild(keep_name=self._cursor_name())
 
+    # ---- F10: ncd 디렉토리 트리 연동(원조 F10=MCD 대응) ----
+    def _open_tree(self):
+        """ncd 트리 팝업을 mdir 위에 띄우고, 고른 디렉토리로 **mdir 이 이동**한다
+        (ncd 기본 동작인 패널 cd 가 아니라). ncd 플러그인의 일회성 콜백 훅
+        (app._nc_open_cb)을 쓴다 — ncd 디렉토리를 지우면 request_nc_list 가 없어
+        조용히 공지만 하고 무동작(양방향 delete-to-disable)."""
+        fn = getattr(self.app, "request_nc_list", None)
+        if fn is None:
+            self._flash(i18n.t(_NO_NCD))
+            return
+
+        def done(res):
+            if not res:
+                return                    # Esc — mdir 로 그냥 복귀
+            action, path = res
+            if action == "cd":
+                self._clear_notice()
+                self._navigate(path)      # 트리 선택 → mdir 탐색 이동
+            elif action == "newpane":
+                self.app.send_cmd("split", orient="lr", path=path)
+        self.app._nc_open_cb = done
+        fn()
+
     # ---- 내장 뷰어 / 압축 내부 보기 ----
     def _open_viewer(self):
         if self._arc is not None:
@@ -902,6 +927,10 @@ class _MdirView(Widget):
                    "alt+4", "alt+5", "alt+6"):
             event.stop()                       # 열수(0=자동)
             self._set_cols(int(k[-1]))
+        elif k == "f10":                       # 디렉토리 트리(원조 F10=MCD → ncd)
+            event.stop()
+            if not self._ro():
+                self._open_tree()
         elif k in ("f4", "ctrl+enter"):        # 패널 cd 후 닫기(원조: 종료 시 잔류)
             event.stop()
             self.screen.dismiss(("cd", self._path))

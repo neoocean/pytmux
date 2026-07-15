@@ -714,6 +714,66 @@ async def test_mdir_archive_mode_hierarchy_and_readonly():
     await _with_app(body)
 
 
+async def test_mdir_f10_opens_ncd_tree_and_navigates_mdir():
+    async def body(app, pilot, srv):
+        from pytmuxlib.plugins.mdir.screen import MdirScreen
+        from pytmuxlib.plugins.ncd.screen import NcdScreen
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app._run_command("mdir")
+        app._dispatch(_msg())
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirScreen))
+        sent.clear()
+        await pilot.press("f10")                   # 원조 F10=MCD → ncd 트리
+        assert sent == [("request_nc_list", {"path": None})], sent
+        # ncd 트리가 mdir 위에 뜬다(일회성 콜백 훅이 소비됨).
+        app._dispatch({"t": "nc_list", "root": "/", "path": None,
+                       "cwd": "/r/sub", "chain": [["/", ["/r"]],
+                                                  ["/r", ["/r/sub"]]]})
+        assert await wait_until(pilot, lambda: isinstance(app.screen, NcdScreen))
+        assert app._nc_open_cb is None, "콜백은 일회성(소비 후 해제)"
+        sent.clear()
+        await pilot.press("enter")                 # 트리에서 /r/sub 선택
+        # ncd 기본 동작(패널 cd)이 아니라 **mdir 탐색 이동**이어야 한다.
+        assert await wait_until(
+            pilot, lambda: ("request_mdir_list", {"path": "/r/sub"}) in sent), sent
+        assert not any(a == "send_input" for a, _k in sent)
+        assert isinstance(app.screen, MdirScreen), "mdir 로 복귀"
+    await _with_app(body)
+
+
+async def test_mdir_f10_without_ncd_flashes_notice():
+    async def body(app, pilot, srv):
+        from pytmuxlib.plugins.mdir.screen import MdirScreen
+        app.send_cmd = lambda *a, **k: None
+        app._run_command("mdir")
+        app._dispatch(_msg())
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirScreen))
+        v = app.screen._view
+        app.request_nc_list = None                 # ncd 부재(delete-to-disable) 흉내
+        await pilot.press("f10")
+        assert v._notice and "ncd" in v._notice[0], v._notice
+        assert isinstance(app.screen, MdirScreen)
+    await _with_app(body)
+
+
+async def test_ncd_standalone_flow_unaffected_by_hook():
+    # 회귀 방지: 콜백 훅을 안 심은 평범한 ncd 흐름은 종전대로 패널 cd 를 주입한다.
+    async def body(app, pilot, srv):
+        from pytmuxlib.plugins.ncd.screen import NcdScreen
+        app.send_cmd = lambda *a, **k: None
+        inp = []
+        app.send_input = lambda data: inp.append(data)
+        app._run_command("ncd")
+        app._dispatch({"t": "nc_list", "root": "/", "path": None,
+                       "cwd": "/r", "chain": [["/", ["/r"]]]})
+        assert await wait_until(pilot, lambda: isinstance(app.screen, NcdScreen))
+        await pilot.press("enter")
+        assert await wait_until(pilot, lambda: inp != [])
+        assert inp[0].startswith(b"cd ")
+    await _with_app(body)
+
+
 async def test_mdir_drive_entry_enter_changes_drive():
     async def body(app, pilot, srv):
         from pytmuxlib.plugins.mdir.screen import MdirScreen

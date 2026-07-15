@@ -20,8 +20,8 @@ from __future__ import annotations
 
 # 명령 메타데이터 — 코어가 COMMANDS/COMPLETIONS/COMMAND_NOARG 에 합쳐 쓴다.
 COMMANDS = [
-    ("mdir", "Mdir III 풍 파일 관리자 — 다열 리스트·탐색·빨리찾기·"
-             "F4 패널 cd·⇧Enter 새 패널(별칭 m)", "탐색"),
+    ("mdir", "Mdir III 풍 파일 관리자 — 다열 리스트·태그·복사/이동/삭제·"
+             "정렬/필터·뷰어·압축 보기·F10 트리·F4 패널 cd(별칭 m)", "탐색"),
 ]
 NOARG = {"mdir", "m"}
 

@@ -96,10 +96,16 @@ class _NcdPlugin:
             # 서버(패널 셸의 소유자)가 알려준 셸 방언. 부재(구버전 서버)면 None →
             # _cd_command 가 클라 os.name 로 폴백(하위호환).
             app._nc_nt = msg.get("nt")
+            # 일회성 결과 콜백(app._nc_open_cb): 다른 소비자(mdir 의 F10 트리 등)가
+            # request_nc_list 전에 심어 두면 기본 동작(_done: 패널 cd/분할) 대신 그
+            # 콜백이 ("cd"|"newpane", path) 를 받는다. ncd 는 심은 쪽을 모른다
+            # (역방향 결합 없음) — 콜백 부재 시 종전과 동일.
+            cb = getattr(app, "_nc_open_cb", None)
+            app._nc_open_cb = None
             app.push_screen(
                 NcdScreen(msg.get("root"), chain=msg.get("chain"),
                           cwd=msg.get("cwd"), dirs=msg.get("dirs")),
-                lambda res: self._done(app, res))
+                cb if cb is not None else (lambda res: self._done(app, res)))
         else:
             scr = app.screen
             if isinstance(scr, NcdScreen):
