@@ -1216,6 +1216,195 @@ class ServerClaudeMixin:
             return True
         return False
 
+    def _scan_done_and_redraw(self, p, t, w, win, old_cl, new_cl, txt) -> bool:
+        """busy→안정 idle 완료 처리 phase — idle 프레임 누적·§10-I 자동 리드로우·
+        비활성 탭 완료 알림(#22).
+
+        `_scan_claude` 에서 추출(로드맵 #1 God-분할, 동작 불변). 플리커 방지로 raw
+        busy→idle 즉시가 아니라 idle 이 _DONE_IDLE_FRAMES 프레임 연속 안정될 때만 완료로
+        친다. 자동 리드로우는 `== _DONE_IDLE_FRAMES` 로 완료 경계 **한 프레임**에만 걸려
+        idle 이 정적으로 머무는 동안 반복 유발하지 않는다. 상태가 바뀌면 True.
+        """
+        changed = False
+        # 비활성 탭에서 처리(busy)→대기(idle) 전이 = 작업 완료. limit 은
+        # "대기"가 아니므로 대상 아님. 플리커 방지(§10 #18): raw busy→idle 즉시
+        # 대신, busy 를 본 적이 있고(idle 진입) idle 이 _DONE_IDLE_FRAMES 프레임
+        # 연속 안정될 때만 완료로 친다(한 프레임 깜빡임에 녹색 오검출 방지).
+        if new_cl == "idle":
+            p._idle_frames += 1
+        else:
+            p._idle_frames = 0
+            if new_cl == "busy":
+                p._was_busy = True   # 작업 중이었음 → 다음 안정 idle 이 '완료'
+                if old_cl != "busy":
+                    p._busy_since = time.monotonic()   # M17 S9: 턴 시작 시각
+        # §10-I Claude 화면 깨짐 자동 완화(opt-in, 기본 off). busy→idle 완료가
+        # 막 _DONE_IDLE_FRAMES 로 안정된 경계에서, claude 패널에 1회 SIGWINCH
+        # (winsize 토글)를 유발해 부분갱신 발산을 전체 repaint 로 덮는다. 가드:
+        # busy 중 금지(idle 확정에서만 — 진행 출력과 레이스 방지)·디바운스
+        # (flicker/_send_full 비용 억제)·claude 패널 한정(new_cl=='idle')·
+        # 활성/비활성 무관(둘 다 깨질 수 있어 아래 done 블록보다 먼저, _was_busy
+        # 가 살아 있을 때 본다). `== _DONE_IDLE_FRAMES` 로 완료 경계 한 프레임에만
+        # 걸려 idle 이 정적으로 머무는 동안 반복 유발하지 않는다(다음 busy→idle
+        # 마다 다시 1회). 근본원인(pyte SU/SD)은 p4 61614 로 해결됐고 바닥 안전망.
+        # 모드: idle=완료마다 무조건 / corruption=깨짐 신호 보일 때만(flicker 억제).
+        # 디바운스 타임스탬프는 **실제 유발할 때만** 갱신 — corruption 모드에서
+        # 안 깨진 경계가 디바운스 창을 소진해 다음 깨짐을 지연시키지 않게.
+        if (self.claude_auto_redraw != "off"
+                and p._was_busy and new_cl == "idle"
+                and p._idle_frames == _DONE_IDLE_FRAMES):
+            nowm = time.monotonic()
+            if (nowm - p._auto_redraw_ts >= _AUTO_REDRAW_DEBOUNCE_SEC
+                    and (self.claude_auto_redraw == "idle"
+                         or self._claude_corruption_signal(txt))):
+                p._auto_redraw_ts = nowm
+                self._auto_redraw_pane(p)
+        # 비활성 탭 완료 알림(#22, 위 주석): busy 를 본 적 있고 idle 이
+        # _DONE_IDLE_FRAMES 안정되면 done 으로 확정(탭 녹색).
+        if (w is not win and t.monitor_claude and not t.has_claude_done
+                and p._was_busy and new_cl == "idle"
+                and p._idle_frames >= _DONE_IDLE_FRAMES):
+            t.has_claude_done = True
+            p._was_busy = False
+            changed = True
+        return changed
+
+    def _scan_retry_gates(self, p, txt, new_cl) -> None:
+        """자동 재개(M12)·전송 에러 자동 재시도 예약의 게이트 phase.
+
+        `_scan_claude` 에서 추출(로드맵 #1 God-분할, 동작 불변). 재시도 게이트는 new_cl 이
+        아니라 **_hdr_claude**(디바운스된 '이 패널은 Claude') 로 판정한다 — API 에러 화면은
+        idle/busy footer 가 없어 claude_state=None 일 수 있고, 셸이 우연히 'API Error' 를
+        찍어도 오발화하면 안 되기 때문이다. 예약만 다루므로 changed 를 바꾸지 않는다.
+        """
+        # M12: limit 이탈 시 무장된 자동재개 예약을 취소(사용자가 먼저 재개
+        # 했거나 화면이 전환됨). _fire_resume 도 발화직전 limit 재확인으로
+        # 막지만(#6), 예약을 일찍 거둬 헤더 카운트다운도 즉시 사라지게 한다.
+        if new_cl != "limit" and p._resume_handle is not None:
+            self._cancel_resume(p)
+        # 전송 에러(API error/rate limit/overloaded) 자동 재시도(요청): 에러로
+        # 멈추면 1분 뒤 "계속" 주입을 예약하고, 에러 해소(busy 복귀 등) 시 취소한다.
+        # 게이트는 new_cl 이 아니라 **_hdr_claude**(이 패널이 Claude 임 — 디바운스):
+        # API 에러 화면은 idle/busy footer 가 없어 claude_state=None 일 수 있고,
+        # Claude 아닌 셸이 우연히 "API Error" 를 찍어도 오발화하지 않게 한다.
+        # 5h 사용량 배너("usage limit reached")는 claude_api_error 에 안 잡히고,
+        # "rate limit exceeded" 처럼 둘 다 걸리는 경우만 autoresume 가 이미 재개를
+        # 무장(_resume_pending)했으면 양보해 중복 주입을 막는다(reset 시각으로 다룸).
+        if p._hdr_claude and claude_api_error(txt) and not p._resume_pending:
+            self._maybe_schedule_retry(p)
+        else:
+            # 에러 아님(해소·busy/idle 복귀·autoresume 양보·non-Claude) → 무장
+            # 예약 취소 + 연속 재시도 카운터 리셋(다음 새 에러는 다시 1분부터, #9 H3).
+            if p._retry_handle is not None:
+                self._cancel_retry(p)
+            p._retry_attempts = 0
+
+    def _scan_idle_actions(self, p, txt, new_cl) -> bool:
+        """idle 프레임의 자동개입 phase — 보류 리네임 주입·시작 규칙·auto-launch(/rc→
+        권한 auto)·권한모드 관측/구동.
+
+        `_scan_claude` 에서 추출(로드맵 #1 God-분할, 동작 불변). idle 이 아니면 권한모드
+        시도 카운터만 리셋한다(다음 idle 진입에 재시도). 권한모드 관측값(pm)은 이 프레임
+        내내 txt 가 불변이라 진입부에서 1회만 구해 모든 분기가 재사용한다(P1 CSE).
+        상태가 바뀌면 True.
+        """
+        changed = False
+        # 권한모드 자동전환 시도 카운터는 idle 이탈 시 리셋(다음 idle 진입에
+        # 다시 시도).
+        if new_cl != "idle":
+            self._perm_reset(p)
+        else:
+            # P1 CSE: 권한모드 관측값(claude_perm_mode)은 txt 가 이 프레임 내내
+            # 불변이라 idle 진입 시 1회만 구해 아래 모든 분기가 재사용한다
+            # (예전엔 1138/1145/1161 에서 같은 txt 를 3번 재스캔).
+            pm = claude_perm_mode(txt)
+            # 탭→세션 리네임 보류분(servertree.rename_window / namesync): 리네임
+            # 당시 busy 라 즉시 주입 못 한 `/rename` 을 입력 준비된 첫 idle 에
+            # 발동한다. 1회성이라 발화 즉시 비운다. 단, 입력박스(컴포저)에
+            # 사용자가 타이핑한 텍스트가 이미 있으면 주입을 **미룬다** — 사용자의
+            # 입력 줄에 `/rename` 이 끼어들어 덮지 않도록 _pending_rename 을 유지해,
+            # 컴포저가 빈 다음 idle(제출/클리어 후)에 재시도한다. 빈 박스("")·
+            # 파싱 불가(None)면 기존대로 즉시 주입한다(추적 불가 시 보수적 진행).
+            #
+            # 화면 스크랩(_claude_composer_text)만으로는 레이스가 있다: 사용자가
+            # 키를 쳐도 Claude 가 그걸 받아 **화면에 되그려야** 컴포저가 non-empty
+            # 로 보인다 — PTY 왕복(서버→자식→재렌더) 지연 동안은 막 친 첫 글자가
+            # 아직 반영 안 돼 "빈 박스"로 오판된다. Windows ConPTY 는 이 왕복이
+            # 유독 느려(conhost 리페인트) 창이 넓어져, 그 틈에 주입되면 `/rename`
+            # 이 사용자가 치던 글자와 섞여 그대로 제출된다(버그 리포트: 첫 글자를
+            # 치는 순간 끼어들어 프롬프트가 섞임). `pane._inbuf`(_track_prompt 가
+            # server_input 에서 키 입력을 화면 재렌더 없이 즉시 동기 누적)를 함께
+            # 봐 이 레이스를 없앤다 — 키 입력 이벤트 자체가 이미 스캔 이전에
+            # _inbuf 를 채워, 화면이 아직 못 따라온 프레임에도 정확히 걸린다.
+            if (p._pending_rename and not self._claude_composer_text(p)
+                    and not p._inbuf):
+                nm = p._pending_rename
+                p._pending_rename = None
+                self._pc_inject(p, "/rename " + nm)
+            # 시작 규칙 주입(#27): 새 세션/clear 후 첫 idle(입력 준비됨)에 한 번.
+            if p._rules_pending:
+                p._rules_pending = False
+                self._inject_rules(p)
+            # 새 세션 자동 셋업(auto-launch, 요청): idle 이 _RC_CONFIRM_FRAMES
+            # 안정되면 /rc 로 원격 제어(리모트 커넥션)를 켜고, 다음 idle 에 권한
+            # 모드를 auto 로 유도한다. /rc 와 권한 shift+tab 을 다른 프레임으로
+            # 갈라 한 묶음 입력으로 섞이지 않게 한다. 이미 원격제어가 켜진 화면
+            # (resume 후 오인·데스크탑 앱 재연결 등)에선 /rc 를 건너뛰어 도로
+            # 끄거나 /remote-control 응답 대기 대화로 멈추지 않게 한다.
+            if p._rc_pending:
+                # /rc 생략 조건: ① 조직 정책 차단 ② 원격제어 기관측 sticky
+                # (_rc_seen_active — 서버 전역) ③ 이미 이 세션에 적용함(_rc_done —
+                # 재시작 re-exec 후 거짓 새세션 오인 방지, 직렬화됨. 위
+                # claude_remote_active 분기가 'Remote Control active' 관측 시 셋)
+                # ④ 지금 화면이 이미 원격제어 ON. 어느 하나라도면 즉시 종료
+                # (도로 끄지/응답 대기 대화 띄우지 않음).
+                if (self._rc_policy_blocked or self._rc_seen_active
+                        or p._rc_done or claude_remote_active(txt)):
+                    p._rc_pending = False
+                    p._rc_done = True
+                    p._perm_auto_pending = True
+                elif p._idle_frames >= _RC_CONFIRM_FRAMES:
+                    # idle 이 _RC_CONFIRM_FRAMES 프레임 연속 안정 — 그 사이 원격제어
+                    # 오버레이가 안 떴으니 정말 꺼진 새 세션 → /rc 1회 주입. 첫 idle
+                    # 프레임에 바로 안 쏘는 이유: 데스크탑 앱이 이미 켠 원격제어
+                    # 오버레이가 한두 프레임 늦게 그려질 수 있어, 그걸 못 보고 쏘면
+                    # /remote-control 이 응답 대기 대화로 멈춘다(버그 수정).
+                    p._rc_pending = False
+                    self._pc_inject(p, "/rc")
+                    p._rc_done = True
+                    p._perm_auto_pending = True
+                # else: 디바운스 진행 중 — _rc_pending 유지(위 pending 게이트가
+                # 정적 화면에서도 스캔을 이어 가 _idle_frames 를 임계까지 올린다).
+            elif p._perm_auto_pending:
+                p._perm_auto_pending = False
+                if pm not in ("auto", "bypass"):
+                    # acceptEdits 도 auto 가 아니므로 여기서 auto 까지 마저 순환한다
+                    # (예전엔 accept 를 auto 로 오인해 새 세션이 accept 에서 멈췄다).
+                    p._perm_target = "auto"   # 아래 폐루프가 auto 까지 순환
+                    self._perm_reset(p)
+            # idle: 현재 권한모드를 관측해 저장(팝업 '현재 모드' 표시용 — status
+            # 로 클라에 전달, §10 item 2). footer 가 안 보이면(None) 마지막 값 유지.
+            # (pm 은 위 else 진입부에서 1회 계산 — P1 CSE.)
+            if pm is not None and pm != p._perm_mode:
+                p._perm_mode = pm
+                changed = True
+            # bypass 를 한 번이라도 관측하면(=시작 시 --dangerously-skip-
+            # permissions 활성) sticky 로 기억해 팝업에 'Bypass' 항목 노출.
+            if pm == "bypass" and not p._bypass_seen:
+                p._bypass_seen = True
+                changed = True
+            # 권한모드 구동: 사용자가 footer 클릭 팝업으로 고른 수동 목표
+            # (_perm_target)가 우선, 없고 claude_auto_mode 면 auto 로 순환
+            # (§10 item 2 + 권한모드 자동 오토모드 전환). 둘 다 shift+tab 폐루프.
+            if p._perm_target:
+                self._drive_perm_mode(p, txt, p._perm_target)
+            elif self.claude_auto_mode:
+                self._maybe_auto_mode(p, txt)
+            # M11 디바운스 해제: 정리 후 잔량이 임계+여유(5%p) 위로 회복하면
+            # 다음 저잔량 구간에 재발화할 수 있게 한다. 회복 전엔 재발화 금지
+            # (compact 가 효과 없어도 매 응답 무한 정리하지 않게 — §5.5).
+        return changed
+
     def _scan_claude(self, sess, win) -> bool:
         """모든 탭 패널의 Claude 상태/사용량을 화면 텍스트(screen.display)로 갱신
         하고, **비활성 탭**의 busy→idle(작업 완료) 전이를 감지해 `has_claude_done`
@@ -1508,162 +1697,17 @@ class ServerClaudeMixin:
                             and sp not in p.pending_prompts[-5:]):
                         p.last_prompt = sp
                         changed = True
-                # 비활성 탭에서 처리(busy)→대기(idle) 전이 = 작업 완료. limit 은
-                # "대기"가 아니므로 대상 아님. 플리커 방지(§10 #18): raw busy→idle 즉시
-                # 대신, busy 를 본 적이 있고(idle 진입) idle 이 _DONE_IDLE_FRAMES 프레임
-                # 연속 안정될 때만 완료로 친다(한 프레임 깜빡임에 녹색 오검출 방지).
-                if new_cl == "idle":
-                    p._idle_frames += 1
-                else:
-                    p._idle_frames = 0
-                    if new_cl == "busy":
-                        p._was_busy = True   # 작업 중이었음 → 다음 안정 idle 이 '완료'
-                        if old_cl != "busy":
-                            p._busy_since = time.monotonic()   # M17 S9: 턴 시작 시각
-                # §10-I Claude 화면 깨짐 자동 완화(opt-in, 기본 off). busy→idle 완료가
-                # 막 _DONE_IDLE_FRAMES 로 안정된 경계에서, claude 패널에 1회 SIGWINCH
-                # (winsize 토글)를 유발해 부분갱신 발산을 전체 repaint 로 덮는다. 가드:
-                # busy 중 금지(idle 확정에서만 — 진행 출력과 레이스 방지)·디바운스
-                # (flicker/_send_full 비용 억제)·claude 패널 한정(new_cl=='idle')·
-                # 활성/비활성 무관(둘 다 깨질 수 있어 아래 done 블록보다 먼저, _was_busy
-                # 가 살아 있을 때 본다). `== _DONE_IDLE_FRAMES` 로 완료 경계 한 프레임에만
-                # 걸려 idle 이 정적으로 머무는 동안 반복 유발하지 않는다(다음 busy→idle
-                # 마다 다시 1회). 근본원인(pyte SU/SD)은 p4 61614 로 해결됐고 바닥 안전망.
-                # 모드: idle=완료마다 무조건 / corruption=깨짐 신호 보일 때만(flicker 억제).
-                # 디바운스 타임스탬프는 **실제 유발할 때만** 갱신 — corruption 모드에서
-                # 안 깨진 경계가 디바운스 창을 소진해 다음 깨짐을 지연시키지 않게.
-                if (self.claude_auto_redraw != "off"
-                        and p._was_busy and new_cl == "idle"
-                        and p._idle_frames == _DONE_IDLE_FRAMES):
-                    nowm = time.monotonic()
-                    if (nowm - p._auto_redraw_ts >= _AUTO_REDRAW_DEBOUNCE_SEC
-                            and (self.claude_auto_redraw == "idle"
-                                 or self._claude_corruption_signal(txt))):
-                        p._auto_redraw_ts = nowm
-                        self._auto_redraw_pane(p)
-                # 비활성 탭 완료 알림(#22, 위 주석): busy 를 본 적 있고 idle 이
-                # _DONE_IDLE_FRAMES 안정되면 done 으로 확정(탭 녹색).
-                if (w is not win and t.monitor_claude and not t.has_claude_done
-                        and p._was_busy and new_cl == "idle"
-                        and p._idle_frames >= _DONE_IDLE_FRAMES):
-                    t.has_claude_done = True
-                    p._was_busy = False
+                # 완료 감지(idle 안정)·자동 리드로우·완료 알림 phase — 로드맵 #1
+                # God-분할로 _scan_done_and_redraw 추출(동작 불변).
+                if self._scan_done_and_redraw(p, t, w, win, old_cl, new_cl, txt):
                     changed = True
-                # M12: limit 이탈 시 무장된 자동재개 예약을 취소(사용자가 먼저 재개
-                # 했거나 화면이 전환됨). _fire_resume 도 발화직전 limit 재확인으로
-                # 막지만(#6), 예약을 일찍 거둬 헤더 카운트다운도 즉시 사라지게 한다.
-                if new_cl != "limit" and p._resume_handle is not None:
-                    self._cancel_resume(p)
-                # 전송 에러(API error/rate limit/overloaded) 자동 재시도(요청): 에러로
-                # 멈추면 1분 뒤 "계속" 주입을 예약하고, 에러 해소(busy 복귀 등) 시 취소한다.
-                # 게이트는 new_cl 이 아니라 **_hdr_claude**(이 패널이 Claude 임 — 디바운스):
-                # API 에러 화면은 idle/busy footer 가 없어 claude_state=None 일 수 있고,
-                # Claude 아닌 셸이 우연히 "API Error" 를 찍어도 오발화하지 않게 한다.
-                # 5h 사용량 배너("usage limit reached")는 claude_api_error 에 안 잡히고,
-                # "rate limit exceeded" 처럼 둘 다 걸리는 경우만 autoresume 가 이미 재개를
-                # 무장(_resume_pending)했으면 양보해 중복 주입을 막는다(reset 시각으로 다룸).
-                if p._hdr_claude and claude_api_error(txt) and not p._resume_pending:
-                    self._maybe_schedule_retry(p)
-                else:
-                    # 에러 아님(해소·busy/idle 복귀·autoresume 양보·non-Claude) → 무장
-                    # 예약 취소 + 연속 재시도 카운터 리셋(다음 새 에러는 다시 1분부터, #9 H3).
-                    if p._retry_handle is not None:
-                        self._cancel_retry(p)
-                    p._retry_attempts = 0
-                # 권한모드 자동전환 시도 카운터는 idle 이탈 시 리셋(다음 idle 진입에
-                # 다시 시도).
-                if new_cl != "idle":
-                    self._perm_reset(p)
-                else:
-                    # P1 CSE: 권한모드 관측값(claude_perm_mode)은 txt 가 이 프레임 내내
-                    # 불변이라 idle 진입 시 1회만 구해 아래 모든 분기가 재사용한다
-                    # (예전엔 1138/1145/1161 에서 같은 txt 를 3번 재스캔).
-                    pm = claude_perm_mode(txt)
-                    # 탭→세션 리네임 보류분(servertree.rename_window / namesync): 리네임
-                    # 당시 busy 라 즉시 주입 못 한 `/rename` 을 입력 준비된 첫 idle 에
-                    # 발동한다. 1회성이라 발화 즉시 비운다. 단, 입력박스(컴포저)에
-                    # 사용자가 타이핑한 텍스트가 이미 있으면 주입을 **미룬다** — 사용자의
-                    # 입력 줄에 `/rename` 이 끼어들어 덮지 않도록 _pending_rename 을 유지해,
-                    # 컴포저가 빈 다음 idle(제출/클리어 후)에 재시도한다. 빈 박스("")·
-                    # 파싱 불가(None)면 기존대로 즉시 주입한다(추적 불가 시 보수적 진행).
-                    #
-                    # 화면 스크랩(_claude_composer_text)만으로는 레이스가 있다: 사용자가
-                    # 키를 쳐도 Claude 가 그걸 받아 **화면에 되그려야** 컴포저가 non-empty
-                    # 로 보인다 — PTY 왕복(서버→자식→재렌더) 지연 동안은 막 친 첫 글자가
-                    # 아직 반영 안 돼 "빈 박스"로 오판된다. Windows ConPTY 는 이 왕복이
-                    # 유독 느려(conhost 리페인트) 창이 넓어져, 그 틈에 주입되면 `/rename`
-                    # 이 사용자가 치던 글자와 섞여 그대로 제출된다(버그 리포트: 첫 글자를
-                    # 치는 순간 끼어들어 프롬프트가 섞임). `pane._inbuf`(_track_prompt 가
-                    # server_input 에서 키 입력을 화면 재렌더 없이 즉시 동기 누적)를 함께
-                    # 봐 이 레이스를 없앤다 — 키 입력 이벤트 자체가 이미 스캔 이전에
-                    # _inbuf 를 채워, 화면이 아직 못 따라온 프레임에도 정확히 걸린다.
-                    if (p._pending_rename and not self._claude_composer_text(p)
-                            and not p._inbuf):
-                        nm = p._pending_rename
-                        p._pending_rename = None
-                        self._pc_inject(p, "/rename " + nm)
-                    # 시작 규칙 주입(#27): 새 세션/clear 후 첫 idle(입력 준비됨)에 한 번.
-                    if p._rules_pending:
-                        p._rules_pending = False
-                        self._inject_rules(p)
-                    # 새 세션 자동 셋업(auto-launch, 요청): idle 이 _RC_CONFIRM_FRAMES
-                    # 안정되면 /rc 로 원격 제어(리모트 커넥션)를 켜고, 다음 idle 에 권한
-                    # 모드를 auto 로 유도한다. /rc 와 권한 shift+tab 을 다른 프레임으로
-                    # 갈라 한 묶음 입력으로 섞이지 않게 한다. 이미 원격제어가 켜진 화면
-                    # (resume 후 오인·데스크탑 앱 재연결 등)에선 /rc 를 건너뛰어 도로
-                    # 끄거나 /remote-control 응답 대기 대화로 멈추지 않게 한다.
-                    if p._rc_pending:
-                        # /rc 생략 조건: ① 조직 정책 차단 ② 원격제어 기관측 sticky
-                        # (_rc_seen_active — 서버 전역) ③ 이미 이 세션에 적용함(_rc_done —
-                        # 재시작 re-exec 후 거짓 새세션 오인 방지, 직렬화됨. 위
-                        # claude_remote_active 분기가 'Remote Control active' 관측 시 셋)
-                        # ④ 지금 화면이 이미 원격제어 ON. 어느 하나라도면 즉시 종료
-                        # (도로 끄지/응답 대기 대화 띄우지 않음).
-                        if (self._rc_policy_blocked or self._rc_seen_active
-                                or p._rc_done or claude_remote_active(txt)):
-                            p._rc_pending = False
-                            p._rc_done = True
-                            p._perm_auto_pending = True
-                        elif p._idle_frames >= _RC_CONFIRM_FRAMES:
-                            # idle 이 _RC_CONFIRM_FRAMES 프레임 연속 안정 — 그 사이 원격제어
-                            # 오버레이가 안 떴으니 정말 꺼진 새 세션 → /rc 1회 주입. 첫 idle
-                            # 프레임에 바로 안 쏘는 이유: 데스크탑 앱이 이미 켠 원격제어
-                            # 오버레이가 한두 프레임 늦게 그려질 수 있어, 그걸 못 보고 쏘면
-                            # /remote-control 이 응답 대기 대화로 멈춘다(버그 수정).
-                            p._rc_pending = False
-                            self._pc_inject(p, "/rc")
-                            p._rc_done = True
-                            p._perm_auto_pending = True
-                        # else: 디바운스 진행 중 — _rc_pending 유지(위 pending 게이트가
-                        # 정적 화면에서도 스캔을 이어 가 _idle_frames 를 임계까지 올린다).
-                    elif p._perm_auto_pending:
-                        p._perm_auto_pending = False
-                        if pm not in ("auto", "bypass"):
-                            # acceptEdits 도 auto 가 아니므로 여기서 auto 까지 마저 순환한다
-                            # (예전엔 accept 를 auto 로 오인해 새 세션이 accept 에서 멈췄다).
-                            p._perm_target = "auto"   # 아래 폐루프가 auto 까지 순환
-                            self._perm_reset(p)
-                    # idle: 현재 권한모드를 관측해 저장(팝업 '현재 모드' 표시용 — status
-                    # 로 클라에 전달, §10 item 2). footer 가 안 보이면(None) 마지막 값 유지.
-                    # (pm 은 위 else 진입부에서 1회 계산 — P1 CSE.)
-                    if pm is not None and pm != p._perm_mode:
-                        p._perm_mode = pm
-                        changed = True
-                    # bypass 를 한 번이라도 관측하면(=시작 시 --dangerously-skip-
-                    # permissions 활성) sticky 로 기억해 팝업에 'Bypass' 항목 노출.
-                    if pm == "bypass" and not p._bypass_seen:
-                        p._bypass_seen = True
-                        changed = True
-                    # 권한모드 구동: 사용자가 footer 클릭 팝업으로 고른 수동 목표
-                    # (_perm_target)가 우선, 없고 claude_auto_mode 면 auto 로 순환
-                    # (§10 item 2 + 권한모드 자동 오토모드 전환). 둘 다 shift+tab 폐루프.
-                    if p._perm_target:
-                        self._drive_perm_mode(p, txt, p._perm_target)
-                    elif self.claude_auto_mode:
-                        self._maybe_auto_mode(p, txt)
-                    # M11 디바운스 해제: 정리 후 잔량이 임계+여유(5%p) 위로 회복하면
-                    # 다음 저잔량 구간에 재발화할 수 있게 한다. 회복 전엔 재발화 금지
-                    # (compact 가 효과 없어도 매 응답 무한 정리하지 않게 — §5.5).
+                # 자동재개/재시도 예약 게이트 phase(로드맵 #1 God-분할 —
+                # _scan_retry_gates 로 추출, 동작 불변).
+                self._scan_retry_gates(p, txt, new_cl)
+                # idle 자동개입 phase(리네임/규칙/auto-launch/권한모드) — 로드맵 #1
+                # God-분할로 _scan_idle_actions 추출(동작 불변).
+                if self._scan_idle_actions(p, txt, new_cl):
+                    changed = True
                 # 프롬프트 단위 클리어 모드(#9): busy→idle(응답 완료) 경계에서
                 # doc→/clear 상태기계를 한 단계 전진한다(사용자가 명시 활성화한 수동 모드).
                 if old_cl == "busy" and new_cl == "idle":
