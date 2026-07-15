@@ -234,6 +234,71 @@ def mdir_op_msg(server, sess, msg: dict) -> dict:
             "failed": [["", "bad_op"]], "conflicts": []}
 
 
+# 내장 뷰어가 한 번에 보내는 최대 바이트(원조 '보라(VV)' 대응 — 앞부분만).
+VIEW_LIMIT = 256 * 1024
+# 압축 내부 목록 상한(폭주 방어 — 목록 상한과 같은 이유).
+ARC_MAX_ENTRIES = 5000
+
+
+def mdir_view_msg(server, sess, path: str) -> dict:
+    """내장 텍스트 뷰어(request_mdir_view) — 파일 앞부분(VIEW_LIMIT)을 UTF-8
+    (errors=replace)로 회신한다. 첫 8KB 에 NUL 이 있으면 이진 파일로 보고 본문
+    없이 binary=True 만 회신(쓰레기 출력 방지). 서버 파일이므로 페더레이션이면
+    원격 내용이 온다."""
+    p = os.path.abspath(os.path.expanduser(str(path)))
+    try:
+        size = os.path.getsize(p)
+        with open(p, "rb") as f:
+            head = f.read(VIEW_LIMIT)
+    except OSError as ex:
+        return {"t": "mdir_view", "path": p, "size": 0, "truncated": False,
+                "binary": False, "text": "", "err": f"{type(ex).__name__}: {ex}"}
+    if b"\x00" in head[:8192]:
+        return {"t": "mdir_view", "path": p, "size": size, "truncated": False,
+                "binary": True, "text": "", "err": None}
+    return {"t": "mdir_view", "path": p, "size": size,
+            "truncated": size > len(head), "binary": False,
+            "text": head.decode("utf-8", errors="replace"), "err": None}
+
+
+_TAR_EXTS = (".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz")
+
+
+def mdir_arc_msg(server, sess, path: str) -> dict:
+    """압축파일 내부 목록(request_mdir_arc) — zip/jar 는 zipfile, tar 계열은
+    tarfile(표준 라이브러리, 읽기전용). 내부 경로를 그대로 실어 클라가 '디렉토리
+    재현'(원조 Alt-\\`)처럼 계층 탐색한다. rar/7z/lzh 등 표준 라이브러리 밖 형식은
+    arc_unsupported 코드로 거절(클라가 번역)."""
+    p = os.path.abspath(os.path.expanduser(str(path)))
+    low = p.lower()
+    entries: list[dict] = []
+    try:
+        if low.endswith((".zip", ".jar")):
+            import zipfile
+            with zipfile.ZipFile(p) as z:
+                for i in z.infolist()[:ARC_MAX_ENTRIES]:
+                    entries.append({"n": i.filename, "d": i.is_dir(),
+                                    "s": int(i.file_size)})
+        elif low.endswith(_TAR_EXTS):
+            import tarfile
+            with tarfile.open(p) as tf:
+                for m in tf:
+                    entries.append({"n": m.name, "d": m.isdir(),
+                                    "s": int(m.size)})
+                    if len(entries) >= ARC_MAX_ENTRIES:
+                        break
+        else:
+            return {"t": "mdir_arc", "path": p, "entries": [],
+                    "err": "arc_unsupported"}
+    except OSError as ex:
+        return {"t": "mdir_arc", "path": p, "entries": [],
+                "err": f"{type(ex).__name__}: {ex}"}
+    except Exception as ex:          # BadZipFile/TarError 등 형식 오류
+        return {"t": "mdir_arc", "path": p, "entries": [],
+                "err": f"{type(ex).__name__}: {ex}"}
+    return {"t": "mdir_arc", "path": p, "entries": entries, "err": None}
+
+
 def mdir_list_msg(server, sess, path: str | None = None) -> dict:
     """mdir 목록 요청 응답.
 

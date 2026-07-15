@@ -52,7 +52,8 @@ class _MdirPlugin:
     command_options = {}
     # 원격 보기(federation) 중 업스트림으로 릴레이할 액션 — 원격 패널이면 원격
     # 머신의 파일시스템을 보고 조작해야 한다(코어 화이트리스트와 합집합).
-    relay_actions = {"request_mdir_list", "request_mdir_op"}
+    relay_actions = {"request_mdir_list", "request_mdir_op",
+                     "request_mdir_view", "request_mdir_arc"}
 
     # ---- 클라이언트 측 ----
     def attach_client(self, app):
@@ -72,6 +73,15 @@ class _MdirPlugin:
             app.send_cmd("request_mdir_op", **kw)
         app.request_mdir_op = request_mdir_op
 
+        # 내장 뷰어(파일 앞부분) / 압축파일 내부 목록.
+        def request_mdir_view(path):
+            app.send_cmd("request_mdir_view", path=path)
+        app.request_mdir_view = request_mdir_view
+
+        def request_mdir_arc(path):
+            app.send_cmd("request_mdir_arc", path=path)
+        app.request_mdir_arc = request_mdir_arc
+
     def handle_command(self, app, c, args):
         if c in ("mdir", "m"):
             app.request_mdir_list()
@@ -89,6 +99,17 @@ class _MdirPlugin:
             scr = self._find_screen(app)
             if scr is not None:
                 scr.apply_result(msg)
+            return True
+        if t == "mdir_view":
+            scr = self._find_screen(app)
+            if scr is not None:
+                from .screen import MdirViewer
+                app.push_screen(MdirViewer(msg))
+            return True
+        if t == "mdir_arc":
+            scr = self._find_screen(app)
+            if scr is not None:
+                scr.apply_arc(msg)
             return True
         return False
 
@@ -134,6 +155,12 @@ class _MdirPlugin:
         if action == "request_mdir_op":
             from .server import mdir_op_msg
             return mdir_op_msg(server, sess, msg)
+        if action == "request_mdir_view":
+            from .server import mdir_view_msg
+            return mdir_view_msg(server, sess, msg.get("path"))
+        if action == "request_mdir_arc":
+            from .server import mdir_arc_msg
+            return mdir_arc_msg(server, sess, msg.get("path"))
         return None
 
 

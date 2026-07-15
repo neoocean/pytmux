@@ -214,6 +214,57 @@ async def test_mdir_op_rename_and_mkdir():
         assert r5["done"] == 0 and r5["failed"][0][1] == "exists"
 
 
+# ---- 서버: 뷰어/압축 내부 목록 ----
+async def test_mdir_view_text_binary_truncated_err():
+    with tempfile.TemporaryDirectory() as root:
+        p = os.path.join(root, "t.txt")
+        _w(p, "hello 한글")
+        r = mds.mdir_view_msg(None, None, p)
+        assert r["text"] == "hello 한글" and not r["binary"] \
+            and not r["truncated"] and r["err"] is None
+        b = os.path.join(root, "b.bin")
+        with open(b, "wb") as f:
+            f.write(b"\x00\x01BIN")
+        rb = mds.mdir_view_msg(None, None, b)
+        assert rb["binary"] is True and rb["text"] == ""
+        big = os.path.join(root, "big.txt")
+        with open(big, "w") as f:
+            f.write("x" * (mds.VIEW_LIMIT + 100))
+        rt = mds.mdir_view_msg(None, None, big)
+        assert rt["truncated"] is True and len(rt["text"]) == mds.VIEW_LIMIT
+        re_ = mds.mdir_view_msg(None, None, os.path.join(root, "none"))
+        assert re_["err"]
+
+
+async def test_mdir_arc_zip_tar_and_unsupported():
+    import tarfile
+    import zipfile
+    with tempfile.TemporaryDirectory() as root:
+        zp = os.path.join(root, "a.zip")
+        with zipfile.ZipFile(zp, "w") as z:
+            z.writestr("top.txt", "T")
+            z.writestr("sub/inner.txt", "I")
+        r = mds.mdir_arc_msg(None, None, zp)
+        assert r["err"] is None
+        names = {e["n"] for e in r["entries"]}
+        assert {"top.txt", "sub/inner.txt"} <= names, names
+        tp = os.path.join(root, "a.tar.gz")
+        _w(os.path.join(root, "f.txt"), "F")
+        with tarfile.open(tp, "w:gz") as tf:
+            tf.add(os.path.join(root, "f.txt"), arcname="dir/f.txt")
+        rt = mds.mdir_arc_msg(None, None, tp)
+        assert rt["err"] is None
+        assert any(e["n"] == "dir/f.txt" and e["s"] == 1 for e in rt["entries"])
+        # 표준 라이브러리 밖 형식은 코드로 거절(클라 번역).
+        ru = mds.mdir_arc_msg(None, None, os.path.join(root, "x.rar"))
+        assert ru["err"] == "arc_unsupported"
+        # 깨진 zip → 형식 오류 문자열(화면 유지, 공지 표시).
+        bad = os.path.join(root, "bad.zip")
+        _w(bad, "not a zip")
+        rbad = mds.mdir_arc_msg(None, None, bad)
+        assert rbad["err"] and rbad["entries"] == []
+
+
 async def test_mdir_cd_command_dialects_and_quote_defense():
     # ncd 와 동일 규율의 사본 — Windows 임베드 따옴표·개행 무력화, POSIX shlex.
     assert _cd_command("/r/a b", nt=False) == "cd '/r/a b'\n"
@@ -549,6 +600,117 @@ async def test_mdir_rename_prompt_prefill_and_mkdir():
         assert sent == [("request_mdir_op",
                          {"op": "mkdir", "base": "/r", "dst": "new"})], sent
         assert v._pending_sel == "new"             # 생성 후 커서를 새 디렉토리로
+    await _with_app(body)
+
+
+async def test_mdir_sort_hidden_filter_cols():
+    async def body(app, pilot, srv):
+        from pytmuxlib.plugins.mdir.screen import MdirScreen, MdirPrompt
+        app.send_cmd = lambda *a, **k: None
+        app._run_command("mdir")
+        ents = [_e("sub", d=True), _e("big.txt", s=100, m=50),
+                _e("a.txt", s=5, m=200), _e("prog.exe", s=30, m=100),
+                _e(".secret", h=True)]
+        app._dispatch(_msg(entries=ents))
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirScreen))
+        v = app.screen._view
+
+        def files():
+            return [v._item_name(it) for it in v._items if it["k"] == "file"]
+        assert files() == ["a.txt", "big.txt", "prog.exe"]   # 기본 N(이름)
+        await pilot.press("alt+s")                 # 크기순
+        assert v._sort == "s" and files() == ["a.txt", "prog.exe", "big.txt"]
+        await pilot.press("alt+s")                 # 재입력 = 내림차순
+        assert v._rev and files() == ["big.txt", "prog.exe", "a.txt"]
+        await pilot.press("alt+t")                 # 시간순(오름)
+        assert v._sort == "t" and not v._rev
+        assert files() == ["big.txt", "prog.exe", "a.txt"]   # m: 50,100,200
+        await pilot.press("alt+z")                 # 숨김 표시
+        assert ".secret" in files()
+        await pilot.press("alt+z")
+        assert ".secret" not in files()
+        # 필터: *.txt 만.
+        await pilot.press("alt+f")
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirPrompt))
+        for chx in "*.txt":
+            await pilot.press(chx if chx != "*" else "asterisk")
+        await pilot.press("enter")
+        assert await wait_until(pilot, lambda: v._filter == ["*.txt"]), v._filter
+        assert files() == ["big.txt", "a.txt"] or files() == ["a.txt", "big.txt"]
+        # 열수 강제(⎇2) / 자동(⎇0).
+        await pilot.press("alt+2")
+        assert v._cols() == 2
+        await pilot.press("alt+0")
+        assert v._cols_override is None
+    await _with_app(body)
+
+
+async def test_mdir_enter_file_opens_viewer_or_archive():
+    async def body(app, pilot, srv):
+        from pytmuxlib.plugins.mdir.screen import MdirScreen
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app._run_command("mdir")
+        app._dispatch(_msg(entries=[_e("a.txt", s=5), _e("z.zip", s=9)]))
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirScreen))
+        await pilot.press("down")                  # a.txt
+        sent.clear()
+        await pilot.press("enter")
+        assert sent == [("request_mdir_view", {"path": "/r/a.txt"})], sent
+        await pilot.press("down")                  # z.zip
+        sent.clear()
+        await pilot.press("enter")
+        assert sent == [("request_mdir_arc", {"path": "/r/z.zip"})], sent
+    await _with_app(body)
+
+
+async def test_mdir_viewer_opens_and_closes():
+    async def body(app, pilot, srv):
+        from pytmuxlib.plugins.mdir.screen import MdirScreen, MdirViewer
+        app.send_cmd = lambda *a, **k: None
+        app._run_command("mdir")
+        app._dispatch(_msg())
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirScreen))
+        app._dispatch({"t": "mdir_view", "path": "/r/a.txt", "size": 5,
+                       "truncated": False, "binary": False,
+                       "text": "hello", "err": None})
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirViewer))
+        await pilot.press("escape")
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirScreen))
+    await _with_app(body)
+
+
+async def test_mdir_archive_mode_hierarchy_and_readonly():
+    async def body(app, pilot, srv):
+        from pytmuxlib.plugins.mdir.screen import MdirScreen
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app._run_command("mdir")
+        app._dispatch(_msg())
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirScreen))
+        v = app.screen._view
+        app._dispatch({"t": "mdir_arc", "path": "/r/z.zip", "err": None,
+                       "entries": [{"n": "top.txt", "d": False, "s": 3},
+                                   {"n": "sub/inner.txt", "d": False, "s": 7}]})
+        # 내부 계층: `..` → sub(유도 디렉토리) → top.txt.
+        assert await wait_until(pilot, lambda: v._arc is not None)
+        assert _names(v) == ["..", "sub", "top.txt"], _names(v)
+        await pilot.press("down", "enter")         # sub 진입
+        assert v._arc_dir == "sub/" and _names(v) == ["..", "inner.txt"]
+        # 읽기전용: 태그/조작은 공지만.
+        await pilot.press("down", "space")
+        assert v._tags == set() and v._notice, "읽기전용 가드"
+        sent.clear()
+        await pilot.press("f8")
+        assert sent == [] and not hasattr(app.screen, "_options"), "삭제 차단"
+        await pilot.press("full_stop")             # `.` = 내부 상위
+        assert v._arc_dir == "" and v._arc is not None
+        await pilot.press("escape")                # Esc 1차 = 압축 종료
+        assert v._arc is None and isinstance(app.screen, MdirScreen)
+        assert _names(v) == ["..", "sub", "zeta", "a.txt", "b.txt"]
+        await pilot.press("escape")                # 2차 = 팝업 닫기
+        assert await wait_until(
+            pilot, lambda: not isinstance(app.screen, MdirScreen))
     await _with_app(body)
 
 
