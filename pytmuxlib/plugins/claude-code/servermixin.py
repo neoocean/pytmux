@@ -1047,6 +1047,175 @@ class ServerClaudeMixin:
             p._claude_model_cand_n = 0
         return ch
 
+    def _scan_warnings(self, p, new_cl) -> bool:
+        """M17 표시 경고(grade0 — 알림만, 개입 없음) 갱신 phase.
+
+        `_scan_claude` 에서 추출(로드맵 #1 God-분할, 동작 불변). 우선순위는 S9 장기 턴
+        > S8 반복 루프 > §3.7 포맷 미인식이며, 임계는 opt(0=끔). 새 경고 **종류**의
+        onset 만 이력에 1건 남긴다(같은 kind 가 이어지는 동안 dedup — long_turn 배지의
+        초는 매초 바뀌어도 kind 는 그대로). 상태가 바뀌면 True.
+        """
+        # S9 장기 턴 우선, 아니면 S8 반복 루프. 세션 종료 시 상태 리셋.
+        changed = False
+        warn = None
+        warn_kind = None        # 구조적 종류(클라가 로케일별 렌더에 사용)
+        warn_n = None           # 반복 종류일 때 반복 횟수(그 외 None)
+        lt = self.claude_long_turn_sec
+        ra = self.claude_repeat_alert
+        if (lt > 0 and new_cl == "busy" and p._busy_since is not None):
+            el = time.monotonic() - p._busy_since
+            if el >= lt:
+                # 장기 턴 경고: 경고 삼각형(⚠) + 경과 시간. 기본 분:초, 1시간
+                # 이상이면 시:분(사용자 요청 2026-06-17, fmt_long_turn_badge).
+                # 초가 매초 바뀌므로 정수 초 경계에서만 changed. 배지 문자열은
+                # 언어중립(숫자만)이라 클라가 그대로 쓴다.
+                warn = fmt_long_turn_badge(el)
+                warn_kind = "long_turn"
+        elif ra > 0 and new_cl == "idle" and p._repeat_n >= ra:
+            warn_n = p._repeat_n + 1
+            warn = f"⚠ 동일 결과 {warn_n}회 반복 — 루프 의심"
+            warn_kind = "repeat"
+        if not new_cl:
+            p._busy_since = None
+            p._repeat_n = 0
+            p._done_tail = None
+        # §3.7: 포맷 미인식이면 ⚠ 경고로 가시화(다른 경고가 없을 때만 — 미인식은
+        # new_cl=None 이라 위 long-turn/repeat 와 상호배타지만 안전하게 or 사용).
+        if p._fmt_unknown and warn is None:
+            warn = _FMT_UNKNOWN_MSG
+            warn_kind = "fmt_unknown"
+        if (warn != p._claude_warn
+                or warn_kind != p._claude_warn_kind):
+            prev_kind = p._claude_warn_kind
+            p._claude_warn = warn
+            p._claude_warn_kind = warn_kind
+            p._claude_warn_n = warn_n
+            changed = True
+            # 항목2(2026-06-22): 새 경고 종류의 **onset**(이전과 다른 non-None
+            # kind)을 이력에 1건 기록한다 — [경고] 탭이 과거 경고를 트리로
+            # 펼쳐 보이게. 같은 kind 가 이어지는 동안(long_turn 배지 초가
+            # 매초 바뀌어도 kind 는 그대로)엔 재기록하지 않아 dedup 된다.
+            if warn_kind is not None and warn_kind != prev_kind:
+                self._record_warn_history(p, warn, warn_kind, warn_n,
+                                          time.time())
+        return changed
+
+    def _scan_rc_signals(self, p, txt) -> None:
+        """`/rc`(원격 제어) 관련 화면 신호 phase — 관리 메뉴 자동 Dismiss·조직 정책
+        차단 감지·'이미 켜짐' sticky 관측.
+
+        `_scan_claude` 에서 추출(로드맵 #1 God-분할, 동작 불변). 상태(changed)를 바꾸지
+        않는다 — 여기서 세우는 건 전부 **서버/패널 내부 플래그**(클라 표시 무관)라
+        원 체인도 changed 를 안 건드렸다.
+        """
+        # `/rc` 원격 제어 관리 메뉴(Continue/Disconnect/QR) 자동 Dismiss: 이
+        # 메뉴는 "Esc to continue" 응답 대기로 **진행을 막으므로**(auto-launch 가
+        # 새 세션마다 /rc 를 1회 주입, 사용자 보고 2026-06-18) Esc=Continue 를
+        # 첫 감지에 **딱 한 번** 주입해 치운다(원격은 켜진 채 메뉴만 닫혀 자동화가
+        # 이어진다). 절대 재주입하지 않는다(이중 Esc=Rewind 모달 차단, 위 상수
+        # 주석) — _rc_menu_active 로 메뉴가 사라질 때까지 디바운스한다. 메뉴 출현은
+        # claude_remote_active 분기가 _rc_done 도 세워 같은 세션에 /rc 가 재발하지
+        # 않는다.
+        #
+        # ★ 세션 피드백 프롬프트("How is Claude doing this session?")는 더 이상
+        # Esc 를 주입하지 않는다(사용자 보고 2026-06-20): 단일 Esc 가 종종 Dismiss
+        # 대신 작동 중인 턴을 interrupt 했다 — busy 중 배너 텍스트가 화면에 매칭
+        # 되거나 feed 지연으로 stale 매칭이 남으면 Esc 가 interrupt 키로 해석된다.
+        # 이 배너는 비모달이라 안 닫아도 컴포저를 막지 않고(사용자의 다음 Enter/
+        # Space 가 자연히 닫는다), server_filter_rows(_blank_feedback_banner)가
+        # 배너를 화면에서 완전히 가린다 — 키 주입 없는 표시 필터만으로 충분하다.
+        if claude_remote_menu(txt):
+            if not p._rc_menu_active:
+                p._rc_menu_active = True
+                if p.pty is not None:
+                    try:
+                        p.pty.write(_FEEDBACK_DISMISS_KEY)
+                    except OSError:
+                        pass
+        else:
+            p._rc_menu_active = False
+        # 원격 제어가 조직 정책으로 막혔다는 메시지를 한 번이라도 보면, 이
+        # 세션(서버 프로세스) 동안 /rc 자동 주입을 영구 중단한다(요청). 정책은
+        # 조직 단위라 서버 전역 플래그로 둬 모든 패널에 적용한다 — 안 그러면
+        # 매 새 세션(/clear·재시작)마다 /rc 를 재시도해 같은 거부가 반복된다.
+        if not self._rc_policy_blocked and claude_remote_blocked(txt):
+            self._rc_policy_blocked = True
+            for q in self._all_panes():
+                q._rc_pending = False   # 무장된 자동 /rc 예약도 거둔다
+        # 원격제어가 켜진 걸(패널/표시) 한 번이라도 보면 sticky 로 기록 — 재시작
+        # re-exec 후 거짓 None→Claude 로 auto /rc 가 재발해 이미 켜진 패널을 다시
+        # 띄우지 않게 한다(_rc_done 은 _RESUME_FIELDS 로 직렬화돼 유지).
+        if claude_remote_active(txt):
+            p._rc_done = True
+            # 추가(요청): 원격제어가 이미 켜진 걸 한 번이라도 관측하면 **서버
+            # 전역** sticky 를 세워, 이후 새 세션의 auto-launch fire 시점에 /rc 를
+            # 확정 스킵한다(아래 fire 블록의 skip 조건에 _rc_seen_active 포함).
+            # 데스크탑 앱이 세션마다 원격제어를 지속 연결하는 환경에선 이미 켜진
+            # 세션에 /rc 를 보내면 Claude 의 `/remote-control` 관리 대화가 다시 떠
+            # 진행이 멈추는데, 디바운스(타이밍)만으론 첫 프레임 레이스를 완전히 못
+            # 막으므로 "한 번 본 적 있으면 더는 안 쏨"으로 보장한다. **무장은
+            # 그대로 둔다** — auto-launch 는 /rc 외에 권한모드 auto 유도도 겸하므로
+            # (fire 블록이 /rc 만 건너뛰고 _perm_auto_pending 은 정상 인계). 수동
+            # 토글(footer 클릭→팝업 [r])은 영향 없음.
+            self._rc_seen_active = True
+
+    def _scan_usage_capture(self, txt) -> bool:
+        """패널에 뜬 실측 /usage 한도를 권위값(self._usage)으로 캡처하는 phase.
+
+        `_scan_claude` 에서 추출(로드맵 #1 God-분할, 동작 불변). ① /usage 패널(전체)
+        ② footer 인라인 한도(부분) 중 무엇이든 보이면 캡처해 상태줄 5h% 가 추정치 대신
+        실측을 따르게 한다. 그림자 프로브가 붙여 둔 account/model 은 인패널 갱신이
+        덮지 않게 보존한다(인라인 parse 엔 그 두 키가 없다). 값이 바뀌면 True.
+        """
+        # 사용자가 패널에서 직접 /usage 를 띄우면 그 **실측** 한도를 캡처해
+        # 권위값(self._usage)으로 둔다 — 상태줄 5h%·토큰 화면 그래프가 /usage 와
+        # 어긋나던 문제(요청). 그림자 probe 결과와 같은 형식이라 그대로 저장하고,
+        # 패널이 사라져도 마지막 값을 유지한다(덮어쓸 때만 갱신·broadcast).
+        # ① /usage 패널(전체, 권위) ② footer 인라인 한도(부분: "used 93% of
+        # your session limit"). 둘 중 무엇이든 보이면 캡처해 상태줄 5h% 가 추정치
+        # 대신 실측을 따르게 한다(요청). 인라인은 기존 _usage 에 병합(세션/주간만
+        # 갱신, 패널서 받은 다른 키는 보존). 패널이 사라져도 마지막 값 유지.
+        new_usage = None
+        if "Current" in txt and "used" in txt:
+            new_usage = parse_usage(txt)
+        # panel_now: /usage 패널(전체)을 봤는가 — 아래 한도 스냅샷 출처 라벨
+        # ("panel" vs "inline")에 쓴다. (인패널 /usage 자동 팝업 신호 seq 는
+        # 2026-06-17 제거 — 사용자가 이미 Claude /usage 패널을 보고 있는데 같은
+        # 내용을 전용 모달로 덮는 게 불필요·방해라서. 수동 usage-panel 명령과
+        # 그림자 /usage 질의·실측 캡처는 그대로 유지. §3.9)
+        panel_now = new_usage is not None
+        if "limit" in txt and "used" in txt:
+            inline = parse_inline_limit(txt)
+            if inline:
+                base = dict(self._usage) \
+                    if isinstance(self._usage, dict) else {}
+                if new_usage:
+                    base.update(new_usage)
+                base.update(inline)
+                new_usage = base
+        if new_usage and new_usage != self._usage:
+            # 그림자 probe 가 붙여 둔 계정(일치 확인용)은 인패널 갱신이
+            # 덮지 않게 보존한다 — 인라인 parse_usage 엔 계정이 없다.
+            if isinstance(self._usage, dict) and self._usage.get("account") \
+                    and "account" not in new_usage:
+                new_usage["account"] = self._usage["account"]
+            # 모델도 동일하게 보존(2026-06-22) — parse_usage/인라인엔 model 이
+            # 없어, 보존 안 하면 인패널 갱신이 프로브 model 폴백을 지워
+            # _scan_claude 의 model 폴백(self._usage['model'])이 끊긴다.
+            if isinstance(self._usage, dict) and self._usage.get("model") \
+                    and "model" not in new_usage:
+                new_usage["model"] = self._usage["model"]
+            self._usage = new_usage
+            self._usage_ts = time.time()   # S6 T3: 신선도(표시·게이트)
+            # S6 T1: 실측 한도 스냅샷 이력화 — 값이 바뀐 순간만 적힌다
+            # (insert_limits 가 직전과 동일값이면 skip). 이 분기는
+            # new_usage != self._usage 일 때만 오므로 30Hz 스캔 부담 없음.
+            self._record_usage_snapshot(
+                new_usage, "panel" if panel_now else "inline")
+            changed = True
+            return True
+        return False
+
     def _scan_claude(self, sess, win) -> bool:
         """모든 탭 패널의 Claude 상태/사용량을 화면 텍스트(screen.display)로 갱신
         하고, **비활성 탭**의 busy→idle(작업 완료) 전이를 감지해 `has_claude_done`
@@ -1094,101 +1263,12 @@ class ServerClaudeMixin:
                 # fg 검사) '포맷 미인식' 경고를 세워 추적 중단을 가시화한다.
                 if self._update_fmt_unknown(p, new_cl is not None):
                     changed = True
-                # `/rc` 원격 제어 관리 메뉴(Continue/Disconnect/QR) 자동 Dismiss: 이
-                # 메뉴는 "Esc to continue" 응답 대기로 **진행을 막으므로**(auto-launch 가
-                # 새 세션마다 /rc 를 1회 주입, 사용자 보고 2026-06-18) Esc=Continue 를
-                # 첫 감지에 **딱 한 번** 주입해 치운다(원격은 켜진 채 메뉴만 닫혀 자동화가
-                # 이어진다). 절대 재주입하지 않는다(이중 Esc=Rewind 모달 차단, 위 상수
-                # 주석) — _rc_menu_active 로 메뉴가 사라질 때까지 디바운스한다. 메뉴 출현은
-                # claude_remote_active 분기가 _rc_done 도 세워 같은 세션에 /rc 가 재발하지
-                # 않는다.
-                #
-                # ★ 세션 피드백 프롬프트("How is Claude doing this session?")는 더 이상
-                # Esc 를 주입하지 않는다(사용자 보고 2026-06-20): 단일 Esc 가 종종 Dismiss
-                # 대신 작동 중인 턴을 interrupt 했다 — busy 중 배너 텍스트가 화면에 매칭
-                # 되거나 feed 지연으로 stale 매칭이 남으면 Esc 가 interrupt 키로 해석된다.
-                # 이 배너는 비모달이라 안 닫아도 컴포저를 막지 않고(사용자의 다음 Enter/
-                # Space 가 자연히 닫는다), server_filter_rows(_blank_feedback_banner)가
-                # 배너를 화면에서 완전히 가린다 — 키 주입 없는 표시 필터만으로 충분하다.
-                if claude_remote_menu(txt):
-                    if not p._rc_menu_active:
-                        p._rc_menu_active = True
-                        if p.pty is not None:
-                            try:
-                                p.pty.write(_FEEDBACK_DISMISS_KEY)
-                            except OSError:
-                                pass
-                else:
-                    p._rc_menu_active = False
-                # 원격 제어가 조직 정책으로 막혔다는 메시지를 한 번이라도 보면, 이
-                # 세션(서버 프로세스) 동안 /rc 자동 주입을 영구 중단한다(요청). 정책은
-                # 조직 단위라 서버 전역 플래그로 둬 모든 패널에 적용한다 — 안 그러면
-                # 매 새 세션(/clear·재시작)마다 /rc 를 재시도해 같은 거부가 반복된다.
-                if not self._rc_policy_blocked and claude_remote_blocked(txt):
-                    self._rc_policy_blocked = True
-                    for q in self._all_panes():
-                        q._rc_pending = False   # 무장된 자동 /rc 예약도 거둔다
-                # 원격제어가 켜진 걸(패널/표시) 한 번이라도 보면 sticky 로 기록 — 재시작
-                # re-exec 후 거짓 None→Claude 로 auto /rc 가 재발해 이미 켜진 패널을 다시
-                # 띄우지 않게 한다(_rc_done 은 _RESUME_FIELDS 로 직렬화돼 유지).
-                if claude_remote_active(txt):
-                    p._rc_done = True
-                    # 추가(요청): 원격제어가 이미 켜진 걸 한 번이라도 관측하면 **서버
-                    # 전역** sticky 를 세워, 이후 새 세션의 auto-launch fire 시점에 /rc 를
-                    # 확정 스킵한다(아래 fire 블록의 skip 조건에 _rc_seen_active 포함).
-                    # 데스크탑 앱이 세션마다 원격제어를 지속 연결하는 환경에선 이미 켜진
-                    # 세션에 /rc 를 보내면 Claude 의 `/remote-control` 관리 대화가 다시 떠
-                    # 진행이 멈추는데, 디바운스(타이밍)만으론 첫 프레임 레이스를 완전히 못
-                    # 막으므로 "한 번 본 적 있으면 더는 안 쏨"으로 보장한다. **무장은
-                    # 그대로 둔다** — auto-launch 는 /rc 외에 권한모드 auto 유도도 겸하므로
-                    # (fire 블록이 /rc 만 건너뛰고 _perm_auto_pending 은 정상 인계). 수동
-                    # 토글(footer 클릭→팝업 [r])은 영향 없음.
-                    self._rc_seen_active = True
-                # 사용자가 패널에서 직접 /usage 를 띄우면 그 **실측** 한도를 캡처해
-                # 권위값(self._usage)으로 둔다 — 상태줄 5h%·토큰 화면 그래프가 /usage 와
-                # 어긋나던 문제(요청). 그림자 probe 결과와 같은 형식이라 그대로 저장하고,
-                # 패널이 사라져도 마지막 값을 유지한다(덮어쓸 때만 갱신·broadcast).
-                # ① /usage 패널(전체, 권위) ② footer 인라인 한도(부분: "used 93% of
-                # your session limit"). 둘 중 무엇이든 보이면 캡처해 상태줄 5h% 가 추정치
-                # 대신 실측을 따르게 한다(요청). 인라인은 기존 _usage 에 병합(세션/주간만
-                # 갱신, 패널서 받은 다른 키는 보존). 패널이 사라져도 마지막 값 유지.
-                new_usage = None
-                if "Current" in txt and "used" in txt:
-                    new_usage = parse_usage(txt)
-                # panel_now: /usage 패널(전체)을 봤는가 — 아래 한도 스냅샷 출처 라벨
-                # ("panel" vs "inline")에 쓴다. (인패널 /usage 자동 팝업 신호 seq 는
-                # 2026-06-17 제거 — 사용자가 이미 Claude /usage 패널을 보고 있는데 같은
-                # 내용을 전용 모달로 덮는 게 불필요·방해라서. 수동 usage-panel 명령과
-                # 그림자 /usage 질의·실측 캡처는 그대로 유지. §3.9)
-                panel_now = new_usage is not None
-                if "limit" in txt and "used" in txt:
-                    inline = parse_inline_limit(txt)
-                    if inline:
-                        base = dict(self._usage) \
-                            if isinstance(self._usage, dict) else {}
-                        if new_usage:
-                            base.update(new_usage)
-                        base.update(inline)
-                        new_usage = base
-                if new_usage and new_usage != self._usage:
-                    # 그림자 probe 가 붙여 둔 계정(일치 확인용)은 인패널 갱신이
-                    # 덮지 않게 보존한다 — 인라인 parse_usage 엔 계정이 없다.
-                    if isinstance(self._usage, dict) and self._usage.get("account") \
-                            and "account" not in new_usage:
-                        new_usage["account"] = self._usage["account"]
-                    # 모델도 동일하게 보존(2026-06-22) — parse_usage/인라인엔 model 이
-                    # 없어, 보존 안 하면 인패널 갱신이 프로브 model 폴백을 지워
-                    # _scan_claude 의 model 폴백(self._usage['model'])이 끊긴다.
-                    if isinstance(self._usage, dict) and self._usage.get("model") \
-                            and "model" not in new_usage:
-                        new_usage["model"] = self._usage["model"]
-                    self._usage = new_usage
-                    self._usage_ts = time.time()   # S6 T3: 신선도(표시·게이트)
-                    # S6 T1: 실측 한도 스냅샷 이력화 — 값이 바뀐 순간만 적힌다
-                    # (insert_limits 가 직전과 동일값이면 skip). 이 분기는
-                    # new_usage != self._usage 일 때만 오므로 30Hz 스캔 부담 없음.
-                    self._record_usage_snapshot(
-                        new_usage, "panel" if panel_now else "inline")
+                # `/rc` 화면 신호 phase(메뉴 dismiss·정책 차단·active sticky) —
+                # 로드맵 #1 God-분할로 _scan_rc_signals 추출(동작 불변).
+                self._scan_rc_signals(p, txt)
+                # 실측 /usage 한도 캡처 phase(로드맵 #1 God-분할 — _scan_usage_capture
+                # 로 추출, 동작 불변).
+                if self._scan_usage_capture(txt):
                     changed = True
                 # 사용량 표시는 Claude 세션이 살아 있는 동안 유지한다(#5): 화면에서
                 # 토큰 문구가 잠시 사라져도(스크롤 등) 마지막 값을 보존하고, 세션이
@@ -1592,49 +1672,10 @@ class ServerClaudeMixin:
                         p._done_tail, p._repeat_n, screen_tail_key(txt))
                     if p.prompt_clear_mode:
                         self._pc_advance(p)
-                # M17(T7) 표시 경고 갱신(grade0 — 알림만, 개입 없음). S9 장기 턴 우선,
-                # 아니면 S8 반복 루프. 임계는 opt(0=끔). 세션 종료 시 상태 리셋.
-                warn = None
-                warn_kind = None        # 구조적 종류(클라가 로케일별 렌더에 사용)
-                warn_n = None           # 반복 종류일 때 반복 횟수(그 외 None)
-                lt = self.claude_long_turn_sec
-                ra = self.claude_repeat_alert
-                if (lt > 0 and new_cl == "busy" and p._busy_since is not None):
-                    el = time.monotonic() - p._busy_since
-                    if el >= lt:
-                        # 장기 턴 경고: 경고 삼각형(⚠) + 경과 시간. 기본 분:초, 1시간
-                        # 이상이면 시:분(사용자 요청 2026-06-17, fmt_long_turn_badge).
-                        # 초가 매초 바뀌므로 정수 초 경계에서만 changed. 배지 문자열은
-                        # 언어중립(숫자만)이라 클라가 그대로 쓴다.
-                        warn = fmt_long_turn_badge(el)
-                        warn_kind = "long_turn"
-                elif ra > 0 and new_cl == "idle" and p._repeat_n >= ra:
-                    warn_n = p._repeat_n + 1
-                    warn = f"⚠ 동일 결과 {warn_n}회 반복 — 루프 의심"
-                    warn_kind = "repeat"
-                if not new_cl:
-                    p._busy_since = None
-                    p._repeat_n = 0
-                    p._done_tail = None
-                # §3.7: 포맷 미인식이면 ⚠ 경고로 가시화(다른 경고가 없을 때만 — 미인식은
-                # new_cl=None 이라 위 long-turn/repeat 와 상호배타지만 안전하게 or 사용).
-                if p._fmt_unknown and warn is None:
-                    warn = _FMT_UNKNOWN_MSG
-                    warn_kind = "fmt_unknown"
-                if (warn != p._claude_warn
-                        or warn_kind != p._claude_warn_kind):
-                    prev_kind = p._claude_warn_kind
-                    p._claude_warn = warn
-                    p._claude_warn_kind = warn_kind
-                    p._claude_warn_n = warn_n
+                # M17(T7) 표시 경고 갱신 phase(로드맵 #1 God-분할 — _scan_warnings
+                # 로 추출, 동작 불변).
+                if self._scan_warnings(p, new_cl):
                     changed = True
-                    # 항목2(2026-06-22): 새 경고 종류의 **onset**(이전과 다른 non-None
-                    # kind)을 이력에 1건 기록한다 — [경고] 탭이 과거 경고를 트리로
-                    # 펼쳐 보이게. 같은 kind 가 이어지는 동안(long_turn 배지 초가
-                    # 매초 바뀌어도 kind 는 그대로)엔 재기록하지 않아 dedup 된다.
-                    if warn_kind is not None and warn_kind != prev_kind:
-                        self._record_warn_history(p, warn, warn_kind, warn_n,
-                                                  time.time())
         return changed
 
     # 경고 이력 보관 상한(파일 한 줄=경고 1건). onset 만 기록해 증가는 느리지만,

@@ -1542,6 +1542,113 @@ async def test_command_table_disposition_golden():
     assert dyn == ["kill_pane"], f"DYNAMIC 은 kill_pane 만: {dyn}"
 
 
+# ── _scan_claude 상태 골든(§10-4⑨ 분할 등가 오라클) ─────────────────────────
+# 스캔이 **패널에 남기는 상태 전체**를 시나리오별·프레임별로 찍는 지문. 타임스탬프
+# (_busy_since 등 monotonic)는 비결정적이라 제외하고, _done_tail 은 길어서 존재여부만.
+_SCAN_FP_ATTRS = (
+    "_claude", "_claude_usage", "_hdr_claude", "_hdr_claude_miss", "_idle_frames",
+    "_was_busy", "_welcome_seen", "_rc_menu_active", "_rc_pending", "_rc_done",
+    "_perm_auto_pending", "_perm_mode", "_perm_target", "_bypass_seen",
+    "_session_tokens", "_exit_tokens", "_busy_exit_miss", "_exit_token_pending",
+    "_rules_pending", "_fmt_unknown", "_claude_warn", "_claude_warn_kind",
+    "_claude_warn_n", "_repeat_n", "_claude_account", "_claude_model",
+    "last_prompt",
+)
+
+# 시나리오 = (라벨, 프레임 시퀀스). 스캔의 주요 phase 를 훑는다: 세션 시작/종료 경계,
+# busy→idle 완료 디바운스, limit, 수동 /clear(welcome), API 에러 재시도, /usage 실측
+# 캡처, /rc 관리 메뉴 dismiss.
+_SCAN_BUSY = "✽ Crunching… (3s · ↑ 1k tokens)"
+_SCAN_IDLE = "? for shortcuts"
+_SCAN_SCENARIOS = (
+    ("none", ("",)),
+    ("busy", (_SCAN_BUSY,)),
+    ("busy_idle_stable", (_SCAN_BUSY, _SCAN_IDLE, _SCAN_IDLE, _SCAN_IDLE)),
+    ("limit", (_SCAN_BUSY, "Claude usage limit reached. Your limit will reset at 3pm.")),
+    ("welcome_clear", (_SCAN_BUSY, "✻ Welcome to Claude Code!", _SCAN_IDLE)),
+    ("api_error", (_SCAN_BUSY, "API Error: Internal server error")),
+    ("usage_panel", (_SCAN_BUSY,
+                     "Current session\nCurrent week (all models)\n"
+                     "used 42% of your session limit")),
+    ("session_exit", (_SCAN_BUSY, _SCAN_IDLE, "")),
+)
+
+
+def _scan_fingerprint(p, t, changed) -> dict:
+    d = {a: getattr(p, a, "<missing>") for a in _SCAN_FP_ATTRS}
+    d["_done_tail?"] = bool(getattr(p, "_done_tail", None))
+    d["pending_prompts"] = list(getattr(p, "pending_prompts", []))
+    d["tab.has_claude_done"] = t.has_claude_done
+    d["changed"] = changed
+    return d
+
+
+async def _scan_golden_signatures() -> dict:
+    """시나리오 매트릭스를 _scan_claude 에 통과시켜 라벨→프레임별 지문 목록."""
+    out = {}
+    for label, frames in _SCAN_SCENARIOS:
+        srv, task, sock = await server_only()
+        try:
+            sess = srv.ensure_default_session(80, 24)
+            srv.new_window(sess)          # 탭1 추가
+            srv.select_window(sess, 0)    # 탭0 활성 → 탭1 비활성(완료 알림 경로 포함)
+            t1 = sess.tabs[1]
+            p1 = t1.window.active_pane
+            win = sess.active_window
+            steps = []
+            for f in frames:
+                p1.feed(("\x1b[2J\x1b[H" + f + "\r\n").encode("utf-8"))
+                changed = srv._scan_claude(sess, win)
+                steps.append(_scan_fingerprint(p1, t1, changed))
+            out[label] = steps
+        finally:
+            await teardown(srv, task, sock)
+    return out
+
+
+async def test_scan_claude_state_golden():
+    """§10-4⑨ `_scan_claude` God-함수 분할의 **등가 오라클** — 시나리오 매트릭스를
+    스캔에 통과시켜 나오는 **패널 상태 전체 지문**을 동결한다.
+
+    `_scan_claude` 는 매 프레임 도는 한 덩어리 상태기계라, phase 헬퍼로 쪼갤 때 한
+    분기의 순서·게이트만 어긋나도 **조용히** 어긋난다(상태는 이미 바뀌었는데 다음
+    phase 가 옛 값을 읽는 식). 개별 거동 테스트(모델 디바운스·done 알림·경고 이력
+    등)는 자기 관심사만 보므로, 이 골든이 **나머지 전부**를 프레임 단위로 못박는다.
+
+    분할 전/후로 이 지문이 **완전히 동일**해야 한다. 골든이 바뀌어야 하는 유일한 경우
+    = 의도적 동작 변경(그땐 PYTMUX_REGEN_GOLDEN=1 로 재생성하고 diff 를 리뷰한다) —
+    리팩터 중에 이게 바뀌면 그건 등가가 아니라 회귀다."""
+    cur = await _scan_golden_signatures()
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "fixtures", "claude_scan_golden.json")
+    if os.environ.get("PYTMUX_REGEN_GOLDEN"):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cur, f, ensure_ascii=False, indent=2, sort_keys=True)
+            f.write("\n")
+        return
+    assert os.path.exists(path), "골든 없음 — PYTMUX_REGEN_GOLDEN=1 로 최초 생성"
+    with open(path, encoding="utf-8") as f:
+        golden = json.load(f)
+    assert set(cur) == set(golden), (
+        f"시나리오 라벨 불일치: 신규={set(cur)-set(golden)} 누락={set(golden)-set(cur)}")
+    # 어느 시나리오·몇 번째 프레임·어느 필드가 드리프트했는지 정확히 짚어 보고한다
+    # (분할 회귀 진단의 대부분은 "어느 phase 가 어긋났나" 이므로 필드명이 곧 단서).
+    drift = []
+    for label in sorted(cur):
+        if len(cur[label]) != len(golden[label]):
+            drift.append(f"{label}: 프레임수 {len(golden[label])}→{len(cur[label])}")
+            continue
+        for i, (c, g) in enumerate(zip(cur[label], golden[label])):
+            for k in sorted(set(c) | set(g)):
+                if c.get(k, "<absent>") != g.get(k, "<absent>"):
+                    drift.append(
+                        f"{label}[{i}].{k}: {g.get(k, '<absent>')!r}"
+                        f" → {c.get(k, '<absent>')!r}")
+    assert not drift, (
+        "_scan_claude 상태 드리프트(분할은 동작 불변이어야 — 의도적 변경이면 "
+        "PYTMUX_REGEN_GOLDEN=1 재생성):\n  " + "\n  ".join(drift[:20]))
+
+
 async def test_scan_model_fallback_and_preserve():
     """모델 귀속 강화(2026-06-22): 라이브 Claude 화면은 모델 배지를 상시 표시하지
     않아(idle 푸터엔 'auto mode on …'·'? for shortcuts'뿐) 토큰이 model NULL('?')로
