@@ -183,6 +183,10 @@ section { padding: 64px 0; }
 .toc a:hover { color: var(--text); text-decoration: none; border-left-color: var(--accent); }
 .doc h2 { font-size: 28px; margin: 30px 0 6px; padding-top: 14px; letter-spacing: -0.6px; border-top: 1px solid var(--border); }
 .doc h2:first-child { border-top: none; margin-top: 0; }
+/* 가이드/문서 본문의 <section> 은 랜딩 마케팅 섹션용 전역 패딩(64px)을 상속하면
+   헤더 사이가 과도하게 벌어진다(특히 모바일) — h2 자체 여백(30px+14px)이 이미
+   구분을 주므로 문서 컨텍스트에선 바짝 줄인다. */
+.doc section { padding: 12px 0; }
 .doc h3 { font-size: 20px; margin: 20px 0 8px; }
 .doc p { color: var(--text-dim); font-size: 16px; }
 .doc ul, .doc ol { color: var(--text-dim); font-size: 16px; }
