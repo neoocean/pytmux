@@ -51,8 +51,8 @@
           사용량 리밋에 걸려 멈추면 출력의 해제 시각을 읽어 <strong>그때 자동으로 재개</strong>합니다.
           <kbd>prefix</kbd> <kbd>R</kbd>(또는 <code>auto-resume on</code>)로 토글하며 상태줄에 <code>AR</code>
           로 표시됩니다. 재개 시 보낼 메시지는 <code>auto-resume-message</code> 로 바꿀 수 있습니다.
-          전송 오류(API 오류·레이트 리밋)에는 <code>auto-retry</code>(기본 on)가 1분 뒤 "continue" 를 넣어
-          이어 갑니다.
+          전송 오류(API 오류·레이트 리밋)에는 <code>auto-retry</code>(기본 on)가 <strong>"계속"</strong> 을 넣어
+          이어 갑니다 — 1분 → 2분 → 이후 5분 간격으로, 풀릴 때까지 반복합니다.
         </p>
         <figure>
           <img src="../image/12-claude-autoresume.svg" alt="토큰 리밋 자동 재개 상태줄">
@@ -63,7 +63,8 @@
       <section>
         <h2>권한 모드 · 모델 · 시작 규칙</h2>
         <p>
-          패널의 <strong>권한모드 footer</strong> 를 클릭하면 auto / default / plan 선택 팝업이 열립니다.
+          패널의 <strong>권한모드 footer</strong> 를 클릭하면 auto / accept / default / plan 선택 팝업이
+          열립니다(권한 우회로 띄운 세션에만 bypass 가 목록 끝에 붙습니다).
           <strong>모델 배지</strong> 를 클릭하면 모델·컨텍스트를 바꾸는 팝업이 열립니다(내부적으로 <code>/model</code>
           주입). <code>claude-auto-mode</code> 로 Claude 가 idle 일 때 자동으로 auto 모드로 바꾸게 할 수도 있습니다.
         </p>
@@ -101,8 +102,7 @@
         <p>
           드물게 출력이 어긋나면 <code>claude-auto-redraw</code>(<code>off|idle|corruption</code>, 기본 off)로
           완료(busy→idle)마다 또는 깨짐 감지 시 패널을 한 번 전체 재출력해 자동 복원하게 켤 수 있습니다.
-          수동으로는 <kbd>prefix</kbd> <kbd>r</kbd>(<code>redraw</code>)로 언제든 다시 그립니다. 컨텍스트가
-          하드스톱에 닿으면 자동으로 <code>/compact</code> 를 부르는 자동 복구도 있습니다.
+          수동으로는 <kbd>prefix</kbd> <kbd>r</kbd>(<code>redraw</code>)로 언제든 다시 그립니다.
         </p>
       </section>
 

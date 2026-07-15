@@ -74,17 +74,20 @@
       <!-- 최근 수정사항 — 랜딩(/)과 동일한 한 덩어리 박스(정적 폴백 + changes 최신 미러). -->
       <div class="cl-news">
         <div class="cl-news-head">
-          <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-13 <span class="pill">월요일</span></span>
+          <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-15 <span class="pill">수요일</span></span>
           <a class="cl-news-more" href="/changes">전체 변경 내역 →</a>
         </div>
         <ul id="cl-news-list">
-          <li><span class="pill stable">복사</span> <strong>Windows 에서 마우스로 복사한 한글이 깨지던 문제를 고쳤습니다.</strong>
-            윈도우 클립보드 도구가 글자를 시스템 코드페이지(cp949)로 잘못 해석하던 것 — 이제 복사·붙여넣기 모두 유니코드 그대로 오갑니다.</li>
-          <li><span class="pill stable">원격</span> <strong>여러 기기가 한 화면을 함께 볼 때, 화면 크기를 "지금 쓰는 창"에 맞추도록 고를 수 있습니다.</strong>
-            기본은 가장 작은 접속에 맞추지만(smallest), :window-size latest·largest 로 바꿀 수 있습니다.</li>
-          <li><span class="pill stable">토큰</span> <strong>토큰 사용량 [기간] 뷰에서 월·연 합계 막대를 없애 주·일·시각 그래프가 더 뚜렷하게 보입니다.</strong></li>
-          <li><span class="pill stable">작성창</span> <strong>맥에서도 여러 줄 작성창을 Esc → Shift+Delete 로 열 수 있습니다.</strong>
-            맥 키보드엔 Insert 키가 없어 못 열던 것 — 이제 Shift+Delete 가 Insert 역할을 합니다.</li>
+          <li><span class="pill stable">작성창</span> <strong>여러 줄로 쓰던 프롬프트를 작성창으로 가져올 때, 이제 윗줄까지 전부 따라옵니다.</strong>
+            Claude 줄바꿈(Option+Enter 등)이 Enter(제출)와 똑같은 신호로 도착해 pytmux 가 그때까지 센 내용을 버리던 것 — 이제 화면에 보이는 입력창을 그대로 읽어 보이는 그대로 전부 가져옵니다.</li>
+          <li><span class="pill stable">스크롤백</span> <strong>긴 대화에서 Esc → Ctrl+↑/↓ 로 내가 이전에 입력한 프롬프트 위치로 건너뜁니다.</strong>
+            "아까 뭘 시켰더라" 를 찾으러 한참 스크롤하던 것 — 이제 한 턴씩 거슬러 오르내리고, 프롬프트가 화면 맨 위에 놓여 거기서부터 읽어 내려갈 수 있습니다.</li>
+          <li><span class="pill stable">탭</span> <strong>탭을 고정(핀)해 오른쪽으로 밀리면, 이제 보이는 순서에 맞춰 탭 번호도 다시 매겨집니다.</strong>
+            화면에 보이는 위치와 Esc → 숫자로 이동하는 번호가 어긋나던 문제(특히 원격 탭이 섞였을 때) — 이제 왼쪽부터 보이는 순서 그대로 1, 2, 3… 번호가 맞습니다.</li>
+          <li><span class="pill stable">디렉토리이동</span> <strong>디렉토리 트리 점프(:ncd)에서, 다른 OS 를 원격으로 조종할 때 이동(cd)이 실패하던 문제를 고쳤습니다.</strong>
+            Windows 에서 macOS·Linux 패널을 조종하면 윈도우 전용 cd 형식이 나가 실패하던 것 — 이제 명령을 실행할 셸의 OS 에 맞춰 올바르게 이동합니다.</li>
+          <li><span class="pill stable">토큰</span> <strong>pytmux 패널이 아닌 별도 터미널에서 Claude 를 써도, 그 시간대의 사용 한도(5시간·주간 %)가 이제 기록됩니다.</strong>
+            한도 조회가 지금까지 패널 안 Claude 에만 떠서 별도 터미널로 쓰면 그 시간대 한도 %가 빈칸이던 것 — 이제 최근 사용 기록을 신호로 패널 없이도 조회를 띄웁니다.</li>
         </ul>
       </div>
 

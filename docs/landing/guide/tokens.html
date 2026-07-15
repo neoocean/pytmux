@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
 <title>토큰 사용량 — pytmux 가이드 9</title>
-<meta name="description" content="pytmux 토큰 사용량 팝업: 기간·세션·계정·한도 뷰, /usage 실측 막대와 리셋 카운트다운, 트랜스크립트 회계로 cache_read 까지 정확 집계, 경고 배지.">
+<meta name="description" content="pytmux 토큰 사용량 팝업: 기간·세션·한도·경고 뷰, /usage 실측 막대와 리셋 카운트다운, 트랜스크립트 회계로 cache_read 까지 정확 집계, 경고 배지.">
 <link rel="stylesheet" href="../styles.css">
 <script>
   var _paq = window._paq = window._paq || [];
@@ -36,7 +36,8 @@
         <h2 style="border-top:none;">여는 법과 탭 이동</h2>
         <p>
           상태줄 <strong>토큰 배지 클릭</strong> 또는 <code>token-log</code>(별칭 <code>token-usage</code>)로 엽니다.
-          <strong>기간 / 세션 / 계정 / 한도</strong> 노트북 탭으로 구성되고, 상단 요약줄(<code>5h% · 주% · ~Σ</code>)은
+          <strong>기간 / 세션 / 한도 / 경고</strong> 노트북 탭과 <strong>[/usage] · [시나리오]</strong> 버튼으로
+          구성되고, 상단 요약줄(<code>5h% · 주% · ~Σ</code>)은
           모든 탭에 공통으로 붙습니다. 탭 사이는 키로도 오갑니다 — <kbd>p</kbd>(세션) · <kbd>l</kbd>(한도) ·
           <kbd>u</kbd>(/usage).
         </p>
@@ -60,8 +61,8 @@
         <p>
           <kbd>p</kbd> 로 전환합니다. 행이 <strong>Claude 세션별 합</strong>(대표 <code>탭:패널</code> 라벨 ·
           타임스탬프 · 토큰)입니다. 닫히고 재사용되는 패널 id 대신 안정적인 세션 id 로 묶어, 어느 세션이
-          토큰을 많이 썼는지 비교할 때 씁니다. <strong>계정 뷰</strong>로는 여러 계정을 나눠 볼 수 있고,
-          필요하면 <code>token-account</code> 로 현재 패널의 계정을 직접 지정합니다.
+          토큰을 많이 썼는지 비교할 때 씁니다. 계정이 여러 개면 <code>token-account</code> 로 현재 패널의
+          계정을 직접 지정할 수 있습니다(빈값=자동).
         </p>
         <figure>
           <img src="../image/42-token-log-session.svg" alt="토큰 사용량 — 세션 뷰">
@@ -96,7 +97,7 @@
       <section>
         <h2>경고 배지</h2>
         <p>
-          Claude 가 이상하게 돌 때 상태줄에 경고 배지가 뜹니다 — <strong>"같은 출력 N회 반복 — 루프 의심"</strong>,
+          Claude 가 이상하게 돌 때 상태줄에 경고 배지가 뜹니다 — <strong>"⚠ 동일 결과 N회 반복 — 루프 의심"</strong>,
           <strong>"Claude 포맷 미인식 — 추적 중단"</strong> 등. 팝업에는 이런 경고 이력도 함께 남습니다.
           토큰 회계 자체를 진단하려면 <code>token-debug</code>(기본 off) 로그를 켤 수 있습니다.
         </p>

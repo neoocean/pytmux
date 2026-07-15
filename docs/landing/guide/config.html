@@ -27,7 +27,9 @@
         <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">설정 파일</h1>
         <p style="font-size:18px;">
           <code>pytmux.conf</code> 로 동작을 바꾸거나, 통합 설정 팝업 <code>:settings</code> 로 카테고리별로
-          조정합니다. <code>:settings</code> 에서 바꾼 값은 설정 파일에 자동으로 되쓰기 됩니다(주석·바인딩 보존).
+          조정합니다. <code>:settings</code> 에서 바꾼 <strong>파일 설정</strong>은 설정 파일에 자동으로 되쓰기 되고
+          (주석·바인딩 보존), <strong>서버 옵션</strong>(<code>window-size</code>·<code>vt-parser</code>·
+          <code>automatic-rename</code> 등)은 서버가 <code>opts.json</code> 에 영속합니다 — 어느 쪽이든 다시 켤 때 유지됩니다.
         </p>
       </header>
 
@@ -36,6 +38,8 @@
         <p>
           설정 파일은 <code>~/.config/pytmux/config</code>, <code>~/.pytmux.conf</code>, 또는 환경변수
           <code>PYTMUX_CONFIG</code> 로 지정한 경로에서 읽습니다(<code>pytmux.conf.example</code> 참고).
+          여러 곳에 있으면 <code>PYTMUX_CONFIG</code> → <code>$PYTMUX_HOME/config</code> →
+          <code>~/.config/pytmux/config</code> → <code>~/.pytmux.conf</code> 순으로 <strong>먼저 있는 하나</strong>만 씁니다.
           각 줄은 <code>set &lt;이름&gt; &lt;값&gt;</code> 형식이고, 실행 중에는 <code>:set …</code> 으로 즉시 바꾸며
           <code>source-file</code> 로 다시 읽습니다. 현재 값은 <code>show-options</code> 로 확인합니다.
         </p>
@@ -91,6 +95,7 @@
             <tr><td><code>nest-auto-attach</code></td><td><code>on|off|toggle</code></td><td>중첩 pytmux 시 자동 remote-attach</td></tr>
             <tr><td><code>win-mouse-motion</code></td><td><code>on|off|toggle</code> (off)</td><td><strong>Windows</strong> 마우스 이동 전달</td></tr>
             <tr><td><code>vt-parser</code></td><td><code>pyte|native</code></td><td>VT 파서 백엔드(재시작 후 적용)</td></tr>
+            <tr><td><code>window-size</code></td><td><code>smallest|latest|largest</code> (smallest)</td><td>여러 클라이언트가 한 세션을 볼 때 공유 격자 크기 기준(<a href="/guide/remote">10장</a>)</td></tr>
             <tr><td><code>net_rtt_threshold</code></td><td>초 (0.4)</td><td>응답성 저하 판정 문턱(파일 전용)</td></tr>
           </tbody>
         </table>
@@ -120,7 +125,8 @@ bind k kill-pane</div>
         <p>
           <code>:settings</code>(별칭 <code>config</code>·<code>preferences</code>)는 옵션을
           <strong>표시 · 입력 · 동작 · 상태줄 · 고급 · 키</strong> 카테고리(+ 플러그인의 Claude 카테고리)로
-          묶어 보여 줍니다. 여기서 바꾼 값은 설정 파일에 자동 반영됩니다. UI 언어는 <code>lang ko|en</code>
+          묶어 보여 줍니다. 여기서 바꾼 값은 파일 설정이면 설정 파일에, 서버 옵션이면 서버 <code>opts.json</code> 에
+          각각 자동 반영됩니다. UI 언어는 <code>lang ko|en</code>
           (별칭 <code>language</code>)으로 즉시 바꾸며, 선택은 클라이언트에 저장됩니다.
         </p>
         <figure>

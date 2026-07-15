@@ -42,9 +42,9 @@
             <tr><td>포커스 이동</td><td><kbd>prefix</kbd> <kbd>←↑↓→</kbd> · <kbd>prefix</kbd> <kbd>o</kbd>(다음) · 패널 클릭</td></tr>
             <tr><td>크기 조절</td><td>경계선 마우스 드래그 · <code>resize-pane</code></td></tr>
             <tr><td>줌 토글</td><td><kbd>prefix</kbd> <kbd>z</kbd> · <code>resize-pane -Z</code></td></tr>
-            <tr><td>교환(swap)</td><td>Shift+왼쪽 드래그 · <code>swap-pane</code></td></tr>
+            <tr><td>교환(swap)</td><td>패널 헤더 드래그 → 다른 패널에 놓기 · <code>swap-pane</code></td></tr>
             <tr><td>회전(rotate)</td><td><code>rotate-window</code></td></tr>
-            <tr><td>삭제</td><td><kbd>prefix</kbd> <kbd>x</kbd>(확인) · 패널 <code>[x]</code> 클릭</td></tr>
+            <tr><td>삭제</td><td><kbd>prefix</kbd> <kbd>x</kbd>(확인) · 우클릭 메뉴 <strong>패널 삭제 ✕</strong> · <code>kill-pane</code></td></tr>
           </tbody>
         </table>
         <figure>
@@ -79,7 +79,8 @@
       <section>
         <h2>교환 · 회전 · 레이아웃</h2>
         <p>
-          <code>swap-pane</code> 으로 두 패널의 위치를 맞바꾸고(마우스로는 <strong>Shift+드래그</strong>),
+          <code>swap-pane</code> 으로 두 패널의 위치를 맞바꾸고(마우스로는 <strong>패널 헤더 드래그</strong> →
+          바꿀 패널 위에 놓기),
           <code>rotate-window</code> 로 패널들을 한 칸씩 돌립니다. 미리 정의된 레이아웃으로
           <strong>고르게(even) 정렬</strong>하거나, 만든 배치를 저장/복원할 수 있습니다.
         </p>
@@ -88,7 +89,8 @@
       <section>
         <h2>삭제와 확인</h2>
         <p>
-          패널을 닫으려면 <kbd>prefix</kbd> <kbd>x</kbd> 또는 패널 모서리의 <code>[x]</code> 를 누릅니다.
+          패널을 닫으려면 <kbd>prefix</kbd> <kbd>x</kbd> 를 누르거나 우클릭 메뉴의 <strong>패널 삭제 ✕</strong> 를
+          고릅니다(패널 오른쪽 위 <code>[x]</code> 는 패널이 아니라 <strong>탭</strong>을 닫습니다).
           실행 중인 프로그램이 있으면 실수로 지우지 않도록 확인 대화상자가 뜹니다. 마지막 패널을 닫으면
           그 윈도우(탭)가 닫힙니다.
         </p>

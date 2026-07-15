@@ -43,7 +43,7 @@
             <tr><td>휠 ↑ / ↓</td><td>스크롤백(마우스 쓰는 앱이면 앱으로 전달)</td></tr>
             <tr><td>경계선 드래그</td><td>패널 크기 조절</td></tr>
             <tr><td>패널 헤더 드래그</td><td>패널을 집어 다른 패널에 놓으면 <strong>swap</strong>, 다른 탭에 놓으면 <strong>이동</strong>, <code>[+]</code>에 놓으면 새 탭</td></tr>
-            <tr><td><code>[x]</code> 클릭</td><td>패널 닫기(확인)</td></tr>
+            <tr><td>활성 패널 우측 상단 <code>[x]</code> 클릭</td><td><strong>탭</strong> 닫기(확인) — 패널 닫기는 우클릭 메뉴 <strong>패널 삭제 ✕</strong></td></tr>
           </tbody>
         </table>
         <div class="callout">
@@ -81,10 +81,9 @@
             <tr><td>탭 클릭</td><td>그 탭으로 전환</td></tr>
             <tr><td>탭 드래그(좌우)</td><td>탭 순서 재정렬</td></tr>
             <tr><td>탭 드래그(아래 콘텐츠로)</td><td>그 탭을 현재 탭의 패널로 합치기(라이브 미리보기; 로컬↔로컬 또는 같은 호스트 원격끼리)</td></tr>
+            <tr><td>탭 드래그 → <code>‖</code> 구분자 / 반대 구역</td><td>그 탭 고정(핀) 토글</td></tr>
             <tr><td><code>[+]</code> 클릭</td><td>새 탭</td></tr>
-            <tr><td>탭 더블클릭</td><td>이름 변경</td></tr>
-            <tr><td><code>[x]</code> 클릭</td><td>탭 닫기(확인)</td></tr>
-            <tr><td>◂ / ▸ 화살표</td><td>탭이 넘칠 때 탭바 스크롤</td></tr>
+            <tr><td>◀ / ▶ 화살표</td><td>탭이 넘칠 때 탭바 스크롤</td></tr>
           </tbody>
         </table>
       </section>
@@ -94,7 +93,8 @@
         <ul>
           <li><strong>모델 배지</strong> 클릭 → 모델/컨텍스트 변경 팝업</li>
           <li><strong>토큰/사용량 배지</strong> 클릭 → 토큰 사용량 팝업</li>
-          <li><strong>권한모드 footer</strong> 클릭 → auto / default / plan 선택</li>
+          <li><strong>권한모드 footer</strong> 클릭 → auto / accept / default / plan 선택</li>
+          <li><strong>서버 이름(host)</strong> 클릭 → 서버 정보 탭</li>
           <li><strong>"esc to interrupt"</strong>(처리중 footer) 클릭 → 그 패널에 ESC 주입</li>
           <li><strong>시계</strong> 클릭 → 시계 모드, <strong>날짜</strong> 클릭 → 달력 오버레이</li>
           <li>시계·달력 오버레이 클릭 → 오버레이 닫기(달력은 <code>‹ ›</code> 로 월 이동)</li>
