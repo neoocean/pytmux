@@ -16,6 +16,7 @@ from .model import (ClientConn, Pane, Session, Split, Tab, Window,
                     coalesce_alt_repaints)
 from .protocol import (FEED_SLICE, FLUSH_HZ, MIN_H, MIN_W, read_msg, write_msg)
 from .servercapture import ServerCaptureIdMixin
+from .servercmd import ServerCmdMixin
 from .serverpersist import ServerPersistMixin
 from .serverpty import ServerPtyMixin
 from .serverio import ServerIOMixin
@@ -38,7 +39,7 @@ _WINDOW_SIZE_MODES = ("smallest", "latest", "largest")
 # MRO 처럼 플러그인 믹스인을 코어 믹스인보다 앞에 둔다(추가 메서드라 충돌은 없다).
 _PLUGIN_SERVER_MIXINS = tuple(plugins.load().server_mixins())
 _SERVER_BASES = _PLUGIN_SERVER_MIXINS + (
-    ServerCaptureIdMixin, ServerPersistMixin, ServerPtyMixin,
+    ServerCaptureIdMixin, ServerCmdMixin, ServerPersistMixin, ServerPtyMixin,
     ServerIOMixin, ServerRemoteMixin, ServerTreeMixin)
 
 

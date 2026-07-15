@@ -1354,9 +1354,11 @@ async def test_command_matrix_local_structural_sweep():
     ② 요청 클라에 올바른 **응답 disposition**(요청 클라 full 프레임 재동기 ↔ 트리 콜백
     broadcast ↔ 특정 타입 회신)을 내는지 전수 검증한다.
 
-    `_handle_cmd`(379줄) God-함수 분할(§10-4⑨)에서 한 verb 만 `return`/`_send_full`/
-    broadcast 를 오분류해도 명령이 **조용히** 깨진다(트리는 바뀌는데 화면 미갱신, 또는
-    중복/누락 broadcast). space `feature_matrix` 처럼 disposition 을 한 어휘로 통합해
+    이 스윕이 선결 안전망이던 §10-4⑨ God-함수 분할은 착륙했다(`servercmd._CMD_TABLE`)
+    — 한 verb 만 `return`/`_send_full`/broadcast 를 오분류하면 명령이 **조용히** 깨지는
+    구조는 그대로라(트리는 바뀌는데 화면 미갱신, 또는 중복/누락 broadcast) 이 스윕이
+    계속 권위다. 표 자체의 전수 대조는 test_command_table_disposition_golden.
+    space `feature_matrix` 처럼 disposition 을 한 어휘로 통합해
     그 조용한 실패를 잡는다. 특히 **kill_pane 이 유일하게** 핸들러 `_send_full` 이 아니라
     `_remove_pane_from_tree` 의 **트리 콜백 broadcast** 에 의존하는 계약을 함께 고정한다
     (핸들러가 그 뒤 `return` 하므로 full 프레임을 안 보냄 — 리팩터가 여기에 _send_full 을
@@ -1456,6 +1458,88 @@ async def test_command_matrix_local_structural_sweep():
         assert sig() == before, "회신 계열: 로컬 트리 불변"
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_command_table_disposition_golden():
+    """§10-4⑨ God-함수 분할의 **등가 오라클** — `servercmd._CMD_TABLE` 의
+    action→disposition 전수를 분할 **이전** if/elif 체인에서 AST 로 추출한 골든과
+    대조한다.
+
+    체인 시절 disposition 은 암묵적 제어흐름이었다(본문이 `return` 하면 핸들러 완결,
+    안 하면 함수 끝 `_send_full` 로 폴스루). 분할이 한 verb 만 오분류해도 명령이
+    **조용히** 깨진다 — 트리는 바뀌는데 화면 미갱신(FULL 을 HANDLED 로), 또는 이중
+    방송(HANDLED 를 FULL 로). 매트릭스 스윕(test_command_matrix_*)이 구조 명령을
+    **드라이브해** 잡는다면, 이 테스트는 나머지 verb 까지 **전수**로 못박는다(69개를
+    전부 드라이브하려면 verb 별 유효 인자·부작용이 필요하지만, 표 대조는 공짜다).
+
+    골든이 바뀌어야 하는 유일한 경우 = **의도적 계약 변경**(새 명령 추가, disposition
+    변경). 그때는 이 표를 같은 CL 에서 함께 고친다 — 표를 안 고치고 통과했다면 그건
+    리팩터가 계약을 바꾼 것이다."""
+    from pytmuxlib.servercmd import _CMD_TABLE, DYNAMIC, FULL, HANDLED
+
+    # 분할 이전 `serverio._handle_cmd`(398줄/67분기, p4 head 64880)에서 기계 추출:
+    #   send_full = 폴스루(함수 끝 _send_full)  handled = 본문 return
+    #   dynamic   = 조건부 return(kill_pane 만)
+    GOLDEN = {
+        # 패널
+        "split": FULL, "kill_pane": DYNAMIC, "select_pane": FULL,
+        "select_pane_id": FULL, "cycle_pane": FULL, "last_pane": FULL,
+        "set_sync": FULL, "set_pane_title": FULL, "set_border_status": FULL,
+        "respawn_pane": FULL, "search": FULL,
+        # 버퍼/붙여넣기/캡처
+        "set_buffer": HANDLED, "paste_buffer": HANDLED, "paste": HANDLED,
+        "request_buffers": HANDLED, "clear_history": HANDLED,
+        "capture_pane": HANDLED, "pipe_pane": HANDLED,
+        # 팝업/레이아웃 영속
+        "popup_open": HANDLED, "popup_close": HANDLED, "save_layout": HANDLED,
+        "restore_layout": HANDLED, "list_layouts": HANDLED,
+        "save_tab_layout": HANDLED, "load_tab_layout": HANDLED,
+        # 조회 요청
+        "request_tree": HANDLED, "request_redraw": HANDLED,
+        "request_version": HANDLED, "request_restart_check": HANDLED,
+        "set_claude_account": HANDLED,
+        # 크기/탭
+        "resize": FULL, "resize_dir": FULL, "new_window": FULL,
+        "next_window": FULL, "prev_window": FULL, "select_window": FULL,
+        "last_window": FULL, "move_window": FULL, "swap_window": FULL,
+        "move_tab": FULL, "move_current_tab": FULL, "set_pinned": FULL,
+        # 배치
+        "zoom": FULL, "select_layout": FULL, "cycle_layout": FULL,
+        "rotate": FULL, "swap_pane": FULL, "swap_pane_to": FULL,
+        "break_pane": FULL, "join_pane": FULL, "move_pane_to_tab": FULL,
+        # 이름/모니터/옵션
+        "rename_window": FULL, "set_auto_rename": FULL, "set_monitor": FULL,
+        "set_single_border": FULL, "set_window_size": FULL,
+        "set_win_mouse_motion": FULL, "set_coalesce": FULL,
+        "set_nest_auto_attach": FULL, "set_vt_parser": FULL,
+        "set_plugin_enabled": HANDLED,
+        # 윈도우/세션 종료
+        "kill_window": HANDLED, "rename_session": FULL, "new_session": HANDLED,
+        "switch_session": HANDLED, "detach_others": HANDLED,
+        "kill_session": HANDLED, "kill_server": HANDLED,
+        "restart_server": HANDLED,
+    }
+    live = {action: disp for action, (_fn, disp) in _CMD_TABLE.items()}
+
+    missing = sorted(set(GOLDEN) - set(live))
+    extra = sorted(set(live) - set(GOLDEN))
+    assert not missing, f"체인에 있던 명령이 테이블에서 누락: {missing}"
+    assert not extra, f"골든에 없는 새 명령(의도면 골든도 갱신): {extra}"
+    flipped = {a: (GOLDEN[a], live[a]) for a in GOLDEN if GOLDEN[a] != live[a]}
+    assert not flipped, f"disposition 뒤집힘 (골든, 현재): {flipped}"
+
+    # 핸들러 계약: 전부 코루틴 + 균일 시그니처(self, client, sess, msg).
+    import inspect
+    for action, (fn, _disp) in _CMD_TABLE.items():
+        assert inspect.iscoroutinefunction(fn), f"{action}: async 핸들러여야"
+        params = list(inspect.signature(fn).parameters)
+        assert params == ["self", "client", "sess", "msg"], \
+            f"{action}: 시그니처 {params}"
+
+    # DYNAMIC 은 kill_pane 하나뿐이라는 사실을 고정한다 — 늘어나면 "핸들러가 몰래
+    # disposition 을 결정"하는 경로가 늘어 표의 선언성이 희석된다(의도면 함께 갱신).
+    dyn = sorted(a for a, d in live.items() if d == DYNAMIC)
+    assert dyn == ["kill_pane"], f"DYNAMIC 은 kill_pane 만: {dyn}"
 
 
 async def test_scan_model_fallback_and_preserve():

@@ -21,6 +21,7 @@ from .model import ClientConn, Pane, Session
 from .protocol import (FLUSH_HZ, HANDSHAKE_MAX_FRAME, HANDSHAKE_TIMEOUT, MAX_H,
                        MAX_W, MIN_H, MIN_W, PROTO_VERSION, SYNC_OUTPUT_MAX_DEFER,
                        clamp_dim, frame_msg, read_msg, write_frames, write_msg)
+from .servercmd import DYNAMIC, FULL, HANDLED, _CMD_TABLE
 from .serverremote import _REMOTE_BLOCK_ACTIONS, _REMOTE_RELAY_ACTIONS
 
 # host 재연결 폭주 가드(옵션 C). host 가 '새 연결이 옛 연결을 대체'하므로 두 서버가 같은
@@ -736,288 +737,54 @@ class ServerIOMixin:
                     "원격 탭으로/원격 탭을 이동할 수 없습니다 — "
                     "원격↔로컬 패널/탭은 섞을 수 없습니다(§1.7)"))
                 return
-        if action == "split":
-            self.split_pane(sess, msg.get("orient", "lr"), path=msg.get("path"))
-        elif action == "kill_pane":
-            pane = sess.active_window.active_pane if sess.active_window else None
-            if pane:
-                self.kill_pane(sess, pane)
-                return  # kill 은 트리 콜백에서 broadcast
-        elif action == "select_pane":
-            self.select_pane_dir(sess, msg.get("dir"))
-        elif action == "select_pane_id":
-            win = sess.active_window
-            p = win.pane_by_id(msg.get("id")) if win else None
-            if p:
-                win.active_pane = p
-        elif action == "cycle_pane":
-            self.select_pane_cycle(sess)
-        elif action == "last_pane":
-            self.last_pane(sess)
-        elif action == "set_sync":
-            self.set_sync(sess, msg.get("value"))
-        elif action == "set_pane_title":
-            self.set_pane_title(sess, str(msg.get("title", "")))
-        elif action == "set_border_status":
-            self.set_border_status(sess, msg.get("value"))
-        elif action == "respawn_pane":
-            self.respawn_pane(sess)
-        elif action == "search":
-            self.search_pane(sess, msg.get("query"), msg.get("direction", "up"))
-        elif action == "set_buffer":
-            self.set_buffer(str(msg.get("text", "")))
+        # ── 명령 디스패치(servercmd._CMD_TABLE) ──
+        # 종전 67 분기 if/elif 체인(§10-4⑨ God-함수)을 action→핸들러 테이블로 대체.
+        # disposition(FULL/HANDLED/DYNAMIC)은 제어흐름이 아니라 테이블이 **데이터로
+        # 선언**한다 — 계약·근거는 servercmd 모듈 docstring 참조.
+        entry = _CMD_TABLE.get(action)
+        if entry is None:
+            await self._dispatch_plugin_cmd(client, sess, action, msg)
             return
-        elif action == "paste_buffer":
-            self.paste_buffer(sess, int(msg.get("index", 0)))
+        handler, disp = entry
+        decided = await handler(self, client, sess, msg)
+        if disp == DYNAMIC:
+            # 핸들러가 실행 시점에 결정(kill_pane). 유효하지 않은 반환은 "응답을 아예
+            # 안 보냄"이라는 **새 침묵 경로**가 되므로(이 분할이 없애려던 바로 그 실패)
+            # 조용히 넘기지 않고 던진다 — handle_client 가 잡아 error.log 에 남기고
+            # 세션은 유지된다.
+            if decided not in (FULL, HANDLED):
+                raise RuntimeError(
+                    f"DYNAMIC 핸들러 {action} 이 FULL/HANDLED 대신 {decided!r} 반환")
+            disp = decided
+        if disp == FULL:
+            await self._send_full(client)
+
+    async def _dispatch_plugin_cmd(self, client, sess, action: str, msg: dict):
+        """테이블에 없는 action → 플러그인 훅(체인 시절 `else:` 블록과 등가)."""
+        # 먼저 플러그인 명령 훅(Claude set_claude_*/token/pc/refresh_usage 등).
+        # 후속 지시를 반환하면 그대로 따른다 — 'broadcast'/'send_full' 은 원래
+        # _handle_cmd 가 하던 _broadcast_session+_send_full 동작을 그대로 재현한다.
+        directive = self.plugins.server_command(self, client, sess, action, msg)
+        if directive == "handled":
             return
-        elif action == "paste":
-            self.paste_text(sess, str(msg.get("text", "")))
-            return
-        elif action == "request_buffers":
-            await self._send_to(client, self._buffers_msg())
-            return
-        elif action == "clear_history":
-            self.clear_history(sess)
+        if directive == "send_full":
             await self._send_full(client)
             return
-        elif action == "capture_pane":
-            n = self.capture_pane(sess, bool(msg.get("full")))
-            await self._send_to(client, {"t": "captured", "chars": n})
-            return
-        elif action == "pipe_pane":
-            self.pipe_pane(sess, str(msg.get("cmd", "")))
-            return
-        elif action == "popup_open":
-            self.popup_open(sess, str(msg.get("cmd", "")),
-                            want_w=msg.get("w"), want_h=msg.get("h"),
-                            title=msg.get("title"))
-            return  # popup_open 이 broadcast
-        elif action == "popup_close":
-            self.popup_close(sess)
-            return  # popup_close 가 broadcast
-        elif action == "save_layout":
-            ok = self.save_layout()
-            await self._send_to(client, {"t": "captured",
-                                         "chars": 1 if ok else 0})
-            return
-        elif action == "restore_layout":
-            self.restore_layout()
+        if directive == "broadcast":
+            self._broadcast_session(sess)   # 세션 전 클라에 새 권위값 status
             await self._send_full(client)
             return
-        elif action == "request_tree":
-            await self._send_to(client, self._tree_msg())
-            return
-        elif action == "request_redraw":
-            # 화면 전체 강제 재그리기(§2.12, redraw/refresh 명령·prefix r). ① 각 패널
-            # PTY 에 SIGWINCH 를 유발해 alt-screen 앱이 현재 화면을 전체 repaint 하게
-            # 하고(스냅샷 갱신) ② 요청 클라에 layout+screen 전체 프레임을 다시 보낸다
-            # (stale 스냅샷 교체). 원격 보기 중엔 위 _REMOTE_RELAY_ACTIONS 분기가 먼저
-            # 잡아 업스트림으로 릴레이하므로 여기 로컬 경로엔 오지 않는다.
-            self._induce_redraw_all()
-            await self._send_full(client)
-            return
-        elif action == "request_version":
-            # version 명령 팝업: 이 서버가 로드한 코드 버전(p4 CL)·업타임·pid 회신.
-            # 클라가 자기 버전/업타임과 합쳐 팝업을 띄운다.
-            await self._send_to(client, {
-                "t": "version", "version": self._code_version,
-                "uptime": time.time() - self._boot_time, "pid": os.getpid()})
-            return
-        elif action == "request_restart_check":
-            # restart-check 드라이런: 작업 보존 재시작 안전성 점검 결과 회신(부작용 없음).
-            rep = self.restart_check()
-            rep["t"] = "restart_check"
-            await self._send_to(client, rep)
-            return
-        elif action == "set_claude_account":
-            self.set_claude_account(sess, str(msg.get("name", "")))
-            return
-        elif action == "list_layouts":
-            await self._send_to(client, {"t": "layouts",
-                                         "names": self.list_tab_layouts()})
-            return
-        elif action == "save_tab_layout":
-            ok = self.save_tab_layout(sess, str(msg.get("name", "")).strip())
-            await self._send_to(client, {"t": "captured",
-                                         "chars": 1 if ok else 0})
-            return
-        elif action == "load_tab_layout":
-            if self.load_tab_layout(sess, str(msg.get("name", "")).strip(),
-                                    new_tab=bool(msg.get("new"))):
-                for c in [x for x in self.clients if x.session is sess]:
-                    await self._send_full(c)
-            return
-        elif action == "resize":
-            self.resize_split(sess, msg.get("split_id"), msg.get("ratio", 0.5))
-        elif action == "resize_dir":
-            self.resize_dir(sess, msg.get("dir"), msg.get("cells", 3))
-        elif action == "new_window":
-            self.new_window(sess, path=msg.get("path"))
-        elif action == "next_window":
-            self.select_window(sess, (sess.active_index + 1) % len(sess.tabs))
-        elif action == "prev_window":
-            self.select_window(sess, (sess.active_index - 1) % len(sess.tabs))
-        elif action == "select_window":
-            self.select_window(sess, msg.get("index", 0))
-        elif action == "last_window":
-            self.last_window(sess)
-        elif action == "move_window":
-            self.move_window(sess, int(msg.get("index", 0)))
-        elif action == "swap_window":
-            self.swap_window(sess, int(msg.get("index", 0)))
-        elif action == "move_tab":
-            self.move_tab(sess, int(msg.get("index", 0)),
-                          int(msg.get("to", 0)))
-        elif action == "move_current_tab":
-            self.move_current_tab(sess, str(msg.get("where", "")))
-        elif action == "set_pinned":
-            # 항목7: 탭 고정/해제. index 없으면 활성 탭. value 미지정이면 토글.
-            idx = msg.get("index")
-            idx = sess.active_index if idx is None else int(idx)
-            if idx >= len(sess.tabs):
-                # §12 ①: 원격(병합) 탭 핀 — per-link 다운스트림 로컬 집합(업스트림
-                # 비전파). 핀은 보는 쪽 탭바 레이아웃 문제라 로컬에서만 토글한다.
-                self.set_remote_pinned(sess, idx, msg.get("value"))
-            elif "value" in msg:
-                self.set_pinned(sess, idx, bool(msg.get("value")))
-            else:
-                self.toggle_pin(sess, idx)
-        elif action == "zoom":
-            self.toggle_zoom(sess)
-        elif action == "select_layout":
-            self.select_layout(sess, msg.get("preset", "tiled"))
-        elif action == "cycle_layout":
-            self.cycle_layout(sess)
-        elif action == "rotate":
-            self.rotate_panes(sess, bool(msg.get("forward", True)))
-        elif action == "swap_pane":
-            self.swap_pane(sess, bool(msg.get("forward", True)))
-        elif action == "swap_pane_to":
-            self.swap_pane_ids(sess, int(msg.get("id", -1)),
-                               int(msg.get("to_id", -1)))
-        elif action == "break_pane":
-            self.break_pane(sess)
-        elif action == "join_pane":
-            # src(끌어온 탭 인덱스) 지정 가능(#19 탭→패널 드래그). 미지정이면 직전 탭.
-            self.join_pane(sess, src_index=msg.get("src"),
-                           orient=msg.get("orient", "tb"))
-        elif action == "move_pane_to_tab":
-            # 헤더 드래그 pick-up → 다른 탭에 드롭(#1): id 패널을 to 탭으로 옮긴다.
-            self.move_pane_to_tab(sess, int(msg.get("id", -1)),
-                                  int(msg.get("to", -1)))
-        elif action == "rename_window":
-            self.rename_window(sess, str(msg.get("name", "")).strip())
-        elif action == "set_auto_rename":
-            self.set_auto_rename(sess, msg.get("value"))
-        elif action == "set_monitor":
-            self.set_monitor(sess, msg.get("which", "activity"), msg.get("value"))
-        elif action == "set_single_border":
-            self.set_single_border(msg.get("value"))
-        elif action == "set_window_size":
-            # 세션 공유 격자 크기 규칙(smallest|latest|largest, tmux window-size 동형).
-            # value=None 이면 순환 토글. 공유 크기가 바뀌므로 같은 세션 전 클라를 새
-            # 규칙으로 다시 미러링해 즉시 발효(작은 코-뷰어는 latest/largest 에서 crop).
-            self.set_window_size(msg.get("value"))
-            for c in [x for x in self.clients if x.session is sess]:
-                try:
-                    await self._send_full(c)
-                except Exception:
-                    self._log_error("send_full(set_window_size)")
-        elif action == "set_win_mouse_motion":
-            # Windows any-motion 패스스루 토글(HANDOFF §10-H). 광고 mouse 레벨이
-            # 바뀌므로 레이아웃을 다시 방송해 즉시 발효시킨다.
-            self.set_win_mouse_motion(msg.get("value"))
-            self._broadcast_session(sess)
-        elif action == "set_coalesce":
-            self.set_coalesce_repaints(msg.get("value"))
-        elif action == "set_nest_auto_attach":
-            # 원격 중첩 자동 승격 토글(NESTED_ATTACH ㉢) — 서버 내부 동작이라 클라
-            # 렌더 변화 없음. value=None 이면 반전(클라 toggle).
-            self.set_nest_auto_attach(msg.get("value"))
-        elif action == "set_vt_parser":
-            # VT 파서 백엔드("pyte"|"native") 선택. 재시작 시 발효(라이브 패널 즉시
-            # 변화 없음) — 서버가 opts.json 영속. 클라가 발효 시점을 안내한다.
-            self.set_vt_parser(msg.get("value"))
-        elif action == "set_plugin_enabled":
-            # 플러그인 관리 팝업 토글(PLUGIN_MANAGER_SCENARIO). disabled 갱신·영속 후
-            # 전 클라에 새 status(disabled_plugins) 방송 — 각 클라가 자기 레지스트리에
-            # 반영해 명령/훅이 즉시 빠지거나 돌아온다.
-            self.set_plugin_enabled(str(msg.get("name", "")), msg.get("on"))
-            self._broadcast_session(sess)
-            await self._send_full(client)
-            return
-        elif action == "kill_window":
-            self.kill_window(sess)
-            if sess.name not in self.sessions:
-                # 세션의 마지막 윈도우였음 → 다른 세션으로 옮기거나 종료
-                if self.sessions:
-                    client.session = next(iter(self.sessions.values()))
-                    await self._send_full(client)
-                else:
-                    self._notify_no_sessions()
-                return
-            await self._send_full(client)
-            return
-        elif action == "rename_session":
-            self.rename_session(sess, str(msg.get("name", "")).strip())
-        elif action == "new_session":
-            new = self.new_session(client.cols, client.rows,
-                                   str(msg.get("name", "")).strip() or None)
-            client.session = new
-            await self._send_full(client)
-            return
-        elif action == "switch_session":
-            self.switch_session(client, str(msg.get("name", "")).strip())
-            await self._send_full(client)
-            return
-        elif action == "detach_others":
-            for c in list(self.clients):
-                if c is not client and c.session is sess:
-                    await self._send_to(c, {"t": "bye"})
-            return
-        elif action == "kill_session":
-            name = str(msg.get("name") or sess.name)
-            self.kill_session(name)
-            if not self.sessions:
-                self._notify_no_sessions()
-                return
-            for c in self.clients:
-                await self._send_full(c)
-            return
-        elif action == "kill_server":
-            self._notify_no_sessions()
-            return
-        elif action == "restart_server":
-            # 작업 보존 재시작(re-exec). 셸/PTY 보존(docs/internal/RESTART_SCENARIO.md).
-            self.restart_server()
-            return
-        else:
-            # 먼저 플러그인 명령 훅(Claude set_claude_*/token/pc/refresh_usage 등).
-            # 후속 지시를 반환하면 그대로 따른다 — 'broadcast'/'send_full' 은 원래
-            # _handle_cmd 가 하던 _broadcast_session+_send_full 동작을 그대로 재현한다.
-            directive = self.plugins.server_command(self, client, sess, action, msg)
-            if directive == "handled":
-                return
-            if directive == "send_full":
-                await self._send_full(client)
-                return
-            if directive == "broadcast":
-                self._broadcast_session(sess)   # 세션 전 클라에 새 권위값 status
-                await self._send_full(client)
-                return
-            # 그 외 알 수 없는 action → 플러그인 요청 핸들러에 위임. 회신 메시지(dict)를
-            # 반환하면 그대로 클라로 보낸다(ncd 의 request_nc_list 등). 없으면 무시.
-            resp = self.plugins.handle_server_request(self, sess, action, msg)
-            if resp is not None:
-                # 원격 페더레이션 §4.1: 릴레이된 요청이 요청 클라 식별자(_req_token)를
-                # 실어 왔으면 회신에 그대로 echo 한다 — 다운스트림 _remote_reader 가
-                # 요청한 그 클라에만 응답을 전달해 다른 뷰어에 새지 않게 한다. 로컬
-                # (비릴레이) 요청엔 _req_token 이 없어 무영향.
-                if isinstance(resp, dict) and msg.get("_req_token") is not None:
-                    resp["_req_token"] = msg["_req_token"]
-                await self._send_to(client, resp)
-            return
-        await self._send_full(client)
+        # 그 외 알 수 없는 action → 플러그인 요청 핸들러에 위임. 회신 메시지(dict)를
+        # 반환하면 그대로 클라로 보낸다(ncd 의 request_nc_list 등). 없으면 무시.
+        resp = self.plugins.handle_server_request(self, sess, action, msg)
+        if resp is not None:
+            # 원격 페더레이션 §4.1: 릴레이된 요청이 요청 클라 식별자(_req_token)를
+            # 실어 왔으면 회신에 그대로 echo 한다 — 다운스트림 _remote_reader 가
+            # 요청한 그 클라에만 응답을 전달해 다른 뷰어에 새지 않게 한다. 로컬
+            # (비릴레이) 요청엔 _req_token 이 없어 무영향.
+            if isinstance(resp, dict) and msg.get("_req_token") is not None:
+                resp["_req_token"] = msg["_req_token"]
+            await self._send_to(client, resp)
 
     def _log_error(self, where: str, detail: str = ""):
         """방금 처리 중인 예외의 트레이스백을 `<sock>.error.log` 에 append 한다.
