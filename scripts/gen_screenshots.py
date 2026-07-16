@@ -514,14 +514,45 @@ async def settings(app, pilot):
     await pilot.pause(0.6)
 
 
+def _demo_now():
+    """데모 데이터의 기준 시각 — **굽는 날의 현재 정시**.
+
+    종전엔 2026-06-18 로 못박아 뒀는데, 토큰 팝업은 기간을 **지금 기준 상대**로 묶는다
+    (월→주→일→시각). 그래서 데이터가 굳은 채 시간만 흐르면, 6월에 구울 땐 '이번 주
+    (W25)' 가 최상위였던 화면이 7월엔 '지난 달(2026-06)' 행이 생긴 화면으로 바뀐다 —
+    **UI 는 그대로인데 스크린샷만 낡는** 것이다(사용자 요청 2026-07-16). 굽는 날에
+    붙여 두면 언제 다시 구워도 '최근 며칠' 로 나온다.
+
+    정시로 절삭하므로 **같은 시간대에 다시 구우면 결과가 같다**. 날짜가 바뀌면 라벨이
+    바뀌는데, 그건 이 데모의 목적(항상 최근)상 의도된 것이다([[스크린샷 stale 감사]]에서
+    '데모데이터 노후화' 로 분류하던 잡음이 여기서 사라진다)."""
+    import datetime as _dt
+    return _dt.datetime.now().replace(minute=0, second=0, microsecond=0)
+
+
+def _week_reset(base, label="3am"):
+    """다음 주간 리셋(다음 월요일)을 /usage 표기로. 기준일과 함께 움직인다."""
+    import datetime as _dt
+    d = base.date() + _dt.timedelta(days=(7 - base.weekday()) or 7)
+    return f"{d.strftime('%b')} {d.day} at {label} (Asia/Seoul)"
+
+
+def _session_reset(base, hours=2):
+    """세션(5h) 리셋 시각을 기준시각 +hours 로. `2pm` 처럼 **고정**해 두면 굽는 시각이
+    거기 가까울 때 한도 탭 카운트다운이 `00:04:38` 같이 다 닳은 채 찍힌다(실측) —
+    문서 그림으로는 남은 시간이 넉넉히 보여야 뜻이 통한다. 기준에 붙여 항상 ~2시간."""
+    h = (base + __import__("datetime").timedelta(hours=hours)).hour
+    return f"{h % 12 or 12}{'am' if h < 12 else 'pm'} (Asia/Seoul)"
+
+
 def _tklog_data():
     """토큰 사용량 팝업용 합성 데이터(2026-06-12 재설계 반영). 공개 저장소에 실제
     사용량이 노출되지 않게 가상의 며칠치 레코드·계정·실측 한도를 만든다. 일별 뷰가
     여러 행으로 차고 요약줄(5h%·주%·~Σ)이 의미 있게 보이도록 구성한다."""
     import datetime as _dt
-    # 결정적 기준일(스크린샷 라벨 고정): 2026-06-18 기준. 여러 날 × 여러 세션을 깔아
-    # 기간 트리(주→일)와 세션 목록(탭:패널)이 둘 다 의미있게 차도록 한다.
-    base = _dt.datetime(2026, 6, 18, 14, 0)
+    # 기준일 = 굽는 날(_demo_now). 여러 날 × 여러 세션을 깔아 기간 트리(주→일)와
+    # 세션 목록(탭:패널)이 둘 다 의미있게 차도록 한다.
+    base = _demo_now()
     recs = []
     sid = 2100
     # (며칠 전, [(탭, 패널, 토큰), ...]) — 최근일수록 세션이 많다.
@@ -542,9 +573,10 @@ def _tklog_data():
             t = day - _dt.timedelta(hours=j)
             recs.append({"ts": t.timestamp(), "tab": tab, "pane": pane,
                          "session": sid, "account": "default", "tokens": tok})
-    usage = {"session": {"pct": 38, "reset": "2pm (Asia/Seoul)"},
-             "week_all": {"pct": 61, "reset": "Jun 22 at 3am (Asia/Seoul)"},
-             "week_sonnet": {"pct": 12, "reset": "Jun 22 at 3am (Asia/Seoul)"},
+    wk = _week_reset(base)
+    usage = {"session": {"pct": 38, "reset": _session_reset(base)},
+             "week_all": {"pct": 61, "reset": wk},
+             "week_sonnet": {"pct": 12, "reset": wk},
              "account": "default"}
     return recs, usage
 
@@ -574,20 +606,24 @@ async def token_log_hour(app, pilot):
     from importlib import import_module
     import datetime as _dt
     screens = import_module("pytmuxlib.plugins.claude-code.screens")
-    base = _dt.datetime(2026, 6, 18, 9, 0)     # 09시부터 시각별
+    # 최근 7시간(현재 정시까지) — 기준을 굽는 날에 붙인다(_demo_now). 시각 라벨만
+    # 따라 움직이고 아래 수치는 그대로다: 토큰은 **오프셋**으로 계산해(굽는 시각과
+    # 무관) 같은 값이 나오게 한다 — 시계 hour 를 곱하면 구울 때마다 숫자가 흔들린다.
+    now = _demo_now()
+    base = now - _dt.timedelta(hours=6)
     recs, hourly_pct, hourly_week_pct = [], {}, {}
-    # 5h 창이 한 번 차오르다 리셋되는 모습: 누적 5h% 가 오르다 14시에 0 으로 떨어진다.
-    series = [(9, 18, 9), (10, 41, 11), (11, 63, 12), (12, 86, 13),
-              (13, 97, 14), (14, 22, 15), (15, 49, 16)]
-    for hour, s5h, swk in series:
-        t = base.replace(hour=hour)
+    # 5h 창이 한 번 차오르다 리셋되는 모습: 누적 5h% 가 오르다 6번째 시각에 0 으로 떨어진다.
+    series = [(0, 18, 9), (1, 41, 11), (2, 63, 12), (3, 86, 13),
+              (4, 97, 14), (5, 22, 15), (6, 49, 16)]
+    for off, s5h, swk in series:
+        t = base + _dt.timedelta(hours=off)
         key = t.strftime("%Y-%m-%d %H:00")
         recs.append({"ts": t.timestamp(), "tab": 0, "pane": 1, "session": 1,
-                     "account": "default", "tokens": 6000 + hour * 700})
+                     "account": "default", "tokens": 6000 + (9 + off) * 700})
         hourly_pct[key] = s5h
         hourly_week_pct[key] = swk
-    usage = {"session": {"pct": 49, "reset": "2pm (Asia/Seoul)"},
-             "week_all": {"pct": 16, "reset": "Jun 22 at 3am (Asia/Seoul)"},
+    usage = {"session": {"pct": 49, "reset": _session_reset(now)},
+             "week_all": {"pct": 16, "reset": _week_reset(now)},
              "account": "default"}
     app.push_screen(screens.TokenLogScreen(
         recs, usage=usage, hourly_pct=hourly_pct,
@@ -775,10 +811,11 @@ async def claude_rules(app, pilot):
 async def usage_panel(app, pilot):
     # 사용량 한도 조회(/usage) — 그림자 세션이 가져온 세션 5h·주 전체·주 Sonnet 한도를
     # 막대 그래프 전용 화면(open_usage_panel)으로 띄운다. 예시 한도 값을 주입.
+    _wk = _week_reset(_demo_now())      # 리셋 날짜도 굽는 날 기준(고정일이면 같이 낡는다)
     app.status.usage_limits = {
-        "session": {"pct": 38, "reset": "2pm (Asia/Seoul)"},
-        "week_all": {"pct": 61, "reset": "Jun 13 at 3am (Asia/Seoul)"},
-        "week_sonnet": {"pct": 12, "reset": "Jun 13 at 3am (Asia/Seoul)"},
+        "session": {"pct": 38, "reset": _session_reset(_demo_now())},
+        "week_all": {"pct": 61, "reset": _wk},
+        "week_sonnet": {"pct": 12, "reset": _wk},
         "account": "default",
     }
     app.open_usage_panel()
@@ -790,10 +827,16 @@ async def usage_view(app, pilot):
     # 리셋 블록 카운트다운. 예시 한도를 주입한다. 실서버 status flush 가 usage_limits 를
     # None 으로 덮어 1초 틱이 '데이터 없음'으로 재렌더할 수 있으므로(레이스), 캡처 직전
     # 데이터를 다시 박고 화면을 재렌더해 안정적으로 찍는다(usage_panel 의 스냅샷 대응).
+    import datetime as _dt
+    # 주간 리셋 날짜는 굽는 날 기준(고정일이면 스크린샷만 낡는다). 표기는 이 화면 고유
+    # 형식(`%b %d, 12:59pm`)이라 _week_reset 을 안 쓰고 여기서 만든다.
+    _b = _demo_now()
+    _d = _b.date() + _dt.timedelta(days=(7 - _b.weekday()) or 7)
+    _wk = f"{_d.strftime('%b')} {_d.day}, 12:59pm (Asia/Seoul)"
     data = {
         "session": {"pct": 18, "reset": "5:59pm (Asia/Seoul)"},
-        "week_all": {"pct": 3, "reset": "Jun 18, 12:59pm (Asia/Seoul)"},
-        "week_sonnet": {"pct": 0, "reset": "Jun 18, 12:59pm (Asia/Seoul)"},
+        "week_all": {"pct": 3, "reset": _wk},
+        "week_sonnet": {"pct": 0, "reset": _wk},
         "account": "default",
     }
     app.status.usage_limits = data
