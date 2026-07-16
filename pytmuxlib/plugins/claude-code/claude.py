@@ -471,11 +471,31 @@ _MODEL_BEFORE_RE = re.compile(
     r"[ \t]{0,20}(?:claude-)?$", re.I)
 _MODEL_BEFORE_WINDOW = 32
 
+# 환영 배너 — Claude 를 띄우면 **매번 맨 위에** 뜨는, 화면이 스스로 밝히는 실행 모델:
+#     Claude Code v2.1.211
+#     Fable 5 · Claude Max        ← 모델명 **뒤** ' · Claude <플랜>'
+#     ~/work/project
+# 서명을 요구하기 시작하면서(위 두 규칙) 이 자리가 인정 대상에서 빠져, **새 Claude
+# 패널은 /usage 프로브가 돌기 전까지 상태줄 모델 배지가 비었다**(라이브 스크린샷
+# 재촬영에서 발견 2026-07-16 — 이전 컷은 'opus-4.8 · ?%/5h', 재촬영은 '?%/5h').
+# 배너야말로 '화면이 권위' 원칙에 가장 잘 맞는 자리(프로브는 별도 세션이라 --model
+# 로 띄운 패널에선 틀린다)이므로 서명으로 인정한다.
+#   · 구분자는 ` · `(U+00B7) — 실 캡처 코퍼스 891건 전수 확인(2026-07-16).
+#   · 뒤에 **플랜명**(Max/Pro/…)을 요구해 본문의 모델명 언급과 구분한다.
+#   · 앞 공백 상한을 넉넉히(20) 둔 건 배너가 커서이동(`ESC[23G`)으로 그려질 때
+#     화면상 열 padding 이 공백으로 남기 때문(코퍼스에 실존).
+# §5.9 ReDoS: 가변 반복은 전부 상한(`\s*` 금지).
+_MODEL_BANNER_AFTER_RE = re.compile(
+    r"[ \t]{0,20}·[ \t]{0,4}Claude[ \t]{1,4}"
+    r"(?:Max|Pro|Team|Enterprise|Free)\b", re.I)
+
 
 def claude_model_badge(text):
     """`claude_model` 과 같되, **화면이 현재 모델을 밝히는 서명**이 붙은 매치만
     인정한다 — **라이브 화면 스크랩 전용**. 서명은 두 갈래다:
       · 모델명 **뒤** — 실 푸터 배지('(… context)'/'/model', _MODEL_BADGE_ANCHOR_RE)
+        · 환영 배너 'Fable 5 · Claude Max'(_MODEL_BANNER_AFTER_RE) — 띄울 때마다
+          맨 위에 뜨는 자리라, 이게 빠지면 새 패널은 프로브 전까지 배지가 빈다.
       · 모델명 **앞** — /model 메뉴 '(currently X)'·선택기 'Currently using X'·
         선택 확인 'Set model to X'·인패널 /status 'Model: X'(_MODEL_BEFORE_RE)
     푸터 배지는 상시 표시가 아니라(idle 푸터엔 없음) 앞 서명들이 실제로는 사용자가
@@ -495,6 +515,7 @@ def claude_model_badge(text):
         if _MODEL_CATEGORY_AFTER_RE.match(text, m.end()):
             continue
         if (_MODEL_BADGE_ANCHOR_RE.match(text, m.end())
+                or _MODEL_BANNER_AFTER_RE.match(text, m.end())
                 or _MODEL_BEFORE_RE.search(
                     text[max(0, m.start() - _MODEL_BEFORE_WINDOW):m.start()])):
             hit = m

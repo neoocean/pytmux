@@ -457,6 +457,29 @@ async def test_claude_model_badge_ignores_prose():
     assert claude_model_badge("Current week (Sonnet only)\n41% used") is None
 
 
+async def test_claude_model_badge_reads_welcome_banner():
+    """환영 배너('Fable 5 · Claude Max')도 라이브 서명으로 인정한다.
+
+    Claude 를 띄우면 **매번 맨 위에** 뜨는, 화면이 스스로 밝히는 실행 모델 자리다.
+    서명 요구를 도입하며 이 자리가 빠져 **새 패널은 /usage 프로브가 돌기 전까지
+    상태줄 모델 배지가 비었다**(라이브 스크린샷 재촬영에서 발견 2026-07-16 — 이전
+    컷 'opus-4.8 · ?%/5h' → 재촬영 '?%/5h'). 프로브는 별도 세션이라 `--model` 로
+    띄운 패널에선 틀리므로, 배너가 더 권위 있는 출처다.
+
+    구분자 ` · `(U+00B7)는 실 캡처 코퍼스 891건 전수 확인. 플랜명(Max/Pro/…)을
+    요구하므로 본문의 모델명 언급은 여전히 배제된다(위 테스트와 한 쌍)."""
+    banner = "Claude Code v2.1.211\n Fable 5 · Claude Max\n ~/work/proj"
+    assert claude_model_badge(banner) == "fable-5"
+    assert claude_model_badge(
+        "Claude Code v2.1.196\n Opus 4.8 · Claude Max\n ~/w") == "opus-4.8"
+    assert claude_model_badge("Sonnet 4.6 · Claude Pro") == "sonnet-4.6"
+    # 커서이동(ESC[23G)으로 그려진 배너 → 화면엔 열 padding 이 공백으로 남는다.
+    assert claude_model_badge("Sonnet 4.6           · Claude Max") == "sonnet-4.6"
+    # 플랜명이 없으면 서명 아님 — 본문이 모델명만 언급한 경우는 계속 배제.
+    assert claude_model_badge("Fable 5 · 두 문장으로 설명해줘") is None
+    assert claude_model_badge("요금제는 Claude Max 입니다. Opus 가 좋아요") is None
+
+
 async def test_claude_input_box_rule_delimited_current_ui():
     """입력박스 파서가 **현행 Claude UI**(모서리·세로 테두리 없이 위아래 가로줄로만
     구획)를 읽는다 — ESC→Insert 작성창 시드가 커서 줄 하나만 오던 버그(사용자 보고

@@ -1010,6 +1010,22 @@ _EMAIL_RE = _re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
 _WELCOME_RE = _re.compile(r">Welcome(?:&#160;|\s)back[^<]*</text>")
 
+# 라이브 Claude 컷 전용 — **실제 세션 ID 마스킹**(2026-07-16 발견).
+# `/remote-control` 이 켜지면 Claude 가 화면에 계정의 실 세션 링크를 띄운다:
+#   `/remote-control is active · Continue here, on your phone, or at`
+#   `https://claude.ai/code/session_01AceZ51rJmRUujVpXz5zS8n`
+# 이 ID 가 그대로 구워져 **공개 사이트·위키에 이미 올라가 있었다**(11-claude, CL 61678).
+# grep 게이트가 못 잡은 이유: 굽기(_bake_glyphs) 후엔 글자가 path 라 텍스트 검색이
+# 무력하다 — 그래서 굽기 **이전**인 여기서 잡아야 한다. 도메인(claude.ai/code)은 제품
+# 공개 URL 이라 남기고 **ID 만** 같은 길이의 자리표시자로 바꾼다(폭·줄바꿈 보존).
+_SESSION_ID_RE = _re.compile(r"(session_)([A-Za-z0-9_-]{8,})")
+_SESSION_ID_FILL = "01ExampleSessionIdXXXXXXXXXXXXXXXXXXXXXXXX"
+
+
+def _mask_session_id(m):
+    real = m.group(2)
+    return m.group(1) + (_SESSION_ID_FILL * 2)[:len(real)]
+
 # 실제 로그인 사용자명·호스트명(셸 프롬프트 `user@host`·상태줄 `ssh:host`·`/Users/<user>`
 # 경로)이 공개 이미지에 베이킹돼 내부 환경이 노출되지 않도록 마스킹한다. 현재 실행 환경에서
 # 동적으로 읽어 스크립트에 PII 를 하드코딩하지 않는다(다른 머신에서 돌리면 그 머신 값으로
@@ -1462,6 +1478,7 @@ def _redact_svg(path):
         return
     new = _EMAIL_RE.sub("user@example.com", svg)
     new = _WELCOME_RE.sub(">Welcome&#160;back!</text>", new)
+    new = _SESSION_ID_RE.sub(_mask_session_id, new)   # /remote-control 실 세션 링크
     # 실제 사용자명/호스트명 마스킹(셸 프롬프트·상태줄·홈경로). full 호스트→short 순서로
     # 치환해 잔여 `.local` 이 남지 않게 한다.
     for _real, _repl in ((_REAL_HOST, "host"), (_REAL_HOST_SHORT, "host"),
