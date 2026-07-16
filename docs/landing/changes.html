@@ -60,6 +60,25 @@
     <section class="cl-day" id="d-2026-07-16">
       <h2>2026-07-16 <span class="pill">목요일</span></h2>
       <ul>
+        <li><span class="pill stable">안정</span> <strong>무거운 작업이 <span class="inline-code">화면 전체를 멈추게</span> 하던 몇 자리를 없앴습니다 — 큰 폴더를 복사·삭제하거나, 큰 압축을 열거나, 마우스로 드래그해 복사할 때입니다.</strong>
+          pytmux 서버는 <strong>한 줄기 흐름</strong>으로 모든 창을 돌봅니다 — 그래서 그 흐름에서 <strong>오래 걸리는 일</strong>을 바로 하면
+          그동안 <strong>모든 패널·모든 화면</strong>이 함께 멈춥니다. mdir 파일 관리자에서 <strong>수 GB 폴더를 복사·삭제</strong>하거나
+          <strong>큰 <span class="inline-code">.tar.gz</span> 를 여는</strong> 동안 화면이 얼어붙던 것, 그리고 이름 없는 <strong>파이프(FIFO)나 장치 파일</strong>을
+          미리보기로 열면 <strong>영영 멈춰</strong> 있던 것이 그 탓이었습니다. 이제 파일 작업은 <strong>곁길(작업 스레드)</strong>로 넘겨
+          화면이 계속 반응하고, 미리보기는 <strong>보통 파일만</strong> 열어 특수 파일에 매달리지 않습니다.
+          클라이언트 쪽도 같습니다 — <a href="#d-2026-07-12">마우스 드래그 복사</a>가 Windows 에서 <strong>PowerShell 을 부르며 잠깐 멈추던</strong> 것을,
+          붙여넣기와 똑같이 <strong>곁길로</strong> 돌려 드래그를 놓는 순간의 <strong>끊김</strong>을 없앴습니다.</li>
+        <li><span class="pill stable">Windows</span> <strong>클립보드 복사·붙여넣기가 이제 <span class="inline-code">실패를 솔직하게</span> 알립니다 — '복사됨'이라 해 놓고 아무것도 안 담기던 일이 없습니다.</strong>
+          다른 프로그램이 클립보드를 <strong>잠깐 쥐고 있는</strong> 흔한 상황에서, 복사가 <strong>속으로 실패</strong>했는데도 pytmux 는
+          <strong>'복사됨'</strong> 이라 알렸습니다 — PowerShell 이 그 실패를 <strong>오류로 끝맺지 않아</strong> 성공처럼 보였기 때문입니다.
+          게다가 그 오류 문구가 <strong>화면에 그대로 찍혀</strong> 표시를 어지럽히기도 했습니다. 붙여넣기도 반대로,
+          PowerShell 이 <strong>실패한 것</strong>을 <strong>'클립보드가 비었다'</strong>로 잘못 읽어 <span class="inline-code">Ctrl+V</span> 가 <strong>조용히 아무 일도 안 하던</strong> 적이 있었습니다.
+          이제 실패는 <strong>실패로 끝맺어져</strong>, 복사는 다른 방법으로 <strong>다시 시도</strong>하고 붙여넣기도 <strong>대체 경로</strong>로 넘어갑니다.
+          오류 문구가 화면에 새는 일도 없습니다.</li>
+        <li><span class="pill stable">탭</span> <strong>탭 스위처(<span class="inline-code">Esc</span> → <span class="inline-code">Tab</span>)를 <span class="inline-code">아주 빠르게</span> 여닫아도 이제 클라이언트가 멈추지 않습니다.</strong>
+          <span class="inline-code">Esc</span> <span class="inline-code">Tab</span> <span class="inline-code">Enter</span> 를 <strong>연달아 빠르게</strong> 치면, 스위처가 <strong>닫힌 뒤에</strong> 뒤늦게
+          도착한 패널 목록이 <strong>이미 사라진 목록</strong>을 건드리다 클라이언트가 <strong>튕겨 나가는</strong> 드문 경우가 있었습니다.
+          이제 목록이 닫혔으면 <strong>조용히 넘어갑니다</strong> — 빠른 리듬 그대로 안전합니다.</li>
         <li><span class="pill stable">작성창</span> <strong>작성창에서 <span class="inline-code">Esc</span> 를 누르면 이제 <span class="inline-code">ESC 모드</span>로 들어간 것이 보이고, <span class="inline-code">:</span> 로 연 명령칸은 작성창을 덮지 않고 그 위에 뜹니다.</strong>
           작성창에서 <span class="inline-code">Esc</span> 한 번은 취소가 아니라 <strong>ESC 모드</strong>(다음 키가 <span class="inline-code">:</span> 명령이냐 취소냐를 정하는 자리)인데,
           지금까지는 <strong>들어갔는지 알 수가 없었습니다</strong> — 바뀌는 것이라곤 박스 위쪽 힌트 <strong>문구</strong>뿐이었고 그마저 <strong>옅은 회색</strong>이라,
