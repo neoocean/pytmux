@@ -22,12 +22,14 @@ from textual.widgets import Input, Label, ListItem, ListView, Static, TextArea
 from rich.highlighter import Highlighter
 from rich.segment import Segment
 from rich.style import Style
+from rich.text import Text
 
 from . import i18n
 from .clientutil import (COMMAND_FREETEXT, COMMAND_NOARG, COMMAND_OPTIONS,
                          COMMANDS, ESC_MODE_KEYS, MENU_GROUP_LABELS, MENU_GROUPS,
                          MENU_ITEMS, MENU_TOGGLES, MENU_TOPLEVEL,
-                         PANE_SCOPED_CMDS, PREFIX_KEYS, SET_OPTION_CHOICES,
+                         PANE_SCOPED_CMDS, PREFIX_KEYS, REMOTE_PINK,
+                         REMOTE_PINK_DIM, SET_OPTION_CHOICES,
                          SETTINGS, SETTINGS_CATS,
                          _char_cells, bar, format_option_row, has_hangul,
                          hangul_to_qwerty, norm_sep, theme_color)
@@ -1162,6 +1164,49 @@ class ChooseTreeScreen(ModalScreen):
                 event.stop()
                 self.dismiss(("kill", self.entries[idx]))
 
+class _CycleListView(ListView):
+    """탭 스위처용 ListView 확장: ↑↓가 끝에서 **순환**(맨 위에서 ↑=맨 아래)하고,
+    Home/End=처음/끝, PgUp/PgDn=한 화면 단위 이동(끝에선 클램프 — 순환하면 페이지
+    이동이 어디서 멈출지 예측 불가). ScrollView 가 물려주는 home/end/pageup/pagedown
+    기본 바인딩은 **스크롤만** 옮기고 선택(cursor)은 안 움직여 선택 리스트에선
+    헛키였다 — 커서 이동 액션으로 덮는다."""
+    BINDINGS = [
+        Binding("home", "cursor_home", "처음", show=False),
+        Binding("end", "cursor_end", "끝", show=False),
+        Binding("pageup", "cursor_page(-1)", "페이지 위", show=False),
+        Binding("pagedown", "cursor_page(1)", "페이지 아래", show=False),
+    ]
+
+    def _clamp(self, idx: int):
+        n = len(self.children)
+        if n:
+            self.index = max(0, min(idx, n - 1))
+
+    def action_cursor_up(self):
+        n = len(self.children)
+        if n and (self.index is None or self.index <= 0):
+            self.index = n - 1      # 맨 위에서 ↑ = 맨 아래(순환)
+        else:
+            super().action_cursor_up()
+
+    def action_cursor_down(self):
+        n = len(self.children)
+        if n and (self.index is None or self.index >= n - 1):
+            self.index = 0          # 맨 아래에서 ↓ = 맨 위(순환)
+        else:
+            super().action_cursor_down()
+
+    def action_cursor_home(self):
+        self._clamp(0)
+
+    def action_cursor_end(self):
+        self._clamp(len(self.children) - 1)
+
+    def action_cursor_page(self, step: int):
+        page = max(1, self.scrollable_content_region.height)
+        self._clamp((self.index or 0) + step * page)
+
+
 class TabSwitcherScreen(ModalScreen):
     """탭 스위처(esc → Tab): 열려 있는 탭 목록을 띄우고 Tab 으로 다음, Shift+Tab 으로
     이전 탭을 **선택만** 하다가 Enter 로 그 탭에 전환한다(Esc=취소, 원래 탭 유지).
@@ -1171,13 +1216,23 @@ class TabSwitcherScreen(ModalScreen):
     KeyUp 이벤트 타입 자체가 없다. 그래서 'Shift 를 놓으면 전환' 대신 **Enter 확정**
     이다(사용자 선택 2026-07-15).
 
-    entries = [{"index": 탭 index, "label": 표시 문자열}] — **시각 순서**(비고정→고정)로
-    호출부(client.open_tab_switcher)가 이미 정렬해 넘긴다. 이 화면은 표시/선택만 하고
-    탭 모델을 모른다. dismiss 값은 전환할 탭 index(취소면 None).
+    entries = [{"kind": "tab", "index": 탭 index, "label": 표시 문자열,
+    "remote"/"pinned"/"active": bool}] — **시각 순서**(비고정→고정)로 호출부
+    (client.open_tab_switcher)가 이미 정렬해 넘긴다. 이 화면은 표시/선택만 하고
+    탭 모델을 모른다. 표시 색은 탭바 규약을 따른다: 원격(⇄) 탭=분홍(REMOTE_PINK)
+    글자, 활성=굵게, 핀 글리프(*)=경고색 — 로컬/원격/핀이 목록에서 한눈에(07-16).
+
+    패널 하위행: 팝업은 **즉시** 탭 행만으로 열리고, 서버 tree 회신이 도착하면
+    add_panes 가 패널 2개 이상인 로컬 탭 밑에 `└ [ssh|local] 앱 · 제목` 행을
+    끼워 넣는다(ChooseTreeScreen 과 같은 서식). 원격(⇄) 탭의 패널 목록은 로컬
+    tree 에 없어 탭 행만 남는다. Enter 를 패널 행에서 치면 그 탭+그 패널로 전환.
+    dismiss 값은 선택한 entry dict(취소면 None).
 
     Tab/Shift+Tab 은 **BINDINGS 로** 잡는다 — Screen 기본 바인딩이 그 두 키를
     focus_next/focus_previous 로 쓰고 있어(포커스가 ListView 를 벗어남) 서브클래스
-    바인딩으로 덮어써야 한다. ↑↓ 는 ListView 기본 이동이 그대로 산다.
+    바인딩으로 덮어써야 한다. Tab 순환은 **탭 행만** 오간다(Alt+Tab 동선 유지,
+    패널 행은 건너뜀). ↑↓/Home/End/PgUp/PgDn 은 _CycleListView 가 전 행 대상으로
+    처리한다(↑↓는 끝에서 순환).
     """
     BINDINGS = [
         Binding("tab", "cycle(1)", "다음 탭", show=False),
@@ -1196,11 +1251,32 @@ class TabSwitcherScreen(ModalScreen):
         self._initial = initial
         self._title = title if title is not None else i18n.t("screen.tab_switcher")
 
-    def compose(self) -> ComposeResult:
-        # markup=False — 탭 이름의 대괄호([ssh] 등)가 Textual 마크업으로 먹히지 않게.
-        rows = [ListItem(Label(e["label"], markup=False), id=f"T{i}")
+    def _row_text(self, e) -> Text:
+        """entry → 표시 Text. 탭바 색 규약 준용: 원격=분홍, 활성=굵게, 핀 글리프만
+        경고색. 패널 행은 흐리게(원격이면 어두운 분홍 — 지금은 로컬만 생기지만
+        서식은 공통). Rich Text 라 대괄호([ssh] 등) 마크업 오해석이 원천 차단된다."""
+        if e.get("kind") == "pane":
+            # 주의: theme_color(self, "text-muted") 는 "auto 60%" 류 Textual 색
+            # 표현을 돌려줘 rich Style 이 못 읽는다(ColorParseError) — 고정 회색.
+            color = REMOTE_PINK_DIM if e.get("remote") else "#8a8a8a"
+            return Text(e["label"], style=Style(color=color))
+        st = Style(color=REMOTE_PINK) if e.get("remote") else Style()
+        if e.get("active"):
+            st += Style(bold=True)
+        txt = Text(e["label"], style=st)
+        if e.get("pinned"):
+            i = e["label"].find("*")
+            if i >= 0:
+                txt.stylize(Style(color=theme_color(self, "warning"),
+                                  bold=True), i, i + 1)
+        return txt
+
+    def _rows(self):
+        return [ListItem(Label(self._row_text(e)), id=f"T{i}")
                 for i, e in enumerate(self._entries)]
-        lv = ListView(*rows, id="tabsw")
+
+    def compose(self) -> ComposeResult:
+        lv = _CycleListView(*self._rows(), id="tabsw")
         lv.border_title = self._title
         # 키 안내는 부제(테두리 아래)로 — 제목에 붙이면 56 칸 상자에서 잘린다
         # (다른 팝업의 *_sub 관례와 동일: cmdlist_sub·confirm_sub·settings_sub).
@@ -1214,18 +1290,56 @@ class TabSwitcherScreen(ModalScreen):
         if self._entries:
             lv.index = self._initial
 
-    def action_cycle(self, step: int):
-        """Tab/Shift+Tab: 선택을 다음/이전으로(끝에서 순환). 전환은 Enter 에서만 —
-        여기선 **선택만** 옮긴다."""
+    async def add_panes(self, panes_by_index):
+        """서버 tree 회신(클라가 세션 필터링해 {탭 index: [pane 정보]} 로 넘김)로
+        패널 2개 이상인 탭 밑에 패널 행을 끼워 넣는다. 팝업이 뜬 **뒤에** 오는
+        회신이라 목록을 재구성하되 선택은 같은 항목 위에 유지한다(entry dict
+        identity 로 재탐색 — 탭 행 dict 는 재사용된다)."""
         lv = self.query_one(ListView)
-        n = len(self._entries)
-        if not n:
+        cur = lv.index
+        sel = (self._entries[cur]
+               if cur is not None and 0 <= cur < len(self._entries) else None)
+        new_entries = []
+        for e in self._entries:
+            if e.get("kind") != "tab":
+                continue            # 중복 회신이어도 패널 행은 새로 만든다
+            new_entries.append(e)
+            panes = panes_by_index.get(e["index"])
+            if not isinstance(panes, list) or len(panes) < 2:
+                continue
+            for p in panes:
+                app = p.get("cmd") or "shell"
+                badge = "[ssh]" if p.get("remote") else "[local]"
+                title = (p.get("title") or "").strip()
+                # 제목이 앱 이름 그대로면 중복 표기(`vim · vim`) 생략.
+                ttxt = f" · {title}" if title and title not in (app, "shell") \
+                    else ""
+                new_entries.append({"kind": "pane", "index": e["index"],
+                                    "pid": p["id"],
+                                    "label": f"     └ {badge} {app}{ttxt}",
+                                    "remote": e.get("remote")})
+        if len(new_entries) == len(self._entries):
+            return                  # 끼워 넣을 패널 행 없음 — 재구성 생략(깜빡임 0)
+        self._entries = new_entries
+        await lv.clear()
+        await lv.extend(self._rows())
+        lv.index = next((i for i, e in enumerate(new_entries) if e is sel), 0)
+
+    def action_cycle(self, step: int):
+        """Tab/Shift+Tab: 선택을 다음/이전 **탭 행**으로(패널 행은 건너뛰고, 끝에서
+        순환). 전환은 Enter 에서만 — 여기선 **선택만** 옮긴다."""
+        lv = self.query_one(ListView)
+        tabs = [i for i, e in enumerate(self._entries) if e.get("kind") == "tab"]
+        if not tabs:
             return
         cur = lv.index if lv.index is not None else 0
-        lv.index = (cur + step) % n
+        if step > 0:
+            lv.index = next((i for i in tabs if i > cur), tabs[0])
+        else:
+            lv.index = next((i for i in reversed(tabs) if i < cur), tabs[-1])
 
     def on_list_view_selected(self, event):
-        self.dismiss(self._entries[int(event.item.id[1:])]["index"])
+        self.dismiss(self._entries[int(event.item.id[1:])])
 
     def on_key(self, event: events.Key):
         if event.key == "escape":

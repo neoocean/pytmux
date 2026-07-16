@@ -1560,10 +1560,13 @@ async def test_esc_tab_switcher_selects_next_and_enter_switches():
         await pilot.press("shift+tab")      # → C(역순환)
         await pilot.pause(0.05)
         assert lv.index == 2, lv.index
-        assert sent == [], f"Enter 전엔 전환하지 않는다: {sent}"
+        # 열릴 때 패널 하위행용 request_tree 는 나가지만 **전환**(select_window)은
+        # Enter 전엔 없다(07-16 패널 하위행 확장).
+        assert sent == [("request_tree", {})], \
+            f"Enter 전엔 전환하지 않는다: {sent}"
         await pilot.press("enter")
         await pilot.pause(0.1)
-        assert sent == [("select_window", {"index": 2})], sent
+        assert sent[1:] == [("select_window", {"index": 2})], sent
         assert len(app.screen_stack) == 1, "Enter 후 모달이 닫힌다"
     await _with_app(body)
 
@@ -1581,7 +1584,7 @@ async def test_esc_tab_switcher_escape_cancels():
         await pilot.press("tab")            # 선택 이동
         await pilot.press("escape")         # 취소
         await pilot.pause(0.1)
-        assert sent == [], f"취소인데 전환됨: {sent}"
+        assert sent == [("request_tree", {})], f"취소인데 전환됨: {sent}"
         assert len(app.screen_stack) == 1
     await _with_app(body)
 
@@ -1613,7 +1616,138 @@ async def test_esc_tab_switcher_visual_order_and_pin():
         assert lv.index == 2, lv.index
         await pilot.press("enter")
         await pilot.pause(0.1)
-        assert sent == [("select_window", {"index": 1})], sent
+        assert sent[-1] == ("select_window", {"index": 1}), sent
+    await _with_app(body)
+
+
+async def test_esc_tab_switcher_colors_remote_and_pin():
+    """스위처 목록은 로컬/원격을 **색**으로 구분한다(사용자 요청 07-16) — 원격(⇄)
+    탭 행은 분홍(REMOTE_PINK, 탭바 규약과 동일), 활성 행은 굵게, 핀 글리프(*)는
+    경고색. 스타일은 _row_text 가 만드는 Rich Text 스팬으로 검증한다."""
+    from pytmuxlib.clientutil import REMOTE_PINK
+
+    async def body(app, pilot, srv):
+        app.send_cmd = lambda action, **kw: None
+        app.tabbar.tabs = [
+            {"index": 0, "name": "local", "active": True},
+            {"index": 1, "name": "⇄office1:build", "active": False,
+             "remote": True},
+            {"index": 2, "name": "held", "active": False, "pinned": True}]
+        await pilot.press("escape")
+        await pilot.press("tab")
+        await pilot.pause(0.1)
+        scr = app.screen
+        e_local, e_remote, e_pin = scr._entries
+        t_local = scr._row_text(e_local)
+        assert t_local.style.bold, "활성 로컬 행은 굵게"
+        assert not getattr(t_local.style, "color", None), \
+            "로컬 행은 기본색(색 지정 없음)"
+        t_remote = scr._row_text(e_remote)
+        assert str(t_remote.style.color.name).lower() == REMOTE_PINK, \
+            f"원격 행은 분홍: {t_remote.style}"
+        t_pin = scr._row_text(e_pin)
+        star = e_pin["label"].find("*")
+        spans = [s for s in t_pin.spans if s.start <= star < s.end]
+        assert spans and spans[0].style.bold, f"핀 글리프 강조 스팬 없음: {t_pin.spans}"
+        await pilot.press("escape")
+    await _with_app(body)
+
+
+async def test_esc_tab_switcher_home_end_page_and_arrow_wrap():
+    """스위처 항해 키(사용자 요청 07-16): Home=첫 행, End=끝 행, PgUp/PgDn=한 화면
+    단위(끝에선 클램프), 그리고 ↑↓는 끝에서 **순환**한다(맨 위에서 ↑=맨 아래,
+    맨 아래에서 ↓=맨 위). ListView(ScrollView) 기본 home/end/pageup/pagedown 은
+    스크롤만 옮기고 선택은 안 움직여 _CycleListView 가 커서 이동으로 덮는다."""
+    from textual.widgets import ListView
+
+    async def body(app, pilot, srv):
+        app.send_cmd = lambda action, **kw: None
+        app.tabbar.tabs = [{"index": i, "name": f"t{i}", "active": (i == 0)}
+                           for i in range(8)]
+        await pilot.press("escape")
+        await pilot.press("tab")
+        await pilot.pause(0.1)
+        lv = app.screen.query_one(ListView)
+        await pilot.press("home")
+        await pilot.pause(0.05)
+        assert lv.index == 0, f"Home 이 첫 행으로 안 감: {lv.index}"
+        await pilot.press("up")             # 맨 위에서 ↑ = 맨 아래(순환)
+        await pilot.pause(0.05)
+        assert lv.index == 7, f"맨 위 ↑ 순환 실패: {lv.index}"
+        await pilot.press("down")           # 맨 아래에서 ↓ = 맨 위(순환)
+        await pilot.pause(0.05)
+        assert lv.index == 0, f"맨 아래 ↓ 순환 실패: {lv.index}"
+        await pilot.press("end")
+        await pilot.pause(0.05)
+        assert lv.index == 7, f"End 가 끝 행으로 안 감: {lv.index}"
+        await pilot.press("pageup")         # 8행<한 화면 → 첫 행 클램프
+        await pilot.pause(0.05)
+        assert lv.index == 0, f"PgUp 클램프 실패: {lv.index}"
+        await pilot.press("pagedown")       # 끝 행 클램프
+        await pilot.pause(0.05)
+        assert lv.index == 7, f"PgDn 클램프 실패: {lv.index}"
+        await pilot.press("escape")
+    await _with_app(body)
+
+
+async def test_esc_tab_switcher_pane_rows_from_tree():
+    """탭 하위 패널 표시(사용자 요청 07-16): 팝업은 탭 행만으로 **즉시** 열리고,
+    서버 tree 회신(purpose=tab_switcher)이 오면 패널 2개 이상인 탭 밑에
+    `└ [badge] 앱 · 제목` 행이 끼어든다(1개짜리는 그대로). 선택은 같은 항목 위에
+    유지되고, Tab 순환은 여전히 **탭 행만** 오가며, 패널 행 Enter 는 그 탭+그
+    패널(select_pane_id)로 전환한다. tree 는 내 세션만 반영한다(다른 세션의 같은
+    index 창 무시)."""
+    from textual.widgets import Label, ListView
+
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app.tabbar.tabs = [{"index": 0, "name": "A", "active": True},
+                           {"index": 1, "name": "B", "active": False}]
+        await pilot.press("escape")
+        await pilot.press("tab")
+        await pilot.pause(0.1)
+        scr = app.screen
+        lv = scr.query_one(ListView)
+        assert lv.index == 1 and len(scr._entries) == 2
+        # tree 회신 주입: 탭 0=패널 2개, 탭 1=패널 1개(하위행 없음). 다른 세션의
+        # index 0 창(패널 3개)은 무시돼야 한다.
+        mine = app.status.session or ""
+        tree = {"t": "tree", "sessions": [
+            {"name": mine, "windows": [
+                {"index": 0, "name": "A", "panes": [
+                    {"id": 10, "title": "editor", "cmd": "vim", "remote": False},
+                    {"id": 11, "title": "", "cmd": "ssh", "remote": True}]},
+                {"index": 1, "name": "B", "panes": [
+                    {"id": 20, "title": "", "cmd": "zsh", "remote": False}]}]},
+            {"name": mine + "-other", "windows": [
+                {"index": 0, "name": "X", "panes": [{"id": 91}, {"id": 92},
+                                                    {"id": 93}]}]}]}
+        app._fill_tab_switcher_panes(tree)
+        await pilot.pause(0.1)
+        kinds = [e["kind"] for e in scr._entries]
+        assert kinds == ["tab", "pane", "pane", "tab"], kinds
+        labels = [it.query_one(Label).render().plain for it in lv.children]
+        assert "└ [local] vim · editor" in labels[1], labels
+        assert "└ [ssh] ssh" in labels[2], labels
+        # 재구성 후에도 선택은 같은 항목(탭 B — 이제 맨 끝 행) 위에 남는다.
+        assert lv.index == 3, f"재구성 후 선택 유실: {lv.index}"
+        # Tab 순환은 패널 행을 건너뛰고 탭 행만 오간다(B → A → B).
+        await pilot.press("tab")
+        await pilot.pause(0.05)
+        assert lv.index == 0, lv.index
+        await pilot.press("tab")
+        await pilot.pause(0.05)
+        assert lv.index == 3, lv.index
+        # 패널 행에서 Enter = 그 탭 + 그 패널로 전환.
+        await pilot.press("home")
+        await pilot.press("down")           # 탭 A 의 두 번째 행 = pane(id 10)
+        await pilot.pause(0.05)
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert sent[-2:] == [("select_window", {"index": 0}),
+                             ("select_pane_id", {"id": 10})], sent
+        assert len(app.screen_stack) == 1
     await _with_app(body)
 
 

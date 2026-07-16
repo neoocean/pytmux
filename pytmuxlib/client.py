@@ -354,6 +354,12 @@ class _ChooseScreensMixin:
         표시 순서·번호는 탭바와 같은 **시각 순서**(비고정→고정, _visual_tab_order)를
         쓴다 — 목록의 3번이 탭바의 3번, esc+3 과도 같은 탭이다(07-14 규약).
         탭이 하나뿐이면 고를 게 없어 열지 않는다(활성 탭 깜빡임으로 안내).
+
+        07-16 확장: 로컬/원격은 색으로(원격=분홍 — 탭바와 같은 REMOTE_PINK 규약),
+        핀 글리프(*)는 경고색으로 구분한다(스타일은 TabSwitcherScreen._row_text).
+        패널 하위행은 서버 tree 회신로 **뒤늦게** 채운다 — 팝업 열림은 즉시이고
+        (esc Tab Enter 리듬 보존), 회신이 오면 패널 2개 이상인 로컬 탭 밑에
+        끼어든다. 패널 행에서 Enter=그 탭+그 패널로 전환.
         """
         tabs = list(self.tabbar.tabs)
         if len(tabs) < 2:
@@ -366,15 +372,41 @@ class _ChooseScreensMixin:
             t = by_index[idx]
             mark = "▸" if t.get("active") else " "
             pin = "* " if t.get("pinned") else ""     # 탭바와 같은 핀 글리프
-            # 원격(⇄) 탭은 이름에 이미 ⇄host: 접두사가 있어 따로 표식하지 않는다.
-            entries.append({"index": idx,
-                            "label": f"{mark} {pin}{pos + 1}:{t.get('name', '')}"})
+            # 원격(⇄) 탭은 이름에 이미 ⇄host: 접두사가 있고 분홍 글자로도 구분된다.
+            entries.append({"kind": "tab", "index": idx,
+                            "label": f"{mark} {pin}{pos + 1}:{t.get('name', '')}",
+                            "remote": bool(t.get("remote")),
+                            "pinned": bool(t.get("pinned")),
+                            "active": bool(t.get("active"))})
             if t.get("active"):
                 initial = (pos + 1) % len(order)     # 시작 선택 = '다음 탭'
-        def handle(index):
-            if index is not None:
-                self.send_cmd("select_window", index=index)
-        self.push_screen(TabSwitcherScreen(entries, initial=initial), handle)
+        def handle(entry):
+            if entry is not None:
+                self.send_cmd("select_window", index=entry["index"])
+                if entry.get("kind") == "pane":
+                    self.send_cmd("select_pane_id", id=entry["pid"])
+        scr = TabSwitcherScreen(entries, initial=initial)
+        self.push_screen(scr, handle)
+        # 패널 하위행 채움: 회신(t=tree, purpose=tab_switcher)이 오면 add_panes.
+        self._tabsw_screen = scr
+        self.request_tree(purpose="tab_switcher")
+
+    def _fill_tab_switcher_panes(self, tree):
+        """tree 회신 → 열려 있는 탭 스위처에 패널 하위행 주입. 스위처가 이미 닫혔으면
+        무시. tree 는 서버의 **전 세션**을 담으므로 내 세션(상태줄이 아는 이름)만
+        골라 {탭 index: panes} 로 좁힌다 — 다른 세션의 같은 index 창이 패널을
+        오염시키지 않게. 원격(⇄) 탭 패널은 로컬 tree 에 없어 자연히 빠진다."""
+        scr = getattr(self, "_tabsw_screen", None)
+        if scr is None or not scr.is_attached:
+            return
+        mine = self.status.session or self.session_name
+        panes_by_index = {}
+        for s in tree.get("sessions", []):
+            if mine and s.get("name") != mine:
+                continue
+            for w in s.get("windows", []):
+                panes_by_index.setdefault(w["index"], w.get("panes"))
+        self.call_later(scr.add_panes, panes_by_index)
 
     # ---- 레이아웃 저장/불러오기 ----
     def save_layout_prompt(self):
@@ -1154,6 +1186,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     purpose = getattr(self, "_tree_purpose", "choose")
                     if purpose == "status_tabs":
                         self._open_status_tabs(msg)
+                    elif purpose == "tab_switcher":
+                        # 탭 스위처 패널 하위행(팝업은 이미 떠 있음 — 지연 주입).
+                        self._fill_tab_switcher_panes(msg)
                     else:
                         # (purpose=="usage" 트리 팝업은 token-usage→token-log 통합
                         #  (2026-06-12)으로 제거 — 요청자가 더 없다.)
