@@ -60,6 +60,16 @@
     <section class="cl-day" id="d-2026-07-16">
       <h2>2026-07-16 <span class="pill">목요일</span></h2>
       <ul>
+        <li><span class="pill stable">작성창</span> <strong>작성창에서 <span class="inline-code">Esc</span> 를 누르면 이제 <span class="inline-code">ESC 모드</span>로 들어간 것이 보이고, <span class="inline-code">:</span> 로 연 명령칸은 작성창을 덮지 않고 그 위에 뜹니다.</strong>
+          작성창에서 <span class="inline-code">Esc</span> 한 번은 취소가 아니라 <strong>ESC 모드</strong>(다음 키가 <span class="inline-code">:</span> 명령이냐 취소냐를 정하는 자리)인데,
+          지금까지는 <strong>들어갔는지 알 수가 없었습니다</strong> — 바뀌는 것이라곤 박스 위쪽 힌트 <strong>문구</strong>뿐이었고 그마저 <strong>옅은 회색</strong>이라,
+          문구를 일부러 읽지 않으면 <strong>아무 일도 안 일어난 것처럼</strong> 보였습니다. 이제 왼쪽 위에 <strong>ESC 모드 배지</strong>가 켜지고
+          <strong>테두리 색까지 함께</strong> 바뀌어, 읽지 않아도 눈에 들어옵니다.
+          이어 <span class="inline-code">:</span> 를 눌러 명령칸으로 넘어가면 — 종전에는 <strong>작성창이 사라진 것처럼</strong> 보였습니다.
+          작성창과 명령칸이 <strong>둘 다 화면 바닥에 붙는</strong> 탓에 명령 후보 목록이 작성창을 <strong>통째로 덮었고</strong>,
+          덮이지 않은 자리마저 명령칸의 <strong>반투명 배경</strong>에 눌려 흐려졌기 때문입니다. 정작 그 작성창은 <strong>멀쩡히 열린 채</strong>였는데도요.
+          이제 <strong>작성창은 바닥에 그대로 남고</strong> 명령칸과 힌트가 <strong>그 위쪽</strong>에 뜹니다 — 어디서 명령칸을 불렀는지,
+          돌아갈 작성창에 무엇을 쓰고 있었는지 <strong>보면서</strong> 명령을 고를 수 있습니다.</li>
         <li><span class="pill stable">Claude</span> <strong>상태줄의 모델 이름이 이제 <span class="inline-code">화면에 보이는 그 모델</span>을 따라갑니다 — <span class="inline-code">/model</span> 을 치는 순간 곧바로 맞춰집니다.</strong>
           Claude 화면에는 <span class="inline-code">Set the AI model for Claude Code (currently Opus 4.8)</span> 라고 떠 있는데
           상태줄 배지는 <strong>엉뚱하게 <span class="inline-code">sonnet-5</span></strong> 인 일이 있었습니다.

@@ -1905,6 +1905,8 @@ class PromptScreen(ModalScreen):
 
     # 후보 영역에 한 번에 보여줄 최대 명령 수.
     MAX_CAND = 12
+    # 입력 줄 박스(#prow)의 높이 — 위/아래 테두리 2행 + 입력 1행(위 CSS 와 한 쌍).
+    _PROW_H = 3
 
     def __init__(self, purpose, label, initial, suggester):
         super().__init__()
@@ -1960,6 +1962,66 @@ class PromptScreen(ModalScreen):
             self.query_one("#pcand", Label).display = False
             self._refresh_cands()
             self._refresh_hint()
+        self._place_over_compose()
+
+    def _compose_below(self):
+        """이 명령 프롬프트 아래에 열려 있는 작성창(esc→: 로 왔을 때). 없으면 None."""
+        get = getattr(self.app, "_active_compose_screen", None)
+        try:
+            return get() if callable(get) else None
+        except Exception:
+            return None
+
+    @property
+    def _no_backdrop_dim(self) -> bool:
+        """작성창 위에 뜬 명령 프롬프트는 뒤 패널을 딤하지 않는다(작성창 자신과 같은
+        이유 — 뒤 출력·작성 중인 내용을 보면서 명령을 고른다).
+
+        on_mount 에서 인스턴스 속성으로 심지 않고 **property** 로 두는 이유: push 와
+        on_mount 사이에 _composite 가 한 번 돌면 그 프레임이 딤을 셀에 구워 버리고,
+        패널이 조용하면(다음 프레임이 안 와서) 딤이 그대로 남는다 — 실제로 그렇게
+        보였다(2026-07-16). property 는 push 시점부터 참이라 그 창이 없다."""
+        return self._compose_below() is not None
+
+    def _place_over_compose(self):
+        """작성창(ComposePromptScreen)이 열린 채 불려 왔으면(esc→:) 그 박스를 가리지
+        않도록 **박스 위쪽**에 자리잡고, 뒤 딤을 걷어 작성창이 그대로 보이게 한다.
+
+        요청(2026-07-16): "팝업이 열린 상태에서 : 로 커맨드모드에 왔다"를 알 수 있어야
+        한다 — 그 신호가 **하단에 그대로 남아 있는 작성창** 자체다. 종전엔 둘 다
+        `dock:bottom` 이라 명령칸·후보목록이 작성창을 통째로 덮었고, PromptScreen 의
+        반투명 배경($background 80%)이 남은 부분마저 딤해 작성창이 사라진 것처럼 보였다.
+
+        위치는 작성창 박스의 **실측 상단**(`#cwrap.region.y`)을 기준으로 잡는다 —
+        박스 높이는 입력 줄 수(자람)와 활성 패널 프롬프트 행에 따라 매번 다르므로
+        상수로 못 박을 수 없다. 작성창은 이미 레이아웃이 끝난 채 스택에 남아 있어
+        이 시점에 region 이 유효하다."""
+        compose = self._compose_below()
+        if compose is None:
+            return
+        try:
+            top = compose.query_one("#cwrap").region.y
+        except Exception:
+            return
+        H = self.app.size.height
+        # 작성창 박스 위에 **입력칸(테두리 포함 3행)이 통째로 들어갈** 자리가 없으면
+        # 아예 옮기지 않는다 — 종전대로 바닥에 붙어 작성창을 가리더라도, 화면 밖으로
+        # 밀려 **안 보이는 칸에 타이핑하는** 것보다 낫다. 작성창은 최대 화면 80% 까지
+        # 자라므로(긴 멀티라인 프롬프트) 실제로 닿는 경계다.
+        if top < self._PROW_H or top >= H:
+            return
+        try:
+            self.query_one("#pwrap").styles.margin = (0, 0, H - top, 0)
+            # 후보 목록은 남은 자리에 맞춰 줄인다(입력칸이 먼저, 후보는 보너스).
+            # 안 줄이면 pwrap 이 위로 자라 후보·입력칸이 화면 위로 잘려 나간다.
+            cand = self.query_one("#pcand", Label)
+            cand.styles.max_height = max(1, min(self.MAX_CAND, top - self._PROW_H))
+        except Exception:
+            return
+        # 이 스크린 자체 배경도 반투명($background 80%) → 투명으로. 안 그러면 아래
+        # 작성창이 그 위로 비쳐 흐려진다. _composite 의 백드롭 딤(#25) 면제는
+        # `_no_backdrop_dim` property 가 push 시점부터 맡는다.
+        self.styles.background = "transparent"
 
     @staticmethod
     def _esc(s):
@@ -2529,8 +2591,13 @@ class ComposePromptScreen(ModalScreen):
        박스 배경은 $panel — 안쪽 입력칸($surface)과 구분된다. */
     #cwrap { dock: bottom; width: 100%; height: auto; max-height: 80%;
              background: $panel; border: round $accent; padding: 0 1; }
-    /* 박스 상단 한 줄: 왼쪽에 힌트(우측정렬), 오른쪽 끝에 IME 배지. */
+    /* 박스 상단 한 줄: 왼쪽에 ESC 모드 배지, 가운데 힌트(우측정렬), 오른쪽 끝에
+       IME 배지. */
     #ctop { width: 100%; height: 1; }
+    /* ESC 모드 배지: 평소엔 숨김(display:none), esc 한 번 누르면 켠다. 힌트 문구만
+       바꾸면(둘 다 옅은 무채색) 모드 진입이 안 보인다는 보고(2026-07-16) → 채운
+       유채색 칩으로 띄운다. 색은 set_esc_mode 가 런타임에 준다(테마 해석 필요). */
+    #cesc { width: auto; height: 1; padding: 0 1; display: none; }
     #chint { width: 1fr; height: 1; color: $text-muted;
              content-align: right middle; }
     #cime { width: auto; height: 1; padding: 0 0 0 1; }
@@ -2562,6 +2629,7 @@ class ComposePromptScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="cwrap"):
             with Horizontal(id="ctop"):
+                yield Label("", id="cesc", markup=False)
                 yield Label(i18n.t("compose.hint"), id="chint", markup=False)
                 yield Label("", id="cime", markup=False)
             yield _ComposeTextArea(self._initial, id="carea", soft_wrap=True)
@@ -2624,13 +2692,42 @@ class ComposePromptScreen(ModalScreen):
         # 투입은 안 하지만 작성 중이던 내용은 돌려줘 초안으로 보존한다(다음에 시드).
         self.dismiss((self.query_one(TextArea).text, False))
 
+    # ESC 모드 표시색. 이 박스에서 아직 안 쓰는 유일한 색이라 모드 진입이 또렷하다
+    # (테두리 평소색=accent 주황 · IME 배지=success 초록[한]/primary 파랑[EN]).
+    # `warning` 은 쓰지 않는다 — textual-dark 에서 accent 와 **같은 #FEA62B** 라
+    # 테두리를 바꿔도 색이 안 변한다(2026-07-16 확인).
+    _ESC_COLOR = "error"
+
     def set_esc_mode(self, on: bool):
-        """esc '메뉴 모드' 진입/해제 + 상단 힌트 갱신. 모드 중엔 힌트를 esc-메뉴
-        안내(: 명령 · Esc 취소 · 그 외 키 편집)로 바꿔 발견 가능하게 한다."""
+        """esc '메뉴 모드' 진입/해제 + 시각 표시 갱신.
+
+        표시를 셋으로 겹쳐 준다(요청 2026-07-16 — "esc 를 눌러도 모드 전환을 알 수
+        없다"): ① 좌상단 **ESC 배지**(채운 유채색 칩) ② **테두리 색** 전환 ③ 힌트
+        문구를 esc-메뉴 안내(: 명령 · Esc 취소 · 그 외 키 편집)로 교체 + 같은 색으로
+        강조. 종전엔 ③ 뿐이었고 그마저 옅은 무채색($text-muted)이라, 문구를 읽지
+        않으면 모드가 바뀐 걸 알아챌 수 없었다."""
         self._esc_mode = on
+        color = theme_color(self, self._ESC_COLOR)
         try:
-            self.query_one("#chint", Label).update(
-                i18n.t("compose.hint_esc" if on else "compose.hint"))
+            hint = self.query_one("#chint", Label)
+            hint.update(i18n.t("compose.hint_esc" if on else "compose.hint"))
+            hint.styles.color = color if on else theme_color(self, "text-muted")
+            hint.styles.text_style = "bold" if on else "none"
+        except Exception:
+            pass
+        try:
+            self.query_one("#cwrap").styles.border = (
+                "round", color if on else theme_color(self, "accent"))
+        except Exception:
+            pass
+        try:
+            badge = self.query_one("#cesc", Label)
+            badge.display = on
+            if on:
+                badge.update(i18n.t("compose.esc_badge"))
+                badge.styles.background = color
+                badge.styles.color = "white"
+                badge.styles.text_style = "bold"
         except Exception:
             pass
 

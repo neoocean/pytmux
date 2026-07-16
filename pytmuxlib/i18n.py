@@ -427,6 +427,7 @@ register({
         "compose.title": "프롬프트 작성 (블록 선택 편집)",
         "compose.hint": "Enter 전송 · Shift+Enter 줄바꿈 · Esc 메뉴 · Shift+방향키/Ctrl+A 선택",
         "compose.hint_esc": "ESC 메뉴 — : 명령(paste-image 등) · Esc 취소 · 그 외 키 편집 복귀",
+        "compose.esc_badge": "ESC 모드",
         "compose.empty": "(빈 내용 — 투입할 것이 없습니다)",
         # 캡처(REC)
         "msg.captured_chars": "{n} chars 버퍼에 캡처됨",
@@ -467,6 +468,7 @@ register({
         "compose.title": "Compose prompt (block-select editing)",
         "compose.hint": "Enter send · Shift+Enter newline · Esc menu · Shift+arrows/Ctrl+A select",
         "compose.hint_esc": "ESC menu — : command (paste-image etc.) · Esc cancel · any key resume",
+        "compose.esc_badge": "ESC MODE",
         "compose.empty": "(empty — nothing to inject)",
         "msg.captured_chars": "{n} chars captured to buffer",
         "msg.capture_toggle": "Output capture {state} (status REC)",

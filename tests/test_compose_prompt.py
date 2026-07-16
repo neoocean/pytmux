@@ -8,6 +8,8 @@ bracketed paste 투입(권고안 B, CLAUDE_PROMPT_BLOCK_SELECTION_FEASIBILITY).
 import harness  # noqa: F401  (sys.path 주입)
 
 from harness import make_app, server_only, teardown, wait_until
+from pytmuxlib.clientscreens import ComposePromptScreen
+from pytmuxlib.clientwidgets import _backdrop_dim_active
 from textual.widgets import TextArea
 
 
@@ -633,6 +635,117 @@ async def test_paste_into_open_compose_text_and_image():
         await _with_app(body)
     finally:
         clientclip.paste, clientclip.has_image, clientclip.save_image = _orig
+
+
+async def test_esc_mode_is_visually_distinct():
+    """esc 한 번 = 모드 진입을 **눈으로** 알 수 있어야 한다(요청 2026-07-16 — 종전엔
+    옅은 무채색 힌트 문구만 바뀌어 알아챌 수 없었다).
+
+    ① 좌상단 ESC 배지가 켜지고 ② 테두리 색이 평소(accent)와 **다른 색**으로 바뀐다.
+    모드에서 빠지면 둘 다 원복. ②의 '다른 색' 을 색값으로 비교하는 게 이 테스트의
+    핵심이다 — textual-dark 는 `warning` 과 `accent` 가 같은 #FEA62B 라, 그럴듯한
+    `warning` 을 쓰면 코드는 멀쩡한데 화면은 그대로인 무증상 회귀가 된다."""
+    async def body(app, pilot, srv):
+        app.open_compose()
+        await pilot.pause(0.2)
+        scr = app.screen_stack[-1]
+        wrap, badge = scr.query_one("#cwrap"), scr.query_one("#cesc")
+        off_border = wrap.styles.border.top[1]
+        assert badge.display is False, "평소엔 ESC 배지가 숨어 있어야"
+
+        await pilot.press("escape")                       # 모드 진입
+        await pilot.pause(0.05)
+        assert scr._esc_mode is True
+        assert badge.display is True, "ESC 모드면 배지가 보여야"
+        on_border = wrap.styles.border.top[1]
+        assert on_border != off_border, (
+            f"ESC 모드 테두리색이 평소와 같으면 전환이 안 보인다 — {on_border!r}")
+
+        await pilot.press("a")                            # 그 외 키 = 편집 복귀
+        await pilot.pause(0.05)
+        assert scr._esc_mode is False
+        assert badge.display is False, "모드에서 빠지면 배지도 꺼져야"
+        assert wrap.styles.border.top[1] == off_border, "테두리색도 원복돼야"
+    await _with_app(body)
+
+
+async def test_command_prompt_sits_above_open_compose():
+    """작성창이 열린 채 esc→: 로 커맨드모드에 오면, 작성창을 **하단에 그대로 두고**
+    명령칸·후보를 그 **위쪽**에 띄운다(요청 2026-07-16).
+
+    "팝업이 열린 상태에서 커맨드모드로 넘어왔다"는 걸 알 수 있어야 하고, 그 신호가
+    남아 있는 작성창 자체다. 종전엔 둘 다 dock:bottom 이라 명령 후보목록이 작성창을
+    통째로 덮었고, PromptScreen 의 반투명 배경이 남은 부분마저 딤했다."""
+    async def body(app, pilot, srv):
+        # 실사용 배치: 활성 패널 프롬프트가 화면 하단(y=25) → 작성창도 하단.
+        app.push_screen(ComposePromptScreen("what is this bug?", 25, 1, 98))
+        await pilot.pause(0.3)
+        compose = app.screen_stack[-1]
+        await pilot.press("escape")
+        await pilot.press("colon")
+        await pilot.pause(0.3)
+        prompt = app.screen_stack[-1]
+        assert prompt.__class__.__name__ == "PromptScreen"
+        cwrap = compose.query_one("#cwrap")
+        pwrap = prompt.query_one("#pwrap")
+        # ① 명령칸 묶음(후보+입력)이 작성창 박스 **위**에서 끝난다(안 겹침).
+        assert pwrap.region.bottom <= cwrap.region.y, (
+            f"명령칸이 작성창을 덮었다 — prompt={pwrap.region} compose={cwrap.region}")
+        # ② 작성창은 화면 안에 그대로 남아 보인다(하단 도킹 유지).
+        assert cwrap.region.height > 0 and cwrap.region.bottom <= app.size.height
+        # ③ 딤 없음: 스크린 배경 투명 + _composite 백드롭 딤(#25) 면제. 후자는
+        #    push~on_mount 사이 프레임이 딤을 구워 버리지 않게 property 여야 한다.
+        assert prompt.styles.background.a == 0, repr(prompt.styles.background)
+        assert getattr(prompt, "_no_backdrop_dim", False) is True
+        assert _backdrop_dim_active(app) is False, "작성창 위 명령칸은 뒤를 딤 안 함"
+    await _with_app(body)
+
+
+async def test_command_prompt_stays_onscreen_over_tall_compose():
+    """작성창이 길게 자란 상태(긴 멀티라인 프롬프트 — 최대 화면 80%)에서 esc→: 해도
+    명령 입력칸이 **화면 안에** 있어야 한다.
+
+    '작성창 위로' 를 그냥 margin 으로만 밀면, 박스가 클수록 명령칸이 화면 **위로**
+    밀려 나가 안 보이는 칸에 타이핑하게 된다(구현 중 실측 y=-8). 후보 목록을 남은
+    자리에 맞춰 줄여 입력칸 자리를 먼저 지킨다."""
+    async def body(app, pilot, srv):
+        long_text = "\n".join(f"line {i}" for i in range(20))
+        app.push_screen(ComposePromptScreen(long_text, 27, 1, 98))
+        await pilot.pause(0.3)
+        compose = app.screen_stack[-1]
+        cwrap = compose.query_one("#cwrap")
+        assert cwrap.region.height > 15, f"작성창이 길게 자란 전제 — {cwrap.region}"
+        await pilot.press("escape")
+        await pilot.press("colon")
+        await pilot.pause(0.3)
+        prompt = app.screen_stack[-1]
+        pwrap = prompt.query_one("#pwrap")
+        # 위아래 어느 쪽으로도 안 잘린다 + 작성창과도 안 겹친다.
+        assert pwrap.region.y >= 0, f"명령칸이 화면 위로 잘렸다 — {pwrap.region}"
+        assert pwrap.region.bottom <= app.size.height, pwrap.region
+        assert pwrap.region.bottom <= cwrap.region.y, (
+            f"명령칸이 작성창을 덮었다 — prompt={pwrap.region} compose={cwrap.region}")
+        # 입력 줄(#prow)은 통째로 보인다 — 후보가 줄더라도 이건 양보 못 한다.
+        prow = prompt.query_one("#prow")
+        assert prow.region.y >= 0 and prow.region.bottom <= app.size.height, prow.region
+    await _with_app(body)
+
+
+async def test_plain_command_prompt_still_bottom_docked_and_dims():
+    """작성창 없이 그냥 esc→: 로 연 명령 프롬프트는 **종전 그대로** — 바닥에 붙고
+    뒤를 딤한다(위 배치는 작성창이 열려 있을 때만 켜지는 특례라는 경계 고정)."""
+    async def body(app, pilot, srv):
+        app.open_prompt("command", "")
+        await pilot.pause(0.3)
+        prompt = app.screen_stack[-1]
+        assert prompt.__class__.__name__ == "PromptScreen"
+        # 바닥 도킹 유지(위로 밀어 올린 margin 이 없다).
+        assert prompt.query_one("#pwrap").region.bottom == app.size.height
+        # 반투명 배경 + 백드롭 딤 유지.
+        assert prompt.styles.background.a > 0, repr(prompt.styles.background)
+        assert getattr(prompt, "_no_backdrop_dim", False) is False
+        assert _backdrop_dim_active(app) is True
+    await _with_app(body)
 
 
 async def test_esc_colon_opens_command_over_open_compose():
