@@ -24,6 +24,7 @@ import os
 import time
 
 from rich.cells import set_cell_size
+from rich.color import Color
 from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
@@ -41,18 +42,16 @@ from pytmuxlib import i18n
 # ---- Mdir III 기본 배색 ----
 # 색은 원본 배포판 실물 스크린샷(m3v310, archive.org)의 픽셀을 직접 추출해 맞췄다.
 # 표준 VGA 16색. 핵심: 크롬(상·하단 바·구분선·테두리)은 파랑이 아니라 **시안
-# #00aaaa**, 커서 선택막대는 **밝은 초록 #55ff55**(어두운 초록 아님). 확장자색은
-# 매뉴얼·BLACK.COL 과 동일(EXE 밝은초록·COM 밝은하늘·BAT 노랑·압축 밝은자홍).
+# #00aaaa**. 확장자색은 매뉴얼·BLACK.COL 과 동일(EXE 밝은초록·COM 밝은하늘·
+# BAT 노랑·압축 밝은자홍). 커서 선택막대는 고정색이 아니라 **항목 본래 색의
+# 반전**(_cursor_style) — 디렉토리 위에선 붉은 막대, 태그 위에선 노란 막대.
 _CYAN = "#00aaaa"                                            # Mdir 시그니처 크롬색
 _TXT = Style(color="#aaaaaa", bgcolor="#000000")            # 일반 파일(회백)
 _DIR = Style(color="#ff5555", bgcolor="#000000", bold=True)  # 디렉토리(붉은색)
 _UP = Style(color="#ffffff", bgcolor="#000000", bold=True)   # [ Up-Dir ]
 _HID = Style(color="#aa00aa", bgcolor="#000000")             # 숨은파일(보라)
 _DRIVE = Style(color="#ffaa00", bgcolor="#000000", bold=True)  # [-C-] 드라이브 항목
-_CUR = Style(color="#000000", bgcolor="#55ff55", bold=True)  # 선택막대(밝은초록, 실측)
-_CUR_BLUR = Style(color="#000000", bgcolor="#00aa00")        # 비포커스는 한 톤 어둡게
 _TAG = Style(color="#ffff55", bgcolor="#000000", bold=True)  # 태그(선택)된 항목
-_CUR_TAG = Style(color="#000000", bgcolor="#55ff55", bold=True)  # 태그+커서
 _BAR = Style(color="#ffffff", bgcolor=_CYAN)                 # 상/하단 시안 바(실측)
 _BAR_HI = Style(color="#ffff55", bgcolor=_CYAN, bold=True)   # 바 위 강조(시계·키)
 _SEP = Style(color=_CYAN, bgcolor="#000000")                 # 구분선·열 구분 │(시안)
@@ -159,6 +158,22 @@ i18n.register({
 # 빨리찾기에 안 쓰는 예약 문자(원조 mdir 의 명령 키) — `.`=상위, `\`=루트,
 # `+`/`-`/`*`/`/`=선택 계열(후속 단계), 공백=태그.
 _RESERVED_CHARS = set(". \\+-*/")
+
+
+def _cursor_style(base: Style, focus: bool) -> Style:
+    """커서 막대 = 항목 본래 색의 반전(전경↔배경). 비포커스는 배경을 한 톤 어둡게.
+
+    고정 초록 막대가 아니라 항목색을 따라가므로 디렉토리 위에선 붉은 막대,
+    태그 위에선 노란 막대가 된다. 항목 스타일은 모두 명시 hex 라 triplet 이
+    있지만, 터미널 기본색(triplet 없음)이면 흰 막대로 물러선다.
+    """
+    c = base.color
+    trip = c.triplet if c is not None else None
+    r, g, b = trip if trip is not None else (255, 255, 255)
+    if not focus:
+        r, g, b = (v * 2 // 3 for v in (r, g, b))
+    return Style(color=base.bgcolor or Color.parse("#000000"),
+                 bgcolor=Color.from_rgb(r, g, b), bold=focus)
 
 
 def _fmt_size(s: int) -> str:
@@ -476,13 +491,9 @@ class _MdirView(Widget):
                          if m else " " * 15)
         text = set_cell_size(text, colw)
         tagged = k in ("file", "dir") and it["e"]["n"] in self._tags
+        style = _TAG if tagged else self._item_style(it)
         if cursor:
-            style = (_CUR_TAG if tagged else
-                     _CUR if self.has_focus else _CUR_BLUR)
-        elif tagged:
-            style = _TAG
-        else:
-            style = self._item_style(it)
+            style = _cursor_style(style, self.has_focus)
         return Segment(text, style)
 
     # ---- 커서 이동(페이지 단위) ----

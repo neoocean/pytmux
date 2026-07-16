@@ -331,6 +331,39 @@ async def test_mdir_opens_with_sorted_items_hidden_filtered():
     await _with_app(body)
 
 
+async def test_mdir_cursor_bar_inverts_item_color():
+    """커서 막대는 고정 초록이 아니라 **그 항목 본래 색의 반전**이어야 한다.
+
+    (디렉토리 위=붉은 막대, 태그 위=노란 막대.) 항목별로 커서를 옮겨 가며
+    막대 배경 == 그 항목의 전경색인지 확인한다.
+    """
+    async def body(app, pilot, srv):
+        from pytmuxlib.plugins.mdir.screen import MdirScreen
+        app.send_cmd = lambda *a, **k: None
+        app._run_command("mdir")
+        app._dispatch(_msg(entries=[_e("sub", d=True), _e("a.txt", s=5),
+                                    _e("run.exe", s=5)]))
+        assert await wait_until(pilot, lambda: isinstance(app.screen, MdirScreen))
+        v = app.screen._view
+        assert _names(v) == ["..", "sub", "a.txt", "run.exe"], _names(v)
+        v.focus()
+        assert await wait_until(pilot, lambda: v.has_focus)
+        seen = []
+        for i, it in enumerate(v._items):
+            own = v._item_style(it)
+            bar = v._item_segment(it, 40, cursor=True).style
+            assert bar.bgcolor == own.color, (_names(v)[i], bar, own)
+            assert bar.color == own.bgcolor, (_names(v)[i], bar, own)
+            seen.append(bar.bgcolor.triplet)
+        # 항목색이 서로 다르니 막대색도 달라야 한다(하나의 고정색 회귀 방지).
+        assert len(set(seen)) == len(seen), seen
+        # 태그된 항목 위에선 태그색(노랑)의 반전.
+        v._tags.add("a.txt")
+        bar = v._item_segment(v._items[2], 40, cursor=True).style
+        assert bar.bgcolor.triplet == (255, 255, 85), bar
+    await _with_app(body)
+
+
 async def test_mdir_enter_dir_navigates_and_applies():
     async def body(app, pilot, srv):
         from pytmuxlib.plugins.mdir.screen import MdirScreen

@@ -658,14 +658,25 @@ def _mdir_screen():
     return import_module("pytmuxlib.plugins.mdir.screen")
 
 
+async def _mdir_cursor_to(app, pilot, name: str):
+    """커서를 이름으로 이동 — 고정 횟수 press 는 정렬이 바뀌면 조용히 딴 항목에
+    선다(실제로 그렇게 드리프트했다). 목적 항목을 이름으로 못박는다."""
+    v = app.screen._view
+    for _ in range(len(v._items)):
+        if v._item_name(v._items[v._idx]) == name:
+            await pilot.pause(0.3)
+            return
+        await pilot.press("down")
+    raise AssertionError(f"mdir 장면: {name!r} 항목 없음")
+
+
 async def mdir_main(app, pilot):
     # mdir 메인 — 검정 바탕 다열 리스트·확장자색·상단 Path/Free·하단 집계+정보줄.
     scr = _mdir_screen()
     app.push_screen(scr.MdirScreen(_mdir_msg()))
     await pilot.pause(0.4)
-    for _ in range(5):                      # 커서를 backup.zip(자홍 압축색) 위로
-        await pilot.press("down")
-    await pilot.pause(0.3)
+    # 커서를 backup.zip 위로 — 선택막대가 항목색의 반전이라 여기선 자홍 막대다.
+    await _mdir_cursor_to(app, pilot, "backup.zip")
 
 
 async def mdir_delete(app, pilot):
@@ -673,9 +684,8 @@ async def mdir_delete(app, pilot):
     scr = _mdir_screen()
     app.push_screen(scr.MdirScreen(_mdir_msg()))
     await pilot.pause(0.4)
-    for _ in range(5):
-        await pilot.press("down")
-    await pilot.press("space", "space")     # backup.zip·install.sh 태그(노랑)
+    await _mdir_cursor_to(app, pilot, "app.py")
+    await pilot.press("space", "space")     # app.py·backup.zip 태그(노랑 — 원조처럼 커서가 내려간다)
     await pilot.press("f8")
     await pilot.pause(0.4)
 
