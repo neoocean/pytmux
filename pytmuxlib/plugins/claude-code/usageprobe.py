@@ -37,8 +37,30 @@ _READ = 65536
 # 조용히 실패한다(그림자 프로브는 무인 실행이라 사람이 답할 수 없음). 화면의 기본
 # 선택(❯ 1. Yes, I trust these settings)을 그대로 확정하는 Enter 1회만 주입해 통과
 # 시킨다 — 이후 실제 부팅 신호 대기로 이어간다.
+#
+# 안전(2026-07-16 검수 SEC-1): 헤더 문구만 보고 무턱대고 Enter 를 치면 향후 claude
+# 빌드가 옵션 순서를 바꾸거나 기본을 "No, exit" 로 두면 **미지의 선택을 확정**한다.
+# 게다가 수락은 사용자 config 에 머신 전역으로 남아, 프로브가 usage_refresh_sec 마다
+# 도는 탓에 조직이 앞으로 푸시할 임의 관리설정(텔레메트리 엔드포인트·권한정책)까지
+# 사용자가 검토화면을 보기도 전에 조용히 자동승인될 수 있다. 그래서 ① 긍정 기본선택
+# 줄(❯/> 셀렉터가 "Yes, I trust these settings" 위에 있을 때)이 실제로 화면에 떠
+# 있을 때만 Enter 를 치고 ② 부팅 대기(_open 직후 첫 wait_for)에서만 발동시킨다 —
+# /usage·/status 스크랩 중엔 이 자동승인을 열지 않는다(부팅 이후엔 이 화면이 안 뜬다).
 _MANAGED_SETTINGS_MARK = "Managed settings require approval"
+_MANAGED_SETTINGS_YES = "Yes, I trust these settings"
 _MANAGED_SETTINGS_ACCEPT = b"\r"
+
+
+def _managed_yes_selected(scr: str) -> bool:
+    """관리설정 화면에서 긍정 기본선택(❯/> 셀렉터가 'Yes, I trust these settings'
+    줄에 있음)이 실제로 떠 있는지. 셀렉터가 다른 줄(예: 'No, exit')로 옮겨갔거나
+    문구가 바뀌면 False → Enter 를 치지 않고 프로브는 안전하게 실패(None)한다."""
+    if _MANAGED_SETTINGS_MARK not in scr:
+        return False
+    for ln in scr.splitlines():
+        if _MANAGED_SETTINGS_YES in ln and ("❯" in ln or ln.lstrip().startswith(">")):
+            return True
+    return False
 
 
 class _PosixSession:
@@ -229,11 +251,12 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
 
     managed_settings_seen = False
 
-    def wait_for(subs, maxs: float) -> bool:
-        """subs(문자열 또는 후보 튜플) 중 하나라도 화면에 뜰 때까지 대기. 그 사이
-        조직 관리 설정 승인 화면(_MANAGED_SETTINGS_MARK)이 뜨면 기본 선택("1. Yes,
-        I trust these settings")을 1회 확정해 넘기고 대기를 이어간다 — 그림자
-        프로브는 무인 실행이라 사람이 답할 수 없다(2026-07-15 요청)."""
+    def wait_for(subs, maxs: float, accept_managed: bool = False) -> bool:
+        """subs(문자열 또는 후보 튜플) 중 하나라도 화면에 뜰 때까지 대기. `accept_managed`
+        (부팅 대기에서만 True)이면 그 사이 조직 관리 설정 승인 화면이 뜨고 **긍정
+        기본선택(❯ Yes, I trust these settings)이 실제로 선택돼 있을 때만** Enter 1회를
+        확정해 넘기고 대기를 이어간다 — 그림자 프로브는 무인 실행이라 사람이 답할 수
+        없다(2026-07-15). 셀렉터가 다른 옵션에 있거나 문구가 바뀌면 치지 않는다(SEC-1)."""
         nonlocal managed_settings_seen
         cands = (subs,) if isinstance(subs, str) else tuple(subs)
         end = time.monotonic() + maxs
@@ -242,7 +265,8 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
             scr = disp()
             if any(c in scr for c in cands):
                 return True
-            if not managed_settings_seen and _MANAGED_SETTINGS_MARK in scr:
+            if (accept_managed and not managed_settings_seen
+                    and _managed_yes_selected(scr)):
                 managed_settings_seen = True
                 sess.write(_MANAGED_SETTINGS_ACCEPT)
                 end = time.monotonic() + maxs   # 승인 후 실제 부팅 대기시간 재확보
@@ -253,7 +277,8 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
         # → None(안전). claude 버전마다 부팅 화면 힌트가 달라 여러 신호 중 하나라도
         # 잡히면 준비로 본다: 구버전 "? for shortcuts", v2.1.x 푸터("shift+tab to
         # cycle"·"← for agents"). 어느 쪽도 입력 박스가 떴다는 신뢰 신호다.
-        if not wait_for(("shortcuts", "shift+tab", "for agents"), boot_timeout):
+        if not wait_for(("shortcuts", "shift+tab", "for agents"), boot_timeout,
+                        accept_managed=True):
             return None
         # 부팅 화면에 계정/조직 표시가 있으면 먼저 캡처(/usage 가 화면을 덮기 전).
         # 별칭(acct, 로그·DB 영속용)과 전체 이메일(acct_full, 사용자 본인 화면 표시용)을

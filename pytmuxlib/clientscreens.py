@@ -1294,8 +1294,20 @@ class TabSwitcherScreen(ModalScreen):
         """서버 tree 회신(클라가 세션 필터링해 {탭 index: [pane 정보]} 로 넘김)로
         패널 2개 이상인 탭 밑에 패널 행을 끼워 넣는다. 팝업이 뜬 **뒤에** 오는
         회신이라 목록을 재구성하되 선택은 같은 항목 위에 유지한다(entry dict
-        identity 로 재탐색 — 탭 행 dict 는 재사용된다)."""
-        lv = self.query_one(ListView)
+        identity 로 재탐색 — 탭 행 dict 는 재사용된다).
+
+        검수 COR-2: 이 코루틴은 call_later 로 큐잉돼 tree 회신 처리 시점에 실행되는데,
+        빠른 esc→Tab→Enter 리듬에서 그 사이 스위처가 이미 dismiss(pop)됐을 수 있다.
+        그러면 query_one(ListView) 가 NoMatches 를 던져 Textual 콜백 안에서 클라가
+        크래시한다 — 붙어 있지 않으면 조용히 빠지고, 남은 좁은 레이스는 NoMatches 를
+        잡아 무시한다."""
+        from textual.css.query import NoMatches
+        if not self.is_attached:
+            return
+        try:
+            lv = self.query_one(ListView)
+        except NoMatches:
+            return
         cur = lv.index
         sel = (self._entries[cur]
                if cur is not None and 0 <= cur < len(self._entries) else None)

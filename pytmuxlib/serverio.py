@@ -10,6 +10,7 @@ import base64
 import binascii
 import contextlib
 import hmac
+import inspect
 import os
 import secrets
 import signal
@@ -777,6 +778,12 @@ class ServerIOMixin:
         # 그 외 알 수 없는 action → 플러그인 요청 핸들러에 위임. 회신 메시지(dict)를
         # 반환하면 그대로 클라로 보낸다(ncd 의 request_nc_list 등). 없으면 무시.
         resp = self.plugins.handle_server_request(self, sess, action, msg)
+        # 훅이 awaitable(코루틴/Future)을 반환하면 여기서 await 한다 — 순수 파일시스템
+        # I/O(mdir 복사/이동/삭제·대형 압축 목록·특수파일 뷰)를 executor 로 넘겨 단일
+        # asyncio 루프가 다중 GB 트리 조작에 멎지 않게 하는 하위호환 확장. dict 를
+        # 곧바로 반환하는 훅(ncd 등)은 그대로 동작한다.
+        if inspect.isawaitable(resp):
+            resp = await resp
         if resp is not None:
             # 원격 페더레이션 §4.1: 릴레이된 요청이 요청 클라 식별자(_req_token)를
             # 실어 왔으면 회신에 그대로 echo 한다 — 다운스트림 _remote_reader 가

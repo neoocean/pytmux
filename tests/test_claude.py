@@ -565,6 +565,23 @@ async def test_claude_model_live_signatures():
         "Set model to Opus 4.8 and saved as your default") == "opus-4.8"
 
 
+async def test_claude_model_badge_before_anchor_rejects_body_text():
+    """COR-1/M-2: `model:` before-anchor 가 패널 본문의 파일/툴 출력에 오검출되면
+    안 된다 — 라이브 서명으로 오인돼 상태줄 배지·토큰 DB 가 실행 모델과 다른 값으로
+    튀고 프로브가 못 덮어 자가치유도 약하다(2026-07-04 재발 방지).
+      · YAML frontmatter `model: sonnet`(공백 1개) → 배제(/status 는 정렬패딩 ≥2공백)
+      · `ANTHROPIC_MODEL:`·`_model:` 처럼 앞이 단어문자면 배제(env 키 내부 매칭 금지)
+    반면 인패널 /status 의 정렬패딩 'Model:' 은 계속 잡아야 한다(회귀 방지)."""
+    # 음성: 에이전트 정의 .md 등 파일 본문의 YAML(공백 1개).
+    assert claude_model_badge("model: sonnet") is None
+    assert claude_model_badge("  model: opus\n  description: x") is None
+    # 음성: 환경변수 키 내부(앞이 '_'=단어문자).
+    assert claude_model_badge("ANTHROPIC_MODEL: claude-sonnet-4-5") is None
+    assert claude_model_badge("export ANTHROPIC_MODEL:claude-opus-4-8") is None
+    # 양성 회귀: /status 정렬패딩(≥2공백)은 여전히 잡는다.
+    assert claude_model_badge("Model:            Opus 4.8") == "opus-4.8"
+
+
 async def test_ctx_window_tokens():
     from pytmuxlib.claude import ctx_window_tokens
     assert ctx_window_tokens("1M ctx") == 1_000_000

@@ -1136,6 +1136,45 @@ async def test_remote_pin_survives_reattach_same_host():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_win_key_rejects_non_int_upstream_values():
+    """검수 F-2: 상류 status(JSON)는 신뢰불가 입력이라 wid/index 가 해시불가(list/dict)
+    거나 타입 혼재(1 과 "1")로 오면, 집합 멤버십 TypeError 로 링크가 끊기거나 핀 집합
+    (int·str 혼재)의 sorted() 가 세션유지 재시작을 깨뜨린다. _win_key 는 int 만 인정하고
+    (bool 도 제외) 그 외엔 None 으로 낮춘다."""
+    srv, task, sock = await server_only()
+    try:
+        wk = srv._win_key
+        assert wk({"wid": 3}) == 3
+        assert wk({"wid": [1, 2]}) is None            # 해시불가 → None
+        assert wk({"wid": {"x": 1}}) is None
+        assert wk({"wid": "3"}) is None               # 문자열 → None(타입 혼재 차단)
+        assert wk({"wid": True}) is None              # bool 제외
+        assert wk({"index": 2}) == 2                  # wid 없으면 int index 폴백
+        assert wk({"wid": None, "index": 5}) == 5
+        assert wk({"wid": "x", "index": "y"}) is None
+        assert wk({}) is None
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_remote_detach_all_clears_orphaned_sticky():
+    """검수 F-3: detach-all(remote-detach 인자 없음)은 재연결을 이미 포기한 호스트
+    (reconn·remotes 어디에도 없는 고아 sticky)까지 버려야 한다 — 안 그러면 나중에 그
+    호스트에 다시 attach 할 때 옛 핀/분리가 되살아나 '명시 detach 만 버림' 계약을 어긴다."""
+    srv, task, sock = await server_only()
+    try:
+        # 링크 객체 없이 sticky 만 남은 '고아' 호스트를 직접 주입(재연결 포기 상태 모사).
+        d = srv._remote_sticky_dict()
+        d["ghost-host"] = {"pinned": {1, 2}, "detached": {3}}
+        assert "ghost-host" in srv._remote_sticky_dict()
+        # detach-all → 살아있는 링크가 없어도 고아 sticky 가 통째로 비워져야 한다.
+        srv.remote_detach(None)
+        assert srv._remote_sticky_dict() == {}, \
+            "detach-all 이 고아 sticky 를 남기면 재-attach 시 옛 핀이 되살아난다"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_remote_same_host_tabs_drag_merge():
     """§1.7-c 예외: **같은 호스트의 두 원격 탭**은 드래그 머지(join_pane)된다 —
     거부 대신 remote_relay_join 이 전역 src index 를 원격 로컬 index 로 변환해

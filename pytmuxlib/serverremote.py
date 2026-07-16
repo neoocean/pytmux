@@ -543,6 +543,12 @@ class ServerRemoteMixin:
         for link in targets:
             self._remote_sticky_forget(link.host)
             asyncio.create_task(self.remote_drop(link))
+        if name is None:
+            # detach-all: 재연결을 이미 포기한 호스트(reconn·remotes 어디에도 없어
+            # 위 두 루프에 안 잡힘)의 고아 sticky 까지 버린다 — 안 그러면 나중에 그
+            # 호스트에 다시 attach 할 때 옛 핀/분리가 되살아나 '명시 detach 만 버림'
+            # 계약을 어긴다(검수 F-3). 공유 참조라 재대입 말고 in-place clear.
+            self._remote_sticky_dict().clear()
         return bool(targets)
 
     def remote_detach_tab(self, sess, gi: int) -> bool:
@@ -826,9 +832,18 @@ class ServerRemoteMixin:
         (구버전 상류라) 없으면 위치값 index 로 폴백한다(M-1). 한 링크의 상류는 단일
         버전이라 집합 내 키가 동형이다(wid 만 or index 만 — 정수끼리 충돌 없음).
         위치 index 로 키잉하던 종전엔 상류 탭 close/reorder 로 _reindex 가 index 를
-        재할당해 숨긴 탭이 엉뚱한 탭으로 옮겨갔다(코드검수 2026-07-10)."""
+        재할당해 숨긴 탭이 엉뚱한 탭으로 옮겨갔다(코드검수 2026-07-10).
+
+        키는 **int 만** 인정한다(검수 F-2): 상류 JSON 은 신뢰불가 입력이라 wid/index 가
+        list·dict(해시불가) 또는 타입 혼재(1 과 "1")로 오면, 집합 멤버십에서 TypeError
+        가 나 링크가 끊기거나, 핀 집합에 int·str 이 섞여 _resume_payload 의 sorted() 가
+        TypeError 로 세션유지 재시작을 깨뜨린다. 정수 아닌 값은 None(=키 없음)으로 낮춰
+        graceful 하게 무시한다(그 창은 sticky 대상에서 빠질 뿐, 링크는 산다)."""
         wid = rw.get("wid")
-        return wid if wid is not None else rw.get("index")
+        if isinstance(wid, int) and not isinstance(wid, bool):
+            return wid
+        idx = rw.get("index")
+        return idx if isinstance(idx, int) and not isinstance(idx, bool) else None
 
     def _visible_windows(self, link: RemoteLink) -> list:
         """이 링크에서 병합 탭바에 보일 (ri, rw) 목록 — 단일-탭 분리
@@ -888,6 +903,8 @@ class ServerRemoteMixin:
         if not (0 <= ri < len(link.windows)):
             return
         key = self._win_key(link.windows[ri])
+        if key is None:      # 상류가 안정 키를 안 줬거나 오염(F-2) — 핀 불가, 무시
+            return
         if value is None:
             value = key not in link.pinned_windows
         if value:

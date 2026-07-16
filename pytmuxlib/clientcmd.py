@@ -272,7 +272,9 @@ class _CommandMixin:
         한다(권고안 B). ESC 모드에서 Insert(맥은 Shift+Delete)로 호출(옵트인, 매번).
 
         '프롬프트 인계': 활성 패널 프롬프트에 **현재 들어 있는 텍스트 전체**를 시드로
-        채운다(_current_prompt_text — 클라 추적치, 없으면 화면 입력박스 긁기). 비우기는
+        채운다(_current_prompt_text — 화면 입력박스 긁기가 1차, 긁을 수 없을 때만 클라
+        추적치 폴백. p4 64741 에서 역전 — 추적기가 Claude 멀티라인 개행을 제출로 오인해
+        마지막 줄만 남던 것 수정). 비우기는
         **여는 시점이 아니라 적용(Ctrl+S) 시점**에 한다(사용자 요청 2026-06-22): 적용
         직전 프롬프트를 다시 읽어 그 길이만큼 백스페이스로 통째 비운 뒤 작성창 텍스트를
         bracketed paste 로 넣는다 — 이렇게 해야 추적 누락분(원격제어/재접속 입력)까지
@@ -280,7 +282,7 @@ class _CommandMixin:
         없으면 직전 **초안**(`_compose_draft`)을 시드로 쓰고, Esc 로 닫아도 초안에 남아
         다음에 다시 시드된다."""
         active = self.layout.get("active")
-        # 시드 우선순위: ① 프롬프트에 현재 들어 있는 텍스트(추적치→없으면 화면 긁기)
+        # 시드 우선순위: ① 프롬프트에 현재 들어 있는 텍스트(화면 긁기 1차→못 긁으면 추적치)
         #                ② 없으면 저장된 초안(취소해도 보존)
         current = self._current_prompt_text(active)
         seed = initial if initial is not None else (

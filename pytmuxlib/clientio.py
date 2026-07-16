@@ -350,9 +350,13 @@ class _InputMixin:
         elif k == "period" or ch == ".":
             self.open_prompt("move_window", "move-tab to index")
         elif k.isdigit():
-            n = int(k) - 1     # prefix+숫자: 1-based 표시 → 0-based 내부(#21)
-            if n >= 0:
-                self.send_cmd("select_window", index=n)
+            # prefix+숫자: 표시 번호(시각 순서)를 탭 index 로 역매핑 — esc+숫자·alt+숫자
+            # 와 동일 규약(고정/원격 탭이 오른쪽으로 재배치돼도 사용자가 보는 번호와
+            # 일치, 없는 번호는 무시). 종전엔 int(k)-1 로 정규화 전 위치를 바로 써
+            # 고정/원격 탭이 섞이면 esc+숫자와 다른 탭으로 갔다(검수 L-4).
+            idx = self.tabbar.index_for_number(int(k))
+            if idx is not None:
+                self.send_cmd("select_window", index=idx)
         elif k == "d":
             self.exit(message="detached")
         elif k == "left_square_bracket" or ch == "[":

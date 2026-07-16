@@ -149,18 +149,30 @@ class _MdirPlugin:
 
     # ---- 서버 측 ----
     def handle_server_request(self, server, sess, action, msg):
+        # 파일시스템 I/O 는 executor 로 넘긴다(coroutine 반환 → serverio 가 await).
+        # 대형 트리 복사/삭제·대형 압축 목록(전체 압축해제)·느린 네트워크 fs 가
+        # 단일 asyncio 루프를 막아 모든 패널/클라/페더레이션을 얼리던 것 해소.
+        # 빌더는 순수 fs 라 서버 상태를 만지지 않아 스레드 오프로드가 안전하다.
+        import asyncio
+
+        def _offload(fn, *a):
+            return asyncio.get_event_loop().run_in_executor(None, fn, *a)
+
         if action == "request_mdir_list":
-            from .server import mdir_list_msg
-            return mdir_list_msg(server, sess, msg.get("path"))
+            # base 해석은 세션 상태(활성 패널 cwd)를 읽으므로 루프 스레드에서 먼저
+            # 끝내고(레이스 방지), 순수 fs 나열만 executor 로 넘긴다.
+            from .server import mdir_list_fs, mdir_list_resolve_base
+            base = mdir_list_resolve_base(server, sess, msg.get("path"))
+            return _offload(mdir_list_fs, base)
         if action == "request_mdir_op":
             from .server import mdir_op_msg
-            return mdir_op_msg(server, sess, msg)
+            return _offload(mdir_op_msg, server, sess, msg)
         if action == "request_mdir_view":
             from .server import mdir_view_msg
-            return mdir_view_msg(server, sess, msg.get("path"))
+            return _offload(mdir_view_msg, server, sess, msg.get("path"))
         if action == "request_mdir_arc":
             from .server import mdir_arc_msg
-            return mdir_arc_msg(server, sess, msg.get("path"))
+            return _offload(mdir_arc_msg, server, sess, msg.get("path"))
         return None
 
 

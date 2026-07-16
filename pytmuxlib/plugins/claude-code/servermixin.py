@@ -1227,7 +1227,6 @@ class ServerClaudeMixin:
             # new_usage != self._usage 일 때만 오므로 30Hz 스캔 부담 없음.
             self._record_usage_snapshot(
                 new_usage, "panel" if panel_now else "inline")
-            changed = True
             return True
         return False
 

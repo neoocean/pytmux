@@ -466,9 +466,21 @@ _MODEL_BADGE_ANCHOR_RE = re.compile(r"[\s\S]{0,24}?(?:context\)|/model)", re.I)
 # 선택기가 나열하는 **후보** 모델 행('2. Opus  Opus 4.8 with 1M context · …')엔 이
 # 서명이 없어 활성 모델로 오인되지 않는다(닫는 괄호 없는 'context' 라 뒤 서명도 불발).
 # §5.9 ReDoS: 가변 반복은 전부 상한(`{0,20}`, `\s*` 금지) + 검사 창 32자 슬라이스.
+#
+# `model:` 오검출 방어(2026-07-16 검수 COR-1/M-2): 이 짧은 앵커는 좌측 경계가 없으면
+# 패널 본문의 파일/툴 출력에도 걸린다 — ① `ANTHROPIC_MODEL:`·`_model:` **내부**(앞이
+# 단어문자) ② YAML frontmatter `model: sonnet`(에이전트 정의 .md, 공백 1개). 걸리면
+# 라이브 서명으로 오인돼 상태줄 배지 **및 토큰 DB** 가 실행 모델과 다른 값으로 튀고,
+# p4 64941 로 프로브가 강한 값을 못 덮어 자가치유도 약하다(2026-07-04 본문 오검출 재발).
+# 그래서 `model:` 만 ⓐ 앞이 단어문자면 배제(`(?<![\w])` → 접두 붙은 env 키 제외)
+# ⓑ 뒤 공백 ≥2 요구(인패널 /status 는 'Model:' 뒤 정렬 padding, YAML 은 정확히 1칸).
+# 프로즈 앵커('(currently'/'currently using'/'set model to')는 문구가 충분히 특이해
+# 종전대로 유지한다.
 _MODEL_BEFORE_RE = re.compile(
-    r"(?:\(currently|currently using|set model to|model:)"
-    r"[ \t]{0,20}(?:claude-)?$", re.I)
+    r"(?:"
+    r"(?:\(currently|currently using|set model to)[ \t]{0,20}"
+    r"|(?<![\w])model:[ \t]{2,20}"
+    r")(?:claude-)?$", re.I)
 _MODEL_BEFORE_WINDOW = 32
 
 # 환영 배너 — Claude 를 띄우면 **매번 맨 위에** 뜨는, 화면이 스스로 밝히는 실행 모델:

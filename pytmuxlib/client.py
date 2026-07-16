@@ -68,9 +68,17 @@ class _ClipboardMixin:
     """OS 클립보드/페이스트 버퍼 연동(copy/paste·이미지 경로 폴백·버퍼 선택)."""
 
     def copy_text(self, text):
-        # 서버 페이스트 버퍼 + OS 클립보드 양쪽에 저장
+        # 서버 페이스트 버퍼(빠름)는 즉시, OS 클립보드 복사는 워커로.
         self.send_cmd("set_buffer", text=text)
-        clip = clientclip.copy(text)
+        # clientclip.copy 는 pbcopy/xclip/PowerShell 등 외부 도구라 수백 ms~수초
+        # 걸린다(특히 Windows PowerShell cold start 0.5~2s, 상한 5s). 마우스 드래그
+        # 복사(기본 on)는 드래그를 놓을 때마다 불려, 이벤트 루프에서 동기로 돌리면
+        # 그때마다 UI 가 멈춘다. paste 와 같은 to_thread 패턴으로 오프로드하고 완료
+        # 콜백에서 '복사됨' 메시지를 띄운다(검수 M-4).
+        self.run_worker(self._do_copy_text(text), exclusive=False)
+
+    async def _do_copy_text(self, text):
+        clip = await asyncio.to_thread(clientclip.copy, text)
         self.display_message(
             i18n.t("msg.copied_chars", n=len(text))
             + (i18n.t("msg.clipboard_suffix") if clip else ""))

@@ -247,7 +247,15 @@ def mdir_view_msg(server, sess, path: str) -> dict:
     원격 내용이 온다."""
     p = os.path.abspath(os.path.expanduser(str(path)))
     try:
-        size = os.path.getsize(p)
+        # 정규파일만 연다. FIFO(작가 없는 named pipe)나 블록킹 디바이스노드를
+        # open/read 하면 무한 대기하는데, 이 빌더가 executor 로 넘어가도 그 스레드가
+        # 영영 매달려 스레드풀을 잠식하고(페더레이션 피어가 원격 트리거 가능),
+        # 오프로드 이전이라면 단일 asyncio 루프 자체가 멎는다(§뷰어 wedge).
+        st = os.stat(p)
+        if not stat.S_ISREG(st.st_mode):
+            return {"t": "mdir_view", "path": p, "size": 0, "truncated": False,
+                    "binary": True, "text": "", "err": "not_regular_file"}
+        size = st.st_size
         with open(p, "rb") as f:
             head = f.read(VIEW_LIMIT)
     except OSError as ex:
@@ -272,14 +280,26 @@ def mdir_arc_msg(server, sess, path: str) -> dict:
     p = os.path.abspath(os.path.expanduser(str(path)))
     low = p.lower()
     entries: list[dict] = []
+    # 지원 형식 판정을 stat 보다 먼저 — 미지원 확장자는 파일이 없어도(존재 여부와
+    # 무관하게) arc_unsupported 로 거절한다(클라가 번역).
+    is_zip = low.endswith((".zip", ".jar"))
+    is_tar = low.endswith(_TAR_EXTS)
+    if not (is_zip or is_tar):
+        return {"t": "mdir_arc", "path": p, "entries": [],
+                "err": "arc_unsupported"}
     try:
-        if low.endswith((".zip", ".jar")):
+        # 뷰어와 같은 이유로 정규파일만(FIFO/디바이스노드에 zipfile/tarfile.open 이
+        # 매달리는 것 차단 — mdir_view_msg 주석 참조). open 직전에만 stat 한다.
+        if not stat.S_ISREG(os.stat(p).st_mode):
+            return {"t": "mdir_arc", "path": p, "entries": [],
+                    "err": "not_regular_file"}
+        if is_zip:
             import zipfile
             with zipfile.ZipFile(p) as z:
                 for i in z.infolist()[:ARC_MAX_ENTRIES]:
                     entries.append({"n": i.filename, "d": i.is_dir(),
                                     "s": int(i.file_size)})
-        elif low.endswith(_TAR_EXTS):
+        else:
             import tarfile
             with tarfile.open(p) as tf:
                 for m in tf:
@@ -287,9 +307,6 @@ def mdir_arc_msg(server, sess, path: str) -> dict:
                                     "s": int(m.size)})
                     if len(entries) >= ARC_MAX_ENTRIES:
                         break
-        else:
-            return {"t": "mdir_arc", "path": p, "entries": [],
-                    "err": "arc_unsupported"}
     except OSError as ex:
         return {"t": "mdir_arc", "path": p, "entries": [],
                 "err": f"{type(ex).__name__}: {ex}"}
@@ -309,11 +326,22 @@ def mdir_list_msg(server, sess, path: str | None = None) -> dict:
     - free/total = 그 경로가 속한 볼륨의 디스크 용량(하단 집계줄).
     - nt = **셸을 소유한 서버**의 OS — F4(패널 cd)의 방언(cmd `cd /d` vs POSIX)은
       이걸로 정한다(ncd 와 동일: 클라 os.name 을 쓰면 페더레이션에서 오방언)."""
+    return mdir_list_fs(mdir_list_resolve_base(server, sess, path))
+
+
+def mdir_list_resolve_base(server, sess, path: str | None) -> str:
+    """목록 시작 경로를 정한다. `path` 가 비면 활성 패널 cwd(세션 상태 읽기)에서
+    시작한다 — 이 세션 접근은 **반드시 asyncio 루프 스레드**에서 해야 한다(executor
+    스레드에서 sess 를 만지면 레이스). 순수 경로 계산이라 여기서 즉시 끝난다."""
     if path:
-        base = os.path.abspath(os.path.expanduser(str(path)))
-    else:
-        cwd = server._resolve_start_cwd(sess, "current")
-        base = os.path.abspath(cwd) if cwd else os.path.expanduser("~")
+        return os.path.abspath(os.path.expanduser(str(path)))
+    cwd = server._resolve_start_cwd(sess, "current")
+    return os.path.abspath(cwd) if cwd else os.path.expanduser("~")
+
+
+def mdir_list_fs(base: str) -> dict:
+    """이미 해석된 `base` 디렉토리를 나열한다(순수 파일시스템 — executor 안전).
+    대형·네트워크 디렉토리의 scandir/stat/disk_usage 블로킹이 여기 갇힌다."""
     if not os.path.isdir(base):
         return {"t": "mdir_list", "path": base, "entries": [], "drives": [],
                 "free": 0, "total": 0, "nt": os.name == "nt", "over": False,

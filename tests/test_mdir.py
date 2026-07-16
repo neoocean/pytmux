@@ -265,6 +265,52 @@ async def test_mdir_arc_zip_tar_and_unsupported():
         assert rbad["err"] and rbad["entries"] == []
 
 
+async def test_mdir_view_arc_refuse_non_regular_file():
+    """검수 mdir #1: 뷰어/압축목록은 **정규파일만** 연다. FIFO(작가 없는 named pipe)
+    를 open/read 하면 무한 대기해 단일 서버 루프(또는 executor 스레드)를 wedge 시키므로
+    (페더레이션 피어가 원격 트리거 가능), stat 으로 걸러 not_regular_file 로 즉시 회신."""
+    if not hasattr(os, "mkfifo"):
+        from run import skip
+        skip("os.mkfifo 없음(비 POSIX)")
+        return
+    with tempfile.TemporaryDirectory() as root:
+        fifo = os.path.join(root, "pipe")
+        os.mkfifo(fifo)
+        rv = mds.mdir_view_msg(None, None, fifo)
+        assert rv["binary"] is True and rv["err"] == "not_regular_file", rv
+        # .zip 확장자를 붙인 FIFO 도 열기 전에 stat 으로 막는다(무한대기 차단).
+        fz = os.path.join(root, "p.zip")
+        os.mkfifo(fz)
+        ra = mds.mdir_arc_msg(None, None, fz)
+        assert ra["err"] == "not_regular_file", ra
+        # 디렉토리도 정규파일 아님 → 거절(뷰어에 디렉토리 경로가 와도 안전).
+        rd = mds.mdir_view_msg(None, None, root)
+        assert rd["err"] == "not_regular_file", rd
+
+
+async def test_mdir_handle_server_request_offloads_to_executor():
+    """검수 High: mdir 파일시스템 I/O 는 executor 로 넘겨(coroutine 반환) 단일 asyncio
+    루프가 대형 트리 조작/압축해제/느린 fs 에 멎지 않게 한다. 훅이 awaitable 을 돌리고
+    그 결과가 원래 빌더의 dict 와 같아야 한다(serverio 가 await 해 회신)."""
+    import inspect
+
+    from pytmuxlib.plugins.mdir import PLUGIN
+    with tempfile.TemporaryDirectory() as root:
+        _w(os.path.join(root, "a.txt"), "A")
+        r = PLUGIN.handle_server_request(None, None,
+                                         "request_mdir_list", {"path": root})
+        assert inspect.isawaitable(r), "fs I/O 는 awaitable 로 오프로드돼야 한다"
+        resp = await r
+        assert resp["t"] == "mdir_list" and resp["path"] == os.path.abspath(root)
+        assert any(e["n"] == "a.txt" for e in resp["entries"]), resp
+        # view/arc/op 도 동일하게 오프로드된다.
+        rv = PLUGIN.handle_server_request(
+            None, None, "request_mdir_view",
+            {"path": os.path.join(root, "a.txt")})
+        assert inspect.isawaitable(rv)
+        assert (await rv)["text"] == "A"
+
+
 async def test_mdir_cd_command_dialects_and_quote_defense():
     # ncd 와 동일 규율의 사본 — Windows 임베드 따옴표·개행 무력화, POSIX shlex.
     assert _cd_command("/r/a b", nt=False) == "cd '/r/a b'\n"

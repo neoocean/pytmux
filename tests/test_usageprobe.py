@@ -130,6 +130,56 @@ async def test_query_usage_dismisses_managed_settings_screen():
     assert sess.written.startswith(b"\r"), "기본 선택 확정 Enter 를 먼저 보내야 한다"
 
 
+def test_managed_yes_selected_requires_affirmative_default():
+    """SEC-1: _managed_yes_selected 는 ❯/> 셀렉터가 **'Yes, I trust these settings'
+    줄에 있을 때만** True. 다른 옵션(No, exit)에 있거나 문구가 바뀌면 False —
+    무턱대고 Enter 를 쳐 미지의 선택을 확정하지 않게 한다."""
+    yes_sel = (" Managed settings require approval\n"
+               " ❯ 1. Yes, I trust these settings\n"
+               "   2. No, exit Claude Code\n")
+    no_sel = (" Managed settings require approval\n"
+              "   1. Yes, I trust these settings\n"
+              " ❯ 2. No, exit Claude Code\n")
+    gt_sel = (" Managed settings require approval\n"
+              " > Yes, I trust these settings\n")
+    reworded = (" Managed settings require approval\n"
+                " ❯ 1. Accept and continue\n")
+    unrelated = " ? for shortcuts\n"
+    assert usageprobe._managed_yes_selected(yes_sel) is True
+    assert usageprobe._managed_yes_selected(gt_sel) is True
+    assert usageprobe._managed_yes_selected(no_sel) is False
+    assert usageprobe._managed_yes_selected(reworded) is False
+    assert usageprobe._managed_yes_selected(unrelated) is False
+
+
+async def test_query_usage_managed_settings_no_enter_when_not_affirmative():
+    """SEC-1: 관리설정 화면이 떠도 긍정 기본선택(❯ Yes)이 아니면 Enter 를 치지
+    않고 프로브는 안전하게 실패(None)해야 한다 — 향후 빌드가 기본을 'No, exit' 로
+    두거나 옵션을 재배열해도 미지의 선택을 자동확정하지 않는다."""
+    managed_no = (b"\x1b[2J\x1b[H Managed settings require approval\r\n"
+                  b"   1. Yes, I trust these settings\r\n"
+                  b" \xe2\x9d\xaf 2. No, exit Claude Code\r\n"
+                  b" Enter to confirm \xc2\xb7 Esc to exit\r\n")
+    ready = b"\x1b[2J\x1b[H Welcome to Claude\r\n ? for shortcuts\r\n"
+
+    class _NoDefaultSession(_FakeSession):
+        def write(self, data: bytes) -> None:
+            if data == b"\r" and not self.written:
+                self._queue.append(ready)   # (있으면) 승인 뒤 뜰 화면 — 오면 안 됨
+            super().write(data)
+
+    sess = _NoDefaultSession(managed_no, _panel_bytes())
+    undo = []
+    _patch(undo, sess)
+    try:
+        u = usageprobe.query_usage(boot_timeout=1.5, panel_timeout=1.5)
+    finally:
+        for f in undo:
+            f()
+    assert u is None, "긍정 기본선택이 아니면 자동 통과하지 않고 실패해야 한다"
+    assert b"\r" not in sess.written, "Enter 를 치지 말아야 한다"
+
+
 async def test_query_usage_captures_account_from_boot():
     # 부팅 화면에 계정·모델 신호가 모두 있으면 둘 다 부팅서 잡고 /status 폴백은 생략.
     boot = (b"\x1b[2J\x1b[H me@acme.com's Organization\r\n"

@@ -24,8 +24,10 @@ from . import proc
 # ASCII 라 cp949·cp437·cp1252 등 어떤 콘솔 코드페이지로 (역)해석돼도 <128 바이트가
 # 동형이라 무손실이다. PowerShell 이 되돌려 Set-Clipboard/Get-Clipboard 한다.
 def _win_copy_stdin(text: str) -> bytes:
-    """_win_copy 가 PowerShell stdin 으로 보낼 payload(UTF-16LE→base64, ASCII)."""
-    return base64.b64encode(text.encode("utf-16le"))
+    """_win_copy 가 PowerShell stdin 으로 보낼 payload(UTF-16LE→base64, ASCII).
+    errors='replace': 짝 없는 서로게이트(vt 파서 잔재 등)에 UnicodeEncodeError 로
+    UI 경로에 예외가 새지 않게(검수 L-1) — 유효 텍스트엔 무손실."""
+    return base64.b64encode(text.encode("utf-16le", errors="replace"))
 
 
 def _win_paste_from_stdout(out: bytes) -> str:
@@ -46,15 +48,22 @@ def _win_copy(text: str) -> bool:
         return False
     # $b(base64) 를 UTF-16LE 원문으로 되돌려 Set-Clipboard. Set-Clipboard 는 자체적으로
     # STA 로 마샬링하므로 -STA 불요. [Console]::In 은 ASCII base64 만 읽어 코드페이지 무관.
+    #
+    # 검수 M-2: ⓐ Set-Clipboard 실패(다른 앱이 클립보드를 쥐고 있는 흔한 상황)는
+    # **비종결 오류**라 그냥 두면 powershell 이 exit 0 → 여기서 True 를 돌려 '복사됨'
+    # 이라 거짓보고하고 clip.exe 폴백도 건너뛴다. -ErrorAction Stop+try/catch{exit 1}
+    # 로 실패를 종결코드로 드러내 폴백이 돌게 한다. ⓑ capture_output 없으면 PS 오류
+    # 텍스트가 클라 단말(Textual 화면)에 그대로 찍혀 UI 를 깨뜨린다 → 캡처해 삼킨다.
     ps = ("$b=[Console]::In.ReadToEnd();"
-          "Set-Clipboard -Value ([Text.Encoding]::Unicode.GetString("
-          "[Convert]::FromBase64String($b)))")
+          "try{Set-Clipboard -Value ([Text.Encoding]::Unicode.GetString("
+          "[Convert]::FromBase64String($b))) -ErrorAction Stop}catch{exit 1}")
     try:
         r = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            input=_win_copy_stdin(text), timeout=5, **proc.no_window_kwargs())
+            input=_win_copy_stdin(text), timeout=5, capture_output=True,
+            **proc.no_window_kwargs())
         return r.returncode == 0
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, ValueError, subprocess.SubprocessError):
         return False
 
 
@@ -69,12 +78,18 @@ def _win_paste():
           "if($null -ne $t){[Convert]::ToBase64String("
           "[Text.Encoding]::Unicode.GetBytes($t))}")
     try:
-        out = subprocess.run(
+        r = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            capture_output=True, timeout=5, **proc.no_window_kwargs()).stdout
+            capture_output=True, timeout=5, **proc.no_window_kwargs())
     except (OSError, subprocess.SubprocessError):
         return None
-    return _win_paste_from_stdout(out)
+    # 검수 M-3: PowerShell 자체가 실패(returncode≠0)하면 stdout 은 비지만 그건 '클립보드
+    # 가 비었다'는 권위가 아니다. ""(빈 클립보드)로 돌리면 paste() 가 그걸 확정으로 보고
+    # 폴백 루프(pbpaste/clip 등)를 건너뛰어 Ctrl+V 가 조용히 무동작한다. None 을 돌려
+    # 폴백으로 라우팅한다(빈 클립보드는 returncode 0+빈 stdout → "" 로 정상 구분).
+    if r.returncode != 0:
+        return None
+    return _win_paste_from_stdout(r.stdout)
 
 
 def copy(text: str) -> bool:
