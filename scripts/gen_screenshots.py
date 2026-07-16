@@ -93,11 +93,18 @@ def _pane_text(app):
     return "\n".join("".join(s[0] for s in row) for row in c[0]) if c else ""
 
 
+# 라이브 컷의 Claude 모델을 **못박는다**(요청 2026-07-16). 안 박으면 `claude` 가 그
+# 시점 **기본 모델**로 떠서 문서 컷의 모델이 촬영할 때마다 달라진다(2026-07-16 촬영은
+# 기본값이 Fable 5 라 배너·배지가 'fable-5' 로 찍혔고, 직전 컷은 'opus-4.8' 이었다).
+# 별칭('opus')이 아니라 **전체 ID** 로 박아 별칭이 다른 버전을 가리키게 돼도 안 흔들린다.
+_SHOT_CLAUDE_MODEL = "claude-opus-4-8"
+
+
 async def _launch_claude(pilot, app):
     """활성 패널에서 **진짜** `claude` 를 실행하고 TUI 가 뜰 때까지 대기."""
     app.send_cmd("rename_window", name="claude")
     await pilot.pause(0.3)
-    await _type(pilot, "claude")
+    await _type(pilot, f"claude --model {_SHOT_CLAUDE_MODEL}")
     await pilot.press("enter")
     for _ in range(250):                       # TUI 기동 대기(단축키 힌트/입력박스)
         await pilot.pause(0.1)
