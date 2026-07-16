@@ -301,6 +301,24 @@ async def compose_prompt(app, pilot):
     await pilot.pause(0.5)
 
 
+async def compose_esc(app, pilot):
+    # 작성창 ESC 모드(compose_prompt 에서 esc 한 번) — 좌상단 ESC 배지 + 로즈 테두리 +
+    # 같은 색 힌트("`:` 명령 · Esc 취소 · 그 외 키 편집 복귀")로 모드 진입을 보여 준다.
+    # 시드·IME 는 compose_prompt 와 같게 둬 **평소 상태(41)와 나란히 놓고 차이만** 읽히게
+    # 한다. 키 주입(pilot.press) 대신 set_esc_mode 를 직접 부른다 — TextArea 포커스
+    # 타이밍에 따라 esc 가 다른 위젯으로 새면 배지가 안 켜진 프레임이 잡힐 수 있다.
+    from pytmuxlib.clientscreens import ComposePromptScreen
+    app._ime_os = False
+    app.ime_show = True
+    app.ime_state = "EN"
+    seed = ("이 모듈의 공개 API 를 정리해서 사용 예시와\n"
+            "함께 README 의 '빠른 시작' 절에 추가해줘")
+    app.push_screen(ComposePromptScreen(seed))
+    await pilot.pause(0.5)
+    app.screen_stack[-1].set_esc_mode(True)
+    await pilot.pause(0.4)
+
+
 async def claude_resume(app, pilot):
     # claude-resume 플러그인 리줌 피커(claude-resume). 실 머신의 세션 경로·제목이
     # 노출되지 않도록 **합성 세션 목록**을 직접 ClaudeResumeScreen 에 넣어 띄운다
@@ -915,6 +933,7 @@ SCENES = [
     ("34-remote-attach", "원격 pytmux 탭 어태치 — 분홍 탭바·분홍 패널 외곽선", remote_attach),
     ("40-settings", "통합 설정 화면(:settings) — 좌측 카테고리 탭+우측 전체 설정 목록·←→ 값 변경·링크 행", settings),
     ("41-compose-prompt", "프롬프트 작성창(ESC→Insert) — 블록 선택 멀티라인·Enter 전송·Ctrl+A 전체선택", compose_prompt),
+    ("48-compose-esc", "작성창 ESC 모드(작성창에서 Esc 한 번) — ESC 배지·로즈 테두리·: 명령/Esc 취소 안내", compose_esc),
 ]
 # Claude 컷(11·12·13·20·22)은 결정적 장면이 아니라 진짜 `claude` 한 세션에서 캡처한다
 # (claude_suite). 실제 API 호출이라 무인자 전체 생성에선 제외하고, `claude-suite` 또는
