@@ -31,8 +31,11 @@ def init_pane(pane) -> None:
     pane._claude_model_cand = None
     pane._claude_model_cand_n = 0
     # _weak=현재 _claude_model 이 그림자 /usage 프로브 폴백(약한 출처)으로 채워졌는지.
-    # 약한 값 위에는 라이브 배지가 **즉시** 덮어쓴다(디바운스 미적용 — /model 변경 반영).
-    # 강한(라이브 배지) 값 위의 *변경*만 디바운스로 서브에이전트 깜빡임을 흡수한다.
+    # 약한 값 위에는 라이브 서명이 **즉시** 덮어쓴다(디바운스 미적용 — /model 변경 반영).
+    # 강한(라이브 서명) 값 위의 *변경*만 디바운스로 서브에이전트 깜빡임을 흡수하고,
+    # 프로브는 강한 값을 아예 못 덮는다(2026-07-16 — 프로브=별도 세션이라 패널이 기본
+    # 아닌 모델로 돌면 구조적으로 틀림). 강한 값이 새 세션까지 눌러앉지 않도록 None→
+    # Claude 경계에서 _scan_claude 가 이 래치를 푼다(계정 재감지와 동형).
     pane._claude_model_weak = False
     # 토큰 영속 로깅(#7): 현재 Claude 세션 id(None→Claude 전이마다 새로 부여)와 토큰
     # 누계 상태(S5 토큰 모듈화 T4 에서 코어 model.py 에서 이전). _tok_state=현재 응답

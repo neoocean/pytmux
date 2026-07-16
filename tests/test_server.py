@@ -1687,6 +1687,50 @@ async def test_scan_model_fallback_and_preserve():
         await teardown(srv, task, sock)
 
 
+async def test_scan_model_probe_never_overrides_live():
+    """프로브(그림자 /usage = **별도 세션**)는 라이브 값을 못 덮는다(2026-07-16).
+
+    버그: 패널이 opus 로 도는데 상태줄이 기본 모델 sonnet-5 로 눌러앉았다. 배지는
+    상시 표시가 아니라 프로브가 **매 스캔** 어긋난 값을 내밀어 _MODEL_DEBOUNCE 를
+    금방 채웠기 때문. 프로브 모델은 패널이 아니라 사용자 **기본** 모델이라, 패널이
+    기본 아닌 모델로 돌면(/model 변경·`--model` 기동) 구조적으로 틀린다."""
+    import importlib
+    sm = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        # 프로브는 사용자 기본 모델(sonnet-5)을 안다 — 패널의 실제 모델은 opus.
+        srv._usage = {"session": {"pct": 5, "reset": "2pm"}, "model": "sonnet-5"}
+        # 라이브 화면이 /model 메뉴로 현재 모델을 밝힘 → 강한 값 확정(스크린샷 재현).
+        p.feed(b"\x1b[2J\x1b[H /model   Set the AI model for Claude Code "
+               b"(currently Opus 4.8)\r\n? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._claude_model == "opus-4.8", \
+            f"/model 메뉴의 현재 모델을 즉시 반영 기대, got {p._claude_model!r}"
+        assert p._claude_model_weak is False, "라이브 서명 → strong"
+        # 메뉴가 닫혀 모델 표식이 사라진 화면이 계속 흘러도 프로브가 못 덮는다.
+        # (종전엔 _MODEL_DEBOUNCE 회 만에 sonnet-5 로 뒤집혔다.)
+        for _ in range(sm._MODEL_DEBOUNCE + 3):
+            p.feed(b"\x1b[2J\x1b[H Done.\r\n? for shortcuts\r\n")
+            srv._scan_claude(sess, win)
+        assert p._claude_model == "opus-4.8", \
+            f"프로브가 라이브 값을 덮음 — got {p._claude_model!r}"
+        # 단, 새 Claude 세션(None→Claude)이면 래치를 푼다 — 새 세션은 기본 모델로
+        # 뜰 수 있으므로 이전 세션 모델이 눌러앉으면 안 된다.
+        p.feed(b"\x1b[2J\x1b[H$ \r\n")          # 셸 복귀 → Claude 종료
+        srv._scan_claude(sess, win)
+        assert p._claude is None, f"Claude 종료 기대, got {p._claude!r}"
+        p.feed(b"\x1b[2J\x1b[H Done.\r\n? for shortcuts\r\n")   # 새 세션 진입
+        srv._scan_claude(sess, win)
+        assert p._claude_model == "sonnet-5", \
+            f"새 세션 경계에서 래치 해제 후 프로브 폴백 기대, got {p._claude_model!r}"
+        assert p._claude_model_weak is True, "프로브 폴백 → weak"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_usage_snapshot_persisted_on_scan():
     """S6 T1: 인패널 /usage·footer 인라인 한도가 _usage 를 갱신하는 순간 limits
     스냅샷이 SQLite 에 적힌다(source=panel/inline, 그림자 계정 보존 포함). 같은

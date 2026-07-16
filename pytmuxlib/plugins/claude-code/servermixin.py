@@ -1025,6 +1025,20 @@ class ServerClaudeMixin:
                 ch = True
                 p._claude_model_cand = None
                 p._claude_model_cand_n = 0
+            elif mdl_from_probe:
+                # 프로브는 **강한(라이브) 값을 못 덮는다**(2026-07-16 수정). 그림자
+                # /usage 프로브는 이 패널이 아니라 **별도 세션**이라 그 모델은 사용자
+                # **기본** 모델일 뿐이다 — 패널이 기본 아닌 모델로 돌면(/model 로 변경·
+                # `claude --model opus` 로 기동) 프로브는 구조적으로 틀린다. 종전엔
+                # 배지 부재 시 프로브가 강한 값도 디바운스로 정정하게 뒀는데(2026-07-04,
+                # 본문 오검출로 굳은 값을 풀려던 것), 배지는 상시 표시가 아니라 프로브가
+                # **매 스캔** 어긋난 값을 내밀어 _MODEL_DEBOUNCE 를 금방 채웠다 → 라이브가
+                # opus 인데 상태줄이 기본값 sonnet-5 로 눌러앉음(사용자 보고 2026-07-16).
+                # 이제 프로브는 값이 없거나(None) 약할 때만 채운다. 2026-07-04 이 걱정한
+                # '굳은 오검출'은 ① 배지 서명 요구로 오검출 자체가 드물어졌고 ② 라이브
+                # 서명이 넓어져(/model 메뉴·/status) 화면 한 번이면 정정되며 ③ 새 Claude
+                # 세션 경계에서 래치를 푸는 것(_scan_claude)으로 대신 막는다.
+                pass
             else:
                 if mdl == p._claude_model_cand:
                     p._claude_model_cand_n += 1
@@ -1033,7 +1047,8 @@ class ServerClaudeMixin:
                     p._claude_model_cand_n = 1
                 if p._claude_model_cand_n >= _MODEL_DEBOUNCE:
                     p._claude_model = mdl
-                    p._claude_model_weak = False  # 디바운스 통과=라이브
+                    # 위 elif 가 프로브를 걷어내므로 이 가지는 라이브 서명 전용.
+                    p._claude_model_weak = False
                     ch = True
                     p._claude_model_cand = None
                     p._claude_model_cand_n = 0
@@ -1516,6 +1531,14 @@ class ServerClaudeMixin:
                     p._exit_tokens = 0       # 새 세션 → 이전 종료 총량 보존값 폐기
                     # 새 Claude 세션 경계: 세션 id 부여, 계정 재감지(수동 지정은 유지).
                     self._next_claude_session_id(p)
+                    # 모델 래치도 푼다(2026-07-16): 새 세션은 다른 모델로 뜰 수 있다
+                    # (기본값 복귀·`--model` 기동). 라이브 값은 프로브가 못 덮으므로
+                    # (_update_claude_model) 여기서 안 풀면 이전 세션의 모델이 새
+                    # 세션까지 눌러앉는다. 계정 재감지와 같은 자리·같은 이유.
+                    p._claude_model = None
+                    p._claude_model_weak = False
+                    p._claude_model_cand = None
+                    p._claude_model_cand_n = 0
                     if not p._claude_account_manual:
                         p._claude_account = None
                         p._claude_account_full = None

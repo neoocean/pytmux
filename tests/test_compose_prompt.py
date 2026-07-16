@@ -529,6 +529,42 @@ async def test_multiline_prompt_seeds_whole_text_not_last_line():
     await _with_app(body)
 
 
+async def test_multiline_prompt_seeds_whole_text_current_ui_rule_box():
+    """위 테스트와 같은 요구지만 **현행 Claude UI 모양**으로 — 모서리(╭╰)·세로 테두리
+    (│) 없이 위아래 **가로줄**로만 입력 구획을 나눈다(fixture idle.txt 가 이 모양).
+
+    p4 64741(화면 긁기 우선)에도 멀티라인이 여전히 마지막 줄만 왔다(사용자 보고
+    2026-07-16). 원인은 우선순위가 아니라 **파서가 현행 박스 모양에 눈이 먼 것** —
+    모서리만 찾아 top/bottom 을 못 잡고 '박스 없음'(=커서 줄 하나만) 폴백으로 떨어졌다.
+    위 회귀 테스트가 **구 UI 모양**으로만 고정돼 있어 내내 초록불이었으므로, 현행
+    모양을 별도 케이스로 못박는다."""
+    from textual.widgets import TextArea as _TA
+
+    async def body(app, pilot, srv):
+        pid = app.layout.get("active")
+        rows = [[("⏺ 이전 출력", {})],
+                [(" ─────────────────────────────────", {})],
+                [(" ❯\xa0https://example.org/browse/X-1", {})],
+                [("", {})],
+                [("   진행상황을 코멘트에 등록하세요.", {})],
+                [(" ─────────────────────────────────", {})],
+                [("   ⏵⏵ auto mode on (shift+tab to cycle)", {})]]
+        app.pane_content = {pid: (rows, (4, 4))}   # 커서=마지막 입력 행
+        app.pane_wrap = {pid: set()}
+        app.pane_claude = {pid: {"id": pid, "claude": "idle"}}
+        # 추적기는 마지막 개행 뒤 한 줄만 들고 있다(CR=제출 오인) — 긁기가 이겨야 한다.
+        app._prompt_buf = {pid: "진행상황을 코멘트에 등록하세요."}
+        whole = ("https://example.org/browse/X-1\n\n"
+                 "진행상황을 코멘트에 등록하세요.")
+        assert app._current_prompt_text(pid) == whole, \
+            repr(app._current_prompt_text(pid))
+        app.open_compose()
+        await pilot.pause(0.2)
+        ta = app.screen_stack[-1].query_one(_TA)
+        assert ta.text == whole, repr(ta.text)
+    await _with_app(body)
+
+
 # ---- 이미지/붙여넣기 라우팅(작성창이 열린 상태·프롬프트 인계) ----
 async def test_image_paste_to_pane_seeds_compose_later():
     """활성 패널에 이미지를 붙여넣으면(작성창 없음) pytmux 가 붙인 **경로를 _prompt_buf

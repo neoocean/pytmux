@@ -451,10 +451,35 @@ def claude_model(text):
 # 닫는 괄호 `)` 를 요구해 'large context window' 같은 본문 언급은 배제한다.
 _MODEL_BADGE_ANCHOR_RE = re.compile(r"[\s\S]{0,24}?(?:context\)|/model)", re.I)
 
+# 화면이 **현재 모델**을 밝히는 자리는 푸터 배지만이 아니다(실캡처 코퍼스 확인
+# 2026-07-16). 배지는 상시 표시가 아니라(idle 푸터엔 'auto mode on …'뿐) 배지만 보면
+# 사용자가 화면에서 **읽고 있는 모델**이 상태줄에 안 뜬다 — 아래 서명들도 함께 인정해
+# 지나가는 즉시 반영한다(사용자 보고 2026-07-16: 화면은 'currently Opus 4.8' 인데
+# 상태줄은 프로브 폴백값 'sonnet-5'). 넷 다 모델명 **앞**에 붙어서, 뒤 서명
+# (_MODEL_BADGE_ANCHOR_RE)과는 별도 규칙으로 검사한다:
+#   · '/' 슬래시 메뉴의 /model 설명 — 'Set the AI model for Claude Code (currently Opus 4.8)'
+#   · /model 선택기 안내 — 'Currently using claude-fable-5 for this session only.'
+#     ('claude-' 접두 ID 꼴 → `(?:claude-)?`. 뒤에 'for this session only' 가 붙지만
+#      _MODEL_CATEGORY_AFTER_RE 는 모델명 **직후** only 만 보므로 카테고리 오인 없음.)
+#   · /model 선택 확인 — 'Set model to Opus 4.8 and saved as your default…'
+#   · 인패널 /status 패널 — 'Model:            Opus 4.8'(라벨 뒤 정렬 공백)
+# 선택기가 나열하는 **후보** 모델 행('2. Opus  Opus 4.8 with 1M context · …')엔 이
+# 서명이 없어 활성 모델로 오인되지 않는다(닫는 괄호 없는 'context' 라 뒤 서명도 불발).
+# §5.9 ReDoS: 가변 반복은 전부 상한(`{0,20}`, `\s*` 금지) + 검사 창 32자 슬라이스.
+_MODEL_BEFORE_RE = re.compile(
+    r"(?:\(currently|currently using|set model to|model:)"
+    r"[ \t]{0,20}(?:claude-)?$", re.I)
+_MODEL_BEFORE_WINDOW = 32
+
 
 def claude_model_badge(text):
-    """`claude_model` 과 같되, **실 푸터 배지 서명**('(… context)' 또는 '/model' 힌트가
-    모델명 직후)이 붙은 매치만 인정한다 — **라이브 화면 스크랩 전용**.
+    """`claude_model` 과 같되, **화면이 현재 모델을 밝히는 서명**이 붙은 매치만
+    인정한다 — **라이브 화면 스크랩 전용**. 서명은 두 갈래다:
+      · 모델명 **뒤** — 실 푸터 배지('(… context)'/'/model', _MODEL_BADGE_ANCHOR_RE)
+      · 모델명 **앞** — /model 메뉴 '(currently X)'·선택기 'Currently using X'·
+        선택 확인 'Set model to X'·인패널 /status 'Model: X'(_MODEL_BEFORE_RE)
+    푸터 배지는 상시 표시가 아니라(idle 푸터엔 없음) 앞 서명들이 실제로는 사용자가
+    모델을 확인하는 주 경로다 — 지나가는 즉시 잡아야 상태줄이 화면과 일치한다.
 
     화면 스크랩은 전체 화면(screen_text)을 먹으므로, 대화/문서 본문이 모델명을 언급하면
     (예: 이 저장소 온보딩·환경 텍스트의 "Fable 5: 'claude-fable-5'" 같은 모델 ID 설명)
@@ -464,12 +489,14 @@ def claude_model_badge(text):
     None → 호출부(servermixin)는 /usage 프로브가 잡은 실 모델로 폴백한다(팝업과 동일 출처).
 
     카테고리('… (Sonnet only)') 제외는 `claude_model` 과 동일. 서명 있는 매치 중
-    **마지막**(하단 배지)을 쓴다."""
+    **마지막**(화면 하단 = 가장 최근 표시)을 쓴다."""
     hit = None
     for m in _MODEL_RE.finditer(text):
         if _MODEL_CATEGORY_AFTER_RE.match(text, m.end()):
             continue
-        if _MODEL_BADGE_ANCHOR_RE.match(text, m.end()):
+        if (_MODEL_BADGE_ANCHOR_RE.match(text, m.end())
+                or _MODEL_BEFORE_RE.search(
+                    text[max(0, m.start() - _MODEL_BEFORE_WINDOW):m.start()])):
             hit = m
     if hit is None:
         return None
@@ -746,6 +773,29 @@ _BOX_BOTTOM = "╰└"       # 박스 아래 모서리(좌)
 _BOX_SIDE = "│|"         # 박스 세로 테두리(유니코드/ASCII 폴백)
 _PROMPT_MARK = ("❯", ">")   # 입력 프롬프트 마커: 최신 Claude=❯(U+276F), 구=">"
 
+# **현행 Claude UI 는 모서리 박스를 안 그린다** — 입력 구획을 위아래 **가로줄**로만
+# 나눈다(fixture idle.txt·badge_1m.txt 가 이미 이 모양):
+#     ────────────────────────────────
+#     ❯ 첫 줄
+#       둘째 줄
+#     ────────────────────────────────
+# 모서리(╭╰)도 세로 테두리(│)도 없어서, 모서리만 찾던 종전 탐색은 top/bottom 을 못
+# 잡고 `rows=[cursor_y]`(박스 없음 폴백)로 떨어졌다 → ESC→Insert 작성창에 **커서가
+# 있던 줄만** 인계됨(사용자 보고 2026-07-16). p4 64741 의 '화면 긁기 우선' 은 맞는
+# 수정이었지만, 정작 파서가 현행 박스 모양에 눈이 멀어 한 줄만 긁고 있었다 — 회귀
+# 테스트가 **구 UI(모서리 박스)** 로만 고정돼 있어 초록불이었다(픽스처는 현행인데).
+_BOX_RULE_CHARS = "─━═-"    # 가로줄 구획(유니코드 실선/굵은선/겹선 + ASCII 폴백)
+_BOX_RULE_MIN = 3           # 이보다 짧으면 구획선으로 안 봄('--' 같은 본문 배제)
+
+
+def _is_box_rule(line: str) -> bool:
+    """모서리·세로 테두리 없이 **가로줄만**으로 입력 구획을 그리는 현행 Claude UI 의
+    구획선인지. 대화 본문의 '---'(마크다운 구분선) 같은 것도 참이 될 수 있지만,
+    탐색은 커서에서 **가장 가까운** 줄만 취하므로(커서=입력 구획 안) 먼 오검출은
+    닿지 않는다."""
+    s = (line or "").strip()
+    return len(s) >= _BOX_RULE_MIN and all(c in _BOX_RULE_CHARS for c in s)
+
 
 def _box_inner(line: str) -> str:
     """박스 한 줄에서 좌우 세로 테두리(│)와 바깥 패딩 한 칸을 떼고 안쪽 내용을
@@ -801,7 +851,7 @@ def claude_input_box(lines, wrap=(), cursor_y=None):
             s = lines[i].strip()
             if not s:
                 continue
-            if s[0] in _BOX_TOP or s[0] in _BOX_BOTTOM:
+            if s[0] in _BOX_TOP or s[0] in _BOX_BOTTOM or _is_box_rule(s):
                 continue
             if _FOOTER_HINT_RE.search(s):
                 continue
@@ -811,20 +861,33 @@ def claude_input_box(lines, wrap=(), cursor_y=None):
             return None
     # 앵커를 감싸는 박스 테두리 탐색(위로 top·아래로 bottom). 다른 박스 경계를 먼저
     # 만나면 앵커가 박스 밖(박스 없는 입력)인 것으로 본다.
+    # 구획선(현행 UI)은 위아래가 같은 모양이라 **탐색 방향**이 top/bottom 을 정한다:
+    # 커서 위의 첫 구획선=top, 아래의 첫 구획선=bottom(커서는 입력 구획 안).
+    # 주의: `c` 는 반드시 **비었는지 먼저** 본다 — `"" in _BOX_TOP` 은 파이썬에서
+    # True(빈 문자열은 모든 문자열의 부분문자열)라, 빈 줄이 모서리로 오인된다. 구 UI
+    # 에선 박스 안 빈 줄에도 세로 테두리(│)가 있어 c 가 빌 일이 없어 안 드러났지만,
+    # 테두리 없는 현행 UI 에선 멀티라인 프롬프트 **중간의 빈 줄**이 곧장 이 함정을
+    # 밟아 거짓 top 이 잡혔다(→ 커서 줄만 인계, 2026-07-16).
     top = bottom = None
     for i in range(cursor_y, -1, -1):
-        c = lines[i].lstrip()[:1]
-        if c in _BOX_TOP:
+        if i != cursor_y and _is_box_rule(lines[i]):
             top = i
             break
-        if c in _BOX_BOTTOM and i != cursor_y:
+        c = lines[i].lstrip()[:1]
+        if c and c in _BOX_TOP:
+            top = i
+            break
+        if c and c in _BOX_BOTTOM and i != cursor_y:
             break
     for i in range(cursor_y, n):
-        c = lines[i].lstrip()[:1]
-        if c in _BOX_BOTTOM:
+        if i != cursor_y and _is_box_rule(lines[i]):
             bottom = i
             break
-        if c in _BOX_TOP and i != cursor_y:
+        c = lines[i].lstrip()[:1]
+        if c and c in _BOX_BOTTOM:
+            bottom = i
+            break
+        if c and c in _BOX_TOP and i != cursor_y:
             break
     if top is not None and bottom is not None and top < bottom:
         rows = list(range(top + 1, bottom))
@@ -833,6 +896,7 @@ def claude_input_box(lines, wrap=(), cursor_y=None):
     if not rows:
         return ""
     parts = []
+    indent = 2          # 연속 줄에서 떼어낼 정렬 들여쓰기 폭(첫 줄에서 학습)
     for k, ri in enumerate(rows):
         inner = _box_inner(lines[ri])
         if k == 0:
@@ -843,13 +907,19 @@ def claude_input_box(lines, wrap=(), cursor_y=None):
                 t = t[1:]
                 if t[:1] in ("\xa0", " "):
                     t = t[1:]
+            # 연속 줄은 첫 줄의 **텍스트 시작 열**에 맞춰 들여써진다 → 첫 줄이 마커·
+            # 패딩으로 소비한 폭이 곧 그 정렬 폭이다. 종전엔 2칸으로 못박아, 세로
+            # 테두리가 없어 바깥 패딩이 inner 에 남는 현행 UI 에서 한 칸이 덜 떼여
+            # 둘째 줄부터 공백이 붙어 나왔다(2026-07-16).
+            indent = len(inner) - len(t)
             parts.append(t.rstrip())
             continue
-        # 연속 줄: 첫 줄 "> " 아래 정렬용 들여쓰기(최대 2칸)를 떼고 잇는다. soft-wrap
+        # 연속 줄: 첫 줄 아래 정렬용 들여쓰기(indent 칸까지)를 떼고 잇는다. 그 이상의
+        # 들여쓰기는 사용자가 친 것이므로 보존한다(붙여넣은 코드 블록 등). soft-wrap
         # (wrap 집합)은 개행 없이, 하드 개행(Shift+Enter)은 "\n" 으로 잇는다.
         b = inner
         j = 0
-        while j < 2 and j < len(b) and b[j] == " ":
+        while j < indent and j < len(b) and b[j] == " ":
             j += 1
         b = b[j:].rstrip()
         parts.append(b if ri in wrap else "\n" + b)

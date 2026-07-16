@@ -9,8 +9,8 @@ import time
 import harness  # noqa: F401  (경로 설정)
 import pytmuxlib.claude as claude_mod
 from pytmuxlib.claude import (claude_awaiting_answer, claude_account,
-                              claude_context_pct, claude_model,
-                              claude_model_badge,
+                              claude_context_pct, claude_input_box,
+                              claude_model, claude_model_badge,
                               claude_perm_mode, claude_prompt, claude_state,
                               claude_usage, fmt_long_turn_badge,
                               parse_reset_delay, parse_usage,
@@ -455,6 +455,91 @@ async def test_claude_model_badge_ignores_prose():
         "Opus 4.8 (1M context) · /model to change") == "opus-4.8"
     # 카테고리 서명 제외는 유지(서명이 'context)'여도 'only' 카테고리면 계열이 아님).
     assert claude_model_badge("Current week (Sonnet only)\n41% used") is None
+
+
+async def test_claude_input_box_rule_delimited_current_ui():
+    """입력박스 파서가 **현행 Claude UI**(모서리·세로 테두리 없이 위아래 가로줄로만
+    구획)를 읽는다 — ESC→Insert 작성창 시드가 커서 줄 하나만 오던 버그(사용자 보고
+    2026-07-16). 종전엔 모서리(╭╰)만 찾아 '박스 없음' 폴백(=커서 줄 하나)이었다.
+    구 UI(모서리 박스)도 그대로 읽어야 한다(회귀)."""
+    cur = [" ────────────────────────",
+           " ❯\xa0첫 줄",
+           "   둘째 줄",
+           "   셋째 줄",
+           " ────────────────────────",
+           "   ⏵⏵ auto mode on (shift+tab to cycle)"]
+    # 커서(입력 구획 안) 앵커 — 위/아래 첫 구획선이 top/bottom.
+    assert claude_input_box(cur, (), 3) == "첫 줄\n둘째 줄\n셋째 줄"
+    # 커서 미상이어도 아래에서 구획선·footer 를 건너뛰어 앵커를 찾는다.
+    assert claude_input_box(cur, (), None) == "첫 줄\n둘째 줄\n셋째 줄"
+    # 박스 **안의 빈 줄**(멀티라인 중간 개행)도 구획 안에 그대로 보존한다. 테두리
+    # 없는 현행 UI 에선 빈 줄의 첫 글자가 ""인데 `"" in _BOX_TOP` 이 True 라(파이썬
+    # 부분문자열) 거짓 top 으로 잡혀 커서 줄만 남던 함정 — 못박는다.
+    blank = [" ─────────────",
+             " ❯\xa0첫 줄",
+             "",
+             "   셋째 줄",
+             " ─────────────"]
+    assert claude_input_box(blank, (), 3) == "첫 줄\n\n셋째 줄"
+    # 구 UI(모서리 박스)는 종전대로(회귀).
+    old = ["╭────────────────────╮",
+           "│ > 첫 줄            │",
+           "│   둘째 줄          │",
+           "╰────────────────────╯"]
+    assert claude_input_box(old, (), 2) == "첫 줄\n둘째 줄"
+    # 빈 박스는 ""(=박스가 실제로 빔) — None(긁기 실패)과 구분돼야 폴백이 안 튄다.
+    assert claude_input_box([" ─────", " ❯", " ─────"], (), 1) == ""
+    # soft-wrap 연속행은 개행 없이 잇는다(자동 줄바꿈=한 논리 줄).
+    assert claude_input_box([" ─────", " ❯\xa0abc", "   def", " ─────"],
+                            (2,), 1) == "abcdef"
+    # 정렬 들여쓰기만 떼고 **사용자가 친 들여쓰기는 보존**(붙여넣은 코드 블록).
+    assert claude_input_box([" ─────", " ❯\xa0def f():", "       return 1",
+                            " ─────"], (), 1) == "def f():\n    return 1"
+
+
+async def test_claude_model_live_signatures():
+    """푸터 배지 말고도 화면이 **현재 모델**을 밝히는 자리를 잡는다(2026-07-16).
+
+    버그: 화면엔 'Set the AI model for Claude Code (currently Opus 4.8)' 이 떠 있는데
+    상태줄은 sonnet-5 였다(사용자 보고+스크린샷). 원인=배지 서명은 모델명 **뒤**의
+    '(… context)'/'/model' 뿐이라 이 줄이 안 잡혀 → 프로브(별도 세션=기본 모델) 폴백.
+    문구는 전부 실캡처 코퍼스(captures/)에서 확인한 것이다."""
+    # ① /model 슬래시 메뉴 설명 — 사용자 스크린샷 재현(실캡처 37회 관측).
+    assert claude_model_badge(
+        "  /model        Set the AI model for Claude Code (currently Opus 4.8)\n"
+        "  /loop         Run a prompt on a recurring interval\n"
+        " ❯ /model\n"
+        "   ⏵⏵ auto mode on (shift+tab to cycle)") == "opus-4.8"
+    assert claude_model_badge(
+        "Set the AI model for Claude Code (currently Sonnet 5)") == "sonnet-5"
+    # ② /model 선택기 안내(세션 한정 모델). 'claude-' 접두 ID 꼴 + 뒤에 'only' 가
+    #    오지만 모델명 **직후**가 아니라 카테고리로 오인되지 않는다.
+    assert claude_model_badge(
+        "Currently using claude-fable-5 for this session only. "
+        "Selecting a model will undo this.") == "fable-5"
+    # ③ /model 선택 확인 메시지.
+    assert claude_model_badge(
+        "Set model to Opus 4.8 and saved as your default for new sessions"
+    ) == "opus-4.8"
+    # ④ 인패널 /status 패널(라벨 뒤 정렬 공백).
+    assert claude_model_badge(
+        "   Login method:     Claude Max\n"
+        "   Model:            Opus 4.8\n"
+        "   Organization:     x") == "opus-4.8"
+    # 음성: 선택기가 나열하는 **후보** 행은 활성 모델이 아니다 — 앞 서명이 없고,
+    # 'with 1M context' 는 닫는 괄호가 없어 배지 서명도 아니다(실캡처 포맷).
+    assert claude_model_badge(
+        "1. Default (recommended)   Opus 4.8 with 1M context · Best for everyday\n"
+        "2. Sonnet                  Sonnet 5 · Efficient for routine tasks\n"
+        "3. Haiku                   Haiku 4.5 · Fastest for quick answers") is None
+    # 음성: 'currently' 가 모델명 바로 앞이 아니면 서명이 아니다(본문 언급).
+    assert claude_model_badge(
+        "currently connected to the host running Opus 4.8 somewhere") is None
+    # 서명이 여럿이면 마지막(화면 하단 = 가장 최근)을 쓴다 — /model 로 바꾼 직후
+    # 메뉴의 옛 값보다 확인 메시지가 이긴다.
+    assert claude_model_badge(
+        "Set the AI model for Claude Code (currently Sonnet 5)\n"
+        "Set model to Opus 4.8 and saved as your default") == "opus-4.8"
 
 
 async def test_ctx_window_tokens():

@@ -60,6 +60,27 @@
     <section class="cl-day" id="d-2026-07-16">
       <h2>2026-07-16 <span class="pill">목요일</span></h2>
       <ul>
+        <li><span class="pill stable">Claude</span> <strong>상태줄의 모델 이름이 이제 <span class="inline-code">화면에 보이는 그 모델</span>을 따라갑니다 — <span class="inline-code">/model</span> 을 치는 순간 곧바로 맞춰집니다.</strong>
+          Claude 화면에는 <span class="inline-code">Set the AI model for Claude Code (currently Opus 4.8)</span> 라고 떠 있는데
+          상태줄 배지는 <strong>엉뚱하게 <span class="inline-code">sonnet-5</span></strong> 인 일이 있었습니다.
+          까닭은 두 가지가 겹쳐서입니다. 하나, Claude 는 모델 이름을 <strong>화면에 늘 띄워 두지 않습니다</strong> — 평소 하단에는
+          <span class="inline-code">auto mode on</span> 만 있고 모델 배지는 잠깐씩만 스칩니다. 그래서 pytmux 는 배지가 안 보이는 동안
+          <strong>따로 돌리는 사용량 조회</strong>가 알아낸 모델로 대신 채웠는데 — 둘, 그 조회는 <strong>이 패널이 아니라 별도 세션</strong>이라
+          거기서 나오는 것은 늘 <strong>기본 모델</strong>입니다. 패널에서 <span class="inline-code">/model</span> 로 모델을 바꿨거나
+          <span class="inline-code">--model</span> 로 띄웠다면 <strong>어긋날 수밖에 없고</strong>, 그 값이 <strong>매번 밀고 들어와</strong> 결국 배지를 눌러앉았습니다.
+          이제 pytmux 는 <strong>화면이 현재 모델을 말해 주는 자리를 모두 읽습니다</strong> — <span class="inline-code">/model</span> 메뉴의 <span class="inline-code">(currently …)</span>,
+          모델 선택 화면의 <span class="inline-code">Currently using …</span>, 선택 직후의 <span class="inline-code">Set model to …</span>, 그리고 <span class="inline-code">/status</span> 의 모델 줄까지.
+          그 중 하나라도 지나가면 배지는 <strong>즉시</strong> 그 값이 되고, 별도 세션의 기본 모델은 이제 <strong>이 값을 덮지 못합니다</strong>(화면에서 확인된 적이 없을 때만 참고).
+          <br><strong>왜:</strong> 배지는 <strong>지금 무엇에게 말하고 있는지</strong>를 알려 주는 표시입니다 — 틀린 모델 이름은 없는 것보다 나쁩니다.</li>
+        <li><span class="pill stable">작성창</span> <strong>여러 줄 프롬프트를 작성창으로 가져올 때 <span class="inline-code">커서가 있던 줄만</span> 오던 문제를 마저 잡았습니다.</strong>
+          <a href="#d-2026-07-15">어제</a> 이 문제를 고쳤다고 적었지만, 실제로는 여전히 <strong>한 줄만</strong> 따라왔습니다.
+          어제 고친 것(키를 세는 대신 <strong>화면을 읽기</strong>)은 맞는 방향이었는데, 정작 <strong>화면을 읽는 쪽이 입력창을 못 알아보고</strong> 있었습니다 —
+          Claude 는 예전에 입력창을 <strong>모서리가 있는 네모 상자</strong>로 그렸고 pytmux 는 그 <strong>모서리</strong>를 찾아 상자 범위를 잡았는데,
+          지금 Claude 는 상자 없이 <strong>위아래 가로줄</strong>로만 입력칸을 나눕니다. 찾던 모서리가 없으니 범위를 못 잡고
+          <strong>커서가 놓인 한 줄</strong>만 집어 왔던 것입니다. 이제 <strong>가로줄로 나뉜 지금의 입력칸</strong>을 알아보고, 그 안의 <strong>모든 줄</strong>을
+          — 중간의 <strong>빈 줄</strong>과 <strong>사용자가 넣은 들여쓰기</strong>까지 그대로 — 작성창으로 가져옵니다.
+          <br><strong>왜 어제는 몰랐나:</strong> 이 기능의 회귀 시험이 <strong>옛 상자 모양</strong>으로만 짜여 있어, 실제 화면이 바뀐 뒤에도 <strong>계속 통과</strong>하고 있었습니다 —
+          지금 모양을 시험에 함께 못박아 같은 눈속임이 반복되지 않게 했습니다.</li>
         <li><span class="pill stable">플러그인</span> <strong>mdir 의 선택막대가 이제 <span class="inline-code">항목 본래 색</span>을 따라갑니다 — 디렉토리 위에선 붉은 막대, 압축 위에선 자홍 막대.</strong>
           지금까지는 커서를 어디에 놓든 <strong>항상 초록 막대</strong>여서, 붉은 디렉토리든 자홍 압축파일이든 커서가 닿는 순간 <strong>본래 색이 사라졌습니다</strong> —
           목록을 훑으며 색으로 종류를 가리다가도, 정작 <strong>지금 보고 있는 한 줄만 색을 잃는</strong> 셈이었습니다.
