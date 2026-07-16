@@ -213,6 +213,52 @@ async def tabs_multi(app, pilot):
     await pilot.pause(0.5)
 
 
+async def tab_switcher(app, pilot):
+    # 탭 스위처(esc→Tab) 확장판(07-16) — 원격(분홍)·핀(경고색 *)·활성(굵게) 색
+    # 구분과 패널 하위행(└ [local] …)을 한 컷에. 패널 하위행은 **실서버 tree
+    # 회신**으로 끼어든다(탭 0 = 분할 2패널이라 그 밑에만 달림). 원격 탭은
+    # remote_attach 와 같은 status.windows 주입 합성 — 스위처는 열릴 때
+    # tabbar.tabs 를 스냅샷하므로 주입 직후 열면 목록이 고정되고, 배경 탭바는
+    # 실 status flush 가 덮었을 수 있어 캡처 직전 재주입한다.
+    app.send_cmd("split", orient="lr")
+    await _settle(pilot, app, want_panes=2)
+    await _wait_painted(pilot, app)
+    app.send_cmd("new_window")
+    await pilot.pause(0.4)
+    app.send_cmd("rename_window", name="build")
+    await pilot.pause(0.4)
+
+    fake = [
+        {"index": 0, "name": "main", "active": True, "remote": False,
+         "bell": False, "activity": False, "claude_done": False},
+        {"index": 1, "name": "build", "active": False, "remote": False,
+         "bell": False, "activity": False, "claude_done": False,
+         "pinned": True},
+        {"index": 2, "name": "⇄remote:cmd", "active": False, "remote": True,
+         "bell": False, "activity": False, "claude_done": False},
+    ]
+    # 실 status flush 가 배경 탭바를 로컬 2탭으로 되돌리지 않게 update_status 를
+    # 감싸 매 갱신 뒤 합성 windows 를 다시 얹는다(1회 주입+재주입으로는 캡처
+    # 직전 flush 레이스를 못 이김 — 첫 컷에서 팝업 3탭 vs 탭바 2탭 불일치 실측).
+    st_update = app.status.update_status
+    def sticky(msg):
+        st_update(msg)
+        app.status.windows = fake
+    app.status.update_status = sticky
+    app.status.windows = fake
+    app._update_tabbar()
+    app.open_tab_switcher()
+    # tree 회신으로 패널 하위행이 끼어들 때까지 대기(로컬 소켓이라 수십 ms).
+    for _ in range(40):
+        ents = getattr(app.screen, "_entries", None)
+        if ents and any(e.get("kind") == "pane" for e in ents):
+            break
+        await pilot.pause(0.1)
+    app._update_tabbar()
+    app._composite()
+    await pilot.pause(0.3)
+
+
 async def calendar(app, pilot):
     app.set_calendar(_aid(app), True)
     app._composite()
@@ -949,6 +995,8 @@ SCENES = [
     ("06-command-prompt", "명령 프롬프트(prefix :) + 고스트 자동완성", command_prompt),
     ("07-kill-pane-prompt", "패널 닫기 — ESC : 명령 프롬프트에 kill-pane 입력", kill_pane_prompt),
     ("08-tabs-multi", "탭 여러 개 + 이름변경", tabs_multi),
+    ("49-tab-switcher", "탭 스위처(esc Tab) — 원격 분홍·핀 경고색·패널 하위행·항해 키",
+     tab_switcher),
     ("09-calendar", "큰 달력 오버레이(cal) — 블록-숫자", calendar_big),
     ("10-confirm-tab", "탭 닫기 확인 박스(탭 2개 이상)", confirm_tab),
     ("14-info-popup", "통합 정보 팝업(캡처·토큰·서버)", info_popup),
