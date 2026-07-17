@@ -128,9 +128,18 @@ class ServerPersistMixin:
             # 재연결만으론 유실 → spec 에 실어 remote_restore_links 가 새 링크에
             # 복원한다(값이 있을 때만 키 추가). detached_windows 는 상류 안정 window
             # id(wid, 구버전 상류는 index 폴백)로 키잉해 우리 서버 재시작(업스트림 불변)을
-            # 그대로 살아남는다 — 상류도 재시작해 wid 가 새로 부여되면 그 detach 는
-            # (엉뚱한 탭을 숨기는 대신) 잊혀 다시 나타난다(안전한 저하).
+            # 그대로 살아남는다.
+            #
+            # **상류가 그 사이 재시작하면** 그 키들은 무의미해진다 — wid 가 1..N 으로
+            # 재발급되기 때문이다(model._win_seq 는 영속되지 않는다). 종전 주석은 그때
+            # "잊혀 다시 나타난다(안전한 저하)"라고 적었는데 **거짓이었다**: 새 wid 가
+            # 하필 옛 키와 최대로 겹쳐, 실증 결과 사용자가 핀한 T2 대신 **T3 가 핀**됐다
+            # (검수 2026-07-17 F-1). 그래서 상류 인스턴스의 `boot_id` 를 **함께 저장**해
+            # 복원 시 링크에 latch 한다 — 부팅 후 첫 status 의 boot_id 가 다르면
+            # "상류가 재시작했다"를 알아채고 sticky 를 명시적으로 리셋한다.
             "remotes": [({**link.spec,
+                          **({"boot_id": link.boot_id}
+                             if getattr(link, "boot_id", None) else {}),
                           **({"pinned_windows": sorted(link.pinned_windows)}
                              if getattr(link, "pinned_windows", None) else {}),
                           **({"detached_windows": sorted(link.detached_windows)}

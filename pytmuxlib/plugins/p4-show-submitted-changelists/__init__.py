@@ -123,17 +123,31 @@ class _P4ChangesPlugin:
 
     # ---- 서버 측 ----
     def handle_server_request(self, server, sess, action, msg):
-        if action == "request_p4_changes":
-            from .server import list_changes_msg
-            count = msg.get("count", _DEFAULT_COUNT)
-            try:
-                count = max(1, min(_MAX_COUNT, int(count)))
-            except (TypeError, ValueError):
-                count = _DEFAULT_COUNT
-            return list_changes_msg(server, sess, count)
-        if action == "request_p4_describe":
+        # p4 서브프로세스는 executor 로 넘긴다(coroutine 반환 → serverio 가 await).
+        # 종전엔 dict 를 곧바로 반환해 단일 asyncio 루프에서 그대로 돌았다 — `describe`
+        # 는 타임아웃이 20초라 느린/불통 P4PORT 하나에 **서버 전체가 최대 20초 정지**
+        # 했고(list 는 8초×2), 공격자 없이 평범한 네트워크 지연만으로 발동했다
+        # (보안검수 2026-07-17 LOOP-2). cwd 추정은 세션 상태를 읽으므로 루프에서
+        # 먼저 끝내고 나머지만 넘긴다 — mdir·ncd 와 동일한 분할.
+        import asyncio
+
+        def _offload(fn, *a):
+            return asyncio.get_event_loop().run_in_executor(None, fn, *a)
+
+        if action in ("request_p4_changes", "request_p4_describe"):
+            from .server import _cwd
+            cwd = _cwd(server, sess)          # 세션 읽기 → 루프에서
+            if action == "request_p4_changes":
+                from .server import list_changes_msg
+                count = msg.get("count", _DEFAULT_COUNT)
+                try:
+                    count = max(1, min(_MAX_COUNT, int(count)))
+                except (TypeError, ValueError):
+                    count = _DEFAULT_COUNT
+                return _offload(list_changes_msg, server, sess, count, cwd)
             from .server import describe_msg
-            return describe_msg(server, sess, str(msg.get("change", "")))
+            return _offload(describe_msg, server, sess,
+                            str(msg.get("change", "")), cwd)
         return None
 
 

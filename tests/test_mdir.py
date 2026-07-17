@@ -186,6 +186,78 @@ async def test_mdir_op_delete_recursive_and_root_guard():
             and not mds._is_fs_root("/tmp")
 
 
+async def test_mdir_copy_does_not_write_through_dst_symlink():
+    """[보안 MDIR-1 회귀, 2026-07-17] 목적지의 심볼릭 링크를 따라가 **dstdir 밖에**
+    쓰지 않는다.
+
+    회귀 전(재현 완료): 충돌 게이트가 `os.path.exists(tgt)` 라 **끊어진** 링크를 False
+    로 봐 되묻기가 생략됐고, `copy2(follow_symlinks=False)` 는 *소스*만 보호할 뿐
+    목적지를 'wb' 로 열어 링크를 추종했다. 결과: `dst/notes.txt → ../secret/newfile`
+    를 심어둔 디렉토리에 `notes.txt` 를 복사하면 페이로드가 **secret/ 에 착지**하고
+    사용자에겐 경고 한 줄 안 떴다. 악성 tarball/clone 이 `→ ~/.ssh/authorized_keys`
+    를 심으면 임의 파일 쓰기. 수정=lexists 충돌 게이트 + 목적지 링크는 추종 대신 대체.
+
+    POSIX 전용(심볼릭 링크 생성이 Windows 에선 권한 필요)."""
+    if os.name == "nt":
+        from run import skip
+        skip("Windows 는 심볼릭 링크 생성에 권한 필요")
+    with tempfile.TemporaryDirectory() as root:
+        src, dst, secret = (os.path.join(root, d) for d in ("src", "dst", "secret"))
+        for d in (src, dst, secret):
+            os.makedirs(d)
+        _w(os.path.join(src, "notes.txt"), "PAYLOAD")
+        outside = os.path.join(secret, "newfile")
+        os.symlink(outside, os.path.join(dst, "notes.txt"))   # dangling 링크
+
+        # ① 기본(ask): 끊어진 링크도 **충돌로 보고**하고 아무것도 안 쓴다.
+        r = mds.mdir_op_msg(None, None, {
+            "op": "copy", "src": [os.path.join(src, "notes.txt")], "dst": dst})
+        assert r["conflicts"] == ["notes.txt"], r
+        assert r["done"] == 0, r
+        assert not os.path.exists(outside), "되묻기 단계에서 이미 밖에 씀"
+
+        # ② 덮어쓰기 확정: 링크를 **대체**하고 dstdir 안에 쓴다(밖은 무사).
+        r2 = mds.mdir_op_msg(None, None, {
+            "op": "copy", "src": [os.path.join(src, "notes.txt")], "dst": dst,
+            "overwrite": "overwrite"})
+        assert r2["done"] == 1, r2
+        assert not os.path.exists(outside), "심볼릭 링크를 따라가 dstdir 밖에 씀(MDIR-1)"
+        tgt = os.path.join(dst, "notes.txt")
+        assert not os.path.islink(tgt), "링크가 대체되지 않음"
+        assert open(tgt).read() == "PAYLOAD"
+
+        # ③ skip 이면 링크도 그대로 두고 밖에도 안 쓴다.
+        os.unlink(tgt)
+        os.symlink(outside, tgt)
+        r3 = mds.mdir_op_msg(None, None, {
+            "op": "copy", "src": [os.path.join(src, "notes.txt")], "dst": dst,
+            "overwrite": "skip"})
+        assert r3["done"] == 0, r3
+        assert not os.path.exists(outside)
+        assert os.path.islink(tgt), "skip 인데 링크가 사라짐"
+
+
+async def test_mdir_move_does_not_write_through_dst_symlink():
+    """[보안 MDIR-1 회귀] move 도 목적지 링크를 추종하지 않는다(copy 와 동일 관문)."""
+    if os.name == "nt":
+        from run import skip
+        skip("Windows 는 심볼릭 링크 생성에 권한 필요")
+    with tempfile.TemporaryDirectory() as root:
+        src, dst, secret = (os.path.join(root, d) for d in ("src", "dst", "secret"))
+        for d in (src, dst, secret):
+            os.makedirs(d)
+        _w(os.path.join(src, "m.txt"), "MOVED")
+        outside = os.path.join(secret, "mnew")
+        os.symlink(outside, os.path.join(dst, "m.txt"))
+        r = mds.mdir_op_msg(None, None, {
+            "op": "move", "src": [os.path.join(src, "m.txt")], "dst": dst,
+            "overwrite": "overwrite"})
+        assert r["done"] == 1, r
+        assert not os.path.exists(outside), "move 가 링크를 따라가 밖에 씀"
+        tgt = os.path.join(dst, "m.txt")
+        assert not os.path.islink(tgt) and open(tgt).read() == "MOVED"
+
+
 async def test_mdir_op_rename_and_mkdir():
     with tempfile.TemporaryDirectory() as root:
         _w(os.path.join(root, "a.txt"), "A")

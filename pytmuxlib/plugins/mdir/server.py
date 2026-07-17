@@ -151,7 +151,12 @@ def mdir_op_msg(server, sess, msg: dict) -> dict:
                     os.path.normcase(os.path.normpath(s)):
                 failed.append([_name(s), "same"])
                 continue
-            if os.path.exists(tgt):
+            # **lexists**(링크 자체) — `exists` 는 링크를 따라가므로 목적지가 **끊어진**
+            # 심볼릭 링크면 False 를 돌려 "충돌 없음"으로 오판했다(보안검수 2026-07-17
+            # MDIR-1). 그 결과 되묻기가 생략된 채 아래 copy2 가 링크를 따라가 **dstdir
+            # 밖에** 파일을 만들었다 — 악성 tarball/clone 이 `notes.txt →
+            # ~/.ssh/authorized_keys` 를 심어두면 임의 파일 쓰기가 된다.
+            if os.path.lexists(tgt):
                 conflicts.append(_name(s))
             pairs.append((s, tgt))
         if conflicts and overwrite == "ask":
@@ -159,10 +164,19 @@ def mdir_op_msg(server, sess, msg: dict) -> dict:
             return {"t": "mdir_result", "op": op, "done": 0, "failed": failed,
                     "conflicts": conflicts}
         for s, tgt in pairs:
-            exists = os.path.exists(tgt)
+            exists = os.path.lexists(tgt)          # 링크 자체 기준(위 MDIR-1 주석)
             if exists and overwrite == "skip":
                 continue
             try:
+                # 목적지가 심볼릭 링크면 **링크를 먼저 지운다**(따라가지 않는다).
+                # copy2(follow_symlinks=False) 는 *소스*만 보호할 뿐 목적지는 'wb' 로
+                # 열어 링크를 추종하고, copytree 도 링크된 디렉토리 안에 쓴다 → 둘 다
+                # dstdir 밖 임의 쓰기(MDIR-1). 사용자가 목록에서 링크를 보고 덮어쓰기를
+                # 택했다면 기대 동작은 "그 링크를 대체"이지 "링크가 가리키는 곳에 쓰기"
+                # 가 아니다 — 원조 mdir/MC 도 링크 항목을 대체한다.
+                if os.path.islink(tgt):
+                    os.unlink(tgt)
+                    exists = False
                 if op == "copy":
                     if os.path.isdir(s) and not os.path.islink(s):
                         shutil.copytree(s, tgt, symlinks=True,

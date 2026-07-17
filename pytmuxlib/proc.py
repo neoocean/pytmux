@@ -190,12 +190,71 @@ def process_cwd(pid: int) -> Optional[str]:
 
     Windows 는 `/proc`·`lsof` 가 없으므로 ctypes 로 대상 프로세스의 PEB →
     RTL_USER_PROCESS_PARAMETERS.CurrentDirectory(UNICODE_STRING)를 직접 읽는다
-    (psutil 등 외부 의존 없이). POSIX 에선 None 을 돌려, 호출부(servertree
-    `_pane_cwd`)의 `/proc`·`lsof` 경로가 처리하게 둔다 — 이 헬퍼는 Windows 갭만
-    메운다. ncd(현재 디렉토리 강조)·default-path=current 가 이 cwd 에 의존한다."""
-    if not IS_WINDOWS or pid <= 0:
+    (psutil 등 외부 의존 없이). **macOS/BSD** 는 libproc `proc_pidinfo` 를 쓴다
+    (아래 `_mac_process_cwd`). Linux 는 `/proc/<pid>/cwd` 가 더 단순해 호출부
+    (servertree `_pane_cwd`)에 맡기고 None 을 돌린다. ncd(현재 디렉토리 강조)·
+    default-path=current 가 이 cwd 에 의존한다."""
+    if pid <= 0:
         return None
-    return _win_process_cwd(pid)
+    if IS_WINDOWS:
+        return _win_process_cwd(pid)
+    if sys.platform == "darwin":
+        return _mac_process_cwd(pid)
+    return None
+
+
+# libproc 상수/구조체(macOS). proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &vpi, sz)
+# 가 sz 를 그대로 돌려주면 성공이다.
+_PROC_PIDVNODEPATHINFO = 9
+_MAXPATHLEN = 1024
+_VNODE_INFO_PAD = 152          # struct vnode_info(vinfo_stat+fsid+vid) 크기
+_libproc = None                 # 지연 로드 캐시(미로드=None, 로드실패=False)
+
+
+def _mac_process_cwd(pid: int) -> Optional[str]:
+    """macOS 전용: libproc 로 대상 프로세스의 cwd 를 **시스템콜 한 번**에 읽는다.
+
+    종전엔 `_pane_cwd` 가 `lsof -a -p PID -d cwd -Fn` 서브프로세스를 띄웠는데, 이게
+    **단일 스레드 asyncio 루프 위에서 동기로** 돌았다(split/new-window/popup/respawn
+    은 전부 sync `def` 라 await 자체가 불가). 실측 **중앙값 321ms**(상한=timeout 2s)
+    동안 서버 전체가 정지 — 전 클라 프레임·입력·ping 이 멈추고 _liveness_loop 가
+    굶은 클라를 죽은 것으로 오해할 수 있었다(코드검수 2026-07-17, blocking-on-loop
+    4회차). libproc 는 **1µs** 라 Linux(/proc readlink)·Windows(PEB) 와 같은 등급의
+    "동기지만 무시할 만한" 경로가 되어, 호출부 시그니처를 바꾸지 않고 원인을 없앤다.
+
+    실패(권한·레이아웃 차이·미지원)는 전부 None → 호출부의 lsof 폴백이 받는다."""
+    global _libproc
+    import ctypes                     # 지연 import(_win_process_cwd 와 동일 관례)
+    if _libproc is None:
+        try:
+            import ctypes.util
+            path = ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib"
+            _libproc = ctypes.CDLL(path, use_errno=True)
+        except OSError:
+            _libproc = False
+    if not _libproc:
+        return None
+
+    class _VnodeInfo(ctypes.Structure):
+        _fields_ = [("pad", ctypes.c_byte * _VNODE_INFO_PAD)]
+
+    class _VnodeInfoPath(ctypes.Structure):
+        _fields_ = [("vip_vi", _VnodeInfo),
+                    ("vip_path", ctypes.c_char * _MAXPATHLEN)]
+
+    class _ProcVnodePathInfo(ctypes.Structure):
+        _fields_ = [("pvi_cdir", _VnodeInfoPath), ("pvi_rdir", _VnodeInfoPath)]
+
+    try:
+        vpi = _ProcVnodePathInfo()
+        n = _libproc.proc_pidinfo(pid, _PROC_PIDVNODEPATHINFO, 0,
+                                  ctypes.byref(vpi), ctypes.sizeof(vpi))
+        # 부분 채움/오류를 신뢰하지 않는다 — 커널이 정확히 sizeof 를 채웠을 때만 유효.
+        if n != ctypes.sizeof(vpi):
+            return None
+        return vpi.pvi_cdir.vip_path.decode("utf-8", "replace") or None
+    except (OSError, ValueError, AttributeError):
+        return None
 
 
 def _win_process_cwd(pid: int) -> Optional[str]:

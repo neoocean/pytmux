@@ -5,6 +5,7 @@
 """
 import asyncio
 import contextlib
+import inspect
 import os
 import signal
 import sys
@@ -237,3 +238,42 @@ def make_app(sock, cfg=None, session=None):
     cfg = dict(cfg or {})
     cfg.setdefault("lang", "ko")
     return pytmux.build_client_app(sock, cfg, session)
+
+
+async def max_loop_gap(awaitable_factory, *, step=0.005, settle=0.02):
+    """`awaitable_factory()` 를 await 하는 동안 **이벤트 루프가 최대 몇 초 멈췄는지** 잰다.
+
+    서버는 단일 스레드 asyncio 라, 어떤 경로가 동기 I/O(서브프로세스·대형 fs 스캔·
+    느린 소켓)를 루프에서 돌리면 그동안 전 클라의 프레임·입력·ping 이 모두 멎는다.
+    이 저장소는 그 결함(blocking-on-loop)을 **네 번** 겪었고(claude-name-sync S-3,
+    autorename P8, mdir LIV, 그리고 코어 _pane_cwd/ncd/p4 — 2026-07-17), 매번 코드
+    리뷰로만 잡았다. 이 헬퍼는 그걸 **런타임 단언**으로 바꾼다.
+
+    원리: 5ms 마다 깨는 하트비트 태스크를 띄우고 실제 깬 간격의 최댓값을 본다.
+    루프가 X 초 막히면 하트비트도 X 초 못 깨므로 gap≈X 가 된다. 오프로드된 경로는
+    작업이 아무리 길어도 gap 이 step 수준에 머문다(실측: 400ms 작업 → 인라인
+    408ms vs executor 6.5ms — 60배 넘게 벌어져 임계값 선택이 둔감하다).
+
+    반환: 최대 gap(초). 호출부는 `assert gap < 0.15` 같은 넉넉한 상한을 건다."""
+    gaps: list[float] = []
+    stop = False
+
+    async def _hb():
+        last = asyncio.get_event_loop().time()
+        while not stop:
+            await asyncio.sleep(step)
+            now = asyncio.get_event_loop().time()
+            gaps.append(now - last)
+            last = now
+
+    t = asyncio.create_task(_hb())
+    await asyncio.sleep(settle)          # 하트비트가 자리잡을 시간
+    try:
+        r = awaitable_factory()
+        if inspect.isawaitable(r):
+            await r
+    finally:
+        stop = True
+        with contextlib.suppress(Exception):
+            await t
+    return max(gaps) if gaps else 0.0

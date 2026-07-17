@@ -153,10 +153,17 @@ async def test_server_request_dispatch():
             [{"change": "1", "time": "1718200000", "user": "u",
               "client": "c", "desc": "d"}]))
 
+    import inspect
+
     reg = plugins.load()
     with _patch_run(fake_run):
+        # p4 서브프로세스는 executor 로 오프로드된다(LOOP-2, 2026-07-17) — 훅은
+        # awaitable 을 돌리고 serverio 가 await 한다. 종전엔 dict 를 곧바로 반환해
+        # describe 타임아웃(20s)이 그대로 이벤트 루프 정지 시간이었다.
         resp = reg.handle_server_request(_FakeServer(), None,
                                          "request_p4_changes", {"count": 3})
+        assert inspect.isawaitable(resp), "p4 서브프로세스는 awaitable 로 오프로드돼야 한다"
+        resp = await resp
     assert resp and resp["t"] == "p4_changes" and resp["rows"][0]["change"] == "1"
     # 미지의 action 은 None(코어가 계속 다른 경로 탐색).
     assert reg.handle_server_request(_FakeServer(), None, "nope", {}) is None

@@ -65,6 +65,12 @@ class RemoteLink:
         # 키잉의 드리프트 수정). 마지막 남은 탭까지 분리하면 호출부가 링크 전체를
         # 해제한다(remote_detach_tab).
         self.detached_windows: set = set()
+        # 상류 인스턴스의 boot_id **latch**(검수 F-1). 첫 status 에서 굳히고, 이후 값이
+        # **바뀌면** = 상류가 재시작/업그레이드된 것 → 옛 sticky 키는 새 탭 번호와
+        # 오매칭되므로 명시적으로 리셋한다(_remote_boot_check). 매번 last_status 에서
+        # 읽지 않고 latch 하는 이유: last_status 는 update() 라 한 번 온 boot_id 가
+        # 이후 프레임에서 빠져도 남는다(F-C) — 그럼 "안 바뀐 것"으로 오인한다.
+        self.boot_id: str | None = None
         self.task: asyncio.Task | None = None
         # keepalive ping 태스크(_remote_ping_loop): 다운스트림이 업스트림에 주기적으로
         # ping 을 보내 업스트림의 死-클라 회수(_liveness_loop, ever_pinged 게이트)가
@@ -718,9 +724,16 @@ class ServerRemoteMixin:
                         # 창 index(ri) 기준이라 업스트림 창 구성이 그대로면 정합.
                         pins = spec.get("pinned_windows")
                         det = spec.get("detached_windows")
-                        if pins or det:
+                        boot = spec.get("boot_id")
+                        if pins or det or boot:
                             link = self._remotes_dict().get(name)
                             if link is not None:
+                                # 재시작 **전에** 보던 상류 인스턴스를 latch 해 둔다(F-1).
+                                # 안 하면 latch 가 None 인 채 부팅 후 첫 status 의
+                                # boot_id 를 그냥 받아들여(=변경 감지 실패) 그 사이
+                                # 재시작한 상류의 새 wid 에 옛 키가 오매칭된다.
+                                if isinstance(boot, str) and boot:
+                                    link.boot_id = boot
                                 # update(재대입 아님): 집합은 호스트별 sticky 저장소와
                                 # 공유하는 객체다(_remote_sticky_bind) — 갈아끼우면
                                 # 이후 재-attach 가 핀을 잃는다. 부팅 직후라 비어 있어
@@ -774,7 +787,10 @@ class ServerRemoteMixin:
                     # light status 가 지우지 않게 합친다 — 보는 클라 오버라이드의
                     # 원천(_remote_status_override).
                     link.last_status.update(msg)
-                    wins = msg.get("windows", [])
+                    # 상류 재시작 감지 → sticky 리셋(F-1). **windows 를 반영하기 전에**
+                    # 해야 옛 키가 새 탭에 한 프레임이라도 오매칭되지 않는다.
+                    self._remote_boot_check(link, msg)
+                    wins = self._sanitize_windows(msg.get("windows", []))
                     if wins != link.windows:
                         link.windows = wins
                         self._remote_status_broadcast()
@@ -826,6 +842,69 @@ class ServerRemoteMixin:
                 await self.remote_drop(link, reconnect=not deliberate_bye)
 
     # ---- 탭바 병합 ----
+    # 상류 탭 이름 표시 상한. 정상 탭 이름은 수십 자다 — 넘기면 탭바 계산(_char_cells
+    # 를 글자마다)만 태우므로 자른다(F-E).
+    _REMOTE_NAME_MAX = 256
+
+    @classmethod
+    def _sanitize_windows(cls, wins) -> list:
+        """상류 status 의 `windows` 를 **경계에서** 정규화한다(검수 2026-07-17 F-A/F-E).
+
+        상류는 신뢰불가다(모듈 docstring). 종전엔 `link.windows = msg.get("windows", [])`
+        로 **컨테이너를 검증 없이** 실었고, 개별 필드만 `_win_key` 가 방어했다(F-2).
+        그래서 상류가 `{"windows": ["x"]}` 한 프레임만 보내면 `_visible_windows` 의
+        `rw.get()` 이 AttributeError 를 내고 — 그게 **flush 루프**(serverio `_status_msg`
+        호출부, try 밖)에서 터져 `_on_flush_done` 이 루프를 재시작→재폭발을 33ms 마다
+        반복했다. 결과: **모든 세션의 모든 클라가 프레임을 한 장도 못 받는 영구 wedge**
+        + error.log 무한 증식. 게다가 클라가 0명일 땐 `_remote_status_broadcast` 가
+        no-op 이라 아무도 안 터지고 **조용히 latch** 됐다가, 사용자가 다시 attach 하는
+        순간 발동했다(=드롭도 안 됨).
+
+        F-E: 상류 탭 이름은 그대로 탭바 Segment 로 렌더된다. 로컬 `rename_window` 는
+        같은 이유로 C0/C1/DEL 을 이미 제거하는데(S-2), **신뢰불가 상류 경로엔 그 필터가
+        없었다** — `{"name": "\\x1b[2J\\x1b[H pwned"}` 가 탭바를 통과했다.
+        """
+        if not isinstance(wins, list):
+            return []                      # dict·str·int 등 → 통째로 무시(링크는 생존)
+        out = []
+        for rw in wins:
+            if not isinstance(rw, dict):
+                continue                   # 비-dict 항목만 골라 버린다(부분 수용)
+            nm = rw.get("name")
+            if isinstance(nm, str):
+                if len(nm) > cls._REMOTE_NAME_MAX:
+                    nm = nm[:cls._REMOTE_NAME_MAX]
+                rw = dict(rw, name=_strip_ctrl(nm))
+            elif nm is not None:
+                rw = dict(rw, name="")     # 비-str 이름 → 빈 문자열(포맷 시 예외 방지)
+            out.append(rw)
+        return out
+
+    def _remote_boot_check(self, link: RemoteLink, msg: dict) -> None:
+        """상류 status 의 boot_id 를 latch 하고, **바뀌었으면 sticky 를 리셋**한다(F-1).
+
+        `Tab.wid` 는 `model._win_seq` 전역에서 나오는데 그 카운터는 영속되지 않는다 —
+        상류가 재시작하면 살아남은 탭들이 wid 를 **1..N 으로 재발급**받아 하류에 남은
+        옛 키와 **최대로 충돌**한다. serverpersist 주석은 이걸 "잊혀서 다시 나타난다
+        (안전한 저하)"라고 적었지만 **정반대**였다 — 실증: 사용자가 핀한 T2 대신
+        **T3 가 핀**됐고, T2 는 되살아났다(2026-07-17 검수).
+
+        boot_id 가 바뀌면 그 상류의 sticky 는 **의미를 잃은 것**이지 옮겨갈 대상이
+        있는 게 아니다. 조용히 오매칭시키는 대신 정직하게 비운다. 구버전 상류
+        (boot_id 미전송)는 latch 가 None 으로 유지돼 종전 거동 그대로다."""
+        boot = msg.get("boot_id")
+        if not isinstance(boot, str) or not boot:
+            return                       # 구버전 상류(미전송) 또는 신뢰불가 타입 → 무시
+        if link.boot_id is None:
+            link.boot_id = boot          # 첫 status → latch
+            return
+        if link.boot_id == boot:
+            return
+        # 상류가 재시작했다 — 옛 키는 새 wid 체계에서 무의미하다.
+        link.boot_id = boot
+        link.pinned_windows.clear()      # 공유 참조라 재대입 금지, clear 로 비운다
+        link.detached_windows.clear()    # (핀 sticky 는 집합 객체를 저장소와 공유)
+
     @staticmethod
     def _win_key(rw: dict):
         """원격 window 를 가리키는 **안정 키**. 상류가 안정 wid 를 실어 보내면 그것을,

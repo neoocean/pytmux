@@ -65,15 +65,20 @@ def encode_data(pane_id: int, data: bytes) -> bytes:
     return _LEN.pack(len(body)) + body
 
 
-async def read_frame(reader: asyncio.StreamReader):
+async def read_frame(reader: asyncio.StreamReader, *, max_frame: int = MAX_FRAME):
     """다음 프레임을 읽어 ("json", dict) 또는 ("data", pane_id, bytes) 로 돌려준다.
-    EOF/손상 시 None. 호출부는 None 을 연결 종료로 다룬다."""
+    EOF/손상 시 None. 호출부는 None 을 연결 종료로 다룬다.
+
+    `max_frame` 은 이 한 번의 읽기에만 적용하는 상한이다 — **인증 전** 읽기는 훨씬
+    작게 준다(HANDSHAKE_MAX_FRAME). 종전엔 MAX_FRAME(16MiB) 고정이라 무인가 피어가
+    16MiB 를 광고하고 1바이트씩 흘리면 `readexactly` 가 그만큼 버퍼를 키운 채 매달렸다
+    (보안검수 2026-07-17 PTYH-1)."""
     try:
         hdr = await reader.readexactly(_LEN.size)
     except (asyncio.IncompleteReadError, ConnectionError):
         return None
     (n,) = _LEN.unpack(hdr)
-    if n < 1 or n > MAX_FRAME:
+    if n < 1 or n > max_frame:
         return None
     try:
         body = await reader.readexactly(n)

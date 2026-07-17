@@ -114,6 +114,49 @@ async def test_pane_cwd_host_mode_uses_pty_pid():
         assert srv._pane_cwd(blank) is None
     finally:
         proc.process_cwd, proc.IS_WINDOWS = orig_cwd, orig_win
+
+
+async def test_pane_cwd_has_no_subprocess_fast_path():
+    """[blocking-on-loop 4회차 회귀, 코드검수 2026-07-17] `_pane_cwd` 는 이벤트 루프에서
+    **서브프로세스를 띄우지 않는다**.
+
+    회귀 전: macOS 경로가 `lsof -a -p PID -d cwd -Fn` 서브프로세스였고 — 실측 **중앙값
+    321ms**(상한 timeout 2s) — split_pane/new_window/popup_open/respawn_pane 이 전부
+    sync `def` 라 await 오프로드가 구조적으로 불가했다. 서버는 단일 스레드 asyncio 라
+    새 탭/분할 한 번마다 **전 클라가 그 시간만큼 동결**됐다. 같은 헬퍼를 빌려 쓰는
+    플러그인(claude-name-sync)은 executor 로 감싸고 회귀 테스트까지 있었는데(S-3),
+    정작 코어 호출부만 그대로였다. 수정=플랫폼별 빠른 경로(Linux=/proc, macOS=libproc
+    proc_pidinfo ~1µs, Windows=PEB) — lsof 는 그 셋이 다 실패할 때만.
+
+    이 테스트는 **실 셸 pid** 로 진짜 경로를 태우며(스텁 없음) subprocess 를 금지한다."""
+    import subprocess as _sp
+    from pytmuxlib import servertree
+    from pytmuxlib.model import Pane
+    srv, task, sock = await server_only()
+    calls = []
+    orig_run = _sp.run
+
+    def spy_run(*a, **k):
+        calls.append(a[0] if a else k.get("args"))
+        return orig_run(*a, **k)
+
+    class _Pty:
+        pid = os.getpid()               # 실존 pid(이 프로세스) — 진짜 조회가 성립
+
+    try:
+        servertree.subprocess.run = spy_run
+        pane = Pane(-1, -1, 80, 24)
+        pane.pty = _Pty()
+        cwd = srv._pane_cwd(pane)
+        # 이 플랫폼에 빠른 경로가 있으면 cwd 를 구하면서도 subprocess 는 0회여야 한다.
+        assert cwd, f"_pane_cwd 가 실 pid 로 cwd 를 못 구함: {cwd!r}"
+        assert os.path.isdir(cwd), f"cwd 가 실재 디렉토리가 아님: {cwd!r}"
+        assert not calls, (
+            f"_pane_cwd 가 루프에서 서브프로세스를 띄웠다(blocking-on-loop 4회차 회귀): "
+            f"{calls}")
+    finally:
+        servertree.subprocess.run = orig_run
+        await teardown(srv, task, sock)
         await teardown(srv, task, sock)
 
 

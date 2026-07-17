@@ -181,6 +181,12 @@ class ServerIOMixin:
         msg = {
             "t": "status",
             "session": sess.name,
+            # boot_id: 이 서버 **인스턴스**의 부팅 식별자(F-1). 아래 wid 는 재시작 때
+            # 1..N 으로 재발급되므로, 다운스트림이 sticky 키를 (boot_id, wid) 로
+            # 네임스페이싱해야 상류 재시작 뒤 옛 키가 새 탭에 오매칭되지 않는다.
+            # 추가 필드라 PROTO_VERSION 범프 불요 — 구버전 상류는 안 보내고, 그때
+            # 다운스트림은 종전대로(=네임스페이싱 없이) 동작한다.
+            "boot_id": getattr(self, "boot_id", None),
             "windows": [{"index": t.index, "name": t.name,
                          # wid: 안정 window id(위치값 index 와 별개). 다운스트림이 원격
                          # 단일-탭 분리를 상류 탭 close/reorder 로도 안 어긋나게 이걸로

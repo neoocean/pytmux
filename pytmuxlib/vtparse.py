@@ -111,6 +111,13 @@ class VTTokenizer:
     # 멀티 MB OSC 의 자원 폭주를 막는 캡(보안 N1/N2).
     _OSC_MAX = 4096
 
+    # CSI 파라미터 원시문자열 상한. **N1(OSC)의 살아남은 형제**(보안검수 2026-07-17 F2):
+    # `_OSC_MAX` 는 OSC 만 캡했고 `_raw` 엔 상한이 없어, 미종결 `ESC[` + 숫자 스트림이
+    # ① `self._raw += ch` 의 O(n²) 재할당으로 CPU 를 태우고(400k자=1.15s, 10MB=수 분)
+    # ② 종결자가 없어도 feed 를 넘어 본문이 영구 잔류해 메모리 DoS 가 됐다.
+    # 정상 CSI 는 SGR 체인을 포함해도 수백 B 이므로 4096 이면 자르지 않는다.
+    _RAW_MAX = 4096
+
     def __init__(self, screen, alt_hook=None):
         self.alt_hook = alt_hook
         self.use_utf8 = True
@@ -327,7 +334,11 @@ class VTTokenizer:
             # intermediate 바이트(DECRQM 등) — private 마커로 기록(드물어 보존만).
             self._priv = self._priv or ch
         elif ch.isdigit() or ch in ";:":
-            self._raw += ch
+            # 상한 초과분은 버린다(F2). 자르는 편이 안전한 저하다 — 정상 CSI 는 이
+            # 한계 근처도 안 가고, 넘겼다는 건 이미 파라미터가 핸들러 arity 를 한참
+            # 넘겨 어차피 _call_csi 에서 잘릴 입력이라는 뜻이다.
+            if len(self._raw) < self._RAW_MAX:
+                self._raw += ch
         # 그 외(제어문자 등)는 무시 — 관용적으로 흘려보낸다.
 
     def _dispatch_csi(self, final: str) -> None:
@@ -373,16 +384,54 @@ class VTTokenizer:
         에서 TypeError 를 던져 Pane.feed → 서버 feed 태스크를 크래시시키고 그 버스트의
         나머지 출력을 유실시킨다(위협모델 #4). 실단말처럼 **여분 파라미터를 뒤에서
         하나씩 떼어** arity 가 맞을 때까지 재시도하고, 끝내 안 맞으면 시퀀스를 생략한다.
-        정상 시퀀스는 arity 가 맞아 첫 시도에 성공하므로 거동/성능 불변(pyte 동일)."""
+        정상 시퀀스는 arity 가 맞아 첫 시도에 성공하므로 거동/성능 불변(pyte 동일).
+
+        **한 번에 자른다**(보안검수 2026-07-17 F1): 종전엔 `p.pop()` 으로 하나씩 떼며
+        재시도했는데, 재시도마다 N-튜플을 다시 쌓으므로 파라미터 N개에 O(N²) 였다 —
+        R2(크래시) 를 고치며 DoS 를 들여온 셈이다(실측: 128KB 한 줄 = 4.76s 루프 정지,
+        입력 2배마다 4배). pop 루프의 **수렴값은 결국 `params[:arity]`** 이므로, 핸들러
+        arity 를 한 번 구해 곧장 슬라이스하면 결과는 완전히 같고 비용만 O(1) 이 된다.
+        `*args` 핸들러(SGR 등)는 상한이 없으므로 자르지 않는다."""
         p = list(params)
-        while True:
-            try:
-                if private:
-                    fn(*p, private=True)
-                else:
-                    fn(*p)
-                return
-            except TypeError:
-                if not p:
-                    return          # 인자 0개로도 불일치 → 핸들러 부적합, 생략
-                p.pop()             # 여분 파라미터 하나 제거 후 재시도(앞쪽 N개만 사용)
+        lim = self._arity(fn)
+        if lim is not None and len(p) > lim:
+            p = p[:lim]
+        try:
+            if private:
+                fn(*p, private=True)
+            else:
+                fn(*p)
+        except TypeError:
+            # arity 를 못 읽었거나(내장/C 함수) 슬라이스로도 안 맞는 핸들러 → 생략.
+            # 종전 pop 루프의 "끝내 안 맞으면 시퀀스 생략"과 동일한 귀결.
+            pass
+
+    # 핸들러별 최대 위치인자 수 캐시. None = 무제한(*args) 또는 조회 실패(그대로 호출).
+    _ARITY_CACHE: dict = {}
+
+    @classmethod
+    def _arity(cls, fn):
+        key = getattr(fn, "__func__", fn)
+        try:
+            return cls._ARITY_CACHE[key]
+        except (KeyError, TypeError):       # TypeError = 해시 불가 → 캐시 우회
+            pass
+        lim = None
+        try:
+            import inspect
+            n = 0
+            for prm in inspect.signature(fn).parameters.values():
+                if prm.kind is inspect.Parameter.VAR_POSITIONAL:
+                    n = None                # *args → 무제한
+                    break
+                if prm.kind in (inspect.Parameter.POSITIONAL_ONLY,
+                                inspect.Parameter.POSITIONAL_OR_KEYWORD):
+                    n += 1
+            lim = n
+        except (TypeError, ValueError):     # 내장/C 함수 등 시그니처 조회 불가
+            lim = None
+        try:
+            cls._ARITY_CACHE[key] = lim
+        except TypeError:
+            pass
+        return lim

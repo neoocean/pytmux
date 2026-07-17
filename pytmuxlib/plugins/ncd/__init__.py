@@ -124,14 +124,34 @@ class _NcdPlugin:
     # ---- 서버 측 ----
     def handle_server_request(self, server, sess, action, msg):
         # ncd(Norton Change Directory 풍 디렉토리 트리). 부작용 없음(읽기 전용).
+        #
+        # **파일시스템 조회는 executor 로 넘긴다**(coroutine 반환 → serverio 가 await).
+        # 종전엔 dict 를 곧바로 반환해 단일 asyncio 루프에서 그대로 돌았다 — 재귀 검색
+        # (`nc_find`)은 최대 20000 디렉토리 BFS 라 실측 1.44s/회 이고, 스피드서치는
+        # **키스트로크마다** 요청을 보내 'documents' 타이핑 한 번에 누적 ~11초 서버
+        # 전면 정지였다. 게다가 request_nc_list/find 는 `_REMOTE_RELAY_ACTIONS` 라
+        # 하류 사용자의 타이핑이 **상류 서버**의 전 패널·전 클라·전 링크를 얼렸다
+        # (신뢰경계를 넘는 DoS). 보안검수 2026-07-17 LOOP-1. mdir 이 이미 쓰던
+        # 탈출구(serverio.py 가 awaitable 을 await)를 ncd 도 채택한다.
+        import asyncio
+
+        def _offload(fn, *a):
+            return asyncio.get_event_loop().run_in_executor(None, fn, *a)
+
         if action == "request_nc_list":
             # path 없으면 루트→cwd 사슬, 있으면 해당 노드의 직계 하위(지연 펼치기).
-            from .server import nc_list_msg
-            return nc_list_msg(server, sess, msg.get("path"))
+            # cwd 추정은 **세션 상태를 읽으므로 루프에서** 먼저 끝내고(레이스 방지),
+            # 순수 fs 나열만 넘긴다 — mdir 과 동일한 분할.
+            from .server import nc_list_fs, nc_list_resolve_cwd
+            path = msg.get("path")
+            cwd = None if path else nc_list_resolve_cwd(server, sess)
+            return _offload(nc_list_fs, cwd, path)
         if action == "request_nc_find":
             # 트리에 안 열린 디렉토리까지 재귀 검색 → 최적 매치 + 조상 사슬.
+            # server/sess 를 안 읽는 순수 fs 라 통째로 넘긴다.
             from .server import nc_find_msg
-            return nc_find_msg(server, sess, msg.get("query", ""), msg.get("root"))
+            return _offload(nc_find_msg, server, sess, msg.get("query", ""),
+                            msg.get("root"))
         return None
 
 

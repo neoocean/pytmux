@@ -2310,3 +2310,134 @@ async def test_ssh_self_attach_rejected_by_token():
         assert srv._is_self_ssh_token("deadbeefcafe") is False
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_hostile_upstream_windows_container_does_not_wedge_status():
+    """[검수 F-A 회귀, 2026-07-17] 상류가 보낸 `windows` **컨테이너 자체**가 신뢰불가다.
+
+    F-2 는 개별 필드(wid/index)를 방어했지만 컨테이너는 무검증이라
+    `link.windows = msg.get("windows", [])` 가 `["x"]`·`"abc"`·`{"a":1}` 을 그대로
+    실었다 → `_visible_windows` 의 `rw.get()` 이 AttributeError. 그게 하필 **flush
+    루프**(serverio `_status_msg` 호출부, try 밖)에서 터져 `_on_flush_done` 이 루프를
+    재시작→재폭발을 33ms 마다 반복 → **모든 세션의 모든 클라가 프레임을 한 장도 못
+    받는 영구 wedge** + error.log 무한 증식. 복구는 `:remote-detach` 를 사용자가
+    알아맞히는 것뿐이었다.
+
+    여기서는 경계 정규화(_sanitize_windows)가 이 프레임들을 걸러 `_status_msg` 가
+    **예외 없이** 성립하는지 본다."""
+    from pytmuxlib.serverremote import RemoteLink
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        link = RemoteLink("hostX", object(), object())
+        srv._remotes_dict()["hostX"] = link
+        for hostile in (["x"], "abc", {"a": 1}, [1, 2], [None], 42,
+                        [{"wid": 1}, "x", {"wid": 2}]):
+            link.windows = srv._sanitize_windows(hostile)
+            # 정규화 뒤엔 전부 dict 여야 하고, 상태 조립이 예외 없이 성립해야 한다.
+            assert all(isinstance(w, dict) for w in link.windows), hostile
+            srv._status_msg(sess)                 # 회귀면 AttributeError
+            srv._remote_tabs(0)
+        # 정상 항목은 살리고 악성만 버린다(부분 수용 — 링크를 통째로 죽이지 않는다).
+        link.windows = srv._sanitize_windows([{"wid": 1}, "x", {"wid": 2}])
+        assert [w["wid"] for w in link.windows] == [1, 2]
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_hostile_upstream_tab_name_stripped_and_capped():
+    """[검수 F-E 회귀, 2026-07-17] 상류 탭 이름은 탭바에 그대로 렌더되므로 제어문자를
+    제거하고 길이를 캡한다.
+
+    로컬 `rename_window` 는 같은 이유로 C0/C1/DEL 을 이미 제거한다(S-2, 2026-07-10) —
+    그런데 **신뢰불가하다고 모듈 docstring 이 선언한 상류 경로엔 그 필터가 없었다**.
+    `{"name": "\\x1b[2J\\x1b[H pwned"}` 가 탭바 Segment 까지 통과했고, 길이 상한도 없어
+    "A"*1_000_000 이 매 캐시미스마다 글자별 폭 계산을 태웠다."""
+    srv, task, sock = await server_only()
+    try:
+        wins = srv._sanitize_windows([{"wid": 1, "name": "\x1b[2J\x1b[H pwned\r\n"}])
+        nm = wins[0]["name"]
+        assert not any(ord(c) < 0x20 or 0x7f <= ord(c) <= 0x9f for c in nm), repr(nm)
+        assert "pwned" in nm                       # 표시 자체는 보존(제어문자만 제거)
+        long = srv._sanitize_windows([{"wid": 1, "name": "A" * 100_000}])
+        assert len(long[0]["name"]) <= srv._REMOTE_NAME_MAX
+        # 비-str 이름도 포맷 시 터지지 않게 빈 문자열로 낮춘다.
+        assert srv._sanitize_windows([{"wid": 1, "name": 12345}])[0]["name"] == ""
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_sticky_reset_when_upstream_instance_changes():
+    """[검수 F-1 회귀, 2026-07-17] 상류가 재시작하면 그 호스트의 sticky(핀/단일-탭 분리)
+    를 **리셋**한다 — 옛 키를 새 탭에 오매칭시키지 않는다.
+
+    `Tab.wid` 는 `model._win_seq` 전역 카운터에서 나오고 그 카운터는 **영속되지 않는다**
+    (serverpersist 는 wid 를 저장조차 안 한다). 상류가 재시작하면 살아남은 탭들이 wid 를
+    **1..N 으로 재발급**받아 하류에 남은 옛 키와 겹친다. serverpersist 의 "상류도
+    재시작하면 그 detach 는 잊혀 다시 나타난다(안전한 저하)" 주석은 **사실과 정반대**
+    였다 — 실증: 상류 탭이 [2,3,4]→[1,2,3] 이 되자 사용자가 핀한 T2 대신 **T3 가 핀**
+    되고 T2 는 되살아났다. 새 wid 가 하필 옛 키와 **최대로** 겹치기 때문이다.
+
+    수정: 상류가 status 에 `boot_id`(인스턴스 부팅 id)를 싣고, 하류가 그걸 latch 해
+    **바뀌면** sticky 를 비운다(조용한 오매칭 → 정직한 초기화)."""
+    from pytmuxlib.serverremote import RemoteLink
+    srv, task, sock = await server_only()
+    try:
+        link = RemoteLink("hostX", object(), object())
+        srv._remotes_dict()["hostX"] = link
+        srv._remote_sticky_bind(link)
+
+        # 상류 인스턴스 A: 탭 churn 뒤 wid=[2,3,4]. 사용자가 T2(wid 2)를 핀.
+        srv._remote_boot_check(link, {"boot_id": "AAA"})
+        link.windows = srv._sanitize_windows(
+            [{"wid": 2, "name": "T2"}, {"wid": 3, "name": "T3"},
+             {"wid": 4, "name": "T4"}])
+        link.pinned_windows.add(srv._win_key(link.windows[0]))
+        link.detached_windows.add(srv._win_key(link.windows[2]))
+
+        # 상류 재시작 → 인스턴스 B. 같은 탭들이 wid=[1,2,3] 으로 재발급.
+        srv._remote_boot_check(link, {"boot_id": "BBB"})
+        link.windows = srv._sanitize_windows(
+            [{"wid": 1, "name": "T2"}, {"wid": 2, "name": "T3"},
+             {"wid": 3, "name": "T4"}])
+        pinned = [rw["name"] for rw in link.windows
+                  if srv._win_key(rw) in link.pinned_windows]
+        assert pinned == [], f"상류 재시작 뒤 엉뚱한 탭이 핀됨(F-1): {pinned}"
+        assert not link.detached_windows, "분리 키가 새 인스턴스에 오매칭됨(F-1)"
+        assert link.boot_id == "BBB"
+
+        # 같은 인스턴스가 계속 status 를 보내면 sticky 는 **유지**된다(과잉 리셋 금지).
+        link.pinned_windows.add(srv._win_key(link.windows[0]))
+        srv._remote_boot_check(link, {"boot_id": "BBB"})
+        assert [rw["name"] for rw in link.windows
+                if srv._win_key(rw) in link.pinned_windows] == ["T2"]
+
+        # 구버전 상류(boot_id 미전송)·신뢰불가 타입은 종전 거동(리셋 안 함).
+        for bad in ({}, {"boot_id": None}, {"boot_id": 123}, {"boot_id": ""}):
+            srv._remote_boot_check(link, bad)
+            assert link.pinned_windows, f"구버전/불량 boot_id({bad})에 핀이 날아감"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_sticky_sets_stay_shared_refs_after_boot_reset():
+    """[F-1 수정의 함정] boot 리셋은 집합을 **재대입하지 말고 clear** 해야 한다.
+
+    핀/분리 집합은 호스트별 sticky 저장소(`_remote_sticky`)와 **객체를 공유**한다
+    (_remote_sticky_bind). 재대입하면 저장소는 옛 객체를 계속 들고 있어 이후 재-attach
+    가 리셋 이전 상태를 되살린다([[remote-pin-sticky-host-lifetime]] 계열)."""
+    from pytmuxlib.serverremote import RemoteLink
+    srv, task, sock = await server_only()
+    try:
+        link = RemoteLink("hostY", object(), object())
+        srv._remotes_dict()["hostY"] = link
+        srv._remote_sticky_bind(link)
+        store = srv._remote_sticky_dict()["hostY"]
+        srv._remote_boot_check(link, {"boot_id": "A"})
+        link.pinned_windows.add(7)
+        srv._remote_boot_check(link, {"boot_id": "B"})       # 리셋 발동
+        assert link.pinned_windows is store["pinned"], "핀 집합이 재대입됨(공유 참조 깨짐)"
+        assert link.detached_windows is store["detached"], "분리 집합이 재대입됨"
+        assert not store["pinned"], "저장소 쪽이 안 비워짐 — 재-attach 로 되살아난다"
+    finally:
+        await teardown(srv, task, sock)

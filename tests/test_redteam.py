@@ -6,9 +6,12 @@
   · 플러드 뒤에도 서버 생존 + **fd 누수 없음**,
   · 자원 표본 헬퍼가 정수를 돌려준다.
 """
+import asyncio
 import gc
 import os
 import sys
+import tempfile
+import time
 
 import harness  # noqa: F401 (sys.path 주입)
 from harness import server_only, teardown
@@ -185,3 +188,153 @@ async def test_attach_selftest_socket_path_within_af_unix_limit():
     finally:
         import shutil
         shutil.rmtree(home, ignore_errors=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 루프-생존 배터리 (blocking-on-loop 을 코드리뷰 산물이 아니라 런타임 단언으로)
+# ─────────────────────────────────────────────────────────────────────────────
+# 이 저장소는 blocking-on-loop 을 **네 번** 겪었다: claude-name-sync(S-3, 2026-07-10)·
+# autorename _fg_command(P8)·mdir(LIV, 2026-07-16)·그리고 2026-07-17 검수에서 코어
+# `_pane_cwd`(split/새탭마다 lsof 321ms) + ncd 재귀검색(1.44s×키스트로크, **릴레이라
+# 상류까지 얼림**) + p4 describe(20s). 매번 **사람이 코드를 읽어야** 발견됐고, 고칠 땐
+# 그 자리만 고쳐 형제가 남았다 — serverio 가 awaitable 을 await 하는 탈출구는 2026-07-16
+# 부터 있었는데 mdir 만 채택했다. 아래 배터리는 그 패턴을 **실행으로** 잡는다: 훅의
+# 실작업을 느리게 스텁하고 구동하면서 이벤트 루프가 멎는지 본다. 오프로드돼 있으면
+# 작업이 400ms 여도 루프 gap 은 ~5ms, 인라인이면 gap≈400ms — 60배 차라 임계값이 둔감하다.
+
+_SLOW = 0.4          # 스텁 작업 시간
+_GAP_MAX = 0.15      # 허용 루프 정지(오프로드면 ~0.005s, 인라인이면 ~0.4s)
+
+
+class _FakeSrvCwd:
+    """훅이 cwd 추정에 쓰는 최소 서버(세션 읽기 부분만)."""
+    def _resolve_start_cwd(self, sess, path):
+        return tempfile.gettempdir()
+
+
+async def test_loop_alive_ncd_find_offloaded():
+    """[LOOP-1 회귀] ncd 재귀검색은 이벤트 루프를 막지 않는다.
+
+    회귀 전: 훅이 dict 를 곧바로 반환해 BFS(최대 20000 디렉토리, 실측 1.44s/회)가
+    루프에서 돌았다. 스피드서치는 **키스트로크마다** 요청하므로 'documents' 한 번
+    타이핑에 누적 ~11초 전면 정지. 게다가 request_nc_find 는 `_REMOTE_RELAY_ACTIONS`
+    라 하류 사용자의 타이핑이 **상류 서버 전체**를 얼렸다(신뢰경계를 넘는 DoS)."""
+    import pytmuxlib.plugins.ncd.server as ncds
+    from pytmuxlib.plugins.ncd import PLUGIN
+
+    orig = ncds.nc_find_msg
+    ncds.nc_find_msg = lambda *a, **k: (time.sleep(_SLOW),
+                                        {"t": "nc_found", "target": None,
+                                         "chain": []})[1]
+    try:
+        gap = await harness.max_loop_gap(
+            lambda: PLUGIN.handle_server_request(
+                _FakeSrvCwd(), None, "request_nc_find",
+                {"query": "x", "root": tempfile.gettempdir()}))
+        assert gap < _GAP_MAX, (
+            f"ncd find 가 이벤트 루프를 {gap*1000:.0f}ms 막았다 — 훅이 executor 로 "
+            f"오프로드하지 않고 루프에서 실행(LOOP-1 회귀)")
+    finally:
+        ncds.nc_find_msg = orig
+
+
+async def test_loop_alive_ncd_list_offloaded():
+    """[LOOP-1 회귀] ncd 목록(초기 진입·노드 펼치기)도 루프를 막지 않는다."""
+    import pytmuxlib.plugins.ncd.server as ncds
+    from pytmuxlib.plugins.ncd import PLUGIN
+
+    orig = ncds.nc_list_fs
+    ncds.nc_list_fs = lambda *a, **k: (time.sleep(_SLOW),
+                                       {"t": "nc_list", "root": "/", "path": None,
+                                        "chain": []})[1]
+    try:
+        for msg in ({}, {"path": tempfile.gettempdir()}):
+            gap = await harness.max_loop_gap(
+                lambda m=msg: PLUGIN.handle_server_request(
+                    _FakeSrvCwd(), None, "request_nc_list", m))
+            assert gap < _GAP_MAX, (
+                f"ncd list{msg} 가 루프를 {gap*1000:.0f}ms 막았다(LOOP-1 회귀)")
+    finally:
+        ncds.nc_list_fs = orig
+
+
+async def test_loop_alive_p4_hooks_offloaded():
+    """[LOOP-2 회귀] p4 서브프로세스는 루프를 막지 않는다.
+
+    회귀 전: describe 타임아웃이 20초라 느린/불통 P4PORT 하나면 **공격자 없이도**
+    서버가 최대 20초 정지했다(list 는 8초×2)."""
+    import importlib
+    p4mod = importlib.import_module(
+        "pytmuxlib.plugins.p4-show-submitted-changelists")
+    p4srv = importlib.import_module(
+        "pytmuxlib.plugins.p4-show-submitted-changelists.server")
+
+    o_list, o_desc = p4srv.list_changes_msg, p4srv.describe_msg
+    p4srv.list_changes_msg = lambda *a, **k: (time.sleep(_SLOW),
+                                              {"t": "p4_changes", "rows": [],
+                                               "err": None, "info": {}})[1]
+    p4srv.describe_msg = lambda *a, **k: (time.sleep(_SLOW),
+                                          {"t": "p4_describe", "change": "1",
+                                           "text": "", "err": None})[1]
+    try:
+        for action, msg in (("request_p4_changes", {"count": 3}),
+                            ("request_p4_describe", {"change": "1"})):
+            gap = await harness.max_loop_gap(
+                lambda a=action, m=msg: p4mod.PLUGIN.handle_server_request(
+                    _FakeSrvCwd(), None, a, m))
+            assert gap < _GAP_MAX, (
+                f"p4 {action} 가 루프를 {gap*1000:.0f}ms 막았다(LOOP-2 회귀)")
+    finally:
+        p4srv.list_changes_msg, p4srv.describe_msg = o_list, o_desc
+
+
+async def test_loop_alive_mdir_offloaded():
+    """[LIV-1/2 회귀, 2026-07-16] mdir fs I/O 는 루프를 막지 않는다(이미 고쳐진 것을
+    배터리에 편입해 되돌아가지 못하게 못박는다)."""
+    import pytmuxlib.plugins.mdir.server as mds
+    from pytmuxlib.plugins.mdir import PLUGIN
+
+    orig = mds.mdir_list_fs
+    mds.mdir_list_fs = lambda *a, **k: (time.sleep(_SLOW),
+                                        {"t": "mdir_list", "path": "/",
+                                         "entries": []})[1]
+    try:
+        gap = await harness.max_loop_gap(
+            lambda: PLUGIN.handle_server_request(
+                _FakeSrvCwd(), None, "request_mdir_list",
+                {"path": tempfile.gettempdir()}))
+        assert gap < _GAP_MAX, f"mdir list 가 루프를 {gap*1000:.0f}ms 막았다(LIV 회귀)"
+    finally:
+        mds.mdir_list_fs = orig
+
+
+async def test_loop_alive_pane_cwd_core_paths():
+    """[blocking-on-loop 4회차 회귀] 코어의 cwd 추정(split/새탭/popup/respawn 이 쓰는
+    `_pane_cwd`)이 루프를 막지 않는다.
+
+    회귀 전: macOS 폴백이 `lsof` 서브프로세스(실측 중앙값 **321ms**, 상한 2s)였고
+    호출부가 전부 sync `def` 라 await 오프로드가 구조적으로 불가했다 → 분할/새 탭
+    한 번마다 전 클라 동결. 수정=플랫폼 빠른 경로(libproc/proc/PEB, ~1µs).
+
+    같은 헬퍼를 빌려 쓰는 플러그인(name-sync)엔 S-3 회귀가 있었는데 코어엔 없었다 —
+    그 비대칭이 이 결함을 반년 살려뒀다."""
+    from pytmuxlib.model import Pane
+    srv, task, ep = await server_only()
+    try:
+        class _Pty:
+            pid = os.getpid()
+        pane = Pane(-1, -1, 80, 24)
+        pane.pty = _Pty()
+
+        async def _drive():
+            # 새 탭/분할 20번이 부르는 만큼 그대로 부른다(sync 경로라 루프 위에서 돈다).
+            for _ in range(20):
+                srv._pane_cwd(pane)
+
+        gap = await harness.max_loop_gap(_drive)
+        # 20회 합계가 임계 안. 회귀(lsof)면 20×321ms=6.4초.
+        assert gap < _GAP_MAX, (
+            f"_pane_cwd 20회가 루프를 {gap*1000:.0f}ms 막았다 — 서브프로세스 폴백 "
+            f"회귀(blocking-on-loop 4회차)")
+    finally:
+        await teardown(srv, task, ep)

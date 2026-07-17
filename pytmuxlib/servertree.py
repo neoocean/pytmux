@@ -62,7 +62,8 @@ class ServerTreeMixin:
                     sess.tabs.pop(wi)
                     self._reindex(sess)
                     if not sess.tabs:
-                        del self.sessions[sess.name]
+                        # 클라 재배정과 한 몸(_drop_session docstring: SESSION-DEATH).
+                        self._drop_session(sess)
                 else:
                     sibling = parent.b if parent.a is pane else parent.a
                     gp = parent.parent
@@ -191,8 +192,18 @@ class ServerTreeMixin:
             return os.readlink(f"/proc/{pid}/cwd")
         except OSError:
             pass
-        # macOS/BSD 폴백: /proc 가 없으므로 lsof 로 cwd(fd=cwd) 를 조회.
-        # -Fn 은 'n<경로>' 한 줄로 출력하므로 파싱이 단순하다.
+        # macOS 빠른 경로: libproc proc_pidinfo(시스템콜 1회, ~1µs).
+        # **이 경로가 없으면 아래 lsof 서브프로세스가 이벤트 루프를 중앙값 321ms 막는다**
+        # — 이 함수의 호출부(split_pane/new_window/popup_open/respawn_pane)는 전부 sync
+        # `def` 라 await 로 오프로드할 수 없고, 서버는 단일 스레드라 그동안 전 클라가
+        # 얼어붙는다(코드검수 2026-07-17, blocking-on-loop 4회차). Linux(/proc)·
+        # Windows(PEB)가 이미 그랬듯 macOS 도 "동기지만 무시할 만한" 경로로 맞춘다.
+        cwd = proc.process_cwd(pid)
+        if cwd:
+            return cwd
+        # macOS/BSD 최후 폴백: /proc 가 없고 libproc 도 실패하면 lsof 로 조회.
+        # -Fn 은 'n<경로>' 한 줄로 출력하므로 파싱이 단순하다. (여기까지 오는 건 드물다 —
+        # 오면 위 주석의 블로킹 비용을 낸다.)
         try:
             out = subprocess.run(
                 ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
@@ -708,7 +719,8 @@ class ServerTreeMixin:
             sess.tabs.remove(tab)
         self._reindex(sess)
         if not sess.tabs:
-            del self.sessions[sess.name]
+            # 클라 재배정과 한 몸(_drop_session docstring: SESSION-DEATH).
+            self._drop_session(sess)
 
     kill_tab = kill_window
 
@@ -729,16 +741,34 @@ class ServerTreeMixin:
             pane.pty.close()
             pane.pty.reap(block=False)
 
+    def _drop_session(self, sess: Session) -> None:
+        """세션을 레지스트리에서 지우고 **그 세션을 보던 클라를 전부 재배정**한다.
+
+        재배정은 `del self.sessions[...]` 과 **한 몸**이어야 한다(검수 2026-07-17
+        SESSION-DEATH). 종전엔 세션 삭제가 세 곳이었는데 재배정은 `kill_session`
+        에만 있었다:
+          · `_remove_pane_from_tree`(마지막 패널 exit → 탭 0개) — 재배정 0곳
+          · `kill_window`(마지막 탭 kill) — 재배정 0곳
+          · `_cmd_kill_window` — **요청 클라만** 구제(다른 뷰어는 방치)
+        그래서 세션이 **2개 이상**일 때(=`_notify_no_sessions` 도 안 뜬다) 클라의
+        `c.session` 이 삭제된 Session 객체를 가리킨 채 남았다. 그 세션은 이미
+        `self.sessions` 에 없어 flush 루프가 순회하지 않고, `_send_full` 은
+        `active_window is None`(tabs 빈) → `_layout_msg` None → **조용히 return**.
+        결과: 클라가 `bye` 도 오류도 프레임도 없이 **영구 동결**, 프로세스 강제
+        종료만이 탈출구였다. 재배정을 삭제 지점으로 끌어올려 구조적으로 막는다."""
+        self.sessions.pop(sess.name, None)
+        for c in self.clients:
+            if c.session is sess:
+                c.session = next(iter(self.sessions.values()), None)
+
     def kill_session(self, name: str):
-        s = self.sessions.pop(name, None)
+        s = self.sessions.get(name)
         if not s:
             return
         for tab in s.tabs:
             for p in tab.window.panes():
                 self._destroy_pane_proc(p)
-        for c in self.clients:
-            if c.session is s:
-                c.session = next(iter(self.sessions.values()), None)
+        self._drop_session(s)
 
     def switch_session(self, client: "ClientConn", name: str) -> bool:
         target = self.sessions.get(name)

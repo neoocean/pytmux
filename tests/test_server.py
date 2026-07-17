@@ -5636,3 +5636,53 @@ async def test_running_server_cm_starts_and_cleans_up():
     except ValueError:
         raised = True
     assert raised, "CM 이 예외를 삼키지 않고 finally 정리 후 전파"
+
+
+class _StubClient:
+    """재배정 단언용 최소 클라(세션 참조만 본다)."""
+    def __init__(self, sess):
+        self.session = sess
+
+
+async def test_session_death_reassigns_every_client():
+    """[검수 SESSION-DEATH 회귀, 2026-07-17] 세션이 사라지면 **그 세션을 보던 모든**
+    클라가 재배정된다 — 삭제 경로가 어디든.
+
+    회귀 전: 세션 삭제는 세 곳인데 재배정은 `kill_session` 에만 있었다.
+      · `_remove_pane_from_tree`(마지막 패널 exit) — 0곳
+      · `kill_window`(마지막 탭 kill) — 0곳
+      · `_cmd_kill_window` — **요청 클라만** 구제(다른 뷰어 방치)
+    세션이 2개 이상이면 `_notify_no_sessions` 도 안 뜨므로 아무도 못 알아챈다.
+    남겨진 `c.session` 은 삭제된 Session 객체라 flush 루프가 순회하지 않고,
+    `_send_full` 은 `active_window is None` → `_layout_msg` None → 조용히 return.
+    → 클라는 **bye 도 오류도 프레임도 없이 영구 동결**(프로세스 kill 만이 탈출구).
+    실증: 수정 전 c1·c2 **둘 다** 삭제된 세션을 가리킨 채 남았다."""
+    srv, task, sock = await server_only()
+    try:
+        for killer in ("kill_window", "pane_eof", "kill_session"):
+            A = srv.new_session(80, 24, f"doomed-{killer}")
+            B = srv.new_session(80, 24, f"keep-{killer}")
+            assert A is not B
+            c1, c2 = _StubClient(A), _StubClient(A)
+            srv.clients.extend([c1, c2])
+            try:
+                if killer == "kill_window":
+                    srv.kill_window(A)                    # 마지막 탭 kill
+                elif killer == "kill_session":
+                    srv.kill_session(A.name)
+                else:
+                    # 마지막 패널의 PTY EOF(사용자가 `exit`) → 탭 0개 → 세션 소멸
+                    srv._remove_pane_from_tree(A.tabs[0].window.panes()[0])
+                assert A.name not in srv.sessions, f"{killer}: 세션이 안 지워짐"
+                live = list(srv.sessions.values())
+                for nm, c in (("c1", c1), ("c2", c2)):
+                    assert c.session is None or c.session in live, (
+                        f"{killer}: {nm} 이 삭제된 세션({getattr(c.session,'name',None)})을 "
+                        f"가리킨 채 남음 — bye 없는 영구 동결(SESSION-DEATH)")
+            finally:
+                for c in (c1, c2):
+                    if c in srv.clients:
+                        srv.clients.remove(c)
+                srv.sessions.pop(B.name, None)
+    finally:
+        await teardown(srv, task, sock)

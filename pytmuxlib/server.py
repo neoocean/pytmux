@@ -10,6 +10,7 @@ import shlex
 import subprocess
 import time
 import traceback
+import uuid
 
 from . import ipc, plugins, proc, pty_backend, sshwrap
 from .model import (ClientConn, Pane, Session, Split, Tab, Window,
@@ -51,6 +52,18 @@ _SERVER_BASES = _PLUGIN_SERVER_MIXINS + (
 class Server(*_SERVER_BASES):
     def __init__(self, sock_path: str, resume_path: str | None = None):
         self.sock_path = sock_path
+        # 이 서버 **인스턴스**의 부팅 식별자(검수 F-1, 2026-07-17). status 에 실려
+        # 나가고, 하류(다운스트림)는 이걸로 원격 sticky 키를 네임스페이싱한다.
+        #
+        # 왜 필요한가: 탭의 안정 id(`Tab.wid`)는 `model._win_seq` 전역 카운터에서 나오고
+        # 그 카운터는 **영속되지 않는다**(serverpersist 는 wid 를 저장조차 안 한다).
+        # 그래서 상류가 재시작/업그레이드되면 살아남은 탭들이 wid 를 **1..N 으로 재발급**
+        # 받는다 — 하류에 남아 있던 옛 sticky 키(핀/분리)와 **최대로 충돌**한다.
+        # serverpersist 의 "상류도 재시작하면 그 detach 는 잊혀 다시 나타난다(안전한
+        # 저하)" 주석은 **사실과 정반대**였다: 실증 결과 잊히는 게 아니라 사용자가 핀한
+        # T2 대신 **엉뚱한 T3 가 핀**됐다. boot_id 가 바뀌면 하류가 "상류가 재시작했다"를
+        # 알아채고 sticky 를 **명시적으로 리셋**한다(조용한 오매칭 → 정직한 초기화).
+        self.boot_id = uuid.uuid4().hex
         # 선택적 플러그인(pytmuxlib/plugins/*). 알 수 없는 action 회신을 플러그인에
         # 넘긴다(ncd 의 request_nc_list 등). 디렉토리를 지우면 해당 기능은 조용히 사라진다.
         self.plugins = plugins.load()

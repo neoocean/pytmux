@@ -25,6 +25,11 @@ import sys
 import traceback
 
 from . import ipc, pty_backend, ptyhostproto as proto
+from .protocol import HANDSHAKE_MAX_FRAME, HANDSHAKE_TIMEOUT
+
+# 인증 전 동시 연결 상한(PTYH-1). 메인 서버 serverio._MAX_PREAUTH_CONNS 와 같은 값·
+# 같은 취지 — 정상 피어는 서버 하나뿐이라 128 은 사실상 무제한이고, 무인가 폭주만 캡된다.
+_MAX_PREAUTH_CONNS = 128
 
 # 서버 재연결 갭 동안 패널별로 버퍼링하는 미전송 출력 상한(초과분은 머리부터 버림).
 _PENDING_MAX = 1 * 1024 * 1024
@@ -56,6 +61,7 @@ class PtyHost:
         self._stop: asyncio.Event | None = None            # shutdown op → serve 종료
         self._token: str | None = None                     # 연결 인증 토큰(M1)
         self._published_port: int | None = None            # portfile 에 게시한 포트
+        self._preauth_conns = 0                            # 인증 중 연결 수(PTYH-1)
 
     # ---- 연결 처리 ----
     async def _authenticate(self, reader: asyncio.StreamReader,
@@ -66,13 +72,27 @@ class PtyHost:
         ② 토큰이 설정돼 있으면(프로덕션은 mgr 이 `--tokenfile` 로 항상 게시) 첫 프레임이
            유효 토큰을 실은 `auth` 여야 한다 — `hmac.compare_digest` 로 상수시간 비교.
         Windows 루프백 TCP 의 무인가 로컬 접속을 차단하는 핵심 게이트다(F1 회귀 봉쇄).
+
+        ③ **인증 전 자원 상한**(PTYH-1, 보안검수 2026-07-17): 읽기에 타임아웃과 작은
+           프레임 캡을 건다. 메인 서버는 이 둘 + 연결 캡을 2026-07-03(M2)·07-04(S1)에
+           갖췄는데 pty-host 만 **셋 다 없이** 남아 있었다 — `read_frame` 이 16MiB 를
+           하드코딩하고 타임아웃이 없어, 무인가 피어가 16MiB 를 광고한 뒤 아무것도 안
+           보내면 그 연결이 **영원히** 버퍼를 문 채 산다. Windows 는 루프백 TCP 라
+           같은 박스의 아무 로컬 사용자나 이걸 N개 열 수 있고, host 가 고갈되면 다음
+           서버 재시작 때 재연결이 실패해 **세션 전체(살아있던 셸 전부)가 소멸**한다 —
+           host 모드가 존재하는 이유 그 자체가 파괴된다.
         """
         sock = writer.get_extra_info("socket")
         puid = ipc.peer_uid(sock)
         if puid is not None and puid != os.getuid():
             return False
         if self._token is not None:
-            f = await proto.read_frame(reader)
+            try:
+                f = await asyncio.wait_for(
+                    proto.read_frame(reader, max_frame=HANDSHAKE_MAX_FRAME),
+                    HANDSHAKE_TIMEOUT)
+            except (asyncio.TimeoutError, OSError, ConnectionError):
+                return False
             if not f or f[0] != "json" or f[1].get("op") != "auth":
                 return False
             tok = f[1].get("token")
@@ -82,11 +102,25 @@ class PtyHost:
 
     async def _handle_conn(self, reader: asyncio.StreamReader,
                            writer: asyncio.StreamWriter):
-        await proto.write_frame(writer, proto.encode_json(
-            {"op": "hello", "version": proto.PROTO_VERSION, "pid": os.getpid()}))
-        # 인증을 **연결 채택 전에** 한다 — 무인가 접속이 현재 서버 연결을 대체하거나
-        # (DoS) pending 출력을 가로채지(정보 노출) 못하게.
-        if not await self._authenticate(reader, writer):
+        # 인증 전 동시 연결 캡(PTYH-1) — 메인 서버 _MAX_PREAUTH_CONNS(S1)와 동형.
+        # 각 미인증 연결이 최대 HANDSHAKE_TIMEOUT 동안 상주하므로, 캡이 없으면 무인가
+        # 피어가 연결을 쌓아 accept 여력·핸들을 고갈시킨다(→ 서버 재시작 시 재연결
+        # 실패 → 세션 전멸). 카운트는 **핸드셰이크 구간만** 감싼다(try/finally) —
+        # 인증된 서버 연결의 수명은 세지 않는다.
+        if self._preauth_conns >= _MAX_PREAUTH_CONNS:
+            with contextlib.suppress(Exception):
+                writer.close()
+            return
+        self._preauth_conns += 1
+        try:
+            await proto.write_frame(writer, proto.encode_json(
+                {"op": "hello", "version": proto.PROTO_VERSION, "pid": os.getpid()}))
+            # 인증을 **연결 채택 전에** 한다 — 무인가 접속이 현재 서버 연결을 대체하거나
+            # (DoS) pending 출력을 가로채지(정보 노출) 못하게.
+            ok = await self._authenticate(reader, writer)
+        finally:
+            self._preauth_conns -= 1
+        if not ok:
             with contextlib.suppress(Exception):
                 writer.close()
             return

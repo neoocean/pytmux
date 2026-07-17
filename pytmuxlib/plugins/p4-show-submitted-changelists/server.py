@@ -87,12 +87,19 @@ def _fmt_when(epoch: str) -> str:
         return epoch or ""
 
 
-def list_changes_msg(server, sess, count: int) -> dict:
+_UNSET = object()      # "cwd 미지정 → 세션에서 구하라"(None 은 '구했지만 없음'이라 구분)
+
+
+def list_changes_msg(server, sess, count: int, cwd=_UNSET) -> dict:
     """submitted changelists 최신 `count` 건을 회신한다(현재 워크스페이스의 p4 설정 사용).
 
     `p4 -G changes -m <count> -s submitted -l` → 각 레코드를 {change,when,user,client,desc}
-    로 정규화. p4 오류 레코드(code==error)는 `err` 로 모은다. info(서버주소 등)도 함께."""
-    cwd = _cwd(server, sess)
+    로 정규화. p4 오류 레코드(code==error)는 `err` 로 모은다. info(서버주소 등)도 함께.
+
+    (`cwd` 를 넘기면 세션 조회를 건너뛴다 — 서버 훅이 cwd 를 루프에서 미리 구하고
+    나머지 p4 서브프로세스를 executor 로 넘기기 위한 분할. LOOP-2.)"""
+    if cwd is _UNSET:
+        cwd = _cwd(server, sess)
     info = _info(cwd)
     recs, err = _run_p4_marshal(
         ["changes", "-m", str(count), "-s", "submitted", "-l"], cwd, _LIST_TIMEOUT)
@@ -115,12 +122,15 @@ def list_changes_msg(server, sess, count: int) -> dict:
     return {"t": "p4_changes", "rows": rows, "err": perr, "info": info}
 
 
-def describe_msg(server, sess, change: str) -> dict:
+def describe_msg(server, sess, change: str, cwd=_UNSET) -> dict:
     """체인지리스트 `change` 의 상세(설명+영향 파일)를 사람이 읽기 좋은 텍스트로 회신한다.
 
     `p4 describe -s <change>`(-s = diff 생략, 파일 목록만)의 원문 텍스트를 그대로 싣는다 —
-    화면은 이걸 줄 단위로 스크롤한다. returncode≠0 이면 stderr 를 `err` 로."""
-    cwd = _cwd(server, sess)
+    화면은 이걸 줄 단위로 스크롤한다. returncode≠0 이면 stderr 를 `err` 로.
+
+    (`cwd` 인자는 list_changes_msg 와 동일한 LOOP-2 분할용.)"""
+    if cwd is _UNSET:
+        cwd = _cwd(server, sess)
     try:
         r = subprocess.run(["p4", "describe", "-s", str(change)],
                            capture_output=True, timeout=_DESCRIBE_TIMEOUT,

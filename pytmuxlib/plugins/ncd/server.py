@@ -167,13 +167,26 @@ def nc_list_msg(server, sess, path: str | None = None) -> dict:
       트리로 그리고 cwd 행에 커서를 둔다(NCD: 전체 트리·현재 위치 시작). **Windows**
       에선 드라이브 문자들을 묶는 합성 최상위('')를 맨 위에 둬 드라이브 전환이 되게
       한다(`root`=""). cwd 추정 불가 시 루트만 1단계.
-    - 모든 경로는 **절대경로**(클라 경로 조합 버그 여지 제거; 표시명=basename)."""
+    - 모든 경로는 **절대경로**(클라 경로 조합 버그 여지 제거; 표시명=basename).
+
+    (이 함수는 세션 읽기 + fs 나열을 한 번에 하는 동기 진입점이다. 서버 훅은 둘을
+    `nc_list_resolve_cwd`/`nc_list_fs` 로 나눠 fs 쪽만 executor 로 넘긴다 — LOOP-1.)"""
+    return nc_list_fs(nc_list_resolve_cwd(server, sess) if not path else None, path)
+
+
+def nc_list_resolve_cwd(server, sess) -> str | None:
+    """활성 패널 cwd 추정 — **세션 상태를 읽으므로 루프 스레드에서** 끝내야 한다
+    (executor 로 넘기면 서버 상태와 레이스). mdir_list_resolve_base 와 동형."""
+    cwd = server._resolve_start_cwd(sess, "current")
+    return os.path.abspath(cwd) if cwd else None
+
+
+def nc_list_fs(cwd: str | None, path: str | None = None) -> dict:
+    """순수 파일시스템 나열(서버 상태 미접근 → executor 오프로드 안전). LOOP-1."""
     if path:
         root = os.path.abspath(os.path.expanduser(str(path)))
         return {"t": "nc_list", "root": root, "path": root,
                 "dirs": _list_dirs(root)}
-    cwd = server._resolve_start_cwd(sess, "current")
-    cwd = os.path.abspath(cwd) if cwd else None
     chain_paths = _ancestor_chain(cwd) if cwd else [os.path.abspath(os.sep)]
     drives = _drive_roots()
     chain = _build_chain(chain_paths, drives)

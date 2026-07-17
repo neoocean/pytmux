@@ -134,6 +134,41 @@ def _pid_listening_on(host: str, port: int) -> int:
         return -1
 
 
+def _pid_owning_unix_sock(path: str) -> int:
+    """AF_UNIX 소켓 파일을 열고 있는 PID(외부 서버 자원 표본용). 불가면 -1.
+
+    §10 W5 의 외부-PID 자원 표본은 `_pid_listening_on`(TCP 포트) 로만 PID 를 구해서
+    **POSIX(unix 소켓)에선 항상 -1** 이었다 → `--attach`/`--attach-selftest` 의 누수
+    게이트가 개발 박스(macOS=로컬 권위)에서 아무것도 재지 않고 통과했다(레드팀
+    2026-07-17).
+
+    **`lsof -t <최종경로>` 로는 절대 못 찾는다**: `ipc.start_server` 는 TOCTOU 를 피하려
+    pid 고유 임시경로(`<path>.<pid>.sock.tmp`)에 bind 한 뒤 `os.replace` 로 최종 이름에
+    건다(§5.9). lsof 가 보고하는 NAME 은 **bind 당시의 임시경로**라 최종 경로와 안 맞는다.
+    그래서 `lsof -U -F pn`(p=pid·n=name)을 훑어 NAME 이 최종경로거나 그 replace-전
+    임시경로(`<path>.` 접두)인 항목의 PID 를 집는다.
+    """
+    try:
+        out = subprocess.run(["lsof", "-U", "-F", "pn"], capture_output=True,
+                             text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return -1
+    if out.returncode != 0:
+        return -1
+    pid = -1
+    for ln in out.stdout.splitlines():
+        if ln.startswith("p"):
+            try:
+                pid = int(ln[1:])
+            except ValueError:
+                pid = -1
+        elif ln.startswith("n") and pid > 0:
+            name = ln[1:]
+            if name == path or name.startswith(path + "."):
+                return pid
+    return -1
+
+
 def count_fds() -> int:
     """현재 프로세스의 열린 fd 수. Linux=/proc/self/fd, macOS/BSD=/dev/fd,
     Windows=프로세스 핸들 수(fd 등가 누수 지표, §10 W3). 불가면 -1."""
@@ -149,7 +184,14 @@ def count_fds() -> int:
 
 def pid_fds(pid: int) -> int:
     """외부 PID 의 열린 fd 수(/proc/<pid>/fd 우선, 아니면 lsof; Windows=핸들 수).
-    best-effort, 불가면 -1."""
+    best-effort, 불가면 -1.
+
+    **측정 실패는 반드시 -1** — 0 으로 뭉개면 `_res_growth` 가 "유효한 0 fd 표본"으로
+    보고 fd_growth=0 → 누수 게이트 **통과**로 오인한다(레드팀 2026-07-17: `--attach`
+    가 유령 PID(-1) 표본으로 verdict_ok=True 를 냈다 = 가짜 초록불).
+    """
+    if pid <= 0:                    # -1=PID 미상 센티넬. 표본 불가를 명시적으로 환원.
+        return -1
     try:
         return len(os.listdir(f"/proc/{pid}/fd"))
     except OSError:
@@ -159,7 +201,11 @@ def pid_fds(pid: int) -> int:
     try:
         out = subprocess.run(["lsof", "-p", str(pid)], capture_output=True,
                              text=True, timeout=10)
-        return max(0, len(out.stdout.splitlines()) - 1)
+        # lsof 실패(rc≠0)·빈 출력 = 측정 불가(-1). 헤더뿐인 출력도 0 이 아니라 -1.
+        lines = out.stdout.splitlines()
+        if out.returncode != 0 or len(lines) <= 1:
+            return -1
+        return len(lines) - 1
     except (OSError, subprocess.SubprocessError):
         return -1
 
@@ -167,6 +213,8 @@ def pid_fds(pid: int) -> int:
 def pid_rss_kb(pid: int) -> int:
     """외부 PID 의 RSS(KB). /proc/<pid>/status 우선, 아니면 ps; Windows=tasklist 작업셋.
     best-effort, 불가면 -1."""
+    if pid <= 0:                    # -1=PID 미상 센티넬(위 pid_fds 주석 참조).
+        return -1
     try:
         with open(f"/proc/{pid}/status", encoding="ascii") as f:
             for line in f:
@@ -608,7 +656,12 @@ async def redteam_attach(endpoint: str, pid: int | None, rounds: int,
                          destructive: bool, *, conc_waves: int = 10,
                          conc_width: int = 20, slowloris: bool = False) -> dict:
     token = ipc.read_token(endpoint)
-    res0 = ({"rss_kb": pid_rss_kb(pid), "fds": pid_fds(pid)} if pid else None)
+    # `if pid` 는 -1(=PID 미상 센티넬)이 truthy 라 유령 PID 를 표본해 fd 0/RSS -1 을
+    # "유효 표본"으로 실어 날랐다 → 누수 게이트 가짜 통과(레드팀 2026-07-17). PID 를
+    # 모르면 표본을 **없음(None)** 으로 정직하게 환원한다(_res_growth = 미게이트).
+    sample = (lambda: {"rss_kb": pid_rss_kb(pid), "fds": pid_fds(pid)}) if (
+        pid is not None and pid > 0) else (lambda: None)
+    res0 = sample()
     counts = await run_battery(endpoint, rounds, destructive=destructive)
     # 라이브 비파괴 동시 폭주(연결 즉시 닫힘): 외부 서버의 동시성 경로를 본다.
     conc = await run_concurrent_flood(endpoint, conc_waves, conc_width,
@@ -617,7 +670,7 @@ async def redteam_attach(endpoint: str, pid: int | None, rounds: int,
     # 켜도 hold 짧고 자동 해제 — 비파괴지만 보수적으로 둔다.
     slow = (await run_slowloris(endpoint, token, n_conns=30, hold_sec=0.6)
             if slowloris else None)
-    res1 = ({"rss_kb": pid_rss_kb(pid), "fds": pid_fds(pid)} if pid else None)
+    res1 = sample()
     alive = await authed_list_alive(endpoint, token)
     res_ok, res_growth = _res_growth(res0, res1)
     report = {
@@ -656,7 +709,9 @@ def discover_target() -> tuple[str | None, int]:
         if port:
             return f"tcp:{host}:{port}", _pid_listening_on(host, port)
         return ep, -1
-    return ep, -1            # unix 소켓: PID 미상(best-effort), 배터리는 그대로 진행
+    # unix 소켓: lsof 로 소유 PID 를 집어 외부-PID 자원 표본을 살린다(못 찾으면 -1,
+    # 배터리는 그대로 진행). 종전엔 무조건 -1 이라 POSIX 누수 게이트가 죽어 있었다.
+    return ep, _pid_owning_unix_sock(ep)      # unix 는 엔드포인트 문자열=소켓 경로
 
 
 # 자식 서버를 격리 부팅하는 부트스트랩(--attach-selftest). 별도 프로세스라 부모(redteam)
@@ -712,7 +767,11 @@ async def redteam_attach_selftest(rounds: int) -> dict:
         if not endpoint:
             raise RuntimeError("selftest 자식 서버 디스커버리 실패(포트파일 미게시)")
 
-        report = await redteam_attach(endpoint, owner_pid, rounds, destructive=False)
+        # 자원 표본은 **우리가 띄운 child.pid** 로 뜬다 — selftest 는 자식을 소유하므로
+        # PID 가 확실하다. 종전엔 discover 가 준 owner_pid 를 그대로 썼고, unix 소켓에선
+        # 그게 늘 -1 이라 표본이 유령 PID 로 가 누수 게이트가 죽어 있었다(2026-07-17).
+        # 디스커버리 정확성은 아래 pid_match 로 **따로** 단언한다(두 관심사 분리).
+        report = await redteam_attach(endpoint, child.pid, rounds, destructive=False)
         report["mode"] = "attach-selftest"
         report["child_pid"] = child.pid
         report["discovered_pid"] = owner_pid
