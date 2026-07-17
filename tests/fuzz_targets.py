@@ -117,4 +117,20 @@ def seed_corpus() -> list[bytes]:
               b"\x1b]0;title\x07", b"\x1b]0;" + b"A" * 9000 + b"\x07",
               b"\x1bP" + b"q" * 5000, b"\x1b[", b"\x1b[38;2;1;2;3m",
               "와이드문자🌟混在".encode()]
+
+    # ── 2026-07-17 검수가 찾아낸 구조적 악성 입력 ──────────────────────────────
+    # 이 셋은 **랜덤 바이트로는 영원히 도달 못 한다**(코퍼스 길이 상한 96B, 균등
+    # 랜덤은 깊은 중첩·긴 파라미터 체인을 만들지 못함). 그래서 F1/F2/F4 는 퍼저가
+    # 아니라 사람이 코드를 읽어 찾았다 — 시드로 박아 다음부터는 퍼저가 잡게 한다.
+
+    # F4: 깊게 중첩된 **유효** JSON → json.loads 가 RecursionError(ValueError 아님).
+    # 40KB 라 인증 전 상한(HANDSHAKE_MAX_FRAME=64KiB) 안 = 무토큰 도달 가능.
+    deep = b"[" * 20000 + b"]" * 20000
+    seeds.append(len(deep).to_bytes(4, "big") + deep)
+    # F1: 과다 CSI 파라미터 — `_call_csi` 의 pop 재시도 루프가 O(N²)였다(128KB=4.76s
+    # 전서버 정지). 종결자 H(=cursor_position, arity 2)에 파라미터 수천 개.
+    seeds.append(b"\x1b[" + b"1;" * 4000 + b"H")
+    # F2: 미종결 CSI 파라미터 — `_raw` 에 상한이 없어 CPU(O(n²))+메모리 DoS 였다.
+    # **종결자가 없다**는 게 요점(feed 를 넘어 본문이 영구 잔류).
+    seeds.append(b"\x1b[" + b"1" * 20000)
     return seeds

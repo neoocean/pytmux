@@ -84,8 +84,17 @@ async def read_msg(reader: asyncio.StreamReader, max_frame: int = MAX_FRAME):
     try:
         # json.loads 는 bytes 를 직접 받아 내부에서 utf-8 디코드한다(중간 str 할당 제거).
         return json.loads(payload)
-    except (ValueError, UnicodeDecodeError):
-        return None                     # 손상·비-JSON 프레임은 조용히 버림(리더 보호)
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        # 손상·비-JSON 프레임은 조용히 버림(리더 보호).
+        #
+        # RecursionError(F4, 보안검수 2026-07-17): 깊게 중첩된 **유효** JSON
+        # (`[`×20000 + `]`×20000 = 40KB)은 json.loads 에서 RecursionError 를 내는데,
+        # 이건 ValueError 가 아니라 종전 계약을 탈출했다 — 40KB 는 **인증 전** 상한
+        # (HANDSHAKE_MAX_FRAME=64KiB) 안이라 Windows 루프백에선 무토큰으로 도달한다.
+        # 실측: fd 누수도 서버 사망도 없었지만(handle_client 밖에서 asyncio 가 트랜스포트를
+        # 정리), 연결마다 미처리 트레이스백이 찍혀 error.log 를 무인가로 부풀렸다.
+        # 이 docstring 이 약속한 "예외 대신 None" 계약을 지킨다(fuzz_targets 도 그렇게 단언).
+        return None
 
 
 def frame_msg(obj) -> bytes:
