@@ -27,7 +27,7 @@
         <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">Claude Code 연동</h1>
         <p style="font-size:18px;">
           패널에서 <code>claude</code> CLI 를 돌리면 pytmux 가 상태·토큰·한도를 추적하고, 리밋에 걸리면
-          자동으로 잇습니다. 이 모든 기능은 <code>claude-code</code> 플러그인이며, 디렉토리를 지우면 조용히
+          자동으로 잇습니다. 이 모든 기능은 <code class="nb">claude-code</code> 플러그인이며, 디렉토리를 지우면 조용히
           사라집니다.
         </p>
       </header>
@@ -50,8 +50,8 @@
         <p>
           사용량 리밋에 걸려 멈추면 출력의 해제 시각을 읽어 <strong>그때 자동으로 재개</strong>합니다.
           <kbd>prefix</kbd> <kbd>R</kbd>(또는 <code>auto-resume on</code>)로 토글하며 상태줄에 <code>AR</code>
-          로 표시됩니다. 재개 시 보낼 메시지는 <code>auto-resume-message</code> 로 바꿀 수 있습니다.
-          전송 오류(API 오류·레이트 리밋)에는 <code>auto-retry</code>(기본 on)가 <strong>"계속"</strong> 을 넣어
+          로 표시됩니다. 재개 시 보낼 메시지는 <code class="nb">auto-resume-message</code> 로 바꿀 수 있습니다.
+          전송 오류(API 오류·레이트 리밋)에는 <code class="nb">auto-retry</code>(기본 on)가 <strong>"계속"</strong> 을 넣어
           이어 갑니다 — 1분 → 2분 → 이후 5분 간격으로, 풀릴 때까지 반복합니다.
         </p>
         <figure>
@@ -66,12 +66,12 @@
           패널의 <strong>권한모드 footer</strong> 를 클릭하면 auto / accept / default / plan 선택 팝업이
           열립니다(권한 우회로 띄운 세션에만 bypass 가 목록 끝에 붙습니다).
           <strong>모델 배지</strong> 를 클릭하면 모델·컨텍스트를 바꾸는 팝업이 열립니다(내부적으로 <code>/model</code>
-          주입). <code>claude-auto-mode</code> 로 Claude 가 idle 일 때 자동으로 auto 모드로 바꾸게 할 수도 있습니다.
+          주입). <code class="nb">claude-auto-mode</code> 로 Claude 가 idle 일 때 자동으로 auto 모드로 바꾸게 할 수도 있습니다.
         </p>
         <p>
-          <code>claude-rules</code> 로 <strong>시작 규칙</strong>을 정의해 두면 새 세션이 시작되거나
+          <code class="nb">claude-rules</code> 로 <strong>시작 규칙</strong>을 정의해 두면 새 세션이 시작되거나
           <code>/clear</code> 뒤에 자동으로 주입됩니다. 새 세션에서 <code>/rc</code>(원격 제어)와 권한 auto 를
-          한 번 자동 적용하는 <code>auto-launch</code>(기본 on)도 있습니다.
+          한 번 자동 적용하는 <code class="nb">auto-launch</code>(기본 on)도 있습니다.
         </p>
         <figure>
           <img src="../image/13-perm-mode.svg" alt="권한 모드 선택 팝업">
@@ -83,8 +83,8 @@
         <h2>프롬프트 히스토리</h2>
         <p>
           보낸 프롬프트 이력을 미리보기·검색·점프합니다(<code>claude-prompt-history</code> 플러그인,
-          <code>prompt-history</code>·별칭 <code>ph</code>). 명령 프롬프트에서 입력하는 동안 직전 프롬프트를
-          미리 보여 주고, 미리보기 줄 수는 <code>prompt-history-lines</code>(1–3)로 조정합니다.
+          <code class="nb">prompt-history</code>·별칭 <code>ph</code>). 명령 프롬프트에서 입력하는 동안 직전 프롬프트를
+          미리 보여 주고, 미리보기 줄 수는 <code class="nb">prompt-history-lines</code>(1–3)로 조정합니다.
         </p>
         <figure>
           <img src="../image/31-prompt-history.svg" alt="프롬프트 히스토리 팝업">
@@ -100,7 +100,7 @@
           <code>:set ambiguous-width narrow|wide|auto</code> 로 폭 모델을 일관되게 전환합니다.
         </p>
         <p>
-          드물게 출력이 어긋나면 <code>claude-auto-redraw</code>(<code>off|idle|corruption</code>, 기본 off)로
+          드물게 출력이 어긋나면 <code class="nb">claude-auto-redraw</code>(<code>off|idle|corruption</code>, 기본 off)로
           완료(busy→idle)마다 또는 깨짐 감지 시 패널을 한 번 전체 재출력해 자동 복원하게 켤 수 있습니다.
           수동으로는 <kbd>prefix</kbd> <kbd>r</kbd>(<code>redraw</code>)로 언제든 다시 그립니다.
         </p>
@@ -109,14 +109,14 @@
       <section>
         <h2>세션 이름 통일 · 세션 재개 · 피드백 숨김</h2>
         <ul>
-          <li><strong>이름 통일</strong> — <code>namesync</code>(<code>claude-name-sync</code> 플러그인)로
+          <li><strong>이름 통일</strong> — <code>namesync</code>(<code class="nb">claude-name-sync</code> 플러그인)로
             특정 디렉토리에서 Claude 를 돌리면 탭·패널·Claude 세션 이름을 키워드로 <strong>한 번</strong> 자동 통일합니다.
             한 번 맞춘 뒤에는 그 탭·패널·Claude 세션인 한 다시 건드리지 않아, 그 뒤 손수 지은 이름이 그대로 유지됩니다(새 셸을 띄우면 다시 한 번 통일).</li>
-          <li><strong>세션 재개</strong> — <code>claude-resume</code>(별칭 <code>cr</code>)로 이 머신의 Claude
+          <li><strong>세션 재개</strong> — <code class="nb">claude-resume</code>(별칭 <code>cr</code>)로 이 머신의 Claude
             세션 목록을 보고 <kbd>Enter</kbd> 로 새 탭에서 재개합니다.</li>
           <li><strong>피드백 숨김</strong> — <code>claude-disable-feedback</code> 플러그인이 Claude 의 피드백
             유도 문구를 숨깁니다(별도 명령 없음).</li>
-          <li><strong>세션당 클리어</strong> — <code>prompt-clear</code> 로 매 완료마다 문서화 후 <code>/clear</code>
+          <li><strong>세션당 클리어</strong> — <code class="nb">prompt-clear</code> 로 매 완료마다 문서화 후 <code>/clear</code>
             하는 모드를 켤 수 있습니다.</li>
         </ul>
         <div class="callout">

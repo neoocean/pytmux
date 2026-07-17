@@ -35,7 +35,7 @@
       <section>
         <h2 style="border-top:none;">여는 법과 탭 이동</h2>
         <p>
-          상태줄 <strong>토큰 배지 클릭</strong> 또는 <code>token-log</code>(별칭 <code>token-usage</code>)로 엽니다.
+          상태줄 <strong>토큰 배지 클릭</strong> 또는 <code class="nb">token-log</code>(별칭 <code class="nb">token-usage</code>)로 엽니다.
           <strong>기간 / 세션 / 한도 / 경고</strong> 노트북 탭과 <strong>[/usage] · [시나리오]</strong> 버튼으로
           구성되고, 상단 요약줄(<code>5h% · 주% · ~Σ</code>)은
           모든 탭에 공통으로 붙습니다. 탭 사이는 키로도 오갑니다 — <kbd>p</kbd>(세션) · <kbd>l</kbd>(한도) ·
@@ -61,7 +61,7 @@
         <p>
           <kbd>p</kbd> 로 전환합니다. 행이 <strong>Claude 세션별 합</strong>(대표 <code>탭:패널</code> 라벨 ·
           타임스탬프 · 토큰)입니다. 닫히고 재사용되는 패널 id 대신 안정적인 세션 id 로 묶어, 어느 세션이
-          토큰을 많이 썼는지 비교할 때 씁니다. 계정이 여러 개면 <code>token-account</code> 로 현재 패널의
+          토큰을 많이 썼는지 비교할 때 씁니다. 계정이 여러 개면 <code class="nb">token-account</code> 로 현재 패널의
           계정을 직접 지정할 수 있습니다(빈값=자동).
         </p>
         <figure>
@@ -79,9 +79,9 @@
           모델·컨텍스트를 바꿔 적용할 수도 있어, 한도를 보며 모델을 고를 때 씁니다.
         </p>
         <p>
-          실측 한도는 숨은 세션으로 <code>/usage</code> 를 조회하는 <code>claude-usage</code>(별칭 <code>usage</code>)로
-          갱신되고, 막대만 따로 보려면 <code>usage-panel</code>(별칭 <code>limits</code>)을 씁니다. 다음 리셋까지의
-          카운트다운만 크게 보려면 <code>usage-view</code>(<code>[popup|tab|pane]</code>)를 씁니다.
+          실측 한도는 숨은 세션으로 <code>/usage</code> 를 조회하는 <code class="nb">claude-usage</code>(별칭 <code>usage</code>)로
+          갱신되고, 막대만 따로 보려면 <code class="nb">usage-panel</code>(별칭 <code>limits</code>)을 씁니다. 다음 리셋까지의
+          카운트다운만 크게 보려면 <code class="nb">usage-view</code>(<code>[popup|tab|pane]</code>)를 씁니다.
         </p>
         <p>
           이 자동 조회는 <strong>살아 있는 Claude 패널</strong>이 있을 때뿐 아니라, Claude 를 <strong>pytmux 패널 밖(별도 터미널)</strong>에서
@@ -99,7 +99,7 @@
         <p>
           Claude 가 이상하게 돌 때 상태줄에 경고 배지가 뜹니다 — <strong>"⚠ 동일 결과 N회 반복 — 루프 의심"</strong>,
           <strong>"Claude 포맷 미인식 — 추적 중단"</strong> 등. 팝업에는 이런 경고 이력도 함께 남습니다.
-          토큰 회계 자체를 진단하려면 <code>token-debug</code>(기본 off) 로그를 켤 수 있습니다.
+          토큰 회계 자체를 진단하려면 <code class="nb">token-debug</code>(기본 off) 로그를 켤 수 있습니다.
         </p>
       </section>
 

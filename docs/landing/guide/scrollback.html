@@ -40,9 +40,9 @@
         </p>
         <ul>
           <li>스크롤백 안에서 텍스트를 <strong>검색</strong>하고 일치 지점으로 점프</li>
-          <li><code>capture-pane</code>(<code>-S</code> 로 전체 스크롤백) 로 버퍼에 담기</li>
-          <li><code>clear-history</code> 로 스크롤백 비우기</li>
-          <li><code>pipe-pane</code> 으로 패널 출력을 외부 명령에 흘려보내기</li>
+          <li><code class="nb">capture-pane</code>(<code class="nb">-S</code> 로 전체 스크롤백) 로 버퍼에 담기</li>
+          <li><code class="nb">clear-history</code> 로 스크롤백 비우기</li>
+          <li><code class="nb">pipe-pane</code> 으로 패널 출력을 외부 명령에 흘려보내기</li>
         </ul>
       </section>
 
@@ -71,7 +71,7 @@
         <h2>마우스로 복사</h2>
         <p>
           그냥 <strong>왼쪽 버튼으로 드래그</strong>하면 pytmux 가 드래그를 시작한 <strong>패널 안으로만</strong>
-          선택을 가둬, 손을 떼는 순간 OS 클립보드로 <strong>자동 복사</strong>합니다(<code>mouse-drag-copy</code>,
+          선택을 가둬, 손을 떼는 순간 OS 클립보드로 <strong>자동 복사</strong>합니다(<code class="nb">mouse-drag-copy</code>,
           기본 on). Shift 도 Ctrl+C 도 필요 없고, pytmux 가 그린 패널 외곽선(<code>│</code>)이나 옆 패널
           내용은 딸려오지 않습니다. 화면 폭 때문에 여러 줄로 접힌 긴 줄(자동 줄바꿈)은 <strong>한 줄로</strong>
           복사돼 — 줄바꿈은 실제 줄 끝에만 — 여러 줄로 보이는 긴 명령도 붙여넣으면 그대로 실행됩니다.
@@ -91,9 +91,9 @@
           바로 실행되지 않습니다. 붙여넣기 버퍼를 직접 다룰 수도 있습니다.
         </p>
         <ul>
-          <li><code>paste-clipboard</code> — OS 클립보드 붙여넣기</li>
-          <li><code>paste-buffer</code> (<kbd>prefix</kbd> <kbd>]</kbd>) — pytmux 붙여넣기 버퍼에서</li>
-          <li><code>choose-buffer</code> (<kbd>prefix</kbd> <kbd>=</kbd>, 별칭 <code>list-buffers</code>) — 버퍼 목록에서 골라 붙여넣기</li>
+          <li><code class="nb">paste-clipboard</code> — OS 클립보드 붙여넣기</li>
+          <li><code class="nb">paste-buffer</code> (<kbd>prefix</kbd> <kbd>]</kbd>) — pytmux 붙여넣기 버퍼에서</li>
+          <li><code class="nb">choose-buffer</code> (<kbd>prefix</kbd> <kbd>=</kbd>, 별칭 <code class="nb">list-buffers</code>) — 버퍼 목록에서 골라 붙여넣기</li>
         </ul>
         <div class="callout">
           <strong>박스드로잉 제거:</strong> 분할된 화면을 복사해 붙여넣으면 패널 테두리(<code>│─┼</code>)가

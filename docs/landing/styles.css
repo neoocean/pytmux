@@ -130,6 +130,13 @@ section { padding: 64px 0; }
   border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; color: var(--text);
   -webkit-box-decoration-break: clone; box-decoration-break: clone;
 }
+/* 본문의 짧은 하이픈 식별자 칩은 하이픈에서 쪼개지지 않게 통짜 유지(.nb 는 빌드 스크립트가 부여).
+   표 안·긴 경로 칩은 .nb 를 안 받아 종전대로 접힌다 — 접혀도 clone 덕에 조각이 온전한 pill. */
+.inline-code.nb, .feature code.nb, code.nb { white-space: nowrap; }
+/* nowrap 칩은 하이픈 break point 를 못 내주므로, '·' 로 이어붙인 칩 사슬이 통짜가 되지 않도록
+   본문에 마지막수단 줄바꿈 기회를 준다(다른 기회가 없을 때만 발동). */
+.doc p, .doc li, .cl-day li, .cl-intro p, .cl-intro .callout,
+.feature .ftext p, .feature ul li { overflow-wrap: anywhere; }
 .shot {
   border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--bg-soft); padding: 8px; overflow: hidden;

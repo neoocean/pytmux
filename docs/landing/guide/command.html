@@ -57,8 +57,8 @@
           직접 입력하되, 다음 편의 기능이 있습니다.
         </p>
         <ul>
-          <li><strong>공백 검색</strong> — <code>clock m</code> → <code>clock-mode</code> 처럼 공백으로 토큰을 나눠 후보를 좁힙니다.</li>
-          <li><strong>ghost 자동완성</strong> — 옵션 템플릿(<code>-h</code> 등)을 흐린 글씨로 미리 보여 줍니다.</li>
+          <li><strong>공백 검색</strong> — <code>clock m</code> → <code class="nb">clock-mode</code> 처럼 공백으로 토큰을 나눠 후보를 좁힙니다.</li>
+          <li><strong>ghost 자동완성</strong> — 옵션 템플릿(<code class="nb">-h</code> 등)을 흐린 글씨로 미리 보여 줍니다.</li>
           <li><strong>인자 힌트</strong> — 자유 텍스트 인자를 받는 명령은 <code>____</code> 로 자리를 표시합니다.</li>
           <li><strong>인자 이력</strong> — <kbd>↑</kbd><kbd>↓</kbd>·<kbd>Tab</kbd> 으로 이전에 넣은 인자를 재사용(서버별 영속, 같은 성격의 명령끼리 공유 — 예: 원격 호스트).</li>
           <li><strong>대상 강조</strong> — 패널 대상 명령은 실행 전 그 패널 테두리를 강조합니다.</li>
@@ -72,7 +72,7 @@
       <section>
         <h2>전체 명령 목록 (<code>?</code> · help)</h2>
         <p>
-          명령 프롬프트에서 <code>?</code>(별칭 <code>help</code>·<code>commands</code>·<code>list-commands</code>)를
+          명령 프롬프트에서 <code>?</code>(별칭 <code>help</code>·<code>commands</code>·<code class="nb">list-commands</code>)를
           입력하면 카테고리로 묶인 전체 명령 목록이 열립니다. 대표 명령을 영역별로 추리면 다음과 같습니다.
         </p>
         <table>
@@ -133,9 +133,9 @@
         <h3>내 키에 명령 묶기</h3>
         <p>
           <code>bind-key &lt;키&gt; &lt;명령&gt;</code>(별칭 <code>bind</code>) 으로 런타임에 키를 묶습니다.
-          <code>-n</code> 을 붙이면 prefix 없이 바로 듣는 <strong>루트 바인딩</strong>이 됩니다(F1–F11·<code>M-</code>
-          키 권장 — 매칭된 키는 셸로 전달되지 않음). 해제는 <code>unbind-key</code>(<code>-a</code> 전부).
-          현재 바인딩과 마우스 제스처는 <code>list-keys</code>(별칭 <code>lsk</code>) 팝업에서 봅니다.
+          <code class="nb">-n</code> 을 붙이면 prefix 없이 바로 듣는 <strong>루트 바인딩</strong>이 됩니다(F1–F11·<code class="nb">M-</code>
+          키 권장 — 매칭된 키는 셸로 전달되지 않음). 해제는 <code class="nb">unbind-key</code>(<code class="nb">-a</code> 전부).
+          현재 바인딩과 마우스 제스처는 <code class="nb">list-keys</code>(별칭 <code>lsk</code>) 팝업에서 봅니다.
           설정 파일에도 <code>bind | split-window -h</code> 처럼 적어 둘 수 있습니다(자세한 내용은
           <a href="/guide/config">13. 설정 파일</a>).
         </p>

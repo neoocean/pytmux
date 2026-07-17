@@ -59,12 +59,12 @@
         </table>
         <p>
           원격 탭도 <strong>고정(핀)</strong>할 수 있습니다(다운스트림 로컬 뷰 기준). 이 핀은 <strong>호스트 기준</strong>으로
-          기억해, 같은 호스트에 <strong>다시 <code>remote-attach</code></strong> 하거나 끊겨서 <strong>자동 재연결</strong>돼도
+          기억해, 같은 호스트에 <strong>다시 <code class="nb">remote-attach</code></strong> 하거나 끊겨서 <strong>자동 재연결</strong>돼도
           유지됩니다 — 그 사이 원격에 새로 생긴 탭만 비고정으로 붙고, 없어진 탭의 핀은 사라집니다.
-          <code>remote-detach</code> 로 직접 떼어내면 그 호스트의 핀은 잊습니다(다시 붙이면 전부 비고정).
+          <code class="nb">remote-detach</code> 로 직접 떼어내면 그 호스트의 핀은 잊습니다(다시 붙이면 전부 비고정).
           원격에서 pytmux 를 다시
           돌리는 중첩 상황은 그 패널의 실제 ssh 목적지로 <strong>자동 승격</strong>됩니다
-          (<code>nest-auto-attach</code>, <strong>기본 on</strong> — <code>nest-auto-attach off</code> 로 끄면 거부).
+          (<code class="nb">nest-auto-attach</code>, <strong>기본 on</strong> — <code>nest-auto-attach off</code> 로 끄면 거부).
         </p>
       </section>
 
@@ -75,11 +75,11 @@
           화면에 맞춰집니다</strong>(<code>smallest</code> — 남는 영역은 빈 여백 띠로 채워집니다). 어떤 기기가 <strong>정상 종료 없이
           끊기면</strong>(노트북 절전·네트워크 단절 등) 그 <strong>유령 접속</strong>이 남아 화면을 계속 작게
           붙잡을 수 있습니다. 지금 화면에서 <code>detach -a</code>(다른 접속 내보내기)로, 또는 그
-          <strong>접속을 가진 기기에서</strong> <code>remote-detach</code> 로 정리되지만, 유령을 <strong>근본적으로</strong>
+          <strong>접속을 가진 기기에서</strong> <code class="nb">remote-detach</code> 로 정리되지만, 유령을 <strong>근본적으로</strong>
           막으려면 원격 서버를 여는 <strong>호스트</strong>의 SSH 데몬이 죽은 접속을 스스로 끊게 해 두는 것이 좋습니다.
         </p>
         <p>
-          여백 띠가 유령이 아니라 <strong>진짜 작은 기기</strong> 때문이라면, <code>window-size</code>(별칭
+          여백 띠가 유령이 아니라 <strong>진짜 작은 기기</strong> 때문이라면, <code class="nb">window-size</code>(별칭
           <code>winsize</code>)로 공유 격자 크기 기준을 바꿀 수 있습니다(tmux 동형). <code>:settings →
           동작 → window-size</code> 에서도 고를 수 있고, 값은 서버에 영속됩니다.
         </p>

@@ -34,8 +34,8 @@
       <section>
         <h2 style="border-top:none;">시계 · 달력</h2>
         <p>
-          <strong>시계</strong>를 클릭하거나 <kbd>prefix</kbd> <kbd>t</kbd>(<code>clock-mode</code>)로 큰 시계를
-          패널 위에 띄웁니다. <strong>날짜</strong>를 클릭하면(<code>calendar-mode</code>) 월 달력 오버레이가
+          <strong>시계</strong>를 클릭하거나 <kbd>prefix</kbd> <kbd>t</kbd>(<code class="nb">clock-mode</code>)로 큰 시계를
+          패널 위에 띄웁니다. <strong>날짜</strong>를 클릭하면(<code class="nb">calendar-mode</code>) 월 달력 오버레이가
           열립니다 — <kbd>←</kbd><kbd>→</kbd> 월, <kbd>↑</kbd><kbd>↓</kbd> 년, <kbd>Home</kbd> 오늘. 오버레이를
           클릭하거나 <kbd>Shift+ESC</kbd> 로 닫습니다.
         </p>
@@ -62,7 +62,7 @@
         <h2>IME 한/영 배지</h2>
         <p>
           OS 입력기 상태를 커서 근처에 <code>[한]</code>/<code>[EN]</code> 배지로 표시합니다
-          (<code>ime-indicator</code>). macOS 는 HIToolbox TIS, Windows 는 IMM, ssh 원격은 <code>-R</code> 에이전트
+          (<code class="nb">ime-indicator</code>). macOS 는 HIToolbox TIS, Windows 는 IMM, ssh 원격은 <code class="nb">-R</code> 에이전트
           소켓을 통해 감지하는 3단계 방식입니다.
         </p>
         <figure>
@@ -81,10 +81,10 @@
             <kbd>Esc</kbd> 로 취소하면 프롬프트는 <strong>그대로</strong> 남습니다.</li>
           <li><strong>작성창 안의 ESC 모드</strong> — 작성창에서 <kbd>Esc</kbd> 를 <strong>한 번</strong> 누르면 취소가 아니라 <strong>ESC 모드</strong>로 들어갑니다.
             들어간 것은 눈에 보입니다 — 박스 왼쪽 위에 <strong>ESC 모드 배지</strong>가 켜지고 <strong>테두리 색이 바뀝니다</strong>.
-            이어서 <kbd>:</kbd> 를 누르면 <strong>명령 입력칸</strong>이 열리는데(<code>paste-image</code> 등), 이때 <strong>작성창은 아래에 그대로 남고</strong>
+            이어서 <kbd>:</kbd> 를 누르면 <strong>명령 입력칸</strong>이 열리는데(<code class="nb">paste-image</code> 등), 이때 <strong>작성창은 아래에 그대로 남고</strong>
             명령칸과 힌트가 그 <strong>위쪽</strong>에 뜹니다 — 작성 중이던 내용을 보면서 명령을 고르라는 뜻입니다. 명령이 끝나면 작성창으로 돌아갑니다.
             <kbd>Esc</kbd> 를 한 번 더 누르면 취소, 그 밖의 키는 모드만 빠지고 편집으로 돌아갑니다.</li>
-          <li><strong>출력 캡처(REC)</strong> — <code>capture-output</code>(<code>capture-toggle [on|off]</code>, 기본 off)로
+          <li><strong>출력 캡처(REC)</strong> — <code class="nb">capture-output</code>(<code>capture-toggle [on|off]</code>, 기본 off)로
             패널의 원시 PTY 출력을 무손실로 파일에 남겨, 나중에 replay 로 복원할 수 있습니다.</li>
         </ul>
         <figure>

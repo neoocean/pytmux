@@ -28,8 +28,8 @@
         <p style="font-size:18px;">
           <code>pytmux.conf</code> 로 동작을 바꾸거나, 통합 설정 팝업 <code>:settings</code> 로 카테고리별로
           조정합니다. <code>:settings</code> 에서 바꾼 <strong>파일 설정</strong>은 설정 파일에 자동으로 되쓰기 되고
-          (주석·바인딩 보존), <strong>서버 옵션</strong>(<code>window-size</code>·<code>vt-parser</code>·
-          <code>automatic-rename</code> 등)은 서버가 <code>opts.json</code> 에 영속합니다 — 어느 쪽이든 다시 켤 때 유지됩니다.
+          (주석·바인딩 보존), <strong>서버 옵션</strong>(<code class="nb">window-size</code>·<code class="nb">vt-parser</code>·
+          <code class="nb">automatic-rename</code> 등)은 서버가 <code>opts.json</code> 에 영속합니다 — 어느 쪽이든 다시 켤 때 유지됩니다.
         </p>
       </header>
 
@@ -40,11 +40,11 @@
           <code>PYTMUX_CONFIG</code> 로 지정한 경로에서 읽습니다(<code>pytmux.conf.example</code> 참고).
           여러 곳에 있으면 <code>PYTMUX_CONFIG</code> → <code>$PYTMUX_HOME/config</code> →
           <code>~/.config/pytmux/config</code> → <code>~/.pytmux.conf</code> 순으로 <strong>먼저 있는 하나</strong>만 씁니다.
-          각 줄은 <code>set &lt;이름&gt; &lt;값&gt;</code> 형식이고, <code>source-file</code> 로 다시 읽습니다.
-          현재 값은 <code>show-options</code> 로 확인합니다.
+          각 줄은 <code>set &lt;이름&gt; &lt;값&gt;</code> 형식이고, <code class="nb">source-file</code> 로 다시 읽습니다.
+          현재 값은 <code class="nb">show-options</code> 로 확인합니다.
           <strong>실행 중에 바꿀 때는</strong> 명령 프롬프트에서 <code>set</code> 을 <strong>빼고</strong>
           옵션 이름을 그대로 칩니다(예: <code>:strip-box-drawing off</code>, <code>:lang en</code>) —
-          <code>:set …</code> 이 먹는 것은 <code>mouse</code>·<code>prefix</code>·<code>mode-keys</code> 처럼
+          <code>:set …</code> 이 먹는 것은 <code>mouse</code>·<code>prefix</code>·<code class="nb">mode-keys</code> 처럼
           일부뿐이라, 가장 확실한 방법은 <strong>설정 팝업</strong>(<code>:settings</code>)에서
           고르는 것입니다.
         </p>
