@@ -76,16 +76,18 @@
          갱신하면 랜딩도 자동 최신(이중 관리 없음). fetch 실패 시 이 폴백이 그대로 남는다. -->
     <div class="cl-news">
       <div class="cl-news-head">
-        <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-16 <span class="pill">목요일</span></span>
+        <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-17 <span class="pill">금요일</span></span>
         <a class="cl-news-more" href="changes">전체 변경 내역 →</a>
       </div>
       <ul id="cl-news-list">
-        <li><span class="pill stable">안정</span> <strong>무거운 작업이 화면 전체를 멈추게 하던 몇 자리를 없앴습니다 — 큰 폴더 복사·삭제, 큰 압축 열기, 마우스 드래그 복사.</strong>
-          서버는 한 줄기 흐름이라 오래 걸리는 일을 바로 하면 모든 창이 함께 멈춥니다 — 이제 파일 작업은 곁길로 넘겨 화면이 계속 반응하고, 미리보기는 보통 파일만 열어 파이프·장치 파일에 매달리지 않습니다. Windows 드래그 복사도 붙여넣기처럼 곁길로 돌려 끊김을 없앴습니다.</li>
-        <li><span class="pill stable">Windows</span> <strong>클립보드 복사·붙여넣기가 이제 실패를 솔직하게 알립니다 — '복사됨'이라 해 놓고 아무것도 안 담기던 일이 없습니다.</strong>
-          다른 앱이 클립보드를 쥔 흔한 상황에서 복사가 속으로 실패해도 성공처럼 보이고 오류 문구가 화면에 새던 것, 붙여넣기가 실패를 '빈 클립보드'로 오인해 Ctrl+V 가 조용히 무동작하던 것 — 이제 실패는 실패로 끝맺어 다른 방법으로 다시 시도합니다.</li>
-        <li><span class="pill stable">탭</span> <strong>탭 스위처(Esc → Tab)를 아주 빠르게 여닫아도 이제 클라이언트가 멈추지 않습니다.</strong>
-          Esc Tab Enter 를 연달아 빠르게 치면 스위처가 닫힌 뒤 뒤늦게 온 패널 목록이 이미 사라진 목록을 건드려 튕기던 드문 경우 — 이제 닫혔으면 조용히 넘어갑니다.</li>
+        <li><span class="pill stable">안정</span> <strong>새 탭·분할이 이제 멈칫하지 않습니다 — macOS 에서 특히 그랬습니다.</strong>
+          새 탭을 열거나 화면을 나눌 때마다 지금 있는 폴더를 알아내려 바깥 프로그램(lsof)을 부르고 그 대답을 기다리는 동안(실측 0.3 초 안팎) 모든 패널이 함께 얼어붙던 것 — 이제 macOS 는 운영체제에 직접 물어 Linux·Windows 와 같은 즉각 반응으로 맞췄습니다.</li>
+        <li><span class="pill stable">안정</span> <strong>패널에 이상한 출력이 쏟아져도 이제 화면이 멈추지 않습니다.</strong>
+          패널 속 프로그램이 비정상적으로 긴 제어 문자열을 뱉으면 푸는 데 시간이 제곱으로 불어나 256KB 한 줄에 수십 초 서버 전체가 멈추던 자리 — 이제 한 번에 처리해 200 배 빠르고, 끝없는 문자열도 정해진 만큼만 담아 메모리를 지킵니다.</li>
+        <li><span class="pill stable">탭</span> <strong>마지막 탭을 닫아 세션이 사라져도, 그 세션을 보던 다른 창이 얼어붙지 않습니다.</strong>
+          여러 세션 중 한 세션의 마지막 탭을 닫으면 그 세션을 보던 클라이언트가 이미 사라진 세션을 가리킨 채 아무 알림도 없이 영영 멈춰 있던 것 — 이제 남은 세션으로 옮겨 갑니다.</li>
+        <li><span class="pill stable">원격</span> <strong>원격 탭을 보는 동안 내 플러그인·설정이 저쪽 값으로 바뀌던 것을 바로잡았습니다.</strong>
+          다른 pytmux 서버의 탭을 원격으로 볼 때 그쪽의 꺼둔 플러그인 목록·환경설정 값이 내 클라이언트로 흘러들어 내 설정 화면이 저쪽 값을 보여주던 것 — 이제 내 설정은 내 것으로 지키고, 원격에서 와야 하는 것만 받습니다.</li>
         <li><span class="pill stable">작성창</span> <strong>작성창에서 Esc 를 누르면 이제 ESC 모드로 들어간 것이 보이고, : 로 연 명령칸은 작성창을 덮지 않고 그 위에 뜹니다.</strong>
           Esc 한 번은 취소가 아니라 ESC 모드인데 옅은 회색 힌트 문구만 바뀌어 들어갔는지 알 수 없던 것 — 이제 ESC 모드 배지가 켜지고 테두리 색도 바뀝니다. : 로 명령칸을 열면 작성창이 사라진 것처럼 보이던 것도(둘 다 바닥에 붙어 후보 목록이 덮었습니다) 이제 작성창은 바닥에 남고 명령칸이 그 위에 뜹니다.</li>
         <li><span class="pill stable">Claude</span> <strong>상태줄의 모델 이름이 이제 화면에 보이는 그 모델을 따라갑니다 — /model 을 치는 순간 곧바로 맞춰집니다.</strong>
