@@ -2490,3 +2490,35 @@ async def test_remote_status_override_keeps_local_opt_and_plugin_authority():
         assert out["claude_model"] == "opus", out.get("claude_model")
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_upstream_status_unknown_keys_are_capped():
+    """[검수 F-C 회귀, 2026-07-17] 상류 status 의 **미지 키**는 소량으로 캡돼 무한
+    성장하지 않는다.
+
+    회귀 전: `last_status.update(msg)` 라 pruning 이 없어, 신뢰불가 상류가 매 프레임
+    새 junk 키(`{"junk_0001":"A"*60000, …}`)를 실으면 last_status 가 무한 성장하고
+    `_remote_status_override` 가 매 status 마다 그 blob 을 재직렬화했다(다운스트림 서버
+    메모리+CPU DoS). read_msg 의 MAX_FRAME 은 단일 프레임만 캡하지 프레임 간 누적은
+    못 막는다."""
+    from pytmuxlib.serverremote import RemoteLink
+    srv, task, sock = await server_only()
+    try:
+        link = RemoteLink("h", object(), object())
+        for i in range(1000):
+            srv._merge_upstream_status(
+                link, {"t": "status", "windows": [], f"junk_{i}": "A" * 60000})
+        junk = [k for k in link.last_status if k.startswith("junk_")]
+        assert len(junk) <= srv._MAX_UNKNOWN_STATUS_KEYS, len(junk)
+        # 알려진 스키마 키(로컬 opt·플러그인 동적 헤더)는 캡과 무관하게 통과한다.
+        srv._merge_upstream_status(
+            link, {"claude_model": "opus", "vt_parser": "native", "active_pane": 5})
+        assert link.last_status["claude_model"] == "opus"
+        assert link.last_status["vt_parser"] == "native"
+        assert link.last_status["active_pane"] == 5
+        # 이미 저장된 미지 키의 **갱신**은 새 키가 아니므로 예산을 안 먹는다.
+        first_junk = junk[0]
+        srv._merge_upstream_status(link, {first_junk: "updated"})
+        assert link.last_status[first_junk] == "updated"
+    finally:
+        await teardown(srv, task, sock)

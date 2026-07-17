@@ -1096,6 +1096,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 prev_active = self.layout.get("active")
                 self.layout = msg
                 new_active = msg.get("active")
+                # 레이아웃에 선언된 패널만 캐시로 유지한다(F-D 계열 F-F, 검수 2026-07-17).
+                # `screen`/`screen-delta` 는 msg["pane"] 를 무검증으로 pane_content 키에
+                # 넣는데, 신뢰불가 상류(원격 뷰)가 pane id 를 1..10^7 로 흘리면 클라
+                # 메모리가 무한 증가했다 — layout 은 pane_content 를 declared pane 로
+                # 정리한 적이 없었다. 매 layout 마다 선언되지 않은 패널의 캐시를 버린다.
+                _declared = {p.get("id") for p in msg.get("panes", [])
+                             if isinstance(p, dict)}
+                if _declared:                     # 빈 layout 은 정리 보류(중간 상태 방지)
+                    for _cache in (self.pane_content, self.pane_wrap):
+                        for _pid in [k for k in _cache if k not in _declared]:
+                            del _cache[_pid]
+                    self._delta_no_base &= _declared
                 # ESC 모드 방향키로 패널 전환을 요청했고(active 가 실제로 바뀜) 깜빡임이
                 # 예약돼 있으면 새 활성 패널을 깜빡인다(요청 — 선택 패널 가시화).
                 if (self._flash_pending and new_active is not None

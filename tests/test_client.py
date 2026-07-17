@@ -7028,3 +7028,29 @@ async def test_send_input_routes_to_open_popup():
         finally:
             C.write_msg = orig
     await _with_app(body)
+
+
+async def test_layout_prunes_stale_pane_content_cache():
+    """[검수 F-F 회귀, 2026-07-17] `layout` 은 선언되지 않은 패널의 화면 캐시를 버린다.
+
+    회귀 전: `screen`/`screen-delta` 가 `msg["pane"]` 를 무검증으로 pane_content 키에
+    넣는데 layout 이 그걸 declared pane 로 정리한 적이 없어, 신뢰불가 상류(원격 뷰)가
+    pane id 를 1..10^7 로 흘리면 클라 pane_content/pane_wrap 이 무한 증가했다(클라 OOM).
+    _dispatch_guarded 는 예외는 잡아도 무한 성장은 못 잡는다."""
+    async def body(app, pilot, srv):
+        # 상류가 무수한 pane id 로 screen 을 흘린다.
+        for pid in range(500):
+            app._dispatch({"t": "screen", "pane": 10000 + pid,
+                           "rows": [[("", {})]], "cursor": None})
+        assert len(app.pane_content) >= 500
+        # layout 이 패널 2개만 선언 → 나머지 캐시는 정리된다.
+        app._dispatch({"t": "layout", "active": 1, "dividers": [],
+                       "panes": [{"id": 1, "x": 0, "y": 0, "w": 40, "h": 24},
+                                 {"id": 2, "x": 40, "y": 0, "w": 40, "h": 24}]})
+        assert set(app.pane_content) <= {1, 2}, sorted(app.pane_content)[:5]
+        assert set(app.pane_wrap) <= {1, 2}
+        # 빈 layout(panes 없음)은 정리 보류 — 중간 상태에서 캐시를 날리지 않는다.
+        app._dispatch({"t": "screen", "pane": 1, "rows": [[("x", {})]], "cursor": None})
+        app._dispatch({"t": "layout", "active": None, "dividers": [], "panes": []})
+        assert 1 in app.pane_content, "빈 layout 이 캐시를 성급히 비움"
+    await _with_app(body)

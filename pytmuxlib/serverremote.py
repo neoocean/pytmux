@@ -796,8 +796,9 @@ class ServerRemoteMixin:
                 if t == "status":
                     # 누적(update): 업스트림 full status 가 채운 옵션 키를 이후
                     # light status 가 지우지 않게 합친다 — 보는 클라 오버라이드의
-                    # 원천(_remote_status_override).
-                    link.last_status.update(msg)
+                    # 원천(_remote_status_override). **미지 키는 소량으로 캡**해
+                    # 무한 성장을 막는다(F-C).
+                    self._merge_upstream_status(link, msg)
                     # 상류 재시작 감지 → sticky 리셋(F-1). **windows 를 반영하기 전에**
                     # 해야 옛 키가 새 탭에 한 프레임이라도 오매칭되지 않는다.
                     self._remote_boot_check(link, msg)
@@ -890,6 +891,48 @@ class ServerRemoteMixin:
                 rw = dict(rw, name="")     # 비-str 이름 → 빈 문자열(포맷 시 예외 방지)
             out.append(rw)
         return out
+
+    # 상류 status 에서 우리가 아는 스키마 키(로컬 _status_msg 필드 + 플러그인 동적 헤더).
+    # 이 키들은 무조건 누적하고, 그 **외 미지 키**는 _MAX_UNKNOWN_STATUS_KEYS 개까지만
+    # 받는다(F-C). 새 플러그인이 키를 늘려도 캡이 아니라 화이트리스트로 흡수되게 하려면
+    # 여기에 추가하면 된다 — 누락돼도 미지 키 예산 안이면 여전히 통과한다(안전한 저하).
+    _KNOWN_STATUS_KEYS = frozenset({
+        "t", "session", "windows", "active_pane", "zoomed", "sync", "pane_title",
+        "single_border", "win_mouse_motion", "boot_id",
+        "coalesce_repaints", "nest_auto_attach", "vt_parser", "window_size",
+        "auto_rename", "border_status", "monitor_activity", "monitor_bell",
+        "disabled_plugins",
+        # 플러그인 동적 헤더(claude-code·rec·prompt-history)
+        "panes_claude", "claude_active", "claude_usage", "claude_tokens",
+        "claude_model", "claude_account", "claude_account_full", "claude_pending",
+        "claude_auto_mode", "claude_auto_redraw", "claude_warn", "claude_warn_kind",
+        "claude_warn_n", "autoresume", "auto_token_on_exit", "usage_limits",
+        "usage_age_sec", "tok5h_pct", "week_sonnet_pct", "xc_totals",
+        "capture", "capture_path", "capture_size", "ph_panes", "ph_max_lines",
+        "prompt_clear", "prompt_clear_queue",
+    })
+    _MAX_UNKNOWN_STATUS_KEYS = 16          # 미지 키 예산(정상은 0 — 순수 방어 여유)
+
+    def _merge_upstream_status(self, link: RemoteLink, msg: dict) -> None:
+        """상류 status 를 `link.last_status` 에 누적하되 **무한 성장을 막는다**(F-C).
+
+        종전엔 `last_status.update(msg)` 라 pruning 이 없어, 신뢰불가 상류가 매 프레임
+        새 junk 키(`{"junk_0001":"A"*60000, …}`)를 실으면 last_status 가 무한 성장하고
+        `_remote_status_override` 가 매 status 마다 그 blob 을 `dict()` 재직렬화했다
+        (다운스트림 서버 메모리 + CPU DoS). `read_msg` 의 MAX_FRAME 은 **단일 프레임**만
+        캡하지 프레임 간 누적은 못 막는다.
+
+        알려진 스키마 키(_KNOWN_STATUS_KEYS)는 무조건 받고, 미지 키는 이미 저장된 것을
+        포함해 총 _MAX_UNKNOWN_STATUS_KEYS 개까지만 유지한다(초과분은 무시)."""
+        unknown = sum(1 for k in link.last_status
+                      if k not in self._KNOWN_STATUS_KEYS)
+        for k, v in msg.items():
+            if k in self._KNOWN_STATUS_KEYS or k in link.last_status:
+                link.last_status[k] = v
+            elif unknown < self._MAX_UNKNOWN_STATUS_KEYS:
+                link.last_status[k] = v
+                unknown += 1
+            # else: 미지 키 예산 초과 → 조용히 드롭(상류는 여전히 살아 있음)
 
     def _remote_boot_check(self, link: RemoteLink, msg: dict) -> None:
         """상류 status 의 boot_id 를 latch 하고, **바뀌었으면 sticky 를 리셋**한다(F-1).
