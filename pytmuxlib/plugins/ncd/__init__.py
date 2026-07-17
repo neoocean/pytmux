@@ -32,10 +32,23 @@ def _cd_command(path: str, nt: bool | None = None) -> str:
     if nt is None:
         nt = os.name == "nt"
     if nt:
-        # POSIX 분기의 shlex.quote 와 동일한 방어 규율(M4). raw 보간 대신 임베드
-        # 따옴표·제어문자(개행/CR)를 제거해 따옴표 탈출 후 명령 분리(`" & cmd`)를
-        # 원천 차단한다 — 이런 문자는 Win32 파일명에 못 들어가므로 정상 경로는 불변.
-        safe = path.replace('"', "").replace("\r", "").replace("\n", "")
+        # POSIX 분기의 shlex.quote 와 동일한 방어 규율(M4). 임베드 따옴표·제어문자를
+        # 제거해 따옴표 탈출 후 명령 분리(`" & cmd`)를 원천 차단한다.
+        #
+        # **셸 방언 함정(CD-1, 보안검수 2026-07-17)**: 이 명령은 서버가 띄운 셸이
+        # 소비하는데 그 셸은 `PYTMUX_SHELL or COMSPEC or cmd.exe`(serverpty)라 cmd 가
+        # 아닐 수 있다. cmd 의 큰따옴표 안에선 `& | ^ $ ()`가 리터럴이지만
+        # **PowerShell/pwsh 은 `$(...)`·백틱을 큰따옴표 안에서도 보간**한다 — 그리고
+        # 이 문자들은 **Win32 파일명에 합법**이라 따옴표 필터를 그냥 통과한다. 즉 M4 는
+        # "심층 방어"가 아니라 load-bearing 인데 겨눈 셸이 틀렸었다. `nt`(OS 유래)로는
+        # 실제 셸을 알 수 없으므로, **어느 Windows 셸에서도 활성일 수 있는 메타문자를
+        # 전부 제거**한다: `" $ \` (백틱) % ! & | < > ^ ( )`. 이 문자들은 정상 디렉토리
+        # 경로엔 안 나타나므로(`( )`는 드물게 나타나지만 cd 대상으로는 희귀) 제거해도
+        # 실사용 불변, 대신 cmd·PowerShell·bash.exe **어디서 실행돼도** 주입이 불가능하다.
+        safe = path
+        for ch in '"$`%!&|<>^()':
+            safe = safe.replace(ch, "")
+        safe = safe.replace("\r", "").replace("\n", "")
         return f'cd /d "{safe}"\n'
     return f"cd {shlex.quote(path)}\n"
 

@@ -384,10 +384,14 @@ async def test_mdir_handle_server_request_offloads_to_executor():
 
 
 async def test_mdir_cd_command_dialects_and_quote_defense():
-    # ncd 와 동일 규율의 사본 — Windows 임베드 따옴표·개행 무력화, POSIX shlex.
+    # ncd 와 동일 규율의 사본 — Windows 임베드 따옴표·개행·셸 메타문자 무력화(CD-1),
+    # POSIX shlex. 상세 주입 배터리는 test_nc 의
+    # test_cd_command_windows_neutralizes_powershell_injection 이 두 사본 모두 검증한다.
     assert _cd_command("/r/a b", nt=False) == "cd '/r/a b'\n"
     assert _cd_command(r"C:\Users\me", nt=True) == 'cd /d "C:\\Users\\me"\n'
-    assert _cd_command('a" & calc &"b', nt=True) == 'cd /d "a & calc &b"\n'
+    # CD-1: `&`·따옴표·`$()`·백틱 모두 제거(cmd·PowerShell 어디서도 주입 불가).
+    assert _cd_command('a" & calc &"b', nt=True) == 'cd /d "a  calc b"\n'
+    assert _cd_command(r"a$(calc)b", nt=True) == 'cd /d "acalcb"\n'
     assert _cd_command("a\nrm -rf x", nt=True) == 'cd /d "arm -rf x"\n'
 
 

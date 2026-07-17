@@ -99,6 +99,17 @@ class RemoteLink:
 # 넘는 조작(break/join/move_pane_to_tab — 병합 전역 index 와 업스트림 로컬 index
 # 공간 불일치)은 _REMOTE_BLOCK_ACTIONS 로 거부한다. 로컬 제어(restart/kill-server/
 # remote_*)·kill_window(원격 탭 제거는 remote-detach 가 정문)는 여전히 제외.
+# 원격 뷰 status 에서 **로컬 서버가 권위**인 키(F-D). 상류 status 를 기반으로 병합할 때
+# 이 키들만 로컬 값으로 되덮어, 상류의 옵션/플러그인-관리 값이 하류 클라의 설정 화면·
+# 레지스트리로 새지 않게 한다. 나머지(원격 패널 상태·플러그인 동적 헤더)는 상류 권위.
+# server_opts 8종 + disabled_plugins + 로컬 취향/전역(single_border·win_mouse_motion은
+# 호출부에서 별도 처리하지만 방어적으로 포함).
+_LOCAL_AUTHORITY_STATUS_KEYS = {
+    "coalesce_repaints", "nest_auto_attach", "vt_parser", "window_size",
+    "auto_rename", "border_status", "monitor_activity", "monitor_bell",
+    "disabled_plugins", "single_border", "win_mouse_motion", "boot_id",
+}
+
 _REMOTE_RELAY_ACTIONS = {
     "select_pane_id", "select_pane", "zoom", "next_window", "prev_window",
     "resize", "resize_dir",
@@ -1017,7 +1028,24 @@ class ServerRemoteMixin:
         link = self._remote_link_for(client)
         if link is None or not link.last_status:
             return None
+        # 상류 status 를 기반으로 하되 **로컬 권위 필드는 로컬 값으로 되덮는다**
+        # (검수 2026-07-17 F-D). 종전엔 4개 키(t·session·single_border·windows)만
+        # 되덮어서, 상류의 `disabled_plugins`·8개 server_opts(vt_parser·window_size·
+        # auto_rename·monitor_* 등)가 그대로 하류 클라에 흘러가 **정상 상류에서도**
+        # 하류의 플러그인 레지스트리를 갈아치우고(`client.set_disabled`) `:settings` 가
+        # 상류 값을 로컬 값으로 표시했다. 사용자가 그걸 "고치면" set_* 는 릴레이 대상이
+        # 아니라 로컬 opts.json 에 상류 값을 썼다.
+        #
+        # 상류 기반을 유지하는 이유: Claude 모델/토큰·REC 등 **플러그인 동적 헤더**는
+        # 원격 패널이 권위라 상류 값이 와야 한다(그 키를 일일이 나열하면 플러그인 추가
+        # 시 표류한다). 그래서 "로컬 권위 필드"만 명시 집합으로 잠그고 로컬 값으로 덮는다.
         msg = dict(link.last_status)
+        local = self._status_msg(sess)
+        for k in _LOCAL_AUTHORITY_STATUS_KEYS:
+            if k in local:
+                msg[k] = local[k]
+            else:
+                msg.pop(k, None)                     # 로컬에 없으면 상류 값도 버린다
         msg["t"] = "status"
         msg["session"] = sess.name                   # #S 등 세션명은 로컬 유지
         msg["single_border"] = self.single_border    # 보더 스타일은 로컬 취향

@@ -336,14 +336,42 @@ async def test_cd_command_windows_neutralizes_quote_break():
     # 따옴표 탈출 후 명령 분리(`" & calc`)를 못 하게 한다. raw 보간 회귀 방지.
     from pytmuxlib.plugins.ncd import _cd_command
     out = _cd_command('a" & calc &"b', nt=True)
-    assert out == 'cd /d "a & calc &b"\n', out
-    assert '" ' not in out and "&\"" not in out
+    # &·따옴표 모두 제거(아래 CD-1 확장). 명령 분리 불가.
+    assert '"' not in out[len('cd /d "'):-2] and "&" not in out, out
     # 개행 주입도 차단(한 줄만).
     assert _cd_command("a\nrm -rf x", nt=True) == 'cd /d "arm -rf x"\n'
     # 정상 경로(따옴표 없음)는 불변.
     assert _cd_command(r"C:\Users\me\proj", nt=True) == 'cd /d "C:\\Users\\me\\proj"\n'
     # POSIX 분기는 shlex.quote 그대로.
     assert _cd_command("/r/a b", nt=False) == "cd '/r/a b'\n"
+
+
+async def test_cd_command_windows_neutralizes_powershell_injection():
+    """[보안 CD-1 회귀, 2026-07-17] `cd /d "..."` 는 cmd 문법이지만 실제 셸은
+    `PYTMUX_SHELL or COMSPEC or cmd.exe` 라 **PowerShell/pwsh 일 수 있다**. PowerShell 은
+    큰따옴표 안에서도 `$(...)`·백틱을 보간하는데, 이 문자들은 Win32 파일명에 **합법**이라
+    종전의 따옴표-만-제거 필터를 그대로 통과했다 → 디렉토리명 `a$(calc.exe)b` 로 임의
+    실행. `nt`(OS 유래)로는 셸 종류를 알 수 없으므로 어느 Windows 셸에서도 활성일 수
+    있는 메타문자를 전부 제거한다.
+
+    종전 테스트(neutralizes_quote_break)는 코드와 **같은 cmd.exe 가정**(`&` 는 큰따옴표
+    안 리터럴)을 인코딩해 이 클래스를 못 봤다 — 초록불 위장. 이 테스트가 그 갭을 닫는다."""
+    from pytmuxlib.plugins.ncd import _cd_command as ncd_cd
+    from pytmuxlib.plugins.mdir import _cd_command as mdir_cd
+    DANGEROUS = '"$`%!&|<>^()'
+    for cd in (ncd_cd, mdir_cd):
+        for attack in (r"C:\a$(calc.exe)b", "C:\\x`nfoo", 'C:\\a" & calc & "b',
+                       "C:\\%USERPROFILE%", "C:\\a|calc", "C:\\a&calc",
+                       "C:\\a^calc.exe", "C:\\a<nul", "C:\\a>out"):
+            inner = cd(attack, nt=True)[len('cd /d "'):-2]
+            leftover = [c for c in DANGEROUS if c in inner]
+            assert not leftover, f"{cd.__module__}: {attack!r} → 위험문자 {leftover} 잔존"
+        # 정상 경로는 불변(공백·하이픈·숫자 포함).
+        for ok in (r"C:\Users\woojin\Documents", r"D:\work\proj-1",
+                   "C:\\Program Files"):
+            assert cd(ok, nt=True) == f'cd /d "{ok}"\n', ok
+    # 두 사본은 동일 규율(플러그인끼리 import 안 함 — 표류 방지 회귀).
+    assert ncd_cd(r"C:\a$(x)b", nt=True) == mdir_cd(r"C:\a$(x)b", nt=True)
 
 
 async def test_ncd_cd_quotes_spaces():

@@ -31,13 +31,21 @@ def _cd_command(path: str, nt: bool | None = None) -> str:
     `cd /d "<경로>"` 로 드라이브까지 전환하고, 그 외엔 `cd <shlex.quote(경로)>`.
     nt 은 **명령을 실행할 셸의 OS**(서버가 mdir_list 로 알려줌). None 이면 클라
     os.name 폴백. 임베드 따옴표·개행 제거로 명령 분리 주입 차단 — ncd 와 동일
-    규율의 사본(플러그인끼리 import 하지 않는다)."""
+    규율의 사본(플러그인끼리 import 하지 않는다).
+
+    **셸 방언 함정(CD-1, 2026-07-17)**: 서버 셸이 cmd 아닌 PowerShell 이면 큰따옴표 안
+    `$(...)`·백틱이 보간돼 주입된다(이 문자들은 Win32 파일명에 합법). `nt`(OS 유래)로는
+    실제 셸을 모르므로 어느 Windows 셸에서도 활성일 수 있는 메타문자를 전부 제거한다.
+    ncd/__init__._cd_command 와 동일 필터(사본)."""
     import os
     import shlex
     if nt is None:
         nt = os.name == "nt"
     if nt:
-        safe = path.replace('"', "").replace("\r", "").replace("\n", "")
+        safe = path
+        for ch in '"$`%!&|<>^()':
+            safe = safe.replace(ch, "")
+        safe = safe.replace("\r", "").replace("\n", "")
         return f'cd /d "{safe}"\n'
     return f"cd {shlex.quote(path)}\n"
 

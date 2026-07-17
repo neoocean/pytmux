@@ -2441,3 +2441,52 @@ async def test_sticky_sets_stay_shared_refs_after_boot_reset():
         assert not store["pinned"], "저장소 쪽이 안 비워짐 — 재-attach 로 되살아난다"
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_remote_status_override_keeps_local_opt_and_plugin_authority():
+    """[검수 F-D 회귀, 2026-07-17] 원격 뷰 status 는 **로컬 서버가 권위**인 옵션·플러그인
+    필드를 상류 값으로 덮지 않는다. **정상 상류에서도 발동하는 correctness 버그**다.
+
+    회귀 전: `_remote_status_override` 가 `dict(link.last_status)` 로 상류 status 를 통째
+    기반 삼고 4개 키(t·session·single_border·windows)만 되덮었다 → 상류의
+    `disabled_plugins`·8개 server_opts(vt_parser·window_size·monitor_* 등)가 하류 클라로
+    흘러가 `client.set_disabled` 로 **하류의 플러그인 레지스트리를 갈아치우고** `:settings`
+    가 상류 값을 로컬 값으로 표시했다. 사용자가 그걸 "고치면" set_* 는 릴레이 대상이
+    아니라 로컬 opts.json 에 상류 값을 썼다. 극성을 뒤집어 로컬 권위 필드를 되덮는다.
+
+    반대 계약도 함께 고정: **원격 패널 상태와 플러그인 동적 헤더**(claude_model 등)는
+    상류가 권위이므로 그대로 전달돼야 한다."""
+    from pytmuxlib.serverremote import RemoteLink
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv.vt_parser = "native"
+        srv.plugins.disabled = set()
+        link = RemoteLink("hostX", object(), object())
+        srv._remotes_dict()["hostX"] = link
+
+        class _C:
+            remote_view = "hostX"
+            session = sess
+        link.last_status = {
+            "t": "status", "disabled_plugins": ["claude-code", "rec"],
+            "vt_parser": "pyte", "window_size": "largest",
+            "monitor_activity": True, "auto_rename": False,
+            "active_pane": 999, "zoomed": True, "pane_title": "REMOTE-PANE",
+            "claude_model": "opus", "windows": [],
+        }
+        out = srv._remote_status_override(sess, _C())
+
+        # 로컬 권위: 상류 값이 새면 안 된다.
+        assert out["disabled_plugins"] == sorted(srv.plugins.disabled) == [], out["disabled_plugins"]
+        assert out["vt_parser"] == "native", out["vt_parser"]
+        assert out["window_size"] == srv.window_size, out["window_size"]
+        assert out["monitor_activity"] is False, out["monitor_activity"]
+        # 원격 스코프: 상류 값이 와야 한다.
+        assert out["active_pane"] == 999
+        assert out["pane_title"] == "REMOTE-PANE"
+        assert out["zoomed"] is True
+        # 플러그인 동적 헤더(로컬 _status_msg 엔 없는 키)는 상류 권위로 전달.
+        assert out["claude_model"] == "opus", out.get("claude_model")
+    finally:
+        await teardown(srv, task, sock)
