@@ -465,6 +465,28 @@ async def test_claude_input_box_parser():
     assert f(["  ╭────╮", "  │ ❯ hi │", "  ╰────╯"], cursor_y=1) == "hi"
 
 
+async def test_claude_input_box_queued_no_rule_block():
+    """busy·큐 대기 중 현행 Claude 는 입력 구획선(가로줄)을 **안 그린다** — 그때 여러 줄
+    프롬프트는 마커(❯)+들여쓴 연속 줄로만 표시된다. 종전엔 구획선이 없어 `[cursor_y]`
+    한 줄만 긁어, 커서가 둘째 줄에 있으면 **커서 윗줄만/한 줄만** 인계됐다(사용자 보고
+    2026-07-18: 팝업에 커서 윗줄이 옴). 이제 마커로 논리 블록 전체를 인계한다 — 실제
+    캡처(captures/playground.local, 큐된 2줄 메시지) 모양으로 고정."""
+    from pytmuxlib.claude import claude_input_box as f
+    blk = ["✢ Sublimating… (42s · ↑ 1.1k tokens)", "  ⎿  Tip: ...", "",
+           "  ❯ 이 세션에서 배운 점을 recordings/rules/",
+           "    하위 문서에 상세히 기입하고 서브밋.", "",
+           "❯\xa0Press up to edit queued messages", "",
+           "  ⏵⏵ auto mode on · esc to interrupt"]
+    whole = "이 세션에서 배운 점을 recordings/rules/\n하위 문서에 상세히 기입하고 서브밋."
+    # 커서가 블록 어느 줄(마커 줄·연속 줄)에 있든 **전체**를 긁는다(커서 윗줄만 아님).
+    assert f(blk, cursor_y=3) == whole
+    assert f(blk, cursor_y=4) == whole
+    # 큐 대기 플레이스홀더 줄 = 실제 입력 아님 → 빈 시드("").
+    assert f(blk, cursor_y=6) == ""
+    # busy 스피너처럼 마커 없는 줄에 커서 → None(스피너 텍스트 안 긁음 → 추적치 폴백).
+    assert f(blk, cursor_y=0) is None
+
+
 async def test_scrape_fallback_seeds_when_tracker_empty():
     """클라 키 추적(_prompt_buf)이 비어 있어도(원격제어/재접속처럼 on_key 미경유)
     화면 입력박스를 긁어 작성창을 시드한다 — client_prompt_text 훅 fallback. Claude

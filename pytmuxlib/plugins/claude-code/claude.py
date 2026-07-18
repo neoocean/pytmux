@@ -892,6 +892,44 @@ def claude_prompt_marks(texts) -> list:
             if _PROMPT_MARK_LINE_RE.match(ln or "")]
 
 
+# 큐된 메시지 대기 중 라이브 입력칸에 뜨는 플레이스홀더(실제 입력 아님). 이 문구를
+# 작성창 시드로 인계하면 안 된다(사용자 보고 2026-07-18: 팝업에 이 안내문이 들어옴).
+_INPUT_PLACEHOLDER_RE = re.compile(r"^Press up to edit queued messages", re.I)
+
+
+def _prompt_block_rows(lines, anchor):
+    """박스 구획선(가로줄/모서리)이 없을 때 — 현행 Claude 는 **busy·큐 대기 중** 입력
+    구획선을 안 그린다 — 커서(anchor)를 품은 **논리 프롬프트 블록**의 행 인덱스를
+    돌려준다(없으면 None → 입력줄 아님, 추적치 폴백).
+
+    블록 = 프롬프트 마커(❯/>) 줄 하나 + 그 아래로 이어지는 **들여쓴 연속 줄**(다음
+    마커·빈 줄·구획선·footer 힌트 전까지). 종전엔 이 자리에서 `[anchor]` 한 줄만 긁어,
+    여러 줄 프롬프트에서 커서 줄만 오고 이웃 줄이 빠졌다(사용자 보고: 커서 윗줄만 옴).
+    커서가 busy 스피너처럼 마커 없는 줄에 얹히면 None → 그 텍스트를 안 긁는다."""
+    n = len(lines)
+    start = None
+    for i in range(anchor, -1, -1):
+        s = lines[i].strip()
+        if not s:
+            break                    # 위쪽 빈 줄 = 블록 경계
+        if lines[i].lstrip("\xa0 ")[:1] in _PROMPT_MARK:
+            start = i
+            break
+        if _is_box_rule(lines[i]) or _FOOTER_HINT_RE.search(s):
+            break                    # 구획선/footer 를 먼저 만남 = 입력 블록 밖
+    if start is None:
+        return None
+    rows = [start]
+    for i in range(start + 1, n):
+        s = lines[i].strip()
+        if not s or _is_box_rule(lines[i]) or _FOOTER_HINT_RE.search(s):
+            break
+        if lines[i].lstrip("\xa0 ")[:1] in _PROMPT_MARK:
+            break                    # 다음 프롬프트 블록 시작
+        rows.append(i)
+    return rows
+
+
 def claude_input_box(lines, wrap=(), cursor_y=None):
     """패널 화면 행 문자열 목록에서 라이브 입력박스의 현재 텍스트를 추출(best-effort).
 
@@ -951,7 +989,12 @@ def claude_input_box(lines, wrap=(), cursor_y=None):
     if top is not None and bottom is not None and top < bottom:
         rows = list(range(top + 1, bottom))
     else:
-        rows = [cursor_y]            # 박스 없음 → 입력 한 줄만
+        # 박스(가로줄/모서리)를 못 찾음 — busy·큐 대기 중 현행 Claude 는 입력 구획선을
+        # 안 그린다. 그땐 프롬프트 마커(❯/>)로 **논리 프롬프트 블록**을 찾아 전체를
+        # 인계한다(커서 줄 + 이웃 줄). 마커를 못 찾으면(입력줄 아님) None → 추적치 폴백.
+        rows = _prompt_block_rows(lines, cursor_y)
+        if rows is None:
+            return None
     if not rows:
         return ""
     parts = []
@@ -982,7 +1025,12 @@ def claude_input_box(lines, wrap=(), cursor_y=None):
             j += 1
         b = b[j:].rstrip()
         parts.append(b if ri in wrap else "\n" + b)
-    return "".join(parts)
+    text = "".join(parts)
+    # 큐 대기 플레이스홀더("Press up to edit queued messages")는 실제 입력이 아니므로
+    # 작성창에 시드하지 않는다 — 라이브 입력칸은 실제로 비어 있다(빈 시드 = "").
+    if _INPUT_PLACEHOLDER_RE.match(text.strip()):
+        return ""
+    return text
 
 
 # ---- 자동 /compact 억제: Claude 가 사용자에게 질문/선택을 요청 중인지(요청) ----
