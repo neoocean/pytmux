@@ -203,6 +203,85 @@ async def test_screen_impl_scrollback_view_equivalence():
     _assert_panes_equal(pa, pb, "screen-scrollback live")
 
 
+# ── M2/M3 오라클 못박기: 편집/영역·희귀 시퀀스·resize 등가 ──────────────────────
+# M1 착지 시 nativescreen 이 이 동작들을 pyte 에 맞춰 이미 구현했으나(insert/delete_lines·
+# DECSCNM/DECCOLM·charset·resize 재flow), 코퍼스가 안 태워 **등가 오라클에 핀되지 않았다**
+# (M1 정직 한계 보고). 여기서 못박아 M4(기본 native 전환+pyte 은퇴) 전 등가 그물을
+# 포괄적으로 만든다. 골든 corpus(_CORPUS)는 M4 tripwire 로 frozen 유지하려 **건드리지
+# 않고** 전용 샘플/연산으로 검증한다.
+
+# 골든에 없는 시퀀스(비-geometry): IL/DL(ESC[L/M)·DECSCNM(스크린 리버스 ?5)·charset
+# ESC(0(DEC 라인드로잉)+SI/SO. DECCOLM(?3, 컬럼 변경)·resize 는 geometry 변형이라 아래
+# 전용 테스트에서 다룬다(골든과 격리).
+_M3_SAMPLES = [
+    b"\x1b[2J\x1b[Habc\r\ndef\r\nghi\r\njkl\r\n\x1b[1;1H\x1b[2L\x1b[4;1H\x1b[1M",  # IL/DL
+    b"\x1b[2J\x1b[Hnormal\x1b[?5h reverse-screen \x1b[?5l back",                    # DECSCNM
+    b"\x1b[2J\x1b[H\x1b(0lqk\x0ex y\x0fmqj\x1b(B ascii",                            # charset+SI/SO
+    b"\x1b[2J\x1b[H" + b"".join(b"L%02d\r\n" % i for i in range(8))
+    + b"\x1b[3;1H\x1b[2M\x1b[2;1H\x1b[3L\x1b[5;1H\x1b[2@ins\x1b[5;1H\x1b[2P",       # 혼합 편집
+]
+
+
+async def test_screen_impl_edit_region_and_rare_sequences_equivalence():
+    """편집/영역·희귀 시퀀스(IL/DL·DECSCNM·charset ESC(0/SI/SO)에서 pyte 화면 ≡ native
+    화면. M2/M3 동작을 등가 오라클에 못박는다(#6). 통짜+슬라이스."""
+    for cols, rows in [(40, 10), (80, 24)]:
+        for i, sample in enumerate(_M3_SAMPLES):
+            pa, pb = _new_screen_pair(cols, rows)
+            pa.feed(sample)
+            pb.feed(sample)
+            _assert_panes_equal(pa, pb, f"screen-m3[{cols}x{rows}#{i}]")
+            # 슬라이스 불변(feed 경계 무관)
+            ref = Pane(-1, -1, cols, rows, vt_parser="native", screen_impl="pyte")
+            ref.feed(sample)
+            nat = Pane(-1, -1, cols, rows, vt_parser="native", screen_impl="native")
+            for off in range(0, len(sample), 3):
+                nat.feed(sample[off:off + 3])
+            _assert_panes_equal(ref, nat, f"screen-m3-slice[{cols}x{rows}#{i}]")
+
+
+async def test_screen_impl_resize_equivalence():
+    """resize 왕복(폭·높이 축소/확대)·DECCOLM(?3 컬럼 변경)·resize 후 스크롤백 뷰포트가
+    pyte 화면 ≡ native 화면(#6 M3). 화면 백엔드 교체가 재flow(폭축소 wrap-guard·drop-
+    from-top·탭스톱 재계산)를 pyte 와 바이트 동일하게 하는지 못박는다 — M1 미검증 갭."""
+    blob = (b"\x1b[2J\x1b[H"
+            + b"".join(("line %02d wide 가나다 漢字 ABCDEFGH\r\n" % i).encode()
+                       for i in range(20))
+            + b"\x1b[1mBOLD\x1b[0m tail")
+    after = "\r\nafter-resize 추가 X\r\n".encode()
+    for cols, rows in [(60, 10), (100, 30), (20, 6), (80, 24), (40, 40), (80, 24)]:
+        pa = Pane(-1, -1, 80, 24, vt_parser="native", screen_impl="pyte")
+        pb = Pane(-1, -1, 80, 24, vt_parser="native", screen_impl="native")
+        pa.feed(blob)
+        pb.feed(blob)
+        pa.resize(rows, cols)
+        pb.resize(rows, cols)
+        pa.feed(after)
+        pb.feed(after)
+        _assert_panes_equal(pa, pb, f"screen-resize->{cols}x{rows}")
+    # DECCOLM(?3h=132컬럼 전환→클리어, ?3l 복귀)도 등가
+    for seq in (b"\x1b[2J\x1b[Hnarrow\x1b[?3hwide-after-deccolm\x1b[?3lback",):
+        pa, pb = _new_screen_pair(40, 10)
+        pa.feed(seq)
+        pb.feed(seq)
+        _assert_panes_equal(pa, pb, "screen-deccolm")
+    # resize 후 스크롤백 위로 스크롤한 뷰포트 등가
+    pa = Pane(-1, -1, 80, 24, vt_parser="native", screen_impl="pyte")
+    pb = Pane(-1, -1, 80, 24, vt_parser="native", screen_impl="native")
+    big = b"".join(("SB line %03d\r\n" % i).encode() for i in range(80))
+    pa.feed(big)
+    pb.feed(big)
+    pa.resize(10, 50)
+    pb.resize(10, 50)
+    for up in (1, 8, 30):
+        pa.scroll = pb.scroll = 0
+        pa.scroll_by(up)
+        pb.scroll_by(up)
+        ra, _ = pa.render(True)
+        rb, _ = pb.render(True)
+        assert ra == rb, f"screen-resize-scrollback up={up} 불일치"
+
+
 # ── 골든 해시 오라클(로드맵 #4·#6 안전망) ─────────────────────────────────────
 # 위 테스트들은 pyte≡native **상대** 비교라, 두 경로를 동일하게 바꾸는 변경(예: #6
 # pyte.Screen→자작 native Screen 교체, 또는 공용 SGR/렌더 로직 변경)은 못 잡는다.
