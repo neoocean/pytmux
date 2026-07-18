@@ -8,7 +8,7 @@
 
 **딤 제외(가독성)**: 이 바는 명령 프롬프트(ModalScreen=PromptScreen) 뒤에 그려지는데,
 코어 backdrop-dim(clientio._composite)이 그 위를 `_darken_style` 로 덮어 흰 글자가 회색
-(≈grey114)으로 뭉개져 배경(진파랑 바)과 대비가 무너진다(사용자 보고: 텍스트가 배경색과
+(≈grey114)으로 뭉개져 배경(진파랑 바)과 대비가 무너진다(제보: 텍스트가 배경색과
 비슷해 안 읽힘). perm-mode footer 행과 동일한 패턴으로 미리보기 행을 `app._undim_rows`
 에 실어 딤에서 제외 → 원래 밝기(순백 글자/진파랑 바)로 또렷이 보이게 한다. client_render
 훅은 backdrop-dim 루프보다 먼저 도므로(clientio 983 < 1163) 같은 프레임에 반영된다.

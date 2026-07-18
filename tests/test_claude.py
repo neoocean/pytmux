@@ -200,7 +200,7 @@ async def test_claude_state():
     assert claude_state("⏵⏵ accept edits on (shift+tab to cycle)") == "idle"
     # 신형 idle footer(2026-06): "(shift+tab to cycle)" 접미가 빠지고 ⏵⏵ 프롬프트만
     # 남는다 — 옛 "mode on (shift" 앵커로는 None(미인식)이 돼 '포맷 미인식' 경고가
-    # 멀쩡한 세션에 오발화했다(사용자 보고 2026-06-22). 접미 없는 footer 도 idle.
+    # 멀쩡한 세션에 오발화했다(제보 2026-06-22). 접미 없는 footer 도 idle.
     assert claude_state(
         "❯\n⏵⏵ auto mode on · 2 shells · ↵ for agents · ↓ to manage") == "idle"
     assert claude_state("⏵⏵ plan mode on · 1 shell") == "idle"
@@ -249,7 +249,7 @@ async def test_claude_perm_mode():
     # auto(진짜 auto 모드: 모든 동작 자동, 분류기 안전검사) — "auto mode on" 만.
     assert claude_perm_mode("⏵⏵ auto mode on (shift+tab to cycle)") == "auto"
     # accept(acceptEdits: 편집·기본 FS 만) — auto 와 **다른** 모드(둘 다 ⏵⏵ 글리프라
-    # 문구로 가른다). 예전엔 둘 다 auto 로 봐 새 세션이 accept 에서 멈췄다(사용자 보고).
+    # 문구로 가른다). 예전엔 둘 다 auto 로 봐 새 세션이 accept 에서 멈췄다(제보).
     assert claude_perm_mode("⏵⏵ accept edits on (shift+tab to cycle)") == "accept"
     assert claude_perm_mode("auto-accept edits on (shift+tab to cycle)") == "accept"
     # plan 모드
@@ -489,7 +489,7 @@ async def test_claude_model_badge_reads_welcome_banner():
 
 async def test_claude_input_box_rule_delimited_current_ui():
     """입력박스 파서가 **현행 Claude UI**(모서리·세로 테두리 없이 위아래 가로줄로만
-    구획)를 읽는다 — ESC→Insert 작성창 시드가 커서 줄 하나만 오던 버그(사용자 보고
+    구획)를 읽는다 — ESC→Insert 작성창 시드가 커서 줄 하나만 오던 버그(제보
     2026-07-16). 종전엔 모서리(╭╰)만 찾아 '박스 없음' 폴백(=커서 줄 하나)이었다.
     구 UI(모서리 박스)도 그대로 읽어야 한다(회귀)."""
     cur = [" ────────────────────────",
@@ -531,7 +531,7 @@ async def test_claude_model_live_signatures():
     """푸터 배지 말고도 화면이 **현재 모델**을 밝히는 자리를 잡는다(2026-07-16).
 
     버그: 화면엔 'Set the AI model for Claude Code (currently Opus 4.8)' 이 떠 있는데
-    상태줄은 sonnet-5 였다(사용자 보고+스크린샷). 원인=배지 서명은 모델명 **뒤**의
+    상태줄은 sonnet-5 였다(제보+스크린샷). 원인=배지 서명은 모델명 **뒤**의
     '(… context)'/'/model' 뿐이라 이 줄이 안 잡혀 → 프로브(별도 세션=기본 모델) 폴백.
     문구는 전부 실캡처 코퍼스(captures/)에서 확인한 것이다."""
     # ① /model 슬래시 메뉴 설명 — 사용자 스크린샷 재현(실캡처 37회 관측).
@@ -789,7 +789,7 @@ async def test_statusbar_unknown_usage_badge_when_no_measurement():
 
 async def test_statusbar_ctx_follows_active_pane_switch():
     """좌하단 ctx(claude_usage)는 **활성 패널 전환 시 새 패널 값으로 교체**된다 — 새
-    패널의 ctx 가 아직 안 잡혀(None) 와도 이전 패널 값을 유지하지 않는다(사용자 보고
+    패널의 ctx 가 아직 안 잡혀(None) 와도 이전 패널 값을 유지하지 않는다(제보
     2026-06-17: 서로 다른 Claude 세션 패널을 옮겨 다녀도 같은 ctx 가 붙어 보임). 단
     **같은 패널** 내 일시적 None 엔 종전대로 마지막 값 유지(스크롤 등 깜빡임 방지)."""
     cs = importlib.import_module("pytmuxlib.plugins.claude-code.clientstatus")

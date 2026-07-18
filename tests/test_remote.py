@@ -263,7 +263,7 @@ async def test_remote_new_tab_spawns_window_and_attaches():
 
 
 async def test_remote_attach_failure_sends_notice():
-    """실패가 서버 로그에만 남아 '아무 일도 안 일어남'으로 보이던 갭(사용자 보고):
+    """실패가 서버 로그에만 남아 '아무 일도 안 일어남'으로 보이던 갭(제보):
     remote_attach 가 실패하면 요청 클라에 notice(원인 포함)가 회신된다."""
     if os.name == "nt":
         return
@@ -281,7 +281,7 @@ async def test_remote_attach_failure_sends_notice():
                               what="failure notice")
         assert "실패" in n.get("text", ""), n
         # 핸드셰이크 실패 알림은 3초 유지 + 수동 닫기(클릭/Enter) 가능해야 한다
-        # (사용자 보고 2026-06-16: 너무 빨리 사라짐).
+        # (제보 2026-06-16: 너무 빨리 사라짐).
         assert n.get("secs") == 3.0, n
         assert n.get("dismissable") is True, n
     finally:
@@ -1056,7 +1056,7 @@ async def test_remote_tab_pin_local_set_and_status():
 
 
 async def test_switcher_panes_in_status_and_remote_tabs():
-    """탭 스위처 하위행(원격 탭, 사용자 보고 07-18): 상류 _status_msg 가 **≥2 패널** 창에
+    """탭 스위처 하위행(원격 탭, 제보 07-18): 상류 _status_msg 가 **≥2 패널** 창에
     경량 panes 요약을 싣고(1 패널 창은 생략), 다운스트림 _sanitize_windows 가 신뢰불가
     panes 를 경계에서 정규화(잡음 드롭·C0/C1 제거)한 뒤 _remote_tabs 가 병합 탭에 그대로
     실어 준다. 이 사슬로 다운스트림 스위처가 원격 탭 하위 패널을 그린다(로컬 tree 엔 없음)."""
@@ -1124,7 +1124,7 @@ async def test_remote_pin_survives_upstream_tab_close_reindex():
 
 
 async def test_remote_pin_survives_reattach_same_host():
-    """사용자 보고 2026-07-15: 원격 탭이 열린 채 **같은 서버에 다시 remote-attach**
+    """제보 2026-07-15: 원격 탭이 열린 채 **같은 서버에 다시 remote-attach**
     하면 걸어 둔 핀이 전부 풀렸다 — 같은 이름 링크 교체가 새 RemoteLink 의 빈
     pinned_windows 로 옛 집합을 덮어썼기 때문. 핀은 링크가 아니라 **호스트 수명**
     상태(_remote_sticky)라 재-attach 를 살아남고, 그 사이 상류에 **추가된 탭만**
@@ -1160,7 +1160,7 @@ async def test_remote_pin_survives_reattach_same_host():
             await asyncio.sleep(0.02)
         assert len(link2.windows) == 2, link2.windows
         assert link2.pinned_windows == {key}, \
-            f"재-attach 로 핀 유실(사용자 보고 2026-07-15): {link2.pinned_windows}"
+            f"재-attach 로 핀 유실(제보 2026-07-15): {link2.pinned_windows}"
         rt = srvA._remote_tabs(len(sessA.tabs))
         assert [t["pinned"] for t in rt] == [True, False], rt  # 추가분만 비고정
 
@@ -1335,7 +1335,7 @@ async def test_remote_same_host_tabs_command_merge():
 
 async def test_remote_autoresume_relays_to_remote_pane():
     """원격 탭을 보는 중 set_autoresume 는 **원격** 활성 패널에 적용된다(릴레이) —
-    로컬 활성 패널(딴 탭)에 켜지던 '엉뚱한 탭에 AR' 버그 수정(사용자 보고 2026-06-15)."""
+    로컬 활성 패널(딴 탭)에 켜지던 '엉뚱한 탭에 AR' 버그 수정(제보 2026-06-15)."""
     if os.name == "nt":
         return
     srvA, taskA, sockA = await server_only()
@@ -1381,7 +1381,7 @@ async def test_remote_autoresume_relays_to_remote_pane():
 async def test_remote_rename_relays_to_remote_tab_and_pane():
     """원격 탭을 보는 중 rename-tab(rename_window)·rename-pane(set_pane_title)는
     **원격** 활성 탭/패널에 적용된다(릴레이) — rename_window 가 릴레이 화이트리스트에
-    없어 보이지 않는 **로컬** 탭만 바꾸고 원격엔 안 먹던 버그 수정(사용자 보고
+    없어 보이지 않는 **로컬** 탭만 바꾸고 원격엔 안 먹던 버그 수정(제보
     2026-06-17). set_pane_title 은 이미 릴레이되지만 같은 보고 범위라 함께 가드."""
     if os.name == "nt":
         return
@@ -1439,7 +1439,7 @@ async def test_remote_rename_relays_to_remote_tab_and_pane():
 async def test_remote_paste_relays_to_remote_pane():
     """원격 탭을 보는 중 붙여넣기(paste=클립보드 텍스트·paste_buffer=버퍼)는 **원격**
     활성 패널에 주입된다(릴레이) — paste/paste_buffer 가 릴레이 화이트리스트에 없어
-    보이지 않는 **로컬** 패널에 들어가던 버그 수정(사용자 보고 2026-06-17). 평문
+    보이지 않는 **로컬** 패널에 들어가던 버그 수정(제보 2026-06-17). 평문
     타이핑/bracketed paste(input)는 이미 릴레이됐지만 붙여넣기 cmd 는 누락이었다."""
     if os.name == "nt":
         return
@@ -1675,7 +1675,7 @@ async def test_remote_token_log_only_to_requester_not_other_viewers():
 async def test_remote_ncd_relays_to_remote_cwd():
     """원격 탭을 보는 중 ncd(request_nc_list)는 **원격** 머신의 cwd/디렉토리 트리를
     회신한다(릴레이) — 로컬 서버가 자기 fs 의 cwd 를 회신하던 '원격 보는데 로컬
-    디렉토리' 버그 수정(사용자 보고 2026-06-17). 업스트림 nc_list 응답은
+    디렉토리' 버그 수정(제보 2026-06-17). 업스트림 nc_list 응답은
     _remote_reader 패스스루로 보는 클라에 전달된다."""
     if os.name == "nt":
         return
@@ -2048,7 +2048,7 @@ async def test_nest_attach_request_guards():
 
 
 async def test_nest_do_attach_repeat_does_not_reswitch():
-    """사용자 보고 2026-06-17: 이미 병합된 원격 호스트로의 중복 NEST_ATTACH_REQ
+    """제보 2026-06-17: 이미 병합된 원격 호스트로의 중복 NEST_ATTACH_REQ
     (출력 재생·스크롤백·셸 루프가 만든 것, 디바운스를 넘긴 것)가 매번 클라를 원격
     탭으로 끌어가 로컬↔원격을 저 혼자 오가게 만들었다. 이제 _nest_do_attach 는 이미
     _remotes_dict 에 있는 호스트면 즉시 무시한다 — 재attach 도, 재전환도 없다(첫 승격
@@ -2184,7 +2184,7 @@ async def test_remote_allowed_hosts_allowlist():
 
 async def test_remote_attach_silent_upstream_warns_not_merged():
     """업스트림이 hello 는 받고도 첫 status 를 안 보내는 웨지(원격 pty-host 고장 등,
-    사용자 보고 2026-06-20)면, 종전엔 hello 송신 직후 '병합됨'으로 단정해 '성공인데
+    제보 2026-06-20)면, 종전엔 hello 송신 직후 '병합됨'으로 단정해 '성공인데
     탭 없음'으로 보였다. 이제 첫 status(실제 탭 도착)를 잠깐 기다려 못 받으면
     rnotice.attach_silent(연결됐지만 무응답)로 알리고 ⇄ 탭을 만들지 않는다."""
     if os.name == "nt":

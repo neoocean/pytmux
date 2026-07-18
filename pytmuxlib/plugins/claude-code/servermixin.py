@@ -137,11 +137,11 @@ _RC_CONFIRM_FRAMES = 30
 # 막아 Esc=Continue 를 첫 감지에 **딱 한 번** 주입한다(_scan_claude). 절대 재주입하지
 # 않는다 — 이중 Esc=되감기(Rewind) 모달의 직접 원인이었다(첫 Esc 가 메뉴를 닫아도 feed
 # 지연으로 화면이 아직 메뉴에 매칭되는 동안 Esc#2 가 나가면 Claude Code 가 이중 Esc 를
-# Rewind 단축키로 해석해 모달로 진행을 막는다, 사용자 보고 2026-06-20). _rc_menu_active
+# Rewind 단축키로 해석해 모달로 진행을 막는다, 제보 2026-06-20). _rc_menu_active
 # 디바운스로 메뉴 인스턴스당 1회만 쏜다.
 #
 # ★ 세션 피드백 프롬프트("How is Claude doing this session?")는 이 Esc 경로를 더 이상
-# 타지 않는다(사용자 보고 2026-06-20): 단일 Esc 가 종종 Dismiss 대신 작동 중인 턴을
+# 타지 않는다(제보 2026-06-20): 단일 Esc 가 종종 Dismiss 대신 작동 중인 턴을
 # interrupt 했다. 이 배너는 컴포저 **위**에 비모달로 떠 있어 안 닫아도 작업을 막지 않고,
 # server_filter_rows(_blank_feedback_banner)가 화면에서 완전히 가려 키 주입이 불필요하다.
 _FEEDBACK_DISMISS_KEY = b"\x1b"
@@ -508,7 +508,7 @@ class ServerClaudeMixin:
         경고가 세워진(_fmt_unknown=True) 동안엔 _scan_claude 의 pending 게이트가 그
         패널을 계속 스캔 대상으로 잡아, Claude 가 종료돼 셸이 **정적**이어도(출력 없음)
         이 경로가 5s throttle 간격으로 계속 돌며 fg≠claude 를 관측해 해제한다 — 종전엔
-        정적 셸이 dirty 게이트로 스캔에서 빠져 경고가 상태줄에 눌러앉았다(사용자 보고
+        정적 셸이 dirty 게이트로 스캔에서 빠져 경고가 상태줄에 눌러앉았다(제보
         2026-07-18: Claude 종료 후에도 ⚠ 지속)."""
         now = time.monotonic()
         if recognized:
@@ -765,7 +765,7 @@ class ServerClaudeMixin:
         화면 스크레이프(_hdr_claude 디바운스)만으론 거짓 종료가 난다 — 긴 출력이 Claude
         footer 를 샘플 화면 밖으로 밀면 살아있는 Claude 도 claude_state→None 이 30프레임
         이어져 '종료'로 확정되고, 그 순간 토큰 그래프가 살아있는 TUI 한가운데 주입돼 화면이
-        깨진다(사용자 보고 2026-06-18). fg 가 알려진 셸이면 Claude 가 빠져 셸로 돌아온 것
+        깨진다(제보 2026-06-18). fg 가 알려진 셸이면 Claude 가 빠져 셸로 돌아온 것
         → 주입 안전(그래프가 새 프롬프트 위 스크롤백에 흐른다). fg 가 여전히 Claude
         (node/claude)거나 확인 불가(None)면 False → 주입 건너뜀(화면 보호 우선)."""
         fg = self._fg_command(pane)
@@ -893,7 +893,7 @@ class ServerClaudeMixin:
         1회). Claude 의 순환 순서가 버전 의존이라 footer 를 매 프레임 재확인하며 도는
         폐루프다. 반환 True = 드라이브 종료(도달 또는 포기), False = 진행 중.
 
-        핵심(사용자 보고 대응): target=="auto" 는 **진짜 auto 모드**("auto mode on")가
+        핵심(제보 대응): target=="auto" 는 **진짜 auto 모드**("auto mode on")가
         목표다 — acceptEdits("accept edits on")는 다른 모드라 거기서 멈추지 않고 계속
         순환한다(cycle: default→accept→plan→auto). 단 auto 는 계정이 opt-in 돼야 cycle
         에 나타나므로, **한 바퀴를 다 돌았는데(이미 본 모드를 재방문) auto 를 못 만나면**
@@ -1005,7 +1005,7 @@ class ServerClaudeMixin:
             # 에서만 폴백해, 본문 언급 오검출로 한번 굳은 값(예 'fable-5')이
             # 프로브가 opus 를 알아도 세션 경계까지 안 풀렸다 — 조건을 풀어
             # 배지 부재 시 프로브가 강한 값도 디바운스 경유로 정정하게 한다
-            # (사용자 보고 2026-07-04). 프로브 미상이면 마지막 값 유지.
+            # (제보 2026-07-04). 프로브 미상이면 마지막 값 유지.
             pm = (self._usage.get("model")
                   if isinstance(self._usage, dict) else None)
             if pm:
@@ -1035,7 +1035,7 @@ class ServerClaudeMixin:
                 # 배지 부재 시 프로브가 강한 값도 디바운스로 정정하게 뒀는데(2026-07-04,
                 # 본문 오검출로 굳은 값을 풀려던 것), 배지는 상시 표시가 아니라 프로브가
                 # **매 스캔** 어긋난 값을 내밀어 _MODEL_DEBOUNCE 를 금방 채웠다 → 라이브가
-                # opus 인데 상태줄이 기본값 sonnet-5 로 눌러앉음(사용자 보고 2026-07-16).
+                # opus 인데 상태줄이 기본값 sonnet-5 로 눌러앉음(제보 2026-07-16).
                 # 이제 프로브는 값이 없거나(None) 약할 때만 채운다. 2026-07-04 이 걱정한
                 # '굳은 오검출'은 ① 배지 서명 요구로 오검출 자체가 드물어졌고 ② 라이브
                 # 서명이 넓어져(/model 메뉴·/status) 화면 한 번이면 정정되며 ③ 새 Claude
@@ -1127,7 +1127,7 @@ class ServerClaudeMixin:
         """
         # `/rc` 원격 제어 관리 메뉴(Continue/Disconnect/QR) 자동 Dismiss: 이
         # 메뉴는 "Esc to continue" 응답 대기로 **진행을 막으므로**(auto-launch 가
-        # 새 세션마다 /rc 를 1회 주입, 사용자 보고 2026-06-18) Esc=Continue 를
+        # 새 세션마다 /rc 를 1회 주입, 제보 2026-06-18) Esc=Continue 를
         # 첫 감지에 **딱 한 번** 주입해 치운다(원격은 켜진 채 메뉴만 닫혀 자동화가
         # 이어진다). 절대 재주입하지 않는다(이중 Esc=Rewind 모달 차단, 위 상수
         # 주석) — _rc_menu_active 로 메뉴가 사라질 때까지 디바운스한다. 메뉴 출현은
@@ -1135,7 +1135,7 @@ class ServerClaudeMixin:
         # 않는다.
         #
         # ★ 세션 피드백 프롬프트("How is Claude doing this session?")는 더 이상
-        # Esc 를 주입하지 않는다(사용자 보고 2026-06-20): 단일 Esc 가 종종 Dismiss
+        # Esc 를 주입하지 않는다(제보 2026-06-20): 단일 Esc 가 종종 Dismiss
         # 대신 작동 중인 턴을 interrupt 했다 — busy 중 배너 텍스트가 화면에 매칭
         # 되거나 feed 지연으로 stale 매칭이 남으면 Esc 가 interrupt 키로 해석된다.
         # 이 배너는 비모달이라 안 닫아도 컴포저를 막지 않고(사용자의 다음 Enter/
@@ -1460,7 +1460,7 @@ class ServerClaudeMixin:
                            or getattr(p, "_exit_token_pending", 0) > 0
                            # §3.7 '포맷 미인식' 경고가 떠 있는 동안: Claude 가 종료돼
                            # 셸이 정적이면 dirty 게이트로 스캔이 끊겨 _update_fmt_unknown
-                           # 이 다시 안 돌아 경고가 상태줄에 눌러앉는다(사용자 보고
+                           # 이 다시 안 돌아 경고가 상태줄에 눌러앉는다(제보
                            # 2026-07-18 Windows: Claude 종료 후에도 ⚠ 지속). 경고 중엔
                            # 계속 스캔해 5s throttle fg 재검사가 fg≠claude 를 잡아 해제하게
                            # 한다(해제되면 _fmt_unknown=False 라 이 항이 빠져 정상 복귀).
@@ -1525,7 +1525,7 @@ class ServerClaudeMixin:
                         # 단, _hdr_claude 거짓 종료(긴 출력이 footer 를 샘플 밖으로 밀어
                         # claude_state→None 30프레임)면 살아있는 TUI 에 그래프가 주입돼
                         # 화면이 깨진다 — 포그라운드 프로세스로 진짜 셸 복귀를 교차검증해
-                        # 그때만 주입한다(_claude_really_exited, 사용자 보고 2026-06-18).
+                        # 그때만 주입한다(_claude_really_exited, 제보 2026-06-18).
                         # 한 프레임짜리 일회성 발화가 fg 미확정으로 유실되지 않게 주입을
                         # **예약**하고, 아래에서 셸이 잡히는 순간 재시도한다(안정 표시,
                         # 요청 2026-07-05). 종료 프레임에 fg 가 이미 셸이면 같은 패스에서
@@ -1552,7 +1552,7 @@ class ServerClaudeMixin:
                     # 출력이 footer 를 화면 샘플 밖으로 밀어 claude_state 가 한두 프레임 None
                     # 이 됐다 돌아오면 old_cl=None→new_cl 로 이 블록에 오는데(같은 세션),
                     # 그때 래치를 풀면 /model 로 확인한 라이브 모델(opus)이 프로브 기본값
-                    # (sonnet-5)으로 되돌아간다(사용자 보고 2026-07-18). flap 은 _hdr_claude
+                    # (sonnet-5)으로 되돌아간다(제보 2026-07-18). flap 은 _hdr_claude
                     # 가 30프레임 미스 전이라 여전히 True 이고, 진짜 재기동만 이전 세션이
                     # _hdr_claude False 까지 갔다 온다(=old_hdr_claude False) — 종료 토큰
                     # 주입을 _claude_really_exited 로 가드하는 것과 같은 '거짓 종료' 방어.

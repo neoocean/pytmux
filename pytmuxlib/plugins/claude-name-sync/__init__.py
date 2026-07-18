@@ -50,7 +50,7 @@ _OPT_KEY = "namesync_rules"
 
 # 재시작(세션유지 re-exec) 보존 필드 — 이미 동기화한 패널의 가드/리네임 이력을 넘긴다.
 # 이게 없으면 재시작마다 _ns_synced 가 기본 False 로 되살아나 이미 이름 맞춘 패널을 다시
-# 동기화해 사용자의 수동 이름을 되돌리고 `/rename` 을 재주입한다(사용자 보고 2026-07-13).
+# 동기화해 사용자의 수동 이름을 되돌리고 `/rename` 을 재주입한다(제보 2026-07-13).
 # JSON 스칼라(bool/str/None)만.
 _SER_FIELDS = ("_ns_synced", "_ns_last_kw")
 

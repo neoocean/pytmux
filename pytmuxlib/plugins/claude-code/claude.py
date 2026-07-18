@@ -471,7 +471,7 @@ _MODEL_BADGE_ANCHOR_RE = re.compile(r"[\s\S]{0,24}?(?:context\)|/model)", re.I)
 # 화면이 **현재 모델**을 밝히는 자리는 푸터 배지만이 아니다(실캡처 코퍼스 확인
 # 2026-07-16). 배지는 상시 표시가 아니라(idle 푸터엔 'auto mode on …'뿐) 배지만 보면
 # 사용자가 화면에서 **읽고 있는 모델**이 상태줄에 안 뜬다 — 아래 서명들도 함께 인정해
-# 지나가는 즉시 반영한다(사용자 보고 2026-07-16: 화면은 'currently Opus 4.8' 인데
+# 지나가는 즉시 반영한다(제보 2026-07-16: 화면은 'currently Opus 4.8' 인데
 # 상태줄은 프로브 폴백값 'sonnet-5'). 넷 다 모델명 **앞**에 붙어서, 뒤 서명
 # (_MODEL_BADGE_ANCHOR_RE)과는 별도 규칙으로 검사한다:
 #   · '/' 슬래시 메뉴의 /model 설명 — 'Set the AI model for Claude Code (currently Opus 4.8)'
@@ -533,7 +533,7 @@ def claude_model_badge(text):
     화면 스크랩은 전체 화면(screen_text)을 먹으므로, 대화/문서 본문이 모델명을 언급하면
     (예: 이 저장소 온보딩·환경 텍스트의 "Fable 5: 'claude-fable-5'" 같은 모델 ID 설명)
     `claude_model` 의 '마지막 매치=배지' 가정이 깨져 상태줄 모델 배지가 **실행 중 모델과
-    다른 모델로 튄다**(사용자 보고 2026-07-04: 팝업/프로브는 opus 인데 상태줄은 'fable-5').
+    다른 모델로 튄다**(제보 2026-07-04: 팝업/프로브는 opus 인데 상태줄은 'fable-5').
     실 배지에만 있는 서명을 요구해 본문 언급(서명 없음)을 배제한다. 배지가 화면에 없으면
     None → 호출부(servermixin)는 /usage 프로브가 잡은 실 모델로 폴백한다(팝업과 동일 출처).
 
@@ -618,7 +618,7 @@ def claude_context_pct(text: str):
 # 잡지 않고, 신뢰 신호가 없으면 None(서버가 "unknown" 으로 묶는다 — 사용자 지시).
 # RFC 2606/6761 예약·플레이스홀더 도메인 — 실제 로그인 계정일 수 없다. Claude 가
 # 처리 중인 transcript/문서 본문의 예시 이메일(user@example.com 등)을 계정으로
-# 오검출하던 사용자 보고를 차단한다(상태줄에 @us…@example.com 으로 튐 —
+# 오검출하던 제보를 차단한다(상태줄에 @us…@example.com 으로 튐 —
 # docs/internal/TOKEN_SAVING_SCENARIO.md §5.7 휴리스틱 포맷 오탐의 실제 사례).
 _RESERVED_EMAIL_DOMAINS = frozenset({
     "example.com", "example.net", "example.org", "example.edu",
@@ -706,7 +706,7 @@ def claude_remote_active(text: str) -> bool:
 # "Disconnect this session · Show QR code(Scan with your phone) · Continue (Enter to
 # select · Esc to continue)" **비모달 메뉴**를 띄워 응답 대기로 진행을 막는다. auto-launch
 # (set_claude_auto_launch, 기본 ON)가 새 세션마다 /rc 를 1회 주입하므로 이 메뉴가 매번
-# 떠 자동화가 멈췄다(사용자 보고 2026-06-18: 폰에서 pytmux 로 접속 중 Continue 메뉴가
+# 떠 자동화가 멈췄다(제보 2026-06-18: 폰에서 pytmux 로 접속 중 Continue 메뉴가
 # 진행을 가로막음). 메뉴 안내대로 **Esc=Continue**(원격은 켜진 채 메뉴만 닫힘)를 자동
 # 주입해 치우기 위한 감지 — 피드백 프롬프트 자동 Dismiss(#26)와 같은 Esc 경로를 탄다.
 # 'Disconnect this session' + QR/scan 안내가 **함께** 보일 때만 잡아, 산문에 'Disconnect'
@@ -840,7 +840,7 @@ _PROMPT_MARK = ("❯", ">")   # 입력 프롬프트 마커: 최신 Claude=❯(U+
 #     ────────────────────────────────
 # 모서리(╭╰)도 세로 테두리(│)도 없어서, 모서리만 찾던 종전 탐색은 top/bottom 을 못
 # 잡고 `rows=[cursor_y]`(박스 없음 폴백)로 떨어졌다 → ESC→Insert 작성창에 **커서가
-# 있던 줄만** 인계됨(사용자 보고 2026-07-16). p4 64741 의 '화면 긁기 우선' 은 맞는
+# 있던 줄만** 인계됨(제보 2026-07-16). p4 64741 의 '화면 긁기 우선' 은 맞는
 # 수정이었지만, 정작 파서가 현행 박스 모양에 눈이 멀어 한 줄만 긁고 있었다 — 회귀
 # 테스트가 **구 UI(모서리 박스)** 로만 고정돼 있어 초록불이었다(픽스처는 현행인데).
 _BOX_RULE_CHARS = "─━═-"    # 가로줄 구획(유니코드 실선/굵은선/겹선 + ASCII 폴백)
@@ -893,7 +893,7 @@ def claude_prompt_marks(texts) -> list:
 
 
 # 큐된 메시지 대기 중 라이브 입력칸에 뜨는 플레이스홀더(실제 입력 아님). 이 문구를
-# 작성창 시드로 인계하면 안 된다(사용자 보고 2026-07-18: 팝업에 이 안내문이 들어옴).
+# 작성창 시드로 인계하면 안 된다(제보 2026-07-18: 팝업에 이 안내문이 들어옴).
 _INPUT_PLACEHOLDER_RE = re.compile(r"^Press up to edit queued messages", re.I)
 
 
@@ -904,7 +904,7 @@ def _prompt_block_rows(lines, anchor):
 
     블록 = 프롬프트 마커(❯/>) 줄 하나 + 그 아래로 이어지는 **들여쓴 연속 줄**(다음
     마커·빈 줄·구획선·footer 힌트 전까지). 종전엔 이 자리에서 `[anchor]` 한 줄만 긁어,
-    여러 줄 프롬프트에서 커서 줄만 오고 이웃 줄이 빠졌다(사용자 보고: 커서 윗줄만 옴).
+    여러 줄 프롬프트에서 커서 줄만 오고 이웃 줄이 빠졌다(제보: 커서 윗줄만 옴).
     커서가 busy 스피너처럼 마커 없는 줄에 얹히면 None → 그 텍스트를 안 긁는다."""
     n = len(lines)
     start = None
@@ -1005,7 +1005,7 @@ def claude_input_box(lines, wrap=(), cursor_y=None):
             t = inner.lstrip("\xa0 ")   # 앞 공백/비분리공백 제거(마커 앞 패딩)
             if t[:1] in _PROMPT_MARK:   # 프롬프트 마커("> "/"❯ ") 제거
                 # 최신 Claude 는 U+276F(❯)+비분리공백(\xa0), 구버전은 ">"+공백.
-                # 마커를 안 떼면 ESC→Insert 작성창 시드에 마커가 딸려 온다(사용자 보고).
+                # 마커를 안 떼면 ESC→Insert 작성창 시드에 마커가 딸려 온다(제보).
                 t = t[1:]
                 if t[:1] in ("\xa0", " "):
                     t = t[1:]
@@ -1080,7 +1080,7 @@ def claude_perm_mode(text: str):
     주의: acceptEdits 와 auto 는 **둘 다 ⏵⏵ 글리프**를 쓴다(공식 permission-modes
     문서). 그래서 글리프가 아니라 **문구**("auto mode" vs "accept edits")로만 가른다 —
     예전엔 ⏵⏵·"accept edits on" 을 모두 auto 로 봐, 새 세션이 acceptEdits 에서 멈춰
-    진짜 auto 까지 못 가던 버그가 있었다(사용자 보고). 버전이 footer 문구를 바꾸면
+    진짜 auto 까지 못 가던 버그가 있었다(제보). 버전이 footer 문구를 바꾸면
     가장 먼저 손볼 곳이다(claude_state 와 같은 footer 를 본다)."""
     low = text.lower()
     # 명시적 권한모드 문구부터 판정한다(모드명은 footer 줄 앞쪽이라 좁은 폭(모바일)

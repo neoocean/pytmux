@@ -160,7 +160,7 @@ async def test_preview_single_line_one_row():
 
 async def test_preview_undims_rows_and_bright_text():
     """미리보기 바는 명령 프롬프트(ModalScreen) backdrop-dim 에 흰 글자가 회색으로
-    뭉개져 배경과 대비가 무너지던 것(사용자 보고: 텍스트가 배경색과 비슷해 안 읽힘)을
+    뭉개져 배경과 대비가 무너지던 것(제보: 텍스트가 배경색과 비슷해 안 읽힘)을
     막기 위해, 그린 행을 app._undim_rows 에 실어 딤에서 제외하고 순백(#FFFFFF) 볼드로
     그린다. 대상 해제 시엔 등록분을 회수해 stale 유령 밝은 줄을 남기지 않는다."""
     cells = _grid(30, 6)

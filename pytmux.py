@@ -38,7 +38,7 @@
 # client(=textual)·server(=model→pyte→wcwidth) 는 무거우므로 여기서 즉시 import 하지
 # 않는다 — 서버 하위프로세스(`pytmux.py server`)나 가벼운 제어 명령(ls/cmd/kill)이
 # import 만으로 textual 전체나 pyte/wcwidth 를 끌어와 기동이 느려지던 문제(Windows
-# 사용자 보고). 가벼운 하위모듈(keymap/launcher/protocol)만 즉시 재노출하고, client·
+# 제보). 가벼운 하위모듈(keymap/launcher/protocol)만 즉시 재노출하고, client·
 # model·replay·server 의 심볼은 모듈 __getattr__(PEP 562)로 **처음 접근할 때** 지연
 # 로드한다(`import pytmux; pytmux.Server` 같은 테스트/외부 호환 유지). 경량 명령
 # 경로(main→launcher)는 이 무거운 재노출을 전혀 건드리지 않는다(A4).

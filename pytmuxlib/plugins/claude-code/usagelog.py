@@ -560,7 +560,7 @@ def _model_cell_sequence(models: dict, n: int) -> list:
     if total <= 0:
         # 모델 토큰이 전혀 없는 구간(스크랩 미귀속) — '?'(unknown) 티어로 채운다.
         # 종전엔 None 을 돌려 위젯이 임계색(초록/노랑/빨강) 폴백으로 칠해, 그 초록이
-        # 마치 다른 모델(haiku 색)인 듯 보이는데 범례엔 안 떠 혼란스러웠다(사용자 보고
+        # 마치 다른 모델(haiku 색)인 듯 보이는데 범례엔 안 떠 혼란스러웠다(제보
         # 2026-06-22). 이제 unknown 회색으로 칠하고 범례에 '?'로 함께 표시한다.
         return ["unknown"] * n
     tiers = [t for t in _MODEL_TIER_ORDER if models.get(t, 0) > 0]

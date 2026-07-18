@@ -672,11 +672,11 @@ class ServerIOMixin:
             ok = await self.remote_attach(sess, host=msg.get("host"),
                                           endpoint=msg.get("endpoint"))
             # 결과를 요청 클라에 알린다(notice) — 실패가 서버 로그에만 남아
-            # "아무 일도 안 일어남"으로 보이던 갭(사용자 보고 2026-06-12) 해소.
+            # "아무 일도 안 일어남"으로 보이던 갭(제보 2026-06-12) 해소.
             # key+ko 폴백으로 보내 클라가 자기 로케일로 번역(_notice_msg, i18n rnotice.*).
             if ok:
                 # hello 는 받았지만 업스트림이 첫 status 를 안 보내는 웨지(원격 pty-host
-                # 고장 등, 사용자 보고 2026-06-20)면 탭이 안 생기는데도 종전엔 즉시
+                # 고장 등, 제보 2026-06-20)면 탭이 안 생기는데도 종전엔 즉시
                 # "병합됨"으로 단정해 '성공인데 탭 없음'으로 보였다. 성공을 단정하기
                 # 전에 첫 status(실제 탭 도착)를 잠깐 기다려 '병합됨'과 '연결됐지만
                 # 무응답'을 가른다(링크는 유지 — 뒤늦은 status 면 그때 탭 출현).
@@ -693,7 +693,7 @@ class ServerIOMixin:
                         "원격 서버 점검", sticky=True, target=target)
             else:
                 # 핸드셰이크 실패는 놓치면 안 되는 알림 — 3초 유지 + 클릭/Enter 로
-                # 수동 닫기(사용자 보고 2026-06-16: 너무 빨리 사라짐).
+                # 수동 닫기(제보 2026-06-16: 너무 빨리 사라짐).
                 detail = self._err_detail("rerr.see_log", "서버 error.log 참조")
                 note = self._notice_msg("rnotice.attach_fail",
                     "remote-attach {target} 실패 — {why}",
@@ -952,7 +952,7 @@ class ServerIOMixin:
         # 주의: append + 초기 _send_full 을 try 안에 둔다. 예전엔 try 밖이라
         # _send_full 이 한 번 터지면 ① 클라가 self.clients 에 남아 누수되고
         # ② 화면이 일부만 그려진 채 연결이 끊겨 클라가 즉시 종료, ③ 트레이스백도
-        # 없이 이후 모든 attach 가 같은 상태로 브릭됐다(사용자 보고: "화면이 일부
+        # 없이 이후 모든 attach 가 같은 상태로 브릭됐다(제보: "화면이 일부
         # 나타났다 바로 종료"). 이제 finally 가 항상 정리하고, _send_full 은 클라별로
         # 가드해 한 클라의 실패가 다른 클라 attach 를 막지 않게 한다.
         try:
@@ -968,7 +968,7 @@ class ServerIOMixin:
                     self._log_error("send_full(initial)")
             # 재접속/신규 attach 직후 살아 있는 TUI(Claude·vim 등)가 idle 라 출력이
             # 없으면 pyte 스냅샷이 직전 리사이즈로 깨진 채 남아, 새 클라가 깨진 화면을
-            # 받는다(사용자 보고: ssh 재접속 시 프롬프트 박스 테두리 소실·빈 입력칸 2줄,
+            # 받는다(제보: ssh 재접속 시 프롬프트 박스 테두리 소실·빈 입력칸 2줄,
             # 입력해도 안 돌아옴). 특히 **같은 크기 재접속**은 resize 가 SIGWINCH 를 안
             # 보내 idle 앱이 영영 다시 안 그린다(_induce_redraw_all 주석 참조 — 지금까진
             # 재시작 복원에서만 불렀다). attach 직후 한 번 SIGWINCH 를 유발해 앱이 현재

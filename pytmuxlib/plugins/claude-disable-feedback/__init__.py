@@ -13,7 +13,7 @@
 게이트는 claude-code 가 패널에 설치한 `_claude`(현재 실행 중) **또는** `_hdr_claude`
 (디바운스 Claude 신호)를 getattr 로 부드럽게 참조한다 — claude-code 가 없으면 둘 다 없어
 모든 패널이 통과(no-op)된다. 피드백 배너는 세션이 **끝나는 순간** 떠 `_claude` 가 이미
-None 으로 떨어질 수 있어 `_hdr_claude` 폴백이 그 전이 창을 덮는다(사용자 보고 2026-06-20).
+None 으로 떨어질 수 있어 `_hdr_claude` 폴백이 그 전이 창을 덮는다(제보 2026-06-20).
 
 무게: 이 모듈은 textual/rich 를 import 하지 않는다(서버 프로세스도 plugins.load() 로 같은
 코드를 읽는다). 행 변형은 순수 문자열 연산뿐이라 무거운 의존이 없다."""
@@ -77,7 +77,7 @@ class _ClaudeDisableFeedbackPlugin:
 
         게이트는 `_claude`(현재 실행 중) **또는** `_hdr_claude`(디바운스 Claude 신호)로
         본다 — 피드백 배너는 세션이 **끝나는 순간** 떠 `_claude` 가 이미 None 으로 떨어질
-        수 있는데(사용자 보고 2026-06-20: 그래서 배너가 안 가려지고 보였다), _hdr_claude
+        수 있는데(제보 2026-06-20: 그래서 배너가 안 가려지고 보였다), _hdr_claude
         는 그 전이 창에서 한동안 True 로 남아 배너 출현을 덮는다. 두 속성은 claude-code 가
         설치하므로 getattr 로 부드럽게 참조한다(없으면 no-op)."""
         if not (getattr(pane, "_claude", None) or getattr(pane, "_hdr_claude", None)):

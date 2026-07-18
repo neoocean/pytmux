@@ -1953,7 +1953,7 @@ def usage_bar_lines(usage, width=80, age_sec=None, right_align=False,
         reset = d.get("reset")
         # 타임존 괄호는 자리 절약 위해 생략.
         # 새로고침 화살표와 날짜/시각 사이 한 칸(가독성 — 붙으면 첫 글자가 화살표에
-        # 겹쳐 안 보인다, 사용자 보고 2026-07-18). 종료 요약(_usage_exit_lines)과 동형.
+        # 겹쳐 안 보인다, 제보 2026-07-18). 종료 요약(_usage_exit_lines)과 동형.
         reset_txt = ("↻ " + reset.split(" (")[0].strip()) if reset else ""
         if right_align:
             # 막대를 트랙 폭으로 채워(공백) 리셋 시작 열을 행마다 맞추고, % 숫자는
@@ -1972,7 +1972,7 @@ def usage_bar_lines(usage, width=80, age_sec=None, right_align=False,
             # (종전엔 채운 블록만 그려 전체·잔여가 안 보였다). pct≥100 이면 트랙이
             # 전부 채워져 가득 찬 막대가 된다.
             full_gauge = gauge + _USAGE_EMPTY_TRACK * max(0, barw - len(gauge))
-            # % 뒤에 '사용/used' 를 명시한다(2026-06-12 사용자 보고): 방향 라벨이
+            # % 뒤에 '사용/used' 를 명시한다(2026-06-12 제보): 방향 라벨이
             # 없으면 잔여 표기와 섞여 다른 값처럼 읽혔다 — Claude /usage 의 "N% used"
             # 와 동일 표기. footer 5h 도 같은 사용률로 통일됐다(clientstatus
             # claude.limit_used — 모든 표면이 같은 방향·같은 숫자).

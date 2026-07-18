@@ -117,7 +117,7 @@ _REMOTE_RELAY_ACTIONS = {
     "swap_pane", "swap_pane_to", "select_layout", "cycle_layout",
     "set_sync", "set_pane_title", "respawn_pane",
     # rename-tab/rename-pane(rename_window·set_pane_title): 원격 탭을 보는 중엔 그
-    # **원격** 탭/패널 이름이 바뀌어야 한다(사용자 보고 2026-06-17). rename_window 가
+    # **원격** 탭/패널 이름이 바뀌어야 한다(제보 2026-06-17). rename_window 가
     # 화이트리스트에 없어 보이지 않는 **로컬** 탭만 바꾸고 원격엔 안 먹던 버그(split 등
     # 비릴레이 액션이 로컬 트리에 조용히 실행되던 §1.7-c 와 동형). set_pane_title 은
     # 이미 위에 있다. 업스트림이 자기 active 탭/패널을 리네임하고 status/layout 으로
@@ -128,14 +128,14 @@ _REMOTE_RELAY_ACTIONS = {
     #  아래 _remote_relay_actions() 에서 이 집합과 합집합한다. delete-to-disable:
     #  플러그인 부재 시 그 액션들은 릴레이 목록에서 자동으로 빠진다.)
     # ncd(Norton Change Directory) 디렉토리 트리 요청 — 원격 탭을 보는 중엔 그 **원격**
-    # 머신의 cwd/디렉토리가 나와야 한다(사용자 보고 2026-06-17). 안 그러면 로컬 서버가
+    # 머신의 cwd/디렉토리가 나와야 한다(제보 2026-06-17). 안 그러면 로컬 서버가
     # 자기 fs 의 cwd 를 회신해 "원격 보는데 로컬 디렉토리 트리" 버그가 난다. 업스트림이
     # nc_list/nc_found 로 회신하고 그 메시지는 _remote_reader 가 보는 클라에 그대로
     # 전달한다(status·bye 외 메시지 패스스루) → ncd 모달이 원격 트리로 열린다. Enter
     # cd 는 입력 릴레이로, ⇧Enter 새 패널은 split 릴레이로 이미 원격에 적용된다.
     "request_nc_list", "request_nc_find",
     # 붙여넣기(paste=OS 클립보드/이미지 경로 텍스트·paste_buffer=페이스트 버퍼 N) —
-    # 원격 탭을 보는 중엔 그 **원격** 활성 패널에 들어가야 한다(사용자 보고 2026-06-17).
+    # 원격 탭을 보는 중엔 그 **원격** 활성 패널에 들어가야 한다(제보 2026-06-17).
     # 평문 타이핑·터미널 bracketed paste 는 input 메시지라 이미 릴레이되는데, 붙여넣기
     # 명령은 cmd 액션이라 화이트리스트에 없어 보이지 않는 로컬 패널에 주입되던 버그
     # (rename_window·split 누락과 동형 §1.7-c). 업스트림이 자기 활성 패널에 paste_text/
@@ -283,7 +283,7 @@ class ServerRemoteMixin:
         **다운스트림 로컬** sticky 상태. RemoteLink 보다 **오래 산다**: 같은 호스트에
         다시 attach 하면(사용자 재-attach·백오프 자동 재연결) 링크 객체는 새로 만들어
         지는데, 핀/분리는 링크가 아니라 **보는 쪽 탭바 취향**이라 링크 수명에 묶이면
-        안 된다(사용자 보고 2026-07-15: 원격 탭이 열린 채 같은 서버에 다시 remote-attach
+        안 된다(제보 2026-07-15: 원격 탭이 열린 채 같은 서버에 다시 remote-attach
         하면 핀이 전부 풀림 — 새 RemoteLink 의 빈 집합이 옛 집합을 덮어썼다).
         명시 detach(사용자 의사)는 _remote_sticky_forget 이 지운다."""
         d = getattr(self, "_remote_sticky", None)
@@ -1283,7 +1283,7 @@ class ServerRemoteMixin:
         전환한다(㉢ ON 확정, 2026-06-13). dest 가 로컬 엔드포인트 형태("/"·"tcp:"
         시작)면 직결(같은 머신/테스트).
 
-        **이미 병합된 호스트로의 재요청은 무시한다**(사용자 보고 2026-06-17): 출력
+        **이미 병합된 호스트로의 재요청은 무시한다**(제보 2026-06-17): 출력
         재생(cat/replay)·스크롤백·셸 루프가 만든 중복 NEST_ATTACH_REQ 가 디바운스
         (_NEST_REQ_DEBOUNCE)를 넘겨 들어오면, 예전엔 '멱등(전환만)' 경로가 매번 모든
         클라를 원격 탭으로 끌어가 사용자가 로컬↔원격을 오가게 만들었다. 첫 승격 때

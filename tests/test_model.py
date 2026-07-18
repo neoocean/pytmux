@@ -145,7 +145,7 @@ async def test_su_sd_scroll_region():
 
     회귀: 표준 CSI 디스패치 테이블엔 SU/SD 가 없어 조용히 드롭됐고, Claude Code 가
     콘텐츠 영역을 SU 로 스크롤하면 무시돼 다음 줄들이 안 밀린 옛 줄에 겹쳐 격자가
-    발산했다(사용자 보고: pytmux 안 Claude 화면 글자 겹침; tmux 는 SU/SD 구현해 정상).
+    발산했다(제보: pytmux 안 Claude 화면 글자 겹침; tmux 는 SU/SD 구현해 정상).
     nativescreen.scroll_up/down + vtparse 의 S/T 매핑으로 해결."""
     from pytmuxlib.model import Pane
 
@@ -176,7 +176,7 @@ async def test_su_sd_scroll_region():
 
 async def test_resized_pane_restores_tabstops():
     """분할 새 패널(spawn MIN_W → 실제 폭 resize)에서 탭 정렬 출력이 줄바꿈에서
-    쪼개지지 않아야 한다(사용자 보고: 좁은 우측 패널의 ls 이름 첫 글자가 이전 줄
+    쪼개지지 않아야 한다(제보: 좁은 우측 패널의 ls 이름 첫 글자가 이전 줄
     끝에 나옴). 폭 3 에서 탭스톱을 빈 집합으로 두고 resize 가 재계산하지 않으면
     TAB 이 줄 끝으로 튀던 회귀를 못박는다(native 화면이 resize 에서 재계산)."""
     from pytmuxlib.nativescreen import NativeScrollbackScreen

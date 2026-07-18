@@ -878,7 +878,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self._log_tab_debug(prev_active, new_active)
             # 활성 탭 이름 길이가 바뀌면 탭 폭(=연결부 x 범위)도 바뀌므로 재합성
             # 트리거에 포함한다(예전엔 활성 index 변화만 봐, 이름만 길어지면 탭은
-            # 늘어나도 노트북 연결부는 옛 폭에 머물렀다 — 사용자 보고).
+            # 늘어나도 노트북 연결부는 옛 폭에 머물렀다 — 제보).
             prev_xr = self.tabbar.active_tab_xrange() if self.tabbar.display else None
             self.tabbar.set_tabs(self.status.windows, new_active)
             # 상단 탭바가 보이면 하단 상태줄의 탭 목록은 생략(중복 방지)
@@ -949,7 +949,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def confirm_kill_tab(self):
             # 원격 탭(remote-attach 병합)은 로컬 셸이 아니다 — 닫기[x]/esc x 로
             # kill_window 를 보내면 서버가 §1.7-c 로 거부해 "원격 탭에서는 사용할 수
-            # 없는 명령입니다" 만 떴다(사용자 보고 2026-06-20). 원격 탭을 닫는 정문은
+            # 없는 명령입니다" 만 떴다(제보 2026-06-20). 원격 탭을 닫는 정문은
             # 그 링크를 분리(remote-detach)하는 것이므로 그렇게 라우팅한다.
             rhost = self._active_remote_host()
             if rhost is not None:

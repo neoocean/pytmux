@@ -1043,7 +1043,7 @@ async def test_startup_rules_injection():
 
 
 async def test_feedback_prompt_no_key_injection():
-    # 사용자 보고(2026-06-20): 세션 피드백 프롬프트("How is Claude doing this session?")
+    # 제보(2026-06-20): 세션 피드백 프롬프트("How is Claude doing this session?")
     # 에 대한 Esc 자동 주입이 종종 Dismiss 대신 작동 중인 턴을 **interrupt** 했다(busy 중
     # 배너 텍스트 매칭/feed 지연 stale 매칭 → 단일 Esc 가 interrupt 키로 해석). 그래서
     # 피드백 프롬프트는 더 이상 **어떤 키도 주입하지 않는다** — 비모달이라 안 닫아도 작업을
@@ -1096,7 +1096,7 @@ async def test_remote_menu_matcher_narrow():
 
 
 async def test_auto_dismiss_remote_control_menu():
-    # 사용자 보고(2026-06-18): auto-launch 가 새 세션마다 /rc 를 주입하는데 현재 Claude
+    # 제보(2026-06-18): auto-launch 가 새 세션마다 /rc 를 주입하는데 현재 Claude
     # CLI 의 /rc 는 원격 제어 관리 메뉴(Continue/Disconnect/QR, "Esc to continue")를 띄워
     # 진행을 가로막는다. Esc 자동 Dismiss 로 치운다 — Esc=Continue 라 원격은 켜진 채
     # 메뉴만 닫힌다. _rc_menu_active 로 메뉴 인스턴스당 Esc 1회만 쏜다(이중 Esc=Rewind 차단).
@@ -4854,7 +4854,7 @@ async def test_claude_perm_mode_set_and_drive():
 
 
 async def test_perm_drive_accept_is_not_auto_and_fallback():
-    """사용자 보고: 새 세션이 acceptEdits('accept edits on')에서 멈춰 진짜 auto
+    """제보: 새 세션이 acceptEdits('accept edits on')에서 멈춰 진짜 auto
     ('auto mode on')까지 못 갔다. acceptEdits 와 auto 는 다른 모드라(둘 다 ⏵⏵),
     auto 목표 구동은 accept 에서 멈추지 않고 계속 순환한다. 단 auto 가 cycle 에 없는
     계정(한 바퀴 돌아 재방문)은 accept 로 폴백해 plan/default 에 안 멈춘다."""
@@ -5083,7 +5083,7 @@ async def test_usage_limits_status_m19():
 async def test_tok5h_pct_fail_open_on_account_mismatch():
     """그림자 /usage 세션의 계정과 패널 계정이 둘 다 알려져 있고 다르면 _tok5h_pct 가
     None(상태줄 5h% 숨김) — 다른 계정의 한도가 이 패널 계정 라벨로 그려지는 오표기
-    방지(사용자 보고 2026-06-13: 팝업 'Account (/usage)' ≠ 하단 토큰 표시 계정).
+    방지(제보 2026-06-13: 팝업 'Account (/usage)' ≠ 하단 토큰 표시 계정).
     한쪽이라도 미상이면 같은 로그인으로 보고 표시한다."""
     srv, task, sock = await server_only()
     try:
@@ -5532,7 +5532,7 @@ async def test_session_size_window_size_modes():
       smallest(기본) = min → 아무도 안 잘림(현행 동작 불변).
       largest        = max.
       latest         = last_active 가 가장 큰(마지막 조작) 클라 크기, 없으면 smallest.
-    사용자 보고(2026-07-13): 작은 코-클라가 min 을 핀해 큰 원격 뷰가 레터박스로 남던
+    제보(2026-07-13): 작은 코-클라가 min 을 핀해 큰 원격 뷰가 레터박스로 남던
     문제의 opt-in 해법. 설정 라운드트립·순환 토글도 함께 검증."""
     from pytmuxlib.model import ClientConn
     srv, task, sock = await server_only()

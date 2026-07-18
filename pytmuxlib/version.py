@@ -27,7 +27,7 @@ def code_version(project_dir: str | None = None, timeout: float = 1.5) -> str:
     # ① p4 #have — 이 워크스페이스에 동기화된 CL(=디스크 코드 리비전).
     try:
         # no_window_kwargs: 창 없는 pythonw.exe 로 뜬 서버가 콘솔 앱(p4.exe)을
-        # 부팅 시 띄울 때 콘솔 창이 번쩍이지 않게(§10 사용자 보고: 딸려 뜨는 창).
+        # 부팅 시 띄울 때 콘솔 창이 번쩍이지 않게(§10 제보: 딸려 뜨는 창).
         out = subprocess.run(
             ["p4", "changes", "-m1", os.path.join(d, "...") + "#have"],
             capture_output=True, timeout=timeout, cwd=d,

@@ -458,7 +458,7 @@ async def test_claude_input_box_parser():
     # 빈 입력(못 찾음) → None
     assert f([]) is None
     # 최신 Claude: 박스 없는 ❯(U+276F)+비분리공백(\xa0) 프롬프트 — 마커가 시드에
-    # 딸려 오면 안 된다(ESC→Insert 작성창에 '❯' 누출 버그, 사용자 보고 2026-07-06).
+    # 딸려 오면 안 된다(ESC→Insert 작성창에 '❯' 누출 버그, 제보 2026-07-06).
     assert f(["⏺ 출력", "─────────", "❯\xa0"], cursor_y=2) == ""     # 빈 입력
     assert f(["─────────", "❯\xa0안녕 세계"], cursor_y=1) == "안녕 세계"
     # 박스 안 ❯ 마커도 제거
@@ -468,7 +468,7 @@ async def test_claude_input_box_parser():
 async def test_claude_input_box_queued_no_rule_block():
     """busy·큐 대기 중 현행 Claude 는 입력 구획선(가로줄)을 **안 그린다** — 그때 여러 줄
     프롬프트는 마커(❯)+들여쓴 연속 줄로만 표시된다. 종전엔 구획선이 없어 `[cursor_y]`
-    한 줄만 긁어, 커서가 둘째 줄에 있으면 **커서 윗줄만/한 줄만** 인계됐다(사용자 보고
+    한 줄만 긁어, 커서가 둘째 줄에 있으면 **커서 윗줄만/한 줄만** 인계됐다(제보
     2026-07-18: 팝업에 커서 윗줄이 옴). 이제 마커로 논리 블록 전체를 인계한다 — 실제
     캡처(captures/playground.local, 큐된 2줄 메시지) 모양으로 고정."""
     from pytmuxlib.claude import claude_input_box as f
@@ -520,7 +520,7 @@ async def test_scrape_fallback_seeds_when_tracker_empty():
 
 async def test_multiline_prompt_seeds_whole_text_not_last_line():
     """멀티라인 프롬프트를 ESC→Insert 로 인계하면 **박스 안 전체**가 작성창에 온다
-    (사용자 보고 2026-07-15: 윗줄들이 빠지고 마지막 한 줄만 왔다).
+    (제보 2026-07-15: 윗줄들이 빠지고 마지막 한 줄만 왔다).
 
     원인은 키 추적치(_prompt_buf)를 화면 긁기보다 **먼저** 썼던 것 — 추적기는 CR 을
     '제출' 로 보고 버퍼를 비우는데, Claude 의 멀티라인 개행(meta/option+Enter → ESC 와
@@ -557,7 +557,7 @@ async def test_multiline_prompt_seeds_whole_text_current_ui_rule_box():
     """위 테스트와 같은 요구지만 **현행 Claude UI 모양**으로 — 모서리(╭╰)·세로 테두리
     (│) 없이 위아래 **가로줄**로만 입력 구획을 나눈다(fixture idle.txt 가 이 모양).
 
-    p4 64741(화면 긁기 우선)에도 멀티라인이 여전히 마지막 줄만 왔다(사용자 보고
+    p4 64741(화면 긁기 우선)에도 멀티라인이 여전히 마지막 줄만 왔다(제보
     2026-07-16). 원인은 우선순위가 아니라 **파서가 현행 박스 모양에 눈이 먼 것** —
     모서리만 찾아 top/bottom 을 못 잡고 '박스 없음'(=커서 줄 하나만) 폴백으로 떨어졌다.
     위 회귀 테스트가 **구 UI 모양**으로만 고정돼 있어 내내 초록불이었으므로, 현행

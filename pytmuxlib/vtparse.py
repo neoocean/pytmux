@@ -48,7 +48,7 @@ _CSI = ctrl.CSI_TABLE       # CSI … final → 메서드명
 # 표준 CSI 테이블엔 SU(`CSI Ps S`)·SD(`CSI Ps T`)가 없다(구 pyte.Screen 미구현 관례).
 # 스크롤 영역(DECSTBM)을 SU/SD 로 직접 스크롤하는 앱(Claude Code·less·일부 TUI)에서 그
 # 시퀀스가 조용히 드롭되면, 앱이 "스크롤됐다"고 가정하고 그린 다음 줄이 안 밀린 옛 줄에
-# 겹쳐 격자가 발산한다(사용자 보고: pytmux 안 Claude 글자 겹침; tmux 는 SU/SD 구현해 정상).
+# 겹쳐 격자가 발산한다(제보: pytmux 안 Claude 글자 겹침; tmux 는 SU/SD 구현해 정상).
 # nativescreen 이 scroll_up/scroll_down 을 구현하고, set_screen 이 화면이 그 메서드를
 # 가질 때만 self._csi 에 S/T 를 바인딩한다(공용 테이블은 안 건드림). final byte.
 _SU_SD = {"S": "scroll_up", "T": "scroll_down"}

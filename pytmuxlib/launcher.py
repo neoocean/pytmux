@@ -15,7 +15,7 @@ import time
 from . import ipc, proc, protocol, sshwrap
 # NOTE: client(=textual)·server(=model→pyte→wcwidth) 는 여기서 import 하지 않는다.
 # 가벼운 제어 명령(ls/cmd/kill)이 launcher 만 거쳐도 textual 전체나 pyte/wcwidth 를
-# 로드해 기동이 느려졌다(Windows 사용자 보고). attach 경로의 client, `server` 명령의
+# 로드해 기동이 느려졌다(Windows 제보). attach 경로의 client, `server` 명령의
 # run_server 모두 main() 안에서 필요 시점에만 지연 import 한다(A4).
 
 
@@ -397,7 +397,7 @@ def run_stdio_proxy(sock_path: str) -> int:
     프로토콜의 길이-프레임이 무손상으로 통과한다 — 로컬 pytmux 서버는 이 파이프
     위에서 원격 서버에 hello(+토큰)로 attach 해 원격 탭/패널을 흡수한다.
 
-    **POSIX·Windows 공통**(Stage 3, 사용자 보고 — office Windows 박스): asyncio
+    **POSIX·Windows 공통**(Stage 3, 제보 — office Windows 박스): asyncio
     add_reader(POSIX 전용) 대신 **블로킹 스레드 2개 + 동기 소켓**(ipc.control_socket
     — Unix=AF_UNIX, Windows=TCP 루프백+포트파일)으로 스플라이스한다. 새 프로세스라
     원격 서버 재시작 없이 코드 동기화만으로 동작.

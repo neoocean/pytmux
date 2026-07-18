@@ -19,7 +19,7 @@ from . import proc
 # Windows 유니코드-안전 클립보드 왕복(코드페이지 무관):
 # clip.exe 는 stdin 을, Get-Clipboard 는 stdout 을 **콘솔 코드페이지**(한국어
 # Windows=cp949)로 해석한다. 그래서 UTF-8 바이트를 넘기면 한글이 mojibake 가 됐다
-# (사용자 보고 2026-07-13: 마우스 드래그 복사한 '그림자 샤미' → '洹몃┝???ㅻ?').
+# (제보 2026-07-13: 마우스 드래그 복사한 '그림자 샤미' → '洹몃┝???ㅻ?').
 # 텍스트를 UTF-16LE→base64(ASCII)로 감싸 PowerShell 과 주고받는다 — base64 는 순수
 # ASCII 라 cp949·cp437·cp1252 등 어떤 콘솔 코드페이지로 (역)해석돼도 <128 바이트가
 # 동형이라 무손실이다. PowerShell 이 되돌려 Set-Clipboard/Get-Clipboard 한다.
@@ -124,7 +124,7 @@ def paste() -> str:
         if shutil.which(cmd[0]):
             try:
                 # no_window_kwargs: Windows 에서 PowerShell Get-Clipboard 창이
-                # 번쩍이지 않게 한다(§10 사용자 보고: 딸려 뜨는 PowerShell 창).
+                # 번쩍이지 않게 한다(§10 제보: 딸려 뜨는 PowerShell 창).
                 return subprocess.run(
                     cmd, capture_output=True, timeout=2,
                     **proc.no_window_kwargs()
@@ -210,7 +210,7 @@ def save_image() -> str | None:
             ok = subprocess.run(["pngpaste", path], capture_output=True,
                                 timeout=8).returncode == 0
         elif shutil.which("osascript"):          # macOS (pngpaste 없이 기본 도구로)
-            # 서드파티 pngpaste 가 없을 때(맥 기본 설치 아님 — 사용자 보고: 이미지
+            # 서드파티 pngpaste 가 없을 때(맥 기본 설치 아님 — 제보: 이미지
             # 붙여넣기 무동작) AppleScript 로 클립보드 PNG(«class PNGf»)를 직접 파일로
             # 쓴다. 스크린샷 클립보드는 PNGf 표현을 포함하므로 의존성 없이 동작한다.
             # PNGf 표현이 없으면(드묾) osascript 가 에러 → ok=False 로 폴백(호출부 Alt+V).

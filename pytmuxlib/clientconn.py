@@ -112,7 +112,7 @@ class _NetReconnectMixin:
                 # 클라가 **살아 있는 콘솔을 상속**한다. 이 핸드오프 뒤 Textual 입력
                 # 경로(win32.EventMonitor→XTermParser)가 외부 터미널의 SGR 마우스
                 # 리포트(\x1b[<..M)를 마우스로 못 알아보고 키 입력으로 재발행 → 활성
-                # 패널에 마우스 좌표가 텍스트로 새고(사용자 보고 2026-07-01), 콘솔이
+                # 패널에 마우스 좌표가 텍스트로 새고(제보 2026-07-01), 콘솔이
                 # VT-마우스 상태로 고착돼 터미널 창을 새로 열어야 풀렸다. 서버는 host
                 # 모드로 세션을 보존하므로 Windows 에서는 execv 대신 **제자리 재접속(ⓔ)**
                 # 으로 처리한다 — 콘솔/마우스 상태를 안 건드려 누출이 없다. 트레이드오프:
@@ -131,7 +131,7 @@ class _NetReconnectMixin:
                 # 드롭 — serverio._drop_slow_client 가 bye 없이 writer 를 close; **서버는
                 # 살아 있다**) 서버가 종료됐다. 종전엔 무조건 self.exit() 라, 모바일 ssh
                 # 대량 출력으로 backpressure 드롭이 날 때마다 멀쩡한 서버를 두고 클라가
-                # 통째로 종료됐다(사용자 보고 2026-06-25). net_auto_reconnect 면 재접속을
+                # 통째로 종료됐다(제보 2026-06-25). net_auto_reconnect 면 재접속을
                 # 시도해 — 서버 생존이면(드롭) 화면을 복구하고, 정말 죽었으면(소켓 부재→
                 # 재접속 실패) 종료한다. 무한 재접속 루프(지속 폭주)는 카운터로 막는다.
                 if self.net_auto_reconnect and self._drop_reconnect_ok() \

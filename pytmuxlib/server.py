@@ -85,7 +85,7 @@ class Server(*_SERVER_BASES):
         # (re-)exec 기준). 버전 캡처는 `p4 changes` 네트워크 왕복이라 수백 ms~timeout
         # (1.5s)까지 걸린다(Windows Perforce 워크스페이스에서 측정 ~800ms). 여기(__init__)
         # 에서 동기로 부르면 serve()의 listen **이전**이라 클라가 붙기까지의 임계경로에
-        # 올라타 콜드 기동이 그만큼 느려진다(사용자 보고: 수 초). 그래서 자리표시자만
+        # 올라타 콜드 기동이 그만큼 느려진다(제보: 수 초). 그래서 자리표시자만
         # 두고, serve()가 listen 을 띄운 **직후** 백그라운드로 채운다(_capture_version).
         # 클라이언트도 동일 패턴(client.py run_in_executor)을 쓴다. 팝업/re-exec 스냅샷은
         # 부팅 임계경로가 아니므로 약간 늦게 채워져도 무방.

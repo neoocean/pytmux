@@ -39,7 +39,7 @@ async def test_strip_box_drawing_filter():
 
 
 async def test_win_clipboard_utf16_roundtrip_preserves_korean():
-    """Windows 클립보드 코드페이지 mojibake 수정(사용자 보고 2026-07-13): clip.exe/
+    """Windows 클립보드 코드페이지 mojibake 수정(제보 2026-07-13): clip.exe/
     Get-Clipboard 가 stdin/stdout 을 콘솔 코드페이지(cp949)로 해석해 UTF-8 한글이
     '洹몃┝…' 로 깨지던 것을, UTF-16LE→base64(ASCII) 왕복으로 코드페이지 무관하게 한다.
 

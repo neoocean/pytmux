@@ -459,7 +459,7 @@ async def test_fmt_unknown_warning_surfaces_and_clears():
 
 
 async def test_fmt_unknown_clears_on_static_shell_after_exit():
-    """§3.7 (사용자 보고 2026-07-18 Windows): '포맷 미인식' ⚠ 가 뜬 뒤 Claude 가 종료돼
+    """§3.7 (제보 2026-07-18 Windows): '포맷 미인식' ⚠ 가 뜬 뒤 Claude 가 종료돼
     셸이 **정적**(새 출력 없음)이면, 종전엔 dirty 게이트로 스캔이 통째로 건너뛰어져
     _update_fmt_unknown 이 다시 안 돌아 경고가 상태줄에 눌러앉았다. 이제 경고가 떠 있는
     동안 _scan_claude 의 pending 게이트가 그 패널을 계속 스캔 대상으로 잡아, **화면 재-feed
@@ -527,7 +527,7 @@ async def test_fmt_unknown_throttles_fg_check():
 
 
 async def test_model_latch_kept_on_transient_flap_reset_on_real_restart():
-    """모델 래치 해제 게이트(사용자 보고 2026-07-18: /model 로 확인한 opus 가 잠시 뒤
+    """모델 래치 해제 게이트(제보 2026-07-18: /model 로 확인한 opus 가 잠시 뒤
     프로브 기본값 sonnet-5 로 복귀). 긴 busy 출력이 footer 를 화면 밖으로 밀어
     claude_state 가 한두 프레임 None 이 됐다 돌아오는 **transient flap** 은 old_cl=None→
     new_cl 로 새 세션 리셋 블록에 오지만, _hdr_claude 가 아직 True(30 미스 전)라 **모델

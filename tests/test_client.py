@@ -359,7 +359,7 @@ async def test_remote_unpinned_tab_after_pinned_remote_tab_visible():
     접근되고 마우스로 못 가던 문제). 비고정/고정을 위치 목록으로 분리하는 가운데 루프가
     고정 탭을 건너뛰고 비고정 전부(여기선 index 3 포함)를 그려야 한다."""
     async def body(app, pilot, srv):
-        # [로컬-비고정, 로컬-비고정, 원격-고정, 원격-비고정] — 사용자 보고 그대로의 순서
+        # [로컬-비고정, 로컬-비고정, 원격-고정, 원격-비고정] — 제보 그대로의 순서
         app.tabbar.set_tabs([
             {"index": 0, "name": "win", "active": False},
             {"index": 1, "name": "win", "active": False},
@@ -1752,7 +1752,7 @@ async def test_esc_tab_switcher_pane_rows_from_tree():
 
 
 async def test_esc_tab_switcher_remote_pane_rows_from_status():
-    """원격(⇄) 탭의 하위 패널 표시(사용자 보고 07-18: '원격 탭엔 패널 2개인데 ESC+Tab
+    """원격(⇄) 탭의 하위 패널 표시(제보 07-18: '원격 탭엔 패널 2개인데 ESC+Tab
     화면엔 탭만 뜨고 하위 패널이 없다'). 원격 탭 패널은 로컬 tree(_tree_msg, 로컬 세션
     전용)에 없고 상류 status 가 windows[].panes 경량 요약으로 실어 주므로, tree 회신
     처리 때 탭바 병합 탭 dict 의 panes 를 병합 전역 index 로 함께 주입한다 — 로컬은
@@ -3427,7 +3427,7 @@ async def test_tab_close_confirm_popup():
 async def test_close_remote_tab_routes_to_detach():
     """원격 탭(remote-attach 병합)을 닫기[x]/esc x 로 닫으면 kill_window(서버가
     §1.7-c 로 거부 → '원격 탭에서는 사용할 수 없는 명령입니다' notice) 대신
-    remote_detach 로 라우팅한다(사용자 보고 2026-06-20). 활성 원격 탭의 병합 전역
+    remote_detach 로 라우팅한다(제보 2026-06-20). 활성 원격 탭의 병합 전역
     index 를 실어 그 **탭 하나만** 분리한다(같은 호스트 다른 탭 유지). 확인 팝업도
     '탭 닫기'가 아니라 '원격 탭 분리'."""
     async def body(app, pilot, srv):
@@ -4311,7 +4311,7 @@ async def test_infoscreen_down_jumps_over_divider():
 
 async def test_remote_attach_preserves_backslash_host_and_notice():
     """§1.7: ① `:remote-attach NATGAMES\\user@host` 의 host 는 shlex 토큰이 아니라
-    원시 잔여 문자열 — 도메인 계정 백슬래시가 보존된다(사용자 보고: 백슬래시가
+    원시 잔여 문자열 — 도메인 계정 백슬래시가 보존된다(제보: 백슬래시가
     삼켜져 엉뚱한 host 로 ssh). ② 서버 notice 메시지는 상태줄에 표시된다."""
     async def body(app, pilot, srv):
         sent = []
@@ -4333,7 +4333,7 @@ async def test_remote_attach_preserves_backslash_host_and_notice():
 
 async def test_server_notice_translates_to_locale():
     """서버발 원격 notice 는 로케일을 모르는 서버가 key(rnotice.*)+kw(+실패 원인
-    detail)만 싣고, 클라가 자기 로케일로 번역한다(사용자 보고 2026-06-20: lang en
+    detail)만 싣고, 클라가 자기 로케일로 번역한다(제보 2026-06-20: lang en
     인데 '원격 탭 병합됨'·'핸드셰이크 실패'가 한국어로 남던 누출). text 는 구서버/
     플러그인용 한국어 폴백 — key 가 있으면 무시되고 번역이 우선한다."""
     from pytmuxlib import i18n
@@ -4370,7 +4370,7 @@ async def test_server_notice_translates_to_locale():
 async def test_dismissable_notice_click_and_enter_close():
     """핸드셰이크 실패처럼 secs/dismissable 를 실은 notice 는 ① 유지 시간을 따르고
     수동 닫기 가능 플래그가 서고, ② 상태줄 클릭/터치로 즉시 닫히며, ③ ESC 모드
-    하단 포커스 'msg' 위에서 Enter 로도 닫힌다(사용자 보고 2026-06-16)."""
+    하단 포커스 'msg' 위에서 Enter 로도 닫힌다(제보 2026-06-16)."""
     async def body(app, pilot, srv):
         secs_seen = []
         orig = app.set_timer
@@ -5792,7 +5792,7 @@ async def test_net_responsiveness_hysteresis_and_border():
 
 async def test_client_reconnects_after_backpressure_drop():
     """slow-client backpressure 드롭(서버가 bye 없이 writer.close)에도 클라가 통째
-    종료하지 않고 재접속해 화면을 복구한다 — 모바일 ssh 빈발(사용자 보고 2026-06-25).
+    종료하지 않고 재접속해 화면을 복구한다 — 모바일 ssh 빈발(제보 2026-06-25).
     종전엔 평상 EOF 가 무조건 self.exit 라 멀쩡한 서버를 두고 클라가 죽었다. 무한
     재접속 루프(지속 폭주)는 _drop_reconnect_ok 카운터가 막는다."""
     from pytmuxlib.clientconn import _DROP_RECONNECT_MAX
@@ -5980,7 +5980,7 @@ async def test_claude_interrupt_zone_sends_esc():
 
 async def test_remote_control_toggle_injects_rc():
     """원격제어 토글이 해당 패널에 '/rc'+Enter(input 메시지)를 주입한다(CLI /rc 로
-    켜고 끔). 사용자 보고로 '직접 토글 불가' 안내를 정정하고 추가한 동작."""
+    켜고 끔). 제보로 '직접 토글 불가' 안내를 정정하고 추가한 동작."""
     import base64
     # 원격제어 토글(_toggle_remote_control)은 claude-code 플러그인으로 이전됐고(Phase
     # 2c) 거기서 pytmuxlib.protocol.write_msg 를 지연 import 한다 → 그 참조를 패치.
