@@ -715,7 +715,11 @@ class _CommandMixin:
             self.send_cmd("request_redraw")
             self._composite()
             self.refresh()
-        elif c in ("paste-clipboard", "pasteb-clip"):
+        elif c in ("paste-clipboard", "pasteb-clip", "paste-image"):
+            # paste-image 는 별칭 — 작성창 ESC 메뉴 힌트(compose.hint_esc)와 랜딩
+            # 가이드가 클립보드 이미지→경로 붙여넣기를 이 이름으로 안내하는데, 실제
+            # 핸들러는 paste-clipboard 하나다(이미지/텍스트를 클립보드에서 판별).
+            # 광고된 명령이 타이핑 가능하도록 이름을 별칭으로 노출한다.
             self.paste_os_clipboard()  # bracketed 패스스루
         elif c in ("send-keys", "send"):
             self._send_keys(args)

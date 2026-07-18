@@ -226,21 +226,29 @@ async def test_process_cwd_reads_own_cwd_on_windows():
     토대(Windows 는 /proc·lsof 가 없어 종전엔 항상 None → ncd 가 루트에서 시작).
 
     Windows: 자기 자신의 pid 로 PEB 를 읽어 os.getcwd() 와 일치해야 한다(실제 PEB
-    경로 검증 — 권한이 보장되는 self 라 항상 성공). 비-Windows: POSIX 위임을 위해
-    None 을 돌려준다. 잘못된 pid 는 어느 OS 에서나 None.
+    경로 검증 — 권한이 보장되는 self 라 항상 성공). macOS: libproc(_mac_process_cwd,
+    p4 65320) 로 self cwd 를 읽어 os.getcwd() 와 일치해야 한다(Windows 와 동급의
+    직접 읽기 경로). 그 외 POSIX(Linux): 호출부(servertree)의 /proc 에 위임하므로
+    헬퍼는 None. 잘못된 pid 는 어느 OS 에서나 None.
     """
+    import sys
     from pytmuxlib import proc
 
     assert proc.process_cwd(-1) is None
     assert proc.process_cwd(0) is None
+    got = proc.process_cwd(os.getpid())
     if proc.IS_WINDOWS:
-        got = proc.process_cwd(os.getpid())
         assert got is not None, "Windows self-pid cwd 를 읽지 못함(PEB 경로 회귀)"
         assert os.path.normcase(os.path.normpath(got)) == \
             os.path.normcase(os.path.normpath(os.getcwd()))
+    elif sys.platform == "darwin":
+        # macOS: libproc 가 self cwd 를 직접 읽는다(성능상 lsof 서브프로세스 제거,
+        # p4 65320 BLOCK-4). libproc 미가용 등 실패 시에만 None 폴백이 허용된다.
+        assert got is None or os.path.normpath(got) == os.path.normpath(os.getcwd()), \
+            f"macOS self-pid cwd 불일치: {got!r}"
     else:
-        # POSIX: 호출부(servertree)의 /proc·lsof 가 처리하므로 헬퍼는 None.
-        assert proc.process_cwd(os.getpid()) is None
+        # 그 외 POSIX(Linux): 헬퍼는 None, 호출부가 /proc 로 처리.
+        assert got is None
 
 
 async def test_resolve_default_endpoint_attaches_across_xdg_mismatch():

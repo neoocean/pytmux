@@ -27,7 +27,7 @@ from __future__ import annotations
 # 명령 메타데이터 — 코어 COMMANDS/COMPLETIONS/COMMAND_NOARG/PANE_SCOPED_CMDS 에 합쳐짐.
 COMMANDS = [
     ("usage-view", "Claude 사용 한도 + 다음 리셋 카운트다운 화면 "
-                   "(usage-view [popup|tab|pane], 기본 popup; 별칭 token-viewer)",
+                   "(usage-view [popup|tab|pane], 기본 popup; 별칭 token-viewer·usage-clock)",
      "Claude"),
 ]
 NOARG = {"usage-view", "token-viewer", "usage-clock"}
@@ -44,7 +44,7 @@ from pytmuxlib import i18n  # noqa: E402
 i18n.register({
     "ko": {
         "cmd.usage-view": "Claude 사용 한도 + 다음 리셋 카운트다운 화면 "
-                          "(usage-view [popup|tab|pane], 기본 popup; 별칭 token-viewer)",
+                          "(usage-view [popup|tab|pane], 기본 popup; 별칭 token-viewer·usage-clock)",
         "uview.title": "Claude 사용 한도 (/usage)",
         "uview.btn_refresh": "↻ 갱신 [u]",
         "uview.btn_toggle": "⤢ 팝업/탭 [t]",
@@ -58,7 +58,7 @@ i18n.register({
     },
     "en": {
         "cmd.usage-view": "Claude usage limit + next-reset countdown screen "
-                          "(usage-view [popup|tab|pane], default popup; alias token-viewer)",
+                          "(usage-view [popup|tab|pane], default popup; alias token-viewer·usage-clock)",
         "uview.title": "Claude usage limit (/usage)",
         "uview.btn_refresh": "↻ Refresh [u]",
         "uview.btn_toggle": "⤢ Popup/Tab [t]",
