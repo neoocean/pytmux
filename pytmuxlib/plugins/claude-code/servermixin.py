@@ -1471,6 +1471,11 @@ class ServerClaudeMixin:
                 txt = screen_text(p.screen)
                 old_cl = p._claude
                 new_cl = claude_state(txt)
+                # 아래 _hdr_claude 갱신(new_cl→True) **전** 값 — '확정 세션 종료'
+                # (디바운스 _hdr_claude=False)를 지나왔는지 판별용(모델 래치 해제 게이트,
+                # 2026-07-18). 갱신 후엔 recovery 프레임에서 항상 True 라 flap↔재기동을
+                # 못 가른다.
+                old_hdr_claude = p._hdr_claude
                 # §3.7: 파서가 상태를 못 읽는데 Claude 가 실제 실행 중이면(throttle 된
                 # fg 검사) '포맷 미인식' 경고를 세워 추적 중단을 가시화한다.
                 if self._update_fmt_unknown(p, new_cl is not None):
@@ -1539,14 +1544,23 @@ class ServerClaudeMixin:
                     p._exit_tokens = 0       # 새 세션 → 이전 종료 총량 보존값 폐기
                     # 새 Claude 세션 경계: 세션 id 부여, 계정 재감지(수동 지정은 유지).
                     self._next_claude_session_id(p)
-                    # 모델 래치도 푼다(2026-07-16): 새 세션은 다른 모델로 뜰 수 있다
-                    # (기본값 복귀·`--model` 기동). 라이브 값은 프로브가 못 덮으므로
-                    # (_update_claude_model) 여기서 안 풀면 이전 세션의 모델이 새
-                    # 세션까지 눌러앉는다. 계정 재감지와 같은 자리·같은 이유.
-                    p._claude_model = None
-                    p._claude_model_weak = False
-                    p._claude_model_cand = None
-                    p._claude_model_cand_n = 0
+                    # 모델 래치는 **확정 세션 종료**(디바운스 _hdr_claude 가 False 까지
+                    # 갔던)를 지나온 새 세션에서만 푼다(2026-07-16 도입, 2026-07-18 게이트
+                    # 추가). 새 세션은 다른 모델로 뜰 수 있어(기본값 복귀·`--model` 기동)
+                    # 풀어야 재감지되지만, 라이브 값은 프로브가 못 덮으므로(_update_claude_model)
+                    # 무조건 풀면 안 되고, **transient flap 에선 풀면 안 된다**: 긴 busy
+                    # 출력이 footer 를 화면 샘플 밖으로 밀어 claude_state 가 한두 프레임 None
+                    # 이 됐다 돌아오면 old_cl=None→new_cl 로 이 블록에 오는데(같은 세션),
+                    # 그때 래치를 풀면 /model 로 확인한 라이브 모델(opus)이 프로브 기본값
+                    # (sonnet-5)으로 되돌아간다(사용자 보고 2026-07-18). flap 은 _hdr_claude
+                    # 가 30프레임 미스 전이라 여전히 True 이고, 진짜 재기동만 이전 세션이
+                    # _hdr_claude False 까지 갔다 온다(=old_hdr_claude False) — 종료 토큰
+                    # 주입을 _claude_really_exited 로 가드하는 것과 같은 '거짓 종료' 방어.
+                    if not old_hdr_claude:
+                        p._claude_model = None
+                        p._claude_model_weak = False
+                        p._claude_model_cand = None
+                        p._claude_model_cand_n = 0
                     if not p._claude_account_manual:
                         p._claude_account = None
                         p._claude_account_full = None

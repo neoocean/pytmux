@@ -35,16 +35,17 @@ async def test_claude_awaiting_answer():
 async def test_screen_text_matches_display():
     """serverclaude.screen_text(경량 추출)가 `"\\n".join(screen.display)`와 셀 단위로
     동일해야 한다(perf #11 — wcwidth 호출 없이 같은 결과). 와이드문자(CJK)·연속셀
-    포함 화면으로 못박는다."""
+    포함 화면으로 못박는다. 백엔드는 자작 NativeScreen(M4b, pyte 완전 은퇴)."""
     import importlib
-    import pyte
+
+    from pytmuxlib.nativescreen import NativeScreen
+    from pytmuxlib.vtparse import VTTokenizer
     # serverclaude 는 claude-code 플러그인으로 이전됨(하이픈 디렉토리 → importlib).
     screen_text = importlib.import_module(
         "pytmuxlib.plugins.claude-code.servermixin").screen_text
 
-    s = pyte.Screen(20, 3)
-    st = pyte.Stream(s)
-    st.feed("AB한글CD\r\n↑ 1.2k tokens\r\nx")
+    s = NativeScreen(20, 3)
+    VTTokenizer(s).feed("AB한글CD\r\n↑ 1.2k tokens\r\nx".encode())
     assert screen_text(s) == "\n".join(s.display)
 
 

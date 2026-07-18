@@ -1717,15 +1717,25 @@ async def test_scan_model_probe_never_overrides_live():
             srv._scan_claude(sess, win)
         assert p._claude_model == "opus-4.8", \
             f"프로브가 라이브 값을 덮음 — got {p._claude_model!r}"
-        # 단, 새 Claude 세션(None→Claude)이면 래치를 푼다 — 새 세션은 기본 모델로
-        # 뜰 수 있으므로 이전 세션 모델이 눌러앉으면 안 된다.
-        p.feed(b"\x1b[2J\x1b[H$ \r\n")          # 셸 복귀 → Claude 종료
-        srv._scan_claude(sess, win)
-        assert p._claude is None, f"Claude 종료 기대, got {p._claude!r}"
-        p.feed(b"\x1b[2J\x1b[H Done.\r\n? for shortcuts\r\n")   # 새 세션 진입
-        srv._scan_claude(sess, win)
+        # 단, **확정 세션 종료**(디바운스 _hdr_claude 가 False 까지 간)를 지나온 새
+        # Claude 세션은 래치를 푼다 — 새 세션은 기본 모델로 뜰 수 있어 이전 세션 모델이
+        # 눌러앉으면 안 된다. (단발 None flap[긴 출력이 footer 를 샘플 밖으로 밈]은
+        # _hdr_claude 가 아직 True 라 래치 유지 — 2026-07-18 게이트, 별도 회귀
+        # test_token_saver.test_model_latch_kept_on_transient_flap_reset_on_real_restart.)
+        orig_miss = sm._HDR_CLAUDE_MISS
+        sm._HDR_CLAUDE_MISS = 2
+        try:
+            for _ in range(sm._HDR_CLAUDE_MISS):
+                p.feed(b"\x1b[2J\x1b[H$ \r\n")     # 셸 복귀 → 확정 종료까지 반복
+                srv._scan_claude(sess, win)
+            assert p._claude is None and p._hdr_claude is False, \
+                f"확정 종료 기대, got claude={p._claude!r} hdr={p._hdr_claude}"
+            p.feed(b"\x1b[2J\x1b[H Done.\r\n? for shortcuts\r\n")  # 새 세션 진입
+            srv._scan_claude(sess, win)
+        finally:
+            sm._HDR_CLAUDE_MISS = orig_miss
         assert p._claude_model == "sonnet-5", \
-            f"새 세션 경계에서 래치 해제 후 프로브 폴백 기대, got {p._claude_model!r}"
+            f"확정 종료 후 새 세션 → 래치 해제·프로브 폴백 기대, got {p._claude_model!r}"
         assert p._claude_model_weak is True, "프로브 폴백 → weak"
     finally:
         await teardown(srv, task, sock)
@@ -5379,13 +5389,14 @@ async def test_fmt_unrecognized_logs_footer_tail():
     어느 것도 못 잡은 화면의 footer tail 을 _fmt_unrecognized_detail 이 추출하고,
     _log_error(detail) 이 error.log 에 남긴다 — 다음에 Claude footer 형식이 또 바뀌어도
     이 로그만 보고 새 형식을 파악해 claude.py _IDLE_ANCHORS 를 갱신할 수 있다."""
-    import pyte
     from pytmuxlib import ipc
+    from pytmuxlib.nativescreen import NativeScreen
+    from pytmuxlib.vtparse import VTTokenizer
     srv, task, sock = await server_only()
     try:
-        screen = pyte.Screen(40, 6)
-        st = pyte.Stream(screen)
-        st.feed("prompt box\r\n@@ brand-new footer 2099 @@\r\n")
+        screen = NativeScreen(40, 6)
+        VTTokenizer(screen).feed(
+            "prompt box\r\n@@ brand-new footer 2099 @@\r\n".encode())
 
         class _P:
             pass

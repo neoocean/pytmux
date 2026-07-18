@@ -520,6 +520,55 @@ async def test_fmt_unknown_throttles_fg_check():
         await teardown(srv, task, sock)
 
 
+async def test_model_latch_kept_on_transient_flap_reset_on_real_restart():
+    """모델 래치 해제 게이트(사용자 보고 2026-07-18: /model 로 확인한 opus 가 잠시 뒤
+    프로브 기본값 sonnet-5 로 복귀). 긴 busy 출력이 footer 를 화면 밖으로 밀어
+    claude_state 가 한두 프레임 None 이 됐다 돌아오는 **transient flap** 은 old_cl=None→
+    new_cl 로 새 세션 리셋 블록에 오지만, _hdr_claude 가 아직 True(30 미스 전)라 **모델
+    래치를 풀지 않아** 라이브로 잡은 opus 가 유지돼야 한다. 반대로 **확정 종료**
+    (_hdr_claude 가 False 까지 감)를 지나온 진짜 재기동은 종전대로 풀려 새 세션 모델
+    (프로브 sonnet-5)로 재감지된다."""
+    import sys as _sys
+    srv, task, sock = await server_only()
+    sm = _sys.modules[srv._update_claude_model.__module__]
+    orig_miss = sm._HDR_CLAUDE_MISS
+    try:
+        sess, win, p = await _claude_pane(srv)
+        srv._fg_is_claude = lambda pane: True
+        srv._usage = {"model": "sonnet-5"}         # 프로브 기본값(별도 세션)
+
+        def scan(text):
+            p.feed(b"\x1b[2J\x1b[H" + text.encode())
+            srv._scan_claude(sess, win)
+
+        idle_badge = ("output line\n⏵⏵ auto mode on (shift+tab to cycle)\n"
+                      "/model  Set the AI model (currently Opus 4.8)")
+        idle_plain = "⏵⏵ auto mode on (shift+tab to cycle)"
+        gone = "plain shell output with no claude footer anchor xyz"
+
+        # /model 메뉴로 라이브 opus 확정(strong) → 배지가 프로브 sonnet 을 덮는다.
+        scan(idle_badge)
+        assert p._claude == "idle" and p._claude_model == "opus-4.8"
+        assert p._claude_model_weak is False, "라이브 배지 = strong"
+
+        # transient flap: 한 프레임 None(footer 밀림) → 즉시 idle 복귀(배지 없음).
+        sm._HDR_CLAUDE_MISS = 30                    # 미스 임계 크게 → flap 은 미도달
+        scan(gone)                                  # new_cl=None, _hdr_claude 유지 True
+        assert p._hdr_claude is True
+        scan(idle_plain)                            # 복귀: old_cl=None→idle = 리셋 블록
+        assert p._claude_model == "opus-4.8", "flap 에선 래치 유지(프로브로 안 되돌아감)"
+
+        # 진짜 재기동: _hdr_claude 가 False 까지 간 뒤 복귀 → 래치 해제 → 프로브 재감지.
+        sm._HDR_CLAUDE_MISS = 2
+        scan(gone); scan(gone)                      # 미스 2회 → _hdr_claude False
+        assert p._hdr_claude is False
+        scan(idle_plain)                            # 확정 종료 후 새 세션 → 리셋 발동
+        assert p._claude_model == "sonnet-5", "확정 재기동은 종전대로 새 모델 재감지"
+    finally:
+        sm._HDR_CLAUDE_MISS = orig_miss
+        await teardown(srv, task, sock)
+
+
 async def test_model_families_externalized():
     """4-B: 모델 패밀리 화이트리스트를 환경변수(PYTMUX_CLAUDE_MODEL_FAMILIES)로 코드
     수정 없이 확장한다 — Anthropic 이 신규 계열을 내도 코드 변경 없이 대응. 기본
