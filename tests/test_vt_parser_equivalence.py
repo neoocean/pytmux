@@ -127,6 +127,82 @@ async def test_scrollback_view_equivalence():
     _assert_panes_equal(pa, pb, "scrollback live")
 
 
+# ── screen_impl 등가 오라클(로드맵 #6 M1: pyte.Screen ≡ 자작 nativescreen) ──────
+# 위 테스트들은 vt_parser(파서) 등가였다. 아래는 **화면 백엔드** 등가: 같은 native
+# 파서로 먹이되 한쪽은 pyte.Screen(_ScrollbackScreen), 다른 쪽은 자작 native Screen
+# (nativescreen.NativeScrollbackScreen)에 디스패치해 render/셀/alt/스크롤백이 동일함을
+# 못박는다. 기본(screen_impl 미지정)은 pyte 라 이 파일의 다른 테스트·골든해시는 native
+# 화면을 타지 않는다(기본 렌더 경로 불변). native 기본 전환은 M4 몫.
+#
+# M2/M3 skip/xfail 없음: M1 core 범위(draw/커서/erase/SGR/mode/save-restore) 외에
+# insert/delete·set_margins·SU/SD·origin·history·alt 도 nativescreen 이 pyte 동작에
+# 맞춰 함께 구현돼(설계 §2 "스텁이라도 맞으면 포함") 아래 코퍼스·픽스처·스크롤백 전부가
+# 이미 green 이다. 커버 못 한 pyte 엣지케이스가 생기면 그 코퍼스 항목만 skip 할 것.
+
+
+def _new_screen_pair(cols, rows):
+    """같은 native 파서 + (pyte 화면) vs (native 화면). 기준은 screen_impl 명시 —
+    _new_pair 와 같은 이유로 기본값 의존 금지(기본이 native 로 바뀌면 무력화 방지)."""
+    return (Pane(-1, -1, cols, rows, vt_parser="native", screen_impl="pyte"),
+            Pane(-1, -1, cols, rows, vt_parser="native", screen_impl="native"))
+
+
+async def test_screen_impl_corpus_equivalence_whole_and_sliced():
+    """코퍼스를 통짜·여러 슬라이스 폭으로 native 화면에 먹여, pyte 화면과 매 단계
+    동일(렌더·셀·alt). serverpty FEED_SLICE 분할을 모사한다(#6 M1)."""
+    blob = b"".join(_CORPUS)
+    for cols, rows in [(40, 12), (80, 24), (24, 8)]:
+        pa, pb = _new_screen_pair(cols, rows)
+        for i, chunk in enumerate(_CORPUS):
+            pa.feed(chunk)
+            pb.feed(chunk)
+            _assert_panes_equal(pa, pb, f"screen-corpus[{cols}x{rows}#{i}]")
+        # 슬라이스 불변: pyte 화면 통짜 vs native 화면 슬라이스(여러 폭).
+        ref = Pane(-1, -1, cols, rows, vt_parser="native", screen_impl="pyte")
+        ref.feed(blob)
+        for width in (1, 3, 7, 64, 997):
+            nat = Pane(-1, -1, cols, rows,
+                       vt_parser="native", screen_impl="native")
+            for off in range(0, len(blob), width):
+                nat.feed(blob[off:off + width])
+            _assert_panes_equal(ref, nat, f"screen-slice[{cols}x{rows} w={width}]")
+
+
+async def test_screen_impl_fixture_equivalence():
+    """실 캡처(claude/*.txt)에서 pyte 화면 ≡ native 화면(렌더·셀·스크롤백)(#6 M1)."""
+    files = sorted(glob.glob(os.path.join(FIXTURES, "*.txt")))
+    assert files, "캡처 픽스처 없음"
+    for path in files:
+        with open(path, "rb") as f:
+            data = f.read()
+        for cols, rows in [(80, 24), (100, 30)]:
+            pa, pb = _new_screen_pair(cols, rows)
+            pa.feed(data)
+            pb.feed(data)
+            _assert_panes_equal(
+                pa, pb,
+                f"screen-fixture[{os.path.basename(path)} {cols}x{rows}]")
+
+
+async def test_screen_impl_scrollback_view_equivalence():
+    """스크롤백 위로 스크롤한 뷰포트 렌더도 pyte 화면 ≡ native 화면(#6 M1)."""
+    cols, rows = 40, 8
+    pa, pb = _new_screen_pair(cols, rows)
+    blob = b"".join(f"scrollback line {i:03d}\r\n".encode() for i in range(60))
+    pa.feed(blob)
+    pb.feed(blob)
+    for up in (1, 5, 20, 52):
+        pa.scroll = pb.scroll = 0
+        pa.scroll_by(up)
+        pb.scroll_by(up)
+        ra, _ = pa.render(True)
+        rb, _ = pb.render(True)
+        assert ra == rb, f"screen-scrollback up={up} 불일치"
+    pa.scroll_to("bottom")
+    pb.scroll_to("bottom")
+    _assert_panes_equal(pa, pb, "screen-scrollback live")
+
+
 # ── 골든 해시 오라클(로드맵 #4·#6 안전망) ─────────────────────────────────────
 # 위 테스트들은 pyte≡native **상대** 비교라, 두 경로를 동일하게 바꾸는 변경(예: #6
 # pyte.Screen→자작 native Screen 교체, 또는 공용 SGR/렌더 로직 변경)은 못 잡는다.

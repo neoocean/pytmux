@@ -498,14 +498,22 @@ class Pane:
     """잎 노드. 셸 PTY + pyte 화면 버퍼 + 스크롤백 뷰포트."""
 
     def __init__(self, pid: int, fd: int, cols: int, rows: int,
-                 vt_parser: str = "native"):
+                 vt_parser: str = "native", screen_impl: str | None = None):
         self.id = pid_counter()
         self.master_fd = fd
         self.child_pid = pid
         self.cols = cols
         self.rows = rows
+        # 화면 백엔드 선택(로드맵 #6 M1): "pyte"(기본, 현행 pyte.Screen 경로) 또는
+        # "native"(자작 nativescreen). vt_parser 의 PYTMUX_VT_PARSER 선례와 동형으로
+        # env PYTMUX_SCREEN 로도 지정한다. **기본은 pyte 유지** — vt_parser 기본이
+        # native 로 바뀌었어도 SCREEN 기본은 pyte 라 기본 렌더 경로가 불변이다. native
+        # 는 옵트인이 명시될 때만(파라미터 또는 env) 쓴다(등가 오라클 게이트 하 점증).
+        if screen_impl is None:
+            screen_impl = os.environ.get("PYTMUX_SCREEN", "pyte")
+        self._screen_impl = screen_impl if screen_impl == "native" else "pyte"
         # 메인 화면(스크롤백 보관) + 대체 화면(풀스크린 TUI 용, 스크롤백 없음)
-        self._main = _ScrollbackScreen(cols, rows, history=HISTORY, ratio=0.5)
+        self._main = self._make_main_screen(cols, rows)
         self._main.set_mode(pyte.modes.LNM)
         self._main_stream = pyte.ByteStream(self._main)
         self._alt = None
@@ -625,7 +633,7 @@ class Pane:
         self.pty = None          # 서버가 reinit 직후 새 PtyProcess 를 주입
         self.host_pane_id = None  # respawn: host 모드면 서버가 새 id 를 다시 설정
         self.cols, self.rows = cols, rows
-        self._main = _ScrollbackScreen(cols, rows, history=HISTORY, ratio=0.5)
+        self._main = self._make_main_screen(cols, rows)
         self._main.set_mode(pyte.modes.LNM)
         self._main_stream = pyte.ByteStream(self._main)
         self._alt = None
@@ -903,6 +911,22 @@ class Pane:
     def first_pane(self) -> "Pane":
         return self
 
+    def _make_main_screen(self, cols: int, rows: int):
+        """메인(스크롤백) 화면을 screen_impl 에 따라 만든다(#6 M1). 기본 "pyte" 는
+        현행 _ScrollbackScreen(pyte.Screen), "native" 는 자작 nativescreen."""
+        if self._screen_impl == "native":
+            from .nativescreen import NativeScrollbackScreen
+            return NativeScrollbackScreen(cols, rows, history=HISTORY,
+                                          ratio=0.5)
+        return _ScrollbackScreen(cols, rows, history=HISTORY, ratio=0.5)
+
+    def _make_alt_screen(self, cols: int, rows: int):
+        """대체(alt) 화면을 screen_impl 에 따라 만든다(#6 M1). 스크롤백 없음."""
+        if self._screen_impl == "native":
+            from .nativescreen import NativeScreen
+            return NativeScreen(cols, rows)
+        return _BCEScreen(cols, rows)
+
     def _make_tokenizer(self):
         """native VT 토크나이저 생성(현재 _main 을 가리키게). 지연 import — 기본
         (pyte) 패널은 vtparse 를 import 하지 않는다."""
@@ -1003,7 +1027,7 @@ class Pane:
     def _enter_alt(self) -> None:
         if self.alt_active:
             return
-        self._alt = _BCEScreen(self.cols, self.rows)
+        self._alt = self._make_alt_screen(self.cols, self.rows)
         self._alt.set_mode(pyte.modes.LNM)
         # pyte 경로만 alt 스트림이 필요. native 는 토크나이저를 alt 화면으로 재지정한다.
         if self._tok is None:
