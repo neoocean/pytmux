@@ -682,7 +682,7 @@ class ServerClaudeMixin:
                 d = u.get(key)
                 if isinstance(d, dict) and d.get("pct") is not None:
                     reset = d.get("reset")
-                    reset_txt = ("  ↻" + reset.split(" (")[0].strip()) if reset else ""
+                    reset_txt = ("  ↻ " + reset.split(" (")[0].strip()) if reset else ""
                     entries.append((key, label, max(0, min(100, int(d["pct"]))),
                                     reset_txt))
         # 세션 토큰 총량(항상 가용한 바닥값 — 프로브 무관). _exit_tokens 는 claude None

@@ -1952,7 +1952,9 @@ def usage_bar_lines(usage, width=80, age_sec=None, right_align=False,
         label = name + " " * max(1, label_w + 1 - sum(_char_cells(c) for c in name))
         reset = d.get("reset")
         # 타임존 괄호는 자리 절약 위해 생략.
-        reset_txt = ("↻" + reset.split(" (")[0].strip()) if reset else ""
+        # 새로고침 화살표와 날짜/시각 사이 한 칸(가독성 — 붙으면 첫 글자가 화살표에
+        # 겹쳐 안 보인다, 사용자 보고 2026-07-18). 종료 요약(_usage_exit_lines)과 동형.
+        reset_txt = ("↻ " + reset.split(" (")[0].strip()) if reset else ""
         if right_align:
             # 막대를 트랙 폭으로 채워(공백) 리셋 시작 열을 행마다 맞추고, % 숫자는
             # 줄 오른쪽 끝(width)에 우측정렬한다 — 막대/리셋과 % 사이를 공백으로 채움.

@@ -127,7 +127,7 @@ async def test_usage_bar_lines_right_align():
     assert all(sum(_char_cells(c) for c in ln) == 76 for ln in ra[:2]), \
         [sum(_char_cells(c) for c in ln) for ln in ra[:2]]
     # 타임존 괄호는 생략되고 리셋은 막대 뒤(% 앞)에 남는다.
-    assert "↻5:59pm" in ra[0] and "(Asia/Seoul)" not in ra[0]
+    assert "↻ 5:59pm" in ra[0] and "(Asia/Seoul)" not in ra[0]
     # 기본(False): 종전 포맷 — 리셋이 줄 끝, % 는 막대 바로 옆.
     base = usage_bar_lines(usage, 76)
     assert base[0].endswith("5:59pm") and base[0].lstrip().startswith("세션")

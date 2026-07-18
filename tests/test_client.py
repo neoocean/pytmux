@@ -4507,7 +4507,7 @@ async def test_usage_bar_lines_format():
     lines = usage_bar_lines(u, 80)
     assert lines and len(lines) == 3, lines
     assert "세션 5h" in lines[0] and "10%" in lines[0], lines[0]
-    assert "↻5am" in lines[0] and "(Asia" not in lines[0], lines[0]  # 타임존 생략
+    assert "↻ 5am" in lines[0] and "(Asia" not in lines[0], lines[0]  # 타임존 생략·화살표 뒤 한 칸
     assert usage_bar_lines(None, 80) is None
     assert usage_bar_lines({}, 80) is None
     # account 키 없으면 계정 줄 안 붙음(인패널 전용 갱신 등) → 기존 3줄 유지
