@@ -4,8 +4,8 @@
 pywinpty(winpty-rs)의 ConPTY 백엔드는 `read()` 가 **str 전용**이고 내부에서 ReadFile
 청크(≤32768B)마다 `MultiByteToWideChar` 로 **carry 없이** 디코드해, 멀티바이트(CJK/이모지)
 가 청크 경계에 걸리면 우리가 바이트를 받기 전에 이미 U+FFFD 로 영구 손상한다(실측 재현).
-서버 feed 경로(`pyte.ByteStream`)는 영속 incremental decoder 로 바이트 경계를 carry
-하므로 **raw 바이트만 받으면 Unix PTY 와 동일하게 무손상**이다.
+서버 feed 경로(`vtparse.VTTokenizer`)는 영속 incremental decoder 로 바이트 경계를
+carry 하므로 **raw 바이트만 받으면 Unix PTY 와 동일하게 무손상**이다.
 
 이 모듈은 ctypes 로 ConPTY API 를 직접 호출해 의사 콘솔을 소유하고, 입출력을 우리
 파이프로 직접 읽고 쓴다(winpty-rs/pywinpty 우회). 따라서 read 가 raw bytes 를 돌려주고
@@ -37,7 +37,7 @@ winpty-rs(`andfoy/winpty-rs` `pty_impl.rs`)를 detached(콘솔-less = 데몬 동
      `close()` 의 `ClosePseudoConsole` 가 conhost 쓰기단을 닫아 read 가 EOF(0)/BROKEN_PIPE 로
      빠져나오고, `CancelIoEx` 가 in-flight read 를 깨운다 → 스레드 정상 종료.
 
-서버 feed 경로(`pyte.ByteStream`)는 영속 incremental decoder 로 바이트 경계를 carry 하므로
+서버 feed 경로(`vtparse.VTTokenizer`)는 영속 incremental decoder 로 바이트 경계를 carry 하므로
 **raw 바이트만 받으면 Unix PTY 와 동일하게 무손상**이다(read 가 디코드 안 함 = 손상 원점 회피).
 PseudoConsole 3종(Create/Resize/Close)은 pywinpty 동봉 `conpty.dll` 의 `Conpty`-접두 export
 로 라우팅한다(번들 OpenConsole 호스트 = 시스템 conhost 와 핸드셰이크 패리티). 번들 부재 시

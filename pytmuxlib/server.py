@@ -151,14 +151,12 @@ class Server(*_SERVER_BASES):
         #   latest         = 마지막으로 조작된(입력·마우스·스크롤·리사이즈) 클라 크기.
         #   largest        = max(모든 클라).
         # latest/largest 는 작은 코-뷰어가 공유 격자를 다 못 담아 우/하단이 **잘린다**
-        # (레터박스 아님) — 단일 공유 pyte 격자의 물리적 한계, tmux 와 동일 트레이드오프.
+        # (레터박스 아님) — 단일 공유 native 격자의 물리적 한계, tmux 와 동일 트레이드오프.
         _ws = str(_opts.get("window_size", "smallest")).strip().lower()
         self.window_size = _ws if _ws in _WINDOW_SIZE_MODES else "smallest"
-        # VT 파서 백엔드: "native"(기본·라이브 — 자작 증분 토크나이저 vtparse.VTTokenizer
-        # 가 feed-전 우회 없이 pyte.Screen 에 직접 디스패치) | "pyte"(pyte.ByteStream 경로,
-        # 대조/롤백용). 2026-06-16 native 로 기본 전환됨(아래 _opts.get 기본값 참조 —
-        # 종전 주석의 '기본 pyte' 는 stale 였음, 1-7 정정). spawn_pane 이 새 패널에
-        # 전달하고 재시작 시 발효. 배경/검증: docs/internal/VT_PARSER_TRADEOFF_2026-06-15.md.
+        # VT 파서 백엔드 opt(레거시): M4b(2026-07-18)에 pyte 완전 은퇴로 파서는 native
+        # 단일화됐다. 이 opt 는 상위 배선 호환을 위해 보존하되 값과 무관하게 native
+        # 토크나이저(vtparse.VTTokenizer)만 쓴다("pyte" 선택은 native 로 수렴).
         self.vt_parser = str(_opts.get("vt_parser", "native"))
         # 원격 중첩 자동 승격(docs/internal/NESTED_ATTACH_SCENARIO.md ㉢): 패널 안 ssh 원격에서
         # pytmux 를 치면 거부 대신 그 패널의 실제 ssh 목적지로 자동 remote-attach +

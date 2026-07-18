@@ -409,7 +409,7 @@ class _WinPty(PtyProcess):
     carry 로 복구 불가(이미 U+FFFD). pywinpty 의 `PTY.read()` 는 str 전용이고 conout
     핸들도 미노출이라 raw 바이트 우회가 불가능하다. **진짜 해결책 = ConPTY 를 직접
     소유**(ctypes CreatePseudoConsole + overlapped 명명 파이프로 raw 바이트 읽기 → 서버
-    `pyte.ByteStream` 의 incremental decoder 가 경계 carry, Unix 와 동일). 익명 CreatePipe
+    `vtparse.VTTokenizer` 의 incremental decoder 가 경계 carry, Unix 와 동일). 익명 CreatePipe
     로는 이 빌드에서 conhost 출력이 read 단에 도달하지 않아 winpty-rs 처럼 overlapped
     명명 파이프가 필요함을 실측 확인. 상세·진행은 docs/internal/IMPROVEMENT_OPPORTUNITIES.md §1.1.
 
@@ -629,7 +629,7 @@ class _OwnedConPty(PtyProcess):
     `conpty._ConPty`(ctypes `CreatePseudoConsole`)가 의사 콘솔을 소유하고 우리 파이프로
     raw 바이트를 읽고 쓴다. pywinpty(`_WinPty`)와 달리 **read 경로에서 디코드를 전혀 하지
     않는다** — winpty-rs 가 ReadFile 청크마다 carry 없이 `MultiByteToWideChar` 하던 손상
-    원점을 우회한다. 받은 raw 바이트는 서버 feed 경로(`pyte.ByteStream`)의 영속 incremental
+    원점을 우회한다. 받은 raw 바이트는 서버 feed 경로(`vtparse.VTTokenizer`)의 영속 incremental
     decoder 가 경계 carry 해 Unix PTY 와 동일하게 무손상으로 처리된다.
 
     리더 모델은 `_WinPty` 와 동일(Proactor 가 콘솔 핸들에 add_reader 불가 → 전용 스레드가

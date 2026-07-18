@@ -1,4 +1,4 @@
-"""자작 native Screen 백엔드 — pyte.Screen 교체 아크(로드맵 #6) M1 core.
+"""자작 native Screen 백엔드 — 화면 상태 의미론(로드맵 #6).
 
 docs/internal/NATIVE_SCREEN_DESIGN_2026-07-10.md 의 명세를 따른다. 이 모듈은
 ``model._ScrollbackScreen``/``_BCEScreen``(= pyte.Screen + _BCEMixin) 이 하던 화면
@@ -12,10 +12,10 @@ set_title/set_icon_name. M2/M3 메서드(insert/delete_*·set_margins·scroll_up
 history/alignment_display)도 pyte 동작에 맞춰 함께 구현해 등가 오라클을 코퍼스 전체에서
 green 으로 유지한다(스텁이 아니라 실동작 — 설계 §2 "스텁이라도 맞으면 포함").
 
-**M1 의 pyte 의존 잔재(의도적)**: SGR 색/속성 룩업 테이블(graphics)·charset 매핑
-(charsets)·모드 상수(modes)·wcwidth 는 pyte 에서 import 한다. 이 상수들을 자작 테이블로
-인라인하는 것(그리고 pyte 완전 제거)은 설계 §2 M4 몫이다. M1 은 화면 **로직**을 자작으로
-가져오되 상수 테이블은 pyte 를 레퍼런스로 재사용해 바이트 동일성을 보장한다.
+**M4b(2026-07-18) pyte 완전 은퇴**: SGR 색/속성 룩업 테이블(graphics)·charset 매핑
+(charsets)·모드 상수(modes)·wcwidth·CSI 디스패치 테이블을 자작 인라인 모듈
+``vtconst`` 로 옮겨 pyte import 를 걷어냈다. 값은 구 pyte 상수와 **바이트 동일**하며
+(vtconst 상단 참조), 골든해시(vt_render_golden.json)가 렌더 동일성을 상시 회귀한다.
 """
 from __future__ import annotations
 
@@ -25,11 +25,14 @@ import unicodedata
 from collections import defaultdict, deque
 from typing import NamedTuple
 
-# M1: 색/모드/charset 룩업 테이블·wcwidth 는 pyte 를 레퍼런스로 재사용(위 docstring).
-from pyte import charsets as cs
-from pyte import graphics as g
-from pyte import modes as mo
-from pyte.screens import wcwidth as _wcwidth
+# 색/모드/charset 룩업 테이블·wcwidth 는 자작 인라인 모듈(vtconst)에서 가져온다
+# (M4b: pyte 완전 은퇴). cs/g/mo 는 한 상수 네임스페이스(vtconst)를 세 갈래로 별칭한
+# 것뿐 — charsets/graphics/modes 심볼은 vtconst 안에서 이름 충돌 없이 공존한다.
+from . import vtconst
+cs = g = mo = vtconst
+# 모듈 전역 폭 함수 — draw()/display() 가 호출 시점에 이 이름을 조회하므로, cellwidth
+# 가 모호폭(EAW='A') 인지 버전으로 `nativescreen._wcwidth` 를 교체하면 즉시 반영된다.
+_wcwidth = vtconst.wcwidth
 
 from .protocol import HISTORY
 

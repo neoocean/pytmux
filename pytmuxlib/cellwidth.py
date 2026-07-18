@@ -11,8 +11,8 @@
 감지**(launcher.detect_ambiguous_width)하고, 감지되면 폭 모델을 세 곳에서 일관되게
 '모호폭=2' 로 전환한다:
   ① 클라 합성/탭바/상태줄의 `char_cells`(= clientutil._char_cells),
-  ② 서버 pyte 격자(`pyte.screens.wcwidth` 오버라이드 — 앱 레이아웃이 격자에 정확히
-     앉도록),
+  ② 서버 native 격자(`nativescreen._wcwidth` 오버라이드 — 앱 레이아웃이 격자에
+     정확히 앉도록),
   ③ Rich/Textual 셀 측정(Strip/Segment 폭 — Textual 이 같은 폭으로 크롭·기록하도록).
 
 기본값은 'narrow'(현행 동작)라, 모호폭을 1칸으로 그리는 절대다수 단말은 **패치가
@@ -32,7 +32,7 @@ _patched = False
 # `_AMBIG_WIDE` 가 False 면 원본값을 그대로 돌려줘 거동·정합성이 깨지지 않는다.
 _orig_cell_len = None
 _orig_char_size = None
-_orig_pyte_w = None
+_orig_native_w = None
 
 
 @lru_cache(maxsize=4096)
@@ -70,10 +70,10 @@ def ambiguous_wide() -> bool:
 
 
 def set_ambiguous_wide(on: bool) -> None:
-    """모호폭 wide 모드 전환. 켜질 때 pyte·Rich/Textual 패치를 설치하고, 꺼지면 복원.
+    """모호폭 wide 모드 전환. 켜질 때 native·Rich/Textual 패치를 설치하고, 꺼지면 복원.
 
     기동 시 한 번 호출되는 게 정상이나, 멱등·가역이라 재호출도 안전하다. 모듈
-    부재(서버엔 textual 없음·클라엔 pyte 없음)는 패치별 try 로 건너뛴다."""
+    부재(클라엔 nativescreen 미로드일 수 있음)는 패치별 try 로 건너뛴다."""
     global _AMBIG_WIDE
     on = bool(on)
     if on == _AMBIG_WIDE:
@@ -110,7 +110,7 @@ def _install_patches() -> None:
     if _patched:
         return
     _patched = True
-    _install_pyte()
+    _install_native()
     _install_rich_textual()
 
 
@@ -136,25 +136,26 @@ def _patch(target, name, new) -> None:
     setattr(target, name, new)
 
 
-def _install_pyte() -> None:
-    """pyte 격자 폭: `pyte.screens.wcwidth` 를 모호폭 인지로 교체(서버 레이아웃).
+def _install_native() -> None:
+    """native 격자 폭: `nativescreen._wcwidth` 를 모호폭 인지로 교체(서버 레이아웃).
 
-    pyte 의 `Screen.draw` 는 매 문자 `wcwidth(ch)` 를 모듈 전역으로 호출하므로
-    전역 치환이면 충분하다. 폭0(결합)·음수는 원값 보존, EAW='A' 의 1 만 2 로."""
-    global _orig_pyte_w
+    nativescreen 의 `draw`/`display` 는 매 문자 폭을 **모듈 전역 `_wcwidth`** 로
+    호출하므로(호출 시점 조회) 그 심볼만 갈면 충분하다. 폭0(결합)·음수는 원값 보존,
+    EAW='A' 의 1 만 2 로. (구 pyte.screens.wcwidth 패치의 native 대응 — M4b.)"""
+    global _orig_native_w
     try:
-        import pyte.screens as ps
+        from . import nativescreen as ns
     except Exception:
         return
-    if _orig_pyte_w is None:      # 원본 1회 포착(재설치 시 패치본을 잡지 않도록)
-        _orig_pyte_w = ps.wcwidth
-    _patch(ps, "wcwidth", _pyte_w)
+    if _orig_native_w is None:    # 원본 1회 포착(재설치 시 패치본을 잡지 않도록)
+        _orig_native_w = ns._wcwidth
+    _patch(ns, "_wcwidth", _native_w)
 
 
-def _pyte_w(ch, *a, **k):
-    """pyte 격자용 모호폭 인지 wcwidth. `_AMBIG_WIDE` False 면 원본값(no-op)이라
+def _native_w(ch, *a, **k):
+    """native 격자용 모호폭 인지 wcwidth. `_AMBIG_WIDE` False 면 원본값(no-op)이라
     혹시 참조가 남아도 안전하다."""
-    w = _orig_pyte_w(ch, *a, **k)
+    w = _orig_native_w(ch, *a, **k)
     if _AMBIG_WIDE and w == 1 and is_ambiguous(ch):
         return 2
     return w

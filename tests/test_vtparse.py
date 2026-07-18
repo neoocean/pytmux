@@ -14,15 +14,28 @@ import os
 import time
 
 import harness  # noqa: F401 (경로 설정)
-import pyte
+from run import skip
 from pytmuxlib.model import Pane
+from pytmuxlib.nativescreen import NativeScreen
 from pytmuxlib.vtparse import VTTokenizer, _sgr_params_from_raw
+
+# pyte 는 M4b(2026-07-18)에 런타임 은퇴했다. 여기선 **선택적 차분 오라클**(독립 VT
+# 구현과의 대조 — 공허하지 않음)로만 쓴다: 설치돼 있으면 차분 테스트가 native 파서를
+# pyte.ByteStream 과 대조하고, 없으면 그 테스트만 skip 한다(렌더 절대 가드는
+# test_vt_parser_equivalence 의 골든해시가 담당). 파서 고유 속성(DoS/DCS/우회 흡수/alt/
+# OSC/SGR 단위)은 native 화면만으로 검증하므로 pyte 유무와 무관하게 항상 돈다.
+try:
+    import pyte
+    _HAVE_PYTE = True
+except Exception:
+    pyte = None
+    _HAVE_PYTE = False
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "claude")
 
 
 def _ref_screen(chunks, cols, rows):
-    """기준 경로: pyte.ByteStream(우회 없음)."""
+    """차분 기준 경로: pyte.ByteStream(선택적 오라클 — 호출 전 _HAVE_PYTE 확인)."""
     s = pyte.Screen(cols, rows)
     st = pyte.ByteStream(s)
     for ch in chunks:
@@ -31,15 +44,15 @@ def _ref_screen(chunks, cols, rows):
 
 
 def _tok_screen(chunks, cols, rows, with_alt=False):
-    """대상 경로: VTTokenizer. with_alt 면 alt_hook 으로 main/alt Screen 을 스왑한다
-    (model.Pane 의 _enter_alt/_leave_alt 등가). 현재 활성 Screen 을 반환한다."""
-    main = pyte.Screen(cols, rows)
+    """대상 경로: VTTokenizer → 자작 NativeScreen. with_alt 면 alt_hook 으로 main/alt
+    화면을 스왑한다(model.Pane 의 _enter_alt/_leave_alt 등가). 현재 활성 화면 반환."""
+    main = NativeScreen(cols, rows)
     state = {"alt": False, "s": None}
     tk = VTTokenizer(main)
 
     def _hook(enter):
         if enter and not state["alt"]:
-            state["s"] = pyte.Screen(cols, rows)
+            state["s"] = NativeScreen(cols, rows)
             state["alt"] = True
             tk.set_screen(state["s"])
         elif not enter and state["alt"]:
@@ -88,6 +101,8 @@ def _assert_same(a, b, label):
 
 # ── (1) 차분: pyte 와 동일해야 하는 정상 시퀀스 ───────────────────────────────
 async def test_differential_against_pyte_bytestream():
+    if not _HAVE_PYTE:
+        skip("pyte 런타임 은퇴(M4b) — 차분 오라클 미설치. 렌더 가드는 골든해시.")
     cols, rows = 40, 6
     cases = {
         "plain": [b"hello\r\nworld\r\n"],
@@ -130,19 +145,22 @@ async def test_multibyte_split_across_feeds_no_fffd():
         chunks = [raw[:cut], raw[cut:]]
         tok = _tok_screen(chunks, cols, rows)
         assert "�" not in tok.display, f"native split@{cut} 에 U+FFFD"
-        ref = _ref_screen(chunks, cols, rows)
-        _assert_same(ref, tok, f"mb-split@{cut}")
+        if _HAVE_PYTE:      # 선택적 차분: pyte.ByteStream 도 동일 carry
+            _assert_same(_ref_screen(chunks, cols, rows), tok, f"mb-split@{cut}")
     # 한 바이트씩 흘려도(최악 경계) 동일.
     onebyte = _tok_screen([raw[i:i + 1] for i in range(len(raw))], cols, rows)
     assert "�" not in onebyte.display, "native 1바이트 스트림에 U+FFFD"
-    _assert_same(_ref_screen([bytes([b]) for b in raw], cols, rows),
-                 onebyte, "mb-split@1byte")
+    if _HAVE_PYTE:
+        _assert_same(_ref_screen([bytes([b]) for b in raw], cols, rows),
+                     onebyte, "mb-split@1byte")
 
 
 async def test_conformance_corpus_against_pyte():
     """vttest급 경계 케이스 — 스크롤영역/원점모드/탭스톱/문자셋/soft-reset/삽입모드를
-    pyte.ByteStream 과 차분 비교(라이브 배선 전 파서 신뢰도 확보). 화면 상태 의미론은
-    pyte.Screen 이 담당하므로 파서가 올바른 인자로 디스패치하면 동일해야 한다."""
+    pyte.ByteStream 과 차분 비교(선택적 오라클). 파서가 올바른 인자로 디스패치하면
+    독립 구현(pyte)과 동일해야 한다. pyte 미설치면 skip(렌더 가드는 골든해시)."""
+    if not _HAVE_PYTE:
+        skip("pyte 런타임 은퇴(M4b) — 차분 오라클 미설치. 렌더 가드는 골든해시.")
     cols, rows = 30, 8
     cases = {
         # DECSTBM 스크롤영역 안에서 스크롤(index/RI)
@@ -259,7 +277,7 @@ async def test_csi_raw_param_buffer_bounded():
     cols, rows = 20, 3
     big = b"\x1b[" + b"1" * 3_000_000                # 미종결 — 종결자 일부러 없음
     chunks = [big[i:i + 65536] for i in range(0, len(big), 65536)]
-    scr = pyte.Screen(cols, rows)
+    scr = NativeScreen(cols, rows)
     tok = VTTokenizer(scr)
     t0 = time.perf_counter()
     for c in chunks:
@@ -354,9 +372,13 @@ async def test_alt_screen_routing_matches_pane():
     _assert_same(pane2.screen, tok2, "alt entered")
 
 
-# ── (+) 캡처 픽스처 재생 동등성 ───────────────────────────────────────────────
+# ── (+) 캡처 픽스처 재생 동등성(선택적 차분 오라클) ──────────────────────────
 async def test_capture_fixtures_match_pyte():
-    """실제 캡처(claude/*.txt)를 양 경로로 재생해 화면이 동일(정상 데이터 회귀망)."""
+    """실제 캡처(claude/*.txt)를 native·pyte 양 경로로 재생해 화면이 동일(독립 구현
+    대조). pyte 미설치면 skip — 캡처 렌더 절대 가드는 골든해시(test_vt_parser_
+    equivalence)가 담당한다."""
+    if not _HAVE_PYTE:
+        skip("pyte 런타임 은퇴(M4b) — 차분 오라클 미설치. 렌더 가드는 골든해시.")
     cols, rows = 80, 24
     files = sorted(glob.glob(os.path.join(FIXTURES, "*.txt")))
     assert files, "캡처 픽스처 없음"

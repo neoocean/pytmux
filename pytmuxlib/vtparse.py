@@ -1,10 +1,10 @@
-"""증분 VT 토크나이저 PoC — pyte.Stream(파서) 대체 타당성 검증용.
+"""증분 VT 토크나이저 — 라이브 feed 경로의 유일한 VT 파서(M4b: pyte 완전 은퇴).
 
-docs/internal/VT_PARSER_TRADEOFF_2026-06-15.md §6 옵션 B("토크나이저만 자작, pyte Screen
-유지")의 PoC. 바이트를 소비해 **pyte.Screen 메서드로 직접 디스패치**하는 자체 상태
-기계다. 화면 상태 의미론(커서/스크롤영역/모드/erase/탭/문자셋)은 검증된 pyte.Screen
-을 그대로 쓰고, dispatch 매핑(final byte → Screen 메서드명)도 pyte.Stream 의 테이블
-(basic/escape/sharp/csi)을 그대로 재사용한다. **우리가 소유하는 것은 증분 파서뿐.**
+docs/internal/VT_PARSER_TRADEOFF_2026-06-15.md §6 옵션 B("토크나이저만 자작") 에서 출발해,
+2026-07-18 M4b 에서 화면 모델(nativescreen)까지 자작으로 전환하며 pyte 를 걷어냈다.
+바이트를 소비해 **화면 메서드(nativescreen.NativeScreen 등)로 직접 디스패치**하는 자체
+상태 기계다. dispatch 매핑(final byte → 메서드명)은 자작 인라인 테이블(vtconst.BASIC/
+ESCAPE/SHARP/CSI_TABLE — 구 pyte.Stream 테이블과 바이트 동일)을 쓴다.
 
 이 한 모듈이 model.py 의 feed-전 우회 4종을 상태기계 안에서 1급으로 흡수함을 보인다:
 
@@ -30,29 +30,27 @@ PoC 범위 주의: 마우스 트래킹/bracketed-paste 추적은 model 에서 fe
 데이터를 보므로 여기 대상이 아니다. **2026-06-16 이후 이 토크나이저가 라이브 feed
 경로의 기본**이다(Pane.feed→_feed_native, vt_parser 기본 native — 종전 docstring 의
 '배선하지 않는다'는 stale 였음, 1-7 정정). tests/test_vtparse.py 가 차분/등가를
-가드하고, test_vt_parser_equivalence.py 가 pyte 경로와의 동등성을 상시 회귀한다."""
+가드하고, test_vt_parser_equivalence.py 의 골든해시가 렌더 회귀를 상시 가드한다."""
 from __future__ import annotations
 
 import codecs
 import re
 
-from pyte import control as ctrl
-from pyte.streams import Stream
+from . import vtconst as ctrl   # 인라인 VT 상수(구 pyte.control/streams 테이블 대체)
 
-# pyte.Stream 의 정적 dispatch 테이블을 그대로 재사용한다(우리는 매핑을 재발명하지
-# 않는다). final byte(또는 ESC 다음 글자) → Screen 메서드명.
-_BASIC = Stream.basic       # C0 컨트롤(BEL/BS/HT/LF/CR/…)
-_ESCAPE = Stream.escape     # non-CSI ESC(RIS/IND/DECSC/…)
-_SHARP = Stream.sharp       # ESC # n (DECALN)
-_CSI = Stream.csi           # CSI … final → 메서드명
+# 정적 dispatch 테이블(구 pyte.Stream.{basic,escape,sharp,csi} → vtconst 로 인라인).
+# final byte(또는 ESC 다음 글자) → Screen 메서드명.
+_BASIC = ctrl.BASIC         # C0 컨트롤(BEL/BS/HT/LF/CR/…)
+_ESCAPE = ctrl.ESCAPE       # non-CSI ESC(RIS/IND/DECSC/…)
+_SHARP = ctrl.SHARP         # ESC # n (DECALN)
+_CSI = ctrl.CSI_TABLE       # CSI … final → 메서드명
 
-# pyte 의 CSI 테이블엔 SU(`CSI Ps S`)·SD(`CSI Ps T`)가 빠져 있다(pyte.Screen 미구현).
+# 표준 CSI 테이블엔 SU(`CSI Ps S`)·SD(`CSI Ps T`)가 없다(구 pyte.Screen 미구현 관례).
 # 스크롤 영역(DECSTBM)을 SU/SD 로 직접 스크롤하는 앱(Claude Code·less·일부 TUI)에서 그
-# 시퀀스가 조용히 드롭돼, 앱이 "스크롤됐다"고 가정하고 그린 다음 줄이 안 밀린 옛 줄에
+# 시퀀스가 조용히 드롭되면, 앱이 "스크롤됐다"고 가정하고 그린 다음 줄이 안 밀린 옛 줄에
 # 겹쳐 격자가 발산한다(사용자 보고: pytmux 안 Claude 글자 겹침; tmux 는 SU/SD 구현해 정상).
-# model._BCEMixin 에 scroll_up/scroll_down 을 추가했고, set_screen 이 화면이 그 메서드를
-# 가질 때만 self._csi 에 S/T 를 바인딩한다(전역 Stream.csi 는 안 건드림 — usageprobe 등
-# 이 쓰는 plain pyte.Screen 은 scroll_up 이 없어 AttributeError 가 나므로). final byte.
+# nativescreen 이 scroll_up/scroll_down 을 구현하고, set_screen 이 화면이 그 메서드를
+# 가질 때만 self._csi 에 S/T 를 바인딩한다(공용 테이블은 안 건드림). final byte.
 _SU_SD = {"S": "scroll_up", "T": "scroll_down"}
 
 # alt-screen 전환 DECSET 모드(model._ALT_RE 와 동일 집합).
@@ -61,9 +59,8 @@ _ALT_MODES = frozenset((1049, 1047, 47))
 # 종결 바이트 범위: VT "final byte" 는 0x40~0x7E.
 _CSI_FINAL_LO, _CSI_FINAL_HI = 0x40, 0x7E
 
-# GROUND 상태 plain-text 런 fast-path(pyte.Stream._text_pattern 와 동일 취지): ESC·
-# C1·NUL·DEL·basic 컨트롤이 아닌 글자의 연속을 한 번에 잡아 draw 1회로 그린다. char-by
-# -char Python 루프 오버헤드를 없애 pyte 의 정규식 배칭과 동등 처리량을 낸다.
+# GROUND 상태 plain-text 런 fast-path: ESC·C1·NUL·DEL·basic 컨트롤이 아닌 글자의
+# 연속을 한 번에 잡아 draw 1회로 그린다. char-by-char Python 루프 오버헤드를 없앤다.
 _SPECIAL = (set(_BASIC) | {ctrl.ESC, ctrl.CSI_C1, ctrl.OSC_C1, ctrl.NUL, ctrl.DEL})
 _TEXT_RUN = re.compile("[^" + "".join(map(re.escape, _SPECIAL)) + "]+")
 
@@ -98,7 +95,7 @@ def _sgr_params_from_raw(raw: str) -> list[int] | None:
 
 class VTTokenizer:
     """증분 VT 파서. ``feed(bytes)`` 를 여러 번 호출해도 시퀀스가 경계로 잘리지 않게
-    상태를 인스턴스에 보존한다. ``screen`` 은 pyte.Screen(또는 호환) 인스턴스.
+    상태를 인스턴스에 보존한다. ``screen`` 은 nativescreen.NativeScreen(또는 호환) 인스턴스.
 
     :param alt_hook: ``?1049/1047/47 h|l`` 감지 시 ``alt_hook(enter: bool)`` 호출.
                      None 이면 해당 전환을 무시한다(테스트 단순화).
@@ -137,7 +134,7 @@ class VTTokenizer:
         self._sharp = {c: getattr(screen, n) for c, n in _SHARP.items()}
         self._csi = {c: getattr(screen, n) for c, n in _CSI.items()}
         # SU/SD 보강: 화면이 scroll_up/scroll_down 을 가질 때만 바인딩(우리 _BCEMixin
-        # 화면은 가짐; plain pyte.Screen 은 없으면 그대로 미수록 → 종전대로 무시).
+        # 화면은 가짐; 미구현 화면은 그대로 미수록 → 종전대로 무시).
         for final, name in _SU_SD.items():
             fn = getattr(screen, name, None)
             if fn is not None:

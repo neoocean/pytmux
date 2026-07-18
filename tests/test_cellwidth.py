@@ -48,10 +48,10 @@ async def test_box_drawing_stays_one_cell_in_wide():
     """박스 드로잉(─│┌┼)·블록 요소(▀)는 EAW='A' 지만 wide 모드에서도 **1칸**으로
     둔다 — pytmux 가 테두리/탭연결을 1칸 격자 셀에 배치하므로 2칸으로 측정하면
     가로 테두리 줄(─ 가득)이 위젯 폭의 2배가 돼 넘쳐 첫/마지막 줄이 겹친다(ssh+CJK
-    단말 스크롤, p4 60827 후속). char_cells·Rich/Textual·pyte 세 경로가 모두 1칸으로
-    일치해야 격자가 안 어긋난다. 반면 일반 모호폭 기호(→·—)는 2칸 유지(원 버그 대상)."""
+    단말 스크롤, p4 60827 후속). char_cells·Rich/Textual·native 격자 세 경로가 모두
+    1칸으로 일치해야 격자가 안 어긋난다. 반면 일반 모호폭 기호(→·—)는 2칸 유지(원 버그)."""
     import rich.cells as rc
-    import pyte.screens as ps
+    import pytmuxlib.nativescreen as ns   # 서버 격자 폭 함수(cellwidth 가 패치하는 대상)
     from rich.segment import Segment
     from textual.strip import Strip
     BOX = ["─", "│", "┌", "┐", "└", "┘", "├", "┤", "┬", "┴", "┼", "▀"]
@@ -61,7 +61,7 @@ async def test_box_drawing_stays_one_cell_in_wide():
         for ch in BOX:
             assert _char_cells(ch) == 1, f"박스 {ch!r} 는 wide 에서도 1칸"
             assert rc.cell_len(ch) == 1, f"Rich {ch!r} 1칸"
-            assert ps.wcwidth(ch) == 1, f"pyte {ch!r} 1칸"
+            assert ns._wcwidth(ch) == 1, f"native 격자 {ch!r} 1칸"
             assert Strip([Segment(ch)]).cell_length == 1, f"Strip {ch!r} 1칸"
         for ch in WIDE_SYM:
             assert _char_cells(ch) == 2, f"일반 모호폭 {ch!r} 는 wide 에서 2칸"

@@ -15,38 +15,6 @@ def _full_render(p, with_cursor=True):
     return p.render(with_cursor)
 
 
-async def test_native_parser_pane_equivalence():
-    """vt_parser="native" 로 배선된 Pane 이 기본(pyte) Pane 과 **동일한 render** 를
-    내는지 확인(마일스톤2 배선 검증). 우회가 다루던 시퀀스(콜론SGR/XTMODKEYS/kitty)와
-    일반 시퀀스·alt-screen·스크롤백을 한 패널에 연속으로 먹여 rows·cursor 가 일치해야
-    한다. (generic DCS 는 native 가 의도적으로 소비하므로 코퍼스에서 제외.)"""
-    from pytmuxlib.model import Pane
-
-    scripts = [
-        b"\x1b[2J\x1b[Hhello\r\nworld\r\n",
-        b"\x1b[3;5HX\x1b[1mBOLD\x1b[0m \x1b[31mRED\x1b[0m",
-        b"\x1b[4:3mcurly\x1b[4:0m off \x1b[38:2::10:20:30mRGB\x1b[0m",   # 콜론 SGR
-        b"\x1b[>4;2mZ\x1b[>1uK\x1b[<u done",                            # XTMODKEYS/kitty
-        "가나다ABC\r\n".encode(),                                       # 와이드
-        b"more\r\nlines\r\npushed\r\nup\r\n" * 4,                       # 스크롤
-        b"\x1b[?1049h\x1b[2J\x1b[HALT SCREEN body\x1b[?1049l",          # alt 왕복
-        b"\x1b[2;1HTAIL\r\n",
-    ]
-    for cols, rows in [(40, 10), (80, 24), (20, 6)]:
-        pa = Pane(-1, -1, cols, rows, vt_parser="pyte")     # pyte 기준(기본값 무관 명시)
-        pb = Pane(-1, -1, cols, rows, vt_parser="native")   # native
-        assert pb._tok is not None and pa._tok is None
-        for s in scripts:
-            pa.feed(s)
-            pb.feed(s)
-            ra, ca = _full_render(pa)
-            rb, cb = _full_render(pb)
-            assert ra == rb, f"{cols}x{rows} rows 불일치 after {s[:24]!r}"
-            assert ca == cb, f"{cols}x{rows} cursor 불일치 after {s[:24]!r}"
-        # alt 왕복 후 메인 복귀 상태 동일
-        assert pa.alt_active == pb.alt_active is False
-
-
 async def test_native_parser_respawn_recreates_tokenizer():
     """respawn(reinit) 후에도 native 토크나이저가 새 _main 을 가리키며 정상 동작."""
     from pytmuxlib.model import Pane
@@ -64,28 +32,26 @@ async def test_native_parser_respawn_recreates_tokenizer():
 
 
 async def test_native_parser_survives_import_state():
-    """작업 보존 재시작 복원 모사: vt_parser="native" 로 만든 Pane 에 export_state →
-    import_state 라운드트립 후에도 native 토크나이저가 유지되고 정상 렌더한다.
-    (서버 복원 경로 _adopt 가 Pane(..., vt_parser=self.vt_parser) 로 만들고 import_state
-    하는 흐름의 핵심 불변식 — import_state 가 _tok 를 건드리지 않아야 한다.)"""
+    """작업 보존 재시작 복원 모사: Pane 에 export_state → import_state 라운드트립 후에도
+    native 토크나이저가 유지되고(새 화면을 가리키며) 복원 콘텐츠 위에 이어지는 출력이
+    정상 렌더한다. (서버 복원 경로 _adopt 가 Pane 을 만들고 import_state 하는 흐름의
+    핵심 불변식 — import_state 가 _tok 를 건드려 끊으면 안 된다.)"""
     from pytmuxlib.model import Pane
 
-    src = Pane(-1, -1, 30, 6, vt_parser="pyte")
+    src = Pane(-1, -1, 30, 6)
     src.feed(b"\x1b[2J\x1b[Hrestored\x1b[1mB\x1b[0m line")
     snap = src.export_state()
     cont = b"\r\n\x1b[4:3mcurly\x1b[0m more"   # 복원 후 이어지는 출력(콜론 SGR 포함)
 
-    ref = Pane(-1, -1, 30, 6, vt_parser="pyte")   # pyte 복원 기준(기본값 무관 명시)
-    ref.import_state(snap)
-    ref.feed(cont)
-
-    dst = Pane(-1, -1, 30, 6, vt_parser="native")   # 복원 패널은 opt 따라 native
+    dst = Pane(-1, -1, 30, 6)
     assert dst._tok is not None
     dst.import_state(snap)
+    # import_state 는 _tok 를 재생성하지 않고 유지하며, 활성 화면을 가리켜야 한다.
     assert dst._tok is not None and dst._tok.screen is dst.screen
     dst.feed(cont)
 
-    assert _full_render(ref)[0] == _full_render(dst)[0], "import_state 후 native ≠ pyte"
+    text = "\n".join("".join(t for t, _ in row) for row in _full_render(dst)[0])
+    assert "restored" in text and "curly" in text and "more" in text, repr(text)
 
 
 async def test_render_dirty_path_matches_full():
@@ -177,12 +143,10 @@ async def test_feed_and_scrollback():
 async def test_su_sd_scroll_region():
     """SU(`CSI Ps S`)/SD(`CSI Ps T`)가 스크롤 영역(DECSTBM) 안에서 줄을 스크롤한다.
 
-    회귀: pyte 의 CSI 디스패치 테이블엔 SU/SD 가 없어 조용히 드롭됐고, Claude Code 가
+    회귀: 표준 CSI 디스패치 테이블엔 SU/SD 가 없어 조용히 드롭됐고, Claude Code 가
     콘텐츠 영역을 SU 로 스크롤하면 무시돼 다음 줄들이 안 밀린 옛 줄에 겹쳐 격자가
     발산했다(사용자 보고: pytmux 안 Claude 화면 글자 겹침; tmux 는 SU/SD 구현해 정상).
-    model._BCEMixin.scroll_up/down + vtparse 의 S/T 매핑으로 해결. SU/SD 는 **native
-    파서 전용**(전역 pyte.Stream.csi 를 안 건드려 plain pyte.Screen 회귀를 피함); pyte
-    파서는 legacy opt-in 이라 종전대로 S/T 무시(아래에서 무탈만 확인). native 가 기본."""
+    nativescreen.scroll_up/down + vtparse 의 S/T 매핑으로 해결."""
     from pytmuxlib.model import Pane
 
     p = Pane(-1, -1, 10, 6, vt_parser="native")
@@ -209,26 +173,21 @@ async def test_su_sd_scroll_region():
     t = lambda y: "".join(s for s, _ in rows[y]).rstrip()
     assert (t(1), t(2), t(3), t(4)) == ("C", "D", "", ""), "SU2"
 
-    # pyte 파서(legacy)는 S/T 를 무시하되 크래시는 없어야 한다(plain pyte.Screen 보호).
-    pp = Pane(-1, -1, 10, 6, vt_parser="pyte")
-    pp.feed(b"\x1b[2;5r\x1b[2;1HX\x1b[S\x1b[T")
-    pp.render(True)   # 예외 없이 통과하면 OK
-
 
 async def test_resized_pane_restores_tabstops():
     """분할 새 패널(spawn MIN_W → 실제 폭 resize)에서 탭 정렬 출력이 줄바꿈에서
     쪼개지지 않아야 한다(사용자 보고: 좁은 우측 패널의 ls 이름 첫 글자가 이전 줄
-    끝에 나옴). pyte 는 폭 3 에서 탭스톱을 빈 집합으로 두고 resize 가 재계산하지
-    않아, TAB 이 줄 끝으로 튀던 회귀를 못박는다."""
-    import pyte
-    from pytmuxlib.model import _ScrollbackScreen
+    끝에 나옴). 폭 3 에서 탭스톱을 빈 집합으로 두고 resize 가 재계산하지 않으면
+    TAB 이 줄 끝으로 튀던 회귀를 못박는다(native 화면이 resize 에서 재계산)."""
+    from pytmuxlib.nativescreen import NativeScrollbackScreen
+    from pytmuxlib.vtparse import VTTokenizer
     from pytmuxlib.protocol import MIN_W
 
-    scr = _ScrollbackScreen(MIN_W, 6)    # spawn 시 임시 MIN_W(=3) → 탭스톱 빈 집합
+    scr = NativeScrollbackScreen(MIN_W, 6)   # spawn 시 임시 MIN_W(=3) → 탭스톱 빈 집합
     scr.resize(6, 26)                     # 실제 폭으로 재배치(분할 경로): (lines, columns)
     assert scr.tabstops == set(range(8, 26, 8)), scr.tabstops
     # ls 가 폭 26 에서 내는 실제 바이트(단일 탭 컬럼 구분).
-    pyte.Stream(scr).feed("f01\tf21\tgg01\r\n")
+    VTTokenizer(scr).feed(b"f01\tf21\tgg01\r\n")
     first = "".join((scr.buffer[0][x].data if x in scr.buffer[0] else " ")
                     for x in range(26))
     # 탭이 8-칸 정지점으로 펼쳐져 한 줄에 들어간다(쪼개짐 없음).
@@ -539,35 +498,31 @@ async def test_respawn_pane():
         await teardown(srv, task, sock)
 
 
-async def test_feed_plain_text_fast_path():
-    """§4.4 빠른 경로: ESC 없는 플레인 텍스트 버스트는 정규식 4개를 건너뛰고 바로
-    현재 화면에 먹는다 — 동작은 불변(처리할 제어 시퀀스가 없으므로). alt 라우팅·
-    _altcarry(잘린 CSI) 경계도 정합. (이 빠른 경로·_altcarry 는 **pyte 경로 전용**
-    구현 디테일이라 기본값과 무관하게 vt_parser="pyte" 로 고정해 검사한다 — native
-    경로는 토크나이저가 partial 시퀀스를 상태로 흡수해 _altcarry 를 안 쓴다.)"""
+async def test_feed_plain_text_and_partial_csi():
+    """native feed 의 관측 속성: ①플레인 텍스트가 정확히 그려지고 _feed_seq/dirty 갱신,
+    ②alt 모드에서도 현재(=alt) 화면으로 라우팅, ③feed 경계로 잘린 CSI 를 토크나이저가
+    증분 상태로 흡수해 다음 feed 에서 완성한다(구 pyte 경로의 _altcarry 우회를 native
+    토크나이저가 대체 — M4b)."""
     from pytmuxlib.model import Pane
     # 1) 플레인 텍스트가 정확히 그려지고 _feed_seq/dirty 가 갱신된다.
-    p = Pane(-1, -1, 40, 6, vt_parser="pyte")
+    p = Pane(-1, -1, 40, 6)
     seq0 = p._feed_seq
     p.feed(b"hello world\r\nsecond line\r\n")
     assert p._feed_seq == seq0 + 1 and p.dirty
     txt = pane_text(p)
     assert "hello world" in txt and "second line" in txt
-    assert p._altcarry == b""           # ESC 없으니 캐리도 없음
-    # 2) alt 모드에서도 빠른 경로는 현재(=alt) 화면으로 라우팅된다.
-    p2 = Pane(-1, -1, 30, 5, vt_parser="pyte")
-    p2.feed(b"\x1b[?1049h")             # alt 진입(일반 경로)
+    # 2) alt 모드에서도 텍스트는 현재(=alt) 화면으로 라우팅된다.
+    p2 = Pane(-1, -1, 30, 5)
+    p2.feed(b"\x1b[?1049h")             # alt 진입
     assert p2.alt_active
-    p2.feed(b"ALTPLAIN")               # ESC 없는 텍스트 → alt 화면에(빠른 경로)
+    p2.feed(b"ALTPLAIN")               # 텍스트 → alt 화면에
     assert "ALTPLAIN" in pane_text(p2)
     p2.feed(b"\x1b[?1049l")            # 메인 복귀
     assert not p2.alt_active and "ALTPLAIN" not in pane_text(p2)
-    # 3) 잘린 CSI 가 _altcarry 로 넘어가면 다음 데이터가 플레인이라도 buf 에 ESC 가
-    #    생겨 일반 경로로 완성 처리된다(빠른 경로가 캐리를 삼키지 않음).
-    p3 = Pane(-1, -1, 20, 3, vt_parser="pyte")
-    p3.feed(b"X\x1b[1")                # 끝에 잘린 CSI → 캐리
-    assert p3._altcarry
-    p3.feed(b";31mRED")               # 캐리+이어붙여 완성 → RED 정상 렌더
+    # 3) feed 경계로 잘린 CSI 를 증분 토크나이저가 이어 파싱해 완성한다.
+    p3 = Pane(-1, -1, 20, 3)
+    p3.feed(b"X\x1b[1")                # 끝에 잘린 CSI
+    p3.feed(b";31mRED")               # 이어붙여 완성 → RED 정상 렌더
     assert "RED" in pane_text(p3)
 
 

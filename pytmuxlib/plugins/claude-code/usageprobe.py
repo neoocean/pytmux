@@ -219,7 +219,8 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
     라이브 배지 우선·없으면 이 값으로 채움). /usage 패널은 'Sonnet only' 같은 한도
     카테고리 라벨이 모델로 오인돼 출처에서 제외한다. 못 잡으면 None."""
     try:
-        import pyte
+        from pytmuxlib.nativescreen import NativeScreen
+        from pytmuxlib.vtparse import VTTokenizer
     except Exception:
         return None
     env = dict(os.environ)
@@ -236,8 +237,11 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
     except Exception:
         return None
 
-    sc = pyte.Screen(cols, rows)
-    st = pyte.ByteStream(sc)
+    # 숨은 세션 TUI 스크랩용 화면(구 pyte.Screen 대응 — M4b native 단일화). alt-screen
+    # 전환은 무시(alt_hook=None)해도 /usage TUI 는 2J+draw 로 단일 버퍼에 그려 disp()
+    # 가 같은 가시 콘텐츠를 낸다.
+    sc = NativeScreen(cols, rows)
+    st = VTTokenizer(sc)
 
     def pump(sec: float) -> None:
         end = time.monotonic() + sec

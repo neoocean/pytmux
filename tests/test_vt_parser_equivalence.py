@@ -1,27 +1,29 @@
-"""VT 파서 동등성 상시 회귀 하네스 — pyte 경로 ≡ native 경로 (옵션 B, C9).
+"""VT 렌더 회귀 하네스 — 골든해시 절대 가드 + 슬라이스 불변(로드맵 #6 M4b).
 
-docs/internal/VT_PARSER_TRADEOFF_2026-06-15.md §7. vt_parser="native"(자작 토크나이저) 패널이
-기본 "pyte" 패널과 **클라이언트에 가는 출력(render rows+cursor)·화면 셀 SGR 속성·
-스크롤백**까지 동일함을 영구 불변식으로 고정한다. 라이브 기본 전환(별도 사인) 전까지의
-안전망이자, 전환 후 native 회귀를 잡는 게이트.
+역사: 이 파일은 원래 pyte 경로 ≡ native 경로의 **상대 등가** 오라클이었다(vt_parser=
+"pyte"/screen_impl="pyte" 기준 vs native). M4b(2026-07-18)에서 pyte 를 **완전 은퇴**
+하며 그 상대 기준이 사라졌으므로(pyte 화면/파서 경로 삭제), 상대 등가 테스트는 제거
+했다 — native≡native 공허통과를 남기지 않기 위함이다. 대신 두 축을 남긴다:
 
-비교 축:
-  ① render(True) rows + cursor      — 클라가 실제로 받는 직렬화 출력
-  ② screen 셀 속성(fg/bg/bold/…)    — render 가 인코딩하지만 명시적으로도 못박음
-  ③ 임의 슬라이싱 불변               — serverpty 가 FEED_SLICE 로 쪼개 먹이므로,
-                                       어떻게 쪼개도 통짜 feed 와 동일해야 함
-  ④ 스크롤백 뷰포트                  — 위로 스크롤한 렌더도 동일
-
-의도적 제외: generic(non-NEST) DCS — native 는 본문을 소비하고 pyte 경로는 출력으로
-흘리는 의도적 개선 차이(test_vtparse.test_dcs_consumed_intentional_divergence 참조).
+  ① **골든해시 절대 가드**(`test_render_golden_hash_frozen`): 현재 파이프라인(native)의
+     코퍼스·픽스처·스크롤백 렌더를 SHA-256 으로 동결한다. 이 golden 은 **pyte 로 검증된
+     베이스라인**이다 — 은퇴 직전 pyte≡native 가 성립하던 값을 그대로 재생성했고(원
+     코퍼스는 은퇴 후에도 frozen 해시를 재현·M3 확장분은 pyte 와 직접 대조해 확인),
+     이후 native 가 이 해시를 못 내면 렌더 회귀다. **의도적 변경 시** PYTMUX_REGEN_GOLDEN=1.
+  ② **슬라이스 불변**(feed 경계 무관): serverpty 가 FEED_SLICE 로 임의 폭 쪼개 먹이므로,
+     통짜 feed 와 여러 폭 슬라이스 feed 가 동일 화면을 내야 한다. 증분 토크나이저의
+     경계-이월 버그를 잡는 **실질 속성**이다(통짜 vs 슬라이스 비교라 공허하지 않다).
 """
 import glob
+import hashlib
+import json
 import os
 
 import harness  # noqa: F401 (경로 설정)
 from pytmuxlib.model import Pane
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "claude")
+_GOLDEN_PATH = os.path.join(FIXTURES, "..", "vt_render_golden.json")
 
 
 def _cells(screen):
@@ -43,15 +45,10 @@ def _assert_panes_equal(pa, pb, label):
     assert _cells(pa.screen) == _cells(pb.screen), f"{label}: 셀 SGR 속성 불일치"
 
 
-def _new_pair(cols, rows):
-    # 기준 패널은 **반드시 pyte 명시** — 기본값이 native 로 바뀐 뒤(2026-06-16)
-    # 기본 생성에 의존하면 native≡native 비교가 되어 이 하네스가 조용히 무력화된다
-    # (그래도 green 이라 회귀 그물이 사라진 걸 못 잡음). pyte≡native 를 지키는 핵심 핀.
-    return (Pane(-1, -1, cols, rows, vt_parser="pyte"),
-            Pane(-1, -1, cols, rows, vt_parser="native"))
-
-
-# 광범위 합성 코퍼스: 우회 대상 + 일반 VT + 경계 케이스의 합집합.
+# 광범위 합성 코퍼스: 우회 대상 + 일반 VT + 경계 케이스의 합집합. 뒤 4개는 구
+# _M3_SAMPLES(IL/DL·DECSCNM·charset ESC(0/SI/SO·혼합 편집)를 병합한 것으로, pyte 은퇴
+# 전 pyte≡native 로 검증됐고 이제 골든 corpus 에 포함돼 절대 가드가 이들까지 덮는다.
+# (DECCOLM/resize 같은 geometry 변형은 별도 슬라이스 테스트에서 다룬다 — golden 격리.)
 _CORPUS = [
     b"\x1b[2J\x1b[Hplain text line\r\nsecond line\r\n",
     b"\x1b[1mBOLD\x1b[0m \x1b[3mITAL\x1b[0m \x1b[4mUNDER\x1b[0m \x1b[7mREV\x1b[0m",
@@ -69,229 +66,105 @@ _CORPUS = [
     b"\x1b[?1049h\x1b[2J\x1b[Halt content here\x1b[3;1Hmore",           # alt 진입
     b"\x1b[?1049lback to main",                                         # alt 복귀
     b"tab\there\tcols\x1b[1;1H\x1bH\tHTS",                              # 탭스톱
-]
-
-
-async def test_corpus_pane_equivalence_whole_and_sliced():
-    """코퍼스를 통짜·여러 슬라이스 폭으로 native 에 먹여, 기본 pyte 통짜 feed 와
-    매 단계 동일(렌더·셀·alt). serverpty 의 FEED_SLICE 분할을 모사한다."""
-    blob = b"".join(_CORPUS)
-    for cols, rows in [(40, 12), (80, 24), (24, 8)]:
-        # 통짜 비교(코퍼스 누적)
-        pa, pb = _new_pair(cols, rows)
-        for i, chunk in enumerate(_CORPUS):
-            pa.feed(chunk)
-            pb.feed(chunk)
-            _assert_panes_equal(pa, pb, f"corpus[{cols}x{rows}#{i}]")
-        # 슬라이스 불변: pyte 통짜 vs native 슬라이스(여러 폭). 기준은 pyte 명시(핀).
-        ref = Pane(-1, -1, cols, rows, vt_parser="pyte")
-        ref.feed(blob)
-        for width in (1, 3, 7, 64, 997):
-            nat = Pane(-1, -1, cols, rows, vt_parser="native")
-            for off in range(0, len(blob), width):
-                nat.feed(blob[off:off + width])
-            _assert_panes_equal(ref, nat, f"slice[{cols}x{rows} w={width}]")
-
-
-async def test_fixture_pane_equivalence():
-    """실제 캡처(claude/*.txt) 양 경로 Pane 동등(렌더·셀·스크롤백)."""
-    files = sorted(glob.glob(os.path.join(FIXTURES, "*.txt")))
-    assert files, "캡처 픽스처 없음"
-    for path in files:
-        with open(path, "rb") as f:
-            data = f.read()
-        for cols, rows in [(80, 24), (100, 30)]:
-            pa, pb = _new_pair(cols, rows)
-            pa.feed(data)
-            pb.feed(data)
-            _assert_panes_equal(pa, pb, f"fixture[{os.path.basename(path)} {cols}x{rows}]")
-
-
-async def test_scrollback_view_equivalence():
-    """스크롤백을 위로 스크롤한 뷰포트 렌더도 양 경로 동일."""
-    cols, rows = 40, 8
-    pa, pb = _new_pair(cols, rows)
-    blob = b"".join(f"scrollback line {i:03d}\r\n".encode() for i in range(60))
-    pa.feed(blob)
-    pb.feed(blob)
-    for up in (1, 5, 20, 52):
-        pa.scroll = pb.scroll = 0          # 동일 출발
-        pa.scroll_by(up)
-        pb.scroll_by(up)
-        ra, _ = pa.render(True)
-        rb, _ = pb.render(True)
-        assert ra == rb, f"scrollback up={up} 불일치"
-    # 라이브(맨 아래) 복귀도 동일
-    pa.scroll_to("bottom")
-    pb.scroll_to("bottom")
-    _assert_panes_equal(pa, pb, "scrollback live")
-
-
-# ── screen_impl 등가 오라클(로드맵 #6 M1: pyte.Screen ≡ 자작 nativescreen) ──────
-# 위 테스트들은 vt_parser(파서) 등가였다. 아래는 **화면 백엔드** 등가: 같은 native
-# 파서로 먹이되 한쪽은 pyte.Screen(_ScrollbackScreen), 다른 쪽은 자작 native Screen
-# (nativescreen.NativeScrollbackScreen)에 디스패치해 render/셀/alt/스크롤백이 동일함을
-# 못박는다. 기본(screen_impl 미지정)은 pyte 라 이 파일의 다른 테스트·골든해시는 native
-# 화면을 타지 않는다(기본 렌더 경로 불변). native 기본 전환은 M4 몫.
-#
-# M2/M3 skip/xfail 없음: M1 core 범위(draw/커서/erase/SGR/mode/save-restore) 외에
-# insert/delete·set_margins·SU/SD·origin·history·alt 도 nativescreen 이 pyte 동작에
-# 맞춰 함께 구현돼(설계 §2 "스텁이라도 맞으면 포함") 아래 코퍼스·픽스처·스크롤백 전부가
-# 이미 green 이다. 커버 못 한 pyte 엣지케이스가 생기면 그 코퍼스 항목만 skip 할 것.
-
-
-def _new_screen_pair(cols, rows):
-    """같은 native 파서 + (pyte 화면) vs (native 화면). 기준은 screen_impl 명시 —
-    _new_pair 와 같은 이유로 기본값 의존 금지(기본이 native 로 바뀌면 무력화 방지)."""
-    return (Pane(-1, -1, cols, rows, vt_parser="native", screen_impl="pyte"),
-            Pane(-1, -1, cols, rows, vt_parser="native", screen_impl="native"))
-
-
-async def test_screen_impl_corpus_equivalence_whole_and_sliced():
-    """코퍼스를 통짜·여러 슬라이스 폭으로 native 화면에 먹여, pyte 화면과 매 단계
-    동일(렌더·셀·alt). serverpty FEED_SLICE 분할을 모사한다(#6 M1)."""
-    blob = b"".join(_CORPUS)
-    for cols, rows in [(40, 12), (80, 24), (24, 8)]:
-        pa, pb = _new_screen_pair(cols, rows)
-        for i, chunk in enumerate(_CORPUS):
-            pa.feed(chunk)
-            pb.feed(chunk)
-            _assert_panes_equal(pa, pb, f"screen-corpus[{cols}x{rows}#{i}]")
-        # 슬라이스 불변: pyte 화면 통짜 vs native 화면 슬라이스(여러 폭).
-        ref = Pane(-1, -1, cols, rows, vt_parser="native", screen_impl="pyte")
-        ref.feed(blob)
-        for width in (1, 3, 7, 64, 997):
-            nat = Pane(-1, -1, cols, rows,
-                       vt_parser="native", screen_impl="native")
-            for off in range(0, len(blob), width):
-                nat.feed(blob[off:off + width])
-            _assert_panes_equal(ref, nat, f"screen-slice[{cols}x{rows} w={width}]")
-
-
-async def test_screen_impl_fixture_equivalence():
-    """실 캡처(claude/*.txt)에서 pyte 화면 ≡ native 화면(렌더·셀·스크롤백)(#6 M1)."""
-    files = sorted(glob.glob(os.path.join(FIXTURES, "*.txt")))
-    assert files, "캡처 픽스처 없음"
-    for path in files:
-        with open(path, "rb") as f:
-            data = f.read()
-        for cols, rows in [(80, 24), (100, 30)]:
-            pa, pb = _new_screen_pair(cols, rows)
-            pa.feed(data)
-            pb.feed(data)
-            _assert_panes_equal(
-                pa, pb,
-                f"screen-fixture[{os.path.basename(path)} {cols}x{rows}]")
-
-
-async def test_screen_impl_scrollback_view_equivalence():
-    """스크롤백 위로 스크롤한 뷰포트 렌더도 pyte 화면 ≡ native 화면(#6 M1)."""
-    cols, rows = 40, 8
-    pa, pb = _new_screen_pair(cols, rows)
-    blob = b"".join(f"scrollback line {i:03d}\r\n".encode() for i in range(60))
-    pa.feed(blob)
-    pb.feed(blob)
-    for up in (1, 5, 20, 52):
-        pa.scroll = pb.scroll = 0
-        pa.scroll_by(up)
-        pb.scroll_by(up)
-        ra, _ = pa.render(True)
-        rb, _ = pb.render(True)
-        assert ra == rb, f"screen-scrollback up={up} 불일치"
-    pa.scroll_to("bottom")
-    pb.scroll_to("bottom")
-    _assert_panes_equal(pa, pb, "screen-scrollback live")
-
-
-# ── M2/M3 오라클 못박기: 편집/영역·희귀 시퀀스·resize 등가 ──────────────────────
-# M1 착지 시 nativescreen 이 이 동작들을 pyte 에 맞춰 이미 구현했으나(insert/delete_lines·
-# DECSCNM/DECCOLM·charset·resize 재flow), 코퍼스가 안 태워 **등가 오라클에 핀되지 않았다**
-# (M1 정직 한계 보고). 여기서 못박아 M4(기본 native 전환+pyte 은퇴) 전 등가 그물을
-# 포괄적으로 만든다. 골든 corpus(_CORPUS)는 M4 tripwire 로 frozen 유지하려 **건드리지
-# 않고** 전용 샘플/연산으로 검증한다.
-
-# 골든에 없는 시퀀스(비-geometry): IL/DL(ESC[L/M)·DECSCNM(스크린 리버스 ?5)·charset
-# ESC(0(DEC 라인드로잉)+SI/SO. DECCOLM(?3, 컬럼 변경)·resize 는 geometry 변형이라 아래
-# 전용 테스트에서 다룬다(골든과 격리).
-_M3_SAMPLES = [
     b"\x1b[2J\x1b[Habc\r\ndef\r\nghi\r\njkl\r\n\x1b[1;1H\x1b[2L\x1b[4;1H\x1b[1M",  # IL/DL
-    b"\x1b[2J\x1b[Hnormal\x1b[?5h reverse-screen \x1b[?5l back",                    # DECSCNM
-    b"\x1b[2J\x1b[H\x1b(0lqk\x0ex y\x0fmqj\x1b(B ascii",                            # charset+SI/SO
+    b"\x1b[2J\x1b[Hnormal\x1b[?5h reverse-screen \x1b[?5l back",        # DECSCNM
+    b"\x1b[2J\x1b[H\x1b(0lqk\x0ex y\x0fmqj\x1b(B ascii",                # charset+SI/SO
     b"\x1b[2J\x1b[H" + b"".join(b"L%02d\r\n" % i for i in range(8))
     + b"\x1b[3;1H\x1b[2M\x1b[2;1H\x1b[3L\x1b[5;1H\x1b[2@ins\x1b[5;1H\x1b[2P",       # 혼합 편집
 ]
 
 
-async def test_screen_impl_edit_region_and_rare_sequences_equivalence():
-    """편집/영역·희귀 시퀀스(IL/DL·DECSCNM·charset ESC(0/SI/SO)에서 pyte 화면 ≡ native
-    화면. M2/M3 동작을 등가 오라클에 못박는다(#6). 통짜+슬라이스."""
-    for cols, rows in [(40, 10), (80, 24)]:
-        for i, sample in enumerate(_M3_SAMPLES):
-            pa, pb = _new_screen_pair(cols, rows)
-            pa.feed(sample)
-            pb.feed(sample)
-            _assert_panes_equal(pa, pb, f"screen-m3[{cols}x{rows}#{i}]")
-            # 슬라이스 불변(feed 경계 무관)
-            ref = Pane(-1, -1, cols, rows, vt_parser="native", screen_impl="pyte")
-            ref.feed(sample)
-            nat = Pane(-1, -1, cols, rows, vt_parser="native", screen_impl="native")
-            for off in range(0, len(sample), 3):
-                nat.feed(sample[off:off + 3])
-            _assert_panes_equal(ref, nat, f"screen-m3-slice[{cols}x{rows}#{i}]")
+# ── 슬라이스 불변(feed 경계 무관): 통짜 native vs 슬라이스 native ─────────────────
+async def test_corpus_slice_invariance():
+    """코퍼스 통짜 feed 와 여러 폭 슬라이스 feed 가 동일 화면(렌더·셀·alt)을 낸다.
+    증분 토크나이저의 feed 경계 이월 버그를 잡는다(serverpty FEED_SLICE 모사)."""
+    blob = b"".join(_CORPUS)
+    for cols, rows in [(40, 12), (80, 24), (24, 8)]:
+        ref = Pane(-1, -1, cols, rows)
+        ref.feed(blob)
+        for width in (1, 3, 7, 64, 997):
+            nat = Pane(-1, -1, cols, rows)
+            for off in range(0, len(blob), width):
+                nat.feed(blob[off:off + width])
+            _assert_panes_equal(ref, nat, f"slice[{cols}x{rows} w={width}]")
 
 
-async def test_screen_impl_resize_equivalence():
-    """resize 왕복(폭·높이 축소/확대)·DECCOLM(?3 컬럼 변경)·resize 후 스크롤백 뷰포트가
-    pyte 화면 ≡ native 화면(#6 M3). 화면 백엔드 교체가 재flow(폭축소 wrap-guard·drop-
-    from-top·탭스톱 재계산)를 pyte 와 바이트 동일하게 하는지 못박는다 — M1 미검증 갭."""
+async def test_fixture_slice_invariance():
+    """실 캡처(claude/*.txt) 통짜 feed vs 슬라이스 feed 동일(렌더·셀·스크롤백)."""
+    files = sorted(glob.glob(os.path.join(FIXTURES, "*.txt")))
+    assert files, "캡처 픽스처 없음"
+    for path in files:
+        with open(path, "rb") as f:
+            data = f.read()
+        for cols, rows in [(80, 24), (100, 30)]:
+            ref = Pane(-1, -1, cols, rows)
+            ref.feed(data)
+            for width in (1, 7, 997):
+                nat = Pane(-1, -1, cols, rows)
+                for off in range(0, len(data), width):
+                    nat.feed(data[off:off + width])
+                _assert_panes_equal(
+                    ref, nat,
+                    f"fixture-slice[{os.path.basename(path)} {cols}x{rows} w={width}]")
+
+
+async def test_resize_slice_invariance():
+    """resize 왕복(폭·높이 축소/확대)·DECCOLM 을 낀 스트림도 통짜 vs 슬라이스 동일.
+    화면 재flow(폭축소 wrap-guard·drop-from-top·탭스톱 재계산)가 feed 경계에 무관함을
+    못박는다(geometry 변형은 golden 과 격리해 여기서 검증)."""
     blob = (b"\x1b[2J\x1b[H"
             + b"".join(("line %02d wide 가나다 漢字 ABCDEFGH\r\n" % i).encode()
                        for i in range(20))
             + b"\x1b[1mBOLD\x1b[0m tail")
     after = "\r\nafter-resize 추가 X\r\n".encode()
-    for cols, rows in [(60, 10), (100, 30), (20, 6), (80, 24), (40, 40), (80, 24)]:
-        pa = Pane(-1, -1, 80, 24, vt_parser="native", screen_impl="pyte")
-        pb = Pane(-1, -1, 80, 24, vt_parser="native", screen_impl="native")
-        pa.feed(blob)
-        pb.feed(blob)
-        pa.resize(rows, cols)
-        pb.resize(rows, cols)
-        pa.feed(after)
-        pb.feed(after)
-        _assert_panes_equal(pa, pb, f"screen-resize->{cols}x{rows}")
-    # DECCOLM(?3h=132컬럼 전환→클리어, ?3l 복귀)도 등가
-    for seq in (b"\x1b[2J\x1b[Hnarrow\x1b[?3hwide-after-deccolm\x1b[?3lback",):
-        pa, pb = _new_screen_pair(40, 10)
-        pa.feed(seq)
-        pb.feed(seq)
-        _assert_panes_equal(pa, pb, "screen-deccolm")
-    # resize 후 스크롤백 위로 스크롤한 뷰포트 등가
-    pa = Pane(-1, -1, 80, 24, vt_parser="native", screen_impl="pyte")
-    pb = Pane(-1, -1, 80, 24, vt_parser="native", screen_impl="native")
-    big = b"".join(("SB line %03d\r\n" % i).encode() for i in range(80))
-    pa.feed(big)
-    pb.feed(big)
-    pa.resize(10, 50)
-    pb.resize(10, 50)
-    for up in (1, 8, 30):
-        pa.scroll = pb.scroll = 0
-        pa.scroll_by(up)
-        pb.scroll_by(up)
-        ra, _ = pa.render(True)
-        rb, _ = pb.render(True)
-        assert ra == rb, f"screen-resize-scrollback up={up} 불일치"
+    for cols, rows in [(60, 10), (100, 30), (20, 6), (80, 24), (40, 40)]:
+        ref = Pane(-1, -1, 80, 24)
+        ref.feed(blob)
+        ref.resize(rows, cols)
+        ref.feed(after)
+        for width in (1, 5, 64):
+            nat = Pane(-1, -1, 80, 24)
+            for off in range(0, len(blob), width):
+                nat.feed(blob[off:off + width])
+            nat.resize(rows, cols)
+            for off in range(0, len(after), width):
+                nat.feed(after[off:off + width])
+            _assert_panes_equal(ref, nat, f"resize->{cols}x{rows} w={width}")
+    # DECCOLM(?3h=132컬럼 전환→클리어, ?3l 복귀) 슬라이스 불변
+    seq = b"\x1b[2J\x1b[Hnarrow\x1b[?3hwide-after-deccolm\x1b[?3lback"
+    ref = Pane(-1, -1, 40, 10)
+    ref.feed(seq)
+    for width in (1, 3, 64):
+        nat = Pane(-1, -1, 40, 10)
+        for off in range(0, len(seq), width):
+            nat.feed(seq[off:off + width])
+        _assert_panes_equal(ref, nat, f"deccolm w={width}")
 
 
-# ── 골든 해시 오라클(로드맵 #4·#6 안전망) ─────────────────────────────────────
-# 위 테스트들은 pyte≡native **상대** 비교라, 두 경로를 동일하게 바꾸는 변경(예: #6
-# pyte.Screen→자작 native Screen 교체, 또는 공용 SGR/렌더 로직 변경)은 못 잡는다.
-# 골든 해시는 **절대 기준**: 현재 기본 파이프라인의 코퍼스·픽스처 렌더를 SHA-256 으로
-# 동결해, 렌더 결과가 바뀌면(의도치 않은 회귀) 잡는다. #6 에서 pyte 를 걷어내도 native
-# Screen 이 이 골든을 재현해야 한다. **의도적 변경 시**: PYTMUX_REGEN_GOLDEN=1 로 재생성.
-import hashlib   # noqa: E402
-import json      # noqa: E402
+async def test_scrollback_view_slice_invariance():
+    """스크롤백 위로 스크롤한 뷰포트 렌더도 통짜 vs 슬라이스 동일."""
+    cols, rows = 40, 8
+    blob = b"".join(f"scrollback line {i:03d}\r\n".encode() for i in range(60))
+    ref = Pane(-1, -1, cols, rows)
+    ref.feed(blob)
+    for width in (1, 7, 997):
+        nat = Pane(-1, -1, cols, rows)
+        for off in range(0, len(blob), width):
+            nat.feed(blob[off:off + width])
+        for up in (1, 5, 20, 52):
+            ref.scroll = nat.scroll = 0
+            ref.scroll_by(up)
+            nat.scroll_by(up)
+            ra, _ = ref.render(True)
+            rb, _ = nat.render(True)
+            assert ra == rb, f"scrollback w={width} up={up} 불일치"
 
-_GOLDEN_PATH = os.path.join(FIXTURES, "..", "vt_render_golden.json")
+
+# ── 골든 해시 오라클(로드맵 #4·#6 안전망 — 절대 가드) ─────────────────────────
+# 슬라이스 테스트는 통짜 vs 슬라이스 **상대** 비교라, 렌더 로직을 통째로 바꾸는 변경은
+# 못 잡는다. 골든 해시는 **절대 기준**: 현재 파이프라인의 코퍼스·픽스처 렌더를 SHA-256
+# 으로 동결한다. pyte 은퇴 후에도 native 가 이 golden(=pyte 검증 베이스라인)을 재현해야
+# 한다 — 이게 M4b 안전의 증명이다. **의도적 변경 시**: PYTMUX_REGEN_GOLDEN=1 로 재생성.
 
 
 def _pane_signature(pane) -> str:
@@ -306,8 +179,7 @@ def _pane_signature(pane) -> str:
 
 
 def _golden_signatures() -> dict:
-    """골든 대상 {label: sha256}. 기본 파이프라인(native default)로 렌더한다 —
-    #6 교체 후 새 Screen 도 이 해시를 재현해야 한다."""
+    """골든 대상 {label: sha256}. 기본 파이프라인(native)로 렌더한다."""
     def sig(pane):
         return hashlib.sha256(_pane_signature(pane).encode("utf-8")).hexdigest()
     out = {}

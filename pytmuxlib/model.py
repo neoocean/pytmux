@@ -8,10 +8,7 @@ import time
 from collections import deque
 from functools import lru_cache
 
-import pyte
-from pyte.screens import Margins
-
-from . import plugins, sshwrap
+from . import plugins, sshwrap, vtconst
 from .protocol import HISTORY, MIN_H, MIN_W, conv_color, set_winsize
 
 
@@ -134,268 +131,9 @@ def _cell_sgr_for(ch) -> str:
                      ch.reverse, ch.strikethrough)
 
 
-# 폭 축소(shrink) 직후의 폭-불일치 전환 윈도우 길이(초). 이 동안만 autowrap 을 꺼
-# cascade 대신 truncate 시킨다(_BCEMixin.draw 참조). SIGWINCH 왕복+리페인트보다 넉넉히
-# 길고(분주한 박스 대비), 정상 폭에선 어차피 오버플로가 없어 무해하므로 보수적으로 잡는다.
-WRAP_GUARD_SEC = 0.4
-
-
-class _BCEMixin:
-    """배경색 소거(BCE) 동작을 하는 화면 믹스인.
-
-    pyte 기본 erase 는 지운 빈 칸에 커서의 현재 SGR 속성을 통째로 채운다.
-    그래서 프로그램이 밑줄(또는 굵게 등)을 켠 채 줄·화면을 지우면, 실제 터미널
-    (xterm 류의 BCE = 배경색만 유지)과 달리 빈 칸에 밑줄이 그대로 남아
-    화면 전체에 원치 않는 가로줄이 보인다(예: Claude Code 환영 화면).
-
-    여기서는 erase 시 배경색·전경색·반전만 보존하고 밑줄/굵게/기울임/취소선/
-    깜빡임 같은 글자 장식 속성은 버려 실제 터미널 동작에 맞춘다.
-    """
-
-    def _erase_char(self):
-        return self.cursor.attrs._replace(
-            data=" ", bold=False, italics=False, underscore=False,
-            strikethrough=False, blink=False)
-
-    def erase_characters(self, count=None):
-        self.dirty.add(self.cursor.y)
-        count = count or 1
-        blank = self._erase_char()
-        line = self.buffer[self.cursor.y]
-        for x in range(self.cursor.x,
-                       min(self.cursor.x + count, self.columns)):
-            line[x] = blank
-
-    def erase_in_line(self, how=0, private=False):
-        self.dirty.add(self.cursor.y)
-        if how == 0:
-            interval = range(self.cursor.x, self.columns)
-        elif how == 1:
-            interval = range(self.cursor.x + 1)
-        else:
-            interval = range(self.columns)
-        blank = self._erase_char()
-        line = self.buffer[self.cursor.y]
-        for x in interval:
-            line[x] = blank
-
-    def erase_in_display(self, how=0, *args, **kwargs):
-        if how == 0:
-            interval = range(self.cursor.y + 1, self.lines)
-        elif how == 1:
-            interval = range(self.cursor.y)
-        elif how in (2, 3):
-            interval = range(self.lines)
-        else:
-            interval = range(0)
-        self.dirty.update(interval)
-        blank = self._erase_char()
-        for y in interval:
-            line = self.buffer[y]
-            for x in list(line):
-                line[x] = blank
-        if how == 0 or how == 1:
-            self.erase_in_line(how)
-
-    # --- soft-wrap(자동 줄바꿈) 표시 ---
-    # 복사 시 "자동 줄바꿈으로 이어진 줄"을 한 줄로 잇기 위한 정확 신호(휴리스틱 아님).
-    # pyte 의 draw() 는 DECAWM 자동 줄바꿈일 때만 그 내부에서 self.linefeed() 를
-    # 부른다(명시적 \n·VT·FF 는 Stream 이 draw 밖에서 linefeed 를 부름). 따라서
-    # draw 진입 동안만 _drawing 을 켜 두면, linefeed 가 그 플래그로 "이 줄바꿈은
-    # wrap 인가"를 무오류로 구분한다. wrap 이면 떠나는 줄(아직 cursor.y)의 줄 객체에
-    # wrapped 를 태그한다 — 줄 객체는 스크롤백(history.top)으로 밀려가도 그대로
-    # 따라가므로(같은 dict 참조), 화면 밖으로 스크롤된 wrap 도 보존된다.
-    # render() 가 이 태그를 (현재 마지막 칸이 비어 있지 않을 때만) 내보내, 이후
-    # 줄 끝이 지워지거나 당겨진 stale 태그는 자동으로 무효화된다.
-    def draw(self, data):
-        self._drawing = True
-        # 폭 축소 직후 짧은 전환 윈도우(_wrap_guard_until): ConPTY/Claude 가 새 폭을
-        # SIGWINCH 로 인식하기 전까지 옛(넓은) 폭으로 계속 그릴 수 있다. 그 바이트가
-        # 이미 좁아진 pyte 에 들어오면 전폭 줄(예: /compact 의 ─ 구분선)이 autowrap 돼
-        # 다음 줄로 흘러, Claude 의 커서 상대 리페인트 좌표까지 어긋나며 아래 줄이 전부
-        # 밀린다(docs/internal/HANDOFF.md — /compact 진행 표시 정렬 깨짐). 이 윈도우 동안만
-        # DECAWM(자동 줄바꿈)을 꺼 두면, 넘치는 글자가 다음 줄로 흐르는 대신 마지막
-        # 칸을 덮어쓴다(pyte draw: cursor.x==columns 또 DECAWM off → cursor.x-=width).
-        # → cascade 대신 한 칸 truncate. 폭이 맞으면 오버플로 자체가 없어 동작 불변이라
-        # (CR 이 마지막 글자 직후 오므로 wrap 분기에 안 들어감) 정상 출력엔 무해하다.
-        guard = (pyte.modes.DECAWM in self.mode
-                 and time.monotonic() < getattr(self, "_wrap_guard_until", 0.0))
-        if guard:
-            self.mode.discard(pyte.modes.DECAWM)
-        try:
-            super().draw(data)
-        finally:
-            if guard:
-                self.mode.add(pyte.modes.DECAWM)
-            self._drawing = False
-
-    def linefeed(self):
-        if getattr(self, "_drawing", False):
-            # carriage_return() 직후·super().linefeed() 직전 — cursor.y 는 아직
-            # '떠나는 줄'이라 그 줄을 wrap 연속원으로 태그한다.
-            try:
-                self.buffer[self.cursor.y].wrapped = True
-            except Exception:
-                pass
-        super().linefeed()
-
-    def resize(self, lines=None, columns=None):
-        old_cols = self.columns
-        super().resize(lines, columns)
-        # 폭이 줄면 전환 윈도우 동안 autowrap 을 꺼 cascade 를 막는다(draw 참조).
-        if columns is not None and columns < old_cols:
-            self._wrap_guard_until = time.monotonic() + WRAP_GUARD_SEC
-        # pyte 의 resize 는 탭스톱을 재계산하지 않는다. 패널은 spawn 시 MIN_W(=3)로
-        # 만든 뒤 실제 폭으로 키우는데(특히 분할 새 패널), 폭 3에선 표준 탭스톱
-        # range(8,3,8) 이 빈 집합이라 그대로 남는다. 탭스톱이 비면 pyte 의 TAB 은
-        # 다음 8-칸 정지점이 아니라 줄 끝(마지막 칸)으로 커서를 보내, ls 처럼 탭으로
-        # 컬럼을 맞추는 출력에서 다음 이름의 첫 글자가 줄 끝에 찍히고 나머지가
-        # 다음 줄로 쪼개진다(사용자 보고: 좁은 우측 패널의 ls). 새 폭 기준 표준
-        # 8-칸 탭스톱을 다시 세워 실제 터미널과 동일하게 만든다.
-        self.tabstops = set(range(8, self.columns, 8))
-
-    # --- SU/SD(스크롤 영역 스크롤) ---
-    # pyte 의 CSI 디스패치 테이블엔 SU(`CSI Ps S`)·SD(`CSI Ps T`)가 **없어**(Stream.csi
-    # 미수록·Screen 미구현) 이 시퀀스가 **조용히 드롭**된다. Claude Code 는 자기 콘텐츠
-    # 영역(DECSTBM 스크롤 영역, 예: `CSI 2;16r`)을 `CSI Ps S` 로 직접 스크롤하는데, 그게
-    # 무시되면 Claude 가 "스크롤됐다"고 가정하고 그린 다음 줄들이 **안 밀린 옛 줄 위에
-    # 겹쳐** 글자가 섞인다(증분 redraw 발산 — tmux 는 SU/SD 구현해 정상). index()/
-    # reverse_index() 의 스크롤 메커니즘을 영역 안에서 count 회 재현한다. CSI 'S'/'T'
-    # 매핑은 vtparse.set_screen 이 **화면이 이 메서드를 가질 때만** self._csi 에 바인딩한다
-    # (전역 pyte.Stream.csi 는 안 건드림 — plain pyte.Screen 회귀 방지). native 파서 전용.
-    def scroll_up(self, count=None):
-        """SU(CSI Ps S): 스크롤 영역을 위로 count 줄 스크롤(커서 이동 없음)."""
-        count = count or 1
-        top, bottom = self.margins or Margins(0, self.lines - 1)
-        self.dirty.update(range(self.lines))
-        for _ in range(min(count, bottom - top + 1)):
-            self._scroll_region_up(top, bottom)
-
-    def _scroll_region_up(self, top, bottom):
-        for y in range(top, bottom):
-            self.buffer[y] = self.buffer[y + 1]
-        self.buffer.pop(bottom, None)   # 빠진 바닥 줄 = 새 빈 줄(StaticDefaultDict)
-
-    def scroll_down(self, count=None):
-        """SD(CSI Ps T): 스크롤 영역을 아래로 count 줄 스크롤(커서 이동 없음)."""
-        count = count or 1
-        top, bottom = self.margins or Margins(0, self.lines - 1)
-        self.dirty.update(range(self.lines))
-        for _ in range(min(count, bottom - top + 1)):
-            for y in range(bottom, top, -1):
-                self.buffer[y] = self.buffer[y - 1]
-            self.buffer.pop(top, None)
-
-
-class _BCEScreen(_BCEMixin, pyte.Screen):
-    pass
-
-
-class _History:
-    """pyte History 네임드튜플의 경량 대체. pytmux 는 top/bottom 두 deque 만 쓴다
-    (render·capture_pane·clear_history·_export_screen). pyte 의 ratio/size/position
-    필드와 인터랙티브 페이징 상태는 쓰지 않으므로 보관하지 않는다."""
-
-    __slots__ = ("top", "bottom")
-
-    def __init__(self, maxlen: int):
-        self.top = deque(maxlen=maxlen)
-        self.bottom = deque(maxlen=maxlen)
-
-
-class _ScrollbackScreen(_BCEMixin, pyte.Screen):
-    """plain pyte Screen + 위로 밀려난 줄만 자체 deque 에 모으는 경량 스크롤백.
-
-    pyte.HistoryScreen 을 대체한다. HistoryScreen 은 인터랙티브 페이징(prev/next
-    _page)을 위해 `__getattribute__` 로 **모든 속성 접근**을 가로채 before/after
-    _event 를 끼워 넣는데, 이 훅이 draw() 의 글자별 속성 접근마다 호출돼 feed 가
-    ~3배 느려진다(1MB 피드에 __getattribute__ 1,100만+ 회 — 시간의 절반). pytmux 는
-    그 페이징을 전혀 쓰지 않고 history.top 만 읽으므로, HistoryScreen 이 하던 줄
-    수집(index/reverse_index)만 동일하게 재현하고 훅을 제거한다.
-
-    수집 조건·대상 줄은 HistoryScreen.index/reverse_index 와 바이트 단위로 동일해
-    스크롤백 동작에 회귀가 없다. .history.top/.bottom deque 인터페이스도 그대로라
-    기존 호출부(render·capture_pane·clear_history·_export_screen)는 변경 불필요."""
-
-    def __init__(self, columns: int, lines: int,
-                 history: int = HISTORY, ratio: float = 0.5):
-        # super().__init__ 가 reset() 을 호출하므로 history 를 먼저 만든다
-        # (HistoryScreen 과 동일한 순서).
-        self.history = _History(history)
-        super().__init__(columns, lines)
-
-    def index(self) -> None:
-        """전체 화면이 위로 스크롤될 때 빠지는 맨 윗줄을 top 히스토리에 모은다
-        (HistoryScreen.index 와 동일)."""
-        top, bottom = self.margins or Margins(0, self.lines - 1)
-        if self.cursor.y == bottom:
-            self.history.top.append(self.buffer[top])
-        super().index()
-
-    def _scroll_region_up(self, top, bottom):
-        """SU 로 영역이 위로 스크롤될 때, 영역 상단이 화면 맨 위(top==0)면 밀려난 줄을
-        스크롤백에 모은다(index() 의 history 수집과 동형). 부분 스크롤 영역(top>0,
-        예: Claude 의 2;16)은 실단말처럼 스크롤백에 안 넣고 버린다."""
-        if top == 0:
-            self.history.top.append(self.buffer[0])
-        super()._scroll_region_up(top, bottom)
-
-    def reverse_index(self) -> None:
-        """아래로 스크롤될 때 빠지는 맨 아랫줄을 bottom 히스토리에 모은다
-        (HistoryScreen.reverse_index 와 동일)."""
-        top, bottom = self.margins or Margins(0, self.lines - 1)
-        if self.cursor.y == top:
-            self.history.bottom.append(self.buffer[bottom])
-        super().reverse_index()
-
-    def reset(self) -> None:
-        """RIS(ESC c) 등에서 화면과 함께 스크롤백도 비운다(HistoryScreen.reset 과
-        동일). __init__ 의 super().__init__ → reset() 경로에서도 호출되므로
-        history 가 먼저 존재해야 한다."""
-        super().reset()
-        self.history.top.clear()
-        self.history.bottom.clear()
-
-
 # 대체 화면 버퍼(alternate screen) 전환 시퀀스. pyte 가 직접 지원하지 않아
 # pytmux 가 직접 처리한다(vim/less/htop/Claude Code 등 풀스크린 TUI 용).
 _ALT_RE = re.compile(rb"\x1b\[\?(1049|1047|47)(h|l)")
-# feed 경계에서 잘린 미완성 CSI 시퀀스(예: ESC[?104, ESC[4: 등)를 다음 feed 로
-# 미룬다. ESC 단독 또는 ESC[ + 종결바이트 없는 파라미터를 끝에서 잡아낸다.
-# 이렇게 해야 _ALT_RE 라우팅과 아래 _sanitize_sgr 가 항상 완전한 시퀀스만 본다.
-_CSI_PARTIAL_RE = re.compile(rb"\x1b(?:\[[0-9:;?<>=!]*)?$")
-
-# NESTED_ATTACH §4: NEST DCS(ssh 목적지 기록·승격 요청)는 서버 제어 채널이라 화면에
-# 보이면 안 되는데, pyte 는 DCS 본문을 소비하지 않고 출력으로 흘린다 — feed 에서
-# 완결분을 제거하고 끝에 잘린 후보(상한 이내)는 다음 feed 로 미룬다. 상한 초과/비
-# b64(위조)는 그대로 통과시켜 위조 입력이 정상 출력을 인질로 잡지 못하게 한다.
-_NEST_FEED_MAX = 8 * 1024
-
-# 콜론(:) 서브파라미터를 쓰는 현대식 SGR(`m`)을 pyte 0.8.2 가 이해하는 세미콜론
-# 형태로 정규화한다. pyte 의 CSI 파서는 콜론을 미지 문자로 보고 시퀀스를 **중단**
-# 하므로, 밑줄 끄기(`CSI 4:0 m`)·곱슬밑줄(`4:3`)·24bit 색(`38:2::r:g:b`)·밑줄색
-# (`58:...`) 같은 시퀀스가 들어오면 밑줄 속성이 꺼지지 않고 그대로 남아 화면 전체에
-# 밑줄이 번지거나 "0m" 같은 잔해가 찍힌다(특히 capable 터미널을 감지한 Claude Code).
-# 자세한 배경은 docs/internal/HANDOFF.md §10 참조.
-_SGR_RE = re.compile(rb"\x1b\[([0-9:;]*)m")
-
-# private-marker(<,>,=)가 붙은 `m` 종결 CSI 를 제거한다. 대표적으로 XTMODKEYS
-# (`CSI > 4 ; Ps m`, modifyOtherKeys) — capable 터미널을 감지한 Claude Code 가
-# 켜기/끄기로 내보낸다. pyte 0.8.2 의 CSI 파서는 `>` 마커를 무시하고 이를 그냥
-# `CSI 4 ; Ps m`(=SGR 밑줄 ON)으로 잘못 읽어, 이후 모든 셀에 밑줄이 번진다(화면
-# 전체 밑줄 버그). pytmux 는 자체 키보드 프로토콜을 다루므로 이 시퀀스를 pyte 에
-# 넘길 이유가 없어 통째로 버린다. 자세한 배경은 docs/internal/HANDOFF.md §10 참조.
-_PRIVATE_SGR_RE = re.compile(rb"\x1b\[[<>=][0-9;:]*m")
-
-# kitty 키보드 프로토콜의 push/pop/set/query 시퀀스(`CSI > flags u`, `CSI < u`,
-# `CSI = flags;mode u`, `CSI ? u`)를 제거한다. capable 터미널로 감지된 Claude Code 가
-# 입력 프롬프트 진입(push `\x1b[>1u`)·이탈(pop `\x1b[<u`)마다 내보내는데, pyte 0.8.2 는
-# 이 `u` 종결 private CSI 를 처리 못 해 끝의 `u` 가 화면에 글자로 샌다(실측: pop `<u`
-# 가 누수원, 입력칸에 `u` 가 박히는 증상). pytmux 는 키 입력을 레거시 바이트로 보내므로
-# (플래그 1=disambiguate 에선 Enter=\r 가 규격상 정상) 이 시퀀스를 pyte 에 넘길 이유가
-# 없어 통째로 버린다. private 마커(<>=?)를 요구하므로 마커 없는 레거시 `CSI u`(SCO
-# 커서 복원)는 안 건드린다.
-_KITTY_KBD_RE = re.compile(rb"\x1b\[[<>=?][0-9;:]*u")
 
 # 내부 앱의 마우스 트래킹 DECSET. 1000=press/release, 1002=+drag, 1003=any-motion,
 # 1006=SGR 확장 좌표 인코딩. 클라이언트의 마우스 패스스루 판단에 쓰인다.
@@ -444,56 +182,6 @@ def coalesce_alt_repaints(buf: bytes, alt_active: bool) -> bytes:
     return buf[last:]
 
 
-def _rewrite_sgr_token(tok: bytes) -> bytes | None:
-    """콜론 서브파라미터를 가진 단일 SGR 파라미터를 세미콜론 형태로 변환.
-
-    반환값을 그대로 세미콜론 목록에 끼워 넣는다. None 이면 그 파라미터를 버린다
-    (pyte 가 표현 못하는 밑줄색 등). 콜론이 없는 토큰은 호출 전에 걸러진다.
-    """
-    sub = tok.split(b":")
-    head = sub[0]
-    if head == b"4":
-        # 밑줄 스타일: 4:0 = 끄기(=24), 그 외(4:1~4:5 곱슬/이중 등) = 켜기(=4).
-        val = sub[1] if len(sub) > 1 else b""
-        return b"24" if val in (b"0", b"") else b"4"
-    if head in (b"38", b"48"):
-        kind = sub[1] if len(sub) > 1 else b""
-        nums = [p for p in sub[2:] if p != b""]
-        if kind == b"5" and nums:
-            return head + b";5;" + nums[0]
-        if kind == b"2" and len(nums) >= 3:
-            # 38:2:<colorspace>:r:g:b — colorspace 가 비어도 마지막 3개가 r,g,b.
-            return head + b";2;" + b";".join(nums[-3:])
-        return None  # 형식 불명 → 버림(잔해 방지)
-    # 58:(밑줄색) 등 pyte 미지원 → 버림.
-    return None
-
-
-def _sanitize_sgr(buf: bytes) -> bytes:
-    if b":" not in buf:   # 콜론이 없으면 정규화할 SGR 도 없다(흔한 경로).
-        return buf
-
-    def repl(mo: "re.Match[bytes]") -> bytes:
-        params = mo.group(1)
-        if b":" not in params:
-            return mo.group(0)   # 평범한 SGR 은 그대로.
-        out = []
-        for tok in params.split(b";"):
-            if b":" not in tok:
-                out.append(tok)
-                continue
-            rewritten = _rewrite_sgr_token(tok)
-            if rewritten is not None:
-                out.append(rewritten)
-        if not out:
-            # 전부 버려졌으면 시퀀스 자체를 제거한다. `CSI m`(=reset all)으로
-            # 두면 앞서 설정된 굵게/색까지 의도치 않게 초기화된다.
-            return b""
-        return b"\x1b[" + b";".join(out) + b"m"
-
-    return _SGR_RE.sub(repl, buf)
-
-
 class Pane:
     """잎 노드. 셸 PTY + pyte 화면 버퍼 + 스크롤백 뷰포트."""
 
@@ -504,34 +192,19 @@ class Pane:
         self.child_pid = pid
         self.cols = cols
         self.rows = rows
-        # 화면 백엔드 선택(로드맵 #6): "native"(기본, 자작 nativescreen) 또는 "pyte"
-        # (레거시 pyte.Screen 경로). vt_parser 의 PYTMUX_VT_PARSER 선례와 동형으로 env
-        # PYTMUX_SCREEN 로도 지정한다. **M4a: 기본 native 전환**(2026-07-18) — 등가
-        # 오라클(코퍼스·픽스처·resize·희귀시퀀스)이 native≡pyte 를 포괄 검증하고 골든해시
-        # 가 기본 렌더를 frozen(전 스위트 PYTMUX_SCREEN=native 로 1156 passed·골든 frozen)
-        # 해, native 를 기본으로 올려도 렌더가 바이트 동일함이 증명됐다. pyte 경로는
-        # 롤백·등가 레퍼런스로 존치(screen_impl="pyte" 또는 PYTMUX_SCREEN=pyte) — 완전
-        # 은퇴 + SGR 이중구현 단일화는 M4b(별도 CL). 야생에서 발산 시 env 한 줄로 롤백.
-        if screen_impl is None:
-            screen_impl = os.environ.get("PYTMUX_SCREEN", "native")
-        self._screen_impl = screen_impl if screen_impl == "native" else "pyte"
+        # 화면 백엔드는 자작 nativescreen 단일(M4b, 2026-07-18: pyte 완전 은퇴). vt_parser·
+        # screen_impl 파라미터는 상위 opts 배선 호환을 위해 받되, 값과 무관하게 native
+        # 파서(vtparse.VTTokenizer)+native 화면만 쓴다("pyte" 선택은 native 로 수렴).
         # 메인 화면(스크롤백 보관) + 대체 화면(풀스크린 TUI 용, 스크롤백 없음)
         self._main = self._make_main_screen(cols, rows)
-        self._main.set_mode(pyte.modes.LNM)
-        self._main_stream = pyte.ByteStream(self._main)
+        self._main.set_mode(vtconst.LNM)
         self._alt = None
-        self._alt_stream = None
         self.alt_active = False
         self.screen = self._main      # 현재 활성 화면(렌더 대상)
-        self._altcarry = b""          # feed 경계의 미완성 시퀀스 보관
-        # VT 파서 선택(opts vt_parser, 기본 "native"; 2026-06-16 전환 — 그 전 기본은
-        # "pyte"). "native" 면 자작 증분 토크나이저(vtparse.VTTokenizer)를 패널에
-        # 상주시켜 feed-전 우회 없이 pyte.Screen 에 직접 디스패치한다(콜론SGR·XTMODKEYS·
-        # kitty·alt·partial-CSI 를 1급 처리 — feed 전 정규식 우회 불필요). pyte 경로는
-        # `vt_parser="pyte"` opt-in 시 유지(우회 ~111줄 동작).
-        # docs/internal/VT_PARSER_TRADEOFF_2026-06-15.md §7·§9.
-        self._vt_parser = vt_parser
-        self._tok = self._make_tokenizer() if vt_parser == "native" else None
+        # 자작 증분 토크나이저(vtparse.VTTokenizer)를 패널에 상주시켜 native 화면에 직접
+        # 디스패치한다(콜론SGR·XTMODKEYS·kitty·alt·partial-CSI 를 1급 처리 — feed 전
+        # 정규식 우회 불필요). alt 전환은 _on_alt_transition 콜백으로 라우팅한다.
+        self._tok = self._make_tokenizer()
         # §1.7 중첩 능동 감지: XTVERSION 질의(ESC[>0q)가 read 경계에 걸쳐 쪼개져도
         # 놓치지 않게 직전 청크 꼬리(질의 길이-1 바이트)를 보관(serverpty 스캔용).
         self._nestq_carry = b""
@@ -637,15 +310,12 @@ class Pane:
         self.host_pane_id = None  # respawn: host 모드면 서버가 새 id 를 다시 설정
         self.cols, self.rows = cols, rows
         self._main = self._make_main_screen(cols, rows)
-        self._main.set_mode(pyte.modes.LNM)
-        self._main_stream = pyte.ByteStream(self._main)
+        self._main.set_mode(vtconst.LNM)
         self._alt = None
-        self._alt_stream = None
         self.alt_active = False
         self.screen = self._main
-        self._altcarry = b""
-        # native 파서면 새 셸용으로 토크나이저도 재생성(증분 상태/디코더 초기화).
-        self._tok = self._make_tokenizer() if self._tok is not None else None
+        # 새 셸용으로 토크나이저 재생성(증분 상태/디코더 초기화).
+        self._tok = self._make_tokenizer()
         # NESTED_ATTACH: 새 셸이므로 NEST carry/ssh 목적지 기록도 무효(이전 셸의
         # 목적지로 자동 승격하지 않게 — 다음 ssh 가 다시 기록한다).
         self._nestd_carry = b""
@@ -915,94 +585,34 @@ class Pane:
         return self
 
     def _make_main_screen(self, cols: int, rows: int):
-        """메인(스크롤백) 화면을 screen_impl 에 따라 만든다(#6 M1). 기본 "pyte" 는
-        현행 _ScrollbackScreen(pyte.Screen), "native" 는 자작 nativescreen."""
-        if self._screen_impl == "native":
-            from .nativescreen import NativeScrollbackScreen
-            return NativeScrollbackScreen(cols, rows, history=HISTORY,
-                                          ratio=0.5)
-        return _ScrollbackScreen(cols, rows, history=HISTORY, ratio=0.5)
+        """메인(스크롤백) 화면 = 자작 nativescreen.NativeScrollbackScreen."""
+        from .nativescreen import NativeScrollbackScreen
+        return NativeScrollbackScreen(cols, rows, history=HISTORY, ratio=0.5)
 
     def _make_alt_screen(self, cols: int, rows: int):
-        """대체(alt) 화면을 screen_impl 에 따라 만든다(#6 M1). 스크롤백 없음."""
-        if self._screen_impl == "native":
-            from .nativescreen import NativeScreen
-            return NativeScreen(cols, rows)
-        return _BCEScreen(cols, rows)
+        """대체(alt) 화면 = 자작 nativescreen.NativeScreen(스크롤백 없음)."""
+        from .nativescreen import NativeScreen
+        return NativeScreen(cols, rows)
 
     def _make_tokenizer(self):
-        """native VT 토크나이저 생성(현재 _main 을 가리키게). 지연 import — 기본
-        (pyte) 패널은 vtparse 를 import 하지 않는다."""
+        """native VT 토크나이저 생성(현재 _main 을 가리키게)."""
         from .vtparse import VTTokenizer
         return VTTokenizer(self._main, alt_hook=self._on_alt_transition)
 
     def _on_alt_transition(self, enter: bool) -> None:
-        """native 파서가 ?1049/1047/47 h|l 을 감지했을 때의 alt 라우팅(pyte 경로의
-        _ALT_RE 루프와 동일하게 _enter_alt/_leave_alt 로 위임)."""
+        """토크나이저가 ?1049/1047/47 h|l 을 감지했을 때의 alt 라우팅
+        (_enter_alt/_leave_alt 로 위임)."""
         if enter:
             self._enter_alt()
         else:
             self._leave_alt()
 
     def feed(self, data: bytes) -> None:
-        # native 파서 경로: 증분 토크나이저가 우회 없이 화면에 직접 디스패치한다
-        # (alt 라우팅은 _on_alt_transition 콜백, partial 시퀀스는 토크나이저 상태로
-        # 흡수 — _altcarry/정규식 전처리 불요). 기본(pyte) 경로는 아래 그대로.
-        if self._tok is not None:
-            self._feed_native(data)
-            return
-        # 대체 화면 전환 시퀀스를 가로채 메인/대체 화면으로 라우팅한다.
-        buf = self._altcarry + data
-        self._altcarry = b""
-        # 빠른 경로(§4.4): ESC 가 전혀 없으면 CSI 캐리·SGR 정제·alt 전환이 있을 수
-        # 없다 — 정규식 4개(_CSI_PARTIAL_RE/_PRIVATE_SGR_RE/_sanitize_sgr/_ALT_RE)를
-        # 모두 건너뛰고 현재 화면에 바로 먹인다. 빌드 로그·cat 등 플레인 텍스트
-        # 버스트의 흔한 핫패스로, 처리할 제어 시퀀스가 없으므로 결과는 불변이다.
-        if b"\x1b" not in buf:
-            self._feed_seg(buf)
-            self.dirty = True
-            self._feed_seq += 1
-            return
-        # NESTED_ATTACH: NEST DCS 제거/이월(위 _NEST_FEED_MAX 주석 참조).
-        if sshwrap.NEST_PRE in buf:
-            buf = sshwrap.NEST_DCS_RE.sub(b"", buf)
-            i = buf.rfind(sshwrap.NEST_PRE)
-            if (i != -1 and sshwrap.DCS_ST not in buf[i:]
-                    and len(buf) - i <= _NEST_FEED_MAX):
-                self._altcarry = buf[i:]
-                buf = buf[:i]
-        else:
-            tail = buf[-(len(sshwrap.NEST_PRE) - 1):]
-            j = tail.rfind(b"\x1b")
-            if j != -1 and sshwrap.NEST_PRE.startswith(tail[j:]):
-                cut = len(buf) - (len(tail) - j)
-                self._altcarry = buf[cut:]
-                buf = buf[:cut]
-        m = _CSI_PARTIAL_RE.search(buf)
-        if m:  # 끝에 잘린 CSI 시퀀스는 다음 feed 로 미룸(완전한 시퀀스만 처리)
-            # (+ NEST 이월분이 있으면 그 앞에 둔다 — 원 스트림 순서 보존)
-            self._altcarry = buf[m.start():] + self._altcarry
-            buf = buf[:m.start()]
-        buf = _PRIVATE_SGR_RE.sub(b"", buf)   # XTMODKEYS 등 `CSI >..m` 제거(밑줄 오인 방지)
-        buf = _KITTY_KBD_RE.sub(b"", buf)     # kitty 키보드 프로토콜 `CSI >..u` 등 제거(`u` 누수 방지)
-        buf = _sanitize_sgr(buf)   # 콜론식 SGR → pyte 가 이해하는 세미콜론 형태
-        pos = 0
-        for mo in _ALT_RE.finditer(buf):
-            self._feed_seg(buf[pos:mo.start()])
-            if mo.group(2) == b"h":
-                self._enter_alt()
-            else:
-                self._leave_alt()
-            pos = mo.end()
-        self._feed_seg(buf[pos:])
-        self.dirty = True
-        self._feed_seq += 1   # B1: Claude 스캔 게이팅용 — 출력 있을 때만 재스캔
-
-    def _feed_native(self, data: bytes) -> None:
-        """native 토크나이저 경로. 토크나이저가 화면에 직접 디스패치하고 alt 전환은
-        _on_alt_transition 콜백으로 처리한다. 스크롤백 뷰포트 고정(R6)은 _feed_seg 와
-        동일 의미를 feed 전체 단위로 적용 — alt 전환이 끼면 _enter/_leave_alt 가 scroll
-        을 0 으로 리셋하므로 메인 잔류 시에만 보정하면 등가다."""
+        """증분 토크나이저가 우회 없이 화면에 직접 디스패치한다(alt 라우팅은
+        _on_alt_transition 콜백, partial 시퀀스는 토크나이저 상태로 흡수 — feed 전
+        정규식 우회 불필요). 스크롤백 뷰포트 고정(R6)은 feed 전체 단위로 적용한다 —
+        alt 전환이 끼면 _enter/_leave_alt 가 scroll 을 0 으로 리셋하므로 메인 잔류
+        시에만 보정하면 등가다."""
         main = self._main
         track = self.screen is main and self.scroll > 0
         before = len(main.history.top) if track else 0
@@ -1012,31 +622,15 @@ class Pane:
             if after > before:
                 self.scroll = min(self.scroll + (after - before), after)
         self.dirty = True
-        self._feed_seq += 1
-
-    def _feed_seg(self, seg: bytes) -> None:
-        if not seg:
-            return
-        if self.screen is self._main:
-            before = len(self._main.history.top)
-            self._main_stream.feed(seg)
-            after = len(self._main.history.top)
-            if self.scroll > 0 and after > before:
-                # 스크롤백을 보는 중 새 출력이 위로 밀어내면 뷰포트를 고정(R6)
-                self.scroll = min(self.scroll + (after - before), after)
-        else:
-            self._alt_stream.feed(seg)
+        self._feed_seq += 1   # B1: Claude 스캔 게이팅용 — 출력 있을 때만 재스캔
 
     def _enter_alt(self) -> None:
         if self.alt_active:
             return
         self._alt = self._make_alt_screen(self.cols, self.rows)
-        self._alt.set_mode(pyte.modes.LNM)
-        # pyte 경로만 alt 스트림이 필요. native 는 토크나이저를 alt 화면으로 재지정한다.
-        if self._tok is None:
-            self._alt_stream = pyte.ByteStream(self._alt)
-        else:
-            self._tok.set_screen(self._alt)
+        self._alt.set_mode(vtconst.LNM)
+        # 토크나이저를 alt 화면으로 재지정한다(FSM 상태는 보존).
+        self._tok.set_screen(self._alt)
         self.screen = self._alt
         self.alt_active = True
         self.scroll = 0
@@ -1046,10 +640,8 @@ class Pane:
         if not self.alt_active:
             return
         self._alt = None
-        self._alt_stream = None
         self.screen = self._main
-        if self._tok is not None:
-            self._tok.set_screen(self._main)
+        self._tok.set_screen(self._main)
         self.alt_active = False
         self.scroll = 0
         self._match_abs = None
