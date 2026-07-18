@@ -127,6 +127,24 @@ class _NativeBase:
         reverse = mo.DECSCNM in self.mode
         return Char(data=" ", fg="default", bg="default", reverse=reverse)
 
+    @property
+    def display(self) -> list:
+        """화면 각 행을 유니코드 문자열로. pyte.Screen.display 와 **바이트 동일** —
+        wide 문자(폭 2)의 stub 셀(빈 data)을 건너뛰어 pyte 와 같은 열 정렬을 낸다.
+        render() 만 태우던 M1 오라클이 안 잡았던 표면(비-render 소비자: serverpersist
+        재시작 매니페스트·vtparse 테스트·nest DCS 가 `.display` 를 직접 읽는다). M4
+        기본 native 전환의 선결로 pyte.Screen 읽기 표면을 완성한다."""
+        def render(line):
+            is_wide = False
+            for x in range(self.columns):
+                if is_wide:               # wide 문자의 stub 셀 skip
+                    is_wide = False
+                    continue
+                char = line[x].data
+                is_wide = _wcwidth(char[0]) == 2 if char else False
+                yield char
+        return ["".join(render(self.buffer[y])) for y in range(self.lines)]
+
     def __repr__(self) -> str:
         return "{0}({1}, {2})".format(self.__class__.__name__,
                                       self.columns, self.lines)

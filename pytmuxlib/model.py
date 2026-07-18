@@ -504,13 +504,16 @@ class Pane:
         self.child_pid = pid
         self.cols = cols
         self.rows = rows
-        # 화면 백엔드 선택(로드맵 #6 M1): "pyte"(기본, 현행 pyte.Screen 경로) 또는
-        # "native"(자작 nativescreen). vt_parser 의 PYTMUX_VT_PARSER 선례와 동형으로
-        # env PYTMUX_SCREEN 로도 지정한다. **기본은 pyte 유지** — vt_parser 기본이
-        # native 로 바뀌었어도 SCREEN 기본은 pyte 라 기본 렌더 경로가 불변이다. native
-        # 는 옵트인이 명시될 때만(파라미터 또는 env) 쓴다(등가 오라클 게이트 하 점증).
+        # 화면 백엔드 선택(로드맵 #6): "native"(기본, 자작 nativescreen) 또는 "pyte"
+        # (레거시 pyte.Screen 경로). vt_parser 의 PYTMUX_VT_PARSER 선례와 동형으로 env
+        # PYTMUX_SCREEN 로도 지정한다. **M4a: 기본 native 전환**(2026-07-18) — 등가
+        # 오라클(코퍼스·픽스처·resize·희귀시퀀스)이 native≡pyte 를 포괄 검증하고 골든해시
+        # 가 기본 렌더를 frozen(전 스위트 PYTMUX_SCREEN=native 로 1156 passed·골든 frozen)
+        # 해, native 를 기본으로 올려도 렌더가 바이트 동일함이 증명됐다. pyte 경로는
+        # 롤백·등가 레퍼런스로 존치(screen_impl="pyte" 또는 PYTMUX_SCREEN=pyte) — 완전
+        # 은퇴 + SGR 이중구현 단일화는 M4b(별도 CL). 야생에서 발산 시 env 한 줄로 롤백.
         if screen_impl is None:
-            screen_impl = os.environ.get("PYTMUX_SCREEN", "pyte")
+            screen_impl = os.environ.get("PYTMUX_SCREEN", "native")
         self._screen_impl = screen_impl if screen_impl == "native" else "pyte"
         # 메인 화면(스크롤백 보관) + 대체 화면(풀스크린 TUI 용, 스크롤백 없음)
         self._main = self._make_main_screen(cols, rows)
