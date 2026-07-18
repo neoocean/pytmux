@@ -71,7 +71,7 @@
         <li><span class="pill stable">Claude</span> <strong>Claude 를 <span class="inline-code">종료</span>한 뒤에도 상태줄에 남던 <span class="inline-code">⚠ 포맷 미인식 — 추적 일시중지</span> 경고가 이제 <span class="inline-code">사라집니다</span>.</strong>
           Claude 화면 형식이 바뀌어 pytmux 가 상태를 <strong>못 읽는 동안</strong>(예: 새 버전) 이 경고를 띄우는데 — Claude 가 <strong>정말 실행 중일 때만</strong> 세우도록
           <strong>포그라운드 프로세스</strong>로 교차확인합니다. 문제는 그 확인이 <strong>화면이 바뀔 때</strong>만 돌던 것이라, Claude 를 끄고 <strong>정적인 셸 프롬프트</strong>만 남으면
-          더 볼 게 없어 <strong>다시 확인하지 않았고</strong>, 경고가 <strong>상태줄에 눌러앉았습니다</strong>(사용자 보고). 이제 경고가 떠 있는 동안엔 그 패널을 <strong>계속 지켜봐</strong>,
+          더 볼 게 없어 <strong>다시 확인하지 않았고</strong>, 경고가 <strong>상태줄에 눌러앉았습니다</strong>. 이제 경고가 떠 있는 동안엔 그 패널을 <strong>계속 지켜봐</strong>,
           Claude 가 사라진 것을 확인하는 즉시 경고를 <strong>내립니다</strong>.</li>
         <li><span class="pill stable">Claude</span> <strong>상태줄 모델 이름이 <a href="#d-2026-07-16">화면을 따라가게</a> 한 뒤에도, 긴 작업 도중 <span class="inline-code">잠깐 기본 모델로 튀던</span> 것을 잡았습니다.</strong>
           <span class="inline-code">/model</span> 로 확인한 <span class="inline-code nb">opus</span> 가 조금 뒤 다시 <span class="inline-code nb">sonnet-5</span> 로 돌아가는 일이 있었습니다.
@@ -80,22 +80,22 @@
           별도 세션의 기본값 <span class="inline-code nb">sonnet-5</span> 로 채워졌습니다. 이제 모델 기억은 <strong>확실히 끝난 세션</strong>(끊김이 충분히 오래 이어진 경우)을 지날 때만 지웁니다 —
           잠깐의 표시줄 밀림은 <strong>같은 세션</strong>으로 보고 <strong>모델을 그대로 유지</strong>합니다.</li>
         <li><span class="pill stable">표시</span> <strong>종료 시 사용량 요약과 사용량 팝업에서, 리셋 시각 앞의 <span class="inline-code">새로고침 화살표(↻)</span>와 날짜·시각 사이에 <span class="inline-code">한 칸</span>을 띄웠습니다.</strong>
-          지금까지는 <span class="inline-code nb">↻2:50pm</span>·<span class="inline-code nb">↻Jul 25, 3am</span> 처럼 <strong>붙어</strong> 나와, 날짜·시각의 <strong>첫 글자가 화살표에 겹쳐</strong> 알아보기 어려웠습니다(사용자 보고).
+          지금까지는 <span class="inline-code nb">↻2:50pm</span>·<span class="inline-code nb">↻Jul 25, 3am</span> 처럼 <strong>붙어</strong> 나와, 날짜·시각의 <strong>첫 글자가 화살표에 겹쳐</strong> 알아보기 어려웠습니다.
           이제 <span class="inline-code nb">↻ 2:50pm</span> 으로 <strong>한 칸 띄어</strong> 또렷합니다.</li>
         <li><span class="pill stable">마우스</span> <strong><span class="inline-code">Shift+드래그</span>로 이제 <span class="inline-code">내부 앱</span>에 마우스 이벤트를 전달합니다 — 마우스를 직접 쓰는 앱(예: 에디터의 <span class="inline-code">패널 스플리터</span>)을 끌어 조정할 수 있습니다.</strong>
-          pytmux 안에서 마우스를 쓰는 앱을 띄우면, 기본으로 켜진 <a href="#d-2026-07-12">드래그 복사</a>가 <strong>좌드래그를 가로채</strong> 앱에 넘기지 않아 스플리터를 끌 수 없었습니다(사용자 보고).
+          pytmux 안에서 마우스를 쓰는 앱을 띄우면, 기본으로 켜진 <a href="#d-2026-07-12">드래그 복사</a>가 <strong>좌드래그를 가로채</strong> 앱에 넘기지 않아 스플리터를 끌 수 없었습니다.
           그렇다고 <strong>모든 드래그를 앱에 넘기면</strong> — Claude 도 마우스를 켜므로 — <strong>Claude 위에서 드래그로 복사</strong>하던 것이 깨집니다.
           그래서 <strong>평드래그는 종전대로 복사</strong>로 두고, <strong><span class="inline-code">Shift</span> 를 '앱에 넘김' 제스처</strong>로 삼았습니다(pytmux 는 평드래그가 이미 복사라 Shift 가 자연히 반대 동작이 됩니다).
           이제 마우스 앱 위에서 <span class="inline-code">Shift+드래그</span>는 <strong>그 앱의 드래그</strong>(스플리터 이동 등)가 되고, Claude 등에서의 <strong>평드래그 복사는 그대로</strong> 보존됩니다.
           <span class="inline-code">list-keys</span>(<span class="inline-code">?</span> 목록) 안내도 이 새 동작으로 갱신했습니다.
           <br><em>참고:</em> 호스트 터미널이 <span class="inline-code">Shift+드래그</span>를 <strong>자기 선택</strong>으로 먼저 가져가면 pytmux 까지 닿지 않을 수 있습니다(호스트 설정에 따름).</li>
         <li><span class="pill stable">Claude</span> <strong>원격 탭에서 도는 Claude 의 <span class="inline-code">컨텍스트 사용률</span>이 이제 Claude 화면과 <span class="inline-code">같은 숫자</span>로 보입니다 — Claude 는 <span class="inline-code nb">98%</span> 인데 상태줄엔 <span class="inline-code nb">2%</span> 로 <strong>뒤집혀</strong> 뜨던 것을 잡았습니다.</strong>
-          Claude 가 최근 하단에 <span class="inline-code nb">98% context used</span>(쓴 비율)처럼 표시하는데, pytmux 는 예전 표기(<span class="inline-code nb">N% 남음</span>)에 맞춰 <strong>100 에서 빼서</strong> 보여주던 습관 탓에 <strong>이미 사용률인 값</strong>을 <strong>한 번 더 뒤집어</strong> <span class="inline-code nb">2%</span> 로 만들었습니다(사용자 보고).
+          Claude 가 최근 하단에 <span class="inline-code nb">98% context used</span>(쓴 비율)처럼 표시하는데, pytmux 는 예전 표기(<span class="inline-code nb">N% 남음</span>)에 맞춰 <strong>100 에서 빼서</strong> 보여주던 습관 탓에 <strong>이미 사용률인 값</strong>을 <strong>한 번 더 뒤집어</strong> <span class="inline-code nb">2%</span> 로 만들었습니다.
           이제 <strong>사용률 표기</strong>를 알아보고 <strong>그대로</strong> — Claude 가 말하는 그 숫자로 — 표시합니다.</li>
-        <li><span class="pill stable">표시</span> <strong>Claude 패널에서 <span class="inline-code">:</span> 명령을 칠 때 첫 줄에 뜨는 <span class="inline-code">직전 프롬프트 미리보기</span>가 이제 <span class="inline-code">또렷하게</span> 보입니다 — 배경에 묻혀 읽기 어렵던 것을 밝혔습니다(사용자 보고).</strong>
+        <li><span class="pill stable">표시</span> <strong>Claude 패널에서 <span class="inline-code">:</span> 명령을 칠 때 첫 줄에 뜨는 <span class="inline-code">직전 프롬프트 미리보기</span>가 이제 <span class="inline-code">또렷하게</span> 보입니다 — 배경에 묻혀 읽기 어렵던 것을 밝혔습니다.</strong>
           명령칸이 열리면 그 <strong>뒤 화면을 살짝 어둡게</strong> 깔아 명령칸을 도드라지게 하는데, 정작 <strong>같이 봐야 할</strong> 미리보기 줄까지 함께 어두워져 글자가 <strong>배경색과 비슷해졌습니다</strong>.
           이제 미리보기 줄은 <strong>어둡게 깔지 않고</strong> 글자도 <strong>또렷한 흰색</strong>으로 그려, 어떤 프롬프트였는지 <strong>바로</strong> 읽힙니다.</li>
-        <li><span class="pill stable">작성창</span> <strong>여러 줄로 쓰던 프롬프트를 <span class="inline-code">ESC → Insert</span> 작성창으로 가져올 때, Claude 가 <span class="inline-code">답변 중</span>이거나 <span class="inline-code">메시지를 대기열에 쌓아둔</span> 상태에서도 이제 <span class="inline-code">전체가</span> 따라옵니다 — 커서 한 줄만 오던 것을 잡았습니다(사용자 보고).</strong>
+        <li><span class="pill stable">작성창</span> <strong>여러 줄로 쓰던 프롬프트를 <span class="inline-code">ESC → Insert</span> 작성창으로 가져올 때, Claude 가 <span class="inline-code">답변 중</span>이거나 <span class="inline-code">메시지를 대기열에 쌓아둔</span> 상태에서도 이제 <span class="inline-code">전체가</span> 따라옵니다 — 커서 한 줄만 오던 것을 잡았습니다.</strong>
           Claude 는 <strong>작업 중</strong>이거나 <strong>보낼 메시지가 대기열에 있을 때</strong> 입력칸의 <strong>위아래 구분선을 그리지 않습니다</strong>. pytmux 는 그 구분선으로 입력 범위를 찾았던 터라, 선이 없으면 <strong>커서가 놓인 한 줄</strong>만 긁어 — 여러 줄 프롬프트의 <strong>이웃 줄이 빠지거나</strong>, 작업 표시줄(스피너)에 커서가 얹히면 <strong>엉뚱한 줄</strong>이 오기도 했습니다.
           이제 구분선이 없을 때는 프롬프트 <strong>기호(❯)를 실마리로</strong> 그 줄과 이어지는 줄을 <strong>한 덩어리로</strong> 가져옵니다. 대기열 안내문(<span class="inline-code nb">Press up to edit queued messages</span>)은 <strong>빈 칸</strong>으로, 실제 입력이 아닌 줄은 <strong>가져오지 않습니다</strong>.</li>
       </ul>
