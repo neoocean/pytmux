@@ -857,6 +857,34 @@ class ServerRemoteMixin:
     # 상류 탭 이름 표시 상한. 정상 탭 이름은 수십 자다 — 넘기면 탭바 계산(_char_cells
     # 를 글자마다)만 태우므로 자른다(F-E).
     _REMOTE_NAME_MAX = 256
+    # 상류 탭 스위처용 패널 요약(windows[].panes) 상한. 정상 탭은 패널 몇 개다.
+    _REMOTE_PANES_MAX = 32
+
+    @classmethod
+    def _sanitize_panes(cls, ps) -> list:
+        """상류 status 창의 `panes`(탭 스위처 하위행용 경량 요약, _switcher_panes)를
+        경계에서 정규화한다. 상류는 신뢰불가라 이름과 같은 이유로(F-E) 개별 필드를
+        방어한다: dict 아닌 항목·int 아닌 id 는 버리고, cmd/title 은 C0/C1/DEL 제거 +
+        길이 상한, 개수도 상한. 스위처 라벨(clientscreens add_panes)이 그대로 렌더하므로
+        제어문자가 통과하면 탭바처럼 화면이 오염된다."""
+        if not isinstance(ps, list):
+            return []
+        out = []
+        for p in ps[:cls._REMOTE_PANES_MAX]:
+            if not isinstance(p, dict):
+                continue
+            pid = p.get("id")
+            if not isinstance(pid, int):
+                continue               # 스위처가 p["id"] 로 select_pane_id — 필수
+            cmd = p.get("cmd")
+            cmd = _strip_ctrl(cmd[:cls._REMOTE_NAME_MAX]) \
+                if isinstance(cmd, str) else ""
+            title = p.get("title")
+            title = _strip_ctrl(title[:cls._REMOTE_NAME_MAX]) \
+                if isinstance(title, str) else ""
+            out.append({"id": pid, "cmd": cmd, "title": title,
+                        "remote": bool(p.get("remote"))})
+        return out
 
     @classmethod
     def _sanitize_windows(cls, wins) -> list:
@@ -889,6 +917,8 @@ class ServerRemoteMixin:
                 rw = dict(rw, name=_strip_ctrl(nm))
             elif nm is not None:
                 rw = dict(rw, name="")     # 비-str 이름 → 빈 문자열(포맷 시 예외 방지)
+            if rw.get("panes") is not None:
+                rw = dict(rw, panes=cls._sanitize_panes(rw["panes"]))
             out.append(rw)
         return out
 
@@ -1008,7 +1038,10 @@ class ServerRemoteMixin:
                             "pinned": self._win_key(rw) in link.pinned_windows,
                             "bell": rw.get("bell", False),
                             "activity": rw.get("activity", False),
-                            "claude_done": rw.get("claude_done", False)})
+                            "claude_done": rw.get("claude_done", False),
+                            # 탭 스위처 하위행용 경량 패널 요약(상류 _switcher_panes →
+                            # _sanitize_panes 로 정규화된 값). 없으면(구상류/≤1 패널) 생략.
+                            "panes": rw.get("panes")})
                 gi += 1
         return out
 

@@ -1055,6 +1055,45 @@ async def test_remote_tab_pin_local_set_and_status():
         await teardown(srv, task, sock)
 
 
+async def test_switcher_panes_in_status_and_remote_tabs():
+    """탭 스위처 하위행(원격 탭, 사용자 보고 07-18): 상류 _status_msg 가 **≥2 패널** 창에
+    경량 panes 요약을 싣고(1 패널 창은 생략), 다운스트림 _sanitize_windows 가 신뢰불가
+    panes 를 경계에서 정규화(잡음 드롭·C0/C1 제거)한 뒤 _remote_tabs 가 병합 탭에 그대로
+    실어 준다. 이 사슬로 다운스트림 스위처가 원격 탭 하위 패널을 그린다(로컬 tree 엔 없음)."""
+    from pytmuxlib.serverremote import RemoteLink
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)          # 1 패널
+        st1 = srv._status_msg(sess)
+        assert "panes" not in st1["windows"][0], "1패널 창엔 panes 생략"
+        srv.split_pane(sess, "lr")                          # → 2 패널
+        ps = srv._status_msg(sess)["windows"][0].get("panes")
+        assert isinstance(ps, list) and len(ps) == 2, ps
+        assert all({"id", "cmd", "title", "remote"} <= set(p) for p in ps), ps
+
+        # 다운스트림 경계: 신뢰불가 상류 panes 를 _sanitize_windows 가 정규화한다.
+        wins = srv._sanitize_windows([{
+            "name": "T", "index": 0, "wid": 7, "active": True, "panes": [
+                {"id": 10, "cmd": "vi\x1bm", "title": "e\x07d", "remote": False},
+                {"id": 11, "cmd": "ssh", "title": "", "remote": True},
+                {"id": "bad"},                              # int 아닌 id → 드롭
+                "notadict",                                 # dict 아님 → 드롭
+            ]}])
+        sps = wins[0]["panes"]
+        assert [p["id"] for p in sps] == [10, 11], sps      # 잡음 2건 제거
+        assert "\x1b" not in sps[0]["cmd"] and "\x07" not in sps[0]["title"]
+
+        # _remote_tabs 가 병합 원격 탭에 정규화된 panes 를 그대로 싣는다.
+        srv._remote_status_broadcast = lambda: None
+        link = RemoteLink("hostA", None, None)
+        link.sess = sess
+        link.windows = wins
+        srv._remotes_dict()["hostA"] = link
+        assert srv._remote_tabs(len(sess.tabs))[0]["panes"] == sps
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_remote_pin_survives_upstream_tab_close_reindex():
     """로드맵 #3(M-1 과 동일 클래스): 원격 탭을 핀한 뒤 상류가 **더 앞의** 탭을 닫아
     _reindex 로 위치 index 가 재할당돼도, 핀은 **그 탭 그대로** 따라간다(위치가 아니라

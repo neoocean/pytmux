@@ -1751,6 +1751,52 @@ async def test_esc_tab_switcher_pane_rows_from_tree():
     await _with_app(body)
 
 
+async def test_esc_tab_switcher_remote_pane_rows_from_status():
+    """원격(⇄) 탭의 하위 패널 표시(사용자 보고 07-18: '원격 탭엔 패널 2개인데 ESC+Tab
+    화면엔 탭만 뜨고 하위 패널이 없다'). 원격 탭 패널은 로컬 tree(_tree_msg, 로컬 세션
+    전용)에 없고 상류 status 가 windows[].panes 경량 요약으로 실어 주므로, tree 회신
+    처리 때 탭바 병합 탭 dict 의 panes 를 병합 전역 index 로 함께 주입한다 — 로컬은
+    tree, 원격은 status 라는 각자 채널로 채워 한 번의 add_panes 로 합류한다. 패널 행
+    Enter 는 그 원격 탭 + 그 패널로 전환(select_window+select_pane_id)."""
+    from textual.widgets import Label, ListView
+
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        # 탭 0=로컬(활성), 탭 1=원격(⇄) — 상류 status 로 받은 2패널 요약을 지닌다.
+        app.tabbar.tabs = [
+            {"index": 0, "name": "A", "active": True, "remote": False},
+            {"index": 1, "name": "⇄host:B", "active": False, "remote": True,
+             "panes": [
+                 {"id": 30, "cmd": "claude", "title": "클로드마을", "remote": False},
+                 {"id": 31, "cmd": "node", "title": "space", "remote": False}]}]
+        await pilot.press("escape")
+        await pilot.press("tab")
+        await pilot.pause(0.1)
+        scr = app.screen
+        lv = scr.query_one(ListView)
+        assert len(scr._entries) == 2                # 열림 즉시엔 탭 행만
+        # tree 회신엔 **로컬만**(원격 탭 패널 없음) — 원격은 탭바 status 에서 주입돼야.
+        mine = app.status.session or ""
+        tree = {"t": "tree", "sessions": [
+            {"name": mine, "windows": [{"index": 0, "name": "A", "panes": [
+                {"id": 10, "cmd": "zsh", "remote": False}]}]}]}
+        app._fill_tab_switcher_panes(tree)
+        await pilot.pause(0.1)
+        kinds = [e["kind"] for e in scr._entries]
+        assert kinds == ["tab", "tab", "pane", "pane"], kinds   # 원격 탭 밑 2행
+        labels = [it.query_one(Label).render().plain for it in lv.children]
+        assert any("claude · 클로드마을" in s for s in labels), labels
+        assert any("node · space" in s for s in labels), labels
+        # 원격 탭의 첫 패널 행 Enter = 그 탭(index 1) + 그 패널(id 30).
+        lv.index = 2
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert sent[-2:] == [("select_window", {"index": 1}),
+                             ("select_pane_id", {"id": 30})], sent
+    await _with_app(body)
+
+
 async def test_esc_tab_switcher_not_opened_for_single_tab():
     """탭이 하나뿐이면 고를 게 없어 스위처를 열지 않는다(활성 탭 깜빡임으로 안내)."""
     async def body(app, pilot, srv):

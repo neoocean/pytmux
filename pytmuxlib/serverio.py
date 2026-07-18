@@ -152,6 +152,26 @@ class ServerIOMixin:
         self.plugins.server_pane_overview(self, pane, info)
         return info
 
+    def _switcher_panes(self, tab):
+        """탭 스위처 하위행용 **경량** 패널 요약. 패널이 2개 이상인 탭만 반환하고(스위처는
+        ≥2 패널 탭에만 하위행을 그린다) 그 외엔 None — status 비대화를 최소화한다.
+
+        용도: **원격 탭** 스위처. 원격 탭의 패널은 상류에 있어 다운스트림 로컬 tree
+        (_tree_msg, 로컬 세션 전용)에 안 잡히므로, 상류가 status 창마다 이 요약을 실어
+        보내면 다운스트림이 _remote_tabs 로 병합해 스위처 하위행을 그린다. 로컬 탭은
+        클라가 여전히 lazy tree 로 채우므로 이 필드를 무시한다(id·앱·제목·로컬여부만 —
+        격자/토큰 등 무거운 개요 필드는 뺀다)."""
+        panes = tab.window.panes()
+        if len(panes) < 2:
+            return None
+        out = []
+        for p in panes:
+            cmd = self._fg_command(p) or ""
+            out.append({"id": p.id, "cmd": cmd,
+                        "title": (p.title or "").strip(),
+                        "remote": cmd.lower() in self._REMOTE_CMDS})
+        return out
+
     def _tree_msg(self):
         return {"t": "tree", "current": None, "sessions": [
             # 세션-레벨 active 는 이 계층에 개념이 없다(어느 클라가 어느 세션에 attach
@@ -227,6 +247,13 @@ class ServerIOMixin:
         # 그 키를 읽지 않는다(delete-to-disable). 채워질 키/값은 플러그인이 있을 때
         # 종전과 동일하다(서버 테스트가 claude_tokens 등 키를 그대로 검증).
         self.plugins.server_status(self, sess, win, msg, full)
+        # 탭 스위처 하위행용 경량 패널 요약(≥2 패널 탭만) — 원격 탭 스위처가 상류
+        # status 로 하위 패널을 그릴 수 있게 한다(_switcher_panes docstring). 로컬
+        # 클라는 이 필드를 무시(lazy tree 사용)하므로 다운스트림 원격 병합에만 쓰인다.
+        for wd, t in zip(msg["windows"], sess.tabs):
+            ps = self._switcher_panes(t)
+            if ps is not None:
+                wd["panes"] = ps
         # §1.7: 원격 링크의 탭을 병합(⇄host:이름, 전역 index 는 로컬 뒤 연속) — 탭바에
         # 양쪽이 항상 보이고, select_window(전역 index)로 원격 탭에 진입한다.
         msg["windows"] += self._remote_tabs(len(sess.tabs), client)

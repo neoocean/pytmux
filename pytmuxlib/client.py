@@ -403,7 +403,12 @@ class _ChooseScreensMixin:
         """tree 회신 → 열려 있는 탭 스위처에 패널 하위행 주입. 스위처가 이미 닫혔으면
         무시. tree 는 서버의 **전 세션**을 담으므로 내 세션(상태줄이 아는 이름)만
         골라 {탭 index: panes} 로 좁힌다 — 다른 세션의 같은 index 창이 패널을
-        오염시키지 않게. 원격(⇄) 탭 패널은 로컬 tree 에 없어 자연히 빠진다."""
+        오염시키지 않게.
+
+        원격(⇄) 탭 패널은 로컬 tree 에 없다(상류에 있음). 대신 상류 status 가 창마다
+        실어 준 경량 요약(_switcher_panes→_remote_tabs→windows[].panes)이 탭바 탭
+        dict 에 병합돼 있으므로, 그 병합 전역 index 로 함께 주입한다 — 로컬은 tree,
+        원격은 status 라는 각자의 채널로 채워 한 번의 add_panes 에 합류시킨다."""
         scr = getattr(self, "_tabsw_screen", None)
         if scr is None or not scr.is_attached:
             return
@@ -414,6 +419,11 @@ class _ChooseScreensMixin:
                 continue
             for w in s.get("windows", []):
                 panes_by_index.setdefault(w["index"], w.get("panes"))
+        # 원격 탭 패널: 탭바 병합 status 에서 (전역 index → panes). tree 로컬 index 와
+        # 겹치지 않는 병합 index 라 setdefault 로 로컬을 덮지 않는다.
+        for t in self.tabbar.tabs:
+            if t.get("remote") and isinstance(t.get("panes"), list):
+                panes_by_index.setdefault(t["index"], t["panes"])
         self.call_later(scr.add_panes, panes_by_index)
 
     # ---- 레이아웃 저장/불러오기 ----
