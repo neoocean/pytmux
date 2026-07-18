@@ -1,0 +1,8 @@
+ ⏺ Accomplishing… (7m 17s · ↓ 356 tokens)
+   Tip: You can control how big a workflow is just by prompting.
+
+                                                     98% context used
+ ────────────────────────────────────────────
+ ❯
+ ────────────────────────────────────────────
+   ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt

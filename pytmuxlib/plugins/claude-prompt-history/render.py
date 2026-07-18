@@ -6,12 +6,44 @@
 `app.ph_max_lines` 행(설정 가능)까지. 서버 행 예약 없이 content 위에 덮어 그리므로
 명령 작성이 끝나(프롬프트 닫힘) `_cmd_target_pane=None` 이 되면 다음 합성에서 사라진다.
 
+**딤 제외(가독성)**: 이 바는 명령 프롬프트(ModalScreen=PromptScreen) 뒤에 그려지는데,
+코어 backdrop-dim(clientio._composite)이 그 위를 `_darken_style` 로 덮어 흰 글자가 회색
+(≈grey114)으로 뭉개져 배경(진파랑 바)과 대비가 무너진다(사용자 보고: 텍스트가 배경색과
+비슷해 안 읽힘). perm-mode footer 행과 동일한 패턴으로 미리보기 행을 `app._undim_rows`
+에 실어 딤에서 제외 → 원래 밝기(순백 글자/진파랑 바)로 또렷이 보이게 한다. client_render
+훅은 backdrop-dim 루프보다 먼저 도므로(clientio 983 < 1163) 같은 프레임에 반영된다.
+
 textual 비의존(rich.Style + clientutil 헬퍼). client_render 훅이 지연 import 한다."""
 from __future__ import annotations
 
 
+def _ph_undim_clear(app):
+    """직전 프레임에 우리가 등록한 undim 행을 `app._undim_rows` 에서 회수한다.
+    아래 draw_preview 의 여러 early-return 이 stale 행(딤 안 되는 유령 밝은 줄)을
+    남기지 않도록 매 프레임 맨 앞에서 부른다. perm-mode 등 다른 소유자의 행은 건드리지
+    않는다(내 기여분 `_ph_undim_rows` 만 뺀다)."""
+    prev = getattr(app, "_ph_undim_rows", None)
+    if not prev:
+        return
+    cur = getattr(app, "_undim_rows", None)
+    if cur:
+        app._undim_rows = cur - prev
+    app._ph_undim_rows = set()
+
+
+def _ph_undim_set(app, rows):
+    """이번 프레임에 그린 미리보기 행들을 딤 제외 집합에 실는다(내 기여분도 기록)."""
+    if not rows:
+        _ph_undim_clear(app)
+        return
+    cur = getattr(app, "_undim_rows", None)
+    app._undim_rows = (set(cur) if cur else set()) | rows
+    app._ph_undim_rows = set(rows)
+
+
 def draw_preview(app, cells, W, H):
     """직전 프롬프트 미리보기를 대상 패널 위에 그린다. 그릴 게 없으면 no-op."""
+    _ph_undim_clear(app)            # 이전 프레임 등록분 회수(early-return stale 방지)
     pid = getattr(app, "_cmd_target_pane", None)
     if pid is None:
         return
@@ -39,15 +71,20 @@ def draw_preview(app, cells, W, H):
     plines = prompt.split("\n")
     nshow = min(max_lines, len(plines), phh)
 
-    bar_st = Style(color="white", bgcolor=theme_color(app, "primary-darken-2"),
+    # 순백(#FFFFFF) 볼드 — ANSI "white"(팔레트 7)는 다수 터미널서 옅은 회색으로 떠
+    # 진파랑 바와 대비가 약했다. 명시 truecolor 로 못 박아 항상 순백으로 그린다(위
+    # 딤 제외와 함께 배경과 확실히 구분). 진파랑 배경은 Claude 헤더와 같은 정체성 유지.
+    bar_st = Style(color="#FFFFFF", bgcolor=theme_color(app, "primary-darken-2"),
                    bold=True)
     # 잘림 표시(▾)·시작 마커(▷) 색은 본문과 같은 바 스타일을 쓴다(단순·고대비).
     truncated = len(plines) > nshow
 
+    drawn_rows = set()
     for row in range(nshow):
         gy = py + row
         if not (0 <= gy < H):
             continue
+        drawn_rows.add(gy)
         # 바 배경으로 한 줄 채움.
         for xx in range(px, min(px + pw, W)):
             cells[gy][xx] = (" ", bar_st)
@@ -75,3 +112,7 @@ def draw_preview(app, cells, W, H):
             mx = px + pw - 2
             if 0 <= mx < W:
                 cells[gy][mx] = ("▾", bar_st)
+
+    # 그린 행들을 딤 제외 집합에 실어, 명령 프롬프트 backdrop-dim 이 이 바를 회색으로
+    # 뭉개지 않게 한다(가독성). 그릴 게 없으면 회수만 한다.
+    _ph_undim_set(app, drawn_rows)

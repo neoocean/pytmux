@@ -18,6 +18,11 @@ pytmux REC 캡처(`captures/default/pane-*.log`, 오염된 이 세션 pane-2 제
 - ✅ `usage.txt` — 실 `/usage` TUI 패널(M19): `Current session/week · Resets … · N% used`.
   pane-2 REC 를 replay 로 렌더해 재구성(세션=5h % 직접·주간 한도·리셋 시각).
 
+- ✅ `ctx_used.txt` — 신형 idle footer `N% context used`(스크린샷 실측, 2026-07-18).
+  이건 **사용량%**(작을수록 여유)라 잔량 계열과 방향이 반대다: 원격 탭 Claude 가 98%
+  인데 pytmux 상태줄엔 `ctx:2%` 로 뒤집혀 뜨던 버그를 `claude_usage`/`claude_context_pct`
+  회귀로 고정(사용%는 뒤집지 않고 그대로 표시).
+
 나머지는 아직 **합성**(synthesized)이다 — `claude.py` 주석의 문서화 포맷으로 만든 것이라
 실화면 1:1 일치의 객관 근거는 아직 아니다.
 

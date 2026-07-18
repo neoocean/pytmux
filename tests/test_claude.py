@@ -319,6 +319,12 @@ async def test_claude_usage():
     assert claude_usage("Read 1 token from cache") is None
     assert claude_usage("processed 987 tokens") is None
     assert claude_usage("ctx 1.2M tokens") == "1.2M tok"
+    # 신형 Claude Code 푸터 "N% context used" 는 **사용량**이므로 그대로 표시(뒤집지
+    # 않음). 원격 탭 Claude 가 98% 인데 pytmux 상태줄엔 ctx:2% 로 뒤집혀 뜨던 실 버그
+    # 회귀 고정 — 이제 Claude Code 표시와 동일한 98% 로 보여야 한다.
+    assert claude_usage("98% context used") == "ctx:98%"
+    assert claude_usage("2% context used") == "ctx:2%"
+    assert claude_usage("100% context used") == "ctx:100%"
 
 
 async def test_claude_usage_context_badge():

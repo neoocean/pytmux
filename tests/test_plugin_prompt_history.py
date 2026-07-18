@@ -158,6 +158,38 @@ async def test_preview_single_line_one_row():
     assert not row1_painted, "단일행 프롬프트가 2행을 침범"
 
 
+async def test_preview_undims_rows_and_bright_text():
+    """미리보기 바는 명령 프롬프트(ModalScreen) backdrop-dim 에 흰 글자가 회색으로
+    뭉개져 배경과 대비가 무너지던 것(사용자 보고: 텍스트가 배경색과 비슷해 안 읽힘)을
+    막기 위해, 그린 행을 app._undim_rows 에 실어 딤에서 제외하고 순백(#FFFFFF) 볼드로
+    그린다. 대상 해제 시엔 등록분을 회수해 stale 유령 밝은 줄을 남기지 않는다."""
+    cells = _grid(30, 6)
+    app = _FakeApp(1, ["a\nb"], 3, 1)      # 2행 미리보기(행 0·1)
+    render.draw_preview(app, cells, 30, 6)
+    # ① 그린 두 행이 딤 제외 집합에 실린다.
+    assert app._undim_rows == {0, 1}, app._undim_rows
+    # ② 글자 스타일이 순백 볼드(옅은 회색 ANSI "white" 아님).
+    st = next(c[1] for c in cells[0] if c[0] not in (" ", ""))
+    assert st.bold and tuple(st.color.get_truecolor()) == (255, 255, 255), st
+    # ③ 대상 해제 후 재합성 → 우리 undim 행 회수(다른 팝업 딤에 유령 밝은 줄 방지).
+    app._cmd_target_pane = None
+    render.draw_preview(app, cells, 30, 6)
+    assert not app._undim_rows, app._undim_rows
+
+
+async def test_preview_undim_preserves_other_owners_rows():
+    """딤 제외 회수는 **내 기여분(_ph_undim_rows)** 만 뺀다 — perm-mode 등 다른 소유자가
+    실어둔 행은 그대로 둔다(공유 집합 오염 방지)."""
+    cells = _grid(30, 6)
+    app = _FakeApp(1, ["x"], 3, 1)
+    app._undim_rows = {5}                  # 다른 소유자(예: perm-mode footer)
+    render.draw_preview(app, cells, 30, 6)
+    assert 5 in app._undim_rows and 0 in app._undim_rows
+    app._cmd_target_pane = None
+    render.draw_preview(app, cells, 30, 6)
+    assert app._undim_rows == {5}, app._undim_rows   # 남의 행은 보존
+
+
 async def test_popup_multiline_expands_into_rows_capped():
     """항목3(2026-06-22): 팝업 _HistView 가 멀티라인 프롬프트를 **여러 표시 행**으로
     펼친다(프롬프트당 최대 max_lines 줄, 초과 시 마지막 줄 ellipsis). 선택 단위는

@@ -200,9 +200,19 @@ def claude_api_error(text: str) -> bool:
     return bool(_API_ERROR_RE.search(_claude_body(text)))
 
 
+# **사용량(used)%를 직접** 캡처하는 패턴 — Claude Code 신형 푸터 "98% context used"
+# (숫자가 클수록 컨텍스트가 꽉 참 = 잔량 계열과 의미가 반대). 아래 잔량 패턴보다
+# **먼저** 본다: "98% context used" 는 잔량 패턴 `(\d)%\s*context` 로도 걸리는데, 그럼
+# 98 을 잔량으로 오해해 100-98=2% 로 뒤집혀 표시된다(원격 탭 Claude 가 98% 인데 pytmux
+# 상태줄엔 ctx 2% 로 뜨던 실 버그). "used" 를 명시적으로 앵커해 사용%로 바로 채택한다.
+_CTX_USED_RES = [
+    re.compile(r"(\d{1,3})\s*%\s*context\s+used", re.I),
+]
+# **잔량(headroom)%**를 캡처하는 패턴 — 작을수록 컨텍스트가 꽉 참. (신형 "context used"
+# 와 충돌하지 않도록 bare "N% context" 는 여기서 빼고 remaining/auto-compact 만 남긴다.)
 _CTX_PCT_RES = [
     re.compile(r"context\s+(?:low|left|remaining)[^0-9%]*?(\d{1,3})\s*%", re.I),
-    re.compile(r"(\d{1,3})\s*%\s*(?:context|remaining|"
+    re.compile(r"(\d{1,3})\s*%\s*(?:remaining|"
                r"until\s+auto[- ]?compact)", re.I),
     re.compile(r"auto[- ]?compact[^0-9%]*?(\d{1,3})\s*%", re.I),
 ]
@@ -242,6 +252,13 @@ def claude_usage(text: str):
     def _join(s):
         return f"{s} {badge}" if badge else s
 
+    for rx in _CTX_USED_RES:
+        m = rx.search(text)
+        if m:
+            # _CTX_USED_RES 는 **사용량%**를 그대로 캡처한다("98% context used" → 98).
+            # 잔량 패턴과 달리 뒤집지 않는다 — Claude Code 표시와 동일한 방향.
+            used = max(0, min(100, int(m.group(1))))
+            return f"ctx:{used}%/{badge}" if badge else f"ctx:{used}%"
     for rx in _CTX_PCT_RES:
         m = rx.search(text)
         if m:
@@ -575,6 +592,15 @@ def claude_context_pct(text: str):
     현행 정규식은 left/remaining/until-compact 계열만 잡는다. Claude 가 "82% used"
     같은 표기를 쓰면 의미가 뒤집히므로 골든 픽스처(tests/fixtures/claude)로 실제
     표기를 회귀 고정한다(docs/internal/TOKEN_SAVING_SCENARIO.md §7)."""
+    for rx in _CTX_USED_RES:
+        m = rx.search(text)
+        if m:
+            # "98% context used" 는 **사용량**이므로 잔량으로 뒤집어 반환(100-used).
+            try:
+                v = int(m.group(1))
+            except (TypeError, ValueError):
+                return None
+            return (100 - v) if 0 <= v <= 100 else None
     for rx in _CTX_PCT_RES:
         m = rx.search(text)
         if m:

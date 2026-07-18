@@ -30,6 +30,9 @@ async def test_claude_context_pct():
     assert f("8% until auto-compact") == 8
     assert f("auto-compact at 5%") == 5
     assert f("context remaining 0%") == 0
+    # 신형 "N% context used" 는 사용량 → 잔량으로 뒤집어 반환(100-used).
+    assert f("98% context used") == 2
+    assert f("2% context used") == 98
     assert f("no context info here") is None
     assert f("45k tokens used") is None       # 토큰 누계는 잔량 아님
     assert f("context remaining 150%") is None  # 0~100 밖은 무시(오검출 방어)
@@ -50,6 +53,9 @@ async def test_golden_fixtures():
     assert claude_context_pct(_fix("ctx_low.txt")) == 8
     assert claude_context_pct(_fix("ctx_compact.txt")) == 12
     assert claude_context_pct(_fix("ctx_high.txt")) == 72
+    # 신형 "98% context used" 푸터 = 사용량 98% → 잔량 2% + 표시 ctx:98%.
+    assert claude_context_pct(_fix("ctx_used.txt")) == 2
+    assert claude_usage(_fix("ctx_used.txt")) == "ctx:98%"
     assert claude_context_pct(_fix("idle.txt")) is None
     assert "1M" in (claude_usage(_fix("badge_1m.txt")) or "")
     # M14c: 실 모델 배지 'Opus 4.8 (1M context)' 에서 모델 계열·버전 추출.
