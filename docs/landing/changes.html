@@ -60,7 +60,7 @@
     </header>
 
     <section class="cl-day" id="d-2026-07-18">
-      <h2>2026-07-18 <span class="pill">토요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/4108842868b62140b025c7a5678f42f2271db21e.zip" rel="noopener" title="2026-07-18 마지막 커밋(4108842) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-18 <span class="pill">토요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/0713fb393e7bfaf3c41506d59aef4dfd1f965346.zip" rel="noopener" title="2026-07-18 마지막 소스 커밋(0713fb3) 시점 소스 zip">zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">탭</span> <strong>탭 스위처(<span class="inline-code">Esc</span> → <span class="inline-code">Tab</span>)가 이제 <span class="inline-code">원격(⇄) 탭</span> 밑에도 패널 줄을 보여줍니다.</strong>
           <a href="#d-2026-07-16">이틀 전</a> 스위처에 패널 줄을 달 때, 로컬 탭은 <span class="inline-code">└ [local] 앱 · 제목</span> 으로 펼쳐졌지만
@@ -89,6 +89,12 @@
           이제 마우스 앱 위에서 <span class="inline-code">Shift+드래그</span>는 <strong>그 앱의 드래그</strong>(스플리터 이동 등)가 되고, Claude 등에서의 <strong>평드래그 복사는 그대로</strong> 보존됩니다.
           <span class="inline-code">list-keys</span>(<span class="inline-code">?</span> 목록) 안내도 이 새 동작으로 갱신했습니다.
           <br><em>참고:</em> 호스트 터미널이 <span class="inline-code">Shift+드래그</span>를 <strong>자기 선택</strong>으로 먼저 가져가면 pytmux 까지 닿지 않을 수 있습니다(호스트 설정에 따름).</li>
+        <li><span class="pill stable">Claude</span> <strong>원격 탭에서 도는 Claude 의 <span class="inline-code">컨텍스트 사용률</span>이 이제 Claude 화면과 <span class="inline-code">같은 숫자</span>로 보입니다 — Claude 는 <span class="inline-code nb">98%</span> 인데 상태줄엔 <span class="inline-code nb">2%</span> 로 <strong>뒤집혀</strong> 뜨던 것을 잡았습니다.</strong>
+          Claude 가 최근 하단에 <span class="inline-code nb">98% context used</span>(쓴 비율)처럼 표시하는데, pytmux 는 예전 표기(<span class="inline-code nb">N% 남음</span>)에 맞춰 <strong>100 에서 빼서</strong> 보여주던 습관 탓에 <strong>이미 사용률인 값</strong>을 <strong>한 번 더 뒤집어</strong> <span class="inline-code nb">2%</span> 로 만들었습니다(사용자 보고).
+          이제 <strong>사용률 표기</strong>를 알아보고 <strong>그대로</strong> — Claude 가 말하는 그 숫자로 — 표시합니다.</li>
+        <li><span class="pill stable">표시</span> <strong>Claude 패널에서 <span class="inline-code">:</span> 명령을 칠 때 첫 줄에 뜨는 <span class="inline-code">직전 프롬프트 미리보기</span>가 이제 <span class="inline-code">또렷하게</span> 보입니다 — 배경에 묻혀 읽기 어렵던 것을 밝혔습니다(사용자 보고).</strong>
+          명령칸이 열리면 그 <strong>뒤 화면을 살짝 어둡게</strong> 깔아 명령칸을 도드라지게 하는데, 정작 <strong>같이 봐야 할</strong> 미리보기 줄까지 함께 어두워져 글자가 <strong>배경색과 비슷해졌습니다</strong>.
+          이제 미리보기 줄은 <strong>어둡게 깔지 않고</strong> 글자도 <strong>또렷한 흰색</strong>으로 그려, 어떤 프롬프트였는지 <strong>바로</strong> 읽힙니다.</li>
       </ul>
     </section>
 
