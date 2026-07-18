@@ -59,6 +59,39 @@
       </div>
     </header>
 
+    <section class="cl-day" id="d-2026-07-18">
+      <h2>2026-07-18 <span class="pill">토요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/46e3ec21d7f18a9a94197d91004b3cc14feacf46.zip" rel="noopener" title="2026-07-18 마지막 커밋(46e3ec2) 시점 소스 zip">zip ⬇</a></h2>
+      <ul>
+        <li><span class="pill stable">탭</span> <strong>탭 스위처(<span class="inline-code">Esc</span> → <span class="inline-code">Tab</span>)가 이제 <span class="inline-code">원격(⇄) 탭</span> 밑에도 패널 줄을 보여줍니다.</strong>
+          <a href="#d-2026-07-16">이틀 전</a> 스위처에 패널 줄을 달 때, 로컬 탭은 <span class="inline-code">└ [local] 앱 · 제목</span> 으로 펼쳐졌지만
+          <strong>원격 탭은 탭 한 줄</strong>만 나왔습니다 — 패널 목록을 얻는 자리(로컬 트리)에 <strong>원격 탭의 패널이 없었기</strong> 때문입니다(그 패널들은 원격 서버에 있습니다).
+          이제 원격 서버가 <strong>패널이 2개 이상인 탭</strong>마다 <strong>가벼운 패널 요약</strong>(앱 이름·제목만)을 상태에 함께 실어 보내고,
+          받는 쪽이 그것을 병합해 원격 탭 밑에도 <strong>패널 줄</strong>을 그립니다. 원격 탭의 패널 줄에서 <span class="inline-code">Enter</span> 를 치면 그 <strong>패널로 바로</strong> 갑니다.
+          (원격이 보내는 값은 <strong>신뢰 경계에서 한 번 걸러</strong> — 제어문자 제거·길이/개수 상한 — 화면을 어지럽히지 못하게 합니다.)</li>
+        <li><span class="pill stable">Claude</span> <strong>Claude 를 <span class="inline-code">종료</span>한 뒤에도 상태줄에 남던 <span class="inline-code">⚠ 포맷 미인식 — 추적 일시중지</span> 경고가 이제 <span class="inline-code">사라집니다</span>.</strong>
+          Claude 화면 형식이 바뀌어 pytmux 가 상태를 <strong>못 읽는 동안</strong>(예: 새 버전) 이 경고를 띄우는데 — Claude 가 <strong>정말 실행 중일 때만</strong> 세우도록
+          <strong>포그라운드 프로세스</strong>로 교차확인합니다. 문제는 그 확인이 <strong>화면이 바뀔 때</strong>만 돌던 것이라, Claude 를 끄고 <strong>정적인 셸 프롬프트</strong>만 남으면
+          더 볼 게 없어 <strong>다시 확인하지 않았고</strong>, 경고가 <strong>상태줄에 눌러앉았습니다</strong>(사용자 보고). 이제 경고가 떠 있는 동안엔 그 패널을 <strong>계속 지켜봐</strong>,
+          Claude 가 사라진 것을 확인하는 즉시 경고를 <strong>내립니다</strong>.</li>
+        <li><span class="pill stable">Claude</span> <strong>상태줄 모델 이름이 <a href="#d-2026-07-16">화면을 따라가게</a> 한 뒤에도, 긴 작업 도중 <span class="inline-code">잠깐 기본 모델로 튀던</span> 것을 잡았습니다.</strong>
+          <span class="inline-code">/model</span> 로 확인한 <span class="inline-code nb">opus</span> 가 조금 뒤 다시 <span class="inline-code nb">sonnet-5</span> 로 돌아가는 일이 있었습니다.
+          Claude 가 <strong>바쁘게 출력</strong>하는 동안 하단 표시줄이 <strong>화면 밖으로 잠깐 밀려나면</strong>, pytmux 는 그 한두 순간을 <strong>Claude 가 꺼진 것</strong>으로 봤다가
+          표시줄이 돌아오면 <strong>새 세션이 시작된 것</strong>으로 오해했습니다 — 새 세션은 다른 모델일 수 있어 <strong>모델 기억을 지우는데</strong>, 그 바람에 화면에서 읽은 <span class="inline-code nb">opus</span> 가 지워지고
+          별도 세션의 기본값 <span class="inline-code nb">sonnet-5</span> 로 채워졌습니다. 이제 모델 기억은 <strong>확실히 끝난 세션</strong>(끊김이 충분히 오래 이어진 경우)을 지날 때만 지웁니다 —
+          잠깐의 표시줄 밀림은 <strong>같은 세션</strong>으로 보고 <strong>모델을 그대로 유지</strong>합니다.</li>
+        <li><span class="pill stable">표시</span> <strong>종료 시 사용량 요약과 사용량 팝업에서, 리셋 시각 앞의 <span class="inline-code">새로고침 화살표(↻)</span>와 날짜·시각 사이에 <span class="inline-code">한 칸</span>을 띄웠습니다.</strong>
+          지금까지는 <span class="inline-code nb">↻2:50pm</span>·<span class="inline-code nb">↻Jul 25, 3am</span> 처럼 <strong>붙어</strong> 나와, 날짜·시각의 <strong>첫 글자가 화살표에 겹쳐</strong> 알아보기 어려웠습니다(사용자 보고).
+          이제 <span class="inline-code nb">↻ 2:50pm</span> 으로 <strong>한 칸 띄어</strong> 또렷합니다.</li>
+        <li><span class="pill stable">마우스</span> <strong><span class="inline-code">Shift+드래그</span>로 이제 <span class="inline-code">내부 앱</span>에 마우스 이벤트를 전달합니다 — 마우스를 직접 쓰는 앱(예: 에디터의 <span class="inline-code">패널 스플리터</span>)을 끌어 조정할 수 있습니다.</strong>
+          pytmux 안에서 마우스를 쓰는 앱을 띄우면, 기본으로 켜진 <a href="#d-2026-07-12">드래그 복사</a>가 <strong>좌드래그를 가로채</strong> 앱에 넘기지 않아 스플리터를 끌 수 없었습니다(사용자 보고).
+          그렇다고 <strong>모든 드래그를 앱에 넘기면</strong> — Claude 도 마우스를 켜므로 — <strong>Claude 위에서 드래그로 복사</strong>하던 것이 깨집니다.
+          그래서 <strong>평드래그는 종전대로 복사</strong>로 두고, <strong><span class="inline-code">Shift</span> 를 '앱에 넘김' 제스처</strong>로 삼았습니다(pytmux 는 평드래그가 이미 복사라 Shift 가 자연히 반대 동작이 됩니다).
+          이제 마우스 앱 위에서 <span class="inline-code">Shift+드래그</span>는 <strong>그 앱의 드래그</strong>(스플리터 이동 등)가 되고, Claude 등에서의 <strong>평드래그 복사는 그대로</strong> 보존됩니다.
+          <span class="inline-code">list-keys</span>(<span class="inline-code">?</span> 목록) 안내도 이 새 동작으로 갱신했습니다.
+          <br><em>참고:</em> 호스트 터미널이 <span class="inline-code">Shift+드래그</span>를 <strong>자기 선택</strong>으로 먼저 가져가면 pytmux 까지 닿지 않을 수 있습니다(호스트 설정에 따름).</li>
+      </ul>
+    </section>
+
     <section class="cl-day" id="d-2026-07-17">
       <h2>2026-07-17 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/df3e8db4b2a3a842382731e2fa8cab43faccfd13.zip" rel="noopener" title="2026-07-17 검수 스프린트 마지막 커밋(df3e8db) 시점 소스 zip">zip ⬇</a></h2>
       <ul>

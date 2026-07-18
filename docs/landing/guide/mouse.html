@@ -38,7 +38,7 @@
           <tbody>
             <tr><td>왼쪽 클릭</td><td>패널 포커스(마우스 쓰는 앱이면 앱으로 전달)</td></tr>
             <tr><td>왼쪽 드래그</td><td><strong>텍스트 선택 → OS 클립보드 자동 복사</strong>(<code>mouse-drag-copy on</code>, 시작한 패널 안으로만 가둠)</td></tr>
-            <tr><td>Shift + 왼쪽 드래그</td><td>텍스트 선택 → 복사(마우스 쓰는 앱 위에서도 강제로 선택)</td></tr>
+            <tr><td>Shift + 왼쪽 드래그</td><td>마우스 쓰는 앱에 <strong>드래그 전달</strong>(예: 에디터 패널 <strong>스플리터</strong> 이동). 앱이 마우스 모드가 아니면 평드래그처럼 텍스트 선택 → 복사</td></tr>
             <tr><td>오른쪽 클릭</td><td>컨텍스트 메뉴(먼저 그 패널을 활성화). 앱의 마우스 모드보다 우선</td></tr>
             <tr><td>휠 ↑ / ↓</td><td>스크롤백(마우스 쓰는 앱이면 앱으로 전달)</td></tr>
             <tr><td>경계선 드래그</td><td>패널 크기 조절</td></tr>
@@ -71,8 +71,9 @@
             줄바꿈은 실제 줄 끝에만 들어가, 여러 줄에 걸쳐 보이는 긴 명령도 붙여넣으면 그대로 실행됩니다
             (Windows 패널 포함).</li>
           <li>선택은 드래그를 <strong>시작한 패널 안으로만</strong> 갇힙니다.</li>
-          <li>Claude 등 마우스 앱 위에서도 드래그는 선택에 양보합니다(클릭은 앱으로).</li>
-          <li>앱에 드래그를 넘기려면 <code>set mouse-drag-copy off</code> — 그때 선택은 Shift+드래그로.</li>
+          <li>Claude 등 마우스 앱 위에서도 <strong>평드래그</strong>는 선택에 양보합니다(클릭은 앱으로).</li>
+          <li><strong>Shift+드래그</strong>는 마우스 쓰는 앱(에디터 <strong>스플리터</strong> 등)에 드래그를 <strong>넘깁니다</strong> —
+            평드래그 복사는 그대로 둔 채 <code>Shift</code> 로만 앱에 전달합니다. (모든 드래그를 앱에 넘기려면 <code>set mouse-drag-copy off</code>.)</li>
         </ul>
       </section>
 
