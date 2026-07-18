@@ -505,9 +505,11 @@ class ServerClaudeMixin:
         fg 검사(ps)는 비싸므로 **인식 실패 패널에 한해** _FMT_CHECK_INTERVAL 초 간격
         throttle 한다. recognized=True(파서 인식)면 throttle 무시하고 즉시 해제.
 
-        한계: 처음부터 인식 안 되는 **정적 idle** 패널은 출력이 없어 스캔이 건너뛰어져
-        (_scan_claude dirty 게이트) 이 경로를 안 탄다 — 추적이 실제로 멈춰 손해가 큰
-        쪽은 **출력이 계속 도는 busy** 구간이고 그건 매 프레임 스캔되므로 잡힌다."""
+        경고가 세워진(_fmt_unknown=True) 동안엔 _scan_claude 의 pending 게이트가 그
+        패널을 계속 스캔 대상으로 잡아, Claude 가 종료돼 셸이 **정적**이어도(출력 없음)
+        이 경로가 5s throttle 간격으로 계속 돌며 fg≠claude 를 관측해 해제한다 — 종전엔
+        정적 셸이 dirty 게이트로 스캔에서 빠져 경고가 상태줄에 눌러앉았다(사용자 보고
+        2026-07-18: Claude 종료 후에도 ⚠ 지속)."""
         now = time.monotonic()
         if recognized:
             # 파서가 다시 상태를 인식 → 의심 즉시 해제(throttle 무시).
@@ -1455,7 +1457,14 @@ class ServerClaudeMixin:
                            or p._busy_exit_miss > 0
                            # §10-F 종료 토큰 주입 예약 중: 셸 프롬프트가 정적이어도 fg 가
                            # 셸로 잡히는 프레임을 관측해 주입하려면 창 동안 계속 스캔한다.
-                           or getattr(p, "_exit_token_pending", 0) > 0)
+                           or getattr(p, "_exit_token_pending", 0) > 0
+                           # §3.7 '포맷 미인식' 경고가 떠 있는 동안: Claude 가 종료돼
+                           # 셸이 정적이면 dirty 게이트로 스캔이 끊겨 _update_fmt_unknown
+                           # 이 다시 안 돌아 경고가 상태줄에 눌러앉는다(사용자 보고
+                           # 2026-07-18 Windows: Claude 종료 후에도 ⚠ 지속). 경고 중엔
+                           # 계속 스캔해 5s throttle fg 재검사가 fg≠claude 를 잡아 해제하게
+                           # 한다(해제되면 _fmt_unknown=False 라 이 항이 빠져 정상 복귀).
+                           or p._fmt_unknown)
                 if p._feed_seq == p._scan_seq and not pending:
                     continue
                 p._scan_seq = p._feed_seq

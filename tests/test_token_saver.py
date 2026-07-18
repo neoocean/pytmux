@@ -452,6 +452,44 @@ async def test_fmt_unknown_warning_surfaces_and_clears():
         await teardown(srv, task, sock)
 
 
+async def test_fmt_unknown_clears_on_static_shell_after_exit():
+    """§3.7 (사용자 보고 2026-07-18 Windows): '포맷 미인식' ⚠ 가 뜬 뒤 Claude 가 종료돼
+    셸이 **정적**(새 출력 없음)이면, 종전엔 dirty 게이트로 스캔이 통째로 건너뛰어져
+    _update_fmt_unknown 이 다시 안 돌아 경고가 상태줄에 눌러앉았다. 이제 경고가 떠 있는
+    동안 _scan_claude 의 pending 게이트가 그 패널을 계속 스캔 대상으로 잡아, **화면 재-feed
+    없이** 스캔만 다시 돌려도 fg≠claude 를 관측해 해제한다."""
+    import sys as _sys
+    srv, task, sock = await server_only()
+    sm = _sys.modules[srv._update_fmt_unknown.__module__]
+    orig_iv, orig_sec = sm._FMT_CHECK_INTERVAL, sm._FMT_UNKNOWN_SEC
+    try:
+        sess, win, p = await _claude_pane(srv)
+        sm._FMT_CHECK_INTERVAL = 0.0
+        sm._FMT_UNKNOWN_SEC = 0.0
+        # 미인식 화면 + Claude fg → 경고 세움(dirty feed 1회).
+        srv._fg_is_claude = lambda pane: True
+        p.feed(b"\x1b[2J\x1b[Hgarbled unrecognized footer")
+        srv._scan_claude(sess, win)
+        assert p._fmt_unknown is True and p._claude_warn
+        # Claude 종료: fg 가 더는 claude 아님. **화면은 그대로 두고**(재-feed 안 함)
+        # 다른 pending 항은 모두 끈다 — 스캔이 계속 도는 유일한 이유가 _fmt_unknown
+        # (이번 수정)임을 격리한다. 종전 코드라면 여기서 스캔이 skip 돼 경고가 남는다.
+        srv._fg_is_claude = lambda pane: False
+        p._hdr_claude = False
+        p._busy_exit_miss = 0
+        p._exit_token_pending = 0
+        p._rc_menu_active = False
+        p._rc_pending = False
+        p._was_busy = False
+        assert p._feed_seq == p._scan_seq, "새 출력 없음(정적) 전제"
+        srv._scan_claude(sess, win)                  # 재-feed 없이 스캔만
+        assert p._fmt_unknown is False, "정적 셸에서도 해제돼야(pending=_fmt_unknown)"
+        assert p._claude_warn is None
+    finally:
+        sm._FMT_CHECK_INTERVAL, sm._FMT_UNKNOWN_SEC = orig_iv, orig_sec
+        await teardown(srv, task, sock)
+
+
 async def test_fmt_unknown_throttles_fg_check():
     """fg 검사(ps)는 비싸므로 인식 실패 패널에 한해 _FMT_CHECK_INTERVAL 간격으로만
     호출한다(throttle). 인식 성공 프레임은 즉시 해제하며 fg 검사를 부르지 않는다."""
