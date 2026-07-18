@@ -305,23 +305,32 @@ class MultiplexerView(Widget):
             self.app._composite()
             event.stop()
             return
-        # Shift+드래그 = 텍스트 선택(normal 모드). copy-mode 에 먼저 안 들어가도 패널
-        # 본문을 끌어 OS 클립보드+pytmux 버퍼로 복사한다(copy-mode 드래그 경로 재사용).
-        # passthrough/divider 보다 먼저 가로채 마우스 모드 앱 위에서도 선택이 된다(터미널
-        # 에뮬레이터에서 Shift 가 앱 마우스를 우회해 선택하는 것과 동일 — 의도). 구
-        # Shift+swap 은 헤더 드래그 pick-up 으로 이전(아래 divider 검사 직후, 2026-06-05).
+        # Shift+좌드래그 = 내부 앱으로 마우스 이벤트 **전달**(passthrough) — 마우스 모드를
+        # 켠 앱(예: 에디터 패널 스플리터)이 드래그를 직접 받아 조작되게 한다(사용자 요청
+        # 2026-07-18). 평드래그는 종전대로 pytmux 드래그-복사(mouse-drag-copy)로 두고,
+        # Shift 를 '앱에 넘김' 제스처로 쓴다 — pytmux 는 평드래그가 이미 복사라 Shift 가
+        # 자연히 반대(앱 전달) 동작이 된다. Claude 등 마우스앱 위 평드래그 복사는 그대로
+        # 보존된다. 넘길 대상이 없으면(마우스 모드 앱 아님·테두리) 아래 평드래그 경로로
+        # 흘려 복사한다. down 에서 press 를 보내고 _mouse_fwd 를 세우면 이후 move/up 은
+        # 기존 패스스루 경로가 drag(1002+)/release 를 전달한다. 좌표·버튼만 인코딩하고
+        # Shift 비트는 안 실어(_encode_mouse) 앱엔 순수 드래그로 보인다. 구 Shift=텍스트
+        # 선택은 폐지(평드래그 복사가 대체). divider/passthrough 보다 먼저 가로챈다.
         if (getattr(event, "shift", False) and event.button == 1
                 and self.app.mode == "normal"):
-            p = self._pane_at(event.x, event.y)
-            self._sel_rect = (p["x"], p["y"], p["w"], p["h"]) if p else None
-            self._sel_pane_id = p["id"] if p else None
-            sx, sy = self._clamp_sel(event.x, event.y)
-            self._sel_start = (sx, sy)
-            self._sel = (sx, sy, sx, sy)
-            self.capture_mouse()
-            self.app._composite()
-            event.stop()
-            return
+            tp = self._mouse_target(event.x, event.y)
+            if tp is not None:
+                if not tp.get("active"):     # 비활성 패널이면 먼저 포커스 이동
+                    self.app.send_cmd("select_pane_id", id=tp["id"])
+                data = self._encode_mouse(tp, event.x, event.y, "press",
+                                          event.button)
+                if data:
+                    self.app.send_mouse(tp["id"], data)
+                    self._mouse_fwd = tp["id"]
+                    self._mouse_fwd_btn = event.button
+                    self.capture_mouse()
+                event.stop()
+                return
+            # 마우스 모드 앱이 아니면 fall-through → 아래 평드래그(복사) 경로.
         # Ctrl+Click 은 무동작 — 컨텍스트 메뉴는 순수 우클릭(button 3)으로만 연다.
         # (단, 터미널이 Ctrl+Click 을 그냥 button 3 으로 합쳐 보내면 ctrl 플래그가
         #  안 와 구분 불가 — 그 경우 우클릭으로 취급됨. 터미널 의존 한계.)

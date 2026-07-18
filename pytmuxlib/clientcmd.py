@@ -942,7 +942,8 @@ class _CommandMixin:
                 ("keys.g_divider", "경계선 드래그 — 패널 크기 조절"),
                 ("keys.g_header", "패널 헤더(위 테두리) 드래그 — 패널을 들어 "
                  "다른 패널과 swap · 탭으로 이동 · [+]에 놓아 새 탭"),
-                ("keys.g_shift", "Shift+드래그 — 텍스트 선택(클립보드 복사)"),
+                ("keys.g_shift", "Shift+드래그 — 내부 앱에 마우스 전달"
+                 "(에디터 패널 스플리터 등 · 평드래그는 텍스트 복사)"),
                 ("keys.g_tab", "탭 드래그 — 탭 재정렬 · 패널 위로 끌어 분할"),
             )]
             binds = [f"prefix {k} → {v}"
