@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 
 from . import syncrypto, usagedb
@@ -63,6 +64,12 @@ def http_transport(base_url: str, timeout: float = 15.0):
     def send(method, path, query="", body=b"", headers=None):
         url = base_url.rstrip("/") + path + (("?" + query) if query else "")
         req = urllib.request.Request(url, data=(body or None), method=method)
+        # **User-Agent 를 반드시 보낸다**. urllib 기본값(Python-urllib/3.x)은 CDN·WAF 가
+        # 봇으로 보고 차단한다 — 실기동에서 Cloudflare 가 error 1010(브라우저 무결성
+        # 검사)로 403 을 돌려줘 요청이 오리진에 닿지도 못했다. 브라우저 경로(등록
+        # 페이지)만 멀쩡해서 원인이 서버인 줄 알고 한참 헤맸다.
+        req.add_header("User-Agent", "pytmux-tokensync/1.0")
+        req.add_header("Accept", "application/json, application/x-ndjson")
         for k, v in (headers or {}).items():
             req.add_header(k, v)
         try:
@@ -87,8 +94,16 @@ class SyncClient:
     REMOTE = "server"       # sync_remote 의 키(T5 는 원격이 서버 하나)
 
     def __init__(self, conn, db_dir: str, transport, *, accounts=(),
-                 encrypt: bool = True, now=time.time):
-        self.conn = conn
+                 encrypt: bool = True, now=time.time, db_path: str = ""):
+        # conn 을 주면 그대로 쓴다(테스트·같은 스레드 호출). db_path 만 주면 **쓰는
+        # 스레드마다 자기 연결**을 연다 — 워커는 executor 스레드에서 도는데 sqlite
+        # 연결은 만든 스레드에서만 쓸 수 있다(실기동: "SQLite objects created in a
+        # thread can only be used in that same thread"). 서버 연결을 공유하지 않는
+        # 이유는 한 연결을 두 스레드가 섞어 쓰면 **트랜잭션이 교차**하기 때문이다.
+        # WAL + busy_timeout + 멱등 쓰기(INSERT OR IGNORE·커서 갱신)라 별도 연결이 안전.
+        self._conn = conn
+        self._db_path = db_path
+        self._tls = threading.local()
         self.db_dir = db_dir
         self.transport = transport
         self.accounts = tuple(a for a in (accounts or ()) if a)
@@ -100,6 +115,19 @@ class SyncClient:
         self._device_sk = None
 
     # -- 키·신원 ----------------------------------------------------------
+
+    @property
+    def conn(self):
+        """이 스레드에서 쓸 DB 연결(주입됐으면 그것, 아니면 스레드별 지연 오픈)."""
+        if self._conn is not None:
+            return self._conn
+        c = getattr(self._tls, "conn", None)
+        if c is None:
+            if not self._db_path:
+                raise SyncError("토큰 DB 경로를 모릅니다")
+            c = usagedb.connect(self._db_path)
+            self._tls.conn = c
+        return c
 
     @property
     def host_id(self) -> str:
@@ -185,7 +213,9 @@ class SyncClient:
             "POST", "/v1/devices", "", body,
             {"Content-Type": "application/json"})
         if status != 200:
-            raise SyncError("등록 거부(코드 만료·오타 가능)")
+            # 사유를 뭉뚱그리지 않는다 — 예전엔 어떤 실패든 "코드 만료·오타" 라고만
+            # 해서, 실제로는 앞단 CDN 이 막고 있었는데 코드를 계속 새로 발급했다.
+            raise SyncError(_http_why(status, resp, "등록"))
         try:
             did = json.loads(resp)["device_id"]
         except (ValueError, KeyError) as e:
@@ -256,7 +286,7 @@ class SyncClient:
         body = ("\n".join(lines) + "\n").encode()
         status, _, resp = self._signed("POST", "/v1/events", "", body)
         if status != 200:
-            raise SyncError("업로드 거부(HTTP %d)" % status)
+            raise SyncError(_http_why(status, resp, "업로드"))
         try:
             out = json.loads(resp)
         except ValueError as e:
@@ -276,7 +306,7 @@ class SyncClient:
         query = "since=%d&limit=%d" % (since, int(batch))
         status, _, resp = self._signed("GET", "/v1/events", query, b"")
         if status != 200:
-            raise SyncError("내려받기 거부(HTTP %d)" % status)
+            raise SyncError(_http_why(status, resp, "내려받기"))
         merged = rejected = 0
         last = since
         host = self.host_id
@@ -427,6 +457,14 @@ def configure(server, *, mode=None, url=None, sec=None, accounts=None,
     save = getattr(server, "_save_opts", None)
     if save is not None:
         save()
+    # 설정이 바뀌면 **옛 실패 사유는 더 이상 사실이 아니다**. 남겨 두면 status 가
+    # 고쳐진 뒤에도 옛 오류를 계속 보여 준다(실기동에서 그렇게 오해를 샀다).
+    conn = getattr(server, "_tokens_db", None)
+    if conn is not None and (mode is not None or url is not None):
+        try:
+            usagedb.set_sync_remote(conn, SyncClient.REMOTE, last_err="")
+        except Exception:       # noqa: BLE001 — 정리 실패가 설정을 막으면 안 된다
+            pass
     return {"mode": getattr(server, "token_sync", "off"),
             "url": getattr(server, "token_sync_url", ""),
             "sec": getattr(server, "token_sync_sec", 300),
@@ -475,17 +513,23 @@ def _sync_once(client) -> dict:
 
 
 def _client_for(server):
-    conn = getattr(server, "_tokens_db", None)
-    if conn is None:
-        raise SyncError("토큰 DB 가 열려 있지 않습니다")
-    db_dir = os.path.dirname(server.tokens_db_path())
+    # tokens_db_path 는 **@property(str)** 다 — 호출하면 'str' object is not callable
+    # 로 죽는다(실기동에서 등록이 이 줄에서 실패했다. servermixin 은 같은 주의를
+    # 주석으로 달아 두고 있었는데 이 경로만 놓쳤다).
+    path = server.tokens_db_path
+    # 연결은 넘기지 않는다 — 워커는 executor 스레드에서 도는데 sqlite 연결은 만든
+    # 스레드에서만 쓸 수 있다(실기동 오류: "SQLite objects created in a thread…").
+    # SyncClient.conn 이 쓰는 스레드마다 자기 연결을 연다. 지연 오픈이라 Claude 활동이
+    # 아직 없는 새 머신에서도 등록이 막히지 않는다(등록이 활동보다 먼저인 게 정상).
+    db_dir = os.path.dirname(path)
     accounts = [a.strip() for a in
                 str(getattr(server, "token_sync_accounts", "") or "").split(",")
                 if a.strip()]
-    return SyncClient(conn, db_dir,
+    return SyncClient(None, db_dir,
                       http_transport(str(server.token_sync_url)),
                       accounts=accounts,
-                      encrypt=bool(getattr(server, "token_sync_encrypt", True)))
+                      encrypt=bool(getattr(server, "token_sync_encrypt", True)),
+                      db_path=path)
 
 
 def _note_error(server, exc):
@@ -511,6 +555,26 @@ def _b64u_dec(s: str) -> bytes:
     import base64
     pad = "=" * ((-len(s)) % 4)
     return base64.urlsafe_b64decode(s + pad)
+
+
+def _http_why(status: int, body, what: str) -> str:
+    """실패 사유를 **구분해서** 돌려준다. 같은 문구로 뭉뚱그리면 엉뚱한 곳을 고치게 된다."""
+    snippet = ""
+    try:
+        snippet = (body or b"").decode("utf-8", "replace").strip()[:80]
+    except Exception:       # noqa: BLE001
+        pass
+    if status == 401:
+        return "%s 거부(401) — 코드 만료·오타이거나 기기가 폐기됐습니다" % what
+    if status == 403:
+        hint = "앞단 CDN/WAF 차단으로 보입니다" if "1010" in snippet or "cloudflare" in snippet.lower() \
+            else "서버가 접근을 거부했습니다"
+        return "%s 거부(403) — %s: %s" % (what, hint, snippet)
+    if status == 429:
+        return "%s 거부(429) — 요청이 너무 잦습니다(잠시 후 재시도)" % what
+    if status == 507:
+        return "%s 거부(507) — 서버 저장 쿼터 초과" % what
+    return "%s 거부(HTTP %d) %s" % (what, status, snippet)
 
 
 def _int(v, default):

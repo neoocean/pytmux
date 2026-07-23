@@ -407,6 +407,30 @@ async def test_configure_persists_and_validates_url():
     assert tokensync.configure(s, sec=1)["sec"] == 30
 
 
+async def test_configure_clears_stale_error():
+    """설정을 바꾸면 옛 실패 사유는 사실이 아니다 — status 가 고쳐진 뒤에도 옛 오류를
+    보여 주면 사용자가 고장으로 오해한다(실기동에서 그랬다)."""
+    d = tempfile.mkdtemp(prefix="pytmux-sync-cfg-")
+    conn = usagedb.connect(os.path.join(d, "t.db"))
+    usagedb.set_sync_remote(conn, tokensync.SyncClient.REMOTE,
+                            last_err="옛날 오류")
+
+    class S:
+        token_sync = "off"
+        token_sync_url = ""
+        token_sync_sec = 300
+        token_sync_accounts = ""
+        token_sync_encrypt = True
+        _tokens_db = conn
+
+        def _save_opts(self):
+            pass
+
+    tokensync.configure(S(), mode="server", url="https://sync.example.org")
+    st = usagedb.get_sync_remote(conn, tokensync.SyncClient.REMOTE)
+    assert st["last_err"] is None, st
+
+
 # ── 검수 처방 회귀(SYNSERVER_REVIEW_2026-07-23) ─────────────────────────────
 
 async def test_corrupt_master_key_is_hard_error():
@@ -462,3 +486,45 @@ async def test_pull_error_reason_not_overwritten_by_success():
     st = usagedb.get_sync_remote(m2.conn, tokensync.SyncClient.REMOTE)
     assert out["merged"] == 1 and out["rejected"] == 0
     assert st["last_ok"] and st["last_err"] is None    # 성공엔 사유가 남지 않는다
+
+
+async def test_client_for_uses_real_server_contract():
+    """`_client_for` 는 **실기동에서만** 지나는 경로라 지금까지 아무 테스트도 안 밟았다.
+    그 사이 `server.tokens_db_path`(@property)를 함수처럼 불러 등록이
+    `'str' object is not callable` 로 죽었다(사용자 화면에 그대로 노출).
+
+    그래서 실제 Server(플러그인 믹스인 합성본)로 이 경로를 밟는다 — 스텁을 만들면
+    같은 실수를 스텁이 따라 해 또 초록불이 된다."""
+    from harness import server_only, teardown
+    srv, task, sock = await server_only()
+    try:
+        srv.new_session(80, 24)
+        tokensync.configure(srv, mode="server",
+                            url="https://sync.example.org")
+        cli = tokensync._client_for(srv)
+        assert isinstance(cli, tokensync.SyncClient)
+        # db_dir 는 토큰 DB 가 있는 디렉터리여야 한다(키·host_id 가 여기 놓인다).
+        assert cli.db_dir == os.path.dirname(srv.tokens_db_path)
+        assert cli.encrypt is True
+        # 워커는 executor 스레드에서 돈다 — **그 스레드에서** DB 를 쓸 수 있어야 한다
+        # (한 연결을 스레드 간 공유하면 "SQLite objects created in a thread…" 로 죽는다).
+        import threading
+        seen = []
+
+        def touch():
+            try:
+                usagedb.get_export_cursor(cli.conn, "limits")
+                seen.append("ok")
+            except Exception as e:      # noqa: BLE001
+                seen.append(repr(e))
+
+        t = threading.Thread(target=touch)
+        t.start()
+        t.join(10)
+        assert seen == ["ok"], seen
+        # CLI 경로(pytmux cmd)도 같은 함수를 지난다 — 사유가 문자열로 나오되
+        # 'not callable' 같은 내부 타입 오류는 없어야 한다.
+        out = srv.handle_control("claude-token-sync enroll ABCD-EFGH")
+        assert "not callable" not in out, out
+    finally:
+        await teardown(srv, task, sock)

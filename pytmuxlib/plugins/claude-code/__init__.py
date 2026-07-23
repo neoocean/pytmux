@@ -642,6 +642,13 @@ async def _token_sync_cmd(server, client, sub: str, arg: str):
             await note("tsync.fail", "토큰 동기화 실패 — {why}",
                        why="알 수 없는 하위 명령: %s" % sub)
     except Exception as e:      # noqa: BLE001 — 사유를 사용자에게 돌려준다
+        # 화면에는 한 줄만 나가지만 **서버 로그에는 스택트레이스**를 남긴다. 예전엔
+        # 사용자가 "'str' object is not callable" 한 줄만 보고 어느 줄인지 알 수
+        # 없었다(실기동에서 그 추적에 몇 왕복을 썼다).
+        log = getattr(server, "_log_error", None)
+        if log is not None:
+            import traceback
+            log("token_sync %s: %s\n%s" % (sub, e, traceback.format_exc()))
         key = "tsync.enroll_fail" if sub == "enroll" else "tsync.fail"
         ko = ("토큰 동기화 등록 실패 — {why}" if sub == "enroll"
               else "토큰 동기화 실패 — {why}")
@@ -1010,11 +1017,59 @@ class _ClaudeCodePlugin:
         """외부 CLI 의 claude/token 토글 명령을 처리한다(코어 handle_control 이 자기
         표에 없을 때 위임). on/off 인자를 파싱해 플러그인 소유 셋터를 호출하고 결과
         상태 문자열('on'/'off')을 돌려준다. 아는 명령이 아니면 None(코어가 unknown)."""
+        if c in ("claude-token-sync", "claude-tokens-sync"):
+            return self._cli_token_sync(server, args)
         setter_name = self._CLI_TOGGLES.get(c)
         if setter_name is None:
             return None
         val = True if "on" in args else (False if "off" in args else None)
         return "on" if getattr(server, setter_name)(val) else "off"
+
+    @staticmethod
+    def _cli_token_sync(server, args):
+        """`pytmux cmd claude-token-sync <sub> [인자]` — 헤드리스 설정·등록 경로.
+
+        UI 없는 머신(서버만 도는 박스·CI)에서도 동기화를 켜고 기기를 붙일 수 있어야
+        한다. 또 설정을 opts.json 으로 직접 고치는 우회는 **서버가 다음 저장 때
+        덮어써** 조용히 되돌아간다(실제로 두 번 물렸다) — 설정 변경은 반드시 코드
+        경로를 지나야 한다는 뜻이라, 그 경로를 CLI 에도 낸다.
+
+        블로킹(HTTP·키 파일)은 짧고(수백 ms) 여기는 이미 동기 제어선이라 그대로 부른다
+        — 이벤트 루프의 주기 워커와 달리 사용자가 결과를 기다리는 1회성 명령이다."""
+        from . import tokensync
+        sub = (args[0] if args else "status").lower()
+        rest = " ".join(args[1:]).strip()
+        try:
+            if sub in ("on", "off", "url", "set-url"):
+                st = tokensync.configure(
+                    server, mode=("server" if sub != "off" else "off"),
+                    url=(rest or None))
+                return "%s %s" % (st["mode"], st["url"] or "-")
+            if sub == "status":
+                conn = getattr(server, "_tokens_db", None)
+                st = (usagedb.get_sync_remote(conn, tokensync.SyncClient.REMOTE)
+                      if conn is not None else None) or {}
+                return "%s %s | 받은행 %s | 마지막오류 %s" % (
+                    getattr(server, "token_sync", "off"),
+                    getattr(server, "token_sync_url", "") or "-",
+                    st.get("rows_in") or 0, st.get("last_err") or "-")
+            cli = tokensync._client_for(server)
+            if sub == "enroll":
+                return "enrolled %s" % cli.enroll(rest)[:8]
+            if sub == "invite":
+                return cli.invite_code()
+            if sub == "adopt":
+                parts = rest.split()
+                cli.adopt_invite(parts[0] if parts else "",
+                                 force=(len(parts) > 1 and parts[1] == "force"))
+                return "adopted"
+            if sub in ("now", "sync"):
+                out = tokensync._sync_once(cli)
+                return "pushed %d merged %d" % (out["push"]["sent"],
+                                                out["pull"]["merged"])
+        except Exception as e:              # noqa: BLE001 — CLI 는 사유를 그대로 준다
+            return "error: %s" % e
+        return "unknown sub: %s" % sub
 
     def attach_client(self, app):
         # ClaudeSaverScreen 이 self.app._saver_display/_saver_action 를 부르므로 설치.

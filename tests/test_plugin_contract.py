@@ -494,3 +494,33 @@ async def test_contract_client_app_runs_without_claude_plugin(monkeypatch=None):
     finally:
         plugins.load = orig_load
         await teardown(srv, task, sock)
+
+
+async def test_cli_token_sync_configures_and_persists():
+    """`pytmux cmd claude-token-sync on <URL>` — UI 없는 머신에서도 켤 수 있어야 한다.
+
+    설정을 opts.json 으로 직접 고치는 우회는 **서버가 다음 저장 때 덮어써** 조용히
+    되돌아간다(실기동에서 두 번 물렸다). 그래서 설정 변경은 코드 경로를 지나야 하고,
+    그 경로가 CLI 에도 있어야 헤드리스 머신을 붙일 수 있다."""
+    srv, task, sock = await server_only()
+    try:
+        srv.new_session(80, 24)
+        out = srv.handle_control(
+            "claude-token-sync on https://sync.example.org")
+        assert out == "server https://sync.example.org", out
+        assert srv.token_sync == "server"
+        assert srv.token_sync_url == "https://sync.example.org"
+        # status 는 설정과 진행 상태를 함께 준다.
+        assert "server" in srv.handle_control("claude-token-sync status")
+        # 평문 URL 은 거부되고 **사유가 보인다**(조용한 실패 금지).
+        bad = srv.handle_control("claude-token-sync on http://sync.example.org")
+        assert bad.startswith("error:") and "https" in bad
+        assert srv.token_sync_url == "https://sync.example.org"   # 안 바뀜
+        # off 는 URL 을 지우지 않고 모드만 끈다(다시 켤 때 주소를 또 치지 않게).
+        assert srv.handle_control("claude-token-sync off").startswith("off")
+        assert srv.token_sync_url == "https://sync.example.org"
+        # 등록 전에는 enroll 이 사유를 돌려준다(크래시 아님).
+        assert srv.handle_control("claude-token-sync enroll ABCD").startswith(
+            ("error:", "enrolled"))
+    finally:
+        await teardown(srv, task, sock)
