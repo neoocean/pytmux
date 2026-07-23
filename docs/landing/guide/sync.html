@@ -48,11 +48,11 @@
           <li><strong>사람 이름이 들어갈 칸이 없습니다.</strong> 로그인은 아이디도 비밀번호도 없이
             패스키 하나로 합니다.</li>
         </ul>
-        <p class="note">
+        <div class="callout"><p>
           그래서 서버가 통째로 털려도 남는 것은 <strong>암호문·난수 가명·건수</strong> 정도입니다.
           대신 정직하게 말하면, <strong>활동 시각과 양이라는 메타데이터</strong>는 서버가 알게 되고
           각 머신의 로컬 DB 에는 여전히 평문 기록이 있습니다.
-        </p>
+        </p></div>
       </section>
 
       <section>
@@ -61,12 +61,12 @@
           집 서버·개인 VPS 어디든 됩니다. TLS 는 앞단 리버스 프록시(Caddy·Cloudflare 터널 등)가
           맡고, 서버는 루프백에만 붙입니다 — <strong>패스키는 HTTPS 에서만 동작</strong>합니다.
         </p>
-        <pre><code>python3 -m pip install 'cryptography&gt;=42'
+        <div class="code">python3 -m pip install 'cryptography&gt;=42'
 
 python3 tools/synserver/app.py \
     --db /var/lib/synserver/sync.db \
     --rp-id sync.example.org \
-    --host 127.0.0.1 --port 8787</code></pre>
+    --host 127.0.0.1 --port 8787</div>
         <p>
           <strong>도메인은 신중히 고르세요.</strong> 패스키는 이 도메인에 묶여, 나중에 바꾸면 등록된
           패스키가 전부 무효가 됩니다. 그리고 <code class="nb">a.b.example.org</code> 처럼 점이 하나 더 깊은
@@ -85,11 +85,11 @@ python3 tools/synserver/app.py \
           <li>가능하면 <strong>패스키를 하나 더</strong> 만들어 두세요(로그인 상태에서 같은 버튼). 패스키가
             하나뿐이면 그것을 잃는 순간 잠깁니다.</li>
         </ol>
-        <p class="note">
+        <div class="callout"><p>
           첫 vault 가 만들어진 뒤에는 <strong>새 vault 생성이 잠깁니다</strong> — 공개 주소라 아무나 계정을
           만들 수 있으면 그 자체가 자원 낭비이기 때문입니다. 같은 vault 에 패스키를 추가하려면
           <strong>먼저 로그인</strong>한 뒤 눌러야 합니다.
-        </p>
+        </p></div>
       </section>
 
       <section>
@@ -98,7 +98,7 @@ python3 tools/synserver/app.py \
           브라우저에서 <strong>코드 새로 만들기</strong> 를 누르면 <strong>실행할 명령 전체</strong>가 복사 버튼과 함께
           나옵니다. 그 머신의 pytmux 에서 <code class="nb">:</code> 프롬프트에 붙여넣으면 끝입니다.
         </p>
-        <pre><code>:claude-token-sync enroll A1B2-C3D4-E5F6-…</code></pre>
+        <div class="code">:claude-token-sync enroll A1B2-C3D4-E5F6-…</div>
         <p>
           <strong>암호화 열쇠도 그 코드에 실려 함께 넘어갑니다</strong> — 머신끼리 열쇠를 손으로 옮길 필요가
           없습니다. 코드는 <strong>1회용·10분</strong>이고, 쓰이는 즉시 브라우저 화면이 스스로 갱신돼 등록된
@@ -108,14 +108,14 @@ python3 tools/synserver/app.py \
         <p>
           UI 없는 머신(헤드리스·CI)에서는 셸로도 됩니다.
         </p>
-        <pre><code>pytmux cmd claude-token-sync enroll &lt;코드&gt;
+        <div class="code">pytmux cmd claude-token-sync enroll &lt;코드&gt;
 pytmux cmd claude-token-sync now       # 즉시 한 바퀴
-pytmux cmd claude-token-sync status    # 상태·마지막 오류</code></pre>
-        <p class="note">
-          <strong>원격 탭을 보는 중</strong>에 친 <code class="nb">:claude-token-sync</code> 는
+pytmux cmd claude-token-sync status    # 상태·마지막 오류</div>
+        <div class="callout"><p>
+          <strong>원격 탭을 보는 중</strong>에 친 <code>:claude-token-sync</code> 는
           <strong>그 원격 머신</strong>에 적용됩니다(스크롤·프롬프트 점프와 같은 규칙). 로컬 머신을
           대상으로 하려면 로컬 탭에서 치거나 셸 명령을 쓰세요.
-        </p>
+        </p></div>
       </section>
 
       <section>
@@ -123,11 +123,11 @@ pytmux cmd claude-token-sync status    # 상태·마지막 오류</code></pre>
         <p>
           기본 주소 대신 자기 서버를 쓰려면 둘 중 하나면 됩니다 — 코드를 고칠 필요는 없습니다.
         </p>
-        <pre><code>pytmux cmd claude-token-sync on https://sync.example.org
+        <div class="code">pytmux cmd claude-token-sync on https://sync.example.org
 # 또는 환경변수
-PYTMUX_TOKEN_SYNC_URL=https://sync.example.org</code></pre>
+PYTMUX_TOKEN_SYNC_URL=https://sync.example.org</div>
         <p>
-          끄려면 <code class="nb">claude-token-sync off</code>. 꺼 두면 동작·성능·프라이버시가 도입 전과
+          끄려면 <code>claude-token-sync off</code>. 꺼 두면 동작·성능·프라이버시가 도입 전과
           <strong>완전히 같습니다</strong>.
         </p>
       </section>
@@ -135,20 +135,20 @@ PYTMUX_TOKEN_SYNC_URL=https://sync.example.org</code></pre>
       <section>
         <h2>결과 읽는 법</h2>
         <p>
-          <code class="nb">claude-token-sync now</code> 는 세 숫자를 돌려줍니다.
+          <code>claude-token-sync now</code> 는 세 숫자를 돌려줍니다.
         </p>
-        <pre><code>pushed 703 merged 6792 rejected 0</code></pre>
+        <div class="code">pushed 703 merged 6792 rejected 0</div>
         <ul>
           <li><strong>pushed</strong> — 이번에 올린 내 기록 수</li>
           <li><strong>merged</strong> — 다른 머신에서 받아 합친 수</li>
           <li><strong>rejected</strong> — 받았지만 버린 수. <strong>0 이 아니면 열쇠가 다릅니다</strong> —
             머신마다 다른 열쇠로 올리고 있다는 뜻이라, 열쇠를 맞추고
-            <code class="nb">claude-token-sync resync</code> 로 전량 다시 올려야 합니다.</li>
+            <code>claude-token-sync resync</code> 로 전량 다시 올려야 합니다.</li>
         </ul>
         <p>
           계정이 여러 개면 <strong>계정별로 갈려서</strong> 합쳐집니다. 같은 계정은 머신을 넘어 하나로,
           다른 계정은 끝까지 따로입니다. 특정 계정만 내보내려면
-          <code class="nb">token_sync_accounts</code> 에 그 계정만 적으면 됩니다(회사 계정을 개인 서버로
+          <code>token_sync_accounts</code> 에 그 계정만 적으면 됩니다(회사 계정을 개인 서버로
           올리지 않기).
         </p>
       </section>
@@ -170,7 +170,7 @@ PYTMUX_TOKEN_SYNC_URL=https://sync.example.org</code></pre>
             <code class="nb">sync_device.key</code> · <code class="nb">sync_device.id</code> 삭제
             (토큰 기록 <code class="nb">claude-tokens.db</code> 는 그대로)</li>
           <li>웹에서 <strong>로그아웃 → 로그인</strong> 하면 새 열쇠 생성</li>
-          <li>머신마다 코드를 새로 만들어 재등록하고 <code class="nb">claude-token-sync resync</code></li>
+          <li>머신마다 코드를 새로 만들어 재등록하고 <code>claude-token-sync resync</code></li>
         </ol>
       </section>
 
