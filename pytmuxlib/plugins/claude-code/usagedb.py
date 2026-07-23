@@ -44,7 +44,20 @@ from . import usagelog
 # (팝업 계정 뷰·상태줄 계정 Σ 를 스크랩 usage 대신 usage_xc 로 전환). 트랜스크립트
 # jsonl 엔 계정 라벨이 없어 ingest 시 pane._claude_account 로 채운다 — 백필된 레거시
 # 행은 NULL(미상→집계서 unknown). ALTER ADD COLUMN(메타데이터만) — 기존 xc 쿼리 무영향.
-SCHEMA_VERSION = 8
+# v9(2026-07-23, TOKEN_SYNC_MULTI_MACHINE_DESIGN §6): 여러 머신 간 동기화 P0.
+# ① usage_xc.tzoff — 원산지(적재한 머신)의 그 시점 UTC 오프셋. 집계 SQL 이 지금은
+#    'localtime'(=조회 머신 tz)으로 버킷을 만들어, 머신 DB 를 합치는 순간 "7월 22일
+#    합계"가 머신마다 갈린다(usage 테이블이 v5 에서 이미 겪은 문제). 새 행부터 실어
+#    두고, 버킷 전환은 P5(표시층)에서 한다 — 지금 넣어야 그때 쓸 데이터가 쌓인다.
+# ② usage_xc.host / limits.host — 원산지 host_id(로컬 적재분은 NULL = 자기 것).
+# ③ limits.lkey + 부분 UNIQUE 인덱스 — limits 는 PK 가 없어 그대로 합치면 중복이
+#    쌓인다. 멱등 키(host|ts|source|account)를 새 행부터 채워 INSERT OR IGNORE 성립.
+#    레거시 행 백필은 host_id 를 아는 동기화 계층이 backfill_limits_lkey() 로 한다
+#    (usagedb 는 파일 I/O 를 하지 않는다 — host_id 는 <db_dir>/host_id 파일).
+# ④ sync_remote / sync_export / account_alias — 진행 커서와 가명↔이메일 로컬 매핑.
+# 전부 CREATE IF NOT EXISTS + ALTER ADD COLUMN(메타데이터만)이라 v8 DB 는 첫 connect
+# 에서 자동 승급되고, 동기화를 켜지 않으면 거동·성능 변화가 0 이다(설계 G5).
+SCHEMA_VERSION = 9
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS usage (
@@ -98,6 +111,27 @@ CREATE TABLE IF NOT EXISTS usage_xc_cursor (
   path   TEXT PRIMARY KEY,
   offset INTEGER NOT NULL,
   mtime  REAL
+);
+
+CREATE TABLE IF NOT EXISTS sync_remote (
+  remote   TEXT PRIMARY KEY,
+  label    TEXT,
+  cursor   TEXT,
+  last_ok  REAL,
+  last_err TEXT,
+  rows_in  INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS sync_export (
+  kind       TEXT PRIMARY KEY,
+  last_rowid INTEGER NOT NULL DEFAULT 0,
+  last_ts    REAL
+);
+
+CREATE TABLE IF NOT EXISTS account_alias (
+  acct_id TEXT PRIMARY KEY,
+  account TEXT,
+  label   TEXT
 );
 """
 
@@ -173,6 +207,11 @@ def connect(path: str) -> sqlite3.Connection:
             _migrate_v8_xc_account(conn)
         except sqlite3.Error:
             new_v = min(new_v, 7)
+    if cur_v < 9 and new_v >= 8:    # v9: 동기화 P0(원산지 tzoff/host·limits.lkey)
+        try:
+            _migrate_v9_sync(conn)
+        except sqlite3.Error:
+            new_v = min(new_v, 8)
     conn.execute(f"PRAGMA user_version={new_v}")
     conn.commit()
     return conn
@@ -294,6 +333,144 @@ def _migrate_v8_xc_account(conn) -> int:
         return 0
     conn.execute("ALTER TABLE usage_xc ADD COLUMN account TEXT")
     return 1
+
+
+def _migrate_v9_sync(conn) -> int:
+    """v9(동기화 P0): usage_xc.tzoff/host · limits.host/lkey 컬럼과 인덱스 보장.
+
+    ALTER ADD COLUMN 은 메타데이터만 바꾼다(129k 행 재기록 없음). 기존 행은 전부
+    NULL — tzoff NULL 은 현행(조회 머신 로컬) 폴백이라 **거동이 그대로**고, host NULL
+    은 "자기 것", lkey NULL 은 부분 UNIQUE 인덱스(WHERE lkey IS NOT NULL)에서 제외돼
+    레거시 중복 limits 행이 마이그레이션을 깨지 않는다. 추가한 컬럼 수 반환(멱등 —
+    이미 있으면 0, v5~v8 ALTER 와 동일 패턴)."""
+    n = 0
+    xc = {r["name"] for r in conn.execute("PRAGMA table_info(usage_xc)")}
+    if "tzoff" not in xc:
+        conn.execute("ALTER TABLE usage_xc ADD COLUMN tzoff INTEGER")
+        n += 1
+    if "host" not in xc:
+        conn.execute("ALTER TABLE usage_xc ADD COLUMN host TEXT")
+        n += 1
+    lim = {r["name"] for r in conn.execute("PRAGMA table_info(limits)")}
+    if "host" not in lim:
+        conn.execute("ALTER TABLE limits ADD COLUMN host TEXT")
+        n += 1
+    if "lkey" not in lim:
+        conn.execute("ALTER TABLE limits ADD COLUMN lkey TEXT")
+        n += 1
+    # 인덱스는 컬럼이 생긴 뒤에만 만들 수 있어 _SCHEMA 가 아니라 여기 둔다.
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_limits_lkey "
+                 "ON limits(lkey) WHERE lkey IS NOT NULL")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_xc_host ON usage_xc(host)")
+    return n
+
+
+def limits_lkey(host: str | None, ts, source, account) -> str:
+    """limits 행의 멱등 키 = host|ts|source|account. 같은 관측을 두 번 받아도 한 행.
+
+    ts 는 소수 6자리로 고정 포맷한다 — float repr 차이(1.0 vs 1.000000)로 같은 관측이
+    다른 키가 되는 것을 막는다. host 가 없으면 빈 문자열(로컬 관측분: 백필 시
+    자기 host_id 로 채워진다)."""
+    return "%s|%.6f|%s|%s" % (host or "", float(ts or 0.0),
+                              source or "", account or "")
+
+
+def backfill_limits_lkey(conn, host_id: str) -> int:
+    """레거시 limits 행(lkey NULL)에 자기 host_id 기준 lkey 를 채운다. 채운 행 수.
+
+    usagedb 는 파일을 읽지 않으므로(host_id 는 `<db_dir>/host_id`) 동기화 계층이
+    host_id 를 넘겨 호출한다. **자기 관측분에만** 쓰는 것이라 안전하고, 충돌(같은
+    키가 이미 있음)이 나는 행은 건너뛴다 — 과거 중복 관측이 남긴 잔상이라 첫 건만
+    키를 갖고 나머지는 NULL 로 남는다(= 동기화 대상에서 조용히 빠지되 로컬 표시는
+    그대로). 멱등: 두 번 돌려도 이미 채운 행은 다시 건드리지 않는다."""
+    if not host_id:
+        return 0
+    rows = conn.execute(
+        "SELECT rowid AS rid, ts, source, account FROM limits "
+        "WHERE lkey IS NULL").fetchall()
+    n = 0
+    for r in rows:
+        k = limits_lkey(host_id, r["ts"], r["source"], r["account"])
+        try:
+            conn.execute("UPDATE limits SET host=COALESCE(host,?), lkey=? "
+                         "WHERE rowid=?", (host_id, k, r["rid"]))
+            n += 1
+        except sqlite3.IntegrityError:
+            continue        # 같은 관측의 잔상 중복 — 첫 건만 키를 갖는다
+    conn.commit()
+    return n
+
+
+# ── 동기화 커서(P2~P4 에서 쓴다. P0 은 저장소만 둔다) ──────────────────────
+
+def get_export_cursor(conn, kind: str) -> int:
+    """내보내기 커서(자기 분). 없으면 0 — 처음이면 전량이 대상."""
+    r = conn.execute("SELECT last_rowid FROM sync_export WHERE kind=?",
+                     (kind,)).fetchone()
+    return int(r["last_rowid"]) if r else 0
+
+
+def set_export_cursor(conn, kind: str, last_rowid: int, last_ts=None) -> None:
+    """내보내기 커서 전진. **성공적으로 보낸 뒤에만** 부른다 — 실패 시 전진시키지
+    않는 것이 곧 재시도 큐다(설계 §5.6)."""
+    conn.execute(
+        "INSERT INTO sync_export (kind,last_rowid,last_ts) VALUES (?,?,?) "
+        "ON CONFLICT(kind) DO UPDATE SET last_rowid=excluded.last_rowid, "
+        "last_ts=excluded.last_ts",
+        (kind, int(last_rowid), last_ts))
+    conn.commit()
+
+
+def get_sync_remote(conn, remote: str):
+    """원격(서버 또는 폴백 샤드 소유자) 진행 상태 dict 또는 None."""
+    r = conn.execute("SELECT * FROM sync_remote WHERE remote=?",
+                     (remote,)).fetchone()
+    return dict(r) if r else None
+
+
+def set_sync_remote(conn, remote: str, cursor=None, label=None,
+                    last_ok=None, last_err=None, rows_in_delta: int = 0) -> None:
+    """원격 진행 갱신(부분 갱신 — None 인 필드는 기존 값 유지). last_err 는 **빈
+    문자열이면 지운다**(성공했는데 옛 사유가 남아 있으면 조용한 오해를 부른다)."""
+    conn.execute("INSERT OR IGNORE INTO sync_remote (remote) VALUES (?)",
+                 (remote,))
+    sets, args = [], []
+    for col, val in (("cursor", cursor), ("label", label), ("last_ok", last_ok)):
+        if val is not None:
+            sets.append(f"{col}=?")
+            args.append(val)
+    if last_err is not None:
+        sets.append("last_err=?")
+        args.append(last_err or None)
+    if rows_in_delta:
+        sets.append("rows_in=rows_in+?")
+        args.append(int(rows_in_delta))
+    if sets:
+        args.append(remote)
+        conn.execute(f"UPDATE sync_remote SET {', '.join(sets)} WHERE remote=?",
+                     args)
+    conn.commit()
+
+
+def put_account_alias(conn, acct_id: str, account=None, label=None) -> None:
+    """가명↔이메일 로컬 매핑 upsert. account/label 은 준 값만 덮어쓴다(모르는 채로
+    들어온 가명에 나중에 이메일이 붙는 경우가 정상 경로다)."""
+    conn.execute("INSERT OR IGNORE INTO account_alias (acct_id) VALUES (?)",
+                 (acct_id,))
+    if account is not None:
+        conn.execute("UPDATE account_alias SET account=? WHERE acct_id=?",
+                     (account, acct_id))
+    if label is not None:
+        conn.execute("UPDATE account_alias SET label=? WHERE acct_id=?",
+                     (label, acct_id))
+    conn.commit()
+
+
+def account_aliases(conn) -> dict:
+    """{acct_id: {"account":…, "label":…}} — 표시층이 가명을 사람이 읽는 이름으로
+    되돌릴 때 쓴다. 못 맞춘 가명은 호출자가 짧은 지문으로 표시한다(추측 금지)."""
+    return {r["acct_id"]: {"account": r["account"], "label": r["label"]}
+            for r in conn.execute("SELECT * FROM account_alias")}
 
 
 def _row_to_rec(row) -> dict:
@@ -561,17 +738,29 @@ def _iso_to_epoch(ts) -> float:
 
 
 def _xc_row(rec: dict, tab=None, pane=None, pytmux_session=None, account=None):
-    return (str(rec["xkey"]), _iso_to_epoch(rec.get("ts")),
+    """레코드 → INSERT 튜플. v9: 원산지 tzoff/host 를 함께 싣는다.
+
+    tzoff 는 **그 레코드의 ts 시점** 로컬 오프셋이다(적재 시각이 아니라) — 과거
+    트랜스크립트를 나중에 백필해도 그때의 벽시계로 버킷이 잡히게(usage 테이블이
+    v5 에서 택한 것과 같은 규칙). rec 가 tzoff/host 를 명시하면 그 값을 존중한다:
+    동기화로 **남의 머신에서 들어온 행**은 원산지 값을 그대로 보존해야 하기 때문이다
+    (여기서 로컬 값으로 덮으면 §1.2 의 tz 문제가 그대로 되살아난다)."""
+    ts = _iso_to_epoch(rec.get("ts"))
+    tzoff = rec.get("tzoff")
+    if tzoff is None:
+        tzoff = usagelog._tzoff_at(ts)
+    return (str(rec["xkey"]), ts,
             rec.get("session_uuid"), tab, pane, pytmux_session,
             rec.get("model"), account, int(rec.get("input", 0)),
             int(rec.get("output", 0)), int(rec.get("cache_create", 0)),
-            int(rec.get("cache_read", 0)), int(rec.get("is_sidechain", 0)))
+            int(rec.get("cache_read", 0)), int(rec.get("is_sidechain", 0)),
+            tzoff, rec.get("host"))
 
 
 _XC_INSERT = (
     "INSERT OR IGNORE INTO usage_xc (xkey,ts,session_uuid,tab,pane,"
     "pytmux_session,model,account,input,output,cache_create,cache_read,"
-    "is_sidechain) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    "is_sidechain,tzoff,host) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
 
 
 def insert_xc(conn, rec: dict, tab=None, pane=None, pytmux_session=None,
@@ -763,26 +952,35 @@ def snap_from_usage(usage: dict, ts: float, source: str) -> dict:
             "source": str(source)}
 
 
-def insert_limits(conn, snap: dict) -> bool:
+def insert_limits(conn, snap: dict, host: str | None = None) -> bool:
     """스냅샷 한 건 삽입. **직전 스냅샷과 값(ts·source 제외)이 전부 같으면 skip**
     (False) — 주기 프로브가 같은 값을 반복 측정해도 DB 가 부풀지 않게, '값이 바뀐
-    순간'만 이력에 남긴다. 실패도 조용히 False(본 흐름 비차단, insert 와 동일 계약)."""
+    순간'만 이력에 남긴다. 실패도 조용히 False(본 흐름 비차단, insert 와 동일 계약).
+
+    v9: host(원산지 host_id)를 주면 host 와 멱등키 lkey 를 함께 적재한다 — 같은
+    관측이 동기화로 되돌아와도 부분 UNIQUE 인덱스가 중복을 막는다. 안 주면 종전대로
+    NULL(로컬 전용 행, 나중에 backfill_limits_lkey 가 채운다)."""
     try:
         last = last_limits(conn)
         if last is not None and all(
                 last.get(c) == snap.get(c) for c in _LIMITS_VAL_COLS):
             return False
+        ts = float(snap.get("ts", 0.0))
+        src = snap.get("source") or "probe"
+        lkey = limits_lkey(host, ts, src, snap.get("account")) if host else None
         conn.execute(
             "INSERT INTO limits (ts,account,session_pct,session_reset,"
             "week_all_pct,week_all_reset,week_sonnet_pct,week_sonnet_reset,"
-            "source) VALUES (?,?,?,?,?,?,?,?,?)",
-            (float(snap.get("ts", 0.0)), snap.get("account"),
+            "source,host,lkey) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (ts, snap.get("account"),
              snap.get("session_pct"), snap.get("session_reset"),
              snap.get("week_all_pct"), snap.get("week_all_reset"),
              snap.get("week_sonnet_pct"), snap.get("week_sonnet_reset"),
-             snap.get("source") or "probe"))
+             src, host, lkey))
         conn.commit()
         return True
+    except sqlite3.IntegrityError:
+        return False        # 같은 lkey 재수신 = 멱등 skip(오류 아님)
     except sqlite3.Error:
         return False
 

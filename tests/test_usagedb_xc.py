@@ -169,7 +169,9 @@ async def test_v7_to_v8_migration_adds_account_legacy_null():
               "cache_read,is_sidechain) VALUES ('old',1.0,1,2,3,4,0)")
     c.execute("PRAGMA user_version=7"); c.commit(); c.close()
     conn = usagedb.connect(p)
-    assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 8
+    # v7 DB 는 최신 스키마까지 한 번에 올라온다(>=8 — v9 동기화 컬럼이 붙은 뒤에도
+    # 이 테스트가 검증하는 것은 "v8 의 account 승급"이라 상한을 고정하지 않는다).
+    assert int(conn.execute("PRAGMA user_version").fetchone()[0]) >= 8
     assert "account" in {r["name"] for r in conn.execute(
         "PRAGMA table_info(usage_xc)")}
     assert usagedb.xc_totals_by_account(conn) == {usagelog.UNKNOWN: 10}
