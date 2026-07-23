@@ -243,8 +243,9 @@ async function ensureVaultKey() {
       },
     });
   } catch (e) {
-    say("키 준비를 건너뜁니다 — " + (e.message || e), true);
-    return;
+    // 사용자가 인증을 취소했거나 실패했다 — **성공한 척하지 않는다**.
+    say("인증이 취소됐습니다 — 키를 열지 못했습니다.", true);
+    return false;
   }
   // 이 assertion 으로 로그인도 갱신해 둔다(세션 유지).
   await post("/v1/auth/verify", {
@@ -254,7 +255,7 @@ async function ensureVaultKey() {
     clientDataJSON: bufToB64u(cred.response.clientDataJSON),
     signature: bufToB64u(cred.response.signature),
   });
-  await unlockOrCreateKey(prfBits(cred));
+  return await unlockOrCreateKey(prfBits(cred));
 }
 
 // PRF 가 있으면 패스키로, 없으면 암호구절로 — 어느 쪽이든 **서버는 암호문만** 갖는다.
@@ -377,6 +378,23 @@ async function pair() {
     // 새로고침으로 키가 잠겼다면 여기서 한 번 푼다(지문/얼굴 1회).
     await ensureVaultKey();
   }
+  if (!VAULT_KEY) {
+    // 서버에 감싼 키가 있는데 못 열었다면(취소·오답) **코드를 만들지 않는다** —
+    // 키 없는 코드를 주면 머신은 등록되지만 통계가 영영 안 합쳐진다(조용한 저하).
+    let hasKey = false;
+    try {
+      const r = await fetch("/v1/session", { credentials: "same-origin" });
+      hasKey = r.ok ? !!(await r.json()).has_key : false;
+    } catch (e) { /* 알 수 없으면 아래에서 보수적으로 처리 */ }
+    if (hasKey) {
+      say("키가 잠겨 있어 코드를 만들지 않았습니다 — 인증을 완료한 뒤 다시 누르세요.",
+          true);
+      return;
+    }
+    // 아직 vault 키 자체가 없는 상태(폴백 운용) — 키 없는 코드임을 분명히 알린다.
+    say("이 vault 에는 아직 키가 없습니다 — 코드에 키가 실리지 않으니 첫 머신에서 "
+        + "invite/adopt 로 키를 맞춰야 합니다.", true);
+  }
   const code = newPairingCode();
   const payload = { code_h: await codeHash(code) };
   if (VAULT_KEY) {
@@ -441,19 +459,18 @@ async function loadDevices() {
   tb.textContent = "";
   for (const d of devices) {
     const tr = document.createElement("tr");
+    // 서버가 살아 있는 기기만 준다(폐기 = 삭제) — 목록에 잔해가 남지 않는다.
     const name = document.createElement("td");
-    name.textContent = (d.label || "(이름 없음)") + (d.revoked ? " — 폐기됨" : "");
+    name.textContent = d.label || "(이름 없음)";
     const act = document.createElement("td");
-    if (!d.revoked) {
-      const btn = document.createElement("button");
-      btn.textContent = "폐기";
-      btn.addEventListener("click", async () => {
-        await fetch("/v1/devices/" + encodeURIComponent(d.device_id),
-                    { method: "DELETE", credentials: "same-origin" });
-        await loadDevices();
-      });
-      act.appendChild(btn);
-    }
+    const btn = document.createElement("button");
+    btn.textContent = "폐기";
+    btn.addEventListener("click", async () => {
+      await fetch("/v1/devices/" + encodeURIComponent(d.device_id),
+                  { method: "DELETE", credentials: "same-origin" });
+      await loadDevices();
+    });
+    act.appendChild(btn);
     tr.append(name, act);
     tb.appendChild(tr);
   }

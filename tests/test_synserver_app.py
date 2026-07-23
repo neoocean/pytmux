@@ -826,13 +826,13 @@ async def test_reenroll_same_machine_replaces_device():
 
     a1 = enroll_machine("aaaa1111", "mac")
     b1 = enroll_machine("bbbb2222", "surface")
-    live = [d for d in sdb.list_devices(app.conn, vault) if not d["revoked"]]
-    assert len(live) == 2
+    assert len(sdb.list_devices(app.conn, vault)) == 2
 
     a2 = enroll_machine("aaaa1111", "mac")        # 같은 머신 재등록
-    live = [d for d in sdb.list_devices(app.conn, vault) if not d["revoked"]]
+    live = sdb.list_devices(app.conn, vault)
+    # 목록에 **잔해가 남지 않는다** — 폐기는 삭제다(제보: '폐기됨' 이 쌓여 읽기 어려움).
     assert {d["device_id"] for d in live} == {a2, b1}, live
-    assert sdb.get_device(app.conn, a1) is None   # 옛 등록은 폐기(요청도 401)
+    assert sdb.get_device(app.conn, a1) is None   # 옛 등록은 사라짐(요청도 401)
 
     # host_id 가 없으면(구 클라이언트) 종전대로 각각 남는다 — 판단 근거가 없으므로.
     app._unauth = [0.0, 0]
@@ -844,5 +844,21 @@ async def test_reenroll_same_machine_replaces_device():
     st, _o = _j(app.handle("POST", "/v1/devices", body=json.dumps({
         "pairing_code": pr["code"], "pubkey": wa.b64u_encode(pub)}).encode()))
     assert st == 200
-    live = [d for d in sdb.list_devices(app.conn, vault) if not d["revoked"]]
-    assert len(live) == 3
+    assert len(sdb.list_devices(app.conn, vault)) == 3
+
+
+async def test_revoked_device_disappears_from_list():
+    """폐기하면 목록에서 **사라진다**(제보: '폐기됨' 항목이 쌓여 무엇이 살아 있는지
+    읽기 어려웠다). 인증은 device_id 조회라 지운 기기의 요청은 그대로 401 이다."""
+    app, clock = _app()
+    cookie, vault, _a = _enroll(app)
+    did, sk = _device(app, cookie)
+    assert [d["device_id"] for d in sdb.list_devices(app.conn, vault)] == [did]
+
+    assert _j(app.handle("DELETE", "/v1/devices/" + did, headers=cookie))[0] == 200
+    assert sdb.list_devices(app.conn, vault) == []
+    st, out = _j(app.handle("GET", "/v1/devices", headers=cookie))
+    assert st == 200 and out["devices"] == []
+    body = _rec("e1" * 8).encode()
+    h = _signed(app, clock, did, sk, "POST", "/v1/events", body)
+    assert _j(app.handle("POST", "/v1/events", headers=h, body=body))[0] == 401

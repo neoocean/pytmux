@@ -283,8 +283,8 @@ def add_device(conn, vault_id: str, pubkey: bytes, label=None,
     if host_id:
         # 같은 머신의 옛 등록은 폐기한다 — 재등록이 기기 목록을 늘리면 사용자가
         # 어느 것이 살아 있는지 알 수 없고, 상한(MAX_DEVICES)만 잡아먹는다.
-        conn.execute("UPDATE device SET revoked=? WHERE vault_id=? AND host_id=?"
-                     " AND revoked IS NULL", (now, vault_id, str(host_id)))
+        conn.execute("DELETE FROM device WHERE vault_id=? AND host_id=?",
+                     (vault_id, str(host_id)))
         conn.commit()
     n = conn.execute("SELECT COUNT(*) AS n FROM device WHERE vault_id=?"
                      " AND revoked IS NULL", (vault_id,)).fetchone()["n"]
@@ -309,18 +309,22 @@ def get_device(conn, device_id: str):
 
 
 def revoke_device(conn, vault_id: str, device_id: str, now: float) -> bool:
-    """**자기 vault 의 기기만** 폐기할 수 있다(vault_id 를 조건에 넣는 이유)."""
-    cur = conn.execute(
-        "UPDATE device SET revoked=? WHERE device_id=? AND vault_id=?"
-        " AND revoked IS NULL", (now, device_id, vault_id))
+    """**자기 vault 의 기기만** 폐기할 수 있다(vault_id 를 조건에 넣는 이유).
+
+    폐기 = **행 삭제**다. 표시로만 남기면 목록에 '폐기됨' 이 쌓여 무엇이 살아 있는지
+    읽기 어려워진다(제보). 인증은 device_id 조회로 하므로 지운 기기의 요청은 그대로
+    401 이고, 남겨 둘 실익이 없다."""
+    cur = conn.execute("DELETE FROM device WHERE device_id=? AND vault_id=?",
+                       (device_id, vault_id))
     conn.commit()
     return cur.rowcount > 0
 
 
 def list_devices(conn, vault_id: str) -> list:
+    """살아 있는 기기만. 폐기는 삭제이므로 목록에 잔해가 남지 않는다."""
     return [dict(r) for r in conn.execute(
-        "SELECT device_id, label, created, last_seen, revoked FROM device"
-        " WHERE vault_id=? ORDER BY created", (vault_id,))]
+        "SELECT device_id, label, created, last_seen FROM device"
+        " WHERE vault_id=? AND revoked IS NULL ORDER BY created", (vault_id,))]
 
 
 def touch_device(conn, device_id: str, now: float) -> None:
