@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pytmux sync — 기기 등록</title>
+<link rel="stylesheet" href="/static/enroll.css">
+</head>
+<body>
+<main>
+  <h1>pytmux 토큰 동기화</h1>
+  <p class="lead">
+    이 서버는 <strong>계정 이름을 저장하지 않습니다</strong>. 아이디도 비밀번호도 없이
+    <strong>패스키</strong> 하나로 들어오고, 올라오는 기록은 이 브라우저가 아니라
+    <strong>각 머신에서 암호화</strong>돼 서버는 내용을 읽지 못합니다.
+  </p>
+
+  <section>
+    <h2>1. 패스키</h2>
+    <div class="row">
+      <button id="btn-login">패스키로 로그인</button>
+      <button id="btn-register">새 패스키 만들기</button>
+    </div>
+    <p class="hint">처음이면 <em>새 패스키 만들기</em> 로 vault 가 생깁니다. 다른 기기의
+      브라우저에서도 같은 vault 에 패스키를 추가할 수 있습니다(로그인 후 다시 누르세요).</p>
+  </section>
+
+  <section id="sec-pair" hidden>
+    <h2>2. 머신 붙이기</h2>
+    <p>아래 <strong>1회용 코드</strong>를 그 머신의 pytmux 에서 입력하세요(10분 유효):</p>
+    <pre id="code">—</pre>
+    <p class="cmd"><code>:token-sync enroll &lt;코드&gt;</code></p>
+    <button id="btn-pair">코드 새로 만들기</button>
+  </section>
+
+  <section id="sec-devices" hidden>
+    <h2>3. 등록된 머신</h2>
+    <table id="devices"><tbody></tbody></table>
+    <p class="hint">기기를 잃어버렸다면 여기서 <strong>폐기</strong>하세요 — 그 즉시 그
+      머신의 업로드·내려받기가 거부됩니다(키 자체를 바꾸려면 문서의 §5.9 참고).</p>
+  </section>
+
+  <p id="msg" role="status"></p>
+</main>
+<script src="/static/enroll.js"></script>
+</body>
+</html>
