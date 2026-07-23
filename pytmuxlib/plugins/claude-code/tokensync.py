@@ -117,13 +117,27 @@ class SyncClient:
         self._keys()
         return syncrypto.format_invite(self._master)
 
-    def adopt_invite(self, code: str) -> None:
-        """다른 머신에서 만든 마스터 키를 받아들인다. 이미 데이터를 올린 뒤 키를
-        바꾸면 그 전 것은 복호 불가가 되므로 **덮어쓰기 전에 경고**해야 한다 —
-        호출자(명령 핸들러)가 확인을 받는다."""
+    def adopt_invite(self, code: str, force: bool = False) -> None:
+        """다른 머신에서 만든 마스터 키를 받아들인다.
+
+        C-2(검수): 예전 주석은 "호출자가 확인을 받는다" 였지만 **실제 호출자는 아무
+        확인도 하지 않았다**. 이미 이 머신이 자기 키로 올린 이력이 있으면 키 교체는
+        그 데이터를 복호 불능으로 만든다 → 기본은 거부하고 force 로만 강행한다."""
         master = syncrypto.parse_invite(code)
-        syncrypto.save_master(os.path.join(self.db_dir, "sync_vault.key"), master)
+        path = os.path.join(self.db_dir, "sync_vault.key")
+        if not force and os.path.exists(path):
+            sent = usagedb.get_export_cursor(self.conn, "limits")
+            if sent:
+                raise SyncError(
+                    "이 머신은 이미 자기 키로 %d행까지 올렸습니다 — 키를 바꾸면 그"
+                    " 데이터는 복호할 수 없게 됩니다. 정말 바꾸려면"
+                    " ':token-sync adopt <코드> force'" % sent)
+        syncrypto.save_master(path, master)
         self._master, self._k_id, self._k_enc = None, None, None
+        if force:
+            # 키가 바뀌었으면 예전 키로 올린 것은 남의 것이나 마찬가지다 — 커서를
+            # 되돌려 새 키로 다시 올린다(멱등이라 안전).
+            usagedb.set_export_cursor(self.conn, "limits", 0, self._now())
 
     def _device_key(self):
         """머신 고유 Ed25519 키(파일 0600). 없으면 만든다."""
@@ -289,12 +303,11 @@ class SyncClient:
             if usagedb.import_limits(self.conn, rec, rec.get("host"),
                                      rec.get("_lkey")):
                 merged += 1
+        # C-3(검수): 성공을 쓴 뒤 오류를 또 쓰면 마지막 값이 성공을 덮어 상태가
+        # 뒤집힌다. 한 번만 쓴다.
         usagedb.set_sync_remote(self.conn, self.REMOTE, cursor=str(last),
-                                last_ok=self._now(), last_err="",
-                                rows_in_delta=merged)
-        if rejected:
-            usagedb.set_sync_remote(self.conn, self.REMOTE,
-                                    last_err="거부 %d건" % rejected)
+                                last_ok=self._now(), rows_in_delta=merged,
+                                last_err=("거부 %d건" % rejected) if rejected else "")
         return {"rows": last - since, "merged": merged, "rejected": rejected}
 
     def _open_event(self, ev, k_id, k_enc):

@@ -118,14 +118,24 @@ def load_or_create_master(path: str) -> bytes:
     try:
         with open(path, "rb") as f:
             raw = f.read().strip()
-        if raw:
-            master = base64.b64decode(raw, validate=True)
-            if len(master) == MASTER_LEN:
-                return master
-    except (OSError, ValueError, binascii.Error):
-        pass
-    master = gen_master()
-    save_master(path, master)
+    except FileNotFoundError:
+        master = gen_master()       # **없을 때만** 새로 만든다
+        save_master(path, master)
+        return master
+    except OSError as e:
+        raise SyncCryptoError("키 파일을 읽지 못했습니다: %s" % e) from e
+    # C-1(검수): 예전에는 파일이 깨졌어도 조용히 새 키를 만들었다 — 그 순간부터 이
+    # 머신은 다른 vault 키로 올리고 서버의 기존 레코드는 복호 불능이 된다(사용자는
+    # "왜 안 합쳐지지?" 를 오래 헤맨다). 파일이 **있는데** 못 읽으면 하드 실패다.
+    try:
+        master = base64.b64decode(raw, validate=True)
+    except (ValueError, binascii.Error) as e:
+        raise SyncCryptoError(
+            "키 파일이 손상됐습니다(%s) — 다른 머신에서 :token-sync invite 로 받은 "
+            "코드를 :token-sync adopt 로 넣거나, 파일을 지워 새 키를 만드세요" % path
+        ) from e
+    if len(master) != MASTER_LEN:
+        raise SyncCryptoError("키 파일 길이가 올바르지 않습니다: %s" % path)
     return master
 
 

@@ -32,10 +32,13 @@ class Clock:
         return self.t
 
 
-def _app():
+def _app(**kw):
+    """테스트용 앱. 기본은 **등록 개방**(대부분의 테스트가 vault 2개를 만든다) —
+    닫힌 기본값 자체는 S-1 테스트가 따로 검증한다."""
     conn = sdb.connect(":memory:")
     clock = Clock()
-    app = sapp.SyncApp(conn, RP_ID, ORIGIN, now=clock)
+    kw.setdefault("open_registration", True)
+    app = sapp.SyncApp(conn, RP_ID, ORIGIN, now=clock, **kw)
     return app, clock
 
 
@@ -58,7 +61,7 @@ def _enroll(app, auth=None):
     assert status == 200, body
     sid = headers["Set-Cookie"].split(";")[0].split("=", 1)[1]
     vault = sdb.session_vault(app.conn, sid, app._now())
-    return {"Cookie": "sync_sid=" + sid}, vault, auth
+    return {"Cookie": sapp.COOKIE + "=" + sid}, vault, auth
 
 
 def _device(app, cookie):
@@ -444,3 +447,193 @@ async def test_concurrent_requests_do_not_corrupt_state():
     assert len(results) == 8 and all(r == (200, 1) for r in results), results
     assert sdb.max_seq(app.conn, sdb.session_vault(
         app.conn, cookie["Cookie"].split("=", 1)[1], clock.t)) == 8
+
+
+# ── 검수 처방 회귀(SYNSERVER_REVIEW_2026-07-23) ─────────────────────────────
+
+async def test_second_vault_blocked_by_default():
+    """S-1: 공개 종단에서 아무나 vault 를 만들 수 있으면 그 자체가 자원 고갈이다
+    (검수 실측: 인증 없이 50/50 생성). 기본은 **첫 등록만** 열린다."""
+    app, _ = _app(open_registration=False)
+    _enroll(app)                                  # 최초 1회는 허용
+    auth = FakeAuthenticator()
+    st, opts = _j(app.handle("POST", "/v1/enroll/options"))
+    att, cd = auth.register(wa.b64u_decode(opts["challenge"]))
+    st, out = _j(app.handle("POST", "/v1/enroll/verify", body=json.dumps({
+        "challenge": opts["challenge"],
+        "attestationObject": wa.b64u_encode(att),
+        "clientDataJSON": wa.b64u_encode(cd)}).encode()))
+    assert st == 401 and out == {"error": "unauthorized"}
+    assert sdb.vault_count(app.conn) == 1
+    assert app.stats.get("registration_closed") == 1
+
+
+async def test_bootstrap_token_gate():
+    """S-1: 여러 vault 가 필요하면 부트스트랩 토큰으로만 연다(정확히 일치해야)."""
+    conn = sdb.connect(":memory:")
+    app = sapp.SyncApp(conn, RP_ID, ORIGIN, now=Clock(), bootstrap_token="s3cr3t")
+
+    def try_enroll(hdrs):
+        auth = FakeAuthenticator()
+        _st, opts = _j(app.handle("POST", "/v1/enroll/options", headers=hdrs))
+        att, cd = auth.register(wa.b64u_decode(opts["challenge"]))
+        return _j(app.handle("POST", "/v1/enroll/verify", headers=hdrs,
+                             body=json.dumps({
+                                 "challenge": opts["challenge"],
+                                 "attestationObject": wa.b64u_encode(att),
+                                 "clientDataJSON": wa.b64u_encode(cd)}).encode()))[0]
+
+    assert try_enroll({}) == 401                       # 토큰 없음
+    assert try_enroll({"X-Sync-Bootstrap": "wrong"}) == 401
+    assert try_enroll({"X-Sync-Bootstrap": "s3cr3t"}) == 200
+    assert try_enroll({"X-Sync-Bootstrap": "s3cr3t"}) == 200   # 여러 개 허용
+
+
+async def test_unauth_rate_limit():
+    """S-1: 미인증 경로는 전역 상한이 있다(터널 뒤라 IP 를 못 믿는다)."""
+    app, _ = _app()
+    codes = [app.handle("POST", "/v1/auth/options")[0]
+             for _ in range(sapp.UNAUTH_BURST + 5)]
+    assert codes[0] == 200 and codes[-1] == 429
+    assert app.stats.get("unauth_rate")
+    # 인증된 경로는 이 상한과 무관하다(같은 창 안에서도 동작).
+    assert app.handle("GET", "/v1/health")[0] == 200
+
+
+async def test_wrong_pairing_guess_does_not_kill_others():
+    """S-2: 오답 5회가 **남의 유효 코드**를 지우던 것(실측 3개→0개)."""
+    app, _ = _app()
+    cookie, _v, _a = _enroll(app)
+    codes = [_j(app.handle("POST", "/v1/pairing", headers=cookie))[1]["code"]
+             for _ in range(3)]
+    for i in range(5):
+        app.handle("POST", "/v1/devices", body=json.dumps({
+            "pairing_code": "ZZZZ-ZZZZ-%02X" % i,
+            "pubkey": wa.b64u_encode(b"\x00" * 32)}).encode())
+    assert app.conn.execute("SELECT COUNT(*) FROM pairing").fetchone()[0] == 3
+    # 살아남은 코드는 여전히 쓸 수 있다.
+    st, out = _j(app.handle("POST", "/v1/devices", body=json.dumps({
+        "pairing_code": codes[0], "pubkey": wa.b64u_encode(b"\x01" * 32)}).encode()))
+    assert st == 200 and out["device_id"]
+
+
+async def test_challenge_store_is_bounded():
+    """S-3: 미인증 호출만으로 챌린지가 무한히 쌓이던 것(실측 2,000개 상주)."""
+    app, _ = _app()
+    for _ in range(sapp.MAX_CHALLENGES + 200):
+        app._unauth = [0.0, 0]                    # rate limit 은 이 테스트 대상 아님
+        app.handle("POST", "/v1/auth/options")
+    assert len(app._chal) <= sapp.MAX_CHALLENGES
+
+
+async def test_quota_rejects_atomically():
+    """S-4: 쿼터 초과가 **부분 삽입 + 회계 드리프트 + 열린 트랜잭션**을 남기던 것
+    (실측 3행 저장·rows_used=0·in_transaction=True → 쿼터가 영영 안 걸림)."""
+    app, clock = _app()
+    cookie, vault, _ = _enroll(app)
+    did, sk = _device(app, cookie)
+    app.conn.execute("UPDATE vault SET quota_rows=3 WHERE vault_id=?", (vault,))
+    app.conn.commit()
+    body = ("\n".join(_rec("%02x" % i * 8) for i in range(1, 8))).encode()
+    h = _signed(app, clock, did, sk, "POST", "/v1/events", body)
+    st, out = _j(app.handle("POST", "/v1/events", headers=h, body=body))
+    assert st == 507
+    assert app.conn.execute("SELECT COUNT(*) FROM event").fetchone()[0] == 0
+    assert app.conn.in_transaction is False
+    # 쿼터 안쪽 배치는 정상 처리되고 회계도 맞는다.
+    body = ("\n".join(_rec("a%01x" % i * 8) for i in range(1, 3))).encode()
+    h = _signed(app, clock, did, sk, "POST", "/v1/events", body)
+    assert _j(app.handle("POST", "/v1/events", headers=h, body=body))[1]["accepted"] == 2
+    row = app.conn.execute("SELECT rows_used, bytes_used FROM vault").fetchone()
+    assert row["rows_used"] == 2 and row["bytes_used"] > 0
+
+
+async def test_byte_quota_enforced():
+    """S-8: 행 수만 세면 64KB 레코드로 이론상 0.33TB 까지 쌓인다."""
+    app, clock = _app()
+    cookie, vault, _ = _enroll(app)
+    did, sk = _device(app, cookie)
+    app.conn.execute("UPDATE vault SET quota_bytes=100 WHERE vault_id=?", (vault,))
+    app.conn.commit()
+    body = _rec("b1" * 8, ct=b"x" * 200).encode()
+    h = _signed(app, clock, did, sk, "POST", "/v1/events", body)
+    st, out = _j(app.handle("POST", "/v1/events", headers=h, body=body))
+    assert st == 507 and out["error"] == "quota"
+    assert app.conn.execute("SELECT COUNT(*) FROM event").fetchone()[0] == 0
+
+
+async def test_expired_state_is_purged():
+    """S-5: purge_expired 가 아무 데서도 안 불려 nonce/세션/코드가 영구 누적되던 것."""
+    app, clock = _app()
+    cookie, _v, _a = _enroll(app)
+    did, sk = _device(app, cookie)
+    body = _rec("c1" * 8).encode()
+    h = _signed(app, clock, did, sk, "POST", "/v1/events", body)
+    app.handle("POST", "/v1/events", headers=h, body=body)
+    app.handle("POST", "/v1/pairing", headers=cookie)
+    assert app.conn.execute("SELECT COUNT(*) FROM nonce_seen").fetchone()[0] == 1
+    clock.t += 3600                                   # 전부 만료될 만큼 전진
+    app.handle("GET", "/v1/health")                   # 아무 요청이나 하나
+    assert app.conn.execute("SELECT COUNT(*) FROM nonce_seen").fetchone()[0] == 0
+    assert app.conn.execute("SELECT COUNT(*) FROM pairing").fetchone()[0] == 0
+    assert app.conn.execute("SELECT COUNT(*) FROM session").fetchone()[0] == 0
+
+
+async def test_pull_respects_byte_budget():
+    """S-6: 다운로드 응답을 통째로 메모리에 조립하던 것(최대 ~328MB).
+    예산에서 잘리면 커서로 이어받는다 — 누락이 아니다."""
+    app, clock = _app()
+    cookie, _v, _a = _enroll(app)
+    did, sk = _device(app, cookie)
+    big = b"y" * 60000
+    for i in range(1, 6):
+        body = _rec("d%01x" % i * 8, ct=big).encode()
+        h = _signed(app, clock, did, sk, "POST", "/v1/events", body)
+        assert _j(app.handle("POST", "/v1/events", headers=h, body=body))[0] == 200
+    old_budget = sapp.PULL_BYTE_BUDGET
+    sapp.PULL_BYTE_BUDGET = 200000                    # 2건 남짓만 들어가게
+    try:
+        h = _signed(app, clock, did, sk, "GET", "/v1/events", b"", "since=0")
+        _st, _hd, raw = app.handle("GET", "/v1/events", "since=0", h, b"")
+        lines = raw.decode().splitlines()
+        assert 0 < len(lines) < 5 and len(raw) < 400000
+        last = json.loads(lines[-1])["seq"]
+        q = "since=%d" % last
+        h = _signed(app, clock, did, sk, "GET", "/v1/events", b"", q)
+        _st, _hd, raw2 = app.handle("GET", "/v1/events", q, h, b"")
+        assert raw2.decode().strip(), "이어받기가 비었다(잘림이 곧 누락이 됐다)"
+    finally:
+        sapp.PULL_BYTE_BUDGET = old_budget
+
+
+async def test_device_limit_per_vault():
+    """S-7: 세션 하나로 기기를 무한 등록할 수 있던 것(실측 30개)."""
+    app, _ = _app()
+    cookie, _v, _a = _enroll(app)
+    for _ in range(sdb.MAX_DEVICES):
+        app._unauth = [0.0, 0]      # 미인증 상한은 이 테스트의 대상이 아니다(S-1 별도)
+        _device(app, cookie)
+    app._unauth = [0.0, 0]
+    st, pr = _j(app.handle("POST", "/v1/pairing", headers=cookie))
+    st, out = _j(app.handle("POST", "/v1/devices", body=json.dumps({
+        "pairing_code": pr["code"], "pubkey": wa.b64u_encode(b"\x02" * 32)}).encode()))
+    assert st == 409 and out["error"] == "limit"
+
+
+async def test_logout_drops_session():
+    """Q-2: 로그아웃이 없으면 훔친 쿠키가 TTL 동안 유효하다."""
+    app, _ = _app()
+    cookie, _v, _a = _enroll(app)
+    assert _j(app.handle("POST", "/v1/pairing", headers=cookie))[0] == 200
+    st, hdrs, _b = app.handle("POST", "/v1/logout", headers=cookie)
+    assert st == 200 and "Max-Age=0" in hdrs["Set-Cookie"]
+    assert _j(app.handle("POST", "/v1/pairing", headers=cookie))[0] == 401
+
+
+async def test_session_cookie_uses_host_prefix():
+    """Q-3: `__Host-` 접두는 Path=/·Secure·도메인 미지정을 브라우저가 강제한다."""
+    app, _ = _app()
+    _c, _v, _a = _enroll(app)
+    st, hdrs, _b = app.handle("POST", "/v1/auth/options")
+    st, opts = _j((st, hdrs, _b))
+    assert sapp.COOKIE.startswith("__Host-")

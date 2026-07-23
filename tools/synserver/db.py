@@ -19,16 +19,22 @@ import sqlite3
 VAULT_ID_LEN = 16
 DEVICE_ID_LEN = 16
 DEFAULT_QUOTA_ROWS = 5_000_000
+DEFAULT_QUOTA_BYTES = 2 * 1024 ** 3      # vault 당 2GB(S-8)
+MAX_DEVICES = 32                        # vault 당 기기 상한(S-7)
+MAX_PASSKEYS = 16                       # vault 당 패스키 상한(S-7)
 PAIRING_TRIES = 5
 
 _SCHEMA = """
 PRAGMA journal_mode=WAL;
 
 CREATE TABLE IF NOT EXISTS vault (
-  vault_id   TEXT PRIMARY KEY,
-  created    REAL,
-  quota_rows INTEGER NOT NULL DEFAULT %d,
-  rows_used  INTEGER NOT NULL DEFAULT 0
+  vault_id    TEXT PRIMARY KEY,
+  created     REAL,
+  quota_rows  INTEGER NOT NULL DEFAULT %d,
+  rows_used   INTEGER NOT NULL DEFAULT 0,
+  -- S-8: 행 수만 세면 64KB 레코드로 이론상 0.33TB 까지 쌓인다. 바이트도 함께 센다.
+  quota_bytes INTEGER NOT NULL DEFAULT %d,
+  bytes_used  INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS passkey (
@@ -86,7 +92,7 @@ CREATE TABLE IF NOT EXISTS session (
   vault_id TEXT NOT NULL,
   exp      REAL NOT NULL
 );
-""" % DEFAULT_QUOTA_ROWS
+""" % (DEFAULT_QUOTA_ROWS, DEFAULT_QUOTA_BYTES)
 
 
 class QuotaExceeded(Exception):
@@ -121,6 +127,11 @@ def connect(path: str) -> sqlite3.Connection:
 
 # ── vault / passkey ────────────────────────────────────────────────────────
 
+def vault_count(conn) -> int:
+    """등록된 vault 수(S-1 부트스트랩 잠금 판정용)."""
+    return int(conn.execute("SELECT COUNT(*) AS n FROM vault").fetchone()["n"])
+
+
 def create_vault(conn, now: float) -> str:
     """새 vault. id 는 랜덤 — **사람 이름이 될 만한 것은 아무것도 받지 않는다**
     (설계 §5.2: 서버에 이름 필드 자체를 두지 않는다)."""
@@ -132,6 +143,10 @@ def create_vault(conn, now: float) -> str:
 
 def add_passkey(conn, vault_id: str, cred_id: bytes, pubkey: bytes,
                 sign_count: int, aaguid=None, label=None, now: float = 0.0):
+    n = conn.execute("SELECT COUNT(*) AS n FROM passkey WHERE vault_id=?",
+                     (vault_id,)).fetchone()["n"]
+    if n >= MAX_PASSKEYS:
+        raise LimitExceeded("패스키 상한(%d) 초과" % MAX_PASSKEYS)
     conn.execute(
         "INSERT INTO passkey (cred_id, vault_id, pubkey, sign_count, aaguid,"
         " label, created) VALUES (?,?,?,?,?,?,?)",
@@ -159,8 +174,19 @@ def list_passkeys(conn, vault_id: str) -> list:
 
 # ── device(기계 인증) ──────────────────────────────────────────────────────
 
+class LimitExceeded(Exception):
+    """vault 당 기기/패스키 개수 상한 초과(S-7)."""
+
+
 def add_device(conn, vault_id: str, pubkey: bytes, label=None,
                now: float = 0.0) -> str:
+    # S-7: 상한이 없으면 세션 하나로 기기를 무한히 등록할 수 있다(실측 30개 성공).
+    # 폐기된 기기는 세지 않는다 — 정리하면 다시 등록할 수 있어야 하므로.
+    n = conn.execute("SELECT COUNT(*) AS n FROM device WHERE vault_id=?"
+                     " AND revoked IS NULL", (vault_id,)).fetchone()["n"]
+    if n >= MAX_DEVICES:
+        raise LimitExceeded("기기 상한(%d) 초과 — 쓰지 않는 기기를 폐기하세요"
+                            % MAX_DEVICES)
     did = secrets.token_hex(DEVICE_ID_LEN)
     conn.execute(
         "INSERT INTO device (device_id, vault_id, pubkey, label, created)"
@@ -203,7 +229,9 @@ def touch_device(conn, device_id: str, now: float) -> None:
 def new_pairing(conn, vault_id: str, now: float, ttl: float = 600.0) -> str:
     """1회용 코드를 발급한다. **평문은 저장하지 않는다**(해시만) — 서버 DB 가 유출돼도
     미사용 코드로 기기를 붙일 수 없게."""
-    code = "-".join(secrets.token_hex(2).upper() for _ in range(2))
+    # 40비트(코드 5바이트) — 짧게 유지하되 대입 비용을 올린다(S-2).
+    code = "-".join(secrets.token_hex(2).upper() for _ in range(2)) + \
+           "-" + secrets.token_hex(1).upper()
     conn.execute("INSERT INTO pairing (code_h, vault_id, exp) VALUES (?,?,?)",
                  (_code_hash(code), vault_id, now + ttl))
     conn.commit()
@@ -212,16 +240,16 @@ def new_pairing(conn, vault_id: str, now: float, ttl: float = 600.0) -> str:
 
 def consume_pairing(conn, code: str, now: float):
     """성공하면 vault_id 를 돌려주고 **코드를 즉시 소모**한다. 만료·시도초과·불일치는
-    None. 시도 횟수를 세는 이유는 짧은 코드를 무차별 대입하지 못하게."""
+    None.
+
+    S-2(검수): 예전에는 없는 코드를 받으면 **살아 있는 모든 코드**의 tries 를 올리고
+    5회에서 삭제했다 — 공격자가 오답 5번으로 사용자의 유효 코드를 전부 날릴 수 있었다
+    (실측 3개→0개). 이제 카운터는 **그 코드에만** 적용하고, 무차별 대입은 앱 계층의
+    미인증 rate limit 으로 막는다(S-1)."""
     h = _code_hash(code)
     r = conn.execute("SELECT * FROM pairing WHERE code_h=?", (h,)).fetchone()
     if r is None:
-        # 존재하지 않는 코드도 **시도 횟수만큼은** 비용이 들게 — 살아 있는 코드들의
-        # tries 를 올려 무차별 대입이 전체적으로 소진되게 한다.
-        conn.execute("UPDATE pairing SET tries=tries+1 WHERE exp>?", (now,))
-        conn.execute("DELETE FROM pairing WHERE tries>=?", (PAIRING_TRIES,))
-        conn.commit()
-        return None
+        return None                 # 없는 코드는 아무 상태도 건드리지 않는다
     if r["exp"] <= now or r["tries"] >= PAIRING_TRIES:
         conn.execute("DELETE FROM pairing WHERE code_h=?", (h,))
         conn.commit()
@@ -281,34 +309,53 @@ def use_nonce(conn, device_id: str, nonce: str, now: float,
 # ── 이벤트(동기화 본체) ────────────────────────────────────────────────────
 
 def put_events(conn, vault_id: str, records, now: float) -> dict:
-    """레코드 배치를 멱등 업서트한다. {accepted, ignored, seq_max}.
+    """레코드 배치를 **원자적으로** 멱등 업서트한다. {accepted, ignored, seq_max}.
 
     records = [{"kind","rkey","acct_id","ct"(bytes),"nonce"(bytes)}, …].
     같은 (vault, kind, rkey)는 **먼저 온 것이 이긴다**(INSERT OR IGNORE) — 뒤에 온
     같은 키로 내용을 덮어쓸 수 있으면 서버에 쓰기 권한이 있는 자가 과거를 고쳐 쓸 수
-    있게 된다. 쿼터 초과는 QuotaExceeded(조용한 절단 금지)."""
-    v = conn.execute("SELECT quota_rows, rows_used FROM vault WHERE vault_id=?",
-                     (vault_id,)).fetchone()
+    있게 된다.
+
+    S-4(검수): 예전에는 루프 중간에 QuotaExceeded 를 올려 **이미 넣은 행은 남고
+    rows_used 는 안 오르고 트랜잭션은 열린 채로** 다음 요청에 넘어갔다(실측:
+    3행 저장·rows_used=0·in_transaction=True → 쿼터가 영영 안 걸림). 이제
+    ① 배치 크기로 **삽입 전에** 판정하고 ② 전부-또는-전무로 커밋하며 ③ 어떤 실패든
+    rollback 한다."""
+    v = conn.execute(
+        "SELECT quota_rows, rows_used, quota_bytes, bytes_used FROM vault"
+        " WHERE vault_id=?", (vault_id,)).fetchone()
     if v is None:
         raise KeyError(vault_id)
+    recs = list(records)
+    size = sum(len(bytes(r["ct"])) + len(bytes(r["nonce"])) for r in recs)
+    # 최악(전부 신규)을 가정해 **미리** 판정한다 — 부분 반영을 원천 차단.
+    if v["rows_used"] + len(recs) > v["quota_rows"]:
+        raise QuotaExceeded("vault 행 쿼터 초과")
+    if v["bytes_used"] + size > v["quota_bytes"]:
+        raise QuotaExceeded("vault 바이트 쿼터 초과")
     accepted = ignored = 0
-    for rec in records:
-        if v["rows_used"] + accepted >= v["quota_rows"]:
-            raise QuotaExceeded("vault 행 쿼터 초과")
-        before = conn.total_changes
-        conn.execute(
-            "INSERT OR IGNORE INTO event (vault_id, kind, acct_id, rkey, ct,"
-            " nonce, recv) VALUES (?,?,?,?,?,?,?)",
-            (vault_id, str(rec["kind"]), rec.get("acct_id"), str(rec["rkey"]),
-             bytes(rec["ct"]), bytes(rec["nonce"]), now))
-        if conn.total_changes > before:
-            accepted += 1
-        else:
-            ignored += 1
-    if accepted:
-        conn.execute("UPDATE vault SET rows_used=rows_used+? WHERE vault_id=?",
-                     (accepted, vault_id))
-    conn.commit()
+    added_bytes = 0
+    try:
+        for rec in recs:
+            before = conn.total_changes
+            conn.execute(
+                "INSERT OR IGNORE INTO event (vault_id, kind, acct_id, rkey, ct,"
+                " nonce, recv) VALUES (?,?,?,?,?,?,?)",
+                (vault_id, str(rec["kind"]), rec.get("acct_id"), str(rec["rkey"]),
+                 bytes(rec["ct"]), bytes(rec["nonce"]), now))
+            if conn.total_changes > before:
+                accepted += 1
+                added_bytes += len(bytes(rec["ct"])) + len(bytes(rec["nonce"]))
+            else:
+                ignored += 1
+        if accepted:
+            conn.execute(
+                "UPDATE vault SET rows_used=rows_used+?, bytes_used=bytes_used+?"
+                " WHERE vault_id=?", (accepted, added_bytes, vault_id))
+        conn.commit()
+    except Exception:
+        conn.rollback()             # 열린 트랜잭션을 다음 요청에 넘기지 않는다
+        raise
     return {"accepted": accepted, "ignored": ignored,
             "seq_max": max_seq(conn, vault_id)}
 

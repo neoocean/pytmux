@@ -156,7 +156,18 @@ async function loadDevices() {
 async function afterLogin() {
   $("sec-pair").hidden = false;
   $("pair-result").hidden = true;      // 로그인 직후엔 지난 코드의 흔적을 남기지 않는다
+  $("btn-logout").hidden = false;
   await loadDevices();
+}
+
+// 세션을 서버에서 지운다 — 쿠키 만료만 기다리면 훔친 쿠키가 TTL 동안 살아 있다.
+async function logout() {
+  await post("/v1/logout");
+  $("sec-pair").hidden = true;
+  $("sec-devices").hidden = true;
+  $("pair-result").hidden = true;
+  $("btn-logout").hidden = true;
+  say("로그아웃했습니다.");
 }
 
 function wrap(fn) {
@@ -167,3 +178,4 @@ $("btn-register").addEventListener("click", wrap(register));
 $("btn-login").addEventListener("click", wrap(login));
 $("btn-pair").addEventListener("click", wrap(pair));
 $("btn-copy").addEventListener("click", wrap(copyCommand));
+$("btn-logout").addEventListener("click", wrap(logout));

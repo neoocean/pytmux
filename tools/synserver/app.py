@@ -38,15 +38,29 @@ SIG_WINDOW = 60.0                   # 요청 서명 ts 허용 창(초)
 CHALLENGE_TTL = 300.0
 SESSION_TTL = 900.0
 RATE_BURST = 60                     # 디바이스당 분당 요청
+UNAUTH_BURST = 30                   # 미인증 경로 **전역** 분당 요청(S-1)
+MAX_CHALLENGES = 512                # 진행 중 챌린지 상한(S-3)
+PULL_BYTE_BUDGET = 4 * 1024 * 1024  # 다운로드 응답 바이트 예산(S-6)
+PURGE_INTERVAL = 60.0               # 만료 상태 정리 최소 간격(S-5)
+COOKIE = "__Host-sync_sid"          # 접두가 Path=/·Secure·도메인 미지정을 강제(Q-3)
 KINDS = ("xc", "lim")
 
 
 class SyncApp:
-    def __init__(self, conn, rp_id: str, origin: str, now=None):
+    def __init__(self, conn, rp_id: str, origin: str, now=None,
+                 open_registration: bool = False, bootstrap_token: str = ""):
         self.conn = conn
         self.rp_id = rp_id
         self.origin = origin
         self._now = now or time.time
+        # S-1: 공개 종단이라 "아무나 vault 를 만들 수 있음" 은 그 자체로 자원 고갈이다
+        # (실측: 인증 없이 50/50 생성). 기본은 **첫 vault 만** 열고 그 뒤로 닫는다.
+        # 여러 사람이 쓸 서버라면 --open-registration, 스스로 여러 vault 를 만들
+        # 계획이면 --bootstrap-token 으로 연다.
+        self.open_registration = bool(open_registration)
+        self.bootstrap_token = str(bootstrap_token or "")
+        self._unauth = [0.0, 0]         # [윈도 시작, 카운트] — 미인증 전역
+        self._last_purge = 0.0
         # 진행 중 챌린지: {challenge_hex: (kind, vault_id|None, exp)}. 단일 프로세스라
         # 메모리로 충분하고, 재시작하면 진행 중인 등록만 다시 하면 된다(무해).
         self._chal = {}
@@ -68,8 +82,16 @@ class SyncApp:
         with self._lock:
             return self._handle_locked(method, path, query, headers, body, q)
 
+    _UNAUTH_ROUTES = {("POST", "/v1/enroll/options"), ("POST", "/v1/enroll/verify"),
+                      ("POST", "/v1/auth/options"), ("POST", "/v1/auth/verify"),
+                      ("POST", "/v1/devices")}
+
     def _handle_locked(self, method, path, query, headers, body, q):
         try:
+            self._purge_due()
+            if (method, path) in self._UNAUTH_ROUTES and not self._unauth_ok():
+                self._bump("unauth_rate")
+                return self._err(429, "slow_down")
             if len(body) > MAX_BODY:
                 return self._err(413, "too_large")
             route = (method, path)
@@ -88,6 +110,8 @@ class SyncApp:
                 return self._auth_options()
             if route == ("POST", "/v1/auth/verify"):
                 return self._auth_verify(body)
+            if route == ("POST", "/v1/logout"):
+                return self._logout(headers)
             if route == ("POST", "/v1/pairing"):
                 return self._pairing(headers)
             if route == ("POST", "/v1/devices"):
@@ -147,7 +171,7 @@ class SyncApp:
         표기뿐 — 서버는 사람 이름을 받지 않는다(§5.2)."""
         vault_id = self._session_vault(headers)
         ch = wa.new_challenge()
-        self._chal[ch.hex()] = ("create", vault_id, self._now() + CHALLENGE_TTL)
+        self._remember_challenge(ch, "create", vault_id)
         uid = vault_id or ("pending-" + ch.hex()[:16])
         return self._json(200, {
             "challenge": wa.b64u_encode(ch),
@@ -161,6 +185,20 @@ class SyncApp:
                                        "userVerification": "required"},
             "attestation": "none",
             "timeout": int(CHALLENGE_TTL * 1000)})
+
+    def _may_create_vault(self, headers) -> bool:
+        """신규 vault 를 만들어도 되는가(S-1).
+
+        · open_registration=True  → 항상 허용(여러 사람이 쓰는 서버)
+        · bootstrap_token 설정됨   → X-Sync-Bootstrap 헤더가 **정확히** 일치할 때만
+        · 둘 다 아니면            → vault 가 하나도 없을 때(=최초 1회)만
+        기본값이 마지막이라 "내 서버" 는 첫 등록 뒤 자동으로 닫힌다."""
+        if self.open_registration:
+            return True
+        if self.bootstrap_token:
+            got = headers.get("x-sync-bootstrap") or ""
+            return hmac.compare_digest(got, self.bootstrap_token)
+        return sdb.vault_count(self.conn) == 0
 
     def _enroll_verify(self, headers, body):
         d = self._body_json(body)
@@ -177,12 +215,18 @@ class SyncApp:
         except wa.WebAuthnError:
             return self._bad_auth("registration")
         now = self._now()
+        if ch[1] is None and not self._may_create_vault(headers):
+            return self._bad_auth("registration_closed")
         vault_id = ch[1] or sdb.create_vault(self.conn, now)
         if sdb.get_passkey(self.conn, reg["cred_id"]) is not None:
             return self._bad_auth("credential_exists")
-        sdb.add_passkey(self.conn, vault_id, reg["cred_id"], reg["cose_key"],
-                        reg["sign_count"], reg["aaguid"],
-                        label=(d.get("label") or None), now=now)
+        try:
+            sdb.add_passkey(self.conn, vault_id, reg["cred_id"], reg["cose_key"],
+                            reg["sign_count"], reg["aaguid"],
+                            label=(d.get("label") or None), now=now)
+        except sdb.LimitExceeded:
+            self._bump("passkey_limit")
+            return self._err(409, "limit")
         sid = sdb.new_session(self.conn, vault_id, now, SESSION_TTL)
         return self._json(200, {"ok": True}, cookie=sid)
 
@@ -190,7 +234,7 @@ class SyncApp:
         """discoverable 로그인 — `allowCredentials` 를 **비워** 아이디 입력 없이,
         인증기가 스스로 어느 vault 인지 알려 준다."""
         ch = wa.new_challenge()
-        self._chal[ch.hex()] = ("get", None, self._now() + CHALLENGE_TTL)
+        self._remember_challenge(ch, "get", None)
         return self._json(200, {"challenge": wa.b64u_encode(ch),
                                 "rpId": self.rp_id,
                                 "allowCredentials": [],
@@ -227,6 +271,14 @@ class SyncApp:
 
     # ── 기기 등록·관리 ────────────────────────────────────────────────────
 
+    def _logout(self, headers):
+        """세션을 **서버에서** 지운다(Q-2). 쿠키 만료만 기다리면 훔친 쿠키가 TTL 동안
+        유효하다."""
+        sid = _cookie(headers.get("cookie") or "", COOKIE)
+        if sid:
+            sdb.drop_session(self.conn, sid)
+        return self._json(200, {"ok": True}, cookie="")
+
     def _pairing(self, headers):
         vault_id = self._session_vault(headers)
         if not vault_id:
@@ -250,8 +302,12 @@ class SyncApp:
             return self._err(400, "bad_request")
         if len(pub) != 32:                       # Ed25519 raw
             return self._err(400, "bad_request")
-        did = sdb.add_device(self.conn, vault_id, pub,
-                             label=(d.get("label") or None), now=self._now())
+        try:
+            did = sdb.add_device(self.conn, vault_id, pub,
+                                 label=(d.get("label") or None), now=self._now())
+        except sdb.LimitExceeded:
+            self._bump("device_limit")
+            return self._err(409, "limit")
         return self._json(200, {"device_id": did})
 
     def _device_list(self, headers):
@@ -305,12 +361,22 @@ class SyncApp:
         since = _int(q.get("since", ["0"])[0], 0)
         limit = _int(q.get("limit", ["1000"])[0], 1000)
         rows = sdb.get_events(self.conn, dev["vault_id"], since, limit)
-        out = []
+        # S-6: 행 수만 제한하면 64KB 레코드 5,000건 = 한 응답에 ~328MB 를 메모리에
+        # 조립한다(업로드엔 MAX_BODY 가 있는데 다운로드엔 없었다). 바이트 예산에서
+        # 잘리면 거기까지만 준다 — 클라는 커서 기반이라 **다음 요청에서 이어받는다**.
+        out, used, truncated = [], 0, False
         for r in rows:
-            out.append(json.dumps({
+            line = json.dumps({
                 "seq": r["seq"], "kind": r["kind"], "acct_id": r["acct_id"],
                 "rkey": r["rkey"], "ct": wa.b64u_encode(r["ct"]),
-                "nonce": wa.b64u_encode(r["nonce"])}, ensure_ascii=False))
+                "nonce": wa.b64u_encode(r["nonce"])}, ensure_ascii=False)
+            if out and used + len(line) > PULL_BYTE_BUDGET:
+                truncated = True
+                break
+            out.append(line)
+            used += len(line) + 1
+        if truncated:
+            self._bump("pull_truncated")
         sdb.touch_device(self.conn, dev["device_id"], self._now())
         return (200, {"Content-Type": "application/x-ndjson"},
                 ("\n".join(out) + ("\n" if out else "")).encode())
@@ -368,6 +434,29 @@ class SyncApp:
             return self._deny("nonce_replay")
         return dev
 
+    def _unauth_ok(self):
+        """미인증 경로의 **전역** 분당 상한(S-1). 터널 뒤라 클라이언트 IP 를 신뢰할
+        수 없어 IP 별이 아니라 전역으로 건다 — 개인용 서버라 정상 사용은 분당 몇 건이다."""
+        now = self._now()
+        if now - self._unauth[0] >= 60.0:
+            self._unauth = [now, 1]
+            return True
+        self._unauth[1] += 1
+        return self._unauth[1] <= UNAUTH_BURST
+
+    def _purge_due(self):
+        """만료된 nonce/세션/페어링 정리(S-5). 요청 수가 아니라 **시간 기반**이라
+        트래픽이 뜸해도 언젠가는 돈다. 예전엔 purge_expired 가 아무 데서도 안 불려
+        nonce_seen 이 요청마다 단조 증가했다."""
+        now = self._now()
+        if now - self._last_purge < PURGE_INTERVAL:
+            return
+        self._last_purge = now
+        try:
+            sdb.purge_expired(self.conn, now)
+        except Exception:           # noqa: BLE001 — 정리 실패가 요청을 죽이면 안 된다
+            self._bump("purge_failed")
+
     def _rate_ok(self, did, now):
         w = self._rate.get(did)
         if w is None or now - w[0] >= 60.0:
@@ -407,8 +496,20 @@ class SyncApp:
                 "nonce": nonce}
 
     def _session_vault(self, headers):
-        sid = _cookie(headers.get("cookie") or "", "sync_sid")
+        sid = _cookie(headers.get("cookie") or "", COOKIE)
         return sdb.session_vault(self.conn, sid, self._now()) if sid else None
+
+    def _remember_challenge(self, ch: bytes, kind: str, vault_id):
+        """진행 중 챌린지를 기록한다 — **발급 시점에** 만료분을 걷고 상한을 건다(S-3).
+        예전엔 소비 때만 걷고 상한이 없어 미인증 호출만으로 무한히 쌓였다(실측 2,000개).
+        상한을 넘겨 밀려나는 것은 진행 중이던 등록/로그인뿐이고 다시 누르면 된다."""
+        now = self._now()
+        for k, v in list(self._chal.items()):
+            if v[2] <= now:
+                self._chal.pop(k, None)
+        while len(self._chal) >= MAX_CHALLENGES:
+            self._chal.pop(next(iter(self._chal)), None)   # 가장 오래된 것부터
+        self._chal[ch.hex()] = (kind, vault_id, now + CHALLENGE_TTL)
 
     def _take_challenge(self, b64: str, kind: str):
         """챌린지는 **1회용**이다 — 꺼내면서 지운다(재사용 = 재생 공격)."""
@@ -447,10 +548,12 @@ class SyncApp:
 
     def _json(self, status, obj, cookie=None):
         h = {"Content-Type": "application/json; charset=utf-8"}
-        if cookie:
+        if cookie is not None:
+            # Q-3: `__Host-` 접두는 Path=/ · Secure · Domain 미지정을 브라우저가
+            # **강제**한다 — 하위도메인이 쿠키를 심어 오염시키는 경로가 원천 차단된다.
             h["Set-Cookie"] = (
-                "sync_sid=%s; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=%d"
-                % (cookie, int(SESSION_TTL)))
+                "%s=%s; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=%d"
+                % (COOKIE, cookie, int(SESSION_TTL) if cookie else 0))
         return status, h, json.dumps(obj, ensure_ascii=False).encode()
 
     def _err(self, status, code):
@@ -533,9 +636,15 @@ def main(argv=None):
     p.add_argument("--origin", default=None, help="기본 https://<rp-id>")
     p.add_argument("--host", default="127.0.0.1", help="TLS 는 앞단 리버스 프록시가")
     p.add_argument("--port", type=int, default=8787)
+    p.add_argument("--open-registration", action="store_true",
+                   help="아무나 새 vault 를 만들 수 있게(기본: 첫 등록 뒤 잠김)")
+    p.add_argument("--bootstrap-token", default="",
+                   help="새 vault 생성 시 요구할 X-Sync-Bootstrap 값")
     a = p.parse_args(argv)
     conn = sdb.connect(a.db)
-    app = SyncApp(conn, a.rp_id, a.origin or ("https://" + a.rp_id))
+    app = SyncApp(conn, a.rp_id, a.origin or ("https://" + a.rp_id),
+                  open_registration=a.open_registration,
+                  bootstrap_token=a.bootstrap_token)
     srv = ThreadingHTTPServer((a.host, a.port), make_handler(app))
     sys.stderr.write("synserver %s:%d rp=%s\n" % (a.host, a.port, a.rp_id))
     try:

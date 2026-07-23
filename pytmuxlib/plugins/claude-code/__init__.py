@@ -623,7 +623,13 @@ async def _token_sync_cmd(server, client, sub: str, arg: str):
             await note("tsync.invite", "초대 코드(이 값이 곧 키입니다 — 채팅·"
                                        "스크린샷 금지): {code}", code=code)
         elif sub == "adopt":
-            await loop.run_in_executor(None, cli.adopt_invite, arg)
+            # 'adopt <코드> force' — 기존 키를 덮어쓰는 것은 데이터 손실이라 명시
+            # 확인을 요구한다(검수 C-2).
+            parts = arg.split()
+            code = parts[0] if parts else ""
+            force = len(parts) > 1 and parts[1].lower() == "force"
+            await loop.run_in_executor(
+                None, lambda: cli.adopt_invite(code, force=force))
             await note("tsync.adopted",
                        "토큰 동기화: 초대 코드를 적용했습니다(이 머신의 키 교체)")
         elif sub in ("now", "sync"):

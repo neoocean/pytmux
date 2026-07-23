@@ -405,3 +405,60 @@ async def test_configure_persists_and_validates_url():
         raise AssertionError("알 수 없는 모드가 통과했다")
     # 주기는 하한이 있다(너무 잦은 폴링 방지).
     assert tokensync.configure(s, sec=1)["sec"] == 30
+
+
+# ── 검수 처방 회귀(SYNSERVER_REVIEW_2026-07-23) ─────────────────────────────
+
+async def test_corrupt_master_key_is_hard_error():
+    """C-1: 키 파일이 깨졌는데 조용히 새 키를 만들면, 이 머신은 다른 vault 키로
+    올리고 서버의 기존 레코드는 복호 불능이 된다. 파일이 **있는데** 못 읽으면 실패."""
+    d = tempfile.mkdtemp(prefix="pytmux-sync-k-")
+    p = os.path.join(d, "sync_vault.key")
+    m1 = syncrypto.load_or_create_master(p)          # 없을 때는 생성(정상)
+    assert syncrypto.load_or_create_master(p) == m1
+    with open(p, "w", encoding="ascii") as f:
+        f.write("!!! not base64 !!!")
+    try:
+        syncrypto.load_or_create_master(p)
+    except syncrypto.SyncCryptoError as e:
+        assert "손상" in str(e) or "길이" in str(e)
+    else:
+        raise AssertionError("손상된 키 파일을 조용히 새 키로 갈아치웠다")
+    # 길이가 모자란 경우도 마찬가지(잘린 파일).
+    import base64
+    with open(p, "wb") as f:
+        f.write(base64.b64encode(b"\x01" * 16))
+    try:
+        syncrypto.load_or_create_master(p)
+    except syncrypto.SyncCryptoError:
+        pass
+    else:
+        raise AssertionError("길이가 틀린 키를 받아들였다")
+
+
+async def test_adopt_refuses_to_clobber_uploaded_key():
+    """C-2: 이미 올린 이력이 있는데 키를 갈아치우면 그 데이터는 복호 불능이 된다."""
+    app, clock, m1, m2 = _two_machines()
+    m1.add_limits(1_000_000.0, 40)
+    m1.cli.push_limits()                              # 자기 키로 업로드 이력 생성
+    other = syncrypto.format_invite(syncrypto.gen_master())
+    try:
+        m1.cli.adopt_invite(other)
+    except tokensync.SyncError as e:
+        assert "force" in str(e)
+    else:
+        raise AssertionError("업로드 이력이 있는데 키를 덮어썼다")
+    # force 면 강행하되, 커서를 되돌려 새 키로 다시 올리게 한다.
+    m1.cli.adopt_invite(other, force=True)
+    assert usagedb.get_export_cursor(m1.conn, "limits") == 0
+
+
+async def test_pull_error_reason_not_overwritten_by_success():
+    """C-3: 성공을 쓴 뒤 오류를 또 쓰면 마지막 값이 상태를 뒤집는다."""
+    app, clock, m1, m2 = _two_machines()
+    m1.add_limits(1_000_000.0, 40)
+    m1.cli.push_limits()
+    out = m2.cli.pull()
+    st = usagedb.get_sync_remote(m2.conn, tokensync.SyncClient.REMOTE)
+    assert out["merged"] == 1 and out["rejected"] == 0
+    assert st["last_ok"] and st["last_err"] is None    # 성공엔 사유가 남지 않는다

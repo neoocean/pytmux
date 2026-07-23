@@ -27,5 +27,11 @@ VOLUME ["/data"]
 EXPOSE 8080
 
 # --rp-id 는 **필수**(패스키가 묶이는 도메인)라 compose/run 에서 넘긴다.
+# Q-1(검수): 헬스체크가 없으면 프로세스가 살아 있되 서빙을 못 하는 상태를
+# "Up" 으로 보게 된다. 의존성을 늘리지 않으려고 표준 라이브러리로만 확인한다.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["python3", "-c", "import urllib.request,sys; \
+sys.exit(0 if b'ok' in urllib.request.urlopen('http://127.0.0.1:8080/v1/health', timeout=3).read() else 1)"]
+
 ENTRYPOINT ["python3", "-u", "/srv/synserver/app.py"]
 CMD ["--db", "/data/sync.db", "--host", "0.0.0.0", "--port", "8080"]
