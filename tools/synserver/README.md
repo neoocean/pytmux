@@ -76,6 +76,32 @@ WantedBy=multi-user.target
 4. 두 번째 머신은 1호 머신에서 `:claude-token-sync invite` 로 나온 **마스터 키 초대
    코드**를 먼저 옮긴 뒤(이 값은 서버를 지나가지 않습니다), 2~3 을 반복합니다.
 
+## 여러 사람이 쓸 서버라면 `--open-registration`
+
+기본값은 **첫 vault 가 생기면 새 vault 생성이 잠깁니다**(공개 종단에서 아무나 계정을
+만들 수 있으면 그 자체가 자원 고갈이라 — S-1). "내 서버" 에는 이게 맞지만, 남에게도
+열어 줄 서버라면 `--open-registration` 을 붙여야 합니다. 안 붙이면 남들의 **새 패스키
+만들기가 전부 거부**됩니다.
+
+> 실물 확인은 소스가 아니라 **그 배포의 실행 인자**로 하세요 —
+> `docker inspect <컨테이너> --format '{{json .Args}}'`. 바깥에서 `POST /v1/enroll/options`
+> 를 찔러 보는 것으로는 알 수 없습니다(게이트는 `/v1/enroll/verify` 라 닫힌 서버도
+> options 는 200 을 줍니다). 2026-07-23 에 공식 서버가 이 차이로 문서와 어긋나 있었습니다.
+
+## 등록 페이지 계측(Matomo) — 자기호스팅이라면 지우세요
+
+등록 페이지는 `static/analytics.js` 로 **공식 서버 운영자의 Matomo**
+(`matomo.woojinkim.org`, siteId 14)에 이용 흐름을 남깁니다 — 어느 단계에서 막히는지를
+보려는 것이고, **페어링/복구 코드·패스키/vault/기기 ID·라벨·오류 원문은 보내지
+않습니다**(경로 화이트리스트로 형태부터 막고, `tests/test_synserver_app.py` 가
+소스 레벨로 감시).
+
+그래도 **자기 서버라면 남의 집계 서버로 보낼 이유가 없습니다.** `static/analytics.js` 를
+**지우면 그대로 꺼집니다** — 파일이 없으면 404 이고, `enroll.js` 의 `track()` 은
+`window.pxTrack` 이 없을 때 no-op 이라 등록 흐름은 그대로입니다(자기 Matomo 를 쓰려면
+그 파일의 `setTrackerUrl`·`setSiteId` 만 바꾸세요). 계측을 지웠다면 `app.py` 의 CSP 에서
+Matomo 출처도 함께 지우면 됩니다.
+
 ## 운영
 
 | 항목 | 방법 |
