@@ -45,3 +45,9 @@ docs/internal/
 tests/fuzz/corpus/*/
 crash-*
 *.fuzz.crash
+
+# 로컬 비밀값(.env — 예: Cloudflare 터널 토큰). 이 토큰 하나면 누구나 이 터널로
+# 트래픽을 받을 수 있으므로 공개 미러에 절대 올라가면 안 된다. p4 도 마찬가지라
+# 중앙 p4ignore(playground/p4ignore.txt)에도 같은 규칙이 있어야 한다.
+.env
+.env.*
