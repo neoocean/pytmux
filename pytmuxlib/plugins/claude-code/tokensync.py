@@ -29,6 +29,22 @@ import time
 
 from . import syncrypto, usagedb
 
+# 기본 동기화 서버(요청: 머신마다 설정하지 않아도 되게).
+#
+# · 이 저장소는 **공개 미러**가 있으므로 여기 박히는 주소는 공개된다. 그래도 안전한
+#   이유: ① 등록은 첫 vault 이후 잠겨 있어 남이 붙지 못하고, ② **등록 전에는 네트워크
+#   요청이 아예 안 나간다**(워커가 NotEnrolled 에서 HTTP 이전에 멈춘다) — 즉 기본값을
+#   들고만 있는 머신은 트래픽 0 이다.
+# · 자기 서버를 쓰는 사람은 코드를 고칠 필요 없이 `PYTMUX_TOKEN_SYNC_URL` 이나
+#   `claude-token-sync on <URL>` 로 덮어쓴다.
+DEFAULT_SYNC_URL = "https://pytmux-sync.woojinkim.org"
+
+
+def default_sync_url() -> str:
+    """기본 서버 주소. 환경변수가 있으면 그쪽이 우선(자기 서버·테스트용)."""
+    return (os.environ.get("PYTMUX_TOKEN_SYNC_URL") or DEFAULT_SYNC_URL).rstrip("/")
+
+
 KIND_LIM = "lim"
 PUSH_BATCH = 500
 PULL_BATCH = 1000
@@ -59,7 +75,9 @@ def http_transport(base_url: str, timeout: float = 15.0):
         def redirect_request(self, *a, **kw):
             return None
 
-    opener = urllib.request.build_opener(_NoRedirect)
+    opener = urllib.request.build_opener(_NoRedirect,
+                                         urllib.request.HTTPSHandler(
+                                             context=_ssl_context()))
 
     def send(method, path, query="", body=b"", headers=None):
         url = base_url.rstrip("/") + path + (("?" + query) if query else "")
@@ -78,9 +96,48 @@ def http_transport(base_url: str, timeout: float = 15.0):
         except urllib.error.HTTPError as e:
             return e.code, dict(e.headers or {}), e.read()
         except OSError as e:
-            raise SyncError("서버에 닿지 못했습니다: %s" % e) from e
+            raise SyncError(_net_why(e)) from e
 
     return send
+
+
+def _ssl_context():
+    """TLS 검증 컨텍스트. **검증을 끄지 않는다** — 끄면 이 설계의 전제(전송 무결성)가
+    무너진다.
+
+    macOS 의 python.org 빌드는 시스템 루트 저장소를 쓰지 않아 기본 컨텍스트가 비어
+    있고, 그러면 정상 서버인데도 CERTIFICATE_VERIFY_FAILED 가 난다(실기동에서 다른
+    머신이 그랬다). certifi 가 있으면 그 번들을 쓰고, 없으면 그대로 두되 실패 시
+    **무엇을 해야 하는지** 알려 준다(_net_why)."""
+    import ssl
+    ctx = ssl.create_default_context()
+    try:
+        import certifi
+    except ImportError:
+        return ctx
+    try:
+        ctx.load_verify_locations(certifi.where())
+    except OSError:
+        pass
+    return ctx
+
+
+def _net_why(exc) -> str:
+    """네트워크 실패 사유 — 원문만 던지면 사용자가 할 일을 모른다.
+
+    **한 줄 안에 조치가 들어가야 한다**: 상태줄 알림은 한 줄이라 길면 잘린다(실기동에서
+    "[SSL: CERTIFICATE_VERIFY_" 에서 끊겨 정작 조치가 안 보였다). 자세한 원문은
+    서버 로그(error.log)로 가고, 여기서는 **무엇을 하면 되는지**만 짧게 준다."""
+    text = str(exc)
+    if "CERTIFICATE_VERIFY_FAILED" in text:
+        return "TLS 인증서 검증 실패 — 'Install Certificates.command' 실행 후 재시작"
+    if "Name or service not known" in text or "nodename nor servname" in text:
+        return "서버 주소를 찾지 못했습니다(DNS) — token_sync_url 확인"
+    if "Connection refused" in text:
+        return "서버가 연결을 거부했습니다 — 서버가 떠 있는지 확인"
+    if "timed out" in text:
+        return "서버 응답 시간 초과 — 네트워크·서버 상태 확인"
+    return "서버에 닿지 못했습니다: %s" % text[:60]
 
 
 # ── 클라이언트 ─────────────────────────────────────────────────────────────
@@ -171,8 +228,12 @@ class SyncClient:
         """머신 고유 Ed25519 키(파일 0600). 없으면 만든다."""
         if self._device_sk is not None:
             return self._device_sk
-        from cryptography.hazmat.primitives import serialization as ser
-        from cryptography.hazmat.primitives.asymmetric import ed25519
+        try:
+            from cryptography.hazmat.primitives import serialization as ser
+            from cryptography.hazmat.primitives.asymmetric import ed25519
+        except ImportError as e:
+            # 원인만 던지면(=ImportError 원문) 사용자는 무엇을 해야 할지 모른다.
+            raise syncrypto.SyncCryptoUnavailable(syncrypto.INSTALL_HINT) from e
         path = os.path.join(self.db_dir, "sync_device.key")
         try:
             with open(path, "rb") as f:
@@ -478,6 +539,10 @@ def configure(server, *, mode=None, url=None, sec=None, accounts=None,
         m = str(mode).lower()
         if m not in ("off", "server"):
             raise SyncError("token_sync 는 off 또는 server 입니다")
+        if m == "server" and not syncrypto.available():
+            # 켜는 시점에 막는다 — 등록까지 가서야 알게 되면 코드를 몇 번이나 새로
+            # 발급하며 헤맨다(라이브에서 그랬다).
+            raise SyncError(syncrypto.INSTALL_HINT)
         server.token_sync = m
     if url is not None:
         u = str(url).strip().rstrip("/")

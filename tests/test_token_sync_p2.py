@@ -617,3 +617,122 @@ async def test_pairing_key_refuses_short_code():
         except syncrypto.SyncCryptoError:
             continue
         raise AssertionError("짧은 코드를 키 전달에 허용했다: %r" % bad)
+
+
+async def test_missing_cryptography_says_what_to_do():
+    """다른 머신에서 `No module named 'cryptography'` 만 보고 멈췄다(제보).
+    원인만 알려주고 조치를 안 알려주는 오류는 절반만 일한 것이다 — 설치 명령까지."""
+    hint = syncrypto.INSTALL_HINT
+    assert "pip install cryptography" in hint and "restart-server" in hint
+
+    # ① 켜는 시점에 막는다(등록까지 가서야 알게 되지 않도록).
+    class S:
+        token_sync = "off"
+        token_sync_url = ""
+        token_sync_sec = 300
+        token_sync_accounts = ""
+        token_sync_encrypt = True
+        _tokens_db = None
+
+        def _save_opts(self):
+            pass
+
+    real = syncrypto.available
+    syncrypto.available = lambda: False
+    try:
+        try:
+            tokensync.configure(S(), mode="server", url="https://x.example.org")
+        except tokensync.SyncError as e:
+            assert "pip install cryptography" in str(e)
+        else:
+            raise AssertionError("cryptography 없이 동기화가 켜졌다")
+    finally:
+        syncrypto.available = real
+
+    # ② 디바이스 키 경로도 같은 문구를 낸다(등록 중 ImportError 원문 노출 금지).
+    import builtins
+    d = tempfile.mkdtemp(prefix="pytmux-sync-nc-")
+    conn = usagedb.connect(os.path.join(d, "t.db"))
+    cli = tokensync.SyncClient(conn, d, lambda *a, **kw: (200, {}, b"{}"))
+    real_import = builtins.__import__
+
+    def blocked(name, *a, **kw):
+        if name.startswith("cryptography"):
+            raise ImportError("No module named 'cryptography'")
+        return real_import(name, *a, **kw)
+
+    builtins.__import__ = blocked
+    try:
+        cli._device_sk = None
+        cli._device_key()
+    except syncrypto.SyncCryptoUnavailable as e:
+        assert "pip install cryptography" in str(e)
+    else:
+        raise AssertionError("설치 안내 없이 지나갔다")
+    finally:
+        builtins.__import__ = real_import
+
+
+async def test_tls_failure_says_what_to_do():
+    """macOS python.org 빌드는 루트 인증서가 없어 정상 서버인데도 검증이 깨진다
+    (실기동 제보). **검증을 끄지 않고**, 대신 조치를 알려 준다."""
+    import ssl
+    why = tokensync._net_why(
+        ssl.SSLCertVerificationError("[SSL: CERTIFICATE_VERIFY_FAILED] unable to "
+                                     "get local issuer certificate"))
+    assert "Install Certificates.command" in why
+    # 상태줄 알림은 한 줄이라 길면 **조치가 잘려 안 보인다**(실기동에서 그랬다).
+    assert len(why) <= 60, "알림이 길어 잘린다: %r" % why
+    # 사유별로 갈린다 — 뭉뚱그리면 엉뚱한 곳을 고친다.
+    dns = tokensync._net_why(OSError("nodename nor servname provided"))
+    assert "token_sync_url" in dns and "Certificates" not in dns
+    assert "거부" in tokensync._net_why(OSError("Connection refused"))
+    assert "시간 초과" in tokensync._net_why(OSError("timed out"))
+
+    # 컨텍스트는 **검증하는** 기본값이어야 한다(끄는 순간 전송 무결성이 사라진다).
+    ctx = tokensync._ssl_context()
+    assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname is True
+
+
+async def test_default_server_needs_no_configuration():
+    """머신마다 주소를 치지 않아도 되게(요청) — 기본 서버가 박혀 있고 기본 on 이다.
+
+    켜져 있어도 **등록 전에는 네트워크 요청이 나가지 않는다**(NotEnrolled 에서 HTTP
+    이전에 멈춘다). 그래서 기본값을 들고만 있는 머신은 트래픽이 0 이다 — 이 성질이
+    깨지면 남의 서버를 두드리게 되므로 회귀로 못박는다."""
+    keys = dict((k, (d, c)) for k, d, c in
+                __import__("importlib").import_module(
+                    "pytmuxlib.plugins.claude-code")._ClaudeCodePlugin._OPTS_KEYS)
+    assert keys["token_sync"][0] == "server"
+    assert tokensync.default_sync_url().startswith("https://")
+
+    # 환경변수가 있으면 그쪽이 이긴다(자기 서버를 쓰는 사람은 코드 수정 불필요).
+    old = os.environ.get("PYTMUX_TOKEN_SYNC_URL")
+    os.environ["PYTMUX_TOKEN_SYNC_URL"] = "https://my.example.org/"
+    try:
+        assert tokensync.default_sync_url() == "https://my.example.org"
+    finally:
+        if old is None:
+            os.environ.pop("PYTMUX_TOKEN_SYNC_URL", None)
+        else:
+            os.environ["PYTMUX_TOKEN_SYNC_URL"] = old
+
+    # 미등록 머신은 요청을 **한 번도** 보내지 않는다.
+    d = tempfile.mkdtemp(prefix="pytmux-sync-def-")
+    conn = usagedb.connect(os.path.join(d, "t.db"))
+    calls = []
+
+    def spy(*a, **kw):
+        calls.append(a)
+        return (200, {}, b"{}")
+
+    cli = tokensync.SyncClient(conn, d, spy)
+    usagedb.insert_limits(conn, {"ts": 1_000_000.0, "account": "a@b.c",
+                                 "session_pct": 1, "source": "probe"},
+                          host=cli.host_id)
+    for fn in (cli.push_limits, cli.pull):
+        try:
+            fn()
+        except tokensync.NotEnrolled:
+            pass
+    assert calls == [], "등록 전에 네트워크 요청이 나갔다: %r" % (calls,)

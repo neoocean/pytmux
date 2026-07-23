@@ -46,8 +46,17 @@ class SyncCryptoError(Exception):
     """복호 실패·형식 오류 등 — 호출자는 **그 레코드를 버리고 사유를 남긴다**."""
 
 
+INSTALL_HINT = ("동기화에는 cryptography 패키지가 필요합니다 — "
+                "`python3 -m pip install cryptography`(권한 오류면 --user) 설치 후 "
+                "`pytmux cmd restart-server`")
+
+
 class SyncCryptoUnavailable(SyncCryptoError):
-    """`cryptography` 미설치. 암호화를 켠 동기화는 시작할 수 없다."""
+    """`cryptography` 미설치. 암호화를 켠 동기화는 시작할 수 없다.
+
+    문구는 **무엇을 해야 하는지까지** 말한다 — 라이브에서 다른 머신이
+    "No module named 'cryptography'" 만 보고 멈췄다. 원인만 알려주고 조치를 안
+    알려주는 오류는 절반만 일한 것이다."""
 
 
 # ── 계정 정규화·가명 ────────────────────────────────────────────────────────
@@ -291,8 +300,7 @@ def _aead():
     try:
         from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
     except ImportError as e:      # 소프트 의존 — 여기서만 걸린다
-        raise SyncCryptoUnavailable(
-            "동기화 암호화에는 cryptography 패키지가 필요합니다") from e
+        raise SyncCryptoUnavailable(INSTALL_HINT) from e
     return ChaCha20Poly1305
 
 

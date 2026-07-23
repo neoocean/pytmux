@@ -7,3 +7,8 @@ wcwidth>=0.2     # 와이드 문자(CJK/이모지) 폭 계산 — client/server/
 # Windows 네이티브 전용(WSL/Cygwin 불필요): ConPTY PTY 백엔드.
 # POSIX 에서는 표준 라이브러리 pty 를 쓰므로 설치되지 않는다.
 pywinpty>=2.0; sys_platform == "win32"   # ConPTY(pty_backend._WinPty)
+
+# 여러 머신 간 Claude 토큰 사용량 동기화(`claude-token-sync`, 기본 off)를 **켤 때만**
+# 필요하다. 안 켜면 설치하지 않아도 pytmux 는 그대로 동작한다 — 그래서 필수 목록이
+# 아니라 여기 주석으로 둔다. 없이 켜면 "pip install cryptography" 안내가 뜬다.
+#   python3 -m pip install cryptography

@@ -749,8 +749,12 @@ class _ClaudeCodePlugin:
                   # 여러 머신 간 토큰 동기화(설계 TOKEN_SYNC_MULTI_MACHINE_DESIGN).
                   # 기본 off — 켜지 않은 사용자에게 동작·성능·프라이버시 변화 0(G5).
                   # server = 자기호스팅 동기화 서버(tools/synserver)로 push/pull.
-                  ("token_sync", "off", str),
-                  ("token_sync_url", "", str),
+                  # 기본 on + 기본 주소 — 머신마다 설정하지 않아도 되게(요청).
+                  # 등록 전에는 네트워크 요청이 나가지 않으므로(NotEnrolled 에서 멈춤)
+                  # 켜 두는 것 자체는 무해하다. 자기 서버는 PYTMUX_TOKEN_SYNC_URL 또는
+                  # `claude-token-sync on <URL>` 로 덮어쓴다.
+                  ("token_sync", "server", str),
+                  ("token_sync_url", None, str),
                   ("token_sync_sec", 300, int),
                   # 빈값=전부. 콤마 목록이면 그 계정만 내보낸다(회사 계정 격리).
                   ("token_sync_accounts", "", str),
@@ -767,7 +771,13 @@ class _ClaudeCodePlugin:
         po = opts.get("plugin_opts")
         po = po if isinstance(po, dict) else {}
         for key, default, cast in self._OPTS_KEYS:
+            if key == "token_sync_url" and default is None:
+                from . import tokensync
+                default = tokensync.default_sync_url()
             raw = po[key] if key in po else opts.get(key, default)  # nested 우선, 구 키 폴백
+            if key == "token_sync_url" and not raw:
+                from . import tokensync
+                raw = tokensync.default_sync_url()   # 빈 값도 기본 주소로 채운다
             try:
                 setattr(server, key, cast(raw))
             except (TypeError, ValueError):
@@ -792,6 +802,7 @@ class _ClaudeCodePlugin:
         해당 블록을 이전). 코어는 이 dict 를 plugin_opts 밑에 불투명하게 저장한다."""
         out = {key: getattr(server, key, default)
                for key, default, _cast in self._OPTS_KEYS}
+        out = {k: ("" if v is None else v) for k, v in out.items()}
         return out
 
     # ---- 서버 런타임 훅(코어 serverio/server 가 레지스트리로만 호출) ----
