@@ -98,6 +98,13 @@
         <li><span class="pill stable">작성창</span> <strong>여러 줄로 쓰던 프롬프트를 <span class="inline-code">ESC → Insert</span> 작성창으로 가져올 때, Claude 가 <span class="inline-code">답변 중</span>이거나 <span class="inline-code">메시지를 대기열에 쌓아둔</span> 상태에서도 이제 <span class="inline-code">전체가</span> 따라옵니다 — 커서 한 줄만 오던 것을 잡았습니다.</strong>
           Claude 는 <strong>작업 중</strong>이거나 <strong>보낼 메시지가 대기열에 있을 때</strong> 입력칸의 <strong>위아래 구분선을 그리지 않습니다</strong>. pytmux 는 그 구분선으로 입력 범위를 찾았던 터라, 선이 없으면 <strong>커서가 놓인 한 줄</strong>만 긁어 — 여러 줄 프롬프트의 <strong>이웃 줄이 빠지거나</strong>, 작업 표시줄(스피너)에 커서가 얹히면 <strong>엉뚱한 줄</strong>이 오기도 했습니다.
           이제 구분선이 없을 때는 프롬프트 <strong>기호(❯)를 실마리로</strong> 그 줄과 이어지는 줄을 <strong>한 덩어리로</strong> 가져옵니다. 대기열 안내문(<span class="inline-code nb">Press up to edit queued messages</span>)은 <strong>빈 칸</strong>으로, 실제 입력이 아닌 줄은 <strong>가져오지 않습니다</strong>.</li>
+        <li><span class="pill stable">화면 처리</span> <strong>pytmux 안에서 <span class="inline-code">화면을 통째로 그리는 앱</span>(터미널 UI 앱)을 띄우면, 화면이 <span class="inline-code">찢겨 보이거나</span> 반응이 <span class="inline-code">굼뜨던</span> 것이 나아집니다.</strong>
+          요즘 터미널 앱은 한 화면(프레임)을 그릴 때 <strong>“여기서부터 여기까지가 한 덩어리”</strong>라고 표시해, 그리다 만 중간 상태가 보이지 않게 합니다.
+          pytmux 는 그 표시를 받으면 <strong>프레임이 끝날 때까지</strong> 화면 전송을 미루는 기능을 <strong>이미</strong> 갖고 있었지만, 정작 앱들은
+          <strong>터미널이 “나 그거 지원해요”라고 알려줄 때만</strong> 그 표시를 씁니다. pytmux 는 그 물음에 <strong>답하지 않아</strong> — 앱은 감싸기를 끈 채
+          <strong>부분 프레임</strong>을 흘렸고, pytmux 는 <strong>조각이 올 때마다</strong> 화면을 다시 합성했습니다.
+          이제 그 물음에 <strong>지원한다고 답해</strong> 앱이 프레임을 감싸고, pytmux 는 <strong>프레임 경계에서 한 번만</strong> 그립니다 — 찢김이 줄고 CPU 도 덜 씁니다.
+          (Claude Code 처럼 <strong>항상 감싸는</strong> 앱은 이전부터 이 혜택을 받고 있었고, 이번 변화는 <strong>그렇지 않던 앱들</strong>에 해당합니다.)</li>
       </ul>
     </section>
 
