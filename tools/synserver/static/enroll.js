@@ -78,10 +78,52 @@ async function login() {
   await afterLogin();
 }
 
+// 사용자가 코드를 손으로 옮겨 적다 틀리지 않게 **명령 전체**를 만들어 보여주고
+// 복사까지 붙인다(코드만 보여주면 앞부분을 기억해서 쳐야 한다).
+function enrollCommand(code) {
+  return ":token-sync enroll " + code;
+}
+
 async function pair() {
   const j = await post("/v1/pairing");
-  $("code").textContent = j.code;
-  say("코드는 10분 뒤 만료됩니다. 한 번만 쓸 수 있습니다.");
+  $("cmd").textContent = enrollCommand(j.code);
+  const btn = $("btn-copy");
+  btn.textContent = "복사";
+  btn.classList.remove("done");
+  $("copy-msg").textContent = "";
+  // 코드가 실제로 생긴 **뒤에만** 명령칸을 드러낸다(빈 칸을 미리 보여주지 않는다).
+  $("pair-result").hidden = false;
+  say("이 명령은 10분 뒤 만료되고 한 번만 쓸 수 있습니다.");
+}
+
+async function copyCommand() {
+  const text = $("cmd").textContent.trim();
+  if (!text) {
+    $("copy-msg").textContent = "먼저 코드를 만드세요.";
+    return;
+  }
+  let ok = false;
+  try {
+    // HTTPS(보안 컨텍스트)에서만 쓸 수 있다 — 실패하면 아래 폴백.
+    await navigator.clipboard.writeText(text);
+    ok = true;
+  } catch (e) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { ok = document.execCommand("copy"); } catch (e2) { ok = false; }
+    document.body.removeChild(ta);
+  }
+  const btn = $("btn-copy");
+  btn.textContent = ok ? "복사됨" : "복사 실패";
+  btn.classList.toggle("done", ok);
+  $("copy-msg").textContent = ok
+    ? "붙일 머신의 pytmux 에서 붙여넣으세요."
+    : "복사가 막혔습니다 — 명령을 직접 선택해 복사하세요.";
 }
 
 async function loadDevices() {
@@ -113,6 +155,7 @@ async function loadDevices() {
 
 async function afterLogin() {
   $("sec-pair").hidden = false;
+  $("pair-result").hidden = true;      // 로그인 직후엔 지난 코드의 흔적을 남기지 않는다
   await loadDevices();
 }
 
@@ -123,3 +166,4 @@ function wrap(fn) {
 $("btn-register").addEventListener("click", wrap(register));
 $("btn-login").addEventListener("click", wrap(login));
 $("btn-pair").addEventListener("click", wrap(pair));
+$("btn-copy").addEventListener("click", wrap(copyCommand));

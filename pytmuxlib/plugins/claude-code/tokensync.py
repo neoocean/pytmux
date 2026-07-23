@@ -383,6 +383,44 @@ def _validate_limits(d, now: float):
     return out
 
 
+# ── 설정(서버 속성 + opts 영속) ────────────────────────────────────────────
+
+def configure(server, *, mode=None, url=None, sec=None, accounts=None,
+              encrypt=None) -> dict:
+    """동기화 설정을 바꾸고 opts 에 영속한다. 바뀐 값만 넘긴다(None=유지).
+
+    설정을 켤 **경로가 코드 안에 있어야** 한다 — opts.json 직접 편집은 서버가 다음
+    저장 때 덮어써 조용히 되돌아간다(실제로 물렸다). url 은 https 만 받는다: 평문
+    http 로 보내면 요청 서명은 살아 있어도 가명·암호문·트래픽 메타가 그대로 노출되고,
+    패스키 등록 자체도 브라우저가 막는다(localhost 는 개발용 예외)."""
+    if mode is not None:
+        m = str(mode).lower()
+        if m not in ("off", "server"):
+            raise SyncError("token_sync 는 off 또는 server 입니다")
+        server.token_sync = m
+    if url is not None:
+        u = str(url).strip().rstrip("/")
+        if u and not (u.startswith("https://")
+                      or u.startswith("http://localhost")
+                      or u.startswith("http://127.0.0.1")):
+            raise SyncError("동기화 URL 은 https 여야 합니다(개발용 localhost 예외)")
+        server.token_sync_url = u
+    if sec is not None:
+        server.token_sync_sec = max(30, int(sec))
+    if accounts is not None:
+        server.token_sync_accounts = str(accounts).strip()
+    if encrypt is not None:
+        server.token_sync_encrypt = bool(encrypt)
+    save = getattr(server, "_save_opts", None)
+    if save is not None:
+        save()
+    return {"mode": getattr(server, "token_sync", "off"),
+            "url": getattr(server, "token_sync_url", ""),
+            "sec": getattr(server, "token_sync_sec", 300),
+            "accounts": getattr(server, "token_sync_accounts", ""),
+            "encrypt": bool(getattr(server, "token_sync_encrypt", True))}
+
+
 # ── 워커(비동기 — 블로킹은 전부 executor) ──────────────────────────────────
 
 async def run_worker(server, make_client=None, sleep=None):

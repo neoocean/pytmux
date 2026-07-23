@@ -19,7 +19,9 @@ import hmac
 import json
 import os
 import sys
+import threading
 import time
+import traceback
 import urllib.parse
 
 try:                                    # 패키지로도, 스크립트로도 실행된다
@@ -50,6 +52,10 @@ class SyncApp:
         self._chal = {}
         self._rate = {}                 # device_id → [윈도 시작, 카운트]
         self.stats = {}                 # 거부 사유별 카운터(로그엔 사유만, 값은 금지)
+        # HTTP 서버는 요청마다 스레드를 만든다 → sqlite 연결과 위 dict 들을 **직렬화**
+        # 한다. 개인 규모 트래픽에서 락 경합은 무시할 수 있고, 대신 경쟁 상태가
+        # 원리적으로 사라진다(챌린지 재사용·nonce·rate 창까지 한 번에 보호).
+        self._lock = threading.RLock()
 
     # ── 라우팅 ────────────────────────────────────────────────────────────
 
@@ -59,6 +65,10 @@ class SyncApp:
         스택트레이스가 응답에 실리면 그 자체가 정보 누출이다."""
         headers = {k.lower(): v for k, v in (headers or {}).items()}
         q = urllib.parse.parse_qs(query or "")
+        with self._lock:
+            return self._handle_locked(method, path, query, headers, body, q)
+
+    def _handle_locked(self, method, path, query, headers, body, q):
         try:
             if len(body) > MAX_BODY:
                 return self._err(413, "too_large")
@@ -95,6 +105,10 @@ class SyncApp:
             return self._err(404, "not_found")
         except Exception:               # noqa: BLE001 — 마지막 그물
             self._bump("internal")
+            # 응답에는 사유를 싣지 않지만(정보 누출), **서버 로그에는 반드시 남긴다** —
+            # 로그 없는 500 은 디버깅이 불가능하다(실측: 스레드 문제를 로그가 없어
+            # 브라우저 화면의 "internal" 만 보고 추적해야 했다).
+            sys.stderr.write("ERR %s %s\n%s" % (method, path, traceback.format_exc()))
             return self._err(500, "internal")
 
     # ── 정적 파일(등록 페이지) ────────────────────────────────────────────
@@ -483,6 +497,7 @@ def make_handler(app):
             parsed = urllib.parse.urlsplit(self.path)
             status, headers, out = app.handle(
                 method, parsed.path, parsed.query, dict(self.headers), body)
+            self._status = status          # 접근 로그에 상태를 남긴다
             self.send_response(status)
             for k, v in headers.items():
                 self.send_header(k, v)
@@ -502,7 +517,9 @@ def make_handler(app):
 
         def log_message(self, fmt, *args):
             """접근 로그는 **경로와 상태만**. 헤더·바디·가명은 절대 남기지 않는다."""
-            sys.stderr.write("%s %s\n" % (self.command, self.path.split("?")[0]))
+            sys.stderr.write("%s %s %s\n" % (self.command,
+                                             self.path.split("?")[0],
+                                             getattr(self, "_status", "-")))
 
     return Handler
 

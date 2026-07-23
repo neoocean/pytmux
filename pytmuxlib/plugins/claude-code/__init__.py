@@ -58,9 +58,8 @@ COMMANDS = [
                            "corruption(깨짐 감지 시만) (claude-auto-redraw "
                            "off|idle|corruption|toggle, 기본 off)",
                            "Claude"),
-    ("token-sync", "여러 머신 간 토큰 사용량 동기화 — status | enroll <코드> | "
-                   "invite | adopt <코드> | now (설정 token_sync/token_sync_url)",
-                   "Claude"),
+    ("token-sync", "여러 머신 간 토큰 사용량 동기화 — status | on <URL> | off | "
+                   "enroll <코드> | invite | adopt <코드> | now", "Claude"),
     ("claude-auto-mode", "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off "
                          "(claude-auto-mode on|off|toggle)", "Claude"),
     ("auto-launch", "새 Claude 세션 시작 시 /rc(원격 제어)+권한모드 auto 1회 자동 적용 "
@@ -128,7 +127,7 @@ i18n.register({
         "cmd.claude-auto-redraw": "Auto-mitigate screen corruption — off | idle (repaint each completion) | corruption (repaint only when corruption is detected) (claude-auto-redraw off|idle|corruption|toggle, default off)",
         "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",
         "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
-        "cmd.token-sync": "Sync token usage across machines — status | enroll <code> | invite | adopt <code> | now (needs token_sync/token_sync_url)",
+        "cmd.token-sync": "Sync token usage across machines — status | on <URL> | off | enroll <code> | invite | adopt <code> | now",
         "cmd.token-debug": "Token-accounting diagnostic log (<sock>.tokendbg.jsonl) on/off — §10-D undercount root-cause diagnostic (off normally) (token-debug on|off|toggle, default off)",
     },
 })
@@ -240,8 +239,9 @@ i18n.register({
         "tsync.adopted": "토큰 동기화: 초대 코드를 적용했습니다(이 머신의 키 교체)",
         "tsync.synced": "토큰 동기화: 올림 {sent} · 받음 {merged}",
         "tsync.fail": "토큰 동기화 실패 — {why}",
-        "tsync.off": "토큰 동기화가 꺼져 있습니다(설정 token_sync=server, "
-                     "token_sync_url 필요)",
+        "tsync.off": "토큰 동기화가 꺼져 있습니다(:token-sync on <https://서버주소> "
+                     "로 켭니다)",
+        "tsync.configured": "토큰 동기화 설정: {state}",
     },
     "en": {
         "tsync.status": "Token sync: {state} · last ok {last} · rows in {rows}",
@@ -251,7 +251,8 @@ i18n.register({
         "tsync.adopted": "Token sync: invite applied (key replaced on this machine)",
         "tsync.synced": "Token sync: pushed {sent} · merged {merged}",
         "tsync.fail": "Token sync failed — {why}",
-        "tsync.off": "Token sync is off (set token_sync=server and token_sync_url)",
+        "tsync.off": "Token sync is off (turn on with :token-sync on <https://url>)",
+        "tsync.configured": "Token sync configured: {state}",
     },
 })
 
@@ -597,10 +598,20 @@ async def _token_sync_cmd(server, client, sub: str, arg: str):
                              if last else "-"),
                        rows=int(st.get("rows_in") or 0))
             return
+        if sub in ("on", "off", "set-url", "url"):
+            # 설정 변경은 URL 미설정 상태에서도 되어야 한다(그게 켜는 방법이다).
+            st = tokensync.configure(
+                server,
+                mode=("server" if sub != "off" else "off"),
+                url=(arg or None))
+            await note("tsync.configured",
+                       "토큰 동기화 설정: {state}",
+                       state="%s %s" % (st["mode"], st["url"] or "-"))
+            return
         if str(getattr(server, "token_sync", "off")) != "server" or \
                 not getattr(server, "token_sync_url", ""):
-            await note("tsync.off", "토큰 동기화가 꺼져 있습니다(설정 "
-                                    "token_sync=server, token_sync_url 필요)")
+            await note("tsync.off", "토큰 동기화가 꺼져 있습니다(:token-sync on "
+                                    "<https://서버주소> 로 켭니다)")
             return
         cli = tokensync._client_for(server)
         if sub == "enroll":

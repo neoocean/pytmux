@@ -361,3 +361,47 @@ async def test_worker_records_error_and_backs_off():
     assert srv.logged and "token_sync" in srv.logged[0]
     assert slept[1] > slept[0]           # 지수 백오프
     assert max(slept) <= 3600
+
+
+# ── 설정 경로(켜는 방법이 코드 안에 있어야 한다) ────────────────────────────
+
+async def test_configure_persists_and_validates_url():
+    """opts.json 직접 편집은 서버가 다음 저장 때 덮어쓴다 — 그래서 설정 변경은
+    configure() 를 지나야 하고, 여기서 opts 영속까지 끝나야 한다."""
+    saved = []
+
+    class S:
+        token_sync = "off"
+        token_sync_url = ""
+        token_sync_sec = 300
+        token_sync_accounts = ""
+        token_sync_encrypt = True
+
+        def _save_opts(self):
+            saved.append(True)
+
+    s = S()
+    st = tokensync.configure(s, mode="server",
+                             url="https://sync.example.org/")
+    assert st["mode"] == "server"
+    assert s.token_sync_url == "https://sync.example.org"      # 끝 / 제거
+    assert saved, "opts 영속이 안 됐다"
+    # 평문 http 는 거부 — 가명·암호문·메타가 그대로 노출되고 패스키도 못 쓴다.
+    for bad in ("http://sync.example.org", "ftp://x", "//sync.example.org"):
+        try:
+            tokensync.configure(s, url=bad)
+        except tokensync.SyncError:
+            continue
+        raise AssertionError("평문/이상 URL 이 통과했다: %s" % bad)
+    # localhost 는 개발용 예외.
+    tokensync.configure(s, url="http://localhost:8788")
+    assert s.token_sync_url == "http://localhost:8788"
+    # 모드 값 검증
+    try:
+        tokensync.configure(s, mode="maybe")
+    except tokensync.SyncError:
+        pass
+    else:
+        raise AssertionError("알 수 없는 모드가 통과했다")
+    # 주기는 하한이 있다(너무 잦은 폴링 방지).
+    assert tokensync.configure(s, sec=1)["sec"] == 30

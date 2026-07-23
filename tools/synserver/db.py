@@ -102,7 +102,10 @@ def connect(path: str) -> sqlite3.Connection:
             os.chmod(d, 0o700)
         except OSError:
             pass
-    conn = sqlite3.connect(path, timeout=5.0)
+    # check_same_thread=False: HTTP 서버가 요청마다 다른 스레드를 쓴다. 기본값이면
+    # DB 를 건드리는 **모든 엔드포인트가** ProgrammingError 로 죽는다(실측 — 브라우저
+    # 로그인이 500 "internal"). 대신 호출자(SyncApp)가 락으로 직렬화한다.
+    conn = sqlite3.connect(path, timeout=5.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=3000")
     conn.executescript(_SCHEMA)

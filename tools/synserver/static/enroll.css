@@ -11,9 +11,16 @@ h2 { font-size: 17px; margin: 28px 0 8px; }
 button { font: inherit; padding: 8px 14px; border-radius: 8px;
          border: 1px solid currentColor; background: transparent; cursor: pointer; }
 button:hover { background: rgba(127,127,127,.15); }
-pre#code { font-size: 24px; letter-spacing: 2px; padding: 12px 16px;
-           border: 1px dashed currentColor; border-radius: 8px; display: inline-block; }
-.cmd code { padding: 2px 6px; border-radius: 6px; background: rgba(127,127,127,.18); }
+/* 붙여넣을 명령을 크게 — 사용자가 코드를 손으로 옮겨 적지 않게 명령 전체를 준다. */
+.cmdbox { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+          border: 1px dashed currentColor; border-radius: 10px;
+          padding: 14px 16px; margin: 10px 0 4px; }
+.cmdbox code { font-size: 22px; font-weight: 600; letter-spacing: .5px;
+               line-height: 1.35; word-break: break-all; flex: 1 1 auto;
+               font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cmdbox button { flex: 0 0 auto; font-size: 15px; }
+.cmdbox button.done { border-style: solid; opacity: .75; }
+@media (max-width: 480px) { .cmdbox code { font-size: 18px; } }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 td { padding: 6px 4px; border-bottom: 1px solid rgba(127,127,127,.3); }
 #msg { min-height: 1.6em; font-size: 14px; }

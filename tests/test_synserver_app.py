@@ -372,3 +372,75 @@ async def test_static_page_served_with_strict_csp():
     # 화이트리스트 밖·경로 조작은 404(파일이 실제로 있어도 나가지 않는다).
     for bad in ("../db.py", "../../CLAUDE.md", "app.py", "secret.txt"):
         assert app.handle("GET", "/static/" + bad)[0] == 404
+
+
+# ── 스레드(실제 HTTP 서버는 요청마다 스레드다) ─────────────────────────────
+
+async def test_handles_requests_from_other_threads():
+    """`ThreadingHTTPServer` 는 요청마다 새 스레드를 만든다. 메인 스레드에서 연
+    sqlite 연결을 그대로 쓰면 **DB 를 건드리는 모든 엔드포인트가 500** 이 된다
+    (실측: 브라우저 로그인이 'internal'). handle() 을 다른 스레드에서 불러 못박는다.
+
+    되돌리면(check_same_thread 기본값) 이 테스트가 실패한다."""
+    import queue
+    import threading
+
+    app, clock = _app()
+    out = queue.Queue()
+
+    def worker(fn):
+        try:
+            out.put(("ok", fn()))
+        except Exception as e:            # noqa: BLE001
+            out.put(("err", repr(e)))
+
+    # ① 등록 한 바퀴를 통째로 다른 스레드에서
+    t = threading.Thread(target=worker, args=(lambda: _enroll(app),))
+    t.start()
+    t.join(20)
+    kind, val = out.get_nowait()
+    assert kind == "ok", val
+    cookie, vault, auth = val
+
+    # ② 기기 등록·이벤트 업로드도 또 다른 스레드에서(각각 새 스레드)
+    t = threading.Thread(target=worker, args=(lambda: _device(app, cookie),))
+    t.start(); t.join(20)
+    kind, val = out.get_nowait()
+    assert kind == "ok", val
+    did, sk = val
+
+    body = _rec("f1" * 8).encode()
+    h = _signed(app, clock, did, sk, "POST", "/v1/events", body)
+    t = threading.Thread(target=worker, args=(
+        lambda: _j(app.handle("POST", "/v1/events", headers=h, body=body)),))
+    t.start(); t.join(20)
+    kind, val = out.get_nowait()
+    assert kind == "ok", val
+    assert val[0] == 200 and val[1]["accepted"] == 1
+
+
+async def test_concurrent_requests_do_not_corrupt_state():
+    """여러 스레드가 동시에 두드려도 멱등·카운트가 어긋나지 않는다(락 직렬화)."""
+    import threading
+
+    app, clock = _app()
+    cookie, _vault, _ = _enroll(app)
+    did, sk = _device(app, cookie)
+    results = []
+    lock = threading.Lock()
+
+    def push(i):
+        body = _rec("%02x" % i * 8).encode()
+        h = _signed(app, clock, did, sk, "POST", "/v1/events", body)
+        st, out = _j(app.handle("POST", "/v1/events", headers=h, body=body))
+        with lock:
+            results.append((st, out.get("accepted")))
+
+    ts = [threading.Thread(target=push, args=(i,)) for i in range(1, 9)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(20)
+    assert len(results) == 8 and all(r == (200, 1) for r in results), results
+    assert sdb.max_seq(app.conn, sdb.session_vault(
+        app.conn, cookie["Cookie"].split("=", 1)[1], clock.t)) == 8

@@ -27,10 +27,17 @@
 
   <section id="sec-pair" hidden>
     <h2>2. 머신 붙이기</h2>
-    <p>아래 <strong>1회용 코드</strong>를 그 머신의 pytmux 에서 입력하세요(10분 유효):</p>
-    <pre id="code">—</pre>
-    <p class="cmd"><code>:token-sync enroll &lt;코드&gt;</code></p>
+    <p>붙일 머신마다 <strong>1회용 코드</strong>가 하나씩 필요합니다(10분 유효).</p>
     <button id="btn-pair">코드 새로 만들기</button>
+    <!-- 코드가 생기기 전에는 빈 명령칸을 보여주지 않는다(누를 것이 하나로 분명해진다). -->
+    <div id="pair-result" hidden>
+      <p>붙일 머신의 pytmux 에서 <strong>아래 명령을 그대로</strong> 실행하세요:</p>
+      <div class="cmdbox">
+        <code id="cmd"></code>
+        <button id="btn-copy" type="button" title="명령 전체를 클립보드에 복사">복사</button>
+      </div>
+      <p class="hint" id="copy-msg" role="status" aria-live="polite"></p>
+    </div>
   </section>
 
   <section id="sec-devices" hidden>
