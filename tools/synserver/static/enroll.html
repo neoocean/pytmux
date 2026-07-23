@@ -104,7 +104,13 @@
   </section>
 
   <p id="msg" role="status"></p>
+
+  <!-- 계측을 쓴다면 숨기지 않는다 — 프라이버시를 앞세운 페이지에서 조용한 추적은
+       그 자체로 모순이다. 무엇을 보내지 않는지는 static/analytics.js 주석에 있다. -->
+  <p class="hint">이 페이지의 이용 흐름(어느 단계에서 막히는지)은 자체 호스팅
+    <strong>Matomo</strong> 로 집계합니다 — <strong>코드·패스키·기기 이름은 보내지 않습니다</strong>.</p>
 </main>
+<script src="/static/analytics.js"></script>
 <script src="/static/enroll.js"></script>
 </body>
 </html>

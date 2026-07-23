@@ -14,6 +14,25 @@ const bufToB64u = (b) =>
   btoa(String.fromCharCode(...new Uint8Array(b)))
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
+// ── 계측(analytics.js) ────────────────────────────────────────────────────
+// 이 페이지는 주소가 하나뿐이라 기본 집계로는 "무엇을 하다 막혔는지" 가 전혀 안
+// 보인다(등록·로그인·코드 발급·복구가 모두 같은 URL 이다). 그래서 **단계마다 가상
+// 페이지**를 남긴다. analytics.js 가 없거나 차단돼도 no-op 이라 흐름은 그대로다.
+const track = (path, title) => {
+  if (window.pxTrack) window.pxTrack(path, title);
+};
+
+// 오류는 **원문을 보내지 않는다** — 서버·브라우저 문구에 무엇이 실릴지 우리가
+// 통제하지 못한다. 아는 이름만 슬러그로 바꾸고 나머지는 전부 `other` 다.
+function errSlug(err) {
+  const name = err && err.name;
+  if (name && BROWSER_ERRORS[name]) return name.toLowerCase().replace(/error$/, "");
+  const msg = String((err && err.message) || "");
+  if (msg === "unauthorized") return "unauthorized";
+  if (SERVER_ERRORS[msg]) return msg.replace(/_/g, "-");
+  return "other";
+}
+
 function say(text, isErr) {
   const el = $("msg");
   el.textContent = text || "";
@@ -90,6 +109,8 @@ async function passKek(pass, salt) {
 function askPassphrase(why) {
   // window.prompt 대신 인라인 입력 — 붙여넣기·비밀번호 관리자와 잘 맞는다.
   return new Promise((resolve) => {
+    // 암호구절 폴백이 뜨는 빈도 = PRF 미지원 인증기 비율(문구는 보내지 않는다).
+    track("/app/key/passphrase-asked", "암호구절 입력 요청");
     $("pass-why").textContent = why;
     $("sec-pass").hidden = false;
     const input = $("pass-input");
@@ -187,6 +208,7 @@ async function register() {
     authed = r.ok ? (await r.json()).authenticated : false;
   } catch (e) { /* 확인 실패는 서버가 판정하게 둔다 */ }
   if (!authed && HAS_VAULT) {
+    track("/app/register/blocked-vault-exists", "등록 거부 — 로그인 먼저");
     say("이미 vault 가 있습니다 — 먼저 '패스키로 로그인' 한 뒤 눌러야 같은 vault 에 "
         + "패스키가 추가됩니다(지금 만들면 서버가 모르는 패스키가 남습니다).", true);
     return;
@@ -216,6 +238,9 @@ async function register() {
   // (로그인해 봐야 아는 구조라 사용자가 원인을 못 짚었다.)
   const ext = cred.getClientExtensionResults ? cred.getClientExtensionResults() : {};
   const prfOn = !!(ext && ext.prf && ext.prf.enabled);
+  track(prfOn ? "/app/register/passkey-created-prf"
+              : "/app/register/passkey-created-noprf",
+        prfOn ? "패스키 생성 — PRF 지원" : "패스키 생성 — PRF 미지원");
   if (j && j.recovery_code) showRecovery(j.recovery_code);
   say(prfOn
       ? "패스키를 등록했습니다 — 이 패스키는 키 자동 배포(PRF)를 지원합니다."
@@ -224,6 +249,7 @@ async function register() {
   // 값이 없는 인증기가 많아, **로그인 assertion 한 번**으로 PRF 를 받아 온다.
   await ensureVaultKey();
   await afterLogin();
+  track("/app/register/done", "등록 완료");
 }
 
 async function ensureVaultKey() {
@@ -244,6 +270,7 @@ async function ensureVaultKey() {
     });
   } catch (e) {
     // 사용자가 인증을 취소했거나 실패했다 — **성공한 척하지 않는다**.
+    track("/app/key/assertion-fail/" + errSlug(e), "키 잠금 해제 실패");
     say(explain(e), true);
     return false;
   }
@@ -269,16 +296,21 @@ async function unlockOrCreateKey(prf) {
     if (!byPass && !prf) {
       // 키는 PRF 로 감싸져 있는데 지금 패스키에는 PRF 가 없다 — 그 패스키로
       // 로그인하거나, PRF 되는 패스키를 새로 만들어야 한다.
+      track("/app/key/blocked-prf-mismatch", "키 열기 막힘 — PRF 불일치");
       say("이 키는 PRF 패스키로 감싸져 있습니다 — 그 패스키로 로그인하거나 " +
           "'새 패스키 만들기'로 PRF 패스키를 추가하세요.", true);
       return false;
     }
     const ok = byPass ? await loadVaultKeyWithPassphrase(existing)
                       : await loadVaultKey(prf);
+    track((ok ? "/app/key/unlocked-" : "/app/key/unlock-fail-")
+          + (byPass ? "passphrase" : "prf"),
+          (ok ? "키 열림" : "키 열기 실패") + (byPass ? " — 암호구절" : " — PRF"));
     if (ok && byPass && prf) {
       // 암호구절로 열었는데 이제 PRF 를 쓸 수 있다 → **PRF 로 갈아 감싼다**.
       // 다음부터는 암호구절을 묻지 않는다(사용자가 아무것도 안 해도 좋아진다).
       if (await storeVaultKey(prf, true)) {
+        track("/app/key/rewrapped-to-prf", "키 재포장 — 암호구절→PRF");
         say("이제 이 패스키로 자동 잠금 해제됩니다 — 암호구절은 더 묻지 않습니다.");
       }
     }
@@ -289,9 +321,12 @@ async function unlockOrCreateKey(prf) {
                      : await storeVaultKeyWithPassphrase();
   if (!stored) {
     VAULT_KEY = null;
+    track("/app/key/create-fail", "키 생성 실패");
     say("키 보관에 실패했습니다 — 이미 다른 키가 있는지 확인하세요.", true);
     return false;
   }
+  track(prf ? "/app/key/created-prf" : "/app/key/created-passphrase",
+        prf ? "키 생성 — PRF 로 보관" : "키 생성 — 암호구절로 보관");
   if (!prf) {
     say("암호구절로 키를 보관했습니다 — 'PRF 지원' 패스키를 만들면 다음부터 " +
         "암호구절 없이 열립니다.");
@@ -319,6 +354,7 @@ async function login() {
     clientDataJSON: bufToB64u(cred.response.clientDataJSON),
     signature: bufToB64u(cred.response.signature),
   });
+  track("/app/login/done", "로그인 성공");
   say("로그인했습니다.");
   await unlockOrCreateKey(prfBits(cred));
   await afterLogin();
@@ -347,6 +383,8 @@ async function codeHash(code) {
 
 // 복구 코드는 **딱 한 번** 보여 준다 — 서버는 해시만 갖고 있어 다시 못 보여 준다.
 function showRecovery(code) {
+  // 코드는 화면에만 — 계측에는 "보여 줬다" 는 사실만 남는다.
+  track("/app/recovery-code/shown", "복구 코드 표시");
   $("recovery-code").textContent = code;
   $("recovery-show").hidden = false;
   $("recovery-note").hidden = false;
@@ -366,8 +404,10 @@ function showRecoverUI(on) {
 async function submitRecover() {
   const code = $("recover-input").value.trim();
   if (!code) return;
+  track("/app/recover/submit", "복구 코드 제출");
   const j = await post("/v1/recover", { code });
   showRecoverUI(false);
+  track("/app/recover/done", "복구 코드 로그인 성공");
   say("복구했습니다 — 새 패스키를 만들어 두세요.");
   if (j.recovery_code) showRecovery(j.recovery_code);
   await restoreSession();
@@ -387,11 +427,13 @@ async function pair() {
       hasKey = r.ok ? !!(await r.json()).has_key : false;
     } catch (e) { /* 알 수 없으면 아래에서 보수적으로 처리 */ }
     if (hasKey) {
+      track("/app/pair/blocked-key-locked", "코드 발급 중단 — 키 잠김");
       say("키가 잠겨 있어 코드를 만들지 않았습니다 — 인증을 완료한 뒤 다시 누르세요.",
           true);
       return;
     }
     // 아직 vault 키 자체가 없는 상태(폴백 운용) — 키 없는 코드임을 분명히 알린다.
+    track("/app/pair/no-vault-key", "코드 발급 — vault 키 없음");
     say("이 vault 에는 아직 키가 없습니다 — 코드에 키가 실리지 않으니 첫 머신에서 "
         + "invite/adopt 로 키를 맞춰야 합니다.", true);
   }
@@ -418,6 +460,9 @@ async function pair() {
   $("copy-msg").textContent = "";
   // 코드가 실제로 생긴 **뒤에만** 명령칸을 드러낸다(빈 칸을 미리 보여주지 않는다).
   $("pair-result").hidden = false;
+  // **코드 자체는 절대 보내지 않는다** — 키가 실렸는지 여부만 남긴다.
+  track(VAULT_KEY ? "/app/pair/code-issued" : "/app/pair/code-issued-keyless",
+        VAULT_KEY ? "코드 발급(키 포함)" : "코드 발급(키 없음)");
   say(VAULT_KEY
       ? "이 명령은 10분 뒤 만료되고 한 번만 쓸 수 있습니다(키가 함께 전달됩니다)."
       : "이 명령은 10분 뒤 만료되고 한 번만 쓸 수 있습니다. " +
@@ -427,15 +472,18 @@ async function pair() {
 async function copyCommand() {
   const text = $("cmd").textContent.trim();
   if (!text) {
+    track("/app/copy/nothing-to-copy", "복사 — 코드 없음");
     $("copy-msg").textContent = "먼저 코드를 만드세요.";
     return;
   }
   let ok = false;
+  let viaFallback = false;
   try {
     // HTTPS(보안 컨텍스트)에서만 쓸 수 있다 — 실패하면 아래 폴백.
     await navigator.clipboard.writeText(text);
     ok = true;
   } catch (e) {
+    viaFallback = true;
     const ta = document.createElement("textarea");
     ta.value = text;
     ta.setAttribute("readonly", "");
@@ -446,6 +494,10 @@ async function copyCommand() {
     try { ok = document.execCommand("copy"); } catch (e2) { ok = false; }
     document.body.removeChild(ta);
   }
+  // 클립보드 API 가 막혀 폴백으로 넘어간 비율은 실제로 자주 물리는 지점이라 나눠 센다.
+  track(ok ? (viaFallback ? "/app/copy/ok-fallback" : "/app/copy/ok")
+           : "/app/copy/fail",
+        ok ? (viaFallback ? "복사 성공(폴백)" : "복사 성공") : "복사 실패");
   const btn = $("btn-copy");
   btn.textContent = ok ? "복사됨" : "복사 실패";
   btn.classList.toggle("done", ok);
@@ -477,6 +529,8 @@ function watchForEnrollment(before, expiresMs) {
   WATCH_TIMER = setInterval(async () => {
     if (Date.now() > deadline) {            // 코드 만료 — 조용히 멈춘다
       stopWatch();
+      // 발급했는데 10분 안에 안 쓰인 코드는 "붙이다 포기" 의 신호다.
+      track("/app/pair/code-expired", "코드 미사용 만료");
       return;
     }
     let now;
@@ -485,6 +539,8 @@ function watchForEnrollment(before, expiresMs) {
     const fresh = now.filter((d) => !known.has(d.device_id));
     if (!fresh.length) return;
     stopWatch();
+    // 머신이 붙는 순간 = 이 페이지의 목표 지점(전환). 기기 이름은 보내지 않는다.
+    track("/app/pair/enrolled", "머신 등록 확인됨");
     // 코드는 1회용이라 이미 소모됐다 — 화면에 남겨 두면 다시 쓸 수 있을 것처럼 보인다.
     $("pair-result").hidden = true;
     await loadDevices();
@@ -510,15 +566,18 @@ async function loadDevices() {
       // **되돌릴 수 없는 조작**이라 한 번 확인한다 — 목록이 이름만으로 구분되는
       // 경우(같은 hostname 여러 대)에 잘못 누르기 쉽다.
       const name = d.label || "(이름 없음)";
+      track("/app/device/revoke-ask", "기기 폐기 확인 팝업");
       if (!window.confirm(
             "이 기기를 폐기할까요?\n\n  " + name +
             "\n\n폐기하면 그 머신의 업로드·내려받기가 즉시 거부됩니다. " +
             "다시 쓰려면 그 머신에서 새 코드로 등록해야 합니다.")) {
+        track("/app/device/revoke-cancel", "기기 폐기 취소");
         return;
       }
       await fetch("/v1/devices/" + encodeURIComponent(d.device_id),
                   { method: "DELETE", credentials: "same-origin" });
       await loadDevices();
+      track("/app/device/revoked", "기기 폐기 완료");
       say("기기를 폐기했습니다: " + name);
     });
     act.appendChild(btn);
@@ -556,6 +615,7 @@ async function logout() {
   $("sec-devices").hidden = true;
   $("pair-result").hidden = true;
   setLoggedIn(false);
+  track("/app/logout/done", "로그아웃");
   say("로그아웃했습니다.");
 }
 
@@ -611,8 +671,14 @@ function explain(err, what) {
   return msg || "알 수 없는 오류가 났습니다.";
 }
 
+// 실패는 여기 한 곳으로 모인다 — 계측도 같이 여기에 둔다(개별 catch 에 흩어 두면
+// 새 흐름을 추가할 때마다 빠뜨린다).
 function wrap(fn, what) {
-  return () => fn().catch((e) => say(explain(e, what), true));
+  return () => fn().catch((e) => {
+    track("/app/" + (what || "unknown") + "/fail/" + errSlug(e),
+          "실패 — " + (what || "unknown"));
+    say(explain(e, what), true);
+  });
 }
 
 // 새로고침 후에도 로그인 상태를 되찾는다(제보). 쿠키는 살아 있었는데 페이지가
@@ -629,20 +695,39 @@ async function restoreSession() {
     return;
   }
   HAS_VAULT = !!j.vault_exists;
-  if (!j.authenticated) return;
+  // 방문자가 **어떤 상태로 들어왔는지**가 이후 모든 비율의 분모다.
+  if (!j.authenticated) {
+    track(HAS_VAULT ? "/app/session/anonymous" : "/app/session/first-visit",
+          HAS_VAULT ? "비로그인 방문" : "vault 없는 첫 방문");
+    return;
+  }
+  track(j.has_key ? "/app/session/restored-locked" : "/app/session/restored",
+        j.has_key ? "세션 복원(키 잠김)" : "세션 복원");
   await afterLogin();
   say(j.has_key
       ? "로그인 상태입니다(키는 잠겨 있음 — 코드 만들 때 한 번 확인합니다)."
       : "로그인 상태입니다.");
 }
 
-$("btn-register").addEventListener("click", wrap(register, "register"));
-$("btn-login").addEventListener("click", wrap(login, "login"));
-$("btn-pair").addEventListener("click", wrap(pair));
-$("btn-copy").addEventListener("click", wrap(copyCommand));
-$("btn-logout").addEventListener("click", wrap(logout));
-$("btn-recover").addEventListener("click", () => showRecoverUI(true));
+// 버튼은 **누른 순간**과 결과를 따로 남긴다 — 둘의 차이가 곧 이탈률이다
+// (예: '코드 새로 만들기' 를 눌렀지만 인증 취소로 코드가 안 나온 비율).
+const clicked = (path, title, fn) => () => { track(path, title); fn(); };
+
+$("btn-register").addEventListener(
+  "click", clicked("/app/register/click", "새 패스키 만들기 누름",
+                   wrap(register, "register")));
+$("btn-login").addEventListener(
+  "click", clicked("/app/login/click", "패스키로 로그인 누름", wrap(login, "login")));
+$("btn-pair").addEventListener(
+  "click", clicked("/app/pair/click", "코드 새로 만들기 누름", wrap(pair, "pair")));
+$("btn-copy").addEventListener("click", wrap(copyCommand, "copy"));
+$("btn-logout").addEventListener("click", wrap(logout, "logout"));
+$("btn-recover").addEventListener("click", () => {
+  track("/app/recover/open", "복구 코드 화면 열기");
+  showRecoverUI(true);
+});
 $("btn-recover-cancel").addEventListener("click", () => {
+  track("/app/recover/cancel", "복구 취소");
   showRecoverUI(false);
   say("");
 });
@@ -654,8 +739,14 @@ $("recover-input").addEventListener("keydown", (e) => {
 $("btn-recovery-copy").addEventListener("click", wrap(async () => {
   const t = $("recovery-code").textContent.trim();
   if (!t) return;
-  try { await navigator.clipboard.writeText(t); $("btn-recovery-copy").textContent = "복사됨"; }
-  catch (e) { say("복사가 막혔습니다 — 직접 선택해 복사하세요.", true); }
+  try {
+    await navigator.clipboard.writeText(t);
+    track("/app/recovery-code/copied", "복구 코드 복사");
+    $("btn-recovery-copy").textContent = "복사됨";
+  } catch (e) {
+    track("/app/recovery-code/copy-fail", "복구 코드 복사 실패");
+    say("복사가 막혔습니다 — 직접 선택해 복사하세요.", true);
+  }
 }));
 
 restoreSession().catch(() => {});

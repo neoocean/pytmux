@@ -367,14 +367,55 @@ async def test_static_page_served_with_strict_csp():
     app, _ = _app()
     status, hdrs, body = app.handle("GET", "/")
     assert status == 200 and hdrs["Content-Type"].startswith("text/html")
-    assert "default-src 'none'" in hdrs["Content-Security-Policy"]
+    csp = hdrs["Content-Security-Policy"]
+    assert "default-src 'none'" in csp
+    # 계측(Matomo)을 붙이면서도 **인라인은 끝까지 막는다** — `'unsafe-inline'` 이
+    # 들어오면 패스키·1회용 코드 페이지에서 XSS 한 방의 대가가 달라진다.
+    assert "'unsafe-inline'" not in csp
+    assert "script-src 'self' https://matomo.woojinkim.org" in csp
     assert b"pytmux" in body
-    for name in ("enroll.js", "enroll.css"):
+    for name in ("enroll.js", "enroll.css", "analytics.js"):
         st, h, b = app.handle("GET", "/static/" + name)
         assert st == 200 and b
     # 화이트리스트 밖·경로 조작은 404(파일이 실제로 있어도 나가지 않는다).
     for bad in ("../db.py", "../../CLAUDE.md", "app.py", "secret.txt"):
         assert app.handle("GET", "/static/" + bad)[0] == 404
+
+
+async def test_analytics_paths_carry_no_values():
+    """계측 경로에 **값이 실리지 않는지** 소스로 못박는다.
+
+    런타임 방어(analytics.js 의 SAFE 정규식)는 이미 있지만, 그것만 믿으면 새 흐름을
+    붙이는 사람이 `track("/app/pair/" + code)` 를 쓰고도 조용히 `/app/_rejected` 로
+    떨어지는 것을 모른다 — 여기서 **커밋 전에** 잡는다. 리터럴 구간은 소문자·숫자·
+    `-`·`/` 뿐이어야 하고(코드는 대문자 HEX 라 형태상 통과 불가), 페어링/복구 코드
+    변수를 그 자리에 쓰는 것도 금지다."""
+    import re
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "tools", "synserver", "static")
+    with open(os.path.join(root, "enroll.js"), encoding="utf-8") as f:
+        src = f.read()
+    lits = re.findall(r'track\(\s*"([^"]*)"', src)
+    assert lits, "track() 호출이 하나도 없다 — 계측이 통째로 사라졌는가?"
+    for p in lits:
+        # 뒤에 슬러그가 이어 붙는 접두(`"/app/" + what`)도 있으므로 빈 꼬리를 허용한다.
+        assert re.fullmatch(r"/app/([a-z0-9][a-z0-9/-]*)?", p), p
+    # 값이 붙는 자리(문자열 밖의 **식별자**)에 코드·라벨·ID 를 잇지 않았는지.
+    # 문자열은 위에서 이미 검증했으므로 지우고 본다(`"recovery-code"` 오탐 방지).
+    # 실제로 값이 나가는 통로는 **문자열 이어붙이기**뿐이다(삼항 조건으로 쓰는
+    # `VAULT_KEY ? … : …` 는 불리언이라 값이 아니다) — `+` 피연산자만 본다.
+    banned = ("code", "label", "device_id", "credentialId", "VAULT_KEY",
+              "name", "text", "msg")
+    for expr in re.findall(r'track\([^;]*?\)', src, re.S):
+        bare = re.sub(r'"[^"]*"', '""', expr)
+        operands = (re.findall(r'\+\s*([A-Za-z_$][\w$]*)', bare)
+                    + re.findall(r'([A-Za-z_$][\w$]*)\s*\+', bare))
+        for tok in operands:
+            assert tok not in banned, (tok, expr)
+    with open(os.path.join(root, "analytics.js"), encoding="utf-8") as f:
+        an = f.read()
+    assert "setSiteId" in an and "matomo.woojinkim.org" in an
+    assert "/app/_rejected" in an, "경로 화이트리스트 폴백이 사라졌다"
 
 
 # ── 스레드(실제 HTTP 서버는 요청마다 스레드다) ─────────────────────────────

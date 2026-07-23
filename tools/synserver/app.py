@@ -161,16 +161,21 @@ class SyncApp:
     _STATIC_TYPES = {".html": "text/html; charset=utf-8",
                      ".js": "text/javascript; charset=utf-8",
                      ".css": "text/css; charset=utf-8"}
-    # 외부 리소스를 **한 톨도** 부르지 않는 페이지라 CSP 를 최대로 조인다.
-    _CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; "
-            "connect-src 'self'; form-action 'none'; base-uri 'none'; "
-            "frame-ancestors 'none'")
+    # 외부 출처는 **Matomo(자체 호스팅) 하나**뿐이라 그것만 열고 나머지는 잠근다.
+    # 인라인 스니펫을 쓰지 않는 이유는 static/analytics.js 주석 참고 —
+    # `'unsafe-inline'` 을 열지 않으려고 별도 파일로 옮겼다(패스키·1회용 코드 페이지).
+    # img-src 는 matomo.js 가 막혔을 때의 이미지 비콘 폴백, connect-src 는 정상 경로.
+    _MATOMO = "https://matomo.woojinkim.org"
+    _CSP = ("default-src 'none'; script-src 'self' " + _MATOMO + "; "
+            "style-src 'self'; img-src 'self' " + _MATOMO + "; "
+            "connect-src 'self' " + _MATOMO + "; "
+            "form-action 'none'; base-uri 'none'; frame-ancestors 'none'")
 
     def _static(self, name):
         """`static/` 밑의 화이트리스트 파일만. 경로 조작(`../`)은 이름 자체를 막아
         차단한다 — 정규화로 막는 것보다 확실하다."""
         ext = os.path.splitext(name)[1]
-        if name not in ("enroll.html", "enroll.js", "enroll.css"):
+        if name not in ("enroll.html", "enroll.js", "enroll.css", "analytics.js"):
             return self._err(404, "not_found")
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "static", name)
