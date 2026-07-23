@@ -1,5 +1,9 @@
 /* 최소 스타일 — 외부 폰트·CDN 없음(CSP default-src 'none'). */
 :root { color-scheme: light dark; }
+/* `hidden` 속성은 UA 기본 display:none 인데, 아래 .row/.cmdbox 의 display:flex 가
+   그것을 **이긴다**(명시 규칙이 UA 규칙보다 강하다). 그래서 숨겼다고 생각한 요소가
+   빈 상자로 남았다(제보). 규칙 하나로 원천 차단한다. */
+[hidden] { display: none !important; }
 body { font: 16px/1.6 system-ui, -apple-system, "Noto Sans KR", sans-serif;
        margin: 0; padding: 32px 20px; display: flex; justify-content: center; }
 main { max-width: 640px; width: 100%; }

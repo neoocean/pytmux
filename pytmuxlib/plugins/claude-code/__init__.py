@@ -60,7 +60,8 @@ COMMANDS = [
                            "off|idle|corruption|toggle, 기본 off)",
                            "Claude"),
     ("claude-token-sync", "여러 머신 간 Claude 토큰 사용량 동기화 — status | on <URL> | "
-                          "off | enroll <코드> | invite | adopt <코드> | now", "Claude"),
+                          "off | enroll <코드> | invite | adopt <코드> | now | resync",
+                          "Claude"),
     ("claude-auto-mode", "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off "
                          "(claude-auto-mode on|off|toggle)", "Claude"),
     ("auto-launch", "새 Claude 세션 시작 시 /rc(원격 제어)+권한모드 auto 1회 자동 적용 "
@@ -129,7 +130,7 @@ i18n.register({
         "cmd.claude-auto-redraw": "Auto-mitigate screen corruption — off | idle (repaint each completion) | corruption (repaint only when corruption is detected) (claude-auto-redraw off|idle|corruption|toggle, default off)",
         "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",
         "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
-        "cmd.claude-token-sync": "Sync token usage across machines — status | on <URL> | off | enroll <code> | invite | adopt <code> | now",
+        "cmd.claude-token-sync": "Sync token usage across machines — status | on <URL> | off | enroll <code> | invite | adopt <code> | now | resync",
         "cmd.claude-token-debug": "Token-accounting diagnostic log (<sock>.tokendbg.jsonl) on/off — §10-D undercount root-cause diagnostic (off normally) (token-debug on|off|toggle, default off)",
     },
 })
@@ -239,7 +240,7 @@ i18n.register({
         "tsync.enroll_fail": "토큰 동기화 등록 실패 — {why}",
         "tsync.invite": "초대 코드(이 값이 곧 키입니다 — 채팅·스크린샷 금지): {code}",
         "tsync.adopted": "토큰 동기화: 초대 코드를 적용했습니다(이 머신의 키 교체)",
-        "tsync.synced": "토큰 동기화: 올림 {sent} · 받음 {merged}",
+        "tsync.synced": "토큰 동기화: 올림 {sent} · 받음 {merged} · 거부 {rejected}",
         "tsync.fail": "토큰 동기화 실패 — {why}",
         "tsync.off": "토큰 동기화가 꺼져 있습니다(:claude-token-sync on <https://서버주소> "
                      "로 켭니다)",
@@ -251,7 +252,7 @@ i18n.register({
         "tsync.enroll_fail": "Token sync enrollment failed — {why}",
         "tsync.invite": "Invite code (this IS the key — never paste in chat): {code}",
         "tsync.adopted": "Token sync: invite applied (key replaced on this machine)",
-        "tsync.synced": "Token sync: pushed {sent} · merged {merged}",
+        "tsync.synced": "Token sync: pushed {sent} · merged {merged} · rejected {rejected}",
         "tsync.fail": "Token sync failed — {why}",
         "tsync.off": "Token sync is off (turn on with :claude-token-sync on <https://url>)",
         "tsync.configured": "Token sync configured: {state}",
@@ -634,10 +635,14 @@ async def _token_sync_cmd(server, client, sub: str, arg: str):
                 None, lambda: cli.adopt_invite(code, force=force))
             await note("tsync.adopted",
                        "토큰 동기화: 초대 코드를 적용했습니다(이 머신의 키 교체)")
-        elif sub in ("now", "sync"):
+        elif sub in ("now", "sync", "resync"):
+            if sub == "resync":
+                await loop.run_in_executor(None, tokensync.reset_cursors, cli.conn)
             out = await loop.run_in_executor(None, tokensync._sync_once, cli)
-            await note("tsync.synced", "토큰 동기화: 올림 {sent} · 받음 {merged}",
-                       sent=out["push"]["sent"], merged=out["pull"]["merged"])
+            await note("tsync.synced",
+                       "토큰 동기화: 올림 {sent} · 받음 {merged} · 거부 {rejected}",
+                       sent=out["push"]["sent"], merged=out["pull"]["merged"],
+                       rejected=out["rejected"])
         else:
             await note("tsync.fail", "토큰 동기화 실패 — {why}",
                        why="알 수 없는 하위 명령: %s" % sub)
@@ -1021,8 +1026,12 @@ class _ClaudeCodePlugin:
     # serverremote 주석 참조(엉뚱한 탭 AR 방지·원격 토큰 출처 일치 등).
     # jump_prompt: 원격 탭을 보는 중엔 **그 원격** 패널의 스크롤백을 점프해야 한다 —
     # 릴레이하지 않으면 보이지도 않는 로컬 패널이 조용히 스크롤된다(§1.7-c 동형 버그).
+    # token_sync: 원격 탭을 보는 중 `:claude-token-sync enroll …` 은 **그 원격 머신**을
+    # 등록해야 한다 — 릴레이하지 않으면 보고 있지도 않은 로컬 머신이 조용히 등록된다
+    # (jump_prompt 와 같은 종류의 버그, §1.7-c). 로컬을 대상으로 하려면 로컬 탭이나
+    # 셸 CLI(`pytmux cmd …`)를 쓴다 — CLI 는 언제나 그 머신의 서버에 직접 붙는다.
     relay_actions = {"set_autoresume", "set_prompt_clear", "request_token_log",
-                     "jump_prompt"}
+                     "jump_prompt", "token_sync"}
 
     def server_control(self, server, sess, c, args):
         """외부 CLI 의 claude/token 토글 명령을 처리한다(코어 handle_control 이 자기
@@ -1074,10 +1083,20 @@ class _ClaudeCodePlugin:
                 cli.adopt_invite(parts[0] if parts else "",
                                  force=(len(parts) > 1 and parts[1] == "force"))
                 return "adopted"
+            if sub == "resync":
+                # 서버를 비웠거나 키를 바꾼 뒤 **전량 재업로드/재수신**. 병합이 멱등이라
+                # "처음부터 다시" 가 안전한 복구 수단이다.
+                tokensync.reset_cursors(cli.conn)
+                out = tokensync._sync_once(cli)
+                return "resync: pushed %d merged %d rejected %d" % (
+                    out["push"]["sent"], out["pull"]["merged"], out["rejected"])
             if sub in ("now", "sync"):
                 out = tokensync._sync_once(cli)
-                return "pushed %d merged %d" % (out["push"]["sent"],
-                                                out["pull"]["merged"])
+                # 거부 건수를 **함께** 보여 준다 — merged 0 만 보면 "새 것이 없음"과
+                # "키가 달라 전부 버림"이 구분되지 않는다(실기동에서 그 구분에 한
+                # 왕복을 썼다).
+                return "pushed %d merged %d rejected %d" % (
+                    out["push"]["sent"], out["pull"]["merged"], out["rejected"])
         except Exception as e:              # noqa: BLE001 — CLI 는 사유를 그대로 준다
             return "error: %s" % e
         return "unknown sub: %s" % sub

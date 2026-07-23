@@ -41,6 +41,16 @@ CREATE TABLE IF NOT EXISTS vault (
   wrap_meta   TEXT
 );
 
+CREATE TABLE IF NOT EXISTS recovery (
+  -- 패스키를 전부 잃었을 때 **스스로** 다시 들어오는 길(§5.9 보강).
+  -- 평문은 저장하지 않는다(해시만) — 서버 DB 가 유출돼도 그것만으로는 못 쓴다.
+  -- 세션만 얻을 뿐 vault 키는 못 푼다(그건 패스키 PRF/암호구절이 쥔다).
+  vault_id TEXT PRIMARY KEY,
+  code_h   TEXT NOT NULL,
+  created  REAL,
+  used     REAL
+);
+
 CREATE TABLE IF NOT EXISTS passkey (
   cred_id    TEXT PRIMARY KEY,
   vault_id   TEXT NOT NULL,
@@ -60,7 +70,10 @@ CREATE TABLE IF NOT EXISTS device (
   label     TEXT,
   created   REAL,
   last_seen REAL,
-  revoked   REAL
+  revoked   REAL,
+  -- 머신의 안정 식별자(무작위 uuid). 같은 머신을 다시 등록하면 옛 등록을 대체해
+  -- **유령 기기**가 쌓이지 않게 한다(재시도가 잦은 등록 절차에서 실제로 쌓였다).
+  host_id   TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_device_vault ON device(vault_id);
 
@@ -114,6 +127,7 @@ _ADD_COLUMNS = (
     ("vault", "wrap_meta", "TEXT"),
     ("pairing", "key_ct", "BLOB"),
     ("pairing", "key_nonce", "BLOB"),
+    ("device", "host_id", "TEXT"),
 )
 
 
@@ -179,6 +193,27 @@ def create_vault(conn, now: float) -> str:
     return vid
 
 
+def new_recovery_code(conn, vault_id: str, now: float) -> str:
+    """복구 코드를 발급(재발급)한다. 평문은 **이때 한 번만** 반환된다."""
+    raw = secrets.token_bytes(16)                    # 128비트
+    code = "-".join(raw.hex().upper()[i:i + 4] for i in range(0, 32, 4))
+    conn.execute("INSERT OR REPLACE INTO recovery (vault_id, code_h, created, used)"
+                 " VALUES (?,?,?,NULL)", (vault_id, _code_hash(code), now))
+    conn.commit()
+    return code
+
+
+def use_recovery_code(conn, code: str, now: float):
+    """맞으면 vault_id 를 돌려주고 **그 코드를 소모**한다(1회용). 아니면 None."""
+    r = conn.execute("SELECT vault_id FROM recovery WHERE code_h=? AND used IS NULL",
+                     (_code_hash(code),)).fetchone()
+    if r is None:
+        return None
+    conn.execute("UPDATE recovery SET used=? WHERE vault_id=?", (now, r["vault_id"]))
+    conn.commit()
+    return r["vault_id"]
+
+
 def set_vault_key(conn, vault_id: str, wrapped: bytes, meta: str,
                  overwrite: bool = False) -> bool:
     """패스키로 감싼 마스터 키를 보관한다(§5.3a). 이미 있으면 **덮어쓰지 않는다** —
@@ -242,9 +277,15 @@ class LimitExceeded(Exception):
 
 
 def add_device(conn, vault_id: str, pubkey: bytes, label=None,
-               now: float = 0.0) -> str:
+               now: float = 0.0, host_id=None) -> str:
     # S-7: 상한이 없으면 세션 하나로 기기를 무한히 등록할 수 있다(실측 30개 성공).
     # 폐기된 기기는 세지 않는다 — 정리하면 다시 등록할 수 있어야 하므로.
+    if host_id:
+        # 같은 머신의 옛 등록은 폐기한다 — 재등록이 기기 목록을 늘리면 사용자가
+        # 어느 것이 살아 있는지 알 수 없고, 상한(MAX_DEVICES)만 잡아먹는다.
+        conn.execute("UPDATE device SET revoked=? WHERE vault_id=? AND host_id=?"
+                     " AND revoked IS NULL", (now, vault_id, str(host_id)))
+        conn.commit()
     n = conn.execute("SELECT COUNT(*) AS n FROM device WHERE vault_id=?"
                      " AND revoked IS NULL", (vault_id,)).fetchone()["n"]
     if n >= MAX_DEVICES:
@@ -252,8 +293,9 @@ def add_device(conn, vault_id: str, pubkey: bytes, label=None,
                             % MAX_DEVICES)
     did = secrets.token_hex(DEVICE_ID_LEN)
     conn.execute(
-        "INSERT INTO device (device_id, vault_id, pubkey, label, created)"
-        " VALUES (?,?,?,?,?)", (did, vault_id, pubkey, label, now))
+        "INSERT INTO device (device_id, vault_id, pubkey, label, created, host_id)"
+        " VALUES (?,?,?,?,?,?)",
+        (did, vault_id, pubkey, label, now, str(host_id) if host_id else None))
     conn.commit()
     return did
 

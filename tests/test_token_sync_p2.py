@@ -736,3 +736,49 @@ async def test_default_server_needs_no_configuration():
         except tokensync.NotEnrolled:
             pass
     assert calls == [], "등록 전에 네트워크 요청이 나갔다: %r" % (calls,)
+
+
+async def test_resync_resets_cursors_for_full_reupload():
+    """서버를 비웠거나 키를 바꾼 뒤에는 **전량 재업로드**가 필요하다. 병합이 멱등이라
+    '처음부터 다시'가 안전한 복구 수단이고, 그 수단이 코드 안에 있어야 한다."""
+    app, clock, m1, m2 = _two_machines()
+    m1.add_limits(1_000_000.0, 40)
+    assert m1.cli.push_limits()["accepted"] == 1
+    assert m1.cli.push_limits()["sent"] == 0          # 커서가 전진해 보낼 것이 없다
+
+    # 서버를 비운 상황을 만든다(사용자가 실제로 한 조치).
+    app.conn.execute("DELETE FROM event")
+    app.conn.execute("UPDATE vault SET rows_used=0, bytes_used=0")
+    app.conn.commit()
+
+    tokensync.reset_cursors(m1.conn)
+    assert usagedb.get_export_cursor(m1.conn, "limits") == 0
+    st = usagedb.get_sync_remote(m1.conn, tokensync.SyncClient.REMOTE)
+    assert st["cursor"] == "0" and st["last_err"] is None
+    assert m1.cli.push_limits()["accepted"] == 1     # 다시 올라간다
+
+
+async def test_all_rejected_says_key_mismatch():
+    """전부 거부되면 사유는 하나뿐이다 — 키가 다르다. '거부 N건'만 적으면 사용자는
+    무엇을 해야 할지 모른다(실기동에서 merged 0 만 보고 원인을 못 찾았다)."""
+    app, clock, m1, _m2 = _two_machines()
+    other = syncrypto.gen_master()
+    k_id, k_enc = syncrypto.derive_keys(other)
+    rk = syncrypto.rkey(k_id, "lim", "x")
+    nonce, ct = syncrypto.seal(k_enc, syncrypto.aad("", "lim", rk, None),
+                               json.dumps({"v": 1, "ts": 1_000_000.0,
+                                           "source": "probe"}).encode())
+
+    def evil(method, path, query="", body=b"", headers=None):
+        if method == "GET":
+            line = json.dumps({"seq": 9, "kind": "lim", "rkey": rk, "acct_id": None,
+                               "ct": tokensync._b64u(ct),
+                               "nonce": tokensync._b64u(nonce)})
+            return 200, {}, (line + "\n").encode()
+        return _transport(app)(method, path, query, body, headers)
+
+    m1.cli.transport = evil
+    out = m1.cli.pull()
+    assert out["merged"] == 0 and out["rejected"] == 1
+    st = usagedb.get_sync_remote(m1.conn, tokensync.SyncClient.REMOTE)
+    assert "키 불일치" in st["last_err"], st

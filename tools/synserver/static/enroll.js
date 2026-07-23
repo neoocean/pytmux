@@ -40,6 +40,7 @@ async function post(path, body) {
 // 자동 배포가 불가능하므로 **그 사실을 화면에 즉시 알리고** 복구 코드 경로로 물러선다.
 const PRF_SALT = new TextEncoder().encode("pytmux-sync/vault-key/v1");
 let VAULT_KEY = null;            // Uint8Array(32) — 이 탭 메모리에만 둔다
+let HAS_VAULT = false;           // 서버에 vault 가 이미 있는가(고아 패스키 방지용)
 
 const rawKey = (bits) => new Uint8Array(bits);
 
@@ -70,7 +71,87 @@ function prfBits(cred) {
   return r ? new Uint8Array(r) : null;
 }
 
-async function storeVaultKey(prf) {
+// ── 암호구절 폴백(인증기가 PRF 를 지원하지 않을 때) ──────────────────────
+// PRF 가 없으면 패스키만으로는 키를 감쌀 수 없다. 그렇다고 서버에 평문으로 두면
+// 이 설계의 존재 이유가 사라지므로, **사용자 암호구절**에서 KEK 를 유도해 감싼다.
+// 서버는 여전히 암호문만 갖고, 암호구절은 브라우저 밖으로 나가지 않는다.
+//
+// 주의: 감싼 블롭이 서버에 있으므로 **약한 암호는 오프라인 대입에 취약**하다.
+// PBKDF2 반복을 크게 잡고(60만), 화면에서도 길게 잡으라고 말한다.
+const PBKDF2_ITER = 600000;
+
+async function passKek(pass, salt) {
+  const base = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(pass), "PBKDF2", false, ["deriveBits"]);
+  return crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", salt, iterations: PBKDF2_ITER }, base, 256);
+}
+
+function askPassphrase(why) {
+  // window.prompt 대신 인라인 입력 — 붙여넣기·비밀번호 관리자와 잘 맞는다.
+  return new Promise((resolve) => {
+    $("pass-why").textContent = why;
+    $("sec-pass").hidden = false;
+    const input = $("pass-input");
+    input.value = "";
+    input.focus();
+    const done = () => {
+      const v = input.value;
+      if (!v) return;
+      $("btn-pass").removeEventListener("click", done);
+      input.removeEventListener("keydown", onKey);
+      $("sec-pass").hidden = true;
+      input.value = "";
+      resolve(v);
+    };
+    const onKey = (e) => { if (e.key === "Enter") done(); };
+    $("btn-pass").addEventListener("click", done);
+    input.addEventListener("keydown", onKey);
+  });
+}
+
+async function storeVaultKeyWithPassphrase() {
+  const pass = await askPassphrase(
+    "이 인증기는 키 자동 배포(PRF)를 지원하지 않습니다 — 키를 감쌀 암호구절을 정하세요.");
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const kek = await passKek(pass, salt);
+  const { iv, ct } = await aesEncrypt(kek, VAULT_KEY);
+  const wrapped = new Uint8Array(iv.length + ct.length);
+  wrapped.set(iv, 0); wrapped.set(ct, iv.length);
+  const meta = "pbkdf2-v1:" + bufToB64u(salt) + ":" + PBKDF2_ITER;
+  const r = await fetch("/v1/vault/key", {
+    method: "POST", credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ wrapped: bufToB64u(wrapped), meta }),
+  });
+  return r.ok;
+}
+
+async function loadVaultKeyWithPassphrase(j) {
+  const parts = (j.meta || "").split(":");
+  if (parts[0] !== "pbkdf2-v1") return false;
+  const salt = b64uToBuf(parts[1]);
+  const iter = parseInt(parts[2], 10) || PBKDF2_ITER;
+  const wrapped = b64uToBuf(j.wrapped);
+  for (let tries = 0; tries < 3; tries++) {
+    const pass = await askPassphrase(
+      tries ? "암호가 맞지 않습니다 — 다시 입력하세요." : "키를 열 암호구절을 입력하세요.");
+    const base = await crypto.subtle.importKey(
+      "raw", new TextEncoder().encode(pass), "PBKDF2", false, ["deriveBits"]);
+    const kek = await crypto.subtle.deriveBits(
+      { name: "PBKDF2", hash: "SHA-256", salt, iterations: iter }, base, 256);
+    try {
+      VAULT_KEY = await aesDecrypt(kek, wrapped.slice(0, 12), wrapped.slice(12));
+      return true;
+    } catch (e) {
+      VAULT_KEY = null;      // 복호 실패 = 암호 불일치(AEAD 가 잡아 준다)
+    }
+  }
+  say("암호구절을 3회 틀렸습니다 — 새로고침 후 다시 시도하세요.", true);
+  return false;
+}
+
+async function storeVaultKey(prf, overwrite) {
   const kek = await hkdf(prf, "pytmux-sync/vault-kek", "wrap");
   const { iv, ct } = await aesEncrypt(kek, VAULT_KEY);
   const wrapped = new Uint8Array(iv.length + ct.length);
@@ -78,7 +159,10 @@ async function storeVaultKey(prf) {
   const r = await fetch("/v1/vault/key", {
     method: "POST", credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ wrapped: bufToB64u(wrapped), meta: "prf-v1" }),
+    // overwrite 는 **같은 키를 다시 감쌀 때만** 쓴다(암호구절 → PRF 승격).
+    // 다른 키로 덮어쓰면 서버의 기존 레코드가 복호 불능이 되므로 기본은 거부다.
+    body: JSON.stringify({ wrapped: bufToB64u(wrapped), meta: "prf-v1",
+                           overwrite: !!overwrite }),
   });
   return r.ok;                      // 409 = 이미 있음(덮어쓰지 않는다)
 }
@@ -94,6 +178,19 @@ async function loadVaultKey(prf) {
 }
 
 async function register() {
+  // **만들기 전에** 추가가 가능한 상태인지 확인한다. 로그아웃 상태에서 누르면 서버는
+  // "새 vault 생성"으로 보고 거부하는데, 그때 인증기에는 이미 패스키가 만들어져
+  // **고아 패스키**가 남는다(그 뒤 로그인에서 그걸 골라 401 이 난다 — 실기동 제보).
+  let authed = false;
+  try {
+    const r = await fetch("/v1/session", { credentials: "same-origin" });
+    authed = r.ok ? (await r.json()).authenticated : false;
+  } catch (e) { /* 확인 실패는 서버가 판정하게 둔다 */ }
+  if (!authed && HAS_VAULT) {
+    say("이미 vault 가 있습니다 — 먼저 '패스키로 로그인' 한 뒤 눌러야 같은 vault 에 "
+        + "패스키가 추가됩니다(지금 만들면 서버가 모르는 패스키가 남습니다).", true);
+    return;
+  }
   say("인증기를 확인하세요…");
   const o = await post("/v1/enroll/options");
   const cred = await navigator.credentials.create({
@@ -110,12 +207,19 @@ async function register() {
       extensions: { prf: { eval: { first: PRF_SALT } } },
     },
   });
-  await post("/v1/enroll/verify", {
+  const j = await post("/v1/enroll/verify", {
     challenge: o.challenge,
     attestationObject: bufToB64u(cred.response.attestationObject),
     clientDataJSON: bufToB64u(cred.response.clientDataJSON),
   });
-  say("패스키를 등록했습니다.");
+  // PRF 는 **크리덴셜 생성 시** 켜진다 — 그래서 지원 여부를 여기서 바로 알려 준다.
+  // (로그인해 봐야 아는 구조라 사용자가 원인을 못 짚었다.)
+  const ext = cred.getClientExtensionResults ? cred.getClientExtensionResults() : {};
+  const prfOn = !!(ext && ext.prf && ext.prf.enabled);
+  if (j && j.recovery_code) showRecovery(j.recovery_code);
+  say(prfOn
+      ? "패스키를 등록했습니다 — 이 패스키는 키 자동 배포(PRF)를 지원합니다."
+      : "패스키를 등록했습니다 — 이 패스키는 PRF 미지원이라 암호구절이 필요합니다.");
   // 새 vault 면 키를 만들어 패스키로 감싸 둔다. 등록 응답 직후의 create 결과에는 PRF
   // 값이 없는 인증기가 많아, **로그인 assertion 한 번**으로 PRF 를 받아 온다.
   await ensureVaultKey();
@@ -150,20 +254,48 @@ async function ensureVaultKey() {
     clientDataJSON: bufToB64u(cred.response.clientDataJSON),
     signature: bufToB64u(cred.response.signature),
   });
-  const prf = prfBits(cred);
-  if (!prf) {
-    // **조용히 넘어가지 않는다** — 이 인증기로는 다른 기기에서 키를 못 받는다.
-    say("이 인증기는 키 자동 배포(PRF)를 지원하지 않습니다 — 머신을 붙일 때 " +
-        "첫 머신에서 :claude-token-sync invite 로 키를 옮겨야 합니다.", true);
-    return;
+  await unlockOrCreateKey(prfBits(cred));
+}
+
+// PRF 가 있으면 패스키로, 없으면 암호구절로 — 어느 쪽이든 **서버는 암호문만** 갖는다.
+async function unlockOrCreateKey(prf) {
+  // **PRF 가 있으면 언제나 그쪽**이다 — 사용자가 고를 필요도, 암호구절을 칠 필요도
+  // 없다. 암호구절은 PRF 를 못 쓰는 인증기에서만 나타나는 폴백이다.
+  const r = await fetch("/v1/vault/key", { credentials: "same-origin" });
+  const existing = r.ok ? await r.json() : null;
+  if (existing) {
+    const byPass = (existing.meta || "").startsWith("pbkdf2-v1");
+    if (!byPass && !prf) {
+      // 키는 PRF 로 감싸져 있는데 지금 패스키에는 PRF 가 없다 — 그 패스키로
+      // 로그인하거나, PRF 되는 패스키를 새로 만들어야 한다.
+      say("이 키는 PRF 패스키로 감싸져 있습니다 — 그 패스키로 로그인하거나 " +
+          "'새 패스키 만들기'로 PRF 패스키를 추가하세요.", true);
+      return false;
+    }
+    const ok = byPass ? await loadVaultKeyWithPassphrase(existing)
+                      : await loadVaultKey(prf);
+    if (ok && byPass && prf) {
+      // 암호구절로 열었는데 이제 PRF 를 쓸 수 있다 → **PRF 로 갈아 감싼다**.
+      // 다음부터는 암호구절을 묻지 않는다(사용자가 아무것도 안 해도 좋아진다).
+      if (await storeVaultKey(prf, true)) {
+        say("이제 이 패스키로 자동 잠금 해제됩니다 — 암호구절은 더 묻지 않습니다.");
+      }
+    }
+    return ok;
   }
-  if (await loadVaultKey(prf)) return;          // 기존 키를 풀었다
   VAULT_KEY = crypto.getRandomValues(new Uint8Array(32));
-  if (!(await storeVaultKey(prf))) {
-    // 서버엔 이미 키가 있는데 못 푼 경우(다른 패스키로 감쌌다) — 덮어쓰지 않는다.
+  const stored = prf ? await storeVaultKey(prf)
+                     : await storeVaultKeyWithPassphrase();
+  if (!stored) {
     VAULT_KEY = null;
-    say("서버에 이미 다른 패스키로 감싼 키가 있습니다 — 그 패스키로 로그인하세요.", true);
+    say("키 보관에 실패했습니다 — 이미 다른 키가 있는지 확인하세요.", true);
+    return false;
   }
+  if (!prf) {
+    say("암호구절로 키를 보관했습니다 — 'PRF 지원' 패스키를 만들면 다음부터 " +
+        "암호구절 없이 열립니다.");
+  }
+  return true;
 }
 
 async function login() {
@@ -187,16 +319,7 @@ async function login() {
     signature: bufToB64u(cred.response.signature),
   });
   say("로그인했습니다.");
-  const prf = prfBits(cred);
-  if (prf) {
-    if (!(await loadVaultKey(prf))) {
-      VAULT_KEY = crypto.getRandomValues(new Uint8Array(32));
-      await storeVaultKey(prf);                 // 아직 키가 없던 vault
-    }
-  } else {
-    say("이 인증기는 키 자동 배포(PRF)를 지원하지 않습니다 — 머신을 붙일 때 " +
-        "첫 머신에서 :claude-token-sync invite 로 키를 옮겨야 합니다.", true);
-  }
+  await unlockOrCreateKey(prfBits(cred));
   await afterLogin();
 }
 
@@ -219,6 +342,34 @@ async function codeHash(code) {
   const d = await crypto.subtle.digest("SHA-256",
                                        new TextEncoder().encode("pairing|" + norm));
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// 복구 코드는 **딱 한 번** 보여 준다 — 서버는 해시만 갖고 있어 다시 못 보여 준다.
+function showRecovery(code) {
+  $("recovery-code").textContent = code;
+  $("recovery-show").hidden = false;
+  $("recovery-note").hidden = false;
+  $("btn-recovery-copy").textContent = "복사";
+}
+
+// 복구 화면은 **단독**으로 띄운다 — 다른 버튼이 함께 보이면 잠긴 사용자가 무엇을
+// 눌러야 할지 또 헷갈린다(이번 잠김에서 실제로 그랬다).
+function showRecoverUI(on) {
+  $("recover-box").hidden = !on;
+  $("passkey-actions").hidden = on;
+  $("passkey-hint").hidden = on;
+  if (on) $("recover-input").focus();
+  else $("recover-input").value = "";
+}
+
+async function submitRecover() {
+  const code = $("recover-input").value.trim();
+  if (!code) return;
+  const j = await post("/v1/recover", { code });
+  showRecoverUI(false);
+  say("복구했습니다 — 새 패스키를 만들어 두세요.");
+  if (j.recovery_code) showRecovery(j.recovery_code);
+  await restoreSession();
 }
 
 async function pair() {
@@ -309,10 +460,23 @@ async function loadDevices() {
   $("sec-devices").hidden = devices.length === 0;
 }
 
+function setLoggedIn(on) {
+  // 로그인 상태에서 '패스키로 로그인' 은 할 일이 없다 — 눌러 봐야 같은 자리에
+  // 머문다. 지금 할 수 있는 것(패스키 추가·로그아웃)만 남긴다.
+  $("btn-login").hidden = on;
+  $("btn-logout").hidden = !on;
+  $("passkey-hint").textContent = on
+    ? "다른 기기의 브라우저에서도 같은 vault 에 패스키를 추가할 수 있습니다 — "
+      + "'새 패스키 만들기' 를 누르세요."
+    : "처음이면 '새 패스키 만들기' 로 vault 가 생깁니다. 다른 기기의 브라우저에서도 "
+      + "같은 vault 에 패스키를 추가할 수 있습니다(로그인 후 다시 누르세요).";
+}
+
 async function afterLogin() {
+  showRecoverUI(false);
   $("sec-pair").hidden = false;
   $("pair-result").hidden = true;      // 로그인 직후엔 지난 코드의 흔적을 남기지 않는다
-  $("btn-logout").hidden = false;
+  setLoggedIn(true);
   await loadDevices();
 }
 
@@ -322,12 +486,30 @@ async function logout() {
   $("sec-pair").hidden = true;
   $("sec-devices").hidden = true;
   $("pair-result").hidden = true;
-  $("btn-logout").hidden = true;
+  setLoggedIn(false);
   say("로그아웃했습니다.");
 }
 
-function wrap(fn) {
-  return () => fn().catch((e) => say(String(e.message || e), true));
+// 서버는 사유를 일반화해 돌려준다(정보 누출 방지) — 그래서 **화면이** 맥락을 붙인다.
+// 'unauthorized' 한 단어만 보여 주면 사용자는 무엇을 해야 할지 모른다(실기동 제보).
+function explain(msg, what) {
+  if (msg !== "unauthorized") return msg;
+  if (what === "register") {
+    return "새 vault 생성은 잠겨 있습니다 — 먼저 '패스키로 로그인' 한 뒤 다시 누르면 "
+         + "같은 vault 에 이 패스키가 추가됩니다.";
+  }
+  if (what === "recover") {
+    return "복구 코드가 맞지 않습니다 — 이미 쓴 코드이거나 오타입니다.";
+  }
+  if (what === "login") {
+    return "로그인 실패 — 서버가 모르는 패스키일 수 있습니다(로그아웃 상태에서 만든 것). "
+         + "인증기 목록에서 다른 패스키를 고르거나, 그 패스키를 지우세요.";
+  }
+  return "권한이 없습니다 — 로그인 상태를 확인하세요.";
+}
+
+function wrap(fn, what) {
+  return () => fn().catch((e) => say(explain(String(e.message || e), what), true));
 }
 
 // 새로고침 후에도 로그인 상태를 되찾는다(제보). 쿠키는 살아 있었는데 페이지가
@@ -343,6 +525,7 @@ async function restoreSession() {
   } catch (e) {
     return;
   }
+  HAS_VAULT = !!j.vault_exists;
   if (!j.authenticated) return;
   await afterLogin();
   say(j.has_key
@@ -350,10 +533,26 @@ async function restoreSession() {
       : "로그인 상태입니다.");
 }
 
-$("btn-register").addEventListener("click", wrap(register));
-$("btn-login").addEventListener("click", wrap(login));
+$("btn-register").addEventListener("click", wrap(register, "register"));
+$("btn-login").addEventListener("click", wrap(login, "login"));
 $("btn-pair").addEventListener("click", wrap(pair));
 $("btn-copy").addEventListener("click", wrap(copyCommand));
 $("btn-logout").addEventListener("click", wrap(logout));
+$("btn-recover").addEventListener("click", () => showRecoverUI(true));
+$("btn-recover-cancel").addEventListener("click", () => {
+  showRecoverUI(false);
+  say("");
+});
+$("btn-recover-go").addEventListener("click", wrap(submitRecover, "recover"));
+$("recover-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") wrap(submitRecover, "recover")();
+  if (e.key === "Escape") showRecoverUI(false);
+});
+$("btn-recovery-copy").addEventListener("click", wrap(async () => {
+  const t = $("recovery-code").textContent.trim();
+  if (!t) return;
+  try { await navigator.clipboard.writeText(t); $("btn-recovery-copy").textContent = "복사됨"; }
+  catch (e) { say("복사가 막혔습니다 — 직접 선택해 복사하세요.", true); }
+}));
 
 restoreSession().catch(() => {});

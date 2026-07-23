@@ -524,3 +524,13 @@ async def test_cli_token_sync_configures_and_persists():
             ("error:", "enrolled"))
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_token_sync_is_relayed_to_remote_tab():
+    """원격 탭을 보는 중 `:claude-token-sync …` 는 **그 원격 머신**이 처리해야 한다.
+    릴레이 목록에 없으면 보고 있지도 않은 로컬 머신이 조용히 등록된다(jump_prompt 와
+    같은 종류의 버그)."""
+    reg = plugins.get()
+    assert "token_sync" in reg.relay_actions()
+    # 다른 활성-패널 액션들도 함께 유지된다(회귀로 같이 못박는다).
+    assert {"set_autoresume", "request_token_log", "jump_prompt"} <= reg.relay_actions()

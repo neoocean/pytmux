@@ -63,6 +63,11 @@ class SyncApp:
         # 계획이면 --bootstrap-token 으로 연다.
         self.open_registration = bool(open_registration)
         self.bootstrap_token = str(bootstrap_token or "")
+        # 잠김 복구(§5.9 보강): 패스키를 전부 잃으면 로그인도, 새 등록도 막힌다
+        # (S-1 잠금이 의도대로 동작한 결과). 서버를 **직접 운영하는 사람**만 쓸 수 있는
+        # 일회용 토큰으로 세션을 발급해 그 자리에서 새 패스키를 추가하게 한다.
+        # 토큰은 한 번 쓰면 사라지고, 서버 재시작 없이는 다시 만들 수 없다.
+        self.recovery_token = ""
         self._unauth = [0.0, 0]         # [윈도 시작, 카운트] — 미인증 전역
         self._last_purge = 0.0
         # 진행 중 챌린지: {challenge_hex: (kind, vault_id|None, exp)}. 단일 프로세스라
@@ -88,7 +93,7 @@ class SyncApp:
 
     _UNAUTH_ROUTES = {("POST", "/v1/enroll/options"), ("POST", "/v1/enroll/verify"),
                       ("POST", "/v1/auth/options"), ("POST", "/v1/auth/verify"),
-                      ("POST", "/v1/devices")}
+                      ("POST", "/v1/devices"), ("POST", "/v1/recover")}
 
     def _handle_locked(self, method, path, query, headers, body, q):
         try:
@@ -114,6 +119,10 @@ class SyncApp:
                 return self._auth_options()
             if route == ("POST", "/v1/auth/verify"):
                 return self._auth_verify(body)
+            if route == ("POST", "/v1/recover"):
+                return self._recover_code(body)
+            if method == "GET" and path == "/v1/recover":
+                return self._recover(q)
             if route == ("GET", "/v1/session"):
                 return self._session_state(headers)
             if route == ("POST", "/v1/vault/key"):
@@ -238,7 +247,12 @@ class SyncApp:
             self._bump("passkey_limit")
             return self._err(409, "limit")
         sid = sdb.new_session(self.conn, vault_id, now, SESSION_TTL)
-        return self._json(200, {"ok": True}, cookie=sid)
+        out = {"ok": True}
+        if ch[1] is None:
+            # **새 vault 를 만든 그 순간에만** 복구 코드를 준다. 패스키를 잃으면
+            # 이것 말고는 스스로 돌아올 길이 없다(관리자 개입은 해법이 아니다).
+            out["recovery_code"] = sdb.new_recovery_code(self.conn, vault_id, now)
+        return self._json(200, out, cookie=sid)
 
     def _auth_options(self):
         """discoverable 로그인 — `allowCredentials` 를 **비워** 아이디 입력 없이,
@@ -281,6 +295,45 @@ class SyncApp:
 
     # ── 기기 등록·관리 ────────────────────────────────────────────────────
 
+    def _recover_code(self, body):
+        """복구 코드로 기존 vault 세션을 연다 — **사용자 스스로** 잠김을 푸는 길.
+
+        얻는 것은 세션뿐이다: vault 키는 패스키(PRF)나 암호구절이 쥐고 있어 이 코드로는
+        데이터를 읽지 못한다. 그래서 코드가 새도 **기록은 안전**하고, 대신 새 패스키를
+        붙일 수 있다. 1회용이며 성공 즉시 새 코드를 발급해 돌려준다."""
+        d = self._body_json(body)
+        if d is None:
+            return self._err(400, "bad_request")
+        vault_id = sdb.use_recovery_code(self.conn, str(d.get("code") or ""),
+                                         self._now())
+        if not vault_id:
+            return self._bad_auth("recovery_code")
+        now = self._now()
+        sid = sdb.new_session(self.conn, vault_id, now, SESSION_TTL)
+        return self._json(200, {"ok": True,
+                                "recovery_code": sdb.new_recovery_code(
+                                    self.conn, vault_id, now)}, cookie=sid)
+
+    def _recover(self, q):
+        """일회용 복구 링크 — 토큰이 맞으면 **기존 vault** 세션을 발급하고 첫 화면으로.
+
+        새 vault 를 만들지 않는다는 점이 핵심이다: 기존 vault 에 붙어야 등록된 기기와
+        감싼 키가 그대로 살아 있다. 토큰은 상수시간 비교 후 **즉시 폐기**한다."""
+        token = (q.get("t") or [""])[0]
+        if not self.recovery_token or not token:
+            return self._bad_auth("recover")
+        if not hmac.compare_digest(token, self.recovery_token):
+            return self._bad_auth("recover")
+        row = self.conn.execute(
+            "SELECT vault_id FROM vault ORDER BY created LIMIT 1").fetchone()
+        if row is None:
+            return self._bad_auth("recover")
+        self.recovery_token = ""            # 일회용
+        sid = sdb.new_session(self.conn, row["vault_id"], self._now(), SESSION_TTL)
+        status, headers_out, body = self._json(200, {"ok": True}, cookie=sid)
+        headers_out["Location"] = "/"
+        return 302, headers_out, body
+
     def _session_state(self, headers):
         """새로고침 후 페이지가 로그인 상태를 되찾는 경로.
 
@@ -288,9 +341,15 @@ class SyncApp:
         **묻지 않았기** 때문이다. vault_id 는 돌려주지 않는다(필요 없고, 노출면만 는다).
         키 보관 여부는 알려 줘 화면이 '키 잠김'을 안내할 수 있게 한다."""
         vault_id = self._session_vault(headers)
+        # vault 존재 여부는 화면이 **고아 패스키를 만들지 않도록** 필요하다(로그아웃
+        # 상태의 '새 패스키 만들기' 를 사전에 막는다). 이미 등록 거부 응답으로 알 수
+        # 있는 사실이라 새로 새는 정보는 없다.
+        exists = sdb.vault_count(self.conn) > 0
         if not vault_id:
-            return self._json(200, {"authenticated": False})
+            return self._json(200, {"authenticated": False,
+                                    "vault_exists": exists})
         return self._json(200, {"authenticated": True,
+                                "vault_exists": exists,
                                 "has_key": sdb.get_vault_key(self.conn,
                                                              vault_id) is not None})
 
@@ -385,8 +444,12 @@ class SyncApp:
         if len(pub) != 32:                       # Ed25519 raw
             return self._err(400, "bad_request")
         try:
+            host_id = str(d.get("host_id") or "")[:64] or None
+            if host_id and not all(c in "0123456789abcdefABCDEF-" for c in host_id):
+                return self._err(400, "bad_request")
             did = sdb.add_device(self.conn, vault_id, pub,
-                                 label=(d.get("label") or None), now=self._now())
+                                 label=(d.get("label") or None), now=self._now(),
+                                 host_id=host_id)
         except sdb.LimitExceeded:
             self._bump("device_limit")
             return self._err(409, "limit")
@@ -729,11 +792,16 @@ def main(argv=None):
                    help="아무나 새 vault 를 만들 수 있게(기본: 첫 등록 뒤 잠김)")
     p.add_argument("--bootstrap-token", default="",
                    help="새 vault 생성 시 요구할 X-Sync-Bootstrap 값")
+    p.add_argument("--recovery-token", default="",
+                   help="일회용 복구 링크 토큰(/v1/recover?t=…) — 패스키를 전부 잃었을 때")
     a = p.parse_args(argv)
     conn = sdb.connect(a.db)
     app = SyncApp(conn, a.rp_id, a.origin or ("https://" + a.rp_id),
                   open_registration=a.open_registration,
                   bootstrap_token=a.bootstrap_token)
+    app.recovery_token = a.recovery_token
+    if a.recovery_token:
+        sys.stderr.write("recovery link armed: /v1/recover?t=<token> (일회용)\n")
     srv = ThreadingHTTPServer((a.host, a.port), make_handler(app))
     sys.stderr.write("synserver %s:%d rp=%s\n" % (a.host, a.port, a.rp_id))
     try:

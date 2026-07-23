@@ -684,7 +684,9 @@ async def test_session_survives_reload_until_logout():
     끊는 것은 **명시적 로그아웃**뿐이다."""
     app, clock = _app()
     st, out = _j(app.handle("GET", "/v1/session"))
-    assert st == 200 and out == {"authenticated": False}   # 로그인 전
+    # vault_exists 는 화면이 고아 패스키를 만들지 않게 하는 신호다(로그아웃 상태의
+    # '새 패스키 만들기' 를 사전 차단).
+    assert st == 200 and out == {"authenticated": False, "vault_exists": False}
     cookie, vault, _a = _enroll(app)
     st, out = _j(app.handle("GET", "/v1/session", headers=cookie))
     assert st == 200 and out["authenticated"] is True and out["has_key"] is False
@@ -696,7 +698,7 @@ async def test_session_survives_reload_until_logout():
     # 명시적 로그아웃만 끊는다.
     assert _j(app.handle("POST", "/v1/logout", headers=cookie))[0] == 200
     assert _j(app.handle("GET", "/v1/session", headers=cookie))[1] == {
-        "authenticated": False}
+        "authenticated": False, "vault_exists": True}
 
 
 async def test_session_expires_when_idle():
@@ -705,7 +707,7 @@ async def test_session_expires_when_idle():
     cookie, _v, _a = _enroll(app)
     clock.t += sapp.SESSION_TTL + 10
     assert _j(app.handle("GET", "/v1/session", headers=cookie))[1] == {
-        "authenticated": False}
+        "authenticated": False, "vault_exists": True}
 
 
 async def test_session_state_does_not_leak_vault_id():
@@ -714,3 +716,133 @@ async def test_session_state_does_not_leak_vault_id():
     cookie, vault, _a = _enroll(app)
     _st, out = _j(app.handle("GET", "/v1/session", headers=cookie))
     assert vault not in json.dumps(out)
+
+
+async def test_recovery_link_is_single_use_and_keeps_vault():
+    """패스키를 전부 잃으면 로그인도 새 등록도 막힌다(S-1 잠금이 정상 작동한 결과).
+    서버를 직접 운영하는 사람만 쓰는 **일회용 복구 링크**로 기존 vault 세션을 연다.
+
+    핵심: 새 vault 를 만들지 **않는다** — 기존 vault 여야 등록된 기기·감싼 키가 산다."""
+    app, clock = _app()
+    cookie, vault, _a = _enroll(app)
+    app.handle("POST", "/v1/logout", headers=cookie)
+
+    assert _j(app.handle("GET", "/v1/recover", "t=nope"))[0] == 401   # 토큰 없음
+    app.recovery_token = "one-time-secret"
+    assert _j(app.handle("GET", "/v1/recover", "t=wrong"))[0] == 401
+    status, hdrs, _b = app.handle("GET", "/v1/recover", "t=one-time-secret")
+    assert status == 302 and hdrs["Location"] == "/"
+    sid = hdrs["Set-Cookie"].split(";")[0].split("=", 1)[1]
+    assert sdb.session_vault(app.conn, sid, clock.t) == vault        # 같은 vault
+    assert sdb.vault_count(app.conn) == 1                            # 새로 안 만듦
+    # 토큰은 소모됐다 — 링크가 로그에 남아도 재사용되지 않는다.
+    assert _j(app.handle("GET", "/v1/recover", "t=one-time-secret"))[0] == 401
+
+
+async def test_recovery_code_unlocks_without_admin():
+    """패스키를 잃으면 **사용자 스스로** 돌아올 길이 있어야 한다(제보: 로컬에서 패스키를
+    지우자 로그인도 등록도 막혀 관리자 개입이 필요했다).
+
+    복구 코드는 세션만 준다 — vault 키는 패스키·암호구절이 쥐고 있어 이 코드로는
+    기록을 읽지 못한다. 그래서 코드가 새도 데이터는 안전하다."""
+    app, clock = _app(open_registration=False)
+    auth = FakeAuthenticator()
+    st, opts = _j(app.handle("POST", "/v1/enroll/options"))
+    att, cd = auth.register(wa.b64u_decode(opts["challenge"]))
+    st, out = _j(app.handle("POST", "/v1/enroll/verify", body=json.dumps({
+        "challenge": opts["challenge"],
+        "attestationObject": wa.b64u_encode(att),
+        "clientDataJSON": wa.b64u_encode(cd)}).encode()))
+    assert st == 200 and out.get("recovery_code"), out      # 생성 시 1회 발급
+    code = out["recovery_code"]
+    vault = sdb.vault_count(app.conn)
+    assert vault == 1
+
+    # 패스키를 잃은 상황: 로그인 불가 + 새 등록도 잠김(S-1) → 복구 코드로 연다.
+    st, out = _j(app.handle("POST", "/v1/recover",
+                            body=json.dumps({"code": code}).encode()))
+    assert st == 200 and out["recovery_code"] != code       # 1회용 → 새 코드 발급
+    new_code = out["recovery_code"]
+
+    # 같은 코드는 재사용되지 않는다(로그·화면에 남아도 안전).
+    assert _j(app.handle("POST", "/v1/recover",
+                         body=json.dumps({"code": code}).encode()))[0] == 401
+    # 새 코드로는 열린다.
+    assert _j(app.handle("POST", "/v1/recover",
+                         body=json.dumps({"code": new_code}).encode()))[0] == 200
+    # 오답은 거부되고 vault 는 그대로다(새로 만들지 않는다).
+    assert _j(app.handle("POST", "/v1/recover",
+                         body=json.dumps({"code": "AAAA-BBBB"}).encode()))[0] == 401
+    assert sdb.vault_count(app.conn) == 1
+
+
+async def test_recovery_session_can_add_passkey():
+    """복구 후 **그 자리에서** 새 패스키를 붙일 수 있어야 잠김이 실제로 풀린다."""
+    app, clock = _app(open_registration=False)
+    auth = FakeAuthenticator()
+    st, opts = _j(app.handle("POST", "/v1/enroll/options"))
+    att, cd = auth.register(wa.b64u_decode(opts["challenge"]))
+    st, out = _j(app.handle("POST", "/v1/enroll/verify", body=json.dumps({
+        "challenge": opts["challenge"],
+        "attestationObject": wa.b64u_encode(att),
+        "clientDataJSON": wa.b64u_encode(cd)}).encode()))
+    code = out["recovery_code"]
+
+    status, hdrs, _b = app.handle("POST", "/v1/recover",
+                                  body=json.dumps({"code": code}).encode())
+    cookie = {"Cookie": hdrs["Set-Cookie"].split(";")[0]}
+    fresh = FakeAuthenticator()
+    st, opts = _j(app.handle("POST", "/v1/enroll/options", headers=cookie))
+    att, cd = fresh.register(wa.b64u_decode(opts["challenge"]))
+    st, out = _j(app.handle("POST", "/v1/enroll/verify", headers=cookie,
+                            body=json.dumps({
+                                "challenge": opts["challenge"],
+                                "attestationObject": wa.b64u_encode(att),
+                                "clientDataJSON": wa.b64u_encode(cd)}).encode()))
+    assert st == 200, out
+    assert sdb.vault_count(app.conn) == 1          # 같은 vault 에 붙었다
+    assert len(sdb.list_passkeys(app.conn, sdb.session_vault(
+        app.conn, cookie["Cookie"].split("=", 1)[1], clock.t))) == 2
+
+
+async def test_reenroll_same_machine_replaces_device():
+    """같은 머신을 다시 등록하면 **옛 등록을 대체**한다(제보: 재시도할 때마다 유령
+    기기가 쌓였다). 다른 머신은 그대로 남아야 한다."""
+    app, clock = _app()
+    cookie, vault, _a = _enroll(app)
+
+    def enroll_machine(host_id, label):
+        from cryptography.hazmat.primitives import serialization as ser
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+        app._unauth = [0.0, 0]
+        _st, pr = _j(app.handle("POST", "/v1/pairing", headers=cookie))
+        sk = ed25519.Ed25519PrivateKey.generate()
+        pub = sk.public_key().public_bytes(ser.Encoding.Raw, ser.PublicFormat.Raw)
+        st, out = _j(app.handle("POST", "/v1/devices", body=json.dumps({
+            "pairing_code": pr["code"], "pubkey": wa.b64u_encode(pub),
+            "label": label, "host_id": host_id}).encode()))
+        assert st == 200, out
+        return out["device_id"]
+
+    a1 = enroll_machine("aaaa1111", "mac")
+    b1 = enroll_machine("bbbb2222", "surface")
+    live = [d for d in sdb.list_devices(app.conn, vault) if not d["revoked"]]
+    assert len(live) == 2
+
+    a2 = enroll_machine("aaaa1111", "mac")        # 같은 머신 재등록
+    live = [d for d in sdb.list_devices(app.conn, vault) if not d["revoked"]]
+    assert {d["device_id"] for d in live} == {a2, b1}, live
+    assert sdb.get_device(app.conn, a1) is None   # 옛 등록은 폐기(요청도 401)
+
+    # host_id 가 없으면(구 클라이언트) 종전대로 각각 남는다 — 판단 근거가 없으므로.
+    app._unauth = [0.0, 0]
+    _st, pr = _j(app.handle("POST", "/v1/pairing", headers=cookie))
+    from cryptography.hazmat.primitives import serialization as ser
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    sk = ed25519.Ed25519PrivateKey.generate()
+    pub = sk.public_key().public_bytes(ser.Encoding.Raw, ser.PublicFormat.Raw)
+    st, _o = _j(app.handle("POST", "/v1/devices", body=json.dumps({
+        "pairing_code": pr["code"], "pubkey": wa.b64u_encode(pub)}).encode()))
+    assert st == 200
+    live = [d for d in sdb.list_devices(app.conn, vault) if not d["revoked"]]
+    assert len(live) == 3

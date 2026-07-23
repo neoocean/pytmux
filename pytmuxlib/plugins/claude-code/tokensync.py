@@ -220,9 +220,9 @@ class SyncClient:
         syncrypto.save_master(path, master)
         self._master, self._k_id, self._k_enc = None, None, None
         if force:
-            # 키가 바뀌었으면 예전 키로 올린 것은 남의 것이나 마찬가지다 — 커서를
-            # 되돌려 새 키로 다시 올린다(멱등이라 안전).
-            usagedb.set_export_cursor(self.conn, "limits", 0, self._now())
+            # 키가 바뀌었으면 예전 키로 올린 것은 남의 것이나 마찬가지다 — **양쪽**
+            # 커서를 되돌려 새 키로 다시 올리고 다시 받는다(멱등이라 안전).
+            reset_cursors(self.conn)
 
     def _device_key(self):
         """머신 고유 Ed25519 키(파일 0600). 없으면 만든다."""
@@ -269,9 +269,12 @@ class SyncClient:
             ser.Encoding.Raw, ser.PublicFormat.Raw)
         # 코드 **원문 대신 해시**를 보낸다 — 원문을 보내면 서버가 pair_key 를 만들어
         # 함께 보관 중인 감싼 키를 풀 수 있다(§5.3a).
+        # host_id(설치 시 1회 생성한 uuid)를 함께 보내 **같은 머신의 재등록이 옛
+        # 등록을 대체**하게 한다 — 안 그러면 재시도할 때마다 유령 기기가 쌓인다.
         body = json.dumps({"pairing_code_h": syncrypto.code_hash(pairing_code),
                            "pubkey": _b64u(pub),
-                           "label": label or _hostname()}).encode()
+                           "label": label or _hostname(),
+                           "host_id": self.host_id}).encode()
         status, _, resp = self.transport(
             "POST", "/v1/devices", "", body,
             {"Content-Type": "application/json"})
@@ -434,9 +437,16 @@ class SyncClient:
                 merged += 1
         # C-3(검수): 성공을 쓴 뒤 오류를 또 쓰면 마지막 값이 성공을 덮어 상태가
         # 뒤집힌다. 한 번만 쓴다.
+        # 전부 거부되면 사유가 하나뿐이다 — **키가 다르다**. "거부 N건" 만 적으면
+        # 사용자는 무엇을 해야 할지 모른다(실기동에서 그랬다).
+        why = ""
+        if rejected and not merged:
+            why = "거부 %d건 — 키 불일치(invite/adopt 로 키 통일)" % rejected
+        elif rejected:
+            why = "거부 %d건" % rejected
         usagedb.set_sync_remote(self.conn, self.REMOTE, cursor=str(last),
                                 last_ok=self._now(), rows_in_delta=merged,
-                                last_err=("거부 %d건" % rejected) if rejected else "")
+                                last_err=why)
         return {"rows": last - since, "merged": merged, "rejected": rejected}
 
     def _open_event(self, ev, k_id, k_enc):
@@ -608,11 +618,20 @@ async def run_worker(server, make_client=None, sleep=None):
         await sleep(min(3600, interval * (2 ** min(fails, 5))))
 
 
+def reset_cursors(conn) -> None:
+    """내보내기·받기 커서를 0 으로 되돌린다 — **전량 재업로드/재수신**.
+
+    키를 바꾸거나 서버를 비운 뒤에 필요하다. 병합은 멱등(xkey·lkey 유니크)이라 다시
+    올려도 중복이 생기지 않는다 — 그래서 "처음부터 다시" 가 안전한 복구 수단이다."""
+    usagedb.set_export_cursor(conn, "limits", 0)
+    usagedb.set_sync_remote(conn, SyncClient.REMOTE, cursor="0", last_err="")
+
+
 def _sync_once(client) -> dict:
     """push → pull 한 바퀴(블로킹). executor 안에서만 부른다."""
     up = client.push_limits()
     down = client.pull()
-    return {"push": up, "pull": down}
+    return {"push": up, "pull": down, "rejected": down.get("rejected", 0)}
 
 
 def _client_for(server):
