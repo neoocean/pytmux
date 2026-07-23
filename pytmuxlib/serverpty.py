@@ -23,6 +23,20 @@ from .protocol import FEED_SLICE, MIN_H, MIN_W
 NEST_QUERY = b"\x1b[>0q"            # XTVERSION 질의
 NEST_REPLY = b"\x1bP>|pytmux\x1b\\"  # DCS > | <name> ST
 
+# 동기화 출력(DEC 2026) 지원 광고. 배칭 자체(update_sync_output·_flush_loop 지연)는
+# 이미 있으나, 그 배칭은 자식이 ?2026h/?2026l 를 **보낼 때만** 작동한다. Textual 앱
+# (예: tx)은 터미널이 지원을 광고해야만 프레임을 감싸므로, 자식의 DECRQM 질의
+# (?2026$p)에 "인식함(2=reset)"으로 답해 감싸기를 켠다. Ps=2 는 Textual 이
+# setting_parameter>0 을 지원으로 해석하는 값(_re_terminal_mode_response). Claude Code
+# 처럼 무조건 감싸는 앱은 이 광고와 무관하게 이미 배칭 혜택을 받는다. perf-pytmux.md L1.
+SYNC_QUERY = b"\x1b[?2026$p"
+SYNC_REPLY = b"\x1b[?2026;2$y"
+
+
+def _has_query(data: bytes, carry: bytes, query: bytes) -> bool:
+    """*data*(또는 직전 청크 꼬리 *carry* 와 걸친 경계)에 *query* 가 있는가."""
+    return query in data or query in (carry + data[: len(query) - 1])
+
 # 원격 중첩 자동 승격(NESTED_ATTACH_SCENARIO §4)의 가변 길이 NEST DCS 스캔. 와이어
 # 상수/정규식은 sshwrap(leaf — 래퍼/launcher/model 과 공유): 공통 머리로 빠른 부재
 # 판정, 페이로드는 b64 클래스만 허용(임의 출력 오인 충돌 차단 + 선형 매칭 보장).
@@ -185,6 +199,17 @@ class ServerPtyMixin:
         tail = len(NEST_QUERY) - 1
         pane._nestq_carry = (data[-tail:] if len(data) >= tail
                              else (pane._nestq_carry + data)[-tail:])
+        # 동기화 출력(DEC 2026) 지원 질의(?2026$p)에도 같은 진입점에서 응답한다 —
+        # 자식(tx)이 지원을 알아야 프레임을 ?2026h/l 로 감싸고, 그때 기존 배칭
+        # (update_sync_output·_flush_loop)이 반쪽 프레임 송신을 막는다(L1).
+        if _has_query(data, pane._syncq_carry, SYNC_QUERY) and pane.pty is not None:
+            try:
+                pane.pty.write(SYNC_REPLY)
+            except OSError:
+                pass
+        stail = len(SYNC_QUERY) - 1
+        pane._syncq_carry = (data[-stail:] if len(data) >= stail
+                             else (pane._syncq_carry + data)[-stail:])
         # NESTED_ATTACH §4: 같은 진입점에서 NEST DCS(ssh 목적지 기록·승격 요청)도
         # 스캔한다 — 평시 비용은 공통 머리 부재 확인(in) 1회.
         self._nest_dcs_scan(pane, data)

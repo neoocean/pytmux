@@ -208,6 +208,10 @@ class Pane:
         # §1.7 중첩 능동 감지: XTVERSION 질의(ESC[>0q)가 read 경계에 걸쳐 쪼개져도
         # 놓치지 않게 직전 청크 꼬리(질의 길이-1 바이트)를 보관(serverpty 스캔용).
         self._nestq_carry = b""
+        # 동기화 출력(DEC 2026) 지원 질의(ESC[?2026$p)가 read 경계에 걸쳐 쪼개져도
+        # 놓치지 않게 직전 청크 꼬리를 보관(serverpty 광고 스캔용). 배칭 자체는
+        # sync_output/_flush_loop 가 이미 담당한다(여긴 광고 질의용 carry 뿐).
+        self._syncq_carry = b""
         # 원격 중첩 자동 승격(NESTED_ATTACH_SCENARIO): 가변 길이 NEST DCS(목적지
         # 기록/승격 요청)의 read 경계 보전 carry + ssh 래퍼가 기록한 이 패널의
         # 마지막 ssh 목적지(사용자가 친 문자열 그대로 — 자동 remote-attach 인자의
