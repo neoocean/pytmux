@@ -13,6 +13,7 @@
 화면(screens.py)은 실제로 열 때 지연 import 한다."""
 from __future__ import annotations
 
+import contextlib
 import os
 import time as _time
 
@@ -57,6 +58,9 @@ COMMANDS = [
                            "corruption(깨짐 감지 시만) (claude-auto-redraw "
                            "off|idle|corruption|toggle, 기본 off)",
                            "Claude"),
+    ("token-sync", "여러 머신 간 토큰 사용량 동기화 — status | enroll <코드> | "
+                   "invite | adopt <코드> | now (설정 token_sync/token_sync_url)",
+                   "Claude"),
     ("claude-auto-mode", "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off "
                          "(claude-auto-mode on|off|toggle)", "Claude"),
     ("auto-launch", "새 Claude 세션 시작 시 /rc(원격 제어)+권한모드 auto 1회 자동 적용 "
@@ -124,6 +128,7 @@ i18n.register({
         "cmd.claude-auto-redraw": "Auto-mitigate screen corruption — off | idle (repaint each completion) | corruption (repaint only when corruption is detected) (claude-auto-redraw off|idle|corruption|toggle, default off)",
         "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",
         "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
+        "cmd.token-sync": "Sync token usage across machines — status | enroll <code> | invite | adopt <code> | now (needs token_sync/token_sync_url)",
         "cmd.token-debug": "Token-accounting diagnostic log (<sock>.tokendbg.jsonl) on/off — §10-D undercount root-cause diagnostic (off normally) (token-debug on|off|toggle, default off)",
     },
 })
@@ -220,6 +225,33 @@ i18n.register({
         "자동재시도": "Auto-retry",
         "깨짐완화": "Anti-corruption",
         "토큰진단로그": "Token diag log",
+    },
+})
+
+
+# 토큰 동기화 서버발 알림 — 서버는 로케일을 모르므로 키+인자만 실어 보내고 클라가
+# 번역한다([[server-pushed-surface-cannot-call-t]]).
+i18n.register({
+    "ko": {
+        "tsync.status": "토큰 동기화: {state} · 마지막 성공 {last} · 받은 행 {rows}",
+        "tsync.enrolled": "토큰 동기화: 이 머신을 등록했습니다({label})",
+        "tsync.enroll_fail": "토큰 동기화 등록 실패 — {why}",
+        "tsync.invite": "초대 코드(이 값이 곧 키입니다 — 채팅·스크린샷 금지): {code}",
+        "tsync.adopted": "토큰 동기화: 초대 코드를 적용했습니다(이 머신의 키 교체)",
+        "tsync.synced": "토큰 동기화: 올림 {sent} · 받음 {merged}",
+        "tsync.fail": "토큰 동기화 실패 — {why}",
+        "tsync.off": "토큰 동기화가 꺼져 있습니다(설정 token_sync=server, "
+                     "token_sync_url 필요)",
+    },
+    "en": {
+        "tsync.status": "Token sync: {state} · last ok {last} · rows in {rows}",
+        "tsync.enrolled": "Token sync: this machine is enrolled ({label})",
+        "tsync.enroll_fail": "Token sync enrollment failed — {why}",
+        "tsync.invite": "Invite code (this IS the key — never paste in chat): {code}",
+        "tsync.adopted": "Token sync: invite applied (key replaced on this machine)",
+        "tsync.synced": "Token sync: pushed {sent} · merged {merged}",
+        "tsync.fail": "Token sync failed — {why}",
+        "tsync.off": "Token sync is off (set token_sync=server and token_sync_url)",
     },
 })
 
@@ -534,6 +566,69 @@ def _open_remote_control(app, pane_id):
 #  별칭으로 남는다(handle_command). 통합 상태 팝업은 REC·서버 두 탭으로 줄었다.)
 
 
+async def _token_sync_cmd(server, client, sub: str, arg: str):
+    """`:token-sync <sub>` 서버측 처리. 블로킹(키·HTTP)은 executor 로 밀고 결과를
+    요청 클라에만 notice 로 돌려준다(조용한 실패 금지)."""
+    import asyncio
+
+    from . import tokensync
+    loop = asyncio.get_running_loop()
+
+    async def note(key, ko, **kw):
+        with contextlib.suppress(Exception):
+            await server._send_to(client, server._notice_msg(key, ko, **kw))
+
+    conn = getattr(server, "_tokens_db", None)
+    if conn is None:
+        await note("tsync.fail", "토큰 동기화 실패 — {why}", why="토큰 DB 없음")
+        return
+    try:
+        if sub == "status":
+            st = usagedb.get_sync_remote(conn, tokensync.SyncClient.REMOTE) or {}
+            mode = getattr(server, "token_sync", "off")
+            state = ("%s(%s)" % (mode, getattr(server, "token_sync_url", "") or "-")
+                     if mode == "server" else "off")
+            last = st.get("last_ok")
+            await note("tsync.status",
+                       "토큰 동기화: {state} · 마지막 성공 {last} · 받은 행 {rows}",
+                       state=state + (" · 오류: %s" % st["last_err"]
+                                      if st.get("last_err") else ""),
+                       last=(_time.strftime("%m-%d %H:%M", _time.localtime(last))
+                             if last else "-"),
+                       rows=int(st.get("rows_in") or 0))
+            return
+        if str(getattr(server, "token_sync", "off")) != "server" or \
+                not getattr(server, "token_sync_url", ""):
+            await note("tsync.off", "토큰 동기화가 꺼져 있습니다(설정 "
+                                    "token_sync=server, token_sync_url 필요)")
+            return
+        cli = tokensync._client_for(server)
+        if sub == "enroll":
+            did = await loop.run_in_executor(None, cli.enroll, arg)
+            await note("tsync.enrolled",
+                       "토큰 동기화: 이 머신을 등록했습니다({label})", label=did[:8])
+        elif sub == "invite":
+            code = await loop.run_in_executor(None, cli.invite_code)
+            await note("tsync.invite", "초대 코드(이 값이 곧 키입니다 — 채팅·"
+                                       "스크린샷 금지): {code}", code=code)
+        elif sub == "adopt":
+            await loop.run_in_executor(None, cli.adopt_invite, arg)
+            await note("tsync.adopted",
+                       "토큰 동기화: 초대 코드를 적용했습니다(이 머신의 키 교체)")
+        elif sub in ("now", "sync"):
+            out = await loop.run_in_executor(None, tokensync._sync_once, cli)
+            await note("tsync.synced", "토큰 동기화: 올림 {sent} · 받음 {merged}",
+                       sent=out["push"]["sent"], merged=out["pull"]["merged"])
+        else:
+            await note("tsync.fail", "토큰 동기화 실패 — {why}",
+                       why="알 수 없는 하위 명령: %s" % sub)
+    except Exception as e:      # noqa: BLE001 — 사유를 사용자에게 돌려준다
+        key = "tsync.enroll_fail" if sub == "enroll" else "tsync.fail"
+        ko = ("토큰 동기화 등록 실패 — {why}" if sub == "enroll"
+              else "토큰 동기화 실패 — {why}")
+        await note(key, ko, why=str(e)[:160])
+
+
 class _ClaudeCodePlugin:
     name = "claude-code"
     description = "Claude Code 연동 — 헤더·상태줄 토큰·시작 규칙·자동개입"
@@ -624,7 +719,18 @@ class _ClaudeCodePlugin:
                   # M17(T7) 경고 임계: long_turn=한 턴 busy 지속 한계(초, 0=끔).
                   ("claude_long_turn_sec", 600, int),
                   # M17(T7) 경고 임계: repeat=동일 완료 출력 반복 횟수(0=끔).
-                  ("claude_repeat_alert", 3, int))
+                  ("claude_repeat_alert", 3, int),
+                  # 여러 머신 간 토큰 동기화(설계 TOKEN_SYNC_MULTI_MACHINE_DESIGN).
+                  # 기본 off — 켜지 않은 사용자에게 동작·성능·프라이버시 변화 0(G5).
+                  # server = 자기호스팅 동기화 서버(tools/synserver)로 push/pull.
+                  ("token_sync", "off", str),
+                  ("token_sync_url", "", str),
+                  ("token_sync_sec", 300, int),
+                  # 빈값=전부. 콤마 목록이면 그 계정만 내보낸다(회사 계정 격리).
+                  ("token_sync_accounts", "", str),
+                  # 레코드 암호화. **끄지 말 것** — 서버가 통째로 털렸을 때 남는 것이
+                  # 암호문에서 평문으로 바뀐다(설계 §5.7). 현재 off 는 미구현(거부).
+                  ("token_sync_encrypt", True, bool))
 
     def server_opts_init(self, server, opts):
         """opts.json → server 속성 설치(코어 __init__ 의 _opts.get 들을 이전).
@@ -646,6 +752,14 @@ class _ClaudeCodePlugin:
         # 런타임 토글이 _save_opts 로 영속되면 그 값이 권위(다음 기동부터 env 무시).
         if "token_debug" not in po and "token_debug" not in opts:
             server.token_debug = bool(os.environ.get("PYTMUX_TOKEN_DEBUG"))
+
+    async def server_background(self, server):
+        """플러그인 소유 장기 작업 — 토큰 동기화 워커(설정 off 면 잠만 잔다).
+
+        지연 import: 동기화는 opt-in 이라 켜지 않은 사용자에게 import 비용도 지우지
+        않는다. 이 디렉토리를 지우면 훅이 사라져 워커도 함께 사라진다."""
+        from . import tokensync
+        await tokensync.run_worker(server)
 
     def server_opts_serialize(self, server):
         """server 속성 → opts.json plugin_opts 네임스페이스(코어 _save_opts 의
@@ -796,6 +910,13 @@ class _ClaudeCodePlugin:
             # footer 클릭 팝업: 활성/지정 패널 권한모드 목표 설정.
             server.set_claude_perm_mode(sess, str(msg.get("target", "")),
                                         pane_id=msg.get("id"))
+            return "handled"
+        if action == "token_sync":
+            # 키 생성·네트워크가 섞여 있어 **여기서 기다리지 않는다** — 태스크로 띄우고
+            # 결과만 notice 로 돌려준다(블로킹-온-루프 금지, 이 프로젝트 재발 항목).
+            asyncio.create_task(
+                _token_sync_cmd(server, client, str(msg.get("sub") or "status"),
+                                str(msg.get("arg") or "")))
             return "handled"
         if action == "set_autoresume":
             server.set_autoresume(sess, value=msg.get("value"),
@@ -1146,6 +1267,10 @@ class _ClaudeCodePlugin:
             # 긁어온다(사용자 화면 무간섭, ~수초). 회신은 status 로 반영.
             app.send_cmd("refresh_usage")
             app.display_message(i18n.t("ccmsg.usage_querying"), 4.0)
+        elif c in ("token-sync", "tokens-sync"):
+            # 서버가 실제 작업(키·네트워크)을 하고 결과를 notice 로 돌려준다.
+            sub = (args[0] if args else "status").strip().lower()
+            app.send_cmd("token_sync", sub=sub, arg=" ".join(args[1:]).strip())
         elif c in ("token-account", "tokens-account"):
             app.send_cmd("set_claude_account", name=" ".join(args).strip())
         elif c in ("prompt-clear", "prompt-clear-mode"):

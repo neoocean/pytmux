@@ -985,6 +985,33 @@ def insert_limits(conn, snap: dict, host: str | None = None) -> bool:
         return False
 
 
+def import_limits(conn, snap: dict, host, lkey) -> bool:
+    """**동기화로 받은** limits 행을 그대로 병합한다(삽입했으면 True).
+
+    `insert_limits` 와 갈라 놓은 이유: 그쪽은 "직전 값과 같으면 skip" 이라는 **로컬
+    관측용 dedup 가드**가 있어, 남의 머신에서 온 정당한 행을 삼킬 수 있다. 여기선
+    멱등을 `lkey` 유니크 인덱스에만 맡긴다 — 같은 관측은 한 번만, 다른 관측은 전부
+    남는다. lkey 가 없으면(계산 불가) 받지 않는다(중복 방지 수단이 없으므로)."""
+    if not lkey:
+        return False
+    try:
+        conn.execute(
+            "INSERT INTO limits (ts,account,session_pct,session_reset,"
+            "week_all_pct,week_all_reset,week_sonnet_pct,week_sonnet_reset,"
+            "source,host,lkey) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (float(snap.get("ts", 0.0)), snap.get("account"),
+             snap.get("session_pct"), snap.get("session_reset"),
+             snap.get("week_all_pct"), snap.get("week_all_reset"),
+             snap.get("week_sonnet_pct"), snap.get("week_sonnet_reset"),
+             snap.get("source") or "remote", host, lkey))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False        # 이미 있는 관측(멱등)
+    except sqlite3.Error:
+        return False
+
+
 def _row_to_limits(row) -> dict:
     return {"ts": row["ts"], "account": row["account"],
             "session_pct": row["session_pct"],

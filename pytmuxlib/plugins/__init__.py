@@ -310,6 +310,26 @@ class Registry:
             if fn is not None:
                 await fn(server)
 
+    async def server_background(self, server):
+        """플러그인 소유의 **장기 실행** 백그라운드 작업(주기 폴링 등).
+
+        코어는 서버 수명 동안 이 코루틴 하나를 태스크로 띄우고 종료 시 취소한다 —
+        주기·의미는 전부 플러그인 몫이다(코어 `_usage_loop` 처럼 코어가 간격을 아는
+        구조를 더 늘리지 않으려고 둔 훅). 플러그인이 없으면 그냥 반환한다.
+
+        한 플러그인이 죽어도 다른 플러그인·서버는 살아야 하므로 gather 는
+        return_exceptions=True 로 모은다. 취소(CancelledError)는 그대로 전파돼
+        서버 종료가 지연되지 않는다."""
+        import asyncio as _a
+        coros = []
+        for p in self.plugins:
+            fn = getattr(p, "server_background", None)
+            if fn is not None:
+                coros.append(fn(server))
+        if not coros:
+            return
+        await _a.gather(*coros, return_exceptions=True)
+
     def server_command(self, server, client, sess, action, msg) -> "str | None":
         """Claude 명령 액션(set_claude_*/token/pc/refresh_usage 등)을 처리한다. 처리한
         플러그인이 있으면 코어가 따를 **후속 지시 문자열**을 반환한다:

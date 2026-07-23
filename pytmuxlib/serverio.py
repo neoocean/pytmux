@@ -1282,6 +1282,9 @@ class ServerIOMixin:
             autoname = asyncio.create_task(self._autorename_loop())
             usage = asyncio.create_task(self._usage_loop())
             liveness = asyncio.create_task(self._liveness_loop())
+            # 플러그인 소유 장기 작업(주기·의미는 플러그인이 안다 — 토큰 동기화 워커
+            # 등). 코어는 태스크 하나를 띄우고 종료 시 취소하는 것만 한다.
+            background = asyncio.create_task(self.plugins.server_background(self))
             # 코드 버전(p4 CL) 캡처를 listen **이후** 백그라운드로 미룬다 — __init__
             # 에서 동기로 부르면 `p4 changes` 왕복(~수백 ms)이 클라 접속 임계경로에
             # 올라 콜드 기동이 느려졌다(server.__init__ 주석 참조). executor 로 돌려
@@ -1296,5 +1299,6 @@ class ServerIOMixin:
             autoname.cancel()
             usage.cancel()
             liveness.cancel()
+            background.cancel()
         finally:
             self._remove_signal_handlers(signals)

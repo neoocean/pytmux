@@ -130,7 +130,7 @@ os.environ.pop("PYTMUX_HOME", None)
 try:
     import pytmuxlib as _pt
     for _m in ("claude", "tokens", "usageprobe", "usagelog", "usagedb",
-               "transcript", "syncrypto"):
+               "transcript", "syncrypto", "tokensync"):
         # per-module 격리: usageprobe 는 POSIX 전용(pty/termios)이라 Windows 에서
         # import 가 실패한다. 한 try 로 묶으면 그 실패가 뒤따르는 usagelog/usagedb
         # (Windows 호환) alias 까지 막아 `from pytmuxlib import usagedb` 가 깨진다.
