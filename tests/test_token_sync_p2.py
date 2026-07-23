@@ -528,3 +528,92 @@ async def test_client_for_uses_real_server_contract():
         assert "not callable" not in out, out
     finally:
         await teardown(srv, task, sock)
+
+
+# ── §5.3a 패스키 기반 키 배포(invite 없이 머신 다중 등록) ───────────────────
+
+def _browser_pair(app, cookie, master):
+    """브라우저가 하는 일을 그대로 흉내낸다 — **코드를 브라우저가 만들고**, 코드에서
+    파생한 키로 마스터 키를 감싸 해시와 함께 올린다. 서버는 코드 원문을 못 본다."""
+    import secrets
+    raw = secrets.token_bytes(16)
+    code = "-".join(raw.hex().upper()[i:i + 4] for i in range(0, 32, 4))
+    nonce, ct = syncrypto.aes_gcm_seal(syncrypto.pair_key(code), master)
+    st, out = _j(app.handle("POST", "/v1/pairing", headers=cookie,
+                            body=json.dumps({
+                                "code_h": syncrypto.code_hash(code),
+                                "key_ct": tokensync._b64u(ct),
+                                "key_nonce": tokensync._b64u(nonce)}).encode()))
+    assert st == 200 and out["carries_key"] is True, out
+    return code
+
+
+async def test_second_machine_gets_key_from_pairing():
+    """같은 패스키(vault)면 **invite 없이** 두 번째 머신이 붙고 통계가 합쳐진다."""
+    app, clock = _server()
+    cookie, vault, _auth = _enroll(app)
+    master = syncrypto.gen_master()               # 브라우저가 만든 vault 키
+
+    m1 = Machine(app, clock, _browser_pair(app, cookie, master))
+    m2 = Machine(app, clock, _browser_pair(app, cookie, master))
+    # 두 머신 모두 **서버가 준 키**를 심었다(손으로 옮긴 적 없음).
+    for m in (m1, m2):
+        got = syncrypto.load_or_create_master(
+            os.path.join(m.dir, "sync_vault.key"))
+        assert got == master
+
+    m1.add_limits(1_000_000.0, 40)
+    assert m1.cli.push_limits()["accepted"] == 1
+    assert m2.cli.pull()["merged"] == 1           # 같은 키라 복호된다
+    rows = usagedb.query_limits(m2.conn)
+    assert [r["session_pct"] for r in rows] == [40]
+
+
+async def test_server_cannot_unwrap_pairing_key():
+    """서버는 코드 **원문을 본 적이 없다** — 저장된 것은 해시와 암호문뿐이라
+    서버 DB 만으로는 마스터 키를 풀 수 없다."""
+    app, clock = _server()
+    cookie, vault, _auth = _enroll(app)
+    master = syncrypto.gen_master()
+    code = _browser_pair(app, cookie, master)
+    row = app.conn.execute(
+        "SELECT code_h, key_ct, key_nonce FROM pairing").fetchone()
+    blob = b"".join([str(row["code_h"]).encode(), bytes(row["key_ct"]),
+                     bytes(row["key_nonce"])])
+    assert master not in blob
+    assert syncrypto.normalize_code(code).encode() not in blob
+    # 해시에서 코드를 되돌릴 수 없으므로 pair_key 도 못 만든다(=복호 불가).
+    assert row["code_h"] == syncrypto.code_hash(code)
+
+
+async def test_machine_sends_hash_not_code():
+    """머신이 코드 원문을 보내면 서버가 감싼 키를 풀 수 있게 된다 — 해시만 보낸다."""
+    app, clock = _server()
+    cookie, vault, _auth = _enroll(app)
+    master = syncrypto.gen_master()
+    code = _browser_pair(app, cookie, master)
+    seen = []
+
+    real = _transport(app)
+
+    def spy(method, path, query="", body=b"", headers=None):
+        seen.append(body or b"")
+        return real(method, path, query, body, headers)
+
+    d = tempfile.mkdtemp(prefix="pytmux-sync-h-")
+    conn = usagedb.connect(os.path.join(d, "t.db"))
+    cli = tokensync.SyncClient(conn, d, spy, now=clock)
+    cli.enroll(code)
+    joined = b"".join(seen)
+    assert syncrypto.normalize_code(code).encode() not in joined, "코드 원문이 나갔다"
+    assert syncrypto.code_hash(code).encode() in joined
+
+
+async def test_pairing_key_refuses_short_code():
+    """코드가 키 전달 통로가 된 이상 짧으면 오프라인 대입이 가능하다(§5.3a)."""
+    for bad in ("A1B2-C3D4-EF", "SHORT", ""):
+        try:
+            syncrypto.pair_key(bad)
+        except syncrypto.SyncCryptoError:
+            continue
+        raise AssertionError("짧은 코드를 키 전달에 허용했다: %r" % bad)

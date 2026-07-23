@@ -31,6 +31,68 @@ async function post(path, body) {
   return j;
 }
 
+// ── vault 마스터 키(§5.3a) ────────────────────────────────────────────────
+// 키의 주인은 **머신이 아니라 vault(패스키)** 다. 첫 등록 때 브라우저가 만들어
+// 패스키 PRF 로 감싸 서버에 두고, 머신 등록 때 페어링 코드로 한 번 더 감싸 넘긴다.
+// 그래서 같은 패스키만 있으면 어느 브라우저·몇 대든 invite 없이 붙는다.
+//
+// 주의: 서버는 감싼 것만 갖는다(열쇠는 인증기 안). PRF 를 지원하지 않는 인증기에서는
+// 자동 배포가 불가능하므로 **그 사실을 화면에 즉시 알리고** 복구 코드 경로로 물러선다.
+const PRF_SALT = new TextEncoder().encode("pytmux-sync/vault-key/v1");
+let VAULT_KEY = null;            // Uint8Array(32) — 이 탭 메모리에만 둔다
+
+const rawKey = (bits) => new Uint8Array(bits);
+
+async function hkdf(ikm, saltStr, infoStr) {
+  const enc = new TextEncoder();
+  const k = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
+  return crypto.subtle.deriveBits(
+    { name: "HKDF", hash: "SHA-256", salt: enc.encode(saltStr), info: enc.encode(infoStr) },
+    k, 256);
+}
+
+async function aesEncrypt(keyBits, plain) {
+  const key = await crypto.subtle.importKey("raw", keyBits, "AES-GCM", false, ["encrypt"]);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plain);
+  return { iv, ct: new Uint8Array(ct) };
+}
+
+async function aesDecrypt(keyBits, iv, ct) {
+  const key = await crypto.subtle.importKey("raw", keyBits, "AES-GCM", false, ["decrypt"]);
+  return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct));
+}
+
+// 패스키 PRF 결과 → KEK. 인증기가 PRF 를 지원하지 않으면 null.
+function prfBits(cred) {
+  const ext = cred.getClientExtensionResults ? cred.getClientExtensionResults() : {};
+  const r = ext && ext.prf && ext.prf.results && ext.prf.results.first;
+  return r ? new Uint8Array(r) : null;
+}
+
+async function storeVaultKey(prf) {
+  const kek = await hkdf(prf, "pytmux-sync/vault-kek", "wrap");
+  const { iv, ct } = await aesEncrypt(kek, VAULT_KEY);
+  const wrapped = new Uint8Array(iv.length + ct.length);
+  wrapped.set(iv, 0); wrapped.set(ct, iv.length);
+  const r = await fetch("/v1/vault/key", {
+    method: "POST", credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ wrapped: bufToB64u(wrapped), meta: "prf-v1" }),
+  });
+  return r.ok;                      // 409 = 이미 있음(덮어쓰지 않는다)
+}
+
+async function loadVaultKey(prf) {
+  const r = await fetch("/v1/vault/key", { credentials: "same-origin" });
+  if (!r.ok) return false;
+  const j = await r.json();
+  const wrapped = b64uToBuf(j.wrapped);
+  const kek = await hkdf(prf, "pytmux-sync/vault-kek", "wrap");
+  VAULT_KEY = await aesDecrypt(kek, wrapped.slice(0, 12), wrapped.slice(12));
+  return true;
+}
+
 async function register() {
   say("인증기를 확인하세요…");
   const o = await post("/v1/enroll/options");
@@ -44,6 +106,8 @@ async function register() {
       authenticatorSelection: o.authenticatorSelection,
       attestation: o.attestation,
       timeout: o.timeout,
+      // 이 패스키로 vault 키를 감쌀 수 있게 PRF 를 요청한다(지원 안 하면 무시된다).
+      extensions: { prf: { eval: { first: PRF_SALT } } },
     },
   });
   await post("/v1/enroll/verify", {
@@ -52,7 +116,54 @@ async function register() {
     clientDataJSON: bufToB64u(cred.response.clientDataJSON),
   });
   say("패스키를 등록했습니다.");
+  // 새 vault 면 키를 만들어 패스키로 감싸 둔다. 등록 응답 직후의 create 결과에는 PRF
+  // 값이 없는 인증기가 많아, **로그인 assertion 한 번**으로 PRF 를 받아 온다.
+  await ensureVaultKey();
   await afterLogin();
+}
+
+async function ensureVaultKey() {
+  // 이미 서버에 감싼 키가 있으면 그것을 풀고, 없으면 새로 만들어 올린다.
+  // 어느 쪽이든 **패스키 assertion 한 번**이 필요하다(PRF 는 그때 나온다).
+  const o = await post("/v1/auth/options");
+  let cred;
+  try {
+    cred = await navigator.credentials.get({
+      publicKey: {
+        challenge: b64uToBuf(o.challenge),
+        rpId: o.rpId,
+        allowCredentials: [],
+        userVerification: o.userVerification,
+        timeout: o.timeout,
+        extensions: { prf: { eval: { first: PRF_SALT } } },
+      },
+    });
+  } catch (e) {
+    say("키 준비를 건너뜁니다 — " + (e.message || e), true);
+    return;
+  }
+  // 이 assertion 으로 로그인도 갱신해 둔다(세션 유지).
+  await post("/v1/auth/verify", {
+    challenge: o.challenge,
+    credentialId: bufToB64u(cred.rawId),
+    authenticatorData: bufToB64u(cred.response.authenticatorData),
+    clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+    signature: bufToB64u(cred.response.signature),
+  });
+  const prf = prfBits(cred);
+  if (!prf) {
+    // **조용히 넘어가지 않는다** — 이 인증기로는 다른 기기에서 키를 못 받는다.
+    say("이 인증기는 키 자동 배포(PRF)를 지원하지 않습니다 — 머신을 붙일 때 " +
+        "첫 머신에서 :claude-token-sync invite 로 키를 옮겨야 합니다.", true);
+    return;
+  }
+  if (await loadVaultKey(prf)) return;          // 기존 키를 풀었다
+  VAULT_KEY = crypto.getRandomValues(new Uint8Array(32));
+  if (!(await storeVaultKey(prf))) {
+    // 서버엔 이미 키가 있는데 못 푼 경우(다른 패스키로 감쌌다) — 덮어쓰지 않는다.
+    VAULT_KEY = null;
+    say("서버에 이미 다른 패스키로 감싼 키가 있습니다 — 그 패스키로 로그인하세요.", true);
+  }
 }
 
 async function login() {
@@ -65,6 +176,7 @@ async function login() {
       allowCredentials: [],          // discoverable — 아이디 입력 없음
       userVerification: o.userVerification,
       timeout: o.timeout,
+      extensions: { prf: { eval: { first: PRF_SALT } } },
     },
   });
   await post("/v1/auth/verify", {
@@ -75,6 +187,16 @@ async function login() {
     signature: bufToB64u(cred.response.signature),
   });
   say("로그인했습니다.");
+  const prf = prfBits(cred);
+  if (prf) {
+    if (!(await loadVaultKey(prf))) {
+      VAULT_KEY = crypto.getRandomValues(new Uint8Array(32));
+      await storeVaultKey(prf);                 // 아직 키가 없던 vault
+    }
+  } else {
+    say("이 인증기는 키 자동 배포(PRF)를 지원하지 않습니다 — 머신을 붙일 때 " +
+        "첫 머신에서 :claude-token-sync invite 로 키를 옮겨야 합니다.", true);
+  }
   await afterLogin();
 }
 
@@ -84,16 +206,50 @@ function enrollCommand(code) {
   return ":claude-token-sync enroll " + code;
 }
 
+// 코드는 **브라우저가** 만든다(§5.3a). 서버가 만들면 그 순간 서버도 코드를 알아
+// 감싼 키를 풀 수 있다 — 서버에는 해시만 올린다.
+function newPairingCode() {
+  const raw = crypto.getRandomValues(new Uint8Array(16));   // 128비트
+  const hex = [...raw].map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+  return hex.match(/.{1,4}/g).join("-");
+}
+
+async function codeHash(code) {
+  const norm = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const d = await crypto.subtle.digest("SHA-256",
+                                       new TextEncoder().encode("pairing|" + norm));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 async function pair() {
-  const j = await post("/v1/pairing");
-  $("cmd").textContent = enrollCommand(j.code);
+  if (!VAULT_KEY) {
+    // 새로고침으로 키가 잠겼다면 여기서 한 번 푼다(지문/얼굴 1회).
+    await ensureVaultKey();
+  }
+  const code = newPairingCode();
+  const payload = { code_h: await codeHash(code) };
+  if (VAULT_KEY) {
+    // 코드에서 파생한 키로 마스터 키를 감싼다 — 머신이 그 코드로 푼다.
+    // 파이썬 syncrypto.pair_key 와 **같은 HKDF 파라미터**여야 한다(salt/info 고정).
+    const norm = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const pk = await hkdf(new TextEncoder().encode(norm),
+                          "pytmux-sync/pair", "pair-key");
+    const { iv, ct } = await aesEncrypt(pk, VAULT_KEY);
+    payload.key_ct = bufToB64u(ct);
+    payload.key_nonce = bufToB64u(iv);
+  }
+  const j = await post("/v1/pairing", payload);
+  $("cmd").textContent = enrollCommand(j.code || code);
   const btn = $("btn-copy");
   btn.textContent = "복사";
   btn.classList.remove("done");
   $("copy-msg").textContent = "";
   // 코드가 실제로 생긴 **뒤에만** 명령칸을 드러낸다(빈 칸을 미리 보여주지 않는다).
   $("pair-result").hidden = false;
-  say("이 명령은 10분 뒤 만료되고 한 번만 쓸 수 있습니다.");
+  say(VAULT_KEY
+      ? "이 명령은 10분 뒤 만료되고 한 번만 쓸 수 있습니다(키가 함께 전달됩니다)."
+      : "이 명령은 10분 뒤 만료되고 한 번만 쓸 수 있습니다. " +
+        "이 인증기는 키 자동 전달을 지원하지 않아, 첫 머신에서 invite 로 키를 옮겨야 합니다.");
 }
 
 async function copyCommand() {
@@ -174,8 +330,30 @@ function wrap(fn) {
   return () => fn().catch((e) => say(String(e.message || e), true));
 }
 
+// 새로고침 후에도 로그인 상태를 되찾는다(제보). 쿠키는 살아 있었는데 페이지가
+// **묻지 않아** 로그아웃처럼 보였다. 키(VAULT_KEY)는 메모리에만 두므로 새로고침하면
+// 잠긴 상태가 되고, 실제로 키가 필요한 순간(코드 발급)에만 지문을 한 번 더 받는다
+// — 키를 브라우저 저장소에 남기면 XSS 한 방에 통째로 새는 것과 바꾸는 셈이라 안 한다.
+async function restoreSession() {
+  let j;
+  try {
+    const r = await fetch("/v1/session", { credentials: "same-origin" });
+    if (!r.ok) return;
+    j = await r.json();
+  } catch (e) {
+    return;
+  }
+  if (!j.authenticated) return;
+  await afterLogin();
+  say(j.has_key
+      ? "로그인 상태입니다(키는 잠겨 있음 — 코드 만들 때 한 번 확인합니다)."
+      : "로그인 상태입니다.");
+}
+
 $("btn-register").addEventListener("click", wrap(register));
 $("btn-login").addEventListener("click", wrap(login));
 $("btn-pair").addEventListener("click", wrap(pair));
 $("btn-copy").addEventListener("click", wrap(copyCommand));
 $("btn-logout").addEventListener("click", wrap(logout));
+
+restoreSession().catch(() => {});

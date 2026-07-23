@@ -572,10 +572,15 @@ async def test_expired_state_is_purged():
     app.handle("POST", "/v1/events", headers=h, body=body)
     app.handle("POST", "/v1/pairing", headers=cookie)
     assert app.conn.execute("SELECT COUNT(*) FROM nonce_seen").fetchone()[0] == 1
-    clock.t += 3600                                   # 전부 만료될 만큼 전진
+    clock.t += 3600                                   # nonce·페어링이 만료될 만큼
     app.handle("GET", "/v1/health")                   # 아무 요청이나 하나
     assert app.conn.execute("SELECT COUNT(*) FROM nonce_seen").fetchone()[0] == 0
     assert app.conn.execute("SELECT COUNT(*) FROM pairing").fetchone()[0] == 0
+    # 세션은 수명이 길다(명시적 로그아웃 전까지 유지 — 새로고침으로 안 끊긴다).
+    # 그것도 **결국은** 정리된다는 것이 이 회귀의 요지다.
+    assert app.conn.execute("SELECT COUNT(*) FROM session").fetchone()[0] == 1
+    clock.t += sapp.SESSION_TTL + 10
+    app.handle("GET", "/v1/health")
     assert app.conn.execute("SELECT COUNT(*) FROM session").fetchone()[0] == 0
 
 
@@ -670,3 +675,42 @@ async def test_existing_db_gets_new_columns():
                    now=1.0)
     assert conn.execute("SELECT bytes_used FROM vault").fetchone()[0] > 0
     conn.close()
+
+
+# ── 세션 유지(제보: 새로고침하면 로그아웃처럼 보임) ─────────────────────────
+
+async def test_session_survives_reload_until_logout():
+    """새로고침은 로그인을 끊지 않는다. 페이지가 `/v1/session` 으로 상태를 되찾고,
+    끊는 것은 **명시적 로그아웃**뿐이다."""
+    app, clock = _app()
+    st, out = _j(app.handle("GET", "/v1/session"))
+    assert st == 200 and out == {"authenticated": False}   # 로그인 전
+    cookie, vault, _a = _enroll(app)
+    st, out = _j(app.handle("GET", "/v1/session", headers=cookie))
+    assert st == 200 and out["authenticated"] is True and out["has_key"] is False
+    # "새로고침" = 같은 쿠키로 다시 물어보기. 한참 뒤에도 유효하다(슬라이딩).
+    clock.t += 3600
+    assert _j(app.handle("GET", "/v1/session", headers=cookie))[1]["authenticated"]
+    clock.t += 6 * 24 * 3600
+    assert _j(app.handle("GET", "/v1/session", headers=cookie))[1]["authenticated"]
+    # 명시적 로그아웃만 끊는다.
+    assert _j(app.handle("POST", "/v1/logout", headers=cookie))[0] == 200
+    assert _j(app.handle("GET", "/v1/session", headers=cookie))[1] == {
+        "authenticated": False}
+
+
+async def test_session_expires_when_idle():
+    """무한정 살아 있지는 않는다 — 활동이 없으면 TTL 이 지나 끊긴다."""
+    app, clock = _app()
+    cookie, _v, _a = _enroll(app)
+    clock.t += sapp.SESSION_TTL + 10
+    assert _j(app.handle("GET", "/v1/session", headers=cookie))[1] == {
+        "authenticated": False}
+
+
+async def test_session_state_does_not_leak_vault_id():
+    """상태 응답에 vault_id 를 싣지 않는다(필요 없고 노출면만 는다)."""
+    app, _ = _app()
+    cookie, vault, _a = _enroll(app)
+    _st, out = _j(app.handle("GET", "/v1/session", headers=cookie))
+    assert vault not in json.dumps(out)

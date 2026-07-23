@@ -206,7 +206,9 @@ class SyncClient:
         from cryptography.hazmat.primitives import serialization as ser
         pub = self._device_key().public_key().public_bytes(
             ser.Encoding.Raw, ser.PublicFormat.Raw)
-        body = json.dumps({"pairing_code": str(pairing_code),
+        # 코드 **원문 대신 해시**를 보낸다 — 원문을 보내면 서버가 pair_key 를 만들어
+        # 함께 보관 중인 감싼 키를 풀 수 있다(§5.3a).
+        body = json.dumps({"pairing_code_h": syncrypto.code_hash(pairing_code),
                            "pubkey": _b64u(pub),
                            "label": label or _hostname()}).encode()
         status, _, resp = self.transport(
@@ -217,9 +219,15 @@ class SyncClient:
             # 해서, 실제로는 앞단 CDN 이 막고 있었는데 코드를 계속 새로 발급했다.
             raise SyncError(_http_why(status, resp, "등록"))
         try:
-            did = json.loads(resp)["device_id"]
+            out = json.loads(resp)
+            did = out["device_id"]
         except (ValueError, KeyError) as e:
             raise SyncError("서버 응답 형식 오류") from e
+        # §5.3a: 응답에 **감싼 마스터 키**가 실려 오면 페어링 코드로 풀어 심는다 —
+        # invite/adopt 로 손수 옮기던 단계가 사라진다. 키가 없으면(구 서버·폴백 vault)
+        # 종전대로 사용자가 adopt 로 넣는다.
+        if out.get("key_ct"):
+            self._install_key_from_pairing(pairing_code, out)
         path = os.path.join(self.db_dir, "sync_device.id")
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
@@ -227,6 +235,36 @@ class SyncClient:
         finally:
             os.close(fd)
         return did
+
+    def _install_key_from_pairing(self, code: str, out: dict) -> None:
+        """등록 응답에 실려 온 감싼 키를 코드로 풀어 저장한다.
+
+        이미 자기 키로 **올린 이력이 있으면** 덮어쓰지 않는다 — 그 데이터가 복호 불능이
+        되기 때문이다(검수 C-2 와 같은 규율). 그 경우 사용자가 무엇을 해야 하는지
+        사유에 적는다."""
+        key_path = os.path.join(self.db_dir, "sync_vault.key")
+        try:
+            k = syncrypto.aes_gcm_open(
+                syncrypto.pair_key(code),
+                _b64u_dec(out.get("key_nonce") or ""),
+                _b64u_dec(out.get("key_ct") or ""))
+        except (ValueError, syncrypto.SyncCryptoError) as e:
+            raise SyncError("서버가 보낸 키를 풀지 못했습니다: %s" % e) from e
+        if len(k) != syncrypto.MASTER_LEN:
+            raise SyncError("서버가 보낸 키 길이가 올바르지 않습니다")
+        if os.path.exists(key_path):
+            try:
+                cur = syncrypto.load_or_create_master(key_path)
+            except syncrypto.SyncCryptoError:
+                cur = None
+            if cur == k:
+                return                      # 같은 키 — 재등록은 무해
+            if usagedb.get_export_cursor(self.conn, "limits"):
+                raise SyncError(
+                    "이 머신은 이미 다른 키로 올린 이력이 있습니다 — 계속하려면"
+                    " 로컬 키를 지우거나 vault 를 맞추세요(데이터 복호 불능 방지)")
+        syncrypto.save_master(key_path, k)
+        self._master, self._k_id, self._k_enc = None, None, None
 
     # -- 서명 요청 --------------------------------------------------------
 

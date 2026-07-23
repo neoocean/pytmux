@@ -220,6 +220,71 @@ def parse_invite(code: str) -> bytes:
     return master
 
 
+# ── 페어링 코드로 키 나르기(§5.3a) ─────────────────────────────────────────
+#
+# 브라우저(WebCrypto)와 머신(cryptography)이 **같은 규칙**을 써야 한다. WebCrypto 는
+# ChaCha20-Poly1305 를 노출하지 않으므로 이 통로만 **AES-256-GCM** 이다(레코드 봉인은
+# 그대로 ChaCha20). 파생도 브라우저에서 재현 가능한 표준 HKDF-SHA256 로 못박는다.
+#
+#   pair_key(code) = HKDF-SHA256(ikm=정규화된 코드, salt=PAIR_SALT, info=PAIR_INFO, 32B)
+#
+# 코드 정규화는 표기 흔들림(하이픈·공백·대소문자)을 흡수한다 — 사용자가 옮겨 적는
+# 값이라 한쪽만 엄격하면 조용히 복호 실패한다.
+PAIR_SALT = b"pytmux-sync/pair"
+PAIR_INFO = b"pair-key"
+
+
+def normalize_code(code: str) -> str:
+    """페어링 코드 표준형 — 영숫자만 남기고 대문자."""
+    return "".join(ch for ch in str(code).upper() if ch.isalnum())
+
+
+def hkdf_sha256(ikm: bytes, salt: bytes, info: bytes, length: int = 32) -> bytes:
+    """RFC5869(브라우저 WebCrypto HKDF 와 동일 규칙). 위 hkdf() 는 salt 가 고정이라
+    상호운용용으로는 이 함수를 쓴다 — 두 구현이 **같은 파라미터**를 받아야 한다."""
+    prk = hmac.new(salt, ikm, hashlib.sha256).digest()
+    out, t, i = b"", b"", 1
+    while len(out) < length:
+        t = hmac.new(prk, t + info + bytes([i]), hashlib.sha256).digest()
+        out += t
+        i += 1
+    return out[:length]
+
+
+def pair_key(code: str) -> bytes:
+    """페어링 코드 → 전송용 대칭키(32B)."""
+    norm = normalize_code(code)
+    if len(norm) < 16:
+        # §5.3a: 코드가 키 전달 통로라 짧으면 오프라인 대입이 가능하다(서버에 감싼
+        # 블롭이 있으므로). 128비트(base32 26자)를 기대한다 — 그보다 짧으면 거부.
+        raise SyncCryptoError("페어링 코드가 너무 짧습니다(키 전달에 부적합)")
+    return hkdf_sha256(norm.encode("ascii"), PAIR_SALT, PAIR_INFO)
+
+
+def code_hash(code: str) -> str:
+    """페어링 코드 → 조회용 해시(서버 `db._code_hash` 와 **같은 규칙**).
+
+    머신은 코드 **원문을 서버에 보내지 않는다** — 해시만 보내도 지식 증명으로 충분하고,
+    원문을 보내면 서버가 `pair_key(code)` 를 만들어 감싼 키를 풀 수 있게 된다(그러면
+    "서버 혼자서는 못 푼다" 가 깨진다)."""
+    return hashlib.sha256(("pairing|" + normalize_code(code)).encode()).hexdigest()
+
+
+def aes_gcm_seal(key: bytes, plaintext: bytes, aad: bytes = b"") -> tuple[bytes, bytes]:
+    """(nonce, ct). 브라우저와 주고받는 통로 전용(WebCrypto 호환)."""
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    nonce = os.urandom(12)
+    return nonce, AESGCM(key).encrypt(nonce, plaintext, aad or None)
+
+
+def aes_gcm_open(key: bytes, nonce: bytes, ct: bytes, aad: bytes = b"") -> bytes:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    try:
+        return AESGCM(key).decrypt(bytes(nonce), bytes(ct), aad or None)
+    except Exception as e:      # noqa: BLE001 — InvalidTag 등
+        raise SyncCryptoError("키 전달 복호 실패(코드 불일치·변조)") from e
+
+
 # ── 레코드 봉인 ────────────────────────────────────────────────────────────
 
 def _aead():

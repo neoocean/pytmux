@@ -34,7 +34,11 @@ CREATE TABLE IF NOT EXISTS vault (
   rows_used   INTEGER NOT NULL DEFAULT 0,
   -- S-8: 행 수만 세면 64KB 레코드로 이론상 0.33TB 까지 쌓인다. 바이트도 함께 센다.
   quota_bytes INTEGER NOT NULL DEFAULT %d,
-  bytes_used  INTEGER NOT NULL DEFAULT 0
+  bytes_used  INTEGER NOT NULL DEFAULT 0,
+  -- §5.3a: 패스키(PRF)로 감싼 vault 마스터 키. 서버는 **풀 수 없다**(열쇠는 인증기
+  -- 안). 이게 있어야 다른 브라우저·다른 머신이 invite 없이 같은 키를 얻는다.
+  wrapped_key BLOB,
+  wrap_meta   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS passkey (
@@ -84,7 +88,11 @@ CREATE TABLE IF NOT EXISTS pairing (
   code_h   TEXT PRIMARY KEY,
   vault_id TEXT NOT NULL,
   exp      REAL NOT NULL,
-  tries    INTEGER NOT NULL DEFAULT 0
+  tries    INTEGER NOT NULL DEFAULT 0,
+  -- §5.3a: 코드에서 파생한 키로 감싼 마스터 키(1회용). 머신이 등록하면서 받아
+  -- 자기 코드로 푼다. 코드가 소모되면 이 행도 함께 사라진다.
+  key_ct    BLOB,
+  key_nonce BLOB
 );
 
 CREATE TABLE IF NOT EXISTS session (
@@ -102,6 +110,10 @@ CREATE TABLE IF NOT EXISTS session (
 _ADD_COLUMNS = (
     ("vault", "quota_bytes", "INTEGER NOT NULL DEFAULT %d" % DEFAULT_QUOTA_BYTES),
     ("vault", "bytes_used", "INTEGER NOT NULL DEFAULT 0"),
+    ("vault", "wrapped_key", "BLOB"),
+    ("vault", "wrap_meta", "TEXT"),
+    ("pairing", "key_ct", "BLOB"),
+    ("pairing", "key_nonce", "BLOB"),
 )
 
 
@@ -165,6 +177,31 @@ def create_vault(conn, now: float) -> str:
     conn.execute("INSERT INTO vault (vault_id, created) VALUES (?,?)", (vid, now))
     conn.commit()
     return vid
+
+
+def set_vault_key(conn, vault_id: str, wrapped: bytes, meta: str,
+                 overwrite: bool = False) -> bool:
+    """패스키로 감싼 마스터 키를 보관한다(§5.3a). 이미 있으면 **덮어쓰지 않는다** —
+    키를 갈아치우면 서버에 쌓인 기존 레코드가 전부 복호 불능이 되기 때문이다.
+    일부러 바꾸려면 overwrite=True(회전 절차, §5.9)."""
+    cur = conn.execute("SELECT wrapped_key FROM vault WHERE vault_id=?",
+                       (vault_id,)).fetchone()
+    if cur is None:
+        raise KeyError(vault_id)
+    if cur["wrapped_key"] is not None and not overwrite:
+        return False
+    conn.execute("UPDATE vault SET wrapped_key=?, wrap_meta=? WHERE vault_id=?",
+                 (bytes(wrapped), str(meta or ""), vault_id))
+    conn.commit()
+    return True
+
+
+def get_vault_key(conn, vault_id: str):
+    r = conn.execute("SELECT wrapped_key, wrap_meta FROM vault WHERE vault_id=?",
+                     (vault_id,)).fetchone()
+    if r is None or r["wrapped_key"] is None:
+        return None
+    return {"wrapped": bytes(r["wrapped_key"]), "meta": r["wrap_meta"] or ""}
 
 
 def add_passkey(conn, vault_id: str, cred_id: bytes, pubkey: bytes,
@@ -252,16 +289,46 @@ def touch_device(conn, device_id: str, now: float) -> None:
 
 # ── 페어링 코드(사람이 옮기는 1회용 값) ─────────────────────────────────────
 
-def new_pairing(conn, vault_id: str, now: float, ttl: float = 600.0) -> str:
+def new_pairing(conn, vault_id: str, now: float, ttl: float = 600.0,
+                key_ct=None, key_nonce=None) -> str:
     """1회용 코드를 발급한다. **평문은 저장하지 않는다**(해시만) — 서버 DB 가 유출돼도
-    미사용 코드로 기기를 붙일 수 없게."""
-    # 40비트(코드 5바이트) — 짧게 유지하되 대입 비용을 올린다(S-2).
-    code = "-".join(secrets.token_hex(2).upper() for _ in range(2)) + \
-           "-" + secrets.token_hex(1).upper()
-    conn.execute("INSERT INTO pairing (code_h, vault_id, exp) VALUES (?,?,?)",
-                 (_code_hash(code), vault_id, now + ttl))
+    미사용 코드로 기기를 붙일 수 없게.
+
+    §5.3a: 코드는 **키 전달 통로**이기도 하다. 브라우저가 코드에서 파생한 키로 감싼
+    마스터 키(key_ct/key_nonce)를 함께 올리면 등록하는 머신이 그것을 받아 자기 코드로
+    푼다. 그래서 길이가 **128비트**여야 한다 — 서버에 감싼 블롭이 있으니 짧은 코드는
+    오프라인 대입이 가능하다(40비트였던 초판은 이 용도에 부적합)."""
+    raw = secrets.token_bytes(16)                 # 128비트
+    code = "-".join(raw.hex().upper()[i:i + 4] for i in range(0, 32, 4))
+    conn.execute("INSERT INTO pairing (code_h, vault_id, exp, key_ct, key_nonce)"
+                 " VALUES (?,?,?,?,?)",
+                 (_code_hash(code), vault_id, now + ttl, key_ct, key_nonce))
     conn.commit()
     return code
+
+
+def consume_pairing_h(conn, code_h: str, now: float):
+    """**해시로** 코드를 소비한다(§5.3a). 머신이 원문을 안 보내므로 서버는 코드를
+    모르고, 따라서 함께 보관한 감싼 키도 풀 수 없다."""
+    r = conn.execute("SELECT * FROM pairing WHERE code_h=?",
+                     (str(code_h or ""),)).fetchone()
+    if r is None:
+        return None
+    conn.execute("DELETE FROM pairing WHERE code_h=?", (r["code_h"],))
+    conn.commit()
+    if r["exp"] <= now or r["tries"] >= PAIRING_TRIES:
+        return None
+    return {"vault_id": r["vault_id"], "key_ct": r["key_ct"],
+            "key_nonce": r["key_nonce"]}
+
+
+def put_pairing(conn, vault_id: str, code_h: str, now: float, ttl: float = 600.0,
+                key_ct=None, key_nonce=None) -> None:
+    """브라우저가 **직접 만든** 코드의 해시를 등록한다. 서버는 원문을 본 적이 없다."""
+    conn.execute("INSERT OR REPLACE INTO pairing (code_h, vault_id, exp, tries,"
+                 " key_ct, key_nonce) VALUES (?,?,?,0,?,?)",
+                 (str(code_h), vault_id, now + ttl, key_ct, key_nonce))
+    conn.commit()
 
 
 def consume_pairing(conn, code: str, now: float):
@@ -282,7 +349,9 @@ def consume_pairing(conn, code: str, now: float):
         return None
     conn.execute("DELETE FROM pairing WHERE code_h=?", (h,))
     conn.commit()
-    return r["vault_id"]
+    # 코드는 소모되고, 감싼 키는 **그 한 번만** 흘러간다.
+    return {"vault_id": r["vault_id"], "key_ct": r["key_ct"],
+            "key_nonce": r["key_nonce"]}
 
 
 def purge_expired(conn, now: float) -> int:
@@ -306,10 +375,18 @@ def new_session(conn, vault_id: str, now: float, ttl: float = 900.0) -> str:
     return sid
 
 
-def session_vault(conn, sid: str, now: float):
-    r = conn.execute("SELECT vault_id FROM session WHERE sid=? AND exp>?",
+def session_vault(conn, sid: str, now: float, renew: float = 0.0):
+    """세션 소유 vault. renew>0 이면 **활동이 있을 때마다 만료를 미룬다**(슬라이딩) —
+    쓰는 동안에는 로그인이 유지되고, 명시적 로그아웃·장기 미사용에만 끊긴다."""
+    r = conn.execute("SELECT vault_id, exp FROM session WHERE sid=? AND exp>?",
                      (sid or "", now)).fetchone()
-    return r["vault_id"] if r else None
+    if r is None:
+        return None
+    if renew and r["exp"] - now < renew * 0.5:
+        # 매 요청마다 쓰지 않는다(쓰기 폭주 방지) — 남은 수명이 절반 아래일 때만.
+        conn.execute("UPDATE session SET exp=? WHERE sid=?", (now + renew, sid))
+        conn.commit()
+    return r["vault_id"]
 
 
 def drop_session(conn, sid: str) -> None:

@@ -36,7 +36,11 @@ MAX_BODY = 8 * 1024 * 1024          # 8MB — 배치 상한
 MAX_BATCH = 5000                    # 레코드/요청
 SIG_WINDOW = 60.0                   # 요청 서명 ts 허용 창(초)
 CHALLENGE_TTL = 300.0
-SESSION_TTL = 900.0
+# 세션은 **명시적 로그아웃 전까지** 유지된다(요청). 새로고침마다 지문을 다시 대는 것은
+# 관리 화면에서 과한 마찰이고, 쿠키는 __Host-·HttpOnly·Secure·SameSite=Strict 라
+# 스크립트·타 사이트가 못 읽는다. 대신 활동이 있을 때마다 갱신(슬라이딩)하고,
+# 로그아웃은 **서버에서 즉시 삭제**한다(Q-2).
+SESSION_TTL = 7 * 24 * 3600.0
 RATE_BURST = 60                     # 디바이스당 분당 요청
 UNAUTH_BURST = 30                   # 미인증 경로 **전역** 분당 요청(S-1)
 MAX_CHALLENGES = 512                # 진행 중 챌린지 상한(S-3)
@@ -110,10 +114,16 @@ class SyncApp:
                 return self._auth_options()
             if route == ("POST", "/v1/auth/verify"):
                 return self._auth_verify(body)
+            if route == ("GET", "/v1/session"):
+                return self._session_state(headers)
+            if route == ("POST", "/v1/vault/key"):
+                return self._vault_key_put(headers, body)
+            if route == ("GET", "/v1/vault/key"):
+                return self._vault_key_get(headers)
             if route == ("POST", "/v1/logout"):
                 return self._logout(headers)
             if route == ("POST", "/v1/pairing"):
-                return self._pairing(headers)
+                return self._pairing(headers, body)
             if route == ("POST", "/v1/devices"):
                 return self._device_add(headers, body)
             if route == ("GET", "/v1/devices"):
@@ -271,6 +281,50 @@ class SyncApp:
 
     # ── 기기 등록·관리 ────────────────────────────────────────────────────
 
+    def _session_state(self, headers):
+        """새로고침 후 페이지가 로그인 상태를 되찾는 경로.
+
+        쿠키는 살아 있는데 화면이 로그아웃처럼 보이던 문제(제보) — 페이지가 세션을
+        **묻지 않았기** 때문이다. vault_id 는 돌려주지 않는다(필요 없고, 노출면만 는다).
+        키 보관 여부는 알려 줘 화면이 '키 잠김'을 안내할 수 있게 한다."""
+        vault_id = self._session_vault(headers)
+        if not vault_id:
+            return self._json(200, {"authenticated": False})
+        return self._json(200, {"authenticated": True,
+                                "has_key": sdb.get_vault_key(self.conn,
+                                                             vault_id) is not None})
+
+    def _vault_key_put(self, headers, body):
+        """패스키로 감싼 마스터 키를 보관한다(§5.3a). 서버는 이걸 **풀 수 없다**."""
+        vault_id = self._session_vault(headers)
+        if not vault_id:
+            return self._bad_auth("session")
+        d = self._body_json(body)
+        if d is None:
+            return self._err(400, "bad_request")
+        try:
+            wrapped = wa.b64u_decode(d.get("wrapped") or "")
+        except wa.WebAuthnError:
+            return self._err(400, "bad_request")
+        if not (0 < len(wrapped) <= 4096):
+            return self._err(400, "bad_request")
+        meta = str(d.get("meta") or "")[:256]
+        ok = sdb.set_vault_key(self.conn, vault_id, wrapped, meta,
+                               overwrite=bool(d.get("overwrite")))
+        # 이미 있는데 덮어쓰기를 안 했으면 409 — 조용히 무시하면 브라우저는 자기 키가
+        # 올라간 줄 알고, 나중에 다른 기기가 **다른 키**로 복호를 시도한다.
+        return self._json(200 if ok else 409, {"stored": ok})
+
+    def _vault_key_get(self, headers):
+        vault_id = self._session_vault(headers)
+        if not vault_id:
+            return self._bad_auth("session")
+        rec = sdb.get_vault_key(self.conn, vault_id)
+        if rec is None:
+            return self._json(404, {"error": "no_key"})
+        return self._json(200, {"wrapped": wa.b64u_encode(rec["wrapped"]),
+                                "meta": rec["meta"]})
+
     def _logout(self, headers):
         """세션을 **서버에서** 지운다(Q-2). 쿠키 만료만 기다리면 훔친 쿠키가 TTL 동안
         유효하다."""
@@ -279,12 +333,33 @@ class SyncApp:
             sdb.drop_session(self.conn, sid)
         return self._json(200, {"ok": True}, cookie="")
 
-    def _pairing(self, headers):
+    def _pairing(self, headers, body=b""):
         vault_id = self._session_vault(headers)
         if not vault_id:
             return self._bad_auth("session")
+        d = self._body_json(body) or {}
+        ct = nonce = None
+        if d.get("key_ct"):
+            try:
+                ct = wa.b64u_decode(d.get("key_ct") or "")
+                nonce = wa.b64u_decode(d.get("key_nonce") or "")
+            except wa.WebAuthnError:
+                return self._err(400, "bad_request")
+            if not (0 < len(ct) <= 4096) or len(nonce) != 12:
+                return self._err(400, "bad_request")
+        code_h = str(d.get("code_h") or "")
+        if code_h:
+            # §5.3a: 코드를 **브라우저가** 만들고 해시만 등록한다. 서버가 코드를 만들면
+            # 그 순간 서버도 코드를 알아 감싼 키를 풀 수 있다("서버 혼자서는 못 푼다"가
+            # 깨진다). 그래서 키를 나르는 경로에서는 서버가 원문을 보지 않는다.
+            if len(code_h) != 64 or any(c not in "0123456789abcdef" for c in code_h):
+                return self._err(400, "bad_request")
+            sdb.put_pairing(self.conn, vault_id, code_h, self._now(),
+                            key_ct=ct, key_nonce=nonce)
+            return self._json(200, {"expires_in": 600, "carries_key": bool(ct)})
         code = sdb.new_pairing(self.conn, vault_id, self._now())
-        return self._json(200, {"code": code, "expires_in": 600})
+        return self._json(200, {"code": code, "expires_in": 600,
+                                "carries_key": False})
 
     def _device_add(self, headers, body):
         """세션(같은 브라우저) 또는 **1회용 페어링 코드**(헤드리스 머신)로 등록."""
@@ -292,8 +367,15 @@ class SyncApp:
         if d is None:
             return self._err(400, "bad_request")
         vault_id = self._session_vault(headers)
-        if not vault_id and d.get("pairing_code"):
-            vault_id = sdb.consume_pairing(self.conn, d["pairing_code"], self._now())
+        paired = None
+        if not vault_id and d.get("pairing_code_h"):
+            # 머신은 **해시만** 보낸다(원문은 서버가 못 본다 — §5.3a).
+            paired = sdb.consume_pairing_h(self.conn, str(d["pairing_code_h"]),
+                                           self._now())
+            vault_id = paired["vault_id"] if paired else None
+        elif not vault_id and d.get("pairing_code"):
+            paired = sdb.consume_pairing(self.conn, d["pairing_code"], self._now())
+            vault_id = paired["vault_id"] if paired else None
         if not vault_id:
             return self._bad_auth("pairing")
         try:
@@ -308,7 +390,13 @@ class SyncApp:
         except sdb.LimitExceeded:
             self._bump("device_limit")
             return self._err(409, "limit")
-        return self._json(200, {"device_id": did})
+        out = {"device_id": did}
+        # §5.3a: 코드에 실려 온 **감싼 마스터 키**를 그 한 번만 돌려준다. 머신은 자기
+        # 코드로 풀어 K 를 얻는다 — invite/adopt 로 손수 옮기던 단계가 사라진다.
+        if paired and paired.get("key_ct"):
+            out["key_ct"] = wa.b64u_encode(bytes(paired["key_ct"]))
+            out["key_nonce"] = wa.b64u_encode(bytes(paired["key_nonce"] or b""))
+        return self._json(200, out)
 
     def _device_list(self, headers):
         vault_id = self._session_vault(headers)
@@ -497,7 +585,8 @@ class SyncApp:
 
     def _session_vault(self, headers):
         sid = _cookie(headers.get("cookie") or "", COOKIE)
-        return sdb.session_vault(self.conn, sid, self._now()) if sid else None
+        return (sdb.session_vault(self.conn, sid, self._now(), renew=SESSION_TTL)
+                if sid else None)
 
     def _remember_challenge(self, ch: bytes, kind: str, vault_id):
         """진행 중 챌린지를 기록한다 — **발급 시점에** 만료분을 걷고 상한을 건다(S-3).
