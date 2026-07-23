@@ -131,8 +131,8 @@ def load_or_create_master(path: str) -> bytes:
         master = base64.b64decode(raw, validate=True)
     except (ValueError, binascii.Error) as e:
         raise SyncCryptoError(
-            "키 파일이 손상됐습니다(%s) — 다른 머신에서 :token-sync invite 로 받은 "
-            "코드를 :token-sync adopt 로 넣거나, 파일을 지워 새 키를 만드세요" % path
+            "키 파일이 손상됐습니다(%s) — 다른 머신에서 :claude-token-sync invite 로 받은 "
+            "코드를 :claude-token-sync adopt 로 넣거나, 파일을 지워 새 키를 만드세요" % path
         ) from e
     if len(master) != MASTER_LEN:
         raise SyncCryptoError("키 파일 길이가 올바르지 않습니다: %s" % path)

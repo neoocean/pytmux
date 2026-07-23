@@ -21,9 +21,9 @@ import pytmuxlib.plugins as plugins
 
 # claude-code 가 코어에 노출하던 명령(이 플러그인 부재 시 전부 사라져야 함).
 _CLAUDE_CMDS = {
-    "claude-rules", "token-saver", "auto-resume",
-    "token-log", "claude-usage",
-    "usage-panel", "token-account", "prompt-clear", "model",
+    "claude-rules", "claude-settings", "auto-resume",
+    "claude-token-log", "claude-usage",
+    "usage-panel", "claude-token-account", "prompt-clear", "model",
     "auto-doc-clear", "auto-compact", "claude-auto-mode", "auto-launch",
 }
 
@@ -49,7 +49,7 @@ def _sanity_claude_present():
 async def test_contract_sanity_claude_present_when_loaded():
     """전제: 플러그인이 있을 때 Claude 명령이 노출돼 있어야(헛검증 방지)."""
     present = _sanity_claude_present()
-    assert "model" in present and "token-saver" in present, \
+    assert "model" in present and "claude-settings" in present, \
         "claude-code 플러그인이 로드되지 않음 — 계약 테스트 전제 실패"
 
 
@@ -64,8 +64,8 @@ async def test_new_hooks_present_when_loaded():
     assert reg.client_tab_glyph(None, {}) is None      # Claude 아님 → 글리프 없음
     descs, cats = reg.settings()
     assert "Claude" in cats
-    assert {d["key"] for d in descs} == {"token-saver", "model",
-                                         "claude-rules", "token-log"}
+    assert {d["key"] for d in descs} == {"claude-settings", "model",
+                                         "claude-rules", "claude-token-log"}
 
 
 async def test_cli_toggle_routes_through_plugin_and_survives_deletion():
@@ -80,7 +80,7 @@ async def test_cli_toggle_routes_through_plugin_and_survives_deletion():
         assert srv.claude_auto_mode is True
         assert srv.handle_control("claude-auto-mode off") == "off"
         assert srv.claude_auto_mode is False
-        assert srv.handle_control("token-debug on") == "on"
+        assert srv.handle_control("claude-token-debug on") == "on"
         # 코어 _ONOFF_CONTROLS 에는 더는 claude/token 엔트리가 없다(플러그인 소유).
         assert "claude-auto-mode" not in srv._ONOFF_CONTROLS
         assert "token-debug" not in srv._ONOFF_CONTROLS
@@ -149,7 +149,7 @@ async def test_contract_client_hooks_noop_without_plugin():
     assert reg.client_close_overlay(None, None) is False
     assert reg.client_overlay_key(None, None) is False
     assert reg.handle_command(None, "model", []) is False
-    assert reg.handle_command(None, "token-saver", []) is False
+    assert reg.handle_command(None, "claude-settings", []) is False
     assert reg.handle_message(None, {"t": "token_log"}) is False
     # client_tab_glyph: 플러그인 부재 시 탭 상태 글리프 None(코어 탭바가 접두 없이 그림).
     assert reg.client_tab_glyph(None, {"claude": "busy"}) is None
@@ -380,7 +380,7 @@ async def test_token_subsystem_fully_disabled_without_plugin():
 
     # ① 토큰 명령(조회/설정/팝업 진입점)이 전부 사라진다.
     names = {n for (n, *_rest) in reg.commands}
-    assert not ({"token-log", "token-account", "token-saver",
+    assert not ({"claude-token-log", "claude-token-account", "claude-settings",
                  "usage-panel"} & names), f"토큰 명령 누수: {names}"
     # ② 토큰 로그 조회(request_token_log) 무응답.
     assert reg.handle_server_request(
@@ -474,7 +474,7 @@ async def test_contract_client_app_runs_without_claude_plugin(monkeypatch=None):
             await pilot.pause(0.1)
             # 4) Claude 관련 명령을 쳐도 무해(핸들러 없음 → 코어가 조용히 무시).
             app._run_command("model")
-            app._run_command("token-saver")
+            app._run_command("claude-settings")
             await pilot.pause(0.1)
             assert app.view._cells, "Claude 명령 후 렌더 깨짐"
             # 5) 통합 상태 팝업: REC·서버 두 탭(토큰 탭은 2026-06-12 token-log 로

@@ -1071,7 +1071,7 @@ COMMAND_FREETEXT = {
     "rename-pane", "rename-tab", "send-keys", "pipe-pane", "paste-buffer",
     "layout-save", "layout-load", "layout-load-new", "auto-resume-message",
     "set", "set-hook", "display-message", "display-popup", "run-shell",
-    "if-shell", "bind-key", "unbind-key", "token-account",
+    "if-shell", "bind-key", "unbind-key", "claude-token-account",
     "prompt-clear-message", "prompt-clear-queue", "select-tab", "move-tab",
     "swap-tab", "resize-pane", "swap-pane", "capture-pane", "join-pane",
     # 원격 페더레이션: 호스트(NATGAMES\user@host 등)를 직접 친다 → 밑줄 힌트 + 이력.

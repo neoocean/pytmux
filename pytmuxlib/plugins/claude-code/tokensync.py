@@ -41,7 +41,7 @@ class SyncError(Exception):
 
 
 class NotEnrolled(SyncError):
-    """이 머신이 아직 서버에 등록되지 않았다(`:token-sync enroll <코드>`)."""
+    """이 머신이 아직 서버에 등록되지 않았다(`:claude-token-sync enroll <코드>`)."""
 
 
 # ── 전송 ───────────────────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ class SyncClient:
                 raise SyncError(
                     "이 머신은 이미 자기 키로 %d행까지 올렸습니다 — 키를 바꾸면 그"
                     " 데이터는 복호할 수 없게 됩니다. 정말 바꾸려면"
-                    " ':token-sync adopt <코드> force'" % sent)
+                    " ':claude-token-sync adopt <코드> force'" % sent)
         syncrypto.save_master(path, master)
         self._master, self._k_id, self._k_enc = None, None, None
         if force:

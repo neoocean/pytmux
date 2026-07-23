@@ -95,6 +95,31 @@ CREATE TABLE IF NOT EXISTS session (
 """ % (DEFAULT_QUOTA_ROWS, DEFAULT_QUOTA_BYTES)
 
 
+# 이미 돌고 있는 서버의 DB 에 컬럼을 더할 때 쓰는 표. `CREATE TABLE IF NOT EXISTS`
+# 는 **기존 테이블을 바꾸지 않는다** — 실기동에서 이걸로 물렸다(바이트 쿼터 컬럼을
+# 추가한 뒤 업로드가 "no such column: quota_bytes" 로 500). 새 컬럼은 반드시 여기에
+# 함께 등록한다. (클라 usagedb 가 v5~v9 에서 쓰는 것과 같은 규율.)
+_ADD_COLUMNS = (
+    ("vault", "quota_bytes", "INTEGER NOT NULL DEFAULT %d" % DEFAULT_QUOTA_BYTES),
+    ("vault", "bytes_used", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
+def _migrate(conn) -> int:
+    """기존 DB 에 빠진 컬럼을 더한다(멱등). 더한 컬럼 수 반환.
+
+    ALTER ADD COLUMN 은 메타데이터만 바꾸므로 행 재기록이 없고, 기존 값은 기본값으로
+    채워진다(bytes_used=0 은 과소계상이지만 단조 증가라 곧 정확해진다 — 데이터를
+    다시 스캔해 정확히 채우는 것보다 재시작을 가볍게 두는 쪽을 택했다)."""
+    n = 0
+    for table, col, decl in _ADD_COLUMNS:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(%s)" % table)}
+        if col not in cols:
+            conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, col, decl))
+            n += 1
+    return n
+
+
 class QuotaExceeded(Exception):
     """vault 행 쿼터 초과. 조용히 버리지 않고 호출자가 사유를 돌려준다."""
 
@@ -115,6 +140,7 @@ def connect(path: str) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=3000")
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     conn.commit()
     if path != ":memory:":
         for suf in ("", "-wal", "-shm"):

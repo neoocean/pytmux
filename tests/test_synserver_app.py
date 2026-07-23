@@ -637,3 +637,36 @@ async def test_session_cookie_uses_host_prefix():
     st, hdrs, _b = app.handle("POST", "/v1/auth/options")
     st, opts = _j((st, hdrs, _b))
     assert sapp.COOKIE.startswith("__Host-")
+
+
+async def test_existing_db_gets_new_columns():
+    """`CREATE TABLE IF NOT EXISTS` 는 **기존 테이블을 바꾸지 않는다** — 배포된 서버의
+    DB 에 바이트 쿼터 컬럼이 안 생겨 업로드가 500 이 됐다(실기동에서 물림).
+    구 스키마 DB 를 열어 컬럼이 채워지고 기존 데이터가 보존되는지 못박는다."""
+    import os
+    import sqlite3
+    import tempfile
+    d = tempfile.mkdtemp(prefix="synserver-mig-")
+    path = os.path.join(d, "old.db")
+    old = sqlite3.connect(path)
+    old.executescript(
+        "CREATE TABLE vault (vault_id TEXT PRIMARY KEY, created REAL,"
+        " quota_rows INTEGER NOT NULL DEFAULT 100, rows_used INTEGER NOT NULL"
+        " DEFAULT 7);"
+        "INSERT INTO vault (vault_id, created) VALUES ('v1', 1.0);")
+    old.commit()
+    old.close()
+
+    conn = sdb.connect(path)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(vault)")}
+    assert {"quota_bytes", "bytes_used"} <= cols
+    row = conn.execute("SELECT * FROM vault").fetchone()
+    assert row["vault_id"] == "v1" and row["rows_used"] == 7      # 기존 값 보존
+    assert row["quota_bytes"] == sdb.DEFAULT_QUOTA_BYTES and row["bytes_used"] == 0
+    assert sdb._migrate(conn) == 0                                 # 멱등
+    # 업로드 경로가 실제로 살아 있는지(컬럼 참조 쿼리)까지 확인한다.
+    sdb.put_events(conn, "v1", [{"kind": "lim", "rkey": "ab" * 8,
+                                 "acct_id": None, "ct": b"x", "nonce": b"n" * 12}],
+                   now=1.0)
+    assert conn.execute("SELECT bytes_used FROM vault").fetchone()[0] > 0
+    conn.close()

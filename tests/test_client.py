@@ -1028,7 +1028,7 @@ async def test_command_list_and_autocomplete():
         assert "Claude" in catmap and "모니터" in catmap, list(catmap)
         claude_names = [n for n, _ in catmap["Claude"]]
         for nm in ("claude-auto-mode", "auto-retry", "auto-resume",
-                   "token-log", "prompt-clear"):
+                   "claude-token-log", "prompt-clear"):
             assert nm in claude_names, (nm, claude_names)
         mon_names = [n for n, _ in catmap["모니터"]]
         assert "monitor-activity" in mon_names, mon_names
@@ -1899,15 +1899,16 @@ class _FakeMouse:
 
 
 async def test_token_usage_alias_opens_token_log():
-    # token-usage 는 token-log 로 통합(2026-06-12) — 명령은 별칭으로만 남아 같은
-    # 영속 토큰 팝업을 연다(트리 팝업·통합 상태 팝업의 토큰 탭은 제거됨).
+    # 토큰 팝업 진입점은 `claude-token-log` 하나다(2026-07-23: token-* 별칭 제거 —
+    # 이름공간을 Claude 전용으로 명시. 옛 이름은 **인식되지 않아야** 한다).
     async def body(app, pilot, srv):
         called = []
         app.open_token_log = lambda: called.append(True)
-        app._run_command("token-usage")
-        app._run_command("tokens")
-        app._run_command("token-log")
-        assert called == [True, True, True], called
+        app._run_command("claude-token-log")
+        assert called == [True], called
+        for old in ("token-usage", "tokens", "token-log"):
+            app._run_command(old)
+        assert called == [True], "제거한 별칭이 아직 동작한다: %r" % called
         # 트리 팝업 클로저는 더 이상 설치되지 않는다.
         assert getattr(app, "_open_usage_tree", None) is None
         assert getattr(app, "open_claude_usage_tree", None) is None
@@ -2946,11 +2947,11 @@ async def test_settings_screen_applies_persists_and_links():
 
         # 링크 행: _activate → dismiss(대상 명령).
         lidx = next(i for i, (d, _f) in enumerate(scr._flat)
-                    if d["key"] == "token-saver")
+                    if d["key"] == "claude-settings")
         captured = {}
         scr.dismiss = lambda v=None: captured.setdefault("v", v)
         scr._activate(lidx)
-        assert captured["v"] == "token-saver", captured
+        assert captured["v"] == "claude-settings", captured
     await _with_app(body)
 
 

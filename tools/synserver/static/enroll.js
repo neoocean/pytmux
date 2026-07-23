@@ -81,7 +81,7 @@ async function login() {
 // 사용자가 코드를 손으로 옮겨 적다 틀리지 않게 **명령 전체**를 만들어 보여주고
 // 복사까지 붙인다(코드만 보여주면 앞부분을 기억해서 쳐야 한다).
 function enrollCommand(code) {
-  return ":token-sync enroll " + code;
+  return ":claude-token-sync enroll " + code;
 }
 
 async function pair() {

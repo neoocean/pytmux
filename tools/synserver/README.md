@@ -68,9 +68,9 @@ WantedBy=multi-user.target
 1. 브라우저로 `https://sync.example.org/` 를 열고 **새 패스키 만들기** — 이때
    vault 가 생깁니다(아이디 입력 없음).
 2. **코드 새로 만들기** 로 1회용 페어링 코드(10분)를 받습니다.
-3. 그 머신의 pytmux 에서 `:token-sync enroll <코드>` — 머신이 자기 Ed25519 키를
+3. 그 머신의 pytmux 에서 `:claude-token-sync enroll <코드>` — 머신이 자기 Ed25519 키를
    등록하고 이후 요청을 서명합니다.
-4. 두 번째 머신은 1호 머신에서 `:token-sync invite` 로 나온 **마스터 키 초대
+4. 두 번째 머신은 1호 머신에서 `:claude-token-sync invite` 로 나온 **마스터 키 초대
    코드**를 먼저 옮긴 뒤(이 값은 서버를 지나가지 않습니다), 2~3 을 반복합니다.
 
 ## 운영

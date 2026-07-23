@@ -29,19 +29,20 @@ from . import clientstatus  # noqa: F401  (i18n claude.* 등록 부수효과)
 COMMANDS = [
     ("claude-rules", "Claude 시작 규칙 편집(저장 시 새 세션/clear 후 프롬프트에 "
                      "자동 주입)", "Claude"),
-    ("token-saver", "Claude 설정 팝업 — 자동재개·세션종료 토큰화면·권한 오토모드·"
-                    "프롬프트 단위 클리어·장기턴/반복 경고(별칭 claude-settings, "
-                    "token-settings)", "Claude"),
+    ("claude-settings", "Claude 설정 팝업 — 자동재개·세션종료 토큰화면·권한 오토모드·"
+                        "프롬프트 단위 클리어·장기턴/반복 경고", "Claude"),
     ("auto-resume", "토큰 리밋 자동 재개 [on|off]", "Claude"),
     ("auto-resume-message", "자동 재개 메시지 설정", "Claude"),
-    ("token-log", "토큰 사용량 팝업 — 기간(시/일/주/월)·계정·세션 뷰 + 실측 한도·5h창"
-                  "(별칭 token-usage, 상태줄 사용량 클릭)", "Claude"),
+    ("claude-token-log", "Claude 토큰 사용량 팝업 — 기간(시/일/주/월)·계정·세션 뷰 + "
+                         "실측 한도·5h창(상태줄 사용량 클릭)",
+                         "Claude"),
     ("claude-usage", "그림자 /usage 질의 — 숨은 세션으로 실 세션/주간 한도 갱신"
                      "(별칭 usage)", "Claude"),
     ("usage-panel", "Claude 토큰 사용 한도 팝업 — /usage(세션 5h·주 전체·주 Sonnet) "
                     "막대 그래프(별칭 usage-limits·limits)", "Claude"),
-    ("token-account", "활성 패널 Claude 계정 수동 지정 (token-account <이름>, "
-                      "빈값=자동)", "Claude"),
+    ("claude-token-account", "활성 패널 Claude 계정 수동 지정 "
+                             "(claude-token-account <이름>, 빈값=자동)",
+                             "Claude"),
     ("prompt-clear", "프롬프트 단위 클리어 모드 토글(완료마다 문서화+/clear) [on|off]",
                      "Claude"),
     ("prompt-clear-message", "프롬프트 단위 클리어의 문서화 지시문 변경", "Claude"),
@@ -58,19 +59,19 @@ COMMANDS = [
                            "corruption(깨짐 감지 시만) (claude-auto-redraw "
                            "off|idle|corruption|toggle, 기본 off)",
                            "Claude"),
-    ("token-sync", "여러 머신 간 토큰 사용량 동기화 — status | on <URL> | off | "
-                   "enroll <코드> | invite | adopt <코드> | now", "Claude"),
+    ("claude-token-sync", "여러 머신 간 Claude 토큰 사용량 동기화 — status | on <URL> | "
+                          "off | enroll <코드> | invite | adopt <코드> | now", "Claude"),
     ("claude-auto-mode", "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off "
                          "(claude-auto-mode on|off|toggle)", "Claude"),
     ("auto-launch", "새 Claude 세션 시작 시 /rc(원격 제어)+권한모드 auto 1회 자동 적용 "
                     "on/off (auto-launch on|off|toggle, 기본 on)", "Claude"),
-    ("token-debug", "토큰 회계 진단 로그(<sock>.tokendbg.jsonl) on/off — §10-D 과소집계 "
-                    "원인 판정용 진단(평시 OFF) (token-debug on|off|toggle, 기본 off)",
+    ("claude-token-debug", "Claude 토큰 회계 진단 로그(<sock>.tokendbg.jsonl) on/off — §10-D 과소집계 "
+                    "원인 판정용 진단(평시 OFF) (claude-token-debug on|off|toggle, 기본 off)",
                     "Claude"),
 ]
 NOARG = {
-    "claude-rules", "token-saver",
-    "token-usage", "token-log",
+    "claude-rules", "claude-settings",
+    "claude-token-log",
     "claude-usage", "usage", "usage-panel", "usage-limits", "limits",
 }
 # 옵션(선택지) 스키마 — 팔레트에서 on/off/토글을 키보드로 고른다(코어 COMMAND_OPTIONS 병합).
@@ -100,7 +101,8 @@ COMMAND_OPTIONS = {
                             "choices": _REDRAW_CHOICES}],
     "claude-auto-mode": [{"key": "state", "label": "오토모드", "choices": _ONOFF}],
     "auto-launch": [{"key": "state", "label": "자동셋업", "choices": _ONOFF}],
-    "token-debug": [{"key": "state", "label": "토큰진단로그", "choices": _ONOFF}],
+    "claude-token-debug": [{"key": "state", "label": "토큰진단로그",
+                            "choices": _ONOFF}],
 }
 
 # §6 ⑤ 플러그인 명령 i18n: '?' 목록·힌트는 코어 CommandListScreen/_cmd_desc 가
@@ -111,13 +113,13 @@ i18n.register({
     "ko": {f"cmd.{n}": d for n, d, *_ in COMMANDS},
     "en": {
         "cmd.claude-rules": "Edit Claude start rules (auto-injected into the prompt after a new session/clear)",
-        "cmd.token-saver": "Claude settings popup — auto-resume·auto-token-on-exit·auto permission mode·per-prompt clear·long-turn/repeat warnings (alias claude-settings, token-settings)",
+        "cmd.claude-settings": "Claude settings popup — auto-resume·auto-token-on-exit·auto permission mode·per-prompt clear·long-turn/repeat warnings (alias claude-settings, token-settings)",
         "cmd.auto-resume": "Auto-resume on token limit [on|off]",
         "cmd.auto-resume-message": "Set the auto-resume message",
-        "cmd.token-log": "Token usage popup — period (h/d/w/m)·session views + measured limits·5h window (alias token-usage, click status usage)",
+        "cmd.claude-token-log": "Token usage popup — period (h/d/w/m)·session views + measured limits·5h window (alias token-usage, click status usage)",
         "cmd.claude-usage": "Shadow /usage query — refresh real session/weekly limits via a hidden session (alias usage)",
         "cmd.usage-panel": "Claude token usage-limit popup — /usage (session 5h·week all·week Sonnet) bar graph (alias usage-limits·limits)",
-        "cmd.token-account": "Manually set the active pane's Claude account (token-account <name>, empty=auto)",
+        "cmd.claude-token-account": "Manually set the active pane's Claude account (token-account <name>, empty=auto)",
         "cmd.prompt-clear": "Toggle per-prompt clear mode (document + /clear each completion) [on|off]",
         "cmd.prompt-clear-message": "Change the per-prompt-clear documentation directive",
         "cmd.prompt-clear-queue": "Queue commands for per-prompt clear (empty=list, -c=clear)",
@@ -127,8 +129,8 @@ i18n.register({
         "cmd.claude-auto-redraw": "Auto-mitigate screen corruption — off | idle (repaint each completion) | corruption (repaint only when corruption is detected) (claude-auto-redraw off|idle|corruption|toggle, default off)",
         "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",
         "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
-        "cmd.token-sync": "Sync token usage across machines — status | on <URL> | off | enroll <code> | invite | adopt <code> | now",
-        "cmd.token-debug": "Token-accounting diagnostic log (<sock>.tokendbg.jsonl) on/off — §10-D undercount root-cause diagnostic (off normally) (token-debug on|off|toggle, default off)",
+        "cmd.claude-token-sync": "Sync token usage across machines — status | on <URL> | off | enroll <code> | invite | adopt <code> | now",
+        "cmd.claude-token-debug": "Token-accounting diagnostic log (<sock>.tokendbg.jsonl) on/off — §10-D undercount root-cause diagnostic (off normally) (token-debug on|off|toggle, default off)",
     },
 })
 
@@ -139,17 +141,17 @@ i18n.register({
 i18n.register({
     "ko": {
         "setcat.Claude": "Claude",
-        "setting.token-saver": "Claude 토큰 세이버…",
+        "setting.claude-settings": "Claude 설정…",
         "setting.model": "Claude 모델/컨텍스트…",
         "setting.claude-rules": "Claude 시작 규칙…",
-        "setting.token-log": "토큰 사용량…",
+        "setting.claude-token-log": "Claude 토큰 사용량…",
     },
     "en": {
         "setcat.Claude": "Claude",
-        "setting.token-saver": "Claude token saver…",
+        "setting.claude-settings": "Claude settings…",
         "setting.model": "Claude model/context…",
         "setting.claude-rules": "Claude start rules…",
-        "setting.token-log": "Token usage…",
+        "setting.claude-token-log": "Claude token usage…",
     },
 })
 
@@ -239,7 +241,7 @@ i18n.register({
         "tsync.adopted": "토큰 동기화: 초대 코드를 적용했습니다(이 머신의 키 교체)",
         "tsync.synced": "토큰 동기화: 올림 {sent} · 받음 {merged}",
         "tsync.fail": "토큰 동기화 실패 — {why}",
-        "tsync.off": "토큰 동기화가 꺼져 있습니다(:token-sync on <https://서버주소> "
+        "tsync.off": "토큰 동기화가 꺼져 있습니다(:claude-token-sync on <https://서버주소> "
                      "로 켭니다)",
         "tsync.configured": "토큰 동기화 설정: {state}",
     },
@@ -251,7 +253,7 @@ i18n.register({
         "tsync.adopted": "Token sync: invite applied (key replaced on this machine)",
         "tsync.synced": "Token sync: pushed {sent} · merged {merged}",
         "tsync.fail": "Token sync failed — {why}",
-        "tsync.off": "Token sync is off (turn on with :token-sync on <https://url>)",
+        "tsync.off": "Token sync is off (turn on with :claude-token-sync on <https://url>)",
         "tsync.configured": "Token sync configured: {state}",
     },
 })
@@ -568,7 +570,7 @@ def _open_remote_control(app, pane_id):
 
 
 async def _token_sync_cmd(server, client, sub: str, arg: str):
-    """`:token-sync <sub>` 서버측 처리. 블로킹(키·HTTP)은 executor 로 밀고 결과를
+    """`:claude-token-sync <sub>` 서버측 처리. 블로킹(키·HTTP)은 executor 로 밀고 결과를
     요청 클라에만 notice 로 돌려준다(조용한 실패 금지)."""
     import asyncio
 
@@ -610,8 +612,8 @@ async def _token_sync_cmd(server, client, sub: str, arg: str):
             return
         if str(getattr(server, "token_sync", "off")) != "server" or \
                 not getattr(server, "token_sync_url", ""):
-            await note("tsync.off", "토큰 동기화가 꺼져 있습니다(:token-sync on "
-                                    "<https://서버주소> 로 켭니다)")
+            await note("tsync.off", "토큰 동기화가 꺼져 있습니다"
+                                    "(:claude-token-sync on <https://서버주소> 로 켭니다)")
             return
         cli = tokensync._client_for(server)
         if sub == "enroll":
@@ -663,7 +665,7 @@ class _ClaudeCodePlugin:
         "claude-auto-mode": "claude_auto_mode",
         "auto-retry": "claude_auto_retry",
         "auto-launch": "auto_launch",
-        "token-debug": "token_debug",
+        "claude-token-debug": "token_debug",
     }
 
     def command_option_current(self, app, name):
@@ -992,8 +994,7 @@ class _ClaudeCodePlugin:
         "auto-mode": "set_claude_auto_mode",
         "claude-auto-launch": "set_claude_auto_launch",
         "auto-launch": "set_claude_auto_launch",
-        "token-debug": "set_token_debug",
-        "token-dbg": "set_token_debug",
+        "claude-token-debug": "set_token_debug",
     }
 
     # 원격 보기(federation) 릴레이 액션(Registry.relay_actions 가 코어 화이트리스트와
@@ -1186,10 +1187,12 @@ class _ClaudeCodePlugin:
     # 에서 이전, delete-to-disable). 링크 행을 고르면 코어가 그 명령(token-saver 등)을
     # 돌려받아 디스패치한다(플러그인 handle_command 가 처리).
     _SETTINGS_DESCS = [
-        {"key": "token-saver", "cat": "Claude", "type": "link", "link": "token-saver"},
+        {"key": "claude-settings", "cat": "Claude", "type": "link",
+         "link": "claude-settings"},
         {"key": "model", "cat": "Claude", "type": "link", "link": "model"},
         {"key": "claude-rules", "cat": "Claude", "type": "link", "link": "claude-rules"},
-        {"key": "token-log", "cat": "Claude", "type": "link", "link": "token-log"},
+        {"key": "claude-token-log", "cat": "Claude", "type": "link",
+         "link": "claude-token-log"},
     ]
 
     def settings(self):
@@ -1264,10 +1267,9 @@ class _ClaudeCodePlugin:
         # 사라지지만 클릭 경로는 Phase 2 까지 코어에 남는다(단계적 추출).
         if c in ("claude-rules", "rules", "startup-rules"):
             self._open_rules(app)
-        elif c in ("token-saver", "claude-settings", "token-settings"):
+        elif c == "claude-settings":
             self._open_saver(app)
-        elif c in ("token-log", "tokens-log", "token-usage-log",
-                   "token-usage", "tokens"):
+        elif c == "claude-token-log":
             # token-usage 는 token-log 로 통합(2026-06-12) — 별칭으로만 남는다.
             app.open_token_log()
         elif c in ("usage-panel", "usage-limits", "limits"):
@@ -1284,11 +1286,11 @@ class _ClaudeCodePlugin:
             # 긁어온다(사용자 화면 무간섭, ~수초). 회신은 status 로 반영.
             app.send_cmd("refresh_usage")
             app.display_message(i18n.t("ccmsg.usage_querying"), 4.0)
-        elif c in ("token-sync", "tokens-sync"):
+        elif c == "claude-token-sync":
             # 서버가 실제 작업(키·네트워크)을 하고 결과를 notice 로 돌려준다.
             sub = (args[0] if args else "status").strip().lower()
             app.send_cmd("token_sync", sub=sub, arg=" ".join(args[1:]).strip())
-        elif c in ("token-account", "tokens-account"):
+        elif c == "claude-token-account":
             app.send_cmd("set_claude_account", name=" ".join(args).strip())
         elif c in ("prompt-clear", "prompt-clear-mode"):
             app.send_cmd("set_prompt_clear", value=_onoff(args))
@@ -1300,7 +1302,7 @@ class _ClaudeCodePlugin:
             app.send_cmd("set_claude_auto_retry", value=_onoff(args))
         elif c in ("claude-auto-mode", "auto-mode"):
             app.send_cmd("set_claude_auto_mode", value=_onoff(args))
-        elif c in ("token-debug", "token-dbg"):
+        elif c == "claude-token-debug":
             # §10-D 토큰 회계 진단 로그 토글(서버 opts.json 영속, 즉시 발효). 진단용이라
             # 평시엔 거의 안 만지므로 결과를 짧게 알린다(다른 토글은 설정 팝업이 상태를
             # 보여 주지만 이건 팝업이 없다). 무인자 토글은 결과값을 동기적으로 모르므로
