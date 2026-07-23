@@ -20,6 +20,7 @@
     { t: 'command',    n: '메뉴 · 명령 프롬프트' },
     { t: 'claude',     n: 'Claude Code 연동' },
     { t: 'tokens',     n: '토큰 사용량' },
+    { t: 'sync',       n: '여러 머신 토큰 동기화' },
     { t: 'remote',     n: '원격 페더레이션' },
     { t: 'restart',    n: '재시작 · 회복' },
     { t: 'tools',      n: '도구 · 위젯' },

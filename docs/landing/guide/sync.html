@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>여러 머신 토큰 동기화 — pytmux 가이드 10</title>
+<meta name="description" content="pytmux-sync 사용법: 자기호스팅 동기화 서버로 여러 컴퓨터의 Claude 토큰 사용량을 합칩니다. 아이디 없는 패스키 로그인, 코드 한 줄 등록, 계정 이름·기록을 서버에 남기지 않는 구조와 복구 절차.">
+<link rel="stylesheet" href="../styles.css">
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body data-topic="sync">
+<div class="wrap">
+  <div class="guide-layout">
+    <aside class="toc"></aside>
+    <main class="doc">
+
+      <header style="margin-bottom:8px;">
+        <span class="kicker">상세 가이드 · 10 / 15</span>
+        <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">여러 머신 토큰 동기화</h1>
+        <p style="font-size:18px;">
+          같은 Claude 계정을 여러 컴퓨터에서 쓰면 머신마다 따로 재고 따로 저장해
+          <strong>통계가 갈립니다</strong>. 노트북에서 본 <code class="nb">5시간 한도 62%</code> 가
+          데스크톱에서는 <code class="nb">18%</code> 로 보이는 식입니다. 동기화를 켜면 각 머신이 관측한 값을
+          서로 나눠 가져 <strong>어느 컴퓨터에서 봐도 같은 숫자</strong>가 나옵니다.
+        </p>
+      </header>
+
+      <section>
+        <h2 style="border-top:none;">무엇을 서버에 두지 않는가</h2>
+        <p>
+          동기화 서버는 <strong>직접 돌리는 작은 서버</strong>(<code class="nb">tools/synserver</code>)입니다.
+          남의 서비스에 토큰 기록을 맡기지 않으려고 파일 하나짜리로 만들었고, 의존성은 암호
+          라이브러리 하나뿐입니다. 무엇보다 <strong>서버가 알 수 있는 것을 설계로 줄였습니다</strong>.
+        </p>
+        <ul>
+          <li><strong>계정 이름을 저장하지 않습니다.</strong> 이메일 대신 각 머신만 아는 열쇠로 만든
+            <em>가명</em>으로 계정을 구분합니다 — 서버는 “계정 A 와 B 는 다르다”만 알고 누구인지는 모릅니다.</li>
+          <li><strong>기록을 읽지 못합니다.</strong> 토큰 수치·모델명은 보내기 전에 각 머신에서 잠그고,
+            서버에는 암호문만 올라갑니다. 열쇠는 서버에 없습니다.</li>
+          <li><strong>사람 이름이 들어갈 칸이 없습니다.</strong> 로그인은 아이디도 비밀번호도 없이
+            패스키 하나로 합니다.</li>
+        </ul>
+        <p class="note">
+          그래서 서버가 통째로 털려도 남는 것은 <strong>암호문·난수 가명·건수</strong> 정도입니다.
+          대신 정직하게 말하면, <strong>활동 시각과 양이라는 메타데이터</strong>는 서버가 알게 되고
+          각 머신의 로컬 DB 에는 여전히 평문 기록이 있습니다.
+        </p>
+      </section>
+
+      <section>
+        <h2>서버 올리기</h2>
+        <p>
+          집 서버·개인 VPS 어디든 됩니다. TLS 는 앞단 리버스 프록시(Caddy·Cloudflare 터널 등)가
+          맡고, 서버는 루프백에만 붙입니다 — <strong>패스키는 HTTPS 에서만 동작</strong>합니다.
+        </p>
+        <pre><code>python3 -m pip install 'cryptography&gt;=42'
+
+python3 tools/synserver/app.py \
+    --db /var/lib/synserver/sync.db \
+    --rp-id sync.example.org \
+    --host 127.0.0.1 --port 8787</code></pre>
+        <p>
+          <strong>도메인은 신중히 고르세요.</strong> 패스키는 이 도메인에 묶여, 나중에 바꾸면 등록된
+          패스키가 전부 무효가 됩니다. 그리고 <code class="nb">a.b.example.org</code> 처럼 점이 하나 더 깊은
+          이름은 기본 인증서가 덮지 못해 HTTPS 가 안 될 수 있습니다 —
+          <code class="nb">sync.example.org</code> 같은 <strong>2단계 이름</strong>이 안전합니다.
+        </p>
+      </section>
+
+      <section>
+        <h2>첫 설정 — 패스키와 복구 코드</h2>
+        <ol>
+          <li>브라우저로 서버 주소를 열고 <strong>새 패스키 만들기</strong>. 아이디 입력 없이 vault(내 공간)가
+            생깁니다.</li>
+          <li>화면에 <strong>복구 코드</strong>가 한 번 뜹니다 — <strong>지금 보관하세요.</strong> 서버는 해시만 갖고
+            있어 다시 보여줄 수 없습니다.</li>
+          <li>가능하면 <strong>패스키를 하나 더</strong> 만들어 두세요(로그인 상태에서 같은 버튼). 패스키가
+            하나뿐이면 그것을 잃는 순간 잠깁니다.</li>
+        </ol>
+        <p class="note">
+          첫 vault 가 만들어진 뒤에는 <strong>새 vault 생성이 잠깁니다</strong> — 공개 주소라 아무나 계정을
+          만들 수 있으면 그 자체가 자원 낭비이기 때문입니다. 같은 vault 에 패스키를 추가하려면
+          <strong>먼저 로그인</strong>한 뒤 눌러야 합니다.
+        </p>
+      </section>
+
+      <section>
+        <h2>머신 붙이기 — 명령 한 줄</h2>
+        <p>
+          브라우저에서 <strong>코드 새로 만들기</strong> 를 누르면 <strong>실행할 명령 전체</strong>가 복사 버튼과 함께
+          나옵니다. 그 머신의 pytmux 에서 <code class="nb">:</code> 프롬프트에 붙여넣으면 끝입니다.
+        </p>
+        <pre><code>:claude-token-sync enroll A1B2-C3D4-E5F6-…</code></pre>
+        <p>
+          <strong>암호화 열쇠도 그 코드에 실려 함께 넘어갑니다</strong> — 머신끼리 열쇠를 손으로 옮길 필요가
+          없습니다. 코드는 <strong>1회용·10분</strong>이고, 쓰이는 즉시 브라우저 화면이 스스로 갱신돼 등록된
+          머신이 나타납니다. 서버 주소는 기본값이 들어 있어 따로 설정하지 않아도 되고,
+          <strong>등록 전에는 네트워크 요청이 한 번도 나가지 않습니다</strong>.
+        </p>
+        <p>
+          UI 없는 머신(헤드리스·CI)에서는 셸로도 됩니다.
+        </p>
+        <pre><code>pytmux cmd claude-token-sync enroll &lt;코드&gt;
+pytmux cmd claude-token-sync now       # 즉시 한 바퀴
+pytmux cmd claude-token-sync status    # 상태·마지막 오류</code></pre>
+        <p class="note">
+          <strong>원격 탭을 보는 중</strong>에 친 <code class="nb">:claude-token-sync</code> 는
+          <strong>그 원격 머신</strong>에 적용됩니다(스크롤·프롬프트 점프와 같은 규칙). 로컬 머신을
+          대상으로 하려면 로컬 탭에서 치거나 셸 명령을 쓰세요.
+        </p>
+      </section>
+
+      <section>
+        <h2>자기 서버를 쓰려면</h2>
+        <p>
+          기본 주소 대신 자기 서버를 쓰려면 둘 중 하나면 됩니다 — 코드를 고칠 필요는 없습니다.
+        </p>
+        <pre><code>pytmux cmd claude-token-sync on https://sync.example.org
+# 또는 환경변수
+PYTMUX_TOKEN_SYNC_URL=https://sync.example.org</code></pre>
+        <p>
+          끄려면 <code class="nb">claude-token-sync off</code>. 꺼 두면 동작·성능·프라이버시가 도입 전과
+          <strong>완전히 같습니다</strong>.
+        </p>
+      </section>
+
+      <section>
+        <h2>결과 읽는 법</h2>
+        <p>
+          <code class="nb">claude-token-sync now</code> 는 세 숫자를 돌려줍니다.
+        </p>
+        <pre><code>pushed 703 merged 6792 rejected 0</code></pre>
+        <ul>
+          <li><strong>pushed</strong> — 이번에 올린 내 기록 수</li>
+          <li><strong>merged</strong> — 다른 머신에서 받아 합친 수</li>
+          <li><strong>rejected</strong> — 받았지만 버린 수. <strong>0 이 아니면 열쇠가 다릅니다</strong> —
+            머신마다 다른 열쇠로 올리고 있다는 뜻이라, 열쇠를 맞추고
+            <code class="nb">claude-token-sync resync</code> 로 전량 다시 올려야 합니다.</li>
+        </ul>
+        <p>
+          계정이 여러 개면 <strong>계정별로 갈려서</strong> 합쳐집니다. 같은 계정은 머신을 넘어 하나로,
+          다른 계정은 끝까지 따로입니다. 특정 계정만 내보내려면
+          <code class="nb">token_sync_accounts</code> 에 그 계정만 적으면 됩니다(회사 계정을 개인 서버로
+          올리지 않기).
+        </p>
+      </section>
+
+      <section>
+        <h2>잠겼을 때 · 열쇠를 바꿀 때</h2>
+        <p>
+          <strong>패스키를 잃었다면</strong> 로그인 화면의 <strong>복구 코드로 로그인</strong> 을 쓰세요. 첫 설정 때
+          받은 1회용 코드를 넣으면 그 자리에서 새 패스키를 붙일 수 있고, 새 복구 코드가 다시
+          발급됩니다. 이 코드로 얻는 것은 <strong>접근 권한뿐</strong>이라, 코드가 새도 기록은 읽히지 않습니다.
+        </p>
+        <p>
+          <strong>열쇠 자체를 바꾸려면</strong>(기기 분실 등) 순서가 있습니다. 서버에 쌓인 기록은 새 열쇠로
+          읽을 수 없게 되지만, <strong>각 머신의 로컬 기록이 원본</strong>이라 다시 올리면 복구됩니다.
+        </p>
+        <ol>
+          <li>웹 화면에서 <strong>모든 기기 폐기</strong></li>
+          <li>각 머신에서 <code class="nb">db/</code> 의 <code class="nb">sync_vault.key</code> ·
+            <code class="nb">sync_device.key</code> · <code class="nb">sync_device.id</code> 삭제
+            (토큰 기록 <code class="nb">claude-tokens.db</code> 는 그대로)</li>
+          <li>웹에서 <strong>로그아웃 → 로그인</strong> 하면 새 열쇠 생성</li>
+          <li>머신마다 코드를 새로 만들어 재등록하고 <code class="nb">claude-token-sync resync</code></li>
+        </ol>
+      </section>
+
+      <section>
+        <h2>지금 동기화되는 것</h2>
+        <p>
+          현재는 <strong>한도 스냅샷</strong>(5시간·주간 퍼센트와 리셋 시각)이 오갑니다. 이 값들은 원래
+          <strong>계정 단위</strong>라 계산이 틀렸던 게 아니라 <em>그 머신이 최근에 관측하지 못했을 뿐</em>이었고,
+          그래서 이것만 맞춰도 체감 문제의 절반이 사라집니다. 요청별 토큰 회계
+          (<code class="nb">usage_xc</code>) 동기화는 다음 단계입니다.
+        </p>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="../guide-nav.js"></script>
+</body>
+</html>

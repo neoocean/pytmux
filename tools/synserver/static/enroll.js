@@ -507,9 +507,19 @@ async function loadDevices() {
     const btn = document.createElement("button");
     btn.textContent = "폐기";
     btn.addEventListener("click", async () => {
+      // **되돌릴 수 없는 조작**이라 한 번 확인한다 — 목록이 이름만으로 구분되는
+      // 경우(같은 hostname 여러 대)에 잘못 누르기 쉽다.
+      const name = d.label || "(이름 없음)";
+      if (!window.confirm(
+            "이 기기를 폐기할까요?\n\n  " + name +
+            "\n\n폐기하면 그 머신의 업로드·내려받기가 즉시 거부됩니다. " +
+            "다시 쓰려면 그 머신에서 새 코드로 등록해야 합니다.")) {
+        return;
+      }
       await fetch("/v1/devices/" + encodeURIComponent(d.device_id),
                   { method: "DELETE", credentials: "same-origin" });
       await loadDevices();
+      say("기기를 폐기했습니다: " + name);
     });
     act.appendChild(btn);
     tr.append(name, act);
