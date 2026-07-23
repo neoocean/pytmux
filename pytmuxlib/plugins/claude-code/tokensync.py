@@ -255,6 +255,9 @@ class SyncClient:
         return sk
 
     def _device_id(self):
+        # 등록 직후 정리(_self_revoke)에는 아직 파일에 안 쓴 id 를 써야 한다.
+        if getattr(self, "_device_id_override", None):
+            return self._device_id_override
         try:
             with open(os.path.join(self.db_dir, "sync_device.id"),
                       encoding="ascii") as f:
@@ -265,6 +268,15 @@ class SyncClient:
     def enroll(self, pairing_code: str, label=None) -> str:
         """1회용 페어링 코드로 이 머신을 서버에 등록한다 → device_id."""
         from cryptography.hazmat.primitives import serialization as ser
+        # 선판정: 이미 **자기 키로 올린 이력**이 있으면 새 vault 키를 받아도 그 데이터가
+        # 복호 불능이 된다. 예전에는 POST 뒤 키 설치 단계에서 막아, 서버에는 기기가
+        # 만들어졌는데 클라이언트만 실패로 보고했다("메시지는 실패인데 목록엔 등록됨").
+        # **네트워크를 타기 전에** 판정해 반쯤 성사되는 상태를 없앤다.
+        key_path = os.path.join(self.db_dir, "sync_vault.key")
+        if os.path.exists(key_path) and usagedb.get_export_cursor(self.conn, "limits"):
+            raise SyncError(
+                "이 머신은 이미 자기 키로 올린 이력이 있습니다 — 키를 맞추려면 "
+                "sync_vault.key 를 지우고 다시 등록하세요(로컬 기록은 그대로입니다)")
         pub = self._device_key().public_key().public_bytes(
             ser.Encoding.Raw, ser.PublicFormat.Raw)
         # 코드 **원문 대신 해시**를 보낸다 — 원문을 보내면 서버가 pair_key 를 만들어
@@ -291,7 +303,12 @@ class SyncClient:
         # invite/adopt 로 손수 옮기던 단계가 사라진다. 키가 없으면(구 서버·폴백 vault)
         # 종전대로 사용자가 adopt 로 넣는다.
         if out.get("key_ct"):
-            self._install_key_from_pairing(pairing_code, out)
+            try:
+                self._install_key_from_pairing(pairing_code, out)
+            except SyncError:
+                # 키를 못 심었으면 이 등록은 쓸모가 없다 — 서버에 남기지 않는다.
+                self._self_revoke(did)
+                raise
         path = os.path.join(self.db_dir, "sync_device.id")
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
@@ -299,6 +316,19 @@ class SyncClient:
         finally:
             os.close(fd)
         return did
+
+    def _self_revoke(self, device_id: str) -> None:
+        """방금 만든 자기 기기를 서버에서 지운다(등록 실패 정리).
+
+        세션 없이도 되도록 **자기 서명**으로 지운다 — 실패한 등록이 서버에 남으면
+        목록에 유령이 쌓이고(제보) 기기 상한만 잡아먹는다."""
+        self._device_id_override = device_id
+        try:
+            self._signed("DELETE", "/v1/devices/self")
+        except Exception:       # noqa: BLE001 — 정리 실패가 원 오류를 덮으면 안 된다
+            pass
+        finally:
+            self._device_id_override = None
 
     def _install_key_from_pairing(self, code: str, out: dict) -> None:
         """등록 응답에 실려 온 감싼 키를 코드로 풀어 저장한다.

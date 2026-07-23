@@ -26,7 +26,7 @@ from synserver import db as sdb          # noqa: E402
 from synserver import webauthnlib as wa  # noqa: E402
 
 from test_synserver_app import Clock, _enroll, _j   # noqa: E402
-from test_synserver_webauthn import RP_ID, ORIGIN   # noqa: E402
+from test_synserver_webauthn import FakeAuthenticator, RP_ID, ORIGIN  # noqa: E402
 
 
 def _server():
@@ -782,3 +782,59 @@ async def test_all_rejected_says_key_mismatch():
     assert out["merged"] == 0 and out["rejected"] == 1
     st = usagedb.get_sync_remote(m1.conn, tokensync.SyncClient.REMOTE)
     assert "키 불일치" in st["last_err"], st
+
+
+async def test_enroll_is_atomic_on_key_conflict():
+    """등록이 **반쯤 성사되면 안 된다**(제보: "이미 등록된 적 있다" 메시지가 떴는데
+    목록에는 등록됨). 예전에는 서버에 기기를 만든 **뒤** 키 설치에서 막았다.
+
+    ① 이미 자기 키로 올린 이력이 있으면 **네트워크를 타기 전에** 거부한다.
+    ② 그래도 키 설치가 실패하면 방금 만든 기기를 스스로 지운다(자기 서명 폐기)."""
+    app, clock = _server()
+    cookie, vault, _auth = _enroll(app)
+    master = syncrypto.gen_master()
+
+    # ① 자기 키로 올린 이력이 있는 머신은 요청 자체를 보내지 않는다.
+    m1 = Machine(app, clock, _browser_pair(app, cookie, master))
+    m1.add_limits(1_000_000.0, 40)
+    m1.cli.push_limits()
+    sent = []
+    real = m1.cli.transport
+
+    def spy(*a, **kw):
+        sent.append(a[:2])
+        return real(*a, **kw)
+
+    m1.cli.transport = spy
+    app._unauth = [0.0, 0]
+    code = _browser_pair(app, cookie, syncrypto.gen_master())   # 다른 키
+    try:
+        m1.cli.enroll(code)
+    except tokensync.SyncError as e:
+        assert "이력" in str(e), e
+    else:
+        raise AssertionError("이력이 있는데 등록이 진행됐다")
+    assert sent == [], "거부해야 하는데 서버로 요청이 나갔다: %r" % (sent,)
+
+    # ② 키 설치가 실패하면(복호 불가) 기기가 서버에 남지 않는다.
+    d = tempfile.mkdtemp(prefix="pytmux-sync-atomic-")
+    conn = usagedb.connect(os.path.join(d, "t.db"))
+    cli = tokensync.SyncClient(conn, d, _transport(app), now=clock)
+    app._unauth = [0.0, 0]
+    bad = _browser_pair(app, cookie, master)
+    before = len(sdb.list_devices(app.conn, vault))
+    real_open = syncrypto.aes_gcm_open
+
+    def boom(*a, **kw):
+        raise syncrypto.SyncCryptoError("복호 실패(시험)")
+
+    syncrypto.aes_gcm_open = boom
+    try:
+        cli.enroll(bad)
+    except tokensync.SyncError:
+        pass
+    else:
+        raise AssertionError("키 설치 실패인데 등록이 성공했다")
+    finally:
+        syncrypto.aes_gcm_open = real_open
+    assert len(sdb.list_devices(app.conn, vault)) == before, "실패한 등록이 남았다"

@@ -29,3 +29,11 @@ table { width: 100%; border-collapse: collapse; font-size: 14px; }
 td { padding: 6px 4px; border-bottom: 1px solid rgba(127,127,127,.3); }
 #msg { min-height: 1.6em; font-size: 14px; }
 #msg.err { color: #c0392b; }
+
+/* 자세한 절차는 접어 둔다 — 평소엔 방해가 안 되고, 필요할 때 그 자리에서 다 읽힌다
+   (외부 문서를 찾아가게 하면 정작 필요한 순간에 못 본다). */
+details { margin: 6px 0 0; }
+details > summary { cursor: pointer; font-size: 14px; opacity: .8; }
+details ol { margin: 8px 0 0 18px; padding: 0; }
+details li { margin: 4px 0; }
+details .nb, details code { font-size: 13px; }

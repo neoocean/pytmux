@@ -137,6 +137,8 @@ class SyncApp:
                 return self._device_add(headers, body)
             if route == ("GET", "/v1/devices"):
                 return self._device_list(headers)
+            if route == ("DELETE", "/v1/devices/self"):
+                return self._device_self_revoke(method, path, headers, body)
             if method == "DELETE" and path.startswith("/v1/devices/"):
                 return self._device_revoke(headers, path.rsplit("/", 1)[-1])
             if route == ("POST", "/v1/events"):
@@ -466,6 +468,17 @@ class SyncApp:
         if not vault_id:
             return self._bad_auth("session")
         return self._json(200, {"devices": sdb.list_devices(self.conn, vault_id)})
+
+    def _device_self_revoke(self, method, path, headers, body):
+        """기기가 **자기 자신**을 지운다(서명 인증). 등록 직후 키 설치가 실패했을 때
+        클라이언트가 스스로 뒷정리하는 경로 — 실패한 등록이 서버에 남지 않게 한다.
+        남의 기기는 건드릴 수 없다(vault·device 를 서명에서 유도한다)."""
+        dev = self._device_auth(method, path, headers, body)
+        if dev is None:
+            return self._bad_auth("signature")
+        ok = sdb.revoke_device(self.conn, dev["vault_id"], dev["device_id"],
+                               self._now())
+        return self._json(200, {"ok": bool(ok)})
 
     def _device_revoke(self, headers, device_id):
         vault_id = self._session_vault(headers)

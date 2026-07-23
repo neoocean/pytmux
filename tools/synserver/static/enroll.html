@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>pytmux sync — 기기 등록</title>
+<title>pytmux 클로드 토큰 사용량 동기화</title>
 <link rel="stylesheet" href="/static/enroll.css">
 </head>
 <body>
 <main>
-  <h1>pytmux 토큰 동기화</h1>
+  <h1>pytmux 클로드 토큰 사용량 동기화</h1>
   <p class="lead">
     이 서버는 <strong>계정 이름을 저장하지 않습니다</strong>. 아이디도 비밀번호도 없이
     <strong>패스키</strong> 하나로 들어오고, 올라오는 기록은 이 브라우저가 아니라
@@ -80,7 +80,27 @@
     <h2>3. 등록된 머신</h2>
     <table id="devices"><tbody></tbody></table>
     <p class="hint">기기를 잃어버렸다면 여기서 <strong>폐기</strong>하세요 — 그 즉시 그
-      머신의 업로드·내려받기가 거부됩니다(키 자체를 바꾸려면 문서의 §5.9 참고).</p>
+      머신의 업로드·내려받기가 거부됩니다. 폐기해도 <strong>암호화 열쇠는 그대로</strong>라,
+      그 머신이 이미 올린 기록은 남아 있습니다.</p>
+    <details class="hint">
+      <summary>열쇠 자체를 바꾸려면(기기 분실 등)</summary>
+      <p>열쇠를 바꾸면 <strong>서버에 쌓인 기록은 더 이상 읽을 수 없습니다</strong>.
+        각 머신의 로컬 기록이 원본이므로 다시 올리면 복구되지만, 순서를 지켜야 합니다.</p>
+      <ol>
+        <li>이 화면에서 <strong>모든 기기를 폐기</strong>합니다.</li>
+        <li>각 머신에서 열쇠 파일을 지웁니다 —
+          <code class="nb">&lt;pytmux&gt;/pytmuxlib/plugins/claude-code/db/</code> 의
+          <code class="nb">sync_vault.key</code>·<code class="nb">sync_device.key</code>·
+          <code class="nb">sync_device.id</code> 세 개. (토큰 기록은 같은 폴더의
+          <code class="nb">claude-tokens.db</code> 에 그대로 남습니다.)</li>
+        <li>여기서 <strong>로그아웃 → 로그인</strong> 하면 새 열쇠가 만들어집니다.</li>
+        <li>머신마다 코드를 새로 만들어 다시 등록하고, 각 머신에서
+          <code class="nb">pytmux cmd claude-token-sync resync</code> 를 실행하면
+          기록이 새 열쇠로 다시 올라갑니다.</li>
+      </ol>
+      <p>서버에 남은 옛 기록은 아무도 읽지 못하는 상태로 자리만 차지하므로, 위 4단계 전에
+        비워도 됩니다(로컬이 원본이라 손실 없음).</p>
+    </details>
   </section>
 
   <p id="msg" role="status"></p>

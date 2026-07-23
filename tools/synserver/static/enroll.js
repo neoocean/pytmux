@@ -244,7 +244,7 @@ async function ensureVaultKey() {
     });
   } catch (e) {
     // 사용자가 인증을 취소했거나 실패했다 — **성공한 척하지 않는다**.
-    say("인증이 취소됐습니다 — 키를 열지 못했습니다.", true);
+    say(explain(e), true);
     return false;
   }
   // 이 assertion 으로 로그인도 갱신해 둔다(세션 유지).
@@ -407,8 +407,11 @@ async function pair() {
     payload.key_ct = bufToB64u(ct);
     payload.key_nonce = bufToB64u(iv);
   }
+  const before = await deviceIds();
   const j = await post("/v1/pairing", payload);
   $("cmd").textContent = enrollCommand(j.code || code);
+  // 이 코드가 쓰이면 목록을 바로 갱신한다(만료되면 멈춘다).
+  watchForEnrollment(before, (j.expires_in || 600) * 1000);
   const btn = $("btn-copy");
   btn.textContent = "복사";
   btn.classList.remove("done");
@@ -449,6 +452,44 @@ async function copyCommand() {
   $("copy-msg").textContent = ok
     ? "붙일 머신의 pytmux 에서 붙여넣으세요."
     : "복사가 막혔습니다 — 명령을 직접 선택해 복사하세요.";
+}
+
+// 코드가 쓰이는 순간을 **화면이 알아채게** 한다 — 머신에서 등록해 놓고 브라우저를
+// 새로고침해야 확인되는 것은 불친절하고, 실제로 성공했는지도 알기 어렵다.
+// 서버 푸시(SSE/WebSocket)를 들이기엔 과한 규모라 짧은 폴링으로 끝낸다.
+let WATCH_TIMER = null;
+
+function stopWatch() {
+  if (WATCH_TIMER) { clearInterval(WATCH_TIMER); WATCH_TIMER = null; }
+}
+
+async function deviceIds() {
+  const r = await fetch("/v1/devices", { credentials: "same-origin" });
+  if (!r.ok) return null;
+  const { devices } = await r.json();
+  return devices;
+}
+
+function watchForEnrollment(before, expiresMs) {
+  stopWatch();
+  const known = new Set((before || []).map((d) => d.device_id));
+  const deadline = Date.now() + expiresMs;
+  WATCH_TIMER = setInterval(async () => {
+    if (Date.now() > deadline) {            // 코드 만료 — 조용히 멈춘다
+      stopWatch();
+      return;
+    }
+    let now;
+    try { now = await deviceIds(); } catch (e) { return; }
+    if (!now) { stopWatch(); return; }      // 세션이 끊겼다
+    const fresh = now.filter((d) => !known.has(d.device_id));
+    if (!fresh.length) return;
+    stopWatch();
+    // 코드는 1회용이라 이미 소모됐다 — 화면에 남겨 두면 다시 쓸 수 있을 것처럼 보인다.
+    $("pair-result").hidden = true;
+    await loadDevices();
+    say("머신이 등록되었습니다: " + (fresh[0].label || "(이름 없음)"));
+  }, 3000);
 }
 
 async function loadDevices() {
@@ -499,6 +540,7 @@ async function afterLogin() {
 
 // 세션을 서버에서 지운다 — 쿠키 만료만 기다리면 훔친 쿠키가 TTL 동안 살아 있다.
 async function logout() {
+  stopWatch();
   await post("/v1/logout");
   $("sec-pair").hidden = true;
   $("sec-devices").hidden = true;
@@ -507,26 +549,60 @@ async function logout() {
   say("로그아웃했습니다.");
 }
 
-// 서버는 사유를 일반화해 돌려준다(정보 누출 방지) — 그래서 **화면이** 맥락을 붙인다.
-// 'unauthorized' 한 단어만 보여 주면 사용자는 무엇을 해야 할지 모른다(실기동 제보).
-function explain(msg, what) {
-  if (msg !== "unauthorized") return msg;
-  if (what === "register") {
-    return "새 vault 생성은 잠겨 있습니다 — 먼저 '패스키로 로그인' 한 뒤 다시 누르면 "
-         + "같은 vault 에 이 패스키가 추가됩니다.";
+// 화면 문구는 **전부 한국어**로 낸다. 두 출처를 모두 옮긴다:
+//  ① 브라우저 예외(WebAuthn DOMException 등) — 영문 원문이 그대로 나가면 사용자가
+//     무엇이 잘못됐는지 알 수 없다(제보: "The request is not allowed by the user
+//     agent…" 가 그대로 노출).
+//  ② 서버 오류 코드 — 서버는 사유를 일반화해 돌려주므로(정보 누출 방지) 맥락은
+//     화면이 붙인다.
+const BROWSER_ERRORS = {
+  NotAllowedError: "인증이 취소됐거나 시간이 초과됐습니다 — 다시 시도하세요.",
+  AbortError: "인증이 중단됐습니다 — 다시 시도하세요.",
+  InvalidStateError: "이 인증기에는 이미 이 서버의 패스키가 있습니다 — "
+                   + "'패스키로 로그인' 을 쓰세요.",
+  NotSupportedError: "이 브라우저·인증기가 지원하지 않는 방식입니다.",
+  ConstraintError: "인증기가 요구 조건을 만족하지 못했습니다"
+                 + "(지문·PIN 등 사용자 확인이 필요합니다).",
+  SecurityError: "보안 컨텍스트 오류 — 이 주소(HTTPS)에서 다시 시도하세요.",
+  NetworkError: "네트워크 오류 — 연결을 확인하세요.",
+  UnknownError: "인증기에서 알 수 없는 오류가 났습니다 — 다시 시도하세요.",
+};
+
+const SERVER_ERRORS = {
+  slow_down: "요청이 너무 잦습니다 — 잠시 후 다시 시도하세요.",
+  limit: "상한을 넘었습니다 — 쓰지 않는 기기를 폐기한 뒤 다시 시도하세요.",
+  quota: "서버 저장 용량이 가득 찼습니다.",
+  too_large: "요청이 너무 큽니다.",
+  bad_request: "요청 형식이 올바르지 않습니다.",
+  not_found: "없는 항목입니다.",
+  internal: "서버 오류가 났습니다 — 잠시 후 다시 시도하세요.",
+  no_key: "이 vault 에는 아직 열쇠가 없습니다.",
+};
+
+function explain(err, what) {
+  const name = err && err.name;
+  if (name && BROWSER_ERRORS[name]) return BROWSER_ERRORS[name];
+  const msg = String((err && err.message) || err || "");
+  if (msg === "unauthorized") {
+    if (what === "register") {
+      return "새 vault 생성은 잠겨 있습니다 — 먼저 '패스키로 로그인' 한 뒤 다시 누르면 "
+           + "같은 vault 에 이 패스키가 추가됩니다.";
+    }
+    if (what === "recover") {
+      return "복구 코드가 맞지 않습니다 — 이미 쓴 코드이거나 오타입니다.";
+    }
+    if (what === "login") {
+      return "로그인 실패 — 서버가 모르는 패스키일 수 있습니다(로그아웃 상태에서 만든 것). "
+           + "인증기 목록에서 다른 패스키를 고르거나, 그 패스키를 지우세요.";
+    }
+    return "권한이 없습니다 — 로그인 상태를 확인하세요.";
   }
-  if (what === "recover") {
-    return "복구 코드가 맞지 않습니다 — 이미 쓴 코드이거나 오타입니다.";
-  }
-  if (what === "login") {
-    return "로그인 실패 — 서버가 모르는 패스키일 수 있습니다(로그아웃 상태에서 만든 것). "
-         + "인증기 목록에서 다른 패스키를 고르거나, 그 패스키를 지우세요.";
-  }
-  return "권한이 없습니다 — 로그인 상태를 확인하세요.";
+  if (SERVER_ERRORS[msg]) return SERVER_ERRORS[msg];
+  return msg || "알 수 없는 오류가 났습니다.";
 }
 
 function wrap(fn, what) {
-  return () => fn().catch((e) => say(explain(String(e.message || e), what), true));
+  return () => fn().catch((e) => say(explain(e, what), true));
 }
 
 // 새로고침 후에도 로그인 상태를 되찾는다(제보). 쿠키는 살아 있었는데 페이지가
