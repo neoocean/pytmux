@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import gc
 import hmac
 import os
@@ -110,6 +111,42 @@ class ServerPtyMixin:
         self._attach_reader(pane)                  # client.register(pane_id, …) 선행
         self._pty_host.spawn(pane_id, argv, cols, rows, cwd=cwd, env=env)
         return pane
+
+    def _adopt_host_panes(self, panes) -> None:
+        """host 재연결 직후, host 가 보고한 패널 목록(list_reply)을 서버 상태에 반영한다.
+
+        ① 생존 집합(`_host_resume_alive`) — restore_resume_state 가 재바인딩에 쓴다.
+        ② **pane id 할당기를 host 의 최대 id 위로 올린다**. 종전엔 이 보정이
+           restore_resume_state 안에만 있어서, **크래시로 resume 파일이 없는 채**
+           살아남은 host 에 새 서버가 붙으면 `_pane_seq=0` 에서 1을 다시 발급 → host 의
+           멱등 `_spawn` 이 그 id 를 조용히 무시 → 새 패널이 **죽은 세션의 옛 셸에
+           연결**됐다(PTYHOST_ORPHAN_2026-07-24 §5-2 실측).
+        ③ prune 게이트 — 직전 소유자가 확실히 죽었을 때만 미상 패널 회수를 허용."""
+        self._host_resume_alive = {p["pane"] for p in panes if p.get("alive")}
+        for p in panes:
+            with contextlib.suppress(TypeError, ValueError):
+                self._pane_seq = max(self._pane_seq, int(p.get("pane", 0)))
+        self._host_prune_ok = (
+            self._pty_host is not None
+            and getattr(self._pty_host, "prev_owner_alive", None) is False)
+
+    def _prune_unknown_host_panes(self) -> None:
+        """host 에만 남고 이 서버가 참조하지 않는 패널을 닫는다(고아 셸 회수, R5).
+
+        크래시로 죽은 서버의 셸이 host 안에 그대로 남아 있는 상황이 대상이다. **직전
+        소유자가 확실히 죽었을 때만**(`_host_prune_ok`) 실행한다 — 살아있는 다른 서버가
+        같은 host 를 쓰는 경쟁 상황(reconnect storm)에서 남의 셸을 죽이면 안 된다."""
+        if self._pty_host is None or not getattr(self, "_host_prune_ok", False):
+            return
+        known = {p.host_pane_id for p in self._all_panes()
+                 if p.host_pane_id is not None}
+        stale = [pid for pid in getattr(self, "_host_resume_alive", set())
+                 if pid not in known]
+        for pid in stale:
+            with contextlib.suppress(Exception):
+                self._pty_host.close_pane(pid)
+        if stale:
+            self._log_error(f"ptyhost_pruned_orphan_panes={len(stale)}")
 
     def _panel_env(self) -> dict:
         """패널 셸에 줄 환경을 만든다(os.environ 기반 + pytmux 표식·색·중첩 거부 래퍼).

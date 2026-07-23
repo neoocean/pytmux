@@ -28,12 +28,20 @@ JSON 제어 op (서버→host):
   close   {op,pane}                          PTY 해제(자식 트리 hangup).
   list    {op}                               살아있는 패널 목록 요청(재연결 시).
   ping    {op}                               생존 확인.
+  owner   {op,pid}                           연결 직후 서버가 자기 pid 통지. host 의 고아
+                                             워치독이 "내 소유자가 죽었나"를 이걸로 판정한다
+                                             (PTYHOST_ORPHAN_2026-07-24 R1). 인증 뒤에만 수용.
+  shutdown{op}                               모든 패널 종료 + host 프로세스 종료.
 
 JSON 제어 op (host→서버):
   hello     {op,version,pid}                 연결 직후 host 가 자기소개.
   spawned   {op,pane,pid}                    spawn 완료·실제 자식 pid.
   exit      {op,pane,status}                 자식 종료(EOF). 서버는 패널을 닫는다.
-  list_reply{op,panes:[{pane,pid,cols,rows,alive}]}  재연결 시 host 가 보유 패널 보고.
+  list_reply{op,prev_owner_pid,prev_owner_alive,panes:[{pane,pid,cols,rows,alive}]}
+                                             재연결 시 host 가 보유 패널 보고. prev_owner_*
+                                             는 **직전** 소유 서버의 pid·생존 — 새 서버가
+                                             "내가 모르는 패널을 회수해도 되는지"(=옛 소유자가
+                                             죽었는지)를 판정하는 게이트(R5).
   pong      {op}
 """
 from __future__ import annotations

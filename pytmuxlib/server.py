@@ -118,6 +118,13 @@ class Server(*_SERVER_BASES):
         # 있는 host_pane_id 집합. restore_resume_state(_build_resume_node)가 이 집합의
         # 패널만 재바인딩하고 갭 중 죽은 패널은 건너뛴다.
         self._host_resume_alive = set()
+        # 미상 host 패널 prune 허용 여부(PTYHOST_ORPHAN_2026-07-24 R5). host 가
+        # list_reply 로 "직전 소유자가 죽었다"고 보고했을 때만 True — 살아있는 다른
+        # 서버와 host 를 공유하는 경쟁 상황에서 남의 셸을 죽이지 않기 위한 게이트.
+        self._host_prune_ok = False
+        # 내가 bind 한 AF_UNIX 소켓의 inode(serve 가 listen 직후 채운다). 종료 시
+        # 소켓 파일이 여전히 내 것인지 판정해, 뒤에 뜬 서버의 소켓을 지우지 않는다.
+        self._sock_ino = None
         # Claude 세션 일련번호(#7 토큰 로깅): 패널의 claude None→비None 전이마다 +1.
         self._claude_session_seq = 0
         self.buffers: list[str] = []   # 페이스트 버퍼(최신이 앞)

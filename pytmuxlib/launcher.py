@@ -608,7 +608,21 @@ def main(argv=None):
         if not getattr(args, "yes", False) and not _confirm_kill_server():
             return
         reply = control_request(sock_path, {"t": "kill-server"})
-        print("서버 종료됨" if reply else "실행 중인 서버 없음")
+        if reply:
+            print("서버 종료됨")
+            return
+        # 서버가 없어도 **pty-host 는 남아 있을 수 있다**(서버 크래시·강제종료 등 —
+        # PTYHOST_ORPHAN_2026-07-24). 그 host 는 자식 셸까지 붙들고 있는데 종전엔
+        # 겨냥할 수단이 없어 사용자가 손으로 kill 해야 했다. 명시 종료 명령이므로
+        # 패널이 있어도 내린다(어차피 소유 서버가 없는 고아 셸이다).
+        killed = False
+        try:
+            from . import ptyhostmgr
+            killed = ptyhostmgr.shutdown_host_sync(sock_path)
+        except Exception:
+            pass
+        print("실행 중인 서버 없음 — 남아 있던 pty-host 를 정리했습니다"
+              if killed else "실행 중인 서버 없음")
         return
     if args.command == "cmd":
         line = " ".join(args.words)

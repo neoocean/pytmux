@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import time
 import traceback
 
@@ -47,6 +48,7 @@ class PtyHostClient:
         self._ka_task: asyncio.Task | None = None  # M2 keepalive 워치독
         self._last_recv = 0.0                      # 마지막 프레임 수신 시각(monotonic)
         self._on_lost = None                     # 연결 끊김 콜백(P5/P6 재연결)
+        self.prev_owner_alive = None             # 직전 host 소유자 생존(list_reply, R5)
 
     async def connect(self, endpoint: str, token: str | None = None):
         kind = ipc.parse_endpoint(endpoint)
@@ -65,6 +67,10 @@ class PtyHostClient:
                 w, proto.encode_json({"op": "auth", "token": token}))
             if not ok:
                 raise PtyHostError("host 인증 프레임 전송 실패")
+        # 소유자 통지(R1): host 의 고아 워치독이 "내 서버가 죽었는가"를 이 pid 로 판정한다.
+        # 인증 **뒤에** 보낸다 — host 는 인증 전 프레임을 auth 로만 읽는다.
+        await proto.write_frame(
+            w, proto.encode_json({"op": "owner", "pid": os.getpid()}))
         self._last_recv = time.monotonic()
         self._read_task = self.loop.create_task(self._read_loop())
         self._ka_task = self.loop.create_task(self._keepalive_loop())
@@ -133,6 +139,9 @@ class PtyHostClient:
                 cb[1]()
         elif op == "list_reply":
             panes = msg.get("panes", [])
+            # 직전 소유자 생존 여부(R5): 서버는 이게 명시적으로 False 일 때만 자기가
+            # 모르는 host 패널을 prune 한다(살아있는 다른 서버의 셸을 죽이지 않게).
+            self.prev_owner_alive = msg.get("prev_owner_alive")
             # reattach(서버 재시작) 후엔 기존 패널의 'spawned' 프레임이 다시 오지
             # 않으므로 list_reply 로 pid/alive 매핑을 재구성한다 — 안 그러면
             # pane.pty.pid=-1 이라 ncd·default-path=current 가 재시작 후 기존

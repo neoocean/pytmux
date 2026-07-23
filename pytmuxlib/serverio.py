@@ -1136,6 +1136,14 @@ class ServerIOMixin:
         if self._pty_host is not None:
             with contextlib.suppress(Exception):
                 self._pty_host.shutdown_host()
+        elif ptyhostmgr.host_enabled():
+            # 폴백 모드로 돌던 서버의 종료(PTYHOST_ORPHAN_2026-07-24 P3/R2): host 연결이
+            # 6초 예산 안에 안 붙어 인프로세스 백엔드로 돌아섰는데, 그 사이 뒤늦게 뜬
+            # host 가 **아무 소유자 없이** 남는다. 핸들이 없으니 shutdown_host() 를 못
+            # 부르던 자리 — 동기 경로로 붙어 **패널 0개일 때만** 내린다(다른 서버가 쓰는
+            # host 면 패널이 있으므로 손대지 않는다).
+            with contextlib.suppress(Exception):
+                ptyhostmgr.shutdown_host_sync(self.sock_path, idle_only=True)
         # 엔드포인트 영속 파일 정리(unix 소켓 + TCP 포트파일/토큰). 종전엔 unix
         # 소켓만 지우고 TCP 는 "다음 기동이 덮어쓴다"고 남겨뒀는데, Windows 는 죽은
         # 루프백 포트 connect 가 즉답 거절이 아니라 타임아웃이라 stale 포트파일이
@@ -1225,6 +1233,10 @@ class ServerIOMixin:
             # 확정 엔드포인트(TCP 면 실제 포트)를 패널 셸 $PYTMUX 에 게시한다.
             server, self.resolved_endpoint = await ipc.start_server(
                 self.sock_path, self.handle_client)
+            if not ipc.is_tcp(self.sock_path):
+                # 종료 시 "이 소켓 파일이 아직 내 것인가" 판정용 inode(위 주석 참조).
+                with contextlib.suppress(OSError):
+                    self._sock_ino = os.stat(self.sock_path).st_ino
             # Windows 세션유지 재시작 host 모드(옵션 C): 장수명 pty-host 에 연결한다.
             # 이미 떠 있으면(서버 재시작) 재연결, 없으면 detached 로 띄워 연결. 실패하면
             # None → spawn_pane 이 인프로세스 백엔드로 폴백(host 버그가 기동을 막지 않게).
@@ -1241,9 +1253,8 @@ class ServerIOMixin:
                     # 재시작 reattach 준비: host 가 살려 둔 패널 집합을 미리 조회한다
                     # (restore_resume_state 가 이 집합으로 생존 패널만 재바인딩).
                     try:
-                        panes = await self._pty_host.list_panes()
-                        self._host_resume_alive = {
-                            p["pane"] for p in panes if p.get("alive")}
+                        self._adopt_host_panes(
+                            await self._pty_host.list_panes())
                     except Exception:
                         self._host_resume_alive = set()
             # 작업 보존 재시작(re-exec) 후: 상속된 PTY 를 채택해 셸을 살린 채 복원.
@@ -1277,6 +1288,9 @@ class ServerIOMixin:
                     self.ensure_default_session(80, 24)
                 except Exception:
                     self._log_error("prewarm_session")
+            # 복원/선생성이 끝난 뒤, host 에만 남아 있고 이 서버의 어떤 패널도 참조하지
+            # 않는 패널(=죽은 서버가 남긴 고아 셸)을 회수한다(R5).
+            self._prune_unknown_host_panes()
             flush = asyncio.create_task(self._flush_loop())
             flush.add_done_callback(self._on_flush_done)
             autoname = asyncio.create_task(self._autorename_loop())

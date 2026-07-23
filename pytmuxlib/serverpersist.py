@@ -247,14 +247,24 @@ class ServerPersistMixin:
             if body is not None and self.auth_token is not None \
                     and body == self.auth_token:
                 paths.append(tp)
+        sock_deferred = False
         if not ipc.is_tcp(self.sock_path):
-            paths.append(self.sock_path)   # AF_UNIX 소켓 파일
+            # AF_UNIX 소켓 파일. owned_only 면 **내가 bind 한 그 소켓일 때만** 지운다
+            # (_unlink_sock_if_mine). 종전엔 무조건 unlink 라, 경쟁에서 물러나는
+            # 서버(reconnect storm stepdown)가 **살아있는 승자의 소켓을 지워** 승자를
+            # 도달 불가로 만들었다(PTYHOST_ORPHAN_2026-07-24 §3 E3-3 실측).
+            if owned_only:
+                sock_deferred = True
+            else:
+                paths.append(self.sock_path)
         for path in paths:
             try:
                 if path and os.path.exists(path):
                     os.unlink(path)
             except OSError:
                 pass
+        if sock_deferred:
+            self._unlink_sock_if_mine()
 
     def _close_resume_subtree(self, node) -> None:
         """복원 중 부분 생성된 서브트리의 패널 pty/리더를 닫는다(M4: 형제 노드 빌드
@@ -567,13 +577,31 @@ class ServerPersistMixin:
         if self._pty_host is not None:
             # 연결만 닫는다(close_pane 아님!) — 패널은 host 가 계속 소유한다.
             asyncio.create_task(self._pty_host.close())
-        try:
-            if not ipc.is_tcp(self.sock_path) and os.path.exists(self.sock_path):
-                os.unlink(self.sock_path)
-        except OSError:
-            pass
+        self._unlink_sock_if_mine()
         if self.loop:
             self.loop.stop()
+
+    def _unlink_sock_if_mine(self) -> bool:
+        """AF_UNIX 소켓 파일을 **아직 내 소켓일 때만** 지운다(지웠으면 True).
+
+        후속/새 서버는 이 함수가 불리기 전에 이미 떠 있을 수 있고(`ipc.start_server` 가
+        임시 경로에 bind 후 `os.replace` 로 같은 이름을 자기 소켓으로 교체), 그때 무조건
+        unlink 하면 **살아있는 서버를 이름 없는 소켓으로 만들어 아무도 접속할 수 없게**
+        만든다 — 실측(2026-07-24, host 모드 `restart-all` 직후): `pytmux ls` 가 "실행 중인
+        서버 없음"이고 후속 서버는 `t.sock.<pid>.sock.tmp` 로만 열려 있었다. inode 로
+        소유를 확인한다(_sock_ino 는 serve() 가 listen 직후 기록)."""
+        if ipc.is_tcp(self.sock_path):
+            return False
+        try:
+            if not os.path.exists(self.sock_path):
+                return False
+            if self._sock_ino is not None and \
+                    os.stat(self.sock_path).st_ino != self._sock_ino:
+                return False                   # 뒤에 뜬 서버의 소켓 — 보존
+            os.unlink(self.sock_path)
+            return True
+        except OSError:
+            return False
 
     def restart_check(self) -> dict:
         """restart-all **드라이런**: 실제 재시작 없이 작업 보존 재시작이 안전한지

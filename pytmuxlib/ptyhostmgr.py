@@ -16,9 +16,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import socket
 import sys
+import time
 
-from . import ipc, proc, pty_backend, ptyhostclient
+from . import ipc, proc, pty_backend, ptyhostclient, ptyhostproto as _proto
 
 
 # 콜드 스타트 host 연결 폴 백오프 상수(WINDOWS_SLOWNESS_..._2026-07-06 §5 레버 G).
@@ -53,6 +55,41 @@ def _state_base(sock_path: str) -> str:
 
 def host_portfile(sock_path: str) -> str:
     return _state_base(sock_path) + ".ptyhost.port"
+
+
+def host_pidfile(sock_path: str) -> str:
+    """host 가 게시하는 자기 pid 파일(R3). "host 가 이미 떠 있나" 판정을 파일 존재가
+    아니라 **pid 생존**으로 하기 위한 것 — 종전엔 죽은 host 의 잔재 소켓/포트파일을
+    보고 '떠 있다'고 오판해 prespawn 을 건너뛰거나, 반대로 아직 bind 전인 host 를 못 보고
+    **중복 spawn** 했다(고아 host 의 주요 원인 중 하나)."""
+    return _state_base(sock_path) + ".ptyhost.pid"
+
+
+def _spawn_lockfile(sock_path: str) -> str:
+    return _state_base(sock_path) + ".ptyhost.spawnlock"
+
+
+def read_host_pid(sock_path: str) -> int | None:
+    try:
+        with open(host_pidfile(sock_path), encoding="ascii") as f:
+            pid = int(f.read().strip())
+        return pid if pid > 0 else None
+    except (OSError, ValueError):
+        return None
+
+
+def host_running(sock_path: str) -> bool:
+    """살아있는 host 가 이 endpoint 를 소유하고 있나. pidfile 이 있으면 pid 생존으로,
+    없으면(구버전 host·게시 실패) 종전처럼 소켓/포트파일 존재로 가늠한다."""
+    pid = read_host_pid(sock_path)
+    if pid is not None:
+        return proc.is_alive(pid)
+    try:
+        if pty_backend.IS_WINDOWS:
+            return _read_portfile(sock_path) is not None
+        return os.path.exists(listen_endpoint(sock_path))
+    except Exception:
+        return False
 
 
 def host_tokenfile(sock_path: str) -> str:
@@ -93,6 +130,52 @@ async def _connect_endpoint(sock_path: str) -> str | None:
     return path if os.path.exists(path) else None
 
 
+# spawn 직렬화 락(R3). 서버 두 개가 같은 endpoint 로 동시에 콜드 스타트하면, 종전엔
+# "소켓/포트파일이 아직 없다"는 이유로 **둘 다** host 를 띄웠다 — 후발 host 가 unix 경로를
+# unlink 후 재bind(Windows 는 portfile 덮어쓰기)해 **선발 host 는 도달 불가한 고아**가 됐다.
+# TTL 은 크래시로 남은 락을 스스로 풀기 위한 것(락 소유자가 죽어도 20초 뒤 재개).
+_SPAWN_LOCK_TTL = 20.0
+
+
+def _acquire_spawn_lock(sock_path: str) -> bool:
+    """spawn 권한을 얻으면 True. 다른 프로세스가 spawn 중이면 False(호출부는 폴링으로
+    그 host 를 기다린다). 락 파일을 만들 수 없는 환경이면 True(무락 = 종전 거동)."""
+    path = _spawn_lockfile(sock_path)
+    for _ in range(2):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            try:
+                os.write(fd, str(os.getpid()).encode("ascii"))
+            finally:
+                os.close(fd)
+            return True
+        except FileExistsError:
+            try:
+                fresh = (time.time() - os.path.getmtime(path)) < _SPAWN_LOCK_TTL
+            except OSError:
+                fresh = False
+            if fresh:
+                return False
+            with contextlib.suppress(OSError):
+                os.unlink(path)          # stale(크래시 잔재) → 스틸 후 재시도
+        except OSError:
+            return True
+    return False
+
+
+def _release_spawn_lock(sock_path: str) -> None:
+    """내가 건 락만 푼다(TTL 로 스틸당한 뒤 남의 락을 지우지 않게)."""
+    path = _spawn_lockfile(sock_path)
+    try:
+        with open(path, encoding="ascii") as f:
+            if f.read().strip() != str(os.getpid()):
+                return
+    except OSError:
+        return
+    with contextlib.suppress(OSError):
+        os.unlink(path)
+
+
 def _spawn_host(sock_path: str) -> bool:
     """pty-host 데몬을 detached 로 띄운다(서버보다 오래 산다). 성공 여부를 돌려준다.
 
@@ -104,12 +187,19 @@ def _spawn_host(sock_path: str) -> bool:
     argv = [sys.executable, "-m", "pytmuxlib.ptyhost",
             "--endpoint", listen_endpoint(sock_path),
             "--portfile", host_portfile(sock_path),
-            "--tokenfile", host_tokenfile(sock_path)]
+            "--tokenfile", host_tokenfile(sock_path),
+            "--pidfile", host_pidfile(sock_path)]
+    if not _acquire_spawn_lock(sock_path):
+        # 다른 프로세스가 지금 host 를 띄우는 중(R3) — 중복 spawn 대신 그 host 를
+        # 기다린다. True 를 돌려 ensure_connected 가 폴링 단계로 넘어가게 한다.
+        _spawned_hosts.add(sock_path)
+        return True
     try:
         proc.spawn_detached(argv)
         _spawned_hosts.add(sock_path)
         return True
     except Exception:
+        _release_spawn_lock(sock_path)
         # M7: 종전엔 무로깅 suppress 라 spawn 실패 시 6초 폴링 낭비 후 인프로세스
         # 폴백하면서 원인이 0 로그였다. 실패를 stderr 에 남기고 False 를 돌려
         # ensure_connected 가 헛된 폴링을 건너뛰게 한다(폴백 자체는 그대로).
@@ -131,19 +221,119 @@ def prespawn_host(sock_path: str) -> None:
     꺼진 환경(POSIX 기본·`PYTMUX_PTY_HOST=0`)에선 no-op."""
     if not host_enabled():
         return
-    # 이미 떠 있는 host 면 prespawn 하지 않는다(재시작 = 기존 host 재사용). 리스닝 여부는
-    # portfile(Windows)·소켓 경로(POSIX) 존재로 가늠한다. stale 이면 여기선 skip 하지만
-    # 뒤이은 ensure_connected 의 재연결이 실패→_spawn_host 가 새로 띄운다(무중복 보장).
-    try:
-        if pty_backend.IS_WINDOWS:
-            exists = _read_portfile(sock_path) is not None
-        else:
-            exists = os.path.exists(listen_endpoint(sock_path))
-    except Exception:
-        exists = False
-    if exists:
+    # 이미 떠 있는 host 면 prespawn 하지 않는다(재시작 = 기존 host 재사용). 판정은
+    # **pid 생존**(host_running) — 종전의 파일 존재 판정은 죽은 host 의 잔재를 '살아있음'
+    # 으로 오판했다(R3). stale 이면 여기서 띄우고, 그래도 못 붙으면 ensure_connected 가
+    # 폴링→폴백으로 흡수한다.
+    if host_running(sock_path):
         return
     _spawn_host(sock_path)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 동기 회수 경로(R2/R4) — 이벤트 루프 없이 host 를 내린다
+# ─────────────────────────────────────────────────────────────────────────────
+_SYNC_TIMEOUT = 1.0
+
+
+def _sync_connect(sock_path: str) -> socket.socket | None:
+    """host endpoint 에 blocking 소켓으로 붙어 인증까지 마친 소켓을 돌려준다."""
+    if pty_backend.IS_WINDOWS:
+        port = _read_portfile(sock_path)
+        if not port:
+            return None
+        fam, addr = socket.AF_INET, ("127.0.0.1", port)
+    else:
+        path = listen_endpoint(sock_path)
+        if not os.path.exists(path):
+            return None
+        fam, addr = socket.AF_UNIX, path
+    s = socket.socket(fam, socket.SOCK_STREAM)
+    try:
+        s.settimeout(_SYNC_TIMEOUT)
+        s.connect(addr)
+        token = _read_host_token(sock_path)
+        if token is not None:
+            s.sendall(_proto.encode_json({"op": "auth", "token": token}))
+        # 단발 probe 선언: host 가 이 연결을 '새 서버'로 채택하지 않게 한다. 없으면
+        # 회수 판정을 위한 조회 한 번이 살아있는 서버를 host 에서 떼어낸다(R2 주석).
+        s.sendall(_proto.encode_json({"op": "probe"}))
+        return s
+    except OSError:
+        with contextlib.suppress(OSError):
+            s.close()
+        return None
+
+
+def _sync_read_frame(s: socket.socket):
+    """blocking 소켓에서 프레임 하나를 읽는다(ptyhostproto 와 같은 프레이밍)."""
+    def _recvn(n: int) -> bytes | None:
+        buf = b""
+        while len(buf) < n:
+            try:
+                chunk = s.recv(n - len(buf))
+            except OSError:
+                return None
+            if not chunk:
+                return None
+            buf += chunk
+        return buf
+
+    hdr = _recvn(4)
+    if hdr is None:
+        return None
+    (ln,) = _proto._LEN.unpack(hdr)
+    if ln < 1 or ln > _proto.MAX_FRAME:
+        return None
+    body = _recvn(ln)
+    if body is None or body[:1] != _proto.TYPE_JSON:
+        return None
+    try:
+        import json
+        return json.loads(body[1:].decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
+def shutdown_host_sync(sock_path: str, *, idle_only: bool = False) -> bool:
+    """남아 있는 host 에 `shutdown` op 를 보내 내린다. 실제로 보냈으면 True.
+
+    이벤트 루프 없이(=서버 shutdown 마지막 단계·CLI 에서) 도는 best-effort 경로다
+    (PTYHOST_ORPHAN_2026-07-24 R2/R4). 두 호출처:
+
+    ① 서버가 **폴백 모드**(`_pty_host is None`)로 돌다가 정상 종료할 때 — 뒤늦게 뜬
+       host 는 아무도 소유하지 않는데 `shutdown_host()` 를 부를 핸들이 없어 영구 잔존했다.
+       이 경우 `idle_only=True` 로 **패널이 0개인 host 만** 내린다. 패널이 있으면 다른
+       서버가 쓰는 host 일 수 있으므로 손대지 않는다(남의 셸 파괴 금지).
+    ② `pytmux kill-server` 인데 서버가 없을 때 — 사용자의 명시 종료 명령이므로
+       `idle_only=False`(패널이 있어도 내린다. 그 셸들은 어차피 고아다)."""
+    s = _sync_connect(sock_path)
+    if s is None:
+        return False
+    try:
+        if idle_only:
+            s.sendall(_proto.encode_json({"op": "list"}))
+            for _ in range(4):        # hello/list_reply 순서 무관하게 몇 프레임 읽는다
+                msg = _sync_read_frame(s)
+                if msg is None:
+                    return False
+                if msg.get("op") == "list_reply":
+                    if msg.get("panes"):
+                        return False          # 사용 중 — 손대지 않는다
+                    break
+            else:
+                return False
+        s.sendall(_proto.encode_json({"op": "shutdown"}))
+        with contextlib.suppress(OSError):
+            s.shutdown(socket.SHUT_WR)
+        with contextlib.suppress(OSError):    # host 가 닫을 때까지(=수신 확인) 짧게 대기
+            s.recv(4096)
+        return True
+    except OSError:
+        return False
+    finally:
+        with contextlib.suppress(OSError):
+            s.close()
 
 
 async def _try_connect(loop, sock_path: str, timeout: float
@@ -173,6 +363,7 @@ async def ensure_connected(loop, sock_path: str
         # (_on_host_lost)로 이 함수가 다시 불릴 때 죽은 host 를 새로 띄울 수 있다
         # (가드가 남아 있으면 _spawn_host 가 no-op → 죽은 host 재기동 불가·회귀).
         _spawned_hosts.discard(sock_path)
+        _release_spawn_lock(sock_path)
         return client
     # 2) 없으면 새로 띄우고(이미 prespawn 됐으면 재-spawn 안 함), 리슨이 뜰 때까지
     #    폴링 후 연결. spawn 자체가 실패하면 6초 폴링은 무의미하므로 즉시 폴백(M7).
@@ -197,3 +388,4 @@ async def ensure_connected(loop, sock_path: str
         # 성공/타임아웃 무관하게 가드 해제 — 다음 host-loss 재연결이 죽은 host 를
         # 새로 띄울 수 있게(가드는 prespawn→직후 콜드스타트 connect 의 1회 중복만 막는 용도).
         _spawned_hosts.discard(sock_path)
+        _release_spawn_lock(sock_path)      # spawn 직렬화 락도 여기서 푼다(R3)
