@@ -73,6 +73,14 @@
           <code>/clear</code> 뒤에 자동으로 주입됩니다. 새 세션에서 <code>/rc</code>(원격 제어)와 권한 auto 를
           한 번 자동 적용하는 <code class="nb">auto-launch</code>(기본 on)도 있습니다.
         </p>
+        <p>
+          <strong>진행을 막는 화면은 자동으로 넘깁니다.</strong> <code>/rc</code> 로 열리는 원격 제어 관리 메뉴는
+          <code>Esc</code>(=Continue)로 닫고, 조직이 관리 설정을 걸어 둔 계정에서 Claude 가 시작하자마자 멈춰 서는
+          <span class="nb">Managed settings require approval</span> 화면은 <strong>이미 선택돼 있는
+          <code>1. Yes, I trust these settings</code> 를 <code>Enter</code> 로 확정</strong>해 통과시킵니다.
+          두 경우 모두 <strong>화면 하나당 딱 한 번</strong>만 키를 보내고, <strong>선택을 옮기는 키는 보내지 않습니다</strong> —
+          화살표가 다른 항목에 놓여 있거나 문구가 바뀐 화면이면 아무 키도 치지 않고 <strong>그대로 사람에게 남깁니다</strong>.
+        </p>
         <figure>
           <img src="../image/13-perm-mode.svg" alt="권한 모드 선택 팝업">
           <figcaption>권한 모드 선택 · 시작 규칙 자동 주입.</figcaption>

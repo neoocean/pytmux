@@ -69,6 +69,25 @@
       </section>
 
       <section>
+        <h2>원격 서버를 상주시키기 (<code>exit-empty</code>)</h2>
+        <p>
+          pytmux 서버는 tmux 와 마찬가지로 <strong>세션이 하나도 남지 않으면 스스로 종료</strong>합니다.
+          내 컴퓨터에서는 자연스럽지만, 붙어 쓰는 <strong>원격 머신</strong>에서는 거기서 마지막 탭을
+          <code>exit</code> 한 순간 <strong>서버가 사라져 연결까지 끊깁니다</strong>. 그 머신에서
+          <code class="nb">exit-empty off</code> 로 꺼 두면 서버가 <strong>빈 채로 상주</strong>하고,
+          다시 <strong>새 탭을 만드는 순간 세션이 그 자리에서 되살아납니다</strong> — 그 머신에서 직접
+          <code>pytmux</code> 로 붙어도, 여기서 <code class="nb">remote-new-tab</code> 을 보내도 마찬가지입니다.
+        </p>
+        <div class="code"><span class="c"># 원격 머신에서 (셸에서 직접, 또는 그 서버에 붙은 상태에서 `:exit-empty off`)</span>
+pytmux cmd exit-empty off</div>
+        <p>
+          기본값은 종전과 같은 <code>on</code> 이고, <code>:settings → 동작 → 세션 0개 시 종료</code> 에서도
+          바꿀 수 있습니다(값은 서버에 영속). <strong><code class="nb">kill-server</code> 처럼 명시적으로 끝내는
+          명령은 이 설정과 무관</strong>하게 늘 종료합니다.
+        </p>
+      </section>
+
+      <section>
         <h2>여러 기기에서 볼 때 화면 크기 (호스트 SSH keepalive 권장)</h2>
         <p>
           한 원격 서버를 <strong>여러 기기가 동시에</strong> 보면, 화면은 tmux 처럼 <strong>기본적으로 가장 작은

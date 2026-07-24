@@ -60,8 +60,24 @@
     </header>
 
     <section class="cl-day" id="d-2026-07-24">
-      <h2>2026-07-24 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/c0f585c1b73ba2bec9f607e25e9b93fa616c6776.zip" rel="noopener" title="2026-07-24 마지막 소스 커밋(c0f585c) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-24 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/9347f12f83c3257daaa65f6d629bcd63952b844d.zip" rel="noopener" title="2026-07-24 마지막 소스 커밋(9347f12) 시점 소스 zip">zip ⬇</a></h2>
       <ul>
+        <li><span class="pill stable">Claude</span> <strong>회사 계정으로 <span class="inline-code">claude</span> 를 띄울 때 앞을 막던 <span class="inline-code">승인 화면</span>을 이제 pytmux 가 <span class="inline-code">대신 넘겨</span> 줍니다.</strong>
+          조직이 관리 설정을 걸어 둔 계정은 Claude 가 시작하자마자
+          <span class="inline-code nb">Managed settings require approval</span> 화면에서 멈춰 서서,
+          <strong>매번 사람이 <span class="inline-code">1. Yes, I trust these settings</span> 를 고르고 Enter</strong> 를 쳐야 했습니다 —
+          Claude 를 띄우는 패널마다 그랬고, 그 화면에 걸려 있는 동안에는 <a href="guide/claude">새 세션 자동 셋업</a>도 시작되지 못했습니다.
+          이제 그 화면이 뜨면 <strong>이미 선택돼 있는 1번을 Enter 로 확정</strong>해 통과시킵니다.
+          <strong>선택을 옮기는 키(↑↓·숫자)는 보내지 않습니다</strong> — 화살표가 <span class="inline-code nb">Yes…</span> 가 아닌
+          다른 항목에 놓여 있거나 문구가 바뀐 화면이면 <strong>아무 키도 치지 않고 그대로 사람에게 남깁니다</strong>.
+          같은 화면에 Enter 를 <strong>두 번 보내지 않는 것</strong>도 규칙입니다(두 번째는 승인 뒤 열린 입력칸에 빈 줄을 보내게 됩니다).</li>
+        <li><span class="pill stable">원격</span> <strong>원격 머신의 서버가 <span class="inline-code">마지막 탭을 닫아도 계속 살아 있게</span> 할 수 있습니다 — <span class="inline-code">:exit-empty off</span>.</strong>
+          지금까지는 서버에 <strong>세션이 하나도 남지 않으면 서버가 스스로 종료</strong>했습니다(tmux 와 같은 기본 동작).
+          내 컴퓨터에서는 자연스럽지만, <a href="guide/remote">원격 페더레이션</a>으로 붙어 쓰는 <strong>상대편 머신</strong>에서는
+          거기서 마지막 탭을 <span class="inline-code">exit</span> 한 순간 <strong>서버가 사라져 연결까지 끊기는</strong> 것이 불편했습니다.
+          이제 그 머신에서 <span class="inline-code">:exit-empty off</span> 로 꺼 두면 서버가 <strong>빈 채로 상주</strong>하고,
+          다시 <strong>새 탭을 만드는 순간 세션이 그 자리에서 되살아납니다</strong>. 기본값은 종전과 같은 <span class="inline-code nb">on</span> 이고,
+          <span class="inline-code">kill-server</span> 처럼 <strong>명시적으로 끝내는 명령은 이 설정과 무관</strong>하게 늘 종료합니다.</li>
         <li><span class="pill stable">Windows</span> <strong>pytmux 를 끝낸 뒤에도 백그라운드에 남아 있던 <span class="inline-code">pty-host</span> 프로세스가 이제 <span class="inline-code">스스로 정리</span>됩니다.</strong>
           Windows 에서는 셸을 담고 있는 그릇(ConPTY)을 <strong>서버와 분리된 별도 프로세스</strong>가 들고 있습니다 — 그래야
           <a href="guide/restart">서버만 새 코드로 갈아끼워도</a> 열려 있던 셸이 끊기지 않기 때문입니다.
