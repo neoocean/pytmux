@@ -284,6 +284,9 @@ async def test_remote_attach_failure_sends_notice():
         # (제보 2026-06-16: 너무 빨리 사라짐).
         assert n.get("secs") == 3.0, n
         assert n.get("dismissable") is True, n
+        # §10-8 N4: 실패는 **등급 error** 로 실어 클라가 빨강+✕ 로 그린다 —
+        # 성공/실패가 같은 노란색이던 것이 이 기능의 출발점이다.
+        assert n.get("sev") == "error", n
     finally:
         if writer is not None:
             writer.close()

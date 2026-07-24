@@ -530,6 +530,31 @@ async def test_cli_token_sync_configures_and_persists():
         await teardown(srv, task, sock)
 
 
+async def test_token_sync_notices_carry_severity():
+    """§10-8 N4: 동기화 알림이 **등급**을 싣는다 — 실패는 `error`(빨강·5초·수동 닫기),
+    "꺼져 있음"처럼 요청한 일을 못 한 안내는 `warn`. 이 표면이 등급 기능을 요청하게
+    만든 바로 그 자리다(성공도 실패도 같은 노란색이라 실패가 실패로 안 보였다)."""
+    import importlib
+    cc = importlib.import_module("pytmuxlib.plugins.claude-code")
+    srv, task, sock = await server_only()
+    try:
+        sent = []
+
+        async def _send_to(c, m):
+            sent.append(m)
+
+        srv._send_to = _send_to
+        srv._tokens_db = None            # 토큰 DB 없음 → 실패
+        await cc._token_sync_cmd(srv, object(), "now", "")
+        assert sent[-1].get("sev") == "error", sent[-1]
+        srv._tokens_db = object()        # DB 는 있지만 동기화가 꺼짐 → 주의
+        srv.token_sync = "off"
+        await cc._token_sync_cmd(srv, object(), "now", "")
+        assert sent[-1].get("sev") == "warn", sent[-1]
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_token_sync_is_relayed_to_remote_tab():
     """원격 탭을 보는 중 `:claude-token-sync …` 는 **그 원격 머신**이 처리해야 한다.
     릴레이 목록에 없으면 보고 있지도 않은 로컬 머신이 조용히 등록된다(jump_prompt 와

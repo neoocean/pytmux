@@ -1772,8 +1772,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 try:
                     set_config_option(desc["key"], value, self._config_path)
                 except OSError as e:
+                    # 설정이 **디스크에 안 남은** 실패 — 조용히 지나가면 다음 기동에
+                    # 값이 사라진 이유를 알 수 없다(§10-8 N4: 등급 error).
                     self.display_message(i18n.t("msg.setting_save_failed",
-                                                err=str(e)))
+                                                err=str(e)), severity="error")
 
         def setting_current(self, key):
             """:settings 행에 표시할 현재 값(정규형 문자열). 클라가 추적하지 않는

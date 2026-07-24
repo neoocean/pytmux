@@ -633,7 +633,7 @@ class ServerRemoteMixin:
                         self._remote_notice(
                             sess, "rnotice.reconnected",
                             "remote-attach {target}: 끊김 후 자동 재연결됨(시도 {i})",
-                            target=name, i=i)
+                            severity="ok", target=name, i=i)
                         return
             # 마지막 시도의 실패 원인(_set_err — Permission denied/PATH 등)을 함께 실어
             # 준다(요청): 핸드셰이크가 반복 실패해 포기하는 그 순간이 원인이 가장 필요한
@@ -642,8 +642,8 @@ class ServerRemoteMixin:
             self._remote_notice(
                 sess, "rnotice.reconnect_giveup",
                 "remote-attach {target}: 자동 재연결 포기({n}회) — {why} · "
-                ":remote-attach 로 수동 재시도", sticky=True, detail=detail,
-                target=name, n=len(self._RECONNECT_DELAYS))
+                ":remote-attach 로 수동 재시도", sticky=True, severity="error",
+                detail=detail, target=name, n=len(self._RECONNECT_DELAYS))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -771,7 +771,8 @@ class ServerRemoteMixin:
                         self._remote_notice(
                             sess, "rnotice.restore_fail",
                             "remote-attach {target}: 재시작 후 복원 실패 — {why}",
-                            sticky=True, detail=detail, target=name)
+                            sticky=True, severity="error", detail=detail,
+                            target=name)
                 except Exception:
                     self._log_error(f"remote_restore({name})")
 
@@ -1310,7 +1311,7 @@ class ServerRemoteMixin:
             self._remote_notice(
                 sess, "rnotice.attach_blocked_nest",
                 "remote-attach {target} 거부(중첩 자동 승격) — 비로컬 endpoint "
-                "직결은 차단됩니다(보안)", target=dest)
+                "직결은 차단됩니다(보안)", severity="warn", target=dest)
             return
         endpoint = dest if _nest_local_endpoint(dest) else None
         ok = await self.remote_attach(sess, host=None if endpoint else dest,
@@ -1320,7 +1321,7 @@ class ServerRemoteMixin:
             self._remote_notice(
                 sess, "rnotice.attach_fail_nest",
                 "remote-attach {target} 실패(중첩 자동 승격) — {why}",
-                detail=detail, target=dest)
+                severity="error", detail=detail, target=dest)
             return
         self._remote_status_broadcast()
         link = remotes.get(dest)
@@ -1330,7 +1331,8 @@ class ServerRemoteMixin:
         await self._remote_wait_first_status(link)
         self._remote_notice(
             sess, "rnotice.attach_merged_nest",
-            "remote-attach {target}: 원격 탭 병합됨(중첩 자동 승격)", target=dest)
+            "remote-attach {target}: 원격 탭 병합됨(중첩 자동 승격)",
+            severity="ok", target=dest)
         if not link.windows:
             return
         # 병합 전역 index = 로컬 탭 수 + 앞선 링크들의 탭 수 + 업스트림 active 위치

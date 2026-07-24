@@ -578,13 +578,18 @@ async def _token_sync_cmd(server, client, sub: str, arg: str):
     from . import tokensync
     loop = asyncio.get_running_loop()
 
-    async def note(key, ko, **kw):
+    # §10-8 등급: 실패는 error(빨강·5초·수동 닫기), 요청한 일이 끝나면 ok(초록),
+    # 켜지지 않아 아무 것도 못 한 안내는 warn. 상태 조회처럼 성공/실패가 아닌 것만
+    # 기본 info 로 둔다 — 일괄 치환이 아니라 호출부마다 판단한다(설계 N4).
+    async def note(key, ko, severity=None, **kw):
         with contextlib.suppress(Exception):
-            await server._send_to(client, server._notice_msg(key, ko, **kw))
+            await server._send_to(client, server._notice_msg(
+                key, ko, severity=severity, **kw))
 
     conn = getattr(server, "_tokens_db", None)
     if conn is None:
-        await note("tsync.fail", "토큰 동기화 실패 — {why}", why="토큰 DB 없음")
+        await note("tsync.fail", "토큰 동기화 실패 — {why}", severity="error",
+                   why="토큰 DB 없음")
         return
     try:
         if sub == "status":
@@ -608,23 +613,26 @@ async def _token_sync_cmd(server, client, sub: str, arg: str):
                 mode=("server" if sub != "off" else "off"),
                 url=(arg or None))
             await note("tsync.configured",
-                       "토큰 동기화 설정: {state}",
+                       "토큰 동기화 설정: {state}", severity="ok",
                        state="%s %s" % (st["mode"], st["url"] or "-"))
             return
         if str(getattr(server, "token_sync", "off")) != "server" or \
                 not getattr(server, "token_sync_url", ""):
             await note("tsync.off", "토큰 동기화가 꺼져 있습니다"
-                                    "(:claude-token-sync on <https://서버주소> 로 켭니다)")
+                                    "(:claude-token-sync on <https://서버주소> 로 켭니다)",
+                       severity="warn")
             return
         cli = tokensync._client_for(server)
         if sub == "enroll":
             did = await loop.run_in_executor(None, cli.enroll, arg)
             await note("tsync.enrolled",
-                       "토큰 동기화: 이 머신을 등록했습니다({label})", label=did[:8])
+                       "토큰 동기화: 이 머신을 등록했습니다({label})",
+                       severity="ok", label=did[:8])
         elif sub == "invite":
             code = await loop.run_in_executor(None, cli.invite_code)
             await note("tsync.invite", "초대 코드(이 값이 곧 키입니다 — 채팅·"
-                                       "스크린샷 금지): {code}", code=code)
+                                       "스크린샷 금지): {code}", severity="ok",
+                       code=code)
         elif sub == "adopt":
             # 'adopt <코드> force' — 기존 키를 덮어쓰는 것은 데이터 손실이라 명시
             # 확인을 요구한다(검수 C-2).
@@ -634,17 +642,22 @@ async def _token_sync_cmd(server, client, sub: str, arg: str):
             await loop.run_in_executor(
                 None, lambda: cli.adopt_invite(code, force=force))
             await note("tsync.adopted",
-                       "토큰 동기화: 초대 코드를 적용했습니다(이 머신의 키 교체)")
+                       "토큰 동기화: 초대 코드를 적용했습니다(이 머신의 키 교체)",
+                       severity="ok")
         elif sub in ("now", "sync", "resync"):
             if sub == "resync":
                 await loop.run_in_executor(None, tokensync.reset_cursors, cli.conn)
             out = await loop.run_in_executor(None, tokensync._sync_once, cli)
+            # 거부(rejected)가 있으면 "돌긴 돌았는데 일부가 버려졌다" — 성공으로
+            # 보이면 안 된다(사용자가 놓친 지점). 0·0 은 **정상적으로 새 게 없는**
+            # 경우도 있어 실패로 단정하지 않는다(거짓 error 는 신뢰를 잃는다).
             await note("tsync.synced",
                        "토큰 동기화: 올림 {sent} · 받음 {merged} · 거부 {rejected}",
+                       severity=("warn" if out["rejected"] else "ok"),
                        sent=out["push"]["sent"], merged=out["pull"]["merged"],
                        rejected=out["rejected"])
         else:
-            await note("tsync.fail", "토큰 동기화 실패 — {why}",
+            await note("tsync.fail", "토큰 동기화 실패 — {why}", severity="error",
                        why="알 수 없는 하위 명령: %s" % sub)
     except Exception as e:      # noqa: BLE001 — 사유를 사용자에게 돌려준다
         # 화면에는 한 줄만 나가지만 **서버 로그에는 스택트레이스**를 남긴다. 예전엔
@@ -657,7 +670,7 @@ async def _token_sync_cmd(server, client, sub: str, arg: str):
         key = "tsync.enroll_fail" if sub == "enroll" else "tsync.fail"
         ko = ("토큰 동기화 등록 실패 — {why}" if sub == "enroll"
               else "토큰 동기화 실패 — {why}")
-        await note(key, ko, why=str(e)[:160])
+        await note(key, ko, severity="error", why=str(e)[:160])
 
 
 class _ClaudeCodePlugin:

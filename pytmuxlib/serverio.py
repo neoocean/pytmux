@@ -694,18 +694,20 @@ class ServerIOMixin:
                 if got:
                     self._remote_status_broadcast()
                     note = self._notice_msg("rnotice.attach_merged",
-                        "remote-attach {target}: 원격 탭 병합됨", target=target)
+                        "remote-attach {target}: 원격 탭 병합됨",
+                        severity="ok", target=target)
                 else:
                     note = self._notice_msg("rnotice.attach_silent",
                         "remote-attach {target}: 연결됐지만 원격이 응답 없음 — "
-                        "원격 서버 점검", sticky=True, target=target)
+                        "원격 서버 점검", sticky=True, severity="warn",
+                        target=target)
             else:
                 # 핸드셰이크 실패는 놓치면 안 되는 알림 — 3초 유지 + 클릭/Enter 로
                 # 수동 닫기(제보 2026-06-16: 너무 빨리 사라짐).
                 detail = self._err_detail("rerr.see_log", "서버 error.log 참조")
                 note = self._notice_msg("rnotice.attach_fail",
                     "remote-attach {target} 실패 — {why}",
-                    sticky=True, detail=detail, target=target)
+                    sticky=True, severity="error", detail=detail, target=target)
             await self._send_to(client, note)
             return
         if action == "remote_detach":
@@ -731,7 +733,7 @@ class ServerIOMixin:
                 await self._send_to(client, self._notice_msg(
                     "rnotice.newtab_fail",
                     "remote-new-tab {target} 실패 — {why}",
-                    sticky=True, detail=detail, target=target))
+                    sticky=True, severity="error", detail=detail, target=target))
             return
         if action == "select_window":
             idx = int(msg.get("index", 0))
@@ -757,7 +759,7 @@ class ServerIOMixin:
             await self._send_to(client, self._notice_msg(
                 "rnotice.mix_block_cmd",
                 "원격 탭에서는 사용할 수 없는 명령입니다 — "
-                "원격↔로컬 패널/탭은 섞을 수 없습니다(§1.7)"))
+                "원격↔로컬 패널/탭은 섞을 수 없습니다(§1.7)", severity="warn"))
             return
         elif client.remote_view and action == "new_window":
             # 원격 보기 중 새 탭 = 로컬 새 탭 의도로 본다 — 보기를 해제하고 아래
@@ -777,7 +779,7 @@ class ServerIOMixin:
                 await self._send_to(client, self._notice_msg(
                     "rnotice.mix_block_move",
                     "원격 탭으로/원격 탭을 이동할 수 없습니다 — "
-                    "원격↔로컬 패널/탭은 섞을 수 없습니다(§1.7)"))
+                    "원격↔로컬 패널/탭은 섞을 수 없습니다(§1.7)", severity="warn"))
                 return
         # ── 명령 디스패치(servercmd._CMD_TABLE) ──
         # 종전 67 분기 if/elif 체인(§10-4⑨ God-함수)을 action→핸들러 테이블로 대체.
