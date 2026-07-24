@@ -28,6 +28,7 @@ from .claude import (claude_account, claude_account_full, claude_api_error,
                      claude_feedback_prompt, fmt_long_turn_badge,
                      fmt_unknown_update,
                      claude_input_box,
+                     claude_managed_settings_yes,
                      claude_model_badge,
                      claude_prompt, claude_prompt_marks, claude_perm_mode,
                      claude_remote_active, claude_remote_blocked,
@@ -145,6 +146,16 @@ _RC_CONFIRM_FRAMES = 30
 # interrupt 했다. 이 배너는 컴포저 **위**에 비모달로 떠 있어 안 닫아도 작업을 막지 않고,
 # server_filter_rows(_blank_feedback_banner)가 화면에서 완전히 가려 키 주입이 불필요하다.
 _FEEDBACK_DISMISS_KEY = b"\x1b"
+# 조직 관리 설정 승인 화면("Managed settings require approval")의 기본선택 확정 키
+# = Enter(요청 2026-07-24). 조직 계정으로 `claude` 를 띄우면 부팅이 이 화면에서 멈춰
+# 사람이 매번 "1. Yes, I trust these settings" 를 고르는 것 외에 선택지가 없다 —
+# 화면에 **이미 선택돼 있는** 그 항목을 Enter 로 확정해 통과시킨다(선택을 바꾸는 키는
+# 보내지 않는다). 그림자 /usage 프로브가 2026-07-15 부터 쓰던 처리를 사용자 패널로
+# 넓힌 것으로, 판정(claude_managed_settings_yes)과 안전 게이트(SEC-1: ❯ 셀렉터가
+# 'Yes…' 줄에 있을 때만)를 그대로 공유한다. _managed_ok_active 로 화면 인스턴스당
+# 딱 한 번만 쏜다 — 두 번째 Enter 는 승인 뒤 뜬 Claude 컴포저에 빈 프롬프트를
+# 제출하는 꼴이라(재주입 금지) /rc 메뉴 Esc 와 같은 디바운스 규율을 따른다.
+_MANAGED_SETTINGS_ACCEPT_KEY = b"\r"
 # M17(T7) 경고 임계는 opt(server.py: claude_long_turn_sec 기본 600 / claude_repeat_alert
 # 기본 3, 0=끔). 스캔의 warn 블록이 self.* 를 읽는다.
 
@@ -1176,6 +1187,30 @@ class ServerClaudeMixin:
             # 토글(footer 클릭→팝업 [r])은 영향 없음.
             self._rc_seen_active = True
 
+    def _scan_managed_settings(self, p, txt) -> None:
+        """조직 관리 설정 승인 화면 자동 통과 phase(요청 2026-07-24).
+
+        조직 계정으로 패널에서 `claude` 를 띄우면 부팅 직후 "Managed settings require
+        approval"(❯ 1. Yes, I trust these settings / 2. No, exit Claude Code)에서 멈춰
+        선다. 화면에 **이미 선택돼 있는** 1번을 Enter 로 확정해 통과시킨다 — 선택을
+        옮기는 키(↑↓·숫자)는 보내지 않으므로, 기본선택이 긍정이 아닌 화면은 그대로
+        사람에게 남는다(claude_managed_settings_yes 의 SEC-1 게이트).
+
+        _managed_ok_active 로 화면 인스턴스당 1회만 주입한다(재주입 금지 — 승인 뒤
+        컴포저에 빈 Enter 를 흘리게 된다). 화면이 사라지면 다음 인스턴스에 재무장.
+        상태(changed)는 안 바꾼다 — 패널 내부 플래그라 클라 표시와 무관하다.
+        """
+        if claude_managed_settings_yes(txt):
+            if not p._managed_ok_active:
+                p._managed_ok_active = True
+                if p.pty is not None:
+                    try:
+                        p.pty.write(_MANAGED_SETTINGS_ACCEPT_KEY)
+                    except OSError:
+                        pass
+        else:
+            p._managed_ok_active = False
+
     def _scan_usage_capture(self, txt) -> bool:
         """패널에 뜬 실측 /usage 한도를 권위값(self._usage)으로 캡처하는 phase.
 
@@ -1480,6 +1515,9 @@ class ServerClaudeMixin:
                 # fg 검사) '포맷 미인식' 경고를 세워 추적 중단을 가시화한다.
                 if self._update_fmt_unknown(p, new_cl is not None):
                     changed = True
+                # 조직 관리 설정 승인 화면(부팅 차단) 자동 통과 phase — Claude 로
+                # 인식되기 **전**(footer 없음) 화면이라 new_cl 게이트 밖에 둔다.
+                self._scan_managed_settings(p, txt)
                 # `/rc` 화면 신호 phase(메뉴 dismiss·정책 차단·active sticky) —
                 # 로드맵 #1 God-분할로 _scan_rc_signals 추출(동작 불변).
                 self._scan_rc_signals(p, txt)

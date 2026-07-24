@@ -731,6 +731,34 @@ def claude_remote_blocked(text: str) -> bool:
     return "disabled by your organization" in (text or "").lower()
 
 
+# 조직 관리 설정(managed settings) 최초 승인 화면. 조직 계정으로 `claude` 를 띄우면
+# 부팅 직후 "Managed settings require approval / ❯ 1. Yes, I trust these settings /
+# 2. No, exit Claude Code / Enter to confirm · Esc to exit" 로 멈춰 선다. 사람이 매번
+# 1 을 고르는 것 외에 선택지가 없어(요청 2026-07-24) 자동으로 기본선택을 확정한다 —
+# 그림자 /usage 프로브가 쓰던 판정(2026-07-15)과 **같은 함수**를 패널 스캔도 쓴다.
+#
+# 안전(2026-07-16 검수 SEC-1): 헤더 문구만 보고 Enter 를 치면 향후 빌드가 옵션 순서를
+# 바꾸거나 기본을 "No, exit" 로 두었을 때 **미지의 선택**을 확정한다. 그래서 셀렉터
+# (❯ 또는 구 CLI 의 '>')가 실제로 "Yes, I trust these settings" 줄에 있을 때만 True.
+_MANAGED_SETTINGS_MARK = "Managed settings require approval"
+_MANAGED_SETTINGS_YES = "Yes, I trust these settings"
+
+
+def claude_managed_settings_yes(text: str) -> bool:
+    """조직 관리 설정 승인 화면이 떠 있고 **긍정 기본선택**(❯/> 셀렉터가 'Yes, I trust
+    these settings' 줄)이 실제로 선택돼 있으면 True(= Enter 자동 확정 대상).
+
+    셀렉터가 다른 줄(예: 'No, exit Claude Code')로 옮겨갔거나 문구가 바뀌면 False —
+    자동화는 아무 키도 보내지 않고 사람에게 화면을 남긴다(SEC-1)."""
+    t = text or ""
+    if _MANAGED_SETTINGS_MARK not in t:
+        return False
+    for ln in t.splitlines():
+        if _MANAGED_SETTINGS_YES in ln and ("❯" in ln or ln.lstrip().startswith(">")):
+            return True
+    return False
+
+
 def _alias_email(local: str, domain: str) -> str:
     """이메일을 `로컬앞2글자…@도메인` 별칭으로(원문 미노출). 로컬이 2글자 이하면 그대로."""
     alias = (local[:2] + "…") if len(local) > 2 else local

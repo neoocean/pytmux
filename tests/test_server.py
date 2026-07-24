@@ -1134,6 +1134,72 @@ async def test_auto_dismiss_remote_control_menu():
         await teardown(srv, task, sock)
 
 
+async def test_auto_confirm_managed_settings_screen():
+    """요청(2026-07-24): 조직 계정으로 패널에서 `claude` 를 띄우면 부팅이 "Managed
+    settings require approval" 화면에서 멈춘다 — 이미 선택돼 있는 "1. Yes, I trust
+    these settings" 를 Enter 로 자동 확정해 통과시킨다. 화면 인스턴스당 딱 1회
+    (재주입 = 승인 뒤 컴포저에 빈 프롬프트 제출)."""
+    import importlib
+    _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    assert _sc._MANAGED_SETTINGS_ACCEPT_KEY == b"\r"
+    _MANAGED = (b"\x1b[2J\x1b[HManaged settings require approval\r\n"
+                b"\r\n"
+                b"Your organization has configured managed settings that could\r\n"
+                b"allow execution of arbitrary code.\r\n"
+                b"\r\n"
+                b"\xe2\x9d\xaf 1. Yes, I trust these settings\r\n"
+                b"  2. No, exit Claude Code\r\n"
+                b"\r\n"
+                b"Enter to confirm \xc2\xb7 Esc to exit\r\n")
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        writes = []
+        p.pty.write = lambda b: writes.append(b)
+        p.feed(_MANAGED)
+        srv._scan_claude(sess, win)
+        assert writes == [b"\r"], (writes, "첫 감지 → 기본선택 확정 Enter 1회")
+        assert p._managed_ok_active is True
+        # 화면이 머물러(redraw) 여러 프레임 스캔돼도 두 번째 Enter 는 없다.
+        for _ in range(10):
+            p.feed(_MANAGED)
+            srv._scan_claude(sess, win)
+        assert writes == [b"\r"], (writes, "화면당 Enter 는 딱 한 번")
+        # 승인 뒤 부팅 화면이 뜨면 재무장(다음 세션의 같은 화면에 다시 1회).
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_claude(sess, win)
+        assert p._managed_ok_active is False, "사라지면 재무장"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_managed_settings_no_key_when_selection_not_affirmative():
+    """SEC-1: 같은 화면이어도 셀렉터가 긍정 기본선택('Yes, I trust these settings')에
+    있지 않으면 **아무 키도 보내지 않는다** — 향후 빌드가 옵션을 재배열하거나 기본을
+    'No, exit' 로 두어도 자동화가 미지의 선택을 확정하지 않게(선택을 옮기는 키도
+    안 보내므로 화면은 그대로 사람에게 남는다)."""
+    _MANAGED_NO = (b"\x1b[2J\x1b[HManaged settings require approval\r\n"
+                   b"  1. Yes, I trust these settings\r\n"
+                   b"\xe2\x9d\xaf 2. No, exit Claude Code\r\n"
+                   b"Enter to confirm \xc2\xb7 Esc to exit\r\n")
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        writes = []
+        p.pty.write = lambda b: writes.append(b)
+        for _ in range(5):
+            p.feed(_MANAGED_NO)
+            srv._scan_claude(sess, win)
+        assert writes == [], (writes, "긍정 기본선택이 아니면 키 주입 없음")
+        assert p._managed_ok_active is False
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_done_flag_debounced_against_flicker():
     """§10 #18: busy→idle 가 한 프레임 깜빡(idle 한 프레임 뒤 다시 busy)이면 완료
     알림(has_claude_done)이 서지 않는다 — 안정 idle 만 완료로 친다."""

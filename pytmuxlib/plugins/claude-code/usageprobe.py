@@ -24,8 +24,8 @@ import subprocess
 import threading
 import time
 
-from .claude import (claude_account, claude_account_full, claude_model,
-                     parse_usage)
+from .claude import (claude_account, claude_account_full,
+                     claude_managed_settings_yes, claude_model, parse_usage)
 
 IS_WINDOWS = os.name == "nt"
 
@@ -46,21 +46,12 @@ _READ = 65536
 # 줄(❯/> 셀렉터가 "Yes, I trust these settings" 위에 있을 때)이 실제로 화면에 떠
 # 있을 때만 Enter 를 치고 ② 부팅 대기(_open 직후 첫 wait_for)에서만 발동시킨다 —
 # /usage·/status 스크랩 중엔 이 자동승인을 열지 않는다(부팅 이후엔 이 화면이 안 뜬다).
-_MANAGED_SETTINGS_MARK = "Managed settings require approval"
-_MANAGED_SETTINGS_YES = "Yes, I trust these settings"
+#
+# 판정 자체는 claude.claude_managed_settings_yes 하나로 단일화(2026-07-24) — 사용자
+# 패널의 자동 승인(servermixin._scan_managed_settings)과 같은 화면을 같은 규칙으로
+# 본다. 여기 이름(_managed_yes_selected)은 기존 호출부/테스트 호환 별칭.
+_managed_yes_selected = claude_managed_settings_yes
 _MANAGED_SETTINGS_ACCEPT = b"\r"
-
-
-def _managed_yes_selected(scr: str) -> bool:
-    """관리설정 화면에서 긍정 기본선택(❯/> 셀렉터가 'Yes, I trust these settings'
-    줄에 있음)이 실제로 떠 있는지. 셀렉터가 다른 줄(예: 'No, exit')로 옮겨갔거나
-    문구가 바뀌면 False → Enter 를 치지 않고 프로브는 안전하게 실패(None)한다."""
-    if _MANAGED_SETTINGS_MARK not in scr:
-        return False
-    for ln in scr.splitlines():
-        if _MANAGED_SETTINGS_YES in ln and ("❯" in ln or ln.lstrip().startswith(">")):
-            return True
-    return False
 
 
 class _PosixSession:

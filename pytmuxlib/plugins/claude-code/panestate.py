@@ -95,6 +95,10 @@ def init_pane(pane) -> None:
     # 막던 버그라 영구 제거했다(servermixin _FEEDBACK_DISMISS_KEY 주석). 세션 피드백
     # 프롬프트는 더 이상 Esc 를 안 쏜다(표시 필터로만 가림) — 이 상태와 무관하다.
     pane._rc_menu_active = False
+    # 조직 관리 설정 승인 화면("Managed settings require approval") 자동 통과 디바운스:
+    # 화면이 떠 있는 동안 True 로 두어 **인스턴스당 Enter 를 딱 한 번**만 쏜다(재주입은
+    # 승인 뒤 컴포저에 빈 프롬프트를 제출한다 — servermixin._scan_managed_settings).
+    pane._managed_ok_active = False
     # 수동 /clear 감지 디바운스(환영 배너가 머무는 동안 토큰세션 재리셋 방지).
     pane._welcome_seen = False
     pane._rules_pending = False     # 시작 규칙 주입 예약(다음 idle 1회, #27)

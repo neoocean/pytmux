@@ -926,6 +926,36 @@ def _redos_payloads(n):
     ]
 
 
+async def test_managed_settings_yes_requires_affirmative_selection():
+    """조직 관리 설정 승인 화면 판정(claude_managed_settings_yes)은 ❯/> 셀렉터가
+    **'Yes, I trust these settings' 줄에 있을 때만** True(SEC-1). 자동 Enter 는 화면에
+    이미 선택된 항목을 확정할 뿐이라, 기본선택이 바뀌면 사람에게 화면을 남겨야 한다.
+    패널 자동 통과(servermixin)와 그림자 프로브가 같은 이 함수를 공유한다."""
+    from pytmuxlib.claude import claude_managed_settings_yes as f
+    real = ("Managed settings require approval\n"
+            "\n"
+            "Your organization has configured managed settings that could allow\n"
+            "execution of arbitrary code or interception of your prompts.\n"
+            "\n"
+            "❯ 1. Yes, I trust these settings\n"
+            "  2. No, exit Claude Code\n"
+            "\n"
+            "Enter to confirm · Esc to exit\n")
+    assert f(real) is True
+    assert f("Managed settings require approval\n > Yes, I trust these settings\n")
+    # 셀렉터가 다른 옵션에 있거나(재배열/기본 변경), 문구가 바뀌면 False.
+    assert f("Managed settings require approval\n"
+             "  1. Yes, I trust these settings\n"
+             "❯ 2. No, exit Claude Code\n") is False
+    assert f("Managed settings require approval\n❯ 1. Accept and continue\n") is False
+    # 셀렉터만·헤더만 있는 화면도 False(오검출 방지).
+    assert f("❯ 1. Yes, I trust these settings\n") is False
+    assert f("Managed settings require approval\n") is False
+    assert f("? for shortcuts") is False
+    assert f("") is False
+    assert f(None) is False
+
+
 async def test_regex_patterns_no_catastrophic_backtracking():
     """claude.py 의 모든 모듈 레벨 컴파일 정규식이 ~40KB 적대적 입력에서도 상한
     내 완료(파국적 백트래킹 부재)."""
