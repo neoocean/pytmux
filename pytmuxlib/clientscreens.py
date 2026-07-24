@@ -24,7 +24,7 @@ from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
 
-from . import i18n
+from . import clientnotices, i18n
 from .clientutil import (COMMAND_FREETEXT, COMMAND_NOARG, COMMAND_OPTIONS,
                          COMMANDS, ESC_MODE_KEYS, MENU_GROUP_LABELS, MENU_GROUPS,
                          MENU_ITEMS, MENU_TOGGLES, MENU_TOPLEVEL,
@@ -2998,6 +2998,164 @@ class ChooseBufferScreen(ModalScreen):
         if event.key == "escape":
             event.stop()
             self.dismiss(None)
+
+class NoticeHistoryScreen(ModalScreen):
+    """§10-8 지나간 상태줄 알림 이력(최신이 위). 상태줄 배지 클릭 또는 ESC 모드
+    `notices` 에서 Enter 로 연다.
+
+    · `↑↓` 이동 · `Enter` 전문 펼치기/접기 · `c` 복사 · `Esc` 닫기.
+    · **전문 표시가 핵심**(설계 G3): 목록은 한 줄로 자르되 Enter 로 그 항목만 여러
+      줄로 펼친다 — 긴 오류 문구가 잘려 조치가 안 보이던 문제의 정면 해결.
+    · 등급 기호(`✓·!✕`)와 색을 목록에서도 유지한다(색맹·모노크롬 대비).
+    · 폭이 좁으면 `source` 열을 먼저 접는다(문구가 우선).
+
+    이력 자체는 클라 메모리(`app._notices`)에 있고, 이 화면은 열 때 받은 **스냅샷**을
+    그린다(팝업이 떠 있는 동안 새 알림이 끼어들어 선택이 튀지 않게)."""
+    CSS = """
+    NoticeHistoryScreen { align: center middle; }
+    #nhbox { width: 96%; max-width: 96; height: auto; max-height: 90%;
+             border: round $accent; background: $panel; padding: 0 1; }
+    #nhlist { width: 100%; height: auto; max-height: 80%; }
+    #nhlist ListItem { height: auto; }
+    #nhlist ListItem Label { width: 1fr; }
+    #nhhint { width: 100%; height: 1; color: $text-muted; }
+    """
+
+    # source 열을 접기 시작하는 폭(설계 §5.4 — 문구가 우선).
+    _NARROW = 60
+
+    def __init__(self, entries):
+        super().__init__()
+        self._entries = list(entries or [])
+        self._expanded = set()   # 전문으로 펼친 항목 인덱스
+
+    # ---- 표시 문자열 ----
+    def _stamp(self, e):
+        return datetime.fromtimestamp(e.ts).strftime("%H:%M:%S")
+
+    def _text_of(self, e):
+        """항목 문구(중복 접힘이면 `×N` 을 붙인다)."""
+        return e.text + (f"  ×{e.count}" if e.count > 1 else "")
+
+    def _prefix(self, e, width):
+        p = f"{clientnotices.symbol(e.sev)} {self._stamp(e)} "
+        if width >= self._NARROW:
+            p += f"{e.source[:12]:<12} "
+        return p
+
+    def _style_of(self, e):
+        # 배경이 아니라 **글자색**으로 등급을 준다 — 목록 배경은 팝업 패널색을 유지해야
+        # 선택 하이라이트(ListView)가 그대로 읽힌다.
+        return Style(color=theme_color(self, clientnotices.theme_name(e.sev)),
+                     bold=(e.sev == "error"))
+
+    def _lines_for(self, i, e, width):
+        pre = self._prefix(e, width)
+        body = self._text_of(e)
+        avail = max(8, width - len(pre) - 2)
+        if i not in self._expanded:
+            one = body.replace("\n", " ")
+            if sum(_char_cells(c) for c in one) > avail:
+                cut, acc = len(one), 0
+                for j, ch in enumerate(one):
+                    acc += _char_cells(ch)
+                    if acc > avail - 1:
+                        cut = j
+                        break
+                one = one[:cut] + "…"
+            return [pre + one]
+        # 펼침: 첫 줄은 접두사와 함께, 이어지는 줄은 접두사 폭만큼 들여쓴다.
+        out = []
+        for para in body.split("\n"):
+            out.extend(_hangwrap(para, avail) or [""])
+        pad = " " * len(pre)
+        return [pre + out[0]] + [pad + ln for ln in out[1:]]
+
+    def _rows(self):
+        width = self._width()
+        rows = []
+        for i, e in enumerate(self._entries):
+            txt = "\n".join(self._lines_for(i, e, width))
+            lb = Label(Text(txt, style=self._style_of(e)), markup=False)
+            rows.append(ListItem(lb, id=f"nh{i}"))
+        return rows or [ListItem(Label(i18n.t("screen.notice_history_empty")),
+                                 id="nhnone")]
+
+    def _width(self):
+        """목록 자르기 기준 폭. 마운트 전(테스트·compose 시점)엔 앱 폭으로, 그것도
+        없으면 보수적 기본값으로 떨어진다(예외로 팝업이 안 뜨는 일이 없게)."""
+        try:
+            w = self.query_one("#nhbox").size.width
+        except Exception:
+            w = 0
+        if not w:
+            try:
+                w = min(96, max(40, self.app.size.width - 4))
+            except Exception:
+                w = 80
+        return w
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="nhbox"):
+            lv = ListView(*self._rows(), id="nhlist")
+            lv.border_title = i18n.t("screen.notice_history_title",
+                                     n=len(self._entries))
+            yield lv
+            yield Label(i18n.t("screen.notice_history_hint"), id="nhhint")
+
+    def on_mount(self):
+        lv = self.query_one(ListView)
+        lv.focus()
+        # 폭이 정해진 뒤(레이아웃 후) 실제 폭 기준으로 라벨을 다시 채운다(자르기 정확도).
+        self.call_after_refresh(self._refresh_rows)
+
+    def _refresh_rows(self, only=None):
+        """항목 라벨을 **제자리에서** 갱신한다. 이력은 열 때 받은 스냅샷이라 항목
+        수가 변하지 않으므로, 리스트를 지웠다 다시 채우지 않는다 — ListView.clear()
+        는 비동기라 곧바로 append 하면 같은 id 가 겹쳐 터진다(실측)."""
+        width = self._width()
+        try:
+            items = list(self.query_one(ListView).children)
+        except Exception:
+            return
+        for i, item in enumerate(items):
+            if i >= len(self._entries) or (only is not None and i != only):
+                continue
+            e = self._entries[i]
+            txt = "\n".join(self._lines_for(i, e, width))
+            try:
+                item.query_one(Label).update(Text(txt, style=self._style_of(e)))
+            except Exception:
+                pass
+
+    def _current(self):
+        lv = self.query_one(ListView)
+        i = lv.index
+        if i is None or not self._entries or i >= len(self._entries):
+            return None, None
+        return i, self._entries[i]
+
+    def on_list_view_selected(self, event):
+        # Enter = 전문 펼치기/접기(선택이 아니라 토글 — 이 화면은 고르는 화면이 아니다).
+        i, e = self._current()
+        if e is None:
+            return
+        self._expanded.symmetric_difference_update({i})
+        self._refresh_rows(only=i)
+
+    def on_key(self, event: events.Key):
+        if event.key == "escape":
+            event.stop()
+            self.dismiss(None)
+        elif event.key == "c":
+            # 선택 항목 전문을 클립보드로(잘린 오류 문구를 그대로 붙여넣어 검색).
+            event.stop()
+            i, e = self._current()
+            if e is None:
+                return
+            fn = getattr(self.app, "copy_text", None)
+            fn and fn(e.text)
+
 
 class ChooseLayoutScreen(ModalScreen):
     """저장된 레이아웃 슬롯 선택기(방향키 이동, Enter 선택, Esc 취소)."""

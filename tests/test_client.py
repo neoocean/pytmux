@@ -4399,6 +4399,138 @@ async def test_dismissable_notice_click_and_enter_close():
     await _with_app(body)
 
 
+async def test_notice_severity_colors_are_distinct():
+    """§10-8-1: 등급 4종(ok/info/warn/error)의 배경색이 **서로 다르다**.
+    `textual-dark` 에서 warning==accent 였던 전례가 있어(같은 색이 오면 색으로
+    구분한다는 전제가 조용히 깨진다) 테마 해석 결과를 직접 못박는다."""
+    from pytmuxlib import clientnotices
+    from pytmuxlib.clientutil import theme_color
+    async def body(app, pilot, srv):
+        cols = {s: theme_color(app.status, clientnotices.theme_name(s))
+                for s in clientnotices.SEVERITIES}
+        assert len(set(cols.values())) == 4, cols
+        # 기호도 서로 다르다(색맹·모노크롬 대비) + 폭 1(CJK 폭 문제 회피).
+        syms = [clientnotices.symbol(s) for s in clientnotices.SEVERITIES]
+        assert len(set(syms)) == 4 and all(len(s) == 1 for s in syms), syms
+    await _with_app(body)
+
+
+async def test_notice_severity_defaults_and_history_survives_clear():
+    """§10-8-2·3: `severity="error"` 는 기본으로 **오래 남고 수동 닫기**이며(secs>=5),
+    등급 미지정은 종전과 같은 info(2초·자동). 그리고 메시지가 타이머로 지워져도
+    **이력에는 남는다** — 이 기능의 존재 이유(사라지면 어디에도 안 남던 것)."""
+    async def body(app, pilot, srv):
+        secs_seen = []
+        orig = app.set_timer
+        app.set_timer = lambda s, cb: secs_seen.append(s) or orig(s, cb)
+        app.display_message("실패했다", severity="error")
+        assert secs_seen[-1] >= 5.0, secs_seen
+        assert app._msg_dismissable is True
+        assert app.status.message_sev == "error"
+        app.display_message("그냥 안내")
+        assert secs_seen[-1] == 2.0 and app._msg_dismissable is False
+        assert app.status.message_sev == "info", app.status.message_sev
+        # 표시가 사라져도 이력은 유지(2건).
+        app._clear_message()
+        assert app.status.message is None
+        assert len(app._notices) == 2, app._notices.entries()
+        assert app.status.message_sev == "info"
+    await _with_app(body)
+
+
+async def test_notice_history_collapses_repeats_and_badge_color():
+    """§10-8-4·5: 같은 알림이 반복되면 항목 1개 + `×N` 으로 접히고(주기 워커가 이력을
+    같은 실패로 채우지 않게), 미확인 배지는 **미확인 중 최고 등급 색**을 쓴다.
+    이력을 열면 미확인이 0 이 되어 배지가 평시 색으로 돌아간다."""
+    async def body(app, pilot, srv):
+        for _ in range(5):
+            app.display_message("동기화 실패", severity="error")
+        app.display_message("올림 0 · 받음 0", severity="warn")
+        ents = app._notices.entries()
+        assert len(ents) == 2, [(e.text, e.count) for e in ents]
+        assert ents[-1].count == 5, ents[-1].count      # 접힘(최신이 앞이라 뒤가 error)
+        assert app.status.notices_n == 2
+        assert app.status.notices_sev == "error", app.status.notices_sev
+        # 이력을 열면 전부 '확인' → 배지 수 0·평시 색.
+        app.open_notice_history()
+        await pilot.pause(0.05)
+        assert app.status.notices_n == 0 and app.status.notices_sev is None
+        assert app.status.notices_total == 2, "이력 자체는 남는다"
+        app.pop_screen()
+    await _with_app(body)
+
+
+async def test_notice_badge_zone_and_status_buttons_with_sticky_message():
+    """§10-8-6: 메시지가 줄을 덮는 동안에도 **배지가 오른쪽 끝에 겹쳐** 남아
+    이력으로 갈 수 있다 — esc 동선은 `["msg","notices"]`(msg 의 Enter=닫기는 그대로),
+    배지 영역 클릭은 닫기가 아니라 이력 팝업으로 간다."""
+    from types import SimpleNamespace
+    async def body(app, pilot, srv):
+        app._dispatch({"t": "notice", "text": "핸드셰이크 실패 — 이유",
+                       "sev": "error", "secs": 3.0, "dismissable": True})
+        await pilot.pause(0.05)
+        sb = app.status
+        assert sb.message_sev == "error"
+        assert sb._notices_zone is not None, "메시지 중에도 배지 겹침"
+        assert app._status_buttons() == ["msg", "notices"], app._status_buttons()
+        # 배지 영역 클릭 → 닫기가 아니라 이력 팝업(메시지는 그대로 남는다).
+        app.mouse_enabled = True
+        x = sb._notices_zone[0]
+        sb.on_mouse_down(SimpleNamespace(x=x, y=sb.size.height - 1,
+                                         stop=lambda: None))
+        await pilot.pause(0.05)
+        assert sb.message is not None, "배지 클릭은 메시지를 닫지 않는다"
+        assert app.screen.__class__.__name__ == "NoticeHistoryScreen"
+        app.pop_screen()
+        await pilot.pause(0.05)
+        # 메시지 본문 영역 클릭은 종전대로 닫기.
+        sb.on_mouse_down(SimpleNamespace(x=1, y=sb.size.height - 1,
+                                         stop=lambda: None))
+        assert sb.message is None
+    await _with_app(body)
+
+
+async def test_notice_history_popup_expands_full_text():
+    """§10-8-7: 목록은 한 줄로 잘리지만 Enter 로 **전문**이 펼쳐진다(오늘 SSL 오류가
+    잘려 조치를 못 보던 문제의 정면 해결). `c` 는 전문을 클립보드로 보낸다."""
+    from pytmuxlib import clientnotices
+    from pytmuxlib.clientscreens import NoticeHistoryScreen
+    async def body(app, pilot, srv):
+        long = ("Token sync enrollment failed — <urlopen error [SSL: "
+                "CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+                "unable to get local issuer certificate (_ssl.c:1006)>")
+        h = clientnotices.NoticeHistory()
+        e = h.add(long, "error", "server")
+        scr = NoticeHistoryScreen([e])
+        one = scr._lines_for(0, e, 60)
+        assert len(one) == 1 and one[0].endswith("…"), one
+        scr._expanded.add(0)
+        full = scr._lines_for(0, e, 60)
+        assert len(full) > 1, full
+        joined = " ".join(ln.strip() for ln in full)
+        assert "unable to get local issuer certificate" in joined, joined
+        # c = 전문 복사(잘린 원문 그대로).
+        copied = []
+        app.copy_text = lambda t: copied.append(t)
+        scr._current = lambda: (0, e)
+        scr.on_key(Key(key="c", character="c"))
+        assert copied == [long], copied
+    await _with_app(body)
+
+
+async def test_notice_unknown_severity_falls_back_to_info():
+    """§10-8-8: `sev` 가 없는(구 서버) notice 와 **모르는 등급**은 예외 없이 info 로
+    처리한다 — 구/신 버전이 섞여도 알림이 사라지거나 터지지 않게."""
+    async def body(app, pilot, srv):
+        app._dispatch({"t": "notice", "text": "구 서버 알림"})
+        assert app.status.message_sev == "info"
+        assert app._msg_dismissable is False
+        app._dispatch({"t": "notice", "text": "미래 등급", "sev": "critical"})
+        assert app.status.message_sev == "info", app.status.message_sev
+        assert app._notices.entries()[0].sev == "info"
+    await _with_app(body)
+
+
 async def test_esc_arrow_flashes_selected_pane():
     # ESC 모드 방향키로 패널 전환을 요청하면 깜빡임을 예약하고(select_pane 전송),
     # 서버가 active 를 바꿔 layout 을 보내면 새 활성 패널을 깜빡인다(가시화 요청).

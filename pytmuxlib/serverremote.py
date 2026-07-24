@@ -688,10 +688,15 @@ class ServerRemoteMixin:
 
     @staticmethod
     def _notice_msg(key, ko_text: str, *, sticky: bool = False,
-                    detail: dict | None = None, **kw) -> dict:
+                    detail: dict | None = None, severity: str | None = None,
+                    **kw) -> dict:
         """notice 메시지 dict 를 만든다. text=한국어 폴백(구클라/테스트), key+kw=클라
         번역용. detail 이 있으면 {why} 자리에 실패 원인(키 포함)을 넘겨 클라가 합성.
-        sticky=놓치면 안 되는 알림(3초 유지 + 클릭/Enter 수동 닫기)."""
+        sticky=놓치면 안 되는 알림(3초 유지 + 클릭/Enter 수동 닫기).
+
+        §10-8 severity: 클라가 색·기호·기본 유지시간을 정하는 등급(ok/info/warn/
+        error)을 `sev` 로 싣는다. 미지정이면 필드를 아예 넣지 않아 **구 클라와
+        동일**하게 동작하고, 새 클라는 info 로 본다(모르는 값도 info 로 낮춤)."""
         if detail is not None:
             kw = dict(kw)
             kw["why"] = detail.get("text", "")   # ko 폴백; 클라가 detail 로 덮어씀
@@ -699,16 +704,21 @@ class ServerRemoteMixin:
         msg = {"t": "notice", "text": text, "key": key, "kw": kw}
         if detail is not None:
             msg["detail"] = detail
+        if severity is not None:
+            msg["sev"] = severity
         if sticky:
             msg["secs"] = 3.0
             msg["dismissable"] = True
         return msg
 
     def _remote_notice(self, sess, key, ko_text: str, *, sticky: bool = False,
-                       detail: dict | None = None, **kw):
+                       detail: dict | None = None, severity: str | None = None,
+                       **kw):
         """세션의 모든 클라에 상태줄 notice(§1.7 attach 결과와 동일 표면).
-        key+ko_text+kw 로 클라가 자기 로케일로 번역한다(_notice_msg 참조)."""
-        msg = self._notice_msg(key, ko_text, sticky=sticky, detail=detail, **kw)
+        key+ko_text+kw 로 클라가 자기 로케일로 번역한다(_notice_msg 참조).
+        severity(§10-8)는 클라의 색·기호·유지시간을 정한다."""
+        msg = self._notice_msg(key, ko_text, sticky=sticky, detail=detail,
+                               severity=severity, **kw)
         for c in list(self.clients):
             if c.session is sess:
                 asyncio.create_task(self._send_to(c, dict(msg)))

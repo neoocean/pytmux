@@ -19,7 +19,7 @@ from textual.suggester import SuggestFromList
 from rich.segment import Segment
 from rich.style import Style
 
-from . import i18n
+from . import clientnotices, i18n
 from .clientutil import (_DATE_STRFTIME, _TIME_STRFTIME, REMOTE_PINK,
                          _char_cells, _deemoji_text, norm_sep, theme_color)
 
@@ -1125,6 +1125,13 @@ class StatusBar(Widget):
         self.prefix_off = False  # 중첩: outer prefix 해제 표시
         self.cmd_mode = False  # ESC 명령 모드 표시
         self.message = None    # display-message 임시 메시지
+        # §10-8 알림 등급(ok/info/warn/error) — 메시지 줄의 색·기호를 정한다.
+        self.message_sev = clientnotices.DEFAULT_SEVERITY
+        # §10-8 미확인 알림 배지: 수·그 중 최고 등급(색). total=이력 보유 건수
+        # (0 이면 배지 자체를 안 그린다 — 빈 배지는 소음).
+        self.notices_n = 0
+        self.notices_sev = None
+        self.notices_total = 0
         self.hide_tabs = False  # 상단 탭바가 보이면 하단 탭 목록 생략
         # Claude 상태 속성(claude_active/usage/tokens/model·토큰절감 설정·예산·카운트
         # 다운 등 ~26개)은 코어가 더 이상 두지 않는다 — claude-code 플러그인이
@@ -1150,6 +1157,7 @@ class StatusBar(Widget):
         self._warn_zone = None   # (x0, x1) Claude 경고 배지 클릭 영역(상황·할일 팝업, 요청)
         self._ar_zone = None     # (x0, x1) AR(자동재개) 배지 클릭 영역(켜고끄기 팝업, 요청)
         self._host_zone = None   # (x0, x1) 서버이름(host) 클릭 영역(서버 탭, §10-A #12)
+        self._notices_zone = None  # (x0, x1) 알림 이력 배지 클릭 영역(§10-8)
         self.focus_btn = None    # ESC 모드 하단 포커스 키 강조(model/usage/rec/host/clock/date)
         # 클라이언트가 SSH 원격 세션에서 도는지(attach 한 머신 기준, 시작 시 1회).
         self._is_remote = bool(os.environ.get("SSH_CONNECTION")
@@ -1267,6 +1275,25 @@ class StatusBar(Widget):
                                          .adjust_cell_length(self.size.width, base))
         return _deemoji_strip_if_dim(self.app, self._render_main(base))
 
+    def _notices_badge(self, tc):
+        """§10-8 알림 이력 배지 `(텍스트, 스타일)` — 이력이 비면 `("", None)`.
+
+        표기는 ASCII 폭 1 문자 `≡`(설계 §9-1: 이모지는 폰트·폭 문제를 오래 겪어
+        기본 ASCII 권고) + 미확인 수. 색은 **미확인 중 최고 등급**이라, 알림이
+        사라진 뒤에도 "방금 실패가 있었다"가 색으로 남는다. 전부 확인했으면 평시
+        색(수는 0 이라 기호만)."""
+        if not self.notices_total:
+            return "", None
+        n = self.notices_n
+        txt = f" ≡{n} " if n else " ≡ "
+        if self.focus_btn == "notices":       # ESC 모드 포커스 강조(다른 배지와 동일)
+            return txt, Style(color="black", bgcolor=tc("accent"), bold=True)
+        if n and self.notices_sev is not None:
+            return txt, Style(color=clientnotices.fg(self.notices_sev),
+                              bgcolor=tc(clientnotices.theme_name(
+                                  self.notices_sev)), bold=True)
+        return txt, Style(color=tc("foreground"), bgcolor=self.bg)
+
     def _render_main(self, base) -> Strip:
         w = self.size.width
         # 색상은 p4v-tui 와 동일한 textual-dark 테마를 따른다(설정으로 덮어쓰기 가능).
@@ -1274,14 +1301,28 @@ class StatusBar(Widget):
         # 배경은 명시 설정(self.bg)이 없으면 터미널 기본(None)을 따른다 —
         # REC/SYNC/AR 등 개별 배지는 자체 bgcolor 유지(의도된 강조).
         if self.message is not None:
-            # ESC 모드 하단 포커스가 메시지에 와 있으면(focus_btn=='msg') 강조 +
-            # ⏎ 닫기 힌트를 붙인다 — Enter 로 닫을 수 있음을 알린다(요청).
+            # §10-8: 등급이 배경색과 기호를 정한다(멀리서 색만 보고 성공/실패 판단 +
+            # 색맹·모노크롬 대비 기호). ESC 모드 하단 포커스가 메시지에 와 있으면
+            # (focus_btn=='msg') 강조 + ⏎ 닫기 힌트를 붙인다(요청).
+            sev = self.message_sev
             if self.focus_btn == "msg":
                 ms = Style(color="black", bgcolor=tc("accent"), bold=True)
                 txt = i18n.t("ui.notice_close", message=self.message)
             else:
-                ms = Style(color="black", bgcolor=tc("warning"), bold=True)
-                txt = f" {self.message} "
+                ms = Style(color=clientnotices.fg(sev),
+                           bgcolor=tc(clientnotices.theme_name(sev)), bold=True)
+                txt = f" {clientnotices.symbol(sev)} {self.message} "
+            # 메시지가 줄 전체를 덮어도 **이력 배지는 오른쪽 끝에 겹쳐** 남긴다 —
+            # 메시지를 보는 중에도 이력으로 갈 수 있어야 한다(설계 §5.1).
+            bt, bs = self._notices_badge(tc)
+            if bt:
+                bw = sum(_char_cells(c) for c in bt)
+                body = Strip([Segment(txt, ms)]).adjust_cell_length(
+                    max(0, w - bw), ms)
+                self._notices_zone = (max(0, w - bw), w)
+                return Strip(list(body) + [Segment(bt, bs)]) \
+                    .adjust_cell_length(w, ms)
+            self._notices_zone = None
             return Strip([Segment(txt, ms)]).adjust_cell_length(w, ms)
         active = Style(color="white", bgcolor=tc("primary"), bold=True)
         # P6: 세그먼트 누적 셀폭을 증분으로 추적한다(예전엔 rx0·used 에서 segs 전체를
@@ -1362,6 +1403,13 @@ class StatusBar(Widget):
         focus_hi = Style(color="black", bgcolor=tc("warning"), bold=True)
         built = []   # (kind, text, style, cells)
         right_w = 0
+        # §10-8 알림 이력 배지는 우측 배지열의 **맨 왼쪽**에 붙인다(host/시각/날짜
+        # 앞). 아래 런 루프가 같은 방식으로 x 를 누적해 클릭존을 계산한다.
+        _nb_txt, _nb_style = self._notices_badge(tc)
+        if _nb_txt:
+            _nb_cells = sum(_char_cells(c) for c in _nb_txt)
+            built.append(("notices", _nb_txt, _nb_style, _nb_cells))
+            right_w += _nb_cells
         for kind, text in right_parts:
             st = base
             if kind == "host" and self._is_remote:
@@ -1380,10 +1428,13 @@ class StatusBar(Widget):
         self._clock_zone = None
         self._date_zone = None
         self._host_zone = None
+        self._notices_zone = None
         x = used + pad
         for kind, text, st, cells in built:
             segs.append(Segment(text, st))
-            if cells and kind == "time":
+            if cells and kind == "notices":
+                self._notices_zone = (x, x + cells)   # §10-8 이력 팝업 클릭존
+            elif cells and kind == "time":
                 self._clock_zone = (x, x + cells)
             elif cells and kind == "date":
                 self._date_zone = (x, x + cells)
@@ -1399,6 +1450,15 @@ class StatusBar(Widget):
         # 클릭 존(REC/시계/날짜/사용량)은 주 상태가 그려지는 맨 아래 줄에만 있다.
         if event.y != self.size.height - 1:
             return
+        # §10-8: 알림 이력 배지는 메시지 줄에도 **겹쳐** 그려지므로, 아래 "메시지 줄
+        # 아무 데나 = 닫기" 보다 **먼저** 판정한다(겹친 배지 영역만 이력으로).
+        nz = self._notices_zone
+        if nz and nz[0] <= event.x < nz[1]:
+            fn = getattr(self.app, "open_notice_history", None)
+            if fn:
+                fn()
+                event.stop()
+                return
         # 수동 닫기 가능한 메시지(remote-attach 핸드셰이크 실패 등)는 메시지가 줄
         # 전체를 덮으므로 아무 데나 클릭/터치하면 즉시 닫는다(요청).
         if self.message is not None and getattr(self.app, "_msg_dismissable", False):

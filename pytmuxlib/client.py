@@ -24,7 +24,8 @@ from textual.binding import Binding
 from textual.geometry import Offset
 from textual.suggester import SuggestFromList
 
-from . import cellwidth, clientclip, clientrender, i18n, ipc, plugins, proc, version
+from . import (cellwidth, clientclip, clientnotices, clientrender, i18n, ipc,
+               plugins, proc, version)
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_ARGHIST, COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS,
     DEFAULT_STYLE, norm_sep,
@@ -42,6 +43,7 @@ from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 
     ChooseBufferScreen, ChooseLayoutScreen, ChooseTreeScreen,
     CommandListScreen, CommandOptionsScreen, ComposePromptScreen, ConfirmScreen,
     InfoScreen, InfoTabsScreen, MenuScreen, MergeRemoteTabScreen,
+    NoticeHistoryScreen,
     PluginManagerScreen, PromptScreen, SettingsScreen, TabSwitcherScreen)
 from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose·ghost suggester)
     MultiplexerView, SepInsensitiveSuggester, StatusBar, TabBar,
@@ -213,14 +215,20 @@ class _StatusFocusMixin:
         btns = []
         # 수동 닫기 메시지(remote-attach 핸드셰이크 실패 등)가 떠 있으면 줄 전체를
         # 덮으므로, 그때는 메시지 닫기('msg')만 포커스 대상으로 둔다(요청).
+        # §10-8: 메시지가 줄을 덮는 동안에도 **이력으로 갈 수 있어야** 하므로
+        # 배지가 그려져 있으면 'notices' 를 함께 준다(msg 의 Enter=닫기는 그대로).
         if sb.message is not None and getattr(self, "_msg_dismissable", False):
-            return ["msg"]
+            return (["msg", "notices"] if getattr(sb, "_notices_zone", None)
+                    else ["msg"])
         if getattr(sb, "_model_zone", None):
             btns.append("model")
         if getattr(sb, "_usage_zone", None):
             btns.append("usage")
         if getattr(sb, "_rec_zone", None):
             btns.append("rec")
+        # §10-8 알림 이력 배지 — 우측 배지열의 **왼쪽 끝**(시각 순서 = 순환 순서 규칙).
+        if getattr(sb, "_notices_zone", None):
+            btns.append("notices")
         if getattr(sb, "_host_zone", None):
             btns.append("host")
         if getattr(sb, "_clock_zone", None):
@@ -274,6 +282,8 @@ class _StatusFocusMixin:
             self._exit_esc()
             if cur == "msg":
                 self._dismiss_message()   # 메시지 위에서 Enter → 즉시 닫기(요청)
+            elif cur == "notices":
+                self.open_notice_history()   # §10-8 지나간 알림 다시 보기
             elif cur == "model":
                 # 모델 팝업은 claude-code 플러그인이 설치(없으면 no-op).
                 fn = getattr(self, "open_model_config", None)
@@ -580,6 +590,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 안 되는 알림은 3초 유지 + 클릭/Enter 로 즉시 닫기).
             self._msg_timer = None
             self._msg_dismissable = False
+            # §10-8 알림 이력(클라 메모리 링버퍼, 비영속). 표시된 알림은 사라져도
+            # 여기 남아 상태줄 배지(미확인 수·최고 등급 색)와 이력 팝업이 읽는다.
+            self._notices = clientnotices.NoticeHistory()
             self._tab_close_zone = None  # 현재 탭 닫기 [x] 영역 (x0, x1, y)
             self._drag_split = None      # 탭→패널 드래그 미리보기 (pane_id, orient)(#19)
             self._undim_rows = set()     # 팝업 dim 에서 제외할 콘텐츠 행(클릭 원천, #29)
@@ -1252,9 +1265,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # (실패 알림은 3초 유지 + 클릭/Enter 닫기, 아래 serverio).
                 # 서버는 로케일을 모르므로(per-user 클라-로컬) key(rnotice.*)+kw 를
                 # 실어 보낸다 — 여기서 자기 로케일로 번역한다. text 는 한국어 폴백.
-                self.display_message(self._notice_text(msg),
-                                     secs=float(msg.get("secs", 2.0)),
-                                     dismissable=bool(msg.get("dismissable")))
+                # §10-8: 서버가 실은 등급(sev)이 색·기호를 정한다. 모르는 값이면
+                # clientnotices.normalize 가 info 로 낮춘다(구/신 버전 혼재 안전).
+                # secs/dismissable 는 서버가 실은 값이 우선, 없으면 등급 기본값.
+                _sev = msg.get("sev")
+                self.display_message(
+                    self._notice_text(msg),
+                    secs=(float(msg["secs"]) if msg.get("secs") is not None
+                          else None),
+                    dismissable=(bool(msg["dismissable"])
+                                 if msg.get("dismissable") is not None else None),
+                    severity=_sev, source="server")
             elif t == "captured":
                 self.display_message(i18n.t("msg.captured_chars",
                                             n=msg.get('chars', 0)))
@@ -1567,9 +1588,28 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return i18n.t(key, default=str(msg.get("text", "")), **kw)
             return str(msg.get("text", ""))
 
-        def display_message(self, text, secs=2.0, dismissable=False):
+        def display_message(self, text, secs=None, dismissable=None,
+                            severity=clientnotices.DEFAULT_SEVERITY,
+                            source="local"):
+            """상태줄 한 줄 알림(§10-8). `severity` 가 색·기호·기본 유지시간·수동
+            닫기 여부를 정한다 — 호출부가 매번 정하지 않게 등급 기본값을 쓰고,
+            `secs`/`dismissable` 를 명시하면 그쪽이 이긴다(기존 호출부 동작 보존:
+            등급 미지정 = info = 종전과 같은 2초·자동 닫힘).
+
+            표시와 **동시에 이력에 적는다** — 2초 뒤 사라져도 배지·이력 팝업으로
+            되짚을 수 있어야 한다는 것이 이 기능의 요구다."""
+            sev = clientnotices.normalize(severity)
+            if secs is None:
+                secs = clientnotices.default_secs(sev)
+            if dismissable is None:
+                dismissable = clientnotices.default_dismissable(sev)
+            # 이력은 **번역이 끝난 최종 문구**로 남긴다(키+kw 로 저장하면 로케일을
+            # 바꿨을 때 이력이 뒤섞인다 — 설계 §4).
+            self._notices.add(text, sev, source)
             self.status.message = text
+            self.status.message_sev = sev
             self._msg_dismissable = dismissable
+            self._refresh_notice_badge()
             self.status.refresh()
             # 이전 메시지 타이머가 살아 있으면 멈춘다 — 새 메시지를 옛 타이머가
             # 조기에 지우지 않도록(수동 닫기 dismissable 메시지에서 특히 중요).
@@ -1579,6 +1619,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def _clear_message(self):
             self.status.message = None
+            self.status.message_sev = clientnotices.DEFAULT_SEVERITY
             self._msg_dismissable = False
             self._msg_timer = None
             # 메시지가 ESC 모드 하단 포커스 대상이었으면 포커스도 해제(잔상 방지).
@@ -1592,6 +1633,24 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if self._msg_timer is not None:
                 self._msg_timer.stop()
             self._clear_message()
+
+        # ---- §10-8 알림 이력(배지·팝업) ----
+        def _refresh_notice_badge(self):
+            """상태줄 미확인 배지 상태(수·최고 등급 색)를 이력에서 다시 계산한다.
+            이력이 비었거나 전부 확인됐으면 배지는 그려지지 않는다(빈 배지는 소음)."""
+            sb = self.status
+            sb.notices_n = self._notices.unseen()
+            sb.notices_sev = self._notices.unseen_severity()
+            sb.notices_total = len(self._notices)
+
+        def open_notice_history(self):
+            """지나간 알림 이력 팝업(상태줄 배지 클릭·ESC 모드 `notices` Enter).
+            여는 순간 전부 '확인'으로 돌려 배지 색이 평시로 돌아간다."""
+            entries = self._notices.entries()
+            self._notices.mark_seen()
+            self._refresh_notice_badge()
+            self.status.refresh()
+            self.push_screen(NoticeHistoryScreen(entries))
 
         def _restart_status_timer(self):
             if self._status_timer is not None:
