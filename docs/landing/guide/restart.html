@@ -53,6 +53,14 @@
         <div class="callout">
           권장 절차는 <code class="nb">restart-check</code> 로 먼저 확인한 뒤 재시작하는 것입니다.
         </div>
+        <p>
+          <strong>서버가 비정상으로 끝났다면.</strong> 셸을 담은 그릇(pty-host)은 서버보다 오래 살도록
+          <strong>일부러</strong> 분리돼 있어, 서버가 강제 종료되면 그 그릇만 남을 수 있습니다. 이제 그릇은
+          <strong>자기를 띄운 서버가 사라진 것을 스스로 확인</strong>하고 잠시(기본 1분) 기다린 뒤 안의 셸까지
+          정리하고 종료합니다. 서버가 살아 있는 동안에는 스스로 종료하지 않으므로 재시작·재접속에는 영향이 없습니다.
+          기다리지 않고 즉시 정리하려면 <code class="nb">pytmux kill-server</code> 를 쓰면 되고,
+          이 자동 정리를 끄려면 환경변수 <code class="nb">PYTMUX_PTYHOST_GRACE=0</code> 로 둡니다.
+        </p>
       </section>
 
       <section>

@@ -59,6 +59,27 @@
       </div>
     </header>
 
+    <section class="cl-day" id="d-2026-07-24">
+      <h2>2026-07-24 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/c0f585c1b73ba2bec9f607e25e9b93fa616c6776.zip" rel="noopener" title="2026-07-24 마지막 소스 커밋(c0f585c) 시점 소스 zip">zip ⬇</a></h2>
+      <ul>
+        <li><span class="pill stable">Windows</span> <strong>pytmux 를 끝낸 뒤에도 백그라운드에 남아 있던 <span class="inline-code">pty-host</span> 프로세스가 이제 <span class="inline-code">스스로 정리</span>됩니다.</strong>
+          Windows 에서는 셸을 담고 있는 그릇(ConPTY)을 <strong>서버와 분리된 별도 프로세스</strong>가 들고 있습니다 — 그래야
+          <a href="guide/restart">서버만 새 코드로 갈아끼워도</a> 열려 있던 셸이 끊기지 않기 때문입니다.
+          그런데 그 프로세스를 끝내는 신호는 <strong>서버가 정상적으로 내려갈 때 보내는 것 하나뿐</strong>이라,
+          서버가 <strong>강제로 종료</strong>되거나(작업 관리자에서 끝내기 등) 예기치 않게 죽으면
+          그릇도, 그 안의 <strong>셸도 함께 계속 살아</strong> 있었습니다. 껐다고 생각한 뒤에도 목록에 남아 있던 게 이것입니다.
+          이제는 <strong>자기를 띄운 서버가 사라진 것을 스스로 알아채고</strong>, 잠시 기다렸다가(기본 1분 — 그 사이 서버가 다시 뜨면 그대로 이어집니다)
+          안에 있던 셸까지 정리하고 종료합니다. <strong>서버가 살아 있는 동안에는 절대 스스로 종료하지 않습니다</strong> — 재시작·재접속 중인 세션을 건드리지 않기 위해서입니다.</li>
+        <li><span class="pill stable">Windows</span> <strong>서버가 이미 없을 때 친 <span class="inline-code">pytmux kill-server</span> 도 이제 남아 있는 것을 정리합니다.</strong>
+          예전에는 <span class="inline-code">실행 중인 서버 없음</span> 한 줄만 나오고 <strong>남은 프로세스는 그대로</strong>였습니다 — 손으로 찾아 끝내는 것 말고는 방법이 없었습니다.
+          이제 같은 명령이 남아 있던 그릇과 그 안의 셸까지 함께 정리하고 그 사실을 알려 줍니다.</li>
+        <li><span class="pill stable">안정</span> <strong>서버가 죽은 뒤 다시 켰을 때, 새 탭이 <span class="inline-code">지난 세션의 셸을 물려받던</span> 문제를 고쳤습니다.</strong>
+          살아남은 그릇 안에 옛 셸이 남아 있으면, 새로 만든 첫 패널이 <strong>새 셸을 띄우는 대신 그 옛 셸에 그대로 연결</strong>돼
+          남의 작업 상태가 이어져 보일 수 있었습니다. 이제 새 패널은 항상 새 셸을 얻고,
+          <strong>아무도 쓰지 않는 옛 셸은 정리</strong>됩니다(단, 다른 서버가 쓰고 있을 수 있는 경우에는 손대지 않습니다).</li>
+      </ul>
+    </section>
+
     <section class="cl-day" id="d-2026-07-23">
       <h2>2026-07-23 <span class="pill">목요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/aad0f70c3c6eab312ea23fe40c3d72ff3d7b5d11.zip" rel="noopener" title="2026-07-23 마지막 소스 커밋(aad0f70) 시점 소스 zip">zip ⬇</a></h2>
       <ul>
