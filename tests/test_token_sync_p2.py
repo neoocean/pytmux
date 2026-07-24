@@ -244,6 +244,9 @@ async def test_forged_records_are_rejected_without_polluting_db():
 
 
 async def test_not_enrolled_is_its_own_error():
+    if not syncrypto.available():
+        from run import skip
+        skip("cryptography 미설치 — push_limits 의 로컬 봉인이 NotEnrolled 판정보다 먼저 실행됨")
     app, clock = _server()
     d = tempfile.mkdtemp(prefix="pytmux-sync-n-")
     conn = usagedb.connect(os.path.join(d, "t.db"))
@@ -368,6 +371,9 @@ async def test_worker_records_error_and_backs_off():
 async def test_configure_persists_and_validates_url():
     """opts.json 직접 편집은 서버가 다음 저장 때 덮어쓴다 — 그래서 설정 변경은
     configure() 를 지나야 하고, 여기서 opts 영속까지 끝나야 한다."""
+    if not syncrypto.available():
+        from run import skip
+        skip("cryptography 미설치 — configure(mode=server) 가 설계상 즉시 거부")
     saved = []
 
     class S:
@@ -410,6 +416,9 @@ async def test_configure_persists_and_validates_url():
 async def test_configure_clears_stale_error():
     """설정을 바꾸면 옛 실패 사유는 사실이 아니다 — status 가 고쳐진 뒤에도 옛 오류를
     보여 주면 사용자가 고장으로 오해한다(실기동에서 그랬다)."""
+    if not syncrypto.available():
+        from run import skip
+        skip("cryptography 미설치 — configure(mode=server) 가 설계상 즉시 거부")
     d = tempfile.mkdtemp(prefix="pytmux-sync-cfg-")
     conn = usagedb.connect(os.path.join(d, "t.db"))
     usagedb.set_sync_remote(conn, tokensync.SyncClient.REMOTE,
@@ -495,6 +504,9 @@ async def test_client_for_uses_real_server_contract():
 
     그래서 실제 Server(플러그인 믹스인 합성본)로 이 경로를 밟는다 — 스텁을 만들면
     같은 실수를 스텁이 따라 해 또 초록불이 된다."""
+    if not syncrypto.available():
+        from run import skip
+        skip("cryptography 미설치 — configure(mode=server) 가 설계상 즉시 거부")
     from harness import server_only, teardown
     srv, task, sock = await server_only()
     try:
@@ -700,6 +712,9 @@ async def test_default_server_needs_no_configuration():
     켜져 있어도 **등록 전에는 네트워크 요청이 나가지 않는다**(NotEnrolled 에서 HTTP
     이전에 멈춘다). 그래서 기본값을 들고만 있는 머신은 트래픽이 0 이다 — 이 성질이
     깨지면 남의 서버를 두드리게 되므로 회귀로 못박는다."""
+    if not syncrypto.available():
+        from run import skip
+        skip("cryptography 미설치 — push_limits/pull 의 로컬 봉인이 NotEnrolled 판정보다 먼저 실행됨")
     keys = dict((k, (d, c)) for k, d, c in
                 __import__("importlib").import_module(
                     "pytmuxlib.plugins.claude-code")._ClaudeCodePlugin._OPTS_KEYS)

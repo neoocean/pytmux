@@ -61,7 +61,11 @@ class FakeAuthenticator:
     """진짜 키로 진짜 서명하는 테스트 인증기(ES256 기본, Ed25519 선택)."""
 
     def __init__(self, alg=wa.ALG_ES256, rp_id=RP_ID):
-        from cryptography.hazmat.primitives.asymmetric import ec, ed25519
+        try:
+            from cryptography.hazmat.primitives.asymmetric import ec, ed25519
+        except ImportError:
+            from run import skip
+            skip("cryptography 미설치 — WebAuthn 서명 경로 미검증(soft dep)")
         self.alg = alg
         self.rp_id = rp_id
         self.cred_id = os.urandom(20)

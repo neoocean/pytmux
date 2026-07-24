@@ -240,6 +240,10 @@ async def test_cannot_revoke_other_vault_device():
 # ── 페어링·챌린지 1회성 ────────────────────────────────────────────────────
 
 async def test_pairing_code_is_single_use_and_expires():
+    from pytmuxlib import syncrypto
+    if not syncrypto.available():
+        from run import skip
+        skip("cryptography 미설치 — WebAuthn 서명 경로 미검증(soft dep)")
     from cryptography.hazmat.primitives import serialization as ser
     from cryptography.hazmat.primitives.asymmetric import ed25519
     app, clock = _app()
@@ -426,6 +430,10 @@ async def test_handles_requests_from_other_threads():
     (실측: 브라우저 로그인이 'internal'). handle() 을 다른 스레드에서 불러 못박는다.
 
     되돌리면(check_same_thread 기본값) 이 테스트가 실패한다."""
+    from pytmuxlib import syncrypto
+    if not syncrypto.available():
+        from run import skip
+        skip("cryptography 미설치 — WebAuthn 서명 경로 미검증(soft dep)")
     import queue
     import threading
 

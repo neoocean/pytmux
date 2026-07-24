@@ -235,6 +235,10 @@ async def test_host_preauth_frame_cap_rejects_oversized_advertisement():
     host 가 고갈되면 다음 서버 재시작 때 재연결이 실패해 **살아있던 셸 전부가 소멸**한다
     — host 모드의 존재 이유 그 자체가 파괴된다. 메인 서버는 같은 방어를 2026-07-03(M2)
     부터 갖췄는데 pty-host 만 남아 있었다."""
+    if pty_backend.IS_WINDOWS:
+        from run import skip
+        skip("asyncio AF_UNIX 미지원(Windows) — 루프백 TCP 경로는 "
+             "test_host_tcp_loopback_token_enforced 가 검증")
     d = tempfile.mkdtemp(prefix="pytmux-hostcap-")
     tf = os.path.join(d, "tok")
     with open(tf, "w") as f:
@@ -266,6 +270,10 @@ async def test_host_preauth_handshake_timeout_reaps_silent_conn():
 
     회귀 전: 타임아웃이 없어 무인가 slowloris 연결이 **무기한** 상주했다(메인 서버는
     HANDSHAKE_TIMEOUT 으로 이미 방어)."""
+    if pty_backend.IS_WINDOWS:
+        from run import skip
+        skip("asyncio AF_UNIX 미지원(Windows) — 루프백 TCP 경로는 "
+             "test_host_tcp_loopback_token_enforced 가 검증")
     d = tempfile.mkdtemp(prefix="pytmux-hosttmo-")
     tf = os.path.join(d, "tok")
     with open(tf, "w") as f:
