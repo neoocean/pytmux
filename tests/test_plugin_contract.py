@@ -502,6 +502,10 @@ async def test_cli_token_sync_configures_and_persists():
     설정을 opts.json 으로 직접 고치는 우회는 **서버가 다음 저장 때 덮어써** 조용히
     되돌아간다(실기동에서 두 번 물렸다). 그래서 설정 변경은 코드 경로를 지나야 하고,
     그 경로가 CLI 에도 있어야 헤드리스 머신을 붙일 수 있다."""
+    from pytmuxlib import syncrypto
+    if not syncrypto.available():
+        from run import skip
+        skip("cryptography 미설치 — configure(mode=server) 가 설계상 즉시 거부")
     srv, task, sock = await server_only()
     try:
         srv.new_session(80, 24)

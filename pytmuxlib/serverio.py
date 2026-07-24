@@ -658,9 +658,17 @@ class ServerIOMixin:
     # ---- 명령 처리 ----
     async def _handle_cmd(self, client: ClientConn, msg: dict):
         sess = client.session
-        if not sess:
-            return
         action = msg.get("action")
+        if not sess:
+            # exit_empty=off 로 서버가 세션 0개인 채 살아있으면(§10-10
+            # REMOTE_SERVER_EXIT_EMPTY), 이미 붙어 있던 클라(대개 federation 링크)의
+            # session 이 _drop_session 에서 None 으로 재배정된 채 남는다.
+            # new_window(remote-new-tab 릴레이)만은 그 자리에서 새 세션을 만들어
+            # 이어준다 — 다른 action 은 세션 없이 의미가 없어 그대로 무시한다.
+            if action != "new_window":
+                return
+            sess = client.session = self.ensure_default_session(
+                client.cols, client.rows)
         # §1.7 페더레이션 진입/해제·릴레이 — 다른 분기보다 먼저:
         # ① remote_attach/remote_detach 는 어디서든 로컬 처리.
         # ② select_window 는 병합 전역 index 공간 — 원격 index 면 보기 진입(릴레이),

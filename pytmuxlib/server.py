@@ -170,6 +170,14 @@ class Server(*_SERVER_BASES):
         # 원격 탭 전환. off=무 ack(원격은 현행 거부 폴백). 기본 ON, opts.json 영속.
         # 토글: 클라 명령/`pytmux cmd nest-auto-attach on|off`.
         self.nest_auto_attach = bool(_opts.get("nest_auto_attach", True))
+        # tmux exit-empty 동형(REMOTE_SERVER_EXIT_EMPTY_2026-07-24, HANDOFF §10-10):
+        # 세션이 0개가 돼도 서버를 죽일지. 기본 True=현행 동작(마지막 탭 exit 시
+        # 서버 자멸) 그대로 보존 — 원격 박스에 서버를 상주시키고 싶은 사용자만
+        # `:set exit-empty off` 로 opt-in. off 면 세션 소멸형 3곳(kill_window/
+        # kill_session/마지막 pane exit)의 _notify_no_sessions 만 억제되고, 명시
+        # kill-server·재시작 실패 폴백은 옵션 무관 항상 종료(server.py 의
+        # `_ONOFF_CONTROLS`·servercmd.py `_CMD_TABLE` 참조).
+        self.exit_empty = bool(_opts.get("exit_empty", True))
         # 연합 ssh egress 허용목록(S2 후속, 특권 설정). remote_attach/remote_new_window
         # 의 host 는 cmd 프레임을 보낼 수 있는 클라가 정하는 **비신뢰** 문자열이라(이미
         # 옵션 인젝션은 _remote_transport 에서 차단) 데몬의 ssh 목적지를 임의로 조종할
@@ -409,6 +417,13 @@ class Server(*_SERVER_BASES):
         self._save_opts()
         return self.nest_auto_attach
 
+    def set_exit_empty(self, value=None):
+        """tmux exit-empty 동형 토글. value 미지정 시 반전. opts.json 영속.
+        off(False)=세션 0개여도 서버 상주(원격 federation 링크 보존용)."""
+        self.exit_empty = (not self.exit_empty) if value is None else bool(value)
+        self._save_opts()
+        return self.exit_empty
+
     def set_vt_parser(self, value):
         """VT 파서 백엔드 선택("pyte"|"native"). 다른 값은 무시(현행 유지). opts.json
         영속. **재시작 시 발효** — 기존 패널은 startup/복원 때 패널별 토크나이저가
@@ -499,6 +514,7 @@ class Server(*_SERVER_BASES):
         "coalesce": "set_coalesce_repaints",
         "nest-auto-attach": "set_nest_auto_attach",
         "nest-attach": "set_nest_auto_attach",
+        "exit-empty": "set_exit_empty",
     }
 
     def handle_control(self, line: str):

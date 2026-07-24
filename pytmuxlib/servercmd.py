@@ -365,6 +365,12 @@ class ServerCmdMixin:
         # 렌더 변화 없음. value=None 이면 반전(클라 toggle).
         self.set_nest_auto_attach(msg.get("value"))
 
+    @_cmd("set_exit_empty", FULL)
+    async def _cmd_set_exit_empty(self, client, sess, msg):
+        # tmux exit-empty 동형 토글(§10-10) — 서버 내부 동작이라 클라 렌더 변화
+        # 없음. value=None 이면 반전(클라 toggle).
+        self.set_exit_empty(msg.get("value"))
+
     @_cmd("set_vt_parser", FULL)
     async def _cmd_set_vt_parser(self, client, sess, msg):
         # VT 파서 백엔드("pyte"|"native") 선택. 재시작 시 발효(라이브 패널 즉시
@@ -389,8 +395,11 @@ class ServerCmdMixin:
             if self.sessions:
                 client.session = next(iter(self.sessions.values()))
                 await self._send_full(client)
-            else:
+            elif self.exit_empty:
                 self._notify_no_sessions()
+            # exit_empty=off: 서버 유지(§10-10). client.session 은 이미 _drop_session
+            # 이 None 으로 재배정했다 — 다음 new_window 릴레이가 새 세션을 만든다
+            # (serverio._handle_cmd).
             return
         await self._send_full(client)
 
@@ -421,7 +430,10 @@ class ServerCmdMixin:
         name = str(msg.get("name") or sess.name)
         self.kill_session(name)
         if not self.sessions:
-            self._notify_no_sessions()
+            if self.exit_empty:
+                self._notify_no_sessions()
+            # exit_empty=off: 서버 유지(§10-10) — 위 kill_session→_drop_session 이
+            # 이미 관련 클라를 session=None 으로 재배정했다.
             return
         for c in self.clients:
             await self._send_full(c)

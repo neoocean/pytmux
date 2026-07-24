@@ -705,7 +705,7 @@ class ServerPersistMixin:
     _PERSISTED_OPT_KEYS = (
         "single_border", "win_mouse_motion", "coalesce_repaints",
         "nest_auto_attach", "usage_refresh_sec", "vt_parser",
-        "window_size",
+        "window_size", "exit_empty",
     )
 
     def _save_opts(self):

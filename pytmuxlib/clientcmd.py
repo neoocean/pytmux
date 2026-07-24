@@ -798,6 +798,13 @@ class _CommandMixin:
             arg = args[0].lower() if args else "toggle"
             val = (arg == "on") if arg in ("on", "off") else None
             self.send_cmd("set_nest_auto_attach", value=val)
+        elif c == "exit-empty":
+            # exit-empty [on|off|toggle] — tmux exit-empty 동형(§10-10). on(기본)
+            # =세션 0개면 서버 종료, off=원격 federation 링크 보존용 상주. 서버
+            # 내부 동작이라 클라 렌더 변화 없음. opts.json 영속, 인자 없으면 toggle.
+            arg = args[0].lower() if args else "toggle"
+            val = (arg == "on") if arg in ("on", "off") else None
+            self.send_cmd("set_exit_empty", value=val)
         elif c in ("window-size", "winsize"):
             # window-size [smallest|latest|largest] — 다중 클라 미러링 시 세션 공유
             # 격자 크기 규칙(tmux window-size 동형). 인자 없으면 순환 토글(서버가 반전).

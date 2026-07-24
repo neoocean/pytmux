@@ -78,7 +78,7 @@ class ServerTreeMixin:
                         win.active_pane = sibling.first_pane()
                 win.invalidate_panes()  # §4.6: 리프 제거 → panes() 캐시 무효화
                 self._broadcast_session(sess)
-                if not self.sessions:
+                if not self.sessions and self.exit_empty:
                     self._notify_no_sessions()
                 return
 

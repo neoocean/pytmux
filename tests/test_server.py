@@ -1511,7 +1511,7 @@ async def test_command_table_disposition_golden():
         "rename_window": FULL, "set_auto_rename": FULL, "set_monitor": FULL,
         "set_single_border": FULL, "set_window_size": FULL,
         "set_win_mouse_motion": FULL, "set_coalesce": FULL,
-        "set_nest_auto_attach": FULL, "set_vt_parser": FULL,
+        "set_nest_auto_attach": FULL, "set_exit_empty": FULL, "set_vt_parser": FULL,
         "set_plugin_enabled": HANDLED,
         # 윈도우/세션 종료
         "kill_window": HANDLED, "rename_session": FULL, "new_session": HANDLED,
@@ -5695,5 +5695,140 @@ async def test_session_death_reassigns_every_client():
                     if c in srv.clients:
                         srv.clients.remove(c)
                 srv.sessions.pop(B.name, None)
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_exit_empty_default_true_still_shuts_down():
+    """§10-10(REMOTE_SERVER_EXIT_EMPTY): `exit_empty` 기본값(True)은 현행 동작을
+    그대로 보존한다 — 마지막 세션이 사라지면 종전대로 `_notify_no_sessions` 가 뜬다.
+    이 회귀가 깨지면 옵션을 켜지 않은 기존 사용자의 서버가 더는 안 죽어 상주하게
+    된다(조용한 동작 변경). 실제 `shutdown()` 은 안 태우게 스텁으로 관측만 한다
+    (§5.6 execv 폴백 테스트와 동일 관례)."""
+    srv, task, sock = await server_only()
+    try:
+        assert srv.exit_empty is True, "기본값이 tmux exit-empty 동형(True)이 아님"
+        calls = {"n": 0}
+        srv._notify_no_sessions = lambda: calls.__setitem__("n", calls["n"] + 1)
+
+        sess = srv.ensure_default_session(80, 24)
+        pane = sess.tabs[0].window.panes()[0]
+        srv._remove_pane_from_tree(pane)
+        assert not srv.sessions and calls["n"] == 1, \
+            "exit_empty 기본값에서 마지막 pane exit 이 서버를 안 죽이려 함"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_exit_empty_off_keeps_server_alive_across_kill_paths():
+    """§10-10: `exit_empty=False` 면 세션이 0개가 돼도 서버가 안 죽는다 — 세 게이트
+    지점(`_remove_pane_from_tree`·`kill_window` cmd·`kill_session` cmd) 전부.
+    `kill_server`/명시 종료는 옵션과 무관하게 항상 죽어야 하므로 별도로 확인한다."""
+    srv, task, sock = await server_only()
+    try:
+        srv.exit_empty = False
+        calls = {"n": 0}
+        srv._notify_no_sessions = lambda: calls.__setitem__("n", calls["n"] + 1)
+
+        # ① 마지막 pane exit(_remove_pane_from_tree)
+        sess = srv.ensure_default_session(80, 24)
+        pane = sess.tabs[0].window.panes()[0]
+        srv._remove_pane_from_tree(pane)
+        assert not srv.sessions and calls["n"] == 0, \
+            "exit_empty=off 인데 마지막 pane exit 이 서버를 죽이려 했다"
+        assert srv.running is True
+
+        # ② kill_window cmd 핸들러(HANDLED 경로)
+        from pytmuxlib.model import ClientConn
+
+        class _W:
+            def write(self, *_a):
+                pass
+
+            async def drain(self):
+                pass
+
+            def close(self):
+                pass
+
+        sess2 = srv.ensure_default_session(80, 24)
+        client = ClientConn(_W())
+        client.session = sess2
+        client.cols, client.rows = 80, 24
+        srv.clients.append(client)
+        await srv._handle_cmd(client, {"t": "cmd", "action": "kill_window"})
+        assert not srv.sessions and calls["n"] == 0, \
+            "exit_empty=off 인데 kill_window cmd 가 서버를 죽이려 했다"
+        assert client.session is None, "세션 소멸 후 client.session 이 재배정 안 됨"
+
+        # ③ kill_session cmd 핸들러(HANDLED 경로)
+        sess3 = srv.ensure_default_session(80, 24)
+        client.session = sess3
+        await srv._handle_cmd(client, {"t": "cmd", "action": "kill_session"})
+        assert not srv.sessions and calls["n"] == 0, \
+            "exit_empty=off 인데 kill_session cmd 가 서버를 죽이려 했다"
+
+        # ④ 대조군 — 명시 kill-server 는 옵션 무관 항상 종료 신호를 보낸다(세션이
+        # 있어야 `_handle_cmd` 가 통과시킨다 — 세션 없는 클라의 kill_server 프레임은
+        # 애초에 §2-3 게이트 밖이라 이 테스트 관심사가 아니다).
+        client.session = srv.ensure_default_session(80, 24)
+        await srv._handle_cmd(client, {"t": "cmd", "action": "kill_server"})
+        assert calls["n"] == 1, "kill_server 는 exit_empty=off 여도 항상 종료해야 함"
+    finally:
+        srv.clients.clear()
+        await teardown(srv, task, sock)
+
+
+async def test_new_window_recreates_session_for_sessionless_client():
+    """§10-10 §2-3: `exit_empty=off` 로 서버가 세션 0개인 채 살아있을 때, 이미 붙어
+    있던 클라(federation 링크 대역)의 `session` 이 `_drop_session` 으로 None 이 된
+    채 남는다. 그 클라로 온 `new_window` 릴레이는 그 자리에서 새 세션을 만들어
+    이어줘야 한다(수정 전엔 `if not sess: return` 로 조용히 no-op — silent 실패)."""
+    from pytmuxlib.model import ClientConn
+
+    class _W:
+        def write(self, *_a):
+            pass
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            pass
+
+    srv, task, sock = await server_only()
+    try:
+        client = ClientConn(_W())
+        client.session = None            # SESSION-DEATH 재배정 이후 상태 재현
+        client.cols, client.rows = 80, 24
+        srv.clients.append(client)
+
+        # 세션 없는 채 무관한 action 은 여전히 조용히 무시(새 세션을 함부로 안 만듦).
+        await srv._handle_cmd(client, {"t": "cmd", "action": "resize",
+                                       "ratio": 0.5})
+        assert client.session is None, "resize 가 세션을 함부로 만들었다"
+        assert not srv.sessions
+
+        # new_window 만은 세션을 즉석 생성해 이어준다.
+        await srv._handle_cmd(client, {"t": "cmd", "action": "new_window"})
+        assert client.session is not None, "new_window 가 세션을 재생성하지 않음"
+        assert srv.sessions, "새 세션이 서버 레지스트리에 없음"
+        assert len(client.session.tabs) >= 1
+    finally:
+        srv.clients.clear()
+        await teardown(srv, task, sock)
+
+
+async def test_set_exit_empty_toggle_and_persistence():
+    """§10-10: `set_exit_empty` 토글(value=None=반전)과 opts.json 영속 키 등록."""
+    from pytmuxlib import serverpersist
+    assert "exit_empty" in serverpersist.ServerPersistMixin._PERSISTED_OPT_KEYS
+    srv, task, sock = await server_only()
+    try:
+        assert srv.exit_empty is True
+        assert srv.set_exit_empty(False) is False
+        assert srv.exit_empty is False
+        assert srv.set_exit_empty() is True, "value=None 은 반전이어야 함"
+        assert srv.set_exit_empty(False) is False
     finally:
         await teardown(srv, task, sock)
