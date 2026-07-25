@@ -81,6 +81,37 @@ def is_local_endpoint(endpoint: str) -> bool:
             or host.startswith("127."))
 
 
+def validate_local_socket(path: str) -> None:
+    """유닉스 소켓 **파일**이 우리 것인지 연결 **전에** 확인한다(fail-closed).
+
+    검수 2026-07-17 PTYH-2(rogue host 토큰 수확)의 POSIX 몫: 종전엔 경로가 누구 것인지
+    보지 않고 connect 한 뒤 **인증 토큰을 실어 보냈다**. 다른 사용자가 그 경로를 선점하면
+    토큰이 그대로 수확된다(같은 uid 프로세스는 토큰 파일 자체를 읽을 수 있어 애초에
+    권한 상승이 아니다 — 실질 위협은 **크로스 유저**다). `_validate_state_dir` 가 상태
+    디렉터리에 하는 것과 같은 규율의 **소켓 버전**이다.
+
+    검사: ①심볼릭 링크 아님(lstat — 링크를 따라가지 않는다) ②소켓 파일임
+    ③현재 uid 소유 ④group/other 권한 비트 없음. Windows(TCP 루프백)에는 등가 검사가
+    없다 — 아무 로컬 프로세스나 에페메럴 포트를 선점할 수 있고 그건 **상호인증**으로만
+    닫힌다(검수 문서 §10: hello 순서 호환 제약 때문에 유보 유지). 파일이 없으면
+    통과시킨다 — 그건 이 함수의 관심사가 아니라 connect 가 낼 오류다."""
+    if IS_WINDOWS:
+        return
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return
+    if _stat.S_ISLNK(st.st_mode):
+        raise RuntimeError(f"소켓 경로가 심볼릭 링크임(보안상 거부): {path}")
+    if not _stat.S_ISSOCK(st.st_mode):
+        raise RuntimeError(f"소켓이 아닌 파일임(보안상 거부): {path}")
+    if st.st_uid != os.getuid():
+        raise RuntimeError(f"소켓 소유자가 현재 사용자가 아님(보안상 거부): {path}")
+    if _stat.S_IMODE(st.st_mode) & 0o077:
+        raise RuntimeError(
+            f"소켓이 다른 사용자에게 열려 있음(보안상 거부): {path}")
+
+
 def _validate_state_dir(path: str) -> None:
     """상태 디렉터리가 안전한지 검증한다(F3, docs/internal/SECURITY_REVIEW.md).
 

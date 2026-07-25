@@ -53,6 +53,13 @@ class PtyHostClient:
     async def connect(self, endpoint: str, token: str | None = None):
         kind = ipc.parse_endpoint(endpoint)
         if kind[0] == "unix":
+            # PTYH-2(검수 2026-07-17, 재평가 07-25): **토큰을 보내기 전에** 이 소켓이
+            # 우리 것인지 확인한다 — 다른 사용자가 경로를 선점하면 auth 프레임을 그대로
+            # 수확할 수 있다. fail-closed(예외 → 연결 안 함). Windows(TCP)에는 등가
+            # 검사가 없어 상호인증 전까지 열려 있다(검수 문서 §10).
+            _vs = getattr(ipc, "validate_local_socket", None)
+            if _vs is not None:
+                _vs(kind[1])
             r, w = await asyncio.open_unix_connection(kind[1])
         else:
             r, w = await asyncio.open_connection(kind[1], kind[2])

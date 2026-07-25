@@ -152,8 +152,15 @@ class PtyHost:
             return
         self._preauth_conns += 1
         try:
-            await proto.write_frame(writer, proto.encode_json(
-                {"op": "hello", "version": proto.PROTO_VERSION, "pid": os.getpid()}))
+            # PTYH-3(검수 2026-07-17, 재평가 07-25): 이 배너는 **인증 전**에 나가야
+            # 한다(구 client 는 hello 를 먼저 읽고 그 다음 auth 를 보낸다 — 순서를
+            # 뒤집으면 신 host × 구 client 가 데드락하고, 그 조합이 정확히 세션유지
+            # 재시작 경로다). 그래서 순서는 두고 **지문만 뺐다**: 종전엔 프로토콜
+            # 버전과 host 실 PID 를 실어 스캐너에 그대로 줬는데, 전 저장소 grep 결과
+            # 둘 다 소비자가 없다(`PtyHostClient.host_pid` 는 대입만 되고 아무도 읽지
+            # 않는다). 구 client 는 `op` 만 검사하므로 빠진 `pid` 는 기본값 -1 이 되고
+            # 동작은 불변이다. 버전 협상이 필요해지면 **auth 이후** 프레임으로 싣는다.
+            await proto.write_frame(writer, proto.encode_json({"op": "hello"}))
             # 인증을 **연결 채택 전에** 한다 — 무인가 접속이 현재 서버 연결을 대체하거나
             # (DoS) pending 출력을 가로채지(정보 노출) 못하게.
             ok = await self._authenticate(reader, writer)
