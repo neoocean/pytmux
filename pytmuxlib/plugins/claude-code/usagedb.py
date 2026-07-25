@@ -142,6 +142,11 @@ CREATE TABLE IF NOT EXISTS account_alias (
 
 _COLS = ("ts", "tab", "pane", "session", "account", "tokens")
 
+# usage_xc.host 가 NULL = **이 머신이 적재한 행**(원산지가 자기라 굳이 안 적는다).
+# 호스트 분해에서 그 덩어리를 가리키는 표시용 키 — 실제 host_id 와 충돌하지 않게
+# `<>` 로 감쌌다(host_id 는 16진 문자열).
+LOCAL_HOST = "<local>"
+
 
 def connect(path: str) -> sqlite3.Connection:
     """DB 연결을 열고(없으면 파일·디렉터리 생성) 스키마/WAL/타임아웃을 보장한다.
@@ -945,10 +950,20 @@ def xc_totals_by_model(conn) -> dict:
     return {r["m"]: int(r["s"]) for r in cur.fetchall()}
 
 
+# 원산지 일자 버킷(P5 §7.1). `'localtime'` = **조회 머신** tz 라, 동기화로 다른 tz
+# 머신의 행이 섞이는 순간 "7월 22일 합계" 가 머신마다 갈린다(적재 머신에선 22일인
+# 것이 조회 머신에선 21일로 밀린다). 행에 실린 원산지 오프셋(tzoff)이 있으면 그
+# **벽시계**로 버킷을 만들고, 없는 레거시 행만 종전 폴백(조회 머신 로컬)을 쓴다 —
+# 클라의 `usagelog.bucket_key(ts, bucket, tzoff)` 와 같은 규칙이다.
+_XC_DAY = ("CASE WHEN tzoff IS NULL "
+           "THEN strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') "
+           "ELSE strftime('%Y-%m-%d', ts + tzoff, 'unixepoch') END")
+
+
 def xc_daily_full(conn) -> dict:
-    """로컬 일자(YYYY-MM-DD)별 full 토큰 합. {day: full}. 일자 뷰 권위 시드용."""
+    """원산지 일자(YYYY-MM-DD)별 full 토큰 합. {day: full}. 일자 뷰 권위 시드용."""
     cur = conn.execute(
-        "SELECT strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') AS day, "
+        "SELECT " + _XC_DAY + " AS day, "
         "COALESCE(SUM(input+output+cache_create+cache_read),0) AS s "
         "FROM usage_xc GROUP BY day")
     return {r["day"]: int(r["s"]) for r in cur.fetchall()}
@@ -960,9 +975,12 @@ def xc_daily_breakdown(conn) -> list:
     클라 usagelog.agg_view/daily_to_records 가 그대로 먹는다(표시 코드 무변경). 차이는
     tokens 가 4항목 full(input+output+cache_create+cache_read)이고 session 은
     pytmux_session(스크랩 usage.session 과 같은 정수 의미)인 점. account/session/model
-    이 NULL 인 레거시 백필 행은 그대로 NULL → 표시층이 unknown 으로 묶는다."""
+    이 NULL 인 레거시 백필 행은 그대로 NULL → 표시층이 unknown 으로 묶는다.
+
+    일자는 **원산지 tz**(_XC_DAY) 기준이다 — 동기화로 들어온 남의 머신 행이 조회
+    머신 tz 로 재분류되면 같은 DB 를 두 머신에서 볼 때 일자 합계가 갈린다(§7.1)."""
     cur = conn.execute(
-        "SELECT strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') AS day, "
+        "SELECT " + _XC_DAY + " AS day, "
         "       account, pytmux_session AS session, tab, pane, model, "
         "       COALESCE(SUM(input+output+cache_create+cache_read), 0) AS tokens "
         "FROM usage_xc "
@@ -983,8 +1001,14 @@ def xc_query_records(conn, limit: int | None = None) -> list:
     """usage_xc 레코드를 usagelog.read 호환 dict(ts/tab/pane/session/account/tokens/
     model)로, ts 오름차순 반환(limit=N 이면 최근 N 건). hour 버킷이 raw 레코드를
     쓰므로(시각 단위 합성 불가) 스크랩 query_records 의 cache 포함 대응물이다. tokens
-    는 full, session 은 pytmux_session."""
+    는 full, session 은 pytmux_session.
+
+    P5 §7.1: **tzoff 를 함께 싣는다** — 클라 `usagelog.aggregate` 가 레코드의 tzoff
+    로 시각 버킷을 만들므로(§3.5①), 이걸 안 실으면 동기화로 들어온 남의 머신 행이
+    조회 머신 벽시계로 재분류돼 시각 뷰가 머신마다 달라진다. 레거시 행(NULL)은 키를
+    생략해 종전 폴백(시스템 로컬)을 유지한다."""
     sel = ("SELECT ts, tab, pane, pytmux_session AS session, account, model, "
+           "tzoff, host, "
            "(input+output+cache_create+cache_read) AS tokens FROM usage_xc ")
     if limit is not None and limit >= 0:
         cur = conn.execute(
@@ -1000,8 +1024,26 @@ def xc_query_records(conn, limit: int | None = None) -> list:
                "tokens": int(r["tokens"])}
         if r["model"] is not None:
             rec["model"] = r["model"]
+        if r["tzoff"] is not None:
+            rec["tzoff"] = int(r["tzoff"])
+        if r["host"] is not None:
+            rec["host"] = r["host"]      # 원산지 머신(호스트 뷰·출처 표기)
         out.append(rec)
     return out
+
+
+def xc_totals_by_host(conn) -> dict:
+    """원산지 머신별 full 토큰. {host: full}. 로컬 적재분(host NULL)은 `_LOCAL_HOST`
+    키로 묶는다 — "이 머신" 이라는 뜻이고, 표시층이 호스트 이름을 붙인다(§7.3).
+
+    동기화를 켜면 상태줄·팝업의 계정 Σ 가 계정 **전역**(다른 머신 포함)으로 뛰는데,
+    그게 어디서 온 값인지 사람이 확인할 수 있어야 한다 — 그 분해가 이 함수다."""
+    cur = conn.execute(
+        "SELECT COALESCE(host, ?) AS h, "
+        "COALESCE(SUM(input+output+cache_create+cache_read),0) AS s "
+        "FROM usage_xc GROUP BY COALESCE(host, ?)",
+        (LOCAL_HOST, LOCAL_HOST))
+    return {r["h"]: int(r["s"]) for r in cur.fetchall()}
 
 
 def xc_totals_by_account(conn) -> dict:

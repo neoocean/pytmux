@@ -22,6 +22,11 @@ from pytmuxlib import i18n
 from pytmuxlib.clientutil import REMOTE_PINK, theme_color
 from . import SAVER_ROWS
 
+# usage_xc.host 가 NULL(=이 머신 적재분)인 덩어리를 가리키는 표시 키.
+# 서버쪽 정본은 usagedb.LOCAL_HOST — 클라 화면이 저장소 모듈을 import 하지
+# 않도록(계층 유지) 문자열만 맞춰 둔다. 회귀가 두 값의 일치를 못박는다.
+_LOCAL_HOST = "<local>"
+
 # §6 ⑤ 플러그인 설정/로그 모달 문자열(token-saver·rules·model·perm·token-log). 정적 문자열은
 # 키=원문 한국어(gettext 식 — 렌더가 t(원문) 로 단순 조회), 포맷 문자열만 pscreen.* semantic
 # 키. SAVER_ROWS 라벨(__init__.py)도 여기서 en 보강(ko 자동 시드). 미등록은 원문 폴백.
@@ -101,6 +106,7 @@ i18n.register({
         "pscreen.tklog_disp": " (표시 {n})",
         # §10-D P6: 트랜스크립트 실측 Σ(캐시 읽기/쓰기 분리) + 스크랩 활동 보조신호.
         "pscreen.tklog_xc": "Σ{full} 실측(캐시 읽기{cr}+쓰기{cc}) · 활동~{scrape}",
+        "pscreen.tklog_host_local": "이 머신",
         "pscreen.tklog_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · p세션 · l한도 u/usage · Esc닫기",
         # 계층 타임라인 트리 구역 구분선(2026-06-21).
         "pscreen.tree_earlier_weeks": "── 이번 달 이전 주 ──",
@@ -170,6 +176,7 @@ i18n.register({
         "pscreen.tklog_scope": "{sigma}",
         "pscreen.tklog_disp": " (shown {n})",
         "pscreen.tklog_xc": "Σ{full} real (cache r{cr}+w{cc}) · activity~{scrape}",
+        "pscreen.tklog_host_local": "this machine",
         "pscreen.tklog_hint": "↑↓ move · Enter/←→ expand·collapse · p session · l limit u /usage · Esc close",
         "pscreen.tree_earlier_weeks": "── earlier weeks this month ──",
         "pscreen.tree_earlier_months": "── earlier months ──",
@@ -690,7 +697,7 @@ class TokenLogScreen(ModalScreen):
                  daily=None, daily_pct=None, hourly_pct=None,
                  hourly_week_pct=None, active_session=None, initial_mode=None,
                  model=None, xc_totals=None, warn_history=None, remote=False,
-                 remote_host=None):
+                 remote_host=None, xc_hosts=None):
         super().__init__()
         # 원격(remote-attach) 탭을 보는 중에 토큰 배지(분홍)를 눌러 연 팝업인지 표시
         # (사용자 요청 2026-06-23). 로컬 팝업(accent 오렌지 테두리)과 한눈에 구분되게
@@ -706,6 +713,10 @@ class TokenLogScreen(ModalScreen):
         # 실제의 ~0.4%만 잡으므로, 상단 Σ 를 이 실측값으로 1차 표시하고 스크랩은 '활동'
         # 보조신호로 강등한다(없으면=구버전 서버 → 종전 스크랩 Σ 폴백).
         self._xc = xc_totals or {}
+        # 동기화 P5 §7.3: 원산지 머신별 full 분해 {host_id|'<local>': tokens}.
+        # 머신이 하나뿐(=동기화 미사용·아직 안 받음)이면 분해할 게 없으므로 [o] 탭
+        # 자체를 감춘다 — 켜지도 않은 기능의 빈 뷰가 보이면 잡음이다.
+        self._xc_hosts = xc_hosts or {}
         # 요청 2026-06-21: 현재 활성 패널의 claude 세션 id(없으면 None) — [세션] 뷰가
         # 이 세션 행을 하이라이트하고 막대를 다른 색으로 그린다.
         self._active_session = active_session
@@ -1483,6 +1494,24 @@ class TokenLogScreen(ModalScreen):
         return (v["buckets"], v["bmax"], v["total"], i18n.t("기간"),
                 v.get("bkeys"), v.get("bmodels"))
 
+    def _host_text(self) -> str:
+        """Σ 뒤에 붙는 **원산지 머신 분해**(동기화 P5 §7.3). 머신이 하나뿐이면 빈
+        문자열 — 동기화를 안 쓰는 사람에게는 아무 변화가 없다.
+
+        동기화를 켜면 Σ 가 계정 전역으로 뛰는데(다른 머신 몫이 합쳐진다), 그게 어디서
+        왔는지 보이지 않으면 "왜 갑자기 늘었나" 를 사람이 풀 수 없다. 비중 큰 순으로
+        `⇅ 이 머신 62% · a1b2 38%` 처럼 붙인다(`⇅` = 동기화된 값이라는 표식)."""
+        hosts = {h: int(v) for h, v in (self._xc_hosts or {}).items() if v}
+        if len(hosts) < 2:
+            return ""
+        total = sum(hosts.values()) or 1
+        local = _LOCAL_HOST
+        parts = []
+        for h, v in sorted(hosts.items(), key=lambda kv: (-kv[1], kv[0]))[:4]:
+            name = i18n.t("pscreen.tklog_host_local") if h == local else h[:8]
+            parts.append("%s %d%%" % (name, round(100.0 * v / total)))
+        return "  ⇅ " + " · ".join(parts)
+
     def _sigma_text(self, win):
         """상단 Σ 요약 문자열(평탄·트리 경로 공용). §10-D P6: 트랜스크립트 실측
         (usage_xc full)이 있으면 그걸 1차 Σ 로 보이고 캐시를 별도 표기, 스크랩 누계는
@@ -1502,7 +1531,7 @@ class TokenLogScreen(ModalScreen):
                           full=usagelog._fmt_tokens(xc_full),
                           cr=usagelog._fmt_tokens(cr),
                           cc=usagelog._fmt_tokens(cc),
-                          scrape=usagelog._fmt_tokens(life))
+                          scrape=usagelog._fmt_tokens(life)) + self._host_text()
         sigma = f"~Σ{usagelog._fmt_tokens(life)}"   # ~ = 추정 라벨(S6 T3)
         if life != win:
             sigma += i18n.t("pscreen.tklog_disp", n=usagelog._fmt_tokens(win))

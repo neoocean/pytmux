@@ -496,6 +496,7 @@ def _on_token_log_msg(app, msg):
         initial_mode=initial_mode,
         model=getattr(app.status, "claude_model", None),
         xc_totals=msg.get("xc_totals"),
+        xc_hosts=msg.get("xc_hosts"),
         warn_history=msg.get("warn_history"),
         remote=getattr(app, "_token_log_remote", False),
         remote_host=getattr(app, "_token_log_remote_host", None)))
@@ -1265,6 +1266,12 @@ class _ClaudeCodePlugin:
             xc_totals = (usagedb.xc_totals(conn)
                          if conn is not None and hasattr(usagedb, "xc_totals")
                          else {})
+            # 동기화 P5 §7.3: 원산지 머신별 분해. 동기화를 켜면 위 xc_totals 가 계정
+            # **전역**(다른 머신 포함)으로 뛰는데, 그게 어디서 온 값인지 확인할 길이
+            # 없으면 "왜 갑자기 늘었나" 를 사람이 못 푼다. 머신이 하나뿐이면 로컬
+            # 한 항목뿐이라 팝업이 뷰 자체를 감춘다(잡음 0).
+            _xbh = getattr(usagedb, "xc_totals_by_host", None)
+            xc_hosts = _xbh(conn) if (conn is not None and _xbh) else {}
             return {"t": "token_log", "records": recs,
                     "total_all": total_all,
                     "daily": daily,
@@ -1272,6 +1279,7 @@ class _ClaudeCodePlugin:
                     "hourly_week_pct": hourly_week,
                     "active_session": active_sid,
                     "xc_totals": xc_totals,
+                    "xc_hosts": xc_hosts,
                     "warn_history": warn_hist}
         return None
 
