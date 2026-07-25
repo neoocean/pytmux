@@ -59,6 +59,44 @@
       </div>
     </header>
 
+    <section class="cl-day" id="d-2026-07-25">
+      <h2>2026-07-25 <span class="pill">토요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/4e1c20626d4c135b9ed5ceb470aff20f4a2b0418.zip" rel="noopener" title="2026-07-25 마지막 소스 커밋(4e1c206) 시점 소스 zip">zip ⬇</a></h2>
+      <ul>
+        <li><span class="pill stable">토큰</span> <strong>여러 컴퓨터의 사용량 합치기가 <span class="inline-code">한도 퍼센트</span>를 넘어 <span class="inline-code">사용 기록 전체</span>로 넓어졌습니다 — 그리고 어느 컴퓨터 몫인지 <span class="inline-code">머신별로 나눠</span> 볼 수 있습니다.</strong>
+          어제까지 머신끼리 나눠 갖던 것은 <strong>한도 퍼센트</strong>뿐이라, 노트북에서 쓴 <strong>토큰 기록 자체</strong>는 데스크톱 팝업에 나타나지 않았습니다.
+          이제 <a href="guide/tokens">토큰 사용량 팝업</a>의 <strong>기간·세션 표에 다른 머신 몫까지 합쳐서</strong> 보이고,
+          <strong>머신이 둘 이상일 때만</strong> <span class="inline-code nb">[머신]</span> 탭이 생겨(<span class="inline-code">o</span> 또는 클릭) 어느 컴퓨터가 얼마를 썼는지 비중 순으로 갈라 볼 수 있습니다.
+          요약줄 <span class="inline-code nb">Σ</span> 뒤에도 머신별 분해가 붙습니다. <strong>동기화를 쓰지 않으면 화면은 종전과 완전히 같습니다</strong>(탭도 생기지 않습니다).
+          <br>날짜 경계는 <strong>그 기록을 만든 컴퓨터의 시간대</strong>를 따릅니다 — 시차가 있는 머신을 함께 쓸 때 "어제 쓴 것"이 남의 시간대 기준으로 오늘에 끼는 일을 막습니다.
+          계정이 아직 밝혀지지 않은 옛 기록도 <strong>같은 세션의 다른 기록에서 계정을 물려받아</strong> 합류하고, 그 채움 정도가 함께 표시됩니다.</li>
+        <li><span class="pill stable">토큰</span> <strong>동기화 웹 화면의 <span class="inline-code">등록된 머신</span> 목록에 <span class="inline-code">마지막 동기화 시각</span>이 표시됩니다.</strong>
+          지금까지는 이름과 <strong>폐기</strong> 버튼뿐이라, 어느 머신이 <strong>조용히 멈춰 있는지</strong> 화면만 봐서는 알 수 없었습니다.
+          이제 이름 옆에 <span class="inline-code nb">방금 전</span> · <span class="inline-code nb">3시간 전</span> 처럼 붙고(마우스를 올리면 정확한 시각),
+          한 번도 올린 적 없는 머신은 <span class="inline-code nb">동기화 기록 없음</span> 으로 구분됩니다.
+          <strong>폐기 버튼은 오른쪽 끝으로 정렬</strong>해, 이름 길이를 따라 버튼이 흔들리지 않고 한 줄에 맞습니다.</li>
+        <li><span class="pill stable">토큰</span> <strong>직접 돌리는 동기화 서버에 <span class="inline-code">보존 기간</span>을 걸 수 있고, 지운 만큼 <span class="inline-code">용량도 함께 줄어듭니다</span>.</strong>
+          <span class="inline-code nb">PYTMUX_SYNC_RETAIN_DAYS=90</span> 처럼 켜 두면 그보다 오래된 기록을 서버가 알아서 정리합니다
+          (<strong>기본은 무기한</strong>이라 켜지 않으면 종전과 같습니다 — 원본은 각 머신의 로컬 기록이라 서버에서 지워도 회계는 손실되지 않습니다).
+          함께, 지운 뒤에도 <strong>용량 계산이 줄지 않아</strong> 비어 있는 서버가 <span class="inline-code nb">저장 용량이 가득 찼습니다</span> 로 굳어 새 업로드를 막던 문제를 고쳤습니다.</li>
+        <li><span class="pill stable">표시</span> <strong>지나간 알림 이력에서 <span class="inline-code">커서를 올린 줄의 글자가 안 보이던</span> 문제를 고쳤습니다.</strong>
+          <span class="inline-code nb">· 안내</span> 등급의 파란 글자색이 <strong>선택 막대의 파란 배경과 같은 색</strong>이라, 그 줄에 커서를 올리면 글자가 배경에 묻혀 <strong>빈 파란 띠</strong>로 보였습니다.
+          이제 커서가 놓인 줄은 <strong>화면 테마가 보장하는 대비색</strong>으로 그려지고, 커서가 지나가면 등급색이 그대로 돌아옵니다(등급은 그 줄에서도 <span class="inline-code nb">✓ · ! ✕</span> 기호로 남습니다).</li>
+        <li><span class="pill stable">Claude</span> <strong>한도가 풀렸을 때 pytmux 가 대신 쳐 주는 <span class="inline-code">자동 재개</span>가 이제 <span class="inline-code">알림으로 남습니다</span>.</strong>
+          자동 재개는 <strong>화면에 뜬 한도 문구</strong>를 보고 발화하는데, 그 문구는 <strong>Claude 자신이 출력할 수도</strong> 있습니다 —
+          즉 모델(또는 모델에게 그렇게 시킨 문서·도구 출력)이 <strong>가짜 한도 배너를 그려 재개를 유발</strong>할 수 있고, 실제로 재현됐습니다.
+          본문을 걸러 막는 방식은 원리적으로 뚫리므로, <strong>막는 대신 보이게</strong> 했습니다 — 주입할 때마다 <strong>무엇을 보냈는지 알림</strong>이 뜨고,
+          같은 패널에는 <strong>15분 안에 다시 주입하지 않습니다</strong>(진짜 한도의 리셋 간격은 최소 1시간이라 정상 재개는 한 번도 막히지 않습니다).</li>
+        <li><span class="pill stable">안정</span> <strong>화면 보내기가 중간에 끊겼을 때 그 패널이 <span class="inline-code">조용히 어긋난 채로 굳던</span> 문제를 고쳤습니다.</strong>
+          pytmux 는 <strong>바뀐 줄만</strong> 보내려고 "직전에 보낸 화면"을 서버가 기억하는데, 그 기억을 <strong>보내기 전에</strong> 갱신하고 있었습니다 —
+          도중에 전송이 깨지면 클라이언트는 못 받았는데 서버는 보낸 것으로 알아, 이후로는 <strong>있지도 않은 화면 기준</strong>의 차이만 보내 그 패널이 계속 어긋난 채 남았습니다.
+          이제 기준은 <strong>전송에 성공한 뒤에만</strong> 갱신하고, 실패하면 다음 프레임을 <strong>화면 전체로</strong> 다시 보냅니다.</li>
+        <li><span class="pill stable">안정</span> <strong>탭 이름이 <span class="inline-code">자동으로 붙을 때</span>도 제어문자를 걸러 냅니다.</strong>
+          탭 이름을 직접 바꿀 때는 이미 <span class="inline-code nb">CR/LF·ESC</span> 같은 제어문자를 제거하고 있었지만,
+          <strong>실행 중인 명령 이름을 따라 자동으로 붙는 이름</strong>은 그 검사를 지나쳤습니다 — 이름은 프로세스가 스스로 정하는 값이라,
+          그런 바이트를 심은 이름으로 뜨는 프로그램이면 <strong>탭바가 깨질</strong> 수 있었습니다. 이제 두 경로가 같은 규칙을 씁니다(길이 상한도 함께).</li>
+      </ul>
+    </section>
+
     <section class="cl-day" id="d-2026-07-24">
       <h2>2026-07-24 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/cfea576b9307fedd22a696829cf37982473a7831.zip" rel="noopener" title="2026-07-24 마지막 소스 커밋(cfea576) 시점 소스 zip">zip ⬇</a></h2>
       <ul>

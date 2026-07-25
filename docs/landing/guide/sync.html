@@ -155,6 +155,12 @@ python3 tools/synserver/app.py \
         <div class="code">pytmux cmd claude-token-sync enroll &lt;코드&gt;
 pytmux cmd claude-token-sync now       # 즉시 한 바퀴
 pytmux cmd claude-token-sync status    # 상태·마지막 오류</div>
+        <p>
+          붙은 머신은 웹 화면의 <strong>등록된 머신</strong> 목록에 이름과 <strong>마지막 동기화 시각</strong>
+          (<code class="nb">방금 전</code> · <code class="nb">3시간 전</code> — 마우스를 올리면 정확한 시각)으로
+          남고, 오른쪽 <strong>폐기</strong> 로 언제든 끊을 수 있습니다. 오래 조용한 머신은 그쪽에서
+          동기화가 멈춰 있다는 뜻이니 그 머신에서 <code>claude-token-sync status</code> 를 보세요.
+        </p>
         <div class="callout"><p>
           <strong>원격 탭을 보는 중</strong>에 친 <code>:claude-token-sync</code> 는
           <strong>그 원격 머신</strong>에 적용됩니다(스크롤·프롬프트 점프와 같은 규칙). 로컬 머신을
@@ -174,6 +180,12 @@ PYTMUX_TOKEN_SYNC_URL=https://sync.example.org</div>
         <p>
           끄려면 <code>claude-token-sync off</code>. 꺼 두면 동작·성능·프라이버시가 도입 전과
           <strong>완전히 같습니다</strong>.
+        </p>
+        <p>
+          서버에 쌓인 기록에 <strong>보존 기간</strong>을 걸 수도 있습니다 — 서버를 띄울 때
+          <code class="nb">PYTMUX_SYNC_RETAIN_DAYS=90</code> 처럼 주면 그보다 오래된 것을 알아서
+          정리합니다. <strong>기본은 무기한</strong>이고, <strong>원본은 각 머신의 로컬 기록</strong>이라
+          서버에서 지워도 사용량 회계는 그대로입니다.
         </p>
       </section>
 
