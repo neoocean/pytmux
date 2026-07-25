@@ -585,16 +585,32 @@ class ServerTreeMixin:
             return
         win.zoomed = not win.zoomed
 
+    # 탭 이름 길이 상한(제어문자 세정과 같은 자리에서 캡). 탭바 한 칸이고 status 로
+    # 매 프레임 방송되므로, 거대한 이름은 표시 파괴이자 대역 낭비다.
+    _TAB_NAME_MAX = 128
+
+    @classmethod
+    def _sanitize_tab_name(cls, name: str) -> str:
+        """탭 이름에서 제어문자(C0/DEL/C1 — 특히 CR/LF/ESC)를 제거하고 길이를 캡한다.
+
+        tab.name 은 탭바에 렌더되고, 단일 Claude 패널이면 `/rename <name>` 으로 패널
+        입력에 주입되므로, 내장 CR/LF 가 탭바 손상이나 다중 줄 제출(프롬프트 주입)이
+        되지 않게 한다(코드검수 2026-07-10 S-2 심층방어).
+
+        **재조사 2026-07-25(검수 잔여 TAB-1)**: 이 세정이 `rename_window` 안에만
+        있어서 **자동 이름(auto-rename)은 그대로 통과**했다 — fg 명령 이름은 프로세스가
+        자기 argv[0] 로 정하므로 ESC 를 심은 이름으로 뜨는 프로세스를 띄우면 그 바이트가
+        탭바로 흘러간다. 세정을 공용 지점으로 올려 두 경로가 같은 계약을 쓴다."""
+        if not name:
+            return ""
+        out = "".join(c for c in name
+                      if ord(c) >= 0x20 and not (0x7f <= ord(c) <= 0x9f))
+        return out[:cls._TAB_NAME_MAX]
+
     def rename_window(self, sess: Session, name: str):
         tab = sess.active_tab
-        # 이름에서 제어문자(C0/DEL/C1 — 특히 CR/LF/ESC)를 제거한다. tab.name 은 탭바에
-        # 렌더되고, 단일 Claude 패널이면 `/rename <name>` 으로 패널 입력에 주입되므로,
-        # 내장 CR/LF 가 탭바 손상이나 다중 줄 제출(프롬프트 주입)이 되지 않게 한다
-        # (코드검수 2026-07-10 S-2 심층방어; name-sync keyword 는 별도로 이미 세정).
         # 전부 제어문자였으면 빈 문자열 → 아래 `and name` 가드로 리네임 무시(안전).
-        if name:
-            name = "".join(c for c in name
-                           if ord(c) >= 0x20 and not (0x7f <= ord(c) <= 0x9f))
+        name = self._sanitize_tab_name(name)
         if tab and name:
             tab.name = name
             tab.window.auto_rename = False  # 수동 이름 지정 시 자동 갱신 끔
@@ -685,6 +701,9 @@ class ServerTreeMixin:
         executor await 가 read(active_pane)↔write(tab.name) 를 가르는 유일 지점이라,
         그 사이 kill_window/kill_pane 가 끼어들어 tab 이 세션에서 제거되거나 active_pane
         이 바뀌었으면 stale 이름을 쓰지 않는다. 변경했으면 True."""
+        # TAB-1(재조사 2026-07-25): fg 이름은 **프로세스가 정하는 값**이라 신뢰할 수
+        # 없다(argv[0] 에 ESC/CR 을 심을 수 있다) — 수동 리네임과 같은 세정을 태운다.
+        cmd = self._sanitize_tab_name(cmd or "")
         if (cmd and cmd != tab.name and tab in sess.tabs
                 and tab.window.active_pane is ap):
             tab.name = cmd

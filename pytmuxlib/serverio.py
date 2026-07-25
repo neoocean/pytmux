@@ -287,25 +287,40 @@ class ServerIOMixin:
             # 총량 동일, 순서만 활성 우선.
             ap = win.active_pane
             panes = sorted(win.panes(), key=lambda p: p is not ap)
-            for p in panes:
-                rows, cursor = p.render(p is ap)
-                p.dirty = False
-                client._sent_rows[p.id] = rows
-                await write_msg(client.writer, {"t": "screen", "pane": p.id,
-                                                "rows": rows, "cursor": cursor,
-                                                "wrap": p._last_wrap})
-            # 팝업 패널 화면도 함께(트리에 없으므로 별도로 보냄). 팝업은 항상 포커스라
-            # 커서를 그린다(render(True)).
-            if sess.popup and sess.popup.get("pane") is not None:
-                pp = sess.popup["pane"]
-                rows, cursor = pp.render(True)
-                pp.dirty = False
-                client._sent_rows[pp.id] = rows
-                await write_msg(client.writer, {"t": "screen", "pane": pp.id,
-                                                "rows": rows, "cursor": cursor,
-                                                "wrap": pp._last_wrap})
-            await write_msg(client.writer,
-                            self._status_msg(sess, client=client))
+            # **기준 갱신은 송신 성공 뒤에**(검수 '화면델타 베이스라인 레이스').
+            # 종전엔 write 전에 `_sent_rows[p.id]=rows` 를 찍었다 — 중간에 write 가
+            # 깨지면(파이프 끊김·타임아웃) 클라는 그 프레임을 못 받았는데 서버는
+            # 받은 것으로 기억한다. 이 경로는 대부분 `create_task(_send_full)` 라
+            # 예외가 로그로만 끝나고 **클라는 살아남으므로**, 다음 flush 가 그
+            # 허구의 기준 대비 델타를 보내 그 패널이 **조용히 어긋난 채로 굳는다**
+            # (되돌린 줄이 영영 안 나간다). 실패 시엔 기준을 비워 다음 프레임이
+            # full screen 으로 나가게 한다 — 기준 없음(prev=None)이 곧 full 경로다.
+            # dirty 도 같은 이유로 성공 뒤에만 내린다(안 그러면 재렌더조차 안 된다).
+            try:
+                for p in panes:
+                    rows, cursor = p.render(p is ap)
+                    await write_msg(client.writer,
+                                    {"t": "screen", "pane": p.id,
+                                     "rows": rows, "cursor": cursor,
+                                     "wrap": p._last_wrap})
+                    p.dirty = False
+                    client._sent_rows[p.id] = rows
+                # 팝업 패널 화면도 함께(트리에 없으므로 별도로 보냄). 팝업은 항상
+                # 포커스라 커서를 그린다(render(True)).
+                if sess.popup and sess.popup.get("pane") is not None:
+                    pp = sess.popup["pane"]
+                    rows, cursor = pp.render(True)
+                    await write_msg(client.writer,
+                                    {"t": "screen", "pane": pp.id,
+                                     "rows": rows, "cursor": cursor,
+                                     "wrap": pp._last_wrap})
+                    pp.dirty = False
+                    client._sent_rows[pp.id] = rows
+                await write_msg(client.writer,
+                                self._status_msg(sess, client=client))
+            except BaseException:
+                client._sent_rows.clear()
+                raise
 
     async def _remirror_if_size_changed(self, sess):
         """window_size=latest 전용 재-미러링: 사용자 조작(입력·스크롤)으로 '마지막
