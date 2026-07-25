@@ -4518,6 +4518,46 @@ async def test_notice_history_popup_expands_full_text():
     await _with_app(body)
 
 
+async def test_notice_history_cursor_row_is_readable():
+    """제보: 이력에서 **커서를 올린 줄의 글자가 안 보였다**. 원인은 색 충돌 —
+    `info` 등급색(`$primary`)이 ListView 하이라이트 배경(`$block-cursor-background`)과
+    같은 값이라 그 줄이 통째로 파란 띠가 됐다. 커서가 놓인 줄은 Rich 색을 **비워**
+    (=CSS 커서 전경색이 적용되게) 대비를 테마에 맡기고, 커서가 떠나면 등급색이
+    돌아온다."""
+    from textual.widgets import Label as _Label, ListView as _LV
+    async def body(app, pilot, srv):
+        app.display_message("동기화 실패", severity="error")
+        app.display_message("이 머신이 등록되었습니다", severity="info")
+        app.open_notice_history()
+        await pilot.pause(0.1)
+        scr = app.screen
+        assert scr.__class__.__name__ == "NoticeHistoryScreen"
+        from rich.color import Color as _RColor
+        cursor_bg = _RColor.parse(
+            str(app.theme_variables.get("block-cursor-background"))
+        ).get_truecolor()
+        info, err = scr._entries[0], scr._entries[1]
+        assert info.sev == "info" and err.sev == "error"
+        # 충돌 자체를 못박는다 — 등급색을 그대로 쓰면 배경과 같은 색이 된다.
+        assert scr._style_of(info).color.get_truecolor() == cursor_bg
+
+        def row_style(i):
+            # Label.content = 우리가 넣은 Rich Text(=실제로 그려지는 것).
+            lv = scr.query_one(_LV)
+            return list(lv.children)[i].query_one(_Label).content.style
+
+        assert scr._hl == 0
+        assert row_style(0).color is None, "커서 줄은 색을 비운다"
+        assert row_style(1).color is not None, "나머지 줄은 등급색 유지"
+        # 커서를 아래로 옮기면 색이 따라 옮겨간다(떠난 줄은 등급색 복귀).
+        scr.query_one(_LV).index = 1
+        scr.on_list_view_highlighted(None)
+        await pilot.pause(0.05)
+        assert row_style(1).color is None and row_style(0).color is not None
+        app.pop_screen()
+    await _with_app(body)
+
+
 async def test_notice_unknown_severity_falls_back_to_info():
     """§10-8-8: `sev` 가 없는(구 서버) notice 와 **모르는 등급**은 예외 없이 info 로
     처리한다 — 구/신 버전이 섞여도 알림이 사라지거나 터지지 않게."""

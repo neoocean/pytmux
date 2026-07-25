@@ -27,6 +27,11 @@ button:hover { background: rgba(127,127,127,.15); }
 @media (max-width: 480px) { .cmdbox code { font-size: 18px; } }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 td { padding: 6px 4px; border-bottom: 1px solid rgba(127,127,127,.3); }
+/* 기기 표: 이름이 남는 폭을 다 먹고, 마지막 동기화와 폐기 버튼은 오른쪽에 붙어
+   세로로 줄이 맞는다 — 버튼이 이름 길이를 따라다니면 누를 자리를 매번 찾게 된다. */
+#devices td.when, #devices td.act { width: 1%; white-space: nowrap; }
+#devices td.when { opacity: .65; font-size: 13px; padding-right: 14px; }
+#devices td.act { text-align: right; }
 #msg { min-height: 1.6em; font-size: 14px; }
 #msg.err { color: #c0392b; }
 

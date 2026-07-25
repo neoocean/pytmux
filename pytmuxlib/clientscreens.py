@@ -3028,6 +3028,7 @@ class NoticeHistoryScreen(ModalScreen):
         super().__init__()
         self._entries = list(entries or [])
         self._expanded = set()   # 전문으로 펼친 항목 인덱스
+        self._hl = 0             # 선택 커서가 놓인 항목(그 줄만 색을 CSS 에 맡긴다)
 
     # ---- 표시 문자열 ----
     def _stamp(self, e):
@@ -3043,9 +3044,20 @@ class NoticeHistoryScreen(ModalScreen):
             p += f"{e.source[:12]:<12} "
         return p
 
-    def _style_of(self, e):
+    def _style_of(self, e, i=None):
         # 배경이 아니라 **글자색**으로 등급을 준다 — 목록 배경은 팝업 패널색을 유지해야
         # 선택 하이라이트(ListView)가 그대로 읽힌다.
+        #
+        # 단 **커서가 놓인 줄은 색을 비운다**: 하이라이트 배경은 테마의
+        # `$block-cursor-background`(= textual-dark 에서 `$primary` #0178D4)인데
+        # `info` 등급색도 `primary` 라 **글자와 배경이 완전히 같은 색** → 그 줄만
+        # 통째로 파란 띠가 되어 읽히지 않았다(제보). 색을 지정하지 않으면 Rich Text
+        # 가 위젯 색을 덮지 않아 테마가 대비를 보장하는 커서 전경색
+        # (`$block-cursor-foreground`)이 그대로 적용된다. 등급은 이 줄에서도
+        # 기호(✓·!✕)로 남는다. (커서 전경색은 `auto 87%` 같은 Textual 전용 값이라
+        # Rich `Style(color=...)` 에 직접 넣으면 ColorParseError — CSS 에 맡겨야 한다.)
+        if i is not None and i == self._hl:
+            return Style(bold=(e.sev == "error"))
         return Style(color=theme_color(self, clientnotices.theme_name(e.sev)),
                      bold=(e.sev == "error"))
 
@@ -3076,7 +3088,7 @@ class NoticeHistoryScreen(ModalScreen):
         rows = []
         for i, e in enumerate(self._entries):
             txt = "\n".join(self._lines_for(i, e, width))
-            lb = Label(Text(txt, style=self._style_of(e)), markup=False)
+            lb = Label(Text(txt, style=self._style_of(e, i)), markup=False)
             rows.append(ListItem(lb, id=f"nh{i}"))
         return rows or [ListItem(Label(i18n.t("screen.notice_history_empty")),
                                  id="nhnone")]
@@ -3124,7 +3136,8 @@ class NoticeHistoryScreen(ModalScreen):
             e = self._entries[i]
             txt = "\n".join(self._lines_for(i, e, width))
             try:
-                item.query_one(Label).update(Text(txt, style=self._style_of(e)))
+                item.query_one(Label).update(
+                    Text(txt, style=self._style_of(e, i)))
             except Exception:
                 pass
 
@@ -3134,6 +3147,20 @@ class NoticeHistoryScreen(ModalScreen):
         if i is None or not self._entries or i >= len(self._entries):
             return None, None
         return i, self._entries[i]
+
+    def on_list_view_highlighted(self, event):
+        """커서가 옮겨간 줄과 떠난 줄만 다시 칠한다(전체 재렌더 금지 — 이력은 최대
+        200 줄)."""
+        try:
+            i = self.query_one(ListView).index
+        except Exception:
+            return
+        i = -1 if i is None else i
+        if i == self._hl:
+            return
+        old, self._hl = self._hl, i
+        self._refresh_rows(only=old)
+        self._refresh_rows(only=i)
 
     def on_list_view_selected(self, event):
         # Enter = 전문 펼치기/접기(선택이 아니라 토글 — 이 화면은 고르는 화면이 아니다).

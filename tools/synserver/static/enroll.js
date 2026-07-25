@@ -548,6 +548,19 @@ function watchForEnrollment(before, expiresMs) {
   }, 3000);
 }
 
+// 마지막 동기화 시각을 사람 말로. 정확한 시각은 title 로 남겨(마우스를 올리면 보인다)
+// 목록은 "얼마나 오래됐나" 한 눈에 읽히게 한다 — 여기서 알고 싶은 것은 초 단위 시각이
+// 아니라 **어느 머신이 조용한가**이다.
+function agoText(secs) {
+  if (!secs) return "동기화 기록 없음";
+  const d = Math.max(0, Date.now() / 1000 - secs);
+  if (d < 90) return "방금 전";
+  if (d < 3600) return Math.round(d / 60) + "분 전";
+  if (d < 86400) return Math.round(d / 3600) + "시간 전";
+  if (d < 86400 * 30) return Math.round(d / 86400) + "일 전";
+  return new Date(secs * 1000).toLocaleDateString();
+}
+
 async function loadDevices() {
   const r = await fetch("/v1/devices", { credentials: "same-origin" });
   if (!r.ok) return;
@@ -559,7 +572,13 @@ async function loadDevices() {
     // 서버가 살아 있는 기기만 준다(폐기 = 삭제) — 목록에 잔해가 남지 않는다.
     const name = document.createElement("td");
     name.textContent = d.label || "(이름 없음)";
+    // last_seen 은 올리기·내려받기 양쪽에서 갱신되므로 곧 '마지막 동기화'다.
+    const when = document.createElement("td");
+    when.className = "when";
+    when.textContent = agoText(d.last_seen);
+    if (d.last_seen) when.title = new Date(d.last_seen * 1000).toLocaleString();
     const act = document.createElement("td");
+    act.className = "act";
     const btn = document.createElement("button");
     btn.textContent = "폐기";
     btn.addEventListener("click", async () => {
@@ -581,7 +600,7 @@ async function loadDevices() {
       say("기기를 폐기했습니다: " + name);
     });
     act.appendChild(btn);
-    tr.append(name, act);
+    tr.append(name, when, act);
     tb.appendChild(tr);
   }
   $("sec-devices").hidden = devices.length === 0;

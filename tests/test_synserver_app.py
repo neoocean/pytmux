@@ -237,6 +237,31 @@ async def test_cannot_revoke_other_vault_device():
     assert sdb.get_device(app.conn, da) is not None      # 살아 있다
 
 
+async def test_devices_list_carries_last_sync_for_ui():
+    """기기 목록 화면이 '마지막 동기화'를 보여 주는 근거는 `last_seen` 하나뿐이다 —
+    등록 직후엔 비어 있고 올리기(내려받기도 동형)로 갱신된다. 화면 요구가 API 계약을
+    앞지르지 않게 여기서 못박는다."""
+    app, clock = _app()
+    cookie, _, _ = _enroll(app)
+    did, sk = _device(app, cookie)
+    st, out = _j(app.handle("GET", "/v1/devices", headers=cookie))
+    assert st == 200 and len(out["devices"]) == 1
+    assert out["devices"][0]["last_seen"] is None, out["devices"][0]
+    body = _rec("cd" * 8).encode()
+    h = _signed(app, clock, did, sk, "POST", "/v1/events", body)
+    assert _j(app.handle("POST", "/v1/events", headers=h, body=body))[0] == 200
+    seen = _j(app.handle("GET", "/v1/devices", headers=cookie))[1]["devices"][0]
+    assert seen["last_seen"] == clock.t, seen
+    # 화면 쪽 계약: 시각 칸과 오른쪽 정렬 폐기 칸.
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "tools", "synserver", "static")
+    with open(os.path.join(root, "enroll.js"), encoding="utf-8") as f:
+        js = f.read()
+    assert "d.last_seen" in js and "tr.append(name, when, act)" in js
+    with open(os.path.join(root, "enroll.css"), encoding="utf-8") as f:
+        assert "#devices td.act { text-align: right; }" in f.read()
+
+
 # ── 페어링·챌린지 1회성 ────────────────────────────────────────────────────
 
 async def test_pairing_code_is_single_use_and_expires():
