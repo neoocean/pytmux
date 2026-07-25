@@ -8,9 +8,11 @@ PASS/FAIL 을 집계한다. 화면(TUI) 없이 전체 동작을 검증한다.
 import asyncio
 import faulthandler
 import importlib
+import json
 import os
 import signal
 import sys
+import time
 import traceback
 
 faulthandler.enable()   # 세그폴트/치명 신호 시 전 스레드 트레이스백 덤프
@@ -176,7 +178,115 @@ def skip(reason: str = ""):
     raise SkipTest(reason)
 
 
+# ── durable per-run 리포트(로드맵 test-infra ⑦ 잔여) ──────────────────────────
+# 회계 요약(`N passed, M failed, K skipped`)은 **맨 끝에 한 번** 찍힌다. 그래서 러너가
+# 중간에 죽으면(머신 부하로 절단 — load 12~17 에서 실측 · CI step 타임아웃 ·
+# faulthandler exit) 그때까지의 결과가 통째로 사라져 "무엇이 돌았고 무엇이 안 돌았나"
+# 를 재실행 없이는 알 수 없었다(2026-07-25·-25b 세션에서 반복해 물림).
+# 처방: 결과가 나오는 **즉시 한 줄씩 append + flush** 한다(kill -9 에도 이미 쓴 줄은
+# 남는다 — 버퍼링을 켜면 이 기능의 의미가 사라진다). 그리고 `run.py --report [경로]` 가
+# 그 파일만으로 회계를 복원하고, summary 줄이 없으면 **절단된 run** 임을 명시한다
+# (마지막으로 import 한 모듈 = 죽을 때 물려 있던 모듈).
+# 경로 = `PYTMUX_TEST_REPORT`(`off`/`0`/빈값 = 끔), 기본 `<repo>/reports/testrun.jsonl`
+# — `reports/` 는 git·p4 양쪽 ignore 라 산출물이 게시에 딸려가지 않는다.
+_DEFAULT_REPORT = os.path.join(os.path.dirname(HERE), "reports", "testrun.jsonl")
+
+
+def _report_path():
+    raw = os.environ.get("PYTMUX_TEST_REPORT")
+    if raw is None:
+        return _DEFAULT_REPORT
+    return "" if raw.strip().lower() in ("", "0", "off", "no") else raw
+
+
+class Reporter:
+    """테스트 결과를 JSONL 로 즉시 적재한다(비활성이면 전부 no-op)."""
+
+    def __init__(self, path):
+        self.path, self.fp = path, None
+        if not path:
+            return
+        try:
+            parent = os.path.dirname(os.path.abspath(path))
+            os.makedirs(parent, exist_ok=True)
+            self.fp = open(path, "w", encoding="utf-8")   # 새 run = 새 파일
+        except OSError as e:      # 읽기전용 CI 워크스페이스 등 — 리포트는 부가기능이라
+            print(f"  (리포트 비활성: {e})")               # 스위트를 죽이지 않는다
+            self.fp = None
+
+    def emit(self, kind, **kw):
+        if not self.fp:
+            return
+        try:
+            self.fp.write(json.dumps(dict(kind=kind, **kw), ensure_ascii=False) + "\n")
+            self.fp.flush()       # 절단 내성의 전부 — 버퍼에 남은 줄은 kill 에서 유실
+        except (OSError, TypeError, ValueError):
+            pass
+
+    def close(self):
+        if self.fp:
+            try:
+                self.fp.close()
+            except OSError:
+                pass
+            self.fp = None
+
+
+def report_summary(path, out=print):
+    """리포트 파일만으로 회계를 복원한다(러너가 죽어 요약을 못 찍은 run 용).
+
+    summary 줄이 있으면 그 run 은 **완주**했다는 뜻이고, 없으면 절단된 run 이므로
+    그 사실과 **죽을 때 물려 있던 모듈**을 보고한다 — 이 기능의 핵심 가치다.
+    반환 = 0(완주) / 1(실패 있음 또는 절단)."""
+    if not path or not os.path.exists(path):
+        out(f"리포트 없음: {path or '(비활성)'}")
+        return 1
+    counts, skips, fails, last_import, summary = {}, [], [], None, None
+    with open(path, encoding="utf-8") as fp:
+        for line in fp:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue          # 절단된 마지막 줄(부분 write) — 무시하고 나머지 회계
+            kind = rec.get("kind")
+            if kind == "import":
+                last_import = rec.get("module")
+            elif kind == "result":
+                st = rec.get("status", "?")
+                counts[st] = counts.get(st, 0) + 1
+                if st == "skip":
+                    skips.append(rec.get("reason") or "(사유 없음)")
+                elif st in ("fail", "timeout"):
+                    fails.append(f"{rec.get('label')}: {rec.get('reason', '')}")
+            elif kind == "summary":
+                summary = rec
+    order = ("pass", "flaky", "fail", "timeout", "skip")
+    parts = [f"{st}={counts[st]}" for st in order if st in counts]
+    parts += [f"{st}={n}" for st, n in sorted(counts.items()) if st not in order]
+    out(f"리포트: {path}")
+    out("  결과: " + (", ".join(parts) or "(기록 없음)"))
+    if skips:
+        from collections import Counter
+        for reason, cnt in Counter(skips).most_common():
+            out(f"  skip {cnt:3d}  {reason}")
+    for f in fails:
+        out(f"  FAIL {f}")
+    if summary is None:
+        out(f"  ⚠ 절단된 run — 요약 줄이 없다(마지막 import: {last_import or '?'}). "
+            "러너가 죽었다: 머신 부하·CI 타임아웃·faulthandler exit 을 의심하고 "
+            "그 모듈만 재실행할 것.")
+        return 1
+    out(f"  완주: {summary.get('passed')} passed, {summary.get('failed')} failed, "
+        f"{summary.get('skipped')} skipped, {summary.get('flaky')} flaky")
+    return 1 if summary.get("failed") else 0
+
+
 def main(argv):
+    if argv and argv[0] in ("--report", "-r"):
+        return report_summary(argv[1] if len(argv) > 1 else _report_path())
     # 모듈 로드 단계의 startup 백스톱(위)을 거둔다 — 이제부터 per-test _arm 이 관리한다
     # (modname 별 import·테스트마다 재무장). discover 가 빈 경우에도 stray 타이머가
     # 성공 실행을 90초 뒤 종료시키지 않게 명시적으로 끈다.
@@ -186,11 +296,15 @@ def main(argv):
     passed = failed = flaky = skipped = 0
     failures = []
     skips = []
-    for modname in discover(names):
+    mods = discover(names)
+    rep = Reporter(_report_path())
+    rep.emit("start", modules=mods, argv=list(argv), pid=os.getpid())
+    for modname in mods:
         # import 도 SIGALRM 으로 감싼다 — 모듈 import 가 매달리면(과거 macOS CI 에서
         # 스위트가 첫 출력도 없이 17분 매달리던 정확한 지점) 여기서 TIMEOUT 실패로
         # 전환돼 run.py 가 스스로 끝난다(step 이 완료돼 로그가 남고 주범 모듈이 보임).
         print(f":: import {modname}", file=sys.stderr, flush=True)
+        rep.emit("import", module=modname)
         _arm()
         try:
             mod = importlib.import_module(modname)
@@ -198,6 +312,8 @@ def main(argv):
             failed += 1
             failures.append((f"{modname} (import)", e, traceback.format_exc()))
             print(f"  FAIL  {modname} (import): {e}")
+            rep.emit("result", label=f"{modname} (import)", status="fail",
+                     reason=str(e))
             _disarm()
             continue
         _disarm()
@@ -208,14 +324,17 @@ def main(argv):
             ok, hung, last_exc, last_tb = False, False, None, ""
             was_skipped = False
             n_hung = 0
+            t0 = time.monotonic()
+            attempts = 0
             for attempt in range(max(1, TEST_RETRIES + 1)):
                 _arm()
                 hung = False               # 이번 시도의 성격(마지막 시도가 tag 결정)
+                attempts = attempt + 1
                 try:
                     asyncio.run(_run_with_timeout(fn))
                     ok = True
                 except SkipTest as e:
-                    was_skipped = True
+                    was_skipped = str(e) or True     # 사유를 리포트로 그대로 운반
                     skips.append((label, str(e)))
                     print(f"  SKIP  {label}: {e}" if str(e)
                           else f"  SKIP  {label}")
@@ -241,16 +360,25 @@ def main(argv):
                 if attempt == TEST_RETRIES or (hung and n_hung > TEST_TIMEOUT_RETRIES):
                     break
                 print(f"  retry {label} (시도 {attempt + 1} 실패: {last_exc})")
+            secs = round(time.monotonic() - t0, 3)
             if was_skipped:
                 skipped += 1
+                rep.emit("result", label=label, status="skip", secs=secs,
+                         reason="" if was_skipped is True else was_skipped)
                 continue                   # passed/failed 어디에도 안 셈
             if ok:
                 passed += 1
+                rep.emit("result", label=label,
+                         status="flaky" if attempts > 1 else "pass",
+                         secs=secs, attempts=attempts)
             else:
                 failed += 1
                 failures.append((label, last_exc, last_tb))
                 tag = "TIMEOUT" if hung else "FAIL"
                 print(f"  {tag}  {label}: {last_exc}")
+                rep.emit("result", label=label,
+                         status="timeout" if hung else "fail",
+                         secs=secs, attempts=attempts, reason=str(last_exc))
                 # 트레이스백을 실패 **즉시**도 찍는다 — 종전엔 말미 일괄 덤프뿐이라,
                 # CI step 타임아웃이 스위트를 중간에 끊으면(Windows 8분) 실패의
                 # 원인 트레이스백이 통째로 유실돼 진단 불능이었다(2026-07-10).
@@ -260,6 +388,12 @@ def main(argv):
     flaky_note = f" ({flaky} flaky — 재시도 후 통과)" if flaky else ""
     skip_note = f", {skipped} skipped" if skipped else ""
     print(f"\n{'='*50}\n{passed} passed, {failed} failed{skip_note}{flaky_note}")
+    # 요약은 stdout 과 **같은 수치**로 리포트에도 남긴다(이 줄의 유무가 완주/절단 판정).
+    rep.emit("summary", passed=passed, failed=failed, skipped=skipped, flaky=flaky)
+    rep.close()
+    if rep.path:
+        print(f"리포트: {rep.path} (절단된 run 회계 복원 = "
+              f"python3 tests/run.py --report)")
     if skips:
         # 커버리지 갭 가시화: 무엇이 왜 안 돌았는지 사유별로 묶어 리포트.
         from collections import Counter

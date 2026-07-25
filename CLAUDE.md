@@ -36,6 +36,9 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
     지워도 통과한다(실측 2회 — 공허 통과). 뮤테이션에 **'호출 제거'** 를 포함할 것.
   - **머신 부하가 높으면**(load ≳10) 러너가 요약 없이 절단된다 — 전체 스위트를 고집하지
     말고 **모듈 배치 + 백그라운드 실행 + 알림 대기**로 돌리고 죽은 모듈만 재실행한다.
+    절단돼 요약을 못 봤을 때 회계는 `python3 tests/run.py --report` 로 복원한다(결과가
+    나오는 즉시 `reports/testrun.jsonl` 에 flush — 절단 여부와 **죽을 때 물려 있던
+    모듈**까지 알려준다). 끄기 = `PYTMUX_TEST_REPORT=off`.
     배치가 도는 중에는 **그 배치가 import 할 파일을 편집하지 말 것**(다음 모듈 프로세스가
     반쯤 고친 코드를 읽는다). 상세 = `docs/internal/LESSONS_2026-07-25.md`·`-25b.md`.
   - macOS 헤드리스 러너는 일부 PTY 스위트를 인프라 레벨로 wedge → CI 매트릭스에서
@@ -80,6 +83,11 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
 ## 게시(이 저장소 관례)
 - 코드 변경은 **Perforce submit + git push** 양쪽(번호 CL, 내 파일만 명시 add).
   `docs/internal/` 은 gitignore → **p4 전용**.
+- **게시 게이트 `python3 scripts/publish_check.py`**(rc 0 이어야 한다): 한쪽만 게시해
+  생기는 **미러 드리프트를 양방향**으로 잡는다 — 미푸시 커밋 · depot 에만 있는 내용
+  (git 미푸시) · git 에만 있는 내용(p4 미제출). 자동 미러가 없어 실제로 3번 물렸다
+  (63471·63714 캐치업, `.gitignore` `.env` 규칙). CL 오염 검사는
+  `--cl <번호>`(아래 부정 게이트와 동일 판정).
 - 공유 워크스페이스(병렬 세션)라 게시 전 `p4 diff`/`git diff` 로 **내 hunk 만**인지 확인.
 - **CL 을 만드는 것만으로 남의 파일이 딸려온다**: `p4 change -o | p4 change -i` 는 스펙
   Files: 에 **default CL 에 열린 파일이 전부**(= 병렬 세션 것까지) 실려 새 CL 로 끌려
