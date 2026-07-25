@@ -24,6 +24,20 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
     `harness.wait_until(pilot, cond)` — Unix 즉시·느린 CI 인내. "정착했는데 조건 미충족"
     (수렴-오답 스톨)을 타임아웃과 구분해 빠르게 진단하려면 `wait_until_settled(pilot, cond,
     snapshot)`(스톨 시 `(False, 진단)` 조기 반환). 고정 pause 는 느린 러너에서 플레이크.
+  - **서버 예외 만능가드**(2026-07-25 신설): `harness.teardown`/`running_server` 가 매
+    테스트 끝에 `<state_base>.error.log`·`.client.crash.log` 의 **트레이스백**을 단언한다
+    — 서버는 데몬(stderr=/dev/null)이라 예외를 로그에만 남겨, 종전엔 "테스트 초록불 +
+    서버가 매 프레임 터짐"이 성립했다. `서버가 예외를 로그로만 삼켰다` 로 실패하면
+    **먼저 진짜 결함인지 본다**. 의도적으로 예외를 내는 테스트만
+    `teardown(..., allow_errors=("<where 라벨 접두>",))` 로 **좁게** 허용한다(전면
+    `True` 금지 — 라벨 접두여야 `expected_thing` 허용이 `unexpected_thing` 을 안 삼킨다).
+    예외 없는 진단 로그(`_log_error(where, detail)`)는 세지 않는다.
+  - **표시 기능은 호출부까지 단언**: 값을 만드는 헬퍼만 테스트하면 그 값을 붙이는 호출을
+    지워도 통과한다(실측 2회 — 공허 통과). 뮤테이션에 **'호출 제거'** 를 포함할 것.
+  - **머신 부하가 높으면**(load ≳10) 러너가 요약 없이 절단된다 — 전체 스위트를 고집하지
+    말고 **모듈 배치 + 백그라운드 실행 + 알림 대기**로 돌리고 죽은 모듈만 재실행한다.
+    배치가 도는 중에는 **그 배치가 import 할 파일을 편집하지 말 것**(다음 모듈 프로세스가
+    반쯤 고친 코드를 읽는다). 상세 = `docs/internal/LESSONS_2026-07-25.md`·`-25b.md`.
   - macOS 헤드리스 러너는 일부 PTY 스위트를 인프라 레벨로 wedge → CI 매트릭스에서
     제외(로컬이 권위). 실 PTY·실 ConPTY(Windows)·실 Claude 패널은 driver 검증 불가.
 
