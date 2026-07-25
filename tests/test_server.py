@@ -1637,6 +1637,14 @@ _SCAN_SCENARIOS = (
                      "Current session\nCurrent week (all models)\n"
                      "used 42% of your session limit")),
     ("session_exit", (_SCAN_BUSY, _SCAN_IDLE, "")),
+    # 연속 busy 중 **응답 교체**(running 토큰 급감 = 다음 응답 시작 → committed>0):
+    # 토큰 회계 phase 가 만든 committed 를 프롬프트 승격 phase 가 경계로 읽는 자리다.
+    # 2026-07-25 분할에서 **이 열이 없어 골든이 committed 전달 끊김을 못 잡았다**
+    # (뮤테이션이 통과). 큐가 비어 있으면 승격이 관측되지 않으므로 setup 으로 채운다.
+    ("busy_response_swap",
+     (_SCAN_BUSY, "✽ Crunching… (9s · ↑ 4k tokens)",
+      "✽ Crunching… (1s · ↑ 120 tokens)", _SCAN_IDLE),
+     lambda p: p.pending_prompts.extend(["첫 프롬프트", "둘째 프롬프트"])),
 )
 
 
@@ -1652,7 +1660,11 @@ def _scan_fingerprint(p, t, changed) -> dict:
 async def _scan_golden_signatures() -> dict:
     """시나리오 매트릭스를 _scan_claude 에 통과시켜 라벨→프레임별 지문 목록."""
     out = {}
-    for label, frames in _SCAN_SCENARIOS:
+    for entry in _SCAN_SCENARIOS:
+        # 2-튜플(라벨, 프레임) 또는 3-튜플(+setup(pane)) — setup 은 프레임을 먹이기
+        # **전에** 패널 상태를 심는다(예: 승격 대기 큐).
+        label, frames = entry[0], entry[1]
+        setup = entry[2] if len(entry) > 2 else None
         srv, task, sock = await server_only()
         try:
             sess = srv.ensure_default_session(80, 24)
@@ -1661,6 +1673,8 @@ async def _scan_golden_signatures() -> dict:
             t1 = sess.tabs[1]
             p1 = t1.window.active_pane
             win = sess.active_window
+            if setup is not None:
+                setup(p1)
             steps = []
             for f in frames:
                 p1.feed(("\x1b[2J\x1b[H" + f + "\r\n").encode("utf-8"))
