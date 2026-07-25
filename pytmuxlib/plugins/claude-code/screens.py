@@ -73,6 +73,7 @@ i18n.register({
         "시나리오": "Scenario",
         "한도": "Limit", "경고": "Warn", "경": "W",
         "기간": "Period", "기": "P",
+        "머신": "Machine", "M": "M",     # 동기화 P5 §7.3 원산지 머신 뷰
         "보기": "View", "조회": "Query", "토큰 사용량": "Token usage",
         "항목": "Item", "토큰": "Tokens", "비율": "Ratio",
         "세션": "Session", "타임스탬프": "Timestamp",
@@ -689,6 +690,8 @@ class TokenLogScreen(ModalScreen):
         "tab_usage": ("/usage", "U"),
         "tab_saver": ("시나리오", "S"),
         "tab_limit": ("한도", "L"), "tab_warn": ("경고", "경"),
+        # 동기화 P5 §7.3: 원산지 머신 뷰. 머신이 하나뿐이면 compose 가 아예 안 만든다.
+        "tab_host": ("머신", "M"),
     }
     # [패널]/계정 그룹이 많을 때 상위 N + '기타'로 접어 길이 폭주를 막는다(설계 §4).
     _GROUP_TOP = 8
@@ -814,6 +817,11 @@ class TokenLogScreen(ModalScreen):
                             markup=False)
                 yield Label(i18n.t("세션"), id="tab_panel", classes="tkbtab",
                             markup=False)
+                if self._multi_host():
+                    # 동기화로 다른 머신 몫이 합쳐진 경우에만 탭을 만든다 — 안 쓰는
+                    # 사람에게 빈 뷰를 보이지 않는다(잡음 0).
+                    yield Label(i18n.t("머신"), id="tab_host", classes="tkbtab",
+                                markup=False)
                 yield Label(i18n.t("한도"), id="tab_limit", classes="tkbtab",
                             markup=False)
                 yield Label(i18n.t("경고"), id="tab_warn", classes="tkbtab",
@@ -1000,7 +1008,7 @@ class TokenLogScreen(ModalScreen):
     # 화면 구간을 읽어 ▀ 다리를 그릴 때 쓴다. 액션(/usage·시나리오)은 활성 개념이
     # 없어 매핑에 없다(연결선은 항상 뷰 탭 아래에 걸린다).
     _ACTIVE_TAB_WIDGET = {
-        "time": "tab_period", "session": "tab_panel",
+        "time": "tab_period", "session": "tab_panel", "host": "tab_host",
         "limit": "tab_limit", "warn": "tab_warn"}
 
     def _active_main_tab_widget(self):
@@ -1027,8 +1035,8 @@ class TokenLogScreen(ModalScreen):
         active = self._active_tab()
         # 상위 뷰 탭 하이라이트(액션 /usage·시나리오는 상태가 없어 강조 안 함).
         for tid, name in (("tab_period", "time"),
-                          ("tab_panel", "session"), ("tab_limit", "limit"),
-                          ("tab_warn", "warn")):
+                          ("tab_panel", "session"), ("tab_host", "host"),
+                          ("tab_limit", "limit"), ("tab_warn", "warn")):
             try:
                 self.query_one("#" + tid, Label).set_class(active == name,
                                                            "tkbtab-active")
@@ -1484,6 +1492,13 @@ class TokenLogScreen(ModalScreen):
                 for i, (lbl, _, _) in enumerate(v["groups"])]
             return (v["groups"], v["gmax"], v["total"], i18n.t("세션"), None,
                     v.get("gmodels"))
+        if self._view == "host":
+            # 머신 뷰(§7.3): 행=원산지 머신별 전체 이력 합. 시간 버킷이 아니라
+            # 집계 dict 라 usagelog.agg_view 를 안 거친다(막대 기준=최대값).
+            rows = self._host_rows()
+            gmax = max((v for _, v, _ in rows), default=0)
+            return (rows, gmax, sum(v for _, v, _ in rows),
+                    i18n.t("머신"), None, None)
         self._sess_times = None
         weekdays = i18n.t("pscreen.weekdays").split(",")
         v = usagelog.agg_view(src, self._bucket, None, "account",
@@ -1493,6 +1508,22 @@ class TokenLogScreen(ModalScreen):
         # 6번째: 행별 모델 티어 분해(막대 색 분할용, 요청 2026-06-21).
         return (v["buckets"], v["bmax"], v["total"], i18n.t("기간"),
                 v.get("bkeys"), v.get("bmodels"))
+
+    def _multi_host(self) -> bool:
+        """원산지 머신이 둘 이상인가(= 동기화로 남의 머신 몫이 들어왔나)."""
+        return len([1 for v in (self._xc_hosts or {}).values() if v]) >= 2
+
+    def _host_rows(self):
+        """머신 뷰 표 행 [(라벨, 토큰, 점유%)] — 비중 큰 순. 다른 뷰(_view_rows)와
+        같은 3-튜플 계약이라 평탄 렌더 경로가 그대로 먹는다."""
+        hosts = {h: int(v) for h, v in (self._xc_hosts or {}).items() if v}
+        total = sum(hosts.values()) or 1
+        rows = []
+        for h, v in sorted(hosts.items(), key=lambda kv: (-kv[1], kv[0])):
+            label = (i18n.t("pscreen.tklog_host_local") if h == _LOCAL_HOST
+                     else h[:12])
+            rows.append((label, v, 100.0 * v / total))
+        return rows
 
     def _host_text(self) -> str:
         """Σ 뒤에 붙는 **원산지 머신 분해**(동기화 P5 §7.3). 머신이 하나뿐이면 빈
@@ -2116,6 +2147,12 @@ class TokenLogScreen(ModalScreen):
             self._view = "session" if was or self._view != "session" else "time"
             self._tree_toggled.clear()
             self.run_worker(self._refresh())
+        elif wid == "tab_host":
+            event.stop()
+            was = self._exit_body_modes()
+            self._view = "host" if was or self._view != "host" else "time"
+            self._tree_toggled.clear()
+            self.run_worker(self._refresh())
         elif wid == "tab_limit":
             event.stop()
             # 한도 상세 뷰 토글(표 자리에 /usage 막대·창Σ). 경고 뷰와 배타.
@@ -2208,6 +2245,15 @@ class TokenLogScreen(ModalScreen):
         # 모두 해당 기능 제거로 더는 동작하지 않는다. 흔한 글자라 팝업이 닫히지 않게
         # 소비만 하고 무동작으로 둔다(예약 — 그 외 키는 아래에서 팝업을 닫으므로
         # 머슬메모리 오타로 안 닫히게).
+        if k == "o" and self._multi_host():
+            event.stop()
+            # 머신 뷰 토글(§7.3). 머신이 하나뿐이면 아래 예약키 처리로 떨어져
+            # 무동작(팝업이 닫히지도 않는다).
+            was = self._exit_body_modes()
+            self._view = "host" if was or self._view != "host" else "time"
+            self._tree_toggled.clear()
+            await self._refresh()
+            return
         if k in ("h", "d", "w", "m", "o", "r"):
             event.stop()
             return

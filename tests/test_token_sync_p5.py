@@ -183,3 +183,80 @@ async def test_sigma_line_shows_host_split_only_when_multi_machine():
 async def test_screen_local_host_key_matches_storage():
     """표시층 상수와 저장소 정본이 어긋나면 로컬 덩어리가 호스트 id 처럼 보인다."""
     assert _screens()._LOCAL_HOST == usagedb.LOCAL_HOST
+
+
+# ── 머신 뷰 탭(§7.3, 2026-07-25) ──────────────────────────────────────────
+
+def _tk_records():
+    base = 1_700_000_000.0
+    return [{"ts": base + d * 3600, "account": "me@x.org", "tokens": 1000}
+            for d in range(4)]
+
+
+async def test_host_tab_hidden_when_single_machine():
+    """머신이 하나뿐이면 탭 자체가 없다 — 동기화를 안 쓰는 사람에게 빈 뷰는 잡음."""
+    from harness import make_app, server_only, teardown
+    S = _screens()
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 36)) as pilot:
+            await pilot.pause(0.3)
+            app.push_screen(S.TokenLogScreen(_tk_records()))
+            await pilot.pause(0.3)
+            scr = app.screen_stack[-1]
+            assert not scr.query("#tab_host")
+            # 'o' 를 눌러도 뷰가 안 바뀌고 팝업도 안 닫힌다(예약키 무동작).
+            await pilot.press("o")
+            await pilot.pause(0.2)
+            assert app.screen_stack[-1] is scr and scr._view == "time"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_host_tab_shows_machine_breakdown():
+    """머신이 둘 이상이면 탭이 뜨고, [o]/클릭으로 머신별 분해 표가 나온다."""
+    from harness import make_app, server_only, teardown
+    S = _screens()
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 36)) as pilot:
+            await pilot.pause(0.3)
+            app.push_screen(S.TokenLogScreen(
+                _tk_records(),
+                xc_totals={"full": 100, "footer": 50,
+                           "cache_read": 30, "cache_create": 20},
+                xc_hosts={usagedb.LOCAL_HOST: 60, "a1b2c3d4e5f6": 40}))
+            await pilot.pause(0.3)
+            scr = app.screen_stack[-1]
+            assert scr.query("#tab_host"), "머신 탭이 있어야 한다"
+            await pilot.press("o")
+            await pilot.pause(0.3)
+            assert scr._view == "host"
+            rows = scr._host_rows()
+            assert [r[0] for r in rows][0] == i18n_t_local(S)
+            assert rows[0][1] == 60 and abs(rows[0][2] - 60.0) < 1e-9
+            assert rows[1][0] == "a1b2c3d4e5f6"[:12]
+            # 다시 누르면 기간 뷰로 복귀(다른 뷰 탭과 같은 토글 규약).
+            await pilot.press("o")
+            await pilot.pause(0.3)
+            assert scr._view == "time"
+    finally:
+        await teardown(srv, task, sock)
+
+
+def i18n_t_local(S):
+    from pytmuxlib import i18n
+    return i18n.t("pscreen.tklog_host_local")
+
+
+async def test_host_rows_sum_matches_totals():
+    """머신 분해 합 = 전체 Σ (표시가 회계와 어긋나면 신뢰를 잃는다)."""
+    S = _screens()
+    scr = S.TokenLogScreen.__new__(S.TokenLogScreen)
+    scr._xc_hosts = {usagedb.LOCAL_HOST: 7, "h2": 3, "h3": 0}
+    rows = scr._host_rows()
+    assert sum(v for _, v, _ in rows) == 10
+    assert abs(sum(pct for _, _, pct in rows) - 100.0) < 1e-9
+    assert len(rows) == 2          # 0 토큰 머신은 행을 만들지 않는다
