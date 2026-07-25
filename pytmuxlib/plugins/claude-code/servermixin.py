@@ -2449,6 +2449,14 @@ class ServerClaudeMixin:
                     # §10-D P7: 새 권위 레코드 적재 → status 용 누계 캐시 무효화
                     # (federation 다운스트림이 다음 status 에 최신 Σ 를 받는다).
                     self._xc_totals_dirty = True
+                if n and acct:
+                    # 동기화 P3(§7.2): 계정을 이제야 알게 된 세션의 **앞선 미상 행**을
+                    # 같은 자리에서 회수한다. 패널 기동 직후 몇 프레임은 계정 스크랩이
+                    # 미확정이라 그 사이 적재분이 NULL 로 남는데, 이걸 마이그레이션
+                    # (한 번뿐)에만 맡기면 그 뒤로 계속 새 미상 행이 쌓인다.
+                    # 방금 본 session_uuid 로 좁혀 돈다(ix_xc_session — 세션당
+                    # GROUP BY 한 번). 계정이 갈리는 세션은 백필이 알아서 포기한다.
+                    self._xc_backfill_accounts(conn, recs)
             if new_off != off:
                 mt = None
                 try:
@@ -2459,6 +2467,26 @@ class ServerClaudeMixin:
             pane._xc_offset = new_off
         except Exception:
             pass
+
+    def _xc_backfill_accounts(self, conn, recs) -> int:
+        """방금 적재한 레코드의 세션에 한해 계정 미상 행을 회수한다(P3 §7.2).
+
+        best-effort — usagedb 가 구버전(백필 미보유)이거나 SQL 이 실패해도 테일
+        흐름을 막지 않는다. 채운 행이 있으면 계정별 집계가 바뀌므로 status 누계
+        캐시도 무효화한다."""
+        try:
+            fn = getattr(usagedb, "backfill_xc_accounts", None)
+            if fn is None:
+                return 0
+            uu = {r.get("session_uuid") for r in recs if r.get("session_uuid")}
+            if not uu:
+                return 0
+            filled = int(fn(conn, sessions=uu).get("filled", 0))
+            if filled:
+                self._xc_totals_dirty = True
+            return filled
+        except Exception:
+            return 0
 
     def _xc_totals_for_status(self) -> dict:
         """§10-D P7: status 에 실을 트랜스크립트 권위 누계(usage_xc 전체 Σ — full/

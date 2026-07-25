@@ -56,7 +56,10 @@ async def test_v8_db_upgrades_in_place_without_touching_rows():
     conn.commit()
     conn.close()
     conn = usagedb.connect(path)
-    assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 9
+    # 버전은 상수로 비교한다 — 여기서 숫자를 박으면 다음 스키마 승급(v10 P3 등)마다
+    # "업그레이드가 된다" 는 이 테스트의 주장과 무관하게 깨진다(실제로 깨졌다).
+    assert int(conn.execute("PRAGMA user_version").fetchone()[0]) \
+        == usagedb.SCHEMA_VERSION
     assert usagedb.xc_count(conn) == 2
     assert usagedb.xc_totals(conn) == before
     conn.close()
@@ -80,7 +83,8 @@ async def test_v8_db_upgrades_in_place_without_touching_rows():
     old.commit()
     old.close()
     conn = usagedb.connect(path2)
-    assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 9
+    assert int(conn.execute("PRAGMA user_version").fetchone()[0]) \
+        == usagedb.SCHEMA_VERSION
     assert usagedb.xc_count(conn) == 1
     assert usagedb.xc_totals(conn)["input"] == 7      # 기존 행 무접촉
     xc = {r["name"] for r in conn.execute("PRAGMA table_info(usage_xc)")}

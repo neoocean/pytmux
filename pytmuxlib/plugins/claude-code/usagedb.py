@@ -57,7 +57,12 @@ from . import usagelog
 # ④ sync_remote / sync_export / account_alias — 진행 커서와 가명↔이메일 로컬 매핑.
 # 전부 CREATE IF NOT EXISTS + ALTER ADD COLUMN(메타데이터만)이라 v8 DB 는 첫 connect
 # 에서 자동 승급되고, 동기화를 켜지 않으면 거동·성능 변화가 0 이다(설계 G5).
-SCHEMA_VERSION = 9
+# v10(2026-07-25, 동기화 P3 §7.2): 데이터 정정 — usage_xc.account 미상(NULL) 행을
+# 같은 트랜스크립트 세션(session_uuid)의 알려진 계정으로 백필한다. 스키마는 v9 와
+# 동일(컬럼 추가 없음)이고 UPDATE 만 돈다. 미상 41%(실측)를 방치하면 동기화를 켠 뒤
+# 계정별 통계가 무의미해지므로 동기화 본체(P4) 앞에 둔다. 한 세션에서 계정이 갈리면
+# 다수결이 아니라 **포기**(잘못된 귀속이 unknown 보다 나쁘다 — v4 교훈).
+SCHEMA_VERSION = 10
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS usage (
@@ -212,6 +217,11 @@ def connect(path: str) -> sqlite3.Connection:
             _migrate_v9_sync(conn)
         except sqlite3.Error:
             new_v = min(new_v, 8)
+    if cur_v < 10 and new_v >= 9:   # v10: 동기화 P3(계정 미상 세션 전파 백필)
+        try:
+            _migrate_v10_xc_accounts(conn)
+        except sqlite3.Error:
+            new_v = min(new_v, 9)
     conn.execute(f"PRAGMA user_version={new_v}")
     conn.commit()
     return conn
@@ -365,6 +375,16 @@ def _migrate_v9_sync(conn) -> int:
     return n
 
 
+def _migrate_v10_xc_accounts(conn) -> int:
+    """v10(동기화 P3 §7.2): usage_xc 계정 미상 행을 세션 단위로 백필. 채운 행 수.
+
+    스키마 변경 없음(UPDATE 뿐) — 실패해도 v9 로 남아 다음 connect 에서 재시도된다
+    (v3~v9 와 같은 관례). 백필 자체는 멱등이라 재시도가 안전하고, 두 번째부터는
+    채울 것이 없어 0 이다. 큰 DB(실측 129k 행)에서도 세션당 GROUP BY 라 인덱스
+    (ix_xc_session)로 끝난다."""
+    return int(backfill_xc_accounts(conn)["filled"])
+
+
 def limits_lkey(host: str | None, ts, source, account) -> str:
     """limits 행의 멱등 키 = host|ts|source|account. 같은 관측을 두 번 받아도 한 행.
 
@@ -399,6 +419,116 @@ def backfill_limits_lkey(conn, host_id: str) -> int:
             continue        # 같은 관측의 잔상 중복 — 첫 건만 키를 갖는다
     conn.commit()
     return n
+
+
+# ── 계정 백필(P3, 설계 §7.2) ───────────────────────────────────────────────
+# usage_xc.account 는 ingest 시점의 pane._claude_account 로 채워진다(v8). 그래서
+# ① v8 이전에 백필된 레거시 행 ② 계정을 아직 못 읽은 동안(패널 기동 직후·스크랩
+# 미확정) 들어온 행이 NULL 로 남는다 — 실측 41%(52,805/129,111). 동기화를 켜면 이
+# 덩어리가 머신마다 'unknown' 으로 남아 **계정별 통계를 무의미하게** 만들므로,
+# 같은 트랜스크립트 세션(session_uuid) 안에서 알려진 계정을 전파해 회수한다.
+#
+# 원칙(설계 §7.2): 한 세션 안에서 계정은 바뀌지 않는다는 가정에 기대되, **가정이
+# 깨지면 다수결이 아니라 포기**한다 — 잘못 귀속된 계정은 unknown 보다 나쁘다
+# (v4 마이그레이션이 남긴 교훈: 가짜 계정이 토큰을 쓴 것처럼 보이는 것이 최악).
+
+def _acct_norm(a):
+    """계정 비교용 정규화 — 트림 + 소문자화. 표기 차이(`A@B.c` vs `a@b.c`)를 같은
+    계정으로 보되, **저장은 원문 그대로** 한다(로컬 DB 는 이메일 원문을 유지하고,
+    동기화가 밖으로 내보내는 가명은 syncrypto.normalize_account 가 따로 만든다 —
+    설계 §3.4. 여기서 그 함수를 쓰지 않는 것은 usagedb 가 암호 계층에 의존하지
+    않기 위해서고, 규칙(트림+소문자)은 같다)."""
+    return str(a).strip().lower() if a is not None else ""
+
+
+def _acct_trusted(a) -> bool:
+    """전파 **출처**로 믿을 수 있는 계정인가. 신뢰 신호는 전부 이메일이라 '@' 를
+    요구한다(v4 정정과 같은 규칙) — 스크랩 오탐이 남긴 비이메일 라벨을 세션 전체로
+    번지게 하지 않는다. UNKNOWN 리터럴도 출처가 아니다."""
+    if a is None:
+        return False
+    s = str(a).strip()
+    return bool(s) and s.lower() != usagelog.UNKNOWN and "@" in s
+
+
+def backfill_xc_accounts(conn, sessions=None) -> dict:
+    """usage_xc 의 계정 미상 행을 같은 세션의 알려진 계정으로 채운다(설계 §7.2).
+
+    sessions=None 이면 전량(마이그레이션·수동 실행), 특정 session_uuid 목록을 주면
+    그 세션만 본다(적재 직후 증분 회수 — ix_xc_session 인덱스로 싸다).
+
+    대상 행 = `account IS NULL` 또는 UNKNOWN 리터럴. 출처 = 같은 session_uuid 의
+    신뢰 계정(이메일). 한 세션에서 정규화 후 서로 다른 계정이 둘 이상 보이면 그
+    세션은 **통째로 건너뛴다**(conflicts). session_uuid 가 NULL 인 행은 이을 근거가
+    없어 그대로 둔다(unresolved 로만 센다).
+
+    채운 값은 그 세션에서 **가장 많이 쓰인 원문 표기**(동수면 사전순 먼저)라
+    같은 입력에 항상 같은 결과가 나온다(멱등·머신 독립).
+
+    반환 = {"filled": 채운 행 수, "sessions": 채운 세션 수,
+            "conflicts": 계정이 갈려 포기한 세션 수,
+            "unresolved": 여전히 미상인 행 수}."""
+    where_s, args = "", []
+    if sessions is not None:
+        uu = sorted({str(s) for s in sessions if s})
+        if not uu:
+            return {"filled": 0, "sessions": 0, "conflicts": 0,
+                    "unresolved": 0}
+        where_s = " AND session_uuid IN (%s)" % ",".join("?" * len(uu))
+        args = uu
+    # 대상 세션 = 미상 행이 실제로 있는 세션만(전량 스캔에서도 후보를 좁힌다).
+    cand = [r["session_uuid"] for r in conn.execute(
+        "SELECT DISTINCT session_uuid FROM usage_xc "
+        "WHERE session_uuid IS NOT NULL AND (account IS NULL OR lower(account)=?)"
+        + where_s, [usagelog.UNKNOWN] + args).fetchall()]
+    filled = nsess = conflicts = 0
+    for uuid in cand:
+        rows = conn.execute(
+            "SELECT account, COUNT(*) AS n FROM usage_xc "
+            "WHERE session_uuid=? AND account IS NOT NULL GROUP BY account",
+            (uuid,)).fetchall()
+        tally: dict = {}
+        for r in rows:
+            if not _acct_trusted(r["account"]):
+                continue
+            key = _acct_norm(r["account"])
+            forms = tally.setdefault(key, {})
+            forms[r["account"]] = forms.get(r["account"], 0) + int(r["n"])
+        if not tally:
+            continue                      # 세션 전체가 미상 — 회수 불가(그대로)
+        if len(tally) > 1:
+            conflicts += 1                # 가정 위반 → 다수결 아닌 포기
+            continue
+        forms = next(iter(tally.values()))
+        acct = sorted(forms.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+        cur = conn.execute(
+            "UPDATE usage_xc SET account=? WHERE session_uuid=? "
+            "AND (account IS NULL OR lower(account)=?)",
+            (acct, uuid, usagelog.UNKNOWN))
+        if cur.rowcount:
+            filled += cur.rowcount
+            nsess += 1
+    if filled:
+        conn.commit()
+    unresolved = int(conn.execute(
+        "SELECT COUNT(*) AS n FROM usage_xc "
+        "WHERE account IS NULL OR lower(account)=?",
+        (usagelog.UNKNOWN,)).fetchone()["n"])
+    return {"filled": filled, "sessions": nsess, "conflicts": conflicts,
+            "unresolved": unresolved}
+
+
+def xc_account_coverage(conn) -> dict:
+    """계정 귀속 커버리지 = {"total", "known", "unknown", "pct"}. 백필 효과와
+    동기화 품질을 사람이 볼 수 있게 하는 값(`:token-sync status`)."""
+    r = conn.execute(
+        "SELECT COUNT(*) AS t, "
+        "SUM(CASE WHEN account IS NOT NULL AND lower(account)<>? THEN 1 ELSE 0 END)"
+        " AS k FROM usage_xc", (usagelog.UNKNOWN,)).fetchone()
+    total = int(r["t"] or 0)
+    known = int(r["k"] or 0)
+    return {"total": total, "known": known, "unknown": total - known,
+            "pct": (100.0 * known / total) if total else 0.0}
 
 
 # ── 동기화 커서(P2~P4 에서 쓴다. P0 은 저장소만 둔다) ──────────────────────

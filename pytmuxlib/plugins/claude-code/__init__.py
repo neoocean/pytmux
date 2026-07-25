@@ -235,7 +235,8 @@ i18n.register({
 # 번역한다([[server-pushed-surface-cannot-call-t]]).
 i18n.register({
     "ko": {
-        "tsync.status": "토큰 동기화: {state} · 마지막 성공 {last} · 받은 행 {rows}",
+        "tsync.status": "토큰 동기화: {state} · 마지막 성공 {last} · 받은 행 {rows}"
+                        " · 계정 귀속 {acct}",
         "tsync.enrolled": "토큰 동기화: 이 머신을 등록했습니다({label})",
         "tsync.enroll_fail": "토큰 동기화 등록 실패 — {why}",
         "tsync.invite": "초대 코드(이 값이 곧 키입니다 — 채팅·스크린샷 금지): {code}",
@@ -247,7 +248,8 @@ i18n.register({
         "tsync.configured": "토큰 동기화 설정: {state}",
     },
     "en": {
-        "tsync.status": "Token sync: {state} · last ok {last} · rows in {rows}",
+        "tsync.status": "Token sync: {state} · last ok {last} · rows in {rows}"
+                        " · account attributed {acct}",
         "tsync.enrolled": "Token sync: this machine is enrolled ({label})",
         "tsync.enroll_fail": "Token sync enrollment failed — {why}",
         "tsync.invite": "Invite code (this IS the key — never paste in chat): {code}",
@@ -598,13 +600,23 @@ async def _token_sync_cmd(server, client, sub: str, arg: str):
             state = ("%s(%s)" % (mode, getattr(server, "token_sync_url", "") or "-")
                      if mode == "server" else "off")
             last = st.get("last_ok")
+            # P3(§7.2): 계정 귀속 커버리지를 함께 보인다 — 동기화를 켜도 미상 행은
+            # 머신마다 unknown 덩어리로 남아 계정별 통계를 무의미하게 만드는데,
+            # 그게 지금 몇 %인지가 어디에도 안 보였다.
+            cov = {}
+            with contextlib.suppress(Exception):
+                cov = usagedb.xc_account_coverage(conn)
             await note("tsync.status",
-                       "토큰 동기화: {state} · 마지막 성공 {last} · 받은 행 {rows}",
+                       "토큰 동기화: {state} · 마지막 성공 {last} · 받은 행 {rows}"
+                       " · 계정 귀속 {acct}",
                        state=state + (" · 오류: %s" % st["last_err"]
                                       if st.get("last_err") else ""),
                        last=(_time.strftime("%m-%d %H:%M", _time.localtime(last))
                              if last else "-"),
-                       rows=int(st.get("rows_in") or 0))
+                       rows=int(st.get("rows_in") or 0),
+                       acct=("%.0f%% (%d/%d)" % (cov["pct"], cov["known"],
+                                                 cov["total"])
+                             if cov.get("total") else "-"))
             return
         if sub in ("on", "off", "set-url", "url"):
             # 설정 변경은 URL 미설정 상태에서도 되어야 한다(그게 켜는 방법이다).
