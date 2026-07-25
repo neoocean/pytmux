@@ -1092,7 +1092,28 @@ def claude_awaiting_answer(text: str) -> bool:
     return False
 
 
-def claude_perm_mode(text: str):
+# F3 벡터 2 완화(2026-07-25b 후속): 화면 텍스트에는 Claude **모델이 출력한 임의
+# 텍스트**가 섞이므로, 본문 어디서든 "bypass permissions" 를 그리면 스크래퍼가 그대로
+# 믿는다. 한도 배너(옵션 A/B)와 달리 권한모드 footer 는 **진짜로 화면 아래쪽**에만
+# 그려지므로, 여기서는 검수가 지적한 "진짜 앵커는 행 위치" 가 성립한다 → 행위에 쓰는
+# 판정은 footer tail 로 좁힌다. 비어 있지 않은 마지막 줄들만 보므로(하단 패딩 무시)
+# 좁은 폭·긴 footer 에도 견딘다.
+# 창 크기 3줄의 근거(실측): 실 화면 픽스처 12종은 **마지막 비어있지 않은 1줄**만 봐도
+# 전부 같은 판정이 나온다(권한모드 footer 가 항상 마지막 줄) — 그런데 좁은 폭에서는
+# footer 가 줄바꿈돼 모드명이 마지막 줄이 아니게 되므로(모바일 폭 회귀 전례) 여유 2줄을
+# 둔다. **남는 한계(정직하게)**: 위조 줄이 입력박스 바로 위(=창 안)에 오면 여전히 창에
+# 들어온다. 이 완화는 위조를 **불가능**하게 만드는 게 아니라 "화면 아무 곳"에서 "footer
+# 직전 3줄"로 좁혀 비용을 올리는 것이다(in-band 방어의 원리적 한계 — F3 설계문서 §2).
+_FOOTER_TAIL_LINES = 3
+
+
+def footer_tail(text: str, lines: int = _FOOTER_TAIL_LINES) -> str:
+    """화면 아래쪽 **비어 있지 않은 마지막 N줄**(= footer 후보 영역)만 반환."""
+    src = [ln for ln in (text or "").splitlines() if ln.strip()]
+    return "\n".join(src[-lines:])
+
+
+def claude_perm_mode(text: str, *, anchored: bool = False):
     """Claude Code idle 권한모드 footer 에서 현재 권한모드를 best-effort 추정.
 
     반환:
@@ -1109,7 +1130,15 @@ def claude_perm_mode(text: str):
     문서). 그래서 글리프가 아니라 **문구**("auto mode" vs "accept edits")로만 가른다 —
     예전엔 ⏵⏵·"accept edits on" 을 모두 auto 로 봐, 새 세션이 acceptEdits 에서 멈춰
     진짜 auto 까지 못 가던 버그가 있었다(제보). 버전이 footer 문구를 바꾸면
-    가장 먼저 손볼 곳이다(claude_state 와 같은 footer 를 본다)."""
+    가장 먼저 손볼 곳이다(claude_state 와 같은 footer 를 본다).
+
+    anchored=True 면 **footer 영역(비어 있지 않은 마지막 줄들)만** 본다 — 본문에 위조
+    footer 를 그려 권한모드 판정을 흔드는 것(F3 벡터 2)을 막는다. 행위를 바꾸는 소비자
+    (_drive_perm_mode 의 shift+tab 폐루프·bypass 관측 sticky)는 반드시 anchored 로
+    부른다. 위조가 아니라도 본문 스캔은 오탐원이다(Claude 가 권한모드를 *설명*하는
+    출력·소스 리터럴)."""
+    if anchored:
+        text = footer_tail(text)
     low = text.lower()
     # 명시적 권한모드 문구부터 판정한다(모드명은 footer 줄 앞쪽이라 좁은 폭(모바일)
     # 에서 뒤가 잘려도 살아남는다). ⏵⏵ 글리프는 auto·accept 공용이라 단독 신호로 안 쓴다.

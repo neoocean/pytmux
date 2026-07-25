@@ -590,6 +590,26 @@ class ServerClaudeMixin:
         pane._pc_phase = None
         self._pc_inject(pane, nxt)
 
+    def _xc_session_looks_new(self, pane) -> bool:
+        """애매한 세션 경계에서 **대역외 근거**로 '진짜 새 Claude 프로세스'를 가른다.
+
+        근거 = 트랜스크립트 경로의 파일명(Claude 가 부여한 sessionId). 새 프로세스는 새
+        파일을 쓰므로 파일명이 바뀐다 — 화면 위조나 transient flap 으로는 바뀌지 않는다.
+        판단 근거가 없으면(경로 미해석·예외) **True**(=종전 동작 유지: 경계를 인정)로
+        떨어진다: 회계 미부착을 위조로 읽어 진짜 새 세션을 옛 세션에 붙이면 통계가 조용히
+        섞이기 때문(F3 옵션 A 와 같은 안전 비대칭).
+        """
+        try:
+            path = getattr(pane, "_xc_path", None) or self._xc_resolve_path(pane)
+        except Exception:
+            return True
+        if not path:
+            return True                     # 근거 없음 → 판단 포기(경계 인정)
+        seen = getattr(pane, "_xc_session_seen", None)
+        cur = os.path.basename(path)
+        pane._xc_session_seen = cur
+        return seen is None or cur != seen
+
     def _reset_token_session(self, pane: Pane):
         """패널 토큰 누계를 **새 세션으로 끊는다**(/clear 컨텍스트 경계, #5). tokens
         상태를 0 으로 리셋하고 세션 id 를 새로 부여해, /clear 이후의 토큰이 비워진 새
@@ -1077,7 +1097,8 @@ class ServerClaudeMixin:
         acceptEdits 로 폴백한다 — auto 없는 계정이 plan/default 같은 엉뚱한 모드에 멈추지
         않게(가장 자동적이되 안전한 모드로 정착). bypass 는 명시적 위험 모드라 자동
         구동이 건드리지 않는다(이미 bypass 면 종료)."""
-        mode = claude_perm_mode(txt)
+        # anchored: 본문 위조 footer 로 폐루프를 흔들지 못하게(F3 벡터 2).
+        mode = claude_perm_mode(txt, anchored=True)
         if mode is None:
             return False                 # footer 안 보임 — 대기
         if mode == "bypass" and target != "bypass":
@@ -1336,11 +1357,32 @@ class ServerClaudeMixin:
             self._rc_policy_blocked = True
             for q in self._all_panes():
                 q._rc_pending = False   # 무장된 자동 /rc 예약도 거둔다
+            # F3 벡터 3 완화 ①**투명성**: 이 래치는 서버 전역·영구라 위조 한 줄로도
+            # 자동 /rc 가 조용히 죽는다. 조용한 중단은 '고장'과 구분 불가라 알린다.
+            note = getattr(self, "_notice_msg", None)
+            if note is not None:
+                note("ccmsg.rc_policy_blocked",
+                     "조직 정책 메시지 관측 — /rc 자동 주입을 중단합니다(패널 {pane})",
+                     severity="warn", pane=p.id)
         # 원격제어가 켜진 걸(패널/표시) 한 번이라도 보면 sticky 로 기록 — 재시작
         # re-exec 후 거짓 None→Claude 로 auto /rc 가 재발해 이미 켜진 패널을 다시
         # 띄우지 않게 한다(_rc_done 은 _RESUME_FIELDS 로 직렬화돼 유지).
         if claude_remote_active(txt):
             p._rc_done = True
+            # F3 벡터 3 완화 ②**자기치유**: '정책으로 막힘' 과 '지금 켜져 있음' 은
+            # 공존할 수 없다 → 켜진 것을 관측하면 오래치를 푼다(위조로 걸린 래치가
+            # 서버 수명 내내 남지 않게). 진짜 차단 환경에선 이 관측이 안 나온다.
+            # **함정(실측)**: claude_remote_active 는 "remote control" 부분일치라
+            # **차단 메시지 자체**("Remote Control is disabled by your organization")
+            # 에도 매칭된다 → 같은 프레임에서 세운 래치를 곧바로 풀어버렸다. 그래서
+            # 치유는 그 프레임에 차단 문구가 **없을 때만** 한다(차단 문구가 이긴다).
+            if self._rc_policy_blocked and not claude_remote_blocked(txt):
+                self._rc_policy_blocked = False
+                note = getattr(self, "_notice_msg", None)
+                if note is not None:
+                    note("ccmsg.rc_policy_cleared",
+                         "원격제어가 실제로 켜져 있어 정책 차단 래치를 해제합니다",
+                         severity="info")
             # 추가(요청): 원격제어가 이미 켜진 걸 한 번이라도 관측하면 **서버
             # 전역** sticky 를 세워, 이후 새 세션의 auto-launch fire 시점에 /rc 를
             # 확정 스킵한다(아래 fire 블록의 skip 조건에 _rc_seen_active 포함).
@@ -1534,7 +1576,7 @@ class ServerClaudeMixin:
             # P1 CSE: 권한모드 관측값(claude_perm_mode)은 txt 가 이 프레임 내내
             # 불변이라 idle 진입 시 1회만 구해 아래 모든 분기가 재사용한다
             # (예전엔 1138/1145/1161 에서 같은 txt 를 3번 재스캔).
-            pm = claude_perm_mode(txt)
+            pm = claude_perm_mode(txt, anchored=True)
             # 탭→세션 리네임 보류분(servertree.rename_window / namesync): 리네임
             # 당시 busy 라 즉시 주입 못 한 `/rename` 을 입력 준비된 첫 idle 에
             # 발동한다. 1회성이라 발화 즉시 비운다. 단, 입력박스(컴포저)에
@@ -1635,10 +1677,30 @@ class ServerClaudeMixin:
         # 현재 응답 running 토큰을 step 으로 접어 응답별 peak 를 누계에 확정.
         # (확정 시점 fr.committed>0 은 #7 의 영속 로깅 이벤트로도 쓰인다 — 프레임 필드.)
         if fr.new_cl and not fr.old_cl:
-            tokens.reset(p._tok_state)
-            p._exit_tokens = 0       # 새 세션 → 이전 종료 총량 보존값 폐기
-            # 새 Claude 세션 경계: 세션 id 부여, 계정 재감지(수동 지정은 유지).
-            self._next_claude_session_id(p)
+            # **거짓 경계 게이트(F3 벡터 4 + transient flap)**: 여기 오는 경로는 둘이다 —
+            # ① 진짜 새 세션(셸에서 claude 기동/재기동) ② 같은 세션인데 claude_state 가
+            # 한두 프레임 None 이었던 것(긴 busy 출력이 footer 를 샘플 밖으로 밀거나,
+            # Claude 가 위조 화면을 그린 경우). ②에서 회계를 끊으면 세션 토큰이 0 으로
+            # 지워지고 세션 id 가 갈려(usage_xc 귀속까지) 통계가 조용히 조각난다.
+            # 모델 래치가 2026-07-18 에 같은 이유로 fr.old_hdr 게이트를 받았고(아래),
+            # 회계는 그때 빠져 있었다. _hdr_claude 는 30프레임 디바운스라 flap 에선
+            # 여전히 True 이고 진짜 재기동만 False 까지 갔다 온다.
+            # (session_id 가 아직 없으면 = 진짜 첫 감지이므로 게이트와 무관하게 부여.)
+            #
+            # **왜 old_hdr 단독으론 안 되는가**(실측으로 배움): 셸 프롬프트가 한 프레임
+            # 보인 뒤 곧바로 claude 가 다시 뜨는 **진짜 빠른 재기동**도 old_hdr=True 다
+            # (디바운스 30프레임). old_hdr 만으로 막으면 그 경우 회계가 옛 세션에 계속
+            # 붙어 두 세션이 하나로 **병합**된다(test_token_usage_logging 이 정확히 이
+            # 시나리오를 못박고 있었다). 그래서 애매할 때만 **대역외 근거**를 본다 —
+            # 트랜스크립트 파일명(=Claude 가 부여한 sessionId)이 바뀌었으면 진짜 새
+            # 프로세스다. 근거를 못 얻으면(경로 미해석·구버전) **종전 동작으로 통과** —
+            # 옵션 A 와 같은 안전 비대칭(회계 미부착을 위조로 읽지 않는다).
+            if (not fr.old_hdr or getattr(p, "_claude_session_id", None) is None
+                    or self._xc_session_looks_new(p)):
+                tokens.reset(p._tok_state)
+                p._exit_tokens = 0   # 새 세션 → 이전 종료 총량 보존값 폐기
+                # 새 Claude 세션 경계: 세션 id 부여, 계정 재감지(수동 지정은 유지).
+                self._next_claude_session_id(p)
             # 모델 래치는 **확정 세션 종료**(디바운스 _hdr_claude 가 False 까지
             # 갔던)를 지나온 새 세션에서만 푼다(2026-07-16 도입, 2026-07-18 게이트
             # 추가). 새 세션은 다른 모델로 뜰 수 있어(기본값 복귀·`--model` 기동)

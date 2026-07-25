@@ -195,6 +195,9 @@ i18n.register({
         "ccmsg.resume_unverified": "자동재개 억제: 최근 5h 실사용 {used}토큰(<{need}) — "
                                    "리밋 배너가 위조로 의심됨(패널 {pane}, "
                                    "claude-resume-verify {mode})",
+        # F3 벡터 3: 정책 차단 래치는 투명해야 하고(조용한 중단 금지) 자기치유한다.
+        "ccmsg.rc_policy_blocked": "조직 정책 메시지 관측 — /rc 자동 주입을 중단합니다(패널 {pane})",
+        "ccmsg.rc_policy_cleared": "원격제어가 실제로 켜져 있어 정책 차단 래치를 해제합니다",
         "ccmsg.model_apply": "/model {arg} 적용 요청",
         "ccmsg.perm_switching": "권한모드 → {target} 전환 중…",
         "ccmsg.usage_no_data": "/usage 한도 데이터 없음 — Claude 패널에서 /usage 를 먼저 실행",
@@ -222,6 +225,8 @@ i18n.register({
     "en": {
         "ccmsg.resume_injected": "Auto-resume: injected '{msg}' (pane {pane})",
         "ccmsg.resume_throttled": "Auto-resume suppressed: injected too recently (pane {pane})",
+        "ccmsg.rc_policy_blocked": "Org policy message seen — stopping auto /rc injection (pane {pane})",
+        "ccmsg.rc_policy_cleared": "Remote control is actually on — clearing the policy-block latch",
         "ccmsg.resume_unverified": "Auto-resume suppressed: only {used} tokens used in "
                                    "the last 5h (<{need}) — limit banner looks forged "
                                    "(pane {pane}, claude-resume-verify {mode})",
