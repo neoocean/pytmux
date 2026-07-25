@@ -46,11 +46,14 @@ def default_sync_url() -> str:
 
 
 KIND_LIM = "lim"
+KIND_XC = "xc"                  # 트랜스크립트 권위 회계(P4 본체)
 PUSH_BATCH = 500
 PULL_BATCH = 1000
 MAX_SKEW_YEARS = 1.0
 _YEAR = 365 * 24 * 3600.0
 PCT_MAX = 1000                  # 퍼센트 상한(적대적 거대값 차단 — 100 초과도 실측 존재)
+TOK_MAX = 10 ** 12              # 레코드 1건의 토큰 상한(적대적 거대값 → 합계 오염 차단)
+TZOFF_MAX = 26 * 3600           # UTC 오프셋 상한(±14h 가 실존 최대, 여유 포함)
 
 
 class SyncError(Exception):
@@ -428,6 +431,63 @@ class SyncClient:
         return {"sent": len(lines), "accepted": int(out.get("accepted", 0)),
                 "ignored": int(out.get("ignored", 0))}
 
+    # -- push(usage_xc) ---------------------------------------------------
+
+    def push_xc(self, batch: int = PUSH_BATCH) -> dict:
+        """아직 안 보낸 자기 usage_xc 행을 봉인해 올린다. {sent, accepted, ignored}.
+
+        limits 와 같은 규율(자기 host 행만·성공 뒤에만 커서 전진)이되 두 가지가
+        다르다:
+        - **rkey 는 xkey 로 만든다**(`message.id:requestId`). 전역 고유라 서버의
+          `(vault,kind,rkey)` 유니크가 곧 머신 간 dedup 이 된다 — 이게 이 설계에서
+          병합이 "단순 합집합"으로 성립하는 이유다(설계 §1.1).
+        - 행이 limits 의 20배라 배치가 한 번에 다 못 나간다. 커서(rowid)가 남으므로
+          다음 주기가 이어서 보낸다(따라잡을 때까지 반복)."""
+        if not self.encrypt:
+            raise SyncError("평문 업로드는 지원하지 않습니다(token_sync_encrypt=on)")
+        k_id, k_enc = self._keys()
+        host = self.host_id
+        cursor = usagedb.get_export_cursor(self.conn, "usage_xc")
+        rows = self.conn.execute(
+            "SELECT rowid AS rid, * FROM usage_xc WHERE rowid>?"
+            " AND (host IS NULL OR host=?) ORDER BY rowid LIMIT ?",
+            (cursor, host, int(batch))).fetchall()
+        if not rows:
+            return {"sent": 0, "accepted": 0, "ignored": 0}
+        lines, last = [], cursor
+        vault = ""      # AAD 의 vault 자리 — 서버가 vault 를 알려주지 않으므로 빈값
+        for r in rows:
+            last = r["rid"]
+            acct = r["account"]
+            if self.accounts and acct not in self.accounts:
+                continue                    # 내보내기 계정 화이트리스트(§8.5)
+            xkey = r["xkey"]
+            if not xkey:
+                continue
+            payload = _xc_payload(r, host)
+            rk = syncrypto.rkey(k_id, KIND_XC, str(xkey))
+            aid = syncrypto.acct_id(k_id, acct)
+            nonce, ct = syncrypto.seal(
+                k_enc, syncrypto.aad(vault, KIND_XC, rk, aid),
+                json.dumps(payload, ensure_ascii=False).encode())
+            lines.append(json.dumps({"kind": KIND_XC, "rkey": rk,
+                                     "acct_id": aid, "ct": _b64u(ct),
+                                     "nonce": _b64u(nonce)}))
+        if not lines:
+            usagedb.set_export_cursor(self.conn, "usage_xc", last, self._now())
+            return {"sent": 0, "accepted": 0, "ignored": 0}
+        body = ("\n".join(lines) + "\n").encode()
+        status, _, resp = self._signed("POST", "/v1/events", "", body)
+        if status != 200:
+            raise SyncError(_http_why(status, resp, "업로드"))
+        try:
+            out = json.loads(resp)
+        except ValueError as e:
+            raise SyncError("서버 응답 형식 오류") from e
+        usagedb.set_export_cursor(self.conn, "usage_xc", last, self._now())
+        return {"sent": len(lines), "accepted": int(out.get("accepted", 0)),
+                "ignored": int(out.get("ignored", 0))}
+
     # -- pull -------------------------------------------------------------
 
     def pull(self, batch: int = PULL_BATCH) -> dict:
@@ -439,7 +499,7 @@ class SyncClient:
         status, _, resp = self._signed("GET", "/v1/events", query, b"")
         if status != 200:
             raise SyncError(_http_why(status, resp, "내려받기"))
-        merged = rejected = 0
+        merged = rejected = xc_new = 0
         last = since
         host = self.host_id
         for line in resp.decode("utf-8", "replace").splitlines():
@@ -462,8 +522,16 @@ class SyncClient:
                 continue
             if rec.get("host") == host:
                 continue            # 내가 올린 것 — 로컬에 이미 있다
-            if usagedb.import_limits(self.conn, rec, rec.get("host"),
-                                     rec.get("_lkey")):
+            if rec.get("_kind") == KIND_XC:
+                # usage_xc 는 xkey PK + INSERT OR IGNORE 라 멱등이 저장소에 있다.
+                # tab/pane/pytmux_session 은 **원산지 로컬 좌표**라 받지 않는다
+                # (그 머신의 3번 탭이 내 3번 탭이 아니다) → NULL 로 남기고 host 로
+                # 출처를 구분한다.
+                if usagedb.insert_xc(self.conn, rec, account=rec.get("account")):
+                    merged += 1
+                    xc_new += 1
+            elif usagedb.import_limits(self.conn, rec, rec.get("host"),
+                                       rec.get("_lkey")):
                 merged += 1
         # C-3(검수): 성공을 쓴 뒤 오류를 또 쓰면 마지막 값이 성공을 덮어 상태가
         # 뒤집힌다. 한 번만 쓴다.
@@ -477,19 +545,33 @@ class SyncClient:
         usagedb.set_sync_remote(self.conn, self.REMOTE, cursor=str(last),
                                 last_ok=self._now(), rows_in_delta=merged,
                                 last_err=why)
-        return {"rows": last - since, "merged": merged, "rejected": rejected}
+        if xc_new:
+            # 남의 머신 행이 들어오면 그 세션의 계정 미상 행을 회수할 근거가 새로
+            # 생긴다(P3 §7.2 를 동기화 결과에도 적용 — 안 하면 받아온 41% 가 그대로
+            # unknown 으로 남아 "합쳤는데도 계정별 통계가 비는" 상태가 된다).
+            try:
+                usagedb.backfill_xc_accounts(self.conn)
+            except Exception:       # noqa: BLE001 — 회수 실패가 동기화를 깨면 안 된다
+                pass
+        return {"rows": last - since, "merged": merged, "rejected": rejected,
+                "xc": xc_new}
 
     def _open_event(self, ev, k_id, k_enc):
-        """이벤트 1건 복호·검증. 조금이라도 어긋나면 None(그 줄만 버린다)."""
-        if ev.get("kind") != KIND_LIM:
-            return None                    # P2 는 limits 만(usage_xc 는 P4)
+        """이벤트 1건 복호·검증. 조금이라도 어긋나면 None(그 줄만 버린다).
+
+        kind 로 갈라 각자의 검증기를 태운다 — **AAD 에 kind 가 들어가므로** 한 종류의
+        레코드를 다른 종류로 재라벨해 밀어 넣는 재조합 공격은 복호 단계에서 이미
+        실패한다(그래도 검증기는 kind 별로 따로 둔다: 필드 계약이 다르다)."""
+        kind = ev.get("kind")
+        if kind not in (KIND_LIM, KIND_XC):
+            return None
         rk, aid = ev.get("rkey"), ev.get("acct_id")
         if not isinstance(rk, str) or not rk:
             return None
         try:
             ct = _b64u_dec(ev.get("ct") or "")
             nonce = _b64u_dec(ev.get("nonce") or "")
-            raw = syncrypto.unseal(k_enc, syncrypto.aad("", KIND_LIM, rk, aid),
+            raw = syncrypto.unseal(k_enc, syncrypto.aad("", kind, rk, aid),
                                    nonce, ct)
         except (ValueError, syncrypto.SyncCryptoError):
             return None                    # 위조·변조·재조합·키 불일치
@@ -497,9 +579,16 @@ class SyncClient:
             d = json.loads(raw)
         except ValueError:
             return None
+        if kind == KIND_XC:
+            rec = _validate_xc(d, self._now())
+            if rec is None:
+                return None
+            rec["_kind"] = KIND_XC
+            return rec
         rec = _validate_limits(d, self._now())
         if rec is None:
             return None
+        rec["_kind"] = KIND_LIM
         rec["_lkey"] = usagedb.limits_lkey(rec.get("host"), rec["ts"],
                                            rec["source"], rec.get("account"))
         return rec
@@ -521,6 +610,79 @@ def _limits_payload(row, host) -> dict:
         out[f] = row[f] if f in keys else None
     out["host"] = row["host"] if ("host" in keys and row["host"]) else host
     out["v"] = 1
+    return out
+
+
+_XC_FIELDS = ("xkey", "ts", "session_uuid", "model", "account", "input",
+              "output", "cache_create", "cache_read", "is_sidechain",
+              "tzoff", "host")
+# **일부러 빠진 것**: tab·pane·pytmux_session. 이 셋은 원산지 머신의 로컬 좌표라
+# 받는 쪽에서 의미가 없고(그 머신의 3번 탭 ≠ 내 3번 탭), 내보내면 "언제 어느 탭에서
+# 무엇을 했는가"라는 로컬 작업 구조가 서버에 그대로 남는다(§8.1 화이트리스트 원칙).
+_XC_COUNTS = ("input", "output", "cache_create", "cache_read")
+
+
+def _xc_payload(row, host) -> dict:
+    """usage_xc 행 → 전송 레코드(화이트리스트 직렬화)."""
+    out = {}
+    keys = row.keys() if hasattr(row, "keys") else row
+    for f in _XC_FIELDS:
+        out[f] = row[f] if f in keys else None
+    out["host"] = row["host"] if ("host" in keys and row["host"]) else host
+    out["v"] = 1
+    return out
+
+
+def _validate_xc(d, now: float):
+    """신뢰불가 usage_xc 레코드 검증 → usagedb.insert_xc 가 받는 dict 또는 None.
+
+    회계 테이블이라 **수치 검증이 핵심**이다 — 여기서 거대값/음수를 흘리면 남의
+    머신 하나가 내 lifetime Σ 를 통째로 오염시킨다(로컬 원본은 무사하지만 표시가
+    거짓이 된다). ts 는 epoch 초로 저장되므로 문자열 ISO 도 받아 정규화한다."""
+    if not isinstance(d, dict) or d.get("v") != 1:
+        return None
+    xkey = d.get("xkey")
+    if not isinstance(xkey, str) or not (0 < len(xkey) <= 256):
+        return None
+    ts = d.get("ts")
+    if isinstance(ts, str):
+        ts = usagedb._iso_to_epoch(ts)
+    try:
+        ts = float(ts)
+    except (TypeError, ValueError):
+        return None
+    if not (now - MAX_SKEW_YEARS * _YEAR <= ts <= now + MAX_SKEW_YEARS * _YEAR):
+        return None
+    out = {"xkey": xkey, "ts": ts}
+    for f, cap in (("session_uuid", 64), ("model", 64), ("account", 256),
+                   ("host", 64)):
+        v = d.get(f)
+        if v is not None and (not isinstance(v, str) or len(v) > cap):
+            return None
+        out[f] = v
+    for f in _XC_COUNTS:
+        v = d.get(f, 0)
+        if v is None:
+            v = 0
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return None
+        if not (0 <= v <= TOK_MAX):
+            return None
+        out[f] = int(v)
+    sc = d.get("is_sidechain", 0)
+    if isinstance(sc, bool):
+        sc = int(sc)
+    if sc not in (0, 1):
+        return None
+    out["is_sidechain"] = sc
+    tz = d.get("tzoff")
+    if tz is not None:
+        if isinstance(tz, bool) or not isinstance(tz, (int, float)):
+            return None
+        if not (-TZOFF_MAX <= tz <= TZOFF_MAX):
+            return None
+        tz = int(tz)
+    out["tzoff"] = tz
     return out
 
 
@@ -654,14 +816,22 @@ def reset_cursors(conn) -> None:
     키를 바꾸거나 서버를 비운 뒤에 필요하다. 병합은 멱등(xkey·lkey 유니크)이라 다시
     올려도 중복이 생기지 않는다 — 그래서 "처음부터 다시" 가 안전한 복구 수단이다."""
     usagedb.set_export_cursor(conn, "limits", 0)
+    usagedb.set_export_cursor(conn, "usage_xc", 0)
     usagedb.set_sync_remote(conn, SyncClient.REMOTE, cursor="0", last_err="")
 
 
 def _sync_once(client) -> dict:
-    """push → pull 한 바퀴(블로킹). executor 안에서만 부른다."""
+    """push(limits→usage_xc) → pull 한 바퀴(블로킹). executor 안에서만 부른다.
+
+    limits 를 먼저 올린다 — 행 수가 1/20 이라 체감 값(5h%/1w%)이 usage_xc 백로그를
+    기다리지 않고 먼저 도착한다(설계 §1.3). usage_xc 는 배치가 남으면 다음 주기가
+    이어 받는다."""
     up = client.push_limits()
+    up_xc = client.push_xc()
     down = client.pull()
-    return {"push": up, "pull": down, "rejected": down.get("rejected", 0)}
+    return {"push": up, "push_xc": up_xc, "pull": down,
+            "sent": up.get("sent", 0) + up_xc.get("sent", 0),
+            "rejected": down.get("rejected", 0)}
 
 
 def _client_for(server):

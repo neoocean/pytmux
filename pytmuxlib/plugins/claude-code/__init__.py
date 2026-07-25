@@ -666,7 +666,9 @@ async def _token_sync_cmd(server, client, sub: str, arg: str):
             await note("tsync.synced",
                        "토큰 동기화: 올림 {sent} · 받음 {merged} · 거부 {rejected}",
                        severity=("warn" if out["rejected"] else "ok"),
-                       sent=out["push"]["sent"], merged=out["pull"]["merged"],
+                       # P4: 올림은 limits + usage_xc 합계(_sync_once 가 합쳐 준다).
+                       sent=out.get("sent", out["push"]["sent"]),
+                       merged=out["pull"]["merged"],
                        rejected=out["rejected"])
         else:
             await note("tsync.fail", "토큰 동기화 실패 — {why}", severity="error",
