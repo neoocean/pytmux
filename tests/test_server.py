@@ -1556,6 +1556,9 @@ async def test_command_table_disposition_golden():
         "set_buffer": HANDLED, "paste_buffer": HANDLED, "paste": HANDLED,
         "request_buffers": HANDLED, "clear_history": HANDLED,
         "capture_pane": HANDLED, "pipe_pane": HANDLED,
+        # 마우스 드래그 선택 텍스트 요청(2026-07-25 신설) — 핸들러가 `selection` 을
+        # 회신해 완결하므로 HANDLED(full 재동기 불필요: 선택은 클라 상태다).
+        "copy_range": HANDLED,
         # 팝업/레이아웃 영속
         "popup_open": HANDLED, "popup_close": HANDLED, "save_layout": HANDLED,
         "restore_layout": HANDLED, "list_layouts": HANDLED,

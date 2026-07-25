@@ -3011,11 +3011,17 @@ class NoticeHistoryScreen(ModalScreen):
 
     이력 자체는 클라 메모리(`app._notices`)에 있고, 이 화면은 열 때 받은 **스냅샷**을
     그린다(팝업이 떠 있는 동안 새 알림이 끼어들어 선택이 튀지 않게)."""
+    # 높이는 **파이썬에서 정확히 계산해 박는다**(_fit_height). 종전엔 박스가
+    # `height: auto`, 목록이 `max-height: 80%` 였는데, 퍼센트는 **부모(박스) 기준**이라
+    # 박스가 이미 '목록 전체 + 힌트' 로 auto 계산된 뒤 목록만 그 80% 로 줄어들어
+    # **박스 아래에 빈 줄이 남았다**(실측 30행 화면에서 박스 19 = 목록 15 + 힌트 1 →
+    # 3행 공백, 제보 2026-07-25). 목록을 `1fr` 로 두고 박스 높이를 확정하면 목록이
+    # 남은 공간을 정확히 채워 공백이 원리적으로 생기지 않는다.
     CSS = """
     NoticeHistoryScreen { align: center middle; }
     #nhbox { width: 96%; max-width: 96; height: auto; max-height: 90%;
              border: round $accent; background: $panel; padding: 0 1; }
-    #nhlist { width: 100%; height: auto; max-height: 80%; }
+    #nhlist { width: 100%; height: 1fr; }
     #nhlist ListItem { height: auto; }
     #nhlist ListItem Label { width: 1fr; }
     #nhhint { width: 100%; height: 1; color: $text-muted; }
@@ -3120,6 +3126,32 @@ class NoticeHistoryScreen(ModalScreen):
         lv.focus()
         # 폭이 정해진 뒤(레이아웃 후) 실제 폭 기준으로 라벨을 다시 채운다(자르기 정확도).
         self.call_after_refresh(self._refresh_rows)
+        self.call_after_refresh(self._fit_height)
+
+    def _content_rows(self):
+        """목록이 실제로 그릴 **줄 수**(펼친 항목은 여러 줄). 항목이 없으면 1줄."""
+        width = self._width()
+        if not self._entries:
+            return 1
+        return sum(max(1, len(self._lines_for(i, e, width)))
+                   for i, e in enumerate(self._entries))
+
+    def _fit_height(self):
+        """박스 높이를 내용에 딱 맞춘다(하단 빈 공간 제거, 제보 2026-07-25).
+
+        `height` 는 border-box 라 테두리 2줄 + 힌트 1줄을 더해 박는다. 화면의 90%
+        (CSS max-height 와 같은 상한)로 클램프해 긴 이력에서도 화면을 넘지 않고, 그때
+        목록은 `1fr` 로 남은 만큼만 차지하며 **스크롤**된다. 앱 크기를 못 구하는
+        상황(테스트·마운트 전)에선 조용히 넘어간다 — 배치는 CSS 로도 유효하다."""
+        try:
+            box = self.query_one("#nhbox")
+            avail = self.app.size.height
+        except Exception:
+            return
+        if not avail:
+            return
+        want = self._content_rows() + 1 + 2      # 힌트 1 + 테두리 2
+        box.styles.height = max(4, min(want, int(avail * 0.9)))
 
     def _refresh_rows(self, only=None):
         """항목 라벨을 **제자리에서** 갱신한다. 이력은 열 때 받은 스냅샷이라 항목
@@ -3169,6 +3201,7 @@ class NoticeHistoryScreen(ModalScreen):
             return
         self._expanded.symmetric_difference_update({i})
         self._refresh_rows(only=i)
+        self._fit_height()      # 펼치면 줄 수가 늘어난다 — 높이도 같이 맞춘다
 
     def on_key(self, event: events.Key):
         if event.key == "escape":

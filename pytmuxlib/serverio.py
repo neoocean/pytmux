@@ -302,7 +302,8 @@ class ServerIOMixin:
                     await write_msg(client.writer,
                                     {"t": "screen", "pane": p.id,
                                      "rows": rows, "cursor": cursor,
-                                     "wrap": p._last_wrap})
+                                     "wrap": p._last_wrap,
+                                     "top": p._last_top})
                     p.dirty = False
                     client._sent_rows[p.id] = rows
                 # 팝업 패널 화면도 함께(트리에 없으므로 별도로 보냄). 팝업은 항상
@@ -313,7 +314,8 @@ class ServerIOMixin:
                     await write_msg(client.writer,
                                     {"t": "screen", "pane": pp.id,
                                      "rows": rows, "cursor": cursor,
-                                     "wrap": pp._last_wrap})
+                                     "wrap": pp._last_wrap,
+                                     "top": pp._last_top})
                     pp.dirty = False
                     client._sent_rows[pp.id] = rows
                 await write_msg(client.writer,
@@ -355,14 +357,19 @@ class ServerIOMixin:
 
     _DELTA_MAX_RATIO = 0.7   # 바뀐 행이 이 비율 초과면 full screen 으로 폴백
 
-    def _screen_frame(self, client, pane_id, rows, cursor, wrap=None):
+    def _screen_frame(self, client, pane_id, rows, cursor, wrap=None, top=None):
         """이 클라에 보낼 screen 프레임 bytes(B2). 직전 전송(_sent_rows) 대비 바뀐 행이
         적으면 screen-delta(바뀐 [y, segs] 목록), 아니면(행 수 변동·최초·임계 초과)
         full screen. client._sent_rows[pane_id] 를 새 rows 로 갱신한다.
 
         wrap(soft-wrap 연속원 행 인덱스)은 행 단위 델타 대상이 아니라 **매 프레임 전체
         리스트를 그대로** 싣는다(보통 빈 리스트~수개 정수라 작고, 델타 머지 복잡도를
-        피한다). 클라는 메시지마다 자기 wrap 셋을 통째로 교체한다."""
+        피한다). 클라는 메시지마다 자기 wrap 셋을 통째로 교체한다.
+
+        top(뷰포트 첫 행의 **절대 인덱스**)도 매 프레임 그대로 싣는다 — 클라가 마우스
+        선택을 절대 좌표로 들고 있어야 스크롤을 넘겨도 같은 텍스트를 가리킨다. 구 클라는
+        모르는 필드를 무시하고, 구 서버에 붙은 신 클라는 top 이 없어 종전(화면 내) 선택
+        으로 자동 폴백한다."""
         prev = client._sent_rows.get(pane_id)
         client._sent_rows[pane_id] = rows
         if prev is not None and len(prev) == len(rows):
@@ -371,9 +378,10 @@ class ServerIOMixin:
             if len(changed) <= len(rows) * self._DELTA_MAX_RATIO:
                 return frame_msg({"t": "screen-delta", "pane": pane_id,
                                   "rows": changed, "cursor": cursor,
-                                  "wrap": wrap or []})
+                                  "wrap": wrap or [], "top": top or 0})
         return frame_msg({"t": "screen", "pane": pane_id,
-                          "rows": rows, "cursor": cursor, "wrap": wrap or []})
+                          "rows": rows, "cursor": cursor, "wrap": wrap or [],
+                          "top": top or 0})
 
     def _broadcast_session(self, sess: Session):
         """구조 변경 후 해당 세션의 모든 클라이언트에 전체 상태를 다시 보낸다."""
@@ -492,7 +500,7 @@ class ServerIOMixin:
                             continue
                         frames_by_client[c].append(
                             self._screen_frame(c, p.id, rows, cursor,
-                                               p._last_wrap))
+                                               p._last_wrap, p._last_top))
                 # 라이브 PTY 팝업 패널(트리 밖)도 dirty 면 스트리밍한다(동기화 출력
                 # 프레임 도중이면 일반 패널과 동일하게 송신을 미룬다).
                 pu = sess.popup
@@ -509,7 +517,7 @@ class ServerIOMixin:
                             continue
                         frames_by_client[c].append(
                             self._screen_frame(c, pp.id, rows, cursor,
-                                               pp._last_wrap))
+                                               pp._last_wrap, pp._last_top))
                 # Claude Code 상태/사용량 갱신(+ 비활성 탭 완료 감지, #22).
                 # 새 휴리스틱(프롬프트/토큰/권한모드)이 특정 화면에서 터져도 flush
                 # 루프 전체(=모든 클라 렌더)가 죽지 않게 가드한다(§10 안정성).

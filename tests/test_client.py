@@ -4524,6 +4524,60 @@ async def test_notice_history_popup_expands_full_text():
     await _with_app(body)
 
 
+async def test_notice_history_box_has_no_empty_space_below():
+    """제보(2026-07-25): 알림 이력 팝업 **하단에 빈 공간**이 남았다.
+
+    원인은 퍼센트 max-height 와 auto-height 부모의 상호작용 — 박스가 '목록 전체 +
+    힌트' 로 auto 계산된 뒤 목록만 부모의 80%로 줄어, 그 차이가 테두리 안 빈 줄로
+    남았다(실측 30행 화면: 박스 19 = 목록 15 + 힌트 1 → 3행 공백).
+
+    오라클은 **불변식**으로 둔다: 박스 content 높이 == 목록 + 힌트. 항목이 적을 때·
+    화면을 넘칠 때·전문을 펼쳤을 때 모두 성립해야 하고, 넘칠 때도 힌트가 박스 안에
+    남아야 한다(스크롤은 목록이 한다)."""
+    from pytmuxlib import clientnotices
+    from pytmuxlib.clientscreens import NoticeHistoryScreen
+
+    async def body(app, pilot, srv):
+        h = clientnotices.NoticeHistory()
+
+        async def open_with(n, text=None):
+            ents = [h.add(text or f"알림 {i} — 문구 abcdefghijklmnopqrstuvwxyz",
+                          "info", "local") for i in range(n)]
+            scr = NoticeHistoryScreen(ents)
+            app.push_screen(scr)
+            await wait_until(pilot, lambda: scr.query_one("#nhbox").size.height > 1)
+            return scr
+
+        def gap(scr):
+            box = scr.query_one("#nhbox")
+            inner = sum(c.size.height for c in box.children)
+            return box.size.height - inner
+
+        # ① 화면에 다 들어오는 소량 — 딱 맞아야 한다(공백 0).
+        scr = await open_with(6)
+        assert gap(scr) == 0, (gap(scr), scr.query_one("#nhbox").size,
+                              [c.size.height for c in scr.query_one("#nhbox").children])
+        app.pop_screen()
+
+        # ② 화면을 넘치는 대량 — 여전히 공백 0 이고 힌트가 박스 안에 있다.
+        scr = await open_with(120)
+        box = scr.query_one("#nhbox")
+        lv, hint = scr.query_one("#nhlist"), scr.query_one("#nhhint")
+        assert gap(scr) == 0, (gap(scr), box.size, lv.size, hint.size)
+        assert lv.virtual_size.height > lv.size.height, "대량이면 목록이 스크롤돼야"
+        assert box.region.contains_region(hint.region), \
+            "넘칠 때 힌트가 박스 밖으로 밀려나면 안 된다"
+        assert box.outer_size.height <= int(app.size.height * 0.9) + 1, box.outer_size
+
+        # ③ 전문 펼치기로 줄 수가 늘어도 공백 0(높이를 다시 맞춘다).
+        scr._expanded.add(0)
+        scr._refresh_rows(only=0)
+        scr._fit_height()
+        await wait_until(pilot, lambda: gap(scr) == 0)
+        assert gap(scr) == 0, (gap(scr), box.size, lv.size)
+    await _with_app(body, size=(100, 30))
+
+
 async def test_notice_history_cursor_row_is_readable():
     """제보: 이력에서 **커서를 올린 줄의 글자가 안 보였다**. 원인은 색 충돌 —
     `info` 등급색(`$primary`)이 ListView 하이라이트 배경(`$block-cursor-background`)과

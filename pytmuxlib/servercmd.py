@@ -54,6 +54,20 @@ def _cmd(action: str, disp: str):
     return deco
 
 
+def _int(v, default=0) -> int:
+    """와이어에서 온 값을 int 로(신뢰 불가 입력 — bool·문자열·None·거대값 방어).
+
+    좌표류 필드에 쓴다. 클라가 보낸 값이 그대로 인덱스 연산에 들어가므로, 형변환
+    실패를 예외로 흘리지 않고 default 로 떨어뜨린다(경계에서 정규화하는 저장소 관례).
+    """
+    if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+        return default
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
 class ServerCmdMixin:
     """`_CMD_TABLE` 에 등록된 명령 핸들러 모음(`Server` 합성 믹스인)."""
 
@@ -135,6 +149,30 @@ class ServerCmdMixin:
     async def _cmd_capture_pane(self, client, sess, msg):
         n = self.capture_pane(sess, bool(msg.get("full")))
         await self._send_to(client, {"t": "captured", "chars": n})
+
+    # 마우스 드래그 선택 텍스트 요청 — 좌표는 **절대 행 인덱스**(screen 메시지의 top
+    # 과 같은 좌표계). 클라는 뷰포트 셀만 갖고 있어 한 화면을 넘는 선택을 스스로 뽑을
+    # 수 없으므로, 스크롤백을 가진 서버가 추출해 회신한다(요청 2026-07-25: 드래그 중
+    # 휠로 스크롤해도 선택 유지·복사).
+    _COPY_RANGE_MAX = 4_000_000     # 회신 상한(바이트급) — 프레임/클립보드 폭주 방지
+
+    @_cmd("copy_range", HANDLED)
+    async def _cmd_copy_range(self, client, sess, msg):
+        win = sess.active_window if sess else None
+        p = (win.pane_by_id(msg.get("pane")) or win.active_pane) if win else None
+        if p is None and sess is not None and sess.popup:
+            p = sess.popup.get("pane")      # 팝업 패널(트리 밖)도 선택 대상이 된다
+        text = ""
+        if p is not None:
+            try:
+                text = p.extract_range(_int(msg.get("y0")), _int(msg.get("x0")),
+                                       _int(msg.get("y1")), _int(msg.get("x1")))
+            except Exception:
+                self._log_error("copy_range", f"pane={msg.get('pane')}")
+                text = ""
+        if len(text) > self._COPY_RANGE_MAX:
+            text = text[:self._COPY_RANGE_MAX]
+        await self._send_to(client, {"t": "selection", "text": text})
 
     @_cmd("pipe_pane", HANDLED)
     async def _cmd_pipe_pane(self, client, sess, msg):

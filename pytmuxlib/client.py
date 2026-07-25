@@ -554,6 +554,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                            "cols": 80, "rows": 24}
             self.pane_content = {}   # id -> (rows, cursor)
             self.pane_wrap = {}      # id -> set(soft-wrap 연속원 행 인덱스, 프레임 상대)
+            # id -> 그 패널 뷰포트 **첫 행의 절대 인덱스**(서버 screen 메시지의 "top").
+            # 마우스 드래그 선택을 절대 좌표로 들고 있게 해, 드래그 중 스크롤해도 선택이
+            # 같은 텍스트를 계속 가리키게 한다(요청 2026-07-25). 구 서버는 이 필드를
+            # 안 보내므로 키가 없으면 종전(화면 내) 선택으로 폴백한다.
+            self.pane_top = {}
             # §1.7 페더레이션 회복: baseline(직전 full) 없이 screen-delta 만 온 패널.
             # redraw 를 1회 요청해 full 을 끌어오고, full 수신 시 비운다(중복 요청 디바운스).
             self._delta_no_base = set()
@@ -1127,7 +1132,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 _declared = {p.get("id") for p in msg.get("panes", [])
                              if isinstance(p, dict)}
                 if _declared:                     # 빈 layout 은 정리 보류(중간 상태 방지)
-                    for _cache in (self.pane_content, self.pane_wrap):
+                    for _cache in (self.pane_content, self.pane_wrap,
+                                   self.pane_top):
                         for _pid in [k for k in _cache if k not in _declared]:
                             del _cache[_pid]
                     self._delta_no_base &= _declared
@@ -1144,6 +1150,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif t == "screen":
                 self.pane_content[msg["pane"]] = (msg["rows"], msg.get("cursor"))
                 self.pane_wrap[msg["pane"]] = set(msg.get("wrap") or ())
+                if "top" in msg:
+                    self.pane_top[msg["pane"]] = int(msg.get("top") or 0)
                 self._delta_no_base.discard(msg["pane"])  # full 수신 → baseline 회복
                 self._request_composite()
             elif t == "screen-delta":
@@ -1170,6 +1178,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                             rows.append(segs)
                     self.pane_content[pid] = (rows, msg.get("cursor"))
                     self.pane_wrap[pid] = set(msg.get("wrap") or ())
+                    if "top" in msg:
+                        self.pane_top[pid] = int(msg.get("top") or 0)
                     self._request_composite()
             elif t == "status":
                 # 플러그인 관리(PLUGIN_MANAGER_SCENARIO): 서버가 보낸 비활성 집합을 이
@@ -1276,6 +1286,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     dismissable=(bool(msg["dismissable"])
                                  if msg.get("dismissable") is not None else None),
                     severity=_sev, source="server")
+            elif t == "selection":
+                # 마우스 드래그 선택(한 화면 초과 가능) 텍스트를 서버가 스크롤백에서
+                # 뽑아 회신한 것 — 그대로 OS 클립보드에 넣는다. 빈 문자열이면 조용히
+                # 무시(선택이 공백뿐인 경우 종전 동작과 동일).
+                _txt = msg.get("text") or ""
+                if _txt:
+                    self.copy_text(_txt)
             elif t == "captured":
                 self.display_message(i18n.t("msg.captured_chars",
                                             n=msg.get('chars', 0)))

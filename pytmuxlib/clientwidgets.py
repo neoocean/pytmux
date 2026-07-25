@@ -87,6 +87,14 @@ class MultiplexerView(Widget):
         self._mouse_fwd_btn = 0    # 그 시퀀스의 버튼(드래그/릴리스 인코딩용)
         self._sel_pending = None   # mouse-drag-copy: down 후 move 전 (x,y) — 클릭↔드래그
         #   미결. move 오면 드래그=pytmux 선택, move 없이 up 이면 클릭=앱 전달.
+        # 선택을 **절대 스크롤백 좌표**로도 들고 있는다 — (anchor_line, anchor_col,
+        # focus_line, focus_col). 화면 좌표(_sel)만 쓰면 스크롤 순간 같은 칸이 다른
+        # 텍스트를 가리켜 한 화면을 넘는 선택이 원리적으로 불가능하다(제보 2026-07-25:
+        # 드래그 중 휠을 굴리면 선택이 풀렸다). 서버가 screen 메시지에 실어 주는
+        # `top`(뷰포트 첫 행의 절대 인덱스)이 없으면(구 서버) None 으로 남고 종전
+        # 화면-내 선택으로 폴백한다.
+        self._sel_abs = None
+        self._sel_ptr = None       # 드래그 중 마지막 포인터 (x,y) — 스크롤 후 focus 재계산
         # 패널 pick-up(헤더 드래그, #1): 패널의 위쪽 테두리/제목 행을 잡아 끌면 그 패널을
         # 든다. 다른 패널에 놓으면 swap, 탭바의 탭에 놓으면 그 탭으로 이동, [+]에 놓으면
         # 새 탭으로 분리(break). (구 Shift+드래그 swap 을 헤더 드래그로 이전 — Shift+드래그는
@@ -104,6 +112,72 @@ class MultiplexerView(Widget):
         px, py, pw, ph = r
         return (max(px, min(px + pw - 1, x)),
                 max(py, min(py + ph - 1, y)))
+
+    # ── 선택의 절대 좌표(스크롤을 넘는 선택) ────────────────────────────────
+    def _pane_top(self, pid):
+        """그 패널 뷰포트 첫 행의 절대 인덱스. 모르면 None(구 서버·앱 없음)."""
+        if pid is None:
+            return None
+        try:
+            return self.app.pane_top.get(pid)
+        except Exception:
+            return None
+
+    def _to_abs(self, x, y):
+        """화면 좌표 → 선택 시작 패널 기준 (절대행, 패널내 열). 불가하면 None."""
+        r, pid = self._sel_rect, self._sel_pane_id
+        top = self._pane_top(pid)
+        if r is None or top is None:
+            return None
+        return (top + (y - r[1]), x - r[0])
+
+    def _from_abs(self, line, col):
+        """(절대행, 패널내 열) → 화면 좌표. 뷰포트 밖이면 행을 패널 경계로 클램프한다
+        (보이는 부분만 강조하고 선택 자체는 유지 — 화면 밖 텍스트도 복사 대상이다)."""
+        r, pid = self._sel_rect, self._sel_pane_id
+        top = self._pane_top(pid)
+        if r is None or top is None:
+            return None
+        px, py, pw, ph = r
+        y = py + (line - top)
+        return (max(px, min(px + pw - 1, px + col)),
+                max(py, min(py + ph - 1, y)))
+
+    def _sel_begin_abs(self, sx, sy, ex=None, ey=None):
+        """드래그 시작 시 절대 앵커를 세운다(가능할 때만 — 없으면 화면-내 폴백)."""
+        self._sel_ptr = (ex, ey) if ex is not None else (sx, sy)
+        a = self._to_abs(sx, sy)
+        b = self._to_abs(ex if ex is not None else sx,
+                         ey if ey is not None else sy)
+        self._sel_abs = (a + b) if (a is not None and b is not None) else None
+
+    def _sel_clear(self):
+        self._sel_start = None
+        self._sel = None
+        self._sel_rect = None
+        self._sel_pane_id = None
+        self._sel_abs = None
+        self._sel_ptr = None
+
+    def sync_selection(self):
+        """절대 앵커 → 화면 좌표(_sel) 재계산. **프레임마다** 호출한다(_composite).
+
+        이게 이 기능의 핵심이다: 패널이 스크롤되면(휠·새 출력) `top` 이 바뀌므로 같은
+        절대 앵커가 다른 화면 행으로 매핑된다 → 선택이 텍스트를 계속 따라간다. 드래그
+        중이면(포인터가 눌린 채) focus 는 **포인터가 가리키는 현재 절대 행**으로 다시
+        잡는다 — 그래서 버튼을 누른 채 휠을 굴리면 선택이 그만큼 늘어난다.
+        """
+        if self._sel_abs is None:
+            return
+        if self._sel_start is not None and self._sel_ptr is not None:
+            cur = self._to_abs(*self._clamp_sel(*self._sel_ptr))
+            if cur is not None:
+                self._sel_abs = (self._sel_abs[0], self._sel_abs[1]) + cur
+        a = self._from_abs(self._sel_abs[0], self._sel_abs[1])
+        b = self._from_abs(self._sel_abs[2], self._sel_abs[3])
+        if a is None or b is None:
+            return
+        self._sel = (a[0], a[1], b[0], b[1])
 
     def _sel_wrap_set(self):
         """선택 시작 패널의 soft-wrap 연속원 행 인덱스 집합(프레임 상대). app/패널
@@ -301,6 +375,7 @@ class MultiplexerView(Widget):
             sx, sy = self._clamp_sel(event.x, event.y)
             self._sel_start = (sx, sy)
             self._sel = (sx, sy, sx, sy)
+            self._sel_begin_abs(sx, sy)
             self.capture_mouse()
             self.app._composite()
             event.stop()
@@ -478,6 +553,7 @@ class MultiplexerView(Widget):
                 ex0, ey0 = self._clamp_sel(event.x, event.y)
                 self._sel_start = (sx, sy)
                 self._sel = (sx, sy, ex0, ey0)
+                self._sel_begin_abs(sx, sy, ex0, ey0)
                 self._sel_pending = None
                 self.app._composite()
             event.stop()
@@ -485,6 +561,11 @@ class MultiplexerView(Widget):
         if self._sel_start is not None:
             ex, ey = self._clamp_sel(event.x, event.y)   # 시작 패널 안으로(§2.4)
             self._sel = (self._sel_start[0], self._sel_start[1], ex, ey)
+            self._sel_ptr = (event.x, event.y)
+            if self._sel_abs is not None:
+                cur = self._to_abs(ex, ey)
+                if cur is not None:
+                    self._sel_abs = (self._sel_abs[0], self._sel_abs[1]) + cur
             self.app._composite()
             event.stop()
             return
@@ -599,13 +680,22 @@ class MultiplexerView(Widget):
             event.stop()
             return
         if self._sel_start is not None:
-            text = self._extract_selection()   # _sel_rect/_sel_pane_id 사용 후 리셋
-            self._sel_start = None
-            self._sel = None
-            self._sel_rect = None
-            self._sel_pane_id = None
+            # 절대 좌표를 알고 있으면 **서버**에 추출을 요청한다 — 선택이 한 화면을
+            # 넘었을 수 있고(드래그 중 스크롤), 클라는 현재 뷰포트 셀만 갖고 있어서
+            # 화면 밖 줄을 스스로 만들 수 없다. 서버가 스크롤백에서 뽑아 `selection`
+            # 으로 회신하면 클라가 OS 클립보드에 넣는다(client.py). 좌표를 모르면
+            # (구 서버) 종전 화면-내 추출로 폴백해 동작이 그대로 유지된다.
+            abs_sel, pid = self._sel_abs, self._sel_pane_id
+            text = None if abs_sel is not None else self._extract_selection()
+            self._sel_clear()
             self.release_mouse()
-            if text:
+            if abs_sel is not None:
+                y0, x0, y1, x1 = abs_sel
+                if (y0, x0) > (y1, x1):
+                    y0, x0, y1, x1 = y1, x1, y0, x0
+                self.app.send_cmd("copy_range", pane=pid,
+                                  y0=y0, x0=x0, y1=y1, x1=x1)
+            elif text:
                 self.app.copy_text(text)
             self.app._composite()
             event.stop()
@@ -627,10 +717,31 @@ class MultiplexerView(Widget):
             self.release_mouse()
             event.stop()
 
+    def _scroll_during_drag(self, delta):
+        """드래그 중 휠 — **선택을 유지한 채** 선택 시작 패널만 스크롤한다.
+
+        이게 "한 화면보다 긴 텍스트 선택"의 조작 경로다(제보 2026-07-25). 앱(less/
+        Claude 등)에 휠을 넘기지 않는 이유: 지금 이 제스처는 pytmux 의 선택이고, 앱이
+        자기 화면을 스크롤하면 선택 좌표계(스크롤백 절대 인덱스)와 어긋난다. 선택
+        focus 는 다음 프레임에서 `sync_selection` 이 포인터 기준으로 다시 잡으므로,
+        누른 채 굴리면 선택이 그만큼 늘어난다. 절대 좌표를 모르는 구 서버에선
+        스크롤해도 화면-내 선택만 유지된다(종전과 같은 한계)."""
+        pid = self._sel_pane_id
+        p = self._pane_by_id(pid) if pid is not None else None
+        if p is None:
+            p = self._pane_at(*(self._sel_ptr or (0, 0))) or self._active_pane()
+        if p is not None:
+            self.app.send_scroll(p["id"], delta=delta)
+        return True
+
     def on_mouse_scroll_up(self, event):
         # 진단 로그는 어떤 가드보다 먼저 — "이벤트가 도달했는가"를 본다.
         self.app._log_mouse("scroll_up", event.x, event.y)
         if not self.app.mouse_enabled:
+            return
+        if self._sel_start is not None:      # 드래그 중 = 선택 확장(앱 전달 금지)
+            self._scroll_during_drag(3)
+            event.stop()
             return
         # 마우스 모드 앱(less/htop/Claude 등)은 휠을 직접 처리하도록 전달.
         tp = self._mouse_target(event.x, event.y)
@@ -648,6 +759,10 @@ class MultiplexerView(Widget):
     def on_mouse_scroll_down(self, event):
         self.app._log_mouse("scroll_down", event.x, event.y)
         if not self.app.mouse_enabled:
+            return
+        if self._sel_start is not None:      # 드래그 중 = 선택 확장(앱 전달 금지)
+            self._scroll_during_drag(-3)
+            event.stop()
             return
         tp = self._mouse_target(event.x, event.y)
         if tp is not None:

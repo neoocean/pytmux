@@ -240,6 +240,11 @@ class Pane:
         self._row_cache = None
         self._row_cache_key = None
         self._last_wrap = []     # 직전 render 의 soft-wrap 연속원 행(프레임 상대 인덱스)
+        # 직전 render 뷰포트의 **첫 행 절대 인덱스**(스크롤백 top 기준 — `_match_abs` 와
+        # 같은 좌표계). 서버가 screen 메시지에 실어 보내면 클라가 화면 행 ↔ 절대 행을
+        # 환산할 수 있고, 그래서 마우스 선택이 **스크롤을 넘어** 유지된다(선택을 화면
+        # 좌표로 들고 있으면 스크롤 순간 다른 텍스트를 가리킨다).
+        self._last_top = 0
         # ConPTY(Windows)는 conhost 가 자기 버퍼에서 줄을 미리 접어 하드 개행으로
         # 재방출하므로 DECAWM 오토랩이 발생하지 않아 wrapped 태그가 영원히 비었다
         # (실캡처 검증: 꽉 찬 줄 36개, 태그 0 — 멀티라인 명령 복사가 줄마다 개행,
@@ -702,6 +707,53 @@ class Pane:
         self.scroll = self._history_len() if where == "top" else 0
         self.dirty = True
 
+    def extract_range(self, y0: int, x0: int, y1: int, x1: int) -> str:
+        """**절대 행 인덱스** 범위의 텍스트를 뽑는다(스크롤백 + 현재 화면).
+
+        마우스 선택이 한 화면을 넘을 수 있게 하려면 추출을 서버가 해야 한다 — 클라는
+        현재 뷰포트 셀만 갖고 있어서 화면 밖 줄을 만들 수 없다. 좌표계는 `_last_top`
+        (=render 가 클라에 실어 보낸 뷰포트 첫 행)과 같은 절대 인덱스이고, 범위는
+        (y0,x0)..(y1,x1) 포함이다(뒤바뀌어 오면 정렬한다).
+
+        규칙은 클라의 화면 내 추출(`MultiplexerView._extract_selection`)과 같게 맞춘다:
+        중간 줄은 폭 전체, 각 줄은 rstrip, 단 **soft-wrap 연속원**(다음 줄과 이어진
+        줄)은 rstrip·개행 없이 다음 줄에 붙인다. wrap 판정도 render 와 같은 신호를
+        쓴다(줄의 `wrapped` 태그 + 마지막 칸이 아직 꽉 참 — 지워져서 더는 wrap 이
+        아닌 stale 태그를 배제).
+
+        범위를 벗어난 인덱스는 조용히 클램프한다(스크롤백이 밀려 y0 가 사라졌을 수
+        있다 — 선택 중 출력이 계속되면 정상적으로 일어나는 일이다).
+        """
+        screen = self.screen
+        cols = screen.columns
+        h = getattr(screen, "history", None)
+        hist = list(h.top) if h is not None else []
+        full = hist + [screen.buffer[y] for y in range(screen.lines)]
+        if not full:
+            return ""
+        if (y0, x0) > (y1, x1):
+            y0, x0, y1, x1 = y1, x1, y0, x0
+        y0 = max(0, min(len(full) - 1, y0))
+        y1 = max(0, min(len(full) - 1, y1))
+        cl = cols - 1
+        parts = []
+        for y in range(y0, y1 + 1):
+            line = full[y]
+            sx = x0 if y == y0 else 0
+            ex = x1 if y == y1 else cl
+            sx = max(0, min(cl, sx))
+            ex = max(0, min(cl, ex))
+            text = "".join((line[x].data or " ") for x in range(sx, ex + 1))
+            wrapped = (y < y1 and getattr(line, "wrapped", False)
+                       and line[cl].data != " ")
+            if wrapped:
+                parts.append(text)          # 다음 줄과 한 줄로(개행·rstrip 없음)
+            else:
+                parts.append(text.rstrip())
+                if y < y1:
+                    parts.append("\n")
+        return "".join(parts)
+
     def _serialize_row(self, line, cols):
         """한 줄(line)을 [text, style] 런(run) 목록으로 직렬화한다(매치 하이라이트
         제외). render 의 빠른 경로/전체 경로가 공유한다(#8)."""
@@ -762,6 +814,7 @@ class Pane:
         # 태그한 wrapped 줄 중, **현재 마지막 칸이 비어 있지 않은**(=여전히 꽉 찬) 줄만
         # 내보내 — 줄 끝이 지워지거나 당겨져 더는 wrap 이 아닌 stale 태그를 싸게
         # 무효화한다(빈 칸 default Char.data == " "; 와이드문자 stub 은 "" 라 꽉 참).
+        self._last_top = start      # 뷰포트 첫 행의 절대 인덱스(클라 선택 좌표 환산용)
         cl = cols - 1
         self._last_wrap = [i for i, ln in enumerate(window)
                            if getattr(ln, "wrapped", False) and ln[cl].data != " "]

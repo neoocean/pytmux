@@ -952,6 +952,10 @@ class _RenderMixin:
                     cells[gy][gx] = (chh, s)
         # copy-mode 선택 영역 하이라이트(추출과 동일하게 시작 패널 가로 범위로
         # 중간 줄을 한정 — 분할 경계 넘어 강조/복사되던 오염 방지, §2.4)
+        # 선택은 **절대 스크롤백 좌표**가 정본이라(스크롤을 넘겨도 같은 텍스트를
+        # 가리키게) 매 프레임 화면 좌표로 다시 환산한다 — 패널이 스크롤되면 top 이
+        # 바뀌어 같은 앵커가 다른 화면 행이 된다. 절대 좌표가 없으면(구 서버) no-op.
+        self.view.sync_selection()
         sel = self.view._sel
         if sel:
             sx0, sy0, sx1, sy1 = sel
