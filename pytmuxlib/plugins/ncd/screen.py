@@ -52,6 +52,11 @@ i18n.register({
 })
 
 
+# ncd 트리 한 단계에 표시할 디렉토리 상한(신뢰불가 상류 방어 — 아래
+# fill_children 주석). 사람이 훑을 수 있는 규모를 넘으면 어차피 검색을 쓴다.
+_MAX_DIRS = 4000
+
+
 class _NcdView(Widget):
     """디렉토리 트리를 한 줄 단위로 직접 그리는 뷰(스크롤·커서 자체 관리, 스크롤바
     없음). 화살표 한 칸 이동은 바뀐 두 줄만 다시 그려 ssh 에서도 즉각적이다."""
@@ -253,7 +258,13 @@ class _NcdView(Widget):
             self.app.request_nc_list(path)
 
     def fill_children(self, path: str, dirs):
-        self._children[path] = list(dirs or [])
+        # 상한 + 모양 정규화(검수 새 배터리 2026-07-25, F-G): 원격 보기에서 이 목록은
+        # **신뢰불가 상류**가 실어 보낸 그대로 온다(릴레이 request_nc_list). 로컬 서버의
+        # 상한은 상류를 구속하지 않으므로 여기서 자른다 — 무제한 목록은 트리 재구성으로
+        # 클라 UI 를 얼리고, 비-문자열 항목은 정렬·렌더에서 예외를 내 클라를 죽인다
+        # (mdir `_sane_entries` 와 같은 처방).
+        self._children[path] = [d for d in (dirs or [])[:_MAX_DIRS]
+                                if isinstance(d, str) and d]
         if self._pending == path:
             self._pending = None
             if self._children[path]:

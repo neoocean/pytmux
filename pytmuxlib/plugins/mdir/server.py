@@ -181,6 +181,14 @@ def mdir_op_msg(server, sess, msg: dict) -> dict:
                     if os.path.isdir(s) and not os.path.islink(s):
                         shutil.copytree(s, tgt, symlinks=True,
                                         dirs_exist_ok=exists)
+                    elif exists and os.path.isdir(tgt):
+                        # 검수 새 배터리 2026-07-25(M-B): 파일 X 를 같은 이름의
+                        # **디렉토리** X 위로 덮어쓰면 copy2 가 그 **안으로** 복사해
+                        # `X/X` 가 생기는데 결과는 done=1(성공)이었다 — 사용자가 고른
+                        # 것은 '대체'이고 조용한 중첩은 그 반대다. move 쪽이 이미
+                        # dir_overwrite 로 거부하므로 두 경로의 규칙을 일치시킨다.
+                        failed.append([_name(s), "dir_overwrite"])
+                        continue
                     else:
                         shutil.copy2(s, tgt, follow_symlinks=False)
                 else:                     # move
@@ -232,7 +240,12 @@ def mdir_op_msg(server, sess, msg: dict) -> dict:
             else:
                 src = srcs[0] if srcs else ""
                 tgt = os.path.join(os.path.dirname(src.rstrip("/\\")), name)
-                if os.path.exists(tgt):
+                # **lexists**(링크 자체) — 검수 새 배터리 2026-07-25(M-A): `exists` 는
+                # 링크를 따라가므로 목적 이름이 **끊어진 심볼릭 링크**면 "없음"으로 보고
+                # `os.rename` 이 그 링크를 말없이 대체했다. 사용자는 "그 이름은 비어
+                # 있다"고 믿는데 있던 항목이 사라진다. copy/move 가 MDIR-1 에서 고친
+                # 그 형제 결함이다(같은 클래스·다른 호출부) — 두 경로가 같은 규칙을 쓴다.
+                if os.path.lexists(tgt):
                     return {"t": "mdir_result", "op": op, "done": 0,
                             "failed": [[name, "exists"]], "conflicts": []}
                 os.rename(src, tgt)

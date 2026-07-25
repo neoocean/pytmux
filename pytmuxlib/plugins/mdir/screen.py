@@ -39,6 +39,40 @@ from textual.widgets import Input, Static
 
 from pytmuxlib import i18n
 
+# 목록 항목 상한·정규화(검수 새 배터리 2026-07-25, F-G). mdir 목록은 **원격 보기에서
+# 상류 서버가 실어 보낸 그대로** 클라에 온다(릴레이 액션 request_mdir_list). 로컬
+# 서버는 `server.MAX_ENTRIES`(4000)로 잘라 보내지만 **신뢰불가 상류는 그 약속에 묶이지
+# 않는다** — 종전엔 ①길이 무제한(수십만 항목 → 정렬·렌더로 UI 프리즈) ②모양 무검증
+# (`e["n"]` 없음/비-dict → `_sort_key` 에서 예외 → Textual fatal 로 **클라 사망**)
+# 이었다. F-A(상류 windows[] 무검증 wedge)·CLI-1(스위처 크래시)과 같은 클래스라
+# 같은 처방을 쓴다: 경계에서 **상한 + 모양 정규화**(코어 `_sanitize_panes` 규율).
+_MAX_ENTRIES = 4000
+
+
+def _sane_entries(entries) -> list:
+    """상류가 준 목록을 표시 가능한 모양으로 정규화(상한 초과분 절단, 잡값 폐기).
+
+    항목 계약 = `{"n": str}` + 선택 `s`/`m`(수치)·`d`/`l`(bool). 이름이 없거나 dict 가
+    아닌 항목은 **버린다**(빈 이름으로 렌더하면 조작 대상이 안 보이는 유령 행이 된다)."""
+    out = []
+    if not isinstance(entries, list):
+        return out
+    for e in entries[:_MAX_ENTRIES]:
+        if not isinstance(e, dict):
+            continue
+        name = e.get("n")
+        if not isinstance(name, str) or not name:
+            continue
+        row = dict(e)
+        row["n"] = name
+        for k in ("s", "m"):
+            v = row.get(k)
+            if v is not None and not isinstance(v, (int, float)):
+                row[k] = 0
+        out.append(row)
+    return out
+
+
 # ---- Mdir III 기본 배색 ----
 # 색은 원본 배포판 실물 스크린샷(m3v310, archive.org)의 픽셀을 직접 추출해 맞췄다.
 # 표준 VGA 16색. 핵심: 크롬(상·하단 바·구분선·테두리)은 파랑이 아니라 **시안
@@ -227,8 +261,9 @@ class _MdirView(Widget):
             self._tags.clear()             # 태그는 디렉토리 한정(원조 동형)
         self._path = new_path
         self._nt = bool(msg.get("nt"))
-        self._entries = list(msg.get("entries") or [])
-        self._drives = list(msg.get("drives") or [])
+        self._entries = _sane_entries(msg.get("entries"))
+        self._drives = [str(d) for d in (msg.get("drives") or [])[:64]
+                        if isinstance(d, (str, int, float))]
         self._free = int(msg.get("free") or 0)
         self._total = int(msg.get("total") or 0)
         self._err = msg.get("err")
