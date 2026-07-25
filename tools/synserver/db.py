@@ -526,11 +526,58 @@ def max_seq(conn, vault_id: str) -> int:
 
 
 def purge_events(conn, vault_id: str, before_seq: int) -> int:
-    """보존정책 집행(§9.4). 로컬 DB 가 원본이므로 서버에서 지워도 회계 손실이 없다."""
-    cur = conn.execute("DELETE FROM event WHERE vault_id=? AND seq<=?",
-                       (vault_id, int(before_seq)))
+    """보존정책 집행(§9.4). 로컬 DB 가 원본이므로 서버에서 지워도 회계 손실이 없다.
+
+    **쿼터 회계도 함께 되돌린다(2026-07-25)**: `put_events` 는 저장할 때
+    `rows_used`/`bytes_used` 를 올리는데 여기선 내리지 않아, 지워도 쿼터는 그대로
+    였다 — 보존정책을 성실히 돌릴수록 vault 가 "비었는데 가득 참" 상태로 굳어
+    새 업로드가 507 로 막힌다(S-4 가 잡은 것과 같은 결의 드리프트). 삭제 대상의
+    바이트를 **지우기 전에** 세어 그만큼 차감하고, 하한은 0 으로 클램프한다
+    (레거시 vault 는 과소/과대 계상이 섞여 있을 수 있어 음수 방어가 필요하다)."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS n, "
+        "COALESCE(SUM(LENGTH(ct) + LENGTH(nonce)), 0) AS b "
+        "FROM event WHERE vault_id=? AND seq<=?",
+        (vault_id, int(before_seq))).fetchone()
+    n, nbytes = int(row["n"]), int(row["b"])
+    if not n:
+        return 0
+    conn.execute("DELETE FROM event WHERE vault_id=? AND seq<=?",
+                 (vault_id, int(before_seq)))
+    conn.execute(
+        "UPDATE vault SET rows_used=MAX(0, rows_used-?), "
+        "bytes_used=MAX(0, bytes_used-?) WHERE vault_id=?",
+        (n, nbytes, vault_id))
     conn.commit()
-    return cur.rowcount
+    return n
+
+
+def purge_old_events(conn, before_ts: float) -> int:
+    """보존정책 스윕(P6 §9.4) — `recv` 가 before_ts 이전인 이벤트를 vault 별로 지운다.
+
+    `purge_events`(seq 기준, 수동 `/v1/purge`)와 같은 회계 규칙을 쓴다: 지운 만큼
+    `rows_used`/`bytes_used` 를 차감한다. vault 별로 도는 이유는 카운터가 vault 에
+    달려 있기 때문이고, 지울 게 없는 vault 는 UPDATE 조차 하지 않는다."""
+    rows = conn.execute(
+        "SELECT vault_id, COUNT(*) AS n, "
+        "COALESCE(SUM(LENGTH(ct) + LENGTH(nonce)), 0) AS b "
+        "FROM event WHERE recv < ? GROUP BY vault_id",
+        (float(before_ts),)).fetchall()
+    total = 0
+    for r in rows:
+        n, nbytes = int(r["n"]), int(r["b"])
+        if not n:
+            continue
+        conn.execute("DELETE FROM event WHERE vault_id=? AND recv < ?",
+                     (r["vault_id"], float(before_ts)))
+        conn.execute(
+            "UPDATE vault SET rows_used=MAX(0, rows_used-?), "
+            "bytes_used=MAX(0, bytes_used-?) WHERE vault_id=?",
+            (n, nbytes, r["vault_id"]))
+        total += n
+    if total:
+        conn.commit()
+    return total
 
 
 def _hex(b) -> str:

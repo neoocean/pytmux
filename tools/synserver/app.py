@@ -46,14 +46,29 @@ UNAUTH_BURST = 30                   # 미인증 경로 **전역** 분당 요청(
 MAX_CHALLENGES = 512                # 진행 중 챌린지 상한(S-3)
 PULL_BYTE_BUDGET = 4 * 1024 * 1024  # 다운로드 응답 바이트 예산(S-6)
 PURGE_INTERVAL = 60.0               # 만료 상태 정리 최소 간격(S-5)
+# 보존정책(P6 §9.4): 이벤트를 며칠 뒤 지울지. **기본 0 = 무기한**(종전 동작 그대로).
+# 정책 자체는 운영자 결정이라 코드가 대신 고르지 않는다 — 여기서는 **메커니즘만**
+# 제공하고, 켜는 것은 배포 환경변수 `PYTMUX_SYNC_RETAIN_DAYS` 다. 로컬 DB 가 원본
+# 이므로 서버에서 지워도 회계 손실은 없다(§9.4).
+RETAIN_DAYS = 0.0
 COOKIE = "__Host-sync_sid"          # 접두가 Path=/·Secure·도메인 미지정을 강제(Q-3)
 KINDS = ("xc", "lim")
 
 
 class SyncApp:
     def __init__(self, conn, rp_id: str, origin: str, now=None,
-                 open_registration: bool = False, bootstrap_token: str = ""):
+                 open_registration: bool = False, bootstrap_token: str = "",
+                 retain_days: float = None):
         self.conn = conn
+        # 보존정책(P6). 인자 > 환경변수 > 기본(0=무기한). 0 이면 아래 스윕이 아예
+        # 돌지 않아 종전과 동작이 같다 — 정책은 운영자가 켜는 것이다.
+        if retain_days is None:
+            try:
+                retain_days = float(os.environ.get(
+                    "PYTMUX_SYNC_RETAIN_DAYS", RETAIN_DAYS))
+            except (TypeError, ValueError):
+                retain_days = RETAIN_DAYS
+        self.retain_days = max(0.0, float(retain_days))
         self.rp_id = rp_id
         self.origin = origin
         self._now = now or time.time
@@ -625,6 +640,15 @@ class SyncApp:
             sdb.purge_expired(self.conn, now)
         except Exception:           # noqa: BLE001 — 정리 실패가 요청을 죽이면 안 된다
             self._bump("purge_failed")
+        if self.retain_days > 0:
+            # 보존정책(기본 off). 켜져 있을 때만, 만료 정리와 같은 시간 게이트로 돈다.
+            try:
+                n = sdb.purge_old_events(
+                    self.conn, now - self.retain_days * 86400.0)
+                if n:
+                    self._bump("retention_purged", n)
+            except Exception:       # noqa: BLE001
+                self._bump("purge_failed")
 
     def _rate_ok(self, did, now):
         w = self._rate.get(did)
@@ -707,8 +731,8 @@ class SyncApp:
         self._bump(reason)
         return None
 
-    def _bump(self, reason):
-        self.stats[reason] = self.stats.get(reason, 0) + 1
+    def _bump(self, reason, n=1):
+        self.stats[reason] = self.stats.get(reason, 0) + int(n)
 
     def _bad_auth(self, reason):
         """4xx 응답은 **형태를 하나로** 유지한다 — 사유별로 다른 메시지를 주면
