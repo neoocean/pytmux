@@ -161,6 +161,10 @@ i18n.register({
 # 이리로 모아 ko/en 대칭화한다. 키 네임스페이스 "ccmsg.*".
 i18n.register({
     "ko": {
+        # F3-B: 자동재개 주입은 지금까지 아무 흔적을 안 남겨, 화면의 'continue'
+        # 가 내가 시킨 것인지 위조 배너가 시킨 것인지 사후 확인이 불가능했다.
+        "ccmsg.resume_injected": "자동재개: '{msg}' 주입(패널 {pane})",
+        "ccmsg.resume_throttled": "자동재개 억제: 방금 주입한 뒤라 건너뜀(패널 {pane})",
         "ccmsg.model_apply": "/model {arg} 적용 요청",
         "ccmsg.perm_switching": "권한모드 → {target} 전환 중…",
         "ccmsg.usage_no_data": "/usage 한도 데이터 없음 — Claude 패널에서 /usage 를 먼저 실행",
@@ -186,6 +190,8 @@ i18n.register({
             "원격({host}) 토큰 응답 없음 — 원격 서버 응답 지연/웨지일 수 있습니다.",
     },
     "en": {
+        "ccmsg.resume_injected": "Auto-resume: injected '{msg}' (pane {pane})",
+        "ccmsg.resume_throttled": "Auto-resume suppressed: injected too recently (pane {pane})",
         "ccmsg.model_apply": "Requested /model {arg}",
         "ccmsg.perm_switching": "Switching permission mode → {target}…",
         "ccmsg.usage_no_data":

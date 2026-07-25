@@ -198,6 +198,14 @@ class ServerClaudeMixin:
             pane._resume_handle = None
         pane._resume_pending = False
 
+    # F3 옵션B(설계 F3_SCRAPE_FORGERY_DESIGN_2026-07-18 §5): 자동재개는 **화면 텍스트**
+    # 하나로 발화하는데, 그 텍스트는 Claude 가 스스로 출력할 수 있다 — 즉 모델(또는
+    # 모델에게 그렇게 시킨 문서/도구 출력)이 가짜 리밋 배너를 그려 주입을 유발할 수 있고,
+    # 실측으로 재현됐다. in-band 방어(본문 필터)는 원리적으로 실패하므로 **막는 대신
+    # 관측 가능하게** 만든다: ① 주입할 때마다 사용자에게 알림 ② 같은 리셋 창에서
+    # 반복 주입을 막는 쿨다운. 위조를 없애지는 못하지만 **사일런트 조작**이 사라진다.
+    _RESUME_COOLDOWN = 15 * 60.0     # 초 — 같은 패널 재주입 최소 간격(리셋 창 ≥1h)
+
     def _fire_resume(self, pane: Pane):
         pane._resume_pending = False
         pane._resume_handle = None
@@ -210,9 +218,44 @@ class ServerClaudeMixin:
             return
         if claude_state(screen_text(pane.screen)) != "limit":
             return
+        # F3-B ② 쿨다운: 위조 배너를 반복해 그리면 주입이 그만큼 반복된다. 진짜 리밋의
+        # 리셋 창은 최소 1시간이라 15분 상한은 정상 자동재개를 **한 번도** 막지 않는다
+        # (막으면 그게 더 큰 손해라 여기서 보수적으로 잡는다).
+        now = self.loop.time() if getattr(self, "loop", None) else 0.0
+        last = getattr(pane, "_resume_fired_at", None)
+        if last is not None and (now - last) < self._RESUME_COOLDOWN:
+            self._notice_resume(pane, throttled=True)
+            return
+        pane._resume_fired_at = now
         try:
             pane.pty.write((pane.resume_msg + "\r").encode("utf-8"))
         except OSError:
+            return
+        self._notice_resume(pane, throttled=False)
+
+    def _notice_resume(self, pane: Pane, throttled: bool):
+        """자동재개 주입(또는 쿨다운 차단)을 사용자에게 알린다(F3-B ①).
+
+        지금까지 주입은 **아무 흔적도 남기지 않았다** — 화면에 'continue' 가 찍히는 것이
+        전부라, 그게 내가 시킨 건지 무엇이 시킨 건지 사후에 알 길이 없었다. 서버발
+        표면이라 문구를 여기서 만들지 않고 **키+인자**로 보낸다(클라가 번역 —
+        [[server-pushed-surface-cannot-call-t]]). 알림 실패가 재개를 막으면 안 되므로
+        전 경로 best-effort."""
+        try:
+            note = getattr(self, "_notice_msg", None)
+            if note is None:
+                return
+            key = ("ccmsg.resume_throttled" if throttled
+                   else "ccmsg.resume_injected")
+            ko = ("자동재개 억제: 방금 주입한 뒤라 건너뜀(패널 {pane})" if throttled
+                  else "자동재개: '{msg}' 주입(패널 {pane})")
+            msg = note(key, ko, severity=("warn" if throttled else "info"),
+                       pane=pane.id, msg=getattr(pane, "resume_msg", ""))
+            import asyncio as _a
+            for c in list(getattr(self, "clients", ())):
+                if getattr(c, "session", None) is not None:
+                    _a.create_task(self._send_to(c, dict(msg)))
+        except Exception:       # noqa: BLE001 — 알림이 자동재개를 죽이면 안 된다
             pass
 
     # ---- 전송 에러(API error/rate limit/overloaded) 자동 재시도(요청 2026-06-12,
