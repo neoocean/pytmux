@@ -276,7 +276,7 @@ i18n.register({
 i18n.register({
     "ko": {
         "tsync.status": "토큰 동기화: {state} · 마지막 성공 {last} · 받은 행 {rows}"
-                        " · 계정 귀속 {acct}",
+                        " · 계정 귀속 {acct} · 적재 {grow}",
         "tsync.enrolled": "토큰 동기화: 이 머신을 등록했습니다({label})",
         "tsync.enroll_fail": "토큰 동기화 등록 실패 — {why}",
         "tsync.invite": "초대 코드(이 값이 곧 키입니다 — 채팅·스크린샷 금지): {code}",
@@ -289,7 +289,7 @@ i18n.register({
     },
     "en": {
         "tsync.status": "Token sync: {state} · last ok {last} · rows in {rows}"
-                        " · account attributed {acct}",
+                        " · account attributed {acct} · ingest {grow}",
         "tsync.enrolled": "Token sync: this machine is enrolled ({label})",
         "tsync.enroll_fail": "Token sync enrollment failed — {why}",
         "tsync.invite": "Invite code (this IS the key — never paste in chat): {code}",
@@ -670,9 +670,20 @@ async def _token_sync_cmd(server, client, sub: str, arg: str):
             cov = {}
             with contextlib.suppress(Exception):
                 cov = usagedb.xc_account_coverage(conn)
+            # 설계 §12(롤업 판정 2026-07-25): 서버는 **암호화 때문에 제 데이터를 집계
+            # 못 한다** → "언제 롤업/쿼터가 문제되나" 를 답할 수 있는 건 클라뿐이다.
+            # 적재 속도를 여기 같이 보여 트리거(쿼터 60%)를 눈으로 확인할 수 있게 한다.
+            grw = {}
+            with contextlib.suppress(Exception):
+                _g = getattr(usagedb, "xc_growth", None)
+                grw = _g(conn) if _g else {}
             await note("tsync.status",
                        "토큰 동기화: {state} · 마지막 성공 {last} · 받은 행 {rows}"
-                       " · 계정 귀속 {acct}",
+                       " · 계정 귀속 {acct} · 적재 {grow}",
+                       grow=("%d행 · %.0f행/일 · 연 %.1f만행"
+                             % (grw["rows"], grw["per_day"],
+                                grw["per_year"] / 10000.0)
+                             if grw.get("rows") else "-"),
                        state=state + (" · 오류: %s" % st["last_err"]
                                       if st.get("last_err") else ""),
                        last=(_time.strftime("%m-%d %H:%M", _time.localtime(last))

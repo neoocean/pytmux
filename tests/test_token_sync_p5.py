@@ -260,3 +260,28 @@ async def test_host_rows_sum_matches_totals():
     assert sum(v for _, v, _ in rows) == 10
     assert abs(sum(pct for _, _, pct in rows) - 100.0) < 1e-9
     assert len(rows) == 2          # 0 토큰 머신은 행을 만들지 않는다
+
+
+# ── 적재 속도 관측(설계 §12 롤업 판정, 2026-07-25) ─────────────────────────
+
+async def test_xc_growth_measures_recent_rate():
+    """`xc_growth` = 롤업 트리거를 사람이 볼 수 있게 하는 유일한 수단.
+
+    서버는 결정 3(보존 무기한)으로 계속 자라는데 결정 2(암호화 on) 때문에 **제 데이터를
+    집계할 수 없다** → "언제 롤업이 필요한가"는 클라만 답한다. 창 밖 행을 최근 속도에
+    섞으면(경계 무시) 이 단언이 깨진다."""
+    conn = usagedb.connect(":memory:")
+    now = 1_800_000_000.0
+    recs = [_rec("r%d" % i, now - i * 3600.0) for i in range(48)]   # 2일치, 시간당 1건
+    recs += [_rec("old%d" % i, now - (40 + i) * 86400.0) for i in range(10)]  # 창 밖
+    usagedb.insert_xc_many(conn, recs)
+    g = usagedb.xc_growth(conn, days=30.0, now=now)
+    assert g["rows"] == 58, "전체 행수"
+    assert g["recent"] == 48, "최근 30일 = 창 밖 10건 제외"
+    assert abs(g["per_day"] - 48 / 30.0) < 1e-6
+    assert abs(g["per_year"] - g["per_day"] * 365.0) < 1e-6
+    # 빈 DB 는 0(표시층이 '-' 로 접는다).
+    empty = usagedb.connect(":memory:")
+    assert usagedb.xc_growth(empty, now=now)["rows"] == 0
+    empty.close()
+    conn.close()

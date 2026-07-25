@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import time
 
 from . import usagelog
 
@@ -1055,6 +1056,27 @@ def xc_totals_by_account(conn) -> dict:
         "FROM usage_xc GROUP BY COALESCE(account, ?)",
         (usagelog.UNKNOWN, usagelog.UNKNOWN))
     return {r["a"]: int(r["s"]) for r in cur.fetchall()}
+
+
+def xc_growth(conn, days: float = 30.0, now: float = None) -> dict:
+    """적재 속도 관측 = `{"rows", "recent", "per_day", "per_year"}`(설계 §12 트리거).
+
+    왜 이게 필요한가 — 동기화 서버는 결정 3(보존 무기한)으로 계속 자라는데, 결정 2
+    (암호화 on) 때문에 **서버는 제 데이터를 집계할 수 없다**(복호 키가 없다). 그래서
+    "언제 롤업이 필요한가"는 **클라만** 답할 수 있고, 그 숫자가 어디에도 안 보이면
+    2년 뒤 쿼터 507 로 막히고 나서야 알게 된다(P6 purge 쿼터 회계 버그와 같은 결).
+
+    `recent` = 최근 `days` 일 적재 행수, `per_day`·`per_year` = 그 속도의 환산."""
+    t = float(time.time() if now is None else now)
+    since = t - float(days) * 86400.0
+    r = conn.execute(
+        "SELECT COUNT(*) AS n, "
+        "COALESCE(SUM(CASE WHEN ts>? THEN 1 ELSE 0 END),0) AS rec "
+        "FROM usage_xc", (since,)).fetchone()
+    rows, recent = int(r["n"] or 0), int(r["rec"] or 0)
+    per_day = recent / float(days) if days > 0 else 0.0
+    return {"rows": rows, "recent": recent, "per_day": per_day,
+            "per_year": per_day * 365.0}
 
 
 def xc_session_window(conn, session_uuid: str, since_ts: float) -> dict:
