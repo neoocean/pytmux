@@ -950,6 +950,9 @@ ESC_MODE_KEYS = [
     ("e_up", "↑ (최상단에서)", "닫기 [x] → 탭바 포커스", "Focus close [x] → tab bar"),
     ("e_tb", "탭바 포커스 후", "←→ 선택·Enter 전환·+/a 새 탭·x/d 닫기·Shift+←→ 이동",
      "←→ select · Enter switch · +/a new · x/d close · Shift+←→ move"),
+    ("e_down", "↓ (최하단에서)",
+     "상태줄 배지 포커스 — ←→ 배지 순환·Enter 실행(알림 이력·모델·시계 등)",
+     "Focus status-bar badges — ←→ cycle · Enter run (notice history, model, clock…)"),
 ]
 PREFIX_KEYS = [
     ("p_pct", "%", "좌우 분할", "Split left/right"),
@@ -988,14 +991,16 @@ PREFIX_KEYS = [
 
 i18n.register({
     "ko": dict([(f"klist.{i}", ko) for i, _k, ko, _en in ESC_MODE_KEYS + PREFIX_KEYS]
-               + [("kkey.e_up", "↑ (최상단에서)"), ("kkey.e_tb", "탭바 포커스 후")]
+               + [("kkey.e_up", "↑ (최상단에서)"), ("kkey.e_tb", "탭바 포커스 후"),
+                  ("kkey.e_down", "↓ (최하단에서)")]
                + [("klist.sub_esc", "ESC 모드 (ESC 한 번 후)"),
                   ("klist.sub_prefix", "prefix 후 ({p})"),
                   ("klist.sub_user", "사용자 바인딩 (config)"),
                   ("klist.sub_user_root", "사용자 바인딩 (prefix 없이, bind -n)"),
                   ("klist.none", "(없음)"), ("setcat.키", "키")]),
     "en": dict([(f"klist.{i}", en) for i, _k, _ko, en in ESC_MODE_KEYS + PREFIX_KEYS]
-               + [("kkey.e_up", "↑ (at top)"), ("kkey.e_tb", "After tab-bar focus")]
+               + [("kkey.e_up", "↑ (at top)"), ("kkey.e_tb", "After tab-bar focus"),
+                  ("kkey.e_down", "↓ (at bottom)")]
                + [("klist.sub_esc", "ESC mode (after one ESC)"),
                   ("klist.sub_prefix", "After prefix ({p})"),
                   ("klist.sub_user", "User bindings (config)"),

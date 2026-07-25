@@ -4819,6 +4819,38 @@ async def test_esc_down_focuses_status_bar_buttons():
     await _with_app(body)
 
 
+async def test_keylist_mirrors_esc_down_status_focus():
+    """`ESC_MODE_KEYS` 는 핸들러(if/elif)의 **수동 미러**라 조용히 어긋난다 — 실제로
+    ESC→↓(상태줄 배지 포커스)는 동작하는데 설정 '키' 탭에는 없어서, 웹 가이드만 그 조작을
+    안내하고 앱 도움말은 몰랐다(감사 2026-07-26).
+
+    오라클은 **둘을 한 테스트에 묶는다**: ① 핸들러가 실제로 포커스를 잡고 ② 그 조작이
+    '키' 탭 행(`kid='e_down'`)으로도 나열된다. 한쪽만 지워도 실패한다 — 미러가 다시
+    어긋나는 것을 막는 것이 이 테스트의 전부다."""
+    from pytmuxlib import clientutil
+    from pytmuxlib.clientscreens import SettingsScreen
+
+    async def body(app, pilot, srv):
+        # ① 기능: 최하단 패널에서 ↓ → 상태줄 배지 포커스.
+        app.layout = {"active": 1, "cols": 80, "rows": 24, "dividers": [],
+                      "panes": [{"id": 1, "x": 0, "y": 0, "w": 80, "h": 24,
+                                 "box": [0, 0, 80, 24]}]}
+        app._status_buttons = lambda: ["notices"]
+        await pilot.press("escape")
+        app._handle_esc_mode(Key(key="down", character=None))
+        assert app._status_focus == "notices", app._status_focus
+        app._handle_esc_mode(Key(key="escape", character=None))
+
+        # ② 미러: '키' 탭이 그 조작을 행으로 나열한다(키표기 + 설명).
+        scr = SettingsScreen(prefix_key="ctrl+b")
+        rows = [d for d, _first in scr._flat if d.get("kid") == "e_down"]
+        assert len(rows) == 1, [d for d, _ in scr._flat if d.get("kid")]
+        assert "↓" in rows[0]["k"], rows[0]
+        ko = dict((kid, ko) for kid, _k, ko, _en in clientutil.ESC_MODE_KEYS)
+        assert "상태줄" in ko["e_down"] and "Enter" in ko["e_down"], ko["e_down"]
+    await _with_app(body)
+
+
 async def test_usage_bar_lines_format():
     # 공유 포맷터: /usage 한도 dict → 라벨+막대+%+리셋(타임존 생략). 데이터 없으면 None.
     from pytmuxlib.clientscreens import usage_bar_lines
