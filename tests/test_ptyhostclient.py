@@ -8,6 +8,7 @@ import os
 import shutil
 import tempfile
 
+from harness import wait_for   # 폴링 규약(고정 sleep 금지)
 from pytmuxlib import ptyhost, pty_backend
 from pytmuxlib.ptyhostclient import PtyHostClient
 
@@ -17,10 +18,7 @@ async def _start_host():
     endpoint = os.path.join(d, "host.sock")
     host = ptyhost.PtyHost()
     task = asyncio.ensure_future(host.serve(endpoint))
-    for _ in range(100):
-        if os.path.exists(endpoint):
-            break
-        await asyncio.sleep(0.01)
+    await wait_for(lambda: os.path.exists(endpoint), timeout=3.0, step=0.01)
     return host, task, endpoint, d
 
 
@@ -73,10 +71,7 @@ async def test_client_spawn_and_stream():
         client.spawn(1, ["/bin/sh", "-c", "echo HELLO_PROXY_1; sleep 0.3"], 80, 24)
         assert await col.wait_for(b"HELLO_PROXY_1"), bytes(col.buf)
         # 'spawned' 회신으로 실제 자식 pid 가 채워진다.
-        for _ in range(50):
-            if proc.pid > 0:
-                break
-            await asyncio.sleep(0.02)
+        await wait_for(lambda: proc.pid > 0, timeout=3.0, step=0.02)
         assert proc.pid > 0, "spawned pid 미수신"
     finally:
         await _stop(host, task, endpoint, d, client)
@@ -113,10 +108,7 @@ async def test_client_reap_on_exit():
         proc = client.make_pane(4, 80, 24)
         proc.start_reader(None, col.on_data, col.on_eof)
         client.spawn(4, ["/bin/sh", "-c", "echo DONE; exit 7"], 80, 24)
-        for _ in range(100):
-            if col.eof:
-                break
-            await asyncio.sleep(0.02)
+        await wait_for(lambda: col.eof, timeout=3.0, step=0.02)
         assert col.eof, "on_eof 미호출"
         assert proc.reap() is not None, "exit status 미수신"
     finally:

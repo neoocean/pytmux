@@ -7,6 +7,7 @@ claude-code 는 하이픈 패키지라 importlib 로 모듈을 가져온다(다�
 import importlib
 
 import harness  # noqa: F401  (sys.path 주입)
+from harness import wait_until
 
 screens = importlib.import_module("pytmuxlib.plugins.claude-code.screens")
 
@@ -175,7 +176,7 @@ async def test_table_row_highlight_home_end_pageup_pagedown():
 
             # End → 마지막 행, Home → 첫 행
             await pilot.press("end")
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: table.cursor_coordinate.row == n - 1)
             assert table.cursor_coordinate.row == n - 1, "End=마지막 행"
             await pilot.press("home")
             await pilot.pause(0.05)
@@ -187,7 +188,7 @@ async def test_table_row_highlight_home_end_pageup_pagedown():
             after_pgdn = table.cursor_coordinate.row
             assert after_pgdn > 0, "PgDn=행 커서 아래로"
             await pilot.press("pageup")
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: table.cursor_coordinate.row < after_pgdn)
             assert table.cursor_coordinate.row < after_pgdn, "PgUp=행 커서 위로"
     finally:
         await teardown(srv, task, sock)
@@ -264,18 +265,18 @@ async def test_tree_collapse_and_expand_today_row():
             assert str(table.get_row_at(0)[0]).startswith("▶ "), "접힌 오늘 행=▶"
             # → 로 다시 펼친다.
             await pilot.press("right")
-            await pilot.pause(0.1)
+            await wait_until(pilot, lambda: hour_count() >= 2)
             assert hour_count() >= 2, "→ 로 다시 펼치면 시각 행 복귀"
             assert str(table.get_row_at(0)[0]).startswith("▼ "), "펼친 오늘 행=▼"
             # Enter 로도 토글(닫히지 않고). 두 번이면 접었다 펼침.
             await pilot.press("home")
             await pilot.pause(0.05)
             await pilot.press("enter")
-            await pilot.pause(0.1)
+            await wait_until(pilot, lambda: app.screen_stack[-1] is scr)
             assert app.screen_stack[-1] is scr, "Enter 는 팝업을 닫지 않음"
             assert hour_count() == 0, "Enter 로 접힘"
             await pilot.press("enter")
-            await pilot.pause(0.1)
+            await wait_until(pilot, lambda: hour_count() >= 2)
             assert hour_count() >= 2, "Enter 로 다시 펼침"
     finally:
         await teardown(srv, task, sock)
@@ -454,7 +455,7 @@ async def test_session_view_timestamp_shows_date_and_time_in_day_bucket():
             scr._view = "session"
             scr._bucket = "day"          # 시각을 잃던 버킷
             await scr._refresh()
-            await pilot.pause(0.1)
+            await wait_until(pilot, lambda: "11-14 22:13" in (scr._sess_times or []))
             # 세션 42 시작 시각 = 11-14 22:13, 세션 7 = 11-16 02:00 (날짜+시각).
             assert "11-14 22:13" in (scr._sess_times or []), scr._sess_times
             assert "11-16 02:00" in (scr._sess_times or []), scr._sess_times
@@ -534,7 +535,7 @@ async def test_tree_leaf_left_jumps_to_parent_and_collapses():
             # 최상위 leaf(부모 없음)에서 ← 는 무동작·무크래시 — 접힌 오늘 행(이제 leaf
             # 아님이지만 펼쳐지지 않은 상태)에서 ← 는 부모가 없으니 그대로.
             await pilot.press("left")
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: app.screen_stack[-1] is scr)
             assert app.screen_stack[-1] is scr, "← 가 팝업을 닫지 않음(no-crash)"
     finally:
         await teardown(srv, task, sock)
@@ -586,7 +587,7 @@ async def test_period_and_session_drop_model_color_and_legend():
             assert scr._view == "time"
             _assert_no_model(scr)                  # Period(계층 트리)
             await pilot.press("p")                 # Session 뷰로 전환
-            await pilot.pause(0.2)
+            await wait_until(pilot, lambda: scr._view == "session")
             assert scr._view == "session"
             _assert_no_model(scr)                  # Session
     finally:
@@ -612,7 +613,7 @@ async def test_limit_tab_model_section_cycle_and_apply():
             assert scr._limit_mode, "한도 탭으로 열려야"
             table = scr.query_one(DataTable)
             table.focus()
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: "opus" in str(table.get_row_at(0)[0]))
             # 행0=모델(현재 opus), 행1=컨텍스트(기본/Default).
             assert "opus" in str(table.get_row_at(0)[0]), table.get_row_at(0)
             r1 = str(table.get_row_at(1)[0])
@@ -621,20 +622,20 @@ async def test_limit_tab_model_section_cycle_and_apply():
             table.move_cursor(row=0)
             msel0 = scr._mc_msel
             await pilot.press("right")
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: scr._mc_msel == (msel0 + 1) % len(scr._mc_models))
             assert scr._mc_msel == (msel0 + 1) % len(scr._mc_models), scr._mc_msel
             assert app.screen_stack[-1] is scr, "→ 가 팝업을 닫지 않음"
             # 행1(컨텍스트)에서 → 로 컨텍스트가 1m 으로.
             table.move_cursor(row=1)
             await pilot.press("right")
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: scr._mc_csel == 1)
             assert scr._mc_csel == 1, scr._mc_csel
             # Enter 로 현재 선택 적용 → _apply_model_config 호출(팝업 유지).
             applied = []
             app._apply_model_config = lambda res: applied.append(res)
             table.move_cursor(row=0)
             await pilot.press("enter")
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: applied)
             assert applied, "Enter 로 _apply_model_config 호출돼야"
             model, ctx = applied[-1]
             assert model == scr._mc_models[scr._mc_msel][1], applied
@@ -643,7 +644,7 @@ async def test_limit_tab_model_section_cycle_and_apply():
             # 비-모델/컨텍스트 행(빈 줄/한도 상세)에서 ←→ 는 무동작이고 팝업도 유지.
             table.move_cursor(row=2)
             await pilot.press("left")
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: app.screen_stack[-1] is scr)
             assert app.screen_stack[-1] is scr, "비-편집 행 ← 는 팝업을 닫지 않음"
     finally:
         await teardown(srv, task, sock)

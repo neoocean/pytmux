@@ -7,7 +7,7 @@ import shutil
 
 import harness
 import pytmux
-from harness import first_session, pane_text, server_only, teardown
+from harness import first_session, pane_text, server_only, teardown, wait_for
 from pytmuxlib import ipc
 
 
@@ -3750,10 +3750,7 @@ async def test_sync_input_broadcast():
         # 하므로 모든 패널에 보일 때까지 최대 ~10s 폴링.
         def _has_synced(p):
             return "SYNCED" in pane_text(p).replace("\n", "")
-        for _ in range(100):
-            await asyncio.sleep(0.1)
-            if all(_has_synced(p) for p in win.panes()):
-                break
+        await wait_for(lambda: all(_has_synced(p) for p in win.panes()), timeout=10.0, step=0.1)
         assert all(_has_synced(p) for p in win.panes())
     finally:
         await teardown(srv, task, sock)

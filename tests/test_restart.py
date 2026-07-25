@@ -11,7 +11,8 @@ import os
 import re
 
 import pytmux
-from harness import server_only, teardown
+from harness import server_only, teardown, wait_for
+from run import skip
 from pytmuxlib import ipc, proc, pty_backend
 from pytmuxlib.protocol import read_msg, write_msg
 
@@ -78,7 +79,7 @@ async def test_export_import_preserves_wide_chars():
 # ── 2. 서버 save_resume_state 가 트리 구조 + PTY 식별자를 담는다 ───────────────
 async def test_save_resume_state_structure():
     if ipc.IS_WINDOWS:
-        return
+        skip("POSIX 전용(세션유지 재시작은 fd 상속·execv 경로)")
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
@@ -128,7 +129,7 @@ async def _read_until(fd, marker: bytes, timeout=3.0) -> bytes:
 # ── 3. fd 채택: fork 없이 기존 셸 PTY 를 다시 감싸 읽기/쓰기 ───────────────────
 async def test_adopt_preserves_pid_and_io():
     if ipc.IS_WINDOWS:
-        return
+        skip("POSIX 전용(세션유지 재시작은 fd 상속·execv 경로)")
     import fcntl
     srv, task, sock = await server_only()
     try:
@@ -158,7 +159,7 @@ async def test_adopt_preserves_pid_and_io():
 # ── 4. 전체 복원 라운드트립: 옛 서버가 쥔 fd 를 새 서버가 채택(= execv 후 동치) ──
 async def test_restore_resume_state_roundtrip():
     if ipc.IS_WINDOWS:
-        return
+        skip("POSIX 전용(세션유지 재시작은 fd 상속·execv 경로)")
     import fcntl
     import tempfile
     srvA, taskA, sockA = await server_only()
@@ -257,16 +258,13 @@ async def test_execv_restart_preserves_shell_pid():
     뒤 restart-server 를 트리거, 재기동된 서버에 재접속해 다시 `echo $$` 로 같은
     PID 인지 확인한다. docs/internal/RESTART_SCENARIO.md §7 test_restart_preserves_pids."""
     if ipc.IS_WINDOWS:
-        return
+        skip("POSIX 전용(세션유지 재시작은 fd 상속·execv 경로)")
     import tempfile
     endpoint = tempfile.mktemp(suffix=".sock")
     pid = proc.spawn_detached(proc.server_argv(endpoint))
     try:
         # listen 대기
-        for _ in range(300):
-            if ipc.probe(endpoint):
-                break
-            await asyncio.sleep(0.02)
+        await wait_for(lambda: ipc.probe(endpoint), timeout=6.0, step=0.02)
         assert ipc.probe(endpoint), "서버 서브프로세스 기동 실패"
 
         reader, writer = await _conn(endpoint)
@@ -288,10 +286,7 @@ async def test_execv_restart_preserves_shell_pid():
 
         # 옛 연결은 execv 로 끊긴다. 재기동(같은 소켓) 대기 후 재접속.
         await asyncio.sleep(0.4)
-        for _ in range(400):
-            if ipc.probe(endpoint):
-                break
-            await asyncio.sleep(0.02)
+        await wait_for(lambda: ipc.probe(endpoint), timeout=8.0, step=0.02)
         assert ipc.probe(endpoint), "재시작 후 서버 재기동 실패"
 
         reader2, writer2 = await _conn(endpoint)
@@ -438,7 +433,7 @@ async def test_client_reconnects_on_restarting():
     # 레이아웃이 ~10s 안에도 안 와 일관 실패한다(테스트 하네스 한계 — 재접속 로직
     # 자체는 POSIX 런에서 검증됨). POSIX 에서만 돌린다.
     if ipc.IS_WINDOWS:
-        return
+        skip("POSIX 전용(세션유지 재시작은 fd 상속·execv 경로)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     app = make_app(sockA)
@@ -483,7 +478,7 @@ async def test_windows_restart_all_reconnects_in_place_not_execv():
     # 이 loop 하네스는 Windows CI 에서 초기 attach 왕복이 느려 불안정하다(위
     # test_restart_client_reconnects_on_disconnect 와 동일 한계) → POSIX 에서만.
     if ipc.IS_WINDOWS:
-        return
+        skip("POSIX 전용(세션유지 재시작은 fd 상속·execv 경로)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     app = make_app(sockA)
@@ -592,7 +587,7 @@ async def test_restore_induces_altscreen_redraw():
     같아도) 검증한다. 살아 있는 alt 앱을 띄운 패널을 새 서버가 채택한 뒤, 같은
     크기로 복원해도 _induce_redraw_all 이 SIGWINCH 를 유발해 앱이 repaint 한다."""
     if ipc.IS_WINDOWS:
-        return
+        skip("POSIX 전용(세션유지 재시작은 fd 상속·execv 경로)")
     import tempfile
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
@@ -605,10 +600,7 @@ async def test_restore_induces_altscreen_redraw():
         pane.pty.write(f"python3 {appf}\n".encode())
         # alt 진입 + ALT_MARK_0 가 보일 때까지 대기
         from harness import pane_text
-        for _ in range(150):
-            await asyncio.sleep(0.02)
-            if "ALT_MARK" in pane_text(pane):
-                break
+        await wait_for(lambda: "ALT_MARK" in pane_text(pane), timeout=3.0, step=0.02)
         assert "ALT_MARK" in pane_text(pane), "alt 앱 기동 실패: " + pane_text(pane)[:200]
 
         path = tempfile.mktemp(suffix=".resume.json")
@@ -619,12 +611,8 @@ async def test_restore_induces_altscreen_redraw():
         assert srvB.restore_resume_state(path)
         paneB = next(iter(srvB.sessions.values())).active_window.active_pane
         # SIGWINCH → 앱 repaint 출력이 새 pyte 로 들어와 ALT_MARK 가 다시 보인다.
-        seen = False
-        for _ in range(200):
-            await asyncio.sleep(0.02)
-            if "ALT_MARK" in pane_text(paneB):
-                seen = True
-                break
+        seen = await wait_for(lambda: "ALT_MARK" in pane_text(paneB),
+                              timeout=4.0, step=0.02)
         assert seen, "복원 후 재그리기 안 됨(마커 소실): " + pane_text(paneB)[:200]
         os.unlink(path)
         srvA.sessions.clear()
@@ -643,7 +631,7 @@ async def test_restore_preserves_scrollback():
     밖으로 밀린 초기 줄이 스크롤백에 보존돼 맨 위로 스크롤하면 다시 보인다.
     docs/internal/RESTART_SCENARIO.md: 메인 화면 평문 스냅샷 복원(순수 셸 스크롤백 연속성)."""
     if ipc.IS_WINDOWS:
-        return
+        skip("POSIX 전용(세션유지 재시작은 fd 상속·execv 경로)")
     import tempfile
     from harness import pane_text
     srvA, taskA, sockA = await server_only()
@@ -652,10 +640,8 @@ async def test_restore_preserves_scrollback():
         sess = srvA.ensure_default_session(80, 24)
         pane = sess.active_window.active_pane
         pane.pty.write(b"for i in $(seq 1 40); do echo SCROLL_LINE_$i; done\n")
-        for _ in range(200):
-            await asyncio.sleep(0.02)
-            if "SCROLL_LINE_40" in pane_text(pane):
-                break
+        await wait_for(lambda: "SCROLL_LINE_40" in pane_text(pane),
+                       timeout=4.0, step=0.02)
         assert "SCROLL_LINE_40" in pane_text(pane), "마커 출력 실패"
 
         path = tempfile.mktemp(suffix=".resume.json")
@@ -682,7 +668,7 @@ async def test_restore_writes_repaint_diag_manifest():
     (restored)·0.6초 후(post_repaint) 두 phase 를 패널별로 찍어, 복원 화면이 앱의 repaint
     에 지워지는지(clobber)를 오프라인 분석하게 한다(RESTART_SCENARIO.md §주의①)."""
     if ipc.IS_WINDOWS:
-        return
+        skip("POSIX 전용(세션유지 재시작은 fd 상속·execv 경로)")
     import json
     import tempfile
     from harness import pane_text
@@ -695,10 +681,8 @@ async def test_restore_writes_repaint_diag_manifest():
         sess = srvA.ensure_default_session(80, 24)
         pane = sess.active_window.active_pane
         pane.pty.write(b"echo RESTART_DIAG_MARK\n")
-        for _ in range(200):
-            await asyncio.sleep(0.02)
-            if "RESTART_DIAG_MARK" in pane_text(pane):
-                break
+        await wait_for(lambda: "RESTART_DIAG_MARK" in pane_text(pane),
+                       timeout=4.0, step=0.02)
         assert "RESTART_DIAG_MARK" in pane_text(pane)
         path = tempfile.mktemp(suffix=".resume.json")
         assert srvA.save_resume_state(path)
@@ -838,7 +822,7 @@ async def test_restarting_with_relaunch_flag_sets_relaunch_mode():
     {"t":"restarting"}(relaunch 없음)은 in-place 재접속(플래그 안 켜짐)."""
     from harness import make_app
     if ipc.IS_WINDOWS:
-        return
+        skip("POSIX 전용(세션유지 재시작은 fd 상속·execv 경로)")
     srv, task, sock = await server_only()
     app = make_app(sock)
     try:
@@ -883,7 +867,7 @@ async def test_restart_server_relaunch_flag_on_wire():
     relaunch:true 를 싣는다(False 면 안 싣는다). 실 execv 는 _do_execv 를 무력화해
     막고, fake 클라 writer 로 나간 메시지를 가로챈다."""
     if ipc.IS_WINDOWS:
-        return
+        skip("POSIX 전용(세션유지 재시작은 fd 상속·execv 경로)")
     import json as _json
     from pytmuxlib.model import ClientConn
 

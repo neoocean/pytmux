@@ -103,6 +103,9 @@ async def test_restart_check_command_opens_popup():
             "reexec_supported": True, "has_sessions": True,
             "serialize_ok": True, "panes": 2, "panes_with_fd": 2,
             "running_version": "p4:1", "disk_version": "p4:2"})
+        # 고정 pause 유지: push_screen 직후 스택은 **즉시** 바뀌므로 조건 폴링은 0회
+        # 대기가 된다 — 여기서 기다리는 것은 스택이 아니라 InfoScreen 의 **마운트**
+        # (compose→ListView)다. 폴링으로 바꾸면 마운트 전에 진행해 NoMatches 로 깨진다.
         await pilot.pause(0.1)
         assert isinstance(app.screen, InfoScreen)
     await _with_app(body)
@@ -135,7 +138,7 @@ async def test_stale_dismiss_after_popup_closed_is_noop_not_crash():
         # 화면에서 다시 dismiss(None) 해도 ScreenStackError(스택 부족) 도, None 반환
         # 으로 인한 AttributeError 도 없이 조용히 무시돼야 한다.
         scr.dismiss(None)
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: len(app.screen_stack) == 1)
         assert len(app.screen_stack) == 1
         # 길목(pop_screen) 직접 호출도 ScreenStackError 없이 awaitable 을 돌려준다.
         assert app.pop_screen() is not None
@@ -477,7 +480,7 @@ async def test_set_ambiguous_width_runtime_toggle():
             # narrow→wide 전환
             app._apply_ambiguous_wide(True)
             assert cellwidth.ambiguous_wide() is True
-            await pilot.pause(0.2)              # 서버 set_ambig 처리 + _send_full 왕복
+            await wait_until(pilot, lambda: app.view._cells)
             assert app.view._cells, "전환 후에도 화면 합성 유지"
             # wide→narrow 복귀(겹침 완화 경로)
             app._apply_ambiguous_wide(False)
@@ -737,7 +740,7 @@ async def test_command_prompt_via_esc():
             await pilot.press(ch if ch != "-" else "minus")
         n = len(sess.tabs)
         await pilot.press("enter")
-        await pilot.pause(0.4)
+        await wait_until(pilot, lambda: len(sess.tabs) == n + 1)
         assert len(sess.tabs) == n + 1, "명령 실행"
     await _with_app(body)
 
@@ -761,7 +764,7 @@ async def test_command_prompt_converts_hangul_name_to_qwerty():
         assert inp.value == hangul_to_qwerty(ko) == "new", inp.value
         # 인자 구간(공백 이후) 한글은 보존(rename-tab 한글탭이름).
         inp.value = "rename-tab 안녕"
-        await pilot.pause(0.2)
+        await wait_until(pilot, lambda: inp.value == "rename-tab 안녕")
         assert inp.value == "rename-tab 안녕", \
             f"인자 한글이 변환됨: {inp.value!r}"
     await _with_app(body)
@@ -996,7 +999,7 @@ async def test_command_list_and_autocomplete():
         await pilot.pause(0.1)
         assert scr._ci == 1 and scr._all_cats[1][0] == "패널", scr._ci
         await pilot.press("right")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: scr._ci == 2 and scr._cur[0][0] == "new-tab")
         assert scr._ci == 2 and scr._cur[0][0] == "new-tab", (scr._ci, scr._cur[:1])
         await pilot.press("left")
         await pilot.press("left")
@@ -1018,7 +1021,7 @@ async def test_command_list_and_autocomplete():
         assert box_h <= scr._CMDS_MAX_ROWS + scr._BOX_OVERHEAD, box_h
         # ←→ 카테고리 전환에도 박스 높이는 불변
         await pilot.press("right")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: box.region.height == box_h)
         assert box.region.height == box_h, (box.region.height, box_h)
         await pilot.press("left")
         await pilot.pause(0.1)
@@ -1056,12 +1059,12 @@ async def test_command_substring_candidates():
         # ↓ 로 후보 내 선택 이동
         first = scr._cand[0][0]
         await pilot.press("down")
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: scr._sel == 1)
         assert scr._sel == 1, scr._sel
         # Tab 으로 강조 후보를 입력에 채움(뒤에 공백) → 후보 영역 숨김
         chosen = scr._cand[scr._sel][0]
         await pilot.press("tab")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: inp.value == chosen + " ")
         assert inp.value == chosen + " ", repr(inp.value)
         assert cand.display is False, "옵션 입력 단계에선 후보 숨김"
         # 첫 글자 일치(접두사)도 여전히 후보로 동작
@@ -1069,12 +1072,12 @@ async def test_command_substring_candidates():
             await pilot.press("backspace")
         for ch in "new":
             await pilot.press(ch)
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: "new-tab" in [n for n, _ in scr._cand])
         assert "new-tab" in [n for n, _ in scr._cand], scr._cand
         # Enter 는 강조 후보를 채우기만(실행 X), 그 다음 Enter 로 실행
         sel_name = scr._cand[scr._sel][0]
         await pilot.press("enter")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: app.screen_stack[-1] is scr)
         assert app.screen_stack[-1] is scr, "첫 Enter 는 후보 채우기"
         assert inp.value == sel_name + " ", repr(inp.value)
     await _with_app(body)
@@ -1139,7 +1142,7 @@ async def test_help_command():
         # Enter → 기본 선택(-h)으로 프롬프트 없이 바로 실행 → 패널 분할
         n = len(sess.active_window.panes())
         await pilot.press("enter")
-        await pilot.pause(0.4)
+        await wait_until(pilot, lambda: len(sess.active_window.panes()) == n + 1)
         assert len(sess.active_window.panes()) == n + 1, "옵션 모달 Enter→실행"
     await _with_app(body)
 
@@ -1164,7 +1167,7 @@ async def test_command_options_change_value():
         assert opt._build_line() == "split-window -v"
         n = len(sess.active_window.panes())
         await pilot.press("enter")           # 바로 실행
-        await pilot.pause(0.4)
+        await wait_until(pilot, lambda: "split-window -v" in ran)
         assert "split-window -v" in ran, ran
         assert len(sess.active_window.panes()) == n + 1
     await _with_app(body)
@@ -1183,7 +1186,7 @@ async def test_command_palette_routing():
         await pilot.pause(0.15)
         ran.clear()
         app.screen_stack[-1].dismiss("next-tab")
-        await pilot.pause(0.15)
+        await wait_until(pilot, lambda: "next-tab" in ran)
         assert "next-tab" in ran, ran
         # 자유 텍스트(rename-tab): 명령 프롬프트가 열림(즉시 실행 아님)
         app._run_command("help")
@@ -1230,7 +1233,7 @@ async def test_f12_opens_command_prompt():
         await pilot.pause(0.1)
         await pilot.press("ctrl+b")
         await pilot.press("f12")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: app.prefix_enabled is False)
         assert app.prefix_enabled is False, "prefix F12 → 중첩 패스스루 토글"
     await _with_app(body)
 
@@ -1471,14 +1474,14 @@ async def test_display_panes():
     async def body(app, pilot, srv):
         await pilot.press("ctrl+b")
         await pilot.press("percent_sign")
-        await pilot.pause(0.4)
+        await wait_until(pilot, lambda: len(app.layout["panes"]) == 2)
         assert len(app.layout["panes"]) == 2
         await pilot.press("ctrl+b")
         await pilot.press("q")
         assert app.mode == "display"
         first = app.layout["panes"][1]["id"]
         await pilot.press("1")
-        await pilot.pause(0.3)
+        await wait_until(pilot, lambda: app.mode == "normal" and app.layout["active"] == first)
         assert app.mode == "normal" and app.layout["active"] == first
     await _with_app(body)
 
@@ -1492,7 +1495,7 @@ async def test_ime_shortcuts():
         # prefix 후 물리 c(=ㅊ) → new-window
         n = len(sess.tabs)
         app.on_key(Key(key="ㅊ", character="ㅊ"))
-        await pilot.pause(0.3)
+        await wait_until(pilot, lambda: len(sess.tabs) == n + 1)
         assert len(sess.tabs) == n + 1, "prefix+ㅊ → new-window"
     await _with_app(body)
 
@@ -1501,7 +1504,7 @@ async def test_ctrl_korean_no_crash():
     async def body(app, pilot, srv):
         # 한글 Ctrl 조합이 forward 경로로 가도 크래시 없음
         app.on_key(Key(key="ctrl+ㅂ", character=None))
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: app.mode == "normal")
         assert app.mode == "normal"
     await _with_app(body)
 
@@ -1526,7 +1529,7 @@ async def test_shift_tab_still_reaches_pane_with_switcher():
         sent = []
         app.send_input = lambda data: sent.append(data)
         await pilot.press("shift+tab")
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: sent == [b"\x1b[Z"])
         assert sent == [b"\x1b[Z"], f"패널로 backtab 미전달: {sent}"
         assert len(app.screen_stack) == 1, "normal 의 shift+tab 은 스위처를 열지 않는다"
     await _with_app(body)
@@ -1552,20 +1555,20 @@ async def test_esc_tab_switcher_selects_next_and_enter_switches():
         lv = app.screen.query_one(ListView)
         assert lv.index == 1, f"시작 선택이 '다음 탭'이 아님: {lv.index}"
         await pilot.press("tab")            # → C
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: lv.index == 2)
         assert lv.index == 2, lv.index
         await pilot.press("tab")            # → A(순환)
         await pilot.pause(0.05)
         assert lv.index == 0, f"끝에서 순환 안 함: {lv.index}"
         await pilot.press("shift+tab")      # → C(역순환)
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: lv.index == 2)
         assert lv.index == 2, lv.index
         # 열릴 때 패널 하위행용 request_tree 는 나가지만 **전환**(select_window)은
         # Enter 전엔 없다(07-16 패널 하위행 확장).
         assert sent == [("request_tree", {})], \
             f"Enter 전엔 전환하지 않는다: {sent}"
         await pilot.press("enter")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: sent[1:] == [("select_window", {"index": 2})])
         assert sent[1:] == [("select_window", {"index": 2})], sent
         assert len(app.screen_stack) == 1, "Enter 후 모달이 닫힌다"
     await _with_app(body)
@@ -1583,7 +1586,7 @@ async def test_esc_tab_switcher_escape_cancels():
         await pilot.pause(0.1)
         await pilot.press("tab")            # 선택 이동
         await pilot.press("escape")         # 취소
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: sent == [("request_tree", {})])
         assert sent == [("request_tree", {})], f"취소인데 전환됨: {sent}"
         assert len(app.screen_stack) == 1
     await _with_app(body)
@@ -1615,7 +1618,7 @@ async def test_esc_tab_switcher_visual_order_and_pin():
         # 활성(시각 2번)의 다음 = 시각 3번 p4v(탭 index 1) → Enter 로 그 탭 전환.
         assert lv.index == 2, lv.index
         await pilot.press("enter")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: sent[-1] == ("select_window", {"index": 1}))
         assert sent[-1] == ("select_window", {"index": 1}), sent
     await _with_app(body)
 
@@ -1672,19 +1675,19 @@ async def test_esc_tab_switcher_home_end_page_and_arrow_wrap():
         await pilot.pause(0.05)
         assert lv.index == 0, f"Home 이 첫 행으로 안 감: {lv.index}"
         await pilot.press("up")             # 맨 위에서 ↑ = 맨 아래(순환)
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: lv.index == 7)
         assert lv.index == 7, f"맨 위 ↑ 순환 실패: {lv.index}"
         await pilot.press("down")           # 맨 아래에서 ↓ = 맨 위(순환)
         await pilot.pause(0.05)
         assert lv.index == 0, f"맨 아래 ↓ 순환 실패: {lv.index}"
         await pilot.press("end")
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: lv.index == 7)
         assert lv.index == 7, f"End 가 끝 행으로 안 감: {lv.index}"
         await pilot.press("pageup")         # 8행<한 화면 → 첫 행 클램프
         await pilot.pause(0.05)
         assert lv.index == 0, f"PgUp 클램프 실패: {lv.index}"
         await pilot.press("pagedown")       # 끝 행 클램프
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: lv.index == 7)
         assert lv.index == 7, f"PgDn 클램프 실패: {lv.index}"
         await pilot.press("escape")
     await _with_app(body)
@@ -1737,7 +1740,7 @@ async def test_esc_tab_switcher_pane_rows_from_tree():
         await pilot.pause(0.05)
         assert lv.index == 0, lv.index
         await pilot.press("tab")
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: lv.index == 3)
         assert lv.index == 3, lv.index
         # 패널 행에서 Enter = 그 탭 + 그 패널로 전환.
         await pilot.press("home")
@@ -1805,7 +1808,7 @@ async def test_esc_tab_switcher_not_opened_for_single_tab():
         app.tabbar.blink_active = lambda: blinked.append(True)
         await pilot.press("escape")
         await pilot.press("tab")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: len(app.screen_stack) == 1)
         assert len(app.screen_stack) == 1, "탭 1개인데 스위처가 열림"
         assert blinked == [True], "안내 깜빡임 없음"
         assert app.mode == "normal", app.mode
@@ -1962,7 +1965,7 @@ async def test_token_log_screen_aggregates_and_switches():
         # 옛 입도 서브탭/정렬 단축키는 계층 트리로 대체돼 h/d/w/m/o 는 예약 no-op.
         for k in ("h", "d", "w", "m", "o"):       # 예약 no-op: 닫히지 않는다
             await pilot.press(k)
-            await pilot.pause(0.02)
+            await wait_until(pilot, lambda: app.screen_stack[-1] is scr)
             assert app.screen_stack[-1] is scr, f"{k} 키는 닫지 않음"
         # M19: /usage 결과를 status 훅으로 밀어넣으면 상단 1줄 요약(5h 7%)이 보이고,
         # [한도] 뷰로 들어가면 막대 상세가 표 자리에 보인다(2026-06-14 한도 전용 뷰).
@@ -1972,7 +1975,7 @@ async def test_token_log_screen_aggregates_and_switches():
         assert "5h 7%" in joined3, joined3            # 상단 1줄 한도 요약
         assert "세션 5h" not in joined3, joined3        # 막대 상세는 기본 화면엔 없음
         await pilot.press("l")                          # [한도] 뷰 진입
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: scr._limit_mode and app.screen_stack[-1] is scr)
         assert scr._limit_mode and app.screen_stack[-1] is scr
         joined3b = _tok_text(scr)
         assert "세션 5h" in joined3b and "7%" in joined3b, joined3b  # /usage 막대
@@ -2010,7 +2013,7 @@ async def test_token_log_limit_view_toggle():
         assert "5:39pm" not in base, base          # 리셋 상세도 숨김
         # [l] 한도 뷰: 막대 상세가 표 자리에 보인다.
         await pilot.press("l")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: scr._limit_mode and app.screen_stack[-1] is scr)
         assert scr._limit_mode and app.screen_stack[-1] is scr
         lim = _tok_text(scr)
         assert "세션 5h" in lim and "17%" in lim, lim
@@ -2023,7 +2026,7 @@ async def test_token_log_limit_view_toggle():
         assert not scr._limit_mode
         # 한도 뷰에서 기간 탭 클릭 → 기간 뷰로 빠져나온다(어느 모드에서도 먹게).
         await pilot.press("l")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: scr._limit_mode)
         assert scr._limit_mode
         await pilot.click("#tab_period")
         await pilot.pause(0.1)
@@ -2053,11 +2056,11 @@ async def test_token_log_tab_subrow_and_limit_return():
         assert scr.query_one("#tab_period", Label).has_class("tkbtab-active")
         # 세션 뷰 전환.
         await pilot.press("p")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: scr._active_tab() == "session")
         assert scr._active_tab() == "session"
         # 한도 뷰: 한도 탭만 활성, 기간 탭은 강조 안 됨(§7.1).
         await pilot.press("l")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: scr._active_tab() == "limit")
         assert scr._active_tab() == "limit"
         assert scr.query_one("#tab_limit", Label).has_class("tkbtab-active")
         assert not scr.query_one("#tab_period", Label).has_class("tkbtab-active")
@@ -2137,7 +2140,7 @@ async def test_warn_tab_tree_active_expanded_past_collapsed():
         assert target is not None, "repeat 헤더 행을 찾지 못함"
         table.move_cursor(row=target)
         await pilot.press("enter")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: "같은 출력이 여러 번 반복" in _tok_text(scr))
         assert "같은 출력이 여러 번 반복" in _tok_text(scr), "Enter 로 과거 경고 펼침"
     await _with_app(body)
 
@@ -2332,7 +2335,7 @@ async def test_token_log_panel_subtab_groups_by_session():
         assert scr._view == "time", "기본은 기간 뷰"
         # 키 [p] 로 세션 뷰 토글
         await pilot.press("p")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: scr._view == "session" and app.screen_stack[-1] is scr)
         assert scr._view == "session" and app.screen_stack[-1] is scr
         joined = _tok_text(scr)
         assert "세션 1" in joined and "세션 2" in joined, joined
@@ -2343,7 +2346,7 @@ async def test_token_log_panel_subtab_groups_by_session():
         assert "Σ4k" in joined, joined
         # 마우스로 [세션] 탭 클릭 → 기간 뷰로 되돌림(토글)
         await pilot.click("#tab_panel")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: scr._view == "time" and app.screen_stack[-1] is scr)
         assert scr._view == "time" and app.screen_stack[-1] is scr
     await _with_app(body)
 
@@ -2448,7 +2451,7 @@ async def test_choose_tree_shows_panes_and_switches():
             def __init__(self, iid):
                 self.item = type("I", (), {"id": iid})()
         scr.on_list_view_selected(_Sel("e2"))   # entries[2] = pane id 12
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: ("select_window", {"index": 1}) in sent)
         assert ("select_window", {"index": 1}) in sent
         assert ("select_pane_id", {"id": 12}) in sent
     await _with_app(body)
@@ -2542,7 +2545,7 @@ async def test_context_menu_click_outside_closes():
         # 박스 안 클릭(항목 → ListView#menu → screen) → 닫히지 않음
         ev_in = _Ev(_W("m_search", parent=_W("menu", parent=_W("screen"))))
         menu.on_click(ev_in)
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: app.screen_stack[-1] is menu)
         assert app.screen_stack[-1] is menu, "박스 안 클릭은 닫지 않는다"
         # 박스 바깥(백드롭) 클릭 → 닫힘
         ev_out = _Ev(_W("backdrop", parent=None))
@@ -2664,7 +2667,7 @@ async def test_context_menu_grouped_submenu_and_reachability():
         assert child is not menu and child.__class__.__name__ == "MenuScreen"
         assert child._title, "서브메뉴 헤더(그룹 라벨)"
         child.on_list_view_selected(_sel_event("m_split_lr"))
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: ("split", {"orient": "lr"}) in sent)
         assert ("split", {"orient": "lr"}) in sent, sent
         assert all(s.__class__.__name__ != "MenuScreen"
                    for s in app.screen_stack), "leaf 디스패치 후 전체 닫힘"
@@ -2726,7 +2729,7 @@ async def test_context_menu_submenu_hover_switches_group():
             screen_x = lr2.x + lr2.width // 2
             screen_y = lr2.y + lr2.height // 2
         new_child.on_mouse_move(_MM2())
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: app.screen_stack[-1] is new_child)
         assert app.screen_stack[-1] is new_child, "같은 그룹 호버는 서브메뉴 유지"
     await _with_app(body)
 
@@ -2770,7 +2773,7 @@ async def test_context_menu_submenu_esc_returns_to_parent_and_toggle_stays():
         assert app.screen_stack[-1] is child, "토글은 서브메뉴 유지"
         # Esc → 부모(top)로 복귀, top 은 아직 열림.
         await pilot.press("escape")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: app.screen_stack[-1] is top)
         assert app.screen_stack[-1] is top, "Esc=부모 복귀(전체 닫힘 아님)"
         # _menu_screen 은 부모로 복원돼 status 갱신이 최상위를 가리킨다.
         assert app._menu_screen is top
@@ -2923,7 +2926,8 @@ async def test_settings_screen_applies_persists_and_links():
                     if d["key"] == "inactive-dim-ratio")
         before = app.inactive_dim_ratio
         scr._cycle(ridx, 1)
-        await pilot.pause(0.05)
+        await wait_until(
+            pilot, lambda: abs(app.inactive_dim_ratio - round(before + 0.02, 2)) < 1e-9)
         assert abs(app.inactive_dim_ratio - round(before + 0.02, 2)) < 1e-9, \
             app.inactive_dim_ratio
         assert "set inactive-dim-ratio" in open(p, encoding="utf-8").read()
@@ -2941,7 +2945,7 @@ async def test_settings_screen_applies_persists_and_links():
         # 활성 탭이 따라온다(전체 목록 유지·필터링 아님).
         ci = scr._cats.index("동작")
         scr._jump_to_cat(ci)
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: scr.query_one("#sets").index == scr._cat_first["동작"])
         assert scr.query_one("#sets").index == scr._cat_first["동작"]
         assert scr._active_cat() == "동작"
 
@@ -2962,7 +2966,7 @@ async def test_ctrl_q_passthrough_not_quit():
         app.send_input = lambda d: sent.append(d)
         app.mode = "normal"
         await pilot.press("ctrl+q")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: b"\x11" in sent)
         assert b"\x11" in sent, "normal 모드 ctrl+q → 활성 패널로 DC1 전달"
         assert app.is_running, "ctrl+q 로 앱이 종료되지 않음"
         # 다른 모드(prefix 등)에서는 패스스루하지 않음
@@ -2988,7 +2992,7 @@ async def test_divider_hover_tints_background():
                             2: ([[("y" * 10, {})] for _ in range(5)], None)}
         # divider(x=10) 위 모션 → 호버 추적 + 배경 강조
         v.on_mouse_move(_FakeMouse(10, 2))
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: v._hover_divider == (10, 0, 1, 5))
         assert v._hover_divider == (10, 0, 1, 5), v._hover_divider
         st = app.view._cells[2][10][1]
         assert st is not None and st.bgcolor is not None, "divider 칸 배경 강조"
@@ -3327,7 +3331,7 @@ async def test_esc_tab_bar_plus_button_nav():
         seg = next(s for s in app.tabbar.render_line(0) if "[+]" in s.text)
         assert seg.style is not None and seg.style.bgcolor is not None
         await pilot.press("enter")
-        await pilot.pause(0.4)
+        await wait_until(pilot, lambda: app.mode == "normal")
         assert app.mode == "normal", "Enter 후 ESC 모드 종료"
         assert len(sess.tabs) == before + 1, "[+] Enter → 새 탭"
     await _with_app(body, cfg={"tab_bar_always": True})
@@ -3360,7 +3364,7 @@ async def test_tab_bar_and_esc_nav():
         before = app._active_tab_index()
         await pilot.press("left")
         await pilot.press("enter")
-        await pilot.pause(0.3)
+        await wait_until(pilot, lambda: app.tabbar.bar_focus is False)
         assert app.tabbar.bar_focus is False, "Enter 후 탭바 포커스 해제"
         assert app._active_tab_index() != before, "탭 전환 완료"
         assert app.mode == "normal", "Enter 한 번으로 ESC 모드도 종료(#3)"
@@ -3398,7 +3402,7 @@ async def test_tab_close_confirm_popup():
     async def body(app, pilot, srv):
         sess = next(iter(srv.sessions.values()))
         app.send_cmd("new_window")            # 탭 2개
-        await pilot.pause(0.4)
+        await wait_until(pilot, lambda: len(sess.tabs) == 2)
         assert len(sess.tabs) == 2
         # 탭바 [x] 닫기 버튼 클릭 → 확인 팝업
         app.confirm_kill_tab()
@@ -3411,7 +3415,7 @@ async def test_tab_close_confirm_popup():
         assert not scr.query_one("#cy", Label).has_class("sel"), "닫기는 무채색"
         # Esc = 취소 → 탭 유지
         await pilot.press("escape")
-        await pilot.pause(0.3)
+        await wait_until(pilot, lambda: len(sess.tabs) == 2)
         assert len(sess.tabs) == 2, "취소 시 탭 유지"
         # 다시 팝업 → '닫기' 버튼 터치(클릭) 로 확정 → 탭 닫힘
         app.confirm_kill_tab()
@@ -3420,7 +3424,7 @@ async def test_tab_close_confirm_popup():
         await wait_until(pilot, lambda: app.screen_stack[-1].query_one("#cy"))
         assert app.screen_stack[-1].__class__.__name__ == "ConfirmScreen"
         await pilot.click("#cy")
-        await pilot.pause(0.5)
+        await wait_until(pilot, lambda: len(sess.tabs) == 1)
         assert len(sess.tabs) == 1, "확인(클릭) 시 탭 닫힘"
     await _with_app(body)
 
@@ -3447,7 +3451,7 @@ async def test_close_remote_tab_routes_to_detach():
         assert "분리" in scr._message, scr._message
         await wait_until(pilot, lambda: app.screen_stack[-1].query_one("#cy"))
         await pilot.click("#cy")
-        await pilot.pause(0.3)
+        await wait_until(pilot, lambda: ("remote_detach", {"host": "office1", "index": 1}) in sent)
         assert ("remote_detach", {"host": "office1", "index": 1}) in sent, sent
         assert not any(a == "kill_window" for a, _ in sent), sent
         # 로컬 탭이 활성이면 종전대로 kill_window 경로(원격 분리 아님)
@@ -3491,7 +3495,7 @@ async def test_tab_bar_scroll_and_hide_bottom():
         for _ in range(6):                 # 총 7개 탭(좁은 폭에서 오버플로)
             app.send_cmd("new_window")
             await pilot.pause(0.15)
-        await pilot.pause(0.3)
+        await wait_until(pilot, lambda: app.status.hide_tabs is True)
         # 상단 탭바가 보이면 하단 상태줄 탭 목록 숨김
         assert app.status.hide_tabs is True
         # 탭 이름(예: win/zsh)이 하단 상태줄에 렌더되지 않음(시계의 "0:" 와 충돌 회피)
@@ -3681,15 +3685,15 @@ async def test_layout_save_load_client():
     async def body(app, pilot, srv):
         sess = next(iter(srv.sessions.values()))
         app._run_command("split-window -v")        # 좌우 2패널
-        await pilot.pause(0.4)
+        await wait_until(pilot, lambda: len(sess.active_tab.window.panes()) == 2)
         assert len(sess.active_tab.window.panes()) == 2
         app._run_command("layout-save two")
-        await pilot.pause(0.3)
+        await wait_until(pilot, lambda: "two" in srv.list_tab_layouts())
         assert "two" in srv.list_tab_layouts()
         # 직접 이름으로 새 탭에 불러오기
         n = len(sess.tabs)
         app._run_command("layout-load-new two")
-        await pilot.pause(0.4)
+        await wait_until(pilot, lambda: len(sess.tabs) == n + 1)
         assert len(sess.tabs) == n + 1
         assert len(sess.active_tab.window.panes()) == 2
         # 이름 없이 불러오기 → 레이아웃 선택기 팝업
@@ -3704,7 +3708,7 @@ async def test_clock_mode_overlay():
     async def body(app, pilot, srv):
         active = app.layout["active"]
         app.toggle_clock(active)              # clock-mode on(현재 패널)
-        await pilot.pause(0.2)
+        await wait_until(pilot, lambda: active in app.clock_panes)
         assert active in app.clock_panes
         cells = app.view._cells
         ap = next(p for p in app.layout["panes"] if p["id"] == active)
@@ -3736,7 +3740,7 @@ async def test_calendar_overlay_and_date_click():
         assert dz is not None, "날짜 클릭 존 등록"
         ev = events.MouseDown(app.status, dz[0], 0, 0, 0, 1, False, False, False)
         app.status.on_mouse_down(ev)
-        await pilot.pause(0.2)
+        await wait_until(pilot, lambda: active in app.calendar_panes)
         assert active in app.calendar_panes, "날짜 클릭 → 달력 켜짐"
         cells = app.view._cells
         ap = next(p for p in app.layout["panes"] if p["id"] == active)
@@ -3771,16 +3775,16 @@ async def test_calendar_month_navigation():
         await pilot.pause(0.1)
         assert app.calendar_offset[active] == 0, "달력은 이번 달(0)에서 시작"
         await pilot.press("right")
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: app.calendar_offset[active] == 1)
         assert app.calendar_offset[active] == 1, "→ 다음 달"
         await pilot.press("left", "left")
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: app.calendar_offset[active] == -1)
         assert app.calendar_offset[active] == -1, "← 이전 달"
         await pilot.press("down")              # 다음 해(+12)
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: app.calendar_offset[active] == 11)
         assert app.calendar_offset[active] == 11
         await pilot.press("up", "up")          # 이전 해 두 번(-24)
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: app.calendar_offset[active] == -13)
         assert app.calendar_offset[active] == -13
         await pilot.press("home")              # 이번 달로 복귀
         await pilot.pause(0.05)
@@ -3817,7 +3821,7 @@ async def test_calendar_nav_click_zones():
         # › (delta +1) 클릭 → 다음 달, 달력은 유지
         x0, x1, y, _ = next(z for z in zones if z[3] == 1)
         app.view.on_mouse_down(_FakeMouse((x0 + x1) // 2, y, button=1))
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: app.calendar_offset[active] == 1)
         assert app.calendar_offset[active] == 1, "› 클릭 → 다음 달"
         assert active in app.calendar_panes, "화살표 클릭으로 닫히지 않음"
         # ‹ (delta -1) 클릭 → 이전 달(렌더 후 갱신된 zone 을 다시 읽는다)
@@ -3895,17 +3899,19 @@ async def _ime_cursor_body(app, pilot, srv):
     # 활성 패널에 알려진 커서를 주입하고 재합성 → 하드웨어 커서가 그 전역 셀로.
     app.pane_content[active] = ([], (ccx, ccy))
     app._composite()
-    await pilot.pause(0.05)
+    await wait_until(pilot, lambda: app.cursor_position == Offset(p["x"] + ccx, p["y"] + ccy))
     assert app.cursor_position == Offset(p["x"] + ccx, p["y"] + ccy)
     # 모달이 떠 있으면 _composite 는 cursor_position 을 건드리지 않는다(경합 방지).
     app.push_screen(InfoScreen(["x"]))
-    await pilot.pause(0.05)
+    # 고정 pause 유지: 스택 깊이는 push 직후 이미 참이라 폴링이 무대기다(마운트 대기가
+    # 목적 — InfoScreen 의 ListView 가 생기기 전에 진행하면 NoMatches).
+    await pilot.pause(0.1)
     assert len(app.screen_stack) > 1
     sentinel = Offset(0, 0)
     app.cursor_position = sentinel
     app.pane_content[active] = ([], (5, 4))   # 커서를 바꿔도
     app._composite()
-    await pilot.pause(0.05)
+    await wait_until(pilot, lambda: app.cursor_position == sentinel)
     assert app.cursor_position == sentinel, "모달 중엔 하드웨어 커서 미이동"
 
 
@@ -3965,7 +3971,7 @@ async def test_overlay_closes_by_panel_click_and_shift_esc():
         assert not hasattr(app, "_calendar_close_zones"), "달력 [x] 닫기영역 폐지"
         # ① 달력 켜고 → 패널 클릭으로 닫힘
         app.toggle_calendar(active)
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: active in app.calendar_panes)
         assert active in app.calendar_panes
         ev = events.MouseDown(app.view, cx, cy, 0, 0, 1, False, False, False)
         app.view.on_mouse_down(ev)
@@ -3973,7 +3979,7 @@ async def test_overlay_closes_by_panel_click_and_shift_esc():
         assert active not in app.calendar_panes, "패널 클릭으로 달력 닫힘"
         # ② 시계 켜고 → 활성 패널 Shift+ESC 로 닫힘
         app.toggle_clock(active)
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: active in app.clock_panes)
         assert active in app.clock_panes
         await pilot.press("shift+escape")
         await pilot.pause(0.1)
@@ -3982,7 +3988,7 @@ async def test_overlay_closes_by_panel_click_and_shift_esc():
         #    ESC 가 esc 모드로 진입하지 않고 오버레이부터 닫는다.
         app._last_esc_ts = 0.0
         app.toggle_calendar(active)
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: active in app.calendar_panes)
         assert active in app.calendar_panes
         app.on_key(Key(key="escape", character=None))
         await pilot.pause(0.1)
@@ -4039,7 +4045,7 @@ async def test_status_clock_click_toggles_clock_mode():
         # 시계 영역 안을 클릭 → clock-mode on
         ev = events.MouseDown(app.status, z[0], 0, 0, 0, 1, False, False, False)
         app.status.on_mouse_down(ev)
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: active in app.clock_panes)
         assert active in app.clock_panes, "시계 클릭 → clock-mode 켜짐"
         # 다시 클릭 → 토글로 꺼짐
         app.status.on_mouse_down(ev)
@@ -4223,12 +4229,12 @@ async def test_infoscreen_arrows_navigate_not_close():
         # 아래로 두 번 → 닫히지 않고 선택이 이동
         scr.on_key(Key(key="down", character=None))
         scr.on_key(Key(key="down", character=None))
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: app.screen_stack[-1] is scr)
         assert app.screen_stack[-1] is scr, "방향키로 팝업이 닫히면 안 됨"
         assert lv.index != start, ("선택이 이동해야 함", start, lv.index)
         # 위로 한 번 → 여전히 열려 있음
         scr.on_key(Key(key="up", character=None))
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: app.screen_stack[-1] is scr)
         assert app.screen_stack[-1] is scr
         # home/end 도 닫지 않는다
         scr.on_key(Key(key="end", character=None))
@@ -4590,7 +4596,7 @@ async def test_esc_arrow_flashes_selected_pane():
         # 서버 응답: active 가 2로 바뀐 layout → 새 패널 깜빡임 시작.
         app._dispatch({"t": "layout", "active": 2, "cols": 80, "rows": 24,
                        "panes": panes, "dividers": []})
-        await pilot.pause(0.02)
+        await wait_until(pilot, lambda: app._pane_flash_id == 2 and app._pane_flash_on is True)
         assert app._pane_flash_id == 2 and app._pane_flash_on is True
         assert app._flash_pending is False, "깜빡임 시작 후 예약 해제"
         # active 가 안 바뀌는 layout(같은 패널)에선 깜빡이지 않는다.
@@ -4831,7 +4837,7 @@ async def test_inpane_usage_no_auto_popup_but_manual_still_opens():
         # 자동 팝업 시퀀스 필드/경로는 제거됐다.
         assert not hasattr(app, "_last_usage_shown_seq")
         app._dispatch({"t": "status", "usage_limits": u, "usage_shown_seq": 6})
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: len(app.screen_stack) == 1)
         assert len(app.screen_stack) == 1, "자동 팝업이 뜨면 안 됨(§3.9 제거)"
         # 수동 명령 경로는 유지 — open_usage_panel 이 InfoScreen 을 연다.
         # 고정 pause 1회 대신 짧게 폴링한다 — 느린 CI(Windows)에서 push_screen
@@ -4891,7 +4897,7 @@ async def test_command_prompt_ignores_leading_colon():
         await pilot.pause(0.05)
         assert inp.value == "", repr(inp.value)
         await pilot.press("l", "s")         # 일반 입력은 정상
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: inp.value == "ls")
         assert inp.value == "ls", repr(inp.value)
     await _with_app(body)
 
@@ -4905,7 +4911,7 @@ async def test_rename_tab_command_noarg_cancels():
         app.send_cmd = lambda a, **k: sent.append((a, k))
         n0 = len(app.screen_stack)
         app._run_command("rename-tab")      # 인자 없음 → no-op(프롬프트 안 열림)
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: len(app.screen_stack) == n0)
         assert len(app.screen_stack) == n0, "무인자 rename-tab 은 프롬프트를 안 연다"
         assert not sent, "무인자 rename-tab 은 명령을 보내지 않는다"
         app._run_command("rename-tab proj")  # 인자 있음 → 즉시 변경
@@ -4945,7 +4951,7 @@ async def test_rename_prompt_ghost_not_prefilled():
         assert scr._suggester is not None, "현재 이름 제안(ghost) suggester"
         for ch in "new":                    # 타이핑 → 덮어쓰기
             await pilot.press(ch)
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: inp.value == "new")
         assert inp.value == "new", repr(inp.value)
     await _with_app(body)
 
@@ -4961,7 +4967,7 @@ async def test_pane_scoped_command_highlights_target_pane():
         await pilot.press("colon")
         for k in ["r", "e", "n", "a", "m", "e", "minus", "p", "a", "n", "e"]:
             await pilot.press(k)
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: app._cmd_target_pane == 1)
         assert app._cmd_target_pane == 1, app._cmd_target_pane
         await pilot.press("escape")         # 프롬프트 닫기 → 해제
         await pilot.pause(0.05)
@@ -5675,7 +5681,7 @@ async def test_open_warn_info_popup_content():
         app.status.claude_warn = None
         n = len(app.screen_stack)
         app.open_claude_warn_info()
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: len(app.screen_stack) == n)
         assert len(app.screen_stack) == n, "경고 없으면 팝업 안 띄움"
     await _with_app(body)
 
@@ -5712,7 +5718,7 @@ async def test_open_autoresume_info_popup_toggles():
         assert scr.__class__.__name__ == "InfoScreen", scr.__class__.__name__
         assert any("AR" in ln for ln in scr._lines), scr._lines
         await pilot.press("a")               # 토글 키 → set_autoresume + 닫힘
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: "set_autoresume" in sent)
         assert "set_autoresume" in sent, sent
         assert app.screen_stack[-1] is not scr, "[a] 후 팝업 닫힘"
     await _with_app(body)
@@ -5788,7 +5794,7 @@ async def test_info_tabs_arrow_reaches_close_button():
         await pilot.pause(0.05)
         assert scr._sel == 0
         await pilot.press("left")             # 0 → [x] (wrap back)
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: scr._sel == n)
         assert scr._sel == n
         await pilot.press("enter")            # [x]+Enter → 닫힘
         await pilot.pause(0.1)
@@ -5818,7 +5824,7 @@ async def test_status_right_segments_clock_and_date_zones():
         # 시각 영역 클릭 → 시계 토글.
         ev = events.MouseDown(app.status, cz[0], 0, 0, 0, 1, False, False, False)
         app.status.on_mouse_down(ev)
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: active in app.clock_panes)
         assert active in app.clock_panes, "시각 클릭 → clock-mode 켜짐"
     await _with_app(body)
 
@@ -5848,7 +5854,7 @@ async def test_tab_bar_default_always():
         assert app.tabbar.display is True, "기본값: 1탭도 탭바 표시"
         # 런타임 set tab-bar auto → 1탭이면 숨김
         app.apply_option("tab-bar", "auto")
-        await pilot.pause(0.2)
+        await wait_until(pilot, lambda: app.tab_bar_always is False)
         assert app.tab_bar_always is False
         assert app.tabbar.display is False, "auto + 1탭 → 숨김"
     await _with_app(body, cfg={"tab_bar_always": True})
@@ -6000,14 +6006,14 @@ async def test_force_reconnect_recovers_without_exit():
         app._net_degraded = True
         app._net_bad = 99
         await app._force_reconnect("manual")
-        await pilot.pause(0.2)
+        await wait_until(pilot, lambda: app._conn_gen > gen0)
         assert app._conn_gen > gen0, "새 연결 세대"
         assert app.reader is not old_reader, "소켓 교체됨"
         assert app._net_degraded is False, "degraded 해제"
         assert app._net_bad == 0 and not app._force_reconnecting
         assert app.layout.get("panes"), "재동기된 레이아웃 수신"
         # 서버는 옛 연결을 정리하고 새 연결 1개만 들고 있어야(누수 없음)
-        await pilot.pause(0.2)
+        await wait_until(pilot, lambda: len(srv.clients) == 1)
         assert len(srv.clients) == 1, f"클라 누수: {len(srv.clients)}"
         # 앱이 살아 있어 명령이 계속 동작(입력 왕복)
         app._net_sample(0.01)
@@ -6087,7 +6093,7 @@ async def test_claude_footer_zones_and_popups():
         assert int(off.x.value) == ax_clamped, (off.x.value, ax_clamped)
         assert int(off.y.value) >= 0                      # 화면 안에 배치
         scr.dismiss("plan")
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: sent and sent[0][0] == "set_claude_perm_mode")
         assert sent and sent[0][0] == "set_claude_perm_mode"
         assert sent[0][1].get("target") == "plan"
         # 원격제어 팝업: InfoScreen + [r] 토글(/rc 주입). 메시지가 틀렸다는 사용자
@@ -6095,11 +6101,11 @@ async def test_claude_footer_zones_and_popups():
         toggled = []
         app._toggle_remote_control = lambda pane_id: toggled.append(pane_id)
         app.open_remote_control(pid)
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: app.screen.__class__.__name__ == "InfoScreen")
         assert app.screen.__class__.__name__ == "InfoScreen"
         assert app.screen._hide_key == "r"            # [r] = 토글 바인딩
         await pilot.press("r")                        # [r] → /rc 토글 + 닫힘
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: toggled == [pid])
         assert toggled == [pid]
         assert app.screen.__class__.__name__ != "InfoScreen"
     await _with_app(body)
@@ -6252,7 +6258,7 @@ async def test_perm_mode_click_outside_closes():
         # 박스 안 클릭(#perm) → 닫히지 않음
         ev_in = _Ev(_W("perm", parent=_W("screen")))
         scr.on_click(ev_in)
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: app.screen is scr)
         assert app.screen is scr, "박스 안 클릭은 닫지 않는다"
         # 박스 바깥(백드롭) 클릭 → 닫힘
         ev_out = _Ev(_W("backdrop", parent=None))
@@ -6292,7 +6298,7 @@ async def test_token_log_click_outside_closes():
         # 박스 안 클릭(표 셀 → … → #tklogbox) → 닫히지 않음
         ev_in = _Ev(_W("tktable", parent=_W("tklogbox", parent=_W("screen"))))
         scr.on_click(ev_in)
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: app.screen_stack[-1] is scr)
         assert app.screen_stack[-1] is scr, "박스 안 클릭은 닫지 않는다"
         # 박스 바깥(백드롭) 클릭 → 닫힘
         ev_out = _Ev(_W("backdrop", parent=None))
@@ -6581,7 +6587,7 @@ async def test_command_list_search_filters_and_tab_counts():
         assert scr._ci == 1 and len(scr._cur) == 2, (scr._ci, scr._cur)
         for ch in "tab":
             await pilot.press(ch)
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: scr._query == "tab")
         assert scr._query == "tab"
         assert scr._ci == 0, scr._ci                       # '전체'로 자동 점프(결과 보유)
         assert [n for n, _ in scr._cur] == ["new-tab", "rename-tab"], scr._cur
@@ -6645,7 +6651,7 @@ async def test_prompt_candidates_separator_insensitive():
         # 언더바로 친 멀티-구분자 이름도 잡힌다.
         inp.value = "move_tab_l"
         scr._refresh_cands()
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: "move-tab-left" in [n for n, _ in scr._cand])
         assert "move-tab-left" in [n for n, _ in scr._cand], scr._cand
     await _with_app(body)
 
@@ -6662,7 +6668,7 @@ async def test_prompt_candidates_space_separator_and_plugin_cmds():
         # 공백으로 친 멀티워드 코어 명령: 'move tab l' → move-tab-left.
         inp.value = "move tab l"
         scr._refresh_cands()
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: "move-tab-left" in [n for n, _ in scr._cand])
         assert "move-tab-left" in [n for n, _ in scr._cand], scr._cand
 
         # 공백으로 친 플러그인 명령: 'clock m' → clock-mode(clock 플러그인이 등록).
@@ -6715,14 +6721,14 @@ async def test_command_list_home_end_tab_click_and_close():
         lv = scr.query_one(ListView)
         assert lv.index == 0
         await pilot.press("end")                           # 맨 아래
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: lv.index == len(scr._cur) - 1)
         assert lv.index == len(scr._cur) - 1, lv.index
         await pilot.press("home")                          # 맨 위
         await pilot.pause(0.1)
         assert lv.index == 0
         # 탭 클릭 → 전환. cmdtab_0='전체', cmdtab_1='패널', cmdtab_2='탭'(new-tab).
         await pilot.click("#cmdtab_2")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: scr._ci == 2 and scr._cur[0][0] == "new-tab")
         assert scr._ci == 2 and scr._cur[0][0] == "new-tab", (scr._ci, scr._cur[:1])
         await pilot.click("#cmdclose")                     # [x] → 닫기
         await pilot.pause(0.2)
@@ -6748,7 +6754,7 @@ async def test_rules_editor_save_cancel_and_spacer():
         assert scr.query("#rulesclose"), "우측 닫기 버튼"
         assert scr.query("#rulessave") and scr.query("#rulescancel"), "저장/취소"
         await pilot.click("#rulessave")                    # 저장 → 텍스트 반환
-        await pilot.pause(0.2)
+        await wait_until(pilot, lambda: captured == ["hello rules"])
         assert captured == ["hello rules"], captured
     await _with_app(body)
 
@@ -6762,7 +6768,7 @@ async def test_rules_editor_cancel_returns_none():
         app.push_screen(RulesEditScreen("x"), lambda v: captured.append(v))
         await pilot.pause(0.2)
         await pilot.click("#rulescancel")                  # 취소 → None
-        await pilot.pause(0.2)
+        await wait_until(pilot, lambda: captured == [None])
         assert captured == [None], captured
     await _with_app(body)
 
@@ -6777,7 +6783,7 @@ async def test_command_prompt_empty_lists_all_commands():
         await pilot.press("colon")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "PromptScreen"
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: scr.query_one("#pcand", Label).display is True)
         assert scr.query_one("#pcand", Label).display is True, "빈 입력서 후보 펼침"
         assert len(scr._cand) == len(scr._commands()), \
             (len(scr._cand), len(scr._commands()))
@@ -6817,7 +6823,7 @@ async def test_status_tabs_capture_toggle():
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoTabsScreen"
         await pilot.press("c")                             # 캡처 토글
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: sent == ["capture-output"])
         assert sent == ["capture-output"], sent
         assert app.status.capture is False, "낙관적 OFF 반영"
     await _with_app(body)
@@ -6848,7 +6854,7 @@ async def test_status_tabs_open_capture_dir():
             assert "itact_o" in ids and "itact_c" in ids, ids
             # [o] 키 → 기록 폴더(파일의 dirname)를 연다.
             await pilot.press("o")
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: opened)
             assert opened, "open_in_file_manager 호출됨"
             assert opened[-1].replace("\\", "/").endswith("/capdir"), opened
         await _with_app(body)
@@ -7188,10 +7194,10 @@ async def test_token_log_box_height_stable_regardless_of_content():
         h_day = box.size.height                 # 기본 '일' 버킷(행 적음)
         assert h_day > 0
         await pilot.press("h")                  # '시간' 버킷(행 많음 — 예전엔 더 컸음)
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: box.size.height == h_day)
         assert box.size.height == h_day, ("hour", box.size.height, h_day)
         await pilot.press("m")                  # '월' 버킷(행 적음 — 예전엔 더 작았음)
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: box.size.height == h_day)
         assert box.size.height == h_day, ("month", box.size.height, h_day)
     await _with_app(body, size=(80, 28))
 
@@ -7284,13 +7290,13 @@ async def test_send_input_routes_to_open_popup():
         try:
             app.layout = {"panes": [{"id": 1}], "active": 1}
             app.send_input(b"a")
-            await pilot.pause(0.02)
+            await wait_until(pilot, lambda: captured and captured[-1]["pane"] == 1)
             assert captured and captured[-1]["pane"] == 1, captured
             # 팝업 열림 → 입력이 팝업(555)으로
             app.layout = {"panes": [{"id": 1}], "active": 1,
                           "popup": {"id": 555}}
             app.send_input(b"b")
-            await pilot.pause(0.02)
+            await wait_until(pilot, lambda: captured[-1]["pane"] == 555)
             assert captured[-1]["pane"] == 555, captured[-1]
         finally:
             C.write_msg = orig

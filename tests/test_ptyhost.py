@@ -7,6 +7,7 @@ import asyncio
 import os
 import tempfile
 
+from harness import wait_for   # 폴링 규약(고정 sleep 금지)
 from pytmuxlib import ptyhost, ptyhostproto as proto
 from pytmuxlib import pty_backend
 
@@ -248,10 +249,7 @@ async def test_on_eof_offloads_blocking_reap():
         await asyncio.sleep(0.01)
     assert reap_started.is_set(), "reap 이 executor 에서 시작(루프 비차단)"
     reap_release.set()                        # 자식 종료
-    for _ in range(200):
-        if 1 not in host.panes:
-            break
-        await asyncio.sleep(0.01)
+    await wait_for(lambda: 1 not in host.panes, timeout=3.0, step=0.01)
     assert pe.alive is False and pe.exit_status == 7, "비동기 exit 처리 완료"
     assert 1 not in host.panes, "패널 정리됨"
     assert any(b"exit" in bytes(x) for x in sink), "exit 프레임 송신"

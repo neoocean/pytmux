@@ -13,7 +13,8 @@ import tempfile
 import time
 
 import harness
-from harness import server_only, teardown
+from harness import server_only, teardown, wait_for
+from run import skip
 from pytmuxlib import ipc
 from pytmuxlib.protocol import PROTO_VERSION, read_msg, write_msg
 
@@ -124,10 +125,7 @@ async def test_remote_attach_merge_select_input_detach():
         pB.pty = _Spy()
         await write_msg(writer, {"t": "input", "pane": rid,
                                  "data": base64.b64encode(b"echo hi\r").decode()})
-        for _ in range(80):
-            if writesB:
-                break
-            await asyncio.sleep(0.05)
+        await wait_for(lambda: writesB, timeout=4.0, step=0.05)
         assert writesB and b"echo hi" in writesB[0], writesB
 
         # ④ 로컬 탭 복귀: select_window(0) → 로컬 layout(로컬 패널 id)
@@ -166,7 +164,7 @@ async def test_remote_status_relays_upstream_xc_totals():
     test_status_includes_xc_totals_cached_dirty_gated 가 권위). 여기선 **xc_totals
     필드가 원격 탭 뷰 status 에 실려 와이어를 건넌다**는 패스스루만 고정한다."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     from pytmuxlib import usagedb
     srvA, taskA, sockA = await server_only()     # 로컬(다운스트림)
     srvB, taskB, sockB = await server_only()     # 원격(업스트림)
@@ -232,10 +230,7 @@ async def test_remote_new_tab_spawns_window_and_attaches():
                                  "endpoint": sockB})
 
         # 원격 B 에 새 window 가 생겨 창이 2개(원격측 권위 확인)
-        for _ in range(160):
-            if len(sessB.tabs) == 2:
-                break
-            await asyncio.sleep(0.05)
+        await wait_for(lambda: len(sessB.tabs) == 2, timeout=8.0, step=0.05)
         assert len(sessB.tabs) == 2, "원격 B 에 새 window 생성"
         newpane = sessB.active_window.active_pane.id   # new_window 가 활성화한 새 창
 
@@ -266,7 +261,7 @@ async def test_remote_attach_failure_sends_notice():
     """실패가 서버 로그에만 남아 '아무 일도 안 일어남'으로 보이던 갭(제보):
     remote_attach 가 실패하면 요청 클라에 notice(원인 포함)가 회신된다."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     reader = writer = None
     try:
@@ -299,7 +294,7 @@ async def test_remote_tab_active_highlight_and_status_passthrough():
     Claude 헤더/토큰도 같은 경로)가 그대로 전달된다. 안 보는 클라는 종전 로컬
     status(⇄ 비활성·로컬 active)다."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     reader = writer = reader2 = writer2 = None
@@ -354,7 +349,7 @@ async def test_autorename_broadcast_keeps_remote_active_for_viewer():
     active(=sess.active_index)가 새어 탭바가 로컬 탭으로 한 프레임 튀었다(복귀). 안
     보는 클라는 per-client 라 종전대로 로컬 active 를 받는다."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     reader = writer = reader2 = writer2 = None
@@ -415,7 +410,7 @@ async def test_remote_reconnect_backoff_remerges_tab():
     """Stage 3 자동 재연결: 링크가 비명시적으로 죽으면(EOF) 백오프 후 재연결을
     시도하고, 성공하면 notice + ⇄ 탭이 다시 병합된다."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     reader = writer = None
@@ -458,7 +453,7 @@ async def test_remote_reconnect_giveup_reports_reason():
     함께 싣고(요청 2026-06-16) 수동 닫기(sticky=3초 유지·클릭/Enter)로 띄운다 — 핸드셰이크가
     반복 실패해 포기하는 그 순간이 원인이 가장 필요한 지점."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     reader = writer = None
@@ -504,7 +499,7 @@ async def test_reconnect_requires_first_status_not_just_hello():
     False) 그 시도는 실패로 간주해 재시도 후 포기하며 거짓 '재연결됨' notice 를
     띄우지 않는다(대화형 attach·중첩 승격의 first-status 게이트를 재연결까지 확장)."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     import types
     srv, task, sock = await server_only()
     try:
@@ -539,7 +534,7 @@ async def test_remote_detach_cancels_pending_reconnect():
     """Stage 3: 명시 remote-detach 는 보류 중인 자동 재연결을 취소한다(사용자
     의사 우선 — 백그라운드 ssh 재시도가 남지 않는다)."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     reader = writer = None
@@ -567,10 +562,7 @@ async def test_remote_detach_cancels_pending_reconnect():
             await asyncio.sleep(0.05)
         assert srvA._remote_reconn_dict(), "재연결이 예약되어야 함"
         await write_msg(writer, {"t": "cmd", "action": "remote_detach"})
-        for _ in range(80):
-            if not srvA._remote_reconn_dict():
-                break
-            await asyncio.sleep(0.05)
+        await wait_for(lambda: not srvA._remote_reconn_dict(), timeout=4.0, step=0.05)
         assert not srvA._remote_reconn_dict(), "detach 가 재연결을 취소해야 함"
     finally:
         if writer is not None:
@@ -583,7 +575,7 @@ async def test_remote_resume_payload_and_restore_links():
     """Stage 3 re-exec 복원: ① _resume_payload 에 링크 spec 이 실리고 ② 새 서버가
     remote_restore_links 로 그 spec 을 재연결해 ⇄ 탭이 복원된다."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     srvC, taskC, sockC = await server_only()
@@ -619,7 +611,7 @@ async def test_remote_pin_survives_restart():
     재시작을 살아남는다 — _resume_payload 가 spec 에 실어 두고 remote_restore_links
     가 새 링크에 되살린다. (재시작 후 핀 유실 회귀 방지.)"""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     srvC, taskC, sockC = await server_only()
@@ -632,10 +624,7 @@ async def test_remote_pin_survives_restart():
         link = next(iter(srvA._remotes_dict().values()))
         # 업스트림 status 병합으로 link.windows(안정 wid 포함)가 찰 때까지 대기 —
         # 핀은 위치가 아니라 wid 로 키잉하므로 실제 창의 wid 가 필요하다(로드맵 #3).
-        for _ in range(200):
-            if link.windows:
-                break
-            await asyncio.sleep(0.02)
+        await wait_for(lambda: link.windows, timeout=4.0, step=0.02)
         assert link.windows, "업스트림 status 병합 대기 실패"
         base = len(sessA.tabs)
         srvA.set_remote_pinned(sessA, base, True)       # 첫 원격 탭 핀(wid 로 키잉)
@@ -670,7 +659,7 @@ async def test_remote_attach_self_rejected():
     """Stage 3: 자기 자신 endpoint attach 는 거부된다(자기 ⇄ 탭 재흡수로 탭
     목록이 status 왕복마다 무한 증식하는 루프 차단)."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     reader = writer = None
     try:
@@ -693,7 +682,7 @@ async def test_remote_multi_link_merge_and_detach_one():
     """Stage 3 다중 원격: 두 링크의 탭이 전역 index 연속으로 병합되고, 하나만
     detach 하면 나머지는 유지된다."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     srvC, taskC, sockC = await server_only()
@@ -738,7 +727,7 @@ async def test_remote_multi_tab_merge_switch_all():
     포함), 각 원격 탭을 전역 index 로 개별 전환해 그 탭의 화면을 받을 수 있다.
     로컬 탭 엔트리에는 remote 플래그가 없다(§1.7-a 분홍 구분의 와이어 기준)."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     reader = writer = None
@@ -785,7 +774,7 @@ async def test_remote_detach_closes_all_tabs_reattach_restores():
     탭/셸은 살아 있고, 재attach 하면 같은 탭 세트(remote 플래그 포함)가 다시
     병합된다."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     reader = writer = None
@@ -832,7 +821,7 @@ async def test_remote_detach_single_tab():
     병합 뷰에서 사라지고, 같은 호스트의 다른 원격 탭·원격 셸은 그대로 살아 있다.
     마지막 남은 원격 탭까지 분리하면 링크(호스트) 전체가 사라진다(⇄ 전멸)."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     reader = writer = None
@@ -883,7 +872,7 @@ async def test_remote_detach_survives_upstream_tab_close_reindex():
     다시 나타나거나 다른 탭이 숨지 않음). 종전 위치 index 키잉은 상류 close 로
     index 가 밀리면 숨김 대상이 어긋났다 — 안정 wid 키잉으로 수정."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     reader = writer = None
@@ -944,7 +933,7 @@ async def test_remote_no_mixing_guards():
     경계 횡단 조작은 거부(notice). ④ 원격 보기 중 new_window 는 보기를 해제하고
     로컬 새 탭으로 빠져나온다(보이지 않는 로컬 탭 생성 금지)."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     reader = writer = None
@@ -988,19 +977,15 @@ async def test_remote_no_mixing_guards():
                           what="remote layout")
         nB_panes = len(sessB.active_window.panes())
         await write_msg(writer, {"t": "cmd", "action": "split", "orient": "lr"})
-        for _ in range(80):
-            if len(sessB.active_window.panes()) == nB_panes + 1:
-                break
-            await asyncio.sleep(0.05)
+        await wait_for(lambda: len(sessB.active_window.panes()) == nB_panes + 1,
+                       timeout=4.0, step=0.05)
         assert len(sessB.active_window.panes()) == nB_panes + 1, \
             "split 은 원격 탭에 릴레이되어야"
         assert len(sessA.active_window.panes()) == nA_panes, "로컬 불변"
         # kill_pane 도 릴레이 → 원격 패널 원복
         await write_msg(writer, {"t": "cmd", "action": "kill_pane"})
-        for _ in range(80):
-            if len(sessB.active_window.panes()) == nB_panes:
-                break
-            await asyncio.sleep(0.05)
+        await wait_for(lambda: len(sessB.active_window.panes()) == nB_panes,
+                       timeout=4.0, step=0.05)
         assert len(sessB.active_window.panes()) == nB_panes
 
         # ③ 원격 보기 중 경계 횡단 조작 거부(notice) + 양쪽 불변
@@ -1013,10 +998,7 @@ async def test_remote_no_mixing_guards():
 
         # ④ 원격 보기 중 new_window → 보기 해제 + 로컬 새 탭(보이는 채로)
         await write_msg(writer, {"t": "cmd", "action": "new_window"})
-        for _ in range(80):
-            if len(sessA.tabs) == nA_tabs + 1:
-                break
-            await asyncio.sleep(0.05)
+        await wait_for(lambda: len(sessA.tabs) == nA_tabs + 1, timeout=4.0, step=0.05)
         assert len(sessA.tabs) == nA_tabs + 1, "로컬 새 탭이 생겨야"
         cA = next(c for c in srvA.clients)
         assert cA.remote_view is None, "new_window 가 원격 보기를 해제해야"
@@ -1133,7 +1115,7 @@ async def test_remote_pin_survives_reattach_same_host():
     상태(_remote_sticky)라 재-attach 를 살아남고, 그 사이 상류에 **추가된 탭만**
     비고정으로 붙는다(핀은 안정 wid 키잉이라 위치와 무관)."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     try:
@@ -1141,10 +1123,7 @@ async def test_remote_pin_survives_reattach_same_host():
         sessA = srvA.ensure_default_session(80, 24)
         assert await srvA.remote_attach(sessA, endpoint=sockB)
         link = srvA._remotes_dict()[sockB]
-        for _ in range(200):
-            if link.windows:
-                break
-            await asyncio.sleep(0.02)
+        await wait_for(lambda: link.windows, timeout=4.0, step=0.02)
         assert link.windows, "업스트림 status 병합 대기 실패"
         base = len(sessA.tabs)
         srvA.set_remote_pinned(sessA, base, True)        # 첫 원격 탭 핀
@@ -1157,10 +1136,7 @@ async def test_remote_pin_survives_reattach_same_host():
         assert await srvA.remote_attach(sessA, endpoint=sockB)
         link2 = srvA._remotes_dict()[sockB]
         assert link2 is not link, "재-attach 는 새 링크로 교체된다(전제)"
-        for _ in range(200):
-            if len(link2.windows) == 2:
-                break
-            await asyncio.sleep(0.02)
+        await wait_for(lambda: len(link2.windows) == 2, timeout=4.0, step=0.02)
         assert len(link2.windows) == 2, link2.windows
         assert link2.pinned_windows == {key}, \
             f"재-attach 로 핀 유실(제보 2026-07-15): {link2.pinned_windows}"
@@ -1223,7 +1199,7 @@ async def test_remote_same_host_tabs_drag_merge():
     업스트림에 릴레이하고, 원격 서버가 자기 active 탭에 합친다(원격 탭 -1, 목적지
     패널 +1). 로컬 트리는 불변(원격↔로컬은 여전히 금지)."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     reader = writer = None
@@ -1281,7 +1257,6 @@ async def test_remote_same_host_tabs_command_merge():
     select_pane_id+join_pane 릴레이→**업스트림이 실제로 병합**(탭 2→1·패널 1→2)까지
     전 구간을 구동한다. 로컬 트리는 불변(원격끼리, §1.7-c 예외)."""
     if os.name == "nt":
-        from run import skip
         skip("Windows: 실 PTY 원격 탭 머지 E2E 는 macOS/Linux 권위(헤드리스 ConPTY 제외)")
     from pytmuxlib.clientscreens import MergeRemoteTabScreen
     srvA, taskA, sockA = await server_only()
@@ -1340,7 +1315,7 @@ async def test_remote_autoresume_relays_to_remote_pane():
     """원격 탭을 보는 중 set_autoresume 는 **원격** 활성 패널에 적용된다(릴레이) —
     로컬 활성 패널(딴 탭)에 켜지던 '엉뚱한 탭에 AR' 버그 수정(제보 2026-06-15)."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     reader = writer = None
@@ -1368,10 +1343,7 @@ async def test_remote_autoresume_relays_to_remote_pane():
                           what="remote layout")
         await write_msg(writer, {"t": "cmd", "action": "set_autoresume",
                                  "value": True})
-        for _ in range(80):
-            if remotep.autoresume:
-                break
-            await asyncio.sleep(0.05)
+        await wait_for(lambda: remotep.autoresume, timeout=4.0, step=0.05)
         assert remotep.autoresume, "원격 활성 패널에 AR 적용(릴레이)"
         assert not localp.autoresume, "로컬 패널은 불변(엉뚱한 탭 AR 금지)"
     finally:
@@ -1387,7 +1359,7 @@ async def test_remote_rename_relays_to_remote_tab_and_pane():
     없어 보이지 않는 **로컬** 탭만 바꾸고 원격엔 안 먹던 버그 수정(제보
     2026-06-17). set_pane_title 은 이미 릴레이되지만 같은 보고 범위라 함께 가드."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     reader = writer = None
@@ -1417,19 +1389,13 @@ async def test_remote_rename_relays_to_remote_tab_and_pane():
         # rename-tab → 원격 활성 탭만 바뀜(로컬 탭 불변)
         await write_msg(writer, {"t": "cmd", "action": "rename_window",
                                  "name": "REMOTE_TAB"})
-        for _ in range(80):
-            if remotetab.name == "REMOTE_TAB":
-                break
-            await asyncio.sleep(0.05)
+        await wait_for(lambda: remotetab.name == "REMOTE_TAB", timeout=4.0, step=0.05)
         assert remotetab.name == "REMOTE_TAB", "원격 활성 탭에 rename 적용(릴레이)"
         assert localtab.name != "REMOTE_TAB", "로컬 탭은 불변(엉뚱한 탭 rename 금지)"
         # rename-pane → 원격 활성 패널만 바뀜(로컬 패널 불변)
         await write_msg(writer, {"t": "cmd", "action": "set_pane_title",
                                  "title": "REMOTE_PANE"})
-        for _ in range(80):
-            if remotep.title == "REMOTE_PANE":
-                break
-            await asyncio.sleep(0.05)
+        await wait_for(lambda: remotep.title == "REMOTE_PANE", timeout=4.0, step=0.05)
         assert remotep.title == "REMOTE_PANE", "원격 활성 패널에 rename 적용(릴레이)"
         assert localp.title != "REMOTE_PANE", "로컬 패널은 불변"
     finally:
@@ -1445,7 +1411,7 @@ async def test_remote_paste_relays_to_remote_pane():
     보이지 않는 **로컬** 패널에 들어가던 버그 수정(제보 2026-06-17). 평문
     타이핑/bracketed paste(input)는 이미 릴레이됐지만 붙여넣기 cmd 는 누락이었다."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     reader = writer = None
@@ -1479,20 +1445,14 @@ async def test_remote_paste_relays_to_remote_pane():
         # 원격 보기 중 paste(텍스트) → 업스트림 B 가 처리, 로컬 A 는 미처리
         await write_msg(writer, {"t": "cmd", "action": "paste",
                                  "text": "REMOTE_PASTE"})
-        for _ in range(80):
-            if recB:
-                break
-            await asyncio.sleep(0.05)
+        await wait_for(lambda: recB, timeout=4.0, step=0.05)
         assert recB == [("text", "REMOTE_PASTE")], \
             f"원격 패널에 paste 주입(릴레이): {recB!r}"
         assert recA == [], f"로컬 패널은 불변: {recA!r}"
         # paste_buffer 도 동일
         await write_msg(writer, {"t": "cmd", "action": "paste_buffer",
                                  "index": 2})
-        for _ in range(80):
-            if any(x[0] == "buf" for x in recB):
-                break
-            await asyncio.sleep(0.05)
+        await wait_for(lambda: any(x[0] == "buf" for x in recB), timeout=4.0, step=0.05)
         assert ("buf", 2) in recB, f"원격 패널에 paste_buffer(릴레이): {recB!r}"
         assert recA == [], f"로컬 패널은 여전히 불변: {recA!r}"
         srvA.paste_text, srvA.paste_buffer = _ptA, _pbA
@@ -1510,7 +1470,7 @@ async def test_remote_redraw_relays_to_remote():
     업스트림이 _induce_redraw_all 후 _send_full 로 보낸 layout/screen 이 federation
     연결을 통해 보는 클라에 전달된다."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     reader = writer = None
@@ -1542,10 +1502,7 @@ async def test_remote_redraw_relays_to_remote():
         inducedB.clear()
         # 원격 보기 중 redraw → 업스트림 B 가 repaint 유발, 로컬 A 는 아님
         await write_msg(writer, {"t": "cmd", "action": "request_redraw"})
-        for _ in range(80):
-            if inducedB:
-                break
-            await asyncio.sleep(0.05)
+        await wait_for(lambda: inducedB, timeout=4.0, step=0.05)
         assert inducedB, "원격(업스트림 B) 화면이 재그려져야(릴레이)"
         assert not inducedA, "로컬 A 화면은 재그리지 않음(섞임 금지)"
         srvA._induce_redraw_all, srvB._induce_redraw_all = _oa, _ob
@@ -1567,7 +1524,7 @@ async def test_remote_token_log_relays_to_upstream():
     **어느 서버가 request_token_log 를 처리했는지**(handle_server_request 호출)로
     릴레이를 판정하고, 응답 token_log 가 보는 클라까지 전달됨도 함께 고정한다."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()     # 로컬(다운스트림)
     srvB, taskB, sockB = await server_only()     # 원격(업스트림)
     reader = writer = None
@@ -1628,7 +1585,7 @@ async def test_remote_token_log_only_to_requester_not_other_viewers():
     식별자 echo)로 라우팅해 막는다. nc_list/redraw 등 미태깅 메시지는 종전대로 뷰어
     전체 브로드캐스트(무영향)."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()     # 로컬(다운스트림)
     srvB, taskB, sockB = await server_only()     # 원격(업스트림)
     r1 = w1 = r2 = w2 = None
@@ -1681,7 +1638,7 @@ async def test_remote_ncd_relays_to_remote_cwd():
     디렉토리' 버그 수정(제보 2026-06-17). 업스트림 nc_list 응답은
     _remote_reader 패스스루로 보는 클라에 전달된다."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     reader = writer = None
@@ -1735,7 +1692,7 @@ async def test_remote_link_death_recovers_viewer_to_local():
     """링크 사망(원격 서버 종료): 보던 클라는 로컬 화면으로 복귀(_send_full)하고
     탭바에서 ⇄ 탭이 제거된다 — '재접속 루프' 대신 명시적 끊김 처리."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     reader = writer = None
@@ -1789,7 +1746,7 @@ async def test_remote_link_keepalive_lets_upstream_reap_dead_client():
     영구히 핀한다 — '다른 기계에서 접속했던 작은 크기로 표시' 버그. keepalive 로
     ever_pinged 가 서고, keepalive 가 끊긴(=유휴 초과) 좀비를 B 가 회수함을 검증한다."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     from pytmuxlib import serverio
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
@@ -1839,7 +1796,7 @@ async def test_remote_reader_bye_suppresses_reconnect():
     레터박스로 작게 남았다(kill/detach/30s대기 다 무효 보고 2026-07-11).
     "restarting"(세션유지 재시작)·EOF/오류는 종전대로 reconnect=True."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     from pytmuxlib import serverremote
     from pytmuxlib.serverremote import RemoteLink
     srv, task, sock = await server_only()
@@ -1923,7 +1880,7 @@ async def test_nest_attach_request_promotes_to_remote_attach():
     ack + 자동 remote_attach(엔드포인트 직결) → ⇄ 탭 병합 + 보던 클라 자동 전환
     (㉢ ON). 직후 재요청은 디바운스로 무 ack."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     from pytmuxlib import sshwrap
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
@@ -1973,7 +1930,7 @@ async def test_nest_do_attach_blocks_nonlocal_endpoint():
     _ssh_dest 의 tcp:원격호스트 직결 → 임의 아웃바운드+키 MITM 차단). 로컬 unix
     소켓·loopback tcp 는 직결 허용(같은 머신). 판정 헬퍼도 직접 단언."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     from pytmuxlib.serverremote import _nest_local_endpoint
     assert _nest_local_endpoint("/tmp/x.sock")
     assert _nest_local_endpoint("tcp:127.0.0.1:7000")
@@ -2012,7 +1969,7 @@ async def test_nest_attach_request_guards():
     → 무 ack ④ 통과 시 ack(attach 실패는 notice 만 — 열화 없음). 대조 의미론은
     _nest_host_match 직접 단언(소문자 정규화+접두 일치)."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     from pytmuxlib.serverremote import _nest_host_match
     assert _nest_host_match("office1", "u@OFFICE1.local"), "별칭 vs 실호스트(접두)"
     assert _nest_host_match("user@office1.example.com", "u@office1")
@@ -2039,10 +1996,7 @@ async def test_nest_attach_request_guards():
             srvA._on_pane_data(pA, _nest_req("tester@" + missing))
             assert spy.acks() == 1, "가드 통과 → ack"
             # attach 본체는 없는 엔드포인트라 즉시 실패(notice 경로) — 태스크 소진.
-            for _ in range(20):
-                await asyncio.sleep(0.02)
-                if missing not in srvA._remotes_dict():
-                    break
+            await wait_for(lambda: missing not in srvA._remotes_dict(), timeout=3.0, step=0.02)
             assert missing not in srvA._remotes_dict(), "실패 attach 는 링크 없음"
         finally:
             pA.pty = realA
@@ -2085,7 +2039,7 @@ async def test_kill_proc_reaps_subprocess():
     실패 경로의 <defunct> 좀비 + 파이프 fd 누수 방지). 살아있는 자식은 kill+wait,
     이미 끝난 자식도 wait 로 회수, None 도 무해."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     from pytmuxlib.serverremote import _kill_proc
     p = await asyncio.create_subprocess_exec(
         "sleep", "30", stdout=asyncio.subprocess.DEVNULL)
@@ -2254,7 +2208,7 @@ async def test_remote_attach_propagates_ambiguous_wide():
     키를 안 실어 업스트림 narrow 유지. cellwidth 전역은 인프로세스 2서버가 공유하므로
     값이 아니라 **전송된 hello** 로 A/B 를 가른다(federation 테스트 함정)."""
     if os.name == "nt":
-        return
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     from pytmuxlib import cellwidth, serverremote
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()

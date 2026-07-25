@@ -7,7 +7,7 @@ import os
 import tempfile
 
 import harness
-from harness import make_app, server_only, teardown
+from harness import make_app, server_only, teardown, wait_until
 from textual.events import Key
 
 # ncd 서버 측 로직은 플러그인으로 옮겼다(pytmuxlib/plugins/ncd/server.py). 예전엔
@@ -402,7 +402,7 @@ async def test_ncd_shift_enter_and_ctrl_o_split_with_path():
         app._dispatch(dict(_CHAIN_MSG))
         await pilot.pause(0.1)
         await pilot.press("ctrl+o")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: ("split", {"orient": "lr", "path": "/r/sub"}) in sent)
         assert ("split", {"orient": "lr", "path": "/r/sub"}) in sent
         # Shift+Enter 동치
         sent.clear()
@@ -410,7 +410,7 @@ async def test_ncd_shift_enter_and_ctrl_o_split_with_path():
         app._dispatch(dict(_CHAIN_MSG))
         await pilot.pause(0.1)
         await app.screen._view.on_key(Key("shift+enter", None))
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: ("split", {"orient": "lr", "path": "/r/sub"}) in sent)
         assert ("split", {"orient": "lr", "path": "/r/sub"}) in sent
     await _with_app(body)
 
@@ -424,7 +424,7 @@ async def test_ncd_speed_search_jumps_by_typing():
         v = app.screen._view
         assert v._cur() == "/r/sub"
         await pilot.press("o")              # 'other' 로 점프(speed search)
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: v._find == "o")
         assert v._find == "o"
         assert v._cur() == "/r/other", v._cur()
         # 방향키 누르면 검색어 리셋
@@ -444,11 +444,11 @@ async def test_ncd_right_expands_via_lazy_load():
         v = app.screen._view
         v._sel = 3                             # /r/other (접힘·미로드)
         await pilot.press("right")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: ("request_nc_list", {"path": "/r/other"}) in sent)
         assert ("request_nc_list", {"path": "/r/other"}) in sent
         app._dispatch({"t": "nc_list", "root": "/r/other", "path": "/r/other",
                        "dirs": ["/r/other/y"]})
-        await pilot.pause(0.15)
+        await wait_until(pilot, lambda: "/r/other" in v._expanded)
         assert "/r/other" in v._expanded
         assert len(v._rows) == 5               # +/r/other/y
     await _with_app(body)
@@ -484,17 +484,17 @@ async def test_ncd_page_home_end_fast_jumps():
         n = len(v._rows)
         assert n == 41, n                       # /r + d00..d39
         await pilot.press("end")
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: v._sel == n - 1)
         assert v._sel == n - 1, "End → 마지막"
         await pilot.press("home")
         await pilot.pause(0.05)
         assert v._sel == 0, "Home → 처음"
         await pilot.press("pagedown")
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: v._sel > 1)
         assert v._sel > 1, ("PageDown 점프", v._sel)
         prev = v._sel
         await pilot.press("pageup")
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: v._sel < prev)
         assert v._sel < prev, "PageUp 되돌림"
     await _with_app(body)
 
@@ -542,10 +542,10 @@ async def test_ncd_windows_drives_at_top_and_switch():
         assert "C:\\" in top and "D:\\" in top, v._rows   # 드라이브 = 최상위
         assert v._cur() == "C:\\Users"                    # cwd 선택
         await pilot.press("d")                            # speed search → D:\
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: v._cur() == "D:\\")
         assert v._cur() == "D:\\", v._cur()
         await pilot.press("enter")                        # 그 드라이브로 cd
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: inp and b"D:" in inp[0])
         assert inp and b"D:" in inp[0], inp
     await _with_app(body)
 
@@ -587,10 +587,10 @@ async def test_ncd_enter_uses_server_shell_dialect_not_client():
             m = dict(_CHAIN_MSG)
             m["nt"] = nt_flag
             app._dispatch(m)
-            await pilot.pause(0.1)
+            await wait_until(pilot, lambda: isinstance(app.screen, NcdScreen))
             assert isinstance(app.screen, NcdScreen)
             await pilot.press("enter")
-            await pilot.pause(0.1)
+            await wait_until(pilot, lambda: inp == [want])
             assert inp == [want], (nt_flag, inp)
     await _with_app(body)
 
@@ -601,7 +601,7 @@ async def test_ncd_esc_closes():
         app.send_cmd = lambda *a, **k: None
         app._run_command("ncd")
         app._dispatch(dict(_CHAIN_MSG))
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: isinstance(app.screen, NcdScreen))
         assert isinstance(app.screen, NcdScreen)
         await pilot.press("escape")
         await pilot.pause(0.1)
@@ -646,12 +646,13 @@ async def test_ncd_speed_search_finds_unopened_and_expands():
         v = app.screen._view
         for ch in "deep":                    # 보이는 행에 없는 이름
             await pilot.press(ch)
-        await pilot.pause(0.1)
+        await wait_until(
+            pilot, lambda: ("request_nc_find", {"query": "deep", "root": "/"}) in sent)
         assert ("request_nc_find", {"query": "deep", "root": "/"}) in sent, sent
         # 서버가 깊은 매치를 회신 → 트리 펼침 + 선택.
         app._dispatch({"t": "nc_found", "query": "deep", "target": "/r/other/deep",
                        "chain": [["/r/other", ["/r/other/deep"]]]})
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: "/r/other" in v._expanded)
         assert "/r/other" in v._expanded
         assert v._cur() == "/r/other/deep", v._cur()
         # 그새 query 가 바뀌었으면 stale 결과는 무시(엉뚱한 점프 방지).

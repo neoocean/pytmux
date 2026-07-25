@@ -15,7 +15,7 @@ import os
 import stat
 
 import harness
-from harness import server_only, teardown
+from harness import server_only, teardown, wait_for
 from pytmuxlib import ipc, protocol
 from pytmuxlib.protocol import MAX_FRAME, MAX_W, MAX_H
 
@@ -190,10 +190,7 @@ async def test_giant_dims_clamped_runtime():
         await _send(w, {"t": "hello", "token": tok,
                         "cols": 999999, "rows": 999999})
         await _recv(r)                          # 서버가 hello 처리(append)할 시간
-        for _ in range(50):
-            if srv.clients:
-                break
-            await asyncio.sleep(0.01)
+        await wait_for(lambda: srv.clients, timeout=3.0, step=0.01)
         assert srv.clients, "hello 가 ClientConn 으로 채택되지 않음"
         c = srv.clients[-1]
         assert c.cols <= MAX_W and c.rows <= MAX_H, (c.cols, c.rows)

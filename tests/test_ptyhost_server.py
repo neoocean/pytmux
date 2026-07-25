@@ -11,7 +11,7 @@ import shutil
 import tempfile
 
 import harness
-from harness import server_only, teardown
+from harness import server_only, teardown, wait_for
 from pytmuxlib import ptyhost, ptyhostmgr, pty_backend, serverio
 from pytmuxlib.ptyhostclient import PtyHostClient
 
@@ -21,10 +21,7 @@ async def _inproc_host():
     endpoint = os.path.join(d, "host.sock")
     host = ptyhost.PtyHost()
     htask = asyncio.ensure_future(host.serve(endpoint))
-    for _ in range(100):
-        if os.path.exists(endpoint):
-            break
-        await asyncio.sleep(0.01)
+    await wait_for(lambda: os.path.exists(endpoint), timeout=3.0, step=0.01)
     return host, htask, endpoint, d
 
 

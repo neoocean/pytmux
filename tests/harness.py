@@ -205,24 +205,67 @@ def pane_text(pane):
     return "\n".join("".join(seg[0] for seg in row) for row in rows)
 
 
+async def _poll(sleep, cond, timeout, step, snapshot=None, settle=8):
+    """폴링 코어 — `wait_until`/`wait_for`(+ settled 변형) 넷의 **단일 구현**.
+
+    sleep(step) 만 다르다(Textual 은 `pilot.pause` 로 프레임을 돌려야 렌더가 진행되고,
+    서버측 테스트는 `asyncio.sleep`). snapshot 이 있으면 스톨 감지(정착-오답) 변형.
+    반환 = (성공?, 마지막 스냅샷 repr 또는 None)."""
+    loop = asyncio.get_event_loop()
+    end = loop.time() + timeout
+    prev, stable, snap = object(), 0, None   # prev=센티넬(첫 비교는 반드시 '변함')
+    while True:
+        try:
+            if cond():
+                return True, None
+        except Exception:
+            pass
+        if snapshot is not None:
+            try:
+                snap = snapshot()
+            except Exception:
+                snap = None
+            if snap == prev:
+                stable += 1
+                if stable >= settle:
+                    return False, repr(snap)   # 수렴했는데 조건 미충족 = 스톨
+            else:
+                stable, prev = 0, snap
+        if loop.time() >= end:
+            return False, repr(snap) if snapshot is not None else None
+        await sleep(step)
+
+
+async def wait_for(cond, timeout=4.0, step=0.05):
+    """`wait_until` 의 **pilot 없는** 판(서버측 테스트용). cond() 참이면 True.
+
+    Textual 앱이 없는 테스트(`server_only()`·소켓 왕복·pty-host)는 종전에 고정
+    `asyncio.sleep(N)` 뒤 단언했다 — 느린/부하 높은 러너에서 정확히 같은 플레이크가
+    난다(클라측 고정 `pilot.pause` 와 동형). 조건 대기는 이걸 쓴다. 호출부는 반환 후에도
+    동일 조건을 단언해 실패 메시지를 보존한다.
+
+    주의: **의미 있는 지연**(grace 타이머 만료·디바운스 경과를 *일으키는* 대기)은
+    폴링으로 바꾸면 안 된다 — 그건 조건 대기가 아니라 시간 자체가 입력이다."""
+    ok, _ = await _poll(asyncio.sleep, cond, timeout, step)
+    return ok
+
+
+async def wait_for_settled(cond, snapshot, timeout=4.0, step=0.05, settle=8):
+    """`wait_until_settled`(스톨 워치독)의 pilot 없는 판 — (성공?, 진단).
+
+    resume/재시작/페더레이션처럼 "진행하다 멈추는" 서버측 절차에서, 관측치가 연속
+    불변인데 조건 미충족이면 timeout 을 다 쓰지 않고 **무엇에 멈췄는지** 돌려준다."""
+    return await _poll(asyncio.sleep, cond, timeout, step, snapshot, settle)
+
+
 async def wait_until(pilot, cond, timeout=4.0, step=0.05):
     """cond() 가 참이 될 때까지 pilot.pause(step) 로 폴링한다(최대 timeout). 참이 되면
     True, 시간 초과면 False. 고정 `pilot.pause(N)` + 단언 패턴의 CI 플레이크(느린
     Windows 러너에서 모달 push·키 처리·렌더가 N 초 안에 안 끝남)를 없앤다 — Unix 에선
     조건 충족 즉시 빠르고, 느린 환경에선 timeout 까지 인내한다. 호출부는 반환 후에도
     동일 조건을 단언해(실패 메시지 보존) 의미를 유지한다."""
-    import asyncio as _asyncio
-    loop = _asyncio.get_event_loop()
-    end = loop.time() + timeout
-    while True:
-        try:
-            if cond():
-                return True
-        except Exception:
-            pass
-        if loop.time() >= end:
-            return False
-        await pilot.pause(step)
+    ok, _ = await _poll(pilot.pause, cond, timeout, step)
+    return ok
 
 
 async def wait_until_settled(pilot, cond, snapshot, timeout=4.0, step=0.05,
@@ -238,31 +281,7 @@ async def wait_until_settled(pilot, cond, snapshot, timeout=4.0, step=0.05,
 
     '수렴-오답'과 '느려서 아직'을 가르는 게 핵심: 렌더가 멈췄는데 조건 미충족이면
     더 기다려도 소용없으니 빠르게 진단 실패시키고, 아직 프레임이 흐르면 인내한다."""
-    import asyncio as _asyncio
-    loop = _asyncio.get_event_loop()
-    end = loop.time() + timeout
-    prev = object()          # 첫 비교가 반드시 '변함'이 되게(스냅샷과 절대 안 같은 센티넬)
-    stable = 0
-    while True:
-        try:
-            if cond():
-                return True, None
-        except Exception:
-            pass
-        try:
-            snap = snapshot()
-        except Exception:
-            snap = None
-        if snap == prev:
-            stable += 1
-            if stable >= settle:
-                return False, repr(snap)   # 수렴했는데 조건 미충족 = 스톨
-        else:
-            stable = 0
-            prev = snap
-        if loop.time() >= end:
-            return False, repr(snap)       # 타임아웃(계속 변하다 시간 초과)
-        await pilot.pause(step)
+    return await _poll(pilot.pause, cond, timeout, step, snapshot, settle)
 
 
 async def drain(reader, store, timeout=0.8, until=None):

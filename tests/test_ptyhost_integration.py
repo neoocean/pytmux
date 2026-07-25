@@ -24,6 +24,7 @@ import shutil
 import sys
 import tempfile
 
+from harness import wait_for   # 폴링 규약(고정 sleep 금지)
 from pytmuxlib import proc, pty_backend
 from pytmuxlib.ptyhostclient import PtyHostClient
 
@@ -75,10 +76,7 @@ async def _spawn_real_host(tmp: str):
                 await asyncio.sleep(0.05)
         assert port, "host portfile(포트) 미생성"
         return host_pid, f"tcp:127.0.0.1:{port}"
-    for _ in range(200):
-        if os.path.exists(listen_ep):
-            break
-        await asyncio.sleep(0.05)
+    await wait_for(lambda: os.path.exists(listen_ep), timeout=10.0, step=0.05)
     assert os.path.exists(listen_ep), "host 소켓 미생성"
     return host_pid, listen_ep
 

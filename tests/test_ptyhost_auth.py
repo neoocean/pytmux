@@ -20,6 +20,7 @@ import shutil
 import stat
 import tempfile
 
+from harness import wait_for   # 폴링 규약(고정 sleep 금지)
 from pytmuxlib import ptyhost, pty_backend
 from pytmuxlib.ptyhostclient import PtyHostClient, PtyHostError
 
@@ -29,10 +30,7 @@ async def _serve(tokenfile=None):
     endpoint = os.path.join(d, "host.sock")
     host = ptyhost.PtyHost()
     htask = asyncio.ensure_future(host.serve(endpoint, tokenfile=tokenfile))
-    for _ in range(200):
-        if os.path.exists(endpoint):
-            break
-        await asyncio.sleep(0.01)
+    await wait_for(lambda: os.path.exists(endpoint), timeout=3.0, step=0.01)
     return host, htask, endpoint, d
 
 
@@ -141,10 +139,7 @@ async def _serve_tcp(tokenfile):
     host = ptyhost.PtyHost()
     htask = asyncio.ensure_future(
         host.serve("tcp:127.0.0.1:0", portfile=portfile, tokenfile=tokenfile))
-    for _ in range(300):
-        if os.path.exists(portfile):
-            break
-        await asyncio.sleep(0.01)
+    await wait_for(lambda: os.path.exists(portfile), timeout=3.0, step=0.01)
     port = open(portfile, encoding="ascii").read().strip()
     return host, htask, f"tcp:127.0.0.1:{port}", d
 

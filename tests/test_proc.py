@@ -10,6 +10,7 @@ import sys
 import tempfile
 
 import harness  # noqa: F401 (sys.path 설정)
+from harness import wait_for
 from pytmuxlib import proc
 
 
@@ -36,10 +37,7 @@ async def test_spawn_detached_lifecycle():
     pid = proc.spawn_detached([sys.executable, "-c", code])
     try:
         # 마커가 생길 때까지(자식이 실제로 실행) 대기.
-        for _ in range(100):
-            if os.path.exists(marker):
-                break
-            await asyncio.sleep(0.05)
+        await wait_for(lambda: os.path.exists(marker), timeout=5.0, step=0.05)
         assert os.path.exists(marker), "분리 자식이 실행되지 않음"
         assert proc.is_alive(pid)
         # start_new_session=True → 자식이 자기 그룹의 리더(getpgid==pid).

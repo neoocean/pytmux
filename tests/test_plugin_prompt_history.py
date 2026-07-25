@@ -5,6 +5,7 @@
 import importlib
 
 import harness  # noqa: F401  (sys.path 주입)
+from harness import wait_until
 from rich.style import Style
 
 import pytmuxlib.plugins as plugins
@@ -263,7 +264,7 @@ async def test_live_popup_and_preview():
                            "ph_max_lines": 2,
                            "ph_panes": [{"id": pid,
                                          "h": ["첫 프롬프트", "둘째\n둘째줄2", "셋째"]}]})
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: app.ph_panes.get(pid, {}).get("h"))
             assert app.ph_panes.get(pid, {}).get("h"), "ph_panes 흡수 실패"
             assert app.ph_max_lines == 2
 
@@ -287,21 +288,22 @@ async def test_live_popup_and_preview():
             assert view._sel == 2, view._sel               # 최신 선택
             # ④ ↑ 로 이전 프롬프트.
             await pilot.press("up")
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: view._sel == 1)
             assert view._sel == 1
             # ⑤ +/− 로 미리보기 행수 → set_ph_max_lines 전송.
             await pilot.press("plus")
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: ("set_ph_max_lines", {"n": 3}) in sent)
             assert ("set_ph_max_lines", {"n": 3}) in sent, sent
             # ⑥ Enter → ph_scroll_to(현재 인덱스) 전송 + 팝업 닫힘.
             await pilot.press("enter")
-            await pilot.pause(0.1)
+            await wait_until(pilot, lambda: ("ph_scroll_to", {"index": 1}) in sent)
             assert ("ph_scroll_to", {"index": 1}) in sent, sent
             assert app.screen_stack[-1].__class__.__name__ != "PromptHistoryScreen"
 
             # ⑦ 다시 열어 Esc 로 닫기.
             app._run_command("prompt-history")
-            await pilot.pause(0.1)
+            await wait_until(
+                pilot, lambda: app.screen_stack[-1].__class__.__name__ == "PromptHistoryScreen")
             assert app.screen_stack[-1].__class__.__name__ == "PromptHistoryScreen"
             await pilot.press("escape")
             await pilot.pause(0.1)

@@ -9,6 +9,7 @@ import os
 import shutil
 import tempfile
 
+from harness import wait_for   # 폴링 규약(고정 sleep 금지)
 from pytmuxlib import ptyhost, pty_backend
 from pytmuxlib.ptyhostclient import PtyHostClient
 
@@ -18,10 +19,7 @@ async def _inproc_host():
     endpoint = os.path.join(d, "host.sock")
     host = ptyhost.PtyHost()
     htask = asyncio.ensure_future(host.serve(endpoint))
-    for _ in range(100):
-        if os.path.exists(endpoint):
-            break
-        await asyncio.sleep(0.01)
+    await wait_for(lambda: os.path.exists(endpoint), timeout=3.0, step=0.01)
     return host, htask, endpoint, d
 
 
@@ -64,10 +62,7 @@ async def test_on_lost_fires_on_disconnect():
             host._server.close()
         host._stop.set()
         # host 가 닫히면 client._read_loop 가 EOF → _handle_lost → _on_lost.
-        for _ in range(100):
-            if lost:
-                break
-            await asyncio.sleep(0.02)
+        await wait_for(lambda: lost, timeout=3.0, step=0.02)
         assert lost, "연결 끊김에 _on_lost 미발화"
     finally:
         await client.close()

@@ -95,7 +95,7 @@ async def test_ctrl_s_injects_text_without_trailing_newline():
         ta.text = "line one\nline two"
         await pilot.pause(0.05)
         await pilot.press("ctrl+s")
-        await pilot.pause(0.2)
+        await wait_until(pilot, lambda: ("paste", {"text": "line one\nline two"}) in sent)
         assert ("paste", {"text": "line one\nline two"}) in sent, sent
         # 끝에 개행이 붙지 않았다(자동 제출 방지).
         assert not sent[-1][1]["text"].endswith("\n")
@@ -115,7 +115,7 @@ async def test_escape_cancels_no_paste():
         ta.text = "discard me"
         await pilot.pause(0.05)
         await pilot.press("escape")                       # 메뉴 모드(취소 아님)
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: scr._esc_mode is True)
         assert scr._esc_mode is True                      # 모드 진입
         assert app.screen_stack[-1] is scr, "esc 한 번은 안 닫힘"
         await pilot.press("escape")                       # 두 번째 esc = 취소
@@ -150,10 +150,10 @@ async def test_ctrl_home_end_move_to_document_start_and_end():
         ta.move_cursor((1, 3))                 # 중간 줄로 커서 이동
         await pilot.pause(0.05)
         await pilot.press("ctrl+home")
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: ta.cursor_location == (0, 0))
         assert ta.cursor_location == (0, 0), ta.cursor_location
         await pilot.press("ctrl+end")
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: ta.cursor_location == (2, 5))
         # 마지막 줄 인덱스 2, 마지막 칸 = len("third") = 5.
         assert ta.cursor_location == (2, 5), ta.cursor_location
     await _with_app(body)
@@ -243,7 +243,7 @@ async def test_enter_sends_and_shift_enter_newlines():
         await pilot.press("ctrl+j")        # Shift+Enter 등가 → 줄바꿈
         await pilot.pause(0.05)
         ta.insert("b")
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: "\n" in ta.text)
         assert "\n" in ta.text, repr(ta.text)   # Enter 아닌 Ctrl+J 가 줄바꿈
         await pilot.press("enter")         # Enter → 전송
         await pilot.pause(0.2)
@@ -299,7 +299,7 @@ async def test_open_seeds_from_typed_prompt_clears_on_apply():
         assert sent_in == []                              # 여는 시점엔 안 비움
         assert app._prompt_buf[pid] == "hello"            # 추적값도 그대로
         await pilot.press("ctrl+s")                        # 적용
-        await pilot.pause(0.2)
+        await wait_until(pilot, lambda: b"\x7f" * 5 in sent_in)
         assert b"\x7f" * 5 in sent_in, sent_in            # 적용 시 5칸 백스페이스로 비움
         assert ("paste", {"text": "hello"}) in sent_cmd, sent_cmd
         assert app._prompt_buf[pid] == "hello"            # 투입 후 프롬프트=작성 텍스트
@@ -337,7 +337,7 @@ async def test_ime_paste_input_seeds_compose():
     async def body(app, pilot, srv):
         pid = app.layout.get("active")
         app.on_paste(events.Paste("라이브로 확인"))
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: app._prompt_buf.get(pid) == "라이브로 확인")
         assert app._prompt_buf.get(pid) == "라이브로 확인", app._prompt_buf
         sent_in = []
         app.send_cmd = lambda action, **kw: None
@@ -347,7 +347,7 @@ async def test_ime_paste_input_seeds_compose():
         ta = app.screen_stack[-1].query_one(_TA)
         assert ta.text == "라이브로 확인", repr(ta.text)        # 한글 시드됨
         await pilot.press("ctrl+s")                        # 적용
-        await pilot.pause(0.2)
+        await wait_until(pilot, lambda: b"\x7f" * len("라이브로 확인") in sent_in)
         assert b"\x7f" * len("라이브로 확인") in sent_in, sent_in  # 그만큼 비움
     await _with_app(body)
 
@@ -364,7 +364,7 @@ async def test_unsaved_draft_persists_across_cancel():
         ta.text = "half-written"
         await pilot.pause(0.05)
         await pilot.press("escape", "escape")             # 저장 없이 닫기(esc-esc)
-        await pilot.pause(0.2)
+        await wait_until(pilot, lambda: app._compose_draft == "half-written")
         assert app._compose_draft == "half-written"
         app.open_compose()                                # 다시 열기
         await pilot.pause(0.2)
@@ -392,7 +392,7 @@ async def test_ime_badge_inside_popup_follows_state():
         lbl = app.screen_stack[-1].query_one("#cime", _Label)
         assert "한" in str(lbl.content), str(lbl.content)
         app.ime_state = "EN"               # 폴링(0.2s)이 따라온다
-        await pilot.pause(0.5)
+        await wait_until(pilot, lambda: "EN" in str(lbl.content))
         assert "EN" in str(lbl.content), str(lbl.content)
     await _with_app(body)
 
@@ -409,7 +409,7 @@ async def test_block_select_delete_in_textarea():
         await pilot.pause(0.05)
         await pilot.press("shift+left", "shift+left", "shift+left")  # "llo" 선택
         await pilot.press("backspace")     # 선택 범위 삭제
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: ta.text == "he")
         assert ta.text == "he", repr(ta.text)
     await _with_app(body)
 
@@ -425,10 +425,10 @@ async def test_ctrl_a_selects_all_in_textarea():
         ta.move_cursor((0, 0))
         await pilot.pause(0.05)
         await pilot.press("ctrl+a")
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: ta.selected_text == "line one\nline two")
         assert ta.selected_text == "line one\nline two", repr(ta.selected_text)
         await pilot.press("x")             # 선택 전체 교체
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: ta.text == "x")
         assert ta.text == "x", repr(ta.text)
     await _with_app(body)
 
@@ -676,7 +676,7 @@ async def test_esc_mode_is_visually_distinct():
         assert badge.display is False, "평소엔 ESC 배지가 숨어 있어야"
 
         await pilot.press("escape")                       # 모드 진입
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: scr._esc_mode is True)
         assert scr._esc_mode is True
         assert badge.display is True, "ESC 모드면 배지가 보여야"
         on_border = wrap.styles.border.top[1]
@@ -684,7 +684,7 @@ async def test_esc_mode_is_visually_distinct():
             f"ESC 모드 테두리색이 평소와 같으면 전환이 안 보인다 — {on_border!r}")
 
         await pilot.press("a")                            # 그 외 키 = 편집 복귀
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: scr._esc_mode is False)
         assert scr._esc_mode is False
         assert badge.display is False, "모드에서 빠지면 배지도 꺼져야"
         assert wrap.styles.border.top[1] == off_border, "테두리색도 원복돼야"
@@ -781,10 +781,10 @@ async def test_esc_colon_opens_command_over_open_compose():
         scr = app.screen_stack[-1]
         assert isinstance(scr, ComposePromptScreen)
         await pilot.press("escape")                       # 메뉴 모드
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: scr._esc_mode is True)
         assert scr._esc_mode is True
         await pilot.press("colon")                        # : → 명령 프롬프트
-        await pilot.pause(0.2)
+        await wait_until(pilot, lambda: app.screen_stack[-1].__class__.__name__ == "PromptScreen")
         # 명령 프롬프트가 작성창 위에 떴고, 작성창은 스택에 그대로 남아 있다.
         assert app.screen_stack[-1].__class__.__name__ == "PromptScreen"
         assert scr in app.screen_stack, "작성창이 스택에 남아 있어야(돌아갈 수 있게)"

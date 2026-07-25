@@ -8,6 +8,7 @@ import importlib
 from datetime import datetime, timedelta
 
 import harness  # noqa: F401  (sys.path 주입)
+from harness import wait_until
 from rich.style import Style
 
 import pytmuxlib.plugins as plugins
@@ -277,18 +278,18 @@ async def test_usage_screen_footer_buttons_tappable():
 
             # 갱신 버튼 → refresh_usage
             assert click("uref").stopped
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: "refresh_usage" in sent)
             assert "refresh_usage" in sent, sent
             # 팝업/탭 전환 → full 클래스 토글
             assert not scr.has_class("full")
             click("utgl")
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: scr.has_class("full"))
             assert scr.has_class("full"), "팝업/탭 전환 토글"
             # 패널 보기 → 닫고 open_usage_view('pane')
             modes = []
             app.open_usage_view = lambda mode="popup": modes.append(mode)
             click("upane")
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: modes == ["pane"])
             assert modes == ["pane"], modes
             assert app.screen_stack[-1] is not scr
     finally:
@@ -406,12 +407,12 @@ async def test_usage_view_popup_and_pane_live():
             routed = []
             app.open_token_log = lambda initial=None: routed.append(initial)
             app._run_command("usage-view")
-            await pilot.pause(0.15)
+            await wait_until(pilot, lambda: routed == ["limit"])
             assert routed == ["limit"], routed
             assert app.view._cells, "팝업 라우팅 후 프레임 합성 실패"
             # ② pane 오버레이 → 활성 패널 토글 + 합성 무crash.
             app._run_command("usage-view pane")
-            await pilot.pause(0.15)
+            await wait_until(pilot, lambda: app.usage_view_panes)
             assert app.usage_view_panes, "pane 오버레이가 안 켜짐"
             assert app.view._cells, "오버레이 합성 후 렌더 깨짐"
             # 한 번 더 → 토글 오프.
@@ -455,7 +456,7 @@ async def test_usage_view_click_outside_closes():
             # 박스 안 클릭(자식 → … → #ubox) → 닫히지 않음
             ev_in = _Ev(_W("ubars", parent=_W("ubox", parent=_W("screen"))))
             scr.on_click(ev_in)
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: app.screen_stack[-1] is scr)
             assert app.screen_stack[-1] is scr, "박스 안 클릭은 닫지 않는다"
             # 박스 바깥(백드롭) 클릭 → 닫힘
             ev_out = _Ev(_W("backdrop", parent=None))

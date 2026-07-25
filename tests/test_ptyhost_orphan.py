@@ -19,7 +19,7 @@ import subprocess
 import sys
 import tempfile
 
-from harness import server_only, teardown
+from harness import server_only, teardown, wait_for
 from run import skip
 from pytmuxlib import ptyhost, ptyhostmgr, pty_backend
 from pytmuxlib.ptyhostclient import PtyHostClient
@@ -42,10 +42,7 @@ async def _inproc_host(grace=None, *, derived=False):
     try:
         host = ptyhost.PtyHost()
         htask = asyncio.ensure_future(host.serve(endpoint))
-        for _ in range(200):
-            if os.path.exists(endpoint):
-                break
-            await asyncio.sleep(0.01)
+        await wait_for(lambda: os.path.exists(endpoint), timeout=3.0, step=0.01)
     finally:
         if old is None:
             os.environ.pop("PYTMUX_PTYHOST_GRACE", None)
