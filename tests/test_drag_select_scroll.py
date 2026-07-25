@@ -325,7 +325,13 @@ async def test_autoscroll_speed_grows_with_distance():
         v = app.view
         _one_pane_app(app)
         v._sel_rect = (2, 1, 10, 5)          # content y=1..5
-        assert v._edge_scroll_delta(3) == 0          # 안
+        assert v._edge_scroll_delta(3) == 0          # 안쪽(가운데)
+        # **경계 행 자체가 트리거**다(2차 제보): 창 밖으로 나가면 터미널이 모션 리포트를
+        # 멈추고, 좌표를 마지막 행으로 클램프하는 터미널도 있어 "넘어야 스크롤"은 도달
+        # 불가능한 조건이 된다. tmux copy-mode·에디터와 같은 규약(끝 줄에 닿으면 스크롤).
+        assert v._edge_scroll_delta(1) == 1, "위 경계 행에 닿으면 스크롤해야"
+        assert v._edge_scroll_delta(5) == -1, "아래 경계 행에 닿으면 스크롤해야"
+        assert v._edge_scroll_delta(2) == 0 and v._edge_scroll_delta(4) == 0
         assert v._edge_scroll_delta(0) == 1          # 1행 밖
         assert v._edge_scroll_delta(-2) == 2         # 3행 밖
         assert v._edge_scroll_delta(-20) == v._AUTOSCROLL_MAX

@@ -733,18 +733,24 @@ class MultiplexerView(Widget):
     _AUTOSCROLL_MAX = 3        # tick 당 최대 행수(경계에서 멀수록 빠르게)
 
     def _edge_scroll_delta(self, y):
-        """포인터 y 가 선택 시작 패널 **content 영역 밖**이면 스크롤 델타, 안이면 0.
+        """포인터 y 로 자동 스크롤 델타를 낸다(안쪽=0). + = 위/과거, - = 아래/최신.
 
-        부호는 휠과 같은 규약(+ = 위/과거 방향, - = 아래/최신 방향)이고, 경계에서 멀수록
-        1→3 행으로 빨라진다(먼 거리를 빨리 긁고, 경계 바로 밖에선 한 줄씩 정밀하게)."""
+        **경계 행 자체를 포함한다**(제보 2026-07-25 2차: "화면 바깥으로 움직여도 스크롤
+        안 됨"). 이유는 터미널의 구조적 제약이다 — 포인터가 **창 밖으로 나가면 터미널이
+        모션 리포트를 아예 멈추고**, 창 안이라도 좌표가 마지막 행/열로 클램프되는 터미널이
+        있다. 그래서 "경계를 넘어야 스크롤"로 만들면 사용자가 실제로 도달할 수 없는 조건이
+        된다. tmux copy-mode·에디터도 **끝 줄에 닿으면** 스크롤한다.
+
+        속도: 경계 행 = 1행/tick(읽으며 정밀하게), 밖으로 더 나갈수록 최대 3행/tick."""
         r = self._sel_rect
         if not r:
             return 0
         _px, py, _pw, ph = r
-        if y < py:
-            dist = py - y
-        elif y > py + ph - 1:
-            dist = -(y - (py + ph - 1))
+        bottom = py + ph - 1
+        if y <= py:                     # 첫 행 **이상**(위 경계 포함)
+            dist = py - y + 1           # 경계 행 = 1 → 1행/tick
+        elif y >= bottom:               # 마지막 행 **이하**(아래 경계 포함)
+            dist = -(y - bottom + 1)
         else:
             return 0
         mag = min(self._AUTOSCROLL_MAX, 1 + (abs(dist) - 1) // 2)
@@ -752,6 +758,12 @@ class MultiplexerView(Widget):
 
     def _autoscroll_set(self, delta):
         """델타가 0 이면 타이머를 멈추고, 아니면 (재)시작한다(멱등)."""
+        if delta != self._autoscroll_delta:
+            # mouse-debug 진단: "경계 밖인데 왜 안 스크롤되나" 를 로그로 가른다
+            # (드래그 상태·판정 델타·대상 패널). `:set mouse-debug on`.
+            self.app._log_mouse("autoscroll", *(self._sel_ptr or (-1, -1)),
+                                note=f"delta={delta} pane={self._sel_pane_id} "
+                                     f"rect={self._sel_rect}")
         self._autoscroll_delta = delta
         if not delta:
             self._autoscroll_stop()
