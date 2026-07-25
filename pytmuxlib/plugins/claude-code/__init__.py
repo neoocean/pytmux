@@ -503,6 +503,7 @@ def _on_token_log_msg(app, msg):
         model=getattr(app.status, "claude_model", None),
         xc_totals=msg.get("xc_totals"),
         xc_hosts=msg.get("xc_hosts"),
+        xc_cov=msg.get("xc_cov"),
         warn_history=msg.get("warn_history"),
         remote=getattr(app, "_token_log_remote", False),
         remote_host=getattr(app, "_token_log_remote_host", None)))
@@ -1278,6 +1279,11 @@ class _ClaudeCodePlugin:
             # 한 항목뿐이라 팝업이 뷰 자체를 감춘다(잡음 0).
             _xbh = getattr(usagedb, "xc_totals_by_host", None)
             xc_hosts = _xbh(conn) if (conn is not None and _xbh) else {}
+            # 사용자 결정 2026-07-25(설계 §10.2-4): 계정 미상 행은 **별항 분리**다.
+            # 분리만 하고 숨기면 "계정 합 < 총합" 이 미궁이 되고 P3 백필 커버리지 저하도
+            # 안 보이므로, 미상 비중을 팝업 Σ 줄에 노출한다(`_unknown_text`).
+            _xac = getattr(usagedb, "xc_account_coverage", None)
+            xc_cov = _xac(conn) if (conn is not None and _xac) else {}
             return {"t": "token_log", "records": recs,
                     "total_all": total_all,
                     "daily": daily,
@@ -1286,6 +1292,7 @@ class _ClaudeCodePlugin:
                     "active_session": active_sid,
                     "xc_totals": xc_totals,
                     "xc_hosts": xc_hosts,
+                    "xc_cov": xc_cov,
                     "warn_history": warn_hist}
         return None
 

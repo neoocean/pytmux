@@ -44,6 +44,33 @@ sync.example.org {
 }
 ```
 
+### Cloudflare Tunnel (인바운드 포트를 하나도 열지 않고)
+
+집·사무실 서버처럼 포트를 열기 어려운 곳이면 터널이 편합니다. `cloudflared` 가 밖으로
+나가는 연결만 쓰므로 **인바운드 방화벽은 전부 닫은 채** 동작합니다.
+
+```yaml
+# ~/.cloudflared/config.yml
+tunnel: <tunnel-id>
+credentials-file: /etc/cloudflared/<tunnel-id>.json
+ingress:
+  - hostname: sync.example.org
+    service: http://127.0.0.1:8787
+  - service: http_status:404
+```
+
+터널을 쓸 때 알고 있어야 할 것:
+
+- **TLS 종단이 Cloudflare 입니다.** 엣지는 요청 메타(경로·크기·시각)와, 그 지점에서의
+  평문을 볼 수 있습니다. 이벤트 바디는 클라이언트에서 이미 암호화돼 올라가므로 열람할 수
+  없지만, **관리 화면의 세션 쿠키는 엣지를 평문으로 지나갑니다** — 더 줄이려면 관리
+  경로(`/`, `/v1/auth/*`, `/v1/devices*`)에만 Cloudflare Access 를 얹으세요.
+- 모든 요청의 출발지 소켓이 `cloudflared`(루프백)입니다. 즉 **IP 기반 차단·레이트리밋은
+  의미가 없습니다**(이 서버의 쿼터·레이트는 vault/디바이스 기준이라 영향 없음). IP 로
+  뭔가 하려면 `CF-Connecting-IP` 를 신뢰 경계와 함께 다뤄야 합니다.
+- 공개 도메인이 되므로 등록은 잠긴 기본값을 유지하고(아래 `--open-registration` 절),
+  `--bootstrap-token` 을 설정해 두세요.
+
 ### systemd
 
 ```ini

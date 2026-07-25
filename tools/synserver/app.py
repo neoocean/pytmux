@@ -821,9 +821,13 @@ def make_handler(app):
     return Handler
 
 
-def main(argv=None):
+def build_parser():
+    """CLI 파서. `main` 에서 떼어낸 이유는 **배포 계약을 테스트로 못박기 위해서**다
+    (사용자 결정 2026-07-25): `--host` 기본이 루프백이라는 것(TLS·공개 노출은 앞단
+    Cloudflare Tunnel/리버스 프록시 담당) · 보존이 기본 무기한(`retain_days=0`) ·
+    등록이 기본 잠김(`--open-registration` 없으면 첫 vault 뒤 잠김)이 그 계약이다.
+    회귀: tests/test_token_sync_decisions.py."""
     import argparse
-    from http.server import ThreadingHTTPServer
     p = argparse.ArgumentParser(description="pytmux 토큰 동기화 서버")
     p.add_argument("--db", default="sync.db")
     p.add_argument("--rp-id", required=True, help="패스키 도메인(예: sync.example.org)")
@@ -836,7 +840,12 @@ def main(argv=None):
                    help="새 vault 생성 시 요구할 X-Sync-Bootstrap 값")
     p.add_argument("--recovery-token", default="",
                    help="일회용 복구 링크 토큰(/v1/recover?t=…) — 패스키를 전부 잃었을 때")
-    a = p.parse_args(argv)
+    return p
+
+
+def main(argv=None):
+    from http.server import ThreadingHTTPServer
+    a = build_parser().parse_args(argv)
     conn = sdb.connect(a.db)
     app = SyncApp(conn, a.rp_id, a.origin or ("https://" + a.rp_id),
                   open_registration=a.open_registration,

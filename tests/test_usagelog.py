@@ -264,29 +264,29 @@ async def test_window_sum_boundaries_and_account():
     assert usagelog.window_sum([], 0.0) == 0
 
 
-async def test_fold_unknown_single_identified_account():
-    """§5.5 단일 식별 계정 귀속(표시층): 식별(이메일) 계정이 정확히 하나면 미식별
-    (unknown/None) 레코드를 그 계정으로 재라벨한다 — 'unknown 86%' 소음과 계정
-    필터 시 일자 누락의 해소. 둘 이상이면 모호 → 귀속 안 함(원본 그대로)."""
-    # 귀속 대상 판정: 식별 1개 → 그 계정, 0개/2개 → None.
-    assert usagelog.fold_target({"me@x.org", "unknown"}) == "me@x.org"
-    assert usagelog.fold_target({"wo…@y.org"}) == "wo…@y.org"   # 별칭도 '@' 포함
-    assert usagelog.fold_target({"unknown"}) is None
-    assert usagelog.fold_target({"me@x.org", "a@b.org"}) is None
-    assert usagelog.fold_target(set()) is None
-    # 재라벨: 미식별만 target 으로, 식별 레코드는 불변. 원본 리스트도 불변.
+async def test_unknown_account_never_folds_into_single_account():
+    """미식별(unknown/None) 계정은 **어떤 경우에도 별항**이다(사용자 결정 2026-07-25,
+    동기화 설계 §10.2-4). 식별 계정이 정확히 하나뿐인 — 종전 §5.5 '단일 계정 귀속'이
+    접으려 했던 바로 그 — 환경에서도 접지 않는다.
+
+    왜 못박나: 접으면 ① 계정별 Σ 가 오염돼 P3 백필 커버리지 저하가 눈에 안 보이고
+    ② 동기화로 남의 머신 몫이 합쳐지면 '식별 계정 하나' 전제가 수시로 깨진다.
+    뮤테이션 오라클: `aggregate` 앞에 fold(unknown→유일 계정)를 되살리면 아래
+    groups 단언이 깨진다."""
     recs = [
         {"ts": 1.0, "account": "unknown", "tokens": 100},
         {"ts": 2.0, "account": None, "tokens": 50},
         {"ts": 3.0, "account": "me@x.org", "tokens": 7},
     ]
-    out = usagelog.fold_unknown(recs, "me@x.org")
-    assert [r["account"] for r in out] == ["me@x.org"] * 3
-    assert recs[0]["account"] == "unknown", "원본 불변(얕은 복사)"
-    agg = usagelog.aggregate(out, "day")
-    assert agg["groups"] == {"me@x.org": 157}
-    # target 없음(None) → 원본 그대로.
-    assert usagelog.fold_unknown(recs, None) is recs
+    agg = usagelog.aggregate(recs, "day")
+    assert agg["groups"] == {"unknown": 150, "me@x.org": 7}, "미상은 별항 유지"
+    assert agg["total"] == 157, "Σ 자체는 전량 포함(별항 분리 ≠ 누락)"
+    # 계정 필터도 별항 의미론 그대로 — unknown 을 지정하면 미식별만.
+    assert usagelog.aggregate(recs, "day", account="me@x.org")["total"] == 7
+    assert usagelog.aggregate(recs, "day", account="unknown")["total"] == 150
+    # 접는 헬퍼는 결정과 반대 방향이라 제거됐다(죽은 코드의 오용 방지).
+    assert not hasattr(usagelog, "fold_unknown")
+    assert not hasattr(usagelog, "fold_target")
 
 
 async def test_migrate_token_accounts():

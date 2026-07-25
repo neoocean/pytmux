@@ -178,34 +178,18 @@ def window_sum(records: list, since_ts: float, until_ts: float | None = None,
     return total
 
 
-def fold_target(accounts):
-    """계정 키 모음에서 **식별 계정(이메일 — '@' 포함)이 정확히 하나**면 그 계정을
-    반환, 둘 이상이거나 없으면 None(귀속 불가).
-
-    §5.5 단일 계정 귀속(2026-06-12 표시층 확장): 패널 화면엔 계정 라벨이 거의 안 떠
-    (라벨은 /status 에만) 레코드 대부분이 미식별(unknown)로 적재되는데, 식별 계정이
-    사실상 하나인 환경에선 미식별=그 계정 활동이다 —
-    서버 _account_token_total 의 단일계정 전합산과 동일한 가정. 식별 계정이 둘
-    이상이면 귀속이 모호하므로 접지 않는다(unknown 유지). v4 정정 이후 식별 계정은
-    항상 이메일 형태('@' 포함)라 '@' 가 식별/미식별 판별식이다."""
-    idd = {a for a in accounts if a and a != UNKNOWN and "@" in a}
-    if len(idd) == 1:
-        return next(iter(idd))
-    return None
-
-
-def fold_unknown(records: list, target) -> list:
-    """미식별(unknown/계정 없음) 레코드를 target 계정으로 재라벨한 **새 목록**을
-    반환한다(원본 레코드 불변 — 재라벨되는 행만 얕은 복사). target 이 거짓이면
-    원본 그대로. fold_target 과 짝으로 쓴다(표시층 귀속 — DB 는 건드리지 않는다)."""
-    if not target:
-        return records
-    out = []
-    for r in records:
-        if (r.get("account") or UNKNOWN) == UNKNOWN:
-            r = dict(r, account=target)
-        out.append(r)
-    return out
+# ── 미식별(unknown) 계정 정책 ────────────────────────────────────────────────
+# **표시층은 unknown 을 어떤 계정으로도 접지 않는다**(사용자 결정 2026-07-25, 동기화
+# 설계 §10.2-4). 종전엔 `fold_target`/`fold_unknown`(§5.5, 2026-06-12) 이 "식별 계정이
+# 하나뿐이면 unknown=그 계정" 으로 재라벨하려 했으나 **어느 호출부에도 배선되지 않은
+# 죽은 코드**였고, 결정과 방향이 반대라 남겨 두면 다음 세션이 "여기 접는 헬퍼가 있네"
+# 로 잘못 쓴다 — 그래서 지웠다. 근거: (a) 접으면 계정별 Σ 가 오염돼 **백필(P3) 커버리지
+# 저하가 눈에 안 보인다**, (b) 동기화로 남의 머신 몫이 합쳐지면 "식별 계정 하나" 라는
+# 전제 자체가 수시로 깨진다. 대신 unknown 은 `group_key` 가 **별항**으로 유지하고,
+# 미상 비중은 팝업 Σ 줄(`TokenLogScreen._unknown_text`)과 `:claude-token-sync status`
+# 의 커버리지(`usagedb.xc_account_coverage`)로 **보이게** 한다.
+# 회귀: tests/test_usagelog.py::test_unknown_account_never_folds_into_single_account.
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def group_key(r: dict, dim: str = "account") -> str:

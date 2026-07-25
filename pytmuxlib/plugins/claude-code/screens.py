@@ -108,6 +108,8 @@ i18n.register({
         # §10-D P6: 트랜스크립트 실측 Σ(캐시 읽기/쓰기 분리) + 스크랩 활동 보조신호.
         "pscreen.tklog_xc": "Σ{full} 실측(캐시 읽기{cr}+쓰기{cc}) · 활동~{scrape}",
         "pscreen.tklog_host_local": "이 머신",
+        # 계정 미상 비중(사용자 결정 2026-07-25 — 미상은 별항, 그 몫을 보인다).
+        "pscreen.tklog_unknown": "미상 {pct}%",
         "pscreen.tklog_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · p세션 · l한도 u/usage · Esc닫기",
         # 계층 타임라인 트리 구역 구분선(2026-06-21).
         "pscreen.tree_earlier_weeks": "── 이번 달 이전 주 ──",
@@ -178,6 +180,7 @@ i18n.register({
         "pscreen.tklog_disp": " (shown {n})",
         "pscreen.tklog_xc": "Σ{full} real (cache r{cr}+w{cc}) · activity~{scrape}",
         "pscreen.tklog_host_local": "this machine",
+        "pscreen.tklog_unknown": "unattributed {pct}%",
         "pscreen.tklog_hint": "↑↓ move · Enter/←→ expand·collapse · p session · l limit u /usage · Esc close",
         "pscreen.tree_earlier_weeks": "── earlier weeks this month ──",
         "pscreen.tree_earlier_months": "── earlier months ──",
@@ -700,7 +703,7 @@ class TokenLogScreen(ModalScreen):
                  daily=None, daily_pct=None, hourly_pct=None,
                  hourly_week_pct=None, active_session=None, initial_mode=None,
                  model=None, xc_totals=None, warn_history=None, remote=False,
-                 remote_host=None, xc_hosts=None):
+                 remote_host=None, xc_hosts=None, xc_cov=None):
         super().__init__()
         # 원격(remote-attach) 탭을 보는 중에 토큰 배지(분홍)를 눌러 연 팝업인지 표시
         # (사용자 요청 2026-06-23). 로컬 팝업(accent 오렌지 테두리)과 한눈에 구분되게
@@ -720,6 +723,11 @@ class TokenLogScreen(ModalScreen):
         # 머신이 하나뿐(=동기화 미사용·아직 안 받음)이면 분해할 게 없으므로 [o] 탭
         # 자체를 감춘다 — 켜지도 않은 기능의 빈 뷰가 보이면 잡음이다.
         self._xc_hosts = xc_hosts or {}
+        # 계정 귀속 커버리지 {"total","known","unknown","pct"}(usagedb.xc_account_
+        # coverage). 사용자 결정 2026-07-25(설계 §10.2-4): 미상 계정은 **별항 분리**이고,
+        # 그 몫이 얼마인지 Σ 줄에 보인다 — P3 백필 커버리지가 나빠지는 걸 사람이 눈으로
+        # 감시할 수 있어야 결정이 실효가 있다. 구버전 서버/빈 DB 면 빈 dict(표시 없음).
+        self._xc_cov = xc_cov or {}
         # 요청 2026-06-21: 현재 활성 패널의 claude 세션 id(없으면 None) — [세션] 뷰가
         # 이 세션 행을 하이라이트하고 막대를 다른 색으로 그린다.
         self._active_session = active_session
@@ -1543,6 +1551,28 @@ class TokenLogScreen(ModalScreen):
             parts.append("%s %d%%" % (name, round(100.0 * v / total)))
         return "  ⇅ " + " · ".join(parts)
 
+    def _unknown_text(self) -> str:
+        """Σ 뒤에 붙는 **미상 계정 비중**(`· 미상 12%`). 사용자 결정 2026-07-25
+        (설계 §10.2-4) = 계정 미상 행은 계정별 Σ 에 섞지 않고 별항으로 분리한다.
+
+        분리만 하고 숨기면 "왜 계정 합이 총합보다 작나" 가 미궁이 되고, P3 백필
+        커버리지가 나빠지는 것도 안 보인다. 그래서 **비중을 한 조각으로 노출**한다.
+        미상이 0(=전량 귀속)이면 빈 문자열 — 잘 되고 있을 때 잡음 0. 반올림이 0% 로
+        떨어지는 소량은 `<1%` 로 적어 "있는데 0" 을 만들지 않는다."""
+        cov = self._xc_cov or {}
+        if not isinstance(cov, dict):
+            return ""     # 신뢰불가 상류(원격 보기 릴레이)가 실어 보낸 잡값
+        try:
+            total = int(cov.get("total") or 0)
+            unknown = int(cov.get("unknown") or 0)
+        except (TypeError, ValueError):
+            return ""     # 문자열·dict 등 — 팝업이 터지는 대신 표기를 생략한다
+        if total <= 0 or unknown <= 0 or unknown > total:
+            return ""
+        pct = 100.0 * unknown / total
+        shown = "<1" if pct < 0.5 else "%d" % round(pct)
+        return "  " + i18n.t("pscreen.tklog_unknown", pct=shown)
+
     def _sigma_text(self, win):
         """상단 Σ 요약 문자열(평탄·트리 경로 공용). §10-D P6: 트랜스크립트 실측
         (usage_xc full)이 있으면 그걸 1차 Σ 로 보이고 캐시를 별도 표기, 스크랩 누계는
@@ -1562,7 +1592,8 @@ class TokenLogScreen(ModalScreen):
                           full=usagelog._fmt_tokens(xc_full),
                           cr=usagelog._fmt_tokens(cr),
                           cc=usagelog._fmt_tokens(cc),
-                          scrape=usagelog._fmt_tokens(life)) + self._host_text()
+                          scrape=usagelog._fmt_tokens(life)) \
+                + self._host_text() + self._unknown_text()
         sigma = f"~Σ{usagelog._fmt_tokens(life)}"   # ~ = 추정 라벨(S6 T3)
         if life != win:
             sigma += i18n.t("pscreen.tklog_disp", n=usagelog._fmt_tokens(win))
