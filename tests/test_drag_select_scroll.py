@@ -275,3 +275,146 @@ async def test_screen_messages_carry_absolute_top_on_the_wire():
         assert f3["top"] == full["top"] - 5, (f3["top"], full["top"])
     finally:
         await teardown(srv, task, sock)
+
+
+# ── ③ 경계 밖 드래그 자동 스크롤(휠 없이 확장) ───────────────────────────────
+async def test_drag_past_pane_edge_autoscrolls_and_stops_inside():
+    """패널 content 밖으로 끌면 그 방향으로 **계속** 스크롤하고, 안으로 돌아오면 멈춘다.
+
+    타이머가 필요한 이유를 함께 고정한다: move 이벤트는 포인터가 움직일 때만 오므로
+    경계 밖에 멈춰 있으면 스크롤도 멈춰 버린다 → tick 이 이어서 스크롤해야 한다.
+    """
+    from test_client import _with_app
+
+    async def body(app, pilot, srv):
+        v = app.view
+        pid = _one_pane_app(app)             # content y=1..5
+        scrolls = []
+        app.send_mouse = lambda p, d: None
+        app.send_cmd = lambda action, **kw: None
+        app.send_scroll = lambda p, **kw: scrolls.append((p, kw.get("delta")))
+        v.on_mouse_down(_FakeMouse(3, 3, 1))
+        v.on_mouse_move(_FakeMouse(5, 4, 1))        # 패널 안 — 자동 스크롤 없음
+        assert v._autoscroll is None and v._autoscroll_delta == 0
+        assert scrolls == [], scrolls
+        # 위쪽 경계 밖(y=0 < py=1) → 위(과거) 방향(+)으로 스크롤 시작
+        v.on_mouse_move(_FakeMouse(5, 0, 1))
+        assert v._autoscroll_delta > 0, v._autoscroll_delta
+        assert v._autoscroll is not None, "경계 밖이면 tick 타이머가 떠야(포인터 정지 대응)"
+        # 포인터가 멈춰 있어도 tick 이 계속 스크롤한다.
+        v._autoscroll_tick()
+        v._autoscroll_tick()
+        assert [d for p, d in scrolls if p == pid] == [v._autoscroll_delta] * 2, scrolls
+        # 아래쪽 경계 밖 → 반대 방향(-)
+        v.on_mouse_move(_FakeMouse(5, 9, 1))
+        assert v._autoscroll_delta < 0, v._autoscroll_delta
+        # 다시 패널 안 → 멈춘다
+        v.on_mouse_move(_FakeMouse(5, 3, 1))
+        assert v._autoscroll is None and v._autoscroll_delta == 0
+        n = len(scrolls)
+        v._autoscroll_tick()
+        assert len(scrolls) == n, "멈춘 뒤에는 tick 이 스크롤하지 않아야"
+    await _with_app(body)
+
+
+async def test_autoscroll_speed_grows_with_distance():
+    """경계에서 멀수록 빨라지고 상한이 있다(먼 거리 빨리·경계 바로 밖은 한 줄씩)."""
+    from test_client import _with_app
+
+    async def body(app, pilot, srv):
+        v = app.view
+        _one_pane_app(app)
+        v._sel_rect = (2, 1, 10, 5)          # content y=1..5
+        assert v._edge_scroll_delta(3) == 0          # 안
+        assert v._edge_scroll_delta(0) == 1          # 1행 밖
+        assert v._edge_scroll_delta(-2) == 2         # 3행 밖
+        assert v._edge_scroll_delta(-20) == v._AUTOSCROLL_MAX
+        assert v._edge_scroll_delta(6) == -1         # 아래 1행 밖
+        assert v._edge_scroll_delta(30) == -v._AUTOSCROLL_MAX
+    await _with_app(body)
+
+
+async def test_autoscroll_stops_on_release_and_extends_selection():
+    """릴리스와 함께 멈추고(유령 스크롤 금지), 스크롤된 만큼 선택이 늘어난다."""
+    from test_client import _with_app
+
+    async def body(app, pilot, srv):
+        v = app.view
+        pid = _one_pane_app(app)
+        scrolls, cmds = [], []
+        app.send_mouse = lambda p, d: None
+        app.send_scroll = lambda p, **kw: scrolls.append(kw.get("delta"))
+        app.send_cmd = lambda action, **kw: cmds.append((action, kw))
+        app.copy_text = lambda t: None
+        v.on_mouse_down(_FakeMouse(3, 2, 1))         # 절대 101행에서 시작
+        v.on_mouse_move(_FakeMouse(5, 0, 1))         # 위 경계 밖 → 자동 스크롤
+        v._autoscroll_tick()
+        # 서버가 그만큼 스크롤된 프레임을 보냈다고 가정(top 감소 = 과거로)
+        app.pane_top[pid] = 100 - 2
+        app._composite()
+        assert v._sel_abs[2] < v._sel_abs[0], \
+            f"위로 끌면 focus 가 앵커보다 과거 행이어야: {v._sel_abs}"
+        v.on_mouse_up(_FakeMouse(5, 0, 1))
+        assert v._autoscroll is None and v._autoscroll_delta == 0, "릴리스 후 타이머 잔존"
+        n = len(scrolls)
+        v._autoscroll_tick()
+        assert len(scrolls) == n, "릴리스 후 tick 이 스크롤하면 유령 스크롤"
+        # 릴리스는 정렬된 절대 범위로 서버에 추출을 요청한다(위로 끌었어도 y0<y1).
+        rng = [kw for a, kw in cmds if a == "copy_range"]
+        assert rng and rng[0]["y0"] <= rng[0]["y1"], rng
+    await _with_app(body)
+
+
+async def test_autoscroll_tick_self_stops_if_the_release_was_lost():
+    """릴리스 이벤트가 **유실된** 경우에도 tick 이 스스로 멈춘다(무한 스크롤 방지).
+
+    호스트 터미널이 버튼 릴리스를 흘리는 일은 실제로 있다(마우스 리포팅 유실·포커스
+    이동). 그러면 `_sel_clear` 가 안 불려 타이머만 남는데, 그때 계속 스크롤하면 패널이
+    사용자 조작 없이 과거로 감긴다. 정상 경로(_sel_clear)는 타이머를 멈추므로 이 가드는
+    **그 경로가 안 불린 경우**만 겨눈다 — 그래서 이 테스트가 따로 필요하다."""
+    from test_client import _with_app
+
+    async def body(app, pilot, srv):
+        v = app.view
+        _one_pane_app(app)
+        scrolls = []
+        app.send_mouse = lambda p, d: None
+        app.send_cmd = lambda action, **kw: None
+        app.send_scroll = lambda p, **kw: scrolls.append(kw.get("delta"))
+        v.on_mouse_down(_FakeMouse(3, 3, 1))
+        v.on_mouse_move(_FakeMouse(5, 0, 1))
+        assert v._autoscroll is not None
+        v._sel_start = None            # 릴리스 유실(선택 상태만 사라짐)
+        n = len(scrolls)
+        v._autoscroll_tick()
+        assert len(scrolls) == n, "드래그가 끝났는데 tick 이 스크롤했다"
+        assert v._autoscroll is None, "tick 이 스스로 타이머를 정리해야"
+    await _with_app(body)
+
+
+async def test_autoscroll_timer_actually_fires_in_a_live_app():
+    """**호출부** 오라클: tick 을 손으로 부르지 않아도 실제 타이머가 스크롤을 낸다.
+
+    `_autoscroll_tick` 단위 테스트만 두면 `set_interval` 배선을 지워도 통과한다 —
+    그러면 포인터를 경계 밖에 **멈춰 둔 채** 기다리는 실제 사용에서 아무 일도 일어나지
+    않는다(이 기능의 존재 이유가 사라진다)."""
+    from test_client import _with_app
+    from harness import wait_until
+
+    async def body(app, pilot, srv):
+        v = app.view
+        _one_pane_app(app)
+        scrolls = []
+        app.send_mouse = lambda p, d: None
+        app.send_cmd = lambda action, **kw: None
+        app.send_scroll = lambda p, **kw: scrolls.append(kw.get("delta"))
+        v.on_mouse_down(_FakeMouse(3, 3, 1))
+        v.on_mouse_move(_FakeMouse(5, 0, 1))        # 경계 밖에서 포인터 정지
+        ok = await wait_until(pilot, lambda: len(scrolls) >= 2, timeout=3.0)
+        assert ok, f"타이머가 안 돌았다(스크롤 {len(scrolls)}회)"
+        assert all(d > 0 for d in scrolls), scrolls
+        v.on_mouse_up(_FakeMouse(5, 0, 1))
+        n = len(scrolls)
+        await pilot.pause(0.25)                     # 릴리스 후 정지 확인(시간이 오라클)
+        assert len(scrolls) == n, f"릴리스 후에도 스크롤됨: {n}→{len(scrolls)}"
+    await _with_app(body)

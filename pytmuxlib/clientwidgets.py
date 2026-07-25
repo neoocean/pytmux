@@ -95,6 +95,8 @@ class MultiplexerView(Widget):
         # 화면-내 선택으로 폴백한다.
         self._sel_abs = None
         self._sel_ptr = None       # 드래그 중 마지막 포인터 (x,y) — 스크롤 후 focus 재계산
+        self._autoscroll = None    # 경계 밖 드래그 자동 스크롤 타이머(Textual Timer)
+        self._autoscroll_delta = 0  # 그 타이머가 매 tick 보낼 스크롤 델타(+위/-아래)
         # 패널 pick-up(헤더 드래그, #1): 패널의 위쪽 테두리/제목 행을 잡아 끌면 그 패널을
         # 든다. 다른 패널에 놓으면 swap, 탭바의 탭에 놓으면 그 탭으로 이동, [+]에 놓으면
         # 새 탭으로 분리(break). (구 Shift+드래그 swap 을 헤더 드래그로 이전 — Shift+드래그는
@@ -152,6 +154,7 @@ class MultiplexerView(Widget):
         self._sel_abs = (a + b) if (a is not None and b is not None) else None
 
     def _sel_clear(self):
+        self._autoscroll_stop()      # 릴리스와 함께 자동 스크롤도 멈춘다
         self._sel_start = None
         self._sel = None
         self._sel_rect = None
@@ -554,6 +557,7 @@ class MultiplexerView(Widget):
                 self._sel_start = (sx, sy)
                 self._sel = (sx, sy, ex0, ey0)
                 self._sel_begin_abs(sx, sy, ex0, ey0)
+                self._autoscroll_set(self._edge_scroll_delta(event.y))
                 self._sel_pending = None
                 self.app._composite()
             event.stop()
@@ -562,6 +566,10 @@ class MultiplexerView(Widget):
             ex, ey = self._clamp_sel(event.x, event.y)   # 시작 패널 안으로(§2.4)
             self._sel = (self._sel_start[0], self._sel_start[1], ex, ey)
             self._sel_ptr = (event.x, event.y)
+            # 패널 경계 밖이면 자동 스크롤(안으로 돌아오면 멈춘다). 선택 focus 는
+            # _clamp_sel 로 이미 경계 행에 붙어 있어, 내용이 스크롤되면 그 경계 행의
+            # 절대 행이 바뀌며 선택이 늘어난다(sync_selection).
+            self._autoscroll_set(self._edge_scroll_delta(event.y))
             if self._sel_abs is not None:
                 cur = self._to_abs(ex, ey)
                 if cur is not None:
@@ -716,6 +724,60 @@ class MultiplexerView(Widget):
             self._dragging = None
             self.release_mouse()
             event.stop()
+
+    # 경계 밖 드래그 자동 스크롤: 포인터를 패널 위/아래로 끌면 그 방향으로 계속
+    # 스크롤해 선택을 늘린다(휠 없이도 한 화면 초과 선택). **타이머가 필요한 이유**:
+    # 마우스 이동 이벤트는 포인터가 움직일 때만 오므로, 경계 밖에 멈춰 있으면 move 가
+    # 끊겨 스크롤도 멈춘다(에디터·tmux 도 같은 이유로 타이머를 쓴다).
+    _AUTOSCROLL_SEC = 0.06     # tick 간격(≈16행/초 — 읽으면서 끌 수 있는 속도)
+    _AUTOSCROLL_MAX = 3        # tick 당 최대 행수(경계에서 멀수록 빠르게)
+
+    def _edge_scroll_delta(self, y):
+        """포인터 y 가 선택 시작 패널 **content 영역 밖**이면 스크롤 델타, 안이면 0.
+
+        부호는 휠과 같은 규약(+ = 위/과거 방향, - = 아래/최신 방향)이고, 경계에서 멀수록
+        1→3 행으로 빨라진다(먼 거리를 빨리 긁고, 경계 바로 밖에선 한 줄씩 정밀하게)."""
+        r = self._sel_rect
+        if not r:
+            return 0
+        _px, py, _pw, ph = r
+        if y < py:
+            dist = py - y
+        elif y > py + ph - 1:
+            dist = -(y - (py + ph - 1))
+        else:
+            return 0
+        mag = min(self._AUTOSCROLL_MAX, 1 + (abs(dist) - 1) // 2)
+        return mag if dist > 0 else -mag
+
+    def _autoscroll_set(self, delta):
+        """델타가 0 이면 타이머를 멈추고, 아니면 (재)시작한다(멱등)."""
+        self._autoscroll_delta = delta
+        if not delta:
+            self._autoscroll_stop()
+            return
+        if self._autoscroll is None:
+            try:
+                self._autoscroll = self.set_interval(self._AUTOSCROLL_SEC,
+                                                    self._autoscroll_tick)
+            except Exception:
+                self._autoscroll = None      # 마운트 전(테스트 등) — tick 없이 진행
+
+    def _autoscroll_stop(self):
+        t, self._autoscroll = self._autoscroll, None
+        self._autoscroll_delta = 0
+        if t is not None:
+            try:
+                t.stop()
+            except Exception:
+                pass
+
+    def _autoscroll_tick(self):
+        """타이머 1회 — 드래그가 끝났으면 스스로 멈춘다(릴리스 누락에도 안전)."""
+        if self._sel_start is None or not self._autoscroll_delta:
+            self._autoscroll_stop()
+            return
+        self._scroll_during_drag(self._autoscroll_delta)
 
     def _scroll_during_drag(self, delta):
         """드래그 중 휠 — **선택을 유지한 채** 선택 시작 패널만 스크롤한다.
