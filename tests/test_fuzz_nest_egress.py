@@ -100,7 +100,9 @@ async def test_fuzz_forged_panel_output_never_egress():
                     token[:4], dest, mon.connects, mon.ssh_hosts)
         pane.pty = real
     finally:
-        await teardown(srvA, taskA, sockA)
+        # 퍼즈가 적대적 엔드포인트 수백 개를 시도하므로 attach 실패 로그는 정상이다
+        # (§10-3⑤ 가드에 그 라벨만 좁게 허용 — 다른 예외는 여전히 잡힌다).
+        await teardown(srvA, taskA, sockA, allow_errors=("remote_attach",))
 
 
 async def test_fuzz_endpoint_block_never_direct_connects_nonlocal():
@@ -131,4 +133,6 @@ async def test_fuzz_endpoint_block_never_direct_connects_nonlocal():
             await srvA._nest_do_attach(sessA, "tcp:127.0.0.1:65000")
             assert mon2.connects == ["tcp:127.0.0.1:65000"], mon2.connects
     finally:
-        await teardown(srvA, taskA, sockA)
+        # 퍼즈가 적대적 엔드포인트 수백 개를 시도하므로 attach 실패 로그는 정상이다
+        # (§10-3⑤ 가드에 그 라벨만 좁게 허용 — 다른 예외는 여전히 잡힌다).
+        await teardown(srvA, taskA, sockA, allow_errors=("remote_attach",))

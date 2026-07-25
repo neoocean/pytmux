@@ -140,7 +140,7 @@ async def test_flush_path_drops_client_instead_of_desyncing():
         await srv._flush_to_client(c, [b"frame"])
         assert c not in srv.clients
     finally:
-        await teardown(srv, task, sock)
+        await teardown(srv, task, sock, allow_errors=("slow client dropped",))
 
 
 # ── TAB-1: 자동 탭이름이 제어문자 세정을 우회하던 문제(재조사 2026-07-25) ──────

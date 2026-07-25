@@ -5424,7 +5424,7 @@ async def test_token_db_failure_logged_once():
     finally:
         if old_db is not None:
             os.environ["PYTMUX_TOKENS_DB"] = old_db
-        await teardown(srv, task, sock)
+        await teardown(srv, task, sock, allow_errors=("tokens_db_connect",))
 
 
 async def test_usage_snapshot_failure_logged():
@@ -5445,7 +5445,7 @@ async def test_usage_snapshot_failure_logged():
         body = open(elog, encoding="utf-8").read()
         assert "[usage_snapshot]" in body and "계약 버그 시뮬" in body
     finally:
-        await teardown(srv, task, sock)
+        await teardown(srv, task, sock, allow_errors=("usage_snapshot",))
 
 
 async def test_panel_env_sets_truecolor_and_term():
@@ -5547,7 +5547,7 @@ async def test_flush_to_client_drops_slow_consumer():
         await srv._flush_to_client(c3, [b"frame"])
         assert c3 in srv.clients and not c3.writer.closed, "정상 클라 유지"
     finally:
-        await teardown(srv, task, sock)
+        await teardown(srv, task, sock, allow_errors=("slow client dropped",))
 
 
 async def test_liveness_evicts_dead_client_and_regrows_session():

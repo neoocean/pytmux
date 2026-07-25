@@ -3,12 +3,16 @@
 핵심: 실제 pytmux 클라이언트를 PTY 아래 띄워 ① 즉시 종료(크래시)하지 않고 ② 트레이스백
 없이 ③ 상태줄/테두리를 그리는지 — '눈으로 보는' 화면을 캡처해 단언한다. 부팅 시
 layout.json 자동 복원 경로(과거 Session.popup 누락 크래시, CL 56607)도 이 경로로
-지나가므로 회귀로서 가치가 크다(§10)."""
+지나가므로 회귀로서 가치가 크다(§10).
+
+2026-07-25(§10-3⑤ 마무리): 이 경로는 **진짜 데몬**을 띄우므로, 클라 화면의 트레이스백
+뿐 아니라 **서버가 로그로만 삼킨 예외**(`<sock>.error.log`)까지 함께 단언한다 —
+서버는 stderr 가 /dev/null 이라 화면만 보면 조용한 실패를 놓친다."""
 import os
 import sys
 import tempfile
 
-import harness  # noqa: F401  (경로 설정)
+import harness
 import ptyshot
 
 
@@ -28,7 +32,8 @@ async def test_ansi_strip_and_traceback_detect():
 async def test_real_client_renders_no_crash():
     """실제 클라이언트가 PTY 아래서 렌더되고 살아있으며 트레이스백이 없는지."""
     if ptyshot.IS_WINDOWS:
-        return  # POSIX 전용 하네스(stdlib pty)
+        from run import skip
+        skip("POSIX 전용 하네스(stdlib pty)")
     sock = tempfile.mktemp(suffix=".sock")
     try:
         raw, alive = ptyshot.capture(
@@ -39,6 +44,8 @@ async def test_real_client_renders_no_crash():
         # 상태줄(시계/날짜/[+] 탭) 또는 패널 테두리가 그려졌는지
         assert any(c in txt for c in "┌─│┐└┘") or "[+]" in txt, \
             "테두리/탭바가 렌더되지 않음:\n" + txt[-800:]
+        # 실 데몬이 조용히 예외를 삼켰는지도 본다(화면만으로는 안 보인다).
+        harness.assert_no_server_errors(sock)
     finally:
         # 이 소켓에 띄워진 데몬을 정리(테스트 격리).
         from pytmuxlib import launcher
@@ -57,7 +64,8 @@ async def test_real_client_delta_render():
     echo 명령을 흘려보내고(0.6초 뒤 feed), 그 고유 마커 출력이 화면에 나타나는지
     단언한다 — 델타 경로 end-to-end 검증."""
     if ptyshot.IS_WINDOWS:
-        return  # POSIX 전용 하네스
+        from run import skip
+        skip("POSIX 전용 하네스(stdlib pty)")
     marker = "PYTMUX_B8_DELTA_OK"
     sock = tempfile.mktemp(suffix=".sock")
     try:
@@ -71,6 +79,7 @@ async def test_real_client_delta_render():
         assert marker in txt, "델타(echo 출력)가 렌더되지 않음:\n" + txt[-800:]
         # 테두리도 그대로(부분 refresh 가 테두리 행을 망치지 않음).
         assert any(c in txt for c in "┌─│┐└┘"), "테두리 손상:\n" + txt[-800:]
+        harness.assert_no_server_errors(sock)
     finally:
         from pytmuxlib import launcher
         try:

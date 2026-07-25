@@ -105,7 +105,71 @@ def cleanup(srv, endpoint):
             pass
 
 
-async def teardown(srv, task, sock):
+# ── 서버 예외 로그 가드(§10-3⑤) ────────────────────────────────────────────
+# 서버는 데몬이라 stderr 가 /dev/null 이고, 예외를 삼킨 뒤 `_log_error` 로
+# `<state_base>.error.log` 에만 남긴다(그게 그 설계의 의도다 — 한 클라의 실패가 서버를
+# 죽이지 않게). 그래서 **테스트가 초록불인데 서버가 매 프레임 터지고 있는** 상태가
+# 성립한다: 실제로 그런 결함을 여러 번 사람이 로그를 읽어야 발견했다(§9.1 델타
+# 베이스라인 레이스가 그 예 — 예외가 로그로만 끝나고 클라는 살아남았다).
+# 이 가드는 그걸 **모든 테스트에 자동으로** 붙인다: teardown 시점에 error.log 에
+# 트레이스백 블록이 있으면 그 테스트를 실패시킨다.
+#
+# 의도적으로 예외를 내는 테스트는 `teardown(..., allow_errors=True)` 또는
+# `allow_errors=("where 조각", …)` 로 **좁게** 예외 처리한다(전면 off 금지 —
+# 그러면 가드가 있으나 마나다).
+_TB_HEAD = "Traceback (most recent call last):"
+
+
+def server_error_blocks(sock) -> list:
+    """서버가 남긴 예외 블록 목록(`==== 시각 [where] ====` 단위).
+
+    `_log_error` 는 진단 로그(claude_format_unrecognized 등 예외 없는 호출)에도
+    쓰이는데 그때 트레이스백 자리는 `NoneType: None` 이다 — **그건 예외가 아니므로
+    세지 않는다**(안 그러면 정상 진단이 전 스위트를 빨갛게 만든다)."""
+    out = []
+    base = ipc.state_base(sock)
+    for path in (base + ".error.log", base + ".client.crash.log"):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        for chunk in text.split("\n==== "):
+            if _TB_HEAD in chunk:
+                out.append(("==== " + chunk).strip())
+    return out
+
+
+def _block_where(block: str) -> str:
+    """블록 헤더 `==== <시각> [<where>] ====` 에서 where 라벨만 뽑는다(없으면 "")."""
+    head = block.split("\n", 1)[0]
+    if "[" in head and "]" in head:
+        return head[head.index("[") + 1:head.rindex("]")]
+    return ""
+
+
+def assert_no_server_errors(sock, allow=False):
+    """error.log 에 트레이스백이 남았으면 실패시킨다.
+
+    allow=True 면 전부 허용(권장하지 않음), 문자열/시퀀스면 그 **where 라벨의 접두**와
+    맞는 블록만 허용한다. 왜 '블록 본문 부분문자열'이 아니라 '라벨 접두'인가 —
+    부분문자열이면 `expected_thing` 허용이 `unexpected_thing` 까지 허용한다(실제로
+    자기검증 테스트에서 밟았다). 접두 매칭은 `remote_attach` 로
+    `remote_attach(/tmp/x.sock)` 를, `slow client dropped` 로
+    `slow client dropped (write backpressure)` 를 덮으면서 다른 라벨은 안 덮는다."""
+    if allow is True:
+        return
+    allowed = (allow,) if isinstance(allow, str) else tuple(allow or ())
+    bad = [b for b in server_error_blocks(sock)
+           if not any(_block_where(b).startswith(a) for a in allowed)]
+    if bad:
+        head = bad[0].splitlines()
+        raise AssertionError(
+            "서버가 예외를 로그로만 삼켰다(%d블록) — 조용한 실패:\n%s"
+            % (len(bad), "\n".join(head[:14])))
+
+
+async def teardown(srv, task, sock, allow_errors=False):
     # 주의: 여기서 task 를 await 하지 않는다. Textual run_test 종료 직후엔 루프가
     # 정리 중이라 serve 태스크를 await 하면 "Event loop stopped" 가 난다.
     # cancel 만 하고 asyncio.run 의 마무리에 맡긴다.
@@ -117,10 +181,13 @@ async def teardown(srv, task, sock):
     os.environ.pop("PYTMUX_CAPTURE_DIR", None)
     os.environ.pop("PYTMUX_TOKENS_DB", None)
     os.environ.pop("PYTMUX_PTY_HOST", None)
+    # 정리 **뒤에** 검사한다 — 종료 경로에서 나는 예외까지 잡는다. 소켓 파일은 이미
+    # 지워졌지만 error.log 는 남아 있다(경로가 다르다).
+    assert_no_server_errors(sock, allow=allow_errors)
 
 
 @contextlib.asynccontextmanager
-async def running_server():
+async def running_server(allow_errors=False):
     """서버를 기동하고 블록 종료 시 정리하는 컨텍스트 매니저(1-6). 스위트 전반의
     `srv, task, sock = await server_only()` + try/finally `await teardown(...)`
     보일러플레이트(214곳)를 `async with running_server() as (srv, task, sock):`
@@ -129,7 +196,7 @@ async def running_server():
     try:
         yield srv, task, sock
     finally:
-        await teardown(srv, task, sock)
+        await teardown(srv, task, sock, allow_errors=allow_errors)
 
 
 def pane_text(pane):

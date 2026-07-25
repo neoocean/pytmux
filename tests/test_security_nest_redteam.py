@@ -185,4 +185,4 @@ async def test_nest_endpoint_block_boundary_is_local_only():
                 "로컬 loopback 직결 경로가 동작해야 함(경계 = 로컬만)", mon.connects)
             assert mon.nonlocal_targets() == [], mon.nonlocal_targets()
     finally:
-        await teardown(srvA, taskA, sockA)
+        await teardown(srvA, taskA, sockA, allow_errors=("remote_attach",))

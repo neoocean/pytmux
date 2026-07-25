@@ -155,7 +155,7 @@ async def test_flush_acquire_timeout_drops_wedged_client():
         assert c not in srv.clients, "acquire 타임아웃 시 먹통 클라를 떨궈야 함"
     finally:
         serverio._CLIENT_WRITE_TIMEOUT = saved
-        await teardown(srv, task, sock)
+        await teardown(srv, task, sock, allow_errors=("slow client dropped",))
 
 
 async def test_flush_loop_restarts_after_unexpected_exception():

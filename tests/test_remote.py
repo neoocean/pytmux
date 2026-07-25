@@ -290,7 +290,7 @@ async def test_remote_attach_failure_sends_notice():
     finally:
         if writer is not None:
             writer.close()
-        await teardown(srvA, taskA, sockA)
+        await teardown(srvA, taskA, sockA, allow_errors=("remote_attach",))
 
 
 async def test_remote_tab_active_highlight_and_status_passthrough():
@@ -493,8 +493,8 @@ async def test_remote_reconnect_giveup_reports_reason():
     finally:
         if writer is not None:
             writer.close()
-        await teardown(srvA, taskA, sockA)
-        await teardown(srvB, taskB, sockB)
+        await teardown(srvA, taskA, sockA, allow_errors=("remote_attach",))
+        await teardown(srvB, taskB, sockB, allow_errors=("remote_attach",))
 
 
 async def test_reconnect_requires_first_status_not_just_hello():
@@ -2047,7 +2047,7 @@ async def test_nest_attach_request_guards():
         finally:
             pA.pty = realA
     finally:
-        await teardown(srvA, taskA, sockA)
+        await teardown(srvA, taskA, sockA, allow_errors=("remote_attach",))
 
 
 async def test_nest_do_attach_repeat_does_not_reswitch():

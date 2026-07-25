@@ -345,7 +345,7 @@ async def test_execv_failure_fallback_rearms_and_cleans():
         assert calls["notify"] == 1, "질서 종료 통지 호출"
         assert srv.running is False
     finally:
-        await teardown(srv, task, sock)
+        await teardown(srv, task, sock, allow_errors=("execv",))
 
 
 async def test_cleanup_endpoint_files_unlinks_socket_portfile_token():

@@ -107,7 +107,7 @@ async def test_redteam_authed_fuzz_survives():
         assert rep["sent"] >= 10, rep                       # top 5 + loop 7
         assert rep["alive_after"] is True, rep              # 어떤 인증 악성에도 생존
     finally:
-        await teardown(srv, task, ep)
+        await teardown(srv, task, ep, allow_errors=("dispatch",))
 
 
 async def test_redteam_resource_samplers_return_ints():
