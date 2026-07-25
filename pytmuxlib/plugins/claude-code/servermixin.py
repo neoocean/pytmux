@@ -160,6 +160,25 @@ _MANAGED_SETTINGS_ACCEPT_KEY = b"\r"
 # 기본 3, 0=끔). 스캔의 warn 블록이 self.* 를 읽는다.
 
 
+
+class _ScanFrame:
+    """`_scan_claude` 의 **한 패널·한 프레임** 스코프 상태(로드맵 #1 분할).
+
+    phase 들이 주고받는 값만 담는다 — `txt`(그 프레임 화면 텍스트)·`old_cl`/`new_cl`
+    (직전/현재 Claude 상태)·`old_hdr`(디바운스된 헤더 플래그의 갱신 **전** 값,
+    거짓 종료 판별용)·`committed`(토큰 회계가 확정한 값 → 프롬프트 승격이 응답 경계로
+    읽음)·`changed`(상태 변화 → 호출부가 클라 갱신). 딕셔너리가 아니라 __slots__ 클래스인
+    이유: 오타 필드가 조용히 생기지 않는다(이 코드의 실패 모드가 정확히 '조용한 무동작')."""
+    __slots__ = ("txt", "old_cl", "new_cl", "old_hdr", "committed", "changed")
+
+    def __init__(self, txt, old_cl, new_cl, old_hdr):
+        self.txt = txt
+        self.old_cl = old_cl
+        self.new_cl = new_cl
+        self.old_hdr = old_hdr
+        self.committed = 0
+        self.changed = False
+
 class ServerClaudeMixin:
     # ── 메서드 인덱스(LLM 부분 Read 용 — 이 단일 클래스는 큰 단일 클래스라 `grep '^    def '`
     #    의 class 축이 무력하다. 섹션→**앵커 메서드명**(정확한 위치는 그 이름을 `grep -n`
@@ -1499,6 +1518,218 @@ class ServerClaudeMixin:
             # (compact 가 효과 없어도 매 응답 무한 정리하지 않게 — §5.5).
         return changed
 
+
+    # ── _scan_claude phase 분할(로드맵 #1 마무리, 2026-07-25) ─────────────────
+    # 앞서 뽑은 6개 phase 와 달리 아래 셋은 **루프 지역변수를 서로 주고받는다**
+    # (토큰 회계가 만든 committed 를 프롬프트 승격이 "다음 응답 시작" 경계로 읽는다).
+    # 그래서 파라미터/튜플 반환이 아니라 **프레임 스코프 상태객체**(_ScanFrame)로
+    # 넘긴다 — 기계적으로 밀면 헬퍼에서 NameError 가 나고, 스캔 예외는 _flush 가
+    # 삼켜 **조용히 상태가 멈춘다**(HANDOFF §10-4 가 경고한 지뢰가 정확히 여기다).
+    def _scan_session_boundary(self, fr, p):
+        """새 Claude 세션 경계(None→Claude) 리셋 + 세션 종료 시 예약 해제 phase."""
+        # 토큰 누계(#3): 새 Claude 세션 시작(None→Claude) 시 리셋, 매 프레임
+        # 현재 응답 running 토큰을 step 으로 접어 응답별 peak 를 누계에 확정.
+        # (확정 시점 fr.committed>0 은 #7 의 영속 로깅 이벤트로도 쓰인다 — 프레임 필드.)
+        if fr.new_cl and not fr.old_cl:
+            tokens.reset(p._tok_state)
+            p._exit_tokens = 0       # 새 세션 → 이전 종료 총량 보존값 폐기
+            # 새 Claude 세션 경계: 세션 id 부여, 계정 재감지(수동 지정은 유지).
+            self._next_claude_session_id(p)
+            # 모델 래치는 **확정 세션 종료**(디바운스 _hdr_claude 가 False 까지
+            # 갔던)를 지나온 새 세션에서만 푼다(2026-07-16 도입, 2026-07-18 게이트
+            # 추가). 새 세션은 다른 모델로 뜰 수 있어(기본값 복귀·`--model` 기동)
+            # 풀어야 재감지되지만, 라이브 값은 프로브가 못 덮으므로(_update_claude_model)
+            # 무조건 풀면 안 되고, **transient flap 에선 풀면 안 된다**: 긴 busy
+            # 출력이 footer 를 화면 샘플 밖으로 밀어 claude_state 가 한두 프레임 None
+            # 이 됐다 돌아오면 fr.old_cl=None→fr.new_cl 로 이 블록에 오는데(같은 세션),
+            # 그때 래치를 풀면 /model 로 확인한 라이브 모델(opus)이 프로브 기본값
+            # (sonnet-5)으로 되돌아간다(제보 2026-07-18). flap 은 _hdr_claude
+            # 가 30프레임 미스 전이라 여전히 True 이고, 진짜 재기동만 이전 세션이
+            # _hdr_claude False 까지 갔다 온다(=fr.old_hdr False) — 종료 토큰
+            # 주입을 _claude_really_exited 로 가드하는 것과 같은 '거짓 종료' 방어.
+            if not fr.old_hdr:
+                p._claude_model = None
+                p._claude_model_weak = False
+                p._claude_model_cand = None
+                p._claude_model_cand_n = 0
+            if not p._claude_account_manual:
+                p._claude_account = None
+                p._claude_account_full = None
+                # 계정 자동 캡처(요청 2026-06-12): 새 세션 시작 시 그림자 /usage
+                # 프로브를 곧 1회 돌려 /status 로 계정 라벨을 잡게 한다(자동 갱신이
+                # 켜진 경우만). 위 스캔 백필이 그 계정을 패널에 채워 unknown 적재를
+                # 줄인다. _schedule_usage_refresh 디바운스로 중복 spawn 방지, 약간의
+                # 지연으로 실 세션이 먼저 부팅하게 둔다.
+                if self.usage_refresh_sec > 0:
+                    self._schedule_usage_refresh(
+                        self._USAGE_NEW_SESSION_DELAY)
+            # 시작 규칙 주입 예약(#27): 새 Claude 세션이 뜨면 다음 idle(입력
+            # 준비됨) 때 저장된 규칙을 프롬프트에 넣는다. 빈 규칙이면 안 함.
+            if self.claude_rules.strip():
+                p._rules_pending = True
+            # 새 세션 자동 셋업(auto-launch): 첫 idle 에 /rc(원격제어)+권한 auto
+            # 1회 적용. _rc_pending 가 idle 에서 /rc 를 쏘고 _perm_auto_pending
+            # 으로 넘겨, 다음 idle 에 _perm_target=auto 를 세운다(프레임 분리로
+            # /rc 제출과 shift+tab 이 한 묶음으로 섞이지 않게).
+            # 조직 정책으로 /rc 가 막힌 세션이면 자동 /rc 를 재무장하지 않는다.
+            # (재시작 후 거짓 새세션 오인으로 /rc 가 재발하는 건 fire 시점의
+            # _rc_done 가드로 막는다 — 무장은 perm-auto 유도도 겸하므로 둔다.)
+            if self.claude_auto_launch and not self._rc_policy_blocked:
+                p._rc_pending = True
+        if not fr.new_cl:
+            p._rules_pending = False   # 세션 끝나면 예약 해제
+            p._rc_pending = False      # 세션 끝 — auto-launch 예약 해제
+            p._perm_auto_pending = False
+
+    def _scan_token_accounting(self, fr, sess, t, p):
+        """계정 래치·모델 배지·토큰 step/누계·트랜스크립트 적재 phase.
+
+        **fr.committed 를 만든다** — 뒤의 프롬프트 승격이 이 값을 응답 경계로 읽는다."""
+        if fr.new_cl:
+            # 계정 단서를 세션 first-seen 으로 고정(§3.5③). 세션 경계에서
+            # None 으로 리셋되므로, 그 세션에서 **처음** 검출된 신뢰 계정만
+            # 래치하고 이후 프레임의 검출로는 덮지 않는다(수동 지정 우선).
+            # 예전엔 매 프레임 last-seen 갱신이라, 한 응답이 끝난 뒤 화면에
+            # 우연히 뜬 다른(또는 오검출) 계정 라벨이 이미 확정된 토큰을
+            # 엉뚱한 계정으로 재귀속할 수 있었다. 한 Claude 프로세스=한 계정
+            # 이므로 first-seen 이 의미상 정확하다.
+            if not p._claude_account_manual and p._claude_account is None:
+                acct = claude_account(fr.txt)
+                # footer 전체 표시용 비별칭 계정(같은 판정). 스크랩에서 못 잡고
+                # 프로브 폴백을 쓰는 경우엔 전체가 없어 None → 클라가 별칭으로 폴백.
+                acct_full = claude_account_full(fr.txt)
+                if not acct:
+                    # 폴백(요청 2026-06-12): 패널 자체 화면엔 계정 라벨
+                    # ('<email>'s Organization)이 안 떠 미식별이면, 그림자
+                    # /usage 프로브가 /status 로 잡은 계정으로 채운다(한
+                    # 머신=한 로그인 가정 — usagedb §5.5 단일계정 가정과 동일).
+                    # 토큰이 'unknown' 으로 적재되던 걸 줄인다. 프로브 계정도
+                    # 없거나 'unknown' 이면 종전대로 None(서버가 unknown 으로 묶음).
+                    pa = (self._usage.get("account")
+                          if isinstance(self._usage, dict) else None)
+                    if pa and pa != "unknown":
+                        acct = pa
+                        acct_full = None   # 프로브는 별칭만 → 전체 미상
+                if acct:
+                    p._claude_account = acct
+                    p._claude_account_full = acct_full
+            # M14c: 모델 배지(Opus 4.8 등) 갱신 — 마지막 본 값 유지.
+            # 배지 서명(‘(… context)’/‘/model’)이 붙은 매치만 인정한다
+            # (claude_model_badge). 전체 화면 스크랩이라, 대화/온보딩 본문의
+            # 모델명 언급(예 "claude-fable-5")을 활성 모델로 오인해 상태줄이
+            # 엉뚱한 모델로 튀던 것 방지(2026-07-04). 배지 없으면 None → 아래
+            # 프로브 폴백(/usage 실 모델, 팝업과 동일 출처)이 채운다.
+            # M14c: 모델 배지/프로브 감지+디바운스(로드맵 God-분할 —
+            # _update_claude_model 로 추출, 동작 불변).
+            if self._update_claude_model(p, fr.txt):
+                fr.changed = True
+            running = tokens.parse_running_tokens(fr.txt)
+            busy = fr.new_cl == "busy"
+            peak0 = p._tok_state.get("peak", 0)   # step 전 진행중 peak
+            fr.committed = tokens.step(p._tok_state, running, busy)
+            if fr.committed > 0:
+                self._log_tokens(sess, t, p, fr.committed)
+            # 10-D 판정용 env-gated 진단(기본 OFF): step 의 running/peak/
+            # committed + 스캔 간격을 라이브로 남긴다.
+            if self._token_debug_on():
+                self._log_token_debug(p, t, state=fr.new_cl, busy=busy,
+                                      running=running, peak_before=peak0,
+                                      committed=fr.committed)
+            # 표시용 누계 = 확정 total + **진행 중 응답의 peak**(아직 미확정).
+            # 예전엔 total 만 써서, 스트리밍 중인 현재 응답 토큰이 빠져 Claude
+            # 표시보다 항상 적게 나왔다(#20). peak 는 확정 시 total 로 접히므로
+            # total+peak 는 경계에서 연속적이고 이중계산이 없다.
+            live = p._tok_state["total"] + p._tok_state["peak"]
+            if live != p._session_tokens:
+                p._session_tokens = live
+                fr.changed = True
+            # §10-D P4: 트랜스크립트 권위 토큰 증분 적재(usage_xc). 위 footer
+            # 스크랩(live)은 cache_read/creation 을 못 봐 실제의 ~0.4%만 잡는
+            # 라이브 활동신호로 남기고, 4항목 정확 누계는 ~/.claude 트랜스크립트
+            # 에서 적재한다. 응답 종료(fr.committed>0)엔 그 턴의 usage 가 막 기록됐
+            # 으므로 강제 테일, 그 외엔 _XC_TAIL_FRAMES 주기로만 — best-effort.
+            self._xc_tail_pane(sess, t, p, force=fr.committed > 0)
+        elif p._session_tokens:
+            # 세션 종료(None) — 진행 중 peak 가 미확정 채 버려지던 지점(10-D).
+            # busy footer 가 idle 프레임을 거치지 않고 곧장 사라지면(응답
+            # 스트리밍 중 Claude 종료·Ctrl-C·/quit 등) step 의 not-busy 확정을
+            # 못 거쳐 진행 중 peak 가 유실됐다. reset 전에 그 peak 를 1회
+            # 영속 확정해 마지막(부분) 응답의 토큰을 보존한다.
+            #   trade-off: busy↔None 깜빡임 뒤 같은 응답이 재개되면 재계수(과대)
+            #   여지가 있으나, §10-D 캡처 감사에서 running 중 None 프레임이 0건
+            #   (busy→None 직행 = 사실상 진짜 종료)이라 실질 위험 없음. 그래도
+            #   발생하면 미미한 1회 과대 vs 현행 1회 유실 — 누락 방향을 택한다.
+            surviving = p._tok_state.get("peak", 0)
+            if surviving > 0:
+                self._log_tokens(sess, t, p, surviving)
+            if self._token_debug_on():
+                self._log_token_debug(
+                    p, t, state=fr.new_cl, busy=False, running=None,
+                    peak_before=surviving,
+                    committed=surviving, reset=True)
+            # §10-F: 리셋으로 사라질 세션 총량을 종료 요약용으로 1회 보존한다
+            # (종료 확정은 여기서 _HDR_CLAUDE_MISS 프레임 뒤라, 그때 _session_tokens
+            # 는 이미 0). _usage_exit_text 가 이 값을 우선 읽어 요약이 비지 않는다.
+            p._exit_tokens = p._session_tokens
+            p._session_tokens = 0
+            p._tok_state["peak"] = 0
+            p._tok_state["total"] = 0
+            fr.changed = True
+
+    def _scan_prompt_promotion(self, fr, p):
+        """큐된 프롬프트 승격(#4)·화면 프롬프트 반영(§10 #19) phase.
+
+        **fr.committed 를 읽는다**(연속 busy 중 급감 = 다음 응답 시작 경계)."""
+        # 큐된 프롬프트 승격(#4): 헤더는 "지금 처리 중인 프롬프트"를 보여야
+        # 한다. busy 중 입력한 프롬프트는 _track_prompt 가 pending_prompts 에
+        # 쌓아 뒀다(last_prompt 즉시 안 바꿈). 응답 경계 — ① busy→non-busy(응답
+        # 종료) 또는 ② 연속 busy 중 running 토큰 급감(fr.committed>0 = 다음 응답
+        # 시작) — 에서 큐의 다음 프롬프트를 last_prompt 로 승격한다.
+        if p._claude is None:
+            if p.pending_prompts:
+                p.pending_prompts.clear()
+            p._busy_exit_miss = 0   # §3.4 라치 해제(세션 종료)
+            # Claude 세션 종료 → 권한모드 관측/목표 비움(§10 item 2)
+            if p._perm_mode is not None or p._perm_target is not None:
+                p._perm_mode = None
+                p._perm_target = None
+            # bypass 가용성도 리셋 — 다음 세션은 위험 플래그 없이 떴을 수 있다.
+            p._bypass_seen = False
+        else:
+            # §3.4 busy 이탈 깜빡임 흡수: busy→idle 첫 프레임은 리페인트가
+            # 스피너를 한 프레임 놓친 깜빡임일 수 있다 — 즉시 승격하지 않고
+            # **다음 스캔도 idle** 이면(연속 2프레임) 경계로 확정한다. busy 로
+            # 복귀하면 라치 해제(승격 없음 — 조기 승격 방지). busy→limit/None
+            # 은 깜빡임이 아니므로 즉시. (done 플래그·auto-doc 타이머는 각자
+            # _DONE_IDLE_FRAMES·busy 복귀 해제로 이미 깜빡임에 안전하다.)
+            exit_now = (fr.old_cl == "busy" and fr.new_cl != "busy")
+            if exit_now and fr.new_cl == "idle":
+                p._busy_exit_miss = 1     # 확정 대기(다음 스캔에 판정)
+                boundary = False
+            elif p._busy_exit_miss and fr.new_cl == "idle":
+                p._busy_exit_miss = 0
+                boundary = True           # 연속 2프레임 idle → 경계 확정
+            else:
+                p._busy_exit_miss = 0
+                boundary = exit_now       # busy→limit/None 등은 즉시
+            if not boundary and fr.committed > 0 and fr.new_cl == "busy":
+                boundary = True
+            if boundary and p.pending_prompts:
+                p.last_prompt = p.pending_prompts.pop(0)
+                fr.changed = True
+        # 데스크탑 앱 원격제어 등 입력 경로(_track_prompt)를 안 거친 프롬프트
+        # 반영(§10 #19): 화면 transcript 에서 최신 사용자 프롬프트를 best-effort
+        # 추출해, 입력으로 안 잡힌(last_prompt 와 다르고 승격 대기 큐에도 없는)
+        # 경우에만 헤더를 갱신한다. 로컬 입력은 _track_prompt 가 제출 즉시
+        # last_prompt/pending 큐에 남기므로 여기 가드에 걸려 중복되지 않는다.
+        # 화면 파싱은 best-effort 라 보수적으로 매칭한다.
+        if fr.new_cl:
+            sp = claude_prompt(fr.txt)
+            if (sp and sp != p.last_prompt
+                    and sp not in p.pending_prompts[-5:]):
+                p.last_prompt = sp
+                fr.changed = True
+
     def _scan_claude(self, sess, win) -> bool:
         """모든 탭 패널의 Claude 상태/사용량을 화면 텍스트(screen.display)로 갱신
         하고, **비활성 탭**의 busy→idle(작업 완료) 전이를 감지해 `has_claude_done`
@@ -1554,6 +1785,9 @@ class ServerClaudeMixin:
                 # 2026-07-18). 갱신 후엔 recovery 프레임에서 항상 True 라 flap↔재기동을
                 # 못 가른다.
                 old_hdr_claude = p._hdr_claude
+                # 분할된 phase 들이 주고받는 프레임 상태(위 지역변수와 같은 값 —
+                # 아직 인라인으로 남은 코드가 지역변수를 쓰므로 둘을 함께 둔다).
+                fr = _ScanFrame(txt, old_cl, new_cl, old_hdr_claude)
                 # §3.7: 파서가 상태를 못 읽는데 Claude 가 실제 실행 중이면(throttle 된
                 # fg 검사) '포맷 미인식' 경고를 세워 추적 중단을 가시화한다.
                 if self._update_fmt_unknown(p, new_cl is not None):
@@ -1616,60 +1850,8 @@ class ServerClaudeMixin:
                 # §10-F 종료 토큰 주입 예약 처리(로드맵 God-함수 분할 1차 —
                 # _process_exit_token_pending 로 추출, 동작 불변).
                 self._process_exit_token_pending(sess, p)
-                # 토큰 누계(#3): 새 Claude 세션 시작(None→Claude) 시 리셋, 매 프레임
-                # 현재 응답 running 토큰을 step 으로 접어 응답별 peak 를 누계에 확정.
-                # (확정 시점 committed>0 은 #7 의 영속 로깅 이벤트로도 쓰인다.)
-                committed = 0
-                if new_cl and not old_cl:
-                    tokens.reset(p._tok_state)
-                    p._exit_tokens = 0       # 새 세션 → 이전 종료 총량 보존값 폐기
-                    # 새 Claude 세션 경계: 세션 id 부여, 계정 재감지(수동 지정은 유지).
-                    self._next_claude_session_id(p)
-                    # 모델 래치는 **확정 세션 종료**(디바운스 _hdr_claude 가 False 까지
-                    # 갔던)를 지나온 새 세션에서만 푼다(2026-07-16 도입, 2026-07-18 게이트
-                    # 추가). 새 세션은 다른 모델로 뜰 수 있어(기본값 복귀·`--model` 기동)
-                    # 풀어야 재감지되지만, 라이브 값은 프로브가 못 덮으므로(_update_claude_model)
-                    # 무조건 풀면 안 되고, **transient flap 에선 풀면 안 된다**: 긴 busy
-                    # 출력이 footer 를 화면 샘플 밖으로 밀어 claude_state 가 한두 프레임 None
-                    # 이 됐다 돌아오면 old_cl=None→new_cl 로 이 블록에 오는데(같은 세션),
-                    # 그때 래치를 풀면 /model 로 확인한 라이브 모델(opus)이 프로브 기본값
-                    # (sonnet-5)으로 되돌아간다(제보 2026-07-18). flap 은 _hdr_claude
-                    # 가 30프레임 미스 전이라 여전히 True 이고, 진짜 재기동만 이전 세션이
-                    # _hdr_claude False 까지 갔다 온다(=old_hdr_claude False) — 종료 토큰
-                    # 주입을 _claude_really_exited 로 가드하는 것과 같은 '거짓 종료' 방어.
-                    if not old_hdr_claude:
-                        p._claude_model = None
-                        p._claude_model_weak = False
-                        p._claude_model_cand = None
-                        p._claude_model_cand_n = 0
-                    if not p._claude_account_manual:
-                        p._claude_account = None
-                        p._claude_account_full = None
-                        # 계정 자동 캡처(요청 2026-06-12): 새 세션 시작 시 그림자 /usage
-                        # 프로브를 곧 1회 돌려 /status 로 계정 라벨을 잡게 한다(자동 갱신이
-                        # 켜진 경우만). 위 스캔 백필이 그 계정을 패널에 채워 unknown 적재를
-                        # 줄인다. _schedule_usage_refresh 디바운스로 중복 spawn 방지, 약간의
-                        # 지연으로 실 세션이 먼저 부팅하게 둔다.
-                        if self.usage_refresh_sec > 0:
-                            self._schedule_usage_refresh(
-                                self._USAGE_NEW_SESSION_DELAY)
-                    # 시작 규칙 주입 예약(#27): 새 Claude 세션이 뜨면 다음 idle(입력
-                    # 준비됨) 때 저장된 규칙을 프롬프트에 넣는다. 빈 규칙이면 안 함.
-                    if self.claude_rules.strip():
-                        p._rules_pending = True
-                    # 새 세션 자동 셋업(auto-launch): 첫 idle 에 /rc(원격제어)+권한 auto
-                    # 1회 적용. _rc_pending 가 idle 에서 /rc 를 쏘고 _perm_auto_pending
-                    # 으로 넘겨, 다음 idle 에 _perm_target=auto 를 세운다(프레임 분리로
-                    # /rc 제출과 shift+tab 이 한 묶음으로 섞이지 않게).
-                    # 조직 정책으로 /rc 가 막힌 세션이면 자동 /rc 를 재무장하지 않는다.
-                    # (재시작 후 거짓 새세션 오인으로 /rc 가 재발하는 건 fire 시점의
-                    # _rc_done 가드로 막는다 — 무장은 perm-auto 유도도 겸하므로 둔다.)
-                    if self.claude_auto_launch and not self._rc_policy_blocked:
-                        p._rc_pending = True
-                if not new_cl:
-                    p._rules_pending = False   # 세션 끝나면 예약 해제
-                    p._rc_pending = False      # 세션 끝 — auto-launch 예약 해제
-                    p._perm_auto_pending = False
+                # 세션 경계 phase(분할): 새 세션 리셋·종료 시 예약 해제.
+                self._scan_session_boundary(fr, p)
                 # 수동 /clear 감지: 이미 Claude 세션 중(old_cl)인데 환영 배너가 **새로**
                 # 뜨면(빈 컨텍스트) 토큰 누계를 새 세션으로 끊는다. pytmux 자동화(_pc_
                 # advance)를 안 타는 사용자 직접 /clear 가, 상태줄 ctx 근사%(누계/윈도우)를
@@ -1682,147 +1864,12 @@ class ServerClaudeMixin:
                         p._rules_pending = True
                     changed = True
                 p._welcome_seen = wel
-                if new_cl:
-                    # 계정 단서를 세션 first-seen 으로 고정(§3.5③). 세션 경계에서
-                    # None 으로 리셋되므로, 그 세션에서 **처음** 검출된 신뢰 계정만
-                    # 래치하고 이후 프레임의 검출로는 덮지 않는다(수동 지정 우선).
-                    # 예전엔 매 프레임 last-seen 갱신이라, 한 응답이 끝난 뒤 화면에
-                    # 우연히 뜬 다른(또는 오검출) 계정 라벨이 이미 확정된 토큰을
-                    # 엉뚱한 계정으로 재귀속할 수 있었다. 한 Claude 프로세스=한 계정
-                    # 이므로 first-seen 이 의미상 정확하다.
-                    if not p._claude_account_manual and p._claude_account is None:
-                        acct = claude_account(txt)
-                        # footer 전체 표시용 비별칭 계정(같은 판정). 스크랩에서 못 잡고
-                        # 프로브 폴백을 쓰는 경우엔 전체가 없어 None → 클라가 별칭으로 폴백.
-                        acct_full = claude_account_full(txt)
-                        if not acct:
-                            # 폴백(요청 2026-06-12): 패널 자체 화면엔 계정 라벨
-                            # ('<email>'s Organization)이 안 떠 미식별이면, 그림자
-                            # /usage 프로브가 /status 로 잡은 계정으로 채운다(한
-                            # 머신=한 로그인 가정 — usagedb §5.5 단일계정 가정과 동일).
-                            # 토큰이 'unknown' 으로 적재되던 걸 줄인다. 프로브 계정도
-                            # 없거나 'unknown' 이면 종전대로 None(서버가 unknown 으로 묶음).
-                            pa = (self._usage.get("account")
-                                  if isinstance(self._usage, dict) else None)
-                            if pa and pa != "unknown":
-                                acct = pa
-                                acct_full = None   # 프로브는 별칭만 → 전체 미상
-                        if acct:
-                            p._claude_account = acct
-                            p._claude_account_full = acct_full
-                    # M14c: 모델 배지(Opus 4.8 등) 갱신 — 마지막 본 값 유지.
-                    # 배지 서명(‘(… context)’/‘/model’)이 붙은 매치만 인정한다
-                    # (claude_model_badge). 전체 화면 스크랩이라, 대화/온보딩 본문의
-                    # 모델명 언급(예 "claude-fable-5")을 활성 모델로 오인해 상태줄이
-                    # 엉뚱한 모델로 튀던 것 방지(2026-07-04). 배지 없으면 None → 아래
-                    # 프로브 폴백(/usage 실 모델, 팝업과 동일 출처)이 채운다.
-                    # M14c: 모델 배지/프로브 감지+디바운스(로드맵 God-분할 —
-                    # _update_claude_model 로 추출, 동작 불변).
-                    if self._update_claude_model(p, txt):
-                        changed = True
-                    running = tokens.parse_running_tokens(txt)
-                    busy = new_cl == "busy"
-                    peak0 = p._tok_state.get("peak", 0)   # step 전 진행중 peak
-                    committed = tokens.step(p._tok_state, running, busy)
-                    if committed > 0:
-                        self._log_tokens(sess, t, p, committed)
-                    # 10-D 판정용 env-gated 진단(기본 OFF): step 의 running/peak/
-                    # committed + 스캔 간격을 라이브로 남긴다.
-                    if self._token_debug_on():
-                        self._log_token_debug(p, t, state=new_cl, busy=busy,
-                                              running=running, peak_before=peak0,
-                                              committed=committed)
-                    # 표시용 누계 = 확정 total + **진행 중 응답의 peak**(아직 미확정).
-                    # 예전엔 total 만 써서, 스트리밍 중인 현재 응답 토큰이 빠져 Claude
-                    # 표시보다 항상 적게 나왔다(#20). peak 는 확정 시 total 로 접히므로
-                    # total+peak 는 경계에서 연속적이고 이중계산이 없다.
-                    live = p._tok_state["total"] + p._tok_state["peak"]
-                    if live != p._session_tokens:
-                        p._session_tokens = live
-                        changed = True
-                    # §10-D P4: 트랜스크립트 권위 토큰 증분 적재(usage_xc). 위 footer
-                    # 스크랩(live)은 cache_read/creation 을 못 봐 실제의 ~0.4%만 잡는
-                    # 라이브 활동신호로 남기고, 4항목 정확 누계는 ~/.claude 트랜스크립트
-                    # 에서 적재한다. 응답 종료(committed>0)엔 그 턴의 usage 가 막 기록됐
-                    # 으므로 강제 테일, 그 외엔 _XC_TAIL_FRAMES 주기로만 — best-effort.
-                    self._xc_tail_pane(sess, t, p, force=committed > 0)
-                elif p._session_tokens:
-                    # 세션 종료(None) — 진행 중 peak 가 미확정 채 버려지던 지점(10-D).
-                    # busy footer 가 idle 프레임을 거치지 않고 곧장 사라지면(응답
-                    # 스트리밍 중 Claude 종료·Ctrl-C·/quit 등) step 의 not-busy 확정을
-                    # 못 거쳐 진행 중 peak 가 유실됐다. reset 전에 그 peak 를 1회
-                    # 영속 확정해 마지막(부분) 응답의 토큰을 보존한다.
-                    #   trade-off: busy↔None 깜빡임 뒤 같은 응답이 재개되면 재계수(과대)
-                    #   여지가 있으나, §10-D 캡처 감사에서 running 중 None 프레임이 0건
-                    #   (busy→None 직행 = 사실상 진짜 종료)이라 실질 위험 없음. 그래도
-                    #   발생하면 미미한 1회 과대 vs 현행 1회 유실 — 누락 방향을 택한다.
-                    surviving = p._tok_state.get("peak", 0)
-                    if surviving > 0:
-                        self._log_tokens(sess, t, p, surviving)
-                    if self._token_debug_on():
-                        self._log_token_debug(
-                            p, t, state=new_cl, busy=False, running=None,
-                            peak_before=surviving,
-                            committed=surviving, reset=True)
-                    # §10-F: 리셋으로 사라질 세션 총량을 종료 요약용으로 1회 보존한다
-                    # (종료 확정은 여기서 _HDR_CLAUDE_MISS 프레임 뒤라, 그때 _session_tokens
-                    # 는 이미 0). _usage_exit_text 가 이 값을 우선 읽어 요약이 비지 않는다.
-                    p._exit_tokens = p._session_tokens
-                    p._session_tokens = 0
-                    p._tok_state["peak"] = 0
-                    p._tok_state["total"] = 0
-                    changed = True
+                # 계정·모델·토큰 회계 phase(분할) — fr.committed 를 만든다.
+                self._scan_token_accounting(fr, sess, t, p)
                 # (M18-B 의 limit 진입 시 5h 상한 학습(_learned_5h_cap)은 S6 T3 에서
                 #  분모 근사 폐기와 함께 제거 — 5h% 는 이제 /usage 실측만 따른다.)
-                # 큐된 프롬프트 승격(#4): 헤더는 "지금 처리 중인 프롬프트"를 보여야
-                # 한다. busy 중 입력한 프롬프트는 _track_prompt 가 pending_prompts 에
-                # 쌓아 뒀다(last_prompt 즉시 안 바꿈). 응답 경계 — ① busy→non-busy(응답
-                # 종료) 또는 ② 연속 busy 중 running 토큰 급감(committed>0 = 다음 응답
-                # 시작) — 에서 큐의 다음 프롬프트를 last_prompt 로 승격한다.
-                if p._claude is None:
-                    if p.pending_prompts:
-                        p.pending_prompts.clear()
-                    p._busy_exit_miss = 0   # §3.4 라치 해제(세션 종료)
-                    # Claude 세션 종료 → 권한모드 관측/목표 비움(§10 item 2)
-                    if p._perm_mode is not None or p._perm_target is not None:
-                        p._perm_mode = None
-                        p._perm_target = None
-                    # bypass 가용성도 리셋 — 다음 세션은 위험 플래그 없이 떴을 수 있다.
-                    p._bypass_seen = False
-                else:
-                    # §3.4 busy 이탈 깜빡임 흡수: busy→idle 첫 프레임은 리페인트가
-                    # 스피너를 한 프레임 놓친 깜빡임일 수 있다 — 즉시 승격하지 않고
-                    # **다음 스캔도 idle** 이면(연속 2프레임) 경계로 확정한다. busy 로
-                    # 복귀하면 라치 해제(승격 없음 — 조기 승격 방지). busy→limit/None
-                    # 은 깜빡임이 아니므로 즉시. (done 플래그·auto-doc 타이머는 각자
-                    # _DONE_IDLE_FRAMES·busy 복귀 해제로 이미 깜빡임에 안전하다.)
-                    exit_now = (old_cl == "busy" and new_cl != "busy")
-                    if exit_now and new_cl == "idle":
-                        p._busy_exit_miss = 1     # 확정 대기(다음 스캔에 판정)
-                        boundary = False
-                    elif p._busy_exit_miss and new_cl == "idle":
-                        p._busy_exit_miss = 0
-                        boundary = True           # 연속 2프레임 idle → 경계 확정
-                    else:
-                        p._busy_exit_miss = 0
-                        boundary = exit_now       # busy→limit/None 등은 즉시
-                    if not boundary and committed > 0 and new_cl == "busy":
-                        boundary = True
-                    if boundary and p.pending_prompts:
-                        p.last_prompt = p.pending_prompts.pop(0)
-                        changed = True
-                # 데스크탑 앱 원격제어 등 입력 경로(_track_prompt)를 안 거친 프롬프트
-                # 반영(§10 #19): 화면 transcript 에서 최신 사용자 프롬프트를 best-effort
-                # 추출해, 입력으로 안 잡힌(last_prompt 와 다르고 승격 대기 큐에도 없는)
-                # 경우에만 헤더를 갱신한다. 로컬 입력은 _track_prompt 가 제출 즉시
-                # last_prompt/pending 큐에 남기므로 여기 가드에 걸려 중복되지 않는다.
-                # 화면 파싱은 best-effort 라 보수적으로 매칭한다.
-                if new_cl:
-                    sp = claude_prompt(txt)
-                    if (sp and sp != p.last_prompt
-                            and sp not in p.pending_prompts[-5:]):
-                        p.last_prompt = sp
-                        changed = True
+                # 프롬프트 승격 phase(분할) — fr.committed 를 응답 경계로 읽는다.
+                self._scan_prompt_promotion(fr, p)
                 # 완료 감지(idle 안정)·자동 리드로우·완료 알림 phase — 로드맵 #1
                 # God-분할로 _scan_done_and_redraw 추출(동작 불변).
                 if self._scan_done_and_redraw(p, t, w, win, old_cl, new_cl, txt):
@@ -1845,6 +1892,9 @@ class ServerClaudeMixin:
                 # M17(T7) 표시 경고 갱신 phase(로드맵 #1 God-분할 — _scan_warnings
                 # 로 추출, 동작 불변).
                 if self._scan_warnings(p, new_cl):
+                    changed = True
+                # 분할 phase 들이 세운 변화를 합류시킨다(프레임 끝에서 한 번).
+                if fr.changed:
                     changed = True
         return changed
 
