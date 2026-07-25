@@ -89,6 +89,16 @@ class RemoteLink:
         # 업스트림 status 누적본(full 이 채운 옵션 키를 light 가 안 지우게 update 로
         # 합친다) — 보는 클라용 status 오버라이드(_remote_status_override)의 원천.
         self.last_status: dict = {}
+        # F-B(검수 2026-07-17): 상류 status 1건이 다운스트림 **클라 수만큼** 프레임을
+        # 만든다(증폭). 상류가 초당 수천 건을 뿜으면 그대로 다운스트림 CPU·대역이
+        # 폭주하는데 상한이 없었다. 아래 3개가 **합치기**(coalescing) 상태다 —
+        # 데이터를 버리는 rate-limit 이 아니라 재방송 **빈도만** 상한하고 마지막
+        # 상태는 반드시 나간다(정상 페더레이션 처리량에 영향이 없어야 한다는 게
+        # 이 항목이 오래 유보된 이유다. 상류 status 는 보통 초당 1건 안팎이라
+        # _STATUS_PUSH_MIN_GAP 아래로는 아예 걸리지 않는다).
+        self._status_push_at: float = 0.0
+        self._status_push_task = None
+        self._status_pending = None      # None | "v"(보는 클라) | "b"(전체 방송)
 
 
 # 원격 탭을 보는 동안 업스트림으로 릴레이하는 cmd action 화이트리스트.
@@ -104,6 +114,12 @@ class RemoteLink:
 # 레지스트리로 새지 않게 한다. 나머지(원격 패널 상태·플러그인 동적 헤더)는 상류 권위.
 # server_opts 8종 + disabled_plugins + 로컬 취향/전역(single_border·win_mouse_motion은
 # 호출부에서 별도 처리하지만 방어적으로 포함).
+# F-B: 상류 status 로 촉발되는 다운스트림 재전송의 **최소 간격**(초). 상류 1건이
+# 클라 수만큼 프레임을 만드는 증폭 경로라, 상한이 없으면 상류가 폭주할 때 다운스트림이
+# 같이 죽는다. 50ms = 초당 20회 — 사람 눈에는 즉시고(탭바·헤더 갱신), 정상 상류
+# (초당 1건 안팎)는 이 게이트에 아예 걸리지 않는다. 테스트가 이 값을 낮춰 쓴다.
+_STATUS_PUSH_MIN_GAP = 0.05
+
 _LOCAL_AUTHORITY_STATUS_KEYS = {
     "coalesce_repaints", "nest_auto_attach", "vt_parser", "window_size",
     "auto_rename", "border_status", "monitor_activity", "monitor_bell",
@@ -816,11 +832,11 @@ class ServerRemoteMixin:
                     wins = self._sanitize_windows(msg.get("windows", []))
                     if wins != link.windows:
                         link.windows = wins
-                        self._remote_status_broadcast()
+                        self._remote_status_push(link, broadcast=True)
                     else:
                         # 탭 목록 불변이어도 부가필드(Claude 헤더/토큰·pane_title
                         # 등)는 변했을 수 있다 — 보는 클라만 갱신.
-                        self._remote_viewer_status(link)
+                        self._remote_status_push(link, broadcast=False)
                     continue
                 if t == "bye":
                     # 업스트림이 우리를 **고의로** 내보냄 — detach_others(다른 뷰어가
@@ -1089,6 +1105,48 @@ class ServerRemoteMixin:
         else:
             link.pinned_windows.discard(key)
         self._remote_status_broadcast()
+
+    def _remote_status_push(self, link: RemoteLink, broadcast: bool):
+        """상류 status 로 촉발된 다운스트림 재전송을 **합쳐서** 내보낸다(F-B).
+
+        규칙 셋:
+        1. 마지막 전송에서 `_STATUS_PUSH_MIN_GAP` 이 지났으면 **즉시** 보낸다 —
+           정상 페더레이션(초당 1건 안팎)은 이 경로만 타므로 지연이 0 이다.
+        2. 아직 안 지났으면 남은 시간만큼 **한 번만** 예약한다. 그 사이 몇 건이
+           들어오든 프레임은 한 번 나가고, 나가는 내용은 그때의 최신 상태다
+           (버리는 게 아니라 합치는 것 — 마지막 상태는 반드시 도달한다).
+        3. 대기 중 '전체 방송'(탭 목록 변동)이 한 번이라도 있었으면 **강한 쪽으로
+           승격**한다. 안 그러면 탭이 생겼는데 보는 클라만 갱신되고 다른 클라의
+           탭바가 낡은 채로 남는다.
+        """
+        if getattr(link, "_status_pending", None) == "b" or broadcast:
+            link._status_pending = "b"
+        else:
+            link._status_pending = "v"
+        loop = getattr(self, "loop", None)
+        if loop is None:                     # 루프 없는 최소 하네스 → 즉시
+            self._remote_status_flush(link)
+            return
+        gap = _STATUS_PUSH_MIN_GAP - (loop.time() - link._status_push_at)
+        if gap <= 0:
+            self._remote_status_flush(link)
+            return
+        if link._status_push_task is None:
+            link._status_push_task = loop.call_later(
+                gap, lambda: self._remote_status_flush(link))
+
+    def _remote_status_flush(self, link: RemoteLink):
+        """합쳐 둔 재전송을 실제로 내보낸다(예약 콜백 또는 즉시 경로)."""
+        link._status_push_task = None
+        mode, link._status_pending = getattr(link, "_status_pending", None), None
+        loop = getattr(self, "loop", None)
+        link._status_push_at = loop.time() if loop is not None else 0.0
+        if not link.alive:
+            return          # 죽은 링크의 지각 콜백 — 유령 프레임을 만들지 않는다
+        if mode == "b":
+            self._remote_status_broadcast()
+        elif mode == "v":
+            self._remote_viewer_status(link)
 
     def _remote_status_broadcast(self):
         """원격 탭 목록 변동을 모든 세션 클라의 탭바에 반영. status 는 클라별
