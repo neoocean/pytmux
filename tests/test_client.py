@@ -4578,6 +4578,54 @@ async def test_notice_history_box_has_no_empty_space_below():
     await _with_app(body, size=(100, 30))
 
 
+async def test_notice_history_pgkeys_move_cursor():
+    """제보(2026-07-25): 알림 이력에서 `Home/End/PgUp/PgDn` 이 커서를 못 옮겼다.
+
+    원인은 `ListView` 가 `VerticalScroll` 을 물려받아 그 네 키가 **스크롤 전용
+    바인딩**에 잡혀 있던 것 — 화면만 굴러가고 하이라이트는 제자리였다. 오라클은
+    **실제 키 입력**으로 둔다(`_nav` 헬퍼만 단언하면 바인딩을 지워도 통과한다):
+    포커스된 목록에 키를 눌렀을 때 `ListView.index` 가 움직여야 한다."""
+    from textual.widgets import ListView as _LV
+
+    async def body(app, pilot, srv):
+        for i in range(60):
+            app.display_message(f"알림 {i} — 문구 abcdefghijklmnopqrstuvwxyz",
+                                severity="info")
+        app.open_notice_history()
+        await wait_until(pilot, lambda: app.screen.__class__.__name__
+                         == "NoticeHistoryScreen" and app.screen.query("#nhlist"))
+        scr = app.screen
+        lv = scr.query_one(_LV)
+        n = len(scr._entries)
+        assert n == 60, n
+        await wait_until(pilot, lambda: lv.size.height > 1)
+        page = lv.size.height          # 한 줄짜리 항목뿐 → 한 페이지 = 뷰포트 행 수
+
+        assert lv.index == 0
+        await pilot.press("pagedown")
+        await wait_until(pilot, lambda: lv.index != 0)
+        assert lv.index == page, (lv.index, page)
+        await pilot.press("pagedown")
+        assert lv.index == 2 * page, (lv.index, page)
+        await pilot.press("pageup")
+        assert lv.index == page, (lv.index, page)
+        await pilot.press("end")
+        await wait_until(pilot, lambda: lv.index == n - 1)
+        await pilot.press("home")
+        await wait_until(pilot, lambda: lv.index == 0)
+        # 커서가 실제로 화면에 보이는 위치로 따라와야(스크롤만 튀면 안 된다).
+        assert lv.scroll_offset.y == 0, lv.scroll_offset
+        # 경계에서는 클램프 — 끝에서 더 눌러도 예외 없이 제자리.
+        await pilot.press("pageup")
+        assert lv.index == 0
+        await pilot.press("end")
+        await wait_until(pilot, lambda: lv.index == n - 1)
+        await pilot.press("pagedown")
+        assert lv.index == n - 1
+        app.pop_screen()
+    await _with_app(body, size=(100, 30))
+
+
 async def test_notice_history_cursor_row_is_readable():
     """제보: 이력에서 **커서를 올린 줄의 글자가 안 보였다**. 원인은 색 충돌 —
     `info` 등급색(`$primary`)이 ListView 하이라이트 배경(`$block-cursor-background`)과

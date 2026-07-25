@@ -2999,11 +2999,34 @@ class ChooseBufferScreen(ModalScreen):
             event.stop()
             self.dismiss(None)
 
+class _NoticeList(ListView):
+    """이력 목록 위젯. `ListView` 는 `VerticalScroll` 을 물려받아 `home`/`end`/
+    `pageup`/`pagedown` 이 **스크롤 전용 바인딩**으로 잡혀 있다 — 화면만 굴러가고
+    **커서(하이라이트)는 제자리**에 남는다. 이 화면에서 그 네 키는 커서 이동이어야
+    하므로(제보 2026-07-25) 같은 키를 이 서브클래스 바인딩으로 덮어 화면
+    (`NoticeHistoryScreen._nav`)으로 넘긴다.
+
+    바인딩으로 덮는 이유: 키는 **포커스된 위젯의 바인딩이 화면 `on_key` 보다 먼저**
+    처리돼(부모 스크롤 바인딩이 이김), 화면 쪽 `on_key` 에 조건을 더하는 것만으로는
+    닿지 않는다."""
+    BINDINGS = [
+        Binding("home", "nh_nav('home')", "맨 위", show=False),
+        Binding("end", "nh_nav('end')", "맨 아래", show=False),
+        Binding("pageup", "nh_nav('pageup')", "페이지 위", show=False),
+        Binding("pagedown", "nh_nav('pagedown')", "페이지 아래", show=False),
+    ]
+
+    def action_nh_nav(self, which: str) -> None:
+        fn = getattr(self.screen, "_nav", None)
+        fn and fn(which)
+
+
 class NoticeHistoryScreen(ModalScreen):
     """§10-8 지나간 상태줄 알림 이력(최신이 위). 상태줄 배지 클릭 또는 ESC 모드
     `notices` 에서 Enter 로 연다.
 
-    · `↑↓` 이동 · `Enter` 전문 펼치기/접기 · `c` 복사 · `Esc` 닫기.
+    · `↑↓`·`PgUp/PgDn`·`Home/End` 이동 · `Enter` 전문 펼치기/접기 · `c` 복사 ·
+      `Esc` 닫기.
     · **전문 표시가 핵심**(설계 G3): 목록은 한 줄로 자르되 Enter 로 그 항목만 여러
       줄로 펼친다 — 긴 오류 문구가 잘려 조치가 안 보이던 문제의 정면 해결.
     · 등급 기호(`✓·!✕`)와 색을 목록에서도 유지한다(색맹·모노크롬 대비).
@@ -3115,7 +3138,7 @@ class NoticeHistoryScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="nhbox"):
-            lv = ListView(*self._rows(), id="nhlist")
+            lv = _NoticeList(*self._rows(), id="nhlist")
             lv.border_title = i18n.t("screen.notice_history_title",
                                      n=len(self._entries))
             yield lv
@@ -3179,6 +3202,49 @@ class NoticeHistoryScreen(ModalScreen):
         if i is None or not self._entries or i >= len(self._entries):
             return None, None
         return i, self._entries[i]
+
+    # ---- 커서 이동(Home/End/PgUp/PgDn — `_NoticeList` 바인딩이 부른다) ----
+    def _page_span(self, start, down):
+        """한 페이지에 해당하는 **항목 수**. 펼친 항목은 여러 줄이라 고정 상수로는
+        못 센다 — 진행 방향으로 실제 줄 수를 뷰포트 높이만큼 눌러 담아 센다(최소 1,
+        즉 어떤 경우에도 한 칸은 움직인다)."""
+        try:
+            view = self.query_one(ListView).size.height
+        except Exception:
+            view = 0
+        view = max(1, view)
+        width = self._width()
+        step = 1 if down else -1
+        used, cnt, j = 0, 0, start + step
+        while 0 <= j < len(self._entries):
+            h = max(1, len(self._lines_for(j, self._entries[j], width)))
+            if used + h > view and cnt:
+                break
+            used += h
+            cnt += 1
+            j += step
+        return max(1, cnt)
+
+    def _nav(self, which):
+        """`home`/`end`/`pageup`/`pagedown` 로 선택 커서를 옮긴다. 목록의 스크롤은
+        `ListView` 가 하이라이트를 따라 알아서 맞춘다(`watch_index`)."""
+        n = len(self._entries)
+        if not n:
+            return
+        try:
+            lv = self.query_one(ListView)
+        except Exception:
+            return
+        cur = 0 if lv.index is None else lv.index
+        if which == "home":
+            target = 0
+        elif which == "end":
+            target = n - 1
+        elif which == "pageup":
+            target = cur - self._page_span(cur, down=False)
+        else:
+            target = cur + self._page_span(cur, down=True)
+        lv.index = max(0, min(n - 1, target))
 
     def on_list_view_highlighted(self, event):
         """커서가 옮겨간 줄과 떠난 줄만 다시 칠한다(전체 재렌더 금지 — 이력은 최대
