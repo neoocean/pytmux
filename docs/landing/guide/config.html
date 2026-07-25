@@ -100,7 +100,7 @@
             <tr><td><code>nest-auto-attach</code></td><td><code>on|off|toggle</code></td><td>중첩 pytmux 시 자동 remote-attach</td></tr>
             <tr><td><code>exit-empty</code></td><td><code>on|off|toggle</code> (on)</td><td>세션이 0개가 되면 서버 종료. <code>off</code>=빈 채로 상주(원격 서버용, <a href="/guide/remote">11장</a>)</td></tr>
             <tr><td><code>win-mouse-motion</code></td><td><code>on|off|toggle</code> (off)</td><td><strong>Windows</strong> 마우스 이동 전달</td></tr>
-            <tr><td><code>vt-parser</code></td><td><code>pyte|native</code></td><td>VT 파서 백엔드(재시작 후 적용)</td></tr>
+            <tr><td><code>vt-parser</code></td><td><code>native</code></td><td>VT 파서 백엔드. 현재는 <strong>자체 native 파서 단일</strong>이라 사실상 고를 것이 없습니다 — 옛 <code>pyte</code> 백엔드는 은퇴했고, 그 값을 넣어도 native 로 수렴합니다(옛 설정 파일 호환용으로만 받습니다)</td></tr>
             <tr><td><code>window-size</code></td><td><code>smallest|latest|largest</code> (smallest)</td><td>여러 클라이언트가 한 세션을 볼 때 공유 격자 크기 기준(<a href="/guide/remote">11장</a>)</td></tr>
             <tr><td><code>net_rtt_threshold</code></td><td>초 (0.4)</td><td>응답성 저하 판정 문턱(파일 전용)</td></tr>
           </tbody>

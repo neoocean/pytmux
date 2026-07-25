@@ -354,6 +354,32 @@ async def compose_prompt(app, pilot):
     await pilot.pause(0.5)
 
 
+async def notice_history(app, pilot):
+    """지나간 알림 이력 팝업(상태줄 ≡N 배지 클릭 · ESC→↓→Enter).
+
+    실제 이력에는 이 머신의 작업 문구가 담기므로 **합성 알림**을 직접 넣어 띄운다
+    (외형은 실제와 동일). 네 등급 기호(✓ · · · ! · ✕)와 반복 접힘(×N), 그리고 한 줄로
+    잘린 긴 오류(Enter 로 전문 펼침)를 한 화면에 담는다."""
+    import time as _t
+    from pytmuxlib import clientnotices
+    from pytmuxlib.clientscreens import NoticeHistoryScreen
+    h = clientnotices.NoticeHistory()
+    base = _t.time() - 300
+    h.add("명령 실행: claude-token-sync status", "info", "local", ts=base)
+    h.add("토큰 동기화: 이 머신을 등록했습니다", "ok", "server", ts=base + 42)
+    h.add("레이아웃 저장: work", "ok", "local", ts=base + 96)
+    h.add("원격 서버 응답이 느립니다 — RTT 820ms", "warn", "office1", ts=base + 128)
+    for i in range(3):                     # 같은 알림 반복 → ×3 으로 접힌다
+        h.add("토큰 동기화: 올림 0 · 받음 0 · 거부 0", "warn", "local",
+              ts=base + 150 + i)
+    h.add("토큰 동기화 등록 실패 — <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] "
+          "certificate verify failed: unable to get local issuer certificate "
+          "(_ssl.c:1006)>", "error", "server", ts=base + 210)
+    h.add("847 chars copied (clipboard)", "info", "local", ts=base + 246)
+    app.push_screen(NoticeHistoryScreen(h.entries()))
+    await pilot.pause(0.5)
+
+
 async def compose_esc(app, pilot):
     # 작성창 ESC 모드(compose_prompt 에서 esc 한 번) — 좌상단 ESC 배지 + 로즈 테두리 +
     # 같은 색 힌트("`:` 명령 · Esc 취소 · 그 외 키 편집 복귀")로 모드 진입을 보여 준다.
@@ -1032,6 +1058,7 @@ SCENES = [
     ("40-settings", "통합 설정 화면(:settings) — 좌측 카테고리 탭+우측 전체 설정 목록·←→ 값 변경·링크 행", settings),
     ("41-compose-prompt", "프롬프트 작성창(ESC→Insert) — 블록 선택 멀티라인·Enter 전송·Ctrl+A 전체선택", compose_prompt),
     ("48-compose-esc", "작성창 ESC 모드(작성창에서 Esc 한 번) — ESC 배지·로즈 테두리·: 명령/Esc 취소 안내", compose_esc),
+    ("50-notice-history", "지나간 알림 이력 팝업(≡N 배지) — 등급 기호·반복 접힘·전문 펼침", notice_history),
 ]
 # Claude 컷(11·12·13·20·22)은 결정적 장면이 아니라 진짜 `claude` 한 세션에서 캡처한다
 # (claude_suite). 실제 API 호출이라 무인자 전체 생성에선 제외하고, `claude-suite` 또는

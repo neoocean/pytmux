@@ -75,26 +75,12 @@
       <!-- 최근 수정사항 — 랜딩(/)과 동일한 한 덩어리 박스(정적 폴백 + changes 최신 미러). -->
       <div class="cl-news">
         <div class="cl-news-head">
-          <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-16 <span class="pill">목요일</span></span>
+          <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-26 <span class="pill">일요일</span></span>
           <a class="cl-news-more" href="/changes">전체 변경 내역 →</a>
         </div>
         <ul id="cl-news-list">
-          <li><span class="pill stable">Claude</span> <strong>상태줄의 모델 이름이 이제 화면에 보이는 그 모델을 따라갑니다 — /model 을 치는 순간 곧바로 맞춰집니다.</strong>
-            화면엔 Opus 4.8 이라 떠 있는데 배지는 sonnet-5 이던 것 — 모델 배지가 안 보이는 동안 별도 세션(사용량 조회)의 기본 모델로 채우던 탓입니다. 이제 /model 메뉴·선택 화면·/status 등 화면이 현재 모델을 말해 주는 자리를 모두 읽어 즉시 반영합니다.</li>
-          <li><span class="pill stable">작성창</span> <strong>여러 줄 프롬프트를 작성창으로 가져올 때 커서가 있던 줄만 오던 문제를 마저 잡았습니다.</strong>
-            어제 고쳤다고 적었지만 실제로는 한 줄만 왔습니다 — 화면을 읽는 쪽이 지금의 입력칸(모서리 상자 대신 위아래 가로줄)을 못 알아봤던 탓. 이제 빈 줄·들여쓰기까지 그대로 전부 따라옵니다.</li>
-          <li><span class="pill stable">플러그인</span> <strong>mdir 의 선택막대가 이제 항목 본래 색을 따라갑니다 — 디렉토리 위에선 붉은 막대, 압축 위에선 자홍 막대.</strong>
-            커서를 어디에 놓든 항상 초록 막대여서 커서가 닿는 줄만 본래 색을 잃던 것 — 이제 막대는 그 항목 색의 반전이라 디렉토리·EXE·압축·태그 색이 커서 아래에서도 그대로 남습니다.</li>
-          <li><span class="pill stable">플러그인</span> <strong>새 플러그인 mdir — 1990년대 국민 파일 관리자 Mdir III 를 재현한 팝업 파일 관리자(:mdir, 별칭 m).</strong>
-            다열 리스트·확장자색·태그 후 복사/이동/삭제·정렬/필터·내장 뷰어·zip/tar 내부 보기·F10 트리까지. 원격 탭이면 원격 머신 파일시스템에 그대로 적용됩니다.</li>
-          <li><span class="pill stable">문서</span> <strong>플러그인 13개 각각의 상세 가이드 페이지가 생겼습니다 — 스크린샷·명령·키 포함.</strong>
-            <a href="/guide/plugins">플러그인 개요</a> 표에서 이름을 클릭하면 개별 페이지로 갑니다. 가이드의 섹션 간격이 과도하던 문제(모바일)도 함께 수정.</li>
-          <li><span class="pill stable">작성창</span> <strong>여러 줄로 쓰던 프롬프트를 작성창으로 가져올 때, 이제 윗줄까지 전부 따라옵니다.</strong>
-            Claude 줄바꿈(Option+Enter 등)이 Enter(제출)와 똑같은 신호로 도착해 pytmux 가 그때까지 센 내용을 버리던 것 — 이제 화면에 보이는 입력창을 그대로 읽어 보이는 그대로 전부 가져옵니다.</li>
-          <li><span class="pill stable">스크롤백</span> <strong>긴 대화에서 Esc → Ctrl+↑/↓ 로 내가 이전에 입력한 프롬프트 위치로 건너뜁니다.</strong>
-            "아까 뭘 시켰더라" 를 찾으러 한참 스크롤하던 것 — 이제 한 턴씩 거슬러 오르내리고, 프롬프트가 화면 맨 위에 놓여 거기서부터 읽어 내려갈 수 있습니다.</li>
-          <li><span class="pill stable">탭</span> <strong>탭을 고정(핀)해 오른쪽으로 밀리면, 이제 보이는 순서에 맞춰 탭 번호도 다시 매겨집니다.</strong>
-            화면에 보이는 위치와 Esc → 숫자로 이동하는 번호가 어긋나던 문제(특히 원격 탭이 섞였을 때) — 이제 왼쪽부터 보이는 순서 그대로 1, 2, 3… 번호가 맞습니다.</li>
+          <li><span class="pill stable">표시</span> <strong>지나간 알림 이력을 <code>Home</code>·<code>End</code>·<code>PgUp</code>·<code>PgDn</code> 으로도 넘길 수 있습니다.</strong>
+            지금까지 이력 팝업에서 움직이는 방법은 ↑↓ 로 한 칸씩뿐이었고, 그 네 키는 눌러도 화면만 굴러가고 선택 막대는 제자리에 남았습니다 — 이제 PgUp/PgDn 은 한 화면씩, Home/End 는 맨 위·맨 아래로 선택 막대를 옮기고 화면이 따라옵니다.</li>
         </ul>
       </div>
 

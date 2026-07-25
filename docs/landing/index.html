@@ -76,42 +76,12 @@
          갱신하면 랜딩도 자동 최신(이중 관리 없음). fetch 실패 시 이 폴백이 그대로 남는다. -->
     <div class="cl-news">
       <div class="cl-news-head">
-        <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-17 <span class="pill">금요일</span></span>
+        <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-26 <span class="pill">일요일</span></span>
         <a class="cl-news-more" href="changes">전체 변경 내역 →</a>
       </div>
       <ul id="cl-news-list">
-        <li><span class="pill stable">안정</span> <strong>새 탭·분할이 이제 멈칫하지 않습니다 — macOS 에서 특히 그랬습니다.</strong>
-          새 탭을 열거나 화면을 나눌 때마다 지금 있는 폴더를 알아내려 바깥 프로그램(lsof)을 부르고 그 대답을 기다리는 동안(실측 0.3 초 안팎) 모든 패널이 함께 얼어붙던 것 — 이제 macOS 는 운영체제에 직접 물어 Linux·Windows 와 같은 즉각 반응으로 맞췄습니다.</li>
-        <li><span class="pill stable">안정</span> <strong>패널에 이상한 출력이 쏟아져도 이제 화면이 멈추지 않습니다.</strong>
-          패널 속 프로그램이 비정상적으로 긴 제어 문자열을 뱉으면 푸는 데 시간이 제곱으로 불어나 256KB 한 줄에 수십 초 서버 전체가 멈추던 자리 — 이제 한 번에 처리해 200 배 빠르고, 끝없는 문자열도 정해진 만큼만 담아 메모리를 지킵니다.</li>
-        <li><span class="pill stable">탭</span> <strong>마지막 탭을 닫아 세션이 사라져도, 그 세션을 보던 다른 창이 얼어붙지 않습니다.</strong>
-          여러 세션 중 한 세션의 마지막 탭을 닫으면 그 세션을 보던 클라이언트가 이미 사라진 세션을 가리킨 채 아무 알림도 없이 영영 멈춰 있던 것 — 이제 남은 세션으로 옮겨 갑니다.</li>
-        <li><span class="pill stable">원격</span> <strong>원격 탭을 보는 동안 내 플러그인·설정이 저쪽 값으로 바뀌던 것을 바로잡았습니다.</strong>
-          다른 pytmux 서버의 탭을 원격으로 볼 때 그쪽의 꺼둔 플러그인 목록·환경설정 값이 내 클라이언트로 흘러들어 내 설정 화면이 저쪽 값을 보여주던 것 — 이제 내 설정은 내 것으로 지키고, 원격에서 와야 하는 것만 받습니다.</li>
-        <li><span class="pill stable">작성창</span> <strong>작성창에서 Esc 를 누르면 이제 ESC 모드로 들어간 것이 보이고, : 로 연 명령칸은 작성창을 덮지 않고 그 위에 뜹니다.</strong>
-          Esc 한 번은 취소가 아니라 ESC 모드인데 옅은 회색 힌트 문구만 바뀌어 들어갔는지 알 수 없던 것 — 이제 ESC 모드 배지가 켜지고 테두리 색도 바뀝니다. : 로 명령칸을 열면 작성창이 사라진 것처럼 보이던 것도(둘 다 바닥에 붙어 후보 목록이 덮었습니다) 이제 작성창은 바닥에 남고 명령칸이 그 위에 뜹니다.</li>
-        <li><span class="pill stable">Claude</span> <strong>상태줄의 모델 이름이 이제 화면에 보이는 그 모델을 따라갑니다 — /model 을 치는 순간 곧바로 맞춰집니다.</strong>
-          화면엔 Opus 4.8 이라 떠 있는데 배지는 sonnet-5 이던 것 — 모델 배지가 안 보이는 동안 별도 세션(사용량 조회)의 기본 모델로 채우던 탓입니다. 이제 /model 메뉴·선택 화면·/status 등 화면이 현재 모델을 말해 주는 자리를 모두 읽어 즉시 반영합니다.</li>
-        <li><span class="pill stable">작성창</span> <strong>여러 줄 프롬프트를 작성창으로 가져올 때 커서가 있던 줄만 오던 문제를 마저 잡았습니다.</strong>
-          어제 고쳤다고 적었지만 실제로는 한 줄만 왔습니다 — 화면을 읽는 쪽이 지금의 입력칸(모서리 상자 대신 위아래 가로줄)을 못 알아봤던 탓. 이제 빈 줄·들여쓰기까지 그대로 전부 따라옵니다.</li>
-        <li><span class="pill stable">플러그인</span> <strong>mdir 의 선택막대가 이제 항목 본래 색을 따라갑니다 — 디렉토리 위에선 붉은 막대, 압축 위에선 자홍 막대.</strong>
-          커서를 어디에 놓든 항상 초록 막대여서 커서가 닿는 줄만 본래 색을 잃던 것 — 이제 막대는 그 항목 색의 반전이라 디렉토리·EXE·압축·태그 색이 커서 아래에서도 그대로 남습니다.</li>
-        <li><span class="pill stable">탭</span> <strong>탭 스위처(Esc → Tab)가 목록에서 더 많은 것을 보여주고, 더 많은 키로 움직입니다.</strong>
-          원격 탭은 분홍·활성은 굵게·핀 글리프는 경고색으로 구분되고, 패널 2개 이상인 탭 밑엔 패널 줄이 달려 Enter 로 그 패널까지 바로 갑니다. Home/End/PgUp/PgDn 이 먹고 ↑↓는 끝에서 순환합니다.</li>
-        <li><span class="pill stable">탭</span> <strong>탭이 많을 때 Esc → Tab 으로 목록을 띄워 골라 전환합니다(탭 스위처).</strong>
-          Tab 다음 · Shift+Tab 이전으로 선택만 하다 Enter 로 전환(Esc 취소) — 열면 다음 탭이 선택돼 있어 Esc Tab Enter 가 곧 다음 탭입니다.</li>
-        <li><span class="pill stable">원격</span> <strong>같은 원격 서버에 다시 붙어도, 고정(핀)해 둔 원격 탭이 이제 풀리지 않습니다.</strong>
-          핀을 연결에 딸린 것으로 두어 다시 붙을 때 새 연결과 함께 사라지던 것 — 이제 호스트 기준으로 기억해, 재연결에도 유지되고 그 사이 달라진 탭만 갱신됩니다.</li>
-        <li><span class="pill stable">작성창</span> <strong>여러 줄로 쓰던 프롬프트를 작성창으로 가져올 때, 이제 윗줄까지 전부 따라옵니다.</strong>
-          Claude 줄바꿈(Option+Enter 등)이 Enter(제출)와 똑같은 신호로 도착해 pytmux 가 그때까지 센 내용을 버리던 것 — 이제 화면에 보이는 입력창을 그대로 읽어 보이는 그대로 전부 가져옵니다.</li>
-        <li><span class="pill stable">스크롤백</span> <strong>긴 대화에서 Esc → Ctrl+↑/↓ 로 내가 이전에 입력한 프롬프트 위치로 건너뜁니다.</strong>
-          "아까 뭘 시켰더라" 를 찾으러 한참 스크롤하던 것 — 이제 한 턴씩 거슬러 오르내리고, 프롬프트가 화면 맨 위에 놓여 거기서부터 읽어 내려갈 수 있습니다.</li>
-        <li><span class="pill stable">탭</span> <strong>탭을 고정(핀)해 오른쪽으로 밀리면, 이제 보이는 순서에 맞춰 탭 번호도 다시 매겨집니다.</strong>
-          화면에 보이는 위치와 Esc → 숫자로 이동하는 번호가 어긋나던 문제(특히 원격 탭이 섞였을 때) — 이제 왼쪽부터 보이는 순서 그대로 1, 2, 3… 번호가 맞습니다.</li>
-        <li><span class="pill stable">디렉토리이동</span> <strong>디렉토리 트리 점프(:ncd)에서, 다른 OS 를 원격으로 조종할 때 이동(cd)이 실패하던 문제를 고쳤습니다.</strong>
-          Windows 에서 macOS·Linux 패널을 조종하면 윈도우 전용 cd 형식이 나가 실패하던 것 — 이제 명령을 실행할 셸의 OS 에 맞춰 올바르게 이동합니다.</li>
-        <li><span class="pill stable">토큰</span> <strong>pytmux 패널이 아닌 별도 터미널에서 Claude 를 써도, 그 시간대의 사용 한도(5시간·주간 %)가 이제 기록됩니다.</strong>
-          한도 조회가 지금까지 패널 안 Claude 에만 떠서 별도 터미널로 쓰면 그 시간대 한도 %가 빈칸이던 것 — 이제 최근 사용 기록을 신호로 패널 없이도 조회를 띄웁니다.</li>
+        <li><span class="pill stable">표시</span> <strong>지나간 알림 이력을 <code>Home</code>·<code>End</code>·<code>PgUp</code>·<code>PgDn</code> 으로도 넘길 수 있습니다.</strong>
+          지금까지 이력 팝업에서 움직이는 방법은 ↑↓ 로 한 칸씩뿐이었고, 그 네 키는 눌러도 화면만 굴러가고 선택 막대는 제자리에 남았습니다 — 이제 PgUp/PgDn 은 한 화면씩, Home/End 는 맨 위·맨 아래로 선택 막대를 옮기고 화면이 따라옵니다.</li>
       </ul>
     </div>
     <div class="cta" style="margin-top:24px;">
@@ -277,6 +247,7 @@
           <li><strong>기간 뷰</strong> — 월 → 주 → 일 → 시각 계층 트리로 시간 흐름을</li>
           <li><strong>세션 뷰</strong> — Claude 세션별 합(<span class="inline-code">탭:패널</span>·타임스탬프)</li>
           <li><strong>한도 뷰</strong> — <span class="inline-code">/usage</span> 실측 막대 + 리셋 카운트다운 시계 + 모델/컨텍스트 변경</li>
+          <li><strong>머신 뷰</strong> — <a href="guide/sync">여러 컴퓨터의 사용량을 합쳤을 때</a>만 붙는 탭(어느 컴퓨터가 얼마를 썼는지)</li>
         </ul>
       </div>
       <div class="shot shot-stack">
@@ -383,7 +354,7 @@
   <div class="wrap">
     <div class="stats">
       <div class="stat"><div class="n">3</div><div class="l">macOS · Linux · Windows</div></div>
-      <div class="stat"><div class="n">950+</div><div class="l">헤드리스 테스트 통과</div></div>
+      <div class="stat"><div class="n">1,400+</div><div class="l">헤드리스 테스트 통과</div></div>
       <div class="stat"><div class="n">1</div><div class="l">파이썬 스크립트로 실행</div></div>
       <div class="stat"><div class="n">∞</div><div class="l">셸 영속 (detach 후 재접속)</div></div>
     </div>
@@ -434,7 +405,7 @@ python3 pytmux.py</div>
       <h2>설치는 한 줄, 실행도 한 줄</h2>
       <p>파이썬만 있으면 됩니다. Python 3.11 이상 권장.</p>
     </div>
-    <p>① 의존성 설치 (Textual · pyte · wcwidth). Windows 는 <span class="inline-code">pip install pywinpty</span> 도 추가합니다.</p>
+    <p>① 의존성 설치 (Textual · wcwidth). Windows 는 <span class="inline-code">pip install pywinpty</span> 도 추가합니다.</p>
     <div class="code">pip install -r requirements.txt</div>
     <p>② 실행 — 서버가 없으면 자동 기동 후 attach 합니다.</p>
     <div class="code">python3 pytmux.py</div>

@@ -94,6 +94,35 @@
       </section>
 
       <section>
+        <h2>알림과 지나간 알림 이력</h2>
+        <p>
+          명령의 결과는 화면 맨 아랫줄에 <strong>등급이 있는 알림</strong>으로 뜹니다 —
+          <code class="nb">✓ 완료</code>(초록) · <code class="nb">· 안내</code>(파랑) ·
+          <code class="nb">! 주의</code>(노랑) · <code class="nb">✕ 실패</code>(빨강).
+          색을 못 쓰는 화면에서도 <strong>기호</strong>로 갈립니다. 완료·안내는 2초, 주의는 3초 뒤 사라지고,
+          <strong>실패는 5초간 머문 뒤에도 직접 닫을 때까지</strong> 남습니다.
+        </p>
+        <p>
+          사라진 알림은 상태줄 오른쪽 <strong><code class="nb">≡N</code> 배지</strong>에 남습니다 —
+          <code>N</code> 은 아직 확인하지 않은 알림 수이고, <strong>배지 색은 그중 가장 심각한 등급</strong>입니다.
+          배지를 클릭하거나 <kbd>ESC</kbd> → <kbd>↓</kbd> → <kbd>Enter</kbd> 로 <strong>이력</strong>(최근 200개)을 엽니다.
+        </p>
+        <ul>
+          <li><kbd>↑↓</kbd> · <kbd>PgUp</kbd>/<kbd>PgDn</kbd> · <kbd>Home</kbd>/<kbd>End</kbd> 로 이동</li>
+          <li><kbd>Enter</kbd> = 그 줄만 <strong>전문 펼치기/접기</strong> — 잘린 오류 문구를 끝까지 봅니다</li>
+          <li><kbd>c</kbd> = 그 알림 <strong>전문 복사</strong>, <kbd>Esc</kbd> = 닫기</li>
+          <li>같은 알림이 반복되면 <code class="nb">×5</code> 처럼 접혀 한 줄로 남습니다</li>
+        </ul>
+        <p>
+          이력은 <strong>이 컴퓨터의 화면 안에만</strong> 머물고 어디에도 저장되지 않습니다 — pytmux 를 닫으면 사라집니다.
+        </p>
+        <figure>
+          <img src="../image/50-notice-history.svg" alt="지나간 알림 이력 팝업">
+          <figcaption>지나간 알림 이력 — 등급 기호(<code>✓ · ! ✕</code>) · 반복 접힘(<code>×3</code>) · 잘린 오류는 <kbd>Enter</kbd> 로 전문.</figcaption>
+        </figure>
+      </section>
+
+      <section>
         <h2>키 바인딩</h2>
         <p>
           키는 세 갈래로 처리됩니다 — <strong>ESC 모드</strong>(한 번의 <kbd>ESC</kbd> 또는 백틱 <kbd>`</kbd> 뒤),
@@ -138,7 +167,7 @@
           키 권장 — 매칭된 키는 셸로 전달되지 않음). 해제는 <code class="nb">unbind-key</code>(<code class="nb">-a</code> 전부).
           현재 바인딩과 마우스 제스처는 <code class="nb">list-keys</code>(별칭 <code>lsk</code>) 팝업에서 봅니다.
           설정 파일에도 <code>bind | split-window -h</code> 처럼 적어 둘 수 있습니다(자세한 내용은
-          <a href="/guide/config">13. 설정 파일</a>).
+          <a href="/guide/config">14. 설정 파일</a>).
         </p>
       </section>
 

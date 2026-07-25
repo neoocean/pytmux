@@ -45,9 +45,11 @@
           <thead><tr><th>명령</th><th>설명</th></tr></thead>
           <tbody>
             <tr><td><code>claude-settings</code></td><td>Claude 설정 팝업 — 자동재개·세션종료 토큰화면·권한 오토모드·프롬프트 단위 클리어·장기턴/반복 경고 (별칭 <code>claude-settings</code>)</td></tr>
-            <tr><td><code>claude-token-log</code></td><td>토큰 사용량 팝업 — 기간(시/일/주/월)·계정·세션 뷰 + 실측 한도·5h창 (상태줄 토큰 배지 클릭)</td></tr>
+            <tr><td><code>claude-token-log</code></td><td>토큰 사용량 팝업 — 기간(시/일/주/월)·세션·한도·경고 탭 + 실측 한도·5h창 (상태줄 토큰 배지 클릭). 여러 머신을 합쳤을 때만 <strong>머신</strong> 탭이 하나 더 붙습니다</td></tr>
             <tr><td><code>usage-panel</code></td><td>/usage 한도 막대 그래프 팝업 (별칭 <code>limits</code>)</td></tr>
-            <tr><td><code>auto-resume</code></td><td>토큰 리밋 자동 재개 on/off</td></tr>
+            <tr><td><code>auto-resume</code></td><td>토큰 리밋 자동 재개 on/off — 주입할 때마다 알림이 남고, 같은 패널 15분 재주입 쿨다운이 걸립니다</td></tr>
+            <tr><td><code>claude-resume-verify</code></td><td>자동 재개 <strong>대역외 확인</strong> <code>off|weak|strict</code>(기본 off) — 최근 실사용이 거의 없는데 뜬 한도 문구면 재개를 억제</td></tr>
+            <tr><td><code>claude-token-sync</code></td><td>여러 머신 토큰 사용량 <a href="/guide/sync">동기화</a> — <code>status | on &lt;URL&gt; | off | enroll &lt;코드&gt; | now | resync</code></td></tr>
             <tr><td><code>claude-rules</code></td><td>시작 규칙 편집 — 새 세션/<code>/clear</code> 후 첫 프롬프트에 자동 주입</td></tr>
             <tr><td><code>model</code></td><td>모델·컨텍스트 변경 팝업 (상태줄 모델 배지 클릭)</td></tr>
             <tr><td><code>prompt-clear</code></td><td>프롬프트 단위 클리어 모드 — 완료마다 문서화+/clear</td></tr>
@@ -83,7 +85,7 @@
       </section>
       <section>
         <h2>메모</h2>
-        <p>원격 페더레이션 패널에서도 동작합니다(자동재개 토글·토큰 팝업은 원격 서버로 릴레이). 토큰 DB 는 <code>.tokens.db</code>(SQLite), 실측 한도는 그림자 <code>/usage</code> 질의로 갱신합니다. 세부 항목은 <a href='/guide/claude'>Claude Code 연동</a>·<a href='/guide/tokens'>토큰 사용량</a> 챕터 참고.</p>
+        <p>원격 페더레이션 패널에서도 동작합니다(자동재개 토글·토큰 팝업은 원격 서버로 릴레이). 토큰 DB 는 <code>claude-tokens.db</code>(SQLite), 실측 한도는 그림자 <code>/usage</code> 질의로 갱신합니다. 세부 항목은 <a href='/guide/claude'>Claude Code 연동</a>·<a href='/guide/tokens'>토큰 사용량</a> 챕터 참고.</p>
       </section>
 
       <section>

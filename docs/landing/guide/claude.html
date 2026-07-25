@@ -54,6 +54,19 @@
           전송 오류(API 오류·레이트 리밋)에는 <code class="nb">auto-retry</code>(기본 on)가 <strong>"계속"</strong> 을 넣어
           이어 갑니다 — 1분 → 2분 → 이후 5분 간격으로, 풀릴 때까지 반복합니다.
         </p>
+        <p>
+          자동 재개는 <strong>화면에 뜬 한도 문구</strong>를 보고 발화합니다. 그 문구는 Claude 자신이(또는
+          Claude 에게 그렇게 시킨 문서·도구 출력이) 그려 낼 수도 있으므로, 다음 세 가지가 함께 걸려 있습니다.
+        </p>
+        <ul>
+          <li><strong>주입할 때마다 알림</strong>이 남습니다 — 무엇을 보냈는지 상태줄 알림과
+            <a href="/guide/command">지나간 알림 이력</a>에서 사후에 확인할 수 있습니다(막지 않고 <strong>보이게</strong> 하는 쪽입니다).</li>
+          <li>같은 패널에는 <strong>15분 안에 다시 주입하지 않습니다</strong>. 진짜 한도의 리셋 간격은
+            최소 1시간이라 정상 재개는 한 번도 막히지 않습니다.</li>
+          <li><code class="nb">claude-resume-verify</code>(<code>off|weak|strict</code>, 기본 <code>off</code>)를 켜면
+            발화 직전에 <strong>대역외 근거</strong>(최근 5시간 실제 사용량)를 확인해, 실제로 쓴 적이 거의 없는데
+            뜬 한도 문구면 재개를 <strong>억제</strong>합니다. 억제되면 그 사실도 알림으로 남습니다.</li>
+        </ul>
         <figure>
           <img src="../image/12-claude-autoresume.svg" alt="토큰 리밋 자동 재개 상태줄">
           <figcaption>토큰 리밋 자동 재개 — 해제 시각에 스스로 이어 갑니다.</figcaption>
