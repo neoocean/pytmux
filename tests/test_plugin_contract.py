@@ -263,6 +263,9 @@ async def _opts_namespace_body(reg, _S):
     assert set(out) - {"ph_max_lines", "capture", "namesync_rules"} == {
         "claude_auto_retry", "token_debug", "auto_token_on_exit",
         "claude_auto_redraw", "prompt_clear_message", "claude_auto_mode",
+        # F3 옵션A(2026-07-25): 자동재개 대역외 확인 3-state. 이 골든이 새 옵션의
+        # **배선 누락을 잡는 자리**다(serialize 에 안 실리면 영속이 안 된다).
+        "claude_resume_verify",
         "claude_auto_launch", "claude_rules", "claude_long_turn_sec",
         "claude_repeat_alert",
         # 2026-07-23 토큰 동기화(P2): 전송 설정도 plugin_opts 소유다 — 코어는

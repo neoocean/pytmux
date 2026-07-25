@@ -51,6 +51,11 @@ class _Srv:
     _fire_resume = sm.ServerClaudeMixin._fire_resume
     _notice_resume = sm.ServerClaudeMixin._notice_resume
     _RESUME_COOLDOWN = sm.ServerClaudeMixin._RESUME_COOLDOWN
+    # F3 옵션A 게이트도 실물을 쓴다(기본 off — 이 파일의 오라클은 종전 그대로여야
+    # 한다: 옵션을 켜지 않은 사용자에게 동작 변화 0). 옵션A 자체 검증은
+    # tests/test_claude_resume_verify.py.
+    _resume_verify_blocks = sm.ServerClaudeMixin._resume_verify_blocks
+    claude_resume_verify = "off"
 
     def __init__(self):
         self.loop = _Loop()

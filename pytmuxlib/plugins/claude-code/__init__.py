@@ -59,6 +59,10 @@ COMMANDS = [
                            "corruption(깨짐 감지 시만) (claude-auto-redraw "
                            "off|idle|corruption|toggle, 기본 off)",
                            "Claude"),
+    ("claude-resume-verify", "자동재개 대역외 확인 — off|weak(최근 5h 실사용이 거의 "
+                             "0이면 억제)|strict (claude-resume-verify "
+                             "off|weak|strict|toggle, 기본 off)",
+                             "Claude"),
     ("claude-token-sync", "여러 머신 간 Claude 토큰 사용량 동기화 — status | on <URL> | "
                           "off | enroll <코드> | invite | adopt <코드> | now | resync",
                           "Claude"),
@@ -82,6 +86,23 @@ _ONOFF = [("토글", ""), ("켜기", "on"), ("끄기", "off")]
 REDRAW_MODES = ("off", "idle", "corruption")
 
 
+# F3 옵션A: 자동재개 발화 전 **대역외 확인** 3-state(설계 F3_SCRAPE_FORGERY_DESIGN §3).
+# off = 확인 없음(기본·현행) | weak = 최근 5h 실사용이 거의 0이면 억제 |
+# strict = 같은 판정을 높은 하한으로. 잘못 손대면 자동재개가 죽는 부류라 opt-in 이다
+# (claude_auto_redraw 선례와 동형 — §4 롤백 경로가 요구한 형태).
+RESUME_VERIFY_MODES = ("off", "weak", "strict")
+
+
+def norm_resume_verify(v):
+    """opts/명령 값을 3-state 로 정규화. 아는 문자열이 아니면 **off**(안전측 —
+    오타·구버전 값이 자동재개를 조용히 억제하면 안 된다). True 는 weak 로 읽는다."""
+    if isinstance(v, str) and v.lower() in RESUME_VERIFY_MODES:
+        return v.lower()
+    if v is True:
+        return "weak"
+    return "off"
+
+
 def norm_redraw_mode(v):
     """opts/명령에서 온 값을 3-state 모드 문자열로 정규화(구 bool 마이그레이션 포함)."""
     if isinstance(v, str) and v.lower() in REDRAW_MODES:
@@ -94,12 +115,17 @@ def norm_redraw_mode(v):
 # `: claude-auto-redraw` 선택지 팝업 항목(빈 값="" = 서버가 다음 모드로 순환).
 _REDRAW_CHOICES = [("순환", ""), ("끔", "off"), ("완료마다", "idle"),
                    ("깨짐감지", "corruption")]
+# `: claude-resume-verify` 선택지(F3 옵션A). 빈 값="" = 서버가 다음 모드로 순환.
+_VERIFY_CHOICES = [("순환", ""), ("끔", "off"), ("약하게", "weak"),
+                   ("엄격", "strict")]
 COMMAND_OPTIONS = {
     "auto-resume": [{"key": "state", "label": "자동재개", "choices": _ONOFF}],
     "prompt-clear": [{"key": "state", "label": "클리어모드", "choices": _ONOFF}],
     "auto-retry": [{"key": "state", "label": "자동재시도", "choices": _ONOFF}],
     "claude-auto-redraw": [{"key": "state", "label": "깨짐완화",
                             "choices": _REDRAW_CHOICES}],
+    "claude-resume-verify": [{"key": "state", "label": "재개확인",
+                              "choices": _VERIFY_CHOICES}],
     "claude-auto-mode": [{"key": "state", "label": "오토모드", "choices": _ONOFF}],
     "auto-launch": [{"key": "state", "label": "자동셋업", "choices": _ONOFF}],
     "claude-token-debug": [{"key": "state", "label": "토큰진단로그",
@@ -128,6 +154,7 @@ i18n.register({
         "cmd.auto-retry": "Auto-inject a 'continue' message 1 min after a transmission error (API error·rate limit) on/off (auto-retry on|off|toggle, default on)",
         "cmd.auto-token-on-exit": "Auto-open token usage screen (Limit/usage) when Claude session ends on/off (auto-token-on-exit on|off|toggle, default on)",
         "cmd.claude-auto-redraw": "Auto-mitigate screen corruption — off | idle (repaint each completion) | corruption (repaint only when corruption is detected) (claude-auto-redraw off|idle|corruption|toggle, default off)",
+        "cmd.claude-resume-verify": "Out-of-band check before auto-resume — off | weak (suppress when the session used almost nothing in the last 5h) | strict (claude-resume-verify off|weak|strict|toggle, default off)",
         "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",
         "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
         "cmd.claude-token-sync": "Sync token usage across machines — status | on <URL> | off | enroll <code> | invite | adopt <code> | now | resync",
@@ -165,6 +192,9 @@ i18n.register({
         # 가 내가 시킨 것인지 위조 배너가 시킨 것인지 사후 확인이 불가능했다.
         "ccmsg.resume_injected": "자동재개: '{msg}' 주입(패널 {pane})",
         "ccmsg.resume_throttled": "자동재개 억제: 방금 주입한 뒤라 건너뜀(패널 {pane})",
+        "ccmsg.resume_unverified": "자동재개 억제: 최근 5h 실사용 {used}토큰(<{need}) — "
+                                   "리밋 배너가 위조로 의심됨(패널 {pane}, "
+                                   "claude-resume-verify {mode})",
         "ccmsg.model_apply": "/model {arg} 적용 요청",
         "ccmsg.perm_switching": "권한모드 → {target} 전환 중…",
         "ccmsg.usage_no_data": "/usage 한도 데이터 없음 — Claude 패널에서 /usage 를 먼저 실행",
@@ -192,6 +222,9 @@ i18n.register({
     "en": {
         "ccmsg.resume_injected": "Auto-resume: injected '{msg}' (pane {pane})",
         "ccmsg.resume_throttled": "Auto-resume suppressed: injected too recently (pane {pane})",
+        "ccmsg.resume_unverified": "Auto-resume suppressed: only {used} tokens used in "
+                                   "the last 5h (<{need}) — limit banner looks forged "
+                                   "(pane {pane}, claude-resume-verify {mode})",
         "ccmsg.model_apply": "Requested /model {arg}",
         "ccmsg.perm_switching": "Switching permission mode → {target}…",
         "ccmsg.usage_no_data":
@@ -232,6 +265,7 @@ i18n.register({
         "오토모드": "Auto mode", "자동셋업": "Auto setup",
         "자동재시도": "Auto-retry",
         "깨짐완화": "Anti-corruption",
+        "재개확인": "Resume check",
         "토큰진단로그": "Token diag log",
     },
 })
@@ -288,11 +322,24 @@ def _redraw_arg(args):
     v = _onoff(args)
     return "idle" if v is True else "off" if v is False else None
 
+def _verify_arg(args):
+    """claude-resume-verify 3-state 인자 파싱. strict/weak/off 명시면 그 모드,
+    on→weak, off→off, 무인자/toggle→None(서버가 순환). `_redraw_arg` 와 동형."""
+    s = " ".join(a for a in args if a).lower()
+    if any(k in s for k in ("strict", "엄격")):
+        return "strict"
+    if any(k in s for k in ("weak", "약")):
+        return "weak"
+    v = _onoff(args)
+    return "weak" if v is True else "off" if v is False else None
+
+
 # 토큰 절감 설정 팝업(ClaudeSaverScreen)의 행/순환 프리셋. clientutil 에서 이리로 이전.
 SAVER_ROWS = [
     ("autoresume", "토큰리밋 자동재개", "toggle"),
     ("auto_token_on_exit", "세션 종료 시 토큰 사용량 화면 자동 표시", "toggle"),
     ("claude_auto_redraw", "화면 깨짐 자동 완화(끔/완료마다/깨짐감지)", "cycle"),
+    ("claude_resume_verify", "자동재개 대역외 확인(끔/약하게/엄격)", "cycle"),
     ("claude_auto_mode", "권한모드 자동 오토", "toggle"),
     ("prompt_clear", "프롬프트 단위 클리어(완료마다 doc+/clear)", "toggle"),
     ("long_turn", "장기 턴 경고(초)", "cycle"),
@@ -301,6 +348,7 @@ SAVER_ROWS = [
 # cycle 행의 프리셋 값(Enter 마다 다음으로 순환). 0=끔.
 SAVER_CYCLES = {
     "claude_auto_redraw": list(REDRAW_MODES),   # off → idle → corruption → off
+    "claude_resume_verify": list(RESUME_VERIFY_MODES),   # off → weak → strict → off
     "long_turn": [0, 300, 600, 900, 1800],
     "repeat_alert": [0, 2, 3, 5, 10],
 }
@@ -329,6 +377,9 @@ def saver_display(app, key):
     if key == "claude_auto_redraw":
         return {"off": "끔", "idle": "완료마다", "corruption": "깨짐감지"}.get(
             norm_redraw_mode(st.claude_auto_redraw), "끔")
+    if key == "claude_resume_verify":
+        return {"off": "끔", "weak": "약하게", "strict": "엄격"}.get(
+            norm_resume_verify(getattr(st, "claude_resume_verify", "off")), "끔")
     if key == "long_turn":
         v = int(st.claude_long_turn_sec)
         return "끔" if v <= 0 else f"{v}초 이상"
@@ -353,6 +404,11 @@ def saver_action(app, key):
         nxt = _cycle_next("claude_auto_redraw", norm_redraw_mode(st.claude_auto_redraw))
         app.send_cmd("set_claude_auto_redraw", value=nxt)
         st.claude_auto_redraw = nxt
+    elif key == "claude_resume_verify":
+        nxt = _cycle_next("claude_resume_verify", norm_resume_verify(
+            getattr(st, "claude_resume_verify", "off")))
+        app.send_cmd("set_claude_resume_verify", value=nxt)
+        st.claude_resume_verify = nxt
     elif key == "claude_auto_mode":
         app.send_cmd("set_claude_auto_mode", value=None)
         st.claude_auto_mode = not st.claude_auto_mode
@@ -709,6 +765,7 @@ class _ClaudeCodePlugin:
         "auto-resume": "autoresume",
         "prompt-clear": "prompt_clear",
         "claude-auto-redraw": "claude_auto_redraw",
+        "claude-resume-verify": "claude_resume_verify",
         "claude-auto-mode": "claude_auto_mode",
         "auto-retry": "claude_auto_retry",
         "auto-launch": "auto_launch",
@@ -771,6 +828,12 @@ class _ClaudeCodePlugin:
                   # 미구현 시퀀스 발산의 바닥 안전망이라 과도 완화를 피해 옵트인으로 둔다.
                   # cast=norm_redraw_mode 가 구 bool opts(True→idle/False→off)를 마이그레이션.
                   ("claude_auto_redraw", "off", norm_redraw_mode),
+                  # F3 옵션A: 자동재개 대역외 하한 게이트. off(기본·현행 동작)|weak|
+                  # strict. 켜면 "최근 5h 실사용이 거의 0인데 리밋 배너" 를 위조로 보고
+                  # 억제한다(회계 미부착 세션은 판단 포기 → 통과). 기본 off 인 이유는
+                  # 오억제가 곧 "Claude 를 못 깨움" 이라, 라이브 A/B(설계 §4-3) 전에는
+                  # 켠 사람에게만 발효해야 하기 때문이다.
+                  ("claude_resume_verify", "off", norm_resume_verify),
                   # ↓ 코어 server.py __init__ 에서 이전(delete-to-disable 완전분리, 2026-07-07).
                   # 프롬프트 단위 클리어 모드(#9)의 문서화 지시문(패널 Claude 에게 보낼 슬래시).
                   ("prompt_clear_message",
@@ -924,6 +987,10 @@ class _ClaudeCodePlugin:
         msg["prompt_clear_queue"] = (list(ap.prompt_clear_queue) if ap else [])
         msg["auto_token_on_exit"] = server.auto_token_on_exit
         msg["claude_auto_redraw"] = server.claude_auto_redraw
+        # F3 옵션A 모드(off|weak|strict) — 설정 팝업·선택지 팝업이 현재값을 보여야
+        # "켰는데 뭐가 켜졌는지" 를 사람이 확인할 수 있다.
+        msg["claude_resume_verify"] = getattr(
+            server, "claude_resume_verify", "off")
         msg["claude_auto_mode"] = server.claude_auto_mode
         # 무장된 자동재개 카운트다운(없으면 None): {kind, eta(초)}.
         msg["claude_pending"] = server._pending_action(ap)
@@ -1004,6 +1071,9 @@ class _ClaudeCodePlugin:
             return "send_full"
         if action == "set_claude_auto_redraw":
             server.set_claude_auto_redraw(msg.get("value"))
+            return "send_full"
+        if action == "set_claude_resume_verify":
+            server.set_claude_resume_verify(msg.get("value"))
             return "send_full"
         if action == "set_claude_auto_retry":
             server.set_claude_auto_retry(msg.get("value"))
@@ -1431,6 +1501,8 @@ class _ClaudeCodePlugin:
             app.send_cmd("set_auto_token_on_exit", value=_onoff(args))
         elif c in ("claude-auto-redraw", "auto-redraw"):
             app.send_cmd("set_claude_auto_redraw", value=_redraw_arg(args))
+        elif c in ("claude-resume-verify", "resume-verify"):
+            app.send_cmd("set_claude_resume_verify", value=_verify_arg(args))
         elif c in ("auto-retry", "retry"):
             app.send_cmd("set_claude_auto_retry", value=_onoff(args))
         elif c in ("claude-auto-mode", "auto-mode"):

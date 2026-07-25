@@ -91,6 +91,8 @@ i18n.register({
             "Auto-open token usage screen when session ends",
         "화면 깨짐 자동 완화(끔/완료마다/깨짐감지)":
             "Auto-mitigate corruption (off/each completion/on detection)",
+        "자동재개 대역외 확인(끔/약하게/엄격)":
+            "Out-of-band auto-resume check (off/weak/strict)",
         "권한모드 자동 오토": "Auto-switch permission mode to auto",
         "프롬프트 단위 클리어(완료마다 doc+/clear)":
             "Per-prompt clear (doc+/clear each completion)",

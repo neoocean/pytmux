@@ -224,6 +224,65 @@ class ServerClaudeMixin:
     # 관측 가능하게** 만든다: ① 주입할 때마다 사용자에게 알림 ② 같은 리셋 창에서
     # 반복 주입을 막는 쿨다운. 위조를 없애지는 못하지만 **사일런트 조작**이 사라진다.
     _RESUME_COOLDOWN = 15 * 60.0     # 초 — 같은 패널 재주입 최소 간격(리셋 창 ≥1h)
+    # F3 옵션A(같은 설계 §3): **대역외** 확인. 진짜 5h 리밋은 계정이 실제로 할당량을
+    # 소진했다는 뜻이라, 그 세션의 트랜스크립트(`~/.claude/*.jsonl` → usage_xc)에 최근
+    # 창 사용량이 **무겁게** 남는다. 위조 배너는 저사용 세션에서도 뜬다. 그래서 "최근
+    # 창 실사용이 0에 가까운데 리밋 배너" 만 위조로 보고 억제하는 **약한 하한 게이트**다
+    # (플랜별 cap 추정이 필요 없어 오억제 위험이 가장 낮다 — 설계가 고른 형태).
+    #   창 = 5h(리밋 창), weak = 그 창의 4항목 Σ 가 _RESUME_VERIFY_WEAK 미만이면 억제,
+    #   strict = _RESUME_VERIFY_STRICT 미만이면 억제(진짜 리밋이면 수십만 토큰이 남는다).
+    # **회계가 붙지 않은 세션(행 0)에서는 판단하지 않는다** — 그걸 위조로 읽으면 진짜
+    # 리밋에서 Claude 를 못 깨운다(체감 회귀 = 이 기능을 켜지 못하게 만드는 실패).
+    _RESUME_VERIFY_WINDOW = 5 * 3600.0
+    _RESUME_VERIFY_WEAK = 5_000        # "거의 0"
+    _RESUME_VERIFY_STRICT = 100_000    # 진짜 5h 리밋 도달의 보수적 하한
+
+    def _xc_window_usage(self, pane: Pane, window_sec: float = None) -> dict | None:
+        """패널의 Claude 세션이 **최근 창에서 실제로 쓴 양**(usage_xc 기준) 또는 None.
+
+        세션 식별자는 트랜스크립트 파일명(= `sessionId`)에서 얻는다 — 이미 패널에
+        캐시된 `_xc_path`(`_xc_resolve_path`)라 새 탐색 비용이 없다. 경로를 아직 못
+        잡았거나 DB/스키마가 없으면 **None**(=판단 불가)을 돌려 호출부가 게이트를
+        건너뛰게 한다. best-effort: 어떤 예외도 자동재개를 막지 않는다."""
+        try:
+            path = getattr(pane, "_xc_path", None) or self._xc_resolve_path(pane)
+            if not path:
+                return None
+            sid = os.path.basename(path).rsplit(".", 1)[0]
+            if not sid:
+                return None
+            conn = self._tokens_db_conn()
+            fn = getattr(usagedb, "xc_session_window", None)
+            if conn is None or fn is None:
+                return None
+            win = float(window_sec or self._RESUME_VERIFY_WINDOW)
+            out = fn(conn, sid, time.time() - win)
+            out["session"] = sid
+            return out
+        except Exception:       # noqa: BLE001 — 확인 실패는 '판단 불가'로 접는다
+            return None
+
+    def _resume_verify_blocks(self, pane: Pane):
+        """F3 옵션A 게이트: 자동재개를 **억제해야 하면** 사유 dict, 아니면 None.
+
+        `claude_resume_verify` = off(기본·현행 동작 그대로) | weak | strict.
+        억제 조건은 셋이 **모두** 참일 때만: ①옵션이 off 아님 ②그 세션에 회계 행이
+        있음(rows>0 — 없으면 판단 불가라 통과) ③최근 5h 창 Σ 가 임계 미만.
+        판단 불가(경로 미해석·DB 없음·예외)는 **언제나 통과**다 — 이 게이트가 틀리는
+        쪽은 '위조를 놓침'(옵션 B 가 가시화로 받아냄)이어야 하고, 절대
+        '진짜 리밋을 못 깨움'이면 안 된다."""
+        from . import norm_resume_verify
+        mode = norm_resume_verify(getattr(self, "claude_resume_verify", "off"))
+        if mode == "off":
+            return None
+        u = self._xc_window_usage(pane)
+        if not u or u.get("rows", 0) <= 0:
+            return None                     # 회계 미부착 → 판단 포기(통과)
+        need = (self._RESUME_VERIFY_STRICT if mode == "strict"
+                else self._RESUME_VERIFY_WEAK)
+        if int(u.get("win_full", 0)) >= need:
+            return None
+        return {"mode": mode, "used": int(u.get("win_full", 0)), "need": need}
 
     def _fire_resume(self, pane: Pane):
         pane._resume_pending = False
@@ -245,6 +304,19 @@ class ServerClaudeMixin:
         if last is not None and (now - last) < self._RESUME_COOLDOWN:
             self._notice_resume(pane, throttled=True)
             return
+        # F3-A 대역외 하한 게이트(기본 off — 켠 사람에게만 발효). 쿨다운 **뒤**에 두는
+        # 이유: 쿨다운은 비용 0 이고, 이 게이트는 DB 를 읽는다(발화 경로에서만 1회).
+        blocked = self._resume_verify_blocks(pane)
+        if blocked is not None:
+            # 억제는 `_resume_fired_at` 를 **건드리지 않는다** — 억제가 쿨다운을 소모하면
+            # 그 뒤 진짜 리밋 발화가 쿨다운에 걸려 죽는다. 대신 억제 **알림**만 같은
+            # 간격으로 접어(위조 배너를 계속 그리는 상대가 알림을 폭주시키지 못하게)
+            # 첫 억제와 그 뒤 15분마다 한 번씩 알린다.
+            last_b = getattr(pane, "_resume_blocked_at", None)
+            if last_b is None or (now - last_b) >= self._RESUME_COOLDOWN:
+                pane._resume_blocked_at = now
+                self._notice_resume(pane, throttled=False, blocked=blocked)
+            return
         pane._resume_fired_at = now
         try:
             pane.pty.write((pane.resume_msg + "\r").encode("utf-8"))
@@ -252,8 +324,8 @@ class ServerClaudeMixin:
             return
         self._notice_resume(pane, throttled=False)
 
-    def _notice_resume(self, pane: Pane, throttled: bool):
-        """자동재개 주입(또는 쿨다운 차단)을 사용자에게 알린다(F3-B ①).
+    def _notice_resume(self, pane: Pane, throttled: bool, blocked=None):
+        """자동재개 주입(또는 쿨다운 차단·대역외 억제)을 사용자에게 알린다(F3-B ①).
 
         지금까지 주입은 **아무 흔적도 남기지 않았다** — 화면에 'continue' 가 찍히는 것이
         전부라, 그게 내가 시킨 건지 무엇이 시킨 건지 사후에 알 길이 없었다. 서버발
@@ -264,12 +336,22 @@ class ServerClaudeMixin:
             note = getattr(self, "_notice_msg", None)
             if note is None:
                 return
-            key = ("ccmsg.resume_throttled" if throttled
-                   else "ccmsg.resume_injected")
-            ko = ("자동재개 억제: 방금 주입한 뒤라 건너뜀(패널 {pane})" if throttled
-                  else "자동재개: '{msg}' 주입(패널 {pane})")
-            msg = note(key, ko, severity=("warn" if throttled else "info"),
-                       pane=pane.id, msg=getattr(pane, "resume_msg", ""))
+            if blocked is not None:
+                # F3-A: 억제는 **반드시 보인다**. 조용히 안 깨우면 사용자는 "자동재개가
+                # 고장났다" 로 읽고(체감 회귀와 구분 불가) 옵션을 다시 끄게 된다.
+                msg = note(
+                    "ccmsg.resume_unverified",
+                    "자동재개 억제: 최근 5h 실사용 {used}토큰(<{need}) — 리밋 배너가 "
+                    "위조로 의심됨(패널 {pane}, claude-resume-verify {mode})",
+                    severity="warn", pane=pane.id, used=blocked.get("used", 0),
+                    need=blocked.get("need", 0), mode=blocked.get("mode", ""))
+            else:
+                key = ("ccmsg.resume_throttled" if throttled
+                       else "ccmsg.resume_injected")
+                ko = ("자동재개 억제: 방금 주입한 뒤라 건너뜀(패널 {pane})" if throttled
+                      else "자동재개: '{msg}' 주입(패널 {pane})")
+                msg = note(key, ko, severity=("warn" if throttled else "info"),
+                           pane=pane.id, msg=getattr(pane, "resume_msg", ""))
             import asyncio as _a
             for c in list(getattr(self, "clients", ())):
                 if getattr(c, "session", None) is not None:
@@ -691,6 +773,28 @@ class ServerClaudeMixin:
             self.claude_auto_redraw = norm_redraw_mode(value)
         self._save_opts()
         return self.claude_auto_redraw
+
+    def set_claude_resume_verify(self, value=None):
+        """F3 옵션A — 자동재개 발화 전 **대역외 확인** 3-state. plugin_opts 영속,
+        기본 `"off"`(현행 동작 그대로). 모드:
+          - off    : 확인 없음. 화면 텍스트만으로 발화(종전 동작).
+          - weak   : 그 세션의 최근 5h 실사용(usage_xc Σ)이 `_RESUME_VERIFY_WEAK`
+                     (5k 토큰) 미만이면 **억제**하고 warn 알림. 진짜 리밋은 반드시
+                     무거운 사용을 동반하므로 오억제가 거의 없다.
+          - strict : 같은 판정을 `_RESUME_VERIFY_STRICT`(100k) 로 — 위조를 더 잡지만
+                     짧은 세션이 리밋에 걸린 경우(계정 전역 소진)를 오억제할 수 있다.
+        **회계가 안 붙은 세션(usage_xc 행 0)에서는 모드와 무관하게 통과**한다 —
+        판단 불가를 위조로 읽으면 진짜 리밋에서 Claude 를 못 깨운다. value 미지정/""=
+        다음 모드로 순환. 설계 = F3_SCRAPE_FORGERY_DESIGN_2026-07-18 §3 옵션 A."""
+        from . import RESUME_VERIFY_MODES, norm_resume_verify
+        cur = norm_resume_verify(getattr(self, "claude_resume_verify", "off"))
+        if value is None or value == "":
+            self.claude_resume_verify = RESUME_VERIFY_MODES[
+                (RESUME_VERIFY_MODES.index(cur) + 1) % len(RESUME_VERIFY_MODES)]
+        else:
+            self.claude_resume_verify = norm_resume_verify(value)
+        self._save_opts()
+        return self.claude_resume_verify
 
     # 박스(프롬프트 테두리) 모서리 글리프 — 깨짐 감지(_claude_corruption_signal)용.
     _BOX_TOP = ("╭", "┌", "┏")      # 둥근/각/굵은 좌상단(우상단도 함께 옴)

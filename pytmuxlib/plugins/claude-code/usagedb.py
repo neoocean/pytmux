@@ -1057,6 +1057,28 @@ def xc_totals_by_account(conn) -> dict:
     return {r["a"]: int(r["s"]) for r in cur.fetchall()}
 
 
+def xc_session_window(conn, session_uuid: str, since_ts: float) -> dict:
+    """한 Claude 세션의 **최근 창** 실사용량(F3 옵션 A 대역외 신호).
+
+    반환 `{"rows": 세션 전체 행수, "win_rows": 창 안 행수, "win_full": 창 안 4항목 Σ}`.
+
+    왜 세션 전체 행수까지 주는가 — 창 합이 0 인 것은 두 가지 뜻일 수 있다: ①정말 안
+    썼다(=리밋 배너가 위조) ②**회계가 아직/영영 안 붙었다**(트랜스크립트 경로 미해석,
+    ingest 지연, 구버전). ②를 ①로 오독하면 **진짜 리밋의 자동재개를 억제**해 사용자가
+    Claude 를 못 깨우는 체감 회귀가 된다(설계 §3 옵션 A 의 유일한 실질 위험). 그래서
+    호출부는 `rows==0`(그 세션에 회계가 아예 없음)이면 **판단을 포기**한다 — 게이트는
+    "회계가 붙어 있는데 최근 사용이 0에 가깝다" 는 좁은 경우에만 발화한다."""
+    r = conn.execute(
+        "SELECT COUNT(*) AS n, "
+        "COALESCE(SUM(CASE WHEN ts>? THEN 1 ELSE 0 END),0) AS wn, "
+        "COALESCE(SUM(CASE WHEN ts>? "
+        "  THEN input+output+cache_create+cache_read ELSE 0 END),0) AS ws "
+        "FROM usage_xc WHERE session_uuid=?",
+        (float(since_ts), float(since_ts), str(session_uuid))).fetchone()
+    return {"rows": int(r["n"] or 0), "win_rows": int(r["wn"] or 0),
+            "win_full": int(r["ws"] or 0)}
+
+
 def get_xc_cursor(conn, path: str):
     """경로의 (offset, mtime) 또는 None(미기록)."""
     r = conn.execute("SELECT offset, mtime FROM usage_xc_cursor WHERE path=?",
