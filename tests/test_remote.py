@@ -1632,6 +1632,53 @@ async def test_remote_token_log_only_to_requester_not_other_viewers():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_remote_choose_buffer_lists_remote_buffers():
+    """원격 탭을 보는 중 `choose-buffer`(request_buffers)는 **원격 서버의** 버퍼 목록을
+    회신한다(감사 2026-07-26).
+
+    `paste_buffer` 는 이미 릴레이라 붙여넣기는 원격 버퍼에서 나오는데, 목록만 로컬이면
+    **번호가 어긋난다** — 내 서버 버퍼를 보고 고른 index 로 원격의 **다른** 버퍼가 붙는다.
+    두 서버에 서로 다른 버퍼를 심고, 회신 목록이 원격 것인지로 판정한다(라우팅 필드
+    `_req_token` 은 클라에 노출되지 않아야 한다)."""
+    if os.name == "nt":
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
+    srvA, taskA, sockA = await server_only()     # 로컬(다운스트림)
+    srvB, taskB, sockB = await server_only()     # 원격(업스트림)
+    reader = writer = None
+    try:
+        srvB.ensure_default_session(80, 24)
+        srvA.ensure_default_session(80, 24)
+        srvA.buffers[:] = ["LOCAL-BUF-A"]
+        srvB.buffers[:] = ["REMOTE-BUF-B"]
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        stm = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") for w in m["windows"]),
+            what="merged status")
+        gidx = next(w["index"] for w in stm["windows"]
+                    if w["name"].startswith("⇄"))
+        await write_msg(writer, {"t": "cmd", "action": "select_window",
+                                 "index": gidx})
+        await _read_until(reader, lambda m: m.get("t") == "layout",
+                          what="remote layout")
+        await write_msg(writer, {"t": "cmd", "action": "request_buffers"})
+        bm = await _read_until(reader, lambda m: m.get("t") == "buffers",
+                               what="relayed buffers")
+        previews = [it.get("preview") for it in bm.get("items", [])]
+        assert previews == ["REMOTE-BUF-B"], f"원격 버퍼 목록이어야: {previews}"
+        assert "LOCAL-BUF-A" not in previews, "로컬 버퍼가 새면 안 된다"
+        assert "_req_token" not in bm, bm      # 라우팅 전용 필드는 제거된다
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
 async def test_remote_ncd_relays_to_remote_cwd():
     """원격 탭을 보는 중 ncd(request_nc_list)는 **원격** 머신의 cwd/디렉토리 트리를
     회신한다(릴레이) — 로컬 서버가 자기 fs 의 cwd 를 회신하던 '원격 보는데 로컬

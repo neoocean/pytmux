@@ -157,6 +157,12 @@ _REMOTE_RELAY_ACTIONS = {
     # (rename_window·split 누락과 동형 §1.7-c). 업스트림이 자기 활성 패널에 paste_text/
     # paste_buffer 로 주입한다. 대용량 텍스트는 input 릴레이와 같은 부담(프레임 한도 §5.1 내).
     "paste", "paste_buffer",
+    # 붙여넣기 **버퍼 목록**(choose-buffer → request_buffers) — paste_buffer 가 원격에
+    # 적용되는데 목록만 로컬이면 **번호가 어긋난다**(내 서버 버퍼를 보고 고른 index 로
+    # 원격 서버의 다른 버퍼가 붙는다). 목록도 같은 서버에서 와야 고른 그것이 붙는다
+    # (감사 2026-07-26). 회신 `buffers` 는 요청 클라에게만 간다(_req_token 라우팅 —
+    # 같은 호스트를 보는 다른 뷰어에 선택 팝업이 뜨지 않게).
+    "request_buffers",
     # 화면 전체 강제 재그리기(redraw/refresh, §2.12) — 원격 탭을 보는 중엔 그 **원격**
     # 화면이 재그려져야 한다. 업스트림이 자기 패널들에 SIGWINCH 를 유발(_induce_redraw_all)
     # 하고 _send_full 로 전체 프레임을 federation 연결로 보내, _remote_reader 가 보는
@@ -169,6 +175,12 @@ _REMOTE_RELAY_ACTIONS = {
     # 업스트림이 `selection` 으로 회신하고 _remote_reader 가 보는 클라에 그대로 전달한다.
     "copy_range",
 }
+
+# §4.1 회신을 **요청한 클라에게만** 보내야 하는 릴레이 액션(요청 클라 식별자
+# `_req_token` 을 실어 보내고 업스트림이 회신에 echo 한다). 팝업을 여는 응답들이라
+# 같은 원격 호스트를 보는 다른 다운스트림 뷰어에 새면 안 된다. 미태깅 액션(입력·
+# 리사이즈·nc_list 등)은 종전대로 그 링크를 보는 전 클라에 브로드캐스트.
+_REMOTE_REQ_TOKEN_ACTIONS = {"request_token_log", "request_buffers"}
 
 # §1.7-c 원격 탭을 보는 동안 거부하는 경계 횡단 조작(notice 회신). 로컬 트리에
 # 조용히 실행되지도, 업스트림으로 릴레이되지도 않는다 — 원격 탭은 원격 패널만,
@@ -1233,7 +1245,7 @@ class ServerRemoteMixin:
         # 전달해, 같은 원격 호스트를 보는 **다른** 다운스트림 클라에 토큰 팝업이 새지
         # 않게 한다. id(client)=이 다운스트림 프로세스 내 안정 키(원격은 불투명 echo).
         # 미태깅 메시지(입력/리사이즈/nc_list 등)는 종전대로 뷰어 전체 브로드캐스트.
-        if msg.get("action") == "request_token_log":
+        if msg.get("action") in _REMOTE_REQ_TOKEN_ACTIONS:
             msg = dict(msg, _req_token=id(client))
         try:
             asyncio.create_task(self._link_write(link, msg))

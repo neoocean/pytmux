@@ -51,6 +51,28 @@ async def test_calendar_overlay_grid_has_title_and_today_highlight():
     assert all(c[0] == " " for row in cells2 for c in row)
 
 
+async def test_calendar_overlay_big_font_tier_on_huge_pane():
+    """큰 달력의 날짜 글자도 **두 단**으로 커진다(요청 2026-07-26).
+
+    아주 넓은 화면이면 한 칸 높이 픽셀의 전각 블록(5행·글자 6칸)으로, 그만큼은 아니면
+    종전 반칸 폰트(3행·글자 3칸)로 그린다. 오라클은 글자 자체 — 전각 단에서는 반칸
+    글자(`▀`/`▄`)가 하나도 없어야 하고, 중간 단에서는 반칸 글자가 나와야 한다."""
+    now = datetime(2026, 7, 26)          # 2026-07, 오늘=26일
+
+    def draw(w, h):
+        cells = _grid(w, h)
+        draw_calendar_overlay(cells, [{"id": 1, "x": 0, "y": 0, "w": w, "h": h}],
+                              {1}, w, h, _cal_styles(), now=now)
+        return "".join(_text_rows(cells))
+
+    huge = draw(140, 46)
+    assert "2026-07" in huge
+    assert "█" in huge and "▀" not in huge and "▄" not in huge, "전각 블록 단이어야"
+    mid = draw(80, 30)
+    assert "2026-07" in mid
+    assert "▀" in mid, "그보다 좁으면 종전 반칸 폰트 단"
+
+
 async def test_calendar_overlay_small_pane_falls_back_to_date_string():
     now = datetime(2026, 6, 6)
     panes = [{"id": 1, "x": 0, "y": 0, "w": 12, "h": 3}]

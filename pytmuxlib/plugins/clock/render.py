@@ -14,22 +14,22 @@ from __future__ import annotations
 from datetime import datetime as _datetime
 
 from pytmuxlib.clientrender import dim_pane, put_cell
-from pytmuxlib.clientutil import _CLOCK_FONT, _CLOCK_FONT_ROWS, _dim_cell
+from pytmuxlib.clientutil import clock_font_for, _dim_cell
 
 
 def draw_clock_overlay(cells, panes, clock_panes, W, H, digit_st, now=None):
     """clock-mode 패널을 큰 시계로 덮는다. 뒤의 패널 출력은 흐리게(dim) 계속 보인다.
     `panes`=레이아웃 패널 rect 목록, `clock_panes`=시계 켠 패널 id 집합,
     `digit_st`=숫자 Style(호출부가 theme 로 해석). `now`=시각 datetime(테스트
-    결정성용; None 이면 현재 시각). 큰 시계 공간이 부족하면 단순 시각 문자열로
-    폴백한다."""
+    결정성용; None 이면 현재 시각).
+
+    글자 크기는 **패널이 허락하는 만큼** 커진다(`clock_font_for`): 넓고 높으면 한 칸
+    높이 픽셀의 큰 폰트(5행·글자 6칸), 아니면 종전 반칸 폰트(3행·글자 3칸), 그마저
+    안 들어가면 단순 시각 문자열로 폴백한다."""
     if not clock_panes:
         return
     now = now or _datetime.now()
     text = now.strftime("%H:%M:%S")
-    glyphs = [_CLOCK_FONT.get(c, ["   "] * _CLOCK_FONT_ROWS) for c in text]
-    cw = sum(len(g[0]) for g in glyphs) + (len(glyphs) - 1)
-    ch_h = _CLOCK_FONT_ROWS
     for p in panes:
         if p["id"] not in clock_panes:
             continue
@@ -37,7 +37,10 @@ def draw_clock_overlay(cells, panes, clock_panes, W, H, digit_st, now=None):
         # 1) 뒤 화면 흐리게(실색 블렌드 — §10, 터미널 무관 균일). 컬러 이모지는
         # 스타일을 무시하고 밝게 남으므로 _dim_cell 이 placeholder(·)로 치환한다(#25).
         dim_pane(cells, px, py, pw, ph, W, H, _dim_cell)
-        # 2) 큰 시계(공간 충분) 또는 단순 시각
+        # 2) 큰 시계(공간 충분) 또는 단순 시각. 폰트는 **패널마다** 고른다 — 넓은
+        # 패널은 한 칸 높이 픽셀의 큰 폰트(5행), 좁은 패널은 종전 반칸 폰트(3행).
+        font, ch_h, gcols, cw = clock_font_for(pw, ph, len(text))
+        glyphs = [font.get(c, [" " * gcols] * ch_h) for c in text]
         if pw >= cw and ph >= ch_h:
             ox = px + (pw - cw) // 2
             oy = py + (ph - ch_h) // 2

@@ -44,6 +44,43 @@ async def test_clock_overlay_big_and_fallback():
     assert "12:34:56" in joined
 
 
+async def test_clock_overlay_grows_to_full_cell_font_on_big_pane():
+    """화면이 넉넉하면 시계가 **한 칸 높이 픽셀**의 큰 폰트로 커진다(요청 2026-07-26).
+
+    종전 폰트는 반칸 글자(`▀`/`▄`)로 5 픽셀행을 3 행에 욱여넣어, 패널이 아무리 커도
+    글자가 그 이상 커지지 않았다. 이제 공간이 되면 5행·글자 6칸짜리 전각 블록(`█`)으로
+    그린다 — 오라클은 **글자 자체**를 본다: 큰 폰트는 반칸 글자가 하나도 없고 획이
+    5행에 걸치며, 좁은 패널은 종전대로 반칸 3행이어야 한다(폴백 보존)."""
+    now = datetime(2026, 6, 6, 12, 34, 56)
+    digit = Style(color="green", bold=True)
+
+    def drawn_rows(w, h):
+        cells = _grid(w, h)
+        draw_clock_overlay(cells, [{"id": 1, "x": 0, "y": 0, "w": w, "h": h}],
+                           {1}, w, h, digit, now=now)
+        rows = _text_rows(cells)
+        return rows, [r for r in rows if r.strip()]
+
+    # ① 큰 패널: 전각 블록만 · 획이 5행
+    rows, filled = drawn_rows(70, 12)
+    joined = "".join(rows)
+    assert "█" in joined and "▀" not in joined and "▄" not in joined, joined
+    assert len(filled) == 5, filled
+    # 폭도 커진다 — 글자 8개 × 6칸 + 간격 7 = 55칸(반칸 폰트는 31칸)
+    span = max(len(r.rstrip()) - (len(r) - len(r.lstrip())) for r in filled)
+    assert span >= 50, (span, filled)
+
+    # ② 큰 폰트가 안 들어가는 패널: 종전 반칸 3행 폰트로 폴백
+    rows2, filled2 = drawn_rows(40, 6)
+    joined2 = "".join(rows2)
+    assert "▀" in joined2, joined2
+    assert len(filled2) == 3, filled2
+
+    # ③ 그마저 안 되면 단순 시각 문자열(종전 폴백 유지)
+    rows3, _ = drawn_rows(12, 3)
+    assert "12:34:56" in "".join(rows3)
+
+
 async def test_clock_overlay_dims_background_emoji_to_placeholder():
     """배경 화면을 딤할 때 컬러 이모지(예 ✅)는 터미널이 스타일을 무시하고 밝게 남으므로
     오버레이 딤이 placeholder(·)로 치환해야 한다(#25). 시계가 큰 폰트로 안 덮는 모서리에

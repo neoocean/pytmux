@@ -138,7 +138,13 @@ class ServerCmdMixin:
 
     @_cmd("request_buffers", HANDLED)
     async def _cmd_request_buffers(self, client, sess, msg):
-        await self._send_to(client, self._buffers_msg())
+        resp = self._buffers_msg()
+        # §4.1 원격 릴레이: 다운스트림이 요청 클라 식별자를 실어 왔으면 회신에 그대로
+        # echo 한다 — _remote_reader 가 그 클라에게만 전달해, 같은 원격 호스트를 보는
+        # 다른 뷰어에 버퍼 선택 팝업이 뜨지 않게(request_token_log 와 같은 규칙).
+        if msg.get("_req_token") is not None:
+            resp = dict(resp, _req_token=msg["_req_token"])
+        await self._send_to(client, resp)
 
     @_cmd("clear_history", HANDLED)
     async def _cmd_clear_history(self, client, sess, msg):

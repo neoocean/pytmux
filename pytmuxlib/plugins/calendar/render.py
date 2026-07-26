@@ -15,7 +15,9 @@ import calendar as _calendar
 from datetime import datetime as _datetime
 
 from pytmuxlib.clientrender import dim_pane, put_cell
-from pytmuxlib.clientutil import _CLOCK_FONT, _CLOCK_FONT_ROWS, _dim_cell
+from pytmuxlib.clientutil import (_CLOCK_FONT, _CLOCK_FONT_BIG,
+                                  _CLOCK_FONT_BIG_COLS, _CLOCK_FONT_BIG_ROWS,
+                                  _CLOCK_FONT_COLS, _CLOCK_FONT_ROWS, _dim_cell)
 
 
 def draw_calendar_overlay(cells, panes, calendar_panes, W, H, styles, now=None,
@@ -66,16 +68,29 @@ def draw_calendar_overlay(cells, panes, calendar_panes, W, H, styles, now=None,
         # 1) 뒤 화면 흐리게(실색 블렌드 — §10, 터미널 무관 균일). 컬러 이모지는
         # 스타일을 무시하고 밝게 남으므로 _dim_cell 이 placeholder(·)로 치환한다(#25).
         dim_pane(cells, px, py, pw, ph, W, H, _dim_cell)
-        # 1.5) 아주 큰 패널이면 시계 폰트(3×5)로 날짜를 큼직하게 — '큰 달력'(#16).
-        # 한 날짜칸은 숫자 두 자리(3+1+3=7) + 칸 사이 1, 한 주는 글자 5 + 간격 1.
-        # DCW=한 날짜칸 폭(숫자 3 + 자리사이 1 + 숫자 3 = 7 + 여유 1 = 8), DGAP=칸 사이,
+        # 1.5) 아주 큰 패널이면 블록 폰트로 날짜를 큼직하게 — '큰 달력'(#16).
+        # 폰트는 **두 단**이다(사용자 요청 2026-07-26): 화면이 아주 넓으면 한 칸 높이
+        # 픽셀의 큰 폰트(5행·글자 6칸)로 두 배 가까이 크게, 그만큼은 아니면 종전 반칸
+        # 폰트(3행·글자 3칸)로. 큰 쪽부터 시도해 **들어가는 첫 단**을 쓴다.
+        # DCW=한 날짜칸 폭(숫자 + 자리사이 DIG + 숫자 + 여유 1), DGAP=칸 사이,
         # DIG=자리(숫자) 사이 간격(§10-A #9: 2→1 로 좁혀 한 날짜의 두 자리가
         # 한 덩어리로 읽히게 — 날짜칸 사이 간격 DGAP/DCW 는 그대로라 날짜끼리는
-        # 안 붙는다. 두 자리 폭 3+1+3=7 이 DCW(8) 안에서 가운데 정렬된다).
-        DCW, DGAP, RHB, DIG = 8, 3, 4, 1   # DGAP↑(날짜칸 사이 더 띄움), DIG↓(자리 사이 좁힘), RHB=폰트행+gap
-        gw_big = 7 * DCW + 6 * DGAP          # 칸 7개 + 사이 간격
-        nl_big = 4 + len(weeks) * RHB        # 제목+빈줄+요일+빈줄 + 주×4 (년월↔요일·요일↔날짜 각 한 줄)
-        if pw >= gw_big + 2 and ph >= nl_big + 2:
+        # 안 붙는다. 두 자리 폭이 DCW 안에서 가운데 정렬된다).
+        DGAP, DIG = 3, 1     # DGAP=날짜칸 사이, DIG=한 날짜의 두 자리 사이
+        big = None           # (font, rows, cols, DCW, RHB, gw, nl)
+        for _font, _rows, _cols in ((_CLOCK_FONT_BIG, _CLOCK_FONT_BIG_ROWS,
+                                     _CLOCK_FONT_BIG_COLS),
+                                    (_CLOCK_FONT, _CLOCK_FONT_ROWS,
+                                     _CLOCK_FONT_COLS)):
+            _dcw = 2 * _cols + DIG + 1       # 두 자리 + 자리사이 + 여유 1
+            _rhb = _rows + 1                 # 폰트행 + 주 사이 한 줄
+            _gw = 7 * _dcw + 6 * DGAP        # 칸 7개 + 사이 간격
+            _nl = 4 + len(weeks) * _rhb      # 제목+빈줄+요일+빈줄 + 주×(_rhb)
+            if pw >= _gw + 2 and ph >= _nl + 2:
+                big = (_font, _rows, _cols, _dcw, _rhb, _gw, _nl)
+                break
+        if big is not None:
+            font, frows, fcols, DCW, RHB, gw_big, nl_big = big
             big_today = styles["big_today"]
             ox = px + (pw - gw_big) // 2
             oy = py + (ph - nl_big) // 2
@@ -94,11 +109,11 @@ def draw_calendar_overlay(cells, panes, calendar_panes, W, H, styles, now=None,
                         continue
                     st = big_today if day == today else day_st
                     s = str(day)
-                    gw = len(s) * 3 + (len(s) - 1) * DIG
+                    gw = len(s) * fcols + (len(s) - 1) * DIG
                     gx0 = ox + col * (DCW + DGAP) + (DCW - gw) // 2
                     for di, ch in enumerate(s):
-                        glyph = _CLOCK_FONT.get(ch, ["   "] * _CLOCK_FONT_ROWS)
-                        dx = gx0 + di * (3 + DIG)
+                        glyph = font.get(ch, [" " * fcols] * frows)
+                        dx = gx0 + di * (fcols + DIG)
                         for r, gl in enumerate(glyph):
                             for k, gc in enumerate(gl):
                                 if gc != " ":
