@@ -352,15 +352,40 @@ class _UnixPty(PtyProcess):
         self._signal_group(_SIGKILL)
 
     def _signal_group(self, sig: int) -> None:
-        if self.pid < 0:
+        """자식 셸의 **프로세스 그룹**에 시그널. 자기 그룹은 절대 쏘지 않는다.
+
+        `pty.fork()` 자식은 `setsid()` 로 자기 세션/그룹을 갖지만, **fork 가 부모에
+        돌아온 뒤 자식이 setsid 를 끝내기 전까지의 창**에서는 아직 부모 그룹에 속한다.
+        그 창에 `terminate()`/`kill()` 이 들어오면 `getpgid(자식)` 이 **내 그룹**을
+        돌려주고, 종전 코드는 그대로 `killpg` 해서 **자기 자신을 죽였다**:
+        서버 프로세스 그룹 전체가 SIGHUP/SIGKILL 을 맞는다(테스트에서는 러너와 그
+        부모 셸까지 함께 사라져 "출력도 트레이스백도 없이 종료" 로 보였다 —
+        2026-07-26 실측, 패널을 만들자마자 kill 하는 경로에서 간헐 재현).
+        종전 가드 `self.pid < 0` 은 pid 0 도 통과시켜(=`getpgid(0)` 은 호출자 자신의
+        그룹) 같은 자살을 한 번 더 열어 뒀다.
+
+        처방: 대상 pgid 가 내 것과 같으면 그룹 대신 **그 pid 하나만** 겨눈다. 자식은
+        정상적으로 죽고(레이스라 곧 setsid 를 마치더라도 시그널은 그 프로세스에
+        전달된다) 우리는 안 죽는다. pid<=0 은 애초에 대상이 아니다.
+        """
+        if self.pid <= 0:
             return
         try:
-            os.killpg(os.getpgid(self.pid), sig)
+            pgid = os.getpgid(self.pid)
+        except (OSError, ProcessLookupError):
+            return                      # 이미 거둬진 자식 — 보낼 곳이 없다
+        try:
+            if pgid == os.getpgid(0):
+                os.kill(self.pid, sig)  # 내 그룹 → 그룹 금지, 자식 단독 타격
+            else:
+                os.killpg(pgid, sig)
         except (OSError, ProcessLookupError):
             pass
 
     def reap(self, *, block: bool = False) -> Optional[int]:
-        if self.pid < 0:
+        # 0 도 제외한다 — `waitpid(0, …)` 은 '내 프로세스 그룹의 아무 자식'이라
+        # 엉뚱한 자식을 거둬 그 소유자의 reap 을 굶긴다(_signal_group 과 같은 결).
+        if self.pid <= 0:
             return None
         try:
             flags = 0 if block else os.WNOHANG

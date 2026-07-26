@@ -495,3 +495,60 @@ async def test_owned_conpty_real_child_exit_fires_eof_windows():
         if pty._watcher:
             pty._watcher.join(timeout=1.0)
     assert eof.is_set(), "실 자식 종료 후 감시자가 EOF 를 깨워야(좀비 회귀 방지)"
+
+
+async def test_signal_group_never_targets_own_process_group():
+    """`terminate`/`kill` 은 **자기 프로세스 그룹**에 절대 시그널하지 않는다.
+
+    회귀(2026-07-26): `_signal_group` 가드가 `self.pid < 0` 뿐이라 **0 이 통과**했다.
+    POSIX 에서 `os.getpgid(0)` 은 '호출자 자신의 프로세스 그룹'이므로 pid 가 0 이면
+    자기 그룹을 killpg 한다 — 서버가 자살하고, 테스트에서는 러너와 **부모 셸까지**
+    함께 죽어 "출력도 트레이스백도 없이 사라지는" 증상이 됐다(terminate=SIGHUP →
+    `☠ 러너가 SIGHUP 로 종료됨`, kill=SIGKILL → 완전 무음).
+
+    오라클: 진짜로 쏘면 이 프로세스가 죽으므로 `os.killpg` 를 가로채 **호출 자체가
+    없어야 함**을 단언한다. 뮤테이션(가드를 `< 0` 으로 되돌리기)이면 pid=0 에서
+    호출이 생겨 실패한다. 대조군으로 **다른 그룹에는 실제로 쏜다**는 것도 함께 봐야
+    가드가 기능을 통째로 죽이지 않았음이 증명된다.
+    """
+    if pty_backend.IS_WINDOWS:
+        skip("POSIX 전용(프로세스 그룹 시그널)")
+    import subprocess
+
+    calls, single = [], []
+    p = object.__new__(pty_backend._UnixPty)      # __init__ 없이 pid 만 세운다
+    # 대조군 자식은 **패치 밖에서** 만들고 정리한다 — 안에서 정리하면 Popen.kill 이
+    # 가짜 os.kill 로 가로채져 자식이 안 죽고 wait 이 타임아웃한다(실측 함정).
+    child = subprocess.Popen(["/bin/sh", "-c", "sleep 30"], start_new_session=True)
+    try:
+        child_pgid = os.getpgid(child.pid)
+        assert child_pgid != os.getpgid(0), "대조군 준비 실패(같은 그룹)"
+
+        with harness.patched(os,
+                             killpg=lambda pgid, sig: calls.append((pgid, sig)),
+                             kill=lambda pid, sig: single.append((pid, sig))):
+            for bad in (0, -1, -12345):
+                p.pid = bad
+                p.terminate()
+                p.kill()
+            assert calls == [] and single == [], f"pid<=0 인데 시그널: {calls} {single}"
+
+            # 살아 있지만 **내 그룹과 같은** pid(= setsid 전 자식 / 이 프로세스 자신):
+            # 그룹은 절대 금지, 대신 그 pid 하나만 겨눠야 한다.
+            p.pid = os.getpid()
+            p.terminate()
+            p.kill()
+            assert calls == [], f"자기 프로세스 그룹에 killpg 했다: {calls}"
+            assert single == [(os.getpid(), pty_backend._SIGHUP),
+                              (os.getpid(), pty_backend._SIGKILL)], single
+            single.clear()
+
+            # 대조군: 다른 세션(=다른 pgid)이면 종전대로 **그룹**에 쏜다(가드가
+            # 기능을 통째로 죽이지 않았음을 증명 — 이게 없으면 항상 skip 해도 통과).
+            p.pid = child.pid
+            p.terminate()
+            assert calls == [(child_pgid, pty_backend._SIGHUP)], calls
+            assert single == [], f"다른 그룹인데 pid 단독으로 쐈다: {single}"
+    finally:
+        child.kill()
+        child.wait(timeout=5)

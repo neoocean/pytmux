@@ -81,6 +81,36 @@ async def server_only():
     return srv, task, srv.resolved_endpoint
 
 
+def _killpg_not_self(child_pid):
+    """자식 프로세스 그룹을 SIGKILL 하되 **내 그룹이면 절대 안 쏜다**(자살 방지).
+
+    종전 코드는 `os.killpg(os.getpgid(p.child_pid), SIGKILL)` 였다. 여기엔 러너를
+    통째로 죽이는 함정이 둘 있다:
+      · `child_pid` 가 0 이면 `os.getpgid(0)` = **내 프로세스 그룹**이다(POSIX 규약:
+        0=호출자). 그대로 killpg 하면 러너와 **부모 셸까지** SIGKILL 된다.
+      · 자식이 setsid 를 안 했거나(=부모 그룹 상속) pid 가 이미 거둬져 재사용됐으면
+        역시 내 그룹이 나온다.
+    SIGKILL 이라 트레이스백도 종료 메시지도 없이 프로세스가 사라진다 — 실제로
+    "출력 없이 exit 1 로 러너가 죽는" 미해결 증상의 후보다. 그래서 대상 pgid 를
+    내 것과 대조하고, 같으면 쏘지 않고 진단만 남긴다(PYTMUX_TEST_SELFKILL_LOG).
+    """
+    if not isinstance(child_pid, int) or child_pid <= 0:
+        return                       # 0=내 그룹, 음수=렌더 전용(-1) — 둘 다 대상 아님
+    pgid = os.getpgid(child_pid)
+    if pgid == os.getpgid(0):
+        path = os.environ.get("PYTMUX_TEST_SELFKILL_LOG")
+        msg = (f"[selfkill-guard] child_pid={child_pid} 의 pgid={pgid} 가 러너 자신의 "
+               f"그룹이라 SIGKILL 을 취소했다(pid={os.getpid()})\n")
+        if path:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(msg)
+                f.flush()
+                os.fsync(f.fileno())
+        print("  " + msg.rstrip(), file=sys.stderr, flush=True)
+        return
+    os.killpg(pgid, signal.SIGKILL)
+
+
 def cleanup(srv, endpoint):
     """패널 자식 프로세스를 정리하고 (Unix) 소켓 파일 제거(루프는 중단하지 않음)."""
     srv.running = False
@@ -94,7 +124,7 @@ def cleanup(srv, endpoint):
                         p.pty.kill()
                         p.pty.close()
                     elif not IS_WINDOWS:
-                        os.killpg(os.getpgid(p.child_pid), signal.SIGKILL)
+                        _killpg_not_self(p.child_pid)
                 except Exception:
                     pass
     if not ipc.is_tcp(endpoint):

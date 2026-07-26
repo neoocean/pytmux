@@ -93,6 +93,43 @@ def _disarm():
         faulthandler.cancel_dump_traceback_later()
 
 
+# ── 치명 시그널 = 조용한 죽음 금지 ──────────────────────────────────────────
+# 러너가 **출력도 트레이스백도 없이** 사라지는 일이 있다(2026-07-26 추적: 재현
+# 조건은 못 잡았고, 통제 반복 10회는 전부 완주했다). 원인을 못 박는 것과 별개로,
+# 죽을 때 **무엇이 돌고 있었는지**만은 반드시 남겨야 다음 번에 진단이 된다.
+# SIGTERM/SIGHUP 을 가로채 현재 테스트를 리포트·stderr 에 적고 곧바로 기본 동작으로
+# 되돌려 재전달한다(종료 의미론 보존 — 삼키지 않는다).
+# SIGPIPE 는 **절대 건드리지 않는다**: 파이썬 기본이 SIG_IGN 이라 write 가
+# BrokenPipeError 로 올라오는데, 여기에 핸들러를 달면 그게 치명 신호로 바뀌어
+# 없던 죽음을 만든다(추적 중 실제로 자초했다).
+_CURRENT = {"label": None}
+_REPORTER = None
+
+
+def _fatal_signal(signum, frame):
+    label = _CURRENT.get("label")
+    name = signal.Signals(signum).name
+    msg = f"러너가 {name} 로 종료됨 (진행중 테스트: {label})"
+    try:
+        print(f"\n  ☠ {msg}", file=sys.stderr, flush=True)
+        if _REPORTER is not None:
+            _REPORTER.emit("fatal_signal", signal=name, label=label)
+    finally:
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)       # 기본 동작으로 재전달
+
+
+def _install_fatal_signal_logger():
+    for nm in ("SIGTERM", "SIGHUP", "SIGQUIT"):
+        sig = getattr(signal, nm, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _fatal_signal)
+        except (ValueError, OSError):
+            pass                            # 메인 스레드가 아니거나 미지원 — 무해
+
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
@@ -295,6 +332,7 @@ def report_summary(path, out=print):
         out(f"리포트 없음: {path or '(비활성)'}")
         return 1
     counts, skips, fails, last_import, summary = {}, [], [], None, None
+    last_begin = done = fatal = None
     with open(path, encoding="utf-8") as fp:
         for line in fp:
             line = line.strip()
@@ -307,7 +345,12 @@ def report_summary(path, out=print):
             kind = rec.get("kind")
             if kind == "import":
                 last_import = rec.get("module")
+            elif kind == "begin":
+                last_begin = rec.get("label")
+            elif kind == "fatal_signal":
+                fatal = rec
             elif kind == "result":
+                done = rec.get("label")
                 st = rec.get("status", "?")
                 counts[st] = counts.get(st, 0) + 1
                 if st == "skip":
@@ -328,9 +371,19 @@ def report_summary(path, out=print):
     for f in fails:
         out(f"  FAIL {f}")
     if summary is None:
+        # 사망 지점 = **끝나지 않은 begin**(begin 은 있는데 같은 label 의 result 가
+        # 없는 것). 종전엔 모듈 이름까지만 알려줘 60개를 되짚어 세야 했다.
+        inflight = last_begin if last_begin and last_begin != done else None
         out(f"  ⚠ 절단된 run — 요약 줄이 없다(마지막 import: {last_import or '?'}). "
             "러너가 죽었다: 머신 부하·CI 타임아웃·faulthandler exit 을 의심하고 "
             "그 모듈만 재실행할 것.")
+        if inflight:
+            out(f"  ☠ 죽을 때 물려 있던 테스트: {inflight}")
+        elif done:
+            out(f"  · 마지막으로 끝난 테스트: {done} (그 다음 것에서 죽었다)")
+        if fatal:
+            out(f"  ☠ 치명 시그널 {fatal.get('signal')} 수신 "
+                f"(진행중: {fatal.get('label')})")
         return 1
     out(f"  완주: {summary.get('passed')} passed, {summary.get('failed')} failed, "
         f"{summary.get('skipped')} skipped, {summary.get('flaky')} flaky")
@@ -353,6 +406,9 @@ def main(argv):
     leak_base = {}
     mods = discover(names)
     rep = Reporter(_report_path())
+    global _REPORTER
+    _REPORTER = rep
+    _install_fatal_signal_logger()
     rep.emit("start", modules=mods, argv=list(argv), pid=os.getpid())
     for modname in mods:
         # import 도 SIGALRM 으로 감싼다 — 모듈 import 가 매달리면(과거 macOS CI 에서
@@ -378,6 +434,13 @@ def main(argv):
                  if n.startswith("test_") and asyncio.iscoroutinefunction(f)]
         for name, fn in sorted(tests):
             label = f"{modname}.{name}"
+            # 진행중 표식: 리포트에 **시작**도 남긴다. 종전엔 완료된 result 만 남아,
+            # 러너가 통째로 죽으면 --report 가 "마지막 import: <모듈>" 까지만 알려
+            # 줬다 — 정작 **죽을 때 물려 있던 테스트**를 못 짚어 진단이 막혔다
+            # (2026-07-26 즉사 추적에서 실제로 이것 때문에 모듈을 60개씩 되돌려
+            # 세어야 했다). begin 이 있으면 마지막 begin 이 곧 사망 지점이다.
+            rep.emit("begin", label=label)
+            _CURRENT["label"] = label
             ok, hung, last_exc, last_tb = False, False, None, ""
             was_skipped = False
             n_hung = 0
@@ -401,8 +464,16 @@ def main(argv):
                     n_hung += 1
                     last_exc = TimeoutError(f"{TEST_TIMEOUT}s 초과 — hang(데드락 의심)")
                     last_tb = f"TIMEOUT after {TEST_TIMEOUT}s\n"
-                except Exception as e:
+                except BaseException as e:
+                    # **BaseException** 이다(종전 Exception). SystemExit·KeyboardInterrupt
+                    # 는 Exception 이 아니라, 테스트가 지나는 코드 어딘가에서
+                    # `sys.exit(1)` 이 뜨면 여기 안 걸리고 main() 밖으로 빠져나가
+                    # **요약도 트레이스백도 없이 종료코드 1** 로 스위트가 끝났다
+                    # (프로덕션 경로에 sys.exit 가 여럿 있다 — launcher·client).
+                    # 그 한 건을 그 테스트의 실패로 기록하고 스위트는 계속 간다.
                     last_exc, last_tb = e, traceback.format_exc()
+                    if isinstance(e, KeyboardInterrupt):
+                        raise          # Ctrl-C 는 사용자 의도 — 그대로 전파
                 finally:
                     _disarm()
                 if ok:
