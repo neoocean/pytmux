@@ -14,7 +14,7 @@
 """
 import importlib
 
-import harness  # noqa: F401
+import harness
 
 sm = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
 
@@ -67,12 +67,30 @@ class _Srv:
         return {"t": "notice", "key": key, "sev": severity, "kw": kw}
 
 
+def _fire_resume_scoped(srv, state):
+    """`_fire_resume` 이 도는 **동안에만** 화면 판정 두 함수를 갈아끼운 호출자.
+
+    종전엔 `_setup` 이 `sm.screen_text`/`sm.claude_state` 를 모듈 전역에 **영구**
+    치환했다. run.py 는 전 모듈을 한 프로세스에서 돌리므로 그 치환이 뒤따르는 모든
+    테스트 모듈에 남아, 화면은 늘 "화면"·상태는 늘 "limit" 이 됐다 — 전체 스위트에서
+    test_server(56)·test_token_saver(5)·test_transcript_wiring(5) **66건**이 이것
+    하나로 깨졌다(2026-07-26). 판정 함수가 필요한 구간은 `_fire_resume` 호출뿐이라
+    그 안으로 가둔다(테스트 본문은 그대로).
+    """
+    real = sm.ServerClaudeMixin._fire_resume
+
+    def call(pane):
+        with harness.patched(sm, screen_text=lambda scr: "화면",
+                             claude_state=lambda txt: state):
+            return real(srv, pane)
+    return call
+
+
 def _setup(monkey_state="limit"):
     srv = _Srv()
     pane = _Pane()
     # 화면 판정은 순수 함수 두 개(screen_text→claude_state)라 여기만 갈아끼운다.
-    sm.screen_text = lambda scr: "화면"
-    sm.claude_state = lambda txt: monkey_state
+    srv._fire_resume = _fire_resume_scoped(srv, monkey_state)
     # 알림 전송은 클라 목록을 도는데, 여기선 어떤 클라도 없다 → 전송 0.
     # 대신 _notice_msg 호출을 가로채 관측한다.
     orig = _Srv._notice_msg

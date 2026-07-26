@@ -19,7 +19,7 @@ F3). 옵션 B 가 그걸 **가시화**했고, 여기 옵션 A 는 **대역외 �
 import importlib
 import time
 
-import harness  # noqa: F401
+import harness
 from pytmuxlib import usagedb
 
 sm = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
@@ -92,6 +92,25 @@ class _Srv:
         return msg
 
 
+def _fire_resume_scoped(srv, state):
+    """`_fire_resume` 이 도는 **동안에만** 화면 판정 두 함수를 갈아끼운 호출자.
+
+    종전엔 `_setup` 이 `sm.screen_text`/`sm.claude_state` 를 모듈 전역에 **영구**
+    치환했다. run.py 는 전 모듈을 한 프로세스에서 돌리므로 그 치환이 뒤따르는 모든
+    테스트 모듈에 남아, 화면은 늘 "화면"·상태는 늘 "limit" 이 됐다 — 전체 스위트에서
+    test_server(56)·test_token_saver(5)·test_transcript_wiring(5) **66건**이 이것
+    하나로 깨졌다(2026-07-26). 판정 함수가 필요한 구간은 `_fire_resume` 호출뿐이라
+    그 안으로 가둔다(테스트 본문은 그대로).
+    """
+    real = sm.ServerClaudeMixin._fire_resume
+
+    def call(pane):
+        with harness.patched(sm, screen_text=lambda scr: "화면",
+                             claude_state=lambda txt: state):
+            return real(srv, pane)
+    return call
+
+
 def _setup(rows, mode="weak", state="limit", path=None):
     """rows = [(xkey, ts_offset_sec, tokens)] — 오프셋은 **현재 시각 기준**(음수=과거)."""
     conn = usagedb.connect(":memory:")
@@ -99,9 +118,8 @@ def _setup(rows, mode="weak", state="limit", path=None):
     if rows:
         usagedb.insert_xc_many(
             conn, [_xc(k, now + off, tok) for k, off, tok in rows])
-    sm.screen_text = lambda scr: "화면"
-    sm.claude_state = lambda txt: state
     srv = _Srv(conn, mode=mode)
+    srv._fire_resume = _fire_resume_scoped(srv, state)
     pane = _Pane(path) if path else _Pane()
     return srv, pane, conn
 
@@ -233,9 +251,8 @@ async def test_session_scope_is_per_session():
     usagedb.insert_xc_many(conn, [
         _xc("other:1", now - 600, 900_000, session="99999999-0000-0000-0000-0"),
         _xc("mine:1", now - 8 * 3600, 900_000)])       # 내 세션은 창 밖에만
-    sm.screen_text = lambda scr: "화면"
-    sm.claude_state = lambda txt: "limit"
     srv, pane = _Srv(conn, mode="weak"), _Pane()
+    srv._fire_resume = _fire_resume_scoped(srv, "limit")
     srv._fire_resume(pane)
     assert pane.pty.writes == [], "남의 세션 사용량으로 통과되면 안 된다"
     conn.close()

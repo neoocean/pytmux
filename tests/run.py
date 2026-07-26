@@ -153,6 +153,59 @@ async def _run_with_timeout(fn):
         await fn()
 
 
+# ── 모듈 경계 전역 누출 가드 ────────────────────────────────────────────────
+# run.py 는 **전 모듈을 한 프로세스**에서 돌린다. 테스트가 `mod.func = lambda …` 로
+# 프로덕션 모듈 전역을 덮고 안 되돌리면 그 치환이 뒤따르는 모든 테스트 모듈에 남는다.
+# 실측(2026-07-26): test_claude_resume_transparency/-verify 가 servermixin 의
+# screen_text/claude_state 를 영구 치환해 test_server(56)·test_token_saver(5)·
+# test_transcript_wiring(5) **66건**이 한꺼번에 깨졌다. 모듈별 격리 실행은 초록이라
+# "기존 결함"으로 오해되기 쉬웠다 — 전체=적색/격리=녹색이면 결함이 아니라 **오염**이다.
+# 그래서 모듈 경계에서 pytmuxlib.* 전역을 스냅샷 대비 되돌리고 누출을 이름으로 보고한다
+# (테스트가 스스로 되돌리는 게 원칙이고 이건 2차 방어 + 가시화). 끄기 = 아래 env.
+_LEAK_GUARD = os.environ.get("PYTMUX_TEST_LEAK_GUARD", "on") != "off"
+_MISSING = object()
+
+
+def _snapshot_globals(base):
+    """아직 안 잡힌 `pytmuxlib.*` 모듈의 전역을 얕게 스냅샷한다(베이스라인 확장).
+
+    모듈이 처음 등장한 시점의 값을 그 모듈의 pristine 으로 삼는다. 한 테스트 모듈이
+    어떤 프로덕션 모듈을 **처음 import 하면서 동시에 치환**하면 그 1회는 못 잡지만
+    (그 값이 베이스라인이 된다), 그 다음 모듈부터는 잡힌다."""
+    for name, mod in list(sys.modules.items()):
+        if name in base or not name.startswith("pytmuxlib"):
+            continue
+        d = getattr(mod, "__dict__", None)
+        if d is not None:
+            base[name] = dict(d)
+
+
+def _restore_globals(base):
+    """스냅샷과 **정체성이 달라진 함수/클래스 전역**만 되돌리고 이름 목록을 반환한다.
+
+    두 가지를 일부러 건드리지 않는다 — 둘 다 실측으로 배운 오탐이다:
+      · **제자리 변경**(캐시 dict 에 키 추가 등): 정체성이 그대로라 애초에 안 걸린다.
+      · **지연 초기화 싱글턴**(`_REGISTRY = None` → 첫 사용 때 객체 대입,
+        `cellwidth._orig_cell_len = None` → 최초 패치 때 원본 보관): 스냅샷 값이
+        None 이라 되돌리면 정상 초기화를 무효로 만든다. 실제로 이걸 되돌렸다가
+        test_client·test_compose_prompt 19건이 `'NoneType' object is not callable`
+        로 깨졌다(2026-07-26). 그래서 **원래 값이 호출 가능(함수/클래스)일 때만**
+        되돌린다 — 잡으려는 건 `mod.f = 가짜함수` 형태의 몽키패치이고, 그 경우는
+        원래 값이 언제나 함수다."""
+    leaked = []
+    for name, snap in base.items():
+        d = getattr(sys.modules.get(name), "__dict__", None)
+        if d is None:
+            continue
+        for k, v in snap.items():
+            if k.startswith("__") or not callable(v):
+                continue
+            if d.get(k, _MISSING) is not v:
+                leaked.append(f"{name}.{k}")
+                d[k] = v
+    return leaked
+
+
 def discover(names):
     mods = []
     for fn in sorted(os.listdir(HERE)):
@@ -296,6 +349,8 @@ def main(argv):
     passed = failed = flaky = skipped = 0
     failures = []
     skips = []
+    leaks = []
+    leak_base = {}
     mods = discover(names)
     rep = Reporter(_report_path())
     rep.emit("start", modules=mods, argv=list(argv), pid=os.getpid())
@@ -305,6 +360,8 @@ def main(argv):
         # 전환돼 run.py 가 스스로 끝난다(step 이 완료돼 로그가 남고 주범 모듈이 보임).
         print(f":: import {modname}", file=sys.stderr, flush=True)
         rep.emit("import", module=modname)
+        if _LEAK_GUARD:
+            _snapshot_globals(leak_base)   # import 전 = 이 모듈의 pristine 기준선
         _arm()
         try:
             mod = importlib.import_module(modname)
@@ -385,6 +442,15 @@ def main(argv):
                 if last_tb:
                     for ln in str(last_tb).rstrip().splitlines():
                         print(f"        {ln}")
+        # 모듈이 남긴 프로덕션 전역 치환을 되돌리고 이름으로 보고한다(2차 방어).
+        if _LEAK_GUARD:
+            leaked = _restore_globals(leak_base)
+            if leaked:
+                leaks.append((modname, leaked))
+                print(f"  LEAK  {modname}: 프로덕션 전역 {len(leaked)}개를 되돌리지 "
+                      f"않고 끝냈다 → 되돌림({', '.join(sorted(leaked)[:6])}"
+                      f"{' …' if len(leaked) > 6 else ''})")
+                rep.emit("leak", module=modname, attrs=sorted(leaked))
     flaky_note = f" ({flaky} flaky — 재시도 후 통과)" if flaky else ""
     skip_note = f", {skipped} skipped" if skipped else ""
     print(f"\n{'='*50}\n{passed} passed, {failed} failed{skip_note}{flaky_note}")
@@ -394,6 +460,12 @@ def main(argv):
     if rep.path:
         print(f"리포트: {rep.path} (절단된 run 회계 복원 = "
               f"python3 tests/run.py --report)")
+    if leaks:
+        # 누출은 실패로 세지 않는다(가드가 이미 되돌려 뒤 모듈은 안전하다). 다만
+        # **원인 모듈을 이름으로** 남겨 테스트가 스스로 되돌리게 고칠 수 있게 한다.
+        print("leaked globals (가드가 되돌림 — 해당 테스트가 스스로 복원해야 한다):")
+        for modname, attrs in leaks:
+            print(f"  {modname}: {', '.join(sorted(attrs))}")
     if skips:
         # 커버리지 갭 가시화: 무엇이 왜 안 돌았는지 사유별로 묶어 리포트.
         from collections import Counter

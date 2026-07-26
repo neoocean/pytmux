@@ -199,6 +199,35 @@ async def running_server(allow_errors=False):
         await teardown(srv, task, sock, allow_errors=allow_errors)
 
 
+@contextlib.contextmanager
+def patched(mod, **attrs):
+    """모듈 전역을 **이 블록 동안만** 갈아끼운다(끝나면 예외가 나도 되돌린다).
+
+    테스트가 `mod.func = lambda …` 로 모듈 전역을 덮고 안 되돌리면, run.py 는 전
+    모듈을 **한 프로세스**에서 돌리므로 그 치환이 뒤따르는 **모든 테스트 모듈**에
+    그대로 남는다. 실측(2026-07-26): test_claude_resume_transparency/-verify 가
+    servermixin.screen_text/claude_state 를 영구 치환해 그 뒤의 test_server(56) ·
+    test_token_saver(5) · test_transcript_wiring(5) **66건**이 깨졌다 — 화면이 늘
+    "화면"·상태가 늘 "limit" 이 되니 스크랩 계열 오라클이 통째로 무너진다. 각 모듈을
+    격리 실행하면 초록이라 "기존 결함"으로 오해되기 쉬웠다(전체=적색/격리=녹색이면
+    결함이 아니라 **오염**을 의심할 것).
+
+    원래 값이 없던 속성은 블록이 끝나면 지운다(덮어쓴 게 아니라 새로 만든 것이므로).
+    """
+    sentinel = object()
+    saved = {k: getattr(mod, k, sentinel) for k in attrs}
+    for k, v in attrs.items():
+        setattr(mod, k, v)
+    try:
+        yield mod
+    finally:
+        for k, v in saved.items():
+            if v is sentinel:
+                delattr(mod, k)
+            else:
+                setattr(mod, k, v)
+
+
 def pane_text(pane):
     """패널의 현재 렌더 결과를 텍스트로(스타일 제외)."""
     rows, _ = pane.render(False)
