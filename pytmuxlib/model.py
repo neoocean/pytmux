@@ -596,12 +596,43 @@ class Pane:
     def _make_main_screen(self, cols: int, rows: int):
         """메인(스크롤백) 화면 = 자작 nativescreen.NativeScrollbackScreen."""
         from .nativescreen import NativeScrollbackScreen
-        return NativeScrollbackScreen(cols, rows, history=HISTORY, ratio=0.5)
+        screen = NativeScrollbackScreen(cols, rows, history=HISTORY, ratio=0.5)
+        screen.write_process_input = self._reply_to_child
+        return screen
 
     def _make_alt_screen(self, cols: int, rows: int):
         """대체(alt) 화면 = 자작 nativescreen.NativeScreen(스크롤백 없음)."""
         from .nativescreen import NativeScreen
-        return NativeScreen(cols, rows)
+        screen = NativeScreen(cols, rows)
+        screen.write_process_input = self._reply_to_child
+        return screen
+
+    def _reply_to_child(self, data: str) -> None:
+        """단말 **질의 응답**(CPR/DSR/DA)을 이 패널의 pty stdin 으로 되돌려준다.
+
+        nativescreen 의 `report_device_status`(DSR/CPR `ESC[6n`)·
+        `report_device_attributes`(DA `ESC[c`)는 응답 문자열을 만들어
+        `write_process_input` 으로 넘기는데, 그 훅이 스텁(pass)이라 **지금까지 모든
+        단말 질의가 삼켜졌다** — pytmux 안의 앱은 커서 위치도, 단말 정체도 물어볼 수
+        없었다(무응답 = 타임아웃 후 폴백). 그래서 CPR 로 단말 특성을 재는 앱은
+        pytmux 안에서만 감지에 실패했다: 실제 사례가 blog-editor 의 East Asian
+        Ambiguous 폭 감지(`·` 를 1칸으로 그리는지 2칸으로 그리는지 CPR 로 전진 칸수를
+        잰다) — pytmux 격자는 그 답을 알고 있는데 물어볼 길이 없었다.
+
+        응답 바이트는 **우리가 만든 고정 형식**(`ESC[y;xR`·`ESC[?6c`·`ESC[0n`)뿐이라
+        패널 출력이 stdin 으로 임의 바이트를 밀어 넣는 통로가 되지 않는다(개행 없음 →
+        셸 명령 주입 불가). 같은 진입점 성격의 선례가 이미 있다 — serverpty 가
+        XTVERSION·DEC 2026 질의에 `pane.pty.write` 로 답한다. 이쪽은 **격자 상태**
+        (커서 좌표)가 필요해 파서가 그 시퀀스를 처리하는 지점에서 답해야 한다.
+
+        pty 가 없는 패널(재시작 복원·리플레이 전용)은 조용히 무시한다."""
+        pty = self.pty
+        if pty is None or not data:
+            return
+        try:
+            pty.write(data.encode("ascii", "ignore"))
+        except (OSError, ValueError):
+            pass          # 자식이 이미 죽었거나 fd 가 닫힘 — 응답은 버려도 무해
 
     def _make_tokenizer(self):
         """native VT 토크나이저 생성(현재 _main 을 가리키게)."""
