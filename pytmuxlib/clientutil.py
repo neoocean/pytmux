@@ -461,19 +461,56 @@ def _dim_inactive_style(st: Style, ratio: float = 0.18) -> Style:
     return st + Style(color=_dim(st.color, Color.parse("grey46")), bgcolor=new_bg)
 
 
+# pyte 계보 색 이름 중 **Rich 가 모르는 것** → Rich 이름. 이게 없으면 해당 색이 그냥
+# 사라진다(아래 _rich_color 주석 참조).
+#
+# - `bright_brown`: SGR 93/103(밝은 노랑). 표준 노랑은 `yellow` 로 오는데 밝은 쪽만
+#   `brown` 계열 이름이라 체계가 어긋나 있다.
+# - `bfightmagenta`: SGR 105(밝은 마젠타 배경). **원 pyte 의 오타를 vtconst 가 의도적으로
+#   보존**한 값이다(vtconst.py — "렌더 바이트 동일성"). 서버가 실제로 이 값을 보내므로
+#   여기서 받아 줘야 한다. 서버 쪽 이름을 '고치면' 그쪽 계약이 깨지므로 표시 계층인
+#   여기서 번역한다.
+_COLOR_ALIASES = {
+    "bright_brown": "bright_yellow",
+    "bfightmagenta": "bright_magenta",
+}
+
+
+@lru_cache(maxsize=512)
+def _rich_color(name: str | None) -> str | None:
+    """서버가 준 색 이름을 Rich 가 이해하는 이름으로. 못 알아들으면 None(그 색만 포기).
+
+    색을 **하나씩** 검증하는 이유: 종전엔 `Style(...)` 전체를 try 로 감싸고 실패하면
+    `Style(reverse, bold)` 로 떨어뜨렸다. 그래서 색 이름 하나를 모르면 **기울임·밑줄·
+    취소선까지 함께 사라졌다**. 실제로 SGR 93/103/105 에서 그 일이 일어나고 있었다
+    (밝은 노랑은 CLI 도구가 흔히 쓴다). 이제 못 알아듣는 색만 버리고 나머지는 남는다.
+    """
+    if not name:
+        return None
+    name = _COLOR_ALIASES.get(name, name)
+    try:
+        from rich.color import Color
+        Color.parse(name)
+    except Exception:
+        return None
+    return name
+
+
 def make_style(d: dict) -> Style:
     if not d:
         return DEFAULT_STYLE
     key = tuple(sorted(d.items()))
     st = _style_cache.get(key)
     if st is None:
+        attrs = dict(bold=bool(d.get("bo")), italic=bool(d.get("it")),
+                     underline=bool(d.get("un")), reverse=bool(d.get("rv")),
+                     strike=bool(d.get("st")))
         try:
-            st = Style(color=d.get("f"), bgcolor=d.get("b"),
-                       bold=bool(d.get("bo")), italic=bool(d.get("it")),
-                       underline=bool(d.get("un")), reverse=bool(d.get("rv")),
-                       strike=bool(d.get("st")))
+            st = Style(color=_rich_color(d.get("f")),
+                       bgcolor=_rich_color(d.get("b")), **attrs)
         except Exception:
-            st = Style(reverse=bool(d.get("rv")), bold=bool(d.get("bo")))
+            # 색은 이미 걸러 냈으므로 여기 오는 건 예상 밖이다. 그래도 속성은 지킨다.
+            st = Style(**attrs)
         _style_cache[key] = st
     return st
 
