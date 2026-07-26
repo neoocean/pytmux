@@ -204,6 +204,38 @@ async def kill_pane_prompt(app, pilot):
     await pilot.pause(0.4)
 
 
+async def token_sync_enroll(app, pilot):
+    # ESC → : 로 명령 프롬프트를 열고 pytmux-sync 웹에서 복사해 온 페어링 코드를
+    # 인자로 붙여넣는 모습(실제 키 입력). BLOG-2623 회고의 동기화 서버 문단 삽화용.
+    #
+    # 코드는 **반드시 합성값**이다. 페어링 코드는 브라우저가 마스터 키를 감쌀 때
+    # 쓴 키의 전달 통로라(TOKEN_SYNC_MULTI_MACHINE_DESIGN §5.3a) 코드를 아는 쪽이
+    # 그 키를 푼다. 형제 명령 `invite` 의 안내도 "이 값이 곧 키입니다 — 채팅·
+    # 스크린샷 금지" 라고 못박고 있다(plugins/claude-code/__init__.py 의
+    # tsync.invite). 실제 코드가 이 컷에 들어가면 그 자체가 키 유출이다. 그래서
+    # 형식만 진짜와 같은 고정 더미를 쓰고 값은 한눈에 가짜인 것으로 둔다.
+    #
+    # 형식 근거: tools/synserver/db.py 의 new_pairing() — 128비트 난수를 대문자
+    # hex 4자리씩 8묶음(총 39자)으로 이어 붙인다. 여기서는 **앞 한 묶음만** 넣는다.
+    # 전부 넣으면 입력이 64자가 되는데 명령 프롬프트의 입력칸은 40%(90칸 중 약
+    # 33칸)뿐이라(clientscreens.py: #pinput 1fr · #phint max-width 60%) 커서 쪽으로
+    # 밀려 **명령 이름이 화면에서 사라진다**. 독자가 봐야 할 것은 어떤 명령에 코드를
+    # 넣는가이므로 명령이 보이는 쪽을 택했다.
+    CODE = "0000"
+    keyname = {"-": "minus", " ": "space"}
+
+    await _wait_painted(pilot, app)
+    await pilot.press("escape")        # 명령 모드(ESC)
+    await pilot.pause(0.2)
+    await pilot.press("colon")         # 명령 프롬프트 열기
+    await pilot.pause(0.2)
+    # 실제 명령 이름은 `claude-token-sync` 이고 서브커맨드가 `enroll <코드>` 다
+    # (plugins/claude-code/__init__.py 의 cmd.claude-token-sync 도움말).
+    for ch in "claude-token-sync enroll " + CODE:
+        await pilot.press(keyname.get(ch, ch))
+    await pilot.pause(0.4)
+
+
 async def tabs_multi(app, pilot):
     app.send_cmd("new_window")
     await pilot.pause(0.4)
@@ -1020,6 +1052,9 @@ SCENES = [
     ("36-menu-submenu", "메뉴 서브메뉴 — '패널 ▸' 펼침(§8.1)", menu_submenu),
     ("06-command-prompt", "명령 프롬프트(prefix :) + 고스트 자동완성", command_prompt),
     ("07-kill-pane-prompt", "패널 닫기 — ESC : 명령 프롬프트에 kill-pane 입력", kill_pane_prompt),
+    ("52-token-sync-enroll",
+     "토큰 동기화 기기 등록 — ESC : 에 claude-token-sync enroll <코드>(합성값)",
+     token_sync_enroll),
     ("08-tabs-multi", "탭 여러 개 + 이름변경", tabs_multi),
     ("49-tab-switcher", "탭 스위처(esc Tab) — 원격 분홍·핀 경고색·패널 하위행·항해 키",
      tab_switcher),
