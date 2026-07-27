@@ -50,10 +50,10 @@ def _absolute_row(pane):
 def pane_osc(pane, code, param):
     """코어가 넘겨 준 OSC 를 블록 경계로 해석한다.
 
-    타이틀(0/1/2)은 코어가 이미 처리해 여기 오지 않는다. 우리가 보는 것은 133 과 7 뿐이고,
-    나머지는 세그멘터가 무시한다.
+    타이틀(0/1/2)은 코어가 이미 처리해 여기 오지 않는다. 우리가 보는 것은 133(경계)·
+    7(cwd)·633(명령 텍스트) 뿐이고, 나머지는 세그멘터가 무시한다.
     """
-    if code not in ("133", "7"):
+    if code not in ("133", "7", "633"):
         return
     seg = _segmenter(pane)
     if seg.on_osc(code, param, row=_absolute_row(pane)):
@@ -82,6 +82,10 @@ class _BlocksPlugin:
 
     name = "blocks"
     description = "셸 통합(OSC 133)으로 명령 경계를 감지해 블록을 클라에 보낸다"
+
+    #: 페더레이션: 이 서버가 업스트림에 붙을 때 광고할 능력. 이게 있어야 업스트림이
+    #: 블록을 내려보내고, 원격 탭을 보는 클라도 블록을 받는다.
+    upstream_caps = ("blocks",)
 
     #: 코어가 OSC 를 넘겨 주는 훅.
     pane_osc = staticmethod(pane_osc)

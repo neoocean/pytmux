@@ -16,6 +16,19 @@ iTerm2 가 만들고 kitty·WezTerm·VSCode 가 따르는 사실상 표준이다
 
 여기에 `OSC 7 ; file://<host><path> ST` 로 cwd 가 온다.
 
+# 명령 텍스트는 OSC 633 ; E 로 온다
+
+133 에는 "무슨 명령을 쳤나"를 알려 주는 자리가 없다(A~D 는 경계뿐). 화면에서 프롬프트
+뒤를 긁어 추측하는 방법도 있으나 프롬프트 모양·줄바꿈·색에 그대로 깨진다 —
+**셸이 직접 알려 주는 쪽**이 정확하다. VSCode 셸 통합이 쓰는
+
+    OSC 633 ; E ; <명령줄> ; <nonce> ST
+
+를 그대로 따른다(자체 코드를 만들면 다른 터미널이 이해할 여지가 없고, 633 은 모르는
+터미널이 조용히 무시한다). 명령줄 안의 `;`·개행·제어문자는 **셸이 `\\xHH` 로 escape**
+하므로 필드를 `;` 로 갈라도 안전하다. 633 의 나머지 하위 종류(A~D)는 **일부러 안 본다**
+— 우리 통합은 경계를 133 으로 보내고, 둘 다 보면 블록이 두 번 생긴다.
+
 # 왜 순수 함수인가
 
 이 모듈은 화면도 서버도 모른다. 상태 기계 하나와 블록 목록뿐이라 테스트가 쉽고,
@@ -32,6 +45,11 @@ from urllib.parse import unquote, urlparse
 #: 패널당 보관할 블록 수 상한. 스크롤백(HISTORY=10000 행)과 같은 뜻의 상한이며,
 #: 한 화면에 보이는 것보다 넉넉하되 무한하지 않게 잡았다.
 MAX_BLOCKS = 500
+
+#: 명령 텍스트 상한(글자). OSC 는 **패널 안에서 도는 아무 프로그램이나** 보낼 수 있다 —
+#: 상한이 없으면 `printf '\033]633;E;<1MB>\033\\'` 한 줄로 서버 메모리를 500배(블록 상한)
+#: 로 불릴 수 있다. 사람이 치는 명령은 이보다 훨씬 짧다.
+MAX_CMD_LEN = 1024
 
 
 class Block:
@@ -86,6 +104,8 @@ class Segmenter:
         """
         if code == "7":
             return self._on_cwd(param)
+        if code == "633":
+            return self._on_vscode(param)
         if code != "133":
             return False
         kind, _, rest = param.partition(";")
@@ -100,6 +120,20 @@ class Segmenter:
         # 모르는 하위 종류(예: P;k=...)는 조용히 무시한다 — 셸이 확장 필드를 보내도
         # 블록이 깨지지 않아야 한다.
         return False
+
+    def _on_vscode(self, param):
+        """OSC 633. 우리가 보는 것은 **명령 텍스트(E)뿐**이다.
+
+        A~D 를 함께 보면 VSCode 통합과 우리 통합이 같이 걸린 셸에서 블록이 두 번
+        생긴다. 경계는 133 한 곳에서만 판정한다.
+        """
+        kind, _, rest = param.partition(";")
+        if kind != "E":
+            return False
+        # `E;<명령줄>;<nonce>` — nonce 는 우리 관심 밖이다. 명령줄 안의 `;` 는
+        # escape 돼 오므로 첫 필드만 떼면 된다.
+        raw = rest.split(";")[0]
+        return self.set_command(_unescape(raw))
 
     def _on_cwd(self, param):
         """`OSC 7 ; file://<host>/<path>`. 경로만 쓰고 호스트는 버린다."""
@@ -149,10 +183,16 @@ class Segmenter:
     # ---- 명령 텍스트 -------------------------------------------------------
 
     def set_command(self, text):
-        """현재 블록의 명령 문자열. 셸이 `OSC 133;B` 뒤에 알려 주거나, 호출부가
-        화면에서 뽑아 넣는다."""
-        if not self.blocks:
+        """현재 블록의 명령 문자열. 셸이 `OSC 633;E` 로 알려 주거나, 호출부가
+        화면에서 뽑아 넣는다.
+
+        **끝난 블록에는 안 쓴다** — 지나간 명령의 이름이 뒤늦은 한 줄로 바뀌면
+        사용자가 보던 목록이 조용히 뒤틀린다. 열린 블록이 없으면 그냥 버린다
+        (프롬프트 없이 명령 텍스트만 오는 셸은 애초에 블록을 못 만든다).
+        """
+        if not self.blocks or self.blocks[-1].state == "done":
             return False
+        text = _sanitize_cmd(text)
         if self.blocks[-1].cmd == text:
             return False
         self.blocks[-1].cmd = text
@@ -192,6 +232,62 @@ def _parse_file_url(param):
     if parsed.scheme != "file" or not parsed.path:
         return None
     return unquote(parsed.path)
+
+
+def _unescape(text):
+    """셸이 `\\xHH`·`\\\\` 로 escape 한 명령줄을 되돌린다(VSCode 633 규약).
+
+    한 번에 왼쪽에서 오른쪽으로 훑는다 — `\\\\x3b`(백슬래시 + 글자 x3b)를 `;` 로
+    잘못 푸는 것을 막으려면 `\\\\` 를 먼저 소비해야 한다. escape 가 아닌 백슬래시는
+    **그대로 둔다**: escape 를 안 하는 셸이 보낸 `C:\\path` 가 사라지면 안 된다.
+    """
+    if "\\" not in text:
+        return text
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch != "\\":
+            out.append(ch)
+            i += 1
+            continue
+        nxt = text[i + 1:i + 2]
+        if nxt == "\\":
+            out.append("\\")
+            i += 2
+            continue
+        hexpart = text[i + 2:i + 4]
+        if nxt in ("x", "X") and len(hexpart) == 2:
+            try:
+                out.append(chr(int(hexpart, 16)))
+            except ValueError:
+                out.append(ch)
+                i += 1
+                continue
+            i += 4
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _sanitize_cmd(text):
+    """블록에 실을 명령 텍스트를 안전한 모양으로 만든다.
+
+    ① **제어문자를 공백으로 접는다**: 이 문자열은 클라가 화면에 그대로 그린다. `\\x1b`
+    가 살아 있으면 패널 안의 아무 프로그램이나 OSC 한 줄로 **사용자 단말에 이스케이프를
+    주입**할 수 있다(원격 유래 문자열에 `_strip_ctrl` 을 쓰는 것과 같은 이유). 지우지
+    않고 **공백으로** 바꾸는 것은 여러 줄 명령이 `echo a`+`echo b` → `echo aecho b` 로
+    붙어 버리지 않게 하기 위해서다.
+    ② **길이를 자른다**(`MAX_CMD_LEN`).
+    """
+    if not isinstance(text, str):
+        return ""
+    cleaned = "".join(
+        " " if (ord(c) < 0x20 or 0x7f <= ord(c) <= 0x9f) else c
+        for c in text
+    )
+    return cleaned[:MAX_CMD_LEN]
 
 
 def _parse_exit(rest):

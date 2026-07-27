@@ -201,6 +201,21 @@ class Registry:
                 return payload
         return None
 
+    def upstream_caps(self):
+        """이 서버가 **업스트림에 붙을 때**(페더레이션) 광고할 능력 목록.
+
+        다운스트림 서버는 업스트림에게 그냥 클라이언트 하나다 — 클라가 hello 에
+        `caps` 를 싣는 것과 같은 자리다. 플러그인이 기여하므로 디렉토리를 지우면
+        목록이 비고, 업스트림은 그 기능의 프레임을 한 바이트도 안 보낸다.
+        정렬해 돌려준다: 링크 hello 가 실행마다 달라지면 진단이 어려워진다.
+        """
+        out = set()
+        for p in self.plugins:
+            caps = getattr(p, "upstream_caps", None)
+            if caps:
+                out.update(caps)
+        return sorted(out)
+
     def pane_blocks_changed(self, pane):
         """마지막으로 물어본 뒤 블록이 바뀌었나. 물어보면 표식이 내려간다.
 

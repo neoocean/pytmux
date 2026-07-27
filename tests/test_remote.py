@@ -19,10 +19,16 @@ from pytmuxlib import ipc
 from pytmuxlib.protocol import PROTO_VERSION, read_msg, write_msg
 
 
-async def _attach_client(sock):
-    """실 클라처럼 hello 로 attach 해 (reader, writer) 반환(초기 full 은 호출부가 소비)."""
+async def _attach_client(sock, caps=None):
+    """실 클라처럼 hello 로 attach 해 (reader, writer) 반환(초기 full 은 호출부가 소비).
+
+    `caps` 를 주면 능력을 광고한 클라(네이티브 클라 계열)가 된다 — 안 주면 종전대로
+    파이썬 Textual 클라와 같은 hello 다.
+    """
     reader, writer = await ipc.open_connection(sock)
     hello = {"t": "hello", "proto": PROTO_VERSION, "cols": 80, "rows": 24}
+    if caps:
+        hello["caps"] = list(caps)
     tok = ipc.read_token(sock)
     if tok:
         hello["token"] = tok
@@ -2291,6 +2297,89 @@ async def test_remote_attach_propagates_ambiguous_wide():
         await teardown(srvB, taskB, sockB)
 
 
+async def test_remote_blocks_reach_advertising_viewers_only():
+    """§10-13 페더레이션 릴레이: 원격 탭을 보는 중에도 블록이 온다.
+
+    두 가지를 한 번에 고정한다. ①**다운스트림이 업스트림에 능력을 광고한다** — 안
+    하면 업스트림이 blocks 를 안 보내 원격 탭에서만 블록이 사라지는 비대칭이 된다
+    (로컬 탭은 보이는데 원격 탭은 안 보인다 = "기능이 고장 난" 것처럼 보인다).
+    ②**광고 안 한 클라에게는 릴레이도 안 샌다** — 링크 하나가 여러 다운스트림 클라를
+    먹이므로, 로컬 패널에서 지키는 계약을 릴레이에서 따로 지켜야 한다.
+    """
+    if os.name == "nt":
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
+    srvA, taskA, sockA = await server_only()     # 로컬(다운스트림)
+    srvB, taskB, sockB = await server_only()     # 원격(업스트림)
+    w_caps = w_plain = None
+    try:
+        sessB = srvB.ensure_default_session(80, 24)
+        pB = sessB.active_window.active_pane
+        srvA.ensure_default_session(80, 24)
+        # 같은 세션을 보는 클라 둘 — **caps 광고 여부만** 다르다.
+        r_caps, w_caps = await _attach_client(sockA, caps=["blocks"])
+        r_plain, w_plain = await _attach_client(sockA)
+        st0 = await _read_until(r_caps, lambda m: m.get("t") == "status",
+                                what="initial status(caps)")
+        await _read_until(r_plain, lambda m: m.get("t") == "status",
+                          what="initial status(plain)")
+        n_local = len(st0["windows"])
+
+        await write_msg(w_caps, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        for r, what in ((r_caps, "caps"), (r_plain, "plain")):
+            await _read_until(
+                r, lambda m: m.get("t") == "status"
+                and any(w["name"].startswith("⇄") for w in m["windows"]),
+                what=f"merged status({what})")
+        # ① 업스트림이 다운스트림의 광고를 실제로 받았다(hello 에 caps 가 실렸다).
+        def _advertised():
+            return any("blocks" in getattr(c, "caps", ())
+                       for c in srvB.clients)
+
+        await wait_for(_advertised, timeout=4.0, step=0.05)
+        assert _advertised(), \
+            "업스트림이 다운스트림 hello 에서 caps 를 못 받았다(광고 누락)"
+
+        # 둘 다 원격 탭으로 들어간다 — 이제 차이는 caps 뿐이다.
+        for w, r, what in ((w_caps, r_caps, "caps"), (w_plain, r_plain, "plain")):
+            await write_msg(w, {"t": "cmd", "action": "select_window",
+                                "index": n_local})
+            await _read_until(r, lambda m: m.get("t") == "layout",
+                              what=f"remote layout({what})")
+
+        # 업스트림 패널에 셸 통합 열을 먹인다(실 셸 대신 직접 — 경계는 같은 코드다).
+        pB.feed(b"\x1b]133;A\x1b\\")
+        pB.feed(b"\x1b]633;E;echo \xec\x9b\x90\xea\xb2\xa9\x1b\\")
+        pB.feed(b"\x1b]133;C\x1b\\")
+        pB.feed(b"\x1b]133;D;0\x1b\\")
+
+        blk = await _read_until(r_caps, lambda m: m.get("t") == "blocks",
+                                what="relayed blocks")
+        assert blk["pane"] == pB.id, ("업스트림 패널 id 로 와야 한다", blk, pB.id)
+        last = blk["blocks"][-1]
+        assert last["cmd"] == "echo 원격", blk
+        assert last["exit"] == 0 and last["state"] == "done", blk
+        # ② 광고 안 한 클라에는 한 바이트도 안 간다.
+        await _assert_no(r_plain, lambda m: m.get("t") == "blocks",
+                         window=1.0, what="blocks(광고 안 한 클라)")
+    finally:
+        for w in (w_caps, w_plain):
+            if w is not None:
+                w.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
+async def test_upstream_caps_come_from_plugins_so_deleting_disables_them():
+    """능력 광고는 플러그인이 기여한다 — `plugins/blocks/` 를 지우면 링크 hello 에서
+    사라져 ssh 링크 바이트도 종전 그대로다(delete-to-disable 이 페더레이션까지)."""
+    from pytmuxlib import plugins
+    assert "blocks" in plugins.load().upstream_caps()
+
+    assert plugins.Registry([]).upstream_caps() == [], \
+        "플러그인이 없는데도 광고했다(지워도 링크 바이트가 안 준다)"
+
+
 async def test_relay_frame_shape_and_ctrl_strip():
     """M1/L3 페더레이션 신뢰경계 헬퍼: 업스트림(untrusted) 프레임을 다운스트림 클라에
     재브로드캐스트하기 전 필수 shape 검증 + 원격 유래 문자열 C0/C1 제거."""
@@ -2301,6 +2390,18 @@ async def test_relay_frame_shape_and_ctrl_strip():
     assert not _relay_frame_ok("screen", {"rows": []})                # pane 누락
     assert not _relay_frame_ok("screen-delta", {"pane": 1, "rows": "x"})  # 비-list
     assert not _relay_frame_ok("screen-delta", {"pane": 1})           # rows 누락
+    # blocks 는 pane + blocks(list) 필수 + **상한**(§10-13). 로컬 세그멘터는 스스로
+    # 자르지만 업스트림은 우리가 통제하지 않는다 — 무제한 목록은 클라 프리즈 부류(F-G).
+    from pytmuxlib.serverremote import _REMOTE_BLOCKS_MAX
+    assert _relay_frame_ok("blocks", {"pane": 1, "blocks": []})
+    assert not _relay_frame_ok("blocks", {"pane": 1})                  # blocks 누락
+    assert not _relay_frame_ok("blocks", {"blocks": []})               # pane 누락
+    assert not _relay_frame_ok("blocks", {"pane": 1, "blocks": "x"})   # 비-list
+    assert _relay_frame_ok("blocks", {"pane": 1,
+                                      "blocks": [{}] * _REMOTE_BLOCKS_MAX})
+    assert not _relay_frame_ok(
+        "blocks", {"pane": 1, "blocks": [{}] * (_REMOTE_BLOCKS_MAX + 1)}), \
+        "상한 없는 원격 블록 목록이 통과했다"
     # 기타 t 는 통과(클라가 get 기반 처리)
     assert _relay_frame_ok("layout", {"active": 3})
     assert _relay_frame_ok("nc_list", {})

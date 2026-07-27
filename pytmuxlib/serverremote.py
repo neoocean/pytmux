@@ -211,12 +211,23 @@ def _decode_remote_stderr(b: bytes) -> str:
 # 페더레이션 신뢰경계: 업스트림 원격 서버는 **untrusted**(악성/침해 가능)다. 로컬 IPC
 # (serverio.handle_client)는 첫 프레임에 isinstance(dict)+shape 가드가 있으나, 원격 리더는
 # 프레임을 그대로 다운스트림 클라에 재브로드캐스트한다 — 아래 두 헬퍼로 경계에서 검증한다.
+# 업스트림이 relay 하는 블록 목록 상한. 로컬 세그멘터는 스스로 자르지만(플러그인
+# MAX_BLOCKS) **업스트림은 우리가 통제하지 않는다** — 악성/침해 원격이 100만 개짜리
+# 목록을 보내면 다운스트림 클라가 그걸 그리다 언다(무제한 목록 = F-G 부류). 코어가
+# 플러그인 상수를 import 하지 않도록(delete-to-disable) 여기 따로 둔다.
+_REMOTE_BLOCKS_MAX = 500
+
+
 def _relay_frame_ok(t, msg: dict) -> bool:
     """업스트림 프레임을 다운스트림 클라에 재브로드캐스트하기 전, 클라가 **무가드로**
     소비하는 필수 키를 검증한다(M1). 누락 시 클라 _dispatch 가 KeyError→reader 워커
     종료(exit_on_error)→앱 크래시였다. 알 수 없는 t 는 통과(클라는 get 기반 처리)."""
     if t in ("screen", "screen-delta"):
         return "pane" in msg and isinstance(msg.get("rows"), list)
+    if t == "blocks":
+        blocks = msg.get("blocks")
+        return ("pane" in msg and isinstance(blocks, list)
+                and len(blocks) <= _REMOTE_BLOCKS_MAX)
     return True
 
 
@@ -484,6 +495,15 @@ class ServerRemoteMixin:
         from . import cellwidth
         if cellwidth.ambiguous_wide():
             hello["ambig"] = "wide"
+        # 능력 광고(§10-13 페더레이션): 우리는 업스트림의 **클라이언트**다. 광고하지
+        # 않으면 업스트림이 `blocks` 를 안 보내고, 원격 탭을 보는 네이티브 클라는
+        # 로컬 탭에서만 블록이 보이는 비대칭을 겪는다. 광고는 **플러그인이 기여**하므로
+        # `plugins/blocks/` 를 지우면 이 키가 사라져 링크 바이트도 종전 그대로다
+        # (delete-to-disable 이 ssh 링크까지 간다). 값이 비면 키를 안 싣는다 —
+        # 구 업스트림은 모르는 키를 무시하지만, 안 싣는 편이 계약이 더 또렷하다.
+        caps = self.plugins.upstream_caps()
+        if caps:
+            hello["caps"] = caps
         if tok:
             hello["token"] = tok
         try:
@@ -883,6 +903,12 @@ class ServerRemoteMixin:
                     if c.remote_view != link.host:
                         continue
                     if req_token is not None and id(c) != req_token:
+                        continue
+                    if t == "blocks" and "blocks" not in getattr(c, "caps", ()):
+                        # 계약: 광고 안 한 클라(= 파이썬 Textual 클라)는 블록 프레임을
+                        # 한 바이트도 안 받는다. 로컬 패널에서 지키는 것과 같은 계약을
+                        # **릴레이에서도** 지킨다 — 링크 하나가 여러 클라를 먹이므로
+                        # 여기서 안 거르면 광고 안 한 클라에게 그대로 샌다.
                         continue
                     try:
                         await self._send_frames_to(c, [frame])

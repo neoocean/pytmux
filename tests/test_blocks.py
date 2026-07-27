@@ -10,12 +10,22 @@
    목록은 이 저장소가 이미 클라 프리즈로 물린 부류다(HANDOFF F-G).
 4. **셸이 끝을 못 알려도 목록이 굳지 않는다.** Ctrl-C·셸 재시작으로 `D` 가 안 와도
    다음 프롬프트에서 정리된다.
+5. **명령 텍스트는 셸이 말해 준 것만 싣는다**(OSC 633;E). 화면에서 긁어 추측하지
+   않고, 실려 온 문자열은 제어문자·길이를 걸러 클라에 넘긴다 — 이 값은 패널 안의
+   아무 프로그램이나 보낼 수 있다.
 """
+import os
+import shlex
+import shutil
+import subprocess
+
 import harness  # noqa: F401 (경로 설정)
+from run import skip
 from pytmuxlib import plugins
+from pytmuxlib.plugins import blocks as blocks_pkg
 from pytmuxlib.model import Pane
 from pytmuxlib.plugins.blocks import blocks_dirty, blocks_wire, pane_osc
-from pytmuxlib.plugins.blocks.segment import MAX_BLOCKS, Segmenter
+from pytmuxlib.plugins.blocks.segment import MAX_BLOCKS, MAX_CMD_LEN, Segmenter
 
 
 def _pane():
@@ -112,6 +122,123 @@ async def test_cwd_parses_file_url_and_ignores_junk():
     assert seg.blocks[0].cwd == "/tmp/한글", "퍼센트 인코딩을 풀어야 한다"
     assert not seg.on_osc("7", "형식이아니다")
     assert seg.blocks[0].cwd == "/tmp/한글", "잘못된 값이 기존 cwd 를 지우면 안 된다"
+
+
+# ---- 명령 텍스트 (OSC 633;E) -------------------------------------------------
+
+async def test_shell_reported_command_text_names_the_block():
+    seg = Segmenter()
+    seg.on_osc("133", "A", row=0)
+    assert seg.on_osc("633", "E;ls -la"), "명령 텍스트가 목록을 바꾼다"
+    seg.on_osc("133", "C", row=1)
+    seg.on_osc("133", "D;0")
+    assert seg.blocks[0].cmd == "ls -la"
+
+
+async def test_semicolons_in_the_command_survive_field_splitting():
+    """escape 가 없으면 `git log; ls` 가 `git log` 로 잘린다 — 실제로 흔한 명령이다."""
+    seg = Segmenter()
+    seg.on_osc("133", "A", row=0)
+    seg.on_osc("633", r"E;git log\x3b ls")
+    assert seg.blocks[0].cmd == "git log; ls"
+
+
+async def test_backslashes_survive_and_are_not_double_decoded():
+    seg = Segmenter()
+    seg.on_osc("133", "A", row=0)
+    # 셸이 보낸 `\\x3b` = "백슬래시 + x3b" 지 `;` 가 아니다.
+    seg.on_osc("633", r"E;echo \\x3b")
+    assert seg.blocks[0].cmd == r"echo \x3b"
+
+
+async def test_unescaped_backslash_is_left_alone():
+    """escape 를 안 하는 셸이 보낸 경로가 사라지면 안 된다."""
+    seg = Segmenter()
+    seg.on_osc("133", "A", row=0)
+    seg.on_osc("633", r"E;type C:\path\to")
+    assert seg.blocks[0].cmd == r"type C:\path\to"
+
+
+async def test_trailing_nonce_field_is_not_part_of_the_command():
+    """VSCode 규약의 `E;<명령줄>;<nonce>`. nonce 가 명령 이름에 붙으면 안 된다."""
+    seg = Segmenter()
+    seg.on_osc("133", "A", row=0)
+    seg.on_osc("633", "E;ls;deadbeef")
+    assert seg.blocks[0].cmd == "ls"
+
+
+async def test_control_chars_cannot_ride_into_the_command_text():
+    """이 문자열은 클라가 그대로 그린다 — ESC 가 살아 있으면 단말 주입이 된다."""
+    seg = Segmenter()
+    seg.on_osc("133", "A", row=0)
+    seg.on_osc("633", r"E;echo \x1b]0\x3bpwned\x07")
+    cmd = seg.blocks[0].cmd
+    assert "\x1b" not in cmd and "\x07" not in cmd, f"제어문자가 살아남았다: {cmd!r}"
+    assert "pwned" in cmd, "글자까지 지울 필요는 없다"
+
+
+async def test_multiline_command_does_not_glue_words_together():
+    seg = Segmenter()
+    seg.on_osc("133", "A", row=0)
+    seg.on_osc("633", r"E;echo a\x0aecho b")
+    assert seg.blocks[0].cmd == "echo a echo b"
+
+
+async def test_command_text_is_bounded():
+    """OSC 는 패널 안 아무 프로그램이나 보낸다 — 상한이 없으면 메모리를 불린다."""
+    seg = Segmenter()
+    seg.on_osc("133", "A", row=0)
+    seg.on_osc("633", "E;" + "x" * (MAX_CMD_LEN * 3))
+    assert len(seg.blocks[0].cmd) == MAX_CMD_LEN
+
+
+async def test_command_text_does_not_rewrite_a_finished_block():
+    """지나간 블록의 이름이 뒤늦은 한 줄로 바뀌면 사용자가 보던 목록이 뒤틀린다."""
+    seg = Segmenter()
+    seg.on_osc("133", "A", row=0)
+    seg.on_osc("633", "E;진짜 명령")
+    seg.on_osc("133", "D;0")
+    assert not seg.on_osc("633", "E;나중에 온 것")
+    assert seg.blocks[0].cmd == "진짜 명령"
+
+
+async def test_other_633_subkinds_are_ignored_so_blocks_are_not_doubled():
+    """VSCode 통합이 함께 걸려 있어도 경계는 133 한 곳에서만 판정한다."""
+    seg = Segmenter()
+    for kind in ("A", "B", "C", "D;0", "P;Cwd=/tmp"):
+        assert not seg.on_osc("633", kind), f"633;{kind} 가 목록을 건드렸다"
+    assert seg.blocks == []
+
+
+async def test_command_text_reaches_the_wire_through_the_pane():
+    pane = _pane()
+    pane.feed(_osc("133", "A"))
+    pane.feed(_osc("633", "E;echo 한글"))
+    pane.feed(_osc("133", "C"))
+    assert blocks_wire(pane)[0]["cmd"] == "echo 한글"
+
+
+async def test_real_shell_integration_emits_the_command_it_was_given():
+    """`shell-integration.sh` 가 실제로 만드는 바이트를 패널에 먹여 본다.
+
+    escape 규칙이 셸 쪽(파라미터 치환)과 서버 쪽(_unescape)에 **따로** 적혀 있어,
+    한쪽만 고치면 조용히 어긋난다. 두 구현을 같은 문자열로 마주 세운다.
+    """
+    shell = shutil.which("zsh") or shutil.which("bash")
+    if shell is None:
+        skip("zsh·bash 없음(셸 통합 스크립트를 실행할 수 없다)")
+    script = os.path.join(os.path.dirname(blocks_pkg.__file__),
+                          "shell-integration.sh")
+    typed = 'git log; grep "a b" C:\\path'
+    out = subprocess.run(
+        [shell, "-c", "source %s; __pytmux_report_cmd %s"
+                      % (shlex.quote(script), shlex.quote(typed))],
+        capture_output=True, timeout=20,
+    )
+    pane = _pane()
+    pane.feed(_osc("133", "A"))
+    pane.feed(out.stdout)
+    assert blocks_wire(pane)[0]["cmd"] == typed, "셸 escape 와 서버 unescape 가 어긋났다"
 
 
 # ---- 상한과 회전 ------------------------------------------------------------

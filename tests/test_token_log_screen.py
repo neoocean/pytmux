@@ -737,3 +737,38 @@ async def test_remote_token_log_timeout_notice_only_when_pending():
     a3 = app(seq=7, want=True)
     cc._token_log_timeout(a3, 5, "playground")
     assert msgs == [] and a3._want_token_log is True, "옛 타이머가 새 요청 오염 금지"
+
+
+async def test_top_header_stays_one_line():
+    """`docs/PENDING_UI_IMPROVEMENTS.md` #2 — 상단 머리글은 **한 줄**이다.
+
+    원 요청(2026-06-22)은 두 줄을 합치는 것이었다: ①`5h 5% · wk 31% · ~Σ153.2M`
+    ②모델 색 범례(`Haiku Sonnet Opus ?`). ②는 그 뒤 별건으로 제거됐고(막대 단색화,
+    `test_period_and_session_drop_model_color_and_legend`) 남은 것은 ① 한 줄뿐이라
+    요청은 이미 충족돼 있다 — 그런데 **아무도 그걸 지키고 있지 않았다**. 여기서
+    못박는다: 머리글이 다시 여러 줄로 갈라지면 이 테스트가 실패한다.
+    """
+    from harness import make_app, server_only, teardown
+
+    usage = {"session": {"pct": 5, "reset": "11:59pm (Asia/Seoul)"},
+             "week_all": {"pct": 31, "reset": "Jun 20 (Asia/Seoul)"}}
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 36)) as pilot:
+            await wait_until(pilot, lambda: bool(app.layout.get("panes")))
+            app.push_screen(screens.TokenLogScreen(
+                _hour_records(), usage=usage, total_all=21000))
+            # 머리글이 실제로 만들어질 때까지 — push 직후 스택 깊이는 이미 참이라
+            # 그걸로 기다리면 마운트 전에 진행한다(대기 규약 ②의 함정).
+            await wait_until(
+                pilot,
+                lambda: getattr(app.screen_stack[-1], "_tktop_text", None) is not None)
+            scr = app.screen_stack[-1]
+            text = scr._tktop_text.plain
+            assert "\n" not in text, f"머리글이 여러 줄로 갈라졌다: {text!r}"
+            # 한 줄 안에 한도 요약과 Σ 가 **함께** 있어야 병합의 의미가 산다.
+            assert "5%" in text and "31%" in text, f"한도 요약 누락: {text!r}"
+            assert "Σ" in text, f"Σ 요약 누락: {text!r}"
+    finally:
+        await teardown(srv, task, sock)

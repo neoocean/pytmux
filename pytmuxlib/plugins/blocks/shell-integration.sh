@@ -17,6 +17,13 @@
 #     OSC 133 ; D ; <종료코드>   명령 끝
 #     OSC 7  ; file://호스트/경로  현재 디렉토리
 #
+# 명령 텍스트("무슨 명령을 쳤나")는 133 에 자리가 없어 VSCode 셸 통합과 같은
+#
+#     OSC 633 ; E ; <명령줄>
+#
+# 를 쓴다. 명령줄 안의 `;`·백슬래시·제어문자는 `\xHH` 로 escape 한다 — 안 하면 명령에
+# 들어간 `;` 하나가 필드 경계로 읽혀 뒤가 잘린다(`git log; ls` 가 `git log` 로 보인다).
+#
 # 이 파일은 bash 와 zsh 를 함께 다룬다. fish 는 문법이 달라 별도 파일이 필요하다.
 
 # 이미 다른 터미널의 통합이 걸려 있으면 겹치지 않게 빠진다 — 두 벌이 걸리면 블록이
@@ -30,6 +37,24 @@ __pytmux_osc() { printf '\033]%s\033\\' "$1"; }
 
 # cwd 를 URL 로. 공백·한글 경로도 그대로 다룰 수 있게 file:// 형식을 쓴다.
 __pytmux_report_cwd() { __pytmux_osc "7;file://${HOSTNAME:-localhost}${PWD}"; }
+
+# 명령줄을 OSC 필드로 안전하게 만든다. 패턴을 따옴표로 감싸 **글자 그대로** 치환한다
+# (bash·zsh 공통 — 안 감싸면 백슬래시가 패턴 escape 로 먹힌다).
+__pytmux_report_cmd() {
+	local s=$1
+	local bs='\'
+	s=${s//"$bs"/"${bs}${bs}"}       # 백슬래시 먼저 — 아래 치환이 만든 것과 안 섞이게
+	s=${s//";"/"${bs}x3b"}
+	s=${s//"$__pytmux_nl"/"${bs}x0a"}
+	s=${s//"$__pytmux_cr"/"${bs}x0d"}
+	s=${s//"$__pytmux_esc"/"${bs}x1b"}
+	# 서버도 자르지만(MAX_CMD_LEN) 긴 붙여넣기를 파이프에 흘리지 않는다.
+	__pytmux_osc "633;E;${s:0:1024}"
+}
+__pytmux_nl='
+'
+__pytmux_cr=$(printf '\r')
+__pytmux_esc=$(printf '\033')
 
 if [ -n "${ZSH_VERSION:-}" ]; then
 	# ── zsh ────────────────────────────────────────────────────────────────
@@ -46,6 +71,9 @@ if [ -n "${ZSH_VERSION:-}" ]; then
 		__pytmux_osc "133;A"
 	}
 	__pytmux_preexec() {
+		# zsh 는 preexec 에 **사용자가 친 줄 그대로**를 준다($1) — 화면에서 긁을
+		# 필요가 없다. 실행 시작(C)보다 먼저 보내 블록이 이름부터 갖게 한다.
+		__pytmux_report_cmd "$1"
 		__pytmux_osc "133;C"
 		__pytmux_running=1
 	}
@@ -71,6 +99,10 @@ elif [ -n "${BASH_VERSION:-}" ]; then
 		# 프롬프트가 뜬 뒤 첫 명령만 "실행 시작"으로 본다.
 		if [ -n "${__pytmux_at_prompt:-}" ]; then
 			unset __pytmux_at_prompt
+			# bash 에는 preexec 이 없어 명령줄도 DEBUG 트랩의 `$BASH_COMMAND` 로
+			# 받는다 — 사용자가 친 줄이 아니라 **실행 직전의 단순명령**이라 별칭·
+			# 함수 확장이 반영된 모양일 수 있다(zsh 쪽이 더 정확하다).
+			__pytmux_report_cmd "$BASH_COMMAND"
 			__pytmux_osc "133;C"
 			__pytmux_running=1
 		fi
