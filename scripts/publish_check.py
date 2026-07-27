@@ -82,6 +82,75 @@ def check_cl(cl, out=print):
     return 0
 
 
+# git 에만 있는 것이 **정상**인 경로. CI(bench 워크플로)가 만들어 커밋하는 결과물이라
+# depot 에 없는 게 맞다 — 이걸 안 빼면 존재 대조가 1,500개로 상시 빨개져 아무도 안 본다.
+GIT_ONLY_PREFIXES = ("docs/benchmark/",)
+
+
+def depot_files():
+    """depot 에 **살아 있는** 파일들(저장소 상대 경로). p4 조회 실패면 None.
+
+    삭제 리비전을 빼는 게 핵심이다 — `p4 files` 는 지워진 파일도 마지막 리비전으로
+    보여주므로(`- delete change`·`- move/delete change`) 그대로 쓰면 옛날에 옮긴 파일이
+    영원히 'git 에 없다'로 보고된다(실측: `docs/*.md` 40여 개가 이 모양이었다)."""
+    rc, txt = run(["p4", "files", "./..."])
+    if rc:
+        return None
+    out = set()
+    for ln in txt.splitlines():
+        head, _, action = ln.partition(" - ")
+        if "delete change" in action:
+            continue
+        r = rel_depot(head.split("#")[0])
+        if r:
+            out.add(r)
+    return out
+
+
+def rel_depot(depot_path):
+    """`//…/pytmux/<경로>` → `<경로>`. 이 프로젝트 밖이면 빈 문자열."""
+    marker = "/pytmux/"
+    i = depot_path.find(marker)
+    return depot_path[i + len(marker):].strip() if i >= 0 else ""
+
+
+def check_existence(out=print):
+    """**파일이 한쪽에만 존재**하는 드리프트.
+
+    내용 대조(`p4 diff -se` × `git status`)가 원리적으로 못 보는 구멍이다: depot 에 아예
+    없는 파일은 `p4 diff -se` 에 안 나오고, git 에 커밋까지 끝난 파일은 `git status` 에
+    안 나온다. 즉 **새 파일을 git 에만 올리고 `p4 add` 를 잊으면** 종전 게이트는 계속
+    '✓ 미러 일치' 라고 말한다 — 미러 사고 3건과 정확히 같은 부류의 남은 절반이다."""
+    depot = depot_files()
+    if depot is None:
+        out("· p4 files 조회 실패 — 존재 대조 생략")
+        return 0
+    rc, txt = run(["git", "ls-files"])
+    if rc:
+        out("· git ls-files 실패 — 존재 대조 생략")
+        return 0
+    tracked = {ln.strip() for ln in txt.splitlines() if ln.strip()}
+    git_only = sorted(f for f in tracked - depot
+                      if not f.startswith(GIT_ONLY_PREFIXES))
+    # depot 에만 있는 것은 gitignore 된 p4 전용 파일(docs/internal·captures·db)이 대부분이다.
+    depot_only_raw = sorted(depot - tracked)
+    depot_only = sorted(set(depot_only_raw) - git_ignored(depot_only_raw))
+    problems = 0
+    if git_only:
+        problems += 1
+        out(f"✗ depot 에 없는 파일 {len(git_only)}개 — git 에만 커밋됐다(p4 add 누락):")
+        for f in git_only[:20]:
+            out(f"    {f}")
+        out("  → p4 add <파일> 후 번호 CL 로 submit")
+    if depot_only:
+        problems += 1
+        out(f"✗ git 에 없는 파일 {len(depot_only)}개 — p4 에만 제출됐다(gitignore 도 아님):")
+        for f in depot_only[:20]:
+            out(f"    {f}")
+        out("  → git add/commit + push, 또는 p4 전용이면 .gitignore 에 규칙 추가")
+    return problems
+
+
 def check_mirror(out=print, remote=True):
     problems = 0
 
@@ -151,8 +220,12 @@ def check_mirror(out=print, remote=True):
     if wip:
         out(f"· 작업 중 {len(wip)}개(양쪽 미게시 — 드리프트 아님): "
             f"{', '.join(wip[:6])}{' …' if len(wip) > 6 else ''}")
+
+    # ── 존재 드리프트(내용 대조가 원리적으로 못 보는 구멍) ──────────────────
+    problems += check_existence(out=out)
+
     if not problems:
-        out("✓ p4↔git 미러 일치(미푸시 커밋 없음, 양방향 내용 드리프트 없음)")
+        out("✓ p4↔git 미러 일치(미푸시 커밋 없음, 내용·존재 드리프트 없음)")
     return 1 if problems else 0
 
 
