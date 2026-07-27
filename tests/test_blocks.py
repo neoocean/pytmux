@@ -184,15 +184,29 @@ async def test_pane_without_a_handler_ignores_osc_quietly():
     assert getattr(pane, "_blocks_segmenter", None) is None
 
 
-async def test_blocks_dirty_clears_after_being_read():
-    """매 프레임 같은 목록을 다시 보내지 않기 위한 표식."""
+async def test_change_gate_falls_after_being_asked():
+    """매 프레임 같은 목록을 다시 보내지 않기 위한 게이트."""
+    reg = plugins.load()
     pane = _pane()
     pane.feed(_osc("133", "A"))
-    assert blocks_dirty(pane)
-    payload = plugins.load().pane_blocks(pane)
-    assert payload is not None
-    assert not blocks_dirty(pane), "읽은 뒤에는 표식이 내려가야 한다"
-    assert plugins.load().pane_blocks(pane) is None, "안 바뀌었으면 보낼 것 없음"
+    assert reg.pane_blocks_changed(pane), "바뀌었는데 안 바뀌었다고 한다"
+    assert not reg.pane_blocks_changed(pane), "물어본 뒤에는 표식이 내려가야 한다"
+
+    pane.feed(_osc("133", "D;0"))
+    assert reg.pane_blocks_changed(pane), "다시 바뀌면 또 알려야 한다"
+
+
+async def test_current_blocks_are_readable_regardless_of_the_change_gate():
+    """새로 붙는 클라는 바뀐 적이 없어도 **현재** 목록을 받아야 한다.
+
+    화면은 `_send_full` 로 받는데 블록만 안 오면 비대칭이라, 붙자마자 빈 화면처럼 보인다.
+    """
+    reg = plugins.load()
+    pane = _pane()
+    pane.feed(_osc("133", "A"))
+    reg.pane_blocks_changed(pane)              # 게이트를 내린다
+    payload = reg.pane_blocks(pane)
+    assert payload, "게이트와 무관하게 현재 목록은 읽혀야 한다"
 
 
 async def test_absolute_rows_do_not_move_when_the_viewport_scrolls():

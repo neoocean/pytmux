@@ -320,6 +320,16 @@ class ServerIOMixin:
                     client._sent_rows[pp.id] = rows
                 await write_msg(client.writer,
                                 self._status_msg(sess, client=client))
+                # 초기 동기화: 광고한 클라에게 **현재** 블록 목록을 보낸다. 이게 없으면
+                # 나중에 붙은 클라는 블록이 다시 바뀔 때까지 아무것도 못 본다(화면은
+                # full 로 받는데 블록만 안 오는 비대칭).
+                if "blocks" in getattr(client, "caps", ()):
+                    for p in panes:
+                        payload = self.plugins.pane_blocks(p)
+                        if payload:
+                            await write_msg(client.writer,
+                                            {"t": "blocks", "pane": p.id,
+                                             "blocks": payload})
             except BaseException:
                 client._sent_rows.clear()
                 raise
@@ -389,6 +399,10 @@ class ServerIOMixin:
         `caps` 에 `blocks` 가 없는 클라(= 파이썬 Textual 클라)는 이 프레임을 아예 받지
         않는다 — 새 기능이 기존 클라의 대역폭·파싱 비용을 건드리지 않게 하는 계약이다.
         플러그인이 없으면 훅이 None 을 돌려줘 여기도 무동작이다(delete-to-disable)."""
+        # 바뀌었는지는 **클라 유무와 무관하게** 먼저 물어 표식을 내린다 — 안 그러면
+        # 광고한 클라가 없는 동안 표식이 쌓였다가 나중에 한꺼번에 나간다.
+        if not self.plugins.pane_blocks_changed(pane):
+            return
         wanted = [c for c in clients
                   if "blocks" in getattr(c, "caps", ()) and not c.remote_view]
         if not wanted:

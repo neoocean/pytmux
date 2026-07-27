@@ -167,3 +167,39 @@ async def test_blocks_are_not_resent_every_frame():
         assert not [m for m in msgs if m.get("t") == "blocks"], \
             "블록이 안 바뀌었는데 다시 보냈다"
         writer.close()
+
+
+async def test_a_client_attaching_later_receives_existing_blocks():
+    """붙는 시점에 이미 있던 블록을 받아야 한다.
+
+    실제로 물린 결함이다: 블록을 "바뀌었을 때만" 보내면, 나중에 붙은 클라는 다음 명령이
+    실행될 때까지 아무것도 못 본다. 화면은 attach 즉시 full 로 받는데 블록만 안 오는
+    비대칭이라, 사용자에겐 "블록 기능이 안 되는" 것으로 보인다.
+    """
+    async with running_server() as (srv, task, sock):
+        sess = srv.ensure_default_session(80, 24)
+        # 아무도 안 붙은 상태에서 명령이 하나 돌았다.
+        _emit_shell_integration(srv, sess)
+
+        reader, writer = await _attach(sock, srv, caps=["blocks"])
+        msgs = await _drain(reader, 2.0)
+
+        blocks = [m for m in msgs if m.get("t") == "blocks"]
+        assert blocks, (
+            "나중에 붙은 클라가 기존 블록을 못 받았다: "
+            f"{sorted({m.get('t') for m in msgs})}")
+        assert blocks[-1]["blocks"], "블록 목록이 비었다"
+        writer.close()
+
+
+async def test_a_late_client_without_caps_still_gets_nothing():
+    """초기 동기화 경로에서도 광고하지 않은 클라는 제외된다."""
+    async with running_server() as (srv, task, sock):
+        sess = srv.ensure_default_session(80, 24)
+        _emit_shell_integration(srv, sess)
+
+        reader, writer = await _attach(sock, srv)      # 광고 없음
+        msgs = await _drain(reader, 1.5)
+        assert not [m for m in msgs if m.get("t") == "blocks"], \
+            "초기 동기화에서 구 클라에 blocks 가 샜다"
+        writer.close()

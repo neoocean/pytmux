@@ -188,20 +188,30 @@ class Registry:
                 fn(pane, code, param)
 
     def pane_blocks(self, pane):
-        """패널의 블록 목록(와이어 형태). 보낼 것이 없으면 None.
+        """패널의 **현재** 블록 목록(와이어 형태). 없으면 None.
 
-        블록이 바뀌었을 때만 값을 돌려준다 — 매 프레임 같은 목록을 다시 보내면
-        30Hz 로 전체 블록 목록이 흐른다."""
+        dirty 와 무관하다 — 새로 붙는 클라는 바뀐 적이 없어도 현재 목록을 받아야 한다
+        (화면을 `_send_full` 로 받는 것과 같은 이유)."""
         for p in self.plugins:
             fn = getattr(p, "blocks_wire", None)
-            dirty = getattr(p, "blocks_dirty", None)
-            if fn is None or dirty is None or not dirty(pane):
+            if fn is None:
                 continue
             payload = fn(pane)
-            p.clear_blocks_dirty(pane)
             if payload is not None:
                 return payload
         return None
+
+    def pane_blocks_changed(self, pane):
+        """마지막으로 물어본 뒤 블록이 바뀌었나. 물어보면 표식이 내려간다.
+
+        flush 가 **매 프레임 같은 목록을 다시 보내지 않게** 하는 게이트다."""
+        changed = False
+        for p in self.plugins:
+            dirty = getattr(p, "blocks_dirty", None)
+            if dirty is not None and dirty(pane):
+                changed = True
+                p.clear_blocks_dirty(pane)
+        return changed
 
     # ---- 서버 훅 ----
     def server_mixins(self):
