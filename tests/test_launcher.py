@@ -307,3 +307,90 @@ async def test_main_refuses_nested_attach():
             os.environ.pop("PYTMUX", None)
         else:
             os.environ["PYTMUX"] = old
+
+
+# ── 네이티브 클라 진입점(§7 P7 슬라이스 4) ────────────────────────────────────
+
+async def test_native_client_is_found_in_a_defined_order():
+    """지목(env) → PATH → 개발 트리 순. 순서가 뒤집히면 사용자가 고른 이진이 무시된다."""
+    from pytmuxlib.launcher import NATIVE_CLIENT, find_native_client
+    with tempfile.TemporaryDirectory() as tmp:
+        on_path = os.path.join(tmp, NATIVE_CLIENT)
+        with open(on_path, "w") as f:
+            f.write("")
+        os.chmod(on_path, 0o755)
+        # PATH 에 있으면 그것을 쓴다.
+        assert find_native_client({"PATH": tmp}) == on_path
+        # 명시 지목이 PATH 를 이긴다 — 두 벌을 견주는 사람이 PATH 를 안 흔들 수 있어야 한다.
+        assert find_native_client(
+            {"PATH": tmp, "PYTMUX_CLIENT_BIN": "/opt/mine"}) == "/opt/mine"
+        # PATH 에 없으면 개발 트리(`../pytmux-client/target/…`)로 떨어진다. 그 트리가
+        # 안 지어져 있으면 None 이고, 지어져 있으면 **반드시 그 트리 안**이어야 한다 —
+        # 엉뚱한 곳의 동명 이진을 집으면 사용자는 옛 클라를 계속 쓰게 된다.
+        empty = os.path.join(tmp, "nope")
+        os.makedirs(empty)
+        fallback = find_native_client({"PATH": empty})
+        assert fallback is None or os.path.join("pytmux-client", "target") in fallback, \
+            fallback
+
+
+async def test_native_client_is_told_which_endpoint_to_use():
+    """엔드포인트를 안 넘기면 클라가 다시 찾아 **다른 서버**에 붙을 수 있다.
+
+    런처는 이미 resolve_default_endpoint 로 대상을 정했고(필요하면 새로 띄웠고),
+    후보는 둘 이상이다($XDG_RUNTIME_DIR 유무). 그 사이에 다른 후보를 맞히면 사용자는
+    자기 탭이 없는 화면을 본다.
+    """
+    from pytmuxlib.launcher import run_native_client
+    seen = []
+    rc = run_native_client("/tmp/chosen.sock",
+                           env={"PYTMUX_CLIENT_BIN": "/opt/pytmux-client-tui"},
+                           runner=lambda argv: seen.append(argv) or 0)
+    assert rc == 0
+    assert seen == [["/opt/pytmux-client-tui", "--socket", "/tmp/chosen.sock"]], seen
+
+
+async def test_missing_native_client_says_how_to_get_one():
+    """없을 때 조용히 성공으로 끝나면 사용자는 --native 가 먹은 줄 안다.
+
+    이진을 **못 찾은 상태**를 여기서 만든다(`find_native_client` 치환) — 이 저장소
+    옆에는 개발 트리가 있어서 PATH 를 비우는 것만으로는 '없는 환경'이 안 된다.
+    """
+    import harness
+    from pytmuxlib import launcher
+    ran = []
+    with harness.patched(launcher, find_native_client=lambda env=None: None):
+        rc = launcher.run_native_client("/tmp/x.sock",
+                                        runner=lambda argv: ran.append(argv) or 0)
+    assert rc == 1, "이진이 없는데 성공으로 보고했다"
+    assert ran == [], "이진이 없는데 무언가를 실행했다"
+
+
+async def test_native_flag_is_accepted_before_and_after_the_subcommand():
+    """`pytmux --native` 와 `pytmux attach --native` 는 같은 동작이어야 한다.
+
+    하위 파서에 기본값을 두면 `pytmux --native attach` 에서 그 기본값이 상위 값을
+    덮어써 플래그가 **조용히** 안 먹는다(argparse 관례). 그래서 SUPPRESS 를 쓴다.
+    """
+    import harness
+    from pytmuxlib import launcher
+    calls = []
+    # 중첩 거부·좀비 판정은 이 테스트의 대상이 아니다 — 그 앞단을 고정해 두고
+    # **--native 가 어느 자리에 와도 같은 경로를 타는가**만 본다.
+    with harness.patched(launcher,
+                         run_native_client=lambda sock: calls.append(sock) or 0,
+                         wait_server_authed=lambda *a, **k: True,
+                         nesting_blocked=lambda *a, **k: False,
+                         host_terminal_is_pytmux=lambda *a, **k: False,
+                         control_request=lambda *a, **k: {}):
+        with harness.patched(launcher.ipc, probe=lambda *a, **k: True):
+            sock = ["--socket", "/tmp/t.sock"]
+            for argv in (sock + ["--native"],
+                         sock + ["attach", "--native"],
+                         sock + ["--native", "attach"]):
+                calls.clear()
+                try:
+                    launcher.main(argv)
+                except SystemExit as e:
+                    assert e.code == 0, f"{argv}: exit {e.code}"
+                assert calls == ["/tmp/t.sock"], f"{argv} 에서 네이티브 경로가 안 탔다"

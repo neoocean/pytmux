@@ -526,11 +526,90 @@ def _confirm_kill_server() -> bool:
     return ans.strip().lower() in ("y", "yes")
 
 
+#: 네이티브 클라(러스트 TUI) 이진 이름. 위치는 `find_native_client` 가 정한다.
+NATIVE_CLIENT = "pytmux-client-tui"
+
+
+def find_native_client(env=None) -> str | None:
+    """네이티브 클라 이진의 경로. 못 찾으면 None.
+
+    찾는 순서와 이유:
+      1. `PYTMUX_CLIENT_BIN` — 직접 지목. 두 벌을 두고 견주는 경우(개발·회귀 확인)에
+         PATH 를 안 흔들고 고를 수 있어야 한다.
+      2. `PATH` — 설치된 상태의 정석. 이 이진은 pytmux 와 **따로 배포**된다(러스트
+         워크스페이스 산출물이라 pip 패키지에 안 들어간다).
+      3. 개발 트리(`../pytmux-client/target/{release,debug}/`) — 이 저장소 옆에 클라
+         트리를 두고 작업하는 경우다. release 를 먼저 본다: 둘 다 있으면 사용자가
+         최근에 만든 것은 대개 release 이고, debug 판은 눈에 띄게 느리다.
+
+    찾기만 하고 **실행 가능한지는 안 따진다** — 여기서 조용히 걸러 내면 "이진이 없다"와
+    "이진이 실행 권한이 없다"가 같은 메시지가 된다. 실행은 호출부가 하고 실패 사유는
+    OS 가 알려 준다.
+    """
+    env = os.environ if env is None else env
+    explicit = env.get("PYTMUX_CLIENT_BIN")
+    if explicit:
+        return explicit
+    import shutil
+    found = shutil.which(NATIVE_CLIENT, path=env.get("PATH"))
+    if found:
+        return found
+    name = NATIVE_CLIENT + (".exe" if os.name == "nt" else "")
+    tree = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))), "pytmux-client", "target")
+    for profile in ("release", "debug"):
+        cand = os.path.join(tree, profile, name)
+        if os.path.exists(cand):
+            return cand
+    return None
+
+
+def run_native_client(sock_path: str, env=None, runner=None) -> int:
+    """네이티브 클라를 띄운다. 종료코드를 돌려준다.
+
+    **엔드포인트를 넘겨준다.** 클라도 스스로 찾을 수 있지만(같은 규칙을 구현한다),
+    여기서는 이미 `resolve_default_endpoint` 가 "어느 서버에 붙을지"를 정했고 필요하면
+    새로 띄우기까지 했다. 클라가 다시 찾으면 그 사이에 다른 후보를 맞혀 **사용자가
+    지목한 것과 다른 서버**의 탭이 뜰 수 있다.
+
+    exec 이 아니라 자식 프로세스로 두는 이유: Windows 에서 `os.execv` 는 부모를 끝내
+    셸이 곧바로 프롬프트를 그리는데, 자식은 아직 대체 화면에 그리고 있어 화면이 섞인다.
+    """
+    binary = find_native_client(env)
+    if binary is None:
+        print(f"pytmux: 네이티브 클라({NATIVE_CLIENT})를 찾지 못했습니다.\n"
+              "        빌드: cargo build --release -p pytmux_client_tui\n"
+              "        그다음 PATH 에 두거나 PYTMUX_CLIENT_BIN 으로 경로를 지정하세요.",
+              file=sys.stderr)
+        return 1
+    argv = [binary, "--socket", sock_path]
+    if runner is None:
+        import subprocess
+        runner = subprocess.call
+    try:
+        return runner(argv)
+    except OSError as e:
+        # 못 뜨는 사유는 OS 가 안다(권한 없음·아키텍처 불일치·깨진 심링크).
+        print(f"pytmux: 네이티브 클라를 실행하지 못했습니다({binary}): {e}",
+              file=sys.stderr)
+        return 1
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="pytmux", description="tmux 유사 터미널 멀티플렉서")
     parser.add_argument("--socket", default=None, help="유닉스 도메인 소켓 경로")
+    # 네이티브 클라(러스트 TUI)로 붙는다. 최상위 옵션인 이유는 `pytmux` 와
+    # `pytmux attach` 가 같은 동작이기 때문이다 — 한쪽에만 붙이면 손버릇에 따라 안 먹는다.
+    parser.add_argument("--native", action="store_true",
+                        help=f"네이티브 클라({NATIVE_CLIENT})로 attach "
+                             "(PYTMUX_CLIENT_BIN 으로 경로 지정 가능)")
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("attach", help="실행 중인 서버에 attach (없으면 기동)")
+    p_attach = sub.add_parser("attach", help="실행 중인 서버에 attach (없으면 기동)")
+    # SUPPRESS 가 필요하다: 기본값을 두면 `pytmux --native attach` 에서 하위 파서가
+    # 자기 기본값(False)으로 **덮어써** 플래그가 조용히 안 먹는다(argparse 관례).
+    p_attach.add_argument("--native", action="store_true",
+                          default=argparse.SUPPRESS,
+                          help=f"네이티브 클라({NATIVE_CLIENT})로 attach")
     sub.add_parser("ls", help="탭/패널 요약")
     p_kill = sub.add_parser("kill-server", help="서버와 모든 탭/셸 종료")
     p_kill.add_argument("-y", "--yes", action="store_true",
@@ -678,6 +757,13 @@ def main(argv=None):
             need_spawn = True
     if need_spawn:
         proc.spawn_detached(proc.server_argv(sock_path))
+    # 네이티브 클라는 textual 을 **아예 안 부른다**. 아래 지연 import 앞에 두는 이유가
+    # 그것이다 — 러스트 이진으로 붙는 사람에게 textual 미설치가 실패 사유가 되면 안 된다.
+    if getattr(args, "native", False):
+        if need_spawn and not wait_server_authed(sock_path):
+            print("pytmux: 서버 기동 실패", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(run_native_client(sock_path))
     try:
         from .client import run_client   # 지연 import: 서버 부팅과 병렬로 textual 로드
     except ModuleNotFoundError as e:
