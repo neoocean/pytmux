@@ -117,7 +117,9 @@ class _NcdPlugin:
             app._nc_open_cb = None
             app.push_screen(
                 NcdScreen(msg.get("root"), chain=msg.get("chain"),
-                          cwd=msg.get("cwd"), dirs=msg.get("dirs")),
+                          cwd=msg.get("cwd"), dirs=msg.get("dirs"),
+                          # 경로 해석도 셸 OS 기준 — cd 방언(nt)과 같은 출처를 쓴다.
+                          nt=msg.get("nt")),
                 cb if cb is not None else (lambda res: self._done(app, res)))
         else:
             scr = app.screen

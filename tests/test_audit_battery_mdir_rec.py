@@ -167,6 +167,9 @@ async def test_ncd_children_from_hostile_upstream_are_capped():
     view._children = {}
     view._pending = None
     view._expanded = set()
+    # 생성자를 우회하므로 생성자가 정하는 것도 여기서 정해야 한다: `_nt` 는 **경로의 OS**
+    # (서버가 nc_list 로 알려 주는 값)이고 `_children` 키가 그걸로 정규화된다(p4 67613).
+    view._nt = False
     view._rebuild_rows = lambda keep_path=None: None
     view.fill_children("/p", ["a"] * 50_000 + [7, None, {}, ""])
     got = view._children["/p"]

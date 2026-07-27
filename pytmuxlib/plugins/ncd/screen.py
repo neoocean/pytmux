@@ -57,32 +57,75 @@ i18n.register({
 _MAX_DIRS = 4000
 
 
+def _pathmod(nt: bool):
+    r"""경로 문자열을 해석할 모듈 — **경로의 OS**(= 셸을 소유한 서버의 OS)로 고른다.
+
+    `os.path`(클라 OS)를 쓰면 안 된다: 페더레이션에서 클라와 셸의 OS 가 다르다
+    (`_cd_command` 의 `nt` 가 이미 같은 이유로 서버발 값을 쓴다). POSIX 클라가
+    Windows 패널의 트리를 볼 때 `posixpath` 는 `C:\Users\me` 를 세퍼레이터 없는
+    한 덩어리로 봐서 표시명·부모 이동·비교가 통째로 어긋난다."""
+    import ntpath
+    import posixpath
+    return ntpath if nt else posixpath
+
+
+def _path_key(path: str | None, nt: bool) -> str | None:
+    r"""경로 동일성 판정용 키. 같은 디렉토리가 **다른 문자열**로 오는 것을 흡수한다.
+
+    ncd 의 cwd 는 셸 프로세스에서(Windows = PEB), 트리 노드는 서버의 `scandir` 에서
+    온다 — **출처가 둘**이라 Windows 에선 드라이브 문자 대소문자·세퍼테이터(`\`↔`/`)·
+    말미 구분자가 어긋나기 쉽다. 문자열로 비교하면 그때 cwd 강조·커서 안착·펼침이
+    **조용히** 사라진다(제보 2026-06-30). 대소문자 무시는 Windows 에서만 —
+    POSIX 경로는 대소문자를 구분하므로 접으면 서로 다른 디렉토리를 합쳐 버린다."""
+    if path is None:
+        return None
+    p = _pathmod(nt)
+    try:
+        return p.normcase(p.normpath(path))
+    except (TypeError, ValueError, AttributeError):
+        return path
+
+
 class _NcdView(Widget):
     """디렉토리 트리를 한 줄 단위로 직접 그리는 뷰(스크롤·커서 자체 관리, 스크롤바
     없음). 화살표 한 칸 이동은 바뀐 두 줄만 다시 그려 ssh 에서도 즉각적이다."""
     can_focus = True
 
-    def __init__(self, root: str, chain=None, cwd: str | None = None, dirs=None):
+    def __init__(self, root: str, chain=None, cwd: str | None = None, dirs=None,
+                 nt: bool | None = None):
         super().__init__(id="ncdview")
+        # 경로의 OS. 서버(셸 소유자)가 nc_list 로 알려준다 — 부재(구버전 서버·테스트)면
+        # 클라 os.name 폴백(_cd_command 와 같은 규칙).
+        self._nt = (os.name == "nt") if nt is None else bool(nt)
         self._root = root
         self._cwd = cwd
+        # **_children·_expanded 는 _key(경로) 로 키잉한다** — 행에 그리는 문자열은
+        # 서버가 준 원본 그대로 두되, 동일성 판정만 정규화된 키로 한다. 두 출처(셸 cwd ·
+        # scandir 노드)가 같은 디렉토리를 다른 문자열로 줘도 트리가 끊기지 않는다.
         self._children: dict[str, list[str]] = {}
         self._expanded: set[str] = set()
         self._rows: list[tuple[str, int]] = []
-        self._pending: str | None = None
+        self._pending: str | None = None     # 펼치기 응답을 기다리는 노드의 _key
         self._find = ""
         self._find_requested = ""   # 마지막으로 서버 재귀검색을 요청한 query(중복 방지)
         self._sel = 0          # 선택(하이라이트) 행 인덱스
         self._top = 0          # 뷰포트 첫 표시 행 인덱스
+        self._cwd_key = self._key(cwd)
         for entry in (chain or []):
             p, kids = entry[0], list(entry[1] or [])
-            self._children[p] = kids
+            self._children[self._key(p)] = kids
             if kids:
-                self._expanded.add(p)
+                self._expanded.add(self._key(p))
         if dirs is not None:
-            self._children[root] = list(dirs)
-        if self._children.get(root):
-            self._expanded.add(root)
+            self._children[self._key(root)] = list(dirs)
+        if self._children.get(self._key(root)):
+            self._expanded.add(self._key(root))
+
+    def _key(self, path: str | None) -> str | None:
+        return _path_key(path, self._nt)
+
+    def _is_cwd(self, path: str) -> bool:
+        return self._cwd_key is not None and self._key(path) == self._cwd_key
 
     def on_mount(self):
         self._rebuild_rows(keep_path=self._cwd)
@@ -97,24 +140,26 @@ class _NcdView(Widget):
         rows: list[tuple[str, int]] = []
 
         def walk(parent: str, depth: int):
-            for child in self._children.get(parent, []):
+            for child in self._children.get(self._key(parent), []):
                 rows.append((child, depth))
-                if child in self._expanded:
+                if self._key(child) in self._expanded:
                     walk(child, depth + 1)
 
         walk(self._root, 0)
         return rows
 
-    @staticmethod
-    def _disp_name(path: str) -> str:
+    def _disp_name(self, path: str) -> str:
         # 표시·검색용 이름. basename 이 비면(루트 '/' 또는 드라이브 'C:\\') 경로 자체.
-        # 슬래시·백슬래시(Windows) 모두 끝에서 떼고 본다.
-        return os.path.basename(path.rstrip("/\\")) or path
+        # 슬래시·백슬래시(Windows) 모두 끝에서 떼고 본다. basename 은 **경로의 OS** 것을
+        # 쓴다 — posixpath 로 'C:\\Users\\me' 를 자르면 통째로 남아 이름 칸에 전체 경로가
+        # 그려지고 speed search 도 어긋난다(POSIX 클라 + Windows 패널).
+        return _pathmod(self._nt).basename(path.rstrip("/\\")) or path
 
     def _row_text(self, path: str, depth: int) -> str:
-        if path in self._expanded:
+        key = self._key(path)
+        if key in self._expanded:
             marker = "▾"
-        elif path in self._children and not self._children[path]:
+        elif key in self._children and not self._children[key]:
             marker = " "    # 로드됨·자식 없음 → 잎
         else:
             marker = "▸"    # 접힘 또는 미로드
@@ -122,7 +167,7 @@ class _NcdView(Widget):
         # 드라이브/루트(C:\ · /)는 구분자로 끝나므로 슬래시를 덧붙이지 않는다.
         suffix = "" if name.endswith(("/", "\\")) else "/"
         row = "  " * depth + f"{marker} {name}{suffix}"
-        if self._cwd is not None and path == self._cwd:
+        if self._is_cwd(path):
             row += _CWD_MARK            # 현재 디렉토리 표시(가리킴)
         return row
 
@@ -134,7 +179,7 @@ class _NcdView(Widget):
         path, depth = self._rows[i]
         if i == self._sel:
             style = _SEL if self.has_focus else _SEL_BLUR
-        elif self._cwd is not None and path == self._cwd:
+        elif self._is_cwd(path):
             style = _CWD            # 현재 디렉토리 강조(커서가 다른 곳에 있을 때)
         else:
             style = _BG
@@ -190,8 +235,11 @@ class _NcdView(Widget):
         if keep_path is None and 0 <= self._sel < len(self._rows):
             keep_path = self._rows[self._sel][0]
         self._rows = self._flatten()
+        # 유지할 행도 키로 찾는다 — keep_path 가 cwd(셸 출처)일 때 노드 문자열과
+        # 어긋나면 커서가 cwd 로 안 가고 조용히 0행에 앉는다(제보의 두 번째 증상).
+        want = self._key(keep_path)
         self._sel = next((i for i, (p, _d) in enumerate(self._rows)
-                          if p == keep_path), 0)
+                          if self._key(p) == want), 0)
         self._clamp_view()
         self.refresh()
 
@@ -241,20 +289,21 @@ class _NcdView(Widget):
             return
         for entry in (chain or []):
             p, kids = entry[0], list(entry[1] or [])
-            self._children[p] = kids
-            self._expanded.add(p)
+            self._children[self._key(p)] = kids
+            self._expanded.add(self._key(p))
         self._rebuild_rows(keep_path=target)
 
     # ---- 지연 펼치기 ----
     async def _expand(self, path: str):
-        if path in self._expanded:
+        key = self._key(path)
+        if key in self._expanded:
             return
-        if path in self._children:
-            if self._children[path]:
-                self._expanded.add(path)
+        if key in self._children:
+            if self._children[key]:
+                self._expanded.add(key)
                 self._rebuild_rows(keep_path=path)
         else:
-            self._pending = path
+            self._pending = key
             self.app.request_nc_list(path)
 
     def fill_children(self, path: str, dirs):
@@ -263,12 +312,13 @@ class _NcdView(Widget):
         # 상한은 상류를 구속하지 않으므로 여기서 자른다 — 무제한 목록은 트리 재구성으로
         # 클라 UI 를 얼리고, 비-문자열 항목은 정렬·렌더에서 예외를 내 클라를 죽인다
         # (mdir `_sane_entries` 와 같은 처방).
-        self._children[path] = [d for d in (dirs or [])[:_MAX_DIRS]
-                                if isinstance(d, str) and d]
-        if self._pending == path:
+        key = self._key(path)
+        self._children[key] = [d for d in (dirs or [])[:_MAX_DIRS]
+                               if isinstance(d, str) and d]
+        if self._pending == key:
             self._pending = None
-            if self._children[path]:
-                self._expanded.add(path)
+            if self._children[key]:
+                self._expanded.add(key)
         self._rebuild_rows(keep_path=path)
 
     # ---- 키 ----
@@ -310,13 +360,16 @@ class _NcdView(Widget):
             event.stop(); self._reset_find()
             if cur is None:
                 return
-            if cur in self._expanded:
-                self._expanded.discard(cur)
+            if self._key(cur) in self._expanded:
+                self._expanded.discard(self._key(cur))
                 self._rebuild_rows(keep_path=cur)
             else:
-                parent = os.path.dirname(cur.rstrip("/\\"))
+                # 부모 계산도 **경로의 OS** 로 — posixpath.dirname('C:\\a\\b') 는 ''
+                # 이라 Windows 패널을 보는 POSIX 클라에서 ← 가 죽는다.
+                parent = _pathmod(self._nt).dirname(cur.rstrip("/\\"))
+                pkey = self._key(parent)
                 pi = next((i for i, (p, _d) in enumerate(self._rows)
-                           if p == parent), None)
+                           if self._key(p) == pkey), None)
                 if pi is not None:
                     self._move(pi)
         elif k == "backspace":
@@ -373,11 +426,12 @@ class NcdScreen(ModalScreen):
     #ncdview { height: 1fr; width: 1fr; }
     """
 
-    def __init__(self, root: str, chain=None, cwd: str | None = None, dirs=None):
+    def __init__(self, root: str, chain=None, cwd: str | None = None, dirs=None,
+                 nt: bool | None = None):
         super().__init__()
         self._root = root
         self._cwd = cwd
-        self._view = _NcdView(root, chain=chain, cwd=cwd, dirs=dirs)
+        self._view = _NcdView(root, chain=chain, cwd=cwd, dirs=dirs, nt=nt)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="ncbox"):

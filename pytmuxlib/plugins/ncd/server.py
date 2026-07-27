@@ -68,19 +68,46 @@ def _drive_roots() -> list[str]:
     return out
 
 
+# 경로 판정에 쓸 모듈. 이 서버가 곧 그 경로들의 OS 라 기본은 `os.path` 다. 모듈 속성인
+# 이유는 **Windows 판정을 다른 OS 에서 검증**할 수 있게 하기 위함(테스트가 ntpath 를
+# 끼운다 — `_list_dirs` 픽스처 교체와 같은 관례).
+_pathmod = os.path
+
+
+def _same_path(a: str, b: str) -> bool:
+    r"""같은 디렉토리를 가리키는 경로 문자열인가(Windows = 대소문자 무시 + `/`↔`\` 흡수).
+
+    문자열 비교로는 안 된다: 사슬은 **셸이 준 cwd**(Windows = PEB, 사용자가 `cd` 할 때
+    쓴 대소문자가 그대로 남는다)에서 뻗고, 하위 목록은 **scandir 의 온디스크 이름**이다.
+    두 표기가 어긋나면 같은 디렉토리가 두 행으로 나오고(중복), 드라이브 루트에서
+    어긋나면 클라가 그 노드를 못 찾아 **트리가 cwd 까지 펼쳐지지 않는다**."""
+    return _pathmod.normcase(_pathmod.normpath(a)) == _pathmod.normcase(
+        _pathmod.normpath(b))
+
+
 def _build_chain(chain_paths: list[str], drives: list[str]) -> list[list]:
     """루트→cwd 사슬을 [dir, [직계 하위]] 리스트로 만든다. `drives` 가 있으면
     (Windows) 맨 앞에 **합성 최상위('')**를 두고 그 자식으로 드라이브 목록을 실어
     드라이브를 트리 최상위 노드로 만든다(현재 드라이브가 빠지면 보강). 각 단계엔 다음
-    사슬 원소를 보장 포함(숨김/누락 대비)해 펼친 경로가 끊기지 않게 한다."""
+    사슬 원소를 보장 포함(숨김/누락 대비)해 펼친 경로가 끊기지 않게 한다.
+
+    표기 차이는 `_same_path` 로 흡수한다 — 드라이브는 `listdrives()` 표기를 정본으로
+    삼아 사슬 머리를 그 문자열로 맞추고(그래야 최상위 자식과 사슬 키가 같은 문자열),
+    하위 목록에 이미 있는 경로를 표기만 달라 다시 넣지 않는다."""
     chain: list[list] = []
     if drives:
-        chain.append(["", sorted(set(drives) | {chain_paths[0]})])
+        canon = next((d for d in drives if _same_path(d, chain_paths[0])), None)
+        if canon is not None:
+            chain_paths = [canon] + chain_paths[1:]     # 사슬 머리 = 드라이브 정본
+            tops = list(drives)
+        else:
+            tops = drives + [chain_paths[0]]            # 목록에 없는 드라이브 보강
+        chain.append(["", sorted(tops)])
     for i, p in enumerate(chain_paths):
         dirs = _list_dirs(p)
         if i + 1 < len(chain_paths):
             nxt = chain_paths[i + 1]
-            if nxt not in dirs:
+            if not any(_same_path(d, nxt) for d in dirs):
                 dirs = sorted(dirs + [nxt],
                               key=lambda d: os.path.basename(
                                   d.rstrip("/\\")).lower())

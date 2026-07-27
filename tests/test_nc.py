@@ -114,6 +114,10 @@ async def test_pane_cwd_host_mode_uses_pty_pid():
         assert srv._pane_cwd(blank) is None
     finally:
         proc.process_cwd, proc.IS_WINDOWS = orig_cwd, orig_win
+        # 이 테스트가 띄운 서버도 반드시 내린다 — 빠져 있으면 서버 하나가 스위트 끝까지
+        # 살아 error.log 만능가드의 대상 밖에 남는다(아래 테스트는 반대로 teardown 을
+        # 두 번 불렀다).
+        await teardown(srv, task, sock)
 
 
 async def test_pane_cwd_has_no_subprocess_fast_path():
@@ -156,7 +160,6 @@ async def test_pane_cwd_has_no_subprocess_fast_path():
             f"{calls}")
     finally:
         servertree.subprocess.run = orig_run
-        await teardown(srv, task, sock)
         await teardown(srv, task, sock)
 
 
@@ -266,6 +269,19 @@ async def _with_app(coro, size=(100, 30)):
         await teardown(srv, task, sock)
 
 
+async def _wait_ncd(pilot, app, rows=None):
+    """ncd 모달이 떠서 트리가 그려질 때까지 **폴링**한다(대기 규약: 고정 pause 금지).
+    `rows` 를 주면 그 행 수까지 기다린다 — 느린 러너에서 0.1초 pause 로는 모달 push·
+    on_mount·render 가 안 끝나 `app.screen._view` 가 없거나 행이 빈 채로 단언에 들어갔다."""
+    def _ready():
+        v = getattr(app.screen, "_view", None)
+        return (v is not None and bool(v._rows)
+                and (rows is None or len(v._rows) == rows))
+    await wait_until(pilot, _ready)
+    assert _ready(), "ncd 트리가 안 떴다(모달 push/마운트 실패)"
+    return app.screen._view
+
+
 # 루트→cwd(/r/sub) 사슬 픽스처. rows: /r, /r/sub, /r/sub/x, /r/other
 _CHAIN_MSG = {"t": "nc_list", "root": "/", "path": None, "cwd": "/r/sub",
               "chain": [["/", ["/r"]],
@@ -292,14 +308,14 @@ async def test_ncd_opens_expanded_to_cwd_and_enter_cds():
         app.send_input = lambda data: inp.append(data)
         app._run_command("ncd")
         app._dispatch(dict(_CHAIN_MSG))
-        await pilot.pause(0.1)
+        await _wait_ncd(pilot, app)
         scr = app.screen
         assert isinstance(scr, NcdScreen)
         # 사슬이 펼쳐져 4행, 커서는 cwd(/r/sub)
         assert len(scr._view._rows) == 4, scr._view._rows
         assert scr._view._cur() == "/r/sub"
         await pilot.press("enter")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: inp)
         # Windows(cmd.exe)는 `cd /d "..."`(드라이브 전환), 그 외엔 POSIX `cd ...`.
         exp = b'cd /d "/r/sub"\n' if os.name == "nt" else b"cd /r/sub\n"
         assert inp == [exp], inp
@@ -316,7 +332,7 @@ async def test_ncd_marks_current_dir():
         app.send_cmd = lambda *a, **k: None
         app._run_command("ncd")
         app._dispatch(dict(_CHAIN_MSG))
-        await pilot.pause(0.1)
+        await _wait_ncd(pilot, app)
         v = app.screen._view
         assert v._cur() == "/r/sub"                 # 커서가 처음엔 cwd 에
         i = next(idx for idx, (p, _d) in enumerate(v._rows) if p == "/r/sub")
@@ -383,9 +399,9 @@ async def test_ncd_cd_quotes_spaces():
         app._dispatch({"t": "nc_list", "root": "/", "path": None,
                        "cwd": "/r/a b", "chain": [["/", ["/r"]],
                                                   ["/r", ["/r/a b"]]]})
-        await pilot.pause(0.1)
+        await _wait_ncd(pilot, app)
         await pilot.press("enter")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: inp)
         # Windows 는 `cd /d "..."`(공백 포함 경로는 따옴표), 그 외엔 POSIX shlex 인용.
         exp = b'cd /d "/r/a b"\n' if os.name == "nt" else b"cd '/r/a b'\n"
         assert inp == [exp], inp
@@ -400,7 +416,7 @@ async def test_ncd_shift_enter_and_ctrl_o_split_with_path():
         app.send_cmd = lambda action, **kw: sent.append((action, kw))
         app._run_command("ncd"); sent.clear()
         app._dispatch(dict(_CHAIN_MSG))
-        await pilot.pause(0.1)
+        await _wait_ncd(pilot, app)
         await pilot.press("ctrl+o")
         await wait_until(pilot, lambda: ("split", {"orient": "lr", "path": "/r/sub"}) in sent)
         assert ("split", {"orient": "lr", "path": "/r/sub"}) in sent
@@ -408,7 +424,7 @@ async def test_ncd_shift_enter_and_ctrl_o_split_with_path():
         sent.clear()
         app._want_nc = True
         app._dispatch(dict(_CHAIN_MSG))
-        await pilot.pause(0.1)
+        await _wait_ncd(pilot, app)
         await app.screen._view.on_key(Key("shift+enter", None))
         await wait_until(pilot, lambda: ("split", {"orient": "lr", "path": "/r/sub"}) in sent)
         assert ("split", {"orient": "lr", "path": "/r/sub"}) in sent
@@ -420,7 +436,7 @@ async def test_ncd_speed_search_jumps_by_typing():
         app.send_cmd = lambda *a, **k: None
         app._run_command("ncd")
         app._dispatch(dict(_CHAIN_MSG))
-        await pilot.pause(0.1)
+        await _wait_ncd(pilot, app)
         v = app.screen._view
         assert v._cur() == "/r/sub"
         await pilot.press("o")              # 'other' 로 점프(speed search)
@@ -440,7 +456,7 @@ async def test_ncd_right_expands_via_lazy_load():
         app.send_cmd = lambda action, **kw: sent.append((action, kw))
         app._run_command("ncd"); sent.clear()
         app._dispatch(dict(_CHAIN_MSG))
-        await pilot.pause(0.1)
+        await _wait_ncd(pilot, app)
         v = app.screen._view
         v._sel = 3                             # /r/other (접힘·미로드)
         await pilot.press("right")
@@ -459,12 +475,12 @@ async def test_ncd_left_collapses():
         app.send_cmd = lambda *a, **k: None
         app._run_command("ncd")
         app._dispatch(dict(_CHAIN_MSG))
-        await pilot.pause(0.1)
+        await _wait_ncd(pilot, app)
         v = app.screen._view
         v._sel = 1                             # /r/sub (펼쳐져 있음)
         assert len(v._rows) == 4
         await pilot.press("left")              # 접기 → /r/sub/x 사라짐
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: len(v._rows) == 3)
         assert "/r/sub" not in v._expanded
         assert len(v._rows) == 3
     await _with_app(body)
@@ -479,7 +495,7 @@ async def test_ncd_page_home_end_fast_jumps():
         app._dispatch({"t": "nc_list", "root": "/", "path": None,
                        "cwd": "/r/d00",
                        "chain": [["/", ["/r"]], ["/r", big]]})
-        await pilot.pause(0.1)
+        await _wait_ncd(pilot, app, rows=41)
         v = app.screen._view
         n = len(v._rows)
         assert n == 41, n                       # /r + d00..d39
@@ -487,7 +503,7 @@ async def test_ncd_page_home_end_fast_jumps():
         await wait_until(pilot, lambda: v._sel == n - 1)
         assert v._sel == n - 1, "End → 마지막"
         await pilot.press("home")
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: v._sel == 0)
         assert v._sel == 0, "Home → 처음"
         await pilot.press("pagedown")
         await wait_until(pilot, lambda: v._sel > 1)
@@ -507,7 +523,7 @@ async def test_ncd_uses_norton_blue_palette():
         app.send_cmd = lambda *a, **k: None
         app._run_command("ncd")
         app._dispatch(dict(_CHAIN_MSG))
-        await pilot.pause(0.1)
+        await _wait_ncd(pilot, app)
         box = app.screen.query_one("#ncbox")
         assert box.styles.background.hex.lower() == "#0000aa", \
             box.styles.background.hex
@@ -536,7 +552,7 @@ async def test_ncd_windows_drives_at_top_and_switch():
                          ["C:\\Users", ["C:\\Users\\me"]]]}
         app._run_command("ncd")
         app._dispatch(msg)
-        await pilot.pause(0.1)
+        await _wait_ncd(pilot, app)
         v = app.screen._view
         top = [p for (p, d) in v._rows if d == 0]
         assert "C:\\" in top and "D:\\" in top, v._rows   # 드라이브 = 최상위
@@ -604,7 +620,7 @@ async def test_ncd_esc_closes():
         await wait_until(pilot, lambda: isinstance(app.screen, NcdScreen))
         assert isinstance(app.screen, NcdScreen)
         await pilot.press("escape")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: not isinstance(app.screen, NcdScreen))
         assert not isinstance(app.screen, NcdScreen)
     await _with_app(body)
 
@@ -642,7 +658,7 @@ async def test_ncd_speed_search_finds_unopened_and_expands():
         app.send_cmd = lambda action, **kw: sent.append((action, kw))
         app._run_command("ncd"); sent.clear()
         app._dispatch(dict(_CHAIN_MSG))      # rows: /r,/r/sub,/r/sub/x,/r/other
-        await pilot.pause(0.1)
+        await _wait_ncd(pilot, app)
         v = app.screen._view
         for ch in "deep":                    # 보이는 행에 없는 이름
             await pilot.press(ch)
@@ -674,7 +690,7 @@ async def test_ncd_mouse_wheel_scrolls_list():
                "chain": [["/", ["/r"]],
                          ["/r", [f"/r/d{i:02d}" for i in range(40)]]]}
         app._dispatch(big)
-        await pilot.pause(0.1)
+        await _wait_ncd(pilot, app)
         v = app.screen._view
         assert len(v._rows) > v.size.height, "스크롤이 의미있으려면 행>뷰포트"
         ev = SimpleNamespace(stop=lambda: None)
@@ -685,4 +701,134 @@ async def test_ncd_mouse_wheel_scrolls_list():
         mid = v._top
         v.on_mouse_scroll_up(ev)
         assert v._top < mid, (mid, v._top)             # 위로
+    await _with_app(body)
+
+
+# ---- Windows 경로 표기 어긋남(제보 2026-06-30: cwd 강조가 안 붙는다) ----
+#
+# cwd 는 **셸 프로세스**에서 오고(Windows = PEB, 사용자가 `cd` 할 때 쓴 대소문자가
+# 그대로 남는다) 트리 노드는 **서버의 scandir**(온디스크 이름)에서 온다. 출처가 둘이라
+# 표기가 어긋날 수 있고, 문자열 비교는 그때 조용히 실패한다(강조·◀·커서 전부 사라짐).
+# 아래 테스트들은 Mac 에서도 Windows 판정을 검증한다 — 클라는 서버가 준 `nt` 로
+# ntpath/posixpath 를 고르고, 서버는 `_pathmod` 를 갈아끼울 수 있게 열어 뒀다.
+async def test_nc_path_key_folds_windows_only():
+    """경로 키: Windows 면 대소문자·세퍼레이터·말미 구분자를 흡수하고, POSIX 면
+    대소문자를 **접지 않는다**(접으면 서로 다른 디렉토리를 같은 것으로 합친다)."""
+    from pytmuxlib.plugins.ncd.screen import _path_key
+    assert _path_key(r"C:\Users\Me", nt=True) == _path_key(r"c:\users\me\\", nt=True)
+    assert _path_key(r"C:\Users\Me", nt=True) == _path_key("C:/Users/Me", nt=True)
+    assert _path_key("/r/Sub", nt=False) != _path_key("/r/sub", nt=False)
+    assert _path_key("/r/sub/", nt=False) == _path_key("/r/sub", nt=False)
+    assert _path_key(None, nt=True) is None
+
+
+_WIN_CASE_MSG = {
+    "t": "nc_list", "root": "", "path": None, "nt": True,
+    # 셸(PEB)이 준 cwd — 사용자가 소문자로 `cd` 했고 말미 `\` 가 붙어 있다.
+    "cwd": "c:\\users\\me\\proj\\",
+    # 서버 scandir 이 준 온디스크 표기(정본 대소문자).
+    "chain": [["", ["C:\\", "D:\\"]],
+              ["C:\\", ["C:\\Users", "C:\\Windows"]],
+              ["C:\\Users", ["C:\\Users\\Me"]],
+              ["C:\\Users\\Me", ["C:\\Users\\Me\\Proj", "C:\\Users\\Me\\tmp"]]],
+}
+
+
+async def test_ncd_marks_current_dir_despite_windows_case():
+    """제보 재현: cwd 표기가 노드와 대소문자·말미 구분자만 달라도 **강조·◀·커서**가
+    붙어야 한다. 수정 전에는 세 신호가 전부 사라졌다(문자열 비교)."""
+    from pytmuxlib.plugins.ncd.screen import NcdScreen, _CWD
+
+    async def body(app, pilot, srv):
+        app.send_cmd = lambda *a, **k: None
+        app._run_command("ncd")
+        app._dispatch(dict(_WIN_CASE_MSG))
+        await wait_until(pilot, lambda: isinstance(app.screen, NcdScreen))
+        v = app.screen._view
+        row = "C:\\Users\\Me\\Proj"
+        await wait_until(pilot, lambda: v._cur() == row)
+        assert v._cur() == row, (v._cur(), v._rows)     # ① 커서가 cwd 행에
+        i = next(idx for idx, (p, _d) in enumerate(v._rows) if p == row)
+        assert "◀" in v._row_text(row, v._rows[i][1]), v._row_text(row, v._rows[i][1])
+        v._sel = 0                                      # ③ 커서를 옮겨도 노랑 강조
+        seg = v.render_line(i - v._top)._segments[0]
+        assert seg.style.color.get_truecolor() == _CWD.color.get_truecolor(), seg.style
+        # 트리가 cwd 까지 펼쳐져 있다(드라이브 노드 키가 어긋나면 여기서 끊긴다).
+        assert any(p == "C:\\Users\\Me" for p, _d in v._rows), v._rows
+
+    await _with_app(body)
+
+
+async def test_ncd_windows_paths_on_posix_client_name_and_parent():
+    """POSIX 클라가 Windows 패널의 트리를 볼 때(페더레이션): 표시명은 **basename**
+    이어야 하고 ← 는 부모 행으로 가야 한다. `os.path`(클라 OS)로 자르면 표시칸에
+    전체 경로가 나오고 ← 가 죽는다."""
+    from pytmuxlib.plugins.ncd.screen import NcdScreen
+
+    async def body(app, pilot, srv):
+        app.send_cmd = lambda *a, **k: None
+        app._run_command("ncd")
+        app._dispatch(dict(_WIN_CASE_MSG))
+        await wait_until(pilot, lambda: isinstance(app.screen, NcdScreen))
+        v = app.screen._view
+        await wait_until(pilot, lambda: v._cur() == "C:\\Users\\Me\\Proj")
+        # ① 표시명 = basename(전체 경로가 아니다)
+        txt = v._row_text("C:\\Users\\Me\\Proj", 3)
+        assert txt.strip().startswith("▸ Proj") or txt.strip().startswith("  Proj"), txt
+        assert "C:\\Users" not in txt, txt
+        # ② ← 는 부모(C:\Users\Me)로 이동한다(cwd 는 접힘 상태라 부모로 간다)
+        await pilot.press("left")
+        await wait_until(pilot, lambda: v._cur() == "C:\\Users\\Me")
+        assert v._cur() == "C:\\Users\\Me", v._cur()
+
+    await _with_app(body)
+
+
+async def test_nc_build_chain_absorbs_drive_case_mismatch():
+    """서버: 셸이 준 사슬 머리(`c:\\`)와 `listdrives()` 표기(`C:\\`)가 달라도 드라이브
+    행은 하나이고 사슬 머리는 **정본 표기**로 맞춰진다(클라가 그 노드를 찾을 수 있게).
+    하위 목록에 표기만 다른 중복이 들어가지도 않는다."""
+    import ntpath
+    srv, task, sock = await server_only()
+    orig_list, orig_pm = ncds._list_dirs, ncds._pathmod
+    try:
+        ncds._pathmod = ntpath          # 이 상자가 아니라 '경로의 OS' 로 판정
+        ncds._list_dirs = lambda p: {
+            "C:\\": ["C:\\Users"],
+            "c:\\": ["C:\\Users"],
+            "C:\\Users": ["C:\\Users\\Me"]}.get(p, [])
+        chain = ncds._build_chain(["c:\\", "C:\\Users"], ["C:\\", "D:\\"])
+        assert chain[0] == ["", ["C:\\", "D:\\"]], chain[0]     # 드라이브 행 중복 없음
+        assert chain[1][0] == "C:\\", chain[1][0]               # 사슬 머리 = 정본
+        # 다음 사슬 원소가 표기만 달라도 다시 넣지 않는다(같은 디렉토리 두 행 방지)
+        c2 = ncds._build_chain(["C:\\", "c:\\users"], ["C:\\"])
+        assert c2[1][1] == ["C:\\Users"], c2[1][1]
+    finally:
+        ncds._list_dirs, ncds._pathmod = orig_list, orig_pm
+        await teardown(srv, task, sock)
+
+
+async def test_ncd_tree_expands_when_upstream_spells_nodes_differently():
+    """사슬 노드 표기와 하위 목록 표기가 서로 다른 경우(정본화 안 하는 **구버전/상류**
+    서버 — 페더레이션에서 실제로 섞인다)에도 트리는 cwd 까지 펼쳐져야 한다. 클라가
+    `_children`/`_expanded` 를 정규화된 키로 들기 때문에 흡수된다."""
+    from pytmuxlib.plugins.ncd.screen import NcdScreen
+
+    async def body(app, pilot, srv):
+        app.send_cmd = lambda *a, **k: None
+        app._run_command("ncd")
+        app._dispatch({
+            "t": "nc_list", "root": "", "path": None, "nt": True,
+            "cwd": "C:\\Users\\Me",
+            # 노드 키는 소문자, 자식 목록은 정본 대소문자 — 표기가 층마다 어긋난다.
+            "chain": [["", ["C:\\"]],
+                      ["c:\\", ["C:\\Users"]],
+                      ["c:\\users", ["C:\\Users\\Me"]]]})
+        await wait_until(pilot, lambda: isinstance(app.screen, NcdScreen))
+        v = app.screen._view
+        await wait_until(pilot, lambda: v._cur() == "C:\\Users\\Me")
+        assert v._cur() == "C:\\Users\\Me", (v._cur(), v._rows)
+        paths = [p for p, _d in v._rows]
+        assert paths == ["C:\\", "C:\\Users", "C:\\Users\\Me"], paths
+
     await _with_app(body)

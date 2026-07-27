@@ -31,7 +31,7 @@ _PLAT = re.compile(r"^\s*if\s+(?:ipc\.IS_WINDOWS|not\s+ipc\.IS_WINDOWS"
                    r"|os\.name\s*[!=]=\s*[\"']nt[\"']|sys\.platform.*)\s*:\s*$")
 
 # 총계 래칫(2026-07-25 기준 실측). **늘리지 말고 줄여라** — 이주 CL 이 여기를 함께 낮춘다.
-TOTALS = {"pause": 405, "sleep": 90, "silent_skip": 18}
+TOTALS = {"pause": 387, "sleep": 90, "silent_skip": 18}
 
 # 모듈별 상한 [고정 pause, 고정 sleep, 조용한 플랫폼 return]. 목록에 없으면 전부 0.
 CEILINGS = {
@@ -45,7 +45,7 @@ CEILINGS = {
     "test_fuzz_nest_egress": [0, 1, 2],
     "test_mdir": [1, 0, 0],
     "test_model": [0, 2, 0],
-    "test_nc": [20, 0, 0],
+    "test_nc": [2, 0, 0],       # 2026-07-27 이주(20→2): 남은 둘은 app 마운트 대기
     "test_plugin_contract": [8, 0, 0],
     "test_plugin_ime_indicator": [7, 1, 5],
     "test_plugin_manager": [7, 0, 0],
