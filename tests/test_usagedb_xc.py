@@ -214,3 +214,51 @@ async def test_xc_daily_breakdown_and_records_are_cache_inclusive():
     # 합이 xc_totals full 과 일치.
     assert sum(r["tokens"] for r in recs) == usagedb.xc_totals(conn)["full"]
     conn.close()
+
+
+async def test_xc_hourly_breakdown_covers_full_history_beyond_record_cap():
+    """시각 집계는 **레코드 cap 과 무관**하게 이력 전체를 돌려준다(제보 2026-07-27).
+
+    종전 팝업 트리는 시각 행을 raw `xc_query_records(limit=N)` 로만 만들 수 있어
+    최근 N 건이 닿는 범위(실측 ~22시간)를 벗어난 날짜는 시각이 통째로 비었다.
+    오라클: cap 밖의 옛 시각이 집계에 **있어야** 한다 — 시각 SQL 을 지우고 raw 로
+    되돌리면 여기서 죽는다."""
+    conn = usagedb.connect(":memory:")
+    # 옛날 1건 + 최근 5건. limit=5 로 조회하면 raw 창은 최근 5건뿐이다.
+    usagedb.insert_xc(conn, _rec("old:1", inp=7, out=0,
+                                 ts="2026-06-01T03:00:00.000Z"))
+    for i in range(5):
+        usagedb.insert_xc(conn, _rec("new:%d" % i, inp=1, out=0,
+                                     ts="2026-06-22T1%d:00:00.000Z" % i))
+    capped = usagedb.xc_query_records(conn, limit=5)
+    assert len(capped) == 5 and all(r["tokens"] == 1 for r in capped), capped
+    hourly = usagedb.xc_hourly_breakdown(conn)
+    # cap 밖의 옛 행이 시각 집계엔 살아 있다(그 시각의 토큰 7).
+    old = [h for h in hourly if h["tokens"] == 7]
+    assert len(old) == 1, hourly
+    assert old[0]["hour"][:4] == "2026" and old[0]["hour"].endswith(":00"), old
+    # 시각 합 == 전체 full(가산성 — 트리 상위 일/주/월 행과 어긋나면 안 된다).
+    assert sum(h["tokens"] for h in hourly) == usagedb.xc_totals(conn)["full"]
+    conn.close()
+
+
+async def test_xc_hourly_breakdown_groups_by_hour_and_model():
+    """같은 시각·같은 모델은 한 행으로 합쳐지고, 모델이 다르면 갈린다(막대 색 분해).
+    model NULL 행은 키를 생략해 표시층이 'unknown' 티어로 묶게 둔다."""
+    conn = usagedb.connect(":memory:")
+    usagedb.insert_xc(conn, _rec("a:1", inp=10, out=0, model="claude-opus-4-8",
+                                 ts="2026-06-22T10:10:00.000Z"))
+    usagedb.insert_xc(conn, _rec("a:2", inp=5, out=0, model="claude-opus-4-8",
+                                 ts="2026-06-22T10:50:00.000Z"))
+    usagedb.insert_xc(conn, _rec("a:3", inp=3, out=0, model="claude-sonnet-4-5",
+                                 ts="2026-06-22T10:20:00.000Z"))
+    usagedb.insert_xc(conn, _rec("a:4", inp=2, out=0, model=None,
+                                 ts="2026-06-22T10:30:00.000Z"))
+    hourly = usagedb.xc_hourly_breakdown(conn)
+    hours = {h["hour"] for h in hourly}
+    assert len(hours) == 1, hourly          # 같은 한 시각(원산지 tz 무관)
+    got = {h.get("model"): h["tokens"] for h in hourly}
+    assert got == {"claude-opus-4-8": 15, "claude-sonnet-4-5": 3, None: 2}, got
+    assert all("model" in h for h in hourly if h["tokens"] != 2)
+    assert [h for h in hourly if h["tokens"] == 2][0].keys() == {"hour", "tokens"}
+    conn.close()

@@ -204,6 +204,40 @@ async def test_agg_index_keyed_map_with_labels_and_models():
     assert usagelog.agg_index([], "day") == {}
 
 
+async def test_hourly_index_matches_agg_index_shape():
+    """hourly_index: 서버 시각 집계 행 → agg_index 와 **같은 구조**의 맵.
+
+    트리(_build_tree_rows)가 두 소스를 자리만 바꿔 쓰므로 구조가 어긋나면 시각 행이
+    조용히 빈다. 같은 데이터를 raw 레코드로 agg_index('hour') 한 결과와 대조한다."""
+    ts0, ts1 = 1_700_000_000.0, 1_700_000_100.0     # 같은 시각(100초 차)
+    ts2 = ts0 + 7200                                 # 두 시간 뒤
+    recs = [
+        dict(usagelog.make_record(ts0, 0, 1, 1, "a@x.org", 1000),
+             model="opus-4.8"),
+        dict(usagelog.make_record(ts1, 0, 1, 1, "a@x.org", 500),
+             model="sonnet-4.6"),
+        dict(usagelog.make_record(ts2, 1, 2, 2, "b@y.org", 2000),
+             model="opus-4.8"),
+    ]
+    want = usagelog.agg_index(recs, "hour", hour_suffix="시")
+    # 서버가 보낼 모양(시각×모델 합성 행) — 계정/세션/탭/패널은 싣지 않는다.
+    hourly = [{"hour": usagelog.bucket_key(r["ts"], "hour"),
+               "model": r["model"], "tokens": r["tokens"]} for r in recs]
+    got = usagelog.hourly_index(hourly, "시")
+    assert got == want, (got, want)
+    # 모델 미상(키 생략) → 'unknown' 티어로 묶인다.
+    h0 = usagelog.bucket_key(ts0, "hour")
+    u = usagelog.hourly_index([{"hour": h0, "tokens": 7}], "시")
+    assert u[h0]["models"] == {"unknown": 7} and u[h0]["tokens"] == 7
+    # 라벨은 _bucket_short(hour) 규칙(MM-DD HH<접미사>) — i18n 접미사가 실린다.
+    assert u[h0]["label"].endswith("h") is False and u[h0]["label"].endswith("시")
+    assert usagelog.hourly_index([{"hour": h0, "tokens": 7}], "h")[h0][
+        "label"].endswith("h")
+    # 방어: None/빈 목록·형태가 아닌 행은 건너뛴다(구버전·손상 payload 무해).
+    assert usagelog.hourly_index(None) == {} == usagelog.hourly_index([])
+    assert usagelog.hourly_index([{"hour": "bad", "tokens": 1}, "x", 3]) == {}
+
+
 async def test_claude_account_heuristics():
     # ① 가장 신뢰: Claude UI 의 "<email>'s Organization" 표시 → 별칭화(원문 미노출)
     assert claude_account(

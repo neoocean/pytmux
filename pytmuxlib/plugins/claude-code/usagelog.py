@@ -498,6 +498,37 @@ def agg_index(records: list, bucket: str = "day", account: str | None = None,
     return out
 
 
+def hourly_index(hourly, hour_suffix="시") -> dict:
+    """서버 usagedb.(xc_)hourly_breakdown(시각별 합성 행)을 **agg_index 와 같은 구조**
+    ({hour_key: {"tokens","label","models"}})로 변환한다 — 계층 트리의 시각 행이
+    raw 레코드 cap(최근 N 건) 대신 이력 전체를 쓰게 하는 입력이다.
+
+    daily_to_records 처럼 ts 로 되돌리지 **않는다**: 시각은 하루보다 눈금이 촘촘해
+    epoch 왕복이 조회 머신 tz/DST 에서 한 칸 밀릴 수 있고, 서버가 이미 원산지 벽시계로
+    만든 키(bucket_key 의 hour 포맷과 동일 문자열)를 그대로 쓰는 게 안전하다.
+
+    tokens 는 부호 그대로 합산하고, models(막대 색 분해)는 agg_index 와 같이 양수 행만
+    센다. 키 형태가 아닌 행은 건너뛴다(구버전/손상 payload 무해 처리)."""
+    out: dict = {}
+    for h in hourly or []:
+        hk = h.get("hour") if isinstance(h, dict) else None
+        if not isinstance(hk, str) or len(hk) < 13:
+            continue
+        try:
+            tok = int(h.get("tokens", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        e = out.setdefault(hk, {
+            "tokens": 0,
+            "label": _bucket_short(hk, "hour", None, hour_suffix),
+            "models": {}})
+        e["tokens"] += tok
+        if tok > 0:
+            tier = model_tier(h)
+            e["models"][tier] = e["models"].get(tier, 0) + tok
+    return out
+
+
 def summary_lines(records: list, bucket: str = "day",
                   account: str | None = None, dim: str = "account") -> list:
     """조회 화면(InfoScreen)용 사람이 읽는 집계 줄 목록을 만든다.

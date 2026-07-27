@@ -1989,6 +1989,30 @@ async def test_token_log_screen_aggregates_and_switches():
     await _with_app(body)
 
 
+async def test_token_log_dispatch_forwards_hourly_aggregate():
+    """서버 token_log 의 시각 집계(hourly)가 팝업까지 **배선**돼 있다(제보 2026-07-27).
+
+    회신에 실어도 `_on_token_log_msg` 가 안 넘기면 팝업은 종전 raw 폴백으로 조용히
+    되돌아간다 — 값을 만드는 쪽(usagedb/usagelog)만 테스트하면 못 잡는 자리다."""
+    async def body(app, pilot, srv):
+        hourly = [{"hour": "2026-07-20 03:00", "model": "claude-opus-4-8",
+                   "tokens": 5}]
+        app._want_token_log = True
+        app._dispatch({"t": "token_log", "records": [], "hourly": hourly})
+
+        def _mounted():
+            # push 직후엔 스택 맨 위가 이미 TokenLogScreen 이라 클래스만 보면 **마운트
+            # 전에** 진행한다(대기 규약 ②의 함정) — 표가 실제로 붙을 때까지 기다린다.
+            top = app.screen_stack[-1]
+            return (top.__class__.__name__ == "TokenLogScreen"
+                    and len(top.query("DataTable")) > 0)
+
+        await wait_until(pilot, _mounted)
+        scr = app.screen_stack[-1]
+        assert scr._hourly == hourly, getattr(scr, "_hourly", "<속성 없음>")
+    await _with_app(body)
+
+
 async def test_token_log_limit_view_toggle():
     """2026-06-14(사용자 요청): 상단 빽빽한 한도 블록(막대·창Σ·계정·신선도 ~7줄)을
     [한도] 전용 서브뷰로 옮겨 작은 화면을 정리. 기본 화면 상단엔 1줄 요약(5h%·주%)만,

@@ -753,6 +753,29 @@ def daily_breakdown(conn) -> list:
     return out
 
 
+def hourly_breakdown(conn) -> list:
+    """스크랩 usage 테이블의 **시각**별 합성 행 — xc_hourly_breakdown 의 스크랩판
+    (usage_xc 가 비어 종전 스크랩 집계로 폴백하는 구버전/백필 전 DB 용). 같은 행 구조
+    [{"hour","model"?,"tokens"}] 라 클라 usagelog.hourly_index 가 그대로 먹는다.
+
+    스크랩 행엔 tzoff 가 없어 시각 키는 조회 머신 로컬(daily_breakdown 과 동일 규칙)."""
+    has_model = any(c[1] == "model"
+                    for c in conn.execute("PRAGMA table_info(usage)"))
+    msel = ", model" if has_model else ""
+    cur = conn.execute(
+        "SELECT strftime('%Y-%m-%d %H:00', ts, 'unixepoch', 'localtime') AS hour"
+        + msel + ", COALESCE(SUM(tokens), 0) AS tokens "
+        "FROM usage GROUP BY hour" + msel + " "
+        "HAVING SUM(tokens) <> 0")
+    out = []
+    for r in cur.fetchall():
+        rec = {"hour": r["hour"], "tokens": int(r["tokens"])}
+        if has_model and r["model"] is not None:
+            rec["model"] = r["model"]
+        out.append(rec)
+    return out
+
+
 def daily_limit_pct(conn) -> dict:
     """로컬 일자별 **세션 5h 한도 최대 %**(limits 스냅샷 기준). {day(YYYY-MM-DD): max_pct}.
 
@@ -959,6 +982,11 @@ def xc_totals_by_model(conn) -> dict:
 _XC_DAY = ("CASE WHEN tzoff IS NULL "
            "THEN strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') "
            "ELSE strftime('%Y-%m-%d', ts + tzoff, 'unixepoch') END")
+# 원산지 **시각** 버킷 — _XC_DAY 와 같은 규칙(클라 usagelog.bucket_key 의 hour 포맷
+# '%Y-%m-%d %H:00' 과 동일 문자열이라 hourly_pct/hourly_week_pct 조인키로 그대로 쓴다).
+_XC_HOUR = ("CASE WHEN tzoff IS NULL "
+            "THEN strftime('%Y-%m-%d %H:00', ts, 'unixepoch', 'localtime') "
+            "ELSE strftime('%Y-%m-%d %H:00', ts + tzoff, 'unixepoch') END")
 
 
 def xc_daily_full(conn) -> dict:
@@ -992,6 +1020,34 @@ def xc_daily_breakdown(conn) -> list:
         rec = {"day": r["day"], "account": r["account"],
                "session": r["session"], "tab": r["tab"], "pane": r["pane"],
                "tokens": int(r["tokens"])}
+        if r["model"] is not None:
+            rec["model"] = r["model"]
+        out.append(rec)
+    return out
+
+
+def xc_hourly_breakdown(conn) -> list:
+    """usage_xc 를 **시각**(원산지 tz)×모델로 GROUP BY 한 합성 행 목록
+    [{"hour": "YYYY-MM-DD HH:00", "model": str|생략, "tokens": int}].
+
+    xc_daily_breakdown 의 시각판이다. 종전엔 팝업 트리의 시각 행을 raw
+    `xc_query_records(limit=N)` 로만 만들 수 있어(일자 합성 레코드엔 시간이 없다)
+    최근 N 건이 닿는 만큼(실측 ~22시간)만 펼쳐지고 그 이전 날짜는 펼침 화살표조차
+    안 붙었다 — 이 집계가 그 cap 을 없앤다(제보 2026-07-27).
+
+    행 구조가 일자판보다 **슬림하다**: 시각 행은 계정/세션/탭/패널로 나눌 일이 없고
+    (트리는 필터 없는 시각 합만 그린다) 모델 티어 색 분해만 필요하다. 그래서
+    account/session/tab/pane 을 GROUP BY 에서 빼 행수를 시각×모델로 묶는다 — 14만
+    레코드가 수천 행으로 줄어 종전 raw 5,000건 payload 보다 오히려 작다."""
+    _tok = "SUM(input+output+cache_create+cache_read)"
+    cur = conn.execute(
+        "SELECT " + _XC_HOUR + " AS hour, model, "
+        "       COALESCE(" + _tok + ", 0) AS tokens "
+        "FROM usage_xc GROUP BY hour, model "
+        "HAVING " + _tok + " <> 0")
+    out = []
+    for r in cur.fetchall():
+        rec = {"hour": r["hour"], "tokens": int(r["tokens"])}
         if r["model"] is not None:
             rec["model"] = r["model"]
         out.append(rec)

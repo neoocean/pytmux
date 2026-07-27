@@ -739,6 +739,58 @@ async def test_remote_token_log_timeout_notice_only_when_pending():
     assert msgs == [] and a3._want_token_log is True, "옛 타이머가 새 요청 오염 금지"
 
 
+def _expand_all(scr):
+    """트리를 더 펼칠 게 없을 때까지 펼치고 최종 노드 목록을 돌려준다(월→주→일→시각).
+    기본 접힘 구역(옛 달/주)을 세그먼트 규칙에 의존하지 않고 훑기 위한 헬퍼."""
+    for _ in range(10):
+        nodes, _total = scr._build_tree_rows()
+        todo = [n["key"] for n in nodes
+                if n["expandable"] and n["key"] and not n["expanded"]]
+        if not todo:
+            return nodes
+        scr._tree_toggled.update(todo)
+    raise AssertionError("트리 펼침이 수렴하지 않음")
+
+
+async def test_tree_hours_come_from_server_aggregate_not_record_cap():
+    """옛 날짜도 **시각 단위로 펼쳐진다** — 시각 행의 소스가 raw 레코드(최근 N 건)가
+    아니라 서버 시각 집계(hourly)라서(제보 2026-07-27).
+
+    종전엔 raw 창(실측 ~22시간)을 벗어난 날은 hour_idx 가 비어 `has_hours=False` →
+    펼침 화살표조차 안 붙었다. 오라클을 **트리 노드(호출부)** 에 건다: usagelog.
+    hourly_index 만 테스트하면 `_build_tree_rows` 가 그 값을 안 쓰게 바꿔도 통과한다
+    (공허 통과 — CLAUDE.md '표시 기능은 호출부까지 단언')."""
+    import time as _t
+
+    now = _t.time()
+    old_day = _t.strftime("%Y-%m-%d", _t.localtime(now - 30 * 86400))
+    old_hours = ["%s %02d:00" % (old_day, h) for h in (3, 9, 17)]
+    # daily=이력 전체(옛 날 포함) · records=raw 창(오늘치만) → 옛 날은 raw 로 못 만든다.
+    daily = [{"day": old_day, "account": "a@x.org", "session": 1,
+              "tab": 0, "pane": 1, "tokens": 300}]
+    records = [{"ts": now, "account": "a@x.org", "tokens": 10}]
+    hourly = [{"hour": hk, "model": "claude-opus-4-8", "tokens": 100}
+              for hk in old_hours]
+
+    scr = screens.TokenLogScreen(records, daily=daily, hourly=hourly)
+    nodes = _expand_all(scr)
+    got = [n["bk"] for n in nodes if n["kind"] == "hour"]
+    assert set(old_hours) <= set(got), (got, old_hours)
+    # 시각 행이 그 날 아래에 실제로 달렸는지(합·펼침 가능) — 화살표 없는 옛 버그 재발 방지.
+    day_nodes = [n for n in nodes if n["kind"] == "day"
+                 and n["key"] == "day:" + old_day]
+    assert day_nodes and day_nodes[0]["expandable"], day_nodes
+    assert day_nodes[0]["tokens"] == 300, day_nodes
+    # 뮤테이션 반증: hourly 를 안 주면(구버전 서버) 종전 raw 폴백 → 옛 날은 시각 없음
+    # (= 이 테스트가 고친 것을 실제로 겨누고 있다는 증거).
+    scr2 = screens.TokenLogScreen(records, daily=daily, hourly=None)
+    nodes2 = _expand_all(scr2)
+    assert not [n for n in nodes2 if n["kind"] == "hour"], nodes2
+    old2 = [n for n in nodes2 if n["kind"] == "day"
+            and n["label"].startswith(old_day[5:])]
+    assert old2 and not old2[0]["expandable"], old2      # 화살표조차 없던 종전 거동
+
+
 async def test_top_header_stays_one_line():
     """`docs/PENDING_UI_IMPROVEMENTS.md` #2 — 상단 머리글은 **한 줄**이다.
 

@@ -706,7 +706,7 @@ class TokenLogScreen(ModalScreen):
                  daily=None, daily_pct=None, hourly_pct=None,
                  hourly_week_pct=None, active_session=None, initial_mode=None,
                  model=None, xc_totals=None, warn_history=None, remote=False,
-                 remote_host=None, xc_hosts=None, xc_cov=None):
+                 remote_host=None, xc_hosts=None, xc_cov=None, hourly=None):
         super().__init__()
         # 원격(remote-attach) 탭을 보는 중에 토큰 배지(분홍)를 눌러 연 팝업인지 표시
         # (사용자 요청 2026-06-23). 로컬 팝업(accent 오렌지 테두리)과 한눈에 구분되게
@@ -750,8 +750,14 @@ class TokenLogScreen(ModalScreen):
         self._hourly_span = self._hourly_spans(self._hourly_pct)
         # 전체 이력 일자별 합성 레코드(서버 daily_breakdown). day/week/month 버킷은
         # 이걸로 집계해 옛 버킷이 cap 에 잘리지 않게 한다(None=구버전 서버 → 폴백으로
-        # 최근 N 건 _records 사용). hour 버킷만 raw _records 를 쓴다(_refresh 참고).
+        # 최근 N 건 _records 사용).
         self._full_recs = usagelog.daily_to_records(daily) if daily else None
+        # 전체 이력 **시각**별 합성 행(서버 (xc_)hourly_breakdown). 종전엔 시각 행을 raw
+        # _records(최근 N 건)로만 만들 수 있어 그 창을 벗어난 날짜는 펼침 자체가 막혔다
+        # (제보 2026-07-27) — 이 집계가 트리 시각 입도를 이력 전체로 넓힌다. 라벨이
+        # i18n(시/h)을 타므로 인덱스는 매 refresh 에 만든다(원본만 보관).
+        # None/빈 목록 = 구버전 서버 → _records 폴백(_build_tree_rows).
+        self._hourly = hourly
         self._usage = usage          # M19 그림자 /usage 한도(dict|None)
         # True 면 표 자리에 /usage 한도 상세(막대·리셋·창Σ·신선도)를 보여준다([l]
         # 토글). 상단 빽빽한 7줄 블록을 이 전용 뷰로 옮겨 작은 화면을 정리(사용자
@@ -1833,16 +1839,20 @@ class TokenLogScreen(ModalScreen):
           ② 이번 달의 지난 주 → 최상위 주 행(펼치면 일·시각),
           ③ 이전 달 → 최상위 월 행(펼치면 주·일·시각).
         각 날짜는 정확히 한 구역에만 들어가 토큰이 중복 집계되지 않는다(가산성 유지).
-        시각 입도는 raw _records(최근 N)로만 만들 수 있어 옛 날을 펼치면 시각이 비어
-        있을 수 있다(일자 합성 레코드엔 시간 정보가 없다 — 설계 한계)."""
+        시각 입도는 서버가 SQL 로 집계해 보낸 _hourly(이력 전체)를 쓴다 — 종전처럼 raw
+        _records(최근 N 건)로 만들면 그 창(실측 ~22시간)을 벗어난 날은 시각이 비고
+        펼침 화살표조차 안 붙었다(제보 2026-07-27). 구버전 서버(_hourly 없음)만 종전
+        raw 폴백이라 옛 날이 여전히 비어 보일 수 있다."""
         from datetime import date, datetime
         src = self._full_recs if self._full_recs is not None else self._records
         weekdays = i18n.t("pscreen.weekdays").split(",")
         hour_suffix = i18n.t("pscreen.hour_suffix")
         day_idx = usagelog.agg_index(src, "day", weekdays=weekdays,
                                      hour_suffix=hour_suffix)
-        hour_idx = usagelog.agg_index(self._records, "hour",
-                                      hour_suffix=hour_suffix)
+        hour_idx = (usagelog.hourly_index(self._hourly, hour_suffix)
+                    if self._hourly else
+                    usagelog.agg_index(self._records, "hour",
+                                       hour_suffix=hour_suffix))
         try:
             today = date.today()
         except Exception:

@@ -192,6 +192,11 @@ async def test_token_log_request_handled_by_plugin_hook():
         assert resp["records"] and resp["records"][0]["tokens"] == 1234
         # 계정별 합(accounts_total)은 머신-로컬 표시로 전환돼 페이로드에서 제거됨(2026-06-19).
         assert "accounts_total" not in resp, resp
+        # 시각 집계(hourly)를 함께 싣는다 — 팝업 트리의 시각 행이 최근 N 건 raw 창에
+        # 갇히지 않게(제보 2026-07-27). 여기선 usage_xc 가 비어 스크랩판이 응답한다.
+        assert resp.get("hourly"), resp.keys()
+        assert resp["hourly"][0]["tokens"] == 1234
+        assert len(resp["hourly"][0]["hour"]) == 16, resp["hourly"]   # 'YYYY-MM-DD HH:00'
         # 플러그인 부재(디렉토리 삭제 시뮬) → 토큰 로그 요청은 무응답(None).
         reg2 = _registry_without_claude()
         assert reg2.handle_server_request(

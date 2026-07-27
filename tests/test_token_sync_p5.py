@@ -87,6 +87,26 @@ async def test_daily_bucket_uses_origin_not_viewer():
     conn.close()
 
 
+async def test_hourly_buckets_are_tz_invariant():
+    """**시각** 집계도 원산지 벽시계로 버킷된다 — 일자와 같은 규칙(_XC_HOUR).
+
+    시각은 하루보다 눈금이 촘촘해 tz 실수가 더 잘 드러난다: 'localtime' 으로
+    되돌리면 조회 머신마다 시각 행이 통째로 밀려, 같은 DB 를 두 머신에서 볼 때
+    5h%/1w% 열 조인키(hourly_pct)와도 어긋난다."""
+    conn = usagedb.connect(":memory:")
+    usagedb.insert_xc_many(conn, [_rec("a:1", _TS_EDGE, tzoff=_KST, input=100)])
+    with _TZ("Asia/Seoul"):
+        seoul = usagedb.xc_hourly_breakdown(conn)
+    with _TZ("America/Los_Angeles"):
+        la = usagedb.xc_hourly_breakdown(conn)
+    # 원산지(서울) 벽시계 = 23일 01:00 — 어디서 보든 같다.
+    assert [h["hour"] for h in seoul] == [h["hour"] for h in la] == \
+        ["2026-07-23 01:00"]
+    # 클라 bucket_key(hour) 와 **같은 문자열**이어야 hourly_pct 조인이 성립한다.
+    assert seoul[0]["hour"] == usagelog.bucket_key(_TS_EDGE, "hour", _KST)
+    conn.close()
+
+
 async def test_legacy_rows_keep_local_fallback():
     """tzoff 가 없는 레거시 행은 종전대로 **조회 머신 로컬**로 버킷된다(거동 유지).
 

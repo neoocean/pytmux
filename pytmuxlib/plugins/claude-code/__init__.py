@@ -559,6 +559,7 @@ def _on_token_log_msg(app, msg):
         daily_pct=msg.get("daily_pct"),
         hourly_pct=msg.get("hourly_pct"),
         hourly_week_pct=msg.get("hourly_week_pct"),
+        hourly=msg.get("hourly"),
         active_session=msg.get("active_session"),
         initial_mode=initial_mode,
         model=getattr(app.status, "claude_model", None),
@@ -1320,6 +1321,11 @@ class _ClaudeCodePlugin:
                     if conn is not None and hasattr(usagedb, "xc_count") else 0)
             xc_breakdown = (conn is not None and xc_n > 0
                             and hasattr(usagedb, "xc_daily_breakdown"))
+            # hourly=시각별 합성 행(이력 전체). 팝업 트리의 시각 행이 최근 N 건 raw
+            # 창에 갇히지 않게 한다(제보 2026-07-27) — daily 와 같은 이유·같은 모양의
+            # 집계다. 구버전 usagedb(함수 부재)면 None → 클라가 종전 raw 폴백.
+            _hb = getattr(usagedb, "xc_hourly_breakdown" if xc_breakdown
+                          else "hourly_breakdown", None)
             if xc_breakdown:
                 recs = usagedb.xc_query_records(conn, limit=lim)
                 daily = usagedb.xc_daily_breakdown(conn)
@@ -1327,6 +1333,7 @@ class _ClaudeCodePlugin:
                 recs = (usagedb.query_records(conn, limit=lim)
                         if conn is not None else [])
                 daily = usagedb.daily_breakdown(conn) if conn is not None else []
+            hourly = _hb(conn) if (conn is not None and _hb) else None
             # 활동신호 lifetime Σ(스크랩) — 팝업 'activity~' 줄이 소비.
             total_all = usagedb.total_all(conn) if conn is not None else 0
             # §10-D: 세션 5h 한도 최대%(권위 /usage). 스크랩 Σ 가 5h 소비를 과소반영
@@ -1373,6 +1380,7 @@ class _ClaudeCodePlugin:
             return {"t": "token_log", "records": recs,
                     "total_all": total_all,
                     "daily": daily,
+                    "hourly": hourly,
                     "daily_pct": daily_pct, "hourly_pct": hourly_pct,
                     "hourly_week_pct": hourly_week,
                     "active_session": active_sid,
