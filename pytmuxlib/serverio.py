@@ -383,6 +383,23 @@ class ServerIOMixin:
                           "rows": rows, "cursor": cursor, "wrap": wrap or [],
                           "top": top or 0})
 
+    def _append_blocks_frames(self, frames_by_client, clients, pane):
+        """블록이 바뀌었으면 **광고한 클라에게만** 보낸다(§10-11 P4).
+
+        `caps` 에 `blocks` 가 없는 클라(= 파이썬 Textual 클라)는 이 프레임을 아예 받지
+        않는다 — 새 기능이 기존 클라의 대역폭·파싱 비용을 건드리지 않게 하는 계약이다.
+        플러그인이 없으면 훅이 None 을 돌려줘 여기도 무동작이다(delete-to-disable)."""
+        wanted = [c for c in clients
+                  if "blocks" in getattr(c, "caps", ()) and not c.remote_view]
+        if not wanted:
+            return
+        payload = self.plugins.pane_blocks(pane)
+        if payload is None:
+            return
+        frame = frame_msg({"t": "blocks", "pane": pane.id, "blocks": payload})
+        for c in wanted:
+            frames_by_client[c].append(frame)
+
     def _broadcast_session(self, sess: Session):
         """구조 변경 후 해당 세션의 모든 클라이언트에 전체 상태를 다시 보낸다."""
         for c in self.clients:
@@ -501,6 +518,7 @@ class ServerIOMixin:
                         frames_by_client[c].append(
                             self._screen_frame(c, p.id, rows, cursor,
                                                p._last_wrap, p._last_top))
+                    self._append_blocks_frames(frames_by_client, clients, p)
                 # 라이브 PTY 팝업 패널(트리 밖)도 dirty 면 스트리밍한다(동기화 출력
                 # 프레임 도중이면 일반 패널과 동일하게 송신을 미룬다).
                 pu = sess.popup
@@ -982,6 +1000,10 @@ class ServerIOMixin:
         # 로컬 단일 클라). 통지 부재(narrow 단말)면 호출 자체가 안 와 현행 유지.
         from . import cellwidth
         cellwidth.set_ambiguous_wide(first.get("ambig") == "wide")
+        # 클라 능력 광고(§10-11 P4). 광고한 것만 보낸다 — 이걸 안 보내는 기존 클라는
+        # 프레임이 한 바이트도 늘지 않는다. 목록이 아닌 값이 와도 죽지 않게 방어한다.
+        caps = first.get("caps")
+        client.caps = set(caps) if isinstance(caps, list) else set()
         # 주의: append + 초기 _send_full 을 try 안에 둔다. 예전엔 try 밖이라
         # _send_full 이 한 번 터지면 ① 클라가 self.clients 에 남아 누수되고
         # ② 화면이 일부만 그려진 채 연결이 끊겨 클라가 즉시 종료, ③ 트레이스백도

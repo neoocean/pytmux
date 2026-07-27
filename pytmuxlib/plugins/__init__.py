@@ -176,6 +176,33 @@ class Registry:
                 return True
         return False
 
+    def pane_osc(self, pane, code, param):
+        """패널이 타이틀 밖의 OSC 를 받았다(셸 통합 = OSC 133 시맨틱 프롬프트, OSC 7 cwd).
+
+        코어는 해석하지 않고 그대로 넘긴다 — 무엇을 할지는 플러그인이 정한다.
+        `Pane.osc_handler` 로 꽂히며(서버가 패널 생성 시), 플러그인 디렉토리를 지우면
+        이 순회가 비어 아무 일도 일어나지 않는다."""
+        for p in self.plugins:
+            fn = getattr(p, "pane_osc", None)
+            if fn is not None:
+                fn(pane, code, param)
+
+    def pane_blocks(self, pane):
+        """패널의 블록 목록(와이어 형태). 보낼 것이 없으면 None.
+
+        블록이 바뀌었을 때만 값을 돌려준다 — 매 프레임 같은 목록을 다시 보내면
+        30Hz 로 전체 블록 목록이 흐른다."""
+        for p in self.plugins:
+            fn = getattr(p, "blocks_wire", None)
+            dirty = getattr(p, "blocks_dirty", None)
+            if fn is None or dirty is None or not dirty(pane):
+                continue
+            payload = fn(pane)
+            p.clear_blocks_dirty(pane)
+            if payload is not None:
+                return payload
+        return None
+
     # ---- 서버 훅 ----
     def server_mixins(self):
         """플러그인이 기여하는 **서버측 믹스인 클래스** 목록. `server.Server` 가 이들을

@@ -106,6 +106,8 @@ class ServerPtyMixin:
         proc = self._pty_host.make_pane(pane_id, cols, rows)
         pane = Pane(-1, -1, cols, rows,
                     vt_parser=getattr(self, "vt_parser", "native"))
+        # 셸 통합(OSC 133/7) 관찰자. 플러그인이 없으면 훅이 무동작이다.
+        pane.osc_handler = self.plugins.pane_osc
         pane.host_pane_id = pane_id
         pane.pty = proc
         self._attach_reader(pane)                  # client.register(pane_id, …) 선행
@@ -184,6 +186,8 @@ class ServerPtyMixin:
         fd = proc.fileno() if hasattr(proc, "fileno") else -1
         pane = Pane(proc.pid, fd, max(MIN_W, cols), max(MIN_H, rows),
                     vt_parser=getattr(self, "vt_parser", "native"))
+        # 셸 통합(OSC 133/7) 관찰자. 플러그인이 없으면 훅이 무동작이다.
+        pane.osc_handler = self.plugins.pane_osc
         pane.pty = proc
         self._attach_reader(pane)
         return pane

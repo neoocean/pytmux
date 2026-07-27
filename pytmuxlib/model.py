@@ -185,6 +185,10 @@ def coalesce_alt_repaints(buf: bytes, alt_active: bool) -> bytes:
 class Pane:
     """잎 노드. 셸 PTY + pyte 화면 버퍼 + 스크롤백 뷰포트."""
 
+    #: 타이틀 밖의 OSC 관찰자 ``fn(pane, code, param)``. 서버가 패널 생성 시 꽂는다.
+    #: 안 꽂히면(테스트·클라·플러그인 부재) OSC 훅이 아무 일도 하지 않는다.
+    osc_handler = None
+
     def __init__(self, pid: int, fd: int, cols: int, rows: int,
                  vt_parser: str = "native", screen_impl: str | None = None):
         self.id = pid_counter()
@@ -637,7 +641,22 @@ class Pane:
     def _make_tokenizer(self):
         """native VT 토크나이저 생성(현재 _main 을 가리키게)."""
         from .vtparse import VTTokenizer
-        return VTTokenizer(self._main, alt_hook=self._on_alt_transition)
+        return VTTokenizer(self._main, alt_hook=self._on_alt_transition,
+                           osc_hook=self._on_osc)
+
+    def _on_osc(self, code: str, param: str) -> None:
+        """타이틀 밖의 OSC 를 관찰자에게 넘긴다(셸 통합 = OSC 133/7).
+
+        코어는 **해석하지 않는다** — 무엇을 할지는 플러그인이 정한다. 관찰자를 아무도
+        안 꽂으면 조용히 버린다(플러그인 디렉토리를 지운 경우 = delete-to-disable).
+
+        관찰자를 **여기서 찾지 않고 꽂아 두는** 이유: 이 경로는 feed 안이라 뜨겁고,
+        `plugins.load()` 는 호출마다 디렉토리를 스캔한다. OSC 를 반복 방출하는 프로그램이
+        그 스캔을 유발하면 그 자체가 자원 공격이 된다(보안검수 계열 N1/F2 와 같은 부류).
+        서버가 패널을 만들 때 한 번 꽂는다."""
+        handler = self.osc_handler
+        if handler is not None:
+            handler(self, code, param)
 
     def _on_alt_transition(self, enter: bool) -> None:
         """토크나이저가 ?1049/1047/47 h|l 을 감지했을 때의 alt 라우팅
@@ -1200,6 +1219,9 @@ class ClientConn:
         # §1.7 페더레이션: 이 클라가 보는 원격 링크 이름(None=로컬). 설정 중엔 화면/
         # 레이아웃이 업스트림에서 전달되고 입력/스크롤/리사이즈가 릴레이된다(serverremote).
         self.remote_view: str | None = None
+        # 클라가 hello 로 광고한 능력 집합(§10-11 P4). 광고한 것만 보낸다 — 이걸 안
+        # 보내는 기존 클라에는 새 메시지가 한 바이트도 가지 않는다.
+        self.caps: set = set()
         # B2 행 단위 델타: 이 클라에 마지막으로 보낸 패널별 rows 스냅샷
         # {pane_id -> rows}. 다음 프레임에 바뀐 행만 screen-delta 로 보낸다(클라마다
         # 자기 상태 기준이라 다중 클라·신규 attach 도 정합 — seq/resync 불필요).

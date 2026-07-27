@@ -304,6 +304,8 @@ class ServerPersistMixin:
             proc = self._pty_host.make_pane(hpid, cols, rows)
             pane = Pane(-1, -1, cols, rows,
                         vt_parser=getattr(self, "vt_parser", "native"))
+            # 셸 통합(OSC 133/7) 관찰자. 플러그인이 없으면 훅이 무동작이다.
+            pane.osc_handler = self.plugins.pane_osc
             pane.host_pane_id = hpid
             pane.pty = proc
             pane.import_state(ps)
@@ -332,6 +334,8 @@ class ServerPersistMixin:
             # (spawn_pane 과 동일 — 그러지 않으면 재시작 후 기존 패널만 pyte 로 남는다).
             pane = Pane(ps["child_pid"], fd, cols, rows,
                         vt_parser=getattr(self, "vt_parser", "native"))
+            # 셸 통합(OSC 133/7) 관찰자. 플러그인이 없으면 훅이 무동작이다.
+            pane.osc_handler = self.plugins.pane_osc
             pane.pty = proc
             pane.import_state(ps)
             self._attach_reader(pane)

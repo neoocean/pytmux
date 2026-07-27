@@ -99,6 +99,11 @@ class VTTokenizer:
 
     :param alt_hook: ``?1049/1047/47 h|l`` 감지 시 ``alt_hook(enter: bool)`` 호출.
                      None 이면 해당 전환을 무시한다(테스트 단순화).
+    :param osc_hook: 타이틀/아이콘(0/1/2) **밖의** OSC 를 만나면
+                     ``osc_hook(code: str, param: str)`` 호출. 셸 통합(OSC 133 시맨틱
+                     프롬프트, OSC 7 cwd)을 코어 밖에서 처리하기 위한 확장점이다 —
+                     여기서 해석하지 않는 이유는 그 기능이 플러그인이기 때문이다
+                     (delete-to-disable). None 이면 종전대로 무시한다.
     """
 
     # 파서 상태
@@ -115,8 +120,9 @@ class VTTokenizer:
     # 정상 CSI 는 SGR 체인을 포함해도 수백 B 이므로 4096 이면 자르지 않는다.
     _RAW_MAX = 4096
 
-    def __init__(self, screen, alt_hook=None):
+    def __init__(self, screen, alt_hook=None, osc_hook=None):
         self.alt_hook = alt_hook
+        self.osc_hook = osc_hook
         self.use_utf8 = True
         self._dec = codecs.getincrementaldecoder("utf-8")("replace")
         self.set_screen(screen)
@@ -316,6 +322,10 @@ class VTTokenizer:
             self.screen.set_icon_name(param)
         if code in ("0", "2"):
             self.screen.set_title(param)
+        elif code != "1" and self.osc_hook is not None:
+            # 타이틀/아이콘이 아닌 OSC 는 훅으로 넘긴다(셸 통합 등). 훅이 없으면
+            # 종전대로 조용히 버린다 — 모르는 OSC 로 연결을 끊지 않는다.
+            self.osc_hook(code, param)
 
     def _on_csi(self, ch: str) -> None:
         o = ord(ch)
