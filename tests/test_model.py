@@ -148,7 +148,9 @@ async def test_device_query_reply_reaches_child():
     pytmux 안의 앱은 커서 위치조차 물어볼 수 없었다(무응답→타임아웃 폴백). 실제
     피해: CPR 로 East Asian Ambiguous 폭(`·` 1칸/2칸)을 재는 앱(blog-editor)이
     pytmux 안에서만 감지에 실패해 폭이 어긋난 줄을 그렸다.
-    Pane._reply_to_child 가 pty 로 되돌려준다."""
+    Pane._reply_to_child 가 pty 로 되돌려준다(Unix 한정 — Windows 게이트는 아래
+    test_device_query_reply_suppressed_on_conpty)."""
+    from pytmuxlib import model
     from pytmuxlib.model import Pane
 
     class _FakePty:
@@ -158,27 +160,58 @@ async def test_device_query_reply_reaches_child():
         def write(self, data):
             self.written += data
 
-    p = Pane(-1, -1, 20, 6, vt_parser="native")
-    p.pty = _FakePty()
-    p.feed(b"\x1b[3;5H\x1b[6n")            # 커서 3행5열로 옮기고 CPR 질의
-    assert p.pty.written == b"\x1b[3;5R", p.pty.written
+    with harness.patched(model, REPLY_TO_CHILD=True):   # Windows 러너에서도 이 경로
+        p = Pane(-1, -1, 20, 6, vt_parser="native")
+        p.pty = _FakePty()
+        p.feed(b"\x1b[3;5H\x1b[6n")            # 커서 3행5열로 옮기고 CPR 질의
+        assert p.pty.written == b"\x1b[3;5R", p.pty.written
 
-    p.pty.written = b""
-    p.feed(b"\x1b[c")                      # Primary DA
-    assert p.pty.written == b"\x1b[?6c", p.pty.written
+        p.pty.written = b""
+        p.feed(b"\x1b[c")                      # Primary DA
+        assert p.pty.written == b"\x1b[?6c", p.pty.written
 
-    p.pty.written = b""
-    p.feed(b"\x1b[5n")                     # DSR: 상태 질의
-    assert p.pty.written == b"\x1b[0n", p.pty.written
+        p.pty.written = b""
+        p.feed(b"\x1b[5n")                     # DSR: 상태 질의
+        assert p.pty.written == b"\x1b[0n", p.pty.written
 
-    # 대체 화면(alt)으로 바꿔도 응답 경로가 유지된다(화면 객체가 새로 생긴다).
-    p.pty.written = b""
-    p.feed(b"\x1b[?1049h\x1b[2;3H\x1b[6n")
-    assert p.pty.written == b"\x1b[2;3R", p.pty.written
+        # 대체 화면(alt)으로 바꿔도 응답 경로가 유지된다(화면 객체가 새로 생긴다).
+        p.pty.written = b""
+        p.feed(b"\x1b[?1049h\x1b[2;3H\x1b[6n")
+        assert p.pty.written == b"\x1b[2;3R", p.pty.written
 
-    # pty 없는 패널(리플레이/복원 전용)은 조용히 무시 — 예외로 feed 를 깨지 않는다.
-    q = Pane(-1, -1, 20, 6, vt_parser="native")
-    q.feed(b"\x1b[6n")
+        # pty 없는 패널(리플레이/복원 전용)은 조용히 무시 — 예외로 feed 를 깨지 않는다.
+        q = Pane(-1, -1, 20, 6, vt_parser="native")
+        q.feed(b"\x1b[6n")
+
+
+async def test_device_query_reply_suppressed_on_conpty():
+    """Windows(ConPTY) 패널은 단말 질의에 **답하지 않는다**.
+
+    회귀(제보 2026-07-27): ConPTY 에서 자식의 단말은 conhost/OpenConsole 자신이라
+    CPR/DA 를 제 버퍼에서 답한다 — 우리 파서까지 올라오는 `ESC[c` 는 자식의 질의가
+    아니라 번들 OpenConsole 의 **부팅 핸드셰이크** 질의다. 거기에 답한 `ESC[?6c` 는
+    ConPTY **입력** 파이프로 들어가 자식 화면에 `^[[?6c` 로 에코됐고, 하필 Claude
+    관리설정 승인 메뉴의 `❯ 1. Yes, I trust these settings` 앞부분을 덮어써
+    자동 승인(❯ 셀렉터 게이트)이 안 걸렸다."""
+    from pytmuxlib import model
+    from pytmuxlib.model import Pane
+
+    class _FakePty:
+        def __init__(self):
+            self.written = b""
+
+        def write(self, data):
+            self.written += data
+
+    with harness.patched(model, REPLY_TO_CHILD=False):
+        p = Pane(-1, -1, 20, 6, vt_parser="native")
+        p.pty = _FakePty()
+        p.feed(b"\x1b[c\x1b[6n\x1b[5n")        # DA · CPR · DSR 전부
+        assert p.pty.written == b"", p.pty.written
+        # 질의를 삼키더라도 화면 자체는 정상이어야 한다(응답만 안 보낼 뿐).
+        p.feed(b"hello")
+        rows, _ = _full_render(p)
+        assert "".join(t for t, _ in rows[0]).startswith("hello")
 
 
 async def test_su_sd_scroll_region():

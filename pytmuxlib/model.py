@@ -11,6 +11,10 @@ from functools import lru_cache
 from . import plugins, sshwrap, vtconst
 from .protocol import HISTORY, MIN_H, MIN_W, conv_color, set_winsize
 
+# 단말 질의(CPR/DSR/DA) 응답을 자식 stdin 으로 되돌릴지 — **Windows(ConPTY)에서는 끈다**
+# (Pane._reply_to_child 주석 참조). 모듈 상수라 테스트가 monkeypatch 로 양쪽을 다 돈다.
+REPLY_TO_CHILD = os.name != "nt"
+
 
 @lru_cache(maxsize=8192)
 def _style_key(fg, bg, bold, italics, underscore, reverse, strike):
@@ -629,7 +633,20 @@ class Pane:
         XTVERSION·DEC 2026 질의에 `pane.pty.write` 로 답한다. 이쪽은 **격자 상태**
         (커서 좌표)가 필요해 파서가 그 시퀀스를 처리하는 지점에서 답해야 한다.
 
-        pty 가 없는 패널(재시작 복원·리플레이 전용)은 조용히 무시한다."""
+        pty 가 없는 패널(재시작 복원·리플레이 전용)은 조용히 무시한다.
+
+        ⚠️ **Windows(ConPTY)에서는 답하지 않는다**(REPLY_TO_CHILD, 제보 2026-07-27):
+        ConPTY 패널에서 자식의 단말은 conhost/OpenConsole 자신이라 CPR/DA 를 **제 화면
+        버퍼에서** 직접 답한다. 그래서 우리 파서까지 올라오는 `ESC[c` 는 자식의 질의가
+        아니라 **번들 OpenConsole 이 부팅할 때 호스트에게 던지는 핸드셰이크 질의**다
+        (conpty.py 모듈 docstring "호스트 패리티": OpenConsole 출력이 `\\x1b[c`·
+        `\\x1b[?9001h` 로 시작). 여기에 답하면 응답은 이미 지나간 핸드셰이크 창 대신
+        ConPTY **입력** 파이프에 타이핑으로 들어가고, 자식 화면에 `^[[?6c` 캐럿표기로
+        에코돼 그 자리 글자를 덮어쓴다 — 실측 피해: Claude 관리설정 승인 메뉴의 첫 줄
+        `❯ 1. Yes, I trust these settings` 앞부분이 뭉개져 자동 승인
+        (claude.claude_managed_settings_yes 의 ❯ 셀렉터 게이트)이 영영 안 걸렸다."""
+        if not REPLY_TO_CHILD:
+            return
         pty = self.pty
         if pty is None or not data:
             return
