@@ -12,6 +12,27 @@ from harness import wait_until
 screens = importlib.import_module("pytmuxlib.plugins.claude-code.screens")
 
 
+async def _wait_tklog(pilot, app, probe="#tklogtitle"):
+    """팝업이 떠서 **위젯이 조회 가능**해질 때까지 폴링한다(대기 규약: 고정 pause 금지).
+
+    `len(app.screen_stack) > 1` 만 조건으로 쓰면 안 된다 — push 직후 이미 참이라
+    마운트 전에 진행해 `NoMatches` 가 난다(문서화된 이주 함정). 그래서 이 테스트들이
+    실제로 쓰는 위젯이 조회되는지까지 조건에 넣는다."""
+    def _ready():
+        scr = app.screen_stack[-1]
+        if scr.__class__.__name__ != "TokenLogScreen":
+            return False
+        try:
+            scr.query_one(probe)
+        except Exception:
+            return False
+        return True
+
+    await wait_until(pilot, _ready)
+    assert _ready(), "TokenLogScreen 이 안 떴다(push/마운트 실패)"
+    return app.screen_stack[-1]
+
+
 def _hour_records():
     """여러 날(기본 day 버킷)에 흩어진 레코드 — 기간(time) 뷰가 ≥6 행을 만든다."""
     base = 1_700_000_000.0          # 고정 ts
@@ -50,7 +71,7 @@ async def test_tab_connector_bridges_active_view_tab():
         async with app.run_test(size=(100, 36)) as pilot:
             await pilot.pause(0.3)
             app.push_screen(screens.TokenLogScreen(_hour_records()))
-            await pilot.pause(0.3)
+            await _wait_tklog(pilot, app)
             scr = app.screen_stack[-1]
             assert scr.__class__.__name__ == "TokenLogScreen"
 
@@ -73,7 +94,9 @@ async def test_tab_connector_bridges_active_view_tab():
 
             # 다른 탭으로 전환하면(한도 'l') 다리가 그 탭 아래로 옮겨간다.
             await pilot.press("l")
-            await pilot.pause(0.2)
+            await wait_until(
+                pilot, lambda: getattr(scr._active_main_tab_widget(), "id", None)
+                == "tab_limit")
             lbl2 = scr._active_main_tab_widget()
             assert lbl2 is not None and lbl2.id == "tab_limit"
             text2 = conn.render_line(0).text
@@ -101,7 +124,7 @@ async def test_remote_popup_pink_border_local_popup_accent():
             # 원격 팝업 → 분홍 테두리·제목 + 출처 호스트 라벨(§3.3)
             app.push_screen(screens.TokenLogScreen(
                 _hour_records(), remote=True, remote_host="playground"))
-            await pilot.pause(0.3)
+            await _wait_tklog(pilot, app)
             scr = app.screen_stack[-1]
             assert scr.query_one("#tklogtitle").styles.color == pink, "원격 제목=분홍"
             top = scr.query_one("#tklogbox").styles.border_top
@@ -114,14 +137,14 @@ async def test_remote_popup_pink_border_local_popup_accent():
             # 뷰 전환(p=세션 뷰, _refresh 가 #tklogtitle 텍스트를 갈아끼움)에도 출처
             # 호스트 라벨은 별개 라벨이라 유지된다.
             await pilot.press("p")
-            await pilot.pause(0.2)
+            await wait_until(pilot, lambda: scr._view == "session")
             assert "⇄playground" in str(
                 scr.query_one("#tkloghost").render()), "뷰 전환에도 출처 유지"
             await pilot.press("escape")
-            await pilot.pause(0.2)
+            await wait_until(pilot, lambda: len(app.screen_stack) == 1)
             # 로컬 팝업(기본) → 분홍 아님 + 호스트 라벨 빈칸
             app.push_screen(screens.TokenLogScreen(_hour_records()))
-            await pilot.pause(0.3)
+            await _wait_tklog(pilot, app)
             scr2 = app.screen_stack[-1]
             assert scr2.query_one("#tklogtitle").styles.color != pink, "로컬 제목≠분홍"
             top2 = scr2.query_one("#tklogbox").styles.border_top
@@ -166,25 +189,25 @@ async def test_table_row_highlight_home_end_pageup_pagedown():
         async with app.run_test(size=(100, 36)) as pilot:
             await pilot.pause(0.3)
             app.push_screen(screens.TokenLogScreen(recs, hourly_pct=hourly))
-            await pilot.pause(0.3)
+            await _wait_tklog(pilot, app)
             scr = app.screen_stack[-1]
             table = scr.query_one(DataTable)
             n = table.row_count
             assert n >= 3, f"여러 트리 행이 있어야(got {n})"
             table.focus()
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: table.has_focus)
 
             # End → 마지막 행, Home → 첫 행
             await pilot.press("end")
             await wait_until(pilot, lambda: table.cursor_coordinate.row == n - 1)
             assert table.cursor_coordinate.row == n - 1, "End=마지막 행"
             await pilot.press("home")
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: table.cursor_coordinate.row == 0)
             assert table.cursor_coordinate.row == 0, "Home=첫 행"
 
             # PgDn 은 아래로, PgUp 은 위로 행 커서를 옮긴다(최소 1행 이상).
             await pilot.press("pagedown")
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: table.cursor_coordinate.row > 0)
             after_pgdn = table.cursor_coordinate.row
             assert after_pgdn > 0, "PgDn=행 커서 아래로"
             await pilot.press("pageup")
@@ -209,7 +232,7 @@ async def test_tree_today_expands_to_hours():
             await pilot.pause(0.3)
             app.push_screen(screens.TokenLogScreen(
                 recs, hourly_pct=hourly, hourly_week_pct=hourly))
-            await pilot.pause(0.3)
+            await _wait_tklog(pilot, app)
             scr = app.screen_stack[-1]
             assert scr._view == "time"
             table = scr.query_one(DataTable)
@@ -246,11 +269,11 @@ async def test_tree_collapse_and_expand_today_row():
         async with app.run_test(size=(100, 36)) as pilot:
             await pilot.pause(0.3)
             app.push_screen(screens.TokenLogScreen(recs, hourly_pct=hourly))
-            await pilot.pause(0.3)
+            await _wait_tklog(pilot, app)
             scr = app.screen_stack[-1]
             table = scr.query_one(DataTable)
             table.focus()
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: table.has_focus)
 
             def hour_count():
                 return sum(1 for n in scr._tree_nodes if n["kind"] == "hour")
@@ -258,9 +281,9 @@ async def test_tree_collapse_and_expand_today_row():
             assert hour_count() >= 2, "처음엔 오늘 시각 행이 펼쳐져 있어야"
             # 커서를 오늘(첫) 행에 두고 ← 로 접는다.
             await pilot.press("home")
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: table.cursor_coordinate.row == 0)
             await pilot.press("left")
-            await pilot.pause(0.1)
+            await wait_until(pilot, lambda: hour_count() == 0)
             assert hour_count() == 0, "← 로 오늘 행 접으면 시각 행이 사라져야"
             assert str(table.get_row_at(0)[0]).startswith("▶ "), "접힌 오늘 행=▶"
             # → 로 다시 펼친다.
@@ -270,7 +293,7 @@ async def test_tree_collapse_and_expand_today_row():
             assert str(table.get_row_at(0)[0]).startswith("▼ "), "펼친 오늘 행=▼"
             # Enter 로도 토글(닫히지 않고). 두 번이면 접었다 펼침.
             await pilot.press("home")
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: table.cursor_coordinate.row == 0)
             await pilot.press("enter")
             await wait_until(pilot, lambda: app.screen_stack[-1] is scr)
             assert app.screen_stack[-1] is scr, "Enter 는 팝업을 닫지 않음"
@@ -304,7 +327,7 @@ async def test_tree_hour_rows_have_5h_1w_columns_with_reset_left():
             await pilot.pause(0.3)
             app.push_screen(screens.TokenLogScreen(
                 recs, usage=usage, hourly_pct=hourly, hourly_week_pct=hourly))
-            await pilot.pause(0.3)
+            await _wait_tklog(pilot, app)
             scr = app.screen_stack[-1]
             table = scr.query_one(DataTable)
             heads = [str(c.label) for c in table.columns.values()]
@@ -346,7 +369,7 @@ async def test_tree_month_row_has_no_bar_and_weeks_scale_without_it():
         async with app.run_test(size=(100, 36)) as pilot:
             await pilot.pause(0.3)
             app.push_screen(screens.TokenLogScreen(recs))
-            await pilot.pause(0.3)
+            await _wait_tklog(pilot, app)
             scr = app.screen_stack[-1]
             table = scr.query_one(DataTable)
             cols = list(table.columns.values())
@@ -394,13 +417,13 @@ async def test_session_view_highlights_active_session():
             await pilot.pause(0.3)
             app.push_screen(screens.TokenLogScreen(
                 _session_records(), active_session=27))
-            await pilot.pause(0.2)
+            await _wait_tklog(pilot, app)
             scr = app.screen_stack[-1]
             # 세션 뷰로 전환(클릭 핸들러와 같은 경로).
             scr._exit_body_modes()
             scr._view = "session"
             await scr._refresh()
-            await pilot.pause(0.1)
+            await wait_until(pilot, lambda: scr.query(DataTable))
             table = scr.query_one(DataTable)
             active_lbl = active_bar = None
             other_lbl_plain = False
@@ -449,7 +472,7 @@ async def test_session_view_timestamp_shows_date_and_time_in_day_bucket():
         async with app.run_test(size=(120, 36)) as pilot:
             await pilot.pause(0.3)
             app.push_screen(screens.TokenLogScreen(recs))
-            await pilot.pause(0.2)
+            await _wait_tklog(pilot, app)
             scr = app.screen_stack[-1]
             scr._exit_body_modes()
             scr._view = "session"
@@ -483,10 +506,12 @@ async def test_hour_view_header_plain_without_usage():
         async with app.run_test(size=(100, 36)) as pilot:
             await pilot.pause(0.3)
             app.push_screen(screens.TokenLogScreen(recs, hourly_pct=hourly))
-            await pilot.pause(0.3)
+            await _wait_tklog(pilot, app)
             scr = app.screen_stack[-1]
             await pilot.press("h")
-            await pilot.pause(0.2)
+            await wait_until(
+                pilot, lambda: any(str(c.label).startswith("5h%") for c in
+                                  scr.query_one(DataTable).columns.values()))
             assert scr._reset_left("session") is None
             heads = [str(c.label) for c in
                      scr.query_one(DataTable).columns.values()]
@@ -511,11 +536,11 @@ async def test_tree_leaf_left_jumps_to_parent_and_collapses():
         async with app.run_test(size=(100, 36)) as pilot:
             await pilot.pause(0.3)
             app.push_screen(screens.TokenLogScreen(recs, hourly_pct=hourly))
-            await pilot.pause(0.3)
+            await _wait_tklog(pilot, app)
             scr = app.screen_stack[-1]
             table = scr.query_one(DataTable)
             table.focus()
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: table.has_focus)
 
             def hour_count():
                 return sum(1 for n in scr._tree_nodes if n["kind"] == "hour")
@@ -525,10 +550,10 @@ async def test_tree_leaf_left_jumps_to_parent_and_collapses():
             assert str(table.get_row_at(0)[0]).startswith("▼ "), "오늘 행 펼침"
             assert scr._tree_nodes[1]["kind"] == "hour", "row1=시각 leaf"
             table.move_cursor(row=1)
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: table.cursor_coordinate.row == 1)
             # leaf 에서 ← → 부모(오늘 행, row0)가 접히고 커서가 부모로.
             await pilot.press("left")
-            await pilot.pause(0.1)
+            await wait_until(pilot, lambda: hour_count() == 0)
             assert hour_count() == 0, "leaf ← 로 부모(오늘 행)가 접혀 시각 행이 사라져야"
             assert str(table.get_row_at(0)[0]).startswith("▶ "), "접힌 오늘 행=▶"
             assert table.cursor_coordinate.row == 0, "커서가 부모(오늘) 행으로 이동"
@@ -582,7 +607,7 @@ async def test_period_and_session_drop_model_color_and_legend():
         async with app.run_test(size=(100, 36)) as pilot:
             await pilot.pause(0.3)
             app.push_screen(screens.TokenLogScreen(_model_session_records()))
-            await pilot.pause(0.3)
+            await _wait_tklog(pilot, app)
             scr = app.screen_stack[-1]
             assert scr._view == "time"
             _assert_no_model(scr)                  # Period(계층 트리)
@@ -608,7 +633,7 @@ async def test_limit_tab_model_section_cycle_and_apply():
             await pilot.pause(0.3)
             app.push_screen(screens.TokenLogScreen(
                 _hour_records(), initial_mode="limit", model="opus"))
-            await pilot.pause(0.3)
+            await _wait_tklog(pilot, app)
             scr = app.screen_stack[-1]
             assert scr._limit_mode, "한도 탭으로 열려야"
             table = scr.query_one(DataTable)
@@ -668,7 +693,7 @@ async def test_xc_totals_shown_as_primary_sigma_with_cache():
             await pilot.pause(0.3)
             app.push_screen(screens.TokenLogScreen(
                 _hour_records(), total_all=21000, xc_totals=xc))
-            await pilot.pause(0.3)
+            await _wait_tklog(pilot, app)
             scr = app.screen_stack[-1]
             top = scr._tktop_text
             text = top.plain if hasattr(top, "plain") else str(top)
@@ -698,7 +723,7 @@ async def test_no_xc_totals_falls_back_to_scrape_sigma():
             await pilot.pause(0.3)
             app.push_screen(screens.TokenLogScreen(
                 _hour_records(), total_all=21000))      # xc_totals 미지정
-            await pilot.pause(0.3)
+            await _wait_tklog(pilot, app)
             scr = app.screen_stack[-1]
             text = scr._tktop_text.plain
             assert f"~Σ{usagelog._fmt_tokens(21000)}" in text, \

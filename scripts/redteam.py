@@ -428,6 +428,24 @@ def _authed_fuzz_top(token: str | None) -> list[dict]:
     ]
 
 
+def _authed_fuzz_hellos(token: str | None) -> list[dict]:
+    """**hello 자체**의 악성 변형(§10-11 P4 caps 협상이 생긴 뒤 추가, 2026-07-27f).
+
+    caps 는 서버가 `set(caps)` 로 받는데, 리스트 안에 **해시 불가 항목**(dict/list)이
+    있으면 TypeError 가 나 그 연결이 error.log 만 남기고 죽었다(실측 결함). 광고 협상은
+    페더레이션에서 **다운스트림이 상류에 보내는** 프레임이기도 해서, 이 경로는 신뢰
+    경계를 넘는다. 각 hello 는 별도 연결로 보내고 서버 생존을 단언한다."""
+    tk = ({"token": token} if token else {})
+    base = {"t": "hello", "cols": 80, "rows": 24, **tk}
+    return [
+        {**base, "caps": [{"a": 1}]},                 # 해시 불가 항목
+        {**base, "caps": [["nested"], None, 3.14]},   # 혼합 잡값
+        {**base, "caps": "blocks"},                   # 비-list(종전 방어 대상)
+        {**base, "caps": ["blocks"] * 10000},         # 과대 목록
+        {**base, "caps": {"blocks": True}},           # dict
+    ]
+
+
 def _authed_fuzz_loop() -> list[dict]:
     """hello 채택 후 **루프 메시지**(resize/input/scroll/cmd/unknown) 악성 변형. 디스패치
     try/except 가드를 런타임으로 실증한다(정적으로는 '잡힐 것'만 추론)."""
@@ -453,6 +471,22 @@ async def run_authed_fuzz(endpoint: str, token: str | None) -> dict:
     """
     sent = 0
     for frame in _authed_fuzz_top(token):
+        try:
+            _r, w = await _open(endpoint)
+        except OSError:
+            continue
+        try:
+            w.write(protocol.frame_msg(frame))
+            await w.drain()
+            await _recv(_r, timeout=1.0)
+            sent += 1
+        except OSError:
+            pass
+        finally:
+            with contextlib.suppress(Exception):
+                w.close()
+    # hello 자체의 악성 변형(caps 협상) — 각각 새 연결로.
+    for frame in _authed_fuzz_hellos(token):
         try:
             _r, w = await _open(endpoint)
         except OSError:

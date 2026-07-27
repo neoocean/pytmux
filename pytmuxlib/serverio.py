@@ -45,6 +45,9 @@ _CLIENT_WRITE_TIMEOUT = 5.0                   # 한 배치 write+drain 상한(�
 # 데몬의 fd/메모리/이벤트루프를 고갈시키는 slowloris 를 이 캡으로 막는다. 인증된(attach된)
 # 클라 수는 캡하지 않는다 — 핸드셰이크 읽기 구간만 카운트한다.
 _MAX_PREAUTH_CONNS = 128
+# hello 의 `caps`(클라 능력 광고) 개수 상한. 정상 클라는 한두 개다 — 상한은 상대가
+# 프레임 상한(MAX_FRAME)까지 채운 목록을 서버가 집합으로 들고 있지 않게 한다.
+_MAX_CAPS = 64
 # 死-클라 회수(_liveness_loop): 클라는 net_ping_interval(기본 0.5초)마다 ping 을
 # 보낸다. ping 을 한 번이라도 보낸(=ping 켜진) 클라가 이 시간 넘게 완전 무응답이면
 # 반-열린 TCP/콘솔 닫힘/웨지로 死한 고아로 보고 회수한다. 핀(=세션 공유 크기는
@@ -1016,8 +1019,14 @@ class ServerIOMixin:
         cellwidth.set_ambiguous_wide(first.get("ambig") == "wide")
         # 클라 능력 광고(§10-11 P4). 광고한 것만 보낸다 — 이걸 안 보내는 기존 클라는
         # 프레임이 한 바이트도 늘지 않는다. 목록이 아닌 값이 와도 죽지 않게 방어한다.
+        # 방어가 **불완전했다**(검수 2026-07-27f): `isinstance(caps, list)` 만 보고
+        # `set(caps)` 를 부르면 `caps=[{"a":1}]` 같은 **해시 불가 항목**에서 TypeError 가
+        # 나고, 그건 handle_client 의 그물에 잡혀 error.log 만 남긴 채 **그 연결이 죽는다**
+        # (사용자에겐 "화면이 안 뜬다"). 항목 타입까지 걸러야 주석대로 "안 죽는다"가 된다.
+        # 개수 상한은 무의미한 큰 집합을 들고 있지 않기 위한 것(광고는 몇 개뿐이다).
         caps = first.get("caps")
-        client.caps = set(caps) if isinstance(caps, list) else set()
+        client.caps = ({c for c in caps[:_MAX_CAPS] if isinstance(c, str)}
+                       if isinstance(caps, list) else set())
         # 주의: append + 초기 _send_full 을 try 안에 둔다. 예전엔 try 밖이라
         # _send_full 이 한 번 터지면 ① 클라가 self.clients 에 남아 누수되고
         # ② 화면이 일부만 그려진 채 연결이 끊겨 클라가 즉시 종료, ③ 트레이스백도

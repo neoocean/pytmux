@@ -2752,3 +2752,50 @@ async def test_upstream_status_unknown_keys_are_capped():
         assert link.last_status[first_junk] == "updated"
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_hostile_hello_caps_do_not_kill_the_connection():
+    """`caps`(능력 광고)는 페더레이션에서 **다운스트림이 상류에 보내는** 필드이기도 하다
+    — 즉 신뢰경계를 넘는다. 종전 방어는 `isinstance(caps, list)` 하나뿐이라
+    `[{"a": 1}]` 처럼 **해시 불가 항목**이 들어오면 `set(caps)` 가 TypeError 를 내고,
+    그건 `handle_client` 의 그물에 잡혀 **error.log 만 남긴 채 그 연결이 죽었다**
+    (사용자에겐 "화면이 안 뜬다"). 코드 주석은 "목록이 아닌 값이 와도 죽지 않게
+    방어한다"고 선언하고 있었으므로, 선언과 실제가 어긋난 자리다.
+
+    오라클 둘: ①어떤 모양이 와도 attach 가 성립한다(초기 프레임을 받는다)
+    ②`teardown` 의 만능가드가 error.log 트레이스백 0 을 단언한다."""
+    from pytmuxlib.serverio import _MAX_CAPS
+    srv, task, sock = await server_only()
+    writers = []
+    try:
+        srv.ensure_default_session(80, 24)
+        cases = [
+            ([{"a": 1}], set()),                      # 해시 불가 → 전부 버림
+            ([["nested"], None, 3.14, "blocks"], {"blocks"}),   # 부분 수용
+            ("blocks", set()),                        # 비-list(종전 방어 대상)
+            ({"blocks": True}, set()),                # dict
+            # 과대 목록. **더 큰 목록(1만 개 ≈ 100KB)은 여기 오지도 않는다** — 핸드셰이크
+            # 프레임 상한(HANDSHAKE_MAX_FRAME=64KiB)이 먼저 연결을 끊는다(의도된 동작).
+            # 그 아래 크기는 여기 도달하므로 `_MAX_CAPS` 가 집합 크기를 잡는다.
+            ([f"cap{i}" for i in range(5_000)], None),
+        ]
+        for caps, want in cases:
+            reader, writer = await ipc.open_connection(sock)
+            writers.append(writer)
+            hello = {"t": "hello", "proto": PROTO_VERSION, "cols": 80,
+                     "rows": 24, "caps": caps}
+            tok = ipc.read_token(sock)
+            if tok:
+                hello["token"] = tok
+            await write_msg(writer, hello)
+            # ① 연결이 살아 attach 가 성립한다(초기 layout/screen 이 온다).
+            await _read_until(reader, lambda m: m.get("t") in ("layout", "screen"),
+                              what=f"initial frame(caps={caps!r:.30})")
+            c = srv.clients[-1]
+            if want is not None:
+                assert c.caps == want, (caps, c.caps)
+            assert len(c.caps) <= _MAX_CAPS, (len(c.caps), _MAX_CAPS)
+    finally:
+        for w in writers:
+            w.close()
+        await teardown(srv, task, sock)
