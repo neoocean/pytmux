@@ -3,7 +3,8 @@ docs/internal/PLUGIN_MANAGER_SCENARIO.md."""
 import json
 import os
 
-from harness import make_app, server_only, teardown
+from harness import (make_app, server_only, teardown, wait_mounted,
+                     wait_until)
 from pytmuxlib import plugins
 
 
@@ -109,17 +110,16 @@ async def test_plugin_manager_popup_toggle_sends_cmd():
         sent = []
         app.send_cmd = lambda action, **kw: sent.append((action, kw))
         app.push_screen(PluginManagerScreen())
-        await pilot.pause(0.1)
-        scr = app.screen_stack[-1]
+        scr = await wait_mounted(pilot, "PluginManagerScreen", child="#plgbox")
         assert scr.__class__.__name__ == "PluginManagerScreen"
         # 첫 항목(활성) 위에서 Space → set_plugin_enabled(on=False) 전송.
         await pilot.press("space")
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: bool(sent))
         assert sent and sent[0][0] == "set_plugin_enabled", sent
         assert sent[0][1].get("on") is False, sent
         # Esc 로 닫힘.
         await pilot.press("escape")
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: app.screen_stack[-1] is not scr)
         assert app.screen_stack[-1] is not scr
     await _with_app(body)
 
@@ -132,8 +132,7 @@ async def test_plugin_manager_click_outside_closes():
 
     async def body(app, pilot, srv):
         app.push_screen(PluginManagerScreen())
-        await pilot.pause(0.1)
-        scr = app.screen_stack[-1]
+        scr = await wait_mounted(pilot, "PluginManagerScreen", child="#plgbox")
         assert scr.__class__.__name__ == "PluginManagerScreen"
 
         class _W:
@@ -157,7 +156,7 @@ async def test_plugin_manager_click_outside_closes():
         # 박스 바깥(백드롭) 클릭 → 닫힘
         ev_out = _Ev(_W("backdrop", parent=None))
         scr.on_click(ev_out)
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: app.screen_stack[-1] is not scr)
         assert app.screen_stack[-1] is not scr, "바깥 클릭은 팝업을 닫는다"
         assert ev_out.stopped
     await _with_app(body)

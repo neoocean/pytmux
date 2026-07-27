@@ -14,9 +14,15 @@
 남아 있는 고정 대기가 전부 결함은 아니다. 두 부류는 **의도된 것**이라 이주 대상이 아니다:
   ① 부정 단언의 정착 대기("아직 안 나타났다"를 보려면 실제로 기다려야 한다 — 폴링으로
      바꾸면 조건이 처음부터 참이라 즉시 통과해 오라클이 공허해진다).
-  ② 마운트/디바운스처럼 **시간 자체가 입력**인 대기(예: `push_screen` 직후 스택 깊이는
-     이미 참이므로 폴링은 0회 대기가 된다 — 실측으로 InfoScreen 마운트 전에 진행해
-     `NoMatches` 로 깨졌다).
+  ② 디바운스처럼 **시간 자체가 입력**인 대기.
+
+**②에서 '마운트 대기'는 2026-07-27j 에 빠졌다.** 못 옮기는 것이 아니라 **폴링 조건이
+틀렸던 것**이다: `push_screen` 직후 `screen_stack > 1` 은 이미 참이라 0회 대기가 되고
+곧이어 `query_one` 이 `NoMatches` 로 깨졌는데, 화면이 아니라 **자식이 생겼는가**를 보면
+정확히 그 대기다(`harness.wait_mounted`). 뮤테이션으로 실증했다 — 그 대기를 지우면
+`No nodes match 'TextArea' on ComposePromptScreen()` 로 깨지고, 새 조건으로 바꾸면
+통과한다. 즉 남은 고정 pause 의 **가장 큰 덩어리가 이주 가능**하다(착수분 = 아래
+`test_plugin_manager` 7→2 · `test_plugin_p4_changes` 7→1).
 """
 import os
 import re
@@ -31,7 +37,7 @@ _PLAT = re.compile(r"^\s*if\s+(?:ipc\.IS_WINDOWS|not\s+ipc\.IS_WINDOWS"
                    r"|os\.name\s*[!=]=\s*[\"']nt[\"']|sys\.platform.*)\s*:\s*$")
 
 # 총계 래칫(2026-07-25 기준 실측). **늘리지 말고 줄여라** — 이주 CL 이 여기를 함께 낮춘다.
-TOTALS = {"pause": 326, "sleep": 90, "silent_skip": 18}
+TOTALS = {"pause": 315, "sleep": 90, "silent_skip": 18}
 
 # 모듈별 상한 [고정 pause, 고정 sleep, 조용한 플랫폼 return]. 목록에 없으면 전부 0.
 CEILINGS = {
@@ -49,9 +55,10 @@ CEILINGS = {
     "test_nc": [2, 0, 0],       # 2026-07-27 이주(20→2): 남은 둘은 app 마운트 대기
     "test_plugin_contract": [8, 0, 0],
     "test_plugin_ime_indicator": [7, 1, 5],
-    "test_plugin_manager": [7, 0, 0],
+    # 2026-07-27j 이주(7→2): 남은 둘은 app 마운트·부정 단언 정착 대기
+    "test_plugin_manager": [2, 0, 0],
     "test_plugin_name_sync": [8, 11, 0],
-    "test_plugin_p4_changes": [7, 0, 0],
+    "test_plugin_p4_changes": [1, 0, 0],   # 2026-07-27j 이주(7→1)
     "test_plugin_prompt_history": [4, 0, 0],
     "test_plugin_usage_view": [10, 0, 0],
     "test_proc": [0, 1, 0],

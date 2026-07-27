@@ -343,6 +343,37 @@ async def wait_until_settled(pilot, cond, snapshot, timeout=4.0, step=0.05,
     return await _poll(pilot.pause, cond, timeout, step, snapshot, settle)
 
 
+async def wait_mounted(pilot, screen=None, child=None, timeout=4.0, step=0.05):
+    """맨 위 화면이 `screen` 이고 **자식까지 마운트될 때까지** 기다린 뒤 그 화면을 돌려준다.
+
+    이게 왜 따로 필요한가 — `push_screen` 직후 `len(screen_stack) > 1` 은 **이미 참**이라
+    그걸로 폴링하면 0회 대기가 되고, 곧이어 `query_one(...)` 이 `NoMatches` 로 깨진다
+    (실측 3건). 그래서 이 저장소는 마운트 대기를 **"폴링으로 못 옮기는 부류"** 로 분류하고
+    고정 `pilot.pause(0.1~0.4)` 를 남겨 뒀다.
+
+    그런데 못 옮기는 것이 아니라 **폴링 조건이 틀렸던 것**이다(2026-07-27j 실측): 화면
+    자체가 아니라 **자식이 생겼는가**(`screen.query(child)`)를 보면 정확히 그 대기다.
+    확인 방법 = 뮤테이션 — 이 대기를 통째로 지우면 `No nodes match 'TextArea' on
+    ComposePromptScreen()` 로 깨지고, 이 대기로 바꾸면 통과한다. 즉 고정 pause 부채의
+    가장 큰 덩어리가 이주 가능하다.
+
+    `screen` = 클래스 또는 클래스 이름(문자열). `child` = 위젯 타입/셀렉터(생략하면
+    화면 마운트까지만). 실패해도 예외를 던지지 않는다 — 호출부가 반환된 화면으로
+    단언해 실패 메시지를 자기 문맥으로 남긴다(다른 wait_* 헬퍼와 같은 규약)."""
+    def _ok():
+        top = pilot.app.screen_stack[-1]
+        if screen is not None:
+            name = screen if isinstance(screen, str) else screen.__name__
+            if top.__class__.__name__ != name:
+                return False
+        if not top.is_mounted:
+            return False
+        return bool(top.query(child)) if child is not None else True
+
+    await _poll(pilot.pause, _ok, timeout, step)
+    return pilot.app.screen_stack[-1]
+
+
 async def drain(reader, store, timeout=0.8, until=None):
     """소켓에서 timeout 동안 들어오는 메시지를 store(list)에 모은다.
 

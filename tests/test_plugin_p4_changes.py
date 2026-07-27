@@ -217,7 +217,8 @@ async def test_contract_gone_without_plugin():
 async def test_live_screen_flow():
     """목록 메시지 → ChangesScreen 풀스크린, ↓ 이동, Enter → DescribeScreen 팝업,
     상세 메시지 채움, Esc 로 팝업 닫고 다시 Esc 로 목록(탭) 닫아 종료."""
-    from harness import make_app, server_only, teardown
+    from harness import (make_app, server_only, teardown, wait_mounted,
+                         wait_until)
 
     srv, task, sock = await server_only()
     try:
@@ -234,35 +235,38 @@ async def test_live_screen_flow():
                                 "user": "woojinkim", "client": "o", "desc": "첫째"},
                                {"change": "58584", "when": "2026/06/12 23:17",
                                 "user": "woojinkim", "client": "o", "desc": "둘째"}]})
-            await pilot.pause(0.15)
-            top = app.screen_stack[-1]
+            top = await wait_mounted(pilot, "ChangesScreen")
             assert top.__class__.__name__ == "ChangesScreen", top.__class__.__name__
             assert app.view._cells, "목록 화면 합성 실패"
             view = top._view
             assert view._sel == 0
             # ② ↓ 이동 — 하이라이트가 둘째 행으로.
             await pilot.press("down")
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: view._sel == 1)
             assert view._sel == 1 and view._cur() == "58584"
             # ③ Enter → DescribeScreen 팝업이 스택 위로(서버에 describe 요청도 나감).
             await pilot.press("enter")
-            await pilot.pause(0.15)
-            pop = app.screen_stack[-1]
+            pop = await wait_mounted(pilot, "DescribeScreen")
             assert pop.__class__.__name__ == "DescribeScreen", pop.__class__.__name__
             assert pop._change == "58584"
             # ④ 상세 메시지 채움 — 팝업 내용이 갱신된다.
             app._dispatch({"t": "p4_describe", "change": "58584",
                            "text": "Change 58584 by woojinkim\n\n\t둘째 상세",
                            "err": None})
-            await pilot.pause(0.1)
+            await wait_until(pilot,
+                             lambda: any("58584" in ln for ln in pop._view._lines))
             assert any("58584" in ln for ln in pop._view._lines)
             # ⑤ Esc → 팝업만 닫히고 목록으로.
             await pilot.press("escape")
-            await pilot.pause(0.1)
+            await wait_until(
+                pilot,
+                lambda: app.screen_stack[-1].__class__.__name__ == "ChangesScreen")
             assert app.screen_stack[-1].__class__.__name__ == "ChangesScreen"
             # ⑥ Esc → 목록(탭) 닫혀 플러그인 종료.
             await pilot.press("escape")
-            await pilot.pause(0.1)
+            await wait_until(
+                pilot,
+                lambda: app.screen_stack[-1].__class__.__name__ != "ChangesScreen")
             assert app.screen_stack[-1].__class__.__name__ != "ChangesScreen"
     finally:
         await teardown(srv, task, sock)
