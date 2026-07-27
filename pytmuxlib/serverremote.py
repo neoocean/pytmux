@@ -231,6 +231,50 @@ def _relay_frame_ok(t, msg: dict) -> bool:
     return True
 
 
+# 상류 블록의 개별 필드 상한. 로컬 세그멘터(plugins/blocks)가 자기 값으로 자르지만
+# **그 상한은 상류를 구속하지 않는다** — 코어가 플러그인 상수를 import 하지 않도록
+# (delete-to-disable) 여기 따로 둔다. 값이 갈리면 상류가 더 큰 것을 보낼 뿐이므로
+# 여기가 더 관대해선 안 된다(플러그인 = 1024).
+_REMOTE_BLOCK_TEXT_MAX = 1024
+_REMOTE_BLOCK_STATES = ("prompt", "running", "done")
+
+
+def _sanitize_blocks(bs) -> list:
+    """상류가 relay 하는 `blocks` 항목을 **경계에서** 정규화한다(_sanitize_panes 와 동형).
+
+    `_relay_frame_ok` 는 컨테이너만 본다(list·개수 상한) — 항목 **안**은 무검증이었다.
+    블록의 `cmd`/`cwd` 는 클라가 블록 머리줄로 **그대로 그리고**(네이티브 클라
+    `session_view::block_line`), cwd 는 Claude 뷰 폴더 판정에도 쓰인다. 즉 로컬 패널에서
+    OSC 유래 문자열에 걸어 둔 방어(제어문자 접기·길이 상한·종료코드 범위)가 신뢰경계를
+    넘는 경로엔 없었다 — 탭 이름(F-E)·패널 요약과 같은 클래스의 구멍이다.
+
+    `exit` 범위를 다시 재는 이유: 와이어 정수를 i64 로 읽는 클라에서 범위 밖 값은
+    **프레임 파싱을 통째로 실패**시켜 블록 표시가 조용히 죽는다."""
+    out = []
+    for b in bs[:_REMOTE_BLOCKS_MAX]:
+        if not isinstance(b, dict):
+            continue                       # 비-dict 항목만 골라 버린다(부분 수용)
+        nb = {}
+        for key in ("cmd", "cwd"):
+            v = b.get(key)
+            if isinstance(v, str) and v:
+                nb[key] = _strip_ctrl(v[:_REMOTE_BLOCK_TEXT_MAX])
+        state = b.get("state")
+        nb["state"] = state if state in _REMOTE_BLOCK_STATES else "done"
+        for key in ("start", "end"):
+            v = b.get(key)
+            if isinstance(v, int) and not isinstance(v, bool):
+                nb[key] = v
+        ex = b.get("exit")
+        if (isinstance(ex, int) and not isinstance(ex, bool)
+                and -(2 ** 31) <= ex <= 2 ** 32 - 1):
+            nb["exit"] = ex               # 범위 밖·비정수는 '모른다'로 떨어뜨린다
+        nb.setdefault("cmd", "")
+        nb.setdefault("start", 0)
+        out.append(nb)
+    return out
+
+
 def _strip_ctrl(s: str) -> str:
     """원격 유래 표시 문자열(핸드셰이크 실패 stderr 등)에서 C0/C1 제어문자를 제거한다
     (L3). 상태줄 스푸핑·커서 이동(\\r)·표시 손상 방지. 개행/탭은 애초에 splitlines/
@@ -898,6 +942,9 @@ class ServerRemoteMixin:
                     # 다운스트림 클라가 무가드로 소비하면 KeyError→reader 워커 종료→
                     # 클라 앱 크래시(M1). 신뢰경계에서 필수 shape 를 검증해 드롭한다.
                     continue
+                if t == "blocks":
+                    # shape 통과 뒤 **항목 안**까지 정규화한다(_sanitize_blocks docstring).
+                    msg = dict(msg, blocks=_sanitize_blocks(msg["blocks"]))
                 frame = frame_msg(msg)
                 for c in list(self.clients):
                     if c.remote_view != link.host:

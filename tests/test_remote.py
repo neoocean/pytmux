@@ -2411,6 +2411,92 @@ async def test_relay_frame_shape_and_ctrl_strip():
     assert s == "a b c d", repr(s)
 
 
+async def test_relayed_blocks_are_sanitized_item_by_item():
+    """검수 2026-07-27: shape 통과 뒤 **항목 안**은 무검증이었다. 상류 블록의
+    `cmd`/`cwd` 는 클라가 블록 머리줄로 그대로 그리고(네이티브 클라 block_line),
+    cwd 는 Claude 뷰 폴더 판정에도 쓰인다 — 로컬 OSC 경로에 걸어 둔 방어(제어문자·
+    길이·종료코드 범위)가 신뢰경계를 넘는 경로엔 없었다(탭 이름 F-E 와 같은 클래스)."""
+    from pytmuxlib.serverremote import (_REMOTE_BLOCK_TEXT_MAX, _sanitize_blocks)
+    out = _sanitize_blocks([
+        {"cmd": "echo \x1b]0;pwned\x07", "cwd": "/t\x9bmp", "state": "done",
+         "exit": 0, "start": 1, "end": 2},
+        {"cmd": "x" * (_REMOTE_BLOCK_TEXT_MAX * 3), "state": "running",
+         "start": 3},
+        {"state": "done", "exit": 99999999999999999999, "start": 4},   # i64 초과
+        {"state": "확인안된상태", "exit": True, "start": "nope"},        # 오타입
+        "블록이 아니다",
+    ])
+    assert len(out) == 4, out                       # 비-dict 항목만 버린다
+    assert "\x1b" not in out[0]["cmd"] and "\x07" not in out[0]["cmd"], out[0]
+    assert "pwned" in out[0]["cmd"], "글자까지 지울 필요는 없다"
+    assert "\x9b" not in out[0]["cwd"], out[0]
+    assert len(out[1]["cmd"]) == _REMOTE_BLOCK_TEXT_MAX
+    assert "exit" not in out[2], "i64 를 넘는 종료코드는 '모른다'여야 한다"
+    assert out[3]["state"] == "done", "모르는 상태는 '실행 중'으로 굳지 않는다"
+    assert "exit" not in out[3] and out[3]["start"] == 0, out[3]
+    # 개수 상한은 여기서도 다시 걸린다(_relay_frame_ok 를 못 거친 호출 대비)
+    from pytmuxlib.serverremote import _REMOTE_BLOCKS_MAX
+    assert len(_sanitize_blocks([{}] * (_REMOTE_BLOCKS_MAX + 10))) \
+        == _REMOTE_BLOCKS_MAX
+
+
+async def test_relay_loop_actually_sanitizes_before_sending():
+    """위 헬퍼 테스트의 **호출부**를 겨눈다 — 정규화를 부르는 한 줄을 지우면 헬퍼
+    테스트는 그대로 통과한다(실측: 뮤테이션 N3 가 무증상이었다). 이 저장소가 반복해서
+    물린 공허 통과 부류라, 실제 릴레이 루프(`_remote_reader`)에 **악성 상류 프레임을
+    먹여** 클라에게 나가는 바이트를 본다."""
+    import json as _json
+    from types import SimpleNamespace
+    from pytmuxlib.model import ClientConn
+    from pytmuxlib.protocol import frame_msg
+    from pytmuxlib.serverremote import RemoteLink
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        reader = asyncio.StreamReader()
+        reader.feed_data(frame_msg({
+            "t": "blocks", "pane": 7,
+            "blocks": [{"cmd": "echo \x1b]0;pwned\x07", "cwd": "/t\x9bmp",
+                        "state": "done", "exit": 99999999999999999999,
+                        "start": 1}]}))
+        # bye = 고의 해제 → 리더가 자동 재연결을 걸지 않고 끝난다(테스트가 ssh 를
+        # 띄우지 않게).
+        reader.feed_data(frame_msg({"t": "bye"}))
+        reader.feed_eof()
+        link = RemoteLink("hostX", reader, SimpleNamespace(close=lambda: None))
+        srv._remotes_dict()["hostX"] = link
+
+        client = ClientConn(None)
+        client.session = sess
+        client.caps = {"blocks"}
+        client.remote_view = "hostX"
+        srv.clients.append(client)
+        sent = []
+
+        async def _capture(c, frames):
+            sent.append((c, list(frames)))
+            return True
+
+        async def _noop_full(c):
+            return None
+
+        srv._send_frames_to = _capture       # 나가는 **프레임 바이트**를 붙잡는다
+        srv._send_full = _noop_full          # drop 경로의 재동기는 이 테스트 밖이다
+        await srv._remote_reader(link)
+
+        assert sent, "악성 상류 blocks 프레임이 클라에 아예 안 갔다(테스트 전제 붕괴)"
+        msgs = [_json.loads(f[4:]) for _c, frames in sent for f in frames]
+        blocks = [b for m in msgs if m.get("t") == "blocks"
+                  for b in m.get("blocks", [])]
+        assert blocks, msgs
+        b = blocks[0]
+        assert "\x1b" not in b["cmd"] and "\x07" not in b["cmd"], b
+        assert "\x9b" not in b.get("cwd", ""), b
+        assert "exit" not in b, ("i64 밖 종료코드가 그대로 나갔다", b)
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_client_dispatch_guarded_survives_malformed_remote_frame():
     """M1 심층방어: 원격이 relay 한 손상 screen 프레임(rows 누락)이 _dispatch 까지
     닿아도 reader 워커가 죽지 않는다 — _dispatch_guarded 가 예외를 삼키고 카운터만

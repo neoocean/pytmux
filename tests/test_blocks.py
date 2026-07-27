@@ -346,3 +346,42 @@ async def test_absolute_rows_do_not_move_when_the_viewport_scrolls():
     pane.feed(_osc("133", "A"))
     second = blocks_wire(pane)[-1]["start"]
     assert second >= first, "절대 좌표가 뷰포트를 따라 움직였다"
+
+
+# ---- cwd·종료코드도 같은 신뢰 등급이다(검수 2026-07-27) ---------------------
+
+async def test_control_chars_cannot_ride_into_the_cwd():
+    """`OSC 7` 은 명령 텍스트와 **같은 등급**(패널 안 아무 프로그램)이고 같은 길로
+    클라 화면에 그려진다. 게다가 위험이 한 겹 더 있다 — 퍼센트 디코드가 제어문자를
+    **만들어 낸다**: `%1b` 는 URL 로는 평범한 글자이므로 unquote 뒤에 걸러야 한다."""
+    seg = Segmenter()
+    seg.on_osc("133", "A", row=0)
+    seg.on_osc("7", "file://host/tmp/%1b]0%3bpwned%07")
+    cwd = seg.blocks[0].cwd
+    assert cwd and "\x1b" not in cwd and "\x07" not in cwd, f"제어문자 생존: {cwd!r}"
+    assert "pwned" in cwd, "글자까지 지울 필요는 없다"
+
+
+async def test_cwd_is_bounded():
+    from pytmuxlib.plugins.blocks.segment import MAX_CWD_LEN
+    seg = Segmenter()
+    seg.on_osc("133", "A", row=0)
+    seg.on_osc("7", "file://host/" + "d" * (MAX_CWD_LEN * 3))
+    assert len(seg.blocks[0].cwd) == MAX_CWD_LEN
+
+
+async def test_absurd_exit_code_is_unknown_not_a_number():
+    """와이어 정수를 i64 로 읽는 클라(네이티브)에서 범위 밖 값은 **프레임 파싱을
+    통째로** 실패시킨다 — 한 줄 OSC 로 블록 표시를 끌 수 있으면 안 된다. 모르면
+    모른다(None)로 떨어뜨리는 것이 이 코드베이스의 규칙이다(성공으로 넘겨짚지 않는다)."""
+    seg = Segmenter()
+    seg.on_osc("133", "A", row=0)
+    seg.on_osc("133", "C", row=1)
+    seg.on_osc("133", "D;99999999999999999999999")
+    assert seg.blocks[0].exit is None, seg.blocks[0].exit
+    assert seg.blocks[0].state == "done", "코드를 몰라도 끝난 것은 끝난 것이다"
+    # 정상 범위는 그대로 실린다(POSIX 128+signal · Windows 32비트 코드)
+    seg2 = Segmenter()
+    seg2.on_osc("133", "A", row=0)
+    seg2.on_osc("133", "D;3221225477")
+    assert seg2.blocks[0].exit == 3221225477

@@ -51,6 +51,17 @@ MAX_BLOCKS = 500
 #: 로 불릴 수 있다. 사람이 치는 명령은 이보다 훨씬 짧다.
 MAX_CMD_LEN = 1024
 
+#: cwd 상한(글자). `OSC 7` 도 명령 텍스트와 **같은 신뢰 등급**(패널 안 아무 프로그램)이고
+#: 같은 길로 클라 화면에 그려지므로 같은 방어를 받는다. 블록 500개가 각자 4KB(파서의
+#: OSC 상한) cwd 를 들면 프레임이 MB 급으로 커진다 — 정상 경로는 수십~수백 바이트다.
+MAX_CWD_LEN = 1024
+
+#: 종료코드 허용 범위. POSIX 는 0~255(+128+signal), Windows 는 32비트 코드
+#: (`0xC0000005` 같은 값)까지 나온다. 그 밖(예: `D;99999999999999999999`)은 **모른다**로
+#: 떨어뜨린다 — 와이어 정수를 i64 로 읽는 네이티브 클라에서 프레임 파싱이 통째로
+#: 실패하기 때문이다(한 줄 OSC 로 블록 표시를 끄는 것과 같아진다).
+_EXIT_MIN, _EXIT_MAX = -(2 ** 31), 2 ** 32 - 1
+
 
 class Block:
     """명령 한 번의 실행."""
@@ -136,8 +147,14 @@ class Segmenter:
         return self.set_command(_unescape(raw))
 
     def _on_cwd(self, param):
-        """`OSC 7 ; file://<host>/<path>`. 경로만 쓰고 호스트는 버린다."""
-        path = _parse_file_url(param)
+        """`OSC 7 ; file://<host>/<path>`. 경로만 쓰고 호스트는 버린다.
+
+        **살균은 여기서**(퍼센트 디코드 **뒤**)다 — `file:///%1b]0;x%07` 처럼 unquote 가
+        제어문자를 *만들어 내는* 것이 이 경로의 위험이다. cwd 는 cmd 와 똑같이 클라가
+        화면에 그리고(블록 머리줄) 네이티브 클라는 Claude 뷰의 폴더 판정에도 쓰므로,
+        cmd 와 같은 방어(제어문자 접기 + 길이 상한)를 받아야 한다.
+        """
+        path = _sanitize_path(_parse_file_url(param))
         if not path or path == self.cwd:
             return False
         self.cwd = path
@@ -283,19 +300,32 @@ def _sanitize_cmd(text):
     """
     if not isinstance(text, str):
         return ""
-    cleaned = "".join(
-        " " if (ord(c) < 0x20 or 0x7f <= ord(c) <= 0x9f) else c
-        for c in text
-    )
+    cleaned = _fold_ctrl(text)
     return cleaned[:MAX_CMD_LEN]
 
 
+def _sanitize_path(text):
+    """블록에 실을 cwd. `_sanitize_cmd` 와 같은 규율(제어문자 접기 + 길이 상한)."""
+    if not isinstance(text, str) or not text:
+        return None
+    return _fold_ctrl(text)[:MAX_CWD_LEN] or None
+
+
+def _fold_ctrl(text):
+    """C0/DEL/C1 을 공백으로 접는다. 지우지 않는 이유는 `_sanitize_cmd` ① 참고."""
+    return "".join(
+        " " if (ord(c) < 0x20 or 0x7f <= ord(c) <= 0x9f) else c
+        for c in text
+    )
+
+
 def _parse_exit(rest):
-    """`D` 뒤의 종료코드. 없거나 숫자가 아니면 None(= 모른다)."""
+    """`D` 뒤의 종료코드. 없거나 숫자가 아니거나 **범위 밖이면** None(= 모른다)."""
     first = rest.split(";")[0].strip() if rest else ""
     if not first:
         return None
     try:
-        return int(first)
+        code = int(first)
     except ValueError:
         return None
+    return code if _EXIT_MIN <= code <= _EXIT_MAX else None
