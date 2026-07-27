@@ -11,6 +11,7 @@
 test_server.py·test_ptyhost_auth.py 에 있고, 여기선 *공격자 시점의 와이어 왕복*을 본다.
 """
 import asyncio
+import base64
 import os
 import stat
 
@@ -405,3 +406,30 @@ async def test_win_grantee_is_unambiguous():
         ipc.IS_WINDOWS = orig_win
         ipc._win_grantee_cache.clear()
         ipc._win_grantee_cache.extend(orig_cache)
+
+
+async def test_input_with_nonstring_data_drops_only_that_frame():
+    """검수 2026-07-27g: `input` 의 `data` 가 문자열이 아니면(list/int/dict/None)
+    `base64.b64decode` 는 ValueError 가 아니라 **TypeError** 를 낸다 — 종전 가드가
+    `(binascii.Error, ValueError)` 뿐이라 그 예외가 `handle_client` 그물까지 올라가
+    **error.log 만 남기고 그 연결이 죽었다**(caps 결함과 같은 클래스).
+
+    실제로 물릴 수 있는 경로였다: 네이티브 클라의 `Input` 타입이 바이트열을 **JSON 배열**로
+    직렬화하고 있었다(같은 CL 에서 base64 문자열로 고쳤다). 계약은 "한 필드가 이상하면 그
+    입력만 버리고 연결은 산다" — 그 뒤 정상 입력이 계속 먹히는 것까지 본다."""
+    srv, task, ep = await server_only()
+    try:
+        tok = ipc.read_token(ep)
+        srv.ensure_default_session(80, 24)
+        r, w = await _open(ep)
+        await _send(w, {"t": "hello", "token": tok, "cols": 80, "rows": 24})
+        await _recv(r)
+        for bad in ([101, 99, 104, 111], 1234, None, {"a": 1}, True):
+            await _send(w, {"t": "input", "data": bad})
+        # 같은 연결로 **정상** 입력이 이어져야 한다(연결이 죽었으면 여기서 끊긴다).
+        await _send(w, {"t": "input",
+                        "data": base64.b64encode(b"\n").decode("ascii")})
+        assert await _server_alive(srv, ep)
+        w.close()
+    finally:
+        await teardown(srv, task, ep)

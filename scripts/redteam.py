@@ -32,6 +32,7 @@ import contextlib
 import gc
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -526,6 +527,216 @@ async def run_authed_fuzz(endpoint: str, token: str | None) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # 모드: spawn(자기완결) / attach(라이브 비파괴)
 # ─────────────────────────────────────────────────────────────────────────────
+def _ptyhost_attacks(token: str | None) -> list[tuple[str, bytes]]:
+    r"""pty-host 용 적대 프레임. **메인 서버와 프레임 포맷이 다르다** — `ptyhostproto` 는
+    `<4B len><1B kind>` 헤더에 json/data 두 종류이고, 인증도 `{"op":"auth","token":…}`
+    라는 자기 규약이다. 그래서 메인 배터리(`_attacks`)를 그대로 쓸 수 없고, 이 표면은
+    **아무도 던져 본 적이 없었다**(검수 2026-07-27g §5-3).
+
+    무인가 항목이 핵심이다: host 는 자식 셸의 입출력을 들고 있어, 인증 없이 control 이
+    통하면 남의 셸에 입력을 넣거나(=코드 실행) 출력을 훔칠 수 있다."""
+    from pytmuxlib import ptyhostproto as hp
+    big = (hp.MAX_FRAME + 1).to_bytes(4, "big") + b"j" + b"x"
+    _nj = b"not json{"
+    nonjson = (len(_nj) + 1).to_bytes(4, "big") + b"j" + _nj
+    nondict = hp.encode_json([1, 2, 3])
+    trunc = (60).to_bytes(4, "big") + b"j" + b"short"
+    bad_kind = (5).to_bytes(4, "big") + b"?" + b"abcd"      # 미지 kind 바이트
+    items = [
+        # ① 인증 없이 제어 — list_reply/pong 이 오면 무인증(치명).
+        ("unauth_list", hp.encode_json({"op": "list"})),
+        ("unauth_ping", hp.encode_json({"op": "ping"})),
+        ("unauth_spawn", hp.encode_json({"op": "spawn", "pane": 1,
+                                         "argv": ["/bin/sh"]})),
+        ("unauth_shutdown", hp.encode_json({"op": "shutdown"})),
+        # ② 인증 없이 자식 입력 주입(data 프레임) — 조용히 먹히면 남의 셸에 쓰기.
+        ("unauth_input", hp.encode_data(1, b"echo pwned\n")),
+        # ③ 틀린 토큰.
+        ("wrong_token", hp.encode_json({"op": "auth", "token": "00" * 32})),
+        ("auth_nonstr_token", hp.encode_json({"op": "auth", "token": 12345})),
+        # ④ 프레이밍 손상.
+        ("oversized", big), ("non_json", nonjson), ("non_dict", nondict),
+        ("truncated", trunc), ("bad_kind", bad_kind),
+    ]
+    return items
+
+
+async def _ptyhost_one_shot(endpoint: str, name: str, payload: bytes) -> str:
+    """단발 적대 연결. host 는 **인증 전에 `{"op":"hello"}` 배너**를 먼저 보내므로
+    (PTYH-3: 지문은 없다) 그 한 프레임은 읽어 버리고, 그 **뒤에** 실질 응답이 오는지로
+    수용/거부를 가른다 — 배너를 수용으로 세면 전부 '무인증'으로 오분류된다."""
+    from pytmuxlib import ptyhostproto as hp
+    try:
+        r, w = await _open(endpoint)
+    except OSError:
+        return "errors"
+    try:
+        with contextlib.suppress(asyncio.TimeoutError, OSError):
+            await asyncio.wait_for(hp.read_frame(r), 1.0)      # hello 배너
+        w.write(payload)
+        await w.drain()
+        try:
+            reply = await asyncio.wait_for(hp.read_frame(r), 0.6)
+        except (asyncio.TimeoutError, OSError, ConnectionError):
+            return "dropped"
+        if reply is None:
+            return "dropped"                  # EOF = 거절 후 연결 종료
+        kind = reply[0]
+        if kind == "json" and reply[1].get("op") in ("list_reply", "pong",
+                                                     "spawned"):
+            return "accepted_unexpected"      # 무인가로 제어가 통했다(치명)
+        return "rejected"
+    finally:
+        with contextlib.suppress(Exception):
+            w.close()
+
+
+def _ptyhost_authed_ops() -> list[dict]:
+    """인증 통과 후 control 악성 변형. host 는 `except (KeyError, ValueError,
+    TypeError)` 로 손상 프레임을 드롭하게 되어 있고(보안검수 2026-07-03 INFO), 이 목록이
+    그 가드를 **런타임으로** 실증한다. 실제 셸을 띄우는 spawn 은 넣지 않는다 —
+    배터리가 프로세스를 남기면 안 된다(argv 없는 spawn 은 host 가 조용히 무시한다)."""
+    huge = "A" * (1 << 16)
+    return [
+        {"op": "spawn"},                                  # pane 누락 → KeyError
+        {"op": "spawn", "pane": "not-int", "argv": []},    # 비정수 pane
+        {"op": "spawn", "pane": 9, "argv": "not-a-list"},  # argv 비-list
+        {"op": "spawn", "pane": 9},                        # argv 부재 → 무동작
+        {"op": "resize", "pane": 9, "cols": "x", "rows": None},
+        {"op": "resize", "pane": 9, "cols": -5, "rows": 10 ** 9},
+        {"op": "signal", "pane": 9, "how": huge[:200]},
+        {"op": "close", "pane": 424242},                   # 없는 패널
+        {"op": "owner", "pid": -1}, {"op": "owner", "pid": "x"},
+        {"op": "no_such_op", "junk": [1, {"a": huge[:500]}]},
+        {"op": None},
+    ]
+
+
+async def run_ptyhost_battery(rounds: int = 40) -> dict:
+    """pty-host 표면 배터리(§5-3). 진짜 분리 프로세스를 띄워 무인가·손상·post-auth
+    프레임을 던지고 ①무인가 수용 0 ②host 생존 ③fd/RSS 누수 없음을 단언한다.
+
+    반환 {sent, rejected, dropped, accepted_unexpected, errors, authed_sent,
+    alive_after, fd_growth, rss_growth_kb, skipped}."""
+    from pytmuxlib import proc as _proc, ptyhostproto as hp
+    out = {"sent": 0, "rejected": 0, "dropped": 0, "accepted_unexpected": 0,
+           "errors": 0, "authed_sent": 0, "alive_after": False,
+           "fd_growth": None, "rss_growth_kb": None, "skipped": None}
+    tmp = tempfile.mkdtemp(prefix="redteam-ptyhost-")
+    tokenfile = os.path.join(tmp, "host.token")
+    portfile = os.path.join(tmp, "host.port")
+    listen_ep = ("tcp:127.0.0.1:0" if ipc.IS_WINDOWS
+                 else os.path.join(tmp, "h.sock"))
+    argv = [sys.executable, "-m", "pytmuxlib.ptyhost", "--endpoint", listen_ep,
+            "--tokenfile", tokenfile, "--portfile", portfile]
+    host_pid = _proc.spawn_detached(argv)
+    if host_pid <= 0:
+        out["skipped"] = "host 기동 실패"
+        return out
+    endpoint = listen_ep
+    try:
+        # 리슨 준비 + 토큰 게시 대기(둘 다 host 가 만든다).
+        for _ in range(300):
+            if ipc.IS_WINDOWS:
+                try:
+                    with open(portfile, encoding="utf-8") as f:
+                        endpoint = "tcp:127.0.0.1:%d" % int(f.read().strip())
+                    break
+                except (OSError, ValueError):
+                    pass
+            elif os.path.exists(listen_ep):
+                break
+            await asyncio.sleep(0.02)
+        token = None
+        for _ in range(300):
+            try:
+                with open(tokenfile, encoding="utf-8") as f:
+                    token = f.read().strip() or None
+                if token:
+                    break
+            except OSError:
+                pass
+            await asyncio.sleep(0.02)
+        if not token:
+            out["skipped"] = "host 토큰 미게시"
+            return out
+        fd0, rss0 = pid_fds(host_pid), pid_rss_kb(host_pid)
+
+        attacks = _ptyhost_attacks(token)
+        for _ in range(max(1, rounds)):
+            for name, payload in attacks:
+                out["sent"] += 1
+                out[await _ptyhost_one_shot(endpoint, name, payload)] += 1
+
+        # post-auth: 인증을 통과한 뒤 손상 control 을 같은 연결로 흘린다.
+        try:
+            r, w = await _open(endpoint)
+        except OSError:
+            r = w = None
+        if w is not None:
+            try:
+                with contextlib.suppress(asyncio.TimeoutError, OSError):
+                    await asyncio.wait_for(hp.read_frame(r), 1.0)   # hello
+                await hp.write_frame(w, hp.encode_json(
+                    {"op": "auth", "token": token}))
+                for op in _ptyhost_authed_ops():
+                    await hp.write_frame(w, hp.encode_json(op))
+                    out["authed_sent"] += 1
+                await asyncio.sleep(0.1)
+            finally:
+                with contextlib.suppress(Exception):
+                    w.close()
+
+        # 생존 확인: 인증 후 ping → pong 이 와야 한다.
+        alive = False
+        try:
+            r, w = await _open(endpoint)
+        except OSError:
+            w = None
+        if w is not None:
+            try:
+                with contextlib.suppress(asyncio.TimeoutError, OSError):
+                    await asyncio.wait_for(hp.read_frame(r), 1.0)
+                await hp.write_frame(w, hp.encode_json(
+                    {"op": "auth", "token": token}))
+                await hp.write_frame(w, hp.encode_json({"op": "ping"}))
+                for _ in range(4):
+                    fr = await asyncio.wait_for(hp.read_frame(r), 1.0)
+                    if fr and fr[0] == "json" and fr[1].get("op") == "pong":
+                        alive = True
+                        break
+            except (asyncio.TimeoutError, OSError, ConnectionError):
+                pass
+            finally:
+                with contextlib.suppress(Exception):
+                    w.close()
+        out["alive_after"] = alive
+        if fd0 >= 0:
+            out["fd_growth"] = pid_fds(host_pid) - fd0
+        if rss0 >= 0:
+            out["rss_growth_kb"] = pid_rss_kb(host_pid) - rss0
+        return out
+    finally:
+        # 질서 종료(authed shutdown) → 안 죽으면 강제.
+        with contextlib.suppress(Exception):
+            r, w = await _open(endpoint)
+            with contextlib.suppress(asyncio.TimeoutError, OSError):
+                await asyncio.wait_for(hp.read_frame(r), 1.0)
+            await hp.write_frame(w, hp.encode_json({"op": "auth",
+                                                    "token": token}))
+            await hp.write_frame(w, hp.encode_json({"op": "shutdown"}))
+            w.close()
+        for _ in range(50):
+            if not _proc.is_alive(host_pid):
+                break
+            await asyncio.sleep(0.05)
+        if _proc.is_alive(host_pid):
+            with contextlib.suppress(Exception):
+                _proc.terminate(host_pid, force=True)
+        with contextlib.suppress(OSError):
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 def _boot_isolated_server(endpoint: str):
     """격리 환경(실 상태 미오염)으로 인프로세스 서버를 띄운다. (srv, task) 반환."""
     # PYTMUX_HOME 으로 상태(소켓·토큰·포트파일)까지 임시 격리한다. Windows 의 TCP
@@ -650,6 +861,11 @@ async def redteam_spawn(rounds: int, *, conc_waves: int = 20,
         slow = await run_slowloris(resolved, token, n_conns=50, hold_sec=0.8)
         # 인증 통과 후(post-auth) 명령 핸들러 내성 — 격리 spawn 에서만(실 세션 미주입).
         authed = await run_authed_fuzz(resolved, token)
+        # pty-host 는 **별도 표면**이다(자기 프레임 포맷·자기 토큰). 이제 여기도 던진다
+        # (검수 2026-07-27g §5-3 — 종전엔 아무도 안 던졌다). 진짜 분리 프로세스라
+        # 라운드는 작게 잡는다(연결마다 프로세스 왕복이 아니라 프레임 왕복이지만,
+        # host 기동/종료가 붙는다).
+        phost = await run_ptyhost_battery(rounds=max(1, min(rounds, 40)))
 
         gc.collect()
         mem1, _ = tracemalloc.get_traced_memory()
@@ -660,6 +876,7 @@ async def redteam_spawn(rounds: int, *, conc_waves: int = 20,
         report = {
             "mode": "spawn", "rounds": rounds, "battery": counts,
             "concurrent": conc, "slowloris": slow, "authed_fuzz": authed,
+            "ptyhost": phost,
             "server_alive": alive,
             "fd_before": fd0, "fd_after": fd1, "fd_growth": fd1 - fd0,
             "mem_growth_bytes": mem1 - mem0,
@@ -672,6 +889,14 @@ async def redteam_spawn(rounds: int, *, conc_waves: int = 20,
                     >= conc["sent"]
                 and slow["alive_after"] and slow["probe_ok"] > 0   # 정상 클라 안 굶김
                 and authed["alive_after"]                          # post-auth 생존
+                # pty-host: 무인가 수용 0 + 생존. 표본을 못 얻어 skipped 면 게이트하지
+                # 않는다(측정 못 한 것을 결함으로도, 통과로도 치지 않는다 — 유령 PID
+                # 가짜 초록불 교훈과 같은 규율이라 `skipped` 를 리포트에 남긴다).
+                and (phost.get("skipped") is not None
+                     or (phost["accepted_unexpected"] == 0
+                         and phost["alive_after"]
+                         and (phost["fd_growth"] is None
+                              or phost["fd_growth"] <= _FD_SLACK)))
                 and (fd0 < 0 or fd1 - fd0 <= _FD_SLACK)
                 and (mem1 - mem0) <= _MEM_GROWTH_MAX),
         }

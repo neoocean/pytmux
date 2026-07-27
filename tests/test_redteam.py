@@ -338,3 +338,28 @@ async def test_loop_alive_pane_cwd_core_paths():
             f"회귀(blocking-on-loop 4회차)")
     finally:
         await teardown(srv, task, ep)
+
+
+async def test_redteam_ptyhost_battery_finds_no_unauth_and_host_survives():
+    """pty-host 는 **메인 서버와 다른 표면**이다(자기 프레임 포맷 `<len><kind>` · 자기
+    인증 `{"op":"auth"}`) — 그래서 종전 배터리가 한 번도 안 던졌다(검수 2026-07-27g).
+
+    무인가로 제어가 통하면 **남의 셸에 입력을 넣거나 출력을 훔칠 수 있다**(host 가 자식
+    셸 I/O 를 들고 있다). 실제 분리 프로세스를 띄워 무인가·손상·post-auth 프레임을 던지고
+    ①무인가 수용 0 ②host 생존을 단언한다. 실효는 뮤테이션으로 확인했다 — host 의 인증
+    게이트를 끄면 `accepted_unexpected` 가 3 이 되고 unauth `shutdown` 으로 host 가
+    실제로 죽는다(`alive_after=False`).
+
+    라운드는 작게(2) 준다 — 이 회귀의 목적은 배터리 배선·분류이고, 대량 반복은 수동 CLI
+    (`python scripts/redteam.py`)가 한다."""
+    rep = await redteam.run_ptyhost_battery(rounds=2)
+    if rep.get("skipped"):
+        from run import skip
+        skip("pty-host 기동/토큰 게시 불가: %s" % rep["skipped"])
+    assert rep["sent"] >= 20, rep                    # 공격 12종 × 2라운드
+    assert rep["accepted_unexpected"] == 0, rep      # 무인가 제어가 통하면 치명
+    assert rep["dropped"] + rep["rejected"] >= rep["sent"] - rep["errors"], rep
+    assert rep["authed_sent"] >= 10, rep             # post-auth 손상 op 도 던졌다
+    assert rep["alive_after"] is True, rep           # 그래도 host 는 살아 있다
+    if rep["fd_growth"] is not None:
+        assert rep["fd_growth"] <= redteam._FD_SLACK, rep

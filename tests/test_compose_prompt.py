@@ -13,6 +13,28 @@ from pytmuxlib.clientwidgets import _backdrop_dim_active
 from textual.widgets import TextArea
 
 
+async def _wait_compose(pilot, app):
+    """작성창이 떠서 **TextArea 가 조회 가능**해질 때까지 폴링한다(대기 규약).
+
+    `screen_stack>1` 만 보면 push 직후 이미 참이라 마운트 전에 진행해 `NoMatches` 가
+    난다(문서화된 이주 함정) — 그래서 이 테스트들이 실제로 만지는 위젯까지 조건에 넣는다.
+    반환 = (화면, TextArea)."""
+    def _ready():
+        scr = app.screen_stack[-1]
+        if not isinstance(scr, ComposePromptScreen):
+            return False
+        try:
+            scr.query_one(TextArea)
+        except Exception:
+            return False
+        return True
+
+    await wait_until(pilot, _ready)
+    assert _ready(), "작성창이 안 떴다(push/마운트 실패)"
+    scr = app.screen_stack[-1]
+    return scr, scr.query_one(TextArea)
+
+
 async def _with_app(coro, size=(100, 30)):
     srv, task, sock = await server_only()
     app = make_app(sock, None, None)
@@ -30,7 +52,7 @@ async def test_esc_insert_opens_compose():
         await pilot.press("escape")
         assert app.mode == "esc"
         await pilot.press("insert")
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "ComposePromptScreen"
         assert app.mode == "normal"        # 모달 진입 시 esc 모드는 빠진다
@@ -46,7 +68,7 @@ async def test_esc_shift_delete_opens_compose():
         await pilot.press("escape")
         assert app.mode == "esc"
         await pilot.press("shift+delete")
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "ComposePromptScreen"
         assert app.mode == "normal"
@@ -89,11 +111,11 @@ async def test_ctrl_s_injects_text_without_trailing_newline():
         sent = []
         app.send_cmd = lambda action, **kw: sent.append((action, kw))
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         scr = app.screen_stack[-1]
         ta = scr.query_one(TextArea)
         ta.text = "line one\nline two"
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: ta.text == "line one\nline two")
         await pilot.press("ctrl+s")
         await wait_until(pilot, lambda: ("paste", {"text": "line one\nline two"}) in sent)
         assert ("paste", {"text": "line one\nline two"}) in sent, sent
@@ -109,17 +131,17 @@ async def test_escape_cancels_no_paste():
         sent = []
         app.send_cmd = lambda action, **kw: sent.append(action)
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         scr = app.screen_stack[-1]
         ta = scr.query_one(TextArea)
         ta.text = "discard me"
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: ta.text == "discard me")
         await pilot.press("escape")                       # 메뉴 모드(취소 아님)
         await wait_until(pilot, lambda: scr._esc_mode is True)
         assert scr._esc_mode is True                      # 모드 진입
         assert app.screen_stack[-1] is scr, "esc 한 번은 안 닫힘"
         await pilot.press("escape")                       # 두 번째 esc = 취소
-        await pilot.pause(0.2)
+        await wait_until(pilot, lambda: app.screen_stack[-1] is not scr)
         assert "paste" not in sent, sent
     await _with_app(body)
 
@@ -130,7 +152,7 @@ async def test_empty_compose_does_not_paste():
         sent = []
         app.send_cmd = lambda action, **kw: sent.append(action)
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         await pilot.press("ctrl+s")
         await pilot.pause(0.2)
         assert "paste" not in sent, sent
@@ -142,13 +164,13 @@ async def test_ctrl_home_end_move_to_document_start_and_end():
     커서 이동(사용자 요청). 여러 줄에서 줄 단위 Home/End 가 아니라 문서 전체 끝으로."""
     async def body(app, pilot, srv):
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         scr = app.screen_stack[-1]
         ta = scr.query_one(TextArea)
         ta.text = "line one\nsecond line\nthird"
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: ta.text.count("\n") == 2)
         ta.move_cursor((1, 3))                 # 중간 줄로 커서 이동
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: ta.cursor_location == (1, 3))
         await pilot.press("ctrl+home")
         await wait_until(pilot, lambda: ta.cursor_location == (0, 0))
         assert ta.cursor_location == (0, 0), ta.cursor_location
@@ -165,7 +187,7 @@ async def test_no_dim_and_bottom_docked():
     프롬프트 위에 겹쳐 뜨고 내용이 늘면 위로 자란다(dock:bottom + height:auto)."""
     async def body(app, pilot, srv):
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         scr = app.screen_stack[-1]
         # 딤 없음: 스크린 배경 알파 0(투명) → 박스 밖 패널이 그대로 보인다.
         assert scr.styles.background.a == 0, \
@@ -184,7 +206,7 @@ async def test_composite_does_not_dim_behind_compose():
     async def body(app, pilot, srv):
         # 작성창을 띄우고 합성하면 뒷 패널 셀이 원색(딤 스타일이 안 입혀짐).
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         app._composite()
         # 첫 행 어딘가에 비공백 셀이 있고, 그 스타일이 _darken 으로 죽지 않았는지
         # 확인하긴 어렵다 → 대신 모달이 _no_backdrop_dim 임을 신뢰하고, 딤 분기가
@@ -205,7 +227,7 @@ async def test_input_aligned_one_below_prompt_row():
         H = app.size.height                    # 30 (테스트 size)
         target = H - 6                          # footer 위로 몇 줄 띄운 프롬프트 행 가정
         app.push_screen(ComposePromptScreen("", prompt_row=target))
-        await pilot.pause(0.3)
+        await wait_until(pilot, lambda: app.screen_stack[-1].query(_TA))
         ta = app.screen_stack[-1].query_one(_TA)
         last_line_y = ta.region.y + ta.region.height - 1
         assert abs(last_line_y - (target + 1)) <= 1, \
@@ -220,7 +242,7 @@ async def test_width_within_active_pane():
 
     async def body(app, pilot, srv):
         app.push_screen(ComposePromptScreen("", pane_x=10, pane_w=30))
-        await pilot.pause(0.3)
+        await wait_until(pilot, lambda: app.screen_stack[-1].query("#cwrap"))
         wrap = app.screen_stack[-1].query_one("#cwrap")
         assert wrap.region.x >= 10, wrap.region
         assert wrap.region.right <= 10 + 30, wrap.region
@@ -236,7 +258,7 @@ async def test_enter_sends_and_shift_enter_newlines():
         sent = []
         app.send_cmd = lambda action, **kw: sent.append((action, kw))
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         ta = app.screen_stack[-1].query_one(_TA)
         ta.text = "a"
         ta.move_cursor((0, 1))
@@ -257,7 +279,7 @@ async def test_distinct_textbox_and_box_backgrounds():
     """입력칸(#carea)과 팝업 박스(#cwrap)의 배경색이 서로 다르다(사용자 요청)."""
     async def body(app, pilot, srv):
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         scr = app.screen_stack[-1]
         wrap_bg = scr.query_one("#cwrap").styles.background
         area_bg = scr.query_one("#carea").styles.background
@@ -293,7 +315,7 @@ async def test_open_seeds_from_typed_prompt_clears_on_apply():
         pid = app.layout.get("active")
         app._compose_track_input(pid, b"hello")
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         ta = app.screen_stack[-1].query_one(_TA)
         assert ta.text == "hello", repr(ta.text)          # 시드됨
         assert sent_in == []                              # 여는 시점엔 안 비움
@@ -317,7 +339,7 @@ async def test_cancel_keeps_prompt_unchanged():
         pid = app.layout.get("active")
         app._compose_track_input(pid, b"hello")
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         ta = app.screen_stack[-1].query_one(_TA)
         assert ta.text == "hello"
         await pilot.press("escape", "escape")              # 취소(esc-esc)
@@ -343,7 +365,7 @@ async def test_ime_paste_input_seeds_compose():
         app.send_cmd = lambda action, **kw: None
         app.send_input = lambda d: sent_in.append(d)
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         ta = app.screen_stack[-1].query_one(_TA)
         assert ta.text == "라이브로 확인", repr(ta.text)        # 한글 시드됨
         await pilot.press("ctrl+s")                        # 적용
@@ -359,7 +381,7 @@ async def test_unsaved_draft_persists_across_cancel():
 
     async def body(app, pilot, srv):
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         ta = app.screen_stack[-1].query_one(_TA)
         ta.text = "half-written"
         await pilot.pause(0.05)
@@ -402,7 +424,7 @@ async def test_block_select_delete_in_textarea():
     삭제하면 선택분만 지워진다(자식 프롬프트엔 없는 편집을 작성창이 제공)."""
     async def body(app, pilot, srv):
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         ta = app.screen_stack[-1].query_one(TextArea)
         ta.text = "hello"
         ta.move_cursor((0, 5))             # 끝으로
@@ -419,7 +441,7 @@ async def test_ctrl_a_selects_all_in_textarea():
     한 글자 입력하면 전체가 교체된다."""
     async def body(app, pilot, srv):
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         ta = app.screen_stack[-1].query_one(TextArea)
         ta.text = "line one\nline two"
         ta.move_cursor((0, 0))
@@ -512,7 +534,7 @@ async def test_scrape_fallback_seeds_when_tracker_empty():
         # 다시 Claude 패널 — open_compose 가 긁은 값으로 시드된다
         app.pane_claude = {pid: {"id": pid, "claude": "idle"}}
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         ta = app.screen_stack[-1].query_one(_TA)
         assert ta.text == "remote text", repr(ta.text)
     await _with_app(body)
@@ -547,7 +569,7 @@ async def test_multiline_prompt_seeds_whole_text_not_last_line():
         assert app._current_prompt_text(pid) == whole, \
             repr(app._current_prompt_text(pid))
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         ta = app.screen_stack[-1].query_one(_TA)
         assert ta.text == whole, repr(ta.text)
     await _with_app(body)
@@ -583,7 +605,7 @@ async def test_multiline_prompt_seeds_whole_text_current_ui_rule_box():
         assert app._current_prompt_text(pid) == whole, \
             repr(app._current_prompt_text(pid))
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         ta = app.screen_stack[-1].query_one(_TA)
         assert ta.text == whole, repr(ta.text)
     await _with_app(body)
@@ -612,7 +634,7 @@ async def test_image_paste_to_pane_seeds_compose_later():
         assert app._prompt_buf[pid] == "look at /tmp/pytmux-clip-x.png"
         # 이제 작성창을 열면 경로가 시드로 딸려온다.
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         ta = app.screen_stack[-1].query_one(_TA)
         assert ta.text == "look at /tmp/pytmux-clip-x.png", repr(ta.text)
     try:
@@ -633,7 +655,7 @@ async def test_paste_into_open_compose_text_and_image():
         sent = []
         app.send_cmd = lambda action, **kw: sent.append((action, kw))
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         scr = app.screen_stack[-1]
         ta = scr.query_one(_TA)
         ta.text = "before "
@@ -669,7 +691,7 @@ async def test_esc_mode_is_visually_distinct():
     `warning` 을 쓰면 코드는 멀쩡한데 화면은 그대로인 무증상 회귀가 된다."""
     async def body(app, pilot, srv):
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         scr = app.screen_stack[-1]
         wrap, badge = scr.query_one("#cwrap"), scr.query_one("#cesc")
         off_border = wrap.styles.border.top[1]
@@ -777,7 +799,7 @@ async def test_esc_colon_opens_command_over_open_compose():
 
     async def body(app, pilot, srv):
         app.open_compose()
-        await pilot.pause(0.2)
+        await _wait_compose(pilot, app)
         scr = app.screen_stack[-1]
         assert isinstance(scr, ComposePromptScreen)
         await pilot.press("escape")                       # 메뉴 모드

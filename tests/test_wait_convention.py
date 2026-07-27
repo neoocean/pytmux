@@ -31,14 +31,15 @@ _PLAT = re.compile(r"^\s*if\s+(?:ipc\.IS_WINDOWS|not\s+ipc\.IS_WINDOWS"
                    r"|os\.name\s*[!=]=\s*[\"']nt[\"']|sys\.platform.*)\s*:\s*$")
 
 # 총계 래칫(2026-07-25 기준 실측). **늘리지 말고 줄여라** — 이주 CL 이 여기를 함께 낮춘다.
-TOTALS = {"pause": 356, "sleep": 90, "silent_skip": 18}
+TOTALS = {"pause": 326, "sleep": 90, "silent_skip": 18}
 
 # 모듈별 상한 [고정 pause, 고정 sleep, 조용한 플랫폼 return]. 목록에 없으면 전부 0.
 CEILINGS = {
     "test_claude_resume_plugin": [8, 0, 0],
     "test_client": [214, 2, 0],
     "test_clientutil": [1, 1, 0],
-    "test_compose_prompt": [46, 0, 0],
+    # 2026-07-27g 이주(46→16): 남은 16은 앱 마운트·부정 단언 정착 대기
+    "test_compose_prompt": [16, 0, 0],
     # 고정 pause 1건은 **의도된 것**: "릴리스 후에는 스크롤이 더 안 온다" 는 부정 단언이라
     # 시간 자체가 오라클이다(폴링으로 바꾸면 조건이 처음부터 참이라 공허해진다).
     "test_drag_select_scroll": [1, 0, 0],

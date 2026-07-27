@@ -177,3 +177,27 @@ async def test_recent_activity_cwd_window_gate():
     assert transcript.recent_activity_cwd(
         600, now=1000.0, root="/r", list_dir=ld, stat_fn=lambda p: 900.0,
         open_fn=lambda p: io.StringIO('{"type":"user"}\n')) is None
+
+
+async def test_project_dir_name_never_contains_a_separator():
+    r"""폴더 **이름** 에 경로 구분자·드라이브 콜론이 남으면 그건 이름이 아니라 경로다.
+
+    `os.path.join(root, "C:\\Users\\me")` 는 POSIX 에서 존재하지 않는 중첩 경로가 되고,
+    NT 에서는 **절대경로로 해석돼 root 를 통째로 무시한다** — 그러면 Windows 에서
+    트랜스크립트 조회가 조용히 빈손이 되고 증상이 "세션이 없다"와 구분되지 않는다
+    (검수 2026-07-27g). `:` 는 Win32 파일명에 애초에 못 쓰는 문자이기도 하다.
+
+    `encode_project_name` 은 **순수 함수**라 POSIX 상자에서 Windows 표기도 검증된다
+    (네이티브 클라 적합성 픽스처가 같은 함수를 쓴다)."""
+    import ntpath
+    import posixpath
+    for raw in (r"C:\Users\me\proj", r"D:\work\a.b\c", r"\\server\share\dir",
+                "C:\\", "/Users/me/.config/nvim", "/"):
+        name = transcript.encode_project_name(raw)
+        assert not any(c in name for c in "/\\:"), (raw, name)
+        # 어떤 OS 의 join 이든 root 아래에 남는다(= 이름으로 동작한다).
+        for mod, root in ((posixpath, "/root/projects"), (ntpath, r"C:\root\projects")):
+            joined = mod.join(root, name)
+            assert joined.startswith(root), (raw, name, joined)
+    # POSIX 정상 경로의 결과는 종전과 같다(회귀 방지).
+    assert transcript.encode_project_name("/Users/me/p4/x") == "-Users-me-p4-x"

@@ -29,10 +29,27 @@ def projects_dir() -> str:
     return os.path.join(base, "projects")
 
 
+def encode_project_name(abs_path: str) -> str:
+    r"""**이미 절대경로인** 값을 Claude Code 프로젝트 디렉터리명으로 인코딩한다.
+
+    `/`·`.` 뿐 아니라 **`\`·`:` 도 바꾼다**(검수 2026-07-27g). 폴더 *이름* 에 경로
+    구분자나 드라이브 콜론이 남으면 그건 이름이 아니라 경로가 된다 —
+    `os.path.join(root, "C:\\Users\\me")` 는 POSIX 에서 중첩 경로가 되고 NT 에서는
+    **절대경로로 해석돼 root 를 통째로 무시한다**(`ntpath.join` 실측). 그러면 Windows
+    에서 트랜스크립트 조회가 조용히 빈손이 되고, 증상은 "세션이 없다"와 구분되지 않는다.
+    (`:` 는 Win32 파일명에 애초에 못 쓰는 문자다.)
+
+    OS 무관 순수 함수라 다른 OS 의 경로 표기도 검증할 수 있다(네이티브 클라 적합성
+    픽스처가 이걸 쓴다).
+    """
+    for ch in ("/", "\\", ":"):
+        abs_path = abs_path.replace(ch, "-")
+    return abs_path.replace(".", "-")
+
+
 def encode_project_dir(path: str) -> str:
-    """절대 경로를 Claude Code 의 프로젝트 디렉터리명으로 인코딩(`/`·`.`→`-`)."""
-    ap = os.path.abspath(os.path.expanduser(path))
-    return ap.replace("/", "-").replace(".", "-")
+    """경로를 절대경로로 정규화한 뒤 프로젝트 디렉터리명으로 인코딩."""
+    return encode_project_name(os.path.abspath(os.path.expanduser(path)))
 
 
 def project_dir_for(cwd: str, root: str | None = None) -> str:

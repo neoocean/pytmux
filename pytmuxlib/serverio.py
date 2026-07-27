@@ -1143,9 +1143,15 @@ class ServerIOMixin:
             return
         # 입력 데이터 base64 디코드(F6): 손상·악의 base64 가 예외를 던지지 않게 한 곳에서
         # 가드한다(binascii.Error 는 ValueError 하위). 실패하면 그 입력만 무시.
+        # **TypeError 도 잡는다**(검수 2026-07-27g): `data` 가 문자열이 아니면
+        # (list/int/dict/None) b64decode 는 ValueError 가 아니라 TypeError 를 낸다 →
+        # handle_client 그물이 잡아 error.log 만 남기고 **그 연결이 죽는다**. 실제로
+        # 네이티브 클라의 `Input` 타입이 바이트열을 JSON 배열로 직렬화하고 있었다
+        # (아직 아무도 안 보내던 코드라 드러나지 않았다). caps 결함과 같은 클래스 —
+        # "한 필드가 이상하면 그 입력만 버리고 연결은 산다".
         try:
             data = base64.b64decode(msg.get("data", ""))
-        except (binascii.Error, ValueError):
+        except (binascii.Error, ValueError, TypeError):
             return
         # 팝업이 열려 있고 입력 대상이 팝업 패널이면 그 PTY 로만 직접 보낸다
         # (트리 밖이라 pane_by_id 로는 못 찾음; 동기화/프롬프트추적도 제외).

@@ -385,3 +385,34 @@ async def test_absurd_exit_code_is_unknown_not_a_number():
     seg2.on_osc("133", "A", row=0)
     seg2.on_osc("133", "D;3221225477")
     assert seg2.blocks[0].exit == 3221225477
+
+
+async def test_osc_hot_path_never_scans_the_plugin_directory():
+    """OSC 는 `feed` 안에서 처리된다 — **뜨거운 경로**다. `plugins.load()` 는 호출마다
+    디렉토리를 스캔하므로 그걸 훅 안에서 부르면 OSC 를 반복 방출하는 프로그램이 그
+    스캔을 유발해 **그 자체가 자원 공격**이 된다(N1/F2 와 같은 부류).
+
+    설계는 "서버가 패널 생성 시 한 번 꽂는다"인데 그 계약이 **문서에만** 있었다
+    (검수 2026-07-27g). 여기서 못박는다: 패널 하나에 OSC 를 200개 먹여도 레지스트리
+    스캔은 0회여야 한다."""
+    pane = _pane()                       # 생성 시 훅 1회 장착(서버와 같은 방식)
+    calls = []
+    orig = plugins.load
+
+    def counting_load(*a, **kw):
+        calls.append(1)
+        return orig(*a, **kw)
+
+    plugins.load = counting_load
+    try:
+        for i in range(50):
+            pane.feed(_osc("133", "A"))
+            pane.feed(_osc("633", f"E;echo {i}"))
+            pane.feed(_osc("133", "C"))
+            pane.feed(_osc("133", "D;0"))
+        assert not calls, f"핫패스에서 플러그인 디렉토리를 {len(calls)}회 스캔했다"
+        # 그래도 기능은 동작한다(스캔 0 ≠ 무동작).
+        wire = blocks_wire(pane)
+        assert wire and wire[-1]["cmd"] == "echo 49", wire
+    finally:
+        plugins.load = orig
