@@ -340,6 +340,49 @@ async def test_loop_alive_pane_cwd_core_paths():
         await teardown(srv, task, ep)
 
 
+async def test_loop_alive_status_build_does_not_fork_per_frame():
+    """[blocking-on-loop 5회차 회귀] status 메시지를 만드는 것이 패널마다 `ps` 를
+    포크하지 않는다.
+
+    회귀 전: `_status_msg` → `_switcher_panes`/`_pane_overview` 가 패널마다
+    `_fg_command`(POSIX `ps` 서브프로세스, Windows 프로세스 트리 순회)를 **동기로**
+    불렀다. status 는 스캔이 "바뀌었다"고 할 때마다 재전송되므로 Claude 가 도는
+    패널에서는 사실상 매 프레임이다 — 실측 2초/2패널에서 `ps` 125회·**920ms**
+    (루프 시간의 46%)였고 패널 수에 비례한다. 앞선 네 번과 달리 **코어의 가장 뜨거운
+    경로**이고, 그 값은 다운스트림 원격 병합에만 쓰이는 표시용 이름이다.
+
+    오라클이 둘인 이유: gap 만 보면 빠른 머신에서 60번의 짧은 포크가 임계값 아래로
+    숨는다. **호출 횟수**가 캐시 제거를 직접 겨눈다(뮤테이션: serverio 의
+    `_fg_command_cached` 를 `_fg_command` 로 되돌리면 0~2 회가 60 회가 된다)."""
+    srv, task, ep = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv.split_pane(sess, "h")
+        panes = sess.active_window.panes()
+        assert len(panes) >= 2, "스위처 하위행은 패널 2개 이상인 탭에만 붙는다"
+        # 캐시를 실제 값으로 덥힌다 — 계약은 "패널 수명당 1회"이지 "0회"가 아니다.
+        for p in panes:
+            srv._fg_command_cached(p)
+        calls = []
+        srv._fg_command = lambda pane: (calls.append(1), time.sleep(_SLOW),
+                                        "zsh")[2]
+
+        async def _build():
+            # 30회 = 30Hz flush 루프의 1초치.
+            for _ in range(30):
+                srv._status_msg(sess, full=False, client=None)
+
+        gap = await harness.max_loop_gap(_build)
+        assert len(calls) <= len(panes), (
+            f"status 30회가 fg 조회를 {len(calls)}회 했다(패널 {len(panes)}개) — "
+            f"프레임마다 포크하고 있다(캐시 미적용)")
+        assert gap < _GAP_MAX, (
+            f"status 빌드가 루프를 {gap*1000:.0f}ms 막았다 — fg 조회가 루프에서 "
+            f"돌고 있다(blocking-on-loop 5회차)")
+    finally:
+        await teardown(srv, task, ep)
+
+
 async def test_redteam_ptyhost_battery_finds_no_unauth_and_host_survives():
     """pty-host 는 **메인 서버와 다른 표면**이다(자기 프레임 포맷 `<len><kind>` · 자기
     인증 `{"op":"auth"}`) — 그래서 종전 배터리가 한 번도 안 던졌다(검수 2026-07-27g).

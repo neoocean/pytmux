@@ -149,7 +149,9 @@ class ServerIOMixin:
     def _pane_overview(self, pane):
         """트리/개요용 패널 1건 정보: id·제목·fg 앱·로컬/원격. Claude 상태/사용량/토큰은
         플러그인이 server_pane_overview 훅으로 덧붙인다(플러그인 없으면 생략)."""
-        cmd = self._fg_command(pane) or ""
+        # 표시용이라 캐시본을 쓴다 — `ps` 서브프로세스를 패널마다 루프에서 돌리면
+        # 그동안 전 클라가 얼어붙는다(servertree._fg_command_cached).
+        cmd = self._fg_command_cached(pane) or ""
         info = {"id": pane.id, "title": (pane.title or "").strip(),
                 "cmd": cmd, "remote": cmd.lower() in self._REMOTE_CMDS}
         self.plugins.server_pane_overview(self, pane, info)
@@ -169,7 +171,10 @@ class ServerIOMixin:
             return None
         out = []
         for p in panes:
-            cmd = self._fg_command(p) or ""
+            # status 는 스캔이 "바뀌었다"고 할 때마다 재전송된다(Claude 가 도는 패널이면
+            # 사실상 매 프레임). 여기서 `ps` 를 포크하면 실측 2초/2패널에 920ms 를 루프에서
+            # 태운다 — 표시용 이름이라 캐시본으로 충분하다.
+            cmd = self._fg_command_cached(p) or ""
             out.append({"id": p.id, "cmd": cmd,
                         "title": (p.title or "").strip(),
                         "remote": cmd.lower() in self._REMOTE_CMDS})

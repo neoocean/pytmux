@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+import time
 
 from . import proc, pty_backend
 from .model import ClientConn, Pane, Session, Split, Tab, Window
@@ -672,6 +673,64 @@ class ServerTreeMixin:
         name = os.path.basename(out.split()[0])
         return name[1:] if name.startswith("-") else name  # -zsh → zsh
 
+    # fg 이름 캐시 수명. 사람이 명령을 바꾸는 주기보다 훨씬 짧고, 자동 탭이름 루프
+    # (2초)보다는 짧아 그쪽이 캐시를 계속 덥혀 준다.
+    _FG_TTL = 1.0
+
+    def _fg_command_cached(self, pane):
+        """[표시용] 포그라운드 명령 이름 — **루프를 절대 막지 않는다**.
+
+        `_fg_command` 는 `ps` 서브프로세스라 1회 ~7ms 다. 표시 경로(status 의 스위처
+        하위행·트리 개요)는 그걸 **패널마다·status 메시지마다** 불렀고, status 는
+        스캔이 "바뀌었다"고 할 때마다 재전송된다(Claude 가 도는 패널이면 사실상 매
+        프레임) — 실측 2초/2패널에서 `ps` 125회·**920ms**(루프 시간의 46%)를 태웠고
+        패널 수에 비례해 커진다. blocking-on-loop 5회차이고, 앞선 4회와 달리 **코어의
+        가장 뜨거운 경로**다.
+
+        해결: 패널당 TTL 캐시. 값이 아예 없을 때만 동기로 한 번 구하고(패널 수명당 1회),
+        만료되면 **stale 을 즉시 돌려주면서** executor 로 갱신을 예약한다. 표시용 이름은
+        1초 늦어도 아무 일도 안 일어나지만 루프가 멈추면 전 클라가 얼어붙는다.
+
+        판정에 쓰는 호출부(`_claude_really_exited` 의 셸 복귀 확정)는 **정확한 값이
+        필요하므로 `_fg_command` 를 그대로 쓴다** — 여기를 캐시로 바꾸면 stale 이름으로
+        살아있는 TUI 한가운데 토큰 요약을 주입할 수 있다."""
+        now = time.monotonic()
+        ts, val = getattr(pane, "_fg_cache", (0.0, None))
+        if ts and now - ts < self._FG_TTL:
+            return val
+        if not ts:
+            # 첫 조회: 캐시가 비어 있으면 stale 을 줄 수도 없다. 패널 수명당 1회다.
+            val = self._fg_command(pane)
+            pane._fg_cache = (now, val)
+            return val
+        self._fg_refresh_soon(pane)
+        return val
+
+    def _fg_refresh_soon(self, pane):
+        """만료된 fg 캐시를 executor 에서 갱신한다(패널당 1개만 떠 있게 한다).
+
+        루프가 없는 문맥(동기 단위 테스트)에서는 조용히 아무 일도 안 한다 — 그때는
+        stale 값을 쓰는 것이 맞고, 여기서 동기 폴백을 하면 이 함수의 존재 이유가 사라진다."""
+        if getattr(pane, "_fg_refreshing", False):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        pane._fg_refreshing = True
+
+        def _done(fut):
+            pane._fg_refreshing = False
+            try:
+                pane._fg_cache = (time.monotonic(), fut.result())
+            except Exception:
+                # 패널이 사라졌거나 ps 가 실패했다 — 다음 조회가 다시 시도한다.
+                # 타임스탬프만 밀어 실패한 패널이 매 프레임 executor 를 부르지 않게.
+                stale = getattr(pane, "_fg_cache", (0.0, None))[1]
+                pane._fg_cache = (time.monotonic(), stale)
+
+        loop.run_in_executor(None, self._fg_command, pane).add_done_callback(_done)
+
     async def _autorename_loop(self):
         while self.running:
             await asyncio.sleep(2.0)
@@ -691,6 +750,9 @@ class ServerTreeMixin:
                     # 자체는 동기 유지 — 다른 동기 호출부 영향 없음).
                     cmd = await asyncio.get_event_loop().run_in_executor(
                         None, self._fg_command, ap)
+                    # 이미 executor 에서 정확한 값을 구했으니 표시용 캐시도 덥힌다 —
+                    # 그만큼 _fg_command_cached 의 갱신 예약이 줄어든다(공짜).
+                    ap._fg_cache = (time.monotonic(), cmd)
                     if self._autorename_apply(sess, tab, ap, cmd):
                         changed = True
                 if changed:
