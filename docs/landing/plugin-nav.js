@@ -24,7 +24,8 @@
     { t: 'calendar',                n: 'calendar',                c: '오버레이' },
     { t: 'ime-indicator',           n: 'ime-indicator',           c: '입력' },
     { t: 'p4-show-submitted-changelists', n: 'p4changes',         c: 'Perforce' },
-    { t: 'rec',                     n: 'rec',                     c: '모니터' }
+    { t: 'rec',                     n: 'rec',                     c: '모니터' },
+    { t: 'blocks',                  n: 'blocks',                  c: '셸 통합' }
   ];
   var idx = -1;
   for (var i = 0; i < PL.length; i++) { if (PL[i].t === slug) { idx = i; break; } }

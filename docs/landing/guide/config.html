@@ -81,6 +81,7 @@
             <tr><td><code>status-position</code></td><td><code>bottom|top</code></td><td>상태줄 위치</td></tr>
             <tr><td><code>status-left</code> / <code>status-right</code></td><td>포맷 문자열</td><td><code>#S</code>·<code>#h</code>·<code>#{pane_title}</code>·strftime 등</td></tr>
             <tr><td><code>status-interval</code></td><td><code>1–60</code></td><td>상태줄 갱신 주기(초)</td></tr>
+            <tr><td><code>status-format &lt;줄&gt; &lt;포맷&gt;</code></td><td><code>1</code>~ + 포맷 문자열</td><td><code>status</code> 를 2줄 이상으로 켰을 때 <strong>보조 줄</strong>의 내용. 줄 번호는 1부터이며 포맷 기호는 <code>status-left</code> 와 같습니다</td></tr>
             <tr><td><code>status-bg</code> / <code>status-fg</code></td><td>색</td><td>상태줄 배경/전경색</td></tr>
             <tr><td><code>set-titles</code> / <code>set-titles-string</code></td><td><code>on|off</code> / 포맷</td><td>터미널 창 제목 설정</td></tr>
             <tr><td><code>single-border</code></td><td><code>on|off|toggle</code></td><td>패널이 하나일 때도 테두리</td></tr>
@@ -101,6 +102,7 @@
             <tr><td><code>nest-auto-attach</code></td><td><code>on|off|toggle</code></td><td>중첩 pytmux 시 자동 remote-attach</td></tr>
             <tr><td><code>exit-empty</code></td><td><code>on|off|toggle</code> (on)</td><td>세션이 0개가 되면 서버 종료. <code>off</code>=빈 채로 상주(원격 서버용, <a href="/guide/remote">11장</a>)</td></tr>
             <tr><td><code>win-mouse-motion</code></td><td><code>on|off|toggle</code> (off)</td><td><strong>Windows</strong> 마우스 이동 전달</td></tr>
+            <tr><td><code>mouse-debug</code></td><td><code>on|off</code> (off)</td><td>진단용 — 클라이언트가 받은 마우스·휠 이벤트와 화살표/페이지 키를 <code class="nb">&lt;소켓&gt;.mouse.log</code> 에 기록합니다. 원격에서 휠이 안 먹는 것처럼 <strong>환경에 따라 달라지는 입력 문제</strong>를 제보할 때 켭니다(글자·단축키는 기록하지 않습니다)</td></tr>
             <tr><td><code>vt-parser</code></td><td><code>native</code></td><td>VT 파서 백엔드. 현재는 <strong>자체 native 파서 단일</strong>이라 사실상 고를 것이 없습니다 — 옛 <code>pyte</code> 백엔드는 은퇴했고, 그 값을 넣어도 native 로 수렴합니다(옛 설정 파일 호환용으로만 받습니다)</td></tr>
             <tr><td><code>window-size</code></td><td><code>smallest|latest|largest</code> (smallest)</td><td>여러 클라이언트가 한 세션을 볼 때 공유 격자 크기 기준(<a href="/guide/remote">11장</a>)</td></tr>
             <tr><td><code>net_rtt_threshold</code></td><td>초 (0.4)</td><td>응답성 저하 판정 문턱(파일 전용)</td></tr>
@@ -124,7 +126,24 @@ set ambiguous-width auto
 bind | split-window -h
 bind - split-window -v
 bind r rename-window
-bind k kill-pane</div>
+bind k kill-pane
+
+<span class="c"># 내 이름으로 명령 줄이기</span>
+alias w layout-load work
+alias tk claude-token-log
+
+<span class="c"># 그 순간에 자동 실행(훅)</span>
+hook client-attached display-message 붙었습니다
+hook alert-bell run-shell "afplay /System/Library/Sounds/Ping.aiff"</div>
+        <table>
+          <thead><tr><th>지시어</th><th>뜻</th></tr></thead>
+          <tbody>
+            <tr><td><code class="nb">set &lt;옵션&gt; &lt;값&gt;</code></td><td>위 표의 설정들. 런타임 <code class="nb">:set</code> 과 같은 이름입니다.</td></tr>
+            <tr><td><code class="nb">bind &lt;키&gt; &lt;명령&gt;</code></td><td>prefix 뒤 키. <code class="nb">bind -n</code> 은 prefix 없이 바로 듣습니다(<a href="/guide/command">7장</a>).</td></tr>
+            <tr><td><code class="nb">alias &lt;이름&gt; &lt;명령&gt;</code></td><td>명령 프롬프트에서 쓸 <strong>짧은 이름</strong>을 만듭니다 — 인자까지 통째로 담을 수 있어 자주 쓰는 조합을 한 단어로 줄입니다.</td></tr>
+            <tr><td><code class="nb">hook &lt;이벤트&gt; &lt;명령&gt;</code></td><td>정해진 순간에 자동 실행합니다(<code class="nb">client-attached</code> · <code class="nb">after-new-window</code> · <code class="nb">alert-bell</code>). 런타임에서는 <code class="nb">set-hook</code>, 지금 걸린 목록은 <code class="nb">show-hooks</code> — 자세한 것은 <a href="/guide/command">7장</a>.</td></tr>
+          </tbody>
+        </table>
       </section>
 
       <section>
@@ -138,7 +157,8 @@ bind k kill-pane</div>
         </p>
         <figure>
           <img src="../image/40-settings.svg" alt="통합 설정 팝업(:settings)">
-          <figcaption>통합 설정 팝업(<code>:settings</code>) — 카테고리별 조정.</figcaption>
+          <figcaption>통합 설정 팝업(<code>:settings</code>) — 카테고리별 조정. 숫자 항목(예: <strong>드래그 인정 최소 이동</strong>)은
+            <kbd>←</kbd><kbd>→</kbd> 로 값을 올리고 내립니다.</figcaption>
         </figure>
       </section>
 

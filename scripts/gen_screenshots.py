@@ -410,6 +410,15 @@ async def notice_history(app, pilot):
     h.add("847 chars copied (clipboard)", "info", "local", ts=base + 246)
     app.push_screen(NoticeHistoryScreen(h.entries()))
     await pilot.pause(0.5)
+    # 커서를 **오류 줄**에 올린 상태로 찍는다(2026-07-28): 커서 줄 배경이 그 줄의
+    # 등급색(오류=빨강)으로 칠해지는 것이 이 팝업의 현재 동작인데, 기본 커서 위치
+    # (맨 위 info)는 등급색이 파랑이라 예전의 '테마 고정 파랑'과 구별되지 않는다.
+    from textual.widgets import ListView as _LV
+    scr = app.screen_stack[-1]
+    lv = scr.query_one(_LV)
+    lv.index = 1                       # 0=info(맨 위), 1=긴 오류 줄
+    scr.on_list_view_highlighted(None)
+    await pilot.pause(0.4)
 
 
 async def compose_esc(app, pilot):

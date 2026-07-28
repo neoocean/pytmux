@@ -84,6 +84,30 @@
           <code class="nb">rotate-window</code> 로 패널들을 한 칸씩 돌립니다. 미리 정의된 레이아웃으로
           <strong>고르게(even) 정렬</strong>하거나, 만든 배치를 저장/복원할 수 있습니다.
         </p>
+        <table>
+          <thead><tr><th>명령</th><th>하는 일</th></tr></thead>
+          <tbody>
+            <tr><td><code class="nb">select-layout &lt;프리셋&gt;</code></td>
+                <td>정해진 배치로 다시 놓습니다 — <code class="nb">tiled</code>(바둑판) ·
+                  <code class="nb">even-horizontal</code> / <code class="nb">even-vertical</code>(가로·세로 균등) ·
+                  <code class="nb">main-vertical</code> / <code class="nb">main-horizontal</code>(큰 패널 하나 + 나머지).</td></tr>
+            <tr><td><code class="nb">next-layout</code> (별칭 <code>nextl</code>)</td>
+                <td>그 프리셋들을 <strong>차례로 넘겨 가며</strong> 적용합니다. 한 키에 묶어 두고 마음에 드는 배치가
+                  나올 때까지 누르는 용도입니다.</td></tr>
+            <tr><td><code class="nb">layout-save &lt;이름&gt;</code> · <code class="nb">layout-load &lt;이름&gt;</code></td>
+                <td>지금 탭의 분할 구조를 이름 붙여 저장하고, 나중에 <strong>그 탭에</strong> 다시 펼칩니다.
+                  이름 없이 부르면 저장된 목록에서 고릅니다(<code class="nb">layout-list</code>).</td></tr>
+            <tr><td><code class="nb">layout-load-new &lt;이름&gt;</code></td>
+                <td>같은 배치를 <strong>새 탭</strong>에 펼칩니다 — 지금 보고 있는 탭은 그대로 두고 작업 세트를 하나 더
+                  여는 셈입니다.</td></tr>
+            <tr><td><code class="nb">rename-pane &lt;제목&gt;</code></td>
+                <td>패널에 <strong>제목</strong>을 붙입니다. 패널 테두리 제목줄을 켜 두면(<code class="nb">pane-border-status</code>)
+                  거기에 그 이름이 보여, 패널이 많을 때 무엇이 무엇인지 구분됩니다.</td></tr>
+            <tr><td><code class="nb">respawn-pane</code> (별칭 <code>respawnp</code>)</td>
+                <td>그 패널의 <strong>셸만 새로 시작</strong>합니다 — 분할 구조·크기·탭 위치는 그대로입니다.
+                  프로그램이 화면을 망가뜨렸거나 셸이 응답하지 않을 때 패널을 지우지 않고 되살리는 길입니다.</td></tr>
+          </tbody>
+        </table>
       </section>
 
       <section>

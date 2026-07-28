@@ -56,6 +56,9 @@
             <tr><td><code>auto-retry</code></td><td>전송 에러 시 1분 뒤 '계속' 자동 주입 on/off</td></tr>
             <tr><td><code>claude-auto-mode</code></td><td>idle 시 권한모드 자동 오토모드 전환 on/off</td></tr>
             <tr><td><code>auto-launch</code></td><td>새 Claude 세션에 /rc+권한모드 1회 자동 적용 on/off</td></tr>
+            <tr><td><code>auto-token-on-exit</code></td><td>Claude <strong>세션이 끝나는 순간</strong> 그 패널에 토큰·한도 요약을 흘려보내기 on/off(기본 on, 별칭 <code>auto-token</code>). 팝업이 아니라 <strong>패널 출력</strong>이라 스크롤백에 그대로 남습니다</td></tr>
+            <tr><td><code>prompt-clear-message</code></td><td>프롬프트 단위 클리어가 <code>/clear</code> 전에 넣는 <strong>문서화 지시문 문구</strong>를 바꿉니다(설정 파일에 영속)</td></tr>
+            <tr><td><code>prompt-clear-queue</code></td><td>클리어 사이클마다 하나씩 꺼내 쓸 <strong>다음 프롬프트 대기열</strong>(별칭 <code>pc-queue</code>) — 인자 없이 = 지금 쌓인 목록 팝업, <code class="nb">-c</code> = 비우기, 그 밖의 문구 = 큐에 추가(모드가 꺼져 있으면 자동으로 켜집니다)</td></tr>
           </tbody>
         </table>
         <p>명령은 <kbd>ESC</kbd> → <kbd>:</kbd> 프롬프트에서 실행합니다. 토글류는 인자 없이 실행하면 선택 팝업이 뜹니다.</p>
