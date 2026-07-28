@@ -18,10 +18,11 @@ import os
 import shlex
 import shutil
 import subprocess
+import tempfile
 
 import harness  # noqa: F401 (경로 설정)
 from run import skip
-from pytmuxlib import plugins
+from pytmuxlib import plugins, pty_backend
 from pytmuxlib.plugins import blocks as blocks_pkg
 from pytmuxlib.model import Pane
 from pytmuxlib.plugins.blocks import blocks_dirty, blocks_wire, pane_osc
@@ -311,7 +312,14 @@ async def test_powershell_integration_reports_a_windows_cwd_without_a_leading_sl
 
     남으면 네이티브 클라가 Claude 폴더 이름을 `-D--a-b` 로 만들고 실제 이름
     (`D--a-b`)과 **한 글자 차이로** 못 찾는다. 증상이 "세션이 없다"라 조용하다.
+
+    **Windows 에서만** 유효하다 — pwsh 는 Linux/macOS 에도 깔려 있고(GHA ubuntu 러너가
+    그렇다) 거기엔 `C:` 드라이브가 없어 `Set-Location` 이 조용히 실패한다. 그러면
+    러너의 POSIX cwd 가 대신 실려 와 `/` 로 시작하는 것이 **정상인데** 이 단언이
+    터진다. POSIX 쪽 계약은 아래 `..._a_posix_cwd_without_a_doubled_slash` 가 본다.
     """
+    if not pty_backend.IS_WINDOWS:
+        skip("Windows 아님(드라이브 경로가 없어 pwsh 가 `C:\\` 로 못 간다)")
     out = _powershell_emits("Set-Location C:\\Windows; __pytmux_report_cwd")
     pane = _pane()
     pane.feed(_osc("133", "A"))
@@ -319,6 +327,31 @@ async def test_powershell_integration_reports_a_windows_cwd_without_a_leading_sl
     cwd = blocks_wire(pane)[0]["cwd"]
     assert not cwd.startswith("/"), "드라이브 경로 앞의 슬래시가 남았다: %r" % cwd
     assert cwd.lower().startswith("c:/"), cwd
+
+
+async def test_powershell_integration_reports_a_posix_cwd_without_a_doubled_slash():
+    """POSIX 의 pwsh 도 `.sh` 판과 **같은 cwd** 를 실어야 한다.
+
+    `.ps1` 이 `file://$host/$p` 로 `/` 를 무조건 덧붙이던 시절, POSIX 의
+    `ProviderPath`(`/home/me`)에는 `/` 가 이미 있어 `file://host//home/me` 가 나갔고
+    파서에 `//home/me` 가 남았다 — 같은 디렉토리인데 `.sh` 셸(`/home/me`)과 문자열이
+    달라 cwd 비교·Claude 폴더 판정이 어긋난다. pwsh 는 Windows 전용이 아니다.
+    """
+    if pty_backend.IS_WINDOWS:
+        skip("Windows(드라이브 경로라 POSIX 절대경로 계약이 아니다)")
+    # 심링크가 없는 실경로를 준다 — `ProviderPath` 가 심링크를 풀든 말든 같은 답이라야
+    # 단언이 경로 정책이 아니라 **URL 조립**만 본다.
+    d = os.path.realpath(tempfile.mkdtemp(prefix="pytmux-ps1-cwd-"))
+    try:
+        out = _powershell_emits("Set-Location '%s'; __pytmux_report_cwd" % d)
+        pane = _pane()
+        pane.feed(_osc("133", "A"))
+        pane.feed(out)
+        cwd = blocks_wire(pane)[0]["cwd"]
+        assert not cwd.startswith("//"), "URL 조립이 슬래시를 겹쳤다: %r" % cwd
+        assert cwd == d, cwd
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 async def test_a_windows_drive_url_loses_only_the_url_slash():

@@ -71,9 +71,13 @@ function global:__pytmux_report_cwd() {
     $loc = Get-Location
     if ($loc.Provider.Name -ne 'FileSystem') { return }
     $p = $loc.ProviderPath.Replace('\', '/')
+    # pwsh 는 Linux/macOS 에도 있고 거기서는 ProviderPath 가 이미 `/` 로 시작한다 —
+    # 그때도 `/` 를 덧붙이면 `file://host//home/me` 가 되어 파서에 `//home/me` 가 남고
+    # (`_parse_file_url` 은 드라이브 경로의 `/` 만 뗀다) `.sh` 판과 cwd 가 어긋난다.
+    if (-not $p.StartsWith('/')) { $p = "/$p" }
     $host_ = $env:COMPUTERNAME
     if (-not $host_) { $host_ = 'localhost' }
-    __pytmux_osc "7;file://$host_/$p"
+    __pytmux_osc "7;file://$host_$p"
 }
 
 function global:__pytmux_report_cmd([string]$line) {
