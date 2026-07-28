@@ -366,6 +366,47 @@ async def test_worker_records_error_and_backs_off():
     assert max(slept) <= 3600
 
 
+async def test_missing_crypto_backs_off_without_logging_a_traceback():
+    """`cryptography` 미설치는 **설정 상태**지 서버 크래시가 아니다 — error.log 를
+    안 건드린다(백오프는 그대로).
+
+    error.log 는 "데몬이 조용히 터졌다"를 찾는 자리라 전 스위트의 teardown 가드가
+    거기 쌓인 트레이스백을 실패로 읽는다. 매 주기 다시 나는 설치 안내가 거기 쌓이면
+    ①무관한 테스트가 떨어지고(GHA ubuntu 3.12 · cryptography 없는 3.11 실측)
+    ②진짜 크래시가 그 사이에 묻힌다."""
+    import asyncio
+
+    class FakeServer:
+        running = True
+        token_sync = "server"
+        token_sync_url = "https://x"
+        token_sync_sec = 60
+
+        def __init__(self):
+            self.logged = []
+
+        def _log_error(self, m):
+            self.logged.append(m)
+
+    srv = FakeServer()
+    slept = []
+
+    async def fake_sleep(n):
+        slept.append(n)
+        if len(slept) >= 3:
+            raise asyncio.CancelledError
+
+    def no_crypto(_s):
+        raise syncrypto.SyncCryptoUnavailable(syncrypto.INSTALL_HINT)
+
+    try:
+        await tokensync.run_worker(srv, make_client=no_crypto, sleep=fake_sleep)
+    except asyncio.CancelledError:
+        pass
+    assert srv.logged == [], "선택 의존성 미설치를 error.log 에 적었다: %r" % srv.logged
+    assert slept[1] > slept[0], "그래도 백오프는 해야 한다(매 30s 재시도 금지)"
+
+
 # ── 설정 경로(켜는 방법이 코드 안에 있어야 한다) ────────────────────────────
 
 async def test_configure_persists_and_validates_url():

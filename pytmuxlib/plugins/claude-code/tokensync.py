@@ -803,6 +803,15 @@ async def run_worker(server, make_client=None, sleep=None):
             raise
         except NotEnrolled:
             pass                # 등록 전에는 조용히 대기(사용자 행동 필요)
+        except syncrypto.SyncCryptoUnavailable as e:
+            # 선택 의존성(cryptography) 미설치는 **크래시가 아니라 설정 상태**다 —
+            # NotEnrolled 와 같은 부류(사용자 행동 필요)로 다룬다. 사유는 남기되
+            # (last_err → 패널이 설치 안내를 보여 준다) error.log 에 트레이스백은
+            # 안 쌓는다: ①매 주기 같은 것이 다시 나 로그가 부풀고 ②서버 예외 가드가
+            # 그 트레이스백을 "조용한 서버 크래시"로 읽어 **무관한 테스트**를 떨군다
+            # (GHA ubuntu · cryptography 없는 로컬 3.11 양쪽에서 실측).
+            fails += 1
+            _note_state(server, e)
         except Exception as e:  # noqa: BLE001
             fails += 1
             _note_error(server, e)
@@ -854,16 +863,30 @@ def _client_for(server):
                       db_path=path)
 
 
-def _note_error(server, exc):
+def _note_last_err(server, exc) -> None:
+    """사유를 DB(`sync_remote.last_err`)에만 적는다 — 패널이 읽어 보여 주는 자리."""
     try:
         conn = getattr(server, "_tokens_db", None)
         if conn is not None:
             usagedb.set_sync_remote(conn, SyncClient.REMOTE, last_err=str(exc)[:200])
     except Exception:           # noqa: BLE001 — 기록 실패가 워커를 죽이면 안 된다
         pass
+
+
+def _note_error(server, exc):
+    """진짜 실패 — last_err + error.log(트레이스백)."""
+    _note_last_err(server, exc)
     log = getattr(server, "_log_error", None)
     if log is not None:
         log("token_sync: %s" % exc)
+
+
+def _note_state(server, exc):
+    """사용자 행동이 필요한 **상태**(선택 의존성 미설치 등) — last_err 까지만.
+
+    error.log 는 "서버가 조용히 터졌다"를 찾는 자리다. 설치 안내 한 줄이면 되는
+    것을 트레이스백으로 쌓으면 진짜 크래시가 그 사이에 묻힌다."""
+    _note_last_err(server, exc)
 
 
 # ── 작은 유틸 ──────────────────────────────────────────────────────────────
