@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 
@@ -27,6 +28,9 @@ def can_connect(sock_path: str) -> bool:
 # 폴 간격→상한까지 지수 증가. 총 예산 polls*interval(≈4s)은 종전과 동일.
 _WAIT_POLL_INITIAL = 0.002   # 첫 폴 간격(서버가 <20ms 에 뜨면 체감 지연 최소화)
 _WAIT_POLL_BACKOFF = 1.6     # 폴 간격 지수 증가율(interval 상한까지)
+# 원격(stdio-proxy) 자동 기동 대기 예산: 500*0.02 = 10s. 로컬 기본(4s)보다 넉넉하되
+# serverremote 의 핸드셰이크 readline 타임아웃(15s) 안에 든다.
+_REMOTE_START_POLLS = 500
 
 
 def wait_server(sock_path: str, *, polls: int = 200, interval: float = 0.02) -> bool:
@@ -79,14 +83,89 @@ def wait_server_authed(sock_path: str, *, polls: int = 200,
         delay *= _WAIT_POLL_BACKOFF
 
 
+def server_boot_log(sock_path: str) -> str:
+    """서버 데몬의 **부팅 stderr** 를 받아 두는 파일 경로(<sock>.boot.log).
+
+    서버가 여는 `<sock>.error.log` 는 서버가 살아난 **뒤**의 예외만 담는다 — 그
+    앞에서 죽으면(import 실패·구문 오류·권한) 아무 흔적도 남지 않았다."""
+    return f"{sock_path}.boot.log"
+
+
+def spawn_server(sock_path: str) -> None:
+    """서버 데몬을 분리 기동한다(부팅 stderr 는 진단용으로 boot.log 에 남긴다).
+
+    모든 자동 기동 지점(attach·stdio-proxy·ensure_server·start-server)이 이 한
+    곳을 지나 실패 사유가 항상 회수 가능하게 한다.
+
+    소켓의 상위 디렉터리는 미리 만든다(0o700). 기본 경로는 ipc 가 만들어 주지만
+    명시 `--socket` 은 아무도 만들지 않아, 없는 디렉터리를 주면 서버가 bind 에서
+    죽고 **error.log 도 같은 없는 디렉터리라 못 써서** 흔적 없이 rc=0 으로 사라졌다
+    (런처는 사유 0줄의 '서버 기동 실패'만 출력). 디렉터리가 있어야 boot.log 도
+    쓸 수 있다 — 진단의 전제 조건이다."""
+    d = os.path.dirname(os.path.abspath(sock_path))
+    try:
+        os.makedirs(d, exist_ok=True)
+        if os.name != "nt":
+            os.chmod(d, 0o700)          # 토큰/소켓이 사는 곳 — 소유자 전용
+    except OSError:
+        pass                            # 만들지 못해도 기동은 시도(사유는 아래서 보고)
+    proc.spawn_detached(proc.server_argv(sock_path),
+                        stderr_path=server_boot_log(sock_path))
+
+
+def server_boot_error(sock_path: str, *, tail: int = 4096) -> str:
+    """기동 실패 시 boot.log 에서 **사람이 읽을 한 줄 사유**를 뽑는다(없으면 "").
+
+    실측 사례(2026-07-28): 원격 호스트의 `python3` 가 homebrew 업그레이드로
+    3.13→3.14 로 바뀌어 requirements 가 없는 인터프리터를 가리켰다. 데몬은
+    ModuleNotFoundError 로 즉사했지만 stderr 가 /dev/null 이라 사용자에게는
+    '인증 대기 시한 초과' 만 보였다 — 원인이 인터프리터에 있음을 알 길이 없었다.
+    의존성 누락은 특히 흔하므로 **어느 인터프리터에 무엇이 없는지 + 설치 명령**
+    까지 만들어 준다."""
+    text = ""
+    try:
+        with open(server_boot_log(sock_path), "rb") as f:
+            try:
+                f.seek(-tail, os.SEEK_END)
+            except OSError:                    # 파일이 tail 보다 짧음
+                f.seek(0)
+            text = f.read().decode("utf-8", "replace")
+    except OSError:
+        pass
+    m = re.search(r"ModuleNotFoundError: No module named '([^']+)'", text)
+    if m:
+        py = proc.server_argv(sock_path)[0]
+        return (f"서버 인터프리터에 필수 의존성 '{m.group(1)}' 이(가) 없습니다 "
+                f"({py}) — `{py} -m pip install -r requirements.txt`")
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if lines:
+        return lines[-1][:300]
+    # 로그가 비었다 = 데몬이 stderr 한 줄 못 남기고 죽었거나, 로그 자체를 못 썼다.
+    # 후자는 소켓 디렉터리 문제인데 그러면 서버도 bind 못 해 같이 죽는다 — 여기서
+    # 짚어 주지 않으면 사유가 영영 0줄이다(런처가 만들 수 있는 마지막 단서).
+    d = os.path.dirname(os.path.abspath(sock_path))
+    if not os.path.isdir(d):
+        return f"소켓 디렉터리가 없습니다: {d}"
+    if not os.access(d, os.W_OK):
+        return f"소켓 디렉터리에 쓸 수 없습니다(권한): {d}"
+    return ""
+
+
+def report_server_start_failure(sock_path: str, headline: str) -> None:
+    """기동 실패를 stderr 로 보고한다 — 가능하면 boot.log 의 진짜 사유를 붙여서.
+    (원격 stdio-proxy 의 stderr 는 ssh 를 타고 로컬 notice 로 그대로 표시된다.)"""
+    detail = server_boot_error(sock_path)
+    print(f"{headline}: {detail}" if detail else headline, file=sys.stderr)
+
+
 def ensure_server(sock_path: str):
     if ipc.probe(sock_path):
         return
     # 부모 생애와 무관하게 살아남는 분리 서버 프로세스를 띄운다(Unix setsid /
     # Windows DETACHED_PROCESS). 그 뒤 listen 이 떠 접속 가능해질 때까지 대기.
-    proc.spawn_detached(proc.server_argv(sock_path))
+    spawn_server(sock_path)
     if not wait_server(sock_path):
-        print("pytmux: 서버 기동 실패", file=sys.stderr)
+        report_server_start_failure(sock_path, "pytmux: 서버 기동 실패")
         sys.exit(1)
 
 
@@ -415,14 +494,21 @@ def run_stdio_proxy(sock_path: str) -> int:
             print("pytmux: 실행 중인 서버 없음", file=sys.stderr)
             return 1
         try:
-            proc.spawn_detached(proc.server_argv(sock_path))
+            spawn_server(sock_path)
         except Exception as e:                       # 기동 자체 실패(권한·실행파일 등)
             print(f"pytmux: 서버 자동 기동 실패: {e}", file=sys.stderr)
             return 1
         # connectability 가 아니라 auth 까지 기다린다 — 좀비 소켓 교체 창에서 probe 가
         # 옛 서버를 맞히는 레이스를 피한다(메인 attach need_spawn 분기와 동일 판정).
-        if not wait_server_authed(sock_path):
-            print("pytmux: 서버 자동 기동 실패(인증 대기 시한 초과)", file=sys.stderr)
+        # 예산은 로컬(4s)보다 넉넉한 _REMOTE_START_POLLS: 원격은 콜드 부팅(인터프리터
+        # 시작+pyte/model import)이 로컬보다 느린데, 실패하면 원격 탭이 통째로 날아가고
+        # 사용자는 다시 시도해야 한다. 로컬 측 핸드셰이크 타임아웃(15s) 안에 든다.
+        if not wait_server_authed(sock_path, polls=_REMOTE_START_POLLS):
+            # 종전엔 '인증 대기 시한 초과' 만 찍어 원인이 사라졌다 — 데몬 stderr 가
+            # /dev/null 이었기 때문. 이제 boot.log 의 실제 사유를 실어 보낸다(이 stderr
+            # 는 ssh 를 타고 로컬 pytmux 의 notice 로 그대로 뜬다).
+            report_server_start_failure(
+                sock_path, "pytmux: 서버 자동 기동 실패(인증 대기 시한 초과)")
             return 1
     import socket as _socket
     sock = ipc.control_socket(sock_path)
@@ -500,6 +586,35 @@ def run_stdio_proxy(sock_path: str) -> int:
         except (OSError, ValueError):
             pass
     os._exit(0)
+
+
+def run_start_server(sock_path: str) -> int:
+    """`pytmux start-server` — 서버 데몬만 분리 기동하고 attach 없이 돌아온다.
+
+    tmux 의 `start-server` 대응. 쓰임새:
+      * **원격 호스트 준비**: `ssh <host> pytmux start-server` — 로컬에서 원격 탭을
+        열기 전에 원격 서버를 올려 두고, **실패하면 그 자리에서 이유를 본다**
+        (원격 탭 실패는 stdio-proxy 자동 기동 뒤에야 드러나 진단이 늦었다).
+      * 부팅 스크립트/서비스에서 서버만 미리 띄우기(클라이언트는 나중에 attach).
+    이미 인증까지 정상인 서버가 있으면 아무것도 하지 않는다(멱등)."""
+    if server_auth_ok(sock_path):
+        print(f"pytmux: 서버가 이미 실행 중입니다: {sock_path}")
+        return 0
+    if ipc.probe(sock_path):
+        # listen 은 하는데 인증이 안 되는 좀비(토큰 분실/불일치) — attach 경로와 같은
+        # 판정으로 새 서버를 띄워 소켓 경로를 원자 교체한다.
+        print("pytmux: 기존 서버가 인증을 거부합니다(좀비 서버로 추정) — "
+              "새 서버로 교체합니다.", file=sys.stderr)
+    try:
+        spawn_server(sock_path)
+    except Exception as e:                   # 실행파일/권한 등 spawn 자체 실패
+        print(f"pytmux: 서버 기동 실패: {e}", file=sys.stderr)
+        return 1
+    if not wait_server_authed(sock_path):
+        report_server_start_failure(sock_path, "pytmux: 서버 기동 실패")
+        return 1
+    print(f"pytmux: 서버 기동됨: {sock_path}")
+    return 0
 
 
 def _confirm_kill_server() -> bool:
@@ -622,6 +737,11 @@ def main(argv=None):
     # stdio-proxy` 로 원격에서 실행되면 원격 서버 소켓 ↔ stdio 를 스플라이스한다.
     sub.add_parser("stdio-proxy",
                    help="(페더레이션) 로컬 서버 소켓 ↔ stdio 스플라이스")
+    # attach 없이 서버만 올린다(tmux start-server 대응). `server` 는 전경 데몬 본체라
+    # 사람이 직접 쓰는 명령이 아니다 — 그 구분을 이름으로 드러낸다.
+    sub.add_parser("start-server",
+                   help="서버만 분리 기동(attach 하지 않음). 예: "
+                        "ssh <host> pytmux start-server")
     p_srv = sub.add_parser("server", help="(내부) 서버를 전경 실행")
     p_srv.add_argument("--foreground", action="store_true")
     # 작업 보존 재시작(re-exec): 새 서버 이미지가 이 상태 파일로 상속된 PTY 를 채택.
@@ -647,6 +767,8 @@ def main(argv=None):
 
     if args.command == "stdio-proxy":
         sys.exit(run_stdio_proxy(sock_path))
+    if args.command == "start-server":
+        sys.exit(run_start_server(sock_path))
     if args.command == "server":
         # 레버 H(콜드 스타트 겹치기): host 인터프리터 startup(~400ms)을 아래 무거운
         # `from .server import run_server`(pyte/model ~140ms)+서버 부팅과 겹치도록, host 를
@@ -756,12 +878,12 @@ def main(argv=None):
                   "되는 좀비 서버) — 새 서버로 교체합니다.", file=sys.stderr)
             need_spawn = True
     if need_spawn:
-        proc.spawn_detached(proc.server_argv(sock_path))
+        spawn_server(sock_path)
     # 네이티브 클라는 textual 을 **아예 안 부른다**. 아래 지연 import 앞에 두는 이유가
     # 그것이다 — 러스트 이진으로 붙는 사람에게 textual 미설치가 실패 사유가 되면 안 된다.
     if getattr(args, "native", False):
         if need_spawn and not wait_server_authed(sock_path):
-            print("pytmux: 서버 기동 실패", file=sys.stderr)
+            report_server_start_failure(sock_path, "pytmux: 서버 기동 실패")
             sys.exit(1)
         sys.exit(run_native_client(sock_path))
     try:
@@ -777,7 +899,7 @@ def main(argv=None):
     # 새로 띄웠다면 connectability(probe)가 아니라 auth 까지 기다린다 — 좀비를
     # 교체하는 경우 경로가 새 서버로 바뀌기 전 probe 가 좀비를 맞힐 수 있어서다.
     if need_spawn and not wait_server_authed(sock_path):
-        print("pytmux: 서버 기동 실패", file=sys.stderr)
+        report_server_start_failure(sock_path, "pytmux: 서버 기동 실패")
         sys.exit(1)
     run_client(sock_path, None)
 

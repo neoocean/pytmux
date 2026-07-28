@@ -134,9 +134,13 @@ python3 pytmux.py        # 서버가 없으면 자동 기동 후 attach, 있으�
 # 래퍼를 설치했다면 어디서든:
 #   pytmux              attach (없으면 기동)
 #   pytmux ls           탭/패널 요약
+#   pytmux start-server 서버만 기동(attach 안 함) — 부팅 스크립트·원격 준비용
 #   pytmux kill-server  서버와 모든 탭/셸 종료
 #   pytmux cmd new-tab  외부에서 서버 제어(split-window -h, rename-tab …)
 ```
+
+원격 호스트를 원격 탭(⇄)으로 붙이기 전에 `ssh <host> pytmux start-server` 로 미리
+띄워 보면, 그 자리에서 기동 성공/실패와 **실패 사유**를 확인할 수 있습니다.
 
 처음 실행하면 평소 쓰던 셸이 전체 화면으로 뜹니다. `Ctrl-b`(prefix)를 누른 뒤 명령
 키를 누르거나, 마우스/메뉴로 조작하면 됩니다.

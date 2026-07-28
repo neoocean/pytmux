@@ -842,6 +842,18 @@ def run_server(sock_path: str, resume_path: str | None = None):
             srv._log_error("run_server(fatal)")
         except Exception:
             pass
+        # stderr 로도 낸다. ① 자동 기동 경로는 stderr 를 `<sock>.boot.log` 로 돌려
+        # 두므로(proc.spawn_detached stderr_path) 런처가 실패 사유를 사용자에게
+        # 그대로 전할 수 있고, ② error.log 자체를 못 쓰는 실패(소켓 디렉터리 부재
+        # → bind FileNotFoundError → 로그 경로도 같은 없는 디렉터리)에선 이쪽이
+        # **유일한 흔적**이다. 종전엔 그런 서버가 출력 한 줄 없이 rc=0 으로 사라져
+        # 런처가 '서버 기동 실패' 만 찍었다(원인 0줄).
+        try:
+            import sys
+            traceback.print_exc(file=sys.stderr)
+            sys.stderr.flush()
+        except Exception:
+            pass
     finally:
         # 종료 시 풀에 남은 미사용 의사콘솔(OpenConsole 호스트)을 닫아 고아를 막는다.
         try:

@@ -168,3 +168,27 @@ async def test_foreground_command():
 
 async def test_run_sync_units():
     test_server_argv()
+
+
+async def test_spawn_detached_captures_stderr_to_a_file():
+    """stderr_path 를 주면 자식 stderr 가 그 파일로 간다(데몬 부팅 실패 진단의 토대).
+
+    데몬은 stderr 가 /dev/null 이라 **부팅 중 죽으면 이유가 통째로 사라졌다** —
+    원격 자동 기동 실패가 '인증 대기 시한 초과' 로만 보이던 원인(2026-07-28).
+    파일 없이(=stderr_path 미지정) 기동해도 종전대로 동작해야 한다.
+    """
+    if proc.IS_WINDOWS:
+        return  # POSIX 에서 검증(Windows 는 별도 박스)
+    d = tempfile.mkdtemp(prefix="pytmux-bootlog-")
+    log = os.path.join(d, "boot.log")
+    code = "import sys;sys.stderr.write('BOOM: no module named zzz\\n')"
+    pid = proc.spawn_detached([sys.executable, "-c", code], stderr_path=log)
+    try:
+        await wait_for(lambda: os.path.exists(log) and os.path.getsize(log) > 0,
+                       timeout=10.0, step=0.05)
+        assert "BOOM" in open(log).read(), open(log).read()
+    finally:
+        try:
+            os.waitpid(pid, 0)
+        except (ChildProcessError, OSError):
+            pass

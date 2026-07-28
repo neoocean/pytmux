@@ -236,7 +236,7 @@ async def test_stdio_proxy_autostarts_when_no_server():
     try:
         L.ipc.probe = lambda *a, **k: False           # 원격에 서버 없음
         L.proc.server_argv = lambda sp: ["argv", sp]
-        L.proc.spawn_detached = lambda argv: calls.append(argv)
+        L.proc.spawn_detached = lambda argv, **kw: calls.append(argv)
         L.wait_server_authed = lambda *a, **k: False  # 인증 대기 실패 → splice 전 return 1
         assert L.run_stdio_proxy("/tmp/nope.sock") == 1
         assert calls == [["argv", "/tmp/nope.sock"]], calls   # 자동 기동을 시도함
@@ -254,7 +254,7 @@ async def test_stdio_proxy_autostart_optout_env():
     real_probe, real_spawn = L.ipc.probe, L.proc.spawn_detached
     try:
         L.ipc.probe = lambda *a, **k: False
-        L.proc.spawn_detached = lambda argv: calls.append(argv)
+        L.proc.spawn_detached = lambda argv, **kw: calls.append(argv)
         os.environ["PYTMUX_NO_REMOTE_AUTOSTART"] = "1"
         assert L.run_stdio_proxy("/tmp/nope.sock") == 1
         assert calls == [], "opt-out 시 자동 기동 안 함"
@@ -394,3 +394,172 @@ async def test_native_flag_is_accepted_before_and_after_the_subcommand():
                 except SystemExit as e:
                     assert e.code == 0, f"{argv}: exit {e.code}"
                 assert calls == ["/tmp/t.sock"], f"{argv} 에서 네이티브 경로가 안 탔다"
+
+
+async def test_server_boot_error_names_the_missing_dependency():
+    """데몬이 import 실패로 즉사하면 **어느 인터프리터에 무엇이 없는지** 를 뽑아낸다.
+
+    실측(2026-07-28 원격 탭 실패): 원격의 homebrew `python3` 가 3.13→3.14 로 옮겨가
+    requirements 없는 인터프리터를 가리켰고, 데몬은 ModuleNotFoundError 로 즉사했다.
+    당시 데몬 stderr 는 /dev/null 이라 사용자가 본 것은 '인증 대기 시한 초과' 뿐 —
+    원인이 인터프리터에 있다는 단서가 어디에도 없었다.
+    """
+    import io
+    import contextlib
+    from pytmuxlib import launcher as L
+    with tempfile.TemporaryDirectory() as d:
+        sock = os.path.join(d, "s.sock")
+        with open(L.server_boot_log(sock), "w") as f:
+            f.write("Traceback (most recent call last):\n"
+                    '  File "pytmuxlib/vtconst.py", line 15, in <module>\n'
+                    "    from wcwidth import wcwidth as _wcwidth_base\n"
+                    "ModuleNotFoundError: No module named 'wcwidth'\n")
+        detail = L.server_boot_error(sock)
+        assert "wcwidth" in detail, detail
+        assert "pip install" in detail, f"설치 방법을 안내하지 않는다: {detail}"
+        # 보고 경로까지 — 값을 만드는 헬퍼만 맞고 호출부가 빠지면 사용자는 못 본다.
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            L.report_server_start_failure(sock, "pytmux: 서버 기동 실패")
+        assert "wcwidth" in err.getvalue(), err.getvalue()
+
+
+async def test_server_boot_error_is_empty_without_a_log():
+    """로그가 없으면 빈 문자열 — 호출부가 종전 문구만 찍도록(없는 원인 지어내지 않음)."""
+    import io
+    import contextlib
+    from pytmuxlib import launcher as L
+    with tempfile.TemporaryDirectory() as d:
+        sock = os.path.join(d, "s.sock")
+        assert L.server_boot_error(sock) == ""
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            L.report_server_start_failure(sock, "pytmux: 서버 기동 실패")
+        assert err.getvalue().strip() == "pytmux: 서버 기동 실패", err.getvalue()
+
+
+async def test_spawn_server_routes_daemon_stderr_to_the_boot_log():
+    """자동 기동은 **반드시** boot.log 로 stderr 를 돌린다(진단의 단일 지점).
+
+    '호출 제거' 뮤테이션 방어: spawn_server 가 stderr_path 를 안 넘기면 데몬의 죽는
+    이유가 다시 /dev/null 로 사라진다.
+    """
+    import harness
+    from pytmuxlib import launcher as L
+    seen = {}
+    with tempfile.TemporaryDirectory() as d:
+        sock = os.path.join(d, "s.sock")
+        with harness.patched(L.proc,
+                             spawn_detached=lambda argv, **kw: seen.update(kw)):
+            L.spawn_server(sock)
+        assert seen.get("stderr_path") == L.server_boot_log(sock), seen
+
+
+async def test_stdio_proxy_autostart_failure_reports_the_real_reason():
+    """원격 자동 기동이 실패하면 stderr 에 **사유**가 실린다(ssh 로 로컬 notice 까지).
+
+    종전엔 '인증 대기 시한 초과' 만 나가서 원격 탭 실패를 진단할 수 없었다.
+    """
+    import io
+    import contextlib
+    import harness
+    from pytmuxlib import launcher as L
+    old_env = os.environ.pop("PYTMUX_NO_REMOTE_AUTOSTART", None)
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            sock = os.path.join(d, "s.sock")
+            with open(L.server_boot_log(sock), "w") as f:
+                f.write("ModuleNotFoundError: No module named 'pyte'\n")
+            err = io.StringIO()
+            with harness.patched(L, wait_server_authed=lambda *a, **k: False,
+                                 spawn_server=lambda sp: None):
+                with harness.patched(L.ipc, probe=lambda *a, **k: False):
+                    with contextlib.redirect_stderr(err):
+                        assert L.run_stdio_proxy(sock) == 1
+            out = err.getvalue()
+            assert "pyte" in out, out
+    finally:
+        if old_env is not None:
+            os.environ["PYTMUX_NO_REMOTE_AUTOSTART"] = old_env
+
+
+async def test_start_server_starts_without_attaching():
+    """`pytmux start-server`: 서버만 띄우고 attach 하지 않는다(0). 이미 떠 있으면 멱등."""
+    import io
+    import contextlib
+    import harness
+    from pytmuxlib import launcher as L
+    spawned = []
+    # ① 서버 없음 → 기동 시도 후 성공 보고.
+    with harness.patched(L, spawn_server=lambda sp: spawned.append(sp),
+                         server_auth_ok=lambda *a, **k: False,
+                         wait_server_authed=lambda *a, **k: True):
+        with harness.patched(L.ipc, probe=lambda *a, **k: False):
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert L.run_start_server("/tmp/x.sock") == 0
+    assert spawned == ["/tmp/x.sock"], spawned
+    # ② 이미 인증 정상인 서버가 있으면 아무것도 띄우지 않는다(멱등).
+    spawned.clear()
+    with harness.patched(L, spawn_server=lambda sp: spawned.append(sp),
+                         server_auth_ok=lambda *a, **k: True):
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert L.run_start_server("/tmp/x.sock") == 0
+    assert spawned == [], "이미 실행 중인데 또 띄웠다"
+
+
+async def test_start_server_reports_failure_reason():
+    """기동에 실패하면 rc=1 + boot.log 의 사유를 stderr 로 알린다(조용한 실패 금지)."""
+    import io
+    import contextlib
+    import harness
+    from pytmuxlib import launcher as L
+    with tempfile.TemporaryDirectory() as d:
+        sock = os.path.join(d, "s.sock")
+        with open(L.server_boot_log(sock), "w") as f:
+            f.write("ModuleNotFoundError: No module named 'textual'\n")
+        err = io.StringIO()
+        with harness.patched(L, spawn_server=lambda sp: None,
+                             server_auth_ok=lambda *a, **k: False,
+                             wait_server_authed=lambda *a, **k: False):
+            with harness.patched(L.ipc, probe=lambda *a, **k: False):
+                with contextlib.redirect_stderr(err):
+                    assert L.run_start_server(sock) == 1
+        assert "textual" in err.getvalue(), err.getvalue()
+
+
+async def test_start_server_is_wired_into_the_cli():
+    """CLI 하위명령으로 실제 연결돼 있는지(파서만 늘고 dispatch 가 빠지는 실수 방지)."""
+    import harness
+    from pytmuxlib import launcher as L
+    calls = []
+    with harness.patched(L, run_start_server=lambda sp: calls.append(sp) or 0):
+        try:
+            L.main(["--socket", "/tmp/t.sock", "start-server"])
+        except SystemExit as e:
+            assert e.code == 0, f"exit {e.code}"
+    assert calls == ["/tmp/t.sock"], calls
+
+
+async def test_spawn_server_creates_the_socket_directory():
+    """명시 `--socket` 이 없는 디렉터리를 가리켜도 기동한다(0o700 으로 생성).
+
+    종전엔 서버가 bind 에서 죽고 error.log 도 같은 없는 디렉터리라 못 써서, 사유
+    한 줄 없이 rc=0 으로 사라졌다 — 런처는 '서버 기동 실패' 만 찍었다.
+    """
+    import harness
+    from pytmuxlib import launcher as L
+    with tempfile.TemporaryDirectory() as d:
+        sub = os.path.join(d, "made", "up")
+        sock = os.path.join(sub, "s.sock")
+        with harness.patched(L.proc, spawn_detached=lambda argv, **kw: 0):
+            L.spawn_server(sock)
+        assert os.path.isdir(sub), "소켓 상위 디렉터리를 만들지 않았다"
+        if os.name != "nt":
+            assert oct(os.stat(sub).st_mode & 0o777) == "0o700", "소유자 전용이 아님"
+
+
+async def test_server_boot_error_falls_back_to_the_socket_directory():
+    """로그가 비면(=데몬이 stderr 도 못 남김) 디렉터리 상태를 마지막 단서로 준다."""
+    from pytmuxlib import launcher as L
+    detail = L.server_boot_error("/nonexistent-dir-for-pytmux-test/s.sock")
+    assert "디렉터리" in detail, detail

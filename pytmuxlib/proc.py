@@ -121,14 +121,29 @@ def server_argv(sock_path: str, *, python: Optional[str] = None,
 
 
 def spawn_detached(argv: List[str], *, cwd: Optional[str] = None,
-                   env: Optional[dict] = None) -> int:
+                   env: Optional[dict] = None,
+                   stderr_path: Optional[str] = None) -> int:
     """부모 생애와 무관하게 살아남는 분리 프로세스를 띄우고 pid 를 돌려준다.
 
     표준 입출력은 모두 devnull 로 돌린다(데몬). close_fds 로 상속 fd 누수를 막는다.
+
+    stderr_path: 주면 자식 stderr 를 devnull 대신 **그 파일**로 돌린다(매 기동마다
+    truncate). 데몬은 stderr 가 /dev/null 이라 **부팅 중 죽으면 이유가 통째로
+    사라졌다** — 원격 stdio-proxy 의 자동 기동이 실패했을 때 사용자가 본 것은
+    '인증 대기 시한 초과' 뿐이고 진짜 원인(ModuleNotFoundError 등)은 어디에도 남지
+    않았다(2026-07-28 원격 탭 실패 실측). 서버가 자기 로그를 열기 **전** 단계의
+    실패(import·구문·권한)를 잡는 유일한 지점이라 파일로 남긴다. 파일을 못 열면
+    조용히 devnull 로 폴백한다(진단이 기동을 막으면 안 된다).
     """
     devnull = subprocess.DEVNULL
+    errf = None
+    if stderr_path:
+        try:
+            errf = open(stderr_path, "wb", buffering=0)
+        except OSError:
+            errf = None
     kwargs: dict = dict(cwd=cwd, env=env, stdin=devnull, stdout=devnull,
-                        stderr=devnull, close_fds=True)
+                        stderr=(errf or devnull), close_fds=True)
     if IS_WINDOWS:
         kwargs["creationflags"] = (
             _DETACHED_PROCESS | _CREATE_NEW_PROCESS_GROUP | _CREATE_NO_WINDOW)
@@ -136,7 +151,11 @@ def spawn_detached(argv: List[str], *, cwd: Optional[str] = None,
         # setsid: 새 세션/프로세스그룹의 리더가 되어 컨트롤링 터미널에서 분리되고,
         # 종료 시 그룹 전체(자식 셸 포함)를 killpg 로 한 번에 정리할 수 있다.
         kwargs["start_new_session"] = True
-    proc = subprocess.Popen(argv, **kwargs)
+    try:
+        proc = subprocess.Popen(argv, **kwargs)
+    finally:
+        if errf is not None:       # 자식이 dup 해 갔으니 부모 쪽 fd 는 닫는다
+            errf.close()
     return proc.pid
 
 
