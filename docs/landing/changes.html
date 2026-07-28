@@ -60,8 +60,23 @@
     </header>
 
     <section class="cl-day" id="d-2026-07-28">
-      <h2>2026-07-28 <span class="pill">화요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/ffae5097dbb8fe50e2538863afba380b731ae7a8.zip" rel="noopener" title="2026-07-28 마지막 소스 커밋(ffae509) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-28 <span class="pill">화요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/0b3604e804459dce5bda6d2997ea817c190809a0.zip" rel="noopener" title="2026-07-28 마지막 소스 커밋(0b3604e) 시점 소스 zip">zip ⬇</a></h2>
       <ul>
+        <li><span class="pill stable">안정성</span> <strong>다른 프로그램이 pytmux 서버를 강제로 죽였을 때 창이 <span class="inline-code">아무 말 없이</span> 사라지던 것을 고쳤습니다 — 이제 이유가 화면에 남습니다.</strong>
+          서버가 정상 절차로 내려가면(<span class="inline-code nb">kill-server</span> 등) 클라이언트는 <strong>"서버가 종료되었습니다"</strong>라고 알리고 끝납니다.
+          그런데 서버 프로세스가 <strong>밖에서 강제 종료</strong>되면(작업 관리자에서 종료·프로세스 이름으로 일괄 kill·크래시) 그 인사말 자체가 없어서,
+          클라이언트는 재접속을 시도하다 실패한 뒤 <strong>단서를 하나도 남기지 않고 사라졌습니다</strong> — 화면만 봐서는 pytmux 가 왜 꺼졌는지 알 길이 없었습니다.
+          이제 이 경우에는 <strong>"서버 연결이 끊겼고 재접속에 실패했습니다 — 서버 프로세스가 외부에서 강제 종료됐는지 확인하세요"</strong> 가 남아,
+          <strong>의도된 종료와 사고를 문구만으로</strong> 가릴 수 있습니다.
+          <br>덧붙여 그렇게 끊긴 뒤 <strong>재접속 시도가 오래 매달리던 것</strong>도 막았습니다 — 이미 죽은 <strong>내 컴퓨터 안의</strong> 서버 포트로 연결을 시도할 때
+          <strong>0.5초 상한</strong>을 겁니다(원격 서버로 가는 연결은 링크가 느린 것이 정상이라 종전대로 제한하지 않습니다).
+          응답 없는 포트가 곧바로 거절되지 않는 환경(윈도우)에서는 재시도 스물다섯 번이 통째로 늘어져 <strong>한참 멈춰 있다가</strong> 종료됐습니다.</li>
+        <li><span class="pill stable">표시</span> <strong>줄 끝 글자에 붙는 <span class="inline-code">악센트</span>가 화면에 반영되지 않던 것을 고쳤습니다.</strong>
+          글자와 악센트를 <strong>따로 보내는</strong> 프로그램이 있습니다(<span class="inline-code">e</span> 다음에 악센트 → <span class="inline-code">é</span>).
+          그 악센트가 하필 <strong>줄이 막 바뀐 직후</strong>에 도착하면 pytmux 는 <strong>앞 줄 마지막 칸</strong>의 글자에 합쳐 넣는데,
+          <strong>고친 줄을 다시 그릴 목록에 넣지 않아</strong> 화면에는 합쳐지기 전 글자가 그대로 남았습니다 —
+          전체 다시 그리기(<span class="inline-code">prefix</span> <span class="inline-code">r</span>) 전까지 계속이었습니다.
+          이제 그 줄도 갱신 대상으로 표시해 곧바로 반영됩니다.</li>
         <li><span class="pill stable">마우스</span> <strong>창을 앞으로 가져오려고 <span class="inline-code">짧게 클릭</span>했을 뿐인데 클립보드가 바뀌던 것을 고쳤습니다.</strong>
           <a href="guide/mouse">왼쪽 드래그로 선택→복사</a>가 지금까지는 <strong>한 칸만 움직여도</strong> 드래그로 인정됐습니다 —
           다른 창에 있다가 pytmux 창을 클릭하는 순간 손이 <strong>살짝 밀리기만 해도</strong> 그 자리 글자가 선택돼

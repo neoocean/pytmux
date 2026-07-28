@@ -80,12 +80,12 @@
         <a class="cl-news-more" href="changes">전체 변경 내역 →</a>
       </div>
       <ul id="cl-news-list">
+        <li><span class="pill stable">안정성</span> <strong>다른 프로그램이 pytmux 서버를 강제로 죽였을 때 창이 <code>아무 말 없이</code> 사라지던 것을 고쳤습니다.</strong>
+          정상 종료면 "서버가 종료되었습니다"가 뜨지만, 밖에서 강제 종료되면 그 인사말이 없어 클라이언트가 단서 없이 사라졌습니다 — 이제 끊김·재접속 실패라는 사유가 남고, 죽은 로컬 서버로의 재접속 시도도 0.5초 상한으로 끊어 오래 매달리지 않습니다.</li>
+        <li><span class="pill stable">표시</span> <strong>줄 끝 글자에 붙는 <code>악센트</code>가 화면에 반영되지 않던 것을 고쳤습니다.</strong>
+          글자와 악센트를 따로 보내는 프로그램에서, 악센트가 줄이 막 바뀐 직후 도착하면 앞 줄 글자에 합쳐지고도 그 줄을 다시 그리지 않아 전체 다시 그리기 전까지 옛 글자가 남았습니다.</li>
         <li><span class="pill stable">마우스</span> <strong>창을 앞으로 가져오려고 <code>짧게 클릭</code>했을 뿐인데 클립보드가 바뀌던 것을 고쳤습니다.</strong>
           지금까지는 한 칸만 움직여도 드래그 선택으로 인정돼, 클릭하며 손이 살짝 밀리기만 해도 OS 클립보드가 덮어써졌습니다 — 이제 3칸 이상 움직여야 드래그이고(<code>set mouse-drag-threshold</code> 로 조절), 그보다 작은 흔들림은 클릭으로 처리됩니다.</li>
-        <li><span class="pill stable">키</span> <strong>맥에서 <code>⌥</code>+숫자가 <code>¡™£…</code> 글자로 새어 들어가던 것을 막고, 그대로 탭 전환이 되게 했습니다.</strong>
-          Esc 다음 숫자를 빨리 누르면 맥 기본 설정에서는 <code>⌥1=¡</code> 같은 글자로 도착해 탭은 그대로인 채 패널에 문자가 찍혔습니다 — 이제 원래 키로 되돌려 보이는 번호의 탭으로 전환하고, 그 글자는 패널에 입력되지 않습니다.</li>
-        <li><span class="pill stable">원격</span> <strong>원격 탭이 <code>서버 자동 기동 실패</code> 라고만 하고 왜인지는 없던 것을 고쳤습니다.</strong>
-          기동 중 데몬이 남긴 말이 버려져 "인증 대기 시한 초과" 한 줄만 보였습니다 — 이제 진짜 사유(예: 그 인터프리터에 없는 라이브러리)와 고치는 명령까지 보여 주고, <code>pytmux start-server</code> 로 원격 서버를 미리 올려 볼 수 있습니다.</li>
       </ul>
     </div>
     <div class="cta" style="margin-top:24px;">
