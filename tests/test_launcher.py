@@ -315,7 +315,11 @@ async def test_native_client_is_found_in_a_defined_order():
     """지목(env) → PATH → 개발 트리 순. 순서가 뒤집히면 사용자가 고른 이진이 무시된다."""
     from pytmuxlib.launcher import NATIVE_CLIENT, find_native_client
     with tempfile.TemporaryDirectory() as tmp:
-        on_path = os.path.join(tmp, NATIVE_CLIENT)
+        # Windows 의 `shutil.which` 는 PATHEXT 확장자가 있어야 실행파일로 친다 —
+        # 확장자 없는 파일을 놓으면 PATH 탐색이 **없는 것으로** 보고 순서 단언이 터진다
+        # (프로덕션은 무관: 실제로 배포되는 이진은 거기서 `.exe` 다).
+        on_path = os.path.join(tmp, NATIVE_CLIENT
+                               + (".exe" if os.name == "nt" else ""))
         with open(on_path, "w") as f:
             f.write("")
         os.chmod(on_path, 0o755)

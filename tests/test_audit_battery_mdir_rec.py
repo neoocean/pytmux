@@ -114,8 +114,11 @@ async def test_capture_filename_never_escapes_directory():
         assert ".." not in out and not out.startswith(".") \
             and not out.endswith("."), repr(out)
         assert out, "빈 조각은 'x' 로 대체돼야 한다"
-        # 조각을 합친 경로가 캡처 루트를 벗어나지 않는다.
-        base = "/tmp/captures"
+        # 조각을 합친 경로가 캡처 루트를 벗어나지 않는다. base 도 abspath 로 만든다 —
+        # 리터럴 "/tmp/captures" 를 쓰면 Windows 에서 좌변만 드라이브·역슬래시로
+        # 정규화돼(`D:\tmp\captures\…`) 우변(`/tmp/captures\`)과 형태가 어긋난다
+        # (탈출을 잡은 것이 아니라 **표기가 달라** 실패한다).
+        base = os.path.abspath(os.path.join(tempfile.gettempdir(), "captures"))
         assert os.path.abspath(os.path.join(base, out)).startswith(base + os.sep)
     assert recmix._safe("my.tab.name") == "my.tab.name", "정상 이름 불변"
     assert recmix._safe("..") == "x" and recmix._safe(".") == "x"

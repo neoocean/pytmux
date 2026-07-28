@@ -287,6 +287,13 @@ _CHAIN_MSG = {"t": "nc_list", "root": "/", "path": None, "cwd": "/r/sub",
               "chain": [["/", ["/r"]],
                         ["/r", ["/r/sub", "/r/other"]],
                         ["/r/sub", ["/r/sub/x"]]]}
+# 같은 픽스처에 **셸 OS 를 명시**한 판. 진짜 서버는 nc_list 에 `nt` 를 늘 싣는다
+# (server.py 의 `"nt": os.name == "nt"`) — 빼면 뷰가 **클라 OS** 로 폴백해서, Windows
+# 클라에서 이 POSIX 경로들이 ntpath 로 정규화된다(`_path_key('/r/other')` → `'\r\other'`).
+# 그러면 `_expanded` 를 원문 리터럴로 들여다보는 단언이 터진다(GHA windows 실측 2건).
+# `_CHAIN_MSG` 원본은 그대로 둔다 — 그쪽은 **구버전 서버 폴백**을 일부러 재는 자리다
+# (`test_ncd_opens_expanded_to_cwd_and_enter_cds` 의 cd 방언 단언).
+_CHAIN_MSG_POSIX = dict(_CHAIN_MSG, nt=False)
 
 
 async def test_ncd_command_requests_list():
@@ -455,7 +462,7 @@ async def test_ncd_right_expands_via_lazy_load():
         sent = []
         app.send_cmd = lambda action, **kw: sent.append((action, kw))
         app._run_command("ncd"); sent.clear()
-        app._dispatch(dict(_CHAIN_MSG))
+        app._dispatch(dict(_CHAIN_MSG_POSIX))
         await _wait_ncd(pilot, app)
         v = app.screen._view
         v._sel = 3                             # /r/other (접힘·미로드)
@@ -657,7 +664,7 @@ async def test_ncd_speed_search_finds_unopened_and_expands():
         sent = []
         app.send_cmd = lambda action, **kw: sent.append((action, kw))
         app._run_command("ncd"); sent.clear()
-        app._dispatch(dict(_CHAIN_MSG))      # rows: /r,/r/sub,/r/sub/x,/r/other
+        app._dispatch(dict(_CHAIN_MSG_POSIX))  # rows: /r,/r/sub,/r/sub/x,/r/other
         await _wait_ncd(pilot, app)
         v = app.screen._view
         for ch in "deep":                    # 보이는 행에 없는 이름
