@@ -147,6 +147,7 @@
             <tr><td><kbd>e</kbd></td><td>활성 패널에 ESC 전송</td></tr>
             <tr><td><kbd>Insert</kbd> / <kbd>Shift+Delete</kbd></td><td>작성창(블록 선택 편집 → 주입) · <kbd>Shift+Delete</kbd> 는 Insert 키 없는 맥 키보드용</td></tr>
             <tr><td><kbd>Ctrl+↑</kbd> / <kbd>Ctrl+↓</kbd></td><td>이전 / 다음에 입력한 프롬프트 위치로 점프(Claude 패널)</td></tr>
+            <tr><td><kbd>↑</kbd>(최상단 패널에서)</td><td>탭 <strong>닫기 <code>[x]</code></strong> 포커스 → 한 번 더 <kbd>↑</kbd> 면 <strong>탭바 포커스</strong>. 탭바에서는 <kbd>←→</kbd>(또는 <kbd>↑↓</kbd>)로 탭과 맨 오른쪽 <code>[+]</code> 를 돌며 고르고, <kbd>Enter</kbd> 로 그 탭 전환(<code>[+]</code> 면 새 탭), <kbd>+</kbd>/<kbd>a</kbd> 새 탭, <kbd>x</kbd>/<kbd>d</kbd>/<kbd>Delete</kbd> 탭 닫기(확인 후), <kbd>Shift+←→</kbd> 로 탭 순서 이동, <kbd>↓</kbd>/<kbd>Esc</kbd> 로 빠져나옵니다</td></tr>
             <tr><td><kbd>↓</kbd>(최하단 패널에서)</td><td>상태줄 배지 포커스 — <kbd>←→</kbd> 로 배지 순환, <kbd>Enter</kbd> 실행. 알림 배지(<code class="nb">≡N</code>)에서 <kbd>Enter</kbd> = <strong>지나간 알림 이력</strong>(<kbd>↑↓</kbd>·<kbd>PgUp</kbd>/<kbd>PgDn</kbd>·<kbd>Home</kbd>/<kbd>End</kbd> 이동 · <kbd>Enter</kbd> 전문 펼치기 · <kbd>c</kbd> 복사 · <kbd>Esc</kbd> 닫기)</td></tr>
             <tr><td><kbd>:</kbd> / <kbd>?</kbd></td><td>명령 프롬프트 / 도움말</td></tr>
             <tr><td><kbd>ESC</kbd></td><td>모드 종료(앱에 ESC 안 보냄)</td></tr>
@@ -214,8 +215,20 @@
             <tr><td><code class="nb">client-attached</code></td><td>클라이언트가 서버에 붙었을 때(시작·재접속)</td></tr>
             <tr><td><code class="nb">after-new-window</code></td><td>탭이 새로 생겼을 때</td></tr>
             <tr><td><code class="nb">alert-bell</code></td><td>어느 탭에서든 벨(<code>\a</code>)이 울렸을 때 — 알림 스크립트를 붙이기 좋습니다</td></tr>
+            <tr><td><code class="nb">claude-auto-armed</code></td><td>Claude <a href="/guide/claude">자동 재개</a>가 <strong>예약된 순간</strong>(한도가 풀릴 시각을 읽어 카운트다운이 걸릴 때). 한 번 예약될 때 1회만 돕니다</td></tr>
+            <tr><td><code class="nb">claude-limit</code></td><td>활성 패널의 Claude 가 <strong>사용량 한도로 멈춘 순간</strong>. 폰으로 알림을 보내는 식으로 쓰기 좋습니다</td></tr>
           </tbody>
         </table>
+        <p>
+          훅 명령은 <strong>그 순간의 맥락을 환경변수로</strong> 받습니다 —
+          <code class="nb">PYTMUX_HOOK_EVENT</code>(발화한 이벤트 이름)에 더해,
+          <code class="nb">claude-auto-armed</code> 는 <code class="nb">PYTMUX_PENDING_KIND</code>(예약의 종류 — 현재 배포본은 <code>resume</code>)와
+          <code class="nb">PYTMUX_PENDING_ETA</code>(발화까지 남은 초)를,
+          두 Claude 훅 모두 <code class="nb">PYTMUX_ACCOUNT</code>(계정 <strong>별칭</strong> — 이메일 원문은 싣지 않습니다)를 함께 넘깁니다.
+          <code class="nb">run-shell</code> 로 부른 셸 명령이 그대로 물려받으므로
+          <code class="nb">set-hook claude-limit run-shell "notify.sh $PYTMUX_ACCOUNT"</code> 처럼 쓰면 됩니다.
+          Claude 훅 둘은 <a href="/guide/plugins">claude-code 플러그인</a>이 있을 때만 발화합니다(디렉토리를 지우면 함께 사라집니다).
+        </p>
       </section>
 
     </main>

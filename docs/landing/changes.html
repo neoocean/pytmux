@@ -126,6 +126,15 @@
           <br>스크린샷은 <strong>43장이 새로 생성됐지만</strong> 대부분은 박혀 있는 시계·날짜가 다를 뿐이라 그대로 두고 내용이 바뀐 <strong>8장</strong>만 교체했습니다 —
           설정 팝업(<strong>새 항목 '드래그 인정 최소 이동'</strong>), 토큰·사용량 화면 5장(데모 날짜가 오늘 기준으로 새로 계산됨),
           그리고 <strong>알림 이력</strong>은 커서를 <strong>오류 줄</strong>에 올린 장면으로 다시 찍어 <a href="#d-2026-07-28">위에서 고친 등급색 커서</a>가 사진에서도 보이게 했습니다.</li>
+        <li><span class="pill stable">문서</span> <strong>사이트 전체를 배포본과 다시 대조해, <span class="inline-code">이미 없어진 기능을 소개하던 문장</span>을 걷어내고 설명이 없던 조작 두 가지를 채웠습니다.</strong>
+          첫 화면의 Claude 소개에 <strong>"컨텍스트 하드스톱 자동 복구"</strong> 가 남아 있었습니다 —
+          컨텍스트가 꽉 찼을 때 <span class="inline-code">/compact</span> 를 대신 넣어 주던 기능인데 <a href="#d-2026-06-22">2026-06-22 에 제거</a>됐고,
+          지금 배포본은 그 상태를 <strong>감지만</strong> 합니다. 문장을 지우고, 그때 지운 사실을 <a href="#d-2026-06-10">6월 10일 항목</a>과 6월 22일 항목에 남겨
+          <strong>변경 내역만 훑어도 오해하지 않게</strong> 했습니다.
+          <br>새로 설명한 조작 둘 — <a href="guide/command">7장</a>에 <strong>ESC 모드에서 맨 위 패널에서 <span class="inline-code">↑</span></strong> 를 누르면
+          닫기 <span class="inline-code">[x]</span> → 한 번 더 누르면 <strong>탭바 포커스</strong>가 되어 키보드만으로 탭을 고르고·만들고·닫고·순서까지 바꾸는 길(아래 <span class="inline-code">↓</span> 배지 포커스의 짝),
+          그리고 <strong>Claude 훅 두 가지</strong>(<span class="inline-code nb">claude-auto-armed</span>·<span class="inline-code nb">claude-limit</span>)와
+          훅 명령이 받는 <span class="inline-code nb">PYTMUX_*</span> 환경변수를 실었습니다 — 한도에 걸리거나 자동 재개가 예약되는 순간에 <strong>내 스크립트</strong>를 물릴 수 있습니다.</li>
         <li><span class="pill stable">문서</span> <strong>플러그인 <span class="inline-code">blocks</span> 페이지가 새로 생겼습니다 — 앱의 <span class="inline-code">:plugins</span> 목록에는 보이는데 설명이 없던 유일한 플러그인이었습니다.</strong>
           셸이 보내는 신호(<span class="inline-code nb">OSC 133</span>)로 <strong>어디부터 어디까지가 한 명령인지</strong>와 종료 코드·작업 디렉토리를 모으는 기능이고,
           bash·zsh 와 <strong>PowerShell</strong> 통합 스크립트를 그대로 싣습니다.
@@ -944,6 +953,10 @@
         <li><span class="pill stable">모델 배지</span> <strong>상태줄의 현재 Claude 모델 배지가 정확해졌습니다.</strong>
           <span class="inline-code nb">sonnet-255</span> 같은 오표기를 바로잡고, 작업 도중 모델이 잠깐 다른 모델로 튀어 보이던 것도 안정화했습니다.</li>
         <li><strong>여러 줄 프롬프트를 이력 팝업에서 여러 행으로 펼쳐</strong> 볼 수 있습니다.</li>
+        <li><span class="pill stable">Claude</span> <strong>토큰을 대신 아껴 주려던 자동 개입을 걷어냈습니다 — <a href="#d-2026-06-10">6월 10일에 넣었던</a> 컨텍스트 하드스톱 자동 복구(<span class="inline-code">/compact</span> 자동 입력)를 포함해 전부 제거했습니다.</strong>
+          컨텍스트가 꽉 차 멈췄을 때 pytmux 가 스스로 <span class="inline-code">/compact</span> 를 넣어 이어 가게 하던 기능인데,
+          <strong>대화를 요약해 버리는 것은 사용자가 고를 일</strong>이고 자동으로 하면 오히려 토큰을 더 쓰게 되는 경우가 있어 뺐습니다.
+          지금은 그 상태를 <strong>감지만</strong> 해서 사용량 한도와 헷갈리지 않게 구분할 뿐, <strong>어떤 키도 대신 넣지 않습니다</strong>.</li>
       </ul>
     </section>
 
@@ -1079,7 +1092,8 @@
       <h2>2026-06-10 <span class="pill">수요일</span></h2>
       <ul>
         <li><span class="pill stable">IME</span> <strong>한/영 입력 상태를 오른쪽 위 배지로 보여줍니다.</strong> 지금 어느 입력 상태인지 별도 플러그인 배지로 확인할 수 있습니다.</li>
-        <li><span class="pill stable">Claude</span> <strong>컨텍스트가 꽉 차 멈추면 자동으로 복구</strong>합니다 — 하드스톱을 감지하면 즉시 <span class="inline-code">/compact</span> 를 넣어 이어가게 합니다.</li>
+        <li><span class="pill stable">Claude</span> <strong>컨텍스트가 꽉 차 멈추면 자동으로 복구</strong>합니다 — 하드스톱을 감지하면 즉시 <span class="inline-code">/compact</span> 를 넣어 이어가게 합니다.
+          <br><strong>※ 이 기능은 <a href="#d-2026-06-22">2026-06-22 에 제거</a>됐습니다</strong> — 지금 배포본은 그 상태를 감지만 하고 <span class="inline-code">/compact</span> 를 대신 넣지 않습니다.</li>
         <li><strong>패널 제목 줄을 잡아끌어(드래그)</strong> 자리 맞바꿈·다른 탭으로 이동·새 탭으로 분리할 수 있습니다.
           시계·달력도 각각 플러그인으로 분리했습니다.</li>
       </ul>
