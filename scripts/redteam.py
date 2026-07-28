@@ -712,7 +712,10 @@ async def run_ptyhost_battery(rounds: int = 40) -> dict:
                     w.close()
         out["alive_after"] = alive
         if fd0 >= 0:
-            out["fd_growth"] = pid_fds(host_pid) - fd0
+            fd1 = await _settled_pid_fds(host_pid, fd0)
+            # 사후 표본이 실패(-1)면 `fd1 - fd0` 은 음수가 되어 게이트를 **통과시킨다**
+            # — 측정 불가는 None(미측정)으로 환원한다(가짜 초록불 금지, pid_fds 주석).
+            out["fd_growth"] = (fd1 - fd0) if fd1 >= 0 else None
         if rss0 >= 0:
             out["rss_growth_kb"] = pid_rss_kb(host_pid) - rss0
         return out
@@ -811,6 +814,28 @@ async def _settled_fd_count(fd0: int) -> int:
         await asyncio.sleep(0.5)
         gc.collect()
         fd1 = count_fds()
+    return fd1
+
+
+async def _settled_pid_fds(pid: int, fd0: int) -> int:
+    """`_settled_fd_count` 의 **외부 프로세스** 판(pty-host 배터리용). 불가면 -1.
+
+    여기서는 GC 를 돌릴 대상이 내 프로세스가 아니라 host 다 — 기다리는 것이 전부다.
+    host 의 `_handle_conn` 은 `writer.close()` 만 하고 `wait_closed()` 를 안 기다리므로
+    (핫패스에서 의도한 것) 실제 소켓 핸들 반납은 host 쪽 이벤트 루프의 다음 틱들에
+    걸쳐 일어난다. 배터리가 26개 연결을 연달아 열고 닫은 **직후**에 재면 그 잔여가
+    그대로 잡히고, Windows 의 GetProcessHandleCount 는 소켓 외 핸들(스레드·이벤트)까지
+    세서 더 부푼다 — GHA windows 3.11/3.12/3.13 이 모두 Δ17~18(>16)로 상시 실패하던
+    원인이다(리눅스 `/proc/<pid>/fd` 는 같은 배터리에서 임계 아래). 연결당 미반납이라는
+    **진짜 누수**는 기다려도 안 줄어 그대로 잡힌다."""
+    fd1 = pid_fds(pid)
+    if fd0 < 0:
+        return fd1
+    for _ in range(6):
+        if fd1 < 0 or fd1 - fd0 <= _FD_SLACK:
+            break
+        await asyncio.sleep(0.5)
+        fd1 = pid_fds(pid)
     return fd1
 
 
