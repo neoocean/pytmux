@@ -94,6 +94,31 @@ async def test_render_dirty_path_matches_full():
         assert r2_fast == r2_full, f"2nd frame suffix={suf!r}"
 
 
+async def test_combining_mark_on_previous_row_marks_it_dirty():
+    """결합 문자가 **앞 행**의 마지막 칸을 고칠 때 그 행도 dirty 로 찍어야 한다.
+
+    커서가 어느 행의 0열에 있을 때 도착한 결합 문자(악센트)는 화면 모델에서 **직전 행의
+    마지막 칸** 글자에 합쳐진다. 그런데 dirty 는 현재 행만 찍혔어서, render 의 행 캐시가
+    앞 행을 **옛 내용 그대로** 재사용했다 — 화면엔 악센트가 빠진 채 남고 전체 재그리기
+    (prefix r) 전까지 안 고쳐졌다(dirty 퍼저 발견 2026-07-28).
+
+    오라클은 **결과 화면**이다: 빠른 경로가 전체 경로와 같아야 하고, 그 칸의 글자가 실제로
+    합쳐져 있어야 한다(dirty 표기를 지우면 둘 다 깨진다)."""
+    from pytmuxlib.model import Pane
+
+    p = Pane(-1, -1, 20, 6)
+    p.feed(b"\x1b[2J\x1b[1;20He")      # 0행 마지막 칸에 'e'
+    p.feed(b"\r\n")                     # 커서를 1행 0열로
+    p.render(True)                       # 캐시 워밍 + dirty 비움
+    assert p._row_cache is not None
+    p.feed("\u0301".encode())            # COMBINING ACUTE — 앞 행 마지막 칸에 합쳐진다
+    rows_fast = p.render(True)[0]
+    rows_full = _full_render(p)[0]
+    assert rows_fast == rows_full, (rows_fast[0], rows_full[0])
+    line0 = "".join(t for t, _ in rows_fast[0])
+    assert line0.endswith("\u00e9"), repr(line0)   # 'é' 로 합쳐져 보여야
+
+
 async def test_render_cache_invalidation_paths():
     """캐시 무효화: alt 전환·스크롤·리사이즈 후 render 가 전체 경로로 폴백해 정확한
     화면을 낸다(같은 상태의 전체 경로와 동일). 빠른 경로가 잘못된 캐시를 재사용하지

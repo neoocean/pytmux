@@ -320,6 +320,11 @@ class _NativeBase:
                         "NFC", last.data + char)
                     self.buffer[self.cursor.y - 1][self.columns - 1] = \
                         last._replace(data=normalized)
+                    # **앞 행**을 고쳤으니 그 행도 dirty 다(아래 dirty.add 는 현재 행만
+                    # 찍는다). 안 찍으면 render 의 행 캐시(dirty 행만 재직렬화)가 그 행을
+                    # 옛 내용 그대로 재사용해, 화면엔 결합 문자가 빠진 채 남고 전체
+                    # 재그리기(prefix r) 전까지 안 고쳐진다 — dirty 퍼저가 잡았다.
+                    self.dirty.add(self.cursor.y - 1)
             else:
                 break
             if char_width > 0:
