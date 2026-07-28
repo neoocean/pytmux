@@ -49,7 +49,9 @@ jobs:
     # 실패로 전환), 이건 2차 안전망. (GitHub 의 timeout 강제는 wedged 러너에서 지연될 수
     # 있어, 자체 종료하는 run.py 쪽 백스톱이 더 신뢰성 있다.) 12→15(2026-07-10):
     # 아래 스위트 스텝 8→10 상향에 맞춰 후속 스텝(validate/perf) 몫을 보존.
-    timeout-minutes: 15
+    # 15→22(2026-07-28): 스위트 스텝 10→15 에 맞춰 같은 몫(≈7분)을 앞뒤 스텝에 남긴다
+    # — 잡 상한이 스텝 상한보다 빠듯하면 스위트가 안 잘리고도 잡이 잘려 요약이 유실된다.
+    timeout-minutes: 22
     env:
       # Windows 콘솔에서 한글 출력이 cp1252 로 깨져 러너가 UnicodeEncodeError 로 죽던
       # 것 방지(러너의 stdout reconfigure 와 함께 이중 방어). 파이썬 전 출력 UTF-8.
@@ -117,7 +119,13 @@ jobs:
         # 넘겨 스위트가 **중간에 잘리며** run.py 말미 실패 트레이스백까지 유실됐다.
         # 지연 자체는 run.py 의 PYTMUX_KEEP_CODEPAGE=1 로 제거했지만, 성장 여유를 둔다.
         # (테스트별 행은 run.py 의 90s SIGALRM/faulthandler 가 1차로 끊는다.)
-        timeout-minutes: 10
+        #
+        # 10→15(2026-07-28): 이 스텝은 그동안 **한 번도 안 돌았다** — 앞의 레드팀
+        # 스텝이 fd 임계(계측이 다른 Windows)에 늘 걸려 skipped 였다(직전 12 run 전부).
+        # 그걸 고치고 나서 처음 돈 결과가 win-3.11 **9분48초** — 여유 12초다. 3.12·3.13
+        # 은 그대로 10분에 잘렸다(행이 아니라 **길이**다: 잘린 쪽도 잘리기 전까지 실패
+        # 없이 진행 중이었다). 스위트가 6~7분이던 시절의 값이라 지금 규모에 안 맞는다.
+        timeout-minutes: 15
         run: python -u tests/run.py   # -u: 버퍼링 없이 진행 즉시 출력(행 지점 식별)
 
       - name: Test run report (절단된 run 회계 복원)

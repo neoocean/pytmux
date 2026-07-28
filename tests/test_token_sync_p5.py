@@ -26,12 +26,20 @@ def _rec(xkey, ts, **kw):
 
 
 class _TZ:
-    """프로세스 tz 를 잠시 바꾼다(조회 머신을 옮겨 보는 것과 같은 효과)."""
+    """프로세스 tz 를 잠시 바꾼다(조회 머신을 옮겨 보는 것과 같은 효과).
+
+    `time.tzset` 은 POSIX 전용이라 Windows 에선 **조회 머신을 옮길 수단이 없다** —
+    거기서는 명시적으로 건너뛴다(`TZ` 만 바꾸고 지나가면 두 '다른 tz' 가 실은 같은
+    tz 라 tz 불변 오라클이 공허하게 통과한다 — 이 모듈이 경계 시각을 고른 이유와
+    같은 함정이다)."""
 
     def __init__(self, tz):
         self.tz = tz
 
     def __enter__(self):
+        if not hasattr(time, "tzset"):
+            from run import skip
+            skip("Windows: time.tzset 부재 — 프로세스 tz 를 바꿀 수 없다")
         self.old = os.environ.get("TZ")
         os.environ["TZ"] = self.tz
         time.tzset()
