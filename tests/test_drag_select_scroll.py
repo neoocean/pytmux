@@ -129,6 +129,10 @@ def _one_pane_app(app, pid=7, mouse=2):
                   "dividers": [], "active": pid, "cols": 100, "rows": 30}
     app.mode = "normal"
     app.mouse_drag_copy = True
+    # 이 파일은 **선택/스크롤 역학**만 본다 — 드래그 확정 임계(mouse-drag-threshold,
+    # 기본 3칸)는 test_client 의 전용 테스트가 권위라 여기선 1칸(=임계 도입 전 감도)로
+    # 고정해 좌표 의도를 그대로 둔다.
+    app.mouse_drag_threshold = 1
     app.pane_top = {pid: 100}          # 서버가 알려준 뷰포트 첫 행 절대 인덱스
     return pid
 

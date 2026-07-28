@@ -75,6 +75,9 @@
             따라 올라가며 선택이 이어지고, 포인터를 패널 <strong>위/아래 끝 줄로 끌면 그 방향으로 자동
             스크롤</strong>합니다(끝에서 멀수록 빨라집니다). 앵커는 화면이 아니라 <strong>텍스트에</strong> 붙어 있어
             스크롤해도 어긋나지 않고, 손을 떼면 화면 밖 줄까지 <strong>그대로</strong> 복사됩니다.</li>
+          <li>드래그로 인정하려면 <strong>최소 3칸</strong>을 움직여야 합니다 — 창을 앞으로 가져오려고 짧게 클릭할 때
+            손이 살짝 밀려 <strong>클립보드가 덮어써지는 일</strong>을 막습니다. 감도는 <code>set mouse-drag-threshold &lt;1~20&gt;</code>
+            으로 조절합니다(<code>1</code> = 예전처럼 1칸만 움직여도 드래그).</li>
           <li>Claude 등 마우스 앱 위에서도 <strong>평드래그</strong>는 선택에 양보합니다(클릭은 앱으로).</li>
           <li><strong>Shift+드래그</strong>는 마우스 쓰는 앱(에디터 <strong>스플리터</strong> 등)에 드래그를 <strong>넘깁니다</strong> —
             평드래그 복사는 그대로 둔 채 <code>Shift</code> 로만 앱에 전달합니다. (모든 드래그를 앱에 넘기려면 <code>set mouse-drag-copy off</code>.)</li>

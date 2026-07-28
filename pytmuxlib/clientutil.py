@@ -282,6 +282,22 @@ _JAMO = {
 }
 
 
+# macOS Option(⌥) + 숫자열 → 그 키의 **레이아웃 글자**. 되돌림표(글자 → 물리 키).
+#
+# 왜 필요한가: pytmux 의 탭 전환은 `ESC` 다음 숫자다. ESC 직후 숫자를 아주 빨리 치면
+# 터미널이 둘을 한 시퀀스(`\x1b<숫자>`)로 합쳐 보내는데, Option 을 **메타**로 쓰는
+# 터미널에선 그게 `alt+<숫자>` 로 도착해 clientio 가 탭 전환으로 받아 준다. 그런데
+# macOS 기본 설정(Option = 일반 키)에서는 같은 손동작이 ESC 접두가 아니라 **이 글자들**
+# (⌥1=¡, ⌥2=™ …)로 도착해, 탭이 안 바뀌고 패널에 엉뚱한 글자가 찍혔다(제보 2026-07-28).
+# 글자를 물리 키로 되돌려 `alt+<숫자>` 와 같은 경로로 보낸다 — 자모 되돌림(_JAMO)과 같은
+# 발상이다. 숫자열 12키만 다룬다(탭 번호와 그 양 끝 -/=). 이 글자를 정말 입력해야 하면
+# `:` 명령 프롬프트·작성창(별도 스크린 — 이 정규화를 안 탄다)을 쓴다.
+MAC_OPT_NUMBER_ROW = {
+    "¡": "1", "™": "2", "£": "3", "¢": "4", "∞": "5", "§": "6",
+    "¶": "7", "•": "8", "ª": "9", "º": "0", "–": "-", "≠": "=",
+}
+
+
 def _normalize_key(k: str) -> str:
     """Textual 키 문자열에서 한글 자모를 QWERTY 영문 키로 정규화."""
     if not k:
@@ -820,7 +836,8 @@ COMMANDS = [
 # (새 set 옵션 추가 시 여기도 한 줄). `set ` 까지 친 뒤 옵션 이름이 자동완성되게
 # COMPLETIONS 에 "set <name>" 으로 병합한다(사용자 요청 2026-06-25).
 _SET_OPTION_NAMES = (
-    "prefix", "mouse", "mouse-drag-copy", "mouse-debug", "alt-scroll", "ambiguous-width",
+    "prefix", "mouse", "mouse-drag-copy", "mouse-drag-threshold",
+    "mouse-debug", "alt-scroll", "ambiguous-width",
     "status", "status-bg", "status-fg", "status-left", "status-right",
     "status-format", "status-position", "status-interval", "mode-keys",
     "set-titles", "set-titles-string", "tab-bar", "default-path",
@@ -833,6 +850,7 @@ SET_OPTION_CHOICES = {
     "alt-scroll": ("on", "off"),
     "mouse": ("on", "off"),
     "mouse-drag-copy": ("on", "off"),
+    "mouse-drag-threshold": ("1", "2", "3", "5", "8"),
     "mouse-debug": ("on", "off"),
     "mode-keys": ("vi", "emacs"),
     "tab-bar": ("always", "auto"),
@@ -942,6 +960,9 @@ SETTINGS = [
      "cmd": "set mouse", "backend": "config"},
     {"key": "mouse-drag-copy", "cat": "입력", "type": "bool",
      "cmd": "set mouse-drag-copy", "backend": "config"},
+    {"key": "mouse-drag-threshold", "cat": "입력", "type": "int",
+     "lo": 1, "hi": 20, "step": 1, "cmd": "set mouse-drag-threshold",
+     "backend": "config"},
     {"key": "mode-keys", "cat": "입력", "type": "enum",
      "choices": ["vi", "emacs"], "cmd": "set mode-keys", "backend": "config"},
     {"key": "alt-scroll", "cat": "입력", "type": "bool",

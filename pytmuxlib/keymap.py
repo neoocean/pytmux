@@ -171,6 +171,8 @@ def load_config(path: str | None = None) -> dict:
                                   #   current(기본)=현재 패널, home=$HOME, 또는 경로
         set inactive-dim on|off   # 비활성 패널 흐리게(§2.9, 기본 on)
         set inactive-dim-ratio <0~0.8>   # 흐리게 세기(기본 0.18)
+        set mouse-drag-threshold <1~20>  # 드래그 복사로 인정할 최소 이동 칸수
+                                  #   (기본 3 — 짧은 클릭이 드래그로 오인되는 것 방지)
         set ambiguous-width auto|narrow|wide  # East Asian Ambiguous 폭(→·— 등)
                                   #   auto(기본)=기동 시 단말 자동감지, wide=강제 2칸
                                   #   (CJK 로케일 단말), narrow=1칸
@@ -217,6 +219,13 @@ def load_config(path: str | None = None) -> dict:
                         # §2.4 좌드래그=pytmux 패널선택→자동복사(기본 on). off 면 앱 패스스루.
                         cfg["mouse_drag_copy"] = val.lower() in (
                             "on", "true", "1", "yes")
+                    elif opt in ("mouse-drag-threshold", "mouse_drag_threshold"):
+                        # 드래그로 인정할 최소 이동(칸, 기본 3 — 클릭이 드래그로 오인돼
+                        # 클립보드가 덮어써지던 문제). 클라가 1~20 클램프. 파싱 실패 무시.
+                        try:
+                            cfg["mouse_drag_threshold"] = int(val)
+                        except ValueError:
+                            pass
                     elif opt == "status-bg":
                         cfg["status_bg"] = val
                     elif opt == "status-fg":
@@ -319,6 +328,8 @@ _OPT_ALIASES = {
     "default-path": ("default_path",),
     "inactive-dim": ("inactive_dim",),
     "inactive-dim-ratio": ("inactive_dim_ratio",),
+    "mouse-drag-copy": ("mouse_drag_copy",),
+    "mouse-drag-threshold": ("mouse_drag_threshold",),
     "strip-box-drawing": ("strip_box_drawing",),
     "lang": ("language",),
 }

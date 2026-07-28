@@ -31,7 +31,7 @@ from textual.suggester import SuggestFromList
 from . import clientclip, clientrender, i18n, ipc, plugins, proc, version
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_ARGHIST, COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS,
-    DEFAULT_STYLE, norm_sep,
+    DEFAULT_STYLE, MAC_OPT_NUMBER_ROW, norm_sep,
     SETTINGS, SETTINGS_CATS,
     REMOTE_PINK, REMOTE_PINK_DIM,
     _BOX_BITS, _BOX_REV, _JAMO, _KEY_DIAG,
@@ -171,11 +171,21 @@ class _InputMixin:
         # 합쳐 **Alt+숫자**로 보내, ESC 가 단독 키로 안 와 모드 진입이 누락되고
         # 숫자가 셸로 새던 문제(요청). Alt+숫자를 ESC 모드의 숫자키와 동일하게
         # 그 번호(1-based) 탭으로 전환해 'esc 다음 숫자' 가 빠르게도 동작하게 한다.
-        if (len(event.key) == 5 and event.key.startswith("alt+")
-                and event.key[4].isdigit()):
+        # 같은 손동작이 **글자**로 오는 경우도 여기서 함께 받는다: macOS 기본 설정
+        # (Option = 메타 아님)에서는 ESC 병합이 `alt+숫자` 가 아니라 그 키의 레이아웃
+        # 글자(⌥1=¡, ⌥2=™ … ⌥-=–, ⌥==≠)로 도착해, 탭이 안 바뀌고 패널에 엉뚱한 글자가
+        # 찍혔다(제보 2026-07-28). MAC_OPT_NUMBER_ROW 로 물리 키를 되돌려 아래 탭 전환에
+        # 태우고, 탭 번호가 없는 -/= 자리는 **패널로 흘리지 않고 삼킨다**(요청: 이 글자들은
+        # 절대 타이핑되지 않아야 한다). 진짜로 입력해야 하면 `:` 프롬프트·작성창에서.
+        _opt_key = MAC_OPT_NUMBER_ROW.get(event.character or "")
+        _alt_digit = (len(event.key) == 5 and event.key.startswith("alt+")
+                      and event.key[4].isdigit())
+        if _alt_digit or _opt_key:
+            n = event.key[4] if _alt_digit else _opt_key
             # 표시 번호(시각 순서) → 탭 index 역매핑 — 고정/원격 탭이 재배치돼도
             # 사용자가 보는 번호로 정확히 이동한다(07-14).
-            idx = self.tabbar.index_for_number(int(event.key[4]))
+            idx = (self.tabbar.index_for_number(int(n)) if n.isdigit()
+                   else None)
             if idx is not None:
                 self.send_cmd("select_window", index=idx)
             else:
@@ -482,6 +492,9 @@ class _InputMixin:
         # 방향키/Enter/Esc(IME 무관)는 그대로 둔다 — 모든 단축키가 IME 무관하게 동작.
         if ch and len(ch) == 1 and has_hangul(ch):
             ch = hangul_to_qwerty(ch)
+        # 맥 Option(⌥)+숫자열이 레이아웃 글자(¡™£…)로 오는 터미널 대응 — normal 모드와
+        # 동일하게 물리 키로 되돌려, 이미 esc 모드에 들어와 있어도 숫자 전환이 먹게 한다.
+        ch = MAC_OPT_NUMBER_ROW.get(ch, ch) if ch else ch
         # ` (double-tap): ` 로 esc 모드에 들어온 뒤 ` 를 한 번 더 → 패널에 리터럴
         # backtick 을 전달하고 모드 종료(요청 2026-06-12). esc 모드 어디서든(탭바·헤더
         # 포커스 포함) 일관되게 동작하도록 하위 포커스 동선보다 먼저 처리한다.

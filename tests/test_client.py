@@ -3114,7 +3114,11 @@ async def test_mouse_drag_copy_selects_and_click_passes_through():
     클립보드 자동복사(앱 패스스루 아님)이고, 이동 없는 좌클릭은 앱에 press+release 를
     전달(마우스 앱 버튼/포커스 보존)한다. 호스트 터미널이 Shift 선택을 가로채 pane
     외곽선까지 긁히던 불편을 없애려 마우스 앱 위 드래그도 선택에 양보한다(2026-07-11
-    사용자 요청). off 면 종전 앱 패스스루로 복원."""
+    사용자 요청). off 면 종전 앱 패스스루로 복원.
+
+    드래그 확정에는 **최소 이동 임계**(`mouse-drag-threshold`, 기본 3칸)가 있다 —
+    1칸만 움직여도 드래그로 보던 종전엔 짧은 클릭(창 포그라운드)에도 선택이 시작돼
+    클립보드가 덮어써졌다(제보 2026-07-28)."""
     async def body(app, pilot, srv):
         v = app.view
         app.layout = {"panes": [{"id": 7, "x": 2, "y": 1, "w": 10, "h": 5,
@@ -3129,15 +3133,16 @@ async def test_mouse_drag_copy_selects_and_click_passes_through():
         app.send_cmd = lambda action, **kw: None
         app.copy_text = lambda t: copied.append(t)
         v._extract_selection = lambda: "SELTEXT"
-        # (1) 드래그 = 선택→복사. 마우스 앱 패널이어도 앱에 패스스루 안 함.
+        app.mouse_drag_threshold = 3
+        # (1) 임계(3칸) 이상 드래그 = 선택→복사. 마우스 앱 패널이어도 패스스루 안 함.
         v.on_mouse_down(_FakeMouse(5, 3, 1))
         assert sent == [], "down 은 미결(pending) — 앱에 press 보내지 않음"
         assert v._sel_pending is not None and v._sel_start is None
-        v.on_mouse_move(_FakeMouse(7, 3, 1))
+        v.on_mouse_move(_FakeMouse(8, 3, 1))
         assert v._sel_start is not None and v._sel is not None, "이동=드래그로 선택 시작"
         assert v._sel_pending is None
         assert sent == [], "선택 중 앱 패스스루 없음"
-        v.on_mouse_up(_FakeMouse(7, 3, 1))
+        v.on_mouse_up(_FakeMouse(8, 3, 1))
         assert copied == ["SELTEXT"], copied
         assert sent == [], "선택 복사 경로는 앱에 마우스 안 보냄"
         assert v._sel_pending is None and v._sel_start is None
@@ -3148,9 +3153,33 @@ async def test_mouse_drag_copy_selects_and_click_passes_through():
         v.on_mouse_up(_FakeMouse(5, 3, 1))
         assert sent == [(7, b"\x1b[<0;4;3M"), (7, b"\x1b[<0;4;3m")], sent
         assert copied == [], "클릭은 복사 아님"
+        # (2b) 임계 미만(1~2칸) 흔들림은 여전히 클릭 — 창을 포그라운드로 올리려 짧게
+        # 누를 때 손이 밀려 클립보드가 덮어써지던 문제(제보 2026-07-28)의 정면 오라클.
+        # 임계 검사를 지우면(뮤테이션) 아래 move 가 선택을 시작해 이 단언이 깨진다.
+        sent.clear()
+        copied.clear()
+        v.on_mouse_down(_FakeMouse(5, 3, 1))
+        v.on_mouse_move(_FakeMouse(6, 3, 1))
+        v.on_mouse_move(_FakeMouse(7, 4, 1))       # 최대 이동 2칸 < 임계 3
+        assert v._sel_start is None and v._sel is None, "임계 미만은 드래그 아님"
+        assert v._sel_pending == (5, 3), "미결 유지(시작점 보존)"
+        v.on_mouse_up(_FakeMouse(7, 4, 1))
+        assert copied == [], "짧은 클릭이 클립보드를 덮어쓰면 안 된다"
+        assert sent == [(7, b"\x1b[<0;4;3M"), (7, b"\x1b[<0;4;3m")], sent
+        # (2c) 임계를 1 로 낮추면 종전 감도(1칸 이동=드래그).
+        app.mouse_drag_threshold = 1
+        sent.clear()
+        copied.clear()
+        v.on_mouse_down(_FakeMouse(5, 3, 1))
+        v.on_mouse_move(_FakeMouse(6, 3, 1))
+        assert v._sel_start is not None, "임계 1 = 1칸 이동도 드래그"
+        v.on_mouse_up(_FakeMouse(6, 3, 1))
+        assert copied == ["SELTEXT"], copied
+        app.mouse_drag_threshold = 3
         # (3) off 면 종전 패스스루(down 즉시 press) — 회귀 가드.
         app.mouse_drag_copy = False
         sent.clear()
+        copied.clear()
         v.on_mouse_down(_FakeMouse(5, 3, 1))
         assert sent == [(7, b"\x1b[<0;4;3M")], "off=down 즉시 press 패스스루"
         assert v._mouse_fwd == 7
@@ -3191,8 +3220,8 @@ async def test_shift_drag_forwards_mouse_events_to_app():
         sent.clear()
         v.on_mouse_down(_FakeMouse(5, 3, 1))
         assert v._sel_pending is not None and sent == [], "평드래그 down=미결(앱 전달 X)"
-        v.on_mouse_move(_FakeMouse(7, 3, 1))
-        v.on_mouse_up(_FakeMouse(7, 3, 1))
+        v.on_mouse_move(_FakeMouse(9, 3, 1))       # 임계(3칸) 이상 = 드래그 확정
+        v.on_mouse_up(_FakeMouse(9, 3, 1))
         assert copied == ["SELTEXT"] and sent == [], "평드래그=복사 보존"
     await _with_app(body)
 
@@ -4804,6 +4833,47 @@ async def test_alt_digit_switches_tab_in_normal_mode():
         sent.clear()
         app.on_key(Key(key="alt+9", character=None))
         assert not any(a == "select_window" for a, _ in sent), sent
+    await _with_app(body)
+
+
+async def test_mac_option_number_row_switches_tab_and_is_never_typed():
+    """맥 Option(⌥)+숫자열이 **레이아웃 글자**(¡™£…)로 오는 터미널에서도 탭이 전환된다.
+
+    제보 2026-07-28: ESC 다음 숫자를 빨리 치면 탭이 안 바뀌고 `¡™£¢∞§¶•ªº–≠` 가 패널에
+    찍힌다. Option 을 메타로 쓰는 터미널은 같은 손동작이 `alt+숫자` 로 와 이미 처리되지만
+    (test_alt_digit_switches_tab_in_normal_mode), macOS 기본(Option=일반 키)에서는 ESC 접두
+    없이 이 글자들이 온다. 글자를 물리 키로 되돌려 같은 탭 전환에 태우고, **어떤 경우에도
+    패널로 흘리지 않는다**(요청: 항상 탭 전환, 절대 타이핑 금지)."""
+    async def body(app, pilot, srv):
+        sent, typed = [], []
+        app.send_cmd = lambda a, **k: sent.append((a, k))
+        app.send_input = lambda b: typed.append(b)
+        app.tabbar.tabs = [{"index": 0}, {"index": 1}]
+        assert app.mode == "normal"
+        # ⌥1 = ¡ → 1번 탭(index 0), ⌥2 = ™ → 2번 탭(index 1).
+        app.on_key(Key(key="¡", character="¡"))
+        assert ("select_window", {"index": 0}) in sent, sent
+        sent.clear()
+        app.on_key(Key(key="™", character="™"))
+        assert ("select_window", {"index": 1}) in sent, sent
+        assert typed == [], f"패널로 글자가 새면 안 된다: {typed}"
+        # 없는 번호(⌥9=ª)·탭 번호가 없는 자리(⌥-=–, ⌥==≠)도 전환은 없지만 **삼킨다**.
+        sent.clear()
+        for chx in ("ª", "–", "≠"):
+            app.on_key(Key(key=chx, character=chx))
+        assert not any(a == "select_window" for a, _ in sent), sent
+        assert typed == [], f"패널로 글자가 새면 안 된다: {typed}"
+        # 이미 esc 모드에 들어와 있어도 같은 글자가 숫자키로 동작한다.
+        app.mode = "esc"
+        sent.clear()
+        app._handle_esc_mode(Key(key="¡", character="¡"))
+        assert ("select_window", {"index": 0}) in sent, sent
+        assert typed == [], f"esc 모드에서도 패널 전달 금지: {typed}"
+        # 대조: 매핑 밖 글자는 종전대로 패널로 간다(전면 차단이 아님을 고정).
+        app.mode = "normal"
+        typed.clear()
+        app.on_key(Key(key="a", character="a"))
+        assert typed == [b"a"], typed
     await _with_app(body)
 
 

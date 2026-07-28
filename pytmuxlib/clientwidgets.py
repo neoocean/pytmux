@@ -85,7 +85,7 @@ class MultiplexerView(Widget):
         #   정보(app.pane_wrap)를 찾아 자동 줄바꿈 줄을 한 줄로 잇는다
         self._mouse_fwd = None     # 패스스루 중인 패널 id(버튼 다운~업)
         self._mouse_fwd_btn = 0    # 그 시퀀스의 버튼(드래그/릴리스 인코딩용)
-        self._sel_pending = None   # mouse-drag-copy: down 후 move 전 (x,y) — 클릭↔드래그
+        self._sel_pending = None   # mouse-drag-copy: down 후 임계 미만 이동 (x,y) — 클릭↔드래그
         #   미결. move 오면 드래그=pytmux 선택, move 없이 up 이면 클릭=앱 전달.
         # 선택을 **절대 스크롤백 좌표**로도 들고 있는다 — (anchor_line, anchor_col,
         # focus_line, focus_col). 화면 좌표(_sel)만 쓰면 스크롤 순간 같은 칸이 다른
@@ -544,11 +544,15 @@ class MultiplexerView(Widget):
                 self.app._composite()
             event.stop()
             return
-        # mouse-drag-copy 미결 상태에서 이동이 오면 = 드래그로 확정 → 선택 시작(§2.4).
-        # 시작 좌표는 down 시점의 (psx,psy)를 쓴다(첫 셀을 놓치지 않게).
+        # mouse-drag-copy 미결 상태에서 **임계 이상** 이동이 오면 = 드래그로 확정 →
+        # 선택 시작(§2.4). 시작 좌표는 down 시점의 (psx,psy)를 쓴다(첫 셀을 놓치지 않게).
+        # 종전엔 1칸만 움직여도 확정이라, 창을 포그라운드로 올리려는 짧은 클릭에도 손이
+        # 미세하게 밀리면 선택→클립보드가 덮어써졌다(제보 2026-07-28). 임계 미만 이동은
+        # 미결 상태를 유지해 up 이 오면 클릭으로 처리한다(`mouse-drag-threshold`, 기본 3).
         if self._sel_pending is not None:
             psx, psy = self._sel_pending
-            if (event.x, event.y) != (psx, psy):
+            thr = max(1, int(getattr(self.app, "mouse_drag_threshold", 3) or 1))
+            if max(abs(event.x - psx), abs(event.y - psy)) >= thr:
                 p = self._pane_at(psx, psy)
                 self._sel_rect = (p["x"], p["y"], p["w"], p["h"]) if p else None
                 self._sel_pane_id = p["id"] if p else None
