@@ -90,6 +90,22 @@ async def test_wip_on_both_sides_is_not_drift():
     assert "✗ p4 미제출" not in text and "✗ git 미푸시" not in text, text
 
 
+async def test_opened_files_are_recognized_from_depot_syntax():
+    """`p4 opened` 는 **depot 경로**를 준다 — `p4 diff -se` 의 로컬 경로와 형식이 다르다.
+
+    종전엔 둘 다 로컬 경로로만 환원해서 열린 파일 집합이 **통째로 비었다**(`rel()` 이
+    ROOT 밖이라 ''). 그러면 `p4 edit` 해 두고 고치는 중인 파일이 매번 '✗ git 미푸시'
+    로 잡혀, 제출 직전 게이트가 상시 적색이 된다 — 게이트가 적색을 늘 달고 있으면
+    진짜 드리프트를 아무도 못 본다. 픽스처를 **실제 p4 출력 그대로** 쓴다."""
+    rc, text = _gate({**_CLEAN,
+                      "p4 opened": (0, "//woojinkim/scripts/pytmux/pytmuxlib/"
+                                       "server.py#12 - edit default change (unicode)\n"),
+                      "git status --porcelain": (0, " M pytmuxlib/server.py\n")})
+    assert rc == 0, text
+    assert "✗ git 미푸시" not in text, text
+    assert "작업 중 1개" in text, text
+
+
 async def test_p4_only_files_are_filtered_by_gitignore():
     """docs/internal·captures 는 p4 전용(gitignore) — '미제출'로 오검출되면 게이트가
     영구히 빨갛다."""

@@ -114,6 +114,17 @@ def rel_depot(depot_path):
     return depot_path[i + len(marker):].strip() if i >= 0 else ""
 
 
+def rel_any(path):
+    """p4 가 준 경로를 저장소 상대로 — **명령마다 형식이 다르다**.
+
+    `p4 diff -se` 는 로컬 경로(`/Users/…/pytmux/x`)를, `p4 opened` 는 **depot 경로**
+    (`//woojinkim/scripts/pytmux/x`)를 준다. depot 경로에 `rel()`(realpath+relpath)을
+    쓰면 ROOT 밖이라 늘 빈 문자열이 나와, 열린 파일 집합이 **통째로 비었다** — 그래서
+    `p4 edit` 해 두고 고치는 중인 파일이 전부 '한쪽에만 있는 내용'으로 오분류됐다."""
+    p = path.strip()
+    return rel_depot(p) if p.startswith("//") else rel(p)
+
+
 def check_existence(out=print):
     """**파일이 한쪽에만 존재**하는 드리프트.
 
@@ -185,8 +196,13 @@ def check_mirror(out=print, remote=True):
     if rc and "not opened" not in opened_txt:
         out(f"· p4 조회 실패 — 미러 대조 생략: {opened_txt.strip()[:120]}")
         return 1 if problems else 0
-    opened = {rel(ln.split("#")[0]) for ln in opened_txt.splitlines()
-              if ln.strip() and "/pytmux/" in ln}
+    # 프로젝트 판별은 **세퍼레이터 무관**으로 — Windows 워크스페이스의 로컬 경로는
+    # `D:\...\pytmux\pytmux\tests\run.py` 라 `"/pytmux/"` 리터럴이 절대 안 맞고, 그러면
+    # opened 가 통째로 비어 열린 파일이 전부 "한쪽에만 있는 내용"으로 오분류된다.
+    opened = {r for r in (rel_any(ln.split("#")[0])
+                          for ln in opened_txt.splitlines()
+                          if ln.strip() and "/pytmux/" in ln.replace("\\", "/"))
+              if r}
     _, se_txt = run(["p4", "diff", "-se", "./..."])
     depot_diff = {r for r in (rel(ln) for ln in se_txt.splitlines()) if r}
     _, st_txt = run(["git", "status", "--porcelain"])
