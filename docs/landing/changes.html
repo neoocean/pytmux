@@ -79,6 +79,38 @@
           이제 그 열두 글자(<span class="inline-code">1</span>~<span class="inline-code">0</span>·<span class="inline-code">-</span>·<span class="inline-code">=</span> 자리)를 원래 키로 되돌려 <strong>보이는 번호의 탭으로 전환</strong>하고,
           탭 번호가 없는 자리는 <strong>패널로 흘리지 않고 삼킵니다</strong> — 어느 쪽이든 그 글자가 입력되는 일은 없습니다.
           그 문자를 정말 써야 하면 <span class="inline-code">:</span> 명령 프롬프트나 작성창에서 그대로 입력됩니다.</li>
+        <li><span class="pill stable">원격</span> <strong>원격 탭이 <span class="inline-code">서버 자동 기동 실패</span> 라고만 하고 <span class="inline-code">왜</span> 인지는 어디에도 없던 것을 고쳤습니다 — 이제 진짜 사유가 나옵니다.</strong>
+          원격 호스트에 붙을 때 pytmux 는 그쪽 서버를 <strong>알아서 띄웁니다</strong>. 그런데 그 서버는 백그라운드 데몬이라
+          <strong>죽으면서 남긴 말이 통째로 버려졌고</strong>(<span class="inline-code nb">stderr</span> → <span class="inline-code nb">/dev/null</span>),
+          손에 남는 것은 <strong>"인증 대기 시한 초과"</strong> 한 줄뿐이었습니다.
+          실제로 있었던 원인은 이렇습니다 — 그 호스트의 <span class="inline-code">python3</span> 가 <strong>패키지 관리자 업그레이드로 다른 버전을 가리키게</strong> 돼,
+          pytmux 가 필요로 하는 라이브러리가 없는 인터프리터로 데몬이 떠서 즉사했습니다.
+          이제 기동 중 남긴 말을 <strong>따로 받아 두었다가</strong>, 실패하면 <strong>어느 인터프리터에 무엇이 없는지와 고치는 명령</strong>까지 그대로 보여 줍니다.
+          <br>덧붙여 <span class="inline-code nb">pytmux start-server</span> 명령이 생겼습니다 — <span class="inline-code nb">ssh &lt;호스트&gt; pytmux start-server</span> 로
+          원격 서버를 <strong>미리 올려 두고 그 자리에서 실패를 확인</strong>할 수 있습니다(이미 떠 있으면 아무것도 하지 않습니다).</li>
+        <li><span class="pill stable">표시</span> <strong>지나간 알림 이력에서 커서를 올리면 <span class="inline-code">등급 색이 사라지고 파란 띠</span>가 되던 것을 고쳤습니다.</strong>
+          목록의 각 줄은 등급대로 색이 다른데(<strong>오류는 빨강</strong>, 주의는 주황, 안내는 파랑),
+          커서를 그 줄에 올리는 순간 하이라이트가 <strong>테마 고정색</strong>으로 덮어써져 <strong>빨간 오류 줄도 파란 띠</strong>가 됐습니다.
+          이제 커서 줄은 <strong>그 등급의 색이 배경</strong>이 되고 글자는 <strong>배경과 대비되는 흑/백</strong>으로 바뀝니다 —
+          등급색이 하이라이트와 같아 글자가 묻히던 문제도 함께 사라집니다. 커서가 떠난 줄은 원래대로 돌아옵니다.</li>
+      </ul>
+    </section>
+
+    <section class="cl-day" id="d-2026-07-27">
+      <h2>2026-07-27 <span class="pill">월요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/e65f83d637b16123b000e33c780441b24492f7a6.zip" rel="noopener" title="2026-07-27 마지막 소스 커밋(e65f83d) 시점 소스 zip">zip ⬇</a></h2>
+      <ul>
+        <li><span class="pill stable">성능</span> <strong>패널이 바쁠 때 화면이 뚝뚝 끊기던 원인 하나를 없앴습니다.</strong>
+          탭·상태줄에 쓸 <strong>지금 무엇이 돌고 있는지</strong>(패널의 포그라운드 명령 이름)를 알아내려고
+          pytmux 는 패널마다 <strong>외부 명령(<span class="inline-code">ps</span>)을 하나씩 띄웠습니다</strong> —
+          그것도 화면이 바뀌었다고 판단할 때마다라서, Claude 같은 프로그램이 도는 패널에서는 <strong>사실상 매 프레임</strong>이었고
+          그동안 서버가 다른 일을 못 해 <strong>모든 창이 함께 굳었습니다</strong>.
+          이제 그 이름은 <strong>1초 캐시</strong>로 두고 갱신은 <strong>백그라운드</strong>에서 합니다(표시용 이름이 1초 늦는 것은 아무 문제가 없습니다).
+          같은 조건으로 이 저장소에서 다시 재어 보면 바쁜 패널 둘에 <strong>5초 동안 9번</strong> — 종전에는 <strong>2초 동안 125번</strong>이었습니다.</li>
+        <li><span class="pill stable">안정성</span> <strong>서버가 특정 메시지를 받으면 그 연결을 끊어 버리던 두 곳을 막았습니다.</strong>
+          연결할 때 클라이언트가 알려 주는 <strong>기능 목록</strong>에 예상 밖 형태가 섞이거나,
+          입력 메시지가 <strong>글자가 아닌 값</strong>으로 오면 서버가 그 자리에서 처리를 포기해 <strong>창이 끊겼습니다</strong> —
+          지금 배포되는 클라이언트는 그런 메시지를 보내지 않지만, 버전이 다른 클라이언트나 잘못 만든 도구가 붙으면 닿는 길이었습니다.
+          두 곳 모두 <strong>받아들일 수 없는 값은 조용히 무시</strong>하도록 바꾸고, 스스로를 두드려 보는 <strong>보안 점검 배터리</strong>도 그 표면까지 넓혔습니다.</li>
       </ul>
     </section>
 
