@@ -512,6 +512,47 @@ def _rich_color(name: str | None) -> str | None:
     return name
 
 
+def harden_no_color_filters(app) -> int:
+    """`NO_COLOR` 가 켜진 상자에서 Textual 이 렌더 중 죽는 것을 막는다(§10-14).
+
+    Textual(8.2.x ~ upstream main, 확인 2026-07-28)의 `filter.monochrome_style` 은
+    `style.color` 를 **가드 없이** 읽는데 Rich `Segment.style` 은 `Optional[Style]` 이라
+    `None` 이 정상값이다 → `Monochrome.apply` 가 `AttributeError: 'NoneType' object has
+    no attribute 'color'` 로 터진다. 앱 **초기화** 경로라 테스트 아티팩트가 아니고,
+    그 변수를 켜 둔 사용자의 클라는 뜨다가 죽는다(실측 `alienware`).
+
+    **`NO_COLOR` 는 그대로 존중한다** — 색은 계속 빠지고, `None` 세그먼트만 통과시킨다
+    (사용자 결정 2026-07-28: 그 변수를 무시하는 선택은 안 섞는다). upstream 이 고치면
+    이 함수는 무해한 no-op 이 된다.
+
+    반환 = 교체한 필터 수(그 변수가 없으면 0). 멱등 — 이미 교체된 것은 다시 안 감싼다.
+    """
+    try:
+        from rich.segment import Segment
+        from textual.filter import Monochrome, monochrome_style
+    except Exception:
+        return 0                      # Textual 이 이 필터를 없앴다면 할 일이 없다
+
+    class _SafeMonochrome(Monochrome):
+        """`None` 스타일 세그먼트를 그대로 통과시키는 것 말고는 상류와 같다."""
+
+        def apply(self, segments, background):
+            return [Segment(text,
+                            monochrome_style(style) if style is not None else None,
+                            None)
+                    for text, style, _ in segments]
+
+    filters = getattr(app, "_filters", None)
+    if not isinstance(filters, list):
+        return 0                      # 상류가 필터 목록 구조를 바꿨다 — 조용히 포기
+    n = 0
+    for i, f in enumerate(filters):
+        if type(f) is Monochrome:     # 정확히 상류 클래스일 때만(멱등)
+            filters[i] = _SafeMonochrome()
+            n += 1
+    return n
+
+
 def make_style(d: dict) -> Style:
     if not d:
         return DEFAULT_STYLE

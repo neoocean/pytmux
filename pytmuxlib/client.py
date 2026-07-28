@@ -36,7 +36,7 @@ from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     _char_cells, _client_relaunch_ok, _darken_style, _dim_inactive_style,
     _first_int, _first_signed_int, _is_emoji, _opt_value, _restart_check_eval,
     _signed_int, _with_reverse,
-    has_hangul, hangul_to_qwerty,
+    has_hangul, hangul_to_qwerty, harden_no_color_filters,
     _normalize_key, _shell_argv, key_to_bytes, make_style, strip_box_drawing,
     theme_color)
 from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 사용)
@@ -514,6 +514,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def __init__(self, sock_path: str):
             super().__init__()
+            # §10-14: `NO_COLOR` 가 켜진 상자에서 Textual 의 Monochrome 필터가 렌더
+            # 중 죽는다(상류 결함, upstream 미수정 — clientutil 참조). App.__init__ 이
+            # 필터 목록을 만든 **직후** 안전판으로 갈아 끼운다. 그 변수가 없으면 무동작.
+            harden_no_color_filters(self)
             self.sock_path = sock_path
             self.session_name = session_name
             self.reader = None
