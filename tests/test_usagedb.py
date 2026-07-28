@@ -1,6 +1,10 @@
 """토큰 사용량 SQLite 저장소(usagedb) + 세션 차원 집계(usagelog.dim) 단위 테스트."""
 import os
+import shutil
+import sqlite3
 import tempfile
+import threading
+import time
 
 import harness  # noqa: F401  (경로 설정)
 from pytmuxlib import usagedb, usagelog
@@ -325,6 +329,93 @@ async def test_file_db_persists_and_sets_schema_version():
         conn2.close()
     finally:
         import shutil
+        shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_wal_switch_survives_a_concurrent_writer():
+    """저널 모드 전환이 막혀도 **연결을 버리지 않는다**(WAL 은 최적화지 요건이 아니다).
+
+    다른 연결이 쓰는 중이면 `PRAGMA journal_mode=WAL` 은 busy_timeout 을 **무시하고
+    즉시** `database is locked` 를 던진다(0.00s — `connect(timeout=5)` 도 안 걸린다).
+    종전엔 그 예외가 `connect()` 를 통째로 깨서 그 판의 토큰 영속이 죽고 error.log 에
+    트레이스백만 남았다(GHA ubuntu 3.12 실패). 같은 PYTMUX_HOME 에 서버가 둘 붙으면
+    실사용에서도 난다.
+    """
+    d = tempfile.mkdtemp()
+    path = os.path.join(d, "t.db")
+    blocker = sqlite3.connect(path, timeout=5.0)
+    conn = None
+    try:
+        blocker.execute("CREATE TABLE probe(x)")
+        blocker.execute("BEGIN")
+        blocker.execute("INSERT INTO probe VALUES (1)")   # 쓰기 락 유지
+        conn = sqlite3.connect(path, timeout=5.0)
+        assert usagedb._enable_wal(conn) is False, "락 상태인데 전환됐다고 보고했다"
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        assert mode.lower() != "wal", mode
+        blocker.rollback()                               # 락이 풀리면
+        assert usagedb._enable_wal(conn) is True, "락이 풀렸는데 전환 실패"
+        assert conn.execute(
+            "PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+    finally:
+        blocker.close()
+        if conn is not None:
+            conn.close()
+        shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_connect_survives_a_locked_journal_switch():
+    """호출부 단언 — 잠긴 DB 에서도 `connect()` 가 **연결을 돌려준다**.
+
+    이것이 실제로 깨졌던 계약이다: 헬퍼가 아무리 얌전해도 `connect()` 가 예외를 올리면
+    서버의 토큰 영속이 그 판 동안 죽는다."""
+    d = tempfile.mkdtemp()
+    path = os.path.join(d, "db", "claude-tokens.db")
+    held = threading.Event()
+
+    def hold():
+        """다른 스레드에서 **잠깐** 쓰기 락을 잡는다(실제 경합의 모양 — 커밋 중인 이웃
+        연결). 계속 잡고 있으면 `PRAGMA user_version` 쓰기까지 막혀 이 테스트가 WAL
+        전환이 아닌 다른 것을 재게 된다."""
+        b = sqlite3.connect(path, timeout=5.0)
+        try:
+            b.execute("BEGIN")
+            b.execute("INSERT INTO usage(ts,tab,pane,session,account,tokens)"
+                      " VALUES (1,0,1,1,'a@x.org',1)")
+            held.set()
+            time.sleep(0.3)
+            b.rollback()
+        finally:
+            b.close()
+
+    try:
+        c0 = usagedb.connect(path)                   # 스키마를 먼저 만들고
+        c0.execute("PRAGMA journal_mode=DELETE")      # 전환이 필요한 상태로 되돌린다
+        c0.close()
+        t = threading.Thread(target=hold, daemon=True)
+        t.start()
+        assert held.wait(5.0), "락 스레드가 안 잡았다"
+        conn = usagedb.connect(path)                 # 종전엔 여기서 OperationalError
+        assert conn is not None
+        assert usagedb.count(conn) == 0, "블로커의 롤백된 행이 보이면 안 된다"
+        conn.close()
+        t.join(5.0)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_file_connect_actually_turns_wal_on():
+    """호출부 단언 — `connect()` 가 `_enable_wal` 을 **부르는지**까지 본다.
+
+    헬퍼만 테스트하면 `connect()` 에서 그 호출을 지워도 초록불이다(이 저장소가 두 번
+    물린 부류: '값 만드는 함수는 맞는데 붙이는 자리가 없다')."""
+    d = tempfile.mkdtemp()
+    try:
+        conn = usagedb.connect(os.path.join(d, "db", "claude-tokens.db"))
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        assert mode.lower() == "wal", "파일 DB 는 WAL 로 열려야 한다: %r" % mode
+        conn.close()
+    finally:
         shutil.rmtree(d, ignore_errors=True)
 
 

@@ -149,6 +149,30 @@ _COLS = ("ts", "tab", "pane", "session", "account", "tokens")
 LOCAL_HOST = "<local>"
 
 
+def _enable_wal(conn: sqlite3.Connection) -> bool:
+    """WAL 로 전환하되 **실패해도 연결을 버리지 않는다**. 전환됐으면 True.
+
+    저널 모드 변경은 DB 를 잠깐 독점해야 하는데, 다른 연결이 쓰고 있으면 SQLite 가
+    busy_timeout 을 **무시하고 즉시** `database is locked` 를 던진다(실측 0.00s —
+    `sqlite3.connect(timeout=5)` 도 이 경로엔 안 걸린다). 종전엔 그 예외가 `connect()`
+    를 통째로 깨서 서버의 토큰 영속이 그 판 동안 죽고 error.log 에 트레이스백만 남았다
+    (GHA ubuntu 3.12 실패 + 다른 테스트 flaky). 같은 머신에서 서버가 둘 붙거나
+    (같은 PYTMUX_HOME) 커밋이 겹치면 실사용에서도 난다.
+
+    WAL 은 **동시성 최적화**지 기능 요건이 아니다 — 잠깐 물러났다 재시도하고, 그래도
+    안 되면 기존 저널 모드로 계속한다(느릴 뿐 정확도는 같다). 이미 WAL 인 DB 는 잠금
+    없이 즉답이라 이 경로를 안 탄다."""
+    for i in range(5):
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            return True
+        except sqlite3.OperationalError:
+            if i == 4:                          # 마지막 시도 뒤엔 안 잔다
+                return False
+            time.sleep(0.05 * (i + 1))          # 0.05→0.2s, 합 ~0.5s
+    return False
+
+
 def connect(path: str) -> sqlite3.Connection:
     """DB 연결을 열고(없으면 파일·디렉터리 생성) 스키마/WAL/타임아웃을 보장한다.
 
@@ -172,7 +196,7 @@ def connect(path: str) -> sqlite3.Connection:
             os.chmod(path, 0o600)
         except OSError:
             pass
-        conn.execute("PRAGMA journal_mode=WAL")
+        _enable_wal(conn)
         # P7: synchronous=NORMAL — WAL 에선 commit 마다 fsync 하지 않고 체크포인트
         # 에서만 동기화한다. _log_tokens 가 응답 경계마다 insert+commit 하므로
         # 레코드별 fsync 비용을 없앤다. 내구성: 애플리케이션 크래시엔 안전(WAL 잔존),
