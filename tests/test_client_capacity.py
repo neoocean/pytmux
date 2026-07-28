@@ -95,21 +95,30 @@ async def test_one_slow_client_does_not_stall_others():
 async def test_broadcast_cost_is_linear_in_clients():
     """클라 수 2배 → 비용 **2배 근처**(선형). 이차면 여기서 3배를 훌쩍 넘는다.
 
-    절대 시간이 아니라 비율을 본다(느린 러너 내인성)."""
+    절대 시간이 아니라 비율을 본다(느린 러너 내인성). 그래도 표본이 **하나**면 공유
+    러너가 그 순간 우리를 디스케줄한 것만으로 비율이 튄다 — GHA 에서 7.6배까지 봤다
+    (재시도해도 같은 소음을 다시 맞을 수 있어 하드 FAIL 로 굳었다). 그래서 각 크기를
+    여러 번 재고 **최소값**을 쓴다: 소음은 시간을 **늘리기만** 하므로 min 이 소음 없는
+    비용의 추정치다. 이차 비용은 min 을 써도 그대로 남아 탐지력은 안 준다."""
     async with running_server() as (srv, task, sock):
         sess = srv.ensure_default_session(80, 24)
 
-        async def run(n):
-            cs = [_attach(srv, sess, _W()) for _ in range(n)]
+        async def _rounds(cs, n_rounds=20):
             t0 = time.monotonic()
-            for _ in range(20):
+            for _ in range(n_rounds):
                 await asyncio.gather(*(srv._flush_to_client(c, [b"x" * 512])
                                        for c in cs))
-            dt = time.monotonic() - t0
-            for c in cs:
-                if c in srv.clients:
-                    srv.clients.remove(c)
-            return dt
+            return time.monotonic() - t0
+
+        async def run(n):
+            cs = [_attach(srv, sess, _W()) for _ in range(n)]
+            try:
+                await _rounds(cs, 2)          # 워밍업(일회성 비용은 안 잰다)
+                return min([await _rounds(cs) for _ in range(3)])
+            finally:
+                for c in cs:
+                    if c in srv.clients:
+                        srv.clients.remove(c)
 
         t_small = await run(8)
         t_big = await run(16)

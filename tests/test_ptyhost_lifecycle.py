@@ -57,6 +57,14 @@ async def test_on_lost_fires_on_disconnect():
     try:
         await client.connect(endpoint)
         client._on_lost = lambda: lost.append(True)
+        # **채택을 기다린다** — `connect()` 반환 시점엔 host 가 아직 probe 판별
+        # (`_PROBE_DECL_TIMEOUT`) 안에 있어 `_writer` 가 비어 있을 수 있고, 그 창에서
+        # 내리면 serve 의 정리가 "소유 연결 close" 를 **건너뛴다**(닫을 대상이 없다).
+        # 그러면 EOF 가 이 경로로 안 오고 클라 keepalive 가 좀비를 끊을 때까지(3.2s)
+        # 밀려 3.0s 창을 넘긴다 — GHA ubuntu 3.11 이 4/5 회 이 창에 걸렸다(파이썬
+        # 3.13 은 22ms 라 안 보였다). 여기서 보려는 계약은 "**소유 연결**이 끊기면
+        # _on_lost" 이므로 소유가 성립한 뒤에 내리는 것이 맞다.
+        await wait_for(lambda: host._writer is not None, timeout=3.0, step=0.01)
         # host 를 내려 연결을 끊는다.
         if host._server is not None:
             host._server.close()
