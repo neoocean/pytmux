@@ -202,6 +202,16 @@ async def test_list_keys_shows_mouse_gestures():
         assert "swap" in joined, joined            # 헤더 드래그 pick-up→swap
         assert "Shift" in joined, joined           # Shift+드래그 앱 마우스 전달
         assert ("드래그" in joined or "drag" in joined.lower()), joined
+        # 문구가 **지금 동작**이어야 한다 — 평드래그=선택→복사, Shift=앱에 전달.
+        # 종전엔 "Shift" 한 단어만 봐서, 카탈로그가 옛 동작("Shift+드래그 — 텍스트
+        # 선택")으로 남아 있어도 이 테스트가 초록불이었다(2026-07-28 사이트 감사에서
+        # 발견). 카탈로그 단위 가드는 test_i18n 에 있고, 여기서는 그 줄이 실제로
+        # **팝업까지 닿는지**(호출부) 본다.
+        assert ("앱에 마우스 전달" in joined
+                or "forward the drag" in joined.lower()), joined
+        assert "Shift+드래그 — 텍스트 선택" not in joined, joined
+        assert ("클립보드 복사" in joined
+                or "copy to clipboard" in joined.lower()), joined
     await _with_app(body)
 
 

@@ -290,3 +290,34 @@ async def test_token_viewer_compose_labels_use_i18n():
            ).read_text(encoding="utf-8")
     bad = re.findall(r'Label\("([가-힣][^"]*)"', src)
     assert not bad, f"i18n.t 미경유 한글 탭 라벨(compose): {bad}"
+
+
+async def test_mouse_gesture_catalog_matches_deployed_behavior():
+    """마우스 제스처 안내가 **지금 동작**과 같아야 한다 — 평드래그=선택→복사,
+    Shift+드래그=내부 앱에 전달(p4 65423 에서 뒤바뀜).
+
+    회귀 이력: 그때 clientcmd 의 `t(key, default=…)` **default 만** 고치고 카탈로그를
+    안 고쳐, t() 가 등록된 번역을 우선하는 바람에 ko·en 사용자 모두에게 옛 안내
+    ("Shift+드래그 — 텍스트 선택")가 계속 보였다(2026-07-28 사이트 감사에서 발견).
+    default 는 카탈로그에 키가 없을 때만 쓰이므로 **default 를 오라클로 삼으면 안 된다**
+    — 카탈로그 값 자체를 단언한다.
+
+    또한 clientcmd 가 나열하는 제스처 키가 전부 두 로케일에 등록돼 있는지 본다(빠지면
+    en UI 에 한글이 새거나 목록 한 줄이 통째로 키 문자열로 뜬다)."""
+    import re
+    from pathlib import Path
+    _reset()
+    src = (Path(__file__).resolve().parent.parent /
+           "pytmuxlib" / "clientcmd.py").read_text(encoding="utf-8")
+    listed = re.findall(r'\("(keys\.g_[a-z]+)",', src)
+    assert "keys.g_shift" in listed and "keys.g_drag" in listed, listed
+    for loc in ("ko", "en"):
+        cat = i18n._CATALOG.get(loc, {})
+        for k in listed:
+            assert k in cat, f"{loc} 카탈로그에 제스처 키 미등록: {k}"
+        shift, drag = cat["keys.g_shift"], cat["keys.g_drag"]
+        # Shift = 앱 전달(옛 '텍스트 선택' 이면 실패), 평드래그 = 복사
+        assert ("전달" in shift or "forward" in shift.lower()), (loc, shift)
+        assert "선택" not in shift and "select" not in shift.lower(), (loc, shift)
+        assert ("복사" in drag or "copy" in drag.lower()), (loc, drag)
+    _reset()

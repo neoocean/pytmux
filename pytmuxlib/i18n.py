@@ -512,7 +512,13 @@ register({
         "keys.g_divider": "경계선 드래그 — 패널 크기 조절",
         "keys.g_header": "패널 헤더(위 테두리) 드래그 — 패널을 들어 다른 패널과 "
                          "swap · 탭으로 이동 · [+]에 놓아 새 탭",
-        "keys.g_shift": "Shift+드래그 — 텍스트 선택(클립보드 복사)",
+        # 평드래그=선택→복사, Shift+드래그=앱에 전달(p4 65423 에서 뒤바뀐 뒤 이 문구만
+        # 옛 동작으로 남아 있었다 — clientcmd 의 default 는 고쳤지만 t() 는 등록된
+        # 번역을 우선하므로 사용자에겐 계속 옛 안내가 보였다).
+        "keys.g_drag": "왼쪽 드래그 — 텍스트 선택 → 클립보드 복사"
+                       "(최소 이동 mouse-drag-threshold)",
+        "keys.g_shift": "Shift+드래그 — 내부 앱에 마우스 전달"
+                        "(에디터 패널 스플리터 등)",
         "keys.g_tab": "탭 드래그 — 탭 재정렬 · 패널 위로 끌어 분할",
         "keys.user_header": "사용자 키 바인딩",
         "keys.none": "(없음)",
@@ -525,7 +531,10 @@ register({
         "keys.g_divider": "Drag divider — resize panes",
         "keys.g_header": "Drag pane header (top border) — pick up the pane: swap "
                          "with another · move to a tab · drop on [+] for a new tab",
-        "keys.g_shift": "Shift+drag — select text (copy to clipboard)",
+        "keys.g_drag": "Left-drag — select text → copy to clipboard "
+                       "(minimum travel: mouse-drag-threshold)",
+        "keys.g_shift": "Shift+drag — forward the drag to the app inside "
+                        "(e.g. an editor's pane splitter)",
         "keys.g_tab": "Drag tab — reorder · drop onto a pane to split",
         "keys.user_header": "User key bindings",
         "keys.none": "(none)",

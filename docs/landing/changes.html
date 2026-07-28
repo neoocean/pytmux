@@ -86,6 +86,12 @@
           선택 시작점은 <strong>누른 자리 그대로</strong>라 첫 글자가 잘리지 않습니다.
           감도는 <span class="inline-code nb">set mouse-drag-threshold &lt;1~20&gt;</span> 으로 바꿉니다 —
           <span class="inline-code">1</span> 이면 예전처럼 한 칸만 움직여도 드래그입니다. 설정 팝업의 <strong>입력</strong> 탭에서도 조절할 수 있습니다.</li>
+        <li><span class="pill stable">마우스</span> <strong>앱 안의 <span class="inline-code">키 · 마우스</span> 도움말이 <span class="inline-code">Shift+드래그</span> 를 <span class="inline-code">거꾸로</span> 안내하던 것을 고쳤습니다.</strong>
+          <span class="inline-code nb">list-keys</span>(별칭 <span class="inline-code nb">mouse-help</span>) 팝업은 <strong>"Shift+드래그 — 텍스트 선택(클립보드 복사)"</strong> 라고 적고 있었는데,
+          지금 동작은 그 반대입니다 — <strong>그냥 드래그</strong>가 선택→복사이고, <strong>Shift+드래그</strong>는 <a href="guide/mouse">마우스를 쓰는 앱에 드래그를 넘기는</a>(에디터 패널 스플리터 등) 제스처입니다.
+          그대로 따라 하면 <strong>복사한 줄 알았는데 앱에 드래그가 전달되는</strong> 일이 생겼습니다.
+          이제 두 줄로 나눠 각각 제대로 적고, <strong>왼쪽 드래그 = 선택→복사</strong> 안내도 목록에 새로 넣었습니다(최소 이동 칸수 옵션 이름까지).
+          상세 가이드 6장은 처음부터 맞게 적혀 있었고, 앱 안 문구만 옛 동작으로 남아 있던 경우입니다.</li>
         <li><span class="pill stable">키</span> <strong>맥에서 <span class="inline-code">⌥</span>+숫자가 <span class="inline-code">¡™£¢∞§¶•ªº–≠</span> 글자로 새어 들어가던 것을 막고, 그대로 탭 전환이 되게 했습니다.</strong>
           <a href="guide/tabs">번호로 탭 전환</a>은 <span class="inline-code">Esc</span> 다음 숫자인데, 둘을 아주 빨리 누르면 터미널이 <strong>한 덩어리로 합쳐</strong> 보냅니다.
           Option 키를 <strong>메타로 쓰는</strong> 터미널에서는 그것이 <span class="inline-code">Alt+숫자</span> 로 도착해 진작부터 탭 전환이 됐지만,
