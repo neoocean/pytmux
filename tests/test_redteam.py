@@ -404,5 +404,9 @@ async def test_redteam_ptyhost_battery_finds_no_unauth_and_host_survives():
     assert rep["dropped"] + rep["rejected"] >= rep["sent"] - rep["errors"], rep
     assert rep["authed_sent"] >= 10, rep             # post-auth 손상 op 도 던졌다
     assert rep["alive_after"] is True, rep           # 그래도 host 는 살아 있다
+    # fd 누수: POSIX 는 `/proc/<pid>/fd` 라 연결 26개의 미반환(≈26)이 임계 16 을 넘어
+    # 실제로 잡힌다. Windows 는 표본이 전 커널 핸들이라 고정 잡음(≈20)이 신호(≈26)와
+    # 겹쳐 **이 규모에선 판별력이 없다** — 임계도 그 잡음을 덮게 잡혀 있다(_FD_SLACK
+    # 주석). 그래서 Windows 의 누수 계약은 연결 1200개를 도는 CLI 배터리가 지킨다.
     if rep["fd_growth"] is not None:
         assert rep["fd_growth"] <= redteam._FD_SLACK, rep
