@@ -3,7 +3,9 @@ IME 단축키/표시줄/포커스 경계/와이드 문자 합성."""
 import asyncio
 
 import harness
-from harness import make_app, server_only, teardown, wait_until
+from harness import (
+    make_app, server_only, teardown, wait_mounted, wait_until,
+)
 from textual.events import Key
 from textual.widgets import Input
 
@@ -981,7 +983,7 @@ async def test_command_list_and_autocomplete():
         for _ in "spl":
             await pilot.press("backspace")
         await pilot.press("question_mark")
-        await pilot.pause(0.2)
+        await wait_mounted(pilot, "CommandListScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "CommandListScreen"
         # 맨 앞 '전체' 탭(모든 명령을 한 탭에서 ↑↓ 탐색) 다음에 카테고리 탭들이 온다.
@@ -996,7 +998,7 @@ async def test_command_list_and_autocomplete():
         assert str(lv.styles.overflow_y) == "scroll", "스크롤바 항상 표시"
         # ← → 로 카테고리(탭) 전환: 전체 → 패널 → 탭(new-tab) → … 그리고 되돌림
         await pilot.press("right")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: scr._ci == 1 and scr._all_cats[1][0] == "패널")
         assert scr._ci == 1 and scr._all_cats[1][0] == "패널", scr._ci
         await pilot.press("right")
         await wait_until(pilot, lambda: scr._ci == 2 and scr._cur[0][0] == "new-tab")
@@ -1130,7 +1132,7 @@ async def test_help_command():
     async def body(app, pilot, srv):
         sess = next(iter(srv.sessions.values()))
         app._run_command("help")
-        await pilot.pause(0.2)
+        await wait_mounted(pilot, "CommandListScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "CommandListScreen"
         # 첫 항목(split-window)은 옵션 스키마가 있어 옵션 모달이 열린다(#3)
@@ -1213,7 +1215,7 @@ async def test_prompt_clear_queue_command():
         # 빈값 → status 의 큐를 InfoScreen 으로 표시
         app.status.prompt_clear_queue = ["alpha", "beta"]
         app._run_command("prompt-clear-queue")
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "InfoScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoScreen"
         joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
@@ -1946,7 +1948,7 @@ async def test_token_log_screen_aggregates_and_switches():
         ]
         app._want_token_log = True
         app._dispatch({"t": "token_log", "records": recs})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "TokenLogScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "TokenLogScreen"
         joined = _tok_text(scr)
@@ -2023,7 +2025,7 @@ async def test_token_log_limit_view_toggle():
                  "account": "me@x.org", "tokens": 1500}]
         app._want_token_log = True
         app._dispatch({"t": "token_log", "records": recs})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "TokenLogScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "TokenLogScreen"
         scr.update_usage({
@@ -2070,7 +2072,7 @@ async def test_token_log_tab_subrow_and_limit_return():
                  "account": "me@x.org", "tokens": 1500}]
         app._want_token_log = True
         app._dispatch({"t": "token_log", "records": recs})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "TokenLogScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "TokenLogScreen"
         # 기간(time) 뷰: 기간 탭 활성. 입도 서브탭/정렬 보조옵션 줄은 계층 트리·정렬
@@ -2109,7 +2111,7 @@ async def test_token_log_opens_time_view_from_5h_segment():
         app._token_log_initial = "hour"
         app._dispatch({"t": "token_log", "records": recs,
                        "hourly_pct": {"2023-11-14 22:00": 8}})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "TokenLogScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "TokenLogScreen"
         assert scr._active_tab() == "time", scr._active_tab()
@@ -2242,7 +2244,7 @@ async def test_token_log_tree_has_5h_and_1w_columns_no_ratio():
         app._dispatch({"t": "token_log", "records": recs,
                        "hourly_pct": {"2023-11-14 22:00": 13},
                        "hourly_week_pct": {"2023-11-14 22:00": 42}})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "TokenLogScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "TokenLogScreen"
         table = scr.query_one(DataTable)
@@ -2324,7 +2326,7 @@ async def test_token_log_day_bucket_full_history_not_capped():
         app._want_token_log = True
         app._dispatch({"t": "token_log", "records": recs, "total_all": 12000,
                        "daily": daily})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "TokenLogScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "TokenLogScreen", scr
         # 트리 집계 합(중복 없는 일자 전체 합)이 daily 전체 이력 12k 여야 한다 — 단일
@@ -2386,7 +2388,7 @@ async def test_token_log_usage_graphs():
                  "account": "me@x.org", "tokens": 100}]
         app._want_token_log = True
         app._dispatch({"t": "token_log", "records": recs})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "TokenLogScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "TokenLogScreen"
         scr.update_usage({
@@ -2463,7 +2465,7 @@ async def test_choose_tree_shows_panes_and_switches():
         sent = []
         app.send_cmd = lambda a, **k: sent.append((a, k))
         app._open_choose_tree(tree)
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "ChooseTreeScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "ChooseTreeScreen"
         assert [e["kind"] for e in scr.entries] == ["win", "pane", "pane"]
@@ -2941,7 +2943,7 @@ async def test_settings_screen_applies_persists_and_links():
         assert i18n.t("setting.unknown") not in wseg, wseg
         before_ws = srv.window_size
         scr._cycle(widx, 1)
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: srv.window_size != before_ws)
         assert srv.window_size != before_ws, srv.window_size
         assert srv.window_size in ("smallest", "latest", "largest")
 
@@ -2961,7 +2963,7 @@ async def test_settings_screen_applies_persists_and_links():
                     if d["key"] == "inactive-dim")
         was = app.inactive_dim
         scr._cycle(bidx, 1)
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: app.inactive_dim != was)
         assert app.inactive_dim != was
         assert "set inactive-dim " in open(p, encoding="utf-8").read()
 
@@ -3049,7 +3051,7 @@ async def test_right_click_menu_unified_and_ctrl_click_noop():
         await pilot.pause(0.05)
         # Ctrl+Click(button 1 + ctrl) → 무동작(메뉴 안 뜸)
         v.on_mouse_down(_FakeMouse(5, 3, button=1, ctrl=True))
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: app.screen_stack[-1].__class__.__name__ != "MenuScreen")
         assert app.screen_stack[-1].__class__.__name__ != "MenuScreen", \
             "Ctrl+Click 은 메뉴를 열지 않음"
     await _with_app(body)
@@ -3402,7 +3404,7 @@ async def test_close_confirm_distinguishes_pytmux_exit():
         from textual.widgets import Label
         # 탭 1개(기본) → 닫으면 pytmux 종료 → danger 강조 + 경고 메시지
         app.confirm_kill_tab()
-        await pilot.pause(0.2)
+        await wait_mounted(pilot, "ConfirmScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "ConfirmScreen"
         assert scr._danger is True, "마지막 탭 → 종료(danger)"
@@ -3430,7 +3432,7 @@ async def test_tab_close_confirm_popup():
         assert len(sess.tabs) == 2
         # 탭바 [x] 닫기 버튼 클릭 → 확인 팝업
         app.confirm_kill_tab()
-        await pilot.pause(0.2)
+        await wait_mounted(pilot, "ConfirmScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "ConfirmScreen", scr
         assert scr._sel == 1, "기본 선택은 '취소'(안전)"
@@ -3469,7 +3471,7 @@ async def test_close_remote_tab_routes_to_detach():
              "remote": True}]
         assert app._active_remote_host() == "office1"
         app.confirm_kill_tab()
-        await pilot.pause(0.2)
+        await wait_mounted(pilot, "ConfirmScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "ConfirmScreen"
         assert "분리" in scr._message, scr._message
@@ -3503,7 +3505,7 @@ async def test_close_last_local_tab_with_remote_open_warns_app_exit():
         app.tabbar.tabs = wins
         assert app._active_remote_host() is None, "활성 탭은 로컬"
         app.confirm_kill_tab()
-        await pilot.pause(0.2)
+        await wait_mounted(pilot, "ConfirmScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "ConfirmScreen"
         assert scr._danger is True, "마지막 로컬 탭 → 앱 종료(danger)"
@@ -4198,7 +4200,7 @@ async def test_bind_unbind_keys():
         app._run_command("unbind-key zzz")
         # list-keys 팝업
         app._run_command("list-keys")
-        await pilot.pause(0.05)
+        await wait_mounted(pilot, "InfoScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoScreen"
         app.pop_screen()
@@ -4245,7 +4247,7 @@ async def test_infoscreen_arrows_navigate_not_close():
         from pytmuxlib.clientscreens import InfoScreen
         long_line = "이것은 " + "아주 " * 40 + "긴 줄입니다"
         app.push_screen(InfoScreen(["p1", long_line, "p3"]))
-        await pilot.pause(0.05)
+        await wait_mounted(pilot, "InfoScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoScreen"
         lv = scr.query_one(ListView)
@@ -4654,8 +4656,7 @@ async def test_notice_history_cursor_row_is_readable():
     """제보: 이력에서 **커서를 올린 줄의 글자가 안 보였다**. 원인은 색 충돌 —
     `info` 등급색(`$primary`)이 ListView 하이라이트 배경(`$block-cursor-background`)과
     같은 값이라 그 줄이 통째로 파란 띠가 됐다. 커서가 놓인 줄은 Rich 색을 **비워**
-    (=CSS 커서 전경색이 적용되게) 대비를 테마에 맡기고, 커서가 떠나면 등급색이
-    돌아온다."""
+    (=위젯 스타일이 색을 정하게) 대비를 보장하고, 커서가 떠나면 등급색이 돌아온다."""
     from textual.widgets import Label as _Label, ListView as _LV
     async def body(app, pilot, srv):
         app.display_message("동기화 실패", severity="error")
@@ -4686,6 +4687,59 @@ async def test_notice_history_cursor_row_is_readable():
         scr.on_list_view_highlighted(None)
         await pilot.pause(0.05)
         assert row_style(1).color is None and row_style(0).color is not None
+        app.pop_screen()
+    await _with_app(body)
+
+
+async def test_notice_history_cursor_background_follows_text_color():
+    """제보(2026-07-28): 커서를 올리면 **등급색이 사라지고 파란 띠**가 됐다 —
+    하이라이트 배경이 테마 고정색(`$block-cursor-background`)이었기 때문.
+
+    이제 커서 줄의 **배경 = 그 줄 글자색(등급 테마색)**, 글자 = 그 등급의 대비색
+    (`clientnotices.fg`, 상태줄 배지와 같은 규칙)이다. 오라클은 **실제 위젯 스타일**
+    로 둔다(`_paint_cursor` 만 단언하면 호출을 지워도 통과한다 — '호출 제거' 뮤테이션):
+    ListItem 의 인라인 규칙이 등급색이어야 하고, 커서가 떠난 줄엔 규칙이 없어야 한다."""
+    from textual.color import Color as _Color
+    from textual.widgets import ListView as _LV
+    from pytmuxlib import clientnotices
+
+    def sev_color(app, sev):
+        return _Color.parse(str(app.theme_variables.get(
+            clientnotices.theme_name(sev))))
+
+    async def body(app, pilot, srv):
+        app.display_message("동기화 실패", severity="error")
+        app.display_message("이 머신이 등록되었습니다", severity="info")
+        app.open_notice_history()
+        await wait_until(pilot, lambda: app.screen.__class__.__name__
+                         == "NoticeHistoryScreen" and app.screen.query("#nhlist"))
+        scr = app.screen
+        rows = list(scr.query_one(_LV).children)
+        info, err = scr._entries[0], scr._entries[1]
+        assert (info.sev, err.sev) == ("info", "error")
+
+        def inline(i):
+            return rows[i].styles.inline
+
+        # ① 커서 줄(0=info): 배경이 등급색, 글자는 등급 대비색 → 배경과 절대 같지 않다.
+        assert scr._hl == 0
+        assert inline(0).has_rule("background"), "커서 줄에 인라인 배경이 있어야"
+        assert inline(0).background == sev_color(app, "info"), \
+            (inline(0).background, sev_color(app, "info"))
+        assert inline(0).color == _Color.parse(clientnotices.fg("info"))
+        assert inline(0).color != inline(0).background, "글자와 배경이 같으면 안 읽힌다"
+        # ② 커서가 아닌 줄: 인라인 규칙 없음(팝업 패널색·hover 동작 유지).
+        assert not inline(1).has_rule("background"), "커서 아닌 줄은 칠하지 않는다"
+        assert not inline(1).has_rule("color")
+
+        # ③ 커서를 오류 줄로 옮기면 배경이 **오류색**으로 따라간다(파랑 고정이 아니다).
+        scr.query_one(_LV).index = 1
+        scr.on_list_view_highlighted(None)
+        await wait_until(pilot, lambda: inline(1).has_rule("background"))
+        assert inline(1).background == sev_color(app, "error"), inline(1).background
+        assert inline(1).background != sev_color(app, "info"), "등급별로 달라야"
+        assert inline(1).color == _Color.parse(clientnotices.fg("error"))
+        assert not inline(0).has_rule("background"), "떠난 줄은 규칙을 지운다"
         app.pop_screen()
     await _with_app(body)
 
@@ -5457,7 +5511,7 @@ async def test_status_tabs_popup_merged():
         assert app._tree_purpose == "status_tabs" and app._status_tab_initial == 0
         app._want_tree = False     # 서버의 실제 트리 응답이 또 팝업을 띄우지 않게(결정성)
         app._open_status_tabs({"sessions": []})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "InfoTabsScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoTabsScreen"
         names = [t[0] for t in scr._tabs]
@@ -5483,11 +5537,11 @@ async def test_info_tabs_bottom_close_button():
         app._status_cap_lines = ["파일: /tmp/x/pane-1.log"]
         app._status_tab_initial = 0
         app._open_status_tabs({"sessions": []})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "InfoTabsScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoTabsScreen"
         await pilot.click("#itclosebtn")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: app.screen_stack[-1].__class__.__name__ != "InfoTabsScreen")
         assert app.screen_stack[-1].__class__.__name__ != "InfoTabsScreen", \
             "하단 닫기 버튼으로 닫힘"
     await _with_app(body)
@@ -5501,7 +5555,7 @@ async def test_info_tabs_notebook_connector():
         app._status_cap_lines = ["파일: /tmp/x/pane-1.log"]
         app._status_tab_initial = 0
         app._open_status_tabs({"sessions": []})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "InfoTabsScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoTabsScreen"
         conn = scr.query_one("#itconn")
@@ -5537,7 +5591,7 @@ async def test_status_tabs_has_server_tab():
         app._status_cap_lines = ["파일: /tmp/x/pane-1.log"]
         app._status_tab_initial = 2          # host 클릭 의도(서버 탭)
         app._open_status_tabs({"sessions": []})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "InfoTabsScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoTabsScreen"
         names = [t[0] for t in scr._tabs]
@@ -5698,7 +5752,7 @@ async def test_info_tabs_notebook_shape_and_constant_height():
         app._status_cap_lines = ["파일: /tmp/x/pane-1.log"]
         app._status_tab_initial = 0
         app._open_status_tabs({"sessions": []})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "InfoTabsScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoTabsScreen"
         # 활성 탭(0)의 라벨에 외곽선 박스 문자(╭╮│─)가 없어야 한다(플랫 탭).
@@ -5826,7 +5880,7 @@ async def test_open_warn_info_popup_content():
         # (다른 token-log 테스트와 동일 패턴 — _want_token_log 는 open_token_log 가 켠다).
         app.open_claude_warn_info()
         app._dispatch({"t": "token_log", "records": []})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "TokenLogScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "TokenLogScreen", scr.__class__.__name__
         assert scr._warn_mode, "⚠ 배지 클릭은 경고 탭으로 열려야"
@@ -5871,7 +5925,7 @@ async def test_open_autoresume_info_popup_toggles():
         sent = []
         app.send_cmd = lambda c, **kw: sent.append(c)
         app.open_autoresume_info()
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "InfoScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoScreen", scr.__class__.__name__
         assert any("AR" in ln for ln in scr._lines), scr._lines
@@ -5907,7 +5961,7 @@ async def test_info_tabs_close_button_and_esc():
         app._status_cap_lines = ["파일: /tmp/x/pane-1.log"]
         app._status_tab_initial = 1
         app._open_status_tabs({"sessions": []})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "InfoTabsScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoTabsScreen"
         close = scr.query_one("#itclose", Label)
@@ -5916,14 +5970,14 @@ async def test_info_tabs_close_button_and_esc():
             f"닫기 [x] 가 화면 안에 보여야 함 {reg} (폭 {app.size.width})"
         assert "[x]" in close.render().plain
         await pilot.click("#itclose")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: app.screen_stack[-1].__class__.__name__ != "InfoTabsScreen")
         assert app.screen_stack[-1].__class__.__name__ != "InfoTabsScreen", "[x] 닫기"
         app._open_status_tabs({"sessions": []})
         await wait_until(pilot, lambda: app.screen_stack[-1].__class__.__name__
                          == "InfoTabsScreen")
         assert app.screen_stack[-1].__class__.__name__ == "InfoTabsScreen"
         await pilot.press("escape")
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: app.screen_stack[-1].__class__.__name__ != "InfoTabsScreen")
         assert app.screen_stack[-1].__class__.__name__ != "InfoTabsScreen", "Esc 닫기"
     await _with_app(body, size=(58, 30))      # 좁은(모바일) 폭
 
@@ -5935,17 +5989,17 @@ async def test_info_tabs_arrow_reaches_close_button():
         app._status_cap_lines = ["파일: /tmp/x/pane-1.log"]
         app._status_tab_initial = 0
         app._open_status_tabs({"sessions": []})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "InfoTabsScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoTabsScreen"
         n = len(scr._tabs)
         assert n >= 2 and scr._sel == 0
         await pilot.press("right")            # 0 → 1
-        await pilot.pause(0.05)
+        await wait_until(pilot, lambda: scr._sel == 1 and scr._ti == 1)
         assert scr._sel == 1 and scr._ti == 1
         for _ in range(n - 1):                # 마지막 탭에서 한 번 더 → [x]
             await pilot.press("right")
-            await pilot.pause(0.03)
+            await wait_until(pilot, lambda: scr._sel == n)
         assert scr._sel == n, "←→ 가 닫기[x] 에 도달해야"
         assert scr.query_one("#itclose", Label).has_class("-focus"), "[x] 강조"
         await pilot.press("right")            # [x] → 0 (wrap)
@@ -5955,7 +6009,7 @@ async def test_info_tabs_arrow_reaches_close_button():
         await wait_until(pilot, lambda: scr._sel == n)
         assert scr._sel == n
         await pilot.press("enter")            # [x]+Enter → 닫힘
-        await pilot.pause(0.1)
+        await wait_until(pilot, lambda: app.screen_stack[-1].__class__.__name__ != "InfoTabsScreen")
         assert app.screen_stack[-1].__class__.__name__ != "InfoTabsScreen", \
             "[x] 포커스 + Enter 로 닫힘"
     await _with_app(body)
@@ -6142,7 +6196,7 @@ async def test_client_reconnects_after_backpressure_drop():
         for _ in range(80):
             if srv.clients:
                 break
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: srv.clients)
         assert srv.clients, "backpressure 드롭 후 재접속 복구(클라 생존)"
         assert app.is_running, "클라가 종료하지 않음"
         # ② 무한 루프 가드: 짧은 창 내 한도 초과면 재접속 포기(False→호출부 self.exit)
@@ -6436,7 +6490,7 @@ async def test_token_log_click_outside_closes():
                  "account": "me@x.org", "tokens": 1500}]
         app._want_token_log = True
         app._dispatch({"t": "token_log", "records": recs})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "TokenLogScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "TokenLogScreen", scr
 
@@ -6733,7 +6787,7 @@ async def test_command_list_search_filters_and_tab_counts():
             ("copy-mode", "복사 모드", "복사/버퍼"),
         ]
         app.push_screen(CommandListScreen(items))
-        await pilot.pause(0.2)
+        await wait_mounted(pilot, "CommandListScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "CommandListScreen"
         # 검색 없음 → 첫 탭('전체') 활성, 모든 명령 5건.
@@ -6905,7 +6959,7 @@ async def test_rules_editor_save_cancel_and_spacer():
         captured = []
         app.push_screen(RulesEditScreen("hello rules"),
                         lambda v: captured.append(v))
-        await pilot.pause(0.2)
+        await wait_mounted(pilot, "RulesEditScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "RulesEditScreen"
         assert scr.query("#rulesspacer"), "타이틀↔에디터 한 줄 여백"
@@ -6977,7 +7031,7 @@ async def test_status_tabs_capture_toggle():
         sent = []
         app._run_command = lambda line, *a, **k: sent.append(line)
         app._open_status_tabs({"sessions": []})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "InfoTabsScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "InfoTabsScreen"
         await pilot.press("c")                             # 캡처 토글
@@ -7003,7 +7057,7 @@ async def test_status_tabs_open_capture_dir():
             app._status_cap_lines = None
             app._status_tab_initial = 0
             app._open_status_tabs({"sessions": []})
-            await pilot.pause(0.1)
+            await wait_mounted(pilot, "InfoTabsScreen")
             scr = app.screen_stack[-1]
             assert scr.__class__.__name__ == "InfoTabsScreen"
             # 클릭 가능한 액션 버튼 행(▸ [c]…/[o]…)이 목록에 있다.
@@ -7345,7 +7399,7 @@ async def test_token_log_box_height_stable_regardless_of_content():
                  "account": "me@x.org", "tokens": 100} for i in range(30)]
         app._want_token_log = True
         app._dispatch({"t": "token_log", "records": recs})
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, "TokenLogScreen")
         scr = app.screen_stack[-1]
         assert scr.__class__.__name__ == "TokenLogScreen"
         box = scr.query_one("#tklogbox")

@@ -3077,18 +3077,36 @@ class NoticeHistoryScreen(ModalScreen):
         # 배경이 아니라 **글자색**으로 등급을 준다 — 목록 배경은 팝업 패널색을 유지해야
         # 선택 하이라이트(ListView)가 그대로 읽힌다.
         #
-        # 단 **커서가 놓인 줄은 색을 비운다**: 하이라이트 배경은 테마의
-        # `$block-cursor-background`(= textual-dark 에서 `$primary` #0178D4)인데
-        # `info` 등급색도 `primary` 라 **글자와 배경이 완전히 같은 색** → 그 줄만
-        # 통째로 파란 띠가 되어 읽히지 않았다(제보). 색을 지정하지 않으면 Rich Text
-        # 가 위젯 색을 덮지 않아 테마가 대비를 보장하는 커서 전경색
-        # (`$block-cursor-foreground`)이 그대로 적용된다. 등급은 이 줄에서도
-        # 기호(✓·!✕)로 남는다. (커서 전경색은 `auto 87%` 같은 Textual 전용 값이라
-        # Rich `Style(color=...)` 에 직접 넣으면 ColorParseError — CSS 에 맡겨야 한다.)
+        # 단 **커서가 놓인 줄은 Rich 색을 비운다**: 그 줄의 색은 위젯 인라인 스타일
+        # (`_paint_cursor`)이 정하고, Rich Text 색을 지정하면 그걸 덮어써 버린다.
+        # 등급은 이 줄에서도 기호(✓·!✕)로 남는다. (커서 전경색으로 쓰이는 테마값은
+        # `auto 87%` 같은 Textual 전용 표기라 Rich `Style(color=...)` 에 직접 넣으면
+        # ColorParseError — 색 결정은 스타일 계층에 맡겨야 한다.)
         if i is not None and i == self._hl:
             return Style(bold=(e.sev == "error"))
         return Style(color=theme_color(self, clientnotices.theme_name(e.sev)),
                      bold=(e.sev == "error"))
+
+    def _paint_cursor(self, item, i, e):
+        """커서 줄의 **배경을 그 줄 글자색(등급색)으로** 칠한다(제보 2026-07-28).
+
+        종전엔 하이라이트 색을 테마에 통째로 맡겼는데(`$block-cursor-background` =
+        textual-dark 에서 파랑) 커서를 올리는 순간 등급색이 사라져, 빨간 오류 줄도
+        파란 띠가 됐다. 그래서 배경 = 등급 테마색, 글자 = 그 등급의 대비색
+        (`clientnotices.fg` — 상태줄 알림 배지와 같은 규칙)으로 못박는다. 등급색이
+        하이라이트 배경과 같아 글자가 묻히던 원래 결함도 같이 해결된다(등급색은
+        이제 배경이고 글자는 항상 흑/백이다).
+
+        **인라인 스타일**로 준다 — ListView 의 `ListItem.-highlight` CSS 규칙을
+        이기는 유일한 방법이고(인라인 > CSS), 커서가 떠난 줄은 규칙을 지워
+        (`None`) 팝업 패널색·hover 동작을 원래대로 돌려준다."""
+        if i == self._hl:
+            item.styles.background = theme_color(
+                self, clientnotices.theme_name(e.sev))
+            item.styles.color = clientnotices.fg(e.sev)
+        else:
+            item.styles.background = None
+            item.styles.color = None
 
     def _lines_for(self, i, e, width):
         pre = self._prefix(e, width)
@@ -3118,7 +3136,9 @@ class NoticeHistoryScreen(ModalScreen):
         for i, e in enumerate(self._entries):
             txt = "\n".join(self._lines_for(i, e, width))
             lb = Label(Text(txt, style=self._style_of(e, i)), markup=False)
-            rows.append(ListItem(lb, id=f"nh{i}"))
+            item = ListItem(lb, id=f"nh{i}")
+            self._paint_cursor(item, i, e)
+            rows.append(item)
         return rows or [ListItem(Label(i18n.t("screen.notice_history_empty")),
                                  id="nhnone")]
 
@@ -3193,6 +3213,7 @@ class NoticeHistoryScreen(ModalScreen):
             try:
                 item.query_one(Label).update(
                     Text(txt, style=self._style_of(e, i)))
+                self._paint_cursor(item, i, e)
             except Exception:
                 pass
 

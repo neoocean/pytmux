@@ -14,7 +14,7 @@ import asyncio
 import os
 
 import harness  # noqa: F401  (sys.path 주입)
-from harness import make_app, server_only, teardown
+from harness import make_app, server_only, teardown, wait_mounted, wait_until
 from textual.events import Key
 
 import pytmuxlib.plugins as plugins
@@ -483,14 +483,14 @@ async def test_contract_client_app_runs_without_claude_plugin(monkeypatch=None):
             # 4) Claude 관련 명령을 쳐도 무해(핸들러 없음 → 코어가 조용히 무시).
             app._run_command("model")
             app._run_command("claude-settings")
-            await pilot.pause(0.1)
+            await wait_until(pilot, lambda: app.view._cells)
             assert app.view._cells, "Claude 명령 후 렌더 깨짐"
             # 5) 통합 상태 팝업: REC·서버 두 탭(토큰 탭은 2026-06-12 token-log 로
             # 통합·제거 — 플러그인 유무와 무관하게 동일 구성).
             app._status_cap_lines = ["파일: /tmp/x/pane-1.log"]
             app._status_tab_initial = 2          # host 클릭 = 서버 탭 의도
             app._open_status_tabs({"sessions": []})
-            await pilot.pause(0.1)
+            await wait_mounted(pilot, "InfoTabsScreen")
             scr = app.screen_stack[-1]
             assert scr.__class__.__name__ == "InfoTabsScreen"
             names = [t[0] for t in scr._tabs]

@@ -37,12 +37,14 @@ _PLAT = re.compile(r"^\s*if\s+(?:ipc\.IS_WINDOWS|not\s+ipc\.IS_WINDOWS"
                    r"|os\.name\s*[!=]=\s*[\"']nt[\"']|sys\.platform.*)\s*:\s*$")
 
 # 총계 래칫(2026-07-25 기준 실측). **늘리지 말고 줄여라** — 이주 CL 이 여기를 함께 낮춘다.
-TOTALS = {"pause": 315, "sleep": 90, "silent_skip": 18}
+TOTALS = {"pause": 260, "sleep": 90, "silent_skip": 18}
 
 # 모듈별 상한 [고정 pause, 고정 sleep, 조용한 플랫폼 return]. 목록에 없으면 전부 0.
 CEILINGS = {
     "test_claude_resume_plugin": [8, 0, 0],
-    "test_client": [214, 2, 0],
+    # 2026-07-28 이주(214->182): 화면 마운트 대기 32건을 wait_mounted 로.
+    # 2026-07-28 이주 5차(182->171): 단순 단언 대기를 wait_until 로.
+    "test_client": [171, 2, 0],
     "test_clientutil": [1, 1, 0],
     # 2026-07-27g 이주(46→16): 남은 16은 앱 마운트·부정 단언 정착 대기
     "test_compose_prompt": [16, 0, 0],
@@ -53,14 +55,14 @@ CEILINGS = {
     "test_mdir": [1, 0, 0],
     "test_model": [0, 2, 0],
     "test_nc": [2, 0, 0],       # 2026-07-27 이주(20→2): 남은 둘은 app 마운트 대기
-    "test_plugin_contract": [8, 0, 0],
-    "test_plugin_ime_indicator": [7, 1, 5],
+    "test_plugin_contract": [6, 0, 0],
+    "test_plugin_ime_indicator": [4, 1, 5],
     # 2026-07-27j 이주(7→2): 남은 둘은 app 마운트·부정 단언 정착 대기
     "test_plugin_manager": [2, 0, 0],
-    "test_plugin_name_sync": [8, 11, 0],
+    "test_plugin_name_sync": [6, 11, 0],
     "test_plugin_p4_changes": [1, 0, 0],   # 2026-07-27j 이주(7→1)
     "test_plugin_prompt_history": [4, 0, 0],
-    "test_plugin_usage_view": [10, 0, 0],
+    "test_plugin_usage_view": [7, 0, 0],
     "test_proc": [0, 1, 0],
     "test_pty_backend": [0, 6, 0],
     "test_ptyhost": [0, 7, 0],
@@ -74,7 +76,7 @@ CEILINGS = {
     "test_pytmux_home": [0, 0, 3],
     "test_redteam": [0, 0, 2],
     "test_remote": [1, 5, 0],
-    "test_restart": [9, 8, 0],
+    "test_restart": [7, 8, 0],
     "test_robustness": [0, 8, 0],
     "test_security_nest_redteam": [0, 1, 2],
     "test_server": [0, 7, 3],

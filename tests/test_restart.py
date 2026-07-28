@@ -11,7 +11,7 @@ import os
 import re
 
 import pytmux
-from harness import server_only, teardown, wait_for
+from harness import server_only, teardown, wait_for, wait_until
 from run import skip
 from pytmuxlib import ipc, proc, pty_backend
 from pytmuxlib.protocol import read_msg, write_msg
@@ -450,7 +450,7 @@ async def test_client_reconnects_on_restarting():
             # 재시작 통지 → 클라이언트가 끊김을 재접속으로 다루도록 표식
             for c in list(srvA.clients):
                 await write_msg(c.writer, {"t": "restarting"})
-            await pilot.pause(0.3)
+            await wait_until(pilot, lambda: app._reconnecting is True)
             assert app._reconnecting is True, "restarting 통지로 재접속 모드"
             # 재접속 대상 = 새 서버(실제론 같은 소켓; 테스트는 별 소켓으로 대체)
             app.sock_path = sockB
@@ -493,7 +493,7 @@ async def test_windows_restart_all_reconnects_in_place_not_execv():
             # 외부 CLI restart-all 동치: relaunch 통지 → relaunch 모드 무장
             for c in list(srvA.clients):
                 await write_msg(c.writer, {"t": "restarting", "relaunch": True})
-            await pilot.pause(0.3)
+            await wait_until(pilot, lambda: app._reconnecting is True)
             assert app._reconnecting is True
             assert app._relaunch_on_restart is True, "relaunch 통지로 relaunch 모드"
             # 새 서버로 재접속(실제론 같은 소켓; 테스트는 별 소켓으로 대체)

@@ -228,7 +228,40 @@ def _relay_frame_ok(t, msg: dict) -> bool:
         blocks = msg.get("blocks")
         return ("pane" in msg and isinstance(blocks, list)
                 and len(blocks) <= _REMOTE_BLOCKS_MAX)
+    if t == "claude":
+        return "pane" in msg and isinstance(msg.get("tail"), str)
     return True
+
+
+# 상류가 보내는 트랜스크립트 꼬리의 상한. **상류를 믿고 그대로 흘리면 안 된다** —
+# 침해된 상류가 큰 프레임 하나로 다운스트림 클라의 메모리·파싱 시간을 밀어낼 수 있다.
+# 플러그인 상수(clienttail.MAX_TAIL_*)를 import 하지 않는 이유는 blocks 와 같다:
+# 코어가 플러그인을 알면 delete-to-disable 이 깨진다. 값이 갈리면 상류가 더 큰 것을
+# 보낼 뿐이므로 여기가 더 관대해선 안 된다(플러그인 = 64KB/80줄).
+_REMOTE_CLAUDE_CHARS_MAX = 256 * 1024
+_REMOTE_CLAUDE_LINES_MAX = 400
+
+
+def _sanitize_claude_tail(text: str) -> str:
+    """상류의 꼬리 원문을 **경계에서** 자른다.
+
+    내용은 손대지 않는다 — 이건 JSONL 이고 파싱은 클라가 한다. 여기서 제어문자를 접으면
+    오히려 **멀쩡한 JSON 을 깨뜨린다**(문자열 안의 개행은 이미 이스케이프돼 있다).
+    블록(`_sanitize_blocks`)과 갈리는 지점이 여기다: 블록의 `cmd`/`cwd` 는 클라가 **그대로
+    그리는** 텍스트라 접어야 하지만, 이건 클라가 **파싱하는** 데이터라 접으면 안 된다.
+    클라 쪽 파서가 줄 단위로 실패를 흡수하고 표시 문자열에 자기 상한을 건다.
+
+    자를 때 첫 줄은 통째로 버린다: 글자 수로 자르면 반 토막 JSON 이 남고, 클라는 그걸
+    조용히 버리거나 틀리게 읽는다.
+    """
+    if len(text) > _REMOTE_CLAUDE_CHARS_MAX:
+        text = text[-_REMOTE_CLAUDE_CHARS_MAX:]
+        cut = text.find("\n")
+        text = text[cut + 1:] if cut >= 0 else ""
+    lines = text.splitlines()
+    if len(lines) > _REMOTE_CLAUDE_LINES_MAX:
+        lines = lines[-_REMOTE_CLAUDE_LINES_MAX:]
+    return "\n".join(lines)
 
 
 # 상류 블록의 개별 필드 상한. 로컬 세그멘터(plugins/blocks)가 자기 값으로 자르지만
@@ -945,17 +978,22 @@ class ServerRemoteMixin:
                 if t == "blocks":
                     # shape 통과 뒤 **항목 안**까지 정규화한다(_sanitize_blocks docstring).
                     msg = dict(msg, blocks=_sanitize_blocks(msg["blocks"]))
+                if t == "claude":
+                    msg = dict(msg, tail=_sanitize_claude_tail(msg["tail"]))
                 frame = frame_msg(msg)
                 for c in list(self.clients):
                     if c.remote_view != link.host:
                         continue
                     if req_token is not None and id(c) != req_token:
                         continue
-                    if t == "blocks" and "blocks" not in getattr(c, "caps", ()):
-                        # 계약: 광고 안 한 클라(= 파이썬 Textual 클라)는 블록 프레임을
+                    if t in ("blocks", "claude") and t not in getattr(c, "caps", ()):
+                        # 계약: 광고 안 한 클라(= 파이썬 Textual 클라)는 그 프레임을
                         # 한 바이트도 안 받는다. 로컬 패널에서 지키는 것과 같은 계약을
                         # **릴레이에서도** 지킨다 — 링크 하나가 여러 클라를 먹이므로
                         # 여기서 안 거르면 광고 안 한 클라에게 그대로 샌다.
+                        #
+                        # `claude` 는 특히 크다(대화 원문 꼬리). 안 쓰는 클라에게
+                        # 흘리면 ssh 링크 대역을 그만큼 헛되이 쓴다.
                         continue
                     try:
                         await self._send_frames_to(c, [frame])

@@ -8,7 +8,7 @@ import importlib
 from datetime import datetime, timedelta
 
 import harness  # noqa: F401  (sys.path 주입)
-from harness import wait_until
+from harness import wait_mounted, wait_until
 from rich.style import Style
 
 import pytmuxlib.plugins as plugins
@@ -211,7 +211,7 @@ async def test_usage_screen_close_button_dismisses():
             screen = importlib.import_module(
                 "pytmuxlib.plugins.claude-token-usage-view.screen")
             app.push_screen(screen.UsageScreen())
-            await pilot.pause(0.25)
+            await wait_mounted(pilot, "UsageScreen")
             scr = app.screen_stack[-1]
             assert scr.__class__.__name__ == "UsageScreen"
 
@@ -253,7 +253,7 @@ async def test_usage_screen_footer_buttons_tappable():
             screen = importlib.import_module(
                 "pytmuxlib.plugins.claude-token-usage-view.screen")
             app.push_screen(screen.UsageScreen())
-            await pilot.pause(0.25)
+            await wait_mounted(pilot, "UsageScreen")
             scr = app.screen_stack[-1]
             assert scr.__class__.__name__ == "UsageScreen"
             sent.clear()                       # 열 때의 refresh_usage 제거
@@ -436,7 +436,7 @@ async def test_usage_view_click_outside_closes():
             screen = importlib.import_module(
                 "pytmuxlib.plugins.claude-token-usage-view.screen")
             app.push_screen(screen.UsageScreen())
-            await pilot.pause(0.25)
+            await wait_mounted(pilot, "UsageScreen")
             scr = app.screen_stack[-1]
             assert scr.__class__.__name__ == "UsageScreen", scr.__class__.__name__
 

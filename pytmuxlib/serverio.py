@@ -338,6 +338,16 @@ class ServerIOMixin:
                             await write_msg(client.writer,
                                             {"t": "blocks", "pane": p.id,
                                              "blocks": payload})
+                # Claude 트랜스크립트 꼬리도 같은 이유로 초기 1회 보낸다. force=True 인
+                # 이유: 변경 판정을 그대로 타면 "안 바뀌었다"로 아무것도 안 가고, 방금
+                # 붙은 클라는 다음 응답이 올 때까지 빈 구역을 본다.
+                if "claude" in getattr(client, "caps", ()):
+                    for p in panes:
+                        tail = self.plugins.pane_claude_tail(self, p, force=True)
+                        if tail:
+                            await write_msg(client.writer,
+                                            {"t": "claude", "pane": p.id,
+                                             "tail": tail})
             except BaseException:
                 client._sent_rows.clear()
                 raise
@@ -419,6 +429,31 @@ class ServerIOMixin:
         if payload is None:
             return
         frame = frame_msg({"t": "blocks", "pane": pane.id, "blocks": payload})
+        for c in wanted:
+            frames_by_client[c].append(frame)
+
+    def _append_claude_frames(self, frames_by_client, clients, pane):
+        """Claude 트랜스크립트가 자랐으면 **광고한 클라에게만** 원문 꼬리를 보낸다.
+
+        `_append_blocks_frames` 와 두 가지가 다르다:
+
+        - **패널이 dirty 하지 않아도 부른다.** 트랜스크립트는 우리가 쓰는 파일이 아니라
+          Claude 가 밖에서 덧붙이는 파일이라, 화면이 조용한 동안에도 자란다(응답이
+          끝난 직후가 그렇다). 화면 변경에 묶으면 마지막 항목이 영영 안 간다.
+        - 변경 판정이 플러그인 안에 있다(파일 크기·mtime). 그래서 여기엔 dirty 훅이
+          없고, 대신 플러그인이 프레임 카운터로 stat 빈도를 줄인다.
+
+        광고 안 한 클라(= 파이썬 Textual 클라)는 한 바이트도 안 받는다 — 그 클라는 자기
+        기계의 트랜스크립트를 직접 읽는 화면을 이미 갖고 있다.
+        """
+        wanted = [c for c in clients
+                  if "claude" in getattr(c, "caps", ()) and not c.remote_view]
+        if not wanted:
+            return
+        tail = self.plugins.pane_claude_tail(self, pane)
+        if not tail:
+            return
+        frame = frame_msg({"t": "claude", "pane": pane.id, "tail": tail})
         for c in wanted:
             frames_by_client[c].append(frame)
 
@@ -541,6 +576,12 @@ class ServerIOMixin:
                             self._screen_frame(c, p.id, rows, cursor,
                                                p._last_wrap, p._last_top))
                     self._append_blocks_frames(frames_by_client, clients, p)
+                # Claude 트랜스크립트는 **dirty 밖**이다. 우리가 쓰는 파일이 아니라
+                # Claude 가 덧붙이는 파일이라 화면이 조용한 동안에도 자란다 — 응답이
+                # 끝난 직후가 정확히 그 순간이고, 화면 변경에 묶으면 마지막 항목이
+                # 영영 안 간다. 빈도는 플러그인의 프레임 카운터가 줄인다.
+                for p in win.panes():
+                    self._append_claude_frames(frames_by_client, clients, p)
                 # 라이브 PTY 팝업 패널(트리 밖)도 dirty 면 스트리밍한다(동기화 출력
                 # 프레임 도중이면 일반 패널과 동일하게 송신을 미룬다).
                 pu = sess.popup

@@ -201,6 +201,26 @@ class Registry:
                 return payload
         return None
 
+    def pane_claude_tail(self, server, pane, force=False):
+        """이 패널의 Claude 트랜스크립트 **꼬리 원문**(JSONL). 보낼 것이 없으면 None.
+
+        `blocks` 와 달리 dirty 훅이 따로 없다 — 트랜스크립트는 우리가 쓰는 파일이 아니라
+        **Claude 가 밖에서 덧붙이는 파일**이라 알려 주는 이벤트가 없다. 그래서 바뀜
+        판정(크기·mtime)도 상한도 플러그인 안에 있다(`claude-code/clienttail.py`).
+        `force` 는 새로 붙은 클라에게 현재 상태를 보낼 때다 — 그 클라는 "바뀐 적이
+        없다"는 이유로 빈 화면을 봐서는 안 된다.
+
+        플러그인 디렉토리를 지우면 이 훅이 사라져 프레임이 한 바이트도 안 나간다.
+        """
+        for p in self.plugins:
+            fn = getattr(p, "claude_tail", None)
+            if fn is None:
+                continue
+            payload = fn(server, pane, force=force)
+            if payload is not None:
+                return payload
+        return None
+
     def upstream_caps(self):
         """이 서버가 **업스트림에 붙을 때**(페더레이션) 광고할 능력 목록.
 

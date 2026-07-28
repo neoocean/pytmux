@@ -10,7 +10,7 @@ Pane 안전기본값 `_claude`, Claude 리네임은 코어 안전기본값 `_pen
 import importlib
 
 import harness  # noqa: F401  (sys.path 주입)
-from harness import make_app, server_only, teardown
+from harness import make_app, server_only, teardown, wait_mounted
 
 # 하이픈 디렉토리라 import_module 로 불러온다(패키지명에 '-' 포함).
 ns = importlib.import_module("pytmuxlib.plugins.claude-name-sync")
@@ -396,7 +396,7 @@ async def test_config_opens_editor_and_add_rule_saves():
         form.query_one("#rf_host", Input).value = ""
         form.query_one("#rf_os", Input).value = ""
         await pilot.press("ctrl+s")            # 폼 저장 → 목록으로
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, scr_mod.NameSyncScreen)
         assert isinstance(app.screen, scr_mod.NameSyncScreen)
         # Esc → 목록 저장·닫기 → namesync_set 전송(원본 1 + 추가 1 = 2건).
         await pilot.press("escape")
@@ -425,7 +425,7 @@ async def test_form_rejects_empty_path_or_keyword():
         form.query_one("#rf_keyword", Input).value = "x"
         form.query_one("#rf_path", Input).value = ""
         await pilot.press("ctrl+s")
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, scr_mod.RuleFormScreen)
         assert isinstance(app.screen, scr_mod.RuleFormScreen), "빈 경로인데 저장됨"
     await _with_app(body)
 

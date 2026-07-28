@@ -11,7 +11,7 @@ client_key/handle_command 는 가짜 app 으로, 코어 on_key 배선은 라이�
 import os
 
 import harness  # noqa: F401  (sys.path 주입)
-from harness import make_app, server_only, teardown
+from harness import make_app, server_only, teardown, wait_until
 from rich.style import Style
 from textual.events import Key
 
@@ -634,10 +634,10 @@ async def test_core_on_key_updates_ime_state():
             # 코어 on_key(normal) 가 plugins.client_key 를 부르는지 — 핸들러 직접 호출
             # (Textual 의 _on_key 디스패치는 프레임워크 영역이라 핸들러만 가드한다).
             app.on_key(Key("가", "가"))
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: app.ime_state == "한")
             assert app.ime_state == "한"
             app.on_key(Key("b", "b"))
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: app.ime_state == "EN")
             assert app.ime_state == "EN"
             # 숫자는 모드 중립 — 'EN' 유지(여기선 변화 없음).
             app.on_key(Key("5", "5"))
@@ -686,7 +686,7 @@ async def test_badge_stays_at_prompt_when_cursor_hidden_in_split():
             app.pane_content = {1: (rows_a, (5, ccy)),
                                 2: ([[("y", {})] for _ in range(H - 2)], None)}
             app._composite()
-            await pilot.pause(0.05)
+            await wait_until(pilot, lambda: app._ime_zone and app._ime_zone[2] == prompt_gy)
             assert app._ime_zone and app._ime_zone[2] == prompt_gy, app._ime_zone
             assert app._ime_zone[1] <= app._active_pane_right
             # 2) 커서 숨김(같은 활성 패널) → 직전 프롬프트 행 유지(맨 위 0 아님).

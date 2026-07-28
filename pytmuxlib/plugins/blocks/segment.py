@@ -40,6 +40,7 @@ iTerm2 가 만들고 kitty·WezTerm·VSCode 가 따르는 사실상 표준이다
 상한을 넘으면 오래된 것부터 버린다. 상한 없는 목록은 이 저장소가 이미 클라 프리즈로
 물린 적이 있는 부류다(HANDOFF F-G).
 """
+import re
 from urllib.parse import unquote, urlparse
 
 #: 패널당 보관할 블록 수 상한. 스크롤백(HISTORY=10000 행)과 같은 뜻의 상한이며,
@@ -238,8 +239,20 @@ class Segmenter:
         return [b.to_wire() for b in self.blocks]
 
 
+#: `/D:/…` · `/D:\…` 처럼 드라이브 문자가 슬래시 뒤에 오는 URL 경로.
+_DRIVE_PREFIX = re.compile(r"^/[A-Za-z]:[/\\]")
+
+
 def _parse_file_url(param):
-    """`file://host/path` 에서 경로만. 형식이 아니면 None."""
+    """`file://host/path` 에서 경로만. 형식이 아니면 None.
+
+    **Windows 드라이브 경로는 앞의 `/` 를 뗀다.** `file:///D:/a/b` 의 URL 경로는
+    규격상 `/D:/a/b` 인데, 그 `/` 가 남으면 cwd 가 `/D:/a/b` 가 되고 네이티브 클라의
+    Claude 뷰가 폴더 이름을 `-D--a-b` 로 만든다(구분자·콜론이 전부 `-` 로 바뀌므로
+    맨 앞 슬래시도 `-` 가 된다). 실제 Claude Code 가 쓰는 이름은 `D--a-b` 라
+    **한 글자 차이로 못 찾고**, 증상은 오류가 아니라 "세션이 없다"다 — 조용해서 더
+    나쁘다. (2026-07-27 alienware 박스에서 실제 `~/.claude/projects` 이름과 대조.)
+    """
     if not param:
         return None
     try:
@@ -248,7 +261,10 @@ def _parse_file_url(param):
         return None
     if parsed.scheme != "file" or not parsed.path:
         return None
-    return unquote(parsed.path)
+    path = unquote(parsed.path)
+    if _DRIVE_PREFIX.match(path):
+        path = path[1:]
+    return path
 
 
 def _unescape(text):

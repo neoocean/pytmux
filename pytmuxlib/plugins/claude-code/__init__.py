@@ -24,6 +24,8 @@ from pytmuxlib import i18n
 # 순서 의존이 생겼다(test_i18n 단독 실행 실패·전체 스위트에선 test_client 가 가림) —
 # 모듈은 가볍다(textual 미사용, 자기 docstring) → 로드 시점 명시 import 로 보장한다.
 from . import clientstatus  # noqa: F401  (i18n claude.* 등록 부수효과)
+# 클라에 보낼 트랜스크립트 꼬리(§7 P5 ⓑ'). 파일 읽기·상한만 있고 textual 을 안 쓴다.
+from . import clienttail
 
 # ---- 명령 메타데이터(코어 COMMANDS/COMPLETIONS/COMMAND_NOARG 에 합쳐짐) ----
 COMMANDS = [
@@ -1026,6 +1028,31 @@ class _ClaudeCodePlugin:
                 "claude_auto_retry": getattr(server, "claude_auto_retry", True),
                 "auto_launch": getattr(server, "claude_auto_launch", True),
             })
+
+    #: 페더레이션: 이 서버가 업스트림에 붙을 때 광고할 능력. 이게 없으면 업스트림이
+    #: 트랜스크립트 꼬리를 안 보내고, 원격 탭을 보는 네이티브 클라는 Claude 뷰가 로컬
+    #: 탭에서만 보이는 비대칭을 겪는다(blocks 와 같은 구조 — `plugins/blocks`).
+    upstream_caps = ("claude",)
+
+    def claude_tail(self, server, pane, force=False):
+        """이 패널의 Claude 트랜스크립트 **꼬리 원문**. 보낼 것이 없으면 None.
+
+        경로 해석은 이미 있는 캐시를 그대로 쓴다(`_xc_resolve_path` — lsof/ps 후손
+        탐색이라 비싸다). 상한·변경 판정은 `clienttail` 참조.
+
+        왜 항목이 아니라 원문인가: 파이썬에는 표시용 항목 파서가 없고, 새로 쓰면 러스트
+        것과 의미가 어긋나는 순간 **같은 대화가 탭에 따라 달라 보인다**(clienttail
+        모듈 주석 · 설계문서 §7 P5 의 비용 재측정).
+        """
+        if not clienttail.due(pane, force):
+            return None
+        try:
+            path = server._xc_resolve_path(pane)
+        except Exception:
+            return None                    # best-effort — 표시용이 본 흐름을 막지 않는다
+        if not path:
+            return None
+        return clienttail.pane_tail(pane, path, force=force)
 
     def server_pane_overview(self, server, pane, info):
         """트리/개요 패널 정보에 Claude 상태/사용량/세션 누계 토큰(#18)을 덧붙인다."""

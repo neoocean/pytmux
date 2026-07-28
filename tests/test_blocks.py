@@ -218,15 +218,46 @@ async def test_command_text_reaches_the_wire_through_the_pane():
     assert blocks_wire(pane)[0]["cmd"] == "echo 한글"
 
 
+#: Git for Windows 의 bash. PATH 에 없는 것이 보통이라 이름으로만 찾으면 못 만난다.
+_GIT_BASH = (r"C:\Program Files\Git\bin\bash.exe",
+             r"C:\Program Files\Git\usr\bin\bash.exe")
+
+
+def _posix_shell():
+    """**실제로 대답하는** zsh·bash. 없으면 None.
+
+    이름으로 찾은 것을 그대로 믿으면 안 된다 — Windows 는 `%LOCALAPPDATA%\\Microsoft\\
+    WindowsApps\\bash.exe`(WSL 실행 스텁)를 PATH 앞쪽에 둔다. WSL 배포판이 없으면 그건
+    셸이 아니라 **설치 안내로 매달리는 프로그램**이고, `shutil.which("bash")` 는 그것을
+    준다. 실제로 이 박스에서 그 스텁을 물어 테스트가 20초 타임아웃으로 죽었다
+    (2026-07-27 alienware). 그래서 골라 놓고 한 번 물어본다.
+    """
+    seen = []
+    for name in ("zsh", "bash"):
+        found = shutil.which(name)
+        if found:
+            seen.append(found)
+    seen.extend(p for p in _GIT_BASH if os.path.exists(p))
+    for shell in seen:
+        try:
+            probe = subprocess.run([shell, "-c", "printf ok"],
+                                   capture_output=True, timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if probe.returncode == 0 and probe.stdout.strip() == b"ok":
+            return shell
+    return None
+
+
 async def test_real_shell_integration_emits_the_command_it_was_given():
     """`shell-integration.sh` 가 실제로 만드는 바이트를 패널에 먹여 본다.
 
     escape 규칙이 셸 쪽(파라미터 치환)과 서버 쪽(_unescape)에 **따로** 적혀 있어,
     한쪽만 고치면 조용히 어긋난다. 두 구현을 같은 문자열로 마주 세운다.
     """
-    shell = shutil.which("zsh") or shutil.which("bash")
+    shell = _posix_shell()
     if shell is None:
-        skip("zsh·bash 없음(셸 통합 스크립트를 실행할 수 없다)")
+        skip("동작하는 zsh·bash 없음(셸 통합 스크립트를 실행할 수 없다)")
     script = os.path.join(os.path.dirname(blocks_pkg.__file__),
                           "shell-integration.sh")
     typed = 'git log; grep "a b" C:\\path'
@@ -239,6 +270,65 @@ async def test_real_shell_integration_emits_the_command_it_was_given():
     pane.feed(_osc("133", "A"))
     pane.feed(out.stdout)
     assert blocks_wire(pane)[0]["cmd"] == typed, "셸 escape 와 서버 unescape 가 어긋났다"
+
+
+def _powershell_emits(expr):
+    """`shell-integration.ps1` 을 실제 PowerShell 에서 돌려 나온 **바이트**.
+
+    `-Command` 의 출력을 파이프로 받으면 PowerShell 이 BOM 을 앞에 붙이므로 벗긴다 —
+    실 콘솔에서는 `[Console]::Write` 가 직접 쓰기 때문에 없는 바이트다.
+    """
+    shell = shutil.which("powershell") or shutil.which("pwsh")
+    if shell is None:
+        skip("powershell 없음(PowerShell 통합 스크립트를 실행할 수 없다)")
+    script = os.path.join(os.path.dirname(blocks_pkg.__file__),
+                          "shell-integration.ps1")
+    out = subprocess.run(
+        [shell, "-NoProfile", "-NoLogo", "-Command", '. "%s"; %s' % (script, expr)],
+        capture_output=True, timeout=60,
+    )
+    return out.stdout.lstrip(b"\xef\xbb\xbf").rstrip(b"\r\n")
+
+
+async def test_powershell_integration_emits_the_command_it_was_given():
+    """`.ps1` 판도 `.sh` 와 **같은 escape 규약**인지 실제로 돌려 확인한다.
+
+    셸이 늘 때마다 escape 를 새로 적게 되는데 서버의 `_unescape` 는 한 벌이다.
+    특히 Windows 는 경로에 백슬래시가 흔해 `\\` 처리를 어기면 바로 드러난다.
+    """
+    typed = 'git log; findstr /c:"a b" C:\\path\\to'
+    payload = typed.replace("'", "''")
+    out = _powershell_emits("__pytmux_report_cmd '%s'" % payload)
+    pane = _pane()
+    pane.feed(_osc("133", "A"))
+    pane.feed(out)
+    assert blocks_wire(pane)[0]["cmd"] == typed, \
+        "PowerShell escape 와 서버 unescape 가 어긋났다"
+
+
+async def test_powershell_integration_reports_a_windows_cwd_without_a_leading_slash():
+    """`file:///D:/a/b` 의 URL 경로는 `/D:/a/b` 다 — 그 `/` 가 남으면 안 된다.
+
+    남으면 네이티브 클라가 Claude 폴더 이름을 `-D--a-b` 로 만들고 실제 이름
+    (`D--a-b`)과 **한 글자 차이로** 못 찾는다. 증상이 "세션이 없다"라 조용하다.
+    """
+    out = _powershell_emits("Set-Location C:\\Windows; __pytmux_report_cwd")
+    pane = _pane()
+    pane.feed(_osc("133", "A"))
+    pane.feed(out)
+    cwd = blocks_wire(pane)[0]["cwd"]
+    assert not cwd.startswith("/"), "드라이브 경로 앞의 슬래시가 남았다: %r" % cwd
+    assert cwd.lower().startswith("c:/"), cwd
+
+
+async def test_a_windows_drive_url_loses_only_the_url_slash():
+    """드라이브 경로만 벗긴다 — POSIX 절대경로의 `/` 는 경로의 일부다."""
+    seg = Segmenter()
+    seg.on_osc("133", "A")
+    seg.on_osc("7", "file://host/D:/a/b")
+    assert seg.cwd == "D:/a/b"
+    seg.on_osc("7", "file://host/home/me/work")
+    assert seg.cwd == "/home/me/work", "POSIX 경로에서 루트를 떼면 안 된다"
 
 
 # ---- 상한과 회전 ------------------------------------------------------------
