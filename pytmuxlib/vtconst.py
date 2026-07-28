@@ -119,6 +119,15 @@ BG_AIXTERM = {
     107: "brightwhite",
 }
 
+#: 보존된 원 pyte 오타 이름 → 정규 철자. 오타 **값 자체**는 렌더 바이트 동일성을 위해
+#: 위 표에 그대로 둔다(모듈 docstring). 하지만 그 이름을 **해석하는** 쪽은 이 표로
+#: 먼저 정규화해야 한다 — 안 그러면 `bright` 접두 규칙에 안 걸려 **색을 통째로
+#: 잃는다**(글자는 남고 색만 사라져 조용하다).
+#: 소비자 둘: `model._sgr_color`(세션유지 재시작 스냅샷의 SGR 환원) ·
+#: `clientutil._COLOR_ALIASES`(표시 계층 Rich 이름). 전수 가드 =
+#: `tests/test_export_snapshot_colors.py` — 이 표를 늘리면 그 테스트가 따라온다.
+PYTE_COLOR_TYPOS = {"bfightmagenta": "brightmagenta"}
+
 FG_256 = 38
 BG_256 = 48
 

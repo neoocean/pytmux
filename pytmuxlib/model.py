@@ -97,7 +97,10 @@ def _sgr_color(c, is_bg: bool):
     if len(c) == 6 and all(ch in "0123456789abcdefABCDEF" for ch in c):
         return [48 if is_bg else 38, 2,
                 int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)]
-    name, bright = c, False
+    # 보존된 원 pyte 오타(aixterm 105 'bfightmagenta')를 먼저 정규화한다 — 안 하면
+    # 아래 'bright' 접두 규칙에 안 걸려 _SGR_BASE 조회가 실패하고 **그 색이 통째로
+    # 사라진다**. 재시작 스냅샷은 조용해서(글자는 그대로) 안 드러난다.
+    name, bright = vtconst.PYTE_COLOR_TYPOS.get(c, c), False
     if name.startswith("bright"):
         bright, name = True, name[6:]
     base = _SGR_BASE.get(name)
