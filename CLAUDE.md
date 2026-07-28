@@ -11,6 +11,23 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
 ## 빌드/실행/테스트
 - 의존성: `pip install -r requirements.txt` (Textual·pyte·wcwidth 등).
 - 실행: `python3 pytmux.py` (또는 설치 후 `pytmux`).
+- ⛔ **프로세스 이름으로 일괄 kill 금지**(사고 2026-07-28, 같은 날 3회 재발):
+  `Get-Process pythonw | Stop-Process -Force`(또는 `pkill -f python`·`taskkill /IM
+  pythonw.exe`)는 **사용자가 지금 쓰고 있는 pytmux 서버와 pty-host 를 죽인다** — 둘 다
+  이름이 그냥 `pythonw.exe`/`python3` 라 내 테스트 데몬과 구분되지 않는다. 실제로
+  pytmux-client 세션의 "테스트 서버 정리" 한 줄이 라이브 세션을 3번 날렸다(그 세션을
+  `claude --resume` 로 이어받을 때마다 같은 정리 단계가 다시 돌아 재발). **내가 띄운
+  것만** 겨냥한다:
+  - 격리해서 띄운다 — `PYTMUX_HOME=<스크래치>`(상태·소켓·캡처가 전부 그 아래로 간다)
+    또는 `--socket`/`-L <이름>`. 드라이버(`.claude/skills/run-pytmux/driver.py`)는 이미
+    전용 임시 상태 디렉터리로 자기를 격리한다.
+  - 내린다 — `PYTMUX_HOME=<스크래치> python3 pytmux.py kill-server --yes`. 서버가 이미
+    죽어 host 만 남았어도 이 명령이 그 엔드포인트의 pty-host 까지 회수한다.
+  - 그래도 남으면 **pid 로만** 죽인다 — `<스크래치>/state/*.ptyhost.pid` 와
+    `spawn_detached` 가 돌려준 pid. 이름 매칭으로 넓히지 않는다.
+  - 증상 참고: 서버가 밖에서 강제 종료되면 클라는 재접속 실패 후
+    `msg.server_lost`("…재접속에 실패했습니다 — …강제 종료됐는지 확인")를 남기고 끝난다.
+    bye 경로(`msg.server_terminated` = 의도된 종료)와 이 문구로 갈린다.
 - **테스트(커밋 전 필수)**: `python3 tests/run.py` — 헤드리스로 전체 스위트를 돌려
   `N passed, 0 failed` 를 확인한다. 특정 모듈만: `python3 tests/run.py test_server`.
   - 주의: `run.py` 는 실패해도 종료코드가 0 일 수 있으니 **요약줄(passed/failed)** 을
@@ -25,6 +42,12 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
     땐 `harness.patched(mod, **attrs)` 로 **구간을 가둔다**. 안 되돌린 재바인딩은
     모듈 경계에서 가드가 되돌리고 `LEAK <모듈>: <속성>` 으로 보고한다
     (끄기 `PYTMUX_TEST_LEAK_GUARD=off`).
+  - **에이전트 셸에서 돌릴 땐 `NO_COLOR` 를 먼저 지운다**(2026-07-28 실측): Claude Code
+    툴 환경은 `NO_COLOR=1` 을 심는데, 그러면 Textual 이 `Monochrome` 필터를 물려
+    `'NoneType' object has no attribute 'color'` 로 **test_client 110건이 한꺼번에**
+    떨어진다 — 내 변경과 무관한 **환경 실패**다(이유가 전부 같은 한 줄이면 의심할 것).
+    `Remove-Item Env:\NO_COLOR`(pwsh) / `unset NO_COLOR`(sh) 후 다시 돌린다.
+    Windows 는 그 밖에 심링크 권한(`WinError 1314`)으로 감사 배터리 2건이 상시 실패한다.
   - **명시 SKIP**: 플랫폼 부적합 등으로 건너뛸 땐 조용한 `return` 대신
     `from run import skip` 후 `skip("사유")` — 요약이 `N skipped` + 사유별로 리포트해
     커버리지 갭이 보인다(신규/수정 테스트부터 점진 채택). 타임아웃(행)은 1회 재시도한다

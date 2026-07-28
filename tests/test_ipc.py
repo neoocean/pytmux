@@ -156,6 +156,40 @@ def test_control_connect_timeout_loopback_capped():  # 동기 단위(아래서 �
     assert ipc._control_connect_timeout("/tmp/x.sock", 2.0) == 2.0
 
 
+def test_async_connect_timeout_loopback_capped():  # 동기 단위(아래서 호출)
+    """비동기 open_connection 도 같은 캡을 쓴다(2026-07-28). 종전엔 동기 control_socket
+    에만 캡이 있어, 서버가 밖에서 강제 종료된 뒤 클라 재접속 루프
+    (`_connect_and_hello` × `_RECONNECT_RETRIES_DROP`=25)가 Windows 의 매달리는 루프백
+    connect 를 25번 태워 **~50초** 뒤에야 종료했다(실측 52·52·51초). 루프백만 캡하고
+    원격 TCP·unix 는 None(무제한 — ssh 터널 지연이 정상)."""
+    cap = ipc._LOOPBACK_CONNECT_TIMEOUT
+    assert ipc._async_connect_timeout("tcp:127.0.0.1:54321") == cap
+    assert ipc._async_connect_timeout("tcp:localhost:1234") == cap
+    assert ipc._async_connect_timeout("tcp:10.0.0.5:22") is None
+    assert ipc._async_connect_timeout("/tmp/x.sock") is None
+
+
+async def test_open_connection_dead_loopback_fails_fast():
+    """죽은 루프백 포트로의 **비동기** connect 가 캡(+여유) 안에 실패로 끝난다.
+    타임아웃은 TimeoutError(= OSError 하위)라 호출부의 `except OSError` 재시도
+    핸들러가 그대로 흡수한다 — 그 상속 관계도 함께 고정한다."""
+    import socket as _socket
+    import time as _time
+    assert issubclass(asyncio.TimeoutError, OSError), \
+        "TimeoutError 가 OSError 하위가 아니면 재접속 핸들러가 못 잡는다"
+    s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()                       # bind 만 하고 닫아 '방금 죽은 포트'를 만든다
+    t0 = _time.monotonic()
+    try:
+        await ipc.open_connection(f"tcp:127.0.0.1:{port}")
+        raise AssertionError("죽은 포트인데 연결됐다")
+    except OSError:
+        pass
+    assert _time.monotonic() - t0 < 1.5, "죽은 루프백 포트 connect 가 느리다"
+
+
 async def test_probe_dead_loopback_port_returns_fast():
     """죽은 루프백 포트 probe 가 캡(+여유) 안에 False 로 끝난다 — POSIX 는 원래
     즉시 거절이고, Windows 러너에서는 위 캡이 실제로 2s→0.5s 를 보장한다."""
@@ -175,6 +209,7 @@ async def test_run_sync_units():
     test_parse_endpoint()
     test_is_local_endpoint()
     test_control_connect_timeout_loopback_capped()
+    test_async_connect_timeout_loopback_capped()
 
 
 async def test_private_atomic_writes_and_cleans_up():

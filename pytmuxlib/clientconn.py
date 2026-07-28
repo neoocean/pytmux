@@ -137,7 +137,15 @@ class _NetReconnectMixin:
                 if self.net_auto_reconnect and self._drop_reconnect_ok() \
                         and await self._reconnect_after_drop():
                     return
-                self.exit()
+                # 여기까지 왔으면 서버가 **bye 없이** 사라졌고 재접속도 실패했다
+                # (= 외부 강제 종료·크래시). 종전엔 인자 없는 self.exit() 라 클라가
+                # **아무 문구도 없이** 사라져, 사용자가 "pytmux 가 그냥 종료됐다"는
+                # 것 말고는 아무 단서도 못 받았다(제보 2026-07-28: 실제 원인은 다른
+                # 도구가 `Get-Process pythonw | Stop-Process -Force` 로 서버·pty-host
+                # 를 싹 죽인 것이었는데, 무언 종료라 화면만 봐서는 알 길이 없었다).
+                # bye 경로(msg.server_terminated = 의도된 종료)와 **구분되는** 문구를
+                # 남겨, 다음 신고 때 §10.2 진단 분기를 화면만으로 가를 수 있게 한다.
+                self.exit(message=i18n.t("msg.server_lost"))
                 return
             self._dispatch_guarded(msg)
 

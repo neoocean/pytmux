@@ -6277,6 +6277,36 @@ async def test_client_reconnects_after_backpressure_drop():
     await _with_app(body)
 
 
+async def test_server_gone_without_bye_exits_with_message():
+    """서버가 **bye 없이** 사라지고(외부 강제 종료·크래시) 재접속도 못 하면, 클라는
+    이유를 담은 문구를 남기고 끝난다 — 종전엔 인자 없는 `self.exit()` 라 화면이
+    **아무 말 없이** 사라져 사용자가 단서를 하나도 못 받았다(제보 2026-07-28: 실제
+    원인은 다른 도구의 `Get-Process pythonw | Stop-Process -Force` 였는데 무언 종료라
+    화면만으로는 알 길이 없었다). bye 경로(msg.server_terminated = 의도된 종료)와
+    **다른** 문구여야 §10.2 진단 분기를 화면만으로 가를 수 있다.
+
+    호출부까지 단언한다(값을 만드는 i18n 만 보면 인자를 지워도 통과) — exit 를 가로채
+    실제로 message 를 실어 부르는지 본다."""
+    from pytmuxlib import i18n
+
+    async def body(app, pilot, srv):
+        calls = []
+        app.exit = lambda *a, **k: calls.append((a, k))
+        try:
+            app.net_auto_reconnect = False     # 재접속 배제 → 곧장 종료 분기
+            assert srv.clients, "선행 조건: 클라가 붙어 있어야"
+            srv._drop_slow_client(srv.clients[0])   # bye 없이 writer.close → EOF
+            await wait_until(pilot, lambda: calls)
+            assert calls, "EOF 후 종료 호출이 없다"
+            msg = calls[0][1].get("message")
+            assert msg, f"무언 종료(문구 없음): {calls[0]!r}"
+            assert msg == i18n.t("msg.server_lost"), msg
+            assert msg != i18n.t("msg.server_terminated"), "bye 경로와 구분돼야"
+        finally:
+            del app.exit                        # 클래스 메서드 복원(teardown 정상화)
+    await _with_app(body)
+
+
 async def test_force_reconnect_recovers_without_exit():
     """§10 degraded 회복: 강제 재접속(_force_reconnect)이 ① IPC 소켓을 교체(연결
     세대 _conn_gen 증가)하고 ② degraded 를 해제하며 ③ 앱을 종료하지 않고 ④ 서버

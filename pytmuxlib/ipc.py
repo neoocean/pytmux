@@ -565,14 +565,29 @@ def _resolve_tcp_port(host: str, port: int, portfile: Optional[str],
 
 async def open_connection(endpoint: str, *, portfile: Optional[str] = None
                           ) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-    """엔드포인트에 비동기 연결. (reader, writer) 반환."""
+    """엔드포인트에 비동기 연결. (reader, writer) 반환.
+
+    루프백 TCP 는 `_LOOPBACK_CONNECT_TIMEOUT` 로 캡한다 — **동기 control_socket 에만
+    있던 캡을 비동기 경로에도 맞춘다**(2026-07-28). Windows 는 리스너 없는 루프백
+    포트 connect 가 즉시 거절되지 않고 매달리므로(아래 상수 주석), 서버가 강제
+    종료된 뒤 클라의 재접속 재시도 루프(clientconn `_connect_and_hello`)가 시도마다
+    통째로 멎었다: `_RECONNECT_RETRIES_DROP`(25회)가 "~0.5초"라는 설계 의도와 달리
+    **~50초**를 태우고 그제서야 종료했다(실측 3회 52·52·51초 — 사용자에겐 "한참
+    멈춰 있다가 아무 말 없이 사라지는" 증상). 산 서버라면 커널 backlog 가 handshake
+    를 <1ms 에 끝내므로 캡이 오탐을 만들지 않는다.
+    타임아웃은 `TimeoutError`(= OSError 하위)로 나가 기존 `except OSError` 재시도
+    핸들러가 그대로 흡수한다."""
     kind = parse_endpoint(endpoint)
     if kind[0] == "tcp":
         _, host, port = kind
         rport = _resolve_tcp_port(host, port, portfile, endpoint)
         if rport is None:
             raise ConnectionError(f"포트파일에서 포트를 못 읽음: {endpoint}")
-        return await asyncio.open_connection(host, rport)
+        cap = _async_connect_timeout(endpoint)
+        if cap is None:
+            return await asyncio.open_connection(host, rport)
+        return await asyncio.wait_for(
+            asyncio.open_connection(host, rport), cap)
     return await asyncio.open_unix_connection(path=kind[1])
 
 
@@ -594,6 +609,14 @@ def _control_connect_timeout(endpoint: str, timeout: float) -> float:
     if is_tcp(endpoint) and is_local_endpoint(endpoint):
         return min(timeout, _LOOPBACK_CONNECT_TIMEOUT)
     return timeout
+
+
+def _async_connect_timeout(endpoint: str) -> Optional[float]:
+    """open_connection 의 connect 캡(초) — 루프백 TCP 만, 그 외는 None(무제한).
+    원격(비루프백) TCP 는 ssh 터널/광역 지연이 정상이라 캡하지 않는다."""
+    if is_tcp(endpoint) and is_local_endpoint(endpoint):
+        return _LOOPBACK_CONNECT_TIMEOUT
+    return None
 
 
 def control_socket(endpoint: str, *, portfile: Optional[str] = None,
