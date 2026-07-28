@@ -361,8 +361,15 @@ async def test_loop_alive_status_build_does_not_fork_per_frame():
         panes = sess.active_window.panes()
         assert len(panes) >= 2, "스위처 하위행은 패널 2개 이상인 탭에만 붙는다"
         # 캐시를 실제 값으로 덥힌다 — 계약은 "패널 수명당 1회"이지 "0회"가 아니다.
-        for p in panes:
-            srv._fg_command_cached(p)
+        # **서버가 아는 패널 전부**를 덥힌다: `_status_msg` 는 이 탭만이 아니라 세션의
+        # 모든 탭을 훑으므로, 안 덥힌 패널이 하나라도 있으면 `_fg_command_cached` 가
+        # 그 패널에서만 동기 경로(`ts` 가 0 → 패널 수명당 1회 인라인)를 타 gap 이
+        # 통째로 _SLOW 가 된다 — GHA windows 3.12 가 407ms(≈_SLOW)로 여기 걸렸다.
+        # 캐시 계약을 재는 자리이지 "누가 패널을 더 만들었나"를 재는 자리가 아니다.
+        for _s in srv.sessions.values():
+            for _t in _s.tabs:
+                for _p in _t.window.panes():
+                    srv._fg_command_cached(_p)
         calls = []
         srv._fg_command = lambda pane: (calls.append(1), time.sleep(_SLOW),
                                         "zsh")[2]

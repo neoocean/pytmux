@@ -323,8 +323,13 @@ async def test_native_client_is_found_in_a_defined_order():
         with open(on_path, "w") as f:
             f.write("")
         os.chmod(on_path, 0o755)
-        # PATH 에 있으면 그것을 쓴다.
-        assert find_native_client({"PATH": tmp}) == on_path
+        # PATH 에 있으면 그것을 쓴다. 비교는 `normcase` 로 — Windows 의 `shutil.which`
+        # 는 찾은 파일명을 **PATHEXT 의 표기 그대로**(`.EXE`) 돌려주므로 원문 문자열
+        # 비교는 대소문자만으로 어긋난다(파일시스템은 대소문자 무시라 찾긴 찾는다).
+        # POSIX 에서 normcase 는 항등이라 단언 강도는 그대로다.
+        got = find_native_client({"PATH": tmp})
+        assert got and os.path.normcase(got) == os.path.normcase(on_path), \
+            (got, on_path)
         # 명시 지목이 PATH 를 이긴다 — 두 벌을 견주는 사람이 PATH 를 안 흔들 수 있어야 한다.
         assert find_native_client(
             {"PATH": tmp, "PYTMUX_CLIENT_BIN": "/opt/mine"}) == "/opt/mine"
