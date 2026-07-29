@@ -353,7 +353,9 @@ async def test_loop_alive_status_build_does_not_fork_per_frame():
 
     오라클이 둘인 이유: gap 만 보면 빠른 머신에서 60번의 짧은 포크가 임계값 아래로
     숨는다. **호출 횟수**가 캐시 제거를 직접 겨눈다(뮤테이션: serverio 의
-    `_fg_command_cached` 를 `_fg_command` 로 되돌리면 0~2 회가 60 회가 된다)."""
+    `_fg_command_cached` 를 `_fg_command` 로 되돌리면 0~2 회가 60 회가 된다).
+    gap 쪽은 **절대 임계값이 아니라 대조 라운드와의 차분**이다 — 이유는 아래 주석
+    (러너 속도가 그대로 실려 GHA windows 가 포크 0회에도 314·359ms 였다)."""
     srv, task, ep = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
@@ -371,21 +373,49 @@ async def test_loop_alive_status_build_does_not_fork_per_frame():
                 for _p in _t.window.panes():
                     srv._fg_command_cached(_p)
         calls = []
-        srv._fg_command = lambda pane: (calls.append(1), time.sleep(_SLOW),
-                                        "zsh")[2]
+        slow = True     # 아래 대조 라운드에서만 끈다(스텁의 나머지는 동일)
+        srv._fg_command = lambda pane: (calls.append(1),
+                                        slow and time.sleep(_SLOW), "zsh")[2]
 
         async def _build():
             # 30회 = 30Hz flush 루프의 1초치.
             for _ in range(30):
                 srv._status_msg(sess, full=False, client=None)
 
-        gap = await harness.max_loop_gap(_build)
-        assert len(calls) <= len(panes), (
-            f"status 30회가 fg 조회를 {len(calls)}회 했다(패널 {len(panes)}개) — "
-            f"프레임마다 포크하고 있다(캐시 미적용)")
-        assert gap < _GAP_MAX, (
-            f"status 빌드가 루프를 {gap*1000:.0f}ms 막았다 — fg 조회가 루프에서 "
-            f"돌고 있다(blocking-on-loop 5회차)")
+        # gap 을 **절대 임계값**과 비교하면 이 테스트는 "status 30회가 얼마나 걸리나"를
+        # 재게 된다 — `_build` 는 30회를 await 없이 도므로 fg 를 한 번도 안 불러도 그
+        # 시간만큼 루프가 멎는다. 빠른 머신에선 <150ms 지만 GHA windows 러너에선
+        # **포크가 0회여도** 314ms(3.13)·359ms(3.12)가 나왔다(호출 횟수 오라클은 통과 =
+        # 캐시는 멀쩡했다). 값이 실행마다 비슷한 것이 단서다: 일시적 스톨이 아니라
+        # 그 러너의 상시 속도다 → 재시도로는 안 갈린다.
+        #
+        # 그래서 재는 것을 **fg 기여분**으로 바꾼다: 같은 머신에서 스텁의 sleep 만
+        # 뺀 대조 라운드를 돌려 차분을 본다. 머신 속도는 양쪽에 똑같이 실리므로
+        # 상쇄되고, 인라인 포크는 1회만 있어도 차분을 _SLOW(400ms) 올린다(프레임마다면
+        # 30×=12초). 남은 노이즈(한쪽 라운드에만 얹힌 스톨)는 재시도로 턴다.
+        deltas = []
+        for _round in range(3):
+            before = len(calls)
+            slow = False
+            base = await harness.max_loop_gap(_build)     # 대조: fg 는 즉시 반환
+            slow = True
+            gap = await harness.max_loop_gap(_build)      # 측정: fg 1회당 _SLOW
+            deltas.append(gap - base)
+            assert len(calls) - before <= 2 * len(panes), (
+                f"status 60회(대조 30 + 측정 30)가 fg 조회를 {len(calls) - before}회 "
+                f"했다(패널 {len(panes)}개) — 프레임마다 포크하고 있다(캐시 미적용)")
+            # 대조 라운드 자체의 상한은 넉넉하게 둔다 — 여긴 "머신이 얼마나 느린가"가
+            # 아니라 "status 빌드가 **병적으로** 막는가"를 본다(GHA 최악이 30회에
+            # 359ms ≈ 12ms/회였으니 1초는 3배 여유이고, 프레임마다 포크하면 12초다).
+            assert base < 1.0, (
+                f"fg 를 한 번도 안 부르는 대조 라운드가 루프를 {base*1000:.0f}ms "
+                f"막았다 — status 빌드 경로에 새 동기 작업이 들어왔다")
+            if deltas[-1] < _SLOW / 2:
+                break
+        assert deltas[-1] < _SLOW / 2, (
+            f"status 빌드가 루프를 대조보다 {deltas[-1]*1000:.0f}ms 더 막았다 — fg "
+            f"조회가 루프에서 돌고 있다(blocking-on-loop 5회차). 라운드별 차분(ms)="
+            f"{[round(d*1000) for d in deltas]}")
     finally:
         await teardown(srv, task, ep)
 

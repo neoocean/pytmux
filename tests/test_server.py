@@ -8,6 +8,7 @@ import shutil
 import harness
 import pytmux
 from harness import first_session, pane_text, server_only, teardown, wait_for
+from run import skip
 from pytmuxlib import ipc
 
 
@@ -3416,19 +3417,40 @@ async def test_sync_output_active_feed_does_not_time_out():
 
         # 프레임 시작(BSU). 이후 ?2026 토글 없는 '중간' 슬라이스를 SYNC_OUTPUT_MAX_DEFER
         # 를 넘는 시간 동안 계속 먹인다(대형 프레임이 청크로 들어오는 상황 모사).
-        srv._ingest_slice(p, b"\x1b[?2026h\x1b[Hheavy-scroll")
-        assert p.sync_output is True
-        sent_during = []
-        step = SYNC_OUTPUT_MAX_DEFER / 3
-        elapsed = 0.0
-        while elapsed < SYNC_OUTPUT_MAX_DEFER * 2 + 0.1:
-            srv._ingest_slice(p, b"row\r\n" * 50)   # 2026 토글 없음 = 프레임 도중
+        #
+        # 이 단언의 **전제는 '급식이 끊기지 않았다'** 이다: 서버는 `now - _sync_since >=
+        # SYNC_OUTPUT_MAX_DEFER`(= 마지막 바이트 이후 침묵) 일 때 안전망으로 보내므로,
+        # 러너가 그만큼 멎으면 송신이 **정답**이고 우리 단언만 무의미해진다(GHA windows
+        # 3.13 이 여기 걸렸다). 그래서 급식 간격을 **실측**해 전제 위반과 결함을 가른다 —
+        # 간격이 다 짧았는데 프레임이 갔으면 그건 진짜 결함이다(디퍼 타임아웃이 '프레임
+        # 총 소요'를 재고 있는 것). 전제가 계속 깨지면 재시도하고 그래도면 SKIP 한다.
+        step = SYNC_OUTPUT_MAX_DEFER / 5      # 여유를 5배로(종전 3배)
+        sent_during, max_gap = [], 0.0
+        for _round in range(3):
+            srv._ingest_slice(p, b"\x1b[?2026h\x1b[Hheavy-scroll")
             assert p.sync_output is True
-            sent_during += [m for m in await _collect(step) if _pane_screen(m)]
-            elapsed += step
+            sent_during, max_gap = [], 0.0
+            last = _time.monotonic()
+            elapsed = 0.0
+            while elapsed < SYNC_OUTPUT_MAX_DEFER * 2 + 0.1:
+                srv._ingest_slice(p, b"row\r\n" * 50)   # 2026 토글 없음 = 프레임 도중
+                now = _time.monotonic()
+                max_gap = max(max_gap, now - last)      # 서버가 본 '침묵'과 같은 시계
+                last = now
+                assert p.sync_output is True
+                sent_during += [m for m in await _collect(step) if _pane_screen(m)]
+                elapsed += step
+            if not sent_during or max_gap < SYNC_OUTPUT_MAX_DEFER:
+                break                                   # 판정 가능(통과 또는 진짜 결함)
+            srv._ingest_slice(p, b"\x1b[?2026l")        # 다음 라운드를 위해 프레임 닫기
+            while await _collect(0.2):
+                pass
+        if sent_during and max_gap >= SYNC_OUTPUT_MAX_DEFER:
+            skip(f"러너 스톨: 급식 간격 {max_gap:.2f}s 가 디퍼 타임아웃"
+                 f"({SYNC_OUTPUT_MAX_DEFER}s)을 넘어 '활성 피드' 전제가 성립 안 함")
         assert not sent_during, \
             ("활성 피드 중엔 반쪽 프레임 송신 금지(디퍼 타임아웃 리셋): "
-             f"{[m.get('t') for m in sent_during]}")
+             f"{[m.get('t') for m in sent_during]} (최대 급식 간격 {max_gap:.2f}s)")
 
         # ESU → 다음 flush 에 완성 프레임이 와야 한다.
         srv._ingest_slice(p, b"done\x1b[?2026l")
