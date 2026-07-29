@@ -50,6 +50,29 @@ def _key_to_style(key):
     return dict(key)
 
 
+def line_text(line, sx: int, ex: int) -> str:
+    """화면 한 줄의 `[sx..ex]` 칸을 **표시되는 그대로** 문자열로 잇는다.
+
+    핵심 규칙 = **와이드 문자(한글·CJK·이모지)의 두 번째 칸(stub)은 건너뛴다**. 폭 2
+    글자는 첫 칸에 글자를, 다음 칸에 `data=""`(빈 문자열) stub 을 심는다(nativescreen
+    `draw`). 종전 관용구 `line[x].data or " "` 는 그 빈 값을 **공백으로 접어** 글자마다
+    공백을 하나씩 끼워 넣었다 — 제보 2026-07-29: 마우스로 긁어 복사하면
+    `뜨면 알려` 가 `뜨 면  알 려` 로 붙여넣어졌고, 같은 이유로 한글 **검색어**도
+    화면에 보이는데 안 잡혔다(검색 대상 문자열이 `뜨 면` 이었다).
+
+    `None` 등 결측 data 만 공백으로 접는다(방어). 이 규칙은 나머지 세 추출 표면과
+    같다 — 클라 화면-내 추출(`clientwidgets._extract_selection`: stub 은 `""` 라
+    이어붙여도 무해)·`Screen.display`(stub skip)·`_serialize_row`(stub 미전송).
+    """
+    out = []
+    for x in range(sx, ex + 1):
+        d = line[x].data
+        if d == "":
+            continue                     # 와이드 글자의 stub — 글자는 앞 칸에 있다
+        out.append(" " if d is None else d)
+    return "".join(out)
+
+
 # 배경 갭 메꿈(_fill_flanked_gaps) 대상 공백 런의 최대 길이. Claude Code 등이 탭
 # 전개로 남기는 구멍은 탭스톱 간격(≤8)이라 넉넉하되, 패널 배치용 큰 기본-배경
 # 여백(정당한 '빈 영역')까지 물들이지 않게 상한을 둔다.
@@ -835,7 +858,8 @@ class Pane:
         중간 줄은 폭 전체, 각 줄은 rstrip, 단 **soft-wrap 연속원**(다음 줄과 이어진
         줄)은 rstrip·개행 없이 다음 줄에 붙인다. wrap 판정도 render 와 같은 신호를
         쓴다(줄의 `wrapped` 태그 + 마지막 칸이 아직 꽉 참 — 지워져서 더는 wrap 이
-        아닌 stale 태그를 배제).
+        아닌 stale 태그를 배제). 칸→문자 변환도 클라와 같은 `line_text` 규칙이다
+        (와이드 글자 stub 은 건너뛴다 — 공백으로 접으면 한글마다 공백이 낀다).
 
         범위를 벗어난 인덱스는 조용히 클램프한다(스크롤백이 밀려 y0 가 사라졌을 수
         있다 — 선택 중 출력이 계속되면 정상적으로 일어나는 일이다).
@@ -859,7 +883,7 @@ class Pane:
             ex = x1 if y == y1 else cl
             sx = max(0, min(cl, sx))
             ex = max(0, min(cl, ex))
-            text = "".join((line[x].data or " ") for x in range(sx, ex + 1))
+            text = line_text(line, sx, ex)
             wrapped = (y < y1 and getattr(line, "wrapped", False)
                        and line[cl].data != " ")
             if wrapped:

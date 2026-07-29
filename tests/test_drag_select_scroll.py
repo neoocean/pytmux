@@ -64,6 +64,26 @@ async def test_extract_range_joins_soft_wrapped_lines():
     assert "0123456789\nabcde" not in text, "접힌 줄을 개행으로 끊었다: " + repr(text)
 
 
+async def test_extract_range_keeps_wide_chars_intact():
+    """와이드 글자(한글·CJK)의 두 번째 칸(stub)을 공백으로 접지 않는다(제보 2026-07-29).
+
+    증상: 마우스로 긁어 복사하면 `뜨면 알려` 가 `뜨 면  알 려` 로 붙여넣어졌다 —
+    글자마다 공백 1개(+ 원래 띄어쓰기까지 2개). 원인은 stub 셀의 `data == ""` 를
+    `data or " "` 가 공백으로 접은 것. 오라클은 **화면에 보이는 것**(`screen.display`)
+    — 복사는 화면과 같아야 한다."""
+    p = Pane(-1, -1, 40, 5)
+    p.feed("뜨면 알려 주세요 — 바로 AO열 편집·검증\r\n".encode())
+    y = p._history_len()
+    got = p.extract_range(y, 0, y, 39)
+    assert got == "뜨면 알려 주세요 — 바로 AO열 편집·검증", repr(got)
+    assert got == p.screen.display[0].rstrip(), (got, p.screen.display[0])
+    # 부분 선택도 같다 — 첫 두 글자(4칸)만.
+    assert p.extract_range(y, 0, y, 3) == "뜨면", repr(p.extract_range(y, 0, y, 3))
+    # 선택이 와이드 글자의 **두 번째 칸에서 시작**하면 그 글자는 안 딸려온다(앞 칸에
+    # 있으므로) — 공백이 새로 생기지도 않는다.
+    assert p.extract_range(y, 1, y, 3) == "면", repr(p.extract_range(y, 1, y, 3))
+
+
 async def test_extract_range_clamps_out_of_range_indices():
     """스크롤백이 밀려 없어진 인덱스·음수도 조용히 클램프(예외 금지 — 드래그 중
     출력이 계속되면 정상적으로 일어난다)."""

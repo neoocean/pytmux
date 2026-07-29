@@ -14,7 +14,7 @@ import uuid
 
 from . import ipc, plugins, proc, pty_backend, sshwrap
 from .model import (ClientConn, Pane, Session, Split, Tab, Window,
-                    coalesce_alt_repaints)
+                    coalesce_alt_repaints, line_text)
 from .protocol import (FEED_SLICE, FLUSH_HZ, MIN_H, MIN_W, read_msg, write_msg)
 from .servercapture import ServerCaptureIdMixin
 from .servercmd import ServerCmdMixin
@@ -297,9 +297,10 @@ class Server(*_SERVER_BASES):
             return cache[1]
         hist = list(h.top) if h is not None else []
         full = hist + [screen.buffer[y] for y in range(screen.lines)]
-        texts = ["".join((line[x].data or " ")
-                         for x in range(screen.columns)).rstrip()
-                 for line in full]
+        # 와이드 글자 stub 을 공백으로 접지 않는다(model.line_text) — 접으면 한글이
+        # `뜨 면` 이 돼 **검색어가 화면에 보이는데 안 잡히고**(search_pane 은 이 문자열에
+        # 부분일치를 건다) capture-pane 버퍼도 같은 공백이 낀 채 붙여넣어진다.
+        texts = [line_text(line, 0, screen.columns - 1).rstrip() for line in full]
         pane._txt_cache = (ver, texts)
         return texts
 
