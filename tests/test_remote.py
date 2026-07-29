@@ -737,7 +737,7 @@ async def test_remote_cascade_two_hop_merges_and_relays():
     조종할 수 없기 때문이고(그건 egress 권한 위임이라 사용자 결정), 이 테스트는
     "B 에 직접 로그인해 한 번 붙여 둔" 상태만 재현한다.
 
-    단언 셋: ① A 의 탭바에 C 의 탭이 `⇄B:⇄C:…` 로 이중 접두돼 올라온다
+    단언 셋: ① A 의 탭바에 C 의 탭이 `⇄B:C:…`(홉을 ':' 로 이은 한 줄)로 올라온다
     ② 그 탭을 고르면 **C 의 화면**이 두 홉을 건너 A 에 도착한다 ③ A 의 입력이
     **C 의 PTY** 까지 도달한다. 셋 다 참이면 안 (다)가 열려 있는 것이고, 하나라도
     거짓이면 그 자리가 캐스케이드의 실제 경계다."""
@@ -777,9 +777,13 @@ async def test_remote_cascade_two_hop_merges_and_relays():
             and sum(w["name"].startswith("⇄") for w in m["windows"]) >= 2,
             what="cascaded merged status")
         rtabs = [w for w in stm["windows"] if w["name"].startswith("⇄")]
-        casc = [w for w in rtabs if w["name"].count("⇄") >= 2]
+        casc = [w for w in rtabs if w["name"].startswith(f"⇄{sockB}:{sockC}:")]
         assert casc, ("C 의 탭이 A 까지 안 올라왔다(캐스케이드 거짓)", rtabs)
-        assert all(sockC in w["name"] for w in casc), casc
+        # 구멍 2(수정됨): ⇄ 는 "여기부터 원격" 표식이라 **한 번만** 찍고 홉은 ':' 로
+        # 잇는다(종전 `⇄B:⇄C:이름` = 이중 접두라 좁은 탭바에서 탭 이름이 안 보였다).
+        # 첫 조각이 link.host(B) 로 남아야 클라 넷의 `remote-detach` 인자 파싱이 맞다.
+        assert all(w["name"].count("⇄") == 1 for w in rtabs), rtabs
+        assert all(w["name"][1:].split(":", 1)[0] == sockB for w in rtabs), rtabs
         assert all(w.get("remote") is True for w in rtabs), rtabs
         # 전역 index 는 A 의 로컬 탭 뒤로 연속(캐스케이드 탭도 예외 아님)
         assert [w["index"] for w in rtabs] == list(
@@ -788,19 +792,25 @@ async def test_remote_cascade_two_hop_merges_and_relays():
         # 그 index 는 B 안에서 B 의 로컬 탭 **뒤**를 가리켜야 릴레이가 성립한다.
         assert gi_casc - n_localA >= n_localB, (gi_casc, n_localA, n_localB)
 
-        # 설계문서 §5 구멍 3 — sticky 키 공간이 2단에서 **섞인다**(사실 고정).
-        # `_win_key` 는 "한 링크의 상류는 단일 버전이라 집합 내 키가 동형(wid 만 or
-        # index 만)"을 전제하는데, 캐스케이드에서는 한 링크(B)의 windows 안에 B 의
-        # 로컬 탭(wid 있음)과 C 의 탭(_remote_tabs 가 만든 엔트리 = wid 없음, index
-        # 폴백)이 **함께** 실린다. 프로덕션은 wid 도 index 도 1 부터라 값이 겹칠 수
-        # 있고, 그러면 핀/단일-탭분리가 엉뚱한 탭에 붙는다. 이 사실이 바뀌면(예:
-        # 캐스케이드 엔트리에도 안정 wid 를 싣게 되면) 이 단언이 깨지고, 그때
-        # 구멍 3 을 다시 판정하면 된다.
+        # 설계문서 §5 구멍 3(수정됨) — sticky 키 공간이 2단에서 **안 섞인다**.
+        # 종전엔 B 가 보내는 windows 안에 B 로컬 탭(wid 있음)과 C 탭(wid 없음 →
+        # 하류가 위치 index 로 폴백)이 함께 실려, 둘 다 1 부터라 **값이 겹쳤다**.
+        # 이제 B 가 캐스케이드 탭에 음수 합성 키(_cascade_wid)를 실어 준다.
         linkAB = srvA._remotes_dict()[sockB]
-        kinds = [("wid" in rw) for rw in linkAB.windows]
-        assert True in kinds and False in kinds, (
-            "2단 링크의 windows 는 wid 있는 것(B 로컬)과 없는 것(C 캐스케이드)이"
-            " 섞여 있어야 한다 — 섞임이 사라졌으면 구멍 3 재판정", linkAB.windows)
+        keys = [srvA._win_key(rw) for rw in linkAB.windows]
+        assert all(k is not None for k in keys), (
+            "2단 링크의 모든 탭이 안정 키를 가져야 한다", linkAB.windows)
+        assert len(set(keys)) == len(keys), ("키 충돌", keys, linkAB.windows)
+        casc_keys = [srvA._win_key(rw) for rw in linkAB.windows if rw.get("remote")]
+        local_keys = [srvA._win_key(rw) for rw in linkAB.windows
+                      if not rw.get("remote")]
+        assert casc_keys and local_keys, (casc_keys, local_keys)
+        assert all(k < 0 for k in casc_keys), ("캐스케이드 키는 음수 공간", casc_keys)
+        assert all(k > 0 for k in local_keys), ("로컬 탭 키는 상류 Tab.wid", local_keys)
+        # 합성 키는 status 가 다시 와도 **같은 값**이어야 한다(안 그러면 핀이 매
+        # 프레임 풀린다) — B 에게 status 를 한 번 더 만들게 해 대조한다.
+        again = [w for w in srvB._status_msg(sessB)["windows"] if w.get("remote")]
+        assert [w["wid"] for w in again] == casc_keys, (again, casc_keys)
 
         # ② 캐스케이드 탭 진입 → C 의 화면(마커)이 두 홉을 건너 도착
         await write_msg(writer, {"t": "cmd", "action": "select_window",
@@ -847,6 +857,104 @@ async def test_remote_cascade_two_hop_merges_and_relays():
         await teardown(srvA, taskA, sockA)
         await teardown(srvB, taskB, sockB)
         await teardown(srvC, taskC, sockC)
+
+
+async def test_remote_cascade_pin_does_not_spill_to_upstream_local_tab():
+    """§10-15 구멍 3 — 2단에서 **핀이 엉뚱한 탭에 붙지 않는다**.
+
+    B 가 A 에게 보내는 windows 에는 B 의 **로컬** 탭(키 = `Tab.wid`)과 B 가 보고 있는
+    C 의 탭이 함께 실린다. C 탭에 키가 없으면 A 는 위치값 index 로 폴백하는데, wid 도
+    index 도 1 부터라 **값이 겹친다** → A 에서 C 탭을 핀하면 B 의 로컬 탭도 같이 핀된다.
+
+    값 충돌은 실행마다 우연에 달렸다(`Tab.wid` 는 프로세스 전역 카운터라 테스트에선
+    보통 큰 수다) — 그러면 결함이 있어도 통과하는 **공허한 오라클**이 된다. 그래서
+    충돌을 **강제**한다: B 로컬 탭의 wid 를 캐스케이드 탭의 index 와 같은 값으로 맞춘다.
+    수정 전 코드에서 이 테스트는 '두 탭이 핀됨'으로 죽는다(뮤테이션 반증 확인).
+    """
+    if os.name == "nt":
+        skip("POSIX 전용(3-서버 페더레이션 — Windows 는 실 PTY/ssh 경로 미보증)")
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    srvC, taskC, sockC = await server_only()
+    try:
+        sessC = srvC.ensure_default_session(80, 24)
+        assert sessC.tabs
+        sessB = srvB.ensure_default_session(80, 24)
+        assert await srvB.remote_attach(sessB, endpoint=sockC), "B→C attach 실패"
+        linkBC = srvB._remotes_dict()[sockC]
+        await wait_for(lambda: bool(linkBC.windows), timeout=4.0)
+
+        # 충돌 강제: B 로컬 탭 1개 → 캐스케이드 탭의 전역 index 는 len(sessB.tabs)=1.
+        assert len(sessB.tabs) == 1, sessB.tabs
+        sessB.tabs[0].wid = 1
+        casc_entry = [w for w in srvB._status_msg(sessB)["windows"] if w.get("remote")]
+        assert casc_entry and casc_entry[0]["index"] == 1, casc_entry
+
+        sessA = srvA.ensure_default_session(80, 24)
+        assert await srvA.remote_attach(sessA, endpoint=sockB), "A→B attach 실패"
+        linkAB = srvA._remotes_dict()[sockB]
+        await wait_for(lambda: len(linkAB.windows) >= 2, timeout=4.0)
+
+        wins = srvA._status_msg(sessA)["windows"]
+        casc = [w for w in wins if w["name"].startswith(f"⇄{sockB}:{sockC}:")]
+        upl = [w for w in wins if w.get("remote") and w not in casc]
+        assert len(casc) == 1 and len(upl) == 1, (casc, upl, wins)
+        assert not any(w["pinned"] for w in wins if w.get("remote")), wins
+
+        srvA.set_remote_pinned(sessA, casc[0]["index"])
+        wins2 = srvA._status_msg(sessA)["windows"]
+        pinned = [w["name"] for w in wins2 if w.get("remote") and w["pinned"]]
+        assert pinned == [casc[0]["name"]], (
+            "C 탭 핀이 B 로컬 탭까지 번졌다(sticky 키 공간 섞임)", pinned, wins2)
+
+        # 구버전 상류(캐스케이드 탭에 키를 안 싣는 서버) 대비 하류 가드: index 폴백을
+        # 타지 않고 **키 없음**으로 낮춘다 — 핀이 안 될 뿐, 남의 탭에 붙지는 않는다.
+        assert srvA._win_key({"remote": True, "index": 1}) is None
+        assert srvA._win_key({"index": 1}) == 1
+    finally:
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+        await teardown(srvC, taskC, sockC)
+
+
+async def test_cascade_wid_is_stable_disjoint_and_reset_on_upstream_restart():
+    """§10-15 구멍 3 — 캐스케이드 합성 키(`_cascade_wid`)의 계약 넷.
+
+    ① **안정**: 같은 (링크, 상류 키)면 status 가 몇 번 와도 같은 값 — 안 그러면 하류의
+    핀이 매 프레임 풀린다. ② **분리**: 로컬 `Tab.wid`(양수)와 안 겹치는 음수 공간이고,
+    링크가 여럿이어도(C·D) 값이 안 겹친다 — 우리가 보내는 windows 한 목록에 셋이 함께
+    실리기 때문이다. ③ **상류 재시작 리셋**: boot_id 가 바뀌면 매핑을 버린다(안 버리면
+    wid 1 을 다시 받은 **다른 탭**이 옛 합성 키를 물려받아 하류 핀이 옮겨간다 — F-1 이
+    고친 것과 같은 오매칭). ④ **예산**: 신뢰불가 상류가 키를 회전시켜도 무한 증식 금지."""
+    from pytmuxlib.serverremote import RemoteLink
+    srv, task, sock = await server_only()
+    try:
+        lc = RemoteLink("hostC", object(), object())
+        ld = RemoteLink("hostD", object(), object())
+        # ① 안정
+        first = srv._cascade_wid(lc, 7)
+        assert first is not None and first == srv._cascade_wid(lc, 7)
+        # ② 분리 — 음수(로컬 wid 는 양수) · 링크 간 무충돌 · 상류 키 간 무충돌
+        assert first < 0, first
+        vals = {first, srv._cascade_wid(lc, 8), srv._cascade_wid(ld, 7),
+                srv._cascade_wid(ld, 8)}
+        assert len(vals) == 4, vals
+        assert srv._cascade_wid(lc, None) is None
+        # ③ 상류 재시작 → 매핑 폐기 → 같은 상류 키라도 **새 값**
+        srv._remote_boot_check(lc, {"boot_id": "AAA"})
+        srv._remote_boot_check(lc, {"boot_id": "BBB"})
+        assert not lc.casc_wids, lc.casc_wids
+        after = srv._cascade_wid(lc, 7)
+        assert after not in vals, (after, vals)
+        # ④ 예산 — 넘으면 발급 중단(None), 매핑은 상한에서 멈춘다
+        for k in range(1000, 1000 + srv._CASC_WID_MAX + 20):
+            srv._cascade_wid(lc, k)
+        assert len(lc.casc_wids) == srv._CASC_WID_MAX, len(lc.casc_wids)
+        assert srv._cascade_wid(lc, 999999) is None
+        # 이미 발급된 것은 예산이 차도 계속 같은 값을 돌려준다(핀 유지).
+        assert srv._cascade_wid(lc, 1000) == lc.casc_wids[1000]
+    finally:
+        await teardown(srv, task, sock)
 
 
 async def test_remote_multi_tab_merge_switch_all():

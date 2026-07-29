@@ -71,6 +71,14 @@ class RemoteLink:
         # 읽지 않고 latch 하는 이유: last_status 는 update() 라 한 번 온 boot_id 가
         # 이후 프레임에서 빠져도 남는다(F-C) — 그럼 "안 바뀐 것"으로 오인한다.
         self.boot_id: str | None = None
+        # 캐스케이드(2단) 탭에 우리가 발급한 **합성 안정 키** — 상류 키(_win_key) →
+        # 음수 id. 우리 status 의 windows 에는 로컬 탭(양수 Tab.wid)과 이 링크의 원격
+        # 탭(_remote_tabs)이 **함께** 실리는데, 원격 탭엔 wid 가 없어 하류가 위치값
+        # index 로 폴백하면 **로컬 탭 wid 와 값이 겹친다**(둘 다 1 부터) → 하류의 핀/
+        # 단일-탭 분리가 엉뚱한 탭에 붙는다(§10-15 구멍 3). 음수 공간에서 발급해
+        # 로컬 wid 와 원천적으로 안 겹치게 하고, 상류가 재시작하면(boot_id 변경)
+        # 옛 매핑은 의미를 잃으므로 함께 비운다(_remote_boot_check).
+        self.casc_wids: dict = {}
         self.task: asyncio.Task | None = None
         # keepalive ping 태스크(_remote_ping_loop): 다운스트림이 업스트림에 주기적으로
         # ping 을 보내 업스트림의 死-클라 회수(_liveness_loop, ever_pinged 게이트)가
@@ -1240,6 +1248,10 @@ class ServerRemoteMixin:
         link.boot_id = boot
         link.pinned_windows.clear()      # 공유 참조라 재대입 금지, clear 로 비운다
         link.detached_windows.clear()    # (핀 sticky 는 집합 객체를 저장소와 공유)
+        # 우리가 이 링크 탭에 발급한 합성 키도 함께 버린다 — 안 버리면 재시작 뒤
+        # wid 1 을 다시 받은 **다른 탭**이 옛 합성 키를 물려받아, 우리 하류의 핀이
+        # 조용히 엉뚱한 탭으로 옮겨간다(위 F-1 이 고친 것과 정확히 같은 오매칭).
+        link.casc_wids.clear()
 
     @staticmethod
     def _win_key(rw: dict):
@@ -1257,6 +1269,14 @@ class ServerRemoteMixin:
         wid = rw.get("wid")
         if isinstance(wid, int) and not isinstance(wid, bool):
             return wid
+        if rw.get("remote"):
+            # 상류의 **원격**(캐스케이드) 탭인데 wid 가 없다 = 구버전 상류다. 여기서
+            # index 로 폴백하면 같은 목록에 실린 상류 **로컬** 탭의 wid 와 값이 겹쳐
+            # (둘 다 1 부터) 핀/분리가 엉뚱한 탭에 붙는다(§10-15 구멍 3) — 위 docstring
+            # 의 "집합 내 키 동형" 전제가 2단에서만 깨지는 자리다. 신버전 상류는
+            # _cascade_wid 로 음수 합성 키를 실어 주므로 이 폴백을 탈 일이 없고,
+            # 구버전 상류에선 그 탭이 sticky 대상에서 빠질 뿐이다(안전한 저하).
+            return None
         idx = rw.get("index")
         return idx if isinstance(idx, int) and not isinstance(idx, bool) else None
 
@@ -1270,6 +1290,59 @@ class ServerRemoteMixin:
         return [(ri, rw) for ri, rw in enumerate(link.windows)
                 if self._win_key(rw) not in link.detached_windows]
 
+    @staticmethod
+    def _remote_tab_name(link: RemoteLink, rw: dict) -> str:
+        """병합 탭바에 적을 이름 — `⇄호스트:이름`, 캐스케이드는 `⇄B:C:이름`(§10-15 구멍 2).
+
+        상류의 **원격** 탭(= 상류가 또 어딘가에 붙어서 보고 있는 탭)은 이름이 이미
+        `⇄C:이름` 이라, 그대로 접두하면 `⇄B:⇄C:이름` 으로 **⇄ 가 두 번** 찍혀 좁은
+        탭바에서 정작 탭 이름이 안 보인다. ⇄ 는 "여기부터 원격"이라는 표식이니 **한 번만**
+        찍고, 홉은 `:` 로 이어 붙인다 — 3단이면 `⇄B:C:D:이름` 이다.
+
+        `:` 를 고른 이유(‘>’ 가 아니라): 클라 넷(파이썬 탭바·드래그 머지·네이티브
+        proto/TUI)이 전부 **⇄ 와 첫 ':' 사이를 호스트**로 읽어 `remote-detach` 인자로
+        쓴다. 첫 조각이 `link.host` 로 남아야 그 넷이 그대로 맞는다 — 우리가 붙잡고
+        있는 링크는 B 하나이고, 하류가 끊을 수 있는 것도 B 뿐이다. 반대로 `>` 는
+        **한 링크가 여러 홉을 품을 때**(`remote-attach C via B` → `link.host = "B>C"`,
+        _link_name)의 표기라 의미가 다르다: 그건 우리가 통째로 끊을 수 있는 하나다.
+
+        판정은 이름이 아니라 상류가 준 `remote` 플래그로 한다(사용자가 탭 이름을 `⇄…`
+        로 지어도 오인하지 않게 — 클라 규약과 같은 이유)."""
+        name = rw.get("name", "")
+        name = name if isinstance(name, str) else ""
+        if rw.get("remote") and name.startswith("⇄"):
+            name = name[1:]
+        return f"⇄{link.host}:{name}"
+
+    _CASC_WID_MAX = 512      # 링크당 합성 키 예산(상류가 키를 회전시켜도 무한 증식 금지)
+
+    def _cascade_wid(self, link: RemoteLink, key):
+        """이 링크의 원격 탭에 **하류용 안정 키**를 발급한다(§10-15 구멍 3).
+
+        우리 status 의 windows 는 로컬 탭(`Tab.wid`, 양수)과 이 링크의 원격 탭이
+        **한 목록**이라, 원격 탭에 키가 없으면 하류가 위치값 index 로 폴백해 로컬
+        wid 와 겹친다. 그래서 **음수 공간**에서 발급한다 — 로컬 wid 와 원천적으로
+        안 겹치고, JSON·정렬(`_resume_payload` 의 sorted)·집합 멤버십 전부 int 그대로다.
+
+        키의 정체성은 (링크, 상류 안정 키)다: 상류 탭이 close/reorder 돼도 같은 탭이면
+        같은 값을 돌려줘 하류의 핀이 안 따라 움직인다. 카운터는 **서버 전역**이라
+        링크가 여럿이어도(C·D 를 동시에 보고 있어도) 값이 안 겹친다. 상류가 재시작하면
+        `_remote_boot_check` 가 매핑을 비운다(옛 키를 새 탭이 물려받지 않게).
+
+        예산을 넘으면 None — 그 탭은 하류에서 sticky 대상이 아니게 될 뿐이다(F-C 와
+        같은 방어: 신뢰불가 상류가 wid 를 회전시켜 우리 메모리를 밀지 못하게 한다)."""
+        if key is None:
+            return None
+        got = link.casc_wids.get(key)
+        if got is not None:
+            return got
+        if len(link.casc_wids) >= self._CASC_WID_MAX:
+            return None
+        seq = getattr(self, "_casc_wid_seq", 0) - 1
+        self._casc_wid_seq = seq
+        link.casc_wids[key] = seq
+        return seq
+
     def _remote_tabs(self, base: int, client=None) -> list:
         """병합 탭 목록에 덧붙일 원격 탭 엔트리(전역 index 는 base 부터 연속).
         active 는 클라별(Stage 3) — 그 링크를 보는 클라에게만 업스트림 active 를
@@ -1282,12 +1355,17 @@ class ServerRemoteMixin:
             viewing = (client is not None
                        and getattr(client, "remote_view", None) == link.host)
             for ri, rw in self._visible_windows(link):
-                out.append({"index": gi, "name": f"⇄{link.host}:{rw.get('name', '')}",
+                key = self._win_key(rw)
+                out.append({"index": gi, "name": self._remote_tab_name(link, rw),
                             "active": bool(viewing and rw.get("active")),
                             "remote": True,
+                            # 하류(2단)용 안정 키 — 없으면 하류가 index 로 폴백해 우리
+                            # 로컬 탭 wid 와 겹친다(§10-15 구멍 3). 우리를 직접 보는
+                            # 클라는 이 값을 안 쓴다(_win_key 만 읽는다).
+                            "wid": self._cascade_wid(link, key),
                             # §12 ① 로컬 핀 — detached 와 동일하게 안정 wid(_win_key)로
                             # 키잉(상류 탭 close/reorder 로도 핀이 안 어긋남, 로드맵 #3).
-                            "pinned": self._win_key(rw) in link.pinned_windows,
+                            "pinned": key in link.pinned_windows,
                             "bell": rw.get("bell", False),
                             "activity": rw.get("activity", False),
                             "claude_done": rw.get("claude_done", False),
