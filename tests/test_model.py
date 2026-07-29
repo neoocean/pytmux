@@ -692,3 +692,45 @@ async def test_bg_gap_fill_conservative_conditions():
     rows3, _ = p3.render(with_cursor=False)
     tail = rows3[0][-1]
     assert "b" not in tail[1] and tail[0].strip(" ") == ""
+
+
+async def test_claude_prompt_bar_fg_boosted_over_msg_bg():
+    """Claude '지나간 프롬프트' 스티키 바(`› <프롬프트>`)의 회색-위-회색 전경을 그
+    테마의 본문색으로 올린다 — Claude Code 는 이 바를 subtle(dark rgb(80,80,80)) 로
+    userMessageBackground(rgb(55,55,55))·Hover(rgb(70,70,70)) 위에 그려 사실상 안
+    읽힌다(제보). 배경은 그대로 둔다(프롬프트 블록 정체성 유지)."""
+    from pytmuxlib.model import Pane
+    for bg, hexbg in ((b"55;55;55", "#373737"), (b"70;70;70", "#464646")):
+        p = Pane(-1, -1, 40, 3)
+        p.feed(b"\x1b[48;2;" + bg + b"m\x1b[38;2;80;80;80m"
+               + "> 계속 진행".encode() + b"\x1b[0m")
+        seg = p.render(with_cursor=False)[0][0][0]
+        assert seg[1].get("f") == "#ffffff", f"전경이 본문색으로 올라야 함: {seg}"
+        assert seg[1].get("b") == hexbg, f"배경은 그대로여야 함: {seg}"
+    # light 계열 테마(subtle rgb(175,175,175))는 검정으로 올린다.
+    p = Pane(-1, -1, 40, 3)
+    p.feed(b"\x1b[48;2;240;240;240m\x1b[38;2;175;175;175m> hi\x1b[0m")
+    seg = p.render(with_cursor=False)[0][0][0]
+    assert seg[1].get("f") == "#000000" and seg[1].get("b") == "#f0f0f0", seg
+
+
+async def test_claude_prompt_bar_boost_conservative_conditions():
+    """전경 올림 보수 조건: ① 실측 테마 쌍이 아니면 손대지 않음 ② 본문 user 메시지의
+    `›` 포인터(subtle 단독 런, 글자 1개)는 그대로 ③ 반전(rv) 런은 그대로 — native 와의
+    차이를 프롬프트 바 한 줄로 좁게 가둔다."""
+    from pytmuxlib.model import Pane
+    # ① 이웃한 색(rgb(90,90,90))이면 미적용 — 다른 앱의 회색을 물들이지 않는다.
+    p = Pane(-1, -1, 40, 3)
+    p.feed(b"\x1b[48;2;70;70;70m\x1b[38;2;90;90;90mother\x1b[0m")
+    assert p.render(with_cursor=False)[0][0][0][1].get("f") == "#5a5a5a"
+    # ② 본문 user 메시지: subtle 포인터 런은 유지, 본문(text) 런은 원래대로.
+    p2 = Pane(-1, -1, 40, 3)
+    p2.feed(b"\x1b[48;2;55;55;55m\x1b[38;2;80;80;80m> \x1b[38;2;255;255;255mbody\x1b[0m")
+    segs = p2.render(with_cursor=False)[0][0]
+    ptr = next(s for t, s in segs if t == "> ")
+    assert ptr.get("f") == "#505050", f"포인터 단독 런은 native 유지: {segs[:2]}"
+    # ③ 반전 런은 전경/배경이 뒤바뀌므로 손대지 않는다.
+    p3 = Pane(-1, -1, 40, 3)
+    p3.feed(b"\x1b[48;2;70;70;70m\x1b[38;2;80;80;80m\x1b[7mrev\x1b[0m")
+    st = p3.render(with_cursor=False)[0][0][0][1]
+    assert st.get("f") == "#505050" and st.get("rv") == 1, st

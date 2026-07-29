@@ -83,6 +83,52 @@ def _fill_flanked_gaps(segs):
     return segs
 
 
+# Claude Code 가 **자기 회색 배경 위에 자기 subtle 색**으로 그려 대비가 무너지는 표면 →
+# 같은 테마의 본문색(`text`)으로 전경만 올린다. 키 = (전경, 배경) truecolor 쌍, 값 =
+# 그 테마의 `text`. 값은 Claude Code 2.1.220 번들의 테마 토큰 실측:
+#   dark  : subtle rgb(80,80,80)   / userMessageBackground rgb(55,55,55)
+#                                    userMessageBackgroundHover rgb(70,70,70) → text 순백
+#   light : subtle rgb(175,175,175)/ 220·232·240·252 계열 배경          → text 검정
+# (ansi:* 로 정의된 저색상 테마 변형은 truecolor 가 아니라 여기 안 걸린다 — 그쪽은
+#  팔레트 대비가 이미 확보돼 있어 손댈 이유도 없다.)
+_CLAUDE_SUBTLE_ON_MSG_BG = {
+    ("#505050", "#373737"): "#ffffff",
+    ("#505050", "#464646"): "#ffffff",
+    ("#afafaf", "#dcdcdc"): "#000000",
+    ("#afafaf", "#e8e8e8"): "#000000",
+    ("#afafaf", "#f0f0f0"): "#000000",
+    ("#afafaf", "#fcfcfc"): "#000000",
+}
+
+
+def _boost_claude_prompt_bar(segs):
+    """Claude Code 의 '지나간 프롬프트' 스티키 바를 읽히게 **전경만** 올린다.
+
+    Claude Code 는 스크롤로 지나간 프롬프트를 창 맨 위에 `› <프롬프트>` 한 줄로 고정
+    표시한다(클릭하면 그 프롬프트 위치로 점프). 이 바를 **subtle**(dark 테마 =
+    rgb(80,80,80)) 전경 + **userMessageBackground**(rgb(55,55,55), 마우스가 올라가
+    있으면 Hover rgb(70,70,70)) 배경으로 그리는데, 회색 위 회색이라 사실상 안 읽힌다
+    (제보 + 실측: 이 두 색은 pytmux 가 손대지 않고 그대로 받은 앱 색이다). 같은
+    프롬프트를 트랜스크립트 본문에서는 `text`(순백)로 그리므로, 이 바의 전경만 같은
+    테마의 `text` 로 올려 본문과 같은 대비를 준다. 배경은 그대로 둬 '프롬프트 블록'
+    이라는 정체성은 유지한다.
+
+    보수 조건(오탐 시 native 와 달라지므로 좁게): ① (전경,배경)이 실측 테마 쌍과
+    **정확히** 일치 ② 반전(rv) 없음(반전은 전경/배경이 뒤바뀐다) ③ 런에 보이는 글자가
+    둘 이상 — 본문 user 메시지의 `›` 포인터도 subtle 이지만 그건 **혼자** 한 런이고
+    (본문 글자는 별도 `text` 런) 이미 잘 읽히므로 여기서 걸러져 native 그대로 남는다.
+    스타일 dict 는 _key_to_style 공유 객체라 복사해 덮는다."""
+    for i in range(len(segs)):
+        text, st = segs[i]
+        if "rv" in st or len(text.strip()) < 2:
+            continue
+        boost = _CLAUDE_SUBTLE_ON_MSG_BG.get((st.get("f"), st.get("b")))
+        if boost is None:
+            continue
+        segs[i][1] = {**st, "f": boost}
+    return segs
+
+
 # restart-all 스냅샷(_export_screen)이 색/속성을 보존하도록 pyte 셀 속성 → SGR
 # 이스케이프로 환원한다. pyte fg/bg 는 "default"·기본색명·"bright<name>"·6자리 hex.
 _SGR_BASE = {"black": 30, "red": 31, "green": 32, "brown": 33, "yellow": 33,
@@ -851,7 +897,7 @@ class Pane:
                 cur_text.append(data)
         if cur_text:
             segs.append(["".join(cur_text), _key_to_style(cur_key)])
-        return _fill_flanked_gaps(segs)
+        return _boost_claude_prompt_bar(_fill_flanked_gaps(segs))
 
     def render(self, with_cursor: bool):
         """현재 뷰포트를 [rows, cursor] 로 직렬화. rows = 행마다 [text, style] 런 목록.
