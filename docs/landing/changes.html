@@ -59,6 +59,35 @@
       </div>
     </header>
 
+    <section class="cl-day" id="d-2026-07-29">
+      <h2>2026-07-29 <span class="pill">수요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/5a1f2c7a8d9f1e37935be78ad9ca960108b193b0.zip" rel="noopener" title="2026-07-29 마지막 소스 커밋(5a1f2c7) 시점 소스 zip">zip ⬇</a></h2>
+      <ul>
+        <li><span class="pill stable">복사</span> <strong>마우스로 긁어 복사하면 <span class="inline-code">한글·한자</span> 한 글자마다 공백이 하나씩 끼던 것을 고쳤습니다.</strong>
+          <span class="inline-code">뜨면 알려 주세요</span> 를 긁어 붙여넣으면 <span class="inline-code">뜨 면  알 려  주 세 요</span> 가 됐습니다 —
+          <strong>두 칸을 차지하는 글자</strong>(한글·한자·이모지)마다 뒤에 공백이 하나씩 붙고, 원래 띄어쓰기 자리는 두 칸이 됐습니다.
+          넓은 글자는 화면에서 <strong>두 칸을 쓰고 뒷칸은 비워 두는데</strong>, 복사할 때 그 빈 칸을 <strong>공백 한 개로 세어</strong> 넣은 것이 원인입니다.
+          <br>같은 원인으로 <strong>한글 검색</strong>(<span class="inline-code">/</span>)도 화면에 뻔히 보이는 낱말이 안 잡혔습니다 — 찾는 쪽 글자열이 <span class="inline-code">뜨 면</span> 이었기 때문입니다.
+          이제 복사·검색·<span class="inline-code nb">capture-pane</span> 이 모두 <strong>화면에 보이는 그대로</strong>입니다.</li>
+        <li><span class="pill stable">Claude</span> <strong>Claude Code 안에서 <span class="inline-code">!</span> 로 셸 명령을 실행하면 <span class="inline-code">세션 종료 요약</span>(토큰 사용량 그래프)이 살아 있는 화면 한가운데 끼어들던 것을 고쳤습니다.</strong>
+          pytmux 는 Claude 세션이 끝나면 그 패널에 토큰 요약을 흘려보냅니다. '끝났다' 판정은 화면에서 Claude 표시가 사라졌는지에 더해
+          <strong>지금 앞에서 도는 프로그램이 셸인지</strong>를 함께 봅니다 — 살아 있는 화면에 그래프를 쏟지 않으려는 안전장치였습니다.
+          그런데 <span class="inline-code">!</span> 는 <strong>Claude 가 자기 자식으로 셸을 띄우는</strong> 것이라, 명령이 도는 동안 화면에서 Claude 표시가 밀려나면
+          그 자식 셸을 보고 <strong>"셸로 돌아왔다"</strong>로 읽었습니다(포그라운드 개념이 없어 <strong>가장 깊은 자식</strong>을 보는 Windows 에서 특히 잘 걸립니다).
+          이제 그 패널의 <strong>프로세스 갈래에 Claude 가 아직 살아 있으면</strong> 종료로 보지 않습니다.</li>
+        <li><span class="pill stable">표시</span> <strong>알림 이력에서 키보드로 커서를 옮기면 <span class="inline-code">지나온 줄</span>이 색 띠로 남아 글자가 안 보이던 것을 고쳤습니다.</strong>
+          마우스를 그 줄에 올리면 <strong>그 줄만</strong> 멀쩡하게 돌아왔습니다.
+          커서 줄은 <a href="#d-2026-07-28">등급 색을 배경으로</a> 칠하는데, 글자를 그리는 것은 줄 안쪽 요소이고 그쪽이 <strong>물려받은 배경색을 따로 기억</strong>합니다.
+          커서가 떠나면 글자색만 등급색으로 돌아오고 <strong>배경은 등급색인 채 남아</strong> 글자색과 배경색이 같아졌습니다 — 그래서 글자가 사라진 색 띠로 보였고,
+          띠 길이도 <strong>그 줄 글자 길이만큼</strong>이었습니다. 마우스를 올리면 스타일이 다시 계산돼 그 줄만 복구된 것도 같은 이유입니다.
+          이제 커서가 지나간 줄은 곧바로 원래 색으로 돌아옵니다.</li>
+        <li><span class="pill stable">Claude</span> <strong>디렉토리별 이름 동기화가 <span class="inline-code">이미 바꿔 둔</span> Claude 세션 이름을 규칙 키워드로 되돌리던 것을 고쳤습니다.</strong>
+          지정한 경로에서 Claude 를 띄우면 pytmux 가 탭·패널 이름과 <strong>Claude 세션 이름</strong>을 키워드로 통일합니다(<span class="inline-code nb">:namesync</span>).
+          그 통일은 패널당 한 번만 하도록 돼 있었는데, <strong>셸을 새로 띄우거나 세션을 이어서 열면</strong> 그 기억이 풀리는 반면
+          <strong>세션 이름은 그대로 살아 돌아와</strong>, 그 사이 <span class="inline-code">/rename</span> 으로 정해 둔 이름이 다시 키워드로 덮였습니다.
+          이제 세션 이름이 <strong>아직 자동으로 지어진 이름일 때만</strong> 통일하고, 누가 정한 이름은 건드리지 않습니다(탭·패널 이름은 종전대로 맞춥니다).</li>
+      </ul>
+    </section>
+
     <section class="cl-day" id="d-2026-07-28">
       <h2>2026-07-28 <span class="pill">화요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/29d3c9d16b35db7ccaf007b3b7358b1c96f7fece.zip" rel="noopener" title="2026-07-28 마지막 소스 커밋(29d3c9d) 시점 소스 zip">zip ⬇</a></h2>
       <ul>
