@@ -247,6 +247,19 @@ class ServerIOMixin:
             # 자기 레지스트리에 set_disabled 로 반영해 명령/훅을 거른다.
             "disabled_plugins": sorted(self.plugins.disabled),
         }
+        # 플러그인 관리 화면(:plugins)용 **전체 개요**. 파이썬 클라는 자기 프로세스 안의
+        # 레지스트리(plugin_overview)를 그대로 읽어 이 목록을 만들지만, 네이티브 클라
+        # (pytmux-client, Rust)는 파이썬 패키지를 못 읽고 pytmux 트리가 어디 있는지도
+        # 모른다(소켓만 안다). 위 disabled_plugins 는 **꺼진 것의 이름**뿐이라 "설치된
+        # 것 전부"를 복원할 수 없다 — 그 클라에서는 관리 화면 자체가 성립하지 않았다.
+        # full 에만 싣는 이유: 목록은 서버가 도는 동안 안 변한다(켜짐/꺼짐만 매 status
+        # 의 disabled_plugins 로 온다). 매번 실으면 설명 문자열이 틱마다 흐른다.
+        # 추가 필드라 PROTO_VERSION 범프 불요 — 파이썬 클라는 이 키를 안 읽는다.
+        if full:
+            msg["plugins"] = [
+                {"name": n, "description": d, "category": c, "enabled": e}
+                for n, d, c, e in self.plugins.plugin_overview()
+            ]
         # REC capture/capture_path/capture_size 는 plugins/rec 의 server_status 훅이
         # 채운다(아래 plugins.server_status). 플러그인 부재 시 키가 빠진다.
         # Claude 필드(패널별 상태·history·토큰·사용량·예산·팝업·full-only 옵션 12개와

@@ -81,6 +81,30 @@ async def test_server_status_carries_disabled_plugins():
         await teardown(srv, task, sock)
 
 
+async def test_full_status_carries_the_whole_plugin_overview():
+    """네이티브 클라(pytmux-client)는 파이썬 패키지를 못 읽어 설치 목록을 자기 힘으로
+    만들 수 없다 — disabled_plugins(꺼진 이름만)로는 관리 화면이 성립하지 않는다.
+    그래서 full status 가 이름·설명·카테고리·활성을 함께 싣는다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv.set_plugin_enabled("clock", False)
+        full = srv._status_msg(sess, full=True)
+        rows = {p["name"]: p for p in full.get("plugins", [])}
+        assert rows, "full status 에 plugins 개요가 없다"
+        assert rows["clock"]["enabled"] is False, rows["clock"]
+        assert rows["clock"]["description"], "설명이 비면 화면에 이름만 남는다"
+        # 델타(full=False)에는 안 싣는다 — 목록은 안 변하고, 매 틱 보내면 설명
+        # 문자열이 그대로 흐른다(켜짐/꺼짐은 disabled_plugins 가 매번 나른다).
+        assert "plugins" not in srv._status_msg(sess, full=False)
+    finally:
+        try:
+            os.unlink(srv.opts_path)
+        except OSError:
+            pass
+        await teardown(srv, task, sock)
+
+
 async def test_server_seeds_default_disabled_when_opts_absent(tmp_path=None):
     """opts.json 에 disabled_plugins 키가 없으면 default_enabled=False 플러그인을 시드.
     현재는 그런 플러그인이 없어 빈 집합이지만, 키가 생기면 그 값이 권위임을 확인한다."""
