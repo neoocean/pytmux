@@ -2920,3 +2920,224 @@ async def test_hostile_hello_caps_do_not_kill_the_connection():
         for w in writers:
             w.close()
         await teardown(srv, task, sock)
+
+
+# ── §10-15 P1 다중홉(remote-attach <C> via <B>) ────────────────────────────────
+# 실 3대 구성은 CI 가 없다. 대신 층을 갈라 덮는다(설계문서 §7): argv 조립 · 검증/
+# 허용목록 · 이름과 spec · 재시작 복원(뮤테이션이 겨누는 자리) · 실패 귀속.
+
+async def test_relay_via_argv_is_fixed_and_host_only_differs():
+    """via 가 있으면 **ssh 목적지가 중계 상자로 바뀌고 목적지는 인자로 간다**:
+    `ssh … -- <via> pytmux relay-proxy <host>`. 옵션·`--`·순서는 1홉과 동일해야 한다
+    (중첩 ssh **문자열**을 안 쓴다는 계약 — B 의 셸이 해석할 것이 없다, §4.1)."""
+    import pytmuxlib.serverremote as sr
+    srv, task, sock = await server_only()
+    spawned = []
+
+    async def fake_exec(*argv, **kw):
+        spawned.append(argv)
+        raise ConnectionError("spawn-reached")
+
+    try:
+        with harness.patched(sr.asyncio, create_subprocess_exec=fake_exec):
+            for kwargs, want_tail in (
+                    ({"host": "C"}, ("--", "C", "pytmux", "stdio-proxy")),
+                    ({"host": "C", "via": "B"},
+                     ("--", "B", "pytmux", "relay-proxy", "C"))):
+                spawned.clear()
+                try:
+                    await srv._remote_transport(endpoint=None, **kwargs)
+                except ConnectionError as e:
+                    assert "spawn-reached" in str(e), str(e)
+                argv = spawned[0]
+                assert argv[:2] == ("ssh", "-T"), argv
+                assert argv[-len(want_tail):] == want_tail, (kwargs, argv)
+                # keepalive 는 홉이 늘어도 그대로(half-open 감지는 바깥 ssh 의 일).
+                assert "ServerAliveInterval=15" in argv, argv
+                # `-J` 를 host 로 흘리지 않는다 — 우리는 ProxyJump 를 argv 로 안 쓴다.
+                assert "-J" not in argv, argv
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_relay_via_validated_like_host_and_allowlisted():
+    """via 는 **우리가 실제로 ssh 로 붙는 상대**라 host 와 같은 규칙을 통과해야 한다.
+    선행 `-`(옵션 인젝션)·공백·빈 문자열 거부 + 허용목록이 켜져 있으면 host·via
+    **둘 다** 등재돼야 한다(목적지만 검사하면 허용된 C 를 대고 임의 상자로 ssh 가 난다)."""
+    import pytmuxlib.serverremote as sr
+    srv, task, sock = await server_only()
+    spawned = []
+
+    async def fake_exec(*argv, **kw):
+        spawned.append(argv)
+        raise ConnectionError("spawn-reached")
+
+    try:
+        with harness.patched(sr.asyncio, create_subprocess_exec=fake_exec):
+            srv.remote_allowed_hosts = []
+            for bad in ("-oProxyCommand=touch /tmp/pwned", "-l", " ", "b ox", ""):
+                spawned.clear()
+                try:
+                    await srv._remote_transport(host="C", endpoint=None, via=bad)
+                    assert False, f"기대: 거부 via={bad!r}"
+                except ConnectionError as e:
+                    assert "중계 호스트" in str(e), (bad, str(e))
+                assert not spawned, f"거부돼야 할 via 가 ssh 를 띄웠다: {bad!r}"
+            # 허용목록: host 만 등재된 상태에서 via 가 미등재면 거부한다.
+            srv.remote_allowed_hosts = ["C"]
+            spawned.clear()
+            try:
+                await srv._remote_transport(host="C", endpoint=None, via="evil")
+                assert False, "기대: 미등재 via 거부"
+            except ConnectionError as e:
+                assert "허용되지 않은 중계 호스트" in str(e), str(e)
+            assert not spawned, "미등재 via 가 ssh 를 띄웠다"
+            # 둘 다 등재되면 spawn 까지 간다.
+            srv.remote_allowed_hosts = ["C", "B"]
+            spawned.clear()
+            try:
+                await srv._remote_transport(host="C", endpoint=None, via="B")
+            except ConnectionError as e:
+                assert "spawn-reached" in str(e), str(e)
+            assert spawned, "host·via 둘 다 등재인데 거부됐다"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_relay_link_name_and_spec_survive_restart():
+    """다중홉 링크의 **이름은 `B>C`**(sticky 저장소 키라 포맷 고정)이고, `via` 는
+    spec 에 실려 재시작 복원까지 간다.
+
+    ★ 이 테스트가 겨누는 자리: `remote_restore_links` 가 `via=` 를 안 넘기면 재시작
+    후 링크가 **조용히 1홉으로** 되살아난다(설계 §4.4 가 '가장 놓치기 쉬운 자리'로
+    지목). 그래서 복원이 실제로 어떤 인자로 attach 를 부르는지 직접 본다."""
+    from pytmuxlib.serverremote import _link_name
+    assert _link_name("C", None, "B") == "B>C"
+    assert _link_name("C", None, None) == "C"
+    assert _link_name(None, "/tmp/s.sock", None) == "/tmp/s.sock"
+    assert _link_name(None, None, "B") is None
+
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        # 실제 attach 대신 링크 하나를 손으로 세워 spec 왕복만 본다(ssh 불요).
+        class _Link:
+            host = "B>C"
+            spec = {"host": "C", "endpoint": None, "via": "B"}
+            windows = []
+            pinned_windows = set()
+            detached_windows = set()
+            boot_id = None
+            last_status = {}
+        srv._remotes_dict()["B>C"] = _Link()
+        payload = srv._resume_payload()
+        specs = payload.get("remotes", [])
+        assert any(s.get("via") == "B" and s.get("host") == "C" for s in specs), specs
+
+        # 복원: remote_attach 를 가로채 **어떤 인자로 불리는지** 본다.
+        got = {}
+
+        async def _spy_attach(sess, host=None, endpoint=None, via=None):
+            got.update(host=host, endpoint=endpoint, via=via)
+            return False            # 이후 sticky 복원 경로는 이 테스트의 관심 밖
+
+        srv._remotes_dict().clear()
+        srv._remote_resume = specs
+        srv.remote_attach = _spy_attach
+        srv.remote_restore_links()
+        await wait_for(lambda: got, timeout=4.0)
+        assert got == {"host": "C", "endpoint": None, "via": "B"}, got
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_relay_failure_is_attributed_to_the_right_hop():
+    """홉 셋(A→B ssh · B 의 relay-proxy · B→C ssh)의 stderr 가 한 파이프로 합류한다.
+    접두(`relay-proxy(<host>): `)가 있는 줄을 **우선** 집어 귀속을 가르고, 각 실패를
+    구분된 키로 올린다 — 서버는 로케일을 모르므로 키+kw 로 보존한다(클라가 번역)."""
+    from pytmuxlib.serverremote import _pick_detail_line
+    # 접두 없는 평범한 stderr 는 종전대로 마지막 줄
+    assert _pick_detail_line("a\nPermission denied") == "Permission denied"
+    # 접두가 있으면 바깥 ssh 의 뒷줄에 묻히지 않는다
+    assert _pick_detail_line(
+        "relay-proxy(C): 이 상자의 remote_allowed_hosts 가 허용하지 않는 목적지입니다\n"
+        "Connection closed by 10.0.0.2 port 22"
+    ).startswith("relay-proxy(C):")
+    assert _pick_detail_line("") == ""
+
+    import pytmuxlib.serverremote as sr
+    srv, task, sock = await server_only()
+
+    def _fake_transport(stderr_text: str):
+        async def fake_exec(*argv, **kw):
+            class _P:
+                returncode = None
+
+                class stdout:
+                    @staticmethod
+                    async def readline():
+                        return b""          # TOKEN 이 아니다 → 실패 경로
+                class stderr:
+                    @staticmethod
+                    async def read(n):
+                        return stderr_text.encode()
+
+                async def wait(self):
+                    return 0
+
+                def kill(self):
+                    pass
+            return _P()
+        return fake_exec
+
+    cases = [
+        ("relay-proxy(C): 이 상자의 remote_allowed_hosts 가 허용하지 않는 목적지입니다",
+         "rerr.relay_hop_denied"),
+        ("relay-proxy(C): C: Permission denied (publickey).",
+         "rerr.relay_inner_fail"),
+        ("bash: pytmux: command not found", "rerr.relay_no_pytmux"),
+        # 접두도 없고 'not found' 도 아니면 **바깥 홉(A→B)** — 종전 키 그대로.
+        ("B: Permission denied (publickey).", "rerr.handshake_perm"),
+    ]
+    try:
+        for text, want_key in cases:
+            with harness.patched(sr.asyncio,
+                                 create_subprocess_exec=_fake_transport(text)):
+                try:
+                    await srv._remote_transport(host="C", endpoint=None, via="B")
+                    assert False, f"기대: RemoteError({want_key})"
+                except sr.RemoteError as e:
+                    assert e.err_key == want_key, (text, e.err_key, want_key)
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_relay_notice_target_is_the_two_hop_link_name():
+    """다중홉 실패 notice 의 target 은 **링크 이름 `B>C`** 여야 한다 — 사용자가 그
+    문자열을 그대로 `remote-detach` 에 쓰기 때문이다(호출부를 겨눈 오라클: 이름을
+    짓는 헬퍼만 테스트하면 serverio 가 그 헬퍼를 안 부르게 바꿔도 통과한다)."""
+    if os.name == "nt":
+        skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
+    import pytmuxlib.serverremote as sr
+    srvA, taskA, sockA = await server_only()
+    reader = writer = None
+
+    async def fake_exec(*argv, **kw):
+        raise OSError("no ssh (test)")
+
+    try:
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        with harness.patched(sr.asyncio, create_subprocess_exec=fake_exec):
+            await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                     "host": "C", "via": "B"})
+            n = await _read_until(reader, lambda m: m.get("t") == "notice",
+                                  what="failure notice")
+        assert "B>C" in n.get("text", ""), n
+        assert n.get("kw", {}).get("target") == "B>C", n
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA, allow_errors=("remote_attach",))

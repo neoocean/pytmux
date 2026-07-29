@@ -193,6 +193,39 @@ _REMOTE_BLOCK_ACTIONS = {
 }
 
 
+# 중계 상자(B)의 `pytmux relay-proxy` 가 자기 에러 줄에 붙이는 접두(launcher 와 같은
+# 문자열). 다중홉 실패는 세 자리에서 나는데 stderr 가 한 파이프로 합류하므로, 이 접두가
+# 있느냐가 "안쪽 홉이냐 바깥 홉이냐"를 가르는 유일한 신호다.
+_RELAY_TAG = "relay-proxy("
+
+
+def _link_name(host: str | None, endpoint: str | None,
+               via: str | None = None) -> str | None:
+    """링크(=원격 호스트)의 **표시·저장 키**. 다중홉은 `B>C`.
+
+    한 자리에 모아 두는 이유: 이 문자열이 `_remotes_dict` 키이자 sticky 저장소 키이자
+    탭 이름(`⇄B>C:…`)이자 `remote-detach` 인자다. 네 곳이 각자 지으면 하나만 어긋나도
+    "핀이 안 붙는다"·"detach 가 안 먹는다"가 조용히 난다."""
+    target = host or endpoint
+    if not target:
+        return None
+    return f"{via}>{target}" if via else target
+
+
+def _pick_detail_line(text: str) -> str:
+    """여러 줄 stderr 에서 사용자에게 보일 **한 줄**을 고른다.
+
+    기본 규칙은 종전대로 **마지막 줄**이다(ssh 의 진짜 원인이 대개 마지막에 온다).
+    다만 다중홉에서는 relay-proxy 접두가 붙은 줄이 더 정확한 귀속을 준다 — 마지막
+    줄은 바깥 ssh 가 덧붙인 일반 문구("Connection closed by …")일 수 있어서다.
+    접두가 있으면 그중 마지막 것을, 없으면 종전 규칙 그대로."""
+    lines = [ln for ln in text.strip().splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    tagged = [ln for ln in lines if _RELAY_TAG in ln]
+    return (tagged[-1] if tagged else lines[-1]).strip()
+
+
 def _decode_remote_stderr(b: bytes) -> str:
     """원격 ssh/명령 stderr 바이트를 사람이 읽을 문자열로 디코드.
 
@@ -430,9 +463,16 @@ class ServerRemoteMixin:
         self._remote_sticky_dict().pop(name, None)
 
     # ---- 전송 열기 ----
-    async def _remote_transport(self, host: str | None, endpoint: str | None):
+    async def _remote_transport(self, host: str | None, endpoint: str | None,
+                                via: str | None = None):
         """(reader, writer, token, proc) 를 연다. endpoint=같은 머신 직결(테스트/로컬
-        페더레이션), host=`ssh -T host pytmux stdio-proxy`(첫 줄 TOKEN)."""
+        페더레이션), host=`ssh -T host pytmux stdio-proxy`(첫 줄 TOKEN).
+
+        `via` 가 있으면 **중간 상자를 거친다**(설계 §4): `ssh -T -- <via> pytmux
+        relay-proxy <host>`. 우리가 ssh 로 붙는 상대가 via 로 바뀔 뿐 파이프 반대편은
+        여전히 "TOKEN 줄을 먼저 뱉는 무언가"라 **아래 핸드셰이크 코드는 그대로**다.
+        검증은 host·via **둘 다** 같은 규칙을 통과해야 한다 — 둘 다 비신뢰 클라
+        문자열이고 둘 다 argv 에 들어간다."""
         if endpoint:
             reader, writer = await ipc.open_connection(endpoint)
             return reader, writer, (ipc.read_token(endpoint) or ""), None
@@ -444,6 +484,10 @@ class ServerRemoteMixin:
         #  동작하는 설정을 깨거나 보안을 느슨하게 만들 수 있어 건드리지 않는다.)
         if not host or host.startswith("-") or any(c.isspace() for c in host):
             raise ConnectionError(f"잘못된 원격 호스트: {host!r}")
+        # via 도 같은 규칙(§4.3) — 이쪽이 실제 ssh 목적지라 규칙이 더 느슨하면 안 된다.
+        if via is not None and (
+                not via or via.startswith("-") or any(c.isspace() for c in via)):
+            raise ConnectionError(f"잘못된 중계 호스트: {via!r}")
         # S2 후속: 연합 허용목록이 설정돼 있으면(opt-in, opts.json `remote_allowed_hosts`)
         # 정확히 일치하는 목적지만 허용한다 — 비신뢰 클라 입력이 데몬의 ssh egress 를
         # 임의 호스트로 조종하지 못하게. 빈 목록(기본)은 현행대로 임의 host 허용.
@@ -452,15 +496,25 @@ class ServerRemoteMixin:
             raise ConnectionError(
                 f"허용되지 않은 원격 호스트: {host!r} "
                 f"(opts.json remote_allowed_hosts 에 없음)")
+        # 다중홉이면 **우리가 ssh 로 붙는 상대는 via** 다 — 목적지만 검사하고 via 를
+        # 빼먹으면 허용목록이 통째로 우회된다(허용된 C 를 대고 임의 상자 B 로 ssh).
+        if allow and via is not None and via not in allow:
+            raise ConnectionError(
+                f"허용되지 않은 중계 호스트: {via!r} "
+                f"(opts.json remote_allowed_hosts 에 없음)")
         # BatchMode: 서버가 띄우는 ssh 는 TTY 가 없어 비밀번호를 못 묻는다 — 키
         # 인증 미설정이면 즉시 명확한 stderr(Permission denied)로 실패하게 한다.
         # ServerAlive*: M2 keepalive — half-open(상대가 데이터도 FIN 도 안 보내는 좀비
         # /웨지) 연결을 ssh 가 15s×3=45s 내 감지해 끊어 준다. 그러면 stdio-proxy 파이프가
         # EOF→_remote_reader 가 끊김으로 처리해 자동 재연결/회수가 진행된다(무프로토콜 변경).
+        # 다중홉은 목적지만 갈아 끼운다 — ssh 옵션·`--`·인자 순서는 1홉과 **동일**하다.
+        # (중첩 ssh 문자열이 아니라 argv 고정: B 의 셸이 해석할 것이 없다 — §4.1)
+        tail = (["--", via, "pytmux", "relay-proxy", host] if via else
+                ["--", host, "pytmux", "stdio-proxy"])
         proc = await asyncio.create_subprocess_exec(
             "ssh", "-T", "-o", "BatchMode=yes",
-            "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "--",
-            host, "pytmux", "stdio-proxy",
+            "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
+            *tail,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE)
         # 모든 실패 경로(readline 타임아웃·핸드셰이크 실패·readline 의 LimitOverrunError·
@@ -477,11 +531,33 @@ class ServerRemoteMixin:
                     err = await asyncio.wait_for(proc.stderr.read(2048), 2)
                 except asyncio.TimeoutError:
                     pass
-                detail = _strip_ctrl(_decode_remote_stderr(err or line)).strip()
-                detail = detail.splitlines()[-1] if detail else ""
+                detail = _pick_detail_line(
+                    _strip_ctrl(_decode_remote_stderr(err or line)))
                 if not detail:
                     raise RemoteError("rerr.handshake_noresp",
                                       "stdio-proxy 핸드셰이크 실패: 응답 없음")
+                if via:
+                    # 다중홉은 실패가 **세 자리**에서 난다(A→B ssh · B 의 relay-proxy ·
+                    # B→C ssh). 셋이 한 파이프의 stderr 로 합류하므로 접두로 귀속을
+                    # 가른다 — 접두가 없으면 바깥 홉(A→B)이다.
+                    if _RELAY_TAG in detail:
+                        if "remote_allowed_hosts" in detail:
+                            raise RemoteError(
+                                "rerr.relay_hop_denied",
+                                "중계 상자 {via} 가 {host} 로의 중계를 거부했습니다"
+                                " (그 상자의 remote_allowed_hosts)",
+                                via=via, host=host)
+                        raise RemoteError(
+                            "rerr.relay_inner_fail",
+                            "{via}→{host} 홉 실패: {detail}",
+                            via=via, host=host, detail=detail)
+                    if "not found" in detail or "인식할 수" in detail:
+                        # B 의 셸이 낸 줄(`pytmux: command not found`) — 우리 접두가
+                        # 붙을 수 없는 자리다. 중계 상자에 pytmux 가 없다는 뜻.
+                        raise RemoteError(
+                            "rerr.relay_no_pytmux",
+                            "중계 상자 {via} 에서 pytmux 를 찾지 못했습니다: {detail}",
+                            via=via, detail=detail)
                 if "Permission denied" in detail:
                     # 비대화 ssh(BatchMode)는 비밀번호를 못 묻는다 — 패스워드 전용
                     # 호스트는 ControlMaster 로 인증된 연결을 공유하면 된다(§5). 키에
@@ -516,10 +592,15 @@ class ServerRemoteMixin:
 
     # ---- attach / detach ----
     async def remote_attach(self, sess, host: str | None = None,
-                            endpoint: str | None = None) -> bool:
+                            endpoint: str | None = None,
+                            via: str | None = None) -> bool:
         """원격 서버에 업스트림 클라로 attach. 성공하면 탭바에 원격 탭이 병합된다.
-        같은 이름의 기존 링크는 교체(detach 후 재연결)."""
-        name = host or endpoint
+        같은 이름의 기존 링크는 교체(detach 후 재연결).
+
+        `via` 가 있으면 그 상자를 거쳐 붙는다(설계 §4 — `remote-attach C via B`).
+        링크 이름은 `B>C` 로 **처음부터 고정**한다: 이 이름이 `_remotes_dict` 키이자
+        sticky(핀·단일탭분리) 저장소 키라 나중에 포맷을 바꾸면 기존 핀이 끊긴다."""
+        name = _link_name(host, endpoint, via)
         if not name:
             return False
         # 자기 자신 attach 가드: 자기 status 의 ⇄ 탭을 다시 흡수해 탭 목록이 status
@@ -540,7 +621,7 @@ class ServerRemoteMixin:
         self._set_err(None, "")
         try:
             reader, writer, tok, proc = await self._remote_transport(
-                host, endpoint)
+                host, endpoint, via)
         except RemoteError as e:
             # 구조화된 실패 원인(핸드셰이크 등) — 키 보존(클라가 자기 로케일로 번역).
             self._set_err(e.err_key, e.err_ko, **e.err_kw)
@@ -555,7 +636,13 @@ class ServerRemoteMixin:
             self._log_error(f"remote_attach({name})")
             return False
         link = RemoteLink(name, reader, writer, proc)
+        # spec 은 재시작 복원·자동재연결의 **유일한 근거**다(_resume_payload 가 통째로
+        # 싣는다) — via 를 여기 안 넣으면 재시작 후 링크가 조용히 1홉으로 되살아난다.
+        # 값이 있을 때만 키를 넣는다(sticky·pinned 와 같은 관례): 1홉 링크의 영속
+        # 상태가 종전과 **한 바이트도** 안 달라진다.
         link.spec = {"host": host, "endpoint": endpoint}
+        if via:
+            link.spec["via"] = via
         link.sess = sess
         # 같은 호스트의 옛 링크가 있었으면(바로 위 remote_drop 이 교체) 그 핀·단일-탭
         # 분리를 새 링크가 이어받는다 — 링크 수명이 아니라 호스트 수명 상태다.
@@ -748,8 +835,11 @@ class ServerRemoteMixin:
                 await asyncio.sleep(delay)
                 if not self.running or sess not in self.sessions.values():
                     return
+                # spec 을 통째로 재사용한다 — via 를 빠뜨리면 자동재연결이 1홉으로
+                # 되살아나 같은 이름의 링크가 영영 안 붙는다(복원 경로와 같은 함정).
                 if await self.remote_attach(sess, host=link.spec.get("host"),
-                                            endpoint=link.spec.get("endpoint")):
+                                            endpoint=link.spec.get("endpoint"),
+                                            via=link.spec.get("via")):
                     # H5: remote_attach 는 hello 송신 직후 True 라 '연결됨'을 단정하지
                     # 못한다 — 업스트림이 hello 만 받고 _send_full(→resize)이 멈춘
                     # pty-host 웨지면 탭이 안 온다. 대화형 attach·중첩 승격과 동일하게
@@ -866,10 +956,16 @@ class ServerRemoteMixin:
 
         async def _restore():
             for spec in specs:
-                name = spec.get("host") or spec.get("endpoint") or "?"
+                # 이름은 attach 와 **같은 함수**로 짓는다 — 여기서만 다르게 지으면
+                # 복원된 링크의 sticky(핀·단일탭분리)가 통째로 딴 키에 붙는다.
+                name = _link_name(spec.get("host"), spec.get("endpoint"),
+                                  spec.get("via")) or "?"
                 try:
+                    # via= 를 빠뜨리면 재시작 후 링크가 **조용히 1홉으로** 되살아나
+                    # 실패한다(설계 §4.4 가 지목한 자리 — 뮤테이션 테스트가 겨눈다).
                     if await self.remote_attach(sess, host=spec.get("host"),
-                                                endpoint=spec.get("endpoint")):
+                                                endpoint=spec.get("endpoint"),
+                                                via=spec.get("via")):
                         # §12 ① 원격 탭 핀 복원: 재시작 전 다운스트림 로컬 핀 집합을
                         # 새 링크에 되살린다(_resume_payload 가 spec 에 실어 둠). 원격
                         # 창 index(ri) 기준이라 업스트림 창 구성이 그대로면 정합.

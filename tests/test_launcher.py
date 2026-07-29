@@ -572,3 +572,98 @@ async def test_server_boot_error_falls_back_to_the_socket_directory():
     from pytmuxlib import launcher as L
     detail = L.server_boot_error("/nonexistent-dir-for-pytmux-test/s.sock")
     assert "디렉터리" in detail, detail
+
+
+async def test_relay_proxy_splices_through_a_fake_ssh():
+    """§10-15 P1: `pytmux relay-proxy <host>` 가 **실제 서브프로세스로** 안쪽
+    `pytmux stdio-proxy` 를 띄워 TOKEN 줄 + 와이어 프레임을 그대로 통과시킨다.
+
+    실 3대(A→B→C)는 CI 가 없으므로 **PATH 앞단에 가짜 `ssh`** 를 깔아 "2홉 모양"만
+    그대로 태운다 — 가짜 ssh 는 인자를 무시하고 로컬 `pytmux stdio-proxy` 를 exec 한다.
+    이 테스트가 지키는 계약: A 입장에서 파이프 반대편은 여전히 "TOKEN 줄을 먼저 뱉는
+    무언가"이고 **와이어 프로토콜은 한 바이트도 안 바뀐다**."""
+    import asyncio
+    import json
+    import stat
+    import sys
+    from harness import server_only, teardown
+    from run import skip
+    from pytmuxlib import protocol
+    if os.name == "nt":
+        skip("POSIX 전용(가짜 ssh 셸 스크립트를 PATH 앞단에 깐다)")
+    srv, task, sock = await server_only()
+    p = None
+    tmpdir = tempfile.mkdtemp(prefix="pytmux-relay-")
+    try:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        fake = os.path.join(tmpdir, "ssh")
+        with open(fake, "w", encoding="utf-8") as f:
+            # 인자를 통째로 무시하고 로컬 stdio-proxy 를 exec — B→C ssh 자리를 대신한다.
+            f.write("#!/bin/sh\nexec %s %s --socket %s stdio-proxy\n"
+                    % (sys.executable, os.path.join(root, "pytmux.py"), sock))
+        os.chmod(fake, os.stat(fake).st_mode | stat.S_IEXEC | stat.S_IXGRP
+                 | stat.S_IXOTH)
+        env = dict(os.environ, PATH=tmpdir + os.pathsep + os.environ.get("PATH", ""))
+        p = await asyncio.create_subprocess_exec(
+            sys.executable, os.path.join(root, "pytmux.py"),
+            "--socket", sock, "relay-proxy", "C",
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, env=env)
+        line = await asyncio.wait_for(p.stdout.readline(), 20)
+        assert line.startswith(b"TOKEN "), line
+        tok = line.split(b" ", 1)[1].strip().decode()
+        frame = {"proto": protocol.PROTO_VERSION, "t": "list"}
+        if tok:
+            frame["token"] = tok
+        payload = json.dumps(frame).encode()
+        p.stdin.write(len(payload).to_bytes(4, "big") + payload)
+        await p.stdin.drain()
+        hdr = await asyncio.wait_for(p.stdout.readexactly(4), 20)
+        body = await asyncio.wait_for(
+            p.stdout.readexactly(int.from_bytes(hdr, "big")), 20)
+        assert "sessions" in json.loads(body), body
+    finally:
+        if p is not None and p.returncode is None:
+            p.kill()
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        await teardown(srv, task, sock)
+
+
+async def test_relay_proxy_rejects_bad_host_and_denied_hop():
+    """중계자는 **자기 입력을 자기가 검증**한다(A 를 믿지 않는다): 선행 `-`·공백
+    목적지는 ssh 를 띄우기 전에 거부하고, 이 상자의 `remote_allowed_hosts` 에 없는
+    목적지도 거부한다 — B 에 로그인할 수 있다는 것과 B 를 통해 아무 데나 갈 수 있다는
+    것은 다른 권한이다. 에러 줄에는 홉 귀속용 `relay-proxy(<host>): ` 접두가 붙는다."""
+    import json
+    from pytmuxlib import ipc, launcher as L
+    from run import skip
+    if os.name == "nt":
+        skip("POSIX 전용(허용목록 파일 경로가 상태 디렉터리 규칙을 탄다)")
+    tmpdir = tempfile.mkdtemp(prefix="pytmux-relayopt-")
+    sock = os.path.join(tmpdir, "s.sock")
+    try:
+        assert L._relay_host_ok("C") is True
+        for bad in ("", "-oProxyCommand=x", "a b", " "):
+            assert L._relay_host_ok(bad) is False, bad
+        # 허용목록 파일이 없으면(기본) 통과 — 종전 동작 무변경
+        assert L._relay_allowed(sock, "C") is True
+        with open(ipc.state_base(sock) + ".opts.json", "w", encoding="utf-8") as f:
+            json.dump({"remote_allowed_hosts": ["onlythis"]}, f)
+        assert L._relay_allowed(sock, "onlythis") is True
+        assert L._relay_allowed(sock, "C") is False
+        # 문자열 하나로 적어도 받아들인다(서버 로더와 같은 관용)
+        with open(ipc.state_base(sock) + ".opts.json", "w", encoding="utf-8") as f:
+            json.dump({"remote_allowed_hosts": "onlythis"}, f)
+        assert L._relay_allowed(sock, "onlythis") is True
+        assert L._relay_allowed(sock, "C") is False
+        # 거부는 **ssh 를 띄우기 전에** 난다 — spawn 을 가로채 호출 0 을 확인한다.
+        import subprocess
+        spawned = []
+        with harness.patched(subprocess, Popen=lambda *a, **k: spawned.append(a)):
+            assert L.run_relay_proxy(sock, "C") == 1
+            assert L.run_relay_proxy(sock, "-oProxyCommand=x") == 1
+        assert not spawned, spawned
+    finally:
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)

@@ -591,7 +591,7 @@ register({
         "hoststatus.resp_ok": "정상",
         "hoststatus.degraded_hint": "degraded 고착 시 reconnect / resync 명령으로 재접속",
         # remote / vt-parser / display-popup 안내
-        "msg.remote_attach_usage": "사용법: remote-attach <host>",
+        "msg.remote_attach_usage": "사용법: remote-attach <host> [via <중계상자>]",
         "msg.remote_newtab_usage": "사용법: remote-new-tab <host>",
         "msg.merge_remote_not_remote": "원격 탭을 보고 있을 때만 원격 탭을 머지할 수 있습니다",
         "msg.merge_remote_no_peers": "같은 원격 서버의 머지할 다른 탭이 없습니다",
@@ -641,7 +641,7 @@ register({
         "hoststatus.resp_degraded": "degraded — red border",
         "hoststatus.resp_ok": "normal",
         "hoststatus.degraded_hint": "If degraded sticks, reconnect with the reconnect / resync command",
-        "msg.remote_attach_usage": "usage: remote-attach <host>",
+        "msg.remote_attach_usage": "usage: remote-attach <host> [via <relay-host>]",
         "msg.remote_newtab_usage": "usage: remote-new-tab <host>",
         "msg.merge_remote_not_remote": "You can only merge a remote tab while viewing a remote tab",
         "msg.merge_remote_no_peers": "No other tab from the same remote server to merge",
@@ -685,6 +685,11 @@ register({
         "rerr.handshake_perm": "stdio-proxy 핸드셰이크 실패: {detail} — 키 미설정. "
                                "패스워드 호스트는 ssh config 에 ControlMaster 설정 후 "
                                "패널에서 한 번 로그인(REMOTE_ATTACH_SCENARIO §5)",
+        # 다중홉(remote-attach <C> via <B>) — 실패한 **홉**이 드러나야 한다(설계 §4.5)
+        "rerr.relay_hop_denied": "중계 상자 {via} 가 {host} 로의 중계를 거부했습니다"
+                                 " (그 상자의 remote_allowed_hosts)",
+        "rerr.relay_no_pytmux": "중계 상자 {via} 에서 pytmux 를 찾지 못했습니다: {detail}",
+        "rerr.relay_inner_fail": "{via}→{host} 홉 실패: {detail}",
         "rerr.see_log": "서버 error.log 참조",
         "rerr.unknown": "원인 미상",
         "rerr.unknown_log": "원인 미상(서버 error.log)",
@@ -714,6 +719,10 @@ register({
         "rerr.handshake_perm": "stdio-proxy handshake failed: {detail} — no key configured. "
                                "For password hosts, set ControlMaster in ssh config then "
                                "log in once from a pane (REMOTE_ATTACH_SCENARIO §5)",
+        "rerr.relay_hop_denied": "relay host {via} refused to relay to {host}"
+                                 " (its own remote_allowed_hosts)",
+        "rerr.relay_no_pytmux": "pytmux not found on relay host {via}: {detail}",
+        "rerr.relay_inner_fail": "{via}→{host} hop failed: {detail}",
         "rerr.see_log": "see server error.log",
         "rerr.unknown": "unknown cause",
         "rerr.unknown_log": "unknown cause (server error.log)",

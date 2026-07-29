@@ -588,6 +588,150 @@ def run_stdio_proxy(sock_path: str) -> int:
     os._exit(0)
 
 
+def _relay_host_ok(host: str) -> bool:
+    """릴레이 목적지로 쓸 수 있는 문자열인가 — `_remote_transport` 와 **같은 규칙**.
+
+    선행 `-` 는 ssh 가 옵션으로 해석한다(`-oProxyCommand=…` → 임의 명령 실행). 공백은
+    argv 한 칸을 쪼갠다. 규칙을 여기서 한 번 더 거는 이유: 이 프로세스는 **B 에서**
+    도는 별개 프로세스라 A 의 검증을 믿을 수 없다 — A 가 침해됐거나 구버전일 수 있다.
+    경계마다 자기 입력을 검증한다."""
+    return bool(host) and not host.startswith("-") and not any(
+        c.isspace() for c in host)
+
+
+def _relay_allowed(sock_path: str, host: str) -> bool:
+    """이 상자(B)의 `remote_allowed_hosts` 가 이 목적지를 허용하나.
+
+    **중계자가 자기 egress 정책의 주인**이라는 것이 이 함수의 존재 이유다. 안 그러면
+    A 가 B 를 임의 호스트로 가는 도약대로 쓸 수 있다 — B 에 로그인할 수 있다는 것과
+    B 를 통해 아무 데나 갈 수 있다는 것은 다른 권한이다.
+
+    서버와 **같은 파일**(`<state>.opts.json`)을 읽는다. 서버가 안 떠 있어도(릴레이는
+    B 의 서버와 무관하다) 파일만 있으면 정책이 선다. 비어 있으면(기본) 종전대로 허용."""
+    try:
+        with open(ipc.state_base(sock_path) + ".opts.json", encoding="utf-8") as f:
+            opts = json.load(f)
+    except (OSError, ValueError):
+        return True
+    if not isinstance(opts, dict):
+        return True
+    allow = opts.get("remote_allowed_hosts", [])
+    if isinstance(allow, str):
+        allow = [allow]
+    if not isinstance(allow, (list, tuple)) or not allow:
+        return True
+    return host in [str(h) for h in allow]
+
+
+def run_relay_proxy(sock_path: str, host: str) -> int:
+    """다중홉 페더레이션의 **중계 상자(B)** 전송 프리미티브(설계 §4).
+
+    `ssh -T -- B pytmux relay-proxy C` 로 실행되면 B 에서 다시
+    `ssh -T -- C pytmux stdio-proxy` 를 띄우고 자기 stdin↔그 자식↔자기 stdout 을
+    스플라이스한다. A 입장에서 파이프 반대편은 여전히 "TOKEN 줄을 먼저 뱉는 무언가"라
+    **와이어 프로토콜·서버 로직 변경이 0** 이다(파이프 반대편이 누구냐만 달라진다).
+    TOKEN 은 **C 가** 낸 것이 그대로 통과하므로 `_is_self_ssh_token` 자기-attach
+    가드도 그대로 유효하다.
+
+    **왜 중첩 ssh 문자열(`ssh B "ssh C …"`)이 아닌가**: 그건 B 의 로그인 셸이 문자열을
+    해석한다 — 지금 argv 형이라 존재하지 않던 셸 인젝션 표면이 생기고, 인용 규칙이 B 의
+    셸/OS 마다 갈리며, B 가 자기 egress 정책을 강제할 자리가 사라진다. 여기서는 argv 를
+    끝까지 고정한다.
+
+    **홉 깊이는 1**이다 — relay-proxy 는 자기 목적지에 다시 relay-proxy 를 부르지
+    않는다(재귀 루프와 진단 난이도 원천 차단).
+
+    **에러 줄에는 `relay-proxy(<host>): ` 접두를 붙인다.** 세 자리(A→B ssh · 여기 ·
+    B→C ssh)의 stderr 가 전부 한 파이프로 합류하는데 A 는 마지막 줄만 보여 주므로,
+    접두가 없으면 "어느 홉이 실패했나"가 즉시 흐려진다."""
+    tag = f"relay-proxy({host})"
+
+    def _err(msg: str):
+        print(f"{tag}: {msg}", file=sys.stderr)
+
+    if not _relay_host_ok(host):
+        _err(f"잘못된 목적지: {host!r}")
+        return 1
+    if not _relay_allowed(sock_path, host):
+        _err("이 상자의 remote_allowed_hosts 가 허용하지 않는 목적지입니다")
+        return 1
+    import subprocess
+    import threading
+    try:
+        proc = subprocess.Popen(
+            ["ssh", "-T", "-o", "BatchMode=yes",
+             "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "--",
+             host, "pytmux", "stdio-proxy"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+    except OSError as e:
+        # B 에 ssh 가 없거나 실행 못 함 — 이 줄이 A 의 notice 에 그대로 뜬다.
+        _err(f"ssh 를 실행하지 못했습니다: {e}")
+        return 1
+
+    out = sys.stdout.buffer
+    done = threading.Event()
+
+    def _pump(src, dst_write, close_after=None):
+        try:
+            while True:
+                data = src.read1(65536) if hasattr(src, "read1") else src.read(65536)
+                if not data:
+                    break
+                dst_write(data)
+        except (OSError, ValueError):
+            pass
+        finally:
+            if close_after is not None:
+                try:
+                    close_after()
+                except OSError:
+                    pass
+            done.set()
+
+    def _write_out(data):
+        out.write(data)
+        out.flush()
+
+    def _write_child(data):
+        proc.stdin.write(data)
+        proc.stdin.flush()
+
+    def _pump_err():
+        # 안쪽 ssh 의 stderr 도 **같은 접두로 감싸** 흘린다 — 그래야 A 가 마지막 줄만
+        # 봐도 "B→C 홉에서 났다"를 안다. 줄 단위라 부분 줄은 다음 것과 합쳐진다.
+        try:
+            for line in proc.stderr:
+                text = line.decode("utf-8", "replace").rstrip("\r\n")
+                if text:
+                    _err(text)
+        except (OSError, ValueError):
+            pass
+
+    t_out = threading.Thread(target=_pump, args=(proc.stdout, _write_out),
+                             daemon=True)
+    t_in = threading.Thread(
+        target=_pump, args=(sys.stdin.buffer, _write_child, proc.stdin.close),
+        daemon=True)
+    t_err = threading.Thread(target=_pump_err, daemon=True)
+    for t in (t_out, t_in, t_err):
+        t.start()
+    done.wait()
+    t_out.join(timeout=3)
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    # stdio-proxy 와 같은 이유로 finalize 를 건너뛴다(데몬 스레드가 stdout 락을 쥔 채
+    # 남으면 `_enter_buffered_busy` fatal abort → macOS 크래시 팝업).
+    for s in (sys.stdout, sys.stderr):
+        try:
+            s.flush()
+        except (OSError, ValueError):
+            pass
+    os._exit(0)
+
+
 def run_start_server(sock_path: str) -> int:
     """`pytmux start-server` — 서버 데몬만 분리 기동하고 attach 없이 돌아온다.
 
@@ -737,6 +881,12 @@ def main(argv=None):
     # stdio-proxy` 로 원격에서 실행되면 원격 서버 소켓 ↔ stdio 를 스플라이스한다.
     sub.add_parser("stdio-proxy",
                    help="(페더레이션) 로컬 서버 소켓 ↔ stdio 스플라이스")
+    # 다중홉(A→B→C): 이 상자가 **중계자**가 된다. A 가 `ssh -T -- B pytmux
+    # relay-proxy C` 로 부르고, 우리는 C 의 stdio-proxy 를 다시 띄워 스플라이스한다.
+    p_relay = sub.add_parser(
+        "relay-proxy",
+        help="(페더레이션) 이 상자를 거쳐 <host> 의 stdio-proxy 로 중계")
+    p_relay.add_argument("host", help="중계할 목적지(이 상자에서 ssh 가 되는 호스트)")
     # attach 없이 서버만 올린다(tmux start-server 대응). `server` 는 전경 데몬 본체라
     # 사람이 직접 쓰는 명령이 아니다 — 그 구분을 이름으로 드러낸다.
     sub.add_parser("start-server",
@@ -767,6 +917,8 @@ def main(argv=None):
 
     if args.command == "stdio-proxy":
         sys.exit(run_stdio_proxy(sock_path))
+    if args.command == "relay-proxy":
+        sys.exit(run_relay_proxy(sock_path, args.host))
     if args.command == "start-server":
         sys.exit(run_start_server(sock_path))
     if args.command == "server":

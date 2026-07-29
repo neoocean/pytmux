@@ -662,8 +662,20 @@ class _CommandMixin:
             # (NATGAMES\user@host)의 백슬래시를 shlex(posix)가 삼키지 않게.
             rest = line.split(None, 1)
             host = rest[1].strip() if len(rest) > 1 else ""
+            # 다중홉: `remote-attach C via B` — C 로 직접 ssh 가 안 되고 B 를 거쳐야
+            # 하는 구성(설계 §4). ` via ` 를 **구분자로만** 쓰고 나머지는 원시 문자열
+            # 그대로 넘긴다(도메인 계정의 백슬래시 보존은 그대로).
+            via = None
+            if " via " in host:
+                head, _, tail = host.rpartition(" via ")
+                head, tail = head.strip(), tail.strip()
+                if head and tail:
+                    host, via = head, tail
             if host:
-                self.send_cmd("remote_attach", host=host)
+                # via 는 있을 때만 싣는다 — 1홉 프레임이 종전과 한 바이트도 안 달라져
+                # 구서버(키를 모르는)와도 그대로 맞물린다.
+                kw = {"via": via} if via else {}
+                self.send_cmd("remote_attach", host=host, **kw)
             else:
                 self.display_message(i18n.t("msg.remote_attach_usage"))
         elif c in ("remote-new-tab", "remote_new_tab", "remote-new-window"):

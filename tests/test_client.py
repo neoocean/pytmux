@@ -7727,3 +7727,32 @@ async def test_layout_prunes_stale_pane_content_cache():
         app._dispatch({"t": "layout", "active": None, "dividers": [], "panes": []})
         assert 1 in app.pane_content, "빈 layout 이 캐시를 성급히 비움"
     await _with_app(body)
+
+
+async def test_remote_attach_via_splits_relay_host():
+    """§10-15 P1: `remote-attach C via B` 가 목적지와 중계 상자로 갈린다.
+
+    ` via ` 는 **구분자로만** 쓰고 나머지는 원시 문자열 그대로 넘긴다 — 도메인 계정
+    (`NATGAMES\\user@host`)의 백슬래시 보존이 그대로여야 하고, 이름 안에 'via' 가
+    들어간 호스트(`viaduct`)를 쪼개면 안 된다(구분자는 **공백으로 둘러싸인** ` via `)."""
+    async def body(app, pilot, srv):
+        sent = []
+        orig = app.send_cmd
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        try:
+            app._run_command("remote-attach C via B")
+            app._run_command("remote-attach C")
+            app._run_command("remote-attach viaduct")
+            app._run_command("remote-attach NATGAMES\\user@host via jump1")
+            # 한쪽이 비면 구분자로 안 본다(그대로 host 문자열).
+            app._run_command("remote-attach via B")
+        finally:
+            app.send_cmd = orig
+        assert ("remote_attach", {"host": "C", "via": "B"}) in sent, sent
+        # 1홉은 **키 자체를 안 싣는다**(구서버 호환 · 프레임 무변경).
+        assert ("remote_attach", {"host": "C"}) in sent, sent
+        assert ("remote_attach", {"host": "viaduct"}) in sent, sent
+        assert ("remote_attach", {"host": "NATGAMES\\user@host",
+                                  "via": "jump1"}) in sent, sent
+        assert ("remote_attach", {"host": "via B"}) in sent, sent
+    await _with_app(body)

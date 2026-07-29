@@ -17,7 +17,7 @@ import signal
 import time
 import traceback
 
-from . import ipc, pty_backend, ptyhostmgr, version
+from . import ipc, pty_backend, ptyhostmgr, serverremote, version
 from .model import ClientConn, Pane, Session
 from .protocol import (FLUSH_HZ, HANDSHAKE_MAX_FRAME, HANDSHAKE_TIMEOUT, MAX_H,
                        MAX_W, MIN_H, MIN_W, PROTO_VERSION, SYNC_OUTPUT_MAX_DEFER,
@@ -793,9 +793,13 @@ class ServerIOMixin:
         #    로컬 화면 복귀까지 처리).
         # ③ 보는 중엔 화이트리스트 action 을 업스트림으로 릴레이.
         if action == "remote_attach":
-            target = msg.get("host") or msg.get("endpoint") or "?"
+            # 다중홉(`remote-attach C via B`)이면 링크 이름이 `B>C` 다 — notice 의
+            # target 도 그 이름이어야 사용자가 detach 할 때 그대로 쓸 수 있다.
+            via = msg.get("via")
+            target = serverremote._link_name(
+                msg.get("host"), msg.get("endpoint"), via) or "?"
             ok = await self.remote_attach(sess, host=msg.get("host"),
-                                          endpoint=msg.get("endpoint"))
+                                          endpoint=msg.get("endpoint"), via=via)
             # 결과를 요청 클라에 알린다(notice) — 실패가 서버 로그에만 남아
             # "아무 일도 안 일어남"으로 보이던 갭(제보 2026-06-12) 해소.
             # key+ko 폴백으로 보내 클라가 자기 로케일로 번역(_notice_msg, i18n rnotice.*).
