@@ -964,9 +964,33 @@ class ServerClaudeMixin:
         이어져 '종료'로 확정되고, 그 순간 토큰 그래프가 살아있는 TUI 한가운데 주입돼 화면이
         깨진다(제보 2026-06-18). fg 가 알려진 셸이면 Claude 가 빠져 셸로 돌아온 것
         → 주입 안전(그래프가 새 프롬프트 위 스크롤백에 흐른다). fg 가 여전히 Claude
-        (node/claude)거나 확인 불가(None)면 False → 주입 건너뜀(화면 보호 우선)."""
+        (node/claude)거나 확인 불가(None)면 False → 주입 건너뜀(화면 보호 우선).
+
+        **fg=셸 이라고 다 종료가 아니다**(제보 2026-07-29): Claude Code 안에서 `!` 로
+        셸 명령을 실행하면 Claude 가 **자기 자식으로 셸을 띄운다** — 그 사이 화면엔
+        Claude 앵커가 없어 `_hdr_claude` 가 내려가고, 포그라운드 판정은 그 자식 셸을
+        보고 '셸 복귀'로 읽어 살아있는 Claude 위에 종료 요약을 주입했다. Windows 는
+        fg 개념이 없어 **최심 자손**을 fg 로 삼으므로(`proc.foreground_command`) 이
+        오판이 특히 잘 난다. 그래서 패널 프로세스 **트리**에 Claude 가 아직 살아 있으면
+        종료가 아니다(_pane_tree_has_claude). 트리 조회는 fg 가 셸로 보일 때만 —
+        즉 주입 직전 1회만 — 돌려 flush 루프 비용을 늘리지 않는다."""
         fg = self._fg_command(pane)
-        return bool(fg) and os.path.basename(fg).lower() in self._SHELL_FG
+        if not (bool(fg) and os.path.basename(fg).lower() in self._SHELL_FG):
+            return False
+        return not self._pane_tree_has_claude(pane)
+
+    def _pane_tree_has_claude(self, pane: Pane) -> bool:
+        """패널 셸의 자손 프로세스 트리에 **살아 있는 Claude** 가 있으면 True.
+
+        근거를 못 구하면(트리 조회 실패 = None) False — '모름'을 '살아 있음'으로 읽으면
+        진짜 종료에도 요약이 영영 안 뜬다(종전 동작 유지 쪽으로 저하). 판정은
+        `_fg_is_claude` 와 같은 앵커('claude' 문자열) — POSIX 는 명령행 전체라 npm 설치
+        (`node …/claude/cli.js`)도 잡히고, Windows 는 exe 이름만이라 네이티브 설치
+        (`claude.exe`)를 잡는다."""
+        names = proc.tree_command_names(self._pane_shell_pid(pane))
+        if names is None:
+            return False
+        return any("claude" in n for n in names)
 
     def _emit_auto_token_log(self, sess: Session, pane: Pane = None) -> None:
         """Claude **세션 종료** 확정 시 그 패널에 토큰 사용량 요약을 **출력으로 주입**한다

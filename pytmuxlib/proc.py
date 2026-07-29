@@ -38,7 +38,8 @@ _CREATE_NO_WINDOW = 0x08000000
 
 __all__ = ["IS_WINDOWS", "spawn_detached", "terminate", "is_alive",
            "server_argv", "shell_argv", "no_window_kwargs",
-           "open_in_file_manager", "process_cwd", "foreground_command"]
+           "open_in_file_manager", "process_cwd", "foreground_command",
+           "tree_command_names"]
 
 
 def no_window_kwargs() -> dict:
@@ -393,13 +394,12 @@ def foreground_command(pid: int) -> Optional[str]:
     return _win_foreground_command(pid)
 
 
-def _win_foreground_command(pid: int) -> Optional[str]:
-    r"""Windows: ToolHelp 스냅샷으로 pid 의 가장 깊은 자손 프로세스 exe 이름을 구한다.
+def _win_proc_table():
+    """Windows: ToolHelp 스냅샷 1회로 `(exe_of, children)` 전체 프로세스 표를 만든다.
 
     CreateToolhelp32Snapshot(SNAPPROCESS) -> Process32FirstW/NextW 로 (pid, ppid, exe)
-    를 모아 자식 맵을 만들고, pid 에서 BFS 로 가장 깊은 자손을 고른다(여러 leaf 면 깊이
-    최댓값). 자손이 없으면 셸 자신의 exe. exe 는 basename 에서 `.exe`(대소문자 무시) 제거.
-    어떤 실패든 None 으로 graceful — 자동 이름은 고정 탭이름으로 폴백된다."""
+    를 모은다. 실패하면 None — 호출부는 graceful 폴백한다. `_win_foreground_command`
+    (최심 자손)과 `tree_command_names`(자손 전체)가 같은 표를 쓴다."""
     try:
         import ctypes
         from ctypes import wintypes
@@ -443,7 +443,83 @@ def _win_foreground_command(pid: int) -> Optional[str]:
                 ok = k.Process32NextW(snap, ctypes.byref(entry))
         finally:
             k.CloseHandle(snap)
+        return exe_of, children
+    except Exception:
+        return None
 
+
+def _descendants(pid: int, children: dict) -> list:
+    """`children`(ppid→[pid]) 표에서 pid 의 자손 pid 목록(자기 제외, BFS).
+    ppid 재사용/사이클은 방문 집합으로 차단한다."""
+    out, seen, frontier = [], {pid}, [pid]
+    while frontier:
+        cur = frontier.pop()
+        for ch in children.get(cur, ()):
+            if ch not in seen:
+                seen.add(ch)
+                out.append(ch)
+                frontier.append(ch)
+    return out
+
+
+def tree_command_names(pid: int) -> Optional[list]:
+    """pid 의 **자손** 프로세스 명령 문자열 목록(소문자). 구하지 못하면 None(판단 불가).
+
+    쓰임: "이 패널 안에서 그 프로그램이 아직 도는가" 를 포그라운드 **하나**가 아니라
+    트리 **전체**로 묻는 자리. Claude Code 가 `!`(bash 모드)로 셸을 띄우면 포그라운드
+    (Windows 는 최심 자손)는 그 셸이지만 Claude 는 여전히 살아 있다 — 그 구분에 쓴다
+    (claude-code `_claude_really_exited`, 제보 2026-07-29).
+
+    POSIX: `ps -Ao pid=,ppid=,command=` 한 번으로 전체 표를 받아 BFS. **명령행 전체**라
+    node 로 실행된 CLI(`node …/claude/cli.js`)도 잡힌다.
+    Windows: ToolHelp 스냅샷의 exe 이름만(명령행은 못 얻는다) — best-effort.
+    자손이 없으면 빈 목록(= 확실히 없음), 조회 실패는 None(= 모름)으로 구분한다."""
+    if pid is None or pid <= 0:
+        return None
+    if IS_WINDOWS:
+        table = _win_proc_table()
+        if table is None:
+            return None
+        exe_of, children = table
+        if pid not in exe_of:
+            return None
+        return [str(exe_of.get(c, "")).lower()
+                for c in _descendants(pid, children)]
+    try:
+        out = subprocess.run(["ps", "-Ao", "pid=,ppid=,command="],
+                             capture_output=True, text=True, timeout=5,
+                             **no_window_kwargs()).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    cmd_of: dict = {}
+    children: dict = {}
+    for line in out.splitlines():
+        parts = line.split(maxsplit=2)
+        if len(parts) < 2:
+            continue
+        try:
+            cpid, ppid = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        cmd_of[cpid] = (parts[2] if len(parts) > 2 else "").lower()
+        children.setdefault(ppid, []).append(cpid)
+    if pid not in cmd_of:
+        return None
+    return [cmd_of.get(c, "") for c in _descendants(pid, children)]
+
+
+def _win_foreground_command(pid: int) -> Optional[str]:
+    r"""Windows: ToolHelp 스냅샷으로 pid 의 가장 깊은 자손 프로세스 exe 이름을 구한다.
+
+    (pid, ppid, exe) 표(`_win_proc_table`)에서 pid 부터 BFS 로 가장 깊은 자손을 고른다
+    (여러 leaf 면 깊이 최댓값). 자손이 없으면 셸 자신의 exe. exe 는 basename 에서
+    `.exe`(대소문자 무시) 제거. 어떤 실패든 None 으로 graceful — 자동 이름은 고정
+    탭이름으로 폴백된다."""
+    try:
+        table = _win_proc_table()
+        if table is None:
+            return None
+        exe_of, children = table
         if pid not in exe_of:
             return None
         # pid 에서 BFS — 가장 깊은 자손(leaf 후보)을 고른다. ppid 재사용 오탐을 막으려

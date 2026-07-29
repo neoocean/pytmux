@@ -979,6 +979,58 @@ async def test_auto_token_on_exit_retries_until_shell_confirmed():
         await teardown(srv, task, sock)
 
 
+async def test_exit_summary_not_fooled_by_claude_spawned_shell():
+    """제보 2026-07-29: Claude Code 안에서 `!` 로 셸 명령을 실행하면 **종료 토큰
+    그래프가 살아있는 세션 한가운데 떴다**.
+
+    기제: `!` 는 Claude 가 자기 자식으로 셸을 띄운다 → 그 사이 화면에 Claude 앵커가
+    없어 `_hdr_claude` 가 30프레임 뒤 내려가고, 포그라운드 판정이 그 **자식 셸**을
+    보고 '셸 복귀'로 읽는다. Windows 는 fg 개념이 없어 최심 자손을 fg 로 삼으므로
+    (`proc.foreground_command`) 특히 잘 걸린다. 이제 패널 프로세스 트리에 Claude 가
+    살아 있으면 종료로 보지 않는다.
+
+    트리 조회(`proc.tree_command_names`)는 실 프로세스 의존이라 harness.patched 로
+    **구간을 가둬** 갈아끼운다(모듈 간 누출 금지)."""
+    from harness import patched
+    from pytmuxlib import proc as procmod
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        pane = sess.active_window.active_pane
+        srv._fg_command = lambda p: "bash"        # `!` 가 띄운 자식 셸
+        # ① 트리에 Claude 가 살아 있다 → 종료 아님(주입 금지).
+        with patched(procmod, tree_command_names=lambda pid: [
+                "claude", "/bin/bash -c p4 edit …"]):
+            assert srv._claude_really_exited(pane) is False
+        # ② npm 설치(node 로 뜬 CLI)도 명령행에 claude 가 있어 잡힌다.
+        with patched(procmod, tree_command_names=lambda pid: [
+                "node /usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js"]):
+            assert srv._claude_really_exited(pane) is False
+        # ③ 진짜 종료: 트리에 Claude 가 없다 → 종전대로 주입 허용.
+        with patched(procmod, tree_command_names=lambda pid: ["vim x.txt"]):
+            assert srv._claude_really_exited(pane) is True
+        # ④ 트리 조회 실패(None = 모름)는 종전 동작 유지 — '모름'을 '살아있음'으로
+        #    읽으면 진짜 종료에도 요약이 영영 안 뜬다.
+        with patched(procmod, tree_command_names=lambda pid: None):
+            assert srv._claude_really_exited(pane) is True
+        # ⑤ 종단: `!` 셸 실행으로 화면에서 Claude 가 사라져도 요약을 주입하지 않는다.
+        import importlib
+        smod = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+        win = sess.active_window
+        calls = []
+        srv._emit_auto_token_log = lambda s, p=None: calls.append((s, p))
+        pane.feed("\x1b[2J\x1b[H✽ Crunching… (3s · ↑ 1k tokens)\r\n".encode())
+        srv._scan_claude(sess, win)
+        assert pane._hdr_claude is True
+        pane.feed(b"\x1b[2J\x1b[H$ p4 edit //depot/x\r\nUsage: add/edit/delete\r\n")
+        with patched(procmod, tree_command_names=lambda pid: ["claude"]):
+            for _ in range(smod._HDR_CLAUDE_MISS + smod._EXIT_TOKEN_RETRY + 2):
+                srv._scan_claude(sess, win)
+        assert calls == [], ("살아있는 Claude 에 종료 요약을 주입했다", calls)
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_pane_shell_pid_host_fallback_and_cmd_shell_recognized():
     """Windows host 모드(pty-host = Windows 기본) 회귀(실박스 보고 2026-07-08): pytmux
     에서 claude 를 실행했다 종료해도 세션종료 토큰요약이 안 떴다. 원인 둘 —
@@ -3908,6 +3960,26 @@ async def test_search_buffer_capture_clear():
         assert "CAPME" in srv.buffers[0], "캡처"
         srv.clear_history(sess)
         assert len(p.screen.history.top) == 0, "히스토리 비움"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_search_and_capture_keep_wide_chars_intact():
+    """검색·capture-pane 이 보는 텍스트도 화면과 같아야 한다(제보 2026-07-29 동반).
+
+    `_pane_text_lines` 가 와이드 글자 stub 을 공백으로 접던 시절엔 대상 문자열이
+    `뜨 면` 이라 **화면에 뻔히 보이는 한글 검색어가 안 잡혔고**, capture 버퍼도 그
+    공백이 낀 채 붙여넣어졌다. 두 소비처를 한 테스트로 묶어 못박는다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        for i in range(40):
+            p.feed((f"L{i} 뜨면 알려주세요\r\n" if i == 7 else f"L{i}\r\n").encode())
+        srv.search_pane(sess, "뜨면 알려주세요", "up")
+        assert p._match_abs == 7, ("한글 검색이 안 잡힘", p._match_abs)
+        srv.capture_pane(sess, full=True)
+        assert "뜨면 알려주세요" in srv.buffers[0], srv.buffers[0][:200]
     finally:
         await teardown(srv, task, sock)
 
