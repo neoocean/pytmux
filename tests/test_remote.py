@@ -3141,3 +3141,128 @@ async def test_relay_notice_target_is_the_two_hop_link_name():
         if writer is not None:
             writer.close()
         await teardown(srvA, taskA, sockA, allow_errors=("remote_attach",))
+
+
+async def test_relay_two_hop_end_to_end_with_fake_ssh():
+    """§10-15 P1 **E2E**: 클라가 친 `remote-attach C via B` 한 줄이 탭 병합까지 간다.
+
+    실 3대(그리고 실 ssh)는 CI 가 없다. 대신 **ssh 를 충실히 흉내내는 대역**을 PATH
+    앞단에 깔아 pytmux 쪽 경로를 **전부 진짜로** 태운다 — 가짜 ssh 는 `--` 뒤의
+    호스트를 보고 그 상자의 소켓을 골라 **주어진 명령을 그대로** 실행한다. 그래서
+    이 테스트가 지나는 길은:
+
+        서버 A ─(가짜 ssh)→ `pytmux relay-proxy C` ─(가짜 ssh)→ `pytmux stdio-proxy`
+                                                                        → 서버 C
+
+    즉 argv 조립·중계자 검증·이중 spawn·스플라이스·TOKEN 통과·탭 병합·입력 릴레이가
+    한 줄로 이어진다(실 ssh 만 대역). 층 테스트가 각각 맞아도 **연결이 빠지면** 여기서
+    죽는다."""
+    if os.name == "nt":
+        skip("POSIX 전용(가짜 ssh 셸 대역 + AF_UNIX 페더레이션)")
+    import json
+    import shutil
+    import stat
+    import sys
+    srvA, taskA, sockA = await server_only()
+    srvC, taskC, sockC = await server_only()
+    reader = writer = None
+    tmpdir = tempfile.mkdtemp(prefix="pytmux-e2e-relay-")
+    old_path = os.environ.get("PATH", "")
+    try:
+        sessC = srvC.ensure_default_session(80, 24)
+        pC = sessC.active_window.active_pane
+        realC = pC.pty
+
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # B 는 '중계자 역'만 하면 되므로 서버가 필요 없다(relay-proxy 는 서버와 무관한
+        # 별개 프로세스다) — 소켓 경로는 opts.json 조회용으로만 쓰인다.
+        sockmap = {"C": sockC, "B": os.path.join(tmpdir, "b.sock")}
+        with open(os.path.join(tmpdir, "map.json"), "w", encoding="utf-8") as f:
+            json.dump(sockmap, f)
+        fake = os.path.join(tmpdir, "ssh")
+        with open(fake, "w", encoding="utf-8") as f:
+            f.write(
+                "#!%s\n"
+                "import json, os, sys\n"
+                "argv = sys.argv[1:]\n"
+                "i = argv.index('--')\n"                 # ssh 옵션과 목적지의 경계
+                "host, cmd = argv[i + 1], argv[i + 2:]\n"
+                "m = json.load(open(%r))\n"
+                "os.execv(sys.executable, [sys.executable, %r,\n"
+                "                          '--socket', m[host], *cmd[1:]])\n"
+                % (sys.executable, os.path.join(tmpdir, "map.json"),
+                   os.path.join(root, "pytmux.py")))
+        os.chmod(fake, os.stat(fake).st_mode | stat.S_IEXEC | stat.S_IXGRP
+                 | stat.S_IXOTH)
+        os.environ["PATH"] = tmpdir + os.pathsep + old_path
+
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        st0 = await _read_until(reader, lambda m: m.get("t") == "status",
+                                what="initial status")
+        n_local = len(st0["windows"])
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "host": "C", "via": "B"})
+        # ① 탭 이름은 **링크 이름**(`B>C`)을 접두로 단다 — 사용자가 그대로
+        #    `remote-detach B>C` 에 쓴다.
+        stm = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄B>C:") for w in m["windows"]),
+            timeout=25.0, what="two-hop merged status")
+        rtabs = [w for w in stm["windows"] if w["name"].startswith("⇄")]
+        assert len(rtabs) == 1 and rtabs[0]["index"] == n_local, rtabs
+
+        # ② 진입 → C 의 레이아웃이 두 홉(그리고 두 프로세스)을 건너 도착
+        await write_msg(writer, {"t": "cmd", "action": "select_window",
+                                 "index": n_local})
+        lay = await _read_until(reader, lambda m: m.get("t") == "layout",
+                                timeout=15.0, what="two-hop layout")
+        rid = lay["active"]
+        assert rid == pC.id, ("2홉 레이아웃의 활성 패널 = C 패널", rid, pC.id)
+        # ③ **살아 있는 갱신**이 흐른다: 지금 C 의 패널에 찍은 글자가 A 까지 온다.
+        #   (초기 전체 프레임이 아니라 이 경로를 보는 이유 — 실 셸이 프롬프트로
+        #    화면을 덮으므로 attach 전에 찍어 둔 마커는 타이밍에 좌우된다.)
+        #   갱신은 `screen` 이 아니라 **`screen-delta`(바뀐 줄만)** 로 올 수 있다 —
+        #   둘 다 받아야 한다(delta 의 rows 는 `[y, 줄]` 쌍이라 글자를 따로 뽑는다).
+        def _has_marker(m):
+            if m.get("pane") != rid:
+                return False
+            if m.get("t") == "screen":
+                return "TWO-HOP-MARKER-ZZ" in _rows_text(m["rows"])
+            if m.get("t") == "screen-delta":
+                return any("TWO-HOP-MARKER-ZZ" in _rows_text([row])
+                           for _y, row in m.get("rows", []))
+            return False
+
+        pC.feed(b"TWO-HOP-MARKER-ZZ\r\n")
+        await _read_until(reader, _has_marker, timeout=15.0,
+                          what="two-hop screen with marker")
+
+        # ④ 입력이 C 의 PTY 까지
+        writesC = []
+
+        class _Spy:
+            def write(self, b):
+                writesC.append(b)
+
+            def set_winsize(self, rows, cols):
+                pass
+
+        pC.pty = _Spy()
+        await write_msg(writer, {"t": "input", "pane": rid,
+                                 "data": base64.b64encode(b"echo relayed\r").decode()})
+        await wait_for(lambda: writesC, timeout=8.0, step=0.05)
+        assert writesC and b"echo relayed" in writesC[0], writesC
+        pC.pty = realC
+
+        # ⑤ spec 이 via 를 들고 있다 = 재시작·자동재연결이 홉을 잃지 않는다.
+        link = srvA._remotes_dict().get("B>C")
+        assert link is not None and link.spec.get("via") == "B", (
+            link.spec if link else None)
+    finally:
+        os.environ["PATH"] = old_path
+        if writer is not None:
+            writer.close()
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvC, taskC, sockC)
