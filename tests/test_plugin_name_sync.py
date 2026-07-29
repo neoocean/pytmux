@@ -315,6 +315,120 @@ async def test_scan_no_match_marks_synced_no_change():
     assert srv.bcast == 0
 
 
+# ---- 서버: 이미 이름이 정해진 세션은 건드리지 않는다(제보 2026-07-29) ----
+def _write_session(root, pid, cwd, name, source=None):
+    """Claude 세션 pid 파일(`<config>/sessions/<pid>.json`) 픽스처 1건."""
+    import json
+    import os
+    obj = {"pid": pid, "cwd": cwd, "name": name}
+    if source is not None:
+        obj["nameSource"] = source
+    os.makedirs(root, exist_ok=True)
+    with open(os.path.join(root, f"{pid}.json"), "w", encoding="utf-8") as f:
+        json.dump(obj, f)
+
+
+async def test_session_named_reads_claude_pid_files():
+    """`nameSource: derived` = Claude 가 기동 시 자동으로 지은 이름(아직 아무도 안 정함),
+    그 표시가 없는 name = `/rename`·resume 으로 **의도적으로 정해진** 이름."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as root:
+        live = os.getpid()
+        # 자동 파생 이름 → 아직 정해진 게 아니다.
+        _write_session(root, live, "/tmp/projX", "projX-a1", source="derived")
+        assert ns._session_named("/tmp/projX", root=root) is False
+        # 같은 세션이 리네임되면 nameSource 가 사라진다 → 정해진 이름.
+        _write_session(root, live, "/tmp/projX", "그로기")
+        assert ns._session_named("/tmp/projX", root=root) is True
+        # 다른 디렉토리 세션은 무관.
+        assert ns._session_named("/tmp/other", root=root) is False
+        # 근거 없음(디렉토리 부재·빈 cwd)은 False = 종전 동작으로 저하.
+        assert ns._session_named("/tmp/projX", root=os.path.join(root, "nope")) is False
+        assert ns._session_named(None, root=root) is False
+
+
+async def test_session_named_ignores_dead_and_corrupt_files():
+    """강제 종료로 남은 잔여 pid 파일이 그 디렉토리의 자동 이름 동기화를 영구히 잠그면
+    안 된다 — pid 생존을 확인한다. 손상 JSON 도 조용히 건너뛴다."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as root:
+        _write_session(root, 424242, "/tmp/projX", "그로기")     # 죽은 pid
+        assert ns._session_named("/tmp/projX", root=root,
+                                 alive=lambda pid: False) is False
+        # 같은 파일이라도 살아 있으면 True(가드가 pid 생존에만 달렸음을 못박는다).
+        assert ns._session_named("/tmp/projX", root=root,
+                                 alive=lambda pid: True) is True
+        with open(os.path.join(root, "bad.json"), "w", encoding="utf-8") as f:
+            f.write("{ not json")
+        with open(os.path.join(root, "skip.txt"), "w", encoding="utf-8") as f:
+            f.write("무시됨")
+        assert ns._session_named("/tmp/projX", root=root,
+                                 alive=lambda pid: False) is False
+
+
+async def _scan_and_settle(scan, srv, sess, win):
+    """server_scan 을 돌리고 그것이 만든 **지연 태스크(_schedule_sync)가 끝날 때까지**
+    기다린다(고정 sleep 금지 규약 — test_wait_convention 래칫).
+
+    부정 단언("`/rename` 을 무장하지 않았다")은 태스크가 아직 안 끝났으면 공허하게
+    통과한다. 그래서 조건을 '새로 생긴 태스크가 전부 done' 으로 잡아 **끝났음**을 본
+    뒤 단언한다. 스캔 전 태스크 집합과의 차집합이라 러너 자신의 태스크는 안 센다."""
+    import asyncio
+    from harness import wait_for
+    before = asyncio.all_tasks()
+    scan(srv, sess, win)
+    spawned = [t for t in asyncio.all_tasks() if t not in before]
+    assert spawned, "server_scan 이 동기화 태스크를 안 만들었다"
+    ok = await wait_for(lambda: all(t.done() for t in spawned))
+    assert ok, "namesync 동기화 태스크가 끝나지 않았다"
+
+
+def _sessions_under(cfg_root):
+    """임시 설정 디렉토리 아래 `sessions/` 를 만들고 경로를 돌려준다 —
+    CLAUDE_CONFIG_DIR 를 이 cfg_root 로 돌리면 _session_named 가 여기를 본다."""
+    import os
+    os.makedirs(os.path.join(cfg_root, "sessions"), exist_ok=True)
+    return os.path.join(cfg_root, "sessions")
+
+
+async def test_scan_skips_session_rename_when_already_named():
+    """제보 2026-07-29: 사용자가 `/rename` 으로 정한 세션 이름을 namesync 가 규칙
+    키워드로 되돌렸다. respawn/resume 으로 패널 가드(_ns_synced)가 풀려도, 세션 이름이
+    이미 정해져 있으면 `/rename` 을 무장하지 않는다. 탭/패널 이름(pytmux 로컬)은 그대로
+    동기화한다 — 사용자가 막은 건 세션 이름 수정이다."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as cfg:
+        sd = _sessions_under(cfg)
+        _write_session(sd, os.getpid(), "/tmp/projX", "그로기")   # 이미 정해진 이름
+        old = os.environ.get("CLAUDE_CONFIG_DIR")
+        os.environ["CLAUDE_CONFIG_DIR"] = cfg
+        try:
+            srv, sess, win, tab, pane = _fixture()
+            pane._claude = "idle"
+            await _scan_and_settle(P.server_scan, srv, sess, win)
+            assert pane._pending_rename is None, "이미 정해진 세션 이름을 되돌렸다"
+            assert getattr(pane, "_ns_last_kw", None) is None
+            # pytmux 쪽 이름은 정상 동기화(가드는 세션 이름에만 적용).
+            assert tab.name == "projX" and pane.title == "projX"
+            assert srv.bcast == 1
+            # 자동 파생 이름이면 종전대로 리네임을 무장한다(대조군).
+            _write_session(sd, os.getpid(), "/tmp/projX", "projX-a1",
+                           source="derived")
+            srv2, sess2, win2, tab2, pane2 = _fixture()
+            pane2._claude = "idle"
+            await _scan_and_settle(P.server_scan, srv2, sess2, win2)
+            assert pane2._pending_rename == "projX"
+            assert pane2._ns_last_kw == "projX"
+        finally:
+            if old is None:
+                os.environ.pop("CLAUDE_CONFIG_DIR", None)
+            else:
+                os.environ["CLAUDE_CONFIG_DIR"] = old
+
+
 # ---- 서버: 요청 처리(get/set) ----
 async def test_request_get_and_set():
     srv, sess, win, tab, pane = _fixture()

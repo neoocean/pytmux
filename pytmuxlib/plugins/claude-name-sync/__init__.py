@@ -18,15 +18,22 @@ TUI 편집기로 설정한다.
 필드 `_pending_rename`(claude-code 스캔이 idle 경계에 발동)을 **쓰기만** 한다. claude-code
 가 없으면 `_claude` 가 항상 None 이라 자동 감지가 조용히 비활성된다(pytmux 탭/패널 이름
 변경도 함께 사라짐) — 두 필드 모두 코어 소유라 결합 없는 소프트 의존이다.
+세션 리네임을 무장하기 직전엔 Claude 가 스스로 쓰는 세션 pid 파일
+(`<config>/sessions/<pid>.json`)을 읽어 **이미 이름이 정해진 세션인지** 확인한다
+(`_session_named`) — 파일이 없거나 못 읽으면 근거 없음으로 보고 종전대로 진행하므로
+이 역시 결합 없는 best-effort 의존이다.
 
 무게: 이 모듈은 textual 을 최상단에서 import 하지 않는다(서버 프로세스도 plugins.load()
-로 이걸 읽는다). socket/os/sys 만 필요한 곳에서 쓴다."""
+로 이걸 읽는다). socket/os/sys/json 과 코어 proc(pid 생존 확인)만 필요한 곳에서 쓴다."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import socket
 import sys
+
+from pytmuxlib import proc
 
 # 명령 메타데이터 — 코어가 COMMANDS/COMPLETIONS/COMMAND_NOARG 에 합쳐 쓴다.
 COMMANDS = [
@@ -119,6 +126,79 @@ def _match_keyword(rules, cwd, host: str, osname: str):
             if kw:
                 return kw
     return None
+
+
+# ---- '이미 이름이 정해진 세션인가' 판정(Claude 세션 pid 파일) ----
+# Claude Code 는 실행 중인 세션마다 `<config>/sessions/<pid>.json` 을 쓰고 그 안에 지금
+# 세션 이름을 담는다(2.1.x `concurrentSessions`). 이름의 출처가 필드로 구분된다:
+#   - 기동 시 자동으로 지은 이름 : {"name": "pytmux-55", "nameSource": "derived"}
+#   - 의도적으로 정해진 이름     : {"name": "그로기"}  ← nameSource **없음**
+#     (`/rename`·`--session-name`·resume 복원이 모두 이 경로다 — 갱신 코드가
+#      `{name, nameSource: undefined}` 로 덮어 파생 표시를 지운다. 2.1.220 확인.)
+# 그래서 "name 이 있는데 파생 표시가 아니다" = **누가 의도를 갖고 정한 이름**이다.
+# 그런 세션에는 `/rename` 을 주입하지 않는다(제보 2026-07-29: namesync 가 사용자가
+# 바꾼 세션 이름을 원래 키워드로 되돌린다 — 특히 respawn/resume 으로 패널 가드
+# `_ns_synced` 가 풀린 뒤 이름만 살아 돌아온 세션에서).
+_SESSIONS_SUBDIR = "sessions"
+# 파생(자동) 이름 표시값 — 이 값들만 '아직 아무도 안 정한 이름'으로 본다.
+_DERIVED_SOURCES = ("derived", "auto")
+
+
+def _sessions_dir() -> str:
+    """실행 중 Claude 세션의 pid 파일 디렉토리(`<config>/sessions`).
+    $CLAUDE_CONFIG_DIR 우선, 없으면 `~/.claude`(claude-code 플러그인 transcript.py 와
+    같은 규약이지만, 결합을 피해 여기서 독립적으로 구한다 — 이 플러그인은 claude-code
+    를 import 하지 않는다)."""
+    base = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+    return os.path.join(base, _SESSIONS_SUBDIR)
+
+
+def _session_named(cwd, root=None, alive=None) -> bool:
+    """cwd 에서 도는 Claude 세션 중 **이미 이름이 정해진** 게 있으면 True.
+
+    판정 근거가 없으면(디렉토리 부재 = 구버전 Claude·읽기 실패·그 cwd 세션 없음) 항상
+    **False** 로 떨어져 종전 동작(동기화 진행)이 된다 — 근거 없음을 '정해진 이름'으로
+    읽으면 자동 이름 동기화 기능 자체가 조용히 죽는다(안전 비대칭: 확인된 이름만 존중).
+
+    세션 식별은 **cwd 일치**로 한다(규칙이 정확 디렉토리 매칭이라 같은 값이 그대로
+    열쇠가 된다). 같은 디렉토리에서 여러 세션이 돌면 그 중 하나만 이름이 정해져 있어도
+    보수적으로 True — 오탐의 대가는 '자동 이름이 안 붙는다'(수동 리네임으로 회복)지만,
+    누락의 대가는 사용자가 정한 이름을 지우는 것이라 비대칭이 크다.
+
+    죽은 세션의 잔여 pid 파일(정상 종료는 스스로 지우지만 강제 종료는 남긴다)은 무시
+    한다 — 안 그러면 그 디렉토리의 자동 이름 동기화가 영구히 잠긴다."""
+    if not cwd:
+        return False
+    if alive is None:
+        alive = proc.is_alive
+    d = root or _sessions_dir()
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return False                       # 근거 없음 → 종전 동작
+    t_norm, t_real = _norm_path(cwd), _real_path(cwd)
+    for fn in names:
+        if not fn.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(d, fn), encoding="utf-8") as f:
+                obj = json.load(f)
+        except (OSError, ValueError):
+            continue                       # 손상/경합 중인 파일은 건너뛴다
+        if not isinstance(obj, dict):
+            continue
+        if not _clean_name(obj.get("name")):
+            continue                       # 이름 미기록 → 판단 근거 아님
+        if str(obj.get("nameSource") or "").strip().lower() in _DERIVED_SOURCES:
+            continue                       # 자동 파생 이름 → 아직 '정해진' 이름 아님
+        c = str(obj.get("cwd") or "")
+        if _norm_path(c) != t_norm and _real_path(c) != t_real:
+            continue
+        pid = obj.get("pid")
+        if not isinstance(pid, int) or isinstance(pid, bool) or not alive(pid):
+            continue                       # 죽은 세션의 잔여 파일
+        return True
+    return False
 
 
 # 규칙 keyword 는 최종적으로 `/rename <keyword>` 로 Claude 패널 입력에 주입될 수 있다
@@ -247,7 +327,11 @@ class _NameSyncPlugin:
     def _schedule_sync(self, server, sess, win, tab, pane):
         """전이 감지 패널의 cwd 를 executor 로 조회해(블로킹 없이) 규칙에 걸리면 탭/패널
         이름을 바꾸고 Claude 세션 리네임(_pending_rename)을 무장한다. flush 루프를 막지
-        않도록 지연 태스크로 실행한다(태스크 안에서만 블로킹 lsof 를 돈다)."""
+        않도록 지연 태스크로 실행한다(태스크 안에서만 블로킹 lsof 를 돈다).
+
+        세션 리네임은 그 세션 이름이 **아직 자동 파생 이름일 때만** 무장한다
+        (_session_named) — 이미 정해진 이름은 사용자의 의도로 보고 손대지 않는다.
+        탭/패널 이름 변경은 pytmux 로컬이라 이 가드와 무관하게 진행한다."""
         import asyncio
 
         host, osname = _this_host(), _this_os()
@@ -280,26 +364,37 @@ class _NameSyncPlugin:
             if getattr(pane, "title", None) != kw:
                 pane.title = kw
                 changed = True
-            # Claude 세션 리네임: 코어 Pane 필드 `_pending_rename` 을 세우면 claude-code
-            # 스캔이 입력 준비된 첫 idle 에 `/rename <kw>` 를 주입한다(busy 면 대기).
-            # claude-code 부재 시 이 필드는 안 읽혀 무해(delete-to-disable).
-            #
-            # 단, 이 패널의 세션을 **이미 이 키워드로 리네임한 이력**이 있으면
-            # (_ns_last_kw == kw) 재주입하지 않는다 — 탭·패널·세션 이름이 모두 kw 로
-            # 일치한 상태다(사용자 요청: 이미 일치하면 더는 /rename 시도 안 함). 세션
-            # 이름은 화면에서 관측 불가하므로, 우리가 마지막으로 건 리네임 키워드를
-            # 기록(_ns_last_kw)해 판단한다. server_scan 의 _ns_synced 가 이미 패널당 1회를
-            # 보장하므로 평시엔 이 가드가 항상 통과하지만, 재시작 복원(pane_restore)으로
-            # 가드가 넘어온 경우의 심층방어로 남긴다. 기록은 새 셸(respawn=pane_reset)
-            # 에서만 지워져, 그때 새 세션이 다시 리네임된다.
-            if getattr(pane, "_ns_last_kw", None) != kw:
-                pane._pending_rename = kw
-                pane._ns_last_kw = kw
+            # pytmux 쪽 이름 변경은 먼저 방송한다 — 아래 세션 이름 확인이 파일 조회
+            # (Windows 는 tasklist 서브프로세스)라 탭 이름 반영을 그 뒤로 미룰 이유가 없다.
             if changed:
                 try:
                     server._broadcast_status(sess)
                 except Exception:
                     pass
+            # Claude 세션 리네임: 코어 Pane 필드 `_pending_rename` 을 세우면 claude-code
+            # 스캔이 입력 준비된 첫 idle 에 `/rename <kw>` 를 주입한다(busy 면 대기).
+            # claude-code 부재 시 이 필드는 안 읽혀 무해(delete-to-disable).
+            #
+            # 두 가지를 확인하고 나서만 무장한다:
+            #  ① 이 패널의 세션을 **이미 이 키워드로 리네임한 이력**(_ns_last_kw == kw)이
+            #     있으면 재주입하지 않는다 — 탭·패널·세션 이름이 모두 kw 로 일치한
+            #     상태다. server_scan 의 _ns_synced 가 이미 패널당 1회를 보장하므로
+            #     평시엔 통과하지만, 재시작 복원(pane_restore)으로 가드가 넘어온 경우의
+            #     심층방어다. 기록은 새 셸(respawn=pane_reset)에서만 지워진다.
+            #  ② 그 세션 이름이 **이미 정해져 있으면**(사용자 `/rename`·resume 으로
+            #     넘어온 이름) 아예 건드리지 않는다(_session_named — 제보 2026-07-29).
+            #     ①만으로는 respawn·resume 으로 패널 가드가 풀린 뒤 이름만 살아 돌아온
+            #     세션을 못 막아, 사용자가 의도적으로 바꾼 이름이 키워드로 되돌아갔다.
+            #     파일 조회라 executor 로 오프로드한다(이벤트 루프 비블로킹).
+            if getattr(pane, "_ns_last_kw", None) == kw:
+                return
+            try:
+                named = await loop.run_in_executor(None, _session_named, cwd)
+            except Exception:
+                named = False              # 확인 실패 = 근거 없음 → 종전 동작
+            if not named:
+                pane._pending_rename = kw
+                pane._ns_last_kw = kw
 
         try:
             asyncio.get_event_loop().create_task(_run())
