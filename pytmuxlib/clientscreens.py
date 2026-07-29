@@ -3099,7 +3099,17 @@ class NoticeHistoryScreen(ModalScreen):
 
         **인라인 스타일**로 준다 — ListView 의 `ListItem.-highlight` CSS 규칙을
         이기는 유일한 방법이고(인라인 > CSS), 커서가 떠난 줄은 규칙을 지워
-        (`None`) 팝업 패널색·hover 동작을 원래대로 돌려준다."""
+        (`None`) 팝업 패널색·hover 동작을 원래대로 돌려준다.
+
+        **자식의 스타일 캐시까지 무효화한다**(제보 2026-07-29): 글자를 그리는 건 이
+        `ListItem` 이 아니라 그 안의 `Label` 이고, Label 은 조상에게서 해석한 스타일
+        (배경 포함)을 `_rich_style_cache` 에 캐시한다. 그 캐시는 CSS 재적용
+        (`notify_style_update`)에서만 비워지는데 **인라인 스타일 대입은 그걸 자식에게
+        전파하지 않는다** — 그래서 커서가 떠난 줄은 글자색만 등급색으로 되돌아가고
+        배경은 등급색인 채로 남아 **글자색=배경색**, 즉 글자가 안 보이는 색 띠가
+        됐다(마우스를 올린 줄만 정상 복귀 — hover 는 의사클래스 변화라 CSS 가
+        하위까지 다시 적용된다). 띠 길이가 글줄 길이와 같았던 것도 이 때문이다
+        (색이 남은 범위 = Label 이 그린 글자 범위)."""
         if i == self._hl:
             item.styles.background = theme_color(
                 self, clientnotices.theme_name(e.sev))
@@ -3107,6 +3117,9 @@ class NoticeHistoryScreen(ModalScreen):
         else:
             item.styles.background = None
             item.styles.color = None
+        for child in item.walk_children(with_self=False):
+            child.notify_style_update()    # 해석된 조상 스타일 캐시를 버리고
+            child.refresh()                # 그 줄을 다시 그린다
 
     def _lines_for(self, i, e, width):
         pre = self._prefix(e, width)

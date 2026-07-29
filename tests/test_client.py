@@ -4783,6 +4783,84 @@ async def test_notice_history_cursor_background_follows_text_color():
     await _with_app(body)
 
 
+async def test_notice_history_cursor_leaves_no_color_trail():
+    """제보 2026-07-29: 이력 팝업에서 **키보드로** 커서를 옮기면 지나간 줄이 등급색
+    띠로 남아 글자가 안 보였다 — 그 줄에 마우스를 올리면 그 줄만 정상으로 돌아왔다.
+
+    원인은 스테일 페인트가 아니라 **자식 위젯의 스타일 캐시**다. 커서 색은 `ListItem`
+    의 인라인 스타일로 주는데 글자를 그리는 건 그 안의 `Label` 이고, Label 은 조상에게서
+    해석한 배경을 캐시한다(`_rich_style_cache` — CSS 재적용에서만 비워진다). 인라인
+    대입은 그 무효화를 자식에게 전파하지 않아, 커서가 떠난 줄은 **글자색만** 등급색으로
+    돌아오고 배경은 등급색인 채 남았다 = 글자색 == 배경색 = 안 보이는 색 띠. hover 는
+    의사클래스 변화라 CSS 가 하위까지 다시 적용돼 그 줄만 복구됐다(제보의 그 현상).
+
+    오라클은 **합성된 화면**이어야 한다 — 위젯 상태(인라인 규칙)는 그때도 정상이었고
+    (`test_notice_history_cursor_background_follows_text_color` 는 초록이었다), 어긋난
+    건 실제로 그려진 픽셀뿐이다. 그래서 compositor 가 만든 strip 을 직접 본다."""
+    from textual.widgets import ListView as _LV
+    from pytmuxlib import clientnotices
+
+    def popup_segments(app, scr):
+        """팝업 목록 영역의 (행, 세그먼트) — 실제로 그려지는 것."""
+        lv = scr.query_one(_LV)
+        strips = app.screen._compositor.render_strips()
+        top = lv.region.y
+        for y in range(top, min(top + lv.region.height, len(strips))):
+            for seg in strips[y]:
+                yield y, seg
+
+    def invisible(app, scr):
+        """글자색 == 배경색이라 **읽을 수 없는** 글자가 그려진 자리."""
+        out = []
+        for y, seg in popup_segments(app, scr):
+            st = seg.style
+            if not seg.text.strip() or st is None:
+                continue
+            if (st.color is not None and st.bgcolor is not None
+                    and st.color.triplet is not None
+                    and st.color.triplet == st.bgcolor.triplet):
+                out.append((y, seg.text[:24]))
+        return out
+
+    def colored_rows(app, scr, sev_hex):
+        """**등급색** 배경이 칠해진 행 번호 — 커서 줄 하나뿐이어야 한다."""
+        rows = set()
+        for y, seg in popup_segments(app, scr):
+            st = seg.style
+            if (st is not None and st.bgcolor is not None
+                    and st.bgcolor.triplet is not None
+                    and st.bgcolor.triplet.hex.lower() in sev_hex):
+                rows.add(y)
+        return sorted(rows)
+
+    async def body(app, pilot, srv):
+        for text, sev in (("동기화 실패", "error"), ("탭을 병합했습니다", "ok"),
+                          ("133 chars copied (clipboard)", "info"),
+                          ("이 머신이 등록되었습니다", "info")):
+            app.display_message(text, severity=sev)
+        app.open_notice_history()
+        await wait_until(pilot, lambda: app.screen.__class__.__name__
+                         == "NoticeHistoryScreen" and app.screen.query("#nhlist"))
+        scr = app.screen
+        lv = scr.query_one(_LV)
+        await wait_until(pilot, lambda: lv.size.height > 1)
+        sev_hex = {str(app.theme_variables.get(clientnotices.theme_name(s), "")
+                       ).lower() for s in clientnotices.SEVERITIES}
+        sev_hex.discard("")
+        # 등급이 서로 다른 줄들을 훑는다 — 등급색이 바뀌는 경계에서 잔상이 났다.
+        for step, key in enumerate(("down", "down", "down", "up", "home", "end")):
+            await pilot.press(key)
+            await wait_until(pilot, lambda: scr._hl == lv.index)
+            bad = invisible(app, scr)
+            assert not bad, (f"{step}:{key} 에서 글자색=배경색(안 읽히는 색 띠)", bad)
+            hot = colored_rows(app, scr, sev_hex)
+            assert len(hot) <= 1, (f"{step}:{key} 커서 줄 말고도 색 띠가 남았다", hot)
+        # 색칠 자체가 사라진 '수정'이면 안 된다 — 커서 줄은 여전히 등급색이어야.
+        assert len(colored_rows(app, scr, sev_hex)) == 1, "커서 줄은 등급색으로 칠해져야"
+        app.pop_screen()
+    await _with_app(body)
+
+
 async def test_notice_unknown_severity_falls_back_to_info():
     """§10-8-8: `sev` 가 없는(구 서버) notice 와 **모르는 등급**은 예외 없이 info 로
     처리한다 — 구/신 버전이 섞여도 알림이 사라지거나 터지지 않게."""
