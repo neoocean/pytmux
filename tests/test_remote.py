@@ -728,6 +728,127 @@ async def test_remote_multi_link_merge_and_detach_one():
         await teardown(srvC, taskC, sockC)
 
 
+async def test_remote_cascade_two_hop_merges_and_relays():
+    """§10-15 P2 — 캐스케이드 가설 검증: **B 가 C 에 붙어 있으면 A 까지 C 의 탭이
+    올라오고, 진입·입력까지 2단으로 이어지는가**(설계문서 §5, 미검증 가설이었다).
+
+    구성 = A →(직결) B →(직결) C. B→C 는 서버 API(`remote_attach`)로 직접 건다 —
+    `remote_attach` 는 `_REMOTE_RELAY_ACTIONS` 에 **없어서** A 에서 B 의 attach 를
+    조종할 수 없기 때문이고(그건 egress 권한 위임이라 사용자 결정), 이 테스트는
+    "B 에 직접 로그인해 한 번 붙여 둔" 상태만 재현한다.
+
+    단언 셋: ① A 의 탭바에 C 의 탭이 `⇄B:⇄C:…` 로 이중 접두돼 올라온다
+    ② 그 탭을 고르면 **C 의 화면**이 두 홉을 건너 A 에 도착한다 ③ A 의 입력이
+    **C 의 PTY** 까지 도달한다. 셋 다 참이면 안 (다)가 열려 있는 것이고, 하나라도
+    거짓이면 그 자리가 캐스케이드의 실제 경계다."""
+    if os.name == "nt":
+        skip("POSIX 전용(3-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    srvC, taskC, sockC = await server_only()
+    reader = writer = None
+    try:
+        # C: 마커를 찍어 둔다(두 홉을 건너온 화면인지 가르는 지문).
+        sessC = srvC.ensure_default_session(80, 24)
+        pC = sessC.active_window.active_pane
+        pC.feed(b"CASCADE-MARKER-QRS\r\n")
+        realC = pC.pty
+
+        # B → C 직접 attach(= B 에 로그인해 한 번 붙여 둔 상태).
+        sessB = srvB.ensure_default_session(80, 24)
+        assert await srvB.remote_attach(sessB, endpoint=sockC), "B→C attach 실패"
+        linkBC = srvB._remotes_dict()[sockC]
+        await wait_for(lambda: bool(linkBC.windows), timeout=4.0)
+        assert linkBC.windows, "B 가 C 의 status(windows)를 못 받았다"
+        n_localB = len(sessB.tabs)
+
+        # A → B attach (실 클라)
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        st0 = await _read_until(reader, lambda m: m.get("t") == "status",
+                                what="initial status")
+        n_localA = len(st0["windows"])
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+
+        # ① B 의 로컬 탭 + B 가 보고 있는 C 의 탭이 **둘 다** A 로 올라온다.
+        stm = await _read_until(
+            reader, lambda m: m.get("t") == "status"
+            and sum(w["name"].startswith("⇄") for w in m["windows"]) >= 2,
+            what="cascaded merged status")
+        rtabs = [w for w in stm["windows"] if w["name"].startswith("⇄")]
+        casc = [w for w in rtabs if w["name"].count("⇄") >= 2]
+        assert casc, ("C 의 탭이 A 까지 안 올라왔다(캐스케이드 거짓)", rtabs)
+        assert all(sockC in w["name"] for w in casc), casc
+        assert all(w.get("remote") is True for w in rtabs), rtabs
+        # 전역 index 는 A 의 로컬 탭 뒤로 연속(캐스케이드 탭도 예외 아님)
+        assert [w["index"] for w in rtabs] == list(
+            range(n_localA, n_localA + len(rtabs))), rtabs
+        gi_casc = casc[0]["index"]
+        # 그 index 는 B 안에서 B 의 로컬 탭 **뒤**를 가리켜야 릴레이가 성립한다.
+        assert gi_casc - n_localA >= n_localB, (gi_casc, n_localA, n_localB)
+
+        # 설계문서 §5 구멍 3 — sticky 키 공간이 2단에서 **섞인다**(사실 고정).
+        # `_win_key` 는 "한 링크의 상류는 단일 버전이라 집합 내 키가 동형(wid 만 or
+        # index 만)"을 전제하는데, 캐스케이드에서는 한 링크(B)의 windows 안에 B 의
+        # 로컬 탭(wid 있음)과 C 의 탭(_remote_tabs 가 만든 엔트리 = wid 없음, index
+        # 폴백)이 **함께** 실린다. 프로덕션은 wid 도 index 도 1 부터라 값이 겹칠 수
+        # 있고, 그러면 핀/단일-탭분리가 엉뚱한 탭에 붙는다. 이 사실이 바뀌면(예:
+        # 캐스케이드 엔트리에도 안정 wid 를 싣게 되면) 이 단언이 깨지고, 그때
+        # 구멍 3 을 다시 판정하면 된다.
+        linkAB = srvA._remotes_dict()[sockB]
+        kinds = [("wid" in rw) for rw in linkAB.windows]
+        assert True in kinds and False in kinds, (
+            "2단 링크의 windows 는 wid 있는 것(B 로컬)과 없는 것(C 캐스케이드)이"
+            " 섞여 있어야 한다 — 섞임이 사라졌으면 구멍 3 재판정", linkAB.windows)
+
+        # ② 캐스케이드 탭 진입 → C 의 화면(마커)이 두 홉을 건너 도착
+        await write_msg(writer, {"t": "cmd", "action": "select_window",
+                                 "index": gi_casc})
+        lay = await _read_until(reader, lambda m: m.get("t") == "layout",
+                                what="cascaded layout")
+        rid = lay["active"]
+        assert rid == pC.id, ("2홉 레이아웃의 활성 패널 = C 패널", rid, pC.id)
+        scr = await _read_until(
+            reader, lambda m: (m.get("t") == "screen" and m.get("pane") == rid
+                               and "CASCADE-MARKER-QRS" in _rows_text(m["rows"])),
+            what="cascaded screen with marker")
+        assert "CASCADE-MARKER-QRS" in _rows_text(scr["rows"])
+
+        # ③ 입력이 C 의 PTY 까지 도달
+        writesC = []
+
+        class _Spy:
+            def write(self, b):
+                writesC.append(b)
+
+            def set_winsize(self, rows, cols):
+                pass
+
+        pC.pty = _Spy()
+        await write_msg(writer, {"t": "input", "pane": rid,
+                                 "data": base64.b64encode(b"echo two-hop\r").decode()})
+        await wait_for(lambda: writesC, timeout=4.0, step=0.05)
+        assert writesC and b"echo two-hop" in writesC[0], writesC
+        pC.pty = realC
+
+        # 설계문서 §5 구멍 4 — 로컬 권위 키(_LOCAL_AUTHORITY_STATUS_KEYS)는 2단에서도
+        # **각 홉이 자기 것으로 되덮는다**(홉마다 _remote_status_override 가 걸리므로).
+        # 즉 C 의 boot_id 가 A 의 클라까지 새지 않는다 — 이게 깨지면 하류 sticky 리셋이
+        # 남의 서버 재시작에 반응한다.
+        stv = await _read_until(reader, lambda m: m.get("t") == "status",
+                                what="status while viewing cascaded tab")
+        assert stv.get("boot_id") == srvA.boot_id, (
+            "원격 보기 중 boot_id 는 로컬(A) 권위", stv.get("boot_id"),
+            srvA.boot_id, srvB.boot_id, srvC.boot_id)
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+        await teardown(srvC, taskC, sockC)
+
+
 async def test_remote_multi_tab_merge_switch_all():
     """§1.7-b: 원격 서버에 탭이 여러 개면 **전부** 병합되고(remote=True 플래그
     포함), 각 원격 탭을 전역 index 로 개별 전환해 그 탭의 화면을 받을 수 있다.
