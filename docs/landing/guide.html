@@ -75,16 +75,16 @@
       <!-- 최근 수정사항 — 랜딩(/)과 동일한 한 덩어리 박스(정적 폴백 + changes 최신 미러). -->
       <div class="cl-news">
         <div class="cl-news-head">
-          <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-29 <span class="pill">수요일</span></span>
+          <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-30 <span class="pill">목요일</span></span>
           <a class="cl-news-more" href="/changes">전체 변경 내역 →</a>
         </div>
         <ul id="cl-news-list">
-          <li><span class="pill stable">복사</span> <strong>마우스로 긁어 복사하면 <code>한글·한자</code> 한 글자마다 공백이 하나씩 끼던 것을 고쳤습니다.</strong>
-            두 칸을 차지하는 글자는 뒷칸을 비워 두는데 복사할 때 그 빈 칸을 공백으로 세었습니다 — 같은 원인으로 한글 검색어도 화면에 보이는데 안 잡혔습니다. 이제 복사·검색 모두 화면에 보이는 그대로입니다.</li>
-          <li><span class="pill stable">Claude</span> <strong>Claude Code 안에서 <code>!</code> 로 셸 명령을 실행하면 <code>세션 종료 요약</code>(토큰 그래프)이 살아 있는 화면에 끼어들던 것을 고쳤습니다.</strong>
-            <code>!</code> 는 Claude 가 자기 자식으로 셸을 띄우는 것인데 그걸 "셸로 돌아왔다"로 읽었습니다 — 이제 그 패널에 Claude 가 아직 살아 있으면 종료로 보지 않습니다.</li>
-          <li><span class="pill stable">표시</span> <strong>알림 이력에서 키보드로 커서를 옮기면 <code>지나온 줄</code>이 색 띠로 남아 글자가 안 보이던 것을 고쳤습니다.</strong>
-            커서가 떠난 줄의 글자색만 등급색으로 돌아오고 배경은 등급색인 채 남아 글자색과 배경색이 같아졌습니다(마우스를 올린 줄만 복구됐습니다).</li>
+          <li><span class="pill stable">Claude</span> <strong><code>/model</code> 로 모델을 바꿔도 상태줄 모델 배지가 한동안 옛 모델을 보이던 것을 고쳤습니다.</strong>
+            배지는 같은 이름을 세 프레임 연속 본 뒤 바꾸는데, 화면이 멈춰 있으면 다시 읽지 않아 세다가 얼었습니다 — 이제 바꾼 직후 곧바로 따라옵니다.</li>
+          <li><span class="pill stable">원격</span> <strong>직접 ssh 가 안 되는 머신에도 <code>중간 상자를 거쳐</code> 붙을 수 있습니다 — <code>remote-attach &lt;C&gt; via &lt;B&gt;</code>.</strong>
+            중계 상자에 pytmux 가 있으면 그 상자를 거쳐 탭들이 붙습니다(탭 이름 <code>⇄B&gt;C:이름</code>) — 자동 재연결·재시작 복원도 거쳐 가는 경로를 잊지 않습니다.</li>
+          <li><span class="pill stable">문서</span> <strong>소개 사이트를 최신 배포본에 맞춰 최신화했습니다.</strong>
+            상세 가이드 11장(원격 페더레이션)에 다중홉을 새로 넣고, 3단으로 이어진 원격 탭 이름 표기(<code>⇄B:C:이름</code>)와 핀이 엉뚱한 탭에 붙던 수정도 함께 실었습니다.</li>
         </ul>
       </div>
 
@@ -102,7 +102,7 @@
           <a class="ch-card" href="/guide/claude"><span class="ch-num">08</span><b>Claude Code 연동</b><span>상태 아이콘·자동 재개·권한모드·규칙·프롬프트 이력·화면 안정성.</span></a>
           <a class="ch-card" href="/guide/tokens"><span class="ch-num">09</span><b>토큰 사용량</b><span>기간·세션·한도·경고·/usage·시나리오 사용량 팝업.</span></a>
           <a class="ch-card" href="/guide/sync"><span class="ch-num">10</span><b>여러 머신 토큰 동기화</b><span>공식 서버(또는 자기호스팅)로 여러 컴퓨터의 사용량을 합칩니다 — 아이디 없는 패스키, 코드 한 줄 등록.</span></a>
-          <a class="ch-card" href="/guide/remote"><span class="ch-num">11</span><b>원격 페더레이션</b><span>ssh 너머 서버 attach, 분홍 탭, 머지·detach·핀, keepalive.</span></a>
+          <a class="ch-card" href="/guide/remote"><span class="ch-num">11</span><b>원격 페더레이션</b><span>ssh 너머 서버 attach, 분홍 탭, 머지·detach·핀, 다중홉(via), keepalive.</span></a>
           <a class="ch-card" href="/guide/restart"><span class="ch-num">12</span><b>재시작 · 회복</b><span>작업 보존 재시작, 네트워크 응답성 표시와 재접속.</span></a>
           <a class="ch-card" href="/guide/tools"><span class="ch-num">13</span><b>도구 · 위젯</b><span>시계·달력·ncd 트리·IME 배지·RTT 그래프·캡처·Perforce·작성창.</span></a>
           <a class="ch-card" href="/guide/config"><span class="ch-num">14</span><b>설정 파일</b><span><code>pytmux.conf</code> 옵션 전체, <code>:settings</code> 팝업, 한/영 전환.</span></a>

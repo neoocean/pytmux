@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
 <title>원격 페더레이션 — pytmux 가이드 11</title>
-<meta name="description" content="pytmux 원격 페더레이션(ssh): remote-attach 로 다른 머신 서버 붙이기, 분홍 탭 구분, remote-new-tab, merge-remote-tab, remote-detach, 여러 기기 화면 크기와 SSH keepalive.">
+<meta name="description" content="pytmux 원격 페더레이션(ssh): remote-attach 로 다른 머신 서버 붙이기, 분홍 탭 구분, remote-new-tab, merge-remote-tab, remote-detach, 중간 상자를 거쳐 붙는 다중홉(remote-attach C via B), 여러 기기 화면 크기와 SSH keepalive.">
 <link rel="stylesheet" href="../styles.css">
 <script>
   var _paq = window._paq = window._paq || [];
@@ -52,6 +52,7 @@
           <thead><tr><th>명령</th><th>동작</th></tr></thead>
           <tbody>
             <tr><td><code>remote-attach &lt;host&gt;</code></td><td>원격 서버의 탭들을 붙이기</td></tr>
+            <tr><td><code>remote-attach &lt;C&gt; via &lt;B&gt;</code></td><td><strong>B 를 거쳐</strong> C 에 붙이기(다중홉 — C 로 직접 ssh 가 안 될 때, 아래 절)</td></tr>
             <tr><td><code>remote-new-tab</code></td><td>원격에 새 터미널을 만들어 새 탭으로 붙이기</td></tr>
             <tr><td><code>merge-remote-tab</code></td><td>같은 원격 서버의 다른 탭을 현재 탭에 <strong>패널</strong>로 합치기(피커)</td></tr>
             <tr><td><code>remote-detach [host]</code></td><td>원격 호스트 떼어내기(비우면 전체). 원격 탭의 <code>[x]</code> 는 <strong>그 탭 하나만</strong> 분리합니다(같은 호스트의 다른 원격 탭은 그대로)</td></tr>
@@ -66,6 +67,41 @@
           돌리는 중첩 상황은 그 패널의 실제 ssh 목적지로 <strong>자동 승격</strong>됩니다
           (<code class="nb">nest-auto-attach</code>, <strong>기본 on</strong> — <code>nest-auto-attach off</code> 로 끄면 거부).
         </p>
+      </section>
+
+      <section>
+        <h2>중간 상자를 거쳐 붙기 (다중홉, <code>via</code>)</h2>
+        <p>
+          내 컴퓨터에서 <strong>목적지로 ssh 가 곧바로 되지 않고</strong> 징검다리 서버를 거쳐야 하는 구성
+          (사내망 안쪽 등)에서는 <code class="nb">remote-attach &lt;C&gt; via &lt;B&gt;</code> 로 <strong>B 를 거쳐 C</strong> 에 붙습니다.
+          붙은 뒤 동작은 1홉과 같습니다 — 탭은 분홍색으로 구분되고, 화면·입력·이름 바꾸기·토큰 회계가 모두 그대로 흐릅니다.
+          탭 이름은 <code>⇄B&gt;C:이름</code> 이고, 떼어낼 때의 인자도 같은 <code>B&gt;C</code> 입니다
+          (<code class="nb">remote-detach B&gt;C</code>).
+        </p>
+        <div class="code"><span class="c"># 지금 이 화면의 명령 프롬프트(prefix :)에서 — B 를 거쳐 C 의 탭들을 붙인다</span>
+:remote-attach C via B</div>
+        <p>
+          중계는 B 에서 도는 <code class="nb">pytmux relay-proxy &lt;C&gt;</code> 가 맡습니다. 그래서
+          <strong>B 에도 pytmux 가 설치돼 있어야</strong> 하고, B→C 의 접속·인증은 <strong>B 의 ssh 설정</strong>
+          (<code>~/.ssh/config</code>·<code>known_hosts</code>·키)을 따릅니다. 겹쳐 쓴 ssh 명령 문자열이 아니라
+          <strong>고정된 인자</strong>로 부르기 때문에 B 의 셸이 해석할 것이 없고, 중계 상자가 자기
+          <strong>허용 목록</strong>(<code class="nb">opts.json</code> 의 <code class="nb">remote_allowed_hosts</code>)으로
+          <strong>어디까지 중계할지 스스로 정합니다</strong> — 허용 밖이면 B 가 거절합니다. 홉은 <strong>한 단</strong>까지로,
+          중계 상자를 또 다른 중계로 겹쳐 쓰지는 않습니다.
+        </p>
+        <p>
+          실패하면 <strong>어느 홉에서 막혔는지</strong>가 문구로 갈립니다 — <em>중계 상자 B 가 C 로의 중계를 거부</em>,
+          <em>중계 상자 B 에서 pytmux 를 찾지 못했습니다</em>, <em>B→C 홉 실패</em>. 거쳐 가는 경로는 링크에 함께
+          저장돼, 끊겼을 때의 <strong>자동 재연결</strong>과 <a href="restart">작업 보존 재시작</a> 뒤의 링크 복원이
+          홉을 잃지 않습니다(1홉으로 조용히 되살아나지 않습니다).
+        </p>
+        <div class="callout">
+          <strong><code>via</code> 와 캐스케이드는 다른 것입니다.</strong> <code>via</code> 는 <strong>한 링크가 여러 홉을
+          품는</strong> 것(A 가 C 를 직접 보고, B 는 길목일 뿐)이라 표기가 <code>⇄B&gt;C:</code> 입니다. 반면 <strong>B 가
+          자기 원격 탭으로 C 를 보고 있는데</strong> 내가 그 B 에 붙으면 C 의 탭까지 따라옵니다(캐스케이드) — 이때는
+          <code>⇄</code> 를 <strong>한 번만</strong> 찍고 거쳐 온 머신을 <code>:</code> 로 이어 <code>⇄B:C:이름</code> 으로
+          보입니다. 어느 쪽이든 원격 탭의 <strong>고정(핀)</strong>과 <strong>탭 하나만 분리</strong>는 내가 지목한 그 탭에 붙습니다.
+        </div>
       </section>
 
       <section>

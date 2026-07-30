@@ -59,9 +59,44 @@
       </div>
     </header>
 
-    <section class="cl-day" id="d-2026-07-29">
-      <h2>2026-07-29 <span class="pill">수요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/5a1f2c7a8d9f1e37935be78ad9ca960108b193b0.zip" rel="noopener" title="2026-07-29 마지막 소스 커밋(5a1f2c7) 시점 소스 zip">zip ⬇</a></h2>
+    <section class="cl-day" id="d-2026-07-30">
+      <h2>2026-07-30 <span class="pill">목요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/41027a11f00865cae1a623fbd5a6ead076366f81.zip" rel="noopener" title="2026-07-30 마지막 소스 커밋(41027a1) 시점 소스 zip">zip ⬇</a></h2>
       <ul>
+        <li><span class="pill stable">Claude</span> <strong><span class="inline-code">/model</span> 로 모델을 바꿔도 상태줄 모델 배지가 <span class="inline-code">한동안 옛 모델</span>을 보이던 것을 고쳤습니다.</strong>
+          <span class="inline-code">/model opus</span> 라고 바꿨는데 왼쪽 아래는 <strong>바꾸기 전 모델</strong>을 그대로 보이고, <strong>무언가를 입력해 화면이 다시 흐를 때까지</strong> 안 고쳐졌습니다.
+          배지는 화면에서 읽은 모델 이름을 <strong>세 프레임 연속</strong> 같게 본 뒤에야 바꿉니다(<a href="guide/claude">Claude 가 곁딸린 작업을 다른 모델로 잠깐 돌릴 때</a>의 깜빡임을 흡수하려는 장치입니다).
+          그런데 <strong>화면이 멈춰 있는 동안 다시 읽지 않는</strong> 절전 규칙에 이 "연속 세기" 가 빠져 있어서,
+          모델을 바꾼 그 프레임에 <strong>한 번 세고 멈춰 버렸습니다</strong> — 바꾼 직후는 대화 시작 전이라 화면이 조용한 것이 보통이니 매번 걸렸습니다.
+          이제 세는 중에는 계속 읽어 <strong>바꾼 직후 곧바로</strong> 배지가 따라옵니다.</li>
+        <li><span class="pill stable">문서</span> <strong>소개 사이트를 최신 배포본에 맞춰 최신화했습니다.</strong>
+          <a href="guide/remote">상세 가이드 11장(원격 페더레이션)</a> 에 <strong>중간 상자를 거쳐 붙는 다중홉</strong>(<span class="inline-code nb">remote-attach C via B</span>)을 새로 넣고,
+          <strong>3단으로 이어진 원격 탭 이름</strong> 표기(<span class="inline-code">⇄B:C:이름</span>)도 함께 적었습니다.
+          <br>이 페이지에는 <a href="#d-2026-07-29">7월 29일</a> 늦게 들어간 두 건(<strong>다중홉 릴레이</strong>, 그리고 <strong>캐스케이드 탭 이름·핀</strong> 수정)을 그날 항목으로 덧붙였고,
+          그날 <span class="pill">zip ⬇</span> 링크도 <strong>그날 마지막 소스 커밋</strong>으로 옮겼습니다.
+          이번 항목들은 <strong>이 머신(macOS)에서 헤드리스로 검증한 것만</strong> 실었습니다 — 다중홉은 ssh 대역을 깔아
+          <strong>서버 A → 중계 → 서버 C</strong> 를 실제로 태우는 종단 시험까지 돌렸습니다.</li>
+      </ul>
+    </section>
+
+    <section class="cl-day" id="d-2026-07-29">
+      <h2>2026-07-29 <span class="pill">수요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/e728cb58bab885e4db3ffae4f0fa3dbf22eb0f37.zip" rel="noopener" title="2026-07-29 마지막 소스 커밋(e728cb5) 시점 소스 zip">zip ⬇</a></h2>
+      <ul>
+        <li><span class="pill stable">원격</span> <strong>직접 ssh 가 안 되는 머신에도 <span class="inline-code">중간 상자를 거쳐</span> 붙을 수 있습니다 — <span class="inline-code nb">remote-attach &lt;C&gt; via &lt;B&gt;</span>.</strong>
+          <a href="guide/remote">원격 attach</a> 는 지금까지 <strong>내 컴퓨터에서 그 머신으로 ssh 가 곧바로 되는</strong> 경우만 가능했습니다 —
+          사내망 안쪽처럼 <strong>징검다리 서버를 거쳐야</strong> 닿는 자리는 방법이 없었습니다.
+          이제 <span class="inline-code nb">remote-attach C via B</span> 한 줄이면 <strong>B 를 거쳐 C 의 탭들</strong>이 붙습니다(탭 이름은 <span class="inline-code">⇄B&gt;C:이름</span>).
+          중계 상자 B 에는 <strong>pytmux 가 설치돼 있어야</strong> 하고, B 에서 C 로 가는 ssh 는 <strong>B 의 ssh 설정·키</strong>를 그대로 씁니다.
+          <br>중계는 <strong>겹쳐 쓴 ssh 명령 문자열이 아니라</strong> B 에서 도는 <span class="inline-code nb">pytmux relay-proxy &lt;C&gt;</span> 가 맡습니다 —
+          그래서 B 의 셸이 해석할 문자열이 없고, B 가 자기 <span class="inline-code nb">opts.json</span> 의 <span class="inline-code nb">remote_allowed_hosts</span> 로 <strong>어디까지 중계할지 스스로 정할</strong> 수 있습니다(허용 밖이면 B 가 거절).
+          홉은 <strong>한 단</strong>까지입니다(B 를 또 다른 중계로 쓰지는 않습니다).
+          실패하면 <strong>어느 홉에서 막혔는지</strong>가 문구로 갈립니다 — "중계 상자 B 가 C 로의 중계를 거부", "B 에서 pytmux 를 찾지 못함", "B→C 홉 실패".
+          <span class="inline-code nb">remote-detach B&gt;C</span> 로 떼어내고, 끊겼을 때의 <strong>자동 재연결</strong>·재시작 복원도 <strong>거쳐 가는 경로를 잊지 않습니다</strong>.</li>
+        <li><span class="pill stable">원격</span> <strong>3단으로 이어진 원격 탭(A→B, 그 B 가 다시 C 를 보고 있는 경우)의 <span class="inline-code">이름이 안 보이고 고정(핀)이 엉뚱한 탭에 붙던</span> 것을 고쳤습니다.</strong>
+          이름은 <span class="inline-code">⇄B:⇄C:이름</span> 처럼 <strong><span class="inline-code">⇄</span> 가 두 번</strong> 찍혀, 좁은 탭바에서 정작 탭 이름이 밀려났습니다 —
+          이제 <span class="inline-code">⇄</span> 는 "여기부터 원격" 표식으로 <strong>한 번만</strong> 찍고 거쳐 온 머신은 <span class="inline-code">:</span> 로 잇습니다(<span class="inline-code">⇄B:C:이름</span>).
+          <br>그리고 <strong>고정(핀)·탭 하나만 분리</strong>가 다른 탭에 붙는 일이 있었습니다 — B 가 보내 주는 탭 목록에는 <strong>B 자신의 탭과 B 가 보고 있는 C 의 탭이 함께</strong> 실리는데,
+          C 쪽 탭에는 구분표가 없어 <strong>몇 번째인가</strong>로 대신 세었고 그 값이 B 자신의 탭 번호와 <strong>겹칠 수 있었습니다</strong>.
+          이제 거쳐 온 탭에는 <strong>겹칠 수 없는 별도의 표</strong>가 붙어, 핀이 <strong>내가 고정한 그 탭</strong>에 그대로 남습니다(B 를 다시 켜면 옛 표는 버립니다).</li>
         <li><span class="pill stable">복사</span> <strong>마우스로 긁어 복사하면 <span class="inline-code">한글·한자</span> 한 글자마다 공백이 하나씩 끼던 것을 고쳤습니다.</strong>
           <span class="inline-code">뜨면 알려 주세요</span> 를 긁어 붙여넣으면 <span class="inline-code">뜨 면  알 려  주 세 요</span> 가 됐습니다 —
           <strong>두 칸을 차지하는 글자</strong>(한글·한자·이모지)마다 뒤에 공백이 하나씩 붙고, 원래 띄어쓰기 자리는 두 칸이 됐습니다.
