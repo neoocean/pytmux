@@ -1262,7 +1262,15 @@ class ServerClaudeMixin:
                 # '굳은 오검출'은 ① 배지 서명 요구로 오검출 자체가 드물어졌고 ② 라이브
                 # 서명이 넓어져(/model 메뉴·/status) 화면 한 번이면 정정되며 ③ 새 Claude
                 # 세션 경계에서 래치를 푸는 것(_scan_claude)으로 대신 막는다.
-                pass
+                # 라이브 서명이 **없는** 프레임이므로 아래 `else`(근거 전무)와 같이
+                # 연속 관측 스트릭도 끊는다(2026-07-30) — 이유 둘: ① 디바운스는
+                # docstring 대로 '**연속** 라이브 관측'을 세는 것이라 서명 없는
+                # 프레임이 끼면 처음부터 세는 게 맞다(서브에이전트 깜빡임 흡수가
+                # 오히려 강해진다) ② 후보 수명을 '화면이 근거를 보이는 동안'으로
+                # 묶어야, 후보를 pending 으로 삼는 _scan_claude 의 dirty 게이트가
+                # 정적 패널을 영원히 재스캔하지 않는다.
+                p._claude_model_cand = None
+                p._claude_model_cand_n = 0
             else:
                 if mdl == p._claude_model_cand:
                     p._claude_model_cand_n += 1
@@ -1282,6 +1290,13 @@ class ServerClaudeMixin:
             # 라이브 스크랩으로 재확인되면 strong 승격(이후 변경은 디바운스).
             if not mdl_from_probe:
                 p._claude_model_weak = False
+            p._claude_model_cand = None
+            p._claude_model_cand_n = 0
+        else:
+            # 이 프레임엔 모델 근거가 아예 없다(라이브 서명 없음 + 프로브 미상) →
+            # 연속 관측 스트릭을 끊는다(위 `elif mdl_from_probe` 와 같은 사유,
+            # 2026-07-30). 종전엔 후보가 그대로 남아, 후보를 pending 으로 보는
+            # dirty 게이트 아래선 정적 패널이 무한 재스캔될 수 있었다.
             p._claude_model_cand = None
             p._claude_model_cand_n = 0
         return ch
@@ -1963,7 +1978,19 @@ class ServerClaudeMixin:
                            # 2026-07-18 Windows: Claude 종료 후에도 ⚠ 지속). 경고 중엔
                            # 계속 스캔해 5s throttle fg 재검사가 fg≠claude 를 잡아 해제하게
                            # 한다(해제되면 _fmt_unknown=False 라 이 항이 빠져 정상 복귀).
-                           or p._fmt_unknown)
+                           or p._fmt_unknown
+                           # 모델 배지 디바운스(_MODEL_DEBOUNCE)가 진행 중: 이것도
+                           # **프레임 카운터**로 도는 디바운스인데 이 목록에 빠져 있었다 →
+                           # `/model` 로 모델을 바꾸면 확인 줄이 뜬 그 프레임에서 후보가
+                           # 1 로 서고, 그 뒤로 출력이 없어(대화 시작 전 정적 화면) dirty
+                           # 게이트가 스캔을 끊어 후보가 **영영 얼었다** — 상태줄이 옛
+                           # 모델을 계속 보인다(제보 2026-07-30: `/model opus` 인데 좌하단
+                           # 은 `fable-5`; 사용자가 뭔가 입력해 출력이 다시 흐를 때까지
+                           # 안 고쳐졌다). 후보가 서 있는 동안 계속 스캔하면 남은 2틱
+                           # (30Hz → ~70ms)에 확정돼 화면과 즉시 일치한다. 후보 수명은
+                           # _update_claude_model 이 '라이브 근거 없는 프레임에서 리셋'
+                           # 으로 묶으므로 이 항은 무한 재스캔이 되지 않는다.
+                           or p._claude_model_cand is not None)
                 if p._feed_seq == p._scan_seq and not pending:
                     continue
                 p._scan_seq = p._feed_seq

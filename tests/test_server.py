@@ -354,6 +354,67 @@ async def test_model_badge_debounce_absorbs_transient_haiku():
         await teardown(srv, task, sock)
 
 
+async def test_model_change_settles_without_further_output():
+    """`/model` 로 모델을 바꾼 뒤 **출력이 더 없어도** 상태줄 모델이 따라온다.
+
+    버그(제보 2026-07-30): `/model opus` → 화면엔 'Set model to Opus 5 …' 인데 좌하단
+    배지는 옛 `fable-5` 로 남았다. _MODEL_DEBOUNCE 는 **프레임 카운터**인데
+    `_scan_claude` 의 dirty 게이트 pending 목록에 '모델 후보 진행중' 항이 없어, 확인
+    줄이 뜬 그 한 프레임에서 후보가 1 로 서고 정적 화면에선 재스캔이 끊겨 영영 얼었다
+    (사용자가 뭔가 입력해 출력이 다시 흐를 때까지 안 고쳐짐)."""
+    import importlib
+    sm = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        srv._usage = {}          # 프로브 폴백 없음 — 화면만이 근거
+        # 환영 배너로 fable-5 를 **강한**(라이브 서명) 값으로 확정.
+        p.feed("\x1b[2J\x1b[H Claude Code v2.1.220\r\n Fable 5 · Claude Max\r\n"
+               " ~/work/proj\r\n? for shortcuts\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._claude_model == "fable-5" and p._claude_model_weak is False, \
+            (p._claude_model, p._claude_model_weak)
+        # `/model opus` 확인 줄이 뜬 프레임 — 강한 값 위 *변경*이라 디바운스 시작.
+        p.feed("\x1b[2J\x1b[H Claude Code v2.1.220\r\n Opus 5 · Claude Max\r\n"
+               " ~/work/proj\r\n\r\n> /model opus\r\n"
+               "  └ Set model to Opus 5 and saved as your default for new "
+               "sessions\r\n? for shortcuts\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._claude_model_cand == "opus-5", \
+            f"후보 개시 기대, got {p._claude_model_cand!r}"
+        # 이 테스트가 **dirty 게이트를 겨눈다**는 전제 고정: 다른 pending 항이 스캔을
+        # 살려두면 게이트를 안 지나 공허 통과한다. auto-launch `/rc` 예약은 새 세션
+        # 감지로 서 있으므로(실 라이브에선 이미 소진) 내려 두고, 화면 불변 상태
+        # (_feed_seq == _scan_seq)임을 단언한다.
+        p._rc_pending = False
+        p._rc_menu_active = False
+        assert p._feed_seq == p._scan_seq and not p._was_busy, \
+            "화면 불변 + busy 이력 없음(= dirty 게이트가 걸리는 상태)이어야"
+        # 이후 flush 틱은 계속 돌지만 **PTY 출력은 없다** — 그래도 확정돼야 한다.
+        for _ in range(sm._MODEL_DEBOUNCE + 2):
+            srv._scan_claude(sess, win)
+        assert p._claude_model == "opus-5", \
+            f"출력 없이도 디바운스가 진행돼 확정 기대, got {p._claude_model!r}"
+        assert p._claude_model_weak is False, "라이브 서명 → strong"
+        # 확정 뒤 후보는 비어 pending 항이 빠진다(정적 패널 무한 재스캔 방지).
+        assert p._claude_model_cand is None and p._claude_model_cand_n == 0
+        # 근거가 사라진 화면(서명·프로브 모두 없음)이 정적으로 남아도 후보가 서 있지
+        # 않아야 한다 — 그래야 새 pending 항이 dirty 게이트를 무력화하지 않는다.
+        p.feed("\x1b[2J\x1b[H Haiku 4.5 · /model\r\n? for shortcuts\r\n"
+               .encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._claude_model_cand == "haiku-4.5", "서명 있는 1프레임 → 후보"
+        p.feed("\x1b[2J\x1b[H Done.\r\n? for shortcuts\r\n".encode("utf-8"))
+        srv._scan_claude(sess, win)
+        assert p._claude_model == "opus-5", "1프레임 배지는 디바운스로 흡수"
+        assert p._claude_model_cand is None and p._claude_model_cand_n == 0, \
+            "근거 없는 프레임에서 후보 리셋(연속 관측) — 안 그러면 무한 재스캔"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_pin_tab_moves_right_and_unpin_returns():
     """항목7: 탭 고정 → tabs 맨 뒤(고정 구역)로 이동·index 재부여·신원 유지. 언핀 →
     비고정 구역으로 복귀. 불변식 '비고정 전부 < 고정 전부' 유지."""
