@@ -80,12 +80,14 @@
         <a class="cl-news-more" href="changes">전체 변경 내역 →</a>
       </div>
       <ul id="cl-news-list">
+        <li><span class="pill stable">마우스</span> <strong>안에서 돌던 앱이 갑자기 죽은 패널에서 마우스를 움직이면 프롬프트에 <code>35;61;31M…</code> 같은 글자가 박히던 것을 고쳤습니다.</strong>
+          앱이 되돌릴 틈 없이 죽어 켜진 채 남은 "마우스 좌표 요청" 을 pytmux 가 스스로 걷어냅니다 — 휠 스크롤백도 함께 돌아옵니다.</li>
+        <li><span class="pill stable">설정</span> <strong>설정 화면의 <code>exit-empty</code> 줄이 켜짐/꺼짐 대신 <code>미상</code> 으로만 보이던 것을 고쳤습니다.</strong>
+          서버가 보내 주는 현재값 묶음에 이 항목만 빠져 있었습니다 — 이제 실제 값이 그대로 보입니다.</li>
         <li><span class="pill stable">Claude</span> <strong><code>/model</code> 로 모델을 바꿔도 상태줄 모델 배지가 한동안 옛 모델을 보이던 것을 고쳤습니다.</strong>
           배지는 같은 이름을 세 프레임 연속 본 뒤 바꾸는데, 화면이 멈춰 있으면 다시 읽지 않아 세다가 얼었습니다 — 이제 바꾼 직후 곧바로 따라옵니다.</li>
-        <li><span class="pill stable">원격</span> <strong>직접 ssh 가 안 되는 머신에도 <code>중간 상자를 거쳐</code> 붙을 수 있습니다 — <code>remote-attach &lt;C&gt; via &lt;B&gt;</code>.</strong>
-          중계 상자에 pytmux 가 있으면 그 상자를 거쳐 탭들이 붙습니다(탭 이름 <code>⇄B&gt;C:이름</code>) — 자동 재연결·재시작 복원도 거쳐 가는 경로를 잊지 않습니다.</li>
         <li><span class="pill stable">문서</span> <strong>소개 사이트를 최신 배포본에 맞춰 최신화했습니다.</strong>
-          상세 가이드 11장(원격 페더레이션)에 다중홉을 새로 넣고, 3단으로 이어진 원격 탭 이름 표기(<code>⇄B:C:이름</code>)와 핀이 엉뚱한 탭에 붙던 수정도 함께 실었습니다.</li>
+          상세 가이드 11장(원격 페더레이션)에 다중홉을, 6장(마우스로 제어)에 남은 마우스 요청 자동 회수를 실었습니다.</li>
       </ul>
     </div>
     <div class="cta" style="margin-top:24px;">
