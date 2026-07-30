@@ -59,6 +59,10 @@ function global:__pytmux_escape([string]$s) {
     $s = $s.Replace("`n", '\x0a')
     $s = $s.Replace("`r", '\x0d')
     $s = $s.Replace([string][char]27, '\x1b')
+    # BEL 도 **OSC 종결자**다(파서는 BEL / C1 ST / ESC \ 셋을 받는다). 안 바꾸면 명령줄에
+    # 든 BEL 하나가 문자열을 여기서 끊어 블록의 명령이 잘리고 남은 글자가 화면에 쏟아진다
+    # (검수 2026-07-30 — `.sh` 와 같은 수정. 머리말의 "제어문자는 escape 한다" 계약).
+    $s = $s.Replace([string][char]7, '\x07')
     # 서버도 자르지만(MAX_CMD_LEN) 긴 붙여넣기를 파이프에 흘리지 않는다.
     if ($s.Length -gt 1024) { $s = $s.Substring(0, 1024) }
     return $s

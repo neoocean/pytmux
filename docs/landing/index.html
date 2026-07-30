@@ -80,6 +80,8 @@
         <a class="cl-news-more" href="changes">전체 변경 내역 →</a>
       </div>
       <ul id="cl-news-list">
+        <li><span class="pill stable">안정</span> <strong>넓은 텍스트를 붙여넣으면 pytmux 가 몇십 초 동안 멈추던 것을 고쳤습니다.</strong>
+          테두리 문자를 걷어내는 검사가 줄 길이의 제곱으로 느려졌습니다 — 공백 10만 자 한 줄 32초 → <strong>0.0035초</strong>. 마우스 복사도 함께 빨라졌습니다.</li>
         <li><span class="pill stable">복사</span> <strong>Claude Code 의 <code>! …</code> 명령을 긁어 복사하면 줄바꿈·들여쓰기가 섞여 그대로 붙여넣을 수 없던 것을 고쳤습니다.</strong>
           앱이 <strong>스스로 접은</strong> 자리를 알아보고 펴서 클립보드에 넣습니다 — 로그·코드 줄은 건드리지 않습니다(<code>set copy-unwrap off</code> 로 끔).</li>
         <li><span class="pill stable">마우스</span> <strong>안에서 돌던 앱이 갑자기 죽은 패널에서 마우스를 움직이면 프롬프트에 <code>35;61;31M…</code> 같은 글자가 박히던 것을 고쳤습니다.</strong>

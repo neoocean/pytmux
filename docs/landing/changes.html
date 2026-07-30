@@ -62,6 +62,14 @@
     <section class="cl-day" id="d-2026-07-30">
       <h2>2026-07-30 <span class="pill">목요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/6f4dfe751d386d1d12056948081bb946f5e98baf.zip" rel="noopener" title="2026-07-30 마지막 소스 커밋(6f4dfe7) 시점 소스 zip">zip ⬇</a></h2>
       <ul>
+        <li><span class="pill stable">안정</span> <strong>넓은 텍스트를 붙여넣으면 pytmux 가 <span class="inline-code">몇십 초 동안 멈추던</span> 것을 고쳤습니다.</strong>
+          붙여넣기(<span class="inline-code">Ctrl+V</span>)는 들어온 텍스트에서 패널 테두리 문자를 걷어내는데(<a href="guide/config">설정</a> <span class="inline-code nb">strip-box-drawing</span>),
+          그 검사가 <strong>한 줄의 길이가 두 배가 되면 네 배로</strong> 느려지는 모양이었습니다 — 오른쪽을 공백으로 채운 넓은 텍스트
+          (스프레드시트·표·넓은 창에서 복사한 것)를 붙여넣으면 <strong>화면·키 입력이 통째로 멎었습니다</strong>.
+          실측으로 <strong>공백 10만 자 한 줄 = 32초</strong>였고, 더 긴 줄에서는 사실상 돌아오지 않았습니다.
+          <br>이제 같은 검사를 <strong>줄 길이에 비례</strong>하게 합니다 — 같은 10만 자가 <strong>0.0035초</strong>(약 9,000배), 100만 자 한 줄도 0.035초입니다.
+          같은 검사를 쓰는 <strong>마우스 복사</strong>도 함께 빨라졌습니다(2000줄 선택 6.5초 → 0.12초).
+          걷어내는 <strong>결과는 한 글자도 달라지지 않습니다</strong> — 옛 검사와 새 검사를 4천 가지 무작위 입력에서 맞대어 같음을 시험으로 고정했습니다.</li>
         <li><span class="pill stable">복사</span> <strong>Claude Code 의 <span class="inline-code">! …</span> 명령을 긁어 복사하면 <span class="inline-code">줄바꿈·들여쓰기</span>가 섞여 그대로 붙여넣을 수 없던 것을 고쳤습니다.</strong>
           화면 폭 때문에 접힌 줄은 이미 한 줄로 복사되고 있었는데, 그건 <strong>터미널이 접은</strong> 경우입니다 —
           Claude Code 는 자기 화면 안에서 <strong>스스로</strong> 긴 줄을 접어 그리고, 그 자리는 화면에 <strong>진짜 줄바꿈</strong>으로 남습니다.

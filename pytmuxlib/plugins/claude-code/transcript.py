@@ -211,6 +211,24 @@ def claude_descendant_pid(shell_pid: int, ps_list=None):
     return None
 
 
+def under_projects_root(path: str, root: str | None = None) -> bool:
+    """`path` 가 트랜스크립트 루트 **밑**인가(경계 검사).
+
+    종전엔 `root in path` **부분문자열**이었다(검수 2026-07-30). 그러면
+    `/tmp/x/Users/me/.claude/projects/a.jsonl` 처럼 루트를 **품기만 한** 경로도 통과한다
+    — 트랜스크립트로 오인된 파일은 이제 토큰 숫자만 세는 데 쓰이지 않고 **원문 꼬리가
+    클라(및 페더레이션 하류)로 실려 나간다**(`clienttail`, 07-28 신설). 즉 같은 느슨함의
+    결과가 '회계 오염'에서 '파일 내용 노출'로 올라갔다. 경계를 접두로 못박는다.
+
+    (전제: 패널 안에서 `claude` 이름을 가진 후손이 그 파일을 열어야 하므로 이미 사용자
+    코드 실행이 필요하다 — 그래서 Low 다. 다만 한 줄로 닫히는 경계다.)"""
+    if not path:
+        return False
+    root = os.path.normpath(root or projects_dir())
+    p = os.path.normpath(path)
+    return p.startswith(root + os.sep)
+
+
 def _default_open_jsonl(pid: int):
     """pid 가 연 `.jsonl` 경로들(projects 하위). /proc 우선, 없으면 lsof. 실패 시 []."""
     root = projects_dir()
@@ -224,7 +242,7 @@ def _default_open_jsonl(pid: int):
                     tgt = os.readlink(os.path.join(fd_dir, fd))
                 except OSError:
                     continue
-                if tgt.endswith(".jsonl") and root in tgt:
+                if tgt.endswith(".jsonl") and under_projects_root(tgt, root):
                     found.append(tgt)
         except OSError:
             pass
@@ -237,7 +255,8 @@ def _default_open_jsonl(pid: int):
     except (OSError, subprocess.SubprocessError):
         return found
     for ln in out.stdout.splitlines():
-        if ln.startswith("n") and ln.endswith(".jsonl") and root in ln:
+        if (ln.startswith("n") and ln.endswith(".jsonl")
+                and under_projects_root(ln[1:], root)):
             found.append(ln[1:])
     return found
 

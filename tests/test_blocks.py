@@ -271,6 +271,21 @@ async def test_real_shell_integration_emits_the_command_it_was_given():
     pane.feed(_osc("133", "A"))
     pane.feed(out.stdout)
     assert blocks_wire(pane)[0]["cmd"] == typed, "셸 escape 와 서버 unescape 가 어긋났다"
+    # BEL 은 **OSC 종결자**다 — escape 하지 않으면 명령줄에 든 BEL 하나가 문자열을
+    # 거기서 끊어 뒤가 통째로 사라지고, 남은 글자는 화면에 그대로 쏟아진다(검수
+    # 2026-07-30: 머리말은 "제어문자는 escape 한다"고 적어 뒀는데 BEL 만 빠져 있었다).
+    # 서버는 표시 전에 제어문자를 공백으로 접으므로 기대값도 그 규칙을 따른다.
+    typed_bel = "echo before\x07after"
+    out2 = subprocess.run(
+        [shell, "-c", "source %s; __pytmux_report_cmd %s"
+                      % (shlex.quote(script), shlex.quote(typed_bel))],
+        capture_output=True, timeout=20,
+    )
+    pane2 = _pane()
+    pane2.feed(_osc("133", "A"))
+    pane2.feed(out2.stdout)
+    assert blocks_wire(pane2)[0]["cmd"] == typed_bel.replace("\x07", " "), \
+        "BEL 이 OSC 를 끊어 명령이 잘렸다(셸 escape 누락)"
 
 
 def _powershell_emits(expr):
@@ -305,6 +320,15 @@ async def test_powershell_integration_emits_the_command_it_was_given():
     pane.feed(out)
     assert blocks_wire(pane)[0]["cmd"] == typed, \
         "PowerShell escape 와 서버 unescape 가 어긋났다"
+    # BEL(= OSC 종결자)도 `.sh` 와 같은 규칙으로 escape 되는지(검수 2026-07-30).
+    # 문자열 안에 실제 BEL 을 넣기 위해 PowerShell 쪽에서 [char]7 로 이어 붙인다.
+    out2 = _powershell_emits(
+        "__pytmux_report_cmd ('echo before' + [string][char]7 + 'after')")
+    pane2 = _pane()
+    pane2.feed(_osc("133", "A"))
+    pane2.feed(out2)
+    assert blocks_wire(pane2)[0]["cmd"] == "echo before after", \
+        "BEL 이 OSC 를 끊어 명령이 잘렸다(PowerShell escape 누락)"
 
 
 async def test_powershell_integration_reports_a_windows_cwd_without_a_leading_slash():

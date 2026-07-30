@@ -192,6 +192,48 @@ class _MouseEv:
         pass
 
 
+async def test_box_edge_cutters_match_old_regex_and_are_linear():
+    """검수 2026-07-30 — 테두리 제거가 줄 길이의 **제곱**이던 것을 선형으로 바꾼 뒤,
+    ① 판정이 **옛 정규식과 글자 단위로 동형**인지(차분 오라클) ② 긴 줄에서 실제로
+    선형인지(복잡도 오라클)를 함께 고정한다.
+
+    왜 이 결함이 아팠나: `paste-clipboard`(Ctrl+V, 기본 on)는 클립보드 읽기만 to_thread
+    이고 **정화는 이벤트 루프에서** 돈다 — 오른쪽을 공백으로 채운 넓은 텍스트를 한 번
+    붙여넣으면(스프레드시트·`column`·wide 터미널 복사) 클라가 통째로 멎었다. 실측:
+    공백 한 줄 2만 자=1.3초 · 5만 자=8.1초 · **10만 자=32초**. 마우스 복사(copy-unwrap)도
+    같은 헬퍼를 쓴다. 옛 정규식을 되살리면 아래 시간 단언이 확실히 깨진다(32초 vs 0.5초).
+    """
+    import random
+    import re
+    import time
+    from pytmuxlib.clientutil import (_cut_lead_box, _cut_lead_box_pad,
+                                      _cut_trail_box, strip_box_drawing)
+    # ① 차분 오라클 — **옛 정규식을 그대로** 참조 구현으로 둔다(비-raw 문자열까지 동일).
+    old_trail = re.compile("[ \t]*[─-╿]+[ \t]*\r?$")
+    old_lead_pad = re.compile("^[─-╿]+[ \t]*")
+    old_lead = re.compile("^[ \t]*[─-╿]+")
+    fixed = ("", " ", "\t", "\r", "│", "─", "╿", "├──┤", "x", "가",
+             "│ x │", " │", "│\r", "│ \r", "│\r\r", "x─y", "  ─  ", "│─│",
+             "a │ ", "| a |", "─" * 5, " \t│\t ")
+    for s in fixed:
+        assert _cut_trail_box(s) == old_trail.sub("", s), repr(s)
+        assert _cut_lead_box_pad(s) == old_lead_pad.sub("", s), repr(s)
+        assert _cut_lead_box(s) == old_lead.sub("", s), repr(s)
+    rnd = random.Random(20260730)          # 결정론(시드 고정)
+    alpha = " \t\r│─╿┤├x가|"
+    for _ in range(4000):
+        s = "".join(rnd.choice(alpha) for _ in range(rnd.randint(0, 12)))
+        assert _cut_trail_box(s) == old_trail.sub("", s), repr(s)
+        assert _cut_lead_box_pad(s) == old_lead_pad.sub("", s), repr(s)
+        assert _cut_lead_box(s) == old_lead.sub("", s), repr(s)
+    # ② 복잡도 오라클 — 공백 런이 길어도 선형. 옛 정규식은 여기서 분 단위였다.
+    t0 = time.perf_counter()
+    strip_box_drawing(" " * 200_000 + "│")
+    strip_box_drawing("\n".join(" " * 1000 for _ in range(300)))
+    dt = time.perf_counter() - t0
+    assert dt < 1.0, f"테두리 제거가 다시 제곱으로 돌아갔다: {dt:.1f}s"
+
+
 async def test_win_clipboard_utf16_roundtrip_preserves_korean():
     """Windows 클립보드 코드페이지 mojibake 수정(제보 2026-07-13): clip.exe/
     Get-Clipboard 가 stdin/stdout 을 콘솔 코드페이지(cp949)로 해석해 UTF-8 한글이

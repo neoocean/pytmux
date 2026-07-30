@@ -105,6 +105,31 @@ async def test_claude_descendant_pid_bfs():
     assert transcript.claude_descendant_pid(999, lambda: rows) is None
 
 
+async def test_open_jsonl_requires_path_under_projects_root():
+    """검수 2026-07-30: 열린 `.jsonl` 을 트랜스크립트로 인정하는 경계가 `root in path`
+    **부분문자열**이었다 — 루트를 품기만 한 남의 경로도 통과한다. 07-28 부터 그 파일의
+    **원문 꼬리가 클라·페더레이션 하류로 실려 나가므로**(clienttail) 접두로 못박는다.
+
+    `_default_open_jsonl` 은 /proc·lsof 를 읽어 단위 테스트가 어려우니, 판정 자체를
+    순수 함수(`under_projects_root`)로 뽑아 그것을 겨눈다 — 두 분기가 모두 이걸 쓴다
+    (뮤테이션: `startswith(root + os.sep)` 를 `root in p` 로 되돌리면 아래가 깨진다)."""
+    root = transcript.projects_dir()
+    assert transcript.under_projects_root(os.path.join(root, "enc", "s.jsonl"))
+    # 루트를 **품기만** 한 경로(공격자가 만들 수 있는 자리) → 거부.
+    assert not transcript.under_projects_root("/tmp/x" + root + "/s.jsonl")
+    assert not transcript.under_projects_root(root + "-evil/s.jsonl")
+    # 루트 자신·빈 값·바깥 경로 → 거부.
+    assert not transcript.under_projects_root(root)
+    assert not transcript.under_projects_root("")
+    assert not transcript.under_projects_root("/etc/passwd.jsonl")
+    # `..` 로 빠져나가는 경로도 정규화 뒤 판정 → 거부.
+    assert not transcript.under_projects_root(
+        os.path.join(root, "..", "..", "s.jsonl"))
+    # 명시 root 인자로도 같은 규칙(다른 홈·테스트 격리).
+    assert transcript.under_projects_root("/r/p/a.jsonl", root="/r/p")
+    assert not transcript.under_projects_root("/r/px/a.jsonl", root="/r/p")
+
+
 async def test_find_transcript_pid_path_then_cwd_fallback():
     root = transcript.projects_dir()
     jp = os.path.join(root, "enc", "sess.jsonl")

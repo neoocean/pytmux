@@ -48,6 +48,12 @@ __pytmux_report_cmd() {
 	s=${s//"$__pytmux_nl"/"${bs}x0a"}
 	s=${s//"$__pytmux_cr"/"${bs}x0d"}
 	s=${s//"$__pytmux_esc"/"${bs}x1b"}
+	# BEL 도 **OSC 종결자**다(파서는 BEL / C1 ST / ESC \ 셋을 받는다). 안 바꾸면
+	# 명령줄에 든 BEL 하나가 문자열을 여기서 끊어 ① 블록의 명령이 잘리고 ② 남은
+	# 글자가 화면에 그대로 쏟아진다(검수 2026-07-30 — 머리말이 "제어문자는 escape
+	# 한다"고 적어 둔 계약을 코드가 안 지키고 있었다). ESC 는 이미 위에서 바꾸므로
+	# escape 주입은 애초에 불가.
+	s=${s//"$__pytmux_bel"/"${bs}x07"}
 	# 서버도 자르지만(MAX_CMD_LEN) 긴 붙여넣기를 파이프에 흘리지 않는다.
 	__pytmux_osc "633;E;${s:0:1024}"
 }
@@ -55,6 +61,7 @@ __pytmux_nl='
 '
 __pytmux_cr=$(printf '\r')
 __pytmux_esc=$(printf '\033')
+__pytmux_bel=$(printf '\007')
 
 if [ -n "${ZSH_VERSION:-}" ]; then
 	# ── zsh ────────────────────────────────────────────────────────────────

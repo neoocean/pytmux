@@ -32,10 +32,66 @@ def _shell_argv(cmd: str) -> list:
 # OS 네이티브 선택은 **복사 시점에 가로챌 수 없다** — pytmux 가 손댈 수 있는 유일한 지점은
 # 그 텍스트가 `paste-clipboard`(Ctrl+V)로 다시 들어올 때다. 거기서 테두리를 타깃 제거한다.
 # 줄 **끝/앞**에 붙은 테두리 런(과 인접 공백)만 떼므로 줄 내부의 박스드로잉(markdown
-# 표·neofetch 아트)은 보존해 오탐을 최소화한다(타깃형 — 사용자 선택). 비-raw 문자열이라
-# ─-╿·\t·\r 은 파이썬이 해석한다(re 의 \u 의존 회피).
-_BOX_TRAIL_RE = re.compile("[ \t]*[─-╿]+[ \t]*\r?$")
-_BOX_LEAD_RE = re.compile("^[─-╿]+[ \t]*")
+# 표·neofetch 아트)은 보존해 오탐을 최소화한다(타깃형 — 사용자 선택).
+#
+# **왜 정규식이 아닌가**(검수 2026-07-30, 성능 결함 수정): 종전 끝쪽 규칙
+# `[ \t]*[─-╿]+[ \t]*\r?$` 는 줄 길이의 **제곱**이었다 — `re.sub` 은 모든 시작 위치에서
+# 선행 `[ \t]*` 로 공백 런을 끝까지 훑고 실패한다. 실측(이 머신): 공백 한 줄 2만 자
+# =1.3초 · 5만 자=8.1초 · **10만 자=32초**. 붙여넣기(`paste-clipboard`, 기본 on)는 이걸
+# **이벤트 루프에서** 돌리므로(클립보드 읽기만 to_thread) 오른쪽을 공백으로 채운 넓은
+# 텍스트(스프레드시트·`column`·wide 터미널 복사) 한 번에 클라가 통째로 멎었다. 마우스
+# 복사(copy-unwrap)도 같은 헬퍼를 쓴다. 아래 세 헬퍼는 **같은 판정을 선형**으로 한다
+# (동형은 test_clientutil 의 차분 오라클이 옛 정규식과 대조해 고정).
+_BOX_LO, _BOX_HI = "─", "╿"      # ─ … ╿ (박스드로잉 블록)
+_PAD = " \t"
+
+
+def _is_box(ch: str) -> bool:
+    return _BOX_LO <= ch <= _BOX_HI
+
+
+def _cut_trail_box(s: str) -> str:
+    """줄 끝의 `공백* 박스런 공백* \\r?` 를 뗀다(박스런이 없으면 무변경)."""
+    i = len(s)
+    if i and s[i - 1] == "\r":
+        i -= 1
+    j = i
+    while j and s[j - 1] in _PAD:
+        j -= 1
+    k = j
+    while k and _is_box(s[k - 1]):
+        k -= 1
+    if k == j:
+        return s                    # 박스런 없음 → 끝의 공백·\r 까지 그대로 둔다
+    while k and s[k - 1] in _PAD:
+        k -= 1
+    return s[:k]
+
+
+def _cut_lead_box_pad(s: str) -> str:
+    """줄 앞의 `박스런 공백*` 를 뗀다(붙여넣기 규칙 — 안쪽 패딩까지 먹는다)."""
+    i = 0
+    n = len(s)
+    while i < n and _is_box(s[i]):
+        i += 1
+    if not i:
+        return s
+    while i < n and s[i] in _PAD:
+        i += 1
+    return s[i:]
+
+
+def _cut_lead_box(s: str) -> str:
+    """줄 앞의 `공백* 박스런` 을 뗀다(복사 규칙 — 안쪽 패딩 한 칸은 **남긴다**:
+    그 칸이 copy-unwrap 의 매달림 들여쓰기 신호다)."""
+    i = 0
+    n = len(s)
+    while i < n and s[i] in _PAD:
+        i += 1
+    j = i
+    while j < n and _is_box(s[j]):
+        j += 1
+    return s if j == i else s[j:]
 
 
 def strip_box_drawing(text: str) -> str:
@@ -50,7 +106,7 @@ def strip_box_drawing(text: str) -> str:
     """
     out = []
     for line in text.split("\n"):
-        s = _BOX_TRAIL_RE.sub("", _BOX_LEAD_RE.sub("", line))
+        s = _cut_trail_box(_cut_lead_box_pad(line))
         if not s and line.strip():
             continue          # 테두리/구분선만이던 줄 → 제거(원래 빈 줄은 유지)
         out.append(s)
@@ -83,10 +139,9 @@ _UNWRAP_TAIL_STOP = ":;{}\\"   # 이 문자로 끝난 줄은 '의도된 줄 끝'
 # 관측 최대 채움(fill)은 그만큼 작게 잡힌다 — 그러면 이어지는 줄의 첫 낱말이 `|`·`&`
 # 처럼 1글자일 때 "들어갈 자리가 있었다"로 오판해 접힘을 놓친다(실측).
 _UNWRAP_SLACK = 2
-# 복사 쪽 앞 테두리 제거는 붙여넣기 쪽(_BOX_LEAD_RE)과 둘이 다르다: **안쪽 패딩 한 칸을
-# 남긴다**(그 칸이 매달림 들여쓰기 신호 ①다). 패널 왼쪽에 여백을 두고 박스를 그리는 앱을
-# 위해 테두리 앞 공백도 함께 먹는다.
-_BOX_LEAD_COPY_RE = re.compile("^[ \t]*[─-╿]+")
+# 복사 쪽 앞 테두리 제거는 붙여넣기 쪽(_cut_lead_box_pad)과 둘이 다르다: **안쪽 패딩 한
+# 칸을 남긴다**(그 칸이 매달림 들여쓰기 신호 ①다) — `_cut_lead_box` 가 그 규칙이다.
+# 패널 왼쪽에 여백을 두고 박스를 그리는 앱을 위해 테두리 앞 공백도 함께 먹는다.
 
 
 def _vis_width(s: str) -> int:
@@ -126,7 +181,7 @@ def unwrap_copy_text(text: str, width: int, first_col: int = 0) -> str:
         return text
     lines, barrier = [], set()
     for raw in text.split("\n"):
-        s = _BOX_TRAIL_RE.sub("", _BOX_LEAD_COPY_RE.sub("", raw)).rstrip()
+        s = _cut_trail_box(_cut_lead_box(raw)).rstrip()
         if not s and raw.strip():
             # 테두리/구분선만이던 줄(입력박스 위아래 가로줄) → 버리되 그 자리를
             # **경계**로 남긴다. 안 그러면 구분선을 지운 뒤 위아래 남남인 줄(윗
