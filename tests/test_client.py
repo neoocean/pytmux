@@ -2932,6 +2932,9 @@ async def test_settings_screen_applies_persists_and_links():
         assert app.server_opts.get("vt_parser") in ("pyte", "native"), app.server_opts
         assert app.setting_current("coalesce-repaints") in ("on", "off")
         assert app.setting_current("vt-parser") == app.server_opts["vt_parser"]
+        # exit-empty 도 같은 경로로 현재값이 온다(이 칸만 status 에 빠져 있어 '미상'
+        # 이던 결함, 2026-07-30). 기본 on — 양성 확인.
+        assert app.setting_current("exit-empty") == "on", app.server_opts
         app._run_command("settings")
         await pilot.pause(0.2)
         scr = app.screen

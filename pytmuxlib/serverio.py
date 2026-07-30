@@ -239,6 +239,9 @@ class ServerIOMixin:
             "nest_auto_attach": self.nest_auto_attach,
             "vt_parser": self.vt_parser,
             "window_size": self.window_size,
+            # exit-empty 도 같은 이유(설정 화면 현재값)로 싣는다 — 이 칸만 빠져 있어
+            # 두 클라 모두 '미상'을 보였다(2026-07-30). 추가 필드라 범프 불요.
+            "exit_empty": bool(self.exit_empty),
             "auto_rename": bool(win.auto_rename) if win else True,
             "border_status": bool(win.border_status) if win else False,
             "monitor_activity": bool(atab.monitor_activity) if atab else False,

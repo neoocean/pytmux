@@ -1216,8 +1216,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.single_border_on = bool(msg["single_border"])
                 # 나머지 서버 옵션 현재값(:settings 표시용)도 권위값으로 갱신.
                 for _k in ("coalesce_repaints", "nest_auto_attach", "vt_parser",
-                           "window_size", "auto_rename", "border_status",
-                           "monitor_activity", "monitor_bell"):
+                           "window_size", "exit_empty", "auto_rename",
+                           "border_status", "monitor_activity", "monitor_bell"):
                     if _k in msg:
                         self.server_opts[_k] = msg[_k]
                 # 컨텍스트 메뉴가 열려 있으면 토글 라벨(on/off)을 실제 상태로 갱신
@@ -1874,6 +1874,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     "nest-auto-attach": "nest_auto_attach",
                     "vt-parser": "vt_parser",
                     "window-size": "window_size",
+                    "exit-empty": "exit_empty",
                     "automatic-rename": "auto_rename",
                     "pane-border-status": "border_status",
                     "monitor-activity": "monitor_activity",
