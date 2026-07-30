@@ -472,7 +472,8 @@ class ServerRemoteMixin:
 
     # ---- 전송 열기 ----
     async def _remote_transport(self, host: str | None, endpoint: str | None,
-                                via: str | None = None):
+                                via: str | None = None,
+                                jump: str | None = None):
         """(reader, writer, token, proc) 를 연다. endpoint=같은 머신 직결(테스트/로컬
         페더레이션), host=`ssh -T host pytmux stdio-proxy`(첫 줄 TOKEN).
 
@@ -480,7 +481,14 @@ class ServerRemoteMixin:
         relay-proxy <host>`. 우리가 ssh 로 붙는 상대가 via 로 바뀔 뿐 파이프 반대편은
         여전히 "TOKEN 줄을 먼저 뱉는 무언가"라 **아래 핸드셰이크 코드는 그대로**다.
         검증은 host·via **둘 다** 같은 규칙을 통과해야 한다 — 둘 다 비신뢰 클라
-        문자열이고 둘 다 argv 에 들어간다."""
+        문자열이고 둘 다 argv 에 들어간다.
+
+        `jump` 가 있으면 우리 ssh argv 에 **`-J <jump>` 를 그대로 싣는다**(§10-15 P3 —
+        `ssh -J B C` 자동승격 전파). `via` 와는 **인증 모델이 달라 배타**다: `-J` 는
+        중간 상자가 TCP 만 포워드하고 핸드셰이크는 A↔C 종단간(우리가 C 의 키를 쓴다),
+        `via` 는 B 가 C 에 로그인한다(B 의 키를 쓴다). 둘을 함께 주면 어느 자격증명으로
+        가는지가 흐려지므로 거부한다. 목적지는 여전히 host 라 링크 이름·sticky 키는
+        1홉과 같다(`B>C` 아님)."""
         if endpoint:
             reader, writer = await ipc.open_connection(endpoint)
             return reader, writer, (ipc.read_token(endpoint) or ""), None
@@ -496,6 +504,15 @@ class ServerRemoteMixin:
         if via is not None and (
                 not via or via.startswith("-") or any(c.isspace() for c in via)):
             raise ConnectionError(f"잘못된 중계 호스트: {via!r}")
+        # jump(-J)도 같은 규칙 — argv 에 들어가는 비신뢰 문자열이다(선행 `-` 는
+        # `-oProxyCommand=…` 옵션 인젝션이 되고 공백은 argv 칸을 쪼갠다).
+        if jump is not None and (
+                not jump or jump.startswith("-")
+                or any(c.isspace() for c in jump)):
+            raise ConnectionError(f"잘못된 ProxyJump 호스트: {jump!r}")
+        if via is not None and jump is not None:
+            # 인증 모델이 갈리는 두 경로를 겹치면 어느 자격증명으로 가는지 흐려진다.
+            raise ConnectionError("via 와 ProxyJump 는 함께 쓸 수 없습니다")
         # S2 후속: 연합 허용목록이 설정돼 있으면(opt-in, opts.json `remote_allowed_hosts`)
         # 정확히 일치하는 목적지만 허용한다 — 비신뢰 클라 입력이 데몬의 ssh egress 를
         # 임의 호스트로 조종하지 못하게. 빈 목록(기본)은 현행대로 임의 host 허용.
@@ -510,6 +527,15 @@ class ServerRemoteMixin:
             raise ConnectionError(
                 f"허용되지 않은 중계 호스트: {via!r} "
                 f"(opts.json remote_allowed_hosts 에 없음)")
+        # `-J` 도 egress 다 — 우리 ssh 가 **그 상자에 TCP 를 연다**(핸드셰이크가 종단간
+        # 이라는 것은 인증 모델의 이야기고, 연결 자체는 우리가 낸다). 홉을 콤마로 여러
+        # 개 줄 수 있으므로(`-J b1,b2`) **각 조각이 전부** 등재돼야 한다.
+        if allow and jump is not None:
+            for hop in (h.strip() for h in jump.split(",")):
+                if hop and hop not in allow:
+                    raise ConnectionError(
+                        f"허용되지 않은 ProxyJump 호스트: {hop!r} "
+                        f"(opts.json remote_allowed_hosts 에 없음)")
         # BatchMode: 서버가 띄우는 ssh 는 TTY 가 없어 비밀번호를 못 묻는다 — 키
         # 인증 미설정이면 즉시 명확한 stderr(Permission denied)로 실패하게 한다.
         # ServerAlive*: M2 keepalive — half-open(상대가 데이터도 FIN 도 안 보내는 좀비
@@ -519,10 +545,14 @@ class ServerRemoteMixin:
         # (중첩 ssh 문자열이 아니라 argv 고정: B 의 셸이 해석할 것이 없다 — §4.1)
         tail = (["--", via, "pytmux", "relay-proxy", host] if via else
                 ["--", host, "pytmux", "stdio-proxy"])
+        # `-J` 는 **옵션 자리**에 들어간다(목적지는 그대로 host) — 그래서 P3 는 `via` 와
+        # 달리 tail·이름·sticky 키를 하나도 안 건드린다. 분리형(`-J`, 값)으로 실어
+        # 결합형 문법 차이를 피한다.
+        jopt = ["-J", jump] if jump else []
         proc = await asyncio.create_subprocess_exec(
             "ssh", "-T", "-o", "BatchMode=yes",
             "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
-            *tail,
+            *jopt, *tail,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE)
         # 모든 실패 경로(readline 타임아웃·핸드셰이크 실패·readline 의 LimitOverrunError·
@@ -601,13 +631,17 @@ class ServerRemoteMixin:
     # ---- attach / detach ----
     async def remote_attach(self, sess, host: str | None = None,
                             endpoint: str | None = None,
-                            via: str | None = None) -> bool:
+                            via: str | None = None,
+                            jump: str | None = None) -> bool:
         """원격 서버에 업스트림 클라로 attach. 성공하면 탭바에 원격 탭이 병합된다.
         같은 이름의 기존 링크는 교체(detach 후 재연결).
 
         `via` 가 있으면 그 상자를 거쳐 붙는다(설계 §4 — `remote-attach C via B`).
         링크 이름은 `B>C` 로 **처음부터 고정**한다: 이 이름이 `_remotes_dict` 키이자
-        sticky(핀·단일탭분리) 저장소 키라 나중에 포맷을 바꾸면 기존 핀이 끊긴다."""
+        sticky(핀·단일탭분리) 저장소 키라 나중에 포맷을 바꾸면 기존 핀이 끊긴다.
+
+        `jump` 는 `-J`(ProxyJump) 전파다(§10-15 P3) — 핸드셰이크가 A↔C 종단간이라
+        **링크는 1홉과 동형**이고 이름도 `C` 그대로다(via 와 달리 이름·키 불변)."""
         name = _link_name(host, endpoint, via)
         if not name:
             return False
@@ -629,7 +663,7 @@ class ServerRemoteMixin:
         self._set_err(None, "")
         try:
             reader, writer, tok, proc = await self._remote_transport(
-                host, endpoint, via)
+                host, endpoint, via, jump)
         except RemoteError as e:
             # 구조화된 실패 원인(핸드셰이크 등) — 키 보존(클라가 자기 로케일로 번역).
             self._set_err(e.err_key, e.err_ko, **e.err_kw)
@@ -651,6 +685,10 @@ class ServerRemoteMixin:
         link.spec = {"host": host, "endpoint": endpoint}
         if via:
             link.spec["via"] = via
+        if jump:
+            # via 와 같은 이유로 spec 에 남긴다 — 빠뜨리면 재시작·자동재연결이 `-J` 없이
+            # 되살아나 A 에서 C 로 직접 못 가는 자리에서 조용히 실패한다.
+            link.spec["jump"] = jump
         link.sess = sess
         # 같은 호스트의 옛 링크가 있었으면(바로 위 remote_drop 이 교체) 그 핀·단일-탭
         # 분리를 새 링크가 이어받는다 — 링크 수명이 아니라 호스트 수명 상태다.
@@ -845,9 +883,11 @@ class ServerRemoteMixin:
                     return
                 # spec 을 통째로 재사용한다 — via 를 빠뜨리면 자동재연결이 1홉으로
                 # 되살아나 같은 이름의 링크가 영영 안 붙는다(복원 경로와 같은 함정).
+                # jump(-J)도 같다: 빠뜨리면 A→C 직결로 되살아나 조용히 실패한다.
                 if await self.remote_attach(sess, host=link.spec.get("host"),
                                             endpoint=link.spec.get("endpoint"),
-                                            via=link.spec.get("via")):
+                                            via=link.spec.get("via"),
+                                            jump=link.spec.get("jump")):
                     # H5: remote_attach 는 hello 송신 직후 True 라 '연결됨'을 단정하지
                     # 못한다 — 업스트림이 hello 만 받고 _send_full(→resize)이 멈춘
                     # pty-host 웨지면 탭이 안 온다. 대화형 attach·중첩 승격과 동일하게
@@ -971,9 +1011,11 @@ class ServerRemoteMixin:
                 try:
                     # via= 를 빠뜨리면 재시작 후 링크가 **조용히 1홉으로** 되살아나
                     # 실패한다(설계 §4.4 가 지목한 자리 — 뮤테이션 테스트가 겨눈다).
+                    # jump= 도 같은 자리다(§10-15 P3 — `-J` 없이 되살아나면 A→C 직결).
                     if await self.remote_attach(sess, host=spec.get("host"),
                                                 endpoint=spec.get("endpoint"),
-                                                via=spec.get("via")):
+                                                via=spec.get("via"),
+                                                jump=spec.get("jump")):
                         # §12 ① 원격 탭 핀 복원: 재시작 전 다운스트림 로컬 핀 집합을
                         # 새 링크에 되살린다(_resume_payload 가 spec 에 실어 둠). 원격
                         # 창 index(ri) 기준이라 업스트림 창 구성이 그대로면 정합.
@@ -1640,7 +1682,10 @@ class ServerRemoteMixin:
                 pane.pty.write(sshwrap.NEST_ACK)     # "접수" — 결과는 notice
             except OSError:
                 pass
-        self.loop.create_task(self._nest_do_attach(sess, dest))
+        # `-J` 는 래퍼가 기록한 것만 쓴다(_ssh_dest 와 같은 provenance 게이트를 이미
+        # 통과한 값) — self-report 는 여기서도 안 믿는다.
+        self.loop.create_task(self._nest_do_attach(
+            sess, dest, getattr(pane, "_ssh_jump", "") or None))
 
     def _nest_pane_session(self, pane):
         for sess in self.sessions.values():
@@ -1649,7 +1694,7 @@ class ServerRemoteMixin:
                     return sess
         return None
 
-    async def _nest_do_attach(self, sess, dest: str):
+    async def _nest_do_attach(self, sess, dest: str, jump: str | None = None):
         """승격 attach 본체: 처음 보는 호스트면 remote_attach 후 첫 업스트림 status
         (탭 병합)를 잠깐 기다려 이 세션의 클라들을 그 원격 active 탭으로 **한 번** 자동
         전환한다(㉢ ON 확정, 2026-06-13). dest 가 로컬 엔드포인트 형태("/"·"tcp:"
@@ -1675,8 +1720,10 @@ class ServerRemoteMixin:
                 "직결은 차단됩니다(보안)", severity="warn", target=dest)
             return
         endpoint = dest if _nest_local_endpoint(dest) else None
+        # endpoint 직결(같은 머신)에는 ssh 가 없으니 `-J` 를 넘기지 않는다.
         ok = await self.remote_attach(sess, host=None if endpoint else dest,
-                                      endpoint=endpoint)
+                                      endpoint=endpoint,
+                                      jump=None if endpoint else jump)
         if not ok:
             detail = self._err_detail("rerr.see_log", "서버 error.log 참조")
             self._remote_notice(

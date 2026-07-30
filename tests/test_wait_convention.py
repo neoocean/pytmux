@@ -37,14 +37,20 @@ _PLAT = re.compile(r"^\s*if\s+(?:ipc\.IS_WINDOWS|not\s+ipc\.IS_WINDOWS"
                    r"|os\.name\s*[!=]=\s*[\"']nt[\"']|sys\.platform.*)\s*:\s*$")
 
 # 총계 래칫(2026-07-25 기준 실측). **늘리지 말고 줄여라** — 이주 CL 이 여기를 함께 낮춘다.
-TOTALS = {"pause": 260, "sleep": 90, "silent_skip": 18}
+# 2026-07-30c 이주 6차(260→249): test_client 의 화면·자식 마운트 대기 11건.
+TOTALS = {"pause": 249, "sleep": 90, "silent_skip": 18}
 
 # 모듈별 상한 [고정 pause, 고정 sleep, 조용한 플랫폼 return]. 목록에 없으면 전부 0.
 CEILINGS = {
     "test_claude_resume_plugin": [8, 0, 0],
     # 2026-07-28 이주(214->182): 화면 마운트 대기 32건을 wait_mounted 로.
     # 2026-07-28 이주 5차(182->171): 단순 단언 대기를 wait_until 로.
-    "test_client": [171, 2, 0],
+    # 2026-07-30c 이주 6차(171->160): 화면 마운트(pause→isinstance 단언) 7건을
+    # wait_mounted(screen=…)·wait_until 로, 자식 위젯 대기(pause→query_one) 4건을
+    # wait_mounted(child=…) 로. 남은 160 은 "다음 입력 전 정착"·부정 단언 정착 부류다
+    # (조건이 **행동 전에 이미 참**이라 폴링으로 옮기면 공허해진다 — 그 판별이 이주의
+    # 실제 비용이고, 기계적 치환으로 옮길 수 있는 몫은 이 회차에서 거의 소진됐다).
+    "test_client": [160, 2, 0],
     "test_clientutil": [1, 1, 0],
     # 2026-07-27g 이주(46→16): 남은 16은 앱 마운트·부정 단언 정착 대기
     "test_compose_prompt": [16, 0, 0],

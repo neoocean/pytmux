@@ -3145,8 +3145,9 @@ async def test_relay_link_name_and_spec_survive_restart():
         # 복원: remote_attach 를 가로채 **어떤 인자로 불리는지** 본다.
         got = {}
 
-        async def _spy_attach(sess, host=None, endpoint=None, via=None):
-            got.update(host=host, endpoint=endpoint, via=via)
+        async def _spy_attach(sess, host=None, endpoint=None, via=None,
+                              jump=None):
+            got.update(host=host, endpoint=endpoint, via=via, jump=jump)
             return False            # 이후 sticky 복원 경로는 이 테스트의 관심 밖
 
         srv._remotes_dict().clear()
@@ -3154,9 +3155,194 @@ async def test_relay_link_name_and_spec_survive_restart():
         srv.remote_attach = _spy_attach
         srv.remote_restore_links()
         await wait_for(lambda: got, timeout=4.0)
-        assert got == {"host": "C", "endpoint": None, "via": "B"}, got
+        assert got == {"host": "C", "endpoint": None, "via": "B",
+                       "jump": None}, got
     finally:
         await teardown(srv, task, sock)
+
+
+# ── §10-15 P3 자동승격 `-J`(ProxyJump) 전파 ───────────────────────────────────
+# ⚠ `-J` 는 `via` 가 아니다(설계 §4.6 함정): `-J B` 는 B 가 **TCP 만 포워드**하고
+# 핸드셰이크는 **A↔C 종단간**(우리가 C 의 키를 쓴다) · `via B` 는 **B 가 C 에 로그인**
+# (B 의 키를 쓴다). 그래서 전파는 "우리 ssh argv 에 `-J` 를 그대로 싣기"이고, 목적지·
+# 링크 이름·sticky 키는 **1홉과 동형**이다. 기계적으로 via=jump 로 이으면 B 에 없는
+# 자격증명을 요구해 실패하고 실패 문구가 엉뚱한 홉을 가리킨다.
+
+async def test_parse_dest_jump_extracts_proxyjump_forms():
+    """`-J` 를 분리형·결합형·묶음·중복·콤마 홉까지 목적지와 **함께** 뽑는다.
+    `parse_dest` 는 종전 그대로(목적지만) — 기존 호출부는 무변경이어야 한다."""
+    from pytmuxlib import sshwrap
+    pj = sshwrap.parse_dest_jump
+    for argv, want in (
+            (["ssh", "C"], ("C", "")),
+            (["ssh", "-J", "B", "C"], ("C", "B")),
+            (["ssh", "-JB", "C"], ("C", "B")),          # 결합값
+            (["ssh", "-4J", "B", "C"], ("C", "B")),     # 묶음 + 분리값
+            (["ssh", "-4JB", "C"], ("C", "B")),         # 묶음 + 결합값
+            (["ssh", "-J", "b1,b2", "C"], ("C", "b1,b2")),   # 여러 홉
+            (["ssh", "-J", "X", "-J", "Y", "C"], ("C", "Y")),  # 마지막이 이긴다
+            (["ssh", "-p", "2222", "-J", "B", "u@C", "uptime"], ("u@C", "B")),
+            (["ssh", "-J", "B", "--", "-weird"], ("-weird", "B")),
+            (["ssh", "-oProxyJump=B", "C"], ("C", "")),  # -o 형태는 안 본다(종전 동일)
+            (["ssh", "-J"], ("", "")),
+            ([], ("", ""))):
+        assert pj(argv) == want, (argv, pj(argv))
+        assert sshwrap.parse_dest(argv) == want[0], argv
+
+
+async def test_proxyjump_goes_into_ssh_argv_as_option_not_destination():
+    """`-J` 는 **옵션 자리**에 들어가고 목적지·tail 은 1홉과 **글자 그대로 동형**이다
+    (via 처럼 목적지를 갈아 끼우면 안 된다 — 그건 다른 인증 모델이다)."""
+    import pytmuxlib.serverremote as sr
+    srv, task, sock = await server_only()
+    spawned = []
+
+    async def fake_exec(*argv, **kw):
+        spawned.append(argv)
+        raise ConnectionError("spawn-reached")
+
+    try:
+        with harness.patched(sr.asyncio, create_subprocess_exec=fake_exec):
+            try:
+                await srv._remote_transport(host="C", endpoint=None, jump="B")
+            except ConnectionError as e:
+                assert "spawn-reached" in str(e), str(e)
+            argv = spawned[0]
+            assert argv[-4:] == ("--", "C", "pytmux", "stdio-proxy"), argv
+            i = argv.index("-J")
+            assert argv[i + 1] == "B", argv
+            assert i < argv.index("--"), ("옵션은 `--` 앞이어야 한다", argv)
+            assert "ServerAliveInterval=15" in argv, argv
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_proxyjump_validated_allowlisted_and_exclusive_with_via():
+    """`-J` 도 argv 로 가는 비신뢰 문자열이다 — host·via 와 **같은 규칙**(선행 `-` =
+    옵션 인젝션 · 공백 = argv 칸 분리 · 빈 값)을 통과해야 하고, 허용목록이 켜져 있으면
+    **콤마로 이은 홉 전부**가 등재돼야 한다(우리 ssh 가 그 상자에 TCP 를 연다).
+    `via` 와는 인증 모델이 갈려 **배타**다."""
+    import pytmuxlib.serverremote as sr
+    srv, task, sock = await server_only()
+    spawned = []
+
+    async def fake_exec(*argv, **kw):
+        spawned.append(argv)
+        raise ConnectionError("spawn-reached")
+
+    try:
+        with harness.patched(sr.asyncio, create_subprocess_exec=fake_exec):
+            for bad in ("-oProxyCommand=touch /tmp/x", "a b", "\tB", ""):
+                spawned.clear()
+                try:
+                    await srv._remote_transport(host="C", endpoint=None,
+                                                jump=bad)
+                    assert False, f"기대: 거부 jump={bad!r}"
+                except ConnectionError as e:
+                    assert "ProxyJump" in str(e) or "spawn" not in str(e), str(e)
+                assert not spawned, f"거부돼야 할 jump 가 ssh 를 띄웠다: {bad!r}"
+            # via 와 배타 — 둘을 함께 주면 어느 자격증명으로 가는지 흐려진다.
+            spawned.clear()
+            try:
+                await srv._remote_transport(host="C", endpoint=None, via="B",
+                                            jump="B")
+                assert False, "기대: via+jump 동시 사용 거부"
+            except ConnectionError as e:
+                assert "함께" in str(e), str(e)
+            assert not spawned, "via+jump 동시 사용이 ssh 를 띄웠다"
+            # 허용목록: 홉이 미등재면 거부(콤마 홉은 전부 검사).
+            srv.remote_allowed_hosts = ["C", "b1"]
+            for bad in ("evil", "b1,evil"):
+                spawned.clear()
+                try:
+                    await srv._remote_transport(host="C", endpoint=None,
+                                                jump=bad)
+                    assert False, f"기대: 미등재 홉 거부 {bad!r}"
+                except ConnectionError as e:
+                    assert "remote_allowed_hosts" in str(e), str(e)
+                assert not spawned, f"미등재 홉이 ssh 를 띄웠다: {bad!r}"
+            spawned.clear()
+            try:
+                await srv._remote_transport(host="C", endpoint=None, jump="b1")
+            except ConnectionError as e:
+                assert "spawn-reached" in str(e), str(e)
+            assert spawned, "host·홉 둘 다 등재인데 거부됐다"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_proxyjump_survives_restart_and_nest_promotion_propagates_it():
+    """P3 배선 두 곳: ① spec 왕복(재시작 복원이 `jump=` 를 넘긴다 — 안 넘기면 링크가
+    **조용히 A→C 직결**로 되살아나 실패한다. via 와 같은 함정 자리) ② 자동승격이
+    래퍼가 기록한 `-J` 를 remote_attach 로 전파한다(종전엔 조용히 떨어뜨렸다).
+
+    ②의 provenance 는 종전과 같다 — 위조 토큰 DEST 는 목적지도 `-J` 도 기록하지 않는다.
+    """
+    if os.name == "nt":
+        skip("POSIX 전용(NEST DCS·PTY 경로)")
+    srv, task, sock = await server_only()
+    srvB, taskB, sockB = await server_only()
+    try:
+        srvB.ensure_default_session(80, 24)
+        sess = srv.ensure_default_session(80, 24)
+        # ⓪ **기록**: 성공한 attach 가 jump 를 spec 에 남기고 resume payload 까지
+        #    실어야 한다 — 이 단언이 없으면 `link.spec["jump"] = jump` 한 줄을 지워도
+        #    아래 ①이 통과한다(spec 을 손으로 주입하니까). 실측 뮤테이션 M3 가 그 구멍.
+        #    ssh 대신 **로컬 직결 전송으로 갈아 끼워** 실제 remote_attach 경로를 태운다.
+        _orig_transport = srv._remote_transport
+        seen = {}
+
+        async def _fake_transport(host=None, endpoint=None, via=None, jump=None):
+            seen.update(host=host, via=via, jump=jump)
+            return await _orig_transport(None, sockB)
+
+        srv._remote_transport = _fake_transport
+        assert await srv.remote_attach(sess, host="C", jump="B"), "attach 실패"
+        srv._remote_transport = _orig_transport
+        assert seen == {"host": "C", "via": None, "jump": "B"}, seen
+        link = srv._remotes_dict().get("C")
+        assert link is not None, srv._remotes_dict().keys()
+        assert link.spec == {"host": "C", "endpoint": None, "jump": "B"}, link.spec
+        assert any(s.get("jump") == "B" and s.get("host") == "C"
+                   for s in srv._resume_payload().get("remotes", [])), \
+            "재시작 payload 에 jump 가 안 실렸다"
+        await srv.remote_drop(link, notify=False)
+        # ① 복원: spec 의 jump 가 attach 인자로 그대로 간다.
+        got = {}
+
+        async def _spy_attach(sess, host=None, endpoint=None, via=None,
+                              jump=None):
+            got.update(host=host, endpoint=endpoint, via=via, jump=jump)
+            return False
+
+        srv._remote_resume = [{"host": "C", "endpoint": None, "jump": "B"}]
+        srv.remote_attach = _spy_attach
+        srv.remote_restore_links()
+        await wait_for(lambda: got, timeout=4.0)
+        assert got == {"host": "C", "endpoint": None, "via": None,
+                       "jump": "B"}, got
+        # ② 자동승격: 래퍼 DEST(`ssh -J B C`) → _ssh_jump 기록 → REQ → attach(jump=B).
+        got.clear()
+        pane = sess.active_window.active_pane
+        real, spy = pane.pty, _AckSpy()
+        pane.pty = spy
+        try:
+            srv._on_pane_data(pane, b"$ " + _nest_dest(
+                "ssh\n-J\nB\nC", token="deadbeef"))
+            assert getattr(pane, "_ssh_jump", "") == "", \
+                "위조 토큰 DEST 는 -J 도 기록하지 않는다(NEW-1)"
+            srv._on_pane_data(pane, b"$ " + _nest_dest("ssh\n-J\nB\nC"))
+            assert pane._ssh_dest == "C" and pane._ssh_jump == "B", \
+                (pane._ssh_dest, getattr(pane, "_ssh_jump", None))
+            srv._on_pane_data(pane, _nest_req("tester@C"))
+            await wait_for(lambda: got, timeout=4.0)
+            assert got.get("host") == "C" and got.get("jump") == "B", got
+            assert got.get("via") is None, "‑J 를 via 로 번역하면 안 된다"
+        finally:
+            pane.pty = real
+    finally:
+        await teardown(srv, task, sock)
+        await teardown(srvB, taskB, sockB)
 
 
 async def test_relay_failure_is_attributed_to_the_right_hop():

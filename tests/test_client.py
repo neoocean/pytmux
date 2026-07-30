@@ -108,7 +108,7 @@ async def test_restart_check_command_opens_popup():
         # 고정 pause 유지: push_screen 직후 스택은 **즉시** 바뀌므로 조건 폴링은 0회
         # 대기가 된다 — 여기서 기다리는 것은 스택이 아니라 InfoScreen 의 **마운트**
         # (compose→ListView)다. 폴링으로 바꾸면 마운트 전에 진행해 NoMatches 로 깨진다.
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, InfoScreen)
         assert isinstance(app.screen, InfoScreen)
     await _with_app(body)
 
@@ -126,12 +126,12 @@ async def test_stale_dismiss_after_popup_closed_is_noop_not_crash():
             "reexec_supported": True, "has_sessions": True,
             "serialize_ok": True, "panes": 1, "panes_with_fd": 1,
             "running_version": "p4:1", "disk_version": "p4:1"})
-        await pilot.pause(0.1)
-        scr = app.screen
+        scr = await wait_mounted(pilot, InfoScreen)
         assert isinstance(scr, InfoScreen)
         # 정상 닫기 → 기본 화면으로 복귀.
         scr.dismiss(None)
-        await pilot.pause(0.1)
+        await wait_until(pilot,
+                         lambda: not isinstance(app.screen, InfoScreen))
         assert not isinstance(app.screen, InfoScreen)
         assert len(app.screen_stack) == 1
         # stale 중복 dismiss(이미 팝된 화면의 on_click 늦은 발화 모사) → 크래시 금지.
@@ -163,8 +163,7 @@ async def test_version_command_opens_popup():
         assert "request_version" in sent
         # 서버 회신 모사 → 팝업
         app._show_version_popup({"version": "p4:99999", "uptime": 3661, "pid": 42})
-        await pilot.pause(0.1)
-        scr = app.screen
+        scr = await wait_mounted(pilot, InfoScreen)
         assert isinstance(scr, InfoScreen)
         joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
         assert "99999" in joined, joined          # 서버 CL 번호
@@ -195,8 +194,7 @@ async def test_list_keys_shows_mouse_gestures():
 
     async def body(app, pilot, srv):
         app._run_command("list-keys")
-        await pilot.pause(0.1)
-        scr = app.screen_stack[-1]
+        scr = await wait_mounted(pilot, InfoScreen)
         assert isinstance(scr, InfoScreen)
         joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
         assert "swap" in joined, joined            # 헤더 드래그 pick-up→swap
@@ -1563,7 +1561,7 @@ async def test_esc_tab_switcher_selects_next_and_enter_switches():
                            {"index": 2, "name": "C", "active": False}]
         await pilot.press("escape")
         await pilot.press("tab")
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, child=ListView)
         lv = app.screen.query_one(ListView)
         assert lv.index == 1, f"시작 선택이 '다음 탭'이 아님: {lv.index}"
         await pilot.press("tab")            # → C
@@ -1621,7 +1619,7 @@ async def test_esc_tab_switcher_visual_order_and_pin():
              "remote": True}]
         await pilot.press("escape")
         await pilot.press("tab")
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, child=ListView)
         lv = app.screen.query_one(ListView)
         labels = [it.query_one(Label).render().plain for it in lv.children]
         assert labels[0].endswith("1:shell"), labels
@@ -1681,7 +1679,7 @@ async def test_esc_tab_switcher_home_end_page_and_arrow_wrap():
                            for i in range(8)]
         await pilot.press("escape")
         await pilot.press("tab")
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, child=ListView)
         lv = app.screen.query_one(ListView)
         await pilot.press("home")
         await pilot.pause(0.05)
@@ -2631,8 +2629,7 @@ async def test_context_menu_plugin_items_join_and_mouse_help():
         from textual.widgets import ListItem
         # :mouse-help 별칭 → list-keys 와 같은 "키 · 마우스" InfoScreen.
         app._run_command("mouse-help")
-        await pilot.pause(0.1)
-        scr = app.screen_stack[-1]
+        scr = await wait_mounted(pilot, InfoScreen)
         assert isinstance(scr, InfoScreen), "mouse-help → 키·마우스 팝업"
         app.pop_screen()
         # 메뉴에 플러그인 항목 + 신규 코어 항목이 보인다.
@@ -2936,8 +2933,7 @@ async def test_settings_screen_applies_persists_and_links():
         # 이던 결함, 2026-07-30). 기본 on — 양성 확인.
         assert app.setting_current("exit-empty") == "on", app.server_opts
         app._run_command("settings")
-        await pilot.pause(0.2)
-        scr = app.screen
+        scr = await wait_mounted(pilot, SettingsScreen)
         assert isinstance(scr, SettingsScreen), type(scr)
         # bool/enum 행은 선택지를 펼쳐 현재값을 강조(세그먼트) — '미상' 아님.
         vidx = next(i for i, (d, _f) in enumerate(scr._flat)
@@ -6769,7 +6765,7 @@ async def test_command_candidates_above_input_box():
         assert scr.__class__.__name__ == "PromptScreen"
         scr.query_one("#pinput").value = "tab"
         scr._refresh_cands()
-        await pilot.pause(0.1)
+        await wait_mounted(pilot, child="#prow")
         prow = scr.query_one("#prow")
         pcand = scr.query_one("#pcand")
         assert pcand.display, "후보가 표시돼야"

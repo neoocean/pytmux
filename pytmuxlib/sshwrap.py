@@ -160,28 +160,54 @@ def parse_dest(argv: list) -> str:
     문자열 그대로**(remote_attach 가 같은 별칭/ControlMaster 레시피를 타도록). 값을
     갖는 옵션은 분리형(`-p 2222`)·결합형(`-p2222`, `-oKey=v`) 모두 건너뛰고, `--`
     뒤 첫 토큰은 무조건 목적지. 목적지 뒤(원격 명령)는 보지 않는다. 없으면 ""."""
+    return parse_dest_jump(argv)[0]
+
+
+def parse_dest_jump(argv: list) -> tuple:
+    """`(목적지, -J 값)` — parse_dest 와 **같은 훑기**로 ProxyJump 까지 함께 뽑는다.
+
+    §10-15 P3: 패널에서 사용자가 `ssh -J B C` 를 치면 자동승격(NESTED_ATTACH §4)이
+    목적지 `C` 만 알려 주고 `-J B` 를 **조용히 떨어뜨렸다** — 그러면 우리 ssh 는 B 를
+    거치지 않아 A 에서 C 로 직접 못 가는 자리에서 실패한다.
+
+    ⚠ **`-J` 를 `via`(relay-proxy)로 번역하면 안 된다**(설계 §4.6 함정): `-J B` 는
+    B 가 **TCP 만 포워드**하고 SSH 핸드셰이크는 **A↔C 종단간**이다(= 사용자가 가진
+    것은 **C 의 자격증명**). `via B` 는 **B 가 C 에 로그인**한다(= B 의 자격증명).
+    그래서 올바른 전파는 우리 ssh argv 에 **`-J` 를 그대로 싣는 것**이고, 링크 이름도
+    1홉과 같은 `C` 다(중계 상자가 pytmux 홉이 아니므로 `B>C` 가 아니다).
+
+    `-J` 는 분리형(`-J B`)·결합형(`-JB`)·묶음(`-4J B`) 전부 받고, 여러 번 오면
+    **마지막이 이긴다**(ssh 도 나중 것을 쓴다). `-oProxyJump=B` 형태는 **안 본다** —
+    `-o` 값은 종전대로 통째로 건너뛴다(자동승격이 그 형태를 놓치는 것은 종전과 동일).
+    없으면 "".
+    """
     if not argv:
-        return ""
+        return "", ""
     value_opts = set(_SSH_VALUE_OPTS)
     if os.path.basename(str(argv[0] or "")).startswith("autossh"):
         value_opts.add("M")
+    jump = ""
     i = 1
     while i < len(argv):
         a = str(argv[i])
         if a == "--":
-            return str(argv[i + 1]) if i + 1 < len(argv) else ""
+            return (str(argv[i + 1]) if i + 1 < len(argv) else ""), jump
         if a.startswith("-") and len(a) > 1:
             # 묶음 플래그(-4A 등) 안에서 값 옵션을 만나면: 뒤에 글자가 남아 있으면
             # 결합값(-p2222 — 같은 토큰에서 소비), 마지막 글자면 다음 토큰이 값.
             for j, ch in enumerate(a[1:]):
                 if ch in value_opts:
                     if j == len(a) - 2:
+                        if ch == "J" and i + 1 < len(argv):
+                            jump = str(argv[i + 1])
                         i += 1
+                    elif ch == "J":
+                        jump = a[j + 2:]      # 결합값(-JB / -4JB)
                     break
             i += 1
             continue
-        return a
-    return ""
+        return a, jump
+    return "", jump
 
 
 def load_or_create_token(state_dir: str) -> str:

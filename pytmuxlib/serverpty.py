@@ -337,9 +337,13 @@ class ServerPtyMixin:
             expected = self._sshwrap_token()
             if not expected or not hmac.compare_digest(tok, expected):
                 return
-            dest = sshwrap.parse_dest([s for s in lines[1:] if s])
+            dest, jump = sshwrap.parse_dest_jump([s for s in lines[1:] if s])
             if dest:
                 pane._ssh_dest = dest
+                # §10-15 P3: `ssh -J B C` 의 `-J` 도 함께 기록해 자동승격이 우리 ssh
+                # argv 로 **전파**한다(종전엔 조용히 떨어뜨려 A→C 직결로 실패했다).
+                # 목적지가 바뀔 때마다 같이 갈아 준다(옛 홉이 새 목적지에 붙지 않게).
+                pane._ssh_jump = jump
                 pane._ssh_dest_ts = time.monotonic()
             return
         self._nest_attach_request(pane, text.strip())
