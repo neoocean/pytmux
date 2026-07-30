@@ -83,6 +83,115 @@ class ServerIOMixin:
             return 2
         return mt
 
+    # ---- stale 마우스 트래킹 회수 -------------------------------------------
+    # 마우스 트래킹은 **앱이 켜고 앱이 끈다**(DECSET ?1000/1002/1003/1006 h·l). 앱이
+    # teardown 을 못 내고 죽으면(ssh 연결 끊김·SIGKILL) 패널 플래그가 켜진 채 남아,
+    # 셸 프롬프트로 돌아온 뒤에도 클라가 마우스 리포트를 그 PTY 로 흘린다 → zsh 가
+    # `\x1b[<35;61;31M` 을 텍스트로 받아 프롬프트에 `35;61;31M…` 이 박히고
+    # `command not found: 31M35` 가 쏟아진다(실측 2026-07-30: `ssh playground-host`
+    # 안의 Claude Code 가 `Connection reset by peer` 로 끊긴 패널. 그 패널만 계속 재발).
+    # → 트래킹을 켠 프로세스 그룹을 기록해 두고, 그 그룹이 사라졌으면 stale 로 보고
+    # 플래그를 회수한다. 판정에 `ps`(_fg_command, ~7ms)를 쓰지 않는다 — tcgetpgrp/
+    # killpg 는 ioctl/시그널 검사 1회라 마우스 이벤트마다 불러도 무해하다.
+
+    def _pane_fg_pgid(self, pane) -> int:
+        """패널 PTY 의 포그라운드 프로세스 그룹 id(모르면 0). Windows(포그라운드 pgrp
+        개념 없음)·host 모드(master_fd=-1)·렌더 전용 패널은 0 = 판정 불가."""
+        if pty_backend.IS_WINDOWS or pane is None:
+            return 0
+        fd = getattr(pane, "master_fd", -1)
+        if not isinstance(fd, int) or fd < 0:
+            return 0
+        try:
+            pgid = os.tcgetpgrp(fd)
+        except (OSError, AttributeError, ValueError):
+            return 0
+        # pgid 0/-1 은 절대 통과시키지 않는다 — POSIX 에서 kill/killpg 의 0 은
+        # **호출자 자신의 그룹**(= pytmux 서버)이다(CLAUDE.md 2026-07-26 사고).
+        return pgid if isinstance(pgid, int) and pgid > 1 else 0
+
+    def _note_mouse_owner(self, pane) -> None:
+        """지금 트래킹을 켠 앱(= 포그라운드 프로세스 그룹)을 소유자로 기록한다.
+        _ingest_slice 가 '켜기 시퀀스를 본 슬라이스'에서만 부른다."""
+        pgid = self._pane_fg_pgid(pane)
+        if not pgid:
+            return
+        if (pgid == getattr(pane, "child_pid", -1)
+                and getattr(pane, "_mouse_owner_pgid", 0) > 1):
+            # 패널 셸이 전경인 순간에 도착한 '켜기'는 앱이 죽은 뒤 늦게 소화된 잔여
+            # 출력일 공산이 크다(셸 자신은 마우스 트래킹을 켜지 않는다). 이미 있는
+            # 소유자를 그걸로 덮으면 stale 판정이 통째로 무력화되므로 덮지 않는다.
+            # (셸 없이 앱이 바로 도는 패널은 소유자가 아직 없어 첫 기록은 통과한다.)
+            return
+        pane._mouse_owner_pgid = pgid
+
+    def _mouse_tracking_stale(self, pane) -> bool:
+        """남은 마우스 트래킹이 stale(= 켠 앱이 더 이상 터미널을 안 읽는다)이면 True.
+        모르면(소유자 미기록·Windows·EPERM) **False** — 살아 있는 앱의 마우스를
+        빼앗지 않는 쪽으로 틀린다.
+
+        판정 둘:
+          ⓐ **패널 셸이 전경으로 돌아왔다**(fg == child_pid ≠ 소유자). 프롬프트 앞에선
+            아무 앱도 리포트를 소비하지 않으니 남은 트래킹은 정의상 stale 이다.
+            `owner != child_pid` 단서가 셸 없이 앱이 바로 도는 패널(팝업·명령 패널·
+            `exec vim`)을 제외해 살아 있는 그 앱의 마우스를 뺏지 않는다.
+          ⓑ 소유 그룹 **소멸**(killpg ESRCH) — fg 가 셸이 아닐 때(다른 앱이 떴다·
+            판정 불가)의 폴백.
+        ⓐ 가 따로 필요한 이유: 앱이 죽어도 셸이 거두기 전까지는 **좀비**로 남아
+        killpg 가 여전히 성공한다 — ⓑ 만으로는 그 창에서 리포트가 프롬프트로 샌다
+        (실측: test_stale_mouse_reaped_after_real_app_killed 가 이 구멍에 걸렸다)."""
+        owner = getattr(pane, "_mouse_owner_pgid", 0)
+        if pty_backend.IS_WINDOWS or not isinstance(owner, int) or owner <= 1:
+            return False
+        fg = self._pane_fg_pgid(pane)
+        if fg and fg == owner:
+            return False        # 그 앱이 아직 전경 = 확실히 살아 있다(시그널 불필요)
+        shell = getattr(pane, "child_pid", -1)
+        if (fg and isinstance(shell, int) and shell > 1
+                and fg == shell and owner != shell):
+            return True             # ⓐ 셸 프롬프트 복귀
+        try:
+            os.killpg(owner, 0)     # 시그널 0 = 존재 확인만(아무것도 보내지 않음)
+        except ProcessLookupError:
+            return True             # ⓑ 그룹 소멸 = 켠 앱이 teardown 없이 죽었다
+        except OSError:
+            return False            # EPERM 등 = 살아 있음/판정 불가
+        return False
+
+    def _drop_mouse_passthrough(self, pane) -> bool:
+        """이 마우스 패스스루 바이트를 **버려야** 하면 True(그리고 stale 이면 회수).
+
+        버리는 경우 둘:
+          • 패널이 트래킹을 안 켰다(mouse_track 0) — 클라 레이아웃과 서버 상태가
+            어긋난 순간(앱이 방금 껐는데 그 전에 출발한 이벤트가 도착)에도 리포트가
+            셸에 텍스트로 박히지 않게 하는 최종 방어선이다.
+          • 켠 앱이 이미 전경에서 사라졌다(_mouse_tracking_stale) → 플래그도 회수."""
+        if pane is None:
+            return True
+        if not pane.mouse_track:
+            return True
+        return self._reap_stale_mouse(pane)
+
+    def _reap_stale_mouse(self, pane) -> bool:
+        """stale 이면 패널 마우스 플래그를 지우고 레이아웃을 다시 보낸다(클라가
+        패스스루를 멈추게). 회수했으면 True."""
+        if pane is None or not pane.mouse_track:
+            return False
+        if not self._mouse_tracking_stale(pane):
+            return False
+        pane.reset_mouse_modes()
+        sess = self._session_of_pane(pane)
+        if sess:
+            self._broadcast_session(sess)
+        return True
+
+    def _sweep_stale_mouse(self) -> None:
+        """마우스 이벤트가 오기 전에도 stale 트래킹을 걷어낸다(자동 리네임 루프에
+        편승, 2초 주기). 트래킹이 켜진 패널만 검사한다."""
+        for pane in self._all_panes():
+            if pane.mouse_track:
+                self._reap_stale_mouse(pane)
+
     def _layout_msg(self, sess: Session, cols: int = None, rows: int = None):
         win = sess.active_window
         if not win:
@@ -1235,6 +1344,12 @@ class ServerIOMixin:
         # 마우스 패스스루: 커서 아래 패널 PTY 로만 raw 전달. 입력 동기화 대상이
         # 아니고(위치 기반), 프롬프트 추적/scroll 복귀도 건드리지 않는다.
         if msg.get("mouse"):
+            # 트래킹이 꺼졌거나 켠 앱이 이미 죽었으면(stale) 바이트를 **버린다** —
+            # 안 그러면 셸이 SGR 리포트를 텍스트로 받아 프롬프트에 박힌다
+            # (_drop_mouse_passthrough). 회수 시엔 레이아웃도 다시 나가 클라가
+            # 패스스루를 멈춘다.
+            if self._drop_mouse_passthrough(p):
+                return
             try:
                 if p.pty is not None:
                     p.pty.write(data)

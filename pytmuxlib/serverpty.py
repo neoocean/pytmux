@@ -444,6 +444,11 @@ class ServerPtyMixin:
             sess = self._session_of_pane(pane)
             if sess:
                 self._broadcast_session(sess)
+        # 트래킹을 켠 앱의 프로세스 그룹을 기록한다(켜기를 본 슬라이스에서만). 그
+        # 그룹이 사라졌는데 플래그가 남아 있으면 = 앱이 teardown 없이 죽은 stale
+        # 상태이고, 그걸 마우스 경로에서 걷어낸다(serverio._reap_stale_mouse).
+        if pane._mouse_on_seen and pane.mouse_track:
+            self._note_mouse_owner(pane)
         # pipe-pane: 패널 출력을 외부 명령으로 복제
         if pane.pipe_proc and pane.pipe_proc.stdin:
             try:

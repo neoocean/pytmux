@@ -3940,9 +3940,7 @@ async def test_mouse_mode_combined_decset_teardown():
     파싱하면 정상적으로 0 으로 복귀한다."""
     from pytmuxlib.model import Pane
     p = Pane.__new__(Pane)
-    p._mouse_modes = set()
-    p.mouse_track = 0
-    p.mouse_sgr = False
+    p.reset_mouse_modes()   # __init__ 우회 — 마우스 필드만 초기화(carry 포함)
 
     # 결합형 enable → 개별과 동일하게 추적
     assert p.update_mouse_modes(b"\x1b[?1000;1002;1003;1006h")
@@ -4024,6 +4022,211 @@ async def test_win_mouse_motion_cap_in_layout_and_persist():
             os.unlink(srv.opts_path)
         except OSError:
             pass
+        await teardown(srv, task, sock)
+
+
+async def test_mouse_decset_split_across_read_boundary():
+    """DECSET 이 read/FEED_SLICE 경계에 걸쳐 쪼개져도 추적을 놓치지 않는다.
+
+    _ingest_slice 는 PTY 버스트를 FEED_SLICE(8KiB)로 잘라 먹이는데 모드 스캔은
+    stateless 라, `\\x1b[?1000;1002;1003;1006l` 하나가 두 조각으로 갈리면 **해제를
+    통째로 놓쳐** 트래킹이 켜진 채 남는다 — 앱이 정상 종료해도 셸 프롬프트에 SGR
+    리포트가 텍스트로 박히는 그 증상이 된다. 직전 꼬리(carry)를 이어 붙여 막는다
+    (NEST/SYNC 질의 스캔과 같은 기법)."""
+    from pytmuxlib.model import Pane
+    p = Pane.__new__(Pane)
+    on = b"\x1b[?1000;1002;1003;1006h"
+    off = b"\x1b[?1000;1002;1003;1006l"
+    for i in range(1, len(on)):
+        p.reset_mouse_modes()
+        p.update_mouse_modes(on[:i])
+        p.update_mouse_modes(on[i:])
+        assert p.mouse_track == 3 and p.mouse_sgr is True, f"켜기 분할 {i}"
+        # 같은 조각 경계에서 해제도 온전히 잡혀야 한다(예전엔 3 에 갇혔다)
+        p.update_mouse_modes(off[:i])
+        p.update_mouse_modes(off[i:])
+        assert p.mouse_track == 0 and p.mouse_sgr is False, f"끄기 분할 {i}"
+    # 개별 시퀀스 여러 개가 한 조각에 몰려 오다 마지막 하나만 걸치는 흔한 형태
+    p.reset_mouse_modes()
+    p.update_mouse_modes(b"\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?100")
+    p.update_mouse_modes(b"6h")
+    assert p.mouse_track == 3 and p.mouse_sgr is True
+    # carry 는 **인접** 조각만 잇는다 — 사이에 다른 데이터가 끼면 재조립 금지
+    p.reset_mouse_modes()
+    p.update_mouse_modes(b"\x1b[?1003")
+    p.update_mouse_modes(b"x" * (2 * 64))
+    p.update_mouse_modes(b"h")
+    assert p.mouse_track == 0, "떨어진 조각을 억지로 붙이면 안 된다"
+
+
+async def test_stale_mouse_tracking_reaped_when_owner_dies():
+    """트래킹을 켠 앱이 teardown 없이 죽으면 남은 마우스 패스스루를 회수한다.
+
+    실측(2026-07-30, captures/…/20260728_110903_0_2.win_p5.log): `ssh <host>` 안의
+    Claude Code 가 `Connection reset by peer` 로 끊겨 해제 DECSET 이 **0건**이었다
+    (`?1000h..?1006h` 만 269건). 패널 플래그는 3(any-motion)로 남고, 셸 프롬프트로
+    돌아온 뒤에도 클라가 SGR 리포트를 그 PTY 로 흘려 `35;61;31M…` 이 프롬프트에
+    박히고 `zsh: command not found: 31M35` 가 쏟아졌다 — 그 패널만 계속.
+    → 켠 앱이 전경에서 사라졌으면 바이트를 버리고 플래그를 지운다(살아서 터미널을
+    쥐고 있으면 그대로 전달). 판정 두 갈래(_mouse_tracking_stale ⓐ/ⓑ)를 모두 본다."""
+    import subprocess
+    from pytmuxlib.model import ClientConn
+    if os.name == "nt":
+        skip("POSIX 포그라운드 프로세스 그룹(tcgetpgrp/killpg) 없음")
+
+    class _Spy:
+        def __init__(self):
+            self.writes = []
+
+        def write(self, data):
+            self.writes.append(data)
+
+        def set_winsize(self, rows, cols):   # _layout_msg 의 resize 경로용 no-op
+            pass
+
+    # 죽은 그룹 / 살아 있는 그룹(둘 다 자기 세션 리더 → pgid == pid)
+    dead = subprocess.Popen(["true"], start_new_session=True)
+    dead.wait()
+    alive = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        client = ClientConn(None)
+        client.session = sess
+        report = base64.b64encode(b"\x1b[<35;61;31M").decode()
+
+        def send():
+            srv._handle_input(client, {"pane": p.id, "mouse": True,
+                                       "data": report})
+
+        # 전경 pgid 를 시나리오별로 지정한다(실 셸 프롬프트에 매이지 않게).
+        other = 10 ** 9      # 셸도 소유자도 아닌 제3의 전경 그룹
+        fg = other
+        srv._pane_fg_pgid = lambda pane: fg
+
+        # ① 앱이 트래킹을 켜고 살아서 터미널을 쥐고 있다 → 그대로 패스스루
+        p.update_mouse_modes(b"\x1b[?1000;1002;1003;1006h")
+        p._mouse_owner_pgid = alive.pid
+        spy = _Spy()
+        real, p.pty = p.pty, spy
+        send()
+        assert spy.writes and p.mouse_track == 3, "살아 있는 앱의 마우스는 그대로"
+
+        # ②-ⓑ 그 앱이 죽어 그룹이 사라졌다 → 바이트를 버리고 플래그를 회수
+        p._mouse_owner_pgid = dead.pid
+        spy.writes.clear()
+        send()
+        assert spy.writes == [], "셸로 새는 SGR 리포트가 한 바이트도 없어야 한다"
+        assert p.mouse_track == 0 and p.mouse_sgr is False, "stale 플래그 회수"
+        lay = srv._layout_msg(sess)
+        pm = next(m for m in lay["panes"] if m["id"] == p.id)
+        assert pm["mouse"] == 0, "클라도 패스스루를 멈추게 레이아웃이 갱신된다"
+
+        # ③-ⓐ 앱이 아직 좀비로 남아(killpg 성공) 있어도, 패널 **셸이 전경으로
+        #     돌아왔으면** 프롬프트 앞이므로 stale 이다 — 좀비 창에서 새던 구멍.
+        p.update_mouse_modes(b"\x1b[?1000;1002;1003;1006h")
+        p._mouse_owner_pgid = alive.pid          # 그룹은 살아 있다(=좀비 흉내)
+        fg = p.child_pid                          # 전경 = 패널 셸
+        spy.writes.clear()
+        send()
+        assert spy.writes == [] and p.mouse_track == 0, "셸 복귀 = stale"
+
+        # 셸 없이 앱을 바로 띄운 패널(팝업·명령 패널·exec)은 소유자 == child_pid 라
+        # ⓐ 가 적용되지 않는다 — 살아 있는 그 앱의 마우스를 뺏으면 안 된다.
+        p.update_mouse_modes(b"\x1b[?1003h\x1b[?1006h")
+        p._mouse_owner_pgid = p.child_pid
+        spy.writes.clear()
+        send()
+        assert spy.writes and p.mouse_track == 3, "앱이 곧 패널 프로세스면 유지"
+
+        # ④ 마우스 이벤트가 없어도 주기 스윕이 같은 판정을 한다
+        fg = other
+        p._mouse_owner_pgid = dead.pid
+        srv._sweep_stale_mouse()
+        assert p.mouse_track == 0, "스윕이 stale 트래킹을 걷어낸다"
+        # 소유자를 모르면(0) 건드리지 않는다 — 살아 있는 앱의 마우스를 뺏지 않는다
+        p.update_mouse_modes(b"\x1b[?1003h")
+        p._mouse_owner_pgid = 0
+        srv._sweep_stale_mouse()
+        assert p.mouse_track == 3, "판정 불가면 보수적으로 유지"
+        p.pty = real
+        del srv._pane_fg_pgid
+    finally:
+        alive.kill()
+        alive.wait()
+        await teardown(srv, task, sock)
+
+
+async def test_stale_mouse_reaped_after_real_app_killed():
+    """실 PTY 종단 검증 — 셸에서 띄운 앱이 트래킹을 켠 뒤 **SIGKILL 로 죽는다**.
+
+    단위 테스트(위)는 소유자 pgid 가 주어졌을 때의 판정만 본다. 정작 중요한 건
+    _ingest_slice 가 기록하는 소유자가 **앱의 프로세스 그룹**이라는 것이다 — 셸의
+    pgid 를 기록하면 셸은 안 죽으니 회수가 영원히 안 걸려 기능이 조용히 죽는다
+    ('표시 기능은 호출부까지 단언', CLAUDE.md). 그래서 진짜 PTY·진짜 자식으로 켜고
+    죽여 본다(= ssh 세션이 끊겨 원격 앱이 teardown 없이 사라진 그 상황)."""
+    import signal
+    import sys
+    from pytmuxlib.model import ClientConn
+    if os.name == "nt":
+        skip("POSIX 포그라운드 프로세스 그룹(tcgetpgrp/killpg) 없음")
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        await wait_for(lambda: srv._pane_fg_pgid(p) > 1, timeout=10.0, step=0.05)
+        shell_pgid = srv._pane_fg_pgid(p)
+
+        # 셸에서 앱을 띄운다: 마우스 트래킹만 켜고 살아 있는다.
+        app = (f"{sys.executable} -c 'import sys,time; "
+               'sys.stdout.write("\\033[?1000;1002;1003;1006h"); '
+               "sys.stdout.flush(); time.sleep(60)'\n")
+        p.pty.write(app.encode())
+        got = await wait_for(lambda: p.mouse_track == 3 and p._mouse_owner_pgid > 1,
+                             timeout=15.0, step=0.05)
+        owner = p._mouse_owner_pgid
+        assert got and owner > 1, "앱이 켠 트래킹의 소유자 pgid 가 기록돼야 한다"
+        assert owner != shell_pgid, \
+            "소유자는 셸이 아니라 트래킹을 켠 **앱**의 프로세스 그룹이어야 한다"
+        assert srv._mouse_tracking_stale(p) is False, "살아 있는 앱은 stale 이 아니다"
+
+        # ssh 끊김/강제 종료: 앱은 해제 DECSET(?1000l…)을 낼 기회가 없다.
+        # ⚠ 이 단언을 지우지 말 것: pgid 0/자기 그룹에 쏘면 **러너와 부모 셸**이 함께
+        # 죽는다(POSIX 에서 killpg 의 0 = 호출자 그룹, CLAUDE.md 2026-07-26 사고).
+        # 실제로 소유자 기록을 지운 뮤테이션 실행에서 owner=0 으로 여기까지 흘러
+        # 러너가 통째로 사라졌다 — 기록 실패는 위 단언에서 멈춰야 한다.
+        assert owner > 1 and owner != os.getpgid(0)
+        os.killpg(owner, signal.SIGKILL)
+        await wait_for(lambda: srv._pane_fg_pgid(p) == shell_pgid,
+                       timeout=15.0, step=0.05)
+        assert srv._mouse_tracking_stale(p) or p.mouse_track == 0, \
+            "셸 프롬프트로 돌아왔으면 남은 트래킹은 stale 로 판정돼야 한다"
+        # 마우스 이벤트가 없어도 주기 스윕(2초)이 플래그를 걷어낸다.
+        await wait_for(lambda: p.mouse_track == 0, timeout=15.0, step=0.05)
+
+        # 이 상태에서 마우스를 움직이면 예전엔 셸 프롬프트에 `35;61;31M…` 이 박혔다.
+        class _Spy:
+            def __init__(self):
+                self.writes = []
+
+            def write(self, data):
+                self.writes.append(data)
+
+            def set_winsize(self, rows, cols):
+                pass
+
+        client = ClientConn(None)
+        client.session = sess
+        spy = _Spy()
+        real, p.pty = p.pty, spy
+        srv._handle_input(client, {
+            "pane": p.id, "mouse": True,
+            "data": base64.b64encode(b"\x1b[<35;61;31M").decode()})
+        assert spy.writes == [], "셸로 새는 SGR 리포트가 한 바이트도 없어야 한다"
+        assert p.mouse_track == 0 and p.mouse_sgr is False
+        p.pty = real
+    finally:
         await teardown(srv, task, sock)
 
 
@@ -4959,6 +5162,24 @@ async def test_small_chunk_burst_engages_drain_backpressure():
         # 모든 바이트가 손실 없이 pyte 에 먹였는지(렌더된 한 줄에 64*N 개의 x).
         assert pane_text(pane).count("x") == len(total), "버스트 드레인도 무손실"
     finally:
+        await teardown(srv, task, sock)
+
+
+async def test_status_carries_exit_empty_current_value():
+    """status 가 exit_empty 현재값을 싣는다(설정 화면 '미상' 제거, 2026-07-30).
+    coalesce_repaints 등 다른 전역 옵션은 실렸는데 이 칸만 빠져 있어 파이썬·네이티브
+    클라 모두 exit-empty 를 '미상'으로 보였다. 양성 확인: 기본 on → set 후 off."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        assert srv._status_msg(sess)["exit_empty"] is True, "기본 on 이 실려 온다"
+        srv.set_exit_empty(False)
+        assert srv._status_msg(sess)["exit_empty"] is False, "바꾼 값이 따라온다"
+    finally:
+        try:
+            os.unlink(srv.opts_path)   # set 이 opts.json 을 영속한다 — 흔적 제거
+        except OSError:
+            pass
         await teardown(srv, task, sock)
 
 

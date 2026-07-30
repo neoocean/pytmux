@@ -220,6 +220,13 @@ _ALT_RE = re.compile(rb"\x1b\[\?(1049|1047|47)(h|l)")
 # → 전체 파라미터 목록을 잡은 뒤 관심 모드만 추린다.
 _MOUSE_DECSET_RE = re.compile(rb"\x1b\[\?([0-9;]+)(h|l)")
 _MOUSE_TRACK_MODES = frozenset((1000, 1002, 1003))
+# DECSET 이 PTY read/FEED_SLICE(8KiB) 경계에 걸쳐 쪼개져도 놓치지 않게 보관하는 직전
+# 데이터 꼬리 길이. 스캔이 stateless 라 `\x1b[?1000;1002;1003;1006l` 한 개가 두 조각으로
+# 갈리면 **해제를 통째로 놓쳐** 트래킹이 켜진 채 남는다(= 앱 종료 후 셸 프롬프트에 SGR
+# 리포트가 텍스트로 박히는 증상). 관심 시퀀스 최장(결합형 8모드 해제)보다 넉넉히 잡는다.
+# carry 를 앞에 붙여 다시 스캔하므로 같은 시퀀스가 두 번 적용될 수 있으나, 모드 집합
+# add/discard 는 멱등이고 순서도 그대로라 결과는 같다.
+_MOUSE_CARRY = 64
 
 # 풀스크린 클리어(erase-in-display all): CSI 2J / CSI 3J. alt-screen 에서 이 시퀀스
 # 이전에 그려진 내용은 전부 지워지므로(스크롤백 없음) 그 앞 바이트는 화면에 안 보인다.
@@ -375,6 +382,12 @@ class Pane:
         self.mouse_track = 0        # 0=off 1=press/release 2=+drag 3=any-motion
         self.mouse_sgr = False      # 1006 SGR 확장 좌표 인코딩 사용 여부
         self._mouse_sent = (0, False)  # 클라이언트로 마지막 전달한 (track, sgr)
+        self._mouse_carry = b""     # DECSET 이 read 경계에 걸릴 때의 직전 꼬리
+        self._mouse_on_seen = False  # 직전 슬라이스에 트래킹 **켜기**가 있었는지
+        # 트래킹을 켠 앱의 포그라운드 프로세스 그룹(서버가 tcgetpgrp 로 기록, 0=모름).
+        # 그 그룹이 사라졌는데 트래킹이 남아 있으면 = 앱이 teardown 없이 죽은 stale
+        # 상태다(serverio._mouse_tracking_stale).
+        self._mouse_owner_pgid = 0
         self.pipe_proc = None    # pipe-pane 대상 프로세스
         # PTY 백엔드 핸들(pty_backend.PtyProcess). 서버가 spawn 직후 주입한다.
         # 렌더 전용(replay/진단) 패널은 None — master_fd/child_pid 만 -1 로 둔다.
@@ -430,9 +443,7 @@ class Pane:
         self.bracketed = False
         self.sync_output = False
         self._sync_since = 0.0
-        self._mouse_modes = set()
-        self.mouse_track = 0
-        self.mouse_sgr = False
+        self.reset_mouse_modes()
         self._mouse_sent = (0, False)
 
     # 작업 보존 재시작(re-exec)용 직렬화 — docs/internal/RESTART_SCENARIO.md ⓑ/ⓓ.
@@ -522,6 +533,10 @@ class Pane:
             "rows": self.rows,
             "mouse_modes": sorted(self._mouse_modes),
             "mouse_sgr": self.mouse_sgr,
+            # 트래킹 소유 프로세스 그룹도 넘긴다 — PTY/셸은 재시작을 가로질러 살아
+            # 있으므로 pgid 도 그대로 유효하고, 안 넘기면 복원된 플래그의 stale 여부를
+            # 새 이미지가 영영 판정 못 한다(앱이 다음 켜기를 낼 때까지).
+            "mouse_owner_pgid": self._mouse_owner_pgid,
             "prompt_clear_queue": list(self.prompt_clear_queue),
             # Claude 보존 필드(프롬프트 대기큐·상태/세션 등)는 플러그인이
             # 직렬화한다(S4). 코어는 내용을 해석하지 않고 불투명 dict 로 담는다 —
@@ -564,6 +579,10 @@ class Pane:
         self.mouse_track = (3 if 1003 in self._mouse_modes
                             else 2 if 1002 in self._mouse_modes
                             else 1 if 1000 in self._mouse_modes else 0)
+        try:
+            self._mouse_owner_pgid = int(d.get("mouse_owner_pgid", 0) or 0)
+        except (TypeError, ValueError):
+            self._mouse_owner_pgid = 0
         self.prompt_clear_queue = list(d.get("prompt_clear_queue", []))
         # Claude 보존 필드 복원은 플러그인이(S4). 구 이미지 하위호환: 예전 export 는
         # pending_prompts 를 최상위 키로 담았으므로, plugin_state 가 없고 그 키가
@@ -613,15 +632,40 @@ class Pane:
             if ac.get("hidden"):
                 self.feed(b"\x1b[?25l")
 
+    def reset_mouse_modes(self) -> None:
+        """마우스 트래킹 상태를 전부 끈다(새 셸 respawn·stale 회수 공용).
+        `_mouse_owner_pgid` 도 지워 다음 앱이 자기 그룹을 새로 등록하게 한다."""
+        self._mouse_modes = set()
+        self.mouse_track = 0
+        self.mouse_sgr = False
+        self._mouse_carry = b""
+        self._mouse_on_seen = False
+        self._mouse_owner_pgid = 0
+
     def update_mouse_modes(self, data: bytes) -> bool:
         """피드 데이터에서 마우스 트래킹 DECSET(1000/1002/1003/1006)을 추적한다.
         bracketed paste(2004) 추적과 같은 위치에서 호출. 상태가 바뀌면 True 를
-        반환해 서버가 클라이언트에 레이아웃을 다시 보내게 한다."""
-        if b"\x1b[?" not in data:   # 어떤 DECSET private 모드도 없음 — 빠른 탈출
+        반환해 서버가 클라이언트에 레이아웃을 다시 보내게 한다.
+
+        데이터는 PTY read/FEED_SLICE 단위로 잘려 오므로 시퀀스가 경계에 걸칠 수 있다
+        → 직전 꼬리(_MOUSE_CARRY)를 앞에 붙여 스캔한다(NEST/SYNC 질의 스캔과 같은
+        기법). 이 슬라이스에서 트래킹을 **켠** 시퀀스를 봤으면 `_mouse_on_seen` 을
+        세워, 서버가 그 시점의 포그라운드 프로세스 그룹을 소유자로 기록하게 한다."""
+        prev = self._mouse_carry
+        self._mouse_carry = (data[-_MOUSE_CARRY:] if len(data) >= _MOUSE_CARRY
+                             else (prev + data)[-_MOUSE_CARRY:])
+        self._mouse_on_seen = False
+        # 빠른 탈출: 이 조각에도, 이어붙일 꼬리에도 DECSET 이 될 씨앗이 없다.
+        if b"\x1b[?" not in data and b"\x1b" not in prev:
             return False
         before = (self.mouse_track, self.mouse_sgr)
-        for mo in _MOUSE_DECSET_RE.finditer(data):
+        for mo in _MOUSE_DECSET_RE.finditer(prev + data):
             on = mo.group(2) == b"h"
+            # carry 안에서 **끝난** 시퀀스는 이전 호출에서 이미 본 것이다(멱등 재적용).
+            # 그걸 '지금 켰다'로 세면 소유자 pgid 가 그 시퀀스를 낸 앱이 아니라 지금
+            # 전경에 있는 프로세스(대개 앱이 죽은 뒤의 셸)로 잘못 기록돼, stale 판정이
+            # 통째로 무력화된다(실측: 실 PTY 종단 테스트가 이 구멍으로 실패했다).
+            fresh = mo.end() > len(prev)
             for tok in mo.group(1).split(b";"):
                 if not tok.isdigit():
                     continue
@@ -631,6 +675,8 @@ class Pane:
                 elif mode in _MOUSE_TRACK_MODES:
                     if on:
                         self._mouse_modes.add(mode)
+                        if fresh:
+                            self._mouse_on_seen = True
                     else:
                         self._mouse_modes.discard(mode)
         self.mouse_track = (3 if 1003 in self._mouse_modes

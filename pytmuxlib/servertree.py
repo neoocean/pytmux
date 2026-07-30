@@ -734,6 +734,11 @@ class ServerTreeMixin:
     async def _autorename_loop(self):
         while self.running:
             await asyncio.sleep(2.0)
+            # 죽은 앱이 남긴 마우스 트래킹 회수(serverio._sweep_stale_mouse). 마우스
+            # 이벤트를 기다리지 않고 걷어내야 그 패널의 휠 스크롤백도 곧 돌아온다.
+            # 여기 편승 = 이미 도는 유일한 저빈도(2초) 패널 순회 루프이고, 검사는
+            # 트래킹이 켜진 패널당 ioctl 1회라 `ps` 오프로드와 달리 루프를 안 막는다.
+            self._sweep_stale_mouse()
             for sess in list(self.sessions.values()):
                 clients = [c for c in self.clients if c.session is sess]
                 if not clients:
