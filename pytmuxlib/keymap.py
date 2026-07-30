@@ -173,6 +173,8 @@ def load_config(path: str | None = None) -> dict:
         set inactive-dim-ratio <0~0.8>   # 흐리게 세기(기본 0.18)
         set mouse-drag-threshold <1~20>  # 드래그 복사로 인정할 최소 이동 칸수
                                   #   (기본 3 — 짧은 클릭이 드래그로 오인되는 것 방지)
+        set copy-unwrap on|off    # 마우스 복사 시 앱이 접은 줄바꿈·들여쓰기 펴기
+                                  #   (기본 on — 긁어 복사한 명령을 바로 붙여넣기)
         set ambiguous-width auto|narrow|wide  # East Asian Ambiguous 폭(→·— 등)
                                   #   auto(기본)=기동 시 단말 자동감지, wide=강제 2칸
                                   #   (CJK 로케일 단말), narrow=1칸
@@ -226,6 +228,11 @@ def load_config(path: str | None = None) -> dict:
                             cfg["mouse_drag_threshold"] = int(val)
                         except ValueError:
                             pass
+                    elif opt in ("copy-unwrap", "copy_unwrap"):
+                        # 마우스 복사 시 **앱이 접은** 줄바꿈·매달림 들여쓰기 펴기
+                        # (기본 on) — Claude Code 의 `! …` 명령을 바로 붙여넣기 위함.
+                        cfg["copy_unwrap"] = val.lower() in (
+                            "on", "true", "1", "yes")
                     elif opt == "status-bg":
                         cfg["status_bg"] = val
                     elif opt == "status-fg":
@@ -330,6 +337,7 @@ _OPT_ALIASES = {
     "inactive-dim-ratio": ("inactive_dim_ratio",),
     "mouse-drag-copy": ("mouse_drag_copy",),
     "mouse-drag-threshold": ("mouse_drag_threshold",),
+    "copy-unwrap": ("copy_unwrap",),
     "strip-box-drawing": ("strip_box_drawing",),
     "lang": ("language",),
 }

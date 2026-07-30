@@ -38,6 +38,160 @@ async def test_strip_box_drawing_filter():
     assert s("a─b─c") == "a─b─c"
 
 
+def _fold(cmd, pane_w=80, marker="> ", hang=2):
+    """앱(Claude Code 등)이 하는 것처럼 낱말 단위로 접어 **화면 줄들**을 만든다 —
+    첫 줄은 마커 뒤에서 시작하고 이어지는 줄은 매달림 들여쓰기가 붙는다."""
+    rows, cur = [], marker
+    for w in cmd.split(" "):
+        cand = cur + (" " if cur.strip() and not cur.endswith(" ") else "") + w
+        if len(cand) > pane_w:
+            rows.append(cur.rstrip())
+            cur = " " * hang + w
+        else:
+            cur = cand
+    rows.append(cur.rstrip())
+    return rows
+
+
+def _drag(rows, x0):
+    """첫 줄 x0 부터 마지막 줄 끝까지 긁은 선택 텍스트(중간·끝 줄은 열 0 부터 —
+    _extract_selection·extract_range 의 규칙)."""
+    return "\n".join((r[x0:] if i == 0 else r) for i, r in enumerate(rows))
+
+
+# 제보의 실물: 긁어 복사해 셸에 바로 붙여넣고 싶은 `!` 명령(공백으로 접힌다).
+_BANG_CMD = ("! p4 opened -c 68575 | sed 's/#.*//' | grep -v \"/pytmux/\" | "
+             "xargs p4 reopen -c default && p4 opened -c 68575 | "
+             "grep -vc \"/pytmux/\"")
+
+
+async def test_unwrap_copy_text_folds_app_wrapped_lines():
+    """copy-unwrap(제보 2026-07-30): Claude Code 화면의 `! …` 명령을 긁어 복사하면 앱이
+    스스로 접은 자리마다 개행+매달림 들여쓰기가 섞여 그대로 붙여넣을 수 없었다. 접힘을
+    펴 **원문 한 줄로 되돌리는지**(폭·매달림 깊이 전반) + 진짜 줄바꿈은 건드리지 않는지."""
+    from pytmuxlib.clientutil import unwrap_copy_text as u
+    # ① 왕복: 폭/매달림 들여쓰기를 바꿔 가며 접어도 원문 한 줄로 복원된다.
+    for pane_w in (46, 50, 60, 70, 80, 100, 120):
+        rows = _fold(_BANG_CMD, pane_w)
+        assert u(_drag(rows, 2), pane_w, 2) == _BANG_CMD, (pane_w, rows)
+    for hang in (2, 3, 4, 6, 8, 10):
+        rows = _fold(_BANG_CMD, 80, marker=" " * hang, hang=hang)
+        assert u(_drag(rows, hang), 80, hang) == _BANG_CMD, (hang, rows)
+    # ② 현행 입력박스: 위아래 가로줄 구획(─)이 함께 긁혀도 그 줄만 사라진다.
+    rows = _fold(_BANG_CMD, 80, marker=" ❯ ", hang=3)
+    assert u(_drag(rows, 3) + "\n" + "─" * 44, 80, 3) == _BANG_CMD
+    # ②' 지워진 구분선 자리는 **경계**다 — 윗 대화 끝줄과 입력줄이 맞붙어 이어붙으면
+    #    안 된다(구분선을 그냥 버리면 아래가 한 줄로 합쳐진다).
+    assert u("⏺ 앞 대화의 마지막 줄이 화면 폭 근처까지 길게 이어져 있었다고 하자!!\n"
+             "────────────────────────────────\n"
+             " ❯ ! echo hi", 68, 0) == (
+        "⏺ 앞 대화의 마지막 줄이 화면 폭 근처까지 길게 이어져 있었다고 하자!!\n"
+        " ❯ ! echo hi")
+    # ③ 옛 모서리 박스(세로 테두리 │)도 안쪽 패딩만 남기고 떨어진다.
+    assert u("! echo this command was folded by the app right about here │\n"
+             "│   and continues on the next line", 62, 2) == (
+        "! echo this command was folded by the app right about here "
+        "and continues on the next line")
+    # ④ 한 줄 선택은 사용자가 고른 그대로 — 손대지 않는다(공백까지 보존).
+    assert u("  ! echo hi  ", 80, 2) == "  ! echo hi  "
+    # ⑤ 폭을 모르면(구 경로·정보 없음) 판정 근거가 없어 원문 그대로.
+    assert u("aaa\n  bbb", 0, 0) == "aaa\n  bbb"
+    # ⑥ 오탐 배터리 — **이어붙이면 안 되는** 진짜 줄바꿈들(줄 수가 그대로여야 한다).
+    keep = (
+        # 열 0 에서 시작하는 긴 줄들(로그·ls) — 매달림 들여쓰기가 없다.
+        "2026-07-30 12:00:01 INFO something happened here in the log detail\n"
+        "2026-07-30 12:00:02 INFO short",
+        # 코드: 블록을 여는 `:`/`;` 로 끝난 줄은 의도된 줄 끝.
+        "    if some_condition and another_condition and yet_another_cond:\n"
+        "        do_something()",
+        "  const x = computeSomethingVeryLongAndImportant(a, b, c, d, e);\n"
+        "    next_statement()",
+        # 셸 이어짐(\\) — 그대로 둬야 붙여넣기가 산다.
+        "docker run --rm -it -v /very/long/path:/data --name mycontainer \\\n"
+        "    ubuntu:24.04",
+        # 짧은 블록(YAML 목록) — 애초에 접힐 폭이 아니다.
+        "items:\n  - alpha\n  - beta",
+        # 빈 줄(문단 경계)을 넘어 잇지 않는다.
+        "! echo one two three four five six seven eight nine ten eleven twe\n"
+        "\n  indented after blank",
+    )
+    for t in keep:
+        assert u(t, 80, 0).count("\n") == t.count("\n"), t
+    # ⑦ 반대로, 낱말 하나가 들어갈 자리도 없던 자리는 이어붙인다(인자 목록 접힘).
+    assert u("foo = bar(alpha, beta, gamma, delta, epsilon, zeta, eta, iota,\n"
+             "          kappa)", 64, 0) == (
+        "foo = bar(alpha, beta, gamma, delta, epsilon, zeta, eta, iota, kappa)")
+
+
+async def test_mouse_drag_copy_applies_unwrap_per_toggle():
+    """호출부 오라클: 마우스 드래그 복사가 **선택 패널의 폭·시작 열로** copy-unwrap 을
+    실제로 적용하는지(화면-내 추출 경로 + 서버 추출 `selection` 회신 경로), 그리고
+    `set copy-unwrap off` 면 원문 그대로 가는지. 값을 만드는 unwrap_copy_text 만 테스트
+    하면 이 호출을 지워도 통과한다(공허 통과 방지 — 뮤테이션에 '호출 제거' 포함)."""
+    # 폭 74 패널 · 매달림 8칸(`⏺ Bash(…` 처럼 깊은 들여쓰기). 이 조합은 첫 줄의 **시작
+    # 열**까지 넘겨야 접힘 폭 추정이 맞는 자리다 — first_col 을 0 으로 바꾸면 깨진다.
+    rows = _fold(_BANG_CMD, 74, marker=" " * 8, hang=8)
+    folded = _drag(rows, 8)
+    assert "\n" in folded, rows                  # 실제로 접혔는지(전제 확인)
+
+    async def body(app, pilot, srv):
+        v = app.view
+        app.layout = {"panes": [{"id": 7, "x": 1, "y": 1, "w": 74, "h": 20,
+                                 "box": [0, 0, 76, 22], "active": True}],
+                      "dividers": [], "active": 7, "cols": 80, "rows": 24}
+        app.mode = "normal"
+        app.mouse_drag_copy = True
+        app.mouse_drag_threshold = 1
+        copied = []
+        app.copy_text = lambda t: copied.append(t)
+        app.send_mouse = lambda pid, data: None
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        v._extract_selection = lambda: folded
+
+        def drag():
+            v.on_mouse_down(_MouseEv(9, 2))       # 패널 열 8 에서 시작(= 마커 뒤)
+            v.on_mouse_move(_MouseEv(20, 3))
+            v.on_mouse_up(_MouseEv(20, 3))
+
+        # (1) on(기본): 드래그를 놓으면 접힘이 펴진 **한 줄**이 클립보드로 간다.
+        app.copy_unwrap = True
+        drag()
+        assert copied == [_BANG_CMD], copied
+        # (2) off: 종전 그대로(앱이 접은 개행·들여쓰기 보존).
+        copied.clear()
+        app.copy_unwrap = False
+        drag()
+        assert copied == [folded], copied
+        # (3) 서버 추출 경로: 선택이 한 화면을 넘을 수 있어 절대 좌표를 알면 서버에
+        # copy_range 를 요청한다(회신 `selection`). 회신에는 패널 정보가 없으니 요청 때
+        # 폭·시작 열을 남겨야 하고, 그 값으로 펴야 한다 — 기록을 지우면 원문이 나온다.
+        copied.clear()
+        sent.clear()
+        app.copy_unwrap = True
+        app.pane_top = {7: 100}                   # 절대 좌표 가능 → copy_range 경로
+        app._copy_unwrap_geom = (0, 0)            # 남기는 쪽을 오라클로
+        drag()
+        assert copied == [], "절대 좌표를 알면 클라가 스스로 복사하지 않는다"
+        assert [a for a, _ in sent] == ["copy_range"], sent
+        assert app._copy_unwrap_geom == (74, 8), app._copy_unwrap_geom
+        app._dispatch({"t": "selection", "text": folded})
+        assert copied == [_BANG_CMD], copied
+
+    await _with_app(body, size=(80, 24))
+
+
+class _MouseEv:
+    """on_mouse_* 에 넣는 최소 마우스 이벤트(테스트 로컬)."""
+
+    def __init__(self, x, y, button=1):
+        self.x, self.y, self.button = x, y, button
+        self.ctrl = self.shift = False
+
+    def stop(self):
+        pass
+
+
 async def test_win_clipboard_utf16_roundtrip_preserves_korean():
     """Windows 클립보드 코드페이지 mojibake 수정(제보 2026-07-13): clip.exe/
     Get-Clipboard 가 stdin/stdout 을 콘솔 코드페이지(cp949)로 해석해 UTF-8 한글이

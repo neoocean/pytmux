@@ -38,7 +38,7 @@ from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     _signed_int, _with_reverse,
     has_hangul, hangul_to_qwerty, harden_no_color_filters,
     _normalize_key, _shell_argv, key_to_bytes, make_style, strip_box_drawing,
-    theme_color)
+    theme_color, unwrap_copy_text)
 from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 사용)
     ChooseBufferScreen, ChooseLayoutScreen, ChooseTreeScreen,
     CommandListScreen, CommandOptionsScreen, ComposePromptScreen, ConfirmScreen,
@@ -78,6 +78,20 @@ class _ClipboardMixin:
         # 그때마다 UI 가 멈춘다. paste 와 같은 to_thread 패턴으로 오프로드하고 완료
         # 콜백에서 '복사됨' 메시지를 띄운다(검수 M-4).
         self.run_worker(self._do_copy_text(text), exclusive=False)
+
+    def copy_selection_text(self, text, cols=0, first_col=0):
+        """**마우스 선택** 텍스트를 클립보드로 — copy_text 앞에 `copy-unwrap` 을 끼운다.
+
+        선택 텍스트에는 앱(Claude Code 등)이 스스로 접은 줄바꿈과 그에 딸린 매달림
+        들여쓰기가 섞여 있어 셸/입력창에 그대로 붙여넣을 수 없었다(제보 2026-07-30).
+        켜져 있으면(기본 on) 여기서 펴서 넣는다. `cols` = 선택이 일어난 패널의 내용
+        폭, `first_col` = 첫 줄의 시작 열(둘 다 접힘 판정 근거) — 폭을 모르면 판정
+        불가로 원문 그대로 간다. 알림 로그 복사 등 마우스 밖 경로는 종전대로
+        copy_text 를 직접 부른다(펴지 않는다)."""
+        if text and getattr(self, "copy_unwrap", True):
+            text = unwrap_copy_text(text, cols, first_col)
+        if text:
+            self.copy_text(text)
 
     async def _do_copy_text(self, text):
         clip = await asyncio.to_thread(clientclip.copy, text)
@@ -682,6 +696,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     20, int(config.get("mouse_drag_threshold", 3))))
             except (TypeError, ValueError):
                 self.mouse_drag_threshold = 3
+            # 마우스 선택 복사에서 **앱이 접은** 줄바꿈·매달림 들여쓰기를 펴 붙여넣기
+            # 가능한 한 줄로 만든다(기본 on). Claude Code 의 `! …` 명령을 긁어 복사하면
+            # 접힌 자리마다 개행+들여쓰기가 섞여 그대로 못 붙여넣던 문제(제보
+            # 2026-07-30). 판정은 휴리스틱이라(앱 접힘엔 신호가 없다) 오탐이 거슬리면
+            # `set copy-unwrap off` — clientutil.unwrap_copy_text 주석에 게이트 설명.
+            self.copy_unwrap = bool(config.get("copy_unwrap", True))
+            # copy_range 회신(selection)에 쓸 (선택 패널 폭, 첫 줄 시작 열).
+            self._copy_unwrap_geom = (0, 0)
             # 마우스 이벤트 진단 로그(원격 SSH 휠 스크롤 미동작 등 환경 의존 문제용).
             # `set mouse-debug on` 으로 켜면 클라이언트가 받은 마우스/휠 이벤트와
             # **내비게이션 키**(↑/↓/페이지/홈/엔드 — `_KEY_DIAG` 화이트리스트)를
@@ -1306,7 +1328,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 무시(선택이 공백뿐인 경우 종전 동작과 동일).
                 _txt = msg.get("text") or ""
                 if _txt:
-                    self.copy_text(_txt)
+                    _w, _fc = getattr(self, "_copy_unwrap_geom", (0, 0))
+                    self.copy_selection_text(_txt, _w, _fc)
             elif t == "captured":
                 self.display_message(i18n.t("msg.captured_chars",
                                             n=msg.get('chars', 0)))
@@ -1708,6 +1731,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 else:
                     self.display_message(i18n.t("msg.mouse_drag_threshold",
                                                 n=self.mouse_drag_threshold))
+            elif name in ("copy-unwrap", "copy_unwrap"):
+                self.copy_unwrap = val.lower() in ("on", "true", "1", "yes")
+                self.display_message(i18n.t(
+                    "msg.copy_unwrap",
+                    state=("ON" if self.copy_unwrap else "OFF")))
             elif name in ("mouse-debug", "mouse-log"):
                 self.mouse_debug = val.lower() in ("on", "true", "1", "yes")
                 if self.mouse_debug:
@@ -1843,6 +1871,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return "on" if self.mouse_drag_copy else "off"
             if key in ("mouse-drag-threshold", "mouse_drag_threshold"):
                 return str(self.mouse_drag_threshold)
+            if key in ("copy-unwrap", "copy_unwrap"):
+                return "on" if self.copy_unwrap else "off"
             if key == "mode-keys":
                 return self.mode_keys
             if key == "alt-scroll":
@@ -1895,6 +1925,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 f"mouse       {'on' if self.mouse_enabled else 'off'}",
                 f"mouse-drag-copy {'on' if self.mouse_drag_copy else 'off'}",
                 f"mouse-drag-threshold {self.mouse_drag_threshold}",
+                f"copy-unwrap {'on' if self.copy_unwrap else 'off'}",
                 f"mouse-debug {'on' if self.mouse_debug else 'off'}",
                 f"alt-scroll  {'on' if self.disable_alt_scroll else 'off'}",
                 f"status-bg   {self.status.bg}",

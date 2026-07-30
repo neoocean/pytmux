@@ -57,6 +57,101 @@ def strip_box_drawing(text: str) -> str:
     return "\n".join(out)
 
 
+# ── 마우스 복사 '앱-접힘' 펴기(copy-unwrap) ───────────────────────────────────
+# 제보 2026-07-30: Claude Code 화면의 `! …` 셸 명령을 마우스로 긁어 복사하면, **앱이
+# 스스로 접은** 자리마다 개행과 이어지는 줄의 매달림 들여쓰기가 함께 딸려와 셸/입력창에
+# 그대로 붙여넣을 수 없었다(사용자는 별도 에디터에서 손으로 지우고 있었다).
+#
+# 왜 휴리스틱인가: 터미널 오토랩(DECAWM)으로 접힌 줄은 pytmux 가 `wrapped` 태그로
+# **정확히** 알아 이미 한 줄로 잇는다(model.extract_range·_extract_selection). 하지만
+# Claude Code 처럼 앱이 폭 미만에서 스스로 접어 **하드 개행**으로 내보낸 줄은 그 신호가
+# 원천 부재다(ConPTY prewrap 과 같은 한계) → 남은 단서는 텍스트 모양뿐이다.
+#
+# 오탐(진짜 줄바꿈을 이어붙임)을 줄이는 게이트:
+#   ① 이어지는 줄이 **들여쓰여** 있어야 한다(매달림 들여쓰기). 로그·`ls` 출력처럼 열 0
+#      에서 시작하는 긴 줄들은 절대 이어붙지 않는다.
+#   ② 앞 줄 끝에 이어지는 줄의 **첫 낱말이 들어갈 자리가 없었어야** 한다 — 들어갈 수
+#      있었다면 앱은 접을 이유가 없었다(= 의도된 줄바꿈). 접힘 폭은 블록에서 관측된
+#      최대 채움(fill)으로 추정한다.
+#   ③ 블록이 폭 근처까지 차 있어야 하고(짧은 목록·YAML 배제), 앞 줄이 코드/셸의
+#      **의도된 줄 끝 문자**로 끝나지 않아야 한다(`:` `;` `{` `}` `\`).
+# 그래도 앱-접힘과 하드 개행이 원리상 구분 불가인 경우가 남는다 → `set copy-unwrap off`.
+_UNWRAP_HANG_MAX = 12       # 매달림 들여쓰기 상한(더 깊으면 코드 블록으로 본다)
+_UNWRAP_MIN_FILL = 24       # 이보다 좁은 블록은 접힐 일이 없다
+_UNWRAP_TAIL_STOP = ":;{}\\"   # 이 문자로 끝난 줄은 '의도된 줄 끝'
+# 접힘 폭 추정의 여유 칸. 앱은 보통 오른쪽에 1~2칸을 남기고 접는데(입력박스 패딩),
+# 관측 최대 채움(fill)은 그만큼 작게 잡힌다 — 그러면 이어지는 줄의 첫 낱말이 `|`·`&`
+# 처럼 1글자일 때 "들어갈 자리가 있었다"로 오판해 접힘을 놓친다(실측).
+_UNWRAP_SLACK = 2
+# 복사 쪽 앞 테두리 제거는 붙여넣기 쪽(_BOX_LEAD_RE)과 둘이 다르다: **안쪽 패딩 한 칸을
+# 남긴다**(그 칸이 매달림 들여쓰기 신호 ①다). 패널 왼쪽에 여백을 두고 박스를 그리는 앱을
+# 위해 테두리 앞 공백도 함께 먹는다.
+_BOX_LEAD_COPY_RE = re.compile("^[ \t]*[─-╿]+")
+
+
+def _vis_width(s: str) -> int:
+    """문자열의 표시 칸 수(한글·CJK 2칸). 접힘 판정은 칸 기준이라 len() 은 못 쓴다."""
+    return sum(char_cells(ch) for ch in s)
+
+
+def _line_indent(s: str) -> int:
+    return len(s) - len(s.lstrip(" "))
+
+
+def _is_app_wrap(prev: str, cur: str, fill: int, prev_cells: int) -> bool:
+    """`cur` 가 `prev` 의 이어지는 줄(앱이 접은 자리)인지 — 위 ①②③ 게이트.
+    `prev_cells` = `prev` 가 실제로 차지한 칸 수(첫 줄은 시작 열이 더해져 있다)."""
+    if not prev.strip() or not cur.strip():
+        return False
+    if not 0 < _line_indent(cur) <= _UNWRAP_HANG_MAX:
+        return False                                  # ① 매달림 들여쓰기 없음
+    if prev[-1] in _UNWRAP_TAIL_STOP:
+        return False                                  # ③ 의도된 줄 끝
+    word = cur.strip().split(" ", 1)[0]
+    return prev_cells + 1 + _vis_width(word) + _UNWRAP_SLACK > fill         # ②
+
+
+def unwrap_copy_text(text: str, width: int, first_col: int = 0) -> str:
+    """마우스 선택 텍스트에서 **앱이 접은** 줄바꿈과 그에 딸린 들여쓰기·테두리를 없앤다.
+
+    `width` = 선택이 일어난 패널의 내용 폭(칸). 한 줄 선택은 사용자가 고른 그대로가
+    정답이라 손대지 않고, 폭을 모르면(0/None) 판정 근거가 없어 그대로 돌려준다.
+    이어붙일 때는 낱말 사이에 공백 한 칸을 넣는다(앱의 접힘은 낱말 경계에서 일어난다).
+
+    `first_col` = 첫 줄이 시작하는 패널 내 열(드래그 시작 칸). 첫 줄만 그 칸에서
+    잘려 나와 나머지 줄보다 짧으므로, 칸 계산에 이 값을 되돌려 줘야 접힘 폭 추정이
+    어긋나지 않는다(매달림 들여쓰기가 깊은 표시에서 실제로 판정을 놓쳤다).
+    """
+    if not text or "\n" not in text or not width or width <= 0:
+        return text
+    lines, barrier = [], set()
+    for raw in text.split("\n"):
+        s = _BOX_TRAIL_RE.sub("", _BOX_LEAD_COPY_RE.sub("", raw)).rstrip()
+        if not s and raw.strip():
+            # 테두리/구분선만이던 줄(입력박스 위아래 가로줄) → 버리되 그 자리를
+            # **경계**로 남긴다. 안 그러면 구분선을 지운 뒤 위아래 남남인 줄(윗
+            # 대화 끝줄과 입력줄)이 맞붙어 이어붙을 수 있다.
+            barrier.add(len(lines))
+            continue
+        lines.append(s)
+    if len(lines) < 2:
+        return "\n".join(lines)
+    # 칸 폭: 첫 줄만 시작 열을 더해 다른 줄과 같은 원점(패널 열 0)으로 맞춘다.
+    pad = max(0, int(first_col or 0))
+    cells = [_vis_width(l) + (pad if i == 0 else 0) for i, l in enumerate(lines)]
+    fill = max(cells)
+    if fill < max(_UNWRAP_MIN_FILL, width // 2):
+        return "\n".join(lines)      # 폭 근처까지 안 간 블록 = 접힘이 아니다
+    out = [lines[0]]
+    for i in range(1, len(lines)):
+        if i not in barrier and _is_app_wrap(lines[i - 1], lines[i],
+                                             fill, cells[i - 1]):
+            out[-1] = out[-1] + " " + lines[i].strip()
+        else:
+            out.append(lines[i])
+    return "\n".join(out)
+
+
 # 셀 폭은 cellwidth.char_cells 한 곳이 권위다(모호폭 wide 모드를 일관 반영). 종전
 # 로컬 `_char_cells` 는 그 별칭 — 임포트 경로(`from .clientutil import _char_cells`)와
 # lru 메모이즈(C1 PERFORMANCE_REVIEW 2026-06-07: 합성 셀 루프·TabBar·상태줄에서 문자
@@ -878,7 +973,7 @@ COMMANDS = [
 # COMPLETIONS 에 "set <name>" 으로 병합한다(사용자 요청 2026-06-25).
 _SET_OPTION_NAMES = (
     "prefix", "mouse", "mouse-drag-copy", "mouse-drag-threshold",
-    "mouse-debug", "alt-scroll", "ambiguous-width",
+    "copy-unwrap", "mouse-debug", "alt-scroll", "ambiguous-width",
     "status", "status-bg", "status-fg", "status-left", "status-right",
     "status-format", "status-position", "status-interval", "mode-keys",
     "set-titles", "set-titles-string", "tab-bar", "default-path",
@@ -892,6 +987,7 @@ SET_OPTION_CHOICES = {
     "mouse": ("on", "off"),
     "mouse-drag-copy": ("on", "off"),
     "mouse-drag-threshold": ("1", "2", "3", "5", "8"),
+    "copy-unwrap": ("on", "off"),
     "mouse-debug": ("on", "off"),
     "mode-keys": ("vi", "emacs"),
     "tab-bar": ("always", "auto"),
@@ -1004,6 +1100,8 @@ SETTINGS = [
     {"key": "mouse-drag-threshold", "cat": "입력", "type": "int",
      "lo": 1, "hi": 20, "step": 1, "cmd": "set mouse-drag-threshold",
      "backend": "config"},
+    {"key": "copy-unwrap", "cat": "입력", "type": "bool",
+     "cmd": "set copy-unwrap", "backend": "config"},
     {"key": "mode-keys", "cat": "입력", "type": "enum",
      "choices": ["vi", "emacs"], "cmd": "set mode-keys", "backend": "config"},
     {"key": "alt-scroll", "cat": "입력", "type": "bool",

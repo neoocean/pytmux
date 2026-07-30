@@ -54,6 +54,27 @@ async def test_set_config_option_creates_missing_file_and_dirs():
     assert keymap.load_config(p)["mode_keys"] == "emacs"
 
 
+async def test_set_config_option_copy_unwrap_roundtrips():
+    """copy-unwrap(마우스 복사 시 앱-접힘 펴기, 기본 on)이 `:settings`→config 로
+    영속되고 load_config 가 copy_unwrap(언더바)으로 되읽는다. 별칭(언더바) 줄도
+    정규형으로 치환해 중복 줄이 생기지 않아야 한다."""
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "config")
+    assert keymap.load_config(p).get("copy_unwrap") is None    # 미지정 = 코드 기본
+    keymap.set_config_option("copy-unwrap", "off", p)
+    assert keymap.load_config(p).get("copy_unwrap") is False
+    keymap.set_config_option("copy-unwrap", "on", p)
+    txt = open(p, encoding="utf-8").read()
+    assert txt.count("set copy-unwrap ") == 1, txt
+    assert keymap.load_config(p).get("copy_unwrap") is True
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("set copy_unwrap on\n")
+    keymap.set_config_option("copy-unwrap", "off", p)
+    txt = open(p, encoding="utf-8").read()
+    assert txt.count("copy") == 1, txt
+    assert keymap.load_config(p).get("copy_unwrap") is False
+
+
 async def test_set_config_option_strip_box_drawing_roundtrips():
     """§2.13: strip-box-drawing 옵션이 config 에 set 줄로 영속되고 load_config 가
     strip_box_drawing(언더바)으로 되읽는다. 기본값은 코드에서 on 이므로 off 영속을 검증."""

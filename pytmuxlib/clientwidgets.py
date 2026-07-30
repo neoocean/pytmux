@@ -195,6 +195,18 @@ class MultiplexerView(Widget):
         except Exception:
             return ()
 
+    def _sel_first_col(self):
+        """선택 **첫 줄이 시작하는 패널 내 열**(없으면 0). 첫 줄만 드래그 시작 칸에서
+        잘려 나와 다른 줄보다 짧으므로, copy-unwrap 의 접힘 폭 추정이 이 값을 되돌려
+        받아야 어긋나지 않는다(매달림 들여쓰기가 깊은 표시에서 판정을 놓쳤다)."""
+        if not self._sel:
+            return 0
+        x0, y0, x1, y1 = self._sel
+        if (y0, x0) > (y1, x1):
+            x0 = x1
+        lx = self._sel_rect[0] if self._sel_rect else 0
+        return max(0, x0 - lx)
+
     def _extract_selection(self):
         if not self._sel or not self._cells:
             return ""
@@ -698,6 +710,11 @@ class MultiplexerView(Widget):
             # 으로 회신하면 클라가 OS 클립보드에 넣는다(client.py). 좌표를 모르면
             # (구 서버) 종전 화면-내 추출로 폴백해 동작이 그대로 유지된다.
             abs_sel, pid = self._sel_abs, self._sel_pane_id
+            # 선택 패널의 내용 폭과 첫 줄 시작 열 — `copy-unwrap` 이 '앱이 접은 줄'을
+            # 판정하는 근거다(clientutil.unwrap_copy_text). 서버 추출(copy_range) 회신
+            # 에는 패널 정보가 없으므로 요청할 때 app 에 남겨 둔다.
+            cols = self._sel_rect[2] if self._sel_rect else 0
+            first_col = self._sel_first_col()
             text = None if abs_sel is not None else self._extract_selection()
             self._sel_clear()
             self.release_mouse()
@@ -705,10 +722,11 @@ class MultiplexerView(Widget):
                 y0, x0, y1, x1 = abs_sel
                 if (y0, x0) > (y1, x1):
                     y0, x0, y1, x1 = y1, x1, y0, x0
+                self.app._copy_unwrap_geom = (cols, x0)
                 self.app.send_cmd("copy_range", pane=pid,
                                   y0=y0, x0=x0, y1=y1, x1=x1)
             elif text:
-                self.app.copy_text(text)
+                self.app.copy_selection_text(text, cols, first_col)
             self.app._composite()
             event.stop()
             return
