@@ -310,6 +310,54 @@ async def test_inactive_tab_claude_done_flag():
         await teardown(srv, task, sock)
 
 
+async def test_select_window_wid_survives_concurrent_reindex_race():
+    """제보(2026-07-31): ESC+숫자로 탭을 전환할 때 간헐적으로 입력한 번호의 다음
+    탭이 열린다. 클라가 표시 번호를 index 로 역매핑해 select_window 를 보내는데,
+    그 계산 시점(사람이 번호를 고르는 순간)과 서버가 커맨드를 처리하는 시점 사이에
+    다른 이벤트(다른 클라의 탭 kill/new/move, 핀 토글 등)가 sess.tabs 를 _reindex 하면
+    옛 index 는 이제 다른 탭을 가리킨다 — index 는 위치값이라 kill/move/핀 정규화마다
+    재할당되기 때문(servertree._reindex). 클라가 함께 보내는 wid(Tab 의 안정 id)로
+    서버가 그 사이 재배정된 현재 index 를 다시 찾아내면(_cmd_select_window), 레이스
+    구간에 탭이 밀려도 사람이 고른 바로 그 탭이 열려야 한다."""
+    from pytmuxlib.model import ClientConn
+
+    class _W:
+        def write(self, *_a):
+            pass
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            pass
+
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        srv.new_window(sess)
+        srv.new_window(sess)
+        srv.new_window(sess)          # 탭 4개: A(0) B(1) C(2) D(3)
+        a, b, c, d = sess.tabs
+        c_wid = c.wid
+        client = ClientConn(_W())
+        client.session = sess
+        # 클라는 "표시 3번 = C" 를 보고 그 시점의 index(2)·wid(c_wid) 를 함께 계산해
+        # 보냈다고 가정한다. 그런데 그 메시지가 서버에 도착하기 **직전**, 다른
+        # 클라이언트가 A(index0)를 닫아 sess.tabs 가 재인덱싱됐다: B(0) C(1) D(2).
+        # 이제 클라가 들고 있던 옛 index=2 는 C 가 아니라 D 를 가리킨다.
+        srv._remove_pane_from_tree(a.window.active_pane)
+        assert [t.name for t in sess.tabs] == ["win", "win", "win"]
+        assert sess.tabs[2] is d and sess.tabs[1] is c, "A 제거 후 위치가 밀림"
+        await srv._handle_cmd(client, {"t": "cmd", "action": "select_window",
+                                       "index": 2, "wid": c_wid})
+        assert sess.active_index == 1, "wid 로 재조회해 C 의 현재 위치를 골라야 함"
+        assert sess.tabs[sess.active_index] is c, \
+            "옛 index=2 를 그대로 썼다면 엉뚱한 탭(D)이 열렸을 것"
+    finally:
+        srv.clients.clear()
+        await teardown(srv, task, sock)
+
+
 async def test_model_badge_debounce_absorbs_transient_haiku():
     """모델 배지 오탐 수정(2026-06-22): opus 세션 중 화면에 haiku 가 한두 프레임 떠도
     (Haiku 서브에이전트/Task 출력·모델명 언급·/model 메뉴 잔상) 배지가 즉시 안 바뀐다.

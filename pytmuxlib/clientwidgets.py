@@ -994,8 +994,20 @@ class TabBar(Widget):
     def index_for_number(self, n):
         """표시 번호(1-based, 시각 순서) → 탭 index. 없으면 None. esc+숫자·alt+숫자
         이동이 _labels 의 표시 번호와 같은 순서를 따르게 한다(고정/원격 탭 재배치 대응)."""
+        t = self.tab_for_number(n)
+        return t["index"] if t else None
+
+    def tab_for_number(self, n):
+        """표시 번호(1-based, 시각 순서) → 탭 dict(index·wid 포함). 없으면 None.
+        wid(Tab 의 안정 id, model.Tab 주석 참고)를 select_window 에 index 와 함께
+        실으면, 클라가 번호를 계산한 시점과 서버가 커맨드를 처리하는 시점 사이
+        다른 클라이언트의 탭 생성/삭제/이동으로 sess.tabs 가 재인덱싱돼도 서버가
+        같은 탭을 다시 찾아낸다(간헐적 ESC+숫자 오탭 전환 레이스 대응)."""
         order = _visual_tab_order(self.tabs)
-        return order[n - 1] if 1 <= n <= len(order) else None
+        if not (1 <= n <= len(order)):
+            return None
+        idx = order[n - 1]
+        return next((t for t in self.tabs if t["index"] == idx), None)
 
     def _entries(self):
         """현재 상태(탭·스크롤·폭)에서 탭바에 그릴 항목을 (kind, payload, text)

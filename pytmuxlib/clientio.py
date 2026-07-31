@@ -184,10 +184,10 @@ class _InputMixin:
             n = event.key[4] if _alt_digit else _opt_key
             # 표시 번호(시각 순서) → 탭 index 역매핑 — 고정/원격 탭이 재배치돼도
             # 사용자가 보는 번호로 정확히 이동한다(07-14).
-            idx = (self.tabbar.index_for_number(int(n)) if n.isdigit()
-                   else None)
-            if idx is not None:
-                self.send_cmd("select_window", index=idx)
+            t = (self.tabbar.tab_for_number(int(n)) if n.isdigit()
+                 else None)
+            if t is not None:
+                self.send_cmd("select_window", index=t["index"], wid=t.get("wid"))
             else:
                 self.tabbar.blink_active()   # 없는 번호 → 활성 탭 깜빡임 안내
             event.prevent_default()
@@ -364,9 +364,9 @@ class _InputMixin:
             # 와 동일 규약(고정/원격 탭이 오른쪽으로 재배치돼도 사용자가 보는 번호와
             # 일치, 없는 번호는 무시). 종전엔 int(k)-1 로 정규화 전 위치를 바로 써
             # 고정/원격 탭이 섞이면 esc+숫자와 다른 탭으로 갔다(검수 L-4).
-            idx = self.tabbar.index_for_number(int(k))
-            if idx is not None:
-                self.send_cmd("select_window", index=idx)
+            t = self.tabbar.tab_for_number(int(k))
+            if t is not None:
+                self.send_cmd("select_window", index=t["index"], wid=t.get("wid"))
         elif k == "d":
             self.exit(message="detached")
         elif k == "left_square_bracket" or ch == "[":
@@ -521,9 +521,9 @@ class _InputMixin:
         # 순서)를 탭 index 로 역매핑해, 고정/원격 탭이 오른쪽으로 재배치돼도 사용자가
         # 보는 번호와 정확히 일치시킨다(07-14). 해당 번호 없으면 모드만 빠짐.
         if ch and ch.isdigit():
-            idx = tb.index_for_number(int(ch))
-            if idx is not None:
-                self.send_cmd("select_window", index=idx)
+            t = tb.tab_for_number(int(ch))
+            if t is not None:
+                self.send_cmd("select_window", index=t["index"], wid=t.get("wid"))
                 self._exit_esc()
             else:
                 # 없는 번호 → 전환 불가. 현재 활성 탭을 깜빡여 안내하고 esc 모드는

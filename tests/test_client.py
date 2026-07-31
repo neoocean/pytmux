@@ -1457,8 +1457,9 @@ async def test_esc_invalid_digit_blinks_active_tab():
         assert blinked == [True], "없는 번호 → 활성 탭 깜빡임"
         assert app.mode == "esc", "없는 번호는 esc 모드 유지"
         assert not sent, "없는 번호는 전환 명령 없음"
+        wid0 = app.tabbar.tabs[0].get("wid")
         await pilot.press("1")          # 탭 1 존재 → 전환 + 종료
-        assert ("select_window", {"index": 0}) in sent
+        assert ("select_window", {"index": 0, "wid": wid0}) in sent
         assert app.mode == "normal", "있는 번호는 전환 후 종료"
     await _with_app(body)
 
@@ -4915,7 +4916,7 @@ async def test_alt_digit_switches_tab_in_normal_mode():
         app.tabbar.tabs = [{"index": 0}, {"index": 1}]
         assert app.mode == "normal"
         app.on_key(Key(key="alt+2", character=None))     # 2번(1-based) 탭 = index 1
-        assert ("select_window", {"index": 1}) in sent, sent
+        assert ("select_window", {"index": 1, "wid": None}) in sent, sent
         # 없는 번호는 전환 대신 활성 탭 깜빡임(blink_active) — send_cmd 추가 없음.
         sent.clear()
         app.on_key(Key(key="alt+9", character=None))
@@ -4939,10 +4940,10 @@ async def test_mac_option_number_row_switches_tab_and_is_never_typed():
         assert app.mode == "normal"
         # ⌥1 = ¡ → 1번 탭(index 0), ⌥2 = ™ → 2번 탭(index 1).
         app.on_key(Key(key="¡", character="¡"))
-        assert ("select_window", {"index": 0}) in sent, sent
+        assert ("select_window", {"index": 0, "wid": None}) in sent, sent
         sent.clear()
         app.on_key(Key(key="™", character="™"))
-        assert ("select_window", {"index": 1}) in sent, sent
+        assert ("select_window", {"index": 1, "wid": None}) in sent, sent
         assert typed == [], f"패널로 글자가 새면 안 된다: {typed}"
         # 없는 번호(⌥9=ª)·탭 번호가 없는 자리(⌥-=–, ⌥==≠)도 전환은 없지만 **삼킨다**.
         sent.clear()
@@ -4954,7 +4955,7 @@ async def test_mac_option_number_row_switches_tab_and_is_never_typed():
         app.mode = "esc"
         sent.clear()
         app._handle_esc_mode(Key(key="¡", character="¡"))
-        assert ("select_window", {"index": 0}) in sent, sent
+        assert ("select_window", {"index": 0, "wid": None}) in sent, sent
         assert typed == [], f"esc 모드에서도 패널 전달 금지: {typed}"
         # 대조: 매핑 밖 글자는 종전대로 패널로 간다(전면 차단이 아님을 고정).
         app.mode = "normal"
@@ -4984,11 +4985,11 @@ async def test_tab_number_follows_visual_order_when_pinned_reordered():
         assert "2:R" in labels[2], labels       # 비고정 R 은 A 다음 → 2
         # esc(alt)+2 → 시각 2번 = R(index 2)
         app.on_key(Key(key="alt+2", character=None))
-        assert ("select_window", {"index": 2}) in sent, sent
+        assert ("select_window", {"index": 2, "wid": None}) in sent, sent
         sent.clear()
         # esc(alt)+3 → 시각 3번 = 고정 B(index 1)
         app.on_key(Key(key="alt+3", character=None))
-        assert ("select_window", {"index": 1}) in sent, sent
+        assert ("select_window", {"index": 1, "wid": None}) in sent, sent
     await _with_app(body)
 
 

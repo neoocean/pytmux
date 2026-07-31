@@ -283,7 +283,21 @@ class ServerCmdMixin:
     async def _cmd_select_window(self, client, sess, msg):
         # 원격(병합 전역) index 진입·로컬 복귀 라우팅은 _handle_cmd 프롤로그가 이미
         # 처리했다 — 여기 오는 건 로컬 탭 선택뿐.
-        self.select_window(sess, msg.get("index", 0))
+        idx = msg.get("index", 0)
+        # wid(Tab 의 안정 id)가 실려 있으면 그걸로 재확인한다: 클라가 번호→index 를
+        # 계산한 시점과 이 커맨드가 여기서 처리되는 시점 사이 다른 클라이언트의 탭
+        # 생성/삭제/이동으로 sess.tabs 가 _reindex 돼 있으면, 그 옛 index 는 이제
+        # 다른 탭을 가리킬 수 있다(제보: ESC+6 눌렀는데 간헐적으로 7번 탭이 열림 —
+        # index 는 위치값이라 _reindex 마다 재할당되는데, ESC+숫자 경로는 그 위치값을
+        # 사람이 번호를 고르는 동안(레이스 구간) 그대로 들고 있었다). wid 로 같은 탭을
+        # 다시 찾아 그 자리의 **현재** index 를 쓴다 — 그 사이 탭이 닫혔으면(못 찾으면)
+        # 클라가 계산 당시 보냈던 index 로 폴백(구버전 클라 호환도 겸함).
+        if wid := msg.get("wid"):
+            for i, t in enumerate(sess.tabs):
+                if getattr(t, "wid", None) == wid:
+                    idx = i
+                    break
+        self.select_window(sess, idx)
 
     @_cmd("last_window", FULL)
     async def _cmd_last_window(self, client, sess, msg):
