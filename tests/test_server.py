@@ -5495,9 +5495,20 @@ async def test_popup_layout_advertises_mouse():
         #   전용이라 팝업이 이 주기 밖에 있었다 — 증상은 "첫 마우스 움직임까지 휠
         #   스크롤백이 늦게 돌아온다"였다. 소유자가 죽은 상태를 흉내 내 스윕이 그
         #   플래그를 걷어내는지 본다.
-        pp._mouse_owner_pgid = 999_999_999      # 존재하지 않는 그룹
-        srv._sweep_stale_mouse()
-        assert pp.mouse_track == 0, "주기 스윕이 팝업 패널을 비켜 갔다"
+        #   ⚠ 이 마지막 단언은 **POSIX 전용**이다. stale 판정
+        #   (`serverio._mouse_tracking_stale`)은 프로세스 **그룹**으로 소유자의 생사를
+        #   보는데 Windows 엔 그 개념이 없어 그 함수가 첫 줄에서 `IS_WINDOWS` 면 무조건
+        #   `False` 를 돌린다 — 즉 Windows 에서는 스윕이 아무것도 회수할 수 없고, 이
+        #   단언은 **제품이 옳아도 성립하지 않는다**(2026-08-01 os-compat 실측: 세
+        #   파이썬 버전 전부 여기서 붉었다). 위의 광고·`_session_of_pane` 단언은 두 OS
+        #   공통이라 그대로 두고 이 블록만 가른다.
+        #   판정은 `serverio.pty_backend.IS_WINDOWS` 를 그대로 읽는다 — 제품이 보는
+        #   바로 그 칸이라, 다른 테스트가 그것을 고정해 Unix 경로를 태우면 여기도 따라간다.
+        from pytmuxlib import serverio as _SIO
+        if not _SIO.pty_backend.IS_WINDOWS:
+            pp._mouse_owner_pgid = 999_999_999      # 존재하지 않는 그룹
+            srv._sweep_stale_mouse()
+            assert pp.mouse_track == 0, "주기 스윕이 팝업 패널을 비켜 갔다"
     finally:
         await teardown(srv, task, sock)
 
