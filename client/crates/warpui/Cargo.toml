@@ -209,9 +209,13 @@ x11-dl = "2.21.0"
 zbus.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dev-dependencies]
-# virtual-fs 제거(pytmux): AGPL 크레이트. 쓰는 곳은 Linux 전용 테스트
-# 파일 하나(windowing/winit/linux/cursor_theme_tests.rs)뿐이다. Linux 를
-# P1 대상 OS 로 고르면 그 테스트를 tempfile 기반으로 다시 써서 되살린다.
+# virtual-fs 제거(pytmux): AGPL 크레이트. 쓰던 곳은 Linux 전용 테스트
+# 파일 하나(windowing/winit/linux/cursor_theme_tests.rs)뿐이었다.
+# ✅ 2026-08-01: 그 파일을 **표준 라이브러리 샌드박스로 재작성**해 되살렸다.
+# 종전 주석은 "Linux 를 대상 OS 로 고르면 다시 쓴다"였는데, 의존을 지우면서
+# 파일을 안 지운 탓에 그때까지 이 파일은 **컴파일도 안 되는 채로** 남아 있었다
+# (Linux 전용이라 다른 OS 에서는 안 드러난다 — CI 가 Linux 를 처음 돌린 날
+# E0432+E0282 로 터졌다). 이 블록은 이제 비어 있다.
 
 [target.'cfg(target_os = "windows")'.dependencies]
 dwrote = { git = "https://github.com/warpdotdev/dwrote-rs", rev = "a71ce6c0136f7d0954a9a8b181b5b2d8ace5eb9c", default-features = false }
