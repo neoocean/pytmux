@@ -344,10 +344,14 @@ class Registry:
         같은 그림을 못 낸다 — 그래서 서버가 **무엇을 어디에 쓸지**를 자료로 준다.
 
         `req` 는 이 클라의 화면 사정이다:
-        `{"panes": [{"id","x","y","w","h"}], "overlays": {"<이름>": {패널 id…}},
-          "cols", "rows"}` — `overlays` 는 그 클라가 켜 둔 것이다(설계 §4.4 의
-        `client_fact`: 오버레이가 켜졌다는 **사실**은 클라만 알고, 그릴지·어떻게는
-        플러그인이 정한다).
+        `{"panes": [{"id","x","y","w","h"}],
+          "overlays": {"<이름>": {패널 id: {…상태…}}}, "cols", "rows"}` —
+        `overlays` 는 그 클라가 켜 둔 것이다(설계 §4.4 의 `client_fact`: 오버레이가
+        켜졌다는 **사실**은 클라만 알고, 그릴지·어떻게는 플러그인이 정한다).
+
+        패널마다 딸린 dict 는 **그 오버레이의 per-client 상태**다(달력의 `offset`).
+        켜져 있다는 것과 그 상태는 한 자료구조에 있다 — 둘로 나누면 한쪽만 지워진
+        채 남는다.
 
         돌려줄 것 — 런 목록. 각 런:
         `{"x","y","text","style": {…}}` (+ 선택 `"layer"`: `content`|`overlay`,
@@ -370,6 +374,46 @@ class Registry:
             if got:
                 runs.extend(got)
         return runs
+
+    def plugin_triggers(self, server, sess, req) -> dict:
+        """오버레이가 **되돌려 받고 싶은 것** — 클릭존과 키 표(설계 Tier B).
+
+        런은 그림뿐이라 "이 화살표를 누르면 무슨 일이 나는가"를 못 나른다. 정본은
+        자기가 그린 자리를 아니까 스스로 알지만, 네이티브 클라는 그림을 받기만 한다 —
+        그래서 자리(`zones`)와 키(`keys`)에 **뜻 대신 이름**(`do`)을 붙여 준다. 클라는
+        그 이름이 무슨 뜻인지 모른 채 `plugin_overlay_action` 으로 돌려보내고, 뜻은
+        플러그인이 정한다(설계 §4.4 — 행동은 서버가 정한다).
+
+        돌려줄 것: `{"zones": [{"x","y","w","h","pane","do"}],
+                     "keys": [{"key","pane","do"}]}`(둘 다 선택).
+
+        오버레이 **이름은 여기서 찍는다** — 플러그인이 자기 이름을 항목마다 다시 적을
+        이유가 없고, 클라는 그 이름을 그대로 되돌려 보내야 서버가 어느 오버레이의
+        상태를 고칠지 안다.
+        """
+        zones, keys = [], []
+        for p in self.plugins:
+            fn = getattr(p, "plugin_triggers", None)
+            if fn is None:
+                continue
+            got = fn(server, sess, req) or {}
+            for item in (got.get("zones") or []):
+                zones.append({**item, "name": p.name})
+            for item in (got.get("keys") or []):
+                keys.append({**item, "name": p.name})
+        return {"zones": zones, "keys": keys}
+
+    def plugin_overlay_action(self, server, sess, req) -> bool:
+        """클라가 돌려보낸 이름(`do`)을 그 오버레이의 상태에 적용한다.
+
+        `req` = `{"name", "pane", "do", "state"}` — `state` 는 **그 클라의**
+        `plugin_state["overlays"][name][pane]` 그 자체다(플러그인이 제자리에서 고친다).
+        내 것이면 True 를 돌려 다음 플러그인이 같은 이름을 또 해석하지 않게 한다."""
+        for p in self.plugins:
+            fn = getattr(p, "plugin_overlay_action", None)
+            if fn is not None and fn(server, sess, req):
+                return True
+        return False
 
     def plugin_dim_panes(self, server, sess, req) -> list:
         """오버레이가 **뒤를 흐리게** 할 패널 id 들(설계 §4.2 의 `layer` 와 같은 부류).

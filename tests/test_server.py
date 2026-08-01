@@ -1727,6 +1727,9 @@ async def test_command_table_disposition_golden():
         # 오버레이를 켰나)만 올린다. 회신이 아예 없어서 HANDLED 다: 답은 다음 프레임의
         # `plugin_cells` 이고, 그건 flush 루프가 낸다.
         "plugin_overlay": HANDLED,
+        # 그 오버레이의 클릭존/키가 되돌려 보내는 이름(2026-08-02 달력). 클라는 뜻을
+        # 모르고 서버가 준 `do` 를 그대로 올린다 — 회신 역시 다음 셀 프레임이다.
+        "plugin_overlay_action": HANDLED,
         # 마우스 드래그 선택 텍스트 요청(2026-07-25 신설) — 핸들러가 `selection` 을
         # 회신해 완결하므로 HANDLED(full 재동기 불필요: 선택은 클라 상태다).
         "copy_range": HANDLED,

@@ -878,18 +878,29 @@ class ServerIOMixin:
         try:
             runs = self.plugins.plugin_cells(self, sess, req)
             dim = self.plugins.plugin_dim_panes(self, sess, req)
+            trig = self.plugins.plugin_triggers(self, sess, req)
         except Exception:
             # 한 플러그인의 예외가 flush 루프 전체(=모든 클라 렌더)를 죽이지 않게
             # 가드한다(server_scan 과 같은 규율).
             self._log_error("plugin_cells")
             return None
+        zones, keys = trig.get("zones") or [], trig.get("keys") or []
+        # 클릭존·키도 판정에 넣는다. ⚠ 오늘의 유일한 시민(달력)에서는 **이것만으로
+        # 달라지는 프레임을 만들 수 없다** — 화살표는 제목 런과 같은 자리 셈에서 나오니
+        # 그림이 같으면 자리도 같다(변이로 확인: 이 두 줄을 빼도 테스트가 안 죽는다).
+        # 그래도 두는 이유는 계약이 더 넓기 때문이다: 런 없이 클릭존만 내는 오버레이가
+        # 허용되고, 그때 그 자리 변화를 실어 나를 것이 여기 말고는 없다.
         key = (tuple(sorted(dim)),
-               tuple((r["x"], r["y"], r["text"]) for r in runs))
+               tuple((r["x"], r["y"], r["text"]) for r in runs),
+               tuple((z["x"], z["y"], z["pane"], z["name"], z["do"])
+                     for z in zones),
+               tuple((k["key"], k["pane"], k["name"], k["do"]) for k in keys))
         if key == c._cells_last:
             return None
         c._cells_last = key
         return frame_msg({"t": "plugin_cells", "layer": "overlay",
-                          "dim": dim, "runs": runs})
+                          "dim": dim, "runs": runs,
+                          "zones": zones, "keys": keys})
 
     def _client_pane_rects(self, sess, win):
         """`(pane, (x, y, w, h))` — **내용 영역**(테두리 안). 레이아웃 메시지가 클라에

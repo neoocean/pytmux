@@ -23,21 +23,18 @@ def _text_rows(cells):
     return ["".join(c[0] for c in row) for row in cells]
 
 
-def _cal_styles():
-    return {
-        "day": Style(color="white"),
-        "title": Style(color="green", bold=True),
-        "today": Style(color="black", bgcolor="green", bold=True),
-        "big_today": Style(color="green", bold=True),
-        "border": Style(color="blue"),
-    }
+def _theme(name):
+    """의미 색 이름 → 실제 색. 정본은 `theme_color(app, name)` 로 사용자 테마에서
+    푸는데, 여기서는 테스트 결정성을 위해 고정 표를 쓴다(색의 권위가 **클라 쪽**에
+    있다는 계약 자체가 이 인자로 표현된다)."""
+    return {"success": "green", "foreground": "white", "accent": "blue"}.get(name)
 
 
 async def test_calendar_overlay_grid_has_title_and_today_highlight():
     now = datetime(2026, 6, 6)        # 2026-06, 오늘=6일
     panes = [{"id": 1, "x": 0, "y": 0, "w": 30, "h": 12}]
     cells = _grid(30, 12)
-    draw_calendar_overlay(cells, panes, {1}, 30, 12, _cal_styles(), now=now)
+    draw_calendar_overlay(cells, panes, {1}, 30, 12, _theme, now=now)
     joined = "".join(_text_rows(cells))
     assert "2026-06" in joined                      # 제목
     assert "Mo" in joined and "Su" in joined        # 요일 헤더
@@ -47,7 +44,7 @@ async def test_calendar_overlay_grid_has_title_and_today_highlight():
     assert today_cells, "오늘 날짜 강조 셀 없음"
     # calendar_panes 비면 무동작
     cells2 = _grid(30, 12)
-    draw_calendar_overlay(cells2, panes, set(), 30, 12, _cal_styles(), now=now)
+    draw_calendar_overlay(cells2, panes, set(), 30, 12, _theme, now=now)
     assert all(c[0] == " " for row in cells2 for c in row)
 
 
@@ -62,7 +59,7 @@ async def test_calendar_overlay_big_font_tier_on_huge_pane():
     def draw(w, h):
         cells = _grid(w, h)
         draw_calendar_overlay(cells, [{"id": 1, "x": 0, "y": 0, "w": w, "h": h}],
-                              {1}, w, h, _cal_styles(), now=now)
+                              {1}, w, h, _theme, now=now)
         return "".join(_text_rows(cells))
 
     huge = draw(140, 46)
@@ -77,7 +74,7 @@ async def test_calendar_overlay_small_pane_falls_back_to_date_string():
     now = datetime(2026, 6, 6)
     panes = [{"id": 1, "x": 0, "y": 0, "w": 12, "h": 3}]
     cells = _grid(12, 3)
-    draw_calendar_overlay(cells, panes, {1}, 12, 3, _cal_styles(), now=now)
+    draw_calendar_overlay(cells, panes, {1}, 12, 3, _theme, now=now)
     assert "2026-06-06" in "".join(_text_rows(cells))
 
 
@@ -89,7 +86,7 @@ async def test_calendar_overlay_month_offset_shifts_title_and_drops_today():
 
     def render(off):
         cells = _grid(30, 12)
-        draw_calendar_overlay(cells, panes, {1}, 30, 12, _cal_styles(),
+        draw_calendar_overlay(cells, panes, {1}, 30, 12, _theme,
                               now=now, offsets={1: off})
         return cells
 
@@ -116,7 +113,7 @@ async def test_calendar_overlay_records_nav_click_zones():
     panes = [{"id": 1, "x": 0, "y": 0, "w": 30, "h": 12}]
     cells = _grid(30, 12)
     zones = {}
-    draw_calendar_overlay(cells, panes, {1}, 30, 12, _cal_styles(),
+    draw_calendar_overlay(cells, panes, {1}, 30, 12, _theme,
                           now=now, nav_zones=zones)
     assert 1 in zones and len(zones[1]) == 2
     assert sorted(d for (_, _, _, d) in zones[1]) == [-1, 1]
@@ -127,7 +124,7 @@ async def test_calendar_overlay_records_nav_click_zones():
     # 단순 날짜 폴백(작은 패널)엔 화살표가 없어 zone 도 기록되지 않는다
     small = {}
     draw_calendar_overlay(_grid(12, 3), [{"id": 1, "x": 0, "y": 0, "w": 12, "h": 3}],
-                          {1}, 12, 3, _cal_styles(), now=now, nav_zones=small)
+                          {1}, 12, 3, _theme, now=now, nav_zones=small)
     assert small == {}, "작은 폴백엔 클릭존 없음"
 
 
@@ -175,3 +172,33 @@ async def test_calendar_overlay_key_home_returns_to_current_month():
     app.layout = {"active": 1}
     app.calendar_panes = set()
     assert cal.PLUGIN.client_overlay_key(app, _Ev("home")) is False
+
+
+async def test_the_drawn_month_is_pinned_to_a_golden():
+    """**그림 자체를 못박는다** — 자리 셈이 한 벌이 된 뒤로는(`cells.py`) 정본과
+    네이티브 클라가 같은 런을 받으므로, 그림이 바뀌면 두 클라가 **함께** 바뀐다.
+    그러면 "두 경로 대조" 오라클로는 아무것도 안 잡힌다(둘 다 같이 틀린다).
+
+    그래서 여기서 재는 것은 대조가 아니라 **모양**이다: 한 자리 날짜의 앞 공백
+    (오늘 강조가 두 칸이라야 하는 이유)·요일 칸 간격·제목 화살표까지 포함한 한 판."""
+    now = datetime(2026, 8, 2)
+    W, H = 34, 14
+    cells = _grid(W, H)
+    draw_calendar_overlay(cells, [{"id": 1, "x": 0, "y": 0, "w": W, "h": H}],
+                          {1}, W, H, _theme, now=now)
+    assert _text_rows(cells) == [
+        "                                  ",
+        "                                  ",
+        "           ‹ 2026-08 ›            ",
+        "                                  ",
+        " Su   Mo   Tu   We   Th   Fr   Sa ",
+        "                                  ",
+        "                                1 ",
+        "  2    3    4    5    6    7    8 ",
+        "  9   10   11   12   13   14   15 ",
+        " 16   17   18   19   20   21   22 ",
+        " 23   24   25   26   27   28   29 ",
+        " 30   31                          ",
+        "                                  ",
+        "                                  ",
+    ], "\n".join(_text_rows(cells))

@@ -421,6 +421,29 @@ impl SessionView {
         }
     }
 
+    /// 활성 패널의 오버레이를 켜고 끄고, 그 **사실**을 서버에 올린다(설계 Tier B).
+    ///
+    /// 그림은 서버가 준다 — 우리가 아는 것은 "이 패널에 이걸 켰다"뿐이다. 한 패널엔
+    /// 오버레이 하나라, 밀려난 것이 있으면 그 끔도 같이 올린다(안 올리면 서버가 두
+    /// 그림을 겹쳐 보낸다).
+    fn push_overlay_toggle(&mut self, name: &str) {
+        let Some(t) = self.state.toggle_overlay(name) else {
+            return;
+        };
+        if let Some(closed) = t.closed {
+            self.pending.push(Outgoing::Command(Command::PluginOverlay {
+                name: closed,
+                pane: t.pane,
+                on: false,
+            }));
+        }
+        self.pending.push(Outgoing::Command(Command::PluginOverlay {
+            name: name.to_owned(),
+            pane: t.pane,
+            on: t.on,
+        }));
+    }
+
     pub fn handle_key(&mut self, key: Key, mods: Mods) -> bool {
         // 직전 이벤트가 연 물음의 이력을 지금 채운다(이 키부터 후보가 산다).
         self.refill_prompt_history();
@@ -724,6 +747,22 @@ impl SessionView {
             && let Some(handled) = self.press_chrome(key, mods)
         {
             return handled;
+        }
+        // ★ 오버레이가 **스펙으로 가져간 키**(달력의 ←/→/Home)는 패널로 안 보낸다.
+        //   활성 패널이 이미 달력에 덮여 있으니 셸 입력을 가리지 않는다(정본
+        //   `client_overlay_key` 와 같은 규칙이고, 어느 키인지도 그 표 한 벌이 정한다).
+        //   평소 모드에서만 본다 — prefix/스크롤/esc 모드의 방향키는 그 모드의 것이다.
+        if self.mode.mode() == InputMode::Normal
+            && self.screens.top().is_none()
+            && let Some(name) = base::keys::binding_name_with(key, mods)
+            && let Some((overlay, pane, act)) = self.state.overlay_key(&name)
+        {
+            self.pending.push(Outgoing::Command(Command::PluginOverlayAction {
+                name: overlay,
+                pane,
+                act,
+            }));
+            return true;
         }
         // 모드 전이는 core 의 상태기계가 끝낸다. 여기서는 결과를 프레임으로 옮기기만 한다.
         let outcome = self.mode.press_in(&self.config.mode_keys, key, mods);
@@ -1059,10 +1098,10 @@ impl SessionView {
                 self.flip_config("inactive-dim");
                 return true;
             }
+            // 달력도 시계와 같은 길이다(Tier B) — 우리는 **켠 사실**만 올리고 그림·
+            // 넘겨 본 달은 서버가 든다. 손으로 옮긴 달력 한 벌이 여기서 사라졌다.
             Action::ToggleCalendar => {
-                self.state.toggle_calendar();
-                self.state
-                    .set_today(proto::calendar_today());
+                self.push_overlay_toggle("calendar");
                 return true;
             }
             // 로케일도 클라 안에서만 끝난다(per-user — `base::i18n` 모듈 문서).
@@ -1081,14 +1120,7 @@ impl SessionView {
             //   여전히 이 클라만 아는 사실이라, 그 사실을 올려 보낸다(§4.4) — 무엇을
             //   어떻게 그릴지는 플러그인이 정한다. 그림은 `plugin_cells` 로 온다.
             Action::ToggleClock => {
-                if let Some(pane) = self.state.active_pane() {
-                    let on = self.state.toggle_clock();
-                    self.pending.push(Outgoing::Command(Command::PluginOverlay {
-                        name: "clock".into(),
-                        pane,
-                        on,
-                    }));
-                }
+                self.push_overlay_toggle("clock");
                 return true;
             }
             Action::ShowPlugins => {
@@ -1446,9 +1478,15 @@ impl SessionView {
             }
             return true;
         }
-        // ★ 달력의 `‹`/`›` 가 먼저다 — 제목에 화살표를 그려 놓고 클릭이 안 먹으면
-        // 그 화살표가 거짓말이 된다. 달력이 떠 있는 패널에서만 맞는다.
-        if self.state.calendar_click(x, y) {
+        // ★ 오버레이가 광고한 자리(달력의 `‹`/`›`)가 먼저다 — 화살표를 그려 놓고
+        // 클릭이 안 먹으면 그 화살표가 거짓말이 된다. **뜻은 우리가 모른다**: 서버가
+        // 준 이름을 그대로 되돌려 보내고, 다음 셀 프레임이 답이다.
+        if let Some((name, pane, act)) = self.state.overlay_zone_at(x, y) {
+            self.pending.push(Outgoing::Command(Command::PluginOverlayAction {
+                name,
+                pane,
+                act,
+            }));
             return true;
         }
         if let Some(divider) = self.state.divider_at(x, y) {
@@ -1786,10 +1824,6 @@ impl SessionView {
         // RTT ping(G9u) — 그림은 안 바뀌니 dirty 를 안 세운다(TUI 와 같은 규칙).
         if let Some(ping) = self.pinger.tick() {
             self.pending.push(ping);
-        }
-        if self.state.calendar_on() {
-            // 자정을 넘기면 '오늘' 강조가 옮겨 가야 한다.
-            dirty |= self.state.set_today(proto::calendar_today());
         }
         // 시계는 **서버가 초를 센다**(P3). 여기서 시각을 넣던 것은 우리가 그리던
         // 시절의 손이고, 지금은 새 `plugin_cells` 프레임이 곧 "다시 그려라"다 —

@@ -54,6 +54,25 @@ _CLOCK_FONT_BIG_ROWS = 5
 _CLOCK_FONT_BIG_COLS = 6
 
 
+def segments(line):
+    """`"██  ██"` → `[(0, "██"), (4, "██")]`. 이어진 **비공백** 덩어리와 그 x 오프셋.
+
+    글리프의 공백은 "쓰지 않는다"는 뜻이다 — 정본은 그 자리에 아무것도 안 써서 흐려진
+    패널 내용이 숫자의 구멍으로 비쳐 보인다. 공백까지 런에 담으면 그 자리가 지워져
+    그림이 달라진다(시계 P3 에서 변이로 실증한 자리). 시계·달력이 같은 규칙을 쓰므로
+    자산 옆에 둔다."""
+    out, x, n = [], 0, len(line)
+    while x < n:
+        if line[x] == " ":
+            x += 1
+            continue
+        start = x
+        while x < n and line[x] != " ":
+            x += 1
+        out.append((start, line[start:x]))
+    return out
+
+
 def clock_font_for(avail_w, avail_h, n_chars, gap=1):
     """가용 공간(칸)에 맞는 블록 폰트를 고른다 — `(font, rows, cols, width)`.
 

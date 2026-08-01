@@ -162,6 +162,12 @@ pub enum Command {
     /// 서버가 같은 그림을 그리려면 그 **사실**을 들어야 한다 — 그릴지·어떻게는 여전히
     /// 플러그인이 정한다. 회신은 없다: 다음 프레임의 `plugin_cells` 가 곧 답이다.
     PluginOverlay { name: String, pane: i64, on: bool },
+    /// 오버레이의 **클릭존/키가 실어 준 이름**을 그대로 되돌려 보낸다(Tier B).
+    ///
+    /// 우리는 `act` 가 무슨 뜻인지 모른다 — 달력의 `‹` 가 지난달인지 지난해인지는
+    /// 플러그인이 정하고, 우리는 "그 자리를 눌렀다"만 말한다(설계 §4.4). 회신은 없다:
+    /// 다음 `plugin_cells` 프레임이 곧 답이다.
+    PluginOverlayAction { name: String, pane: i64, act: String },
     /// 입력을 창 안 모든 패널로 복제할지 토글한다(`synchronize-panes`).
     ///
     /// 인자를 안 실으면 서버가 토글한다 — 켜고 끄는 두 명령을 두면 클라가 상태를 알아야
@@ -398,6 +404,7 @@ impl Command {
             Command::PluginOpen { .. } => "plugin_open",
             Command::PluginAction { .. } => "plugin_action",
             Command::PluginOverlay { .. } => "plugin_overlay",
+            Command::PluginOverlayAction { .. } => "plugin_overlay_action",
             Command::ToggleSync { .. } => "set_sync",
             Command::ToggleMonitor { .. } => "set_monitor",
             Command::ToggleAutoRename { .. } => "set_auto_rename",
@@ -497,6 +504,9 @@ impl Command {
             }
             Command::PluginOverlay { name, pane, on } => {
                 json!({ "name": name, "pane": pane, "on": on })
+            }
+            Command::PluginOverlayAction { name, pane, act } => {
+                json!({ "name": name, "pane": pane, "do": act })
             }
             Command::RequestTree
             | Command::RequestBuffers
@@ -1062,6 +1072,7 @@ mod tests {
             Command::PluginOpen { .. } => 65,
             Command::PluginAction { .. } => 66,
             Command::PluginOverlay { .. } => 67,
+            Command::PluginOverlayAction { .. } => 68,
             Command::ToggleSync { .. } => 29,
             Command::ToggleMonitor { .. } => 30,
             Command::ToggleAutoRename { .. } => 31,

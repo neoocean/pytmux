@@ -68,6 +68,7 @@ pytmux 네이티브 클라이언트(GUI)
   pytmux-gui demo             서버 없이 블록 데모
   pytmux-gui --frame-dump=<png>  몇 초 뒤 첫 화면을 PNG 로 덤프하고 끝낸다(확인용)
   pytmux-gui --frame-keys=<키들>  덤프 전에 키를 넣는다(예: esc,:,s,p,l — 확인용)
+                              `wait` 를 끼우면 거기서 서버 왕복을 기다린다
 ";
 
 /// `--frame-dump[=<path>]` 를 골라내고 나머지 인자를 돌려준다.
@@ -114,11 +115,22 @@ const FRAME_DUMP_DELAY: Duration = Duration::from_secs(4);
 /// 덤프가 첫 화면만 찍을 수 있으면 팔레트·설정 같은 **키 뒤의 그림**은 영영 못
 /// 찍는다 — 맥에서는 창에 키를 넣을 길이 없기 때문이다(Background 세션 —
 /// `take_frame_dump` 문서). 그래서 키를 앱 안에서 넣는다(오라클과 같은 경로).
-fn parse_frame_keys(spec: &str) -> Vec<(base::Key, base::Mods)> {
+/// `wait` 는 키가 아니라 **한 배치의 끝**이다: 거기서 서버 왕복을 기다렸다 이어 넣는다.
+/// 없으면 배치 하나다. 이것이 필요한 이유는 순서가 실제로 물리기 때문이다 — 팔레트로
+/// 오버레이를 켠 **다음** 그 오버레이가 가져가는 키를 누르려면, 그 사이에 서버의 첫
+/// 프레임이 와 있어야 한다(안 그러면 키가 그냥 셸로 간다 — 제품이 아니라 하네스의
+/// 순서 때문에 "안 먹는다"로 보인다. 2026-08-02 달력 확인에서 실제로 그렇게 읽었다).
+fn parse_frame_keys(spec: &str) -> Vec<Vec<(base::Key, base::Mods)>> {
     // 토큰 표는 core 의 것이다(계층 규칙 — 키 정의는 한 곳). 여기는 쉼표만 가른다.
-    spec.split(',')
-        .filter_map(base::keys::parse_token)
-        .collect()
+    let mut batches = vec![Vec::new()];
+    for token in spec.split(',') {
+        if token == "wait" {
+            batches.push(Vec::new());
+        } else if let Some(key) = base::keys::parse_token(token) {
+            batches.last_mut().expect("배치가 하나는 있다").push(key);
+        }
+    }
+    batches
 }
 
 /// 잡은 프레임을 PNG 로 남긴다. 실패는 stderr 로 — 하네스가 rc 로 판정한다.
@@ -259,18 +271,22 @@ fn main() -> Result<()> {
                                 // 키를 먼저 넣는다(`parse_frame_keys` 문서) — 오라클과
                                 // 같은 경로(handle_key)라, 찍히는 그림이 곧 사용자가
                                 // 그 키로 볼 그림이다.
-                                if let Some(keys) = keys {
-                                    let _ = spawner
-                                        .spawn(move |view: &mut session_view::SessionView, ctx| {
-                                            for (key, mods) in keys {
-                                                view.handle_key(key, mods);
-                                                view.pump(ctx);
-                                            }
-                                            ctx.notify();
-                                        })
-                                        .await;
-                                    // 키가 만든 상태(서버 왕복 포함)가 그려질 틈을 준다.
-                                    warpui::r#async::Timer::after(Duration::from_secs(2)).await;
+                                if let Some(batches) = keys {
+                                    for batch in batches {
+                                        let _ = spawner
+                                            .spawn(move |view: &mut session_view::SessionView, ctx| {
+                                                for (key, mods) in batch {
+                                                    view.handle_key(key, mods);
+                                                    view.pump(ctx);
+                                                }
+                                                ctx.notify();
+                                            })
+                                            .await;
+                                        // 키가 만든 상태(서버 왕복 포함)가 그려질 틈을
+                                        // 준다 — `wait` 로 가른 배치 사이에도 같은 틈이다.
+                                        warpui::r#async::Timer::after(Duration::from_secs(2))
+                                            .await;
+                                    }
                                 }
                                 let _ = spawner
                                     .spawn(move |_: &mut session_view::SessionView, ctx| {
@@ -353,7 +369,7 @@ mod tests {
         let keys = parse_frame_keys("esc,:,s,ctrl-b,%,enter,tab,up,space,insert,잘못된토큰");
         assert_eq!(
             keys,
-            vec![
+            vec![vec![
                 (Key::Escape, Mods::NONE),
                 (Key::Char(':'), Mods::NONE),
                 (Key::Char('s'), Mods::NONE),
@@ -364,8 +380,17 @@ mod tests {
                 (Key::Up, Mods::NONE),
                 (Key::Char(' '), Mods::NONE),
                 (Key::Insert, Mods::NONE),
-            ],
+            ]],
             "모르는 토큰은 버리고 나머지는 문서의 표 그대로다"
+        );
+        // `wait` 는 키가 아니라 **배치의 끝**이다 — 그 자리에서 서버 왕복을 기다린다.
+        assert_eq!(
+            parse_frame_keys("esc,wait,left"),
+            vec![
+                vec![(Key::Escape, Mods::NONE)],
+                vec![(Key::Left, Mods::NONE)],
+            ],
+            "wait 가 배치를 가르지 않으면 순서를 못 만든다"
         );
     }
 

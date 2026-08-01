@@ -267,6 +267,48 @@ pub struct PluginCells {
     pub dim: Vec<u64>,
     #[serde(default)]
     pub runs: Vec<PluginRun>,
+    /// 누를 수 있는 자리들(달력의 `‹`/`›`). **뜻은 안 온다** — 우리는 `do` 를 그대로
+    /// 되돌려 보낼 뿐이고 그것이 무슨 일인지는 플러그인이 정한다(설계 §4.4).
+    #[serde(default)]
+    pub zones: Vec<PluginZone>,
+    /// 그 오버레이가 가져가는 키들. 오버레이가 **활성 패널**에 떠 있을 때만 가로챈다 —
+    /// 패널이 이미 덮여 있으니 셸 입력을 가리지 않는다(정본도 같은 규칙이다).
+    #[serde(default)]
+    pub keys: Vec<PluginKey>,
+}
+
+/// 누를 수 있는 자리 하나. 좌표는 런과 같은 **창 절대 좌표**다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+pub struct PluginZone {
+    #[serde(default)]
+    pub x: i64,
+    #[serde(default)]
+    pub y: i64,
+    #[serde(default)]
+    pub w: i64,
+    #[serde(default)]
+    pub h: i64,
+    #[serde(default)]
+    pub pane: i64,
+    /// 어느 오버레이의 자리인가(서버가 찍어 준다). 되돌려 보낼 때 그대로 싣는다.
+    #[serde(default)]
+    pub name: String,
+    /// 서버에 되돌려 줄 이름. 우리는 뜻을 모른다.
+    #[serde(default, rename = "do")]
+    pub act: String,
+}
+
+/// 오버레이가 가져가는 키 하나. 이름은 이 클라의 표기다([`base::keys`] 의 `binding_name`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+pub struct PluginKey {
+    #[serde(default)]
+    pub key: String,
+    #[serde(default)]
+    pub pane: i64,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default, rename = "do")]
+    pub act: String,
 }
 
 /// 얹을 글자 한 덩어리. 자리는 **창 절대 좌표**다(서버가 패널 내용 영역으로 이미 옮겼다).
@@ -281,10 +323,33 @@ pub struct PluginRun {
     /// 서버가 화면 런에 쓰는 것과 **같은 축약 스타일**(`crate::style`). 새 표기가 아니다.
     #[serde(default)]
     pub style: crate::message::Style,
-    /// 의미 색 이름(`success` 등). 있으면 **이 클라의 테마**에서 풀어 전경색을 덮는다 —
-    /// 서버가 hex 를 실으면 서버가 UI 를 알게 된다(설계 §10 위험표).
+    /// 의미 색 이름(`{"f": "success"}`). 있으면 **이 클라의 테마**에서 풀어 그 자리를
+    /// 덮는다 — 서버가 hex 를 실으면 서버가 UI 를 알게 된다(설계 §10 위험표).
     #[serde(default)]
-    pub theme: String,
+    pub theme: ThemeRef,
+}
+
+/// 오버레이를 하나 켜거나 껐다 — 서버에 올려 보낼 사실.
+///
+/// `closed` 는 **같은 패널에서 밀려난 오버레이**다(한 패널엔 하나). 이것까지 올려야
+/// 서버가 두 그림을 겹쳐 보내지 않는다 — 안 올리면 시계 위에 달력이 얹힌다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverlayToggle {
+    pub pane: i64,
+    pub on: bool,
+    pub closed: Option<String>,
+}
+
+/// 런이 싣는 **의미 색** — 전경/배경 각각의 이름(`success`·`foreground`).
+///
+/// 왜 이름인가: 색을 정하는 것은 **이 클라의 테마**다. 달력의 '오늘'은 강조색을
+/// **배경**에 깔므로 전경만으로는 못 나른다 — 그래서 자리마다 이름을 따로 싣는다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+pub struct ThemeRef {
+    #[serde(default)]
+    pub f: Option<String>,
+    #[serde(default)]
+    pub b: Option<String>,
 }
 
 /// 목록 한 줄. `key` 는 **그 줄의 뜻**(CL 번호·파일 이름)이고 액션에 그대로 실어 보낸다 —
@@ -488,51 +553,35 @@ pub struct MouseTarget {
     pub mode: crate::mouse::MouseMode,
 }
 
-/// 오버레이(시계·달력)의 색 — **정본의 관습**을 옮긴 자리(레이아웃 맞추기 ⑫).
+/// 의미 색 이름 → 이 클라의 색. **플러그인 이름이 안 나오는 표**다.
 ///
-/// # 왜 색이 아니라 관습인가
+/// # 왜 이름만 받나
 ///
-/// 정본은 `theme_color(app, "success")` 처럼 **Textual 테마 변수**로 칠한다. `#4EBF71` 은
-/// 그 변수의 폴백일 뿐이고, 터미널에서 그 자리를 정하는 것은 사용자 테마다 — 값을 박으면
-/// 어두운 테마에서만 맞는 색이 된다. 그래서 옮기는 것은 값이 아니라 **어느 자리에 같은
-/// 색을 쓰는가**이고, `tests/overlay_style_conformance.rs` 가 정본에서 뽑은 변수 이름
-/// (`scripts/gen_overlay_styles.py`)과 이 표의 구조를 대조한다.
+/// 종전에는 여기 `clock_digit()`·`calendar()` 처럼 **플러그인마다 한 자리씩** 있었다.
+/// 그건 INV5 가 빚이라고 부르는 것이다 — 플러그인을 지워도 그 이름이 Rust 에 남고,
+/// 새 오버레이가 생기면 여기도 같이 고쳐야 한다(그리고 잊는다).
 ///
-/// # 무엇이 틀려 있었나 (대조 문서 §13)
-///
-/// 시계 숫자와 달력 제목이 **청록**이었고(정본은 초록), 달력의 오늘은 **주황 글자**였다
-/// (정본은 초록 **배경**에 검은 글자). 같은 그림에서 눈이 찾는 색이 달랐다.
-///
-/// # 왜 한 모듈에 모으나
-///
-/// 흩어 두면 "시계만 고치고 달력을 잊는" 일이 난다 — 실제로 이 둘은 정본에서 **같은
-/// 변수**를 쓰므로 한 곳에서 갈라져야 갈리지 않는다.
-pub mod overlay_style {
-    use crate::calendar;
-    use crate::style::{CellStyle, Color, NamedColor};
+/// 이제 서버가 런에 **의미 이름**을 실어 준다(`{"f": "success"}`). 우리가 아는 것은
+/// "이 이름은 이 색"뿐이고, 어느 자리에 어떤 이름을 쓸지는 플러그인 한 벌이 정한다.
+/// 정본은 같은 이름을 `theme_color(app, name)` 으로 자기 테마에서 푼다 — 값이 아니라
+/// **이름이 옮겨 다니는** 것이 이 설계의 요점이다(설계 §10 위험표).
+pub mod theme {
+    use crate::style::{Color, NamedColor};
 
-    /// 정본 `success`(강조 초록)의 우리 자리. 이름색이라 사용자 테마를 따른다.
-    pub const SUCCESS: Color = Color::Named(NamedColor::BrightGreen);
-
-    /// 시계 숫자 — 정본 `Style(color=theme_color(app, "success"), bold=True)`.
-    pub fn clock_digit() -> CellStyle {
-        CellStyle { fg: Some(SUCCESS), bold: true, ..Default::default() }
-    }
-
-    /// 달력 네 자리 — 정본 `calendar` 플러그인의 `day`/`title`/`today`/`big_today`.
-    pub fn calendar() -> calendar::Styles {
-        calendar::Styles {
-            // 정본 `foreground` — "특별한 색이 아니다"가 곧 기본값이다.
-            day: CellStyle::default(),
-            title: CellStyle { fg: Some(SUCCESS), bold: true, ..Default::default() },
-            today: CellStyle {
-                fg: Some(Color::Named(NamedColor::Black)),
-                bg: Some(SUCCESS),
-                bold: true,
-                ..Default::default()
-            },
-            big_today: CellStyle { fg: Some(SUCCESS), bold: true, ..Default::default() },
-        }
+    /// 모르는 이름이면 `None` — 그 자리는 런에 실린 리터럴이나 기본색이 지킨다.
+    /// (플러그인이 새 이름을 쓰기 시작하면 여기 한 줄을 더한다. 이름을 모른다고
+    /// 글자를 안 그리지는 않는다.)
+    pub fn color(name: &str) -> Option<Color> {
+        Some(match name {
+            // 정본 `success`(강조 초록). 시계 숫자·달력 제목·오늘 바탕이 이 이름을 쓴다.
+            "success" => Color::Named(NamedColor::BrightGreen),
+            // "특별한 색이 아니다"가 곧 기본값이다 — 칠하지 않는 것이 정답이다.
+            "foreground" => return None,
+            "accent" => Color::Named(NamedColor::BrightBlue),
+            "warning" => Color::Named(NamedColor::Yellow),
+            "error" => Color::Named(NamedColor::BrightRed),
+            _ => return None,
+        })
     }
 }
 
@@ -598,18 +647,12 @@ pub struct SessionState {
     plugin_cells: PluginCells,
     /// 서버가 알려 준 세션 이름(`status.session`). 상태줄 `#S` 가 쓴다.
     session: String,
-    /// 시계 오버레이를 켠 패널들(패리티 G7b). 켰다는 **사실**은 여전히 이 클라의 것이지만
-    /// (`clock-mode` 는 파이썬 쪽에서도 클라 플러그인이다) 이제 그 사실을 서버에
-    /// 올려 보내고(`plugin_overlay` — 설계 Tier B · P3) **그림은 서버가 준다**.
-    /// 여기 남는 이유는 토글과 "패널 클릭으로 닫기"가 이 집합을 보기 때문이다.
-    clock_panes: std::collections::HashSet<i64>,
-    /// 달력 오버레이를 켠 패널들(패리티 G7c). 시계와 같은 자리다 — 서버는 모른다.
-    calendar_panes: std::collections::HashSet<i64>,
-    /// 패널마다 몇 달 넘겨 보고 있나(0 = 이번 달). `‹`/`›` 클릭이 움직인다.
-    calendar_offset: std::collections::HashMap<i64, i32>,
-    /// 오늘 날짜 `(년, 월, 일)`. 시각과 같은 이유로 **이벤트 루프가 넣는다** — 자정을
-    /// 넘기면 '오늘' 강조가 옮겨 가야 한다.
-    today: (i32, u32, u32),
+    /// **켠 사실**만 우리 것이다 — `{오버레이 이름: 켠 패널 집합}`.
+    ///
+    /// 그림도, 그 오버레이가 넘겨 본 달 같은 상태도 서버가 든다(설계 Tier B · P3).
+    /// 여기 남는 이유는 토글이 "지금 켜져 있나"를 물어야 하기 때문이고, 그래서 이름이
+    /// 열쇠다 — 오버레이가 하나 늘어도 이 자료형은 안 바뀐다(INV5).
+    overlays: std::collections::HashMap<String, std::collections::HashSet<i64>>,
     /// 비활성 패널을 흐리게 하는 세기. `None` 이면 끔(설정 `inactive-dim`).
     ///
     /// **왜 상태에 두나**: 합성이 이 값을 쓰는데 합성은 proto 에 있고 설정은 core 에
@@ -901,18 +944,29 @@ impl SessionState {
         self.plugin_screens.clear();
     }
 
-    /// 활성 패널의 시계를 켜고 끈다(패리티 G7b · `prefix t`). 켜졌으면 `true`.
+    /// 활성 패널의 오버레이를 켜고 끈다(패리티 G7b/G7c · `prefix t` · 달력).
     ///
-    /// 패널이 없으면 아무 일도 안 한다 — 붙기 전에 눌린 키다.
-    pub fn toggle_clock(&mut self) -> bool {
-        let Some(active) = self.layout.as_ref().map(|l| l.active) else {
-            return false;
-        };
-        if self.clock_panes.remove(&active) {
-            return false;
+    /// 패널이 없으면 `None` — 붙기 전에 눌린 키다. 한 패널엔 **오버레이 하나**라
+    /// (정본 규칙) 켜면 그 패널의 다른 것을 닫고 그 사실을 `closed` 로 돌려준다 —
+    /// 서버에도 그 끔을 알려야 두 그림이 겹쳐 그려지지 않는다.
+    pub fn toggle_overlay(&mut self, name: &str) -> Option<OverlayToggle> {
+        let active = self.layout.as_ref()?.active;
+        if let Some(on) = self.overlays.get_mut(name)
+            && on.remove(&active)
+        {
+            return Some(OverlayToggle { pane: active, on: false, closed: None });
         }
-        self.clock_panes.insert(active);
-        true
+        let closed: Vec<String> = self
+            .overlays
+            .iter_mut()
+            .filter(|(other, on)| other.as_str() != name && on.contains(&active))
+            .map(|(other, on)| {
+                on.remove(&active);
+                other.clone()
+            })
+            .collect();
+        self.overlays.entry(name.to_owned()).or_default().insert(active);
+        Some(OverlayToggle { pane: active, on: true, closed: closed.into_iter().next() })
     }
 
     /// 입력기 배지 글(뷰가 넣는다). 상태를 모르는 판에서는 `None` — 모르는 것을
@@ -1015,67 +1069,38 @@ impl SessionState {
         self.layout.as_ref()?.panes.get(n).map(|p| p.id)
     }
 
-    /// 활성 패널의 달력을 켜고 끈다(패리티 G7c). 켜졌으면 `true`.
+    /// 화면 좌표 클릭이 오버레이의 **누를 수 있는 자리**에 맞았나 —
+    /// 맞았으면 `(오버레이 이름, 패널, 되돌려 줄 이름)`.
     ///
-    /// 끌 때 **넘겨 본 달도 같이 버린다**(파이썬과 같다) — 안 버리면 다시 켰을 때 지난달이
-    /// 떠 있고, 사용자는 자기가 언제 그리로 갔는지 기억하지 못한다.
-    pub fn toggle_calendar(&mut self) -> bool {
-        let Some(active) = self.layout.as_ref().map(|l| l.active) else {
-            return false;
-        };
-        if self.calendar_panes.remove(&active) {
-            self.calendar_offset.remove(&active);
-            return false;
-        }
-        self.calendar_panes.insert(active);
-        true
-    }
-
-    /// 달력이 떠 있는 패널이 하나라도 있나(이벤트 루프의 주기 갱신 조건).
-    pub fn calendar_on(&self) -> bool {
-        !self.calendar_panes.is_empty()
-    }
-
-    /// 오늘 날짜. 바뀌었으면 `true`.
-    pub fn set_today(&mut self, today: (i32, u32, u32)) -> bool {
-        let changed = today != self.today;
-        self.today = today;
-        changed
-    }
-
-    /// 그 패널에 지금 그려질 달. 달력이 안 떠 있으면 `None`.
-    pub fn calendar_month(&self, pane_id: i64) -> Option<crate::calendar::Month> {
-        if !self.calendar_panes.contains(&pane_id) {
-            return None;
-        }
-        let offset = self.calendar_offset.get(&pane_id).copied().unwrap_or(0);
-        Some(crate::calendar::month_for(self.today, offset))
-    }
-
-    /// 화면 좌표 클릭을 달력의 `‹`/`›` 로 보낸다. 넘겼으면 `true`.
-    ///
-    /// **달력이 떠 있는 패널에서만** 동작한다 — 안 그러면 우연히 같은 자리를 클릭한 것이
-    /// 달을 넘긴다.
-    pub fn calendar_click(&mut self, x: u16, y: u16) -> bool {
-        // 팝업이 떠 있으면 뒤에 가려진 달력 화살표는 클릭 대상이 아니다(68295 빚 —
+    /// 이름의 뜻은 **모른다**. 달력의 `‹` 가 지난달인지 지난해인지는 플러그인이 정하고
+    /// (설계 §4.4) 우리는 그 자리를 눌렀다는 사실만 올린다 — 그래서 새 오버레이가
+    /// 생겨도 여기는 안 바뀐다.
+    pub fn overlay_zone_at(&self, x: u16, y: u16) -> Option<(String, i64, String)> {
+        // 팝업이 떠 있으면 뒤에 가려진 화살표는 클릭 대상이 아니다(68295 빚 —
         // `pane_at` 의 팝업 우선 규칙과 같은 이유).
         if self.popup().is_some() {
-            return false;
+            return None;
         }
-        let Some(layout) = self.layout.as_ref() else {
-            return false;
-        };
-        let hit = layout.panes.iter().find_map(|pane| {
-            let month = self.calendar_month(pane.id)?;
-            let rect = (pane.x as usize, pane.y as usize, pane.w as usize, pane.h as usize);
-            crate::calendar::hit_nav(rect, &month, x as usize, y as usize)
-                .map(|delta| (pane.id, delta))
-        });
-        let Some((pane_id, delta)) = hit else {
-            return false;
-        };
-        *self.calendar_offset.entry(pane_id).or_insert(0) += delta;
-        true
+        let (x, y) = (x as i64, y as i64);
+        let zone = self.plugin_cells.zones.iter().find(|z| {
+            x >= z.x && x < z.x + z.w.max(1) && y >= z.y && y < z.y + z.h.max(1)
+        })?;
+        Some((zone.name.clone(), zone.pane, zone.act.clone()))
+    }
+
+    /// 활성 패널의 오버레이가 이 키를 가져가나 — 가져가면
+    /// `(오버레이 이름, 패널, 되돌려 줄 이름)`.
+    ///
+    /// **활성 패널에 떠 있을 때만** 가로챈다: 그 패널은 이미 오버레이에 덮여 있으니
+    /// 셸 입력을 가리지 않는다(정본 `client_overlay_key` 와 같은 규칙).
+    pub fn overlay_key(&self, name: &str) -> Option<(String, i64, String)> {
+        let active = self.layout.as_ref()?.active;
+        let key = self
+            .plugin_cells
+            .keys
+            .iter()
+            .find(|k| k.pane == active && k.key == name)?;
+        Some((key.name.clone(), active, key.act.clone()))
     }
 
     /// 마지막으로 받은 트리(`request_tree` 회신). 요청 전이면 `None`.
@@ -1700,21 +1725,6 @@ impl SessionState {
                 canvas.put(zone.x, zone.y + i, ch, style.clone());
             }
         }
-        // 달력도 시계와 같은 자리에서 덮는다.
-        if !self.calendar_panes.is_empty() {
-            let styles = overlay_style::calendar();
-            for pane in &layout.panes {
-                let Some(month) = self.calendar_month(pane.id) else {
-                    continue;
-                };
-                crate::calendar::draw(
-                    &mut canvas,
-                    (pane.x as usize, pane.y as usize, pane.w as usize, pane.h as usize),
-                    &month,
-                    styles,
-                );
-            }
-        }
         // ★ 플러그인 셀 기여(설계 Tier B · P3) — **테두리를 그린 뒤** 덮는다(먼저
         //   그리면 프레임이 글자 위에 얹힌다). 시계가 이 길로 온다: 우리는 어느 폰트를
         //   고르고 어디에 중앙 정렬하는지 **모른다**. 그건 플러그인 한 벌의 일이고
@@ -1734,13 +1744,15 @@ impl SessionState {
                     }
                 }
             }
-            let digit = overlay_style::clock_digit();
             for run in &self.plugin_cells.runs {
                 let mut style = crate::style::CellStyle::from_map(&run.style);
                 // 색의 권위는 **이 클라의 테마**다(설계 §10 위험표) — 서버가 hex 를
-                // 실으면 서버가 UI 를 알게 된다. 지금 아는 이름은 하나(`success`)다.
-                if run.theme == "success" {
-                    style.fg = digit.fg;
+                // 실으면 서버가 UI 를 알게 된다. 런은 이름만 싣고 여기서 푼다.
+                if let Some(name) = run.theme.f.as_deref() {
+                    style.fg = theme::color(name);
+                }
+                if let Some(name) = run.theme.b.as_deref() {
+                    style.bg = theme::color(name);
                 }
                 for (i, ch) in run.text.chars().enumerate() {
                     canvas.put(run.x as usize + i, run.y as usize, ch, style.clone());

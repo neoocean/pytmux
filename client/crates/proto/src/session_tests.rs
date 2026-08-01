@@ -335,7 +335,8 @@ fn plugin_cell_runs_are_painted_where_the_server_said() {
     state.apply(screen_msg(1, "hi"));
     let cells: ServerMessage = serde_json::from_value(serde_json::json!({
         "t": "plugin_cells", "layer": "overlay", "dim": [],
-        "runs": [{"x": 2, "y": 1, "text": "██", "style": {"bo": 1}, "theme": "success"}]
+        "runs": [{"x": 2, "y": 1, "text": "██", "style": {"bo": 1},
+                  "theme": {"f": "success"}}]
     }))
     .unwrap();
     assert!(state.apply(cells), "화면이 바뀌었는데 안 바뀌었다고 했다");
@@ -345,6 +346,77 @@ fn plugin_cell_runs_are_painted_where_the_server_said() {
         "서버가 준 글자가 화면에 없다: {:?}",
         canvas.row_text(1)
     );
+}
+
+#[test]
+fn the_semantic_colour_is_resolved_by_us_not_the_server() {
+    // 색의 권위는 **이 클라의 테마**다(설계 §10 위험표). 서버는 이름만 싣는다 —
+    // 달력의 '오늘'처럼 **배경**에 강조색을 까는 자리도 있어서 전경만으로는 못 나른다.
+    use crate::style::{Color, NamedColor};
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 6)]));
+    state.apply(screen_msg(1, "hi"));
+    let cells: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells", "layer": "overlay", "dim": [],
+        "runs": [{"x": 0, "y": 0, "text": "6", "style": {"f": "black", "bo": 1},
+                  "theme": {"b": "success"}}]
+    }))
+    .unwrap();
+    state.apply(cells);
+    let canvas = state.composite().unwrap();
+    let cell = canvas.cell(0, 0).expect("칸이 없다");
+    assert_eq!(
+        cell.style.bg,
+        Some(Color::Named(NamedColor::BrightGreen)),
+        "의미 이름이 우리 테마 색으로 안 풀렸다"
+    );
+    assert_eq!(
+        cell.style.fg,
+        Some(Color::Named(NamedColor::Black)),
+        "런에 실린 리터럴 글자색이 사라졌다"
+    );
+}
+
+#[test]
+fn a_zone_hit_carries_back_the_name_we_cannot_read() {
+    // 우리는 `‹` 가 지난달인지 지난해인지 **모른다**. 아는 것은 "그 자리를 눌렀다" 뿐이고
+    // 뜻은 플러그인이 정한다(설계 §4.4).
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 6)]));
+    let cells: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells", "layer": "overlay", "dim": [], "runs": [],
+        "zones": [{"x": 4, "y": 2, "w": 2, "h": 1, "pane": 1,
+                   "name": "calendar", "do": "prev"}],
+        "keys": [{"key": "left", "pane": 1, "name": "calendar", "do": "prev"}]
+    }))
+    .unwrap();
+    state.apply(cells);
+    assert_eq!(
+        state.overlay_zone_at(5, 2),
+        Some(("calendar".to_owned(), 1, "prev".to_owned()))
+    );
+    assert_eq!(state.overlay_zone_at(6, 2), None, "자리 밖을 눌렀는데 맞았다고 한다");
+    assert_eq!(
+        state.overlay_key("left"),
+        Some(("calendar".to_owned(), 1, "prev".to_owned()))
+    );
+    assert_eq!(state.overlay_key("right"), None, "표에 없는 키를 가져갔다");
+}
+
+#[test]
+fn one_pane_holds_one_overlay() {
+    // 정본 규칙이다 — 시계를 켜면 그 패널의 달력이 닫힌다. 밀려난 쪽을 **서버에도**
+    // 알려야 두 그림이 겹쳐 오지 않는다.
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 6)]));
+    let first = state.toggle_overlay("calendar").expect("패널이 있는데 못 켰다");
+    assert!(first.on && first.closed.is_none());
+    let second = state.toggle_overlay("clock").expect("못 켰다");
+    assert!(second.on);
+    assert_eq!(second.closed.as_deref(), Some("calendar"), "밀려난 것을 안 알린다");
+    // 같은 것을 다시 누르면 끈다(그때는 밀려난 것이 없다).
+    let third = state.toggle_overlay("clock").expect("못 껐다");
+    assert!(!third.on && third.closed.is_none());
 }
 
 #[test]

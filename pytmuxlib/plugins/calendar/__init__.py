@@ -36,6 +36,28 @@ NOARG = {"calendar-mode", "calendar", "cal",
 PANE_SCOPED = {"calendar-mode", "calendar", "cal",
                "open-calendar", "open-cal", "close-calendar", "close-cal"}
 
+# 표시 월을 옮기는 동작들 — **이름 하나에 뜻 하나**다. 정본은 키를 직접 받아 오프셋을
+# 고치고(`client_overlay_key`), 네이티브 클라는 이름만 서버로 올린다
+# (`plugin_overlay_action` — 클라는 그 이름이 무슨 뜻인지 모른다). 두 경로가 같은 표를
+# 보므로 "정본에서만 되는 이동"이 생기지 않는다.
+ACTIONS = {"prev": -1, "next": +1, "prev-year": -12, "next-year": +12,
+           "today": None}          # None = 상대가 아니라 **이번 달로 복귀**
+
+# 키 → 동작. 정본이 `client_overlay_key` 에서 쓰고, 같은 표를 네이티브 클라에도
+# **자료로** 내려보낸다(설계 Tier B — 키 이름은 클라 표기, 뜻은 플러그인 것).
+KEYS = [("left", "prev"), ("pageup", "prev"), ("[", "prev"),
+        ("right", "next"), ("pagedown", "next"), ("]", "next"),
+        ("up", "prev-year"), ("down", "next-year"),
+        ("home", "today"), (".", "today")]
+
+
+def apply_action(off, do):
+    """오프셋 `off` 에 동작 `do` 를 적용한 새 오프셋(모르는 이름이면 그대로)."""
+    if do not in ACTIONS:
+        return off
+    delta = ACTIONS[do]
+    return 0 if delta is None else off + delta
+
 
 class _CalendarPlugin:
     name = "calendar"
@@ -125,23 +147,15 @@ class _CalendarPlugin:
         오늘 날짜는 강조."""
         if not getattr(app, "calendar_panes", None):
             return
-        from rich.style import Style
         from pytmuxlib.clientutil import theme_color
         from .render import draw_calendar_overlay
-        styles = {
-            "day": Style(color=theme_color(app, "foreground")),
-            "title": Style(color=theme_color(app, "success"), bold=True),
-            "today": Style(color="black",
-                           bgcolor=theme_color(app, "success"), bold=True),
-            "big_today": Style(color=theme_color(app, "success"), bold=True),
-            "border": Style(color=theme_color(app, "accent")),
-        }
         # 매 렌더마다 ‹/› 클릭존을 새로 채운다(레이아웃/오프셋 변화 반영). 코어 마우스
         # 핸들러가 app._calendar_nav_zones 를 getattr 로 읽어 클릭을 디스패치한다.
         zones = app._calendar_nav_zones
         zones.clear()
         draw_calendar_overlay(cells, app.layout.get("panes", []),
-                              app.calendar_panes, W, H, styles,
+                              app.calendar_panes, W, H,
+                              lambda name: theme_color(app, name),
                               now=getattr(app, "_calendar_now", None),
                               offsets=getattr(app, "calendar_offset", None),
                               nav_zones=zones)
@@ -149,29 +163,21 @@ class _CalendarPlugin:
     def client_overlay_key(self, app, event):
         """활성 패널에 달력이 떠 있을 때 네비게이션 키를 가로채(소비) 표시 월을 옮긴다.
         ←/PageUp=이전 달, →/PageDown=다음 달, ↑=이전 해, ↓=다음 해, Home/`.`=오늘(이번
-        달). 소비하면 True(코어가 키를 패널로 보내지 않음). 달력이 없거나 다른 키면
-        False(코어 기본 입력 경로). 패널이 달력에 덮여 있으므로 이 키들을 가져가도 셸
-        입력을 가리지 않는다."""
+        달) — 표는 위 `KEYS` 한 벌이고 네이티브 클라도 그 표를 받는다. 소비하면 True
+        (코어가 키를 패널로 보내지 않음). 달력이 없거나 다른 키면 False(코어 기본 입력
+        경로). 패널이 달력에 덮여 있으므로 이 키들을 가져가도 셸 입력을 가리지 않는다."""
         cp = getattr(app, "calendar_panes", None)
         if not cp:
             return False
         pid = app.layout.get("active")
         if pid is None or pid not in cp:
             return False
-        off = app.calendar_offset.get(pid, 0)
-        ch = event.character
-        if event.key in ("left", "pageup") or ch == "[":
-            app.calendar_offset[pid] = off - 1
-        elif event.key in ("right", "pagedown") or ch == "]":
-            app.calendar_offset[pid] = off + 1
-        elif event.key == "up":
-            app.calendar_offset[pid] = off - 12
-        elif event.key == "down":
-            app.calendar_offset[pid] = off + 12
-        elif event.key == "home" or ch == ".":
-            app.calendar_offset[pid] = 0
-        else:
+        do = next((d for k, d in KEYS
+                   if k == event.key or k == event.character), None)
+        if do is None:
             return False
+        app.calendar_offset[pid] = apply_action(
+            app.calendar_offset.get(pid, 0), do)
         app._composite()
         return True
 
@@ -187,6 +193,53 @@ class _CalendarPlugin:
             getattr(app, "calendar_offset", {}).pop(pane_id, None)
             return True
         return False
+
+    # ---- 서버 측: 셀 기여(Tier B · 시계 P3 의 두 번째 시민) ----
+    #
+    # 시계와 다른 것은 **상태가 있다**는 점이다: 패널마다 몇 달 넘겨 보고 있나
+    # (`offset`). 그 상태는 연결에 매달린다(`ClientConn.plugin_state["overlays"]`) —
+    # 옆 사람이 지난달을 봐도 내 화면은 이번 달이고, 연결이 끊기면 함께 사라진다.
+    #
+    # 그리는 규칙은 정본과 **한 벌**이다(`cells.calendar_cells`). 시계는 두 벌을
+    # 오라클로 대조하는 데서 멈췄지만(설계 미결 #1) 달력은 대조할 두 벌이 없다.
+    def _panes(self, req):
+        on = (req.get("overlays") or {}).get("calendar") or {}
+        return [p for p in req.get("panes") or [] if p["id"] in on], on
+
+    def plugin_cells(self, server, sess, req):
+        from .cells import calendar_cells
+        panes, states = self._panes(req)
+        if not panes:
+            return []
+        return calendar_cells(panes, states)[0]
+
+    def plugin_triggers(self, server, sess, req):
+        """클릭존(`‹`/`›`)과 키 표 — **클라는 뜻을 모른 채** 되돌려 보낸다.
+
+        정본은 자기가 그린 자리를 아니까 클릭존을 스스로 안다. 네이티브 클라는 그림을
+        받기만 하므로 "여기를 누르면 이 이름을 올려라"까지 받아야 화살표가 거짓말이
+        되지 않는다."""
+        from .cells import calendar_cells
+        panes, states = self._panes(req)
+        if not panes:
+            return {}
+        zones = calendar_cells(panes, states)[1]
+        keys = [{"key": k, "pane": p["id"], "do": d}
+                for p in panes for k, d in KEYS]
+        return {"zones": zones, "keys": keys}
+
+    def plugin_dim_panes(self, server, sess, req):
+        """달력이 켜진 패널은 **뒤를 흐리게** 한다(정본 `dim_pane` 과 같은 뜻)."""
+        return sorted((req.get("overlays") or {}).get("calendar") or {})
+
+    def plugin_overlay_action(self, server, sess, req):
+        """클릭존/키가 올려 보낸 이름을 이 패널의 상태에 적용한다(내 것이면 True)."""
+        if req.get("name") != "calendar":
+            return False
+        state = req["state"]
+        state["offset"] = apply_action(int(state.get("offset", 0)),
+                                       str(req.get("do") or ""))
+        return True
 
 
 PLUGIN = _CalendarPlugin()

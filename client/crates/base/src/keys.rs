@@ -601,6 +601,9 @@ fn binding_name(key: Key) -> Option<String> {
         Key::End => "end".to_owned(),
         // 작성창을 여는 두 키(`e_ins`). `shift-delete` 는 Insert 키가 없는 맥 자판용
         // 별칭이라, 이름도 **표기 그대로** 접두를 붙여 적는다.
+        // Home 은 우리 표에는 없지만 **오버레이가 스펙으로 가져간다**(달력의 '오늘로').
+        // 이름이 없으면 서버가 준 `keys` 표에서 영영 안 찾아진다.
+        Key::Home => "home".to_owned(),
         Key::Insert => "insert".to_owned(),
         Key::ShiftDelete => "shift-delete".to_owned(),
         _ => return None,

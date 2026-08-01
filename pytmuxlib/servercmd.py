@@ -163,14 +163,35 @@ class ServerCmdMixin:
         if not name or pane is None:
             return
         overlays = client.plugin_state.setdefault("overlays", {})
-        on = overlays.setdefault(name, set())
+        on = overlays.setdefault(name, {})
         if msg.get("on"):
-            on.add(pane)
+            # 켤 때마다 **빈 상태로 시작한다**(달력이면 이번 달). 껐다 켠 사람은 자기가
+            # 언제 지난달로 갔는지 기억하지 못한다 — 정본도 같은 규칙이다.
+            on[pane] = {}
         else:
-            on.discard(pane)
+            on.pop(pane, None)
         if not on:
             overlays.pop(name, None)
         # 다음 틱을 기다리지 않고 **지금** 그린다(껐을 때도: 빈 런이 지우개다).
+        client._cells_at = 0.0
+
+    @_cmd("plugin_overlay_action", HANDLED)
+    async def _cmd_plugin_overlay_action(self, client, sess, msg):
+        """오버레이의 클릭존/키가 올려 보낸 **이름**을 그 플러그인에 넘긴다(Tier B).
+
+        클라는 `‹` 가 무슨 뜻인지 모른다 — 서버가 준 `do` 를 그대로 되돌려 줄 뿐이고,
+        그것이 달을 넘기는 일인지 해를 넘기는 일인지는 플러그인이 정한다(설계 §4.4).
+        회신은 없다: 다음 프레임의 `plugin_cells` 가 곧 답이다.
+        """
+        name = str(msg.get("name") or "")
+        pane = msg.get("pane")
+        state = ((client.plugin_state.get("overlays") or {})
+                 .get(name) or {}).get(pane)
+        if state is None:
+            return          # 안 켜진 오버레이 — 늦게 온 클릭이다(조용히 버린다)
+        self.plugins.plugin_overlay_action(
+            self, sess, {"name": name, "pane": pane,
+                         "do": msg.get("do"), "state": state})
         client._cells_at = 0.0
 
     @_cmd("plugin_open", HANDLED)

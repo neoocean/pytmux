@@ -34,6 +34,7 @@
     "plugin_action": "handled",
     "plugin_open": "handled",
     "plugin_overlay": "handled",
+    "plugin_overlay_action": "handled",
     "popup_close": "handled",
     "popup_open": "handled",
     "prev_window": "full",
@@ -185,6 +186,11 @@
     "plugin_overlay": [
       "name",
       "on",
+      "pane"
+    ],
+    "plugin_overlay_action": [
+      "do",
+      "name",
       "pane"
     ],
     "popup_close": [],

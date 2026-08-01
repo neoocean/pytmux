@@ -2645,6 +2645,101 @@ fn a_prompt_spec_uses_the_native_ask_and_sends_the_typed_answer() {
 
 // ── P3 — 오버레이는 클라만 아는 사실이고, 그림은 서버가 준다 ────────────────────
 
+/// 달력이 켜진 한 판 — 서버가 그림 대신 **누를 자리와 키 표**까지 실어 준 프레임.
+fn calendar_cells() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells", "layer": "overlay", "dim": [1],
+        "runs": [{"x": 10, "y": 1, "text": "‹ 2026-08 ›", "style": {"bo": 1},
+                  "theme": {"f": "success"}}],
+        "zones": [{"x": 10, "y": 1, "w": 2, "h": 1, "pane": 1,
+                   "name": "calendar", "do": "prev"},
+                  {"x": 19, "y": 1, "w": 2, "h": 1, "pane": 1,
+                   "name": "calendar", "do": "next"}],
+        "keys": [{"key": "left", "pane": 1, "name": "calendar", "do": "prev"},
+                 {"key": "home", "pane": 1, "name": "calendar", "do": "today"}]
+    }))
+    .unwrap()
+}
+
+#[test]
+fn clicking_the_arrow_sends_back_the_name_the_server_gave_us() {
+    // 화살표를 그려 놓고 클릭이 안 먹으면 그 화살표가 **거짓말**이 된다. 우리는 뜻을
+    // 모른 채 이름만 되돌려 보낸다(설계 §4.4).
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(calendar_cells()))).unwrap();
+    view.pump_headless();
+    view.handle_mouse_down((19, 1), false);
+    view.pump_headless();
+    let frames: Vec<serde_json::Value> =
+        sent.lock().unwrap().iter().map(|o| o.to_frame()).collect();
+    let act = frames
+        .iter()
+        .find(|f| f["action"] == "plugin_overlay_action")
+        .unwrap_or_else(|| panic!("클릭이 안 올라갔다: {frames:?}"));
+    assert_eq!(act["name"], "calendar");
+    assert_eq!(act["do"], "next");
+    assert_eq!(act["pane"], 1);
+}
+
+#[test]
+fn the_overlay_takes_the_keys_the_spec_declared_and_the_pane_gets_nothing() {
+    // 패널이 이미 달력에 덮여 있으니 이 키를 가져가도 셸 입력을 가리지 않는다
+    // (정본 `client_overlay_key` 와 같은 규칙). **표에 있는 키만** 가져간다 —
+    // 안 그러면 오버레이가 떠 있는 동안 셸이 먹통이 된다.
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(calendar_cells()))).unwrap();
+    view.pump_headless();
+    for (key, mods) in [
+        (Key::Left, Mods::NONE),
+        (Key::Home, Mods::NONE),
+        (Key::Right, Mods::NONE),
+    ] {
+        view.handle_key(key, mods);
+        view.pump_headless();
+    }
+    let out = sent.lock().unwrap().clone();
+    let frames: Vec<serde_json::Value> = out.iter().map(|o| o.to_frame()).collect();
+    let acts: Vec<&str> = frames
+        .iter()
+        .filter(|f| f["action"] == "plugin_overlay_action")
+        .map(|f| f["do"].as_str().unwrap())
+        .collect();
+    assert_eq!(acts, ["prev", "today"], "스펙이 정한 키를 안 가져갔다: {frames:?}");
+    // 표에 없는 →(right)는 그대로 패널로 간다.
+    assert!(
+        out.iter().any(|o| matches!(o, Outgoing::Input(_))),
+        "표에 없는 키까지 삼켰다: {out:?}"
+    );
+}
+
+#[test]
+fn toggling_the_calendar_tells_the_server_and_closes_the_clock_there() {
+    // 한 패널엔 오버레이 하나(정본 규칙). 밀려난 시계의 **끔까지** 올려야 서버가 두
+    // 그림을 겹쳐 보내지 않는다.
+    // 달력에는 기본 키가 없다(팔레트·메뉴의 `calendar-mode`) — 그 두 길이 결국 부르는
+    // 액션을 그대로 태운다.
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.apply_action(base::Action::ToggleClock);
+    view.apply_action(base::Action::ToggleCalendar);
+    view.pump_headless();
+    let frames: Vec<serde_json::Value> =
+        sent.lock().unwrap().iter().map(|o| o.to_frame()).collect();
+    let overlays: Vec<(&str, bool)> = frames
+        .iter()
+        .filter(|f| f["action"] == "plugin_overlay")
+        .map(|f| (f["name"].as_str().unwrap(), f["on"].as_bool().unwrap()))
+        .collect();
+    assert_eq!(
+        overlays,
+        [("clock", true), ("clock", false), ("calendar", true)],
+        "달력을 켜며 시계를 안 껐다: {frames:?}"
+    );
+}
+
 #[test]
 fn toggling_the_clock_tells_the_server_which_pane() {
     // 시계를 서버가 그리려면 **어느 패널에 켰나**를 들어야 한다(설계 §4.4). 그 사실을

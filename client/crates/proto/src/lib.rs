@@ -20,10 +20,7 @@
 // `#[cfg(unix)]` 였고, 그게 Windows 지원의 첫 관문이었다.
 pub mod client;
 pub mod blocks;
-pub mod calendar;
 
-/// 오늘 날짜 — 뷰가 부르기 좋은 자리에 다시 내놓는다([`clock::today`]).
-pub use clock::today as calendar_today;
 pub mod canvas;
 pub mod clock;
 pub mod command;

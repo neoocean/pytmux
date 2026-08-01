@@ -36,21 +36,6 @@ NOARG = {"clock-mode", "clock", "open-clock", "close-clock"}
 PANE_SCOPED = {"clock-mode", "open-clock", "close-clock"}
 
 
-def _segments(line: str):
-    """`"██  ██"` → `[(0, "██"), (4, "██")]`. 이어진 **비공백** 덩어리와 그 x 오프셋.
-    글리프의 공백은 "쓰지 않는다"는 뜻이라 런에 담기면 안 된다."""
-    out, x, n = [], 0, len(line)
-    while x < n:
-        if line[x] == " ":
-            x += 1
-            continue
-        start = x
-        while x < n and line[x] != " ":
-            x += 1
-        out.append((start, line[start:x]))
-    return out
-
-
 class _ClockPlugin:
     name = "clock"
     description = "시계 오버레이 — 패널을 큰 시계로 덮음(clock-mode)"
@@ -148,7 +133,7 @@ class _ClockPlugin:
     # (`blockfont.clock_font_for`)을 쓰는 것으로 그 위험을 좁혀 둔다.
     def plugin_cells(self, server, sess, req):
         from datetime import datetime
-        from pytmuxlib.blockfont import clock_font_for
+        from pytmuxlib.blockfont import clock_font_for, segments
         panes = [p for p in req.get("panes") or []
                  if p["id"] in (req.get("overlays") or {}).get("clock", ())]
         if not panes:
@@ -164,18 +149,17 @@ class _ClockPlugin:
                 for row in range(ch_h):
                     line = " ".join(font.get(c, [" " * gcols] * ch_h)[row]
                                     for c in text)
-                    # ★ **빈 칸은 안 싣는다**. 정본은 글리프의 공백에 아무것도 안 써서
-                    #   흐려진 패널 내용이 숫자 구멍으로 비쳐 보인다 — 공백까지 런에
-                    #   담으면 그 자리가 지워져 그림이 달라진다. 그래서 이어진 글자
+                    # ★ **빈 칸은 안 싣는다**(`blockfont.segments` 주석) — 이어진 글자
                     #   덩어리마다 런 하나다(칸마다 쪼개는 것보다 프레임이 작다).
-                    for x0, seg in _segments(line):
+                    for x0, seg in segments(line):
                         runs.append({"x": ox + x0, "y": oy + row, "text": seg,
-                                     "style": {"bo": 1}, "theme": "success"})
+                                     "style": {"bo": 1},
+                                     "theme": {"f": "success"}})
             else:
                 # 큰 글자가 안 들어가면 단순 시각(정본 폴백과 같은 판정).
                 ox = p["x"] + max(0, (pw - len(text)) // 2)
                 runs.append({"x": ox, "y": p["y"] + ph // 2, "text": text,
-                             "style": {"bo": 1}, "theme": "success"})
+                             "style": {"bo": 1}, "theme": {"f": "success"}})
         return runs
 
     def plugin_dim_panes(self, server, sess, req):
