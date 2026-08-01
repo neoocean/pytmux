@@ -1723,6 +1723,10 @@ async def test_command_table_disposition_golden():
         # (`{"t":"plugin_screen"}`) 세션 상태를 안 바꾼다. 재동기할 캔버스가 없고,
         # 다음 동작은 클라가 `plugin_action` 으로 되묻는다.
         "plugin_open": HANDLED, "plugin_action": HANDLED,
+        # 플러그인 셀 기여(Tier B · 2026-08-02 P3) — 클라가 **사실**(어느 패널에
+        # 오버레이를 켰나)만 올린다. 회신이 아예 없어서 HANDLED 다: 답은 다음 프레임의
+        # `plugin_cells` 이고, 그건 flush 루프가 낸다.
+        "plugin_overlay": HANDLED,
         # 마우스 드래그 선택 텍스트 요청(2026-07-25 신설) — 핸들러가 `selection` 을
         # 회신해 완결하므로 HANDLED(full 재동기 불필요: 선택은 클라 상태다).
         "copy_range": HANDLED,

@@ -156,6 +156,12 @@ pub enum Command {
     /// `input` 에 그 줄의 **`key`**(뜻)를 싣는다. 자리(번호)만 보내면 목록이 바뀔 때
     /// 엉뚱한 줄이 열린다 — 서버가 자리로 되찾게 두지 않는 것이 이 스펙의 계약이다.
     PluginAction { id: String, act: String, row: usize, input: Option<String> },
+    /// 이 클라의 **패널 오버레이 상태**를 서버에 알린다(설계 Tier B · P3 · §4.4).
+    ///
+    /// 시계가 어느 패널에 떠 있는지는 클라만 안다(정본에서도 클라 플러그인 상태다).
+    /// 서버가 같은 그림을 그리려면 그 **사실**을 들어야 한다 — 그릴지·어떻게는 여전히
+    /// 플러그인이 정한다. 회신은 없다: 다음 프레임의 `plugin_cells` 가 곧 답이다.
+    PluginOverlay { name: String, pane: i64, on: bool },
     /// 입력을 창 안 모든 패널로 복제할지 토글한다(`synchronize-panes`).
     ///
     /// 인자를 안 실으면 서버가 토글한다 — 켜고 끄는 두 명령을 두면 클라가 상태를 알아야
@@ -391,6 +397,7 @@ impl Command {
             Command::RequestBuffers => "request_buffers",
             Command::PluginOpen { .. } => "plugin_open",
             Command::PluginAction { .. } => "plugin_action",
+            Command::PluginOverlay { .. } => "plugin_overlay",
             Command::ToggleSync { .. } => "set_sync",
             Command::ToggleMonitor { .. } => "set_monitor",
             Command::ToggleAutoRename { .. } => "set_auto_rename",
@@ -487,6 +494,9 @@ impl Command {
             Command::PluginOpen { name, args } => json!({ "name": name, "args": args }),
             Command::PluginAction { id, act, row, input } => {
                 json!({ "id": id, "do": act, "row": row, "input": input })
+            }
+            Command::PluginOverlay { name, pane, on } => {
+                json!({ "name": name, "pane": pane, "on": on })
             }
             Command::RequestTree
             | Command::RequestBuffers
@@ -1051,6 +1061,7 @@ mod tests {
             Command::RequestBuffers => 28,
             Command::PluginOpen { .. } => 65,
             Command::PluginAction { .. } => 66,
+            Command::PluginOverlay { .. } => 67,
             Command::ToggleSync { .. } => 29,
             Command::ToggleMonitor { .. } => 30,
             Command::ToggleAutoRename { .. } => 31,

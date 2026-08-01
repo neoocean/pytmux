@@ -250,6 +250,43 @@ impl PluginScreen {
     }
 }
 
+/// 플러그인이 화면에 얹는 글자들(설계 Tier B · P3).
+///
+/// # 왜 `dim` 이 따로 있나
+///
+/// 시계는 패널을 **덮되 뒤가 비쳐 보인다**. 그 흐리게 하기는 새 글자를 얹는 것이 아니라
+/// **이미 있는 셀을 바꾸는** 일이라 런으로 못 나른다 — 화면을 들고 있는 쪽만 할 수 있다.
+/// 서버는 "어느 패널이 덮였나"만 말하고 계산은 각 클라가 자기 방식으로 한다.
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+pub struct PluginCells {
+    /// `content`(내용 장식) | `overlay`(패널 덮기) — 정본의 그리기 순서 그대로다.
+    #[serde(default)]
+    pub layer: String,
+    /// 뒤를 흐리게 할 패널 id 들.
+    #[serde(default)]
+    pub dim: Vec<u64>,
+    #[serde(default)]
+    pub runs: Vec<PluginRun>,
+}
+
+/// 얹을 글자 한 덩어리. 자리는 **창 절대 좌표**다(서버가 패널 내용 영역으로 이미 옮겼다).
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+pub struct PluginRun {
+    #[serde(default)]
+    pub x: i64,
+    #[serde(default)]
+    pub y: i64,
+    #[serde(default)]
+    pub text: String,
+    /// 서버가 화면 런에 쓰는 것과 **같은 축약 스타일**(`crate::style`). 새 표기가 아니다.
+    #[serde(default)]
+    pub style: crate::message::Style,
+    /// 의미 색 이름(`success` 등). 있으면 **이 클라의 테마**에서 풀어 전경색을 덮는다 —
+    /// 서버가 hex 를 실으면 서버가 UI 를 알게 된다(설계 §10 위험표).
+    #[serde(default)]
+    pub theme: String,
+}
+
 /// 목록 한 줄. `key` 는 **그 줄의 뜻**(CL 번호·파일 이름)이고 액션에 그대로 실어 보낸다 —
 /// 자리(번호)로 가리키면 목록이 바뀔 때 엉뚱한 줄이 열린다.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
@@ -556,16 +593,16 @@ pub struct SessionState {
     /// 서버에 다시 물으면 p4 를 또 부르고(느리다) 그 사이 목록이 달라질 수도 있다 —
     /// 방금 보던 판을 그대로 되살리는 편이 정본의 손과도 같다.
     plugin_screens: Vec<PluginScreen>,
+    /// 서버가 준 셀 기여(설계 Tier B · P3). 시계가 여기로 온다 — **우리가 그리지
+    /// 않는다.** 로직(어느 폰트·어디에 중앙 정렬)이 플러그인 한 벌로 남는다.
+    plugin_cells: PluginCells,
     /// 서버가 알려 준 세션 이름(`status.session`). 상태줄 `#S` 가 쓴다.
     session: String,
-    /// 시계 오버레이를 켠 패널들(패리티 G7b). **서버는 이걸 모른다** — `clock-mode` 는
-    /// 파이썬 쪽에서도 클라 플러그인이라 상태가 클라에 있다. 그래서 다른 클라에는 안
-    /// 보이고, 재접속하면 꺼진다(파이썬과 같다).
+    /// 시계 오버레이를 켠 패널들(패리티 G7b). 켰다는 **사실**은 여전히 이 클라의 것이지만
+    /// (`clock-mode` 는 파이썬 쪽에서도 클라 플러그인이다) 이제 그 사실을 서버에
+    /// 올려 보내고(`plugin_overlay` — 설계 Tier B · P3) **그림은 서버가 준다**.
+    /// 여기 남는 이유는 토글과 "패널 클릭으로 닫기"가 이 집합을 보기 때문이다.
     clock_panes: std::collections::HashSet<i64>,
-    /// 시계에 적을 시각. **누가 채우나**: 이벤트 루프가 1초마다 넣는다. 여기서 시각을
-    /// 읽지 않는 이유는 `composite()` 를 시간에 안 묶기 위해서다 — 묶으면 같은 상태를
-    /// 두 번 그려도 결과가 달라져 오라클을 쓸 수 없다.
-    clock_text: String,
     /// 달력 오버레이를 켠 패널들(패리티 G7c). 시계와 같은 자리다 — 서버는 모른다.
     calendar_panes: std::collections::HashSet<i64>,
     /// 패널마다 몇 달 넘겨 보고 있나(0 = 이번 달). `‹`/`›` 클릭이 움직인다.
@@ -657,6 +694,11 @@ impl SessionState {
                     _ => self.plugin_screens.push(screen),
                 }
                 true
+            }
+            ServerMessage::PluginCells(cells) => {
+                let changed = cells != self.plugin_cells;
+                self.plugin_cells = cells;
+                changed
             }
             ServerMessage::PluginScreenClose { id } => {
                 let before = self.plugin_screens.len();
@@ -871,20 +913,6 @@ impl SessionState {
         }
         self.clock_panes.insert(active);
         true
-    }
-
-    /// 시계를 켠 패널이 하나라도 있나. 이벤트 루프가 **초당 갱신을 걸지** 정하는 데 쓴다
-    /// (안 켜져 있으면 1초마다 다시 그릴 이유가 없다).
-    pub fn clock_on(&self) -> bool {
-        !self.clock_panes.is_empty()
-    }
-
-    /// 시계에 적을 시각(`HH:MM:SS`). 바뀌었으면 `true` — 그때만 다시 그린다.
-    pub fn set_clock_text(&mut self, text: impl Into<String>) -> bool {
-        let text = text.into();
-        let changed = text != self.clock_text;
-        self.clock_text = text;
-        changed
     }
 
     /// 입력기 배지 글(뷰가 넣는다). 상태를 모르는 판에서는 `None` — 모르는 것을
@@ -1687,19 +1715,36 @@ impl SessionState {
                 );
             }
         }
-        // 시계는 **테두리를 그린 뒤** 덮는다 — 먼저 그리면 프레임이 숫자 위에 얹힌다.
-        if !self.clock_panes.is_empty() && !self.clock_text.is_empty() {
-            let digit = overlay_style::clock_digit();
+        // ★ 플러그인 셀 기여(설계 Tier B · P3) — **테두리를 그린 뒤** 덮는다(먼저
+        //   그리면 프레임이 글자 위에 얹힌다). 시계가 이 길로 온다: 우리는 어느 폰트를
+        //   고르고 어디에 중앙 정렬하는지 **모른다**. 그건 플러그인 한 벌의 일이고
+        //   우리가 아는 것은 "여기 이 글자를 이 스타일로"뿐이다.
+        if !self.plugin_cells.dim.is_empty() || !self.plugin_cells.runs.is_empty() {
+            // 딤이 먼저다 — 뒤를 흐리게 한 **다음** 글자를 얹어야 글자가 안 흐려진다.
             for pane in &layout.panes {
-                if !self.clock_panes.contains(&pane.id) {
+                if !self.plugin_cells.dim.contains(&(pane.id as u64)) {
                     continue;
                 }
-                crate::clock::draw(
-                    &mut canvas,
-                    (pane.x as usize, pane.y as usize, pane.w as usize, pane.h as usize),
-                    &self.clock_text,
-                    digit,
-                );
+                let (cols, rows) = canvas.size();
+                for y in (pane.y as usize)..((pane.y + pane.h) as usize).min(rows) {
+                    for x in (pane.x as usize)..((pane.x + pane.w) as usize).min(cols) {
+                        if let Some(cell) = canvas.cell_mut(x, y) {
+                            cell.style = crate::clock::darken(&cell.style);
+                        }
+                    }
+                }
+            }
+            let digit = overlay_style::clock_digit();
+            for run in &self.plugin_cells.runs {
+                let mut style = crate::style::CellStyle::from_map(&run.style);
+                // 색의 권위는 **이 클라의 테마**다(설계 §10 위험표) — 서버가 hex 를
+                // 실으면 서버가 UI 를 알게 된다. 지금 아는 이름은 하나(`success`)다.
+                if run.theme == "success" {
+                    style.fg = digit.fg;
+                }
+                for (i, ch) in run.text.chars().enumerate() {
+                    canvas.put(run.x as usize + i, run.y as usize, ch, style.clone());
+                }
             }
         }
         // 팝업은 **모든 패널 위**다(트리 밖이라 blit 루프에 안 들어온다). 상자를 그리고

@@ -2643,6 +2643,42 @@ fn a_prompt_spec_uses_the_native_ask_and_sends_the_typed_answer() {
     assert_eq!(action["input"], "hi");
 }
 
+// ── P3 — 오버레이는 클라만 아는 사실이고, 그림은 서버가 준다 ────────────────────
+
+#[test]
+fn toggling_the_clock_tells_the_server_which_pane() {
+    // 시계를 서버가 그리려면 **어느 패널에 켰나**를 들어야 한다(설계 §4.4). 그 사실을
+    // 안 올리면 서버는 아무것도 안 그리고, 화면에서는 "키가 안 먹었다"로 보인다.
+    let sent = sent_after(
+        vec![layout_one_pane()],
+        &[(Key::Char('b'), Mods::CTRL), (Key::Char('t'), Mods::NONE)],
+    );
+    let frames: Vec<serde_json::Value> = sent.iter().map(|o| o.to_frame()).collect();
+    let on = frames
+        .iter()
+        .find(|f| f["action"] == "plugin_overlay")
+        .unwrap_or_else(|| panic!("오버레이 사실이 안 올라갔다: {frames:?}"));
+    assert_eq!(on["name"], "clock");
+    assert_eq!(on["on"], true, "켰는데 껐다고 보냈다: {on:?}");
+
+    // 한 번 더 누르면 **껐다고** 보낸다 — 안 보내면 서버가 영영 그린다.
+    let sent = sent_after(
+        vec![layout_one_pane()],
+        &[
+            (Key::Char('b'), Mods::CTRL),
+            (Key::Char('t'), Mods::NONE),
+            (Key::Char('b'), Mods::CTRL),
+            (Key::Char('t'), Mods::NONE),
+        ],
+    );
+    let frames: Vec<serde_json::Value> = sent.iter().map(|o| o.to_frame()).collect();
+    let offs: Vec<_> = frames
+        .iter()
+        .filter(|f| f["action"] == "plugin_overlay" && f["on"] == false)
+        .collect();
+    assert_eq!(offs.len(), 1, "끈 사실이 안 올라갔다: {frames:?}");
+}
+
 // ── P6 — 스펙이 물음 문구와 커서 자리를 정한다 ──────────────────────────────────
 
 fn mdir_table_screen(selected: usize) -> ServerMessage {

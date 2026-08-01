@@ -146,6 +146,33 @@ class ServerCmdMixin:
             resp = dict(resp, _req_token=msg["_req_token"])
         await self._send_to(client, resp)
 
+    @_cmd("plugin_overlay", HANDLED)
+    async def _cmd_plugin_overlay(self, client, sess, msg):
+        """이 클라의 **패널 오버레이 상태**를 서버에 알린다(설계 Tier B · P3 · §4.4).
+
+        시계·달력이 어느 패널에 떠 있는지는 오늘 **클라의 것**이다(정본 `app.clock_panes`).
+        서버가 같은 그림을 그리려면 그 사실을 들어야 하는데, 그건 설계 §6 이 "비용"으로
+        적어 둔 per-client UI 상태다 — 그래서 세션이 아니라 **연결**에 매단다
+        (`ClientConn.plugin_state`, Tier C 가 이미 쓰는 그 자리). 두 사람이 같은 세션을
+        봐도 서로의 시계를 켜지 않고, 연결이 끊기면 함께 사라진다.
+
+        회신은 없다 — 다음 프레임의 `plugin_cells` 가 곧 답이다.
+        """
+        name = str(msg.get("name") or "")
+        pane = msg.get("pane")
+        if not name or pane is None:
+            return
+        overlays = client.plugin_state.setdefault("overlays", {})
+        on = overlays.setdefault(name, set())
+        if msg.get("on"):
+            on.add(pane)
+        else:
+            on.discard(pane)
+        if not on:
+            overlays.pop(name, None)
+        # 다음 틱을 기다리지 않고 **지금** 그린다(껐을 때도: 빈 런이 지우개다).
+        client._cells_at = 0.0
+
     @_cmd("plugin_open", HANDLED)
     async def _cmd_plugin_open(self, client, sess, msg):
         """플러그인 **화면**을 연다(설계 Tier C · P4).

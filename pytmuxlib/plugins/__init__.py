@@ -336,6 +336,57 @@ class Registry:
                     return resp
         return None
 
+    def plugin_cells(self, server, sess, req) -> list:
+        """Tier B — **셀 기여**(설계 §4.2 · P3).
+
+        플러그인이 `cells` 에 직접 쓰던 것을 **런 목록**으로 뽑는다. 정본은 자기
+        프로세스에서 `client_overlay` 로 그리지만, 네이티브 클라는 파이썬을 못 읽어
+        같은 그림을 못 낸다 — 그래서 서버가 **무엇을 어디에 쓸지**를 자료로 준다.
+
+        `req` 는 이 클라의 화면 사정이다:
+        `{"panes": [{"id","x","y","w","h"}], "overlays": {"<이름>": {패널 id…}},
+          "cols", "rows"}` — `overlays` 는 그 클라가 켜 둔 것이다(설계 §4.4 의
+        `client_fact`: 오버레이가 켜졌다는 **사실**은 클라만 알고, 그릴지·어떻게는
+        플러그인이 정한다).
+
+        돌려줄 것 — 런 목록. 각 런:
+        `{"x","y","text","style": {…}}` (+ 선택 `"layer"`: `content`|`overlay`,
+        `"theme"`: 의미 색 이름)
+
+        - 스타일은 **이미 있는 표현**을 쓴다(`model._style_key` 가 내는 축약 키 —
+          서버가 화면 런에 쓰는 것과 같다). 새 색 표기를 만들지 않는다.
+        - **색의 권위는 클라 테마**다. `theme` 가 있으면 클라가 자기 테마에서 그 이름을
+          풀어 `style.f` 를 덮는다 — 여기에 hex 를 실으면 서버가 UI 를 알게 된다
+          (설계 §10 위험표의 그 줄).
+
+        플러그인이 하나도 안 내면 빈 목록 → 서버는 프레임을 안 만든다(delete-to-disable).
+        """
+        runs = []
+        for p in self.plugins:
+            fn = getattr(p, "plugin_cells", None)
+            if fn is None:
+                continue
+            got = fn(server, sess, req)
+            if got:
+                runs.extend(got)
+        return runs
+
+    def plugin_dim_panes(self, server, sess, req) -> list:
+        """오버레이가 **뒤를 흐리게** 할 패널 id 들(설계 §4.2 의 `layer` 와 같은 부류).
+
+        런으로는 못 나르는 것이라 따로 둔다 — 딤은 새 글자를 얹는 것이 아니라 **이미
+        있는 셀을 바꾸는** 일이고, 그 계산(실색 블렌드·이모지 placeholder)은 화면을
+        들고 있는 클라만 할 수 있다. 서버는 "어느 패널이 덮였나"만 말한다."""
+        out = []
+        for p in self.plugins:
+            fn = getattr(p, "plugin_dim_panes", None)
+            if fn is None:
+                continue
+            got = fn(server, sess, req)
+            if got:
+                out.extend(got)
+        return out
+
     # ---- 서버 런타임 훅(코어가 믹스인 메서드를 이름으로 직접 부르지 않게) ----
     # 코어(serverio/server)는 Claude 서버 로직(스캔/상태/입력/사용량)에 **이 훅으로만**
     # 닿는다. 플러그인이 없으면 전부 기본값(False/None/no-op)이라 서버가 그대로 동작

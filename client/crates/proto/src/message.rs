@@ -182,6 +182,12 @@ pub enum ServerMessage {
         #[serde(default)]
         id: String,
     },
+    /// 플러그인이 **화면에 얹을 글자**(설계 Tier B · P3 — 셀 기여).
+    ///
+    /// 정본은 시계·달력을 자기 프로세스에서 그린다. 우리는 파이썬을 못 읽으므로 서버가
+    /// **무엇을 어디에 쓸지**를 런으로 준다 — 로직은 플러그인 한 벌로 남는다.
+    #[serde(rename = "plugin_cells")]
+    PluginCells(crate::session::PluginCells),
     #[serde(rename = "ok")]
     Ok(serde_json::Value),
     #[serde(rename = "pong")]
@@ -210,6 +216,7 @@ impl ServerMessage {
             Self::Buffers { .. } => "buffers",
             Self::PluginScreen(_) => "plugin_screen",
             Self::PluginScreenClose { .. } => "plugin_screen_close",
+            Self::PluginCells(_) => "plugin_cells",
             Self::Blocks { .. } => "blocks",
             Self::Selection { .. } => "selection",
             Self::Claude { .. } => "claude",

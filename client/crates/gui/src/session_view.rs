@@ -1077,12 +1077,18 @@ impl SessionView {
                 ));
                 return true;
             }
-            // 시계는 클라 안에서만 끝난다 — 서버는 어느 패널이 시계 모드인지 모른다.
+            // ★ 시계를 **서버가 그린다**(설계 Tier B · P3). 어느 패널이 시계 모드인지는
+            //   여전히 이 클라만 아는 사실이라, 그 사실을 올려 보낸다(§4.4) — 무엇을
+            //   어떻게 그릴지는 플러그인이 정한다. 그림은 `plugin_cells` 로 온다.
             Action::ToggleClock => {
-                self.state.toggle_clock();
-                // 켠 직후 다음 초까지 빈 화면이 아니게 지금 시각을 바로 넣는다.
-                self.state
-                    .set_clock_text(proto::clock::now_text());
+                if let Some(pane) = self.state.active_pane() {
+                    let on = self.state.toggle_clock();
+                    self.pending.push(Outgoing::Command(Command::PluginOverlay {
+                        name: "clock".into(),
+                        pane,
+                        on,
+                    }));
+                }
                 return true;
             }
             Action::ShowPlugins => {
@@ -1785,11 +1791,9 @@ impl SessionView {
             // 자정을 넘기면 '오늘' 강조가 옮겨 가야 한다.
             dirty |= self.state.set_today(proto::calendar_today());
         }
-        if self.state.clock_on() {
-            dirty |= self
-                .state
-                .set_clock_text(proto::clock::now_text());
-        }
+        // 시계는 **서버가 초를 센다**(P3). 여기서 시각을 넣던 것은 우리가 그리던
+        // 시절의 손이고, 지금은 새 `plugin_cells` 프레임이 곧 "다시 그려라"다 —
+        // 지금 화면 갱신과 같은 길이라 클라에 따로 시계를 둘 이유가 없다.
         dirty | self.tick_status()
     }
 

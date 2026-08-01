@@ -13,7 +13,6 @@
 //! `tests/clock_conformance.rs` 가 이 표와 대조한다. 손으로 옮겨 적으면 `▀`/`▄`/`█` 이
 //! 한 칸만 어긋나도 숫자가 다르게 보인다.
 
-use crate::canvas::Canvas;
 use crate::style::CellStyle;
 
 /// 지금 시각(`HH:MM:SS`, **지역 시간**). 이벤트 루프가 주기적으로 불러 상태에 넣는다.
@@ -123,58 +122,16 @@ pub fn darken(style: &CellStyle) -> CellStyle {
 /// 오버레이 뒤 화면을 흐리게 하는 세기. 파이썬 `_darken_style` 의 기본 비율이다.
 pub const DIM_RATIO: f32 = 0.55;
 
-/// 패널 하나를 시계로 덮는다. `rect` 는 `(x, y, w, h)` 다.
-///
-/// 뒤 화면은 **지우지 않고 흐리게** 남긴다(파이썬과 같다) — 시계를 켠 채로도 그 패널에서
-/// 무슨 일이 벌어지는지 어렴풋이 보인다.
-pub fn draw(canvas: &mut Canvas, rect: (usize, usize, usize, usize), text: &str, digit: CellStyle) {
-    let (px, py, pw, ph) = rect;
-    let (cols, rows) = canvas.size();
-
-    // 1) 뒤 화면 흐리게.
-    for y in py..(py + ph).min(rows) {
-        for x in px..(px + pw).min(cols) {
-            if let Some(cell) = canvas.cell_mut(x, y) {
-                cell.style = darken(&cell.style);
-            }
-        }
-    }
-
-    // 2) 큰 글자, 안 들어가면 그냥 시각 문자열.
-    let chars: Vec<char> = text.chars().collect();
-    let font = font_for(pw, ph, chars.len());
-    if pw >= font.width && ph >= font.rows {
-        let ox = px + (pw - font.width) / 2;
-        let oy = py + (ph - font.rows) / 2;
-        for row in 0..font.rows {
-            let mut gx = ox;
-            for c in &chars {
-                // 모르는 글자는 **빈 칸으로 자리만** 차지한다 — 건너뛰면 그 뒤 글자가
-                // 통째로 밀려 시계가 어긋난다.
-                let lines = glyph(&font, *c);
-                for i in 0..font.cols {
-                    let ch = lines
-                        .and_then(|l| l.get(row))
-                        .and_then(|line| line.chars().nth(i))
-                        .unwrap_or(' ');
-                    if ch != ' ' {
-                        canvas.put_cell(gx as isize, (oy + row) as isize, ch, digit);
-                    }
-                    gx += 1;
-                }
-                gx += GAP;
-            }
-        }
-        return;
-    }
-
-    // 폴백 — 패널이 너무 작다. 파이썬과 같은 자리(가운데 줄)에 그냥 적는다.
-    let ox = px + pw.saturating_sub(chars.len()) / 2;
-    let oy = py + ph / 2;
-    for (i, c) in chars.iter().enumerate() {
-        canvas.put_cell((ox + i) as isize, oy as isize, *c, digit);
-    }
-}
+// `draw` 는 **여기 없다**(2026-08-02, 설계 Tier B · P3). 시계 그림은 이제 서버가
+// 런으로 준다(`plugin_cells`) — 우리가 그리면 규칙이 두 벌이 되고, 두 벌은 갈린다.
+//
+// 남은 것들이 왜 남았나:
+//   `darken`      — 딤은 런으로 못 나른다(있는 셀을 바꾸는 일). 셀 기여가 쓴다.
+//   `now_text`    — 알림 이력의 시각(`Notice::at`).
+//   `today`       — 달력이 '오늘'을 강조하는 데 쓴다.
+//   폰트 표·`font_for` — **달력이 직접 부른다**(`calendar.rs` 의 큰 날짜 글자).
+//                  그래서 표와 그 짝(`gen_clock_font_fixture.py`·`clock_conformance.rs`)은
+//                  달력이 같은 길로 올 때 함께 간다.
 
 #[cfg(test)]
 #[path = "clock_tests.rs"]

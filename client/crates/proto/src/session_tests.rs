@@ -324,6 +324,52 @@ fn bordered_layout(panes: &[(i64, [u16; 4])], active: i64) -> ServerMessage {
     .unwrap()
 }
 
+// ── P3 — 플러그인이 얹는 글자(셀 기여) ──────────────────────────────────────────
+
+#[test]
+fn plugin_cell_runs_are_painted_where_the_server_said() {
+    // 시계가 이 길로 온다. 우리는 어느 폰트를 고르고 어디에 중앙 정렬하는지 **모른다** —
+    // 그건 플러그인 한 벌의 일이고, 그 사실이 이 슬라이스의 요점이다.
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 6)]));
+    state.apply(screen_msg(1, "hi"));
+    let cells: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells", "layer": "overlay", "dim": [],
+        "runs": [{"x": 2, "y": 1, "text": "██", "style": {"bo": 1}, "theme": "success"}]
+    }))
+    .unwrap();
+    assert!(state.apply(cells), "화면이 바뀌었는데 안 바뀌었다고 했다");
+    let canvas = state.composite().unwrap();
+    assert!(
+        canvas.row_text(1).contains("██"),
+        "서버가 준 글자가 화면에 없다: {:?}",
+        canvas.row_text(1)
+    );
+}
+
+#[test]
+fn a_dimmed_pane_keeps_its_text_but_loses_its_brightness() {
+    // 시계는 패널을 **덮되 뒤가 비쳐 보인다**. 딤은 새 글자가 아니라 있는 셀을 바꾸는
+    // 일이라 런으로 못 나른다 — 서버는 "어느 패널"만 말하고 계산은 우리가 한다.
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 6)]));
+    state.apply(screen_msg(1, "hi"));
+    let before = state.composite().unwrap();
+    let bright = before.cell(0, 0).cloned();
+    let cells: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells", "layer": "overlay", "dim": [1], "runs": []
+    }))
+    .unwrap();
+    state.apply(cells);
+    let after = state.composite().unwrap();
+    assert!(after.text().contains("hi"), "딤이 글자를 지웠다:\n{}", after.text());
+    assert_ne!(
+        after.cell(0, 0).cloned(),
+        bright,
+        "덮으라고 했는데 뒤가 그대로 밝다"
+    );
+}
+
 #[test]
 fn a_bordered_pane_is_framed() {
     let mut state = SessionState::new();

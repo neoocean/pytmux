@@ -33,6 +33,7 @@
     "pipe_pane": "handled",
     "plugin_action": "handled",
     "plugin_open": "handled",
+    "plugin_overlay": "handled",
     "popup_close": "handled",
     "popup_open": "handled",
     "prev_window": "full",
@@ -180,6 +181,11 @@
     "plugin_open": [
       "args",
       "name"
+    ],
+    "plugin_overlay": [
+      "name",
+      "on",
+      "pane"
     ],
     "popup_close": [],
     "popup_open": [
