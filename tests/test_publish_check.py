@@ -177,14 +177,22 @@ async def test_p4_only_files_that_are_gitignored_are_not_drift():
     assert "HANDOFF" not in text, text
 
 
-async def test_ci_generated_benchmarks_are_allowed_to_be_git_only():
-    """bench 워크플로가 만들어 커밋하는 결과물은 depot 에 없는 게 맞다(실측 1,500여 개).
-    안 빼면 존재 대조가 상시 빨개져 아무도 안 본다."""
-    rc, text = _existence({
-        "p4 files": (0, _files(("CLAUDE.md", "edit"))),
-        "git ls-files": (0, "CLAUDE.md\ndocs/benchmark/darwin-arm64/x.json\n"),
-    })
-    assert rc == 0, text
+async def test_moved_out_docs_are_no_longer_exempt_from_the_existence_check():
+    """§10-17 이관의 한시 예외(`GIT_ONLY_PREFIXES`)는 **지웠다**.
+
+    셋(`docs/benchmark/`·`docs/image/`·`docs/PENDING_UI_IMPROVEMENTS.md`)은
+    `docs/internal/` 로 이사했고 미러에서도 `git rm --cached` 로 내렸다 — 그러니 이제
+    저 경로가 git 에만 있다면 그건 **정상이 아니라 드리프트**다(이사한 자리로 누가 다시
+    커밋했거나, 되돌아온 것). 예외를 되살리면 이 셋이 다시 죽는다."""
+    for path in ("docs/benchmark/darwin-arm64/x.json",
+                 "docs/image/02-split-lr.svg",
+                 "docs/PENDING_UI_IMPROVEMENTS.md"):
+        rc, text = _existence({
+            "p4 files": (0, _files(("CLAUDE.md", "edit"))),
+            "git ls-files": (0, f"CLAUDE.md\n{path}\n"),
+        })
+        assert rc == 1, f"{path} 가 예외로 새고 있다: {text}"
+        assert path in text, text
 
 
 async def test_deleted_revisions_do_not_count_as_present_in_depot():

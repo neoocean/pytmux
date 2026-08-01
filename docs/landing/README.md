@@ -23,8 +23,10 @@
 
 > **자기완결:** 이미지를 `image/` 하위에 동봉했고 HTML 도 `image/…` 상대 경로만
 > 씁니다. 따라서 **`docs/landing/` 디렉토리 그대로** 정적 호스팅 루트에 올리면 됩니다
-> (상위 `../image/` 참조 없음). `image/*.svg` 는 저장소의 `docs/image/` 원본을 동봉한
-> 사본이며, 원본 스크린샷이 갱신되면 `build.sh` 위쪽 안내대로 다시 복사해 맞춥니다.
+> (상위 `../image/` 참조 없음). `image/*.svg` 는 저장소의 `docs/internal/image/` 원본을
+> 동봉한 사본이며, 원본 스크린샷이 갱신되면 `build.sh` 위쪽 안내대로 다시 복사해 맞춥니다.
+> ★ 원본이 `docs/internal/` 아래(= 미러 제외)로 갔으므로(§10-17), **공개 저장소에서 이
+> 동봉본이 그림의 유일한 출처**입니다 — `README.md` 첫 그림도 여기를 겁니다.
 
 ## 로컬 미리보기
 
@@ -48,12 +50,12 @@ python3 -m http.server -d _dist 8000    # 번들 미리보기
 
 ## 스크린샷 동기화
 
-`image/*.svg` 는 `docs/image/` 의 사본입니다. 원본 스크린샷이 바뀌면 참조 중인 것만
-다시 복사합니다.
+`image/*.svg` 는 `docs/internal/image/` 의 사본입니다. 원본 스크린샷이 바뀌면 참조 중인
+것만 다시 복사합니다.
 
 ```bash
 cd docs/landing
-for f in image/*.svg; do cp "../image/$(basename "$f")" "$f"; done
+for f in image/*.svg; do cp "../internal/image/$(basename "$f")" "$f"; done
 ```
 
 ## Cloudflare R2 배포 (참고 — 실행하지 않음)

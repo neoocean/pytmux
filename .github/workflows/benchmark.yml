@@ -1,24 +1,32 @@
 name: benchmark
 
-# OS별 성능/반응성 벤치마크(scripts/bench.py)를 ubuntu/macos/windows 에서 돌려
-# 결과(docs/benchmark/<os>/<ts>.md|json)를 미러에 커밋한다. 개발환경(Apple Silicon
-# macOS)에서 `git pull` 로 OS별·시각별 리포트를 비교해 볼 수 있다.
-# 배경/한계: docs/WINDOWS_TESTING.md, docs/benchmark/README.md.
+# OS별 성능/반응성 벤치마크(scripts/bench.py)를 ubuntu/macos/windows 에서 돌리고
+# 결과(docs/internal/benchmark/<os>/<ts>.md|json)를 **아티팩트로만** 남긴다.
+# 배경/한계: docs/internal/WINDOWS_TESTING.md, docs/internal/benchmark/README.md.
+#
+# ⚠ 종전에는 `publish` 잡이 그 결과를 미러에 커밋·푸시했다. §10-17 로 출력 경로가
+# `docs/internal/` 아래(= .gitignore 가 디렉토리째 막는 곳)로 이사하면서 그 잡은
+# **빈 커밋을 만들거나 죽는** 상태가 됐고, 목적지가 비공개인데 커밋할 이유도 없어졌다.
+# 그래서 퇴역시켰다 — 재는 일은 그대로 두고 커밋·푸시만 뺀다.
+#   · `permissions` 를 contents: read 로 낮췄다(더는 쓸 일이 없다 — 최소권한).
+#   · `paths-ignore` 도 뺐다. 그건 "bench 커밋이 자신을 재트리거"하는 것을 막는
+#     장치였는데 이제 bench 커밋 자체가 없다.
+#   · 대가를 알고 고른 것이다: OS별 이력이 앞으로 git 에 안 쌓인다. 남는 것은
+#     아티팩트(보존기간)와, 사람이 로컬에서 돌려 p4 에 넣는 것뿐이다.
 
 on:
   push:
     branches: [main]
-    paths-ignore: ["docs/benchmark/**"]   # bench 커밋이 자신을 재트리거하지 않게
   workflow_dispatch:
   schedule:
     - cron: "17 6 * * 1"                   # 매주 월 06:17 UTC(코드 변경 없이도 env 드리프트 추적)
 
 concurrency:
-  group: benchmark                          # 동시 실행 직렬화(publish 푸시 경합 방지)
+  group: benchmark
   cancel-in-progress: false
 
 permissions:
-  contents: write                           # publish 잡이 docs/benchmark 커밋·푸시
+  contents: read
 
 jobs:
   bench:
@@ -42,38 +50,5 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: bench-${{ matrix.os }}
-          path: docs/benchmark/
+          path: docs/internal/benchmark/
           if-no-files-found: error
-
-  publish:
-    needs: bench
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v8
-        with:
-          path: _bench_artifacts
-      - name: Merge results into docs/benchmark/
-        run: |
-          # 각 아티팩트(bench-<os>) 안의 <slug>/<ts>.md|json 을 docs/benchmark/<slug>/ 로 복사.
-          # 아티팩트 prefix 처리가 버전에 따라 다를 수 있어 파일 기준으로 robust 하게 옮긴다.
-          find _bench_artifacts -type f \( -name '*.md' -o -name '*.json' \) | while read -r f; do
-            slug="$(basename "$(dirname "$f")")"
-            mkdir -p "docs/benchmark/$slug"
-            cp "$f" "docs/benchmark/$slug/$(basename "$f")"
-          done
-          rm -rf _bench_artifacts
-      - name: Commit & push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/benchmark
-          if git diff --cached --quiet; then
-            echo "새 벤치마크 파일 없음 — 커밋 생략"; exit 0
-          fi
-          git commit -m "bench: OS별 결과 동기화 (run ${{ github.run_id }}) [skip ci]"
-          for i in 1 2 3; do
-            git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
-            echo "재시도 $i…"; sleep 3
-          done
-          echo "push 실패"; exit 1

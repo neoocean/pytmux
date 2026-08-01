@@ -3,7 +3,7 @@
 
 macOS(arm64) 한 곳에서만 개발하면 Linux/Windows 의 성능 특성을 못 본다. 이 스크립트는
 **완전 헤드리스**(실 터미널/셸 spawn 불필요)로 3축을 측정해 OS·시각별 Markdown 리포트를
-남긴다. CI(.github/workflows/benchmark.yml)가 OS 매트릭스로 돌려 docs/benchmark/<os>/ 에
+남긴다. CI(.github/workflows/benchmark.yml)가 OS 매트릭스로 돌려 docs/internal/benchmark/<os>/ 에
 커밋하면 개발환경에서 git pull 로 비교해 볼 수 있다.
 
 측정 3축:
@@ -16,7 +16,7 @@ macOS(arm64) 한 곳에서만 개발하면 Linux/Windows 의 성능 특성을 �
      cat 스크롤)를 재사용한다.
 
 사용:
-  python scripts/bench.py                  # 측정 후 docs/benchmark/<os>/<ts>.md 작성
+  python scripts/bench.py                  # 측정 후 docs/internal/benchmark/<os>/<ts>.md 작성
   python scripts/bench.py --stdout         # 파일 대신 표준출력
   python scripts/bench.py --quick          # 짧게(스모크/CI 빠른 점검)
   python scripts/bench.py --mb 20 --reps 8 # 더 큰 스트림·더 많은 반복
@@ -357,8 +357,8 @@ def main(argv=None) -> int:
     ap.add_argument("--quick", action="store_true",
                     help="짧게(reps=10, mb=1) — 스모크/CI 빠른 점검")
     ap.add_argument("--stdout", action="store_true", help="파일 대신 표준출력으로만")
-    ap.add_argument("--out-dir", default=os.path.join(ROOT, "docs", "benchmark"),
-                    help="리포트 출력 루트(기본 docs/benchmark)")
+    ap.add_argument("--out-dir", default=os.path.join(ROOT, "docs", "internal", "benchmark"),
+                    help="리포트 출력 루트(기본 docs/internal/benchmark)")
     args = ap.parse_args(argv)
 
     reps, mb = (10, 1.0) if args.quick else (args.reps, args.mb)

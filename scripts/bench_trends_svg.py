@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """벤치마크 추세 SVG 그래프 생성기 (matplotlib).
 
-docs/benchmark/<os-slug>/*.json 를 읽어 **일별 중앙값(median)** 시계열을 뽑고,
+docs/internal/benchmark/<os-slug>/*.json 를 읽어 **일별 중앙값(median)** 시계열을 뽑고,
 matplotlib 으로 멀티라인 SVG 차트를 docs/internal/image/ 에 쓴다. 리포트
 (BENCHMARK_TRENDS_*.md)가 이 이미지를 참조한다.
 
@@ -160,7 +160,7 @@ CHARTS = [
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--bench-root", default="docs/benchmark")
+    ap.add_argument("--bench-root", default="docs/internal/benchmark")
     ap.add_argument("--outdir", default="docs/internal/image")
     args = ap.parse_args()
     os.makedirs(args.outdir, exist_ok=True)

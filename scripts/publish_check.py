@@ -94,9 +94,12 @@ def check_cl(cl, out=print):
     return 0
 
 
-# git 에만 있는 것이 **정상**인 경로. CI(bench 워크플로)가 만들어 커밋하는 결과물이라
-# depot 에 없는 게 맞다 — 이걸 안 빼면 존재 대조가 1,500개로 상시 빨개져 아무도 안 본다.
-GIT_ONLY_PREFIXES = ("docs/benchmark/",)
+# **git 에만 있어도 되는 경로는 이제 없다.** 종전 `GIT_ONLY_PREFIXES`
+# (`docs/benchmark/`·`docs/image/`·`docs/PENDING_UI_IMPROVEMENTS.md`) 는 §10-17 이관의
+# 한시 예외였다 — 셋이 `docs/internal/` 로 이사한 뒤에도 gitignore 는 **이미 추적 중인
+# 파일을 안 내려서** 미러 HEAD 에 남아 있었고, 그것을 "p4 에 없다"로 세면 존재 대조가
+# 5천 개로 상시 빨개졌다. `git rm -r --cached` 로 내린 지금 예외는 조건을 잃었다.
+# 예외는 조건과 함께만 산다 — 남겨 뒀다면 그 순간부터 **진짜 드리프트를 가리는 구멍**이다.
 
 
 def depot_files():
@@ -153,8 +156,7 @@ def check_existence(out=print):
         out("· git ls-files 실패 — 존재 대조 생략")
         return 0
     tracked = {ln.strip() for ln in txt.splitlines() if ln.strip()}
-    git_only = sorted(f for f in tracked - depot
-                      if not f.startswith(GIT_ONLY_PREFIXES))
+    git_only = sorted(tracked - depot)
     # depot 에만 있는 것은 gitignore 된 p4 전용 파일(docs/internal·captures·db)이 대부분이다.
     depot_only_raw = sorted(depot - tracked)
     depot_only = sorted(set(depot_only_raw) - git_ignored(depot_only_raw))

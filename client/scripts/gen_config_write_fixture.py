@@ -96,16 +96,18 @@ def main() -> int:
 
     out = os.path.abspath(args.out)
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    # ⚠ 출력에 `newline="\n"` 를 **명시하지 않는다** — 생성기 열아홉 중 이것만
-    # 명시했고, 그 하나 때문에 Windows CI 가 붉었다(2026-08-01 실측). 이유:
-    # `check_fixtures.py` 는 픽스처를 **바이트로** 비교하는데, 저장소에
-    # `.gitattributes` 가 없어 Windows 러너의 체크아웃은 `core.autocrlf` 로 CRLF 가
-    # 된다. 나머지 열여덟은 플랫폼 기본(=Windows 에서 CRLF)으로 써서 체크아웃과
-    # 맞아떨어지는데, 여기만 LF 로 써서 "픽스처가 낡았다"로 읽혔다.
+    # 출력 줄끝은 **플랫폼 기본**으로 둔다(나머지 열여덟과 같다). 종전엔 여기만
+    # `newline="\n"` 로 LF 를 써서 Windows CI 가 붉었다(2026-08-01, p4 69128 이 껐다).
     # 위 `before` 쓰기의 `newline="\n"` 는 **그대로 둔다** — 저것은 테스트 입력의
     # 바이트를 정하는 것이라 OS 마다 달라지면 안 된다.
-    # (구조적 정답은 `.gitattributes` 로 픽스처를 LF 로 고정하고 열아홉을 모두
-    #  명시로 돌리는 것이다 — HANDOFF §10-18.)
+    #
+    # ⚠ 종전 주석은 "구조적 정답 = `.gitattributes` + 열아홉 전부 LF 고정"이라 적어
+    # 뒀는데 **그건 틀렸다**(2026-08-02 실측). p4 는 이 픽스처를 `unicode` 타입으로
+    # 들고 클라 `LineEnd: local` 이라 **sync 가 Windows 에 CRLF 를 푼다** — 생성기를
+    # LF 로 고정하는 순간 p4 워크스페이스가 영구히 붉어진다(CI 의 빨강을 로컬의
+    # 빨강과 맞바꾸는 것뿐이다. 그 판을 직접 돌려 확인했다).
+    # 진짜 답은 저장 형식 통일이 아니라 **재는 자**였다 — `check_fixtures.py` 가
+    # 줄끝을 지우고 내용을 비교한다(그 모듈 독스트링 §줄끝 · HANDOFF §10-18).
     with open(out, "w", encoding="utf-8") as f:
         json.dump({
             "source": "pytmuxlib/keymap.py::set_config_option",

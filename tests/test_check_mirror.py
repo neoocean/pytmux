@@ -117,10 +117,15 @@ async def test_scan_lets_placeholders_through():
 async def test_docs_verdict_skips_on_mirror_but_not_in_canon():
     """② 는 **어디서 재는가**에 따라 갈린다 — 네 조합을 전부 고정한다.
 
-    첫 미러 푸시(2026-08-01) 직후 이 게이트가 CI 에서만 붉었다: `client/docs/` 를
-    일부러 미러에서 뺐는데, 판정이 "없으면 고장"이라 **제외가 성공한 것을 고장으로
-    읽었다.** 없는 것이 정답인 자리(미러 체크아웃)와 없으면 안 되는 자리(정본
-    워크스페이스)를 `docs/internal/` 의 존재로 가른다.
+    첫 미러 푸시(2026-08-01) 직후 이 게이트가 CI 에서만 붉었다: 클라 문서를 일부러
+    미러에서 뺐는데, 판정이 "없으면 고장"이라 **제외가 성공한 것을 고장으로 읽었다.**
+    없는 것이 정답인 자리(미러 체크아웃)와 없으면 안 되는 자리(정본 워크스페이스)를
+    `docs/internal/` 의 존재로 가른다.
+
+    ⚠ 재는 **자리**는 §10-17 로 옮겨갔다(`client/docs/` → `docs/internal/client/`).
+    판정 로직은 그대로라 이 네 칸도 그대로다 — 바뀐 것은 무엇을 `present` 로 넘기느냐
+    뿐이고 그건 `main()` 의 몫이다. 그래서 여기서는 **메시지가 새 자리를 가리키는지**
+    까지 고정한다(옛 경로를 가리키면 다음 사람이 빈 `client/docs/` 를 보러 간다).
 
     **양성 두 개가 요점이다** — 건너뛰기만 재면 "판정을 통째로 지워도 통과"가
     성립한다(그 변이는 아래 `canon=True` 두 줄에서 죽는다).
@@ -131,6 +136,7 @@ async def test_docs_verdict_skips_on_mirror_but_not_in_canon():
     kind, msg = cm.docs_verdict(present=True, is_ignored=False, canon=True)
     assert kind == "problem", msg
     assert "올라간다" in msg, msg
+    assert "docs/internal/client" in msg, msg
     # 정본 워크스페이스: 없다 = 잴 것이 사라졌다(고장).
     kind, msg = cm.docs_verdict(present=False, is_ignored=True, canon=True)
     assert kind == "problem", msg
