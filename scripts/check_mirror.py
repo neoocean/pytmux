@@ -131,6 +131,39 @@ def scan_paths(paths):
     return 0
 
 
+def docs_verdict(present, is_ignored, canon):
+    """② `client/docs/` 판정. `(kind, msg)` — kind 는 `"problem"|"skip"|None`.
+
+    셋을 가른다:
+
+    - **있는데 안 무시된다** → 문제. 리댁션 전 그림에는 실 사용자·호스트·계정이
+      찍혀 있다(`.gitignore` 의 `/client/docs/` 주석). 계획 §4.4-2 는 리포트를 공개
+      대상으로 적었고 이 자리도 원래 "올라가나"를 쟀는데, 첫 푸시 직전에 실물을 보고
+      방향을 **뒤집었다** — 한시 보류를 게이트가 안 붙들면 "리댁션했다고 생각하고"
+      아무 때나 새는 쪽으로 되돌아간다. **푸는 것도 여기서** 한다: 그림을 리댁션·
+      재생성한 CL 이 이 판정과 `.gitignore` 규칙을 같이 뒤집는다.
+    - **없는데 정본 워크스페이스다** → 문제. 잴 것이 없으면 통과가 아니라 고장이다.
+    - **없는데 미러 체크아웃이다** → 건너뜀. 거기서는 없는 것이 **정답**이다 —
+      없다고 실패시키면 "제외가 성공한 것"을 고장으로 읽는다(2026-08-01 실측: 첫
+      푸시 뒤 rust-client `gates` 가 정확히 그렇게 붉었다).
+
+    두 자리를 가르는 표식이 `canon`(= `docs/internal/` 의 존재)이다. 그것도 p4
+    전용이라 미러 체크아웃엔 `client/docs/` 와 **같이** 없다.
+    """
+    docs = "client/docs"
+    if present:
+        if not is_ignored:
+            return ("problem",
+                    f"{docs}/ 가 미러에 올라간다 — 리댁션 전 그림에는 실 사용자·호스트·"
+                    "계정이 찍혀 있다(`.gitignore` 의 `/client/docs/` 주석). 리댁션"
+                    " 슬라이스가 이 판정과 규칙을 **같은 CL 에서** 뒤집을 것")
+        return (None, "")
+    if canon:
+        return ("problem", f"{docs}/ 가 없다 — 잴 것이 없으면 통과가 아니라 고장이다")
+    return ("skip",
+            f"② {docs}/ — 미러 체크아웃이라 잴 것이 없다(정본 워크스페이스에서만 잰다)")
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--scan":
         return scan_paths(sys.argv[2:])
@@ -142,6 +175,9 @@ def main():
         return 0
 
     problems = []
+    # 건너뛴 판정은 **사유와 함께** 남긴다 — 조용히 건너뛰면 "쟀다"와 구분이 안 된다
+    # (루트 CLAUDE.md 의 합본 게이트 규약과 같은 결).
+    skipped = []
 
     # ① 무거운 산출물은 안 올라간다.
     #
@@ -153,24 +189,16 @@ def main():
         if os.path.exists(os.path.join(ROOT, rel)) and ignored(rel) is False:
             problems.append(f"{rel} 이 무시되지 않는다 — 첫 커밋이 통째로 부푼다")
 
-    # ② `client/docs/` 는 **안 올라간다** — 리댁션 전까지 한시 보류(2026-08-01 결정).
-    #
-    # 계획 §4.4-2 는 리포트를 공개 대상으로 적었고 이 자리도 원래 "올라가나"를 쟀다.
-    # 첫 푸시 직전에 실물을 보니 그림이 실 캡처라 사용자·호스트·계정이 찍혀 있었다
-    # (근거는 `.gitignore` 의 `/client/docs/` 주석). 그래서 방향을 **뒤집어** 둔다 —
-    # 한시 보류를 게이트가 안 붙들면 "리댁션했다고 생각하고" 아무 때나 새는 쪽으로
-    # 되돌아간다. **푸는 것도 여기서** 한다: 그림을 리댁션·재생성한 CL 이 이 블록과
-    # `.gitignore` 규칙을 같이 뒤집는다(⑤ 의 패턴 목록은 그때도 그대로 둔다).
-    docs = "client/docs"
-    if os.path.isdir(os.path.join(ROOT, docs)):
-        if not ignored(docs):
-            problems.append(
-                f"{docs}/ 가 미러에 올라간다 — 리댁션 전 그림에는 실 사용자·호스트·계정이"
-                " 찍혀 있다(`.gitignore` 의 `/client/docs/` 주석). 리댁션 슬라이스가"
-                " 이 판정과 규칙을 **같은 CL 에서** 뒤집을 것"
-            )
-    else:
-        problems.append(f"{docs}/ 가 없다 — 잴 것이 없으면 통과가 아니라 고장이다")
+    # ② `client/docs/` 는 **안 올라간다** — 판정은 `docs_verdict` 한 곳에 있다.
+    kind, msg = docs_verdict(
+        present=os.path.isdir(os.path.join(ROOT, "client", "docs")),
+        is_ignored=bool(ignored("client/docs")),
+        canon=os.path.isdir(os.path.join(ROOT, "docs", "internal")),
+    )
+    if kind == "problem":
+        problems.append(msg)
+    elif kind == "skip":
+        skipped.append(msg)
 
     # ③ MIT 경계의 기록이 함께 올라간다.
     for rel in ("client/PROVENANCE.md", "client/LICENSE-MIT"):
@@ -212,6 +240,8 @@ def main():
     for rel, why in _leaks():
         problems.append(f"{rel} — {why}. 미러로 가는 텍스트다(리댁션하거나 무시 목록에 넣을 것)")
 
+    for s in skipped:
+        print(f"SKIP: {s}")
     if problems:
         print("FAIL: 공개 미러 위생(계획 §5.3)")
         for p in problems:

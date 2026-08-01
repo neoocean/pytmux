@@ -96,7 +96,17 @@ def main() -> int:
 
     out = os.path.abspath(args.out)
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    with open(out, "w", encoding="utf-8", newline="\n") as f:
+    # ⚠ 출력에 `newline="\n"` 를 **명시하지 않는다** — 생성기 열아홉 중 이것만
+    # 명시했고, 그 하나 때문에 Windows CI 가 붉었다(2026-08-01 실측). 이유:
+    # `check_fixtures.py` 는 픽스처를 **바이트로** 비교하는데, 저장소에
+    # `.gitattributes` 가 없어 Windows 러너의 체크아웃은 `core.autocrlf` 로 CRLF 가
+    # 된다. 나머지 열여덟은 플랫폼 기본(=Windows 에서 CRLF)으로 써서 체크아웃과
+    # 맞아떨어지는데, 여기만 LF 로 써서 "픽스처가 낡았다"로 읽혔다.
+    # 위 `before` 쓰기의 `newline="\n"` 는 **그대로 둔다** — 저것은 테스트 입력의
+    # 바이트를 정하는 것이라 OS 마다 달라지면 안 된다.
+    # (구조적 정답은 `.gitattributes` 로 픽스처를 LF 로 고정하고 열아홉을 모두
+    #  명시로 돌리는 것이다 — HANDOFF §10-18.)
+    with open(out, "w", encoding="utf-8") as f:
         json.dump({
             "source": "pytmuxlib/keymap.py::set_config_option",
             "note": "줄 터미네이터는 뺐다 — 파이썬은 OS 기본으로 번역해 쓴다",

@@ -114,6 +114,33 @@ async def test_scan_lets_placeholders_through():
         assert cm._scan(_write(tmp, name, text)) is None, (name, text)
 
 
+async def test_docs_verdict_skips_on_mirror_but_not_in_canon():
+    """② 는 **어디서 재는가**에 따라 갈린다 — 네 조합을 전부 고정한다.
+
+    첫 미러 푸시(2026-08-01) 직후 이 게이트가 CI 에서만 붉었다: `client/docs/` 를
+    일부러 미러에서 뺐는데, 판정이 "없으면 고장"이라 **제외가 성공한 것을 고장으로
+    읽었다.** 없는 것이 정답인 자리(미러 체크아웃)와 없으면 안 되는 자리(정본
+    워크스페이스)를 `docs/internal/` 의 존재로 가른다.
+
+    **양성 두 개가 요점이다** — 건너뛰기만 재면 "판정을 통째로 지워도 통과"가
+    성립한다(그 변이는 아래 `canon=True` 두 줄에서 죽는다).
+    """
+    # 정본 워크스페이스: 있고 무시된다 = 정상.
+    assert cm.docs_verdict(present=True, is_ignored=True, canon=True)[0] is None
+    # 정본 워크스페이스: 있는데 안 무시된다 = 유출 직전.
+    kind, msg = cm.docs_verdict(present=True, is_ignored=False, canon=True)
+    assert kind == "problem", msg
+    assert "올라간다" in msg, msg
+    # 정본 워크스페이스: 없다 = 잴 것이 사라졌다(고장).
+    kind, msg = cm.docs_verdict(present=False, is_ignored=True, canon=True)
+    assert kind == "problem", msg
+    assert "잴 것이 없으면" in msg, msg
+    # 미러 체크아웃: 없다 = **정답**이라 건너뛴다(사유와 함께).
+    kind, msg = cm.docs_verdict(present=False, is_ignored=True, canon=False)
+    assert kind == "skip", msg
+    assert "미러 체크아웃" in msg, msg
+
+
 async def test_scan_paths_reports_and_fails():
     """`--scan` 이 **rc 와 경로 둘 다** 낸다.
 
