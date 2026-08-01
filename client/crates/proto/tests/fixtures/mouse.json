@@ -1,0 +1,515 @@
+{
+  "_comment": "python3 scripts/gen_mouse_fixture.py 로 생성. 출처 = pytmuxlib/clientwidgets.py 의 MultiplexerView._encode_mouse. bytes_b64 는 base64(레거시 X10 이 UTF-8 이 아닌 바이트를 낸다).",
+  "cases": [
+    {
+      "name": "press_left_topleft_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 5,
+      "y": 3,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": "G1tNICEh"
+    },
+    {
+      "name": "press_left_inside_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 8,
+      "y": 6,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": "G1tNICQk"
+    },
+    {
+      "name": "press_middle_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 8,
+      "y": 6,
+      "kind": "press",
+      "button": 2,
+      "bytes_b64": "G1tNISQk"
+    },
+    {
+      "name": "press_right_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 8,
+      "y": 6,
+      "kind": "press",
+      "button": 3,
+      "bytes_b64": "G1tNIiQk"
+    },
+    {
+      "name": "release_left_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 8,
+      "y": 6,
+      "kind": "release",
+      "button": 1,
+      "bytes_b64": "G1tNIyQk"
+    },
+    {
+      "name": "release_right_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 8,
+      "y": 6,
+      "kind": "release",
+      "button": 3,
+      "bytes_b64": "G1tNIyQk"
+    },
+    {
+      "name": "drag_left_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 9,
+      "y": 7,
+      "kind": "drag",
+      "button": 1,
+      "bytes_b64": "G1tNQCUl"
+    },
+    {
+      "name": "drag_right_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 9,
+      "y": 7,
+      "kind": "drag",
+      "button": 3,
+      "bytes_b64": "G1tNQiUl"
+    },
+    {
+      "name": "wheel_up_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 8,
+      "y": 6,
+      "kind": "wheelup",
+      "button": 0,
+      "bytes_b64": "G1tNYCQk"
+    },
+    {
+      "name": "wheel_down_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 8,
+      "y": 6,
+      "kind": "wheeldown",
+      "button": 0,
+      "bytes_b64": "G1tNYSQk"
+    },
+    {
+      "name": "bottom_right_corner_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 24,
+      "y": 12,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": "G1tNIDQq"
+    },
+    {
+      "name": "left_of_pane_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 4,
+      "y": 6,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": ""
+    },
+    {
+      "name": "above_pane_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 8,
+      "y": 2,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": ""
+    },
+    {
+      "name": "right_of_pane_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 25,
+      "y": 6,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": ""
+    },
+    {
+      "name": "below_pane_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 8,
+      "y": 13,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": ""
+    },
+    {
+      "name": "press_left_topleft_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 5,
+      "y": 3,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": "G1s8MDsxOzFN"
+    },
+    {
+      "name": "press_left_inside_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 8,
+      "y": 6,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": "G1s8MDs0OzRN"
+    },
+    {
+      "name": "press_middle_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 8,
+      "y": 6,
+      "kind": "press",
+      "button": 2,
+      "bytes_b64": "G1s8MTs0OzRN"
+    },
+    {
+      "name": "press_right_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 8,
+      "y": 6,
+      "kind": "press",
+      "button": 3,
+      "bytes_b64": "G1s8Mjs0OzRN"
+    },
+    {
+      "name": "release_left_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 8,
+      "y": 6,
+      "kind": "release",
+      "button": 1,
+      "bytes_b64": "G1s8MDs0OzRt"
+    },
+    {
+      "name": "release_right_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 8,
+      "y": 6,
+      "kind": "release",
+      "button": 3,
+      "bytes_b64": "G1s8Mjs0OzRt"
+    },
+    {
+      "name": "drag_left_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 9,
+      "y": 7,
+      "kind": "drag",
+      "button": 1,
+      "bytes_b64": "G1s8MzI7NTs1TQ=="
+    },
+    {
+      "name": "drag_right_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 9,
+      "y": 7,
+      "kind": "drag",
+      "button": 3,
+      "bytes_b64": "G1s8MzQ7NTs1TQ=="
+    },
+    {
+      "name": "wheel_up_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 8,
+      "y": 6,
+      "kind": "wheelup",
+      "button": 0,
+      "bytes_b64": "G1s8NjQ7NDs0TQ=="
+    },
+    {
+      "name": "wheel_down_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 8,
+      "y": 6,
+      "kind": "wheeldown",
+      "button": 0,
+      "bytes_b64": "G1s8NjU7NDs0TQ=="
+    },
+    {
+      "name": "bottom_right_corner_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 24,
+      "y": 12,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": "G1s8MDsyMDsxME0="
+    },
+    {
+      "name": "left_of_pane_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 4,
+      "y": 6,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": ""
+    },
+    {
+      "name": "above_pane_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 8,
+      "y": 2,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": ""
+    },
+    {
+      "name": "right_of_pane_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 25,
+      "y": 6,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": ""
+    },
+    {
+      "name": "below_pane_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 8,
+      "y": 13,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": ""
+    },
+    {
+      "name": "wide_within_cap_x10",
+      "pane": [
+        0,
+        0,
+        400,
+        400
+      ],
+      "sgr": false,
+      "x": 200,
+      "y": 200,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": "G1tNIOnp"
+    },
+    {
+      "name": "wide_beyond_cap_x10",
+      "pane": [
+        0,
+        0,
+        400,
+        400
+      ],
+      "sgr": false,
+      "x": 300,
+      "y": 300,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": "G1tNIP//"
+    },
+    {
+      "name": "wide_within_cap_sgr",
+      "pane": [
+        0,
+        0,
+        400,
+        400
+      ],
+      "sgr": true,
+      "x": 200,
+      "y": 200,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": "G1s8MDsyMDE7MjAxTQ=="
+    },
+    {
+      "name": "wide_beyond_cap_sgr",
+      "pane": [
+        0,
+        0,
+        400,
+        400
+      ],
+      "sgr": true,
+      "x": 300,
+      "y": 300,
+      "kind": "press",
+      "button": 1,
+      "bytes_b64": "G1s8MDszMDE7MzAxTQ=="
+    }
+  ]
+}

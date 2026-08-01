@@ -1,0 +1,13 @@
+[package]
+name = "base"
+version = "0.1.0"
+edition = "2024"
+authors.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "pytmux 클라이언트의 백엔드 중립 계층(상태·액션·키맵)."
+
+# 의존이 비어 있는 것이 이 크레이트의 계약이다 — UI 크레이트를 여기에 추가하면
+# GUI/TUI 백엔드 타입이 상태 계층으로 새어 들어올 수 있다. 추가 전에
+# PROVENANCE.md 와 설계문서 §7 P1 게이트를 먼저 읽을 것.
+[dependencies]

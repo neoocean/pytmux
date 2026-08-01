@@ -1,0 +1,203 @@
+{
+  "source": "pytmuxlib/keymap.py::set_config_option",
+  "note": "줄 터미네이터는 뺐다 — 파이썬은 OS 기본으로 번역해 쓴다",
+  "cases": [
+    {
+      "name": "no file at all",
+      "why": "파일이 없으면 만든다 — 설정 화면을 처음 쓰는 사람이 여기다",
+      "before": null,
+      "before_ends_with_newline": false,
+      "before_exists": false,
+      "option": "prefix",
+      "value": "C-a",
+      "after": [
+        "set prefix C-a"
+      ]
+    },
+    {
+      "name": "empty file",
+      "why": "빈 파일도 같은 길",
+      "before": [
+        ""
+      ],
+      "before_ends_with_newline": false,
+      "before_exists": true,
+      "option": "prefix",
+      "value": "C-a",
+      "after": [
+        "set prefix C-a"
+      ]
+    },
+    {
+      "name": "append when absent",
+      "why": "모르는 옵션은 끝에 붙인다(앞의 줄은 그대로)",
+      "before": [
+        "# 내 설정",
+        "set mouse on"
+      ],
+      "before_ends_with_newline": true,
+      "before_exists": true,
+      "option": "prefix",
+      "value": "C-a",
+      "after": [
+        "# 내 설정",
+        "set mouse on",
+        "set prefix C-a"
+      ]
+    },
+    {
+      "name": "replace in place",
+      "why": "★ 있는 줄을 고친다 — 붙이기만 하면 같은 옵션이 두 줄이 되고 나중 줄이 이긴다",
+      "before": [
+        "set prefix C-b",
+        "set mouse on"
+      ],
+      "before_ends_with_newline": true,
+      "before_exists": true,
+      "option": "prefix",
+      "value": "C-a",
+      "after": [
+        "set prefix C-a",
+        "set mouse on"
+      ]
+    },
+    {
+      "name": "keep the indent",
+      "why": "선행 공백 보존(사용자가 들여쓴 파일을 평평하게 만들지 않는다)",
+      "before": [
+        "  set prefix C-b"
+      ],
+      "before_ends_with_newline": true,
+      "before_exists": true,
+      "option": "prefix",
+      "value": "C-a",
+      "after": [
+        "  set prefix C-a"
+      ]
+    },
+    {
+      "name": "comments are not settings",
+      "why": "주석 안의 같은 옵션은 건드리지 않는다 — 끝에 붙는다",
+      "before": [
+        "# set prefix C-x"
+      ],
+      "before_ends_with_newline": true,
+      "before_exists": true,
+      "option": "prefix",
+      "value": "C-a",
+      "after": [
+        "# set prefix C-x",
+        "set prefix C-a"
+      ]
+    },
+    {
+      "name": "only the first one",
+      "why": "첫 줄만 고친다(파이썬 로더도 마지막이 이기지만 표는 함수를 따른다)",
+      "before": [
+        "set prefix C-b",
+        "set prefix C-c"
+      ],
+      "before_ends_with_newline": true,
+      "before_exists": true,
+      "option": "prefix",
+      "value": "C-a",
+      "after": [
+        "set prefix C-a",
+        "set prefix C-c"
+      ]
+    },
+    {
+      "name": "alias form is the same option",
+      "why": "★ 별칭으로 적힌 줄을 못 알아보면 중복이 생긴다",
+      "before": [
+        "set tabbar always"
+      ],
+      "before_ends_with_newline": true,
+      "before_exists": true,
+      "option": "tab-bar",
+      "value": "auto",
+      "after": [
+        "set tab-bar auto"
+      ]
+    },
+    {
+      "name": "underscore form too",
+      "why": "`_` 표기도 같은 옵션",
+      "before": [
+        "set mouse_drag_copy on"
+      ],
+      "before_ends_with_newline": true,
+      "before_exists": true,
+      "option": "mouse-drag-copy",
+      "value": "off",
+      "after": [
+        "set mouse-drag-copy off"
+      ]
+    },
+    {
+      "name": "bind and hook lines survive",
+      "why": "set 이 아닌 줄은 그대로 둔다",
+      "before": [
+        "bind r source-file ~/.pytmux.conf",
+        "hook after-new-window run 'x'"
+      ],
+      "before_ends_with_newline": true,
+      "before_exists": true,
+      "option": "prefix",
+      "value": "C-a",
+      "after": [
+        "bind r source-file ~/.pytmux.conf",
+        "hook after-new-window run 'x'",
+        "set prefix C-a"
+      ]
+    },
+    {
+      "name": "no trailing newline",
+      "why": "끝 개행이 없으면 넣고 붙인다 — 아니면 두 설정이 한 줄로 붙는다",
+      "before": [
+        "set mouse on"
+      ],
+      "before_ends_with_newline": false,
+      "before_exists": true,
+      "option": "prefix",
+      "value": "C-a",
+      "after": [
+        "set mouse on",
+        "set prefix C-a"
+      ]
+    },
+    {
+      "name": "a value with spaces",
+      "why": "값의 공백은 그대로(상태줄 포맷)",
+      "before": [
+        "set status-left old"
+      ],
+      "before_ends_with_newline": true,
+      "before_exists": true,
+      "option": "status-left",
+      "value": "#S #I",
+      "after": [
+        "set status-left #S #I"
+      ]
+    },
+    {
+      "name": "blank lines stay",
+      "why": "빈 줄·꼬리 주석 뒤에 붙는다",
+      "before": [
+        "set mouse on",
+        "",
+        "# 끝"
+      ],
+      "before_ends_with_newline": true,
+      "before_exists": true,
+      "option": "prefix",
+      "value": "C-a",
+      "after": [
+        "set mouse on",
+        "",
+        "# 끝",
+        "set prefix C-a"
+      ]
+    }
+  ]
+}

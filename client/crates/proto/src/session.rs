@@ -1,0 +1,2142 @@
+//! 서버가 말해 준 것의 현재 상태.
+//!
+//! 서버는 메시지를 **점진적으로** 보낸다 — `layout` 이 배치를 바꾸고, 패널마다 `screen`
+//! 이 오고, `status` 가 탭바를 갱신한다. 그래서 클라는 "지금 화면이 어떻게 생겼나"를
+//! 스스로 누적해 들고 있어야 한다.
+//!
+//! # 서버가 권위다
+//!
+//! 명령을 보낸 뒤 로컬 상태를 낙관적으로 고치지 않는다. 서버 명령 테이블 대부분이
+//! `FULL` 이라 **전체 재동기**가 뒤따라오므로, 기다리면 정확한 상태가 온다. 낙관적
+//! 갱신은 두 상태가 어긋날 여지만 만든다.
+//!
+//! # UI 를 모른다
+//!
+//! 이 타입은 무엇을 그릴지 알지만 **어떻게 그릴지는 모른다**. GUI·TUI 가 같은 상태를
+//! 각자의 엘리먼트로 그린다.
+
+use std::collections::HashMap;
+
+use base::i18n::{t, tf};
+
+use crate::blocks::Block;
+use crate::canvas::Canvas;
+use crate::compose::compose_rows;
+use crate::message::{BufferItem, Layout, PaneLayout, Screen, ServerMessage, TitleBar, Tree};
+use crate::style::{CellStyle, Color, NamedColor};
+use crate::tabs::TabBar;
+
+/// 이력에 남기는 알림 개수. 넘으면 오래된 것부터 버린다.
+pub const NOTICE_LIMIT: usize = 200;
+
+/// 알림 등급 — 색과 기호를 정한다(파이썬 §10-8 과 같은 네 단계).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    Ok,
+    Info,
+    Warn,
+    Error,
+}
+
+impl Severity {
+    /// 와이어의 `sev`. **모르는 값은 `Info`** 다 — 서버가 등급을 늘려도 클라가 안 깨진다.
+    pub fn parse(value: Option<&str>) -> Self {
+        match value {
+            Some("ok") => Severity::Ok,
+            Some("warn") => Severity::Warn,
+            Some("error") => Severity::Error,
+            _ => Severity::Info,
+        }
+    }
+
+    /// 목록에 붙는 기호. 색은 뷰가 정하지만 기호는 여기서 — 두 뷰가 각자 고르면 같은
+    /// 알림이 화면마다 달라 보인다.
+    pub fn mark(self) -> &'static str {
+        match self {
+            Severity::Ok => "✓",
+            Severity::Info => "·",
+            Severity::Warn => "!",
+            Severity::Error => "✕",
+        }
+    }
+}
+
+/// 알림 한 줄.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notice {
+    pub severity: Severity,
+    pub text: String,
+    /// 이 알림이 생긴 시각(`HH:MM:SS`). 이력의 값어치는 **언제**에 있다.
+    pub at: String,
+    /// 누가 낸 알림인가.
+    pub source: Source,
+}
+
+/// 알림을 낸 쪽 — 정본 알림 이력의 출처 열과 같은 갈래다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// 이 클라가 낸 것(설정 다시 읽음·복사됨·끊김 …).
+    Local,
+    /// 서버가 보낸 것(`notice`·`error` 메시지).
+    Server,
+}
+
+impl Source {
+    /// 목록에 적을 낱말. 정본과 같은 소문자 영문이다 — 이 열은 **눈으로 훑는 표식**이라
+    /// 번역하면 폭이 흔들리고 정렬이 깨진다.
+    pub fn label(self) -> &'static str {
+        match self {
+            Source::Local => "local",
+            Source::Server => "server",
+        }
+    }
+}
+
+impl Notice {
+    /// 지금 시각을 찍어 만든다(`Local` 출처).
+    pub fn new(severity: Severity, text: String) -> Self {
+        Self::from(severity, text, Source::Local)
+    }
+
+    pub fn from(severity: Severity, text: String, source: Source) -> Self {
+        Self { severity, text, at: crate::clock::now_text(), source }
+    }
+
+    /// 목록에 적을 한 줄 — `{기호} {시각} {출처} {글}`.
+    ///
+    /// 정본 알림 이력과 같은 열 구성이다(대조 문서 §8). 기호만 있고 시각·출처가 없으면
+    /// "언제 무엇이 있었나"를 이력에서 못 읽는다 — 이력의 존재 이유가 그것이다.
+    /// 출처는 `server` 가 가장 길어 6칸으로 맞춘다(열이 흔들리면 훑기가 안 된다).
+    pub fn line(&self) -> String {
+        format!("{} {} {:<6} {}", self.severity.mark(), self.at, self.source.label(), self.text)
+    }
+}
+
+/// 터치 스크롤바가 차지한 자리 — 그리는 쪽과 누르는 쪽이 **같은 값**을 본다.
+///
+/// 활성 패널 오른쪽 끝 **한 열**이다(`x` 는 그 열, `y..y+h` 가 그 세로 범위).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TouchScrollZone {
+    /// 이 바가 조종하는 패널.
+    pub pane: i64,
+    /// 바가 그려지는 열.
+    pub x: usize,
+    /// 바의 첫 행.
+    pub y: usize,
+    /// 바의 높이(= 패널 높이).
+    pub h: usize,
+}
+
+/// 서버가 광고하는 플러그인 하나(패리티 G7).
+///
+/// # 왜 서버가 알려 줘야 하나
+///
+/// 파이썬 클라는 **자기 프로세스 안에서** 플러그인 패키지를 읽어 이 목록을 만든다
+/// (`plugins.plugin_overview()`). 우리는 파이썬 모듈을 못 읽고, pytmux 트리가 어디 있는지도
+/// 모른다 — 아는 것은 소켓뿐이다. `status` 의 `disabled_plugins` 는 **꺼진 것의 이름**뿐이라
+/// "설치된 것 전부"를 복원할 수 없었다. 그래서 서버가 full status 에 개요를 싣는다
+/// (pytmux CL 68070 — 이 저장소가 서버를 건드린 첫 자리다).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginInfo {
+    pub name: String,
+    pub description: String,
+    pub category: String,
+    pub enabled: bool,
+}
+
+/// 플러그인이 기여한 **데이터 표면** — 서버가 실어 주는 명령·메뉴·설정
+/// (설계 `docs/internal/PLUGIN_COMPAT_TEXTUAL_GUI_2026-08-01.md` Tier A).
+///
+/// # 왜 서버가 주나
+///
+/// 이 자료는 플러그인의 파이썬 훅이 돌려주는 것이고, 정본 클라는 자기 프로세스에서 바로
+/// 부른다. 우리는 파이썬을 못 읽는다 — 그래서 **플러그인이 기여한 명령·메뉴 줄·설정이
+/// 통째로 안 보였다**(mdir·ncd 같은 플러그인은 입구조차 없었다). 서버는 어차피 플러그인을
+/// 로드하고 있으니 그 자료를 그대로 준다.
+///
+/// 비어 있는 것과 **안 온 것**은 다르다: 델타 프레임에는 이 키가 없고, 그때 목록을 지우면
+/// 플러그인 기여가 매 틱 깜빡인다(`plugins` 개요와 같은 규칙).
+///
+/// # 왜 타입이 `base` 것인가 (2026-08-01, P2)
+///
+/// 화면 로직(무엇이 목록에 서고, 어느 탭에 걸리고, 어느 줄이 이미 우리 네이티브인가)이
+/// `base::plugins` 에 있다. 여기 같은 모양을 한 벌 더 두면 **옮겨 담는 코드**가 생기고,
+/// 옮겨 담는 코드는 필드가 늘 때 한쪽만 늘어난다. 파싱은 여기, 뜻은 저기.
+pub use base::plugins::{PluginCommand, PluginMenuItem, PluginSetting, PluginSurface};
+
+/// 플러그인이 준 **화면 한 판**(설계 Tier C · P4).
+///
+/// # 왜 스펙인가
+///
+/// `mdir`·`ncd`·`p4changes` 의 화면은 정본에서 Textual 위젯이다 — 우리는 그것을 띄울 수
+/// 없다. 대신 플러그인이 **무엇을 그릴지**를 자료로 주고 우리는 두 모양(목록·글)만 그린다.
+/// 그래서 플러그인은 파이썬 한 벌로 남고, 화면 흐름이 바뀌어도 우리를 안 고친다.
+///
+/// 모르는 `kind` 는 **조용히 버리지 않는다** — 그리는 쪽이 "이 클라는 이 화면을 아직 못
+/// 그린다"를 사람에게 보인다(설계 §8-5).
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+pub struct PluginScreen {
+    #[serde(default)]
+    pub id: String,
+    /// `list` · `text`(P4). 나머지 넷은 P5.
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub hint: String,
+    #[serde(default)]
+    pub rows: Vec<PluginRow>,
+    #[serde(default)]
+    pub text: String,
+    /// 실패했거나 비었을 때 화면에 적을 한 줄. **빈 목록과 실패는 다르다.**
+    #[serde(default)]
+    pub note: String,
+    #[serde(default)]
+    pub selected: usize,
+    /// 키 → 플러그인 액션 이름. 이 표에 있는 키만 되돌려준다.
+    #[serde(default)]
+    pub keys: std::collections::BTreeMap<String, String>,
+}
+
+impl PluginScreen {
+    /// `Enter` 에 걸린 플러그인 액션 이름(없으면 이 화면의 Enter 는 뜻이 없다).
+    ///
+    /// # 왜 뷰가 `keys["enter"]` 를 직접 안 읽나
+    ///
+    /// 계층 게이트(`scripts/check_layering.sh`)가 뷰 코드의 **키 이름 문자열**을 막는다.
+    /// 그 규칙의 뜻은 "키 목록을 뷰가 따로 적기 시작하면 두 클라가 갈린다"이고, 여기
+    /// `"enter"` 는 서버 스펙의 어휘이지 우리 키맵이 아니지만 — 그 구분을 사람 눈에
+    /// 맡기면 규칙이 흐려진다. **어휘를 아는 곳을 하나로** 둔다.
+    pub fn enter_action(&self) -> Option<&str> {
+        self.keys.get("enter").map(String::as_str)
+    }
+
+    /// 그 **글자 키**에 걸린 액션(설계 P5). 스펙이 자기 키를 정하므로 플러그인마다
+    /// 다른 손이 생긴다 — `ncd` 의 `c`(여기로 cd)가 그 첫 자리다.
+    ///
+    /// 화면 밖 키(닫기 등)와 겹칠 걱정은 없다: 이 표에 있는 글자만 우리가 먹는다.
+    pub fn char_action(&self, c: char) -> Option<&str> {
+        self.keys.get(&c.to_string()).map(String::as_str)
+    }
+
+    /// 이 화면이 **고르는 화면**인가(목록·표·폼). 아니면 읽거나 답하는 화면이다.
+    ///
+    /// core 는 스펙을 안 들으므로 뷰가 이 값을 넘겨 준다(`open_plugin_view`).
+    pub fn is_selectable(&self) -> bool {
+        matches!(self.kind.as_str(), "list" | "table" | "form")
+    }
+}
+
+/// 목록 한 줄. `key` 는 **그 줄의 뜻**(CL 번호·파일 이름)이고 액션에 그대로 실어 보낸다 —
+/// 자리(번호)로 가리키면 목록이 바뀔 때 엉뚱한 줄이 열린다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+pub struct PluginRow {
+    #[serde(default)]
+    pub key: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub cols: Vec<String>,
+}
+
+/// `status` 가 실어 오는 **세션 전역 상태**(패리티 G6).
+///
+/// # 왜 따로 두나
+///
+/// 탭바는 탭마다의 것이고 이건 **지금 보고 있는 창 전체**의 것이다(줌·동기화·감시).
+/// 파이썬 클라는 이걸 상태줄에 낱말로 붙인다 — 안 보이면 사용자는 자기가 줌 안에 있다는
+/// 것도, 입력이 모든 패널로 복제되고 있다는 것도 모른다. **후자는 특히 위험하다.**
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StatusFlags {
+    /// 활성 패널이 창 전체로 확대돼 있는가.
+    pub zoomed: bool,
+    /// 입력이 창 안 모든 패널로 복제되는가(`synchronize-panes`).
+    pub sync: bool,
+    /// 활성 패널의 제목(서버가 OSC 로 받은 것).
+    pub pane_title: String,
+    /// 탭 이름을 서버가 자동으로 바꾸는가.
+    pub auto_rename: bool,
+    /// 패널 테두리에 제목을 항상 보이는가(서버 옵션 `pane-border-status`).
+    pub border_status: bool,
+    pub monitor_activity: bool,
+    pub monitor_bell: bool,
+    /// 패널 하나일 때도 테두리를 그리는가.
+    pub single_border: bool,
+    pub coalesce_repaints: bool,
+    pub nest_auto_attach: bool,
+    pub win_mouse_motion: bool,
+    /// exit-empty 현재값(서버 전역 옵션 — 세션 0개면 서버 종료).
+    ///
+    /// `Option` 인 이유: 이 칸은 2026-07-30 에야 서버 status 에 실렸다(그 전엔
+    /// 파이썬 클라도 '미상'). 구버전 서버는 안 보내는데, 기본 `false` 로 받으면
+    /// 서버 기본(on)과 반대인 **거짓말**이 된다 — 모르면 모른다(`None` → `?`)고 둔다.
+    pub exit_empty: Option<bool>,
+    /// VT 파서 백엔드 이름(서버 옵션). 서버가 안 보내면 빈 문자열이다.
+    pub vt_parser: String,
+    /// 공유 크기 규칙 이름(서버 옵션).
+    pub window_size: String,
+    /// 토큰리밋 **자동재개**가 켜져 있나(claude-code 플러그인 — `prefix R` 로 뒤집는다).
+    ///
+    /// 서버가 활성 패널 기준으로 `status` 에 싣는다. 플러그인이 없으면 그 칸이 안 와
+    /// 기본값 `false` 로 떨어진다 — 그때는 `prefix R` 도 무동작이라 앞뒤가 맞는다.
+    pub autoresume: bool,
+    /// 프롬프트 단위 클리어가 켜져 있나(claude-code 플러그인 — 완료마다 문서화+`/clear`).
+    ///
+    /// 자동재개와 같은 자리다: 서버가 활성 패널 기준으로 `status` 에 싣고, 플러그인이
+    /// 없으면 칸이 안 와 `false` 다.
+    pub prompt_clear: bool,
+    /// 출력 캡처(REC)가 켜져 있나 — **rec 서버 플러그인**이 status 에 싣는다.
+    /// `None` 이면 플러그인 부재(그때는 REC 탭 자체가 없다 — delete-to-disable 동형).
+    pub capture: Option<bool>,
+    /// 캡처 파일 경로(켜져 있고 파일이 준비된 뒤에만).
+    pub capture_path: String,
+    /// 캡처 파일 크기(바이트).
+    pub capture_size: i64,
+}
+
+impl StatusFlags {
+    /// `status` 메시지에서 뽑는다. 없는 필드는 기본값이다(구버전 서버 대비).
+    pub fn from_status(status: &crate::message::Status) -> Self {
+        let flag = |key: &str| {
+            status
+                .fields
+                .get(key)
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+        };
+        let text = |key: &str| {
+            status
+                .fields
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        Self {
+            zoomed: flag("zoomed"),
+            sync: flag("sync"),
+            pane_title: status
+                .fields
+                .get("pane_title")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            auto_rename: flag("auto_rename"),
+            border_status: flag("border_status"),
+            single_border: flag("single_border"),
+            coalesce_repaints: flag("coalesce_repaints"),
+            nest_auto_attach: flag("nest_auto_attach"),
+            win_mouse_motion: flag("win_mouse_motion"),
+            exit_empty: status
+                .fields
+                .get("exit_empty")
+                .and_then(serde_json::Value::as_bool),
+            vt_parser: text("vt_parser"),
+            window_size: text("window_size"),
+            monitor_activity: flag("monitor_activity"),
+            monitor_bell: flag("monitor_bell"),
+            autoresume: flag("autoresume"),
+            prompt_clear: flag("prompt_clear"),
+            capture: status.fields.get("capture").and_then(serde_json::Value::as_bool),
+            capture_path: text("capture_path"),
+            capture_size: status
+                .fields
+                .get("capture_size")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0),
+        }
+    }
+
+    /// 상태줄에 붙일 낱말들. **켜진 것만** 나온다 — 꺼진 것까지 적으면 줄이 길어져
+    /// 정작 켜진 것이 눈에 안 띈다.
+    ///
+    /// 두 뷰가 같은 낱말을 쓰도록 여기서 만든다(색은 뷰가 정한다).
+    /// [`tab_badges`](Self::tab_badges) + [`monitor_badges`](Self::monitor_badges)
+    /// 순서 그대로다 — 자리를 안 가르는 뷰(TUI)는 이걸 그대로 쓴다.
+    pub fn badges(&self) -> Vec<&'static str> {
+        let mut out = self.tab_badges();
+        out.extend(self.monitor_badges());
+        out
+    }
+
+    /// 탭바 앞에 붙는 표식 — 모르고 두면 **입력·동작이 달라지는** 상태들(줌·동기화·
+    /// 자동재개·프롬프트클리어). 눈앞(위쪽)에 있어야 하는 부류다(패리티 G6).
+    pub fn tab_badges(&self) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if self.zoomed {
+            out.push(t("[줌]"));
+        }
+        // ★ 동기화는 **입력이 복제되는 상태**다. 모르고 치면 모든 패널에서 같은 명령이
+        // 돈다 — 표식 중 가장 위험한 것이라 항상 보인다.
+        if self.sync {
+            out.push(t("[동기화]"));
+        }
+        // ★ 자동재개는 **꺼져 있을 때가 기본**이라, 켜져 있다는 사실이 보여야 한다 —
+        // 켜 두면 토큰 한도에 걸린 뒤 클라 없이도 서버가 대화를 이어 붙인다. 모르고
+        // 켜 둔 채 자리를 비우면 의도 없이 진행되는 셈이라 동기화와 같은 부류다.
+        if self.autoresume {
+            out.push(t("[자동재개]"));
+        }
+        // 자동재개와 같은 이유다 — 켜 두면 완료마다 패널이 문서화+`/clear` 를 돌린다.
+        if self.prompt_clear {
+            out.push(t("[프롬프트클리어]"));
+        }
+        out
+    }
+
+    /// 감시류 표식(활동감시·벨감시) — 입력을 바꾸지 않는 **상시 상태**라, 파이썬 정본이
+    /// 시스템 배지를 두는 하단 상태줄 곁이 자리다(사용자 요청 2026-07-30 — GUI 가
+    /// 이걸 하단에 그린다).
+    pub fn monitor_badges(&self) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if self.monitor_activity {
+            out.push(t("[활동감시]"));
+        }
+        if self.monitor_bell {
+            out.push(t("[벨감시]"));
+        }
+        out
+    }
+}
+
+/// 트리 목록의 한 줄. 화면은 이걸 그리고, 고른 줄의 `window`/`pane` 으로 명령을 만든다.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TreeRow {
+    /// 들여쓰기 깊이(0 = 세션 · 1 = 탭 · 2 = 패널). 그리는 쪽이 공백으로 옮긴다.
+    pub depth: usize,
+    pub label: String,
+    /// 이 줄이 가리키는 탭 index. 세션 줄이면 `None`(고를 수 없다).
+    pub window: Option<usize>,
+    /// 이 줄이 가리키는 패널 id. 탭 줄이면 `None`.
+    pub pane: Option<i64>,
+    /// 지금 활성 탭인가(표식용).
+    pub active: bool,
+}
+
+/// 마우스 패스스루의 대상 — [`SessionState::mouse_pane_at`] 의 답.
+///
+/// 참조가 아니라 값인 이유: 대상이 일반 패널(`PaneLayout`)일 수도 팝업
+/// (`PopupLayout`)일 수도 있어, 뷰가 쓰는 세 가지(어디로 · 어떤 사각형 기준으로 ·
+/// 어떤 인코딩으로)만 추려 한 모양으로 돌려준다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MouseTarget {
+    /// 리포트를 받을 패널 id (`Outgoing::Mouse` 의 pane).
+    pub id: i64,
+    /// 내용 사각형 `(x, y, w, h)` — [`crate::mouse::encode`] 의 rect 인자.
+    pub rect: (u16, u16, u16, u16),
+    /// 추적 수준·인코딩(SGR 여부).
+    pub mode: crate::mouse::MouseMode,
+}
+
+/// 오버레이(시계·달력)의 색 — **정본의 관습**을 옮긴 자리(레이아웃 맞추기 ⑫).
+///
+/// # 왜 색이 아니라 관습인가
+///
+/// 정본은 `theme_color(app, "success")` 처럼 **Textual 테마 변수**로 칠한다. `#4EBF71` 은
+/// 그 변수의 폴백일 뿐이고, 터미널에서 그 자리를 정하는 것은 사용자 테마다 — 값을 박으면
+/// 어두운 테마에서만 맞는 색이 된다. 그래서 옮기는 것은 값이 아니라 **어느 자리에 같은
+/// 색을 쓰는가**이고, `tests/overlay_style_conformance.rs` 가 정본에서 뽑은 변수 이름
+/// (`scripts/gen_overlay_styles.py`)과 이 표의 구조를 대조한다.
+///
+/// # 무엇이 틀려 있었나 (대조 문서 §13)
+///
+/// 시계 숫자와 달력 제목이 **청록**이었고(정본은 초록), 달력의 오늘은 **주황 글자**였다
+/// (정본은 초록 **배경**에 검은 글자). 같은 그림에서 눈이 찾는 색이 달랐다.
+///
+/// # 왜 한 모듈에 모으나
+///
+/// 흩어 두면 "시계만 고치고 달력을 잊는" 일이 난다 — 실제로 이 둘은 정본에서 **같은
+/// 변수**를 쓰므로 한 곳에서 갈라져야 갈리지 않는다.
+pub mod overlay_style {
+    use crate::calendar;
+    use crate::style::{CellStyle, Color, NamedColor};
+
+    /// 정본 `success`(강조 초록)의 우리 자리. 이름색이라 사용자 테마를 따른다.
+    pub const SUCCESS: Color = Color::Named(NamedColor::BrightGreen);
+
+    /// 시계 숫자 — 정본 `Style(color=theme_color(app, "success"), bold=True)`.
+    pub fn clock_digit() -> CellStyle {
+        CellStyle { fg: Some(SUCCESS), bold: true, ..Default::default() }
+    }
+
+    /// 달력 네 자리 — 정본 `calendar` 플러그인의 `day`/`title`/`today`/`big_today`.
+    pub fn calendar() -> calendar::Styles {
+        calendar::Styles {
+            // 정본 `foreground` — "특별한 색이 아니다"가 곧 기본값이다.
+            day: CellStyle::default(),
+            title: CellStyle { fg: Some(SUCCESS), bold: true, ..Default::default() },
+            today: CellStyle {
+                fg: Some(Color::Named(NamedColor::Black)),
+                bg: Some(SUCCESS),
+                bold: true,
+                ..Default::default()
+            },
+            big_today: CellStyle { fg: Some(SUCCESS), bold: true, ..Default::default() },
+        }
+    }
+}
+
+/// 서버 세션의 현재 모습.
+#[derive(Debug, Default, Clone)]
+pub struct SessionState {
+    layout: Option<Layout>,
+    /// 패널 id → 마지막으로 받은 화면.
+    screens: HashMap<i64, Screen>,
+    /// 마지막 드라이런 회신의 **원본 칸들**(판정용). 회신 전에는 비어 있다.
+    restart_check_fields: serde_json::Map<String, serde_json::Value>,
+    /// 어느 패널이 **Claude 패널**인가(서버 `status` 의 `panes_claude`).
+    ///
+    /// 이 게이트가 없으면 셸 프롬프트(`~/dir ❯ `)를 입력 텍스트로 오긁는다 — 파이썬
+    /// `client_prompt_text` 도 같은 이유로 `pane_claude` 로 먼저 거른다. **활성 윈도우의
+    /// 패널만** 실려 오므로, 탭을 바꾸면 이 표도 그 탭의 것으로 갈린다.
+    claude_panes: std::collections::HashSet<i64>,
+    /// 지금 Claude 모델 이름(서버 `status` 의 `claude_model` — 예 `opus-5`).
+    claude_model: Option<String>,
+    /// 5시간 한도 사용률 %(서버 `tok5h_pct`). 분모를 모르면 서버가 안 보낸다.
+    claude_5h_pct: Option<u8>,
+    /// 패널 id → 서버가 판정한 블록 목록(§10-13).
+    ///
+    /// 셸 통합을 안 깐 사용자에게는 영원히 비어 있다 — 그게 정상이다.
+    blocks: HashMap<i64, Vec<Block>>,
+    tabs: TabBar,
+    /// 서버가 연결을 닫았는가.
+    closed: bool,
+    /// RTT 표본과 응답성(G9u) — pong 이 올 때마다 뷰가 채운다.
+    rtt: crate::rtt::RttHist,
+    /// 마지막으로 받은 오류 메시지.
+    last_error: Option<String>,
+    /// `request_version` 회신을 사람이 읽을 한 줄로. 묻기 전에는 `None`.
+    version: Option<String>,
+    /// `request_restart_check` 회신을 사람이 읽을 줄들로. 묻기 전에는 비어 있다.
+    restart_check: Vec<String>,
+    /// `run-shell` 이 마지막으로 낸 출력(줄 단위). 상한은 파이썬과 같은 40줄이다.
+    shell_output: Vec<String>,
+    /// 지나간 알림들(패리티 G6c). **새것이 앞**이다 — 화면이 그대로 위에서부터 그린다.
+    ///
+    /// 길이를 묶어 두는 이유: 오래 붙어 있는 클라에서 이 목록만 끝없이 자란다. 파이썬도
+    /// 이력 화면에 상한이 있다.
+    notices: std::collections::VecDeque<Notice>,
+    /// 기준(직전 full `screen`) 없이 델타만 온 패널.
+    ///
+    /// 그 패널은 바뀐 행을 얹을 바탕이 없어 **영원히 빈 채로 남는다**(원격 attach 에서
+    /// 상류의 첫 full 이 '보는 클라 없음'으로 드롭될 때 실제로 생긴다). 그래서 다시
+    /// 그려 달라고 한 번 청한다 — 여기 담긴 것은 그 **중복 요청을 막는 표식**이고,
+    /// full 을 받으면 지운다. 파이썬 클라의 `_delta_no_base` 와 같은 자리다.
+    delta_no_base: std::collections::HashSet<i64>,
+    /// 서버가 광고한 플러그인 목록(패리티 G7). **full status 에만** 실려 온다.
+    /// 플러그인이 기여한 데이터 표면(Tier A). 서버가 full status 에 실어 준다.
+    plugin_surface: PluginSurface,
+    plugins: Vec<PluginInfo>,
+    /// 지금 떠 있는 플러그인 화면들(설계 Tier C · P4).
+    ///
+    /// **스택인 이유**: 목록에서 상세로 들어갔다가 `Esc` 로 **목록으로 돌아와야** 한다.
+    /// 서버에 다시 물으면 p4 를 또 부르고(느리다) 그 사이 목록이 달라질 수도 있다 —
+    /// 방금 보던 판을 그대로 되살리는 편이 정본의 손과도 같다.
+    plugin_screens: Vec<PluginScreen>,
+    /// 서버가 알려 준 세션 이름(`status.session`). 상태줄 `#S` 가 쓴다.
+    session: String,
+    /// 시계 오버레이를 켠 패널들(패리티 G7b). **서버는 이걸 모른다** — `clock-mode` 는
+    /// 파이썬 쪽에서도 클라 플러그인이라 상태가 클라에 있다. 그래서 다른 클라에는 안
+    /// 보이고, 재접속하면 꺼진다(파이썬과 같다).
+    clock_panes: std::collections::HashSet<i64>,
+    /// 시계에 적을 시각. **누가 채우나**: 이벤트 루프가 1초마다 넣는다. 여기서 시각을
+    /// 읽지 않는 이유는 `composite()` 를 시간에 안 묶기 위해서다 — 묶으면 같은 상태를
+    /// 두 번 그려도 결과가 달라져 오라클을 쓸 수 없다.
+    clock_text: String,
+    /// 달력 오버레이를 켠 패널들(패리티 G7c). 시계와 같은 자리다 — 서버는 모른다.
+    calendar_panes: std::collections::HashSet<i64>,
+    /// 패널마다 몇 달 넘겨 보고 있나(0 = 이번 달). `‹`/`›` 클릭이 움직인다.
+    calendar_offset: std::collections::HashMap<i64, i32>,
+    /// 오늘 날짜 `(년, 월, 일)`. 시각과 같은 이유로 **이벤트 루프가 넣는다** — 자정을
+    /// 넘기면 '오늘' 강조가 옮겨 가야 한다.
+    today: (i32, u32, u32),
+    /// 비활성 패널을 흐리게 하는 세기. `None` 이면 끔(설정 `inactive-dim`).
+    ///
+    /// **왜 상태에 두나**: 합성이 이 값을 쓰는데 합성은 proto 에 있고 설정은 core 에
+    /// 있다(그리고 proto 는 core 의 `Config` 를 안 읽는다 — 뷰가 넣어 준다).
+    inactive_dim: Option<f32>,
+    /// 입력기 배지(`[한]`/`[EN]`). **뷰가 넣는다** — 입력기 상태는 OS 것이고 proto 는
+    /// 그것을 모른다(`inactive_dim` 과 같은 갈래).
+    ///
+    /// 왜 상태줄이 아니라 여기인가: 이 배지는 **다음 글자가 무엇이 될지**를 말한다.
+    /// 그때 눈은 커서에 있지 상태줄에 있지 않다 — 정본도 그래서 2026-06-16 에 이
+    /// 배지를 화면 끝에서 **활성 패널 우상단**으로 옮겼다.
+    ime_badge: Option<String>,
+    /// 패널 번호를 띄우고 있나(`prefix q` — tmux `display-panes`).
+    ///
+    /// **다음 키 하나로 사라진다**(파이썬도 모드라 그렇다) — 그 판정은 뷰가 한다.
+    pane_numbers: bool,
+    /// 터치 스크롤바를 쓰나(설정 `touch-scroll`, 기본 켬 — 뷰가 넣는다).
+    touch_scroll: bool,
+    /// 지금 스크롤 모드인가(뷰의 `InputMode` 를 옮겨 받는다).
+    ///
+    /// proto 가 모드를 갖는 것이 아니라 **그 사실을 안다**: 스크롤바는 스크롤 모드에서만
+    /// 그려야 하고(라이브 화면의 마지막 열을 덮으므로), 그리는 자리는 두 뷰가 공유하는
+    /// [`composite`](Self::composite) 다.
+    scroll_mode: bool,
+    /// 상태줄에 걸리는 세션 전역 표식들(패리티 G6). 서버가 `status` 에 매번 실어 준다 —
+    /// 종전에는 **탭 목록만 꺼내 쓰고 나머지를 버리고 있었다**.
+    flags: StatusFlags,
+    /// `request_tree` 회신(패리티 G3b). **요청해야 오는 것**이라 없을 수 있다.
+    tree: Option<Tree>,
+    /// `request_buffers` 회신 — 페이스트 버퍼 목록.
+    buffers: Vec<BufferItem>,
+    /// 위 요청을 아직 안 보냈다는 표식. 뷰가 [`take_redraw_request`](Self::take_redraw_request)
+    /// 로 가져간다 — 상태 누적기는 서버로 무엇을 보낼 수 없다.
+    want_redraw: bool,
+}
+
+impl SessionState {
+    /// 새 상태. **`touch_scroll` 만 `true` 로 시작한다** — 설정 기본이 켬이고
+    /// (`base::Config::default`), 뷰가 설정을 읽기 전 한 프레임이라도 꺼져 보이면
+    /// `⇕` 배지가 깜빡인다. 나머지는 `Default` 그대로다(모르는 것은 끈다).
+    pub fn new() -> Self {
+        Self { touch_scroll: true, ..Self::default() }
+    }
+
+    /// 메시지 하나를 반영한다. **화면이 달라졌으면** `true`.
+    ///
+    /// 반환값으로 다시 그릴지 정한다 — 서버는 조용할 때도 `pong` 같은 것을 보내므로
+    /// 모든 메시지에 repaint 를 걸면 낭비다.
+    pub fn apply(&mut self, msg: ServerMessage) -> bool {
+        match msg {
+            ServerMessage::Layout(layout) => {
+                // 새 배치에 없는 패널의 화면은 버린다 — 안 그러면 죽은 패널의 스냅샷이
+                // 영원히 남아 메모리와 혼란을 함께 키운다.
+                let alive: Vec<i64> = layout.panes.iter().map(|p| p.id).collect();
+                self.screens.retain(|id, _| alive.contains(id));
+                self.blocks.retain(|id, _| alive.contains(id));
+                self.layout = Some(layout);
+                true
+            }
+            ServerMessage::Screen(screen) => {
+                // full 이 왔다 = 기준이 생겼다. 다음 델타부터는 얹을 바탕이 있다.
+                self.delta_no_base.remove(&screen.pane);
+                self.screens.insert(screen.pane, screen);
+                true
+            }
+            ServerMessage::ScreenDelta(delta) => self.apply_delta(delta),
+            // 요청해서 받은 목록들(G3b). 화면이 열려 있으면 그 화면이 이걸 그린다.
+            ServerMessage::Tree(tree) => {
+                self.tree = Some(tree);
+                true
+            }
+            ServerMessage::Buffers { items } => {
+                self.buffers = items;
+                true
+            }
+            ServerMessage::PluginScreen(screen) => {
+                // 같은 화면의 **갱신**이면 덮고, 새 화면이면 쌓는다(목록 → 상세).
+                match self.plugin_screens.last_mut() {
+                    Some(top) if top.id == screen.id && top.kind == screen.kind => {
+                        *top = screen;
+                    }
+                    _ => self.plugin_screens.push(screen),
+                }
+                true
+            }
+            ServerMessage::PluginScreenClose { id } => {
+                let before = self.plugin_screens.len();
+                self.plugin_screens.retain(|s| s.id != id);
+                before != self.plugin_screens.len()
+            }
+            ServerMessage::Status(status) => {
+                // 세션 이름은 full status 에만 실릴 수 있다 — 안 왔으면 들고 있던 것을
+                // 지킨다(델타마다 비우면 `#S` 가 깜빡인다).
+                if let Some(name) = status.fields.get("session").and_then(|v| v.as_str())
+                    && !name.is_empty()
+                {
+                    self.session = name.to_owned();
+                }
+                let tabs = TabBar::from_status(&status);
+                let flags = StatusFlags::from_status(&status);
+                // Claude 모델·5시간 한도 — **안 왔으면 들고 있던 것을 지킨다**(델타마다
+                // 비우면 배지가 깜빡인다. 파이썬 클라도 같은 규칙이다 —
+                // `clientstatus.py`: "usage 가 비어 와도 마지막 비-빈 값을 유지").
+                if let Some(model) = status.fields.get("claude_model").and_then(|v| v.as_str())
+                    && !model.is_empty()
+                {
+                    self.claude_model = Some(model.to_owned());
+                }
+                if let Some(pct) = status.fields.get("tok5h_pct").and_then(|v| v.as_i64()) {
+                    // 서버가 100 을 넘겨 보낸 적이 있다(파이썬도 클램프한다 —
+                    // "999%/5h" 버그를 그렇게 막았다).
+                    self.claude_5h_pct = Some(pct.clamp(0, 100) as u8);
+                }
+                // 패널별 Claude 여부. **안 왔으면 들고 있던 것을 지킨다** — 델타마다
+                // 비우면 작성창 인계가 status 사이에서 깜빡인다(플러그인 개요와 같은 규칙).
+                if let Some(panes) = status.fields.get("panes_claude").and_then(|v| v.as_array())
+                {
+                    self.claude_panes = panes
+                        .iter()
+                        .filter(|entry| {
+                            entry.get("claude").and_then(serde_json::Value::as_bool) == Some(true)
+                        })
+                        .filter_map(|entry| entry.get("id").and_then(serde_json::Value::as_i64))
+                        .collect();
+                }
+                // 개요는 **full 에만** 온다(목록은 서버가 도는 동안 안 변한다). 델타
+                // status 마다 비우면 관리 화면이 깜빡이므로, 안 왔으면 들고 있던 것을
+                // 지킨다 — 대신 켜짐/꺼짐은 매번 오는 `disabled_plugins` 로 덮는다.
+                //
+                // 바뀐 것만 대입한다(통째로 갈아 끼우고 `true` 를 돌려주면 status 가 올
+                // 때마다 화면을 다시 그린다 — 이 반환값의 존재 이유가 그걸 막는 것이다).
+                let mut plugins_changed = false;
+                if let Some(surface) = plugin_surface_from_status(&status)
+                    && surface != self.plugin_surface
+                {
+                    self.plugin_surface = surface;
+                    plugins_changed = true;
+                }
+                if let Some(overview) = plugins_from_status(&status)
+                    && overview != self.plugins
+                {
+                    self.plugins = overview;
+                    plugins_changed = true;
+                }
+                if let Some(disabled) = disabled_plugins_from_status(&status) {
+                    for plugin in self.plugins.iter_mut() {
+                        let enabled = !disabled.iter().any(|off| *off == plugin.name);
+                        if plugin.enabled != enabled {
+                            plugin.enabled = enabled;
+                            plugins_changed = true;
+                        }
+                    }
+                }
+                let changed = tabs != self.tabs || flags != self.flags || plugins_changed;
+                self.tabs = tabs;
+                self.flags = flags;
+                changed
+            }
+            ServerMessage::Blocks { pane, blocks } => {
+                let changed = self.blocks.get(&pane) != Some(&blocks);
+                self.blocks.insert(pane, blocks);
+                changed
+            }
+            ServerMessage::Bye => {
+                self.closed = true;
+                true
+            }
+            ServerMessage::Error { msg } => {
+                self.push_notice(Notice::from(Severity::Error, msg.clone(), Source::Server));
+                self.last_error = Some(msg);
+                true
+            }
+            ServerMessage::RestartCheck { fields } => {
+                // 사람이 읽을 줄로 푼다. **이름순**이라 서버가 필드를 늘려도 자리가
+                // 흔들리지 않는다(`serde_json::Map` 은 넣은 순서를 지킬 수도, 아닐 수도
+                // 있다 — 여기서 정렬해 못박는다).
+                let mut rows: Vec<String> = fields
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {v}"))
+                    .collect();
+                rows.sort();
+                self.restart_check = rows;
+                // ★ 원본 칸도 들고 있는다. 줄만 남기면 **판정에 쓸 값이 없다** —
+                // 드라이런 게이트(`base::restart::evaluate`)가 이 칸들을 본다.
+                self.restart_check_fields = fields;
+                true
+            }
+            ServerMessage::Version { version, uptime, pid } => {
+                // ★ 값 중 서버가 준 문자열(version)을 **마지막에** 끼운다 — 값 안의
+                // `{...}` 가 재치환되지 않게(`i18n::tf` 는 순차 치환이다).
+                self.version = Some(tf(
+                    "서버 {version} · 가동 {min}분 · pid {pid}",
+                    &[
+                        ("min", ((uptime / 60.0) as i64).to_string().as_str()),
+                        ("pid", pid.to_string().as_str()),
+                        ("version", version.as_str()),
+                    ],
+                ));
+                true
+            }
+            ServerMessage::Notice { text, sev } => {
+                let severity = Severity::parse(sev.as_deref());
+                // 오류 등급만 상태줄 한 줄에도 건다 — 나머지는 이력에만 쌓는다(모든
+                // 알림이 상태줄을 차지하면 정작 오류가 묻힌다).
+                if severity == Severity::Error {
+                    self.last_error = Some(text.clone());
+                }
+                self.push_notice(Notice::from(severity, text, Source::Server));
+                true
+            }
+            // 선택 회신은 **화면이 아니라 클립보드로** 간다. 프로세스를 띄우는 일이라
+            // 상태 누적기가 할 수 없고, 이벤트 루프가 `apply` 앞에서 가로챈다. 여기까지
+            // 왔다면 그 가로채기가 빠진 것이다 — 조용히 사라지지 않게 팔을 적어 둔다.
+            ServerMessage::Selection { .. } => false,
+            // 트랜스크립트 꼬리도 화면 상태가 아니다 — 파싱해서 Claude 항목으로
+            // 만드는 것은 이벤트 루프의 일이고(뷰는 그리기만 한다) 여기까지 오면
+            // 그 가로채기가 빠진 것이다.
+            ServerMessage::Claude { .. } => false,
+            // tree/ok/pong/unknown 은 화면을 바꾸지 않는다.
+            _ => false,
+        }
+    }
+
+    /// 바뀐 행만 온 갱신을 캐시에 얹는다. 화면이 달라졌으면 `true`.
+    ///
+    /// # 기준이 없으면 얹지 않고 **다시 그려 달라고 청한다**
+    ///
+    /// 바탕이 없는 채로 바뀐 행만 들고 있으면 나머지 행을 영영 모른다 — 화면 절반이
+    /// 빈 채로 굳는 것이 조용히 아무것도 안 하는 것보다 나쁘다. 파이썬 클라와 같은
+    /// 처방이고(`_delta_no_base`), 요청은 패널마다 한 번으로 눌러 둔다.
+    fn apply_delta(&mut self, delta: crate::message::ScreenDelta) -> bool {
+        let Some(screen) = self.screens.get_mut(&delta.pane) else {
+            if self.delta_no_base.insert(delta.pane) {
+                self.want_redraw = true;
+            }
+            return false;
+        };
+        for (y, row) in delta.rows {
+            if y < screen.rows.len() {
+                screen.rows[y] = row;
+            } else if y == screen.rows.len() {
+                // 서버가 행 수를 늘린 그 한 줄. 그 너머는 **버린다** — 사이가 빈 채로
+                // 늘리면 없는 줄이 빈 줄로 그려져 화면이 조용히 어긋난다.
+                screen.rows.push(row);
+            }
+        }
+        // 델타가 아니라 매번 전체가 오는 것들(파이썬 클라와 같다).
+        screen.cursor = delta.cursor;
+        screen.wrap = delta.wrap;
+        screen.top = delta.top;
+        screen.scroll = delta.scroll;
+        true
+    }
+
+    /// 상태줄 표식(줌·동기화·감시·자동 이름 …).
+    pub fn flags(&self) -> &StatusFlags {
+        &self.flags
+    }
+
+    /// 서버가 광고한 플러그인 목록(패리티 G7). 첫 full status 전에는 비어 있다.
+    pub fn plugins(&self) -> &[PluginInfo] {
+        &self.plugins
+    }
+
+    /// 플러그인이 기여한 명령·메뉴·설정([`PluginSurface`]).
+    pub fn plugin_surface(&self) -> &PluginSurface {
+        &self.plugin_surface
+    }
+
+    /// 지금 그릴 플러그인 화면(없으면 `None`).
+    pub fn plugin_screen(&self) -> Option<&PluginScreen> {
+        self.plugin_screens.last()
+    }
+
+    /// 한 판 물러난다 — 상세에서 `Esc` 를 누르면 **방금 보던 목록**으로 돌아간다.
+    /// 돌려주는 값은 "아직 화면이 남았나"다(false 면 화면을 통째로 닫는다).
+    pub fn pop_plugin_screen(&mut self) -> bool {
+        self.plugin_screens.pop();
+        !self.plugin_screens.is_empty()
+    }
+
+    /// 화면을 통째로 접는다(다른 화면으로 갈아탈 때).
+    pub fn clear_plugin_screens(&mut self) {
+        self.plugin_screens.clear();
+    }
+
+    /// 활성 패널의 시계를 켜고 끈다(패리티 G7b · `prefix t`). 켜졌으면 `true`.
+    ///
+    /// 패널이 없으면 아무 일도 안 한다 — 붙기 전에 눌린 키다.
+    pub fn toggle_clock(&mut self) -> bool {
+        let Some(active) = self.layout.as_ref().map(|l| l.active) else {
+            return false;
+        };
+        if self.clock_panes.remove(&active) {
+            return false;
+        }
+        self.clock_panes.insert(active);
+        true
+    }
+
+    /// 시계를 켠 패널이 하나라도 있나. 이벤트 루프가 **초당 갱신을 걸지** 정하는 데 쓴다
+    /// (안 켜져 있으면 1초마다 다시 그릴 이유가 없다).
+    pub fn clock_on(&self) -> bool {
+        !self.clock_panes.is_empty()
+    }
+
+    /// 시계에 적을 시각(`HH:MM:SS`). 바뀌었으면 `true` — 그때만 다시 그린다.
+    pub fn set_clock_text(&mut self, text: impl Into<String>) -> bool {
+        let text = text.into();
+        let changed = text != self.clock_text;
+        self.clock_text = text;
+        changed
+    }
+
+    /// 입력기 배지 글(뷰가 넣는다). 상태를 모르는 판에서는 `None` — 모르는 것을
+    /// "영문"이라고 단정하지 않는다.
+    pub fn set_ime_badge(&mut self, badge: Option<String>) {
+        self.ime_badge = badge;
+    }
+
+    /// 비활성 패널 딤을 켜고 끈다(설정에서 읽은 값을 뷰가 넣는다).
+    pub fn set_inactive_dim(&mut self, on: bool, ratio: f32) {
+        self.inactive_dim = on.then_some(ratio.clamp(0.0, 0.8));
+    }
+
+    /// 터치 스크롤바를 쓰나(설정 `touch-scroll`). 뷰가 설정에서 읽어 넣는다.
+    pub fn set_touch_scroll(&mut self, on: bool) {
+        self.touch_scroll = on;
+    }
+
+    pub fn touch_scroll(&self) -> bool {
+        self.touch_scroll
+    }
+
+    /// 지금 스크롤 모드인가를 알려 준다(뷰가 모드를 바꿀 때마다 넣는다).
+    pub fn set_scroll_mode(&mut self, on: bool) {
+        self.scroll_mode = on;
+    }
+
+    /// 터치 스크롤바가 차지한 자리 — **없으면 그리지도 안 눌리지도 않는다**.
+    ///
+    /// 조건은 정본(`clientio._composite`)과 같다:
+    /// - 스크롤 모드일 것(라이브 화면의 마지막 열을 덮으므로 평소에는 안 그린다)
+    /// - 설정 `touch-scroll` 이 켜져 있을 것
+    /// - **팝업이 안 떠 있을 것** — 팝업은 스크롤바를 덮어 그린다. 존만 남기면
+    ///   사용자가 보는 것(팝업)과 탭이 하는 일(뒤 패널 스크롤)이 어긋난다
+    /// - 활성 패널이 2칸 이상 넓고, 바를 그릴 만큼(3행) 높을 것
+    ///
+    /// 그리는 쪽과 누르는 쪽이 **같은 함수**를 봐야 좌표가 안 어긋난다 — 정본은 그리기
+    /// 부수효과로 존을 남기는데, 우리는 순수 함수로 두고 양쪽이 부른다.
+    pub fn touch_scroll_zone(&self) -> Option<TouchScrollZone> {
+        if !self.scroll_mode || !self.touch_scroll {
+            return None;
+        }
+        let layout = self.layout.as_ref()?;
+        if layout.popup.is_some() {
+            return None;
+        }
+        let pane = layout.panes.iter().find(|p| p.id == layout.active)?;
+        if pane.w < 2 || (pane.h as usize) < base::scrollbar::MIN_H {
+            return None;
+        }
+        Some(TouchScrollZone {
+            pane: pane.id,
+            x: (pane.x + pane.w - 1) as usize,
+            y: pane.y as usize,
+            h: pane.h as usize,
+        })
+    }
+
+    /// 스크롤바 안 **상대 행** `iy` 를 눌렀을 때 보낼 프레임. 누를 것이 없으면 `None`.
+    ///
+    /// `▲`/`▼` 는 반 화면(PgUp/PgDn 과 같은 양), 트랙은 그 자리로 점프한다. 점프는 절대
+    /// 위치가 아니라 **지금과의 차**를 보낸다 — 그래서 `scr` 을 안 주는 구서버에서도
+    /// 프로토콜 추가 없이 동작한다.
+    pub fn touch_scroll_tap(&self, iy: usize) -> Option<crate::command::Scroll> {
+        let zone = self.touch_scroll_zone()?;
+        let scroll = |delta: i32| {
+            (delta != 0).then(|| crate::command::Scroll::by(delta).for_pane(Some(zone.pane)))
+        };
+        match base::scrollbar::hit(zone.h, iy)? {
+            base::scrollbar::Hit::Up => scroll(base::scrollbar::half_page(zone.h)),
+            base::scrollbar::Hit::Down => scroll(-base::scrollbar::half_page(zone.h)),
+            base::scrollbar::Hit::Jump(frac) => scroll(base::scrollbar::jump_delta(
+                self.pane_top(zone.pane).unwrap_or(0),
+                self.pane_scroll(zone.pane).unwrap_or(0),
+                frac,
+            )),
+        }
+    }
+
+    /// 패널 번호를 띄우거나 지운다(`prefix q`). 켜졌으면 `true`.
+    pub fn toggle_pane_numbers(&mut self) -> bool {
+        self.pane_numbers = !self.pane_numbers;
+        self.pane_numbers
+    }
+
+    /// 지금 번호가 떠 있나.
+    pub fn pane_numbers(&self) -> bool {
+        self.pane_numbers
+    }
+
+    /// 번호를 지운다. 지웠으면 `true` — 뷰가 "이 키로 사라졌다"를 알 수 있다.
+    pub fn clear_pane_numbers(&mut self) -> bool {
+        let was = self.pane_numbers;
+        self.pane_numbers = false;
+        was
+    }
+
+    /// 번호 `n` 번 패널의 id. 번호는 레이아웃 순서(파이썬과 같은 0부터)다.
+    pub fn pane_by_number(&self, n: usize) -> Option<i64> {
+        self.layout.as_ref()?.panes.get(n).map(|p| p.id)
+    }
+
+    /// 활성 패널의 달력을 켜고 끈다(패리티 G7c). 켜졌으면 `true`.
+    ///
+    /// 끌 때 **넘겨 본 달도 같이 버린다**(파이썬과 같다) — 안 버리면 다시 켰을 때 지난달이
+    /// 떠 있고, 사용자는 자기가 언제 그리로 갔는지 기억하지 못한다.
+    pub fn toggle_calendar(&mut self) -> bool {
+        let Some(active) = self.layout.as_ref().map(|l| l.active) else {
+            return false;
+        };
+        if self.calendar_panes.remove(&active) {
+            self.calendar_offset.remove(&active);
+            return false;
+        }
+        self.calendar_panes.insert(active);
+        true
+    }
+
+    /// 달력이 떠 있는 패널이 하나라도 있나(이벤트 루프의 주기 갱신 조건).
+    pub fn calendar_on(&self) -> bool {
+        !self.calendar_panes.is_empty()
+    }
+
+    /// 오늘 날짜. 바뀌었으면 `true`.
+    pub fn set_today(&mut self, today: (i32, u32, u32)) -> bool {
+        let changed = today != self.today;
+        self.today = today;
+        changed
+    }
+
+    /// 그 패널에 지금 그려질 달. 달력이 안 떠 있으면 `None`.
+    pub fn calendar_month(&self, pane_id: i64) -> Option<crate::calendar::Month> {
+        if !self.calendar_panes.contains(&pane_id) {
+            return None;
+        }
+        let offset = self.calendar_offset.get(&pane_id).copied().unwrap_or(0);
+        Some(crate::calendar::month_for(self.today, offset))
+    }
+
+    /// 화면 좌표 클릭을 달력의 `‹`/`›` 로 보낸다. 넘겼으면 `true`.
+    ///
+    /// **달력이 떠 있는 패널에서만** 동작한다 — 안 그러면 우연히 같은 자리를 클릭한 것이
+    /// 달을 넘긴다.
+    pub fn calendar_click(&mut self, x: u16, y: u16) -> bool {
+        // 팝업이 떠 있으면 뒤에 가려진 달력 화살표는 클릭 대상이 아니다(68295 빚 —
+        // `pane_at` 의 팝업 우선 규칙과 같은 이유).
+        if self.popup().is_some() {
+            return false;
+        }
+        let Some(layout) = self.layout.as_ref() else {
+            return false;
+        };
+        let hit = layout.panes.iter().find_map(|pane| {
+            let month = self.calendar_month(pane.id)?;
+            let rect = (pane.x as usize, pane.y as usize, pane.w as usize, pane.h as usize);
+            crate::calendar::hit_nav(rect, &month, x as usize, y as usize)
+                .map(|delta| (pane.id, delta))
+        });
+        let Some((pane_id, delta)) = hit else {
+            return false;
+        };
+        *self.calendar_offset.entry(pane_id).or_insert(0) += delta;
+        true
+    }
+
+    /// 마지막으로 받은 트리(`request_tree` 회신). 요청 전이면 `None`.
+    pub fn tree(&self) -> Option<&Tree> {
+        self.tree.as_ref()
+    }
+
+    /// 마지막으로 받은 페이스트 버퍼 목록.
+    pub fn buffers(&self) -> &[BufferItem] {
+        &self.buffers
+    }
+
+    /// 트리를 **한 줄짜리 목록**으로 편다(패리티 G3b).
+    ///
+    /// # 왜 proto 인가
+    ///
+    /// 두 뷰가 각자 펴면 같은 트리가 화면마다 다르게 보인다(들여쓰기·라벨·순서). 그리고
+    /// 목록 화면은 **줄 번호로 고르므로**, 펴는 순서가 갈리면 GUI 에서 고른 것과 TUI 에서
+    /// 고른 것이 달라진다 — 조용한 어긋남이다.
+    ///
+    /// 세션 줄은 **접어 넣지 않는다**: 세션이 하나뿐인 것이 보통이고, 그때 세션 줄은
+    /// 고를 수도 없는 줄 하나를 목록 맨 위에 얹을 뿐이다(파이썬 클라도 탭부터 보인다).
+    pub fn tree_rows(&self) -> Vec<TreeRow> {
+        let Some(tree) = &self.tree else {
+            return Vec::new();
+        };
+        let many = tree.sessions.len() > 1;
+        let mut rows = Vec::new();
+        for session in &tree.sessions {
+            if many {
+                rows.push(TreeRow {
+                    depth: 0,
+                    label: session.name.clone(),
+                    window: None,
+                    pane: None,
+                    active: false,
+                });
+            }
+            for window in &session.windows {
+                let pin = if window.pinned { "*" } else { "" };
+                rows.push(TreeRow {
+                    depth: usize::from(many),
+                    label: format!("{}{pin} {}", window.index, window.name),
+                    window: Some(window.index),
+                    pane: None,
+                    active: window.active,
+                });
+                // 패널이 하나뿐이면 그 줄은 탭 줄과 같은 말을 한다 — 안 싣는다.
+                if window.panes.len() < 2 {
+                    continue;
+                }
+                for pane in &window.panes {
+                    let what = if pane.cmd.is_empty() { "?" } else { &pane.cmd };
+                    let where_ = if pane.remote { "ssh" } else { "local" };
+                    let title = if pane.title.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · {}", pane.title)
+                    };
+                    rows.push(TreeRow {
+                        depth: usize::from(many) + 1,
+                        label: format!("[{where_}] {what}{title}"),
+                        window: Some(window.index),
+                        pane: Some(pane.id),
+                        active: false,
+                    });
+                }
+            }
+        }
+        rows
+    }
+
+    /// 탭 스위처의 줄들 — 탭바의 **시각 순서** 그대로 + 로컬 탭의 패널 하위행.
+    ///
+    /// 파이썬 `open_tab_switcher`(07-16 확장)와 같은 규칙: 팝업은 즉시 열리고(탭
+    /// 목록은 `status` 로 이미 안다), 패널 하위행은 서버 `tree` 회신이 오면 **뒤늦게**
+    /// 끼어든다 — **패널 2개 이상인 로컬 탭** 밑에만(하나뿐이면 탭 줄과 같은 말이고,
+    /// 원격 탭의 패널 구성은 업스트림 소유라 여기서 안 편다). 패널 줄에서 고르면
+    /// 그 탭 + 그 패널로 간다(뷰의 `picked` 가 트리와 같은 팔로 푼다).
+    pub fn switcher_rows(&self) -> Vec<TreeRow> {
+        let mut rows = Vec::new();
+        let labels = self.tabs().labels();
+        for (i, tab) in self.tabs().tabs.iter().enumerate() {
+            rows.push(TreeRow {
+                depth: 0,
+                label: labels[i].clone(),
+                window: Some(tab.index),
+                pane: None,
+                active: tab.active,
+            });
+            if tab.remote {
+                continue;
+            }
+            let Some(tree) = &self.tree else { continue };
+            for session in &tree.sessions {
+                for window in &session.windows {
+                    if window.index != tab.index || window.panes.len() < 2 {
+                        continue;
+                    }
+                    for pane in &window.panes {
+                        let what = if pane.cmd.is_empty() { "?" } else { &pane.cmd };
+                        let where_ = if pane.remote { "ssh" } else { "local" };
+                        let title = if pane.title.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" · {}", pane.title)
+                        };
+                        rows.push(TreeRow {
+                            depth: 1,
+                            label: format!("[{where_}] {what}{title}"),
+                            window: Some(window.index),
+                            pane: Some(pane.id),
+                            active: false,
+                        });
+                    }
+                }
+            }
+        }
+        rows
+    }
+
+    /// "다시 그려 달라"를 보내야 하는가(가져가면 표식을 내린다).
+    ///
+    /// 뷰가 이 값을 보고 [`Command::RequestRedraw`](crate::command::Command::RequestRedraw)
+    /// 를 보낸다 — 상태 누적기는 소켓을 모른다.
+    pub fn take_redraw_request(&mut self) -> bool {
+        std::mem::take(&mut self.want_redraw)
+    }
+
+    pub fn layout(&self) -> Option<&Layout> {
+        self.layout.as_ref()
+    }
+
+    pub fn tabs(&self) -> &TabBar {
+        &self.tabs
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+
+    pub fn last_error(&self) -> Option<&str> {
+        self.last_error.as_deref()
+    }
+
+    /// 지금 보는 탭이 원격이면 그 **호스트**. 아니면 `None`.
+    ///
+    /// 판정 기준은 파이썬 `_active_remote_host` 와 같다 — 병합 탭바의 이름
+    /// (`⇄host:name`)에서 호스트를 읽는다.
+    pub fn active_remote_host(&self) -> Option<&str> {
+        self.tabs
+            .tabs
+            .iter()
+            .find(|t| t.active && t.remote)
+            .and_then(|t| t.display().host)
+    }
+
+    /// `merge-remote-tab` 후보 — **같은 호스트의, 지금 탭이 아닌 원격 탭**들.
+    ///
+    /// 서버에 따로 물을 것이 없다: 페더레이션의 요점이 원격 탭을 **이 탭바에** 끼워
+    /// 넣는 것이라, 목록은 이미 우리 손에 있다.
+    ///
+    /// 돌려주는 것은 `(전역 index, 화면에 적을 줄)`. index 는 서버 `join_pane` 이
+    /// 원격 로컬 index 로 바꿔 업스트림에 릴레이하는 값이다(파이썬과 같다).
+    pub fn merge_candidates(&self) -> Vec<(usize, String)> {
+        let Some(host) = self.active_remote_host() else {
+            return Vec::new();
+        };
+        self.tabs
+            .tabs
+            .iter()
+            .filter(|t| t.remote && !t.active && t.display().host == Some(host))
+            .map(|t| (t.index, format!("{}: {}", t.index + 1, t.name)))
+            .collect()
+    }
+
+    /// `run-shell` 의 마지막 출력.
+    pub fn shell_output(&self) -> &[String] {
+        &self.shell_output
+    }
+
+    /// 셸 출력을 담는다. 40줄까지만(파이썬 `_run_shell` 과 같은 상한).
+    pub fn set_shell_output(&mut self, text: &str) {
+        self.shell_output = text.lines().take(40).map(str::to_owned).collect();
+    }
+
+    /// 재시작 점검 결과 줄들(`restart-check` 회신). 묻기 전에는 비어 있다.
+    pub fn restart_check(&self) -> &[String] {
+        &self.restart_check
+    }
+
+    /// 떠 있는 팝업(`display-popup`). 없으면 `None`.
+    ///
+    /// 입력을 여기 `id` 로 보내야 그 PTY 에 닿는다 — 팝업은 트리 밖이라 **활성 패널이
+    /// 될 수 없다**(서버가 활성 패널로 흘리는 평소 경로로는 영영 안 간다).
+    pub fn popup(&self) -> Option<&crate::message::PopupLayout> {
+        self.layout.as_ref()?.popup.as_ref()
+    }
+
+    /// 활성 패널 **위쪽**(같은 열 범위)에 다른 패널이 있나.
+    ///
+    /// 크롬 포커스(`e_up`)가 이걸 본다 — 위에 패널이 더 있으면 `↑` 는 여전히 패널 이동이고,
+    /// 없을 때만 포커스가 탭바로 나간다. 파이썬 `_pane_above` 와 같은 판정이다.
+    pub fn pane_above(&self) -> bool {
+        self.pane_beyond(true)
+    }
+
+    /// 아래쪽에 다른 패널이 있나(`e_down` 이 본다).
+    pub fn pane_below(&self) -> bool {
+        self.pane_beyond(false)
+    }
+
+    /// `↑`/`↓` 방향에 **가로로 겹치는** 다른 패널이 있는지.
+    ///
+    /// 겹침을 따지는 이유: 왼쪽 아래에 패널이 있어도 그건 `↓` 로 갈 수 있는 패널이 아니다.
+    /// 겹침을 안 보면 옆 열의 패널 때문에 가장자리 판정이 틀린다.
+    fn pane_beyond(&self, above: bool) -> bool {
+        let Some(layout) = self.layout.as_ref() else {
+            return false;
+        };
+        let Some(active) = layout.panes.iter().find(|p| p.active) else {
+            return false;
+        };
+        layout.panes.iter().any(|p| {
+            if p.id == active.id {
+                return false;
+            }
+            let beyond = if above {
+                p.y + p.h <= active.y
+            } else {
+                p.y >= active.y + active.h
+            };
+            let overlaps =
+                !(p.x + p.w <= active.x || p.x >= active.x + active.w);
+            beyond && overlaps
+        })
+    }
+
+    /// 상태줄 형식 문자열이 쓸 값들([`crate::status::expand`]).
+    ///
+    /// **두 뷰가 각자 모으면 갈린다** — 한쪽에서만 `#I` 가 하나 어긋나는 식으로. 그래서
+    /// 여기 한 곳이 만든다.
+    pub fn status_ctx(&self) -> crate::status::StatusCtx {
+        let active = self.tabs.tabs.iter().position(|t| t.active);
+        crate::status::StatusCtx {
+            session: self.session.clone(),
+            // ★ **보이는 번호**(1부터)다. 내부 자리를 적으면 탭바의 번호와 하나씩
+            // 어긋나고, 그건 눈으로 잡기 가장 어려운 부류다.
+            tab_number: active.map(|i| i + 1),
+            tab_name: active
+                .and_then(|i| self.tabs.tabs.get(i))
+                .map(|t| t.name.clone())
+                .unwrap_or_default(),
+            pane_title: self.flags.pane_title.clone(),
+        }
+    }
+
+    /// 지금 하단에 떠 있는 배지들 — 크롬 포커스(`e_down`)가 순환하는 목록.
+    ///
+    /// **두 뷰가 각자 세면 갈린다**(한쪽에만 `원격` 이 뜨는 식으로). 그래서 목록은 여기
+    /// 한 곳이 만든다. 있을 때만 싣는 `알림` 은 파이썬 `_status_buttons` 가 존재하는
+    /// zone 만 세는 것과 같은 규칙이다.
+    pub fn badges(&self) -> Vec<crate::Badge> {
+        use crate::Badge;
+        let mut out = Vec::new();
+        if self.notices.len() > 0 {
+            out.push(Badge::Notices);
+        }
+        // 서버 배지는 **늘 있다** — 로컬에서도 "어디에 붙어 있나 · 서버가 무엇인가"를
+        // 볼 길이 있어야 한다(파이썬 상태줄의 호스트 버튼도 늘 있다). 종전에는 원격일
+        // 때만 떴고, 그래서 로컬에서는 그 정보로 가는 배지 동선이 아예 없었다.
+        out.push(Badge::Host);
+        // 시계·달력은 우리가 늘 그릴 수 있는 것이라 항상 있다(파이썬에서는 플러그인이
+        // 설치돼 있을 때만 뜬다 — 우리에겐 그 갈래가 없다).
+        out.push(Badge::Clock);
+        out.push(Badge::Calendar);
+        // 터치 스크롤 `⇕` 는 **설정이 켜져 있을 때만**이다(정본과 같다 — 저쪽은
+        // `touch_scroll and mouse_enabled`). 마우스를 끈 판에서는 누를 수가 없으므로
+        // 자리만 차지한다.
+        if self.touch_scroll {
+            out.push(Badge::TouchScroll);
+        }
+        out
+    }
+
+    /// 창(또는 단말) 제목 — 설정 `set-titles-string` 을 지금 상태로 펼친 것.
+    ///
+    /// 토큰은 상태줄과 **같은 것**을 쓴다(`status::expand`) — 두 자리가 다른 문법을 쓰면
+    /// 사용자가 한쪽에서 배운 것을 다른 쪽에서 못 쓴다. 그래서 여기서 만들고 뷰는
+    /// 흘리기만 한다(TUI 는 OSC 2, GUI 는 창 제목).
+    pub fn window_title(&self, fmt: &str) -> String {
+        crate::status::expand(fmt, &self.status_ctx())
+    }
+
+    /// 마지막 드라이런 회신을 **판정에 쓰는 값들**로 옮긴다(`base::restart::Probe`).
+    ///
+    /// 와이어 칸 이름을 아는 것은 여기다 — `core` 는 서버를 모른다. 회신이 아직 없으면
+    /// 전부 기본값(`false`/`0`)이라 판정이 **막힌다**(그게 안전한 쪽이다).
+    pub fn restart_probe(&self) -> base::restart::Probe {
+        let f = &self.restart_check_fields;
+        let flag = |key: &str| {
+            f.get(key)
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+        };
+        let count = |key: &str| f.get(key).and_then(serde_json::Value::as_i64).unwrap_or(0);
+        base::restart::Probe {
+            reexec: flag("reexec_supported"),
+            sessions: flag("has_sessions"),
+            serialize: flag("serialize_ok"),
+            panes: count("panes"),
+            panes_with_fd: count("panes_with_fd"),
+        }
+    }
+
+    /// 드라이런 회신이 이미 왔나(게이트가 회신을 기다릴지 정한다).
+    pub fn has_restart_check(&self) -> bool {
+        !self.restart_check_fields.is_empty()
+    }
+
+    /// 다음 드라이런을 위해 지난 회신을 버린다.
+    ///
+    /// 안 버리면 **지난 회신으로 판정한다** — 그 사이 패널이 닫혔으면 그 값은 거짓이고,
+    /// 되돌릴 수 없는 동작을 그 거짓으로 통과시키게 된다.
+    pub fn clear_restart_check(&mut self) {
+        self.restart_check_fields.clear();
+        self.restart_check.clear();
+    }
+
+    /// 이 패널이 Claude 패널인가(서버 `status` 의 `panes_claude`).
+    pub fn is_claude_pane(&self, pane: i64) -> bool {
+        self.claude_panes.contains(&pane)
+    }
+
+    /// 상태줄에 붙일 **Claude 배지** — `opus-5 · 12%/5h` 꼴. 재료가 없으면 `None`.
+    ///
+    /// # 왜 상태줄에 상주해야 하나
+    ///
+    /// 정본은 Claude 를 쓰는 동안 모델과 5시간 한도 사용률을 **늘 보인다**(대조 문서
+    /// §16 — 우리에겐 그 자리가 없었다). 한도는 넘고 나서 알면 늦다: 응답이 끊긴 뒤에야
+    /// "아 한도였구나" 를 알게 된다. 그래서 **지금 얼마나 썼나**가 화면에 있어야 한다.
+    ///
+    /// 모델만 오고 한도가 없을 수 있다(서버가 분모를 모르면 `tok5h_pct` 를 안 보낸다) —
+    /// 그때는 모델만 보인다. 없는 값을 지어내지 않는다.
+    pub fn claude_badge(&self) -> Option<String> {
+        let model = self.claude_model.as_deref()?;
+        Some(match self.claude_5h_pct {
+            Some(pct) => format!("{model} · {pct}%/5h"),
+            None => model.to_owned(),
+        })
+    }
+
+    /// 이 패널의 **라이브 입력칸에 지금 들어 있는 글**(패리티 G9c).
+    ///
+    /// 작성창(`esc Insert`)이 이 값으로 시작하고, 투입할 때 **그 길이만큼 백스페이스로
+    /// 비운 뒤** 새 글을 넣는다. 시드와 비우기가 같은 값을 써야 중복도 잔여도 없다.
+    ///
+    /// 세 가지 반환값의 뜻이 다르다(`prompt_box` 모듈 문서): `None` = 긁을 수 없다(호출부는
+    /// 초안으로) · `Some("")` = 입력칸이 실제로 빔 · `Some(글)`.
+    ///
+    /// **Claude 패널일 때만 긁는다.** 셸 패널에서 긁으면 프롬프트(`~/dir ❯ `)가 입력
+    /// 텍스트로 잡힌다 — 그러면 작성창이 그 글로 시작하고, 투입할 때 그 길이만큼
+    /// 백스페이스가 셸로 간다.
+    pub fn prompt_text(&self, pane: i64) -> Option<String> {
+        if !self.is_claude_pane(pane) {
+            return None;
+        }
+        let screen = self.screens.get(&pane)?;
+        // 런 텍스트를 그대로 이어 붙인다 — 파이썬 `client_prompt_text` 와 같다(폭에 맞춰
+        // 채우지 않는다. 채우면 줄 끝 공백이 생겨 `rstrip` 뒤 결과는 같지만, 정본과 다른
+        // 경로를 타는 것이라 픽스처 대조의 뜻이 옅어진다).
+        let lines: Vec<String> = screen
+            .rows
+            .iter()
+            .map(|row| row.iter().map(|run| run.text.as_str()).collect())
+            .collect();
+        crate::prompt_box::input_text(&lines, &screen.wrap, screen.cursor.map(|(_, y)| y as usize))
+    }
+
+    /// 서버가 알려 준 버전 한 줄(`version` 명령의 회신). 묻기 전에는 `None`.
+    /// RTT 이력(읽기) — 정보 팝업 서버 탭이 그래프를 그린다.
+    pub fn rtt(&self) -> &crate::rtt::RttHist {
+        &self.rtt
+    }
+
+    /// RTT 이력(쓰기) — pong 이 올 때 뷰가 표본을 넣는다.
+    pub fn rtt_mut(&mut self) -> &mut crate::rtt::RttHist {
+        &mut self.rtt
+    }
+
+    pub fn version(&self) -> Option<&str> {
+        self.version.as_deref()
+    }
+
+    /// 지나간 알림들. **새것이 앞**이다.
+    pub fn notices(&self) -> impl ExactSizeIterator<Item = &Notice> {
+        self.notices.iter()
+    }
+
+    fn push_notice(&mut self, notice: Notice) {
+        self.notices.push_front(notice);
+        self.notices.truncate(NOTICE_LIMIT);
+    }
+
+    /// **클라 쪽**에서 난 오류를 서버 오류와 같은 자리에 건다(설정 저장 실패 등).
+    ///
+    /// 자리를 나누지 않는 이유: 사용자에게는 "방금 한 것이 안 됐다" 한 가지이고, 자리가
+    /// 둘이면 한쪽은 아무도 안 본다. 파이썬 클라도 `display_message(severity=error)` 로
+    /// 같은 줄에 건다.
+    /// **클라 쪽**에서 알리는 보통 소식(설정 다시 읽음·`display-message`).
+    ///
+    /// 오류와 나눠 두는 이유: 오류는 상태줄 한 줄을 차지하고 이건 이력에만 쌓인다
+    /// (모든 알림이 상태줄을 차지하면 정작 오류가 묻힌다 — G6c 의 규칙).
+    pub fn note_notice(&mut self, msg: impl Into<String>) {
+        self.push_notice(Notice::new(Severity::Info, msg.into()));
+    }
+
+    pub fn note_error(&mut self, msg: impl Into<String>) {
+        let msg = msg.into();
+        self.push_notice(Notice::new(Severity::Error, msg.clone()));
+        self.last_error = Some(msg);
+    }
+
+    /// 오류 등급으로 **이력에만** 남긴다 — 상태줄 한 줄(`last_error`)은 차지하지 않는다.
+    ///
+    /// 끊김이 그 경우다: 사유는 뷰가 이미 맨 아래 한 줄로 보이고 있으므로 같은 말을 두
+    /// 번 걸 필요가 없고, `last_error` 까지 세우면 **다시 붙은 뒤에도** 그 줄이 "서버
+    /// 오류"로 남는다(끊김 표시는 지워지지만 오류는 안 지워진다).
+    ///
+    /// 이력에는 남겨야 한다 — 그 한 줄은 다음 메시지가 오면 사라지고, 사용자가 그 줄을
+    /// 눌러서 여는 곳이 바로 이력이다(`status::message_line` 문서).
+    pub fn note_error_history(&mut self, msg: impl Into<String>) {
+        self.push_notice(Notice::new(Severity::Error, msg.into()));
+    }
+
+    /// 배치에 있는 패널들. 서버가 준 순서 그대로다.
+    pub fn panes(&self) -> &[PaneLayout] {
+        self.layout.as_ref().map_or(&[], |l| &l.panes)
+    }
+
+    /// 분할 경계들(마우스 손잡이). 분할이 없으면 비어 있다.
+    pub fn dividers(&self) -> &[crate::message::Divider] {
+        self.layout.as_ref().map_or(&[], |l| &l.dividers)
+    }
+
+    /// 캔버스 좌표 (x, y) 에 있는 패널의 id.
+    ///
+    /// 테두리(`boxrect`)까지 그 패널로 친다 — 파이썬 클라의 `_pane_at` 과 같은 판정이다.
+    /// 경계선은 두 패널이 한 셀을 나눠 쓰므로, 호출부가 **경계선을 먼저** 걸러야 한다
+    /// (안 그러면 경계를 잡으려던 클릭이 이웃 패널 포커스로 샌다).
+    ///
+    /// **팝업이 떠 있으면 팝업이 먼저다**(68295 빚): 내용 안이면 팝업 패널, 밖이면
+    /// `None` — 가려진 패널을 클릭이 조작하면 안 보이는 곳에서 상태가 바뀐다. 파이썬
+    /// 클라는 아직 팝업 마우스가 없지만(같은 `_pane_at`), 그건 버그 동형의 비목표다
+    /// (키보드는 저쪽도 팝업으로 라우팅한다 — 마우스만 새는 것이 이상한 쪽이다).
+    pub fn pane_at(&self, x: u16, y: u16) -> Option<i64> {
+        if let Some(popup) = self.popup() {
+            let inside = x >= popup.cx
+                && x < popup.cx + popup.cw
+                && y >= popup.cy
+                && y < popup.cy + popup.ch;
+            return inside.then_some(popup.id);
+        }
+        self.panes()
+            .iter()
+            .find(|p| {
+                let [bx, by, bw, bh] = p.boxrect.unwrap_or([p.x, p.y, p.w, p.h]);
+                x >= bx && x < bx + bw && y >= by && y < by + bh
+            })
+            .map(|p| p.id)
+    }
+
+    /// 탭 드래그를 캔버스에 놓은 자리(파이썬 `_tabdrop_at` 동형 — G9v).
+    ///
+    /// 커서 아래 패널과, 그 패널의 어느 쪽인가(가운데 기준 가로 치우침 ≥ 세로면
+    /// 좌우 분할). 팝업이 떠 있거나 1칸짜리 패널이면 `None` — 합칠 자리가 아니다.
+    pub fn tab_drop_at(&self, x: u16, y: u16) -> Option<(i64, bool)> {
+        if self.popup().is_some() {
+            return None;
+        }
+        self.panes().iter().find_map(|p| {
+            let [bx, by, bw, bh] = p.boxrect.unwrap_or([p.x, p.y, p.w, p.h]);
+            let inside = x >= bx && x < bx + bw && y >= by && y < by + bh;
+            if !inside || bw <= 1 || bh <= 1 {
+                return None;
+            }
+            let dx = (f64::from(x - bx) / f64::from(bw) - 0.5).abs();
+            let dy = (f64::from(y - by) / f64::from(bh) - 0.5).abs();
+            Some((p.id, dx >= dy))
+        })
+    }
+
+    /// 휠이 굴릴 패널 — **팝업이 먼저다**(모달: 팝업이 떠 있으면 커서가 어디 있든
+    /// 팝업을 굴린다. 뒤 패널이 굴러가면 사용자는 그것을 볼 수도 없다).
+    /// 팝업이 없으면 커서 아래 패널, 그것도 없으면 `None`(뷰가 활성 패널로 접는다).
+    pub fn wheel_pane(&self, at: Option<(u16, u16)>) -> Option<i64> {
+        if let Some(popup) = self.popup() {
+            return Some(popup.id);
+        }
+        at.and_then(|(x, y)| self.pane_at(x, y))
+    }
+
+    /// 캔버스 좌표 (x, y) 를 잡은 분할 경계.
+    ///
+    /// 팝업이 떠 있으면 늘 `None` — 가려진 경계를 끌면 안 보이는 배치가 바뀐다.
+    pub fn divider_at(&self, x: u16, y: u16) -> Option<&crate::message::Divider> {
+        if self.popup().is_some() {
+            return None;
+        }
+        self.dividers().iter().find(|d| d.contains(x, y))
+    }
+
+    /// 이 좌표의 마우스를 **받고 싶어 하는** 대상(안에서 도는 앱이 추적을 켰다).
+    ///
+    /// [`pane_at`](Self::pane_at) 과 두 가지가 다르다:
+    ///
+    /// - **테두리·제목줄은 안 친다.** 그 칸은 pytmux 의 것이다(경계선 드래그·패널 헤더).
+    ///   앱에 넘기면 분할 조절을 못 하게 된다 — tmux 도 같은 경계다.
+    /// - 추적을 안 켠 패널이면 `None` 이다. 안 켠 앱에 리포트를 보내면 그 바이트가
+    ///   **프롬프트에 글자로 찍힌다**.
+    ///
+    /// 모드 판정(평소 모드에서만 넘긴다)은 여기서 안 한다 — 그건 뷰의 상태다.
+    ///
+    /// 팝업이 떠 있으면 **팝업이 먼저다**(다른 마우스 판정들과 같은 모달 규칙):
+    /// 팝업 안 앱이 추적을 켰고 좌표가 내용 사각형 안이면 팝업으로 넘기고, 그 외에는
+    /// `None` — 가려진 앱에 패스스루가 새면 안 된다. 팝업의 테두리·제목줄도 안 친다
+    /// (내용 사각형 `cx..cw`/`cy..ch` 만 — 일반 패널의 경계와 같은 이유).
+    pub fn mouse_pane_at(&self, x: u16, y: u16) -> Option<MouseTarget> {
+        if let Some(popup) = self.popup() {
+            let inside = x >= popup.cx
+                && x < popup.cx + popup.cw
+                && y >= popup.cy
+                && y < popup.cy + popup.ch;
+            return (inside && popup.mouse_mode().wants_mouse()).then(|| MouseTarget {
+                id: popup.id,
+                rect: (popup.cx, popup.cy, popup.cw, popup.ch),
+                mode: popup.mouse_mode(),
+            });
+        }
+        self.panes()
+            .iter()
+            .find(|p| {
+                p.mouse_mode().wants_mouse()
+                    && x >= p.x
+                    && y >= p.y
+                    && x < p.x + p.w
+                    && y < p.y + p.h
+            })
+            .map(|p| MouseTarget {
+                id: p.id,
+                rect: (p.x, p.y, p.w, p.h),
+                mode: p.mouse_mode(),
+            })
+    }
+
+    /// 아직 화면을 못 받은 패널이 있는가. 첫 프레임이 다 왔는지 판단할 때 쓴다.
+    pub fn is_complete(&self) -> bool {
+        !self.panes().is_empty() && self.panes().iter().all(|p| self.screens.contains_key(&p.id))
+    }
+
+    /// 패널 하나를 합성한 텍스트 줄들. 폭은 배치가 알려 준 값을 쓴다.
+    ///
+    /// 화면이 아직 안 왔거나 배치에 없는 패널이면 `None`.
+    pub fn compose_pane(&self, pane_id: i64) -> Option<Vec<String>> {
+        let screen = self.screens.get(&pane_id)?;
+        let pane = self.panes().iter().find(|p| p.id == pane_id)?;
+        Some(compose_rows(&screen.rows, pane.w as usize))
+    }
+
+    /// 창 전체를 하나의 셀 격자로 합성한다.
+    ///
+    /// 패널을 각자의 좌표에 옮겨 놓으므로 **분할 배치가 그대로 나온다**. 배치를 아직
+    /// 못 받았으면 `None`.
+    pub fn composite(&self) -> Option<Canvas> {
+        let layout = self.layout.as_ref()?;
+        let mut canvas = Canvas::new(layout.cols as usize, layout.rows as usize);
+        for pane in &layout.panes {
+            if let Some(screen) = self.screens.get(&pane.id) {
+                canvas.blit_pane(
+                    &screen.rows,
+                    pane.x as usize,
+                    pane.y as usize,
+                    pane.w as usize,
+                    pane.h as usize,
+                );
+            }
+        }
+        // 비활성 패널을 한 톤 옅게 — **테두리를 그리기 전**이다(테두리는 활성/비활성이
+        // 이미 색으로 갈려 있고, 딤까지 먹으면 두 번 어두워진다).
+        if let Some(ratio) = self.inactive_dim {
+            for pane in layout.panes.iter().filter(|p| p.id != layout.active) {
+                for y in pane.y as usize..(pane.y + pane.h) as usize {
+                    for x in pane.x as usize..(pane.x + pane.w) as usize {
+                        if let Some(cell) = canvas.cell_mut(x, y) {
+                            cell.style = crate::style::darken(&cell.style, ratio);
+                        }
+                    }
+                }
+            }
+        }
+        draw_frames(&mut canvas, layout);
+        // 입력기 배지는 **활성 패널 첫 행 오른쪽 끝**이다(정본과 같은 자리). 테두리를
+        // 그린 **뒤**라 프레임이 배지를 덮지 않는다.
+        if let Some(badge) = self.ime_badge.as_deref() {
+            draw_ime_badge(&mut canvas, layout, badge);
+        }
+        // 터치 스크롤바는 **입력기 배지 뒤**다(정본과 같은 순서). 둘이 같은 자리(활성
+        // 패널 우측 끝)를 쓰는데, 가려도 되는 것은 배지 쪽이다 — 스크롤바에는 **클릭존이
+        // 붙어 있어서**, 보이는 것과 탭이 하는 일이 어긋나면 안 된다.
+        if let Some(zone) = self.touch_scroll_zone() {
+            let bar = base::scrollbar::chars(
+                zone.h,
+                self.pane_top(zone.pane).unwrap_or(0),
+                self.pane_scroll(zone.pane).unwrap_or(0),
+            );
+            let style = crate::style::CellStyle {
+                fg: Some(crate::style::Color::Named(crate::style::NamedColor::BrightBlue)),
+                bold: true,
+                ..Default::default()
+            };
+            for (i, ch) in bar.into_iter().enumerate() {
+                canvas.put(zone.x, zone.y + i, ch, style.clone());
+            }
+        }
+        // 달력도 시계와 같은 자리에서 덮는다.
+        if !self.calendar_panes.is_empty() {
+            let styles = overlay_style::calendar();
+            for pane in &layout.panes {
+                let Some(month) = self.calendar_month(pane.id) else {
+                    continue;
+                };
+                crate::calendar::draw(
+                    &mut canvas,
+                    (pane.x as usize, pane.y as usize, pane.w as usize, pane.h as usize),
+                    &month,
+                    styles,
+                );
+            }
+        }
+        // 시계는 **테두리를 그린 뒤** 덮는다 — 먼저 그리면 프레임이 숫자 위에 얹힌다.
+        if !self.clock_panes.is_empty() && !self.clock_text.is_empty() {
+            let digit = overlay_style::clock_digit();
+            for pane in &layout.panes {
+                if !self.clock_panes.contains(&pane.id) {
+                    continue;
+                }
+                crate::clock::draw(
+                    &mut canvas,
+                    (pane.x as usize, pane.y as usize, pane.w as usize, pane.h as usize),
+                    &self.clock_text,
+                    digit,
+                );
+            }
+        }
+        // 팝업은 **모든 패널 위**다(트리 밖이라 blit 루프에 안 들어온다). 상자를 그리고
+        // 그 안에 팝업 패널의 화면을 얹는다 — 뒤 화면은 **안 지운다**(테두리가 경계를
+        // 알려 주고, 지우면 팝업이 화면 전체를 먹은 것처럼 보인다).
+        if let Some(popup) = layout.popup.as_ref() {
+            let style = crate::style::CellStyle {
+                fg: Some(crate::style::Color::Named(crate::style::NamedColor::BrightCyan)),
+                bold: true,
+                ..Default::default()
+            };
+            canvas.draw_box(
+                popup.x as usize,
+                popup.y as usize,
+                popup.w as usize,
+                popup.h as usize,
+                style,
+            );
+            if !popup.title.is_empty() && popup.w > 4 {
+                let label: String = format!(" {} ", popup.title)
+                    .chars()
+                    .take(popup.w as usize - 2)
+                    .collect();
+                let start = popup.x as isize + 1;
+                for (i, ch) in label.chars().enumerate() {
+                    canvas.put_cell(start + i as isize, popup.y as isize, ch, style);
+                }
+            }
+            if let Some(screen) = self.screens.get(&popup.id) {
+                canvas.blit_pane(
+                    &screen.rows,
+                    popup.cx as usize,
+                    popup.cy as usize,
+                    popup.cw as usize,
+                    popup.ch as usize,
+                );
+            }
+        }
+        // 패널 번호(`prefix q`)는 **가장 위**다 — 시계·달력 위에서도 번호가 보여야
+        // 그 패널로 갈 수 있다.
+        if self.pane_numbers {
+            for (n, pane) in layout.panes.iter().enumerate() {
+                let text = n.to_string();
+                // 활성은 초록, 나머지는 노랑 바탕에 검은 글자(파이썬과 같다).
+                let style = crate::style::CellStyle {
+                    fg: Some(crate::style::Color::Named(crate::style::NamedColor::Black)),
+                    bg: Some(crate::style::Color::Named(if pane.id == layout.active {
+                        crate::style::NamedColor::Green
+                    } else {
+                        crate::style::NamedColor::Yellow
+                    })),
+                    bold: true,
+                    ..Default::default()
+                };
+                let x0 = pane.x as isize
+                    + (pane.w as isize - text.chars().count() as isize).max(0) / 2;
+                let y0 = pane.y as isize + (pane.h / 2) as isize;
+                for (i, c) in text.chars().enumerate() {
+                    canvas.put_cell(x0 + i as isize, y0, c, style);
+                }
+            }
+        }
+        Some(canvas)
+    }
+
+    /// 패널의 블록 목록. 셸 통합이 없으면 빈 슬라이스다.
+    pub fn blocks(&self, pane_id: i64) -> &[Block] {
+        self.blocks.get(&pane_id).map_or(&[], Vec::as_slice)
+    }
+
+    /// 활성 패널의 블록. 화면에 붙일 목록으로 이걸 쓴다.
+    pub fn active_blocks(&self) -> &[Block] {
+        match self.layout.as_ref().map(|l| l.active) {
+            Some(id) => self.blocks(id),
+            None => &[],
+        }
+    }
+
+    /// 블록을 하나라도 받았는가(= 셸 통합이 켜져 있는가).
+    pub fn has_blocks(&self) -> bool {
+        self.blocks.values().any(|v| !v.is_empty())
+    }
+
+    /// 지금 보고 있는 탭이 원격인가.
+    pub fn active_tab_is_remote(&self) -> bool {
+        self.tabs().active().is_some_and(|t| t.remote)
+    }
+
+    /// 지금 보고 있는 패널의 id. 배치를 아직 못 받았으면 `None`.
+    ///
+    /// 상류가 보내 준 트랜스크립트를 패널별로 들고 있다가 이 값으로 고른다 — 한 세션에
+    /// Claude 패널이 여럿이면 아무거나 골라선 안 된다.
+    pub fn active_pane(&self) -> Option<i64> {
+        self.layout.as_ref().map(|l| l.active)
+    }
+
+    /// 지금 보고 있는 패널의 작업 디렉터리. 서버가 블록으로 알려 준 cwd 가 유일한
+    /// 출처이므로 **셸 통합이 없으면 모른다**(그때 Claude 뷰도 안 뜬다).
+    ///
+    /// # 원격 탭에서는 알려 주지 않는다
+    ///
+    /// 원격 패널의 블록도 cwd 를 싣고 내려온다(상류가 relay 한다 — `serverremote.py`).
+    /// 하지만 그 경로는 **상류 머신의 경로**이고, 이 클라가 그걸로 여는 트랜스크립트
+    /// 폴더는 **이 머신의** `~/.claude/projects` 아래다. 두 머신의 디렉터리 구조가 닮아
+    /// 있으면(같은 사람의 작업 트리라면 대개 그렇다) 폴더가 **실제로 존재하고**, 그러면
+    /// 원격 패널 자리에 **로컬 세션의 대화가 뜬다** — 비어 보이는 것보다 나쁘다. 조용히
+    /// 틀린 화면이라 사용자는 그게 남의 세션인 줄 모른다(2026-07-27g 실측 결함).
+    ///
+    /// 그래서 모르면 모른다고 한다. 원격 패널의 진짜 대화는 상류가 원문 꼬리를 실어
+    /// 보내는 경로로 온다([`ServerMessage::Claude`](crate::ServerMessage) — 설계문서
+    /// §7 P5 ⓑ'). 이 함수는 그 경로와 무관하게 "이 머신에서 직접 읽어도 되는가"만 답한다.
+    ///
+    /// **두 뷰가 각자 답하면 안 된다.** 한쪽만 원격 판정을 빠뜨리면 그 클라에서만 남의
+    /// 대화가 뜨는데, 그건 그럴듯해서 아무도 의심하지 않는다.
+    pub fn active_cwd(&self) -> Option<&str> {
+        if self.active_tab_is_remote() {
+            return None;
+        }
+        self.active_blocks()
+            .iter()
+            .rev()
+            .find_map(|b| b.cwd.as_deref())
+    }
+
+    /// 패널 안에서의 커서 위치(열, 행). 커서를 그리지 않는 패널이면 `None`.
+    pub fn pane_cursor(&self, pane_id: i64) -> Option<(u16, u16)> {
+        self.screens.get(&pane_id)?.cursor
+    }
+
+    /// 이 패널 뷰포트 **첫 줄의 절대 행 번호**. 화면을 아직 못 받았으면 `None`.
+    ///
+    /// 서버가 `screen` 마다 실어 보내는 값이고, 서버의 스크롤백 추출
+    /// (`model.Pane.extract_range`)이 쓰는 좌표계의 원점이다.
+    pub fn pane_top(&self, pane_id: i64) -> Option<usize> {
+        Some(self.screens.get(&pane_id)?.top)
+    }
+
+    /// 이 패널이 라이브에서 **위로 올라간 행수**. 화면을 아직 못 받았으면 `None`.
+    ///
+    /// 서버는 0 이 아닐 때만 `scr` 로 싣는다 — 라이브면 필드가 없고 우리는 0 으로 읽는다.
+    pub fn pane_scroll(&self, pane_id: i64) -> Option<usize> {
+        Some(self.screens.get(&pane_id)?.scroll)
+    }
+
+    /// 패널의 **내용** 사각형 `(x, y, w, h)`. 테두리는 뺀 안쪽이다.
+    ///
+    /// 선택은 테두리를 포함하지 않는다 — 테두리는 서버가 그린 글자가 아니라 클라가
+    /// 얹은 크롬이고, 스크롤백에는 존재하지 않는다.
+    pub fn pane_rect(&self, pane_id: i64) -> Option<(u16, u16, u16, u16)> {
+        self.panes()
+            .iter()
+            .find(|p| p.id == pane_id)
+            .map(|p| (p.x, p.y, p.w, p.h))
+    }
+
+    /// 캔버스 좌표를 그 패널의 내용 사각형 **안으로 접는다**.
+    ///
+    /// 드래그가 패널 밖으로 나가도 선택은 시작한 패널 안에 머물러야 한다 — 화면에서는
+    /// 나란히 보여도 옆 패널의 줄은 남의 스크롤백이라 이어 붙일 수 없다. 파이썬 클라의
+    /// `_clamp_sel` 과 같은 처리다.
+    pub fn clamp_to_pane(&self, pane_id: i64, x: u16, y: u16) -> Option<(u16, u16)> {
+        let (px, py, w, h) = self.pane_rect(pane_id)?;
+        // 폭·높이가 0 인 패널은 접을 안쪽이 없다(창이 줄어드는 순간의 레이스).
+        let (last_x, last_y) = (px + w.checked_sub(1)?, py + h.checked_sub(1)?);
+        Some((x.clamp(px, last_x), y.clamp(py, last_y)))
+    }
+
+    /// 캔버스 좌표 → 그 패널 기준 **절대 좌표**. 패널 내용 밖이거나 화면을 아직 못
+    /// 받았으면 `None`.
+    ///
+    /// 강조를 그릴 때 셀마다 부른다 — 밖이면 `None` 이므로 호출부가 사각형 검사를 따로
+    /// 하지 않아도 된다.
+    pub fn pane_abs(&self, pane_id: i64, x: u16, y: u16) -> Option<crate::selection::Point> {
+        let (px, py, w, h) = self.pane_rect(pane_id)?;
+        if x < px || y < py || x >= px + w || y >= py + h {
+            return None;
+        }
+        let top = self.pane_top(pane_id)?;
+        Some(crate::selection::Point::new(
+            top + usize::from(y - py),
+            x - px,
+        ))
+    }
+}
+
+/// 패널 경계선·제목을 격자 위에 그린다.
+///
+/// # 왜 내용을 다 앉힌 **뒤** 인가
+///
+/// 테두리는 내용 바깥 한 칸을 쓰지만, 화면이 아직 안 온 패널이 있으면 그 자리는 공백이다.
+/// 내용을 먼저 깔고 그 위에 그려야 순서에 상관없이 같은 그림이 나온다.
+///
+/// # 그리는 순서가 곧 우선순위다
+///
+/// 비활성 → 활성 → 제목 순으로 그린다. 맞닿은 변은 **나중에 그린 쪽 색**이 남으므로,
+/// 활성 패널의 테두리가 이웃 위로 온다(파이썬 클라와 같은 순서 = 같은 그림).
+
+/// 입력기 배지를 **활성 패널의 첫 행 오른쪽 끝**에 그린다(정본과 같은 자리).
+///
+/// 정본 주석이 이 자리를 고른 이유를 적고 있다 — 닫기 `[x]` 는 테두리 행으로 한 칸
+/// 올려 "콘텐츠를 안 가리고 IME 배지(첫 행 우상단)와도 안 겹치게" 한다. 즉 배지의
+/// 자리가 먼저이고 나머지가 그것을 피한다.
+///
+/// 패널이 좁으면(배지가 절반을 넘으면) **안 그린다** — 화면을 덮어 가며 알릴 만한
+/// 것은 아니다.
+fn draw_ime_badge(canvas: &mut Canvas, layout: &Layout, badge: &str) {
+    let Some(pane) = layout.panes.iter().find(|p| p.id == layout.active) else {
+        return;
+    };
+    let chars: Vec<char> = badge.chars().collect();
+    let width = crate::compose::display_width(badge);
+    let (px, py, pw) = (pane.x as usize, pane.y as usize, pane.w as usize);
+    if width == 0 || width * 2 > pw {
+        return;
+    }
+    let style = crate::style::CellStyle {
+        fg: Some(crate::style::Color::Named(crate::style::NamedColor::Black)),
+        bg: Some(crate::style::Color::Named(crate::style::NamedColor::BrightGreen)),
+        bold: true,
+        ..Default::default()
+    };
+    let mut x = px + pw - width;
+    for ch in chars {
+        // 폭 2 인 글자는 `put` 이 뒷칸을 자리표로 채운다 — 한 칸씩 밀면 겹친다.
+        let w = crate::compose::display_width(&ch.to_string()).max(1);
+        canvas.put(x, py, ch, style.clone());
+        x += w;
+    }
+}fn draw_frames(canvas: &mut Canvas, layout: &Layout) {
+    let mut draw = |pane: &PaneLayout| {
+        let Some([x, y, w, h]) = pane.boxrect else {
+            return;                 // 테두리를 안 그리는 배치(패널 하나 + single-border off)
+        };
+        let style = if pane.id == layout.active {
+            border_style(true)
+        } else {
+            border_style(false)
+        };
+        canvas.draw_box(x as usize, y as usize, w as usize, h as usize, style);
+    };
+    for pane in layout.panes.iter().filter(|p| p.id != layout.active) {
+        draw(pane);
+    }
+    for pane in layout.panes.iter().filter(|p| p.id == layout.active) {
+        draw(pane);
+    }
+    // 제목은 테두리를 **전부** 그린 뒤 별도 패스로 — 이웃 패널의 변이 이름을 덮어쓰지
+    // 않게 한다(파이썬 클라 `_draw_title` 의 같은 이유).
+    for pane in layout
+        .panes
+        .iter()
+        .filter(|p| p.id != layout.active)
+        .chain(layout.panes.iter().filter(|p| p.id == layout.active))
+    {
+        draw_title(canvas, pane, layout);
+    }
+    for bar in &layout.titlebars {
+        draw_titlebar(canvas, bar);
+    }
+}
+
+/// 이름을 위쪽 테두리 가운데에.
+///
+/// 서버는 모든 패널의 `title` 을 보내지만 **항상 보이지는 않는다** — 기본 이름(`shell`)은
+/// 잡음이라 사용자가 이름을 바꿨거나 pane-border-status 가 켜졌을 때만 보인다. 파이썬
+/// 클라와 같은 판정이라야 두 클라가 같은 화면을 그린다.
+fn draw_title(canvas: &mut Canvas, pane: &PaneLayout, layout: &Layout) {
+    let Some([x, y, w, _]) = pane.boxrect else {
+        return;
+    };
+    let title = pane.title.trim();
+    let renamed = !title.is_empty() && title != "shell";
+    if title.is_empty() || w < 4 || !(layout.border_status || renamed) {
+        return;
+    }
+    let label: String = format!(" {title} ")
+        .chars()
+        .take(w as usize - 2)
+        .collect();
+    let width = label.chars().count();
+    // 가운데 정렬. 모서리는 침범하지 않는다.
+    let start = x as usize + std::cmp::max(1, (w as usize).saturating_sub(width) / 2);
+    let limit = x as usize + w as usize - 1;
+    let style = border_style(pane.id == layout.active);
+    let mut cx = start;
+    for ch in label.chars() {
+        if cx >= limit {
+            break;
+        }
+        cx += canvas.put_text(cx, y as usize, &ch.to_string(), style);
+    }
+}
+
+/// pane-border-status 제목줄: 라벨 뒤는 `─` 로 채운다.
+fn draw_titlebar(canvas: &mut Canvas, bar: &TitleBar) {
+    let label = format!(" {} ", bar.title);
+    let style = if bar.active {
+        titlebar_style(true)
+    } else {
+        titlebar_style(false)
+    };
+    let fill = CellStyle {
+        fg: Some(Color::Named(NamedColor::BrightBlack)),
+        ..CellStyle::default()
+    };
+    let mut cx = bar.x as usize;
+    let end = bar.x as usize + bar.w as usize;
+    for ch in label.chars() {
+        if cx >= end {
+            break;
+        }
+        cx += canvas.put_text(cx, bar.y as usize, &ch.to_string(), style);
+    }
+    while cx < end {
+        canvas.put_text(cx, bar.y as usize, "─", fill);
+        cx += 1;
+    }
+}
+
+/// 테두리 색. 활성은 파랑+굵게, 비활성은 흐린 회색 — 파이썬 클라의 관습과 같다
+/// (`primary`+bold / `grey42`). 팔레트 이름으로 두어 사용자 터미널 테마를 따른다.
+fn border_style(active: bool) -> CellStyle {
+    if active {
+        CellStyle {
+            fg: Some(Color::Named(NamedColor::Blue)),
+            bold: true,
+            ..CellStyle::default()
+        }
+    } else {
+        CellStyle {
+            fg: Some(Color::Named(NamedColor::BrightBlack)),
+            ..CellStyle::default()
+        }
+    }
+}
+
+/// 제목줄 색(파이썬 `_TB_ACTIVE_STYLE`/`_TB_INACTIVE_STYLE`): 검은 글자 + 배경 반전.
+fn titlebar_style(active: bool) -> CellStyle {
+    CellStyle {
+        fg: Some(Color::Named(NamedColor::Black)),
+        bg: Some(Color::Named(if active {
+            NamedColor::Cyan
+        } else {
+            NamedColor::White
+        })),
+        ..CellStyle::default()
+    }
+}
+
+#[cfg(test)]
+#[path = "session_tests.rs"]
+mod tests;
+
+
+/// full `status` 의 **플러그인 표면**(Tier A). 이 프레임에 없으면 `None` —
+/// 델타라는 뜻이지 "기여가 없다"가 아니다(개요와 같은 규칙).
+fn plugin_surface_from_status(status: &crate::message::Status) -> Option<PluginSurface> {
+    let obj = status.fields.get("plugin_surface")?.as_object()?;
+    let text = |v: Option<&serde_json::Value>| {
+        v.and_then(serde_json::Value::as_str).unwrap_or_default().to_owned()
+    };
+    let strings = |key: &str| -> Vec<String> {
+        obj.get(key)
+            .and_then(serde_json::Value::as_array)
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+            .unwrap_or_default()
+    };
+    let rows = |key: &str| -> Vec<serde_json::Map<String, serde_json::Value>> {
+        obj.get(key)
+            .and_then(serde_json::Value::as_array)
+            .map(|a| a.iter().filter_map(|v| v.as_object().cloned()).collect())
+            .unwrap_or_default()
+    };
+    Some(PluginSurface {
+        // 이름 없는 줄은 실어도 부를 수가 없다 — 누르면 아무 일도 안 나는 줄이 된다.
+        commands: rows("commands")
+            .into_iter()
+            .filter_map(|r| {
+                let name = text(r.get("name"));
+                (!name.is_empty()).then(|| PluginCommand {
+                    name,
+                    desc: text(r.get("desc")),
+                    cat: text(r.get("cat")),
+                })
+            })
+            .collect(),
+        noarg: strings("noarg"),
+        menu_items: rows("menu_items")
+            .into_iter()
+            .filter_map(|r| {
+                let key = text(r.get("key"));
+                (!key.is_empty()).then(|| PluginMenuItem { key, label: text(r.get("label")) })
+            })
+            .collect(),
+        settings: rows("settings")
+            .into_iter()
+            .filter_map(|r| {
+                let key = text(r.get("key"));
+                (!key.is_empty()).then(|| PluginSetting {
+                    key,
+                    cat: text(r.get("cat")),
+                    kind: text(r.get("type")),
+                    values: r
+                        .get("values")
+                        .and_then(serde_json::Value::as_array)
+                        .map(|a| {
+                            a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()
+                        })
+                        .unwrap_or_default(),
+                })
+            })
+            .collect(),
+        setting_cats: strings("setting_cats"),
+    })
+}
+
+/// full `status` 의 플러그인 개요. 이 프레임에 없으면 `None`(델타라는 뜻이지 "플러그인이
+/// 없다"가 아니다 — 둘을 섞으면 델타가 올 때마다 목록이 사라진다).
+fn plugins_from_status(status: &crate::message::Status) -> Option<Vec<PluginInfo>> {
+    let rows = status.fields.get("plugins")?.as_array()?;
+    Some(
+        rows.iter()
+            .filter_map(|row| {
+                let obj = row.as_object()?;
+                let text = |key: &str| {
+                    obj.get(key)
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned()
+                };
+                let name = text("name");
+                // 이름 없는 줄은 토글할 수단이 없다(서버가 이름으로 받는다) — 실으면
+                // 눌러도 아무 일이 안 나는 줄이 된다.
+                if name.is_empty() {
+                    return None;
+                }
+                Some(PluginInfo {
+                    name,
+                    description: text("description"),
+                    category: text("category"),
+                    enabled: obj
+                        .get("enabled")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(true),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// 매 `status` 에 실려 오는 **꺼진 플러그인 이름**들.
+fn disabled_plugins_from_status(status: &crate::message::Status) -> Option<Vec<String>> {
+    Some(
+        status
+            .fields
+            .get("disabled_plugins")?
+            .as_array()?
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect(),
+    )
+}

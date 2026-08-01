@@ -88,7 +88,11 @@ async def test_mdir_list_msg_explicit_path_and_err():
 
 # ---- 서버: 파일 조작(request_mdir_op) ----
 def _w(path, content="x"):
-    with open(path, "w") as f:
+    # encoding 을 명시한다 — 없으면 로케일 인코딩으로 쓰이고(한국어 Windows=cp949),
+    # 프로덕션(`mdir_view_msg`)은 UTF-8 로 읽어 한글이 U+FFFD 로 깨진다. 그러면
+    # `test_mdir_view_text_binary_truncated_err` 가 **이 박스에서만** 빨강이 된다
+    # (제품 결함이 아니라 테스트가 만든 인코딩 불일치 — 2026-07-31 검수).
+    with open(path, "w", encoding="utf-8") as f:
         f.write(content)
 
 

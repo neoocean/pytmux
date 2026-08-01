@@ -26,6 +26,18 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# 출력은 UTF-8 로 고정한다(tests/run.py 와 같은 처방). 이 게이트의 메시지는 ✓/✗ 와
+# 한글을 쓰는데, 콘솔 기본 인코딩이 cp949 인 박스(한국어 Windows)에서는 `print` 가
+# **UnicodeEncodeError 로 죽어** 게이트가 판정을 내리기 전에 traceback 으로 끝났다
+# (2026-07-31 실측: `✗ git 저장소가 아니다` 를 찍는 순간 crash — 게시 직전 훅으로
+# 쓰라는 스크립트가 정작 이 박스에서 무용이었다). errors 도 관대하게 둬, 인코딩이
+# 어떻든 **판정과 종료코드**는 반드시 나오게 한다.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="backslashreplace")
+    except (AttributeError, ValueError):
+        pass
+
 
 def run(cmd, cwd=ROOT):
     """(rc, stdout) — 실패해도 예외 대신 rc 로 돌려준다(도구 부재 진단용)."""

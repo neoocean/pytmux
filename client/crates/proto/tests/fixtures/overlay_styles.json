@@ -1,0 +1,35 @@
+{
+  "_comment": "python3 scripts/gen_overlay_styles.py 로 생성. 출처 = pytmuxlib/plugins/{clock,calendar}/__init__.py 의 Style(...) 줄. 값이 아니라 **어느 테마 변수로 칠하는가**를 뜬다 — 우리는 터미널 이름색을 쓰므로 옮기는 것은 색이 아니라 관습이다.",
+  "elements": {
+    "clock.digit": {
+      "fg_var": "success",
+      "bold": true
+    },
+    "calendar.day": {
+      "fg_var": "foreground",
+      "bold": false
+    },
+    "calendar.title": {
+      "fg_var": "success",
+      "bold": true
+    },
+    "calendar.big_today": {
+      "fg_var": "success",
+      "bold": true
+    },
+    "calendar.border": {
+      "fg_var": "accent",
+      "bold": false
+    },
+    "calendar.today": {
+      "fg_literal": "black",
+      "bg_var": "success",
+      "bold": true
+    }
+  },
+  "theme_fallback": {
+    "accent": "#FEA62B",
+    "foreground": "#E0E0E0",
+    "success": "#4EBF71"
+  }
+}

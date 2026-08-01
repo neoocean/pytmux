@@ -382,6 +382,16 @@ class MultiplexerView(Widget):
         self.app._log_mouse("down", event.x, event.y, event.button)
         if not self.app.mouse_enabled:
             return
+        # 터치 스크롤바(touch-scroll) 탭 — 스크롤 모드의 드래그 선택보다 **먼저**
+        # 가로챈다(스크롤바 열에서 시작한 탭은 선택이 아니라 스크롤 조작이다).
+        # 존은 _composite 이 스크롤 모드에서만 채우므로 normal 모드엔 영향이 없다.
+        z = getattr(self.app, "_touch_scroll_zone", None)
+        if z and event.button == 1:
+            zpid, zx, zy0, zh = z
+            if event.x == zx and zy0 <= event.y < zy0 + zh:
+                self.app.touch_scroll_action(zpid, zh, event.y - zy0)
+                event.stop()
+                return
         if self.app.mode == "scroll":  # copy-mode: 드래그로 선택
             # 선택 시작 패널을 기억해(§2.4) 이후 드래그/추출을 그 패널 안으로 묶는다.
             p = self._pane_at(event.x, event.y)
@@ -1381,6 +1391,7 @@ class StatusBar(Widget):
         self._ar_zone = None     # (x0, x1) AR(자동재개) 배지 클릭 영역(켜고끄기 팝업, 요청)
         self._host_zone = None   # (x0, x1) 서버이름(host) 클릭 영역(서버 탭, §10-A #12)
         self._notices_zone = None  # (x0, x1) 알림 이력 배지 클릭 영역(§10-8)
+        self._touch_zone = None  # (x0, x1) ⇕ 터치 스크롤 배지 클릭 영역(touch-scroll)
         self.focus_btn = None    # ESC 모드 하단 포커스 키 강조(model/usage/rec/host/clock/date)
         # 클라이언트가 SSH 원격 세션에서 도는지(attach 한 머신 기준, 시작 시 1회).
         self._is_remote = bool(os.environ.get("SSH_CONNECTION")
@@ -1524,6 +1535,9 @@ class StatusBar(Widget):
         # 배경은 명시 설정(self.bg)이 없으면 터미널 기본(None)을 따른다 —
         # REC/SYNC/AR 등 개별 배지는 자체 bgcolor 유지(의도된 강조).
         if self.message is not None:
+            # 메시지가 줄을 덮는 동안엔 ⇕ 배지를 안 그리므로 클릭존도 무효화한다
+            # (안 그러면 직전 프레임의 좌표가 남아 메시지 위 탭이 모드를 토글한다).
+            self._touch_zone = None
             # §10-8: 등급이 배경색과 기호를 정한다(멀리서 색만 보고 성공/실패 판단 +
             # 색맹·모노크롬 대비 기호). ESC 모드 하단 포커스가 메시지에 와 있으면
             # (focus_btn=='msg') 강조 + ⏎ 닫기 힌트를 붙인다(요청).
@@ -1571,6 +1585,22 @@ class StatusBar(Widget):
             segs.append(Segment("SYNC ", Style(color="white", bgcolor=tc("error"),
                                                 bold=True)))
             acc += 5
+        # 터치 스크롤 배지 `⇕`(touch-scroll, 기본 on) — 탭하면 스크롤 모드 진입/이탈.
+        # 스크롤 모드에선 강조색이라 **모드 표시**도 겸한다. 휠이 안 오는 터미널
+        # (iPhone Blink 등)에서 스크롤백으로 들어가는 유일한 마우스 경로라 항상
+        # 보이게 두고, 필요 없으면 `set touch-scroll off` 로 끈다.
+        self._touch_zone = None
+        if getattr(self.app, "touch_scroll", False) and self.app.mouse_enabled:
+            _scr_on = self.app.mode == "scroll"
+            _tt = " ⇕ "
+            segs.append(Segment(_tt, Style(
+                color="black" if _scr_on else tc("foreground"),
+                bgcolor=tc("accent") if _scr_on else self.bg, bold=True)))
+            # 폭은 _cw 로 잰다 — ⇕ 는 East Asian Ambiguous 라 모호폭 wide 모드에선
+            # 2칸이다(하드코딩 3 이면 그 모드에서 클릭존이 한 칸 밀린다).
+            _tw = _cw(_tt)
+            self._touch_zone = (acc, acc + _tw)
+            acc += _tw
         self._ar_zone = None
         if self.autoresume:
             segs.append(Segment(" AR ", Style(color="black", bgcolor=tc("accent"),
@@ -1686,6 +1716,13 @@ class StatusBar(Widget):
         # 전체를 덮으므로 아무 데나 클릭/터치하면 즉시 닫는다(요청).
         if self.message is not None and getattr(self.app, "_msg_dismissable", False):
             self.app._dismiss_message()
+            event.stop()
+            return
+        tz = getattr(self, "_touch_zone", None)
+        if tz and tz[0] <= event.x < tz[1]:
+            # ⇕ 배지 탭 → 스크롤 모드 토글(터치 전용 경로 — 휠이 안 오는 터미널).
+            fn = getattr(self.app, "toggle_scroll_mode", None)
+            fn and fn()
             event.stop()
             return
         rz = getattr(self, "_rec_zone", None)   # rec 플러그인 부재 시 None(no-op)

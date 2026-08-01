@@ -1,0 +1,15 @@
+{
+  "_comment": "python3 scripts/gen_transcript_fixture.py 로 생성. 출처 = pytmuxlib/plugins/claude-code/transcript.py::encode_project_dir",
+  "dirs": {
+    "/Users/me/p4/playground/scripts": "-Users-me-p4-playground-scripts",
+    "/Users/me/.config/nvim": "-Users-me--config-nvim",
+    "/tmp/a.b.c/d": "-tmp-a-b-c-d",
+    "/Users/me/작업 폴더/프로젝트": "-Users-me-작업 폴더-프로젝트",
+    "/": "-",
+    "/Users/me/repo.git/worktree": "-Users-me-repo-git-worktree",
+    "C:\\Users\\me\\proj": "C--Users-me-proj",
+    "D:\\work\\a.b\\c": "D--work-a-b-c",
+    "\\\\server\\share\\dir": "--server-share-dir",
+    "C:\\": "C--"
+  }
+}

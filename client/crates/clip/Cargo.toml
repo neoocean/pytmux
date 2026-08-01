@@ -1,0 +1,11 @@
+[package]
+name = "clip"
+version = "0.1.0"
+edition = "2024"
+authors.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "pytmux 네이티브 클라이언트 — OS 클립보드(외부 도구 호출)."
+
+[dependencies]
+# 없다. 표준 라이브러리의 프로세스 실행만 쓴다 — 이 크레이트가 하는 일이 곧 그것이다.

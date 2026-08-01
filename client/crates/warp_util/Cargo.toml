@@ -1,0 +1,8 @@
+[package]
+name = "warp_util"
+version = "0.1.0"
+edition = "2024"
+authors.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "AGPL 원본을 대체하는 자체 구현(MIT). PROVENANCE.md 참조."

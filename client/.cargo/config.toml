@@ -1,0 +1,18 @@
+# pytmux-gui 빌드 설정.
+#
+# warp 스냅샷의 `.cargo/config.toml` 에서 **이 워크스페이스가 실제로 필요로 하는 것만**
+# 남겼다(wasm 타깃·심볼 맹글링·Sentry 관련 설정은 뺐다).
+
+[env]
+# warpui 의 build.rs 가 Metal 셰이더를 컴파일할 때 이 값을 읽는다(없으면 패닉).
+# 값은 "지원할 최소 macOS 버전"이며, upstream 스냅샷과 같은 값을 쓴다.
+MACOSX_DEPLOYMENT_TARGET = "10.14"
+
+[net]
+# 워크스페이스가 git 의존(포크 핀)을 쓰므로 시스템 git 을 그대로 태운다 —
+# 사내 프록시·자격증명 설정을 cargo 가 다시 구현하지 않게 한다.
+git-fetch-with-cli = true
+
+[target.'cfg(target_os = "macos")']
+# 번들 후 install_name 을 고쳐 쓸 여지를 남긴다(dylib 재배치 시 필요).
+rustflags = ["-C", "link-args=-Wl,-headerpad_max_install_names"]

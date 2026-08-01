@@ -158,6 +158,24 @@ if _STARTUP_TIMEOUT > 0:
 # 필요한 test_pytmux_home 은 자체 _Env 로 매 테스트 설정/해제하므로 영향 없다.
 os.environ.pop("PYTMUX_HOME", None)
 
+# 같은 위생 축(2026-07-31): 코드 버전 조회를 **서브프로세스 없이** 고정한다. 서버·클라는
+# 기동 때마다 `version.code_version()`(p4 `#have` → git → unknown)을 부르는데, p4/git 이
+# 느리거나 불통인 워크스테이션에선 호출당 4.5~5.2초(둘 다 1.5s 타임아웃 + 프로세스 생성)를
+# 태운다. Windows 에선 그 프로세스 생성이 **이벤트 루프를 ~0.6초 정체**시켜, 살아 있는 서버
+# 로의 루프백 connect 가 `ipc._LOOPBACK_CONNECT_TIMEOUT`(0.5s)에 걸려 **거짓 TIMEOUT** 이
+# 난다(실측: test_server 연결 테스트 10건이 이유 없이 hang 으로 보였다). 값 자체를 보는
+# 테스트는 version 모듈을 직접 부르므로 이 고정값에 의존하지 않는다.
+os.environ.setdefault("PYTMUX_CODE_VERSION", "test")
+
+# 같은 축(2026-07-31): 루프백 connect 캡을 러너에서만 넉넉히 준다. 스위트는 서버와 클라를
+# **한 이벤트 루프**에 넣으므로, 서버가 startup 중에 하는 동기 작업(세션 생성=ConPTY 스폰,
+# 상태디렉터리 ACL 조이기=icacls 스폰)이 0.4~0.9초 루프를 멎게 하고, 그 창에 걸린
+# `ipc.open_connection` 이 커널 handshake(<1ms)와 무관하게 기본 캡 0.5s 로 **거짓
+# TimeoutError** 를 낸다(실측: 살아 있는 서버로의 첫 connect 0.608s, 두 번째부터 0.001s →
+# test_server 연결 테스트가 원인 없는 hang 으로 보였다). 프로덕션 기본값(0.5)은 무변경 —
+# 죽은 포트 빠른 실패를 검증하는 test_ipc 는 자기 블록에서 이 override 를 걷어낸다.
+os.environ.setdefault("PYTMUX_LOOPBACK_CONNECT_TIMEOUT", "5")
+
 # S5c/T5: claude/tokens/usageprobe/usagedb/usagelog 는 plugins/claude-code/ 로 물리
 # 이전됐다(코어는 더는 이들을 import 하지 않는다). 기존 테스트가 `from pytmuxlib.claude
 # import …`·`from pytmuxlib import tokens, usagedb, usagelog` 로 계속 import 할 수 있게,

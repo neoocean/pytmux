@@ -1,0 +1,141 @@
+{
+  "_comment": "python3 scripts/gen_endpoint_fixture.py 로 생성. 출처 = pytmuxlib/ipc.py(default_endpoint_candidates·token_path·portfile_for). 경로는 구성요소 배열 — 구분자는 각 OS 가 정한다.",
+  "placeholders": {
+    "xdg": "/xdg-run",
+    "localappdata": "/localappdata",
+    "home": "/pytmux-home"
+  },
+  "scenarios": [
+    {
+      "name": "unix_xdg",
+      "os": "unix",
+      "env": {
+        "XDG_RUNTIME_DIR": "/xdg-run"
+      },
+      "uid": 501,
+      "candidates": [
+        {
+          "kind": "unix",
+          "path": [
+            "xdg-run",
+            "pytmux",
+            "default.sock"
+          ],
+          "token": [
+            "xdg-run",
+            "pytmux",
+            "default.sock.token"
+          ]
+        },
+        {
+          "kind": "unix",
+          "path": [
+            "tmp",
+            "pytmux-501",
+            "default.sock"
+          ],
+          "token": [
+            "tmp",
+            "pytmux-501",
+            "default.sock.token"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unix_tmp_fallback",
+      "os": "unix",
+      "env": {},
+      "uid": 501,
+      "candidates": [
+        {
+          "kind": "unix",
+          "path": [
+            "tmp",
+            "pytmux-501",
+            "default.sock"
+          ],
+          "token": [
+            "tmp",
+            "pytmux-501",
+            "default.sock.token"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unix_pytmux_home",
+      "os": "unix",
+      "env": {
+        "PYTMUX_HOME": "/pytmux-home"
+      },
+      "uid": 501,
+      "candidates": [
+        {
+          "kind": "unix",
+          "path": [
+            "pytmux-home",
+            "state",
+            "default.sock"
+          ],
+          "token": [
+            "pytmux-home",
+            "state",
+            "default.sock.token"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "windows_localappdata",
+      "os": "windows",
+      "env": {
+        "LOCALAPPDATA": "/localappdata"
+      },
+      "uid": 501,
+      "candidates": [
+        {
+          "kind": "tcp",
+          "host": "127.0.0.1",
+          "port": 0,
+          "portfile": [
+            "localappdata",
+            "pytmux",
+            "default.port"
+          ],
+          "token": [
+            "localappdata",
+            "pytmux",
+            "default.token"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "windows_pytmux_home",
+      "os": "windows",
+      "env": {
+        "LOCALAPPDATA": "/localappdata",
+        "PYTMUX_HOME": "/pytmux-home"
+      },
+      "uid": 501,
+      "candidates": [
+        {
+          "kind": "tcp",
+          "host": "127.0.0.1",
+          "port": 0,
+          "portfile": [
+            "pytmux-home",
+            "state",
+            "default.port"
+          ],
+          "token": [
+            "pytmux-home",
+            "state",
+            "default.token"
+          ]
+        }
+      ]
+    }
+  ]
+}

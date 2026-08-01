@@ -11,8 +11,15 @@ db/
 __pycache__/
 *.pyc
 
-# Windows 호환성·성능 리포트(scripts/win_report.py) 출력 — 생성 산출물
-reports/
+# Windows 호환성·성능 리포트(scripts/win_report.py) 출력 — 생성 산출물.
+# ★ 루트에 **앵커**한다(`/reports/`). 앵커가 없으면 어느 깊이든 매칭돼
+# `client/docs/reports/` 가 통째로 미러에서 조용히 빠진다. publish_check 는 그것을
+# "p4 전용"으로 읽어 드리프트로도 안 잡으므로 *"미러에 올렸다"가 거짓말이 된다*(§4.4-2·§11).
+# 앵커는 **그대로 둔다** — 아래 `/client/docs/` 보류가 풀리는 날 이 앵커가 없으면 같은
+# 조용한 누락이 그때 되살아난다(보류는 한시적, 앵커는 영구).
+# 위/아래의 다른 규칙(captures/·db/·memory/·.claude/)은 **일부러 앵커하지 않는다** —
+# 그것들은 민감·생성물 차단이라 어느 깊이든 막히는 편이 안전한 방향이다.
+/reports/
 
 # 에이전트 학습 메모(내부 워크플로·머신명·진단 노트). 공개 GitHub 미러에는
 # 올리지 않고 Perforce 로만 공유한다(captures/ 와 동일 정책). 미러가 부활해도 차단.
@@ -30,6 +37,15 @@ memory/
 # 통째로 차단하므로, 앞으로 새 내부 문서는 여기에 두면 자동으로 미러에서 제외된다
 # (기본-차단). 공개 문서는 docs/ 최상위에만 둔다. 미러가 부활해도 여기서 막는다.
 docs/internal/
+
+# docs/internal/html/ — `scripts/build_docs.py` 가 굽는 정적 문서 사이트(빌드 산출물).
+# 기본 빌드가 docs/internal/ · MEMORY.md · .claude/ 를 **본문째 HTML 에 인라인**하므로,
+# 위 세 줄로 막아 둔 것이 이 디렉토리로 우회 유출된다. 생성물이라 미러링할 이유도 없다.
+# 그래서 출력 위치를 위 `docs/internal/` **안**으로 옮겼다 — 별도 규칙을 잊어도 미러
+# 차단이 상위 디렉토리 규칙으로 자동 성립한다(아래 줄은 명시용 중복이라 무해하다).
+# 공개용 번들이 필요하면 `python3 scripts/build_docs.py --public` 로 내부 문서를 빼고
+# 굽는다(그때도 이 규칙은 그대로 두고, 산출물을 별도 위치로 복사해 게시한다).
+docs/internal/html/
 
 # pytmux 워킹디렉토리 통합 홈(PYTMUX_HOME=./.pytmux, §10-E #1). 역할별 하위:
 #   state/    런타임(소켓·token·opts·resume·slots·port·layout) — 휘발·민감
@@ -51,3 +67,30 @@ crash-*
 # 중앙 p4ignore(playground/p4ignore.txt)에도 같은 규칙이 있어야 한다.
 .env
 .env.*
+
+# Rust 클라(client/) 빌드 산출물. `client/.p4ignore` 가 depot 쪽 같은 일을 한다
+# (트리 통합 계획 §4.4-3).
+#   target/    cargo 빌드 트리(15GB대) — 어느 쪽 버전관리에도 안 들어간다
+#   build/     배포용 이진 스냅샷 — **git 미러에도 올린다**(2026-08-01 결정 변경).
+#              종전에는 `/client/build/*` + README 앵커로 막고 "공개 배포는 GitHub
+#              릴리스 자산"(§5.3)이라 적어 뒀는데, 그 릴리스 경로가 구현된 적이 없어
+#              **이진을 받을 길이 depot 뿐**이었다 — 공개 저장소 쪽에서는 아무도 못
+#              받는다. 그래서 미러에 싣는 쪽으로 돌린다.
+#              ⚠ 대가를 알고 고른 것이다: 이진은 개정마다 통째로 새 blob 이라
+#              (Windows 16MB · macOS 7.6MB) 히스토리에 영구히 쌓이고, 빼려면 history
+#              rewrite 밖에 없다. 스냅샷 갱신 빈도를 낮게 유지할 것.
+#              (한도 참고: GitHub 파일 한도 100MB · `check_mirror.py` 는 50MB 부터 운다.)
+/client/target/
+
+# client/docs/ — Rust 클라 유저 가이드·슬라이스 리포트와 **그 그림들**. 계획 §4.4-2 는
+# 이것을 공개 대상으로 적었지만, 첫 푸시 직전 실물을 보니 **스크린샷이 실 캡처**라
+# 사용자·호스트·계정이 그대로 찍혀 있다(2026-08-01 사용자 결정 = 코드만 먼저 올린다):
+#   docs/images/ 28장    셸 프롬프트의 `<계정>@<호스트>` · 실 홈 워크스페이스 경로 · 상태줄 호스트명
+#   docs/reports/ 115장 + images/ 286장
+#                        상태줄 머신명 · Windows depot 절대경로 · `C:\Users\<계정>\AppData\...`
+# 파이썬 쪽 스크린샷에는 `_redact_svg` 동적 마스킹이 있는데 이쪽 컷에는 그런 것이 없다.
+# PNG 라 자동 리댁션이 안 되고 상당수는 Windows 상자에서만 다시 구울 수 있다 —
+# **되돌릴 수 없는 공개**라 리댁션 슬라이스 전까지 보류한다. 푸는 조건은 두 가지:
+# ⑴ 그림을 리댁션하거나 다시 굽는다 ⑵ `scripts/check_mirror.py` 의 ②·⑤ 를 같은 CL 에서
+# 뒤집는다(그 게이트가 이 보류를 기계로 붙들고 있다). depot 은 계속 추적한다.
+/client/docs/

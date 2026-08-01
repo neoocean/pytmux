@@ -1,0 +1,13 @@
+[package]
+name = "command"
+version = "0.1.0"
+edition = "2024"
+authors.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "AGPL 원본을 대체하는 자체 구현(MIT). PROVENANCE.md 참조."
+
+[features]
+# warpui_core 의 dev-dependencies 가 이 feature 를 켠 채로 의존한다. 원본에서는 테스트용
+# 헬퍼를 노출하는 스위치였지만, 이 구현은 std 재노출뿐이라 켜고 끌 것이 없다.
+test-util = []

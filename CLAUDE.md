@@ -2,20 +2,44 @@
 
 > LLM/에이전트가 이 저장소에서 작업할 때 먼저 읽는 30초 안내(LLM 친화성 4-3).
 > 사람용 상세 문서는 **GitHub 위키**(매뉴얼·갤러리·플러그인·기능비교·기여)와 `docs/internal/`(p4 전용).
+> **Rust 클라 전용 안내는 [`client/CLAUDE.md`](client/CLAUDE.md)** — 빌드·게이트·라이브
+> 하네스가 거기 있다. 아래 ⛔ 안전 규율은 **이 파일 한 벌**이 정본이고 클라 쪽은 참조만 한다.
 
 ## 무엇인가
 Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데몬)–다중 클라이언트
 구조(서버는 단일 스레드 asyncio 루프), Windows/macOS/Linux 지원, Claude Code 토큰
 추적·리밋 자동 재개 + 원격 페더레이션(ssh) 포함.
 
+**두 언어 · 두 클라이언트가 한 트리에 산다**(트리 통합 2026-08-01 — 계획은
+`docs/internal/PYTMUX_CLIENT_MERGE_PLAN_2026-07-31.md`):
+
+| | 무엇 | 어디 |
+|---|---|---|
+| 서버 | 파이썬 데몬(정본) | `pytmux.py` · `pytmuxlib/` |
+| 클라 1 | 파이썬 Textual — **의미의 권위** | `pytmuxlib/client*.py` |
+| 클라 2 | Rust GUI `pytmux-gui` | `client/crates/gui/` |
+
+둘 다 **같은 소켓 프로토콜**로 같은 서버에 **동시에** 붙는다(회귀시키지 않는다). 파이썬이
+정본이라는 뜻은 *무엇이 맞는가*의 권위라는 것이지 유일한 제품이라는 뜻이 아니다 — 새 조작
+표면은 **정본에 먼저** 들어가거나 같은 CL 에서 둘 다 들어간다.
+
+> ⚠ **Rust TUI 는 2026-08-01 에 지웠다**(사용자 결정 · 근거
+> `docs/internal/CLIENT_PRODUCT_SET_2026-08-01.md`). 같은 매체에 제품이 두 벌일 이유가
+> 없었다. 그 대가로 **Rust 쪽 기계 검증이 1714 → 1189 건으로 줄었다**(세션 뷰 행동
+> 오라클이 TUI 쪽에 많았다) — GUI 오라클을 늘리는 것이 그만큼 급해졌다.
+> `pytmux --native` 플래그도 함께 사라졌다(GUI 는 `pytmux-gui` 를 직접 실행한다).
+
 ## 빌드/실행/테스트
 - 의존성: `pip install -r requirements.txt` (Textual·pyte·wcwidth 등).
 - 실행: `python3 pytmux.py` (또는 설치 후 `pytmux`).
+- Rust GUI: `cd client && cargo build -p gui`.
+  자세한 것(게이트 4종·패리티 래칫·라이브 하네스)은 `client/CLAUDE.md`.
 - ⛔ **프로세스 이름으로 일괄 kill 금지**(사고 2026-07-28, 같은 날 3회 재발):
   `Get-Process pythonw | Stop-Process -Force`(또는 `pkill -f python`·`taskkill /IM
   pythonw.exe`)는 **사용자가 지금 쓰고 있는 pytmux 서버와 pty-host 를 죽인다** — 둘 다
   이름이 그냥 `pythonw.exe`/`python3` 라 내 테스트 데몬과 구분되지 않는다. 실제로
-  pytmux-client 세션의 "테스트 서버 정리" 한 줄이 라이브 세션을 3번 날렸다(그 세션을
+  Rust 클라 세션의 "테스트 서버 정리" 한 줄이 라이브 세션을 3번 날렸다(15:38·16:06·16:09 —
+  트랜스크립트의 명령 시각과 pytmux 캡처가 멎은 시각이 초 단위로 일치. 그 세션을
   `claude --resume` 로 이어받을 때마다 같은 정리 단계가 다시 돌아 재발). **내가 띄운
   것만** 겨냥한다:
   - 격리해서 띄운다 — `PYTMUX_HOME=<스크래치>`(상태·소켓·캡처가 전부 그 아래로 간다)
@@ -25,9 +49,37 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
     죽어 host 만 남았어도 이 명령이 그 엔드포인트의 pty-host 까지 회수한다.
   - 그래도 남으면 **pid 로만** 죽인다 — `<스크래치>/state/*.ptyhost.pid` 와
     `spawn_detached` 가 돌려준 pid. 이름 매칭으로 넓히지 않는다.
+  - ★ **검증도 스코프 안에서** 한다 — 여기가 진짜 함정이다. 스코프를 지켜 `kill-server`
+    를 부른 뒤 전역 `Get-Process pythonw`/`pgrep` 로 "정리됐나"를 확인하면 화면에 남는
+    것은 **사용자의 라이브 데몬**이다 → "정리 실패"로 오판 → 일괄 kill 로 확대. 판정은
+    **내 홈의 상태 파일**로 한다: `<PYTMUX_HOME>/state/default.port`(Windows) 또는
+    `default.sock`(Unix)과 `*.ptyhost.pid` 가 없어야 한다. ⚠ **sock 파일은 "서버 종료됨"
+    직후 잠깐 남는다**(kill-server 는 0.2초 지연 shutdown — 실측 1.5초 안에 사라진다) —
+    직후 판정은 `ptyhost.pid` 나 스코프 안 `ls`("실행 중인 서버 없음")로 하고, sock
+    잔존만 보고 확대하지 말 것(2026-07-30 두 번 오독).
+  - **`ls` 같은 읽기 확인도 `PYTMUX_HOME` 을 세우고** 한다. 안 세우면 자동 발견이
+    사용자의 라이브 서버를 읽어, 내 스크래치에 한 일이 "안 먹었다"로 오진된다.
+  - **`PYTMUX_HOME` 없이 Rust 클라 이진을 띄우면 사용자의 라이브 서버에 붙는다**
+    (`client/crates/.../endpoint.rs` 가 `PYTMUX_HOME/state` → 없으면 라이브 순으로 자동
+    발견). 실험용으로 띄울 땐 **항상** `PYTMUX_HOME` 을 먼저 세운다. 반대로 클라 이진
+    자체를 이름으로 치우는 건 안전하다(`pytmux-gui` 는 우리 것뿐) —
+    위험한 것은 **`pythonw`·`python`** 이다.
   - 증상 참고: 서버가 밖에서 강제 종료되면 클라는 재접속 실패 후
     `msg.server_lost`("…재접속에 실패했습니다 — …강제 종료됐는지 확인")를 남기고 끝난다.
     bye 경로(`msg.server_terminated` = 의도된 종료)와 이 문구로 갈린다.
+- **커밋 전 한 명령: `python3 scripts/check_all.py`**(합본 게이트 — 트리 통합 M2).
+  픽스처 신선도 · 계층/라이선스/크로스OS 게이트 · 패리티 래칫 · Rust 스위트 · 파이썬
+  스위트 · 미러 위생/드리프트를 순서대로 돌고 요약 한 줄을 낸다. 빠른 되먹임만 원하면
+  `--fast`, 무엇을 도는지만 보려면 `--list`. **한 스텝이 넘어져도 나머지를 돈다**(한 번
+  돌려 고칠 것을 전부 본다). 개별 게이트는 아래·`client/CLAUDE.md`.
+  - **Windows**: 셸 게이트 셋은 **Git Bash** 로 돈다. `bash` 를 PATH 에서 그냥 집으면
+    `…\WindowsApps\bash.exe`(Store 앱 별칭 = WSL 런처)가 잡혀 `Class not registered` 로
+    죽는데, 그건 게이트가 **아무것도 안 재고 빨간 줄만 남기는** 상태다(2026-08-01 실측:
+    계층·라이선스 둘이 그렇게 60초씩 태웠다). 이제 git 옆의 것을 스스로 찾는다 —
+    다른 데 있으면 `PYTMUX_BASH=<경로>`. `--list` 가 **실제로 쓸 이진 경로**를 찍으니
+    의심되면 그것부터 볼 것.
+  - **SKIP 은 실패가 아니다**: p4 전용 워크스페이스(git 클론이 없는 곳)에서 `미러 드리프트`
+    는 잴 것이 없어 건너뛴다. 건너뛴 것은 요약의 `건너뜀 N:` 줄에 **사유와 함께** 남는다.
 - **테스트(커밋 전 필수)**: `python3 tests/run.py` — 헤드리스로 전체 스위트를 돌려
   `N passed, 0 failed` 를 확인한다. 특정 모듈만: `python3 tests/run.py test_server`.
   - 주의: `run.py` 는 실패해도 종료코드가 0 일 수 있으니 **요약줄(passed/failed)** 을
@@ -96,6 +148,14 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
 - 플러그인: `pytmuxlib/plugins/<name>/`. **delete-to-disable**: 디렉토리를 지우면 그
   기능이 조용히 사라진다(코어는 플러그인을 직접 import 하지 않고 레지스트리 훅으로만
   닿는다). 훅 계약은 `pytmuxlib/plugins/__init__.py` 의 `Registry` 한 곳에 모여 있다.
+  ⚠ 오늘 클라 훅은 **파이썬/Textual 모양**(파이썬 객체를 주고받는다)이라 소켓을 못 건넌다 —
+  Rust 클라에는 손으로 옮긴 것만 있다. 선언형으로 바꿔 한 벌이 세 클라에 뜨게 하는 계획이
+  `docs/internal/PYTMUX_CLIENT_MERGE_PLAN_2026-07-31.md` §7(M4)다.
+- **`client/` — Rust 클라 워크스페이스**(Cargo). `crates/base`(상태·키맵·
+  명령, **UI 의존 없음** — 계층 게이트가 강제)·`_proto`(소켓 프로토콜, 서버와 동형)·
+  `_tui`/`_gui`(뷰 두 벌)·`_claude`·`_clip` + `warpui`·`warpui_core`(상류 스냅샷, MIT
+  경계 = `client/PROVENANCE.md`). `client/scripts/gen_*.py` 는 **정본을 직접 import 해**
+  픽스처를 뽑는다(`--pytmux` 기본값이 저장소 루트) — 정본이 움직이면 다시 뽑아야 한다.
 
 ## LLM 작업 팁(중요)
 - **거대 파일은 부분 읽기**(아래 줄수는 **규모 판단용 대략치** — 정확 행수는 `wc -l`,
@@ -103,6 +163,9 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
   (수천 줄대)·`plugins/claude-code/screens.py`·`plugins/claude-code/servermixin.py`(단일
   클래스)·`model.py`·`serverio.py` 등은 한 컨텍스트에 안 들어온다. `grep -n '^class \|^    def '`
   로 위치를 잡고 Read offset/limit 으로 관심 영역만 읽어 부분 수정→회귀를 피한다.
+  **Rust 쪽도 같다**:
+  `client/crates/gui/src/session_view.rs`(4천 줄대)·`gui/src/session_view_tests.rs`·
+  `base/src/keymap.rs`·`proto/src/{session,command}.rs`. 앵커는 `grep -n '^pub fn \|^fn \|^impl \|^#\[test\]'`.
   (`servermixin.py` 는 상단 **메서드 인덱스 주석**에 섹션→앵커 메서드명이 있다.) (`client.py` 는 믹스인 3모듈로
   분할돼 ~1.7천 줄이다 — `clientconn.py`·`clientcmd.py`·`clientio.py` 참조.)
 - **거대 문서 Read 주의**: `docs/internal/HANDOFF.md`(수백 KB)·`IMPROVEMENT_OPPORTUNITIES.md`
@@ -124,6 +187,16 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
 ## 게시(이 저장소 관례)
 - 코드 변경은 **Perforce submit + git push** 양쪽(번호 CL, 내 파일만 명시 add).
   `docs/internal/` 은 gitignore → **p4 전용**.
+- **서버와 세 클라가 한 CL 이다**(트리 통합 2026-08-01). `client/` 는 같은 depot 경로
+  `//woojinkim/scripts/pytmux/...` 안이고 같은 게이트를 탄다 — 프로토콜을 건드리면 서버와
+  소비자 셋이 **같은 CL 안에** 들어간다(종전에는 두 트리라 반쪽 CL 이 정상이었고, 하나를
+  되돌리면 반쪽만 되돌아갔다). `client/docs/reports/` 는 **공개 대상**이라 `.gitignore` 의
+  `/reports/` 앵커가 그것을 지킨다 — 앵커를 지우면 리포트가 조용히 미러에서 빠진다.
+- **표면이 움직이면 세 소비자가 같이 깨진다**(트리 통합 M3 §6.2): `clientutil` 의
+  명령·설정·키 표나 `servercmd._CMD_TABLE` 을 건드리면 `tests/test_surface_ledger.py`
+  가 먼저 운다 — 클라 픽스처가 낡았다는 뜻이다. 순서는
+  `python3 client/scripts/check_fixtures.py --write` → `cd client && cargo test` →
+  새로 우는 적합성 테스트가 가리키는 표면을 **두 뷰 다** 이관(같은 CL).
 - **게시 게이트 `python3 scripts/publish_check.py`**(rc 0 이어야 한다): 한쪽만 게시해
   생기는 **미러 드리프트를 양방향**으로 잡는다 — 미푸시 커밋 · depot 에만 있는 내용
   (git 미푸시) · git 에만 있는 내용(p4 미제출). 자동 미러가 없어 실제로 3번 물렸다

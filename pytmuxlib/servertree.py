@@ -159,9 +159,15 @@ class ServerTreeMixin:
                                       pu.get("want_h"))
         cw, ch = max(MIN_W, w - 2), max(MIN_H, h - 2)
         pane.resize(cw, ch)
+        # 팝업 안 앱의 마우스 트래킹도 일반 패널과 같은 형태로 광고한다 — 이 두 칸이
+        # 없으면 클라는 팝업 안 마우스 1급 앱(htop·Claude Code 등)에 패스스루를 못
+        # 연다(네이티브 클라가 소비; 파이썬 클라는 아직 팝업 마우스가 없어 무시).
+        mt = self._advertised_mouse_track(pane)
+        pane._mouse_sent = (mt, pane.mouse_sgr)
         return {"id": pane.id, "x": x, "y": y, "w": w, "h": h,
                 "cx": x + 1, "cy": y + 1, "cw": cw, "ch": ch,
-                "title": pu.get("title") or ""}
+                "title": pu.get("title") or "",
+                "mouse": mt, "mouse_sgr": pane.mouse_sgr}
 
     def _pane_shell_pid(self, pane: Pane) -> int:
         """패널 셸 프로세스의 실제 pid(없으면 -1). 인프로세스 PTY 면 pane.child_pid,

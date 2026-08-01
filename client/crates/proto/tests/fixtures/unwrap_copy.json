@@ -1,0 +1,114 @@
+{
+  "_comment": "python3 scripts/gen_unwrap_cases.py 로 생성. 출처 = pytmuxlib/clientutil.py::unwrap_copy_text 를 직접 호출한 결과. 기대값을 손으로 적지 않는 이유는 그러면 '우리가 이해한 규칙'을 재게 되기 때문이다.",
+  "hang_max": 12,
+  "min_fill": 24,
+  "slack": 2,
+  "tail_stop": ":;{}\\",
+  "cases": [
+    {
+      "name": "한 줄은 손대지 않는다",
+      "text": "그냥 한 줄이다",
+      "width": 80,
+      "first_col": 0,
+      "want": "그냥 한 줄이다"
+    },
+    {
+      "name": "폭을 모르면 그대로",
+      "text": "접힌 것처럼\n  보이는 두 줄",
+      "width": 0,
+      "first_col": 0,
+      "want": "접힌 것처럼\n  보이는 두 줄"
+    },
+    {
+      "name": "앱이 접은 두 줄을 잇는다",
+      "text": "이 줄은 패널 폭 가까이까지 채워져 있어서 다음 줄로 넘어간다 그리고\n  이어지는 낱말들이 여기 온다",
+      "width": 60,
+      "first_col": 0,
+      "want": "이 줄은 패널 폭 가까이까지 채워져 있어서 다음 줄로 넘어간다 그리고 이어지는 낱말들이 여기 온다"
+    },
+    {
+      "name": "들여쓰기가 없으면 안 잇는다",
+      "text": "이 줄은 패널 폭 가까이까지 채워져 있어서 다음 줄로 넘어간다 그리고\n이어지는 낱말들이 여기 온다",
+      "width": 60,
+      "first_col": 0,
+      "want": "이 줄은 패널 폭 가까이까지 채워져 있어서 다음 줄로 넘어간다 그리고\n이어지는 낱말들이 여기 온다"
+    },
+    {
+      "name": "깊은 들여쓰기는 코드로 본다",
+      "text": "이 줄은 패널 폭 가까이까지 채워져 있어서 다음 줄로 넘어간다 그리고\n                여기는 코드 블록이다",
+      "width": 60,
+      "first_col": 0,
+      "want": "이 줄은 패널 폭 가까이까지 채워져 있어서 다음 줄로 넘어간다 그리고\n                여기는 코드 블록이다"
+    },
+    {
+      "name": "의도된 줄 끝은 안 잇는다",
+      "text": "이 줄은 패널 폭 가까이까지 채워져 있고 콜론으로 끝난다 그러니까:\n  다음 줄은 새 줄이다",
+      "width": 60,
+      "first_col": 0,
+      "want": "이 줄은 패널 폭 가까이까지 채워져 있고 콜론으로 끝난다 그러니까:\n  다음 줄은 새 줄이다"
+    },
+    {
+      "name": "짧은 블록은 접힘이 아니다",
+      "text": "짧다\n  이것도",
+      "width": 80,
+      "first_col": 0,
+      "want": "짧다\n  이것도"
+    },
+    {
+      "name": "테두리를 떼고 판정한다",
+      "text": "│ 이 줄은 패널 폭 가까이까지 채워져 있어서 다음 줄로 넘어간다 그리고 │\n│   이어지는 낱말들이 여기 온다                                      │",
+      "width": 60,
+      "first_col": 0,
+      "want": " 이 줄은 패널 폭 가까이까지 채워져 있어서 다음 줄로 넘어간다 그리고 이어지는 낱말들이 여기 온다"
+    },
+    {
+      "name": "구분선은 경계로 남는다",
+      "text": "│ 이 줄은 패널 폭 가까이까지 채워져 있어서 다음 줄로 넘어간다 그리고 │\n└────────────────────────────────────────────────────────────────────┘\n  다음 블록의 첫 줄이다",
+      "width": 60,
+      "first_col": 0,
+      "want": " 이 줄은 패널 폭 가까이까지 채워져 있어서 다음 줄로 넘어간다 그리고\n  다음 블록의 첫 줄이다"
+    },
+    {
+      "name": "시작 열을 되돌려 준다",
+      "text": "채워져 있어서 다음 줄로 넘어간다 그리고\n  이어지는 낱말들이 여기 온다",
+      "width": 60,
+      "first_col": 26,
+      "want": "채워져 있어서 다음 줄로 넘어간다 그리고 이어지는 낱말들이 여기 온다"
+    },
+    {
+      "name": "시작 열을 안 주면 판정이 어긋난다",
+      "text": "채워져 있어서 다음 줄로 넘어간다 그리고\n  이어지는 낱말들이 여기 온다",
+      "width": 60,
+      "first_col": 0,
+      "want": "채워져 있어서 다음 줄로 넘어간다 그리고 이어지는 낱말들이 여기 온다"
+    },
+    {
+      "name": "여유 칸이 결정한다",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n  | 이어지는 낱말",
+      "width": 60,
+      "first_col": 0,
+      "want": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | 이어지는 낱말"
+    },
+    {
+      "name": "시작 열이 결정한다",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n  | 이어지는 낱말",
+      "width": 60,
+      "first_col": 25,
+      "want": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n  | 이어지는 낱말"
+    },
+    {
+      "name": "시작 열을 안 주면 이어붙는다",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n  | 이어지는 낱말",
+      "width": 60,
+      "first_col": 0,
+      "want": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | 이어지는 낱말"
+    },
+    {
+      "name": "한글은 두 칸으로 센다",
+      "text": "한글로만 이루어진 줄인데 폭을 거의 다 채운다 그리고 여기서\n  이어진다",
+      "width": 60,
+      "first_col": 0,
+      "want": "한글로만 이루어진 줄인데 폭을 거의 다 채운다 그리고 여기서 이어진다"
+    }
+  ]
+}

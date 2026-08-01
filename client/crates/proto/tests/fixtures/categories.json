@@ -1,0 +1,668 @@
+{
+  "_comment": "python3 scripts/gen_categories.py 로 생성. 출처 = pytmuxlib/clientutil.py 의 분류 표 + plugins 레지스트리 기여. 화면을 나누는 기준(카테고리·그룹)의 정본이다 — 세는 단위는 client_surface.json 쪽이고 여기는 배치다.",
+  "command_cats": {
+    "auto-launch": "Claude",
+    "auto-resume": "Claude",
+    "auto-resume-message": "Claude",
+    "auto-retry": "Claude",
+    "auto-token-on-exit": "Claude",
+    "automatic-rename": "탭",
+    "bind-key": "설정/기타",
+    "break-pane": "패널",
+    "calendar-mode": "설정/기타",
+    "capture-output": "모니터",
+    "capture-pane": "복사/버퍼",
+    "capture-toggle": "모니터",
+    "choose-buffer": "복사/버퍼",
+    "choose-tree": "탭",
+    "claude-auto-mode": "Claude",
+    "claude-auto-redraw": "Claude",
+    "claude-resume": "Claude",
+    "claude-resume-verify": "Claude",
+    "claude-rules": "Claude",
+    "claude-settings": "Claude",
+    "claude-token-account": "Claude",
+    "claude-token-debug": "Claude",
+    "claude-token-log": "Claude",
+    "claude-token-sync": "Claude",
+    "claude-usage": "Claude",
+    "clear-history": "복사/버퍼",
+    "clock-mode": "설정/기타",
+    "close-calendar": "설정/기타",
+    "close-clock": "설정/기타",
+    "coalesce-repaints": "설정/기타",
+    "commands": "설정/기타",
+    "detach-client": "설정/기타",
+    "display-message": "설정/기타",
+    "display-popup": "설정/기타",
+    "exit-empty": "설정/기타",
+    "help": "설정/기타",
+    "if-shell": "설정/기타",
+    "ime-indicator": "설정/기타",
+    "inactive-dim": "설정/기타",
+    "inactive-dim-ratio": "설정/기타",
+    "join-pane": "패널",
+    "kill-pane": "패널",
+    "kill-server": "설정/기타",
+    "kill-tab": "탭",
+    "lang": "설정/기타",
+    "last-tab": "탭",
+    "layout-load": "레이아웃",
+    "layout-load-new": "레이아웃",
+    "layout-save": "레이아웃",
+    "list-commands": "설정/기타",
+    "list-keys": "설정/기타",
+    "mdir": "탐색",
+    "merge-remote-tab": "설정/기타",
+    "model": "Claude",
+    "monitor-activity": "모니터",
+    "monitor-bell": "모니터",
+    "mouse-help": "설정/기타",
+    "move-tab": "탭",
+    "move-tab-first": "탭",
+    "move-tab-last": "탭",
+    "move-tab-left": "탭",
+    "move-tab-right": "탭",
+    "namesync": "Claude",
+    "ncd": "탐색",
+    "nest-auto-attach": "설정/기타",
+    "new-tab": "탭",
+    "next-layout": "패널",
+    "next-tab": "탭",
+    "open-calendar": "설정/기타",
+    "open-clock": "설정/기타",
+    "p4changes": "Perforce",
+    "paste-buffer": "복사/버퍼",
+    "paste-clipboard": "복사/버퍼",
+    "pin-tab": "탭",
+    "pin-toggle": "탭",
+    "pipe-pane": "복사/버퍼",
+    "plugins": "설정/기타",
+    "previous-tab": "탭",
+    "prompt-clear": "Claude",
+    "prompt-clear-message": "Claude",
+    "prompt-clear-queue": "Claude",
+    "prompt-history": "Claude",
+    "prompt-history-lines": "Claude",
+    "reconnect": "설정/기타",
+    "redraw": "설정/기타",
+    "remote-attach": "설정/기타",
+    "remote-detach": "설정/기타",
+    "remote-new-tab": "설정/기타",
+    "rename-pane": "패널",
+    "rename-tab": "탭",
+    "resize-pane": "패널",
+    "respawn-pane": "패널",
+    "restart-all": "설정/기타",
+    "restart-check": "설정/기타",
+    "restart-server": "설정/기타",
+    "restore-layout": "레이아웃",
+    "rotate-window": "패널",
+    "run-shell": "설정/기타",
+    "save-layout": "레이아웃",
+    "select-layout": "패널",
+    "select-pane": "패널",
+    "select-tab": "탭",
+    "send-escape": "복사/버퍼",
+    "send-keys": "복사/버퍼",
+    "set": "설정/기타",
+    "set-hook": "설정/기타",
+    "settings": "설정/기타",
+    "show-hooks": "설정/기타",
+    "show-options": "설정/기타",
+    "single-border": "설정/기타",
+    "source-file": "설정/기타",
+    "split-window": "패널",
+    "strip-box-drawing": "설정/기타",
+    "swap-pane": "패널",
+    "swap-tab": "탭",
+    "synchronize-panes": "패널",
+    "unbind-key": "설정/기타",
+    "unpin-tab": "탭",
+    "usage-panel": "Claude",
+    "usage-view": "Claude",
+    "version": "설정/기타",
+    "vt-parser": "설정/기타",
+    "win-mouse-motion": "설정/기타",
+    "window-size": "설정/기타"
+  },
+  "command_cat_order": [
+    "패널",
+    "탭",
+    "복사/버퍼",
+    "설정/기타",
+    "레이아웃",
+    "모니터",
+    "Claude",
+    "탐색",
+    "Perforce"
+  ],
+  "setting_cats": {
+    "alt-scroll": "입력",
+    "ambiguous-width": "입력",
+    "automatic-rename": "동작",
+    "claude-rules": "Claude",
+    "claude-settings": "Claude",
+    "claude-token-log": "Claude",
+    "coalesce-repaints": "동작",
+    "copy-unwrap": "입력",
+    "default-path": "동작",
+    "exit-empty": "동작",
+    "inactive-dim": "표시",
+    "inactive-dim-ratio": "표시",
+    "language": "표시",
+    "list-keys": "고급",
+    "mode-keys": "입력",
+    "model": "Claude",
+    "monitor-activity": "동작",
+    "monitor-bell": "동작",
+    "mouse": "입력",
+    "mouse-drag-copy": "입력",
+    "mouse-drag-threshold": "입력",
+    "nest-auto-attach": "동작",
+    "pane-border-status": "표시",
+    "plugins": "고급",
+    "prefix": "입력",
+    "set-titles": "동작",
+    "single-border": "표시",
+    "status-bg": "상태줄",
+    "status-fg": "상태줄",
+    "status-interval": "동작",
+    "status-left": "상태줄",
+    "status-position": "표시",
+    "status-right": "상태줄",
+    "strip-box-drawing": "입력",
+    "synchronize-panes": "동작",
+    "tab-bar": "표시",
+    "touch-scroll": "입력",
+    "vt-parser": "동작",
+    "win-mouse-motion": "동작",
+    "window-size": "동작"
+  },
+  "settings_cat_order": [
+    "표시",
+    "입력",
+    "동작",
+    "상태줄",
+    "고급",
+    "Claude",
+    "키"
+  ],
+  "menu_labels": {
+    "autoresume": "토큰리밋 자동재개 토글",
+    "break_pane": "패널 → 새 탭으로 분리",
+    "choose_tree": "탭 선택기(트리)",
+    "command": "명령 입력",
+    "detach": "detach (앱 종료, 셸 유지)",
+    "join_pane": "패널 → 다른 탭에 합치기 (join-pane <탭>)",
+    "kill_pane": "패널 삭제 ✕",
+    "kill_server": "서버 종료 (모든 탭/셸 종료)",
+    "kill_window": "탭 삭제",
+    "layout_load_new": "레이아웃 불러오기(새 탭)",
+    "layout_load_over": "레이아웃 불러오기(현재 탭 덮어쓰기)",
+    "layout_save": "레이아웃 저장(현재 탭)",
+    "merge_remote_tab": "원격 탭 → 현재 탭에 pane 으로 머지 (같은 서버)",
+    "mouse_help": "마우스 제스처 도움말",
+    "new_window": "새 탭",
+    "next_layout": "다음 레이아웃 프리셋",
+    "next_window": "다음 탭",
+    "prev_window": "이전 탭",
+    "prompt_clear": "프롬프트 단위 클리어 토글",
+    "rename_pane": "패널 제목 변경",
+    "rename_window": "탭 이름 변경",
+    "rotate": "패널 회전 ↻",
+    "search": "스크롤백 검색",
+    "select_layout": "레이아웃 프리셋…",
+    "settings": "⚙ 설정…",
+    "split_lr": "패널 분할 │ (좌우)",
+    "split_tb": "패널 분할 ─ (상하)",
+    "swap_pane": "패널 교환 (다음 패널과)",
+    "sync": "입력 동기화 토글",
+    "toggle_pin": "탭 고정 토글 (오른쪽 구역으로)",
+    "zoom": "패널 줌 토글 ⛶"
+  },
+  "menu_order": [
+    "split_lr",
+    "split_tb",
+    "zoom",
+    "rotate",
+    "swap_pane",
+    "break_pane",
+    "join_pane",
+    "merge_remote_tab",
+    "rename_pane",
+    "select_layout",
+    "next_layout",
+    "search",
+    "kill_pane",
+    "sync",
+    "autoresume",
+    "prompt_clear",
+    "new_window",
+    "rename_window",
+    "kill_window",
+    "toggle_pin",
+    "choose_tree",
+    "next_window",
+    "prev_window",
+    "layout_save",
+    "layout_load_over",
+    "layout_load_new",
+    "mouse_help",
+    "command",
+    "settings",
+    "detach",
+    "kill_server"
+  ],
+  "menu_toggles": [
+    "autoresume",
+    "prompt_clear",
+    "sync",
+    "toggle_pin",
+    "zoom"
+  ],
+  "menu_groups": {
+    "pane": [
+      "split_lr",
+      "split_tb",
+      "zoom",
+      "rotate",
+      "swap_pane",
+      "break_pane",
+      "join_pane",
+      "merge_remote_tab",
+      "rename_pane",
+      "kill_pane"
+    ],
+    "layout": [
+      "select_layout",
+      "next_layout",
+      "layout_save",
+      "layout_load_over",
+      "layout_load_new"
+    ],
+    "tab": [
+      "new_window",
+      "rename_window",
+      "kill_window",
+      "toggle_pin",
+      "choose_tree",
+      "next_window",
+      "prev_window"
+    ]
+  },
+  "menu_group_order": [
+    "pane",
+    "layout",
+    "tab"
+  ],
+  "menu_toplevel": [
+    "group:pane",
+    "group:layout",
+    "group:tab",
+    "--",
+    "search",
+    "command",
+    "settings",
+    "mouse_help",
+    "sync",
+    "autoresume",
+    "prompt_clear",
+    "--",
+    "detach",
+    "kill_server"
+  ],
+  "menu_group_labels": {
+    "pane": "패널",
+    "layout": "레이아웃",
+    "tab": "탭",
+    "plugin": "플러그인"
+  },
+  "plugin_menu_order": [
+    "calendar-mode",
+    "clock-mode"
+  ],
+  "plugin_menu_labels": {
+    "calendar-mode": "달력 오버레이 토글(현재 패널 이번 달)",
+    "clock-mode": "시계 모드 토글(현재 패널 큰 시계)"
+  },
+  "plugin_menu_en": {
+    "calendar-mode": "Toggle calendar overlay (this month on current pane)",
+    "clock-mode": "Toggle clock mode (big clock on current pane)"
+  },
+  "plugin_commands": [
+    {
+      "name": "calendar-mode",
+      "desc": "현재 패널을 이번 달 달력으로 덮기(토글, ←/→ 이전·다음 달, ↑/↓ 연 이동, Home 오늘)",
+      "cat": "설정/기타"
+    },
+    {
+      "name": "open-calendar",
+      "desc": "현재 패널에 이번 달 달력 표시(이미 떠 있으면 유지)",
+      "cat": "설정/기타"
+    },
+    {
+      "name": "close-calendar",
+      "desc": "현재 패널의 달력 닫기",
+      "cat": "설정/기타"
+    },
+    {
+      "name": "claude-rules",
+      "desc": "Claude 시작 규칙 편집(저장 시 새 세션/clear 후 프롬프트에 자동 주입)",
+      "cat": "Claude"
+    },
+    {
+      "name": "claude-settings",
+      "desc": "Claude 설정 팝업 — 자동재개·세션종료 토큰화면·권한 오토모드·프롬프트 단위 클리어·장기턴/반복 경고",
+      "cat": "Claude"
+    },
+    {
+      "name": "auto-resume",
+      "desc": "토큰 리밋 자동 재개 [on|off]",
+      "cat": "Claude"
+    },
+    {
+      "name": "auto-resume-message",
+      "desc": "자동 재개 메시지 설정",
+      "cat": "Claude"
+    },
+    {
+      "name": "claude-token-log",
+      "desc": "Claude 토큰 사용량 팝업 — 기간(시/일/주/월)·계정·세션 뷰 + 실측 한도·5h창(상태줄 사용량 클릭)",
+      "cat": "Claude"
+    },
+    {
+      "name": "claude-usage",
+      "desc": "그림자 /usage 질의 — 숨은 세션으로 실 세션/주간 한도 갱신(별칭 usage)",
+      "cat": "Claude"
+    },
+    {
+      "name": "usage-panel",
+      "desc": "Claude 토큰 사용 한도 팝업 — /usage(세션 5h·주 전체·주 Sonnet) 막대 그래프(별칭 usage-limits·limits)",
+      "cat": "Claude"
+    },
+    {
+      "name": "claude-token-account",
+      "desc": "활성 패널 Claude 계정 수동 지정 (claude-token-account <이름>, 빈값=자동)",
+      "cat": "Claude"
+    },
+    {
+      "name": "prompt-clear",
+      "desc": "프롬프트 단위 클리어 모드 토글(완료마다 문서화+/clear) [on|off]",
+      "cat": "Claude"
+    },
+    {
+      "name": "prompt-clear-message",
+      "desc": "프롬프트 단위 클리어의 문서화 지시문 변경",
+      "cat": "Claude"
+    },
+    {
+      "name": "prompt-clear-queue",
+      "desc": "프롬프트 단위 클리어 큐에 명령 쌓기(빈값=목록, -c=비움)",
+      "cat": "Claude"
+    },
+    {
+      "name": "model",
+      "desc": "모델·컨텍스트 변경 팝업(상태줄 모델 배지 클릭으로도 열림, /model 주입; 별칭 model-config, claude-model)",
+      "cat": "Claude"
+    },
+    {
+      "name": "auto-retry",
+      "desc": "전송 에러(API error·rate limit) 시 1분 뒤 '계속' 자동 주입 on/off (auto-retry on|off|toggle, 기본 on)",
+      "cat": "Claude"
+    },
+    {
+      "name": "auto-token-on-exit",
+      "desc": "Claude 세션 종료 시 토큰 사용량 화면(한도/usage) 자동 표시 on/off (auto-token-on-exit on|off|toggle, 기본 on)",
+      "cat": "Claude"
+    },
+    {
+      "name": "claude-auto-redraw",
+      "desc": "Claude 화면 깨짐 자동 완화 — off|idle(완료마다 재출력)|corruption(깨짐 감지 시만) (claude-auto-redraw off|idle|corruption|toggle, 기본 off)",
+      "cat": "Claude"
+    },
+    {
+      "name": "claude-resume-verify",
+      "desc": "자동재개 대역외 확인 — off|weak(최근 5h 실사용이 거의 0이면 억제)|strict (claude-resume-verify off|weak|strict|toggle, 기본 off)",
+      "cat": "Claude"
+    },
+    {
+      "name": "claude-token-sync",
+      "desc": "여러 머신 간 Claude 토큰 사용량 동기화 — status | on <URL> | off | enroll <코드> | invite | adopt <코드> | now | resync",
+      "cat": "Claude"
+    },
+    {
+      "name": "claude-auto-mode",
+      "desc": "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off (claude-auto-mode on|off|toggle)",
+      "cat": "Claude"
+    },
+    {
+      "name": "auto-launch",
+      "desc": "새 Claude 세션 시작 시 /rc(원격 제어)+권한모드 auto 1회 자동 적용 on/off (auto-launch on|off|toggle, 기본 on)",
+      "cat": "Claude"
+    },
+    {
+      "name": "claude-token-debug",
+      "desc": "Claude 토큰 회계 진단 로그(<sock>.tokendbg.jsonl) on/off — §10-D 과소집계 원인 판정용 진단(평시 OFF) (claude-token-debug on|off|toggle, 기본 off)",
+      "cat": "Claude"
+    },
+    {
+      "name": "namesync",
+      "desc": "디렉토리별 이름 동기화 규칙 — 지정 경로에서 Claude 실행 시 pytmux 탭/패널·Claude 세션 이름을 키워드로 자동 통일(별칭 nsync)",
+      "cat": "Claude"
+    },
+    {
+      "name": "prompt-history",
+      "desc": "Claude 프롬프트 히스토리 팝업(`:`서 작성 중엔 직전 프롬프트 미리보기; 별칭 prompts·ph)",
+      "cat": "Claude"
+    },
+    {
+      "name": "prompt-history-lines",
+      "desc": "프롬프트 미리보기 패널 최대 행수 설정 (prompt-history-lines <1-3>; 별칭 ph-lines)",
+      "cat": "Claude"
+    },
+    {
+      "name": "claude-resume",
+      "desc": "이 머신의 Claude Code 세션 목록 — ↑↓ 탐색·Enter 새 탭에서 리줌 (별칭 claude-sessions·cr)",
+      "cat": "Claude"
+    },
+    {
+      "name": "usage-view",
+      "desc": "Claude 사용 한도 + 다음 리셋 카운트다운 화면 (usage-view [popup|tab|pane], 기본 popup; 별칭 token-viewer·usage-clock)",
+      "cat": "Claude"
+    },
+    {
+      "name": "clock-mode",
+      "desc": "현재 패널을 큰 시계로 덮기(토글, 패널 클릭/Shift+ESC 로 닫기)",
+      "cat": "설정/기타"
+    },
+    {
+      "name": "open-clock",
+      "desc": "현재 패널에 큰 시계 표시(이미 떠 있으면 유지)",
+      "cat": "설정/기타"
+    },
+    {
+      "name": "close-clock",
+      "desc": "현재 패널의 큰 시계 닫기",
+      "cat": "설정/기타"
+    },
+    {
+      "name": "ime-indicator",
+      "desc": "화면 우상단 IME(한/영) 상태 배지 표시 토글",
+      "cat": "설정/기타"
+    },
+    {
+      "name": "mdir",
+      "desc": "Mdir III 풍 파일 관리자 — 다열 리스트·태그·복사/이동/삭제·정렬/필터·뷰어·압축 보기·F10 트리·F4 패널 cd(별칭 m)",
+      "cat": "탐색"
+    },
+    {
+      "name": "ncd",
+      "desc": "디렉토리 트리(Norton Change Directory 풍) — 루트→cwd 펼침·↑↓ 탐색·타이핑 찾기·Enter cd·⇧Enter/^O 새 패널(별칭 nc)",
+      "cat": "탐색"
+    },
+    {
+      "name": "p4changes",
+      "desc": "현재 퍼포스 서버의 submitted changelists 목록을 띄운다 (p4changes [N], 기본 50; ↑↓ 스크롤 · Enter 상세 · Esc 닫기; 별칭 submitted)",
+      "cat": "Perforce"
+    },
+    {
+      "name": "capture-output",
+      "desc": "패널 출력 캡처 토글 [on|off] (기본 off, 영속)",
+      "cat": "모니터"
+    },
+    {
+      "name": "capture-toggle",
+      "desc": "패널 출력 캡처 토글(별칭) [on|off]",
+      "cat": "모니터"
+    }
+  ],
+  "plugin_noarg": [
+    "cal",
+    "calendar",
+    "calendar-mode",
+    "capture-output",
+    "capture-toggle",
+    "claude-resume",
+    "claude-rules",
+    "claude-sessions",
+    "claude-settings",
+    "claude-token-log",
+    "claude-usage",
+    "clock",
+    "clock-mode",
+    "close-cal",
+    "close-calendar",
+    "close-clock",
+    "cr",
+    "ime",
+    "ime-indicator",
+    "limits",
+    "m",
+    "mdir",
+    "namesync",
+    "nc",
+    "ncd",
+    "nsync",
+    "open-cal",
+    "open-calendar",
+    "open-clock",
+    "p4-changes",
+    "p4changes",
+    "ph",
+    "prompt-history",
+    "prompts",
+    "submitted",
+    "token-viewer",
+    "usage",
+    "usage-clock",
+    "usage-limits",
+    "usage-panel",
+    "usage-view"
+  ],
+  "plugin_settings": [
+    {
+      "key": "claude-settings",
+      "cat": "Claude",
+      "type": "link",
+      "values": []
+    },
+    {
+      "key": "model",
+      "cat": "Claude",
+      "type": "link",
+      "values": []
+    },
+    {
+      "key": "claude-rules",
+      "cat": "Claude",
+      "type": "link",
+      "values": []
+    },
+    {
+      "key": "claude-token-log",
+      "cat": "Claude",
+      "type": "link",
+      "values": []
+    }
+  ],
+  "plugin_setting_cats": [
+    "Claude"
+  ],
+  "plugin_menu_after": "group:tab",
+  "cat_en": {
+    "전체": "All",
+    "패널": "Pane",
+    "탭": "Tab",
+    "복사/버퍼": "Copy/Buffer",
+    "설정/기타": "Settings/Misc",
+    "레이아웃": "Layout",
+    "모니터": "Monitor"
+  },
+  "settings_order": [
+    "inactive-dim",
+    "inactive-dim-ratio",
+    "tab-bar",
+    "status-position",
+    "single-border",
+    "pane-border-status",
+    "language",
+    "mouse",
+    "mouse-drag-copy",
+    "mouse-drag-threshold",
+    "copy-unwrap",
+    "touch-scroll",
+    "mode-keys",
+    "alt-scroll",
+    "ambiguous-width",
+    "prefix",
+    "strip-box-drawing",
+    "default-path",
+    "set-titles",
+    "status-interval",
+    "automatic-rename",
+    "monitor-activity",
+    "monitor-bell",
+    "synchronize-panes",
+    "coalesce-repaints",
+    "nest-auto-attach",
+    "exit-empty",
+    "win-mouse-motion",
+    "vt-parser",
+    "window-size",
+    "status-left",
+    "status-right",
+    "status-bg",
+    "status-fg",
+    "plugins",
+    "list-keys",
+    "claude-settings",
+    "model",
+    "claude-rules",
+    "claude-token-log"
+  ],
+  "setcat_ko": {
+    "표시": "표시",
+    "입력": "입력/키",
+    "동작": "동작",
+    "상태줄": "상태줄",
+    "고급": "고급/플러그인",
+    "Claude": "Claude",
+    "키": "키"
+  },
+  "setcat_en": {
+    "표시": "Display",
+    "입력": "Input/Keys",
+    "동작": "Behavior",
+    "상태줄": "Status bar",
+    "고급": "Advanced/Plugins",
+    "Claude": "Claude",
+    "키": "Keys"
+  },
+  "menu_group_en": {
+    "pane": "Pane",
+    "layout": "Layout",
+    "tab": "Tab",
+    "plugin": "Plugins"
+  }
+}

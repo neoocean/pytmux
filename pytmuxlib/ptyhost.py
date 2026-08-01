@@ -295,8 +295,20 @@ class PtyHost:
         if pane_id in self.panes:
             return                       # 멱등(중복 spawn 무시)
         cols, rows = int(msg.get("cols", 80)), int(msg.get("rows", 24))
-        argv = list(msg.get("argv") or [])
-        if not argv:
+        # argv 는 **리스트/튜플의 str** 만 통과시킨다. 종전 `list(msg.get("argv") or [])`
+        # 는 문자열을 받으면 `list("not-a-list")` = 글자별 리스트가 되어 **손상 프레임이
+        # 실제 spawn 으로 이어졌다** — 문서화된 손상-프레임 드롭 계약(`except (KeyError,
+        # ValueError, TypeError)`)이 `list(str)` 은 성공하므로 걸러 주지 못한다.
+        # 레드팀 2026-07-31 실측: 인증 후 그 한 프레임이 Windows 에서 **host 를 응답
+        # 정지**시켰다(프로세스는 생존 · ping 무응답). host 는 모든 패널의 셸 I/O 를
+        # 들고 있어 그 정지는 곧 세션 전체 정지다(같은 사용자만 가능하므로 권한 상승은
+        # 아니고 가용성 결함). 아래 spawn 이 **루프에서 동기로** 도는 구조는 그대로다
+        # (_on_eof 의 reap 오프로드와 같은 축의 후속 과제 — 검수 문서 §5 관측 참조).
+        raw = msg.get("argv")
+        if not isinstance(raw, (list, tuple)):
+            return
+        argv = [a for a in raw if isinstance(a, str)]
+        if not argv or len(argv) != len(raw):
             return
         pty = pty_backend.spawn(argv, cols=cols, rows=rows,
                                 cwd=msg.get("cwd"), env=msg.get("env"))

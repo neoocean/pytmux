@@ -371,6 +371,7 @@ class _InputMixin:
             self.exit(message="detached")
         elif k == "left_square_bracket" or ch == "[":
             self.mode = "scroll"
+            self.status.refresh()   # ⇕ 배지가 곧 모드 표시(touch-scroll) — 즉시 반영
         elif k == "right_square_bracket" or ch == "]":
             self.send_cmd("paste_buffer", index=0)
         elif k == "equals_sign" or ch == "=":
@@ -709,6 +710,7 @@ class _InputMixin:
         elif k in ("q", "escape", "enter"):
             self.send_scroll(aid, bottom=True)
             self.mode = "normal"
+            self.status.refresh()   # ⇕ 배지 강조 해제(모드 표시 동기화)
 
 
 class _RenderMixin:
@@ -998,6 +1000,33 @@ class _RenderMixin:
         # Claude Code 콘텐츠-레이어 장식(footer 클릭존 스캔)·플러그인 오버레이는
         # client_render 훅이 그린다(없으면 no-op — delete-to-disable).
         self.plugins.client_render(self, cells, W, H)
+        # 터치 스크롤바(touch-scroll, 기본 on): 스크롤 모드에서 활성 패널 오른쪽 끝
+        # 한 열에 세로 스크롤바를 그리고 클릭존을 남긴다. **휠을 앱에 안 넘기는
+        # 터미널**(iPhone Blink 등 — 스와이프를 자기 스크롤백으로 소비, 진단
+        # 2026-07-31)에서 도달하는 유일한 입력이 탭이라 만든 경로다. 콘텐츠 마지막
+        # 열을 덮으므로 **스크롤 모드에서만** 그린다(라이브 화면은 불변).
+        # **플러그인 렌더 뒤**에 그린다 — IME 배지가 같은 자리(활성 패널 우측 끝)를
+        # 쓰는데, 클릭존이 있는 쪽(스크롤바)이 가려지면 탭 좌표와 보이는 것이 어긋난다.
+        # 반대로 패널 전체를 덮는 오버레이(시계/달력)·탭닫기 [x] 는 뒤에 그려 이긴다.
+        # 라이브 PTY 팝업(display-popup)이 떠 있으면 **그리지도 존을 남기지도 않는다**
+        # — 팝업은 아래(⑥)에서 그려 스크롤바를 덮는데, 클릭존만 남으면 사용자가 보는
+        # 것(팝업)과 탭이 하는 일(뒤 패널 스크롤)이 어긋난다.
+        self._touch_scroll_zone = None
+        if (self.mode == "scroll" and self.touch_scroll and self.mouse_enabled
+                and not self.layout.get("popup")):
+            ap = next((p for p in self.layout.get("panes", [])
+                       if p["id"] == active), None)
+            if ap and ap["w"] >= 2:
+                bar = clientrender.scrollbar_chars(
+                    ap["h"], self.pane_top.get(ap["id"], 0),
+                    self.pane_scroll.get(ap["id"], 0))
+                if bar:
+                    bx = ap["x"] + ap["w"] - 1
+                    st = Style(color=theme_color(self, "primary"), bold=True)
+                    for i, chb in enumerate(bar):
+                        clientrender.put_cell(cells, bx, ap["y"] + i, chb,
+                                              st, W, H)
+                    self._touch_scroll_zone = (ap["id"], bx, ap["y"], ap["h"])
         # 현재 탭 닫기 [x]: 활성 패널 상단 테두리 행 우측(2026-06-13 한 칸 위로)
         self._draw_tab_close(cells, W, H)
         # 패널 오버레이(시계/달력 등, 패널 전체 덮기·뒤 화면 dim) — clock·calendar

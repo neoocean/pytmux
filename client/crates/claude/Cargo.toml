@@ -1,0 +1,18 @@
+[package]
+name = "claude"
+version = "0.1.0"
+edition = "2024"
+authors.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Claude Code 트랜스크립트(JSONL) → 블록 뷰 모델(§10-11 P5)."
+
+# UI 의존 없음 — 이 크레이트도 계층 게이트의 '중립' 목록에 있다.
+# JSON 만 필요하다: 트랜스크립트가 JSONL 이라서다.
+# core 는 i18n(`t()`) 하나 때문이다 — 계층 방향(core ← claude)은 게이트와 어긋나지 않는다.
+[dependencies]
+base.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

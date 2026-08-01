@@ -1,0 +1,19 @@
+{
+  "_comment": "2026-07-30 G9c 라이브 캡처. PYTMUX_HOME 격리 서버에 raw 소켓으로 붙어 패널에 Claude 모양 입력박스를 실제로 그린 뒤 서버가 보낸 screen 프레임의 행을 그대로 뜬 것. 실 프레임의 오른쪽 패딩과 **실제 wrap 집합**이 들어 있어, 합성 표본이 못 담는 것을 담는다. 실 캡처라 셸 프롬프트가 함께 떠 있었다 — 공개 미러용으로 경로만 가렸고(줄 폭은 보존), 파서가 보는 것은 폭과 구조라 사례는 그대로다.",
+  "lines": [
+    "   second line                                            ",
+    "────────────────────────────────────────                  ",
+    "  ? for shortcuts                                         ",
+    "                                                          ",
+    "D:\\p4\\somehost\\someuser\\scripts\\pytmux-client>/rc         ",
+    "'/rc' is not recognized as an internal or external command",
+    ",                                                         ",
+    "operable program or batch file.                           ",
+    "                                                          ",
+    "D:\\p4\\somehost\\someuser\\scripts\\pytmux-client>            "
+  ],
+  "wrap": [
+    5
+  ],
+  "cursor": 9
+}

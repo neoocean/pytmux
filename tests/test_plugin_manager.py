@@ -82,7 +82,7 @@ async def test_server_status_carries_disabled_plugins():
 
 
 async def test_full_status_carries_the_whole_plugin_overview():
-    """네이티브 클라(pytmux-client)는 파이썬 패키지를 못 읽어 설치 목록을 자기 힘으로
+    """네이티브 클라(pytmux-gui)는 파이썬 패키지를 못 읽어 설치 목록을 자기 힘으로
     만들 수 없다 — disabled_plugins(꺼진 이름만)로는 관리 화면이 성립하지 않는다.
     그래서 full status 가 이름·설명·카테고리·활성을 함께 싣는다."""
     srv, task, sock = await server_only()

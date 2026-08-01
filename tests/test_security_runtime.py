@@ -12,8 +12,10 @@ test_server.py·test_ptyhost_auth.py 에 있고, 여기선 *공격자 시점의 
 """
 import asyncio
 import base64
+import contextlib
 import os
 import stat
+import tempfile
 
 import harness
 from harness import server_only, teardown, wait_for
@@ -313,6 +315,39 @@ async def test_preauth_conn_cap_rejects_over_limit():
         await teardown(srv, task, sock)
 
 
+@contextlib.contextmanager
+def _acl_marker_store(enabled=True):
+    r"""ACL 표식 저장소(`%LOCALAPPDATA%\pytmux\acl`)를 이 구간에만 갈아 끼운다.
+
+    표식은 **실행 간** 캐시라 프로세스 밖에 남는다(`ipc._write_acl_marker`). 그래서 같은
+    가짜 경로를 조이는 테스트가 둘이면 **먼저 도는 쪽이 뒤를 무력화한다**: `_harden_win_acl`
+    이 표식을 보고 icacls 스폰을 생략하므로 뒤 테스트는 아무 잘못 없이 `icacls 미호출` 로
+    떨어진다. 실측 2026-08-01 — `runs_once_per_path` 가 `uses_unambiguous_grantee` 를
+    이렇게 죽였고(하네스가 `LOCALAPPDATA` 를 **런 전체에 하나**로 잡아 저장소가 공유됐다),
+    "단독으로 돌려도 떨어지는 별건"으로 보여 오래 남았다.
+
+    `enabled=False` 는 저장소를 **아예 없앤다**(`LOCALAPPDATA` 미설정 → `_acl_marker_dir()`
+    가 None → 표식 읽기·쓰기가 통째로 no-op). 이쪽이 중요하다: 표식이 살아 있으면 첫 호출
+    뒤로는 **표식이** 스폰을 막아 주므로, 프로세스 내 메모이즈를 지워도 `runs_once_per_path`
+    가 그대로 통과한다(변이로 확인 — 그 오라클은 재는 척만 하고 있었다).
+    """
+    orig = os.environ.get("LOCALAPPDATA")
+    tmp = tempfile.TemporaryDirectory(prefix="pytmux-acl-") if enabled else None
+    try:
+        if enabled:
+            os.environ["LOCALAPPDATA"] = tmp.name
+        else:
+            os.environ.pop("LOCALAPPDATA", None)
+        yield tmp.name if enabled else None
+    finally:
+        if orig is None:
+            os.environ.pop("LOCALAPPDATA", None)
+        else:
+            os.environ["LOCALAPPDATA"] = orig
+        if tmp is not None:
+            tmp.cleanup()
+
+
 async def test_harden_win_acl_runs_once_per_path():
     """L7 후속(2026-07-03 os-compat fd 회귀): _harden_win_acl 은 경로별 **1회만** icacls 를
     스폰한다. default_state_dir 이 소켓/포트/토큰/state_base·에러로그 경로 해석에서 반복
@@ -332,11 +367,14 @@ async def test_harden_win_acl_runs_once_per_path():
         ipc.IS_WINDOWS = True
         subprocess.run = fake_run
         ipc._win_acl_hardened.clear()
-        for _ in range(5):                       # 같은 경로 반복 호출(핫패스 모사)
-            ipc._harden_win_acl(r"C:\fake\statedir", is_dir=True)
-        assert len(calls) == 1, calls            # 경로당 1회만 스폰
-        ipc._harden_win_acl(r"C:\fake\default.token")   # 다른 경로 → +1
-        assert len(calls) == 2, calls
+        # 표식을 끈다 — 켜 두면 "1회"를 **표식이** 만들어 주고, 이 테스트가 재려는
+        # 프로세스 내 메모이즈는 지워도 통과한다(공허 통과).
+        with _acl_marker_store(enabled=False):
+            for _ in range(5):                   # 같은 경로 반복 호출(핫패스 모사)
+                ipc._harden_win_acl(r"C:\fake\statedir", is_dir=True)
+            assert len(calls) == 1, calls        # 경로당 1회만 스폰
+            ipc._harden_win_acl(r"C:\fake\default.token")   # 다른 경로 → +1
+            assert len(calls) == 2, calls
     finally:
         subprocess.run, ipc.IS_WINDOWS = orig_run, orig_win
         ipc._win_acl_hardened.clear()
@@ -367,8 +405,9 @@ async def test_harden_win_acl_uses_unambiguous_grantee():
         ipc._win_acl_hardened.clear()
         ipc._win_grantee_cache.clear()
         ipc._win_grantee_cache.append("*S-1-5-21-9-9-9-500")   # 명확한 SID 강제
-        ipc._harden_win_acl(r"C:\fake\statedir", is_dir=True)
-        assert calls, "icacls 미호출"
+        with _acl_marker_store(enabled=False):   # 앞 테스트의 표식에 막히지 않게
+            ipc._harden_win_acl(r"C:\fake\statedir", is_dir=True)
+        assert calls, "icacls 미호출 — 표식(ACL marker)에 막혔는지부터 볼 것"
         argv = calls[0]
         assert "*S-1-5-21-9-9-9-500:(OI)(CI)F" in argv, argv
         # 짧은(모호한) 이름이 grant 로 새어들어가면 안 된다.
@@ -379,6 +418,71 @@ async def test_harden_win_acl_uses_unambiguous_grantee():
             bare = ""
         if bare:
             assert f"{bare}:(OI)(CI)F" not in argv, argv
+    finally:
+        subprocess.run, ipc.IS_WINDOWS = orig_run, orig_win
+        ipc._win_acl_hardened.clear()
+        ipc._win_acl_hardened.update(orig_set)
+        ipc._win_grantee_cache.clear()
+        ipc._win_grantee_cache.extend(orig_cache)
+
+
+async def test_harden_win_acl_marker_caches_across_runs_only_on_success():
+    r"""**실행 간** 캐시(표식)의 계약. 2026-07-31 콜드스타트 최적화인데 검사가 없었다.
+
+    계약 둘: ① icacls 가 **성공**(rc 0)했을 때만 표식을 남기고, 그 뒤의 *새 프로세스*는
+    스폰을 생략한다(이 박스 실측 1.1초/회 × 2 = 콜드스타트 3초). ② **실패를 캐시하면
+    영구히 안 조인다** — rc != 0 이면 표식이 없어야 하고 다음 실행이 다시 시도해야 한다.
+
+    새 프로세스는 `_win_acl_hardened`(프로세스 내 메모이즈)를 비워 흉내 낸다 — 그래야
+    스폰을 막는 것이 **표식뿐**임이 분명해진다.
+    """
+    import subprocess
+    orig_run, orig_win = subprocess.run, ipc.IS_WINDOWS
+    orig_set, orig_cache = set(ipc._win_acl_hardened), list(ipc._win_grantee_cache)
+    calls = []
+
+    def faker(rc):
+        def fake_run(*a, **k):
+            calls.append(a[0] if a else k.get("args"))
+            class _R:
+                returncode = rc
+            return _R()
+        return fake_run
+
+    def as_new_process():
+        ipc._win_acl_hardened.clear()   # 프로세스 내 메모이즈만 초기화(표식은 그대로)
+
+    try:
+        ipc.IS_WINDOWS = True
+        ipc._win_grantee_cache.clear()
+        ipc._win_grantee_cache.append("*S-1-5-21-9-9-9-500")
+
+        # ① 성공 → 표식이 남고, 다음 실행은 스폰하지 않는다.
+        with _acl_marker_store():
+            subprocess.run = faker(0)
+            as_new_process()
+            ipc._harden_win_acl(r"C:\fake\statedir", is_dir=True)
+            assert len(calls) == 1, calls
+            # 표식 **그 파일**을 본다. 저장소 디렉터리가 비었나로 재면 `_acl_marker_dir()`
+            # 이 만든 하위 디렉터리에 속아 늘 참이 된다(처음에 그렇게 썼다가 잡혔다).
+            mk = ipc._acl_marker_path(r"C:\fake\statedir")
+            assert mk and os.path.exists(mk), "성공했는데 표식이 없다 — 실행 간 캐시가 죽었다"
+            as_new_process()
+            ipc._harden_win_acl(r"C:\fake\statedir", is_dir=True)
+            assert len(calls) == 1, f"표식이 있는데 또 스폰했다: {calls}"
+
+        # ② 실패 → 표식을 남기지 않는다(다음 실행이 다시 조인다).
+        calls.clear()
+        with _acl_marker_store():
+            subprocess.run = faker(1)
+            as_new_process()
+            ipc._harden_win_acl(r"C:\fake\statedir", is_dir=True)
+            assert len(calls) == 1, calls
+            mk = ipc._acl_marker_path(r"C:\fake\statedir")
+            assert mk and not os.path.exists(mk), "실패를 캐시했다 — 이 경로는 영영 안 조여진다"
+            as_new_process()
+            ipc._harden_win_acl(r"C:\fake\statedir", is_dir=True)
+            assert len(calls) == 2, f"실패 뒤에는 다시 시도해야 한다: {calls}"
     finally:
         subprocess.run, ipc.IS_WINDOWS = orig_run, orig_win
         ipc._win_acl_hardened.clear()

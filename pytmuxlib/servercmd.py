@@ -146,6 +146,71 @@ class ServerCmdMixin:
             resp = dict(resp, _req_token=msg["_req_token"])
         await self._send_to(client, resp)
 
+    @_cmd("plugin_open", HANDLED)
+    async def _cmd_plugin_open(self, client, sess, msg):
+        """플러그인 **화면**을 연다(설계 Tier C · P4).
+
+        정본 클라는 플러그인이 준 Textual 화면을 자기 프로세스에서 띄운다. 네이티브
+        클라는 파이썬을 못 읽으므로 **무엇을 그릴지**를 서버가 스펙으로 준다 —
+        플러그인 코드는 한 벌로 남고, 클라는 목록/글 두 모양만 그릴 줄 알면 된다.
+
+        회신이 없으면(그 이름을 아무 플러그인도 안 집으면) **조용히 끝내지 않는다**:
+        알림 한 줄을 보낸다. 조용한 누락이 이 저장소의 상습 결함이다(설계 §8-5).
+        """
+        await self._plugin_screen_reply(client, sess, {
+            "do": "open",
+            "name": str(msg.get("name", "")),
+            "args": list(msg.get("args") or []),
+        })
+
+    @_cmd("plugin_action", HANDLED)
+    async def _cmd_plugin_action(self, client, sess, msg):
+        """플러그인 화면에서 **고른 줄과 누른 키**를 그대로 되돌려준다(설계 §4.3).
+
+        행동은 서버(=플러그인)가 정한다 — 클라는 "몇 번째 줄에서 무슨 키"만 말한다.
+        그래서 플러그인이 화면 흐름을 바꿔도 클라를 안 고친다.
+
+        ⚠ 액션 이름의 칸은 `do` 다. `action` 은 **명령 디스패처의 것**이라(이 프레임의
+        `action` 은 `plugin_action` 이다) 같은 이름을 쓰면 서로 덮는다.
+        """
+        await self._plugin_screen_reply(client, sess, {
+            "id": str(msg.get("id", "")),
+            "do": str(msg.get("do", "")),
+            "row": msg.get("row"),
+            "input": msg.get("input"),
+        })
+
+    async def _plugin_screen_reply(self, client, sess, req):
+        """플러그인에 화면 요청을 넘기고 그 회신을 요청 클라에게만 보낸다.
+
+        `req["state"]` 는 **이 클라의** 화면 상태 보관함이다(설계 Tier C · P5): `ncd` 의
+        지금 디렉터리, `mdir` 의 커서·태그처럼 "그 사람이 보고 있는 판"의 것이 여기 산다.
+        서버 전역에 두면 두 클라가 같은 화면을 열었을 때 서로의 커서를 옮기고, 연결이
+        끊겨도 남는다 — `ClientConn` 에 매달아 **수명을 연결에 묶는다**.
+
+        `handle_server_request` 와 같은 규약을 쓴다 — awaitable 을 돌려주면 여기서
+        기다린다(플러그인의 p4/파일시스템 작업은 executor 로 나간다). 요청 클라에게만
+        보내는 이유: 이 화면은 **그 클라의 것**이다(다른 뷰어에 남의 팝업이 뜨면 안 된다).
+        """
+        import inspect
+        req = dict(req, state=getattr(client, "plugin_state", None))
+        if req["state"] is None:
+            # 옛 판 클라 객체(테스트 스텁 등) — 상태 없는 화면은 그대로 돈다.
+            req["state"] = {}
+        resp = self.plugins.plugin_screen(self, sess, req)
+        if inspect.isawaitable(resp):
+            resp = await resp
+        if not isinstance(resp, dict):
+            # 아무도 안 집었다 — 사용자에겐 "눌렀는데 아무 일도 안 남"으로 보인다.
+            name = req.get("name") or req.get("id") or ""
+            await self._send_to(client, {
+                "t": "notice", "sev": "warn",
+                "key": "msg.plugin_screen_missing", "kw": {"name": name},
+                "text": f"{name}: 이 플러그인은 화면 스펙을 제공하지 않습니다",
+            })
+            return
+        await self._send_to(client, resp)
+
     @_cmd("clear_history", HANDLED)
     async def _cmd_clear_history(self, client, sess, msg):
         self.clear_history(sess)

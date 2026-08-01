@@ -1,0 +1,201 @@
+# pytmux-gui — 워크스페이스 루트
+#
+# 이 파일은 pytmux 프로젝트가 직접 작성했다. warp 저장소의 루트 Cargo.toml(21K줄,
+# AGPL)을 트리밍한 것이 아니라, warpui/warpui_core 가 실제로 요구하는 의존만 남겨
+# 새로 구성한 것이다. 버전 제약값은 upstream 스냅샷(p4 67415)과의 호환을 위해
+# 동일한 값을 쓴다(버전 번호는 사실 정보이지 표현이 아니다).
+#
+# 라이선스: 이 워크스페이스의 산출물은 MIT 다. 자세한 경위는 PROVENANCE.md 참조.
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/warpui",
+    "crates/warpui_core",
+    # 아래는 AGPL 원본을 대체하는 자체 구현(MIT). PROVENANCE.md §2 참조.
+    "crates/warp_errors",
+    "crates/warp_util",
+    "crates/string-offset",
+    "crates/command",
+    "crates/markdown_parser",
+    "crates/sum_tree",
+    # 클라이언트 본체. base 는 UI 의존이 없고, gui 가 뷰를 갖는다.
+    #
+    # ⚠ 2026-08-01: **Rust TUI 를 지웠다**(사용자 결정). 클라 제품은 정본 Textual TUI 와
+    # 이 GUI 둘이다 — 같은 매체(터미널)에 제품이 두 벌일 이유가 없었고, 정본이 아닌 쪽을
+    # 유지하는 값은 "파이썬이 없는 터미널 상자" 하나로 좁아져 있었다
+    # (docs/internal/CLIENT_PRODUCT_SET_2026-08-01.md).
+    "crates/claude",
+    "crates/clip",
+    "crates/base",
+    "crates/proto",
+    "crates/gui",
+]
+
+[workspace.package]
+authors = ["pytmux contributors"]
+publish = false
+license = "MIT"
+
+[workspace.dependencies]
+# --- 자체 구현(AGPL 원본 대체) ---
+warp_errors = { path = "crates/warp_errors" }
+warp_util = { path = "crates/warp_util" }
+string-offset = { path = "crates/string-offset" }
+command = { path = "crates/command" }
+markdown_parser = { path = "crates/markdown_parser" }
+sum_tree = { path = "crates/sum_tree" }
+
+# --- 클라이언트 ---
+claude = { path = "crates/claude" }
+clip = { path = "crates/clip" }
+base = { path = "crates/base" }
+proto = { path = "crates/proto" }
+
+# --- 외부 크레이트 (upstream 스냅샷과 동일 제약) ---
+anyhow = "1.0"
+arboard = { version = "3.6.1", default-features = false }
+async-broadcast = "0.7.2"
+async-channel = "2.3.1"
+async-fs = "2.1.2"
+async-io = "2.4.0"
+async-task = "4.2.0"
+block = "0.1.6"
+blocking = "1.6.2"
+bounded-vec-deque = "0.1"
+bytemuck = { version = "1.13.1" }
+bytes = { version = "1.11.1", features = ["serde"] }
+cfg-if = "1.0.0"
+cfg_aliases = "0.2.1"
+chrono = { version = "0.4.38", features = ["serde"] }
+cocoa = "=0.26.0"
+concat-idents = "1.1.4"
+core-foundation = "0.10.1"
+ctrlc = "3.4.7"
+dashmap = "6.1.0"
+derivative = "2.2.0"
+derive_more = "0.99.17"
+dirs = "6.0.0"
+dispatch2 = { version = "0.3.0", default-features = false, features = ["std", "block2"] }
+enum-iterator = "1.1.3"
+env_logger = "0.10.0"
+float-cmp = "0.9.0"
+font-kit = { git = "https://github.com/warpdotdev/font-kit", rev = "a04b225ecb639bb850f21d05212cfdc7465000f3", default-features = false, features = [
+  "source",
+] }
+futures = { version = "0.3", features = ["executor", "thread-pool"] }
+futures-lite = "1.13.0"
+futures-util = { version = "0.3", default-features = false }
+gloo = { version = "0.11.0", default-features = false, features = [
+  "events",
+  "futures",
+  "utils",
+] }
+image = { version = "0.25.9", default-features = false, features = [
+  "rayon",
+  "jpeg",
+  "png",
+  "gif",
+  "webp",
+] }
+instant = { version = "0.1.12", features = ["wasm-bindgen"] }
+itertools = "0.14.0"
+lazy_static = "1.4.0"
+libc = "0.2.81"
+libtest-mimic = "0.8.2"
+log = { version = "0.4", features = ["serde", "std"] }
+minimp4 = "0.1.2"
+nix = { version = "0.26.4", default-features = false, features = ["signal"] }
+num-traits = "0.2"
+objc = "0.2"
+objc2 = "0.6.3"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSScreen", "objc2-core-foundation"] }
+objc2-av-foundation = { version = "0.3.2", default-features = false }
+objc2-core-foundation = "0.3.2"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std"] }
+objc2-metal = { version = "0.3.2", default-features = false }
+objc2-quartz-core = { version = "0.3.2", default-features = false }
+openh264 = "0.8"
+ordered-float = { version = "3.0.0", features = ["serde"] }
+parking_lot = "0.12.1"
+pathfinder_color = "0.5"
+pathfinder_geometry = "0.5.1"
+rand = "0.8.6"
+rangemap = "1.3.0"
+resvg = "0.47.0"
+rust-embed = { version = "8.7.0", features = ["include-exclude"] }
+rustc-hash = "2.1.1"
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = { version = "1.0", features = ["raw_value"] }
+similar = { version = "2.7", features = ["inline"] }
+simplelog = "0.12.2"
+smallvec = "1.6.1"
+strum = "0.27"
+strum_macros = "0.27"
+tempfile = "3.8.0"
+thiserror = "2.0.17"
+tokio = "1.47.1"
+tracing = "0.1.40"
+unicode-segmentation = "1.11.0"
+url = "2.5.4"
+vec1 = { version = "1.8.0", features = ["serde"] }
+version-compare = "0.1"
+virtual-fs = { path = "crates/virtual_fs" }
+warpui = { path = "crates/warpui" }
+warpui_core = { path = "crates/warpui_core" }
+wasm-bindgen = "0.2.89"
+wasm-bindgen-futures = "0.4.42"
+web-sys = { version = "0.3.69", features = [
+  "Blob",
+  "Clipboard",
+  "ClipboardEvent",
+  "ClipboardItem",
+  "CompositionEvent",
+  "Document",
+  "DataTransfer",
+  "Event",
+  "HtmlCanvasElement",
+  "HtmlInputElement",
+  "InputEvent",
+  "Navigator",
+  "MediaQueryList",
+  "Window",
+  "Notification",
+  "NotificationPermission",
+] }
+wgpu = { version = "30.0.0", default-features = false, features = [
+  "dx12",
+  "gles",
+  "metal",
+  "parking_lot",
+  "std",
+  "vulkan",
+  "wgsl",
+] }
+windows = { version = "0.62.2", features = [
+  "Win32",
+  "Win32_System",
+  "Win32_System_Kernel",
+  "Win32_System_Threading",
+  "Wdk_System",
+  "Wdk_System_SystemServices",
+  "Win32_System_Com",
+  "Win32_System_SecurityCenter",
+  "Win32_System_SystemInformation",
+  "Win32_System_Console",
+] }
+windows-core = { version = "0.62.2" }
+winit = { git = "https://github.com/warpdotdev/winit.git", rev = "a4e0ecb5f9626ccac9445a73dc28354b52423abc" }
+winreg = "0.55.0"
+x11rb = "0.13.0"
+zbus = "5.9.0"
+
+# warp 가 쓰던 포크 핀. 모두 MIT/Apache 계열 크레이트의 포크이며, 이 핀이 없으면
+# macOS 폰트/렌더 경로가 upstream 스냅샷과 다르게 동작한다.
+[patch.crates-io]
+core-foundation = { git = "https://github.com/servo/core-foundation-rs", rev = "6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff" }
+core-foundation-sys = { git = "https://github.com/servo/core-foundation-rs", rev = "6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff" }
+core-graphics = { git = "https://github.com/servo/core-foundation-rs", rev = "6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff" }
+core-text = { git = "https://github.com/servo/core-foundation-rs", rev = "6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff" }
+objc = { git = "https://github.com/warpdotdev/rust-objc.git", rev = "5b656827fa9f863ef0eb22e444a3fedac009e78a" }
+pathfinder_simd = { git = "https://github.com/warpdotdev/pathfinder.git", rev = "34128a129ca6aee168fbc5060a4f21b4f7e486a9" }

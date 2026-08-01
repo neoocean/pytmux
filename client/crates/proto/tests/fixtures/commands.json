@@ -1,0 +1,373 @@
+{
+  "_comment": "python3 scripts/gen_command_fixture.py 로 생성. 출처 = pytmuxlib/servercmd.py 의 _CMD_TABLE(@_cmd 데코레이터가 채운다) + serverio.py 가 표를 거치지 않고 직접 처리하는 action 들 + 플러그인 server_command 훅이 소유한 action 들. disposition 계약(full/handled/dynamic)은 그 모듈 docstring 참조.",
+  "dispositions": {
+    "break_pane": "full",
+    "capture_pane": "handled",
+    "clear_history": "handled",
+    "copy_range": "handled",
+    "cycle_layout": "full",
+    "cycle_pane": "full",
+    "detach_others": "handled",
+    "join_pane": "full",
+    "jump_prompt": "full",
+    "kill_pane": "dynamic",
+    "kill_server": "handled",
+    "kill_session": "handled",
+    "kill_window": "handled",
+    "last_pane": "full",
+    "last_window": "full",
+    "list_layouts": "handled",
+    "load_tab_layout": "handled",
+    "move_current_tab": "full",
+    "move_pane_to_tab": "full",
+    "move_tab": "full",
+    "move_window": "full",
+    "new_session": "handled",
+    "new_window": "full",
+    "next_window": "full",
+    "paste": "handled",
+    "paste_buffer": "handled",
+    "pc_queue_add": "full",
+    "pc_queue_clear": "full",
+    "ph_scroll_to": "full",
+    "pipe_pane": "handled",
+    "plugin_action": "handled",
+    "plugin_open": "handled",
+    "popup_close": "handled",
+    "popup_open": "handled",
+    "prev_window": "full",
+    "refresh_usage": "full",
+    "remote_attach": "handled",
+    "remote_detach": "handled",
+    "remote_new_window": "handled",
+    "rename_session": "full",
+    "rename_window": "full",
+    "request_buffers": "handled",
+    "request_redraw": "handled",
+    "request_restart_check": "handled",
+    "request_tree": "handled",
+    "request_version": "handled",
+    "resize": "full",
+    "resize_dir": "full",
+    "respawn_pane": "full",
+    "restart_server": "handled",
+    "restore_layout": "handled",
+    "rotate": "full",
+    "save_layout": "handled",
+    "save_tab_layout": "handled",
+    "search": "full",
+    "select_layout": "full",
+    "select_pane": "full",
+    "select_pane_id": "full",
+    "select_window": "full",
+    "set_auto_rename": "full",
+    "set_auto_token_on_exit": "full",
+    "set_autoresume": "full",
+    "set_border_status": "full",
+    "set_buffer": "handled",
+    "set_capture": "full",
+    "set_claude_account": "handled",
+    "set_claude_auto_mode": "full",
+    "set_claude_auto_redraw": "full",
+    "set_claude_auto_retry": "full",
+    "set_claude_perm_mode": "handled",
+    "set_claude_resume_verify": "full",
+    "set_claude_rules": "full",
+    "set_claude_turn_warn": "full",
+    "set_coalesce": "full",
+    "set_exit_empty": "full",
+    "set_monitor": "full",
+    "set_nest_auto_attach": "full",
+    "set_pane_title": "full",
+    "set_ph_max_lines": "full",
+    "set_pinned": "full",
+    "set_plugin_enabled": "handled",
+    "set_prompt_clear": "full",
+    "set_prompt_clear_message": "handled",
+    "set_single_border": "full",
+    "set_sync": "full",
+    "set_token_debug": "full",
+    "set_vt_parser": "full",
+    "set_win_mouse_motion": "full",
+    "set_window_size": "full",
+    "split": "full",
+    "swap_pane": "full",
+    "swap_pane_to": "full",
+    "swap_window": "full",
+    "switch_session": "handled",
+    "token_sync": "handled",
+    "zoom": "full"
+  },
+  "payload_keys": {
+    "break_pane": [],
+    "capture_pane": [
+      "full"
+    ],
+    "clear_history": [],
+    "copy_range": [
+      "pane",
+      "x0",
+      "x1",
+      "y0",
+      "y1"
+    ],
+    "cycle_layout": [],
+    "cycle_pane": [],
+    "detach_others": [],
+    "join_pane": [
+      "orient",
+      "src"
+    ],
+    "jump_prompt": [
+      "direction"
+    ],
+    "kill_pane": [],
+    "kill_server": [],
+    "kill_session": [
+      "name"
+    ],
+    "kill_window": [],
+    "last_pane": [],
+    "last_window": [],
+    "list_layouts": [],
+    "load_tab_layout": [
+      "name",
+      "new"
+    ],
+    "move_current_tab": [
+      "where"
+    ],
+    "move_pane_to_tab": [
+      "id",
+      "to"
+    ],
+    "move_tab": [
+      "index",
+      "to"
+    ],
+    "move_window": [
+      "index"
+    ],
+    "new_session": [
+      "name"
+    ],
+    "new_window": [
+      "path"
+    ],
+    "next_window": [],
+    "paste": [
+      "text"
+    ],
+    "paste_buffer": [
+      "index"
+    ],
+    "pc_queue_add": [
+      "cmd"
+    ],
+    "pc_queue_clear": [],
+    "ph_scroll_to": [
+      "index"
+    ],
+    "pipe_pane": [
+      "cmd"
+    ],
+    "plugin_action": [
+      "do",
+      "id",
+      "input",
+      "row"
+    ],
+    "plugin_open": [
+      "args",
+      "name"
+    ],
+    "popup_close": [],
+    "popup_open": [
+      "cmd",
+      "h",
+      "title",
+      "w"
+    ],
+    "prev_window": [],
+    "refresh_usage": [],
+    "remote_attach": [
+      "endpoint",
+      "host",
+      "via"
+    ],
+    "remote_detach": [
+      "host",
+      "index"
+    ],
+    "remote_new_window": [
+      "endpoint",
+      "host"
+    ],
+    "rename_session": [
+      "name"
+    ],
+    "rename_window": [
+      "name"
+    ],
+    "request_buffers": [
+      "_req_token"
+    ],
+    "request_redraw": [],
+    "request_restart_check": [],
+    "request_tree": [],
+    "request_version": [],
+    "resize": [
+      "ratio",
+      "split_id"
+    ],
+    "resize_dir": [
+      "cells",
+      "dir"
+    ],
+    "respawn_pane": [],
+    "restart_server": [],
+    "restore_layout": [],
+    "rotate": [
+      "forward"
+    ],
+    "save_layout": [],
+    "save_tab_layout": [
+      "name"
+    ],
+    "search": [
+      "direction",
+      "query"
+    ],
+    "select_layout": [
+      "preset"
+    ],
+    "select_pane": [
+      "dir"
+    ],
+    "select_pane_id": [
+      "id"
+    ],
+    "select_window": [
+      "index",
+      "wid"
+    ],
+    "set_auto_rename": [
+      "value"
+    ],
+    "set_auto_token_on_exit": [
+      "value"
+    ],
+    "set_autoresume": [
+      "msg",
+      "value"
+    ],
+    "set_border_status": [
+      "value"
+    ],
+    "set_buffer": [
+      "text"
+    ],
+    "set_capture": [
+      "value"
+    ],
+    "set_claude_account": [
+      "name"
+    ],
+    "set_claude_auto_mode": [
+      "value"
+    ],
+    "set_claude_auto_redraw": [
+      "value"
+    ],
+    "set_claude_auto_retry": [
+      "value"
+    ],
+    "set_claude_perm_mode": [
+      "id",
+      "target"
+    ],
+    "set_claude_resume_verify": [
+      "value"
+    ],
+    "set_claude_rules": [
+      "text"
+    ],
+    "set_claude_turn_warn": [
+      "long_sec",
+      "repeat"
+    ],
+    "set_coalesce": [
+      "value"
+    ],
+    "set_exit_empty": [
+      "value"
+    ],
+    "set_monitor": [
+      "value",
+      "which"
+    ],
+    "set_nest_auto_attach": [
+      "value"
+    ],
+    "set_pane_title": [
+      "title"
+    ],
+    "set_ph_max_lines": [
+      "n"
+    ],
+    "set_pinned": [
+      "index",
+      "value"
+    ],
+    "set_plugin_enabled": [
+      "name",
+      "on"
+    ],
+    "set_prompt_clear": [
+      "value"
+    ],
+    "set_prompt_clear_message": [
+      "msg"
+    ],
+    "set_single_border": [
+      "value"
+    ],
+    "set_sync": [
+      "value"
+    ],
+    "set_token_debug": [
+      "value"
+    ],
+    "set_vt_parser": [
+      "value"
+    ],
+    "set_win_mouse_motion": [
+      "value"
+    ],
+    "set_window_size": [
+      "value"
+    ],
+    "split": [
+      "orient",
+      "path"
+    ],
+    "swap_pane": [
+      "forward"
+    ],
+    "swap_pane_to": [
+      "id",
+      "to_id"
+    ],
+    "swap_window": [
+      "index"
+    ],
+    "switch_session": [
+      "name"
+    ],
+    "token_sync": [
+      "arg",
+      "sub"
+    ],
+    "zoom": []
+  }
+}

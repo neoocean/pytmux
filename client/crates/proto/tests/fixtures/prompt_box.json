@@ -1,0 +1,378 @@
+{
+  "_comment": "python3 scripts/gen_prompt_box_fixture.py 로 생성. 기대값은 pytmuxlib/plugins/claude-code/claude.py 의 claude_input_box 를 그대로 호출한 결과다(손으로 적은 것이 아니다). 표본 = pytmux/tests/fixtures/claude/*.txt(실화면) + 이 스크립트의 SYNTHETIC(정본 주석이 이름을 든 경계 사례).",
+  "cases": [
+    {
+      "name": "실화면 badge_1m.txt",
+      "lines": [
+        " ⏺ Done.",
+        "",
+        " ────────────────────────────────────────────",
+        " ❯",
+        " ────────────────────────────────────────────",
+        "   Opus 4.8 (1M context) · /model to change",
+        "   ? for shortcuts"
+      ],
+      "wrap": [],
+      "cursor": 3,
+      "expected": ""
+    },
+    {
+      "name": "실화면 busy.txt",
+      "lines": [
+        " ⏺ Updating the scan loop in serverclaude.py…",
+        "",
+        " ✻ Whirring… (1m 15s · thought for 1s)",
+        "",
+        " ────────────────────────────────────────────",
+        " ❯",
+        " ────────────────────────────────────────────",
+        "   ⏵⏵ auto mode on · 2 shells · esc to interrupt"
+      ],
+      "wrap": [],
+      "cursor": 5,
+      "expected": ""
+    },
+    {
+      "name": "실화면 ctx_compact.txt",
+      "lines": [
+        " ⏺ Finished reviewing.",
+        "",
+        " 12% until auto-compact",
+        " > ",
+        " ? for shortcuts"
+      ],
+      "wrap": [],
+      "cursor": 3,
+      "expected": ""
+    },
+    {
+      "name": "실화면 ctx_high.txt",
+      "lines": [
+        " ⏺ Ready.",
+        "",
+        " context left 72%",
+        " > ",
+        " ? for shortcuts"
+      ],
+      "wrap": [],
+      "cursor": 3,
+      "expected": ""
+    },
+    {
+      "name": "실화면 ctx_low.txt",
+      "lines": [
+        " ⏺ That's wrapped up.",
+        "",
+        " Context low (8% remaining) · /compact to free space",
+        "",
+        " ────────────────────────────────────────────",
+        " ❯",
+        " ────────────────────────────────────────────",
+        "   ⏵⏵ accept edits on",
+        "   ? for shortcuts"
+      ],
+      "wrap": [],
+      "cursor": 5,
+      "expected": ""
+    },
+    {
+      "name": "실화면 ctx_used.txt",
+      "lines": [
+        " ⏺ Accomplishing… (7m 17s · ↓ 356 tokens)",
+        "   Tip: You can control how big a workflow is just by prompting.",
+        "",
+        "                                                     98% context used",
+        " ────────────────────────────────────────────",
+        " ❯",
+        " ────────────────────────────────────────────",
+        "   ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt"
+      ],
+      "wrap": [],
+      "cursor": 5,
+      "expected": ""
+    },
+    {
+      "name": "실화면 feedback.txt",
+      "lines": [
+        "● How is Claude doing this session? (optional)",
+        "  1: Bad    2: Fine   3: Good   0: Dismiss"
+      ],
+      "wrap": [],
+      "cursor": null,
+      "expected": null
+    },
+    {
+      "name": "실화면 idle.txt",
+      "lines": [
+        " ⏺ Done. The change is applied.",
+        "",
+        " ────────────────────────────────────────────",
+        " ❯",
+        " ────────────────────────────────────────────",
+        "   ⏵⏵ auto mode on · 2 shells",
+        "   ? for shortcuts"
+      ],
+      "wrap": [],
+      "cursor": 3,
+      "expected": ""
+    },
+    {
+      "name": "실화면 inline_limit.txt",
+      "lines": [
+        "⏺ Done — I updated the parser and added tests.",
+        "  ⎿ Wrote tests/test_claude.py (+24 lines)",
+        "",
+        "You've used 93% of your session limit · resets 1:40pm (Asia/Seoul) · /usage-credits to request more",
+        "",
+        "╭──────────────────────────────────────────────────────────────────────────╮",
+        "│ > keep going                                                               │",
+        "╰──────────────────────────────────────────────────────────────────────────╯",
+        "  ⏵⏵ auto mode on (shift+tab to cycle) · 1 shell                ? for shortcuts"
+      ],
+      "wrap": [],
+      "cursor": null,
+      "expected": "keep going"
+    },
+    {
+      "name": "실화면 limit.txt",
+      "lines": [
+        " ⏺ I'll continue working on that.",
+        "",
+        " ✗ Claude usage limit reached. Your limit will reset at 5pm.",
+        "   You can upgrade your plan or wait for the reset.",
+        "",
+        " > try \"fix the build\"",
+        " ? for shortcuts"
+      ],
+      "wrap": [],
+      "cursor": 5,
+      "expected": "try \"fix the build\""
+    },
+    {
+      "name": "실화면 limit_warn.txt",
+      "lines": [
+        " ⏺ Done — I updated the parser and added tests.",
+        "",
+        " ⎿  Wrote tests/test_claude.py (+24 lines)",
+        "",
+        " You've used 93% of your session limit · resets 1:40pm (Asia/Seoul)",
+        " · /usage-credits to request more",
+        "",
+        " > keep going",
+        " ⏵⏵ auto mode on (shift+tab to cycle)"
+      ],
+      "wrap": [],
+      "cursor": 7,
+      "expected": "keep going"
+    },
+    {
+      "name": "실화면 usage.txt",
+      "lines": [
+        "   Settings  Status   Config   Usage   Stats",
+        "   Session",
+        "   Total cost:            $0.0000",
+        "   Total duration (wall): 0s",
+        "   Usage:                 0 input, 0 output, 0 cache read, 0 cache write",
+        "   Current session",
+        "   █                                                  2% used",
+        "   Resets 2pm (Asia/Seoul)",
+        "   Current week (all models)",
+        "   ███████                                            14% used",
+        "   Resets Jun 13 at 3am (Asia/Seoul)",
+        "   Current week (Sonnet only)",
+        "                                                      0% used",
+        "   Resets Jun 13 at 3am (Asia/Seoul)"
+      ],
+      "wrap": [],
+      "cursor": null,
+      "expected": null
+    },
+    {
+      "name": "실 서버 프레임(라이본 추출 2026-07-30)",
+      "lines": [
+        "   second line                                            ",
+        "────────────────────────────────────────                  ",
+        "  ? for shortcuts                                         ",
+        "                                                          ",
+        "D:\\p4\\somehost\\someuser\\scripts\\pytmux-client>/rc         ",
+        "'/rc' is not recognized as an internal or external command",
+        ",                                                         ",
+        "operable program or batch file.                           ",
+        "                                                          ",
+        "D:\\p4\\somehost\\someuser\\scripts\\pytmux-client>            "
+      ],
+      "wrap": [
+        5
+      ],
+      "cursor": 9,
+      "expected": null
+    },
+    {
+      "name": "현행 UI · 구획선만 · 한 줄",
+      "lines": [
+        "대화 본문",
+        "────────────",
+        "❯ hello",
+        "────────────",
+        "  ? for shortcuts"
+      ],
+      "wrap": [],
+      "cursor": 2,
+      "expected": "hello"
+    },
+    {
+      "name": "현행 UI · 멀티라인 · 중간 빈 줄",
+      "lines": [
+        "────────────",
+        "❯ 첫 줄",
+        "",
+        "  셋째 줄",
+        "────────────"
+      ],
+      "wrap": [],
+      "cursor": 3,
+      "expected": "첫 줄\n\n셋째 줄"
+    },
+    {
+      "name": "현행 UI · 멀티라인 · 연속 줄 정렬 폭 학습",
+      "lines": [
+        "────────────",
+        "❯ 첫 줄",
+        "  둘째 줄",
+        "      들여쓴 줄",
+        "────────────"
+      ],
+      "wrap": [],
+      "cursor": 2,
+      "expected": "첫 줄\n둘째 줄\n    들여쓴 줄"
+    },
+    {
+      "name": "현행 UI · 정렬 폭이 3인 경우(밖의 패딩 + 마커 공백)",
+      "lines": [
+        "────────────",
+        " ❯ 첫 줄",
+        "   둘째 줄",
+        "────────────"
+      ],
+      "wrap": [],
+      "cursor": 1,
+      "expected": "첫 줄\n둘째 줄"
+    },
+    {
+      "name": "현행 UI · soft-wrap 은 개행 없이 잇는다",
+      "lines": [
+        "────────────",
+        "❯ 앞부분",
+        "  뒤부분",
+        "────────────"
+      ],
+      "wrap": [
+        2
+      ],
+      "cursor": 1,
+      "expected": "앞부분뒤부분"
+    },
+    {
+      "name": "구 UI · 모서리 박스 · 세로 테두리",
+      "lines": [
+        "╭──────────╮",
+        "│ > hello  │",
+        "╰──────────╯"
+      ],
+      "wrap": [],
+      "cursor": 1,
+      "expected": "hello"
+    },
+    {
+      "name": "구 UI · 모서리 박스 · 멀티라인",
+      "lines": [
+        "╭──────────╮",
+        "│ > 첫 줄  │",
+        "│   둘째   │",
+        "╰──────────╯"
+      ],
+      "wrap": [],
+      "cursor": 1,
+      "expected": "첫 줄\n둘째"
+    },
+    {
+      "name": "구획선 없음 · 프롬프트 블록",
+      "lines": [
+        "⏺ 뭔가 하는 중",
+        "",
+        "❯ 첫 줄",
+        "  둘째 줄",
+        "",
+        "  esc to interrupt"
+      ],
+      "wrap": [],
+      "cursor": 2,
+      "expected": "첫 줄\n둘째 줄"
+    },
+    {
+      "name": "구획선 없음 · 마커 없는 줄에 커서",
+      "lines": [
+        "⏺ 뭔가 하는 중",
+        "",
+        "  ✳ Thinking…",
+        "",
+        "  esc to interrupt"
+      ],
+      "wrap": [],
+      "cursor": 2,
+      "expected": null
+    },
+    {
+      "name": "큐 대기 플레이스홀더는 빈 입력이다",
+      "lines": [
+        "────────────",
+        "❯ Press up to edit queued messages",
+        "────────────"
+      ],
+      "wrap": [],
+      "cursor": 1,
+      "expected": ""
+    },
+    {
+      "name": "구 마커(>) + 공백",
+      "lines": [
+        "────────────",
+        "> hello",
+        "────────────"
+      ],
+      "wrap": [],
+      "cursor": 1,
+      "expected": "hello"
+    },
+    {
+      "name": "빈 입력칸",
+      "lines": [
+        "────────────",
+        "❯",
+        "────────────"
+      ],
+      "wrap": [],
+      "cursor": 1,
+      "expected": ""
+    },
+    {
+      "name": "커서 행 미상 — 아래에서 앵커를 찾는다",
+      "lines": [
+        "────────────",
+        "❯ hello",
+        "────────────",
+        "  ? for shortcuts"
+      ],
+      "wrap": [],
+      "cursor": null,
+      "expected": "hello"
+    },
+    {
+      "name": "빈 화면",
+      "lines": [],
+      "wrap": [],
+      "cursor": null,
+      "expected": null
+    }
+  ]
+}

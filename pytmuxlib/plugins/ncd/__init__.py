@@ -169,5 +169,95 @@ class _NcdPlugin:
                             msg.get("root"))
         return None
 
+    # ---- 선언형 화면 스펙(Tier C · 설계 P5 — **상태 있는 첫 시민**) ----
+    def plugin_screen(self, server, sess, req):
+        """네이티브 클라용 디렉터리 화면.
+
+        # 정본과 **모양이 다르다**(그리고 그래도 된다)
+
+        정본은 루트→cwd 를 펼친 **트리**를 보이고 `Enter` 로 그 자리에 cd 한다. 여기서는
+        한 디렉터리씩 보이는 **평면 목록**이다(`..` + 하위 디렉터리). 설계 §6 이 그은 선이
+        이것이다 — 스펙은 **내용과 선택**을 정하고 표현은 각 클라 관례를 따른다. 결과(어느
+        디렉터리로 cd 하나)는 같고, 위젯 고유의 펼침 동작까지 스펙에 담으려 하면 스펙이
+        화면마다 늘어난다.
+
+        # 상태는 **그 클라의 것**이다
+
+        지금 보고 있는 디렉터리는 사람마다 다르다. `req["state"]` 는 그 클라의 연결에
+        매달린 보관함이라(설계 P5) 두 클라가 같은 화면을 열어도 서로의 자리를 안 옮기고,
+        연결이 끊기면 함께 사라진다.
+        """
+        import asyncio
+        import os
+
+        def _offload(fn, *a):
+            return asyncio.get_event_loop().run_in_executor(None, fn, *a)
+
+        state = req.get("state") or {}
+        mine = state.setdefault("ncd", {})
+        do = req.get("do")
+        if do == "open":
+            if req.get("name") not in ("ncd", "nc"):
+                return None
+            from .server import nc_list_resolve_cwd
+            # cwd 추정은 **세션 상태를 읽으므로 루프에서**(fs 나열만 오프로드 — LOOP-1).
+            mine["path"] = nc_list_resolve_cwd(server, sess) or os.path.abspath(os.sep)
+            return _offload(self._dir_spec, mine)
+        if req.get("id") != "ncd":
+            return None
+        if do == "into":
+            target = str(req.get("input") or "")
+            if target:
+                mine["path"] = target
+            return _offload(self._dir_spec, mine)
+        if do == "cd":
+            # 정본과 **같은 결과**: 그 자리에서 패널에 cd 를 친다. 셸 방언은 이 서버의
+            # OS 가 정한다(클라의 것을 쓰면 Windows 클라가 macOS 패널에 `cd /d` 를 흘린다).
+            path = str(req.get("input") or mine.get("path") or "")
+            if path:
+                cmd = ("cd /d " if os.name == "nt" else "cd ") + _quote(path)
+                self._send_to_pane(server, sess, cmd + "\r")
+            return {"t": "plugin_screen_close", "id": "ncd"}
+        if do == "close":
+            return {"t": "plugin_screen_close", "id": "ncd"}
+        return None
+
+    def _send_to_pane(self, server, sess, text):
+        """활성 패널에 글자를 넣는다(정본 ncd 의 Enter 와 같은 결과)."""
+        win = sess.active_window if sess else None
+        pane = win.active_pane if win else None
+        if pane is not None:
+            pane.write(text.encode("utf-8", "replace"))
+
+    def _dir_spec(self, mine):
+        """지금 디렉터리의 목록 스펙(순수 fs — executor 에서 돈다)."""
+        import os
+        from .server import _list_dirs
+        path = mine.get("path") or os.path.abspath(os.sep)
+        rows = []
+        parent = os.path.dirname(path.rstrip(os.sep)) or path
+        if parent and parent != path:
+            # `..` 는 **자리가 아니라 뜻**으로 나른다(부모 경로 그대로).
+            rows.append({"key": parent, "label": "..", "cols": []})
+        for d in _list_dirs(path):
+            rows.append({"key": d, "label": os.path.basename(d), "cols": []})
+        return {
+            "t": "plugin_screen", "id": "ncd", "kind": "list",
+            "title": f"디렉터리 — {path}",
+            "hint": "(↑↓ 이동 · Enter 들어가기 · c 여기로 cd · Esc 닫기)",
+            "rows": rows,
+            "selected": 0,
+            # 키 → 액션. `enter` 말고도 **글자 키**를 실을 수 있다(클라가 그 표만 본다).
+            "keys": {"enter": "into", "c": "cd"},
+            "note": "" if rows else "하위 디렉터리가 없습니다",
+        }
+
+
+def _quote(path: str) -> str:
+    """셸에 넣을 경로 — 공백·따옴표가 있는 경로가 그대로 깨지지 않게."""
+    if not path or any(c in path for c in ' "\'$`'):
+        return '"' + path.replace('"', '\\"') + '"'
+    return path
+
 
 PLUGIN = _NcdPlugin()

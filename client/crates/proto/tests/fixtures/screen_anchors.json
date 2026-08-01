@@ -1,0 +1,36 @@
+{
+ "_comment": "python3 scripts/gen_screen_anchor_fixture.py 로 생성. 출처 = pytmuxlib/clientscreens.py 의 CSS(align/dock)와 PromptScreen.compose 의 요소 차례. 손으로 고치지 말 것.",
+ "anchors": {
+  "ChooseBufferScreen": "middle",
+  "ChooseLayoutScreen": "middle",
+  "ChooseTreeScreen": "middle",
+  "CommandListScreen": "bottom",
+  "CommandOptionsScreen": "middle",
+  "ComposePromptScreen": "bottom",
+  "ConfirmScreen": "middle",
+  "InfoScreen": "top",
+  "InfoTabsScreen": "middle",
+  "MenuScreen": "middle",
+  "MergeRemoteTabScreen": "middle",
+  "NoticeHistoryScreen": "middle",
+  "PluginManagerScreen": "middle",
+  "PromptScreen": "bottom",
+  "SettingsScreen": "middle",
+  "TabSwitcherScreen": "middle",
+  "_SettingInputScreen": "middle"
+ },
+ "docks": {
+  "ComposePromptScreen": {
+   "cwrap": "bottom"
+  },
+  "PromptScreen": {
+   "pwrap": "bottom"
+  }
+ },
+ "prompt_order": [
+  "pcand",
+  "prow",
+  "pprefix",
+  "phint"
+ ]
+}

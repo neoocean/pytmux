@@ -1,0 +1,16 @@
+{
+  "_comment": "python3 scripts/gen_box_fixture.py 로 생성. 출처 = pytmuxlib/clientutil.py::_BOX_BITS (U=8,D=4,L=2,R=1)",
+  "bits": {
+    "─": 3,
+    "┌": 5,
+    "┐": 6,
+    "┬": 7,
+    "└": 9,
+    "┘": 10,
+    "┴": 11,
+    "│": 12,
+    "├": 13,
+    "┤": 14,
+    "┼": 15
+  }
+}

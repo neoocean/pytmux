@@ -57,6 +57,14 @@ CLIENT_IDLE_TIMEOUT = 30.0          # 이 시간(초) 넘게 무응답이면 死
 CLIENT_LIVENESS_SWEEP_SEC = 5.0     # 死-클라 회수 점검 주기(초)
 
 
+def _scr_field(scroll):
+    """screen/screen-delta 프레임에 실을 스크롤 위치 필드(`{"scr": N}`).
+
+    **라이브(0)면 빈 dict** — 거의 모든 프레임이 라이브라 필드를 안 붙여야 대역폭과
+    와이어 골든이 종전 그대로다. 클라는 필드 부재를 0(라이브)으로 읽는다."""
+    return {"scr": scroll} if scroll else {}
+
+
 class ServerIOMixin:
     @staticmethod
     def _content_rect(rect, bordered, border_status):
@@ -187,9 +195,21 @@ class ServerIOMixin:
 
     def _sweep_stale_mouse(self) -> None:
         """마우스 이벤트가 오기 전에도 stale 트래킹을 걷어낸다(자동 리네임 루프에
-        편승, 2초 주기). 트래킹이 켜진 패널만 검사한다."""
+        편승, 2초 주기). 트래킹이 켜진 패널만 검사한다.
+
+        **팝업 패널도 돈다**(2026-08-01, §10-16ⓓ): `_all_panes()` 는 트리 전용이라
+        `display-popup` 의 라이브 PTY 패널이 이 주기 밖에 있었다. 증상은 작았지만
+        (입력 경로 `_drop_mouse_passthrough` 가 첫 마우스 움직임에서 그 자리 회수)
+        그 첫 움직임까지 **휠 스크롤백이 늦게 돌아온다**. `_all_panes()` 자체는
+        건드리지 않는다 — 그 의미(재시작 시 직렬화 대상)를 넓히면 팝업이 세션유지
+        스냅샷에 딸려 들어간다."""
         for pane in self._all_panes():
             if pane.mouse_track:
+                self._reap_stale_mouse(pane)
+        for sess in self.sessions.values():
+            popup = getattr(sess, "popup", None)
+            pane = popup.get("pane") if popup else None
+            if pane is not None and getattr(pane, "mouse_track", False):
                 self._reap_stale_mouse(pane)
 
     def _layout_msg(self, sess: Session, cols: int = None, rows: int = None):
@@ -305,6 +325,34 @@ class ServerIOMixin:
                          for t in s.tabs]}
             for s in self.sessions.values()]}
 
+    def _plugin_surface(self) -> dict:
+        """플러그인이 기여한 **데이터 표면**을 소켓이 나를 수 있는 모양으로.
+
+        정본 클라가 `plugins.commands`·`menu_items`·`settings()` 를 직접 불러 얻는 것과
+        **같은 자료**다. 그래서 이 함수가 두 클라의 공통 원본이 된다 — 한쪽만 늘어나는
+        일이 구조적으로 안 생긴다(적합성 테스트가 그 동치를 잰다).
+
+        모양은 정본 훅의 튜플을 이름 붙인 dict 로 편 것뿐이다. 이름을 새로 짓지 않는다:
+        `name`·`desc`·`cat` 은 `clientutil.COMMANDS` 의 세 칸과 같은 뜻이다.
+        """
+        commands = [{"name": name, "desc": desc, "cat": cat}
+                    for name, desc, cat in self.plugins.commands]
+        # 인자를 안 받는 명령(팔레트가 곧장 실행할지, 인자를 물을지 가른다).
+        noarg = sorted(self.plugins.noarg)
+        menu_items = [{"key": key, "label": label}
+                      for key, label in self.plugins.menu_items]
+        descs, cats = self.plugins.settings()
+        return {
+            "commands": commands,
+            "noarg": noarg,
+            "menu_items": menu_items,
+            # 설정 줄은 코어 `clientutil.SETTINGS` 와 **같은 스키마**의 dict 다 —
+            # 그대로 싣는다(키를 다시 지으면 두 스키마가 갈린다).
+            "settings": list(descs),
+            # 코어에 없던 카테고리(좌측 세로탭에 이어 붙일 것). 순서가 뜻이라 리스트다.
+            "setting_cats": list(cats),
+        }
+
     def _status_msg(self, sess: Session, full=True, client=None):
         # §1.7 Stage 3: 원격 탭을 보는 클라는 업스트림 status 기반 머지본(원격 탭
         # active 하이라이트 + Claude 헤더 등 부가필드)을 받는다 — per-client.
@@ -361,7 +409,7 @@ class ServerIOMixin:
         }
         # 플러그인 관리 화면(:plugins)용 **전체 개요**. 파이썬 클라는 자기 프로세스 안의
         # 레지스트리(plugin_overview)를 그대로 읽어 이 목록을 만들지만, 네이티브 클라
-        # (pytmux-client, Rust)는 파이썬 패키지를 못 읽고 pytmux 트리가 어디 있는지도
+        # (pytmux-gui, Rust)는 파이썬 패키지를 못 읽고 pytmux 트리가 어디 있는지도
         # 모른다(소켓만 안다). 위 disabled_plugins 는 **꺼진 것의 이름**뿐이라 "설치된
         # 것 전부"를 복원할 수 없다 — 그 클라에서는 관리 화면 자체가 성립하지 않았다.
         # full 에만 싣는 이유: 목록은 서버가 도는 동안 안 변한다(켜짐/꺼짐만 매 status
@@ -372,6 +420,20 @@ class ServerIOMixin:
                 {"name": n, "description": d, "category": c, "enabled": e}
                 for n, d, c, e in self.plugins.plugin_overview()
             ]
+            # ★ 플러그인 **표면**(명령·메뉴·설정) — 광고한 클라에게만
+            #   (PLUGIN_COMPAT_TEXTUAL_GUI_2026-08-01.md Tier A).
+            #
+            #   왜 필요한가: 이 훅들은 파이썬 **자료구조**를 돌려주므로 정본 클라는 자기
+            #   프로세스에서 바로 부른다. 네이티브 GUI 는 파이썬을 못 읽어, 플러그인이
+            #   기여한 명령·메뉴 줄·설정이 **통째로 안 보였다** — 그래서 mdir·ncd 같은
+            #   플러그인은 GUI 에서 입구조차 없었다. 서버는 어차피 플러그인을 로드하고
+            #   있으니, 그 자료를 그대로 실어 준다.
+            #
+            #   full 에만 · caps 광고한 클라에만: 목록은 서버가 도는 동안 안 변하고
+            #   (켜짐/꺼짐만 disabled_plugins 로 매번 온다), 안 읽는 클라의 프레임을
+            #   불리지 않는다(`blocks` 프레임과 같은 규칙).
+            if client is not None and "plugin_surface" in getattr(client, "caps", ()):
+                msg["plugin_surface"] = self._plugin_surface()
         # REC capture/capture_path/capture_size 는 plugins/rec 의 server_status 훅이
         # 채운다(아래 plugins.server_status). 플러그인 부재 시 키가 빠진다.
         # Claude 필드(패널별 상태·history·토큰·사용량·예산·팝업·full-only 옵션 12개와
@@ -436,7 +498,7 @@ class ServerIOMixin:
                                     {"t": "screen", "pane": p.id,
                                      "rows": rows, "cursor": cursor,
                                      "wrap": p._last_wrap,
-                                     "top": p._last_top})
+                                     "top": p._last_top, **_scr_field(p.scroll)})
                     p.dirty = False
                     client._sent_rows[p.id] = rows
                 # 팝업 패널 화면도 함께(트리에 없으므로 별도로 보냄). 팝업은 항상
@@ -448,7 +510,8 @@ class ServerIOMixin:
                                     {"t": "screen", "pane": pp.id,
                                      "rows": rows, "cursor": cursor,
                                      "wrap": pp._last_wrap,
-                                     "top": pp._last_top})
+                                     "top": pp._last_top,
+                                     **_scr_field(pp.scroll)})
                     pp.dirty = False
                     client._sent_rows[pp.id] = rows
                 await write_msg(client.writer,
@@ -510,7 +573,8 @@ class ServerIOMixin:
 
     _DELTA_MAX_RATIO = 0.7   # 바뀐 행이 이 비율 초과면 full screen 으로 폴백
 
-    def _screen_frame(self, client, pane_id, rows, cursor, wrap=None, top=None):
+    def _screen_frame(self, client, pane_id, rows, cursor, wrap=None, top=None,
+                      scroll=0):
         """이 클라에 보낼 screen 프레임 bytes(B2). 직전 전송(_sent_rows) 대비 바뀐 행이
         적으면 screen-delta(바뀐 [y, segs] 목록), 아니면(행 수 변동·최초·임계 초과)
         full screen. client._sent_rows[pane_id] 를 새 rows 로 갱신한다.
@@ -522,19 +586,24 @@ class ServerIOMixin:
         top(뷰포트 첫 행의 **절대 인덱스**)도 매 프레임 그대로 싣는다 — 클라가 마우스
         선택을 절대 좌표로 들고 있어야 스크롤을 넘겨도 같은 텍스트를 가리킨다. 구 클라는
         모르는 필드를 무시하고, 구 서버에 붙은 신 클라는 top 이 없어 종전(화면 내) 선택
-        으로 자동 폴백한다."""
+        으로 자동 폴백한다.
+
+        scroll(라이브에서 위로 올라간 행수)은 **0 이 아닐 때만** `scr` 로 싣는다 —
+        터치 스크롤바(touch-scroll)가 썸 위치/점프 거리를 계산하는 데 쓴다. 라이브
+        (=거의 모든 프레임)에서는 필드가 아예 안 붙어 대역폭·와이어 골든이 불변이다."""
         prev = client._sent_rows.get(pane_id)
         client._sent_rows[pane_id] = rows
+        scr = _scr_field(scroll)
         if prev is not None and len(prev) == len(rows):
             changed = [[y, rows[y]] for y in range(len(rows))
                        if rows[y] != prev[y]]
             if len(changed) <= len(rows) * self._DELTA_MAX_RATIO:
                 return frame_msg({"t": "screen-delta", "pane": pane_id,
                                   "rows": changed, "cursor": cursor,
-                                  "wrap": wrap or [], "top": top or 0})
+                                  "wrap": wrap or [], "top": top or 0, **scr})
         return frame_msg({"t": "screen", "pane": pane_id,
                           "rows": rows, "cursor": cursor, "wrap": wrap or [],
-                          "top": top or 0})
+                          "top": top or 0, **scr})
 
     def _append_blocks_frames(self, frames_by_client, clients, pane):
         """블록이 바뀌었으면 **광고한 클라에게만** 보낸다(§10-11 P4).
@@ -699,7 +768,8 @@ class ServerIOMixin:
                             continue
                         frames_by_client[c].append(
                             self._screen_frame(c, p.id, rows, cursor,
-                                               p._last_wrap, p._last_top))
+                                               p._last_wrap, p._last_top,
+                                               p.scroll))
                     self._append_blocks_frames(frames_by_client, clients, p)
                 # Claude 트랜스크립트는 **dirty 밖**이다. 우리가 쓰는 파일이 아니라
                 # Claude 가 덧붙이는 파일이라 화면이 조용한 동안에도 자란다 — 응답이
@@ -723,7 +793,8 @@ class ServerIOMixin:
                             continue
                         frames_by_client[c].append(
                             self._screen_frame(c, pp.id, rows, cursor,
-                                               pp._last_wrap, pp._last_top))
+                                               pp._last_wrap, pp._last_top,
+                                               pp.scroll))
                 # Claude Code 상태/사용량 갱신(+ 비활성 탭 완료 감지, #22).
                 # 새 휴리스틱(프롬프트/토큰/권한모드)이 특정 화면에서 터져도 flush
                 # 루프 전체(=모든 클라 렌더)가 죽지 않게 가드한다(§10 안정성).
@@ -1334,6 +1405,11 @@ class ServerIOMixin:
         if sess.popup and sess.popup.get("pane") is not None \
                 and pid == sess.popup["pane"].id:
             pp = sess.popup["pane"]
+            # 마우스 리포트는 일반 패널과 같은 최종 방어선을 지난다 — 트래킹이
+            # 꺼졌거나 켠 앱이 죽었으면(stale) 버린다. 안 그러면 팝업 셸 프롬프트에
+            # SGR 리포트가 텍스트로 박힌다(아래 일반 경로 주석과 같은 사유).
+            if msg.get("mouse") and self._drop_mouse_passthrough(pp):
+                return
             try:
                 if pp.pty is not None:
                     pp.pty.write(data)

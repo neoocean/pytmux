@@ -66,6 +66,31 @@ async def _read_until(reader, pane_id, needle: bytes, timeout=4.0):
     return bytes(buf), others
 
 
+async def test_spawn_drops_corrupt_argv_without_touching_backend():
+    """손상 `argv` 는 **백엔드를 건드리기 전에** 드롭한다(레드팀 2026-07-31).
+
+    종전 `list(msg.get("argv") or [])` 는 문자열을 받으면 `list("not-a-list")` =
+    글자별 리스트로 펼쳐 **실제 spawn** 으로 이어졌다. 그 spawn 은 루프에서 동기로
+    돌아, Windows 실측에서 인증 후 그 한 프레임이 host 를 **응답 정지**시켰다
+    (프로세스는 생존 · ping 무응답 → host 가 모든 패널 셸 I/O 를 들고 있으므로 세션
+    전체 정지). 문서화된 손상-프레임 드롭 계약이 `list(str)` 성공 때문에 못 걸렀다.
+
+    `pty_backend.spawn` 을 폭탄으로 갈아 끼워 **호출 자체가 없음**을 단언한다 —
+    소켓·셸이 필요 없는 순수 경로라 OS 무관으로 돈다(Windows 도 실행)."""
+    from harness import patched
+    host = ptyhost.PtyHost()
+
+    def _boom(*a, **k):
+        raise AssertionError("손상 argv 로 backend spawn 이 호출됐다")
+
+    with patched(pty_backend, spawn=_boom):
+        for bad in ("not-a-list", {"a": 1}, 5, ["ok", 7], [None], []):
+            host._spawn({"pane": 9, "argv": bad})
+            assert host.panes == {}, (bad, host.panes)
+        host._spawn({"pane": 9})          # argv 부재 = 종전대로 무동작
+        assert host.panes == {}
+
+
 async def test_ptyhost_spawn_and_stream():
     if pty_backend.IS_WINDOWS:
         return                            # ConPTY 는 Phase 0 스파이크로 검증
