@@ -507,6 +507,9 @@ impl SessionView {
         // 취소도 **끝난 것**이다 — 무엇을 묻고 있었는지는 키를 먹기 전에 잡아야 안다
         // (`Closed` 로 오는 '아니오'는 대답을 안 실어 온다).
         let asking_before = self.screens.asking();
+        // 고른 줄도 키를 먹기 **전에** 잡는다 — 판을 닫는 키는 그 자리에서 선택을
+        // 0 으로 되돌리므로, 한 판 물러난 뒤에 물어보면 이미 늦다.
+        let selected_before = self.screens.selected();
         // ★ 플러그인 화면의 **글자 키**는 스펙이 정한다(설계 P5 — `ncd` 의 `c` = 여기로
         //   cd). 화면 키 처리보다 먼저 보는 이유: 목록 화면에서 글자는 원래 "닫기"라
         //   뒤에 두면 우리 키가 그 판을 먼저 닫는다. 표에 있는 글자만 먹는다.
@@ -698,6 +701,10 @@ impl SessionView {
                         let is_list =
                             self.state.plugin_screen().is_some_and(|spec| spec.is_selectable());
                         self.screens.open_plugin_view(is_list);
+                        // ★ **보던 자리로** 돌아간다. 서버에 다시 안 묻는 이유가 "방금
+                        //   보던 자리를 잃지 않으려고"인데, 정작 판을 닫는 키가 선택을
+                        //   0 으로 되돌려 자리를 잃고 있었다(P4 부터 있던 구멍).
+                        self.screens.select_row(selected_before);
                     }
                 }
                 ScreenKey::Consumed | ScreenKey::Closed => {}
@@ -1962,14 +1969,33 @@ impl SessionView {
                             // ★ 물음·확인은 **이 클라가 이미 잘하는 일**이다(입력 이력·
                             //   버튼 둘·기본이 '아니오'). 플러그인이 물었다고 그 화면을
                             //   한 벌 더 만들면 되돌릴 수 없는 것 앞의 규칙이 두 곳에 생긴다.
-                            match self.state.plugin_screen().map(|s| s.kind.clone()) {
-                                Some(kind) if kind == "prompt" => {
-                                    self.screens.ask(base::Prompt::PluginAsk, "");
+                            // ★ 물음 문구의 주인은 **플러그인**이다(`ask_text` — 첫 줄이
+                            //   물음, 나머지가 상세). 안 실어 주면 되돌릴 수 없는 것 앞에서
+                            //   "플러그인이 물었다:" 한 줄만 보인다.
+                            let (kind, ask, sel) = match self.state.plugin_screen() {
+                                Some(spec) => {
+                                    (spec.kind.clone(), spec.ask_text(), spec.selected)
                                 }
-                                Some(kind) if kind == "confirm" => {
-                                    self.screens.confirm(base::Prompt::PluginAsk);
+                                None => (String::new(), String::new(), 0),
+                            };
+                            match kind.as_str() {
+                                "prompt" => {
+                                    self.screens.ask_with_detail(base::Prompt::PluginAsk, "", ask);
                                 }
-                                _ => self.screens.open_plugin_view(is_list),
+                                "confirm" => {
+                                    self.screens.confirm_with(base::Prompt::PluginAsk, ask);
+                                }
+                                _ => {
+                                    self.screens.open_plugin_view(is_list);
+                                    // ★ 커서 자리도 **스펙이 정한다**. 목록을 갈아 끼우는
+                                    //   것은 늘 사용자의 손짓에 대한 답이라(디렉터리 이동·
+                                    //   태그) 어디에 놓아야 하는지는 만든 쪽이 안다.
+                                    //   **고르는 화면일 때만** — 글 화면(상세)에서 커서를
+                                    //   건드리면 `Esc` 로 목록에 돌아왔을 때 자리를 잃는다.
+                                    if is_list {
+                                        self.screens.select_row(sel);
+                                    }
+                                }
                             }
                         }
                         // 서버가 닫으라고 했으면 판도 접는다(플러그인이 흐름을 끝냈다).

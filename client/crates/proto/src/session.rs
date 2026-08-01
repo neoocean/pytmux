@@ -220,6 +220,28 @@ impl PluginScreen {
         self.keys.get(&c.to_string()).map(String::as_str)
     }
 
+    /// 물음·확인 화면에 적을 글 — **첫 줄이 물음이고 나머지가 상세**다.
+    ///
+    /// # 왜 여기 있나
+    ///
+    /// 종전에는 `confirm`·`prompt` 를 열 때 스펙의 `title`·`note` 를 **아무도 안 읽어서**,
+    /// 사람에게는 "플러그인이 물었다:" 한 줄과 예/아니오 버튼만 보였다. 무엇을 지우는지
+    /// 모른 채 누르는 화면이 되돌릴 수 없는 것 앞에 서 있던 셈이다(`Prompt::question` 의
+    /// PluginAsk 주석은 이미 "문구의 주인은 플러그인"이라고 적고 있었는데 배선이 없었다).
+    ///
+    /// 어휘를 아는 곳을 하나로 둔다 — 뷰가 `title`/`note` 를 따로 이어 붙이기 시작하면
+    /// 같은 물음이 화면마다 달라 보인다(`enter_action` 과 같은 규율).
+    pub fn ask_text(&self) -> String {
+        let mut out = self.title.clone();
+        if !self.note.is_empty() {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&self.note);
+        }
+        out
+    }
+
     /// 이 화면이 **고르는 화면**인가(목록·표·폼). 아니면 읽거나 답하는 화면이다.
     ///
     /// core 는 스펙을 안 들으므로 뷰가 이 값을 넘겨 준다(`open_plugin_view`).

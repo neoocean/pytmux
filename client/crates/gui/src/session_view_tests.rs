@@ -2643,6 +2643,94 @@ fn a_prompt_spec_uses_the_native_ask_and_sends_the_typed_answer() {
     assert_eq!(action["input"], "hi");
 }
 
+// ── P6 — 스펙이 물음 문구와 커서 자리를 정한다 ──────────────────────────────────
+
+fn mdir_table_screen(selected: usize) -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "mdir", "kind": "table",
+        "title": "파일 관리자 — /tmp/x", "hint": "(Enter 열기)",
+        "rows": [
+            {"key": "/tmp", "label": "   ..", "cols": ["<상위>"]},
+            {"key": "/tmp/x/sub", "label": "  sub/", "cols": ["<DIR>", "2026/08/02 01:00"]},
+            {"key": "/tmp/x/a.txt", "label": "  a.txt", "cols": ["9B", "2026/08/02 01:00"]}
+        ],
+        "text": "", "note": "", "selected": selected,
+        "keys": {"enter": "into", "d": "delete", "t": "tag"}
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_plugin_ask_shows_the_question_the_plugin_wrote() {
+    // 되돌릴 수 없는 것 앞에서 "플러그인이 물었다:" 한 줄만 보이면, 사람은 **무엇이
+    // 사라지는지 모른 채** 누른다. 문구의 주인은 스펙이다(`title` → 물음 · `note` → 상세).
+    let ask: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "mdir", "kind": "confirm",
+        "title": "2개를 지웁니다 — 되돌릴 수 없습니다", "hint": "", "rows": [],
+        "text": "", "note": "a.txt, b.txt", "selected": 0, "keys": {"enter": "apply"}
+    }))
+    .unwrap();
+    let painted = painted_after(vec![layout_one_pane(), ask], &[]);
+    assert!(
+        painted_contains(&painted, "되돌릴 수 없습니다"),
+        "플러그인이 쓴 물음이 안 보인다: {painted:?}"
+    );
+    assert!(
+        painted_contains(&painted, "a.txt, b.txt"),
+        "무엇이 사라지는지가 안 보인다: {painted:?}"
+    );
+    assert!(
+        !painted_contains(&painted, "플러그인이 물었다"),
+        "폴백 문구가 플러그인의 물음을 덮었다: {painted:?}"
+    );
+}
+
+#[test]
+fn a_plugin_screen_puts_the_cursor_where_the_spec_says() {
+    // 목록을 갈아 끼우는 것은 늘 사용자의 손짓에 대한 답이다(디렉터리 이동·태그) —
+    // 어디에 커서를 놓아야 하는지는 **만든 쪽**이 알고, 그 칸이 `selected` 다.
+    // 이 배선이 없던 동안 그 칸은 아무도 안 읽는 죽은 칸이었다.
+    let sent = sent_after(
+        vec![layout_one_pane(), mdir_table_screen(2)],
+        &[(Key::Char('t'), Mods::NONE)],
+    );
+    let frames: Vec<serde_json::Value> = sent.iter().map(|o| o.to_frame()).collect();
+    let action = frames
+        .iter()
+        .find(|f| f["action"] == "plugin_action")
+        .unwrap_or_else(|| panic!("액션이 안 나갔다: {frames:?}"));
+    assert_eq!(
+        action["input"], "/tmp/x/a.txt",
+        "스펙이 고른 줄이 아니라 다른 줄이 실렸다: {action:?}"
+    );
+    assert_eq!(action["row"], 2, "{action:?}");
+}
+
+#[test]
+fn a_detail_screen_does_not_steal_the_place_you_were_at() {
+    // 글 화면(상세)은 고르는 화면이 아니다 — 거기서 커서를 건드리면 `Esc` 로 목록에
+    // 돌아왔을 때 자리를 잃는다(`selected` 를 무턱대고 따르면 생기는 반대쪽 결함).
+    let detail: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "mdir", "kind": "text",
+        "title": "a.txt", "hint": "", "rows": [], "text": "가나다",
+        "note": "", "selected": 0, "keys": {}
+    }))
+    .unwrap();
+    let sent = sent_after(
+        vec![layout_one_pane(), mdir_table_screen(2), detail],
+        &[(Key::Escape, Mods::NONE), (Key::Char('d'), Mods::NONE)],
+    );
+    let frames: Vec<serde_json::Value> = sent.iter().map(|o| o.to_frame()).collect();
+    let action = frames
+        .iter()
+        .find(|f| f["action"] == "plugin_action" && f["do"] == "delete")
+        .unwrap_or_else(|| panic!("목록으로 못 돌아왔다: {frames:?}"));
+    assert_eq!(
+        action["input"], "/tmp/x/a.txt",
+        "상세를 보고 왔더니 커서가 옮겨져 있었다: {action:?}"
+    );
+}
+
 #[test]
 fn cancelling_a_plugin_confirm_does_nothing_at_all() {
     // 기본이 '아니오'인 화면이다 — 취소가 곧 "아무 일도 안 일어남"이라야 한다.

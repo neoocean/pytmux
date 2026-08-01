@@ -812,10 +812,23 @@ impl Screens {
         self.open(Screen::Prompt);
         self.asking = Some(prompt);
         self.typed = seed.to_owned();
+        // 앞선 확인 화면의 상세를 **버린다**. 물음 판도 상세를 그리므로(`render_prompt`),
+        // 안 버리면 "이 탭을 닫으면 …" 같은 붉은 경고가 엉뚱한 물음 위에 남는다.
+        self.detail.clear();
         // 이력은 **미채움**으로 연다 — 뷰가 다음 진입점에서 자기 arghist 로 채운다
         // (`asking_unfilled` 문서). 그래서 40여 개의 ask 호출부가 그대로다.
         self.prompt_history = None;
         self.prompt_pick = None;
+    }
+
+    /// 물음 위에 **플러그인이 준 글**을 함께 세운다(설계 Tier C).
+    ///
+    /// [`Self::ask`] 와 가른 이유: 저쪽 40여 개 호출부의 물음은 `Prompt::question` 이
+    /// 정하고, 이쪽은 **문구의 주인이 플러그인**이다. 같은 함수에 빈 인자를 하나 더
+    /// 다는 것보다 그 차이가 이름에 보이는 편이 낫다.
+    pub fn ask_with_detail(&mut self, prompt: Prompt, seed: &str, detail: String) {
+        self.ask(prompt, seed);
+        self.detail = detail;
     }
 
     /// 인자 이력이 있는 물음(파이썬 arghist — remote-attach 의 호스트 등).
@@ -896,6 +909,14 @@ impl Screens {
         let Some(prompt) = self.asking else {
             return String::new();
         };
+        // 플러그인이 물은 것은 **그 플러그인이 문구를 정한다**(스펙의 `title`). 여기
+        // 폴백("플러그인이 물었다:")만 보이면 사람은 무엇을 지우는지 모른 채 누른다.
+        if prompt == Prompt::PluginAsk
+            && let Some(first) = self.detail.lines().next()
+            && !first.is_empty()
+        {
+            return first.to_owned();
+        }
         if prompt.detail_fills_a_slot() {
             crate::i18n::tf(prompt.question(), &[("name", &self.detail)])
         } else {
@@ -907,6 +928,12 @@ impl Screens {
     pub fn confirm_detail(&self) -> &str {
         match self.asking {
             Some(p) if p.detail_fills_a_slot() => "",
+            // 플러그인 물음은 **첫 줄이 물음으로 올라갔다** — 여기서 또 그리면 같은 글이
+            // 두 번 뜬다. 남은 줄(지울 이름들 등)만 상세로 내려온다.
+            Some(Prompt::PluginAsk) => match self.detail.split_once('\n') {
+                Some((_, rest)) => rest,
+                None => "",
+            },
             _ => &self.detail,
         }
     }
@@ -945,6 +972,17 @@ impl Screens {
     /// 그대로 `Enter` 를 치면 없는 탭으로 전환하려 든다.
     pub fn clamp_selection(&mut self, len: usize) {
         self.selected = self.selected.min(len.saturating_sub(1));
+    }
+
+    /// 커서를 그 줄에 놓는다 — **목록의 주인이 자리를 정하는** 자리용(플러그인 화면 스펙).
+    ///
+    /// 평소 목록은 커서가 이 클라의 것이라 서버가 건드리지 않는다. 플러그인 화면은
+    /// 다르다: 어느 디렉터리로 들어갔는지·태그를 찍고 다음 줄로 내려갈지를 **스펙을
+    /// 만든 쪽**이 안다. 그 칸(`PluginScreen::selected`)을 아무도 안 읽던 동안 목록을
+    /// 갈아 끼워도 커서는 옛 자리에 남아 있었다.
+    pub fn select_row(&mut self, row: usize) {
+        self.selected = row;
+        self.scroll = 0;
     }
 
     /// 목록형 화면인가(선택 커서를 그리는가).

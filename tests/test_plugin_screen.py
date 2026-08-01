@@ -220,3 +220,173 @@ async def test_a_path_with_spaces_survives_the_shell():
     from pytmuxlib.plugins.ncd import _quote
     assert _quote("/a b/c") == '"/a b/c"'
     assert _quote("/plain") == "/plain"
+
+
+# ── P6 — `mdir`: 되돌릴 수 없는 조작이 있는 첫 시민 ──────────────────────────────
+
+def _mdir():
+    from pytmuxlib.plugins.mdir import PLUGIN
+    return PLUGIN
+
+
+def _tree(tmp):
+    """표본 디렉터리 — 하위 하나 + 파일 둘 + 숨김 하나."""
+    import os
+    os.makedirs(os.path.join(tmp, "sub"), exist_ok=True)
+    for name, body in (("a.txt", "가나다"), ("b.txt", "bbb"), (".hidden", "x")):
+        with open(os.path.join(tmp, name), "w", encoding="utf-8") as f:
+            f.write(body)
+    return tmp
+
+
+async def test_mdir_lists_a_directory_as_a_table_the_client_can_draw(tmp_path=None):
+    """표 스펙의 모양이 계약이다 — 줄의 `key` 가 **절대경로**(그 줄의 뜻)라야 다음
+    액션이 자리가 아니라 그 항목을 가리킨다."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        _tree(tmp)
+        mine = {"path": tmp, "tags": []}
+        spec = _mdir()._spec(mine, 0, "")
+        assert spec["kind"] == "table" and spec["id"] == "mdir", spec
+        labels = [r["label"] for r in spec["rows"]]
+        assert labels[0].strip() == "..", labels
+        assert spec["rows"][0]["key"] == os.path.dirname(tmp), spec["rows"][0]
+        # 디렉터리가 먼저, 그 다음 파일(정본 기본 정렬).
+        assert "sub/" in labels[1], labels
+        # 숨김은 기본으로 안 보인다.
+        assert not any(".hidden" in ln for ln in labels), labels
+        # 조작 대상 목록은 `..` 를 안 담는다 — 담기면 부모를 지울 수 있다.
+        assert os.path.dirname(tmp) not in mine["items"], mine["items"]
+        assert os.path.join(tmp, "a.txt") in mine["items"], mine["items"]
+        # 칸 둘(크기·시각)이 실린다.
+        row = next(r for r in spec["rows"] if r["label"].strip().startswith("a.txt"))
+        assert len(row["cols"]) == 2 and row["cols"][0] != "<DIR>", row
+        # 글자 키를 스펙이 정한다 — 여기 없는 글자는 클라에서 판을 닫는다.
+        assert spec["keys"]["enter"] == "into", spec["keys"]
+        assert spec["keys"]["d"] == "delete" and spec["keys"]["p"] == "cd", spec["keys"]
+
+
+async def test_mdir_hidden_toggle_and_tagging_live_in_this_clients_state():
+    """숨김 토글·태그는 **그 클라의 것**이고, 태그는 그 디렉터리를 벗어나면 사라진다.
+
+    태그가 따라다니면 화면에 안 보이는 것이 지워진다 — 삭제가 있는 화면에서 그건
+    사고다."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        _tree(tmp)
+        p = _mdir()
+        mine = {"path": tmp, "tags": []}
+        p._spec(mine, 0, "")
+        a = os.path.join(tmp, "a.txt")
+        spec = p._tag(mine, a, 2)
+        assert mine["tags"] == [a], mine
+        assert any(r["label"].startswith("✓") for r in spec["rows"]), spec["rows"]
+        # 커서는 한 줄 내려간다(연달아 찍는 것이 이 키의 쓰임이다).
+        assert spec["selected"] == 3, spec["selected"]
+        # 숨김 토글은 왕복 없이 목록을 늘린다.
+        mine["hidden"] = True
+        spec = p._spec(mine, 0, "")
+        assert any(".hidden" in r["label"] for r in spec["rows"]), spec["rows"]
+        # 하위로 들어가면 그 디렉터리의 태그만 남는다 → 여기서는 전부 사라진다.
+        p._into(mine, os.path.join(tmp, "sub"), 0)
+        assert mine["tags"] == [], mine
+
+
+async def test_mdir_delete_asks_before_it_does_anything_and_says_what_disappears():
+    """되돌릴 수 없는 것 앞의 규칙 — **묻는 단계에서는 아무것도 안 한다**, 그리고
+    무엇이 사라지는지를 물음이 들고 간다(클라는 스펙의 `title`·`note` 를 그린다)."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        _tree(tmp)
+        p = _mdir()
+        mine = {"path": tmp, "tags": []}
+        p._spec(mine, 0, "")
+        a = os.path.join(tmp, "a.txt")
+        ask = p._begin(mine, "delete", a, 2)
+        assert ask["kind"] == "confirm", ask
+        assert "되돌릴 수 없" in ask["title"], ask
+        assert "a.txt" in ask["note"], "무엇이 지워지는지 안 보인다: %r" % (ask,)
+        assert ask["keys"] == {"enter": "apply"}, ask
+        assert os.path.exists(a), "묻기만 했는데 벌써 지웠다"
+        # 답이 오면 그때 지운다.
+        spec = p._apply(mine, "y", 2)
+        assert not os.path.exists(a), "답했는데 안 지워졌다"
+        assert "삭제 1건" in spec["note"], spec["note"]
+        assert spec["kind"] == "table", spec
+
+
+async def test_mdir_copy_asks_where_and_the_two_step_overwrite_protocol_survives():
+    """복사는 목적지를 되묻고, 겹치면 **아무것도 안 한 채** 덮어쓸지 다시 묻는다.
+
+    절반만 수행하고 묻는 것보다 결정론적이다(정본 서버의 2단계 프로토콜 그대로)."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        src, dst = os.path.join(tmp, "src"), os.path.join(tmp, "dst")
+        os.makedirs(src)
+        os.makedirs(dst)
+        for d in (src, dst):
+            with open(os.path.join(d, "same.txt"), "w") as f:
+                f.write("old" if d is dst else "new")
+        p = _mdir()
+        mine = {"path": src, "tags": []}
+        p._spec(mine, 0, "")
+        ask = p._begin(mine, "copy", os.path.join(src, "same.txt"), 1)
+        assert ask["kind"] == "prompt" and "복사" in ask["title"], ask
+        # 답 = 목적지. 겹치니 **수행 없이** 되묻는다.
+        again = p._apply(mine, dst, 1)
+        assert again["kind"] == "confirm" and "덮어쓸까요" in again["title"], again
+        with open(os.path.join(dst, "same.txt")) as f:
+            assert f.read() == "old", "되묻기 전에 이미 덮어썼다"
+        # '예' 면 그때 덮어쓴다.
+        spec = p._apply(mine, "y", 1)
+        with open(os.path.join(dst, "same.txt")) as f:
+            assert f.read() == "new", spec
+        assert "복사 1건" in spec["note"], spec["note"]
+
+
+async def test_mdir_cd_writes_to_the_pane_and_closes_the_screen():
+    """`p` 는 정본 F4 와 **같은 결과**다 — 패널에 cd 를 치고 판을 닫는다.
+    셸 방언은 **이 서버의** OS 가 정한다(원격이면 원격 셸의 방언이라야 한다)."""
+    import tempfile
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = _mdir()
+        with tempfile.TemporaryDirectory() as tmp:
+            pane = sess.active_window.active_pane
+            wrote = []
+            with harness.patched(type(pane), write=lambda self, d: wrote.append(d)):
+                resp = p.plugin_screen(srv, sess, {
+                    "id": "mdir", "do": "cd", "row": 0, "input": "",
+                    "state": {"mdir": {"path": tmp, "tags": [], "items": []}},
+                })
+            assert resp == {"t": "plugin_screen_close", "id": "mdir"}, resp
+            assert wrote and tmp.encode() in wrote[0], wrote
+            assert wrote[0].endswith(b"\n"), "Enter 없이 보내면 셸이 실행하지 않는다"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_mdir_only_operates_on_what_the_current_listing_holds():
+    """클라가 되돌려준 경로는 **지금 목록에 있는 것**이라야 한다.
+
+    옛 목록의 줄(또는 지어낸 경로)이 그대로 삭제 대상이 되면, 화면에 없던 것이
+    사라진다. 목록을 만들 때 담아 둔 `items` 가 그 관문이다."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        _tree(tmp)
+        p = _mdir()
+        mine = {"path": tmp, "tags": []}
+        p._spec(mine, 0, "")
+        outsider = os.path.join(tmp, "..", "somewhere-else")
+        assert p._targets(mine, outsider) == [], "목록 밖 경로가 대상이 됐다"
+        # `..` 줄도 대상이 아니다(정본 동형).
+        assert p._targets(mine, os.path.dirname(tmp)) == []
+        spec = p._begin(mine, "delete", outsider, 0)
+        # 대상이 없으면 묻지 않는다 — 빈 확인 화면은 "누르면 뭔가 지워진다"로 읽힌다.
+        assert not isinstance(spec, dict) or spec.get("kind") != "confirm", spec
