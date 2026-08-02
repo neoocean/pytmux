@@ -67,5 +67,29 @@ for crate_dir in crates/gui; do
     fi
 done
 
-[ "$rc" -eq 0 ] && echo "OK: base·proto·claude·clip 은 UI 무의존 · 지운 TUI 백엔드 부재 · 키 정의는 한 곳"
+# ── 5. 전역 로케일을 뒤집는 자리가 늘지 않았는지 ────────────────────────────
+# `set_locale` 은 **프로세스 전역**이라, 한 이진 안에서 병렬로 도는 테스트 하나가
+# 잠깐 뒤집으면 그 창에 걸린 다른 테스트가 남의 로케일에서 단언한다. 2026-08-02 에
+# 실제로 그렇게 둘이 붉었고(배지 하나 · 서버 문자열 34개 전부), 혼자 돌리면 초록이라
+# "부하 플레이크"로 읽히기 딱 좋은 모양이었다. 테스트는 `i18n::locale_guard`/
+# `with_locale`(스레드 안에서 끝난다)을 쓴다.
+#
+# 허용된 자리 셋과 그 이유:
+#   - crates/base/src/i18n.rs          정의와 `init`(시동 우선순위)
+#   - crates/gui/src/session_view.rs   `lang` 명령 — 제품에서 전역을 바꾸는 유일한 곳
+#   - crates/base/tests/i18n_switch.rs 전환 자체의 오라클. 자기 프로세스에 **한 테스트**
+#                                      뿐이라 순서가 곧 격리다(그 파일 머리말).
+allowed_locale='crates/base/src/i18n.rs|crates/gui/src/session_view.rs|crates/base/tests/i18n_switch.rs'
+stray=$(grep -rn 'set_locale(' crates --include='*.rs' 2>/dev/null \
+    | grep -vE "^($allowed_locale):" \
+    | grep -v 'fn set_locale' || true)
+if [ -n "$stray" ]; then
+    echo "FAIL: 전역 로케일을 뒤집는 자리가 허용 목록 밖에 있다:" >&2
+    echo "$stray" | sed 's/^/  /' >&2
+    echo "  → 테스트라면 base::i18n::locale_guard / with_locale 로 이 스레드에만 걸 것." >&2
+    echo "  → 제품 코드라면 허용 목록과 함께 **왜 전역이라야 하는지**를 여기 적을 것." >&2
+    rc=1
+fi
+
+[ "$rc" -eq 0 ] && echo "OK: base·proto·claude·clip 은 UI 무의존 · 지운 TUI 백엔드 부재 · 키 정의는 한 곳 · 전역 로케일은 세 곳뿐"
 exit "$rc"

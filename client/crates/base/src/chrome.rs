@@ -132,6 +132,11 @@ pub enum ClickTarget {
     /// 탭바 넘침 화살표(`◀`/`▶` — G9x). **뷰 로컬 스크롤**이라 액션이 아니다 —
     /// [`click`] 은 `None` 을 돌려주고 뷰가 자기 스크롤을 옮긴다(파이썬 `scroll_by`).
     TabScroll { left: bool },
+    /// 아래 요약 구역의 머리줄(§10-20ⓔ). **뷰 로컬 접힘**이라 액션이 아니다 —
+    /// 서버에 보낼 명령이 없고(정본에는 이 구역 자체가 없다) 뷰가 자기 상태를 뒤집는다.
+    /// 다만 그 결과로 **크롬 높이가 바뀌어 서버에 새 크기가 나간다** — `TabScroll` 과
+    /// 달리 화면 밖으로 파급이 있는 유일한 뷰 로컬 클릭이다.
+    FooterFold,
 }
 
 /// 클릭 하나를 액션으로 — **Enter 와 같은 길**이다(파이썬 `on_mouse_down`/`_hit` 도
@@ -146,7 +151,7 @@ pub fn click(target: ClickTarget, ctx: &ChromeCtx) -> Option<Action> {
         ClickTarget::Spot(TabSpot::New) => Action::NewTab,
         ClickTarget::Spot(TabSpot::Close) => Action::KillTab,
         ClickTarget::Badge(badge) => badge.action(),
-        ClickTarget::TabScroll { .. } => return None,
+        ClickTarget::TabScroll { .. } | ClickTarget::FooterFold => return None,
     })
 }
 

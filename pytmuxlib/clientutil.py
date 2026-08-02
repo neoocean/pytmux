@@ -293,22 +293,11 @@ def _fmt_tokens(total: int) -> str:
 
 
 # 막대 게이지용 부분블록(1/8 단위) — 우측 끝 잔량을 부드럽게 표현.
-_BAR_BLOCKS = " ▏▎▍▌▋▊▉█"
-
-
-def bar(value: int, vmax: int, cells: int) -> str:
-    """value/vmax 비율을 cells 칸 막대 문자열로(부분블록 포함). vmax<=0/cells<=0/
-    value<=0 이면 빈 문자열. 표시 계층(DataTable/InfoScreen/usage_bar_lines) 공용 —
-    폭은 호출부가 셀폭으로 계산한다. (S5b 에서 usagelog 에서 이리로 이전 — 코어
-    clientscreens.usage_bar_lines 가 데이터 모듈 usagelog 를 import 하지 않게 하려고
-    순수 표시 헬퍼를 코어 표시 유틸로 옮겼다. usagelog 는 S5c 에서 플러그인으로 이동.)"""
-    if cells <= 0 or vmax <= 0 or value <= 0:
-        return ""
-    frac = max(0.0, min(1.0, value / vmax))
-    eighths = int(round(frac * cells * 8))
-    full, rem = divmod(eighths, 8)
-    full = min(full, cells)
-    return "█" * full + (_BAR_BLOCKS[rem] if rem and full < cells else "")
+# 막대 프리미티브(`bar`)와 그 여덟 단 블록 표는 **UI 무의존 모듈**로 옮겼다
+# (`usagebar.py` — 2026-08-02f). 이 모듈은 최상단에서 `rich.style` 을 읽으므로 서버가
+# 같은 막대를 못 그린다. 종전 이름으로 읽는 자리를 위해 아래에서 다시 내보낸다
+# (`bar_floating*` 은 여기 남는다 — 표시 전용이고 서버가 안 쓴다).
+from .usagebar import _BAR_BLOCKS, bar  # noqa: F401,E402  (재수출 — 종전 이름 보존)
 
 
 def bar_floating_segments(start: float, end: float, vmax: int, cells: int):

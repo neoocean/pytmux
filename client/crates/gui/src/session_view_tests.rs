@@ -937,6 +937,38 @@ fn picking_a_language_runs_the_whole_wiring_in_the_gui_too() {
 // **판정·배선 구간**(core `chrome::click` → `apply_action` → 큐)을 잰다.
 
 #[test]
+fn folding_the_summary_area_changes_what_the_server_is_told(){
+    // ★ 이 오라클이 잡는 것은 "접힌다"가 아니라 **레이아웃 계약**이다. 이 구역의 줄
+    //   수는 크롬 높이의 일부이고, 크롬 높이는 서버에 알리는 캔버스 rows 에서 빠진다
+    //   (`fit_grid`). 접기를 그리기만 바꾸는 일로 다루면 캔버스가 그대로라 **접어도
+    //   화면이 안 넓어지고**, 그건 이 슬라이스가 하려던 일 전체다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    // 블록이 하나 있어야 구역이 그려진다(없으면 접든 펴든 0 줄이다).
+    tx.send(LinkEvent::Message(Box::new(
+        serde_json::from_value(serde_json::json!({
+            "t": "blocks", "pane": 1,
+            "blocks": [{"command": "ls", "state": "done", "exit": 0, "start_row": 0}]
+        }))
+        .unwrap(),
+    )))
+    .unwrap();
+    view.pump_headless();
+
+    let folded = view.footer_lines();
+    view.chrome_click(base::chrome::ClickTarget::FooterFold);
+    let opened = view.footer_lines();
+    assert_eq!(
+        opened - folded,
+        footer::ROWS,
+        "머리줄을 눌렀는데 크롬 높이가 안 바뀌었다 — 캔버스도 그대로다"
+    );
+    // 다시 누르면 되돌아온다(토글이지 한 번 쓰고 마는 스위치가 아니다).
+    view.chrome_click(base::chrome::ClickTarget::FooterFold);
+    assert_eq!(view.footer_lines(), folded, "다시 접히지 않았다");
+}
+
+#[test]
 fn a_chrome_click_travels_the_same_road_as_enter() {
     use base::chrome::ClickTarget;
     use base::TabSpot;
@@ -2899,4 +2931,43 @@ fn cancelling_a_plugin_confirm_does_nothing_at_all() {
         !frames.iter().any(|f| f["action"] == "plugin_action"),
         "취소했는데 액션이 나갔다: {frames:?}"
     );
+}
+
+#[test]
+fn the_input_method_state_goes_up_as_a_fact_not_a_drawing() {
+    // ★ 이 배선은 오래 **라이브 스크린샷으로만** 잡혔다(GUI 에 큐 오라클이 없다던 그
+    // 자리). 한/영을 묻는 일만 OS 에 남기고 올리는 일을 갈라 두니 여기서 잴 수 있다.
+    //
+    // 우리가 보내는 것은 **사실뿐**이다 — 어디에 무슨 색으로 그릴지는 플러그인이
+    // 정한다(설계 Tier D · §4.4). 종전에는 우리가 그림까지 들고 있었고 자리가 정본과
+    // 갈려 있었다.
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+
+    assert!(view.report_ime(Some("한")), "바뀐 것을 안 알렸다");
+    view.pump_headless();          // 모아 둔 것을 실제로 보낸다
+    let frames: Vec<serde_json::Value> =
+        sent.lock().unwrap().iter().map(|o| o.to_frame()).collect();
+    let fact = frames
+        .iter()
+        .find(|f| f["action"] == "client_fact")
+        .unwrap_or_else(|| panic!("사실이 안 올라갔다: {frames:?}"));
+    assert_eq!(fact["name"], "ime");
+    assert_eq!(fact["value"], "한");
+
+    // 같은 값은 다시 안 올린다 — 0.3초마다 같은 말을 하면 서버가 매번 다시 그린다.
+    assert!(!view.report_ime(Some("한")), "안 바뀌었는데 또 올렸다");
+
+    // 끄는 것도 사실이다: 값이 비면 서버가 그 사실을 지운다(배지가 사라진다).
+    assert!(view.report_ime(None));
+    view.pump_headless();
+    let frames: Vec<serde_json::Value> =
+        sent.lock().unwrap().iter().map(|o| o.to_frame()).collect();
+    let last = frames
+        .iter()
+        .filter(|f| f["action"] == "client_fact")
+        .next_back()
+        .unwrap();
+    assert!(last["value"].is_null(), "끔이 안 올라갔다: {last}");
 }

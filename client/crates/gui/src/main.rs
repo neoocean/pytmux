@@ -1,7 +1,15 @@
+// ★ **GUI 서브시스템으로 링크한다**(Windows). 안 걸면 이진이 콘솔 서브시스템이라
+//   탐색기·바로가기로 띄울 때 Windows 가 먼저 검은 cmd 창을 붙여 주고 그 뒤에 창이
+//   뜬다(사용자 실측 2026-08-02 · §10-20ⓒ). 짝은 `console::attach_parent()` 다 —
+//   터미널에서 띄웠을 때는 부모 콘솔에 붙어 `--help`·실패 사유가 종전대로 보인다.
+//   `not(test)` 인 이유: 이 속성은 **테스트 이진에도** 걸려, 그러면 `cargo test` 의
+//   출력이 통째로 사라진다(초록/빨강을 못 보는 것이 결함보다 비싸다).
+#![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
+
 //! pytmux 네이티브 클라이언트 — GUI 이진.
 //!
 //! ```sh
-//! cargo run -p gui                    # 서버를 찾아 붙고, 없으면 블록 데모
+//! cargo run -p gui                    # 서버를 찾아 붙는다(없으면 정본으로 띄우고 붙는다)
 //! cargo run -p gui -- --socket <경로>  # 그 엔드포인트로만 붙는다
 //! cargo run -p gui -- demo            # 항상 블록 데모
 //! ```
@@ -22,6 +30,7 @@ use anyhow::{Result, anyhow};
 use proto::ServerLink;
 use warpui::{AssetProvider, platform};
 
+mod console;
 mod mono_font;
 mod root_view;
 mod session_view;
@@ -63,13 +72,70 @@ enum Args {
 const USAGE: &str = "\
 pytmux 네이티브 클라이언트(GUI)
 
-  pytmux-gui                  떠 있는 서버를 찾아 붙는다
+  pytmux-gui                  떠 있는 서버에 붙는다(없으면 서버를 띄우고 붙는다)
   pytmux-gui --socket <경로>  그 엔드포인트로만 붙는다(`tcp:host:port` 도 된다)
   pytmux-gui demo             서버 없이 블록 데모
   pytmux-gui --frame-dump=<png>  몇 초 뒤 첫 화면을 PNG 로 덤프하고 끝낸다(확인용)
   pytmux-gui --frame-keys=<키들>  덤프 전에 키를 넣는다(예: esc,:,s,p,l — 확인용)
                               `wait` 를 끼우면 거기서 서버 왕복을 기다린다
 ";
+
+/// 인자 하나가 **어떤 시작**을 뜻하는가.
+///
+/// # 왜 갈라 두나
+///
+/// 이 갈림이 곧 제품의 성격이라 오라클이 붙잡고 있어야 한다. 실제로 여기가 결함이었다:
+/// 인자 없이 띄우면 서버를 못 찾았을 때 **데모**로 갔고(§10-20ⓓ), 사용자는 자기 세션이
+/// 사라진 화면을 봤다. 그 사유는 `eprintln!` 로만 났는데 GUI 서브시스템이 되면 그것도
+/// 안 보인다 — "왜 데모인지 모른 채 데모를 본다"가 성립했다.
+///
+/// 이걸 `main` 안의 `match` 로 두면 되돌리는 변경이 **아무 테스트도 안 깨뜨린다**.
+#[derive(Debug, PartialEq)]
+enum Plan {
+    /// 사용법을 찍고 정상 종료.
+    Usage,
+    /// 인자가 틀렸다.
+    Bad(String),
+    /// 서버 없이 블록 데모 — **명시 인자(`demo`)일 때만** 온다.
+    Demo,
+    /// 지목받은 곳에만 붙는다. 못 붙으면 실패다(폴백 없음).
+    AttachTo(String),
+    /// 찾아 붙고, 없으면 **띄우고** 붙는다(정본 `attach` 와 같은 모델).
+    FindOrStart,
+}
+
+/// 창을 만들 때 쓰는 선택지 한 벌.
+///
+/// # 왜 OS 에게 맡기나 (§10-20ⓐ)
+///
+/// 종전에는 최소화·최대화·닫기 버튼이 **아예 없었다**. 상류가 창을 만들 때
+/// `hide_title_bar` 를 `true` 로 박아 두고(`warpui_core` 의 `insert_window_internal`)
+/// 그 칸을 밖에서 건드릴 길이 없었기 때문이다 — 자기 크롬을 다 그리는 앱(warp)의
+/// 기본값이고, 우리는 그것을 물려받았다.
+///
+/// 우리가 그리는 길도 있었지만 **관습이 OS 마다 다르다**: 맥은 왼쪽 신호등 셋, Windows 는
+/// 오른쪽 최소화·최대화·닫기. 자리를 한 벌로 박으면 한쪽 OS 사용자에게는 늘 어색하고,
+/// 그 어색함을 고치는 값은 우리에게 없다. 그래서 `TitleBar::Native` 로 **OS 에게 맡긴다**.
+///
+/// 제목도 여기서 준다 — 안 주면 winit 기본값이 그대로 뜬다(실측: 제목줄이 `winit window`
+/// 였다. 장식이 없던 동안에는 아무도 그 이름을 못 봤다).
+fn window_options() -> warpui::AddWindowOptions {
+    warpui::AddWindowOptions {
+        title_bar: warpui::TitleBar::Native,
+        title: Some("pytmux".to_owned()),
+        ..Default::default()
+    }
+}
+
+fn plan_for(args: Args) -> Plan {
+    match args {
+        Args::Usage => Plan::Usage,
+        Args::Bad(reason) => Plan::Bad(reason),
+        Args::Demo => Plan::Demo,
+        Args::Attach(Some(spec)) => Plan::AttachTo(spec),
+        Args::Attach(None) => Plan::FindOrStart,
+    }
+}
 
 /// `--frame-dump[=<path>]` 를 골라내고 나머지 인자를 돌려준다.
 ///
@@ -180,36 +246,42 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> Args {
 }
 
 fn main() -> Result<()> {
+    // ★ **첫 줄이다.** 터미널에서 띄웠으면 부모 콘솔에 붙어, 아래의 사용법·오류·기동
+    //   실패 사유가 종전처럼 보이게 한다. 러스트 std 가 표준 핸들을 첫 출력 때 캐시하므로
+    //   한 줄이라도 먼저 내면 늦는다(`console` 모듈 문서).
+    let has_console = console::attach_parent();
     // 로거가 없으면 `log::info!` 는 **어디로도 안 간다** — 진단을 남긴 줄 알고
     // 아무것도 안 남긴 상태가 된다. 기본은 조용하고(`RUST_LOG` 미설정 시 warn
     // 이상), 필요할 때 `RUST_LOG=info` 로 켠다.
     env_logger::init();
+    // 시동 실패를 사용자에게 남긴다. 콘솔이 있으면 글로, 없으면(탐색기로 띄웠다)
+    // 대화상자로 — **어느 쪽이든 사라지지는 않게**(`console::show_fatal` 문서).
+    let die = |message: String, code: i32| -> ! {
+        console::say(&format!("{message}\n"), true);
+        if !has_console {
+            console::show_fatal(&message);
+        }
+        std::process::exit(code)
+    };
     let (frame_dump, frame_keys, argv) = take_frame_dump(std::env::args().skip(1));
     // **지정된 엔드포인트는 폴백하지 않는다** — 지목받은 곳에 못 붙었는데 데모가 뜨면
-    // 사용자는 "붙었다"고 읽는다(TUI 이진과 같은 규칙).
-    let link = match parse_args(argv) {
-        Args::Usage => {
-            print!("{USAGE}");
+    // 사용자는 "붙었다"고 읽는다.
+    let link = match plan_for(parse_args(argv)) {
+        Plan::Usage => {
+            console::say(USAGE, false);
             return Ok(());
         }
-        Args::Bad(reason) => {
-            eprintln!("pytmux-gui: {reason}\n\n{USAGE}");
-            std::process::exit(2);
-        }
-        Args::Demo => None,
-        Args::Attach(Some(spec)) => match ServerLink::attach_to(&spec, 80, 24) {
+        Plan::Bad(reason) => die(format!("pytmux-gui: {reason}\n\n{USAGE}"), 2),
+        Plan::Demo => None,
+        Plan::AttachTo(spec) => match ServerLink::attach_to(&spec, 80, 24) {
             Ok(link) => Some(link),
-            Err(e) => {
-                eprintln!("pytmux-gui: {spec} 에 붙지 못했다: {e}");
-                std::process::exit(1);
-            }
+            Err(e) => die(format!("pytmux-gui: {spec} 에 붙지 못했다: {e}"), 1),
         },
-        Args::Attach(None) => match ServerLink::attach(80, 24) {
+        // 정본 `attach` 와 같은 모델이다: 없으면 **띄우고** 붙는다. 실패는 실패로
+        // 끝난다 — 데모로 떨어지면 사용자는 자기 세션이 사라졌다고 읽는다.
+        Plan::FindOrStart => match proto::boot::attach_or_start(80, 24) {
             Ok(link) => Some(link),
-            Err(e) => {
-                eprintln!("서버에 붙지 못해 블록 데모로 시작한다: {e}");
-                None
-            }
+            Err(e) => die(format!("pytmux-gui: {e}"), 1),
         },
     };
 
@@ -234,7 +306,7 @@ fn main() -> Result<()> {
         match link {
             Some(link) => {
                 let frame_dump = frame_dump.clone();
-                ctx.add_window(warpui::AddWindowOptions::default(), move |ctx| {
+                ctx.add_window(window_options(), move |ctx| {
                     // 서버 메시지를 주기적으로 퍼올린다. GUI 에는 TUI 의 `run_until` 에
                     // 해당하는 자리가 없어, 대신 주기 작업이 뷰로 돌아온다.
                     let spawner = ctx.spawner();
@@ -307,7 +379,7 @@ fn main() -> Result<()> {
             }
             None => {
                 let frame_dump = frame_dump.clone();
-                ctx.add_window(warpui::AddWindowOptions::default(), move |ctx| {
+                ctx.add_window(window_options(), move |ctx| {
                     // 데모 창도 같은 하네스를 받는다 — 서버 없이 순수 그리기를 확인하는 판.
                     if let Some(path) = frame_dump.clone() {
                         let spawner = ctx.spawner();
@@ -354,6 +426,32 @@ mod tests {
         assert_eq!(args(&["--socket", "/tmp/p.sock"]), want);
         assert_eq!(args(&["--socket=/tmp/p.sock"]), want);
         assert_eq!(args(&["--help"]), Args::Usage);
+    }
+
+    #[test]
+    fn no_arguments_means_start_the_server_not_show_a_demo() {
+        // ★ §10-20ⓓ 가 여기였다. 인자 없이 띄웠을 때 데모로 가면 사용자는 자기 세션이
+        //   사라졌다고 읽는다. 데모는 **명시 인자일 때만** 온다.
+        assert_eq!(plan_for(args(&[])), Plan::FindOrStart);
+        assert_eq!(plan_for(args(&["demo"])), Plan::Demo);
+        // 지목받은 곳은 폴백하지 않는다 — 데모도, 새 서버도 아니다.
+        assert_eq!(
+            plan_for(args(&["--socket=/tmp/p.sock"])),
+            Plan::AttachTo("/tmp/p.sock".into())
+        );
+        assert_eq!(plan_for(args(&["--help"])), Plan::Usage);
+        assert!(matches!(plan_for(args(&["--nope"])), Plan::Bad(_)));
+    }
+
+    #[test]
+    fn the_window_asks_the_os_to_draw_its_buttons() {
+        // §10-20ⓐ: 종전에는 최소화·최대화·닫기가 없었다(상류가 `hide_title_bar` 를
+        // 박아 뒀고 밖에서 건드릴 칸이 없었다). 기본값으로 되돌아가면 그 상태다.
+        let options = window_options();
+        assert_eq!(options.title_bar, warpui::TitleBar::Native);
+        // 제목을 안 주면 winit 기본값(`winit window`)이 제목줄에 뜬다 — 장식이 없던
+        // 동안에는 아무도 못 보던 이름이다.
+        assert_eq!(options.title.as_deref(), Some("pytmux"));
     }
 
     #[test]

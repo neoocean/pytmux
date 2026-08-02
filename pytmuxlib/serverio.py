@@ -442,6 +442,15 @@ class ServerIOMixin:
         # 그 키를 읽지 않는다(delete-to-disable). 채워질 키/값은 플러그인이 있을 때
         # 종전과 동일하다(서버 테스트가 claude_tokens 등 키를 그대로 검증).
         self.plugins.server_status(self, sess, win, msg, full)
+        # 상태줄 표식(Tier B ③ · P6) — **자료로** 준다. 정본은 자기 프로세스에서
+        # `client_statusbar_badges` 훅으로 그리지만, 네이티브 클라는 파이썬을 못 읽어
+        # 같은 칸을 못 만든다(그래서 REC 배지가 GUI 에 아예 없었다). 위 server_status
+        # 가 채워 둔 값을 플러그인이 그대로 다시 읽어 배지 목록을 만든다.
+        # 빈 목록이면 키를 안 싣는다 — 플러그인 부재 시 status 가 종전과 한 바이트도
+        # 다르지 않아야 한다(delete-to-disable · 추가 필드라 PROTO_VERSION 범프 불요).
+        badges = self.plugins.plugin_badges(self, sess, msg)
+        if badges:
+            msg["plugin_badges"] = badges
         # 탭 스위처 하위행용 경량 패널 요약(≥2 패널 탭만) — 원격 탭 스위처가 상류
         # status 로 하위 패널을 그릴 수 있게 한다(_switcher_panes docstring). 로컬
         # 클라는 이 필드를 무시(lazy tree 사용)하므로 다운스트림 원격 병합에만 쓰인다.
@@ -860,12 +869,15 @@ class ServerIOMixin:
         `_cells_last` 가 그 판정을 한다(같으면 안 보낸다 · 30Hz 로 같은 그림을 흘리지
         않는다)."""
         overlays = (c.plugin_state or {}).get("overlays") or {}
+        # 이 클라만 아는 사실들(Tier D · P7) — 오늘은 입력기 한/영 하나다.
+        facts = (c.plugin_state or {}).get("facts") or {}
         if getattr(c, "remote_view", None):
             # §1.7 원격 보기 중 — 화면이 업스트림 것이라 그 위에 **로컬** 시계가 뜨면
             # 안 된다. 들고 있던 그림이 남지 않게 지우개는 한 번 내보낸다(아래 빈
-            # 런 경로가 그 일을 한다).
-            overlays = {}
-        if not overlays and not c._cells_last:
+            # 런 경로가 그 일을 한다). 입력기 배지도 같다 — 남의 화면 위에 내 한/영을
+            # 얹으면 그 줄이 상류 것인지 내 것인지 알 수 없다.
+            overlays, facts = {}, {}
+        if not overlays and not facts and not c._cells_last:
             return None                      # 켠 적도 없다 — 아무것도 안 만든다
         if now - c._cells_at < self._CELLS_PERIOD and c._cells_last:
             return None
@@ -873,7 +885,10 @@ class ServerIOMixin:
         cols, rows = self._session_size(sess)
         panes = [{"id": p.id, "x": x, "y": y, "w": w, "h": h}
                  for p, (x, y, w, h) in self._client_pane_rects(sess, win)]
-        req = {"panes": panes, "overlays": overlays,
+        req = {"panes": panes, "overlays": overlays, "facts": facts,
+               # 활성 패널 id — 배지처럼 **거기 하나에만** 붙는 기여가 쓴다(Tier D).
+               "active": (win.active_pane.id
+                          if win and win.active_pane else None),
                "cols": cols, "rows": rows}
         try:
             runs = self.plugins.plugin_cells(self, sess, req)

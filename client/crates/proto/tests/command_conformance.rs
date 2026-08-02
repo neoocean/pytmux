@@ -136,6 +136,8 @@ fn only_the_two_known_commands_skip_the_full_resync() {
             // 핸들러가 **자기 손으로** full 을 보낸다(`_cmd_clear_history`) — 표의
             // FULL 을 안 쓸 뿐이지 전체 재동기는 온다.
             ("clear_history", "handled"),
+            // Tier D — 클라만 아는 사실을 올린다. 회신이 없고 답은 다음 셀 프레임이다.
+            ("client_fact", "handled"),
             ("copy_range", "handled"),
             // 패널을 실제로 죽였을 때만 broadcast 에 맡기고 HANDLED 를 반환한다.
             // 죽일 패널이 없으면 no-op 이라 FULL 로 떨어진다.
@@ -168,6 +170,13 @@ fn only_the_two_known_commands_skip_the_full_resync() {
             // 그리고, 다음 동작은 다시 `plugin_action` 으로 물어본다.
             ("plugin_action", "handled"),
             ("plugin_open", "handled"),
+            // Tier B/D 의 셋 — **회신이 아예 없다**. 답은 다음 `plugin_cells` 프레임이고
+            // 그건 flush 루프가 낸다(설계 §4.4). 그래서 full 재동기가 필요 없다.
+            // ⚠ 이 셋은 오래 이 목록 밖에 있었다 — `Command::all()` 에 안 들어 있어서다
+            // (`VARIANT_COUNT` 가 안 따라 올라가 색인 67·68 이 검사 범위 밖이었다).
+            // 2026-08-02i(P7)에서 셋을 all() 에 넣으며 여기도 함께 메웠다.
+            ("plugin_overlay", "handled"),
+            ("plugin_overlay_action", "handled"),
             // 핸들러가 **자기 손으로 방송**한다(서버 주석: `popup_open 이 broadcast`)
             // — 표의 FULL 을 안 쓸 뿐이지 화면은 온다.
             ("popup_close", "handled"),

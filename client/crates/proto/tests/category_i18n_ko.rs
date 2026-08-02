@@ -29,7 +29,8 @@ fn fixture() -> Fx {
 fn every_settings_tab_shows_the_canonical_korean() {
     let fx = fixture();
     assert!(!fx.setcat_ko.is_empty(), "픽스처가 비었다 — 통과가 아니라 고장이다");
-    i18n::set_locale("ko");
+    // 이 스레드에만 건다 — 전역을 뒤집으면 형제 테스트가 남의 로케일에서 단언한다.
+    let _ko = i18n::locale_guard("ko");
 
     let mut wrong = Vec::new();
     for cat in SETTINGS_CATS {

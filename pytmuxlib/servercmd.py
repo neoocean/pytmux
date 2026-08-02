@@ -175,6 +175,40 @@ class ServerCmdMixin:
         # 다음 틱을 기다리지 않고 **지금** 그린다(껐을 때도: 빈 런이 지우개다).
         client._cells_at = 0.0
 
+    @_cmd("client_fact", HANDLED)
+    async def _cmd_client_fact(self, client, sess, msg):
+        """이 클라만 아는 **사실**을 서버에 알린다(설계 Tier D · §4.4 · P7).
+
+        서버가 대신 알 수 없는 것이 있다 — 오늘 목록은 **입력기 한/영** 하나다. OS 가
+        그 상태를 클라 창에만 알려 주기 때문이고, 그래서 `ime-indicator` 는 그 사실을
+        클라에서 얻는다. 하지만 **그릴지·어디에·무슨 색으로는 플러그인이 정한다**
+        (Tier B) — 그래야 규칙이 한 벌로 남는다.
+
+        오버레이와 같은 자리(`ClientConn.plugin_state`)에 매단다: per-client 이고,
+        연결이 끊기면 함께 사라진다. 값이 비면 **지운다** — 끄는 것도 사실이다.
+
+        ⚠ **와이어 모양이 설계 스케치와 다르다.** 스케치는
+        `{"t":"client_fact","ime":"ko"}` 였는데 그러면 **플러그인 이름이 프로토콜에
+        박힌다** — P8 이 `overlay_style::{clock_digit,calendar}` 를 걷어낸 것과 같은
+        빚(INV5)이다. 이미 자리잡은 `plugin_overlay{name,…}` 와 같은 결로
+        `{"name","value"}` 를 쓴다.
+
+        회신은 없다 — 다음 프레임의 `plugin_cells` 가 곧 답이다.
+        """
+        name = str(msg.get("name") or "")
+        if not name:
+            return
+        facts = client.plugin_state.setdefault("facts", {})
+        value = msg.get("value")
+        if value in (None, ""):
+            facts.pop(name, None)
+        else:
+            facts[name] = str(value)[:32]   # 비신뢰 문자열 — 길이를 자른다
+        if not facts:
+            client.plugin_state.pop("facts", None)
+        # 다음 틱을 기다리지 않고 **지금** 그린다(지웠을 때도: 빈 런이 지우개다).
+        client._cells_at = 0.0
+
     @_cmd("plugin_overlay_action", HANDLED)
     async def _cmd_plugin_overlay_action(self, client, sess, msg):
         """오버레이의 클릭존/키가 올려 보낸 **이름**을 그 플러그인에 넘긴다(Tier B).

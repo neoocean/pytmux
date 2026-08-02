@@ -20,6 +20,8 @@
 // `#[cfg(unix)]` 였고, 그게 Windows 지원의 첫 관문이었다.
 pub mod client;
 pub mod blocks;
+/// 서버가 없으면 **정본이 띄운다**(직접 spawn 을 다시 적지 않는다).
+pub mod boot;
 
 pub mod canvas;
 pub mod clock;

@@ -22,36 +22,20 @@ from pytmuxlib import i18n
 from pytmuxlib.clientscreens import usage_bar_lines
 from pytmuxlib.clientutil import _CLOCK_FONT, _CLOCK_FONT_ROWS
 
-from .reset import fmt_countdown, parse_reset_to_dt, urgency
+from .reset import (_BUCKETS, fmt_countdown, parse_reset_to_dt,  # noqa: F401
+                    soonest_reset, urgency)
 
 # 빈 막대 트랙을 받아올 구분 글자(usage_bar_lines track_char). 표시 단계에서 이 글자만
 # 골라 회색 막대('█')로 치환·색칠한다 — 화면에 '░' 자체가 보이지는 않는다.
 _TRACK = "░"
 _TRACK_STYLE = "grey50"   # 빈 부분 회색(배경=검정·채움=흰색과 구분)
 
-# 카운트다운 대상 후보(이른 순으로 고른다) — usage_bar_lines 와 같은 버킷.
-_BUCKETS = [("session", "세션 5h"), ("week_all", "주 전체"),
-            ("week_sonnet", "주 Sonnet")]
+# 카운트다운 버킷 표와 선택 규칙(`soonest_reset`)은 UI 무의존 `reset.py` 로 옮겼다
+# (2026-08-02f) — 서버가 셀 기여에서 같은 규칙을 써야 해서다. 종전 이름 보존.
 
 # urgency 토큰 → rich 스타일.
 _URGENCY_STYLE = {"red": "bold bright_red", "yellow": "bold yellow",
                   "cyan": "bold bright_cyan"}
-
-
-def soonest_reset(usage, now):
-    """usage_limits 의 버킷 중 가장 이른(곧 도래) 리셋을 (label, dt) 로. 없으면
-    (None, None). 화면·오버레이가 공유하는 선택 규칙."""
-    best = (None, None)
-    for key, label in _BUCKETS:
-        d = usage.get(key) if isinstance(usage, dict) else None
-        if not isinstance(d, dict):
-            continue
-        dt = parse_reset_to_dt(d.get("reset"), now)
-        if dt is None:
-            continue
-        if best[1] is None or dt < best[1]:
-            best = (label, dt)
-    return best
 
 
 def big_clock_text(td, style):

@@ -18,6 +18,56 @@
 /// 요약 구역이 쓰는 줄 수(항목만 — 머리줄·빈 줄은 별도).
 pub const ROWS: usize = 5;
 
+/// 구역이 펼쳐져 있나 (§10-20ⓔ · 사용자 요청 2026-08-02).
+///
+/// # 왜 기본이 접힘인가
+///
+/// 이 구역은 **늘 펼쳐져** 있었고, 그만큼 서버 캔버스가 상시로 여섯 줄 좁았다. 훑는
+/// 용도의 요약이 화면의 주인공(패널)을 밀어내고 있던 셈이다. 사용자 요청도 접힘이다.
+///
+/// # 왜 접혀도 머리줄은 남나
+///
+/// 통째로 사라지면 **여는 손이 사라진다** — 다시 펼 자리가 화면에 없다. 머리줄은 그
+/// 자리에서 개수(`블록 N개 · Claude N개`)까지 알려 주므로, 접힌 상태가 "없다"로
+/// 읽히지도 않는다.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Fold {
+    /// 머리줄만. **기본값** — 되돌리는 변경이 오라클을 깨우게 여기에 `#[default]` 를 둔다.
+    #[default]
+    Closed,
+    /// 머리줄 + 항목들.
+    Open,
+}
+
+impl Fold {
+    /// 눌렀을 때.
+    pub fn toggled(self) -> Self {
+        match self {
+            Fold::Closed => Fold::Open,
+            Fold::Open => Fold::Closed,
+        }
+    }
+
+    pub fn is_open(self) -> bool {
+        matches!(self, Fold::Open)
+    }
+}
+
+/// 이 구역이 **크롬에서 가져가는 줄 수**(머리줄 포함). 그릴 것이 없으면 0.
+///
+/// # 왜 뷰 밖인가
+///
+/// 이 값이 곧 서버에 알리는 캔버스 높이의 일부다 — 한 줄이 틀리면 서버가 전 세션을
+/// 다시 배치하고 그 프레임이 **같은 세션의 다른 클라에게도** 간다. 창을 띄우지 않고
+/// 시험돼야 하는 부류라 판단은 여기 있고 뷰는 더하기만 한다(모듈 문서 §「왜 여기인가」).
+pub fn rows(fold: Fold, has_blocks: bool, has_claude: bool) -> usize {
+    if !has_blocks && !has_claude {
+        return 0;
+    }
+    // 머리줄 하나는 접혀 있어도 남는다(여는 손).
+    1 + if fold.is_open() { ROWS } else { 0 }
+}
+
 /// 블록과 Claude 를 **함께** 보일 때 Claude 가 가져가는 줄 수.
 pub const CLAUDE_ROWS: usize = 3;
 
@@ -94,10 +144,12 @@ pub fn elide(text: &str, max_cols: usize) -> String {
 ///   (서버·Claude 가 이름을 늘려도 우리가 번역하려 들면 모르는 값이 사라진다).
 /// - `remote` 이고 Claude 항목이 없으면 한 마디 붙인다. 그냥 비면 **"안 되는 것"과
 ///   "안 쓴 것"이 같아 보인다**.
-pub fn head(blocks: usize, claude: usize, mode: Option<&str>, remote: bool) -> String {
+/// `fold` 는 **접힘 표식**을 정한다(`▸` 닫힘 / `▾` 열림). 표식이 없으면 접힌 구역이
+/// "블록이 있는데 안 그려진다"로 읽히고, 누를 수 있다는 것도 화면에 없다.
+pub fn head(blocks: usize, claude: usize, mode: Option<&str>, remote: bool, fold: Fold) -> String {
     use base::i18n::{t, tf};
 
-    let mut head = String::from("──");
+    let mut head = String::from(if fold.is_open() { "▾" } else { "▸" });
     if blocks > 0 {
         head.push_str(&tf(" 블록 {n}개", &[("n", blocks.to_string().as_str())]));
     }
@@ -201,7 +253,7 @@ mod tests {
     fn the_permission_mode_is_shown_verbatim() {
         // ★ 무엇이 자동으로 허용되는지가 화면에 없으면 사용자는 거부 줄을 보고서야 안다.
         // 값을 번역하려 들면 상류가 이름을 늘렸을 때 그 값이 조용히 사라진다.
-        let line = head(0, 3, Some("acceptEdits"), false);
+        let line = head(0, 3, Some("acceptEdits"), false, Fold::Open);
         assert!(line.contains("Claude 3개"), "{line}");
         assert!(line.contains("[acceptEdits]"), "{line}");
     }
@@ -209,17 +261,54 @@ mod tests {
     #[test]
     fn a_remote_pane_without_a_conversation_says_why() {
         // 그냥 비면 "안 되는 것"과 "안 쓴 것"이 같아 보인다.
-        assert!(head(2, 0, None, true).contains("원격 상류"));
+        assert!(head(2, 0, None, true, Fold::Open).contains("원격 상류"));
         // 로컬인데 대화가 없는 것은 그냥 없는 것이다 — 설명할 게 없다.
-        assert!(!head(2, 0, None, false).contains("원격"));
+        assert!(!head(2, 0, None, false, Fold::Open).contains("원격"));
         // 원격이어도 대화가 오면 그 안내는 필요 없다.
-        assert!(!head(2, 1, None, true).contains("원격"));
+        assert!(!head(2, 1, None, true, Fold::Open).contains("원격"));
     }
 
     #[test]
     fn both_kinds_are_named_when_both_are_there() {
-        let line = head(2, 3, None, false);
+        let line = head(2, 3, None, false, Fold::Open);
         assert!(line.contains("블록 2개") && line.contains("Claude 3개"), "{line}");
+    }
+
+    #[test]
+    fn the_area_starts_folded_and_keeps_its_head_line() {
+        // ★ 기본이 펼침이면 서버 캔버스가 **상시로** 여섯 줄 좁다(§10-20ⓔ 이전 상태).
+        assert_eq!(Fold::default(), Fold::Closed, "기본이 접힘이 아니다");
+        // 접혀도 머리줄은 남는다 — 통째로 사라지면 **다시 펼 자리가 화면에 없다**.
+        assert_eq!(rows(Fold::Closed, true, false), 1);
+        assert_eq!(rows(Fold::Closed, false, true), 1);
+        assert_eq!(rows(Fold::Open, true, false), 1 + ROWS);
+        assert_eq!(rows(Fold::Open, true, true), 1 + ROWS);
+        // 그릴 것이 없으면 머리줄도 없다(종전과 같다).
+        assert_eq!(rows(Fold::Closed, false, false), 0);
+        assert_eq!(rows(Fold::Open, false, false), 0);
+        // 펼침이 가져가는 몫이 곧 예산이다 — 어긋나면 캔버스가 그만큼 밀린다.
+        assert_eq!(
+            rows(Fold::Open, true, true) - rows(Fold::Closed, true, true),
+            ROWS
+        );
+    }
+
+    #[test]
+    fn the_head_line_says_which_way_it_is_folded() {
+        // 표식이 없으면 접힌 구역이 "블록이 있는데 안 그려진다"로 읽히고, 누를 수
+        // 있다는 것도 화면에 없다.
+        let closed = head(2, 0, None, false, Fold::Closed);
+        let open = head(2, 0, None, false, Fold::Open);
+        assert!(closed.starts_with('▸'), "{closed}");
+        assert!(open.starts_with('▾'), "{open}");
+        // 개수는 접혀도 보인다 — 접힘이 "없다"로 읽히면 안 된다.
+        assert!(closed.contains("블록 2개"), "{closed}");
+    }
+
+    #[test]
+    fn folding_is_a_toggle() {
+        assert_eq!(Fold::Closed.toggled(), Fold::Open);
+        assert_eq!(Fold::Open.toggled(), Fold::Closed);
     }
 
     #[test]

@@ -256,6 +256,13 @@ pub struct SessionView {
     claude: Vec<ClaudeItem>,
     /// 걸려 있는 권한 모드. 머리줄에 한 낱말로 붙는다.
     claude_mode: Option<String>,
+    /// 이 구역이 펼쳐져 있나(§10-20ⓔ). 기본은 접힘.
+    ///
+    /// **어디에도 저장하지 않는다.** 후보가 둘이었다 — 설정 파일(영속)과 여기(연결 수명).
+    /// 설정을 고르면 정본과 공유하는 설정 표면에 **정본에 없는 칸**이 생기고
+    /// (`check_fixtures`·표면 원장이 먼저 운다), 그 칸의 뜻을 정본이 영영 모른다.
+    /// 이 구역 자체가 우리 것뿐이라(정본에는 없다) 상태도 우리 창의 수명에 묶는다.
+    footer_fold: footer::Fold,
     /// 이 머신의 트랜스크립트 파일을 보는 눈(로컬 패널용).
     watcher: Watcher,
     /// 상류가 실어 보낸 원문 꼬리(원격 패널용).
@@ -364,6 +371,7 @@ impl SessionView {
             ui_font,
             claude: Vec::new(),
             claude_mode: None,
+            footer_fold: footer::Fold::default(),
             watcher: Watcher::new(projects_dir()),
             remote: RemoteTranscripts::default(),
             // 붙자마자 한 번 본다 — 첫 프레임에 이미 대화가 있으면 빈 구역을 보일
@@ -1123,6 +1131,13 @@ impl SessionView {
                 self.push_overlay_toggle("clock");
                 return true;
             }
+            // Claude 한도 오버레이도 같은 길이다(Tier B) — 그림·데이터는 서버가 든다
+            // (`/usage` 스크랩은 서버가 하고, 한도 막대 줄도 서버가 만든다). 우리는
+            // **켠 사실**만 올린다. 오버레이 이름은 플러그인 디렉토리 이름 그대로다.
+            Action::ToggleUsageView => {
+                self.push_overlay_toggle("claude-token-usage-view");
+                return true;
+            }
             Action::ShowPlugins => {
                 self.screens.open(Screen::Plugins);
                 self.screens.clamp_selection(self.state.plugins().len());
@@ -1775,10 +1790,9 @@ impl SessionView {
         // 재발이다. 안 세면 더 나쁘다: 라이브에서 그 줄이 **창 밖으로 밀려 안 보였다**
         // (2026-07-30 실측 — 상태줄까지만 그려지고 메시지가 사라졌다).
         let message = 1;
-        if !has_blocks && !has_claude {
-            return badges + message;
-        }
-        badges + message + 1 + footer::ROWS
+        // 요약 구역의 몫은 `footer` 가 정한다(뷰는 더하기만 — 그 값이 곧 서버에 알릴
+        // 캔버스 높이라 창 없이 시험돼야 한다).
+        badges + message + footer::rows(self.footer_fold, has_blocks, has_claude)
     }
 
     /// 자리표와 창 크기로 격자를 잰다. 잴 수 없으면 `None`.
@@ -1858,14 +1872,27 @@ impl SessionView {
             return false;
         }
         self.last_ime = std::time::Instant::now();
-        let now = crate::ime::badge();
+        self.report_ime(crate::ime::badge())
+    }
+
+    /// 바뀐 한/영을 **사실로 올린다**. OS 를 여기서 안 묻는 이유는 그래야 오라클이
+    /// 이 배선을 부를 수 있어서다 — 위 `tick_ime` 은 창 밖 입력기 창에 물어야 해서
+    /// 테스트가 값을 정할 수 없다(그 탓에 이 배선은 오래 라이브 스크린샷으로만
+    /// 잡혔다). 바뀌었으면 `true`(다시 그린다).
+    fn report_ime(&mut self, now: Option<&'static str>) -> bool {
         if now == self.ime_badge {
             return false;
         }
         self.ime_badge = now;
-        // 배지는 **활성 패널 우상단**에 그린다(정본과 같은 자리) — 합성이 그리므로
-        // 상태에 넣어 준다. 입력기 상태는 OS 것이라 proto 가 스스로 알 수 없다.
-        self.state.set_ime_badge(now.map(str::to_owned));
+        // ★ 우리가 하는 일은 **사실을 알리는 것까지**다(설계 Tier D · P7). 한/영은 OS 가
+        // 우리 창에만 알려 주니 서버가 스스로 알 수 없지만, **그릴지·어디에·무슨 색으로**
+        // 는 플러그인이 정한다(Tier B) — 그래야 규칙이 정본과 한 벌이다. 종전에는 우리가
+        // 그림까지 들고 있었고 자리가 갈려 있었다(활성 패널 첫 행 vs 정본의 커서 줄).
+        // 그림은 다음 `plugin_cells` 프레임으로 온다.
+        self.pending.push(Outgoing::Command(Command::ClientFact {
+            name: "ime".to_owned(),
+            value: now.map(str::to_owned),
+        }));
         true
     }
 
@@ -2288,6 +2315,13 @@ impl SessionView {
         if !self.config.mouse {
             return false;
         }
+        // 요약 구역 접기는 **뷰 로컬**이라 액션 표를 안 지난다(정본에 대응 명령이 없다).
+        // 다만 크롬 높이가 바뀌므로 다음 레이아웃에서 서버에 새 격자가 나간다 —
+        // `fit_grid` 가 `footer_lines()` 를 다시 재는 그 자리다.
+        if matches!(target, base::chrome::ClickTarget::FooterFold) {
+            self.footer_fold = self.footer_fold.toggled();
+            return true;
+        }
         let tabs = self.chrome_tabs();
         let badges = self.state.badges();
         let ctx = self.chrome_ctx(&tabs, &badges);
@@ -2563,10 +2597,31 @@ impl SessionView {
         for badge in self.state.flags().monitor_badges() {
             left = left.with_child(self.chip(badge, palette::BR_YELLOW));
         }
-        // Claude 모델·5시간 한도(정본과 같은 자리 — 대조 문서 §16). 재료가 없으면 안 뜬다.
-        if let Some(text) = self.state.claude_badge() {
-            left = left.with_child(self.chip(&text, palette::CYAN));
+        // ★ 플러그인이 낸 표식(Tier B ③ · P6) — 바로 위 주석이 "파이썬 정본이 시스템
+        // 배지(Z·SYNC·AR·**REC**)를 두는 자리"라고 적어 둔 그 자리다. REC 는 우리에게
+        // 없었다(플러그인이 채우는 칸이라 `Badge` 열거형에 넣을 수 없었다).
+        // 이제 서버가 자료로 준다 — 글자와 **의미 색 이름**만 받아 우리 테마로 푼다.
+        // 감시류와 같은 이유로 **클릭존 없이 칩으로만** 그린다(누르는 자리는 Tier C
+        // 화면이 와야 생긴다 — 그래서 서버도 `do` 를 안 싣는다).
+        for badge in self.state.plugin_badges() {
+            // 색 이름은 런과 **같은 표**로 푼다(`proto::session::theme`) — 배지라고
+            // 다른 표를 두면 같은 이름이 두 자리에서 다른 색이 된다.
+            // 칩은 배경이 고정(HOVER)이라 글자색 한 칸만 쓴다: 바탕색 이름이 왔으면
+            // 그것이 이 배지의 **주된 색**이므로 글자에 쓴다(정본은 ` REC ` 를 빨간
+            // 바탕에 흰 글자로 그린다 — 칩에서는 빨간 글자가 같은 뜻이다).
+            let name = badge.theme.b.as_deref().or(badge.theme.f.as_deref());
+            let color = name
+                .and_then(proto::session::theme::color)
+                .map(|c| to_gui_color(&c))
+                .unwrap_or(palette::FG);
+            left = left.with_child(self.chip(badge.say().trim(), color));
         }
+        // ★ Claude 모델·한도 배지는 **여기 없다** — 위 `plugin_badges` 줄이 그린다
+        //   (M4 P6 후반). 종전에는 우리가 날 필드(`claude_model`·`tok5h_pct`)로 자기
+        //   문자열을 조립했는데(`claude_badge`), 그러면 정본과 **두 벌**이 되어 같은
+        //   상태를 서로 다르게 보였다 — 실제로 갈려 있었다(정본은 카운트다운·경고까지
+        //   그렸고 우리는 안 그렸다). 이제 규칙은 `plugins/claude-code/statusbadges.py`
+        //   한 벌이고 우리는 받은 것을 칩으로 그린다.
         // ★ 입력기 배지는 여기 없다 — **활성 패널 우상단**으로 옮겼다(정본과 같은 자리,
         // 3차 대조 ⓕ). 이 배지는 "다음 글자가 무엇이 될지"를 말하는데 그때 눈은 커서에
         // 있지 상태줄에 있지 않다. 두 곳에 그리면 같은 것을 두 번 말하는 크롬이 된다.
@@ -2814,24 +2869,49 @@ impl SessionView {
             self.claude.len(),
             self.claude_mode.as_deref(),
             self.state.active_tab_is_remote(),
+            self.footer_fold,
         );
         // 복사 결과는 여기가 아니라 **맨 위 머리줄**에 붙는다(TUI 와 같은 배치) —
         // 이 구역은 블록도 Claude 도 없으면 아예 안 그려져, 여기 두면 안 보일 때가 있다.
         // 이 줄의 위치가 곧 **캔버스가 끝나는 자리**다. 크롬 높이를 계산하지 않고 재려고
         // 자리표를 남긴다(캔버스 자리표와 같은 규율).
-        let mut column = column.with_child(
+        let slot = self.chrome_slot_end() + 1;
+        let mut head_el = Container::new(
             Text::new_inline(head, self.font, 12.)
                 .with_color(palette::DIM)
                 .with_saved_char_position(0, Self::FOOTER_PROBE.to_owned())
                 .finish(),
-        );
+        )
+        .with_horizontal_padding(4.)
+        .with_corner_radius(theme::PILL_RADIUS);
+        if self.chrome_hovered(slot) {
+            head_el = head_el.with_background_color(theme::HOVER);
+        }
+        let mut column = column.with_child(self.clickable_chrome(
+            slot,
+            base::chrome::ClickTarget::FooterFold,
+            head_el.finish(),
+        ));
+        if !self.footer_fold.is_open() {
+            return column;
+        }
+        // 펼쳐진 항목은 **상자로 감싼다**(사용자 요청) — 그래야 이 구역이 캔버스의 일부가
+        // 아니라 따로 얹힌 판이라는 것이 눈에 보인다. GUI 는 테두리를 선문자가 아니라
+        // 실제 선으로 그린다(N8) — 여기서도 같은 길이라 **줄을 더 먹지 않는다**.
+        let mut inner = Flex::column();
         for block in footer::tail(blocks, block_rows) {
-            column = column.with_child(self.render_block(block, cols));
+            inner = inner.with_child(self.render_block(block, cols));
         }
         for item in footer::tail(&self.claude, claude_rows) {
-            column = column.with_child(self.render_claude(item, cols));
+            inner = inner.with_child(self.render_claude(item, cols));
         }
-        column
+        column.with_child(
+            Container::new(inner.finish())
+                .with_border(Border::all(1.).with_border_color(palette::DIM))
+                .with_corner_radius(theme::PILL_RADIUS)
+                .with_horizontal_padding(4.)
+                .finish(),
+        )
     }
 
     /// 플러그인이 준 화면(설계 Tier C · P4) — 목록과 글 두 모양.
@@ -2846,7 +2926,7 @@ impl SessionView {
         let mut column = column;
         // 실패했거나 비었을 때의 한 줄 — **빈 목록과 실패는 다르다**(스펙의 `note`).
         if !spec.note.is_empty() {
-            column = column.with_child(self.text(spec.note.clone(), 13., palette::DIM));
+            column = column.with_child(self.text(spec.say_note(), 13., palette::DIM));
         }
         match spec.kind.as_str() {
             "list" => {
@@ -4693,7 +4773,7 @@ impl SessionView {
         //   `플러그인 화면` 이라는 한 제목으로 떴다. 어느 판을 열었는지 화면이 말해 주지
         //   않으면 스펙이 제목을 싣는 뜻이 없다). 스펙이 안 주면 종전 폴백 그대로다.
         let spec_title = (screen == Screen::PluginView)
-            .then(|| self.state.plugin_screen().map(|s| s.title.clone()))
+            .then(|| self.state.plugin_screen().map(|s| s.say_title()))
             .flatten()
             .filter(|t| !t.is_empty());
         let title = self.screens.confirm_title().unwrap_or(screen.title());
@@ -4708,7 +4788,7 @@ impl SessionView {
         // 안내도 같다 — 그 판에서 무슨 키가 무엇을 하는지는 플러그인이 안다
         // (`ncd` 의 `c`, 달력의 `‹` 처럼 판마다 다르다).
         let spec_hint = (screen == Screen::PluginView)
-            .then(|| self.state.plugin_screen().map(|s| s.hint.clone()))
+            .then(|| self.state.plugin_screen().map(|s| s.say_hint()))
             .flatten()
             .filter(|h| !h.is_empty());
         let mut column = Flex::column()

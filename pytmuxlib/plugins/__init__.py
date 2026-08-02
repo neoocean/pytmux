@@ -431,6 +431,41 @@ class Registry:
                 out.extend(got)
         return out
 
+    def plugin_badges(self, server, sess, msg) -> list:
+        """Tier B — **상태줄 기여**(설계 §1.2 의 ③ · P6).
+
+        상태줄에 붙는 **표식 한 칸**을 자료로 준다. 셀 기여(`plugin_cells`)와 같은
+        발상이고 어휘도 같다 — 다른 것은 자리를 플러그인이 안 정한다는 점뿐이다.
+        오버레이는 "어느 칸에" 가 뜻의 일부지만, 상태줄 표식은 **줄 안의 순서**만
+        있으면 되고 그 순서는 클라의 상태줄 규칙이 정한다(정본과 GUI 의 배지 줄
+        생김새가 서로 다르다 — 같은 자리를 강요하면 한쪽이 망가진다).
+
+        `msg` 는 지금 만들고 있는 status 메시지다(읽기 전용으로 본다) — 플러그인이
+        이미 `server_status` 로 채워 넣은 자기 필드를 그대로 다시 읽으면 되므로,
+        같은 값을 두 번 계산하지 않는다.
+
+        돌려줄 것 — 배지 목록. 각 배지:
+        `{"text": " REC ", "style": {…}, "theme": {…}}` (+ 레지스트리가 `"name"` 을 찍는다)
+
+        - 스타일은 **이미 있는 표현**(`model._style_key` 축약)이고, 색은 `theme` 의
+          **의미 이름**이다 — 서버가 hex 를 실으면 서버가 UI 를 알게 된다(설계 §10).
+        - **누르는 자리는 아직 없다**. 정본의 REC 배지는 클릭하면 캡처 정보 팝업이
+          뜨는데 그 화면은 Tier C(④)이고 네이티브에는 아직 없다 — 여기에 `do` 를
+          실어 두면 **선언은 있고 배선이 없는** 칸이 하나 더 생긴다(08-02b). 화면이
+          오면 그때 `plugin_triggers` 와 같은 표기로 넓힌다.
+
+        플러그인이 하나도 안 내면 빈 목록 → status 에 키가 안 실린다(delete-to-disable).
+        """
+        out = []
+        for p in self.plugins:
+            fn = getattr(p, "plugin_badges", None)
+            if fn is None:
+                continue
+            got = fn(server, sess, msg)
+            for item in (got or []):
+                out.append({**item, "name": p.name})
+        return out
+
     # ---- 서버 런타임 훅(코어가 믹스인 메서드를 이름으로 직접 부르지 않게) ----
     # 코어(serverio/server)는 Claude 서버 로직(스캔/상태/입력/사용량)에 **이 훅으로만**
     # 닿는다. 플러그인이 없으면 전부 기본값(False/None/no-op)이라 서버가 그대로 동작

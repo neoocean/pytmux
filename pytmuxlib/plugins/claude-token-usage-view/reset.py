@@ -118,3 +118,29 @@ def urgency(td) -> str:
     if secs < 60 * 60:
         return "yellow"
     return "cyan"
+
+
+# 카운트다운 대상 후보 — `usagebar` 의 표시 버킷과 같은 순서·같은 키다.
+# (라벨은 화면이 i18n 으로 다시 붙이므로 여기서는 키만 쓴다.)
+_BUCKETS = (("session", "세션 5h"), ("week_all", "주 전체"),
+            ("week_sonnet", "주 Sonnet"))
+
+
+def soonest_reset(usage, now):
+    """usage_limits 의 버킷 중 가장 이른(곧 도래) 리셋을 (label, dt) 로. 없으면
+    (None, None). 화면·오버레이가 공유하는 선택 규칙.
+
+    2026-08-02f 에 `screen.py`(textual) 에서 여기로 옮겼다 — **서버도 같은 규칙으로**
+    카운트다운을 골라야 셀 기여(Tier B)가 정본과 같은 시각을 센다. 옮긴 것은 자리
+    뿐이고 screen.py 는 종전 이름으로 다시 내보낸다."""
+    best = (None, None)
+    for key, label in _BUCKETS:
+        d = usage.get(key) if isinstance(usage, dict) else None
+        if not isinstance(d, dict):
+            continue
+        dt = parse_reset_to_dt(d.get("reset"), now)
+        if dt is None:
+            continue
+        if best[1] is None or dt < best[1]:
+            best = (label, dt)
+    return best

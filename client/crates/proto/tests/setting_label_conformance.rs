@@ -133,7 +133,10 @@ fn every_value_word_matches_canon_and_technical_values_stay_raw() {
 #[test]
 fn the_english_side_matches_canon_too() {
     let fx = fixture();
-    i18n::set_locale("en");
+    // 이 스레드에만 건다 — 전역을 뒤집으면 형제 테스트가 남의 로케일에서 단언한다
+    // (2026-08-02 사고 — `base::i18n::with_locale` 항목). 되돌리기는 `Drop` 이 하므로
+    // 아래 단언에서 터져도 다음 테스트가 영어를 물려받지 않는다.
+    let _en = i18n::locale_guard("en");
 
     let mut wrong = Vec::new();
     for setting in SETTINGS {
@@ -168,6 +171,6 @@ fn the_english_side_matches_canon_too() {
         }
     }
 
-    i18n::set_locale("ko");
+    drop(_en);   // 실패 메시지는 **한국어로** 짓는다 — 재는 구간은 여기서 끝이다.
     assert!(wrong.is_empty(), "영어 표기가 정본과 다르다:\n  {}", wrong.join("\n  "));
 }

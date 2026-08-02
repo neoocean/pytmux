@@ -156,6 +156,22 @@ struct GlobalShortcut {
     args: Box<dyn Any>,
 }
 
+/// Whether the OS draws the window's title bar.
+///
+/// (pytmux addition — see `client/PROVENANCE.md`.) `WindowOptions::hide_title_bar` already
+/// existed on every platform backend, but `AddWindowOptions` had no way to reach it: the
+/// value was hard-coded to "hidden" in `App::insert_window_internal`. An app that wants the
+/// OS to draw minimize/maximize/close had no way to say so.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum TitleBar {
+    /// The app draws its own chrome. **Default — this is the pre-existing behavior.**
+    #[default]
+    Hidden,
+    /// Native decorations. The buttons land wherever that OS puts them (left on macOS,
+    /// right on Windows), which is the point of asking the OS to draw them.
+    Native,
+}
+
 #[derive(Default, Derivative)]
 #[derivative(Debug)]
 pub struct AddWindowOptions {
@@ -165,6 +181,9 @@ pub struct AddWindowOptions {
     pub window_bounds: WindowBounds,
     pub title: Option<String>,
     pub fullscreen_state: FullscreenState,
+    /// Who draws the title bar. Defaults to [`TitleBar::Hidden`] so existing callers are
+    /// unaffected.
+    pub title_bar: TitleBar,
 
     /// If true, new windows created immediately after this window is closed
     /// will have the same position and size as this window.

@@ -1,7 +1,15 @@
-//! 입력기 배지가 **활성 패널 우상단**에 그려지나 — 렌더 오라클.
+//! 입력기 배지 — **우리는 더 이상 그리지 않는다**(설계 Tier D · P7, 2026-08-02i).
 //!
-//! 왜 렌더로 재나: 자리를 계산하는 함수만 단위로 재면 **합성이 그것을 안 부르는 것**을
-//! 못 잡는다(이 저장소가 두 번 겪은 공허 통과). 실제로 합성해 놓고 그 칸의 글자를 본다.
+//! 종전에는 이 파일이 우리 손그림(`draw_ime_badge`)을 쟀다: 활성 패널 **첫 행** 오른쪽
+//! 끝. 그런데 정본은 **커서가 있는 줄**에 그린다 — 두 벌이 갈려 있었고, 그 자리 주석은
+//! "정본과 같은 자리"라고 적고 있었다(커서가 첫 줄일 때만 같았다).
+//!
+//! 이제 자리 규칙은 플러그인 한 벌(`plugins/ime-indicator/cells.py`)이 정하고, 우리는
+//! **한/영이라는 사실만** `client_fact` 로 올린다. 그래서 여기서 잴 것도 바뀌었다:
+//!
+//! 1. 우리가 **스스로 그리지 않는다**(런이 안 오면 아무것도 안 뜬다).
+//! 2. 런이 오면 **플러그인이 말한 행**에 뜬다 — 옛 코드는 무슨 값이 와도 0행이었다.
+//!    이 오라클이 있었으면 위 갈림을 잡았다.
 
 use proto::message::ServerMessage;
 use proto::session::SessionState;
@@ -31,42 +39,61 @@ fn row_text(state: &SessionState, y: usize) -> String {
 }
 
 #[test]
-fn the_badge_sits_at_the_top_right_of_the_active_pane() {
-    let mut state = state_with_two_panes();
-    assert!(!row_text(&state, 0).contains("EN"), "안 넣었는데 배지가 있다");
-
-    state.set_ime_badge(Some("EN".to_owned()));
-    let line = row_text(&state, 0);
-    // 활성 패널(오른쪽, x=20..38)의 **오른쪽 끝**이라야 한다 — 화면 끝도, 왼쪽 패널도 아니다.
-    let at = line.find("EN").expect(&format!("배지가 없다: {line:?}"));
-    assert_eq!(at, 36, "배지가 활성 패널 우상단이 아니다: {line:?}");
-
-    // 활성 패널이 바뀌면 배지도 따라간다 — 자리를 박아 두면 분할에서 엉뚱한 칸에 남는다.
-    let layout: ServerMessage = serde_json::from_value(serde_json::json!({
-        "t": "layout", "cols": 40, "rows": 6,
-        "panes": [
-            {"id": 1, "x": 0, "y": 0, "w": 18, "h": 6, "title": "left"},
-            {"id": 2, "x": 20, "y": 0, "w": 18, "h": 6, "title": "right"}
-        ],
-        "active": 1
-    }))
-    .unwrap();
-    state.apply(layout);
-    let line = row_text(&state, 0);
-    assert_eq!(line.find("EN"), Some(16), "활성 패널을 안 따라갔다: {line:?}");
+fn we_do_not_draw_the_badge_ourselves_anymore() {
+    // 사실을 올리는 것과 그리는 것은 다른 일이다. 런이 안 오면 화면에 아무것도 없다 —
+    // 플러그인을 지운 서버에 붙어도 우리 쪽에 배지가 남지 않는다(delete-to-disable).
+    let state = state_with_two_panes();
+    for y in 0..6 {
+        assert!(
+            !row_text(&state, y).contains("EN"),
+            "런이 없는데 배지가 그려졌다(y={y}): {:?}",
+            row_text(&state, y)
+        );
+    }
 }
 
 #[test]
-fn a_pane_too_narrow_for_the_badge_keeps_its_content() {
-    // 화면을 덮어 가며 알릴 만한 것은 아니다 — 좁으면 안 그린다.
-    let mut state = SessionState::new();
-    let layout: ServerMessage = serde_json::from_value(serde_json::json!({
-        "t": "layout", "cols": 6, "rows": 3,
-        "panes": [{"id": 1, "x": 0, "y": 0, "w": 3, "h": 3, "title": "tiny"}],
-        "active": 1
+fn the_badge_lands_on_the_row_the_plugin_chose() {
+    // ★ 이 오라클이 P7 의 요점이다. 옛 손그림은 **무슨 일이 있어도 0행**이었다 —
+    // 정본이 커서 줄에 그리는 것과 갈렸고, 아무도 그것을 재지 않았다.
+    let mut state = state_with_two_panes();
+    let cells: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells",
+        "runs": [{
+            "x": 34, "y": 4, "text": "[EN]",
+            "style": {"f": "black", "bo": 1}, "theme": {"b": "primary"}
+        }]
     }))
     .unwrap();
-    state.apply(layout);
-    state.set_ime_badge(Some("EN".to_owned()));
-    assert!(!row_text(&state, 0).contains("EN"), "좁은 패널을 배지가 덮었다");
+    state.apply(cells);
+    assert_eq!(
+        row_text(&state, 4).find("[EN]"),
+        Some(34),
+        "플러그인이 말한 자리에 안 떴다: {:?}",
+        row_text(&state, 4)
+    );
+    assert!(!row_text(&state, 0).contains("EN"), "0행에도 그렸다(옛 손그림의 자리)");
+}
+
+#[test]
+fn a_wide_character_in_a_run_does_not_shift_the_rest() {
+    // ★ **와이드 문자는 두 칸이다.** `put` 이 뒷칸을 자리표로 채우므로 우리가 그 폭만큼
+    // 건너뛰어야 다음 글자가 안 겹친다. 정본도 같은 자리에서 같은 실수를 하고 있었고
+    // (글자마다 한 칸씩), 한글 배지가 오자 행 폭이 틀어지며 드러났다(2026-08-02i).
+    let mut state = state_with_two_panes();
+    let cells: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells",
+        "runs": [{ "x": 20, "y": 2, "text": "[한]", "style": {}, "theme": {} }]
+    }))
+    .unwrap();
+    state.apply(cells);
+    let canvas = state.composite().expect("합성이 없다");
+    assert_eq!(canvas.cell(20, 2).map(|c| c.ch), Some('['));
+    assert_eq!(canvas.cell(21, 2).map(|c| c.ch), Some('한'));
+    // 22 는 `한` 의 자리표다 — 여기에 `]` 가 오면 한 칸씩 밀린 것이다.
+    assert_eq!(
+        canvas.cell(23, 2).map(|c| c.ch),
+        Some(']'),
+        "와이드 문자를 한 칸으로 세어 뒤가 밀렸다"
+    );
 }

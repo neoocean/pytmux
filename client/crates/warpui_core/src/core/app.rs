@@ -2479,6 +2479,7 @@ impl AppContext {
             window_bounds,
             title,
             fullscreen_state,
+            title_bar,
             background_blur_radius_pixels,
             background_blur_texture,
             anchor_new_windows_from_closed_position,
@@ -2504,7 +2505,9 @@ impl AppContext {
         let window_options = WindowOptions {
             bounds: window_bounds,
             fullscreen_state,
-            hide_title_bar: true,
+            // (pytmux) was hard-coded `true`; now the caller decides. `TitleBar::Hidden` is
+            // the derive default, so callers that don't mention it are unchanged.
+            hide_title_bar: matches!(title_bar, crate::core::TitleBar::Hidden),
             title,
             style: window_style,
             background_blur_radius_pixels,

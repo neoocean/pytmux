@@ -45,4 +45,8 @@ windows = { workspace = true, features = [
   "Win32_Foundation",
   "Win32_UI_Input_Ime",
   "Win32_UI_WindowsAndMessaging",
+  # GUI 서브시스템 이진이 터미널에서 떴을 때 **부모 콘솔에 붙는다**(`console.rs`).
+  # 이 둘이 없으면 `--help`·기동 실패 사유가 갈 곳이 없다.
+  "Win32_System_Console",
+  "Win32_Storage_FileSystem",
 ] }

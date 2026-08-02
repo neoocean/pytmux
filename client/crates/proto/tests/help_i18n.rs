@@ -25,7 +25,9 @@ fn every_palette_description_translates_to_the_canonical_english() {
     let fx: Fx = serde_json::from_str(include_str!("fixtures/client_surface.json"))
         .expect("픽스처를 못 읽었다");
     assert!(!fx.command_help.is_empty(), "픽스처가 비었다 — 통과가 아니라 고장이다");
-    i18n::set_locale("en");
+    // 전역을 뒤집으면 같은 이진의 형제 테스트가 남의 로케일에서 단언한다
+    // (2026-08-02 사고 — `base::i18n::with_locale` 항목). 이 스레드에만 건다.
+    let _en = i18n::locale_guard("en");
     let mut missing = Vec::new();
     for (name, ko) in &fx.command_help {
         // 뷰(TUI·GUI 팔레트)와 같은 조회 경로: command_help → tc("cmd", ko).

@@ -288,6 +288,52 @@ async def test_real_shell_integration_emits_the_command_it_was_given():
         "BEL 이 OSC 를 끊어 명령이 잘렸다(셸 escape 누락)"
 
 
+def _ps1_path():
+    return os.path.join(os.path.dirname(blocks_pkg.__file__),
+                        "shell-integration.ps1")
+
+
+def _powershell_loads(shell, script):
+    """그 셸이 **그 스크립트를 실제로 불러들이는가**. 실패면 stderr 원문을 함께 준다.
+
+    dot-source 가 막히면(실행 정책·MotW·경로) 함수가 정의되지 않아 stdout 이 **빈
+    채로** 돌아온다 → 아래 오라클들은 "빈 명령"을 escape 결함으로, "cwd 없음"을 cwd
+    결함으로 읽는다. 실제로 2026-07-31 검수가 그렇게 **제품 결함으로 오판**했다
+    (office 상자 · `AssertionError: PowerShell escape 와 서버 unescape 가 어긋났다`
+    + `KeyError: 'cwd'`). 2026-08-02 에 alienware 에서 `PSExecutionPolicyPreference=
+    Restricted` 로 그 두 줄을 **글자 그대로 재현**해 원인을 확정했다 — 제품이 아니라
+    상자다. 그래서 여기서 **잴 수 있는지 먼저 묻고**, 못 재면 skip 한다(적색으로
+    남기면 다음 사람이 또 제품을 판다).
+    """
+    probe = subprocess.run(
+        [shell, "-NoProfile", "-NoLogo", "-Command",
+         '. "%s"; if (Get-Command __pytmux_report_cmd '
+         '-ErrorAction SilentlyContinue) { "LOADED" }' % script],
+        capture_output=True, timeout=60,
+    )
+    if b"LOADED" in probe.stdout:
+        return True, ""
+    err = probe.stderr.decode("utf-8", "replace")
+    return False, " ".join(err.split())[:300]
+
+
+def _control_script_loads(shell):
+    """**대조군** — 하찮은 `.ps1` 하나를 새로 써서 그것도 안 불리는지 본다.
+
+    "우리 스크립트가 안 불린다"의 원인을 상자(정책·MotW)와 스크립트(문법·경로)로
+    가르는 유일한 관측이다. 대조군은 방금 만든 로컬 파일이라 MotW 가 없다 —
+    그래서 `RemoteSigned` 는 통과하고 `Restricted`/`AllSigned` 는 막는다.
+    """
+    fd, path = tempfile.mkstemp(suffix=".ps1", prefix="pytmux-control-")
+    os.close(fd)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("function __pytmux_report_cmd { }\n")
+        return _powershell_loads(shell, path)
+    finally:
+        os.unlink(path)
+
+
 def _powershell_emits(expr):
     """`shell-integration.ps1` 을 실제 PowerShell 에서 돌려 나온 **바이트**.
 
@@ -297,8 +343,19 @@ def _powershell_emits(expr):
     shell = shutil.which("powershell") or shutil.which("pwsh")
     if shell is None:
         skip("powershell 없음(PowerShell 통합 스크립트를 실행할 수 없다)")
-    script = os.path.join(os.path.dirname(blocks_pkg.__file__),
-                          "shell-integration.ps1")
+    script = _ps1_path()
+    loaded, err = _powershell_loads(shell, script)
+    if not loaded:
+        # **대조군**: 우리가 방금 쓴 하찮은 스크립트도 안 불리는가. 그것까지 막히면
+        # 상자가 스크립트를 통째로 막는 것이고(정책·MotW) 잴 것이 없다 → skip.
+        # 대조군만 불리면 못 불리는 것은 **우리 `.ps1` 하나**다 → 그건 제품 결함이니
+        # 적색으로 남긴다(이 갈래가 없으면 문법 오류를 상자 탓으로 덮는다).
+        control_ok, control_err = _control_script_loads(shell)
+        assert not control_ok, (
+            "이 상자는 다른 `.ps1` 은 부르는데 `%s` 만 못 부른다 — 상자가 아니라 "
+            "스크립트 결함이다. stderr: %s" % (os.path.basename(script), err))
+        skip("이 상자는 `.ps1` 을 통째로 못 부른다 — 잴 것이 없다(실행 정책·MotW). "
+             "우리 것: %s / 대조군: %s" % (err or "(없음)", control_err or "(없음)"))
     out = subprocess.run(
         [shell, "-NoProfile", "-NoLogo", "-Command", '. "%s"; %s' % (script, expr)],
         capture_output=True, timeout=60,
@@ -376,6 +433,43 @@ async def test_powershell_integration_reports_a_posix_cwd_without_a_doubled_slas
         assert cwd == d, cwd
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_the_powershell_load_probe_tells_loaded_from_not_loaded():
+    """탐침이 **양쪽을 가르는가**(위 skip 이 조용한 구멍이 되지 않게).
+
+    늘 `True` 면 skip 이 안 걸려 07-31 오판(빈 출력 → "제품 결함")이 돌아오고,
+    늘 `False` 면 위 오라클 셋이 **전부 조용히 skip** 된다 — 그 편이 더 나쁘다.
+    적색은 눈에 띄지만 초록은 안 띈다.
+    """
+    shell = shutil.which("powershell") or shutil.which("pwsh")
+    if shell is None:
+        skip("powershell 없음(PowerShell 통합 스크립트를 실행할 수 없다)")
+    missing = os.path.join(tempfile.gettempdir(),
+                           "pytmux-no-such-shell-integration.ps1")
+    assert not os.path.exists(missing)
+    ok, err = _powershell_loads(shell, missing)
+    assert not ok, "없는 스크립트를 '불렀다'고 한다 — 탐침이 늘 참이다"
+    assert err, "못 불렀는데 stderr 가 비었다 — 다음 사람이 사유를 못 본다"
+    loaded, why = _powershell_loads(shell, _ps1_path())
+    if not loaded:
+        skip("이 상자는 `.ps1` 을 못 부른다(위와 같은 사유): %s" % why)
+    assert loaded
+    # 그리고 **대조군이 상자와 스크립트를 가르는가**: 정책이 허용하는 이 상자에서
+    # 대조군은 불려야 하고(→ 우리 것만 못 불리면 적색), 망가진 스크립트는 안 불려야
+    # 한다(→ "안 불린다"가 파일 내용에도 반응한다는 뜻).
+    control_ok, control_err = _control_script_loads(shell)
+    assert control_ok, "대조군이 안 불린다 — 갈래가 늘 '상자 탓'으로 쏠린다: %s" % control_err
+    fd, broken = tempfile.mkstemp(suffix=".ps1", prefix="pytmux-broken-")
+    os.close(fd)
+    try:
+        with open(broken, "w", encoding="utf-8") as f:
+            f.write("function __pytmux_report_cmd { \n")  # 닫는 중괄호 없음
+        bad_ok, bad_err = _powershell_loads(shell, broken)
+        assert not bad_ok, "문법이 깨진 스크립트를 '불렀다'고 한다"
+        assert bad_err, "깨진 스크립트인데 stderr 가 비었다"
+    finally:
+        os.unlink(broken)
 
 
 async def test_a_windows_drive_url_loses_only_the_url_slash():

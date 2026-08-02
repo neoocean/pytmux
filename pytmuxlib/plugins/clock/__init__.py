@@ -100,16 +100,18 @@ class _ClockPlugin:
 
     # ---- 클라이언트 렌더/오버레이 훅 ----
     def client_overlay(self, app, cells, W, H, active):
-        """clock-mode 패널을 큰 시계로 덮는다(테마 Style 해석 후 이 플러그인 render
-        모듈의 앱-비의존 순수함수에 위임). 뒤의 패널 출력은 흐리게(dim) 계속 보인다."""
+        """clock-mode 패널을 큰 시계로 덮는다(런 생성기 `cells.py` 의 그림을 이 플러그인
+        render 모듈이 셀 격자에 얹는다). 뒤의 패널 출력은 흐리게(dim) 계속 보인다.
+
+        색은 **이름으로** 내려오고 여기서 이 클라의 테마로 푼다 — 그래서 테마를 바꾸면
+        시계도 같이 바뀐다(달력과 같은 규칙)."""
         if not getattr(app, "clock_panes", None):
             return
-        from rich.style import Style
         from pytmuxlib.clientutil import theme_color
         from .render import draw_clock_overlay
-        digit_st = Style(color=theme_color(app, "success"), bold=True)
         draw_clock_overlay(cells, app.layout.get("panes", []),
-                           app.clock_panes, W, H, digit_st)
+                           app.clock_panes, W, H,
+                           lambda name: theme_color(app, name))
 
     def client_tick(self, app):
         """1초마다 시계가 떠 있으면 True(코어가 재합성해 초 단위 갱신)."""
@@ -125,42 +127,17 @@ class _ClockPlugin:
 
     # ---- 서버 측: 셀 기여(Tier B · P3) ----
     #
-    # 위 `client_overlay` 와 **같은 그림을 같은 규칙으로** 만든다. 다른 것은 도착
-    # 방식뿐이다: 정본은 자기 프로세스에서 cells 에 쓰고, 네이티브 클라는 서버가 뽑은
-    # 런을 받는다. 그래서 로직(어느 폰트를 고르고 어디에 중앙 정렬하나)은 한 벌이라야
-    # 하는데 — 지금은 **아직 두 벌**이다(정본은 P3 까지 종전 경로 유지 · 설계 미결 #1).
-    # 여기가 갈리면 두 클라의 시계 자리가 달라지므로, 두 경로가 같은 자산
-    # (`blockfont.clock_font_for`)을 쓰는 것으로 그 위험을 좁혀 둔다.
+    # 위 `client_overlay` 와 **같은 그림**이다 — 이제 **말 그대로 한 벌**이라서다
+    # (2026-08-02d, 달력 P3b 가 먼저 간 길). 그리는 규칙은 `cells.py` 한 곳에 있고,
+    # 다른 것은 도착 방식뿐이다: 정본은 그 런을 자기 프로세스에서 격자에 얹고, 네이티브
+    # 클라는 같은 런을 서버에게서 받는다.
     def plugin_cells(self, server, sess, req):
-        from datetime import datetime
-        from pytmuxlib.blockfont import clock_font_for, segments
+        from .cells import clock_cells
         panes = [p for p in req.get("panes") or []
                  if p["id"] in (req.get("overlays") or {}).get("clock", ())]
         if not panes:
             return []
-        text = datetime.now().strftime("%H:%M:%S")
-        runs = []
-        for p in panes:
-            pw, ph = p["w"], p["h"]
-            font, ch_h, gcols, cw = clock_font_for(pw, ph, len(text))
-            if pw >= cw and ph >= ch_h:
-                ox = p["x"] + (pw - cw) // 2
-                oy = p["y"] + (ph - ch_h) // 2
-                for row in range(ch_h):
-                    line = " ".join(font.get(c, [" " * gcols] * ch_h)[row]
-                                    for c in text)
-                    # ★ **빈 칸은 안 싣는다**(`blockfont.segments` 주석) — 이어진 글자
-                    #   덩어리마다 런 하나다(칸마다 쪼개는 것보다 프레임이 작다).
-                    for x0, seg in segments(line):
-                        runs.append({"x": ox + x0, "y": oy + row, "text": seg,
-                                     "style": {"bo": 1},
-                                     "theme": {"f": "success"}})
-            else:
-                # 큰 글자가 안 들어가면 단순 시각(정본 폴백과 같은 판정).
-                ox = p["x"] + max(0, (pw - len(text)) // 2)
-                runs.append({"x": ox, "y": p["y"] + ph // 2, "text": text,
-                             "style": {"bo": 1}, "theme": {"f": "success"}})
-        return runs
+        return clock_cells(panes)
 
     def plugin_dim_panes(self, server, sess, req):
         """시계가 켜진 패널은 **뒤를 흐리게** 한다(정본 `dim_pane` 과 같은 뜻).

@@ -4,6 +4,7 @@
     "break_pane": "full",
     "capture_pane": "handled",
     "clear_history": "handled",
+    "client_fact": "handled",
     "copy_range": "handled",
     "cycle_layout": "full",
     "cycle_pane": "full",
@@ -106,6 +107,10 @@
       "full"
     ],
     "clear_history": [],
+    "client_fact": [
+      "name",
+      "value"
+    ],
     "copy_range": [
       "pane",
       "x0",

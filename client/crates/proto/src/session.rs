@@ -197,9 +197,27 @@ pub struct PluginScreen {
     /// 키 → 플러그인 액션 이름. 이 표에 있는 키만 되돌려준다.
     #[serde(default)]
     pub keys: std::collections::BTreeMap<String, String>,
+    /// `title`·`hint`·`note` 를 우리 로케일로 다시 지을 재료(있는 것만 온다).
+    #[serde(default)]
+    pub i18n: I18nMap,
 }
 
 impl PluginScreen {
+    /// 제목 — **이 클라의 로케일로**.
+    pub fn say_title(&self) -> String {
+        i18n_say(&self.i18n, "title", &self.title)
+    }
+
+    /// 안내줄 — 이 클라의 로케일로.
+    pub fn say_hint(&self) -> String {
+        i18n_say(&self.i18n, "hint", &self.hint)
+    }
+
+    /// 빈/실패 한 줄 — 이 클라의 로케일로.
+    pub fn say_note(&self) -> String {
+        i18n_say(&self.i18n, "note", &self.note)
+    }
+
     /// `Enter` 에 걸린 플러그인 액션 이름(없으면 이 화면의 Enter 는 뜻이 없다).
     ///
     /// # 왜 뷰가 `keys["enter"]` 를 직접 안 읽나
@@ -311,6 +329,44 @@ pub struct PluginKey {
     pub act: String,
 }
 
+/// 서버가 지은 글 한 조각을 **이 클라의 로케일로 다시 지을 재료**(로케일 ⓑ).
+///
+/// # 왜 글이 아니라 재료인가
+///
+/// 서버가 이미 지은 글(`text`)은 **서버 프로세스의 로케일**이다. 서버가 ko 면 영어
+/// 사용자도 한국어를 본다. 고정 리터럴은 우리가 한국어 원문을 키로 번역해 이미 풀렸지만
+/// (로케일 ⓐ), `{pct}%/5h 사용` 처럼 **자리가 있는 글**은 값이 매번 달라 원문이 키가
+/// 못 된다. 그래서 원문 포맷과 값을 따로 받아 [`crate::i18n_say`] 가 `tf` 로 짓는다.
+///
+/// 파이썬 쪽 짝은 `pytmuxlib.i18n.phrase()` 다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+pub struct Phrase {
+    /// 한국어 **원문 포맷**(`"{pct}%/5h 사용"`). 우리 카탈로그의 키이기도 하다 —
+    /// 못 찾으면 이 원문이 그대로 보인다(우아한 degrade).
+    #[serde(default)]
+    pub fmt: String,
+    /// 자리 값. 서버가 이미 문자열로 만들어 보낸다(수·시각의 표기 규칙은 서버 몫이다).
+    #[serde(default)]
+    pub args: std::collections::BTreeMap<String, String>,
+}
+
+/// 한 메시지 안의 **필드 이름 → 재료**. 필드마다 칸을 늘리는 대신 하나로 묶는다
+/// (화면 스펙은 `title`·`hint`·`note` 셋이 있어 칸을 늘리면 여섯이 된다).
+pub type I18nMap = std::collections::BTreeMap<String, Phrase>;
+
+/// 필드 하나를 이 클라의 로케일로 읽는다. 재료가 없으면 **서버가 지은 글 그대로**다
+/// (구버전 서버·번역 대상이 아닌 글 — 그래도 고정 리터럴은 `t()` 가 잡는다).
+pub fn i18n_say(map: &I18nMap, field: &str, fallback: &str) -> String {
+    match map.get(field) {
+        Some(p) if !p.fmt.is_empty() => {
+            let args: Vec<(&str, &str)> =
+                p.args.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+            base::i18n::tf(&p.fmt, &args)
+        }
+        _ => base::i18n::t(fallback).to_owned(),
+    }
+}
+
 /// 얹을 글자 한 덩어리. 자리는 **창 절대 좌표**다(서버가 패널 내용 영역으로 이미 옮겼다).
 #[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
 pub struct PluginRun {
@@ -320,6 +376,9 @@ pub struct PluginRun {
     pub y: i64,
     #[serde(default)]
     pub text: String,
+    /// `{"text": {"fmt": …, "args": …}}` — 이 런의 글을 우리 로케일로 다시 지을 재료.
+    #[serde(default)]
+    pub i18n: I18nMap,
     /// 서버가 화면 런에 쓰는 것과 **같은 축약 스타일**(`crate::style`). 새 표기가 아니다.
     #[serde(default)]
     pub style: crate::message::Style,
@@ -350,6 +409,55 @@ pub struct ThemeRef {
     pub f: Option<String>,
     #[serde(default)]
     pub b: Option<String>,
+}
+
+/// 상태줄에 붙는 **표식 한 칸**(설계 §1.2 의 ③ · P6).
+///
+/// 종전에는 이 자리가 통째로 비어 있었다 — `Badge` 열거형에 우리가 아는 다섯이
+/// 박혀 있고, 정본의 `rec`·`model`·`usage`·`perm` 은 "플러그인이 채우는 칸이라
+/// 우리에게는 없다"고 적혀 있었다. 이제 **서버가 자료로 준다**: 우리는 글자와 의미
+/// 색만 받아 칩으로 그린다. 플러그인을 지우면 배지도 함께 사라진다.
+///
+/// **누르는 자리는 아직 없다.** 정본의 REC 배지는 누르면 캡처 정보 팝업이 뜨는데 그
+/// 화면은 Tier C(④)이고 우리에겐 아직 없다 — 그래서 서버도 `do` 를 안 싣는다. 없는
+/// 것을 실어 두면 "선언은 있고 배선이 없는" 칸이 하나 더 생긴다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+pub struct PluginBadge {
+    /// 이 배지를 낸 플러그인 이름(레지스트리가 찍는다).
+    #[serde(default)]
+    pub name: String,
+    /// 보일 글자. 정본과 같은 문자열이라 좌우 여백까지 그대로 온다(` REC `).
+    ///
+    /// ⚠ **직접 읽지 말고 [`PluginBadge::say`] 를 쓴다** — 이 값은 서버 로케일이다.
+    #[serde(default)]
+    pub text: String,
+    /// 이 배지의 글을 우리 로케일로 다시 지을 재료(`{"text": …}`).
+    #[serde(default)]
+    pub i18n: I18nMap,
+    /// 서버가 화면 런에 쓰는 것과 **같은 축약 스타일**. 새 표기가 아니다.
+    #[serde(default)]
+    pub style: crate::message::Style,
+    /// 의미 색 이름 — 런과 같은 규약이다(hex 는 안 온다).
+    #[serde(default)]
+    pub theme: ThemeRef,
+}
+
+impl PluginBadge {
+    /// 보일 글자 — **이 클라의 로케일로**. `text` 를 직접 읽으면 서버 로케일이 샌다.
+    pub fn say(&self) -> String {
+        i18n_say(&self.i18n, "text", &self.text)
+    }
+}
+
+impl PluginRun {
+    /// 이 런의 글 — **이 클라의 로케일로**.
+    ///
+    /// ⚠ 로케일이 바뀌면 **폭도 바뀐다**(`세션 5h` ↔ `Session 5h`). 런은 좌표를 갖고
+    /// 오므로 서버가 잰 폭과 어긋날 수 있다 — 그래서 지금은 **줄 하나가 통째로 한 런**인
+    /// 자리에만 재료를 싣는다(그 줄은 옆에 붙는 것이 없어 밀 것도 없다).
+    pub fn say(&self) -> String {
+        i18n_say(&self.i18n, "text", &self.text)
+    }
 }
 
 /// 목록 한 줄. `key` 는 **그 줄의 뜻**(CL 번호·파일 이름)이고 액션에 그대로 실어 보낸다 —
@@ -603,6 +711,10 @@ pub struct SessionState {
     claude_model: Option<String>,
     /// 5시간 한도 사용률 %(서버 `tok5h_pct`). 분모를 모르면 서버가 안 보낸다.
     claude_5h_pct: Option<u8>,
+    /// 플러그인이 낸 상태줄 표식들(Tier B ③ · 서버 `status` 의 `plugin_badges`).
+    ///
+    /// **매 status 마다 통째로 갈아 끼운다** — 안 오면 없는 것이다(위 파싱부 주석).
+    plugin_badges: Vec<PluginBadge>,
     /// 패널 id → 서버가 판정한 블록 목록(§10-13).
     ///
     /// 셸 통합을 안 깐 사용자에게는 영원히 비어 있다 — 그게 정상이다.
@@ -664,7 +776,6 @@ pub struct SessionState {
     /// 왜 상태줄이 아니라 여기인가: 이 배지는 **다음 글자가 무엇이 될지**를 말한다.
     /// 그때 눈은 커서에 있지 상태줄에 있지 않다 — 정본도 그래서 2026-06-16 에 이
     /// 배지를 화면 끝에서 **활성 패널 우상단**으로 옮겼다.
-    ime_badge: Option<String>,
     /// 패널 번호를 띄우고 있나(`prefix q` — tmux `display-panes`).
     ///
     /// **다음 키 하나로 사라진다**(파이썬도 모드라 그렇다) — 그 판정은 뷰가 한다.
@@ -783,6 +894,15 @@ impl SessionState {
                         .filter_map(|entry| entry.get("id").and_then(serde_json::Value::as_i64))
                         .collect();
                 }
+                // 상태줄 표식(Tier B ③) — ★ **안 오면 「없음」이다.** 위 이웃들과
+                // 반대 규칙이라 적어 둔다: 저것들은 델타에 안 실릴 수 있어 "안 왔으면
+                // 지킨다"가 맞지만, 배지는 서버가 **매 status 마다 다시 만들고 비면
+                // 키를 뺀다**. 여기서 지키면 캡처를 끈 뒤에도 REC 가 영영 남는다.
+                self.plugin_badges = status
+                    .fields
+                    .get("plugin_badges")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
                 // 개요는 **full 에만** 온다(목록은 서버가 도는 동안 안 변한다). 델타
                 // status 마다 비우면 관리 화면이 깜빡이므로, 안 왔으면 들고 있던 것을
                 // 지킨다 — 대신 켜짐/꺼짐은 매번 오는 `disabled_plugins` 로 덮는다.
@@ -971,9 +1091,6 @@ impl SessionState {
 
     /// 입력기 배지 글(뷰가 넣는다). 상태를 모르는 판에서는 `None` — 모르는 것을
     /// "영문"이라고 단정하지 않는다.
-    pub fn set_ime_badge(&mut self, badge: Option<String>) {
-        self.ime_badge = badge;
-    }
 
     /// 비활성 패널 딤을 켜고 끈다(설정에서 읽은 값을 뷰가 넣는다).
     pub fn set_inactive_dim(&mut self, on: bool, ratio: f32) {
@@ -1435,23 +1552,19 @@ impl SessionState {
         self.claude_panes.contains(&pane)
     }
 
-    /// 상태줄에 붙일 **Claude 배지** — `opus-5 · 12%/5h` 꼴. 재료가 없으면 `None`.
+    /// 플러그인이 낸 상태줄 표식들 — 뷰가 순서대로 칩으로 그린다(Tier B ③ · P6).
     ///
-    /// # 왜 상태줄에 상주해야 하나
+    /// 자리는 우리가 정한다. 정본과 우리의 배지 줄 생김새가 서로 다르니 서버가 자리를
+    /// 정하면 한쪽이 망가진다 — 서버가 주는 것은 **무엇을 어떤 뜻의 색으로**까지다.
     ///
-    /// 정본은 Claude 를 쓰는 동안 모델과 5시간 한도 사용률을 **늘 보인다**(대조 문서
-    /// §16 — 우리에겐 그 자리가 없었다). 한도는 넘고 나서 알면 늦다: 응답이 끊긴 뒤에야
-    /// "아 한도였구나" 를 알게 된다. 그래서 **지금 얼마나 썼나**가 화면에 있어야 한다.
-    ///
-    /// 모델만 오고 한도가 없을 수 있다(서버가 분모를 모르면 `tok5h_pct` 를 안 보낸다) —
-    /// 그때는 모델만 보인다. 없는 값을 지어내지 않는다.
-    pub fn claude_badge(&self) -> Option<String> {
-        let model = self.claude_model.as_deref()?;
-        Some(match self.claude_5h_pct {
-            Some(pct) => format!("{model} · {pct}%/5h"),
-            None => model.to_owned(),
-        })
+    /// ⚠ **`claude_badge()` 는 지웠다(M4 P6 후반).** 상태줄의 Claude 표식은 이제
+    /// 플러그인이 자료로 준다(`plugin_badges` → [`Self::plugin_badges`]) — 우리가 날
+    /// 필드로 문자열을 조립하면 정본과 **두 벌**이 되고, 실제로 갈려 있었다(정본은
+    /// 카운트다운·경고까지 그렸다). 규칙은 `plugins/claude-code/statusbadges.py` 한 벌이다.
+    pub fn plugin_badges(&self) -> &[PluginBadge] {
+        &self.plugin_badges
     }
+
 
     /// 이 패널의 **라이브 입력칸에 지금 들어 있는 글**(패리티 G9c).
     ///
@@ -1702,11 +1815,11 @@ impl SessionState {
             }
         }
         draw_frames(&mut canvas, layout);
-        // 입력기 배지는 **활성 패널 첫 행 오른쪽 끝**이다(정본과 같은 자리). 테두리를
-        // 그린 **뒤**라 프레임이 배지를 덮지 않는다.
-        if let Some(badge) = self.ime_badge.as_deref() {
-            draw_ime_badge(&mut canvas, layout, badge);
-        }
+        // ★ 입력기 배지는 **여기서 안 그린다**(2026-08-02i · P7). 손으로 옮긴 판이
+        // 활성 패널 **첫 행**에 고정이라 정본(커서가 있는 줄)과 갈려 있었다 — 그 자리
+        // 주석은 "정본과 같은 자리"라고 적고 있었지만 커서가 첫 줄일 때만 같았다.
+        // 이제 그림은 플러그인이 `plugin_cells` 로 준다(우리는 한/영이라는 **사실**만
+        // `client_fact` 로 올린다). 셀 런은 위 plugin_cells 경로가 얹는다.
         // 터치 스크롤바는 **입력기 배지 뒤**다(정본과 같은 순서). 둘이 같은 자리(활성
         // 패널 우측 끝)를 쓰는데, 가려도 되는 것은 배지 쪽이다 — 스크롤바에는 **클릭존이
         // 붙어 있어서**, 보이는 것과 탭이 하는 일이 어긋나면 안 된다.
@@ -1754,8 +1867,17 @@ impl SessionState {
                 if let Some(name) = run.theme.b.as_deref() {
                     style.bg = theme::color(name);
                 }
-                for (i, ch) in run.text.chars().enumerate() {
-                    canvas.put(run.x as usize + i, run.y as usize, ch, style.clone());
+                // ★ **와이드 문자는 두 칸이다.** 글자마다 한 칸씩 밀면 한글이 든 런
+                //   (`[한]` 입력기 배지)에서 자리가 어긋난다 — `put` 이 뒷칸을 자리표로
+                //   채우므로 우리가 그 폭만큼 건너뛰어야 겹치지 않는다. 정본도 같은
+                //   자리에서 같은 실수를 하고 있었다(2026-08-02i 실측).
+                let mut x = run.x as usize;
+                // 서버가 지은 글이 아니라 **우리 로케일로 지은 글**을 찍는다(로케일 ⓑ).
+                // 재료가 안 오면 `say()` 가 서버 글 그대로 돌려준다.
+                let text = run.say();
+                for ch in text.chars() {
+                    canvas.put(x, run.y as usize, ch, style.clone());
+                    x += crate::compose::display_width(&ch.to_string()).max(1);
                 }
             }
         }
@@ -1962,30 +2084,7 @@ impl SessionState {
 ///
 /// 패널이 좁으면(배지가 절반을 넘으면) **안 그린다** — 화면을 덮어 가며 알릴 만한
 /// 것은 아니다.
-fn draw_ime_badge(canvas: &mut Canvas, layout: &Layout, badge: &str) {
-    let Some(pane) = layout.panes.iter().find(|p| p.id == layout.active) else {
-        return;
-    };
-    let chars: Vec<char> = badge.chars().collect();
-    let width = crate::compose::display_width(badge);
-    let (px, py, pw) = (pane.x as usize, pane.y as usize, pane.w as usize);
-    if width == 0 || width * 2 > pw {
-        return;
-    }
-    let style = crate::style::CellStyle {
-        fg: Some(crate::style::Color::Named(crate::style::NamedColor::Black)),
-        bg: Some(crate::style::Color::Named(crate::style::NamedColor::BrightGreen)),
-        bold: true,
-        ..Default::default()
-    };
-    let mut x = px + pw - width;
-    for ch in chars {
-        // 폭 2 인 글자는 `put` 이 뒷칸을 자리표로 채운다 — 한 칸씩 밀면 겹친다.
-        let w = crate::compose::display_width(&ch.to_string()).max(1);
-        canvas.put(x, py, ch, style.clone());
-        x += w;
-    }
-}fn draw_frames(canvas: &mut Canvas, layout: &Layout) {
+fn draw_frames(canvas: &mut Canvas, layout: &Layout) {
     let mut draw = |pane: &PaneLayout| {
         let Some([x, y, w, h]) = pane.boxrect else {
             return;                 // 테두리를 안 그리는 배치(패널 하나 + single-border off)

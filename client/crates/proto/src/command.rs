@@ -168,6 +168,16 @@ pub enum Command {
     /// 플러그인이 정하고, 우리는 "그 자리를 눌렀다"만 말한다(설계 §4.4). 회신은 없다:
     /// 다음 `plugin_cells` 프레임이 곧 답이다.
     PluginOverlayAction { name: String, pane: i64, act: String },
+    /// **이 클라만 아는 사실**을 서버에 알린다(설계 Tier D · §4.4 · P7).
+    ///
+    /// 오늘 목록은 입력기 한/영 하나다 — OS 가 그 상태를 **우리 창에만** 알려 주므로
+    /// 서버가 스스로 알 수 없다. 다만 알려 주는 것은 사실뿐이고, **그릴지·어디에·무슨
+    /// 색으로는 플러그인이 정한다**(Tier B). 그래야 규칙이 한 벌로 남는다 —
+    /// 종전에는 우리가 그 그림을 손으로 들고 있었고, 자리가 정본과 갈려 있었다.
+    ///
+    /// `value` 가 `None` 이면 그 사실을 **지운다**(끄는 것도 사실이다).
+    /// 회신은 없다: 다음 `plugin_cells` 프레임이 곧 답이다.
+    ClientFact { name: String, value: Option<String> },
     /// 입력을 창 안 모든 패널로 복제할지 토글한다(`synchronize-panes`).
     ///
     /// 인자를 안 실으면 서버가 토글한다 — 켜고 끄는 두 명령을 두면 클라가 상태를 알아야
@@ -405,6 +415,7 @@ impl Command {
             Command::PluginAction { .. } => "plugin_action",
             Command::PluginOverlay { .. } => "plugin_overlay",
             Command::PluginOverlayAction { .. } => "plugin_overlay_action",
+            Command::ClientFact { .. } => "client_fact",
             Command::ToggleSync { .. } => "set_sync",
             Command::ToggleMonitor { .. } => "set_monitor",
             Command::ToggleAutoRename { .. } => "set_auto_rename",
@@ -508,6 +519,7 @@ impl Command {
             Command::PluginOverlayAction { name, pane, act } => {
                 json!({ "name": name, "pane": pane, "do": act })
             }
+            Command::ClientFact { name, value } => json!({ "name": name, "value": value }),
             Command::RequestTree
             | Command::RequestBuffers
             // 값을 안 실으면 서버가 토글한다(`_cmd_set_sync`·`_cmd_set_auto_rename`).
@@ -725,6 +737,17 @@ impl Command {
             Command::SetPromptClear,
             Command::Search { query: None, down: false },
             Command::SetCapture,
+            // ★ 아래 셋은 **오래 빠져 있었다** — `VARIANT_COUNT` 가 안 따라 올라가서
+            // (67) 색인 67·68 이 검사 범위 밖으로 나갔고, 그래서 "all() 에 넣는 것까지
+            // 강제한다"던 가드가 조용히 이 셋을 안 봤다(실측 2026-08-02i · P7).
+            // 세 번째(ClientFact)를 같은 자리에 더하려다 발견해 함께 메운다.
+            Command::PluginOverlay { name: "clock".into(), pane: 1, on: true },
+            Command::PluginOverlayAction {
+                name: "calendar".into(),
+                pane: 1,
+                act: "prev".into(),
+            },
+            Command::ClientFact { name: "ime".into(), value: Some("한".into()) },
         ]
     }
 }
@@ -1073,6 +1096,7 @@ mod tests {
             Command::PluginAction { .. } => 66,
             Command::PluginOverlay { .. } => 67,
             Command::PluginOverlayAction { .. } => 68,
+            Command::ClientFact { .. } => 69,
             Command::ToggleSync { .. } => 29,
             Command::ToggleMonitor { .. } => 30,
             Command::ToggleAutoRename { .. } => 31,
@@ -1112,7 +1136,7 @@ mod tests {
     }
 
     /// `variant_index` 가 돌려주는 값의 가짓수. 변형을 늘리면 여기도 늘려야 한다.
-    const VARIANT_COUNT: usize = 67;
+    const VARIANT_COUNT: usize = 70;
 
     #[test]
     fn all_covers_every_variant() {
@@ -1540,9 +1564,10 @@ pub fn action_to_command(action: base::Action) -> Option<Command> {
         // 정보 팝업도 화면이다. 다만 **서버에 물어야 채워지는 탭**이 있어(버전·가동
         // 시간) 뷰가 열면서 `request_version` 을 함께 청한다 — 트리·버퍼와 같은 자리다.
         Action::ShowInfoTabs => None,
-        // 시계·달력은 **클라 안에서만** 끝난다 — 파이썬 쪽에서도 클라 플러그인이라 서버는
-        // 어느 패널이 그 모드인지 모른다.
-        Action::ToggleClock | Action::ToggleCalendar => None,
+        // 오버레이 토글은 **한 명령으로 안 떨어진다** — 뷰가 `push_overlay_toggle` 로
+        // `plugin_overlay` 를 (때로 두 개: 닫는 것 + 켜는 것) 보낸다. 한 패널엔 한
+        // 오버레이라 서로를 닫기 때문이다. 그림은 다음 `plugin_cells` 프레임이 답이다.
+        Action::ToggleClock | Action::ToggleCalendar | Action::ToggleUsageView => None,
         // 패널로 **바이트를 보내는** 것이라 명령이 아니다 — 뷰가 `Outgoing::Input` 으로
         // 흘린다(키 입력과 같은 길).
         Action::SendEscape | Action::SendBacktick => None,

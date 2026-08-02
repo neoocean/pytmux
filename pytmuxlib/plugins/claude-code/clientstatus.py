@@ -18,6 +18,9 @@ i18n.register({
     "ko": {
         "claude.auto_resume": "자동재개",
         "claude.countdown": " ⏳ {label} {eta}s(입력=취소) ",
+        # ⓑ: 라벨을 인자로 넘기면 클라가 자기 포맷에 **서버 로케일 조각**을 끼운다
+        # (`⏳ 자동재개 30s (input=cancel)`). 라벨을 포맷 안에 넣은 판을 따로 둔다.
+        "claude.countdown_ar": " ⏳ 자동재개 {eta}s(입력=취소) ",
         "claude.limit_used": "{pct}%/5h 사용",
         "claude.limit_week_sonnet": "{pct}%/주(Sonnet)",
         "claude.limit_unknown": "?%/5h 사용",
@@ -29,6 +32,7 @@ i18n.register({
     "en": {
         "claude.auto_resume": "auto-resume",
         "claude.countdown": " ⏳ {label} {eta}s (input=cancel) ",
+        "claude.countdown_ar": " ⏳ auto-resume {eta}s (input=cancel) ",
         "claude.limit_used": "{pct}%/5h used",
         "claude.limit_week_sonnet": "{pct}%/wk(Sonnet)",
         "claude.limit_unknown": "?%/5h used",
@@ -151,6 +155,24 @@ def absorb(status, msg):
     status.claude_pending = msg.get("claude_pending")
 
 
+def _fields_of(status):
+    """상태줄 위젯의 Claude 속성을 **규칙이 읽는 모양**(status 메시지와 같은 키)으로.
+
+    규칙(`statusbadges`)은 서버가 만드는 status dict 를 읽는다 — 정본은 그 dict 를
+    이미 위젯 속성으로 흡수해 뒀으므로(`absorb`) 여기서 되돌려 준다. 두 소비자가
+    **같은 입력**을 같은 규칙에 먹이는 것이 요점이다."""
+    return {
+        "claude_active": status.claude_active,
+        "claude_model": status.claude_model,
+        "tok5h_pct": status.tok5h_pct,
+        "week_sonnet_pct": status.week_sonnet_pct,
+        "claude_pending": status.claude_pending,
+        "claude_warn": status.claude_warn,
+        "claude_warn_kind": status.claude_warn_kind,
+        "claude_warn_n": status.claude_warn_n,
+    }
+
+
 def _trailing_cells(status, _char_cells) -> int:
     """render_segs 이후 코어 _render_main 이 우측에 덧붙일 폭(NEST + 윈도우목록 +
     host/시각/날짜) 추정. 계정명을 **전체로 보일 폭이 되는지** 판단에만 쓴다 —
@@ -191,10 +213,18 @@ def render_segs(status, segs, w, w0=None, viewing_remote=False):
     from rich.segment import Segment
     from rich.style import Style
     from pytmuxlib.clientutil import _char_cells, theme_color, REMOTE_PINK_DIM
+
+    from .statusbadges import badges as _badge_rule
+
     tc = lambda n: theme_color(status, n)  # noqa: E731
     _cw = lambda t: sum(_char_cells(c) for c in t)  # noqa: E731
     # w0 미지정(직접 호출)이면 기존처럼 전수합산으로 폭을 구한다(하위호환).
     acc = w0 if w0 is not None else sum(_cw(s.text) for s in segs)
+    # ★ **무엇을 어떤 뜻의 색으로**는 `statusbadges` 한 벌이 정한다(M4 P6 후반).
+    #   여기 남는 것은 **표현**뿐이다 — 세그먼트로 쪼개고, 클릭존을 찍고, 원격 분홍으로
+    #   덮고, 포커스를 강조하는 일. 그 셋은 전부 **이 클라만 아는 상태**라 규칙 쪽에
+    #   실을 것이 아니다(설계 §6 · REC 배지가 포커스 노랑을 안 싣는 것과 같은 규율).
+    _rule = {b["kind"]: b for b in _badge_rule(_fields_of(status))}
     # 활성 Claude 패널: 모델(M14c) + 컨텍스트 사용량(best-effort) + 세션 누적(#3, Σ).
     uparts = []
     if status.claude_active:
@@ -220,23 +250,11 @@ def render_segs(status, segs, w, w0=None, viewing_remote=False):
         #    보낸다(tok5h_pct=None, week_sonnet_pct=값) — Anthropic 이 5h 를 모델
         #    통합으로만 줘 모델별 측정이 불가하기 때문(2026-06-16 사용자 결정).
         #    둘은 상호배타(서버가 한쪽만 채움).
-        if status.tok5h_pct is not None:
-            usage_parts.append(
-                i18n.t("claude.limit_used",
-                       pct=max(0, min(100, int(status.tok5h_pct)))))
-        elif status.week_sonnet_pct is not None:
-            usage_parts.append(
-                i18n.t("claude.limit_week_sonnet",
-                       pct=max(0, min(100, int(status.week_sonnet_pct)))))
-        else:
-            # 실측(/usage 5h·주간 Sonnet) 미도착 — Claude 를 막 시작해 아직 그림자
-            # /usage 가 없으면 위 두 분기가 비어 사용량 배지가 **아예 안 보였다**.
-            # 활성 Claude 패널이면 값 미상이라도 즉시 'Unknown' 배지(`?%/5h used`)를
-            # 띄우고, 실측이 도착하면 위 분기로 그 자리에서 숫자 갱신된다(요청
-            # 2026-06-18). 이 분기는 `if status.claude_active:` 안이라 비-Claude
-            # 패널엔 안 뜬다. 계정 라벨은 아래 claude_account 분기가 붙인다(미상이면
-            # 생략) — 실측 계정(usage_limits)은 아직 없으니 is_usage_last 는 False.
-            usage_parts.append(i18n.t("claude.limit_unknown"))
+        # ★ 세 갈래(5h · 주간 Sonnet · 미상)의 **판정과 문구는 규칙 쪽**이다
+        #   (`statusbadges._limit_badge` — 그 docstring 에 세 갈래의 근거가 있다).
+        #   여기서 다시 고르면 두 벌이 되고, 갈리면 정본과 GUI 가 다른 숫자를 보인다.
+        if _rule.get("usage"):
+            usage_parts.append(_rule["usage"]["text"])
         # 계정 라벨은 더는 붙이지 않는다 — Claude 토큰 사용량은 계정과 무관하게
         # **현재 로컬 머신** 기준으로 표시한다(계정별 집계/표기 제거, 2026-06-19 결정).
         uparts.extend(usage_parts)
@@ -273,10 +291,8 @@ def render_segs(status, segs, w, w0=None, viewing_remote=False):
         status._usage_zone = (ux0, x)
         acc = x   # P6: uparts 블록이 append 한 폭만큼 누적 전진(x 가 정확히 추적)
     # 카운트다운 배지: 무장된 자동재개의 남은 초(비가역 동작 발견성).
-    if isinstance(status.claude_pending, dict):
-        eta = status.claude_pending.get("eta", 0)
-        label = i18n.t("claude.auto_resume")
-        _ct = i18n.t("claude.countdown", label=label, eta=eta)
+    if _rule.get("pending"):
+        _ct = _rule["pending"]["text"]
         segs.append(Segment(_ct,
                             Style(color="black", bgcolor=tc("warning"),
                                   bold=True)))
@@ -293,16 +309,8 @@ def render_segs(status, segs, w, w0=None, viewing_remote=False):
         # 종류(kind)별 로케일 배지: 반복/포맷-미인식은 i18n(ko/en), 장기 턴은 언어중립
         # ('⚠ M:SS') 서버 문자열 그대로. kind 미상(구버전 서버)이면 서버 문자열 폴백
         # (한글일 수 있으나 호환 유지) — i18n 전수조사 2026-06-19.
-        _wkind = status.claude_warn_kind
-        if _wkind == "repeat":
-            _disp = i18n.t("claude.warn_repeat_badge", n=status.claude_warn_n or 0)
-        elif _wkind == "fmt_unknown":
-            _disp = i18n.t("claude.warn_fmt_badge")
-        else:
-            _disp = status.claude_warn
-        if _disp.startswith("⚠ "):
-            _disp = "⚠  " + _disp[2:]
-        _wt = f" {_disp} "
+        # 종류별 로케일 배지 + ⚠ 뒤 공백 보정은 규칙 쪽이다(`statusbadges._warn_text`).
+        _wt = _rule["warn"]["text"]
         segs.append(Segment(_wt,
                             Style(color="white", bgcolor=tc("error"),
                                   bold=True)))

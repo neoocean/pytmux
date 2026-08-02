@@ -83,6 +83,48 @@ def t(key: str, default: Optional[str] = None, **kw) -> str:
     return s
 
 
+def phrase(key: str, default: Optional[str] = None, **kw) -> tuple:
+    """서버가 지은 글 + **클라가 자기 로케일로 다시 지을 재료**를 함께 돌려준다.
+
+    돌려주는 것 = `(text, spec)`.
+      * `text` — 이 프로세스 로케일로 지은 글([`t`] 그대로). 구버전 클라와 정본이 쓴다.
+      * `spec` — `{"fmt": <한국어 원문 포맷>, "args": {이름: 값}}`.
+
+    # 왜 필요한가 (로케일 ⓑ)
+
+    Tier B(셀·상태줄 기여)·Tier C(화면 스펙)가 생기면서 **서버가 지은 글**이 클라에
+    실려 오기 시작했다. 그 글은 서버 프로세스의 로케일을 타므로, 서버가 ko 면 영어
+    사용자도 한국어를 본다 — 이 모듈 머리말의 *"로케일은 클라이언트-로컬"* 규약이
+    거기서 깨진다.
+
+    **고정 리터럴**은 클라가 한국어 원문을 키로 번역해 이미 풀렸다(로케일 ⓐ). 남은 것이
+    `{pct}%/5h 사용` 처럼 **자리가 있는 글**이다 — 값이 매번 달라 원문이 키가 못 된다.
+    그래서 원문 포맷과 값을 **따로** 실어 보내고 클라가 자기 표에서 포맷을 번역한 뒤
+    치환한다(Rust `base::i18n::tf` 가 정확히 그 함수다).
+
+    이 모양은 새로 지은 것이 아니다 — 원격 알림(`rnotice.*`)이 이미 *"서버는 키 + 포맷
+    인자만 실어 보내고 클라가 t() 로 번역한다"* 로 돌고 있다. 여기서는 키 대신 **한국어
+    원문**을 싣는데, 우리 네이티브 클라의 카탈로그가 원문을 키로 쓰기 때문이고, 덕분에
+    **못 찾는 클라는 한국어 원문으로 우아하게 degrade** 한다(구버전 호환이 공짜다).
+
+    `text` 를 계속 싣는 이유도 그것이다: `fmt` 를 모르는 클라는 종전과 한 글자도 다르지
+    않은 것을 본다 → 프로토콜 버전을 안 연다.
+
+    ⚠ **`args` 에는 로케일 중립인 값만 넣는다** — 수·시각·이름·경로. 번역 대상을 인자로
+    넘기면 클라가 **자기 로케일 포맷에 서버 로케일 조각을 끼워** 언어가 섞인다
+    (실측 위험: `phrase("claude.countdown", label=t("claude.auto_resume"), …)` 는
+    영어 클라에 `⏳ 자동재개 30s (input=cancel)` 를 만든다). 번역이 필요한 조각은
+    **포맷 문자열 안에** 넣고 그 판을 키로 따로 둔다.
+    """
+    ko = _CATALOG.get(_FALLBACK, {}).get(key)
+    if ko is None:
+        ko = default if default is not None else key
+    return t(key, default, **kw), {
+        "fmt": ko,
+        "args": {name: str(value) for name, value in kw.items()},
+    }
+
+
 def resolve(config_lang: Optional[str], env: Optional[Dict[str, str]] = None) -> str:
     """명령 영속을 제외한 초기 로케일을 정한다: config `lang` > 환경 `LANG`/`LC_ALL`.
 

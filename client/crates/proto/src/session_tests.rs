@@ -1046,32 +1046,71 @@ fn a_notice_line_says_when_and_who_not_just_what() {
 }
 
 #[test]
-fn the_claude_badge_shows_the_model_and_the_five_hour_limit() {
-    // ★ 정본은 Claude 를 쓰는 동안 모델과 5시간 한도를 상태줄에 **늘 보인다**(대조 문서
-    //   §16). 한도는 넘고 나서 알면 늦다 — 응답이 끊긴 뒤에야 이유를 알게 된다.
+fn the_claude_badge_now_comes_from_the_plugin_not_from_us() {
+    // ★ 이 오라클은 **옮겨진 것**이다(M4 P6 후반). 종전에는 우리가 날 필드로
+    //   `opus-5 · 12%/5h` 를 조립했고 그 문자열을 여기서 쟀다 — 그 조립이 정본과
+    //   두 벌이었다는 것이 이 슬라이스가 고친 것이다. 지우기만 하면 "상태줄에 Claude
+    //   표식이 뜬다"를 아무도 안 재게 되므로, 같은 축을 **새 경로**에서 잰다.
+    let mut state = SessionState::default();
+    assert!(state.plugin_badges().is_empty(), "재료가 없는데 배지가 떴다");
+    state.apply(status_with(serde_json::json!({
+        "plugin_badges": [
+            {"name": "claude-code", "text": "opus-5", "theme": {"b": "secondary"}},
+            {"name": "claude-code", "text": "12%/5h 사용", "theme": {"b": "secondary"},
+             "i18n": {"text": {"fmt": "{pct}%/5h 사용", "args": {"pct": "12"}}}}
+        ]
+    })));
+    let badges = state.plugin_badges();
+    assert_eq!(badges.len(), 2, "{badges:?}");
+    assert_eq!(badges[0].say(), "opus-5");
+    // 재료가 왔으니 **우리 로케일**로 지어진다(서버가 지은 글이 아니라).
+    // ⚠ 종전에는 여기서 전역을 뒤집고 **함수 안의 `Mutex`** 로 감쌌는데, 그 잠금은
+    // 자기 자신만 직렬화한다 — 읽는 쪽(같은 이진의 다른 테스트 수백)이 같은 잠금을
+    // 들 리가 없다. 실제로 그 창에 걸린 `the_sync_badge_is_always_there_when_sync_is_on`
+    // 이 `[동기화]` 대신 영어를 보고 떨어졌다(2026-08-02). 이제 덮어쓰기는 이 스레드
+    // 밖으로 안 나간다(`base::i18n::with_locale`).
+    let english = base::i18n::with_locale("en", || badges[1].say());
+    assert_eq!(english, "12%/5h used", "서버가 지은 한국어가 그대로 샜다");
+}
+
+#[test]
+fn a_plugin_badge_arrives_as_data_and_keeps_its_semantic_colour() {
+    // 종전에는 이 자리가 통째로 비어 있었다 — REC 는 파이썬 훅으로만 그려져 우리에겐
+    // 없었다(`base::chrome` 의 "플러그인이 채우는 칸이라 우리에게는 없다"). 이제 서버가
+    // 자료로 준다. 색은 **이름**으로 오고(hex 아님) 푸는 것은 이 클라의 표다.
     let mut state = SessionState::new();
-    assert_eq!(state.claude_badge(), None, "재료가 없는데 배지가 떴다");
+    state.apply(status_with(serde_json::json!({
+        "plugin_badges": [{
+            "name": "rec", "text": " REC ",
+            "style": {"bo": 1, "f": "white"}, "theme": {"b": "error"}
+        }]
+    })));
+    let badges = state.plugin_badges();
+    assert_eq!(badges.len(), 1, "{badges:?}");
+    assert_eq!(badges[0].name, "rec");
+    assert_eq!(badges[0].text, " REC ");
+    assert_eq!(badges[0].theme.b.as_deref(), Some("error"));
+    // 그 이름이 런과 **같은 표**로 풀려야 한다 — 배지만 다른 표를 두면 같은 이름이
+    // 두 자리에서 다른 색이 된다.
+    assert_eq!(
+        crate::session::theme::color("error"),
+        Some(crate::style::Color::Named(crate::style::NamedColor::BrightRed))
+    );
+}
 
-    let msg: ServerMessage = serde_json::from_value(serde_json::json!({
-        "t": "status", "session": "s", "windows": [],
-        "claude_model": "opus-5", "tok5h_pct": 12
-    }))
-    .unwrap();
-    state.apply(msg);
-    assert_eq!(state.claude_badge().as_deref(), Some("opus-5 · 12%/5h"));
-
-    // 델타 status 에 값이 안 실려도 **들고 있던 것을 지킨다** — 매 프레임 깜빡이면
-    // 읽을 수 없다(파이썬 클라도 같은 규칙).
-    let delta: ServerMessage =
-        serde_json::from_value(serde_json::json!({"t": "status", "windows": []})).unwrap();
-    state.apply(delta);
-    assert_eq!(state.claude_badge().as_deref(), Some("opus-5 · 12%/5h"), "델타에 배지가 지워졌다");
-
-    // 서버가 100 을 넘겨 보내도 클램프한다(파이썬이 "999%/5h" 를 그렇게 막았다).
-    let over: ServerMessage = serde_json::from_value(serde_json::json!({
-        "t": "status", "windows": [], "claude_model": "opus-5", "tok5h_pct": 999
-    }))
-    .unwrap();
-    state.apply(over);
-    assert_eq!(state.claude_badge().as_deref(), Some("opus-5 · 100%/5h"));
+#[test]
+fn a_status_without_plugin_badges_means_there_are_none() {
+    // ★ 이웃 필드들과 **반대 규칙**이라 못박는다. 저것들(claude_model 등)은 델타에 안
+    // 실릴 수 있어 "안 왔으면 지킨다"가 맞지만, 배지는 서버가 매 status 마다 다시 만들고
+    // **비면 키를 뺀다** — 여기서 지키면 캡처를 끈 뒤에도 REC 가 영영 남는다.
+    let mut state = SessionState::new();
+    state.apply(status_with(serde_json::json!({
+        "plugin_badges": [{"name": "rec", "text": " REC "}]
+    })));
+    assert_eq!(state.plugin_badges().len(), 1);
+    state.apply(status_with(serde_json::json!({"zoomed": false})));
+    assert!(
+        state.plugin_badges().is_empty(),
+        "배지 키가 안 왔는데 옛 배지가 남았다 — 캡처를 꺼도 REC 가 사라지지 않는다"
+    );
 }

@@ -31,7 +31,8 @@ fn fixture() -> Fx {
 fn every_category_name_shows_the_canonical_english() {
     let fx = fixture();
     assert!(!fx.cat_en.is_empty(), "픽스처가 비었다 — 통과가 아니라 고장이다");
-    i18n::set_locale("en");
+    // 이 스레드에만 건다 — 전역을 뒤집으면 형제 테스트가 남의 로케일에서 단언한다.
+    let _en = i18n::locale_guard("en");
 
     let mut wrong = Vec::new();
     let mut check = |what: &str, ko: &str, got: &str, canon: Option<&String>| {

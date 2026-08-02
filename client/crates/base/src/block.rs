@@ -228,6 +228,7 @@ impl BlockList {
             | Action::SendEscape
             | Action::SendBacktick
             | Action::ToggleCalendar
+            | Action::ToggleUsageView
             | Action::ToggleBorderStatus
             | Action::ToggleInactiveDim
             | Action::ToggleServerOption(_)

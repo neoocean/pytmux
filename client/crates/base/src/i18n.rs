@@ -29,6 +29,11 @@
 //! 클라 프로세스 하나에 사용자 하나다(파이썬도 모듈 전역). 뷰 둘(TUI·GUI)이 같은 값을
 //! 봐야 하고, 렌더 시점에 읽으므로 원자 하나면 된다. 전환은 즉시 화면에 반영된다 —
 //! 이미 만들어 둔 String(지난 알림 등)은 옛 언어로 남는다(파이썬과 같다).
+//!
+//! 그 전제가 **거짓인 자리가 하나** 있다: 한 이진 안에서 병렬로 도는 테스트다. 다른
+//! 언어에서 재려고 전역을 뒤집으면 그 창 동안 남의 테스트가 남의 로케일에서 단언한다 —
+//! 그래서 [`with_locale`] 이 있고, 테스트는 [`set_locale`] 을 부르지 않는다(그 항목의
+//! 사고 기록 참조).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -39,6 +44,8 @@ mod en_claude;
 mod en_core;
 mod en_gui;
 mod en_proto;
+// 서버가 지어 보내는 글(정본 카탈로그에서 뽑은 표) — 아래 fold 의 **마지막**이다.
+mod en_server;
 
 /// 지원 로케일. 첫 항목이 원본/폴백 언어다(파이썬 `LOCALES` 와 같다).
 pub const LOCALES: &[&str] = &["ko", "en"];
@@ -47,7 +54,69 @@ pub const LOCALES: &[&str] = &["ko", "en"];
 /// 생기면 이 표현부터 바꾸면 된다(그때까지 enum 은 과하다).
 static EN_ACTIVE: AtomicBool = AtomicBool::new(false);
 
+/// 이 **스레드에만** 적용되는 덮어쓰기. `None` 이면 전역(`EN_ACTIVE`)을 따른다.
+///
+/// # 왜 있나 — 뒤집은 전역이 남의 단언에 샜다
+///
+/// 로케일이 프로세스 전역이라, 한 이진 안에서 **병렬로 도는 테스트** 하나가 잠깐
+/// `set_locale("en")` 하면 그 창 동안 다른 테스트가 **남의 로케일에서 단언**한다.
+/// 실제로 그랬다(2026-08-02): `session_tests` 의 배지 테스트가 en 구간에 들어간 사이
+/// `the_sync_badge_is_always_there_when_sync_is_on` 이 `[동기화]` 대신 영어를 보고
+/// 떨어졌고, `server_strings_conformance` 는 34개 전부가 한국어로 나왔다. 둘 다
+/// **혼자 돌리면 초록**이라 "부하 플레이크"로 읽히기 쉬운 모양이다.
+///
+/// 종전 처방은 잠금(`Mutex`)이었는데 **그것으로는 못 막는다** — 잠그는 쪽은 뒤집는
+/// 테스트뿐이고, 읽는 쪽 수백 개가 같은 잠금을 들 리가 없다. 그래서 뒤집기를 잠그는
+/// 대신 **스레드 밖으로 안 나가게** 한다: 러너가 테스트마다 스레드를 주므로 덮어쓰기가
+/// 그 테스트 안에서 끝난다. 전역은 그대로 두므로 제품 경로(`lang` 명령 → 즉시 반영)는
+/// 한 글자도 안 바뀐다.
+thread_local! {
+    static LOCAL_EN: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// 지금 이 스레드가 볼 로케일이 en 인가. 덮어쓰기 > 전역.
+///
+/// TLS 파괴 뒤에도 부를 수 있으므로 `try_with` 다 — 그때는 전역으로 떨어진다.
+fn en_active() -> bool {
+    LOCAL_EN
+        .try_with(|cell| cell.get())
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| EN_ACTIVE.load(Ordering::Relaxed))
+}
+
+/// 살아 있는 동안 **이 스레드의** 로케일을 덮어쓰고, 떨어질 때 원래대로 돌린다.
+///
+/// 되돌리기가 `Drop` 이라 단언이 터져도(=패닉해도) 다음 것이 남의 로케일을 물려받지
+/// 않는다. 함수 하나가 통째로 다른 언어일 때 쓴다 — 몸통을 들여쓰지 않아도 된다.
+#[must_use = "떨어뜨리면 그 자리에서 로케일이 돌아간다 — `let _guard = …` 로 붙잡을 것"]
+pub struct LocaleGuard(Option<bool>);
+
+impl Drop for LocaleGuard {
+    fn drop(&mut self) {
+        let _ = LOCAL_EN.try_with(|cell| cell.set(self.0));
+    }
+}
+
+/// 이 스레드를 `loc` 로케일로 두는 안내자. [`LocaleGuard`] 참조.
+pub fn locale_guard(loc: &str) -> LocaleGuard {
+    LocaleGuard(LOCAL_EN.with(|cell| cell.replace(Some(loc == "en"))))
+}
+
+/// `loc` 로케일에서 `f` 를 부르고 **이 스레드의** 로케일을 원래대로 돌린다.
+///
+/// 재는 구간이 짧을 때 쓴다. 단언은 이 블록 **밖**에서 하는 편이 낫다 — 안에서
+/// 터뜨리면 실패 메시지를 짓는 동안에도 로케일이 바뀐 채다.
+pub fn with_locale<T>(loc: &str, f: impl FnOnce() -> T) -> T {
+    let _guard = locale_guard(loc);
+    f()
+}
+
 /// 활성 로케일을 바꾼다. 미지원 값이면 폴백(ko). 적용된 로케일을 돌려준다.
+///
+/// ⚠ **전역을 바꾼다** — 이 프로세스의 모든 스레드가 본다. 테스트에서는 부르지 말고
+/// [`with_locale`] 을 쓸 것(위 항목의 사고). 제품에서 이것을 부르는 자리는
+/// `lang` 명령 하나다.
 pub fn set_locale(loc: &str) -> &'static str {
     let en = loc == "en";
     EN_ACTIVE.store(en, Ordering::Relaxed);
@@ -56,14 +125,14 @@ pub fn set_locale(loc: &str) -> &'static str {
 
 /// 지금 활성 로케일.
 pub fn locale() -> &'static str {
-    if EN_ACTIVE.load(Ordering::Relaxed) { "en" } else { "ko" }
+    if en_active() { "en" } else { "ko" }
 }
 
 /// 한국어 원문 → 지금 로케일의 문자열. en 이고 번역이 있으면 영어, 아니면 원문 그대로.
 ///
 /// 입력이 `'static` 이면 출력도 `'static` 이다 — 정적 표의 라벨을 그대로 지난다.
 pub fn t<'a>(ko: &'a str) -> &'a str {
-    if !EN_ACTIVE.load(Ordering::Relaxed) {
+    if !en_active() {
         return ko;
     }
     en_map().get(ko).copied().unwrap_or(ko)
@@ -76,7 +145,7 @@ pub fn t<'a>(ko: &'a str) -> &'a str {
 /// `setcat.동작` 대 폼 라벨). 문맥 키(`ctx\u{4}원문`)가 있으면 그것을, 없으면 평소
 /// [`t`] 로 떨어진다. 표기는 gettext 와 같은 EOT(U+0004) 구분자다.
 pub fn tc<'a>(ctx: &str, ko: &'a str) -> &'a str {
-    if !EN_ACTIVE.load(Ordering::Relaxed) {
+    if !en_active() {
         return ko;
     }
     let key = format!("{ctx}\u{0004}{ko}");
@@ -111,6 +180,9 @@ fn en_map() -> &'static HashMap<&'static str, &'static str> {
             en_proto::EN,
             en_gui::EN,
             en_claude::EN,
+            // 마지막이라 같은 원문이 겹치면 **여기가 이긴다** — 서버가 보내는 글의
+            // 권위는 정본이다(`en_server.rs` 머리말).
+            en_server::EN,
         ] {
             for (ko, en) in table {
                 map.insert(*ko, *en);

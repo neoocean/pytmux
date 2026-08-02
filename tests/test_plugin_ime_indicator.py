@@ -4,7 +4,7 @@
 관찰할 수 없고 **확정된 글자만** 키 이벤트로 받는다. 그래서 한/영은 패널로 보낼 확정
 입력 문자의 스크립트로 추정한다 — 한글→'한', ASCII 글자→'EN', 숫자/기호는 모드 중립.
 
-`draw_ime_indicator` 는 앱 비의존 순수 함수라 앱·소켓 없이 직접 호출해 셀 출력을 단언한다.
+자리 규칙(`cells.py`)은 앱 비의존 순수 함수라 앱·소켓 없이 직접 호출해 단언한다.
 client_key/handle_command 는 가짜 app 으로, 코어 on_key 배선은 라이브 앱으로 가드한다.
 계약(delete-to-disable): 플러그인을 Registry 에서 빼면 ime 명령/훅이 전부 사라진다.
 """
@@ -43,9 +43,7 @@ def _text_rows(cells):
 # 하이픈 디렉토리(ime-indicator)라 일반 import 불가 — importlib 로 모듈을 가져온다.
 import importlib  # noqa: E402
 
-_render = importlib.import_module("pytmuxlib.plugins.ime-indicator.render")
 _pkg = importlib.import_module("pytmuxlib.plugins.ime-indicator")
-draw_ime_indicator = _render.draw_ime_indicator
 PLUGIN = _pkg.PLUGIN
 
 
@@ -69,72 +67,52 @@ class _Ev:
         self.character = character
 
 
-# ---- 1) 순수 렌더 함수 ----
-async def test_badge_drawn_top_right_and_widths():
-    # '한'(와이드 2칸) → "[한]" = 4칸, 우측 reserve=4 비우고 우측정렬.
-    cells = _grid(40, 5)
-    st = Style(color="black", bgcolor="green", bold=True)
-    draw_ime_indicator(cells, 40, 5, "한", st)
-    row0 = _text_rows(cells)[0]
-    assert "[한]" in row0, row0
-    # 우측 4칸은 비어 있어야([x] 자리). 마지막 4칸 공백 확인.
-    assert row0[-4:] == "    ", repr(row0[-4:])
-    # 배지는 row 0 에만(다른 행은 공백).
-    assert all(c[0] == " " for row in cells[1:] for c in row)
-    # 'EN' = "[EN]" 4칸, 모두 단일폭.
-    cells2 = _grid(40, 5)
-    draw_ime_indicator(cells2, 40, 5, "EN", st)
-    assert "[EN]" in _text_rows(cells2)[0]
+# ---- 1) 자리 규칙(순수) ----
+#
+# 2026-08-02i(P7): 그리기 함수 `draw_ime_indicator` 는 **지웠다** — 정본이 이제 런
+# 생성기(`cells.py`) + 공통 소비자(`clientrender.paint_runs`)를 쓰기 때문이다. 아래는
+# 그 함수가 지키던 규칙을 **자리 셈 쪽에서** 그대로 잰다. 규칙을 지운 것이 아니라
+# 사는 곳이 바뀌었다.
+
+_cells = importlib.import_module("pytmuxlib.plugins.ime-indicator.cells")
+
+
+async def test_badge_is_right_aligned_and_counts_wide_chars():
+    """`[한]` 은 **네 칸**이다(한글 2칸) — 폭을 글자 수로 세면 자리가 어긋난다."""
+    assert _cells.text_width("[한]") == 4
+    assert _cells.text_width("[EN]") == 4
+    # 오른쪽 경계(exclusive) 40 에 우측정렬 → 36..40.
+    assert _cells.badge_span("한", 40, 0) == (36, 40)
+    assert _cells.badge_span("EN", 40, 0) == (36, 40)
 
 
 async def test_badge_skipped_when_too_narrow():
-    # 폭이 배지+reserve 를 못 담으면 아무것도 안 그린다.
-    cells = _grid(6, 3)
-    draw_ime_indicator(cells, 6, 3, "한", Style())
-    assert all(c[0] == " " for row in cells for c in row)
+    """폭이 배지를 못 담으면 아무것도 안 그린다 — 화면을 덮어 가며 알릴 것은 아니다."""
+    assert _cells.badge_span("한", 3, 0) is None
+    assert _cells.ime_cells("한", 0, 3) == ([], None)
 
 
-async def test_badge_wide_continuation_cell():
-    # 한글 본체 다음 칸은 빈 연속 셀("")이어야 정렬이 안 깨진다.
-    cells = _grid(40, 2)
-    draw_ime_indicator(cells, 40, 2, "한", Style())
-    chars = [c[0] for c in cells[0]]
-    i = chars.index("한")
-    assert chars[i + 1] == "", chars[i:i + 3]
-
-
-async def test_badge_on_cursor_row_right_end():
-    """2026-06-11 요청: 배지는 커서가 있는 줄(y)의 오른쪽 끝 — y≠0 이면 reserve 0
-    으로 진짜 끝까지, 행 범위 밖 y 는 생략(None)."""
-    cells = _grid(40, 5)
-    span = draw_ime_indicator(cells, 40, 5, "한", Style(), y=3, reserve_right=0)
-    assert span == (36, 40), span
-    row3 = _text_rows(cells)[3]
-    assert row3.endswith("[한]" + ""), repr(row3[-6:])
-    assert "[한]" in row3 and all(
-        c[0] == " " for r, row in enumerate(cells) if r != 3 for c in row)
-    # y 가 화면 밖이면 생략
-    cells2 = _grid(40, 5)
-    assert draw_ime_indicator(cells2, 40, 5, "EN", Style(), y=7) is None
-    assert all(c[0] == " " for row in cells2 for c in row)
+async def test_badge_leaves_room_for_the_tab_close_button():
+    """탭 닫기 `[x]` 와 **같은 행**이면 우측 4칸을 비운다 — [x] 가 뒤에 그려져 배지를
+    덮기 때문이다. 다른 행에는 [x] 가 없어 진짜 끝까지 쓴다."""
+    assert _cells.badge_span("EN", 40, _cells.RESERVE_FOR_TAB_CLOSE) == (32, 36)
+    assert _cells.badge_span("EN", 40, 0) == (36, 40)
 
 
 async def test_badge_at_active_pane_right_edge():
     """2026-06-16 요청: 좌우 분할에서 활성 패널이 화면 왼쪽 절반이면 배지는 화면
-    오른쪽 끝이 아니라 **활성 패널의 오른쪽 끝**(x_right)에 그려져야 한다."""
-    # 활성 패널 = 왼쪽 절반(우측 경계 x_right=40), 화면 폭 80.
-    cells = _grid(80, 5)
-    span = draw_ime_indicator(cells, 80, 5, "EN", Style(), y=2,
-                              reserve_right=0, x_right=40)
+    오른쪽 끝이 아니라 **활성 패널의 오른쪽 끝**에 붙는다 — 비활성 패널 위에 뜨면
+    어느 패널의 상태인지 헷갈린다."""
+    runs, span = _cells.ime_cells("EN", 2, 40)      # 활성 패널 우측 경계 = 40
     assert span == (36, 40), span
-    row2 = _text_rows(cells)[2]
-    assert row2[36:40] == "[EN]", repr(row2[34:42])
-    # 화면 오른쪽 절반(비활성 패널 위)은 건드리지 않는다.
-    assert row2[40:] == " " * 40, repr(row2[40:])
-    # x_right 미지정이면 종전대로 화면 폭 끝.
-    cells2 = _grid(80, 5)
-    assert draw_ime_indicator(cells2, 80, 5, "EN", Style(), y=2,
-                              reserve_right=0) == (76, 80)
+    assert runs[0]["x"] == 36 and runs[0]["y"] == 2, runs
+    # 화면이 80칸이어도 경계를 넘지 않는다(경계를 안 주면 호출부가 화면 폭을 준다).
+    assert _cells.ime_cells("EN", 2, 80)[1] == (76, 80)
+
+
+async def test_no_badge_for_a_row_that_does_not_exist():
+    """행이 음수면 생략 — 그리는 쪽이 격자 밖을 만지지 않게 여기서 막는다."""
+    assert _cells.ime_cells("EN", -1, 40) == ([], None)
 
 
 # ---- 2) client_key 한/영 추정 상태 전이 ----
@@ -775,3 +753,97 @@ async def test_oskbd_drain_parses_line_after_newline():
     finally:
         os.close(r)
         os.close(w)
+
+
+# ── Tier D: 클라가 사실을 올리고, 그림은 플러그인이 낸다 (P7 · 2026-08-02i) ──
+
+def _ime():
+    import importlib
+    return importlib.import_module("pytmuxlib.plugins.ime-indicator").PLUGIN
+
+
+def _cells_mod():
+    import importlib
+    return importlib.import_module("pytmuxlib.plugins.ime-indicator.cells")
+
+
+_PANE = {"id": 1, "x": 0, "y": 0, "w": 40, "h": 10}
+
+
+async def test_the_badge_is_not_drawn_until_a_client_reports_the_fact():
+    """**한/영은 서버가 모른다.** OS 가 클라 창에만 알려 주는 사실이라(설계 ⑤),
+    클라가 `client_fact` 로 올리기 전에는 그릴 것이 없다 — 빈 목록이라야 서버가
+    프레임을 안 만든다(끄는 것도 프레임: 빈 런이 지우개다)."""
+    req = {"panes": [_PANE], "active": 1, "facts": {}}
+    assert _ime().plugin_cells(None, None, req) == []
+    # 올렸다 지우면(값 없음) 다시 빈 목록.
+    assert _ime().plugin_cells(None, None,
+                               {**req, "facts": {"ime": ""}}) == []
+
+
+async def test_the_reported_fact_becomes_a_run_with_a_semantic_colour():
+    """올라온 사실이 그대로 런이 된다 — 색은 **이름**이고(hex 금지) 글자는 `[한]` 꼴."""
+    runs = _ime().plugin_cells(
+        None, None, {"panes": [_PANE], "active": 1, "facts": {"ime": "한"}})
+    assert len(runs) == 1, runs
+    run = runs[0]
+    assert run["text"] == "[한]", run
+    assert run["theme"] == {"b": "success"}, run       # 한글 = 강조색
+    for v in run["theme"].values():
+        assert not v.startswith("#"), f"hex 가 실렸다: {run}"
+    # 활성 패널의 **오른쪽 끝**에 붙는다(정본 규칙). '한' 은 두 칸이라 `[한]` = 4칸 —
+    # 폭을 글자 수로 세면 여기서 어긋난다(와이드 문자 계산이 규칙의 일부다).
+    assert run["x"] + _cells_mod().text_width(run["text"])         == _PANE["x"] + _PANE["w"], run
+    # 영문은 다른 이름을 쓴다 — 두 상태가 같은 색이면 배지가 아무 말도 안 한다.
+    en = _ime().plugin_cells(
+        None, None, {"panes": [_PANE], "active": 1, "facts": {"ime": "EN"}})
+    assert en[0]["theme"] == {"b": "primary"}, en
+
+
+async def test_the_row_rule_is_one_copy_and_prefers_the_cursor():
+    """자리 규칙(`badge_row`)이 정본과 **한 벌**이라야 한다 — 세 갈래를 직접 잰다.
+
+    이 규칙이 갈려 있던 것이 P7 의 동기다: 네이티브가 늘 첫 행에 그렸고 정본은 커서
+    줄에 그렸다."""
+    badge_row = _cells_mod().badge_row
+    box = (0, 0, 40, 10)
+    assert badge_row((5, 7), None, box) == 7, "커서가 보이면 그 행"
+    assert badge_row(None, 4, box) == 4, "숨겨졌으면 직전 커서 행"
+    assert badge_row(None, None, box) == 9, "둘 다 없으면 패널 마지막 내용 행"
+    assert badge_row(None, None, None) == 0
+
+
+async def test_a_pane_too_narrow_gets_no_badge():
+    """좁으면 안 그린다 — 화면을 덮어 가며 알릴 만한 것은 아니다."""
+    narrow = {"id": 1, "x": 0, "y": 0, "w": 3, "h": 3}
+    assert _ime().plugin_cells(
+        None, None,
+        {"panes": [narrow], "active": 1, "facts": {"ime": "EN"}}) == []
+
+
+async def test_the_fact_rides_the_connection_not_the_session():
+    """사실은 **그 연결의 것**이다 — 두 사람이 같은 세션을 봐도 서로의 한/영이 안 섞인다.
+
+    오버레이(`plugin_overlay`)와 같은 자리(`ClientConn.plugin_state`)를 쓴다."""
+    from harness import server_only, teardown
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        from pytmuxlib.servercmd import _CMD_TABLE
+        handler = _CMD_TABLE["client_fact"][0]
+
+        class _C:
+            def __init__(self):
+                self.plugin_state = {}
+                self._cells_at = 1.0
+
+        a, b = _C(), _C()
+        await handler(srv, a, sess, {"name": "ime", "value": "한"})
+        assert a.plugin_state["facts"] == {"ime": "한"}
+        assert b.plugin_state == {}, "남의 연결에 새어 나갔다"
+        assert a._cells_at == 0.0, "지금 다시 그리라고 안 했다"
+        # 값이 비면 지운다(끄는 것도 사실이다) — 키까지 정리한다.
+        await handler(srv, a, sess, {"name": "ime", "value": None})
+        assert "facts" not in a.plugin_state, a.plugin_state
+    finally:
+        await teardown(srv, task, sock)

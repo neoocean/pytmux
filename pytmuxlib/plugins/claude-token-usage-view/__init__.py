@@ -55,6 +55,9 @@ i18n.register({
         "uview.refreshing": "사용량 갱신 중… (숨은 /usage, ~수초)",
         "uview.overlay_no_data": "한도 데이터 없음 — Claude 패널에서 /usage 실행 후 갱신",
         "uview.overlay_next_reset": "다음 리셋까지 ",
+        # ⓑ 카운트다운 줄은 **라벨 + 값**이라 원문이 키가 못 된다 — 자리를 둔 판을
+        # 따로 두고 `i18n.phrase` 로 실어 보낸다(위 라벨 키는 정본 렌더가 계속 쓴다).
+        "uview.overlay_next_reset_in": "다음 리셋까지 {left}",
     },
     "en": {
         "cmd.usage-view": "Claude usage limit + next-reset countdown screen "
@@ -69,6 +72,7 @@ i18n.register({
         "uview.refreshing": "Refreshing usage… (hidden /usage, ~a few s)",
         "uview.overlay_no_data": "No limit data — run /usage in a Claude pane to refresh",
         "uview.overlay_next_reset": "Until next reset ",
+        "uview.overlay_next_reset_in": "Until next reset {left}",
     },
 })
 
@@ -131,18 +135,57 @@ class _UsageViewPlugin:
 
     # ---- 클라이언트 오버레이 훅(pane 모드) — clock/calendar 와 동일 계약 ----
     def client_overlay(self, app, cells, W, H, active):
+        """켜진 패널을 한도 막대 + 카운트다운으로 덮는다(런 생성기 `cells.py` 의 그림을
+        `overlay.py` 가 셀 격자에 얹는다). 색은 **이름으로** 내려오고 여기서 이 클라의
+        테마로 푼다 — 시계·달력과 같은 규칙."""
         if not getattr(app, "usage_view_panes", None):
             return
-        from rich.style import Style
         from pytmuxlib.clientutil import theme_color
         from .overlay import draw_usage_overlay
-        text_st = Style(color=theme_color(app, "foreground"))
-        digit_st = Style(color=theme_color(app, "success"), bold=True)
         draw_usage_overlay(
             cells, app.layout.get("panes", []), app.usage_view_panes, W, H,
-            text_st, digit_st,
+            lambda name: theme_color(app, name),
             getattr(app.status, "usage_limits", None),
             age_sec=getattr(app.status, "usage_age_sec", None))
+
+    # ---- 서버 측: 셀 기여(Tier B) ----
+    #
+    # 정본과 **같은 런**이다 — 그리는 규칙이 `cells.py` 한 벌이라서다(시계 08-02e ·
+    # 달력 08-02b 와 같은 모양). 다른 것은 도착 방식뿐: 정본은 자기 프로세스에서
+    # 격자에 얹고, 네이티브 클라는 같은 런을 서버에게서 받는다.
+    #
+    # 데이터는 **서버가 든다** — claude-code 가 그림자 `/usage` 로 긁어 `server._usage`
+    # 에 두고 status 로도 싣는다. 플러그인끼리 하드 참조는 금지라 `getattr` 로 부드럽게
+    # 읽는다(claude-code 가 없으면 안내 한 줄만 그려진다 — 빈 화면 금지).
+    def plugin_cells(self, server, sess, req):
+        from .cells import usage_cells
+        panes = [p for p in req.get("panes") or []
+                 if p["id"] in (req.get("overlays") or {}).get(
+                     "claude-token-usage-view", ())]
+        if not panes:
+            return []
+        return usage_cells(panes, getattr(server, "_usage", None),
+                           age_sec=self._usage_age(server))
+
+    def plugin_dim_panes(self, server, sess, req):
+        """오버레이가 켜진 패널은 **뒤를 흐리게** 한다(정본 `dim_pane` 과 같은 뜻).
+        딤은 있는 셀을 바꾸는 일이라 화면을 든 클라만 할 수 있다 — 서버는 어느
+        패널인지만 말한다."""
+        return sorted((req.get("overlays") or {}).get(
+            "claude-token-usage-view", ()))
+
+    @staticmethod
+    def _usage_age(server):
+        """실측 경과(초). claude-code 가 안 실었으면 None(신선도 줄이 안 붙는다).
+
+        `_usage_ts` 는 claude-code 가 실측 때마다 찍는 시각이고, status 의
+        `usage_age_sec`(정본 클라가 읽는 값)도 **같은 자리에서** 나온다 — 두 경로가
+        같은 신선도를 보게 하려고 이름을 빌린다(getattr 가드 = 플러그인 하드 참조 금지)."""
+        ts = getattr(server, "_usage_ts", None)
+        if not isinstance(ts, (int, float)):
+            return None
+        import time
+        return max(0, int(time.time() - ts))
 
     def client_tick(self, app):
         """1초마다 오버레이가 떠 있으면 True(코어가 재합성 → 카운트다운 갱신)."""

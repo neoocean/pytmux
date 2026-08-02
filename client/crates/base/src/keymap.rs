@@ -117,6 +117,15 @@ pub enum Action {
     ///
     /// **키가 없다** — 파이썬도 안 준다(시계만 `prefix t` 를 쓴다). 팔레트가 입구다.
     ToggleCalendar,
+    /// 활성 패널을 Claude 한도 막대 + 리셋 카운트다운으로 덮는다
+    /// (`usage-view` — `claude-token-usage-view` 플러그인).
+    ///
+    /// ⚠ **정본의 `usage-view` 는 세 모드**(popup·tab·pane)이고 기본이 `popup` 인데,
+    /// 우리에게 있는 것은 **`pane`(오버레이) 하나**다 — 나머지 둘은 Textual 화면이라
+    /// 여기에 짝이 없다. 그래서 팔레트의 `usage-view` 는 이 오버레이로 간다.
+    /// 종전에는 같은 자리가 "이 클라엔 화면이 없다" 알림으로 끝났으니 **덜 하던 것이
+    /// 늘어난 것**이지 다르게 하는 것이 아니다. 팝업/탭이 오면 그때 갈래를 나눈다.
+    ToggleUsageView,
     /// 입력을 창 안 모든 패널로 복제할지 토글(`synchronize-panes`).
     ToggleSync,
     ToggleMonitorActivity,
@@ -349,6 +358,7 @@ impl Action {
             Action::SendBacktick => "패널에 `",
             Action::ToggleClock => "시계",
             Action::ToggleCalendar => "달력",
+            Action::ToggleUsageView => "Claude 한도",
             Action::ToggleSync => "패널 동기화",
             Action::ToggleMonitorActivity => "활동 감시",
             Action::ToggleMonitorBell => "벨 감시",
@@ -1120,6 +1130,8 @@ pub static PALETTE: &[PaletteEntry] = &[
     pe("notice-history", "설정/기타", Action::ShowNotices),
     pe("clock-mode", "설정/기타", Action::ToggleClock),
     pe("calendar-mode", "설정/기타", Action::ToggleCalendar),
+    // 정본은 세 모드지만 우리에게 있는 것은 pane(오버레이) 하나다 — Action 주석 참조.
+    pe("usage-view", "Claude", Action::ToggleUsageView),
     pe("plugins", "설정/기타", Action::ShowPlugins),
     pe("plugin-manager", "설정/기타", Action::ShowPlugins),
     pe("kill-server", "설정/기타", Action::KillServer),
@@ -1552,6 +1564,7 @@ fn variant_index(action: Action) -> usize {
         Action::SendBacktick => 50,
         Action::ToggleClock => 47,
         Action::ToggleCalendar => 48,
+        Action::ToggleUsageView => 105,
         Action::JumpPrompt { .. } => 94,
         Action::ShowCompose => 95,
         Action::ShowInfoTabs => 96,
@@ -1565,7 +1578,7 @@ fn variant_index(action: Action) -> usize {
     }
 }
 
-const ACTION_COUNT: usize = 105;
+const ACTION_COUNT: usize = 106;
 
 /// **전수 목록** — 액션 하나도 빠지지 않는다(위 `variant_index` 의 와일드카드 없는 match 가
 /// 빠짐을 막고, 아래 개수 단언이 중복·누락을 막는다).
@@ -1626,6 +1639,7 @@ pub fn all_actions() -> Vec<Action> {
         Action::SendBacktick,
         Action::ToggleClock,
         Action::ToggleCalendar,
+        Action::ToggleUsageView,
         Action::ToggleSync,
         Action::ToggleMonitorActivity,
         Action::ToggleMonitorBell,

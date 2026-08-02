@@ -495,10 +495,17 @@ fn every_plugin_command_reaches_the_palette_exactly_once() {
 static NATIVE_PLUGIN_COMMANDS: &[&str] = &[
     // 상태줄 토글 둘 — 서버 상태(`flags`)로 값이 오고 우리가 명령을 보낸다.
     "auto-resume",
-    // 패널 오버레이 둘 — proto 가 그림을 직접 든다(설계 P3 에서 `plugin_cells` 로 이관).
+    // 패널 오버레이 셋 — 그림은 서버가 `plugin_cells` 로 준다(P3·2026-08-02e·f).
+    // 우리가 네이티브로 드는 것은 **켠 사실**뿐이다: 어느 패널에 오버레이가 떴는지는
+    // 그 클라만 아는 상태라 서버가 대신 정할 수 없다(설계 §4.4 `client_fact`).
     "calendar-mode",
     "clock-mode",
     "prompt-clear",
+    // ⚠ `usage-view` 는 정본에서 **세 모드**(popup·tab·pane)인데 우리 것은
+    // `pane`(오버레이) 하나다 — 나머지 둘은 Textual 화면이라 짝이 없다. 위 둘과 같은
+    // 이유로 네이티브(켠 사실은 클라의 것)이고, 팝업/탭이 선언형 화면으로 오면 그때
+    // 갈래를 나눈다. 종전에는 이 이름이 "화면이 없다" 알림으로 끝났다.
+    "usage-view",
 ];
 
 #[test]

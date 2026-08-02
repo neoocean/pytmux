@@ -1512,6 +1512,23 @@ class _ClaudeCodePlugin:
         viewing_remote = bool(vr()) if callable(vr) else False
         return render_segs(status, segs, w, w0, viewing_remote=viewing_remote)
 
+    def plugin_badges(self, server, sess, msg):
+        """상태줄 표식을 **자료로** 준다(Tier B ③ · P6 후반).
+
+        위 `client_statusbar` 와 **같은 규칙**(`statusbadges.badges`)이고 다른 것은 도착
+        방식뿐이다 — 정본은 자기 프로세스에서 그 목록으로 세그먼트를 만들고, 네이티브
+        클라는 이 자료를 받아 칩으로 그린다. rec 배지가 먼저 밟은 길이다.
+
+        값은 `server_status` 가 방금 채운 `msg` 를 그대로 읽는다 — 같은 것을 두 번
+        계산하면 두 클라가 다른 것을 볼 수 있는 자리가 하나 생긴다.
+
+        `kind` 는 **정본이 클릭존을 붙이는 데 쓰는 이름**이라 와이어에도 그대로 실린다.
+        네이티브 클라는 아직 그 자리들을 안 여는데(그 화면들이 Tier C 이고 GUI 에 없다),
+        `do` 를 실어 두면 "선언은 있고 배선이 없는" 칸이 생기므로 **누르는 자리는 안
+        만든다**(rec 배지와 같은 판단 · 08-02b)."""
+        from .statusbadges import badges
+        return badges(msg)
+
     # (client_status_tabs 훅 — 통합 상태 팝업의 '토큰 사용량' 탭 — 은 token-log 통합
     #  (2026-06-12)으로 제거. 통합 상태 팝업은 REC·서버 두 탭, 토큰은 token-log 팝업.)
 
