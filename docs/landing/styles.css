@@ -1,10 +1,10 @@
 /* pytmux 랜딩/가이드 공용 스타일 — 다크 터미널 테마(Textual textual-dark 팔레트 근사) */
 :root {
-  --bg: #14141f;
-  --bg-soft: #1c1c2b;
-  --bg-card: #21212f;
-  --bg-elev: #282838;
-  --border: #34344a;
+  --bg: #1e1e2c;
+  --bg-soft: #262636;
+  --bg-card: #2b2b3c;
+  --bg-elev: #343447;
+  --border: #414159;
   --text: #e6e6ef;
   --text-dim: #a6a6bd;
   --text-faint: #74748c;
@@ -42,7 +42,7 @@ a:hover { text-decoration: underline; }
 /* ── 상단 내비 ── */
 .nav {
   position: sticky; top: 0; z-index: 50;
-  background: rgba(20, 20, 31, 0.82);
+  background: rgba(30, 30, 44, 0.82);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
 }
@@ -161,7 +161,7 @@ section { padding: 64px 0; }
 
 /* ── 코드 블록 ── */
 .code {
-  background: #0d0d16; border: 1px solid var(--border); border-radius: 12px;
+  background: #16161f; border: 1px solid var(--border); border-radius: 12px;
   font-family: var(--mono); font-size: 14px; line-height: 1.7;
   padding: 20px 22px; overflow-x: auto; color: #d4d4e4;
   white-space: pre-wrap; word-break: break-word;
