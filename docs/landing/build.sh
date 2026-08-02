@@ -15,10 +15,13 @@ out="${1:-$here/_dist}"
 rm -rf "$out"
 mkdir -p "$out/image" "$out/guide"
 
-cp "$here/index.html" "$here/guide.html" "$here/changes.html" "$here/changelog.html" "$here/styles.css" "$out/"
+cp "$here/index.html" "$here/guide.html" "$here/changes.html" "$here/changelog.html" \
+   "$here/gui.html" "$here/styles.css" "$out/"
 cp "$here/lightbox.js" "$here/guide-nav.js" "$out/"
 cp "$here"/guide/*.html "$out/guide/"
-cp "$here"/image/*.svg "$out/image/"
+# 그림은 SVG(합성 컷)와 PNG(GUI 실물 캡처) 두 가지다 — 확장자를 하나만 적으면 GUI 소개
+# 페이지의 그림이 통째로 빠진 번들이 조용히 나간다.
+cp "$here"/image/*.svg "$here"/image/*.png "$out/image/"
 
 echo "built → $out"
 echo "  files: $(find "$out" -type f | wc -l | tr -d ' ')"

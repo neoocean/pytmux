@@ -54,13 +54,76 @@
         <strong>최신 날짜가 맨 위</strong>에 오도록 정리합니다. 여기 적힌 것은 실제로 화면에서
         <strong>보이고 체감되는 변화</strong> 위주이며, 내부 성능·안정화 작업은 요약만 적었습니다.
         전체 변경 이력은 <a href="https://github.com/neoocean/pytmux/commits/main" target="_blank" rel="noopener">GitHub 커밋 로그</a>에 있습니다.
-        날짜 제목 옆 <span class="pill">zip ⬇</span> 은 <strong>그날 마지막 커밋 시점의 소스 전체</strong>를
-        내려받는 링크입니다 — 공개 미러가 시작된 <strong>2026-06-17 이후</strong> 날짜에만 붙습니다.
+        날짜 제목 옆 zip 링크는 <strong>그날 마지막 커밋 시점의 소스</strong>를 내려받는 링크입니다 —
+        공개 미러가 시작된 <strong>2026-06-17 이후</strong> 날짜에만 붙고, 무엇이 담기는지는 아래에 적었습니다.
+      </div>
+      <div class="callout">
+        <strong>zip 이 두 벌입니다.</strong> 2026-08-01 부터 저장소에 <strong>Rust GUI 클라이언트</strong>가
+        함께 들어와, 날짜별 스냅샷을 <strong>두 가지</strong>로 나눠 걸었습니다.
+        <ul style="margin:8px 0 0;">
+          <li><span class="pill">py zip ⬇</span> — <strong>파이썬 TUI</strong> 한 벌(서버 + 터미널 클라이언트).
+            <span class="inline-code">client/</span> 를 뺀 트리라 <strong>약 3.5MB</strong> 입니다. 쓰는 데 필요한 것은 이쪽이 전부입니다.</li>
+          <li><span class="pill">py+gui zip ⬇</span> — 위에 <strong>GUI 클라이언트 소스와 선빌드 이진</strong>(macOS·리눅스·윈도우)까지 담은 전체 트리.
+            이진이 함께 들어 있어 <strong>약 25MB</strong> 입니다.</li>
+        </ul>
+        <br>2026-07-31 이전 날짜에는 GUI 가 저장소에 없었으므로 <span class="pill">py zip ⬇</span> 한 벌만 붙습니다.
+      </div>
+      <div class="callout warn">
+        <strong>GUI 클라이언트는 아직 알파입니다 — 쓰실 때는 파이썬 TUI 클라이언트를 권합니다.</strong>
+        pytmux 는 같은 서버에 붙는 클라이언트를 두 벌 갖고 있습니다. 그중 <strong>파이썬 TUI</strong>(터미널에서 도는
+        <span class="inline-code">python3 pytmux.py</span>)가 <strong>정본</strong>이고, 기능·번역·안정성이 모두 이쪽 기준입니다.
+        <strong>Rust GUI</strong>(<span class="inline-code nb">pytmux-gui</span>)는 <strong>개발 중</strong>이라
+        정본만큼 다듬어지지 않았고, 빠진 조작과 거친 자리가 남아 있습니다.
+        구경하거나 시험해 보시는 것은 환영이지만, <strong>실제 작업은 TUI 로</strong> 하시는 편이 안전합니다.
+        <br>GUI 가 무엇을 목표로 하는지·지금 어디까지 왔는지는 <a href="gui">GUI 클라이언트 소개</a>에 정리해 두었습니다.
       </div>
     </header>
 
+    <section class="cl-day" id="d-2026-08-02">
+      <h2>2026-08-02 <span class="pill">일요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/d77c40eb853d47151541115e8192740831c44ef4.zip" rel="noopener" title="2026-08-02 마지막 소스 커밋(ab2af07) 시점 · 파이썬 TUI 만(client/ 제외) 소스 zip">py zip ⬇</a> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/ab2af07201bc50cd3cc1aa594f2d741974c12438.zip" rel="noopener" title="2026-08-02 마지막 소스 커밋(ab2af07) 시점 · GUI 소스와 선빌드 이진까지 담은 전체 소스 zip">py+gui zip ⬇</a></h2>
+      <ul>
+        <li><span class="pill stable">플러그인</span> <strong>시계·달력 같은 <span class="inline-code">패널을 덮는 화면</span>을 이제 <span class="inline-code">서버가 그립니다</span> — 두 클라이언트에 같은 그림이 뜹니다.</strong>
+          <a href="guide/plugins">플러그인</a>이 그리는 화면(큰 시계, 이번 달 달력, 파일 관리자 <span class="inline-code">mdir</span>)은 지금까지 <strong>파이썬 클라이언트 안에서</strong> 그려졌습니다 —
+          그리는 코드가 파이썬·Textual 모양이라 <strong>소켓을 건너가지 못했고</strong>, 그래서 GUI 클라이언트에는 <strong>손으로 옮긴 것만</strong> 있었습니다(옮기지 않은 것은 아예 안 보였습니다).
+          <br>이제 서버가 "이 화면은 이렇게 생겼다"를 <strong>그림이 아니라 설명으로</strong> 내려보내고, 클라이언트가 자기 방식대로 그립니다.
+          플러그인 한 벌을 만들면 <strong>두 클라이언트 모두에</strong> 뜹니다 — 이 페이지의 <a href="gui">GUI 소개</a>에 실은 달력 컷이 그렇게 뜬 화면입니다.</li>
+        <li><span class="pill stable">화면</span> <strong>아래쪽 <span class="inline-code">Claude 요약 구역</span>이 기본으로 접힙니다 — 패널이 여섯 줄 넓어졌습니다.</strong>
+          이 구역은 늘 펼쳐져 있었고, 그만큼 <strong>터미널 화면이 상시로 여섯 줄 좁았습니다</strong>. 훑어보는 용도의 요약이 화면의 주인공(패널)을 밀어내고 있던 셈입니다.
+          <br>이제 <strong>머리줄만</strong> 남고 접힙니다. 머리줄에는 개수(<span class="inline-code">Claude 3개</span>)가 함께 적혀 있어 "없다"로 읽히지 않고, 그 자리를 눌러 다시 펼 수 있습니다.</li>
+        <li><span class="pill stable">언어</span> <strong>GUI 클라이언트도 한국어·영어를 따라옵니다 — 두 클라이언트가 <span class="inline-code">같은 파일</span>을 봅니다.</strong>
+          서버가 만들어 보내는 문구(알림·확인 물음 등)는 클라이언트가 번역해 보여 주는데, GUI 쪽에 아직 빠진 문구가 남아 있었습니다. 이번에 그 목록을 서버 정본에서 <strong>기계로 뽑아 맞췄습니다</strong>.
+          <br>언어 선택은 <strong>파이썬 클라이언트와 같은 파일</strong>에 저장됩니다 — 한쪽에서 <span class="inline-code">lang en</span> 하면 다른 쪽도 다음 기동부터 그 언어로 뜹니다.</li>
+        <li><span class="pill stable">문서</span> <strong>소개 사이트에 <a href="gui">GUI 클라이언트 소개</a> 페이지를 새로 만들고, 날짜별 소스 zip 을 두 벌로 나눴습니다.</strong>
+          GUI 가 <strong>무엇을 목표로 하는지·지금 어디까지 왔는지·어떤 코드 위에 서 있는지</strong>(warp 터미널의 MIT 부분)를 실제 화면과 함께 정리했습니다.
+          이 페이지 맨 위에도 <strong>GUI 는 아직 알파이니 파이썬 TUI 를 쓰시라</strong>는 안내를 붙였습니다.
+          <br>날짜 옆 zip 링크는 이제 <span class="pill">py zip ⬇</span>(파이썬 TUI 만 · 약 3.5MB)와
+          <span class="pill">py+gui zip ⬇</span>(GUI 소스·이진 포함 · 약 25MB) 두 벌입니다 — 쓰는 데 필요한 것은 앞의 것이 전부입니다.
+          같은 날 <strong>사이트 배경을 한 단 밝게</strong> 조정했습니다(어두운 층 사다리를 통째로 한 칸 올렸습니다).</li>
+      </ul>
+    </section>
+
+    <section class="cl-day" id="d-2026-08-01">
+      <h2>2026-08-01 <span class="pill">토요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/54ca2734f4a0c7556df0ed9dd120d121f43873c2.zip" rel="noopener" title="2026-08-01 마지막 소스 커밋(0a328a0) 시점 · 파이썬 TUI 만(client/ 제외) 소스 zip">py zip ⬇</a> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/0a328a0407f7229d9f3b4f1c0e311a274ed03a0f.zip" rel="noopener" title="2026-08-01 마지막 소스 커밋(0a328a0) 시점 · GUI 소스와 선빌드 이진까지 담은 전체 소스 zip">py+gui zip ⬇</a></h2>
+      <ul>
+        <li><span class="pill stable">저장소</span> <strong>개발 중인 <span class="inline-code">GUI 클라이언트</span>가 공개 저장소에 함께 들어왔습니다.</strong>
+          pytmux 는 <strong>하나의 서버에 여러 클라이언트</strong>가 붙는 구조입니다. 지금까지 공개된 것은 터미널에서 도는 <strong>파이썬 클라이언트</strong> 한 벌이었고,
+          별도로 만들던 <strong>Rust GUI 클라이언트</strong>는 다른 곳에 있었습니다. 이제 <strong>한 저장소</strong>에 들어와,
+          서버와 클라이언트가 <strong>같은 커밋</strong>으로 함께 움직입니다 — 프로토콜이 바뀌면 서버와 두 클라이언트가 한 번에 같이 바뀝니다.
+          <br>소스와 함께 <strong>미리 빌드한 실행 파일 3종</strong>(macOS·리눅스·윈도우)이 <span class="inline-code">client/build/</span> 에 들어 있어, Rust 를 깔지 않아도 받아서 바로 띄워 볼 수 있습니다.
+          <strong>다만 아직 알파입니다</strong> — 자세한 것은 <a href="gui">GUI 클라이언트 소개</a>를 봐 주세요.
+          <br>이 이진들 때문에 저장소 zip 이 <strong>3.5MB 에서 25MB 로</strong> 커졌습니다. 그래서 이 페이지의 날짜별 zip 을 <strong>두 벌로 나눴습니다</strong>(위 안내 참고).</li>
+        <li><span class="pill stable">배포</span> <strong>실행 파일은 이제 <span class="inline-code">GitHub 액션</span>이 굽습니다 — 굽는 사람의 흔적이 남지 않도록.</strong>
+          손으로 빌드한 실행 파일에는 <strong>빌드한 사람 컴퓨터의 소스 경로가 그대로 박힙니다</strong>(오류 위치 표시용으로 컴파일러가 넣습니다).
+          실측으로 macOS 판에 345건, 윈도우 판에 1,034건이 들어 있었고, 실행 파일은 한 번 올리면 되돌리기가 어렵습니다.
+          <br>이제 <strong>깨끗한 러너에서</strong> 굽습니다 — 개인 컴퓨터 경로가 애초에 끼어들지 않고, 윈도우·리눅스 판을 위해 그 OS 컴퓨터를 따로 갖고 있을 필요도 없습니다(GUI 는 크로스 빌드가 안 됩니다).</li>
+        <li><span class="pill stable">정리</span> <strong>클라이언트는 <span class="inline-code">둘</span>입니다 — 터미널용 파이썬 TUI, 그리고 창으로 뜨는 GUI.</strong>
+          한동안 Rust 로 만든 <strong>터미널 클라이언트</strong>도 함께 있었지만, <strong>같은 자리에 제품이 두 벌일 이유가 없어</strong> 지웠습니다(터미널은 파이썬 정본 한 벌).
+          <span class="inline-code">pytmux --native</span> 플래그도 함께 사라졌습니다 — GUI 는 <span class="inline-code nb">pytmux-gui</span> 를 직접 실행합니다.</li>
+      </ul>
+    </section>
+
     <section class="cl-day" id="d-2026-07-31">
-      <h2>2026-07-31 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/6dfce5dd48d4abf66774ca832a141be2d57971d5.zip" rel="noopener" title="2026-07-31 마지막 소스 커밋(6dfce5d) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-31 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/6dfce5dd48d4abf66774ca832a141be2d57971d5.zip" rel="noopener" title="2026-07-31 마지막 소스 커밋(6dfce5d) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">탭</span> <strong><span class="inline-code">Esc</span> 뒤 숫자로 탭을 전환할 때, 아주 드물게 <span class="inline-code">누른 번호의 다음 탭</span>이 열리던 것을 고쳤습니다.</strong>
           번호를 누르는 그 짧은 순간 다른 창(또는 자동화)이 탭을 열거나 닫아 탭 순서가 밀리면, 화면에 보이던 번호를 그대로 서버로 보내는 방식이라 <strong>사람이 고른 탭과 다른 탭</strong>이 열릴 수 있었습니다.
@@ -69,7 +132,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-30">
-      <h2>2026-07-30 <span class="pill">목요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/6f4dfe751d386d1d12056948081bb946f5e98baf.zip" rel="noopener" title="2026-07-30 마지막 소스 커밋(6f4dfe7) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-30 <span class="pill">목요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/6f4dfe751d386d1d12056948081bb946f5e98baf.zip" rel="noopener" title="2026-07-30 마지막 소스 커밋(6f4dfe7) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">안정</span> <strong>넓은 텍스트를 붙여넣으면 pytmux 가 <span class="inline-code">몇십 초 동안 멈추던</span> 것을 고쳤습니다.</strong>
           붙여넣기(<span class="inline-code">Ctrl+V</span>)는 들어온 텍스트에서 패널 테두리 문자를 걷어내는데(<a href="guide/config">설정</a> <span class="inline-code nb">strip-box-drawing</span>),
@@ -122,7 +185,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-29">
-      <h2>2026-07-29 <span class="pill">수요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/e728cb58bab885e4db3ffae4f0fa3dbf22eb0f37.zip" rel="noopener" title="2026-07-29 마지막 소스 커밋(e728cb5) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-29 <span class="pill">수요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/e728cb58bab885e4db3ffae4f0fa3dbf22eb0f37.zip" rel="noopener" title="2026-07-29 마지막 소스 커밋(e728cb5) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">원격</span> <strong>직접 ssh 가 안 되는 머신에도 <span class="inline-code">중간 상자를 거쳐</span> 붙을 수 있습니다 — <span class="inline-code nb">remote-attach &lt;C&gt; via &lt;B&gt;</span>.</strong>
           <a href="guide/remote">원격 attach</a> 는 지금까지 <strong>내 컴퓨터에서 그 머신으로 ssh 가 곧바로 되는</strong> 경우만 가능했습니다 —
@@ -167,7 +230,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-28">
-      <h2>2026-07-28 <span class="pill">화요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/29d3c9d16b35db7ccaf007b3b7358b1c96f7fece.zip" rel="noopener" title="2026-07-28 마지막 소스 커밋(29d3c9d) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-28 <span class="pill">화요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/29d3c9d16b35db7ccaf007b3b7358b1c96f7fece.zip" rel="noopener" title="2026-07-28 마지막 소스 커밋(29d3c9d) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">안정성</span> <strong>다른 프로그램이 pytmux 서버를 강제로 죽였을 때 창이 <span class="inline-code">아무 말 없이</span> 사라지던 것을 고쳤습니다 — 이제 이유가 화면에 남습니다.</strong>
           서버가 정상 절차로 내려가면(<span class="inline-code nb">kill-server</span> 등) 클라이언트는 <strong>"서버가 종료되었습니다"</strong>라고 알리고 끝납니다.
@@ -257,7 +320,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-27">
-      <h2>2026-07-27 <span class="pill">월요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/e65f83d637b16123b000e33c780441b24492f7a6.zip" rel="noopener" title="2026-07-27 마지막 소스 커밋(e65f83d) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-27 <span class="pill">월요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/e65f83d637b16123b000e33c780441b24492f7a6.zip" rel="noopener" title="2026-07-27 마지막 소스 커밋(e65f83d) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">성능</span> <strong>패널이 바쁠 때 화면이 뚝뚝 끊기던 원인 하나를 없앴습니다.</strong>
           탭·상태줄에 쓸 <strong>지금 무엇이 돌고 있는지</strong>(패널의 포그라운드 명령 이름)를 알아내려고
@@ -275,7 +338,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-26">
-      <h2>2026-07-26 <span class="pill">일요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/6014a2dc98a0ed6f7711d06e28285e8e6857186b.zip" rel="noopener" title="2026-07-26 마지막 소스 커밋(6014a2d) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-26 <span class="pill">일요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/6014a2dc98a0ed6f7711d06e28285e8e6857186b.zip" rel="noopener" title="2026-07-26 마지막 소스 커밋(6014a2d) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">표시</span> <strong>지나간 알림 이력을 <span class="inline-code">Home</span>·<span class="inline-code">End</span>·<span class="inline-code">PgUp</span>·<span class="inline-code">PgDn</span> 으로도 넘길 수 있습니다.</strong>
           지금까지 이력 팝업에서 움직이는 방법은 <span class="inline-code">↑↓</span> 로 <strong>한 칸씩</strong>뿐이었습니다 —
@@ -311,7 +374,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-25">
-      <h2>2026-07-25 <span class="pill">토요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/a0d96f6c906659869909d9bdf5a9bd075048b5dd.zip" rel="noopener" title="2026-07-25 마지막 소스 커밋(a0d96f6) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-25 <span class="pill">토요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/a0d96f6c906659869909d9bdf5a9bd075048b5dd.zip" rel="noopener" title="2026-07-25 마지막 소스 커밋(a0d96f6) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">토큰</span> <strong>여러 컴퓨터의 사용량 합치기가 <span class="inline-code">한도 퍼센트</span>를 넘어 <span class="inline-code">사용 기록 전체</span>로 넓어졌습니다 — 그리고 어느 컴퓨터 몫인지 <span class="inline-code">머신별로 나눠</span> 볼 수 있습니다.</strong>
           어제까지 머신끼리 나눠 갖던 것은 <strong>한도 퍼센트</strong>뿐이라, 노트북에서 쓴 <strong>토큰 기록 자체</strong>는 데스크톱 팝업에 나타나지 않았습니다.
@@ -349,7 +412,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-24">
-      <h2>2026-07-24 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/cfea576b9307fedd22a696829cf37982473a7831.zip" rel="noopener" title="2026-07-24 마지막 소스 커밋(cfea576) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-24 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/cfea576b9307fedd22a696829cf37982473a7831.zip" rel="noopener" title="2026-07-24 마지막 소스 커밋(cfea576) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">표시</span> <strong>맨 아랫줄 알림이 이제 <span class="inline-code">성공은 초록 ✓</span>, <span class="inline-code">실패는 빨강 ✕</span> 로 갈립니다 — 그리고 <span class="inline-code">지나간 알림을 다시 볼 수</span> 있습니다.</strong>
           지금까지 알림은 성공이든 실패든 <strong>전부 같은 노란색</strong>이었고, <strong>2초 뒤 사라지면 어디에도 남지 않았습니다</strong>.
@@ -400,7 +463,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-23">
-      <h2>2026-07-23 <span class="pill">목요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/aad0f70c3c6eab312ea23fe40c3d72ff3d7b5d11.zip" rel="noopener" title="2026-07-23 마지막 소스 커밋(aad0f70) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-23 <span class="pill">목요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/aad0f70c3c6eab312ea23fe40c3d72ff3d7b5d11.zip" rel="noopener" title="2026-07-23 마지막 소스 커밋(aad0f70) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">토큰</span> <strong>여러 컴퓨터에서 같은 Claude 계정을 써도 이제 <span class="inline-code">토큰 사용량이 한 곳으로 합쳐집니다</span> — 어느 컴퓨터에서 봐도 같은 숫자가 나옵니다.</strong>
           지금까지는 머신마다 따로 재고 따로 저장해, 노트북에서 본 <span class="inline-code">5시간 한도 62%</span> 가 데스크톱에서는 <span class="inline-code nb">18%</span> 로 보였습니다.
@@ -439,7 +502,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-18">
-      <h2>2026-07-18 <span class="pill">토요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/b2c33fb54b090f4db7d03055983bbcd4994105de.zip" rel="noopener" title="2026-07-18 분 마지막 소스 커밋(b2c33fb — 동기화 출력 광고는 07-23 미러 반영) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-18 <span class="pill">토요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/b2c33fb54b090f4db7d03055983bbcd4994105de.zip" rel="noopener" title="2026-07-18 분 마지막 소스 커밋(b2c33fb — 동기화 출력 광고는 07-23 미러 반영) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">탭</span> <strong>탭 스위처(<span class="inline-code">Esc</span> → <span class="inline-code">Tab</span>)가 이제 <span class="inline-code">원격(⇄) 탭</span> 밑에도 패널 줄을 보여줍니다.</strong>
           <a href="#d-2026-07-16">이틀 전</a> 스위처에 패널 줄을 달 때, 로컬 탭은 <span class="inline-code">└ [local] 앱 · 제목</span> 으로 펼쳐졌지만
@@ -488,7 +551,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-17">
-      <h2>2026-07-17 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/df3e8db4b2a3a842382731e2fa8cab43faccfd13.zip" rel="noopener" title="2026-07-17 검수 스프린트 마지막 커밋(df3e8db) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-17 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/df3e8db4b2a3a842382731e2fa8cab43faccfd13.zip" rel="noopener" title="2026-07-17 검수 스프린트 마지막 커밋(df3e8db) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">안정</span> <strong>새 탭·분할이 이제 <span class="inline-code">멈칫하지 않습니다</span> — macOS 에서 특히 그랬습니다.</strong>
           pytmux 서버는 <strong>한 줄기 흐름</strong>으로 모든 창을 돌보는데(<a href="#d-2026-07-16">07-16</a> 참고),
@@ -525,7 +588,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-16">
-      <h2>2026-07-16 <span class="pill">목요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/fdaed188ba52b1a45be5e7b14fafbf109a18689f.zip" rel="noopener" title="2026-07-16 마지막 커밋(fdaed18) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-16 <span class="pill">목요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/fdaed188ba52b1a45be5e7b14fafbf109a18689f.zip" rel="noopener" title="2026-07-16 마지막 커밋(fdaed18) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">안정</span> <strong>무거운 작업이 <span class="inline-code">화면 전체를 멈추게</span> 하던 몇 자리를 없앴습니다 — 큰 폴더를 복사·삭제하거나, 큰 압축을 열거나, 마우스로 드래그해 복사할 때입니다.</strong>
           pytmux 서버는 <strong>한 줄기 흐름</strong>으로 모든 창을 돌봅니다 — 그래서 그 흐름에서 <strong>오래 걸리는 일</strong>을 바로 하면
@@ -596,7 +659,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-15">
-      <h2>2026-07-15 <span class="pill">수요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/6492b9c7343295a6ed82ba9f5cf0a8dd4c87838d.zip" rel="noopener" title="2026-07-15 마지막 커밋(6492b9c) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-15 <span class="pill">수요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/6492b9c7343295a6ed82ba9f5cf0a8dd4c87838d.zip" rel="noopener" title="2026-07-15 마지막 커밋(6492b9c) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">문서</span> <strong>가이드가 안내하던 설정 명령 중 실제로는 동작하지 않던 것을 바로잡았습니다.</strong>
           <a href="/guide/mouse">마우스 가이드</a>가 Windows 마우스 이동 패스스루를 <span class="inline-code">set win-mouse-motion on</span> 으로 안내했는데,
@@ -672,7 +735,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-14">
-      <h2>2026-07-14 <span class="pill">화요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/549afecad51f954b89b965000261b2d02be11c27.zip" rel="noopener" title="2026-07-14 마지막 커밋(549afec) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-14 <span class="pill">화요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/549afecad51f954b89b965000261b2d02be11c27.zip" rel="noopener" title="2026-07-14 마지막 커밋(549afec) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">탭</span> <strong>탭을 고정(핀)해 오른쪽으로 밀리면, 이제 보이는 순서에 맞춰 탭 번호도 다시 매겨집니다.</strong>
           <span class="inline-code">Esc</span> → <span class="inline-code">Shift+P</span> 로 일부 탭을 고정하면, 그 탭들은 탭바의 <strong>오른쪽 구역</strong>으로 모여 보입니다.
@@ -696,7 +759,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-13">
-      <h2>2026-07-13 <span class="pill">월요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/88bcfd9038d74e27a9784675fb3b51bbe031a271.zip" rel="noopener" title="2026-07-13 마지막 커밋(88bcfd9) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-13 <span class="pill">월요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/88bcfd9038d74e27a9784675fb3b51bbe031a271.zip" rel="noopener" title="2026-07-13 마지막 커밋(88bcfd9) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">이름동기화</span> <strong>이름 동기화가 탭·패널·Claude 세션 이름을 한 번 맞춘 뒤에는, 그 뒤에 손수 바꾼 이름을 더 이상 되돌리지 않습니다.</strong>
           <span class="inline-code">:namesync</span> 규칙에 걸린 폴더에서 Claude 를 켜면 그 탭·패널·Claude 세션 이름이 지정 키워드로 <strong>한 번 통일</strong>됩니다.
@@ -729,7 +792,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-12">
-      <h2>2026-07-12 <span class="pill">일요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/c5d68aa050c63bb81b74712598518f47f79ec198.zip" rel="noopener" title="2026-07-12 마지막 커밋(c5d68aa) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-12 <span class="pill">일요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/c5d68aa050c63bb81b74712598518f47f79ec198.zip" rel="noopener" title="2026-07-12 마지막 커밋(c5d68aa) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">복사</span> <strong>이제 그냥 마우스로 드래그하면 그 패널 내용만 자동으로 복사됩니다 — 외곽선·옆 패널 없이.</strong>
           지금까지는 화면을 드래그해도 복사가 안 되거나(Ctrl+C 무반응), Shift+드래그로 복사하면 터미널이 화면 전체를
@@ -744,7 +807,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-11">
-      <h2>2026-07-11 <span class="pill">토요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/ebe1e96a9f638773f032ada841f75c88d89fa7aa.zip" rel="noopener" title="2026-07-11 마지막 커밋(ebe1e96) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-11 <span class="pill">토요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/ebe1e96a9f638773f032ada841f75c88d89fa7aa.zip" rel="noopener" title="2026-07-11 마지막 커밋(ebe1e96) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">원격</span> <strong>원격 화면이 작게(빈 여백 띠) 남고, 다른 접속을 끊어도 다시 작아지던 문제를 고쳤습니다.</strong>
           한 원격 서버를 <strong>여러 기기가 함께</strong> 보거나 <strong>예전에 끊긴 접속 흔적이 남아</strong> 있으면, 화면 크기가
@@ -770,7 +833,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-10">
-      <h2>2026-07-10 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/83ee2c3fb68fa51bb94b2dd654f935515529034b.zip" rel="noopener" title="2026-07-10 마지막 커밋(83ee2c3) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-10 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/83ee2c3fb68fa51bb94b2dd654f935515529034b.zip" rel="noopener" title="2026-07-10 마지막 커밋(83ee2c3) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">원격</span> <strong>분리해 둔 원격 탭이, 원격 쪽에서 다른 탭을 닫아도 계속 숨겨진 채 유지됩니다.</strong>
           어제(07-09) 추가한 <strong>원격 탭 하나씩 닫기</strong>에서, 탭을 분리한 뒤 <strong>원격 서버 쪽에서 다른 탭을
@@ -812,7 +875,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-09">
-      <h2>2026-07-09 <span class="pill">목요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/76d01c9a5bdc30e9de2934dde27177dc071917e9.zip" rel="noopener" title="2026-07-09 마지막 커밋(76d01c9) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-09 <span class="pill">목요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/76d01c9a5bdc30e9de2934dde27177dc071917e9.zip" rel="noopener" title="2026-07-09 마지막 커밋(76d01c9) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">원격</span> <strong>다른 서버의 원격 탭을 이제 하나씩 닫을 수 있습니다.</strong>
           <span class="inline-code nb">remote-attach</span> 로 붙여 온 원격 탭은, 지금까지 하나를 닫으면 그 서버에서 온
@@ -840,7 +903,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-08">
-      <h2>2026-07-08 <span class="pill">수요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/c5357773ef911908c237e29990cf9a6e2c8a992e.zip" rel="noopener" title="2026-07-08 마지막 커밋(c535777) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-08 <span class="pill">수요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/c5357773ef911908c237e29990cf9a6e2c8a992e.zip" rel="noopener" title="2026-07-08 마지막 커밋(c535777) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">이름 동기화</span> <strong>자동 이름 맞추기가 입력 중에는 끼어들지 않습니다.</strong>
           이름 동기화(또는 탭→세션 이름 맞추기)가 Claude 세션에 <span class="inline-code">/rename</span> 을
@@ -866,7 +929,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-07">
-      <h2>2026-07-07 <span class="pill">화요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/0526942a59fec9c0ee2a88e6a9752bc808fb64da.zip" rel="noopener" title="2026-07-07 마지막 커밋(0526942) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-07 <span class="pill">화요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/0526942a59fec9c0ee2a88e6a9752bc808fb64da.zip" rel="noopener" title="2026-07-07 마지막 커밋(0526942) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">작성창</span> <strong>여러 줄 작성창에 붙여넣은 이미지·여러 줄 내용이 그대로 딸려오고, 작성창 안에서도 붙여넣기·명령을 쓸 수 있습니다.</strong>
           Claude 패널에서 <span class="inline-code">ESC</span> 뒤 <span class="inline-code">Insert</span> 로 여는
@@ -897,7 +960,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-06">
-      <h2>2026-07-06 <span class="pill">월요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/6f7fe1bb53a1dac6916b68263fcf579dd9f01dc7.zip" rel="noopener" title="2026-07-06 마지막 커밋(6f7fe1b) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-06 <span class="pill">월요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/6f7fe1bb53a1dac6916b68263fcf579dd9f01dc7.zip" rel="noopener" title="2026-07-06 마지막 커밋(6f7fe1b) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><strong>여러 줄 작성창에 프롬프트 기호가 딸려오지 않습니다.</strong> Claude 패널에서
           <span class="inline-code">ESC</span> 뒤 <span class="inline-code">Insert</span> 로 여는
@@ -916,7 +979,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-05">
-      <h2>2026-07-05 <span class="pill">일요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/465a7b2fd38b560f11b6116e8763df7de4053e33.zip" rel="noopener" title="2026-07-05 마지막 커밋(465a7b2) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-05 <span class="pill">일요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/465a7b2fd38b560f11b6116e8763df7de4053e33.zip" rel="noopener" title="2026-07-05 마지막 커밋(465a7b2) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><strong>Claude 를 끝내면 토큰 사용량이 <em>항상</em> 보입니다.</strong> Claude Code 세션을
           <span class="inline-code">exit</span> 로 끝냈을 때 이번 세션에 쓴 <strong>토큰 사용량 요약</strong>이
@@ -935,7 +998,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-04">
-      <h2>2026-07-04 <span class="pill">토요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/05905e27715f66ed00c0700dceeef9d0e65532a4.zip" rel="noopener" title="2026-07-04 마지막 커밋(05905e2) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-04 <span class="pill">토요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/05905e27715f66ed00c0700dceeef9d0e65532a4.zip" rel="noopener" title="2026-07-04 마지막 커밋(05905e2) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><strong>원격 탭에 붙으면 화면 크기가 제대로 맞습니다.</strong> ssh 로 원격 세션에
           다시 연결할 때 화면이 <strong>예전에 접속했던 다른(작은) 기계의 크기로 고착</strong>되던
@@ -955,7 +1018,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-03">
-      <h2>2026-07-03 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/501572930087acb3b2811b32cb4332f39bc0f135.zip" rel="noopener" title="2026-07-03 마지막 커밋(5015729) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-03 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/501572930087acb3b2811b32cb4332f39bc0f135.zip" rel="noopener" title="2026-07-03 마지막 커밋(5015729) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><strong>원격 서버가 이상해도 내 화면이 안전합니다.</strong> ssh 로 원격 pytmux 탭을
           보는 중 상대 서버가 손상되거나 악의적인 화면 프레임을 보내면 클라이언트가 통째로
@@ -977,7 +1040,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-07-01">
-      <h2>2026-07-01 <span class="pill">수요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/0072382f2095202048d7cdfa06db155897af05db.zip" rel="noopener" title="2026-07-01 마지막 커밋(0072382) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-07-01 <span class="pill">수요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/0072382f2095202048d7cdfa06db155897af05db.zip" rel="noopener" title="2026-07-01 마지막 커밋(0072382) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><strong>실수로 앱이 통째로 닫히지 않습니다.</strong> 원격 탭이 열려 있는 채로 마지막 로컬 탭을
           닫으면 앱 전체가 종료되는데, 이제 <strong>정말 끝낼지 확인</strong>을 먼저 받습니다.</li>
@@ -991,7 +1054,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-06-30">
-      <h2>2026-06-30 <span class="pill ship">화요일 · 소개 사이트 공개 🚀</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/5e0e1d4e3d1fb633a79f0f7633fccf2600710956.zip" rel="noopener" title="2026-06-30 마지막 커밋(5e0e1d4) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-06-30 <span class="pill ship">화요일 · 소개 사이트 공개 🚀</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/5e0e1d4e3d1fb633a79f0f7633fccf2600710956.zip" rel="noopener" title="2026-06-30 마지막 커밋(5e0e1d4) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><strong>소개 사이트를 공개했습니다.</strong> <a href="/">pytmux.woojinkim.org</a> 에서
           기능·화면·설치·<a href="guide">상세 가이드</a>를 한곳에서 볼 수 있습니다. 스크린샷은
@@ -1003,7 +1066,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-06-29">
-      <h2>2026-06-29 <span class="pill">월요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/dc85a54910ca93e46c448b0104bf555639fe8592.zip" rel="noopener" title="2026-06-29 마지막 커밋(dc85a54) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-06-29 <span class="pill">월요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/dc85a54910ca93e46c448b0104bf555639fe8592.zip" rel="noopener" title="2026-06-29 마지막 커밋(dc85a54) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">Claude 화면</span> <strong>Claude 화면에서 글자가 겹쳐 보이던 근본 원인을 고쳤습니다.</strong>
           화면의 <strong>일부 영역만 위·아래로 밀어 올리는 터미널 신호(<span class="inline-code">SU</span>·<span class="inline-code">SD</span>,
@@ -1016,7 +1079,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-06-25">
-      <h2>2026-06-25 <span class="pill">목요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/012fa373f8e3e57bc45a95473d8e370a854e111e.zip" rel="noopener" title="2026-06-25 마지막 커밋(012fa37) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-06-25 <span class="pill">목요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/012fa373f8e3e57bc45a95473d8e370a854e111e.zip" rel="noopener" title="2026-06-25 마지막 커밋(012fa37) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">표시</span> <strong>ssh 로 한글·중문·일문 단말에 접속했을 때 패널 테두리와 글자가 한 칸씩 밀려 겹쳐 보이던 문제를 고쳤습니다.</strong>
           단말마다 폭이 애매한 문자('모호폭')를 1칸으로 그리는지 2칸으로 그리는지 <strong>스스로 알아내</strong>
@@ -1033,7 +1096,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-06-24">
-      <h2>2026-06-24 <span class="pill">수요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/69983444216fad7d98404e5ee13a46b6ef547152.zip" rel="noopener" title="2026-06-24 마지막 커밋(6998344) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-06-24 <span class="pill">수요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/69983444216fad7d98404e5ee13a46b6ef547152.zip" rel="noopener" title="2026-06-24 마지막 커밋(6998344) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">원격 · 토큰</span> <strong>원격 탭을 보는 중에는 토큰 사용량 팝업이 그 상대 컴퓨터의 토큰을 보여줍니다.</strong>
           어느 기계의 값인지 <span class="inline-code">⇄host</span> 라벨로 출처를 표시하고, 요청한 화면에만 회신하며,
@@ -1044,7 +1107,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-06-23">
-      <h2>2026-06-23 <span class="pill">화요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/c4976dcd9ae56a2b14627d691e63d934f1a55cd7.zip" rel="noopener" title="2026-06-23 마지막 커밋(c4976dc) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-06-23 <span class="pill">화요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/c4976dcd9ae56a2b14627d691e63d934f1a55cd7.zip" rel="noopener" title="2026-06-23 마지막 커밋(c4976dc) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">토큰</span> <strong>토큰 사용량을 화면 스크랩이 아니라 실제 대화 기록에서 실측합니다.</strong>
           Claude Code 의 대화 기록(트랜스크립트)을 직접 읽어 회계하도록 바꿔, 화면만 긁을 때 놓치던 양을 되살렸습니다.
@@ -1056,7 +1119,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-06-22">
-      <h2>2026-06-22 <span class="pill">월요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/c754b339219ac27b2cdd009ed2a0d48372477ac0.zip" rel="noopener" title="2026-06-22 마지막 커밋(c754b33) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-06-22 <span class="pill">월요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/c754b339219ac27b2cdd009ed2a0d48372477ac0.zip" rel="noopener" title="2026-06-22 마지막 커밋(c754b33) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">탭 고정</span> <strong>자주 쓰는 탭을 고정(핀)해 실수로 닫히지 않게 할 수 있습니다.</strong>
           <span class="inline-code">Shift+P</span> 로 탭을 고정하면 <strong>탭바 오른쪽 구역에 따로 모여</strong> 눈에 잘 띄고
@@ -1074,7 +1137,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-06-21">
-      <h2>2026-06-21 <span class="pill">일요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/c8fbb04a4346b50578d69e469b1e6a68ceb6d4d7.zip" rel="noopener" title="2026-06-21 마지막 커밋(c8fbb04) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-06-21 <span class="pill">일요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/c8fbb04a4346b50578d69e469b1e6a68ceb6d4d7.zip" rel="noopener" title="2026-06-21 마지막 커밋(c8fbb04) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">토큰</span> <strong>토큰 사용량 뷰를 모델별 색으로 나눠 보여줍니다.</strong>
           Haiku·Sonnet·Opus·Fable 를 <strong>서로 다른 색</strong>으로 분해하고 범례를 붙였으며, 막대도 모델 구성비대로
@@ -1087,7 +1150,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-06-20">
-      <h2>2026-06-20 <span class="pill">토요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/a78ec5aed713b926606d2d0cba766348b37926db.zip" rel="noopener" title="2026-06-20 마지막 커밋(a78ec5a) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-06-20 <span class="pill">토요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/a78ec5aed713b926606d2d0cba766348b37926db.zip" rel="noopener" title="2026-06-20 마지막 커밋(a78ec5a) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">서버 정보</span> <strong>서버 정보 팝업에 최근 60분 응답 지연(RTT) 그래프가 생겼습니다.</strong>
           연결이 얼마나 빠릿한지 한눈에 볼 수 있고, 그래프는 <strong>디스크에 남아 재시작해도 유지</strong>됩니다.
@@ -1100,7 +1163,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-06-19">
-      <h2>2026-06-19 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/084d26e99d3216fba7b60e51dbaa9bc5d5bbc50d.zip" rel="noopener" title="2026-06-19 마지막 커밋(084d26e) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-06-19 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/084d26e99d3216fba7b60e51dbaa9bc5d5bbc50d.zip" rel="noopener" title="2026-06-19 마지막 커밋(084d26e) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">작성창</span> <strong>Claude 프롬프트를 여러 줄로 골라 편집하는 작성창이 생겼습니다.</strong>
           <span class="inline-code">ESC</span> 뒤 <span class="inline-code">Insert</span> 로 여는 <strong>여러 줄 작성창(컴포즈 오버레이)</strong>이
@@ -1113,7 +1176,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-06-18">
-      <h2>2026-06-18 <span class="pill">목요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/1c67754fa64a59bf0f78f43805a8862d5dac493c.zip" rel="noopener" title="2026-06-18 마지막 커밋(1c67754) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-06-18 <span class="pill">목요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/1c67754fa64a59bf0f78f43805a8862d5dac493c.zip" rel="noopener" title="2026-06-18 마지막 커밋(1c67754) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">Windows</span> <strong>Windows 에서 서버를 재시작해도 실행 중이던 프로그램이 살아남습니다.</strong>
           터미널을 <strong>별도 프로세스(아웃오브프로세스 pty-host)</strong>로 옮겨, 서버가 껐다 켜져도 그 안에서 돌던
@@ -1128,7 +1191,7 @@
     </section>
 
     <section class="cl-day" id="d-2026-06-17">
-      <h2>2026-06-17 <span class="pill ship">수요일 · 깃헙에 공개 시작 🐙</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/ba6da495a25398d954bd7ed9ff9a5558565b31d3.zip" rel="noopener" title="2026-06-17 마지막 커밋(ba6da49) 시점 소스 zip">zip ⬇</a></h2>
+      <h2>2026-06-17 <span class="pill ship">수요일 · 깃헙에 공개 시작 🐙</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/ba6da495a25398d954bd7ed9ff9a5558565b31d3.zip" rel="noopener" title="2026-06-17 마지막 커밋(ba6da49) 시점 소스 zip">py zip ⬇</a></h2>
       <ul>
         <li><span class="pill stable">Claude 계정</span> <strong>Claude 계정에 별칭을 붙여 왼쪽 아래에 표시할 수 있습니다.</strong>
           감지된 계정을 나열하고 <strong>별칭을 편집·표시 방식을 고르는 관리 화면</strong>을 더했습니다.</li>
