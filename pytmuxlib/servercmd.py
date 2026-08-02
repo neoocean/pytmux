@@ -146,6 +146,88 @@ class ServerCmdMixin:
             resp = dict(resp, _req_token=msg["_req_token"])
         await self._send_to(client, resp)
 
+    @_cmd("plugin_overlay", HANDLED)
+    async def _cmd_plugin_overlay(self, client, sess, msg):
+        """이 클라의 **패널 오버레이 상태**를 서버에 알린다(설계 Tier B · P3 · §4.4).
+
+        시계·달력이 어느 패널에 떠 있는지는 오늘 **클라의 것**이다(정본 `app.clock_panes`).
+        서버가 같은 그림을 그리려면 그 사실을 들어야 하는데, 그건 설계 §6 이 "비용"으로
+        적어 둔 per-client UI 상태다 — 그래서 세션이 아니라 **연결**에 매단다
+        (`ClientConn.plugin_state`, Tier C 가 이미 쓰는 그 자리). 두 사람이 같은 세션을
+        봐도 서로의 시계를 켜지 않고, 연결이 끊기면 함께 사라진다.
+
+        회신은 없다 — 다음 프레임의 `plugin_cells` 가 곧 답이다.
+        """
+        name = str(msg.get("name") or "")
+        pane = msg.get("pane")
+        if not name or pane is None:
+            return
+        overlays = client.plugin_state.setdefault("overlays", {})
+        on = overlays.setdefault(name, {})
+        if msg.get("on"):
+            # 켤 때마다 **빈 상태로 시작한다**(달력이면 이번 달). 껐다 켠 사람은 자기가
+            # 언제 지난달로 갔는지 기억하지 못한다 — 정본도 같은 규칙이다.
+            on[pane] = {}
+        else:
+            on.pop(pane, None)
+        if not on:
+            overlays.pop(name, None)
+        # 다음 틱을 기다리지 않고 **지금** 그린다(껐을 때도: 빈 런이 지우개다).
+        client._cells_at = 0.0
+
+    @_cmd("client_fact", HANDLED)
+    async def _cmd_client_fact(self, client, sess, msg):
+        """이 클라만 아는 **사실**을 서버에 알린다(설계 Tier D · §4.4 · P7).
+
+        서버가 대신 알 수 없는 것이 있다 — 오늘 목록은 **입력기 한/영** 하나다. OS 가
+        그 상태를 클라 창에만 알려 주기 때문이고, 그래서 `ime-indicator` 는 그 사실을
+        클라에서 얻는다. 하지만 **그릴지·어디에·무슨 색으로는 플러그인이 정한다**
+        (Tier B) — 그래야 규칙이 한 벌로 남는다.
+
+        오버레이와 같은 자리(`ClientConn.plugin_state`)에 매단다: per-client 이고,
+        연결이 끊기면 함께 사라진다. 값이 비면 **지운다** — 끄는 것도 사실이다.
+
+        ⚠ **와이어 모양이 설계 스케치와 다르다.** 스케치는
+        `{"t":"client_fact","ime":"ko"}` 였는데 그러면 **플러그인 이름이 프로토콜에
+        박힌다** — P8 이 `overlay_style::{clock_digit,calendar}` 를 걷어낸 것과 같은
+        빚(INV5)이다. 이미 자리잡은 `plugin_overlay{name,…}` 와 같은 결로
+        `{"name","value"}` 를 쓴다.
+
+        회신은 없다 — 다음 프레임의 `plugin_cells` 가 곧 답이다.
+        """
+        name = str(msg.get("name") or "")
+        if not name:
+            return
+        facts = client.plugin_state.setdefault("facts", {})
+        value = msg.get("value")
+        if value in (None, ""):
+            facts.pop(name, None)
+        else:
+            facts[name] = str(value)[:32]   # 비신뢰 문자열 — 길이를 자른다
+        if not facts:
+            client.plugin_state.pop("facts", None)
+        # 다음 틱을 기다리지 않고 **지금** 그린다(지웠을 때도: 빈 런이 지우개다).
+        client._cells_at = 0.0
+
+    @_cmd("plugin_overlay_action", HANDLED)
+    async def _cmd_plugin_overlay_action(self, client, sess, msg):
+        """오버레이의 클릭존/키가 올려 보낸 **이름**을 그 플러그인에 넘긴다(Tier B).
+
+        클라는 `‹` 가 무슨 뜻인지 모른다 — 서버가 준 `do` 를 그대로 되돌려 줄 뿐이고,
+        그것이 달을 넘기는 일인지 해를 넘기는 일인지는 플러그인이 정한다(설계 §4.4).
+        회신은 없다: 다음 프레임의 `plugin_cells` 가 곧 답이다.
+        """
+        name = str(msg.get("name") or "")
+        pane = msg.get("pane")
+        state = ((client.plugin_state.get("overlays") or {})
+                 .get(name) or {}).get(pane)
+        if state is None:
+            return          # 안 켜진 오버레이 — 늦게 온 클릭이다(조용히 버린다)
+        self.plugins.plugin_overlay_action(
+            self, sess, {"name": name, "pane": pane,
+                         "do": msg.get("do"), "state": state})
+        client._cells_at = 0.0
+
     @_cmd("plugin_open", HANDLED)
     async def _cmd_plugin_open(self, client, sess, msg):
         """플러그인 **화면**을 연다(설계 Tier C · P4).

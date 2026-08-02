@@ -134,7 +134,7 @@ def classify(rel: str) -> str:
         return "플러그인"
     if d.startswith("tests") or d.startswith("tools") or d.startswith(".claude") or d.startswith("scripts"):
         return "테스트 · 도구"
-    if d.startswith("docs/benchmark"):
+    if d.startswith("docs/internal/benchmark"):
         return "성능 · 벤치마크"
     if d.startswith("docs/landing"):
         return "시작하기"
@@ -198,7 +198,7 @@ def sort_key_for(doc: Doc) -> tuple:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def is_benchmark_run(rel: str) -> bool:
-    return (rel.startswith("docs/benchmark/")
+    return (rel.startswith("docs/internal/benchmark/")
             and os.path.basename(rel) != "README.md"
             and re.match(r"\d{8}-\d{6}Z\.md$", os.path.basename(rel)) is not None)
 
@@ -1185,7 +1185,7 @@ def build(public: bool, with_benchmarks: bool) -> int:
     gen_note = (f"문서 {len(flat)}건 · <code>scripts/build_docs.py</code> 로 생성. "
                 f"저장소의 마크다운을 고치고 다시 실행하면 갱신됩니다."
                 + ("" if with_benchmarks else
-                   " 벤치마크 실행기록(<code>docs/benchmark/&lt;os&gt;/*.md</code>)은 "
+                   " 벤치마크 실행기록(<code>docs/internal/benchmark/&lt;os&gt;/*.md</code>)은 "
                    "<code>--with-benchmarks</code> 로 포함할 수 있습니다."))
     home = page_shell(
         title="문서 홈", root="", sidebar=render_sidebar(groups, "index.html"),
@@ -1270,7 +1270,7 @@ def main() -> None:
     ap.add_argument("--public", action="store_true",
                     help="미러 차단 문서(docs/internal/·memory/·.claude/·MEMORY.md)를 제외한다")
     ap.add_argument("--with-benchmarks", action="store_true",
-                    help="docs/benchmark/<os>/*.md 실행기록까지 포함한다 "
+                    help="docs/internal/benchmark/<os>/*.md 실행기록까지 포함한다 "
                          "(약 1770쪽·166MB — 기본 219쪽·23MB)")
     ap.add_argument("--serve", type=int, metavar="PORT",
                     help="빌드 후 해당 포트로 로컬 미리보기 서버를 띄운다")

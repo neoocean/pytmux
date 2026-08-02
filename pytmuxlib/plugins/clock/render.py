@@ -1,59 +1,37 @@
-"""clock 플러그인의 셀 그리드 합성 헬퍼 — 앱 상태 비의존 순수 함수.
+"""clock 플러그인의 셀 그리드 합성 — **런 생성기의 소비자**.
 
-원래 `pytmuxlib/clientrender.py` 의 자유함수였으나(IMPROVEMENT #12 추출), 시계 기능
-전체를 이 플러그인 디렉토리 안으로 모으는 delete-to-disable 마무리(완전 격리)로 여기로
-옮겼다. 디렉토리를 통째로 지우면 이 그리기 코드도 함께 사라지고 코어에 죽은 코드가
-남지 않는다 — `put_cell`(코어 client 도 쓰는 범용 그리드 프리미티브)과 `_CLOCK_FONT`
-(시계·달력 두 플러그인이 공유하는 3×5 블록 폰트 자산)만 코어 공용 모듈에 남는다.
+그림을 정하는 일은 여기 없다. 어느 단의 폰트로 어디에 무엇을 쓸지는 `cells.py` 가
+한 벌로 정하고(그 한 벌을 네이티브 클라도 `plugin_cells` 로 받는다), 이 모듈은 그
+런을 정본의 셀 격자에 얹는다 — 그것도 직접 하지 않는다: 얹는 일 자체가 세 오버레이에
+공통이라 `clientrender.paint_runs` 한 곳으로 접었다(2026-08-02g). 여기 남는 것은
+**이 오버레이만의 것**뿐이다 — 어느 패널을 덮고, 뒤를 어떻게 흐리게 하나.
+
+2026-08-02d 이전에는 여기가 **두 번째 규칙**이었다(서버 `plugin_cells` 가 같은 판정을
+다시 적고 있었다). 합치기 직전 두 경로의 그림이 세 크기에서 칸 단위로 같음을 확인했고,
+합친 뒤로는 **모양 자체**를 `tests/test_plugin_clock_render.py` 의 그림 골든이 지킨다.
 
 `client_overlay` 훅에서만 지연 import 되므로(서버 프로세스는 이 모듈을 읽지 않는다)
-clientrender/clientutil 의 헬퍼를 모듈 최상단에서 import 해도 안전하다. 회귀는
-`tests/test_plugin_clock_render.py` 가 셀 그리드 출력 불변으로 가드한다."""
+clientrender/clientutil 의 헬퍼를 모듈 최상단에서 import 해도 안전하다."""
 from __future__ import annotations
 
-from datetime import datetime as _datetime
+from pytmuxlib.clientrender import dim_panes, paint_runs
+from pytmuxlib.clientutil import _dim_cell
 
-from pytmuxlib.clientrender import dim_pane, put_cell
-from pytmuxlib.clientutil import clock_font_for, _dim_cell
+from .cells import clock_cells
 
 
-def draw_clock_overlay(cells, panes, clock_panes, W, H, digit_st, now=None):
+def draw_clock_overlay(cells, panes, clock_panes, W, H, theme, now=None):
     """clock-mode 패널을 큰 시계로 덮는다. 뒤의 패널 출력은 흐리게(dim) 계속 보인다.
-    `panes`=레이아웃 패널 rect 목록, `clock_panes`=시계 켠 패널 id 집합,
-    `digit_st`=숫자 Style(호출부가 theme 로 해석). `now`=시각 datetime(테스트
-    결정성용; None 이면 현재 시각).
 
-    글자 크기는 **패널이 허락하는 만큼** 커진다(`clock_font_for`): 넓고 높으면 한 칸
-    높이 픽셀의 큰 폰트(5행·글자 6칸), 아니면 종전 반칸 폰트(3행·글자 3칸), 그마저
-    안 들어가면 단순 시각 문자열로 폴백한다."""
+    `panes`=레이아웃 패널 rect 목록, `clock_panes`=시계 켠 패널 id 집합,
+    `theme`=의미 색 이름을 실제 색으로 푸는 함수(`lambda n: theme_color(app, n)`),
+    `now`=시각 datetime(테스트 결정성용; None 이면 현재 시각).
+
+    글자 크기 판정(큰 폰트 → 반칸 폰트 → 단순 시각)은 여기가 아니라 `cells.py` 다."""
     if not clock_panes:
         return
-    now = now or _datetime.now()
-    text = now.strftime("%H:%M:%S")
-    for p in panes:
-        if p["id"] not in clock_panes:
-            continue
-        px, py, pw, ph = p["x"], p["y"], p["w"], p["h"]
-        # 1) 뒤 화면 흐리게(실색 블렌드 — §10, 터미널 무관 균일). 컬러 이모지는
-        # 스타일을 무시하고 밝게 남으므로 _dim_cell 이 placeholder(·)로 치환한다(#25).
-        dim_pane(cells, px, py, pw, ph, W, H, _dim_cell)
-        # 2) 큰 시계(공간 충분) 또는 단순 시각. 폰트는 **패널마다** 고른다 — 넓은
-        # 패널은 한 칸 높이 픽셀의 큰 폰트(5행), 좁은 패널은 종전 반칸 폰트(3행).
-        font, ch_h, gcols, cw = clock_font_for(pw, ph, len(text))
-        glyphs = [font.get(c, [" " * gcols] * ch_h) for c in text]
-        if pw >= cw and ph >= ch_h:
-            ox = px + (pw - cw) // 2
-            oy = py + (ph - ch_h) // 2
-            for row in range(ch_h):
-                gx = ox
-                for g in glyphs:
-                    for c in g[row]:
-                        if c != " ":
-                            put_cell(cells, gx, oy + row, c, digit_st, W, H)
-                        gx += 1
-                    gx += 1   # 글자 사이 간격
-        else:
-            ox = px + max(0, (pw - len(text)) // 2)
-            oy = py + ph // 2
-            for j, c in enumerate(text):
-                put_cell(cells, ox + j, oy, c, digit_st, W, H)
+    on = [p for p in panes if p["id"] in clock_panes]
+    # 뒤 화면 흐리게(실색 블렌드 — §10, 터미널 무관 균일). 컬러 이모지는 스타일을
+    # 무시하고 밝게 남으므로 _dim_cell 이 placeholder(·)로 치환한다(#25).
+    dim_panes(cells, on, W, H, _dim_cell)
+    paint_runs(cells, clock_cells(on, now=now), W, H, theme)

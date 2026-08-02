@@ -190,8 +190,8 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
 - **서버와 세 클라가 한 CL 이다**(트리 통합 2026-08-01). `client/` 는 같은 depot 경로
   `//woojinkim/scripts/pytmux/...` 안이고 같은 게이트를 탄다 — 프로토콜을 건드리면 서버와
   소비자 셋이 **같은 CL 안에** 들어간다(종전에는 두 트리라 반쪽 CL 이 정상이었고, 하나를
-  되돌리면 반쪽만 되돌아갔다). `client/docs/reports/` 는 **공개 대상**이라 `.gitignore` 의
-  `/reports/` 앵커가 그것을 지킨다 — 앵커를 지우면 리포트가 조용히 미러에서 빠진다.
+  되돌리면 반쪽만 되돌아갔다). 슬라이스 리포트는 **`docs/internal/client/reports/`** 에
+  쓴다(§10-17 로 이사 — 실 캡처라 미러 제외. 종전 `client/docs/reports/` 는 비었다).
 - **표면이 움직이면 세 소비자가 같이 깨진다**(트리 통합 M3 §6.2): `clientutil` 의
   명령·설정·키 표나 `servercmd._CMD_TABLE` 을 건드리면 `tests/test_surface_ledger.py`
   가 먼저 운다 — 클라 픽스처가 낡았다는 뜻이다. 순서는

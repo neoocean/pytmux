@@ -141,3 +141,42 @@ async def test_runner_e2e_writes_report_matching_stdout():
         assert (summary["passed"], summary["failed"]) == (n_pass, 0), summary
         # 파일만으로 복원한 회계가 완주로 판정돼야 한다(왕복 검증).
         assert _summarize(p) == (0, _summarize(p)[1]) and "완주" in _summarize(p)[1]
+
+
+async def test_the_runner_collects_plain_def_tests_too():
+    """**동기 `def test_` 도 돈다.**
+
+    러너가 코루틴만 거두던 시절, 평범하게 적힌 테스트는 한 줄의 경고도 없이 안 돌았다 —
+    실측(2026-08-02) 여덟 파일에 **27개**였고 그중 셋은 파일 통째로 0개였다. 스위트는
+    그 동안 초록이었고, 그래서 아무도 몰랐다.
+
+    "거뒀다"가 아니라 **"불렀다"** 를 잰다: 탐침 테스트가 표식 파일을 쓰고, 여기서 그
+    파일의 존재를 본다. 수집만 재면 "목록에는 있는데 안 부른다"가 그대로 통과한다.
+
+    ⚠ 탐침 파일은 **테스트 디렉터리 안에** 있어야 한다(`discover` 가 거기만 본다).
+    그래서 이름을 고유하게 짓고 `finally` 로 지운다 — 그리고 **일부러 실패시키지
+    않는다**: 병렬 세션의 전체 스위트가 그 찰나에 이 파일을 집어도 무해해야 한다.
+    """
+    marker = os.path.join(tempfile.gettempdir(),
+                          "pytmux-sync-probe-%d" % os.getpid())
+    name = "test_sync_probe_%d" % os.getpid()
+    path = os.path.join(os.path.dirname(RUNPY), name + ".py")
+    body = ("import os\n\n\n"
+            "def test_sync_probe_ran():\n"
+            "    open(%r, 'w').close()\n" % marker)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(body)
+    try:
+        env = dict(os.environ, PYTMUX_TEST_REPORT="off")
+        r = subprocess.run([sys.executable, RUNPY, name],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", env=env, timeout=120)
+        out = r.stdout + r.stderr
+        assert "1 passed, 0 failed" in out, out
+        assert os.path.exists(marker), "거두기만 하고 부르지 않았다:\n" + out
+    finally:
+        for p_ in (path, marker):
+            try:
+                os.remove(p_)
+            except OSError:
+                pass

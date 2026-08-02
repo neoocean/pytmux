@@ -15,6 +15,10 @@ import pytmuxlib.plugins as plugins
 
 reset = importlib.import_module("pytmuxlib.plugins.claude-token-usage-view.reset")
 overlay = importlib.import_module("pytmuxlib.plugins.claude-token-usage-view.overlay")
+cells_mod = importlib.import_module("pytmuxlib.plugins.claude-token-usage-view.cells")
+
+# 의미 색 이름 → 실제 색. 정본은 `theme_color(app, name)` 을 넘긴다(클라 테마가 권위).
+_theme = {"success": "green", "foreground": "white"}.get
 
 
 # --------------------------------------------------------------------------- #
@@ -87,13 +91,11 @@ def _text(cells):
 
 async def test_overlay_draws_bars_and_clock():
     now = datetime(2026, 6, 11, 10, 0, 0)
-    text_st = Style(color="white")
-    digit_st = Style(color="green", bold=True)
     panes = [{"id": 1, "x": 0, "y": 0, "w": 64, "h": 14}]
     usage = {"session": {"pct": 41, "reset": "2pm"},          # 4시간 후 → 블록 시계
              "week_all": {"pct": 14, "reset": "Jun 13 at 3am"}}
     cells = _grid(64, 14)
-    overlay.draw_usage_overlay(cells, panes, {1}, 64, 14, text_st, digit_st,
+    overlay.draw_usage_overlay(cells, panes, {1}, 64, 14, _theme,
                                usage, age_sec=None, now=now)
     # 카운트다운 블록 글리프(█)가 그려졌는지 — 블록 행 수로 확인(리터럴 숫자 아님).
     blocks = sum(1 for row in cells for c in row if c[0] == "█")
@@ -104,12 +106,11 @@ async def test_overlay_draws_bars_and_clock():
 async def test_overlay_countdown_text_fallback_when_narrow():
     """블록 시계가 안 들어가는 좁은/낮은 패널은 한 줄 카운트다운 텍스트로 폴백."""
     now = datetime(2026, 6, 11, 10, 0, 0)
-    text_st = Style(color="white"); digit_st = Style(color="green")
     # 폭은 막대용으로 충분하되 블록 시계(pw>=30·하단 5행)는 안 되는 좁은 패널.
     panes = [{"id": 1, "x": 0, "y": 0, "w": 28, "h": 6}]
     usage = {"session": {"pct": 41, "reset": "2pm"}}
     cells = _grid(28, 6)
-    overlay.draw_usage_overlay(cells, panes, {1}, 28, 6, text_st, digit_st,
+    overlay.draw_usage_overlay(cells, panes, {1}, 28, 6, _theme,
                                usage, now=now)
     assert "다음 리셋까지" in _text(cells)   # 블록 대신 한 줄 카운트다운
 
@@ -312,19 +313,17 @@ async def test_usage_screen_colorize_tracks_grey():
 
 
 async def test_overlay_noop_when_not_enabled():
-    text_st = Style(); digit_st = Style()
     panes = [{"id": 1, "x": 0, "y": 0, "w": 64, "h": 14}]
     cells = _grid(64, 14)
-    overlay.draw_usage_overlay(cells, panes, set(), 64, 14, text_st, digit_st,
+    overlay.draw_usage_overlay(cells, panes, set(), 64, 14, _theme,
                                {"session": {"pct": 9, "reset": "2pm"}})
     assert all(c[0] == " " for row in cells for c in row)
 
 
 async def test_overlay_no_data_message():
-    text_st = Style(); digit_st = Style()
     panes = [{"id": 1, "x": 0, "y": 0, "w": 64, "h": 14}]
     cells = _grid(64, 14)
-    overlay.draw_usage_overlay(cells, panes, {1}, 64, 14, text_st, digit_st, None)
+    overlay.draw_usage_overlay(cells, panes, {1}, 64, 14, _theme, None)
     assert "데이터 없음" in _text(cells)   # 빈 화면 금지 — 안내 표시
 
 
@@ -466,3 +465,33 @@ async def test_usage_view_click_outside_closes():
             assert ev_out.stopped
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_the_drawn_usage_overlay_is_pinned_to_a_golden():
+    """**그림 자체를 못박는다** — 자리 셈이 한 벌이 된 뒤로는(`cells.py`) 정본과
+    네이티브 클라가 같은 런을 받으므로, 그림이 바뀌면 두 클라가 **함께** 바뀐다.
+    그러면 "두 경로 대조" 오라클로는 아무것도 안 잡힌다(둘 다 같이 틀린다).
+    시계(2026-08-02e)·달력(08-02b)이 같은 이유로 골든을 들고 있다.
+
+    아래 한 판은 통합 **직전**의 그림 그대로다 — 이 통합이 모양을 안 바꿨다는 증거이자,
+    앞으로 규칙을 고칠 때 따라와야 할 기준이다. 왼쪽 여백 2칸·막대 시작 열 정렬·
+    % 우측정렬·카운트다운 블록 자리까지 포함한다."""
+    now = datetime(2026, 6, 11, 10, 0, 0)
+    usage = {"session": {"pct": 41, "reset": "2pm"},
+             "week_all": {"pct": 14, "reset": "Jun 13 at 3am"}}
+    W, H = 64, 14
+    cells = _grid(W, H)
+    overlay.draw_usage_overlay(cells, [{"id": 1, "x": 0, "y": 0, "w": W, "h": H}],
+                               {1}, W, H, _theme, usage, age_sec=None, now=now)
+    # (이 파일의 `_text` 는 한 덩이 문자열이라 행 단위 골든에는 못 쓴다.)
+    rows = ["".join(c[0] for c in row).rstrip() for row in cells]
+    assert rows == [
+        "",
+        "  세션 5h ██████▌           ↻ 2pm                          41%",
+        "  주 전체 ██▎               ↻ Jun 13 at 3am                14%",
+        "",
+        "                █▀█ █ █  ▄  █▀█ █▀█  ▄  █▀█ █▀█",
+        "                █ █ ▀▀█  ▄  █ █ █ █  ▄  █ █ █ █",
+        "                ▀▀▀   ▀     ▀▀▀ ▀▀▀     ▀▀▀ ▀▀▀",
+        "", "", "", "", "", "", "",
+    ], "\n".join(rows)

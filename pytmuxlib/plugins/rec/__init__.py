@@ -131,6 +131,23 @@ class _RecPlugin:
             return None
         return render_badge(status, segs, w0)
 
+    def plugin_badges(self, server, sess, msg):
+        """상태줄 표식을 **자료로** 준다(Tier B ③ · P6) — 위 `client_statusbar_badges`
+        와 **같은 배지**이고, 다른 것은 도착 방식뿐이다: 정본은 자기 프로세스에서 그리고
+        네이티브 클라는 이 자료를 받는다.
+
+        값은 `server_status` 가 방금 채운 `msg["capture"]` 를 그대로 읽는다 — 같은 것을
+        두 번 계산하면 두 클라가 다른 것을 볼 수 있는 자리가 하나 생긴다.
+
+        색은 **의미 이름**이다(`error` 바탕 = 녹화 중). 정본이 쓰는
+        `theme_color(status,"error")` 와 같은 이름이라 두 클라가 각자의 테마에서 푼다.
+        포커스가 왔을 때의 노랑(`warning`)은 안 싣는다 — 크롬 포커스는 **그 클라만
+        아는 상태**라 서버가 정할 것이 아니다(정본은 자기 것을 계속 쓴다)."""
+        if not msg.get("capture"):
+            return []
+        return [{"text": " REC ", "style": {"bo": 1, "f": "white"},
+                 "theme": {"b": "error"}}]
+
     def client_status_tabs(self, app, tree):
         """통합 상태 팝업에 '출력 캡처(REC)' 탭(+[c]/[o] 동작)을 기여(코어
         _open_status_tabs 의 하드코딩 REC 탭에서 이전). (제목,줄,동작) 3-튜플."""

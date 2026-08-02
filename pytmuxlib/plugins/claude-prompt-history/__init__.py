@@ -61,6 +61,9 @@ i18n.register({
         "ph.truncated_mark": " …",
         "ph.jump_fail": "그 프롬프트가 스크롤백에 없습니다(회전/재시작으로 사라짐)",
         "ph.lines_set": "프롬프트 미리보기: {n}행",
+        # Tier C 스펙 화면의 안내줄 — 정본 팝업(`popup_sub`)과 **조작이 다르다**
+        # (스펙엔 +/− 미리보기 행수 조절이 없다)라 문구를 따로 둔다.
+        "ph.spec_hint": "↑↓ 이동 · Enter 그 위치로 점프 · Esc 닫기",
     },
     "en": {
         "cmd.prompt-history": "Claude prompt-history popup (preview while typing; alias prompts·ph)",
@@ -72,6 +75,7 @@ i18n.register({
         "ph.truncated_mark": " …",
         "ph.jump_fail": "That prompt is no longer in scrollback (rotated out / restarted)",
         "ph.lines_set": "Prompt preview: {n} rows",
+        "ph.spec_hint": "↑↓ move · Enter jump to position · Esc close",
     },
 })
 
@@ -141,6 +145,66 @@ class _PromptHistoryPlugin:
             # 실패(스크롤백서 못 찾음)면 무동작.
             return "broadcast" if ok else "handled"
         return None
+
+    # ---- 서버 측: 화면 스펙(Tier C) ----
+    #
+    # 정본은 아래 `open_prompt_history` 로 자기 Textual 팝업을 띄운다(자료는 status 로
+    # 이미 받아 둔 것). 네이티브 클라도 같은 자료를 받지만 그릴 화면이 없었다 — 그래서
+    # **무엇을 그릴지**를 스펙으로 준다. 점프는 종전 `ph_scroll_to` 와 같은 손이다.
+    def plugin_screen(self, server, sess, req):
+        if req.get("do") == "open":
+            if req.get("name") not in _OPEN_ALIASES:
+                return None                 # 내 이름이 아니다
+            return self._open_spec(server, sess)
+        if req.get("id") != "prompt-history":
+            return None
+        if req.get("do") == "jump":
+            from .server import scroll_to_prompt
+            try:
+                index = int(req.get("input"))
+            except (TypeError, ValueError):
+                index = -1
+            if index >= 0 and scroll_to_prompt(server, sess, index):
+                # 스크롤은 **공유 서버 상태**라 모든 클라가 같이 따라와야 한다
+                # (정본의 `ph_scroll_to` 가 broadcast 를 돌려주는 것과 같은 이유).
+                server._broadcast_session(sess)
+            return {"t": "plugin_screen_close", "id": "prompt-history"}
+        if req.get("do") == "close":
+            return {"t": "plugin_screen_close", "id": "prompt-history"}
+        return None
+
+    def _open_spec(self, server, sess):
+        """활성 패널의 프롬프트 목록. **최신이 위**다(정본 팝업과 같은 차례).
+
+        ⚠ 목록은 **tail 슬라이스**여야 한다 — 점프(`scroll_to_prompt`)의 index 가 그
+        슬라이스 기준이고, 정본 클라도 status 로 받는 것이 tail 이다. 전체를 실으면
+        오래된 세션에서 index 가 통째로 어긋나 **엉뚱한 자리로 점프**한다."""
+        from .server import _TAIL
+        win = sess.active_window if sess else None
+        pane = win.active_pane if win else None
+        hist = list(getattr(pane, "_ph_history", []) or [])[-_TAIL:]
+        rows = []
+        for i in range(len(hist) - 1, -1, -1):
+            text = hist[i]
+            first = (text.splitlines() or [""])[0]
+            more = "" if first == text else " ⏎"
+            rows.append({
+                # `key` 는 그 줄의 **뜻**(히스토리 자리)이다 — 목록이 뒤집혀 있어
+                # 화면의 줄 번호로는 못 찾는다.
+                "key": str(i),
+                "label": (first + more)[:200],
+                "cols": [str(i + 1)],
+            })
+        return {
+            "t": "plugin_screen", "id": "prompt-history", "kind": "list",
+            # ⚠ 손으로 적으면 게이트가 못 본다(2026-08-02o) — 카탈로그가 곧 영어 표다.
+            "title": i18n.t("ph.popup_title"),
+            "hint": i18n.t("ph.spec_hint"),
+            "rows": rows,
+            "selected": 0,
+            "keys": {"enter": "jump"},
+            "note": "" if rows else i18n.t("ph.empty"),
+        }
 
     # ---- 클라이언트 ----
     def attach_client(self, app):

@@ -345,13 +345,21 @@ class ServerClaudeMixin:
                     "위조로 의심됨(패널 {pane}, claude-resume-verify {mode})",
                     severity="warn", pane=pane.id, used=blocked.get("used", 0),
                     need=blocked.get("need", 0), mode=blocked.get("mode", ""))
+            elif throttled:
+                # ⚠ 갈래마다 **키와 원문을 리터럴로** 적는다. 종전에는 둘을 변수에 담아
+                # 한 번만 불렀는데, 그러면 "서버가 무슨 글을 내보내나"를 소스에서 세는
+                # 도구(`client/scripts/gen_server_strings.py`)가 이 두 줄을 못 본다 —
+                # 실려는 나가는데 영어 표에는 안 들어가 영어 사용자에게 한국어로 뜬다
+                # (2026-08-02o 실측). 한 줄 줄이는 것보다 세어지는 편이 낫다.
+                msg = note("ccmsg.resume_throttled",
+                           "자동재개 억제: 방금 주입한 뒤라 건너뜀(패널 {pane})",
+                           severity="warn", pane=pane.id,
+                           msg=getattr(pane, "resume_msg", ""))
             else:
-                key = ("ccmsg.resume_throttled" if throttled
-                       else "ccmsg.resume_injected")
-                ko = ("자동재개 억제: 방금 주입한 뒤라 건너뜀(패널 {pane})" if throttled
-                      else "자동재개: '{msg}' 주입(패널 {pane})")
-                msg = note(key, ko, severity=("warn" if throttled else "info"),
-                           pane=pane.id, msg=getattr(pane, "resume_msg", ""))
+                msg = note("ccmsg.resume_injected",
+                           "자동재개: '{msg}' 주입(패널 {pane})",
+                           severity="info", pane=pane.id,
+                           msg=getattr(pane, "resume_msg", ""))
             import asyncio as _a
             for c in list(getattr(self, "clients", ())):
                 if getattr(c, "session", None) is not None:

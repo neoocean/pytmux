@@ -46,6 +46,59 @@ def dim_pane(cells, px, py, pw, ph, W, H, cell_fn):
             row[xx] = cell_fn(c, st)
 
 
+def dim_panes(cells, panes, W, H, cell_fn):
+    """`dim_pane` 을 패널 목록에 돌린다 — 세 오버레이가 같은 두 줄을 쓰던 자리."""
+    for p in panes:
+        dim_pane(cells, p["x"], p["y"], p["w"], p["h"], W, H, cell_fn)
+
+
+def run_style(run, theme):
+    """오버레이 런의 축약 스타일 + 의미 색 → rich Style.
+
+    **색의 권위는 클라 테마**다 — 런은 이름만 싣고(`success`·`foreground`) 실제 색은
+    여기서 `theme(name)` 으로 푼다. 서버가 hex 를 실으면 서버가 UI 를 알게 되고(설계
+    §10 위험표), 사용자가 테마를 바꿔도 그 오버레이만 옛 색으로 남는다. 이름이 없는
+    자리는 런에 실린 리터럴을 쓴다(달력 '오늘'의 글자색 `black` — 강조색 바탕 위에서
+    읽히기만 하면 되는 자리라 테마가 아니라 모양의 일부다)."""
+    from rich.style import Style
+    st = run.get("style") or {}
+    th = run.get("theme") or {}
+    fg = theme(th["f"]) if "f" in th else st.get("f")
+    bg = theme(th["b"]) if "b" in th else st.get("b")
+    return Style(color=fg, bgcolor=bg, bold=bool(st.get("bo")))
+
+
+def paint_runs(cells, runs, W, H, theme):
+    """오버레이 런 목록을 셀 격자에 얹는다 — **Tier B 런의 정본 소비자**.
+
+    시계·달력·한도 오버레이가 **글자까지 같은 사본 셋**을 들고 있던 자리다(각자의
+    `_style` + 같은 이중 루프). 셋이 된 순간 접는다 — 둘일 때는 우연이지만 셋이면
+    규약이다. 네이티브 클라의 소비자(`proto`)와 짝이 되는 자리이기도 하다: 같은 런을
+    받아 각자의 방식으로 얹는다.
+
+    런 하나 = `{"x","y","text","style":{…}}` (+ 선택 `"theme"`: 의미 색 이름).
+    자리는 **창 절대 좌표**이고, 만드는 쪽은 각 플러그인의 `cells.py` 다."""
+    for run in runs:
+        st = run_style(run, theme)
+        x, y = run["x"], run["y"]
+        for ch in run["text"]:
+            # ★ **와이드 문자는 두 칸이다.** 글자마다 x 를 1 씩 밀면 한글이 든 런에서
+            #   자리가 어긋나고 연속셀(`""`)이 안 생겨 **행 전체 폭이 틀어진다**
+            #   (실측 2026-08-02i: `[한]` 배지가 44칸 행을 45로 만들었다). 이 규칙이
+            #   여기 없던 이유는 첫 소비자 셋(시계·달력·한도)이 전부 ASCII 였기
+            #   때문이고, 그건 "안 걸렸다"이지 "맞았다"가 아니다.
+            w = _char_cells(ch)
+            if w == 2 and x + 1 < W:
+                # 오른쪽 칸에 걸친 **배경**의 짝을 먼저 정리한다(우리 글자를 쓴 뒤에
+                # 정리하면 put_cell 이 방금 쓴 본체를 공백으로 지운다 — 순서가 규칙의
+                # 일부다).
+                put_cell(cells, x + 1, y, " ", st, W, H)
+            put_cell(cells, x, y, ch, st, W, H)
+            if w == 2 and 0 <= x + 1 < W and 0 <= y < H:
+                cells[y][x + 1] = ("", st)      # 와이드 짝의 연속셀
+            x += w
+
+
 # ── 탭(터치)으로 쓰는 세로 스크롤바 ──────────────────────────────────────────
 # **휠 이벤트를 앱에 넘기지 않는 터미널**을 위한 조작 경로다(제보/진단 2026-07-31,
 # iPhone Blink → ssh → MSYS): 클릭은 SGR 로 정상 도달하는데 `wheel` 은 0건이라

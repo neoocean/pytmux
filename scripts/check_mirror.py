@@ -7,8 +7,9 @@
 
 - `client/target/`(7GB대) 이 무시 목록에서 빠지면 첫 커밋이 통째로 부푼다.
 - 상류 자산이 다시 들어오면 파일 하나가 GitHub 한도(100MB)를 넘길 수 있다.
-- 리댁션 전 `client/docs/` 가 규칙 한 줄이 사라지는 것만으로 공개된다(그림에 실
-  사용자·호스트·계정이 찍혀 있다). 되돌릴 수 없는 방향이라 게이트가 붙든다.
+- `docs/internal/`(클라 유저가이드·리포트·그림이 §10-17 로 여기 모였다)가 규칙 한 줄이
+  사라지는 것만으로 공개된다(그림에 실 사용자·호스트·계정이 찍혀 있다). 되돌릴 수
+  없는 방향이라 게이트가 붙든다.
 - 라이브 캡처를 굳힌 픽스처에 이 상자의 실 경로가 섞여 들어온다 — 사람 눈에는 diff
   로만 보이고 한 번 푸시하면 히스토리에 남는다(첫 푸시 준비에서 실제로 둘 걸렸다).
 
@@ -132,31 +133,35 @@ def scan_paths(paths):
 
 
 def docs_verdict(present, is_ignored, canon):
-    """② `client/docs/` 판정. `(kind, msg)` — kind 는 `"problem"|"skip"|None`.
+    """② 클라 문서·그림(실 캡처)이 미러에 안 올라가나. `(kind, msg)` — `"problem"|"skip"|None`.
+
+    ⚠ **재는 자리가 §10-17 로 옮겨갔다.** 종전엔 `client/docs/` 를 봤다. 지금 그 셋
+    (USER_GUIDE.md · images 28 · reports 401)은 `docs/internal/client/` 로 이사했고,
+    막는 것은 `.gitignore` 의 `/client/docs/` 가 아니라 **`docs/internal/` 한 줄**이다.
+    그래서 판정도 새 집을 본다 — 옛 자리를 계속 보면 **이사 때문에 비어 있는 것**을
+    "잴 것이 사라졌다"로 읽어 상시 빨강이 된다(옛 규칙은 영구 안전망으로 남겨 뒀다).
 
     셋을 가른다:
 
-    - **있는데 안 무시된다** → 문제. 리댁션 전 그림에는 실 사용자·호스트·계정이
-      찍혀 있다(`.gitignore` 의 `/client/docs/` 주석). 계획 §4.4-2 는 리포트를 공개
-      대상으로 적었고 이 자리도 원래 "올라가나"를 쟀는데, 첫 푸시 직전에 실물을 보고
-      방향을 **뒤집었다** — 한시 보류를 게이트가 안 붙들면 "리댁션했다고 생각하고"
-      아무 때나 새는 쪽으로 되돌아간다. **푸는 것도 여기서** 한다: 그림을 리댁션·
-      재생성한 CL 이 이 판정과 `.gitignore` 규칙을 같이 뒤집는다.
+    - **있는데 안 무시된다** → 문제. 그림에는 실 사용자·호스트·계정이 찍혀 있다
+      (셸 프롬프트의 `<계정>@<호스트>` · Windows depot 절대경로 · 상태줄 머신명).
+      PNG 라 자동 리댁션이 안 되고 **되돌릴 수 없는 방향**이라 게이트가 붙든다.
+      푸는 것도 여기서 한다: 그림을 리댁션·재생성한 CL 이 이 판정과 `.gitignore`
+      규칙을 **같은 CL 에서** 뒤집는다.
     - **없는데 정본 워크스페이스다** → 문제. 잴 것이 없으면 통과가 아니라 고장이다.
     - **없는데 미러 체크아웃이다** → 건너뜀. 거기서는 없는 것이 **정답**이다 —
       없다고 실패시키면 "제외가 성공한 것"을 고장으로 읽는다(2026-08-01 실측: 첫
       푸시 뒤 rust-client `gates` 가 정확히 그렇게 붉었다).
 
     두 자리를 가르는 표식이 `canon`(= `docs/internal/` 의 존재)이다. 그것도 p4
-    전용이라 미러 체크아웃엔 `client/docs/` 와 **같이** 없다.
+    전용이라 미러 체크아웃엔 그 안의 클라 문서와 **같이** 없다.
     """
-    docs = "client/docs"
+    docs = "docs/internal/client"
     if present:
         if not is_ignored:
             return ("problem",
-                    f"{docs}/ 가 미러에 올라간다 — 리댁션 전 그림에는 실 사용자·호스트·"
-                    "계정이 찍혀 있다(`.gitignore` 의 `/client/docs/` 주석). 리댁션"
-                    " 슬라이스가 이 판정과 규칙을 **같은 CL 에서** 뒤집을 것")
+                    f"{docs}/ 가 미러에 올라간다 — 그림에 실 사용자·호스트·계정이"
+                    " 찍혀 있다(`.gitignore` 의 `docs/internal/` 규칙이 사라졌다는 뜻).")
         return (None, "")
     if canon:
         return ("problem", f"{docs}/ 가 없다 — 잴 것이 없으면 통과가 아니라 고장이다")
@@ -189,10 +194,11 @@ def main():
         if os.path.exists(os.path.join(ROOT, rel)) and ignored(rel) is False:
             problems.append(f"{rel} 이 무시되지 않는다 — 첫 커밋이 통째로 부푼다")
 
-    # ② `client/docs/` 는 **안 올라간다** — 판정은 `docs_verdict` 한 곳에 있다.
+    # ② 클라 문서·그림은 **안 올라간다** — 판정은 `docs_verdict` 한 곳에 있다.
+    # §10-17 이후 새 집은 `docs/internal/client/` 이고, 막는 규칙은 `docs/internal/` 이다.
     kind, msg = docs_verdict(
-        present=os.path.isdir(os.path.join(ROOT, "client", "docs")),
-        is_ignored=bool(ignored("client/docs")),
+        present=os.path.isdir(os.path.join(ROOT, "docs", "internal", "client")),
+        is_ignored=bool(ignored("docs/internal")),
         canon=os.path.isdir(os.path.join(ROOT, "docs", "internal")),
     )
     if kind == "problem":

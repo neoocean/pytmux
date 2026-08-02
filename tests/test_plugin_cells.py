@@ -1,0 +1,672 @@
+"""플러그인 셀 기여(Tier B) — 서버가 **무엇을 어디에 쓸지**를 런으로 준다.
+
+설계 = `docs/internal/PLUGIN_COMPAT_TEXTUAL_GUI_2026-08-01.md` §4.2 · §4.4 (P3).
+
+# 왜 필요한가
+
+시계·달력은 정본이 자기 프로세스에서 그린다(`client_overlay`). 네이티브 클라는
+파이썬을 못 읽어 그 그림을 못 낸다 — 그래서 GUI 에는 **손으로 옮긴 두 번째 시계**가
+있었다. 두 벌은 갈린다. 이 슬라이스는 그리는 규칙을 플러그인 한 벌로 되돌리고, 클라는
+"여기 이 글자를 이 스타일로"만 받는다.
+
+# 여기서 재는 것
+
+1. **두 경로가 같은 그림을 낸다** — 정본 오버레이가 그린 격자와, 런을 얹은 격자가 같다.
+   (이 저장소가 값을 본 「같은 입력, 두 경로」 오라클이다.)
+2. 오버레이는 **그 클라의 것**이다 — 켠 클라에게만 간다.
+3. **끄는 것도 프레임이다** — 빈 런이 한 번 나가야 클라가 지운다.
+"""
+
+import harness  # noqa: F401  (경로 설정)
+from harness import server_only, teardown
+
+
+def _clock():
+    from pytmuxlib.plugins.clock import PLUGIN
+    return PLUGIN
+
+
+def _calendar():
+    from pytmuxlib.plugins.calendar import PLUGIN
+    return PLUGIN
+
+
+def _bg(w, h):
+    """**빈 격자로 재면 안 된다.** 시계는 패널을 덮되 숫자의 구멍으로 뒤가 비쳐
+    보인다 — 배경이 공백이면 "구멍을 지웠다"와 "안 지웠다"가 똑같아 보여, 공백까지
+    런에 담는 결함이 오라클을 그대로 통과한다(실측: 변이가 안 죽었다)."""
+    from rich.style import Style
+    st = Style()
+    return [[("·", st) for _ in range(w)] for _ in range(h)]
+
+
+
+def _paint(cells, runs, W, H):
+    """런을 정본 소비자로 얹는다(테스트가 그리기 규칙을 다시 적지 않게)."""
+    from pytmuxlib.clientrender import paint_runs
+    paint_runs(cells, runs, W, H, lambda name: None)
+
+
+def _text(cells):
+    return ["".join(c[0] or " " for c in row) for row in cells]
+
+
+async def test_the_runs_draw_the_same_clock_the_canonical_overlay_draws():
+    """**같은 입력, 두 경로.** 정본이 cells 에 그린 것과, 런을 얹은 것이 같아야 한다.
+
+    2026-08-02d 에 그리는 **규칙**은 한 벌이 됐다(`clock/cells.py`) — 그래서 이 오라클이
+    이제 재는 것은 "두 규칙이 같은가"가 아니라 **정본 소비자가 런을 제자리에 얹는가**다
+    (`render.py` 가 좌표를 흘리면 여기서 죽는다). 규칙 자체는 그림 골든이 지킨다
+    (`test_plugin_clock_render.test_the_drawn_clock_is_pinned_to_a_golden`).
+    달력도 같은 이유로 짝이 되는 테스트를 남겨 뒀다(아래)."""
+    from datetime import datetime
+    from pytmuxlib.plugins.clock.render import draw_clock_overlay
+
+    W, H = 60, 20
+    pane = {"id": 1, "x": 0, "y": 0, "w": W, "h": H}
+    now = datetime(2026, 8, 2, 3, 4, 5)
+
+    # ① 정본 경로 — cells 에 직접 그린다(딤은 빈 격자라 아무 일도 안 한다).
+    canon = _bg(W, H)
+    draw_clock_overlay(canon, [pane], {1}, W, H, lambda n: "green", now=now)
+
+    # ② 런 경로 — 서버가 준 런을 그대로 얹는다.
+    mine = _bg(W, H)
+    req = {"panes": [pane], "overlays": {"clock": {1: {}}}, "cols": W, "rows": H}
+    # ★ 시각은 **참조를 든 모듈**에서 얼린다. `cells.py` 가 `from datetime import
+    #   datetime` 을 모듈 최상단에서 하므로, `datetime` **모듈의 속성**을 갈아 봐야
+    #   이미 붙잡은 이름은 안 바뀐다 — 그렇게 얼리면 벽시계가 그대로 흘러 이 오라클이
+    #   초 단위로 깜빡이는 플레이크가 된다(통합 직후 실측).
+    from pytmuxlib.plugins.clock import cells as clock_cells_mod
+    with harness.patched(clock_cells_mod, _datetime=_FrozenDatetime(now)):
+        runs = _clock().plugin_cells(None, None, req)
+    # ★ 런을 얹는 것은 **진짜 소비자**(`paint_runs`)에게 시킨다. 종전에는 여기서 손으로
+    #   한 줄 루프를 돌렸는데, 그건 그리기 규칙의 **네 번째 사본**이었고 실제로 갈렸다 —
+    #   와이드 문자를 한 칸으로 세다가 2026-08-02i 에 드러났다.
+    _paint(mine, runs, W, H)
+
+    assert _text(mine) == _text(canon), (
+        "두 경로의 그림이 다르다\n런:\n" + "\n".join(_text(mine))
+        + "\n정본:\n" + "\n".join(_text(canon)))
+
+
+class _FrozenDatetime:
+    """`datetime.now()` 만 고정한다 — 시계 테스트를 벽시계에 묶지 않으려고."""
+
+    def __init__(self, when):
+        self._when = when
+
+    def now(self, tz=None):
+        return self._when
+
+    def __getattr__(self, name):
+        import datetime as _dt
+        return getattr(_dt.datetime, name)
+
+
+async def test_a_small_pane_falls_back_to_plain_time_like_the_canonical_one():
+    """큰 글자가 안 들어가면 단순 시각 — 판정이 두 경로에서 같아야 한다."""
+    W, H = 12, 3
+    pane = {"id": 1, "x": 0, "y": 0, "w": W, "h": H}
+    req = {"panes": [pane], "overlays": {"clock": {1: {}}}, "cols": W, "rows": H}
+    runs = _clock().plugin_cells(None, None, req)
+    assert len(runs) == 1, runs
+    assert len(runs[0]["text"]) == 8 and runs[0]["text"].count(":") == 2, runs
+
+
+async def test_the_colour_is_a_name_not_a_hex():
+    """색의 권위는 **클라 테마**다(설계 §10 위험표). 서버가 hex 를 실으면 서버가 UI 를
+    알게 된다 — 그러면 테마를 바꿔도 시계만 옛 색으로 남는다."""
+    pane = {"id": 1, "x": 0, "y": 0, "w": 60, "h": 20}
+    runs = _clock().plugin_cells(
+        None, None, {"panes": [pane], "overlays": {"clock": {1: {}}}})
+    assert runs, "런이 없다"
+    for r in runs:
+        assert r["theme"] == {"f": "success"}, r
+        assert "f" not in r["style"], f"서버가 색을 정해 버렸다: {r}"
+
+
+async def test_nothing_is_produced_when_no_client_turned_it_on():
+    """delete-to-disable 의 반쪽 — 아무도 안 켰으면 프레임 자체가 없다."""
+    pane = {"id": 1, "x": 0, "y": 0, "w": 60, "h": 20}
+    assert _clock().plugin_cells(
+        None, None, {"panes": [pane], "overlays": {}}) == []
+    assert _clock().plugin_dim_panes(
+        None, None, {"panes": [pane], "overlays": {}}) == []
+
+
+async def test_the_overlay_fact_belongs_to_the_connection_not_the_session():
+    """켠 사실은 **그 클라의 것**이다 — 옆 사람 화면에 내 시계가 뜨면 안 되고,
+    연결이 끊기면 함께 사라져야 한다(설계 §6 이 '비용'으로 적어 둔 그 상태)."""
+    from pytmuxlib.servercmd import _CMD_TABLE
+    assert "plugin_overlay" in _CMD_TABLE
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+
+        class _C:
+            def __init__(self):
+                self.plugin_state = {}
+                self._cells_at = 1.0
+
+        a, b = _C(), _C()
+        handler = _CMD_TABLE["plugin_overlay"][0]
+        await handler(srv, a, sess, {"name": "clock", "pane": 1, "on": True})
+        assert a.plugin_state["overlays"]["clock"] == {1: {}}
+        assert b.plugin_state == {}, "한 클라의 오버레이가 다른 클라에 샜다"
+        # 켠 직후에는 다음 틱을 안 기다린다(껐을 때도 마찬가지 — 빈 런이 지우개다).
+        assert a._cells_at == 0.0, a._cells_at
+        # 끄면 이름 자체가 사라진다(빈 집합이 남으면 "켜져 있음"으로 읽힌다).
+        await handler(srv, a, sess, {"name": "clock", "pane": 1, "on": False})
+        assert "clock" not in a.plugin_state["overlays"], a.plugin_state
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_the_server_stops_resending_the_same_picture():
+    """시계는 1초에 한 번만 달라진다 — 같은 그림이 30Hz 로 흐르면 안 된다.
+    그리고 **끈 뒤 한 번은** 나가야 한다(그 빈 프레임이 지우개다)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+
+        class _C:
+            def __init__(self):
+                self.plugin_state = {"overlays": {"clock": {win.active_pane.id: {}}}}
+                self._cells_at = 0.0
+                self._cells_last = ()
+
+        c = _C()
+        first = srv._plugin_cells_frame(c, sess, win, 100.0)
+        assert first is not None, "켰는데 아무것도 안 왔다"
+        # 같은 초 안에서는 다시 안 만든다.
+        assert srv._plugin_cells_frame(c, sess, win, 100.5) is None
+        # 껐다 — 한 번은 나가야 클라가 지운다.
+        c.plugin_state["overlays"] = {}
+        erase = srv._plugin_cells_frame(c, sess, win, 102.0)
+        assert erase is not None, "껐는데 지우개 프레임이 없다"
+        # 그 뒤로는 조용하다.
+        assert srv._plugin_cells_frame(c, sess, win, 104.0) is None
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_a_remote_view_does_not_get_a_local_clock_on_top_of_it():
+    """원격 보기(§1.7) 중에는 화면이 **업스트림 것**이다 — 그 위에 이 서버의 시계를
+    얹으면 남의 화면에 없는 것이 그려진다. 들고 있던 그림이 남지 않게 지우개는
+    한 번 나가야 한다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+
+        class _C:
+            def __init__(self):
+                self.plugin_state = {"overlays": {"clock": {win.active_pane.id: {}}}}
+                self._cells_at = 0.0
+                self._cells_last = ()
+                self.remote_view = None
+
+        c = _C()
+        assert srv._plugin_cells_frame(c, sess, win, 100.0) is not None
+        c.remote_view = object()          # 원격 보기로 들어갔다
+        erase = srv._plugin_cells_frame(c, sess, win, 102.0)
+        assert erase is not None, "원격 보기로 들어갔는데 시계가 그대로 남는다"
+        assert srv._plugin_cells_frame(c, sess, win, 104.0) is None
+        # 나오면 다음 틱에 다시 그려진다.
+        c.remote_view = None
+        assert srv._plugin_cells_frame(c, sess, win, 106.0) is not None
+    finally:
+        await teardown(srv, task, sock)
+
+
+# ---------------------------------------------------------------------------
+# 달력(2026-08-02) — 시계의 두 번째 시민이지만 **상태가 있다**(패널마다 몇 달 넘겨
+# 보나). 그래서 여기서 더 재는 것: 상태가 연결에 매달리는가 · 클릭존/키가 뜻이 아니라
+# **이름**으로 오가는가 · 정본과 서버가 정말 같은 규칙을 쓰는가.
+# ---------------------------------------------------------------------------
+
+def _cal_theme(name):
+    return {"success": "green", "foreground": "white"}.get(name)
+
+
+async def test_the_calendar_runs_draw_what_the_canonical_overlay_draws():
+    """**같은 입력, 두 경로** — 달력판.
+
+    시계는 두 벌(정본 `render` · 서버 런 생성기)을 오라클로 대조하는 데서 멈췄지만,
+    달력은 정본도 런 생성기를 통해 그린다. 그래서 이 테스트가 재는 것은 "두 그림이
+    같은가"가 아니라 **배선**이다 — `plugin_cells` 가 엉뚱한 오버레이 이름을 읽거나
+    오프셋을 안 넘겨도 여기서 죽는다."""
+    from datetime import datetime
+    from pytmuxlib.plugins.calendar.render import draw_calendar_overlay
+
+    W, H = 40, 16
+    pane = {"id": 7, "x": 0, "y": 0, "w": W, "h": H}
+    now = datetime(2026, 8, 2)
+
+    canon = _bg(W, H)
+    draw_calendar_overlay(canon, [pane], {7}, W, H, _cal_theme,
+                          now=now, offsets={7: -1})
+
+    mine = _bg(W, H)
+    req = {"panes": [pane], "overlays": {"calendar": {7: {"offset": -1}}},
+           "cols": W, "rows": H}
+    # ★ 시계와 같은 이유로 **참조를 든 모듈**에서 언다(위 주석). 종전에는 `datetime`
+    #   모듈의 속성을 갈아 **아무것도 안 얼고 있었고**, 그래서 이 테스트는 실제로는
+    #   벽시계의 지난달을 그리고 있었다 — 아래 `"2026-07"` 단언은 **2026년 8월에만**
+    #   맞는다(9월이 되면 적색). 얼려야 이 판이 날짜와 무관해진다.
+    from pytmuxlib.plugins.calendar import cells as cal_cells_mod
+    with harness.patched(cal_cells_mod, _datetime=_FrozenDatetime(now)):
+        runs = _calendar().plugin_cells(None, None, req)
+    # ★ 런을 얹는 것은 **진짜 소비자**(`paint_runs`)에게 시킨다. 종전에는 여기서 손으로
+    #   한 줄 루프를 돌렸는데, 그건 그리기 규칙의 **네 번째 사본**이었고 실제로 갈렸다 —
+    #   와이드 문자를 한 칸으로 세다가 2026-08-02i 에 드러났다.
+    _paint(mine, runs, W, H)
+
+    assert "2026-07" in "".join(_text(mine)), "지난달을 안 그렸다"
+    assert _text(mine) == _text(canon), (
+        "두 경로의 그림이 다르다\n런:\n" + "\n".join(_text(mine))
+        + "\n정본:\n" + "\n".join(_text(canon)))
+
+
+async def test_the_calendar_colour_is_a_name_not_a_hex():
+    """달력도 색을 안 정한다 — 이름만 싣고 각 클라가 자기 테마에서 푼다.
+
+    유일한 리터럴은 '오늘'의 **글자색**(black)이다: 그 자리는 테마 강조색 바탕 위라
+    이름으로 풀 것이 배경이다."""
+    req = {"panes": [{"id": 1, "x": 0, "y": 0, "w": 40, "h": 16}],
+           "overlays": {"calendar": {1: {}}}}
+    runs = _calendar().plugin_cells(None, None, req)
+    assert runs, "런이 없다"
+    for r in runs:
+        assert r.get("theme"), f"의미 색이 없다: {r}"
+        for k, v in (r.get("style") or {}).items():
+            assert k != "b", f"서버가 배경색을 정해 버렸다: {r}"
+            if k == "f":
+                assert v == "black" and r["theme"].get("b"), r
+
+
+async def test_the_arrows_carry_a_name_the_client_cannot_read():
+    """클릭존은 **뜻이 아니라 이름**을 싣는다(설계 §4.4: 행동은 서버가 정한다).
+
+    자리는 실제로 그려진 `‹`/`›` 위여야 한다 — 화살표를 그려 놓고 클릭이 안 먹으면
+    그 화살표가 거짓말이 된다."""
+    pane = {"id": 3, "x": 0, "y": 0, "w": 40, "h": 16}
+    req = {"panes": [pane], "overlays": {"calendar": {3: {}}}}
+    runs = _calendar().plugin_cells(None, None, req)
+    trig = _calendar().plugin_triggers(None, None, req)
+    zones = trig["zones"]
+    assert sorted(z["do"] for z in zones) == ["next", "prev"], zones
+    for z in zones:
+        assert z["pane"] == 3
+        glyph = "‹" if z["do"] == "prev" else "›"
+        hit = [r for r in runs
+               if r["y"] == z["y"] and glyph in r["text"]
+               and r["x"] <= z["x"] + z["w"] - 1
+               and z["x"] <= r["x"] + len(r["text"]) - 1]
+        assert hit, f"{glyph} 없는 자리에 클릭존: {z}"
+    # 키도 같은 어휘다 — 정본이 쓰는 표 그대로 내려간다(두 경로가 갈리지 않게).
+    from pytmuxlib.plugins.calendar import KEYS
+    assert {(k["key"], k["do"]) for k in trig["keys"]} == set(KEYS)
+    assert all(k["pane"] == 3 for k in trig["keys"])
+
+
+async def test_a_small_calendar_advertises_no_arrows():
+    """단순 날짜로 폴백한 패널엔 화살표가 없다 — 그러면 클릭존도 없어야 한다."""
+    req = {"panes": [{"id": 1, "x": 0, "y": 0, "w": 12, "h": 3}],
+           "overlays": {"calendar": {1: {}}}}
+    assert _calendar().plugin_triggers(None, None, req)["zones"] == []
+    assert _calendar().plugin_cells(None, None, req), "그림 자체는 있어야 한다"
+
+
+async def test_the_action_name_moves_the_month_and_belongs_to_the_connection():
+    """`do` 는 그 클라의 상태만 움직인다. 옆 사람 달력이 같이 넘어가면 안 된다."""
+    from pytmuxlib.servercmd import _CMD_TABLE
+    assert "plugin_overlay_action" in _CMD_TABLE
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+
+        class _C:
+            def __init__(self):
+                self.plugin_state = {}
+                self._cells_at = 1.0
+
+        a, b = _C(), _C()
+        on = _CMD_TABLE["plugin_overlay"][0]
+        act = _CMD_TABLE["plugin_overlay_action"][0]
+        await on(srv, a, sess, {"name": "calendar", "pane": 1, "on": True})
+        await on(srv, b, sess, {"name": "calendar", "pane": 1, "on": True})
+        for do, want in (("prev", -1), ("prev", -2), ("next", -1),
+                         ("prev-year", -13), ("next-year", -1), ("today", 0)):
+            await act(srv, a, sess, {"name": "calendar", "pane": 1, "do": do})
+            assert a.plugin_state["overlays"]["calendar"][1]["offset"] == want, do
+        assert b.plugin_state["overlays"]["calendar"][1] == {}, "옆 클라가 같이 넘어갔다"
+        # 켤 때마다 이번 달에서 시작한다(껐다 켠 사람은 자기가 어디로 갔는지 모른다).
+        await act(srv, a, sess, {"name": "calendar", "pane": 1, "do": "prev"})
+        await on(srv, a, sess, {"name": "calendar", "pane": 1, "on": False})
+        await on(srv, a, sess, {"name": "calendar", "pane": 1, "on": True})
+        assert a.plugin_state["overlays"]["calendar"][1] == {}
+        # 안 켜진 패널에 온 늦은 클릭은 조용히 버린다(터지지 않는다).
+        await act(srv, a, sess, {"name": "calendar", "pane": 99, "do": "prev"})
+        await act(srv, a, sess, {"name": "nosuch", "pane": 1, "do": "prev"})
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_moving_the_month_produces_a_new_frame_carrying_new_zones():
+    """상태가 달라졌으면 프레임이 나가야 하고, 그 프레임에 **그 달의 클릭존**이 실려야
+    한다.
+
+    ⚠ 여기서 재지 **못하는** 것: "그림은 같은데 클릭존만 옮겨간" 경우. 달력에서는
+    화살표가 제목 런과 같은 자리 셈에서 나와 그런 조합이 성립하지 않는다(판정 키에서
+    zones 를 빼는 변이가 안 죽는 것으로 확인했다 — `serverio` 쪽 주석에 그 사실을
+    적어 뒀다). 런 없이 클릭존만 내는 오버레이가 생기면 그때 이 축이 실재한다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        pid = win.active_pane.id
+
+        class _C:
+            def __init__(self):
+                self.plugin_state = {"overlays": {"calendar": {pid: {}}}}
+                self._cells_at = 0.0
+                self._cells_last = ()
+
+        c = _C()
+        first = srv._plugin_cells_frame(c, sess, win, 100.0)
+        assert first is not None
+        before = c._cells_last
+        c.plugin_state["overlays"]["calendar"][pid] = {"offset": -1}
+        second = srv._plugin_cells_frame(c, sess, win, 102.0)
+        assert second is not None, "달을 넘겼는데 프레임이 안 나갔다"
+        assert c._cells_last != before
+        import json
+        body = json.loads(second[4:])      # 길이 프리픽스 4바이트 + JSON
+        assert body["zones"], "클릭존이 프레임에 안 실렸다"
+        assert {z["do"] for z in body["zones"]} == {"prev", "next"}
+    finally:
+        await teardown(srv, task, sock)
+
+
+# --------------------------------------------------------------------------- #
+# claude-token-usage-view — Tier B 의 마지막 소비자(2026-08-02f)
+# --------------------------------------------------------------------------- #
+
+def _usage_view():
+    import importlib
+    return importlib.import_module(
+        "pytmuxlib.plugins.claude-token-usage-view").PLUGIN
+
+
+class _FakeServer:
+    """셀 기여가 서버에서 읽는 것만 흉내낸다 — claude-code 가 긁어 둔 한도와 그 시각.
+
+    **플러그인끼리 하드 참조는 금지**라 usage-view 는 이 둘을 `getattr` 로 부드럽게
+    읽는다. 그 계약을 여기서 재려면 서버가 진짜일 필요가 없다(없을 때의 거동은 아래
+    `..._without_claude_code_...` 가 따로 본다)."""
+
+    def __init__(self, usage, ts=None):
+        self._usage = usage
+        if ts is not None:
+            self._usage_ts = ts
+
+
+_USAGE = {"session": {"pct": 41, "reset": "2pm"},
+          "week_all": {"pct": 14, "reset": "Jun 13 at 3am"}}
+
+
+
+
+async def test_the_usage_runs_draw_what_the_canonical_overlay_draws():
+    """**같은 입력, 두 경로** — 한도 오버레이판.
+
+    그리는 규칙은 `cells.py` 한 벌이므로, 이 오라클이 재는 것은 **정본 소비자가 런을
+    제자리에 얹는가**다(시계·달력의 짝과 같은 뜻). `overlay.py` 가 좌표나 여백을
+    흘리면 여기서 죽는다."""
+    import importlib
+    from datetime import datetime
+    ov = importlib.import_module(
+        "pytmuxlib.plugins.claude-token-usage-view.overlay")
+
+    W, H = 64, 14
+    pane = {"id": 1, "x": 0, "y": 0, "w": W, "h": H}
+    now = datetime(2026, 6, 11, 10, 0, 0)
+
+    canon = _bg(W, H)
+    ov.draw_usage_overlay(canon, [pane], {1}, W, H, lambda n: "white",
+                          _USAGE, age_sec=None, now=now)
+
+    mine = _bg(W, H)
+    req = {"panes": [pane],
+           "overlays": {"claude-token-usage-view": {1: {}}},
+           "cols": W, "rows": H}
+    # 시각은 **참조를 든 모듈**에서 언다(시계 쪽 주석 참조 — 모듈 속성을 갈면 안 듣는다).
+    cells_mod = importlib.import_module(
+        "pytmuxlib.plugins.claude-token-usage-view.cells")
+    with harness.patched(cells_mod, _datetime=_FrozenDatetime(now)):
+        runs = _usage_view().plugin_cells(_FakeServer(_USAGE), None, req)
+    # ★ 런을 얹는 것은 **진짜 소비자**(`paint_runs`)에게 시킨다. 종전에는 여기서 손으로
+    #   한 줄 루프를 돌렸는데, 그건 그리기 규칙의 **네 번째 사본**이었고 실제로 갈렸다 —
+    #   와이드 문자를 한 칸으로 세다가 2026-08-02i 에 드러났다.
+    _paint(mine, runs, W, H)
+
+    assert "41%" in "".join(_text(mine)), "한도 막대가 런에 안 실렸다"
+    assert _text(mine) == _text(canon), (
+        "두 경로의 그림이 다르다\n런:\n" + "\n".join(_text(mine))
+        + "\n정본:\n" + "\n".join(_text(canon)))
+
+
+async def test_the_usage_colour_is_a_name_not_a_hex():
+    """서버는 색을 안 정한다 — 이름만 싣고 각 클라가 자기 테마에서 푼다.
+
+    hex 를 실으면 서버가 UI 를 알게 되고(설계 §10 위험표), 사용자가 테마를 바꿔도
+    이 오버레이만 옛 색으로 남는다."""
+    pane = {"id": 1, "x": 0, "y": 0, "w": 64, "h": 14}
+    runs = _usage_view().plugin_cells(
+        _FakeServer(_USAGE), None,
+        {"panes": [pane], "overlays": {"claude-token-usage-view": {1: {}}}})
+    assert runs, "런이 하나도 없다"
+    for r in runs:
+        th = r.get("theme") or {}
+        assert th, f"의미 색이 없다: {r}"
+        for v in th.values():
+            assert not v.startswith("#"), f"hex 가 실렸다: {r}"
+        assert "f" not in (r.get("style") or {}), f"리터럴 색이 실렸다: {r}"
+
+
+async def test_nothing_is_drawn_until_a_client_turns_the_usage_overlay_on():
+    """켠 사실은 **클라만** 안다(설계 §4.4). 아무도 안 켰으면 런도 딤도 없다 —
+    `plugin_cells` 가 빈 목록을 내야 서버가 프레임을 안 만든다(delete-to-disable 결)."""
+    pane = {"id": 1, "x": 0, "y": 0, "w": 64, "h": 14}
+    srv = _FakeServer(_USAGE)
+    assert _usage_view().plugin_cells(
+        srv, None, {"panes": [pane], "overlays": {}}) == []
+    assert _usage_view().plugin_dim_panes(
+        srv, None, {"panes": [pane], "overlays": {}}) == []
+    # 켜면 그 패널이 딤 대상이 된다(뒤 화면을 흐리게 — 딤은 클라만 할 수 있다).
+    on = {"panes": [pane], "overlays": {"claude-token-usage-view": {1: {}}}}
+    assert _usage_view().plugin_dim_panes(srv, None, on) == [1]
+
+
+async def test_the_usage_overlay_says_something_without_claude_code():
+    """**빈 화면 금지.** claude-code 가 없거나 아직 안 긁었으면 서버에 한도가 없다 —
+    그래도 안내 한 줄은 가야 사용자가 "고장"으로 읽지 않는다.
+
+    그리고 **플러그인끼리 하드 참조 금지**를 여기서 잰다: 한도를 든 속성이 아예 없는
+    서버(=claude-code 미설치)를 줘도 터지지 않아야 한다."""
+    pane = {"id": 1, "x": 0, "y": 0, "w": 64, "h": 14}
+    req = {"panes": [pane], "overlays": {"claude-token-usage-view": {1: {}}}}
+
+    class _Bare:                     # claude-code 가 없는 서버(속성 자체가 없다)
+        pass
+
+    runs = _usage_view().plugin_cells(_Bare(), None, req)
+    assert runs, "안내 한 줄도 없이 빈 화면이 됐다"
+    assert any("없음" in r["text"] or "No limit" in r["text"] for r in runs), \
+        [r["text"] for r in runs]
+
+
+async def test_the_usage_freshness_comes_from_the_same_clock_the_status_uses():
+    """묵은 값을 현재값으로 오독하지 않게 'N분 전 실측'을 붙인다(S6 T3).
+
+    신선도의 출처는 정본 클라가 status 로 받는 것과 **같은 자리**(`_usage_ts`)라야
+    한다 — 두 클라가 다른 신선도를 보면 한쪽이 거짓말을 한다."""
+    import time
+    pane = {"id": 1, "x": 0, "y": 0, "w": 64, "h": 14}
+    req = {"panes": [pane], "overlays": {"claude-token-usage-view": {1: {}}}}
+    fresh = _usage_view().plugin_cells(
+        _FakeServer(_USAGE, ts=time.time()), None, req)
+    stale = _usage_view().plugin_cells(
+        _FakeServer(_USAGE, ts=time.time() - 3600), None, req)
+    assert not any("전 실측" in r["text"] for r in fresh), "방금 잰 값에 stale 표기"
+    assert any("전 실측" in r["text"] for r in stale), \
+        "한 시간 묵었는데 표기가 없다: " + str([r["text"] for r in stale])
+
+
+# --------------------------------------------------------------------------- #
+# 런의 공통 소비자(`clientrender.paint_runs`) — 2026-08-02g 에 셋을 접은 자리
+# --------------------------------------------------------------------------- #
+
+async def test_the_client_theme_actually_colours_what_gets_drawn():
+    """**의미 색이 실제로 칠해지는가.**
+
+    이 자리는 오래 비어 있었다: `run_style` 이 `theme(...)` 을 통째로 무시하도록
+    변이시켜도 오버레이 테스트 **52건이 전부 초록**이었다(2026-08-02g 실측). 골든과
+    두 경로 대조가 **글자만** 보기 때문이다 — 색이 통째로 빠져도 그림은 같다.
+    "값을 만드는 헬퍼만 재고 붙이는 호출은 안 재는" 이 저장소의 상습 실패 모드다.
+
+    셋을 한 소비자로 접었으니 여기가 그 한 곳이다. 두 층을 다 잰다:
+    ① 규칙(`run_style`)이 이름을 테마로 푸는가 ② 세 오버레이가 그 함수를 **실제로
+    끼워 넣는가**(끼우는 줄을 지우면 ②가 죽는다)."""
+    import importlib
+    from pytmuxlib.clientrender import run_style
+    from pytmuxlib.plugins.clock.render import draw_clock_overlay
+    from pytmuxlib.plugins.calendar.render import draw_calendar_overlay
+    ov = importlib.import_module(
+        "pytmuxlib.plugins.claude-token-usage-view.overlay")
+
+    SENTINEL = {"success": "#010203", "foreground": "#040506"}
+
+    # ① 규칙: 의미 이름은 테마로 풀고, 이름이 없는 자리는 런의 리터럴을 쓴다.
+    st = run_style({"text": "x", "style": {"bo": 1}, "theme": {"f": "success"}},
+                   SENTINEL.get)
+    assert st.color.name == "#010203", st
+    assert st.bold, "축약 스타일 bo 가 떨어졌다"
+    st2 = run_style({"text": "x", "style": {"f": "black"}, "theme": {"b": "success"}},
+                    SENTINEL.get)
+    assert st2.bgcolor.name == "#010203", st2
+    assert st2.color.name == "black", "이름 없는 자리의 리터럴이 사라졌다"
+
+    def drawn_colours(draw):
+        """오버레이를 그린 뒤 **실제로 찍힌** 전경/배경 색 이름 집합."""
+        W, H = 64, 16
+        cells = _bg(W, H)
+        draw(cells, [{"id": 1, "x": 0, "y": 0, "w": W, "h": H}], W, H)
+        out = set()
+        for row in cells:
+            for ch, cst in row:
+                if ch not in (" ", "", "·"):
+                    if cst.color is not None:
+                        out.add(cst.color.name)
+                    if cst.bgcolor is not None:
+                        out.add(cst.bgcolor.name)
+        return out
+
+    # ② 배선: 세 오버레이가 그 규칙을 실제로 통과시키는가.
+    from datetime import datetime
+    now = datetime(2026, 6, 11, 10, 0, 0)
+    clock = drawn_colours(lambda c, p, W, H: draw_clock_overlay(
+        c, p, {1}, W, H, SENTINEL.get, now=now))
+    assert "#010203" in clock, f"시계 숫자가 테마 색을 안 썼다: {clock}"
+
+    cal = drawn_colours(lambda c, p, W, H: draw_calendar_overlay(
+        c, p, {1}, W, H, SENTINEL.get, now=now))
+    assert "#010203" in cal, f"달력 강조가 테마 색을 안 썼다: {cal}"
+    assert "#040506" in cal, f"달력 날짜가 테마 색을 안 썼다: {cal}"
+
+    usage = drawn_colours(lambda c, p, W, H: ov.draw_usage_overlay(
+        c, p, {1}, W, H, SENTINEL.get, _USAGE, now=now))
+    assert "#010203" in usage, f"카운트다운이 테마 색을 안 썼다: {usage}"
+    assert "#040506" in usage, f"한도 막대가 테마 색을 안 썼다: {usage}"
+
+
+async def test_a_wide_character_in_a_run_keeps_the_row_aligned():
+    """**와이드 문자는 두 칸이다** — 런에 한글이 들어오면 자리 셈이 달라진다.
+
+    첫 소비자 셋(시계·달력·한도)이 전부 ASCII 라 `paint_runs` 는 글자마다 x 를 1 씩
+    밀고 있었고, 아무도 안 걸렸다. 입력기 배지(`[한]`)가 오자 44칸 행이 **45** 로
+    측정되며 드러났다(2026-08-02i · P7). "안 걸렸다"는 "맞았다"가 아니다.
+
+    두 가지를 잰다: ① 글자가 제 칸에 놓이는가 ② 와이드 짝의 **연속셀**(`""`)이 생겨
+    행 폭이 보존되는가."""
+    from pytmuxlib.clientrender import paint_runs
+    from pytmuxlib.clientutil import _char_cells
+
+    W, H = 12, 1
+    cells = _bg(W, H)
+    paint_runs(cells, [{"x": 4, "y": 0, "text": "[한]", "style": {},
+                        "theme": {"f": "success"}}], W, H, lambda n: "green")
+    row = cells[0]
+    # ① `[`=4 · `한`=5(본체)+6(연속셀) · `]`=7
+    assert row[4][0] == "[" and row[5][0] == "한" and row[7][0] == "]", \
+        [c[0] for c in row]
+    assert row[6][0] == "", f"와이드 짝의 연속셀이 없다: {[c[0] for c in row]}"
+    # ② 행 폭 보존 — 이 단언이 실측에서 45 != 44 로 울었던 그 셈이다.
+    assert sum(_char_cells(c) for c, _ in row if c != "") == W, \
+        [c[0] for c in row]
+    # ③ 고아 연속셀 금지: `""` 의 왼쪽은 반드시 와이드 문자다.
+    for x, (ch, _st) in enumerate(row):
+        if ch == "":
+            assert x > 0 and _char_cells(row[x - 1][0]) == 2, \
+                f"고아 연속셀 @{x}: {[c[0] for c in row]}"
+
+
+async def test_a_reported_fact_reaches_the_plugin_through_the_server_frame():
+    """★ **배선을 잰다** — 손으로 만든 `req` 로는 안 지나는 자리다.
+
+    P7(69218)이 정확히 여기서 물렸다: 플러그인은 `req["facts"]` 를 읽는데 서버가 그
+    칸을 **안 채운 채** 나갔다. 그 슬라이스의 오라클이 전부 `plugin_cells(None, None,
+    <손으로 만든 req>)` 를 불러 서버를 한 번도 안 지났고, 스위트는 초록이었다 —
+    "값을 만드는 헬퍼만 재고 붙이는 호출은 안 잰다"의 교과서 사례다.
+
+    그래서 여기서는 **서버가 만든 프레임**을 본다: 클라가 사실을 올리면 그 클라의 셀
+    프레임에 배지가 실리고, 지우면 빠진다."""
+    import json
+    from pytmuxlib.servercmd import _CMD_TABLE
+
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+
+        class _C:
+            def __init__(self):
+                self.plugin_state = {}
+                self._cells_at = 0.0
+                self._cells_last = ()
+
+        c = _C()
+        # 아무도 안 올렸으면 프레임 자체가 없다(켠 적도 없다).
+        assert srv._plugin_cells_frame(c, sess, win, 100.0) is None
+
+        # 클라가 사실을 올린다 — 실제 명령 핸들러를 지난다.
+        await _CMD_TABLE["client_fact"][0](srv, c, sess,
+                                           {"name": "ime", "value": "한"})
+        frame = srv._plugin_cells_frame(c, sess, win, 101.0)
+        assert frame is not None, "사실을 올렸는데 프레임이 안 나갔다"
+        body = json.loads(frame[4:])          # 길이 프리픽스 4바이트 + JSON
+        texts = [r["text"] for r in body.get("runs") or []]
+        assert "[한]" in texts, f"배지가 프레임에 없다: {body}"
+
+        # 지우면 빠진다 — 빈 런이 지우개다.
+        await _CMD_TABLE["client_fact"][0](srv, c, sess,
+                                           {"name": "ime", "value": None})
+        frame2 = srv._plugin_cells_frame(c, sess, win, 102.0)
+        assert frame2 is not None, "지웠는데 지우개 프레임이 안 나갔다"
+        body2 = json.loads(frame2[4:])
+        assert not (body2.get("runs") or []), f"지웠는데 배지가 남았다: {body2}"
+    finally:
+        await teardown(srv, task, sock)

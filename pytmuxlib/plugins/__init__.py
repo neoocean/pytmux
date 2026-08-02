@@ -336,6 +336,136 @@ class Registry:
                     return resp
         return None
 
+    def plugin_cells(self, server, sess, req) -> list:
+        """Tier B — **셀 기여**(설계 §4.2 · P3).
+
+        플러그인이 `cells` 에 직접 쓰던 것을 **런 목록**으로 뽑는다. 정본은 자기
+        프로세스에서 `client_overlay` 로 그리지만, 네이티브 클라는 파이썬을 못 읽어
+        같은 그림을 못 낸다 — 그래서 서버가 **무엇을 어디에 쓸지**를 자료로 준다.
+
+        `req` 는 이 클라의 화면 사정이다:
+        `{"panes": [{"id","x","y","w","h"}],
+          "overlays": {"<이름>": {패널 id: {…상태…}}}, "cols", "rows"}` —
+        `overlays` 는 그 클라가 켜 둔 것이다(설계 §4.4 의 `client_fact`: 오버레이가
+        켜졌다는 **사실**은 클라만 알고, 그릴지·어떻게는 플러그인이 정한다).
+
+        패널마다 딸린 dict 는 **그 오버레이의 per-client 상태**다(달력의 `offset`).
+        켜져 있다는 것과 그 상태는 한 자료구조에 있다 — 둘로 나누면 한쪽만 지워진
+        채 남는다.
+
+        돌려줄 것 — 런 목록. 각 런:
+        `{"x","y","text","style": {…}}` (+ 선택 `"layer"`: `content`|`overlay`,
+        `"theme"`: 의미 색 이름)
+
+        - 스타일은 **이미 있는 표현**을 쓴다(`model._style_key` 가 내는 축약 키 —
+          서버가 화면 런에 쓰는 것과 같다). 새 색 표기를 만들지 않는다.
+        - **색의 권위는 클라 테마**다. `theme` 가 있으면 클라가 자기 테마에서 그 이름을
+          풀어 `style.f` 를 덮는다 — 여기에 hex 를 실으면 서버가 UI 를 알게 된다
+          (설계 §10 위험표의 그 줄).
+
+        플러그인이 하나도 안 내면 빈 목록 → 서버는 프레임을 안 만든다(delete-to-disable).
+        """
+        runs = []
+        for p in self.plugins:
+            fn = getattr(p, "plugin_cells", None)
+            if fn is None:
+                continue
+            got = fn(server, sess, req)
+            if got:
+                runs.extend(got)
+        return runs
+
+    def plugin_triggers(self, server, sess, req) -> dict:
+        """오버레이가 **되돌려 받고 싶은 것** — 클릭존과 키 표(설계 Tier B).
+
+        런은 그림뿐이라 "이 화살표를 누르면 무슨 일이 나는가"를 못 나른다. 정본은
+        자기가 그린 자리를 아니까 스스로 알지만, 네이티브 클라는 그림을 받기만 한다 —
+        그래서 자리(`zones`)와 키(`keys`)에 **뜻 대신 이름**(`do`)을 붙여 준다. 클라는
+        그 이름이 무슨 뜻인지 모른 채 `plugin_overlay_action` 으로 돌려보내고, 뜻은
+        플러그인이 정한다(설계 §4.4 — 행동은 서버가 정한다).
+
+        돌려줄 것: `{"zones": [{"x","y","w","h","pane","do"}],
+                     "keys": [{"key","pane","do"}]}`(둘 다 선택).
+
+        오버레이 **이름은 여기서 찍는다** — 플러그인이 자기 이름을 항목마다 다시 적을
+        이유가 없고, 클라는 그 이름을 그대로 되돌려 보내야 서버가 어느 오버레이의
+        상태를 고칠지 안다.
+        """
+        zones, keys = [], []
+        for p in self.plugins:
+            fn = getattr(p, "plugin_triggers", None)
+            if fn is None:
+                continue
+            got = fn(server, sess, req) or {}
+            for item in (got.get("zones") or []):
+                zones.append({**item, "name": p.name})
+            for item in (got.get("keys") or []):
+                keys.append({**item, "name": p.name})
+        return {"zones": zones, "keys": keys}
+
+    def plugin_overlay_action(self, server, sess, req) -> bool:
+        """클라가 돌려보낸 이름(`do`)을 그 오버레이의 상태에 적용한다.
+
+        `req` = `{"name", "pane", "do", "state"}` — `state` 는 **그 클라의**
+        `plugin_state["overlays"][name][pane]` 그 자체다(플러그인이 제자리에서 고친다).
+        내 것이면 True 를 돌려 다음 플러그인이 같은 이름을 또 해석하지 않게 한다."""
+        for p in self.plugins:
+            fn = getattr(p, "plugin_overlay_action", None)
+            if fn is not None and fn(server, sess, req):
+                return True
+        return False
+
+    def plugin_dim_panes(self, server, sess, req) -> list:
+        """오버레이가 **뒤를 흐리게** 할 패널 id 들(설계 §4.2 의 `layer` 와 같은 부류).
+
+        런으로는 못 나르는 것이라 따로 둔다 — 딤은 새 글자를 얹는 것이 아니라 **이미
+        있는 셀을 바꾸는** 일이고, 그 계산(실색 블렌드·이모지 placeholder)은 화면을
+        들고 있는 클라만 할 수 있다. 서버는 "어느 패널이 덮였나"만 말한다."""
+        out = []
+        for p in self.plugins:
+            fn = getattr(p, "plugin_dim_panes", None)
+            if fn is None:
+                continue
+            got = fn(server, sess, req)
+            if got:
+                out.extend(got)
+        return out
+
+    def plugin_badges(self, server, sess, msg) -> list:
+        """Tier B — **상태줄 기여**(설계 §1.2 의 ③ · P6).
+
+        상태줄에 붙는 **표식 한 칸**을 자료로 준다. 셀 기여(`plugin_cells`)와 같은
+        발상이고 어휘도 같다 — 다른 것은 자리를 플러그인이 안 정한다는 점뿐이다.
+        오버레이는 "어느 칸에" 가 뜻의 일부지만, 상태줄 표식은 **줄 안의 순서**만
+        있으면 되고 그 순서는 클라의 상태줄 규칙이 정한다(정본과 GUI 의 배지 줄
+        생김새가 서로 다르다 — 같은 자리를 강요하면 한쪽이 망가진다).
+
+        `msg` 는 지금 만들고 있는 status 메시지다(읽기 전용으로 본다) — 플러그인이
+        이미 `server_status` 로 채워 넣은 자기 필드를 그대로 다시 읽으면 되므로,
+        같은 값을 두 번 계산하지 않는다.
+
+        돌려줄 것 — 배지 목록. 각 배지:
+        `{"text": " REC ", "style": {…}, "theme": {…}}` (+ 레지스트리가 `"name"` 을 찍는다)
+
+        - 스타일은 **이미 있는 표현**(`model._style_key` 축약)이고, 색은 `theme` 의
+          **의미 이름**이다 — 서버가 hex 를 실으면 서버가 UI 를 알게 된다(설계 §10).
+        - **누르는 자리는 아직 없다**. 정본의 REC 배지는 클릭하면 캡처 정보 팝업이
+          뜨는데 그 화면은 Tier C(④)이고 네이티브에는 아직 없다 — 여기에 `do` 를
+          실어 두면 **선언은 있고 배선이 없는** 칸이 하나 더 생긴다(08-02b). 화면이
+          오면 그때 `plugin_triggers` 와 같은 표기로 넓힌다.
+
+        플러그인이 하나도 안 내면 빈 목록 → status 에 키가 안 실린다(delete-to-disable).
+        """
+        out = []
+        for p in self.plugins:
+            fn = getattr(p, "plugin_badges", None)
+            if fn is None:
+                continue
+            got = fn(server, sess, msg)
+            for item in (got or []):
+                out.append({**item, "name": p.name})
+        return out
+
     # ---- 서버 런타임 훅(코어가 믹스인 메서드를 이름으로 직접 부르지 않게) ----
     # 코어(serverio/server)는 Claude 서버 로직(스캔/상태/입력/사용량)에 **이 훅으로만**
     # 닿는다. 플러그인이 없으면 전부 기본값(False/None/no-op)이라 서버가 그대로 동작

@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import shutil
+import time
 
 import harness
 import pytmux
@@ -1722,6 +1723,16 @@ async def test_command_table_disposition_golden():
         # (`{"t":"plugin_screen"}`) 세션 상태를 안 바꾼다. 재동기할 캔버스가 없고,
         # 다음 동작은 클라가 `plugin_action` 으로 되묻는다.
         "plugin_open": HANDLED, "plugin_action": HANDLED,
+        # 플러그인 셀 기여(Tier B · 2026-08-02 P3) — 클라가 **사실**(어느 패널에
+        # 오버레이를 켰나)만 올린다. 회신이 아예 없어서 HANDLED 다: 답은 다음 프레임의
+        # `plugin_cells` 이고, 그건 flush 루프가 낸다.
+        "plugin_overlay": HANDLED,
+        # 그 오버레이의 클릭존/키가 되돌려 보내는 이름(2026-08-02 달력). 클라는 뜻을
+        # 모르고 서버가 준 `do` 를 그대로 올린다 — 회신 역시 다음 셀 프레임이다.
+        "plugin_overlay_action": HANDLED,
+        # 클라만 아는 **사실**(Tier D · 2026-08-02 P7) — 오늘은 입력기 한/영 하나다.
+        # 오버레이와 같은 이유로 HANDLED: 회신이 없고 답은 다음 셀 프레임이다.
+        "client_fact": HANDLED,
         # 마우스 드래그 선택 텍스트 요청(2026-07-25 신설) — 핸들러가 `selection` 을
         # 회신해 완결하므로 HANDLED(full 재동기 불필요: 선택은 클라 상태다).
         "copy_range": HANDLED,
@@ -3387,6 +3398,60 @@ async def test_request_redraw_induces_repaint_and_resends_full():
         await teardown(srv, task, sock)
 
 
+async def _drain_attach(reader, pane, timeout=8.0, quiet=0.2):
+    """attach full 버스트를 **실제로 본 뒤** 조용해질 때까지 소켓을 비운다.
+
+    왜 "조용해질 때까지"만으로는 안 되는가(§10-19, 2026-08-02 Windows 실측):
+    종전 관용구 `while await _collect(0.2): pass` 는 **'끝나서 조용한 것'과 '아직
+    시작도 안 해서 조용한 것'을 구분하지 못한다.** 느린 러너에서 `_send_full` 이
+    첫 창(0.2s) 안에 못 오면 그 창이 통째로 비고, 루프는 그것을 '이미 다 비웠다'로
+    읽어 즉시 빠져나간다 → attach 버스트가 **뒤따르는 단언 창에 통째로** 걸린다.
+    실패의 값이 단언 방향에 따라 갈리는데 둘 다 나쁘다:
+      · **부정** 단언(`assert not ...`)은 거짓 실패 — GHA windows 3.11/3.12/3.13 이
+        `['layout','screen','status']` 로 셋 다 붉었다.
+      · **긍정** 단언(`assert any(...)`)은 거짓 통과 — 그 버스트가 단언을 만족시켜
+        **제품이 아무 일도 안 해도** 초록이 된다.
+
+    `layout` 을 버스트 도착의 **인과 표식**으로 쓴다 — `_send_full` 만이 그것을 내고
+    `_flush_loop` 는 낼 수 없다. ⚠ 프레임 *내용*으로는 못 가른다: `_send_full` 은
+    호출 시점의 패널을 렌더하므로 이미 먹인 동기화 바이트가 그 안에 그대로 보인다
+    (실측 — "초기 프롬프트냐 hello-sync 냐"로 가르려던 최초 판별법이 여기서 틀렸다).
+
+    반환 = 비우는 동안 받은 프레임 전부."""
+    from pytmuxlib.protocol import read_msg
+
+    async def _collect(window):
+        got = []
+        end = time.monotonic() + window
+        while time.monotonic() < end:
+            try:
+                m = await asyncio.wait_for(
+                    read_msg(reader), max(0.01, end - time.monotonic()))
+            except asyncio.TimeoutError:
+                break
+            if m is None:
+                break
+            got.append(m)
+        return got
+
+    seen, saw_attach = [], False
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        batch = await _collect(quiet)
+        if batch:
+            seen.extend(batch)
+            if any(m.get("t") == "layout" for m in batch):
+                saw_attach = True
+            continue
+        # 창이 비었다 — 버스트를 **봤고** 패널도 안 dirty 일 때만 '정착'으로 친다.
+        if saw_attach and not pane.dirty:
+            break
+    assert saw_attach, \
+        (f"attach full(layout)이 {timeout}s 안에 안 왔다 — 이 뒤의 단언은 "
+         f"의미가 없다(받은 것: {[m.get('t') for m in seen]})")
+    return seen
+
+
 async def test_sync_output_defers_flush():
     """DEC 2026 동기화 출력(BSU/ESU): 프레임(?2026h…?2026l) 도중엔 _flush_loop 가 그
     패널 screen 을 클라에 안 보내(반쪽 프레임=무작위 글자 겹침 방지), ?2026l 후에
@@ -3416,9 +3481,9 @@ async def test_sync_output_defers_flush():
                 got.append(m)
             return got
 
-        # 초기 attach + 셸 프롬프트 프레임이 잦아들 때까지 비운다(정적 상태 확보).
-        while await _collect(0.2):
-            pass
+        # 초기 attach 버스트 + 셸 프롬프트 프레임이 잦아들 때까지 비운다(정적 상태
+        # 확보). **버스트를 본 뒤에** 조용해지는 것을 기다린다 — 이유는 _drain_attach.
+        await _drain_attach(reader, p)
 
         def _pane_screen(m):
             return (m.get("t") in ("screen", "screen-delta")
@@ -3471,8 +3536,10 @@ async def test_sync_output_defer_times_out():
                 got.append(m)
             return got
 
-        while await _collect(0.2):
-            pass
+        # ⚠ 이 테스트의 단언은 **긍정**이라 늦은 attach 버스트에 거짓 통과한다
+        # (제품이 아무 일도 안 해도 그 버스트가 screen 을 준다) — 그래서 여기서도
+        # 버스트를 확실히 걷어낸 뒤 진행한다(§10-19).
+        await _drain_attach(reader, p)
 
         def _pane_screen(m):
             return (m.get("t") in ("screen", "screen-delta")
@@ -3521,8 +3588,7 @@ async def test_sync_output_active_feed_does_not_time_out():
                 got.append(m)
             return got
 
-        while await _collect(0.2):
-            pass
+        await _drain_attach(reader, p)
 
         def _pane_screen(m):
             return (m.get("t") in ("screen", "screen-delta")

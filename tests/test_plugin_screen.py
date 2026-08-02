@@ -220,3 +220,351 @@ async def test_a_path_with_spaces_survives_the_shell():
     from pytmuxlib.plugins.ncd import _quote
     assert _quote("/a b/c") == '"/a b/c"'
     assert _quote("/plain") == "/plain"
+
+
+# ── P6 — `mdir`: 되돌릴 수 없는 조작이 있는 첫 시민 ──────────────────────────────
+
+def _mdir():
+    from pytmuxlib.plugins.mdir import PLUGIN
+    return PLUGIN
+
+
+def _tree(tmp):
+    """표본 디렉터리 — 하위 하나 + 파일 둘 + 숨김 하나."""
+    import os
+    os.makedirs(os.path.join(tmp, "sub"), exist_ok=True)
+    for name, body in (("a.txt", "가나다"), ("b.txt", "bbb"), (".hidden", "x")):
+        with open(os.path.join(tmp, name), "w", encoding="utf-8") as f:
+            f.write(body)
+    return tmp
+
+
+async def test_mdir_lists_a_directory_as_a_table_the_client_can_draw(tmp_path=None):
+    """표 스펙의 모양이 계약이다 — 줄의 `key` 가 **절대경로**(그 줄의 뜻)라야 다음
+    액션이 자리가 아니라 그 항목을 가리킨다."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        _tree(tmp)
+        mine = {"path": tmp, "tags": []}
+        spec = _mdir()._spec(mine, 0, "")
+        assert spec["kind"] == "table" and spec["id"] == "mdir", spec
+        labels = [r["label"] for r in spec["rows"]]
+        assert labels[0].strip() == "..", labels
+        assert spec["rows"][0]["key"] == os.path.dirname(tmp), spec["rows"][0]
+        # 디렉터리가 먼저, 그 다음 파일(정본 기본 정렬).
+        assert "sub/" in labels[1], labels
+        # 숨김은 기본으로 안 보인다.
+        assert not any(".hidden" in ln for ln in labels), labels
+        # 조작 대상 목록은 `..` 를 안 담는다 — 담기면 부모를 지울 수 있다.
+        assert os.path.dirname(tmp) not in mine["items"], mine["items"]
+        assert os.path.join(tmp, "a.txt") in mine["items"], mine["items"]
+        # 칸 둘(크기·시각)이 실린다.
+        row = next(r for r in spec["rows"] if r["label"].strip().startswith("a.txt"))
+        assert len(row["cols"]) == 2 and row["cols"][0] != "<DIR>", row
+        # 글자 키를 스펙이 정한다 — 여기 없는 글자는 클라에서 판을 닫는다.
+        assert spec["keys"]["enter"] == "into", spec["keys"]
+        assert spec["keys"]["d"] == "delete" and spec["keys"]["p"] == "cd", spec["keys"]
+
+
+async def test_mdir_hidden_toggle_and_tagging_live_in_this_clients_state():
+    """숨김 토글·태그는 **그 클라의 것**이고, 태그는 그 디렉터리를 벗어나면 사라진다.
+
+    태그가 따라다니면 화면에 안 보이는 것이 지워진다 — 삭제가 있는 화면에서 그건
+    사고다."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        _tree(tmp)
+        p = _mdir()
+        mine = {"path": tmp, "tags": []}
+        p._spec(mine, 0, "")
+        a = os.path.join(tmp, "a.txt")
+        spec = p._tag(mine, a, 2)
+        assert mine["tags"] == [a], mine
+        assert any(r["label"].startswith("✓") for r in spec["rows"]), spec["rows"]
+        # 커서는 한 줄 내려간다(연달아 찍는 것이 이 키의 쓰임이다).
+        assert spec["selected"] == 3, spec["selected"]
+        # 숨김 토글은 왕복 없이 목록을 늘린다.
+        mine["hidden"] = True
+        spec = p._spec(mine, 0, "")
+        assert any(".hidden" in r["label"] for r in spec["rows"]), spec["rows"]
+        # 하위로 들어가면 그 디렉터리의 태그만 남는다 → 여기서는 전부 사라진다.
+        p._into(mine, os.path.join(tmp, "sub"), 0)
+        assert mine["tags"] == [], mine
+
+
+async def test_mdir_delete_asks_before_it_does_anything_and_says_what_disappears():
+    """되돌릴 수 없는 것 앞의 규칙 — **묻는 단계에서는 아무것도 안 한다**, 그리고
+    무엇이 사라지는지를 물음이 들고 간다(클라는 스펙의 `title`·`note` 를 그린다)."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        _tree(tmp)
+        p = _mdir()
+        mine = {"path": tmp, "tags": []}
+        p._spec(mine, 0, "")
+        a = os.path.join(tmp, "a.txt")
+        ask = p._begin(mine, "delete", a, 2)
+        assert ask["kind"] == "confirm", ask
+        assert "되돌릴 수 없" in ask["title"], ask
+        assert "a.txt" in ask["note"], "무엇이 지워지는지 안 보인다: %r" % (ask,)
+        assert ask["keys"] == {"enter": "apply"}, ask
+        assert os.path.exists(a), "묻기만 했는데 벌써 지웠다"
+        # 답이 오면 그때 지운다.
+        spec = p._apply(mine, "y", 2)
+        assert not os.path.exists(a), "답했는데 안 지워졌다"
+        assert "삭제 1건" in spec["note"], spec["note"]
+        assert spec["kind"] == "table", spec
+
+
+async def test_mdir_copy_asks_where_and_the_two_step_overwrite_protocol_survives():
+    """복사는 목적지를 되묻고, 겹치면 **아무것도 안 한 채** 덮어쓸지 다시 묻는다.
+
+    절반만 수행하고 묻는 것보다 결정론적이다(정본 서버의 2단계 프로토콜 그대로)."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        src, dst = os.path.join(tmp, "src"), os.path.join(tmp, "dst")
+        os.makedirs(src)
+        os.makedirs(dst)
+        for d in (src, dst):
+            with open(os.path.join(d, "same.txt"), "w") as f:
+                f.write("old" if d is dst else "new")
+        p = _mdir()
+        mine = {"path": src, "tags": []}
+        p._spec(mine, 0, "")
+        ask = p._begin(mine, "copy", os.path.join(src, "same.txt"), 1)
+        assert ask["kind"] == "prompt" and "복사" in ask["title"], ask
+        # 답 = 목적지. 겹치니 **수행 없이** 되묻는다.
+        again = p._apply(mine, dst, 1)
+        assert again["kind"] == "confirm" and "덮어쓸까요" in again["title"], again
+        with open(os.path.join(dst, "same.txt")) as f:
+            assert f.read() == "old", "되묻기 전에 이미 덮어썼다"
+        # '예' 면 그때 덮어쓴다.
+        spec = p._apply(mine, "y", 1)
+        with open(os.path.join(dst, "same.txt")) as f:
+            assert f.read() == "new", spec
+        assert "복사 1건" in spec["note"], spec["note"]
+
+
+async def test_mdir_cd_writes_to_the_pane_and_closes_the_screen():
+    """`p` 는 정본 F4 와 **같은 결과**다 — 패널에 cd 를 치고 판을 닫는다.
+    셸 방언은 **이 서버의** OS 가 정한다(원격이면 원격 셸의 방언이라야 한다)."""
+    import tempfile
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = _mdir()
+        with tempfile.TemporaryDirectory() as tmp:
+            pane = sess.active_window.active_pane
+            wrote = []
+            with harness.patched(type(pane), write=lambda self, d: wrote.append(d)):
+                resp = p.plugin_screen(srv, sess, {
+                    "id": "mdir", "do": "cd", "row": 0, "input": "",
+                    "state": {"mdir": {"path": tmp, "tags": [], "items": []}},
+                })
+            assert resp == {"t": "plugin_screen_close", "id": "mdir"}, resp
+            assert wrote and tmp.encode() in wrote[0], wrote
+            assert wrote[0].endswith(b"\n"), "Enter 없이 보내면 셸이 실행하지 않는다"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_mdir_only_operates_on_what_the_current_listing_holds():
+    """클라가 되돌려준 경로는 **지금 목록에 있는 것**이라야 한다.
+
+    옛 목록의 줄(또는 지어낸 경로)이 그대로 삭제 대상이 되면, 화면에 없던 것이
+    사라진다. 목록을 만들 때 담아 둔 `items` 가 그 관문이다."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        _tree(tmp)
+        p = _mdir()
+        mine = {"path": tmp, "tags": []}
+        p._spec(mine, 0, "")
+        outsider = os.path.join(tmp, "..", "somewhere-else")
+        assert p._targets(mine, outsider) == [], "목록 밖 경로가 대상이 됐다"
+        # `..` 줄도 대상이 아니다(정본 동형).
+        assert p._targets(mine, os.path.dirname(tmp)) == []
+        spec = p._begin(mine, "delete", outsider, 0)
+        # 대상이 없으면 묻지 않는다 — 빈 확인 화면은 "누르면 뭔가 지워진다"로 읽힌다.
+        assert not isinstance(spec, dict) or spec.get("kind") != "confirm", spec
+
+
+# ── P7 — Claude 쪽 둘: 화면이 없던 마지막 플러그인들 ────────────────────────────
+
+def _plugin(srv, name):
+    return next(p for p in srv.plugins.plugins if getattr(p, "name", "") == name)
+
+
+async def test_claude_resume_lists_sessions_and_remembers_where_each_one_lives():
+    """세션 목록 스펙 — 줄의 **뜻**은 세션 id 이고, 리줌에 필요한 cwd 는 그 클라의
+    화면 상태에 적어 둔다.
+
+    왜 상태에 적나: 리줌할 때 `~/.claude/projects` 를 **다시 훑으면** 수백 개 jsonl 을
+    두 번 읽는다. 그렇다고 cwd 를 줄의 key 에 붙이면 key 가 뜻 하나를 나른다는 계약이
+    깨진다(그 key 는 목록이 바뀌어도 같은 세션을 가리켜야 한다).
+    """
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        plugin = _plugin(srv, "claude-resume")
+        found = [{"id": "abc-1", "cwd": "/work/one", "title": "첫 세션",
+                  "project": "work/one", "mtime": 1_700_000_000.0},
+                 {"id": "abc-2", "cwd": "/work/two", "title": "둘",
+                  "project": "work/two", "mtime": 1_700_000_100.0}]
+        mod = __import__("pytmuxlib.plugins.claude-resume.sessions",
+                         fromlist=["sessions"])
+        state = {}
+        with harness.patched(mod, list_sessions=lambda **kw: found):
+            spec = await plugin._open_spec(state)
+        assert spec["kind"] == "list" and spec["id"] == "claude-resume"
+        assert [r["key"] for r in spec["rows"]] == ["abc-1", "abc-2"]
+        assert spec["rows"][0]["label"] == "첫 세션"
+        assert spec["keys"] == {"enter": "resume"}
+        assert state["claude-resume"]["cwds"] == {"abc-1": "/work/one",
+                                                  "abc-2": "/work/two"}
+
+        # 고른 줄 → 그 세션의 **원래 디렉토리**에서 새 탭 + 리줌 명령 주입.
+        opened = []
+        with harness.patched(type(srv),
+                             new_window=lambda self, s, path=None: opened.append(path),
+                             _broadcast_session=lambda self, s: None):
+            resp = plugin.plugin_screen(srv, sess, {
+                "id": "claude-resume", "do": "resume", "input": "abc-2",
+                "state": state,
+            })
+        assert resp == {"t": "plugin_screen_close", "id": "claude-resume"}
+        assert opened == ["/work/two"], "적어 둔 cwd 로 안 열었다: %r" % opened
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_claude_resume_refuses_a_session_id_that_is_not_one():
+    """세션 id 는 셸로 들어간다 — 위생 실패면 **탭도 안 연다**(스펙 경로도 같은 문).
+
+    종전에는 이 문이 `handle_server_request` 안에만 있었다. 화면 스펙이 두 번째 입구가
+    되면서 같은 함수를 부르게 묶었다 — 입구가 둘인데 문이 하나여야 한다.
+    """
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        plugin = _plugin(srv, "claude-resume")
+        opened = []
+        with harness.patched(type(srv),
+                             new_window=lambda self, s, path=None: opened.append(path),
+                             _broadcast_session=lambda self, s: None):
+            plugin.plugin_screen(srv, sess, {
+                "id": "claude-resume", "do": "resume",
+                "input": "; rm -rf ~", "state": {},
+            })
+        assert opened == [], "위생 실패인데 탭을 열었다"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_prompt_history_lists_the_same_tail_the_jump_indexes():
+    """프롬프트 목록 — **최신이 위**이고, 줄의 뜻은 tail 슬라이스 안의 자리다.
+
+    ⚠ 여기가 조용히 틀리는 자리다: 점프(`scroll_to_prompt`)의 index 는 tail 기준인데
+    목록을 전체 히스토리로 만들면 오래된 패널에서 **엉뚱한 자리로** 점프한다. 그래서
+    이 오라클은 tail 보다 긴 히스토리를 준다.
+    """
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        plugin = _plugin(srv, "claude-prompt-history")
+        pane = sess.active_window.active_pane
+        pane._ph_history = ["p%d" % i for i in range(40)]
+        spec = plugin._open_spec(srv, sess)
+        assert spec["kind"] == "list" and spec["id"] == "prompt-history"
+        assert spec["rows"][0]["label"] == "p39", "최신이 위가 아니다"
+        # tail 슬라이스라 30개, 그리고 그 안의 자리가 key 다(마지막 = 29).
+        assert len(spec["rows"]) == 30, len(spec["rows"])
+        assert spec["rows"][0]["key"] == "29", spec["rows"][0]
+
+        jumped = []
+        srvmod = _server_module(plugin)
+        with harness.patched(srvmod, scroll_to_prompt=lambda s, ss, i: jumped.append(i) is None), \
+             harness.patched(type(srv), _broadcast_session=lambda self, s: None):
+            resp = plugin.plugin_screen(srv, sess, {
+                "id": "prompt-history", "do": "jump", "input": "29", "state": {}})
+        assert resp == {"t": "plugin_screen_close", "id": "prompt-history"}
+        assert jumped == [29], "고른 줄의 뜻이 그대로 안 갔다: %r" % jumped
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_prompt_history_says_it_is_empty_instead_of_showing_nothing():
+    """빈 목록은 **빈 화면이 아니다** — 왜 비었는지 한 줄이 있어야 한다(설계 §8-5)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        plugin = _plugin(srv, "claude-prompt-history")
+        sess.active_window.active_pane._ph_history = []
+        spec = plugin._open_spec(srv, sess)
+        assert spec["rows"] == [] and spec["note"], spec
+    finally:
+        await teardown(srv, task, sock)
+
+
+# ── 스펙의 글은 **카탈로그를 거친다**(로케일 2026-08-02o) ──────────────────────
+#
+# 게이트가 못 보던 자리였다: 픽스처는 정본 카탈로그에서 뽑히므로, 스펙에 **직접 적은**
+# 한국어는 영어 표(`en_server.rs`)에 못 들어가고 영어 사용자에게 그대로 한국어로 뜬다.
+# 정적 스캔은 생성기가 하고(`wire_literals` 래칫), 여기서는 **실제로 지어진 스펙**을
+# 재서 그 스캔이 재는 것과 제품이 내보내는 것이 같은지 붙잡는다.
+
+async def test_a_screen_spec_says_the_same_words_the_catalog_does():
+    """스펙의 제목·안내·빈 줄은 카탈로그 값이어야 한다 — 손으로 적으면 영어가 안 된다.
+
+    ⚠ 이 오라클은 "카탈로그에 있나"만 보고 **문구가 예쁜가**는 안 본다. 그래도 값이
+    있다: 손으로 적은 판은 카탈로그 판과 **괄호 하나가 달랐고**, 그 한 글자 때문에
+    `t()` 가 못 찾아 한국어로 떴다(실측 — p4changes·ncd·prompt-history·claude-resume).
+    """
+    from pytmuxlib import i18n
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        values = set(i18n._CATALOG["ko"].values())
+
+        plugin = _plugin(srv, "claude-prompt-history")
+        sess.active_window.active_pane._ph_history = []
+        spec = plugin._open_spec(srv, sess)
+        for field in ("title", "hint", "note"):
+            assert spec[field] in values, (
+                "prompt-history 스펙의 %s 가 카탈로그에 없다: %r" % (field, spec[field]))
+
+        plugin = _plugin(srv, "claude-resume")
+        spec = await plugin._open_spec({})
+        # `note` 는 세션이 있으면 빈 문자열이다 — 빈 것은 글이 아니라 "할 말 없음"이라
+        # 카탈로그를 안 거친다(빈 줄까지 번역 대상으로 세면 오라클이 거짓말을 한다).
+        # 빈 note 의 문구는 위 prompt-history 가 덮는다(거기서는 비게 만들 수 있다).
+        for field in ("title", "hint", "note"):
+            assert not spec[field] or spec[field] in values, (
+                "claude-resume 스펙의 %s 가 카탈로그에 없다: %r" % (field, spec[field]))
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_a_composed_title_carries_the_ingredients_not_just_the_words():
+    """자리가 있는 제목은 **재료**(`i18n`)도 실어야 한다 — 원문이 키가 못 되기 때문.
+
+    `ncd` 의 제목은 `디렉터리 — {path}` 다. 글만 보내면 영어 클라가 그 문자열을 표에서
+    못 찾아 한국어가 그대로 뜬다. 그래서 `fmt`+`args` 를 같이 싣고 클라가 `tf` 로
+    자기 로케일에서 다시 짓는다(`i18n_say`).
+    """
+    import os
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        plugin = _plugin(srv, "ncd")
+        path = os.path.abspath(os.sep)
+        spec = plugin._dir_spec({"path": path})
+        assert spec["i18n"]["title"]["fmt"] == "디렉터리 — {path}", spec["i18n"]
+        assert spec["i18n"]["title"]["args"] == {"path": path}, spec["i18n"]
+        # 글도 그대로 온다 — 재료를 모르는 클라는 종전과 똑같은 것을 본다.
+        assert spec["title"].endswith(path), spec["title"]
+    finally:
+        await teardown(srv, task, sock)

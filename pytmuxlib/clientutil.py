@@ -293,22 +293,11 @@ def _fmt_tokens(total: int) -> str:
 
 
 # 막대 게이지용 부분블록(1/8 단위) — 우측 끝 잔량을 부드럽게 표현.
-_BAR_BLOCKS = " ▏▎▍▌▋▊▉█"
-
-
-def bar(value: int, vmax: int, cells: int) -> str:
-    """value/vmax 비율을 cells 칸 막대 문자열로(부분블록 포함). vmax<=0/cells<=0/
-    value<=0 이면 빈 문자열. 표시 계층(DataTable/InfoScreen/usage_bar_lines) 공용 —
-    폭은 호출부가 셀폭으로 계산한다. (S5b 에서 usagelog 에서 이리로 이전 — 코어
-    clientscreens.usage_bar_lines 가 데이터 모듈 usagelog 를 import 하지 않게 하려고
-    순수 표시 헬퍼를 코어 표시 유틸로 옮겼다. usagelog 는 S5c 에서 플러그인으로 이동.)"""
-    if cells <= 0 or vmax <= 0 or value <= 0:
-        return ""
-    frac = max(0.0, min(1.0, value / vmax))
-    eighths = int(round(frac * cells * 8))
-    full, rem = divmod(eighths, 8)
-    full = min(full, cells)
-    return "█" * full + (_BAR_BLOCKS[rem] if rem and full < cells else "")
+# 막대 프리미티브(`bar`)와 그 여덟 단 블록 표는 **UI 무의존 모듈**로 옮겼다
+# (`usagebar.py` — 2026-08-02f). 이 모듈은 최상단에서 `rich.style` 을 읽으므로 서버가
+# 같은 막대를 못 그린다. 종전 이름으로 읽는 자리를 위해 아래에서 다시 내보낸다
+# (`bar_floating*` 은 여기 남는다 — 표시 전용이고 서버가 안 쓴다).
+from .usagebar import _BAR_BLOCKS, bar  # noqa: F401,E402  (재수출 — 종전 이름 보존)
 
 
 def bar_floating_segments(start: float, end: float, vmax: int, cells: int):
@@ -361,63 +350,13 @@ _TIME_STRFTIME = set("HIMSpRTrXkl")
 _DATE_STRFTIME = set("YymdbBaAjeDFuwUWxgGCV")
 
 
-# clock-mode 큰 시계용 3x5 블록 폰트(시:분:초)
-_CLOCK_FONT = {
-    "0": ["█▀█", "█ █", "▀▀▀"],
-    "1": ["  █", "  █", "  ▀"],
-    "2": ["▀▀█", "█▀▀", "▀▀▀"],
-    "3": ["▀▀█", "▀▀█", "▀▀▀"],
-    "4": ["█ █", "▀▀█", "  ▀"],
-    "5": ["█▀▀", "▀▀█", "▀▀▀"],
-    "6": ["█▀▀", "█▀█", "▀▀▀"],
-    "7": ["▀▀█", "  █", "  ▀"],
-    "8": ["█▀█", "█▀█", "▀▀▀"],
-    "9": ["█▀█", "▀▀█", "▀▀▀"],
-    ":": [" ▄ ", " ▄ ", "   "],
-}
-_CLOCK_FONT_ROWS = 3
-_CLOCK_FONT_COLS = 3
-
-
-# 큰 화면용 **한 칸 = 한 픽셀** 블록 폰트(사용자 요청 2026-07-26). 위 `_CLOCK_FONT` 는
-# 반칸 글자(`▀`/`▄`)로 5 픽셀행을 3 셀에 욱여넣은 것이라, 화면이 넓어도 글자가 그 이상
-# 커지지 않았다. 이 폰트는 픽셀 하나를 **셀 한 칸 높이**로 그려(그래서 5행) 글자가 두 배
-# 가까이 커진다.
-#
-# 가로도 2칸으로 넓힌다: 터미널 셀은 세로가 가로의 두 배쯤이라 픽셀을 1×1 셀로 두면
-# 숫자가 홀쭉해진다(반칸 폰트는 1셀×½셀 ≈ 정사각 픽셀이라 비율이 맞았다). 2셀×1셀이면
-# 픽셀이 다시 정사각에 가까워 모양이 유지된 채 크기만 커진다.
-_CLOCK_FONT_BIG = {
-    "0": ["██████", "██  ██", "██  ██", "██  ██", "██████"],
-    "1": ["    ██", "    ██", "    ██", "    ██", "    ██"],
-    "2": ["██████", "    ██", "██████", "██    ", "██████"],
-    "3": ["██████", "    ██", "██████", "    ██", "██████"],
-    "4": ["██  ██", "██  ██", "██████", "    ██", "    ██"],
-    "5": ["██████", "██    ", "██████", "    ██", "██████"],
-    "6": ["██████", "██    ", "██████", "██  ██", "██████"],
-    "7": ["██████", "    ██", "    ██", "    ██", "    ██"],
-    "8": ["██████", "██  ██", "██████", "██  ██", "██████"],
-    "9": ["██████", "██  ██", "██████", "    ██", "██████"],
-    ":": ["      ", "  ██  ", "      ", "  ██  ", "      "],
-}
-_CLOCK_FONT_BIG_ROWS = 5
-_CLOCK_FONT_BIG_COLS = 6
-
-
-def clock_font_for(avail_w, avail_h, n_chars, gap=1):
-    """가용 공간(칸)에 맞는 블록 폰트를 고른다 — `(font, rows, cols, width)`.
-
-    넉넉하면 **한 칸 높이 픽셀**의 큰 폰트(5행·6칸)를, 아니면 종전 반칸 폰트(3행·3칸)를
-    돌려준다. `width` 는 `n_chars` 글자를 `gap` 칸 간격으로 늘어놓은 전체 폭이라 호출부가
-    그대로 중앙 정렬에 쓴다. 작은 폰트조차 안 들어가면 호출부가 판단하도록 그대로 작은
-    폰트를 돌려준다(폴백 판정은 호출부 몫 — 종전 동작 보존)."""
-    n = max(0, int(n_chars))
-    big_w = n * _CLOCK_FONT_BIG_COLS + max(0, n - 1) * gap
-    if avail_w >= big_w and avail_h >= _CLOCK_FONT_BIG_ROWS:
-        return (_CLOCK_FONT_BIG, _CLOCK_FONT_BIG_ROWS, _CLOCK_FONT_BIG_COLS,
-                big_w)
-    return (_CLOCK_FONT, _CLOCK_FONT_ROWS, _CLOCK_FONT_COLS,
-            n * _CLOCK_FONT_COLS + max(0, n - 1) * gap)
+# 블록 폰트 자산은 **UI 무의존 모듈**로 옮겼다(`blockfont.py` — 설계 Tier B · P3).
+# 이 모듈은 최상단에서 `rich.style` 을 읽으므로 서버가 같은 글리프를 못 쓴다.
+# 종전 이름으로 읽는 자리(clock/calendar 의 render·테스트)를 위해 여기서 다시 내보낸다.
+from .blockfont import (  # noqa: F401,E402  (재수출 — 종전 이름 보존)
+    _CLOCK_FONT, _CLOCK_FONT_BIG, _CLOCK_FONT_BIG_COLS, _CLOCK_FONT_BIG_ROWS,
+    _CLOCK_FONT_COLS, _CLOCK_FONT_ROWS, clock_font_for,
+)
 
 
 # 한글 두벌식 자모 → QWERTY 영문 키. IME 가 켜져 있어도 단축키가 동작하도록

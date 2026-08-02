@@ -102,26 +102,99 @@ class _ClaudeResumePlugin:
     # ---- 서버 측 ----
     def handle_server_request(self, server, sess, action, msg):
         if action == "claude_list_sessions":
-            from . import sessions
-            return {"t": "claude_sessions",
-                    "sessions": sessions.list_sessions(limit=_LIST_LIMIT)}
+            # ★ **executor 로** 나간다. 이 훑기는 `~/.claude/projects` 의 jsonl 을 전부
+            #   읽어 이 머신에서 실측 **5.5초**다(세션 300개) — 루프에서 하면 그 동안
+            #   모든 패널의 출력이 멎는다(단일 스레드 asyncio). 종전에는 그대로 루프에서
+            #   했고, 증상이 "리줌 목록을 열면 pytmux 가 잠깐 먹통"이라 원인이 이 훅으로
+            #   안 보였다(2026-08-02 화면 스펙을 붙이며 시간을 재다 드러났다).
+            return self._list_sessions()
         if action == "claude_resume_session":
-            cmd = resume_command(msg.get("session_id"))
-            if cmd is None:
-                return None                 # 위생 실패 — 아무것도 안 함
-            # 세션의 원래 디렉토리에서 새 탭을 연다(사용자 결정: cd 후 리줌).
-            server.new_window(sess, path=msg.get("cwd"))
-            win = sess.active_window
-            pane = win.active_pane if win else None
-            try:
-                if pane is not None and pane.pty is not None:
-                    pane.pty.write(cmd.encode("utf-8"))
-            except OSError:
-                pass
-            # 새 탭이 보이도록 세션 전 클라에 전체 동기화 방송.
-            server._broadcast_session(sess)
+            self._resume(server, sess, msg.get("session_id"), msg.get("cwd"))
             return None
         return None
+
+    def _list_sessions(self):
+        import asyncio
+        from . import sessions
+        return asyncio.get_event_loop().run_in_executor(
+            None, lambda: {"t": "claude_sessions",
+                           "sessions": sessions.list_sessions(limit=_LIST_LIMIT)})
+
+    def _resume(self, server, sess, session_id, cwd):
+        """그 세션의 원래 디렉토리에서 새 탭을 열고 리줌 명령을 주입한다. 했으면 True.
+
+        **정본과 네이티브 클라가 같이 부른다** — 한쪽만 고치면 "GUI 에서만 cd 가 안
+        된다" 같은 것이 생긴다(사용자 결정: cd 후 리줌)."""
+        cmd = resume_command(session_id)
+        if cmd is None:
+            return False                    # 위생 실패 — 아무것도 안 함
+        server.new_window(sess, path=cwd)
+        win = sess.active_window
+        pane = win.active_pane if win else None
+        try:
+            if pane is not None and pane.pty is not None:
+                pane.pty.write(cmd.encode("utf-8"))
+        except OSError:
+            pass
+        # 새 탭이 보이도록 세션 전 클라에 전체 동기화 방송.
+        server._broadcast_session(sess)
+        return True
+
+    # ---- 서버 측: 화면 스펙(Tier C) ----
+    #
+    # 정본은 위 `handle_message` 에서 자기 Textual 피커를 띄운다. 네이티브 클라는
+    # 파이썬을 못 읽으므로 **무엇을 그릴지**를 스펙으로 준다 — 목록의 자료도 리줌하는
+    # 손도 위와 **같은 함수**라, 두 클라에서 다른 세션이 보이거나 다른 디렉토리에서
+    # 열릴 자리가 없다.
+    def plugin_screen(self, server, sess, req):
+        do = req.get("do")
+        if do == "open":
+            if req.get("name") not in _ALIASES:
+                return None                 # 내 이름이 아니다
+            return self._open_spec(req.get("state") or {})
+        if req.get("id") != "claude-resume":
+            return None
+        if do == "resume":
+            sid = str(req.get("input") or "")
+            # cwd 는 **목록을 만들 때 적어 둔 것**을 쓴다(그 클라의 화면 상태 —
+            # 설계 Tier C · P5). 여기서 다시 훑으면 수백 개 jsonl 을 두 번 읽는다.
+            cwd = (((req.get("state") or {}).get("claude-resume") or {})
+                   .get("cwds") or {}).get(sid)
+            self._resume(server, sess, sid, cwd)
+            return {"t": "plugin_screen_close", "id": "claude-resume"}
+        if do == "close":
+            return {"t": "plugin_screen_close", "id": "claude-resume"}
+        return None
+
+    async def _open_spec(self, state):
+        """세션 목록 스펙. 훑기는 **executor 로** 나간다 — `~/.claude/projects` 전체를
+        읽는 일이라 루프에서 하면 그동안 모든 패널이 멎는다."""
+        import time
+        found = (await self._list_sessions())["sessions"]
+        # 고른 줄로 리줌할 때 쓸 cwd 를 적어 둔다(위 `resume` 주석).
+        state.setdefault("claude-resume", {})["cwds"] = {
+            s["id"]: s.get("cwd") for s in found}
+
+        def when(mtime):
+            try:
+                return time.strftime("%m-%d %H:%M", time.localtime(mtime or 0))
+            except (ValueError, OSError, TypeError):
+                return ""
+
+        return {
+            "t": "plugin_screen", "id": "claude-resume", "kind": "list",
+            # ⚠ 손으로 적으면 게이트가 못 본다(2026-08-02o) — 카탈로그가 곧 영어 표다.
+            "title": i18n.t("cresume.title"),
+            "hint": i18n.t("cresume.hint"),
+            # `key` 는 그 줄의 **뜻**(세션 id)이다 — 자리로 가리키면 목록이 바뀔 때
+            # 엉뚱한 세션이 열린다.
+            "rows": [{"key": s["id"], "label": s.get("title") or s["id"],
+                      "cols": [s.get("project") or "", when(s.get("mtime"))]}
+                     for s in found],
+            "selected": 0,
+            "keys": {"enter": "resume"},
+            "note": "" if found else i18n.t("cresume.none"),
+        }
 
 
 PLUGIN = _ClaudeResumePlugin()

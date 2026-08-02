@@ -3,9 +3,9 @@
 
 진짜 서버(임시 소켓)를 띄우고 **실제 클라이언트 앱**(`build_client_app`)을 Textual
 헤드리스(`run_test`)로 운전해, 각 장면을 클라가 실제로 그리는 그대로 **SVG** 로 떠
-`docs/image/` 에 저장한다. 위젯 상태 단언이 아니라 사용자가 보는 화면 그 자체다.
+`docs/internal/image/` 에 저장한다. 위젯 상태 단언이 아니라 사용자가 보는 화면 그 자체다.
 
-  python3 scripts/gen_screenshots.py            # 결정적 장면 전체 → docs/image/*.svg
+  python3 scripts/gen_screenshots.py            # 결정적 장면 전체 → docs/internal/image/*.svg
   python3 scripts/gen_screenshots.py 02-split   # 이름에 매칭되는 결정적 장면만
   python3 scripts/gen_screenshots.py claude-suite  # 라이브: 진짜 claude 실행해 §11 컷 5장
 
@@ -51,7 +51,7 @@ os.environ["ZDOTDIR"] = _SHOT_ZDOTDIR
 # bash 폴백(SHELL=bash 환경)도 동일 프롬프트로.
 os.environ["PS1"] = r"user@host \W \$ "
 
-OUT_DIR = os.path.join(_UNIT, "docs", "image")
+OUT_DIR = os.path.join(_UNIT, "docs", "internal", "image")
 SIZE = (90, 26)
 
 async def _settle(pilot, app, want_panes=None, tries=40):

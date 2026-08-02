@@ -4,7 +4,7 @@ Python + [Textual](https://textual.textualize.io/) 로 만든 **tmux 유사 터�
 하나의 터미널 안에서 여러 셸을 패널로 나눠 쓰고, 앱이나 터미널 창을 닫아도 셸 세션이
 계속 살아있게 해 줍니다.
 
-![pytmux — 하나의 터미널을 여러 패널로 분할(활성 패널은 파란 테두리)](docs/image/02-split-lr.svg)
+![pytmux — 하나의 터미널을 여러 패널로 분할(활성 패널은 파란 테두리)](docs/landing/image/02-split-lr.svg)
 
 > 📖 **사용법은 매뉴얼에 있습니다.** 설치부터 패널·탭·마우스·메뉴·명령·Claude 연동·
 > 운영까지 **실제 화면 스크린샷**과 함께 안내하는
@@ -182,7 +182,7 @@ cd client
 cargo build --release -p gui   # → target/release/pytmux-gui
 ```
 
-사용법·화면은 **[`client/docs/USER_GUIDE.md`](client/docs/USER_GUIDE.md)** 를 보세요.
+키·마우스·화면은 파이썬 클라와 같습니다 — [매뉴얼 위키](https://github.com/neoocean/pytmux/wiki/Manual) 를 보세요.
 파이썬 클라만 쓰신다면 이 디렉터리는 몰라도 됩니다 — 서버와 `pytmux` 명령은 Rust 없이 돕니다.
 
 ## 상태

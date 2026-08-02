@@ -442,6 +442,15 @@ class ServerIOMixin:
         # 그 키를 읽지 않는다(delete-to-disable). 채워질 키/값은 플러그인이 있을 때
         # 종전과 동일하다(서버 테스트가 claude_tokens 등 키를 그대로 검증).
         self.plugins.server_status(self, sess, win, msg, full)
+        # 상태줄 표식(Tier B ③ · P6) — **자료로** 준다. 정본은 자기 프로세스에서
+        # `client_statusbar_badges` 훅으로 그리지만, 네이티브 클라는 파이썬을 못 읽어
+        # 같은 칸을 못 만든다(그래서 REC 배지가 GUI 에 아예 없었다). 위 server_status
+        # 가 채워 둔 값을 플러그인이 그대로 다시 읽어 배지 목록을 만든다.
+        # 빈 목록이면 키를 안 싣는다 — 플러그인 부재 시 status 가 종전과 한 바이트도
+        # 다르지 않아야 한다(delete-to-disable · 추가 필드라 PROTO_VERSION 범프 불요).
+        badges = self.plugins.plugin_badges(self, sess, msg)
+        if badges:
+            msg["plugin_badges"] = badges
         # 탭 스위처 하위행용 경량 패널 요약(≥2 패널 탭만) — 원격 탭 스위처가 상류
         # status 로 하위 패널을 그릴 수 있게 한다(_switcher_panes docstring). 로컬
         # 클라는 이 필드를 무시(lazy tree 사용)하므로 다운스트림 원격 병합에만 쓰인다.
@@ -835,10 +844,91 @@ class ServerIOMixin:
                     for c in clients:
                         frames_by_client[c].append(frame_msg(
                             self._status_msg(sess, full=False, client=c)))
+                # 플러그인 셀 기여(설계 Tier B · P3). 클라마다 다르다 — 오버레이를
+                # 켠 것이 그 클라이기 때문이다. **틱은 서버가 판단한다**: 정본은
+                # `client_tick` 으로 클라가 1초마다 재합성하는데, 네이티브 클라는
+                # 프레임이 도착해야 다시 그린다(지금 화면 갱신과 같은 길).
+                for c in clients:
+                    frame = self._plugin_cells_frame(c, sess, win, now)
+                    if frame is not None:
+                        frames_by_client[c].append(frame)
                 # 클라마다 이 프레임의 모든 메시지를 한 번에 write+drain(B4).
                 # H-2: 느린/먹통 클라가 flush 루프 전체를 막지 않게 가드한다.
                 for c in clients:
                     await self._flush_to_client(c, frames_by_client[c])
+
+    # 셀 기여를 다시 만드는 주기(초). 시계가 초 단위라 1 이면 충분하고, 더 자주
+    # 만들면 같은 그림을 다시 계산해 버린다(내용 비교가 걸러 주지만 계산은 이미 했다).
+    _CELLS_PERIOD = 1.0
+
+    def _plugin_cells_frame(self, c, sess, win, now):
+        """이 클라의 셀 기여 프레임(없으면 None).
+
+        **끄는 것도 프레임이다**: 오버레이를 닫으면 빈 런 목록이 한 번 나가야 클라가
+        지운다. 그래서 "직전에 뭔가 보냈는데 지금 비었다"도 보낼 거리다 —
+        `_cells_last` 가 그 판정을 한다(같으면 안 보낸다 · 30Hz 로 같은 그림을 흘리지
+        않는다)."""
+        overlays = (c.plugin_state or {}).get("overlays") or {}
+        # 이 클라만 아는 사실들(Tier D · P7) — 오늘은 입력기 한/영 하나다.
+        facts = (c.plugin_state or {}).get("facts") or {}
+        if getattr(c, "remote_view", None):
+            # §1.7 원격 보기 중 — 화면이 업스트림 것이라 그 위에 **로컬** 시계가 뜨면
+            # 안 된다. 들고 있던 그림이 남지 않게 지우개는 한 번 내보낸다(아래 빈
+            # 런 경로가 그 일을 한다). 입력기 배지도 같다 — 남의 화면 위에 내 한/영을
+            # 얹으면 그 줄이 상류 것인지 내 것인지 알 수 없다.
+            overlays, facts = {}, {}
+        if not overlays and not facts and not c._cells_last:
+            return None                      # 켠 적도 없다 — 아무것도 안 만든다
+        if now - c._cells_at < self._CELLS_PERIOD and c._cells_last:
+            return None
+        c._cells_at = now
+        cols, rows = self._session_size(sess)
+        panes = [{"id": p.id, "x": x, "y": y, "w": w, "h": h}
+                 for p, (x, y, w, h) in self._client_pane_rects(sess, win)]
+        req = {"panes": panes, "overlays": overlays, "facts": facts,
+               # 활성 패널 id — 배지처럼 **거기 하나에만** 붙는 기여가 쓴다(Tier D).
+               "active": (win.active_pane.id
+                          if win and win.active_pane else None),
+               "cols": cols, "rows": rows}
+        try:
+            runs = self.plugins.plugin_cells(self, sess, req)
+            dim = self.plugins.plugin_dim_panes(self, sess, req)
+            trig = self.plugins.plugin_triggers(self, sess, req)
+        except Exception:
+            # 한 플러그인의 예외가 flush 루프 전체(=모든 클라 렌더)를 죽이지 않게
+            # 가드한다(server_scan 과 같은 규율).
+            self._log_error("plugin_cells")
+            return None
+        zones, keys = trig.get("zones") or [], trig.get("keys") or []
+        # 클릭존·키도 판정에 넣는다. ⚠ 오늘의 유일한 시민(달력)에서는 **이것만으로
+        # 달라지는 프레임을 만들 수 없다** — 화살표는 제목 런과 같은 자리 셈에서 나오니
+        # 그림이 같으면 자리도 같다(변이로 확인: 이 두 줄을 빼도 테스트가 안 죽는다).
+        # 그래도 두는 이유는 계약이 더 넓기 때문이다: 런 없이 클릭존만 내는 오버레이가
+        # 허용되고, 그때 그 자리 변화를 실어 나를 것이 여기 말고는 없다.
+        key = (tuple(sorted(dim)),
+               tuple((r["x"], r["y"], r["text"]) for r in runs),
+               tuple((z["x"], z["y"], z["pane"], z["name"], z["do"])
+                     for z in zones),
+               tuple((k["key"], k["pane"], k["name"], k["do"]) for k in keys))
+        if key == c._cells_last:
+            return None
+        c._cells_last = key
+        return frame_msg({"t": "plugin_cells", "layer": "overlay",
+                          "dim": dim, "runs": runs,
+                          "zones": zones, "keys": keys})
+
+    def _client_pane_rects(self, sess, win):
+        """`(pane, (x, y, w, h))` — **내용 영역**(테두리 안). 레이아웃 메시지가 클라에
+        보내는 것과 같은 계산이라, 오버레이가 그 패널을 정확히 덮는다."""
+        cols, rows = self._session_size(sess)
+        panes, _divs = win.compute_layout(0, 0, cols, rows)
+        bordered = len(panes) >= 2 or self.single_border
+        out = []
+        for p in panes:
+            cx, cy, cw, ch, _box, _titled = self._content_rect(
+                p.rect, bordered, win.border_status)
+            out.append((p, (cx, cy, cw, ch)))
+        return out
 
     async def _flush_to_client(self, c: ClientConn, frames):
         """한 클라에 프레임 배치를 보낸다(H-2). 느린/먹통 클라(드레인 무한 대기)가

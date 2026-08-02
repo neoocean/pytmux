@@ -1898,107 +1898,13 @@ class InfoTabsScreen(ModalScreen):
         self.dismiss(None)
 
 
-# /usage 한도 막대의 **빈(잔여) 트랙** 글자 — 채움 '█' 과 대비되는 연한 음영이라
-# 색이 없어도 사용/잔여를 구분한다(usage_bar_lines 비-right_align = usage-panel·
-# TokenLogScreen [한도]). right_align(usage-view overlay)은 호출부가 track_char 로
-# 따로 준다(표시단이 그 글자만 회색으로 칠함).
-_USAGE_EMPTY_TRACK = "░"
-
-
-def usage_bar_lines(usage, width=80, age_sec=None, right_align=False,
-                    track_char=" ", row_gap=False):
-    """Claude `/usage` 한도 dict(session·week_all·week_sonnet)를 보기 좋은 표시
-    줄 목록으로 만든다. 각 줄: 라벨(10셀 패딩) + 막대 + % + 리셋(요약, 타임존 생략).
-    데이터가 없으면 None. TokenLogScreen 의 한도 섹션과 자동 /usage 팝업이 공유한다.
-
-    age_sec: 실측 경과(초, S6 T3). 2분 이상 묵었으면 마지막에 'N분 전 실측'을 붙여
-    stale 임을 알린다 — 실측이 주 표시로 승격되면서 묵은 값을 현재값으로 오독하지
-    않게 하는 표시측 대응(stale 스냅샷 혼동 방지).
-
-    right_align: 켜면 막대를 트랙 폭(barw)으로 채워 행마다 리셋 시작 열을 맞추고,
-    % 숫자를 막대 바로 옆이 아니라 **줄 오른쪽 끝(width)** 에 우측정렬한다(리셋은
-    막대 뒤). usage-view 플러그인 팝업/오버레이가 켠다 — 기본 False 라 기존 소비자
-    (usage-panel·TokenLogScreen)의 표시는 그대로다(opt-in).
-
-    track_char: 막대의 **빈 부분**(채움 뒤 트랙)을 채우는 글자. 기본 ' '(공백 →
-    배경과 동일, 종전 동작). 호출부가 회색 트랙을 그리려고 구분 글자(예 '░')를 주면
-    빈 칸을 그 글자로 채워, 표시측이 그 글자만 회색으로 색칠할 수 있게 한다(요청:
-    막대=흰색·빈 부분=회색으로 배경과 구분). right_align 일 때만 의미가 있다(빈 트랙이
-    그 분기에서만 채워진다).
-
-    row_gap: 켜면 막대 행들 **사이에 빈 줄 1개**를 넣어 시각적으로 분리한다(요청
-    2026-06-18, [한도] 뷰). 첫 막대 앞·계정/신선도 줄엔 안 넣는다. 기본 False."""
-    if not isinstance(usage, dict):
-        return None
-    barw = 24 if width >= 80 else (16 if width >= 60 else 8)
-    # 표시할 한도(데이터 있는 것)만 먼저 모아 **라벨 폭을 통일**한다 — 라벨 길이가
-    # 달라(예: 'Week Sonnet' 11셀 vs 'Week all' 8셀) 막대 시작 열이 행마다 어긋나던
-    # 것을, 가장 긴 라벨 + 1칸으로 모두 패딩해 **모든 막대의 왼쪽 시작을 같은 열**에
-    # 맞춘다(요청 2026-06-18 — 종전 고정 10셀은 11셀 라벨에서 막대가 한 칸 밀렸다).
-    entries = []
-    for key, name in (("session", i18n.t("usage.session_5h")),
-                      ("week_all", i18n.t("usage.week_all")),
-                      ("week_sonnet", i18n.t("usage.week_sonnet"))):
-        d = usage.get(key)
-        if isinstance(d, dict) and d.get("pct") is not None:
-            entries.append((name, d))
-    label_w = max((sum(_char_cells(c) for c in nm) for nm, _ in entries),
-                  default=0)
-    rows = []
-    for name, d in entries:
-        pct = d["pct"]
-        gauge = bar(pct, 100, barw)
-        # 가장 긴 라벨 + 1칸 → 모든 라벨이 같은 폭(막대 시작 열 통일), 최소 1칸 간격.
-        label = name + " " * max(1, label_w + 1 - sum(_char_cells(c) for c in name))
-        reset = d.get("reset")
-        # 타임존 괄호는 자리 절약 위해 생략.
-        # 새로고침 화살표와 날짜/시각 사이 한 칸(가독성 — 붙으면 첫 글자가 화살표에
-        # 겹쳐 안 보인다, 제보 2026-07-18). 종료 요약(_usage_exit_lines)과 동형.
-        reset_txt = ("↻ " + reset.split(" (")[0].strip()) if reset else ""
-        if right_align:
-            # 막대를 트랙 폭으로 채워(공백) 리셋 시작 열을 행마다 맞추고, % 숫자는
-            # 줄 오른쪽 끝(width)에 우측정렬한다 — 막대/리셋과 % 사이를 공백으로 채움.
-            gauge = gauge + track_char * max(0, barw - len(gauge))
-            tail = f"{pct:>3}%"
-            body = f"{label}{gauge}  {reset_txt}".rstrip()
-            gap = (width - sum(_char_cells(c) for c in body)
-                   - sum(_char_cells(c) for c in tail))
-            line = body + " " * max(1, gap) + tail
-        else:
-            # 전체 막대를 그려 **사용(채움)·잔여(빈칸)를 한눈에 구분**한다(요청
-            # 2026-06-16, Claude /usage 표시처럼). bar() 는 채운 부분만 주므로 남는
-            # 트랙을 '░'(연한 음영)로 채워 항상 전체 폭(barw)을 그린다 — 채움 '█' vs
-            # 빈칸 '░' 라 색 없이도 어디까지 찼는지/전체 중 얼마 남았는지 보인다
-            # (종전엔 채운 블록만 그려 전체·잔여가 안 보였다). pct≥100 이면 트랙이
-            # 전부 채워져 가득 찬 막대가 된다.
-            full_gauge = gauge + _USAGE_EMPTY_TRACK * max(0, barw - len(gauge))
-            # % 뒤에 '사용/used' 를 명시한다(2026-06-12 제보): 방향 라벨이
-            # 없으면 잔여 표기와 섞여 다른 값처럼 읽혔다 — Claude /usage 의 "N% used"
-            # 와 동일 표기. footer 5h 도 같은 사용률로 통일됐다(clientstatus
-            # claude.limit_used — 모든 표면이 같은 방향·같은 숫자).
-            line = f"{label}{full_gauge} {pct:>3}% {i18n.t('usage.used')}"
-            if reset_txt:
-                line += "  " + reset_txt
-        # 막대 행 사이 빈 줄 1개(row_gap) — 첫 막대 앞엔 안 넣는다.
-        if row_gap and rows:
-            rows.append("")
-        rows.append(line)
-    # 그림자 /usage 세션의 계정(일치 확인용). 키가 있을 때만 — 폰 앱과 다른 계정이면
-    # 한도가 실제로 달라지므로 눈으로 대조하라고 표시한다. 신호 못 잡으면 '미확인'.
-    if rows and "account" in usage:
-        # 전체 이메일(account_full, 프로브가 라이브로 실어 보냄)을 우선 표시하고, 없으면
-        # 별칭(account, DB 영속·재시작 직후 폴백)으로. 사용자 본인 화면이라 줄이지 않고
-        # 전체를 보인다(요청·footer claude_account_full 과 동일 방침).
-        acct = usage.get("account_full") or usage.get("account")
-        rows.append(i18n.t("usage.account", acct=acct) if acct
-                    else i18n.t("usage.account_unknown"))
-    # S6 T3: 실측 신선도 — 2분 미만이면 표기 생략(잡음), 그 이상은 분/시간 단위.
-    if rows and isinstance(age_sec, (int, float)) and age_sec >= 120:
-        m = int(age_sec // 60)
-        ago = (i18n.t("usage.ago_hm", h=m // 60, m=m % 60) if m >= 60
-               else i18n.t("usage.ago_m", m=m))
-        rows.append(i18n.t("usage.measured_ago", ago=ago))
-    return rows or None
+# /usage 한도 줄(`usage_bar_lines`)과 그 빈 트랙 글자는 **UI 무의존 모듈**로 옮겼다
+# (`usagebar.py` — 2026-08-02f). 이 모듈은 최상단에서 textual/rich 를 읽으므로 서버가
+# 같은 줄을 못 만들고, 그러면 한도 오버레이가 클라 전용으로 묶인다(Tier B 셀 기여).
+# 소비자가 여덟 곳이라 경로를 다 갈지 않고 여기서 종전 이름으로 다시 내보낸다.
+from .usagebar import (  # noqa: F401,E402  (재수출 — 종전 이름 보존)
+    _USAGE_EMPTY_TRACK, usage_bar_lines,
+)
 
 
 class PromptScreen(ModalScreen):

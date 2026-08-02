@@ -256,44 +256,85 @@ class _ImeIndicatorPlugin:
         if not getattr(app, "ime_show", False):
             app._ime_zone = None
             return
-        from rich.style import Style
+        from pytmuxlib.clientrender import paint_runs
         from pytmuxlib.clientutil import theme_color
-        from .render import draw_ime_indicator
+        from .cells import RESERVE_FOR_TAB_CLOSE, badge_row, ime_cells
         state = getattr(app, "ime_state", "EN")
-        color = "success" if state == "한" else "primary"
-        st = Style(color="black", bgcolor=theme_color(app, color), bold=True)
+        # ── 이 클라만 아는 것(Tier D 의 ⑤): 한/영 · 커서 자리 · 탭 닫기 [x] 행 ──
         cxy = getattr(app, "_active_cursor_xy", None)
-        # 활성 패널 id(직전 커서 행을 같은 패널에서만 재사용하기 위함).
         lay = getattr(app, "layout", None)
         active = lay.get("active") if isinstance(lay, dict) else None
-        # 커서 행 결정. Claude 가 '생각 중' 커서를 숨기면(_active_cursor_xy=None) 종전엔
-        # y=0(화면 맨 위)으로 떨어져 배지가 프롬프트에서 한참 위로 튀었다(요청 2026-06-21).
-        #  1) 커서가 보이면 그 행(+같은 패널의 '직전 커서 행'으로 기억).
-        #  2) 숨겨졌고 같은 활성 패널의 직전 커서 행이 있으면 그 행(타이핑하던 프롬프트
-        #     행 — 숨김 직전 위치라 프롬프트 오른쪽에 그대로 머문다).
-        #  3) 둘 다 없으면 활성 패널 **하단**(프롬프트가 있는 영역)으로, 그래도 없으면 0.
         last = getattr(app, "_ime_last_cursor", None)   # (active_pane_id, (x, y))
         if cxy is not None:
             app._ime_last_cursor = (active, cxy)
-            y = cxy[1]
-        elif last is not None and last[0] == active and last[1] is not None:
-            y = last[1][1]
-        else:
-            box = getattr(app, "_active_pane_box", None)
-            y = (box[1] + box[3] - 1) if box else 0    # 활성 패널 마지막 내용 행
+        last_row = (last[1][1] if last is not None and last[0] == active
+                    and last[1] is not None else None)
+        # ── 자리 규칙은 **한 벌**(cells.py) — 네이티브 클라도 같은 것을 쓴다 ──
+        y = badge_row(cxy, last_row, getattr(app, "_active_pane_box", None))
         # 활성 패널 오른쪽 경계(exclusive). 미상이면 화면 폭 W(=종전 전체폭 동작).
         x_right = getattr(app, "_active_pane_right", None)
         # 탭 닫기 [x] 와 같은 행이면 우측 4칸 회피(이 훅 뒤에 그려져 배지를 덮는다).
-        # [x] 행은 콘텐츠 우상단이라 테두리 유무에 따라 변한다(무테 0행·유테 1행·헤더
-        # 행 등) — 전 프레임의 _tab_close_zone 행으로 판정(프레임 간 안정, 첫 프레임
-        # 미상이면 0행 가정 = 종전 동작).
+        # [x] 행은 콘텐츠 우상단이라 테두리 유무에 따라 변한다 — 전 프레임의
+        # _tab_close_zone 행으로 판정(프레임 간 안정, 첫 프레임 미상이면 0행 가정).
         tz = getattr(app, "_tab_close_zone", None)
-        xrow = tz[2] if tz else 0
-        span = draw_ime_indicator(cells, W, H, state, st, y=y,
-                                  reserve_right=4 if y == xrow else 0,
-                                  x_right=x_right)
+        runs, span = ime_cells(
+            state, y, W if x_right is None else x_right,
+            reserve_right=(RESERVE_FOR_TAB_CLOSE
+                           if y == (tz[2] if tz else 0) else 0))
+        paint_runs(cells, runs, W, H, lambda name: theme_color(app, name))
         # 그린 칸 범위를 노출(테두리 강조 테스트의 [x] 동급 예외). 폭 부족 시 None.
         app._ime_zone = (span[0], span[1], y) if span else None
+
+    # ---- 서버 측: 셀 기여(Tier B) + 클라 사실(Tier D) ----
+    #
+    # 정본과 **같은 런**이다 — 자리 규칙이 `cells.py` 한 벌이라서다. 다른 것은 그 규칙에
+    # 넣는 재료의 출처뿐이다: 정본은 합성 중의 좌표를, 서버는 자기 화면 모델의 커서를
+    # 읽는다. **한/영은 서버가 모른다** — 그건 OS 가 클라 창에만 알려 주는 사실이라
+    # 클라가 `client_fact` 로 올려 준 것을 그대로 쓴다(설계 §4.4 Tier D).
+    def plugin_cells(self, server, sess, req):
+        from .cells import ime_cells
+        label = ((req.get("facts") or {}).get("ime") or "").strip()
+        if not label:
+            return []                      # 안 올라왔으면 안 그린다(끄는 것도 프레임)
+        panes = req.get("panes") or []
+        active = req.get("active")
+        box = next((p for p in panes if p["id"] == active), None)
+        if box is None:
+            return []
+        # 커서 행: 서버는 자기 화면 모델에서 읽는다(숨김이면 패널 마지막 내용 행).
+        row = self._cursor_row(sess, box)
+        # ⚠ `layer` 를 **안 싣는다**. 이 배지는 설계 분류로는 ②(내용 장식)지만,
+        # 네이티브 클라의 `PluginCells::layer` 는 **파싱만 되고 아무도 안 읽는다**
+        # (실측 2026-08-02i — 선재 구멍). 안 읽는 칸을 채우면 "재고 있다"로 읽히는
+        # 칸이 하나 더 는다(08-02b 의 그 부류). 소비자가 생기면 그때 싣는다.
+        # 그리는 순서는 지금도 맞다: 네이티브는 테두리(`draw_frames`)를 **먼저** 그리고
+        # 런을 그 위에 얹으므로, 정본이 "테두리 위에 덮는 의도된 오버레이"라고 적어 둔
+        # 그 거동과 같다.
+        runs, _ = ime_cells(label, row, box["x"] + box["w"])
+        return runs
+
+    @staticmethod
+    def _cursor_row(sess, box):
+        """활성 패널의 커서 **창 절대 행**. 숨김·미상이면 패널 마지막 내용 행.
+
+        ★ 판정은 `Pane.render()` 가 커서를 실을 때와 **같은 조건**이라야 한다
+        (`scroll == 0` 이고 `cursor.hidden` 이 아닐 때만) — 다르게 재면 스크롤백을
+        보는 중에 배지만 엉뚱한 줄에 붙는다. 공개 접근자가 없어 화면 모델을 직접
+        읽지만, 없거나 모양이 바뀌면 **조용히 폴백**한다(배지 하나 때문에 프레임이
+        죽으면 안 된다)."""
+        from .cells import badge_row
+        rect = (box["x"], box["y"], box["w"], box["h"])
+        try:
+            win = sess.active_window
+            pane = win.active_pane if win else None
+            screen = pane._main if pane is not None else None
+            if screen is None or getattr(pane, "scroll", 0) != 0 \
+                    or screen.cursor.hidden:
+                return badge_row(None, None, rect)
+            return badge_row((screen.cursor.x, box["y"] + screen.cursor.y),
+                             None, rect)
+        except Exception:
+            return badge_row(None, None, rect)
 
 
 PLUGIN = _ImeIndicatorPlugin()

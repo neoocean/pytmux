@@ -206,3 +206,67 @@ async def test_rec_disabled_client_noop():
     assert not any(t[0] == "출력 캡처(REC)" for t in tabs)
     # rec 가 plugins 목록에 없으니 client_statusbar 배지를 그릴 길이 없다.
     assert not any(getattr(p, "name", "") == "rec" for p in reg.plugins)
+
+
+# ── 상태줄 기여를 **자료로** (Tier B ③ · P6) ────────────────────────────────
+
+async def test_the_rec_badge_also_goes_out_as_data():
+    """정본이 그리는 배지와 **같은 배지**가 네이티브 클라에게는 자료로 간다.
+
+    종전에는 이 배지가 파이썬 훅(`client_statusbar_badges`)뿐이라 GUI 에는 REC 가
+    아예 없었다(`base::chrome` 이 "저쪽의 rec 은 플러그인이 채우는 칸이라 우리에게는
+    없다"고 적어 둔 그 자리). 이제 서버가 `status.plugin_badges` 로 준다.
+
+    값의 출처는 **`server_status` 가 방금 채운 그 필드**다 — 같은 것을 두 번 계산하면
+    두 클라가 다른 것을 보는 자리가 하나 생긴다."""
+    reg = _registry_only_rec()
+    # 캡처 중이면 배지 하나, 이름이 찍혀 있고, 색은 **이름**이다(hex 금지).
+    got = reg.plugin_badges(None, None, {"capture": True})
+    assert len(got) == 1, got
+    b = got[0]
+    assert b["name"] == "rec", b
+    assert b["text"] == " REC ", b
+    assert b["theme"] == {"b": "error"}, b
+    for v in b["theme"].values():
+        assert not v.startswith("#"), f"hex 가 실렸다: {b}"
+    # 정본이 그리는 글자와 **같은 문자열**이라야 한다(두 클라가 다른 낱말을 보면 안 된다).
+    class _St:
+        pass
+    st = _St()
+    reg.client_statusbar_init(None, st)
+    reg.client_statusbar_update(None, st, {"capture": True})
+    segs = []
+    reg.client_statusbar_badges(None, st, segs, 80, 0)
+    assert [s.text for s in segs] == [b["text"]], (segs, b)
+    # 캡처가 아니면 아무것도 안 낸다 — 서버가 키를 빼야 배지가 사라진다.
+    assert reg.plugin_badges(None, None, {"capture": False}) == []
+    assert reg.plugin_badges(None, None, {}) == []
+
+
+async def test_the_status_carries_the_badge_only_while_capturing():
+    """서버 status 에 **실제로** 실리는가, 그리고 **끄면 키가 빠지는가**.
+
+    ★ 여기가 조용히 틀리기 쉬운 자리다: 네이티브 클라는 "안 오면 없는 것"으로 읽으므로
+    (`SessionState::plugin_badges` 파싱부), 서버가 끈 뒤에도 키를 계속 실으면 REC 가
+    영영 남는다. 그래서 **켠 판과 끈 판을 둘 다** 잰다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        msg = srv._status_msg(sess)
+        assert "plugin_badges" not in msg, "캡처 전인데 배지가 실렸다"
+        # 캡처 중으로 만든 뒤 다시 만든다. ★ 필드 이름은 `server.capture` 다
+        # (`rec.server_status` 가 그것을 읽는다) — 틀린 이름을 세우면 이 테스트는
+        # **조용히 공허해진다**(캡처가 안 켜지니 아래 단언이 전부 건너뛰어진다).
+        # 그래서 켜졌다는 것을 먼저 단언한다(실제로 한 번 그렇게 썼다).
+        srv.capture = True
+        msg2 = srv._status_msg(sess)
+        assert msg2.get("capture") is True, \
+            "캡처를 못 켰다 — 이 테스트가 아무것도 안 재고 있다"
+        assert msg2.get("plugin_badges"), "캡처 중인데 배지가 안 실렸다"
+        assert msg2["plugin_badges"][0]["text"] == " REC "
+        assert msg2["plugin_badges"][0]["name"] == "rec"
+        srv.capture = False
+        assert "plugin_badges" not in srv._status_msg(sess), \
+            "캡처를 껐는데 배지 키가 남았다 — 네이티브 클라에 REC 가 영영 남는다"
+    finally:
+        await teardown(srv, task, sock)
