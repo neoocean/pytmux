@@ -2477,6 +2477,28 @@ fn a_plugin_screen_spec_becomes_a_panel() {
     assert!(painted_contains(&painted, "woojinkim"), "부가 칸이 없다: {painted:?}");
 }
 
+/// 판의 **제목과 안내는 스펙의 것**이다 — 어느 판을 열었는지 화면이 말해야 한다.
+///
+/// P4~P6 동안 여기가 빠져 있어 `mdir`·`ncd`·`p4changes` 가 전부 `플러그인 화면` 이라는
+/// 한 제목으로 떴다(`base::screens` 주석은 "뷰가 스펙으로 덮어 그린다"고 적어 뒀는데
+/// 그 덮는 자리가 없었다 — 2026-08-02 라이브에서 드러났다).
+#[test]
+fn the_spec_names_the_panel_not_us() {
+    let painted = painted_after(vec![layout_one_pane(), plugin_list_screen()], &[]);
+    assert!(
+        painted_contains(&painted, "Perforce submitted changelists"),
+        "스펙 제목이 안 보인다: {painted:?}"
+    );
+    assert!(
+        painted_contains(&painted, "Enter 상세"),
+        "스펙 안내가 안 보인다: {painted:?}"
+    );
+    assert!(
+        !painted_contains(&painted, "플러그인 화면"),
+        "폴백 제목이 스펙을 덮었다: {painted:?}"
+    );
+}
+
 #[test]
 fn choosing_a_row_sends_back_its_key_not_its_position() {
     // 자리(번호)만 보내면 목록이 바뀔 때 엉뚱한 줄이 열린다 — 그 줄의 **뜻**을 보낸다.

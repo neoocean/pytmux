@@ -51,16 +51,22 @@ class _FakeServer:
         self.broadcasted = True
 
 
-def test_list_sessions_request_returns_sessions(monkeypatch):
+async def test_list_sessions_request_returns_sessions():
+    """목록 회신 — **awaitable 로** 온다.
+
+    훑기가 `~/.claude/projects` 전체(이 머신 실측 3.1GB · 18초)라 루프에서 하면 그 동안
+    모든 패널이 멎는다. 그래서 executor 로 나가고, 디스패처가 awaitable 을 기다린다
+    (`handle_server_request` 규약 — mdir 도 같은 길이다)."""
     fake = [{"id": _UUID, "cwd": "D:\\x", "title": "t", "mtime": 1.0,
              "project": "office/x"}]
-    monkeypatch.setattr(sess_mod, "list_sessions", lambda limit=None: fake)
-    resp = cr.PLUGIN.handle_server_request(object(), _FakeSess(),
-                                           "claude_list_sessions", {})
-    assert resp == {"t": "claude_sessions", "sessions": fake}
+    with harness.patched(sess_mod, list_sessions=lambda limit=None: fake):
+        resp = cr.PLUGIN.handle_server_request(object(), _FakeSess(),
+                                               "claude_list_sessions", {})
+        assert not isinstance(resp, dict), "루프에서 훑고 있다(멎는다)"
+        assert await resp == {"t": "claude_sessions", "sessions": fake}
 
 
-def test_resume_request_opens_tab_in_cwd_and_injects():
+async def test_resume_request_opens_tab_in_cwd_and_injects():
     srv = _FakeServer()
     sess = _FakeSess()
     out = cr.PLUGIN.handle_server_request(
@@ -72,7 +78,7 @@ def test_resume_request_opens_tab_in_cwd_and_injects():
     assert srv.broadcasted
 
 
-def test_resume_request_rejects_bad_session_id():
+async def test_resume_request_rejects_bad_session_id():
     srv = _FakeServer()
     out = cr.PLUGIN.handle_server_request(
         srv, _FakeSess(), "claude_resume_session",
@@ -83,7 +89,7 @@ def test_resume_request_rejects_bad_session_id():
     assert not srv.broadcasted
 
 
-def test_unknown_action_returns_none():
+async def test_unknown_action_returns_none():
     assert cr.PLUGIN.handle_server_request(object(), _FakeSess(),
                                            "something_else", {}) is None
 

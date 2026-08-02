@@ -104,23 +104,41 @@ def parse_session(path: str):
 def list_sessions(root: str | None = None, limit: int | None = None) -> list:
     """이 머신의 모든 프로젝트 세션을 최신(mtime)순으로 돌려준다. 각 항목에 프로젝트
     표시 라벨(`project`)을 더한다. root 미지정 시 `projects_dir()`. 디렉토리/파일 접근
-    실패는 조용히 건너뛴다(부분 결과라도 보여 준다)."""
+    실패는 조용히 건너뛴다(부분 결과라도 보여 준다).
+
+    # 왜 mtime 으로 먼저 줄이나 (2026-08-02 실측)
+
+    종전에는 **모든** jsonl 을 파싱한 뒤 정렬하고 상한을 씌웠다. 이 머신에서 그것은
+    파일 1,706개 · **3.1GB** 를 읽는 일이고 실측 **18초**였다(찬 캐시). 그 동안 피커는
+    아무것도 안 뜨고, 종전 경로는 그 일을 **이벤트 루프에서** 해서 모든 패널이 함께
+    멎었다.
+
+    `mtime` 은 `os.stat` 한 번이면 알 수 있고 정렬 기준이 바로 그것이다 — 최신순으로
+    훑다가 상한을 채우면 **거기서 멈춘다**. 빈 세션(사용자 메시지 0)은 파싱해야 알 수
+    있으므로 "상한만큼 파싱"이 아니라 "상한을 채울 때까지"다.
+    """
     root = root or projects_dir()
     out = []
     try:
         slugs = os.listdir(root)
     except OSError:
         return out
+    stamped = []
     for slug in slugs:
         d = os.path.join(root, slug)
         if not os.path.isdir(d):
             continue
         for path in glob.glob(os.path.join(d, "*.jsonl")):
-            s = parse_session(path)
-            if s is not None:
-                s["project"] = _project_label(s.get("cwd"), slug)
-                out.append(s)
-    out.sort(key=lambda s: s["mtime"], reverse=True)
-    if limit:
-        out = out[:limit]
+            try:
+                stamped.append((os.path.getmtime(path), path, slug))
+            except OSError:
+                continue
+    stamped.sort(reverse=True)
+    for _mtime, path, slug in stamped:
+        s = parse_session(path)
+        if s is not None:
+            s["project"] = _project_label(s.get("cwd"), slug)
+            out.append(s)
+            if limit and len(out) >= limit:
+                break
     return out

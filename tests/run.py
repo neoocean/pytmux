@@ -8,6 +8,7 @@ PASS/FAIL 을 집계한다. 화면(TUI) 없이 전체 동작을 검증한다.
 import asyncio
 import faulthandler
 import importlib
+import inspect
 import json
 import os
 import signal
@@ -201,11 +202,35 @@ except Exception:
     pass
 
 
+def _call_args(fn):
+    """그 테스트가 받을 인자. 지금 채워 주는 것은 `tmp_path` 하나다(pytest 관례) —
+    그 이름을 선언한 테스트에는 **비어 있는 임시 디렉터리**를 준다. 안 채워 주면
+    동기 테스트가 `missing 1 required positional argument` 로 죽고, 그것이 이 파일들이
+    여태 안 돌던(=코루틴만 거두던) 자리와 겹쳐 있었다."""
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return {}
+    if "tmp_path" not in params:
+        return {}
+    import pathlib as _pl
+    import tempfile as _tf
+    return {"tmp_path": _pl.Path(_tf.mkdtemp(prefix="pytmux-test-"))}
+
+
 async def _run_with_timeout(fn):
+    """테스트 하나를 (타임아웃과 함께) 돌린다. **동기 함수도 받는다** — 그 경우
+    코루틴이 아니라 그냥 부른다(스레드로 넘기지 않는 이유: 이 스위트의 동기 테스트는
+    순수 계산이고, 스레드로 옮기면 `harness.patched` 같은 프로세스 전역 조작이 다른
+    테스트와 겹친다)."""
+    kw = _call_args(fn)
+    if not asyncio.iscoroutinefunction(fn):
+        fn(**kw)
+        return
     if TEST_TIMEOUT > 0:
-        await asyncio.wait_for(fn(), TEST_TIMEOUT)
+        await asyncio.wait_for(fn(**kw), TEST_TIMEOUT)
     else:
-        await fn()
+        await fn(**kw)
 
 
 # ── 모듈 경계 전역 누출 가드 ────────────────────────────────────────────────
@@ -448,8 +473,13 @@ def main(argv):
             _disarm()
             continue
         _disarm()
+        # ⚠ **동기 `def test_` 도 거둔다**(2026-08-02). 종전에는 코루틴만 거뒀는데,
+        # 그러면 평범한 `def test_…` 로 적힌 테스트가 **한 줄의 경고도 없이** 안 돈다 —
+        # 실측으로 여덟 파일에 27개가 그렇게 죽어 있었고(셋은 파일 통째로 0개),
+        # 스위트는 그동안 초록이었다. 이 저장소가 '공허 통과'라 부르는 그것이다.
         tests = [(n, f) for n, f in vars(mod).items()
-                 if n.startswith("test_") and asyncio.iscoroutinefunction(f)]
+                 if n.startswith("test_") and (asyncio.iscoroutinefunction(f)
+                                               or inspect.isfunction(f))]
         for name, fn in sorted(tests):
             label = f"{modname}.{name}"
             # 진행중 표식: 리포트에 **시작**도 남긴다. 종전엔 완료된 result 만 남아,

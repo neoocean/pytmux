@@ -4688,12 +4688,29 @@ impl SessionView {
         }
         // 확인 판은 **물음이 제목을 정한다**(정본과 같다) — 마지막 탭이면 `pytmux 종료`.
         // 판을 여는 순간 가장 먼저 읽히는 글이라, 거기서 손이 멈춘다.
+        // ★ 플러그인이 준 판은 **제목의 주인이 스펙**이다(`base::screens` 가 그렇게 적어
+        //   뒀는데 여기서 안 읽고 있었다 — P4 부터 mdir·ncd·p4changes 가 전부
+        //   `플러그인 화면` 이라는 한 제목으로 떴다. 어느 판을 열었는지 화면이 말해 주지
+        //   않으면 스펙이 제목을 싣는 뜻이 없다). 스펙이 안 주면 종전 폴백 그대로다.
+        let spec_title = (screen == Screen::PluginView)
+            .then(|| self.state.plugin_screen().map(|s| s.title.clone()))
+            .flatten()
+            .filter(|t| !t.is_empty());
         let title = self.screens.confirm_title().unwrap_or(screen.title());
-        header = header.with_child(self.ui_text(title, 14., palette::FG));
+        header = header.with_child(match spec_title {
+            Some(t) => self.text(t, 14., palette::FG),
+            None => self.ui_text(title, 14., palette::FG),
+        });
         // ★ 힌트는 **판 아래**다(정본과 같은 틀 — 대조 문서 §「팝업 공통」). 제목 옆에
         //   붙이면 제목줄이 길어져 제목이 밀리고, 눈이 제목·힌트·본문을 한 줄에서
         //   나눠 읽어야 한다. 아래로 내리면 "제목 → 본문 → 이 화면에서 쓸 키" 순서다.
         let hint = if esc_menu { t(Screen::COMPOSE_HINT_ESC) } else { screen.hint() };
+        // 안내도 같다 — 그 판에서 무슨 키가 무엇을 하는지는 플러그인이 안다
+        // (`ncd` 의 `c`, 달력의 `‹` 처럼 판마다 다르다).
+        let spec_hint = (screen == Screen::PluginView)
+            .then(|| self.state.plugin_screen().map(|s| s.hint.clone()))
+            .flatten()
+            .filter(|h| !h.is_empty());
         let mut column = Flex::column()
             .with_main_axis_size(MainAxisSize::Min)
             .with_spacing(2.)
@@ -4756,7 +4773,10 @@ impl SessionView {
         };
         // 힌트 줄(판 바닥) — 위 구분선의 짝이다.
         let column = column.with_child(
-            Container::new(self.ui_text(hint, 11., palette::DIM))
+            Container::new(match spec_hint {
+                Some(h) => self.text(h, 11., palette::DIM),
+                None => self.ui_text(hint, 11., palette::DIM),
+            })
                 .with_padding_top(8.)
                 .with_border(Border::top(1.).with_border_color(theme::BORDER))
                 .finish(),

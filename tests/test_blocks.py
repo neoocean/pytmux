@@ -563,3 +563,59 @@ async def test_osc_hot_path_never_scans_the_plugin_directory():
         assert wire and wire[-1]["cmd"] == "echo 49", wire
     finally:
         plugins.load = orig
+
+
+# ── 셸이 늘 때마다 갈릴 자리 — escape 표를 기계로 대조한다 ──────────────────────
+
+def _escape_table(path, pattern):
+    """셸 통합 스크립트에서 `<원문자> → <escape>` 쌍을 뽑는다.
+
+    소스를 읽는 이유: 이 표는 **셸마다 다시 적힌다**(sh 는 `${s//…}`, PowerShell 은
+    `.Replace(…)`). 실제로 돌려 보는 오라클은 그 셸이 깔린 상자에서만 도는데
+    (`powershell 없음` skip 이 이 스위트에 상시 둘 있다), 표가 어긋나는 것은
+    **어디서나** 잴 수 있다."""
+    import re
+    src = open(path, encoding="utf-8").read()
+    named = {'"`n"': "\n", '"`r"': "\r",
+             "$__pytmux_nl": "\n", "$__pytmux_cr": "\r",
+             "$__pytmux_esc": "\x1b", "$__pytmux_bel": "\x07",
+             "[string][char]27": "\x1b", "[string][char]7": "\x07",
+             "$bs": "\\", r"'\'": "\\", "';'": ";", ";": ";"}
+    out = {}
+    for src_tok, esc in re.findall(pattern, src):
+        tok = src_tok.strip()
+        assert tok in named, f"모르는 토큰 {tok!r} — 표가 늘었는데 이 오라클이 낡았다"
+        out[named[tok]] = esc.replace("${bs}", "\\")
+    return out
+
+
+async def test_every_shell_escapes_the_same_set_and_the_server_can_undo_it():
+    """세 벌(sh · PowerShell · 서버 `_unescape`)이 **한 표**를 보는가.
+
+    셸이 늘면 escape 를 새로 적게 되는데 서버의 되돌리기는 한 벌이다. 한 글자라도
+    빠지면 그 글자가 든 명령에서만 조용히 틀리고(BEL 이 정확히 그랬다 — 검수
+    2026-07-30), 그 셸이 없는 상자에서는 스위트가 **초록인 채로** 지나간다.
+    """
+    from pytmuxlib.plugins.blocks.segment import _unescape
+    d = os.path.dirname(blocks_pkg.__file__)
+    sh = _escape_table(os.path.join(d, "shell-integration.sh"),
+                       r's=\$\{s//"([^"]+)"/"([^"]+)"\}')
+    ps = _escape_table(os.path.join(d, "shell-integration.ps1"),
+                       r"\$s = \$s\.Replace\((.+?),\s*'([^']+)'\)")
+    assert sh, "sh 표를 못 읽었다(정규식이 낡았다 — 잴 것이 없으면 고장이다)"
+    assert ps, "PowerShell 표를 못 읽었다(정규식이 낡았다)"
+    assert set(sh) == set(ps), (
+        "두 셸이 다른 글자를 escape 한다: sh=%r ps=%r"
+        % (sorted(map(ord, sh)), sorted(map(ord, ps))))
+    for raw, esc in sh.items():
+        assert ps[raw] == esc, f"{raw!r} 를 sh 는 {esc!r}, ps 는 {ps[raw]!r} 로 쓴다"
+        # 서버가 그 escape 를 **정확히** 되돌리는가(escape 한 자리만, 그 글자로).
+        assert _unescape(esc) == raw, f"서버가 {esc!r} 를 {raw!r} 로 못 되돌린다"
+    # 그리고 그 표로 escape 한 명령줄은 왕복이 항등이라야 한다 — 백슬래시가 뒤
+    # 치환이 만든 것과 섞이면 여기서 죽는다(그래서 두 스크립트 다 `\` 를 먼저 한다).
+    typed = 'git log; findstr /c:"a b" C:\\path\\to\x07\x1b[0m\n끝'
+    s = typed.replace("\\", "\\\\")
+    for raw, esc in sh.items():
+        if raw != "\\":
+            s = s.replace(raw, esc)
+    assert _unescape(s) == typed, f"왕복이 항등이 아니다: {_unescape(s)!r}"

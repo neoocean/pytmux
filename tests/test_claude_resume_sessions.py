@@ -103,3 +103,40 @@ def test_list_sessions_sorted_newest_first_with_project(tmp_path):
 
 def test_list_sessions_missing_root_returns_empty(tmp_path):
     assert sessions.list_sessions(str(tmp_path / "nope")) == []
+
+
+def test_list_sessions_stops_reading_once_the_limit_is_full(tmp_path):
+    """상한을 채웠으면 **거기서 멈춘다** — 오래된 파일은 열지도 않는다.
+
+    왜 재나: 종전에는 전부 파싱한 뒤 정렬하고 잘랐다. 이 머신 실측으로 그것은 jsonl
+    1,706개·3.1GB 를 읽는 일이고 **18초**였다(찬 캐시). 정렬 기준인 mtime 은 `os.stat`
+    한 번이면 알 수 있으니, 최신순으로 훑다 채우면 나머지는 안 읽어도 된다.
+
+    빈 세션(사용자 메시지 0)은 파싱해야 알므로 "상한만큼 읽기"가 아니라 "채울 때까지"다 —
+    그래서 중간에 빈 세션을 하나 끼워 그 규칙까지 잰다.
+    """
+    root = str(tmp_path)
+    d = os.path.join(root, "proj")
+    made = []
+    for i in range(5):
+        made.append(_write(d, "s%d.jsonl" % i, [
+            {"type": "user", "cwd": "/w", "message": {"content": "질문 %d" % i}},
+            {"type": "ai-title", "aiTitle": "t%d" % i},
+        ]))
+    # 두 번째로 최신인 것을 **빈 세션**으로 바꾼다(사용자 메시지 0).
+    empty = _write(d, "empty.jsonl", [{"type": "ai-title", "aiTitle": "비었다"}])
+    for i, p in enumerate(made):
+        os.utime(p, (1_700_000_000 + i, 1_700_000_000 + i))
+    os.utime(empty, (1_700_000_003.5, 1_700_000_003.5))   # s4 다음, s3 앞
+
+    opened = []
+    real = sessions.parse_session
+    try:
+        sessions.parse_session = lambda p: (opened.append(p), real(p))[1]
+        out = sessions.list_sessions(root, limit=2)
+    finally:
+        sessions.parse_session = real
+    assert [s["title"] for s in out] == ["t4", "t3"], out
+    # 연 것은 셋뿐이다 — s4 · empty(빈 것이라 안 세고) · s3. s2 이하는 안 연다.
+    assert [os.path.basename(p) for p in opened] == \
+        ["s4.jsonl", "empty.jsonl", "s3.jsonl"], opened

@@ -390,3 +390,120 @@ async def test_mdir_only_operates_on_what_the_current_listing_holds():
         spec = p._begin(mine, "delete", outsider, 0)
         # 대상이 없으면 묻지 않는다 — 빈 확인 화면은 "누르면 뭔가 지워진다"로 읽힌다.
         assert not isinstance(spec, dict) or spec.get("kind") != "confirm", spec
+
+
+# ── P7 — Claude 쪽 둘: 화면이 없던 마지막 플러그인들 ────────────────────────────
+
+def _plugin(srv, name):
+    return next(p for p in srv.plugins.plugins if getattr(p, "name", "") == name)
+
+
+async def test_claude_resume_lists_sessions_and_remembers_where_each_one_lives():
+    """세션 목록 스펙 — 줄의 **뜻**은 세션 id 이고, 리줌에 필요한 cwd 는 그 클라의
+    화면 상태에 적어 둔다.
+
+    왜 상태에 적나: 리줌할 때 `~/.claude/projects` 를 **다시 훑으면** 수백 개 jsonl 을
+    두 번 읽는다. 그렇다고 cwd 를 줄의 key 에 붙이면 key 가 뜻 하나를 나른다는 계약이
+    깨진다(그 key 는 목록이 바뀌어도 같은 세션을 가리켜야 한다).
+    """
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        plugin = _plugin(srv, "claude-resume")
+        found = [{"id": "abc-1", "cwd": "/work/one", "title": "첫 세션",
+                  "project": "work/one", "mtime": 1_700_000_000.0},
+                 {"id": "abc-2", "cwd": "/work/two", "title": "둘",
+                  "project": "work/two", "mtime": 1_700_000_100.0}]
+        mod = __import__("pytmuxlib.plugins.claude-resume.sessions",
+                         fromlist=["sessions"])
+        state = {}
+        with harness.patched(mod, list_sessions=lambda **kw: found):
+            spec = await plugin._open_spec(state)
+        assert spec["kind"] == "list" and spec["id"] == "claude-resume"
+        assert [r["key"] for r in spec["rows"]] == ["abc-1", "abc-2"]
+        assert spec["rows"][0]["label"] == "첫 세션"
+        assert spec["keys"] == {"enter": "resume"}
+        assert state["claude-resume"]["cwds"] == {"abc-1": "/work/one",
+                                                  "abc-2": "/work/two"}
+
+        # 고른 줄 → 그 세션의 **원래 디렉토리**에서 새 탭 + 리줌 명령 주입.
+        opened = []
+        with harness.patched(type(srv),
+                             new_window=lambda self, s, path=None: opened.append(path),
+                             _broadcast_session=lambda self, s: None):
+            resp = plugin.plugin_screen(srv, sess, {
+                "id": "claude-resume", "do": "resume", "input": "abc-2",
+                "state": state,
+            })
+        assert resp == {"t": "plugin_screen_close", "id": "claude-resume"}
+        assert opened == ["/work/two"], "적어 둔 cwd 로 안 열었다: %r" % opened
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_claude_resume_refuses_a_session_id_that_is_not_one():
+    """세션 id 는 셸로 들어간다 — 위생 실패면 **탭도 안 연다**(스펙 경로도 같은 문).
+
+    종전에는 이 문이 `handle_server_request` 안에만 있었다. 화면 스펙이 두 번째 입구가
+    되면서 같은 함수를 부르게 묶었다 — 입구가 둘인데 문이 하나여야 한다.
+    """
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        plugin = _plugin(srv, "claude-resume")
+        opened = []
+        with harness.patched(type(srv),
+                             new_window=lambda self, s, path=None: opened.append(path),
+                             _broadcast_session=lambda self, s: None):
+            plugin.plugin_screen(srv, sess, {
+                "id": "claude-resume", "do": "resume",
+                "input": "; rm -rf ~", "state": {},
+            })
+        assert opened == [], "위생 실패인데 탭을 열었다"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_prompt_history_lists_the_same_tail_the_jump_indexes():
+    """프롬프트 목록 — **최신이 위**이고, 줄의 뜻은 tail 슬라이스 안의 자리다.
+
+    ⚠ 여기가 조용히 틀리는 자리다: 점프(`scroll_to_prompt`)의 index 는 tail 기준인데
+    목록을 전체 히스토리로 만들면 오래된 패널에서 **엉뚱한 자리로** 점프한다. 그래서
+    이 오라클은 tail 보다 긴 히스토리를 준다.
+    """
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        plugin = _plugin(srv, "claude-prompt-history")
+        pane = sess.active_window.active_pane
+        pane._ph_history = ["p%d" % i for i in range(40)]
+        spec = plugin._open_spec(srv, sess)
+        assert spec["kind"] == "list" and spec["id"] == "prompt-history"
+        assert spec["rows"][0]["label"] == "p39", "최신이 위가 아니다"
+        # tail 슬라이스라 30개, 그리고 그 안의 자리가 key 다(마지막 = 29).
+        assert len(spec["rows"]) == 30, len(spec["rows"])
+        assert spec["rows"][0]["key"] == "29", spec["rows"][0]
+
+        jumped = []
+        srvmod = _server_module(plugin)
+        with harness.patched(srvmod, scroll_to_prompt=lambda s, ss, i: jumped.append(i) is None), \
+             harness.patched(type(srv), _broadcast_session=lambda self, s: None):
+            resp = plugin.plugin_screen(srv, sess, {
+                "id": "prompt-history", "do": "jump", "input": "29", "state": {}})
+        assert resp == {"t": "plugin_screen_close", "id": "prompt-history"}
+        assert jumped == [29], "고른 줄의 뜻이 그대로 안 갔다: %r" % jumped
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_prompt_history_says_it_is_empty_instead_of_showing_nothing():
+    """빈 목록은 **빈 화면이 아니다** — 왜 비었는지 한 줄이 있어야 한다(설계 §8-5)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        plugin = _plugin(srv, "claude-prompt-history")
+        sess.active_window.active_pane._ph_history = []
+        spec = plugin._open_spec(srv, sess)
+        assert spec["rows"] == [] and spec["note"], spec
+    finally:
+        await teardown(srv, task, sock)
