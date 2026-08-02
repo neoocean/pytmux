@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
+<title>GUI 클라이언트 (개발 중) — pytmux</title>
+<meta name="description" content="pytmux 의 두 번째 클라이언트인 Rust GUI(pytmux-gui) 소개. 아직 알파이며 실사용은 파이썬 TUI 를 권합니다. 개발 목표(네이티브 탭·블록 단위 표현·Claude 블록 뷰), warp 터미널의 MIT 코드에 기반한 출처와 라이선스 경계, 그리고 지금 화면.">
+<link rel="stylesheet" href="styles.css">
+<!-- Matomo -->
+<script>
+  var _paq = window._paq = window._paq || [];
+  _paq.push(['trackPageView']); _paq.push(['enableLinkTracking']);
+  (function() { var u="//matomo.woojinkim.org/";
+    _paq.push(['setTrackerUrl', u+'matomo.php']); _paq.push(['setSiteId', '4']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s); })();
+</script>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/" style="text-decoration:none"><span class="prompt">❯</span> pytmux</a>
+    <div class="nav-links">
+      <a href="/">홈</a>
+      <a href="guide">상세 가이드</a>
+      <a href="changes">최근 수정사항</a>
+      <a href="/#download">다운로드</a>
+      <a class="gh" href="https://github.com/neoocean/pytmux" target="_blank" rel="noopener">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap">
+  <main class="doc" style="max-width:820px;margin:48px auto 0;">
+
+    <header class="cl-intro">
+      <span class="kicker">GUI client · Alpha</span>
+      <h1 style="font-size:40px;letter-spacing:-1px;margin:6px 0 10px;">GUI 클라이언트 (개발 중)</h1>
+      <p style="font-size:18px;">
+        pytmux 는 <strong>하나의 서버에 여러 클라이언트가 붙는</strong> 구조입니다.
+        지금 클라이언트는 두 벌이고, 둘은 <strong>같은 서버에 동시에</strong> 붙을 수 있습니다 —
+        터미널 안에서 도는 <strong>파이썬 TUI</strong>(정본), 그리고 창으로 뜨는
+        <strong>Rust GUI</strong>(<span class="inline-code nb">pytmux-gui</span>)입니다.
+        이 페이지는 그중 <strong>아직 만들고 있는</strong> GUI 쪽 이야기입니다.
+      </p>
+      <div class="callout warn">
+        <strong>지금은 알파입니다 — 실제 작업에는 파이썬 TUI 클라이언트를 권합니다.</strong>
+        GUI 는 <strong>구경하고 시험해 보시라고</strong> 공개해 둔 것이지, 하루를 맡기시라고 내놓은 것이 아닙니다.
+        빠진 조작과 거친 자리가 남아 있고, 기능·번역·안정성의 기준은 모두 <strong>파이썬 TUI</strong> 쪽입니다.
+        내려받기·설치는 <a href="/#download">홈의 다운로드</a>를, 실제 사용법은 <a href="guide">상세 가이드</a>를 봐 주세요.
+      </div>
+    </header>
+
+    <section>
+      <h2 style="border-top:none;">왜 두 번째 클라이언트인가</h2>
+      <p>
+        지금의 파이썬 클라이언트는 Textual 로 만든 <strong>터미널 앱</strong>입니다. 덕분에
+        <strong>어느 터미널에서나</strong> 돌고 ssh 너머에서도 그대로 쓰이지만, 그 대가로
+        탭·스크롤·글자 선택·폰트가 <strong>숙주 터미널의 제약</strong>을 그대로 받습니다 —
+        pytmux 가 그리고 싶은 그림이 있어도 결국 <strong>글자 격자 한 장</strong> 안에서 표현해야 합니다.
+      </p>
+      <p>
+        GUI 는 그 천장을 걷어내려는 시도입니다. 다만 <strong>서버는 손대지 않습니다</strong>.
+        세션 유지·PTY·원격 페더레이션·토큰 회계처럼 실제로 검증된 자산은 전부 파이썬 서버에 그대로 두고,
+        GUI 는 <strong>같은 소켓 프로토콜로 붙는 또 하나의 클라이언트</strong>일 뿐입니다.
+        그래서 GUI 를 쓰다가 TUI 로 돌아와도 <strong>같은 세션</strong>이 그 자리에 있습니다.
+      </p>
+    </section>
+
+    <section>
+      <h2>개발 목표</h2>
+      <p>세 가지를 겨냥하고 있습니다. 아래로 갈수록 멀리 있는 목표입니다.</p>
+      <ul>
+        <li><strong>네이티브 탭</strong> — 로컬 탭과 <a href="guide/remote">페더레이션된 원격 탭</a>을
+          터미널이 그린 글자 탭바가 아니라 <strong>창 자신의 탭 UI</strong>로. 드래그해서 순서를 바꾸고,
+          닫기 버튼을 누르고, 커서 모양이 바뀌는 그런 조작들입니다.</li>
+        <li><strong>블록 단위 표현</strong> — <strong>명령 한 번 = 블록 하나</strong>(입력·출력·종료코드·작업 디렉토리·소요시간).
+          스크롤·선택·복사·접기가 <strong>블록 경계를 아는</strong> 화면입니다. 지금 서버는 30Hz 로
+          <strong>이미 그려진 셀 격자</strong>만 밀어 줄 뿐이라 명령이 어디서 시작하고 끝났는지를 모릅니다 —
+          그래서 이 목표는 <strong>서버가 블록을 만들어 줘야</strong> 닿습니다. GUI 작업 중 유일하게 서버를 건드리는 부분이고,
+          실제 작업량의 중심이기도 합니다.</li>
+        <li><strong>Claude Code 화면의 블록화</strong> — 권한 프롬프트·플랜·파일 편집 diff·툴 호출을
+          <a href="guide/claude">화면에서 긁어낸 텍스트</a>가 아니라 <strong>구조화된 블록</strong>으로 보여 주는 것.
+          지금 pytmux 가 Claude 화면을 읽어내는 방식은 결국 <strong>글자를 눈으로 읽는 것</strong>과 같은 일을 하고 있습니다.</li>
+      </ul>
+      <div class="callout">
+        <strong>로직은 한 벌, 뷰만 두 벌.</strong> 두 클라이언트가 조용히 갈라지는 것이 가장 큰 위험이라,
+        상태·키맵·명령은 <strong>UI 를 모르는 한 곳</strong>(<span class="inline-code">crates/base</span>)에 모아 두고
+        <strong>기계가 그 경계를 강제</strong>합니다(그 층에 UI 의존이 생기면 빌드가 막힙니다).
+        그 위에 <strong>패리티 래칫</strong>이 있어서, 표면 하나를 덮으면 그 점수를 <strong>같은 커밋에서</strong> 옮겨야 하고
+        <strong>TUI 와 GUI 를 각각</strong> 적습니다 — 한쪽 배선만 빠뜨리면 시험이 먼저 웁니다.
+      </div>
+    </section>
+
+    <section>
+      <h2>어디까지 왔나</h2>
+      <p>
+        래칫이 재는 표면은 <strong>2026-08-02 기준 189개 중 189개</strong>를 덮었습니다 —
+        명령 87 · <span class="inline-code">prefix</span> 키 32 · <span class="inline-code">Esc</span> 동선 키 17 ·
+        설정 36 · 화면 17.
+      </p>
+      <p>
+        <strong>그런데 이 숫자는 "다 됐다"는 뜻이 아닙니다.</strong> 래칫은 <strong>미리 적어 둔 표면 목록</strong>을 재는 자이지
+        실제로 쓸 때 만나는 모든 것을 재지 않습니다. 특히 GUI 쪽에는 아직 <strong>화면을 띄우지 않고 재는 시험 장치가 부족</strong>해서,
+        배선이 통째로 빠진 것은 <strong>실제로 띄워 찍은 그림</strong>이라야 잡힙니다. 위의 <strong>알파</strong>는 그 뜻입니다 —
+        표는 채웠지만 <strong>손에 익을 만큼 다듬지는 못했습니다</strong>.
+      </p>
+    </section>
+
+    <section>
+      <h2>지금 화면</h2>
+      <p>
+        아래는 <strong>2026-08-02 소스로 이 자리에서 직접 띄워 찍은</strong> 그림입니다(macOS).
+        연출한 합성 화면이 아니라 실제로 서버에 붙어 돌던 창입니다.
+      </p>
+
+      <figure>
+        <img src="image/gui-01-split.png" alt="pytmux GUI — 한 탭 안에 세 패널로 나눈 화면">
+        <figcaption>패널 분할 — 한 탭 안에서 좌우로 나눈 세 패널. 활성 패널만 테두리가 밝습니다.</figcaption>
+      </figure>
+
+      <figure>
+        <img src="image/gui-02-palette.png" alt="pytmux GUI — 명령 팔레트가 열린 화면">
+        <figcaption>명령 팔레트(<span class="inline-code">Esc</span> → <span class="inline-code">:</span>) — 정본과 <strong>같은 명령 표</strong>를 씁니다. 표가 한 벌이라 두 클라이언트의 명령이 갈리지 않습니다.</figcaption>
+      </figure>
+
+      <figure>
+        <img src="image/gui-03-settings.png" alt="pytmux GUI — 설정 화면">
+        <figcaption>설정 화면 — 항목·토글·선택지가 모두 정본과 같은 표에서 나옵니다.</figcaption>
+      </figure>
+
+      <figure>
+        <img src="image/gui-04-calendar.png" alt="pytmux GUI — 달력 오버레이가 패널을 덮은 화면">
+        <figcaption>달력 오버레이 — <strong>서버가 그린 화면</strong>이 그대로 GUI 에 뜬 것입니다(<a href="changes#d-2026-08-02">2026-08-02</a>). 플러그인 한 벌이 두 클라이언트 모두에 뜹니다.</figcaption>
+      </figure>
+    </section>
+
+    <section>
+      <h2>무엇 위에 서 있나 — warp 의 MIT 부분</h2>
+      <p>
+        창·GPU 렌더러·폰트·입력처럼 <strong>GUI 앱의 바닥</strong>은 직접 쓰지 않고
+        <a href="https://github.com/warpdotdev/warp" target="_blank" rel="noopener">warp 터미널</a>의 오픈소스 코드에서 가져왔습니다.
+        다만 <strong>그대로 포크한 것이 아닙니다</strong> — 라이선스 경계가 이 작업의 절반이었습니다.
+      </p>
+      <ul>
+        <li>warp 저장소는 <strong>대부분 AGPL v3</strong> 이고 pytmux 는 <strong>MIT</strong> 입니다.
+          그래서 <strong>MIT 로 배포되는 두 크레이트만</strong> 가져왔습니다 —
+          <span class="inline-code">warpui</span> · <span class="inline-code">warpui_core</span>(합 12만여 줄, 저작권 표시 보존).
+          기준 스냅샷은 <strong>2026-07-25</strong> 시점입니다.</li>
+        <li>그 두 크레이트가 의존하던 <strong>AGPL 크레이트 6개는 전부 자체 구현으로 갈아끼웠습니다</strong>.
+          실제로 호출되는 API 가 몇 개뿐이라, <strong>15,577줄이 1,719줄</strong>로 줄었습니다.
+          <strong>AGPL 코드는 산출물에 한 줄도 없습니다.</strong></li>
+        <li>이 경계는 말이 아니라 <strong>기계가 지킵니다</strong> — 의존 그래프에 허용 목록 밖의 코드가 끼면 게이트가 막고,
+          무엇을 어디서 가져왔고 무엇을 왜 고쳤는지는 저장소의
+          <a href="https://github.com/neoocean/pytmux/blob/main/client/PROVENANCE.md" target="_blank" rel="noopener"><span class="inline-code">client/PROVENANCE.md</span></a> 에
+          줄 단위로 적어 두었습니다. 함께 가져온 Roboto 글꼴은 <strong>OFL 1.1</strong> 입니다.</li>
+      </ul>
+      <p>
+        가져온 코드에도 손을 댔습니다. 터미널 클라이언트는 <strong>모든 키를 자식 프로그램에 넘겨야</strong> 하고,
+        붙여넣기는 키가 아니라 <strong>덩어리 하나</strong>이며, 한글 같은 조합 문자는 <strong>자판 한 번이 글자 하나가 아닙니다</strong> —
+        상류에는 그 이벤트를 받을 창구가 없어 하나씩 열었습니다. 그런 수정도 전부 위 문서에 <strong>이유와 함께</strong> 남아 있습니다.
+      </p>
+    </section>
+
+    <section>
+      <h2>띄워 보려면</h2>
+      <p>
+        Rust 를 깔지 않아도 됩니다 — 저장소의 <span class="inline-code">client/build/</span> 에
+        <strong>미리 빌드한 실행 파일 3종</strong>(macOS·리눅스·윈도우)이 들어 있습니다.
+        이 파일들은 개인 컴퓨터가 아니라 <strong>깨끗한 러너에서</strong> 굽습니다(빌드한 사람의 소스 경로가 실행 파일에 박히지 않도록).
+      </p>
+      <div class="code">git clone https://github.com/neoocean/pytmux.git
+cd pytmux
+./client/build/pytmux-gui-macos-arm64      # 떠 있는 서버에 붙는다(없으면 띄우고 붙는다)</div>
+      <p>직접 빌드하시려면:</p>
+      <div class="code">cd client
+cargo build --release -p gui               # → client/target/release/pytmux-gui</div>
+      <div class="callout">
+        <strong>GUI 를 띄워도 세션은 그대로입니다.</strong> 두 클라이언트가 같은 서버에 동시에 붙을 수 있으니,
+        터미널의 TUI 를 켜 둔 채로 GUI 를 띄워 <strong>같은 탭을 양쪽에서</strong> 보실 수 있습니다.
+        무언가 어긋나 보이면 그건 GUI 쪽 문제일 가능성이 큽니다 — <strong>세션은 서버가 들고 있으니</strong>
+        GUI 를 닫아도 하시던 일은 사라지지 않습니다.
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<footer class="foot">
+  <div class="wrap">
+    <div>
+      <span class="brand"><span class="prompt">❯</span> pytmux</span>
+      &nbsp; — Python/Textual 터미널 멀티플렉서
+    </div>
+    <div class="foot-links">
+      <a href="guide">상세 가이드</a> ·
+      <a href="changes">최근 수정사항</a> ·
+      <a href="/#install">설치</a> ·
+      <a href="https://github.com/neoocean/pytmux" target="_blank" rel="noopener">GitHub</a> ·
+      <a href="mailto:me@woojinkim.org?subject=pytmux">me@woojinkim.org</a>
+    </div>
+  </div>
+</footer>
+
+<script src="lightbox.js" defer></script>
+</body>
+</html>
