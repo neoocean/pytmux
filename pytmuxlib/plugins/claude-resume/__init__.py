@@ -183,8 +183,9 @@ class _ClaudeResumePlugin:
 
         return {
             "t": "plugin_screen", "id": "claude-resume", "kind": "list",
-            "title": "Claude 세션 리줌",
-            "hint": "(↑↓ 이동 · Enter 새 탭에서 리줌 · Esc 닫기)",
+            # ⚠ 손으로 적으면 게이트가 못 본다(2026-08-02o) — 카탈로그가 곧 영어 표다.
+            "title": i18n.t("cresume.title"),
+            "hint": i18n.t("cresume.hint"),
             # `key` 는 그 줄의 **뜻**(세션 id)이다 — 자리로 가리키면 목록이 바뀔 때
             # 엉뚱한 세션이 열린다.
             "rows": [{"key": s["id"], "label": s.get("title") or s["id"],
@@ -192,7 +193,7 @@ class _ClaudeResumePlugin:
                      for s in found],
             "selected": 0,
             "keys": {"enter": "resume"},
-            "note": "" if found else "이 머신에 리줌할 세션이 없습니다",
+            "note": "" if found else i18n.t("cresume.none"),
         }
 
 

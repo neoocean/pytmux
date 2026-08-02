@@ -61,6 +61,9 @@ i18n.register({
         "ph.truncated_mark": " …",
         "ph.jump_fail": "그 프롬프트가 스크롤백에 없습니다(회전/재시작으로 사라짐)",
         "ph.lines_set": "프롬프트 미리보기: {n}행",
+        # Tier C 스펙 화면의 안내줄 — 정본 팝업(`popup_sub`)과 **조작이 다르다**
+        # (스펙엔 +/− 미리보기 행수 조절이 없다)라 문구를 따로 둔다.
+        "ph.spec_hint": "↑↓ 이동 · Enter 그 위치로 점프 · Esc 닫기",
     },
     "en": {
         "cmd.prompt-history": "Claude prompt-history popup (preview while typing; alias prompts·ph)",
@@ -72,6 +75,7 @@ i18n.register({
         "ph.truncated_mark": " …",
         "ph.jump_fail": "That prompt is no longer in scrollback (rotated out / restarted)",
         "ph.lines_set": "Prompt preview: {n} rows",
+        "ph.spec_hint": "↑↓ move · Enter jump to position · Esc close",
     },
 })
 
@@ -193,12 +197,13 @@ class _PromptHistoryPlugin:
             })
         return {
             "t": "plugin_screen", "id": "prompt-history", "kind": "list",
-            "title": "프롬프트 히스토리",
-            "hint": "(↑↓ 이동 · Enter 그 위치로 점프 · Esc 닫기)",
+            # ⚠ 손으로 적으면 게이트가 못 본다(2026-08-02o) — 카탈로그가 곧 영어 표다.
+            "title": i18n.t("ph.popup_title"),
+            "hint": i18n.t("ph.spec_hint"),
             "rows": rows,
             "selected": 0,
             "keys": {"enter": "jump"},
-            "note": "" if rows else "저장된 프롬프트가 없습니다 — Claude 에 프롬프트를 입력해 보세요",
+            "note": "" if rows else i18n.t("ph.empty"),
         }
 
     # ---- 클라이언트 ----

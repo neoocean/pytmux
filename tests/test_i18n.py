@@ -321,3 +321,58 @@ async def test_mouse_gesture_catalog_matches_deployed_behavior():
         assert "선택" not in shift and "select" not in shift.lower(), (loc, shift)
         assert ("복사" in drag or "copy" in drag.lower()), (loc, drag)
     _reset()
+
+
+async def test_a_notice_carries_the_ingredients_for_a_client_that_keys_on_korean():
+    """서버 알림도 **재료**(`fmt`+`args`)를 싣는다 — 로케일 ⓑ 의 알림 갈래.
+
+    # 왜 `key`+`kw` 로는 부족했나
+
+    이 경로는 예전부터 `key`(`ccmsg.resume_injected` 같은 도메인 키)와 `kw` 를 실어
+    보내 왔고, **정본 클라**는 그것으로 자기 로케일을 짓는다. 그런데 네이티브 클라의
+    카탈로그는 **한국어 원문이 곧 키**라 그 도메인 키로는 아무것도 못 찾는다 — 그래서
+    자리가 있는 알림(`자동재개: '{msg}' 주입(패널 {pane})`)이 영어 사용자에게 통째로
+    한국어로 떴다. 같은 재료를 그 클라가 읽는 모양으로도 싣는다.
+
+    칸을 **더하기만** 하므로 이것을 모르는 클라는 종전과 한 글자도 다르지 않다.
+    """
+    from pytmuxlib.serverremote import ServerRemoteMixin
+
+    msg = ServerRemoteMixin._notice_msg(
+        "ccmsg.resume_injected", "자동재개: '{msg}' 주입(패널 {pane})",
+        severity="info", pane=3, msg="continue")
+    # 종전 칸은 그대로다(구 클라 호환).
+    assert msg["text"] == "자동재개: 'continue' 주입(패널 3)", msg
+    assert msg["key"] == "ccmsg.resume_injected" and msg["kw"]["pane"] == 3
+    # 새 칸: 원문 포맷과 값. 값은 문자열로 — 클라의 `tf` 가 소박한 치환이다.
+    assert msg["i18n"] == {"text": {"fmt": "자동재개: '{msg}' 주입(패널 {pane})",
+                                    "args": {"pane": "3", "msg": "continue"}}}, msg
+
+
+async def test_a_notice_without_places_needs_no_ingredients():
+    """자리가 없는 알림은 **원문이 곧 키**라 재료가 필요 없다(로케일 ⓐ 로 풀린다).
+
+    빈 `i18n` 칸을 굳이 실으면 프레임만 커지고, "재료가 왔다"는 신호가 무의미해진다.
+    """
+    from pytmuxlib.serverremote import ServerRemoteMixin
+
+    msg = ServerRemoteMixin._notice_msg("rnotice.attach_silent", "조용히 붙었습니다")
+    assert "i18n" not in msg, msg
+
+
+async def test_a_notice_with_a_reason_fragment_does_not_mix_languages():
+    """실패 사유(`detail`)가 붙은 알림은 재료를 **안** 싣는다 — 안 그러면 언어가 섞인다.
+
+    그 경로의 `kw["why"]` 는 사유의 **한국어 조각**이다(정본 클라는 `detail` 로 덮어
+    자기 로케일로 짓는다). 그것을 인자로 넘기면 영어 포맷 안에 한국어가 박혀
+    `remote-attach host failed — 연결 거부됨` 같은 것이 된다. 섞느니 통째로 한국어가
+    낫다 — `i18n.phrase` 머리말이 경고하는 그 함정이다.
+    """
+    from pytmuxlib.serverremote import ServerRemoteMixin
+
+    msg = ServerRemoteMixin._notice_msg(
+        "rnotice.attach_fail", "remote-attach {target} 실패 — {why}",
+        detail={"text": "연결 거부됨"}, target="office1")
+    assert "i18n" not in msg, msg
+    # 종전 칸은 그대로다 — 정본 클라는 `detail` 로 자기 로케일 조각을 끼운다.
+    assert msg["detail"] == {"text": "연결 거부됨"} and msg["kw"]["why"] == "연결 거부됨"

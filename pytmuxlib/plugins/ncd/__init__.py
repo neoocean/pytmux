@@ -13,6 +13,24 @@
 plugins.load() 로 이걸 읽는다). 필요한 곳에서 지연 import 한다."""
 from __future__ import annotations
 
+from pytmuxlib import i18n
+
+# 화면 스펙(Tier C)이 **소켓 너머로 실어 보내는** 글. 여기 없으면 게이트가 못 본다 —
+# 픽스처는 카탈로그에서 뽑히므로, 스펙에 직접 적은 한국어는 영어 표에도 안 들어가고
+# 영어 사용자에게 그대로 한국어로 뜬다(2026-08-02o 실측).
+i18n.register({
+    "ko": {
+        "ncd.title": "디렉터리 — {path}",
+        "ncd.hint": "↑↓ 이동 · Enter 들어가기 · c 여기로 cd · Esc 닫기",
+        "ncd.empty": "하위 디렉터리가 없습니다",
+    },
+    "en": {
+        "ncd.title": "Directory — {path}",
+        "ncd.hint": "↑↓ move · Enter open · c cd here · Esc close",
+        "ncd.empty": "No subdirectories",
+    },
+})
+
 # 명령 메타데이터 — 코어가 COMMANDS/COMPLETIONS/COMMAND_NOARG 에 합쳐 쓴다.
 COMMANDS = [
     ("ncd", "디렉토리 트리(Norton Change Directory 풍) — 루트→cwd 펼침·↑↓ 탐색·"
@@ -241,15 +259,19 @@ class _NcdPlugin:
             rows.append({"key": parent, "label": "..", "cols": []})
         for d in _list_dirs(path):
             rows.append({"key": d, "label": os.path.basename(d), "cols": []})
+        # 자리가 있는 글은 **재료까지** 싣는다(로케일 ⓑ) — 경로는 로케일 중립이라
+        # 인자로 넘겨도 언어가 안 섞인다.
+        title, title_spec = i18n.phrase("ncd.title", path=path)
         return {
             "t": "plugin_screen", "id": "ncd", "kind": "list",
-            "title": f"디렉터리 — {path}",
-            "hint": "(↑↓ 이동 · Enter 들어가기 · c 여기로 cd · Esc 닫기)",
+            "title": title,
+            "hint": i18n.t("ncd.hint"),
             "rows": rows,
             "selected": 0,
             # 키 → 액션. `enter` 말고도 **글자 키**를 실을 수 있다(클라가 그 표만 본다).
             "keys": {"enter": "into", "c": "cd"},
-            "note": "" if rows else "하위 디렉터리가 없습니다",
+            "note": "" if rows else i18n.t("ncd.empty"),
+            "i18n": {"title": title_spec},
         }
 
 

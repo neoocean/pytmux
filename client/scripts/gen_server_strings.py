@@ -36,6 +36,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 
 OUT = os.path.join("crates", "proto", "tests", "fixtures", "server_strings.json")
@@ -95,6 +96,99 @@ def _carried(root, ko):
     return sorted(k for k in found if k in ko)
 
 
+def _wire_producers(root):
+    """소켓 너머로 나가는 글을 **짓는 자리**를 소스에서 찾는다.
+
+    돌려주는 것 = `(참조된_i18n_키, 알림으로_나가는_키, 카탈로그에_없는_한국어_리터럴)`.
+
+    # 왜 네임스페이스만으로는 부족했나 (2026-08-02o)
+
+    종전에는 `SHIPPED` 네임스페이스에 속한 카탈로그 항목을 **전부** "서버가 보내는 글"로
+    셌다. 실측해 보니 그 12개 중 **7개는 소켓을 안 건넜다** — `app.display_message`·
+    Textual 화면(`screen.py`)에서만 쓰는 클라 로컬 문자열이라 애초에 번역 문제가 없다.
+    그리고 진짜 문제는 반대쪽에 있었다: 화면 스펙에 **직접 적은 한국어 22개**는
+    카탈로그에 없으니 이 생성기의 눈에 아예 안 보였고, 그래서 `en_server.rs` 에도 못
+    들어가 **영어 사용자에게 그대로 한국어로 떴다**(게이트는 초록이었다).
+
+    그래서 세는 자리를 카탈로그가 아니라 **짓는 코드**로 옮긴다:
+      * `plugin_screen`·`plugin_cells`·`plugin_badges` dict 를 만드는 함수
+      * 알림 발신(`note(...)`/`_notice_msg(...)`) — 서버가 클라에 미는 한 줄
+
+    한계는 정직하게: 이것은 정적 스캔이라 **함수 밖 상수**(모듈 레벨 표)는 그 함수가
+    이름으로 참조해도 못 따라간다. 그 몫은 `wire_literals` 래칫이 아니라 앞으로의
+    슬라이스가 줄인다 — 지금 남은 것이 `mdir` 이다.
+    """
+    import ast
+    import glob
+
+    hangul = re.compile(r"[가-힣]")
+    wire = ("plugin_screen", "plugin_cells", "plugin_badges")
+    keys, notices, literals = set(), set(), []
+
+    def builds_wire(fn):
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Dict):
+                for k, v in zip(n.keys, n.values):
+                    if (isinstance(k, ast.Constant) and k.value == "t"
+                            and isinstance(v, ast.Constant) and v.value in wire):
+                        return True
+        return False
+
+    def first_str(call):
+        if call.args and isinstance(call.args[0], ast.Constant) \
+                and isinstance(call.args[0].value, str):
+            return call.args[0].value
+        return None
+
+    for path in sorted(glob.glob(os.path.join(root, "pytmuxlib", "**", "*.py"),
+                                 recursive=True)):
+        with open(path, encoding="utf-8") as fp:
+            tree = ast.parse(fp.read())
+        # 알림 발신은 어느 함수에 있든 소켓으로 나간다 — 파일 전체에서 찾는다.
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) \
+                    and n.func.id in ("note", "_notice_msg"):
+                k = first_str(n)
+                if k:
+                    keys.add(k)
+                    notices.add(k)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) \
+                    and n.func.attr in ("_notice_msg", "_remote_notice"):
+                k = first_str(n)
+                if k:
+                    keys.add(k)
+                    notices.add(k)
+        # 독스트링은 소켓으로 안 나간다 — 줄 번호로 걸러 낸다(`ast.get_docstring` 은
+        # 정리된 문자열만 주므로 자리를 모른다).
+        docline = set()
+        for n in ast.walk(tree):
+            body = getattr(n, "body", None)
+            if not isinstance(body, list) or not body:
+                continue
+            head = body[0]
+            if isinstance(head, ast.Expr) and isinstance(head.value, ast.Constant) \
+                    and isinstance(head.value.value, str):
+                docline.add(head.value.lineno)
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not builds_wire(fn):
+                continue
+            for n in ast.walk(fn):
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) \
+                        and n.func.attr in ("t", "phrase", "tc"):
+                    k = first_str(n)
+                    if k:
+                        keys.add(k)
+                elif isinstance(n, ast.Constant) and isinstance(n.value, str) \
+                        and hangul.search(n.value) and n.lineno not in docline:
+                    literals.append((os.path.relpath(path, root), n.lineno, n.value))
+    if not keys:
+        sys.exit("소켓으로 나가는 글을 짓는 자리를 하나도 못 찾았다 — 통과가 아니라 "
+                 "고장이다(AST 스캐너가 낡았으면 고칠 것)")
+    return keys, notices, literals
+
+
 def main():
     _utf8_stdout()
     ap = argparse.ArgumentParser()
@@ -121,7 +215,19 @@ def main():
         else:
             fixed[ko_text] = en_text
 
-    carried = _carried(os.path.abspath(args.pytmux), ko)
+    shipped_keys, notice_keys, wire_literals = _wire_producers(
+        os.path.abspath(args.pytmux))
+    # 재료가 실리는 길이 둘이다: 스펙·셀·배지는 `i18n.phrase` 로, 알림은 `_notice_msg`
+    # 가 **자기가 받은 ko 포맷과 kw 를 그대로** 싣는다(자리가 있을 때만 — 자리가 없으면
+    # 원문이 곧 키라 로케일 ⓐ 로 풀린다).
+    carried = set(_carried(os.path.abspath(args.pytmux), ko))
+    carried |= {k for k in notice_keys if k in ko and "{" in ko[k]}
+    carried = sorted(carried)
+    # 합성된 글은 **실제로 소켓을 건너는 것만** 센다(위 `_wire_producers` 머리말).
+    # 카탈로그에만 있고 아무 데서도 안 나가는 것 · 클라 로컬 화면에서만 쓰는 것은
+    # 여기서 빠진다 — 그것들을 세면 "영어 사용자에게 한국어로 뜬다"가 거짓이 된다.
+    shipped_fmt = {ko[k] for k in shipped_keys if k in ko and "{" in ko[k]}
+    formatted = [t for t in set(formatted) if t in shipped_fmt]
     payload = {
         "_comment": "python3 scripts/gen_server_strings.py 로 생성. 출처 = 정본 "
                     "pytmuxlib/i18n.py 카탈로그(플러그인 register 포함). "
@@ -138,13 +244,19 @@ def main():
         #   원문이 우리 표에 없으면 한국어 포맷에 값만 끼워 넣는다 — "실어 보냈다"가
         #   곧 "영어로 뜬다"가 아니다. 그래서 여기도 ko→en 짝으로 싣고 게이트가 잰다.
         "carried": {ko[k]: en.get(k, ko[k]) for k in carried},
+        # 화면 스펙에 **직접 적힌** 한국어 — 카탈로그를 안 거치므로 영어 표에 못 들어가고
+        # 영어 사용자에게 그대로 뜬다. 지금은 못 고치는 것이 아니라 **아직 안 옮긴 것**
+        # 이라, 고정 리터럴처럼 전수로 못 박는 대신 수를 래칫으로 잡는다. 0 이 되는 날이
+        # "서버가 보내는 글은 전부 카탈로그를 거친다"가 참이 되는 날이다.
+        "wire_literals": [f"{path}:{line} {text}" for path, line, text in wire_literals],
     }
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fp:
         json.dump(payload, fp, ensure_ascii=False, indent=2)
         fp.write("\n")
     print(f"{args.out} — 고정 {len(fixed)}개 · 합성 {len(payload['formatted'])}개 "
-          f"(그중 재료로 실리는 것 {len(carried)}개)")
+          f"(그중 재료로 실리는 것 {len(carried)}개) · "
+          f"스펙에 직접 적힌 한국어 {len(wire_literals)}개")
 
 
 if __name__ == "__main__":

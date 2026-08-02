@@ -507,3 +507,64 @@ async def test_prompt_history_says_it_is_empty_instead_of_showing_nothing():
         assert spec["rows"] == [] and spec["note"], spec
     finally:
         await teardown(srv, task, sock)
+
+
+# ── 스펙의 글은 **카탈로그를 거친다**(로케일 2026-08-02o) ──────────────────────
+#
+# 게이트가 못 보던 자리였다: 픽스처는 정본 카탈로그에서 뽑히므로, 스펙에 **직접 적은**
+# 한국어는 영어 표(`en_server.rs`)에 못 들어가고 영어 사용자에게 그대로 한국어로 뜬다.
+# 정적 스캔은 생성기가 하고(`wire_literals` 래칫), 여기서는 **실제로 지어진 스펙**을
+# 재서 그 스캔이 재는 것과 제품이 내보내는 것이 같은지 붙잡는다.
+
+async def test_a_screen_spec_says_the_same_words_the_catalog_does():
+    """스펙의 제목·안내·빈 줄은 카탈로그 값이어야 한다 — 손으로 적으면 영어가 안 된다.
+
+    ⚠ 이 오라클은 "카탈로그에 있나"만 보고 **문구가 예쁜가**는 안 본다. 그래도 값이
+    있다: 손으로 적은 판은 카탈로그 판과 **괄호 하나가 달랐고**, 그 한 글자 때문에
+    `t()` 가 못 찾아 한국어로 떴다(실측 — p4changes·ncd·prompt-history·claude-resume).
+    """
+    from pytmuxlib import i18n
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        values = set(i18n._CATALOG["ko"].values())
+
+        plugin = _plugin(srv, "claude-prompt-history")
+        sess.active_window.active_pane._ph_history = []
+        spec = plugin._open_spec(srv, sess)
+        for field in ("title", "hint", "note"):
+            assert spec[field] in values, (
+                "prompt-history 스펙의 %s 가 카탈로그에 없다: %r" % (field, spec[field]))
+
+        plugin = _plugin(srv, "claude-resume")
+        spec = await plugin._open_spec({})
+        # `note` 는 세션이 있으면 빈 문자열이다 — 빈 것은 글이 아니라 "할 말 없음"이라
+        # 카탈로그를 안 거친다(빈 줄까지 번역 대상으로 세면 오라클이 거짓말을 한다).
+        # 빈 note 의 문구는 위 prompt-history 가 덮는다(거기서는 비게 만들 수 있다).
+        for field in ("title", "hint", "note"):
+            assert not spec[field] or spec[field] in values, (
+                "claude-resume 스펙의 %s 가 카탈로그에 없다: %r" % (field, spec[field]))
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_a_composed_title_carries_the_ingredients_not_just_the_words():
+    """자리가 있는 제목은 **재료**(`i18n`)도 실어야 한다 — 원문이 키가 못 되기 때문.
+
+    `ncd` 의 제목은 `디렉터리 — {path}` 다. 글만 보내면 영어 클라가 그 문자열을 표에서
+    못 찾아 한국어가 그대로 뜬다. 그래서 `fmt`+`args` 를 같이 싣고 클라가 `tf` 로
+    자기 로케일에서 다시 짓는다(`i18n_say`).
+    """
+    import os
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        plugin = _plugin(srv, "ncd")
+        path = os.path.abspath(os.sep)
+        spec = plugin._dir_spec({"path": path})
+        assert spec["i18n"]["title"]["fmt"] == "디렉터리 — {path}", spec["i18n"]
+        assert spec["i18n"]["title"]["args"] == {"path": path}, spec["i18n"]
+        # 글도 그대로 온다 — 재료를 모르는 클라는 종전과 똑같은 것을 본다.
+        assert spec["title"].endswith(path), spec["title"]
+    finally:
+        await teardown(srv, task, sock)

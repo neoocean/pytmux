@@ -42,6 +42,9 @@ i18n.register({
         "p4cl.nav": "↑↓ 이동 · Enter 상세 · Esc 닫기",
         "p4cl.empty": "(제출된 체인지리스트가 없습니다)",
         "p4cl.detail_nav": "↑↓ 스크롤 · PgUp/PgDn · Home/End · Esc 닫기",
+        # 스펙(Tier C)의 상세 화면은 Esc 가 **목록으로** 돌아간다(스펙 스택) —
+        # 정본 팝업의 `detail_nav`(Esc = 닫기)와 뜻이 달라 키를 따로 둔다.
+        "p4cl.detail_back": "↑↓ 스크롤 · Esc 목록으로",
         "p4cl.loading": "불러오는 중…",
         "p4cl.error": "오류: {err}",
         "p4cl.no_detail": "(내용 없음)",
@@ -52,6 +55,7 @@ i18n.register({
         "p4cl.nav": "↑↓ move · Enter details · Esc close",
         "p4cl.empty": "(no submitted changelists)",
         "p4cl.detail_nav": "↑↓ scroll · PgUp/PgDn · Home/End · Esc close",
+        "p4cl.detail_back": "↑↓ scroll · Esc back to the list",
         "p4cl.loading": "Loading…",
         "p4cl.error": "Error: {err}",
         "p4cl.no_detail": "(empty)",
@@ -205,13 +209,17 @@ class _P4ChangesPlugin:
         return {
             "t": "plugin_screen", "id": "p4changes", "kind": "list",
             "title": f"Perforce submitted changelists ({msg.get('info') or ''})".strip(),
-            "hint": "(↑↓ 이동 · Enter 상세 · Esc 닫기)",
+            # ⚠ 여기에 문구를 **직접 적으면** 게이트가 못 본다(2026-08-02o): 픽스처는
+            # 카탈로그에서 뽑히므로, 카탈로그에 없는 리터럴은 영어 표에도 안 들어가고
+            # 영어 사용자에게 한국어로 뜬다. 손으로 적은 판은 괄호까지 달라 같은 문구가
+            # 두 벌이 돼 있었다 — 정본 클라가 쓰는 키를 그대로 쓴다.
+            "hint": i18n.t("p4cl.nav"),
             "rows": rows,
             "selected": 0,
             # 키 → 플러그인 액션 이름. 클라는 이 표에 있는 키만 되돌려준다.
             "keys": {"enter": "describe"},
             # 빈 목록과 **실패**는 다르다 — 실패면 그 사실이 화면에 있어야 한다.
-            "note": err or ("" if rows else "submitted changelist 가 없습니다"),
+            "note": err or ("" if rows else i18n.t("p4cl.empty")),
         }
 
     def _describe_spec(self, server, sess, change, cwd):
@@ -220,7 +228,7 @@ class _P4ChangesPlugin:
         return {
             "t": "plugin_screen", "id": "p4changes", "kind": "text",
             "title": f"CL {change}",
-            "hint": "(↑↓ 스크롤 · Esc 목록으로)",
+            "hint": i18n.t("p4cl.detail_back"),
             "text": msg.get("text") or "",
             "note": msg.get("err") or "",
             "keys": {},

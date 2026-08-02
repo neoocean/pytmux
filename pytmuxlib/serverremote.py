@@ -970,6 +970,20 @@ class ServerRemoteMixin:
             kw["why"] = detail.get("text", "")   # ko 폴백; 클라가 detail 로 덮어씀
         text = ko_text.format(**kw) if kw else ko_text
         msg = {"t": "notice", "text": text, "key": key, "kw": kw}
+        # 로케일 ⓑ: `key`+`kw` 는 **정본 클라 전용**이다 — 저쪽 카탈로그는 도메인 키를
+        # 쓰지만 네이티브 클라는 **한국어 원문이 곧 키**라 `ccmsg.resume_injected` 같은
+        # 키로는 아무것도 못 찾는다. 그래서 같은 재료를 그 클라가 읽는 모양으로도
+        # 싣는다(`i18n.phrase` 와 같은 `{fmt, args}`). 칸을 **더하기만** 하므로 이것을
+        # 모르는 클라는 종전과 한 글자도 다르지 않은 `text` 를 본다.
+        #
+        # ⚠ `detail` 이 있는 알림은 **안 싣는다**: 그때 `kw["why"]` 는 실패 사유의
+        # **한국어 조각**이고(정본 클라는 `detail` 로 덮어 자기 로케일로 짓는다),
+        # 그것을 인자로 넘기면 영어 포맷 안에 한국어가 박혀 **언어가 섞인다** —
+        # `i18n.phrase` 머리말이 경고하는 바로 그 모양이다. 재료가 없으면 종전대로
+        # 서버가 지은 글이 그대로 보인다(전부 한국어 = 섞이지는 않는다).
+        if kw and detail is None:
+            msg["i18n"] = {"text": {"fmt": ko_text,
+                                    "args": {n: str(v) for n, v in kw.items()}}}
         if detail is not None:
             msg["detail"] = detail
         if severity is not None:

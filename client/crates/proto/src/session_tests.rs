@@ -779,6 +779,40 @@ fn a_notice_is_not_dropped_on_the_floor() {
 }
 
 #[test]
+fn a_notice_with_ingredients_is_rebuilt_in_our_own_locale() {
+    // 서버가 미는 알림도 **자리가 있으면** 원문이 키가 못 된다(`자동재개: '{msg}'
+    // 주입(패널 {pane})`). 서버가 같이 싣는 `key`+`kw` 는 정본 클라의 도메인 키라
+    // 우리 표(한국어 원문이 키)로는 아무것도 못 찾는다 — `i18n` 재료를 읽어야 한다.
+    let msg: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "notice", "sev": "info",
+        "text": "자동재개: 'continue' 주입(패널 3)",
+        "key": "ccmsg.resume_injected",
+        "kw": {"pane": 3, "msg": "continue"},
+        "i18n": {"text": {"fmt": "자동재개: '{msg}' 주입(패널 {pane})",
+                          "args": {"pane": "3", "msg": "continue"}}}
+    }))
+    .unwrap();
+    // ★ 로케일을 **받는 순간**에 건다 — 알림은 도착할 때 글이 되고 그 뒤로는 String 이다
+    //   (모듈 문서: *"이미 만들어 둔 String(지난 알림 등)은 옛 언어로 남는다"* — 정본과
+    //   같은 규약이라, 나중에 `lang` 을 바꿔도 지난 알림은 그대로다).
+    let mut state = SessionState::new();
+    base::i18n::with_locale("en", || state.apply(msg));
+    let shown = state.notices().next().expect("알림이 안 쌓였다").text.clone();
+    assert_eq!(
+        shown, "Auto-resume: injected 'continue' (pane 3)",
+        "서버가 지은 한국어가 그대로 샜다 — notice 의 i18n 재료를 안 읽는 것이다"
+    );
+}
+
+/// 재료가 없는 알림은 서버가 지은 글 그대로다(구버전 서버 호환).
+#[test]
+fn a_notice_without_ingredients_still_shows_what_the_server_wrote() {
+    let mut state = SessionState::new();
+    state.apply(notice("서버가 지은 글", None));
+    assert_eq!(state.notices().next().unwrap().text, "서버가 지은 글");
+}
+
+#[test]
 fn the_newest_notice_is_first() {
     let mut state = SessionState::new();
     state.apply(notice("하나", None));

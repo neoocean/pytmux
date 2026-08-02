@@ -31,10 +31,14 @@ fn in_english<T>(f: impl FnOnce() -> T) -> T {
 struct Fixture {
     fixed: BTreeMap<String, String>,
     formatted: Vec<String>,
-    /// `i18n.phrase` 로 **원문 포맷 + 인자**까지 실려 오는 것들(ko 포맷 → en 포맷).
-    /// 실어 보내는 것만으로는 부족하다 — 그 **포맷 원문의 번역**이 우리 표에 있어야
-    /// `tf` 가 영어를 짓는다. 아래 두 테스트가 그 둘을 나눠 잰다.
+    /// 원문 포맷 + 인자까지 실려 오는 것들(ko 포맷 → en 포맷). 길이 둘이다 —
+    /// 스펙·셀·배지는 `i18n.phrase`, 알림은 `_notice_msg` 가 자기가 받은 ko 포맷을
+    /// 그대로 싣는다. 실어 보내는 것만으로는 부족하다 — 그 **포맷 원문의 번역**이 우리
+    /// 표에 있어야 `tf` 가 영어를 짓는다. 아래 두 테스트가 그 둘을 나눠 잰다.
     carried: BTreeMap<String, String>,
+    /// 화면 스펙에 **직접 적힌** 한국어 — 카탈로그를 안 거쳐서 영어 표에 못 들어간다.
+    /// 파일:줄 과 문구가 함께 온다(고칠 자리를 바로 가리키려고).
+    wire_literals: Vec<String>,
 }
 
 fn fixture() -> Fixture {
@@ -72,11 +76,26 @@ fn every_fixed_string_the_server_ships_has_an_english_face() {
 
 /// 아직 **못 번역하는** 글의 수 = 합성된 것 − 재료로 실려 오는 것.
 ///
-/// 16 → 12(2026-08-02n): claude-code 상태줄 넷이 `i18n.phrase` 로 옮겨갔다(M4 P6 후반).
-/// 0 이 되는 날이 로케일 ⓑ 가 닫히는 날이다. 새로 생기는 것은 이 숫자를 올리게 되고,
-/// 올리는 CL 이 "왜 또 하나 늘었나"를 적게 된다. **줄이는 길은 `i18n.phrase` 로 옮기는
-/// 것뿐**이라, 이 숫자는 옮긴 만큼 정직하게 내려간다.
-const UNTRANSLATABLE_TODAY: usize = 12;
+/// 16 → 12(2026-08-02n) → **0**(2026-08-02o). 마지막 걸음은 두 가지였다:
+/// ⑴ 알림(`_notice_msg`)도 재료를 싣게 했다 — `key`+`kw` 는 정본 클라의 도메인 키라
+///    우리에겐 무용지물이었다(우리 카탈로그는 한국어 원문이 키다).
+/// ⑵ ★ **세는 자리를 고쳤다.** 12 중 **일곱은 소켓을 안 건너는 글**이었다(클라 로컬
+///    Textual 화면·`display_message`)이고 하나는 아무 데서도 안 쓰는 죽은 항목이었다.
+///    네임스페이스로 세면 그런 것까지 "영어 사용자에게 한국어로 뜬다"로 집계된다 —
+///    이제 생성기가 **짓는 코드**(스펙·셀·배지·알림)에서 센다.
+///
+/// 0 이 됐다고 로케일이 끝난 것은 아니다. 같은 CL 이 드러낸 다른 축이 아래
+/// [`WIRE_LITERALS_TODAY`] 다.
+const UNTRANSLATABLE_TODAY: usize = 0;
+
+/// 화면 스펙에 **직접 적힌** 한국어의 수(=카탈로그를 안 거쳐 영어 표에 못 들어간 것).
+///
+/// ★ 이 축은 2026-08-02o 에 생겼는데, **생기기 전까지 22개가 게이트 밖에 있었다**.
+/// 픽스처가 카탈로그에서 뽑히니, 스펙에 손으로 적은 한국어는 생성기의 눈에 아예 안
+/// 보였다 — 영어 사용자에게 그대로 한국어로 뜨는데 게이트는 초록이었다. 같은 CL 에서
+/// 넷(p4changes·ncd·prompt-history·claude-resume)을 카탈로그로 옮겨 22 → 10 이고,
+/// 남은 열은 전부 `mdir` 이다(모듈 상수 표까지 걸려 있어 슬라이스 하나 값어치다).
+const WIRE_LITERALS_TODAY: usize = 10;
 
 #[test]
 fn the_number_of_strings_we_cannot_translate_does_not_grow_silently() {
@@ -97,6 +116,24 @@ fn the_number_of_strings_we_cannot_translate_does_not_grow_silently() {
     assert!(
         !fx.carried.is_empty(),
         "재료로 실려 오는 글이 하나도 없다 — `i18n.phrase` 배관이 끊겼는지 볼 것"
+    );
+}
+
+/// 스펙에 **직접 적힌** 한국어의 수 — 늘리는 CL 이 이유를 적게 한다.
+///
+/// 위 두 테스트가 카탈로그를 재는 동안 이 축은 **카탈로그 밖**을 잰다. 둘을 같이 두는
+/// 이유가 그것이다: 카탈로그만 재면 "표에 있는 것은 다 영어다"는 참인데 화면은 한국어일
+/// 수 있다(2026-08-02o 실측).
+#[test]
+fn nobody_writes_korean_straight_into_a_screen_spec() {
+    let fx = fixture();
+    assert_eq!(
+        fx.wire_literals.len(),
+        WIRE_LITERALS_TODAY,
+        "화면 스펙에 직접 적힌 한국어의 수가 움직였다. 늘었으면 그 문구는 영어 \
+         사용자에게 한국어로 뜬다 — 카탈로그(`i18n.register`)로 옮기고 `i18n.t`/\
+         `i18n.phrase` 로 실을 것. 지금 남은 것:\n{:#?}",
+        fx.wire_literals
     );
 }
 

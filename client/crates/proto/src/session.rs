@@ -978,8 +978,12 @@ impl SessionState {
                 ));
                 true
             }
-            ServerMessage::Notice { text, sev } => {
+            ServerMessage::Notice { text, sev, i18n } => {
                 let severity = Severity::parse(sev.as_deref());
+                // 재료가 왔으면 **우리 로케일로** 다시 짓는다(로케일 ⓑ). 안 왔으면
+                // 서버가 지은 글을 원문 키로 번역해 본다 — 자리가 없는 알림은 그것만으로
+                // 영어가 된다(로케일 ⓐ).
+                let text = i18n_say(&i18n, "text", &text);
                 // 오류 등급만 상태줄 한 줄에도 건다 — 나머지는 이력에만 쌓는다(모든
                 // 알림이 상태줄을 차지하면 정작 오류가 묻힌다).
                 if severity == Severity::Error {
