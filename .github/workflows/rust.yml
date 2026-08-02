@@ -1,0 +1,149 @@
+name: rust-client
+
+# Rust 클라(TUI·GUI) — 트리 통합(2026-08-01) 뒤 이 저장소에 함께 사는 두 산출물의 CI.
+#
+# # 왜 파이썬 워크플로와 따로인가
+#
+# 도는 것도(cargo) 캐시할 것도(~/.cargo · client/target) 다르고, 매트릭스 축도 다르다
+# (파이썬은 인터프리터 3개 × OS 2개, 여기는 OS 3개 × 툴체인 1개 — 툴체인은
+# `client/rust-toolchain.toml` 이 못박는다). 한 워크플로에 밀어 넣으면 캐시 키가
+# 섞여 둘 다 느려진다.
+#
+# # macOS 는 왜 여기 있나(파이썬 쪽은 제외인데)
+#
+# 제외 사유가 **PTY 스위트의 헤드리스 wedge** 였다(windows.yml 머리말). Rust 스위트는
+# PTY 를 안 띄우고 순수 단위·적합성 테스트라 그 함정에 안 걸린다 — GUI 도 창을 안 연다
+# (`--frame-dump` 는 사람이 부르는 길이고 CI 는 로직만 잰다). 그래서 세 OS 를 다 돈다.
+#
+# # 게이트 셋은 왜 ubuntu 에서만 도나
+#
+# 셋 다 **크로스 컴파일·의존 그래프·소스 문법** 검사라 결과가 호스트 OS 와 무관하다
+# (`check_windows.sh` 는 이름과 달리 Windows 러너가 아니라 `--target` 크로스 컴파일이다).
+# 세 OS 에서 같은 답을 세 번 받는 것은 러너 분 낭비다.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'client/**'
+      - '.github/workflows/rust.yml'
+  pull_request:
+    paths:
+      - 'client/**'
+      - '.github/workflows/rust.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    # 정상 소요는 캐시 적중 시 몇 분이다. 캐시가 비면(툴체인 변경·첫 run) 워크스페이스
+    # 전체 빌드라 훨씬 길어진다 — 그 몫까지 두되, 매달리면 여기서 끊는다.
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v5
+
+      # 툴체인 채널은 client/rust-toolchain.toml 이 정한다 — 여기 버전을 또 적으면
+      # 두 곳이 갈린다(그러면 CI 만 다른 컴파일러로 도는 상태가 조용히 생긴다).
+      - name: Show toolchain
+        run: |
+          rustup show
+          cargo --version
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            client/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('client/Cargo.lock', 'client/rust-toolchain.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # Linux 러너에는 GUI 크레이트가 링크하는 시스템 라이브러리가 없다. 빌드가 여기서
+      # 깨지면 증상은 "wgpu/xkb 를 못 찾는다"라 앱 결함처럼 읽힌다 — 먼저 깔아 둔다.
+      - name: Install Linux GUI deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb1-dev pkg-config
+
+      - name: Build
+        run: cargo build --workspace --locked
+
+      # --no-fail-fast: 첫 크레이트에서 멈추면 "고칠 것이 몇 개인가"를 못 본다.
+      - name: Test
+        run: cargo test --workspace --no-fail-fast --locked
+
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            client/target
+          key: gates-cargo-${{ hashFiles('client/Cargo.lock', 'client/rust-toolchain.toml') }}
+          restore-keys: gates-cargo-
+
+      - name: Install Linux GUI deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb1-dev pkg-config
+
+      # 뷰만 두 벌이고 상태·키맵·명령은 한 벌 — core 에 UI 의존이 새면 두 뷰가
+      # 조용히 갈라지기 시작한다.
+      - name: Layering gate
+        run: bash scripts/check_layering.sh
+
+      # MIT 경계(PROVENANCE.md). **빈 결과는 통과가 아니라 고장**이라 스크립트 자신이
+      # 그 경우를 실패로 떨어뜨린다.
+      - name: License boundary gate
+        run: bash scripts/check_licenses.sh
+
+      # 두 번째 OS 가 조용히 썩는 것을 막는다(링크는 안 하고 cfg 분기·타입만 검사).
+      - name: Windows cross-compile gate
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          bash scripts/check_windows.sh
+
+      # 픽스처가 **정본보다 낡지 않았나**. 생성기가 pytmux 정본을 import 하므로 파이썬
+      # 의존이 필요하다 — 정본은 같은 저장소 루트다(트리 통합).
+      - name: Fixture freshness gate
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r ../requirements.txt
+          python scripts/check_fixtures.py
+
+      # 공개 미러 위생(계획 §5.3) — `.gitignore` 앵커 하나가 사라지면 리포트 400여
+      # 장이 **증상 없이** 미러에서 빠진다. 그래서 사람이 아니라 게이트가 본다.
+      - name: Mirror hygiene gate
+        working-directory: .
+        run: python scripts/check_mirror.py
+
+      # 패리티 래칫은 테스트지만 **게이트로도** 이름을 붙여 둔다 — 전체 스위트에 묻히면
+      # "점수가 왜 움직였나"를 리뷰에서 못 본다.
+      - name: Parity ratchet
+        run: cargo test -p proto --test parity --locked

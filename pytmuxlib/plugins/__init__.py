@@ -308,6 +308,34 @@ class Registry:
                     return resp
         return None
 
+    def plugin_screen(self, server, sess, req):
+        """Tier C — **선언형 화면 스펙**(설계 PLUGIN_COMPAT_TEXTUAL_GUI §4.3 · P4).
+
+        네이티브 클라(pytmux-gui)는 파이썬을 못 읽어 플러그인의 Textual 화면을 띄울 수
+        없다. 그래서 플러그인이 **무엇을 그릴지**를 자료로 돌려주고, 클라는 목록/글 두
+        모양만 그릴 줄 알면 된다 — 플러그인 코드는 한 벌로 남는다.
+
+        `req` 는 두 모양뿐이다:
+        - 열기 — `{"do": "open", "name": <명령 이름>, "args": [...]}`
+        - 화면 안 동작 — `{"id": <화면 id>, "do": <액션 이름>, "row": n, "input": …}`
+
+        돌려줄 것(첫 플러그인의 값을 쓴다 · 내 것이 아니면 `None`):
+        - `{"t": "plugin_screen", "id", "kind": "list"|"text", "title", "hint", …}`
+        - `{"t": "plugin_screen_close", "id"}`
+        - awaitable(느린 일은 executor 로 — `handle_server_request` 와 같은 규약)
+
+        **정본 클라는 이 훅을 안 쓴다**(자기 프로세스에서 화면을 직접 띄운다). 그래서
+        이 훅이 없는 플러그인은 네이티브 클라에서만 "화면 없음"이고, 그 사실이 알림으로
+        보인다(설계 §8-5 — 조용히 버리지 않는다).
+        """
+        for p in self.plugins:
+            fn = getattr(p, "plugin_screen", None)
+            if fn is not None:
+                resp = fn(server, sess, req)
+                if resp is not None:
+                    return resp
+        return None
+
     # ---- 서버 런타임 훅(코어가 믹스인 메서드를 이름으로 직접 부르지 않게) ----
     # 코어(serverio/server)는 Claude 서버 로직(스캔/상태/입력/사용량)에 **이 훅으로만**
     # 닿는다. 플러그인이 없으면 전부 기본값(False/None/no-op)이라 서버가 그대로 동작

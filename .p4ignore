@@ -5,8 +5,19 @@ __pycache__/
 *.pyc
 *.swp
 .DS_Store
-# Windows 호환성·성능 리포트(scripts/win_report.py) 출력 — 생성 산출물(버전관리 제외)
-reports/
+# Windows 호환성·성능 리포트(scripts/win_report.py) 출력 — 생성 산출물(버전관리 제외).
+# ★ 루트에 **앵커**한다(`/reports/`). 이 .p4ignore 는 이제 `client/` 도 덮으므로, 앵커가
+# 없으면 어느 깊이든 매칭돼 `client/docs/reports/`(Rust 클라 슬라이스 리포트 — depot 추적
+# 대상)가 앞으로 `p4 add`·reconcile 에서 조용히 빠진다. 이미 들어간 파일은 p4 move 가
+# ignore 를 안 보므로 무사하지만, **새 리포트가 안 담긴다**(.gitignore 의 같은 함정과 쌍).
+# 양성 확인: `p4 ignores -i client/docs/reports/README.md` 가 ignored 를 안 찍어야 한다.
+/reports/
+# 정적 문서 사이트(scripts/build_docs.py) 출력 — 저장소의 .md 에서 통째로 재생성되는
+# 산출물이라 depot 에 두지 않는다(20MB+ · 매 빌드 전량 갱신). 필요하면 각자 굽는다.
+# 산출물이 내부 문서를 본문째 인라인하므로 출력 위치가 docs/internal/ 안이다 — 즉
+# **docs/internal/ 은 depot 추적 대상이라** 이 규칙이 없으면 reconcile 이 20MB+ 를 빨아들인다.
+# (실제 강제는 중앙 playground/p4ignore.txt — 이 줄은 문서용 미러. P4IGNORE 단일파일 모델)
+docs/internal/html/
 # 토큰 사용량 SQLite DB. 런타임 생성·호스트 로컬이라 depot 제외. S5 T5 부터 DB 는
 # claude-code 플러그인 하위 db/ 에 산다(루트 db/ 는 레거시 위치). 상대 패턴 db/ 가
 # 양쪽(어느 깊이든)을 덮는다. (실제 강제는 중앙 playground/p4ignore.txt — 이 줄은 문서용

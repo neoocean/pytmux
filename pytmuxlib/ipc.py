@@ -298,6 +298,73 @@ def token_path(endpoint: str) -> str:
 
 _win_acl_hardened: set = set()
 _win_grantee_cache: list = []   # [str] 한 번만 계산해 재사용(캐시 미스=빈 리스트)
+_ACL_MARKER_SUFFIX = ".ok"
+
+
+def _acl_marker_dir() -> Optional[str]:
+    r"""ACL 하드닝 표식 저장소(`%LOCALAPPDATA%\pytmux\acl`). 못 만들면 None.
+
+    표식을 **대상 디렉터리 안**에 두면 안 된다: 느슨한 ACL 위치를 PYTMUX_HOME 으로
+    쓰는 환경에서 타 로컬 사용자가 표식을 **선점 생성**해 하드닝을 영구히 건너뛰게
+    만들 수 있다(L7 무력화). `%LOCALAPPDATA%` 는 OS 기본 ACL 이 소유자(+SYSTEM·
+    Administrators)뿐이라 그 창이 없다 — Administrators 는 어차피 무엇이든 읽는다."""
+    base = os.environ.get("LOCALAPPDATA")
+    if not base:
+        return None
+    d = os.path.join(base, "pytmux", "acl")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        return None
+    return d
+
+
+def _acl_marker_path(path: str) -> Optional[str]:
+    """대상 경로에 대응하는 표식 파일 경로(저장소를 못 쓰면 None).
+
+    경로를 그대로 파일명에 쓸 수 없어(구분자·길이·대소문자) 정규화 후 해시로 키잉한다.
+    Windows 파일명은 대소문자 무시라 casefold 로 같은 디렉터리가 두 키가 되지 않게 한다."""
+    d = _acl_marker_dir()
+    if d is None:
+        return None
+    import hashlib
+    key = hashlib.sha256(
+        os.path.abspath(path).casefold().encode("utf-8")).hexdigest()[:32]
+    return os.path.join(d, key + _ACL_MARKER_SUFFIX)
+
+
+def _acl_hardened_earlier(path: str, is_dir: bool) -> bool:
+    """이 경로를 **이전 실행에서 이미** 조였는지(표식 존재).
+
+    icacls 는 서브프로세스라 이 박스 실측 **1.1초/회**(EDR 이 프로세스 생성을 후킹).
+    `_win_acl_hardened` 는 프로세스 내 메모이즈일 뿐이라, 매 `pytmux` 실행(클라·서버·
+    pty-host 각각)이 상태 디렉터리 2개에 대해 이 비용을 다시 냈다 — 실측 **3.0초**가
+    콜드 스타트 임계경로에 그대로 얹혀 런처의 서버 대기 예산(4초)을 넘겼다
+    (2026-07-31 조사: 첫 `pytmux` 가 항상 '서버 기동 실패'). 디렉터리 ACL 은 한 번
+    조이면 유지되므로 표식으로 실행 간 캐시한다.
+
+    파일(토큰)은 부모 디렉터리가 `(OI)(CI)F` 로 조여져 있으면 **상속으로** 소유자
+    전용이 되므로 부모의 표식을 본다(write_token 의 `_harden_win_acl` 도 생략 가능)."""
+    target = path if is_dir else os.path.dirname(os.path.abspath(path))
+    m = _acl_marker_path(target)
+    if m is None:
+        return False
+    try:
+        return os.path.exists(m)
+    except OSError:
+        return False
+
+
+def _write_acl_marker(path: str) -> None:
+    """하드닝 성공을 표식으로 남긴다(best-effort — 실패하면 다음 실행이 다시 조인다)."""
+    m = _acl_marker_path(path)
+    if m is None:
+        return
+    try:
+        with open(m, "w", encoding="ascii") as f:
+            f.write("1")
+    except OSError:
+        pass
 
 
 def _win_current_user_grantee() -> str:
@@ -384,20 +451,38 @@ def _harden_win_acl(path: str, is_dir: bool = False) -> None:
     **경로별 1회만** 실행한다: `default_state_dir` 이 소켓/포트/토큰/state_base 경로 해석에서
     반복 호출되고(에러 로그 경로 포함) 여기에 icacls 스폰을 걸면 연결마다 서브프로세스 →
     Windows 핸들 churn 으로 red-team 배터리 fd 증가가 임계를 넘었다(2026-07-03 os-compat).
-    디렉토리를 (OI)(CI)F 로 조이면 그 안에 만들어지는 토큰 파일도 상속으로 소유자 전용이 된다."""
+    디렉토리를 (OI)(CI)F 로 조이면 그 안에 만들어지는 토큰 파일도 상속으로 소유자 전용이 된다.
+
+    **실행 간**으로도 1회만 실행한다(2026-07-31): 프로세스 내 메모이즈만으로는 매
+    `pytmux` 실행이 icacls 를 다시 스폰해(이 박스 실측 1.1초/회 × 상태 디렉터리 2개 =
+    3.0초) 콜드 스타트가 런처 대기 예산을 넘겼다. 하드닝 성공을 표식으로 남기고
+    (`_write_acl_marker`), 표식이 있으면 스폰을 생략한다(`_acl_hardened_earlier`)."""
     if not IS_WINDOWS or path in _win_acl_hardened:
         return
     _win_acl_hardened.add(path)   # 실패해도 재시도 안 함(스팸 방지) — best-effort
+    if _acl_hardened_earlier(path, is_dir):
+        return                    # 이전 실행이 이미 조였다 — icacls 스폰(1.1초) 생략
     try:
         import subprocess
         user = _win_current_user_grantee()
         if not user:
             return   # 식별자를 못 구하면 상속 ACL 을 그대로 둔다(무회귀 우선).
         grant = f"{user}:(OI)(CI)F" if is_dir else f"{user}:F"
-        subprocess.run(
+        # 출력은 **파이프로 받지 않는다**(DEVNULL). 우리가 보는 건 returncode 뿐인데,
+        # `capture_output=True` 는 파이프 + 리더 스레드 둘을 만들고 `run(timeout=)` 이
+        # 그 스레드 join 을 거친다 — 2026-07-31 전체 스위트가 **이 자리에서** watchdog 에
+        # 죽어 절단됐다(스택: run → communicate → _wait_for_tstate_lock). 파이프가 없으면
+        # 리더 스레드도 없어 그 창이 원천 소멸하고, Windows 핸들 churn 도 줄어든다
+        # (레드팀 fd 표본 잡음의 원천 하나 — 검수 문서 2026-07-31 §5).
+        r = subprocess.run(
             ["icacls", path, "/inheritance:r", "/grant:r", grant],
-            capture_output=True, timeout=5,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        # 표식은 **성공했을 때만**(rc 0) 남긴다 — 실패를 캐시하면 영구히 안 조인다.
+        # 디렉터리에만 남긴다: 파일 표식은 매번 새로 만들어지는 토큰 파일에 무의미하고,
+        # 파일의 소유자 전용성은 부모 디렉터리 ACE 상속이 보장한다(위 주석).
+        if is_dir and getattr(r, "returncode", 1) == 0:
+            _write_acl_marker(path)
     except Exception:
         pass
 
@@ -601,13 +686,31 @@ async def open_connection(endpoint: str, *, portfile: Optional[str] = None
 # handshake 를 즉시(<ms) 끝내므로 짧게 잡아도 오탐이 없다. 원격(비루프백) TCP 와
 # 호출자가 더 짧게 준 timeout 은 그대로 둔다.
 _LOOPBACK_CONNECT_TIMEOUT = 0.5
+# 환경변수 override 이름. 위 "오탐이 없다"는 **호출자 이벤트 루프가 안 멎는다**를 전제
+# 한다 — 캡은 `asyncio.wait_for`/`settimeout` 의 벽시계이므로, 호출자가 그 사이 동기
+# 작업으로 멎으면 커널이 handshake 를 이미 끝냈어도 캡이 발동한다(2026-07-31 실측:
+# 서버·클라가 **같은 루프**를 쓰는 테스트에서 세션 생성(ConPTY 스폰)·상태디렉터리
+# 조이기(icacls)가 0.4~0.9초 루프를 멎게 해 살아 있는 서버 connect 가 0.608s → 캡
+# 0.5s 에 걸려 거짓 TimeoutError → test_server 연결 테스트가 이유 없이 hang 으로
+# 보였다). 프로덕션은 클라·서버가 별 프로세스이고 재시도 루프가 흡수하므로 기본값을
+# 유지하고, **한 프로세스에 둘을 넣는 러너**나 느린 박스에서만 이 변수로 넉넉히 준다.
+_LOOPBACK_CAP_ENV = "PYTMUX_LOOPBACK_CONNECT_TIMEOUT"
+
+
+def _loopback_cap() -> float:
+    """유효 루프백 connect 캡(초). env override 가 있으면 그 값(>0), 없으면 기본."""
+    try:
+        v = float(os.environ.get(_LOOPBACK_CAP_ENV, ""))
+    except ValueError:
+        return _LOOPBACK_CONNECT_TIMEOUT
+    return v if v > 0 else _LOOPBACK_CONNECT_TIMEOUT
 
 
 def _control_connect_timeout(endpoint: str, timeout: float) -> float:
     """control_socket 의 connect 타임아웃 결정(위 상수 주석 참조). 루프백 TCP 만
     캡하고, 원격 TCP·unix·호출자가 더 짧게 준 값은 그대로 둔다."""
     if is_tcp(endpoint) and is_local_endpoint(endpoint):
-        return min(timeout, _LOOPBACK_CONNECT_TIMEOUT)
+        return min(timeout, _loopback_cap())
     return timeout
 
 
@@ -615,7 +718,7 @@ def _async_connect_timeout(endpoint: str) -> Optional[float]:
     """open_connection 의 connect 캡(초) — 루프백 TCP 만, 그 외는 None(무제한).
     원격(비루프백) TCP 는 ssh 터널/광역 지연이 정상이라 캡하지 않는다."""
     if is_tcp(endpoint) and is_local_endpoint(endpoint):
-        return _LOOPBACK_CONNECT_TIMEOUT
+        return _loopback_cap()
     return None
 
 

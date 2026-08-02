@@ -311,98 +311,9 @@ async def test_main_refuses_nested_attach():
 
 # ── 네이티브 클라 진입점(§7 P7 슬라이스 4) ────────────────────────────────────
 
-async def test_native_client_is_found_in_a_defined_order():
-    """지목(env) → PATH → 개발 트리 순. 순서가 뒤집히면 사용자가 고른 이진이 무시된다."""
-    from pytmuxlib.launcher import NATIVE_CLIENT, find_native_client
-    with tempfile.TemporaryDirectory() as tmp:
-        # Windows 의 `shutil.which` 는 PATHEXT 확장자가 있어야 실행파일로 친다 —
-        # 확장자 없는 파일을 놓으면 PATH 탐색이 **없는 것으로** 보고 순서 단언이 터진다
-        # (프로덕션은 무관: 실제로 배포되는 이진은 거기서 `.exe` 다).
-        on_path = os.path.join(tmp, NATIVE_CLIENT
-                               + (".exe" if os.name == "nt" else ""))
-        with open(on_path, "w") as f:
-            f.write("")
-        os.chmod(on_path, 0o755)
-        # PATH 에 있으면 그것을 쓴다. 비교는 `normcase` 로 — Windows 의 `shutil.which`
-        # 는 찾은 파일명을 **PATHEXT 의 표기 그대로**(`.EXE`) 돌려주므로 원문 문자열
-        # 비교는 대소문자만으로 어긋난다(파일시스템은 대소문자 무시라 찾긴 찾는다).
-        # POSIX 에서 normcase 는 항등이라 단언 강도는 그대로다.
-        got = find_native_client({"PATH": tmp})
-        assert got and os.path.normcase(got) == os.path.normcase(on_path), \
-            (got, on_path)
-        # 명시 지목이 PATH 를 이긴다 — 두 벌을 견주는 사람이 PATH 를 안 흔들 수 있어야 한다.
-        assert find_native_client(
-            {"PATH": tmp, "PYTMUX_CLIENT_BIN": "/opt/mine"}) == "/opt/mine"
-        # PATH 에 없으면 개발 트리(`../pytmux-client/target/…`)로 떨어진다. 그 트리가
-        # 안 지어져 있으면 None 이고, 지어져 있으면 **반드시 그 트리 안**이어야 한다 —
-        # 엉뚱한 곳의 동명 이진을 집으면 사용자는 옛 클라를 계속 쓰게 된다.
-        empty = os.path.join(tmp, "nope")
-        os.makedirs(empty)
-        fallback = find_native_client({"PATH": empty})
-        assert fallback is None or os.path.join("pytmux-client", "target") in fallback, \
-            fallback
-
-
-async def test_native_client_is_told_which_endpoint_to_use():
-    """엔드포인트를 안 넘기면 클라가 다시 찾아 **다른 서버**에 붙을 수 있다.
-
-    런처는 이미 resolve_default_endpoint 로 대상을 정했고(필요하면 새로 띄웠고),
-    후보는 둘 이상이다($XDG_RUNTIME_DIR 유무). 그 사이에 다른 후보를 맞히면 사용자는
-    자기 탭이 없는 화면을 본다.
-    """
-    from pytmuxlib.launcher import run_native_client
-    seen = []
-    rc = run_native_client("/tmp/chosen.sock",
-                           env={"PYTMUX_CLIENT_BIN": "/opt/pytmux-client-tui"},
-                           runner=lambda argv: seen.append(argv) or 0)
-    assert rc == 0
-    assert seen == [["/opt/pytmux-client-tui", "--socket", "/tmp/chosen.sock"]], seen
-
-
-async def test_missing_native_client_says_how_to_get_one():
-    """없을 때 조용히 성공으로 끝나면 사용자는 --native 가 먹은 줄 안다.
-
-    이진을 **못 찾은 상태**를 여기서 만든다(`find_native_client` 치환) — 이 저장소
-    옆에는 개발 트리가 있어서 PATH 를 비우는 것만으로는 '없는 환경'이 안 된다.
-    """
-    import harness
-    from pytmuxlib import launcher
-    ran = []
-    with harness.patched(launcher, find_native_client=lambda env=None: None):
-        rc = launcher.run_native_client("/tmp/x.sock",
-                                        runner=lambda argv: ran.append(argv) or 0)
-    assert rc == 1, "이진이 없는데 성공으로 보고했다"
-    assert ran == [], "이진이 없는데 무언가를 실행했다"
-
-
-async def test_native_flag_is_accepted_before_and_after_the_subcommand():
-    """`pytmux --native` 와 `pytmux attach --native` 는 같은 동작이어야 한다.
-
-    하위 파서에 기본값을 두면 `pytmux --native attach` 에서 그 기본값이 상위 값을
-    덮어써 플래그가 **조용히** 안 먹는다(argparse 관례). 그래서 SUPPRESS 를 쓴다.
-    """
-    import harness
-    from pytmuxlib import launcher
-    calls = []
-    # 중첩 거부·좀비 판정은 이 테스트의 대상이 아니다 — 그 앞단을 고정해 두고
-    # **--native 가 어느 자리에 와도 같은 경로를 타는가**만 본다.
-    with harness.patched(launcher,
-                         run_native_client=lambda sock: calls.append(sock) or 0,
-                         wait_server_authed=lambda *a, **k: True,
-                         nesting_blocked=lambda *a, **k: False,
-                         host_terminal_is_pytmux=lambda *a, **k: False,
-                         control_request=lambda *a, **k: {}):
-        with harness.patched(launcher.ipc, probe=lambda *a, **k: True):
-            sock = ["--socket", "/tmp/t.sock"]
-            for argv in (sock + ["--native"],
-                         sock + ["attach", "--native"],
-                         sock + ["--native", "attach"]):
-                calls.clear()
-                try:
-                    launcher.main(argv)
-                except SystemExit as e:
-                    assert e.code == 0, f"{argv}: exit {e.code}"
-                assert calls == ["/tmp/t.sock"], f"{argv} 에서 네이티브 경로가 안 탔다"
+# ⚠ 2026-08-01: `--native`(러스트 TUI) 테스트 셋을 지웠다 — 그 플래그와 이진이 함께
+# 사라졌다(사용자 결정: 클라는 정본 Textual 과 warp GUI 둘). GUI 는 `pytmux-gui` 를
+# 직접 실행하므로 런처가 대신 찾아 주는 경로가 없다.
 
 
 async def test_server_boot_error_names_the_missing_dependency():
@@ -603,6 +514,12 @@ async def test_relay_proxy_splices_through_a_fake_ssh():
                     % (sys.executable, os.path.join(root, "pytmux.py"), sock))
         os.chmod(fake, os.stat(fake).st_mode | stat.S_IEXEC | stat.S_IXGRP
                  | stat.S_IXOTH)
+        # 중계는 **B 가 허락한 목적지만** 나간다(fail-closed, 2026-08-01 §10-16ⓔ).
+        # 그래서 이 상자의 정책 파일에 목적지 `C` 를 먼저 적어 둔다 — 전에는 빈 목록이
+        # 곧 전부 허용이라 이 줄이 필요 없었다.
+        from pytmuxlib import ipc
+        with open(ipc.state_base(sock) + ".opts.json", "w", encoding="utf-8") as f:
+            json.dump({"remote_allowed_hosts": ["C"]}, f)
         env = dict(os.environ, PATH=tmpdir + os.pathsep + os.environ.get("PATH", ""))
         p = await asyncio.create_subprocess_exec(
             sys.executable, os.path.join(root, "pytmux.py"),
@@ -646,8 +563,19 @@ async def test_relay_proxy_rejects_bad_host_and_denied_hop():
         assert L._relay_host_ok("C") is True
         for bad in ("", "-oProxyCommand=x", "a b", " "):
             assert L._relay_host_ok(bad) is False, bad
-        # 허용목록 파일이 없으면(기본) 통과 — 종전 동작 무변경
-        assert L._relay_allowed(sock, "C") is True
+        # ★ 허용목록이 없으면 **거부**한다(fail-closed, 2026-08-01 §10-16ⓔ).
+        #   종전에는 통과였다 — "정책 미설정"을 "전부 허용"으로 읽으면 B 는 자기가
+        #   도약대로 쓰이는 줄도 모른 채 아무 데나 나간다. 이 함수가 지키는 것이 B 의
+        #   egress 라, 모르면 안 나가는 쪽이 맞는 기본값이다. 평범한 원격 attach 는
+        #   이 경로를 안 지나므로(다중홉 릴레이 전용) 기존 동선은 그대로다.
+        assert L._relay_allowed(sock, "C") is False
+        # 파일이 있어도 목록이 없거나 비면 같은 판정이다(모르면 안 나간다).
+        with open(ipc.state_base(sock) + ".opts.json", "w", encoding="utf-8") as f:
+            json.dump({"remote_allowed_hosts": []}, f)
+        assert L._relay_allowed(sock, "C") is False
+        with open(ipc.state_base(sock) + ".opts.json", "w", encoding="utf-8") as f:
+            json.dump({}, f)
+        assert L._relay_allowed(sock, "C") is False
         with open(ipc.state_base(sock) + ".opts.json", "w", encoding="utf-8") as f:
             json.dump({"remote_allowed_hosts": ["onlythis"]}, f)
         assert L._relay_allowed(sock, "onlythis") is True

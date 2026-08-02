@@ -1718,6 +1718,10 @@ async def test_command_table_disposition_golden():
         "set_buffer": HANDLED, "paste_buffer": HANDLED, "paste": HANDLED,
         "request_buffers": HANDLED, "clear_history": HANDLED,
         "capture_pane": HANDLED, "pipe_pane": HANDLED,
+        # 플러그인 화면 스펙(Tier C · 2026-08-01 P4) — 회신이 **화면 스펙**이라
+        # (`{"t":"plugin_screen"}`) 세션 상태를 안 바꾼다. 재동기할 캔버스가 없고,
+        # 다음 동작은 클라가 `plugin_action` 으로 되묻는다.
+        "plugin_open": HANDLED, "plugin_action": HANDLED,
         # 마우스 드래그 선택 텍스트 요청(2026-07-25 신설) — 핸들러가 `selection` 을
         # 회신해 완결하므로 HANDLED(full 재동기 불필요: 선택은 클라 상태다).
         "copy_range": HANDLED,
@@ -5463,6 +5467,49 @@ async def test_restore_layout_session_has_popup():
             os.unlink(srv.layout_path)
         except OSError:
             pass
+        await teardown(srv, task, sock)
+
+
+async def test_popup_layout_advertises_mouse():
+    """popup.mouse: 팝업 안 앱의 마우스 트래킹을 layout.popup 에 일반 패널과 같은
+    두 칸(mouse/mouse_sgr)으로 광고한다 — 네이티브 클라의 팝업 안 패스스루가 이 값을
+    소비한다(파이썬 클라는 아직 팝업 마우스가 없어 무시). 팝업 패널은 트리 밖이라
+    _session_of_pane 이 popup 도 봐야 모드 변화 재방송(serverpty)·stale 회수
+    (_reap_stale_mouse)가 팝업에 닿는다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        assert srv.popup_open(sess, "sleep 100", want_w=40, want_h=10)
+        pp = sess.popup["pane"]
+        # 광고 기본값: 추적 없음(클라는 패스스루를 안 연다).
+        pu = srv._popup_layout(sess, 80, 24)
+        assert pu["mouse"] == 0 and pu["mouse_sgr"] is False
+        # 팝업 안 앱이 DECSET 1002(드래그)+1006(SGR) 을 켰다.
+        assert pp.update_mouse_modes(b"\x1b[?1002h\x1b[?1006h")
+        pu = srv._popup_layout(sess, 80, 24)
+        assert pu["mouse"] == 2 and pu["mouse_sgr"] is True
+        # 트리 밖이어도 세션을 찾는다 — 이게 없으면 재방송·stale 회수가 팝업만 비켜 간다.
+        assert srv._session_of_pane(pp) is sess
+
+        # ★ 주기 스윕도 팝업을 돈다(§10-16ⓓ, 2026-08-01). `_all_panes()` 는 트리
+        #   전용이라 팝업이 이 주기 밖에 있었다 — 증상은 "첫 마우스 움직임까지 휠
+        #   스크롤백이 늦게 돌아온다"였다. 소유자가 죽은 상태를 흉내 내 스윕이 그
+        #   플래그를 걷어내는지 본다.
+        #   ⚠ 이 마지막 단언은 **POSIX 전용**이다. stale 판정
+        #   (`serverio._mouse_tracking_stale`)은 프로세스 **그룹**으로 소유자의 생사를
+        #   보는데 Windows 엔 그 개념이 없어 그 함수가 첫 줄에서 `IS_WINDOWS` 면 무조건
+        #   `False` 를 돌린다 — 즉 Windows 에서는 스윕이 아무것도 회수할 수 없고, 이
+        #   단언은 **제품이 옳아도 성립하지 않는다**(2026-08-01 os-compat 실측: 세
+        #   파이썬 버전 전부 여기서 붉었다). 위의 광고·`_session_of_pane` 단언은 두 OS
+        #   공통이라 그대로 두고 이 블록만 가른다.
+        #   판정은 `serverio.pty_backend.IS_WINDOWS` 를 그대로 읽는다 — 제품이 보는
+        #   바로 그 칸이라, 다른 테스트가 그것을 고정해 Unix 경로를 태우면 여기도 따라간다.
+        from pytmuxlib import serverio as _SIO
+        if not _SIO.pty_backend.IS_WINDOWS:
+            pp._mouse_owner_pgid = 999_999_999      # 존재하지 않는 그룹
+            srv._sweep_stale_mouse()
+            assert pp.mouse_track == 0, "주기 스윕이 팝업 패널을 비켜 갔다"
+    finally:
         await teardown(srv, task, sock)
 
 

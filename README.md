@@ -160,6 +160,31 @@ Claude Code 연동, 작업 보존 재시작까지 — 은 **[사용 매뉴얼(�
 - [기능 비교(위키)](https://github.com/neoocean/pytmux/wiki/Tmux-Feature-Comparison) — tmux 대비 기능 제안과 구현 현황
 - [기여 규칙(위키)](https://github.com/neoocean/pytmux/wiki/Contributing) — 기여/서브밋 규칙
 
+## 클라이언트 셋 — 서버는 하나
+
+pytmux 는 **단일 서버(데몬) + 다중 클라이언트** 구조입니다. 클라이언트는 둘이고 **모두 같은
+소켓 프로토콜**로 **같은 서버에 동시에** 붙습니다 — 한 창에서 터미널 클라로, 다른 창에서 GUI
+클라로 같은 세션을 보며 일할 수 있습니다.
+
+| 클라이언트 | 실행 | 무엇 |
+|---|---|---|
+| **Textual (Python)** | `pytmux` | 정본 클라이언트. 어디서든 파이썬만 있으면 돈다 |
+| **Rust GUI** | `pytmux-gui` | 별도 창으로 뜨는 네이티브 GUI(가변폭 크롬 · 실제 위젯 탭바/스플리터) |
+
+> 종전에는 Rust TUI(`pytmux-client-tui`)도 있었지만 **2026-08-01 에 퇴역**했습니다 —
+> 같은 매체(터미널)에 제품이 두 벌일 이유가 없었습니다. 터미널에서는 정본 `pytmux` 를 쓰세요.
+
+Rust GUI 는 이 저장소의 **[`client/`](client/)** 에 있습니다(Cargo 워크스페이스, MIT —
+경계는 [`client/PROVENANCE.md`](client/PROVENANCE.md)). 빌드:
+
+```sh
+cd client
+cargo build --release -p gui   # → target/release/pytmux-gui
+```
+
+사용법·화면은 **[`client/docs/USER_GUIDE.md`](client/docs/USER_GUIDE.md)** 를 보세요.
+파이썬 클라만 쓰신다면 이 디렉터리는 몰라도 됩니다 — 서버와 `pytmux` 명령은 Rust 없이 돕니다.
+
 ## 상태
 
 [기능 비교 위키](https://github.com/neoocean/pytmux/wiki/Tmux-Feature-Comparison) 의 모든 기능(패널/탭/단일 세션/복사 모드/명령·설정/상태줄·탭바·UI/

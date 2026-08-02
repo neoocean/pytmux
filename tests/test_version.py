@@ -19,9 +19,43 @@ async def test_fmt_uptime():
 
 
 async def test_code_version_format():
-    v = version.code_version()
+    """**실조회**(_probe_version)는 p4:/git:/unknown 셋 중 하나다.
+
+    `code_version()` 이 아니라 프로브를 직접 부른다 — 러너가 위생을 위해
+    `PYTMUX_CODE_VERSION` 을 심으므로(run.py), 래퍼를 부르면 그 값을 되읽는
+    **공허 통과**가 된다."""
+    v = version._probe_version(version.PROJECT_DIR, 1.5)
     assert isinstance(v, str) and v
     assert v.startswith(("p4:", "git:")) or v == "unknown"
+
+
+async def test_code_version_env_override_and_process_cache():
+    """override 는 그대로 돌려주고, 없으면 **프로세스 1회만** 조회한다.
+
+    캐시가 없으면 서버·클라를 여러 번 띄우는 프로세스(테스트 러너)가 기동마다
+    p4+git 서브프로세스를 새로 띄워 이벤트 루프를 정체시킨다(느린 p4 워크스테이션
+    실측 4.5~5.2초/회 → 살아 있는 서버로의 루프백 connect 가 0.5s 캡에 걸려 거짓
+    타임아웃). 프로브를 폭탄으로 갈아 끼워 **조회가 다시 일어나지 않음**을 단언한다."""
+    import os
+    from harness import patched
+    old = os.environ.get("PYTMUX_CODE_VERSION")
+    os.environ["PYTMUX_CODE_VERSION"] = "p4:999"
+    try:
+        assert version.code_version() == "p4:999"
+        os.environ.pop("PYTMUX_CODE_VERSION")
+        d = "/nonexistent-project-dir-for-cache-test"
+        with patched(version, _probe_version=lambda *a: "p4:1"):
+            assert version.code_version(d) == "p4:1"
+        def _boom(*a):
+            raise AssertionError("캐시 히트여야 하는데 프로브를 다시 불렀다")
+        with patched(version, _probe_version=_boom):
+            assert version.code_version(d) == "p4:1"
+    finally:
+        version._CACHE.pop("/nonexistent-project-dir-for-cache-test", None)
+        if old is None:
+            os.environ.pop("PYTMUX_CODE_VERSION", None)
+        else:
+            os.environ["PYTMUX_CODE_VERSION"] = old
 
 
 class _CapWriter:

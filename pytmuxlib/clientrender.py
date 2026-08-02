@@ -44,3 +44,64 @@ def dim_pane(cells, px, py, pw, ph, W, H, cell_fn):
         for xx in range(px, min(px + pw, W)):
             c, st = row[xx]
             row[xx] = cell_fn(c, st)
+
+
+# ── 탭(터치)으로 쓰는 세로 스크롤바 ──────────────────────────────────────────
+# **휠 이벤트를 앱에 넘기지 않는 터미널**을 위한 조작 경로다(제보/진단 2026-07-31,
+# iPhone Blink → ssh → MSYS): 클릭은 SGR 로 정상 도달하는데 `wheel` 은 0건이라
+# — 두 손가락 스와이프가 터미널 자기 스크롤백 UI로 소비된다(hterm 은 alt-screen
+# 에서도 이전 스크롤백을 노출해 "pytmux 실행 이전"까지 올라간다) — pytmux 가 휠을
+# 받을 방법이 원천적으로 없다. 그래서 **도달하는 유일한 입력인 탭**으로 스크롤백을
+# 조작한다: 스크롤 모드에서 활성 패널 오른쪽 끝 한 열에 스크롤바를 그리고,
+# ▲/▼ 탭 = 반 화면 위/아래, 트랙 탭 = 그 위치로 점프.
+#
+# 아래 세 함수는 셀 그리드도 앱도 안 건드리는 **순수 함수**다(단위 테스트 대상).
+SCROLLBAR_UP = "▲"
+SCROLLBAR_DOWN = "▼"
+SCROLLBAR_TRACK = "│"
+SCROLLBAR_THUMB = "█"
+SCROLLBAR_MIN_H = 3     # ▲ + 트랙 1칸 + ▼ 미만이면 그리지 않는다
+
+
+def scrollbar_chars(h, top, scroll):
+    """세로 스크롤바 한 열의 글자 목록(길이 h). `h < 3` 이면 `[]`(미표시).
+
+    좌표계는 서버 프레임의 두 값만으로 닫힌다 — `top`(뷰포트 첫 행의 **절대**
+    인덱스)·`scroll`(라이브에서 위로 올라간 행수). 위로 더 갈 수 있는 최대치는
+    `top + scroll`(맨 위면 top=0 이라 곧 scroll), 전체 행수는 `top + h + scroll`.
+    그래서 썸 길이 = 트랙 × (보이는 h / 전체), 위치 = 아래에서부터 scroll 비율."""
+    if h < SCROLLBAR_MIN_H:
+        return []
+    n = h - 2                                   # 화살표 두 칸을 뺀 트랙 길이
+    max_scroll = max(0, top + scroll)
+    total = max_scroll + h
+    thumb = max(1, min(n, round(n * h / total))) if total > 0 else n
+    # frac: 0.0 = 맨 위(스크롤 최대) … 1.0 = 맨 아래(라이브). 스크롤백이 없으면
+    # 썸이 트랙 전체라 위치는 의미가 없다(0 으로 고정).
+    frac = 0.0 if max_scroll <= 0 else (1.0 - scroll / max_scroll)
+    start = max(0, min(n - thumb, round((n - thumb) * frac)))
+    track = [SCROLLBAR_TRACK] * n
+    for i in range(start, start + thumb):
+        track[i] = SCROLLBAR_THUMB
+    return [SCROLLBAR_UP] + track + [SCROLLBAR_DOWN]
+
+
+def scrollbar_hit(h, iy):
+    """스크롤바 안 상대 행 `iy` → 조작. `("up"|"down", None)` 또는
+    `("jump", frac)`(frac 0.0=맨 위 … 1.0=맨 아래). 범위 밖/미표시면 None."""
+    if h < SCROLLBAR_MIN_H or not (0 <= iy < h):
+        return None
+    if iy == 0:
+        return ("up", None)
+    if iy == h - 1:
+        return ("down", None)
+    n = h - 2
+    return ("jump", (iy - 1) / (n - 1) if n > 1 else 0.0)
+
+
+def scrollbar_jump_delta(h, top, scroll, frac):
+    """트랙 탭이 요구하는 스크롤 델타(+위/-아래) — `send_scroll(delta=)` 에 그대로
+    넣는다. 절대 위치 명령을 새로 만들지 않고 **현재 위치와의 차**로 옮기므로 구
+    서버(scr 미전송 → scroll=0)에서도 프로토콜 추가 없이 동작한다(정확도만 떨어짐)."""
+    max_scroll = max(0, top + scroll)
+    return round((1.0 - frac) * max_scroll) - scroll

@@ -3473,6 +3473,13 @@ async def test_relay_two_hop_end_to_end_with_fake_ssh():
         sockmap = {"C": sockC, "B": os.path.join(tmpdir, "b.sock")}
         with open(os.path.join(tmpdir, "map.json"), "w", encoding="utf-8") as f:
             json.dump(sockmap, f)
+        # 중계는 **B 가 허락한 목적지만** 나간다(fail-closed, 2026-08-01 §10-16ⓔ) —
+        # B 의 정책 파일에 `C` 를 적어 둔다. 종전에는 빈 목록이 곧 전부 허용이라 이 줄이
+        # 없었고, 그래서 이 테스트가 이 전환의 **첫 실증**이 됐다(적색 → 이 한 줄).
+        from pytmuxlib import ipc as _ipc
+        with open(_ipc.state_base(sockmap["B"]) + ".opts.json", "w",
+                  encoding="utf-8") as f:
+            json.dump({"remote_allowed_hosts": ["C"]}, f)
         fake = os.path.join(tmpdir, "ssh")
         with open(fake, "w", encoding="utf-8") as f:
             f.write(

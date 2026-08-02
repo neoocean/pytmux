@@ -118,8 +118,15 @@ async def test_runner_e2e_writes_report_matching_stdout():
     with tempfile.TemporaryDirectory() as td:
         p = os.path.join(td, "r.jsonl")
         env = dict(os.environ, PYTMUX_TEST_REPORT=p)
+        # encoding 명시 — run.py 는 자기 stdout 을 UTF-8 로 reconfigure 하고 한글
+        # (요약·`리포트:` 꼬리말)을 찍는데, `text=True` 만 주면 **부모가 로케일
+        # 인코딩으로 디코드**한다. 한국어 Windows(cp949)에선 리더 스레드가
+        # UnicodeDecodeError 로 죽어 `r.stdout` 이 None 이 되고, 아래 단언이
+        # "argument of type 'NoneType' is not iterable" 로 터졌다 — 러너 결함이
+        # 아니라 이 호출의 디코딩 불일치다(2026-07-31 검수).
         r = subprocess.run([sys.executable, RUNPY, "test_cellwidth"],
-                           capture_output=True, text=True, env=env, timeout=120)
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", env=env, timeout=120)
         assert "passed" in r.stdout, r.stdout + r.stderr
         n_pass = int(r.stdout.split("=" * 50)[-1].split(" passed")[0].strip())
         recs = [json.loads(ln) for ln in open(p, encoding="utf-8") if ln.strip()]

@@ -175,6 +175,9 @@ def load_config(path: str | None = None) -> dict:
                                   #   (기본 3 — 짧은 클릭이 드래그로 오인되는 것 방지)
         set copy-unwrap on|off    # 마우스 복사 시 앱이 접은 줄바꿈·들여쓰기 펴기
                                   #   (기본 on — 긁어 복사한 명령을 바로 붙여넣기)
+        set touch-scroll on|off   # 탭으로 쓰는 스크롤 UI(기본 on) — 상태줄 ⇕ 배지
+                                  #   + 스크롤 모드 세로 스크롤바. 휠 이벤트를 앱에
+                                  #   안 넘기는 터미널(iPhone Blink 등)용
         set ambiguous-width auto|narrow|wide  # East Asian Ambiguous 폭(→·— 등)
                                   #   auto(기본)=기동 시 단말 자동감지, wide=강제 2칸
                                   #   (CJK 로케일 단말), narrow=1칸
@@ -228,6 +231,12 @@ def load_config(path: str | None = None) -> dict:
                             cfg["mouse_drag_threshold"] = int(val)
                         except ValueError:
                             pass
+                    elif opt in ("touch-scroll", "touch_scroll"):
+                        # 탭(터치)으로 쓰는 스크롤 UI — 상태줄 ⇕ 배지 + 스크롤 모드
+                        # 세로 스크롤바(기본 on). 휠을 앱에 안 넘기는 터미널
+                        # (iPhone Blink 등)용 경로라 데스크탑에선 꺼도 된다.
+                        cfg["touch_scroll"] = val.lower() in (
+                            "on", "true", "1", "yes")
                     elif opt in ("copy-unwrap", "copy_unwrap"):
                         # 마우스 복사 시 **앱이 접은** 줄바꿈·매달림 들여쓰기 펴기
                         # (기본 on) — Claude Code 의 `! …` 명령을 바로 붙여넣기 위함.
@@ -338,6 +347,7 @@ _OPT_ALIASES = {
     "mouse-drag-copy": ("mouse_drag_copy",),
     "mouse-drag-threshold": ("mouse_drag_threshold",),
     "copy-unwrap": ("copy_unwrap",),
+    "touch-scroll": ("touch_scroll",),
     "strip-box-drawing": ("strip_box_drawing",),
     "lang": ("language",),
 }

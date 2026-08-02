@@ -58,6 +58,20 @@ from .clientcmd import _CommandMixin  # noqa: F401
 from .clientio import _InputMixin, _RenderMixin  # noqa: F401
 
 
+def _wire_int(v, default: int = 0) -> int:
+    """프레임에서 온 정수 필드를 **절대 예외 없이** 읽는다(없거나 오타입이면 default).
+
+    화면 프레임(`screen`/`screen-delta`)은 로컬 서버뿐 아니라 **페더레이션 상류**에서도
+    릴레이돼 온다 — 상류는 다른 머신의 서버라 신뢰 등급이 낮고, 릴레이 검증은
+    `pane`+`rows` 만 본다(serverremote). 종전 `int(msg.get("top") or 0)` 은 상류가
+    `"top": "x"` 같은 값을 보내면 ValueError 로 **클라를 죽였다**(자동 재기동은 되지만
+    화면이 날아간다). 숫자 아닌 값은 조용히 기본값으로 접는다."""
+    try:
+        return int(v or default)
+    except (TypeError, ValueError):
+        return default
+
+
 # ── §5.4: PytmuxApp 책임별 믹스인(모듈 레벨) ─────────────────────────────────────
 # 종전 build_client_app 팩토리 안 한 덩어리(거대 클래스)였던 PytmuxApp 의 응집된
 # 메서드 군을 모듈 레벨 믹스인으로 분리한다. 믹스인은 client.py 의 모듈 전역(textual/
@@ -577,6 +591,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 같은 텍스트를 계속 가리키게 한다(요청 2026-07-25). 구 서버는 이 필드를
             # 안 보내므로 키가 없으면 종전(화면 내) 선택으로 폴백한다.
             self.pane_top = {}
+            # id -> 그 패널이 라이브에서 **위로 올라간 행수**(서버 프레임의 "scr",
+            # 라이브면 필드 부재 = 0). 터치 스크롤바(touch-scroll)가 썸 위치와 점프
+            # 거리를 계산하는 유일한 입력이다 — `pane_top` 과 짝을 이뤄 "위로 갈 수
+            # 있는 최대치 = top + scr" 를 준다(clientrender.scrollbar_chars 주석).
+            self.pane_scroll = {}
             # §1.7 페더레이션 회복: baseline(직전 full) 없이 screen-delta 만 온 패널.
             # redraw 를 1회 요청해 full 을 끌어오고, full 수신 시 비운다(중복 요청 디바운스).
             self._delta_no_base = set()
@@ -704,6 +723,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.copy_unwrap = bool(config.get("copy_unwrap", True))
             # copy_range 회신(selection)에 쓸 (선택 패널 폭, 첫 줄 시작 열).
             self._copy_unwrap_geom = (0, 0)
+            # 터치 스크롤 UI(기본 on): 상태줄 `⇕` 배지 탭 → 스크롤 모드, 스크롤
+            # 모드에서 활성 패널 오른쪽 끝 세로 스크롤바를 탭으로 조작. **휠을 앱에
+            # 넘기지 않는 터미널**(iPhone Blink 등 — 스와이프를 자기 스크롤백 UI로
+            # 소비, 진단 2026-07-31)에서 유일하게 남는 입력이 탭이라서 만든 경로다.
+            # 휠이 정상인 데스크탑에선 불필요하므로 `set touch-scroll off` 로 끄면
+            # 배지·스크롤바가 사라진다(clientrender.scrollbar_chars 주석 참조).
+            self.touch_scroll = bool(config.get("touch_scroll", True))
+            # 이번 합성에서 그린 스크롤바 클릭존 (pane_id, x, y0, h) 또는 None —
+            # PaneView.on_mouse_down 이 선택/패스스루보다 먼저 hit-test 한다.
+            self._touch_scroll_zone = None
             # 마우스 이벤트 진단 로그(원격 SSH 휠 스크롤 미동작 등 환경 의존 문제용).
             # `set mouse-debug on` 으로 켜면 클라이언트가 받은 마우스/휠 이벤트와
             # **내비게이션 키**(↑/↓/페이지/홈/엔드 — `_KEY_DIAG` 화이트리스트)를
@@ -1169,7 +1198,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                              if isinstance(p, dict)}
                 if _declared:                     # 빈 layout 은 정리 보류(중간 상태 방지)
                     for _cache in (self.pane_content, self.pane_wrap,
-                                   self.pane_top):
+                                   self.pane_top, self.pane_scroll):
                         for _pid in [k for k in _cache if k not in _declared]:
                             del _cache[_pid]
                     self._delta_no_base &= _declared
@@ -1187,7 +1216,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.pane_content[msg["pane"]] = (msg["rows"], msg.get("cursor"))
                 self.pane_wrap[msg["pane"]] = set(msg.get("wrap") or ())
                 if "top" in msg:
-                    self.pane_top[msg["pane"]] = int(msg.get("top") or 0)
+                    self.pane_top[msg["pane"]] = _wire_int(msg.get("top"))
+                    # scr 부재 = 라이브(0). 매 프레임 덮어써야 "맨 아래로 돌아온"
+                    # 전이를 놓치지 않는다(서버는 0 일 때 필드를 안 싣는다).
+                    self.pane_scroll[msg["pane"]] = _wire_int(msg.get("scr"))
                 self._delta_no_base.discard(msg["pane"])  # full 수신 → baseline 회복
                 self._request_composite()
             elif t == "screen-delta":
@@ -1215,7 +1247,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self.pane_content[pid] = (rows, msg.get("cursor"))
                     self.pane_wrap[pid] = set(msg.get("wrap") or ())
                     if "top" in msg:
-                        self.pane_top[pid] = int(msg.get("top") or 0)
+                        self.pane_top[pid] = _wire_int(msg.get("top"))
+                        self.pane_scroll[pid] = _wire_int(msg.get("scr"))
                     self._request_composite()
             elif t == "status":
                 # 플러그인 관리(PLUGIN_MANAGER_SCENARIO): 서버가 보낸 비활성 집합을 이
@@ -1500,6 +1533,42 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     m["delta"] = delta
                 asyncio.create_task(write_msg(self.writer, m))
 
+        def toggle_scroll_mode(self):
+            """터치 스크롤 UI(상태줄 `⇕` 배지 탭)의 스크롤 모드 진입/이탈.
+
+            나갈 땐 맨 아래(live)로 되돌린다 — 키보드 q/ESC/Enter 종료와 같은 의미
+            (`_handle_scroll_key`). normal/scroll 이 아닌 모드(prompt·display·prefix)
+            에선 no-op — 그 모드들의 키 해석을 배지 탭이 가로채지 않게 한다."""
+            if self.mode == "scroll":
+                self.send_scroll(self.layout.get("active"), bottom=True)
+                self.mode = "normal"
+            elif self.mode == "normal":
+                self.mode = "scroll"
+            else:
+                return
+            self.status.refresh()
+            self._composite()
+
+        def touch_scroll_action(self, pane_id, h, iy):
+            """스크롤바(높이 h) 상대 행 iy 탭 처리 — ▲/▼ = 반 화면 위/아래(PgUp/PgDn
+            과 같은 양), 트랙 = 그 위치로 점프. 점프는 절대 위치 명령을 새로 만들지
+            않고 **현재 위치와의 차**를 기존 scroll 델타로 보낸다."""
+            hit = clientrender.scrollbar_hit(h, iy)
+            if hit is None:
+                return
+            kind, frac = hit
+            half = max(1, h // 2)
+            if kind == "up":
+                self.send_scroll(pane_id, delta=half)
+            elif kind == "down":
+                self.send_scroll(pane_id, delta=-half)
+            else:
+                delta = clientrender.scrollbar_jump_delta(
+                    h, self.pane_top.get(pane_id, 0),
+                    self.pane_scroll.get(pane_id, 0), frac)
+                if delta:
+                    self.send_scroll(pane_id, delta=delta)
+
         def _apply_ambiguous_wide(self, wide: bool):
             """모호폭 wide 모드를 런타임 전환한다(:set ambiguous-width). 클라 폭 모델
             (char_cells·Rich/Textual 측정)을 바꾸고, 서버에 통지(set_ambig)해 서버 pyte
@@ -1736,6 +1805,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.display_message(i18n.t(
                     "msg.copy_unwrap",
                     state=("ON" if self.copy_unwrap else "OFF")))
+            elif name in ("touch-scroll", "touch_scroll"):
+                self.touch_scroll = val.lower() in ("on", "true", "1", "yes")
+                if not self.touch_scroll:
+                    self._touch_scroll_zone = None   # 남은 클릭존 즉시 무효화
+                self.display_message(i18n.t(
+                    "msg.touch_scroll",
+                    state=("ON" if self.touch_scroll else "OFF")))
+                self.status.refresh()
+                self._composite()
             elif name in ("mouse-debug", "mouse-log"):
                 self.mouse_debug = val.lower() in ("on", "true", "1", "yes")
                 if self.mouse_debug:
@@ -1873,6 +1951,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return str(self.mouse_drag_threshold)
             if key in ("copy-unwrap", "copy_unwrap"):
                 return "on" if self.copy_unwrap else "off"
+            if key in ("touch-scroll", "touch_scroll"):
+                return "on" if self.touch_scroll else "off"
             if key == "mode-keys":
                 return self.mode_keys
             if key == "alt-scroll":
@@ -1926,6 +2006,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 f"mouse-drag-copy {'on' if self.mouse_drag_copy else 'off'}",
                 f"mouse-drag-threshold {self.mouse_drag_threshold}",
                 f"copy-unwrap {'on' if self.copy_unwrap else 'off'}",
+                f"touch-scroll {'on' if self.touch_scroll else 'off'}",
                 f"mouse-debug {'on' if self.mouse_debug else 'off'}",
                 f"alt-scroll  {'on' if self.disable_alt_scroll else 'off'}",
                 f"status-bg   {self.status.bg}",

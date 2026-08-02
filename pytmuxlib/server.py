@@ -775,11 +775,19 @@ class Server(*_SERVER_BASES):
         return None
 
     def _session_of_pane(self, pane: Pane) -> Session | None:
-        """패널이 속한 세션을 찾는다(어느 탭/윈도우든)."""
+        """패널이 속한 세션을 찾는다(어느 탭/윈도우든, **팝업 패널 포함**).
+
+        팝업 패널은 트리 밖이라 window.panes() 로는 안 잡힌다 — 여기서 빠지면 팝업 안
+        앱이 마우스 트래킹을 켜고 꺼도 레이아웃 재방송이 안 나가(serverpty 의
+        update_mouse_modes 경로) 클라가 패스스루를 열고 닫을 수 없고, stale 회수
+        (_reap_stale_mouse)도 팝업만 비켜 간다."""
         for sess in self.sessions.values():
             for t in sess.tabs:
                 if pane in t.window.panes():
                     return sess
+            pu = getattr(sess, "popup", None)
+            if pu and pu.get("pane") is pane:
+                return sess
         return None
 
     def _session_size(self, sess: Session):

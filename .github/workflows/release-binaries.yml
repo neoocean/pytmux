@@ -1,0 +1,173 @@
+name: release-binaries
+
+# 배포용 GUI 이진 셋(macOS·Linux·Windows)을 러너에서 굽고 `client/build/` 에 커밋한다.
+# 사용자 지시 2026-08-01: "깃헙 액션을 통해 build 디렉토리 하위에 맥OS·리눅스·윈도우
+# 버전 바이너리를 각각 만들어 올리도록".
+#
+# # 왜 CI 가 굽나
+#
+# `build/` 는 2026-08-01(p4 69022)부터 공개 미러로 나간다. 그런데 손으로 구운 이진에는
+# **굽는 사람 상자의 절대 소스경로가 박힌다**(rustc 가 패닉 위치·`file!()` 용으로 넣는다).
+# 실측으로 macOS 345건 · Windows 1034건이 들어 있었고, 이진은 개정마다 새 blob 이라 한 번
+# 푸시하면 history rewrite 말고는 빼는 길이 없다. 러너에서 구우면 애초에 개인 상자가
+# 개입하지 않고, **Windows·Linux 이진을 위해 그 OS 상자를 갖고 있을 필요도 없다**
+# (크로스 컴파일은 안 된다 — GUI 는 창·GPU 백엔드를 실제로 링크한다).
+#
+# # 왜 굽는 로직이 여기 없나
+#
+# `client/scripts/build_release.{sh,ps1}` 을 **그대로 부른다.** remap 인자를 워크플로에
+# 다시 적으면 사람이 손으로 굽는 길과 CI 가 굽는 길이 갈리고, 갈린 순간 "로컬은
+# 깨끗한데 CI 산출물만 샌다"(혹은 그 반대)가 조용히 성립한다. 스크립트는 구운 직후
+# `scripts/check_mirror.py --scan` 으로 자기 산출물을 재므로 그 검사도 공짜로 따라온다.
+#
+# # 왜 push 마다 안 도나
+#
+# 이진 셋이 ~24MB 이고 개정마다 통째로 새 blob 이다 — main 에 푸시할 때마다 구우면
+# 히스토리가 몇 달 만에 GB 로 간다(`.gitignore` 의 `build/` 주석이 "스냅샷 갱신 빈도를
+# 낮게 유지할 것"이라 적어 둔 이유). 그래서 **사람이 부를 때**(`workflow_dispatch`)와
+# **릴리스 태그**에만 돈다. 코드가 깨졌는지는 `rust.yml` 이 매 푸시마다 이미 잰다 —
+# 여기는 "굽는다"만 한다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "왜 다시 굽나(커밋 메시지에 남는다)"
+        required: false
+        default: "수동 갱신"
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-binaries        # 같은 파일을 커밋하므로 직렬화(푸시 경합 방지)
+  cancel-in-progress: false
+
+permissions:
+  contents: write                # publish 잡이 client/build 를 커밋·푸시
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false           # 한 OS 가 깨져도 나머지 둘의 결과는 본다
+      matrix:
+        include:
+          - os: macos-latest
+            out: pytmux-gui-macos-arm64
+          - os: ubuntu-latest
+            out: pytmux-gui-linux-x64
+          - os: windows-latest
+            out: pytmux-gui-windows-x64.exe
+    runs-on: ${{ matrix.os }}
+    # 릴리스 빌드는 워크스페이스 전체 최적화라 디버그보다 훨씬 길다. 캐시가 비는 첫
+    # run 몫까지 두되, 매달리면 여기서 끊는다.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      # 툴체인 채널은 client/rust-toolchain.toml 이 정한다(rust.yml 과 같은 규율 —
+      # 여기 버전을 또 적으면 두 곳이 갈린다).
+      - name: Show toolchain
+        run: rustup show && cargo --version
+
+      # build_release.* 가 갓 구운 이진을 scripts/check_mirror.py 로 잰다.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            client/target
+          # 릴리스 프로파일은 rust.yml 의 디버그 캐시와 산출물이 다르다 — 키를 갈라
+          # 서로 밀어내지 않게 한다.
+          key: release-${{ runner.os }}-cargo-${{ hashFiles('client/Cargo.lock', 'client/rust-toolchain.toml') }}
+          restore-keys: release-${{ runner.os }}-cargo-
+
+      # Linux 러너에는 GUI 크레이트가 링크하는 시스템 라이브러리가 없다(rust.yml 과
+      # 같은 목록 — 갈리면 여기서만 "wgpu/xkb 를 못 찾는다"로 깨진다).
+      - name: Install Linux GUI deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb1-dev pkg-config
+
+      - name: Bake (Unix)
+        if: runner.os != 'Windows'
+        run: bash client/scripts/build_release.sh --locked
+
+      - name: Bake (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: client\scripts\build_release.ps1 --locked
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: gui-${{ matrix.os }}
+          path: client/build/${{ matrix.out }}
+          if-no-files-found: error   # 없으면 통과가 아니라 고장이다
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: _gui_artifacts
+
+      # 아티팩트 prefix 처리가 버전에 따라 다를 수 있어 **파일 기준**으로 옮긴다
+      # (benchmark.yml 이 같은 이유로 같은 모양을 쓴다).
+      - name: Move binaries into client/build/
+        run: |
+          set -eu
+          found=0
+          for f in $(find _gui_artifacts -type f); do
+            cp "$f" "client/build/$(basename "$f")"
+            found=$((found + 1))
+          done
+          rm -rf _gui_artifacts
+          # 셋 다 와야 한다. 하나가 조용히 빠지면 그 OS 사용자는 **낡은 이진**을 계속
+          # 받게 되고, 커밋은 성공했으므로 아무도 눈치채지 못한다.
+          if [ "$found" -ne 3 ]; then
+            echo "이진이 3개가 아니라 ${found}개 왔다 — build 잡 중 하나가 넘어졌다" >&2
+            exit 1
+          fi
+
+      # ⚠ upload-artifact 는 zip 을 거치며 **실행 권한을 잃는다.** 여기서 다시 세우지
+      # 않으면 git 이 100644 로 싣고, 받은 사람은 `chmod +x` 를 손으로 해야 한다 —
+      # 미러에 이진을 싣는 이유가 "받을 길"인데 받아서 못 돌리면 뜻이 없다.
+      - name: Restore exec bit
+        run: chmod +x client/build/pytmux-gui-macos-arm64 client/build/pytmux-gui-linux-x64
+
+      # 마지막 관문. build 잡에서 이미 쟀지만 그 뒤로 아티팩트가 왕복했다 —
+      # **커밋 직전의 실물**을 한 번 더 잰다(재는 값이 싸고, 놓치면 되돌릴 수 없다).
+      - name: Mirror hygiene gate
+        run: |
+          python scripts/check_mirror.py --scan \
+            client/build/pytmux-gui-macos-arm64 \
+            client/build/pytmux-gui-linux-x64 \
+            client/build/pytmux-gui-windows-x64.exe
+
+      - name: Commit & push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add client/build
+          if git diff --cached --quiet; then
+            echo "이진이 그대로다 — 커밋 생략"; exit 0
+          fi
+          git commit -m "build: GUI 이진 셋 재빌드 (${{ github.event.inputs.reason || github.ref_name }}, run ${{ github.run_id }}) [skip ci]"
+          for i in 1 2 3; do
+            git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
+            echo "재시도 $i…"; sleep 3
+          done
+          echo "push 실패"; exit 1

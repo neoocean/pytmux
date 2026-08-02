@@ -19,6 +19,24 @@ from pytmuxlib import ipc
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir, "scripts"))
 import redteam  # noqa: E402
+import contextlib  # noqa: E402
+
+
+@contextlib.contextmanager
+def fast_loopback_cap():
+    """루프백 connect 캡을 **프로덕션 기본값**으로 되돌린 채 배터리를 돌린다.
+
+    러너(run.py)는 위생을 위해 넉넉한 캡을 심는다(서버·클라가 한 루프라 동기 stall 이
+    거짓 타임아웃을 만든다 — 2026-07-31). 반면 이 모듈의 배터리는 **거절·죽은 엔드포인트를
+    대량으로** 두드리는 게 목적이라, 넉넉한 캡을 그대로 쓰면 시도마다 그만큼 기다려 테스트
+    예산(90초)을 넘긴다 — 실측: 같은 실패가 어서션(≈10초)에서 **TIMEOUT** 으로 바뀌어
+    원인이 가려졌다. 캡의 의미가 정반대로 필요한 구간이므로 여기서만 되돌린다."""
+    saved = os.environ.pop(ipc._LOOPBACK_CAP_ENV, None)
+    try:
+        yield
+    finally:
+        if saved is not None:
+            os.environ[ipc._LOOPBACK_CAP_ENV] = saved
 
 
 async def test_redteam_battery_rejects_unauth_and_keeps_alive():
@@ -432,7 +450,8 @@ async def test_redteam_ptyhost_battery_finds_no_unauth_and_host_survives():
 
     라운드는 작게(2) 준다 — 이 회귀의 목적은 배터리 배선·분류이고, 대량 반복은 수동 CLI
     (`python scripts/redteam.py`)가 한다."""
-    rep = await redteam.run_ptyhost_battery(rounds=2)
+    with fast_loopback_cap():      # 죽은/거절 엔드포인트를 대량 두드린다(위 주석)
+        rep = await redteam.run_ptyhost_battery(rounds=2)
     if rep.get("skipped"):
         from run import skip
         skip("pty-host 기동/토큰 게시 불가: %s" % rep["skipped"])

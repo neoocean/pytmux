@@ -150,5 +150,81 @@ class _P4ChangesPlugin:
                             str(msg.get("change", "")), cwd)
         return None
 
+    # ---- 선언형 화면 스펙(Tier C · 설계 P4) ----
+    def plugin_screen(self, server, sess, req):
+        """네이티브 클라용 화면 스펙 — 목록(list)과 상세(text) 둘.
+
+        **첫 시민으로 이 플러그인을 고른 이유**: 서버측이 이미 목록·상세를 만들고 있고
+        (`list_changes_msg`·`describe_msg`), 화면 상태가 **인자에서 매번 생긴다** —
+        서버가 클라마다 UI 상태를 들 필요가 없다(mdir·ncd 는 그게 있어 뒤 슬라이스다).
+
+        정본 클라와의 관계: 저쪽은 이 훅을 안 쓰고 자기 Textual 화면을 띄운다. **그리는
+        자료는 같은 함수에서 나온다** — 그래서 목록이 갈릴 자리가 없다.
+        """
+        import asyncio
+
+        def _offload(fn, *a):
+            return asyncio.get_event_loop().run_in_executor(None, fn, *a)
+
+        do = req.get("do")
+        from .server import _cwd
+        if do == "open":
+            if req.get("name") not in _ALIASES:
+                return None                      # 내 이름이 아니다
+            args = req.get("args") or []
+            count = _DEFAULT_COUNT
+            if args and str(args[0]).isdigit():
+                count = max(1, min(_MAX_COUNT, int(args[0])))
+            cwd = _cwd(server, sess)             # 세션 읽기는 루프에서(LOOP-2 분할)
+            from .server import list_changes_msg
+            return _offload(self._changes_spec, server, sess, count, cwd)
+        if req.get("id") != "p4changes":
+            return None
+        if do == "describe":
+            change = str(req.get("input") or "")
+            if not change:
+                # 줄 번호만 온 경우는 못 푼다 — 클라가 그 줄의 `key`(=CL 번호)를 실어
+                # 보낸다는 것이 이 스펙의 계약이다(자리로 가리키면 목록이 바뀔 때 어긋난다).
+                return {"t": "plugin_screen_close", "id": "p4changes"}
+            cwd = _cwd(server, sess)
+            return _offload(self._describe_spec, server, sess, change, cwd)
+        if do == "close":
+            return {"t": "plugin_screen_close", "id": "p4changes"}
+        return None
+
+    def _changes_spec(self, server, sess, count, cwd):
+        from .server import list_changes_msg
+        msg = list_changes_msg(server, sess, count, cwd)
+        rows = [{
+            # `key` 는 그 줄의 **뜻**(CL 번호)이고 클라가 액션에 그대로 실어 보낸다.
+            "key": str(r.get("change", "")),
+            "label": f"{r.get('change', '')}  {r.get('desc', '')}".strip(),
+            "cols": [r.get("user", ""), r.get("when", "")],
+        } for r in msg.get("rows") or []]
+        err = msg.get("err")
+        return {
+            "t": "plugin_screen", "id": "p4changes", "kind": "list",
+            "title": f"Perforce submitted changelists ({msg.get('info') or ''})".strip(),
+            "hint": "(↑↓ 이동 · Enter 상세 · Esc 닫기)",
+            "rows": rows,
+            "selected": 0,
+            # 키 → 플러그인 액션 이름. 클라는 이 표에 있는 키만 되돌려준다.
+            "keys": {"enter": "describe"},
+            # 빈 목록과 **실패**는 다르다 — 실패면 그 사실이 화면에 있어야 한다.
+            "note": err or ("" if rows else "submitted changelist 가 없습니다"),
+        }
+
+    def _describe_spec(self, server, sess, change, cwd):
+        from .server import describe_msg
+        msg = describe_msg(server, sess, change, cwd)
+        return {
+            "t": "plugin_screen", "id": "p4changes", "kind": "text",
+            "title": f"CL {change}",
+            "hint": "(↑↓ 스크롤 · Esc 목록으로)",
+            "text": msg.get("text") or "",
+            "note": msg.get("err") or "",
+            "keys": {},
+        }
+
 
 PLUGIN = _P4ChangesPlugin()

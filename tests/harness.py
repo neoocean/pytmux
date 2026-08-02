@@ -44,11 +44,36 @@ async def server_only():
     상태 디렉터리를 `LOCALAPPDATA` 로 주입해 격리한다.
     반환값은 **확정 엔드포인트**(TCP 면 실제 포트)라 클라이언트가 그대로 접속한다.
     """
+    # ⚠ **PYTMUX_HOME 을 먼저 무력화한다**(2026-07-31 실측 사고). 아래 LOCALAPPDATA
+    # 격리만으로는 부족하다 — `ipc.default_state_dir()` 는 **PYTMUX_HOME 을 우선**하므로,
+    # 사용자가 그 변수를 쓰는 박스(§10-E #1 통합을 켠 환경)에서는 테스트 서버가 전부
+    # **실사용 상태 디렉터리**에 자기 포트/토큰을 게시한다 → 라이브 데몬의
+    # `default.port`·`default.token` 이 덮어써져 (a) 새 attach 가 죽은 포트로 가고
+    # (b) 토큰 불일치로 auth_failed 가 되며, (c) teardown 의 서버-예외 가드가 **실사용**
+    # `error.log`(수개월치)를 읽어 무관한 트레이스백으로 오탐한다. 실제로 이 박스에서
+    # 라이브 서버 포트파일이 테스트 포트로 바뀌었다.
+    # **설정하지 않고 제거한다**(run.py 의 위생 규약과 동일) — 임시 홈으로 *설정*하면
+    # captures/db 기본 경로까지 `<home>/…` 로 옮겨가 "기본 소켓 → 프로젝트 captures/"
+    # 를 단언하는 테스트가 깨진다(실측). 제거하면 종전 기본값(Windows=LOCALAPPDATA,
+    # Unix=XDG)으로 돌아가고, 그 둘은 아래에서 임시 디렉터리로 격리된다.
+    # run.py 는 이미 같은 pop 을 하지만, 여기 두는 이유는 **harness 를 직접 import 하는
+    # 경로**(임시 진단 스크립트·에디터 러너)까지 덮기 위해서다 — 실제로 이 세션의
+    # 진단 스크립트가 그 구멍으로 라이브 상태를 덮어썼다.
+    os.environ.pop("PYTMUX_HOME", None)
     if IS_WINDOWS:
         os.environ["LOCALAPPDATA"] = tempfile.mkdtemp(prefix="pytmux-test-")
         endpoint = "tcp:127.0.0.1:0"
     else:
         endpoint = tempfile.mktemp(suffix=".sock")
+    # 상태 디렉터리를 **서버 기동 전에** 미리 만들고 조인다(warm-up, 2026-07-31 진단).
+    # 격리마다 새 디렉터리라 Windows 는 첫 호출이 `ipc._harden_win_acl` 의 icacls
+    # 서브프로세스로 **0.4~0.6초**를 태운다(실측). 그게 `serve()` 도중에 터지면 이벤트
+    # 루프가 그만큼 멎고, 테스트는 서버와 **같은 루프**를 쓰므로 곧이어 하는
+    # `ipc.open_connection` 이 커널 handshake(<1ms)와 무관하게
+    # `ipc._LOOPBACK_CONNECT_TIMEOUT`(0.5s)에 걸려 **거짓 TimeoutError** 를 냈다 —
+    # 원인이 안 보이는 hang 으로 나타나 test_server 연결 테스트 10건이 TIMEOUT 이었다
+    # (실측: 같은 조건에서 첫 connect 0.608s, 두 번째부터 0.001s). 연결 창에서 치운다.
+    ipc.default_state_dir()
     # 캡처(REC) 출력 격리: 테스트 엔드포인트 "tcp:127.0.0.1:0" 는 default_endpoint()
     # 와 같아 server.capture_dir 가 **공유 프로젝트 captures/default** 를 가리킨다.
     # 그러면 실사용 pytmux 데몬이 같은 파일을 캡처 중일 때 test_capture_output 이 그
