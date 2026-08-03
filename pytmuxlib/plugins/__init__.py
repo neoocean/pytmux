@@ -707,6 +707,37 @@ class Registry:
                     return r
         return None
 
+    def client_input_badge(self, app):
+        """**글자를 받는 판**(물음·팔레트·작성창·설정 입력)의 입력줄 오른쪽 끝에 붙일
+        배지 — `(문구, 의미색이름)` 또는 None(첫 비-None 채택).
+
+        # 왜 이 훅이 필요한가 (pytmux-14)
+
+        입력기 배지의 자리 규칙은 *"지금 글자를 받는 곳의 오른쪽 끝"* 이다. 캔버스에서는
+        그것이 활성 패널의 커서 줄이고, 그 그림은 `client_render`(정본)·`plugin_cells`
+        (서버)가 그린다. 그런데 **판이 열리면 커서가 판 안 입력줄로 가고**, 판은 Textual
+        위젯이라 셀 격자 위에 있다 — 셀에 그린 배지는 판 **뒤**에 깔려 안 보인다.
+        그래서 판 쪽은 셀이 아니라 **위젯**으로 붙여야 하고, 그 자리를 아는 것은 판이다.
+
+        # 왜 코어가 직접 `[한]` 을 안 그리나
+
+        delete-to-disable 이 깨진다. `ime-indicator` 디렉터리를 지우면 배지는 화면 어디에도
+        없어야 하는데, 문구가 `clientscreens.py` 에 있으면 남는다. 그래서 판은 **자리만**
+        내주고 무엇을 적을지는 플러그인이 정한다(`client_render` 와 같은 분업).
+
+        색은 값이 아니라 **의미 이름**이다(`success`·`primary`) — 각 클라가 자기 테마에서
+        푼다. 플러그인이 없으면 None → 판에 배지가 아예 안 붙는다(delete-to-disable)."""
+        for p in self.plugins:
+            fn = getattr(p, "client_input_badge", None)
+            if fn is not None:
+                try:
+                    r = fn(app)
+                except Exception:
+                    r = None
+                if r is not None:
+                    return r
+        return None
+
     def client_render(self, app, cells, W, H):
         """패널 내용(content) 위에 플러그인이 콘텐츠-레이어 장식을 그린다(in-place).
         claude-code 는 이 훅으로 ① 프롬프트 스티키 헤더를 그리고 ② footer 클릭존

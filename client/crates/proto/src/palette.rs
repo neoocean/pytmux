@@ -21,10 +21,9 @@
 /// ⚠ 여러 칸으로 갈라진 옵션(`-t next`)은 **한 덩이로 둔다**. 더 쪼개면 "무엇이 값인가"를
 /// 이 자리가 알아야 하는데, 그것은 명령마다 다르다(그 지식은 서버의 표에 있다).
 pub fn split_name(name: &str) -> (&str, &str) {
-    match name.find(' ') {
-        Some(i) => (&name[..i], name[i + 1..].trim_start()),
-        None => (name, ""),
-    }
+    // 자르는 규칙의 주인은 **core 한 벌**이다(pytmux-7) — 팔레트가 거를 때·훅이 돌릴
+    // 때·뷰가 색을 칠할 때가 전부 같은 자리에서 잘려야 한다.
+    base::screens::split_first_space(name)
 }
 
 /// 글을 `cols` 칸 폭으로 접는다. 넘치지 않으면 한 줄 그대로.

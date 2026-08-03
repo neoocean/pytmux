@@ -384,7 +384,7 @@ fn tracking_state() -> SessionState {
 #[test]
 fn shift_drag_over_a_mouse_app_goes_to_the_app() {
     let state = tracking_state();
-    assert!(SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), true));
+    assert!(SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), true, true));
 }
 
 #[test]
@@ -392,7 +392,38 @@ fn a_plain_drag_is_a_selection_even_over_a_mouse_app() {
     // ★ 평드래그를 앱에게 넘기면 **화면의 글자를 꺼낼 방법이 사라진다** — 이 클라에는
     // 마우스 캡처를 대신 풀어 줄 바깥 터미널이 없다.
     let state = tracking_state();
-    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), false));
+    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), false, true));
+}
+
+#[test]
+fn a_plain_click_reaches_the_app_even_though_a_plain_drag_does_not() {
+    // ★ pytmux-19. 클릭은 드래그가 아니다 — 복사와 다투지 않으므로 Shift 를 요구할
+    //   이유가 없다. 이 자리를 비워 뒀더니 패널 안 앱의 **버튼·링크가 통째로 죽었다**
+    //   (제보는 Claude 프롬프트 바였지만 구멍은 그보다 넓었다).
+    let state = tracking_state();
+    assert!(SessionView::click_goes_to_app(&state, InputMode::Normal, (10, 5)));
+    // 드래그 쪽 판정은 안 넓어졌다 — 평드래그는 여전히 복사다.
+    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), false, true));
+}
+
+#[test]
+fn a_click_where_no_app_wants_the_mouse_stays_ours() {
+    // 안 켠 앱에 리포트를 보내면 그 바이트가 프롬프트에 **글자로 찍힌다**.
+    let state = tracking_state();
+    assert!(!SessionView::click_goes_to_app(&state, InputMode::Normal, (60, 5)));
+    for mode in [InputMode::Command, InputMode::Scroll] {
+        assert!(
+            !SessionView::click_goes_to_app(&state, mode, (10, 5)),
+            "{mode:?} 에서 넘어갔다 — 사용자가 pytmux 에게 말하는 중이다"
+        );
+    }
+}
+
+#[test]
+fn turning_off_drag_copy_hands_the_plain_press_to_the_app() {
+    // `mouse-drag-copy off` 는 "복사를 포기하고 앱에게 다 준다"는 뜻이다(정본과 같다).
+    let state = tracking_state();
+    assert!(SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), false, false));
 }
 
 #[test]
@@ -401,7 +432,7 @@ fn nothing_is_forwarded_while_the_user_is_talking_to_pytmux() {
     let state = tracking_state();
     for mode in [InputMode::Command, InputMode::Scroll] {
         assert!(
-            !SessionView::press_goes_to_app(&state, mode, (10, 5), true),
+            !SessionView::press_goes_to_app(&state, mode, (10, 5), true, true),
             "{mode:?} 에서 넘어갔다"
         );
     }
@@ -411,9 +442,9 @@ fn nothing_is_forwarded_while_the_user_is_talking_to_pytmux() {
 fn an_app_that_never_asked_for_the_mouse_gets_nothing() {
     // 안 켠 앱에 리포트를 보내면 그 바이트가 프롬프트에 **글자로 찍힌다**.
     let state = tracking_state();
-    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (60, 5), true));
+    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (60, 5), true, true));
     // 캔버스 밖도 마찬가지다.
-    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 99), true));
+    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 99), true, true));
 }
 
 /// 뒤 패널이 추적을 켠 채, 추적을 켠 앱이 든 팝업이 떠 있는 판(popup.mouse).
@@ -435,10 +466,10 @@ fn popup_tracking_state() -> SessionState {
 fn a_shift_press_inside_the_popup_goes_to_the_popup_app() {
     // 서버가 popup.mouse 를 광고하면 GUI 판정도 팝업 안 앱을 대상으로 잡는다.
     let state = popup_tracking_state();
-    assert!(SessionView::press_goes_to_app(&state, InputMode::Normal, (12, 7), true));
+    assert!(SessionView::press_goes_to_app(&state, InputMode::Normal, (12, 7), true, true));
     // 테두리와 팝업 밖(뒤 패널이 추적 중이어도)은 아니다 — 모달 규칙.
-    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), true));
-    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (60, 20), true));
+    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), true, true));
+    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (60, 20), true, true));
 }
 
 // ── 붙여넣기 조합(슬라이스 9) ────────────────────────────────────────────────
@@ -1628,6 +1659,54 @@ fn the_wheel_reaches_the_popup_app_in_the_gui_too() {
     assert!(
         !sent.iter().any(|o| matches!(o, Outgoing::Scroll(_))),
         "뷰 스크롤로도 샜다"
+    );
+}
+
+#[test]
+fn a_click_on_a_mouse_app_sends_press_and_release_from_where_it_was_pressed() {
+    // ★ pytmux-19 의 **호출부** 오라클. 위 순수 판정만 재면 "판정은 맞는데 아무 데서도
+    //   안 부른다"가 통과한다 — 그게 정확히 종전 상태였다(뗄 때 포커스만 옮겼다).
+    let (mut view, tx, sent) = harness();
+    let msg: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 80, "rows": 24, "active": 1,
+        "panes": [{"id": 1, "x": 0, "y": 0, "w": 80, "h": 24, "title": "claude",
+                   "active": true, "mouse": 1, "mouse_sgr": true}]
+    }))
+    .unwrap();
+    tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    view.pump_headless();
+    // 누르고 — 안 끌고 — 뗀다. 뗀 자리는 한 칸 옆이다(손이 흔들린 클릭).
+    view.handle_mouse_down((7, 3), false);
+    view.handle_mouse_up(Some((8, 3)));
+    view.pump_headless();
+    let sent = sent.lock().unwrap();
+    let reports: Vec<String> = sent
+        .iter()
+        .filter_map(|o| match o {
+            Outgoing::Mouse { data, .. } => Some(String::from_utf8_lossy(data).into_owned()),
+            _ => None,
+        })
+        .collect();
+    // SGR 1-based · 패널 원점 (0,0) → 열 8 행 4. 0=버튼1 누름, m=뗌.
+    assert_eq!(
+        reports,
+        vec!["\u{1b}[<0;8;4M".to_owned(), "\u{1b}[<0;8;4m".to_owned()],
+        "클릭이 앱에 안 갔거나 좌표가 **뗀 자리**로 갔다"
+    );
+}
+
+#[test]
+fn a_click_where_no_app_listens_sends_nothing_to_the_pane() {
+    // 마우스를 안 켠 앱에 리포트를 보내면 그 바이트가 프롬프트에 **글자로 찍힌다**.
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.handle_mouse_down((7, 3), false);
+    view.handle_mouse_up(Some((7, 3)));
+    view.pump_headless();
+    assert!(
+        !sent.lock().unwrap().iter().any(|o| matches!(o, Outgoing::Mouse { .. })),
+        "안 켠 앱에 마우스 리포트를 보냈다"
     );
 }
 
@@ -4306,6 +4385,9 @@ fn no_korean_survives_on_the_common_screens() {
 // 라이브로도 확인했지만 조합은 1초 안에 확정돼 캡처 타이밍에 걸리므로, 판정은 여기서 한다.
 
 /// 조합 중인 글자를 얹은 캔버스. 그림이 아니라 **칸의 내용**을 본다.
+///
+/// ⚠ `overlay_preedit` 를 직접 부르지 않는다 — **`render` 가 쓰는 길과 같은 길**로 얻어야
+/// "얹는 호출을 지웠다"가 여기서 죽는다(그 뮤테이션이 종전엔 전부 초록이었다).
 fn canvas_with_preedit(preedit: &str, cursor: (u16, u16)) -> proto::canvas::Canvas {
     let (mut view, tx, _sent) = harness();
     for msg in [layout_one_pane(), screen_with_cursor(cursor.0, cursor.1)] {
@@ -4313,9 +4395,7 @@ fn canvas_with_preedit(preedit: &str, cursor: (u16, u16)) -> proto::canvas::Canv
     }
     view.pump_headless();
     view.handle_preedit(preedit);
-    let mut canvas = view.state.composite().expect("합성이 없다");
-    view.overlay_preedit(&mut canvas);
-    canvas
+    view.composite_for_paint().expect("합성이 없다")
 }
 
 #[test]
@@ -4341,8 +4421,7 @@ fn clearing_the_composition_removes_it_from_the_screen() {
     view.pump_headless();
     assert!(view.handle_preedit("한"), "첫 조합이 상태를 안 세웠다");
     assert!(view.handle_preedit(""), "지우기가 상태를 안 바꿨다");
-    let mut canvas = view.state.composite().unwrap();
-    view.overlay_preedit(&mut canvas);
+    let canvas = view.composite_for_paint().unwrap();
     assert_ne!(canvas.cell(3, 2).map(|c| c.ch), Some('한'), "조합 잔상이 남았다");
 }
 
@@ -4383,8 +4462,303 @@ fn the_composition_is_clipped_at_the_panes_right_edge() {
     }
     view.pump_headless();
     view.handle_preedit("한글");
-    let mut canvas = view.state.composite().unwrap();
-    view.overlay_preedit(&mut canvas);
+    let canvas = view.composite_for_paint().unwrap();
     assert_eq!(canvas.cell(8, 0).map(|c| c.ch), Some('한'), "첫 글자는 들어가야 한다");
     assert_ne!(canvas.cell(10, 0).map(|c| c.ch), Some('글'), "패널 경계를 넘어 그렸다");
+}
+
+// ── 팔레트 입력줄이 인자를 먹는다 · pytmux-7 ─────────────────────────────────
+//
+// 제보: *"명령 인자는 정본 TUI 처럼 그 줄에서 이어 친다 — 별도 입력 팝업을 띄우지 않는다."*
+// 실패가 조용한 자리 둘: ⑴ 인자를 쳤는데 필터가 통째로 걸려 목록이 비면 아무것도 못 고른다
+// ⑵ 이어 쳤는데도 판이 뜨면 사용자는 자기가 친 인자를 **다시 친다**.
+
+/// 팔레트를 열고 `line` 을 친 뒤 `Enter` 까지 — 키 경로 그대로.
+fn palette_typed(view: &mut SessionView, line: &str) {
+    view.handle_key(Key::Escape, Mods::NONE);
+    view.handle_key(Key::Char(':'), Mods::NONE);
+    for c in line.chars() {
+        view.handle_key(Key::Char(c), Mods::NONE);
+    }
+    view.pump_headless();
+}
+
+#[test]
+fn typing_an_argument_does_not_narrow_the_list_away() {
+    // ★ 인자까지 걸러 버리면 `remote-attach box1` 을 치는 순간 목록이 **빈다**.
+    //   자르는 자리는 core 한 벌(`split_first_space`)이고, 목록은 이름 쪽만 본다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    palette_typed(&mut view, "remote-attach box1");
+    assert_eq!(view.screens.typed_filter(), "remote-attach");
+    assert_eq!(view.screens.typed_arg(), "box1");
+    let hits = view.palette_hits(view.screens.palette_cat(), view.screens.typed_filter());
+    assert!(!hits.is_empty(), "인자를 쳤더니 목록이 비었다 — 고를 것이 사라진다");
+}
+
+#[test]
+fn an_inline_argument_runs_the_command_without_opening_a_prompt() {
+    // ★ 이 오라클이 제보 그 자체다. 이어 쳤는데 판이 뜨면 사용자는 인자를 두 번 친다.
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    palette_typed(&mut view, "rename-tab 작업");
+    view.handle_key(Key::Enter, Mods::NONE);
+    view.pump_headless();
+    assert_eq!(view.screens.top(), None, "인자를 이어 쳤는데 판이 떴다");
+    let renamed = sent.lock().unwrap().iter().any(|o| {
+        matches!(o, Outgoing::Command(Command::RenameWindow { name, .. }) if name == "작업")
+    });
+    assert!(renamed, "친 인자가 서버로 안 갔다: {:?}", sent.lock().unwrap());
+}
+
+#[test]
+fn picking_without_an_argument_still_opens_the_prompt() {
+    // ⚠ 이어 치는 길은 **더하는 것**이지 다른 길을 없애는 것이 아니다 — 인자 이력이
+    //   그 판에 붙어 있다(`arghist`). 없애면 지난 값을 꺼낼 자리가 사라진다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    palette_typed(&mut view, "rename-tab");
+    view.handle_key(Key::Enter, Mods::NONE);
+    view.pump_headless();
+    assert_eq!(
+        view.screens.top(),
+        Some(base::screens::Screen::Prompt),
+        "인자 없이 골랐는데 물음 판이 안 떴다"
+    );
+}
+
+#[test]
+fn the_argument_hint_rides_the_panel_footer() {
+    // ⑶ "입력을 방해하지 않는 선에서 도움말" — 판이 안 늘어나는 자리는 안내줄뿐이다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    palette_typed(&mut view, "rename-tab");
+    let panel = view
+        .render_screen_panel(base::screens::Screen::Commands)
+        .debug_text_content()
+        .expect("팔레트 판에 글자가 없다");
+    assert!(
+        panel.contains("이어서 치기"),
+        "인자를 받는 명령을 골랐는데 안내가 없다:\n{panel}"
+    );
+}
+
+// ── Status 판 · pytmux-9 ⑵ 정렬 ⑶ 진짜 탭 ────────────────────────────────────
+//
+// 두 제보의 뿌리가 하나다: 이 판은 **글자 그림**을 그대로 찍고 있었다. 그래프도 글자고
+// (그래서 폴백 글꼴의 진폭에 밀린다) 탭도 글자였다(그래서 탭처럼 안 보인다).
+
+#[test]
+fn the_status_tabs_are_real_tabs_not_boxed_text() {
+    // ★ 판정은 "탭줄이 **클릭되는 표적**을 갖는가"다. 글자에 배경만 씌운 종전 판은
+    //   눌러도 아무 일이 없었다 — 알약처럼 보이게만 고치면 그건 또 다른 거짓말이다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.screens.open_info_tabs();
+    let before = view.screens.info_tab();
+    // 둘째 탭을 누른다(첫 탭이 이미 골라져 있으니 바뀌어야 보인다).
+    view.screens.panel_click(base::PanelTarget::InfoTab(before + 1));
+    assert_eq!(
+        view.screens.info_tab(),
+        before + 1,
+        "Status 탭을 눌러도 안 바뀐다 — 탭처럼 보이기만 하는 것은 고친 것이 아니다"
+    );
+}
+
+#[test]
+fn switching_status_tabs_does_not_carry_the_old_scroll() {
+    // 탭마다 줄 수가 다르다 — 스크롤 자리를 물려받으면 짧은 탭이 **빈 화면**으로 뜬다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.screens.open_info_tabs();
+    for _ in 0..5 {
+        view.handle_key(Key::Down, Mods::NONE);   // 판 안 스크롤(키 경로 그대로)
+    }
+    assert_ne!(view.screens.scroll(), 0, "전제 실패 — 스크롤이 안 내려갔다");
+    view.screens.panel_click(base::PanelTarget::InfoTab(1));
+    assert_eq!(view.screens.scroll(), 0, "다른 탭의 스크롤 자리를 물려받았다");
+}
+
+#[test]
+fn the_status_lines_are_pinned_to_the_cell_grid() {
+    // ★ pytmux-9 ⑵. RTT 그래프는 세로 막대(`▁▂▃…`)와 축(`┤┄─`)이 섞인 **글자 그림**
+    //   이라, 줄을 통짜로 셰이퍼에 넘기면 폴백 글꼴의 진폭에 밀려 축과 어긋난다.
+    //   `mono_row` 가 비 ASCII 조각마다 칸을 못박는지를 **조각 나누기**로 잰다
+    //   (그림은 못 보지만, 못박을 대상을 고르는 판정은 잴 수 있다).
+    let segs = SessionView::grid_segments("  12 ┤▁▂█ ");
+    // ASCII 는 한 덩이로 이어지고, 비 ASCII 는 **낱개**로 갈려 각자 칸을 받는다.
+    let boxed: Vec<&str> = segs
+        .iter()
+        .filter(|(p, _)| p.chars().any(|c| !c.is_ascii()))
+        .map(|(p, _)| p.as_str())
+        .collect();
+    assert_eq!(boxed, vec!["┤", "▁", "▂", "█"], "못박을 조각을 못 골랐다: {segs:?}");
+}
+
+// ── 입력기 배지는 **글자를 받는 곳**에 붙는다 · pytmux-14 ─────────────────────
+//
+// 캔버스 쪽 배지(활성 패널 커서 줄)는 서버 플러그인이 그린다. 판이 열리면 커서는 판 안
+// 입력줄로 가고 캔버스 배지는 판 **뒤**에 깔린다 — 제보가 본 그림이 그것이다.
+// 여기서는 그림 대신 **판이 담은 글자**를 묻는다(`debug_text_content` — `test-util`).
+
+/// 배지 상태를 세운 뷰. `report_ime` 를 쓰는 이유는 그것이 OS 를 안 묻는 쪽이라서다
+/// (`tick_ime` 은 창 밖 입력기에 물어 테스트가 값을 정할 수 없다).
+fn view_with_ime(label: Option<&'static str>) -> SessionView {
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.report_ime(label);
+    view
+}
+
+#[test]
+fn the_ime_badge_rides_the_palette_input_line() {
+    let mut view = view_with_ime(Some("한"));
+    view.screens.open(base::screens::Screen::Commands);
+    let panel = view
+        .render_screen_panel(base::screens::Screen::Commands)
+        .debug_text_content()
+        .expect("팔레트 판에 글자가 하나도 없다");
+    // 입력줄과 **같은 줄**이라야 한다 — 판 어딘가가 아니라 치는 자리 옆이다.
+    let line = panel
+        .lines()
+        .find(|l| l.contains('>'))
+        .unwrap_or_else(|| panic!("입력줄을 못 찾았다:\n{panel}"));
+    assert!(
+        line.contains("[한]"),
+        "입력기 배지가 팔레트 입력줄에 없다 — 사람은 지금 무엇이 찍힐지 모른 채 친다.\n입력줄: {line:?}"
+    );
+}
+
+#[test]
+fn the_ime_badge_rides_the_prompt_input_line() {
+    // 제보의 그림(인자를 묻는 작은 판)이 이 판이다.
+    let mut view = view_with_ime(Some("EN"));
+    view.screens
+        .ask(base::Prompt::RenameTab, "");
+    let panel = view
+        .render_screen_panel(base::screens::Screen::Prompt)
+        .debug_text_content()
+        .expect("물음 판에 글자가 하나도 없다");
+    let line = panel
+        .lines()
+        .find(|l| l.contains('>'))
+        .unwrap_or_else(|| panic!("입력줄을 못 찾았다:\n{panel}"));
+    assert!(line.contains("[EN]"), "입력기 배지가 물음 판 입력줄에 없다:\n{line:?}");
+}
+
+#[test]
+fn in_the_composer_the_badge_rides_the_cursor_row_only() {
+    // 작성창은 여러 줄이라 "입력줄"이 곧 **커서 줄**이다 — 캔버스 규칙과 같은 자리다.
+    let mut view = view_with_ime(Some("한"));
+    view.screens.open_compose("첫줄\n둘째줄");
+    let panel = view
+        .render_screen_panel(base::screens::Screen::Compose)
+        .debug_text_content()
+        .expect("작성창에 글자가 하나도 없다");
+    let marked: Vec<&str> = panel.lines().filter(|l| l.contains("[한]")).collect();
+    assert_eq!(
+        marked.len(),
+        1,
+        "배지가 커서 줄에만 있어야 한다 — 줄마다 붙으면 글을 읽을 수 없다:\n{panel}"
+    );
+}
+
+#[test]
+fn without_an_ime_state_no_badge_is_drawn() {
+    // 비 Windows·질의 실패는 `None` 이다. 그때 `[  ]` 같은 빈 배지를 그리면 자리만
+    // 차지하고 아무 말도 안 한다(정본도 안 올라오면 안 그린다).
+    let mut view = view_with_ime(None);
+    view.screens.open(base::screens::Screen::Commands);
+    let panel = view
+        .render_screen_panel(base::screens::Screen::Commands)
+        .debug_text_content()
+        .unwrap_or_default();
+    assert!(
+        !panel.contains("[한]") && !panel.contains("[EN]"),
+        "상태를 모르는데 배지를 그렸다:\n{panel}"
+    );
+}
+
+#[test]
+fn no_screen_shows_an_input_line_without_the_badge() {
+    // ★ 전수 오라클. 위 셋은 자기 판만 본다 — **새 판**이 입력줄을 갖는 날 아무도 안
+    //   운다. 그래서 화면 전부를 열어 보고 "입력줄이 있는데 배지가 없는" 판을 찾는다.
+    //   입력줄의 표식은 `> …_` 다(세 판이 공유하는 그림 — 커서를 `_` 로 보인다).
+    let mut naked: Vec<String> = Vec::new();
+    for screen in base::screens::Screen::all().iter().copied() {
+        let mut view = view_with_ime(Some("한"));
+        // 판마다 그릴 재료가 다르다 — 없으면 그 판은 비어서 판정 대상이 안 된다.
+        match screen {
+            base::screens::Screen::Compose => view.screens.open_compose(""),
+            base::screens::Screen::Prompt | base::screens::Screen::Confirm => {
+                view.screens.ask(base::Prompt::RenameTab, "")
+            }
+            other => view.screens.open(other),
+        }
+        let Some(panel) = view.render_screen_panel(screen).debug_text_content() else {
+            continue;
+        };
+        for line in panel.lines() {
+            let t = line.trim_end();
+            if t.starts_with('>') && t.ends_with('_') && !line.contains("[한]") {
+                naked.push(format!("{screen:?}: {line:?}"));
+            }
+        }
+    }
+    assert!(
+        naked.is_empty(),
+        "글자를 받는 줄인데 입력기 배지가 없다 — `input_line` 을 거칠 것:\n  {}",
+        naked.join("\n  ")
+    );
+}
+
+// ── 배선 두 끝 — 창 없이 잴 수 없는 자리를 소스로 잰다 ────────────────────────
+//
+// 조합 그리기의 실패는 **전부 조용하다**: 상류 구독이 빠지면 아무것도 안 오고, 얹는
+// 호출이 빠지면 캔버스가 서버 화면 그대로다. 둘 다 화면이 "평소처럼" 보인다.
+// 앞끝(구독)은 엘리먼트 이벤트 디스패치가 레이아웃을 요구해 헤드리스로 못 세우므로
+// 소스로 잰다 — `tests/test_harness_window_lookup.py` 와 같은 종류의 오라클이다.
+
+/// 이 파일 자신. `render`/구독은 창 없이 못 부르니 **글로 읽어** 배선을 확인한다.
+const SESSION_VIEW_SRC: &str = include_str!("session_view.rs");
+
+#[test]
+fn the_view_subscribes_to_upstream_composition_events() {
+    // ★ 이 구독이 빠지면 사람이 `ㅎ`→`하`→`한` 을 만드는 동안 **화면이 비어 있다**.
+    //   상류는 계속 주고 있으므로 오류도 로그도 없다 — 지운 것을 아무도 모른다.
+    //   (`warpui_core` 의 `on_marked_text` 자체가 이 기능 때문에 생겼다 — PROVENANCE §1.)
+    assert!(
+        SESSION_VIEW_SRC.contains(".on_marked_text("),
+        "상류 조합 이벤트 구독(`on_marked_text`)이 사라졌다 — 조합 중인 글자가 다시 안 보이게 된다"
+    );
+    assert!(
+        SESSION_VIEW_SRC.contains("ViewAction::Preedit("),
+        "구독은 있는데 `ViewAction::Preedit` 로 넘기지 않는다 — 뷰까지 안 닿는다"
+    );
+}
+
+#[test]
+fn render_gets_its_canvas_only_through_composite_for_paint() {
+    // ★ `render` 가 `state.composite()` 를 **직접** 부르면 클라가 얹는 것이 통째로
+    //   빠진다(종전 결함의 모양 그대로). 캔버스로 가는 문을 하나로 유지한다 —
+    //   그래야 위 오라클 다섯이 `render` 의 그림을 실제로 재는 것이 된다.
+    let body = SESSION_VIEW_SRC
+        .split_once("    fn render(&self, _: &AppContext) -> Box<dyn Element> {")
+        .expect("`render` 를 못 찾았다 — 시그니처가 바뀌었으면 이 오라클도 옮길 것")
+        .1;
+    assert!(
+        body.contains("self.composite_for_paint()"),
+        "`render` 가 `composite_for_paint` 를 안 쓴다"
+    );
+    assert!(
+        !body.contains("self.state.composite()"),
+        "`render` 가 서버 합성을 직접 집었다 — 클라가 얹는 것(조합 중인 글자)이 화면에서 사라진다"
+    );
 }

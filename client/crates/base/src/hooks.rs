@@ -243,6 +243,19 @@ static ARG_COMMANDS: &[(&str, Prompt)] = &[
     ("remote-detach", Prompt::RemoteDetach),
 ];
 
+/// 이 명령이 **인자를 받나** — 받으면 그 인자를 묻는 물음(아니면 `None`).
+///
+/// 팔레트가 인자를 그 줄에서 받게 되면서(pytmux-7) 필요해졌다: 지금 고른 명령이 인자를
+/// 받는지 알아야 *"무엇을 이어 치면 되는지"* 를 안내줄에 적을 수 있다. 표는 위
+/// [`ARG_COMMANDS`] 한 벌이고, 여기가 그 표를 밖에서 물어보는 유일한 문이다.
+pub fn arg_prompt(name: &str) -> Option<Prompt> {
+    let lower = name.to_ascii_lowercase();
+    ARG_COMMANDS
+        .iter()
+        .find(|(n, _)| *n == lower)
+        .map(|(_, prompt)| *prompt)
+}
+
 /// 명령 한 줄을 돌릴 수 있는 것으로 옮긴다. 모르는 이름은 `None` — **조용히 넘긴다**
 /// (정본도 그렇다. 훅이 도는 자리에는 오류를 볼 사람이 없다).
 ///
@@ -261,10 +274,10 @@ pub fn resolve(line: &str) -> Option<HookRun> {
     {
         return Some(HookRun::Act(entry.action));
     }
-    let (name, arg) = match line.split_once(char::is_whitespace) {
-        Some((name, arg)) => (name, arg.trim()),
-        None => (line, ""),
-    };
+    // 자르는 자리는 **core 한 벌**이다(pytmux-7) — 팔레트가 거르는 자리와 같아야
+    // `remote-attach host1` 이 목록에서는 걸리는데 여기서는 안 걸리는 일이 없다.
+    let (name, arg) = crate::screens::split_first_space(line);
+    let arg = arg.trim();
     let lower = name.to_ascii_lowercase();
     if let Some((_, prompt)) = ARG_COMMANDS.iter().find(|(n, _)| *n == lower) {
         // 인자가 비었으면 물음을 띄우는 편이 낫다 — `run-shell` 만 적어 둔 훅에

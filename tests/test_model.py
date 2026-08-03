@@ -650,6 +650,43 @@ async def test_resize_shrunk_rows_do_not_come_back():
     assert not any(tail), f"화면 밖으로 나갔던 줄이 되살아났다: {tail}"
 
 
+async def test_every_way_of_shrinking_a_pane_goes_through_the_one_fix():
+    """패널을 줄이는 **모든 길**이 같은 축소 코드를 탄다 — 분할·줌·창 리사이즈.
+
+    §10-21ⓙ3·ⓨ 를 고친 자리는 `nativescreen._NativeBase.resize` 한 곳인데, 제보 ⓠ
+    (pytmux-5 "치지 않은 글자가 패널 한가운데에 떠 있다")는 **간헐**이라 "리사이즈 말고
+    다른 경로가 또 있나"가 열려 있었다. 코드상 답은 '없다'다: 창 리사이즈도 분할도 줌도
+    팝업도 전부 `serverio._layout_msg`/`servertree._popup_layout` 의 `p.resize(cw, ch)`
+    한 자리로 모인다. 그 사실을 **글이 아니라 오라클로** 못박는다 — 새 경로가 생기면서
+    이 깔때기를 우회하면 여기서 운다.
+
+    잰 것: 분할로 패널이 절반이 되는 순간(= 커서가 위쪽에 있고 아래가 빈 화면, 제보
+    동선 그대로) 원래 있던 내용이 살아 있나."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        # 셸 배너처럼 **위쪽에 몰린** 내용 — 옛 코드가 통째로 지우던 표본이다.
+        p.feed(b"BANNER_ONE\r\nBANNER_TWO\r\nPROMPT>")
+        rows_before = p.rows
+        srv.split_pane(sess, "tb")            # 위/아래로 가른다 → 행이 절반이 된다
+        srv._layout_msg(sess, 80, 24)         # 배치가 실제로 리사이즈를 부르는 자리
+        assert p.rows < rows_before, (p.rows, rows_before)
+        text = pane_text(p)
+        for mark in ("BANNER_ONE", "BANNER_TWO", "PROMPT>"):
+            assert mark in text, f"분할로 줄었더니 {mark} 가 사라졌다:\n{text}"
+        # 줌도 같은 깔때기다 — 숨는 패널이 리사이즈되고, 풀면 되돌아온다.
+        sess.active_window.zoomed = True
+        srv._layout_msg(sess, 80, 24)
+        sess.active_window.zoomed = False
+        srv._layout_msg(sess, 80, 24)
+        text = pane_text(p)
+        for mark in ("BANNER_ONE", "BANNER_TWO", "PROMPT>"):
+            assert mark in text, f"줌 왕복에서 {mark} 가 사라졌다:\n{text}"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_resize_shrink_ignores_scroll_region():
     """앱이 세운 스크롤 영역(DECSTBM)에 축소가 갇히면 안 된다.
 

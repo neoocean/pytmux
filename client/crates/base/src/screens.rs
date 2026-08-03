@@ -798,9 +798,19 @@ impl Screens {
         self.asking
     }
 
-    /// 입력 화면에 지금까지 친 글자.
+    /// 입력 화면에 지금까지 친 글자(**줄 통째** — 이름과 인자를 다 담는다).
     pub fn typed(&self) -> &str {
         &self.typed
+    }
+
+    /// 친 줄의 **이름 쪽**(첫 공백 앞) — 팔레트가 거를 때 쓴다(pytmux-7).
+    pub fn typed_filter(&self) -> &str {
+        split_first_space(&self.typed).0
+    }
+
+    /// 친 줄의 **인자 쪽**(첫 공백 뒤). 인자를 안 쳤으면 빈 문자열이다.
+    pub fn typed_arg(&self) -> &str {
+        split_first_space(&self.typed).1
     }
 
     /// 인자 폼을 연다. 표에 없는 이름이면 **아무 일도 안 한다**(`false`).
@@ -1501,12 +1511,31 @@ impl Screens {
 ///
 /// 판 안에서 **키로 할 수 있는 일과 같은 것**만 둔다. 클릭이 키보다 더 할 수 있으면 그건
 /// 도움말이 거짓말이 되는 길이다.
+/// 명령 한 줄을 **이름과 인자**로 가른다 — 첫 공백에서 자른다.
+///
+/// # 왜 이 규칙의 주인이 core 인가 (pytmux-7)
+///
+/// 같은 줄을 세 곳이 읽는다: 팔레트가 거를 이름 · 훅이 돌릴 명령([`crate::hooks::resolve`])
+/// · 뷰가 색을 달리 칠할 두 조각. 자리마다 자르면 **팔레트 목록과 입력줄이 갈린다** —
+/// 사용자에게는 "이름은 맞는데 안 걸린다"로 보이고 그건 조용한 어긋남이다.
+///
+/// ⚠ 인자 쪽은 **더 안 쪼갠다**. 여러 낱말이면 통째로 하나다(`run-shell echo hi`) —
+/// "무엇이 값인가"는 명령마다 다르고 그 지식은 여기 없다.
+pub fn split_first_space(line: &str) -> (&str, &str) {
+    match line.find(' ') {
+        Some(i) => (&line[..i], line[i + 1..].trim_start()),
+        None => (line, ""),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelTarget {
     /// 설정 화면 왼쪽 세로 탭 `i` 번째(`config::SETTINGS_CATS` 의 자리).
     SettingsCat(usize),
     /// 팔레트 카테고리 탭 `i` 번째(0 = `전체`).
     PaletteTab(usize),
+    /// Status 판(정보 탭) `i` 번째. 키로는 `←→` 가 같은 일을 한다(pytmux-9 ⑶).
+    InfoTab(usize),
     /// 지금 층의 `row` 번째 줄(메뉴·목록형).
     Row(usize),
     /// 확인 화면의 버튼([`CONFIRM_YES`]/[`CONFIRM_NO`]).
@@ -1539,6 +1568,13 @@ impl Screens {
                 }
                 self.palette_tab = i;
                 self.selected = 0;
+                false
+            }
+            PanelTarget::InfoTab(i) => {
+                // 탭 수는 뷰가 안다(내용이 정한다 — REC 탭은 플러그인이 있을 때만 선다).
+                // 그래서 여기서는 자리만 세우고, 범위 맞추기는 `wrap_info_tab` 이 한다.
+                self.info_tab = i;
+                self.scroll = 0;    // 다른 탭의 스크롤 자리를 물려받으면 빈 화면이 뜬다
                 false
             }
             PanelTarget::Row(row) => {

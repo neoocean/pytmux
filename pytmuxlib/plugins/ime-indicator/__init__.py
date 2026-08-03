@@ -285,6 +285,19 @@ class _ImeIndicatorPlugin:
         # 그린 칸 범위를 노출(테두리 강조 테스트의 [x] 동급 예외). 폭 부족 시 None.
         app._ime_zone = (span[0], span[1], y) if span else None
 
+    def client_input_badge(self, app):
+        """글자를 받는 판의 입력줄에 붙일 `(문구, 의미색)` — 배지가 꺼져 있으면 None.
+
+        캔버스 쪽(`client_render`)과 **같은 어휘·같은 문구**다. 다른 것은 자리를 정하는
+        주체뿐이다: 캔버스는 이 플러그인이 커서 줄을 골라 셀에 그리고, 판은 판이 자기
+        입력줄 오른쪽 끝을 내준다(판의 자리를 아는 것은 판뿐이다 — pytmux-14).
+        """
+        if not getattr(app, "ime_show", False):
+            return None
+        from .cells import badge_text, badge_theme
+        state = getattr(app, "ime_state", "EN")
+        return (badge_text(state), badge_theme(state))
+
     # ---- 서버 측: 셀 기여(Tier B) + 클라 사실(Tier D) ----
     #
     # 정본과 **같은 런**이다 — 자리 규칙이 `cells.py` 한 벌이라서다. 다른 것은 그 규칙에

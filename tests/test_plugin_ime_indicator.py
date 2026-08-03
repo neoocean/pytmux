@@ -847,3 +847,80 @@ async def test_the_fact_rides_the_connection_not_the_session():
         assert "facts" not in a.plugin_state, a.plugin_state
     finally:
         await teardown(srv, task, sock)
+
+
+# ---- 8) 판이 열리면 배지는 **그 판의 입력줄**로 간다 (pytmux-14) ----------------
+#
+# 캔버스 배지는 활성 패널의 커서 줄에 그려지는데, 판이 열리면 커서는 판 안 입력줄로
+# 가고 그 배지는 판 **뒤**에 깔려 안 보인다. 제보가 본 그림이 그것이다.
+# 자리 규칙 한 문장은 그대로다 — **지금 글자를 받는 곳의 오른쪽 끝**.
+
+async def test_the_badge_moves_into_every_screen_that_takes_typing():
+    """글자를 받는 판 넷이 모두 배지를 단다 — 하나만 빠져도 그 판에서 조용히 사라진다."""
+    from textual.widgets import Label as _Label
+    from pytmuxlib.clientscreens import IME_BADGE_ID
+
+    def _badge(app):
+        """맨 위 판의 배지 글자(자리가 없으면 None — 아직 안 떴거나 대상이 아닌 판)."""
+        try:
+            return str(app.screen_stack[-1].query_one("#" + IME_BADGE_ID, _Label).content)
+        except Exception:
+            return None
+
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await wait_until(pilot, lambda: getattr(app, "layout", None) is not None)
+            app._ime_os = False          # OS 실측이 수동 설정을 덮지 않게(폴백 강제)
+            app._ime_sock = None
+            app.ime_show = True
+            app.ime_state = "한"
+            # 판을 여는 길은 판마다 다르다 — 각각 그 판이 실제로 열리는 길로 연다.
+            from pytmuxlib.clientscreens import (CommandListScreen, PromptScreen,
+                                                 _SettingInputScreen)
+            opens = [
+                ("팔레트", lambda: CommandListScreen([("split", "설명", "창")])),
+                ("물음", lambda: PromptScreen("rename", "붙을 상자 (host)", "", None)),
+                ("설정 입력", lambda: _SettingInputScreen("prefix", "C-b")),
+                ("작성창", None),        # 여는 길이 따로다(블록 선택 편집기)
+            ]
+            for name, mk in opens:
+                if mk is None:
+                    app.open_compose()
+                else:
+                    app.push_screen(mk())
+                # 배지는 0.2초 폴링으로 채워진다 — 고정 대기 대신 **값이 올 때까지** 본다.
+                ok = await wait_until(pilot, lambda: "한" in (_badge(app) or ""))
+                assert ok, (name, _badge(app))
+                app.pop_screen()
+                await wait_until(pilot, lambda: len(app.screen_stack) == 1)
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_the_screen_badge_dies_with_the_plugin():
+    """delete-to-disable — 플러그인이 없으면 판에도 배지가 **아예 안 뜬다**.
+
+    판이 문구를 갖고 있으면 이 단언이 죽는다(종전 작성창이 그랬다: `[{state}]` 와
+    색 규칙이 `clientscreens.py` 안에 있었다)."""
+    found = [p for p in plugins._discover()
+             if getattr(p, "name", "") != "ime-indicator"]
+    reg = plugins.Registry(found)
+    assert reg.client_input_badge(None) is None, "플러그인이 없는데 배지가 나왔다"
+
+
+async def test_the_screen_badge_and_the_canvas_badge_say_the_same_thing():
+    """판과 캔버스가 **같은 문구·같은 의미색**을 쓴다 — 규칙이 두 벌이면 갈린다."""
+
+    class _App:
+        ime_show = True
+        ime_state = "한"
+
+    text, theme = PLUGIN.client_input_badge(_App())
+    assert text == _cells.badge_text("한"), (text, _cells.badge_text("한"))
+    assert theme == _cells.badge_theme("한") == "success", (theme,)
+    # 캔버스 런도 같은 재료에서 나온다.
+    runs, _ = _cells.ime_cells("한", 0, 40)
+    assert runs[0]["text"] == text, (runs[0]["text"], text)
+    assert runs[0]["theme"]["b"] == theme, (runs[0]["theme"], theme)
