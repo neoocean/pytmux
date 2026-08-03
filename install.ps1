@@ -1,4 +1,4 @@
-# pytmux 설치(Windows) — install.sh 의 PowerShell 대응판.
+﻿# pytmux 설치(Windows) — install.sh 의 PowerShell 대응판.
 # 세 가지를 자동화한다:
 #   1) 의존성 설치(pip install -r requirements.txt)
 #   2) 어디서든 `pytmux` 로 실행되도록 PATH 상의 디렉터리에 얇은 래퍼(pytmux.cmd) 생성

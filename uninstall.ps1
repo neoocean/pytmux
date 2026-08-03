@@ -1,4 +1,4 @@
-# pytmux 제거(Windows) — install.ps1 가 만든 래퍼(pytmux.cmd)와 python shim 을 지운다.
+﻿# pytmux 제거(Windows) — install.ps1 가 만든 래퍼(pytmux.cmd)와 python shim 을 지운다.
 # uninstall.sh 의 PowerShell 대응판.
 #
 # 사용법(PowerShell):
