@@ -843,11 +843,19 @@ impl SessionView {
                             // ★ 플러그인 명령은 **아직 화면이 없다**(설계 P4).
                             //   조용히 버리지 않는다 — 목록에 보이는데 눌러도 아무 일이
                             //   안 나면 사용자는 자기가 잘못 골랐다고 읽는다(설계 §8-5).
-                            // ★ 플러그인 명령은 서버에 **화면을 달라**고 한다(P4).
-                            //   회신이 없으면 서버가 알림을 보낸다(설계 §8-5) — 조용히
-                            //   끝나는 길은 어느 쪽에도 없다.
+                            // ★ 플러그인 명령은 **이름만 보낸다**(pytmux-35). 종전에는
+                            //   전부 "화면을 달라"(`plugin_open`)였는데, 상태를 바꾸는
+                            //   명령에는 통째로 틀린 길이라 서버가 거절했고 사용자에게는
+                            //   죽은 줄로 보였다 — 팔레트에 보이는데 안 먹는 줄 열여덟이
+                            //   전부 그것이다.
+                            //
+                            //   갈래는 **서버가 정한다**: 상태형이면 거기서 끝나고, 아니면
+                            //   서버가 화면 스펙 경로로 넘어간다. 그 표를 우리가 들면
+                            //   서버와 갈리고, 갈린 순간 명령은 **조용히** 죽는다(이
+                            //   결함이 생긴 원인 그대로). 회신이 없으면 서버가 알림을
+                            //   보낸다(설계 §8-5) — 조용히 끝나는 길은 어느 쪽에도 없다.
                             Some(PalettePick::Plugin(name)) => {
-                                self.pending.push(Outgoing::Command(Command::PluginOpen {
+                                self.pending.push(Outgoing::Command(Command::PluginCmd {
                                     name,
                                     args: Vec::new(),
                                 }));
@@ -4018,9 +4026,10 @@ impl SessionView {
         let Some(name) = pick.name() else {
             return;
         };
-        // 플러그인 명령은 화면을 여는 길로 인자를 실어 보낸다(스펙에 이미 칸이 있다).
+        // 플러그인 명령은 **갈래를 우리가 안 정한다**(pytmux-35) — 이름과 인자를 그대로
+        // 보내고 서버가 상태형인지 화면인지 정한다.
         if let PalettePick::Plugin(name) = pick {
-            self.pending.push(Outgoing::Command(Command::PluginOpen {
+            self.pending.push(Outgoing::Command(Command::PluginCmd {
                 name,
                 args: vec![arg.to_owned()],
             }));

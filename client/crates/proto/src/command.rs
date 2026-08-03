@@ -158,6 +158,21 @@ pub enum Command {
     /// 띄울 수 없다. 서버가 **무엇을 그릴지**를 자료로 주면 우리는 목록/글 두 모양만
     /// 그리면 된다 — 플러그인 코드는 한 벌로 남는다.
     PluginOpen { name: String, args: Vec<String> },
+    /// 플러그인 **명령 한 줄**을 실행해 달라(pytmux-35).
+    ///
+    /// # 왜 `PluginOpen` 과 갈라야 하나
+    ///
+    /// 우리는 플러그인 명령을 오래 `plugin_open`("화면을 다오")으로만 보냈다. 화면을 여는
+    /// 명령에는 맞지만 **상태를 바꾸는 명령**에는 통째로 틀린 길이라 서버가 거절했고,
+    /// 팔레트에 보이는데 눌러도 안 먹는 줄이 열여덟이었다.
+    ///
+    /// # 우리는 어느 쪽인지 **모른다**
+    ///
+    /// 한 이름이 화면인지 상태인지는 플러그인이 안다. 그 표를 우리가 들면 서버와 갈리고,
+    /// 갈린 순간 명령은 **조용히 아무 일도 안 한다** — 이 결함이 생긴 원인 그대로다.
+    /// 그래서 고른 이름을 그냥 보내고 서버가 갈래를 정한다(못 알아들으면 서버가 화면
+    /// 경로로 넘어간다).
+    PluginCmd { name: String, args: Vec<String> },
     /// 플러그인 화면에서 **고른 줄과 누른 키**를 되돌려준다(설계 §4.3).
     ///
     /// ⚠ 액션 이름의 칸은 `do` 다 — `action` 은 명령 디스패처의 것이라(이 프레임의
@@ -446,6 +461,7 @@ impl Command {
             Command::RequestBuffers => "request_buffers",
             Command::PluginToggle { action, .. } | Command::PluginDo { action } => action,
             Command::PluginOpen { .. } => "plugin_open",
+            Command::PluginCmd { .. } => "plugin_cmd",
             Command::PluginAction { .. } => "plugin_action",
             Command::PluginOverlay { .. } => "plugin_overlay",
             Command::PluginOverlayAction { .. } => "plugin_overlay_action",
@@ -545,7 +561,9 @@ impl Command {
                 json!({ "dir": dir.as_str(), "cells": cells })
             }
             Command::PasteBuffer { index } => json!({ "index": index }),
-            Command::PluginOpen { name, args } => json!({ "name": name, "args": args }),
+            Command::PluginOpen { name, args } | Command::PluginCmd { name, args } => {
+                json!({ "name": name, "args": args })
+            }
             Command::PluginAction { id, act, row, input } => {
                 json!({ "id": id, "do": act, "row": row, "input": input })
             }
@@ -1132,6 +1150,7 @@ mod tests {
             Command::RequestTree => 27,
             Command::RequestBuffers => 28,
             Command::PluginOpen { .. } => 65,
+            Command::PluginCmd { .. } => 70,
             Command::PluginAction { .. } => 66,
             Command::PluginOverlay { .. } => 67,
             Command::PluginOverlayAction { .. } => 68,

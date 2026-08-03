@@ -729,6 +729,10 @@ fn the_settings_table_keeps_the_canon_order() {
 struct CmdKinds {
     advertised: Vec<String>,
     with_screen: Vec<String>,
+    /// 서버가 **명령으로 실행**할 수 있는 이름(pytmux-35 · `plugin_cmd`).
+    /// 화면 스펙과 겹칠 수 있다 — 겹치면 서버가 명령 쪽을 먼저 본다.
+    #[serde(default)]
+    server_runnable: Vec<String>,
     stateful: Vec<String>,
 }
 
@@ -749,25 +753,21 @@ fn cmd_kinds() -> CmdKinds {
 ///   다만 그 목록도 래칫이라 "왜 서버가 못 하나"를 적어야 한다.
 static DEAD_PLUGIN_COMMANDS: &[&str] = &[
     "auto-launch",
-    "auto-resume-message",
     "capture-output",
     "capture-toggle",
-    "claude-auto-redraw",
-    "claude-resume-verify",
     "claude-rules",
     "claude-settings",
-    "claude-token-account",
     "claude-token-log",
-    "claude-token-sync",
     "ime-indicator",
     "model",
     "namesync",
-    "prompt-clear-message",
     "prompt-clear-queue",
     "prompt-history-lines",
-    // `usage-panel` 은 2026-08-03(pytmux-20)에 여기서 나갔다 — 정본에서 팝업인 것을
-    // **Tier B 화면 스펙**으로 내는 첫 사례다. 리포트가 나눈 셋 중 그 갈래의 본보기라,
-    // 남은 넷(claude-settings·model·claude-rules·claude-token-log)도 같은 길을 탄다.
+    // 2026-08-03 (pytmux-35) 에 여섯이 나갔다 — `auto-resume-message` ·
+    // `claude-auto-redraw` · `claude-resume-verify` · `claude-token-account` ·
+    // `claude-token-sync` · `prompt-clear-message`(+ 앞서 `usage-panel`).
+    // 인자를 파싱해야 뜻이 온전한 것들이라 팔레트가 인자를 못 받는 동안(pytmux-7)
+    // 여기 묶여 있었다.
 ];
 
 #[test]
@@ -777,11 +777,15 @@ fn the_dead_command_list_does_not_grow() {
         .iter()
         .map(|e| e.name.split(' ').next().unwrap_or(e.name))
         .collect();
+    // ★ **서버가 명령으로 실행할 수 있는 이름**도 산 것이다(pytmux-35 · `plugin_cmd`).
+    //   우리는 갈래를 안 정하고 이름만 보내며, 서버가 상태형이면 거기서 처리하고 아니면
+    //   화면 경로로 넘어간다. 이 칸이 없으면 살아난 명령이 여전히 죽은 것으로 세어진다.
+    let runnable: BTreeSet<&str> = kinds.server_runnable.iter().map(String::as_str).collect();
     let dead: Vec<&str> = kinds
         .stateful
         .iter()
         .map(String::as_str)
-        .filter(|n| !core.contains(n))
+        .filter(|n| !core.contains(n) && !runnable.contains(n))
         .collect();
     let mut sorted = DEAD_PLUGIN_COMMANDS.to_vec();
     sorted.sort_unstable();

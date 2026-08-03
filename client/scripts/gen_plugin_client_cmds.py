@@ -66,9 +66,45 @@ def collect(pytmux_root: pathlib.Path) -> dict:
         elif hasattr(resp, "close"):
             resp.close()          # 안 기다릴 코루틴은 닫는다(경고를 남기지 않게)
 
+    # 그 이름을 **서버가 명령으로 실행할 수 있나**(pytmux-35 · `plugin_cmd` 경로).
+    #
+    # 상태를 바꾸는 명령의 살길이다: 이름을 액션으로 옮기는 규칙을 플러그인이 한 벌로
+    # 들고(`cmdmap`), 서버가 그것으로 푼다. 화면 스펙도 없고 여기도 없는 이름이 곧
+    # **여전히 죽은 줄**이다 — 그 여집합이 래칫이 지키는 목록이다.
+    #
+    # ⚠ **무엇이 일어나는지는 안 잰다.** 인형(MagicMock)에 대고 실행하면 부작용이 있는
+    #    액션은 예외를 낼 수 있는데, 예외는 **그 이름이 잡혔다는 뜻**이다. 우리가 묻는
+    #    것은 "이 이름이 명령으로 디스패치되는가" 하나다(서버 액션 생성기와 같은 판단).
+    from pytmuxlib.servercmd import _CMD_TABLE
+
+    server_runnable: list[str] = []
+    for name in advertised:
+        try:
+            got = reg.plugin_command_action(name, [])
+        except Exception:
+            got = None
+        if got is None:
+            continue
+        action, _kw = got
+        # ★ **차례가 규칙이다** — 코어 표를 먼저 본다. 플러그인 훅에만 물으면 코어가
+        #   받는 액션이 없는 것으로 보인다(`set_claude_account` 가 그렇다: 그 주인은
+        #   `_CMD_TABLE` 이다). 2026-08-03 에 그렇게 오판해 산 명령을 죽은 목록에
+        #   넣을 뻔했고, disposition 골든이 잡았다.
+        if action in _CMD_TABLE:
+            server_runnable.append(name)
+            continue
+        try:
+            disp = reg.server_command(MagicMock(), MagicMock(), MagicMock(),
+                                      action, {})
+        except Exception:
+            disp = "handled"      # 잡혔다(그 다음이 인형에서 넘어졌을 뿐)
+        if disp is not None:
+            server_runnable.append(name)
+
     return {
         "advertised": advertised,
         "with_screen": sorted(set(with_screen)),
+        "server_runnable": sorted(set(server_runnable)),
         "stateful": sorted(set(advertised) - set(with_screen)),
     }
 
@@ -89,7 +125,9 @@ def main() -> int:
     args.out.write_text(text, encoding="utf-8", newline="\n")
     print(
         f"{args.out}: 광고 {len(data['advertised'])}"
-        f" · 화면 스펙 {len(data['with_screen'])} · 상태형 {len(data['stateful'])}"
+        f" · 화면 스펙 {len(data['with_screen'])}"
+        f" · 서버 실행 {len(data['server_runnable'])}"
+        f" · 상태형 {len(data['stateful'])}"
     )
     return 0
 

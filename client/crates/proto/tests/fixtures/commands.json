@@ -33,6 +33,7 @@
     "ph_scroll_to": "full",
     "pipe_pane": "handled",
     "plugin_action": "handled",
+    "plugin_cmd": "dynamic",
     "plugin_open": "handled",
     "plugin_overlay": "handled",
     "plugin_overlay_action": "handled",
@@ -183,6 +184,10 @@
       "id",
       "input",
       "row"
+    ],
+    "plugin_cmd": [
+      "args",
+      "name"
     ],
     "plugin_open": [
       "args",

@@ -46,6 +46,20 @@
     "prompt-history",
     "usage-panel"
   ],
+  "server_runnable": [
+    "auto-resume",
+    "auto-resume-message",
+    "auto-retry",
+    "auto-token-on-exit",
+    "claude-auto-mode",
+    "claude-auto-redraw",
+    "claude-resume-verify",
+    "claude-token-account",
+    "claude-token-sync",
+    "claude-usage",
+    "prompt-clear",
+    "prompt-clear-message"
+  ],
   "stateful": [
     "auto-launch",
     "auto-resume",

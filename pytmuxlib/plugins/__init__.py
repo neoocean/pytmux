@@ -308,6 +308,46 @@ class Registry:
                     return resp
         return None
 
+    def plugin_command_action(self, name, args):
+        """플러그인 **명령 이름 + 인자** → `(서버 액션, 인자 dict)`(첫 비-None 채택).
+
+        # 왜 이 훅이 필요한가
+
+        네이티브 클라는 플러그인 명령을 오래 `plugin_open`("화면을 다오")으로만 보냈다.
+        화면을 여는 명령에는 맞지만 **상태를 바꾸는 명령**에는 통째로 틀린 길이고, 그래서
+        팔레트에 보이는데 눌러도 안 먹는 줄이 열여덟 있었다(pytmux-35).
+
+        걸림돌은 "이름을 어떤 액션·어떤 인자로 옮기는가"가 **정본 클라 안에** 있었다는
+        것이다 — 액션 이름도, 인자 칸 이름도(액션마다 다르다), 3-state 파싱도. 그것을
+        네이티브 클라가 따로 알게 하면 두 표가 갈리고, 갈린 순간 명령은 **조용히 아무
+        일도 안 한다**(죽은 명령이 생긴 원인 그대로). 그래서 규칙은 플러그인 안에
+        한 벌로 두고 **서버가 그것을 쓴다**.
+
+        # 왜 **실행이 아니라 해석**인가 (2026-08-03 에 한 번 틀렸다)
+
+        처음에는 이 훅이 명령을 곧바로 실행하게 했다(플러그인의 `server_command` 를
+        직접 불렀다). 그러면 **코어 명령표가 받는 액션이 죽는다** — `set_claude_account`
+        가 그렇다: 그 액션의 주인은 `servercmd._CMD_TABLE` 이고 플러그인
+        `server_command` 에는 없다. 훅에만 물으면 "서버가 안 받는다"로 보이고, 실제로
+        그렇게 오판해 그 명령을 죽은 목록에 넣을 뻔했다.
+
+        그래서 훅은 **옮기기만** 한다. 어느 표가 그 액션을 받는지는 서버가 안다
+        (코어 표 → 플러그인 `server_command` 순). 플러그인이 알아야 하는 것은 이름과
+        인자의 모양뿐이다.
+
+        `args` 는 낱말 목록이다(정본 `handle_command` 가 받는 그것).
+        `None` 은 *"내 것이 아니다"* — 서버가 화면 스펙 경로로 넘어간다.
+
+        플러그인이 없으면 언제나 None → 그 명령은 종전처럼 화면 스펙 경로로 간다
+        (delete-to-disable)."""
+        for p in self.plugins:
+            fn = getattr(p, "plugin_command_action", None)
+            if fn is not None:
+                r = fn(name, args)
+                if r is not None:
+                    return r
+        return None
+
     def plugin_screen(self, server, sess, req):
         """Tier C — **선언형 화면 스펙**(설계 PLUGIN_COMPAT_TEXTUAL_GUI §4.3 · P4).
 

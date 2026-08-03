@@ -180,3 +180,124 @@ def test_no_limit_data_is_a_note_not_an_empty_panel():
     spec = plug.plugin_screen(_Srv(), None, {"do": "open", "name": "limits"})
     assert spec["text"] == "", spec
     assert spec["note"], "빈 판만 띄우면 사용자는 무엇이 잘못됐는지 모른다"
+
+
+# ---- 명령 표는 한 벌이다 (pytmux-35) ----------------------------------------
+#
+# 이름을 액션으로 옮기는 규칙이 정본 클라 안에만 있어서 네이티브 클라는 같은 명령을
+# 보낼 길이 없었다 — 그것이 죽은 줄 열여덟의 뿌리다. 표를 빼 두 소비자가 같이 쓴다.
+
+def _cmdmap():
+    import importlib
+    return importlib.import_module("pytmuxlib.plugins.claude-code.cmdmap")
+
+
+def test_the_table_never_names_an_action_the_server_does_not_accept():
+    """⛔ **이 오라클이 이 표의 존재 이유다.** 서버가 안 받는 액션을 표가 이름 대면 그
+    명령은 눌러도 **조용히 아무 일도 안 한다** — 종전(거절 알림)보다 더 조용하다.
+
+    ⚠ **받는 자리가 둘이다**: 코어 명령표(`servercmd._CMD_TABLE`)와 플러그인
+    `server_command`. 한쪽만 보면 산 명령을 죽은 것으로 읽는다 — 2026-08-03 에 실제로
+    그렇게 오판해 `claude-token-account`(주인은 코어 표다)를 표에서 뺄 뻔했다."""
+    import json, io, os
+    from pytmuxlib.servercmd import _CMD_TABLE
+    fx = json.load(io.open(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "client", "crates", "proto", "tests", "fixtures",
+        "plugin_server_actions.json"), encoding="utf-8"))
+    known = set(fx["actions"]) | set(_CMD_TABLE)
+    cm = _cmdmap()
+    bad = []
+    for name in cm.names():
+        action, _kw = cm.to_action(name, [])
+        if action not in known:
+            bad.append((name, action))
+    assert not bad, f"서버가 안 받는 액션을 표가 이름 댄다: {bad}"
+
+
+def test_a_core_table_action_is_reachable_through_the_new_path():
+    """★ 위 오판의 회귀 가드 — **코어 표가 받는 액션**도 `plugin_cmd` 로 닿아야 한다.
+
+    종전 설계는 플러그인 `server_command` 만 물어서, 주인이 코어 표인 액션
+    (`set_claude_account`)은 새 길에서 죽었다. 지금은 서버가 **코어 표를 먼저** 본다."""
+    from pytmuxlib.servercmd import _CMD_TABLE
+    cm = _cmdmap()
+    action, kw = cm.to_action("claude-token-account", ["나"])
+    assert action == "set_claude_account" and kw == {"name": "나"}, (action, kw)
+    assert action in _CMD_TABLE, "코어 표가 이 액션을 안 받는다(전제가 바뀌었다)"
+
+
+def test_the_server_runs_the_same_command_the_canonical_sends():
+    """정본이 `send_cmd(action, **kw)` 로 치는 것을 서버가 **같은 표로** 푼다.
+
+    두 소비자가 같은 표를 쓴다는 것이 이 슬라이스의 전부다 — 갈리면 네이티브에서만
+    죽는 명령이 다시 생긴다."""
+    import importlib
+    plug = importlib.import_module("pytmuxlib.plugins.claude-code").PLUGIN
+    # 3-state 인자가 실제로 파싱돼 넘어가는지까지 본다(무인자 토글로 걸면 반쪽이 된다).
+    cm = _cmdmap()
+    assert cm.to_action("claude-auto-redraw", ["corruption"]) == (
+        "set_claude_auto_redraw", {"value": "corruption"})
+    assert cm.to_action("claude-resume-verify", ["strict"]) == (
+        "set_claude_resume_verify", {"value": "strict"})
+    assert cm.to_action("prompt-clear-message", ["작업", "끝"]) == (
+        "set_prompt_clear_message", {"msg": "작업 끝"})
+    # 플러그인 훅은 **옮기기만** 한다 — 실행은 서버가 한다(그래야 코어 표가 받는
+    # 액션도 산다). 그 훅이 정본과 같은 표를 쓰는지 본다.
+    assert plug.plugin_command_action("claude-auto-redraw", ["idle"]) == (
+        "set_claude_auto_redraw", {"value": "idle"})
+    # 내 것이 아니면 None — 서버가 화면 경로로 넘어간다.
+    assert plug.plugin_command_action("ncd", []) is None
+
+
+def test_a_screen_command_still_reaches_its_screen_through_the_new_path():
+    """`plugin_cmd` 는 못 알아들으면 **화면 경로로 넘어간다** — 그래야 클라가 갈래를
+    안 정해도 된다(갈래를 클라가 들면 서버와 갈리고, 갈린 순간 조용히 죽는다)."""
+    import importlib
+    plug = importlib.import_module("pytmuxlib.plugins.claude-code").PLUGIN
+    # 한도 판은 명령 표에 없다(화면이다) → 훅은 None 을 돌려준다.
+    assert plug.plugin_command_action("usage-panel", []) is None
+    # 그리고 화면 경로에서는 스펙이 나온다.
+
+    class _Srv:
+        _usage = {"session": {"pct": 1, "reset": None}}
+        _usage_ts = None
+
+    spec = plug.plugin_screen(_Srv(), None, {"do": "open", "name": "usage-panel"})
+    assert spec and spec["kind"] == "text", spec
+
+
+async def test_the_new_command_actually_moves_server_state():
+    """★ **호출부 오라클** — 표가 맞아도 서버가 안 부르면 명령은 여전히 죽어 있다.
+
+    라이브 서버에 `plugin_cmd` 를 먹여 상태가 실제로 움직이는지 본다. 종전에는 이 이름이
+    `plugin_open` 으로 가서 *"화면 스펙을 제공하지 않습니다"* 로 거절당했다."""
+    from harness import server_only, teardown
+    from pytmuxlib.servercmd import _CMD_TABLE
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+
+        class _C:
+            def __init__(self):
+                self.plugin_state = {}
+                self._cells_at = 1.0
+                self.notices = []
+
+            def notice(self, *a, **kw):
+                self.notices.append(a)
+
+        client = _C()
+        handler, _disp = _CMD_TABLE["plugin_cmd"]
+        # 3-state 인자가 그 줄에서 이어 쳐 온 모양 그대로.
+        await handler(srv, client, sess,
+                      {"name": "claude-auto-redraw", "args": ["corruption"]})
+        assert srv.claude_auto_redraw == "corruption", srv.claude_auto_redraw
+        await handler(srv, client, sess,
+                      {"name": "claude-auto-redraw", "args": ["off"]})
+        assert srv.claude_auto_redraw == "off", srv.claude_auto_redraw
+        # 코어 표가 주인인 액션도 같은 길로 닿는다(2026-08-03 오판의 회귀 가드).
+        await handler(srv, client, sess,
+                      {"name": "claude-token-account", "args": ["나"]})
+    finally:
+        await teardown(srv, task, sock)

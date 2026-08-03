@@ -3328,8 +3328,14 @@ fn choosing_a_row_sends_back_its_key_not_its_position() {
 }
 
 #[test]
-fn a_plugin_command_asks_the_server_for_a_screen() {
-    // P1~P2 에서는 여기서 "화면이 없다" 알림만 남았다. 이제 서버에 **화면을 묻는다**.
+fn a_plugin_command_goes_to_the_server_by_name_not_by_our_guess() {
+    // ★ 계약이 바뀌었다(pytmux-35). P1~P2 에서는 알림만 남았고, 그 뒤로는 **전부**
+    //   `plugin_open`("화면을 다오")이었다 — 그래서 상태를 바꾸는 명령이 통째로 죽어
+    //   있었다(팔레트에 보이는데 안 먹는 줄 열여덟).
+    //
+    //   이제 **이름만 보낸다**(`plugin_cmd`). 어느 갈래인지는 플러그인이 알고, 그 표를
+    //   우리가 들면 서버와 갈린다 — 갈린 순간 명령은 조용히 죽는다.
+    //   화면인 이름(`mdir`)도 같은 길로 간다: 서버가 화면 경로로 넘어간다.
     let sent = sent_after(
         vec![layout_one_pane(), status_with_plugin_surface()],
         &[
@@ -3345,9 +3351,15 @@ fn a_plugin_command_asks_the_server_for_a_screen() {
     let frames: Vec<serde_json::Value> = sent.iter().map(|o| o.to_frame()).collect();
     let open = frames
         .iter()
-        .find(|f| f["action"] == "plugin_open")
-        .unwrap_or_else(|| panic!("plugin_open 이 안 나갔다: {frames:?}"));
+        .find(|f| f["action"] == "plugin_cmd")
+        .unwrap_or_else(|| panic!("plugin_cmd 가 안 나갔다: {frames:?}"));
     assert_eq!(open["name"], "mdir");
+    // ⚠ **우리가 갈래를 정하지 않는다**는 것이 이 오라클의 요점이다 — 화면인 이름에도
+    //    `plugin_open` 을 직접 치지 않는다(치면 상태형 이름에서 다시 죽는다).
+    assert!(
+        !frames.iter().any(|f| f["action"] == "plugin_open"),
+        "갈래를 클라가 정했다: {frames:?}"
+    );
 }
 
 #[test]
