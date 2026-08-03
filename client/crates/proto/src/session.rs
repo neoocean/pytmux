@@ -694,23 +694,73 @@ pub struct MouseTarget {
 /// "이 이름은 이 색"뿐이고, 어느 자리에 어떤 이름을 쓸지는 플러그인 한 벌이 정한다.
 /// 정본은 같은 이름을 `theme_color(app, name)` 으로 자기 테마에서 푼다 — 값이 아니라
 /// **이름이 옮겨 다니는** 것이 이 설계의 요점이다(설계 §10 위험표).
+/// ⛔ **어휘가 갈리면 화면이 조용히 빈다**(pytmux-16, 2026-08-03 실측). 모르는 이름은
+/// 색을 안 칠하는데, 런에 실린 리터럴이 어두운 글자면 그 자리는 **아무것도 안 보인다** —
+/// 예외도 로그도 없다. ime-indicator 가 정확히 그 함정을 밟았다:
+///
+/// ```text
+/// _THEME = {"한": "success", "EN": "primary"}       # 정본 플러그인
+/// run = {"style": {"f": "black", "bo": 1}, "theme": {"b": _THEME[label]}}
+/// ```
+///
+/// `success` 는 알아서 `[한]` 이 밝은 초록 바탕에 떴는데 **`primary` 가 표에 없어**
+/// `[EN]` 은 검은 글자만 남았다. 캡처의 화소로 확인했다 — 한글 컷에는 배지 바탕색이
+/// 640화소, 영문 컷에는 **0화소**. 제보에는 "영문 모드에서는 배지가 사라진다"로 적혔다.
+///
+/// 그래서 어휘를 **정본에서 뽑아 고정**한다(`scripts/gen_theme_names.py` →
+/// `tests/fixtures/theme_names.json`). 정본의 어휘는 `clientutil._THEME_FALLBACK` 의
+/// 키 전부이고, 그 하나하나를 여기서 **명시로** 처리해야 한다. "몰라서 None"과
+/// "알지만 기본색"을 구분하려고 [`resolve`] 가 [`Resolution`] 을 돌려주고,
+/// `the_theme_vocabulary_is_fully_known` 이 픽스처로 전수를 잰다.
 pub mod theme {
     use crate::style::{Color, NamedColor};
 
-    /// 모르는 이름이면 `None` — 그 자리는 런에 실린 리터럴이나 기본색이 지킨다.
-    /// (플러그인이 새 이름을 쓰기 시작하면 여기 한 줄을 더한다. 이름을 모른다고
-    /// 글자를 안 그리지는 않는다.)
-    pub fn color(name: &str) -> Option<Color> {
-        Some(match name {
+    /// 이름을 어떻게 처리했나. `color()` 만으로는 **모르는 이름**과 **일부러 기본색**이
+    /// 둘 다 `None` 이라 갈리지 않는다 — 게이트가 재는 것이 바로 그 구분이다.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Resolution {
+        /// 이 색으로 칠한다.
+        Color(Color),
+        /// 뜻은 알지만 **칠하지 않는다**(= 기본색이 정답).
+        Default,
+        /// 모르는 이름. 새 이름이 생겼다는 뜻이니 표에 한 줄을 더한다.
+        Unknown,
+    }
+
+    /// 이름 하나의 처리. 표의 정본은 여기 하나다.
+    pub fn resolve(name: &str) -> Resolution {
+        use Resolution::{Color as C, Default as D, Unknown as U};
+        match name {
             // 정본 `success`(강조 초록). 시계 숫자·달력 제목·오늘 바탕이 이 이름을 쓴다.
-            "success" => Color::Named(NamedColor::BrightGreen),
-            // "특별한 색이 아니다"가 곧 기본값이다 — 칠하지 않는 것이 정답이다.
-            "foreground" => return None,
-            "accent" => Color::Named(NamedColor::BrightBlue),
-            "warning" => Color::Named(NamedColor::Yellow),
-            "error" => Color::Named(NamedColor::BrightRed),
-            _ => return None,
-        })
+            "success" => C(Color::Named(NamedColor::BrightGreen)),
+            // ime 영문 배지·정본의 주 강조. **없어서 [EN] 이 안 보였다**(pytmux-16).
+            "primary" => C(Color::Named(NamedColor::BrightBlue)),
+            // claude 상태 표식의 바탕. primary 보다 가라앉은 파랑이라야 표식이 글자를
+            // 안 잡아먹는다(정본도 `secondary` 가 `primary` 보다 어둡다).
+            "secondary" => C(Color::Named(NamedColor::Blue)),
+            "accent" => C(Color::Named(NamedColor::BrightYellow)),
+            "warning" => C(Color::Named(NamedColor::Yellow)),
+            "error" => C(Color::Named(NamedColor::BrightRed)),
+            // ── 아래는 "칠하지 않는 것이 정답"인 이름들 ──
+            // "특별한 색이 아니다"가 곧 기본값이다.
+            "foreground" => D,
+            // 바탕 계열: 우리 바탕은 **우리 테마**가 정한다(`gui::theme`). 서버가 준
+            // 이름으로 캔버스 바닥을 덮으면 크롬과 캔버스 배색이 갈린다.
+            "background" | "surface" | "panel" => D,
+            // 정본 Textual 테마의 파생 변수(진한 파랑 두 단계). 우리 팔레트에는 대응이
+            // 없고, 지금 이 이름을 런에 싣는 플러그인도 없다 — 생기면 색을 준다.
+            "primary-darken-2" | "primary-darken-3" => D,
+            _ => U,
+        }
+    }
+
+    /// 모르는 이름이면 `None` — 그 자리는 런에 실린 리터럴이나 기본색이 지킨다.
+    /// (이름을 모른다고 글자를 안 그리지는 않는다.)
+    pub fn color(name: &str) -> Option<Color> {
+        match resolve(name) {
+            Resolution::Color(c) => Some(c),
+            Resolution::Default | Resolution::Unknown => None,
+        }
     }
 }
 

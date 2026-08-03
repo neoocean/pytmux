@@ -1,0 +1,24 @@
+{
+ "emitted": [
+  "error",
+  "foreground",
+  "primary",
+  "secondary",
+  "success",
+  "warning"
+ ],
+ "names": [
+  "accent",
+  "background",
+  "error",
+  "foreground",
+  "panel",
+  "primary",
+  "primary-darken-2",
+  "primary-darken-3",
+  "secondary",
+  "success",
+  "surface",
+  "warning"
+ ]
+}
