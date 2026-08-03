@@ -39,6 +39,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+. "$PSScriptRoot\winlib.ps1"   # 창 찾기 한 벌(Get-AppWindow)
+
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -75,15 +77,9 @@ public class WinWheel {
 
   public const uint WHEEL = 0x0800;
 
-  public static IntPtr TopLevel(uint want) {
-    IntPtr found = IntPtr.Zero;
-    EnumWindows((h, p) => {
-      uint pid; GetWindowThreadProcessId(h, out pid);
-      if (pid == want && IsWindowVisible(h) && GetWindow(h, 4) == IntPtr.Zero) { found = h; return false; }
-      return true;
-    }, IntPtr.Zero);
-    return found;
-  }
+  // ⛔ 창 찾기는 여기 두지 않는다 — `scripts/winlib.ps1` 의 `Get-AppWindow` 한 벌이다.
+  //    종전에는 이 클래스마다 "그 pid 의 첫 보이는 최상위 창"을 복붙해 뒀는데, 그 술어는
+  //    winit 의 숨은 15×15 이벤트 창(보이고 소유자도 없다)을 앱 창으로 집는다(pytmux-32).
 
   public static RECT Bounds(IntPtr h) {
     RECT r;
@@ -94,8 +90,7 @@ public class WinWheel {
 }
 '@
 
-$hwnd = [WinWheel]::TopLevel([uint32]$ProcessId)
-if ($hwnd -eq [IntPtr]::Zero) { throw "pid $ProcessId 에 최상위 창이 없다." }
+$hwnd = Get-AppWindow -ProcessId $ProcessId
 
 [void][WinWheel]::ShowWindow($hwnd, 9)
 [void][WinWheel]::SetForegroundWindow($hwnd)
@@ -119,8 +114,14 @@ Start-Sleep -Milliseconds 150
 # 눈금을 한 번에 몰아 보내지 않는다 — 앱이 델타를 합쳐 한 번으로 읽으면 "여러 번 굴린
 # 것"을 확인할 수 없다.
 $step = if ($Notches -ge 0) { 1 } else { -1 }
+# ⚠ `mouseData` 는 DWORD 지만 담는 값은 **부호 있는** 휠 델타다. `[uint32](-120)` 은
+#   변환이 아니라 **오류**다("Value was either too large or too small for a UInt32") —
+#   그래서 종전에는 **아래로 굴리는 것이 아예 불가능**했다(이 파일의 .EXAMPLE 이 바로
+#   `-Notches -3` 인데도 그 예제가 죽었다). 값을 바꾸는 게 아니라 **비트를 그대로**
+#   읽어야 하므로 2의 보수 바이트를 재해석한다.
+$delta = [BitConverter]::ToUInt32([BitConverter]::GetBytes([int]($step * 120)), 0)
 for ($i = 0; $i -lt [Math]::Abs($Notches); $i++) {
-  [WinWheel]::mouse_event([WinWheel]::WHEEL, 0, 0, [uint32]([int]($step * 120)), [UIntPtr]::Zero)
+  [WinWheel]::mouse_event([WinWheel]::WHEEL, 0, 0, $delta, [UIntPtr]::Zero)
   Start-Sleep -Milliseconds 120
 }
 Start-Sleep -Milliseconds 250

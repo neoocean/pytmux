@@ -56,6 +56,8 @@ if (($ProcessId -eq 0) -eq ($Hwnd -eq 0)) {
 }
 
 $ErrorActionPreference = 'Stop'
+
+. "$PSScriptRoot\winlib.ps1"   # 창 찾기 한 벌(Get-AppWindow)
 Add-Type -AssemblyName System.Drawing
 
 Add-Type @'
@@ -113,20 +115,10 @@ public class WinCap {
   [StructLayout(LayoutKind.Sequential)]
   public struct RECT { public int Left, Top, Right, Bottom; }
 
-  // 그 pid 가 소유한, 보이고, 소유자 창이 없는(= 툴팁·팝업이 아닌) 최상위 창.
-  public static List<IntPtr> TopLevel(uint want) {
-    var found = new List<IntPtr>();
-    EnumWindows((h, p) => {
-      uint pid; GetWindowThreadProcessId(h, out pid);
-      if (pid == want && IsWindowVisible(h) && GetWindow(h, 4 /*GW_OWNER*/) == IntPtr.Zero) {
-        RECT r;
-        if (GetWindowRect(h, out r) && (r.Right - r.Left) > 64 && (r.Bottom - r.Top) > 64)
-          found.Add(h);
-      }
-      return true;
-    }, IntPtr.Zero);
-    return found;
-  }
+  // ⛔ 창 찾기는 여기 두지 않는다 — `scripts/winlib.ps1` 의 `Get-AppWindow` 한 벌이다.
+  //    이 파일에는 64px 필터가 있어 winit 의 숨은 15×15 창을 **집지는** 않았지만, 대신
+  //    창이 최소화되면(=rect 가 158×26) 우리 창까지 걸러 "최상위 창을 못 찾았다"로
+  //    떨어졌다. 그 문구가 pytmux-32 를 "앱이 깨졌다"로 읽게 만든 출발점이다.
 
   public static string Title(IntPtr h) {
     int n = GetWindowTextLength(h);
@@ -147,20 +139,8 @@ public class WinCap {
 }
 '@
 
-function Find-Window {
-  param([int]$Pid_, [int]$TimeoutSec)
-  $deadline = (Get-Date).AddSeconds($TimeoutSec)
-  while ((Get-Date) -lt $deadline) {
-    $proc = Get-Process -Id $Pid_ -ErrorAction SilentlyContinue
-    if (-not $proc) { throw "pid $Pid_ 가 이미 죽었다 — 창이 뜨기 전에 종료됐다(로그를 볼 것)." }
-    $wins = [WinCap]::TopLevel([uint32]$Pid_)
-    if ($wins.Count -gt 0) { return $wins[0] }
-    Start-Sleep -Milliseconds 200
-  }
-  throw "pid $Pid_ 가 $TimeoutSec 초 안에 최상위 창을 안 만들었다."
-}
-
-$hwnd = if ($Hwnd -ne 0) { [IntPtr]$Hwnd } else { Find-Window -Pid_ $ProcessId -TimeoutSec $WaitSeconds }
+$hwnd = if ($Hwnd -ne 0) { [IntPtr]$Hwnd }
+        else { Get-AppWindow -ProcessId $ProcessId -TimeoutSec $WaitSeconds }
 $title = [WinCap]::Title($hwnd)
 
 # 앞으로 올린다. 가려진 창을 화면에서 뜨면 **남의 창이 찍힌다** — 조용히 틀린 그림이라

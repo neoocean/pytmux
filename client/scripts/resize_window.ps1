@@ -28,6 +28,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+. "$PSScriptRoot\winlib.ps1"   # 창 찾기 한 벌(Get-AppWindow)
+
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -49,20 +51,13 @@ public class WinSize {
 
   public const uint SWP_NOMOVE = 0x0002, SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
 
-  public static IntPtr TopLevel(uint want) {
-    IntPtr found = IntPtr.Zero;
-    EnumWindows((h, p) => {
-      uint pid; GetWindowThreadProcessId(h, out pid);
-      if (pid == want && IsWindowVisible(h) && GetWindow(h, 4) == IntPtr.Zero) { found = h; return false; }
-      return true;
-    }, IntPtr.Zero);
-    return found;
-  }
+  // ⛔ 창 찾기는 여기 두지 않는다 — `scripts/winlib.ps1` 의 `Get-AppWindow` 한 벌이다.
+  //    종전에는 이 클래스마다 "그 pid 의 첫 보이는 최상위 창"을 복붙해 뒀는데, 그 술어는
+  //    winit 의 숨은 15×15 이벤트 창(보이고 소유자도 없다)을 앱 창으로 집는다(pytmux-32).
 }
 '@
 
-$hwnd = [WinSize]::TopLevel([uint32]$ProcessId)
-if ($hwnd -eq [IntPtr]::Zero) { throw "pid $ProcessId 에 최상위 창이 없다." }
+$hwnd = Get-AppWindow -ProcessId $ProcessId
 
 # 최대화 상태면 크기 지정이 안 먹는다 — 먼저 보통 창으로 되돌린다(SW_RESTORE).
 [void][WinSize]::ShowWindow($hwnd, 9)

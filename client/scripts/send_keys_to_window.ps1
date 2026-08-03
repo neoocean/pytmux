@@ -64,6 +64,8 @@ if (($Keys -eq "") -eq ($Text -eq "")) {
 }
 
 $ErrorActionPreference = 'Stop'
+
+. "$PSScriptRoot\winlib.ps1"   # 창 찾기 한 벌(Get-AppWindow)
 Add-Type -AssemblyName System.Windows.Forms
 
 Add-Type @'
@@ -135,25 +137,16 @@ public class WinSend {
     System.Threading.Thread.Sleep(12);
   }
 
-  public static IntPtr TopLevel(uint want) {
-    IntPtr found = IntPtr.Zero;
-    EnumWindows((h, p) => {
-      uint pid; GetWindowThreadProcessId(h, out pid);
-      if (pid == want && IsWindowVisible(h) && GetWindow(h, 4) == IntPtr.Zero) {
-        found = h; return false;
-      }
-      return true;
-    }, IntPtr.Zero);
-    return found;
-  }
+  // ⛔ 창 찾기는 여기 두지 않는다 — `scripts/winlib.ps1` 의 `Get-AppWindow` 한 벌이다.
+  //    종전에는 이 클래스마다 "그 pid 의 첫 보이는 최상위 창"을 복붙해 뒀는데, 그 술어는
+  //    winit 의 숨은 15×15 이벤트 창(보이고 소유자도 없다)을 앱 창으로 집는다(pytmux-32).
 }
 '@
 
 if ($Hwnd -ne 0) {
   $hwnd = [IntPtr]$Hwnd
 } else {
-  $hwnd = [WinSend]::TopLevel([uint32]$ProcessId)
-  if ($hwnd -eq [IntPtr]::Zero) { throw "pid $ProcessId 에 최상위 창이 없다." }
+  $hwnd = Get-AppWindow -ProcessId $ProcessId
 }
 
 [void][WinSend]::ShowWindow($hwnd, 9)

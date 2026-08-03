@@ -169,8 +169,29 @@ cargo test                              # 워크스페이스 전체
 
 창 안의 그림을 사람 눈 없이 확인한다. 전부 **pid 를 받는다**.
 
+⛔ **창 찾기는 `winlib.ps1` 한 벌이다 — 직접 훑지 말 것**(pytmux-32, 2026-08-03).
+`pytmux-gui` 는 최상위 창을 여러 개 갖고, 그중 winit 의 숨은 `Winit Thread Event Target`
+은 **15×15 인데 보이고 소유자도 없다**. 그래서 "그 pid 의 첫 보이는 최상위 창"이라는
+술어를 **그대로 만족한다** — EnumWindows 는 Z 순서로 도니 그 창이 위로 올라오는 순간
+(앱 창을 최소화하면 바로 그렇다) 하네스가 **그것을 앱 창으로 집는다**. 증상 셋이 한꺼번에
+온다: 키가 성공을 찍고도 안 들어간다 · 전경이 바탕화면으로 간다 · rect 가 15×15 다.
+**그 셋이 "최소화했다 복원하면 창이 15×15 로 남고 키를 하나도 안 받는다"로 제품 결함처럼
+기록됐다** — 제품은 멀쩡했다(`ShowWindow(SW_RESTORE)` 도 사람이 누르는
+`WM_SYSCOMMAND/SC_RESTORE` 도 정상 복원을 실측). 여덟 중 **일곱**이 그 술어를 복붙하고
+있었고, `capture_window.ps1` 만 64px 필터가 있어 오집 대신 "창을 못 찾았다"로 떨어졌다 —
+그 문구가 오진의 출발점이었다.
+- 이제 전부 `. "$PSScriptRoot\winlib.ps1"` 후 **`Get-AppWindow -ProcessId <pid>`** 를 쓴다.
+  판정은 크기가 아니라 **상태**로 한다: `IsIconic` 이면 크기 필터를 건너뛰고(최소화된
+  우리 창은 rect 가 158×26 이다), 아니면 64px 하한으로 숨은 창을 버린다. 클래스 이름으로
+  거르지 않는다(winit 판이 바뀌면 이름도 바뀐다).
+- 못 찾으면 **본 창을 전부 적어** 던진다. "창이 없다" 한 줄은 다음 세션이 *앱이 깨졌다*로
+  읽는다 — 실제로 그렇게 읽혔다. 후보만 보고 싶으면 `Show-AppWindowCandidates -ProcessId`.
+- 복붙이 돌아오는 것은 `tests/test_harness_window_lookup.py` 가 막는다(파일만 읽어 판정하니
+  OS 를 안 탄다).
+
 | 스크립트 | 하는 일 |
 |---|---|
+| `winlib.ps1` | **pid → 앱 창**(`Get-AppWindow`). 나머지 여덟이 dot-source 한다 |
 | `capture_window.ps1` | pid → PNG. 화면 DC BitBlt(`PrintWindow` 는 wgpu 창에 **까만 사각형을 성공으로** 돌려준다) |
 | `send_keys_to_window.ps1` · `send_chord_to_window.ps1` | SendInput 으로 글자·조합키 |
 | `wheel_on_window.ps1` · `drag_mouse_on_window.ps1` | 휠·드래그(`-ClientPixels`) |
@@ -178,6 +199,11 @@ cargo test                              # 워크스페이스 전체
 | `launch_console_window.ps1` | 콘솔 명령을 **새 창**에 띄우고 그 창 HWND 를 확정해 돌려준다(정본 클라용) |
 | `gen_canon_shots.ps1` · `compose_side_by_side.ps1` | **파이썬 정본을 실제로 띄워** 장면별로 찍고, 우리 컷과 나란히 굽는다(대조 문서) |
 | `type_korean_to_window.ps1` · `resize_window.ps1` | IME · 창 크기 |
+
+- ⚠ **휠 아래로 굴리기는 2026-08-03 까지 아예 안 됐다**: `mouse_event` 의 `mouseData` 는
+  DWORD 지만 담는 값은 **부호 있는** 델타라 `[uint32](-120)` 이 변환이 아니라 오류로 죽는다
+  (`wheel_on_window.ps1` 의 `.EXAMPLE` 이 바로 `-Notches -3` 인데 그 예제가 죽었다). 이제
+  2의 보수 바이트를 재해석해 넘긴다 — 위/아래 둘 다 실측했다.
 
 - ⛔ **IME 조합 모드는 `IMC_SETCONVERSIONMODE` 로 켜지 말 것**(2026-08-03 실측, 리포트
   `docs/internal/client/reports/2026-08-03-ime-harness.md`). 그 쓰기는 성공을 돌려주고
