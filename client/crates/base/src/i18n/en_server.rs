@@ -29,6 +29,8 @@ pub static EN: &[(&str, &str)] = &[
     ("(제출된 체인지리스트가 없습니다)", "(no submitted changelists)"),
     ("(큐 비어 있음)", "(queue empty)"),
     ("/usage 한도 데이터 없음 — Claude 패널에서 /usage 를 먼저 실행", "No /usage limit data — run /usage in a Claude panel first"),
+    // mdir 파일 마스크(pytmux-12 C) — 빈 값이 곧 끄기다(거는 것과 푸는 것이 한 키).
+    ("파일 마스크 (예: *.txt *.md · 빈 값이면 해제)", "File mask (e.g. *.txt *.md · empty clears)"),
     ("<드라이브>", "<DRIVE>"),
     ("<상위>", "<UP>"),
     ("?%/5h 사용", "?%/5h used"),

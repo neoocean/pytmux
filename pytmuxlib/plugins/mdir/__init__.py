@@ -20,6 +20,12 @@ from __future__ import annotations
 
 from pytmuxlib import i18n
 
+# 줄의 뜻 판정 — 정본 화면과 **같은 함수**다(UI 무의존이라 서버도 부른다).
+from .rowtag import row_tag
+
+# 늘어놓는 규칙 — 정본 화면과 **같은 함수**다(UI 무의존이라 서버도 부른다).
+from .listing import arrange, next_sort, parse_masks
+
 # 화면 스펙(Tier C)이 **소켓 너머로 실어 보내는** 글. 여기 없으면 게이트가 못 본다 —
 # 픽스처는 카탈로그에서 뽑히므로, 스펙에 직접 적은 한국어는 영어 표에도 안 들어가고
 # 영어 사용자에게 그대로 한국어로 뜬다(ncd·p4changes 와 같은 규율).
@@ -38,6 +44,7 @@ i18n.register({
         "mdir.drive": "<드라이브>",
         "mdir.read_fail": "읽기 실패: {err}",
         "mdir.too_many": "항목이 너무 많아 일부만 보입니다",
+        "mdir.mask_ask": "파일 마스크 (예: *.txt *.md · 빈 값이면 해제)",
         "mdir.empty": "빈 디렉터리입니다",
         # 뷰어
         "mdir.view_hint": "(↑↓ 스크롤 · Esc 닫기)",
@@ -89,6 +96,7 @@ i18n.register({
         "mdir.drive": "<DRIVE>",
         "mdir.read_fail": "Read failed: {err}",
         "mdir.too_many": "Too many entries — showing only some",
+        "mdir.mask_ask": "File mask (e.g. *.txt *.md · empty clears)",
         "mdir.empty": "Empty directory",
         "mdir.view_hint": "(↑↓ scroll · Esc close)",
         "mdir.cant_read": "Cannot read: {err}",
@@ -147,6 +155,12 @@ _SCREEN_KEYS = {
     ".": "up", "t": "tag", "u": "tagall", "h": "hidden",
     "c": "copy", "m": "move", "d": "delete", "r": "rename",
     "k": "mkdir", "v": "view", "p": "cd",
+    # ★ 정렬·마스크는 **정본과 같은 키**다(pytmux-12 C) — `Alt+N/E/S/T/O` 와 `Alt+F`.
+    #   글자 키로 옮기지 않는 이유: 그러면 손버릇이 갈리고, 이미 `t`(태그)가 정렬의
+    #   `t`(시각)와 부딪힌다. 스펙의 키 어휘가 `alt-` 를 알아 그럴 필요가 없다.
+    "alt-n": "sort-n", "alt-e": "sort-e", "alt-s": "sort-s",
+    "alt-t": "sort-t", "alt-o": "sort-o",
+    "alt-f": "mask",
 }
 
 def _reason(code) -> str:
@@ -430,6 +444,21 @@ class _MdirPlugin:
             return _offload(self._tag, mine, picked, row)
         if do == "tagall":
             return _offload(self._tagall, mine, row)
+        if do.startswith("sort-"):
+            # 같은 갈래를 다시 누르면 **내림차순**(정본 손버릇) — 전이 규칙은 한 벌이다.
+            mine["sort"], mine["rev"] = next_sort(
+                mine.get("sort") or "n", bool(mine.get("rev")), do[-1])
+            return _offload(self._spec, mine, row, "")
+        if do == "mask":
+            # 되돌릴 수 없는 것이 아니라 **거르는 것**이지만, 값이 필요하니 물어본다.
+            # 빈 대답은 **끄기**다(정본과 같다 — 거는 것과 푸는 것이 한 키다).
+            return {"t": "plugin_screen", "id": "mdir", "kind": "prompt",
+                    "title": i18n.t("mdir.mask_ask"),
+                    "note": "", "rows": [], "text": "",
+                    "keys": {"enter": "mask-apply"}, "selected": row}
+        if do == "mask-apply":
+            mine["mask"] = parse_masks(picked)
+            return _offload(self._spec, mine, 0, "")
         if do == "hidden":
             mine["hidden"] = not mine.get("hidden")
             return _offload(self._spec, mine, row, "")
@@ -468,9 +497,13 @@ class _MdirPlugin:
         from .server import list_entries, _drive_roots
         path = mine.get("path") or os.path.abspath(os.sep)
         entries, err, over = list_entries(path)
-        items = [e for e in entries if mine.get("hidden") or not e["h"]]
-        # 디렉터리 먼저, 그 안에서 이름순 — 정본의 기본 정렬과 같다.
-        items.sort(key=lambda e: (not e["d"], e["n"].lower()))
+        visible = [e for e in entries if mine.get("hidden") or not e["h"]]
+        # 늘어놓는 규칙은 **정본 화면과 같은 함수**다(`listing.arrange` — pytmux-12 C).
+        # 종전에는 여기서 이름순으로 한 번 정렬하고 끝이라, 정본의 `Alt+E/S/T/O` 정렬과
+        # `Alt+F` 마스크가 네이티브 클라에는 통째로 없었다.
+        dirs, files = arrange(visible, mine.get("sort") or "n",
+                              bool(mine.get("rev")), mine.get("mask"))
+        items = dirs + files
         tags = set(mine.get("tags") or [])
         # 직전 조작에서 **안 된 것들** — 사유를 그 줄의 칸에 붙인다(한 번만 보인다).
         fails = mine.pop("fails", None) or {}
@@ -479,7 +512,9 @@ class _MdirPlugin:
         if parent and parent != path:
             # `..` 는 **자리가 아니라 뜻**으로 나른다(부모 경로 그대로 — ncd 동형).
             rows.append({"key": parent, "label": "   ..",
-                         "cols": [i18n.t("mdir.parent")]})
+                         "cols": [i18n.t("mdir.parent")],
+                         # 줄의 **뜻**(색은 각 클라가 이 이름으로 푼다 — pytmux-12 A).
+                         "tag": row_tag("up")})
         operable = []
         for e in items:
             full = os.path.join(path, e["n"])
@@ -493,14 +528,19 @@ class _MdirPlugin:
                 cols += ["✗", _reason(fails[e["n"]])]
             rows.append({
                 "key": full,
-                # 태그는 **줄 안에** 보인다. 색·굵기는 클라마다 다르지만 글자는 같다.
+                # 태그는 **줄 안에도** 보인다(글자). 색만으로 말하면 색을 못 보는
+                # 화면에서 그 뜻이 통째로 사라진다.
                 "label": ("✓ " if full in tags else "  ")
                          + e["n"] + ("/" if e["d"] else ""),
                 "cols": cols,
+                # 판정은 정본 화면과 **같은 함수**다(`rowtag`) — 두 벌이면 같은 파일이
+                # 두 클라에서 다른 색으로 뜬다.
+                "tag": row_tag("dir" if e["d"] else "file", e, full in tags),
             })
         for d in _drive_roots():
             rows.append({"key": d, "label": f"  [-{d[:1]}-]",
-                         "cols": [i18n.t("mdir.drive")]})
+                         "cols": [i18n.t("mdir.drive")],
+                         "tag": row_tag("drive")})
         # 조작 대상은 이 목록 안의 것뿐이다 — 다음 액션이 `input` 으로 받은 경로를
         # 여기 대고 검증한다(클라가 옛 목록의 줄을 되돌려줘도 엉뚱한 것을 안 지운다).
         mine["items"] = operable

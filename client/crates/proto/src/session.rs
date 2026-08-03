@@ -238,6 +238,35 @@ impl PluginScreen {
         self.keys.get(&c.to_string()).map(String::as_str)
     }
 
+    /// 그 **키**에 걸린 액션 — 글자와 **이름 있는 키**를 한 자리에서 본다(pytmux-11 B).
+    ///
+    /// # 왜 글자만으로는 부족했나
+    ///
+    /// 스펙의 키 표는 오래 글자뿐이었다(`ncd` 의 `c`). 그런데 트리는 `←→` 로 접고 펴는
+    /// 것이 손버릇이고, 그 둘은 글자가 아니다 — 이름을 못 실으면 화면이 트리가 될 수
+    /// 없다. 그래서 어휘를 **몇 개의 이름**까지 넓혔다.
+    ///
+    /// ⚠ 넓힌 것은 **여기까지**다. `↑↓`·`Enter`·`Esc` 는 목록 화면의 뜻이 이미 정해져
+    /// 있어(고르기·확정·닫기) 스펙이 뺏으면 판마다 손이 달라진다.
+    pub fn key_action(&self, key: base::Key, mods: base::Mods) -> Option<&str> {
+        // `Alt+글자` — 정본 mdir 의 정렬(`Alt+N/E/S/T/O`)·마스크(`Alt+F`)가 그 손이다.
+        // 글자 키로 옮기면 손버릇이 갈리고, 이미 `t`(태그)가 정렬의 `t`(시각)와 부딪힌다.
+        if mods.alt {
+            let base::Key::Char(c) = key else { return None };
+            return self.keys.get(&format!("alt-{c}")).map(String::as_str);
+        }
+        if mods != base::Mods::NONE {
+            return None;
+        }
+        let name = match key {
+            base::Key::Char(c) => return self.char_action(c),
+            base::Key::Right => "right",
+            base::Key::Left => "left",
+            _ => return None,
+        };
+        self.keys.get(name).map(String::as_str)
+    }
+
     /// 물음·확인 화면에 적을 글 — **첫 줄이 물음이고 나머지가 상세**다.
     ///
     /// # 왜 여기 있나
@@ -489,6 +518,32 @@ pub struct PluginRow {
     pub label: String,
     #[serde(default)]
     pub cols: Vec<String>,
+    /// 이 줄이 **무엇인가** — 색을 정하는 의미 이름(`dir`·`hidden`·`tagged` …).
+    ///
+    /// # 왜 스타일이 아니라 이름인가 (pytmux-11·12 A)
+    ///
+    /// 제보: *"컬러 스킴 일치가 특히 중요하다."* 정본은 줄마다 색을 달리 칠하는데 그
+    /// 판정이 Textual 화면 안에 있어 서버가 못 불렀고, 이 구조체에는 실을 칸도 없었다 —
+    /// 그래서 네이티브 클라의 mdir 은 줄이 **전부 같은 색**이었다.
+    ///
+    /// 이제 판정은 `plugins/mdir/rowtag.py` 한 벌이고 서버가 **이름만** 싣는다. hex 를
+    /// 실으면 서버가 UI 를 알게 된다(설계 §10). 값으로 바꾸는 것은 [`crate::rowtag`] 다.
+    ///
+    /// 빈 문자열이면 특별한 뜻이 없다 — 그 줄은 기본색으로 뜬다.
+    #[serde(default)]
+    pub tag: String,
+    /// 트리에서 이 줄의 **깊이**(0 = 뿌리). 목록형 화면은 0 이다.
+    ///
+    /// 들여쓰기를 **글자로 미리 넣지 않는** 이유(pytmux-11 B): 그러면 이름에 공백이
+    /// 섞여 `label` 이 더는 자료가 아니게 되고, 타이핑 찾기·복사가 그 공백을 물고 간다.
+    #[serde(default)]
+    pub depth: u16,
+    /// 펼침 상태 — `open`(펼침) · `shut`(접힘) · `""`(펼 것이 없다).
+    ///
+    /// 세 갈래인 이유: 접힘과 **잎**은 다르다. 둘을 하나로 묶으면 빈 디렉터리에도
+    /// `▸` 가 붙어 눌러도 아무 일이 없는 화살표가 생긴다(정본이 그래서 셋을 가른다).
+    #[serde(default)]
+    pub expand: String,
 }
 
 impl PluginRow {

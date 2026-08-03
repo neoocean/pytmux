@@ -37,6 +37,8 @@ pub mod mouse;
 pub mod palette;
 pub mod selection;
 pub mod prompt_box;
+/// 플러그인 화면 줄의 **의미 태그 → 색**(pytmux-11·12 A).
+pub mod rowtag;
 pub mod rtt;
 pub mod session;
 pub mod info;

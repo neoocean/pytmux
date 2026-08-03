@@ -101,6 +101,28 @@ _ARCHIVE_EXTS = {"zip", "tar", "gz", "tgz", "bz2", "tbz2", "xz", "txz",
                  "zst", "7z", "rar", "lzh", "arj", "jar"}
 _ARC_COLOR = "#ff55ff"
 
+from .rowtag import row_tag        # 판정 한 벌(UI 무의존)
+
+#: 의미 이름(`rowtag.TAGS`) → 이 화면의 색. **생성기가 이 표에서 뽑는다**
+#: (`client/scripts/gen_row_tags.py`) — 네이티브 클라가 같은 이름을 같은 값으로 풀게 한다.
+#:
+#: ⚠ 이 색은 테마가 아니라 **제품의 정체성**이다(Norton Commander 계열의 그림). 그래서
+#:   클라 테마로 풀지 않는다 — 상태줄 표식(`theme_color`)과 갈리는 지점이고, 갈리는
+#:   이유가 이것이다. 서버는 여전히 **이름만** 싣는다(hex 는 소켓을 안 건넌다).
+_TAG_STYLES = {
+    "text": _TXT,
+    "dir": _DIR,
+    "updir": _UP,
+    "hidden": _HID,
+    "drive": _DRIVE,
+    "tagged": _TAG,
+    "archive": Style(color=_ARC_COLOR, bgcolor="#000000"),
+    "exe": Style(color=_EXT_COLORS["exe"], bgcolor="#000000"),
+    "com": Style(color=_EXT_COLORS["com"], bgcolor="#000000"),
+    "script": Style(color=_EXT_COLORS["bat"], bgcolor="#000000"),
+    "exec": Style(color="#55ff55", bgcolor="#000000"),
+}
+
 # 한글 원문을 i18n 키로 쓰고 en 번역을 등록(코드베이스 관례). 렌더 시점 i18n.t().
 _STRIP = ("Space태그 · ⎇C/F5복사 ⎇M/F6이동 ⎇D/F8삭제 ⎇R/F2이름 ⎇K/F7새디렉 "
           "⎇V/F3보기 · ⎇NEST정렬 ⎇Z숨김 ⎇F필터 ⎇0-6열 · F4=cd ⇧↵분할 Esc")
@@ -277,17 +299,6 @@ class _MdirView(Widget):
         self.refresh()
 
     # ---- 목록 구성(표시 모델) ----
-    def _sort_key(self):
-        s = self._sort
-        if s == "e":
-            return lambda e: ((e["n"].rsplit(".", 1)[-1].lower()
-                               if "." in e["n"][1:] else ""), e["n"].lower())
-        if s == "s":
-            return lambda e: (e.get("s", 0), e["n"].lower())
-        if s == "t":
-            return lambda e: (e.get("m", 0), e["n"].lower())
-        return lambda e: e["n"].lower()
-
     def _arc_level_items(self) -> list[dict]:
         """압축 내부의 현재 접두(_arc_dir) 한 단계를 디렉토리/파일 항목으로 만든다
         (원조 '디렉토리 재현'). 하위 경로에서 디렉토리를 유도해 tar 처럼 디렉토리
@@ -325,16 +336,11 @@ class _MdirView(Widget):
             items = self._arc_level_items()
         else:
             ents = [e for e in self._entries if self._show_hidden or not e["h"]]
-            dirs = [e for e in ents if e["d"]]
-            files = [e for e in ents if not e["d"]]
-            if self._filter:
-                files = [e for e in files
-                         if any(fnmatch.fnmatch(e["n"], m)
-                                for m in self._filter)]
-            if self._sort != "o":              # o=무정렬(서버 나열 순서, 원조 기본)
-                key = self._sort_key()
-                dirs.sort(key=key, reverse=self._rev)
-                files.sort(key=key, reverse=self._rev)
+            # 늘어놓는 규칙은 **한 벌**(`listing.arrange` — pytmux-12 C). 종전에는 이
+            # 자리가 그 규칙을 혼자 갖고 있어서 서버가 못 불렀고, 네이티브 클라의
+            # mdir 은 늘 이름순이었다.
+            from .listing import arrange
+            dirs, files = arrange(ents, self._sort, self._rev, self._filter)
             items = [{"k": "up"}]
             items += [{"k": "dir", "e": e} for e in dirs]
             items += [{"k": "file", "e": e} for e in files]
@@ -486,24 +492,12 @@ class _MdirView(Widget):
         return Strip(segs).adjust_cell_length(w, _TXT)
 
     def _item_style(self, it: dict) -> Style:
-        k = it["k"]
-        if k == "up":
-            return _UP
-        if k == "drive":
-            return _DRIVE
-        if k == "dir":
-            return _DIR
-        e = it["e"]
-        if e.get("h"):
-            return _HID
-        ext = e["n"].rsplit(".", 1)[-1].lower() if "." in e["n"][1:] else ""
-        if ext in _ARCHIVE_EXTS:
-            return Style(color=_ARC_COLOR, bgcolor="#000000")
-        if ext in _EXT_COLORS:
-            return Style(color=_EXT_COLORS[ext], bgcolor="#000000")
-        if e.get("x"):
-            return Style(color="#55ff55", bgcolor="#000000")
-        return _TXT
+        """줄의 스타일 — **판정은 `rowtag` 한 벌**, 여기는 이름을 색으로 풀 뿐이다.
+
+        갈라 둔 이유(pytmux-12 A): 이 판정이 Textual 화면 안에 있는 동안 서버가 못
+        불렀고, 그래서 네이티브 클라의 mdir 은 줄이 **전부 같은 색**이었다. 이제 서버가
+        같은 함수로 이름을 붙여 스펙에 싣고, 각 클라가 자기 표로 푼다."""
+        return _TAG_STYLES[row_tag(it["k"], it.get("e"))]
 
     def _item_segment(self, it: dict, colw: int, cursor: bool) -> Segment:
         k = it["k"]
@@ -526,7 +520,9 @@ class _MdirView(Widget):
                          if m else " " * 15)
         text = set_cell_size(text, colw)
         tagged = k in ("file", "dir") and it["e"]["n"] in self._tags
-        style = _TAG if tagged else self._item_style(it)
+        # 태그 우선순위도 **판정 한 벌**이 든다(`rowtag` 의 첫 갈래) — 여기서 따로
+        # 앞세우면 서버가 붙이는 이름과 갈릴 자리가 하나 생긴다.
+        style = _TAG_STYLES[row_tag(k, it.get("e"), tagged)]
         if cursor:
             style = _cursor_style(style, self.has_focus)
         return Segment(text, style)
@@ -748,11 +744,11 @@ class _MdirView(Widget):
 
     # ---- 표시 토글(정렬/숨김/필터/열수) ----
     def _set_sort(self, s: str):
-        """원조 Alt-N/E/S/T/O. 같은 키 재입력 = 내림차순 토글(원조 Alt-- 대응)."""
-        if self._sort == s:
-            self._rev = not self._rev
-        else:
-            self._sort, self._rev = s, False
+        """원조 Alt-N/E/S/T/O. 같은 키 재입력 = 내림차순 토글(원조 Alt-- 대응).
+
+        전이 규칙은 **한 벌**(`listing.next_sort`) — 서버도 같은 것으로 푼다."""
+        from .listing import next_sort
+        self._sort, self._rev = next_sort(self._sort, self._rev, s)
         self._rebuild(keep_name=self._cursor_name())
 
     def _toggle_hidden(self):

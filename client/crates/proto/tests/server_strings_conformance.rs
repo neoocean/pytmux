@@ -163,7 +163,10 @@ fn the_scanner_still_looks_at_the_places_that_build_screens() {
     );
     // 화면을 짓는 자리는 **함수 이름으로** 찾는다(줄 번호·순서가 아니라) — 표가
     // 재정렬돼도 안 낡는다. 셋 다 다른 플러그인이라 하나가 죽어도 드러난다.
-    for want in ["mdir/__init__.py:_spec", "ncd/__init__.py:_dir_spec",
+    // ⚠ `ncd` 의 자리 이름은 2026-08-04(pytmux-11 B)에 바뀌었다 — 그 화면이 평면
+    //    목록에서 **트리**가 되면서 `_dir_spec` 이 `_tree_spec` 이 됐다. 앵커가
+    //    이름이라 그때 이 줄이 울었고, 그것이 이 오라클이 하는 일이다.
+    for want in ["mdir/__init__.py:_spec", "ncd/__init__.py:_tree_spec",
                  "mdir/__init__.py:_result_note"] {
         assert!(
             fx.wire_scanned.iter().any(|s| s.ends_with(want)),

@@ -1,0 +1,16 @@
+{
+  "tags": {
+    "archive": "#ff55ff",
+    "com": "#55ffff",
+    "cwd": "#ffff55",
+    "dir": "#ff5555",
+    "drive": "#ffaa00",
+    "exe": "#55ff55",
+    "exec": "#55ff55",
+    "hidden": "#aa00aa",
+    "script": "#ffff55",
+    "tagged": "#ffff55",
+    "text": "#aaaaaa",
+    "updir": "#ffffff"
+  }
+}

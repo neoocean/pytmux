@@ -949,3 +949,155 @@ async def test_mdir_drive_entry_enter_changes_drive():
         await pilot.press("enter")
         assert sent == [("request_mdir_list", {"path": "D:\\"})], sent
     await _with_app(body)
+
+
+# ---- 줄의 뜻(색) · pytmux-12 A -----------------------------------------------
+#
+# 제보: *"컬러 스킴 일치가 특히 중요하다."* 판정이 Textual 화면 안에 있는 동안 서버가 못
+# 불렀고, 그래서 네이티브 클라의 이 화면은 줄이 **전부 같은 색**이었다.
+
+def _rowtag():
+    import importlib
+    return importlib.import_module("pytmuxlib.plugins.mdir.rowtag")
+
+
+def test_the_row_meaning_is_decided_once_for_both_clients():
+    """정본 화면과 서버 스펙이 **같은 함수**로 뜻을 정한다 — 두 벌이면 같은 파일이
+    두 클라에서 다른 색으로 뜬다."""
+    rt = _rowtag()
+    # 차례가 규칙이다: 태그 → 갈래 → 숨김 → 확장자 → 실행 비트.
+    assert rt.row_tag("dir", {"n": "src"}, tagged=True) == "tagged", "고른 것이 먼저다"
+    assert rt.row_tag("up") == "updir"
+    assert rt.row_tag("drive") == "drive"
+    assert rt.row_tag("dir", {"n": "src"}) == "dir"
+    assert rt.row_tag("file", {"n": ".hidden", "h": True}) == "hidden"
+    assert rt.row_tag("file", {"n": "a.zip"}) == "archive"
+    assert rt.row_tag("file", {"n": "a.EXE"}) == "exe", "확장자는 대소문자를 안 탄다"
+    assert rt.row_tag("file", {"n": "run.sh"}) == "script"
+    assert rt.row_tag("file", {"n": "run", "x": True}) == "exec"
+    assert rt.row_tag("file", {"n": "note.txt"}) == "text"
+    # ⚠ 앞머리 점은 확장자가 아니다 — `.bashrc` 를 `bashrc` 확장자로 읽으면 안 된다.
+    assert rt.row_tag("file", {"n": ".bashrc"}) == "text"
+
+
+def test_the_canonical_screen_can_paint_every_name_this_rule_makes():
+    """이름을 냈는데 정본이 그 색을 모르면 **KeyError 로 화면이 죽는다**.
+
+    전수로 잰다 — 새 이름을 더하면서 표를 잊는 것이 이 부류의 사고다."""
+    from pytmuxlib.plugins.mdir.screen import _TAG_STYLES
+    rt = _rowtag()
+    missing = [t for t in rt.TAGS if t not in _TAG_STYLES and t != "cwd"]
+    assert not missing, f"정본 표에 색이 없는 이름: {missing}"
+
+
+async def test_the_spec_actually_carries_the_meaning_of_every_row():
+    """★ **호출부 오라클** — 규칙이 맞아도 스펙이 안 실으면 화면은 여전히 한 색이다.
+
+    실제 디렉터리를 열어 스펙의 줄마다 뜻이 붙었는지 본다. ⛔ 그리고 서버는 **이름만**
+    싣는다 — hex 를 실으면 서버가 UI 를 알게 된다(설계 §10 위험표)."""
+    import importlib, os, tempfile
+    plug = importlib.import_module("pytmuxlib.plugins.mdir").PLUGIN
+    rt = _rowtag()
+    with tempfile.TemporaryDirectory() as td:
+        os.mkdir(os.path.join(td, "sub"))
+        for name in ("note.txt", "pack.zip", "run.sh"):
+            with open(os.path.join(td, name), "w", encoding="utf-8") as fh:
+                fh.write("x")
+        mine = {"path": td, "tags": []}
+        spec = plug._spec(mine, 0, "")
+        tags = {r["label"].strip().rstrip("/"): r.get("tag") for r in spec["rows"]}
+        assert tags.get("sub") == "dir", tags
+        assert tags.get("note.txt") == "text", tags
+        assert tags.get("pack.zip") == "archive", tags
+        assert tags.get("run.sh") == "script", tags
+        assert tags.get("..") == "updir", tags
+        # 이름은 규칙이 낼 수 있는 것이라야 하고, 값은 색이 아니라야 한다.
+        for r in spec["rows"]:
+            t = r.get("tag")
+            assert t in rt.TAGS, (r["label"], t)
+            assert "#" not in str(t), r
+
+
+# ---- 정렬·마스크 · pytmux-12 C ----------------------------------------------
+#
+# 제보: *"정본 동작과 완전히 같게."* 정본은 `Alt+N/E/S/T/O` 로 정렬을 바꾸고(같은 키를
+# 다시 누르면 내림차순) `Alt+F` 로 마스크를 건다. 그 규칙이 Textual 화면 안에 있어서
+# 서버가 못 불렀고, 네이티브 클라의 mdir 은 **늘 이름순**이었다.
+
+def _listing():
+    import importlib
+    return importlib.import_module("pytmuxlib.plugins.mdir.listing")
+
+
+def test_the_arrangement_rule_is_one_copy():
+    """정본 화면과 서버 스펙이 **같은 함수**로 늘어놓는다."""
+    L = _listing()
+    ents = [
+        {"n": "b.txt", "d": False, "s": 30, "m": 3},
+        {"n": "a.zip", "d": False, "s": 10, "m": 1},
+        {"n": "c.txt", "d": False, "s": 20, "m": 2},
+        {"n": "dir", "d": True, "s": 0, "m": 0},
+    ]
+    names = lambda t: [e["n"] for e in t[1]]                       # noqa: E731
+    assert names(L.arrange(ents, "n")) == ["a.zip", "b.txt", "c.txt"]
+    assert names(L.arrange(ents, "s")) == ["a.zip", "c.txt", "b.txt"]
+    assert names(L.arrange(ents, "t")) == ["a.zip", "c.txt", "b.txt"]
+    assert names(L.arrange(ents, "e")) == ["b.txt", "c.txt", "a.zip"]
+    # `o` = 무정렬 — 서버가 준 차례 그대로다(그 차례가 뜻을 갖는 자리가 있다).
+    assert names(L.arrange(ents, "o")) == ["b.txt", "a.zip", "c.txt"]
+    # 디렉터리는 언제나 따로 먼저 온다.
+    assert [e["n"] for e in L.arrange(ents, "n")[0]] == ["dir"]
+
+
+def test_pressing_the_same_sort_again_reverses_it():
+    """정본 손버릇 — 같은 갈래를 다시 누르면 내림차순, 다른 갈래면 오름차순부터."""
+    L = _listing()
+    assert L.next_sort("n", False, "n") == ("n", True)
+    assert L.next_sort("n", True, "n") == ("n", False)
+    assert L.next_sort("n", True, "s") == ("s", False)
+    # 모르는 글자는 아무것도 안 바꾼다(스펙이 실수로 실어도 화면이 안 흔들린다).
+    assert L.next_sort("n", True, "?") == ("n", True)
+
+
+def test_the_mask_never_hides_the_way_out():
+    """⚠ 마스크는 **파일에만** 건다 — 디렉터리까지 거르면 `*.txt` 를 건 순간 들어갈
+    곳이 사라져 그 화면에서 나올 수 없다."""
+    L = _listing()
+    ents = [{"n": "a.txt", "d": False}, {"n": "b.md", "d": False},
+            {"n": "sub", "d": True}]
+    dirs, files = L.arrange(ents, "n", False, L.parse_masks("*.txt"))
+    assert [e["n"] for e in files] == ["a.txt"]
+    assert [e["n"] for e in dirs] == ["sub"], "디렉터리가 걸러졌다"
+    # 빈 마스크는 **끄기**다(거는 것과 푸는 것이 한 키다).
+    assert L.parse_masks("") == [] and L.parse_masks("  ") == []
+
+
+async def test_the_spec_declares_the_canonical_sort_and_mask_keys():
+    """`Alt+` 키를 그대로 광고한다 — 글자 키로 옮기면 손버릇이 갈리고, 이미 `t`(태그)가
+    정렬의 `t`(시각)와 부딪힌다."""
+    import importlib, tempfile
+    plug = importlib.import_module("pytmuxlib.plugins.mdir").PLUGIN
+    with tempfile.TemporaryDirectory() as td:
+        spec = plug._spec({"path": td, "tags": []}, 0, "")
+        keys = spec["keys"]
+        for k, act in (("alt-n", "sort-n"), ("alt-e", "sort-e"), ("alt-s", "sort-s"),
+                       ("alt-t", "sort-t"), ("alt-o", "sort-o"), ("alt-f", "mask")):
+            assert keys.get(k) == act, (k, keys)
+        # 종전 손도 그대로다(제보는 더하라는 것이지 없애라는 것이 아니었다).
+        assert keys.get("t") == "tag" and keys.get("enter") == "into", keys
+
+
+async def test_sorting_actually_reorders_the_spec_rows():
+    """★ **호출부 오라클** — 규칙이 맞아도 스펙이 안 쓰면 화면은 늘 이름순이다."""
+    import importlib, os, tempfile
+    plug = importlib.import_module("pytmuxlib.plugins.mdir").PLUGIN
+    with tempfile.TemporaryDirectory() as td:
+        for name, size in (("big.txt", 300), ("small.txt", 1)):
+            with open(os.path.join(td, name), "w", encoding="utf-8") as fh:
+                fh.write("x" * size)
+        mine = {"path": td, "tags": []}
+        by_name = [r["label"].strip() for r in plug._spec(mine, 0, "")["rows"]]
+        mine["sort"], mine["rev"] = "s", False
+        by_size = [r["label"].strip() for r in plug._spec(mine, 0, "")["rows"]]
+        assert by_name.index("big.txt") < by_name.index("small.txt"), by_name
+        assert by_size.index("small.txt") < by_size.index("big.txt"), by_size

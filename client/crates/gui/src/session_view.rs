@@ -742,12 +742,9 @@ impl SessionView {
         //   cd). 화면 키 처리보다 먼저 보는 이유: 목록 화면에서 글자는 원래 "닫기"라
         //   뒤에 두면 우리 키가 그 판을 먼저 닫는다. 표에 있는 글자만 먹는다.
         if self.screens.top() == Some(Screen::PluginView)
-            && mods == base::Mods::NONE
-            && let base::Key::Char(c) = key
-            && let Some((id, act)) = self
-                .state
-                .plugin_screen()
-                .and_then(|spec| spec.char_action(c).map(|a| (spec.id.clone(), a.to_owned())))
+            && let Some((id, act)) = self.state.plugin_screen().and_then(|spec| {
+                spec.key_action(key, mods).map(|a| (spec.id.clone(), a.to_owned()))
+            })
         {
             let row = self.screens.selected();
             let input = self
@@ -3777,11 +3774,35 @@ impl SessionView {
                 let start = (selected + 1).saturating_sub(budget);
                 for (row, item) in spec.rows.iter().enumerate().skip(start).take(budget) {
                     // 부가 칸(`cols`)은 뒤에 흐리게 — 정본 목록 화면과 같은 짜임이다.
+                    // ★ 줄마다 **뜻이 있으면 그 색**으로(pytmux-11·12 A). 정본은 디렉터리를
+                    //   붉게, 숨은 파일을 보라로, 고른 줄을 노랗게 칠한다 — 제보가 *"컬러
+                    //   스킴 일치가 특히 중요하다"* 고 못박은 자리다. 뜻이 없으면 기본색.
+                    let fg = proto::rowtag::color(&item.tag)
+                        .map_or(palette::FG, |c| to_gui_color(&c));
                     let mut line = Flex::row()
                         .with_main_axis_size(MainAxisSize::Min)
                         .with_cross_axis_alignment(CrossAxisAlignment::Center)
                         .with_spacing(8.)
-                        .with_child(self.text(item.label.clone(), 13., palette::FG));
+                        // ★ **트리**면 깊이와 펼침을 그린다(pytmux-11 B). 목록형은
+                        //   `depth == 0` · `expand` 가 비어 종전 그대로다.
+                        //   들여쓰기를 서버가 글자로 안 넣는 이유: 그러면 이름에 공백이
+                        //   섞여 `label` 이 더는 자료가 아니게 된다.
+                        .with_child(self.text(
+                            format!(
+                                "{}{}",
+                                "  ".repeat(item.depth as usize),
+                                // 접힘과 **잎**은 다르다 — 빈 디렉터리에 눌러도 안 열리는
+                                // 화살표를 붙이면 그 화살표가 거짓말이 된다.
+                                match item.expand.as_str() {
+                                    "open" => "▾ ",
+                                    "shut" => "▸ ",
+                                    _ => "  ",
+                                }
+                            ),
+                            13.,
+                            palette::DIM,
+                        ))
+                        .with_child(self.text(item.label.clone(), 13., fg));
                     // 칸은 플러그인이 **적은 말**이라 우리 로케일로 다시 읽는다
                     // (이름은 자료라 그대로 — `PluginRow::say_cols`).
                     for col in item.say_cols() {
@@ -3824,6 +3845,9 @@ impl SessionView {
                 let selected = self.screens.selected().min(spec.rows.len().saturating_sub(1));
                 let start = (selected + 1).saturating_sub(budget);
                 for (row, item) in spec.rows.iter().enumerate().skip(start).take(budget) {
+                    // 목록과 **같은 규칙**으로 색을 푼다(pytmux-12 A) — mdir 이 이 갈래다.
+                    let fg = proto::rowtag::color(&item.tag)
+                        .map_or(palette::FG, |c| to_gui_color(&c));
                     let mut line = Flex::row()
                         .with_main_axis_size(MainAxisSize::Min)
                         .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -3832,7 +3856,7 @@ impl SessionView {
                             ConstrainedBox::new(
                                 Flex::row()
                                     .with_main_axis_size(MainAxisSize::Min)
-                                    .with_child(self.text(item.label.clone(), 13., palette::FG))
+                                    .with_child(self.text(item.label.clone(), 13., fg))
                                     .finish(),
                             )
                             .with_width(220.)

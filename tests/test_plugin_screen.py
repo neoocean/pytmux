@@ -193,13 +193,19 @@ async def test_ncd_walks_with_state_and_cd_closes_the_screen():
         plugin = next(p for p in srv.plugins.plugins if getattr(p, "name", "") == "ncd")
         state = {}
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        spec = plugin._dir_spec({"path": here})
+        # ★ 계약이 바뀌었다(pytmux-11 B): 이 화면은 **평면 목록이 아니라 트리**다.
+        #   종전에는 첫 줄이 `..`(부모로 올라가는 길)였는데, 트리에서는 부모가 **실제
+        #   줄로 위에 있고** 올라가는 손은 `←` 다 — 제보가 요구한 그 변화다.
+        spec = plugin._open_tree({"path": here, "cwd": here})
         assert spec["kind"] == "list" and spec["id"] == "ncd"
-        # 첫 줄은 **부모로 올라가는 길**이고, 그 뜻(부모 경로)이 key 에 실린다.
-        assert spec["rows"][0]["label"] == ".."
-        assert spec["rows"][0]["key"] == os.path.dirname(here)
-        # 스펙이 자기 글자 키를 정한다(클라는 이 표에 있는 것만 먹는다).
-        assert spec["keys"] == {"enter": "into", "c": "cd"}
+        # 지금 서 있는 자리가 트리 안에 있고, 커서가 거기 선다.
+        assert spec["rows"][spec["selected"]]["key"] == here, spec["selected"]
+        # 그리고 그 줄은 **현재 자리**로 표시된다(정본은 노랑 + 표식).
+        assert spec["rows"][spec["selected"]]["tag"] == "cwd", spec["rows"][spec["selected"]]
+        # 스펙이 자기 키를 정한다(클라는 이 표에 있는 것만 먹는다). 글자뿐 아니라
+        # **이름 있는 키**도 실린다 — 트리는 `←→` 로 접고 편다.
+        assert spec["keys"] == {"enter": "into", "c": "cd",
+                                "right": "expand", "left": "collapse"}
 
         # `cd` 는 패널에 명령을 넣고 화면을 닫는다 — 정본 Enter 와 같은 결과다.
         pane = sess.active_window.active_pane
@@ -629,7 +635,7 @@ async def test_a_composed_title_carries_the_ingredients_not_just_the_words():
         sess = srv.ensure_default_session(80, 24)
         plugin = _plugin(srv, "ncd")
         path = os.path.abspath(os.sep)
-        spec = plugin._dir_spec({"path": path})
+        spec = plugin._open_tree({"path": path, "cwd": path})
         assert spec["i18n"]["title"]["fmt"] == "디렉터리 — {path}", spec["i18n"]
         assert spec["i18n"]["title"]["args"] == {"path": path}, spec["i18n"]
         # 글도 그대로 온다 — 재료를 모르는 클라는 종전과 똑같은 것을 본다.

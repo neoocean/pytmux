@@ -864,6 +864,9 @@ fn a_rows_columns_are_read_in_our_own_locale_but_its_name_is_not() {
         // 파일이 실제로 있을 수 있고, 번역된 이름으로는 그 파일을 못 찾는다.
         label: "빈 디렉터리입니다".to_owned(),
         cols: vec!["<상위>".to_owned(), "<DIR>".to_owned()],
+        tag: String::new(),
+        depth: 0,
+        expand: String::new(),
     };
     let (cols, label) = base::i18n::with_locale("en", || (row.say_cols(), row.label.clone()));
     assert_eq!(
