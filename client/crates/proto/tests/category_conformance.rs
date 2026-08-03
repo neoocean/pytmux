@@ -527,10 +527,26 @@ fn every_plugin_command_reaches_the_palette_exactly_once() {
 static NATIVE_PLUGIN_COMMANDS: &[&str] = &[
     // 상태줄 토글 둘 — 서버 상태(`flags`)로 값이 오고 우리가 명령을 보낸다.
     "auto-resume",
+    // ★ 서버가 **이미 받고 있던** 플러그인 토글 다섯(pytmux-35). 왜 서버가 못 하나 —
+    //   못 하는 게 아니다. 서버는 처음부터 이 액션들을 받는다(`set_claude_auto_retry` 등,
+    //   정본 훅이 치는 그 이름 그대로). 갈린 것은 **"팔레트 이름 → 서버 액션"을 아는
+    //   자리**이고, 정본은 그것을 파이썬 클라 훅에 뒀다 — 그 훅은 파이썬 객체를 주고받아
+    //   **소켓을 못 건넌다**(M4 §7 이 선언형으로 바꾸려는 바로 그것). 그때까지는 이 표가
+    //   우리 몫이다. 종전에는 이 다섯이 `plugin_open` 으로 가서 "화면 스펙 없음"으로
+    //   거절당했다 = 팔레트에는 보이는데 눌러도 안 먹는 줄.
+    //   ⚠ **인자 없이 뜻이 온전한 것만** 넣었다. `claude-auto-redraw`(3-state)·
+    //   `claude-token-account`(이름 인자) 등은 팔레트가 인자를 못 받는 동안(pytmux-7)
+    //   반쪽이라 아직 죽은 목록에 남는다.
+    "auto-retry",
+    "auto-token-on-exit",
     // 패널 오버레이 셋 — 그림은 서버가 `plugin_cells` 로 준다(P3·2026-08-02e·f).
     // 우리가 네이티브로 드는 것은 **켠 사실**뿐이다: 어느 패널에 오버레이가 떴는지는
     // 그 클라만 아는 상태라 서버가 대신 정할 수 없다(설계 §4.4 `client_fact`).
     "calendar-mode",
+    "claude-auto-mode",
+    "claude-token-debug",
+    // 토글이 아니라 **한 번 시키는** 것이다(서버가 숨은 claude 로 /usage 를 긁는다).
+    "claude-usage",
     "clock-mode",
     // ★ 같은 오버레이의 **명시적 켜기/끄기**(§10-21ⓡ · 제보 "`close-clock`·
     // `close-calendar` 가 안 먹는다"). 왜 서버가 못 하나: 위 토글과 **같은 이유**다 —
@@ -734,20 +750,15 @@ fn cmd_kinds() -> CmdKinds {
 static DEAD_PLUGIN_COMMANDS: &[&str] = &[
     "auto-launch",
     "auto-resume-message",
-    "auto-retry",
-    "auto-token-on-exit",
     "capture-output",
     "capture-toggle",
-    "claude-auto-mode",
     "claude-auto-redraw",
     "claude-resume-verify",
     "claude-rules",
     "claude-settings",
     "claude-token-account",
-    "claude-token-debug",
     "claude-token-log",
     "claude-token-sync",
-    "claude-usage",
     "ime-indicator",
     "model",
     "namesync",
@@ -805,4 +816,93 @@ fn the_reported_two_commands_are_alive_now() {
     for name in ["open-clock", "close-clock", "open-calendar", "close-calendar"] {
         assert!(core.contains(name), "{name} 이 코어 표에 없다 — 다시 죽은 줄이 된다");
     }
+}
+
+// ── 우리가 치는 플러그인 액션은 서버가 받는 것이라야 한다 (pytmux-35) ──────────
+//
+// 죽은 명령을 살리는 길은 **서버가 이미 받는 액션 이름을 그대로 치는 것**이다. 그런데 그
+// 이름은 정본 파이썬에만 있고 우리 표는 손으로 적는다 — 한 글자만 달라도 명령은 **조용히
+// 아무 일도 안 한다.** 종전(거절 알림)보다 **더 조용해진다**: 팔레트에서 사라지지도 않고
+// (코어 표에 있으니) 아무 반응도 없다. 그러면 `the_dead_command_list_does_not_grow` 는
+// 초록인데 사용자에게는 여전히 죽은 줄이다.
+//
+// 그래서 이름을 눈으로 옮기지 않고 정본에게 물어 고정한다
+// (`scripts/gen_plugin_server_actions.py` 가 `server_command` 를 이름마다 실제로 부른다).
+
+#[derive(serde::Deserialize)]
+struct ServerActions {
+    actions: Vec<String>,
+}
+
+fn server_actions() -> ServerActions {
+    serde_json::from_str(include_str!("fixtures/plugin_server_actions.json"))
+        .expect("픽스처를 읽을 수 없다")
+}
+
+/// 팔레트가 서버로 직접 치는 플러그인 액션 이름들.
+fn our_plugin_actions() -> Vec<&'static str> {
+    use base::Action;
+    base::keymap::PALETTE
+        .iter()
+        .filter_map(|e| match e.action {
+            Action::PluginToggle { action } | Action::PluginDo { action } => Some(action),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_server_action_fixture_actually_measured_something() {
+    // ★ 이 오라클이 먼저다. 픽스처가 비면 아래 단언은 "무엇이든 통과"가 된다.
+    let fx = server_actions();
+    assert!(
+        fx.actions.len() >= 10,
+        "서버 액션 픽스처가 너무 작다({}) — 생성기가 정본에게 못 물었을 수 있다",
+        fx.actions.len()
+    );
+    assert!(fx.actions.iter().any(|a| a == "set_autoresume"), "{:?}", fx.actions);
+}
+
+#[test]
+fn every_plugin_action_we_send_is_one_the_server_accepts() {
+    let fx = server_actions();
+    let known: BTreeSet<&str> = fx.actions.iter().map(String::as_str).collect();
+    let ours = our_plugin_actions();
+    assert!(!ours.is_empty(), "플러그인 액션을 하나도 안 친다 — 이 오라클이 공허하다");
+    let unknown: Vec<&str> = ours
+        .iter()
+        .copied()
+        .filter(|a| !known.contains(a))
+        .collect();
+    assert!(
+        unknown.is_empty(),
+        "서버가 안 받는 액션을 친다: {unknown:?}\n  \
+         → 그 명령은 팔레트에 보이지만 **아무 일도 안 한다**(거절 알림조차 없다).\n  \
+         정본 훅이 치는 이름을 확인하고(`plugins/*/__init__.py` 의 `send_cmd`) 표를 고칠 것."
+    );
+}
+
+#[test]
+fn a_command_that_needs_an_argument_is_not_wired_as_a_bare_toggle() {
+    // ⚠ 인자를 파싱해야 뜻이 온전한 명령(3-state·이름 인자)은 무인자 토글로 걸면 **반쪽**이
+    //    된다 — 팔레트가 인자를 못 받는 동안(pytmux-7) 죽은 목록에 남는 편이 정직하다.
+    //    그것들이 슬쩍 넘어오는 것을 막는다.
+    const NEEDS_ARG: &[&str] = &[
+        "set_claude_auto_redraw",   // corruption/idle/off 3-state
+        "set_claude_resume_verify", // 검증 모드 인자
+        "set_claude_account",       // 계정 이름
+        "set_prompt_clear_message", // 메시지 문자열
+        "set_autoresume",           // 팔레트의 `auto-resume-message` 는 msg= 를 싣는다
+        "token_sync",               // 하위 명령(sub) + 인자
+    ];
+    let ours = our_plugin_actions();
+    let leaked: Vec<&str> = ours
+        .iter()
+        .copied()
+        .filter(|a| NEEDS_ARG.contains(a))
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "인자가 필요한 액션을 무인자로 걸었다: {leaked:?} — 반쪽으로 사는 명령이 된다"
+    );
 }

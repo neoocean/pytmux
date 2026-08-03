@@ -161,6 +161,27 @@ pub enum Action {
     /// 뜻은 core 가 정한다(정본 계약 그대로): **켜기는 멱등** · 대상은 활성 패널 ·
     /// 시계와 달력은 **상호 배타**. 그 판정은 `proto::SessionState::set_overlay` 다.
     SetOverlay { name: &'static str, on: bool },
+    /// 플러그인이 **서버에** 들고 있는 토글 하나를 그 플러그인의 서버 액션으로 직접 친다
+    /// (pytmux-35). 무인자면 서버가 뒤집는다 — 현재값의 권위는 서버다.
+    ///
+    /// # 왜 이 이름들이 죽어 있었나
+    ///
+    /// 코어 표에 없는 이름은 **플러그인 줄**로 남고, 고르면 `plugin_open`("화면을 다오")
+    /// 으로 가서 *"이 플러그인은 화면 스펙을 제공하지 않습니다"* 로 거절당한다. 상태를
+    /// 바꾸는 명령을 화면 여는 길로 보낸 것이다 — `SetOverlay` 가 고친 것과 **같은 뿌리**.
+    ///
+    /// # 왜 서버가 못 하나 (래칫이 요구하는 사유)
+    ///
+    /// 못 하는 게 아니다 — **서버는 처음부터 이 액션들을 받고 있다**(정본 훅이 치는 그
+    /// 이름 그대로). 갈린 것은 "팔레트 이름 → 서버 액션"을 아는 자리이고, 정본은 그것을
+    /// 파이썬 클라 훅에 뒀다. 그 훅은 파이썬 객체를 주고받아 **소켓을 못 건넌다**(설계
+    /// M4 §7 이 선언형으로 바꾸려는 바로 그것). 그때까지는 이 표가 우리 몫이다.
+    ///
+    /// ⚠ 여기 넣는 것은 **인자 없이 뜻이 온전한** 것만이다. `claude-auto-redraw`(3-state)
+    /// 처럼 인자를 파싱해야 하는 것은 팔레트가 인자를 못 받는 동안(pytmux-7) 반쪽이 된다.
+    PluginToggle { action: &'static str },
+    /// 인자 없이 서버에 한 번 시키는 플러그인 명령(`refresh_usage`). 위 토글의 짝이다.
+    PluginDo { action: &'static str },
     /// 활성 패널을 Claude 한도 막대 + 리셋 카운트다운으로 덮는다
     /// (`usage-view` — `claude-token-usage-view` 플러그인).
     ///
@@ -413,6 +434,15 @@ impl Action {
                 ("calendar", true) => "달력 켜기",
                 _ => "달력 끄기",
             },
+            // 이름은 **정본 팔레트의 낱말**을 따른다 — 같은 줄을 두 클라가 다르게 부르면
+            // 사용자가 같은 기능인지 모른다.
+            Action::PluginToggle { action } => match *action {
+                "set_claude_auto_retry" => "전송 재시도",
+                "set_auto_token_on_exit" => "종료 시 토큰 기록",
+                "set_claude_auto_mode" => "Claude 자동 모드",
+                _ => "토큰 진단 로그",
+            },
+            Action::PluginDo { .. } => "사용량 새로 고침",
             Action::ToggleUsageView => "Claude 한도",
             Action::ToggleSync => "패널 동기화",
             Action::ToggleMonitorActivity => "활동 감시",
@@ -1217,6 +1247,14 @@ pub static PALETTE: &[PaletteEntry] = &[
     pe("close-calendar", "설정/기타", Action::SetOverlay { name: "calendar", on: false }),
     // 정본은 세 모드지만 우리에게 있는 것은 pane(오버레이) 하나다 — Action 주석 참조.
     pe("usage-view", "Claude", Action::ToggleUsageView),
+    // ★ 서버가 이미 받고 있던 플러그인 토글들(pytmux-35). 이름이 코어 표에 **있어야**
+    //   플러그인 줄에서 빠지고 우리가 실행한다 — 없으면 "보이는데 안 먹는" 줄이 된다.
+    //   대응은 정본 훅이 치는 액션 이름 그대로다(`plugins/claude-code/__init__.py`).
+    pe("auto-retry", "Claude", Action::PluginToggle { action: "set_claude_auto_retry" }),
+    pe("auto-token-on-exit", "Claude", Action::PluginToggle { action: "set_auto_token_on_exit" }),
+    pe("claude-auto-mode", "Claude", Action::PluginToggle { action: "set_claude_auto_mode" }),
+    pe("claude-token-debug", "Claude", Action::PluginToggle { action: "set_token_debug" }),
+    pe("claude-usage", "Claude", Action::PluginDo { action: "refresh_usage" }),
     pe("plugins", "설정/기타", Action::ShowPlugins),
     pe("plugin-manager", "설정/기타", Action::ShowPlugins),
     pe("kill-server", "설정/기타", Action::KillServer),
@@ -1651,6 +1689,8 @@ fn variant_index(action: Action) -> usize {
         Action::ToggleClock => 47,
         Action::ToggleCalendar => 48,
         Action::SetOverlay { .. } => 109,
+        Action::PluginToggle { .. } => 110,
+        Action::PluginDo { .. } => 111,
         Action::ToggleUsageView => 105,
         Action::JumpPrompt { .. } => 94,
         Action::ShowCompose => 95,
@@ -1667,7 +1707,7 @@ fn variant_index(action: Action) -> usize {
     }
 }
 
-const ACTION_COUNT: usize = 110;
+const ACTION_COUNT: usize = 112;
 
 /// **전수 목록** — 액션 하나도 빠지지 않는다(위 `variant_index` 의 와일드카드 없는 match 가
 /// 빠짐을 막고, 아래 개수 단언이 중복·누락을 막는다).
@@ -1730,6 +1770,8 @@ pub fn all_actions() -> Vec<Action> {
         Action::ToggleClock,
         Action::ToggleCalendar,
         Action::SetOverlay { name: "clock", on: true },
+        Action::PluginToggle { action: "set_claude_auto_retry" },
+        Action::PluginDo { action: "refresh_usage" },
         Action::ToggleUsageView,
         Action::ToggleSync,
         Action::ToggleMonitorActivity,

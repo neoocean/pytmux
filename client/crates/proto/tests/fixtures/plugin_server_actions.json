@@ -1,0 +1,24 @@
+{
+ "actions": [
+  "jump_prompt",
+  "pc_queue_add",
+  "pc_queue_clear",
+  "ph_scroll_to",
+  "refresh_usage",
+  "set_auto_token_on_exit",
+  "set_autoresume",
+  "set_capture",
+  "set_claude_auto_mode",
+  "set_claude_auto_redraw",
+  "set_claude_auto_retry",
+  "set_claude_perm_mode",
+  "set_claude_resume_verify",
+  "set_claude_rules",
+  "set_claude_turn_warn",
+  "set_ph_max_lines",
+  "set_prompt_clear",
+  "set_prompt_clear_message",
+  "set_token_debug",
+  "token_sync"
+ ]
+}

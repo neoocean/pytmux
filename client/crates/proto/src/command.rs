@@ -188,6 +188,29 @@ pub enum Command {
     /// `value` 가 `None` 이면 그 사실을 **지운다**(끄는 것도 사실이다).
     /// 회신은 없다: 다음 `plugin_cells` 프레임이 곧 답이다.
     ClientFact { name: String, value: Option<String> },
+    /// **플러그인이 서버에 들고 있는 토글 하나**를 그 플러그인의 서버 액션으로 직접 친다.
+    ///
+    /// # 왜 `PluginOpen` 이 아닌가 (pytmux-35)
+    ///
+    /// 우리는 플러그인 명령을 **전부** `plugin_open`("화면을 다오")으로 보내 왔다. 화면을
+    /// 여는 명령(`ncd`·`mdir`)에는 맞지만 **상태를 바꾸는 명령**에는 통째로 틀린 길이라,
+    /// 서버가 *"이 플러그인은 화면 스펙을 제공하지 않습니다"* 로 거절하고 사용자에게는
+    /// **팔레트에 보이는데 눌러도 안 먹는 줄**로 보였다(스물셋).
+    ///
+    /// 그런데 **서버는 처음부터 그 액션을 받고 있었다** — 정본 클라의 플러그인 훅이
+    /// `send_cmd("set_claude_auto_retry", value=…)` 로 치는 바로 그 이름이다. 갈린 것은
+    /// 서버가 아니라 **이름을 아는 자리**였다(정본은 파이썬 훅, 우리는 없었다).
+    ///
+    /// 값을 안 실으면 서버가 토글한다 — 정본도 무인자면 `value=None` 을 보내고 서버의
+    /// `set_*(value=None)` 이 뒤집는다. 켜기/끄기를 따로 두면 클라가 현재값을 알아야 하고
+    /// 그 값의 권위는 서버다(`ToggleSync` 와 같은 규율).
+    PluginToggle { action: &'static str, value: Option<bool> },
+    /// 인자 없이 서버에 **한 번 시키는** 플러그인 명령(`refresh_usage` 등).
+    ///
+    /// 위 토글의 짝이다 — 값이 없는 것이지 "토글"이 아니다. 둘을 한 변종으로 묶으면
+    /// `Option<bool>` 의 `None` 이 "토글해라"와 "값이 없는 명령"을 겸하게 되어, 나중에
+    /// 누가 값을 실을 때 뜻이 갈린다.
+    PluginDo { action: &'static str },
     /// 입력을 창 안 모든 패널로 복제할지 토글한다(`synchronize-panes`).
     ///
     /// 인자를 안 실으면 서버가 토글한다 — 켜고 끄는 두 명령을 두면 클라가 상태를 알아야
@@ -421,6 +444,7 @@ impl Command {
             Command::PasteBuffer { .. } => "paste_buffer",
             Command::RequestTree => "request_tree",
             Command::RequestBuffers => "request_buffers",
+            Command::PluginToggle { action, .. } | Command::PluginDo { action } => action,
             Command::PluginOpen { .. } => "plugin_open",
             Command::PluginAction { .. } => "plugin_action",
             Command::PluginOverlay { .. } => "plugin_overlay",
@@ -535,6 +559,8 @@ impl Command {
             Command::RequestTree
             | Command::RequestBuffers
             // 값을 안 실으면 서버가 토글한다(`_cmd_set_sync`·`_cmd_set_auto_rename`).
+            | Command::PluginToggle { value: None, .. }
+            | Command::PluginDo { .. }
             | Command::ToggleSync { value: None }
             | Command::ToggleAutoRename { value: None }
             | Command::ToggleBorderStatus
@@ -612,7 +638,8 @@ impl Command {
                 Some(on) => json!({ "which": which, "value": on }),
                 None => json!({ "which": which }),
             },
-            Command::ToggleSync { value: Some(on) }
+            Command::PluginToggle { value: Some(on), .. }
+            | Command::ToggleSync { value: Some(on) }
             | Command::ToggleAutoRename { value: Some(on) }
             | Command::SetOption(_, Some(on)) => json!({ "value": on }),
         };
@@ -1144,6 +1171,10 @@ mod tests {
             Command::SetPromptClear => 62,
             Command::Search { .. } => 63,
             Command::SetCapture => 64,
+            // 플러그인 액션은 **이름이 곧 명령**이라 변형 하나에 여러 이름이 실린다 —
+            // 자리는 하나면 충분하다(이 표는 "변형을 빠짐없이 훑었나"를 재는 것이다).
+            Command::PluginToggle { .. } => 65,
+            Command::PluginDo { .. } => 66,
         }
     }
 
@@ -1593,6 +1624,10 @@ pub fn action_to_command(action: base::Action) -> Option<Command> {
         | Action::ToggleCalendar
         | Action::ToggleUsageView
         | Action::SetOverlay { .. } => None,
+        // ★ 플러그인 토글은 **명령이 곧 액션 이름**이다(pytmux-35) — 서버가 처음부터
+        //   받고 있던 그 이름을 그대로 친다. 값을 안 실으면 서버가 뒤집는다.
+        Action::PluginToggle { action } => Some(Command::PluginToggle { action, value: None }),
+        Action::PluginDo { action } => Some(Command::PluginDo { action }),
         // 글자 배율은 **이 창 안의 일**이다 — 서버는 픽셀을 모른다. 다만 배율이 바뀌면
         // 격자(행·열)가 달라지고, 그것은 뷰가 자리표를 다시 재어 `Resize` 로 알린다
         // (`report_size` — 창 크기가 바뀔 때와 같은 길이라 새 명령이 필요 없다).

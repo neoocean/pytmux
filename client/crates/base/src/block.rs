@@ -232,6 +232,8 @@ impl BlockList {
             | Action::SendBacktick
             | Action::ToggleCalendar
             | Action::SetOverlay { .. }
+            | Action::PluginToggle { .. }
+            | Action::PluginDo { .. }
             | Action::ToggleUsageView
             | Action::ToggleBorderStatus
             | Action::ToggleInactiveDim

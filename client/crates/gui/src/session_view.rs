@@ -1357,6 +1357,21 @@ impl SessionView {
                 self.push_overlay_set(name, on);
                 return true;
             }
+            // ★ 서버가 이미 받고 있던 플러그인 토글(pytmux-35). 값을 안 실으면 서버가
+            //   뒤집는다 — 현재값의 권위는 서버이고, 결과는 다음 status 로 따라온다.
+            //   종전에는 이 이름들이 `plugin_open` 으로 가서 "화면 스펙 없음"으로 거절됐다.
+            Action::PluginToggle { action } => {
+                self.pending.push(Outgoing::Command(Command::PluginToggle {
+                    action,
+                    value: None,
+                }));
+                return true;
+            }
+            Action::PluginDo { action } => {
+                self.pending
+                    .push(Outgoing::Command(Command::PluginDo { action }));
+                return true;
+            }
             // Claude 한도 오버레이도 같은 길이다(Tier B) — 그림·데이터는 서버가 든다
             // (`/usage` 스크랩은 서버가 하고, 한도 막대 줄도 서버가 만든다). 우리는
             // **켠 사실**만 올린다. 오버레이 이름은 플러그인 디렉토리 이름 그대로다.
