@@ -171,6 +171,12 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
 - **거대 문서 Read 주의**: `docs/internal/HANDOFF.md`(수백 KB)·`IMPROVEMENT_OPPORTUNITIES.md`
   를 통째로 Read 하면 컨텍스트 예산을 소진한다. 루트 `MEMORY.md`(주제→파일→p4 CL 색인)로
   먼저 관련 항목을 찾아 해당 파일만 본다.
+- **열린 항목(제보·결함·할일)은 이슈 파일이 정본이다**(이전 2026-08-03 · p4 69517):
+  `docs/internal/qa/issues/pytmux-<번호>.md`(규약 = 그 디렉터리 README). 프로젝트 횡단
+  트래커 `//woojinkim/scripts/issue` 가 그것을 읽어 웹·MCP 로 낸다(단계 M0 = 저장소가 권위).
+  HANDOFF §10-21 은 이제 **색인 표**만 두고 본문을 갖지 않는다 — ⛔ **핸드오프에 항목을 다시
+  적지 말 것**(사본이 둘이면 SSOT 가 아니다). `docs/internal/` 의 문서 348편에는 트래커
+  옵트인 키(`doc:`)가 프론트매터로 들어가 있다(`benchmark/` 는 데이터라 제외).
 - **동적 합성 메서드**: `Server` 의 일부 메서드(`set_autoresume`·`_scan_claude` 등)는
   `server.py` 에 없고 런타임에 플러그인 믹스인(`plugins/claude-code/servermixin.py`)으로
   합성된다. jump-to-def 가 안 닿으면 그 파일을 grep 한다(server.py 의 `class Server` 위
