@@ -411,7 +411,9 @@ async def test_ime_badge_inside_popup_follows_state():
         app.ime_state = "한"
         app.open_compose()
         await pilot.pause(0.3)
-        lbl = app.screen_stack[-1].query_one("#cime", _Label)
+        # id 는 입력 판 넷이 공유한다(pytmux-14 — 종전 작성창 전용 `#cime`).
+        from pytmuxlib.clientscreens import IME_BADGE_ID
+        lbl = app.screen_stack[-1].query_one("#" + IME_BADGE_ID, _Label)
         assert "한" in str(lbl.content), str(lbl.content)
         app.ime_state = "EN"               # 폴링(0.2s)이 따라온다
         await wait_until(pilot, lambda: "EN" in str(lbl.content))

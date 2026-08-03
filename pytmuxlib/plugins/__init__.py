@@ -308,6 +308,46 @@ class Registry:
                     return resp
         return None
 
+    def plugin_command_action(self, name, args):
+        """플러그인 **명령 이름 + 인자** → `(서버 액션, 인자 dict)`(첫 비-None 채택).
+
+        # 왜 이 훅이 필요한가
+
+        네이티브 클라는 플러그인 명령을 오래 `plugin_open`("화면을 다오")으로만 보냈다.
+        화면을 여는 명령에는 맞지만 **상태를 바꾸는 명령**에는 통째로 틀린 길이고, 그래서
+        팔레트에 보이는데 눌러도 안 먹는 줄이 열여덟 있었다(pytmux-35).
+
+        걸림돌은 "이름을 어떤 액션·어떤 인자로 옮기는가"가 **정본 클라 안에** 있었다는
+        것이다 — 액션 이름도, 인자 칸 이름도(액션마다 다르다), 3-state 파싱도. 그것을
+        네이티브 클라가 따로 알게 하면 두 표가 갈리고, 갈린 순간 명령은 **조용히 아무
+        일도 안 한다**(죽은 명령이 생긴 원인 그대로). 그래서 규칙은 플러그인 안에
+        한 벌로 두고 **서버가 그것을 쓴다**.
+
+        # 왜 **실행이 아니라 해석**인가 (2026-08-03 에 한 번 틀렸다)
+
+        처음에는 이 훅이 명령을 곧바로 실행하게 했다(플러그인의 `server_command` 를
+        직접 불렀다). 그러면 **코어 명령표가 받는 액션이 죽는다** — `set_claude_account`
+        가 그렇다: 그 액션의 주인은 `servercmd._CMD_TABLE` 이고 플러그인
+        `server_command` 에는 없다. 훅에만 물으면 "서버가 안 받는다"로 보이고, 실제로
+        그렇게 오판해 그 명령을 죽은 목록에 넣을 뻔했다.
+
+        그래서 훅은 **옮기기만** 한다. 어느 표가 그 액션을 받는지는 서버가 안다
+        (코어 표 → 플러그인 `server_command` 순). 플러그인이 알아야 하는 것은 이름과
+        인자의 모양뿐이다.
+
+        `args` 는 낱말 목록이다(정본 `handle_command` 가 받는 그것).
+        `None` 은 *"내 것이 아니다"* — 서버가 화면 스펙 경로로 넘어간다.
+
+        플러그인이 없으면 언제나 None → 그 명령은 종전처럼 화면 스펙 경로로 간다
+        (delete-to-disable)."""
+        for p in self.plugins:
+            fn = getattr(p, "plugin_command_action", None)
+            if fn is not None:
+                r = fn(name, args)
+                if r is not None:
+                    return r
+        return None
+
     def plugin_screen(self, server, sess, req):
         """Tier C — **선언형 화면 스펙**(설계 PLUGIN_COMPAT_TEXTUAL_GUI §4.3 · P4).
 
@@ -653,6 +693,22 @@ class Registry:
                 closed = True
         return closed
 
+    def client_overlay_covers(self, app, pane_id) -> bool:
+        """그 패널이 지금 **플러그인 오버레이에 덮여 있나**(시계/달력 등).
+
+        코어가 이것을 물어야 하는 자리가 있다: 오버레이는 코어의 마지막 층 뒤에 그려져
+        **밑에 있는 클릭존을 가린다**. 존만 남으면 사용자가 보는 것(오버레이)과 탭이
+        하는 일(뒤 패널 조작)이 어긋난다 — 라이브 PTY 팝업에서 이미 한 번 막은 그 모양
+        이고(`layout["popup"]`), 오버레이는 코어가 아니라 **플러그인**이 아는 사실이라
+        훅으로 묻는다.
+
+        플러그인이 없으면 False → 종전과 같다(delete-to-disable)."""
+        for p in self.plugins:
+            fn = getattr(p, "client_overlay_covers", None)
+            if fn is not None and fn(app, pane_id):
+                return True
+        return False
+
     def client_overlay_key(self, app, event) -> bool:
         """활성 패널에 플러그인 오버레이가 떠 있을 때 키 1건을 가로채(소비) 오버레이를
         조작한다(달력 월 이동 등). 소비한 플러그인이 하나라도 있으면 True(코어가 키를
@@ -685,6 +741,37 @@ class Registry:
             if fn is not None:
                 try:
                     r = fn(app, pane_id)
+                except Exception:
+                    r = None
+                if r is not None:
+                    return r
+        return None
+
+    def client_input_badge(self, app):
+        """**글자를 받는 판**(물음·팔레트·작성창·설정 입력)의 입력줄 오른쪽 끝에 붙일
+        배지 — `(문구, 의미색이름)` 또는 None(첫 비-None 채택).
+
+        # 왜 이 훅이 필요한가 (pytmux-14)
+
+        입력기 배지의 자리 규칙은 *"지금 글자를 받는 곳의 오른쪽 끝"* 이다. 캔버스에서는
+        그것이 활성 패널의 커서 줄이고, 그 그림은 `client_render`(정본)·`plugin_cells`
+        (서버)가 그린다. 그런데 **판이 열리면 커서가 판 안 입력줄로 가고**, 판은 Textual
+        위젯이라 셀 격자 위에 있다 — 셀에 그린 배지는 판 **뒤**에 깔려 안 보인다.
+        그래서 판 쪽은 셀이 아니라 **위젯**으로 붙여야 하고, 그 자리를 아는 것은 판이다.
+
+        # 왜 코어가 직접 `[한]` 을 안 그리나
+
+        delete-to-disable 이 깨진다. `ime-indicator` 디렉터리를 지우면 배지는 화면 어디에도
+        없어야 하는데, 문구가 `clientscreens.py` 에 있으면 남는다. 그래서 판은 **자리만**
+        내주고 무엇을 적을지는 플러그인이 정한다(`client_render` 와 같은 분업).
+
+        색은 값이 아니라 **의미 이름**이다(`success`·`primary`) — 각 클라가 자기 테마에서
+        푼다. 플러그인이 없으면 None → 판에 배지가 아예 안 붙는다(delete-to-disable)."""
+        for p in self.plugins:
+            fn = getattr(p, "client_input_badge", None)
+            if fn is not None:
+                try:
+                    r = fn(app)
                 except Exception:
                     r = None
                 if r is not None:

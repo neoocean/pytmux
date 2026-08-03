@@ -185,6 +185,10 @@ class _CalendarPlugin:
         """1초마다 달력이 떠 있으면 True(코어가 재합성 — 자정 넘으면 '오늘' 강조 이동)."""
         return bool(getattr(app, "calendar_panes", None))
 
+    def client_overlay_covers(self, app, pane_id):
+        """이 패널이 달력에 덮여 있나 — 코어가 클릭존을 남길지 정하는 데 쓴다."""
+        return pane_id in (getattr(app, "calendar_panes", None) or ())
+
     def client_close_overlay(self, app, pane_id):
         """해당 패널의 달력을 닫는다(Shift+ESC/패널 클릭). 닫았으면 True."""
         cp = getattr(app, "calendar_panes", None)

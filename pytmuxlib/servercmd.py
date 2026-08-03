@@ -228,6 +228,55 @@ class ServerCmdMixin:
                          "do": msg.get("do"), "state": state})
         client._cells_at = 0.0
 
+    @_cmd("plugin_cmd", DYNAMIC)
+    async def _cmd_plugin_cmd(self, client, sess, msg):
+        """플러그인 **명령 한 줄**을 실행한다 — 상태를 바꾸는 것이면 여기서 끝난다
+        (pytmux-35).
+
+        # 왜 `plugin_open` 으로는 안 됐나
+
+        네이티브 클라는 플러그인 명령을 **전부** `plugin_open`("화면을 다오")으로 보냈다.
+        화면을 여는 명령(`ncd`·`mdir`)에는 맞지만 **상태를 바꾸는 명령**에는 통째로 틀린
+        길이라, 서버가 *"이 플러그인은 화면 스펙을 제공하지 않습니다"* 로 거절하고
+        사용자에게는 죽은 줄로 보였다. 리포트가 *"가장 옳은 길"* 로 적은 것이 이 명령이다.
+
+        # 못 알아들으면 **화면 경로로 넘어간다**
+
+        한 이름이 둘 중 어느 쪽인지는 **플러그인이 안다** — 클라가 알면 그 표가 서버와
+        갈리고, 갈린 순간 명령은 조용히 죽는다(이 결함의 원인 그대로). 그래서 클라는
+        고른 이름을 그냥 보내고, 서버가 순서대로 시도한다:
+
+        1. `plugin_command_action` — 플러그인이 이름을 **액션과 인자로 옮긴다**.
+        2. 그 액션을 평소 길로 디스패치한다: **코어 표 먼저**, 없으면 플러그인
+           `server_command`.
+        3. 그래도 아니면 `plugin_open` 과 **같은 길** — 화면 스펙을 묻는다(없으면
+           그쪽이 알림으로 알린다. 조용한 누락은 상습 결함이다 · 설계 §8-5).
+
+        ⚠ 2번의 **차례가 규칙이다**. 플러그인 훅에만 물으면 코어 표가 받는 액션이 죽는다 —
+        `set_claude_account` 의 주인은 `_CMD_TABLE` 이고 플러그인 `server_command` 에는
+        없다(2026-08-03 에 그렇게 만들었다가 disposition 골든이 잡았다).
+        """
+        name = str(msg.get("name", ""))
+        args = [a for a in (msg.get("args") or []) if a != ""]
+        got = self.plugins.plugin_command_action(name, args)
+        if got is not None:
+            action, kw = got
+            entry = _CMD_TABLE.get(action)
+            if entry is not None:
+                handler, disp = entry
+                r = await handler(self, client, sess, kw)
+                return r if disp == DYNAMIC else disp
+            disp = self.plugins.server_command(self, client, sess, action, kw)
+            if disp is not None:
+                if disp == "broadcast":
+                    self._broadcast_session(sess)
+                    return FULL
+                return FULL if disp == "send_full" else HANDLED
+        await self._plugin_screen_reply(client, sess, {
+            "do": "open", "name": name, "args": args,
+        })
+        return HANDLED
+
     @_cmd("plugin_open", HANDLED)
     async def _cmd_plugin_open(self, client, sess, msg):
         """플러그인 **화면**을 연다(설계 Tier C · P4).

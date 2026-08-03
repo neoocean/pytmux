@@ -163,7 +163,11 @@ async def test_version_command_opens_popup():
         assert "request_version" in sent
         # 서버 회신 모사 → 팝업
         app._show_version_popup({"version": "p4:99999", "uptime": 3661, "pid": 42})
-        scr = await wait_mounted(pilot, InfoScreen)
+        # ⚠ **내용까지** 기다린다(`child`). 화면만 보고 돌아오면 `query(Label)` 이
+        #    제목과 닫기 `[x]` 만 주고, 느린 러너에서 그 창에 걸린다 — 실측: 합본
+        #    게이트가 평소보다 43% 느렸던 회차에서 `joined` 가 `"version [x]"` 였다.
+        #    `wait_mounted` 문서가 적어 둔 그 함정인데 이 호출부가 안 쓰고 있었다.
+        scr = await wait_mounted(pilot, InfoScreen, child="#info ListItem")
         assert isinstance(scr, InfoScreen)
         joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
         assert "99999" in joined, joined          # 서버 CL 번호
@@ -194,7 +198,11 @@ async def test_list_keys_shows_mouse_gestures():
 
     async def body(app, pilot, srv):
         app._run_command("list-keys")
-        scr = await wait_mounted(pilot, InfoScreen)
+        # ⚠ **내용까지** 기다린다(`child`). 화면만 보고 돌아오면 `query(Label)` 이
+        #    제목과 닫기 `[x]` 만 주고, 느린 러너에서 그 창에 걸린다 — 실측: 합본
+        #    게이트가 평소보다 43% 느렸던 회차에서 `joined` 가 `"version [x]"` 였다.
+        #    `wait_mounted` 문서가 적어 둔 그 함정인데 이 호출부가 안 쓰고 있었다.
+        scr = await wait_mounted(pilot, InfoScreen, child="#info ListItem")
         assert isinstance(scr, InfoScreen)
         joined = " ".join(str(lbl.render()) for lbl in scr.query(Label))
         assert "swap" in joined, joined            # 헤더 드래그 pick-up→swap

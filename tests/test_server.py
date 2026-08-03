@@ -1723,6 +1723,11 @@ async def test_command_table_disposition_golden():
         # (`{"t":"plugin_screen"}`) 세션 상태를 안 바꾼다. 재동기할 캔버스가 없고,
         # 다음 동작은 클라가 `plugin_action` 으로 되묻는다.
         "plugin_open": HANDLED, "plugin_action": HANDLED,
+        # 플러그인 **명령**(pytmux-35 · 2026-08-03) — 클라는 갈래를 모른 채 이름만
+        # 보내고 서버가 정한다. 상태를 바꾸는 명령이면 그 액션의 disposition 을 그대로
+        # 물려받고(코어 표 → 플러그인 순), 못 알아들으면 화면 경로(HANDLED)로 간다.
+        # 그래서 **DYNAMIC** 이다 — `kill_pane` 에 이어 두 번째다.
+        "plugin_cmd": DYNAMIC,
         # 플러그인 셀 기여(Tier B · 2026-08-02 P3) — 클라가 **사실**(어느 패널에
         # 오버레이를 켰나)만 올린다. 회신이 아예 없어서 HANDLED 다: 답은 다음 프레임의
         # `plugin_cells` 이고, 그건 flush 루프가 낸다.
@@ -1782,10 +1787,17 @@ async def test_command_table_disposition_golden():
         assert params == ["self", "client", "sess", "msg"], \
             f"{action}: 시그니처 {params}"
 
-    # DYNAMIC 은 kill_pane 하나뿐이라는 사실을 고정한다 — 늘어나면 "핸들러가 몰래
-    # disposition 을 결정"하는 경로가 늘어 표의 선언성이 희석된다(의도면 함께 갱신).
+    # DYNAMIC 이 **누구인지**를 고정한다 — 늘어나면 "핸들러가 몰래 disposition 을
+    # 결정"하는 경로가 늘어 표의 선언성이 희석된다(의도면 이름과 이유를 함께 적는다).
+    #
+    #   kill_pane   — 죽일 패널이 있으면 트리 콜백 broadcast 에 맡기고 HANDLED,
+    #                 없으면 no-op 이라 폴스루 FULL.
+    #   plugin_cmd  — 클라가 갈래를 모른 채 이름만 보낸다(pytmux-35). 상태를 바꾸는
+    #                 명령이면 **그 액션의 disposition 을 물려받고**, 못 알아들으면
+    #                 화면 경로(HANDLED)로 간다. 무엇이 될지는 이름이 정하므로 표에
+    #                 못 적는다.
     dyn = sorted(a for a, d in live.items() if d == DYNAMIC)
-    assert dyn == ["kill_pane"], f"DYNAMIC 은 kill_pane 만: {dyn}"
+    assert dyn == ["kill_pane", "plugin_cmd"], f"DYNAMIC 이 달라졌다: {dyn}"
 
 
 # ── _scan_claude 상태 골든(§10-4⑨ 분할 등가 오라클) ─────────────────────────

@@ -63,12 +63,22 @@ def rel(path):
 
 def git_ignored(paths):
     """gitignore 된 경로 집합. p4 전용 파일(docs/internal·captures·db)이 '미푸시'로
-    오검출되는 것을 막는 필수 필터다."""
+    오검출되는 것을 막는 필수 필터다.
+
+    ⚠ **NUL 로 주고받는다**(`-z`). 종전에는 `text=True` + 개행 join 이었는데, 그 조합이
+    **Windows 에서 이 필터를 통째로 무력화**했다(2026-08-03 실측: 오탐 6813건). 두 가지가
+    겹친다 — ⑴ `text=True` 는 stdin 에 유니버설 개행을 적용해 `\\n` 을 `\\r\\n` 으로 바꿔
+    쓴다. git 은 그 `\\r` 을 **경로의 일부**로 읽는다. ⑵ 경로에 그런 특수문자나 비ASCII 가
+    있으면 git 은 결과를 **큰따옴표로 감싸고 이스케이프해서** 돌려준다. 그래서 반환값이
+    `"docs/internal/…json\\r"` 같은 모양이 되고, 호출부의 `set(raw) - git_ignored(raw)` 가
+    **하나도 못 뺀다** — gitignore 된 p4 전용 파일 전부가 '게시 누락'으로 올라와 진짜
+    드리프트 두 건이 그 안에 묻혔다. `-z` 는 개행 번역(바이트 입출력)과 인용 둘 다를
+    비켜간다."""
     if not paths:
         return set()
-    p = subprocess.run(["git", "check-ignore", "--stdin"], cwd=ROOT,
-                       input="\n".join(paths), capture_output=True, text=True)
-    return {ln.strip() for ln in p.stdout.splitlines() if ln.strip()}
+    p = subprocess.run(["git", "check-ignore", "-z", "--stdin"], cwd=ROOT,
+                       input="\0".join(paths).encode("utf-8"), capture_output=True)
+    return {s.decode("utf-8", "replace") for s in p.stdout.split(b"\0") if s}
 
 
 def check_cl(cl, out=print):

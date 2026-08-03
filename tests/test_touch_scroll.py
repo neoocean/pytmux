@@ -308,6 +308,35 @@ async def test_no_scrollbar_zone_while_a_popup_covers_the_pane():
     await _with_app(body)
 
 
+async def test_no_scrollbar_zone_while_an_overlay_covers_the_pane():
+    """시계·달력 오버레이가 패널을 덮으면 팝업과 **같은 이유**로 존을 안 남긴다.
+
+    오버레이는 코어의 마지막 층 뒤에 그려져 스크롤바를 가린다 — 존만 남으면 탭이
+    보이지 않는 것을 조작한다(검수 2026-07-31 §5 가 "코어에 조회 API 가 없다"로 유보한
+    자리. 이제 `client_overlay_covers` 훅이 그 사실을 플러그인에게 묻는다).
+    """
+    from test_client import _with_app
+
+    async def body(app, pilot, srv):
+        pid = _one_pane(app)
+        app.mode = "scroll"
+        app._composite()
+        assert app._touch_scroll_zone is not None
+        # 시계를 켠다 — 플러그인이 그 사실의 주인이다.
+        app.toggle_clock(pid)
+        app._composite()
+        assert app._touch_scroll_zone is None, app._touch_scroll_zone
+        # 끄면 돌아온다(막는 것이 아니라 **덮인 동안만** 비운다).
+        app.toggle_clock(pid)
+        app._composite()
+        assert app._touch_scroll_zone is not None
+        # 달력도 같다 — 훅이 플러그인 하나에만 붙어 있으면 다른 오버레이는 샌다.
+        app.toggle_calendar(pid)
+        app._composite()
+        assert app._touch_scroll_zone is None, app._touch_scroll_zone
+    await _with_app(body)
+
+
 async def test_keyboard_scroll_mode_refreshes_the_badge():
     """키보드로 들고 나도 ⇕ 배지(=모드 표시)가 즉시 따라온다 — 호출부 오라클로
     상태줄 refresh 횟수를 센다(배지 스타일은 mode 를 읽어 그린다)."""

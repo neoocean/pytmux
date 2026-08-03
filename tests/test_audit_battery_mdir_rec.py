@@ -29,6 +29,29 @@ def _op(**kw):
     return mserver.mdir_op_msg(None, None, kw)
 
 
+def _symlink(target, link):
+    """심링크를 만들되, **권한이 없으면 명시 SKIP** 한다.
+
+    Windows 는 `SeCreateSymbolicLinkPrivilege`(개발자 모드 또는 관리자) 없이는
+    `os.symlink` 가 `WinError 1314` 로 죽는다. 종전에는 그것이 **상시 FAIL 2건**으로
+    남아 합본 게이트가 이 상자에서 영원히 빨간불이었다 — 그러면 진짜 회귀가 하나 더
+    늘어도 눈에 안 띈다("원래 2건 실패"로 읽힌다). 이건 결함이 아니라 **환경 부적합**
+    이므로 저장소 규약대로 SKIP 으로 적는다(루트 CLAUDE.md 「명시 SKIP」) — 요약의
+    `N skipped` 와 사유별 리포트에 남아 **커버리지 갭이 보이는** 쪽이 정직하다.
+
+    ⚠ 다른 OSError 는 삼키지 않는다. 이 배터리가 재는 계약(끊어진 링크를 따라가지
+    않는다)은 링크를 실제로 만들 수 있을 때만 성립하고, 만들다 난 **다른** 실패는
+    진짜 문제다.
+    """
+    try:
+        os.symlink(target, link)
+    except OSError as e:
+        if os.name == "nt" and getattr(e, "winerror", None) == 1314:
+            from run import skip
+            skip("Windows: 심링크 생성 권한 없음(개발자 모드/관리자 필요)")
+        raise
+
+
 # ── mdir: 목적지 심볼릭 링크(MDIR-1 계열 전수) ─────────────────────────────
 
 async def test_copy_does_not_follow_dangling_dst_symlink():
@@ -41,7 +64,7 @@ async def test_copy_does_not_follow_dangling_dst_symlink():
     dst = os.path.join(d, "dstdir")
     os.mkdir(dst)
     outside = os.path.join(d, "outside.txt")          # 링크 대상(존재하지 않음)
-    os.symlink(outside, os.path.join(dst, "notes.txt"))
+    _symlink(outside, os.path.join(dst, "notes.txt"))
     r = _op(op="copy", src=[src], dst=dst, overwrite="ask")
     assert r["conflicts"] == ["notes.txt"], "끊어진 링크를 충돌로 못 봤다"
     r = _op(op="copy", src=[src], dst=dst, overwrite="all")
@@ -60,7 +83,7 @@ async def test_rename_does_not_clobber_through_dangling_symlink():
     with open(src, "w") as f:
         f.write("x")
     link = os.path.join(d, "b.txt")
-    os.symlink(os.path.join(d, "gone.txt"), link)     # 끊어진 링크
+    _symlink(os.path.join(d, "gone.txt"), link)       # 끊어진 링크
     r = _op(op="rename", src=[src], dst="b.txt", base=d)
     assert r["done"] == 0, "끊어진 링크 이름을 조용히 대체했다"
     assert r["failed"] and r["failed"][0][1] == "exists"

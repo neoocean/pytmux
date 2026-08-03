@@ -8,6 +8,8 @@ p4/git 명령은 `run()` 을 갈아끼워 주입한다(실 depot 상태에 의�
 import importlib.util
 import os
 
+import harness
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location(
     "publish_check", os.path.join(os.path.dirname(HERE), "scripts",
@@ -248,3 +250,79 @@ async def test_cl_gate_accepts_own_files_only():
     finally:
         pc.run = old
     assert rc == 0 and "내 파일만" in "\n".join(out)
+
+
+# ── 진짜 git 을 거치는 필터 ───────────────────────────────────────────────────
+# 위 존재-대조 테스트들은 `git_ignored` 를 **통째로 스텁**한다(`_existence(..., ignored=)`).
+# 그래서 그 함수 자체가 무엇을 돌려주든 전부 초록이었고, 실제로 **Windows 에서 필터가
+# 아무것도 못 거르는 상태로 넉 달을 갔다**(2026-08-03 실측 · 오탐 6813건 · 그 소음에
+# 진짜 드리프트 두 건이 묻혔다). 그러니 하나는 실 git 을 거쳐야 한다.
+
+
+def _git_repo_with_gitignore(tmp, rules):
+    import subprocess
+    subprocess.run(["git", "init", "-q", tmp], capture_output=True)
+    with open(os.path.join(tmp, ".gitignore"), "w", encoding="utf-8") as f:
+        f.write("\n".join(rules) + "\n")
+
+
+async def test_git_ignored_returns_paths_verbatim_so_set_subtraction_works():
+    """반환값은 **넣은 문자열 그대로**여야 한다 — 호출부가 집합 뺄셈을 하기 때문이다.
+
+    종전 구현은 `text=True` + 개행 join 이었다. Windows 에서 `text=True` 는 stdin 에
+    유니버설 개행을 적용해 `\\n` 을 `\\r\\n` 으로 쓰고, git 은 그 `\\r` 을 경로의 일부로
+    읽는다 → 특수문자가 낀 경로라 결과를 `"…\\r"` 로 **인용·이스케이프**해서 돌려준다.
+    그러면 `set(raw) - git_ignored(raw)` 가 **한 건도 못 뺀다**. 즉 무시 목록이 맞는지가
+    아니라 **문자열이 왕복하는지**가 오라클이다(비ASCII 경로도 같은 인용에 걸린다)."""
+    import shutil
+    import subprocess
+    import tempfile
+    if not shutil.which("git"):
+        from run import skip
+        skip("git 이 PATH 에 없다")
+
+    tmp = tempfile.mkdtemp(prefix="pubchk-")
+    try:
+        _git_repo_with_gitignore(tmp, ["captures/", "/MEMORY.md", "docs/internal/"])
+        if subprocess.run(["git", "-C", tmp, "rev-parse"],
+                          capture_output=True).returncode:
+            from run import skip
+            skip("임시 git 저장소를 만들지 못했다")
+
+        ignored = ["captures/a.log.gz", "MEMORY.md",
+                   "docs/internal/한글 문서.md"]   # 비ASCII+공백 = 인용 유발
+        kept = ["pytmuxlib/server.py", "docs/CONTRIBUTING.md"]
+        with harness.patched(pc, ROOT=tmp):
+            got = pc.git_ignored(ignored + kept)
+
+        assert got == set(ignored), (
+            "넣은 문자열 그대로 돌아오지 않았다 — 호출부의 집합 뺄셈이 무효가 된다.\n"
+            f"  기대: {sorted(ignored)}\n  실제: {sorted(got)}")
+        assert not (got & set(kept)), f"안 무시되는 파일을 걸렀다: {sorted(got & set(kept))}"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def test_existence_check_uses_the_real_filter_not_a_stub():
+    """**호출부를 겨눈 오라클.** 위 테스트는 `git_ignored` 를 직접 부르므로,
+    `check_existence` 에서 그 **호출을 지워도** 통과한다(이 저장소가 반복해 물린
+    '공허 통과' — 뮤테이션에 '호출 제거'를 포함할 것)."""
+    calls = []
+
+    def spy(paths):
+        calls.append(list(paths))
+        return set(paths)
+
+    old_run, old_ign = pc.run, pc.git_ignored
+    pc.run, pc.git_ignored = _fake_run({
+        "p4 files": (0, _files(("captures/a.log.gz", "add"))),
+        "git ls-files": (0, ""),
+    }), spy
+    out = []
+    try:
+        rc = pc.check_existence(out=out.append)
+    finally:
+        pc.run, pc.git_ignored = old_run, old_ign
+    assert calls, "check_existence 가 gitignore 필터를 아예 안 불렀다"
+    assert calls[0] == ["captures/a.log.gz"], calls
+    assert rc == 0, "\n".join(out)

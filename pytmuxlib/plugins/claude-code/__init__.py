@@ -204,6 +204,8 @@ i18n.register({
         "ccmsg.perm_switching": "권한모드 → {target} 전환 중…",
         "ccmsg.usage_no_data": "/usage 한도 데이터 없음 — Claude 패널에서 /usage 를 먼저 실행",
         "ccmsg.usage_title": "Claude 사용 한도 (/usage)",
+        # Tier C 한도 판(pytmux-20) — 읽는 판이라 키가 스크롤·닫기뿐이다.
+        "cusage.hint": "↑↓ 스크롤 · Esc 닫기",
         "ccmsg.no_warn": "표시할 Claude 경고가 없습니다(이미 해소됨).",
         "ccmsg.rc_title": "원격 제어(Remote Control)",
         "ccmsg.rc_body":
@@ -237,6 +239,7 @@ i18n.register({
         "ccmsg.usage_no_data":
             "No /usage limit data — run /usage in a Claude panel first",
         "ccmsg.usage_title": "Claude usage limit (/usage)",
+        "cusage.hint": "↑↓ scroll · Esc close",
         "ccmsg.no_warn": "No Claude warning to show (already cleared).",
         "ccmsg.rc_title": "Remote Control",
         "ccmsg.rc_body":
@@ -307,6 +310,14 @@ i18n.register({
         "tsync.configured": "Token sync configured: {state}",
     },
 })
+
+
+def _cmdmap():
+    """명령→액션 표(`cmdmap`). 하이픈 디렉터리라 일반 import 가 안 돼 지연 로드한다.
+
+    이 모듈이 UI 무의존인 이유와 왜 표가 한 벌이어야 하는지는 그 파일 머리말에 있다."""
+    from . import cmdmap
+    return cmdmap
 
 
 def _onoff(args):
@@ -1529,6 +1540,85 @@ class _ClaudeCodePlugin:
         from .statusbadges import badges
         return badges(msg)
 
+    # 이 이름들이 한도 팝업을 연다 — 정본의 `handle_command` 갈래와 **같은 표**다
+    # (아래 `elif c in (…)` 와 갈라지면 팔레트에서 되던 이름이 네이티브에서만 죽는다).
+    _USAGE_PANEL = ("usage-panel", "usage-limits", "limits")
+
+    def plugin_command_action(self, name, args):
+        """명령 이름 + 인자 → `(서버 액션, 인자 dict)`(pytmux-35).
+
+        # 무엇이 달라졌나
+
+        종전에 네이티브 클라는 플러그인 명령을 **전부** `plugin_open`("화면을 다오")으로
+        보냈다. 화면을 여는 명령에는 맞지만 **상태를 바꾸는 명령**에는 통째로 틀린 길이라
+        서버가 거절했고, 사용자에게는 죽은 줄로 보였다(팔레트에 보이는데 안 먹는 열여덟).
+
+        고치는 길은 리포트가 *"가장 옳은 길"* 로 적은 것이다 — **서버가 플러그인 명령을
+        직접 받는다.** 이름을 액션으로 옮기는 규칙은 [`cmdmap`](cmdmap) 한 벌이고
+        정본도 같은 표를 쓴다(`handle_command`).
+
+        `None` 이면 **내 것이 아니다** — 부르는 쪽이 화면 스펙 경로로 넘어간다.
+
+        ⚠ **실행하지 않는다.** 그 액션을 어느 표가 받는지는 서버가 안다(코어
+        `_CMD_TABLE` → 플러그인 `server_command` 순). 여기서 우리 `server_command` 를
+        직접 부르면 **코어 표가 받는 액션이 죽는다** — `set_claude_account` 가 그렇다
+        (2026-08-03 에 실제로 그렇게 만들었다가 골든이 잡았다).
+        """
+        from . import cmdmap
+        return cmdmap.to_action(name, args)
+
+    def plugin_screen(self, server, sess, req):
+        """Tier C — `usage-panel` 의 한도 화면을 **자료로** 준다(pytmux-20).
+
+        # 무엇을 옮겼나
+
+        제보는 *"토큰 사용량 표시를 눌러 여는 팝업이 GUI 에 없다"* 였고, 이슈가 물어 둔
+        범위 물음("팝업 전체를 옮길까, 제보가 말한 세 값만 담은 작은 판을 먼저 낼까")의
+        답은 **후자**다: 제보가 든 것은 *시간당 사용량 · 사용 비율 · 리셋 시각* 셋이고,
+        그 셋이 곧 `/usage` 한도 막대(`usage-panel`)다. 계층 타임라인·`[한도]` 탭·대사
+        뷰가 있는 `claude-token-log` 는 스펙이 훨씬 커서 별도 슬라이스로 남긴다.
+
+        # 왜 줄을 서버가 짓나
+
+        `usage_bar_lines` 는 **UI 무의존**(`usagebar.py` — P3 가 그러라고 빼 둔 자리)이라
+        서버가 부를 수 있고, 정본의 `_open_usage_panel` 이 부르는 것과 **같은 함수**다.
+        그래서 두 클라의 한도 화면이 글자까지 같다 — 여기서 다시 지으면 그 순간 두 벌이
+        된다.
+
+        ⚠ 폭은 **고정 76칸**이다. 진짜 폭은 클라만 아는데 스펙에는 그 칸이 없고, 막대는
+        폭이 바뀌면 눈금이 바뀐다 — 판마다 다른 눈금을 보이느니 한 벌로 고정하는 편이
+        낫다(정본도 창이 좁으면 같은 계단으로 떨어진다). `right_align` 은 안 켠다:
+        그건 usage-view 오버레이가 켜는 것이고, 이 판은 정본 팝업과 같은 모양이어야 한다.
+        """
+        do = req.get("do")
+        if do == "open":
+            if req.get("name") not in self._USAGE_PANEL:
+                return None                 # 내 이름이 아니다
+            return self._usage_panel_spec(server)
+        if req.get("id") != "claude-usage-panel":
+            return None
+        if do == "close":
+            return {"t": "plugin_screen_close", "id": "claude-usage-panel"}
+        return None
+
+    @staticmethod
+    def _usage_panel_spec(server):
+        from pytmuxlib.usagebar import usage_bar_lines
+        import time as _t
+        uts = getattr(server, "_usage_ts", None)
+        lines = usage_bar_lines(
+            getattr(server, "_usage", None), 76,
+            age_sec=(max(0, int(_t.time() - uts)) if uts is not None else None))
+        # ⚠ **빈 목록과 실패는 다르다**(스펙의 `note`). 한도를 아직 못 재 왔으면
+        #    빈 판이 아니라 이유를 보인다 — 정본도 같은 문구로 알린다.
+        return {
+            "t": "plugin_screen", "id": "claude-usage-panel", "kind": "text",
+            "title": i18n.t("ccmsg.usage_title"),
+            "hint": i18n.t("cusage.hint"),
+            "text": "\n".join(lines or []),
+            "note": "" if lines else i18n.t("ccmsg.usage_no_data"),
+        }
+
     # (client_status_tabs 훅 — 통합 상태 팝업의 '토큰 사용량' 탭 — 은 token-log 통합
     #  (2026-06-12)으로 제거. 통합 상태 팝업은 REC·서버 두 탭, 토큰은 token-log 팝업.)
 
@@ -1547,34 +1637,18 @@ class _ClaudeCodePlugin:
             app.open_usage_panel()
         elif c in ("model", "model-config", "claude-model"):
             app.open_model_config()
-        # 토글/주입 명령(서버로 전송, on/off 없으면 서버가 토글)
-        elif c in ("auto-resume", "autoresume"):
-            app.send_cmd("set_autoresume", value=_onoff(args))
-        elif c in ("auto-resume-message", "autoresume-message"):
-            app.send_cmd("set_autoresume", msg=" ".join(args))
-        elif c in ("claude-usage", "usage", "refresh-usage"):
-            # M19 그림자 /usage 질의: 서버가 숨은 claude 를 띄워 실 세션/주간 한도를
-            # 긁어온다(사용자 화면 무간섭, ~수초). 회신은 status 로 반영.
-            app.send_cmd("refresh_usage")
-            app.display_message(i18n.t("ccmsg.usage_querying"), 4.0)
-        elif c == "claude-token-sync":
-            # 서버가 실제 작업(키·네트워크)을 하고 결과를 notice 로 돌려준다.
-            sub = (args[0] if args else "status").strip().lower()
-            app.send_cmd("token_sync", sub=sub, arg=" ".join(args[1:]).strip())
-        elif c == "claude-token-account":
-            app.send_cmd("set_claude_account", name=" ".join(args).strip())
-        elif c in ("prompt-clear", "prompt-clear-mode"):
-            app.send_cmd("set_prompt_clear", value=_onoff(args))
-        elif c in ("auto-token-on-exit", "auto-token", "token-on-exit"):
-            app.send_cmd("set_auto_token_on_exit", value=_onoff(args))
-        elif c in ("claude-auto-redraw", "auto-redraw"):
-            app.send_cmd("set_claude_auto_redraw", value=_redraw_arg(args))
-        elif c in ("claude-resume-verify", "resume-verify"):
-            app.send_cmd("set_claude_resume_verify", value=_verify_arg(args))
-        elif c in ("auto-retry", "retry"):
-            app.send_cmd("set_claude_auto_retry", value=_onoff(args))
-        elif c in ("claude-auto-mode", "auto-mode"):
-            app.send_cmd("set_claude_auto_mode", value=_onoff(args))
+        # ★ 토글/주입 명령은 **표 한 벌**이 액션으로 옮긴다(`cmdmap` — pytmux-35).
+        #   종전에는 이 `elif` 사슬이 그 규칙을 혼자 갖고 있었고, 그래서 네이티브 클라는
+        #   같은 명령을 보낼 길이 없었다(액션 이름도, 인자 칸 이름도, 3-state 파싱도
+        #   전부 여기 안에 있었다). 이제 서버가 같은 표로 푼다 — 규칙은 한 벌이다.
+        elif _cmdmap().to_action(c, args) is not None:
+            action, kw = _cmdmap().to_action(c, args)
+            app.send_cmd(action, **kw)
+            # 한 마디가 필요한 것만 여기서 덧붙인다(알림은 클라의 일이라 표가 못 나른다).
+            if action == "refresh_usage":
+                # M19 그림자 /usage 질의: 서버가 숨은 claude 를 띄워 실 세션/주간 한도를
+                # 긁어온다(사용자 화면 무간섭, ~수초). 회신은 status 로 반영.
+                app.display_message(i18n.t("ccmsg.usage_querying"), 4.0)
         elif c == "claude-token-debug":
             # §10-D 토큰 회계 진단 로그 토글(서버 opts.json 영속, 즉시 발효). 진단용이라
             # 평시엔 거의 안 만지므로 결과를 짧게 알린다(다른 토글은 설정 팝업이 상태를

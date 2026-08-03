@@ -35,6 +35,59 @@ from .clientutil import (COMMAND_FREETEXT, COMMAND_NOARG, COMMAND_OPTIONS,
                          hangul_to_qwerty, norm_sep, theme_color)
 
 
+# ── 입력줄 오른쪽 끝의 입력기 배지 (pytmux-14) ────────────────────────────────
+#
+# 자리 규칙은 한 문장이다: **지금 글자를 받는 곳의 오른쪽 끝**. 캔버스에서는 그것이
+# 활성 패널의 커서 줄이고(`ime-indicator` 의 `client_render`), 판이 열리면 커서가 판 안
+# 입력줄로 가므로 **그 줄**이다. 셀에 그린 배지는 판 뒤에 깔려 안 보인다 — 그래서 판
+# 쪽은 위젯으로 붙이고, 자리를 아는 판이 자리를 낸다.
+#
+# ⛔ 문구·색은 **여기서 정하지 않는다**. `plugins.client_input_badge` 가 준 것을 그린다 —
+#    `ime-indicator` 를 지우면 배지가 화면 어디에도 없어야 하는데(delete-to-disable),
+#    `[한]` 이 이 파일에 있으면 남는다. 종전 작성창(`#cime`)이 문구와 색 규칙을 손으로
+#    갖고 있었고, 그래서 규칙이 두 벌이었다 — 이 헬퍼가 그 두 벌을 없앤다.
+
+IME_BADGE_ID = "imebadge"
+
+#: `None` 도 유효한 직전값이라(배지 꺼짐) "아직 안 그렸다"의 초기값은 그것과 달라야 한다.
+_UNSET = object()
+
+
+def ime_badge_label(**kwargs) -> Label:
+    """입력줄 오른쪽 끝에 설 **빈 배지 자리**. 채우는 것은 `refresh_ime_badge` 다."""
+    return Label("", id=IME_BADGE_ID, markup=False, **kwargs)
+
+
+def refresh_ime_badge(screen) -> None:
+    """플러그인이 준 `(문구, 의미색이름)` 으로 배지를 갱신한다. 없으면 비운다.
+
+    0.2초 간격으로 불려도 싸게 끝나도록 **바뀐 것이 없으면 즉시 돌아온다** — 매번
+    `styles` 를 건드리면 그때마다 판이 다시 그려진다.
+    """
+    try:
+        lbl = screen.query_one("#" + IME_BADGE_ID, Label)
+    except Exception:
+        return                      # 이 판에 배지 자리가 없다 — 정상(대상이 아닌 판)
+    app = screen.app
+    try:
+        badge = app.plugins.client_input_badge(app)
+    except Exception:
+        badge = None                # 배지 하나 때문에 판이 죽으면 안 된다
+    if getattr(screen, "_ime_badge_last", _UNSET) == badge:
+        return
+    screen._ime_badge_last = badge
+    if badge is None:
+        lbl.update("")
+        lbl.styles.background = None
+        return
+    text, theme = badge
+    lbl.update(text)
+    # 색은 **의미 이름**으로 온다 — 값이 아니라 이름이 옮겨 다닌다(설계 §10).
+    lbl.styles.background = theme_color(app, theme)
+    lbl.styles.color = "black"      # 강조색 바탕 위에서 읽히기만 하면 되는 자리다
+    lbl.styles.text_style = "bold"
+
+
 class _CommandWordHighlighter(Highlighter):
     """명령 프롬프트 입력에서 **첫 토큰(명령어)** 에만 옅은 배경을 입혀 인자와
     시각적으로 구분한다(사용자 요청). 명령어와 인자 사이 첫 공백까지가 명령 토큰."""
@@ -85,8 +138,12 @@ class CommandListScreen(ModalScreen):
     #cmdclose { width: 5; height: 1; content-align: center middle;
                 background: $error; color: $text; text-style: bold; }
     /* 검색창(타이틀 탭줄과 목록 사이). 표시 전용이라 포커스를 받지 않는다. */
-    #cmdsearch { width: 100%; height: 3; border: round $accent;
+    #cmdsrow { width: 100%; height: 3; }
+    #cmdsearch { width: 1fr; height: 3; border: round $accent;
                  background: $panel-darken-1; }
+    /* 줄의 오른쪽 끝 — 입력기 배지(pytmux-14). 테두리 상자와 세로 가운데를 맞춘다. */
+    #imebadge { width: auto; height: 3; padding: 1 0 0 1;
+                content-align: center middle; }
     /* §10: 박스 높이를 "항목이 가장 많은 카테고리" 기준으로 고정(_apply_layout 에서
        #cmdbox.height 설정) — ←→ 카테고리 전환·검색 필터 시 박스가 출렁이지
        않게. ListView 는 1fr 로 박스 안을 채운다 — 고정 행수를 강제하면 낮은
@@ -138,7 +195,12 @@ class CommandListScreen(ModalScreen):
                         yield Label("", id=f"cmdtab_{i}", markup=True)
                 yield Label("", id="cmdgap")          # [x] 를 우측 끝으로 미는 여백
                 yield Label("[x]", id="cmdclose", markup=False)
-            yield Input(placeholder=i18n.t("ui.search"), id="cmdsearch")
+            # 검색줄 오른쪽 끝에 입력기 배지 자리(pytmux-14). 상자가 테두리를 가져
+            # 안에 못 넣으므로 줄 통째를 Horizontal 로 감싼다 — 높이는 그대로 3이라
+            # `_BOX_OVERHEAD` 산수가 안 변한다.
+            with Horizontal(id="cmdsrow"):
+                yield Input(placeholder=i18n.t("ui.search"), id="cmdsearch")
+                yield ime_badge_label()
             yield ListView(id="cmds")
 
     # 박스 외 세로 오버헤드(외곽선 2 + 탭머리 3 + 검색창 3)와 화면 하단 여백.
@@ -164,6 +226,9 @@ class CommandListScreen(ModalScreen):
         si.can_focus = False           # 표시 전용 — 클릭/탭 포커스가 키 모델을 깨지 않게
         si.value = self._query
         await self._rebuild()
+        # 입력기 상태는 서버 메시지와 무관하게 바뀐다 — 작성창과 같은 주기로 훑는다.
+        refresh_ime_badge(self)
+        self.set_interval(0.2, lambda: refresh_ime_badge(self))
         self.query_one(ListView).focus()
 
     def on_resize(self, event: events.Resize):
@@ -373,8 +438,11 @@ class _SettingInputScreen(ModalScreen):
     _SettingInputScreen { align: center middle; background: $background 60%; }
     #sibox { width: 70%; max-width: 80; height: auto;
              border: round $accent; background: $panel; padding: 0 1; }
-    #siinput { width: 100%; border: none; height: 1; padding: 0;
+    #sirow { width: 100%; height: 1; }
+    #siinput { width: 1fr; border: none; height: 1; padding: 0;
                background: $panel; color: $text; }
+    /* 줄의 오른쪽 끝 — 입력기 배지(pytmux-14). */
+    #imebadge { width: auto; height: 1; padding: 0 0 0 1; background: $panel; }
     """
 
     def __init__(self, title, value, hint=""):
@@ -385,7 +453,9 @@ class _SettingInputScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="sibox"):
-            yield Input(value=self._value, id="siinput")
+            with Horizontal(id="sirow"):
+                yield Input(value=self._value, id="siinput")
+                yield ime_badge_label()
 
     def on_mount(self):
         box = self.query_one("#sibox", Vertical)
@@ -393,6 +463,9 @@ class _SettingInputScreen(ModalScreen):
         if self._hint:
             box.border_subtitle = self._hint
         self.query_one(Input).focus()
+        # 입력기 상태는 서버 메시지와 무관하게 바뀐다 — 작성창과 같은 주기로 훑는다.
+        refresh_ime_badge(self)
+        self.set_interval(0.2, lambda: refresh_ime_badge(self))
 
     def on_input_submitted(self, event):
         event.stop()
@@ -1931,6 +2004,10 @@ class PromptScreen(ModalScreen):
        (1fr)이 남는 폭을 채우므로 힌트는 항상 줄 오른쪽 끝에 표시된다(명령 오른쪽). */
     #phint { width: auto; max-width: 60%; height: 1; padding: 0 1;
              background: $surface; content-align: right middle; }
+    /* 줄의 오른쪽 끝 — 입력기 배지(pytmux-14). `width: auto` 라 배지가 비면 자리를
+       안 차지한다(플러그인이 없거나 꺼져 있으면 빈 문자열이 온다). */
+    #imebadge { width: auto; height: 1; padding: 0 0 0 1;
+                background: $surface; }
     /* 입력 박스 위에 펼쳐지는 자동완성 후보 영역(부분일치 명령). */
     #pcand { width: 100%; height: auto; max-height: 12;
              background: $panel; color: $text; padding: 0 1;
@@ -1979,6 +2056,8 @@ class PromptScreen(ModalScreen):
                     yield inp
                     # 입력 오른쪽 힌트(설명/인자 밑줄/토글 선택지). markup 으로 강조.
                     yield Label("", id="phint", markup=True)
+                    # 줄의 **오른쪽 끝**이 입력기 배지 자리다(pytmux-14).
+                    yield ime_badge_label()
         else:
             # 검색·이름변경 등 한 줄 입력도 명령 프롬프트와 같은 둥근 테두리 박스
             # (바닥 고정) 스타일로 통일한다(요청 2026-06-21). 바닥 끝에 붙는 맨몸
@@ -1987,6 +2066,8 @@ class PromptScreen(ModalScreen):
             with Vertical(id="pwrap"):
                 with Horizontal(id="prow"):
                     yield inp
+                    # 이름 바꾸기·검색도 글자를 받는 줄이다 — 배지 자리는 같다.
+                    yield ime_badge_label()
 
     def on_mount(self):
         inp = self.query_one(Input)
@@ -1996,6 +2077,9 @@ class PromptScreen(ModalScreen):
             self.query_one("#pcand", Label).display = False
             self._refresh_cands()
             self._refresh_hint()
+        # 입력기 상태는 서버 메시지와 무관하게 바뀐다 — 작성창과 같은 주기로 훑는다.
+        refresh_ime_badge(self)
+        self.set_interval(0.2, lambda: refresh_ime_badge(self))
         self._place_over_compose()
 
     def _compose_below(self):
@@ -2634,7 +2718,8 @@ class ComposePromptScreen(ModalScreen):
     #cesc { width: auto; height: 1; padding: 0 1; display: none; }
     #chint { width: 1fr; height: 1; color: $text-muted;
              content-align: right middle; }
-    #cime { width: auto; height: 1; padding: 0 0 0 1; }
+    /* 줄의 오른쪽 끝 — 입력기 배지(pytmux-14). 다른 입력 판과 같은 id 다. */
+    #imebadge { width: auto; height: 1; padding: 0 0 0 1; }
     /* 입력칸: 박스 배경($panel)과 다른 색($surface)으로 구분. TextArea 자체 테두리는
        끄고 #cwrap 의 round 테두리로 감싼다. 한 줄로 시작(min-height:1)해 프롬프트처럼
        보이고, 입력이 늘면 max-height 까지 위로 자란 뒤 그 이상은 TextArea 내부 스크롤. */
@@ -2657,7 +2742,6 @@ class ComposePromptScreen(ModalScreen):
         # 활성 패널 테두리 안쪽 좌측 x·폭(셀). None 이면 전체 폭.
         self._pane_x = pane_x
         self._pane_w = pane_w
-        self._ime_last = None      # 배지 중복 갱신 방지용 직전 (state, show)
         self._esc_mode = False     # esc 한 번 눌린 '메뉴 모드'(다음 키가 :/취소 결정)
 
     def compose(self) -> ComposeResult:
@@ -2665,7 +2749,7 @@ class ComposePromptScreen(ModalScreen):
             with Horizontal(id="ctop"):
                 yield Label("", id="cesc", markup=False)
                 yield Label(i18n.t("compose.hint"), id="chint", markup=False)
-                yield Label("", id="cime", markup=False)
+                yield ime_badge_label()
             yield _ComposeTextArea(self._initial, id="carea", soft_wrap=True)
 
     def on_mount(self):
@@ -2696,26 +2780,12 @@ class ComposePromptScreen(ModalScreen):
         self.set_interval(0.2, self._refresh_ime)
 
     def _refresh_ime(self):
-        """우상단 IME(한/영) 배지를 app.ime_state 에 맞춰 갱신한다(ime-indicator 의
-        화면 배지와 같은 원천·색). 플러그인이 없거나 OFF 면 빈 배지."""
-        try:
-            lbl = self.query_one("#cime", Label)
-        except Exception:
-            return
-        app = self.app
-        show = getattr(app, "ime_show", False) and hasattr(app, "ime_state")
-        state = getattr(app, "ime_state", "EN") if show else None
-        if (state, show) == self._ime_last:
-            return
-        self._ime_last = (state, show)
-        if not show:
-            lbl.update("")
-            return
-        lbl.update(f"[{state}]")
-        lbl.styles.background = theme_color(app, "success" if state == "한"
-                                            else "primary")
-        lbl.styles.color = "black"
-        lbl.styles.text_style = "bold"
+        """IME(한/영) 배지를 갱신한다 — 다른 입력 판들과 **같은 헬퍼**로.
+
+        ⚠ 종전에는 이 메서드가 문구(`[{state}]`)와 색 규칙(`success`/`primary`)을 손으로
+        갖고 있었다. 그러면 규칙이 두 벌이고(플러그인에 한 벌·여기 한 벌), 지운 플러그인이
+        여기 남는다 — pytmux-14 로 판 넷이 같은 배지를 갖게 되면서 그 두 벌을 없앴다."""
+        refresh_ime_badge(self)
 
     def action_inject(self):
         # (text, injected) 로 돌려줘 open_compose 가 투입+초안 저장을 구분한다.

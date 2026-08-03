@@ -39,6 +39,19 @@ _THEME = {"한": "success", "EN": "primary"}
 RESERVE_FOR_TAB_CLOSE = 4
 
 
+def badge_text(label: str) -> str:
+    """배지에 실제로 적히는 글자. 캔버스든 판이든 **같은 문구**여야 한다(pytmux-14)."""
+    return "[" + label + "]"
+
+
+def badge_theme(label: str) -> str:
+    """배지 바탕의 **의미 색 이름**. 값이 아니라 이름이 옮겨 다닌다(설계 §10).
+
+    ⚠ 여기 없는 이름을 쓰면 그 클라가 색을 못 풀어 **배지가 통째로 안 보인다**
+    (pytmux-16: `primary` 가 네이티브 표에 없어 `[EN]` 이 검은 글자만 남았다)."""
+    return _THEME.get(label, "primary")
+
+
 def text_width(s: str) -> int:
     """표시 폭(한글 등 와이드=2칸)."""
     return sum(char_cells(c) for c in s)
@@ -67,7 +80,7 @@ def badge_span(label, right_edge, reserve_right):
     """배지가 차지할 `(x0, x_end_exclusive)` — 폭이 모자라면 None.
 
     `right_edge` 는 **exclusive** 한 오른쪽 경계(활성 패널의 우측)다."""
-    text = "[" + label + "]"
+    text = badge_text(label)
     x_end = right_edge - reserve_right
     x0 = x_end - text_width(text)
     if x0 < 0:
@@ -86,7 +99,7 @@ def ime_cells(label, row, right_edge, reserve_right=0):
     span = badge_span(label, right_edge, reserve_right)
     if span is None:
         return [], None
-    run = {"x": span[0], "y": row, "text": "[" + label + "]",
+    run = {"x": span[0], "y": row, "text": badge_text(label),
            "style": {"f": "black", "bo": 1},
-           "theme": {"b": _THEME.get(label, "primary")}}
+           "theme": {"b": badge_theme(label)}}
     return [run], span

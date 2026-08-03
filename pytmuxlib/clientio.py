@@ -1016,6 +1016,13 @@ class _RenderMixin:
                 and not self.layout.get("popup")):
             ap = next((p for p in self.layout.get("panes", [])
                        if p["id"] == active), None)
+            # 패널을 통째로 덮는 오버레이(시계·달력)도 팝업과 **같은 이유**로 막는다:
+            # 아래 `client_overlay` 가 그 위에 그려 스크롤바를 가리므로, 존만 남으면
+            # 사용자가 보는 것(오버레이)과 탭이 하는 일(뒤 패널 스크롤)이 어긋난다.
+            # 오버레이는 코어가 아니라 **플러그인이 아는 사실**이라 훅으로 묻는다
+            # (검수 2026-07-31 §5 가 "조회 API 가 없다"로 유보한 자리 — API 를 냈다).
+            if ap and self.plugins.client_overlay_covers(self, ap["id"]):
+                ap = None
             if ap and ap["w"] >= 2:
                 bar = clientrender.scrollbar_chars(
                     ap["h"], self.pane_top.get(ap["id"], 0),
