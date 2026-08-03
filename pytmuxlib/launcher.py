@@ -14,6 +14,28 @@ import sys
 import time
 
 from . import ipc, proc, protocol, sshwrap
+
+# ── CLI 출력은 UTF-8 로 고정한다 ──────────────────────────────────────────────
+# 이 CLI 의 메시지는 전부 한글이다(`실행 중인 서버 없음` 등). 파이썬은 **진짜 콘솔**
+# 에는 UTF-16 으로 쓰지만, 출력이 **파이프나 파일로 가면** 로케일 인코딩을 쓴다 — 그
+# 상자가 한국어 로케일이 아니면(예: en-US 의 cp1252) 그 print 가 `UnicodeEncodeError`
+# 로 **죽는다**. 실측(2026-08-03): Git Bash 에서 `python pytmux.py ls | head` 가
+# "실행 중인 서버 없음" 을 찍으려다 traceback 으로 끝났다 — 판정을 내리기 전에 죽으니
+# 스크립트에서 이 CLI 를 못 쓴다.
+#
+# 이 저장소의 **스크립트**들(tests/run.py · scripts/publish_check.py · check_all.py ·
+# check_mirror.py · gen_*.py)에는 이미 같은 처방이 한 줄씩 들어 있는데, 정작 **제품
+# CLI** 에만 없었다. errors 도 관대하게 둬 인코딩이 어떻든 **메시지와 종료코드는
+# 반드시 나오게** 한다(게이트들과 같은 판단).
+#
+# ⚠ 진짜 콘솔은 건드리지 않는다 — 거기서는 파이썬이 이미 UTF-8/콘솔 API 로 쓰고 있고,
+# 코드페이지가 cp949 인 한국어 콘솔에서 UTF-8 로 바꾸면 오히려 한글이 깨진다.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        if not _stream.isatty():
+            _stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+    except (AttributeError, ValueError, OSError):
+        pass
 # NOTE: client(=textual)·server(=model→pyte→wcwidth) 는 여기서 import 하지 않는다.
 # 가벼운 제어 명령(ls/cmd/kill)이 launcher 만 거쳐도 textual 전체나 pyte/wcwidth 를
 # 로드해 기동이 느려졌다(Windows 제보). attach 경로의 client, `server` 명령의
