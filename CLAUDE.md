@@ -171,12 +171,22 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
 - **거대 문서 Read 주의**: `docs/internal/HANDOFF.md`(수백 KB)·`IMPROVEMENT_OPPORTUNITIES.md`
   를 통째로 Read 하면 컨텍스트 예산을 소진한다. 루트 `MEMORY.md`(주제→파일→p4 CL 색인)로
   먼저 관련 항목을 찾아 해당 파일만 본다.
-- **열린 항목(제보·결함·할일)은 이슈 파일이 정본이다**(이전 2026-08-03 · p4 69517):
-  `docs/internal/qa/issues/pytmux-<번호>.md`(규약 = 그 디렉터리 README). 프로젝트 횡단
-  트래커 `//woojinkim/scripts/issue` 가 그것을 읽어 웹·MCP 로 낸다(단계 M0 = 저장소가 권위).
-  HANDOFF §10-21 은 이제 **색인 표**만 두고 본문을 갖지 않는다 — ⛔ **핸드오프에 항목을 다시
-  적지 말 것**(사본이 둘이면 SSOT 가 아니다). `docs/internal/` 의 문서 348편에는 트래커
-  옵트인 키(`doc:`)가 프론트매터로 들어가 있다(`benchmark/` 는 데이터라 제외).
+- **항목(제보·결함·할일)의 정본은 이슈트래커다**(이전 2026-08-03 · 단계 **M2**):
+  `//woojinkim/scripts/issue` 가 권위이고 `docs/internal/qa/issues/pytmux-<번호>.md` 는
+  **자동 생성 미러**다 — ⛔ **그 파일을 손으로 고치지 말 것**(다음 `sync` 가 드리프트로
+  신고하고 반영하지 않는다). 고치는 길은 MCP `issue_update`·`issue_create` → `mirror --write`
+  → 사람이 P4 제출. 규약은 그 디렉터리 README. HANDOFF §10-21·ARCHIVE §13-4 는 **색인 표**만
+  두고 본문을 갖지 않는다 — ⛔ **핸드오프에 항목을 다시 적지 말 것**(사본이 둘이면 SSOT 가
+  아니다).
+- ⛔ ★ **내부 문서 350편은 이제 저장소에 없다 — 링크 스텁만 있다**(2026-08-03 · 사용자 지시).
+  `docs/internal/**/*.md` 를 열면 **제목 + 트래커 링크**뿐이다. 전문을 읽는 곳:
+  - 웹 — <http://100.79.188.26:8086/d/pytmux/<slug>>(각 스텁이 자기 링크를 갖고 있다)
+  - 오프라인 — `//woojinkim/scripts/issue/data/journal/*.jsonl`(P4 추적 · 350건 2.5M자) ·
+    `issue rebuild` 가 그것으로 복원한다.
+  **새 글·수정은 트래커에서** 하고 `issue mirror --project pytmux --write` 로 스텁을 갱신한다 —
+  스텁 파일을 손으로 고치면 다음 미러가 되돌린다. `benchmark/` 2451편은 데이터라 대상 밖이다.
+  ⚠ 루트 `CLAUDE.md`·`client/CLAUDE.md` 는 **스텁이 아니다**(문서 루트 밖) — 여기 ⛔ 안전
+  규율은 저장소 안에 그대로 남는다.
 - **동적 합성 메서드**: `Server` 의 일부 메서드(`set_autoresume`·`_scan_claude` 등)는
   `server.py` 에 없고 런타임에 플러그인 믹스인(`plugins/claude-code/servermixin.py`)으로
   합성된다. jump-to-def 가 안 닿으면 그 파일을 grep 한다(server.py 의 `class Server` 위
