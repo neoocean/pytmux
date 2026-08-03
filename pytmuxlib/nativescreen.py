@@ -176,10 +176,23 @@ class _NativeBase:
             return
         self.dirty.update(range(lines))
         if lines < self.lines:
-            self.save_cursor()
-            self.cursor_position(0, 0)
-            self.delete_lines(self.lines - lines)   # 위에서부터 잘라냄
-            self.restore_cursor()
+            # 행 축소는 **아래에서** 버린다(대개 빈 줄). 커서가 새 화면 밖으로 나갈
+            # 때만, 나가는 만큼만 **위에서** 걷어 스크롤백으로 넘긴다(xterm/tmux 규칙).
+            # ☠ 종전엔 줄어드는 수만큼 전부 위에서 delete_lines 로 걷어(그것도 스크롤백에
+            # 안 넣고) 잘라, 커서가 위쪽에 있는 화면 — 셸 배너 직후처럼 아래가 다 빈
+            # 화면 — 은 **내용이 통째로 사라졌다**(§10-21ⓙ3. 30행→26행이면 위 4줄 =
+            # 배너 전부). 화면 모델을 pyte 에서 그대로 옮겨 온 자리이고 pyte 도 같다.
+            # 커서를 같이 옮기는 것도 이 결함의 반쪽이다 — 종전엔 restore_cursor() 가
+            # **옛 y** 를 되돌려 내용만 위로 가고 커서는 제자리였다(§10-21ⓨ: 프롬프트와
+            # 이어 친 글자가 어긋난다. conhost 는 절대 주소로 그려 어긋남이 그대로 남는다).
+            scroll_off = max(0, min(self.lines - lines,
+                                    self.cursor.y - (lines - 1)))
+            self.margins = None      # 아래 set_margins() 와 같은 값 — 먼저 푼다
+            if scroll_off:
+                self.scroll_up(scroll_off)   # 스크롤백을 든 화면은 여기서 밀어 넣는다
+                self.cursor.y -= scroll_off
+            for y in range(lines, self.lines):
+                self.buffer.pop(y, None)     # 화면 밖 줄이 되살아나지 않게
         if columns < self.columns:
             for line in self.buffer.values():
                 for x in range(columns, self.columns):

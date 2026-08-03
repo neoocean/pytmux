@@ -20,6 +20,10 @@ pub static EN: &[(&str, &str)] = &[
     ("시계", "Clock"),
     ("달력", "Calendar"),
     // ── keymap.rs — Action::label ──
+    // 글자 배율 셋(§10-21ⓐ) — 액션 이름 둘 + 되돌리기.
+    ("글자 크게", "Larger text"),
+    ("글자 작게", "Smaller text"),
+    ("글자 크기 기본", "Reset text size"),
     ("좌우 분할", "Split left/right"),
     ("상하 분할", "Split top/bottom"),
     ("패널 닫기", "Kill pane"),
@@ -59,6 +63,10 @@ pub static EN: &[(&str, &str)] = &[
     ("패널 번호", "Pane numbers"),
     ("메뉴", "Menu"),
     ("알림 이력", "Notice history"),
+    // §10-21ⓓ — 화면에서 뺀 요약 구역이 판이 됐다.
+    ("블록 · Claude 요약", "Blocks · Claude summary"),
+    ("블록·Claude 요약", "Blocks · Claude summary"),
+    ("블록도 Claude 항목도 없다", "No blocks and no Claude items"),
     ("패널에 ESC", "ESC to pane"),
     ("패널에 `", "` to pane"),
     ("패널 동기화", "Sync panes"),
@@ -211,12 +219,26 @@ pub static EN: &[(&str, &str)] = &[
     // 확인 화면의 **버튼 두 개**(screens.rs `confirm_buttons`). 2026-07-31 라이브 컷에서
     // 제목·물음만 영어이고 버튼만 한국어로 남아 있는 것이 잡혔다 — 되돌릴 수 없는 것
     // 앞의 화면이라 어느 쪽이 '아니오'인지 못 읽으면 그 화면의 취지가 무너진다.
+    //
+    // ☠ **그때 설명만 적고 항목을 안 넣었다**(§10-21ⓖ2 — 2026-08-03 에 제보로 다시 왔다).
+    //   `닫기` 는 아래에 있었는데 `취소` 가 없어, 판이 `Close` + `취소` 로 반쯤 영어였다.
+    //   이제 **그려진 프레임에 한글이 남는지**를 재는 오라클이 이 자리를 지킨다
+    //   (`gui` 의 `no_korean_survives_on_the_confirm_screen`).
+    ("취소", "Cancel"),
+    ("재시작", "Restart"),
+    // 확인 판의 안내줄 — 이웃 판들(Tabs·Tree·Buffers…)은 다 있는데 이것만 빠져 있었다.
+    (
+        "(←→ 고르기 · Enter 확정 · y/n · Esc 취소)",
+        "(←→ choose · Enter confirm · y/n · Esc cancel)",
+    ),
     // ── 설정 줄 이름 · 값 낱말(정본 setting.*/setval.* — gen_setting_labels.py) ──
     ("setting\u{0004}비활성 패널 흐리게", "Dim inactive panes"),
     ("setting\u{0004}패널 헤더 표시", "Pane header"),
     ("setting\u{0004}단일 패널 테두리", "Single-pane border"),
     ("setting\u{0004}탭 바 표시", "Tab bar"),
     ("setting\u{0004}흐리게 세기", "Dim strength"),
+    // GUI 만의 줄(§10-21ⓐ) — 정본에 짝이 없어 이름도 번역도 우리가 짓는다.
+    ("setting\u{0004}글자 크기 배율", "Text size"),
     ("setting\u{0004}상태줄 위치", "Status bar position"),
     ("setting\u{0004}언어", "Language"),
     ("setting\u{0004}prefix 키", "Prefix key"),

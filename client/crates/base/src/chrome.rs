@@ -136,7 +136,11 @@ pub enum ClickTarget {
     /// 서버에 보낼 명령이 없고(정본에는 이 구역 자체가 없다) 뷰가 자기 상태를 뒤집는다.
     /// 다만 그 결과로 **크롬 높이가 바뀌어 서버에 새 크기가 나간다** — `TabScroll` 과
     /// 달리 화면 밖으로 파급이 있는 유일한 뷰 로컬 클릭이다.
-    FooterFold,
+    /// 하단 한 줄의 **닫기**(§10-21ⓦ⑵).
+    ///
+    /// 액션 표를 안 지난다 — 지우는 것은 **이 클라의 표시**이고 서버도 정본도 그런
+    /// 명령을 갖지 않는다(같은 이유로 종전 `FooterFold` 도 여기 있었다).
+    DismissMessage,
 }
 
 /// 클릭 하나를 액션으로 — **Enter 와 같은 길**이다(파이썬 `on_mouse_down`/`_hit` 도
@@ -151,7 +155,7 @@ pub fn click(target: ClickTarget, ctx: &ChromeCtx) -> Option<Action> {
         ClickTarget::Spot(TabSpot::New) => Action::NewTab,
         ClickTarget::Spot(TabSpot::Close) => Action::KillTab,
         ClickTarget::Badge(badge) => badge.action(),
-        ClickTarget::TabScroll { .. } | ClickTarget::FooterFold => return None,
+        ClickTarget::TabScroll { .. } | ClickTarget::DismissMessage => return None,
     })
 }
 

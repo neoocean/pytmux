@@ -39,6 +39,9 @@ struct Fixture {
     /// 화면 스펙에 **직접 적힌** 한국어 — 카탈로그를 안 거쳐서 영어 표에 못 들어간다.
     /// 파일:줄 과 문구가 함께 온다(고칠 자리를 바로 가리키려고).
     wire_literals: Vec<String>,
+    /// 위 목록을 **어디서** 찾았나(파일:함수). 목록이 0 인 지금, 이것이 "다 옮겼다"와
+    /// "스캐너가 눈을 감았다"를 가르는 유일한 증거다.
+    wire_scanned: Vec<String>,
 }
 
 fn fixture() -> Fixture {
@@ -93,9 +96,17 @@ const UNTRANSLATABLE_TODAY: usize = 0;
 /// ★ 이 축은 2026-08-02o 에 생겼는데, **생기기 전까지 22개가 게이트 밖에 있었다**.
 /// 픽스처가 카탈로그에서 뽑히니, 스펙에 손으로 적은 한국어는 생성기의 눈에 아예 안
 /// 보였다 — 영어 사용자에게 그대로 한국어로 뜨는데 게이트는 초록이었다. 같은 CL 에서
-/// 넷(p4changes·ncd·prompt-history·claude-resume)을 카탈로그로 옮겨 22 → 10 이고,
-/// 남은 열은 전부 `mdir` 이다(모듈 상수 표까지 걸려 있어 슬라이스 하나 값어치다).
-const WIRE_LITERALS_TODAY: usize = 10;
+/// 넷(p4changes·ncd·prompt-history·claude-resume)을 카탈로그로 옮겨 22 → 10 이었다.
+///
+/// **10 → 0 (2026-08-02p)**: 남은 열은 전부 `mdir` 이었다. 다만 그 열을 옮기려고 자를
+/// 대 보니 **자가 짧았다** — 스캐너가 wire dict 를 짓는 함수 안만 보고 있어서, 같은
+/// 파일의 모듈 레벨 표(`_REASONS` 10 · `_VERBS` 5 · 안내줄)와 한 겹 위·아래의 함수
+/// (`_begin`·`_apply`·`_result_note`)에 있던 **같은 성질의 글 34개**가 수에 안 잡혔다.
+/// 스캐너를 고치니 10 이 아니라 **44** 였고, 그 44 를 옮겨 0 이 됐다.
+///
+/// 그래서 이 0 은 "mdir 을 옮겼다"보다 **"안 세지는 자리로 피할 길을 좁혔다"** 가
+/// 값이다 — 옮기기 전에 자부터 고치지 않았으면 34개가 조용히 남았다.
+const WIRE_LITERALS_TODAY: usize = 0;
 
 #[test]
 fn the_number_of_strings_we_cannot_translate_does_not_grow_silently() {
@@ -135,6 +146,33 @@ fn nobody_writes_korean_straight_into_a_screen_spec() {
          `i18n.phrase` 로 실을 것. 지금 남은 것:\n{:#?}",
         fx.wire_literals
     );
+}
+
+/// **0 은 두 가지 뜻이 될 수 있다** — 다 옮겼거나, 스캐너가 아무 데도 안 봤거나.
+///
+/// 위 테스트가 0 을 요구하게 된 순간부터, 생성기의 AST 스캔이 조용히 망가지면(파서
+/// 예외를 삼키거나, 함수 판별이 낡거나) 이 게이트는 **영원히 초록**이다. 그래서 훑은
+/// 자리의 목록을 같이 싣고, 그것이 비지 않았는지 · 스펙을 짓는 자리들이 실제로 들어
+/// 있는지를 잰다(빈 결과는 통과가 아니다 — 라이선스 게이트가 밟은 그 함정).
+#[test]
+fn the_scanner_still_looks_at_the_places_that_build_screens() {
+    let fx = fixture();
+    assert!(
+        !fx.wire_scanned.is_empty(),
+        "스캐너가 훑은 자리가 하나도 없다 — 통과가 아니라 고장이다(생성기를 볼 것)"
+    );
+    // 화면을 짓는 자리는 **함수 이름으로** 찾는다(줄 번호·순서가 아니라) — 표가
+    // 재정렬돼도 안 낡는다. 셋 다 다른 플러그인이라 하나가 죽어도 드러난다.
+    for want in ["mdir/__init__.py:_spec", "ncd/__init__.py:_dir_spec",
+                 "mdir/__init__.py:_result_note"] {
+        assert!(
+            fx.wire_scanned.iter().any(|s| s.ends_with(want)),
+            "스펙을 짓는 자리 {want:?} 가 훑은 목록에서 사라졌다 — 스캐너가 한 겹을 \
+             다시 못 보게 됐는지 볼 것(그렇게 되면 `wire_literals` 0 은 거짓이다). \
+             지금 목록:\n{:#?}",
+            fx.wire_scanned
+        );
+    }
 }
 
 /// 재료가 오면 **그 자리에서 영어가 된다** — 배관이 실제로 도는지 잰다.

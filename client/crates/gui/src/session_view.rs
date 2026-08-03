@@ -34,6 +34,7 @@ use proto::footer;
 use proto::mouse::{self, MouseKind};
 use proto::style::{CellStyle, Color as CellColor, NamedColor};
 use proto::status;
+use proto::session::Severity;
 use proto::{LinkEvent, Selection, ServerLink, ServerMessage, SessionState};
 use warpui::color::ColorU;
 use warpui::elements::{
@@ -151,6 +152,24 @@ const CLAUDE_POLL: Duration = Duration::from_millis(400);
 /// 같은 손짓이 화면마다 다르게 움직인다.
 const WHEEL_LINES: i32 = 3;
 
+/// 하단 한 줄에 뜨는 한 마디(§10-21ⓝ·ⓦ).
+///
+/// `at` 이 `None` 이면 **시한이 없다** — 끊김처럼 "지금 상태"인 줄이 그렇다.
+#[derive(Debug, Clone)]
+struct Flash {
+    text: String,
+    severity: Severity,
+    at: Option<Instant>,
+}
+
+impl Flash {
+    /// 시한이 없나(끊김처럼 "지금 상태"인 줄).
+    #[cfg(test)]
+    pub(crate) fn has_no_deadline(&self) -> bool {
+        self.at.is_none()
+    }
+}
+
 pub struct SessionView {
     /// 돌고 있는 셸 명령의 결과가 도착하는 자리(`run-shell`·`if-shell`).
     ///
@@ -236,7 +255,16 @@ pub struct SessionView {
     /// 눌린 줄 안다(TUI 와 같은 상태·같은 이유).
     mouse_fwd: Option<(i64, u8)>,
     /// 복사 결과 한 마디. **줄을 늘리지 않고** 요약 머리줄 끝에 붙는다.
-    copy_note: Option<String>,
+    /// 하단 한 줄에 뜨는 **지나가는 말**(§10-21ⓝ·ⓦ) — 복사 결과와 서버 오류가 여기
+    /// 한 자리로 모인다.
+    ///
+    /// 종전에는 복사 결과가 **맨 위 머리줄** 끝에 붙었다. 그 자리를 고른 근거는 "아래
+    /// 구역은 블록도 Claude 도 없으면 안 그려져 여기 두면 안 보일 때가 있다"였는데,
+    /// ⓓ 로 그 구역이 화면에서 빠지고 **늘 그려지는 하단 한 줄**이 생기면서 그 근거가
+    /// 사라졌다. 제보도 "서버 오류가 나타나는 그 자리에 나타나야 한다"로 확정됐다.
+    flash: Option<Flash>,
+    /// `Ctrl` 을 쥔 채 탭 스위처를 돌고 있나(§10-21ⓕ2). 뗌이 확정이다.
+    alt_tab: bool,
     /// 마지막 복사 요청의 **패널 폭과 시작 열**(정본 `_copy_unwrap_geom`).
     ///
     /// 왜 기억해 두나: 접힘을 되돌리려면 그 글이 **몇 칸짜리 판에서 접혔는지**를 알아야
@@ -246,6 +274,19 @@ pub struct SessionView {
     drew: bool,
     /// 서버에 알린 격자 크기. **바뀌었을 때만** 다시 알린다(TUI 와 같은 정본).
     size: SizeReporter,
+    /// 마지막으로 **잰** 칸 크기(픽셀). 캔버스가 격자를 잡을 때 쓴다(§10-21ⓙ).
+    ///
+    /// # 왜 잰 값인가 · 왜 `Cell` 인가
+    ///
+    /// 칸너비는 글꼴과 배율이 정하므로 계산으로는 못 얻는다. 원천은 마우스 셀 산수·
+    /// 스플리터 오버레이와 **같은 자리표**(`CELL_PROBE`)이고, 그것을 읽는 자리가
+    /// [`report_size`](Self::report_size)(`&mut self`)인데 쓰는 자리는 `render`(`&self`)라
+    /// 안쪽 가변성이 필요하다.
+    ///
+    /// 값은 **한 프레임 낡았다**. 그래도 맞는 이유: 이 값이 바뀌는 것은 글꼴 배율이나
+    /// 창 배율이 바뀔 때뿐이고, 그때는 다음 프레임에 곧 따라온다(첫 프레임에는 아직
+    /// 없어 종전 배치로 그린다).
+    cell_px: std::cell::Cell<Option<(f32, f32)>>,
     font: FamilyId,
     /// 크롬(탭·팝업 틀·상태줄) 글꼴 — 가변폭. 못 찾으면 `font`(고정폭) 그대로다.
     /// 캔버스는 항상 `font` 로 그린다(격자는 고정폭이 계약이다).
@@ -262,7 +303,6 @@ pub struct SessionView {
     /// 설정을 고르면 정본과 공유하는 설정 표면에 **정본에 없는 칸**이 생기고
     /// (`check_fixtures`·표면 원장이 먼저 운다), 그 칸의 뜻을 정본이 영영 모른다.
     /// 이 구역 자체가 우리 것뿐이라(정본에는 없다) 상태도 우리 창의 수명에 묶는다.
-    footer_fold: footer::Fold,
     /// 이 머신의 트랜스크립트 파일을 보는 눈(로컬 패널용).
     watcher: Watcher,
     /// 상류가 실어 보낸 원문 꼬리(원격 패널용).
@@ -361,17 +401,20 @@ impl SessionView {
             press: None,
             selection: None,
             mouse_fwd: None,
-            copy_note: None,
+            flash: None,
+            alt_tab: false,
             copy_geom: None,
             drew: false,
             // 핸드셰이크에서 알린 크기와 같아야 한다 — 다르면 첫 프레임부터 한 번
             // 헛되이 재배치를 부른다(`main.rs` 의 attach 인자).
             size: SizeReporter::new(80, 24),
+            // 아직 안 쟀다 — 첫 프레임은 종전 배치로 그리고, 자리표가 남는 즉시 격자를
+            // 잡는다(§10-21ⓙ).
+            cell_px: std::cell::Cell::new(None),
             font,
             ui_font,
             claude: Vec::new(),
             claude_mode: None,
-            footer_fold: footer::Fold::default(),
             watcher: Watcher::new(projects_dir()),
             remote: RemoteTranscripts::default(),
             // 붙자마자 한 번 본다 — 첫 프레임에 이미 대화가 있으면 빈 구역을 보일
@@ -419,6 +462,123 @@ impl SessionView {
             && keystroke.key.eq_ignore_ascii_case("v")
     }
 
+    /// 이 키가 **탭 전환**인가(§10-21ⓕ) — `Ctrl+Tab` / `Ctrl+Shift+Tab`.
+    ///
+    /// # 왜 GUI 만 할 수 있나
+    ///
+    /// 제보의 근거가 그대로 설계다: *"정본 Textual TUI 는 터미널 앱 안에서 도니까 이
+    /// 조합을 쓸 수 없었다. `pytmux-gui` 는 독립 앱이라 쓸 수 있다."*
+    ///
+    /// ⚠ **가로채면 패널 안 프로그램의 `Ctrl+Tab` 이 사라진다** — 제보가 그것을 감수한
+    /// 결정이다(`Ctrl+Shift+V` 때와 같은 판단이고, 같은 이유로 순수 함수다).
+    /// 돌려주는 값은 **방향**이다(앞으로 = `true`).
+    ///
+    /// 액션(`NextTab`)을 바로 안 돌려주는 이유: 제보 ⓕ2 가 요구하는 것은 "누른 채
+    /// 도는" 동선이고, **ⓕ 의 동작은 거기서 저절로 나온다** — 짧게 눌렀다 떼면 스위처가
+    /// 열리자마자(커서는 다음 탭에 있다 = ⓔ2) 확정되므로 곧 "다음 탭으로"다. 두 제보를
+    /// 각자 배선하면 같은 키가 두 갈래로 처리된다.
+    fn tab_switch_chord(keystroke: &warpui::keymap::Keystroke) -> Option<bool> {
+        if !keystroke.ctrl || keystroke.alt || keystroke.meta || keystroke.cmd {
+            return None;
+        }
+        if !keystroke.key.eq_ignore_ascii_case("tab") {
+            return None;
+        }
+        Some(!keystroke.shift)
+    }
+
+    /// `Ctrl` 을 쥔 채 도는 탭 스위처의 한 걸음(§10-21ⓕ·ⓕ2).
+    ///
+    /// **합성 키로 기존 길을 탄다** — 선택 이동도 확정도 이미 `screens.press` 가 하는
+    /// 일이라, 여기서 따로 구현하면 같은 화면이 두 가지 규칙으로 움직인다.
+    #[cfg(test)]
+    pub(crate) fn alt_tab_step_for_test(&mut self, forward: bool) -> bool {
+        self.alt_tab_step(forward)
+    }
+
+    fn alt_tab_step(&mut self, forward: bool) -> bool {
+        // ★ **판이 떠 있으면 그 판의 탭이 먼저다**(§10-21ⓗ⑷). ⓕ 가 `Ctrl+Tab` 을 세션
+        //   전역으로 가져갔는데, 제보는 *"이 판 위에서는 판 안 분류 탭을 옮긴다"* 이므로
+        //   두 자리의 우선순위를 정해야 했다. 판이 위에 있으니 판이 이긴다 — 화면이 떠
+        //   있으면 **모든 키가 그 화면의 것**이라는 core 규칙과 같은 결이다.
+        //
+        //   ⚠ 스위처 자신(`Screen::Tabs`)은 예외다. 그것이 곧 이 동선이고, `alt_tab`
+        //   중에는 아래 걸음이 계속 돌아야 한다.
+        if !self.alt_tab
+            && let Some(screen) = self.screens.top()
+            && matches!(screen, Screen::Commands | Screen::InfoTabs)
+        {
+            let key = if forward { Key::Right } else { Key::Left };
+            return self.handle_key(key, Mods::NONE);
+        }
+        if !self.alt_tab {
+            if !self.apply_action(Action::ShowTabs) {
+                return true;
+            }
+            // 탭이 하나뿐이면 안 열린다(core 판정) — 그때는 모드도 안 켠다.
+            if self.screens.top() != Some(Screen::Tabs) {
+                return true;
+            }
+            self.alt_tab = true;
+            // 열자마자 커서는 **다음 탭**이다(ⓔ2). 뒤로 도는 첫 걸음은 거기서 두 칸
+            // 올라가야 **이전 탭**이 된다.
+            if !forward {
+                self.handle_key(Key::Up, Mods::NONE);
+                self.handle_key(Key::Up, Mods::NONE);
+            }
+            return true;
+        }
+        let key = if forward { Key::Down } else { Key::Up };
+        self.handle_key(key, Mods::NONE)
+    }
+
+    /// `Ctrl` 을 뗐다 — 쥔 채 돌고 있었으면 **확정**한다(§10-21ⓕ2).
+    ///
+    /// # 포커스를 잃으면 (열어 뒀던 물음의 답)
+    ///
+    /// 창이 포커스를 잃는 동안 뗌을 못 받을 수 있다. 그때는 **아무것도 하지 않는다** —
+    /// 확정도 취소도 아니다. 스위처는 평범한 화면이라 `Enter`·`Esc` 가 그대로 듣고,
+    /// 그래서 **갇히는 모드가 아니다**. 몰래 탭을 바꾸는 쪽(확정)이나 사용자가 고른
+    /// 것을 버리는 쪽(취소)보다 이쪽이 놀랍지 않다.
+    pub fn release_ctrl(&mut self) -> bool {
+        if !self.alt_tab {
+            return false;
+        }
+        self.alt_tab = false;
+        // 그 사이에 화면이 닫혔으면(Esc) 확정할 것이 없다.
+        if self.screens.top() != Some(Screen::Tabs) {
+            return false;
+        }
+        self.handle_key(Key::Enter, Mods::NONE)
+    }
+
+    /// 이 키가 "앱 글자 크기를 바꿔 달라"인가(§10-21ⓐ) — `Ctrl+=`/`Ctrl++`/`Ctrl+-`/`Ctrl+0`.
+    ///
+    /// # 왜 가로채도 되나
+    ///
+    /// `Ctrl+Shift+V` 와 **같은 판단**이다: 이 클라에는 글자 크기를 대신 바꿔 줄 바깥
+    /// 터미널이 없다(TUI 는 호스트 단말이 한다). 브라우저·터미널 에뮬레이터의 관습이
+    /// 그대로 이 조합이라 손버릇도 맞는다.
+    ///
+    /// # `=` 와 `+` 를 둘 다 받는 이유
+    ///
+    /// 이 조합의 관습적 이름은 "Ctrl 확대"인데, 사람이 실제로 누르는 것은 **Shift 없이
+    /// `=`** 이거나 **Shift 를 눌러 `+`** 다. 하나만 받으면 절반의 사람에게 안 먹고,
+    /// 그건 조용하다. 숫자패드 `+`(`add`)도 같은 자리다.
+    ///
+    /// 순수 함수로 빼는 이유도 붙여넣기와 같다 — 창 없이 물을 수 있어야 오라클이 선다.
+    fn font_scale_chord(keystroke: &warpui::keymap::Keystroke) -> Option<Action> {
+        if !keystroke.ctrl || keystroke.alt || keystroke.meta || keystroke.cmd {
+            return None;
+        }
+        match keystroke.key.as_str() {
+            "=" | "+" | "add" => Some(Action::FontScale { up: true }),
+            "-" | "_" | "subtract" => Some(Action::FontScale { up: false }),
+            "0" => Some(Action::FontScaleReset),
+            _ => None,
+        }
+    }
+
     /// 키 하나. 반환값은 "다시 그려야 하는가".
     /// 물음이 방금 열렸으면 인자 이력을 core 에 채운다(지연 채움 — TUI 와 같은 자리).
     fn refill_prompt_history(&mut self) {
@@ -435,7 +595,18 @@ impl SessionView {
     /// 오버레이 하나라, 밀려난 것이 있으면 그 끔도 같이 올린다(안 올리면 서버가 두
     /// 그림을 겹쳐 보낸다).
     fn push_overlay_toggle(&mut self, name: &str) {
-        let Some(t) = self.state.toggle_overlay(name) else {
+        let t = self.state.toggle_overlay(name);
+        self.push_overlay(name, t);
+    }
+
+    /// 오버레이를 **명시적으로** 켜거나 끈다(§10-21ⓡ). 토글과 같은 프레임을 낸다.
+    fn push_overlay_set(&mut self, name: &str, on: bool) {
+        let t = self.state.set_overlay(name, on);
+        self.push_overlay(name, t);
+    }
+
+    fn push_overlay(&mut self, name: &str, t: Option<proto::session::OverlayToggle>) {
+        let Some(t) = t else {
             return;
         };
         if let Some(closed) = t.closed {
@@ -879,9 +1050,18 @@ impl SessionView {
                 return true;
             }
             Action::ShowTabs => {
-                self.screens.open(Screen::Tabs);
-                // 목록이 줄어 있었을 수 있다 — 열면서 선택을 목록 안으로 접는다.
-                self.screens.clamp_selection(self.state.switcher_rows().len());
+                // ★ 첫 선택은 **다음 탭**이다(§10-21ⓔ2 · 정본과 같다) — 뜻은 core 가
+                //   정한다. 탭이 하나뿐이면 안 연다(고를 것이 없는 목록은 "아무 일도
+                //   안 일어난다"와 같다).
+                let rows: Vec<(bool, bool)> = self
+                    .state
+                    .switcher_rows()
+                    .iter()
+                    .map(|r| (r.window.is_some() && r.pane.is_none(), r.active))
+                    .collect();
+                if !self.screens.open_tab_switcher(&rows) {
+                    return true;
+                }
                 // 패널 하위행은 tree 회신이 **뒤늦게** 채운다(파이썬과 같다 — 열림은
                 // 즉시, esc Tab Enter 리듬을 지킨다).
                 self.pending.push(Outgoing::Command(Command::RequestTree));
@@ -1085,6 +1265,11 @@ impl SessionView {
                 );
                 return true;
             }
+            // §10-21ⓓ — 화면에서 뺀 요약 구역의 새 입구.
+            Action::ShowSummary => {
+                self.screens.open(Screen::Summary);
+                return true;
+            }
             Action::ShowNotices => {
                 self.screens.open(Screen::Notices);
                 return true;
@@ -1104,6 +1289,34 @@ impl SessionView {
             }
             Action::ToggleInactiveDim => {
                 self.flip_config("inactive-dim");
+                return true;
+            }
+            // 글자 배율(§10-21ⓐ) — 걸음·끝값의 주인은 core 다. 여기는 지금 값에서 한
+            // 걸음 옮겨 **설정 파일에 적는** 일만 한다(`set_number` 가 그 길이고,
+            // 그래서 설정 화면에서 고친 것과 키로 고친 것이 한 자리로 모인다).
+            Action::FontScale { up } => {
+                let next = base::config::font_scale_step(self.config.font_scale, up);
+                // 끝에 닿아 값이 그대로면 **말해 준다** — 아무 일도 안 일어나면
+                // 사용자는 키가 안 먹은 줄 안다(끝에서 멈추는 설계라 더 그렇다).
+                //
+                // ⚠ 문구를 **낱말로 조립하지 않는다**(2026-08-02p 교훈): 방향을 인자로
+                //   넘기면 그 낱말만 다른 언어로 남는다. 문장을 통째로 둘 둔다.
+                if (next - self.config.font_scale).abs() < f32::EPSILON {
+                    let scale = format!("{next:.1}");
+                    self.state.note_notice(if up {
+                        tf("글자 크기: {scale}× — 더 키울 수 없다", &[("scale", &scale)])
+                    } else {
+                        tf("글자 크기: {scale}× — 더 줄일 수 없다", &[("scale", &scale)])
+                    });
+                    return true;
+                }
+                self.set_number("font-scale", next);
+                self.note_font_scale();
+                return true;
+            }
+            Action::FontScaleReset => {
+                self.set_number("font-scale", 1.0);
+                self.note_font_scale();
                 return true;
             }
             // 달력도 시계와 같은 길이다(Tier B) — 우리는 **켠 사실**만 올리고 그림·
@@ -1129,6 +1342,12 @@ impl SessionView {
             //   어떻게 그릴지는 플러그인이 정한다. 그림은 `plugin_cells` 로 온다.
             Action::ToggleClock => {
                 self.push_overlay_toggle("clock");
+                return true;
+            }
+            // 명시적 켜기/끄기(§10-21ⓡ) — 토글과 **같은 길**로 보낸다. 판정(멱등·상호
+            // 배타)은 core 가 하고 우리는 그 결과를 프레임으로 옮기기만 한다.
+            Action::SetOverlay { name, on } => {
+                self.push_overlay_set(name, on);
                 return true;
             }
             // Claude 한도 오버레이도 같은 길이다(Tier B) — 그림·데이터는 서버가 든다
@@ -1224,20 +1443,52 @@ impl SessionView {
     /// 평소 모드에서만 패널로 보낸다. 명령 모드에서 확정된 글자는 명령이 아니므로 **버린다**
     /// — 거기서 패널로 흘리면 사용자가 pytmux 에게 말하는 중에 셸에 글자가 찍힌다.
     pub fn handle_typed(&mut self, text: &str) -> bool {
-        if !Self::typed_goes_to_pane(self.mode.mode(), text) {
-            return false;
+        match Self::typed_target(self.mode.mode(), self.screens.top().is_some(), text) {
+            TypedTo::Drop => false,
+            TypedTo::Pane => {
+                self.pending.push(Outgoing::Input(text.as_bytes().to_vec()));
+                true
+            }
+            // 판이 열려 있으면 **그 판의 입력처**로 넣는다(§10-21ⓜ2). 낱자로 풀어
+            // 보내는 이유: 판의 입력은 `Key::Char` 를 받는 자리 하나뿐이고, 그래야
+            // 필터·프롬프트·작성창이 **같은 길**로 글자를 먹는다.
+            TypedTo::Screen => {
+                let mut any = false;
+                for ch in text.chars() {
+                    any |= self.handle_key(Key::Char(ch), Mods::NONE);
+                }
+                any
+            }
         }
-        self.pending
-            .push(Outgoing::Input(text.as_bytes().to_vec()));
-        true
     }
 
     /// 확정된 글자를 패널로 보낼 것인가.
     ///
     /// 창 없이 물을 수 있게 갈라 둔다 — 이 판정이 틀리면 **명령 모드에서 셸에 글자가
     /// 찍히거나**(넓을 때) **한글이 통째로 사라진다**(좁을 때). 둘 다 조용하다.
-    fn typed_goes_to_pane(mode: InputMode, text: &str) -> bool {
-        !text.is_empty() && mode == InputMode::Normal
+    /// # 왜 셋인가 (§10-21ⓜ2)
+    ///
+    /// 종전 판정은 **둘**이었다(패널로 보내거나 버리거나). 그래서 제보가 났다:
+    /// *"`esc` `:` 상태에서 한글을 아예 못 친다"* — 판이 열려 있어도 확정된 글자가
+    /// **버려졌다**. 영문이 되던 이유는 ASCII 가 키 이벤트로도 오기 때문이고, 한글은
+    /// 조합이 끝난 뒤 **확정 글자로만** 온다.
+    ///
+    /// 넓게 푸는 것(모드를 안 보고 다 패널로)은 반대쪽 결함을 살린다 — 명령 모드에서
+    /// 셸에 글자가 찍힌다. 그래서 **판이 열렸나**를 한 칸 더 본다.
+    fn typed_target(mode: InputMode, screen_open: bool, text: &str) -> TypedTo {
+        if text.is_empty() {
+            return TypedTo::Drop;
+        }
+        if screen_open {
+            return TypedTo::Screen;
+        }
+        if mode == InputMode::Normal {
+            TypedTo::Pane
+        } else {
+            // 판 없는 모드 키(esc·prefix·스크롤)에서 확정된 글자는 명령이 아니다 —
+            // 패널로 흘리면 사용자가 pytmux 에게 말하는 중에 셸에 글자가 찍힌다.
+            TypedTo::Drop
+        }
     }
 
     /// 붙여넣기. **마커는 클라가 감싸지 않는다** — 감싸도 되는지는 패널 안 프로그램이
@@ -1751,6 +2002,9 @@ impl SessionView {
         let Some(probe) = ctx.element_position_by_id(Self::CELL_PROBE) else {
             return; // 첫 프레임 — 아직 잴 것이 없다
         };
+        // 캔버스가 격자를 잡는 데 쓴다(§10-21ⓙ). 격자 크기를 알리지 못하는 프레임
+        // (창이 너무 작다 등)에도 칸 크기는 유효하므로 **먼저** 남긴다.
+        self.note_cell_size(probe.width(), probe.height());
         let window = ctx.window_id();
         let Some(bounds) = ctx.window_bounds(&window) else {
             return;
@@ -1772,6 +2026,14 @@ impl SessionView {
         }
     }
 
+    /// 잰 칸 크기를 남긴다. 말이 안 되는 값(0·무한대)은 **안 받는다** — 그걸 받으면
+    /// 격자가 한 점으로 접히고, 증상은 "캔버스가 통째로 비었다"가 된다.
+    pub fn note_cell_size(&self, w: f32, h: f32) {
+        if w.is_finite() && h.is_finite() && w > 0.5 && h > 0.5 {
+            self.cell_px.set(Some((w, h)));
+        }
+    }
+
     /// 아래 요약 구역이 **최대** 몇 줄까지 쓰나(머리줄 포함). 구역이 아예 없으면 0.
     ///
     /// # 왜 지금 줄 수가 아니라 예산인가
@@ -1781,8 +2043,6 @@ impl SessionView {
     /// 세션의 다른 클라에게도 간다(실측 2026-07-28: 47→46→47 로 떨렸다). 예산은 고정이라
     /// (`footer::ROWS`) 한 번 잡아 두면 흔들리지 않는다.
     fn footer_lines(&self) -> usize {
-        let has_blocks = !self.state.active_blocks().is_empty();
-        let has_claude = !self.claude.is_empty();
         // 배지 줄은 **늘 있다** — `e_down` 이 갈 곳이라 접히면 안 된다.
         let badges = 1;
         // 메시지 줄(`render_message`)도 **늘 세어 둔다**. 있을 때만 세면 끊기는 순간
@@ -1790,9 +2050,10 @@ impl SessionView {
         // 재발이다. 안 세면 더 나쁘다: 라이브에서 그 줄이 **창 밖으로 밀려 안 보였다**
         // (2026-07-30 실측 — 상태줄까지만 그려지고 메시지가 사라졌다).
         let message = 1;
-        // 요약 구역의 몫은 `footer` 가 정한다(뷰는 더하기만 — 그 값이 곧 서버에 알릴
-        // 캔버스 높이라 창 없이 시험돼야 한다).
-        badges + message + footer::rows(self.footer_fold, has_blocks, has_claude)
+        // ★ 요약 구역의 몫은 **없다**(§10-21ⓓ) — 화면에서 빠져 판으로 갔다. 그만큼
+        // 캔버스가 늘 두 줄 넓어진다(종전에는 블록이나 Claude 가 있으면 머리줄 한 줄을
+        // 상시로 먹었다).
+        badges + message
     }
 
     /// 자리표와 창 크기로 격자를 잰다. 잴 수 없으면 `None`.
@@ -1842,6 +2103,7 @@ impl SessionView {
         // 시계는 **서버가 초를 센다**(P3). 여기서 시각을 넣던 것은 우리가 그리던
         // 시절의 손이고, 지금은 새 `plugin_cells` 프레임이 곧 "다시 그려라"다 —
         // 지금 화면 갱신과 같은 길이라 클라에 따로 시계를 둘 이유가 없다.
+        dirty |= self.tick_flash();
         dirty | self.tick_status()
     }
 
@@ -2003,7 +2265,7 @@ impl SessionView {
                             // 클라를 위한 것이고, 여기서 그걸 부르면 PowerShell cold
                             // start(0.5~2초) 동안 창이 멈춘다. 쓰는 것은 호출부다(위).
                             clip = Some(text);
-                            self.copy_note = Some(copy_note(chars, true));
+                            self.note_flash(copy_note(chars, true), Severity::Ok);
                             dirty = true;
                         }
                     }
@@ -2106,6 +2368,9 @@ impl SessionView {
         // 화면이 멎었을 때 층을 가르는 줄(기본값에서는 안 나온다 — `RUST_LOG=debug`).
         // ⑴서버 메시지가 아예 안 오나 ⑵와서 반영이 안 되나를 이 한 줄이 가른다. 실제로
         // 2026-07-28 에 "키는 서버까지 가는데 그림만 안 바뀌는" 자리를 만나 넣었다.
+        // 서버 오류가 왔으면 하단 한 줄로 옮긴다(§10-21ⓝ — 자리가 하나가 됐다).
+        // 펌프 끝에서 하는 이유: 렌더에서 하면 그리기가 상태를 고치게 된다.
+        dirty |= self.adopt_error();
         if arrived > 0 {
             log::debug!("펌프: 메시지 {arrived}개 · 다시 그림={dirty}");
         }
@@ -2116,17 +2381,37 @@ impl SessionView {
         self.ended.is_some() || self.state.is_closed()
     }
 
+    /// 배율을 먹인 글자 크기(§10-21ⓐ).
+    ///
+    /// # 왜 여기 한 자리인가
+    ///
+    /// 제보가 "패널 캔버스만이 아니라 **앱 전체**"라고 못박았다. 글자를 만드는 자리는
+    /// 셋뿐이라([`text`](Self::text)·[`ui_text`](Self::ui_text)·[`render_row`](Self::render_row))
+    /// 곱하는 자리를 이 함수 하나로 모으면 새 화면이 늘어도 자동으로 따라온다 — 호출부
+    /// 마다 곱하면 **한 곳을 빠뜨렸을 때 그 줄만 안 커지고**, 그건 조용한 어긋남이다.
+    fn scaled(&self, size: f32) -> f32 {
+        size * self.config.font_scale
+    }
+
     fn text(&self, s: impl Into<String>, size: f32, color: ColorU) -> Box<dyn Element> {
-        Text::new_inline(s.into(), self.font, size)
+        Text::new_inline(s.into(), self.font, self.scaled(size))
             .with_color(color)
             .finish()
     }
 
     /// 크롬 글자 — 가변폭([`theme`]). 캔버스·팝업 본문은 [`text`](Self::text)(고정폭)다.
     fn ui_text(&self, s: impl Into<String>, size: f32, color: ColorU) -> Box<dyn Element> {
-        Text::new_inline(s.into(), self.ui_font, size)
+        Text::new_inline(s.into(), self.ui_font, self.scaled(size))
             .with_color(color)
             .finish()
+    }
+
+    /// 배율을 바꾼 뒤 한 마디. **값을 그대로 보인다** — 배율은 "지금 몇 배인가"가
+    /// 유일한 상태이고, 화면에서 그것을 읽을 다른 자리가 (설정 화면 말고는) 없다.
+    fn note_font_scale(&mut self) {
+        let scale = format!("{:.1}", self.config.font_scale);
+        self.state
+            .note_notice(tf("글자 크기: {scale}×", &[("scale", &scale)]));
     }
 
     /// 칩 — pill 배경 위 한 낱말(모드 배지·세션 표식). 띠(SURFACE) 위에 앉으므로
@@ -2136,6 +2421,20 @@ impl SessionView {
             .with_horizontal_padding(8.)
             .with_vertical_padding(2.)
             .with_background_color(theme::HOVER)
+            .with_corner_radius(theme::PILL_RADIUS)
+            .finish()
+    }
+
+    /// **반전 칩**(§10-21ⓖ·ⓧ) — 배경을 채우고 글자를 빼낸다.
+    ///
+    /// 쓰는 자리 둘: `esc` 모드 표식(ⓖ — *"배경·글자 색을 반전해 눈에 띄게"*)과
+    /// **켜진 토글 배지**(ⓧ — *"눌러 스크롤바가 뜨면 버튼도 토글 상태임을 알 수 있어야"*).
+    /// 두 제보가 같은 그림을 요구하므로 헬퍼도 하나다.
+    fn chip_on(&self, s: impl Into<String>) -> Box<dyn Element> {
+        Container::new(self.ui_text(s, 11., theme::INVERT_FG))
+            .with_horizontal_padding(8.)
+            .with_vertical_padding(2.)
+            .with_background_color(theme::INVERT_BG)
             .with_corner_radius(theme::PILL_RADIUS)
             .finish()
     }
@@ -2165,8 +2464,42 @@ impl SessionView {
     /// 몫을 덜어낸다 — 캔버스 행수를 그대로 쓰면 판이 창 밖으로 넘친다(대체가 아니라
     /// 플로팅이라, 넘친 줄은 잘리는 게 아니라 **창 밖에 그려진다**. 라이브 실측 N2).
     fn panel_budget(&self) -> usize {
+        self.panel_rows(self.screens.top().unwrap_or(Screen::Notices))
+    }
+
+    /// 그 판이 쓰는 **줄 수**(§10-21 ⓗ·ⓢ·ⓥ·ⓐ2·ⓚ2) — 비율의 주인은 core 다.
+    ///
+    /// 종전에는 화면의 8/9 에서 넷을 뺀 값 하나였다(= 거의 전체 화면). 그 값이 판마다
+    /// 같은 것 자체는 문제가 아니었고, 문제는 **그 값이 상한일 뿐이라 실제 높이는
+    /// 내용이 정했다**는 것이다 — 줄이 적으면 판이 작아지고 굴리면 크기가 변했다.
+    /// 판의 남는 줄을 **빈 자리로 채운다**(§10-21 ⓗ·ⓢ·ⓥ·ⓐ2·ⓚ2).
+    ///
+    /// 폭은 못박았지만(`with_width`) 세로는 자식이 정한다 — 줄이 적으면 판이 줄고,
+    /// 굴리다 끝에 가까워지면 남은 줄이 예산보다 적어 **판이 작아진다**(ⓥ 가 본 것이
+    /// 그것이다). 빈 줄로 채우면 같은 판은 언제나 같은 높이다.
+    #[cfg(test)]
+    pub(crate) fn panel_budget_for_test(&self) -> usize {
+        self.panel_budget()
+    }
+
+    /// 빈 줄을 **몇 개** 채우게 되는지(테스트가 그 수만 본다 — 엘리먼트는 못 센다).
+    #[cfg(test)]
+    pub(crate) fn pad_rows_count_for_test(&self, drawn: usize, budget: usize) -> usize {
+        drawn + budget.saturating_sub(drawn)
+    }
+
+    fn pad_rows(&self, column: Flex, drawn: usize, budget: usize) -> Flex {
+        let mut column = column;
+        for _ in drawn..budget {
+            column = column.with_child(self.text(" ", 13., palette::DIM));
+        }
+        column
+    }
+
+    fn panel_rows(&self, screen: Screen) -> usize {
         let rows = self.state.composite().map_or(12, |c| c.size().1) as usize;
-        (rows * 8 / 9).saturating_sub(4).max(5)
+        let (num, den) = screen.height_ratio();
+        (rows * num / den).saturating_sub(2).max(5)
     }
 
     /// 지금 탭 상황(정본 `client.py` 와 같은 셈) — 확인 문구가 이걸 보고 갈린다.
@@ -2208,11 +2541,47 @@ impl SessionView {
 
     /// 크롬 자리 `i` 에 마우스가 올라와 있나 — hover 배경용. Hoverable 이 hover 변화 때
     /// 스스로 `notify` 하므로(상류 hoverable.rs) 렌더에서 읽어도 낡지 않는다.
+    /// `i` 번째 크롬 자리에 마우스가 올라와 있나 — **누를 수 있을 때만** 참이다.
+    ///
+    /// # 왜 `config.mouse` 를 보나 (§10-21ⓑ2 의 뿌리 · 실측 2026-08-02)
+    ///
+    /// 제보는 *"오른쪽 하단 시각·날짜를 클릭하면 시계·달력이 떠야 하는데 **hover 효과만
+    /// 나고 눌러도 아무 일이 없다**"* 였다. 라이브로 재 보니 그 기능은 **멀쩡히 동작한다**
+    /// (제보자가 쓴 릴리스 이진에서도 시계·달력이 떴다). 같은 증상을 **정확히** 만드는
+    /// 것은 `set mouse off` 였다 — 그러면 [`chrome_click`](Self::chrome_click) 이 첫 줄에서
+    /// 돌아가는데, hover 강조는 그 설정을 안 보고 그대로 그려졌다.
+    ///
+    /// 즉 결함은 "클릭이 안 먹는다"가 아니라 **"안 먹는 것을 눌리는 것처럼 그렸다"** 다.
+    /// 이 저장소가 팔레트·설정 표에서 되풀이해 온 규율("못 하는 것을 목록에 두면 고르는
+    /// 순간 아무 일도 안 일어나고, 그건 '있는데 안 먹는다'로 읽힌다")의 마우스 판이고,
+    /// `SessionState::badges` 가 `⇕` 를 **마우스가 켜졌을 때만** 싣는 것과 같은 결이다.
     fn chrome_hovered(&self, i: usize) -> bool {
-        self.chrome_click_states
-            .borrow()
+        Self::hover_shown(self.config.mouse, self.mouse_over(&self.chrome_click_states, i))
+    }
+
+    /// hover 강조를 그릴까 — **순수 판정**.
+    ///
+    /// 순수 함수로 빼는 이유는 [`is_paste_chord`](Self::is_paste_chord) 와 같다: 이
+    /// 판정이 틀리면 아무 소리 없이 어긋난다(넓으면 안 먹는 것이 눌리는 것처럼 보이고,
+    /// 좁으면 눌리는 것이 죽어 보인다). 창 없이 물을 수 있는 자리에 둔다 — 그리고
+    /// `MouseState` 에는 밖에서 "여기 마우스가 있다"를 세울 길이 없어(비공개 필드),
+    /// 이 갈래를 재는 길이 이것뿐이기도 하다.
+    pub(crate) fn hover_shown(mouse_enabled: bool, over: bool) -> bool {
+        mouse_enabled && over
+    }
+
+    /// 두 풀이 같은 방식으로 "그 자리에 마우스가 있나"를 묻는다 — 자물쇠 다루는 코드를
+    /// 두 번 적으면 한쪽만 고쳐진다.
+    fn mouse_over(
+        &self,
+        pool: &std::cell::RefCell<Vec<MouseStateHandle>>,
+        i: usize,
+    ) -> bool {
+        pool.borrow()
             .get(i)
-            .is_some_and(|s| s.lock().is_ok_and(|s| s.is_mouse_over_element()))
+            .is_some_and(|s: &MouseStateHandle| {
+                s.lock().is_ok_and(|s| s.is_mouse_over_element())
+            })
     }
 
     /// 탭바. **무엇을 적을지는 `proto::tabs` 가 정한다**(`Tab::label`) — 두 뷰가 각자
@@ -2315,11 +2684,12 @@ impl SessionView {
         if !self.config.mouse {
             return false;
         }
-        // 요약 구역 접기는 **뷰 로컬**이라 액션 표를 안 지난다(정본에 대응 명령이 없다).
-        // 다만 크롬 높이가 바뀌므로 다음 레이아웃에서 서버에 새 격자가 나간다 —
-        // `fit_grid` 가 `footer_lines()` 를 다시 재는 그 자리다.
-        if matches!(target, base::chrome::ClickTarget::FooterFold) {
-            self.footer_fold = self.footer_fold.toggled();
+        // 하단 한 줄 닫기(§10-21ⓦ⑵)는 **뷰 로컬**이라 액션 표를 안 지난다 — 서버도
+        // 정본도 "내 화면의 이 줄을 지워라"라는 명령을 갖지 않는다.
+        // ⚠ 이력은 안 지운다(`note_error_history` 가 이미 따로 갖고 있다) — 지우면
+        //   그 줄을 눌러 이력으로 가는 동선(ⓦ⑶)이 무의미해진다.
+        if matches!(target, base::chrome::ClickTarget::DismissMessage) {
+            self.flash = None;
             return true;
         }
         let tabs = self.chrome_tabs();
@@ -2368,11 +2738,11 @@ impl SessionView {
     }
 
     /// 판 안 위젯 `i` 에 마우스가 올라와 있나 — hover 강조용.
+    /// 판 안 `i` 번째 위젯에 마우스가 올라와 있나 — 크롬과 **같은 규칙**이다
+    /// ([`chrome_hovered`](Self::chrome_hovered) 의 §왜 `config.mouse` 를 보나).
+    /// `panel_click` 도 첫 줄에서 같은 설정을 보고 돌아간다.
     fn panel_hovered(&self, i: usize) -> bool {
-        self.panel_click_states
-            .borrow()
-            .get(i)
-            .is_some_and(|s| s.lock().is_ok_and(|s| s.is_mouse_over_element()))
+        Self::hover_shown(self.config.mouse, self.mouse_over(&self.panel_click_states, i))
     }
 
     /// 판 안을 클릭했다 — core 가 커서를 옮기고, **실행이 필요하면 평소 `Enter` 경로**를
@@ -2405,9 +2775,13 @@ impl SessionView {
 
     fn render_tabs(&self) -> Box<dyn Element> {
         let tabs = &self.state.tabs().tabs;
-        // `tab-bar auto` — 탭이 하나뿐이면 줄을 아낀다(파이썬과 같다). 모드 배지·표식이
-        // 걸릴 자리라 **탭이 없을 때만** 감춘다.
-        if !self.config.tab_bar_always && tabs.len() <= 1 && self.mode.mode().badge().is_none() {
+        // `tab-bar auto` — 탭이 하나뿐이면 줄을 아낀다(파이썬과 같다).
+        //
+        // ★ 종전에는 여기에 **모드 배지가 있으면 줄을 남긴다**는 조건이 더 있었다.
+        //   §10-21ⓖ 로 그 배지가 하단 상태줄로 내려가면서 조건도 같이 사라졌다 —
+        //   그래서 "탭 하나 + esc 모드"에서는 이제 탭바가 없다. 제보가 요구한 결과이고,
+        //   모드는 하단에서 **더 잘 보인다**(반전 칩이다).
+        if !self.config.tab_bar_always && tabs.len() <= 1 {
             return self.text("", 12., palette::DIM);
         }
         if tabs.is_empty() {
@@ -2417,11 +2791,8 @@ impl SessionView {
             .with_main_axis_size(MainAxisSize::Min)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_spacing(4.);
-        // 모드 배지. **모드가 안 보이면 사용자는 자기 키가 어디로 가는지 모른다** —
-        // 이름은 core 가 정한다(두 뷰가 각자 지으면 같은 모드가 화면마다 달라 보인다).
-        if let Some(badge) = self.mode.mode().badge() {
-            row = row.with_child(self.chip(badge, palette::YELLOW));
-        }
+        // ★ 모드 배지는 **여기 없다**(§10-21ⓖ) — 하단 상태줄로 내려갔다(정본이 시스템
+        //   배지를 두는 자리, 감시류가 2026-07-30 에 같은 이유로 먼저 내려간 그 자리다).
         // 세션 전역 표식(줌·동기화·자동재개…)은 탭바 **앞**에 붙는다 — 탭 뒤에 붙이면
         // 탭이 많을 때 화면 밖으로 밀려 나가는데, 그중 `[동기화]` 는 **모르고 치면 모든
         // 패널에 같은 명령이 도는** 상태라 안 보이면 안 된다(패리티 G6). 감시류
@@ -2540,6 +2911,34 @@ impl SessionView {
     ///
     /// 늘 그린다. 목록은 proto 가 만들고([`SessionState::badges`]) 어느 것이 골라졌는지는
     /// core 가 안다 — 이 함수는 낱말을 잇기만 한다(TUI 와 같은 규칙).
+    /// 이 배지가 지금 **켜져 있나**(§10-21ⓧ).
+    ///
+    /// # 왜 일반 개념인가
+    ///
+    /// 제보의 마지막 문단이 그 걱정을 적어 뒀다: *"같은 판단이 필요한 배지가 더 있을 수
+    /// 있다 … 배지 그리기 자리에 '켜짐'을 **일반 개념으로** 넣는 편이 낫다 — 하나씩 특수
+    /// 처리하면 다음 배지에서 또 빠진다."* 그래서 배지마다 갈래를 두되 **한 함수 안**에
+    /// 모은다 — 새 배지가 늘면 `match` 가 여기서 컴파일을 막는다.
+    ///
+    /// 켜짐이 **없는** 배지도 있다: `알림`·`서버`·`시계`·`달력` 은 누르면 화면이 열리는
+    /// **버튼**이지 토글이 아니다(열려 있음을 배지가 말할 이유가 없다 — 화면이 이미
+    /// 눈앞에 있다).
+    #[cfg(test)]
+    pub(crate) fn badge_is_on_for_test(&self, badge: base::Badge) -> bool {
+        self.badge_is_on(badge)
+    }
+
+    fn badge_is_on(&self, badge: base::Badge) -> bool {
+        match badge {
+            // 스크롤 모드에 들어와 있으면 켜짐 — 그 배지가 그것을 드나드는 스위치다.
+            base::Badge::TouchScroll => self.mode.mode() == InputMode::Scroll,
+            base::Badge::Notices
+            | base::Badge::Host
+            | base::Badge::Clock
+            | base::Badge::Calendar => false,
+        }
+    }
+
     fn render_status(&self) -> Box<dyn Element> {
         let tabs = self.chrome_tabs();
         let badges = self.state.badges();
@@ -2553,8 +2952,31 @@ impl SessionView {
             .with_main_axis_size(MainAxisSize::Min)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_spacing(6.);
-        left =
-            left.with_child(self.ui_text(status::expand(&self.config.status_left, &sctx), 12., fg));
+        // ★ **캔버스가 끝나는 자리의 자리표가 여기 있다**(§10-21ⓓ 로 옮겨 왔다).
+        //
+        // 종전 주인은 요약 구역의 머리줄이었는데, 그 구역을 화면에서 빼면서 자리표도
+        // 같이 사라질 참이었다 — 그러면 `report_size` 의 `footer_px` 가 늘 0 이 되어
+        // 캔버스가 **배지·메시지 두 줄만큼 넘치고**, 그 줄들이 창 밖으로 밀린다
+        // (2026-07-30 에 실제로 겪은 증상이다).
+        //
+        // 상태줄은 **늘 그려지므로** 자리표의 주인으로 더 낫다. 종전 주인은 블록도
+        // Claude 도 없으면 안 그려져서, 그때는 같은 넘침이 이미 조용히 있었다.
+        left = left.with_child(
+            Text::new_inline(
+                status::expand(&self.config.status_left, &sctx),
+                self.ui_font,
+                self.scaled(12.),
+            )
+            .with_color(fg)
+            .with_saved_char_position(0, Self::FOOTER_PROBE.to_owned())
+            .finish(),
+        );
+        // ★ `esc` 모드 표식은 **여기**다(§10-21ⓖ) — 탭바에서 내려왔다. 정본이 시스템
+        //   배지를 두는 자리이고, 감시류([벨감시]·[활동감시])가 2026-07-30 에 같은
+        //   이유로 먼저 내려온 곳이다. 반전 칩이라 종전(노란 글자)보다 눈에 띈다.
+        if let Some(badge) = self.mode.mode().badge() {
+            left = left.with_child(self.chip_on(badge));
+        }
         for badge in &badges {
             let mut text = badge.label().to_string();
             // 곁가지(개수·호스트 이름)는 뷰가 붙인다 — core 는 그 값을 모른다.
@@ -2574,14 +2996,34 @@ impl SessionView {
             // 곧 색인이라 겹치지 않는다.
             let state_index =
                 self.state.tabs().tabs.len() + 2 + badges.iter().position(|b| b == badge).unwrap();
+            // ★ **켜짐**은 배지 모양이 말한다(§10-21ⓧ) — 반전 칩이다.
+            //
+            // 제보: *"눌러 스크롤바가 뜨면 버튼도 색이 바뀌는 등 토글 상태임을 알 수
+            // 있어야 한다. 지금은 스크롤바만 나타나고 버튼은 그대로라 버튼만 보고는
+            // 켜졌는지 알 수 없다."* 상태는 이미 우리가 안다 — 안 하던 것은 그것을
+            // **모양에 싣는 일**뿐이었다.
+            //
+            // ⚠ 켜짐을 **일반 개념으로** 둔다(`Badge::is_on`): 하나씩 특수 처리하면
+            //   다음 토글 배지에서 또 빠진다(제보의 마지막 문단이 그 걱정이다).
+            let on = self.badge_is_on(*badge);
+            let (fg, bg) = if on {
+                (theme::INVERT_FG, Some(theme::INVERT_BG))
+            } else {
+                (fg, None)
+            };
             // 칩 버튼(N4): hover 배경, 키보드 포커스는 FOCUS 테두리(탭바와 같은 문법).
             let mut boxed = Container::new(self.ui_text(text, 11., fg))
                 .with_horizontal_padding(8.)
                 .with_vertical_padding(2.)
                 .with_corner_radius(theme::PILL_RADIUS);
-            if self.chrome_hovered(state_index) {
+            if let Some(bg) = bg {
+                boxed = boxed.with_background_color(bg);
+            } else if self.chrome_hovered(state_index) {
                 boxed = boxed.with_background_color(theme::HOVER);
             }
+            // ⚠ FOCUS 테두리는 **다른 뜻**이다 — "키보드가 이 배지를 고르고 있다"이지
+            //   켜짐이 아니다. 그래서 켜짐은 배경으로, 고름은 테두리로 갈라 둔다
+            //   (겹치면 둘이 한 그림이 된다).
             if picked == Some(*badge) {
                 boxed = boxed.with_border(Border::all(1.5).with_border_color(theme::FOCUS));
             }
@@ -2832,30 +3274,142 @@ impl SessionView {
     /// 상태줄 `[알림]` 배지와 **같은 클릭 대상**([`Badge::Notices`])으로 감싼다: 눌러 본
     /// 사람이 "그 앞의 메시지"에 닿을 수 있어야 한다(TUI 도 같은 배지로 같은 곳을 연다).
     fn render_message(&self, column: Flex) -> Flex {
-        let Some(text) = status::message_line(self.ended.as_deref(), self.state.last_error())
-        else {
+        let Some(flash) = self.live_flash() else {
             return column;
         };
+        // ★ 색은 **심각도가 정한다**(§10-21ⓝ). 종전에는 이 줄이 빨강 고정이었는데,
+        //   복사 결과까지 그 자리에 오면서 성공이 오류로 읽히게 됐다. 알림 이력이 이미
+        //   `Severity` 로 색을 가르므로 **그 표를 그대로** 쓴다(두 자리가 다른 표를 들면
+        //   같은 사건이 화면마다 다른 색이 된다).
+        let color = Self::severity_color(flash.severity);
         let slot = self.chrome_slot_end();
-        let mut boxed = Container::new(self.ui_text(text, 13., palette::RED))
+        let mut boxed = Container::new(self.ui_text(flash.text.clone(), 13., color))
             .with_horizontal_padding(6.)
             .with_vertical_padding(1.)
             .with_corner_radius(theme::PILL_RADIUS);
         if self.chrome_hovered(slot) {
             boxed = boxed.with_background_color(theme::HOVER);
         }
-        column.with_child(self.clickable_chrome(
-            slot,
-            base::chrome::ClickTarget::Badge(base::Badge::Notices),
-            boxed.finish(),
-        ))
+        // 글은 눌러 **이력**으로 가고(ⓦ⑶ — 이미 있던 배선), 닫기는 그 옆이다(ⓦ⑵).
+        let line = Flex::row()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(4.)
+            .with_child(self.clickable_chrome(
+                slot,
+                base::chrome::ClickTarget::Badge(base::Badge::Notices),
+                boxed.finish(),
+            ))
+            .with_child(self.dismiss_button(slot + 1));
+        column.with_child(line.finish())
     }
 
-    fn render_footer(&self, column: Flex) -> Flex {
+    /// 하단 한 줄의 닫기 `×`(§10-21ⓦ⑵).
+    fn dismiss_button(&self, slot: usize) -> Box<dyn Element> {
+        let hovered = self.chrome_hovered(slot);
+        let mut boxed = Container::new(
+            self.ui_text("×", 12., if hovered { palette::FG } else { palette::DIM }),
+        )
+        .with_horizontal_padding(4.)
+        .with_corner_radius(theme::PILL_RADIUS);
+        if hovered {
+            boxed = boxed.with_background_color(theme::HOVER);
+        }
+        self.clickable_chrome(
+            slot,
+            base::chrome::ClickTarget::DismissMessage,
+            boxed.finish(),
+        )
+    }
+
+    /// 알림 이력과 **같은 표**로 심각도 → 색.
+    fn severity_color(severity: Severity) -> ColorU {
+        match severity {
+            Severity::Error => palette::RED,
+            Severity::Warn => palette::YELLOW,
+            Severity::Ok => palette::GREEN,
+            Severity::Info => palette::FG,
+        }
+    }
+
+    /// 지금 보여야 하는 한 마디. 시한이 지났으면 `None`(§10-21ⓦ⑴).
+    ///
+    /// # 왜 끊김은 안 사라지나
+    ///
+    /// 연결이 끝난 것은 **지나가는 사건이 아니라 지금 상태**다 — 그 줄이 사라지면
+    /// 화면은 멀쩡해 보이는데 아무것도 안 오는 창이 된다. 그래서 시한은 지나가는
+    /// 말에만 건다.
+    fn live_flash(&self) -> Option<Flash> {
+        if let Some(reason) = self.ended.as_deref() {
+            return status::message_line(Some(reason), None)
+                .map(|text| Flash { text, severity: Severity::Error, at: None });
+        }
+        let flash = self.flash.as_ref()?;
+        match flash.at {
+            Some(at) if at.elapsed() >= Self::FLASH_TTL => None,
+            _ => Some(flash.clone()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn note_flash_for_test(&mut self, text: String, severity: Severity) {
+        self.note_flash(text, severity);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn live_flash_for_test(&self) -> Option<Flash> {
+        self.live_flash()
+    }
+
+    /// 하단 한 줄에 한 마디를 띄운다(시한 시작).
+    fn note_flash(&mut self, text: String, severity: Severity) {
+        self.flash = Some(Flash { text, severity, at: Some(std::time::Instant::now()) });
+    }
+
+    /// 서버 오류가 왔으면 그것을 하단 한 줄로 **옮긴다**(ⓝ 로 자리가 하나가 됐다).
+    ///
+    /// 상태에서 걷어내는 이유: 두 자리가 같은 오류를 들고 있으면 닫아도 다음 프레임에
+    /// 다시 뜬다. 이력은 `note_error_history` 가 이미 따로 갖고 있다.
+    fn adopt_error(&mut self) -> bool {
+        let Some(err) = self.state.last_error().map(str::to_owned) else {
+            return false;
+        };
+        self.state.clear_error();
+        if let Some(line) = status::message_line(None, Some(&err)) {
+            self.note_flash(line, Severity::Error);
+        }
+        true
+    }
+
+    /// 시한이 막 지났나 — 지났으면 그 프레임에 다시 그려 줄을 지운다.
+    fn tick_flash(&mut self) -> bool {
+        let Some(flash) = &self.flash else { return false };
+        let Some(at) = flash.at else { return false };
+        if at.elapsed() < Self::FLASH_TTL {
+            return false;
+        }
+        self.flash = None;
+        true
+    }
+
+    /// 블록·Claude **요약 판**(§10-21ⓓ).
+    ///
+    /// # 왜 화면 아래가 아니라 판인가
+    ///
+    /// 제보 그대로다: *"이 판은 GUI 에만 있고 pytmux 사용에 직접적인 영향을 주지
+    /// 않으므로, 화면에서 빼고 별도 명령어나 메뉴로 접근하게 한다."* 종전에는 이 구역이
+    /// 화면 아래 한 자리를 상시로 먹었고(접혀 있어도 머리줄 한 줄), 그만큼 **서버
+    /// 캔버스가 좁았다** — 훑는 용도의 요약이 화면의 주인공을 밀어내던 셈이다.
+    /// 2026-08-02l 에서 "기본 접힘"으로 줄인 그 근거를 끝까지 민 결과이기도 하다.
+    ///
+    /// 판이 되면서 **접기(`Fold`)가 사라졌다** — 판은 열면 다 보이는 것이 자연스럽고,
+    /// 접힌 판은 "왜 안 보이지"가 된다. 예산(`footer::ROWS`)은 그대로 쓴다: 판이라도
+    /// 목록이 무한정 길면 그것이 곧 ⓗ·ⓢ 가 말하는 "내용이 판을 정한다"가 된다.
+    fn render_summary(&self, column: Flex) -> Flex {
         let blocks = self.state.active_blocks();
         let (block_rows, claude_rows) = footer::split(!blocks.is_empty(), !self.claude.is_empty());
         if block_rows == 0 && claude_rows == 0 {
-            return column;
+            return column.with_child(self.text(t("블록도 Claude 항목도 없다"), 13., palette::DIM));
         }
         // 폭 예산은 **캔버스와 같다** — 요약이 그림보다 넓으면 창이 그만큼 늘어나거나
         // 글자가 창 밖으로 나간다. 캔버스가 아직 없으면 서버에 알린 값(80)을 쓴다.
@@ -2864,40 +3418,16 @@ impl SessionView {
             .composite()
             .map_or(80, |canvas| canvas.size().0) as usize;
 
+        // 개수 한 줄은 그대로 둔다 — 판을 열자마자 "몇 개인가"가 보여야 한다.
+        // (종전 머리줄이 하던 말이고, 이제 판 안의 첫 줄이다.)
         let head = footer::head(
             blocks.len(),
             self.claude.len(),
             self.claude_mode.as_deref(),
             self.state.active_tab_is_remote(),
-            self.footer_fold,
+            footer::Fold::Open,
         );
-        // 복사 결과는 여기가 아니라 **맨 위 머리줄**에 붙는다(TUI 와 같은 배치) —
-        // 이 구역은 블록도 Claude 도 없으면 아예 안 그려져, 여기 두면 안 보일 때가 있다.
-        // 이 줄의 위치가 곧 **캔버스가 끝나는 자리**다. 크롬 높이를 계산하지 않고 재려고
-        // 자리표를 남긴다(캔버스 자리표와 같은 규율).
-        let slot = self.chrome_slot_end() + 1;
-        let mut head_el = Container::new(
-            Text::new_inline(head, self.font, 12.)
-                .with_color(palette::DIM)
-                .with_saved_char_position(0, Self::FOOTER_PROBE.to_owned())
-                .finish(),
-        )
-        .with_horizontal_padding(4.)
-        .with_corner_radius(theme::PILL_RADIUS);
-        if self.chrome_hovered(slot) {
-            head_el = head_el.with_background_color(theme::HOVER);
-        }
-        let mut column = column.with_child(self.clickable_chrome(
-            slot,
-            base::chrome::ClickTarget::FooterFold,
-            head_el.finish(),
-        ));
-        if !self.footer_fold.is_open() {
-            return column;
-        }
-        // 펼쳐진 항목은 **상자로 감싼다**(사용자 요청) — 그래야 이 구역이 캔버스의 일부가
-        // 아니라 따로 얹힌 판이라는 것이 눈에 보인다. GUI 는 테두리를 선문자가 아니라
-        // 실제 선으로 그린다(N8) — 여기서도 같은 길이라 **줄을 더 먹지 않는다**.
+        let column = column.with_child(self.text(head, 12., palette::DIM));
         let mut inner = Flex::column();
         for block in footer::tail(blocks, block_rows) {
             inner = inner.with_child(self.render_block(block, cols));
@@ -2939,8 +3469,10 @@ impl SessionView {
                         .with_cross_axis_alignment(CrossAxisAlignment::Center)
                         .with_spacing(8.)
                         .with_child(self.text(item.label.clone(), 13., palette::FG));
-                    for col in &item.cols {
-                        line = line.with_child(self.text(col.clone(), 12., palette::DIM));
+                    // 칸은 플러그인이 **적은 말**이라 우리 로케일로 다시 읽는다
+                    // (이름은 자료라 그대로 — `PluginRow::say_cols`).
+                    for col in item.say_cols() {
+                        line = line.with_child(self.text(col, 12., palette::DIM));
                     }
                     let boxed = Container::new(line.finish()).with_uniform_padding(1.);
                     column = column.with_child(self.clickable_panel(
@@ -2956,9 +3488,17 @@ impl SessionView {
             }
             "text" => {
                 let scroll = self.screens.scroll();
+                let mut drawn = 0usize;
                 for line in spec.text.lines().skip(scroll).take(budget) {
-                    column = column.with_child(self.text(line.to_owned(), 13., palette::FG));
+                    drawn += 1;
+                    // ★ **긴 줄을 자른다**(§10-21ⓚ2). 폭을 못박아도 줄이 안 접히면
+                    //   상한을 넘겨 밀고 나간다 — `p4changes` 의 CL 설명 한 줄이 정확히
+                    //   그 부류다(제보: "판이 화면을 통째로 가린다"). 자를 때 `…` 를
+                    //   붙이는 것은 요약 구역이 쓰던 규칙 그대로다(`footer::elide`).
+                    let line = footer::elide(line, Self::PANEL_COLS);
+                    column = column.with_child(self.text(line, 13., palette::FG));
                 }
+                column = self.pad_rows(column, drawn, budget);
             }
             // 표는 목록과 **같은 자료**(rows)를 칸 맞춰 그린 것이다. 갈라 두는 이유는
             // 정본과 같다 — 목록은 고르는 화면이고 표는 읽으며 고르는 화면이라, 칸의
@@ -2981,8 +3521,10 @@ impl SessionView {
                             .with_width(220.)
                             .finish(),
                         );
-                    for col in &item.cols {
-                        line = line.with_child(self.text(col.clone(), 12., palette::DIM));
+                    // 칸은 플러그인이 **적은 말**이라 우리 로케일로 다시 읽는다
+                    // (이름은 자료라 그대로 — `PluginRow::say_cols`).
+                    for col in item.say_cols() {
+                        line = line.with_child(self.text(col, 12., palette::DIM));
                     }
                     let boxed = Container::new(line.finish()).with_uniform_padding(1.);
                     column = column.with_child(self.clickable_panel(
@@ -3179,6 +3721,67 @@ impl SessionView {
         Container::new(row.finish()).with_padding_bottom(4.).finish()
     }
 
+    /// 팔레트 한 줄을 **세 칸**으로(§10-21ⓞ) 그리고, 설명이 길면 접는다(ⓗ⑶).
+    ///
+    /// 돌려주는 것은 **그려진 줄들**이다 — 접히면 둘 이상이고, 부르는 쪽이 그 수를
+    /// 예산에서 뺀다(판 높이는 고정이므로 접힌 만큼 뒤가 밀려서는 안 된다).
+    ///
+    /// # 칸 폭은 왜 상수인가
+    ///
+    /// 내용(가장 긴 이름)으로 정하면 필터를 칠 때마다 칼럼이 흔들린다 — 판 기하를
+    /// 내용에서 뗀 판 공통 규칙(ⓗ·ⓢ·ⓥ)과 같은 이유다.
+    ///
+    /// # 색 셋
+    ///
+    /// 이름은 밝게, 옵션은 노랑, 설명은 흐리게. 고른 줄 배경(`SELECTED_BG`) 위에서도
+    /// 셋이 다 읽혀야 한다 — 제보가 "색으로 구분"을 요구한 자리다.
+    fn palette_lines(
+        &self,
+        name: &str,
+        desc: &str,
+        selected: bool,
+        left: usize,
+    ) -> Vec<Box<dyn Element>> {
+        let (cmd, opts) = proto::palette::split_name(name);
+        let desc_cols = Self::PANEL_COLS
+            .saturating_sub(Self::PAL_NAME_COLS + Self::PAL_OPTS_COLS + 2);
+        // 접힌 줄이 예산을 넘기지 않게 자른다 — 마지막 한 줄만 남았는데 설명이 세 줄이면
+        // 그 항목이 판을 밀고 나간다.
+        let mut wrapped = proto::palette::wrap(desc, desc_cols);
+        wrapped.truncate(left.max(1));
+        if wrapped.is_empty() {
+            wrapped.push(String::new());
+        }
+        let cell = self.cell_px.get().map(|(w, _)| w);
+        let col = |me: &Self, text: String, cols: usize, color| -> Box<dyn Element> {
+            let t = me.text(text, 13., color);
+            match cell {
+                Some(w) => ConstrainedBox::new(t).with_width(w * cols as f32).finish(),
+                None => t,
+            }
+        };
+        let mut out: Vec<Box<dyn Element>> = Vec::new();
+        for (i, chunk) in wrapped.into_iter().enumerate() {
+            // 접힌 줄은 **설명 칸 아래**에 이어 붙는다(이름·옵션 칸은 비운다).
+            let (n, o) = if i == 0 { (cmd.to_owned(), opts.to_owned()) } else { (String::new(), String::new()) };
+            let line = Flex::row()
+                .with_main_axis_size(MainAxisSize::Min)
+                .with_child(col(self, n, Self::PAL_NAME_COLS, palette::FG))
+                .with_child(col(self, o, Self::PAL_OPTS_COLS, palette::YELLOW))
+                .with_child(col(self, chunk, desc_cols, palette::DIM))
+                .finish();
+            out.push(if selected {
+                Container::new(line)
+                    .with_background_color(palette::SELECTED_BG)
+                    .with_uniform_padding(1.)
+                    .finish()
+            } else {
+                Container::new(line).with_uniform_padding(1.).finish()
+            });
+        }
+        out
+    }
+
     fn render_palette(&self, column: Flex) -> Flex {
         let filter = self.screens.typed();
         let matches = self.palette_hits(self.screens.palette_cat(), filter);
@@ -3193,16 +3796,19 @@ impl SessionView {
         // 분류 탭은 정본 팔레트와 같이 **머리**에 둔다(`#cmdtabs` — 상자의 머리줄이다).
         let mut column = column.with_child(self.palette_tabs(filter));
         let input = |me: &Self| me.text(format!("> {filter}_"), 14., palette::CYAN);
+        // ⓗ⑵ — **←→ 로 분류를 옮겨도 높이가 안 변한다**. 후보 수가 달라도 판은 같다.
+        let budget = self.panel_budget().saturating_sub(1);
         if matches.is_empty() {
-            return column
-                .with_child(self.text(t("맞는 명령이 없다"), 13., palette::DIM))
-                .with_child(input(self));
+            let column = column.with_child(self.text(t("맞는 명령이 없다"), 13., palette::DIM));
+            return self.pad_rows(column, 1, budget).with_child(input(self));
         }
         let selected = self.screens.selected().min(matches.len() - 1);
-        // 판 높이 예산을 넘지 않게 자른다(다른 화면과 같은 규칙 — `panel_budget`).
-        let budget = self.panel_budget();
-        for (row, hit) in matches.iter().enumerate().take(budget.saturating_sub(1)) {
-            let text = match hit {
+        let mut drawn = 0usize;
+        for (row, hit) in matches.iter().enumerate() {
+            if drawn >= budget {
+                break;
+            }
+            let (name, desc) = match hit {
                 PaletteHit::Core(i) => {
                     let entry = &base::PALETTE[*i];
                     // 설명은 파이썬 정본의 것(픽스처 — `command_help`) · 없는 이름은 액션
@@ -3211,26 +3817,21 @@ impl SessionView {
                     let desc = proto::command::command_help(entry.name)
                         .map(|d| tc("cmd", d).to_owned())
                         .unwrap_or_else(|| entry.action.label().to_owned());
-                    format!("{}  {}", entry.name, desc)
+                    (entry.name.to_owned(), desc)
                 }
                 // 플러그인 기여는 서버가 준 글을 그대로 쓴다(정본 팔레트와 같은 글).
                 PaletteHit::Plugin(i) => {
                     let c = &self.state.plugin_surface().commands[*i];
-                    format!("{}  {}", c.name, c.desc)
+                    (c.name.clone(), c.desc.clone())
                 }
             };
-            let label = self.text(text, 13., palette::FG);
-            column = column.with_child(if row == selected {
-                Container::new(label)
-                    .with_background_color(palette::SELECTED_BG)
-                    .with_uniform_padding(1.)
-                    .finish()
-            } else {
-                Container::new(label).with_uniform_padding(1.).finish()
-            });
+            for line in self.palette_lines(&name, &desc, row == selected, budget - drawn) {
+                column = column.with_child(line);
+                drawn += 1;
+            }
         }
         // 목록 **뒤**에 입력 — 화면에서는 목록 아래, 곧 판의 맨 밑이다.
-        column.with_child(input(self))
+        self.pad_rows(column, drawn, budget).with_child(input(self))
     }
 
     /// 재시작 드라이런 회신을 게이트로 쓴다 — 안전하면 곧장, 아니면 **실패 항목을 적어**
@@ -3401,10 +4002,16 @@ impl SessionView {
             });
         }
         let mut column = column.with_child(Box::new(bar) as Box<dyn Element>);
-        for line in tabs[picked].1.iter().skip(self.screens.scroll()) {
+        // ★ **여기만 예산이 없었다**(§10-21ⓐ2⑴) — `skip` 은 있는데 `take` 가 없어
+        //   탭마다 줄 수가 다르면 판이 그때그때 커졌다 작아졌고, 긴 탭에서는 창을
+        //   넘길 수도 있었다. 다른 판과 같은 규칙으로 자르고 남으면 채운다.
+        let budget = self.panel_budget().saturating_sub(1);
+        let mut drawn = 0usize;
+        for line in tabs[picked].1.iter().skip(self.screens.scroll()).take(budget) {
+            drawn += 1;
             column = column.with_child(self.text(line.clone(), 13., palette::FG));
         }
-        column
+        self.pad_rows(column, drawn, budget)
     }
 
     /// 여러 줄 작성창(패리티 `e_ins` · `ComposePromptScreen`). TUI 와 같은 그림이다.
@@ -3421,6 +4028,8 @@ impl SessionView {
         for (row, line) in editor.lines().iter().enumerate() {
             let chars: Vec<char> = line.chars().collect();
             let mut cells = Flex::row();
+            // 이 줄에 칸을 하나라도 놓았나 — 빈 줄이 사라지는 것을 막는다(§10-21ⓒ2).
+            let mut drew = false;
             // 커서는 **줄 끝에도** 선다 — 칠할 글자가 없으므로 한 칸을 덧댄다.
             for col in 0..=chars.len() {
                 let glyph = chars.get(col).copied().unwrap_or(' ');
@@ -3438,6 +4047,20 @@ impl SessionView {
                 } else {
                     Container::new(label).finish()
                 });
+                drew = true;
+            }
+            // ★ **빈 줄도 한 칸을 놓는다**(§10-21ⓒ2 — 제보: "`Shift`+`Enter` 로 빈 줄을
+            //   연달아 넣어도 연속으로 안 보인다").
+            //
+            //   위 루프는 빈 줄에서 `col == 0 == chars.len()` 한 번 돌고 그 자리에서
+            //   걸러진다(커서도 선택도 없으면). 그러면 이 행 상자에 **자식이 하나도
+            //   없어 높이가 0** 이고, 화면에서 줄이 통째로 사라진다 — 커서가 놓인 빈
+            //   줄만 보이던 것이 그 증거였다.
+            //
+            //   ⚠ 이 공백은 **그림뿐**이다. 작성창의 글은 `editor.lines()` 가 쥐고
+            //   있고 복사·전송은 거기서 가므로, 여기 놓은 칸이 내용에 새지 않는다.
+            if !drew {
+                cells = cells.with_child(Container::new(self.text(" ", 14., palette::FG)).finish());
             }
             column = column.with_child(Box::new(cells) as Box<dyn Element>);
         }
@@ -3469,6 +4092,7 @@ impl SessionView {
             set_titles: self.config.set_titles,
             set_titles_string: self.config.set_titles_string.clone(),
             inactive_dim_ratio: self.config.inactive_dim_ratio,
+            font_scale: self.config.font_scale,
             mode_keys: self.config.mode_keys.clone(),
             status_left: self.config.status_left.clone(),
             status_right: self.config.status_right.clone(),
@@ -3761,12 +4385,14 @@ impl SessionView {
         }
         let budget = self.panel_budget();
         let mut column = column;
+        let mut drawn = 0usize;
         for notice in self
             .state
             .notices()
             .skip(self.screens.scroll())
             .take(budget.saturating_sub(1))
         {
+            drawn += 1;
             let color = match notice.severity {
                 proto::session::Severity::Error => palette::RED,
                 proto::session::Severity::Warn => palette::YELLOW,
@@ -3775,7 +4401,8 @@ impl SessionView {
             };
             column = column.with_child(self.text(notice.line(), 13., color));
         }
-        column
+        // ⓥ — 끝에 가까워져 남은 줄이 적어도 판은 그대로다.
+        self.pad_rows(column, drawn, budget.saturating_sub(1))
     }
 
     /// F10 메뉴(패리티 G1d · 계층은 레이아웃 맞추기 ⑪). 파이썬 `MENU_ITEMS` 와 **같은
@@ -4699,6 +5326,30 @@ impl SessionView {
     /// 아래 요약 구역이 시작하는 자리. 캔버스가 어디까지 쓸 수 있는지를 여기서 잰다.
     const FOOTER_PROBE: &'static str = "pytmux:footer-probe";
 
+    /// 판 안 한 줄이 쓸 수 있는 **표시 폭**(칸) — 넘치면 자른다(§10-21ⓚ2).
+    ///
+    /// 폭을 픽셀로 못박았으므로(`with_width`) 줄도 그 안에 들어와야 한다. 픽셀↔칸은
+    /// 글꼴이 정하는데 그 값은 그리는 중에만 알 수 있어, 여기서는 **넉넉한 칸 수**를
+    /// 상수로 둔다 — 자르는 목적은 "판을 밀고 나가지 않게"이지 정확한 우변 정렬이
+    /// 아니다(그건 ⓙ 슬라이스가 셀 격자를 잡을 때 이야기다).
+    const PANEL_COLS: usize = 110;
+
+    /// 팔레트 칸 폭(칸 수) — 이름·옵션(§10-21ⓞ). 설명은 남는 폭을 다 쓴다.
+    ///
+    /// 상수인 이유: 내용으로 정하면 필터를 칠 때마다 칼럼이 흔들린다(판 기하를 내용에서
+    /// 뗀 규칙과 같은 이유). 값은 정본 표의 가장 긴 이름(`select-pane`·`display-message`
+    /// 류)이 안 잘리는 선에서 골랐다.
+    const PAL_NAME_COLS: usize = 22;
+    const PAL_OPTS_COLS: usize = 10;
+
+    /// 지나가는 말이 하단 한 줄에 머무는 시간(§10-21ⓦ⑴).
+    ///
+    /// 8초인 이유: 복사 결과("20 chars copied")는 한 번 눈에 들어오면 끝이라 짧아도
+    /// 되지만, 오류는 **읽고 판단할 시간**이 필요하다. 둘을 다른 값으로 두면 "왜 이건
+    /// 빨리 사라지지"가 되므로 긴 쪽에 맞춘다 — 놓쳐도 이력에 남는다(그 줄을 누르면
+    /// 그 화면으로 간다).
+    const FLASH_TTL: std::time::Duration = std::time::Duration::from_secs(8);
+
     /// 창 가장자리 여백(렌더의 `with_uniform_padding`). 이 값만 우리가 정한 것이라 안다.
     const PAD: f32 = 8.;
 
@@ -4815,6 +5466,7 @@ impl SessionView {
             Screen::PluginView => self.render_plugin_view(column),
             Screen::Menu => self.render_menu(column),
             Screen::Notices => self.render_notices(column),
+            Screen::Summary => self.render_summary(column),
             Screen::Options => self.render_options(column),
             Screen::Hooks => self
                 .config
@@ -4890,8 +5542,15 @@ impl SessionView {
         }
         // 팔레트는 목록이 넓어야 읽히고(이름+설명 한 줄), 나머지는 좁게 둔다 — 목록이
         // 창 끝까지 퍼지면 이름과 설명 사이가 벌어져 한 줄을 눈으로 잇기 어렵다.
-        let max_width = if screen == Screen::Commands { 900. } else { 760. };
-        let boxed = ConstrainedBox::new(panel).with_max_width(max_width).finish();
+        // ★ **크기를 내용에서 뗀다**(§10-21 ⓗ·ⓢ·ⓥ·ⓐ2·ⓚ2).
+        //
+        // 종전에는 `with_max_width` 라 **상한만** 있었고 그 아래로는 내용이 정했다 —
+        // 줄이 짧으면 판이 좁아지고, 굴리면 그때 보이는 가장 긴 줄을 따라 폭이 출렁였다.
+        // 이제 **폭을 못박는다**: 같은 판은 언제 열어도 같은 크기다.
+        //
+        // 팔레트가 넓은 이유는 종전과 같다(이름+설명 한 줄을 눈으로 잇는다).
+        let width = if screen == Screen::Commands { 900. } else { 760. };
+        let boxed = ConstrainedBox::new(panel).with_width(width).finish();
         let aligned = Align::new(boxed);
         match anchor {
             Anchor::Bottom => aligned.bottom_center().finish(),
@@ -4965,6 +5624,94 @@ impl SessionView {
             .collect()
     }
 
+    /// 블록 문자 칸들을 **사각형**으로 옮긴다(§10-21ⓘ).
+    ///
+    /// # 왜 패널 안까지 옮기나 (테두리와 다른 판단)
+    ///
+    /// [`frame_segments`](Self::frame_segments) 는 **크롬 칸만** 옮긴다 — 패널 안의 `┌` 는
+    /// 그 앱이 그린 그림이라 우리가 고쳐 그릴 것이 아니다. 블록은 반대다: `█` 의 뜻은
+    /// "이 칸의 이만큼이 이 색"이 전부라, 사각형이 글리프보다 **더 정확한 그림**이다.
+    /// 폴백 글꼴의 진폭에 맡기면 오히려 행마다 밀린다(제보 ⓘ 의 마스코트가 그 증상).
+    fn block_cells(canvas: &proto::canvas::Canvas) -> Vec<crate::splitter::Block> {
+        let (w, h) = canvas.size();
+        let mut out = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                let Some(cell) = canvas.cell(x, y) else { continue };
+                if cell.continuation {
+                    continue;
+                }
+                let Some(fill) = proto::canvas::block_fill(cell.ch) else {
+                    continue;
+                };
+                let (fg, _) = colors(&cell.style);
+                out.push(crate::splitter::Block {
+                    x: x as u16,
+                    y: y as u16,
+                    fill,
+                    color: fg,
+                });
+            }
+        }
+        out
+    }
+
+    /// 이 칸을 **글자 대신 사각형**으로 그리나 — `render_row` 가 비울 칸을 정할 때 쓴다.
+    ///
+    /// [`block_cells`](Self::block_cells) 와 **같은 판정**이라야 한다(테두리 쪽과 같은
+    /// 규율): 한쪽만 바뀌면 글리프와 사각형이 겹쳐 보이거나 그림이 통째로 사라진다.
+    fn block_cell_set(
+        canvas: &proto::canvas::Canvas,
+    ) -> std::collections::BTreeSet<(u16, u16)> {
+        Self::block_cells(canvas)
+            .into_iter()
+            .map(|b| (b.x, b.y))
+            .collect()
+    }
+
+    /// 런 하나를 **격자에 놓을 조각들**로 나눈다. 각 조각은 `(글자들, 칸 수)`.
+    ///
+    /// # 왜 나누나 (§10-21ⓙ)
+    ///
+    /// 캔버스는 한 줄을 스타일이 같은 **런 단위 문자열**로 셰이퍼에 넘겨 왔다 — 가로
+    /// 자리를 **글리프의 전진폭**이 정한다는 뜻이다. 고정폭 글꼴에 있는 글자는 그것이
+    /// 곧 칸너비지만, 한글은 폴백 글꼴(`Malgun Gothic` 등)에서 오고 그 진폭은 칸너비의
+    /// 정수배가 아니다. 그러면 **그 뒤가 전부 밀린다** — 제보 ⓙ 의 "표 오른쪽 끝이
+    /// 들쑥날쑥"이 그것이다.
+    ///
+    /// 그래서 **격자를 클라가 잡는다**: 고정폭이 보장되는 글자(인쇄 가능한 ASCII)는
+    /// 이어 붙여 한 덩이로 두고, 그 밖의 글자는 **한 글자씩** 떼어 자기 칸에 못박는다.
+    /// 못박는 일은 부르는 쪽이 한다(여기는 나누기만 — 그래야 글꼴 없이 시험된다).
+    ///
+    /// # 왜 ASCII 는 안 떼나
+    ///
+    /// 한 칸에 하나씩 엘리먼트를 만들면 80×24 만 해도 1,920 개다. ASCII 는 우리가 고른
+    /// 고정폭 글꼴이 반드시 갖고 있고 그 진폭이 곧 칸너비라(자리표를 그 글자로 재는
+    /// 이유가 그것이다) 이어 붙여도 자리가 안 밀린다. 화면의 대부분이 여기 속한다.
+    fn grid_segments(text: &str) -> Vec<(String, usize)> {
+        let mut out: Vec<(String, usize)> = Vec::new();
+        let mut ascii = String::new();
+        let mut ascii_cells = 0usize;
+        for ch in text.chars() {
+            let cells = proto::compose::char_cells(ch).max(1);
+            // 인쇄 가능한 ASCII 만 이어 붙인다 — 제어문자는 폭이 뭔지 알 수 없다.
+            if ch.is_ascii() && !ch.is_ascii_control() {
+                ascii.push(ch);
+                ascii_cells += cells;
+                continue;
+            }
+            if !ascii.is_empty() {
+                out.push((std::mem::take(&mut ascii), ascii_cells));
+                ascii_cells = 0;
+            }
+            out.push((ch.to_string(), cells));
+        }
+        if !ascii.is_empty() {
+            out.push((ascii, ascii_cells));
+        }
+        out
+    }
+
     /// 이 칸을 **글자 대신 선**으로 그리나 — `render_row` 가 그 칸을 비울지 정할 때 쓴다.
     ///
     /// [`frame_segments`](Self::frame_segments) 와 **같은 판정**이라야 한다: 한쪽만 바뀌면
@@ -4977,6 +5724,41 @@ impl SessionView {
             .into_iter()
             .map(|seg| (seg.x, seg.y))
             .collect()
+    }
+
+    /// 활성 패널의 커서가 놓인 **캔버스 칸**(§10-21ⓒ). 그릴 것이 없으면 `None`.
+    ///
+    /// # 왜 이 배선이 통째로 없었나
+    ///
+    /// 서버는 `screen` 프레임마다 커서를 **델타가 아니라 통째로** 준다. 상태까지 올라와
+    /// 있었는데([`SessionState::pane_cursor`]) 뷰가 한 번도 안 읽었다 — 전 저장소에서 그
+    /// 값을 읽는 곳이 정의와 proto 자기 테스트뿐이었다. `client/CLAUDE.md` 가 경고한
+    /// 부류 그대로다(*"GUI 쪽 배선 누락은 라이브 스크린샷만이 잡는다"*).
+    ///
+    /// # 왜 활성 패널 하나뿐인가
+    ///
+    /// 커서는 "다음 글자가 어디에 찍히나"이고, 그것은 **키를 받는 패널** 하나뿐이다.
+    /// 패널마다 그리면 화면에 커서가 여럿 보여 오히려 어디를 보는지 알 수 없다(정본도
+    /// 단말의 하드웨어 커서 하나다).
+    ///
+    /// # 화면이 떠 있으면 안 그린다
+    ///
+    /// 판이 열려 있는 동안 키는 그 판의 것이다(core 규칙). 그때 패널 커서를 그리면
+    /// "여기 치면 들어간다"는 거짓말이 된다.
+    fn cursor_cell(&self) -> Option<crate::splitter::Cursor> {
+        if self.screens.top().is_some() {
+            return None;
+        }
+        let pane = self.state.active_pane()?;
+        let (cx, cy) = self.state.pane_cursor(pane)?;
+        // 패널 안 좌표 → 캔버스 좌표. `pane_rect` 는 **테두리를 뺀 안쪽**이라 그대로 더한다.
+        let (px, py, w, h) = self.state.pane_rect(pane)?;
+        // 서버가 준 커서가 패널 밖이면 안 그린다 — 밀린 자리에 상자를 그리면 그것이
+        // 새 거짓말이 된다(그런 프레임이 오면 그건 ⓙ3·ⓨ 쪽 이야기다).
+        if cx >= w || cy >= h {
+            return None;
+        }
+        Some(crate::splitter::Cursor { x: px + cx, y: py + cy })
     }
 
     /// 캔버스 한 줄. 같은 스타일끼리 묶인 런을 가로로 잇는다.
@@ -4999,46 +5781,70 @@ impl SessionView {
     /// 테두리(`┌───┐`)이고 거기엔 ASCII 가 하나도 없다. 증상은 "경계선이 안 끌린다"였고,
     /// 층을 가른 것은 이 함수가 아니라 [`cell_from_event`](Self::cell_from_event) 에
     /// 넣은 진단 한 줄이었다.
+    /// # 격자는 클라가 잡는다 (§10-21ⓙ)
+    ///
+    /// 런을 통째로 넘기지 않고 [`grid_segments`](Self::grid_segments) 로 나눠, **고정폭이
+    /// 보장되지 않는 글자마다 자기 칸에 못박는다**(`ConstrainedBox::with_width`). 칸너비는
+    /// 자리표에서 **잰 값**이다 — 계산하면 렌더와 어긋난다는 이 파일의 규율 그대로다.
+    /// 아직 안 쟀으면(첫 프레임) 종전처럼 셰이퍼에 맡긴다: 한 프레임 뒤에 제자리로 온다.
     fn render_row(
         &self,
         y: usize,
         runs: Vec<(String, CellStyle)>,
         frame: &std::collections::BTreeSet<(u16, u16)>,
+        blocks: &std::collections::BTreeSet<(u16, u16)>,
         probed: &mut bool,
     ) -> Box<dyn Element> {
         let mut row = Flex::row().with_main_axis_size(MainAxisSize::Min);
+        let cell_w = self.cell_px.get().map(|(w, _)| w);
         let mut cx = 0usize;
         for (text, style) in runs {
-            // ★ 크롬의 경계 문자는 **글자로 안 그린다** — 오버레이가 그 칸을 실제 선으로
-            //   그린다(2026-07-31 사용자 지시). 자리를 비우는 것이지 지우는 것이 아니다:
-            //   경계 문자는 전부 한 칸짜리라 공백으로 바꿔도 그 줄의 폭이 그대로다(두
-            //   칸짜리로 바꾸면 뒤 글자가 전부 밀리고, 마우스 셀 산수까지 어긋난다).
+            // ★ 크롬의 경계 문자와 블록 문자는 **글자로 안 그린다** — 오버레이가 그 칸을
+            //   실제 선(2026-07-31 사용자 지시)·사각형(§10-21ⓘ)으로 그린다. 자리를 비우는
+            //   것이지 지우는 것이 아니다: 둘 다 한 칸짜리라 공백으로 바꿔도 그 줄의 폭이
+            //   그대로다(두 칸짜리로 바꾸면 뒤 글자가 전부 밀리고 마우스 셀 산수까지
+            //   어긋난다).
             let mut text2 = String::with_capacity(text.len());
             for ch in text.chars() {
-                let blank = frame.contains(&(cx as u16, y as u16))
-                    && proto::canvas::box_bits(ch).is_some();
+                let at = (cx as u16, y as u16);
+                let blank = (frame.contains(&at) && proto::canvas::box_bits(ch).is_some())
+                    || blocks.contains(&at);
                 text2.push(if blank { ' ' } else { ch });
                 cx += proto::compose::char_cells(ch).max(1);
             }
-            let text = text2;
             let (fg, bg) = colors(&style);
-            // 이 런 안에서 자리표를 붙일 ASCII 글자의 위치(없으면 안 붙인다).
-            let mark = (!*probed)
-                .then(|| {
-                    text.chars()
-                        .position(|c| c.is_ascii() && !c.is_ascii_control())
-                })
-                .flatten();
-            let mut cell = Text::new_inline(text, self.font, 13.).with_color(fg);
-            if let Some(index) = mark {
-                *probed = true;
-                cell = cell.with_saved_char_position(index, Self::CELL_PROBE.to_owned());
+            for (piece, cells) in Self::grid_segments(&text2) {
+                // 이 조각 안에서 자리표를 붙일 ASCII 글자의 위치(없으면 안 붙인다).
+                let mark = (!*probed)
+                    .then(|| {
+                        piece
+                            .chars()
+                            .position(|c| c.is_ascii() && !c.is_ascii_control())
+                    })
+                    .flatten();
+                // 캔버스도 **같은 배율**을 탄다(§10-21ⓐ) — 여기만 빼면 "앱 전체"가 아니다.
+                // 칸 크기가 바뀌면 `report_size` 가 자리표를 다시 재어 서버에 새 격자를
+                // 알린다(창을 키운 것과 같은 길이라 새 배관이 없다).
+                let mut cell =
+                    Text::new_inline(piece.clone(), self.font, self.scaled(13.)).with_color(fg);
+                if let Some(index) = mark {
+                    *probed = true;
+                    cell = cell.with_saved_char_position(index, Self::CELL_PROBE.to_owned());
+                }
+                let mut cell = cell.finish();
+                // ★ 못박는 것은 **ASCII 가 아닌 조각만**이다. ASCII 는 고정폭 글꼴이
+                //   그리므로 자연폭이 곧 `칸수 × 칸너비`고, 거기에 우리가 잰 값을 덮어
+                //   씌우면 부동소수 반올림 한 톨 차이로 마지막 글자가 흐려질 수 있다
+                //   (`layout_line` 은 max_width 를 넘으면 페이드한다).
+                let boxed = piece.chars().any(|c| !c.is_ascii() || c.is_ascii_control());
+                if let (Some(w), true) = (cell_w, boxed) {
+                    cell = ConstrainedBox::new(cell).with_width(w * cells as f32).finish();
+                }
+                row = row.with_child(match bg {
+                    Some(bg) => Container::new(cell).with_background_color(bg).finish(),
+                    None => cell,
+                });
             }
-            let cell = cell.finish();
-            row = row.with_child(match bg {
-                Some(bg) => Container::new(cell).with_background_color(bg).finish(),
-                None => cell,
-            });
         }
         row.finish()
     }
@@ -5058,11 +5864,20 @@ impl View for SessionView {
         // 머리줄 — TUI 와 같은 배치(맨 위 한 줄): 어느 서버에 붙어 있는지 + 복사 결과
         // 한 마디. 복사 결과를 아래 요약 구역에 두면 블록·Claude 가 없을 때 통째로 안
         // 보인다 — TUI 가 같은 이유로 여기 끝에 붙인다(TUI render 머리줄 주석).
-        let head = match &self.copy_note {
-            Some(note) => format!("pytmux-gui · {} · {note}", self.link.socket()),
-            None => format!("pytmux-gui · {}", self.link.socket()),
-        };
-        column = column.with_child(self.text(head, 12., palette::DIM));
+        // 머리줄 — 앱 이름과 어느 서버에 붙어 있는지. **가운데**다(§10-21ⓗ2).
+        //
+        // 복사 결과는 여기 없다(ⓝ 로 하단 한 줄에 합류했다) — 그래서 이 줄에는 이제
+        // 이름과 주소만 남고, 가운데가 자연스러운 자리가 됐다. ⓔ(OS 타이틀바를 앱 안으로)
+        // 를 하면 이 줄이 "왼쪽 여백 · 가운데 제목 · 오른쪽 창 버튼" 셋으로 갈리는데,
+        // 가운데 정렬은 그 배치의 일부다.
+        let head = format!("pytmux-gui · {}", self.link.socket());
+        column = column.with_child(
+            Flex::row()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_main_axis_alignment(warpui::elements::MainAxisAlignment::Center)
+                .with_child(self.text(head, 12., palette::DIM))
+                .finish(),
+        );
         if self.status_on_top() {
             column = column.with_child(self.render_status());
         }
@@ -5087,9 +5902,19 @@ impl View for SessionView {
                 // 어느 칸을 선으로 그리나 — 줄을 그리기 **전에** 한 번 정한다(줄마다
                 // 다시 재면 같은 판정을 행 수만큼 돌린다).
                 let frame = Self::frame_cells(&canvas, self.state.layout());
+                // 블록 문자 칸도 같은 규율로 한 번만 고른다(§10-21ⓘ) — 오버레이가
+                // 사각형으로 그릴 자리이자, 줄에서 비울 자리다.
+                let blocks = Self::block_cells(&canvas);
+                let block_at: std::collections::BTreeSet<(u16, u16)> =
+                    blocks.iter().map(|b| (b.x, b.y)).collect();
                 for y in 0..height {
-                    rows = rows
-                        .with_child(self.render_row(y, canvas.row_runs(y), &frame, &mut probed));
+                    rows = rows.with_child(self.render_row(
+                        y,
+                        canvas.row_runs(y),
+                        &frame,
+                        &block_at,
+                        &mut probed,
+                    ));
                 }
                 // 경계 칸 위 네이티브 스플리터 바 — 잡고 있거나 hover 면 FOCUS 강조.
                 let bars = self
@@ -5111,6 +5936,8 @@ impl View for SessionView {
                         rows.finish(),
                         bars,
                         Self::frame_segments(&canvas, self.state.layout()),
+                        blocks,
+                        self.cursor_cell(),
                         Self::CELL_PROBE,
                     )
                     .finish(),
@@ -5128,7 +5955,7 @@ impl View for SessionView {
         // 남아 두 클라의 배치가 갈린다(격자 절사 나머지는 어딘가에 남을 수밖에 없고,
         // TUI 처럼 캔버스 밑에서 접는 것이 맞다).
         column = column.with_child(Expanded::new(1., Empty::new().finish()).finish());
-        column = self.render_footer(column);
+        // ★ 요약 구역은 **여기 없다**(§10-21ⓓ) — `summary` 명령이 여는 판으로 옮겼다.
         // 상태줄은 기본이 **맨 아래**다 — `e_down` 이 "아래로 나간다"라야 동선이 말이
         // 된다. `status-position top` 이면 탭바보다 위로 올린다.
         if !self.status_on_top() {
@@ -5176,6 +6003,19 @@ impl View for SessionView {
                     evt.dispatch_typed_action(ViewAction::PasteRequest);
                     return DispatchEventResult::StopPropagation;
                 }
+                // ★ 글자 크기(§10-21ⓐ)도 여기서 가로챈다 — 바깥 터미널이 없어서
+                //   우리가 안 받으면 아무도 안 받는다(붙여넣기와 같은 사정).
+                if let Some(action) = Self::font_scale_chord(keystroke) {
+                    evt.dispatch_typed_action(ViewAction::Act(action));
+                    return DispatchEventResult::StopPropagation;
+                }
+                // ★ 탭 전환(§10-21ⓕ·ⓕ2) — 독립 앱이라 이 조합을 가로챌 수 있다
+                //   (정본은 터미널 안이라 못 한다). 패널 안 프로그램의 `Ctrl+Tab` 이
+                //   사라지는 것은 제보가 감수한 결정이다.
+                if let Some(forward) = Self::tab_switch_chord(keystroke) {
+                    evt.dispatch_typed_action(ViewAction::AltTab(forward));
+                    return DispatchEventResult::StopPropagation;
+                }
                 match Self::key_from_keystroke(keystroke) {
                     Some((key, mods)) => evt.dispatch_typed_action(ViewAction::RawKey(key, mods)),
                     // 모르는 키는 조용히 버린다 — 자식에게 쓰레기를 보내지 않는다.
@@ -5187,6 +6027,17 @@ impl View for SessionView {
             // 필요하다(`on_scroll_wheel` 이 위치를 주도록 고쳤다 — PROVENANCE §1).
             // 입력기가 확정한 글자(한글). **키와 다른 경로**로 온다 — 조합 중에는
             // 아무것도 안 오고, 끝나야 문자열 하나가 온다.
+            // ★ 수정키 **뗌**을 받는다(§10-21ⓕ2) — 상류가 주고 있었는데 이 크레이트가
+            //   한 번도 안 받던 이벤트다. `Ctrl` 을 떼면 스위처가 확정된다.
+            .on_modifier_state_changed(|evt, _app, key_code, state| {
+                use warpui::platform::keyboard::KeyCode;
+                if matches!(state, warpui_core::event::KeyState::Released)
+                    && matches!(key_code, KeyCode::ControlLeft | KeyCode::ControlRight)
+                {
+                    evt.dispatch_typed_action(ViewAction::CtrlReleased);
+                }
+                DispatchEventResult::PropagateToParent
+            })
             .on_typed_characters(|evt, _app, chars| {
                 evt.dispatch_typed_action(ViewAction::Typed(chars.to_owned()));
                 DispatchEventResult::StopPropagation
@@ -5260,6 +6111,17 @@ impl View for SessionView {
     }
 }
 
+/// 확정된 글자(IME 조합 결과)가 갈 곳(§10-21ⓜ2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TypedTo {
+    /// 패널 안 프로그램에게.
+    Pane,
+    /// 지금 열려 있는 판의 입력처(팔레트 필터·프롬프트·작성창).
+    Screen,
+    /// 아무 데도 — 모드 키를 쓰는 중이다.
+    Drop,
+}
+
 /// 이 뷰가 받는 것 — 이미 뜻이 정해진 액션과 **아직 판정 전의 키**.
 ///
 /// core 의 [`Action`] 에 키를 넣지 않는 이유는 TUI 와 같다: 그건 **의도**의 목록이고
@@ -5298,6 +6160,16 @@ pub enum ViewAction {
     ///
     /// 읽기는 `AppContext` 가 필요해 이벤트 콜백 안에서 못 한다 — 뷰로 넘겨 거기서 한다.
     PasteRequest,
+    /// `Ctrl+Tab`/`Ctrl+Shift+Tab` 한 걸음(§10-21ⓕ·ⓕ2). 값은 방향이다.
+    AltTab(bool),
+    /// `Ctrl` 을 뗐다 — 쥔 채 돌던 스위처의 **확정**(§10-21ⓕ2).
+    CtrlReleased,
+    /// 이벤트 콜백이 **키보다 먼저** 판정한 액션(지금은 글자 배율 셋 — §10-21ⓐ).
+    ///
+    /// `RawKey` 로 안 보내는 이유: 그 길은 core 의 모드·바인딩 표를 지나는데, 이 조합은
+    /// 그 표 밖에서 **뷰가 가로챈** 것이다(붙여넣기와 같은 부류). 액션으로 실어 보내면
+    /// 팔레트에서 고른 것과 **완전히 같은 자리**로 떨어진다.
+    Act(Action),
 }
 
 impl TypedActionView for SessionView {
@@ -5308,6 +6180,9 @@ impl TypedActionView for SessionView {
     fn handle_action(&mut self, action: &ViewAction, ctx: &mut ViewContext<Self>) {
         let dirty = match action {
             ViewAction::RawKey(key, mods) => self.handle_key(*key, *mods),
+            ViewAction::Act(action) => self.apply_action(*action),
+            ViewAction::AltTab(forward) => self.alt_tab_step(*forward),
+            ViewAction::CtrlReleased => self.release_ctrl(),
             ViewAction::ChromeClick(target) => self.chrome_click(*target),
             ViewAction::PanelClick(target) => self.panel_click(*target),
             ViewAction::Wheel { up, at } => self.handle_wheel(*up, *at),

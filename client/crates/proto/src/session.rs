@@ -472,6 +472,26 @@ pub struct PluginRow {
     pub cols: Vec<String>,
 }
 
+impl PluginRow {
+    /// 부가 칸을 **이 클라의 로케일로**.
+    ///
+    /// # 왜 칸만인가 (2026-08-02p)
+    ///
+    /// `label` 은 **자료**다 — 파일 이름·디렉터리 이름·CL 번호. 거기에 `t()` 를 걸면
+    /// `복사` 라는 이름의 파일이 `Copy` 로 보인다. 반대로 `cols` 는 플러그인이 **적은
+    /// 말**이다(`<상위>`·`<드라이브>`·실패 사유). 그래서 번역은 칸에만 건다.
+    ///
+    /// 이 갈림이 없던 동안 `mdir` 의 `<상위>`·`<드라이브>` 는 영어 사용자에게 한국어로
+    /// 떴다 — 카탈로그로 옮겨도 **서버 로케일**로 지어지므로 여기서 다시 짓지 않으면
+    /// 그대로다(`title`·`hint`·`note` 만 [`i18n_say`] 를 거치고 있었다).
+    pub fn say_cols(&self) -> Vec<String> {
+        self.cols
+            .iter()
+            .map(|c| base::i18n::t(c).to_owned())
+            .collect()
+    }
+}
+
 /// `status` 가 실어 오는 **세션 전역 상태**(패리티 G6).
 ///
 /// # 왜 따로 두나
@@ -625,7 +645,8 @@ impl StatusFlags {
         if self.monitor_activity {
             out.push(t("[활동감시]"));
         }
-        if self.monitor_bell {
+        // 감춘 표면(§10-21ⓜ) — 켜져 있어도 표식을 안 그린다. 기능은 그대로다.
+        if self.monitor_bell && !base::keymap::is_hidden("monitor-bell") {
             out.push(t("[벨감시]"));
         }
         out
@@ -1075,9 +1096,33 @@ impl SessionState {
     /// 서버에도 그 끔을 알려야 두 그림이 겹쳐 그려지지 않는다.
     pub fn toggle_overlay(&mut self, name: &str) -> Option<OverlayToggle> {
         let active = self.layout.as_ref()?.active;
-        if let Some(on) = self.overlays.get_mut(name)
-            && on.remove(&active)
-        {
+        let on_now = self.overlays.get(name).is_some_and(|on| on.contains(&active));
+        self.set_overlay(name, !on_now)
+    }
+
+    /// 오버레이를 **명시적으로** 켜거나 끈다(`open-clock`·`close-calendar` 등).
+    ///
+    /// # 왜 토글과 따로 있나 (§10-21ⓡ)
+    ///
+    /// 제보: `close-clock`·`close-calendar` 가 안 먹는다. 뿌리는 우리에게 **토글밖에
+    /// 없어서** 그 이름들이 팔레트에서 서버로 넘어가(`plugin_open`) "화면 스펙이 없다"로
+    /// 거절당한 것이다 — 화면을 여는 명령이 아니라 **상태를 바꾸는 명령**이라 그 경로가
+    /// 통째로 틀렸다.
+    ///
+    /// 정본의 계약 셋을 그대로 가져온다(`plugins/calendar/__init__.py` · 회귀
+    /// `tests/test_client.py`): **켜기는 멱등** · 끄기는 끔 · 대상은 **활성 패널** ·
+    /// 시계와 달력은 **상호 배타**(하나를 켜면 다른 하나는 닫힌다).
+    ///
+    /// 돌려주는 `closed` 는 "이 켜기 때문에 닫힌 다른 오버레이"다 — 뷰가 서버에도 그
+    /// 사실을 알려야 서버가 그리던 셀을 지운다.
+    pub fn set_overlay(&mut self, name: &str, on: bool) -> Option<OverlayToggle> {
+        let active = self.layout.as_ref()?.active;
+        if !on {
+            // 멱등: 안 켜져 있어도 "껐다"로 답한다. 여기서 `None` 을 돌려주면 서버에
+            // 알림이 안 가고, 서버가 그리던 셀이 남을 수 있다(끄기는 반복해도 안전하다).
+            if let Some(set) = self.overlays.get_mut(name) {
+                set.remove(&active);
+            }
             return Some(OverlayToggle { pane: active, on: false, closed: None });
         }
         let closed: Vec<String> = self
@@ -1367,6 +1412,17 @@ impl SessionState {
         self.last_error.as_deref()
     }
 
+    /// 상태줄 한 줄에서 **표시만** 걷어낸다(§10-21ⓦ).
+    ///
+    /// # 이력은 남는다
+    ///
+    /// 지나간 오류는 알림 화면이 갖는다(`note_error_history`). 여기서 지우는 것은 "지금
+    /// 보이는 한 줄"뿐이다 — 닫기가 이력까지 지우면 그 줄을 눌러 이력으로 가는 동선
+    /// (ⓦ⑶)이 무의미해진다.
+    pub fn clear_error(&mut self) {
+        self.last_error = None;
+    }
+
     /// 지금 보는 탭이 원격이면 그 **호스트**. 아니면 `None`.
     ///
     /// 판정 기준은 파이썬 `_active_remote_host` 와 같다 — 병합 탭바의 이름
@@ -1490,14 +1546,21 @@ impl SessionState {
         if self.notices.len() > 0 {
             out.push(Badge::Notices);
         }
-        // 서버 배지는 **늘 있다** — 로컬에서도 "어디에 붙어 있나 · 서버가 무엇인가"를
-        // 볼 길이 있어야 한다(파이썬 상태줄의 호스트 버튼도 늘 있다). 종전에는 원격일
-        // 때만 떴고, 그래서 로컬에서는 그 정보로 가는 배지 동선이 아예 없었다.
-        out.push(Badge::Host);
-        // 시계·달력은 우리가 늘 그릴 수 있는 것이라 항상 있다(파이썬에서는 플러그인이
-        // 설치돼 있을 때만 뜬다 — 우리에겐 그 갈래가 없다).
-        out.push(Badge::Clock);
-        out.push(Badge::Calendar);
+        // ★ **`서버`·`시계`·`달력` 은 여기 없다**(제보 §10-21ⓑ, 2026-08-02).
+        //
+        // 제보: *"왼쪽 하단의 `Server` `Clock` `Calendar` 표시가 없어야 한다 — 오른쪽
+        // 하단의 `ALIENWARE 20:09 2026-08-02` 와 **완전히 같은 역할**이라 중복이다."*
+        //
+        // 그때 열려 있던 물음은 "지우면 그 마우스 동선이 사라지는데 어디에 두나"였고,
+        // **ⓑ2 가 그 답이었다**: 오른쪽 글자가 이미 그 동작을 갖고 있다 — `#h` 구간은
+        // `Badge::Host`, `%H:%M` 은 `Badge::Clock`, `%Y-%m-%d` 는 `Badge::Calendar` 로
+        // 이어진다(`crate::status::run_badge`). 2026-08-02 라이브에서 셋 다 실제로
+        // 동작하는 것을 확인하고 지웠다 — **먼저 재고 나서 지운 것**이지 옮길 곳을
+        // 믿고 지운 것이 아니다.
+        //
+        // ⚠ `status_right` 에서 그 토큰들을 지운 사람에게는 **마우스 입구가 사라진다**.
+        // 키·팔레트는 남는다(`prefix t` · `clock-mode` · `calendar-mode` · `status`) —
+        // 정본도 상태줄 형식을 비우면 그 버튼들이 같이 사라지므로 결이 같다.
         // 터치 스크롤 `⇕` 는 **설정이 켜져 있을 때만**이다(정본과 같다 — 저쪽은
         // `touch_scroll and mouse_enabled`). 마우스를 끈 판에서는 누를 수가 없으므로
         // 자리만 차지한다.

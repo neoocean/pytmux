@@ -75,6 +75,39 @@ impl Seg {
     const RIGHT: u8 = 0b0001;
 }
 
+/// 블록 문자 칸 하나 — 칸의 일부를 채운 **사각형**으로 옮긴 것(§10-21ⓘ).
+///
+/// # 왜 글자로 안 그리나
+///
+/// 테두리와 **같은 이유**다: 블록 문자는 우리가 고른 고정폭 글꼴에 거의 없어 폴백으로
+/// 가고, 폴백의 진폭이 칸너비의 정수배가 아니면 그림이 행마다 밀린다. 마스코트가
+/// 정확히 그 증상이었다(제보 §10-21ⓘ).
+///
+/// 다른 점 하나: 테두리는 **크롬 칸만** 옮기는데(패널 안 `htop` 의 선까지 고쳐 그리면
+/// 남의 화면을 바꾸는 것이다) 블록은 **패널 안도 옮긴다**. 블록은 선문자와 달리
+/// "이 칸의 이만큼이 이 색"이라는 뜻이 전부라, 사각형으로 그린 것이 글리프보다
+/// **더 정확한 그림**이다(덜 정확한 것이 아니다).
+pub struct Block {
+    pub x: u16,
+    pub y: u16,
+    pub fill: proto::canvas::BlockFill,
+    /// 그 칸의 글자색 — 배경은 캔버스가 이미 칠했다.
+    pub color: ColorU,
+}
+
+/// 활성 패널의 **커서 칸**(§10-21ⓒ) — 캔버스 셀 좌표.
+///
+/// 서버는 `screen` 프레임마다 커서 위치를 통째로 준다(`SessionState::pane_cursor`).
+/// 그런데 **뷰가 그것을 한 번도 안 읽고 있었다** — 전 저장소에서 그 값을 읽는 곳이
+/// 정의와 proto 자기 테스트뿐이었다(GUI 0건). 그래서 "터미널에 커서가 안 보인다"가 됐다.
+pub struct Cursor {
+    pub x: u16,
+    pub y: u16,
+}
+
+/// 커서 테두리의 두께.
+const CURSOR_PX: f32 = 2.;
+
 /// 얇은 바의 픽셀 두께. 칸 폭보다 얇아야 "선"으로 읽힌다.
 const BAR_PX: f32 = 4.;
 
@@ -87,6 +120,10 @@ pub struct SplitterOverlay {
     bars: Vec<Bar>,
     /// 패널 테두리(경계 문자 칸)를 옮긴 선분들. 비어 있으면 아무것도 안 그린다.
     segs: Vec<Seg>,
+    /// 블록 문자 칸들을 옮긴 사각형들(§10-21ⓘ).
+    blocks: Vec<Block>,
+    /// 활성 패널의 커서 칸(없으면 안 그린다 — 커서를 감춘 패널·화면이 뜬 동안).
+    cursor: Option<Cursor>,
     /// 셀 자리표 id(`SessionView::CELL_PROBE`) — 셀 기하의 원천.
     probe_id: &'static str,
     origin: Option<Point>,
@@ -97,9 +134,59 @@ impl SplitterOverlay {
         child: Box<dyn Element>,
         bars: Vec<Bar>,
         segs: Vec<Seg>,
+        blocks: Vec<Block>,
+        cursor: Option<Cursor>,
         probe_id: &'static str,
     ) -> Self {
-        Self { child, bars, segs, probe_id, origin: None }
+        Self { child, bars, segs, blocks, cursor, probe_id, origin: None }
+    }
+
+    /// 블록 문자 칸들을 사각형으로. 비율(`BlockFill`)을 칸 크기에 곱할 뿐이다 —
+    /// 무엇을 채우나는 proto 가 정하고 여기는 몇 픽셀인가만 안다.
+    fn paint_blocks(&self, origin: Vector2F, cw: f32, ch: f32, ctx: &mut PaintContext) {
+        for blk in &self.blocks {
+            let x0 = origin.x() + blk.x as f32 * cw;
+            let y0 = origin.y() + blk.y as f32 * ch;
+            let f = blk.fill;
+            let rect = RectF::new(
+                vec2f(x0 + f.x0 * cw, y0 + f.y0 * ch),
+                vec2f((f.x1 - f.x0) * cw, (f.y1 - f.y0) * ch),
+            );
+            // 음영(`░`)은 같은 사각형을 흐리게 — 색을 섞지 않고 알파만 낮춘다.
+            // 배경 위에 얹히므로 결과는 글꼴이 그리던 점묘와 같은 밝기다.
+            let mut color = blk.color;
+            if f.alpha < 1. {
+                color.a = (color.a as f32 * f.alpha).round().clamp(0., 255.) as u8;
+            }
+            ctx.scene
+                .draw_rect_without_hit_recording(rect)
+                .with_background(Fill::Solid(color));
+        }
+    }
+
+    /// 커서 칸을 **테두리 상자**로 그린다.
+    ///
+    /// # 왜 꽉 찬 블록이 아닌가 (첫 판의 의도된 한계)
+    ///
+    /// 터미널의 기본 커서는 꽉 찬 블록이고, 그 아래 글자는 **반전**돼 보인다. 이
+    /// 오버레이는 캔버스를 **다 그린 뒤에** 얹히므로 블록을 칠하면 그 칸의 글자가
+    /// 그대로 덮인다 — 커서가 놓인 글자를 못 읽게 만드는 것은 "커서가 보여야 한다"의
+    /// 답이 될 수 없다. 반전을 하려면 그 칸을 런에서 갈라 **배경색**으로 칠해야 하고
+    /// (터미널이 하는 방식), 그건 런 렌더를 손대는 일이라 §10-21ⓙ(셀 격자 슬라이스)와
+    /// 같은 자리다. 그때 함께 옮긴다.
+    fn paint_cursor(&self, origin: Vector2F, cw: f32, ch: f32, ctx: &mut PaintContext) {
+        let Some(cur) = &self.cursor else { return };
+        let x0 = origin.x() + cur.x as f32 * cw;
+        let y0 = origin.y() + cur.y as f32 * ch;
+        let mut line = |rect: RectF| {
+            ctx.scene
+                .draw_rect_without_hit_recording(rect)
+                .with_background(Fill::Solid(theme::FOCUS));
+        };
+        line(RectF::new(vec2f(x0, y0), vec2f(cw, CURSOR_PX)));
+        line(RectF::new(vec2f(x0, y0 + ch - CURSOR_PX), vec2f(cw, CURSOR_PX)));
+        line(RectF::new(vec2f(x0, y0), vec2f(CURSOR_PX, ch)));
+        line(RectF::new(vec2f(x0 + cw - CURSOR_PX, y0), vec2f(CURSOR_PX, ch)));
     }
 
     pub fn finish(self) -> Box<dyn Element> {
@@ -153,7 +240,11 @@ impl Element for SplitterOverlay {
         self.origin = Some(Point::from_vec2f(origin, ctx.scene.z_index()));
         // 자식(캔버스 줄들)이 먼저 — 자리표도 이때 남는다.
         self.child.paint(origin, ctx, app);
-        if self.bars.is_empty() && self.segs.is_empty() {
+        if self.bars.is_empty()
+            && self.segs.is_empty()
+            && self.blocks.is_empty()
+            && self.cursor.is_none()
+        {
             return;
         }
         let Some(cell) = ctx.position_cache.get_position(self.probe_id) else {
@@ -163,6 +254,8 @@ impl Element for SplitterOverlay {
         if !(cw.is_finite() && ch.is_finite()) || cw <= 0.5 || ch <= 0.5 {
             return;
         }
+        // 블록이 맨 먼저 — 패널 **안**의 그림이라 크롬(테두리·바)이 그 위를 덮는 것이 맞다.
+        self.paint_blocks(origin, cw, ch, ctx);
         // 테두리를 **먼저** — 스플리터 바는 그 위에 얹혀야 잡는 자리가 또렷하다.
         self.paint_frames(origin, cw, ch, ctx);
         for bar in &self.bars {
@@ -204,6 +297,8 @@ impl Element for SplitterOverlay {
                 painted.with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)));
             }
         }
+        // 커서는 **맨 위**다 — 경계·바에 가리면 그 칸에 커서가 있는지 알 수 없다.
+        self.paint_cursor(origin, cw, ch, ctx);
     }
 
     fn dispatch_event(

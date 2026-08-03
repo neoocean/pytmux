@@ -47,6 +47,7 @@ SHIPPED = {
     "uview": "claude-token-usage-view 의 Tier B 셀 런(한도 안내·카운트다운 라벨)",
     "p4cl": "p4changes 의 Tier C 화면 스펙",
     "ph": "prompt-history 의 Tier C 화면 스펙",
+    "mdir": "mdir 의 Tier C 화면 스펙(제목·안내·물음·결과·실패 사유)",
     "claude": "claude-code 의 상태줄 배지(P6 후반이 Tier B 로 옮길 것)",
     "ccmsg": "claude-code 가 클라에 보내는 안내 줄",
 }
@@ -114,16 +115,39 @@ def _wire_producers(root):
       * `plugin_screen`·`plugin_cells`·`plugin_badges` dict 를 만드는 함수
       * 알림 발신(`note(...)`/`_notice_msg(...)`) — 서버가 클라에 미는 한 줄
 
-    한계는 정직하게: 이것은 정적 스캔이라 **함수 밖 상수**(모듈 레벨 표)는 그 함수가
-    이름으로 참조해도 못 따라간다. 그 몫은 `wire_literals` 래칫이 아니라 앞으로의
-    슬라이스가 줄인다 — 지금 남은 것이 `mdir` 이다.
+    # 그 스캔이 놓치던 것 (2026-08-02p)
+
+    종전에는 **그 dict 를 직접 짓는 함수 안의 리터럴만** 셌다. `mdir` 에 자를 대 보니
+    그 한 겹 밖에 같은 성질의 글이 그만큼 더 있었다 — 전부 소켓을 건너는데 수에는
+    안 잡혔다:
+
+      * **모듈 레벨 표**(`_REASONS` 10 · `_VERBS` 5 · `_SCREEN_HINT`) — 함수가 이름으로
+        참조하지만 정의는 함수 밖이라 `ast.walk(fn)` 이 못 본다.
+      * **한 겹 위**(`_begin`·`_apply`) — 자기는 dict 를 안 짓고 `self._ask` 로 짓는다.
+      * **한 겹 아래**(`_result_note`) — 돌려준 문자열이 `note` 칸으로 실려 나간다.
+
+    "안 세지는 자리로 옮기면 게이트가 조용해진다"가 성립하면 래칫이 아니다. 그래서 같은
+    파일 안에서 **호출 그래프를 양방향으로 닫고**(producer 를 부르는 함수도 producer ·
+    producer 가 부르는 함수도 훑는다) 그 함수들이 **이름으로 참조하는 모듈 레벨 상수**
+    까지 따라간다.
+
+    한계는 여전히 정직하게 적는다: **파일 경계는 안 넘는다**(다른 모듈의 헬퍼가 지은
+    한국어는 그 모듈에 wire 빌더가 있을 때만 잡힌다). 넘기려면 프로젝트 전역 호출
+    그래프가 필요한데, 그러면 서버 내부 로그 문자열까지 딸려 와 이 축의 뜻("소켓을
+    건너는 글")이 흐려진다.
     """
     import ast
     import glob
 
     hangul = re.compile(r"[가-힣]")
     wire = ("plugin_screen", "plugin_cells", "plugin_badges")
-    keys, notices, literals = set(), set(), []
+    # 리터럴은 **집합**이다 — 한 표를 두 함수가 참조하면 같은 줄이 두 번 잡힌다
+    # (`_REASONS` 는 `_result_note` 만 읽지만 `_SCREEN_HINT` 는 여럿이 읽는다).
+    keys, notices, literals = set(), set(), set()
+    # 훑은 자리(파일:함수) — **0 이 통과로 보이지 않게** 하는 증거다. 스캐너가 조용히
+    # 아무것도 안 보게 되면 `wire_literals` 가 0 이 되는데, 그 0 은 "다 옮겼다"와
+    # 구별되지 않는다. 소비자(Rust 게이트)가 이 수로 그 둘을 가른다.
+    seen = set()
 
     def builds_wire(fn):
         for n in ast.walk(fn):
@@ -133,6 +157,37 @@ def _wire_producers(root):
                             and isinstance(v, ast.Constant) and v.value in wire):
                         return True
         return False
+
+    def calls_in(fn):
+        """이 함수가 부르는 이름들 — `f(...)` 와 `self.f(...)` 를 같게 본다."""
+        out = set()
+        for n in ast.walk(fn):
+            if not isinstance(n, ast.Call):
+                continue
+            if isinstance(n.func, ast.Name):
+                out.add(n.func.id)
+            elif isinstance(n.func, ast.Attribute):
+                out.add(n.func.attr)
+        return out
+
+    # 소켓으로 **안** 나가는 자리 — 진단 로그다. 위 닫힘이 `serverio` 의 프레임 함수들을
+    # 정당하게 끌어오는데, 그 안의 `_log_error("어디", "한국어")` 까지 세면 게이트가
+    # "카탈로그로 옮겨라"라고 틀린 처방을 낸다(그 글은 사람이 읽는 로그 파일로 간다).
+    sinks = ("_log_error", "print")
+
+    def sink_nodes(body):
+        out = set()
+        for n in ast.walk(body):
+            if isinstance(n, ast.Call) and (
+                    (isinstance(n.func, ast.Name) and n.func.id in sinks)
+                    or (isinstance(n.func, ast.Attribute) and n.func.attr in sinks)):
+                out |= {id(sub) for sub in ast.walk(n)}
+        return out
+
+    def names_in(fn):
+        """이 함수가 **읽는** 이름들 — 모듈 레벨 표를 따라가는 데 쓴다."""
+        return {n.id for n in ast.walk(fn)
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
 
     def first_str(call):
         if call.args and isinstance(call.args[0], ast.Constant) \
@@ -144,6 +199,10 @@ def _wire_producers(root):
                                  recursive=True)):
         with open(path, encoding="utf-8") as fp:
             tree = ast.parse(fp.read())
+        # 경로는 **`/` 로 못박는다** — 이 픽스처는 OS 를 건너 비교된다(§10-18 이 줄끝에서
+        # 겪은 것과 같은 자리다). `os.sep` 을 그대로 실으면 Windows 에서 뽑은 것과
+        # macOS 에서 뽑은 것이 글자 단위로 갈려 `check_fixtures` 가 헛되이 운다.
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
         # 알림 발신은 어느 함수에 있든 소켓으로 나간다 — 파일 전체에서 찾는다.
         for n in ast.walk(tree):
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) \
@@ -169,24 +228,68 @@ def _wire_producers(root):
             if isinstance(head, ast.Expr) and isinstance(head.value, ast.Constant) \
                     and isinstance(head.value.value, str):
                 docline.add(head.value.lineno)
-        for fn in ast.walk(tree):
-            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if not builds_wire(fn):
-                continue
-            for n in ast.walk(fn):
-                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) \
-                        and n.func.attr in ("t", "phrase", "tc"):
-                    k = first_str(n)
-                    if k:
-                        keys.add(k)
-                elif isinstance(n, ast.Constant) and isinstance(n.value, str) \
-                        and hangul.search(n.value) and n.lineno not in docline:
-                    literals.append((os.path.relpath(path, root), n.lineno, n.value))
+        # 이 파일의 함수들(메서드 포함)을 이름으로. 같은 이름이 여럿이면 전부 묶는다 —
+        # 호출부는 `self._spec` 처럼 이름만 남기므로 어느 클래스의 것인지 못 가른다.
+        fns = {}
+        for n in ast.walk(tree):
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                fns.setdefault(n.name, []).append(n)
+        # 모듈 레벨 상수(표·문구) — 함수가 이름으로 참조하면 그 안의 한국어도 나간다.
+        consts = {}
+        for n in tree.body:
+            if isinstance(n, ast.Assign):
+                for tgt in n.targets:
+                    if isinstance(tgt, ast.Name):
+                        consts[tgt.id] = n.value
+
+        # 씨앗 = wire dict 를 **직접** 짓는 함수.
+        producers = {name for name, nodes in fns.items()
+                     if any(builds_wire(nd) for nd in nodes)}
+        # ① 위로 — producer 를 부르는 함수도 producer 다(`_begin` 은 `_ask` 로 짓는다).
+        changed = True
+        while changed:
+            changed = False
+            for name, nodes in fns.items():
+                if name in producers:
+                    continue
+                if any(producers & calls_in(nd) for nd in nodes):
+                    producers.add(name)
+                    changed = True
+        # ② 아래로 — producer 가 부르는 같은 파일 함수도 훑는다(`_result_note` 가 지은
+        #    줄은 `note` 칸으로 그대로 실린다). producer 로 승격하지는 않는다: 그러면
+        #    `_offload` 같은 배관을 타고 파일 전체가 딸려 온다.
+        scanned, frontier = set(producers), set(producers)
+        while frontier:
+            nxt = set()
+            for name in frontier:
+                for nd in fns.get(name, []):
+                    nxt |= calls_in(nd) & set(fns)
+            frontier = nxt - scanned
+            scanned |= frontier
+
+        for name in sorted(scanned):
+            seen.add(f"{rel}:{name}")
+            for fn in fns.get(name, []):
+                bodies = [fn]
+                # 이 함수가 읽는 모듈 레벨 표까지 같은 눈으로 본다.
+                bodies += [consts[nm] for nm in sorted(names_in(fn) & set(consts))]
+                for body in bodies:
+                    logged = sink_nodes(body)
+                    for n in ast.walk(body):
+                        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) \
+                                and n.func.attr in ("t", "phrase", "tc"):
+                            k = first_str(n)
+                            if k:
+                                keys.add(k)
+                        elif isinstance(n, ast.Constant) and isinstance(n.value, str) \
+                                and hangul.search(n.value) and n.lineno not in docline \
+                                and id(n) not in logged:
+                            literals.add(
+                                (rel, n.lineno, n.value))
     if not keys:
         sys.exit("소켓으로 나가는 글을 짓는 자리를 하나도 못 찾았다 — 통과가 아니라 "
                  "고장이다(AST 스캐너가 낡았으면 고칠 것)")
-    return keys, notices, literals
+    return keys, notices, sorted(literals), seen
 
 
 def main():
@@ -215,7 +318,7 @@ def main():
         else:
             fixed[ko_text] = en_text
 
-    shipped_keys, notice_keys, wire_literals = _wire_producers(
+    shipped_keys, notice_keys, wire_literals, wire_scanned = _wire_producers(
         os.path.abspath(args.pytmux))
     # 재료가 실리는 길이 둘이다: 스펙·셀·배지는 `i18n.phrase` 로, 알림은 `_notice_msg`
     # 가 **자기가 받은 ko 포맷과 kw 를 그대로** 싣는다(자리가 있을 때만 — 자리가 없으면
@@ -249,6 +352,9 @@ def main():
         # 이라, 고정 리터럴처럼 전수로 못 박는 대신 수를 래칫으로 잡는다. 0 이 되는 날이
         # "서버가 보내는 글은 전부 카탈로그를 거친다"가 참이 되는 날이다.
         "wire_literals": [f"{path}:{line} {text}" for path, line, text in wire_literals],
+        # 위 목록을 **어디서** 찾았나(파일:함수). 목록이 0 일 때 "다 옮겼다"와 "스캐너가
+        # 눈을 감았다"를 가르는 유일한 증거라 함께 싣는다.
+        "wire_scanned": sorted(wire_scanned),
     }
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fp:

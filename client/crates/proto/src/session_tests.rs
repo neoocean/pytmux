@@ -420,6 +420,55 @@ fn one_pane_holds_one_overlay() {
 }
 
 #[test]
+fn opening_an_overlay_twice_is_idempotent() {
+    // ★ §10-21ⓡ. 정본 계약이다(`plugins/calendar/__init__.py`: "멱등 — open 시 같은
+    //   패널의 시계는 닫는다"). 토글로 흉내 내면 두 번째 `open-clock` 이 **꺼 버린다** —
+    //   그것이 이 함수가 토글과 따로 있는 이유다.
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 6)]));
+    let first = state.set_overlay("clock", true).expect("패널이 있는데 못 켰다");
+    assert!(first.on);
+    let again = state.set_overlay("clock", true).expect("못 켰다");
+    assert!(again.on, "두 번째 open 이 꺼졌다고 답했다");
+    // ★ **반환값만 보면 공허하다** — 변이(두 번째 open 을 토글로 바꾸기)가 살아남아
+    //   그것을 알려 줬다. 실제 상태를 캐물어야 한다: 지금 켜져 있다면 **토글은 끈다**.
+    assert!(
+        !state.toggle_overlay("clock").unwrap().on,
+        "두 번째 open 이 실제로는 꺼 버렸다 — 멱등이 아니다"
+    );
+}
+
+#[test]
+fn closing_an_overlay_that_is_not_open_still_says_closed() {
+    // 끄기도 멱등이다. 여기서 `None` 을 돌려주면 서버에 알림이 안 가고, 서버가 그리던
+    // 셀이 남을 수 있다(끄기는 반복해도 안전해야 한다).
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 6)]));
+    let off = state.set_overlay("clock", false).expect("패널이 있는데 못 껐다");
+    assert!(!off.on && off.closed.is_none());
+}
+
+#[test]
+fn an_explicit_open_still_pushes_the_other_overlay_out() {
+    // 상호 배타는 토글이 아니라 **켜기**의 성질이다 — 명시적 open 에도 걸려야 한다.
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 6)]));
+    state.set_overlay("calendar", true).unwrap();
+    let clock = state.set_overlay("clock", true).unwrap();
+    assert_eq!(clock.closed.as_deref(), Some("calendar"), "밀려난 것을 안 알린다");
+}
+
+#[test]
+fn the_toggle_still_toggles_after_being_rebuilt_on_set() {
+    // `toggle_overlay` 를 `set_overlay` 위에 다시 세웠다 — 그 뜻이 안 바뀌었는지 본다
+    // (여기가 어긋나면 `prefix t` 가 조용히 달라진다).
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 6)]));
+    assert!(state.toggle_overlay("clock").unwrap().on, "첫 토글은 켠다");
+    assert!(!state.toggle_overlay("clock").unwrap().on, "두 번째 토글은 끈다");
+}
+
+#[test]
 fn a_dimmed_pane_keeps_its_text_but_loses_its_brightness() {
     // 시계는 패널을 **덮되 뒤가 비쳐 보인다**. 딤은 새 글자가 아니라 있는 셀을 바꾸는
     // 일이라 런으로 못 나른다 — 서버는 "어느 패널"만 말하고 계산은 우리가 한다.
@@ -802,6 +851,27 @@ fn a_notice_with_ingredients_is_rebuilt_in_our_own_locale() {
         shown, "Auto-resume: injected 'continue' (pane 3)",
         "서버가 지은 한국어가 그대로 샜다 — notice 의 i18n 재료를 안 읽는 것이다"
     );
+}
+
+#[test]
+fn a_rows_columns_are_read_in_our_own_locale_but_its_name_is_not() {
+    // 줄의 **칸**은 플러그인이 적은 말이고(`<상위>`·실패 사유) **이름**은 자료다
+    // (파일 이름). 종전에는 칸도 자료로 취급해 그대로 그렸고, 그래서 `mdir` 을
+    // 카탈로그로 옮긴 뒤에도 영어 클라에는 `<상위>` 가 한국어로 떴다.
+    let row = PluginRow {
+        key: "/tmp".to_owned(),
+        // 이름이 하필 카탈로그에 있는 말과 같아도 **번역되면 안 된다** — 그런 이름의
+        // 파일이 실제로 있을 수 있고, 번역된 이름으로는 그 파일을 못 찾는다.
+        label: "빈 디렉터리입니다".to_owned(),
+        cols: vec!["<상위>".to_owned(), "<DIR>".to_owned()],
+    };
+    let (cols, label) = base::i18n::with_locale("en", || (row.say_cols(), row.label.clone()));
+    assert_eq!(
+        cols,
+        vec!["<UP>".to_owned(), "<DIR>".to_owned()],
+        "줄의 칸이 서버 로케일 그대로 샜다(`say_cols` 를 안 거치는 것이다)"
+    );
+    assert_eq!(label, "빈 디렉터리입니다", "이름을 번역했다 — 그건 자료다");
 }
 
 /// 재료가 없는 알림은 서버가 지은 글 그대로다(구버전 서버 호환).

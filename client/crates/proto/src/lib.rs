@@ -34,6 +34,7 @@ pub mod framing;
 pub mod link;
 pub mod message;
 pub mod mouse;
+pub mod palette;
 pub mod selection;
 pub mod prompt_box;
 pub mod rtt;

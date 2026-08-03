@@ -64,8 +64,16 @@ use Cover::{Done, Missing, Partial};
 /// 둘 다 정당하다(`EnterScroll` 은 모드 전이 · `ToggleExpand` 는 블록 목록 데모 뷰의 것).
 /// 리포트 = `docs/reports/2026-08-01-parity-ratchet-g1-remeasure.md`.
 ///
-/// ⚠ 다만 그 측정이 재는 것은 **"무엇인가 한다"이지 "맞는 일을 한다"가 아니다**. 그리고
-/// 설정 36·화면 17 축은 아직 같은 강도로 안 쟀다.
+/// ★ **설정 36·화면 17 축도 쟀다(2026-08-02p).** 액션 축에 던진 질문을 두 축에 그대로
+/// 던진 것이다 — 설정은 *"그 줄의 효과가 어딘가에 닿나"*(`base` 의
+/// `every_setting_row_reaches_something_that_reads_it` — 36줄 전부 닿는다. 예외 둘은
+/// 이미 알려진 특별 취급), 화면은 *"열 길이 있나"*(`gui` 의
+/// `every_screen_has_a_way_to_open_it` — 액션으로 못 여는 셋은 전부 서버 회신이 연다).
+/// 두 축 다 **손으로 적어 둔 예외 목록이 틀렸다**(설정 다섯이 거짓 사망 · 화면 여덟 중
+/// 다섯은 이미 열렸다) — 기계로 재는 이유가 그것이다.
+/// 리포트 = `docs/internal/client/reports/2026-08-02-locale-mdir-and-the-ruler.md`.
+///
+/// ⚠ 세 측정 다 재는 것은 **"무엇인가 한다"이지 "맞는 일을 한다"가 아니다**.
 struct Item {
     name: &'static str,
     cover: Cover,
@@ -397,7 +405,12 @@ static SCORE: &[(&str, usize, usize)] = &[
 /// 함께 적을 것 — 조용히 빠지면 "명령이 있는데 팔레트에 없다"가 된다.
 #[test]
 fn every_python_command_is_in_the_palette() {
-    const NOT_IN_PALETTE: &[&str] = &["paste-clipboard"];
+    /// ⚠ 예외 둘째: `monitor-bell` 은 **사용자 결정으로 화면에서 감췄다**(§10-21ⓜ —
+    /// "당장은 지원하지 않겠다"). 못 하는 것이 아니라 **입구를 닫은** 것이다: 액션
+    /// (`ToggleMonitorBell`)도 설정 값(`monitor_bell`)도 그대로 있고, 서버가 켜 두면
+    /// 우리도 그 값을 나른다. 지운 것은 팔레트 줄 · 설정 화면 줄 · 상태줄 표식 셋뿐이다.
+    /// 정본(파이썬)에서도 감출지는 **정하지 않았다** — 제보는 GUI 화면에 대한 것이었다.
+    const NOT_IN_PALETTE: &[&str] = &["monitor-bell", "paste-clipboard"];
     let have: BTreeSet<&str> = base::PALETTE
         .iter()
         .flat_map(|e| [e.name, e.name.split(' ').next().unwrap_or(e.name)])

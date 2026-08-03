@@ -129,6 +129,50 @@ pub struct Config {
     /// 환경 변수로 넘어간다([`crate::i18n::resolve`]). 파이썬과 **같은 파일·같은
     /// 키**라 두 클라가 설정을 공유한다(G5 결정).
     pub lang: String,
+    /// 앱 **전체** 글자 크기 배율([`FONT_SCALE_LO`]~[`FONT_SCALE_HI`], 기본 1.0).
+    ///
+    /// # 왜 캔버스만이 아닌가 (제보 2026-08-02 §10-21ⓐ)
+    ///
+    /// 제보가 "패널 캔버스만이 아니라 **앱 전체**(탭바·상태줄·오버레이 포함)"라고
+    /// 못박았다. 그래서 뷰는 이 값을 **글자를 만드는 두 자리**(`text`·`ui_text`)에
+    /// 곱하고, 캔버스 줄도 같은 배율을 탄다.
+    ///
+    /// # GUI 만의 설정이다
+    ///
+    /// 정본(TUI)의 글자 크기는 **호스트 단말**이 정한다 — 우리가 건드릴 자리가 없다.
+    /// 그래도 설정 파일은 두 클라가 공유하므로(G5 결정 3) 파이썬 쪽 파서가 모르는
+    /// 줄로 조용히 넘긴다(`keymap.load_config` 의 if/elif 는 모르는 옵션을 버린다 —
+    /// 확인함). 이 갈림은 패리티 표에 **`iv`** 로 선언한다.
+    pub font_scale: f32,
+}
+
+/// 글자 배율의 아래·위 끝과 한 걸음.
+///
+/// 끝을 두는 이유: 0 이하면 글자가 사라지고(창을 못 되돌린다), 너무 크면 격자가
+/// 1×1 이 되어 서버에 그 크기를 보고한다 — 둘 다 **되돌릴 입구까지 같이 사라지는**
+/// 자리다. 걸음이 0.1 인 것은 한 번 눌러 눈에 보이되 두세 번에 과하지 않은 폭이다.
+pub const FONT_SCALE_LO: f32 = 0.5;
+pub const FONT_SCALE_HI: f32 = 3.0;
+pub const FONT_SCALE_STEP: f32 = 0.1;
+
+/// 배율 한 걸음. **규칙의 주인은 core 다** — 뷰가 각자 더하면 두 자리에서 다르게
+/// 잘리고(끝값·반올림), 그 어긋남은 설정 파일에 그대로 굳는다.
+///
+/// 끝에서는 **돌지 않고 멈춘다**. `Number` 설정 줄은 한 바퀴 도는데(키 하나로 조작하니까)
+/// 이쪽은 키가 둘이라 돌 필요가 없고, 돌면 "한 번 더 키웠는데 갑자기 작아진다"가 된다.
+#[must_use]
+pub fn font_scale_step(now: f32, up: bool) -> f32 {
+    let next = if up { now + FONT_SCALE_STEP } else { now - FONT_SCALE_STEP };
+    // ★ 한 자리에서 접는다 — 값을 **격자 위에** 앉힌다.
+    //
+    // ⚠ 처음에는 "안 접으면 `1.0000001` 이 설정 파일에 적힌다"고 적었는데 **틀렸다**:
+    //   파일은 `number_text` 가 `{:.2}` 로, 화면은 `{:.1}×` 로 적어서 둘 다 드리프트를
+    //   가려 준다(실측: 열 걸음 뒤 `2.0000002`, 적히는 글자는 양쪽 다 `2.00`).
+    //   접는 진짜 이유는 **가려 주는 것과 같은 값인 것은 다르다**는 것이다 — 배율은
+    //   `==` 로 견주는 자리가 있고(끝에 닿았나 = 뷰가 "더 못 키운다"를 가르는 판정),
+    //   격자를 벗어난 값은 그 판정을 조용히 흔든다. 오라클도 **정확 비교**로 잰다.
+    let next = (next * 10.).round() / 10.;
+    next.clamp(FONT_SCALE_LO, FONT_SCALE_HI)
 }
 
 impl Default for Config {
@@ -159,8 +203,32 @@ impl Default for Config {
             ambiguous_width: "auto".to_owned(),
             hooks: crate::hooks::Hooks::default(),
             lang: String::new(),
+            font_scale: 1.0,
         }
     }
+}
+
+/// 설정 **쓰기**를 다른 파일로 돌려놓는 자리(테스트 전용).
+static WRITE_SINK: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// 이 프로세스의 설정 쓰기를 `path` 로 돌린다. **테스트 전용**이고, 처음 한 번만 먹는다.
+///
+/// # 왜 필요했나 (2026-08-02 실측)
+///
+/// 액션 축 오라클(`gui` 의 `every_action_does_something_in_this_view`)은 **액션 전수**를
+/// 뷰에 먹인다. 그 안에는 설정 파일을 고치는 것들이 섞여 있어(`ToggleInactiveDim` ·
+/// `SetLang` · 새로 든 `FontScale`) `cargo test` 한 번이 **돌린 사람의 진짜 config 를
+/// 고쳤다**. 토글은 티가 안 나지만 글자 배율은 다음 기동에 눈에 보인다.
+///
+/// # 왜 환경변수가 아닌가
+///
+/// `PYTMUX_CONFIG` 를 `set_var` 로 세우는 길은 이 저장소가 **금지**한 것이다 — 프로세스
+/// 전역이라 형제 테스트와 경합한다(`config_tests.rs` 의 설정 축 측정이 그래서 파일을
+/// 안 건드린다). `OnceLock` 은 먼저 부른 쪽이 이기고 그 뒤로 안 바뀌므로 경합이 없다.
+///
+/// 제품 경로에서는 아무도 안 부른다 → `get()` 이 늘 `None` 이라 동작이 종전과 같다.
+pub fn redirect_writes(path: PathBuf) {
+    let _ = WRITE_SINK.set(path);
 }
 
 impl Config {
@@ -199,6 +267,10 @@ impl Config {
     /// (`$PYTMUX_HOME/config`, 없으면 XDG). 설정 화면에서 처음 값을 바꾸는 사람은
     /// 파일이 아직 없다 — 거기서 "파일이 없다"로 실패하면 설정을 영영 못 남긴다.
     pub fn path_for_write() -> PathBuf {
+        // ★ 테스트가 세운 사물함이 **가장 먼저**다 — 아래를 보라(`redirect_writes`).
+        if let Some(sink) = WRITE_SINK.get() {
+            return sink.clone();
+        }
         if let Some(explicit) = std::env::var_os("PYTMUX_CONFIG") {
             return PathBuf::from(explicit);
         }
@@ -359,6 +431,11 @@ impl Config {
                         config.inactive_dim_ratio = ratio.clamp(0.0, 0.8);
                     }
                 }
+                "font-scale" => {
+                    if let Ok(scale) = value.parse::<f32>() {
+                        config.font_scale = scale.clamp(FONT_SCALE_LO, FONT_SCALE_HI);
+                    }
+                }
                 _ => {}
             }
         }
@@ -455,6 +532,8 @@ pub struct SettingValues {
     /// 사용자가 한쪽에서 배운 것을 다른 쪽에서 못 쓴다.
     pub set_titles_string: String,
     pub inactive_dim_ratio: f32,
+    /// 앱 전체 글자 배율(설정 파일 — GUI 만의 줄, §10-21ⓐ).
+    pub font_scale: f32,
     pub mode_keys: String,
     pub mouse_drag_threshold: u16,
     pub ambiguous_width: String,
@@ -494,6 +573,7 @@ impl Default for SettingValues {
             set_titles: false,
             set_titles_string: String::new(),
             inactive_dim_ratio: 0.0,
+            font_scale: 1.0,
             mode_keys: String::new(),
             mouse_drag_threshold: 1,
             ambiguous_width: String::new(),
@@ -529,6 +609,17 @@ pub const SETTINGS: &[Setting] = &[
         key: "inactive-dim-ratio",
         cat: "표시",
         kind: SettingKind::Number { lo: 0.0, hi: 0.8, step: 0.02 },
+    },
+    // ★ **GUI 만의 줄이다**(§10-21ⓐ) — 정본의 글자 크기는 호스트 단말이 정한다.
+    //   설정 파일은 공유하지만 파이썬 파서가 모르는 옵션을 조용히 넘기므로 안전하다.
+    Setting {
+        key: "font-scale",
+        cat: "표시",
+        kind: SettingKind::Number {
+            lo: FONT_SCALE_LO,
+            hi: FONT_SCALE_HI,
+            step: FONT_SCALE_STEP,
+        },
     },
     Setting {
         key: "tab-bar",
@@ -634,11 +725,6 @@ pub const SETTINGS: &[Setting] = &[
         key: "monitor-activity",
         cat: "동작",
         kind: SettingKind::Toggle(Action::ToggleMonitorActivity),
-    },
-    Setting {
-        key: "monitor-bell",
-        cat: "동작",
-        kind: SettingKind::Toggle(Action::ToggleMonitorBell),
     },
     Setting {
         key: "synchronize-panes",
@@ -799,6 +885,8 @@ pub static SETTING_LABELS: &[(&str, &str)] = &[
     ("single-border", "단일 패널 테두리"),
     ("tab-bar", "탭 바 표시"),
     ("inactive-dim-ratio", "흐리게 세기"),
+    // 정본에 이 줄이 없다(GUI 만의 설정) → `NO_CANON_LABEL` 에 사유와 함께 적어 뒀다.
+    ("font-scale", "글자 크기 배율"),
     ("status-position", "상태줄 위치"),
     ("language", "언어"),
     ("prefix", "prefix 키"),
@@ -822,7 +910,6 @@ pub static SETTING_LABELS: &[(&str, &str)] = &[
     ("window-size", "창 크기 규칙"),
     ("synchronize-panes", "입력 동기화"),
     ("monitor-activity", "활동 모니터"),
-    ("monitor-bell", "벨 모니터"),
     ("automatic-rename", "탭 자동 이름"),
     ("status-left", "상태줄 왼쪽 포맷"),
     ("status-right", "상태줄 오른쪽 포맷"),
@@ -987,6 +1074,8 @@ impl Setting {
             "ambiguous-width" => values.ambiguous_width.clone(),
             "mouse-drag-threshold" => values.mouse_drag_threshold.to_string(),
             "inactive-dim-ratio" => format!("{:.2}", values.inactive_dim_ratio),
+            // 배율은 한 자리면 충분하다(걸음이 0.1) — `1.00` 은 자릿수만 늘어 읽기 나쁘다.
+            "font-scale" => format!("{:.1}×", values.font_scale),
             // 링크 줄은 값이 없다 — `…` 로 "여기서 다른 화면이 열린다"를 알린다.
             "list-keys" | "plugins" => "…".to_string(),
             // 값의 주인은 런타임 로케일이다 — 서버도 `SettingValues` 도 모른다.
@@ -1133,6 +1222,23 @@ pub fn flip_config(key: &str, now: &Config) -> Option<(Config, std::io::Result<P
     Some((next, written))
 }
 
+/// 숫자 옵션을 **설정 파일에 적을 글**로.
+///
+/// 정수 옵션은 정수로 적는다 — `3.00` 은 파서가 `u16` 으로 못 읽어 **그 줄이 조용히
+/// 무시된다**(파이썬 정본도 같다). 증상은 "설정 화면에서 올렸는데 다음 기동에 되돌아
+/// 있다"라, 쓰는 자리와 읽는 자리가 어긋나도 아무도 안 운다.
+///
+/// 함수로 뺀 이유가 그것이다: 이 규칙을 [`set_number`] 안에 두면 **테스트가 같은 규칙을
+/// 한 벌 더 적어야** 하고, 두 벌이 되는 순간 이 게이트는 자기 사본을 재게 된다
+/// (`every_setting_row_reaches_something_that_reads_it` 이 실제로 그 자리에 섰다).
+pub fn number_text(key: &str, value: f32) -> String {
+    if matches!(key, "mouse-drag-threshold" | "status-interval") {
+        format!("{}", value as i64)
+    } else {
+        format!("{value:.2}")
+    }
+}
+
 /// 설정 파일의 숫자 옵션 하나를 놓는다.
 pub fn set_number(
     key: &str,
@@ -1142,17 +1248,12 @@ pub fn set_number(
     let mut next = now.clone();
     match key {
         "inactive-dim-ratio" => next.inactive_dim_ratio = value.clamp(0.0, 0.8),
+        "font-scale" => next.font_scale = value.clamp(FONT_SCALE_LO, FONT_SCALE_HI),
         "mouse-drag-threshold" => next.mouse_drag_threshold = value.clamp(1.0, 20.0) as u16,
         "status-interval" => next.status_interval = value.clamp(1.0, 60.0) as u16,
         _ => return None,
     }
-    // 정수 옵션은 정수로 적는다 — `3.00` 을 파이썬이 못 읽는다.
-    let text = if matches!(key, "mouse-drag-threshold" | "status-interval") {
-        format!("{}", value as i64)
-    } else {
-        format!("{value:.2}")
-    };
-    Some((next, Config::write_option(key, &text)))
+    Some((next, Config::write_option(key, &number_text(key, value))))
 }
 
 /// 이 물음의 대답이 **설정 파일의 어느 키**로 가는가. 물음이 설정용이 아니면 `None`.

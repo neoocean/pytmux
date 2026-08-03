@@ -709,23 +709,42 @@ pub fn encode(key: Key, mods: Mods) -> Option<Vec<u8>> {
                 c.encode_utf8(&mut buf).as_bytes().to_vec()
             }
         }
-        // Shift 를 키 쪽에 접은 것들은 **패널로 갈 때 수정자 없는 것과 같은 바이트**다
-        // (`Key::ShiftLeft` 주석 참조) — 이 갈래를 만들기 전과 같아야 지금 도는 앱의
-        // 손버릇이 안 바뀐다.
-        Key::Enter | Key::ShiftEnter => vec![b'\r'],
+        // ★ **수정자 붙은 커서 키**(§10-21ⓩ2) — 정본 `clientutil.SPECIAL` 과 같은 표다.
+        //
+        // 종전에는 이것들이 **수정자 없는 바이트**로 나갔다("이 갈래를 만들기 전과 같은
+        // 바이트라야 지금 도는 앱의 손버릇이 안 바뀐다"는 판단과 함께). 그 대가가 제보다:
+        // `Ctrl`+`End` 로 맨 아래로 못 간다 — 패널 안 앱은 그냥 `End` 를 받는다. 정본은
+        // 그 자리에 표를 갖고 있고(*"예전엔 매핑이 없어 버려졌다"*), 두 클라가 **같은
+        // 바이트**를 보내는 것이 옳다. **이 변화는 의도된 것이다.**
+        //
+        // ⚠ 여기 없는 조합(예 `Ctrl`+화살표)은 **정본에도 없다** — 넓히려면 두 표를
+        //   같이 고친다(적합성 테스트가 그것을 강제한다).
+        Key::ShiftUp => b"\x1b[1;2A".to_vec(),
+        Key::ShiftDown => b"\x1b[1;2B".to_vec(),
+        Key::ShiftRight => b"\x1b[1;2C".to_vec(),
+        Key::ShiftLeft => b"\x1b[1;2D".to_vec(),
+        Key::ShiftHome => b"\x1b[1;2H".to_vec(),
+        Key::ShiftEnd => b"\x1b[1;2F".to_vec(),
+        Key::Home if mods.ctrl => b"\x1b[1;5H".to_vec(),
+        Key::End if mods.ctrl => b"\x1b[1;5F".to_vec(),
+        // 아래는 수정자 없는 바이트. Shift 를 키 쪽에 접은 것들 중 **Enter·Delete·
+        // Escape** 는 정본도 수정자 없는 것과 다른 바이트를 주지 않는다(그 표에 있다).
+        Key::Enter => vec![b'\r'],
+        // ★ `Shift`+`Enter` 는 **LF** 다(정본 표: *"LF — Claude 등 입력 줄바꿈
+        //   (Enter=CR 제출과 구분)"*). 우리는 CR 을 보내고 있었다 — 그러면 줄을 바꾸려던
+        //   손이 **제출**을 한다. 적합성 오라클이 이 갈림을 잡았다(§10-21ⓩ2 슬라이스).
+        Key::ShiftEnter => vec![b'\n'],
         Key::Tab => vec![b'\t'],
         Key::BackTab => b"\x1b[Z".to_vec(),
         Key::Backspace => vec![0x7f],
         Key::Delete | Key::ShiftDelete => b"\x1b[3~".to_vec(),
         Key::Escape | Key::ShiftEscape => vec![0x1b],
-        Key::Up | Key::ShiftUp => b"\x1b[A".to_vec(),
-        Key::Down | Key::ShiftDown => b"\x1b[B".to_vec(),
-        // Shift 를 키 쪽에 접어 뒀지만 **패널로 갈 때는 화살표 그대로**다 — 이 갈래를
-        // 만들기 전과 같은 바이트라야 지금 도는 앱의 손버릇이 안 바뀐다(`Key::ShiftLeft`).
-        Key::Right | Key::ShiftRight => b"\x1b[C".to_vec(),
-        Key::Left | Key::ShiftLeft => b"\x1b[D".to_vec(),
-        Key::Home | Key::ShiftHome => b"\x1b[H".to_vec(),
-        Key::End | Key::ShiftEnd => b"\x1b[F".to_vec(),
+        Key::Up => b"\x1b[A".to_vec(),
+        Key::Down => b"\x1b[B".to_vec(),
+        Key::Right => b"\x1b[C".to_vec(),
+        Key::Left => b"\x1b[D".to_vec(),
+        Key::Home => b"\x1b[H".to_vec(),
+        Key::End => b"\x1b[F".to_vec(),
         Key::PageUp => b"\x1b[5~".to_vec(),
         Key::PageDown => b"\x1b[6~".to_vec(),
         Key::Insert => b"\x1b[2~".to_vec(),

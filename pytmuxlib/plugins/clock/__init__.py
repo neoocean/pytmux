@@ -117,6 +117,10 @@ class _ClockPlugin:
         """1초마다 시계가 떠 있으면 True(코어가 재합성해 초 단위 갱신)."""
         return bool(getattr(app, "clock_panes", None))
 
+    def client_overlay_covers(self, app, pane_id):
+        """이 패널이 시계에 덮여 있나 — 코어가 클릭존을 남길지 정하는 데 쓴다."""
+        return pane_id in (getattr(app, "clock_panes", None) or ())
+
     def client_close_overlay(self, app, pane_id):
         """해당 패널의 시계를 닫는다(Shift+ESC/패널 클릭). 닫았으면 True."""
         cp = getattr(app, "clock_panes", None)

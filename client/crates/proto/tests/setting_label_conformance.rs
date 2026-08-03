@@ -62,7 +62,12 @@ fn plugin_setting_keys() -> Vec<String> {
 ///
 /// 목록으로 **박아 두는** 이유: 새 설정을 넣으면서 이름을 안 지으면 조용히 여기로
 /// 떨어져 "정본에 없으니 통과"가 된다. 늘려야 통과하게 두면 그때 한 번 멈춘다.
-const NO_CANON_LABEL: &[&str] = &["ambiguous-width", "win-mouse-motion", "window-size"];
+///
+/// ⚠ `font-scale` 만 사정이 다르다: 앞의 셋은 **정본에 그 줄이 있고 번역만 없는** 것인데,
+/// 이것은 정본에 **줄 자체가 없다**(GUI 만의 설정 — §10-21ⓐ. 정본의 글자 크기는 호스트
+/// 단말이 정한다). 그래서 이름의 출처가 우리인 것이 맞고, 갈림은 패리티 표에 선언한다.
+const NO_CANON_LABEL: &[&str] =
+    &["ambiguous-width", "font-scale", "win-mouse-motion", "window-size"];
 
 #[test]
 fn every_setting_row_uses_the_canonical_korean_name() {

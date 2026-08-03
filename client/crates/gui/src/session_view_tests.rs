@@ -303,15 +303,15 @@ fn probe_at(x: f32, y: f32, w: f32, h: f32) -> RectF {
 #[test]
 fn a_committed_string_reaches_the_pane() {
     // 한글은 자판 한 번이 글자 하나가 아니다. 조합 결과는 키가 아니라 문자열로 온다.
-    assert!(SessionView::typed_goes_to_pane(InputMode::Normal, "한글"));
+    assert_eq!(SessionView::typed_target(InputMode::Normal, false, "한글"), TypedTo::Pane);
 }
 
 #[test]
 fn nothing_is_typed_while_the_user_is_talking_to_pytmux() {
     // 명령 모드에서 확정된 글자는 명령이 아니다. 패널로 흘리면 사용자가 pytmux 에게
-    // 말하는 중에 셸에 글자가 찍힌다.
+    // 말하는 중에 셸에 글자가 찍힌다. **판이 없을 때** 이야기다(아래 ⓜ2 참조).
     for mode in [InputMode::Command, InputMode::Scroll] {
-        assert!(!SessionView::typed_goes_to_pane(mode, "한글"), "{mode:?}");
+        assert_eq!(SessionView::typed_target(mode, false, "한글"), TypedTo::Drop, "{mode:?}");
     }
 }
 
@@ -319,7 +319,47 @@ fn nothing_is_typed_while_the_user_is_talking_to_pytmux() {
 fn an_empty_commit_sends_nothing() {
     // 입력기는 조합을 취소할 때 빈 확정을 보낸다. 그걸 그대로 보내면 빈 입력 프레임이
     // 매번 서버로 나간다.
-    assert!(!SessionView::typed_goes_to_pane(InputMode::Normal, ""));
+    assert_eq!(SessionView::typed_target(InputMode::Normal, false, ""), TypedTo::Drop);
+    assert_eq!(SessionView::typed_target(InputMode::Command, true, ""), TypedTo::Drop);
+}
+
+#[test]
+fn a_committed_string_reaches_the_open_panel() {
+    // ★ **제보 그대로**(§10-21ⓜ2): `esc` `:` 에서 한글을 못 쳤다. 판이 열려 있으면
+    //   확정된 글자는 **그 판의 것**이다 — 종전에는 모드만 보고 버렸다.
+    assert_eq!(SessionView::typed_target(InputMode::Command, true, "한글"), TypedTo::Screen);
+    // 평소 모드에서 판이 열려 있는 경우(작성창 등)도 판이 먼저다.
+    assert_eq!(SessionView::typed_target(InputMode::Normal, true, "한글"), TypedTo::Screen);
+}
+
+#[test]
+fn korean_typed_into_the_palette_lands_in_the_filter() {
+    // 순수 판정만 재면 배선이 빠져도 통과한다 — **실제로 필터에 쌓이는지**를 본다.
+    let (link, tx, _sent) = ServerLink::detached("/tmp/test.sock");
+    let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+    for msg in three_tabs() {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.handle_key(Key::Escape, Mods::NONE);
+    view.handle_key(Key::Char(':'), Mods::NONE);
+    assert_eq!(view.screens.top(), Some(Screen::Commands), "팔레트가 안 열렸다");
+    assert!(view.handle_typed("한글"), "확정 글자를 아무도 안 받았다");
+    assert_eq!(view.screens.typed(), "한글", "필터에 안 쌓였다");
+}
+
+#[test]
+fn korean_typed_in_command_mode_without_a_panel_still_goes_nowhere() {
+    // 반대쪽도 지킨다 — 판이 없으면 종전 그대로다(셸에 글자가 찍히면 안 된다).
+    let (link, tx, _sent) = ServerLink::detached("/tmp/test.sock");
+    let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+    for msg in three_tabs() {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.handle_key(Key::Escape, Mods::NONE);
+    assert_eq!(view.screens.top(), None, "판이 없어야 한다");
+    assert!(!view.handle_typed("한글"), "esc 모드에서 글자가 새 나갔다");
 }
 
 // ── 마우스 패스스루(슬라이스 10) ─────────────────────────────────────────────
@@ -425,6 +465,482 @@ fn a_paste_needs_both_modifiers_and_nothing_else() {
     assert!(!SessionView::is_paste_chord(&ks("c", true, false, true)), "Ctrl+Shift+C 는 다른 키다");
     // Alt 가 섞이면 다른 조합이다 — 넓게 잡으면 그 조합이 통째로 사라진다.
     assert!(!SessionView::is_paste_chord(&ks("v", true, true, true)));
+}
+
+// ── 하단 한 줄(§10-21ⓝ·ⓦ·ⓗ2) ────────────────────────────────────────────────
+//
+// 제보 셋이 **같은 줄**을 두고 있다: 복사 결과를 그 자리로 모으고(ⓝ) 닫을 수 있게 하고
+// 시한을 주며(ⓦ) 그래서 비워진 머리줄을 가운데로 옮긴다(ⓗ2).
+
+#[test]
+fn the_copy_note_lands_on_the_bottom_line_not_the_head() {
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.note_flash_for_test("· 20 chars copied".into(), proto::session::Severity::Ok);
+    let painted = painted_after_setup(vec![layout_one_pane()], &[], |v| {
+        v.note_flash_for_test("· 20 chars copied".into(), proto::session::Severity::Ok)
+    });
+    assert!(
+        painted_contains(&painted, "20 chars copied"),
+        "복사 결과가 프레임에 없다: {painted:?}"
+    );
+    // 머리줄에는 **안 붙는다** — 그 줄에는 이제 이름과 주소만 남는다(ⓗ2 의 전제).
+    assert!(
+        painted
+            .iter()
+            .any(|t| t.starts_with("pytmux-gui · ") && !t.contains("copied")),
+        "머리줄에 복사 결과가 아직 붙어 있다: {painted:?}"
+    );
+}
+
+#[test]
+fn the_line_is_not_always_red() {
+    // ★ 이 줄은 빨강 고정이었다. 복사 결과까지 여기 오면서 **성공이 오류로 읽히던**
+    //   자리다 — 색은 심각도가 정하고, 표는 알림 이력과 같은 것을 쓴다.
+    use proto::session::Severity;
+    assert_eq!(SessionView::severity_color(Severity::Ok), palette::GREEN);
+    assert_eq!(SessionView::severity_color(Severity::Error), palette::RED);
+    assert_eq!(SessionView::severity_color(Severity::Warn), palette::YELLOW);
+    assert_ne!(
+        SessionView::severity_color(Severity::Ok),
+        SessionView::severity_color(Severity::Error),
+        "성공과 오류가 같은 색이면 이 줄은 종전과 같다"
+    );
+}
+
+#[test]
+fn the_bottom_line_can_be_closed_but_the_history_stays() {
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.state.note_error("서버가 성났다");
+    view.pump_headless();
+    assert!(view.live_flash_for_test().is_some(), "오류가 하단 줄로 안 왔다");
+    let before = view.state.notices().len();
+    assert!(view.chrome_click(base::chrome::ClickTarget::DismissMessage));
+    assert!(view.live_flash_for_test().is_none(), "닫아도 줄이 남는다");
+    // ⚠ 이력은 남아야 한다 — 지우면 그 줄을 눌러 이력으로 가는 동선이 무의미해진다.
+    assert_eq!(view.state.notices().len(), before, "닫기가 이력까지 지웠다");
+}
+
+#[test]
+fn a_disconnect_line_does_not_expire() {
+    // 끊김은 지나가는 사건이 아니라 **지금 상태**다 — 사라지면 화면은 멀쩡해 보이는데
+    // 아무것도 안 오는 창이 된다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.ended = Some("서버가 닫았다".into());
+    let flash = view.live_flash_for_test().expect("끊김 줄이 없다");
+    assert!(flash.has_no_deadline(), "끊김에 시한이 붙었다");
+}
+
+// ── 판 공통 기하(§10-21 ⓗ·ⓢ·ⓥ·ⓐ2·ⓚ2) ───────────────────────────────────────
+//
+// 제보 다섯의 뿌리가 하나다: **판의 기하를 내용이 정한다**. 여기서 재는 것은 그 반대다 —
+// 내용이 달라져도 판이 같은가.
+
+/// 판 하나를 열고 **그려진 줄 수**를 센다.
+fn panel_line_count(messages: Vec<ServerMessage>, keys: &[(Key, Mods)]) -> usize {
+    painted_after(messages, keys).len()
+}
+
+#[test]
+fn the_palette_keeps_its_height_when_the_filter_narrows() {
+    // ⓗ⑵ — 후보 수가 달라져도 높이는 그대로다. 종전에는 목록이 짧아지면 판이 줄었다.
+    //
+    // ⚠ **필터는 후보가 "적지만 0 은 아닌" 자리라야 한다**(처음에 여기서 틀렸다):
+    //   0 개면 "맞는 명령이 없다" 갈래로 빠져 다른 코드가 채우고, 예산을 넘게 많으면
+    //   양쪽 다 예산만큼 그려 차이가 안 난다 — 둘 다 변이가 살아남는다.
+    let open = |keys: &[(Key, Mods)]| {
+        let mut all = vec![(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)];
+        all.extend_from_slice(keys);
+        painted_after(three_tabs(), &all)
+    };
+    let wide = open(&[]);
+    assert!(
+        wide.iter().any(|t| t.starts_with("> ")),
+        "팔레트 입력줄이 없다 — 판이 안 열렸다: {wide:?}"
+    );
+    // `notice-history` 하나만 남는 필터.
+    let typed: Vec<(Key, Mods)> =
+        "notice".chars().map(|c| (Key::Char(c), Mods::NONE)).collect();
+    let narrow = open(&typed);
+    let hits = narrow.iter().filter(|t| t.contains("notice-history")).count();
+    assert_eq!(hits, 1, "필터가 한 줄만 남기지 않았다 — 단언이 뜻을 잃는다: {narrow:?}");
+    // ⚠ **조각 수가 아니라 줄 수를 센다**(§10-21ⓞ 이후). 한 줄이 세 칸으로 갈리면서
+    //   "그려진 글 조각의 수"는 더 이상 높이의 대리값이 아니다 — 그 CL 에서 이 단언이
+    //   먼저 울었고, 그것이 옳았다(대리값이 뜻을 잃었다는 신호다).
+    let rows = |keys: &[(Key, Mods)]| -> usize {
+        let mut all = vec![(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)];
+        all.extend_from_slice(keys);
+        let boxes = painted_boxes(three_tabs(), &all);
+        let mut ys: Vec<i64> = boxes.iter().map(|(_, y)| y.round() as i64).collect();
+        ys.sort_unstable();
+        ys.dedup();
+        ys.len()
+    };
+    assert_eq!(
+        rows(&[]),
+        rows(&typed),
+        "필터로 좁혔더니 판 높이가 달라졌다(ⓗ)
+넓을 때: {wide:?}
+좁을 때: {narrow:?}"
+    );
+}
+
+#[test]
+fn the_palette_is_half_and_the_others_are_two_thirds() {
+    // 비율의 주인은 core 다 — 제보가 팔레트만 "절반"이라고 못박았다.
+    use base::screens::Screen;
+    assert_eq!(Screen::Commands.height_ratio(), (1, 2));
+    assert_eq!(Screen::Settings.height_ratio(), (2, 3));
+    assert_eq!(Screen::Notices.height_ratio(), (2, 3));
+}
+
+#[test]
+fn a_short_list_still_fills_the_panel() {
+    // ⓥ — 굴려 끝에 가까워져도, 목록이 짧아도 판은 그대로다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    let budget = view.panel_budget_for_test();
+    assert!(budget >= 5, "예산이 너무 작아 단언이 뜻을 잃는다: {budget}");
+    // 빈 목록도 예산만큼 자리를 차지한다(빈 줄로 채운다).
+    let padded = view.pad_rows_count_for_test(0, budget);
+    assert_eq!(padded, budget, "모자란 줄을 안 채운다");
+}
+
+#[test]
+fn a_long_line_is_cut_so_it_cannot_push_the_panel_out() {
+    // ⓚ2 — `p4changes` 의 CL 설명 한 줄이 그 부류다. 폭을 못박아도 줄이 안 잘리면
+    // 상한을 넘겨 밀고 나간다.
+    let long = "x".repeat(400);
+    let cut = proto::footer::elide(&long, 110);
+    assert!(cut.chars().count() <= 110, "안 잘렸다: {}", cut.chars().count());
+    assert!(cut.ends_with('…'), "잘렸으면 그 사실이 보여야 한다: {cut}");
+    // 짧은 줄은 안 건드린다(자르는 것이 목적이 아니다).
+    assert_eq!(proto::footer::elide("짧다", 110), "짧다");
+}
+
+// ── 모드 표식·켜짐 표시(§10-21ⓖ·ⓧ) ─────────────────────────────────────────
+//
+// 두 제보가 **같은 그림**을 요구한다: 배경을 채운 반전 칩. ⓖ 는 `esc` 모드를 눈에 띄게,
+// ⓧ 는 토글이 켜졌다는 것을 배지가 말하게.
+
+#[test]
+fn the_mode_badge_sits_in_the_bottom_status_bar_not_the_tab_bar() {
+    // 프레임은 위에서 아래로 그려진다 — 탭바에 남아 있으면 캔버스보다 **먼저**,
+    // 상태줄로 갔으면 **나중에** 그려진다(감시류 배지와 같은 방법으로 잰다).
+    let screen: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 1,
+        "rows": [[["HELLO-ORACLE", {}]]], "cursor": [0, 0], "wrap": [], "top": 0
+    }))
+    .unwrap();
+    let painted = painted_after(vec![layout_one_pane(), screen], &[(Key::Escape, Mods::NONE)]);
+    let mode_at = painted.iter().position(|t| t.contains("esc"));
+    let canvas_at = painted.iter().position(|t| t.contains("HELLO-ORACLE"));
+    assert!(mode_at.is_some(), "esc 모드 표식이 프레임에 없다: {painted:?}");
+    assert!(canvas_at.is_some(), "캔버스가 없다 — 단언이 공허해진다: {painted:?}");
+    assert!(
+        mode_at > canvas_at,
+        "모드 표식이 캔버스보다 먼저 그려졌다(=탭바 자리 그대로다): {painted:?}"
+    );
+}
+
+#[test]
+fn a_toggle_badge_says_when_it_is_on() {
+    // ★ 상태는 이미 클라가 안다 — 안 하던 것은 그것을 모양에 싣는 일뿐이었다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    assert!(
+        !view.badge_is_on_for_test(base::Badge::TouchScroll),
+        "스크롤 모드가 아닌데 켜짐이다"
+    );
+    view.apply_action_for_test(base::Action::ToggleScroll);
+    assert!(
+        view.badge_is_on_for_test(base::Badge::TouchScroll),
+        "스크롤 모드에 들어왔는데 배지가 꺼짐이다(ⓧ)"
+    );
+}
+
+#[test]
+fn a_button_badge_is_never_on() {
+    // 누르면 화면이 열리는 **버튼**은 토글이 아니다 — 켜짐을 말할 것이 없다.
+    let (view, _tx, _sent) = harness();
+    for badge in [base::Badge::Notices, base::Badge::Host, base::Badge::Clock, base::Badge::Calendar] {
+        assert!(!view.badge_is_on_for_test(badge), "{badge:?} 가 켜짐으로 나온다");
+    }
+}
+
+#[test]
+fn on_and_picked_are_different_pictures() {
+    // ⚠ FOCUS 는 "키보드가 이것을 고르고 있다"이고 반전은 "켜져 있다"다. 색이 같으면
+    //   그 둘이 한 그림이 되어 어느 쪽인지 알 수 없다.
+    assert_ne!(theme::INVERT_BG, theme::FOCUS);
+    // 반전 칩은 배경 위에 글자를 빼낸다 — 둘이 같으면 글자가 안 보인다.
+    assert_ne!(theme::INVERT_BG, theme::INVERT_FG);
+}
+
+// ── Alt+Tab 동선(§10-21ⓕ·ⓔ2·ⓕ2) ────────────────────────────────────────────
+//
+// 셋이 한 이야기다: 스위처를 열면 커서가 **다음 탭**에 있고(ⓔ2), `Ctrl` 을 쥔 채 `Tab`
+// 으로 돌며(ⓕ2), 짧게 눌렀다 떼면 그것이 곧 "다음 탭으로"다(ⓕ).
+
+#[test]
+fn the_switcher_opens_on_the_next_tab_not_the_first() {
+    // 정본이 일부러 그렇게 한다 — `esc Tab Enter` 가 곧 "다음 탭으로 전환"이어야 한다.
+    let (mut view, tx, _sent) = harness();
+    for msg in three_tabs() {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.apply_action_for_test(base::Action::ShowTabs);
+    assert_eq!(view.screens.top(), Some(base::screens::Screen::Tabs));
+    assert_eq!(view.screens.selected(), 1, "첫 선택이 '다음 탭'이 아니다");
+}
+
+#[test]
+fn a_single_tab_does_not_open_the_switcher() {
+    // 고를 것이 없는 목록을 띄우는 것은 "아무 일도 안 일어난다"와 같다(정본과 같은 규칙).
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(
+        serde_json::from_value(serde_json::json!({"t": "status", "windows": [
+            {"index": 0, "name": "하나", "active": true},
+        ]}))
+        .unwrap(),
+    )))
+    .unwrap();
+    view.pump_headless();
+    view.apply_action_for_test(base::Action::ShowTabs);
+    assert_eq!(view.screens.top(), None, "탭이 하나뿐인데 스위처가 열렸다");
+}
+
+#[test]
+fn ctrl_tab_is_the_switcher_chord() {
+    assert_eq!(SessionView::tab_switch_chord(&ks("tab", true, false, false)), Some(true));
+    assert_eq!(
+        SessionView::tab_switch_chord(&ks("tab", true, false, true)),
+        Some(false),
+        "Shift 가 섞이면 뒤로다"
+    );
+    // 평범한 Tab 은 **패널의 것**이다(셸 자동완성) — 가로채면 조용히 사라진다.
+    assert_eq!(SessionView::tab_switch_chord(&ks("tab", false, false, false)), None);
+    assert_eq!(SessionView::tab_switch_chord(&ks("tab", true, true, false)), None);
+    assert_eq!(SessionView::tab_switch_chord(&ks("a", true, false, false)), None);
+}
+
+#[test]
+fn holding_ctrl_walks_the_list_and_releasing_confirms() {
+    // ★ 이것이 ⓕ2 의 전부다: 쥔 채 돌고, 떼면 확정.
+    let (mut view, tx, sent) = harness();
+    for msg in three_tabs() {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.alt_tab_step_for_test(true); // Ctrl+Tab — 열리고 커서는 '다음 탭'
+    assert_eq!(view.screens.top(), Some(base::screens::Screen::Tabs));
+    assert_eq!(view.screens.selected(), 1);
+    view.alt_tab_step_for_test(true); // 쥔 채 한 번 더 — 한 줄 아래
+    assert_eq!(view.screens.selected(), 2, "쥔 채 누른 Tab 이 목록을 안 움직였다");
+    view.release_ctrl(); // 뗌 = 확정
+    view.pump_headless();
+    assert_eq!(view.screens.top(), None, "떼도 판이 안 닫혔다");
+    let out = sent.lock().unwrap().clone();
+    assert!(
+        out.iter().any(|o| matches!(o, Outgoing::Command(Command::SelectWindow { .. }))),
+        "확정했는데 탭 전환이 안 나갔다: {out:?}"
+    );
+}
+
+#[test]
+fn a_quick_ctrl_tab_is_just_next_tab() {
+    // ⓕ 의 동작은 ⓕ2 에서 **저절로** 나온다 — 열자마자 커서가 다음 탭이므로.
+    let (mut view, tx, sent) = harness();
+    for msg in three_tabs() {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.alt_tab_step_for_test(true);
+    view.release_ctrl();
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    let picked = out.iter().find_map(|o| match o {
+        Outgoing::Command(Command::SelectWindow { index, .. }) => Some(*index),
+        _ => None,
+    });
+    assert_eq!(picked, Some(1), "짧게 눌렀다 뗀 것이 '다음 탭'이 아니다: {out:?}");
+}
+
+#[test]
+fn releasing_ctrl_without_holding_does_nothing() {
+    // 평소에 Ctrl 을 떼는 일은 흔하다 — 그때마다 무언가 일어나면 안 된다.
+    let (mut view, tx, _sent) = harness();
+    for msg in three_tabs() {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    assert!(!view.release_ctrl());
+    assert_eq!(view.screens.top(), None);
+}
+
+// ── 패널 커서(§10-21ⓒ) ───────────────────────────────────────────────────────
+//
+// 배선이 **통째로 없던** 자리다: 서버는 `screen` 마다 커서를 통째로 주는데 뷰가 그 값을
+// 한 번도 안 읽었다. 그래서 여기서 재는 것은 "그 값이 화면 칸으로 옮겨지나"다.
+//
+// ⚠ **그림 자체는 이 하네스가 못 잰다.** 시험 글꼴은 칸 폭이 0이라 오버레이의 paint 가
+// `cw <= 0.5` 가드에서 돌아간다(스플리터·테두리도 같은 이유로 여기서 안 그려진다) —
+// 그 층은 `client/CLAUDE.md` 가 적은 대로 **라이브 스크린샷이** 잡는다. 여기서는 그
+// 앞 단계(어느 칸인가)를 못 박는다.
+
+fn screen_with_cursor(col: u16, row: u16) -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 1,
+        "rows": [[["HELLO", {}]]], "cursor": [col, row], "wrap": [], "top": 0
+    }))
+    .unwrap()
+}
+
+#[test]
+fn the_cursor_lands_on_the_cell_the_server_named() {
+    let (mut view, tx, _sent) = harness();
+    for msg in [layout_one_pane(), screen_with_cursor(3, 2)] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    let cur = view.cursor_cell().expect("커서를 안 그린다 — 서버가 준 값을 아무도 안 읽는다");
+    // 이 패널은 (0,0) 에서 시작하므로 패널 안 좌표가 곧 캔버스 좌표다.
+    assert_eq!((cur.x, cur.y), (3, 2));
+}
+
+#[test]
+fn the_cursor_follows_the_pane_offset() {
+    // 패널이 캔버스 안쪽에 있으면 그만큼 밀려야 한다 — 안 밀면 분할했을 때 커서가
+    // 왼쪽 패널에 나타난다(그 증상이 곧 ⓨ 의 모양이라 여기서 못 박는다).
+    let layout: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 80, "rows": 10, "active": 1,
+        "panes": [{"id": 1, "x": 10, "y": 4, "w": 20, "h": 5, "title": "sh", "active": true}]
+    }))
+    .unwrap();
+    let (mut view, tx, _sent) = harness();
+    for msg in [layout, screen_with_cursor(2, 1)] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    let cur = view.cursor_cell().unwrap();
+    assert_eq!((cur.x, cur.y), (12, 5));
+}
+
+#[test]
+fn no_cursor_while_a_panel_is_open() {
+    // 판이 떠 있는 동안 키는 그 판의 것이다 — 그때 패널 커서를 그리면 "여기 치면
+    // 들어간다"는 거짓말이 된다.
+    let (mut view, tx, _sent) = harness();
+    for msg in [layout_one_pane(), screen_with_cursor(1, 1)] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    assert!(view.cursor_cell().is_some(), "먼저 그려지고 있어야 뜻이 있는 단언이다");
+    view.screens.open(base::screens::Screen::Keys);
+    assert!(view.cursor_cell().is_none());
+}
+
+#[test]
+fn a_cursor_outside_the_pane_is_not_drawn() {
+    // 밀린 자리에 상자를 그리면 그것이 새 거짓말이 된다.
+    let (mut view, tx, _sent) = harness();
+    for msg in [layout_one_pane(), screen_with_cursor(200, 0)] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    assert!(view.cursor_cell().is_none());
+}
+
+// ── 글자 크기 배율(§10-21ⓐ) ──────────────────────────────────────────────────
+//
+// 제보가 "패널 캔버스만이 아니라 **앱 전체**"라고 못박았다. 그래서 재는 것 둘이다:
+// ⑴ 그 조합이 실제로 잡히는가(넓지도 좁지도 않게) ⑵ **글자 크기가 실제로 바뀌는가**.
+//
+// ⑵ 를 부정 단언으로 두면(예: "패널로 안 샌다") 배율을 아무 데도 안 곱해도 통과한다 —
+// `client/CLAUDE.md` 가 두 번 밟았다고 적은 그 자리다. 그래서 `scaled()` 가 만드는
+// **값**을 직접 본다.
+
+#[test]
+fn ctrl_plus_and_minus_change_the_text_size() {
+    assert_eq!(
+        SessionView::font_scale_chord(&ks("=", true, false, false)),
+        Some(Action::FontScale { up: true })
+    );
+    // Shift 를 눌러 `+` 가 오는 사람도 같은 뜻이다 — 하나만 받으면 절반에게 안 먹는다.
+    assert_eq!(
+        SessionView::font_scale_chord(&ks("+", true, false, true)),
+        Some(Action::FontScale { up: true })
+    );
+    assert_eq!(
+        SessionView::font_scale_chord(&ks("-", true, false, false)),
+        Some(Action::FontScale { up: false })
+    );
+    assert_eq!(
+        SessionView::font_scale_chord(&ks("0", true, false, false)),
+        Some(Action::FontScaleReset)
+    );
+}
+
+#[test]
+fn plain_minus_belongs_to_the_program_in_the_pane() {
+    // ★ 넓게 잡으면 패널에서 `-` 를 못 친다. 좁게 잡으면 확대가 안 된다 — 둘 다 조용하다.
+    assert_eq!(SessionView::font_scale_chord(&ks("-", false, false, false)), None);
+    assert_eq!(SessionView::font_scale_chord(&ks("=", false, false, false)), None);
+    // Alt 가 섞이면 다른 조합이다.
+    assert_eq!(SessionView::font_scale_chord(&ks("-", true, true, false)), None);
+    // 글자 키는 배율과 상관없다(`Ctrl+a` 를 삼키면 셸의 줄 처음 가기가 사라진다).
+    assert_eq!(SessionView::font_scale_chord(&ks("a", true, false, false)), None);
+}
+
+/// 배율을 **쓰기 경로를 안 타고** 옮긴다.
+///
+/// ⚠ `apply_action(FontScale)` 은 `set_number` 를 거쳐 **진짜 설정 파일**에 쓴다
+/// (`Config::path_for_write` — 이 상자에서 돌리는 사람의 파일이다). 이 저장소는
+/// 테스트에서 `PYTMUX_CONFIG` 를 세우는 것을 금한다(프로세스 전역이라 형제 테스트와
+/// 경합한다 — `config_tests.rs:865` 의 그 자리). 그래서 여기서는 **값만** 옮기고,
+/// "그 값이 설정 파일 형식으로 오간다"는 `base` 의 파일 왕복 오라클이 잰다.
+/// 액션이 실제로 이 자리에 닿는지는 `every_action_does_something_in_this_view` 가 센다.
+fn step_scale(view: &mut SessionView, up: bool) {
+    view.config.font_scale = base::config::font_scale_step(view.config.font_scale, up);
+}
+
+#[test]
+fn the_whole_app_grows_not_just_the_canvas() {
+    let (mut view, _tx, _sent) = harness();
+    let before = view.scaled(13.);
+    step_scale(&mut view, true);
+    let after = view.scaled(13.);
+    assert!(
+        after > before,
+        "글자가 안 커졌다 — 배율이 어디에도 안 곱해진 것이다: {before} → {after}"
+    );
+    // 크롬 글자도 **같은 배율**을 탄다(제보의 "앱 전체"가 그 뜻이다). 두 자리가 서로
+    // 다른 배율을 타면 탭바만 그대로 남는다.
+    assert!((view.scaled(11.) / 11. - view.scaled(13.) / 13.).abs() < 1e-6);
+}
+
+#[test]
+fn the_size_comes_back_to_one() {
+    let (mut view, _tx, _sent) = harness();
+    let base = view.scaled(13.);
+    for _ in 0..3 {
+        step_scale(&mut view, true);
+    }
+    assert!(view.scaled(13.) > base);
+    view.config.font_scale = 1.0;
+    assert!(
+        (view.scaled(13.) - base).abs() < 1e-6,
+        "되돌리기가 기본으로 안 온다 — 작게 줄여 놓으면 설정 화면조차 못 읽는다"
+    );
 }
 
 // ── Claude 구역(P5) ──────────────────────────────────────────────────────────
@@ -645,6 +1161,10 @@ use proto::message::ServerMessage;
 
 /// 소켓 없는 뷰 · 받을 것을 밀어 넣는 쪽 · 보낸 것이 쌓이는 자리.
 fn harness() -> (SessionView, std::sync::mpsc::Sender<LinkEvent>, Sent) {
+    // ★ 설정 쓰기를 **사물함으로 돌린다**(맨 처음 한 번만 먹는다). 액션 축 오라클이
+    //   액션 전수를 먹이는데 그중 몇은 설정 파일을 고친다 — 안 돌리면 `cargo test` 가
+    //   돌린 사람의 진짜 config 를 고친다(글자 배율은 다음 기동에 눈에 보인다).
+    base::config::redirect_writes(std::env::temp_dir().join("pytmux-gui-test-config"));
     let (link, tx, sent) = ServerLink::detached("/tmp/test.sock");
     // 글꼴은 값 하나다 — 그리지 않는 테스트에서는 어느 id 든 상관없다.
     (
@@ -788,25 +1308,22 @@ fn a_key_that_leaves_esc_mode_also_lets_go_of_the_chrome_focus() {
 
 #[test]
 fn the_bottom_edge_takes_the_focus_to_the_badges_and_enter_runs_one() {
-    let messages = vec![
-        layout_one_pane(),
-        serde_json::from_value(serde_json::json!({"t": "status", "windows": [
-            {"index": 0, "name": "⇄box:쉘", "active": true, "remote": true},
-        ]}))
-        .unwrap(),
-    ];
-    let out = sent_after(
-        messages,
-        &[
-            (Key::Escape, Mods::NONE),
-            (Key::Down, Mods::NONE),
-            (Key::Enter, Mods::NONE),
-        ],
-    );
-    assert!(
-        out.iter()
-            .any(|o| matches!(o, Outgoing::Command(Command::RequestVersion))),
-        "{out:?}"
+    // ⚠ 종전 이 테스트는 첫 배지가 `서버` 라는 것에 기대어 `RequestVersion` 을 봤다.
+    //   §10-21ⓑ 로 `서버`·`시계`·`달력` 이 목록에서 빠지면서 그 전제가 사라졌다 —
+    //   재는 것("아래로 내려가면 배지에 포커스가 가고 Enter 가 그것을 실행한다")은
+    //   그대로 두고 **남아 있는 배지**로 재도록 고친다. 알림은 있을 때만 실리므로
+    //   하나 만들어 두고 본다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.state.note_notice(String::from("무언가 알림"));
+    view.handle_key(Key::Escape, Mods::NONE);
+    view.handle_key(Key::Down, Mods::NONE);
+    view.handle_key(Key::Enter, Mods::NONE);
+    assert_eq!(
+        view.screens.top(),
+        Some(base::screens::Screen::Notices),
+        "아래 모서리에서 Enter 가 첫 배지(알림)를 실행하지 않았다"
     );
 }
 
@@ -937,14 +1454,15 @@ fn picking_a_language_runs_the_whole_wiring_in_the_gui_too() {
 // **판정·배선 구간**(core `chrome::click` → `apply_action` → 큐)을 잰다.
 
 #[test]
-fn folding_the_summary_area_changes_what_the_server_is_told(){
-    // ★ 이 오라클이 잡는 것은 "접힌다"가 아니라 **레이아웃 계약**이다. 이 구역의 줄
-    //   수는 크롬 높이의 일부이고, 크롬 높이는 서버에 알리는 캔버스 rows 에서 빠진다
-    //   (`fit_grid`). 접기를 그리기만 바꾸는 일로 다루면 캔버스가 그대로라 **접어도
-    //   화면이 안 넓어지고**, 그건 이 슬라이스가 하려던 일 전체다.
+fn the_summary_area_no_longer_takes_a_row_from_the_canvas() {
+    // ★ 종전 이 자리의 오라클은 "머리줄을 누르면 크롬 높이가 바뀐다"였다(접기 계약).
+    //   §10-21ⓓ 로 그 구역이 **화면에서 빠지면서** 접기 자체가 사라졌다 — 이제 재는
+    //   것은 그 반대다: 블록이 생겨도 크롬 높이가 **안 늘어난다**(그만큼 캔버스가 늘
+    //   넓다). 그것이 이 제보가 하려던 일 전체다.
     let (mut view, tx, _sent) = harness();
     tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
-    // 블록이 하나 있어야 구역이 그려진다(없으면 접든 펴든 0 줄이다).
+    view.pump_headless();
+    let empty = view.footer_lines();
     tx.send(LinkEvent::Message(Box::new(
         serde_json::from_value(serde_json::json!({
             "t": "blocks", "pane": 1,
@@ -954,18 +1472,22 @@ fn folding_the_summary_area_changes_what_the_server_is_told(){
     )))
     .unwrap();
     view.pump_headless();
-
-    let folded = view.footer_lines();
-    view.chrome_click(base::chrome::ClickTarget::FooterFold);
-    let opened = view.footer_lines();
+    assert!(!view.state.active_blocks().is_empty(), "블록이 안 들어왔다 — 단언이 공허해진다");
     assert_eq!(
-        opened - folded,
-        footer::ROWS,
-        "머리줄을 눌렀는데 크롬 높이가 안 바뀌었다 — 캔버스도 그대로다"
+        view.footer_lines(),
+        empty,
+        "블록이 생겼다고 크롬이 한 줄 더 먹는다 — 요약 구역이 아직 화면에 있다(ⓓ)"
     );
-    // 다시 누르면 되돌아온다(토글이지 한 번 쓰고 마는 스위치가 아니다).
-    view.chrome_click(base::chrome::ClickTarget::FooterFold);
-    assert_eq!(view.footer_lines(), folded, "다시 접히지 않았다");
+}
+
+#[test]
+fn the_summary_is_reachable_as_a_panel() {
+    // 화면에서 뺐으면 **여는 길**이 있어야 한다(제보: "별도 명령어나 메뉴로").
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    assert!(view.apply_action_for_test(base::Action::ShowSummary));
+    assert_eq!(view.screens.top(), Some(base::screens::Screen::Summary));
 }
 
 #[test]
@@ -1513,14 +2035,16 @@ fn ctrl_a_inside_the_compose_box_selects_instead_of_closing_it() {
 fn the_server_badge_opens_the_info_tabs_and_asks_for_the_version_from_this_view() {
     // 배지 동선은 뷰마다 배선이 따로다. 버전 탭은 서버가 채우므로 **열면서 함께 청해야**
     // 한다 — 안 청하면 그 줄이 영영 "묻는 중"이다.
-    let out = sent_after(
-        vec![layout_one_pane()],
-        &[
-            (Key::Escape, Mods::NONE),
-            (Key::Down, Mods::NONE),
-            (Key::Enter, Mods::NONE),
-        ],
-    );
+    //
+    // ⚠ 입구가 **상태줄 오른쪽의 `#h` 구간**으로 옮겼다(§10-21ⓑ·ⓑ2) — 왼쪽 `서버`
+    //   배지는 없앴다. 뜻(`Badge::Host`)은 그대로이므로 그 클릭 대상으로 잰다.
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.chrome_click(base::chrome::ClickTarget::Badge(base::Badge::Host));
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    assert_eq!(view.screens.top(), Some(base::screens::Screen::InfoTabs));
     assert!(
         out.iter()
             .any(|o| matches!(o, Outgoing::Command(Command::RequestVersion))),
@@ -1920,6 +2444,60 @@ fn the_pane_screen_text_is_painted() {
     );
 }
 
+/// 배율을 세운 채 한 프레임 그리고, 그 글자가 차지한 **높이**를 돌려준다.
+///
+/// 왜 높이인가: 시험 폰트는 글자 **폭**이 0이라 가로는 못 잰다(위 절 머리말) — 줄
+/// 높이는 살아 있고 글자 크기를 따라간다. 그래서 "캔버스가 실제로 커졌나"를 잴 수
+/// 있는 유일한 축이다.
+fn painted_height_at_scale(scale: f32, needle: &str) -> Option<f32> {
+    use warpui::platform::WindowStyle;
+    use warpui::{EntityIdSet, Presenter, WindowInvalidation};
+    let needle = needle.to_owned();
+    let screen: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 1,
+        "rows": [[["HELLO-ORACLE", {}]]], "cursor": [0, 0], "wrap": [], "top": 0
+    }))
+    .unwrap();
+    warpui::App::test((), |mut app| async move {
+        let (link, tx, _sent) = ServerLink::detached("/tmp/test.sock");
+        let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+        for msg in [layout_one_pane(), screen] {
+            tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+        }
+        view.pump_headless();
+        view.config.font_scale = scale;
+        let (window_id, _handle) = app.add_window(WindowStyle::NotStealFocus, move |_| view);
+        let mut presenter = Presenter::new(window_id);
+        let mut updated = EntityIdSet::default();
+        updated.insert(app.root_view_id(window_id).unwrap());
+        let invalidation = WindowInvalidation {
+            updated,
+            ..Default::default()
+        };
+        app.update(move |ctx| {
+            presenter.invalidate(invalidation, ctx);
+            let scene = presenter.build_scene(vec2f(800., 600.), 1., None, ctx);
+            scene
+                .painted_texts()
+                .find(|t| t.text.contains(&needle))
+                .map(|t| t.bounds.height())
+        })
+    })
+}
+
+#[test]
+fn the_canvas_rows_grow_with_the_scale() {
+    // ★ `scaled()` 만 재면 **캔버스가 그것을 안 쓰는** 변이가 살아남는다(`render_row`
+    //   의 `13.` 을 안 곱해도 크롬은 커지므로 다른 오라클이 다 통과한다). 그래서 실제로
+    //   그려진 캔버스 글자의 높이를 잰다 — 제보의 "앱 전체"에서 캔버스가 그 몫이다.
+    let one = painted_height_at_scale(1.0, "HELLO-ORACLE").expect("캔버스 글자가 안 그려졌다");
+    let two = painted_height_at_scale(2.0, "HELLO-ORACLE").expect("캔버스 글자가 안 그려졌다");
+    assert!(
+        two > one,
+        "배율을 두 배로 했는데 캔버스 줄 높이가 그대로다 — render_row 가 배율을 안 탄다: {one} → {two}"
+    );
+}
+
 #[test]
 fn monitor_badges_sit_in_the_bottom_status_bar_not_the_tab_bar() {
     // 사용자 요청(2026-07-30): 감시류 표식([벨감시]·[활동감시])은 파이썬 정본의 시스템
@@ -1930,19 +2508,26 @@ fn monitor_badges_sit_in_the_bottom_status_bar_not_the_tab_bar() {
         "rows": [[["HELLO-ORACLE", {}]]], "cursor": [0, 0], "wrap": [], "top": 0
     }))
     .unwrap();
+    // ⚠ 표본을 **활동 감시**로 바꿨다 — 벨 감시는 화면에서 감췄다(§10-21ⓜ). 그 표식으로
+    //   자리를 재면 이제 "없다"가 되어 오라클이 뜻을 잃는다.
     let flags: ServerMessage = serde_json::from_value(serde_json::json!({
         "t": "status", "windows": [{"index": 0, "name": "하나", "active": true}],
-        "monitor_bell": true
+        "monitor_activity": true, "monitor_bell": true
     }))
     .unwrap();
     let painted = painted_after(vec![layout_one_pane(), screen, flags], &[]);
-    let bell_at = painted.iter().position(|t| t.contains("[벨감시]"));
+    let bell_at = painted.iter().position(|t| t.contains("[활동감시]"));
     let canvas_at = painted.iter().position(|t| t.contains("HELLO-ORACLE"));
-    assert!(bell_at.is_some(), "[벨감시] 표식이 프레임에 없다: {painted:?}");
+    assert!(bell_at.is_some(), "[활동감시] 표식이 프레임에 없다: {painted:?}");
     assert!(canvas_at.is_some(), "캔버스가 없다: {painted:?}");
     assert!(
         bell_at > canvas_at,
-        "[벨감시] 가 캔버스보다 먼저(=탭바에) 그려졌다 — 하단 상태줄이 자리다: {painted:?}"
+        "[활동감시] 가 캔버스보다 먼저(=탭바에) 그려졌다 — 하단 상태줄이 자리다: {painted:?}"
+    );
+    // ★ 그리고 **벨 감시는 켜져 있어도 안 그려진다**(§10-21ⓜ) — 같은 프레임에서 잰다.
+    assert!(
+        !painted.iter().any(|t| t.contains("[벨감시]")),
+        "감춘 표식이 그려졌다: {painted:?}"
     );
 }
 
@@ -1961,8 +2546,9 @@ fn the_disconnect_message_sits_below_the_status_bar_and_opens_the_notice_history
     });
     let msg_at = painted.iter().position(|t| t.contains("연결 종료"));
     let canvas_at = painted.iter().position(|t| t.contains("HELLO-ORACLE"));
-    // 상태줄의 [시계] 배지가 곧 "상태줄이 그려진 자리"다.
-    let status_at = painted.iter().position(|t| t.contains("시계"));
+    // 상태줄의 `⇕` 배지가 곧 "상태줄이 그려진 자리"다.
+    // (종전에는 `시계` 배지로 짚었는데 §10-21ⓑ 로 그 배지가 사라졌다 — 표식만 바꾼다.)
+    let status_at = painted.iter().position(|t| t.contains("⇕"));
     assert!(msg_at.is_some(), "끊김 메시지가 프레임에 없다: {painted:?}");
     assert!(
         painted_contains(&painted, "서버가 닫았다"),
@@ -2015,10 +2601,58 @@ fn the_tab_chrome_and_status_line_are_painted() {
     for needle in ["하나", "둘", "셋", "+", "×"] {
         assert!(painted_contains(&painted, needle), "{needle} 가 탭바에 없다: {painted:?}");
     }
-    // 상태줄 배지(ko 기본 로케일) — 존이 아니라 존재만 본다.
-    for needle in ["서버", "시계", "달력"] {
-        assert!(painted_contains(&painted, needle), "{needle} 배지가 상태줄에 없다: {painted:?}");
+    // ★ §10-21ⓑ — `서버`·`시계`·`달력` 배지는 **없어야 한다**(오른쪽 글자와 중복이라는
+    //   제보). 부정 단언만 두면 상태줄이 통째로 안 그려져도 통과하므로, **그 동작이 옮겨
+    //   간 자리**를 함께 양성으로 잰다.
+    for gone in ["서버", "시계", "달력"] {
+        assert!(
+            !painted_contains(&painted, gone),
+            "{gone} 배지가 아직 상태줄에 있다(ⓑ): {painted:?}"
+        );
     }
+    // 오른쪽 구간 셋이 그 동작을 갖는다(ⓑ2 로 라이브 확인) — 시각·날짜는 형식 문자열이
+    // 만든다. `%H:%M` 은 시각이라 글자를 못 박으므로 `:` 를 낀 구간이 있는지로 본다.
+    assert!(
+        painted.iter().any(|t| t.contains("2026-")),
+        "오른쪽 날짜 구간(달력 입구)이 없다: {painted:?}"
+    );
+    assert!(
+        painted.iter().any(|t| t.len() == 5 && t.contains(':')),
+        "오른쪽 시각 구간(시계 입구)이 없다: {painted:?}"
+    );
+}
+
+// ── ⓑ2 — 안 먹는 것을 눌리는 것처럼 그리지 않는다 ────────────────────────────
+//
+// 제보는 "hover 효과만 나고 눌러도 아무 일이 없다"였고, 라이브에서 그 증상을 **정확히**
+// 만드는 것은 `set mouse off` 였다(기능 자체는 멀쩡하다 — 제보자가 쓴 릴리스 이진에서도
+// 시계·달력이 떴다). 즉 결함은 클릭이 아니라 **강조**다.
+
+#[test]
+fn nothing_is_highlighted_when_the_mouse_is_off() {
+    // 진리표 넷 — **양성이 먼저**다(마우스가 켜져 있고 그 자리에 있으면 강조가 뜬다).
+    // 그것이 없으면 아래 부정 단언은 "늘 false" 로도 통과한다.
+    assert!(SessionView::hover_shown(true, true), "켜져 있으면 강조가 떠야 한다");
+    assert!(
+        !SessionView::hover_shown(false, true),
+        "마우스를 껐는데 강조가 뜬다 — 눌러도 아무 일이 없는 것을 눌리는 것처럼 그린다(ⓑ2)"
+    );
+    assert!(!SessionView::hover_shown(true, false));
+    assert!(!SessionView::hover_shown(false, false));
+}
+
+#[test]
+fn the_click_and_the_highlight_agree_about_the_mouse_setting() {
+    // 배선 확인 — 판정을 순수 함수로 빼도 **부르는 자리가 빠지면** 뜻이 없다.
+    // 클릭이 거절되는 그 설정에서 강조도 함께 죽는지 본다(둘이 갈리면 그것이 ⓑ2 다).
+    let (mut view, _tx, _sent) = harness();
+    view.config.mouse = false;
+    assert!(!view.chrome_hovered(0));
+    assert!(!view.panel_hovered(0));
+    assert!(
+        !view.chrome_click(base::chrome::ClickTarget::Badge(base::Badge::Clock)),
+        "마우스를 끈 판에서 크롬 클릭이 먹었다"
+    );
 }
 
 #[test]
@@ -2403,7 +3037,10 @@ fn a_natively_handled_plugin_command_is_not_listed_twice() {
             (Key::Char('k'), Mods::NONE),
         ],
     );
-    let rows = painted.iter().filter(|line| line.starts_with("clock-mode ")).count();
+    // ⚠ 한 줄이 **세 칸**으로 갈려 그려진다(§10-21ⓞ) — 이름 칸은 그 이름 하나뿐이다.
+    //   종전처럼 `"clock-mode "` 로 시작하는 **한 덩이**를 찾으면 이제 아무것도 안 걸려
+    //   단언이 뜻을 잃는다(칸을 나눈 CL 에서 여기가 먼저 울었다).
+    let rows = painted.iter().filter(|piece| piece.as_str() == "clock-mode").count();
     assert_eq!(rows, 1, "같은 이름이 팔레트에 두 줄 섰다: {painted:?}");
 }
 
@@ -2480,6 +3117,68 @@ fn every_action_does_something_in_this_view() {
          늘었다면 그 액션은 **이 클라에서 없는 기능**이다 — 배선하거나, 왜 다른 입구로만\n\
          뜻이 생기는지를 NO_OP_ACTIONS 에 적을 것(패리티 표의 Done 도 함께 볼 것)."
     );
+}
+
+// ── 화면 축 측정(2026-08-02p) — 액션 축(G1)을 **화면**으로 넓힌다 ────────────────
+//
+// 패리티 표의 화면 칸은 17줄인데 그 값도 손번역이었다(`parity.rs` Item 주석의 *"설정
+// 36·화면 17 축은 아직 같은 강도로 안 쟀다"*). 여기서 재는 것은 액션 축과 같은 질문의
+// 화면판이다: **이 화면을 열 길이 있나.**
+//
+// 그리기는 안 잰다 — `render_screen_panel` 이 와일드카드 없는 `match` 라 변형이 늘면
+// 컴파일러가 먼저 운다. 반면 "여는 길"은 아무도 안 지킨다: 화면 하나를 enum 에 남긴 채
+// 그것을 여는 액션만 지우면 표의 수는 그대로이고 사용자는 그 화면을 영영 못 본다.
+
+/// 액션으로는 못 여는 화면과 **무엇이 여는가**.
+///
+/// 전부 "GUI 에 없다"가 아니라 **서버 회신이나 다른 화면이 연다**는 뜻이다. 목록에
+/// 두는 이유는 액션 축과 같다: 여기 없으면 조용히 못 여는 화면이 늘어난다.
+/// ⚠ 이 셋은 **잰 값이다.** 처음에는 여덟을 적었는데(물음·확인·인자 화면 따위) 재
+/// 보니 다섯은 액션이 이미 연다 — 손으로 적은 목록이 그만큼 틀렸다는 뜻이고, 이 축을
+/// 기계로 재는 이유가 그것이다.
+static NOT_OPENED_BY_AN_ACTION: &[(&str, &str)] = &[
+    ("MergeRemote", "원격 탭 **목록이 와야** 고를 것이 있다(서버 회신이 연다)"),
+    ("PluginView", "플러그인이 준 스펙(`plugin_screen`)이 연다"),
+    ("ShellOutput", "`run-shell` 의 **결과가 온 뒤에** 열린다"),
+];
+
+#[test]
+fn every_screen_has_a_way_to_open_it() {
+    // 액션 전수를 먹여 **열린 화면의 집합**을 모은다(G1 과 같은 하네스·같은 세션).
+    let mut opened: Vec<String> = Vec::new();
+    for action in base::keymap::all_actions() {
+        let (mut view, tx, _sent) = harness();
+        for msg in three_tabs() {
+            tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+        }
+        view.pump_headless();
+        view.apply_action_for_test(action);
+        if let Some(screen) = view.screens.top() {
+            opened.push(format!("{screen:?}"));
+        }
+    }
+    let mut unreachable: Vec<String> = base::screens::Screen::all()
+        .iter()
+        .map(|s| format!("{s:?}"))
+        .filter(|name| !opened.contains(name))
+        .collect();
+    unreachable.sort();
+    let mut known: Vec<String> =
+        NOT_OPENED_BY_AN_ACTION.iter().map(|(n, _)| (*n).to_owned()).collect();
+    known.sort();
+    assert_eq!(
+        known,
+        NOT_OPENED_BY_AN_ACTION.iter().map(|(n, _)| (*n).to_owned()).collect::<Vec<_>>(),
+        "NOT_OPENED_BY_AN_ACTION 은 이름순이라야 한다"
+    );
+    assert_eq!(
+        unreachable, known,
+        "액션으로 열리는 화면이 달라졌다.\n\
+         늘었다면 그 화면은 **이 클라에서 열 길이 없다** — 액션을 배선하거나, 무엇이 여는지를\n\
+         NOT_OPENED_BY_AN_ACTION 에 적을 것(패리티 표의 화면 칸도 함께 볼 것)."
+    );
+    // 빈 결과가 통과로 보이지 않게 — 아무 화면도 안 열렸다면 위 비교는 공허하다.
+    assert!(opened.len() > 5, "액션이 연 화면이 너무 적다: {opened:?}");
 }
 
 // ── 플러그인 화면(Tier C · P4) — 스펙이 판이 되고, 고른 줄이 서버로 돌아간다 ────────
@@ -2668,6 +3367,35 @@ fn a_table_spec_draws_its_columns() {
     let painted = painted_after(vec![layout_one_pane(), table], &[]);
     assert!(painted_contains(&painted, "이름"), "{painted:?}");
     assert!(painted_contains(&painted, "10KB"), "칸이 안 그려졌다: {painted:?}");
+}
+
+/// 줄의 **칸**은 우리 로케일로 그린다 — 이름은 그대로 둔다(2026-08-02p).
+///
+/// `mdir` 을 카탈로그로 옮기고 나서도 여기가 빠져 있으면 영어 사용자에게 `<상위>` 가
+/// 한국어로 뜬다: 서버는 **자기** 로케일로 스펙을 짓기 때문이다(`title`·`hint`·`note`
+/// 만 `say_*` 를 거치고 있었다). 배선을 되돌리는 변이(`say_cols()` → `cols`)를 이
+/// 오라클이 잡는다.
+#[test]
+fn a_rows_columns_are_drawn_in_our_locale_but_its_name_is_not() {
+    let table: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "mdir", "kind": "table",
+        "title": "표", "hint": "",
+        // 이름이 하필 카탈로그의 말과 같아도 그대로 그린다 — 그런 이름의 파일이 있다.
+        "rows": [{"key": "..", "label": "빈 디렉터리입니다", "cols": ["<상위>"]}],
+        "text": "", "note": "", "selected": 0, "keys": {}
+    }))
+    .unwrap();
+    let painted = base::i18n::with_locale("en", || {
+        painted_after(vec![layout_one_pane(), table], &[])
+    });
+    assert!(
+        painted_contains(&painted, "<UP>"),
+        "칸이 서버 로케일 그대로 그려졌다: {painted:?}"
+    );
+    assert!(
+        painted_contains(&painted, "빈 디렉터리입니다"),
+        "이름을 번역했다 — 그건 자료다: {painted:?}"
+    );
 }
 
 #[test]
@@ -2970,4 +3698,603 @@ fn the_input_method_state_goes_up_as_a_fact_not_a_drawing() {
         .next_back()
         .unwrap();
     assert!(last["value"].is_null(), "끔이 안 올라갔다: {last}");
+}
+
+// ── 셀 격자(§10-21ⓙ) · 블록 문자(§10-21ⓘ) ──────────────────────────────────
+//
+// 제보 둘의 뿌리가 하나다: **가로 자리를 글꼴이 정하고 있었다.** 캔버스가 한 줄을 런
+// 통짜로 셰이퍼에 넘기면, 폴백 글꼴에서 오는 글자(한글·블록)의 진폭이 칸너비의 정수배가
+// 아닐 때 그 뒤가 전부 밀린다.
+//
+// 그래서 격자를 클라가 잡는다. 아래 오라클은 그 **나누기 규칙**을 글꼴 없이 잰다 —
+// 시험 폰트는 폭이 0이라 픽셀은 못 재지만(이 파일 머리말), 규칙은 순수 함수다.
+
+#[test]
+fn a_pure_ascii_run_stays_one_piece() {
+    // 화면의 대부분이 여기다. 한 칸에 하나씩 만들면 80x24 에 1,920 조각이 생긴다.
+    let segs = SessionView::grid_segments("hello world");
+    assert_eq!(segs.len(), 1, "ASCII 를 쪼갰다: {segs:?}");
+    assert_eq!(segs[0], ("hello world".to_owned(), 11));
+}
+
+#[test]
+fn each_hangul_char_gets_its_own_cell_box() {
+    // ★ 이것이 ⓙ 의 처방이다. 한글을 이어 붙이면 그 안에서 밀린 만큼 뒤가 밀린다.
+    let segs = SessionView::grid_segments("가나다");
+    assert_eq!(segs.len(), 3, "한글을 한 덩이로 뒀다: {segs:?}");
+    for seg in &segs {
+        assert_eq!(seg.1, 2, "한글은 두 칸이다: {seg:?}");
+    }
+}
+
+#[test]
+fn ascii_and_hangul_alternate_without_losing_a_character() {
+    // 나누기가 글자를 먹으면 화면에서 조용히 사라진다.
+    let segs = SessionView::grid_segments("ab가cd나");
+    let joined: String = segs.iter().map(|(s, _)| s.as_str()).collect();
+    assert_eq!(joined, "ab가cd나", "나누며 글자가 바뀌었다: {segs:?}");
+    assert_eq!(
+        segs.iter().map(|(_, c)| *c).collect::<Vec<_>>(),
+        vec![2, 2, 2, 2],
+        "칸 수가 틀리면 그 뒤가 통째로 밀린다: {segs:?}"
+    );
+}
+
+#[test]
+fn the_cell_count_of_a_row_is_what_the_server_counted() {
+    // ★ 이 합이 곧 그 줄의 폭이다. 여기가 어긋나면 우리가 잡은 격자가 서버의 격자와
+    //   다른 뜻이 되어, 마우스 셀 산수·테두리·커서가 한꺼번에 어긋난다.
+    for text in ["hello", "가나다", "a가b나c", "─│┌", ""] {
+        let ours: usize = SessionView::grid_segments(text).iter().map(|(_, c)| c).sum();
+        let server: usize = text
+            .chars()
+            .map(|c| proto::compose::char_cells(c).max(1))
+            .sum();
+        assert_eq!(ours, server, "{text:?} 의 칸 수가 서버와 다르다");
+    }
+}
+
+#[test]
+fn an_empty_run_makes_no_pieces() {
+    assert!(SessionView::grid_segments("").is_empty());
+}
+
+/// 블록 문자가 든 캔버스 하나.
+fn canvas_with(text: &str) -> proto::canvas::Canvas {
+    let mut canvas = proto::canvas::Canvas::new(text.chars().count().max(4), 1);
+    canvas.put_text(0, 0, text, CellStyle::default());
+    canvas
+}
+
+#[test]
+fn block_characters_become_rectangles_at_their_own_cells() {
+    // 자리(칸 좌표)가 틀리면 그림이 통째로 어긋난다 — 마스코트 제보가 그것이다.
+    let blocks = SessionView::block_cells(&canvas_with("a█b▀"));
+    assert_eq!(blocks.len(), 2, "블록 둘을 못 찾았다");
+    assert_eq!((blocks[0].x, blocks[0].y), (1, 0));
+    assert_eq!((blocks[1].x, blocks[1].y), (3, 0));
+    assert_eq!(blocks[1].fill, proto::canvas::block_fill('▀').unwrap());
+}
+
+#[test]
+fn a_canvas_without_blocks_asks_for_no_rectangles() {
+    // 빈 목록이라야 오버레이가 그 프레임에 아무 일도 안 한다.
+    assert!(SessionView::block_cells(&canvas_with("hello")).is_empty());
+}
+
+#[test]
+fn the_blanked_set_and_the_rectangles_come_from_the_same_judgement() {
+    // ★ 둘이 갈리면 글리프와 사각형이 겹쳐 보이거나(칸을 안 비움) 그림이 통째로
+    //   사라진다(사각형을 안 그림). 테두리 쪽에서 이미 굳은 규율이다.
+    let canvas = canvas_with("░▒a▓");
+    let from_rects: std::collections::BTreeSet<(u16, u16)> = SessionView::block_cells(&canvas)
+        .into_iter()
+        .map(|b| (b.x, b.y))
+        .collect();
+    assert_eq!(from_rects, SessionView::block_cell_set(&canvas));
+    assert_eq!(from_rects.len(), 3);
+}
+
+#[test]
+fn a_block_cell_is_not_painted_as_a_glyph() {
+    // ★ **그려진 프레임**에서 잰다(순수 함수 둘이 맞아도 render_row 가 안 비우면
+    //   글리프와 사각형이 겹친다 — 그 배선이 이 오라클의 대상이다).
+    let screen: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 1,
+        "rows": [[["AA█BB", {}]]], "cursor": [0, 0], "wrap": [], "top": 0
+    }))
+    .unwrap();
+    let painted = painted_after(vec![layout_one_pane(), screen], &[]);
+    // ⚠ **프레임 전체**를 봐야 한다. 줄이 조각으로 나뉘므로("AA" · "█" · "BB") "AA" 가
+    //   든 조각만 보면 거기엔 애초에 블록이 없어 **무엇을 해도 통과한다** — 변이를 심어
+    //   그 사실을 알았다(판 기하 슬라이스와 같은 종류의 공허함).
+    assert!(
+        painted_contains(&painted, "AA"),
+        "캔버스가 프레임에 없다 — 단언이 공허해진다: {painted:?}"
+    );
+    assert!(
+        painted_contains(&painted, "BB"),
+        "블록을 비우며 뒤 글자까지 지웠다: {painted:?}"
+    );
+    assert!(
+        !painted.iter().any(|t| t.contains('█')),
+        "블록이 글자로도 그려졌다(사각형과 두 겹이 된다): {painted:?}"
+    );
+}
+
+#[test]
+fn a_measured_cell_size_is_kept_but_a_nonsense_one_is_not() {
+    // 0 이나 무한대를 받으면 격자가 한 점으로 접히고, 증상은 "캔버스가 통째로 비었다"다.
+    let (link, _tx, _sent) = ServerLink::detached("/tmp/test.sock");
+    let view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+    assert_eq!(view.cell_px.get(), None, "재기 전에는 없다");
+    view.note_cell_size(8., 16.);
+    assert_eq!(view.cell_px.get(), Some((8., 16.)));
+    view.note_cell_size(0., 16.);
+    view.note_cell_size(f32::INFINITY, 16.);
+    assert_eq!(view.cell_px.get(), Some((8., 16.)), "말이 안 되는 값을 받았다");
+}
+
+/// 그려진 글자를 **가로 자리와 함께** 돌려준다 — 격자가 잡혔나를 재는 자리용.
+///
+/// # 왜 이것만은 폭을 잴 수 있나
+///
+/// 시험 폰트는 글자 폭이 0이라 셰이퍼가 놓는 자리는 못 잰다(위 절 머리말). 그런데
+/// §10-21ⓙ 의 처방이 바로 **자리를 셰이퍼에서 뺏는 것**이다 — 못박은 조각의 가로 자리는
+/// 우리가 준 칸너비가 정하므로 글꼴과 무관하다. 그래서 이 오라클은 **고친 뒤에야
+/// 성립한다**: 종전 코드에서는 전부 0에 겹쳐 나온다.
+fn painted_x(
+    messages: Vec<ServerMessage>,
+    cell: (f32, f32),
+) -> Vec<(String, f32)> {
+    use warpui::platform::WindowStyle;
+    use warpui::{EntityIdSet, Presenter, WindowInvalidation};
+    warpui::App::test((), move |mut app| async move {
+        let (link, tx, _sent) = ServerLink::detached("/tmp/test.sock");
+        let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+        for msg in messages {
+            tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+        }
+        view.pump_headless();
+        // 실행 경로에서는 `report_size` 가 자리표에서 재어 남긴다. 헤드리스에는 창이
+        // 없으니 같은 값을 직접 놓는다 — 재는 자리가 아니라 **쓰는 자리**를 시험한다.
+        view.note_cell_size(cell.0, cell.1);
+        let (window_id, _handle) = app.add_window(WindowStyle::NotStealFocus, move |_| view);
+        let mut presenter = Presenter::new(window_id);
+        let mut updated = EntityIdSet::default();
+        updated.insert(app.root_view_id(window_id).unwrap());
+        let invalidation = WindowInvalidation {
+            updated,
+            ..Default::default()
+        };
+        app.update(move |ctx| {
+            presenter.invalidate(invalidation, ctx);
+            let scene = presenter.build_scene(vec2f(800., 600.), 1., None, ctx);
+            scene
+                .painted_texts()
+                .map(|t| (t.text.clone(), t.bounds.origin().x()))
+                .collect()
+        })
+    })
+}
+
+fn hangul_screen(text: &str) -> Vec<ServerMessage> {
+    let screen: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 1,
+        "rows": [[[text, {}]]], "cursor": [0, 0], "wrap": [], "top": 0
+    }))
+    .unwrap();
+    vec![layout_one_pane(), screen]
+}
+
+#[test]
+fn each_wide_glyph_lands_on_its_own_cell_boundary() {
+    // ★ ⓙ 의 본체다. 한글 셋을 그리면 자리가 0·2칸·4칸이어야 한다 — 셰이퍼가 놓으면
+    //   (시험 폰트에서) 전부 0 에 겹치고, 실제 글꼴에서는 진폭만큼 밀린다.
+    let boxes = painted_x(hangul_screen("가나다"), (10., 20.));
+    let xs: Vec<f32> = ["가", "나", "다"]
+        .iter()
+        .map(|ch| {
+            boxes
+                .iter()
+                .find(|(t, _)| t == ch)
+                .unwrap_or_else(|| panic!("{ch} 가 프레임에 없다: {boxes:?}"))
+                .1
+        })
+        .collect();
+    // 창 왼쪽 여백만큼 통째로 밀려 있으므로 **첫 글자를 기준**으로 잰다.
+    assert_eq!(xs[1] - xs[0], 20., "둘째 글자가 두 칸 뒤가 아니다: {xs:?}");
+    assert_eq!(xs[2] - xs[1], 20., "셋째 글자가 두 칸 뒤가 아니다: {xs:?}");
+}
+
+#[test]
+fn a_wide_glyph_after_ascii_still_lands_on_the_grid() {
+    // ASCII 는 고정폭 글꼴이 놓는다(시험 폰트에서는 폭 0). 그 **뒤에** 오는 한글이
+    // 서로 두 칸씩 벌어지는지를 본다 — 조각 하나라도 안 못박히면 여기가 무너진다.
+    let boxes = painted_x(hangul_screen("ab가나"), (10., 20.));
+    let ga = boxes.iter().find(|(t, _)| t == "가").expect("가 없다").1;
+    let na = boxes.iter().find(|(t, _)| t == "나").expect("나 없다").1;
+    assert_eq!(na - ga, 20., "한글 사이가 두 칸이 아니다: {boxes:?}");
+}
+
+#[test]
+fn the_grid_follows_the_measured_cell_width() {
+    // 칸너비가 배율로 바뀌면(§10-21ⓐ) 격자도 따라와야 한다 — 상수를 박아 두면 배율을
+    // 바꾼 순간 조용히 어긋난다.
+    let wide = painted_x(hangul_screen("가나"), (20., 40.));
+    let ga = wide.iter().find(|(t, _)| t == "가").unwrap().1;
+    let na = wide.iter().find(|(t, _)| t == "나").unwrap().1;
+    assert_eq!(na - ga, 40., "칸너비 20 이면 두 칸은 40 이다: {wide:?}");
+}
+
+// ── 팔레트 세 칸 · 설명 접기(§10-21ⓞ·ⓗ⑶) ───────────────────────────────────
+
+fn palette_pieces(filter: &str) -> Vec<String> {
+    let mut keys = vec![(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)];
+    keys.extend(filter.chars().map(|c| (Key::Char(c), Mods::NONE)));
+    painted_after(three_tabs(), &keys)
+}
+
+#[test]
+fn a_palette_row_is_drawn_as_three_separate_pieces() {
+    // ★ 제보의 요구가 "색으로 구분"이라 **조각이 갈려 있어야** 한다 — 한 덩이면 색이
+    //   하나뿐이다. 이름과 옵션이 따로 그려지는지가 그 증거다.
+    let pieces = palette_pieces("split-window");
+    assert!(
+        pieces.iter().any(|p| p == "split-window"),
+        "이름 칸이 따로 안 그려졌다: {pieces:?}"
+    );
+    assert!(
+        pieces.iter().any(|p| p == "-h"),
+        "옵션 칸이 따로 안 그려졌다(이름에 붙어 있다): {pieces:?}"
+    );
+    assert!(
+        !pieces.iter().any(|p| p.starts_with("split-window -h ")),
+        "이름·옵션·설명이 아직 한 덩이다: {pieces:?}"
+    );
+}
+
+#[test]
+fn the_split_rule_is_the_core_one() {
+    // 뷰가 자기 규칙으로 자르면 두 클라가 갈린다 — core 의 것을 쓰는지 값으로 확인한다.
+    assert_eq!(proto::palette::split_name("split-window -h"), ("split-window", "-h"));
+    let pieces = palette_pieces("select-pane");
+    assert!(
+        pieces.iter().any(|p| p == "-t next"),
+        "여러 낱말 옵션이 한 덩이로 안 그려졌다: {pieces:?}"
+    );
+}
+
+#[test]
+fn a_long_description_wraps_instead_of_pushing_the_panel() {
+    // ⓗ⑶ — 접어서 **보이고**, 판은 그대로. 접힌 줄은 설명 칸 아래에 이어 붙는다.
+    //
+    // ⚠ 설명은 서버가 준 것으로 넣는다. 코어 표의 설명은 이 폭에서 안 접히고, 접히지
+    //   않는 표본으로는 이 오라클이 아무것도 안 잰다(공허해진다).
+    let cols = SessionView::PANEL_COLS
+        - (SessionView::PAL_NAME_COLS + SessionView::PAL_OPTS_COLS + 2);
+    let long = "가나다라마바사 ".repeat(12);
+    let lines = proto::palette::wrap(long.trim(), cols);
+    assert!(lines.len() > 1, "이 설명은 접혀야 한다 — 오라클이 뜻을 잃는다");
+
+    let status: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "status",
+        "windows": [{"index": 0, "name": "하나", "active": true}],
+        "plugin_surface": {
+            "commands": [{"name": "verbose-thing", "desc": long.trim(), "cat": "설정/기타"}],
+            "noarg": [], "menu_items": [], "settings": [], "setting_cats": []
+        }
+    }))
+    .unwrap();
+    let mut keys = vec![(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)];
+    keys.extend("verbose".chars().map(|c| (Key::Char(c), Mods::NONE)));
+    let pieces = painted_after(vec![layout_one_pane(), status], &keys);
+    for chunk in &lines {
+        assert!(
+            pieces.iter().any(|p| p == chunk),
+            "접힌 줄이 안 그려졌다: {chunk:?} / {pieces:?}"
+        );
+    }
+}
+
+#[test]
+fn wrapping_never_spends_more_rows_than_the_panel_has() {
+    // 접히는 만큼 줄이 늘므로, 예산을 안 지키면 **접기 때문에** 판이 넘친다.
+    let boxes = painted_boxes(three_tabs(), &[(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)]);
+    let mut ys: Vec<i64> = boxes.iter().map(|(_, y)| y.round() as i64).collect();
+    ys.sort_unstable();
+    ys.dedup();
+    // 창 600px · 줄 높이가 폰트에서 오므로 절대값은 못 박는다 — **넘치지 않음**만 본다.
+    let bottom = ys.last().copied().unwrap_or(0);
+    assert!(bottom <= 600, "판이 창 밖으로 나갔다(맨 아래 줄 y={bottom})");
+}
+
+#[test]
+fn ctrl_tab_moves_the_panel_tab_while_a_panel_is_open() {
+    // ⓗ⑷ — ⓕ 가 `Ctrl+Tab` 을 세션 전역으로 가져갔으므로 우선순위를 정해야 했다.
+    // 판이 위에 있으면 판이 이긴다(화면이 떠 있으면 모든 키가 그 화면의 것 — core 규칙).
+    let (link, tx, _sent) = ServerLink::detached("/tmp/test.sock");
+    let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+    for msg in three_tabs() {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.handle_key(Key::Escape, Mods::NONE);
+    view.handle_key(Key::Char(':'), Mods::NONE);
+    assert_eq!(view.screens.top(), Some(Screen::Commands), "팔레트가 안 열렸다");
+    let before = view.screens.palette_tab();
+    view.alt_tab_step_for_test(true);
+    assert_eq!(
+        view.screens.palette_tab(),
+        before + 1,
+        "판이 떠 있는데 Ctrl+Tab 이 분류 탭을 안 옮겼다"
+    );
+    // 그리고 **세션 탭 스위처를 열지 않았다** — 그것이 이 우선순위의 요점이다.
+    assert_eq!(view.screens.top(), Some(Screen::Commands), "판이 스위처로 바뀌었다");
+}
+
+#[test]
+fn ctrl_tab_still_switches_session_tabs_when_no_panel_is_open() {
+    // 반대쪽도 지킨다 — 판이 없으면 ⓕ 의 동선 그대로다(이 단언이 없으면 위 우선순위가
+    // 세션 탭 전환을 통째로 죽여도 통과한다).
+    let (link, tx, _sent) = ServerLink::detached("/tmp/test.sock");
+    let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+    for msg in three_tabs() {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    assert_eq!(view.screens.top(), None, "판이 없어야 한다");
+    view.alt_tab_step_for_test(true);
+    assert_eq!(view.screens.top(), Some(Screen::Tabs), "스위처가 안 열렸다");
+}
+
+// ── 작성창 빈 줄(§10-21ⓒ2) ──────────────────────────────────────────────────
+
+/// 작성창을 `seed` 로 열고 **그려진 줄의 세로 자리들**을 돌려준다.
+fn compose_rows(seed: &str) -> Vec<f32> {
+    use warpui::platform::WindowStyle;
+    use warpui::{EntityIdSet, Presenter, WindowInvalidation};
+    let seed = seed.to_owned();
+    warpui::App::test((), move |mut app| async move {
+        let (link, tx, _sent) = ServerLink::detached("/tmp/test.sock");
+        let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+        tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+        view.pump_headless();
+        view.screens.open_compose(&seed);
+        let (window_id, _handle) = app.add_window(WindowStyle::NotStealFocus, move |_| view);
+        let mut presenter = Presenter::new(window_id);
+        let mut updated = EntityIdSet::default();
+        updated.insert(app.root_view_id(window_id).unwrap());
+        let invalidation = WindowInvalidation { updated, ..Default::default() };
+        app.update(move |ctx| {
+            presenter.invalidate(invalidation, ctx);
+            let scene = presenter.build_scene(vec2f(800., 600.), 1., None, ctx);
+            let mut ys: Vec<f32> = scene.painted_texts().map(|t| t.bounds.origin().y()).collect();
+            ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            ys.dedup();
+            ys
+        })
+    })
+}
+
+#[test]
+fn consecutive_blank_lines_each_take_a_row() {
+    // ★ 제보 그대로 — 빈 줄을 연달아 넣으면 그만큼 줄이 있어야 한다. 종전에는 자식이
+    //   없는 행 상자의 높이가 0 이라 **커서가 놓인 빈 줄 하나만** 보였다.
+    let one = compose_rows("a\nb").len();
+    let three = compose_rows("a\n\n\n\nb").len();
+    assert_eq!(
+        three,
+        one + 3,
+        "빈 줄 셋이 자리를 안 차지했다(줄 자리: {one} → {three})"
+    );
+}
+
+#[test]
+fn a_blank_line_does_not_leak_into_the_text() {
+    // ⚠ 그림으로 놓은 공백이 **내용**에 새면 보낸 글이 달라진다. 작성창의 글은
+    //   `editor.lines()` 가 쥐고 있고 그림은 거기서 나오므로, 그 목록을 직접 본다.
+    let (link, _tx, _sent) = ServerLink::detached("/tmp/test.sock");
+    let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+    view.screens.open_compose("a\n\nb");
+    let lines: Vec<String> = view
+        .screens
+        .editor()
+        .expect("작성창이 안 열렸다")
+        .lines()
+        .to_vec();
+    assert_eq!(lines, vec!["a".to_owned(), String::new(), "b".to_owned()]);
+}
+
+
+// ── 대문자 바인딩(§10-21ⓒ3) ─────────────────────────────────────────────────
+//
+// 제보는 "탭 고정이 GUI 에서 안 된다"였고, 핸드오프의 유력 가설은 **shift+글자가 대문자로
+// 안 접힌다**(그래서 표의 `shift-P` 와 안 맞는다)였다. 그 가설은 **틀렸다** — 상류
+// `get_input_key` 가 이미 접는다(`warpui/.../key_events.rs`: *"If the key is a character
+// AND shift is pressed, we force the key to uppercase"*). 아래가 그 사실을 못박는다.
+
+#[test]
+fn esc_shift_p_sends_the_pin_command() {
+    // ★ 제보의 동선 그대로 — 이 줄이 초록이면 **클라 쪽은 끝까지 간다**(라이브 컷도 같다).
+    let out = sent_after(
+        three_tabs(),
+        &[(Key::Escape, Mods::NONE), (Key::Char('P'), Mods::NONE)],
+    );
+    assert!(
+        out.iter().any(|o| matches!(o, Outgoing::Command(Command::TogglePin { .. }))),
+        "esc Shift+P 가 고정 명령을 안 보냈다: {out:?}"
+    );
+    // ★ **자리를 실어야 원격 탭에도 걸린다**(§10-21ⓒ3 — 사용자 답: "원격 탭이 핀이
+    //   안 됨"). 서버의 기본값(`sess.active_index`)은 로컬 탭의 자리라 원격에서 어긋난다.
+    let idx = out.iter().find_map(|o| match o {
+        Outgoing::Command(Command::TogglePin { index }) => Some(*index),
+        _ => None,
+    });
+    assert_eq!(idx, Some(Some(0)), "활성 탭의 자리를 안 실었다: {out:?}");
+}
+
+#[test]
+fn every_uppercase_binding_is_reachable_from_a_shifted_keystroke() {
+    // 이것은 **부류**다: 표의 `shift-<대문자>` 가 여덟이고, 키 변환이 한 자리에서
+    // 어긋나면 여덟이 한꺼번에 죽는다(그리고 조용하다). 상류가 주는 모양
+    // (`key: "P"` + `shift: true`)을 그대로 넣어 표까지 닿는지 본다.
+    for (name, ch) in [
+        ("shift-G", 'G'),
+        ("shift-H", 'H'),
+        ("shift-J", 'J'),
+        ("shift-K", 'K'),
+        ("shift-L", 'L'),
+        ("shift-P", 'P'),
+        ("shift-R", 'R'),
+        ("shift-T", 'T'),
+    ] {
+        let ks = ks(&ch.to_string(), false, false, true);
+        let (key, mods) =
+            SessionView::key_from_keystroke(&ks).unwrap_or_else(|| panic!("{name}: 키를 못 만들었다"));
+        assert_eq!(key, Key::Char(ch), "{name}: 대문자로 안 접혔다");
+        assert_eq!(
+            base::keys::binding_name_with(key, mods).as_deref(),
+            Some(name),
+            "{name}: 표 이름으로 안 돌아간다"
+        );
+    }
+}
+
+#[test]
+fn pinning_a_remote_tab_carries_that_tabs_merged_index() {
+    // ★ **제보의 자리다**(§10-21ⓒ3 · 사용자 답 2026-08-03: "원격 탭이 핀이 안 됨").
+    //
+    // 서버는 자리를 안 실으면 `sess.active_index` 로 접는데 그것은 **로컬 탭**의 자리다.
+    // 원격(병합) 탭이 활성이면 그 값은 보고 있는 탭이 아니라서 토글이 엉뚱한 로컬 탭에
+    // 걸린다 — 화면에서는 "원격 탭만 핀이 안 된다"로 보인다. 정본은 그래서 활성 탭의
+    // **병합 index** 를 명시해 보낸다(`clientcmd.py` 의 주석이 그 함정을 적어 뒀다).
+    let status: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "status",
+        "windows": [
+            {"index": 0, "name": "로컬"},
+            {"index": 1, "name": "⇄box:원격", "remote": true, "active": true},
+        ]
+    }))
+    .unwrap();
+    let out = sent_after(
+        vec![layout_one_pane(), status],
+        &[(Key::Escape, Mods::NONE), (Key::Char('P'), Mods::NONE)],
+    );
+    let idx = out.iter().find_map(|o| match o {
+        Outgoing::Command(Command::TogglePin { index }) => Some(*index),
+        _ => None,
+    });
+    assert_eq!(
+        idx,
+        Some(Some(1)),
+        "원격 탭이 활성인데 그 자리를 안 실었다 — 서버가 로컬 탭을 고정한다: {out:?}"
+    );
+}
+
+
+// ── 영어 화면에 한국어가 안 남는가(§10-21ⓖ2) ────────────────────────────────
+//
+// 제보: *"영어를 골랐는데 화면에 한국어가 섞인다"*(확인 판의 버튼 `취소` · 안내줄).
+// 원인은 번역 누락이었고, 핸드오프의 판정은 **게이트가 없다**였다 — 로케일 래칫은
+// "소켓을 건너는 한국어"를 세지 **우리가 그리는 글**을 안 센다.
+//
+// 여기서는 **그려진 프레임**을 잰다. 어떤 경로로 그 글이 왔든(정적 표·`t()`·서버가 준
+// 글) 화면에 한글이 남으면 잡힌다 — 사용자가 보는 것과 같은 자리에서 재는 것이 요점이다.
+
+fn hangul(text: &str) -> bool {
+    text.chars().any(|c| ('\u{ac00}'..='\u{d7a3}').contains(&c))
+}
+
+/// 탭 이름이 **ASCII** 인 상태 — 사용자 자료(탭 이름·패널 글)는 번역 대상이 아니라서
+/// 표본에 한글을 두면 이 오라클이 자기 자료에 걸린다.
+fn ascii_tabs() -> Vec<ServerMessage> {
+    vec![
+        layout_one_pane(),
+        serde_json::from_value(serde_json::json!({"t": "status", "windows": [
+            {"index": 0, "name": "one", "active": true},
+            {"index": 1, "name": "two"},
+        ]}))
+        .unwrap(),
+    ]
+}
+
+/// 그 화면을 **영어로** 열어 그려진 조각 중 한글이 든 것을 돌려준다.
+fn english_hangul(keys: &[(Key, Mods)]) -> Vec<String> {
+    base::i18n::with_locale("en", || {
+        painted_after(ascii_tabs(), keys)
+            .into_iter()
+            .filter(|t| hangul(t))
+            .collect()
+    })
+}
+
+fn typed(text: &str) -> Vec<(Key, Mods)> {
+    text.chars().map(|c| (Key::Char(c), Mods::NONE)).collect()
+}
+
+#[test]
+fn the_english_locale_actually_switches_something() {
+    // ★ 공허 방지 — 로케일이 안 바뀌면 아래가 전부 "한글투성이"로 붉거나(그건 낫다)
+    //   반대로 표본이 비어 조용히 통과할 수 있다. 먼저 스위치가 도는지 본다.
+    let ko = base::i18n::with_locale("ko", || base::Action::Quit.label().to_owned());
+    let en = base::i18n::with_locale("en", || base::Action::Quit.label().to_owned());
+    assert!(hangul(&ko), "ko 라벨이 한국어가 아니다: {ko}");
+    assert!(!hangul(&en), "en 으로 안 바뀌었다: {en}");
+}
+
+#[test]
+fn no_korean_survives_on_the_confirm_screen() {
+    // ★ **제보의 그 화면**이다(`Kill tab` 판). 되돌릴 수 없는 것 앞의 화면이라
+    //   어느 쪽이 "아니오"인지 못 읽으면 그 화면의 취지가 무너진다.
+    let left = english_hangul(&[(Key::Char('b'), Mods::CTRL), (Key::Char('&'), Mods::NONE)]);
+    assert!(left.is_empty(), "확인 판에 한국어가 남았다: {left:?}");
+}
+
+#[test]
+fn no_korean_survives_on_the_common_screens() {
+    let screens: &[(&str, Vec<(Key, Mods)>)] = &[
+        ("키 도움말", vec![(Key::Escape, Mods::NONE), (Key::Char('?'), Mods::NONE)]),
+        ("탭 스위처", vec![(Key::Escape, Mods::NONE), (Key::Tab, Mods::NONE)]),
+        ("트리", vec![(Key::Char('b'), Mods::CTRL), (Key::Char('w'), Mods::NONE)]),
+        ("메뉴", vec![(Key::Char('b'), Mods::CTRL), (Key::Enter, Mods::NONE)]),
+        ("팔레트", vec![(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)]),
+        ("설정", {
+            let mut k = vec![(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)];
+            k.extend(typed("settings"));
+            k.push((Key::Enter, Mods::NONE));
+            k
+        }),
+        ("알림 이력", {
+            let mut k = vec![(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)];
+            k.extend(typed("notice-history"));
+            k.push((Key::Enter, Mods::NONE));
+            k
+        }),
+        ("버퍼", {
+            let mut k = vec![(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)];
+            k.extend(typed("choose-buffer"));
+            k.push((Key::Enter, Mods::NONE));
+            k
+        }),
+        ("키 바인딩 목록", {
+            let mut k = vec![(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)];
+            k.extend(typed("list-keys"));
+            k.push((Key::Enter, Mods::NONE));
+            k
+        }),
+    ];
+    let mut bad = Vec::new();
+    for (name, keys) in screens {
+        let left = english_hangul(keys);
+        if !left.is_empty() {
+            bad.push(format!("{name}: {left:?}"));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "영어 로케일인데 한국어가 남은 화면:\n  {}\n\
+         카탈로그(`base/src/i18n/en_*.rs`)에 그 원문의 영어 짝을 더할 것.",
+        bad.join("\n  ")
+    );
 }

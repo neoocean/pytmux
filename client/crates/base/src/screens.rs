@@ -126,9 +126,85 @@ pub enum Screen {
     /// 개를 연달아 바꾸고, 한 번에 하나씩 닫히면 그때마다 다시 열어야 한다. 그리고 값이
     /// 바뀐 것을 **같은 화면에서 확인**하는 것이 이 화면의 존재 이유다.
     Settings,
+    /// 블록·Claude **요약 판**(§10-21ⓓ — 종전엔 화면 아래에 늘 붙어 있던 구역).
+    ///
+    /// 화면에서 뺀 이유는 제보 그대로다: *"이 판은 GUI 에만 있고 pytmux 사용에 직접적인
+    /// 영향을 주지 않으므로, 화면에서 빼고 별도 명령어나 메뉴로 접근하게 한다."*
+    /// 훑는 용도의 요약이 화면의 주인공(패널)을 밀어내던 자리다.
+    Summary,
 }
 
 impl Screen {
+    /// **전수 목록** — 화면 하나도 빠지지 않는다.
+    ///
+    /// 오라클용이다(`base::keymap::all_actions` 와 같은 자리·같은 이유): "이 화면을 열
+    /// 길이 있나"를 재려면 목록이 있어야 하고, 목록을 크레이트마다 다시 적으면 그
+    /// 목록들이 서로 다르게 낡는다.
+    ///
+    /// 빠짐은 **컴파일러가 막는다** — 아래 `match` 에 와일드카드가 없으므로 변형을
+    /// 더하면 여기가 안 컴파일된다(그때 배열에도 더하게 된다).
+    pub fn all() -> &'static [Screen] {
+        // 이 match 는 값을 쓰려는 것이 아니라 **빠짐을 막으려고** 있다.
+        const fn exhaustive(screen: Screen) -> usize {
+            match screen {
+                Screen::Keys => 0,
+                Screen::ClaudeDetail => 1,
+                Screen::Tabs => 2,
+                Screen::Tree => 3,
+                Screen::Buffers => 4,
+                Screen::Prompt => 5,
+                Screen::Confirm => 6,
+                Screen::Commands => 7,
+                Screen::Version => 8,
+                Screen::ShellOutput => 9,
+                Screen::RestartCheck => 10,
+                Screen::MergeRemote => 11,
+                Screen::Layouts => 12,
+                Screen::Notices => 13,
+                Screen::Menu => 14,
+                Screen::Plugins => 15,
+                Screen::PluginView => 16,
+                Screen::Options => 17,
+                Screen::Hooks => 18,
+                Screen::InfoTabs => 19,
+                Screen::Compose => 20,
+                Screen::Settings => 21,
+                Screen::Summary => 22,
+            }
+        }
+        const ALL: &[Screen] = &[
+            Screen::Keys,
+            Screen::ClaudeDetail,
+            Screen::Tabs,
+            Screen::Tree,
+            Screen::Buffers,
+            Screen::Prompt,
+            Screen::Confirm,
+            Screen::Commands,
+            Screen::Version,
+            Screen::ShellOutput,
+            Screen::RestartCheck,
+            Screen::MergeRemote,
+            Screen::Layouts,
+            Screen::Notices,
+            Screen::Menu,
+            Screen::Plugins,
+            Screen::PluginView,
+            Screen::Options,
+            Screen::Hooks,
+            Screen::InfoTabs,
+            Screen::Compose,
+            Screen::Settings,
+            Screen::Summary,
+        ];
+        // 중복·자리 어긋남은 여기서 잡는다(빠짐은 위 match 가 이미 막았다).
+        debug_assert!(
+            ALL.iter().enumerate().all(|(i, s)| exhaustive(*s) == i),
+            "Screen::all() 의 차례가 어긋났다 — 전수 목록이 아니다"
+        );
+        ALL
+    }
+
     /// 화면 머리에 붙는 제목. 이름을 뷰가 지으면 같은 화면이 화면마다 달라 보인다.
     pub fn title(self) -> &'static str {
         crate::i18n::t(match self {
@@ -158,6 +234,8 @@ impl Screen {
             Screen::Compose => "프롬프트 작성 (블록 선택 편집)",
             // 파이썬 `dialog.status_title` 과 같은 자리다.
             Screen::InfoTabs => "상태",
+            // §10-21ⓓ — 종전 화면 아래 구역의 머리줄이 하던 말을 판 제목이 한다.
+            Screen::Summary => "블록 · Claude 요약",
         })
     }
 
@@ -204,7 +282,38 @@ impl Screen {
             | Screen::InfoTabs
             // 플러그인이 준 판도 **고르러 여는 판**이다(목록이든 글이든 그 흐름의 안이다).
             | Screen::PluginView
-            | Screen::Settings => Anchor::Middle,
+            | Screen::Settings
+            // 요약은 **훑는 판**이다 — 목록이라 고르러 여는 판과 같은 자리가 맞다.
+            | Screen::Summary => Anchor::Middle,
+        }
+    }
+
+    /// 이 판이 화면 세로의 **몇 분의 몇**을 쓰나(§10-21 ⓗ·ⓢ·ⓥ·ⓐ2·ⓚ2).
+    ///
+    /// # 왜 이 값이 생겼나 — 제보 다섯이 한 이야기였다
+    ///
+    /// | 제보 | 증상 |
+    /// |---|---|
+    /// | ⓗ | 팔레트가 상하 전체를 쓴다 · 분류를 옮기면 높이가 변한다 |
+    /// | ⓢ | 설정 판도 화면 전체 높이를 쓴다 |
+    /// | ⓥ | 알림 이력을 굴리면 **판 크기가 변한다** |
+    /// | ⓐ2⑴ | 상태 판이 고른 탭에 따라 커졌다 작아졌다 |
+    /// | ⓚ2 | `p4changes` 판이 화면을 통째로 가린다 |
+    ///
+    /// 다섯 다 뿌리가 하나다: **판의 기하를 내용이 정한다**. 그래서 개별 처방이 아니라
+    /// 규칙 하나를 둔다 — 높이는 여기가 정하고, 모자란 줄은 빈 자리로 두고, 넘치면
+    /// 안에서 스크롤한다.
+    ///
+    /// # 왜 판마다 다른가
+    ///
+    /// ⓗ 는 팔레트를 **절반**이라고 못박았고, ⓢ 는 설정에 대해 "전체는 아니다"까지만
+    /// 왔다. 그래서 공통 상한을 낮추되(2/3) 팔레트만 그 말대로 절반이다 — 기록이
+    /// *"공통 상한을 낮추되 판별로 덮어쓸 수 있는 모양이 안전하다"* 고 적은 그대로다.
+    pub fn height_ratio(self) -> (usize, usize) {
+        match self {
+            // 제보가 "높이는 화면의 절반"이라고 못박았다.
+            Screen::Commands => (1, 2),
+            _ => (2, 3),
         }
     }
 
@@ -232,6 +341,8 @@ impl Screen {
             | Screen::Version
             | Screen::ShellOutput
             | Screen::RestartCheck => "InfoScreen",
+            // 정본에 짝이 없다 — 이 구역은 GUI 만 갖고 있던 것이다(§10-21ⓓ).
+            Screen::Summary => return None,
             Screen::Tabs => "TabSwitcherScreen",
             Screen::Tree => "ChooseTreeScreen",
             Screen::Buffers => "ChooseBufferScreen",
@@ -290,6 +401,7 @@ impl Screen {
                 "(Enter 전송 · Shift+Enter 줄바꿈 · Esc 메뉴 · Shift+방향키/Ctrl+A 선택)"
             }
             Screen::InfoTabs => "(←→ 탭 · ↑↓ 스크롤 · Esc 닫기)",
+            Screen::Summary => "(아무 키나 닫기 · ↑↓ 스크롤)",
         })
     }
 
@@ -1019,6 +1131,54 @@ impl Screens {
             return;
         }
         self.stack.push(screen);
+    }
+
+    /// 탭 스위처를 **정본과 같은 자리에서** 연다(§10-21ⓔ2).
+    ///
+    /// # 왜 첫 선택이 0 이 아닌가
+    ///
+    /// 정본이 일부러 **다음 탭**에 놓는다 — *"첫 화면부터 다음 탭이 선택돼 있어
+    /// `esc Tab Enter` 가 곧 '다음 탭으로 전환'이다"*(`client.py::open_tab_switcher`,
+    /// 사용자 요청 2026-07-15 · Alt+Tab 동선). 우리 `open` 은 무조건 `selected = 0`
+    /// 이라 같은 손버릇이 다른 탭을 골랐다.
+    ///
+    /// # 왜 core 가 정하나
+    ///
+    /// 뷰가 열 때마다 자기 셈으로 커서를 옮기면 두 클라가 갈린다. 뜻은 여기서 정하고
+    /// 뷰는 줄 목록만 준다.
+    ///
+    /// # 탭이 하나뿐이면 안 연다
+    ///
+    /// 고를 것이 없는 목록을 띄우는 것은 "아무 일도 안 일어난다"와 같다(정본은 그때
+    /// 활성 탭을 깜빡여 알린다). 안 열었으면 `false` 를 돌려주니 뷰가 그 신호를 쓴다.
+    /// `rows` 는 줄마다 **(이 줄이 탭인가, 활성 탭인가)** 다.
+    ///
+    /// 두 값을 다 받는 이유: 스위처 목록에는 탭 줄 밑에 **패널 하위행**이 섞인다. 탭만
+    /// 세지 않으면 "탭이 둘 이상인가" 판정이 틀리고, 탭만 건너뛰지 않으면 "다음 탭"이
+    /// 같은 탭의 패널이 되어 Alt+Tab 동선이 무너진다.
+    pub fn open_tab_switcher(&mut self, rows: &[(bool, bool)]) -> bool {
+        if rows.iter().filter(|(is_tab, _)| *is_tab).count() < 2 {
+            return false;
+        }
+        self.open(Screen::Tabs);
+        self.selected = Self::next_tab_row(rows);
+        true
+    }
+
+    /// 활성 탭 **다음 탭 줄**의 자리(정본 `initial = (pos + 1) % len`).
+    fn next_tab_row(rows: &[(bool, bool)]) -> usize {
+        let at = rows.iter().position(|(is_tab, active)| *is_tab && *active);
+        // 활성 탭을 못 찾으면 첫 줄 — 종전 동작 그대로다(무엇도 안 고른 것보다 낫다).
+        let Some(at) = at else { return 0 };
+        // 그 다음의 **탭 줄**로 간다(패널 하위행은 건너뛴다). 한 바퀴 돌아 제자리면
+        // 그대로 둔다 — 탭이 하나뿐인 경우는 위에서 이미 걸렀다.
+        for step in 1..=rows.len() {
+            let i = (at + step) % rows.len();
+            if rows[i].0 {
+                return i;
+            }
+        }
+        at
     }
 
     /// 맨 위 화면을 닫는다. 닫을 것이 있었으면 `true`.

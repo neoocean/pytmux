@@ -548,6 +548,74 @@ async def test_a_screen_spec_says_the_same_words_the_catalog_does():
         await teardown(srv, task, sock)
 
 
+async def test_mdir_says_everything_through_the_catalog():
+    """`mdir` 이 내보내는 **모든 칸**이 카탈로그를 거친다(2026-08-02p).
+
+    다른 스펙과 달리 이 화면은 제목·안내·빈 줄만이 아니라 **줄의 칸**(`<상위>`·
+    `<드라이브>`)과 **물음**(삭제·복사)과 **결과 한 줄**까지 서버가 짓는다. 그 자리
+    하나가 손으로 적힌 채 남으면 영어 사용자에게 그 줄만 한국어로 뜬다.
+
+    이름(`label`)은 일부러 안 본다 — 파일 이름은 자료라 번역 대상이 아니다."""
+    import os
+    import tempfile
+    from pytmuxlib import i18n
+    values = set(i18n._CATALOG["ko"].values())
+    with tempfile.TemporaryDirectory() as tmp:
+        _tree(tmp)
+        p = _mdir()
+        mine = {"path": tmp, "tags": []}
+        spec = p._spec(mine, 0, "")
+        # 제목은 자리가 있어(`{path}`) 지어진 글이 아니라 **포맷**이 카탈로그의 것이다.
+        assert spec["i18n"]["title"]["fmt"] in values, spec["i18n"]
+        assert spec["hint"] in values, (
+            "mdir 스펙의 hint 가 카탈로그에 없다: %r" % (spec["hint"],))
+        # `..` 와 드라이브 줄의 칸도 카탈로그 값이다(크기·시각은 자료라 제외).
+        assert spec["rows"][0]["cols"] == [i18n.t("mdir.parent")], spec["rows"][0]
+        # 빈 디렉터리·물음·결과 — 서버가 짓는 나머지 자리.
+        empty = p._spec({"path": os.path.join(tmp, "sub"), "tags": []}, 0, "")
+        assert empty["note"] in values, empty["note"]
+        ask = p._begin(mine, "delete", os.path.join(tmp, "a.txt"), 1)
+        assert ask["i18n"]["title"]["fmt"] in values, ask["i18n"]
+        assert p._begin(mine, "mkdir", "", 0)["title"] in values, "mkdir 물음"
+
+
+async def test_mdir_tells_why_it_failed_in_words_the_client_can_translate():
+    """왜 안 됐는지는 **그 줄의 칸**으로 간다 — 결과 한 줄은 수만 말한다.
+
+    종전에는 `실패 2건 — a(이미 있습니다)` 처럼 사유를 결과 줄에 이어 붙였다. 그러면
+    번역이 안 된다: 사유를 인자로 넘기면 영어 클라가 자기 포맷에 한국어 조각을 끼우고
+    (`i18n.phrase` 의 그 함정), 판을 조작×사유로 만들면 쉰 개가 된다. 사유가 **그 자체로
+    카탈로그의 한 줄**이면 클라가 `t()` 로 읽는다(`PluginRow::say_cols`).
+    """
+    import os
+    import tempfile
+    from pytmuxlib import i18n
+    values = set(i18n._CATALOG["ko"].values())
+    with tempfile.TemporaryDirectory() as tmp:
+        _tree(tmp)
+        p = _mdir()
+        mine = {"path": tmp, "tags": []}
+        p._spec(mine, 0, "")
+        # 둘을 `sub` 로 옮긴다 — 파일은 되고 `sub` 자신은 **자기 안으로**라 안 된다.
+        # 일괄 작업이 절반만 성공하는 것이 정상이고(서버가 개별 실패를 모아 계속한다)
+        # 바로 그때 "무엇이 왜 안 됐나"가 필요하다.
+        sub = os.path.join(tmp, "sub")
+        mine["tags"] = [os.path.join(tmp, "a.txt"), sub]
+        p._begin(mine, "move", "", 1)
+        spec = p._apply(mine, sub, 1)
+        row = next(r for r in spec["rows"] if r["label"].strip().startswith("sub"))
+        assert "✗" in row["cols"], "안 된 줄에 표식이 없다: %r" % (row,)
+        why = [c for c in row["cols"] if c in values]
+        assert why, "사유가 카탈로그를 안 거쳤다(영어 클라엔 한국어로 뜬다): %r" % (row,)
+        # 표식과 사유는 **다른 칸**이다 — 이어 붙이면 그 칸은 카탈로그의 글이 아니다.
+        assert not any(c.startswith("✗ ") and len(c) > 2 for c in row["cols"]), row
+        # 결과 한 줄은 수만 말하고, 재료를 싣는다.
+        assert spec["i18n"]["note"]["fmt"] in values, spec["i18n"]
+        assert "f" in spec["i18n"]["note"]["args"], spec["i18n"]["note"]
+        # 사유는 한 번만 보인다 — 다음 화면에는 안 남는다.
+        assert "✗" not in str(p._spec(mine, 0, "")["rows"]), "표식이 눌러앉았다"
+
+
 async def test_a_composed_title_carries_the_ingredients_not_just_the_words():
     """자리가 있는 제목은 **재료**(`i18n`)도 실어야 한다 — 원문이 키가 못 되기 때문.
 

@@ -221,6 +221,9 @@ impl BlockList {
             | Action::RemoteDetach
             | Action::ShowPlugins
             | Action::ToggleClock
+            | Action::ShowSummary
+            | Action::FontScale { .. }
+            | Action::FontScaleReset
             | Action::RenamePane
             | Action::ShowPaneNumbers
             | Action::ShowMenu
@@ -228,6 +231,7 @@ impl BlockList {
             | Action::SendEscape
             | Action::SendBacktick
             | Action::ToggleCalendar
+            | Action::SetOverlay { .. }
             | Action::ToggleUsageView
             | Action::ToggleBorderStatus
             | Action::ToggleInactiveDim

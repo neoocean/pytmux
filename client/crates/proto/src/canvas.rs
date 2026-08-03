@@ -54,6 +54,79 @@ fn box_char(bits: u8) -> Option<char> {
     BOX_BITS.iter().find(|(_, b)| *b == bits).map(|(c, _)| *c)
 }
 
+/// 블록 문자가 칸의 **어디를** 채우나. 칸을 `(0,0)`~`(1,1)` 로 본 사각형이다.
+///
+/// 값이 비율인 이유: 칸의 픽셀 크기는 글꼴과 배율이 정하므로 여기서는 알 수 없다.
+/// 그리는 쪽이 `x0 * 칸너비` 식으로 옮긴다(테두리 선분과 같은 규율 — proto 는 무엇을,
+/// 뷰는 몇 픽셀에).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlockFill {
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+    /// 진하기 0~1. 음영 문자(`░`·`▒`·`▓`)는 **같은 사각형을 흐리게** 칠한 것이다.
+    pub alpha: f32,
+}
+
+impl BlockFill {
+    const fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> Self {
+        Self { x0, y0, x1, y1, alpha: 1. }
+    }
+
+    const fn shade(alpha: f32) -> Self {
+        Self { x0: 0., y0: 0., x1: 1., y1: 1., alpha }
+    }
+}
+
+/// 블록 문자 ↔ 채우는 자리(U+2580 ~ U+2595).
+///
+/// # 왜 이 표가 필요한가 (§10-21ⓘ)
+///
+/// GUI 캔버스는 한 줄을 문자열로 셰이퍼에 넘긴다 — 자리는 **글리프의 전진폭**이 정한다.
+/// 블록 문자는 우리가 고른 고정폭 글꼴에 거의 없어 폴백으로 가는데, 폴백이 고정폭이
+/// 아니면 진폭이 칸너비의 정수배가 아니다. 그러면 그림이 **행마다 어긋난다** — Claude
+/// 마스코트가 정확히 그 증상이었다.
+///
+/// 테두리를 실제 선으로 옮긴 것과 **같은 처방**이다: 글꼴에 맡기지 않고 우리가 그린다.
+/// 그러면 진폭이 무엇이든 그림이 격자에 딱 맞는다.
+///
+/// # 사분면(U+2596~U+259F)이 없는 이유
+///
+/// 그것들은 사각형 **둘**이라 이 표의 모양(하나)으로 못 적는다. 저장소의 실 픽스처를
+/// 전수로 훑어 보니(Claude 출력·벤치 그림 포함) 쓰이는 것은 **전부 이 표 안**이었다 —
+/// 없는 것은 종전대로 글자로 그려진다(그림이 어긋날 뿐 사라지지는 않는다).
+/// 필요해지면 그때 `&[BlockFill]` 로 넓힐 것.
+pub const BLOCK_FILLS: &[(char, BlockFill)] = &[
+    ('▀', BlockFill::rect(0., 0., 1., 0.5)),
+    ('▁', BlockFill::rect(0., 7. / 8., 1., 1.)),
+    ('▂', BlockFill::rect(0., 6. / 8., 1., 1.)),
+    ('▃', BlockFill::rect(0., 5. / 8., 1., 1.)),
+    ('▄', BlockFill::rect(0., 4. / 8., 1., 1.)),
+    ('▅', BlockFill::rect(0., 3. / 8., 1., 1.)),
+    ('▆', BlockFill::rect(0., 2. / 8., 1., 1.)),
+    ('▇', BlockFill::rect(0., 1. / 8., 1., 1.)),
+    ('█', BlockFill::rect(0., 0., 1., 1.)),
+    ('▉', BlockFill::rect(0., 0., 7. / 8., 1.)),
+    ('▊', BlockFill::rect(0., 0., 6. / 8., 1.)),
+    ('▋', BlockFill::rect(0., 0., 5. / 8., 1.)),
+    ('▌', BlockFill::rect(0., 0., 4. / 8., 1.)),
+    ('▍', BlockFill::rect(0., 0., 3. / 8., 1.)),
+    ('▎', BlockFill::rect(0., 0., 2. / 8., 1.)),
+    ('▏', BlockFill::rect(0., 0., 1. / 8., 1.)),
+    ('▐', BlockFill::rect(0.5, 0., 1., 1.)),
+    ('░', BlockFill::shade(0.25)),
+    ('▒', BlockFill::shade(0.5)),
+    ('▓', BlockFill::shade(0.75)),
+    ('▔', BlockFill::rect(0., 0., 1., 1. / 8.)),
+    ('▕', BlockFill::rect(7. / 8., 0., 1., 1.)),
+];
+
+/// 그 글자가 블록 문자면 채우는 자리, 아니면 `None`.
+pub fn block_fill(ch: char) -> Option<BlockFill> {
+    BLOCK_FILLS.iter().find(|(c, _)| *c == ch).map(|(_, f)| *f)
+}
+
 /// 격자의 한 칸.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cell {

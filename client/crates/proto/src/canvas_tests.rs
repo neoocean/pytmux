@@ -147,3 +147,88 @@ fn a_later_pane_overwrites_an_earlier_one_where_they_overlap() {
     canvas.blit_pane(&plain("BB"), 1, 0, 2, 1);
     assert_eq!(canvas.row_text(0), "aBBa");
 }
+
+// ── 블록 문자 표(§10-21ⓘ) ────────────────────────────────────────────────────
+//
+// 이 표는 "글꼴에 맡기지 않고 우리가 그린다"의 재료다. 값이 틀리면 그림이 조용히
+// 어긋나므로(마스코트가 그랬다) 뜻을 기계로 고정한다.
+
+#[test]
+fn a_full_block_fills_the_whole_cell() {
+    let f = block_fill('█').expect("█ 이 표에 없다");
+    assert_eq!((f.x0, f.y0, f.x1, f.y1), (0., 0., 1., 1.));
+    assert_eq!(f.alpha, 1.);
+}
+
+#[test]
+fn the_upper_half_block_fills_the_top_not_the_bottom() {
+    // ★ 위아래가 뒤집히면 마스코트가 통째로 뒤집힌다 — 그런데 "어긋난다"로만 보여
+    //   눈으로는 원인을 못 가른다. 방향을 여기서 못박는다.
+    let f = block_fill('▀').unwrap();
+    assert_eq!((f.y0, f.y1), (0., 0.5), "▀ 는 칸의 **위** 절반이다");
+    let f = block_fill('▄').unwrap();
+    assert_eq!((f.y0, f.y1), (0.5, 1.), "▄ 는 칸의 **아래** 절반이다");
+}
+
+#[test]
+fn the_left_and_right_half_blocks_are_mirror_images() {
+    let l = block_fill('▌').unwrap();
+    let r = block_fill('▐').unwrap();
+    assert_eq!((l.x0, l.x1), (0., 0.5));
+    assert_eq!((r.x0, r.x1), (0.5, 1.));
+}
+
+#[test]
+fn the_eighth_blocks_grow_one_eighth_at_a_time() {
+    // ▁▂▃▄▅▆▇█ 은 아래에서 한 조각씩 자란다. 하나라도 어긋나면 막대 그래프가
+    // 계단이 아니라 톱니가 된다.
+    let bars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    for (i, ch) in bars.iter().enumerate() {
+        let f = block_fill(*ch).unwrap();
+        let want = (7 - i) as f32 / 8.;
+        assert!(
+            (f.y0 - want).abs() < 1e-6,
+            "{ch} 의 윗변이 {} 인데 {want} 여야 한다",
+            f.y0
+        );
+        assert_eq!(f.y1, 1., "{ch} 는 바닥까지 채운다");
+    }
+}
+
+#[test]
+fn shades_are_the_whole_cell_at_lower_alpha() {
+    // 음영은 **모양이 아니라 진하기**다. 사각형을 줄이면 격자에 구멍이 뚫린다.
+    for (ch, want) in [('░', 0.25), ('▒', 0.5), ('▓', 0.75)] {
+        let f = block_fill(ch).unwrap();
+        assert_eq!((f.x0, f.y0, f.x1, f.y1), (0., 0., 1., 1.), "{ch}");
+        assert_eq!(f.alpha, want, "{ch}");
+    }
+}
+
+#[test]
+fn a_letter_is_not_a_block() {
+    // 넓게 잡으면 글자가 사각형으로 덮여 사라진다.
+    for ch in ['a', ' ', '─', '│', '가', '▖'] {
+        assert!(block_fill(ch).is_none(), "{ch} 를 블록으로 읽었다");
+    }
+}
+
+#[test]
+fn every_fill_stays_inside_its_cell() {
+    // 하나라도 칸을 넘으면 이웃 칸을 덮는다 — 격자를 지키려고 옮긴 것이 격자를 깬다.
+    for (ch, f) in BLOCK_FILLS {
+        assert!(f.x0 >= 0. && f.y0 >= 0. && f.x1 <= 1. && f.y1 <= 1., "{ch} 가 칸을 넘는다");
+        assert!(f.x0 < f.x1 && f.y0 < f.y1, "{ch} 의 사각형이 비었다");
+        assert!(f.alpha > 0. && f.alpha <= 1., "{ch} 의 진하기가 범위 밖이다");
+    }
+}
+
+#[test]
+fn the_block_table_has_no_duplicate_characters() {
+    // 중복이 있으면 `find` 가 첫 줄만 쓰고 뒤는 조용히 죽는다.
+    let mut seen: Vec<char> = BLOCK_FILLS.iter().map(|(c, _)| *c).collect();
+    let before = seen.len();
+    seen.sort_unstable();
+    seen.dedup();
+    assert_eq!(before, seen.len(), "블록 표에 중복 문자가 있다");
+}

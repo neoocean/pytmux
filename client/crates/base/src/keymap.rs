@@ -103,6 +103,12 @@ pub enum Action {
     ShowMenu,
     /// 지나간 알림 목록을 연다(`notice-history`).
     ShowNotices,
+    /// 블록·Claude **요약 판**을 연다(`summary` · §10-21ⓓ).
+    ///
+    /// 종전에는 화면 아래에 늘 붙어 있던 구역이다. 제보가 *"GUI 에만 있고 pytmux
+    /// 사용에 직접적인 영향을 주지 않으므로 화면에서 빼고 별도 명령어나 메뉴로"* 라고
+    /// 해서 판으로 옮겼다 — 훑는 용도의 요약이 화면의 주인공(패널)을 밀어내던 자리다.
+    ShowSummary,
     /// 활성 패널에 **ESC 한 바이트**를 보낸다(`esc e` · `Shift+ESC`).
     ///
     /// 왜 따로 있나: 명령 모드 안에서 vim·less 에게 ESC 를 주려면 길이 필요한데, 그냥
@@ -113,10 +119,48 @@ pub enum Action {
     /// 파이썬 클라에서 백틱이 명령 모드 진입 키라, 백틱 자체를 치려면 길이 따로 있어야
     /// 한다. 우리는 진입 키가 `ESC` 지만 **손버릇을 맞춘다**.
     SendBacktick,
+    /// 앱 **전체** 글자 크기를 한 걸음 키우거나 줄인다(`Ctrl+=`/`Ctrl+-` · §10-21ⓐ).
+    ///
+    /// # 왜 GUI 만인가
+    ///
+    /// 정본(TUI)의 글자 크기는 **호스트 단말**이 정한다 — 우리가 건드릴 자리가 없다.
+    /// `Ctrl+=`/`Ctrl+-` 를 가로채는 것도 독립 앱이라 되는 일이고(같은 논리가 `Ctrl+Tab`
+    /// = §10-21ⓕ).
+    ///
+    /// ⚠ **갈림을 어디에 적나** — HANDOFF §10-21 이 여러 자리에서 "패리티 표에 `iv` 로
+    /// 선언"이라고 적지만 그 장치는 **없다**: `iv`/`KNOWN_DIVERGENCES` 는 Rust TUI 를
+    /// 지우면서 함께 사라졌고(2026-08-01), 지금 `parity.rs` 의 칸은 하나이며 그 표의
+    /// 줄은 **정본 픽스처가 정한다** — 정본에 없는 표면은 실을 줄 자체가 없다. 그래서
+    /// GUI 전용 표면의 대장은 적합성 게이트의 허용 목록이다:
+    /// `category_conformance.rs` 의 `PALETTE_OURS`(팔레트 이름)·`SETTINGS_OURS`(설정 줄).
+    /// 거기 없으면 게이트가 운다 = 조용히 늘지 않는다.
+    ///
+    /// 규칙(끝값·걸음·반올림)의 주인은 [`crate::config::font_scale_step`] 이다 — 뷰가
+    /// 각자 더하면 두 자리에서 다르게 잘리고 그 어긋남이 설정 파일에 굳는다.
+    FontScale { up: bool },
+    /// 글자 크기를 기본(1.0)으로 되돌린다(`Ctrl+0`).
+    ///
+    /// 따로 있는 이유: 배율은 **자기가 자기 입구를 작게 만든다** — 0.5 까지 줄여 놓고
+    /// 설정 화면을 찾아 들어가는 것보다 키 하나로 돌아오는 길이 있어야 한다.
+    FontScaleReset,
     /// 활성 패널을 이번 달 달력으로 덮는다(`calendar-mode` — `calendar` 플러그인).
     ///
     /// **키가 없다** — 파이썬도 안 준다(시계만 `prefix t` 를 쓴다). 팔레트가 입구다.
     ToggleCalendar,
+    /// 오버레이를 **명시적으로** 켜거나 끈다(`open-clock`·`close-clock`·`open-calendar`·
+    /// `close-calendar`).
+    ///
+    /// # 왜 토글로는 부족한가 (§10-21ⓡ)
+    ///
+    /// 제보: `close-clock`·`close-calendar` 가 안 먹는다. 우리에게 토글밖에 없어서 그
+    /// 이름들이 **플러그인 줄**로 남았고, 고르면 서버에 "화면을 다오"로 가서
+    /// *"이 플러그인은 화면 스펙을 제공하지 않습니다"* 로 거절당했다 — 상태를 바꾸는
+    /// 명령을 화면 여는 길로 보낸 것이다. 이름이 코어 표에 있으면 그 줄은 플러그인
+    /// 목록에서 빠지고([`crate::plugins::native_action`]) 우리가 실행한다.
+    ///
+    /// 뜻은 core 가 정한다(정본 계약 그대로): **켜기는 멱등** · 대상은 활성 패널 ·
+    /// 시계와 달력은 **상호 배타**. 그 판정은 `proto::SessionState::set_overlay` 다.
+    SetOverlay { name: &'static str, on: bool },
     /// 활성 패널을 Claude 한도 막대 + 리셋 카운트다운으로 덮는다
     /// (`usage-view` — `claude-token-usage-view` 플러그인).
     ///
@@ -354,10 +398,21 @@ impl Action {
             Action::ShowPaneNumbers => "패널 번호",
             Action::ShowMenu => "메뉴",
             Action::ShowNotices => "알림 이력",
+            Action::ShowSummary => "블록·Claude 요약",
             Action::SendEscape => "패널에 ESC",
             Action::SendBacktick => "패널에 `",
             Action::ToggleClock => "시계",
+            Action::FontScale { up } => {
+                if *up { "글자 크게" } else { "글자 작게" }
+            }
+            Action::FontScaleReset => "글자 크기 기본",
             Action::ToggleCalendar => "달력",
+            Action::SetOverlay { name, on } => match (*name, *on) {
+                ("clock", true) => "시계 켜기",
+                ("clock", false) => "시계 끄기",
+                ("calendar", true) => "달력 켜기",
+                _ => "달력 끄기",
+            },
             Action::ToggleUsageView => "Claude 한도",
             Action::ToggleSync => "패널 동기화",
             Action::ToggleMonitorActivity => "활동 감시",
@@ -1011,6 +1066,24 @@ const fn pe(name: &'static str, cat: &'static str, action: Action) -> PaletteEnt
     PaletteEntry { name, cat, action }
 }
 
+/// 화면에서 **감춘** 표면 이름(§10-21ⓜ) — 기능은 남기고 **입구만** 닫는다.
+///
+/// # 왜 지우지 않나
+///
+/// 제보는 *"`bell monitor` 를 화면에서 숨긴다 — 당장은 지원하지 않겠다"* 였다(사용자
+/// 결정). **지우는 것이 아니다**: 표를 지우면 그 명령을 아는 사람의 키·설정 파일이
+/// 조용히 죽고, 패리티 표에서도 "우리가 못 하는 것"이 되어 정본과의 차이가 실제보다
+/// 커 보인다. 우리는 여전히 할 수 있고, **보여 주지 않을** 뿐이다.
+///
+/// 거르는 자리는 **화면을 만드는 곳 전부**여야 한다 — 하나라도 빠지면 그 입구로 다시
+/// 보인다(팔레트·설정 화면·상태줄 표식). 그래서 목록을 한 곳에 두고 각자 물어본다.
+pub static HIDDEN_SURFACES: &[&str] = &["monitor-bell"];
+
+/// 그 이름이 화면에서 감춰졌나.
+pub fn is_hidden(name: &str) -> bool {
+    HIDDEN_SURFACES.contains(&name)
+}
+
 /// 팔레트에 뜨는 것 — **지금 이 클라가 실제로 할 수 있는 것만** 싣는다.
 ///
 /// 못 하는 이름을 목록에 두면 고르는 순간 아무 일도 안 일어나고, 그건 "명령이 있는데 안
@@ -1047,7 +1120,6 @@ pub static PALETTE: &[PaletteEntry] = &[
     pe("paste-buffer", "복사/버퍼", Action::PasteBuffer),
     pe("synchronize-panes", "패널", Action::ShowCommandOptions("synchronize-panes")),
     pe("monitor-activity", "모니터", Action::ShowCommandOptions("monitor-activity")),
-    pe("monitor-bell", "모니터", Action::ShowCommandOptions("monitor-bell")),
     pe("automatic-rename", "탭", Action::ShowCommandOptions("automatic-rename")),
     pe("pane-border-status", "패널", Action::ToggleBorderStatus),
     pe("inactive-dim", "설정/기타", Action::ShowCommandOptions("inactive-dim")),
@@ -1128,8 +1200,21 @@ pub static PALETTE: &[PaletteEntry] = &[
     pe("display-panes", "패널", Action::ShowPaneNumbers),
     pe("menu", "설정/기타", Action::ShowMenu),
     pe("notice-history", "설정/기타", Action::ShowNotices),
+    // GUI 만의 판(§10-21ⓓ) — 화면에서 뺀 요약 구역의 새 입구다.
+    pe("summary", "설정/기타", Action::ShowSummary),
+    // GUI 만의 줄(§10-21ⓐ) — 키(`Ctrl+=`/`Ctrl+-`/`Ctrl+0`)가 주 입구이고 팔레트는
+    // 그 키를 모르는 사람의 입구다. 이름은 설정 키(`font-scale`)와 같은 낱말을 쓴다.
+    pe("font-scale-up", "설정/기타", Action::FontScale { up: true }),
+    pe("font-scale-down", "설정/기타", Action::FontScale { up: false }),
+    pe("font-scale-reset", "설정/기타", Action::FontScaleReset),
     pe("clock-mode", "설정/기타", Action::ToggleClock),
     pe("calendar-mode", "설정/기타", Action::ToggleCalendar),
+    // ★ 명시적 켜기/끄기(§10-21ⓡ). 이 넷이 코어 표에 **있어야** 플러그인 줄에서 빠지고
+    //   우리가 실행한다 — 없으면 "팔레트엔 보이는데 눌러도 안 먹는" 줄이 된다.
+    pe("open-clock", "설정/기타", Action::SetOverlay { name: "clock", on: true }),
+    pe("close-clock", "설정/기타", Action::SetOverlay { name: "clock", on: false }),
+    pe("open-calendar", "설정/기타", Action::SetOverlay { name: "calendar", on: true }),
+    pe("close-calendar", "설정/기타", Action::SetOverlay { name: "calendar", on: false }),
     // 정본은 세 모드지만 우리에게 있는 것은 pane(오버레이) 하나다 — Action 주석 참조.
     pe("usage-view", "Claude", Action::ToggleUsageView),
     pe("plugins", "설정/기타", Action::ShowPlugins),
@@ -1560,10 +1645,12 @@ fn variant_index(action: Action) -> usize {
         Action::ShowPaneNumbers => 52,
         Action::ShowMenu => 53,
         Action::ShowNotices => 56,
+        Action::ShowSummary => 108,
         Action::SendEscape => 49,
         Action::SendBacktick => 50,
         Action::ToggleClock => 47,
         Action::ToggleCalendar => 48,
+        Action::SetOverlay { .. } => 109,
         Action::ToggleUsageView => 105,
         Action::JumpPrompt { .. } => 94,
         Action::ShowCompose => 95,
@@ -1575,10 +1662,12 @@ fn variant_index(action: Action) -> usize {
         Action::TogglePromptClear => 101,
         Action::SearchScrollback => 102,
         Action::SearchAgain { .. } => 103,
+        Action::FontScale { .. } => 106,
+        Action::FontScaleReset => 107,
     }
 }
 
-const ACTION_COUNT: usize = 106;
+const ACTION_COUNT: usize = 110;
 
 /// **전수 목록** — 액션 하나도 빠지지 않는다(위 `variant_index` 의 와일드카드 없는 match 가
 /// 빠짐을 막고, 아래 개수 단언이 중복·누락을 막는다).
@@ -1635,10 +1724,12 @@ pub fn all_actions() -> Vec<Action> {
         Action::ShowPaneNumbers,
         Action::ShowMenu,
         Action::ShowNotices,
+        Action::ShowSummary,
         Action::SendEscape,
         Action::SendBacktick,
         Action::ToggleClock,
         Action::ToggleCalendar,
+        Action::SetOverlay { name: "clock", on: true },
         Action::ToggleUsageView,
         Action::ToggleSync,
         Action::ToggleMonitorActivity,
@@ -1693,6 +1784,8 @@ pub fn all_actions() -> Vec<Action> {
         Action::TogglePromptClear,
         Action::SearchScrollback,
         Action::SearchAgain { down: false },
+        Action::FontScale { up: true },
+        Action::FontScaleReset,
     ];
     let mut seen = vec![false; ACTION_COUNT];
     for action in &all {
@@ -1945,5 +2038,45 @@ mod tests {
         assert!(help.contains("j 다음"), "실제: {help}");
         assert!(help.contains("q 종료"), "실제: {help}");
         assert!(!help.contains("down"), "보조 키는 도움말에 안 나온다: {help}");
+    }
+
+    // ── 화면에서 감춘 표면(§10-21ⓜ) ─────────────────────────────────────────────
+
+    #[test]
+    fn a_hidden_surface_is_absent_from_every_screen_table() {
+        // ★ 감추는 자리가 여럿이라(팔레트·설정 줄·설정 라벨·상태줄 표식) **하나만 빠뜨려도**
+        //   그 입구로 다시 보인다. 목록과 표가 갈리지 않게 기계로 묶는다.
+        use crate::config::{SETTINGS, SETTING_LABELS};
+        for name in HIDDEN_SURFACES {
+            assert!(
+                !PALETTE.iter().any(|e| e.name.split(' ').next() == Some(*name)),
+                "감춘 이름이 팔레트에 남아 있다: {name}"
+            );
+            assert!(
+                !SETTINGS.iter().any(|s| s.key == *name),
+                "감춘 이름이 설정 표에 남아 있다: {name}"
+            );
+            assert!(
+                !SETTING_LABELS.iter().any(|(k, _)| k == name),
+                "감춘 이름의 설정 라벨이 남아 있다: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_hidden_list_is_not_empty_and_names_the_reported_one() {
+        // 빈 목록이면 위 단언이 **아무것도 안 재고** 통과한다(공허 방지).
+        assert!(HIDDEN_SURFACES.contains(&"monitor-bell"), "제보가 지목한 이름이 없다");
+    }
+
+    #[test]
+    fn hiding_does_not_remove_the_ability() {
+        // "지우는 것이 아니라 감추는 것"이 제보의 말이다 — 액션은 그대로 있어야 서버가 켜
+        // 두었을 때 우리도 그 상태를 나른다.
+        assert_eq!(Action::ToggleMonitorBell.label(), "벨 감시");
+        assert!(
+            all_actions().contains(&Action::ToggleMonitorBell),
+            "감췄다고 액션까지 사라지면 그건 지운 것이다"
+        );
     }
 }

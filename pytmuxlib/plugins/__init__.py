@@ -653,6 +653,22 @@ class Registry:
                 closed = True
         return closed
 
+    def client_overlay_covers(self, app, pane_id) -> bool:
+        """그 패널이 지금 **플러그인 오버레이에 덮여 있나**(시계/달력 등).
+
+        코어가 이것을 물어야 하는 자리가 있다: 오버레이는 코어의 마지막 층 뒤에 그려져
+        **밑에 있는 클릭존을 가린다**. 존만 남으면 사용자가 보는 것(오버레이)과 탭이
+        하는 일(뒤 패널 조작)이 어긋난다 — 라이브 PTY 팝업에서 이미 한 번 막은 그 모양
+        이고(`layout["popup"]`), 오버레이는 코어가 아니라 **플러그인**이 아는 사실이라
+        훅으로 묻는다.
+
+        플러그인이 없으면 False → 종전과 같다(delete-to-disable)."""
+        for p in self.plugins:
+            fn = getattr(p, "client_overlay_covers", None)
+            if fn is not None and fn(app, pane_id):
+                return True
+        return False
+
     def client_overlay_key(self, app, event) -> bool:
         """활성 패널에 플러그인 오버레이가 떠 있을 때 키 1건을 가로채(소비) 오버레이를
         조작한다(달력 월 이동 등). 소비한 플러그인이 하나라도 있으면 True(코어가 키를

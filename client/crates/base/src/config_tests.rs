@@ -152,7 +152,8 @@ fn the_values_are_the_ones_we_were_given() {
     };
     assert_eq!(value_of("synchronize-panes"), "on");
     assert_eq!(value_of("monitor-activity"), "off");
-    assert_eq!(value_of("monitor-bell"), "on");
+    // ⚠ `monitor-bell` 은 **설정 표에서 뺐다**(§10-21ⓜ — 화면에서 감춘다). 값은 여전히
+    //   서버가 들고 우리도 나른다(`values.monitor_bell`) — 없어진 것은 **입구뿐**이다.
     assert_eq!(value_of("automatic-rename"), "off");
     assert_eq!(value_of("prefix"), "C-a");
 }
@@ -262,6 +263,47 @@ fn the_ratio_is_clamped_not_rejected() {
     assert!(
         (Config::parse("set inactive-dim-ratio 짙게").inactive_dim_ratio - 0.18).abs() < 1e-6
     );
+}
+
+// ── 글자 크기 배율(§10-21ⓐ) ──────────────────────────────────────────────────
+//
+// 규칙의 주인이 core 인 이유는 뷰가 둘이라서가 아니라(뷰는 하나다) **입구가 둘**이기
+// 때문이다: 키(`Ctrl+=`)와 설정 화면. 두 자리가 각자 더하면 끝값·반올림이 갈리고, 그
+// 어긋남은 설정 파일에 굳는다.
+
+#[test]
+fn the_scale_moves_one_step_and_stays_round() {
+    assert!((font_scale_step(1.0, true) - 1.1).abs() < 1e-6);
+    assert!((font_scale_step(1.0, false) - 0.9).abs() < 1e-6);
+    // ★ **정확 비교**다(오차 허용 아님). 0.1 씩 f32 로 더하면 열 걸음 뒤가
+    //   `2.0000002` 라 `1e-6` 허용으로는 접기를 빼도 통과한다 — 실제로 그 변이가
+    //   살아남는 것을 보고 이 단언을 조였다. 배율은 `==` 로 견주는 자리가 있으므로
+    //   (끝에 닿았나) 격자 위에 정확히 앉아야 한다.
+    let mut scale = 1.0;
+    for _ in 0..10 {
+        scale = font_scale_step(scale, true);
+    }
+    assert_eq!(scale, 2.0, "열 걸음 뒤가 정확히 2.0 이 아니다 — 접기가 빠졌다");
+}
+
+#[test]
+fn the_scale_stops_at_the_ends_instead_of_wrapping() {
+    // ★ 돌면 "한 번 더 키웠는데 갑자기 작아진다"가 된다. `Number` 설정 줄은 키가
+    //   하나뿐이라 한 바퀴 도는데, 이쪽은 키가 둘이라 돌 이유가 없다.
+    assert!((font_scale_step(FONT_SCALE_HI, true) - FONT_SCALE_HI).abs() < 1e-6);
+    assert!((font_scale_step(FONT_SCALE_LO, false) - FONT_SCALE_LO).abs() < 1e-6);
+}
+
+#[test]
+fn the_scale_survives_the_config_file() {
+    // 파일 왕복 — 값이 우리가 적는 그대로 다시 읽히나(설정 축 측정과 같은 방법).
+    let text = edit_option("", "font-scale", &number_text("font-scale", 1.4));
+    assert!((Config::parse(&text).font_scale - 1.4).abs() < 1e-6, "{text:?}");
+    // 범위 밖은 **자른다** — 손으로 적은 한 줄 때문에 창이 못 쓰게 되면 안 된다.
+    assert!((Config::parse("set font-scale 99").font_scale - FONT_SCALE_HI).abs() < 1e-6);
+    assert!((Config::parse("set font-scale 0").font_scale - FONT_SCALE_LO).abs() < 1e-6);
+    // 안 적으면 1.0 — 이 설정을 모르는 사람의 화면이 종전과 같아야 한다.
+    assert!((Config::parse("set mouse on").font_scale - 1.0).abs() < 1e-6);
 }
 
 #[test]
@@ -845,4 +887,95 @@ fn settings_are_named_in_human_words_not_option_keys() {
     // 기술적인 값은 옮기지 않는다(옮기면 설정 파일에서 못 찾는다).
     assert_eq!(setting_value_label("pyte"), "pyte");
     assert_eq!(setting_value_label("on"), "켜짐");
+}
+
+// ── 설정 축 측정(2026-08-02p) — G1 을 액션에서 **설정 줄**로 넓힌다 ─────────────
+//
+// 패리티 표의 설정 칸은 36줄인데, 그 값은 액션 축처럼 **재서** 얻은 것이 아니었다
+// (`parity.rs` 의 Item 주석: *"설정 36·화면 17 축은 아직 같은 강도로 안 쟀다"*).
+// 위 `picking_a_toggle_row_gives_an_action…` 이 재는 것은 **모양**이다 — 줄마다 다섯
+// 종류 중 하나가 나온다는 것. 그 다음 질문이 안 물어져 있었다: **그 효과가 실제로
+// 어딘가에 닿는가.**
+//
+// 닿지 않는 길이 실재한다. `flip_config`/`set_config` 는 자기가 모르는 키에 `None` 을
+// 돌려주고(그 줄은 조용히 아무 일도 안 한다), 설정 파일 파서도 모르는 줄을 조용히
+// 넘긴다 — 증상은 `prompt_key` 주석이 적어 둔 그대로다: *"설정 화면에서 고쳐도 안
+// 바뀐다"*.
+//
+// 그래서 **파일을 안 건드리고** 잰다: 그 줄이 쓰겠다는 값을 `edit_option` 으로 설정
+// 파일 글에 얹고 다시 파싱해, 파서가 그 키를 알아듣는지 본다. 쓰기 경로를 부르면
+// `PYTMUX_CONFIG` 를 세워야 하는데 그건 프로세스 전역이라 형제 테스트와 경합한다
+// (2026-08-02 로케일에서 겪은 그 모양).
+
+/// 설정 파일이 값의 주인이 **아닌** 줄과 그 이유.
+///
+/// 서버가 쥔 값(`Act`)과 특별 취급이 필요한 물음 둘은 파일 왕복으로 잴 수 없다.
+/// 목록이 곧 이 측정의 예외이고, 새로 생기면 같은 CL 에서 이유와 함께 여기 적힌다.
+static NOT_A_CONFIG_ROW: &[(&str, &str)] = &[
+    ("default-path", "빈 대답이 **되돌리기**라 `prompt_key` 가 일부러 안 돌려준다"),
+    ("prefix", "대답이 값이 아니라 **키 표기**(`C-a`)라 파싱을 거친다"),
+];
+
+#[test]
+fn every_setting_row_reaches_something_that_reads_it() {
+    let values = base_values();
+    let mut dead: Vec<String> = Vec::new();
+    let mut acted: Vec<&'static str> = Vec::new();
+    for (row, setting) in SETTINGS.iter().enumerate() {
+        let lands = match setting_pick_dir(row, &values, true) {
+            // 서버가 값의 주인이다 — 이 줄이 닿는 곳은 액션 축이 잰다(GUI 의
+            // `every_action_does_something_in_this_view`). 이름만 모아 둔다.
+            Some(SettingPick::Act(_)) => {
+                acted.push(setting.key);
+                true
+            }
+            Some(SettingPick::Ask(prompt, _)) => {
+                prompt_key(prompt).is_some()
+                    || NOT_A_CONFIG_ROW.iter().any(|(k, _)| *k == setting.key)
+            }
+            // 뒤집기·놓기·숫자는 **설정 파일**이 주인이다 → 파일 왕복으로 잰다.
+            Some(SettingPick::Flip(key)) => {
+                Config::parse(&edit_option("", key, "on"))
+                    != Config::parse(&edit_option("", key, "off"))
+            }
+            // ⚠ **다른 값**을 표에서 고른다. 처음엔 `←`(뒤로) 가 준 값과 견줬는데,
+            //    선택지가 둘뿐인 줄은 앞뒤가 같은 값이라 셋이 거짓으로 죽었다
+            //    (tab-bar·status-position·mode-keys — 제품이 아니라 자가 틀렸다).
+            Some(SettingPick::Set(key, value)) => match setting.kind {
+                SettingKind::ConfigEnum(list) => list
+                    .iter()
+                    .find(|v| **v != value)
+                    .is_some_and(|other| {
+                        Config::parse(&edit_option("", key, value))
+                            != Config::parse(&edit_option("", key, other))
+                    }),
+                _ => false,
+            },
+            // 숫자도 같은 이유로 **끝값 둘**을 견준다(한 걸음이 기본값에 떨어지면
+            // 기본값과의 비교가 조용히 거짓이 된다 — 실제로 둘이 그랬다).
+            Some(SettingPick::SetNumber(key, _)) => match setting.kind {
+                // ★ 값을 **제품이 적는 그대로** 적는다(`number_text`). 손으로
+                //   `{:.2}` 를 적었더니 정수 옵션 둘이 죽은 줄로 나왔는데, 그건 제품이
+                //   아니라 이 자가 `3.00` 을 쓴 탓이었다 — 그 형식은 파서가 못 읽는다.
+                SettingKind::Number { lo, hi, .. } => {
+                    Config::parse(&edit_option("", key, &number_text(key, lo)))
+                        != Config::parse(&edit_option("", key, &number_text(key, hi)))
+                }
+                _ => false,
+            },
+            None => false,
+        };
+        if !lands {
+            dead.push(setting.key.to_owned());
+        }
+    }
+    assert!(
+        dead.is_empty(),
+        "설정 줄이 **아무 데도 안 닿는다** — 화면에서 고쳐도 안 바뀐다는 뜻이다. \
+         고치거나(파서·`flip_config`·`prompt_key` 에 그 키를 더하거나) 왜 파일이 주인이 \
+         아닌지를 NOT_A_CONFIG_ROW 에 적을 것: {dead:?}"
+    );
+    // 빈 결과가 통과로 보이지 않게 — 표가 통째로 비면 위 루프는 조용히 초록이다.
+    assert!(SETTINGS.len() >= 30, "설정 표가 줄었다: {}", SETTINGS.len());
+    assert!(!acted.is_empty(), "서버가 주인인 줄이 하나도 없다 — 측정이 낡았다");
 }

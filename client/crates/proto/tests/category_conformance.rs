@@ -110,6 +110,13 @@ fn surface(fx: &Fixture) -> base::PluginSurface {
 static PALETTE_OURS: &[(&str, &str)] = &[
     // 정본 `SETTINGS` 에는 있고 `COMMANDS` 에는 없다(저쪽 입구는 설정 화면뿐).
     ("display-panes", "패널"),
+    // ★ **GUI 만의 것**(§10-21ⓐ) — 정본의 글자 크기는 호스트 단말이 정하므로 저쪽에
+    //   같은 이름이 있을 수 없다. 키(`Ctrl+=`/`Ctrl+-`/`Ctrl+0`)가 주 입구이고 팔레트는
+    //   그 키를 모르는 사람의 입구다. **이 목록이 곧 그 선언이다** — 패리티 표에는
+    //   실을 줄이 없다(그 표의 줄은 정본 픽스처가 정한다).
+    ("font-scale-down", "설정/기타"),
+    ("font-scale-reset", "설정/기타"),
+    ("font-scale-up", "설정/기타"),
     ("menu", "설정/기타"),
     ("notice-history", "설정/기타"),
     ("pane-border-status", "패널"),
@@ -119,6 +126,9 @@ static PALETTE_OURS: &[(&str, &str)] = &[
     ("popup-close", "설정/기타"),
     ("resync", "설정/기타"),
     ("status", "설정/기타"),
+    // GUI 만의 판(§10-21ⓓ) — 정본에는 이 구역 자체가 없다(블록·Claude 요약은 우리가
+    // 화면 아래에 갖고 있던 것이고, 제보로 판이 됐다).
+    ("summary", "설정/기타"),
 ];
 
 /// `PALETTE` 의 모든 줄이 정본과 같은 카테고리인가.
@@ -200,6 +210,24 @@ fn palette_tabs_follow_the_canon_order() {
     assert!(uncovered.is_empty(), "어느 탭에도 안 잡히는 팔레트 줄: {uncovered:?}");
 }
 
+/// 정본이 **가질 수 없는** 설정 줄과 그 이유.
+///
+/// # 왜 예외가 생겼나 (2026-08-02, §10-21ⓐ)
+///
+/// 종전 이 자리의 규칙은 *"설정은 팔레트와 달리 우리 전용이 없다 — 정본에 없는 설정을
+/// 실으면 그것을 바꿔도 정본 클라와 값이 어긋난다(같은 서버에 함께 붙는 구조다)"* 였다.
+/// 그 근거는 **두 클라가 같은 값을 다르게 읽을 때** 성립한다. `font-scale` 은 그 부류가
+/// 아니다 — 정본은 이 값을 **읽지도 쓰지도 않는다**(터미널 앱의 글자 크기는 호스트
+/// 단말의 것이라 저쪽에 그 줄이 있을 수가 없다). 어긋날 값이 없으니 근거가 안 닿는다.
+///
+/// 그래도 목록으로 **박아 두는** 이유는 `PALETTE_OURS` 와 같다: 조용히 늘면 안 된다.
+/// 새 줄을 여기 적을 때는 "정본이 안 가진 것"이 아니라 **"정본이 가질 수 없는 것"**임을
+/// 보여야 한다 — 전자는 그냥 우리가 아직 안 단 줄이고, 그건 예외가 아니라 할 일이다.
+static SETTINGS_OURS: &[(&str, &str)] = &[(
+    "font-scale",
+    "정본의 글자 크기는 호스트 단말이 정한다 — 저쪽에 짝이 있을 수 없다(§10-21ⓐ)",
+)];
+
 /// 설정 한 줄 한 줄이 정본과 같은 카테고리인가.
 #[test]
 fn every_setting_carries_the_canon_category() {
@@ -211,12 +239,16 @@ fn every_setting_carries_the_canon_category() {
             Some(canon) => {
                 wrong.push(format!("{}: 우리 {} · 정본 {canon}", setting.key, setting.cat))
             }
-            // 설정은 팔레트와 달리 **우리 전용이 없다** — 정본에 없는 설정을 실으면 그것을
-            // 바꿔도 정본 클라와 값이 어긋난다(같은 서버에 함께 붙는 구조다).
+            None if SETTINGS_OURS.iter().any(|(k, _)| *k == setting.key) => {}
             None => wrong.push(format!("{}: 정본에 없는 설정", setting.key)),
         }
     }
     assert!(wrong.is_empty(), "정본과 다른 분류의 설정 줄:\n  {}", wrong.join("\n  "));
+    // 목록이 낡지 않게 — 지운 줄의 예외가 남아 있으면 그것도 자국이다.
+    let keys: BTreeSet<&str> = SETTINGS.iter().map(|s| s.key).collect();
+    let stale: Vec<&str> =
+        SETTINGS_OURS.iter().map(|(k, _)| *k).filter(|k| !keys.contains(k)).collect();
+    assert!(stale.is_empty(), "설정 표에 없는 줄의 예외가 남아 있다: {stale:?}");
 }
 
 /// 설정 **사이드바 차례**가 정본 차례의 부분수열이고, 모든 설정을 덮나.
@@ -500,6 +532,17 @@ static NATIVE_PLUGIN_COMMANDS: &[&str] = &[
     // 그 클라만 아는 상태라 서버가 대신 정할 수 없다(설계 §4.4 `client_fact`).
     "calendar-mode",
     "clock-mode",
+    // ★ 같은 오버레이의 **명시적 켜기/끄기**(§10-21ⓡ · 제보 "`close-clock`·
+    // `close-calendar` 가 안 먹는다"). 왜 서버가 못 하나: 위 토글과 **같은 이유**다 —
+    // 어느 패널에 오버레이가 떠 있는지는 그 클라만 아는 상태이고, 정본의 계약(켜기는
+    // 멱등 · 대상은 활성 패널 · 시계와 달력은 상호 배타)도 그 상태 위에서만 성립한다.
+    // 종전에는 이 넷이 목록에 없어 **플러그인 줄로 남았고**, 고르면 서버에 "화면을
+    // 다오"로 가서 *"이 플러그인은 화면 스펙을 제공하지 않습니다"* 로 거절당했다 —
+    // 팔레트에는 보이는데 눌러도 안 먹는 줄이었다.
+    "close-calendar",
+    "close-clock",
+    "open-calendar",
+    "open-clock",
     "prompt-clear",
     // ⚠ `usage-view` 는 정본에서 **세 모드**(popup·tab·pane)인데 우리 것은
     // `pane`(오버레이) 하나다 — 나머지 둘은 Textual 화면이라 짝이 없다. 위 둘과 같은
@@ -605,6 +648,8 @@ fn plugin_settings_and_their_category_show_up() {
     // 줄의 차례도 정본 `settings_order` 그대로다(코어 뒤에 플러그인).
     let ours: Vec<&str> = (0..plugins.settings_len())
         .filter_map(|row| plugins.setting_at(row).map(|r| r.key().to_owned()))
+        // 정본이 가질 수 없는 줄은 저쪽 차례에 자리가 없다 — 뺀다(`SETTINGS_OURS`).
+        .filter(|k| !SETTINGS_OURS.iter().any(|(ours, _)| ours == k))
         .map(|k| {
             fx.settings_order
                 .iter()
@@ -635,7 +680,13 @@ fn the_settings_table_keeps_the_canon_order() {
     // 우리가 아직 안 다는 줄은 빼도 된다 — 다만 **차례를 바꿀 수는 없다**.
     let want: Vec<&str> =
         fx.settings_order.iter().map(String::as_str).filter(|k| have.contains(k)).collect();
-    let ours: Vec<&str> = SETTINGS.iter().map(|s| s.key).collect();
+    // 정본이 **가질 수 없는** 줄은 정본 차례에 자리가 없다(`SETTINGS_OURS`). 그 줄만
+    // 빼고 견준다 — 나머지의 차례는 여전히 정본 그대로라야 한다.
+    let ours: Vec<&str> = SETTINGS
+        .iter()
+        .map(|s| s.key)
+        .filter(|k| !SETTINGS_OURS.iter().any(|(ours, _)| ours == k))
+        .collect();
     assert_eq!(ours, want, "설정 줄의 차례가 정본과 다르다");
 
     // 차례가 카테고리를 넘나들면 화면이 같은 머리줄을 두 번 찍는다(2026-07-29 실측).
@@ -645,5 +696,113 @@ fn the_settings_table_keeps_the_canon_order() {
             assert!(!seen.contains(&setting.cat), "카테고리 {} 가 두 번 나온다", setting.cat);
             seen.push(setting.cat);
         }
+    }
+}
+
+// ── 팔레트에 보이는데 안 먹는 명령 (§10-21ⓡ) ────────────────────────────────
+//
+// 제보는 `close-clock`·`close-calendar` 둘이었지만, 재 보니 **부류**였다. 네이티브
+// 클라는 플러그인 명령을 전부 "서버야, 화면을 다오"(`plugin_open`)로 보낸다 — 화면이
+// 아니라 **상태를 바꾸는** 명령에는 그 경로가 통째로 틀렸고, 서버는 *"이 플러그인은
+// 화면 스펙을 제공하지 않습니다"* 로 거절한다. 사용자에게는 죽은 줄로 보인다.
+//
+// 그래서 눈으로 세지 않고 **정본에서 뽑아** 센다(`scripts/gen_plugin_client_cmds.py`):
+// 광고된 이름마다 플러그인이 화면 스펙을 내는지 실제로 물어, 안 내는 것을 모은다.
+
+#[derive(Deserialize)]
+struct CmdKinds {
+    advertised: Vec<String>,
+    with_screen: Vec<String>,
+    stateful: Vec<String>,
+}
+
+fn cmd_kinds() -> CmdKinds {
+    let raw = include_str!("fixtures/plugin_client_cmds.json");
+    serde_json::from_str(raw).expect("plugin_client_cmds.json 을 못 읽는다")
+}
+
+/// **아직 죽은 줄** — 팔레트에 뜨지만 고르면 아무 일도 안 난다.
+///
+/// 줄이는 것이 목표다. 이 목록이 **늘면** 게이트가 운다 — 새 플러그인 명령을 광고만 하고
+/// 어느 클라도 못 하게 두는 것이 이 부류가 생긴 경위다.
+///
+/// 어떻게 줄이나(둘 중 하나):
+/// - 플러그인이 **화면 스펙**을 내면(Tier B) `plugin_open` 경로가 그대로 산다 —
+///   `claude-settings`·`model`·`usage-panel` 처럼 정본에서 팝업인 것들이 여기다.
+/// - 상태만 바꾸는 것은 **네이티브 어댑터**로 든다(위 `NATIVE_PLUGIN_COMMANDS`) —
+///   다만 그 목록도 래칫이라 "왜 서버가 못 하나"를 적어야 한다.
+static DEAD_PLUGIN_COMMANDS: &[&str] = &[
+    "auto-launch",
+    "auto-resume-message",
+    "auto-retry",
+    "auto-token-on-exit",
+    "capture-output",
+    "capture-toggle",
+    "claude-auto-mode",
+    "claude-auto-redraw",
+    "claude-resume-verify",
+    "claude-rules",
+    "claude-settings",
+    "claude-token-account",
+    "claude-token-debug",
+    "claude-token-log",
+    "claude-token-sync",
+    "claude-usage",
+    "ime-indicator",
+    "model",
+    "namesync",
+    "prompt-clear-message",
+    "prompt-clear-queue",
+    "prompt-history-lines",
+    "usage-panel",
+];
+
+#[test]
+fn the_dead_command_list_does_not_grow() {
+    let kinds = cmd_kinds();
+    let core: BTreeSet<&str> = PALETTE
+        .iter()
+        .map(|e| e.name.split(' ').next().unwrap_or(e.name))
+        .collect();
+    let dead: Vec<&str> = kinds
+        .stateful
+        .iter()
+        .map(String::as_str)
+        .filter(|n| !core.contains(n))
+        .collect();
+    let mut sorted = DEAD_PLUGIN_COMMANDS.to_vec();
+    sorted.sort_unstable();
+    assert_eq!(DEAD_PLUGIN_COMMANDS, &sorted[..], "목록은 이름순이라야 한다");
+    assert_eq!(
+        dead, DEAD_PLUGIN_COMMANDS,
+        "팔레트에 보이는데 안 먹는 명령이 달라졌다. **늘었다면** 그 이름을 어느 쪽으로든\n\
+         살리고(화면 스펙 또는 네이티브 어댑터) 목록에서 뺄 것 — 늘려 놓고 통과시키면\n\
+         이 부류가 다시 자란다. **줄었다면** 같은 CL 에서 이 목록도 줄일 것."
+    );
+}
+
+#[test]
+fn the_command_kinds_fixture_actually_measured_something() {
+    // ★ 이 오라클이 먼저다. 픽스처가 비면 위 단언은 "빈 목록 == 빈 목록"이 되어
+    //   **무엇을 해도 통과한다**(이 저장소가 여러 번 밟은 공허함).
+    let kinds = cmd_kinds();
+    assert!(kinds.advertised.len() >= 30, "광고 목록이 너무 적다 — 생성기가 헛돌았다");
+    assert!(!kinds.with_screen.is_empty(), "화면 스펙이 하나도 없다 — 생성기가 헛돌았다");
+    assert_eq!(
+        kinds.advertised.len(),
+        kinds.with_screen.len() + kinds.stateful.len(),
+        "광고 = 화면 + 상태형 이라야 한다(생성기가 이름을 흘렸다)"
+    );
+}
+
+#[test]
+fn the_reported_two_commands_are_alive_now() {
+    // 제보 그 자체(§10-21ⓡ) — 이 넷은 이제 코어 표가 든다.
+    let core: BTreeSet<&str> = PALETTE
+        .iter()
+        .map(|e| e.name.split(' ').next().unwrap_or(e.name))
+        .collect();
+    for name in ["open-clock", "close-clock", "open-calendar", "close-calendar"] {
+        assert!(core.contains(name), "{name} 이 코어 표에 없다 — 다시 죽은 줄이 된다");
     }
 }

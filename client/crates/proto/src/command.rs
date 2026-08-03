@@ -134,8 +134,18 @@ pub enum Command {
     SelectPaneDir { dir: Dir },
     /// 방향으로 패널 경계를 민다. `cells` 는 한 번에 미는 칸 수다.
     ResizeDir { dir: Dir, cells: u16 },
-    /// 탭 고정(핀)을 켜고 끈다. 인자를 안 실으면 **활성 탭을 토글**한다.
-    TogglePin,
+    /// 탭 고정(핀)을 켜고 끈다.
+    ///
+    /// # 왜 자리를 실어야 하나 (§10-21ⓒ3 — 제보 "원격 탭이 핀이 안 된다")
+    ///
+    /// 서버는 자리를 안 실으면 `sess.active_index` 를 쓰는데, 그것은 **로컬 탭의
+    /// 자리**다. 원격(병합) 탭이 활성일 때 그 값은 보고 있는 탭이 아니라서, 토글이
+    /// **엉뚱한 로컬 탭**에 걸린다 — 사용자에게는 "원격 탭은 핀이 안 된다"로 보인다.
+    ///
+    /// 정본이 그 함정을 주석으로 남겨 뒀다(`clientcmd.py`): *"활성 탭의 병합 index 를
+    /// 명시해 보낸다(**원격 active 는 sess.active_index 와 다르므로 index 생략 불가**)"*.
+    /// 우리도 같은 것을 싣는다 — `None` 은 탭바를 아직 못 받은 판뿐이다.
+    TogglePin { index: Option<usize> },
     /// 페이스트 버퍼의 `index` 번째를 패널에 붙인다(0 = 맨 앞).
     PasteBuffer { index: usize },
     /// 세션·탭·패널 개요를 보내 달라(회신 = [`ServerMessage::Tree`]).
@@ -407,7 +417,7 @@ impl Command {
             Command::BreakPane => "break_pane",
             Command::SelectPaneDir { .. } => "select_pane",
             Command::ResizeDir { .. } => "resize_dir",
-            Command::TogglePin => "set_pinned",
+            Command::TogglePin { .. } => "set_pinned",
             Command::PasteBuffer { .. } => "paste_buffer",
             Command::RequestTree => "request_tree",
             Command::RequestBuffers => "request_buffers",
@@ -499,8 +509,10 @@ impl Command {
             | Command::LastPane
             | Command::CycleLayout
             | Command::BreakPane
-            // 인자를 안 싣는 것이 곧 "활성 탭을 토글하라"다(서버 `_cmd_set_pinned`).
-            | Command::TogglePin => json!({}),
+             => json!({}),
+            // 자리를 실어야 원격(병합) 탭에도 걸린다(§10-21ⓒ3) — `None` 이면 서버가
+            // 활성 탭으로 접는데, 그 기본값은 **로컬 탭**이라 원격에서는 어긋난다.
+            Command::TogglePin { index } => json!({ "index": index }),
             Command::Rotate { forward } | Command::SwapPane { forward } => {
                 json!({ "forward": forward })
             }
@@ -691,7 +703,7 @@ impl Command {
             Command::BreakPane,
             Command::SelectPaneDir { dir: Dir::LEFT },
             Command::ResizeDir { dir: Dir::UP, cells: 3 },
-            Command::TogglePin,
+            Command::TogglePin { index: None },
             Command::PasteBuffer { index: 0 },
             Command::RequestTree,
             Command::RequestBuffers,
@@ -1088,7 +1100,7 @@ mod tests {
             Command::BreakPane => 22,
             Command::SelectPaneDir { .. } => 23,
             Command::ResizeDir { .. } => 24,
-            Command::TogglePin => 25,
+            Command::TogglePin { .. } => 25,
             Command::PasteBuffer { .. } => 26,
             Command::RequestTree => 27,
             Command::RequestBuffers => 28,
@@ -1467,6 +1479,13 @@ pub fn action_to_command_with_tabs(
         // 첫/끝과 화면의 첫/끝이 다를 수 있다.
         Action::SelectFirst => select(tabs.by_number(1)),
         Action::SelectLast => select(tabs.by_number(tabs.tabs.len())),
+        // ★ 고정도 **탭바를 봐야 한다**(§10-21ⓒ3). 서버는 자리를 안 실으면
+        //   `sess.active_index`(= 로컬 탭의 자리)로 접는데, 원격(병합) 탭이 활성일 때
+        //   그 값은 보고 있는 탭이 아니다 — 토글이 엉뚱한 로컬 탭에 걸리고, 사용자에겐
+        //   "원격 탭은 핀이 안 된다"로 보인다. 정본이 같은 자리에 그 함정을 적어 뒀다.
+        Action::TogglePin => Some(Command::TogglePin {
+            index: tabs.active().map(|t| t.index),
+        }),
         other => action_to_command(other),
     }
 }
@@ -1546,7 +1565,8 @@ pub fn action_to_command(action: base::Action) -> Option<Command> {
             dir: dir.into(),
             cells: 3,
         }),
-        Action::TogglePin => Some(Command::TogglePin),
+        // 자리는 탭바를 봐야 안다 — `action_to_command_with_tabs` 가 채운다.
+        Action::TogglePin => Some(Command::TogglePin { index: None }),
         Action::PasteBuffer => Some(Command::PasteBuffer { index: 0 }),
         // 화면을 여는 것은 **클라 안의 일**이다 — 서버는 이 클라가 무엇을 덮어 보이는지
         // 알 필요가 없다(플랜 화면과 같은 자리).
@@ -1567,7 +1587,18 @@ pub fn action_to_command(action: base::Action) -> Option<Command> {
         // 오버레이 토글은 **한 명령으로 안 떨어진다** — 뷰가 `push_overlay_toggle` 로
         // `plugin_overlay` 를 (때로 두 개: 닫는 것 + 켜는 것) 보낸다. 한 패널엔 한
         // 오버레이라 서로를 닫기 때문이다. 그림은 다음 `plugin_cells` 프레임이 답이다.
-        Action::ToggleClock | Action::ToggleCalendar | Action::ToggleUsageView => None,
+        // 오버레이는 **상태를 보고** 명령이 정해진다(어느 패널인가·무엇이 닫히는가) —
+        // 그래서 여기서는 `None` 이고 뷰가 `push_overlay*` 로 만든다.
+        Action::ToggleClock
+        | Action::ToggleCalendar
+        | Action::ToggleUsageView
+        | Action::SetOverlay { .. } => None,
+        // 글자 배율은 **이 창 안의 일**이다 — 서버는 픽셀을 모른다. 다만 배율이 바뀌면
+        // 격자(행·열)가 달라지고, 그것은 뷰가 자리표를 다시 재어 `Resize` 로 알린다
+        // (`report_size` — 창 크기가 바뀔 때와 같은 길이라 새 명령이 필요 없다).
+        Action::FontScale { .. } | Action::FontScaleReset => None,
+        // 요약 판은 **클라 안의 것**이다 — 재료(블록·Claude 항목)를 이미 들고 있다.
+        Action::ShowSummary => None,
         // 패널로 **바이트를 보내는** 것이라 명령이 아니다 — 뷰가 `Outgoing::Input` 으로
         // 흘린다(키 입력과 같은 길).
         Action::SendEscape | Action::SendBacktick => None,

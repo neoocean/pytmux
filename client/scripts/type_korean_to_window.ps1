@@ -72,15 +72,11 @@ public class WinIme {
     return (mode.ToInt64() & IME_CMODE_NATIVE) != 0;
   }
 
-  /// 한글 조합 모드를 **켠다**(이미 켜져 있으면 그대로).
-  public static bool SetHangulMode(IntPtr hwnd) {
-    IntPtr ime = ImmGetDefaultIMEWnd(hwnd);
-    if (ime == IntPtr.Zero) return false;
-    IntPtr mode = SendMessage(ime, WM_IME_CONTROL, (IntPtr)IMC_GETCONVERSIONMODE, IntPtr.Zero);
-    long want = mode.ToInt64() | IME_CMODE_NATIVE;
-    SendMessage(ime, WM_IME_CONTROL, (IntPtr)IMC_SETCONVERSIONMODE, (IntPtr)want);
-    return true;
-  }
+  // ☠ **`IMC_SETCONVERSIONMODE` 로 켜지 말 것**(2026-08-03 실측). 그 쓰기는 성공을
+  // 돌려주고 **읽기값까지 바꾸지만 실제 입력기는 안 바뀐다** — 즉 그림자만 켜진다.
+  // 그러면 다음 실행이 "이미 켜져 있다"고 읽고 토글을 건너뛰어, 자판이 **로마자 그대로**
+  // 들어간다(`gksrmf`). 2026-08-03 이전 세 세션이 "하네스가 IME 를 못 몬다"고 적은 것이
+  // 전부 이 자국이다. 진짜 토글은 **VK_HANGUL 뿐**이다.
 
   public const uint WM_INPUTLANGCHANGEREQUEST = 0x0050;
   public const uint KEYUP = 0x0002;
@@ -135,12 +131,18 @@ Write-Output ("레이아웃: {0:X} → {1:X}" -f $before.ToInt64(), $after.ToInt
 # 조합한다 — 이걸 빼면 자판이 그대로 로마자로 들어간다(실측 2026-07-28).
 #
 # VK_HANGUL 을 그냥 두드리면 **토글**이라 이미 켜져 있을 때 오히려 꺼진다(같은 날 두 번째로
-# 밟았다). 그래서 IME 창에 물어보고 **켜는 방향으로만** 맞춘다.
-if (-not [WinIme]::SetHangulMode($hwnd)) {
-  [WinIme]::Tap(0x15, $true); [WinIme]::Tap(0x15, $false)   # 폴백: VK_HANGUL 토글
+# 밟았다). 그래서 **물어보고 켜는 방향으로만** 두드린다 — 쓰기(IMC_SETCONVERSIONMODE)는
+# 그림자만 켜므로 쓰지 않는다(위 주석).
+$wasHangul = [WinIme]::IsHangulMode($hwnd)
+if (-not $wasHangul) {
+  [WinIme]::Tap(0x15, $true); [WinIme]::Tap(0x15, $false)   # VK_HANGUL
+  Start-Sleep -Milliseconds 400
 }
-Start-Sleep -Milliseconds 400
-Write-Output ("조합 모드: " + [WinIme]::IsHangulMode($hwnd))
+$nowHangul = [WinIme]::IsHangulMode($hwnd)
+Write-Output ("조합 모드: {0} (들어올 때 {1})" -f $nowHangul, $wasHangul)
+if (-not $nowHangul) {
+  throw "조합 모드를 못 켰다 — 이 상태로 치면 로마자가 들어간다(자판만 넣지 않는다)."
+}
 
 foreach ($ch in $Keys.ToCharArray()) {
   $scan = [WinIme]::VkKeyScanEx($ch, $korean)
@@ -163,6 +165,12 @@ Start-Sleep -Milliseconds 200
 Start-Sleep -Milliseconds 300
 
 if (-not $NoRestore) {
+  # 조합 모드도 되돌린다 — 안 되돌리면 **사용자의 다음 타이핑이 한글로 들어간다**
+  # (레이아웃만 되돌리던 종전엔 이 상자가 늘 한글로 남았다).
+  if (-not $wasHangul -and [WinIme]::IsHangulMode($hwnd)) {
+    [WinIme]::Tap(0x15, $true); [WinIme]::Tap(0x15, $false)
+    Start-Sleep -Milliseconds 300
+  }
   [void][WinIme]::PostMessage($hwnd, [WinIme]::WM_INPUTLANGCHANGEREQUEST, [IntPtr]::Zero, $before)
   Start-Sleep -Milliseconds 300
 }

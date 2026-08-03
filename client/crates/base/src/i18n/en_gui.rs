@@ -11,4 +11,18 @@ pub static EN: &[(&str, &str)] = &[
     ),
     // ── root_view.rs — 블록 데모 창 제목 줄(TUI 데모와 같은 원문 — 여기가 주인) ──
     ("pytmux-gui · 블록 데모", "pytmux-gui · block demo"),
+    // ── session_view.rs — 글자 배율 한 마디(§10-21ⓐ) ──
+    // ⚠ 끝값 둘을 **문장 통째로** 둔다. 방향("키울 수"/"줄일 수")을 인자로 넘기면 그
+    //   낱말만 한국어로 남는다(2026-08-02p 에서 배운 자리 — 사유를 줄에 이어 붙이지
+    //   않는다). 줄이 둘로 늘어도 그쪽이 옳다.
+    ("글자 크기: {scale}×", "Text size: {scale}×"),
+    ("글자 크기: {scale}× — 더 키울 수 없다", "Text size: {scale}× — cannot go larger"),
+    ("글자 크기: {scale}× — 더 줄일 수 없다", "Text size: {scale}× — cannot go smaller"),
+    // 트리 판이 개요를 기다리는 동안의 한 줄(§10-21ⓖ2 — 프레임 오라클이 잡았다).
+    ("개요를 기다리는 중…", "Waiting for the overview…"),
+    ("첫 화면을 기다리는 중…", "Waiting for the first frame…"),
+    ("맞는 명령이 없다", "No matching command"),
+    ("아직 알림이 없다", "No notices yet"),
+    ("버퍼가 없다", "No buffers"),
+    ("(탭 없음)", "(no tabs)"),
 ];
